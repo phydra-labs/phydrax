@@ -5,6 +5,7 @@
 
 import hashlib
 import math
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -53,7 +54,7 @@ AREA_OVER_LENGTH = 1e-6  # m; explicit homogeneous resistor geometry
 DENSITY = 1e21  # m^-3; independent synthetic metrology, not inferred from current
 
 
-def _reference(label, *, training=True, redistribution=False):
+def _reference(label: Any, *, training: Any = True, redistribution: Any = False) -> Any:
     payload = f"Synthetic homogeneous SG resistor, {label}; SI q*n*mu*A*V/L".encode()
     return ReferenceArtifactManifest(
         label,
@@ -72,7 +73,7 @@ def _reference(label, *, training=True, redistribution=False):
     )
 
 
-def _quantity(name, kind, unit):
+def _quantity(name: Any, kind: Any, unit: Any) -> Any:
     return SemiconductorQuantitySpec(
         name,
         kind,
@@ -85,14 +86,14 @@ def _quantity(name, kind, unit):
     )
 
 
-def _controls(voltage):
+def _controls(voltage: Any) -> Any:
     voltage = jnp.asarray(voltage, dtype="float64")
     return jnp.stack(
         (voltage, jnp.full_like(voltage, 300.0), jnp.full_like(voltage, DENSITY)), axis=-1
     )
 
 
-def _current(parameters, case):
+def _current(parameters: Any, case: Any) -> Any:
     """Genuine native SG number flux in a homogeneous isothermal resistor."""
     voltage, temperature, density = case.controls.T
     thermal_voltage = KB * temperature / Q
@@ -116,17 +117,17 @@ def _current(parameters, case):
 
 
 def _case(
-    name,
-    voltage=(0.1, 0.3, 0.5),
+    name: Any,
+    voltage: Any = (0.1, 0.3, 0.5),
     *,
-    die=None,
-    rho=0.0,
-    deembed=0.0,
-    control_error=0.0,
-    observed_shift=0.0,
-    training_right=True,
-    source="synthetic",
-):
+    die: Any = None,
+    rho: Any = 0.0,
+    deembed: Any = 0.0,
+    control_error: Any = 0.0,
+    observed_shift: Any = 0.0,
+    training_right: Any = True,
+    source: Any = "synthetic",
+) -> Any:
     controls = _controls(voltage)
     count = controls.shape[0]
     sigma = 2e-7
@@ -168,7 +169,7 @@ def _case(
     )
 
 
-def _campaign(training=None, heldout=None, *, axes=("die",)):
+def _campaign(training: Any = None, heldout: Any = None, *, axes: Any = ("die",)) -> Any:
     training = _case("training") if training is None else training
     heldout = _case("heldout", (0.2, 0.4, 0.6)) if heldout is None else heldout
     domain = SemiconductorCalibrationDomain(
@@ -198,13 +199,13 @@ def _campaign(training=None, heldout=None, *, axes=("die",)):
     )
 
 
-def _binding(*, two=False, prior_sigma=0.02):
+def _binding(*, two: Any = False, prior_sigma: Any = 0.02) -> Any:
     initial = jnp.asarray([0.04, 0.06] if two else [0.1])
     quantities = tuple(
         _quantity(f"mobility-{i}", "mobility", MOBILITY_UNIT) for i in range(initial.size)
     )
 
-    def log_prior(p):
+    def log_prior(p: Any) -> Any:
         return -0.5 * jnp.sum(
             ((p - initial) / prior_sigma) ** 2
             + 2 * jnp.log(prior_sigma)
@@ -221,7 +222,9 @@ def _binding(*, two=False, prior_sigma=0.02):
 
 
 @pytest.mark.parametrize("axis", ["lot", "wafer", "die", "structure", "condition"])
-def test_complete_group_holdout_cannot_be_replaced_by_random_curve_points(axis):
+def test_complete_group_holdout_cannot_be_replaced_by_random_curve_points(
+    axis: Any,
+) -> None:
     train = _case("train")
     heldout = _case("renamed-heldout", (0.2, 0.4, 0.6), die="train")
     if axis == "condition":
@@ -253,7 +256,9 @@ def test_complete_group_holdout_cannot_be_replaced_by_random_curve_points(axis):
         _campaign(train, heldout, axes=(axis,))
 
 
-def test_correlated_measurement_deembedding_and_control_errors_enter_joint_likelihood():
+def test_correlated_measurement_deembedding_and_control_errors_enter_joint_likelihood() -> (
+    None
+):
     train = _case("training", (0.2, 0.2), rho=0.5, deembed=1e-7, control_error=1e-3)
     campaign = _campaign(train)
     prepared = prepare_semiconductor_calibration(campaign, _binding(), _current)
@@ -288,7 +293,7 @@ def test_correlated_measurement_deembedding_and_control_errors_enter_joint_likel
     assert abs(float(expected - independent)) > 0.1
 
 
-def test_heldout_values_never_change_training_posterior():
+def test_heldout_values_never_change_training_posterior() -> None:
     original = prepare_semiconductor_calibration(_campaign(), _binding(), _current)
     shifted = prepare_semiconductor_calibration(
         _campaign(heldout=_case("heldout", (0.2, 0.4, 0.6), observed_shift=1e-3)),
@@ -305,14 +310,14 @@ def test_heldout_values_never_change_training_posterior():
     )
 
 
-def _unresolved_diode(parameters, case):
+def _unresolved_diode(parameters: Any, case: Any) -> Any:
     """Actual series-resistor/diode root truncated before convergence."""
     voltage = case.controls[:, 0]
     vt = KB * case.controls[:, 1] / Q
     saturation_current = Q * DENSITY * jnp.sum(parameters) * AREA_OVER_LENGTH * vt
     resistance = 1e3
 
-    def residual(junction_voltage, args):
+    def residual(junction_voltage: Any, args: Any) -> Any:
         del args
         return (
             junction_voltage
@@ -340,8 +345,8 @@ def _unresolved_diode(parameters, case):
 
 
 def test_unresolved_native_forward_preserves_rejected_evidence_and_stops_inference(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     campaign, binding = _campaign(), _binding()
     with pytest.raises(SemiconductorForwardUnresolved) as caught:
         prepare_semiconductor_calibration(campaign, binding, _unresolved_diode)
@@ -366,7 +371,7 @@ def test_unresolved_native_forward_preserves_rejected_evidence_and_stops_inferen
     )
 
 
-def test_an_unresolved_likelihood_point_is_not_given_zero_probability():
+def test_an_unresolved_likelihood_point_is_not_given_zero_probability() -> None:
     initial = jnp.asarray([1e-25])
     binding = SemiconductorParameterBinding(
         ParameterSpace(initial, log_prior=lambda p: -0.5 * jnp.sum((p / 0.1) ** 2)),
@@ -386,7 +391,7 @@ def test_an_unresolved_likelihood_point_is_not_given_zero_probability():
         prepared.posterior.log_likelihood(jnp.asarray([0.1])).block_until_ready()
 
 
-def test_physical_prior_exclusion_is_not_numerical_failure():
+def test_physical_prior_exclusion_is_not_numerical_failure() -> None:
     prepared = prepare_semiconductor_calibration(_campaign(), _binding(), _current)
     inadmissible = evaluate_semiconductor_forward(prepared, jnp.asarray([-0.1]))
     assert inadmissible.status == "physical-inadmissible"
@@ -394,7 +399,7 @@ def test_physical_prior_exclusion_is_not_numerical_failure():
     assert float(prepared.posterior.log_likelihood(jnp.asarray([-0.1]))) == -math.inf
 
 
-def test_prior_curvature_cannot_identify_two_indistinguishable_mobilities():
+def test_prior_curvature_cannot_identify_two_indistinguishable_mobilities() -> None:
     campaign = _campaign()
     weak = prepare_semiconductor_calibration(
         campaign, _binding(two=True, prior_sigma=0.2), _current
@@ -417,8 +422,8 @@ def test_prior_curvature_cannot_identify_two_indistinguishable_mobilities():
 
 
 def test_native_fit_heldout_and_archive_do_not_turn_synthetic_recovery_into_foundry_evidence(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     prepared = prepare_semiconductor_calibration(_campaign(), _binding(), _current)
     result = calibrate_semiconductor(prepared)
     np.testing.assert_allclose(result.optimization.parameters, [0.1], rtol=1e-8)
@@ -481,7 +486,7 @@ def test_native_fit_heldout_and_archive_do_not_turn_synthetic_recovery_into_foun
         )
 
 
-def test_measurement_training_rights_are_checked_before_forward_use():
+def test_measurement_training_rights_are_checked_before_forward_use() -> None:
     campaign = _campaign(training=_case("training", training_right=False))
     with pytest.raises(PermissionError, match="training-use"):
         prepare_semiconductor_calibration(campaign, _binding(), _current)

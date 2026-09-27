@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -6,7 +7,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_periodic_spectral_conservation_and_entropy_diagnostics():
+def test_periodic_spectral_conservation_and_entropy_diagnostics() -> None:
     space = phx.discretization.TensorSpectralPlan(
         (phx.discretization.FourierBasisPlan(24),),
         axis_names=("x",),
@@ -47,6 +48,7 @@ def test_periodic_spectral_conservation_and_entropy_diagnostics():
     physical = jnp.sin(2.0 * jnp.pi * x)[..., None]
     state = space.project(physical)
 
+    # ty: ignore[invalid-argument-type]
     residual, diagnostics = compiled.residual_with_diagnostics(0.0, state)
     physical_residual = space.reconstruct(residual)
     balance_terms = np.asarray(space.quadrature_weights[..., None] * physical_residual)
@@ -57,12 +59,14 @@ def test_periodic_spectral_conservation_and_entropy_diagnostics():
         ]
     )
     np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
         diagnostics.semidiscrete_integral_rate,
         expected_rate,
         rtol=8e-15,
         atol=0.0,
     )
     np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
         diagnostics.conservation_defect,
         expected_rate,
         rtol=8e-15,
@@ -76,13 +80,17 @@ def test_periodic_spectral_conservation_and_entropy_diagnostics():
         rtol=1e-10,
         atol=1e-10,
     )
+    # ty: ignore[unresolved-attribute]
     assert jnp.max(jnp.abs(diagnostics.conservation_defect)) < 1e-11
+    # ty: ignore[unresolved-attribute]
     assert diagnostics.entropy is not None
+    # ty: ignore[unresolved-attribute]
     assert jnp.abs(diagnostics.entropy.semidiscrete_entropy_rate) < 1e-11
+    # ty: ignore[unresolved-attribute]
     assert diagnostics.entropy.admissible
 
 
-def test_spectral_conservation_honors_widened_reduction_precision():
+def test_spectral_conservation_honors_widened_reduction_precision() -> None:
     precision = phx.discretization.SpectralPrecisionPolicy(
         jnp.float32,
         reduction_dtype=jnp.float64,
@@ -118,6 +126,7 @@ def test_spectral_conservation_honors_widened_reduction_precision():
     x = space.axes[0].nodes
     state = space.project(jnp.sin(2.0 * jnp.pi * x)[..., None])
 
+    # ty: ignore[invalid-argument-type]
     residual, diagnostics = compiled.residual_with_diagnostics(0.0, state)
     physical_residual = precision.reduction(space.reconstruct(residual))
     weights = precision.reduction(space.quadrature_weights[..., None])
@@ -129,15 +138,19 @@ def test_spectral_conservation_honors_widened_reduction_precision():
         ]
     )
 
+    # ty: ignore[unresolved-attribute]
     assert diagnostics.semidiscrete_integral_rate.dtype == jnp.float64
+    # ty: ignore[unresolved-attribute]
     assert diagnostics.conservation_defect.dtype == jnp.float64
     np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
         diagnostics.semidiscrete_integral_rate,
         expected,
         rtol=8e-15,
         atol=0.0,
     )
     np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
         diagnostics.conservation_defect,
         expected,
         rtol=8e-15,
@@ -145,7 +158,9 @@ def test_spectral_conservation_honors_widened_reduction_precision():
     )
 
 
-def test_periodic_fourier_split_form_is_conservative_entropy_stable_and_chunk_invariant():
+def test_periodic_fourier_split_form_is_conservative_entropy_stable_and_chunk_invariant() -> (
+    None
+):
     from phydrax.discretization import spectral
 
     space = phx.discretization.TensorSpectralPlan(
@@ -167,7 +182,7 @@ def test_periodic_fourier_split_form_is_conservative_entropy_stable_and_chunk_in
     )
     state = space.project(system.primitive_to_conserved(primitive))
 
-    def compiled(chunk):
+    def compiled(chunk: Any) -> Any:
         method = spectral.SpectralConservationMethodPlan(
             split_form=spectral.SpectralSplitFormPlan(
                 phx.discretization.EntropyConservativeEulerFluxPlan(),
@@ -187,10 +202,11 @@ def test_periodic_fourier_split_form_is_conservative_entropy_stable_and_chunk_in
     assert diagnostics.entropy.entropy_stable
     assert diagnostics.entropy.convective_entropy_defect < 5e-11
     assert diagnostics.entropy.pair_workspace_bytes > 0
+    # ty: ignore[unresolved-attribute]
     assert space.periodic_cell.fully_periodic
 
 
-def test_split_form_workspace_bound_includes_every_transverse_line():
+def test_split_form_workspace_bound_includes_every_transverse_line() -> None:
     from phydrax.discretization import spectral
 
     space = phx.discretization.TensorSpectralPlan(
@@ -234,13 +250,15 @@ def test_split_form_workspace_bound_includes_every_transverse_line():
             maximum_pair_workspace_bytes=expected_workspace,
         )
     ).prepare(space)
+    # ty: ignore[unresolved-attribute]
     assert prepared.split_form.report.pair_workspace_bytes == expected_workspace
 
 
-def test_split_form_rejects_unsupported_flux_source_and_basis():
+def test_split_form_rejects_unsupported_flux_source_and_basis() -> None:
     from phydrax.discretization import spectral
 
     with np.testing.assert_raises(TypeError):
+        # ty: ignore[invalid-argument-type]
         spectral.SpectralSplitFormPlan(phx.discretization.RusanovFluxPlan())
     polynomial = phx.discretization.TensorSpectralPlan(
         (phx.discretization.ChebyshevBasisPlan(8),)

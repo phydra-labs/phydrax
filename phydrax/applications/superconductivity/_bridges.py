@@ -10,7 +10,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -51,7 +52,7 @@ class _AbstractBridgePolicy(StrictModule, NonTrainableState, abc.ABC):
         minimum_scale_separation: float,
         payload: dict[str, object],
         /,
-    ):
+    ) -> None:
         tolerance = float(relative_tolerance)
         separation = float(minimum_scale_separation)
         if (
@@ -72,7 +73,13 @@ class _AbstractBridgePolicy(StrictModule, NonTrainableState, abc.ABC):
             }
         )
 
-    def evidence(self, source, target, scale_separation, supported=True):
+    def evidence(
+        self,
+        source: ArrayLike,
+        target: ArrayLike,
+        scale_separation: ArrayLike,
+        supported: ArrayLike = True,
+    ) -> SuperconductingFidelityBridgeEvidence:
         source_ = jnp.asarray(source)
         target_ = jnp.asarray(target, dtype=source_.dtype)
         separation = jnp.asarray(scale_separation, dtype=jnp.real(source_).dtype)
@@ -120,7 +127,7 @@ class BdGQuasiclassicalBridgePlan(_AbstractBridgePolicy):
         energy_scale: float,
         relative_tolerance: float,
         minimum_scale_separation: float,
-    ):
+    ) -> None:
         energy = float(energy_scale)
         if not isfinite(energy) or energy <= 0.0:
             raise ValueError("BdG/quasiclassical bridge energy_scale is invalid.")
@@ -168,7 +175,7 @@ class QuasiclassicalGLBridgePlan(_AbstractBridgePolicy):
         gap_to_order_parameter_scale: float,
         relative_tolerance: float,
         minimum_scale_separation: float,
-    ):
+    ) -> None:
         scale = float(gap_to_order_parameter_scale)
         if not isfinite(scale) or scale <= 0.0:
             raise ValueError("Quasiclassical/GL bridge scale is invalid.")
@@ -214,7 +221,7 @@ class GLLondonBridgePlan(_AbstractBridgePolicy):
         *,
         relative_tolerance: float,
         minimum_scale_separation: float,
-    ):
+    ) -> None:
         projection = np.asarray(current_projection, dtype=np.float64)
         if projection.ndim != 2 or np.any(~np.isfinite(projection)):
             raise ValueError("GL/London current projection must be a finite matrix.")
@@ -265,7 +272,7 @@ class LondonCableBridgePlan(_AbstractBridgePolicy):
         *,
         relative_tolerance: float,
         minimum_scale_separation: float,
-    ):
+    ) -> None:
         super().__init__(
             "london-to-cable-bridge",
             relative_tolerance,

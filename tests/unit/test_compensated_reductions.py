@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import math
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -16,7 +18,9 @@ from phydrax._numerics._compensated import compensated_sum, compensated_sum_chun
     ("dtype", "large"),
     ((jnp.float32, 1.0e8), (jnp.float64, 1.0e16)),
 )
-def test_compensated_sum_recovers_cancellation_and_derivative(dtype, large):
+def test_compensated_sum_recovers_cancellation_and_derivative(
+    dtype: Any, large: Any
+) -> None:
     values = jnp.asarray((large, 1.0, -large), dtype=dtype)
     reduced = jax.jit(compensated_sum)(values)
     gradient = jax.grad(lambda candidate: compensated_sum(candidate))(values)
@@ -25,7 +29,7 @@ def test_compensated_sum_recovers_cancellation_and_derivative(dtype, large):
     np.testing.assert_array_equal(gradient, jnp.ones_like(values))
 
 
-def test_compensated_chunks_match_accurate_signed_component_sums():
+def test_compensated_chunks_match_accurate_signed_component_sums() -> None:
     left = jnp.asarray(
         (
             (1.0e16, 1.0e8),
@@ -45,7 +49,7 @@ def test_compensated_chunks_match_accurate_signed_component_sums():
     np.testing.assert_array_equal(actual, expected)
 
 
-def test_compensated_sum_preserves_axes_shapes_and_empty_identity():
+def test_compensated_sum_preserves_axes_shapes_and_empty_identity() -> None:
     values = jnp.arange(24.0).reshape((2, 3, 4))
     expected = jnp.sum(values, axis=(0, 2), keepdims=True)
     actual = compensated_sum(values, axis=(0, 2), keepdims=True)
@@ -57,7 +61,7 @@ def test_compensated_sum_preserves_axes_shapes_and_empty_identity():
     np.testing.assert_array_equal(integers, jnp.asarray((3, 5, 7)))
 
 
-def test_compensated_sum_preserves_complex_and_nonfinite_semantics():
+def test_compensated_sum_preserves_complex_and_nonfinite_semantics() -> None:
     complex_values = jnp.asarray((1.0e16 + 1.0e16j, 1.0 + 1.0j, -1.0e16 - 1.0e16j))
     nonfinite = jnp.asarray(((jnp.inf, 1.0), (-jnp.inf, 2.0)))
 
@@ -69,7 +73,7 @@ def test_compensated_sum_preserves_complex_and_nonfinite_semantics():
     )
 
 
-def test_compensated_sum_vmaps_independent_reductions():
+def test_compensated_sum_vmaps_independent_reductions() -> None:
     values = jnp.asarray(
         (
             (1.0e16, 1.0, -1.0e16),

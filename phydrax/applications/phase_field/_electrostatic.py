@@ -4,29 +4,31 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
-ElectrostaticEnsemble = Literal["fixed-charge", "fixed-voltage"]
+ElectrostaticEnsemble: TypeAlias = Literal["fixed-charge", "fixed-voltage"]
 
 
 class PhasePermittivityLaw(StrictModule, NonTrainableState):
     phase_permittivities: Array
     law_id: str = eqx.field(static=True)
 
-    def __init__(self, phase_permittivities: ArrayLike, /, *, law_id: str):
+    def __init__(self, phase_permittivities: ArrayLike, /, *, law_id: str) -> None:
         values = np.asarray(phase_permittivities)
         identifier = str(law_id)
         if (
@@ -83,11 +85,10 @@ class PhaseElectrostaticCouplingPlan(StrictModule, NonTrainableState):
         *,
         ensemble: ElectrostaticEnsemble,
         gauss_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(permittivity, PhasePermittivityLaw):
             raise TypeError("permittivity must be PhasePermittivityLaw.")
-        if ensemble not in ("fixed-charge", "fixed-voltage"):
-            raise ValueError("Unknown electrostatic control ensemble.")
+        ensemble = parse(ensemble, ElectrostaticEnsemble, "ensemble")
         tolerance = float(gauss_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("Gauss-law tolerance must be nonnegative.")
@@ -129,7 +130,7 @@ class PhaseElectrostaticCouplingPlan(StrictModule, NonTrainableState):
         sign = 1.0 if self.ensemble == "fixed-charge" else -1.0
         field_energy = 0.5 * sign * permittivity * electric_norm
 
-        def one_energy(local_logits, local_electric):
+        def one_energy(local_logits: Array, local_electric: Array) -> Array:
             epsilon = self.permittivity.evaluate(local_logits)
             return 0.5 * sign * epsilon * jnp.dot(local_electric, local_electric)
 
@@ -194,7 +195,7 @@ class ElectrochemicalCouplingPlan(StrictModule, NonTrainableState):
         /,
         *,
         faraday_constant: ArrayLike,
-    ):
+    ) -> None:
         charges = np.asarray(valences)
         mobility = np.asarray(mobilities)
         faraday = np.asarray(faraday_constant)

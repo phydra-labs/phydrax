@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from math import isfinite
 from typing import Any, final, Literal, TYPE_CHECKING, TypeAlias
 
@@ -12,7 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 from phydrax.ein import contract
 
@@ -50,6 +50,7 @@ from ..operators.quantum import (
     ComplexParameterMode,
     LogAmplitude,
 )
+from ..typing import PRNGKey
 from ._variational_monte_carlo import (
     _clipped_direction,
     _FrozenVMCRun,
@@ -114,7 +115,7 @@ def _batched_amplitude(model: Any, configurations: Array, /) -> LogAmplitude:
     return value
 
 
-def _parameter_mode(value: ComplexParameterMode, /) -> ComplexParameterMode:
+def _parameter_mode(value: str, /) -> ComplexParameterMode:
     if value not in ("real", "holomorphic", "nonholomorphic"):
         raise ValueError(
             "complex parameter modes must be 'real', 'holomorphic', or 'nonholomorphic'."
@@ -211,8 +212,8 @@ def _mixture_components(
     return relative, log_norm, all_valid & any_nonzero
 
 
-def _mixture_log_target(models: tuple[Any, ...], /):
-    def log_target(configuration):
+def _mixture_log_target(models: tuple[Any, ...], /) -> Callable[[Array], Array]:
+    def log_target(configuration: Array) -> Array:
         amplitudes = tuple(_scalar_amplitude(model, configuration) for model in models)
         _relative, log_norm, valid = _mixture_components(amplitudes)
         return jnp.where(valid, 2.0 * log_norm, -jnp.inf)
@@ -253,7 +254,7 @@ class VariationalMonteCarloSubspaceProblem(StrictModule):
         | Sequence[ComplexParameterMode] = "real",
         parameter_subspaces: Sequence[ParameterSubspace | None] | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         models_ = tuple(models)
         if len(models_) < 2:
             raise ValueError("Subspace VMC requires at least two amplitude models.")
@@ -373,7 +374,7 @@ class VariationalMonteCarloSubspaceProblem(StrictModule):
         )
 
     def initial_state(
-        self, *, key: Key[Array, ""] = DOC_KEY0
+        self, *, key: PRNGKey = DOC_KEY0
     ) -> VariationalMonteCarloSubspaceState:
         markov = self.kernel.initialize(
             FullMarkovTarget(
@@ -413,9 +414,9 @@ class VariationalMonteCarloSubspaceState(StrictModule):
         parameter_coordinates: Sequence[Array],
         markov_state: MarkovState,
         iteration: int | Array,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         attempt_cursor: int | Array | None = None,
-    ):
+    ) -> None:
         models_ = tuple(models)
         coordinates = tuple(jnp.asarray(value) for value in parameter_coordinates)
         if len(models_) < 2 or len(coordinates) != len(models_):
@@ -733,7 +734,7 @@ def evaluate_variational_monte_carlo_subspace(
     markov_state: MarkovState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_draws: int,
     steps_per_draw: int = 1,
     warmup_steps: int = 0,
@@ -789,7 +790,7 @@ def _score_geometry(
 ) -> EmpiricalGramLinearOperator:
     mode = problem.complex_parameter_modes[model_index]
 
-    def features(parameter_coordinates):
+    def features(parameter_coordinates: Array) -> Array:
         model = problem.model_from_coordinates(model_index, parameter_coordinates)
         amplitudes = _batched_amplitude(model, configurations)
         values = _surrogate(amplitudes)
@@ -861,7 +862,7 @@ def _score_corrected_objective(
     sample_count = configurations.shape[0]
     zero_logits = jnp.zeros((sample_count,), dtype=jnp.float64)
 
-    def objective_from_logits(logits):
+    def objective_from_logits(logits: Array) -> Array:
         return _weighted_block_objective(
             problem,
             coordinates,
@@ -1019,7 +1020,7 @@ def solve_variational_monte_carlo_subspace(
     policy: VariationalMonteCarloPolicy,
     /,
     *,
-    key: Key[Array, ""] | None = None,
+    key: PRNGKey | None = None,
     state: VariationalMonteCarloSubspaceState | None = None,
     ritz_tolerance: float = 1e-10,
 ) -> VariationalMonteCarloSubspaceResult:

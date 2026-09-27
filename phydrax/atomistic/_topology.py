@@ -9,7 +9,9 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -19,7 +21,7 @@ from ..discretization import ParticleDiscretization
 
 def _interaction_table(
     name: str,
-    value: ArrayLike | None,
+    value: npt.ArrayLike | None,
     width: int,
     /,
 ) -> np.ndarray:
@@ -40,7 +42,7 @@ def _interaction_table(
     return result
 
 
-def _type_ids(name: str, value: ArrayLike | None, count: int, /) -> np.ndarray:
+def _type_ids(name: str, value: npt.ArrayLike | None, count: int, /) -> np.ndarray:
     if value is None:
         return np.zeros((count,), dtype=np.int32)
     array = np.asarray(value)
@@ -84,21 +86,21 @@ class MolecularTopologyPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         *,
-        bonds: ArrayLike | None = None,
-        angles: ArrayLike | None = None,
-        torsions: ArrayLike | None = None,
-        impropers: ArrayLike | None = None,
-        constraints: ArrayLike | None = None,
-        constraint_distances: ArrayLike | None = None,
-        pair_exceptions: ArrayLike | None = None,
-        lennard_jones_scales: ArrayLike | None = None,
-        electrostatic_scales: ArrayLike | None = None,
-        bond_type_ids: ArrayLike | None = None,
-        angle_type_ids: ArrayLike | None = None,
-        torsion_type_ids: ArrayLike | None = None,
-        improper_type_ids: ArrayLike | None = None,
+        bonds: npt.ArrayLike | None = None,
+        angles: npt.ArrayLike | None = None,
+        torsions: npt.ArrayLike | None = None,
+        impropers: npt.ArrayLike | None = None,
+        constraints: npt.ArrayLike | None = None,
+        constraint_distances: npt.ArrayLike | None = None,
+        pair_exceptions: npt.ArrayLike | None = None,
+        lennard_jones_scales: npt.ArrayLike | None = None,
+        electrostatic_scales: npt.ArrayLike | None = None,
+        bond_type_ids: npt.ArrayLike | None = None,
+        angle_type_ids: npt.ArrayLike | None = None,
+        torsion_type_ids: npt.ArrayLike | None = None,
+        improper_type_ids: npt.ArrayLike | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         bonds_ = _canonical_pairs("bonds", _interaction_table("bonds", bonds, 2))
         angles_ = _interaction_table("angles", angles, 3)
         torsions_ = _interaction_table("torsions", torsions, 4)
@@ -207,7 +209,9 @@ class PreparedMolecularTopology(StrictModule, NonTrainableState):
     particle_discretization_id: str = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MolecularTopologyPlan, particles: ParticleDiscretization, /):
+    def __init__(
+        self, plan: MolecularTopologyPlan, particles: ParticleDiscretization, /
+    ) -> None:
         if not isinstance(plan, MolecularTopologyPlan):
             raise TypeError("plan must be a MolecularTopologyPlan.")
         if not isinstance(particles, ParticleDiscretization):

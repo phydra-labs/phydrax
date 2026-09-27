@@ -4,19 +4,64 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import Callable
+from typing import TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...discretization import scharfetter_gummel_flux
-from ._interfaces import interface_electrostatics, ThermionicInterface
+from ._interfaces import (
+    interface_electrostatics,
+    InterfaceElectrostaticState,
+    InterfaceExchange,
+    ThermionicInterface,
+)
 from ._kinetics import DynamicTrap, NonlocalTunnelingPath
 from ._materials import SemiconductorMaterial
 from ._quantities import BOLTZMANN_CONSTANT_SI as K, ELEMENTARY_CHARGE_SI as Q
 from ._thermal import ThermalBoundaryExchange
+
+
+if TYPE_CHECKING:
+    from ._device import DevicePlan
+    from ._state import SemiconductorStateLayout
+    from ._thermal import ConstantLatticeHeatCapacity
+    from ._thermodynamics import BandThermodynamics
+
+
+_ThermodynamicFields: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array
+]
+_InterfaceExchanges: TypeAlias = tuple[
+    tuple[int, InterfaceExchange, InterfaceExchange], ...
+]
+_TransportResult: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    dict[str, Array],
+    _InterfaceExchanges,
+    _ThermodynamicFields,
+]
+_SourcesResult: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    dict[str, Array],
+    dict[str, Array],
+    _ThermodynamicFields,
+]
 
 
 class MaterialInterface(StrictModule):
@@ -36,14 +81,14 @@ class MaterialInterface(StrictModule):
 
     def __init__(
         self,
-        edge,
+        edge: int,
         *,
-        fraction,
-        sheet_charge=0.0,
-        potential_jump=0.0,
-        electron_law=None,
-        hole_law=None,
-    ):
+        fraction: float,
+        sheet_charge: ArrayLike = 0.0,
+        potential_jump: ArrayLike = 0.0,
+        electron_law: ThermionicInterface | None = None,
+        hole_law: ThermionicInterface | None = None,
+    ) -> None:
         if not isinstance(edge, int) or edge < 0 or not 0 < fraction < 1:
             raise ValueError(
                 "An interface needs an edge and a strictly interior fraction."
@@ -79,7 +124,9 @@ class TrapBinding(StrictModule):
     location: int = eqx.field(static=True)
     initial_occupancy: jax.Array
 
-    def __init__(self, trap, location, *, initial_occupancy=0.5):
+    def __init__(
+        self, trap: DynamicTrap, location: int, *, initial_occupancy: float = 0.5
+    ) -> None:
         if (
             not isinstance(trap, DynamicTrap)
             or not isinstance(location, int)
@@ -101,7 +148,7 @@ class ThermalPort(StrictModule):
     node: int = eqx.field(static=True)
     exchange: ThermalBoundaryExchange
 
-    def __init__(self, name, node, exchange):
+    def __init__(self, name: str, node: int, exchange: ThermalBoundaryExchange) -> None:
         if (
             not isinstance(name, str)
             or not name
@@ -122,7 +169,9 @@ class TunnelingChannel(StrictModule):
     energy: jax.Array
     attempt_rate: jax.Array
 
-    def __init__(self, path, energy, attempt_rate):
+    def __init__(
+        self, path: NonlocalTunnelingPath, energy: ArrayLike, attempt_rate: ArrayLike
+    ) -> None:
         energy_host, attempt_host = np.asarray(energy), np.asarray(attempt_rate)
         if (
             not isinstance(path, NonlocalTunnelingPath)
@@ -140,23 +189,23 @@ class TunnelingChannel(StrictModule):
         self.attempt_rate = jnp.asarray(attempt_rate)
 
 
-def _harmonic(a, b):
+def _harmonic(a: Array, b: Array) -> Array:
     return 2 * a * b / jnp.where(a + b > 0, a + b, 1)
 
 
 def _flux(
-    nl,
-    nr,
-    chemical_left,
-    chemical_right,
-    temperature_left,
-    temperature_right,
-    einstein_left,
-    einstein_right,
-    mobility,
-    metric,
-    transported_entropy=0.0,
-):
+    nl: Array,
+    nr: Array,
+    chemical_left: Array,
+    chemical_right: Array,
+    temperature_left: Array,
+    temperature_right: Array,
+    einstein_left: Array,
+    einstein_right: Array,
+    mobility: Array,
+    metric: Array,
+    transported_entropy: Array | float = 0.0,
+) -> Array:
     """Exponential fitting with thermodynamic chemical/thermoelectric affinity.
 
     Arithmetic D/mu is a positive degenerate diffusion enhancement. The explicit
@@ -183,18 +232,31 @@ def _flux(
 class ClassicalPhysics(StrictModule):
     __strict_abstract__ = True
 
+    plan: eqx.AbstractVar[DevicePlan]
+    num_nodes: eqx.AbstractVar[int]
+    num_terminals: eqx.AbstractVar[int]
+    count_scale: eqx.AbstractVar[Array]
+    charge_scale: eqx.AbstractVar[Array]
+    edge_capacitance: eqx.AbstractVar[Array]
+    time_scale: eqx.AbstractVar[Array]
+    differential_mask: eqx.AbstractVar[Array]
+
     @abstractmethod
-    def _coordinates(self, coordinates):
+    def _coordinates(self, coordinates: ArrayLike) -> Array:
+        raise NotImplementedError
+
+    @abstractmethod
+    def _voltages(self, voltages: ArrayLike) -> Array:
         raise NotImplementedError
 
     @property
-    def layout(self):
+    def layout(self) -> SemiconductorStateLayout:
         return self.plan.layout
 
-    def field(self, u, name):
+    def field(self, u: ArrayLike, name: str) -> Array:
         return self.layout.field(u, name)
 
-    def temperatures(self, u):
+    def temperatures(self, u: ArrayLike) -> tuple[Array, Array, Array]:
         plan = self.plan
         lattice = jnp.broadcast_to(plan.temperature, (self.num_nodes,))
         if plan.electrothermal:
@@ -205,7 +267,7 @@ class ClassicalPhysics(StrictModule):
             hole = plan.temperature * jnp.exp(self.field(u, "hole_energy"))
         return lattice, electron, hole
 
-    def _state_valid(self, u):
+    def _state_valid(self, u: Array) -> Array:
         plan = self.plan
         psi = plan.thermal_voltage * self.field(u, "potential")
         fn = K * plan.temperature * self.field(u, "electron")
@@ -215,7 +277,11 @@ class ClassicalPhysics(StrictModule):
         for index, model in enumerate(plan.material_models):
             nodes = jnp.asarray(plan.material_nodes[index], dtype=jnp.int32)
             if plan.electrothermal:
-                capacity_bounds = model.lattice_heat_capacity.temperature_range
+                capacity = model.lattice_heat_capacity
+                # DevicePlan requires lattice heat capacity for electrothermal plans.
+                if not (capacity is not None):
+                    raise RuntimeError("Internal invariant failed: capacity is not None.")
+                capacity_bounds = capacity.temperature_range
                 valid &= jnp.all(
                     (tl[nodes] >= capacity_bounds[0]) & (tl[nodes] <= capacity_bounds[1])
                 )
@@ -257,7 +323,7 @@ class ClassicalPhysics(StrictModule):
                 valid &= jnp.all((jnp.abs(eta_n) < 600) & (jnp.abs(eta_p) < 600))
         return valid
 
-    def densities(self, u):
+    def densities(self, u: ArrayLike) -> tuple[Array, Array]:
         u = self._coordinates(u)
         plan = self.plan
         psi = plan.thermal_voltage * self.field(u, "potential")
@@ -287,7 +353,7 @@ class ClassicalPhysics(StrictModule):
             n, p = n.at[nodes].set(nn), p.at[nodes].set(pp)
         return n, p
 
-    def coordinates_from_densities(self, u, n, p):
+    def coordinates_from_densities(self, u: Array, n: Array, p: Array) -> Array:
         plan = self.plan
         psi = plan.thermal_voltage * self.field(u, "potential")
         _, tn, tp = self.temperatures(u)
@@ -310,7 +376,7 @@ class ClassicalPhysics(StrictModule):
             fn, fp = fn.at[nodes].set(en), fp.at[nodes].set(ep)
         return self.layout.set(self.layout.set(u, "electron", fn), "hole", fp)
 
-    def _thermodynamic_fields(self, u, n, p):
+    def _thermodynamic_fields(self, u: Array, n: Array, p: Array) -> _ThermodynamicFields:
         plan = self.plan
         psi = plan.thermal_voltage * self.field(u, "potential")
         fn, fp = (
@@ -327,6 +393,13 @@ class ClassicalPhysics(StrictModule):
                 continue
             nodes = jnp.asarray(plan.material_nodes[index], dtype=jnp.int32)
             if model.thermodynamics is None:
+                # Legacy intrinsic-density materials always resolve their band data.
+                if not (
+                    model.electron_affinity is not None and model.band_gap is not None
+                ):
+                    raise RuntimeError(
+                        "Internal invariant failed: model.electron_affinity is not None and model.band_gap is not None."
+                    )
                 conduction_material = -model.electron_affinity
                 valence_material = conduction_material - model.band_gap
                 ec = ec.at[nodes].set(conduction_material - Q * psi[nodes])
@@ -355,7 +428,7 @@ class ClassicalPhysics(StrictModule):
             )
         return en, ep, ec, ev, un, up, bn, bp
 
-    def ionized_dopants(self, u):
+    def ionized_dopants(self, u: Array) -> tuple[Array, Array]:
         """Return local-equilibrium ionized donors/acceptors for steady models."""
         plan = self.plan
         donors, acceptors = plan.donor_density, plan.acceptor_density
@@ -371,6 +444,11 @@ class ClassicalPhysics(StrictModule):
             ):
                 continue
             nodes = jnp.asarray(plan.material_nodes[index], dtype=jnp.int32)
+            # Incomplete ionization is admitted only against explicit bands.
+            if not (model.thermodynamics is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: model.thermodynamics is not None."
+                )
             nd, na = model.incomplete_ionization.ionized_densities_split(
                 model.thermodynamics,
                 psi[nodes],
@@ -384,7 +462,7 @@ class ClassicalPhysics(StrictModule):
             ionized_acceptors = ionized_acceptors.at[nodes].set(na)
         return ionized_donors, ionized_acceptors
 
-    def _trap_geometry(self, binding):
+    def _trap_geometry(self, binding: TrapBinding) -> tuple[int, Array]:
         if binding.trap.population_kind == "bulk":
             return binding.location, self.plan.support.volumes[binding.location]
         interface = self.plan.interfaces[binding.location]
@@ -393,7 +471,7 @@ class ClassicalPhysics(StrictModule):
             self.plan.interface_nodes[binding.location][0]
         ), self.plan.support.transmissibility[edge] * self.plan.edge_lengths[edge]
 
-    def sheet_charge(self, u):
+    def sheet_charge(self, u: Array) -> Array:
         charges = jnp.asarray(
             [interface.sheet_charge for interface in self.plan.interfaces]
         )
@@ -406,7 +484,7 @@ class ClassicalPhysics(StrictModule):
                 )
         return charges
 
-    def interface_states(self, u):
+    def interface_states(self, u: Array) -> tuple[InterfaceElectrostaticState, ...]:
         plan, support = self.plan, self.plan.support
         psi = plan.thermal_voltage * self.field(u, "potential")
         charges = self.sheet_charge(u)
@@ -428,7 +506,7 @@ class ClassicalPhysics(StrictModule):
             )
         )
 
-    def charge_density(self, u):
+    def charge_density(self, u: Array) -> Array:
         n, p = self.densities(u)
         donors, acceptors = self.ionized_dopants(u)
         charge = Q * (p - n + donors - acceptors)
@@ -440,7 +518,7 @@ class ClassicalPhysics(StrictModule):
                 )
         return charge
 
-    def poisson_reaction(self, u):
+    def poisson_reaction(self, u: Array) -> Array:
         plan, support = self.plan, self.plan.support
         psi = plan.thermal_voltage * self.field(u, "potential")
         flux = self.edge_capacitance * (psi[support.tail] - psi[support.head])
@@ -454,7 +532,7 @@ class ClassicalPhysics(StrictModule):
             )
         return result
 
-    def recombination(self, u):
+    def recombination(self, u: Array) -> Array:
         n, p = self.densities(u)
         plan = self.plan
         lattice, _, _ = self.temperatures(u)
@@ -477,7 +555,7 @@ class ClassicalPhysics(StrictModule):
             result = result.at[nodes].set(rate)
         return result
 
-    def _incoming(self, flux):
+    def _incoming(self, flux: Array) -> Array:
         support = self.plan.support
         return (
             jnp.zeros((self.num_nodes,), dtype=flux.dtype)
@@ -487,17 +565,17 @@ class ClassicalPhysics(StrictModule):
             .add(flux)
         )
 
-    def _terminal_sum(self, values, mask):
+    def _terminal_sum(self, values: Array, mask: Array) -> Array:
         return (
             jnp.zeros((self.num_terminals,), dtype=values.dtype)
             .at[jnp.maximum(self.plan.terminal_index, 0)]
             .add(jnp.where(mask, values, 0))
         )
 
-    def terminal_charge(self, u):
+    def terminal_charge(self, u: Array) -> Array:
         return self._terminal_sum(self.poisson_reaction(u), self.plan.potential_mask)
 
-    def _transport(self, u):
+    def _transport(self, u: Array) -> _TransportResult:
         plan, support = self.plan, self.plan.support
         left, right = support.tail, support.head
         n, p = self.densities(u)
@@ -581,8 +659,8 @@ class ClassicalPhysics(StrictModule):
         )
         gn, gp = jnp.where(active, gn, 0), jnp.where(active, gp, 0)
         nl, nr, pl, pr = gn, gn, gp, gp
-        traces = {}
-        interface_exchanges = []
+        traces: dict[str, Array] = {}
+        interface_exchanges: list[tuple[int, InterfaceExchange, InterfaceExchange]] = []
         for index, (interface, (a, b), electrostatic) in enumerate(
             zip(
                 plan.interfaces,
@@ -591,7 +669,8 @@ class ClassicalPhysics(StrictModule):
                 strict=True,
             )
         ):
-            if interface.electron_law is None:
+            electron_law, hole_law = interface.electron_law, interface.hole_law
+            if electron_law is None or hole_law is None:
                 continue
             edge = interface.edge
             area = support.transmissibility[edge] * plan.edge_lengths[edge]
@@ -599,12 +678,23 @@ class ClassicalPhysics(StrictModule):
                 interface.fraction * plan.edge_lengths[edge],
                 (1 - interface.fraction) * plan.edge_lengths[edge],
             )
-            bands_l = plan.material_models[
-                plan.interface_materials[index][0]
-            ].thermodynamics
-            bands_r = plan.material_models[
-                plan.interface_materials[index][1]
-            ].thermodynamics
+            model_l = plan.material_models[plan.interface_materials[index][0]]
+            model_r = plan.material_models[plan.interface_materials[index][1]]
+            # DevicePlan admits thermionic traces only between explicit-band
+            # semiconductors.
+            if not (isinstance(model_l, SemiconductorMaterial)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(model_l, SemiconductorMaterial)."
+                )
+            if not (isinstance(model_r, SemiconductorMaterial)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(model_r, SemiconductorMaterial)."
+                )
+            bands_l, bands_r = model_l.thermodynamics, model_r.thermodynamics
+            if not (bands_l is not None and bands_r is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: bands_l is not None and bands_r is not None."
+                )
             fns = tuple(
                 K * plan.temperature * self.field(u, f"interface_{index}_{name}")[0]
                 for name in ("electron_left", "electron_right", "hole_left", "hole_right")
@@ -616,10 +706,10 @@ class ClassicalPhysics(StrictModule):
             p_r = bands_r.hole_density(electrostatic.potential_right, fpr, tp[b])
             ecl, evl = bands_l.band_edges(electrostatic.potential_left, tl[a])
             ecr, evr = bands_r.band_edges(electrostatic.potential_right, tl[b])
-            exchange_n = interface.electron_law.evaluate(
+            exchange_n = electron_law.evaluate(
                 fnl, fnr, tn[a], tn[b], jnp.maximum(ecl, ecr), area
             )
-            exchange_p = interface.hole_law.evaluate(
+            exchange_p = hole_law.evaluate(
                 -fpl, -fpr, tp[a], tp[b], jnp.maximum(-evl, -evr), area
             )
             gnl = _flux(
@@ -669,11 +759,11 @@ class ClassicalPhysics(StrictModule):
             (en, ep, ec, ev, un, up, bn, bp),
         )
 
-    def edge_fluxes(self, u):
+    def edge_fluxes(self, u: Array) -> tuple[Array, Array]:
         result = self._transport(u)
         return result[0], result[1]
 
-    def _transport_sources(self, left_flux, right_flux):
+    def _transport_sources(self, left_flux: Array, right_flux: Array) -> Array:
         support = self.plan.support
         return (
             jnp.zeros((self.num_nodes,), dtype=left_flux.dtype)
@@ -683,7 +773,7 @@ class ClassicalPhysics(StrictModule):
             .add(right_flux)
         )
 
-    def _sources(self, u):
+    def _sources(self, u: Array) -> _SourcesResult:
         plan, support = self.plan, self.plan.support
         n, p = self.densities(u)
         tl, tn, tp = self.temperatures(u)
@@ -746,7 +836,7 @@ class ClassicalPhysics(StrictModule):
                 heat = heat.at[port.node].add(
                     port.exchange.evaluate(tl[port.node]).left_energy_source
                 )
-        trap_rates = {}
+        trap_rates: dict[str, Array] = {}
         for index, binding in enumerate(plan.traps):
             node, measure = self._trap_geometry(binding)
             occupancy = jax.nn.sigmoid(self.field(u, f"trap_{index}")[0])
@@ -855,6 +945,11 @@ class ClassicalPhysics(StrictModule):
                     transport_law,
                     electron,
                 ) in carriers:
+                    # DevicePlan requires both laws for carrier-energy evolution.
+                    if not (relaxation_law is not None and transport_law is not None):
+                        raise RuntimeError(
+                            "Internal invariant failed: relaxation_law is not None and transport_law is not None."
+                        )
                     relaxation = relaxation_law.evaluate(
                         density[nodes], temperature[nodes], tl[nodes]
                     )
@@ -884,7 +979,7 @@ class ClassicalPhysics(StrictModule):
                         kp += exchange
         return ns, ps, kn, kp, heat, traces, trap_rates, thermo
 
-    def physical_storage(self, u):
+    def physical_storage(self, u: Array) -> Array:
         """Extensive inventories; potential and interface traces store nothing."""
         plan, volumes = self.plan, self.plan.support.volumes
         n, p = self.densities(u)
@@ -895,9 +990,11 @@ class ClassicalPhysics(StrictModule):
             lattice = jnp.zeros_like(n)
             for index, model in enumerate(plan.material_models):
                 nodes = jnp.asarray(plan.material_nodes[index], dtype=jnp.int32)
-                lattice = lattice.at[nodes].set(
-                    model.lattice_heat_capacity.internal_energy(tl[nodes])
-                )
+                capacity = model.lattice_heat_capacity
+                # DevicePlan requires lattice heat capacity for electrothermal plans.
+                if not (capacity is not None):
+                    raise RuntimeError("Internal invariant failed: capacity is not None.")
+                lattice = lattice.at[nodes].set(capacity.internal_energy(tl[nodes]))
             if plan.carrier_energy:
                 result = self.layout.set(
                     result, "electron_energy", volumes * (un + bn * n)
@@ -918,7 +1015,7 @@ class ClassicalPhysics(StrictModule):
         return result
 
     @property
-    def storage_scale(self):
+    def storage_scale(self) -> Array:
         scale = self.layout.pack(
             potential=1.0, electron=self.count_scale, hole=self.count_scale
         )
@@ -933,12 +1030,12 @@ class ClassicalPhysics(StrictModule):
                 scale = self.layout.set(scale, name, 1.0)
         return scale
 
-    def storage(self, u):
+    def storage(self, u: Array) -> Array:
         return jnp.where(
             self.differential_mask, self.physical_storage(u) / self.storage_scale, 0
         )
 
-    def storage_coordinates(self, u):
+    def storage_coordinates(self, u: Array) -> Array:
         physical = self.physical_storage(u) / self.storage_scale
         mask = self.differential_mask
         # Algebraic contact rows still use invertible physical storage charts;
@@ -952,7 +1049,7 @@ class ClassicalPhysics(StrictModule):
             mask = self.layout.set(mask, "hole_energy", self.plan.semiconductor_mask)
         return jnp.where(mask, physical, u)
 
-    def coordinates_from_storage(self, z):
+    def coordinates_from_storage(self, z: Array) -> Array:
         plan = self.plan
         stored = z * self.storage_scale
         n = self.field(stored, "electron") / plan.support.volumes
@@ -972,22 +1069,30 @@ class ClassicalPhysics(StrictModule):
                     / plan.support.volumes[nodes]
                 )
                 capacity = model.lattice_heat_capacity
+                # DevicePlan requires lattice heat capacity for electrothermal plans.
+                if not (capacity is not None):
+                    raise RuntimeError("Internal invariant failed: capacity is not None.")
                 lower, upper = capacity.temperature_range
                 if isinstance(model, SemiconductorMaterial):
                     lower = jnp.maximum(lower, model.temperature_range[0])
                     upper = jnp.minimum(upper, model.temperature_range[1])
                     bands = model.thermodynamics
+                    # Electrothermal plans reject semiconductors without explicit bands.
+                    if not (bands is not None):
+                        raise RuntimeError(
+                            "Internal invariant failed: bands is not None."
+                        )
 
                     def solve_one(
-                        nn,
-                        pp,
-                        energy,
-                        capacity=capacity,
-                        bands=bands,
-                        lower=lower,
-                        upper=upper,
-                    ):
-                        def balance(temperature):
+                        nn: Array,
+                        pp: Array,
+                        energy: Array,
+                        capacity: ConstantLatticeHeatCapacity = capacity,
+                        bands: BandThermodynamics = bands,
+                        lower: Array = lower,
+                        upper: Array = upper,
+                    ) -> Array:
+                        def balance(temperature: Array) -> Array:
                             value = capacity.internal_energy(temperature)
                             if not plan.carrier_energy:
                                 value += bands.electron_material_internal_energy_density(
@@ -1035,6 +1140,11 @@ class ClassicalPhysics(StrictModule):
                             continue
                         nodes = jnp.asarray(plan.material_nodes[index], dtype=jnp.int32)
                         bands = model.thermodynamics
+                        # Carrier-energy plans are electrothermal, hence explicit-band.
+                        if not (bands is not None):
+                            raise RuntimeError(
+                                "Internal invariant failed: bands is not None."
+                            )
                         target = (
                             self.field(stored, f"{name}_energy")[nodes]
                             / plan.support.volumes[nodes]
@@ -1052,13 +1162,15 @@ class ClassicalPhysics(StrictModule):
                         lower, upper = model.temperature_range
 
                         def solve_one(
-                            nn,
-                            energy,
-                            kinetic_energy=kinetic_energy,
-                            bands=bands,
-                            lower=lower,
-                            upper=upper,
-                        ):
+                            nn: Array,
+                            energy: Array,
+                            kinetic_energy: Callable[
+                                [BandThermodynamics, Array, Array], Array
+                            ] = kinetic_energy,
+                            bands: BandThermodynamics = bands,
+                            lower: float = lower,
+                            upper: float = upper,
+                        ) -> Array:
                             return _implicit_scalar_root(
                                 lambda temperature: (
                                     (kinetic_energy(bands, nn, temperature) - energy)
@@ -1083,7 +1195,7 @@ class ClassicalPhysics(StrictModule):
             )
         return self.coordinates_from_densities(result, n, p)
 
-    def _physical_residual(self, u, voltages):
+    def _physical_residual(self, u: Array, voltages: Array) -> Array:
         plan = self.plan
         voltage = voltages[jnp.maximum(plan.terminal_index, 0)]
         contact_potential = (
@@ -1147,7 +1259,7 @@ class ClassicalPhysics(StrictModule):
             result = self.layout.set(result, name, -rate)
         return result
 
-    def residual(self, u, voltages):
+    def residual(self, u: ArrayLike, voltages: ArrayLike) -> Array:
         u, voltages = self._coordinates(u), self._voltages(voltages)
         # Proposal admission is separate from constitutive evaluation. Invalid
         # Newton states produce rejected nonfinite proposals, not error_if aborts.
@@ -1158,20 +1270,20 @@ class ClassicalPhysics(StrictModule):
             operand=None,
         )
 
-    def residual_function(self, flat, voltages):
+    def residual_function(self, flat: ArrayLike, voltages: ArrayLike) -> Array:
         return (
             self.time_scale
             * self.residual(jnp.asarray(flat).reshape(self.layout.shape), voltages)
         ).reshape(-1)
 
-    def terminal_current(self, u, udot=None):
+    def terminal_current(self, u: Array, udot: Array | None = None) -> Array:
         ns, ps, *_ = self._sources(u)
         result = Q * self._terminal_sum(ns - ps, self.plan.ohmic_mask)
         if udot is not None:
             result += jax.jvp(self.terminal_charge, (u,), (udot,))[1]
         return result
 
-    def thermal_power(self, u, udot=None):
+    def thermal_power(self, u: Array, udot: Array | None = None) -> Array:
         """Heat W into the device, electrical-contact accommodation then ports."""
         ns, ps, kn, kp, heat, _, _, thermo = self._sources(u)
         total = heat + kn + kp + thermo[-2] * ns + thermo[-1] * ps
@@ -1191,7 +1303,7 @@ class ClassicalPhysics(StrictModule):
         )
         return jnp.concatenate((contacts, ports))
 
-    def total_energy(self, u):
+    def total_energy(self, u: Array) -> Array:
         """Material, lattice, trap and Poisson energy, each stored exactly once."""
         stored = self.physical_storage(u)
         energy = jnp.asarray(0.0)

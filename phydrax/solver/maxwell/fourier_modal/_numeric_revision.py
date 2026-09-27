@@ -8,11 +8,14 @@ from collections.abc import Sequence
 
 import jax
 import numpy as np
+from jax import core as jax_core
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._identity import NumericRevision, SemanticProvenance
 from ._continuous import PreparedContinuousFourierModalLayer
 from ._contracts import (
+    AbstractFourierFactorizationPlan,
+    AbstractFourierModalPort,
     ContinuousFourierModalLayer,
     FourierModalLayer,
     FourierModalSourcePlane,
@@ -26,7 +29,7 @@ from ._runtime import (
 )
 
 
-def _factorization_arrays(factorization, /) -> object:
+def _factorization_arrays(factorization: AbstractFourierFactorizationPlan, /) -> object:
     if isinstance(factorization, VectorFourierFactorizationPlan) and isinstance(
         factorization.frame, AnalyticInterfaceFramePlan
     ):
@@ -34,7 +37,9 @@ def _factorization_arrays(factorization, /) -> object:
     return ()
 
 
-def _frame_provenance_id(factorization, /) -> str | None:
+def _frame_provenance_id(
+    factorization: AbstractFourierFactorizationPlan, /
+) -> str | None:
     return (
         factorization.frame.frame_id
         if isinstance(factorization, VectorFourierFactorizationPlan)
@@ -43,7 +48,7 @@ def _frame_provenance_id(factorization, /) -> str | None:
 
 
 def _contains_tracer(value: object, /) -> bool:
-    return any(isinstance(leaf, jax.core.Tracer) for leaf in jax.tree.leaves(value))
+    return any(isinstance(leaf, jax_core.Tracer) for leaf in jax.tree.leaves(value))
 
 
 def fourier_modal_physical_stack_digest(
@@ -94,7 +99,7 @@ def fourier_modal_physical_stack_digest(
         else np.zeros_like(thickness_values)
     )
 
-    def port_descriptor(port) -> dict[str, object]:
+    def port_descriptor(port: AbstractFourierModalPort) -> dict[str, object]:
         return {
             "port_id": port.port_id,
             "material_id": port.material.material_id,
@@ -204,7 +209,7 @@ def fourier_modal_physical_state_digest(
             "A physical-state digest requires host-materialized numeric inputs."
         )
 
-    def port_descriptor(port) -> dict[str, object]:
+    def port_descriptor(port: AbstractFourierModalPort) -> dict[str, object]:
         return {
             "port_id": port.port_id,
             "material_id": port.material.material_id,
@@ -331,7 +336,7 @@ def fourier_modal_numeric_revision(
             "A Fourier-modal NumericRevision requires host-materialized numeric inputs."
         )
 
-    def port_descriptor(port) -> dict[str, object]:
+    def port_descriptor(port: AbstractFourierModalPort) -> dict[str, object]:
         return {
             "port_id": port.port_id,
             "material_id": port.material.material_id,

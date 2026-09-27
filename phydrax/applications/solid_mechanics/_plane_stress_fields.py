@@ -4,17 +4,30 @@
 
 from __future__ import annotations
 
-from typing import Callable, Literal
+from collections.abc import Callable
+from typing import Any, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...domain import DomainFunction
-from ...equations import CellEnergyAction, FiniteElementForm
+from ...equations import (
+    CellEnergyAction,
+    FiniteElementExecutionContext,
+    FiniteElementForm,
+)
 from ...operators import deformation_gradient
 from ...operators.mechanics import HyperelasticLaw
-from ._plane_stress import BlockDiagonalPlaneStressReductionPlan
+from ._plane_stress import (
+    BlockDiagonalPlaneStressReductionPlan,
+    BlockDiagonalPlaneStressReductionResponse,
+)
+
+
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
 
 
 class PlaneStressFieldResponse(StrictModule):
@@ -48,8 +61,10 @@ def plane_stress_hyperelastic_response(
         raise TypeError("plan must be BlockDiagonalPlaneStressReductionPlan.")
     deformation = deformation_gradient(u, var=var, mode=mode)
 
-    def select(selector: Callable):
-        def operation(*args, key=None, **kwargs):
+    def select(
+        selector: Callable[[BlockDiagonalPlaneStressReductionResponse], Array],
+    ) -> DomainFunction:
+        def operation(*args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
             value = jnp.asarray(deformation.func(*args, key=key, **kwargs))
             response = plan.evaluate(
                 value,
@@ -91,7 +106,12 @@ def plane_stress_hyperelastic_form(
     if not isinstance(plan, BlockDiagonalPlaneStressReductionPlan):
         raise TypeError("plan must be BlockDiagonalPlaneStressReductionPlan.")
 
-    def density(values, gradients, points, context):
+    def density(
+        values: Array,
+        gradients: Array,
+        points: Array,
+        context: FiniteElementExecutionContext,
+    ) -> Array:
         del values, points, context
         displacement_gradient = jnp.swapaxes(jnp.asarray(gradients), -1, -2)
         if displacement_gradient.shape[-2:] != (2, 2):

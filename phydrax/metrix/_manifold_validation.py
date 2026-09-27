@@ -6,9 +6,10 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
 from ._manifold import AbstractRiemannianManifold
 from ._state_geometry import AbstractStateGeometry
@@ -58,7 +59,7 @@ class ManifoldValidationReport(StrictModule):
         transported_tangent_residual: Array,
         identity_transport_residual: Array,
         transport_isometry_residual: Array,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.contains = jnp.asarray(contains, dtype=jnp.bool_)
         self.constraint_residual = jnp.asarray(constraint_residual)
@@ -105,7 +106,7 @@ class StateGeometryValidationReport(StrictModule):
         transport_roundtrip_residual: Array,
         transport_duality_residual: Array,
         transport_isometry_residual: Array,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.contains = jnp.asarray(contains, dtype=jnp.bool_)
         self.retraction_origin_residual = jnp.asarray(retraction_origin_residual)

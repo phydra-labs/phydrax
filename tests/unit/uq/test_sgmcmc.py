@@ -16,7 +16,7 @@ import phydrax.axes as cx
 import phydrax.uq._sgmcmc as sgmcmc_module
 
 
-def _regression_problem(*, batch_size=3, seed=7):
+def _regression_problem(*, batch_size: Any = 3, seed: Any = 7) -> Any:
     inputs = jnp.linspace(-1.5, 1.5, 8)
     targets = 0.4 + 1.7 * inputs
     data = {"input": inputs, "target": targets}
@@ -26,11 +26,11 @@ def _regression_problem(*, batch_size=3, seed=7):
         priors=phx.uq.Normal(0.0, 3.0),
     )
 
-    def factors(parameters, batch):
+    def factors(parameters: Any, batch: Any) -> Any:
         prediction = parameters[0] + parameters[1] * batch.data["input"]
         return -0.5 * ((batch.data["target"] - prediction) / 0.5) ** 2
 
-    def full_likelihood(parameters):
+    def full_likelihood(parameters: Any) -> Any:
         prediction = parameters[0] + parameters[1] * inputs
         return jnp.sum(-0.5 * ((targets - prediction) / 0.5) ** 2)
 
@@ -44,16 +44,16 @@ def _regression_problem(*, batch_size=3, seed=7):
     return problem, source
 
 
-def _assert_tree_equal(left, right):
+def _assert_tree_equal(left: Any, right: Any) -> None:
     comparisons = jax.tree_util.tree_map(jnp.array_equal, left, right)
     assert all(jax.tree_util.tree_leaves(comparisons))
 
 
-def _transition_keys(chain_keys, update):
+def _transition_keys(chain_keys: Any, update: Any) -> Any:
     return jax.vmap(lambda key: jr.fold_in(jr.fold_in(key, 1), update))(chain_keys)
 
 
-def test_sgld_first_update_matches_blackjax_diffusion_convention():
+def test_sgld_first_update_matches_blackjax_diffusion_convention() -> None:
     problem, source = _regression_problem()
     initial = jnp.asarray([[-0.3, 0.2], [0.4, -0.1]])
     step_size = 2.0e-4
@@ -90,7 +90,7 @@ def test_sgld_first_update_matches_blackjax_diffusion_convention():
     )
 
 
-def test_sgnht_first_update_matches_blackjax_diffusion_convention():
+def test_sgnht_first_update_matches_blackjax_diffusion_convention() -> None:
     problem, source = _regression_problem()
     initial = jnp.asarray([[-0.2, 0.3], [0.25, -0.15]])
     step_size = 1.0e-4
@@ -136,7 +136,7 @@ def test_sgnht_first_update_matches_blackjax_diffusion_convention():
 
 
 @pytest.mark.parametrize("sample", [phx.uq.sample_sgld, phx.uq.sample_sgnht])
-def test_sgmcmc_sequential_and_vectorized_chains_replay_exactly(sample):
+def test_sgmcmc_sequential_and_vectorized_chains_replay_exactly(sample: Any) -> None:
     problem, source = _regression_problem(batch_size=4)
     common: dict[str, Any] = {
         "key": jr.key(22),
@@ -156,7 +156,7 @@ def test_sgmcmc_sequential_and_vectorized_chains_replay_exactly(sample):
     assert not jnp.array_equal(vectorized.samples[0], vectorized.samples[1])
 
 
-def test_control_variate_is_exact_at_center_and_rejects_other_sources():
+def test_control_variate_is_exact_at_center_and_rejects_other_sources() -> None:
     problem, source = _regression_problem(batch_size=3)
     center = jnp.asarray([0.2, 1.5])
     control = phx.uq.build_sgmcmc_control_variate(problem, source, center)
@@ -188,7 +188,7 @@ def test_control_variate_is_exact_at_center_and_rejects_other_sources():
         )
 
 
-def test_sgmcmc_preserves_nested_constrained_parameter_samples():
+def test_sgmcmc_preserves_nested_constrained_parameter_samples() -> None:
     values = jnp.linspace(-1.0, 1.0, 6)
     source = phx.uq.ArrayMinibatchSource(values, batch_size=4, seed=9)
     space = phx.uq.ParameterSpace(
@@ -203,7 +203,7 @@ def test_sgmcmc_preserves_nested_constrained_parameter_samples():
         },
     )
 
-    def factors(parameters, batch):
+    def factors(parameters: Any, batch: Any) -> Any:
         return -0.5 * ((batch.data - parameters["location"]) / parameters["scale"]) ** 2
 
     problem = phx.uq.MinibatchPosteriorProblem(
@@ -233,7 +233,7 @@ def test_sgmcmc_preserves_nested_constrained_parameter_samples():
     assert prediction.samples.shape == (2, 4, 2)
 
 
-def test_sgmcmc_result_exposes_honest_diagnostics_and_mixing_gates():
+def test_sgmcmc_result_exposes_honest_diagnostics_and_mixing_gates() -> None:
     problem, source = _regression_problem(batch_size=3)
     result = phx.uq.sample_sgld(
         problem,
@@ -263,7 +263,7 @@ def test_sgmcmc_result_exposes_honest_diagnostics_and_mixing_gates():
         report.raise_for_failure()
 
 
-def test_sgmcmc_rejects_invalid_controls_and_reports_nonfinite_locations():
+def test_sgmcmc_rejects_invalid_controls_and_reports_nonfinite_locations() -> None:
     problem, source = _regression_problem()
     common: dict[str, Any] = {
         "key": jr.key(26),

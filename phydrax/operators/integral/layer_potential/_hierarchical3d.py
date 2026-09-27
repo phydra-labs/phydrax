@@ -12,15 +12,18 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....linalg import ArraySpace, FunctionLinearOperator, OperatorProperties
+from ....typing import parse
 from ._fast_provider import (
     BEMExecutionEnvelope,
     BEMLocalBlock3D,
+    BoundaryGalerkinFormulation,
     LaplaceDP0ExactNearProvider3D,
 )
 from ._galerkin3d import LaplaceSingleLayerDP0Galerkin3D
@@ -41,7 +44,7 @@ class ScalarFastPolicy3D(StrictModule, NonTrainableState):
     maximum_blocks: int = eqx.field(static=True)
     maximum_resident_bytes: int = eqx.field(static=True)
     maximum_block_entries: int = eqx.field(static=True)
-    formulation: str = eqx.field(static=True)
+    formulation: BoundaryGalerkinFormulation = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -57,7 +60,7 @@ class ScalarFastPolicy3D(StrictModule, NonTrainableState):
         maximum_resident_bytes: int = 2_000_000_000,
         maximum_block_entries: int = 1_000_000,
         formulation: str = "strong",
-    ):
+    ) -> None:
         tolerance_ = float(tolerance)
         eta = float(admissibility)
         integers = (
@@ -76,8 +79,7 @@ class ScalarFastPolicy3D(StrictModule, NonTrainableState):
         if any(value <= 0 for value in integers):
             raise ValueError("Fast-provider resource bounds must be positive.")
         formulation_ = str(formulation)
-        if formulation_ not in ("weak", "strong"):
-            raise ValueError("formulation must be 'weak' or 'strong'.")
+        formulation_ = parse(formulation_, BoundaryGalerkinFormulation, "formulation_")
         self.tolerance = tolerance_
         self.leaf_size = integers[0]
         self.admissibility = eta
@@ -154,7 +156,7 @@ class PreparedScalarFastProvider3D(StrictModule, NonTrainableState):
     evidence: ScalarFastEvidence3D
     envelope: BEMExecutionEnvelope
     algorithm: ScalarFastAlgorithm3D = eqx.field(static=True)
-    formulation: str = eqx.field(static=True)
+    formulation: BoundaryGalerkinFormulation = eqx.field(static=True)
     face_count: int = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
@@ -228,7 +230,6 @@ class PreparedScalarFastProvider3D(StrictModule, NonTrainableState):
             source=space,
             target=space,
             transpose_action=self.transpose_mv,
-            adjoint_action=self.adjoint_mv,
             properties=OperatorProperties(evidence={}),
             operator_id=self.provider_id,
             closure_convert=False,
@@ -323,9 +324,7 @@ def _monomial_exponents(
     order: int, maximum_rank: int, /
 ) -> tuple[tuple[int, int, int], ...]:
     values = tuple(
-        exponent
-        for exponent in product(range(order + 1), repeat=3)
-        if sum(exponent) <= order
+        (x, y, z) for x, y, z in product(range(order + 1), repeat=3) if x + y + z <= order
     )
     return values[:maximum_rank]
 
@@ -356,7 +355,7 @@ def _laplace_block(
     areas: np.ndarray,
     target_indices: np.ndarray,
     source_indices: np.ndarray,
-    formulation: str,
+    formulation: BoundaryGalerkinFormulation,
     /,
 ) -> np.ndarray:
     differences = centroids[target_indices, None, :] - centroids[None, source_indices, :]

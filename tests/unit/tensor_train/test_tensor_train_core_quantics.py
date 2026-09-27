@@ -6,7 +6,7 @@ import pytest
 import phydrax.tensor_train as tt
 
 
-def test_tt_svd_exact_algebra_operator_and_bounded_dense_reconstruction():
+def test_tt_svd_exact_algebra_operator_and_bounded_dense_reconstruction() -> None:
     dense = jnp.arange(24, dtype=jnp.float32).reshape((2, 3, 4))
     decomposition = tt.tt_svd(dense, max_ranks=(2, 4), relative_tolerance=0.0)
     train = decomposition.tensor
@@ -51,7 +51,7 @@ def test_tt_svd_exact_algebra_operator_and_bounded_dense_reconstruction():
     assert jnp.allclose(rounded_operator.operator.to_matrix(max_entries=24 * 24), matrix)
 
 
-def test_rounding_reports_rss_bound_including_every_discarded_mode():
+def test_rounding_reports_rss_bound_including_every_discarded_mode() -> None:
     dense = jnp.asarray(
         np.random.default_rng(4).normal(size=(4, 5, 3)), dtype=jnp.float32
     )
@@ -70,7 +70,9 @@ def test_rounding_reports_rss_bound_including_every_discarded_mode():
     )
 
 
-def test_relative_tolerance_masks_negligible_singular_directions_at_static_capacity():
+def test_relative_tolerance_masks_negligible_singular_directions_at_static_capacity() -> (
+    None
+):
     dense = jnp.diag(jnp.asarray([1.0, 1e-8], dtype=jnp.float32))
     compressed = tt.tt_svd(
         dense,
@@ -97,7 +99,7 @@ def test_relative_tolerance_masks_negligible_singular_directions_at_static_capac
     assert rounded.evidence.tolerance_met
 
 
-def test_qtt_ordering_round_trip_evaluation_and_analytic_linear_quadrature():
+def test_qtt_ordering_round_trip_evaluation_and_analytic_linear_quadrature() -> None:
     grid = tt.TensorizedGrid.uniform(((0.0, 1.0), (0.0, 1.0)), (4, 4), rule="trapezoid")
     blocked = tt.QuanticsLayout.binary((4, 4), ordering="blocked")
     interleaved = tt.QuanticsLayout.binary((4, 4), ordering="interleaved")
@@ -130,7 +132,7 @@ def test_qtt_ordering_round_trip_evaluation_and_analytic_linear_quadrature():
     assert jnp.allclose(function.quadrature(max_evaluations=16), 1.0, atol=2e-6)
 
 
-def test_tensor_indices_reject_fractional_and_out_of_range_values():
+def test_tensor_indices_reject_fractional_and_out_of_range_values() -> None:
     train = tt.TensorTrain((jnp.ones((1, 4, 1), dtype=jnp.float32),))
     with pytest.raises(TypeError, match="integer dtype"):
         train.evaluate(jnp.asarray([[1.5]], dtype=jnp.float32))
@@ -146,7 +148,7 @@ def test_tensor_indices_reject_fractional_and_out_of_range_values():
         layout.undigitize(jnp.asarray([[0, 2]], dtype=jnp.int32))
 
 
-def test_tt_svd_and_rounding_execute_under_jit_with_array_evidence():
+def test_tt_svd_and_rounding_execute_under_jit_with_array_evidence() -> None:
     dense = jnp.arange(24, dtype=jnp.float32).reshape((2, 3, 4))
     compressed = jax.jit(
         lambda value: tt.tt_svd(

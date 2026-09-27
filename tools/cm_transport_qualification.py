@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -82,7 +83,7 @@ def qualification() -> dict:
     boltzmann_energies = jnp.asarray([[-0.04 * _E], [0.04 * _E]])
     boltzmann_velocity = jnp.asarray([[[1.0e5, 0.5e5]], [[-0.6e5, 1.1e5]]])
 
-    def boltzmann(tau):
+    def boltzmann(tau: Any) -> Any:
         return PeriodicBoltzmannPlan(
             boltzmann_energies,
             boltzmann_velocity,
@@ -144,6 +145,7 @@ def main() -> None:
         default=Path("benchmarks/cm_transport_qualification.json"),
     )
     arguments = parser.parse_args()
+    # ty: ignore[unresolved-attribute]
     if not jax.config.x64_enabled:
         raise ValueError("Transport qualification requires JAX_ENABLE_X64=1.")
     payload = qualification()

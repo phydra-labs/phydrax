@@ -15,7 +15,7 @@ from phydrax.applications.conformal_bootstrap import (
 )
 
 
-def test_elliptic_nome_at_crossing_symmetric_point_is_exp_minus_pi():
+def test_elliptic_nome_at_crossing_symmetric_point_is_exp_minus_pi() -> None:
     np.testing.assert_allclose(
         elliptic_nome(0.5),
         (np.exp(-np.pi),),
@@ -24,7 +24,7 @@ def test_elliptic_nome_at_crossing_symmetric_point_is_exp_minus_pi():
     )
 
 
-def test_finite_bpz_hypergeometric_compiler_matches_closed_logarithm():
+def test_finite_bpz_hypergeometric_compiler_matches_closed_logarithm() -> None:
     points = jnp.asarray((0.1, 0.2, 0.5))
     prepared = prepare_bpz_virasoro_blocks(
         BPZVirasoroBlockPlan(
@@ -48,7 +48,7 @@ def test_finite_bpz_hypergeometric_compiler_matches_closed_logarithm():
     assert "caller-derived" in evidence.claim
 
 
-def test_exact_ising_sigma_blocks_and_channel_sum_cross_crossing():
+def test_exact_ising_sigma_blocks_and_channel_sum_cross_crossing() -> None:
     points = jnp.asarray((0.1, 0.2, 0.35, 0.65, 0.8, 0.9))
     identity = prepare_ising_sigma_virasoro_blocks(
         IsingSigmaVirasoroPlan(points, "identity")

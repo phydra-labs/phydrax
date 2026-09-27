@@ -35,7 +35,7 @@ class FrictionWearEvolutionLaw(AbstractInterfaceEvolutionLaw):
         damage_onset: float,
         damage_completion: float,
         minimum_film_thickness: float = 0.0,
-    ):
+    ) -> None:
         critical = float(critical_slip_distance)
         onset = float(damage_onset)
         completion = float(damage_completion)

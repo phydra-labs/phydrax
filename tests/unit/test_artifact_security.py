@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -46,7 +47,9 @@ def _policy(root: Path, *, maximum_bytes: int = 32) -> ExternalArtifactPolicy:
     )
 
 
-def test_external_artifact_is_checksum_verified_before_bytes_are_returned(tmp_path):
+def test_external_artifact_is_checksum_verified_before_bytes_are_returned(
+    tmp_path: Any,
+) -> None:
     payload = b"independent bytes"
     (tmp_path / "reference.bin").write_bytes(payload)
     policy = _policy(tmp_path)
@@ -56,7 +59,9 @@ def test_external_artifact_is_checksum_verified_before_bytes_are_returned(tmp_pa
     assert read_admitted_artifact(admitted, manifest, policy=policy) == payload
 
 
-def test_external_artifact_rejects_traversal_absolute_and_symlink_paths(tmp_path):
+def test_external_artifact_rejects_traversal_absolute_and_symlink_paths(
+    tmp_path: Any,
+) -> None:
     root = tmp_path / "root"
     root.mkdir()
     outside = tmp_path / "outside.bin"
@@ -73,7 +78,7 @@ def test_external_artifact_rejects_traversal_absolute_and_symlink_paths(tmp_path
         admit_external_artifact("link.bin", manifest, policy=policy)
 
 
-def test_external_artifact_rejects_oversize_checksum_and_license(tmp_path):
+def test_external_artifact_rejects_oversize_checksum_and_license(tmp_path: Any) -> None:
     payload = b"eight888"
     path = tmp_path / "reference.bin"
     path.write_bytes(payload)
@@ -103,8 +108,8 @@ def test_external_artifact_rejects_oversize_checksum_and_license(tmp_path):
 
 
 def test_external_artifact_read_rechecks_content_and_pickle_suffixes_are_forbidden(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     payload = b"trusted content"
     path = tmp_path / "reference.bin"
     path.write_bytes(payload)
@@ -124,7 +129,7 @@ def test_external_artifact_read_rechecks_content_and_pickle_suffixes_are_forbidd
         )
 
 
-def test_forged_admission_cannot_replace_the_trusted_manifest(tmp_path):
+def test_forged_admission_cannot_replace_the_trusted_manifest(tmp_path: Any) -> None:
     payload = b"attacker-selected bytes"
     path = tmp_path / "reference.bin"
     path.write_bytes(payload)

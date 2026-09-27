@@ -4,16 +4,21 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._jump import JumpEventBatch
 from ._wiener import WienerRealization
+
+
+if TYPE_CHECKING:
+    from ..integration._targets import WeightedSampleTarget
 
 
 MeasureChangeKind: TypeAlias = Literal["diffusion", "jump"]
@@ -69,7 +74,7 @@ class DiffusionMeasureChange(StrictModule):
         *,
         proposal_model_id: str,
         target_model_id: str,
-    ):
+    ) -> None:
         log_ratio = jnp.asarray(log_likelihood_ratio, dtype=jnp.float64)
         stochastic = jnp.asarray(stochastic_integral, dtype=jnp.float64)
         quadratic = jnp.asarray(quadratic_variation, dtype=jnp.float64)
@@ -120,7 +125,7 @@ class JumpMeasureChange(StrictModule):
         *,
         proposal_model_id: str,
         target_model_id: str,
-    ):
+    ) -> None:
         log_ratio = jnp.asarray(log_likelihood_ratio, dtype=jnp.float64)
         event_term = jnp.asarray(event_log_ratio, dtype=jnp.float64)
         mark_term = jnp.asarray(mark_log_ratio, dtype=jnp.float64)
@@ -409,7 +414,7 @@ def measure_changed_target(
     *,
     sample_axes: int | tuple[int, ...] = 0,
     independent: bool = False,
-):
+) -> WeightedSampleTarget:
     """Expose a path-law change as Phydrax's canonical weighted empirical measure."""
 
     from ..integration import weighted

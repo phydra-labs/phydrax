@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import hashlib
 import json
@@ -38,7 +40,7 @@ from phydrax.solver._dark_sector_epoch_runtime import DarkSectorEpochPlan
 from phydrax.units import COULOMB
 
 
-def _profiles(chain_capacity: int):
+def _profiles(chain_capacity: int) -> Any:
     units = RelativisticUnitContract(
         RelativityScaleContract(DimensionalScaleContract.si(), 1, 1, 1, 1),
         RelativityConvention(metric_signature="mostly_minus"),
@@ -141,7 +143,7 @@ def _profiles(chain_capacity: int):
     return string, cluster
 
 
-def benchmark_case(chain_capacity: int):
+def benchmark_case(chain_capacity: int) -> Any:
     string, cluster = _profiles(chain_capacity)
     momenta = jnp.zeros((chain_capacity, 4))
     momenta = momenta.at[0].set((4.0, 0.0, 0.0, 4.0))

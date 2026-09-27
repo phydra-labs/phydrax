@@ -4,13 +4,16 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
+from .._dtype_names import inexact_result_type
 from .._execution_array import shard_tree_axis
 from .._execution_runtime import ExecutionGroup
 from .._iteration import (
@@ -23,10 +26,11 @@ from .._iteration import (
     IterationPhase,
     IterationPlan,
     IterationRecord,
+    IterationRuntimeState,
     update_iteration,
 )
-from .._precision import inexact_result_type
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._addressing import derive_key, SampleAddress
 from ._chain import AbstractChainSampleResult
 from ._proposals import AbstractProposal
@@ -46,8 +50,14 @@ _ACCEPTANCE_ADDRESS = SampleAddress(
     role="transition",
 )
 
+_MarkovTarget: TypeAlias = FullMarkovTarget | IncrementalMarkovTarget
+# (positions, log targets, accepted, log acceptance ratios, proposal valid,
+# target valid) for one collected draw.
+_DrawOutput: TypeAlias = tuple[PyTree[Array], Array, Array, Array, Array, Array]
+_ObservedCarry: TypeAlias = tuple["MarkovState", IterationRuntimeState]
 
-def _resolve_target(target, /):
+
+def _resolve_target(target: object, /) -> _MarkovTarget:
     if isinstance(target, (FullMarkovTarget, IncrementalMarkovTarget)):
         return target
     raise TypeError(
@@ -56,7 +66,7 @@ def _resolve_target(target, /):
     )
 
 
-def _validate_target_chain_capacity(target, count: int, /) -> None:
+def _validate_target_chain_capacity(target: _MarkovTarget, count: int, /) -> None:
     if (
         isinstance(target, IncrementalMarkovTarget)
         and target.maximum_chains is not None
@@ -129,7 +139,7 @@ class MarkovState(StrictModule):
         valid: Array | None = None,
         step_index: Array | int = 0,
         target_id: str,
-    ):
+    ) -> None:
         count = _chain_count(position)
         positions = jax.tree_util.tree_map(jnp.asarray, position)
         values = jnp.asarray(log_target)
@@ -203,12 +213,12 @@ class MarkovIterationMetrics(StrictModule):
     def __init__(
         self,
         info: MarkovTransitionInfo,
-        log_target,
+        log_target: ArrayLike,
         /,
         *,
-        warmup,
-        draw_index,
-    ):
+        warmup: ArrayLike,
+        draw_index: ArrayLike,
+    ) -> None:
         self.accepted = jnp.asarray(info.accepted, dtype=jnp.bool_)
         self.log_acceptance_ratio = jnp.asarray(info.log_acceptance_ratio)
         self.proposal_valid = jnp.asarray(info.proposal_valid, dtype=jnp.bool_)
@@ -221,13 +231,13 @@ class MarkovIterationMetrics(StrictModule):
 def _markov_iteration_record(
     state: MarkovState,
     info: MarkovTransitionInfo,
-    phase,
+    phase: IterationPhase,
     /,
     *,
-    warmup,
-    draw_index,
-    active,
-    terminal=False,
+    warmup: ArrayLike,
+    draw_index: ArrayLike,
+    active: ArrayLike,
+    terminal: bool = False,
 ) -> IterationRecord:
     return IterationRecord(
         IterationCoordinates(
@@ -285,7 +295,7 @@ class MarkovSampleResult(AbstractChainSampleResult):
         warmup_steps: int,
         steps_per_draw: int,
         iteration_evidence: IterationEvidence | None = None,
-    ):
+    ) -> None:
         sample_leaves = jax.tree_util.tree_leaves(samples)
         if not sample_leaves:
             raise ValueError("Markov samples must contain at least one array leaf.")
@@ -363,7 +373,7 @@ class MetropolisHastings(StrictModule):
         /,
         *,
         kernel_id: str = "metropolis-hastings",
-    ):
+    ) -> None:
         if not isinstance(proposal, AbstractProposal):
             raise TypeError("proposal must implement AbstractProposal.")
         if not isinstance(kernel_id, str) or not kernel_id:
@@ -373,7 +383,7 @@ class MetropolisHastings(StrictModule):
 
     def initialize(
         self,
-        target,
+        target: _MarkovTarget,
         initial_positions: PyTree[Any],
         /,
         *,
@@ -405,7 +415,7 @@ class MetropolisHastings(StrictModule):
 
     def refresh(
         self,
-        target,
+        target: _MarkovTarget,
         state: MarkovState,
         /,
     ) -> MarkovState:
@@ -443,7 +453,7 @@ class MetropolisHastings(StrictModule):
 
     def rebind(
         self,
-        target,
+        target: _MarkovTarget,
         state: MarkovState,
         /,
     ) -> MarkovState:
@@ -473,9 +483,9 @@ class MetropolisHastings(StrictModule):
 
     def step(
         self,
-        target,
+        target: _MarkovTarget,
         state: MarkovState,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
     ) -> tuple[MarkovState, MarkovTransitionInfo]:
         resolved = _resolve_target(target)
@@ -493,13 +503,13 @@ class MetropolisHastings(StrictModule):
         )(chain_indices)
 
         def one_step(
-            current,
-            current_log_target,
-            current_cache,
-            current_valid,
-            proposal_key,
-            acceptance_key,
-        ):
+            current: PyTree[Array],
+            current_log_target: Array,
+            current_cache: PyTree[Array],
+            current_valid: Array,
+            proposal_key: PRNGKey,
+            acceptance_key: PRNGKey,
+        ) -> tuple[MarkovTargetState, MarkovTransitionInfo]:
             current_target = MarkovTargetState(
                 position=current,
                 log_target=current_log_target,
@@ -578,12 +588,12 @@ class MetropolisHastings(StrictModule):
 
 
 def sample_markov(
-    target,
+    target: _MarkovTarget,
     kernel: MetropolisHastings,
     state: MarkovState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_draws: int,
     steps_per_draw: int = 1,
     warmup_steps: int = 0,
@@ -638,14 +648,16 @@ def sample_markov(
 
     if iteration is None:
 
-        def discard_step(carry, _):
+        def discard_step(carry: MarkovState, _: None) -> tuple[MarkovState, None]:
             next_state, _info = kernel.step(resolved, carry, key)
             return next_state, None
 
         warmed, _ = jax.lax.scan(discard_step, state, xs=None, length=warmup)
 
-        def collect_draw(carry, _):
-            def transition_step(inner, __):
+        def collect_draw(carry: MarkovState, _: None) -> tuple[MarkovState, _DrawOutput]:
+            def transition_step(
+                inner: MarkovState, __: None
+            ) -> tuple[MarkovState, MarkovTransitionInfo]:
                 next_state, info = kernel.step(resolved, inner, key)
                 return next_state, info
 
@@ -674,7 +686,7 @@ def sample_markov(
     else:
         assert iteration_state is not None
 
-        def discard_step(carry, _):
+        def discard_step(carry: _ObservedCarry, _: None) -> tuple[_ObservedCarry, None]:
             current, observed = carry
             next_state, info = kernel.step(resolved, current, key)
             record = _markov_iteration_record(
@@ -699,8 +711,12 @@ def sample_markov(
             length=warmup,
         )
 
-        def collect_draw(carry, draw_index):
-            def transition_step(inner, _):
+        def collect_draw(
+            carry: _ObservedCarry, draw_index: Array
+        ) -> tuple[_ObservedCarry, _DrawOutput]:
+            def transition_step(
+                inner: _ObservedCarry, _: None
+            ) -> tuple[_ObservedCarry, MarkovTransitionInfo]:
                 current, observed = inner
                 next_state, info = kernel.step(resolved, current, key)
                 record = _markov_iteration_record(

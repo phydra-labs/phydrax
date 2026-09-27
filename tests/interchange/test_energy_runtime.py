@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import hashlib
 import importlib.util
 import json
@@ -9,6 +10,7 @@ import socket
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import jax
 import pytest
@@ -26,13 +28,15 @@ from phydrax._external_worker import _OpenDSSWorker, _send_packet
 
 
 @pytest.fixture
-def python_executable():
+def python_executable() -> Any:
     return pin_energy_executable(
         sys.executable, version=sys.version.split()[0], license_id="PSF-2.0"
     )
 
 
-def test_command_detaches_computed_artifact_and_cleans_work_directory(python_executable):
+def test_command_detaches_computed_artifact_and_cleans_work_directory(
+    python_executable: Any,
+) -> None:
     # A real external numerical calculation, not an engine mock/echo.
     program = (
         "import json,pathlib; p=pathlib.Path; "
@@ -55,7 +59,9 @@ def test_command_detaches_computed_artifact_and_cleans_work_directory(python_exe
     assert result.artifact.status == "complete"
 
 
-def test_timeout_retains_partial_diagnostics_and_cleans_directory(python_executable):
+def test_timeout_retains_partial_diagnostics_and_cleans_directory(
+    python_executable: Any,
+) -> None:
     with pytest.raises(EnergyRuntimeError) as caught:
         run_energy_command(
             python_executable,
@@ -67,20 +73,28 @@ def test_timeout_retains_partial_diagnostics_and_cleans_directory(python_executa
             timeout=1,
         )
     result = caught.value.result
+    # ty: ignore[unresolved-attribute]
     assert result.timed_out
+    # ty: ignore[unresolved-attribute]
     assert result.returncode != 0
+    # ty: ignore[unresolved-attribute]
     assert result.artifact.status == "failed"
+    # ty: ignore[unresolved-attribute]
     assert not Path(result.stdout.decode().strip()).exists()
 
 
-def test_nonzero_exit_and_missing_output_do_not_report_success(python_executable):
+def test_nonzero_exit_and_missing_output_do_not_report_success(
+    python_executable: Any,
+) -> None:
     with pytest.raises(EnergyRuntimeError) as caught:
         run_energy_command(
             python_executable,
             ("-c", "import sys; sys.stderr.write('invalid physical model'); sys.exit(7)"),
             inputs={},
         )
+    # ty: ignore[unresolved-attribute]
     assert caught.value.result.returncode == 7
+    # ty: ignore[unresolved-attribute]
     assert caught.value.result.stderr == b"invalid physical model"
     with pytest.raises(EnergyRuntimeError) as caught:
         run_energy_command(
@@ -89,10 +103,13 @@ def test_nonzero_exit_and_missing_output_do_not_report_success(python_executable
             inputs={},
             outputs=("required.csv",),
         )
+    # ty: ignore[unresolved-attribute]
     assert caught.value.result.artifact.status == "failed"
 
 
-def test_untrusted_paths_symlinks_and_pin_mismatch_fail_closed(python_executable):
+def test_untrusted_paths_symlinks_and_pin_mismatch_fail_closed(
+    python_executable: Any,
+) -> None:
     with pytest.raises(ValueError, match="bounded relative POSIX file path"):
         run_energy_command(
             python_executable, ("-c", "sum(range(10))"), inputs={"../escape": b"x"}
@@ -111,6 +128,7 @@ def test_untrusted_paths_symlinks_and_pin_mismatch_fail_closed(python_executable
             inputs={},
             outputs=("result",),
         )
+    # ty: ignore[unresolved-attribute]
     assert caught.value.result.outputs == ()
     wrong_pin = PinnedExecutable(
         python_executable.path,
@@ -120,13 +138,14 @@ def test_untrusted_paths_symlinks_and_pin_mismatch_fail_closed(python_executable
     )
     with pytest.raises(EnergyRuntimeError) as caught:
         run_energy_command(wrong_pin, ("-c", "sum(range(10))"), inputs={})
+    # ty: ignore[unresolved-attribute]
     assert caught.value.result.returncode is None
 
 
 def test_execution_uses_private_snapshot_when_original_is_mutated_in_place(
-    monkeypatch,
-    tmp_path,
-):
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
     executable_path = tmp_path / "provider"
     executable_path.write_text("#!/bin/sh\nprintf old > result\n")
     executable_path.chmod(0o700)
@@ -136,7 +155,7 @@ def test_execution_uses_private_snapshot_when_original_is_mutated_in_place(
     )
     popen = external_runtime.subprocess.Popen
 
-    def mutate_before_exec(*args, **kwargs):
+    def mutate_before_exec(*args: Any, **kwargs: Any) -> Any:
         executable_path.write_bytes(replacement_bytes)
         executable_path.chmod(0o700)
         return popen(*args, **kwargs)
@@ -147,7 +166,7 @@ def test_execution_uses_private_snapshot_when_original_is_mutated_in_place(
     assert result.output("result") == b"old"
 
 
-def test_log_bytes_are_read_from_held_descriptors(python_executable):
+def test_log_bytes_are_read_from_held_descriptors(python_executable: Any) -> None:
     result = run_energy_command(
         python_executable,
         (
@@ -161,7 +180,7 @@ def test_log_bytes_are_read_from_held_descriptors(python_executable):
     assert result.stdout == b"held-log\n"
 
 
-def test_worker_sender_rejects_oversized_response_before_sending():
+def test_worker_sender_rejects_oversized_response_before_sending() -> None:
     sender, receiver = socket.socketpair()
     try:
         with pytest.raises(ValueError, match="cardinality limit"):
@@ -178,10 +197,10 @@ def test_worker_sender_rejects_oversized_response_before_sending():
         receiver.close()
 
 
-def test_opendss_worker_rejects_oversized_circuit_before_collections():
+def test_opendss_worker_rejects_oversized_circuit_before_collections() -> None:
     materialized = False
 
-    def materialize():
+    def materialize() -> Any:
         nonlocal materialized
         materialized = True
         return []
@@ -214,7 +233,7 @@ def test_opendss_worker_rejects_oversized_circuit_before_collections():
     assert materialized is False
 
 
-def test_collected_output_bound_is_enforced(python_executable):
+def test_collected_output_bound_is_enforced(python_executable: Any) -> None:
     with pytest.raises(EnergyRuntimeError) as caught:
         run_energy_command(
             python_executable,
@@ -223,18 +242,25 @@ def test_collected_output_bound_is_enforced(python_executable):
             outputs=("result",),
             max_output_bytes=1024,
         )
+    # ty: ignore[unresolved-attribute]
     assert caught.value.result.artifact.status == "failed"
+    # ty: ignore[unresolved-attribute]
     assert caught.value.result.outputs == ()
 
 
-def test_unenforced_isolation_and_network_denial_fail_closed(python_executable):
+def test_unenforced_isolation_and_network_denial_fail_closed(
+    python_executable: Any,
+) -> None:
     with pytest.raises(ValueError, match="enforcing launcher"):
         ExternalExecutionPolicy(
+            # ty: ignore[invalid-argument-type]
             "sandboxed",
+            # ty: ignore[invalid-argument-type]
             network_access=False,
             inherit_environment=False,
         )
     with pytest.raises(ValueError, match="Network denial"):
+        # ty: ignore[invalid-argument-type]
         ExternalExecutionPolicy(network_access=False)
 
     policy = ExternalExecutionPolicy(
@@ -274,9 +300,9 @@ def test_unenforced_isolation_and_network_denial_fail_closed(python_executable):
         )
 
 
-def test_host_boundary_rejects_even_argument_free_jit(python_executable):
+def test_host_boundary_rejects_even_argument_free_jit(python_executable: Any) -> None:
     @jax.jit
-    def transformed():
+    def transformed() -> int:
         run_energy_command(python_executable, ("-c", "sum(range(10))"), inputs={})
         return 1
 
@@ -288,7 +314,7 @@ def test_host_boundary_rejects_even_argument_free_jit(python_executable):
     importlib.util.find_spec("opendssdirect") is None,
     reason="requires the optional real OpenDSSDirect engine",
 )
-def test_real_opendss_solution_keeps_multiphase_units_and_power_balance():
+def test_real_opendss_solution_keeps_multiphase_units_and_power_balance() -> None:
     result = run_opendss(
         (
             "Clear",

@@ -4,13 +4,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from math import prod
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -19,7 +22,12 @@ from .._probability import AbstractProbabilityLaw, DiagonalNormalLaw
 from .._strict import StrictModule
 from .._trainable import fixed_field
 from ..domain._measure import MeasureKind
+from ..typing import PRNGKey
 from ._gaussian_diffusion import AbstractGaussianDiffusion
+
+
+if TYPE_CHECKING:
+    from ..uq._factor_law import GaussianFactorLaw
 
 
 class AffineSubspaceLayout(StrictModule):
@@ -41,10 +49,10 @@ class AffineSubspaceLayout(StrictModule):
         basis: ArrayLike,
         /,
         *,
-        event_shape,
+        event_shape: Sequence[int],
         quadrature_weights: ArrayLike | None = None,
         layout_id: str | None = None,
-    ):
+    ) -> None:
         events = tuple(event_shape)
         if not events or any(size <= 0 for size in events):
             raise ValueError("event_shape must contain positive dimensions.")
@@ -146,10 +154,17 @@ class SubspaceGaussianLaw(AbstractProbabilityLaw):
     """Pushforward of a coefficient law to an affine Hausdorff event measure."""
 
     layout: AffineSubspaceLayout
-    coefficient_law: AbstractProbabilityLaw
+    coefficient_law: DiagonalNormalLaw | GaussianFactorLaw
     support_tolerance: Array
 
-    def __init__(self, layout, coefficient_law, /, *, support_tolerance=1e-8):
+    def __init__(
+        self,
+        layout: AffineSubspaceLayout,
+        coefficient_law: DiagonalNormalLaw | GaussianFactorLaw,
+        /,
+        *,
+        support_tolerance: ArrayLike = 1e-8,
+    ) -> None:
         from ..uq._factor_law import GaussianFactorLaw
 
         if not isinstance(layout, AffineSubspaceLayout):
@@ -183,7 +198,7 @@ class SubspaceGaussianLaw(AbstractProbabilityLaw):
     def density_measure_kind(self) -> MeasureKind:
         return "hausdorff"
 
-    def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         return self.layout.synthesize(self.coefficient_law.sample(key, sample_shape))
 
     def contains(self, value: ArrayLike, /) -> Array:
@@ -223,7 +238,14 @@ class SubspaceGaussianDiffusion(StrictModule):
     coefficient_process: AbstractGaussianDiffusion
     process_id: str = eqx.field(static=True)
 
-    def __init__(self, layout, coefficient_process, /, *, process_id: str | None = None):
+    def __init__(
+        self,
+        layout: AffineSubspaceLayout,
+        coefficient_process: AbstractGaussianDiffusion,
+        /,
+        *,
+        process_id: str | None = None,
+    ) -> None:
         if not isinstance(layout, AffineSubspaceLayout):
             raise TypeError("layout must be an AffineSubspaceLayout.")
         if not isinstance(coefficient_process, AbstractGaussianDiffusion):
@@ -242,7 +264,7 @@ class SubspaceGaussianDiffusion(StrictModule):
             }
         )
 
-    def perturb(self, key: Key[Array, ""], value: ArrayLike, /, *, time: ArrayLike):
+    def perturb(self, key: PRNGKey, value: ArrayLike, /, *, time: ArrayLike) -> Array:
         coefficients, residual = self.layout.project(value)
         coefficients = eqx.error_if(
             coefficients,

@@ -19,14 +19,14 @@ import phydrax as phx
 import phydrax.uq._flow_mcmc as flow_module
 
 
-def _problem():
+def _problem() -> Any:
     return phx.uq.PosteriorProblem(
         phx.uq.ParameterSpace(jnp.asarray(0.0), priors=phx.uq.Normal(0.0, 2.0)),
         lambda value: -0.5 * ((value - 0.4) / 0.6) ** 2,
     )
 
 
-def _config(**overrides):
+def _config(**overrides: Any) -> Any:
     settings: dict[str, Any] = {
         "num_adaptation_rounds": 1,
         "num_local_adaptation_steps": 4,
@@ -47,18 +47,18 @@ def _config(**overrides):
     return phx.uq.FlowNUTSConfig(**settings)
 
 
-def _assert_tree_equal(left, right):
+def _assert_tree_equal(left: Any, right: Any) -> None:
     comparisons = jax.tree_util.tree_map(jnp.array_equal, left, right)
     assert all(jax.tree_util.tree_leaves(comparisons))
 
 
-def _assert_flow_arrays_equal(left, right):
+def _assert_flow_arrays_equal(left: Any, right: Any) -> None:
     left_arrays, _ = eqx.partition(left, eqx.is_array)
     right_arrays, _ = eqx.partition(right, eqx.is_array)
     _assert_tree_equal(left_arrays, right_arrays)
 
 
-def _rewrite_checkpoint(path, mutate):
+def _rewrite_checkpoint(path: Any, mutate: Any) -> None:
     with zipfile.ZipFile(path, mode="r") as archive:
         members = {name: archive.read(name) for name in archive.namelist()}
     manifest = json.loads(members["manifest.json"])
@@ -80,7 +80,7 @@ def _rewrite_checkpoint(path, mutate):
             archive.writestr(name, members[name])
 
 
-def _replace_checkpoint_array(manifest, members, name, value):
+def _replace_checkpoint_array(manifest: Any, members: Any, name: Any, value: Any) -> None:
     record = manifest["arrays"][name]
     buffer = io.BytesIO()
     np.save(buffer, value, allow_pickle=False)
@@ -100,12 +100,12 @@ def _replace_checkpoint_array(manifest, members, name, value):
     ],
 )
 def test_interrupted_flow_nuts_resume_is_exact_at_every_phase_boundary(
-    tmp_path,
-    monkeypatch,
-    phase,
-    progress_field,
-    progress,
-):
+    tmp_path: Any,
+    monkeypatch: Any,
+    phase: Any,
+    progress_field: Any,
+    progress: Any,
+) -> None:
     problem = _problem()
     common: dict[str, Any] = {
         "key": jr.key(20),
@@ -120,7 +120,7 @@ def test_interrupted_flow_nuts_resume_is_exact_at_every_phase_boundary(
     checkpoint = tmp_path / f"flow-nuts-{phase}.phxckpt"
     original_write = flow_module._write_flow_nuts_checkpoint
 
-    def interrupting_write(destination, **kwargs):
+    def interrupting_write(destination: Any, **kwargs: Any) -> None:
         original_write(destination, **kwargs)
         if kwargs["phase"] == phase and kwargs[progress_field] == progress:
             raise RuntimeError("simulated flow interruption")
@@ -144,7 +144,7 @@ def test_interrupted_flow_nuts_resume_is_exact_at_every_phase_boundary(
         original_write,
     )
 
-    def adaptation_must_not_run(*args, **kwargs):
+    def adaptation_must_not_run(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("completed flow adaptation repeated during resume")
 
     monkeypatch.setattr(flow_module, "_adapt_mcmc", adaptation_must_not_run)
@@ -181,7 +181,7 @@ def test_interrupted_flow_nuts_resume_is_exact_at_every_phase_boundary(
     )
 
 
-def test_flow_nuts_checkpoint_rejects_changed_configuration(tmp_path):
+def test_flow_nuts_checkpoint_rejects_changed_configuration(tmp_path: Any) -> None:
     problem = _problem()
     checkpoint = tmp_path / "flow-config.phxckpt"
     common: dict[str, Any] = {
@@ -230,7 +230,7 @@ def test_flow_nuts_checkpoint_rejects_changed_configuration(tmp_path):
     )
 
 
-def test_flow_checkpoint_rejects_package_array_and_dtype_tampering(tmp_path):
+def test_flow_checkpoint_rejects_package_array_and_dtype_tampering(tmp_path: Any) -> None:
     problem = _problem()
     checkpoint = tmp_path / "flow-tampering.phxckpt"
     common: dict[str, Any] = {
@@ -251,7 +251,7 @@ def test_flow_checkpoint_rejects_package_array_and_dtype_tampering(tmp_path):
     )
     original = checkpoint.read_bytes()
 
-    def resume():
+    def resume() -> Any:
         return phx.uq.sample_flow_nuts(
             problem,
             resume_from=checkpoint,
@@ -259,7 +259,7 @@ def test_flow_checkpoint_rejects_package_array_and_dtype_tampering(tmp_path):
             **common,
         )
 
-    def change_flow_architecture(manifest, members):
+    def change_flow_architecture(manifest: Any, members: Any) -> None:
         manifest["compatibility"]["settings"]["flow_architecture"] = "invalid"
 
     _rewrite_checkpoint(checkpoint, change_flow_architecture)
@@ -267,7 +267,7 @@ def test_flow_checkpoint_rejects_package_array_and_dtype_tampering(tmp_path):
         resume()
     checkpoint.write_bytes(original)
 
-    def remove_flow_array(manifest, members):
+    def remove_flow_array(manifest: Any, members: Any) -> None:
         name = next(
             name for name in manifest["arrays"] if name.startswith("flow_parameters/")
         )
@@ -278,7 +278,7 @@ def test_flow_checkpoint_rejects_package_array_and_dtype_tampering(tmp_path):
         resume()
     checkpoint.write_bytes(original)
 
-    def change_global_shape(manifest, members):
+    def change_global_shape(manifest: Any, members: Any) -> None:
         record = manifest["arrays"]["global_acceptance_rate"]
         value = np.load(io.BytesIO(members[record["member"]]), allow_pickle=False)
         _replace_checkpoint_array(
@@ -293,7 +293,7 @@ def test_flow_checkpoint_rejects_package_array_and_dtype_tampering(tmp_path):
         resume()
     checkpoint.write_bytes(original)
 
-    def change_flow_dtype(manifest, members):
+    def change_flow_dtype(manifest: Any, members: Any) -> None:
         candidates = []
         for name, record in manifest["arrays"].items():
             if not name.startswith("flow_parameters/"):
@@ -319,7 +319,7 @@ def test_flow_checkpoint_rejects_package_array_and_dtype_tampering(tmp_path):
 
 
 @pytest.fixture(scope="module")
-def portable_flow_result():
+def portable_flow_result() -> Any:
     return phx.uq.sample_flow_nuts(
         _problem(),
         key=jr.key(22),
@@ -333,9 +333,9 @@ def portable_flow_result():
 
 
 def test_flow_nuts_portable_export_and_arviz_include_global_statistics(
-    tmp_path,
-    portable_flow_result,
-):
+    tmp_path: Any,
+    portable_flow_result: Any,
+) -> None:
     destination = tmp_path / "flow-result.phxuq"
     phx.uq.export_result(portable_flow_result, destination)
     archive = phx.uq.read_result_archive(destination)

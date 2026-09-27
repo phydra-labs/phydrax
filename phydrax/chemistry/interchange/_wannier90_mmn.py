@@ -11,7 +11,8 @@ import re
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -57,9 +58,9 @@ class Wannier90MMNImport(StrictModule, NonTrainableState):
         self,
         context: PeriodicSourceContext,
         connectivity: PreparedReciprocalConnectivity,
-        raw_overlaps,
+        raw_overlaps: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(context, PeriodicSourceContext) or not isinstance(
             connectivity, PreparedReciprocalConnectivity
         ):

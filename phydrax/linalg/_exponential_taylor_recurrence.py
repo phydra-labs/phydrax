@@ -9,7 +9,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ._exponential_taylor_planning import TaylorExponentialPlan
 from ._generated_exponential_taylor_thresholds import TAYLOR_THRESHOLDS

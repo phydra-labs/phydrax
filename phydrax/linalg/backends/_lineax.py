@@ -9,13 +9,18 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import lineax as lx
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
 from .._plans import _certified_rank, LinearSolvePlan
 from .._policies import BiCGStab, ConjugateGradient
 from .._preconditioners import AbstractPreconditioner
-from .._problems import LeastSquaresProblem, LinearSystem, MinimumNormProblem
+from .._problems import (
+    AbstractLinearProblem,
+    LeastSquaresProblem,
+    LinearSystem,
+    MinimumNormProblem,
+)
 from .._results import LinearSolveStatus
 from ._jax_dense import _metric_diagonal
 
@@ -43,7 +48,7 @@ class LineaxBackendOutput(StrictModule):
 
 
 def prepare_lineax(
-    problem,
+    problem: AbstractLinearProblem,
     plan: LinearSolvePlan,
     /,
     *,
@@ -68,7 +73,7 @@ def prepare_lineax(
         row_scale = jnp.sqrt(metric)
         source_inverse_square_root = jax.lax.rsqrt(metric)
 
-    def action(coordinates):
+    def action(coordinates: Array) -> Array:
         if source_inverse_square_root is not None:
             coordinates = source_inverse_square_root * coordinates
         vector = operator.source.unflatten(coordinates)
@@ -95,7 +100,7 @@ def prepare_lineax(
         raise ValueError("Prepared preconditioning must match the symbolic solve plan.")
     if preconditioner is not None:
 
-        def precondition(coordinates):
+        def precondition(coordinates: Array) -> Array:
             primal_coordinates = (
                 coordinates
                 if source_inverse_square_root is None
@@ -148,7 +153,7 @@ def solve_lineax(
 
     mathematical = plan.policy.differentiation.mode in ("mathematical", "rhs-only")
 
-    def run(vector, guess):
+    def run(vector: Array, guess: Array | None) -> lx.Solution:
         options = dict(state.options)
         if guess is not None:
             options["y0"] = guess
@@ -169,7 +174,9 @@ def solve_lineax(
             throw=False,
         )
 
-    def solve_one(vector, guess):
+    def solve_one(
+        vector: Array, guess: Array
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
         solution = run(vector, guess)
         iterations = solution.stats.get("num_steps", jnp.asarray(0, dtype=jnp.int32))
         condition = solution.stats.get("cond_A", jnp.asarray(jnp.nan))
@@ -220,7 +227,7 @@ def solve_lineax(
     )
 
 
-def _solver(plan: LinearSolvePlan, /):
+def _solver(plan: LinearSolvePlan, /) -> lx.CG | lx.BiCGStab:
     tolerance = plan.policy.tolerance
     method = plan.policy.method
     method_name = plan.method if method.name == "auto" else method.name
@@ -239,7 +246,7 @@ def _solver(plan: LinearSolvePlan, /):
     raise ValueError(f"Unsupported Lineax method {method_name!r}.")
 
 
-def _status(result, /) -> Array:
+def _status(result: lx.RESULTS, /) -> Array:
     successful = result == lx.RESULTS.successful
     status = jnp.full(
         jnp.shape(successful),

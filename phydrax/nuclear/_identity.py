@@ -9,11 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 from numbers import Integral
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -90,8 +91,11 @@ class NuclearSpeciesKey:
             self.particle, NuclearParticleKind
         ):
             raise TypeError("particle must be NuclearParticleKind or None.")
+        # Exactly one identity kind was validated above.
         identity = (
-            self.nuclide.nuclide_id if self.nuclide is not None else self.particle.value
+            self.nuclide.nuclide_id
+            if self.nuclide is not None
+            else cast(NuclearParticleKind, self.particle).value
         )
         object.__setattr__(
             self,
@@ -222,6 +226,7 @@ class NuclearSpeciesTable:
 def _charge_number(value: NuclearSpeciesKey, /) -> int:
     if value.nuclide is not None:
         return value.nuclide.proton_number
+    # NuclearSpeciesKey guarantees a particle whenever the nuclide is absent.
     return {
         NuclearParticleKind.NEUTRON: 0,
         NuclearParticleKind.PHOTON: 0,
@@ -229,7 +234,7 @@ def _charge_number(value: NuclearSpeciesKey, /) -> int:
         NuclearParticleKind.POSITRON: 1,
         NuclearParticleKind.NEUTRINO: 0,
         NuclearParticleKind.ANTINEUTRINO: 0,
-    }[value.particle]
+    }[cast(NuclearParticleKind, value.particle)]
 
 
 def _baryon_number(value: NuclearSpeciesKey, /) -> int:

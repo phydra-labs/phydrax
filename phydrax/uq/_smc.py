@@ -5,9 +5,9 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import blackjax
 import equinox as eqx
@@ -15,12 +15,14 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from blackjax.smc import adaptive_tempered, resampling
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint
 from .._frozendict import frozendict
 from .._strict import StrictModule
 from ..integration import WeightedSampleTarget
+from ..typing import parse
 from ._checkpoint import (
     checkpoint_compatibility,
     CheckpointCorruptionError,
@@ -37,7 +39,7 @@ from ._posterior_predictive import (
 from ._predictive import PredictiveField
 
 
-ResamplingMethod = Literal["systematic", "stratified"]
+ResamplingMethod: TypeAlias = Literal["systematic", "stratified"]
 
 
 class TemperedSMCResult(StrictModule):
@@ -76,7 +78,7 @@ class TemperedSMCResult(StrictModule):
         duration_seconds: float,
         num_unique_initial_particles: int,
         resampling_method: ResamplingMethod,
-    ):
+    ) -> None:
         self.problem = problem
         self.state = state
         self.samples = samples
@@ -204,8 +206,7 @@ def sample_tempered_smc(
         raise ValueError("step_size must be finite and positive.")
     if sequential_batch < 0:
         raise ValueError("batch_size must be non-negative.")
-    if resampling_method not in ("systematic", "stratified"):
-        raise ValueError("resampling_method must be 'systematic' or 'stratified'.")
+    resampling_method = parse(resampling_method, ResamplingMethod, "resampling_method")
     if prior_position_sampler is not None and not callable(prior_position_sampler):
         raise TypeError("prior_position_sampler must be callable or None.")
 
@@ -429,19 +430,19 @@ def sample_tempered_smc(
 
 
 def _write_smc_checkpoint(
-    destination,
+    destination: Path,
     *,
-    compatibility,
-    completed,
-    state,
-    lineage,
-    temperatures,
-    effective_sample_sizes,
-    acceptance_rates,
-    divergence_rates,
-    log_evidence_terms,
-    duration_seconds,
-):
+    compatibility: Mapping[str, Any],
+    completed: int,
+    state: Any,
+    lineage: Array,
+    temperatures: Array,
+    effective_sample_sizes: Array,
+    acceptance_rates: Array,
+    divergence_rates: Array,
+    log_evidence_terms: Array,
+    duration_seconds: float,
+) -> None:
     arrays = {
         "lineage": lineage,
         "temperatures": temperatures,
@@ -465,12 +466,12 @@ def _write_smc_checkpoint(
 
 
 def _read_smc_checkpoint(
-    source,
+    source: Path,
     *,
-    compatibility,
-    problem,
-    particles_count,
-):
+    compatibility: Mapping[str, Any],
+    problem: PosteriorProblem,
+    particles_count: int,
+) -> tuple[int, Any, Array, Array, Array, Array, Array, Array, float]:
     checkpoint_state, arrays = read_checkpoint_archive(
         source,
         kind="tempered_smc",
@@ -521,7 +522,9 @@ def _read_smc_checkpoint(
     )
 
 
-def _smc_checkpoint_array(arrays, name, *, shape):
+def _smc_checkpoint_array(
+    arrays: Mapping[str, Array], name: str, *, shape: tuple[int, ...]
+) -> Array:
     if name not in arrays:
         raise CheckpointCorruptionError(f"Checkpoint array {name!r} is missing.")
     value = jnp.asarray(arrays[name])

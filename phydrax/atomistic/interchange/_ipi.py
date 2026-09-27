@@ -9,10 +9,13 @@ import socket
 import struct
 from enum import IntEnum
 from pathlib import Path
+from types import TracebackType
+from typing import Self, TypedDict, Unpack
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -22,6 +25,12 @@ from .._system import PreparedAtomisticSystem
 
 
 _HEADER = 12
+
+
+class _IPITransportOptions(TypedDict, total=False):
+    timeout: float
+    maximum_atoms: int
+    maximum_extra_bytes: int
 
 
 class IPITransportStatus(IntEnum):
@@ -51,7 +60,7 @@ class IPITransportPlan(StrictModule, NonTrainableState):
         timeout: float = 60.0,
         maximum_atoms: int = 1_000_000,
         maximum_extra_bytes: int = 1_000_000,
-    ):
+    ) -> None:
         if mode not in ("unix", "tcp"):
             raise ValueError("i-PI transport mode must be unix or tcp.")
         port_ = None if port is None else int(port)
@@ -86,11 +95,11 @@ class IPITransportPlan(StrictModule, NonTrainableState):
         )
 
     @classmethod
-    def unix(cls, path: str, /, **kwargs):
+    def unix(cls, path: str, /, **kwargs: Unpack[_IPITransportOptions]) -> Self:
         return cls("unix", path, **kwargs)
 
     @classmethod
-    def tcp(cls, host: str, port: int, /, **kwargs):
+    def tcp(cls, host: str, port: int, /, **kwargs: Unpack[_IPITransportOptions]) -> Self:
         return cls("tcp", host, port=port, **kwargs)
 
     def connect(self) -> "IPISession":
@@ -129,7 +138,7 @@ class IPIResponse(StrictModule):
 
 
 class IPISession:
-    def __init__(self, connection: socket.socket, plan: IPITransportPlan, /):
+    def __init__(self, connection: socket.socket, plan: IPITransportPlan, /) -> None:
         self.connection = connection
         self.plan = plan
         self.status = IPITransportStatus.READY
@@ -219,15 +228,20 @@ class IPISession:
         self.status = IPITransportStatus.CLOSED
         self.connection.close()
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         self.close()
 
 
 class IPIListener:
-    def __init__(self, server: socket.socket, plan: IPITransportPlan, /):
+    def __init__(self, server: socket.socket, plan: IPITransportPlan, /) -> None:
         self.server = server
         self.plan = plan
 
@@ -236,15 +250,20 @@ class IPIListener:
         connection.settimeout(self.plan.timeout)
         return IPISession(connection, self.plan)
 
-    def close(self):
+    def close(self) -> None:
         self.server.close()
         if self.plan.mode == "unix":
             Path(self.plan.address).unlink(missing_ok=True)
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         self.close()
 
 
@@ -256,14 +275,18 @@ class TransportedExternalAtomisticProvider(AbstractExternalAtomisticProvider):
 
     def __init__(
         self, session: IPISession, provider_id: str, /, *, conservative: bool = True
-    ):
+    ) -> None:
         self.session = session
         self.provider_id = str(provider_id)
         self.conservative = bool(conservative)
         self.differentiable = False
 
     def evaluate(
-        self, system: PreparedAtomisticSystem, positions, cell_vectors, /
+        self,
+        system: PreparedAtomisticSystem,
+        positions: ArrayLike,
+        cell_vectors: ArrayLike | None,
+        /,
     ) -> ExternalAtomisticEvaluation:
         session = self.session
         if not isinstance(session, IPISession):

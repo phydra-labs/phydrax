@@ -11,7 +11,7 @@ import trimesh
 import phydrax as phx
 
 
-def test_geometry_sampling_preserves_interior_and_boundary_measures():
+def test_geometry_sampling_preserves_interior_and_boundary_measures() -> None:
     geometry = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -39,7 +39,9 @@ def test_geometry_sampling_preserves_interior_and_boundary_measures():
     )
 
 
-def test_canonical_triangle_mesh_builds_graph_and_simplicial_operator_topologies():
+def test_canonical_triangle_mesh_builds_graph_and_simplicial_operator_topologies() -> (
+    None
+):
     mesh = phx.geometry.TriangleMesh(
         jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]]),
         jnp.asarray([[0, 1, 2], [0, 2, 3]]),
@@ -71,7 +73,7 @@ def test_canonical_triangle_mesh_builds_graph_and_simplicial_operator_topologies
     )
 
 
-def test_mesh_region_uses_surface_vertex_measure():
+def test_mesh_region_uses_surface_vertex_measure() -> None:
     host_mesh = trimesh.creation.box(extents=(1.0, 2.0, 3.0))
     region = phx.geometry.mesh_region_from_source(
         (np.asarray(host_mesh.vertices), np.asarray(host_mesh.faces)),
@@ -87,7 +89,7 @@ def test_mesh_region_uses_surface_vertex_measure():
     assert samples.topology.site == "vertex"
 
 
-def test_batched_point_cloud_adapter_compacts_masked_graph_nodes():
+def test_batched_point_cloud_adapter_compacts_masked_graph_nodes() -> None:
     coordinates = jnp.asarray(
         [
             [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [9.0, 9.0]],

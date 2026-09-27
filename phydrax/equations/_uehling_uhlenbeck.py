@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -123,7 +124,7 @@ class UehlingUhlenbeckPlan(StrictModule, NonTrainableState):
         substep_safety: float = 0.8,
         invariant_tolerance: float = 1.0e-10,
         entropy_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         statistics_ = np.asarray(statistics)
         weights = np.asarray(phase_space_weights, dtype=np.float64)
         species = np.asarray(event_species)
@@ -416,7 +417,7 @@ class UehlingUhlenbeckPlan(StrictModule, NonTrainableState):
         used = jnp.minimum(required, self.maximum_substeps)
         substep = jnp.where(used > 0, step / used.astype(initial.dtype), 0.0)
 
-        def body(index, current):
+        def body(index: Array, current: Array) -> Array:
             candidate = current + substep * self.collision_rate(current)
             return jnp.where(index < used, candidate, current)
 

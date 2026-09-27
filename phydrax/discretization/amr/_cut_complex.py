@@ -20,11 +20,13 @@ from typing import Any, TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from .._cell_complex import PolyhedralConnectivity
 from .._cell_mesh import CellMesh
 from ._canonical import (
     BlockAMRResourcePlan,
@@ -74,7 +76,7 @@ class _Fragment:
 
 
 class _UnionFind:
-    def __init__(self, size: int):
+    def __init__(self, size: int) -> None:
         self.parent = list(range(size))
 
     def root(self, value: int) -> int:
@@ -99,7 +101,7 @@ class EmbeddedLevelSetBody(StrictModule, NonTrainableState):
     body_tag: int = eqx.field(static=True)
     body_id: str = eqx.field(static=True)
 
-    def __init__(self, level_set: LevelSet, field_id: str, body_tag: int, /):
+    def __init__(self, level_set: LevelSet, field_id: str, body_tag: int, /) -> None:
         field = str(field_id)
         tag = int(body_tag)
         if not callable(level_set) or not field or tag < 0:
@@ -129,7 +131,7 @@ class EmbeddedLevelSetBodySet(StrictModule, NonTrainableState):
         *,
         operation: str = "union",
         body_signs: Sequence[int] | None = None,
-    ):
+    ) -> None:
         bodies_ = tuple(sorted(bodies, key=lambda body: body.body_tag))
         operation_ = str(operation)
         signs = (1,) * len(bodies_) if body_signs is None else tuple(body_signs)
@@ -232,7 +234,7 @@ class MultivaluedCutCellEvidence(StrictModule, NonTrainableState):
         maximum_volume_closure_defect: float,
         maximum_face_closure_defect: float,
         tolerance: float,
-    ):
+    ) -> None:
         counts = (
             leaf_cell_count,
             regular_cell_count,
@@ -295,9 +297,9 @@ class MultivaluedCutCellComplex(StrictModule, NonTrainableState):
     component_volumes: Array
     component_centers: Array
     component_volume_fractions: Array
-    component_tetrahedra: tuple[
-        tuple[tuple[tuple[float, float, float], ...], ...], ...
-    ] = eqx.field(static=True)
+    component_tetrahedra: tuple[tuple[tuple[tuple[float, ...], ...], ...], ...] = (
+        eqx.field(static=True)
+    )
     face_active: Array
     face_owner_components: Array
     face_neighbor_components: Array
@@ -344,7 +346,7 @@ class MultivaluedCutCellComplex(StrictModule, NonTrainableState):
         face_measures: ArrayLike,
         evidence: MultivaluedCutCellEvidence,
         body_set_id: str,
-    ):
+    ) -> None:
         if not isinstance(hierarchy, CanonicalPatchHierarchy) or not isinstance(
             mesh, CellMesh
         ):
@@ -771,18 +773,18 @@ def _cell_components(
 def _finalize_cut_complex(
     plan: MultivaluedCutCellPlan,
     hierarchy: CanonicalPatchHierarchy,
-    leaf_cells: list[Any],
-    global_points: list[Any],
-    global_vertex: Any,
+    leaf_cells: Sequence[tuple[int, tuple[int, ...], str]],
+    global_points: list[np.ndarray],
+    global_vertex: Callable[[_Vertex], int],
     component_faces: list[Any],
     component_levels: list[int],
-    component_coordinates: list[Any],
+    component_coordinates: list[tuple[int, ...]],
     component_slots: list[int],
     component_volumes: list[float],
-    component_centers: list[Any],
-    component_tetrahedra: list[Any],
+    component_centers: list[np.ndarray],
+    component_tetrahedra: list[list[np.ndarray]],
     component_fractions: list[float],
-    component_shells: list[Any],
+    component_shells: list[tuple[_Face, ...]],
     regular_cells: int,
     covered_cells: int,
     cut_cells: int,
@@ -801,7 +803,12 @@ def _finalize_cut_complex(
         cell_global_ids=cell_ids,
         numeric_version="block-amr-cut-complex",
     )
-    mesh_ids = np.asarray(mesh.connectivity.cell_global_ids, dtype=np.int64)
+    connectivity = mesh.connectivity
+    if not (isinstance(connectivity, PolyhedralConnectivity)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(connectivity, PolyhedralConnectivity)."
+        )
+    mesh_ids = np.asarray(connectivity.cell_global_ids, dtype=np.int64)
     component_order = mesh_ids.astype(np.int64, copy=False)
     inverse_order = np.empty_like(component_order)
     inverse_order[component_order] = np.arange(component_order.size)
@@ -833,8 +840,8 @@ def _finalize_cut_complex(
                 face_records.append((second_owner, first_owner, second_face))
         else:
             raise ValueError("Cut-complex face has more than two incident components.")
-    face_offsets = np.asarray(mesh.connectivity.face_vertex_offsets, dtype=np.int32)
-    face_vertices = np.asarray(mesh.connectivity.face_vertex_values, dtype=np.int32)
+    face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int32)
+    face_vertices = np.asarray(connectivity.face_vertex_values, dtype=np.int32)
     mesh_face_lookup = {
         tuple(
             sorted(
@@ -844,7 +851,7 @@ def _finalize_cut_complex(
                 ]
             )
         ): index
-        for index in range(mesh.connectivity.face_count)
+        for index in range(connectivity.face_count)
     }
     face_mesh_records = []
     for _, _, face in face_records:
@@ -955,7 +962,7 @@ def _finalize_cut_complex(
         raise ValueError("Cut face exceeds maximum_apertures_per_face.")
     closure_defect = np.linalg.norm(closure, axis=1)
     geometry_scale = max(1.0, float(np.max(face_measure[: len(face_records)])))
-    closure_tolerance = 512.0 * np.finfo(np.float64).eps * geometry_scale
+    closure_tolerance = float(512.0 * np.finfo(np.float64).eps * geometry_scale)
     evidence = MultivaluedCutCellEvidence(
         leaf_cell_count=len(leaf_cells),
         regular_cell_count=regular_cells,
@@ -1024,7 +1031,7 @@ class MultivaluedCutCellPlan(StrictModule, NonTrainableState):
         *,
         subdivision: int = 1,
         predicate_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         hierarchy = canonicalize_patch_hierarchy(topology)
         map_id = str(coordinate_map_id)
         subdivision_ = int(subdivision)

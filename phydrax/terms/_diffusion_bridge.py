@@ -8,7 +8,8 @@ from typing import Any, Mapping
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 import phydrax.ein as ein
@@ -17,6 +18,7 @@ from .._doc import DOC_KEY0
 from .._strict import StrictModule
 from .._term import AbstractScalarTerm
 from ..domain import DomainFunction
+from ..typing import PRNGKey
 
 
 class DiffusionBridgeControlDataset(StrictModule):
@@ -41,7 +43,7 @@ class DiffusionBridgeControlDataset(StrictModule):
         /,
         *,
         bridge_id: str,
-    ):
+    ) -> None:
         times_ = jnp.asarray(times)
         states_ = jnp.asarray(states)
         reference = jnp.asarray(reference_drift)
@@ -83,7 +85,7 @@ class DiffusionBridgeDriftTerm(AbstractScalarTerm):
         *,
         metric: Any = None,
         label: str | None = None,
-    ):
+    ) -> None:
         if not field:
             raise ValueError("field must be non-empty.")
         if not isinstance(dataset, DiffusionBridgeControlDataset):
@@ -100,9 +102,9 @@ class DiffusionBridgeDriftTerm(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
-        iter_=None,
-        **kwargs,
+        key: PRNGKey = DOC_KEY0,
+        iter_: int | Array | None = None,
+        **kwargs: Any,
     ) -> Array:
         del iter_, kwargs
         field = functions[self.field]

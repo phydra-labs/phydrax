@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import optax
@@ -11,7 +13,7 @@ from phydrax.terms._deep_bsde import (
 )
 
 
-def _brownian_paths():
+def _brownian_paths() -> Any:
     increments = jnp.asarray([[[0.2], [-0.1]], [[-0.3], [0.4]]])
     states = jnp.concatenate(
         (jnp.zeros((2, 1, 1)), jnp.cumsum(increments, axis=1)), axis=1
@@ -28,7 +30,7 @@ def _brownian_paths():
     )
 
 
-def _problem(paths, *, terminal=None):
+def _problem(paths: Any, *, terminal: Any = None) -> Any:
     return BSDEProblem(
         lambda key: paths,
         lambda time, state, args: jnp.zeros_like(state),
@@ -43,11 +45,11 @@ def _problem(paths, *, terminal=None):
     )
 
 
-def _constant(domain, value):
+def _constant(domain: Any, value: Any) -> Any:
     return phx.domain.DomainFunction(domain=domain, deps=(), func=jnp.asarray(value))
 
 
-def test_deep_bsde_rollout_reproduces_linear_brownian_solution():
+def test_deep_bsde_rollout_reproduces_linear_brownian_solution() -> None:
     paths = _brownian_paths()
     problem = _problem(paths)
     domain = phx.domain.Interval1d(-1.0, 1.0)
@@ -73,7 +75,7 @@ def test_deep_bsde_rollout_reproduces_linear_brownian_solution():
     ).passed
 
 
-def test_deep_bsde_masks_nonfinite_invalid_terminal_gradient():
+def test_deep_bsde_masks_nonfinite_invalid_terminal_gradient() -> None:
     base_paths = _brownian_paths()
     paths = BSDEPathBatch(
         base_paths.times,
@@ -103,7 +105,7 @@ def test_deep_bsde_masks_nonfinite_invalid_terminal_gradient():
         fixed_paths=paths,
     )
 
-    def loss(initial_value):
+    def loss(initial_value: Any) -> Any:
         initial = _constant(domain, jnp.reshape(initial_value, (1,)))
         return objective.loss({"initial": initial, "control": control}, batch=paths)
 
@@ -113,7 +115,7 @@ def test_deep_bsde_masks_nonfinite_invalid_terminal_gradient():
     assert gradient == 3.0
 
 
-def test_solve_deep_bsde_trains_initial_value_and_removes_temporary_objective():
+def test_solve_deep_bsde_trains_initial_value_and_removes_temporary_objective() -> None:
     paths = BSDEPathBatch(
         jnp.asarray([0.0, 0.5, 1.0]),
         jnp.zeros((8, 3, 1)),

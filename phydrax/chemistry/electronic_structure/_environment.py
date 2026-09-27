@@ -14,7 +14,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -56,7 +57,7 @@ class ContinuumSolvationPlan(StrictModule, NonTrainableState):
         solute_dielectric: float = 1.0,
         surface_tension: float = 0.005,
         provider_definition_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(kind, ContinuumSolvationKind):
             raise TypeError("kind must be ContinuumSolvationKind.")
         values = (
@@ -122,7 +123,7 @@ class ContinuumSolvationPlan(StrictModule, NonTrainableState):
         charges_ = jnp.asarray(charges, dtype=coordinate.dtype)
         radii_ = jnp.asarray(radii, dtype=coordinate.dtype)
 
-        def energy(value):
+        def energy(value: Array) -> Array:
             return substrate.energy(value, charges_, radii_, float(coulomb_constant))
 
         energy_, gradient = jax.value_and_grad(energy)(coordinate)
@@ -162,7 +163,7 @@ class CallableContinuumSolventProvider(AbstractContinuumSolventProvider):
         provider_id: str,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         provider = str(provider_id).strip()
@@ -213,7 +214,7 @@ class RelativisticOneElectronPlan(StrictModule, NonTrainableState):
         *,
         order: int = 2,
         positive_energy_projector_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(kind, RelativisticHamiltonianKind):
             raise TypeError("kind must be RelativisticHamiltonianKind.")
         order_ = int(order)

@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -14,7 +15,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _measure(function, argument, repetitions):
+def _measure(function: Any, argument: Any, repetitions: Any) -> Any:
     compiled = jax.jit(function)
     start = time.perf_counter()
     first = compiled(argument)
@@ -33,7 +34,7 @@ def _measure(function, argument, repetitions):
     }
 
 
-def _enthalpy(size, repetitions):
+def _enthalpy(size: Any, repetitions: Any) -> Any:
     material = phx.equations.SolidLiquidEnthalpyPlan(
         1000.0, 273.15, 300.0, 302.0, 2000.0, 2200.0, 2.0e5, 2.0, 0.5, 1.0e-6
     )
@@ -45,7 +46,7 @@ def _enthalpy(size, repetitions):
     )
 
 
-def _hem(size, repetitions):
+def _hem(size: Any, repetitions: Any) -> Any:
     material = phx.equations.HomogeneousEquilibriumCavitationMaterial(
         1.0e5,
         1.0,
@@ -63,7 +64,7 @@ def _hem(size, repetitions):
     )
 
 
-def _vof(size, repetitions):
+def _vof(size: Any, repetitions: Any) -> Any:
     eos = phx.equations.TwoMaterialEOSClosure(
         phx.equations.StiffenedGasMaterial(4.4, 2.0e5, 1800.0),
         phx.equations.StiffenedGasMaterial(1.33, 0.0, 1400.0, reference_energy=2.0e6),
@@ -93,7 +94,7 @@ def _vof(size, repetitions):
     )
 
 
-def _mac(size, repetitions):
+def _mac(size: Any, repetitions: Any) -> Any:
     count = max(4, int(size**0.5))
     grid = phx.discretization.TensorGridPlan(
         (
@@ -153,7 +154,7 @@ _CASES = {
 }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--case", choices=(*_CASES, "all"), default="all")
     parser.add_argument("--size", type=int, default=4096)

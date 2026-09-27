@@ -4,21 +4,23 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._compressible_contracts import CompressibleKineticPopulationState
 from ._compressible_rules import CompressibleVelocityRule
 
 
-KineticStorageLayout = Literal[
+KineticStorageLayout: TypeAlias = Literal[
     "double-buffer-aos", "double-buffer-soa", "q-blocked", "aa"
 ]
 
@@ -45,7 +47,7 @@ class CompressibleKineticPrecisionPolicy(StrictModule, NonTrainableState):
         accumulation_dtype: str = "float64",
         dual_dtype: str = "float64",
         block_size: int = 256,
-    ):
+    ) -> None:
         supported = ("float16", "bfloat16", "float32", "float64")
         if storage_dtype not in supported or dual_dtype not in supported:
             raise ValueError("Unsupported kinetic storage or dual dtype.")
@@ -118,9 +120,8 @@ class KineticStoragePlan(StrictModule, NonTrainableState):
         /,
         *,
         q_block_size: int = 16,
-    ):
-        if layout not in ("double-buffer-aos", "double-buffer-soa", "q-blocked", "aa"):
-            raise ValueError(f"Unknown kinetic storage layout {layout!r}.")
+    ) -> None:
+        layout = parse(layout, KineticStorageLayout, "layout")
         block = int(q_block_size)
         if block < 1:
             raise ValueError("q_block_size must be positive.")
@@ -140,7 +141,9 @@ class KineticWorksetPlan(StrictModule, NonTrainableState):
     maximum_scratch_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, cell_batch_size: int = 4096, maximum_scratch_bytes: int = 1 << 30):
+    def __init__(
+        self, cell_batch_size: int = 4096, maximum_scratch_bytes: int = 1 << 30
+    ) -> None:
         batch = int(cell_batch_size)
         scratch = int(maximum_scratch_bytes)
         if batch < 1 or scratch < 1:
@@ -191,7 +194,7 @@ class IntegerLatticeTransportPlan(StrictModule, NonTrainableState):
         *,
         periodic_axes: tuple[bool, ...] | None = None,
         storage: KineticStoragePlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(rule, CompressibleVelocityRule):
             raise TypeError("rule must be a CompressibleVelocityRule.")
         if not rule.exact_streaming:
@@ -312,7 +315,7 @@ class KineticVelocityPartitionPlan(StrictModule, NonTrainableState):
     shard_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, rule: CompressibleVelocityRule, shard_count: int, /):
+    def __init__(self, rule: CompressibleVelocityRule, shard_count: int, /) -> None:
         if not isinstance(rule, CompressibleVelocityRule):
             raise TypeError("rule must be a CompressibleVelocityRule.")
         count = int(shard_count)
@@ -389,7 +392,7 @@ class KineticVelocityPartitionPlan(StrictModule, NonTrainableState):
             value @ feature_values[start:stop]
             for value, (start, stop) in zip(values, self.shard_slices, strict=True)
         )
-        return sum(partials)
+        return sum(partials[1:], start=partials[0])
 
 
 __all__ = [

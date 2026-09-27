@@ -8,10 +8,10 @@ import hashlib
 import json
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ...._differentiation import DerivativeContract, DerivativeRoute
 from ...._document_resource import decode_json_resource
@@ -32,6 +32,10 @@ from ...._trainable import NonTrainableState
 from ..._keys import EvalKey
 from ..data import OperatorBatch
 from ..engine import AbstractOperatorModel
+
+
+if TYPE_CHECKING:
+    from ..catalog import ConfiguredOperatorContract
 
 
 class OperatorCheckpointManifest(NonTrainableState):
@@ -67,7 +71,7 @@ class OperatorCheckpointManifest(NonTrainableState):
         code_license: str,
         weights_license: str,
         checkpoint_sha256: str,
-    ):
+    ) -> None:
         self.architecture = str(architecture)
         self.model_version = str(model_version)
         self.source_uri = str(source_uri)
@@ -236,7 +240,9 @@ def verify_operator_checkpoint(
     return checkpoint_sha256(path) == manifest.checkpoint_sha256
 
 
-def _external_operator_contract(model):
+def _external_operator_contract(
+    model: ExternalOperatorAdapter,
+) -> ConfiguredOperatorContract:
     from ..catalog import operator_architecture_contract
 
     return operator_architecture_contract(
@@ -286,7 +292,7 @@ class ExternalOperatorAdapter(AbstractOperatorModel):
         capabilities: ExecutionCapabilities,
         in_size: int | tuple[int, ...] | Literal["scalar"],
         out_size: int | tuple[int, ...] | Literal["scalar"],
-    ):
+    ) -> None:
         if (
             not callable(runner)
             or not callable(input_adapter)

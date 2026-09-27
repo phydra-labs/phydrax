@@ -9,11 +9,13 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..discretization.finite_volume import (
+    MACMarkerRelation,
     MACMarkerRouteState,
     PreparedMACMarkerTransfer,
 )
@@ -57,7 +59,7 @@ class ConfinedFIBMobilityPlan(AbstractHydrodynamicMobilityPlan):
         *,
         maximum_particles: int,
         symmetry_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(transfer, PreparedMACMarkerTransfer):
             raise TypeError("transfer must be PreparedMACMarkerTransfer.")
         if not isinstance(inverse_stokes, AbstractLinearOperator):
@@ -116,7 +118,7 @@ class PreparedConfinedFIBMobility(AbstractPreparedHydrodynamicMobility):
         system: PreparedAtomisticSystem,
         active_slots: ArrayLike,
         /,
-    ):
+    ) -> None:
         slots = _active_slots(plan.maximum_particles, system, active_slots)
         markers = plan.transfer.markers
         if markers.active_count != slots.size:
@@ -182,7 +184,7 @@ class PreparedConfinedFIBMobility(AbstractPreparedHydrodynamicMobility):
             }
         )
 
-    def _relation(self, positions: Array):
+    def _relation(self, positions: Array) -> MACMarkerRelation:
         markers = self.plan.transfer.markers
         full = markers.reference_position.at[markers.active_indices].set(
             positions[self.marker_from_mobility]
@@ -197,7 +199,7 @@ class PreparedConfinedFIBMobility(AbstractPreparedHydrodynamicMobility):
         value = self.coordinate_space.validate(jnp.asarray(positions))
         relation = self._relation(value)
 
-        def action(vector):
+        def action(vector: Array) -> Array:
             force = self.coordinate_space.validate(vector)
             marker_force_density = (
                 force[self.marker_from_mobility] * self.inverse_weights[:, None]

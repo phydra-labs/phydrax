@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -11,7 +14,7 @@ import phydrax as phx
 from phydrax.operators.integral.vortex._fmm_complete import VortexFMMPlan
 
 
-def test_reformulated_vpm_and_relaxation_report_their_invariants():
+def test_reformulated_vpm_and_relaxation_report_their_invariants() -> None:
     strength = jnp.asarray(((1.0, 0.2, 0.0), (0.0, 1.0, 0.1)))
     stretching = jnp.asarray(((0.2, -0.1, 0.0), (0.1, 0.3, -0.1)))
     core = jnp.asarray((0.2, 0.3))
@@ -32,7 +35,9 @@ def test_reformulated_vpm_and_relaxation_report_their_invariants():
     assert relaxed.magnitude_residual < 1e-12
 
 
-def test_barnes_hut_backend_matches_direct_for_small_cloud_and_detects_staleness():
+def test_barnes_hut_backend_matches_direct_for_small_cloud_and_detects_staleness() -> (
+    None
+):
     position = jnp.asarray(((-0.6, -0.2), (-0.2, 0.3), (0.3, -0.4), (0.7, 0.2)))
     circulation = jnp.asarray((0.5, -0.3, 0.8, -0.4))
     core = jnp.full((4,), 0.1)
@@ -79,7 +84,7 @@ def test_barnes_hut_backend_matches_direct_for_small_cloud_and_detects_staleness
     assert bool(stale.diagnostics.backend_diagnostics.stale_topology)
 
 
-def test_vortex_dynamics_rejects_a_stale_backend_evaluation():
+def test_vortex_dynamics_rejects_a_stale_backend_evaluation() -> None:
     reference = jnp.asarray(((-0.5, 0.0), (0.5, 0.0)))
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(2),
@@ -93,7 +98,9 @@ def test_vortex_dynamics_rejects_a_stale_backend_evaluation():
     method = phx.discretization.VortexParticleMethodPlan(
         VortexFMMPlan(
             reference,
+            # ty: ignore[invalid-argument-type]
             (-1.0, -1.0),
+            # ty: ignore[invalid-argument-type]
             (1.0, 1.0),
             depth=1,
             maximum_reference_displacement=0.01,
@@ -110,7 +117,7 @@ def test_vortex_dynamics_rejects_a_stale_backend_evaluation():
         compiled.dynamics(0.0, state)
 
 
-def test_actuator_sources_and_passive_probes_are_distinct():
+def test_actuator_sources_and_passive_probes_are_distinct() -> None:
     filament = phx.applications.vortex_flow.actuator_line_sources(
         jnp.asarray(((0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 2.0, 0.0))),
         jnp.asarray((1.0, 0.5)),
@@ -128,7 +135,7 @@ def test_actuator_sources_and_passive_probes_are_distinct():
     assert jnp.linalg.norm(velocity.velocity) > 0.0
 
 
-def test_random_vortex_solver_uses_named_antithetic_realizations():
+def test_random_vortex_solver_uses_named_antithetic_realizations() -> None:
     direct = phx.operators.GaussianDirectVortexPlan2D(
         maximum_sources=2,
     ).prepare(source_capacity=2, target_capacity=2)
@@ -138,6 +145,7 @@ def test_random_vortex_solver_uses_named_antithetic_realizations():
         core_radius=jnp.full((2,), 0.1),
         volume=jnp.ones((2,)),
     )
+    # ty: ignore[call-non-callable]
     solver = phx.applications.vortex_flow.RandomVortexSolverPlan(
         direct,
         0.01,
@@ -155,11 +163,12 @@ def test_random_vortex_solver_uses_named_antithetic_realizations():
     assert bool(result.successful)
 
 
-def test_native_learned_vorticity_reconstruction_is_divergence_free():
+def test_native_learned_vorticity_reconstruction_is_divergence_free() -> None:
     count = 8
     coordinates = jnp.arange(count) / count
     xx, yy = jnp.meshgrid(coordinates, coordinates, indexing="ij")
     vorticity = jnp.sin(2.0 * jnp.pi * xx) * jnp.cos(2.0 * jnp.pi * yy)
+    # ty: ignore[call-non-callable]
     result = phx.applications.vortex_flow.PeriodicVorticityReconstructionPlan(
         (count, count),
         (1.0, 1.0),
@@ -171,7 +180,7 @@ def test_native_learned_vorticity_reconstruction_is_divergence_free():
     assert bool(result.successful)
 
 
-def test_nonlinear_vortex_step_closure_solves_polar_circulation_root():
+def test_nonlinear_vortex_step_closure_solves_polar_circulation_root() -> None:
     span = jnp.linspace(-1.0, 1.0, 4)
     leading = jnp.stack(
         (jnp.zeros_like(span), span, jnp.zeros_like(span)),
@@ -203,7 +212,7 @@ def test_nonlinear_vortex_step_closure_solves_polar_circulation_root():
     assert bool(result.successful)
 
 
-def test_equilibrium_wall_closure_and_bounded_load_recovery_report_evidence():
+def test_equilibrium_wall_closure_and_bounded_load_recovery_report_evidence() -> None:
     wall = phx.discretization.EquilibriumWallVortexClosurePlan(
         1.0,
         1.0e-3,
@@ -237,3 +246,86 @@ def test_equilibrium_wall_closure_and_bounded_load_recovery_report_evidence():
     )
     assert bool(recovered.recoverable)
     assert jnp.allclose(recovered.estimate, jnp.asarray((1.0, 2.0)))
+
+
+def _unit_mass_flexible_coupling() -> Any:
+    def residual(
+        time: Any, configuration: Any, velocity: Any, acceleration: Any, args: Any
+    ) -> Any:
+        del time, configuration, velocity
+        return acceleration - (args["vortex_load"] + args["user_args"]["bias"])
+
+    system = phx.dynamics.SecondOrderDifferentialSystem(
+        residual,
+        state_shape=(1,),
+        system_id="unit-mass-structure",
+    )
+    # ty: ignore[call-non-callable]
+    return phx.applications.vortex_flow.VortexFlexibleCouplingPlan(system)
+
+
+def test_flexible_vortex_coupling_advances_structure_under_the_supplied_load() -> None:
+    plan = _unit_mass_flexible_coupling()
+    time, time_step = 0.25, 0.1
+    load = jnp.asarray((0.5,))
+    user_args = {"bias": jnp.asarray((0.25,)), "load": load}
+    rest = jnp.zeros((1,))
+
+    def fluid_step(fluid: Any, configuration: Any, dt: Any, args: Any) -> Any:
+        work = -jnp.sum(args["load"] * (configuration - rest))
+        return {"circulation": fluid["circulation"] + dt * configuration[0]}, work
+
+    result = plan.step(
+        {"circulation": jnp.asarray(1.0)},
+        rest,
+        rest,
+        load + user_args["bias"],
+        time,
+        time_step,
+        load,
+        fluid_step,
+        user_args,
+    )
+
+    solution = result.structural_solution
+    constant_acceleration = load + user_args["bias"]
+    displacement = 0.5 * time_step**2 * constant_acceleration
+    np.testing.assert_allclose(solution.times, (time, time + time_step))
+    np.testing.assert_allclose(solution.accelerations[-1], constant_acceleration)
+    np.testing.assert_allclose(solution.velocities[-1], time_step * constant_acceleration)
+    np.testing.assert_allclose(solution.configurations[-1], displacement)
+    assert bool(jnp.all(jnp.isfinite(solution.configurations)))
+    assert bool(result.successful)
+    np.testing.assert_allclose(result.work_residual, 0.0, atol=1e-15)
+    np.testing.assert_allclose(
+        result.fluid_state["circulation"], 1.0 + time_step * displacement[0]
+    )
+
+
+def test_flexible_vortex_coupling_keeps_fluid_state_when_fluid_work_is_not_finite() -> (
+    None
+):
+    plan = _unit_mass_flexible_coupling()
+    load = jnp.asarray((0.5,))
+    user_args = {"bias": jnp.asarray((0.0,)), "load": load}
+    rest = jnp.zeros((1,))
+
+    def fluid_step(fluid: Any, configuration: Any, dt: Any, args: Any) -> Any:
+        del args
+        return {"circulation": fluid["circulation"] + dt * configuration[0]}, jnp.nan
+
+    result = plan.step(
+        {"circulation": jnp.asarray(1.0)},
+        rest,
+        rest,
+        load,
+        0.0,
+        0.1,
+        load,
+        fluid_step,
+        user_args,
+    )
+
+    assert bool(result.structural_solution.successful)
+    assert not bool(result.successful)
+    np.testing.assert_allclose(result.fluid_state["circulation"], 1.0)

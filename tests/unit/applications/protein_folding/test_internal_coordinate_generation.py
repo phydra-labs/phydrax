@@ -1,4 +1,5 @@
 import hashlib
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -28,7 +29,9 @@ from phydrax.qualification import ReferenceArtifactManifest
 from phydrax.units import ANGSTROM
 
 
-def _cis_proline_fixture(*, unsupported_ring=False, glycine=False, aromatic=False):
+def _cis_proline_fixture(
+    *, unsupported_ring: Any = False, glycine: Any = False, aromatic: Any = False
+) -> Any:
     if glycine and aromatic:
         raise ValueError("Fixture residue choice must be unique.")
     letter = "G" if glycine else "F" if aromatic else "P"
@@ -100,7 +103,7 @@ def _cis_proline_fixture(*, unsupported_ring=False, glycine=False, aromatic=Fals
     )
     key_index = {key: index for index, key in enumerate(keys)}
 
-    def atom(residue, name):
+    def atom(residue: Any, name: Any) -> Any:
         return key_index[ProteinAtomKey(residue, name)]
 
     routes = [
@@ -197,6 +200,7 @@ def _cis_proline_fixture(*, unsupported_ring=False, glycine=False, aromatic=Fals
     )
     system = atomistic.AtomisticSystemPlan(
         ids,
+        # ty: ignore[invalid-argument-type]
         numbers,
         masses,
         units,
@@ -234,7 +238,7 @@ def _cis_proline_fixture(*, unsupported_ring=False, glycine=False, aromatic=Fals
     return binding, qualifier, rights
 
 
-def test_periodic_decoder_preserves_chirality_rigid_proline_and_declared_cis():
+def test_periodic_decoder_preserves_chirality_rigid_proline_and_declared_cis() -> None:
     binding, qualification, _ = _cis_proline_fixture()
     with pytest.raises(ValueError, match="Cis peptide geometry"):
         prepare_bound_protein_coordinate_generation(binding, qualification)
@@ -267,7 +271,9 @@ def test_periodic_decoder_preserves_chirality_rigid_proline_and_declared_cis():
     assert support.support_id == decoder.support_id
 
 
-def test_invalid_periodic_case_and_unsupported_standard_residue_ring_are_retained_or_refused():
+def test_invalid_periodic_case_and_unsupported_standard_residue_ring_are_retained_or_refused() -> (
+    None
+):
     binding, qualification, _ = _cis_proline_fixture()
     _, decoder = prepare_bound_protein_coordinate_generation(
         binding, qualification, cis_peptide_indices=(0,)
@@ -284,7 +290,7 @@ def test_invalid_periodic_case_and_unsupported_standard_residue_ring_are_retaine
         )
 
 
-def test_glycine_is_achiral_without_suppressing_other_residue_evidence():
+def test_glycine_is_achiral_without_suppressing_other_residue_evidence() -> None:
     binding, qualification, _ = _cis_proline_fixture(glycine=True)
     _, decoder = prepare_bound_protein_coordinate_generation(
         binding, qualification, cis_peptide_indices=(0,)
@@ -299,7 +305,7 @@ def test_glycine_is_achiral_without_suppressing_other_residue_evidence():
     assert jnp.all(full.chirality_valid)
 
 
-def test_standard_aromatic_ring_is_a_rigid_evaluated_closure_group():
+def test_standard_aromatic_ring_is_a_rigid_evaluated_closure_group() -> None:
     binding, qualification, _ = _cis_proline_fixture(aromatic=True)
     _, decoder = prepare_bound_protein_coordinate_generation(
         binding, qualification, cis_peptide_indices=(0,)
@@ -313,7 +319,7 @@ def test_standard_aromatic_ring_is_a_rigid_evaluated_closure_group():
     assert qualification.evaluate(decoded.positions).successful
 
 
-def test_internal_flow_retains_every_raw_decoded_and_failed_proposal():
+def test_internal_flow_retains_every_raw_decoded_and_failed_proposal() -> None:
     binding, qualification, rights = _cis_proline_fixture()
     support, decoder = prepare_bound_protein_coordinate_generation(
         binding, qualification, cis_peptide_indices=(0,)
@@ -361,15 +367,21 @@ def test_internal_flow_retains_every_raw_decoded_and_failed_proposal():
     batch = sample_protein_coordinate_proposals(
         fit, jr.key(42), jnp.asarray([[-0.2], [0.2]]), qualification
     )
+    # ty: ignore[unresolved-attribute]
     assert batch.internal_coordinates.shape == (2, decoder.coordinate_size)
+    # ty: ignore[unresolved-attribute]
     assert batch.raw_decoded_coordinates.shape == (2, support.template.atom_capacity, 3)
+    # ty: ignore[unresolved-attribute]
     assert batch.decoded_coordinates.shape == (2, support.template.atom_capacity, 3)
+    # ty: ignore[unresolved-attribute]
     assert batch.failures.successful.shape == (2,)
     assert len(batch.sample_ids) == 2
     assert batch.physical_energy_evidence is None
     assert "non-equilibrium" in batch.scientific_scope
     assert jnp.array_equal(
-        batch.decoder_evidence.periodic_coordinates, batch.internal_coordinates
+        batch.decoder_evidence.periodic_coordinates,
+        # ty: ignore[invalid-argument-type]
+        batch.internal_coordinates,
     )
     assert batch.protein_geometry.successful.shape == (2,)
     assert all(value.shape == (2,) for value in jax.tree.leaves(batch.failures))

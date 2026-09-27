@@ -7,15 +7,18 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from enum import IntEnum
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization import StructuredCochainBridge
 from ..linalg import ArraySpace, DenseLinearOperator, eigen as eigen_linalg, FailurePolicy
 from ._maxwell_observers import ModeAmplitudeObserverPlan
 from ._maxwell_sources import (
@@ -23,6 +26,10 @@ from ._maxwell_sources import (
     MaxwellPairedCurrentSourcePlan,
     PreparedMaxwellSource,
 )
+
+
+if TYPE_CHECKING:
+    from ._maxwell import MaxwellCochainLayout
 
 
 class GuidedModeStatus(IntEnum):
@@ -182,7 +189,7 @@ class FixedFrequencyGuidedModePlan(StrictModule, NonTrainableState):
         isolation_absolute_tolerance: float = 1e-8,
         isolation_relative_tolerance: float = 1e-6,
         maximum_dofs: int = 4096,
-    ):
+    ) -> None:
         coefficient_values = tuple(
             np.asarray(value) for value in (coefficient_0, coefficient_1, coefficient_2)
         )
@@ -284,7 +291,11 @@ class FixedFrequencyGuidedModePlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "polynomial_policy must retain at least mode_count eigenpairs."
             )
-        self.coefficients = tuple(jnp.asarray(value) for value in coefficient_values)
+        self.coefficients = (
+            jnp.asarray(coefficient_values[0]),
+            jnp.asarray(coefficient_values[1]),
+            jnp.asarray(coefficient_values[2]),
+        )
         self.right_electric_trace_coefficients = tuple(
             jnp.asarray(value) for value in right_e
         )
@@ -612,14 +623,14 @@ def _safe_inverse_sqrt(value: Array, valid: Array, /) -> Array:
 
 
 def _guided_mode_derivative_evidence(
-    beta,
-    pairing,
-    finite,
-    full_beta,
-    full_finite,
-    spectrum_indices,
-    plan,
-):
+    beta: Array,
+    pairing: Array,
+    finite: Array,
+    full_beta: Array,
+    full_finite: Array,
+    spectrum_indices: Array,
+    plan: FixedFrequencyGuidedModePlan,
+) -> GuidedModeDerivativeEvidence:
     count = plan.mode_count
     distances = jnp.abs(beta[:, None] - full_beta[None, :])
     same_mode = (
@@ -679,7 +690,9 @@ def _guided_mode_derivative_evidence(
     )
 
 
-def _classify_guided_modes(beta, finite, plan):
+def _classify_guided_modes(
+    beta: Array, finite: Array, plan: FixedFrequencyGuidedModePlan
+) -> Array:
     real = jnp.abs(jnp.real(beta))
     imaginary = jnp.abs(jnp.imag(beta))
     scale = jnp.maximum(1.0, jnp.abs(beta))
@@ -729,7 +742,7 @@ class MaxwellHuygensSourcePlan(AbstractMaxwellSourcePlan, NonTrainableState):
         amplitude: ArrayLike = 1.0,
         control_key: str | None = None,
         magnetic_closedness_preserving: bool = False,
-    ):
+    ) -> None:
         if direction not in (-1, 1):
             raise ValueError("Huygens launch direction must be -1 or +1.")
         power = float(signed_power)
@@ -762,7 +775,9 @@ class MaxwellHuygensSourcePlan(AbstractMaxwellSourcePlan, NonTrainableState):
             identifier,
         )
 
-    def prepare(self, bridge, layout, /) -> PreparedMaxwellSource:
+    def prepare(
+        self, bridge: StructuredCochainBridge, layout: MaxwellCochainLayout, /
+    ) -> PreparedMaxwellSource:
         return self.paired.prepare(bridge, layout)
 
 
@@ -785,7 +800,7 @@ class MaxwellModePortPlan(StrictModule):
         source: MaxwellHuygensSourcePlan,
         observer: ModeAmplitudeObserverPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, MaxwellHuygensSourcePlan) or not isinstance(
             observer, ModeAmplitudeObserverPlan
         ):
@@ -830,7 +845,7 @@ class MaxwellModeDecomposition(StrictModule, NonTrainableState):
     mass: Array
     decomposition_id: str = eqx.field(static=True)
 
-    def __init__(self, modes: ArrayLike, mass: ArrayLike, /):
+    def __init__(self, modes: ArrayLike, mass: ArrayLike, /) -> None:
         modes_ = jnp.asarray(modes)
         mass_ = jnp.asarray(mass)
         if modes_.ndim != 2 or mass_.shape != (modes_.shape[0], modes_.shape[0]):
@@ -873,7 +888,7 @@ class MaxwellNearToFarPlan(StrictModule, NonTrainableState):
         directions: ArrayLike,
         wavenumbers: ArrayLike,
         /,
-    ):
+    ) -> None:
         positions_ = jnp.asarray(positions, dtype=jnp.float64)
         normals_ = jnp.asarray(normals, dtype=jnp.float64)
         weights_ = jnp.asarray(weights, dtype=jnp.float64)

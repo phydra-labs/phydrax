@@ -9,7 +9,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -71,7 +72,7 @@ class LatticeParquetPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-10,
         damping: float = 0.7,
         maximum_elements: int = 4_000_000,
-    ):
+    ) -> None:
         iterations = int(maximum_iterations)
         tolerance_ = float(tolerance)
         damping_ = float(damping)
@@ -184,8 +185,16 @@ class PreparedLatticeParquet(StrictModule, NonTrainableState):
     prepared_id: str = eqx.field(static=True)
 
     def __init__(
-        self, plan, vertex, bubbles, gathers, inverses, routing_residual, prepared_id, /
-    ):
+        self,
+        plan: LatticeParquetPlan,
+        vertex: MatsubaraTwoParticleGreenFunction,
+        bubbles: Array,
+        gathers: Array,
+        inverses: Array,
+        routing_residual: Array,
+        prepared_id: str,
+        /,
+    ) -> None:
         self.plan = plan
         self.fully_irreducible_vertex = vertex
         self.channel_bubbles = bubbles

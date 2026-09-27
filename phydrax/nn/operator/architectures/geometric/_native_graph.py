@@ -11,12 +11,12 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from phydrax._doc import DOC_KEY0
 from phydrax.graph._ir import GraphIR
 from phydrax.nn._keys import EvalKey
-from phydrax.nn.operator.data import OperatorBatch
+from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 from phydrax.nn.operator.topology import (
     gather_operator_graph_entities,
@@ -53,7 +53,7 @@ class NativeGraphOperator(AbstractOperatorModel):
         source_name: str | None = None,
         input_key: str = "features",
         output_key: str | None = None,
-    ):
+    ) -> None:
         if not callable(processor):
             raise TypeError("NativeGraphOperator processor must be callable.")
         if not str(input_key):
@@ -67,7 +67,7 @@ class NativeGraphOperator(AbstractOperatorModel):
         self.input_key = str(input_key)
         self.output_key = None if output_key is None else str(output_key)
 
-    def _source(self, batch: OperatorBatch, /):
+    def _source(self, batch: OperatorBatch, /) -> FunctionSamples:
         if self.source_name is not None:
             return batch.input(self.source_name)
         candidates = tuple(

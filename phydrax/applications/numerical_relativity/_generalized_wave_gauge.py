@@ -9,7 +9,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -42,7 +43,7 @@ class GeneralizedWaveGaugePlan(StrictModule):
         damping: float,
         scalar_curvature_gauge: float,
         source_sign: int = 1,
-    ):
+    ) -> None:
         initial = np.asarray(initial_source, dtype=np.float64)
         boundary = np.asarray(boundary_source, dtype=np.float64)
         values = tuple(

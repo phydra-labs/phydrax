@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..dynamics import DiscreteStepContext, StateLayout
@@ -81,7 +82,7 @@ class MultipleShootingDecisionLayout(StrictModule):
         control_shape: tuple[int, ...],
         state_anchors: ArrayLike,
         /,
-    ):
+    ) -> None:
         steps = int(num_steps)
         if not isinstance(state_layout, StateLayout):
             raise TypeError("state_layout must be a StateLayout.")
@@ -235,7 +236,7 @@ class MultipleShootingLinearization(StrictModule):
         equality_provenance: tuple[str, ...],
         inequality_provenance: tuple[str, ...],
         hessian_regularization: float,
-    ):
+    ) -> None:
         self.quadratic_program = quadratic_program
         self.layout = layout
         self.objective = jnp.asarray(objective)
@@ -278,7 +279,7 @@ class MultipleShootingHistory(StrictModule):
         step_size: ArrayLike,
         accepted: ArrayLike,
         qp_status: ArrayLike,
-    ):
+    ) -> None:
         objective_ = jnp.asarray(objective)
         merit_ = jnp.asarray(merit)
         maximum_defect_ = jnp.asarray(maximum_defect)
@@ -361,7 +362,7 @@ class MultipleShootingResult(StrictModule):
         iterations: int,
         status: int,
         layout: MultipleShootingDecisionLayout,
-    ):
+    ) -> None:
         self.state_nodes = jnp.asarray(state_nodes)
         self.control_nodes = jnp.asarray(control_nodes)
         self.boundary_defect = jnp.asarray(boundary_defect)

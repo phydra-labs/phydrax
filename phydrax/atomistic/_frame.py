@@ -5,12 +5,16 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Iterable, Iterator
 from enum import IntFlag
+from types import TracebackType
+from typing import Self
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -41,14 +45,14 @@ class AtomisticMetadata(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        atom_names,
-        element_labels,
-        residue_ids,
-        residue_names,
-        chain_ids,
-        segment_ids,
+        atom_names: Iterable[str],
+        element_labels: Iterable[str],
+        residue_ids: ArrayLike,
+        residue_names: Iterable[str],
+        chain_ids: Iterable[str],
+        segment_ids: Iterable[str],
         /,
-    ):
+    ) -> None:
         names = tuple(str(value) for value in atom_names)
         count = len(names)
         elements = tuple(str(value) for value in element_labels)
@@ -99,7 +103,7 @@ class AtomisticSelectionPlan(StrictModule, NonTrainableState):
     stable_ids: Array
     selection_id: str = eqx.field(static=True)
 
-    def __init__(self, stable_ids: ArrayLike, mask: ArrayLike, /):
+    def __init__(self, stable_ids: ArrayLike, mask: ArrayLike, /) -> None:
         ids = np.asarray(stable_ids)
         selected = np.asarray(mask, dtype=np.bool_)
         if ids.ndim != 1 or selected.shape != ids.shape:
@@ -130,7 +134,7 @@ class AtomisticSelectionPlan(StrictModule, NonTrainableState):
     def __invert__(self) -> "AtomisticSelectionPlan":
         return AtomisticSelectionPlan(self.stable_ids, ~self.mask)
 
-    def _require_same(self, other, /) -> None:
+    def _require_same(self, other: object, /) -> None:
         if not isinstance(other, AtomisticSelectionPlan) or not np.array_equal(
             np.asarray(self.stable_ids), np.asarray(other.stable_ids)
         ):
@@ -177,7 +181,7 @@ class AtomisticFrame(StrictModule):
         topology_id: str,
         units: AtomisticUnitSystem,
         source_id: str,
-    ):
+    ) -> None:
         position = jnp.asarray(positions)
         ids_host = np.asarray(stable_ids)
         if not np.issubdtype(ids_host.dtype, np.integer):
@@ -193,7 +197,9 @@ class AtomisticFrame(StrictModule):
             raise ValueError("Frame stable IDs must be unique and non-negative.")
         ids = jnp.asarray(ids_host)
 
-        def optional(value, dtype=None):
+        def optional(
+            value: ArrayLike | None, dtype: DTypeLike | None = None
+        ) -> Array | None:
             return None if value is None else jnp.asarray(value, dtype=dtype)
 
         velocity = optional(velocities, position.dtype)
@@ -263,23 +269,28 @@ class AbstractAtomisticTrajectorySinkPlan(StrictModule, NonTrainableState):
     sink_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
-    def open(self, *, append: bool = False) -> "AtomisticTrajectoryWriter":
+    def open(self, *, append: bool) -> "AtomisticTrajectoryWriter":
         raise NotImplementedError
 
 
 class AtomisticTrajectoryReader(abc.ABC):
     @abc.abstractmethod
-    def __iter__(self):
+    def __iter__(self) -> Iterator[AtomisticFrame]:
         raise NotImplementedError
 
     @abc.abstractmethod
     def close(self) -> None:
         raise NotImplementedError
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         self.close()
 
 
@@ -292,10 +303,15 @@ class AtomisticTrajectoryWriter(abc.ABC):
     def close(self) -> None:
         raise NotImplementedError
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         self.close()
 
 
@@ -303,7 +319,7 @@ class InMemoryTrajectorySourcePlan(AbstractAtomisticTrajectorySourcePlan):
     frames: tuple[AtomisticFrame, ...]
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, frames, /):
+    def __init__(self, frames: Iterable[AtomisticFrame], /) -> None:
         values = tuple(frames)
         if any(not isinstance(value, AtomisticFrame) for value in values):
             raise TypeError("frames must contain AtomisticFrame values.")
@@ -332,18 +348,18 @@ class InMemoryTrajectorySourcePlan(AbstractAtomisticTrajectorySourcePlan):
             }
         )
 
-    def open(self):
+    def open(self) -> AtomisticTrajectoryReader:
         return _InMemoryReader(self.frames)
 
 
 class _InMemoryReader(AtomisticTrajectoryReader):
-    def __init__(self, frames):
+    def __init__(self, frames: tuple[AtomisticFrame, ...]) -> None:
         self.frames = frames
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[AtomisticFrame]:
         return iter(self.frames)
 
-    def close(self):
+    def close(self) -> None:
         return None
 
 

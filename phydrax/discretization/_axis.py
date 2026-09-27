@@ -7,17 +7,19 @@ from __future__ import annotations
 import abc
 import math
 from collections.abc import Callable, Sequence
-from typing import Literal
+from typing import Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from .._fingerprint import canonical_fingerprint
 from .._polynomial._orthogonal import legendre_rule_data
 from .._strict import StrictModule
+from ..typing import parse
 from ._axis_domain import AxisDomain
 from ._core import (
     DiscretizationCapability,
@@ -27,8 +29,13 @@ from ._core import (
 from ._lifecycle import AbstractDiscretizationPlan
 
 
-AxisPrimaryEntity = Literal["point", "interval"]
-AxisBasis = Literal[
+if TYPE_CHECKING:
+    from ._tensor_index import PreparedTensorIndexSpace
+    from ._tensor_support import PreparedTensorGrid
+
+
+AxisPrimaryEntity: TypeAlias = Literal["point", "interval"]
+AxisBasis: TypeAlias = Literal[
     "uniform",
     "nonuniform",
     "fourier",
@@ -69,22 +76,10 @@ class AxisDiscretization(StrictModule):
         active: ArrayLike | None = None,
         level: ArrayLike | None = None,
         parent_interval: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(domain, AxisDomain):
             raise TypeError("domain must be an AxisDomain.")
-        if basis not in (
-            "uniform",
-            "nonuniform",
-            "fourier",
-            "sine",
-            "cosine",
-            "chebyshev",
-            "legendre",
-            "nested",
-            "rational_chebyshev_line",
-            "rational_chebyshev_half_line",
-        ):
-            raise ValueError("Unknown axis basis.")
+        basis = parse(basis, AxisBasis, "basis")
         nodes_ = jnp.asarray(nodes, dtype=jnp.float64).reshape((-1,))
         if nodes_.size == 0:
             raise ValueError("AxisDiscretization.nodes must be non-empty.")
@@ -108,8 +103,7 @@ class AxisDiscretization(StrictModule):
                 jnp.any(~jnp.isfinite(weights)) | jnp.any(weights < 0.0),
                 "AxisDiscretization quadrature weights must be finite and non-negative.",
             )
-        if primary_entity not in ("point", "interval"):
-            raise ValueError("primary_entity must be 'point' or 'interval'.")
+        primary_entity = parse(primary_entity, AxisPrimaryEntity, "primary_entity")
         if primary_entity == "interval" and domain.finite_bounds is None:
             raise ValueError("Interval-primary axes require a finite domain.")
         lower = bool(lower_endpoint_included)
@@ -121,7 +115,9 @@ class AxisDiscretization(StrictModule):
                 "Interval-primary nodes are not physical boundary endpoints."
             )
 
-        def normalize_metadata(name, value, dtype):
+        def normalize_metadata(
+            name: str, value: ArrayLike | None, dtype: DTypeLike
+        ) -> Array | None:
             if value is None:
                 return None
             normalized = jnp.asarray(value, dtype=dtype).reshape((-1,))
@@ -216,7 +212,7 @@ class TensorGridPlan(AbstractDiscretizationPlan):
         cut_cell_order: int = 0,
         key: DiscretizationKey | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         axes_ = tuple(axes)
         if not axes_ or not all(isinstance(axis, AbstractAxisSpec) for axis in axes_):
             raise TypeError(
@@ -275,13 +271,13 @@ class TensorGridPlan(AbstractDiscretizationPlan):
         self.capabilities = capabilities
         self.plan_id = identifier
 
-    def prepare(self, bounds: ArrayLike, /):
+    def prepare(self, bounds: ArrayLike, /) -> PreparedTensorGrid:
         """Materialize numerical support without selecting a calculus."""
         from ._tensor_support import PreparedTensorGrid
 
         return PreparedTensorGrid.from_plan(self, bounds)
 
-    def prepare_index_space(self, bounds: ArrayLike, /):
+    def prepare_index_space(self, bounds: ArrayLike, /) -> PreparedTensorIndexSpace:
         """Materialize tensor axes without dense tensor-product arrays."""
         from ._tensor_index import PreparedTensorIndexSpace
 
@@ -300,7 +296,7 @@ class UniformAxisSpec(AbstractAxisSpec):
     endpoint: bool
     periodic: bool
 
-    def __init__(self, n: int, *, endpoint: bool = True, periodic: bool = False):
+    def __init__(self, n: int, *, endpoint: bool = True, periodic: bool = False) -> None:
         self.n = _axis_count(n)
         self.endpoint = bool(endpoint)
         self.periodic = bool(periodic)
@@ -344,7 +340,7 @@ class UniformCellAxisSpec(AbstractAxisSpec):
     n: int
     periodic: bool
 
-    def __init__(self, n: int, *, periodic: bool = False):
+    def __init__(self, n: int, *, periodic: bool = False) -> None:
         self.n = _axis_count(n)
         self.periodic = bool(periodic)
 
@@ -382,7 +378,7 @@ class NonuniformCellAxisSpec(AbstractAxisSpec):
         /,
         *,
         periodic: bool = False,
-    ):
+    ) -> None:
         edges = np.asarray(normalized_edges, dtype=np.float64)
         if (
             edges.ndim != 1
@@ -426,7 +422,7 @@ class NestedDyadicAxisSpec(AbstractAxisSpec):
     n: int
     initial_level: int
 
-    def __init__(self, n: int, *, initial_level: int = 1):
+    def __init__(self, n: int, *, initial_level: int = 1) -> None:
         self.n = _axis_count(n)
         intervals = int(n) - 1
         if intervals <= 0 or intervals & (intervals - 1):
@@ -516,7 +512,7 @@ class FourierAxisSpec(AbstractAxisSpec):
 
     n: int
 
-    def __init__(self, n: int):
+    def __init__(self, n: int) -> None:
         self.n = _axis_count(n)
 
     def materialize(self, a: Array, b: Array, /) -> AxisDiscretization:
@@ -550,7 +546,7 @@ class SineAxisSpec(AbstractAxisSpec):
 
     n: int
 
-    def __init__(self, n: int):
+    def __init__(self, n: int) -> None:
         self.n = _axis_count(n)
 
     def materialize(self, a: Array, b: Array, /) -> AxisDiscretization:
@@ -585,7 +581,7 @@ class CosineAxisSpec(AbstractAxisSpec):
 
     n: int
 
-    def __init__(self, n: int):
+    def __init__(self, n: int) -> None:
         self.n = _axis_count(n)
 
     def materialize(self, a: Array, b: Array, /) -> AxisDiscretization:
@@ -628,7 +624,9 @@ class LegendreAxisSpec(AbstractAxisSpec):
     n: int
     kind: Literal["gauss", "radau", "lobatto"]
 
-    def __init__(self, n: int, *, kind: Literal["gauss", "radau", "lobatto"] = "gauss"):
+    def __init__(
+        self, n: int, *, kind: Literal["gauss", "radau", "lobatto"] = "gauss"
+    ) -> None:
         self.n = _axis_count(n)
         if kind not in ("gauss", "radau", "lobatto"):
             raise ValueError("kind must be 'gauss', 'radau', or 'lobatto'.")

@@ -11,11 +11,12 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax import Array
 
 from ..._differentiation import (
     DerivativeContract,
 )
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from .._batch import MLBatch
 from .._contracts import (
@@ -84,7 +85,7 @@ class ScoreRecord(StrictModule):
         status: Any,
         effective_weight: Any,
         raw: Any,
-    ):
+    ) -> None:
         self.value = value
         self.valid = valid
         self.status = status
@@ -303,7 +304,7 @@ class FoldEvaluation(StrictModule):
         *,
         fit_key: Any,
         prediction_key: Any,
-    ):
+    ) -> None:
         self.fold = fold
         self.fit_result = fit_result
         self.scorer_result = scorer_result
@@ -324,7 +325,7 @@ def _aggregate_scores(folds: tuple[FoldEvaluation, ...], /) -> ScoreRecord:
         tuple(fold.scorer_result.effective_weight for fold in folds)
     )
 
-    def aggregate(value, valid_, weight):
+    def aggregate(value: Array, valid_: Array, weight: Array) -> Array:
         weight_ = jnp.asarray(weight)
         valid_ = jnp.asarray(valid_, dtype=jnp.bool_)
         usable = valid_ & jnp.isfinite(value) & jnp.isfinite(weight_) & (weight_ >= 0)
@@ -416,7 +417,7 @@ class CrossValidationResult(StrictModule):
         *,
         key: Any,
         derivative_contract: DerivativeContract,
-    ):
+    ) -> None:
         fit_valid = jnp.all(
             jnp.stack([jnp.all(jnp.asarray(fold.fit_result.valid)) for fold in folds])
         )
@@ -546,7 +547,7 @@ class OutOfFoldPredictionResult(StrictModule):
         valid: Any,
         status: Any,
         /,
-    ):
+    ) -> None:
         self.predictions = jnp.asarray(predictions)
         self.sample_mask = jnp.asarray(sample_mask, dtype=jnp.bool_)
         self.fold_ids = jnp.asarray(fold_ids, dtype=jnp.int32)
@@ -721,7 +722,7 @@ class CrossValidator(StrictModule):
     split_plan: AbstractSplitPlan
     scorer: Any
 
-    def __init__(self, split_plan: AbstractSplitPlan, scorer: Any, /):
+    def __init__(self, split_plan: AbstractSplitPlan, scorer: Any, /) -> None:
         if not isinstance(split_plan, AbstractSplitPlan):
             raise TypeError("split_plan must be an AbstractSplitPlan.")
         if not callable(scorer) and not isinstance(scorer, _Scorer):

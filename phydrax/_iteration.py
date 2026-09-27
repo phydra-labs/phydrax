@@ -10,13 +10,15 @@ import abc
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Any, cast, Literal, Protocol
+from typing import Any, Literal, Protocol, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ._execution_control import (
     DistributedObservationPolicy,
@@ -26,9 +28,10 @@ from ._execution_control import (
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
+from .typing import parse
 
 
-IterationGranularity = Literal[
+IterationGranularity: TypeAlias = Literal[
     "terminal",
     "output",
     "segment",
@@ -36,14 +39,6 @@ IterationGranularity = Literal[
     "attempt",
     "inner-iteration",
 ]
-_GRANULARITIES: tuple[IterationGranularity, ...] = (
-    "terminal",
-    "output",
-    "segment",
-    "step",
-    "attempt",
-    "inner-iteration",
-)
 
 
 class IterationPhase(IntEnum):
@@ -82,7 +77,7 @@ class IterationCoordinates(StrictModule):
         active: ArrayLike = True,
         committed: ArrayLike = False,
         terminal: ArrayLike = False,
-    ):
+    ) -> None:
         self.phase = jnp.asarray(phase, dtype=jnp.int32)
         self.ordinal = jnp.asarray(ordinal, dtype=jnp.int32)
         self.invocation = jnp.asarray(invocation, dtype=jnp.int32)
@@ -107,7 +102,7 @@ class IterationRecord(StrictModule):
         status: ArrayLike,
         metrics: PyTree[Any],
         /,
-    ):
+    ) -> None:
         if not isinstance(coordinates, IterationCoordinates):
             raise TypeError("coordinates must be IterationCoordinates.")
         self.coordinates = coordinates
@@ -137,14 +132,12 @@ class IterationCapabilities(StrictModule, NonTrainableState):
         host_streaming: bool = False,
         mapped_records: bool = True,
         checkpointable: bool = False,
-    ):
-        granularities_ = cast(
-            tuple[IterationGranularity, ...],
-            tuple(str(value) for value in granularities),
+    ) -> None:
+        granularities_ = tuple(
+            parse(str(value), IterationGranularity, "granularities")
+            for value in granularities
         )
-        if not granularities_ or any(
-            value not in _GRANULARITIES for value in granularities_
-        ):
+        if not granularities_:
             raise ValueError("Iteration granularities are invalid.")
         if "terminal" not in granularities_:
             raise ValueError("Every iterative owner must support terminal evidence.")
@@ -184,7 +177,7 @@ class IterationScope(StrictModule, NonTrainableState):
         role: str,
         algorithm_id: str,
         depth: int,
-    ):
+    ) -> None:
         scope_id_ = str(scope_id)
         role_ = str(role)
         algorithm_id_ = str(algorithm_id)
@@ -203,7 +196,7 @@ class IterationDecision(StrictModule):
 
     stop: Array
 
-    def __init__(self, stop: ArrayLike = False, /):
+    def __init__(self, stop: ArrayLike = False, /) -> None:
         stop_ = jnp.asarray(stop, dtype=jnp.bool_)
         if stop_.shape != ():
             raise ValueError("Iteration stop decisions must be scalar.")
@@ -284,7 +277,7 @@ class IterationTraceObserver(AbstractIterationObserver):
         *,
         cadence: int = 1,
         committed_only: bool = False,
-    ):
+    ) -> None:
         capacity_ = int(capacity)
         cadence_ = int(cadence)
         if capacity_ < 0 or cadence_ <= 0:
@@ -369,7 +362,7 @@ class IterationCountObserver(AbstractIterationObserver):
 
     observer_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.observer_id = canonical_fingerprint({"kind": "iteration-counts"})
 
     def initialize(self, initial: IterationRecord, /) -> IterationCounts:
@@ -437,7 +430,7 @@ class IterationMomentObserver(AbstractIterationObserver):
     projector: Callable = eqx.field(static=True)
     observer_id: str = eqx.field(static=True)
 
-    def __init__(self, projector: Callable, observer_id: str, /):
+    def __init__(self, projector: Callable, observer_id: str, /) -> None:
         observer_id_ = str(observer_id)
         if not callable(projector) or not observer_id_:
             raise ValueError("Moment observer projector and identity are required.")
@@ -516,7 +509,7 @@ class CallableIterationObserver(AbstractIterationObserver):
         finalizer: Callable,
         observer_id: str,
         /,
-    ):
+    ) -> None:
         observer_id_ = str(observer_id)
         if (
             not callable(initializer)
@@ -561,7 +554,7 @@ class CallableIterationStopRule(AbstractIterationStopRule):
         evaluator: Callable,
         rule_id: str,
         /,
-    ):
+    ) -> None:
         rule_id_ = str(rule_id)
         if not callable(initializer) or not callable(evaluator) or not rule_id_:
             raise ValueError("Callable stop-rule functions and identity are required.")
@@ -585,7 +578,7 @@ class IterationChildPlan(StrictModule, NonTrainableState):
     role: str = eqx.field(static=True)
     plan: IterationPlan
 
-    def __init__(self, role: str, plan: IterationPlan, /):
+    def __init__(self, role: str, plan: IterationPlan, /) -> None:
         role_ = str(role)
         if not role_ or not isinstance(plan, IterationPlan):
             raise ValueError("Iteration child plans require a role and plan.")
@@ -609,10 +602,8 @@ class IterationPlan(StrictModule, NonTrainableState):
         observers: Sequence[AbstractIterationObserver] = (),
         stop_rule: AbstractIterationStopRule | None = None,
         children: Sequence[IterationChildPlan] = (),
-    ):
-        granularity_ = str(granularity)
-        if granularity_ not in _GRANULARITIES:
-            raise ValueError("Iteration plan granularity is invalid.")
+    ) -> None:
+        granularity_ = parse(str(granularity), IterationGranularity, "granularity")
         observers_ = tuple(observers)
         if any(not isinstance(value, AbstractIterationObserver) for value in observers_):
             raise TypeError(
@@ -897,7 +888,7 @@ class IterationSession:
         control: IterationHostControl | None = None,
         state: IterationSessionState | None = None,
         observation_policy: DistributedObservationPolicy | None = None,
-    ):
+    ) -> None:
         session_id_ = str(session_id)
         sinks_ = tuple(sinks)
         if not session_id_ or any(not sink.sink_id for sink in sinks_):

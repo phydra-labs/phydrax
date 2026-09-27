@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 from phydrax import ein
@@ -41,7 +42,7 @@ class ColeColeConductivity(StrictModule):
         time_constant_s: ArrayLike,
         exponent: ArrayLike,
         /,
-    ):
+    ) -> None:
         dc, chargeability_, time, exponent_ = jnp.broadcast_arrays(
             jnp.asarray(dc_conductivity_S_m),
             jnp.asarray(chargeability),
@@ -93,7 +94,7 @@ class DebyeSpectrumConductivity(StrictModule):
         increments_S_m: ArrayLike,
         time_constants_s: ArrayLike,
         /,
-    ):
+    ) -> None:
         dc = jnp.asarray(dc_conductivity_S_m)
         increments = jnp.asarray(increments_S_m)
         times = jnp.asarray(time_constants_s)
@@ -171,7 +172,7 @@ class SpectralIPPlan(StrictModule, NonTrainableState):
     policy: la.LinearSolvePolicy
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, finite_patch: FinitePatchDCPlan, /):
+    def __init__(self, finite_patch: FinitePatchDCPlan, /) -> None:
         if not isinstance(finite_patch, FinitePatchDCPlan):
             raise TypeError("Spectral IP requires FinitePatchDCPlan geometry and survey.")
         cells = np.concatenate(
@@ -201,7 +202,7 @@ class SpectralIPPlan(StrictModule, NonTrainableState):
             {"kind": "spectral-ip-plan", "finite_patch": finite_patch.plan_id}
         )
 
-    def _operator(self, conductivity: Array):
+    def _operator(self, conductivity: Array) -> la.FunctionLinearOperator:
         cell_count = self.cells.shape[0]
         values = jnp.broadcast_to(jnp.asarray(conductivity), (cell_count,))
         values = eqx.error_if(
@@ -218,7 +219,7 @@ class SpectralIPPlan(StrictModule, NonTrainableState):
         )
         nodes = self.gauge.size
 
-        def action(unknown):
+        def action(unknown: Array) -> Array:
             potential, multiplier = unknown[:nodes], unknown[-1]
             cell_values = potential[self.cells]
             residual = ein.contract("cij,cj->ci", local, cell_values)

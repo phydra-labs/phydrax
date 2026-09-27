@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PRNGKeyArray
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -24,6 +25,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.dsmc._core import DSMCParticleState, DSMCSpeciesPlan
+from ..typing import PRNGKey
 
 
 class ContinuumDSMCReason(IntFlag):
@@ -264,7 +266,7 @@ class ContinuumToDSMCConversionPlan(StrictModule, NonTrainableState):
 
     def convert(
         self,
-        key: PRNGKeyArray,
+        key: PRNGKey,
         total_mass: ArrayLike,
         mean_velocity: ArrayLike,
         translational_thermal_energy: ArrayLike,

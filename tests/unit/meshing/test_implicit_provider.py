@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -6,14 +8,14 @@ import pytest
 import phydrax as phx
 
 
-def _grid(count=9):
+def _grid(count: Any = 9) -> Any:
     return phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformAxisSpec(count) for _ in range(3)),
         axis_names=("x", "y", "z"),
     ).prepare(jnp.asarray([[-1.4, -1.4, -1.4], [1.4, 1.4, 1.4]]))
 
 
-def test_native_implicit_provider_preserves_fixed_topology_gradients():
+def test_native_implicit_provider_preserves_fixed_topology_gradients() -> None:
     geometry = phx.geometry.Sphere(
         (0.0, 0.0, 0.0),
         0.75,
@@ -59,7 +61,7 @@ def test_native_implicit_provider_preserves_fixed_topology_gradients():
     result = plan.execute()
     radius_index = geometry.schema.index(phx.geometry.ParameterId("sphere", "radius"))
 
-    def vertex_sum(radius):
+    def vertex_sum(radius: Any) -> Any:
         state = geometry.state.replace_at(radius_index, radius)
         return jnp.sum(plan.surface_plan.realize(state).proposed_vertices)
 
@@ -75,7 +77,9 @@ def test_native_implicit_provider_preserves_fixed_topology_gradients():
     assert derivative != 0.0
 
 
-def _implicit_case(*, size_strength, limits=None, periodic_constraints=()):
+def _implicit_case(
+    *, size_strength: Any, limits: Any = None, periodic_constraints: Any = ()
+) -> Any:
     geometry = phx.geometry.Sphere(
         (0.0, 0.0, 0.0),
         0.75,
@@ -109,7 +113,7 @@ def _implicit_case(*, size_strength, limits=None, periodic_constraints=()):
     return geometry, scope, specification
 
 
-def _plan_case(geometry, specification):
+def _plan_case(geometry: Any, specification: Any) -> Any:
     return phx.meshing.NativeImplicitProvider().plan(
         geometry,
         _grid(),
@@ -124,7 +128,7 @@ def _plan_case(geometry, specification):
     )
 
 
-def test_native_implicit_provider_rejects_unsupported_periodic_controls():
+def test_native_implicit_provider_rejects_unsupported_periodic_controls() -> None:
     geometry, scope, _ = _implicit_case(
         size_strength=phx.meshing.SizeControlStrength.SOFT
     )
@@ -141,7 +145,7 @@ def test_native_implicit_provider_rejects_unsupported_periodic_controls():
     )
 
 
-def test_native_implicit_provider_enforces_limits_and_hard_size_compliance():
+def test_native_implicit_provider_enforces_limits_and_hard_size_compliance() -> None:
     limits = phx.meshing.MeshingLimits(maximum_vertices=3)
     geometry, _, limited = _implicit_case(
         size_strength=phx.meshing.SizeControlStrength.SOFT,
@@ -164,7 +168,7 @@ def test_native_implicit_provider_enforces_limits_and_hard_size_compliance():
     )
 
 
-def test_native_implicit_provider_enforces_wall_deadline():
+def test_native_implicit_provider_enforces_wall_deadline() -> None:
     limits = phx.meshing.MeshingLimits(maximum_wall_seconds=1.0e-6)
     geometry, _, specification = _implicit_case(
         size_strength=phx.meshing.SizeControlStrength.SOFT,
@@ -177,7 +181,7 @@ def test_native_implicit_provider_enforces_wall_deadline():
     assert error.value.category is phx.meshing.MeshingFailureCategory.TIMED_OUT
 
 
-def test_native_implicit_provider_volume_gradient_matches_finite_differences():
+def test_native_implicit_provider_volume_gradient_matches_finite_differences() -> None:
     geometry, _, specification = _implicit_case(
         size_strength=phx.meshing.SizeControlStrength.SOFT
     )
@@ -186,7 +190,7 @@ def test_native_implicit_provider_volume_gradient_matches_finite_differences():
         phx.geometry.ParameterId("admission-sphere", "radius")
     )
 
-    def enclosed_volume(radius):
+    def enclosed_volume(radius: Any) -> Any:
         result = plan.execute(geometry.state.replace_at(radius_index, radius))
         faces = result.geometry.geometry_dofs[0]
         corners = result.geometry.coordinates[faces]

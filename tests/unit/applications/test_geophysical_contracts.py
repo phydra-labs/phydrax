@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -27,7 +28,7 @@ from phydrax.nn.operator import (
 from phydrax.units import KELVIN, KILOPASCAL, ONE, PASCAL, PRESSURE, TEMPERATURE
 
 
-def test_exchange_compatibility_is_physical_not_local_storage_or_unit_scale():
+def test_exchange_compatibility_is_physical_not_local_storage_or_unit_scale() -> None:
     source = GeophysicalQuantity(
         "pressure_source",
         "pressure",
@@ -51,7 +52,9 @@ def test_exchange_compatibility_is_physical_not_local_storage_or_unit_scale():
         GeophysicalQuantity("temperature", "temperature", PASCAL)
 
 
-def test_archive_binding_requires_actual_original_storage_and_untampered_semantics():
+def test_archive_binding_requires_actual_original_storage_and_untampered_semantics() -> (
+    None
+):
     layout = StateLayout((2,), component_names=("temperature", "pressure"))
     quantity = GeophysicalQuantity("temperature", "temperature", KELVIN)
     binding = GeophysicalFieldBinding(
@@ -70,7 +73,7 @@ def test_archive_binding_requires_actual_original_storage_and_untampered_semanti
         GeophysicalFieldBinding(quantity, state_layout=layout, components=("missing",))
 
 
-def _column_task(dimension):
+def _column_task(dimension: Any) -> Any:
     return OperatorTask(
         "column-task",
         fields=(
@@ -91,7 +94,7 @@ def _column_task(dimension):
     )
 
 
-def test_binding_checks_quantity_dimension_against_declaring_owner_port():
+def test_binding_checks_quantity_dimension_against_declaring_owner_port() -> None:
     quantity = GeophysicalQuantity("temperature", "temperature", KELVIN)
     binding = GeophysicalFieldBinding(
         quantity, operator_task=_column_task(TEMPERATURE), field_name="temperature"
@@ -103,7 +106,7 @@ def test_binding_checks_quantity_dimension_against_declaring_owner_port():
         )
 
 
-def test_owners_without_declared_dimensions_record_unverified_bindings():
+def test_owners_without_declared_dimensions_record_unverified_bindings() -> None:
     quantity = GeophysicalQuantity("temperature", "temperature", KELVIN)
     layout = StateLayout((2,), component_names=("temperature", "pressure"))
     state = GeophysicalFieldBinding(
@@ -132,13 +135,15 @@ def test_owners_without_declared_dimensions_record_unverified_bindings():
         ("360_day", ("2001-02-30", "2001-03-01"), 1.0),
     ],
 )
-def test_calendar_elapsed_time_and_inverse(calendar, dates, elapsed):
+def test_calendar_elapsed_time_and_inverse(
+    calendar: Any, dates: Any, elapsed: Any
+) -> None:
     spec = GeophysicalTimeSpec(calendar, dates[0], "d")
     np.testing.assert_array_equal(spec.encode(dates), [0.0, elapsed])
     assert spec.decode([0.0, elapsed]) == tuple(date + "T00:00:00" for date in dates)
 
 
-def test_calendar_invalid_dates_time_scale_and_epoch_identity():
+def test_calendar_invalid_dates_time_scale_and_epoch_identity() -> None:
     standard = GeophysicalTimeSpec("gregorian", "1582-10-04", "d")
     with pytest.raises(ValueError, match="transition"):
         standard.encode(["1582-10-10"])
@@ -158,7 +163,9 @@ def test_calendar_invalid_dates_time_scale_and_epoch_identity():
         GeophysicalTimeSpec.from_dict(forged)
 
 
-def test_clock_rejects_lossy_fractional_dates_instead_of_leaving_supported_range():
+def test_clock_rejects_lossy_fractional_dates_instead_of_leaving_supported_range() -> (
+    None
+):
     final_date = "9999-12-31T23:59:59.999999"
     with pytest.raises(ValueError, match="representable"):
         GeophysicalTimeSpec().encode([final_date])
@@ -166,7 +173,7 @@ def test_clock_rejects_lossy_fractional_dates_instead_of_leaving_supported_range
     assert close_epoch.decode(close_epoch.encode([final_date])) == (final_date,)
 
 
-def test_accumulation_requires_bounds_but_allows_explicit_rolling_windows():
+def test_accumulation_requires_bounds_but_allows_explicit_rolling_windows() -> None:
     with pytest.raises(ValueError, match="bounds"):
         TemporalSupport("accumulation")
     rolling = TemporalSupport("mean", ((0.0, 2.0), (1.0, 3.0)), "end")
@@ -176,7 +183,7 @@ def test_accumulation_requires_bounds_but_allows_explicit_rolling_windows():
         TemporalSupport("accumulation", ((3.0, 1.0),))
 
 
-def test_hybrid_layer_measure_tracks_surface_pressure_and_derivative():
+def test_hybrid_layer_measure_tracks_surface_pressure_and_derivative() -> None:
     coordinate = HybridPressureCoordinate([0.1, 0.05, 0.0], [0.0, 0.5, 1.0])
     ps = jnp.array([90000.0, 100000.0])
     pressure = coordinate.interfaces(ps)
@@ -193,7 +200,7 @@ def test_hybrid_layer_measure_tracks_surface_pressure_and_derivative():
         HybridPressureCoordinate([0.0, 0.0], [1.0, 0.0])
 
 
-def test_hybrid_archive_retains_executed_precision_not_unrounded_input():
+def test_hybrid_archive_retains_executed_precision_not_unrounded_input() -> None:
     coordinate = HybridPressureCoordinate(
         [0.1, 0.05, 0.0], [0.0, 0.5, 1.0], dtype="float32"
     )

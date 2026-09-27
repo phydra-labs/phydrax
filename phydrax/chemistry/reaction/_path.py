@@ -11,7 +11,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -47,7 +48,7 @@ class ReactionPathResult(StrictModule, NonTrainableState):
         climbing_image: int,
         source_result_ids: tuple[str, ...],
         plan_id: str,
-    ):
+    ) -> None:
         images_ = jnp.asarray(images)
         energies_ = jnp.asarray(energies, dtype=images_.dtype)
         forces_ = jnp.asarray(neb_forces, dtype=images_.dtype)
@@ -121,7 +122,7 @@ class NudgedElasticBandPlan(StrictModule, NonTrainableState):
         force_tolerance: float = 1.0e-3,
         maximum_steps: int = 500,
         climbing_start: int = 20,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         if not isinstance(surface, AbstractPreparedPotentialEnergySurface):
@@ -371,7 +372,7 @@ class ReactionPathQualificationResult(StrictModule, NonTrainableState):
         /,
         *,
         minimum_overlap: float = 0.5,
-    ):
+    ) -> None:
         threshold = float(minimum_overlap)
         mass = np.asarray(masses)
         if not isfinite(threshold) or not 0.0 <= threshold <= 1.0:
@@ -444,7 +445,7 @@ class IntrinsicReactionCoordinateResult(StrictModule, NonTrainableState):
         successful: ArrayLike,
         source_result_ids: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         forward_ = jnp.asarray(forward)
         reverse_ = jnp.asarray(reverse, dtype=forward_.dtype)
         forward_energy = jnp.asarray(forward_energies, dtype=forward_.dtype)
@@ -499,7 +500,7 @@ class IntrinsicReactionCoordinatePlan(StrictModule, NonTrainableState):
         force_tolerance: float = 1.0e-3,
         corrector_iterations: int = 8,
         corrector_tolerance: float = 1.0e-4,
-    ):
+    ) -> None:
         if surface.system_id != system.system_id or not surface.capabilities.forces:
             raise ValueError("IRC requires a force-capable surface for the same system.")
         if surface.units.unit_system_id != system.units.unit_system_id:
@@ -569,7 +570,7 @@ class IntrinsicReactionCoordinatePlan(StrictModule, NonTrainableState):
         )
         source_ids: list[str] = []
 
-        def branch(direction: float):
+        def branch(direction: float) -> tuple[np.ndarray, np.ndarray, bool]:
             position = (
                 np.asarray(transition_state.positions).copy()
                 + direction * self.step_size * mode

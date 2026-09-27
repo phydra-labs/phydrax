@@ -7,11 +7,13 @@ from __future__ import annotations
 import operator
 import time
 from enum import StrEnum
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._identity import SemanticProvenance
@@ -43,7 +45,7 @@ from .._trace import (
 )
 
 
-def _open3d():
+def _open3d() -> Any:
     try:
         import open3d
     except (ImportError, OSError) as exc:
@@ -78,7 +80,7 @@ class OrientedPointCloud(StrictModule, NonTrainableState):
         *,
         source_id: str,
         source_revision: str,
-    ):
+    ) -> None:
         if not isinstance(coordinate_contract, SpatialCoordinateContract):
             raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         if (
@@ -166,7 +168,7 @@ class PoissonReconstructionSpec(StrictModule, NonTrainableState):
         boundary: PoissonBoundaryCondition = PoissonBoundaryCondition.NEUMANN,
         density_trim_quantile: float | None = None,
         threads: int = 1,
-    ):
+    ) -> None:
         depth_ = operator.index(depth)
         scale_ = float(scale)
         if isinstance(depth, bool) or not 2 <= depth_ <= 30:
@@ -229,7 +231,7 @@ def _trim_by_density(
     )
 
 
-def _density_attribute(mesh, densities: np.ndarray, /) -> MeshAttribute:
+def _density_attribute(mesh: Any, densities: np.ndarray, /) -> MeshAttribute:
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     vertices = mesh.entity_set(0)
     return MeshAttribute(

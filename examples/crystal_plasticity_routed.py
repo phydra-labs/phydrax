@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _model(*slip_systems):
+def _model(*slip_systems: Any) -> Any:
     cp = phx.applications.crystal_plasticity
     return cp.CrystalPlasticityModel(
         slip_systems,
@@ -17,7 +19,7 @@ def _model(*slip_systems):
     )
 
 
-def _discretization():
+def _discretization() -> Any:
     points = jnp.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -55,7 +57,7 @@ def _discretization():
     ).prepare()
 
 
-def main():
+def main() -> None:
     cp = phx.applications.crystal_plasticity
     slip_xy = cp.CrystalSlipSystem(
         jnp.asarray((1.0, 0.0, 0.0)),
@@ -94,6 +96,7 @@ def main():
     residual, auxiliary = problem.residual_with_auxiliary(displacement)
     candidate = auxiliary.trial_state
     promoted = (
+        # ty: ignore[invalid-argument-type]
         route.commit(candidate) if bool(auxiliary.valid) else route.rollback(candidate)
     )
 

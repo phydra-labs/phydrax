@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -17,7 +18,7 @@ import phydrax as phx
         (jnp.float64, 2e-11, 3e-13),
     ],
 )
-def test_airy_and_scaled_airy_match_scipy(dtype, rtol, atol):
+def test_airy_and_scaled_airy_match_scipy(dtype: Any, rtol: Any, atol: Any) -> None:
     values = np.concatenate(
         [
             np.linspace(-100.0, -8.0, 100),
@@ -40,7 +41,7 @@ def test_airy_and_scaled_airy_match_scipy(dtype, rtol, atol):
     np.testing.assert_array_equal(scaled[:, ~positive], actual[:, ~positive])
 
 
-def test_airy_large_negative_phase_preserves_quarter_pi_rotation():
+def test_airy_large_negative_phase_preserves_quarter_pi_rotation() -> None:
     argument = -1e12
     values = phx.special.airy(jnp.asarray(argument))
 
@@ -66,7 +67,7 @@ def test_airy_large_negative_phase_preserves_quarter_pi_rotation():
     np.testing.assert_allclose(derivatives, expected_derivatives, rtol=3e-13)
 
 
-def test_airy_scaling_and_wronskian_identities():
+def test_airy_scaling_and_wronskian_identities() -> None:
     positive = jnp.geomspace(1e-8, 100.0, 100)
     ai, aip, bi, bip = phx.special.airy(positive)
     aie, aipe, bie, bipe = phx.special.airye(positive)
@@ -92,7 +93,7 @@ def test_airy_scaling_and_wronskian_identities():
     )
 
 
-def test_airy_forward_reverse_and_second_derivatives_obey_ode():
+def test_airy_forward_reverse_and_second_derivatives_obey_ode() -> None:
     values = jnp.asarray([-20.0, -5.0, -0.2, 0.0, 2.0, 8.0, 40.0])
     for component in range(4):
         function = lambda value: phx.special.airy(value)[component]
@@ -118,7 +119,9 @@ def test_airy_forward_reverse_and_second_derivatives_obey_ode():
         (jnp.float64, 1e12, 2e-13),
     ],
 )
-def test_scaled_airy_extreme_derivatives_remain_representable(dtype, argument, rtol):
+def test_scaled_airy_extreme_derivatives_remain_representable(
+    dtype: Any, argument: Any, rtol: Any
+) -> None:
     derivatives = [
         float(
             jax.grad(lambda value: phx.special.airye(value)[component])(
@@ -147,7 +150,7 @@ def test_scaled_airy_extreme_derivatives_remain_representable(dtype, argument, r
     )
 
 
-def test_airy_boundary_and_dtype_contracts():
+def test_airy_boundary_and_dtype_contracts() -> None:
     ordinary = phx.special.airy(jnp.asarray([jnp.inf, -jnp.inf, jnp.nan]))
     assert ordinary[0].dtype == jnp.float64
     assert np.asarray(ordinary[0])[0] == 0.0

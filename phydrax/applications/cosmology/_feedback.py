@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -47,7 +48,7 @@ class CosmologicalPopulationPlan(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, capacity: int, dimension: int, /):
+    def __init__(self, capacity: int, dimension: int, /) -> None:
         capacity_ = int(capacity)
         dimension_ = int(dimension)
         if capacity_ <= 0 or dimension_ not in (1, 2, 3):
@@ -62,7 +63,7 @@ class CosmologicalPopulationPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def empty(self, *, dtype=jnp.float64) -> CosmologicalPopulationState:
+    def empty(self, *, dtype: DTypeLike = jnp.float64) -> CosmologicalPopulationState:
         return CosmologicalPopulationState(
             jnp.arange(self.capacity, dtype=jnp.int64),
             jnp.zeros((self.capacity,), dtype=jnp.int32),
@@ -134,7 +135,7 @@ class StochasticStarFormationPlan(StrictModule, NonTrainableState):
         star_mass: float,
         maximum_events: int,
         process_id: int = 1,
-    ):
+    ) -> None:
         mass = float(star_mass)
         events = int(maximum_events)
         process = int(process_id)
@@ -336,7 +337,7 @@ class StochasticThermalFeedbackPlan(StrictModule, NonTrainableState):
         heating_energy_per_mass: float,
         maximum_events: int,
         process_id: int = 2,
-    ):
+    ) -> None:
         energy = float(heating_energy_per_mass)
         events = int(maximum_events)
         process = int(process_id)

@@ -8,7 +8,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -55,13 +56,17 @@ def _mass(plan: ChemicalEquilibriumPlan, amount: Array, /) -> Array:
     )
 
 
-def _density_and_specific_enthalpy(plan, amount, temperature, pressure):
+def _density_and_specific_enthalpy(
+    plan: ChemicalEquilibriumPlan, amount: Array, temperature: Array, pressure: Array
+) -> tuple[Array, Array]:
     state = plan.evaluate_state(amount, temperature, pressure)
     mass = _mass(plan, amount)
     return mass / state.volume, state.enthalpy / mass
 
 
-def _sound_speed(plan, equilibrium: ChemicalEquilibriumResult):
+def _sound_speed(
+    plan: ChemicalEquilibriumPlan, equilibrium: ChemicalEquilibriumResult
+) -> Array:
     amount = equilibrium.species_amount
     total = jnp.sum(amount)
     fraction = amount / total
@@ -88,7 +93,7 @@ class EquilibriumShockPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-8,
         maximum_steps: int = 12,
         difference_step: float = 1.0e-4,
-    ):
+    ) -> None:
         if (
             not isinstance(equilibrium, ChemicalEquilibriumPlan)
             or equilibrium.ensemble is not ChemicalEquilibriumEnsemble.TP
@@ -146,7 +151,7 @@ class EquilibriumShockPlan(StrictModule, NonTrainableState):
         momentum_scale = jnp.maximum(jnp.abs(momentum_total), 1.0)
         energy_scale = jnp.maximum(jnp.abs(stagnation_enthalpy), 1.0)
 
-        def residual(log_state):
+        def residual(log_state: Array) -> Array:
             downstream_temperature = jnp.exp(log_state[0])
             downstream_pressure = jnp.exp(log_state[1])
             equilibrium = self.equilibrium.solve(
@@ -264,7 +269,7 @@ class DetonationJumpPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-8,
         maximum_steps: int = 16,
         difference_step: float = 1.0e-4,
-    ):
+    ) -> None:
         ratio = float(drive_ratio)
         if not isfinite(ratio) or ratio <= 0.0:
             raise ValueError("drive_ratio must be finite and positive.")
@@ -304,7 +309,7 @@ class DetonationJumpPlan(StrictModule, NonTrainableState):
         momentum_scale = jnp.maximum(jnp.abs(pressure), 1.0)
         energy_scale = jnp.maximum(jnp.abs(upstream_enthalpy), 1.0)
 
-        def residual(log_state):
+        def residual(log_state: Array) -> Array:
             downstream_temperature, downstream_pressure, wave_speed = jnp.exp(log_state)
             equilibrium = self.shock.equilibrium.solve(
                 downstream_temperature, downstream_pressure, amount

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -11,7 +13,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _case(*, geometry_ad="piecewise"):
+def _case(*, geometry_ad: Any = "piecewise") -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformAxisSpec(12, periodic=True, endpoint=False)
@@ -60,7 +62,7 @@ def _case(*, geometry_ad="piecewise"):
     return compiled, arguments, initial, mesh
 
 
-def test_mpm_retention_modes_have_identical_final_state():
+def test_mpm_retention_modes_have_identical_final_state() -> None:
     compiled, arguments, initial, mesh = _case()
     trajectory = phx.solver.ScheduledMPMRolloutPlan(
         compiled.dynamics, mesh, retention="trajectory"
@@ -86,7 +88,7 @@ def test_mpm_retention_modes_have_identical_final_state():
             np.testing.assert_allclose(left, right, rtol=1e-12, atol=1e-12)
 
 
-def test_full_step_and_block_replay_match_primal_and_gradients():
+def test_full_step_and_block_replay_match_primal_and_gradients() -> None:
     compiled, arguments, initial, mesh = _case()
     policies = (
         phx.solver.MPMReplayPolicy("full"),
@@ -94,7 +96,7 @@ def test_full_step_and_block_replay_match_primal_and_gradients():
         phx.solver.MPMReplayPolicy("block", block_size=3),
     )
 
-    def objective(initial_velocity, policy):
+    def objective(initial_velocity: Any, policy: Any) -> Any:
         particles = phx.discretization.MPMParticleState(
             initial.particles.position,
             initial_velocity,
@@ -127,7 +129,7 @@ def test_full_step_and_block_replay_match_primal_and_gradients():
         np.testing.assert_allclose(gradient, gradients[0], rtol=1e-10, atol=1e-10)
 
 
-def _directions(initial):
+def _directions(initial: Any) -> Any:
     particle_direction = jax.tree.map(jnp.zeros_like, initial.particles)
     particle_direction = phx.discretization.MPMParticleState(
         particle_direction.position,
@@ -146,7 +148,7 @@ def _directions(initial):
     return particle_direction, argument_direction
 
 
-def test_piecewise_gradient_report_matches_jvp_vjp_and_finite_difference():
+def test_piecewise_gradient_report_matches_jvp_vjp_and_finite_difference() -> None:
     compiled, arguments, initial, mesh = _case(geometry_ad="piecewise")
     plan = phx.solver.ScheduledMPMRolloutPlan(
         compiled.dynamics,
@@ -169,7 +171,7 @@ def test_piecewise_gradient_report_matches_jvp_vjp_and_finite_difference():
     assert report.finite_difference_residual < 1e-6
 
 
-def test_frozen_gradient_report_does_not_claim_ordinary_finite_difference():
+def test_frozen_gradient_report_does_not_claim_ordinary_finite_difference() -> None:
     compiled, arguments, initial, mesh = _case(geometry_ad="frozen")
     plan = phx.solver.ScheduledMPMRolloutPlan(compiled.dynamics, mesh)
     particle_direction, argument_direction = _directions(initial)

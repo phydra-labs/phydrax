@@ -10,7 +10,9 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -79,7 +81,7 @@ class NeuralContactAdapter(StrictModule, NonTrainableState):
         rate_trace: NeuralContactRateTrace | None = None,
         step_size: float = 1.0,
         activation_distance: float | None = None,
-    ):
+    ) -> None:
         if not isinstance(scene, ContactParticipantScene):
             raise TypeError("scene must be ContactParticipantScene.")
         if not isinstance(

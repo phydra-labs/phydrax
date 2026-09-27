@@ -12,7 +12,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -48,7 +49,7 @@ class MeasurementSchedule(StrictModule, NonTrainableState):
         measurement_interval: int,
         sources_per_configuration: int = 1,
         maximum_measurements: int = 1 << 22,
-    ):
+    ) -> None:
         total = int(total_trajectories)
         thermalization = int(thermalization_trajectories)
         interval = int(measurement_interval)
@@ -113,7 +114,7 @@ class EnsembleManifest(StrictModule, NonTrainableState):
         chain_id: str,
         update_randomness_id: str,
         measurement_randomness_id: str,
-    ):
+    ) -> None:
         if not isinstance(schedule, MeasurementSchedule):
             raise TypeError("schedule must be MeasurementSchedule.")
         identifiers = tuple(
@@ -250,7 +251,7 @@ class EnsembleSegment(StrictModule, NonTrainableState):
         *,
         initial_checkpoint_id: str,
         terminal_checkpoint_id: str,
-    ):
+    ) -> None:
         manifest = _identifier(manifest_id, "manifest_id")
         initial = _identifier(initial_checkpoint_id, "initial_checkpoint_id")
         terminal = _identifier(terminal_checkpoint_id, "terminal_checkpoint_id")

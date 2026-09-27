@@ -10,6 +10,7 @@ import threading
 import time
 from collections.abc import Sequence
 from importlib import import_module, util
+from typing import Any
 
 import equinox as eqx
 import numpy as np
@@ -59,7 +60,7 @@ from ._gmsh_remesh import _execute_remesh, _surface_source
 _GMSH_LOCK = threading.Lock()
 
 
-def _optional_background(value, /) -> BackgroundMetricControl | None:
+def _optional_background(value: Any, /) -> BackgroundMetricControl | None:
     if value is not None and not isinstance(value, BackgroundMetricControl):
         raise TypeError("background_metric must be BackgroundMetricControl or None.")
     return value
@@ -83,7 +84,7 @@ class GmshMeshingPlan(StrictModule, NonTrainableState):
         /,
         *,
         background_metric: BackgroundMetricControl | None = None,
-    ):
+    ) -> None:
         model = _brep_model(source)
         if not isinstance(specification, (SurfaceMeshingSpec, VolumeMeshingSpec)):
             raise TypeError("specification must be surface or volume meshing.")
@@ -141,7 +142,7 @@ class GmshRemeshingPlan(StrictModule, NonTrainableState):
         /,
         *,
         background_metric: BackgroundMetricControl | None = None,
-    ):
+    ) -> None:
         if not isinstance(source, SurfaceModel):
             raise TypeError("source must be SurfaceModel.")
         if not isinstance(specification, SurfaceRemeshingSpec):
@@ -194,7 +195,7 @@ class GmshSession(AbstractMeshingSession):
         /,
         *,
         import_cache_capacity: int = 4,
-    ):
+    ) -> None:
         capacity = int(import_cache_capacity)
         if capacity <= 0:
             raise ValueError("import_cache_capacity must be positive.")
@@ -333,7 +334,7 @@ class GmshSession(AbstractMeshingSession):
 
 
 class GmshProvider:
-    def __init__(self, options: GmshOptions | None = None, /):
+    def __init__(self, options: GmshOptions | None = None, /) -> None:
         self.options = GmshOptions() if options is None else options
         if not isinstance(self.options, GmshOptions):
             raise TypeError("options must be GmshOptions or None.")
@@ -474,6 +475,7 @@ class GmshProvider:
                 else MeshingSourceKind.CELL_MESH,
                 mesh.topological_dimension,
                 mesh.ambient_dimension,
+                # ty: ignore[unresolved-attribute]
                 closed=not bool(np.any(np.asarray(mesh.connectivity.boundary_edges))),
             )
         model = _brep_model(source)
@@ -506,6 +508,7 @@ class GmshProvider:
             )
         match specification:
             case SurfaceRemeshingSpec():
+                # ty: ignore[invalid-argument-type]
                 surface = _surface_source(source, coordinate_contract)
                 descriptor = self.inspect_source(source)
                 unsupported = _remeshing_support_issues(
@@ -520,6 +523,7 @@ class GmshProvider:
                 unsupported = _brep_support_issues(
                     self.options,
                     source,
+                    # ty: ignore[invalid-argument-type]
                     _brep_model(source),
                     descriptor,
                     specification,
@@ -553,6 +557,7 @@ class GmshProvider:
         )
         if isinstance(specification, SurfaceRemeshingSpec):
             return GmshRemeshingPlan(
+                # ty: ignore[invalid-argument-type]
                 _surface_source(source, coordinate_contract),
                 specification,
                 self.options,
@@ -561,6 +566,7 @@ class GmshProvider:
                 background_metric=background_metric,
             )
         return GmshMeshingPlan(
+            # ty: ignore[invalid-argument-type]
             source,
             specification,
             self.options,
@@ -587,6 +593,7 @@ class GmshProvider:
         /,
         *,
         maximum_size: float | None = None,
+        # ty: ignore[invalid-return-type]
     ) -> CellMeshingResult:
         """Fill the core between native boundary layers and a fixed outer boundary."""
         threads = self.options.num_threads

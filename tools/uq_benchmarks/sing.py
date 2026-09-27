@@ -8,7 +8,7 @@ import argparse
 import json
 import time
 from collections.abc import Callable, Sequence
-from typing import Literal
+from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
@@ -35,7 +35,7 @@ def _latent_model(
     drift_matrix = -jnp.diag(diagonal) + coupling
     dispersion = 0.24 * jnp.eye(state_size)
 
-    def drift(time, state, args):
+    def drift(time: Any, state: Any, args: Any) -> Any:
         del time, args
         linear = drift_matrix @ state
         return linear - 0.04 * state**3 if nonlinear else linear
@@ -69,9 +69,9 @@ def _latent_model(
 
 
 def _linear_reference(
-    prior,
-    observation,
-    observations,
+    prior: Any,
+    observation: Any,
+    observations: Any,
     state_size: int,
 ) -> phx.stochastic.StateSpaceProblem:
     diagonal = jnp.linspace(0.12, 0.3, state_size)
@@ -134,18 +134,20 @@ def _problem(
     else:
         values = jnp.round(2.0 + 1.3 * (1.0 + jnp.sin(1.7 * times)))[:, None]
 
-        def rate(state, time, context):
+        def rate(state: Any, time: Any, context: Any) -> Any:
             del time, context
             return jnp.asarray([jnp.exp(jnp.clip(projection @ state, -12.0, 12.0))])
 
-        def log_prob(value, state, time, mask, context):
+        def log_prob(value: Any, state: Any, time: Any, mask: Any, context: Any) -> Any:
             del time, context
             log_rate = jnp.clip(projection @ state, -12.0, 12.0)
             count = value.reshape(())
             term = count * log_rate - jnp.exp(log_rate) - gammaln(count + 1.0)
             return jnp.where(mask.reshape(()), term, 0.0)
 
-        def sample(key, state, time, sample_shape, context):
+        def sample(
+            key: Any, state: Any, time: Any, sample_shape: Any, context: Any
+        ) -> Any:
             del time, context
             value = jr.poisson(
                 key,
@@ -188,15 +190,17 @@ def _problem(
     return problem, reference
 
 
-def _time_call(function: Callable[[], object], repeats: int):
+def _time_call(function: Callable[[], object], repeats: int) -> Any:
     started = time.perf_counter()
     result = function()
+    # ty: ignore[unresolved-attribute]
     jax.block_until_ready(result.elbo.total_elbo)
     first_seconds = time.perf_counter() - started
     durations = []
     for _ in range(repeats):
         started = time.perf_counter()
         result = function()
+        # ty: ignore[unresolved-attribute]
         jax.block_until_ready(result.elbo.total_elbo)
         durations.append(time.perf_counter() - started)
     return result, first_seconds, durations

@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -41,7 +42,7 @@ class RenderEvidence(StrictModule, NonTrainableState):
         plan_id: str,
         support_id: str,
         geometry_id: str,
-    ):
+    ) -> None:
         self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.coverage_complete = jnp.asarray(coverage_complete, dtype=jnp.bool_)
         self.capacity_sufficient = jnp.asarray(capacity_sufficient, dtype=jnp.bool_)

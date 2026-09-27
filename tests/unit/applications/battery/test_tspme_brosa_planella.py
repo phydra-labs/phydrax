@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import diffrax as dfx
 import equinox as eqx
 import jax
@@ -46,8 +49,15 @@ from phydrax.applications.battery._tspme_brosa_planella import (
 
 
 def _constant(
-    value, support, *, quantity, coordinate, value_unit, coordinate_unit, positive=True
-):
+    value: Any,
+    support: Any,
+    *,
+    quantity: Any,
+    coordinate: Any,
+    value_unit: Any,
+    coordinate_unit: Any,
+    positive: Any = True,
+) -> Any:
     return ConstantPropertyLaw(
         jnp.asarray(value),
         jnp.asarray(support),
@@ -61,8 +71,15 @@ def _constant(
 
 
 def _table(
-    nodes, values, *, quantity, coordinate, value_unit, coordinate_unit, positive=True
-):
+    nodes: Any,
+    values: Any,
+    *,
+    quantity: Any,
+    coordinate: Any,
+    value_unit: Any,
+    coordinate_unit: Any,
+    positive: Any = True,
+) -> Any:
     return TabulatedPropertyLaw(
         jnp.asarray(nodes),
         jnp.asarray(values),
@@ -75,7 +92,7 @@ def _table(
     )
 
 
-def _temperature_table(values, *, quantity, value_unit):
+def _temperature_table(values: Any, *, quantity: Any, value_unit: Any) -> Any:
     return _table(
         (280.0, 300.0, 320.0),
         values,
@@ -86,7 +103,9 @@ def _temperature_table(values, *, quantity, value_unit):
     )
 
 
-def _bivariate(values, *, quantity, value_unit, value_bounds=(0.0, jnp.inf)):
+def _bivariate(
+    values: Any, *, quantity: Any, value_unit: Any, value_bounds: Any = (0.0, jnp.inf)
+) -> Any:
     return ConcentrationTemperaturePropertyLaw(
         jnp.asarray((500.0, 1000.0, 1500.0)),
         jnp.asarray((280.0, 300.0, 320.0)),
@@ -98,7 +117,7 @@ def _bivariate(values, *, quantity, value_unit, value_bounds=(0.0, jnp.inf)):
     )
 
 
-def _spm_parameters(*, maximum_current=1.0):
+def _spm_parameters(*, maximum_current: Any = 1.0) -> Any:
     return SpmParameters(
         electrode_area_m2=0.1,
         negative_electrode_thickness_m=1.0e-4,
@@ -150,7 +169,7 @@ def _spm_parameters(*, maximum_current=1.0):
     )
 
 
-def _marquis_parameters(*, maximum_current=1.0):
+def _marquis_parameters(*, maximum_current: Any = 1.0) -> Any:
     return Marquis2019SpmeParameters(
         _spm_parameters(maximum_current=maximum_current),
         separator_thickness_m=5.0e-5,
@@ -180,7 +199,7 @@ def _marquis_parameters(*, maximum_current=1.0):
     )
 
 
-def _parameters(*, maximum_current=1.0):
+def _parameters(*, maximum_current: Any = 1.0) -> Any:
     return BrosaPlanellaTspmeParameters(
         _marquis_parameters(maximum_current=maximum_current),
         ambient_temperature_k=300.0,
@@ -254,7 +273,7 @@ def _parameters(*, maximum_current=1.0):
     )
 
 
-def _adapter(*, small_threshold=0.1):
+def _adapter(*, small_threshold: Any = 0.1) -> Any:
     marquis_plan = Marquis2019SpmePlan(
         5,
         negative_electrolyte_cell_count=4,
@@ -269,7 +288,7 @@ def _adapter(*, small_threshold=0.1):
     return adapter, adapter.prepare(), _parameters()
 
 
-def _state(adapter, prepared, parameters):
+def _state(adapter: Any, prepared: Any, parameters: Any) -> Any:
     return adapter.initial_state(
         prepared,
         parameters,
@@ -277,7 +296,7 @@ def _state(adapter, prepared, parameters):
     )
 
 
-def _runtime(parameters, current, *, duration=1.0):
+def _runtime(parameters: Any, current: Any, *, duration: Any = 1.0) -> Any:
     protocol = BatteryProtocolPlan((CurrentStepPlan(duration),))
     values = BatteryProtocolValues(protocol, jnp.asarray((current,)))
     return BatteryRuntimeInputs(
@@ -289,7 +308,7 @@ def _runtime(parameters, current, *, duration=1.0):
     )
 
 
-def _nonuniform_electrolyte_state(prepared, state):
+def _nonuniform_electrolyte_state(prepared: Any, state: Any) -> Any:
     mesh = prepared.spme.through_cell
     concentration = jnp.where(
         mesh.negative_mask, 900.0, jnp.where(mesh.positive_mask, 1100.0, 1000.0)
@@ -304,7 +323,9 @@ def _nonuniform_electrolyte_state(prepared, state):
     )
 
 
-def test_exact_section_three_identity_zero_current_and_isothermal_spme_reduction():
+def test_exact_section_three_identity_zero_current_and_isothermal_spme_reduction() -> (
+    None
+):
     adapter, prepared, parameters = _adapter()
     state = _state(adapter, prepared, parameters)
     evaluation = prepared.evaluate(state, parameters, 0.0)
@@ -337,7 +358,7 @@ def test_exact_section_three_identity_zero_current_and_isothermal_spme_reduction
     assert adapter.plan.applicability_support_id != adapter.plan.spme_plan.plan_id
 
 
-def test_temperature_is_two_way_coupled_to_every_property_family_and_ocp():
+def test_temperature_is_two_way_coupled_to_every_property_family_and_ocp() -> None:
     adapter, prepared, parameters = _adapter()
     initial = _state(adapter, prepared, parameters)
     cold = prepared.evaluate(
@@ -379,7 +400,7 @@ def test_temperature_is_two_way_coupled_to_every_property_family_and_ocp():
     assert float(prepared.evaluate(initial, parameters, 0.2).temperature_rate_k_s) != 0.0
 
 
-def test_every_section_three_heat_term_sign_and_power_identity_is_explicit():
+def test_every_section_three_heat_term_sign_and_power_identity_is_explicit() -> None:
     adapter, prepared, parameters = _adapter()
     state = _nonuniform_electrolyte_state(prepared, _state(adapter, prepared, parameters))
     state = BrosaPlanellaTspmeState(state.spme_state, 305.0)
@@ -493,7 +514,7 @@ def test_every_section_three_heat_term_sign_and_power_identity_is_explicit():
     )
 
 
-def test_section_three_applicability_is_independent_and_refuses_bad_regimes():
+def test_section_three_applicability_is_independent_and_refuses_bad_regimes() -> None:
     adapter, prepared, parameters = _adapter()
     state = _state(adapter, prepared, parameters)
     accepted = prepared.evaluate(state, parameters, 0.1)
@@ -523,7 +544,9 @@ def test_section_three_applicability_is_independent_and_refuses_bad_regimes():
     assert bool(refused_thermal.domain_valid)
 
 
-def test_problem_observation_jit_vmap_and_gradients_cover_both_coupling_directions():
+def test_problem_observation_jit_vmap_and_gradients_cover_both_coupling_directions() -> (
+    None
+):
     adapter, prepared, parameters = _adapter()
     state = _state(adapter, prepared, parameters)
     runtime = _runtime(parameters, 0.2)
@@ -547,12 +570,12 @@ def test_problem_observation_jit_vmap_and_gradients_cover_both_coupling_directio
     assert mapped.values.shape == (2, len(adapter.observable_names))
     assert bool(jnp.all(mapped.domain_valid))
 
-    def voltage_for_temperature(temperature):
+    def voltage_for_temperature(temperature: Any) -> Any:
         return prepared.evaluate(
             BrosaPlanellaTspmeState(state.spme_state, temperature), parameters, 0.2
         ).voltage_v
 
-    def temperature_rate_for_current(current):
+    def temperature_rate_for_current(current: Any) -> Any:
         return prepared.evaluate(state, parameters, current).temperature_rate_k_s
 
     temperature_gradient = jax.grad(voltage_for_temperature)(jnp.asarray(300.0))
@@ -563,7 +586,9 @@ def test_problem_observation_jit_vmap_and_gradients_cover_both_coupling_directio
     assert float(current_gradient) != 0.0
 
 
-def test_protocol_orchestration_returns_separate_thermal_and_electrochemical_ledgers():
+def test_protocol_orchestration_returns_separate_thermal_and_electrochemical_ledgers() -> (
+    None
+):
     parameters = _parameters()
     adapter = BrosaPlanellaTspmeAdapter(
         BrosaPlanellaTspmePlan(
@@ -584,6 +609,7 @@ def test_protocol_orchestration_returns_separate_thermal_and_electrochemical_led
     profile = BROSA_PLANELLA_TSPME_CANDIDATE
     save_times = jnp.asarray((0.0, 0.125, 0.25, 0.5, 0.625, 0.75))
     experiment = BatteryExperimentPlan(
+        # ty: ignore[invalid-argument-type]
         adapter,
         protocol,
         BatteryOutputPlan(

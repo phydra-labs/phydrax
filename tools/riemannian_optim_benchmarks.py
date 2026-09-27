@@ -61,7 +61,7 @@ def _benchmark_case(
     state = optimizer.init(parameters)
     value_and_grad = jax.value_and_grad(objective)
 
-    def step(parameters_, state_):
+    def step(parameters_: Any, state_: Any) -> Any:
         value, gradients = value_and_grad(parameters_)
         destination, destination_state = optimizer.update(
             gradients,
@@ -105,7 +105,7 @@ def _benchmark_case(
     return record | diagnostics(parameters)
 
 
-def _cases():
+def _cases() -> Any:
     sphere_parameters = {"point": jnp.ones((8,)) / jnp.sqrt(8.0)}
     sphere_geometry = phx.optim.ParameterGeometry.from_leaf_paths(
         sphere_parameters,
@@ -221,12 +221,12 @@ def _line_search_case(
     optimizer = optimizer_factory(geometry)
     state = optimizer.init(point)
 
-    def objective(candidate):
+    def objective(candidate: Any) -> Any:
         return 1.0 - jnp.dot(candidate, target)
 
     value_and_grad = jax.value_and_grad(objective)
 
-    def step(point_, state_):
+    def step(point_: Any, state_: Any) -> Any:
         value, gradient = value_and_grad(point_)
         return optimizer.update(
             gradient,
@@ -295,7 +295,7 @@ def _line_search_cases(repeats: int, /) -> list[dict[str, Any]]:
     ]
 
 
-def _qualification_cases():
+def _qualification_cases() -> Any:
     sphere_initial = jnp.array([1.0, 0.0, 0.0])
     sphere_target = jnp.array([0.0, 1.0, 0.0])
 

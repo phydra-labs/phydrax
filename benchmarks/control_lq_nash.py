@@ -138,8 +138,8 @@ def _problem(
     return arguments, partition, time_grid
 
 
-def _solve_function(partition, time_grid):
-    def solve_game(arguments):
+def _solve_function(partition: Any, time_grid: Any) -> Any:
+    def solve_game(arguments: Any) -> Any:
         (
             dynamics,
             controls,
@@ -175,7 +175,7 @@ def _solve_function(partition, time_grid):
     return eqx.filter_jit(solve_game)
 
 
-def _certificates(arguments, partition, result) -> dict[str, float]:
+def _certificates(arguments: Any, partition: Any, result: Any) -> dict[str, float]:
     (
         dynamics,
         controls,
@@ -404,7 +404,7 @@ def _case(
     }
 
 
-def _specifications():
+def _specifications() -> Any:
     return (
         ("baseline", 16, 8, (2, 2), ()),
         ("horizon-4", 4, 8, (2, 2), ()),

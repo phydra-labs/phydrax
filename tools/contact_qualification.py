@@ -5,6 +5,7 @@
 """Independent synthetic qualification for barrier derivatives and conservative CCD."""
 
 import json
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -13,7 +14,7 @@ import numpy as np
 import phydrax as phx
 
 
-def main():
+def main() -> Any:
     distance_squared = jnp.asarray(0.04)
     activation = jnp.asarray(0.5)
     analytic = jax.grad(
@@ -47,7 +48,9 @@ def main():
         ambient_dimension=2,
         edges=jnp.asarray(((0, 1),)),
         pair_policy=phx.discretization.ContactPairPolicy(
-            2, static_mask=jnp.ones((2,), dtype="bool")
+            2,
+            # ty: ignore[unknown-argument]
+            static_mask=jnp.ones((2,), dtype="bool"),
         ),
     )
     static = phx.discretization.PreparedCollisionSurface(

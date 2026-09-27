@@ -6,14 +6,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from math import factorial
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -234,7 +235,7 @@ def _hyp2f1_series(
 ) -> Array:
     initial = (jnp.ones_like(argument), jnp.ones_like(argument))
 
-    def body(index, carry):
+    def body(index: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
         term, value = carry
         denominator = (third + index) * (index + 1.0)
         denominator = eqx.error_if(
@@ -305,10 +306,10 @@ def _four_dimensional_block(
     high = scaling_dimension + spin
     low = scaling_dimension - spin - 2.0
 
-    def high_block(value):
+    def high_block(value: Array) -> Array:
         return _k_beta(high, value, delta_12, delta_34, order, pole_tolerance)
 
-    def low_block(value):
+    def low_block(value: Array) -> Array:
         return _k_beta(low, value, delta_12, delta_34, order, pole_tolerance)
 
     high_z = high_block(z)
@@ -324,7 +325,13 @@ def _four_dimensional_block(
     return ((-1.0) ** spin / 2.0**spin) * jnp.where(close, diagonal, separated)
 
 
-def _mixed_derivative(function, z: Array, zbar: Array, first: int, second: int):
+def _mixed_derivative(
+    function: Callable[[Array, Array], Array],
+    z: Array,
+    zbar: Array,
+    first: int,
+    second: int,
+) -> Array:
     differentiated = function
     for _ in range(first):
         previous = differentiated
@@ -366,7 +373,7 @@ class GlobalScalarBlockPlan(StrictModule):
         integer_dimension_offset: float = 1e-6,
         pole_tolerance: float = 1e-10,
         maximum_evaluations: int = 2_000_000,
-    ):
+    ) -> None:
         if not isinstance(data, ConformalDataPlan):
             raise TypeError("data must be ConformalDataPlan.")
         points = np.asarray(evaluation_points, dtype=np.float64)
@@ -577,7 +584,7 @@ class PreparedGlobalScalarBlocks(StrictModule):
             "Scaling dimension must lie strictly above the declared unitarity bound.",
         )
 
-        def at_point(point):
+        def at_point(point: Array) -> Array:
             function = lambda z, zbar: self._value_at(delta, ell, z, zbar)
             return jnp.stack(
                 tuple(

@@ -9,6 +9,7 @@ import json
 from dataclasses import asdict, dataclass
 from importlib.metadata import version
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -59,7 +60,7 @@ def _compile_periodic(
     bounds: jax.Array,
     position: jax.Array,
     volume: jax.Array,
-):
+) -> Any:
     axes = tuple(
         phx.discretization.UniformAxisSpec(size, periodic=True, endpoint=False)
         for size in grid_shape
@@ -95,7 +96,9 @@ def _compile_periodic(
     return compiled, arguments
 
 
-def _case_from_rollout(name, dimension, compiled, result, error):
+def _case_from_rollout(
+    name: Any, dimension: Any, compiled: Any, result: Any, error: Any
+) -> Any:
     mass = float(jnp.nanmax(result.relative_mass_defects))
     momentum = float(jnp.nanmax(result.relative_momentum_defects))
     angular = float(jnp.nanmax(result.relative_angular_momentum_defects))
@@ -130,7 +133,7 @@ def _case_from_rollout(name, dimension, compiled, result, error):
     )
 
 
-def _wave_case(resolution: int):
+def _wave_case(resolution: int) -> Any:
     ny = max(4, resolution // 4)
     x = (jnp.arange(resolution) + 0.37) / resolution
     y = (jnp.arange(ny) + 0.37) * (0.25 / ny)
@@ -189,7 +192,7 @@ def _wave_case(resolution: int):
     )
 
 
-def _translation_case(dimension: int):
+def _translation_case(dimension: int) -> Any:
     position = jnp.asarray(
         [
             [0.23, 0.27, 0.31],
@@ -219,7 +222,7 @@ def _translation_case(dimension: int):
     )
 
 
-def _rollback_case():
+def _rollback_case() -> Any:
     position = jnp.asarray([[0.23, 0.27], [0.39, 0.34], [0.32, 0.48], [0.47, 0.51]])
     volume = jnp.full((4,), 0.01)
     bounds = jnp.asarray([[0.0, 0.0], [1.0, 1.0]])
@@ -260,7 +263,7 @@ def _rollback_case():
     )
 
 
-def run_material_point_qualification(*, smoke: bool = False):
+def run_material_point_qualification(*, smoke: bool = False) -> Any:
     resolutions = (8, 12) if smoke else (12, 24, 36)
     wave_cases = tuple(_wave_case(value) for value in resolutions)
     errors = np.asarray([case.relative_error for case in wave_cases])
@@ -284,7 +287,7 @@ def run_material_point_qualification(*, smoke: bool = False):
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Qualify explicit APIC material points.")
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument(

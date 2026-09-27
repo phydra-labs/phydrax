@@ -9,18 +9,21 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..domain import (
+    Domain,
     DomainComponent,
     DomainFunction,
     LocalFieldRef,
     PairedSupport,
     SubdomainPatch,
 )
+from ..typing import PRNGKey
 from ._base import AbstractResidualCondition
 
 
@@ -49,7 +52,7 @@ def _field_names(
 
 
 def _target_field(
-    domain,
+    domain: Domain,
     target: DomainFunction | ArrayLike,
     /,
 ) -> DomainFunction:
@@ -79,14 +82,14 @@ class _NormalContract(StrictModule):
         flux: DomainFunction,
         normal: DomainFunction,
         deps: tuple[str, ...],
-    ):
+    ) -> None:
         by_label = {label: index for index, label in enumerate(deps)}
         self.flux = flux
         self.normal = normal
         self.flux_positions = tuple(by_label[label] for label in flux.deps)
         self.normal_positions = tuple(by_label[label] for label in normal.deps)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         flux = self.flux.func(
             *(args[index] for index in self.flux_positions),
             key=key,
@@ -137,7 +140,7 @@ class SubdomainValueJump(AbstractResidualCondition):
         *,
         target: DomainFunction | ArrayLike = 0.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(pairing, PairedSupport):
             raise TypeError("pairing must be a PairedSupport.")
         self.fields = _field_names(left_field, right_field)
@@ -178,7 +181,7 @@ class SubdomainFluxJump(AbstractResidualCondition):
         *,
         target: DomainFunction | ArrayLike = 0.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(pairing, PairedSupport):
             raise TypeError("pairing must be a PairedSupport.")
         if pairing.normal is None:
@@ -234,7 +237,7 @@ class SubdomainTransmission(AbstractResidualCondition):
         /,
         *,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(pairing, PairedSupport):
             raise TypeError("pairing must be a PairedSupport.")
         if not callable(operator):
@@ -281,7 +284,7 @@ class LocalizedResidual(AbstractResidualCondition):
         *,
         on: DomainComponent | None = None,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(condition, AbstractResidualCondition):
             raise TypeError("condition must be an AbstractResidualCondition.")
         if not isinstance(patch, SubdomainPatch):

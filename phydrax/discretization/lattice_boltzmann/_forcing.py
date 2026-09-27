@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -23,7 +23,7 @@ class GuoForcingPlan(StrictModule, NonTrainableState):
     compatible_collision_families: tuple[str, ...] = eqx.field(static=True)
     forcing_id: str = "lattice-boltzmann-forcing:guo"
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.compatible_collision_families = (
             "bgk",
             "central-moment",

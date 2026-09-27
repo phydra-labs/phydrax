@@ -12,7 +12,8 @@ from dataclasses import dataclass, field
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -40,7 +41,7 @@ class ReactorKineticsState(StrictModule):
         precursor_populations: ArrayLike,
         time_s: ArrayLike = 0.0,
         /,
-    ):
+    ) -> None:
         population = jnp.asarray(neutron_population, dtype=jnp.float64)
         precursors = jnp.asarray(precursor_populations, dtype=population.dtype)
         time = jnp.asarray(time_s, dtype=population.dtype)

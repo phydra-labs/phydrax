@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -9,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _mechanism():
+def _mechanism() -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B", "C"),
         (
@@ -47,7 +50,7 @@ def _mechanism():
     ).prepare()
 
 
-def _model():
+def _model() -> Any:
     mechanism = _mechanism()
     chemistry = phx.equations.ChemicalConditionalAffinePlan(("B", "C"), ("A",)).prepare(
         mechanism
@@ -86,7 +89,7 @@ def _model():
     )
 
 
-def _task():
+def _task() -> Any:
     return phx.nn.operator.OperatorTask(
         "chemical-conditional-affine-local-transition",
         fields=(
@@ -131,7 +134,7 @@ def _task():
     )
 
 
-def _batch(duration=1.0e-4):
+def _batch(duration: Any = 1.0e-4) -> Any:
     return phx.nn.operator.OperatorBatch(
         inputs={
             "state": phx.nn.operator.FunctionSamples(values=jnp.asarray((2.0, 1.0, 0.0))),
@@ -147,7 +150,7 @@ def _batch(duration=1.0e-4):
     )
 
 
-def _trained():
+def _trained() -> Any:
     task = _task()
     state_port = task.field_by_name["state"].value_port()
     return phx.nn.operator.training.TrainedOperator(
@@ -161,7 +164,7 @@ def _trained():
     )
 
 
-def test_conditional_affine_artifact_and_discrete_system_roundtrip(tmp_path):
+def test_conditional_affine_artifact_and_discrete_system_roundtrip(tmp_path: Any) -> None:
     trained = _trained()
     expected = trained.predict(_batch()).field("state").values
     destination = phx.nn.operator.training.save_operator_artifact(tmp_path, trained)

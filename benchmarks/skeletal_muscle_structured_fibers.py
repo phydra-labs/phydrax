@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from dataclasses import asdict
@@ -30,7 +32,7 @@ from phydrax.applications.skeletal_muscle.fibers import (
 )
 
 
-def _measure(function, args, repeats):
+def _measure(function: Any, args: Any, repeats: Any) -> Any:
     compiled, compilation = measure_lower_and_compile(
         lambda: eqx.filter_jit(function).lower(*args),
         lambda lowered: lowered.compile(),

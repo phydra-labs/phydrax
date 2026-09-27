@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -44,7 +45,7 @@ class ModalForcingBasis(StrictModule, NonTrainableState):
         *,
         weights: ArrayLike | None = None,
         mode_ids: tuple[str, ...] | None = None,
-    ):
+    ) -> None:
         values = np.asarray(vectors, dtype=np.float64)
         if values.ndim != 3 or values.shape[0] == 0 or values.shape[-1] not in (1, 2, 3):
             raise ValueError(
@@ -124,7 +125,7 @@ class ModalOUForcingPlan(AbstractBalanceLawProcessPlan):
         correlation_time: float = 1.0,
         rms_acceleration: float = 1.0,
         realization_name: str = "modal_ou_forcing",
-    ):
+    ) -> None:
         if not isinstance(basis, ModalForcingBasis):
             raise TypeError("basis must be ModalForcingBasis.")
         correlation = float(correlation_time)
@@ -170,7 +171,7 @@ class PreparedModalOUForcing(AbstractPreparedBalanceLawProcess):
         plan: ModalOUForcingPlan,
         transport: AbstractPreparedBalanceLawTransport,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, ModalOUForcingPlan):
             raise TypeError("plan must be ModalOUForcingPlan.")
         if not isinstance(transport, AbstractPreparedBalanceLawTransport):

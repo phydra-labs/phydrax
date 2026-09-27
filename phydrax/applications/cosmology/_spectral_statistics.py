@@ -4,11 +4,12 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -19,6 +20,7 @@ from ...discretization.spectral import (
     PeriodicFourierShellPlan,
 )
 from ...observation import CoordinateLayout, TheoryVector
+from ...typing import parse
 from ._closure import CosmologyRealizationSignature
 from ._products import (
     CosmologyProductProvenance,
@@ -28,7 +30,9 @@ from ._products import (
 from ._scales import CosmologyScaleContract
 
 
-FieldDensityConvention = Literal["density-contrast", "density", "extensive-content"]
+FieldDensityConvention: TypeAlias = Literal[
+    "density-contrast", "density", "extensive-content"
+]
 
 
 class MatterPowerEstimate(StrictModule):
@@ -61,7 +65,7 @@ class MatterPowerEstimate(StrictModule):
         source_product_ids: tuple[str, ...],
         estimator_id: str,
         /,
-    ):
+    ) -> None:
         epoch = jnp.asarray(scale_factor).reshape(())
         k = jnp.asarray(wavenumbers, dtype=epoch.dtype).reshape((-1,))
         power = jnp.asarray(power_values, dtype=epoch.dtype).reshape((-1,))
@@ -197,13 +201,14 @@ class CosmologicalFieldSpectrumPlan(StrictModule, NonTrainableState):
         correction: ModeTransferCorrection | None = None,
         shot_noise: float = 0.0,
         imaginary_tolerance: float = 1.0e-10,
-    ):
-        convention = str(density_convention)
+    ) -> None:
         noise = float(shot_noise)
         tolerance = float(imaginary_tolerance)
+        convention = parse(
+            density_convention, FieldDensityConvention, "density_convention"
+        )
         if (
-            convention not in ("density-contrast", "density", "extensive-content")
-            or not jnp.isfinite(noise)
+            not jnp.isfinite(noise)
             or not jnp.isfinite(tolerance)
             or tolerance <= 0.0
             or descriptor.spatial_dimension != len(shells.source_shape)
@@ -386,7 +391,7 @@ class SpectralFieldDiscrepancyPlan(StrictModule, NonTrainableState):
         /,
         *,
         correction: ModeTransferCorrection | None = None,
-    ):
+    ) -> None:
         self.shells = shells
         self.correction = correction
         self.plan_id = canonical_fingerprint(

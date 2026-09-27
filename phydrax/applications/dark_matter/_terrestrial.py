@@ -9,7 +9,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -50,7 +51,7 @@ class HazardQuadraturePlan(StrictModule, NonTrainableState):
     order: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, order: int = 32, /):
+    def __init__(self, order: int = 32, /) -> None:
         if not isinstance(order, int) or isinstance(order, bool) or order < 2:
             raise ValueError(
                 "Hazard quadrature order must be an integer of at least two."
@@ -89,7 +90,9 @@ class TerrestrialTransportResult(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
-def _ray(position_m: ArrayLike, direction: ArrayLike, distance_m: ArrayLike, /):
+def _ray(
+    position_m: ArrayLike, direction: ArrayLike, distance_m: ArrayLike, /
+) -> tuple[Array, Array, Array]:
     position = jnp.asarray(position_m, dtype=jnp.float64)
     direction_ = jnp.asarray(direction, dtype=position.dtype)
     distance = jnp.asarray(distance_m, dtype=position.dtype).reshape(())
@@ -308,7 +311,7 @@ class TerrestrialTransportPlan(StrictModule, NonTrainableState):
         detector_depth_m: float,
         maximum_jump_events: int = 64,
         maximum_guard_events: int = 64,
-    ):
+    ) -> None:
         if not isinstance(profile, LayeredTerrestrialProfile) or not isinstance(
             scattering, ElasticScatteringTable
         ):

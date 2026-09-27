@@ -37,13 +37,14 @@ from __future__ import annotations
 
 import math
 import time
-from typing import final, NamedTuple, TYPE_CHECKING
+from typing import Any, final, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -171,7 +172,7 @@ class DeviceMetricLayout(StrictModule, NonTrainableState):
     mesh_signature_id: str = eqx.field(static=True)
     signature_id: str = eqx.field(static=True)
 
-    def __init__(self, *, vertex_capacity: int, cell_capacity: int):
+    def __init__(self, *, vertex_capacity: int, cell_capacity: int) -> None:
         vertices = _count(vertex_capacity, "vertex_capacity")
         cells = _count(cell_capacity, "cell_capacity")
         records = _RECORDS_PER_SLOT * (vertices + cells)
@@ -264,7 +265,7 @@ class DeviceMetricState(StrictModule, NonTrainableState):
         controls: ArrayLike,
         counters: ArrayLike,
         flags: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(mesh, MaskedSimplexMesh):
             raise TypeError("mesh must be MaskedSimplexMesh.")
         if mesh.cell_kind != "triangle" or mesh.ambient_dimension != 2:
@@ -438,7 +439,7 @@ class DeviceMetricEvidence(StrictModule, NonTrainableState):
         relocation: bool,
         status: AdaptiveSimplexStatus,
         layout_id: str,
-    ):
+    ) -> None:
         counts = {
             "passes": passes,
             "splits": splits,
@@ -544,7 +545,7 @@ class PreparedDeviceMetricAdaptation(StrictModule, NonTrainableState):
         state: DeviceMetricState,
         anchor: _Anchor,
         /,
-    ):
+    ) -> None:
         self.adaptation = adaptation
         self.layout = layout
         self.state = state
@@ -742,7 +743,7 @@ def _quality(lengths: Array, /) -> Array:
 def _barycentric(triangles: Array, points: Array, /) -> Array:
     """Floating barycentric weights of ``points`` in ``(..., 3, 2)`` triangles."""
 
-    def cross(origin, first, second):
+    def cross(origin: Any, first: Any, second: Any) -> Any:
         u = first - origin
         v = second - origin
         return u[..., 0] * v[..., 1] - u[..., 1] * v[..., 0]
@@ -754,11 +755,11 @@ def _barycentric(triangles: Array, points: Array, /) -> Array:
     return weights / cross(a, b, c)[..., None]
 
 
-def _metric_midpoint(metric: Array, points: Array, first: Array, second: Array, /):
+def _metric_midpoint(metric: Array, points: Array, first: Array, second: Array, /) -> Any:
     """Parameter of the metric-length midpoint under geometric size variation."""
     delta = points[second] - points[first]
 
-    def length(rows):
+    def length(rows: Any) -> Any:
         tensor = metric[rows]
         return jnp.sqrt(
             delta[:, 0] * delta[:, 0] * tensor[:, 0, 0]
@@ -802,7 +803,7 @@ def _ranks(valid: Array, *keys: Array) -> Array:
     return jnp.zeros((count,), dtype=jnp.int32).at[ordered[-1]].set(index)
 
 
-def _independent(rank: Array, valid: Array, items: Array, cell_capacity: int, /):
+def _independent(rank: Array, valid: Array, items: Array, cell_capacity: int, /) -> Any:
     """Greedy maximal set of valid operations with pairwise disjoint cell cavities.
 
     Each round selects every undecided operation whose rank is the minimum over
@@ -815,11 +816,11 @@ def _independent(rank: Array, valid: Array, items: Array, cell_capacity: int, /)
     gather = jnp.where(present, items, 0)
     own = jnp.broadcast_to(rank[:, None], items.shape)
 
-    def undecided_remain(carry):
+    def undecided_remain(carry: Any) -> Any:
         undecided, _, rounds = carry
         return jnp.any(undecided) & (rounds < _SELECTION_ROUNDS)
 
-    def select_round(carry):
+    def select_round(carry: Any) -> Any:
         undecided, selected, rounds = carry
         live = undecided[:, None] & present
         best = (
@@ -845,10 +846,10 @@ def _independent(rank: Array, valid: Array, items: Array, cell_capacity: int, /)
     return selected
 
 
-def _tally(counters: Array, status, mask: Array, /) -> tuple[Array, Array]:
+def _tally(counters: Array, status: Any, mask: Array, /) -> tuple[Array, Array]:
     """Add the rejections among ``mask``; uncertain ones need host resolution."""
 
-    def count(condition):
+    def count(condition: Any) -> Any:
         return jnp.sum(mask & condition, dtype=jnp.int64)
 
     uncertain = count(status == _UNCERTAIN)
@@ -872,7 +873,9 @@ def _overflow(condition: Array, /) -> Array:
     )
 
 
-def _edge_half(topology: _Topology, first: Array, second: Array, vertex_capacity: int):
+def _edge_half(
+    topology: _Topology, first: Array, second: Array, vertex_capacity: int
+) -> Any:
     """Canonical half-edge of each queried vertex pair, or -1 when not an edge."""
     code = _edge_code(first, second, vertex_capacity)
     position = jnp.minimum(
@@ -884,13 +887,20 @@ def _edge_half(topology: _Topology, first: Array, second: Array, vertex_capacity
 # ------------------------------------------------------------------ topology
 
 
-def _vertex_classes(work: _Work, canonical, ends, classes, protected, vertex_capacity):
+def _vertex_classes(
+    work: _Work,
+    canonical: Any,
+    ends: Any,
+    classes: Any,
+    protected: Any,
+    vertex_capacity: Any,
+) -> Any:
     """Host vertex kinds: curve vertices carry exactly two edges of one class."""
     low, high = ends[:, 0], ends[:, 1]
     classified = canonical & (classes > 0)
     guarded_edge = canonical & protected
 
-    def at(mask, index):
+    def at(mask: Any, index: Any) -> Any:
         return jnp.where(mask, index, vertex_capacity)
 
     shape = (vertex_capacity,)
@@ -1050,7 +1060,9 @@ def _topology(work: _Work, layout: DeviceMetricLayout, /) -> _Topology:
 # ------------------------------------------------------------------ state updates
 
 
-def _ancestry(work: _Work, removed: Array, lineage: Array, layout: DeviceMetricLayout):
+def _ancestry(
+    work: _Work, removed: Array, lineage: Array, layout: DeviceMetricLayout
+) -> Any:
     """Children inherit the source cells of all listed parents; removed cells drop.
 
     ``lineage[c]`` lists the parents of new cell slot ``c`` (``-1`` padded). The
@@ -1213,7 +1225,7 @@ def _compact_cells(work: _Work, layout: DeviceMetricLayout, /) -> _Work:
     active = work.cell_active
     target = jnp.where(active, jnp.cumsum(active, dtype=jnp.int32) - 1, capacity)
 
-    def packed(values, fill):
+    def packed(values: Any, fill: Any) -> Any:
         return jnp.full_like(values, fill).at[target].set(values, mode="drop")
 
     pair_cells = work.ancestry[:, 0]
@@ -1277,7 +1289,7 @@ def _split_children(
     """
     local = sides.local
 
-    def child_features(values):
+    def child_features(values: Any) -> Any:
         values = values[sides.cell]
         split = _take(values, local)
         following = _take(values, (local + 1) % 3)
@@ -1317,7 +1329,7 @@ def _split_children(
     return children, removed
 
 
-def _split_round(work: _Work, done: Array, layout: DeviceMetricLayout, /):
+def _split_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
     work = _compact_cells(work, layout)
     topology = _topology(work, layout)
     vertex_capacity = layout.vertex_capacity
@@ -1543,7 +1555,7 @@ def _collapse_children(
     return children, replaced
 
 
-def _collapse_round(work: _Work, done: Array, layout: DeviceMetricLayout, /):
+def _collapse_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
     work = _compact_cells(work, layout)
     topology = _topology(work, layout)
     vertex_capacity = layout.vertex_capacity
@@ -1612,7 +1624,7 @@ def _flip_children(
     first_cell, first_local = halves // 3, halves % 3
     second_cell, second_local = other // 3, other % 3
 
-    def child_features(values):
+    def child_features(values: Any) -> Any:
         first = values[first_cell]
         second = values[second_cell]
         fresh = jnp.zeros_like(first[:, 0])
@@ -1663,7 +1675,7 @@ def _flip_children(
     return children, replaced
 
 
-def _flip_round(work: _Work, done: Array, layout: DeviceMetricLayout, /):
+def _flip_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
     work = _compact_cells(work, layout)
     topology = _topology(work, layout)
     vertex_capacity = layout.vertex_capacity
@@ -1737,7 +1749,7 @@ def _flip_round(work: _Work, done: Array, layout: DeviceMetricLayout, /):
 # ------------------------------------------------------------------ relocation
 
 
-def _relocation_targets(work: _Work, topology: _Topology, /):
+def _relocation_targets(work: _Work, topology: _Topology, /) -> Any:
     """Spring displacement toward unit metric lengths and each vertex's badness.
 
     Interior vertices use every neighbor; curve vertices only their two curve
@@ -1763,7 +1775,7 @@ def _relocation_targets(work: _Work, topology: _Topology, /):
     return displacement, badness
 
 
-def _relocation_round(work: _Work, done: Array, layout: DeviceMetricLayout, /):
+def _relocation_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
     topology = _topology(work, layout)
     vertex_capacity = layout.vertex_capacity
     cell_capacity = layout.cell_capacity
@@ -1890,14 +1902,14 @@ def _unit(work: _Work, /) -> Array:
     return jnp.all(~measured | inside)
 
 
-def _phase(step, work: _Work, done: Array, bits: Array, layout, /):
+def _phase(step: Any, work: _Work, done: Array, bits: Array, layout: Any, /) -> Any:
     """Sub-rounds of one phase until a round applies nothing (bounded)."""
 
-    def proceed(carry):
+    def proceed(carry: Any) -> Any:
         _, _, bits, count, rounds, _ = carry
         return (rounds < _PHASE_ROUNDS) & (count > 0) & ((bits & _FAILURES) == 0)
 
-    def sub_round(carry):
+    def sub_round(carry: Any) -> Any:
         work, done, bits, _, rounds, total = carry
         work, done, round_bits, count = step(work, done, layout)
         return work, done, bits | round_bits, count, rounds + 1, total + count
@@ -1910,15 +1922,15 @@ def _phase(step, work: _Work, done: Array, bits: Array, layout, /):
     return work, done, bits, total
 
 
-def _pass(work: _Work, bits: Array, layout: DeviceMetricLayout, /):
+def _pass(work: _Work, bits: Array, layout: DeviceMetricLayout, /) -> Any:
     """Split, collapse, and flip phases, then relocation (each vertex once)."""
     done = jnp.zeros((layout.vertex_capacity,), dtype=jnp.bool_)
 
-    def skipped(operand):
+    def skipped(operand: Any) -> Any:
         work, bits = operand
         return work, bits, jnp.int32(0)
 
-    def topological(operand):
+    def topological(operand: Any) -> Any:
         work, bits = operand
         total = jnp.int32(0)
         for step in (_split_round, _collapse_round, _flip_round):
@@ -1926,7 +1938,7 @@ def _pass(work: _Work, bits: Array, layout: DeviceMetricLayout, /):
             total = total + count
         return work, bits, total
 
-    def relocating(operand):
+    def relocating(operand: Any) -> Any:
         work, bits = operand
         work, _, bits, count = _phase(_relocation_round, work, done, bits, layout)
         return work, bits, count
@@ -2028,11 +2040,11 @@ def _adapted(layout: DeviceMetricLayout, source: _Work, /) -> DeviceMetricUpdate
 
     maximum = source.controls[_MAXIMUM_PASSES]
 
-    def proceed(carry):
+    def proceed(carry: Any) -> Any:
         work, bits, passes, stalled = carry
         return (passes < maximum) & ~stalled & ((bits & _FAILURES) == 0) & ~_unit(work)
 
-    def adaptation_pass(carry):
+    def adaptation_pass(carry: Any) -> Any:
         work, bits, passes, _ = carry
         work, bits, applied = _pass(work, bits, layout)
         return work, bits, passes + 1, applied == 0
@@ -2126,7 +2138,7 @@ def _host_mode() -> PredicateMode:
     return resolve_host_predicate_mode(PredicateMode.EXACT)
 
 
-def _edge_features(topology, host_cells: np.ndarray, /):
+def _edge_features(topology: Any, host_cells: np.ndarray, /) -> Any:
     """Feature class and protection of the edge opposite every local vertex."""
     first = host_cells[:, _NEXT].reshape((-1,))
     second = host_cells[:, _PREVIOUS].reshape((-1,))
@@ -2139,7 +2151,7 @@ def _edge_features(topology, host_cells: np.ndarray, /):
 
 
 def _device_state(
-    layout: DeviceMetricLayout, state: _State, topology, controls: np.ndarray, /
+    layout: DeviceMetricLayout, state: _State, topology: Any, controls: np.ndarray, /
 ) -> DeviceMetricState:
     """Pad the host working state into global-ID-ordered slots of the bucket."""
 
@@ -2156,7 +2168,7 @@ def _device_state(
         raise ValueError("The prepared mesh exceeds its lineage capacities.")
     classes, protected = _edge_features(topology, host_cells)
 
-    def padded(values, capacity, fill, dtype):
+    def padded(values: Any, capacity: Any, fill: Any, dtype: Any) -> Any:
         array = np.asarray(values, dtype=dtype)
         result = np.full((capacity, *array.shape[1:]), fill, dtype=dtype)
         result[: array.shape[0]] = array
@@ -2212,7 +2224,7 @@ def _device_state(
     return _state(work)
 
 
-def _prepared_metric(adaptation: PreparedMeshAdaptation, /):
+def _prepared_metric(adaptation: PreparedMeshAdaptation, /) -> Any:
     # Lazy: the adaptation transaction imports this module's evidence type.
     from ._adaptation import MetricMeshAdaptation
 
@@ -2235,6 +2247,7 @@ def _prepared_metric(adaptation: PreparedMeshAdaptation, /):
     )
     topology = _host_topology(state, mode)
     _validate_classification(state, topology)
+    # ty: ignore[unresolved-attribute]
     vertex_capacity, cell_capacity = policy.device_policy.capacities(
         vertex_count, cell_count
     )
@@ -2286,7 +2299,9 @@ def prepare_device_metric_adaptation(
 # ------------------------------------------------------------------ commit
 
 
-def _host_state(prepared: PreparedDeviceMetricAdaptation, host: DeviceMetricState, /):
+def _host_state(
+    prepared: PreparedDeviceMetricAdaptation, host: DeviceMetricState, /
+) -> Any:
     """The host working state of the device slots (vertex rows are vertex slots)."""
     mesh = host.mesh
     cursors = np.asarray(host.cursors)
@@ -2338,7 +2353,7 @@ def _host_state(prepared: PreparedDeviceMetricAdaptation, host: DeviceMetricStat
 
 
 def _evidence(
-    prepared: PreparedDeviceMetricAdaptation, host: DeviceMetricState, topology, /
+    prepared: PreparedDeviceMetricAdaptation, host: DeviceMetricState, topology: Any, /
 ) -> DeviceMetricEvidence:
     counters = np.asarray(host.counters)
     flags = np.asarray(host.flags)
@@ -2410,6 +2425,7 @@ def _outcome(
         native.lineage,
         native.stencil,
         native.transfer,
+        # ty: ignore[unresolved-attribute]
         _target_metric(adaptation.request.metric, native.target.mesh, metric),
         evidence,
         None,

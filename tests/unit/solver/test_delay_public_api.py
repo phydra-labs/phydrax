@@ -5,7 +5,7 @@
 import phydrax as phx
 
 
-def test_delay_solver_families_are_public_and_declared_once():
+def test_delay_solver_families_are_public_and_declared_once() -> None:
     expected = {
         "CaputoFractionalProblem",
         "CheckpointedDelayAdjoint",
@@ -38,6 +38,6 @@ def test_delay_solver_families_are_public_and_declared_once():
     assert len(phx.solver.__all__) == len(set(phx.solver.__all__))
 
 
-def test_obsolete_fixed_grid_delay_surface_remains_removed():
+def test_obsolete_fixed_grid_delay_surface_remains_removed() -> None:
     assert not hasattr(phx.solver, "StochasticDelayProblem")
     assert not hasattr(phx.solver, "solve_stochastic_delay")

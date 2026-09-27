@@ -44,7 +44,7 @@ class CellularChainMap(StrictModule, NonTrainableState):
         /,
         *,
         map_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(source, CellSubcomplex) or not isinstance(
             target, CellSubcomplex
         ):
@@ -168,7 +168,7 @@ class CellularPairMap(StrictModule, NonTrainableState):
         target: CellComplexPair,
         ambient_map: CellularChainMap,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, CellComplexPair) or not isinstance(
             target, CellComplexPair
         ):
@@ -272,7 +272,7 @@ class FilteredCellularChainMap(StrictModule, NonTrainableState):
         /,
         *,
         epsilon: float = 0.0,
-    ):
+    ) -> None:
         if source_filtration.complex.subcomplex_id != chain_map.source.subcomplex_id:
             raise ValueError("Source filtration does not match the cellular map.")
         if target_filtration.complex.subcomplex_id != chain_map.target.subcomplex_id:
@@ -329,7 +329,7 @@ class CellularChainContraction(StrictModule, NonTrainableState):
         inclusion: CellularChainMap,
         homotopies: Sequence[ExactIntegerCOO],
         /,
-    ):
+    ) -> None:
         if projection.source.subcomplex_id != large.subcomplex_id:
             raise ValueError("Contraction projection must start on the large complex.")
         if projection.target.subcomplex_id != small.subcomplex_id:
@@ -417,7 +417,7 @@ class FilteredCellularChainContraction(StrictModule, NonTrainableState):
         /,
         *,
         epsilon: float = 0.0,
-    ):
+    ) -> None:
         epsilon_ = float(epsilon)
         FilteredCellularChainMap(
             contraction.projection,

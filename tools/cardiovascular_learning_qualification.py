@@ -393,6 +393,7 @@ def _native_solver(current: FullNativeReanalysisRequest) -> NativeReanalysisCand
             ),
             route=CardiovascularSerialExecution(),
         )
+        # ty: ignore[invalid-argument-type]
         receipts.append(receipt_adapter(route.route_id, execution, domain_result))
     return NativeReanalysisCandidate(
         {quantity.name: hemodynamics.macroscopic.gauge_pressure_kpa},
@@ -422,7 +423,10 @@ metrics = {
     and reanalysis.final_native_reanalysis,
     "accepted_differs_from_learned": bool(
         not jnp.array_equal(
-            reanalysis.accepted_fields[quantity.name], proposal.predicted_state
+            # ty: ignore[not-subscriptable]
+            reanalysis.accepted_fields[quantity.name],
+            # ty: ignore[invalid-argument-type]
+            proposal.predicted_state,
         )
     ),
 }

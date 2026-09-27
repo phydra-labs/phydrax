@@ -11,7 +11,9 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -70,7 +72,7 @@ class TopologyMechanicsProblem(StrictModule, NonTrainableState):
         branch_evaluator: Callable | None = None,
         state_realization: Callable | None = None,
         problem_id: str = "topology-mechanics",
-    ):
+    ) -> None:
         if not callable(state_residual):
             raise TypeError("state_residual must be callable.")
         cases = tuple(load_cases)
@@ -183,7 +185,9 @@ class TopologyMechanicsProblem(StrictModule, NonTrainableState):
             else jnp.asarray(penalty)
         )
 
-        def residual(states, density, dynamic_args):
+        def residual(
+            states: PyTree[Any], density: Array, dynamic_args: Any
+        ) -> tuple[PyTree[Any], ...]:
             if not isinstance(states, tuple) or len(states) != len(self.load_cases):
                 raise ValueError("states must contain one tuple entry per load case.")
             material = self.material_parameters(
@@ -196,7 +200,9 @@ class TopologyMechanicsProblem(StrictModule, NonTrainableState):
                 for state, case in zip(states, self.load_cases, strict=True)
             )
 
-        def objective(states, density, dynamic_args):
+        def objective(
+            states: PyTree[Any], density: Array, dynamic_args: Any
+        ) -> tuple[Array, Array]:
             values = self.load_values(
                 states,
                 density,
@@ -210,7 +216,9 @@ class TopologyMechanicsProblem(StrictModule, NonTrainableState):
             )
             return self.aggregation(values, weights), values
 
-        def admissibility(states, density, dynamic_args):
+        def admissibility(
+            states: PyTree[Any], density: Array, dynamic_args: Any
+        ) -> Array:
             if self.branch_evaluator is None:
                 return jnp.asarray(True)
             physical = self.physical_density(density, selected_beta)
@@ -222,7 +230,7 @@ class TopologyMechanicsProblem(StrictModule, NonTrainableState):
                 raise TypeError("branch_evaluator must return BranchGateEvidence.")
             return jnp.all(jnp.stack(tuple(item.accepted for item in evidence)))
 
-        def realization(states, density, dynamic_args):
+        def realization(states: PyTree[Any], density: Array, dynamic_args: Any) -> Array:
             if self.state_realization is None:
                 return jnp.asarray(True)
             physical = self.physical_density(density, selected_beta)
@@ -265,7 +273,7 @@ class TopologyContinuationStage(StrictModule, NonTrainableState):
         *,
         penalty: ArrayLike | None = None,
         stage_id: str,
-    ):
+    ) -> None:
         beta_ = np.asarray(beta)
         penalty_ = None if penalty is None else np.asarray(penalty)
         identifier = str(stage_id)
@@ -306,7 +314,7 @@ class TopologyContinuationSchedule(StrictModule, NonTrainableState):
         /,
         *,
         schedule_id: str = "topology-continuation",
-    ):
+    ) -> None:
         stages_ = tuple(stages)
         if not stages_ or any(
             not isinstance(stage, TopologyContinuationStage) for stage in stages_

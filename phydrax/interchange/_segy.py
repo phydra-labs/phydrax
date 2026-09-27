@@ -29,7 +29,7 @@ from typing import Literal, Protocol, TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._external_resource import (
     account_bounded_resource,
@@ -92,7 +92,7 @@ class SEGYRev1IEEEProfile(StrictModule, NonTrainableState):
         coordinate_mapping: str = "source-group-xyz",
         pressure_calibration: float | None = None,
         pressure_polarity: Literal["positive", "negative"] | None = None,
-    ):
+    ) -> None:
         if byte_order not in ("big", "little") or text_encoding not in ("ascii", "cp500"):
             raise ValueError(
                 "SEG-Y byte order and text encoding must be explicitly supported choices."
@@ -248,10 +248,10 @@ def decode_segy_resource(
     endian = ">" if profile.byte_order == "big" else "<"
     binary = memoryview(data)[3200:3600]
 
-    def u16(offset):
+    def u16(offset: int) -> int:
         return struct.unpack_from(endian + "H", binary, offset)[0]
 
-    def i16(offset):
+    def i16(offset: int) -> int:
         return struct.unpack_from(endian + "h", binary, offset)[0]
 
     if u16(300) != 0x0100:
@@ -324,10 +324,10 @@ def decode_segy_resource(
         start = 3600 + trace * record_size
         header = memoryview(data)[start : start + 240]
 
-        def h(offset, current_header=header):
+        def h(offset: int, current_header: memoryview = header) -> int:
             return struct.unpack_from(endian + "h", current_header, offset)[0]
 
-        def i(offset, current_header=header):
+        def i(offset: int, current_header: memoryview = header) -> int:
             return struct.unpack_from(endian + "i", current_header, offset)[0]
 
         trace_samples, trace_interval = struct.unpack_from(endian + "HH", header, 114)

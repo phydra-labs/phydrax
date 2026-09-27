@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def test_quadratic_program_native_bounds_preserve_public_constraint_axes():
+def test_quadratic_program_native_bounds_preserve_public_constraint_axes() -> None:
     problem = phx.optim.QuadraticProgram(
         jnp.eye(2),
         jnp.asarray([-2.0, -4.0]),
@@ -45,7 +48,7 @@ def test_quadratic_program_native_bounds_preserve_public_constraint_axes():
     np.testing.assert_allclose(result.complementarity_gap, expected_gap, atol=1e-12)
 
 
-def test_fixed_bound_is_exposed_as_bound_dual_not_public_equality():
+def test_fixed_bound_is_exposed_as_bound_dual_not_public_equality() -> None:
     problem = phx.optim.QuadraticProgram(
         jnp.eye(1),
         jnp.zeros(1),
@@ -64,7 +67,7 @@ def test_fixed_bound_is_exposed_as_bound_dual_not_public_equality():
     )
 
 
-def test_bounds_reject_inverted_or_batch_varying_roles():
+def test_bounds_reject_inverted_or_batch_varying_roles() -> None:
     with pytest.raises(
         (RuntimeError, ValueError),
         match="Lower bounds must not exceed upper bounds",
@@ -86,10 +89,10 @@ def test_bounds_reject_inverted_or_batch_varying_roles():
         )
 
 
-def test_bounded_quadratic_solution_is_jittable_and_differentiable():
+def test_bounded_quadratic_solution_is_jittable_and_differentiable() -> None:
     bounds = phx.optim.Bounds(0.0, 1.0)
 
-    def solution(target):
+    def solution(target: Any) -> Any:
         problem = phx.optim.QuadraticProgram(
             jnp.eye(1),
             -jnp.asarray([target]),

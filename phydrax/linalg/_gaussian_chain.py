@@ -12,11 +12,13 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from ..typing import parse, PRNGKey
 from ._dense_inverse import dense_inverse
 from ._operators import DenseLinearOperator
 from ._policies import DenseLU, FailurePolicy, LinearSolvePolicy
@@ -46,7 +48,7 @@ class GaussianFilterElement(StrictModule):
         /,
         *,
         element_id: str = "gaussian-filter-element",
-    ):
+    ) -> None:
         if not isinstance(element_id, str) or not element_id:
             raise ValueError("element_id must be a non-empty string.")
         self.transition = transition
@@ -321,7 +323,9 @@ def associative_freeze(
     )
     seeded_values = jnp.concatenate((initial[None, ...], values), axis=0)
 
-    def select_latest(left, right):
+    def select_latest(
+        left: tuple[Array, Array], right: tuple[Array, Array]
+    ) -> tuple[Array, Array]:
         left_flag, left_value = left
         right_flag, right_value = right
         selector = right_flag.reshape(
@@ -428,7 +432,7 @@ class GaussianInformationElement(StrictModule):
         /,
         *,
         element_id: str = "gaussian-information-element",
-    ):
+    ) -> None:
         self.left_precision = left_precision
         self.right_precision = right_precision
         self.transition_precision = transition_precision
@@ -461,7 +465,7 @@ class GaussianMarkovInformation(StrictModule):
         node_valid: ArrayLike | None = None,
         information_id: str = "gaussian-markov-information",
         rank_tolerance: float = 0.0,
-    ):
+    ) -> None:
         diagonal = jnp.asarray(diagonal_precision)
         transition = jnp.asarray(transition_precision)
         vector = jnp.asarray(information_vector)
@@ -566,7 +570,7 @@ class GaussianMarkovMoments(StrictModule):
         information_id: str = "gaussian-markov-information",
         execution_method: str = "provided",
         rank_tolerance: float = 0.0,
-    ):
+    ) -> None:
         means_ = jnp.asarray(means)
         second_ = jnp.asarray(second_moments)
         transition_ = jnp.asarray(transition_second_moments)
@@ -897,7 +901,9 @@ def _reduce_information_elements(
     if edge_count == 1:
         return initial
 
-    def scan_step(carry, item):
+    def scan_step(
+        carry: GaussianInformationElement, item: GaussianInformationElement
+    ) -> tuple[GaussianInformationElement, None]:
         combined = combine(carry, item)
         return combined, None
 
@@ -958,8 +964,7 @@ def _resolve_gaussian_markov_method(
     method: GaussianMarkovExecutionMethod,
     /,
 ) -> Literal["sequential", "parallel"]:
-    if method not in ("sequential", "parallel", "auto"):
-        raise ValueError("method must be 'sequential', 'parallel', or 'auto'.")
+    method = parse(method, GaussianMarkovExecutionMethod, "method")
     if method != "auto":
         return method
     return "parallel" if num_nodes >= 64 and state_size <= 32 else "sequential"
@@ -1085,7 +1090,12 @@ def gaussian_markov_moments(
     vector = information.information_vector.reshape((case_count, node_count, state_size))
     node_valid = information.node_valid.reshape((case_count, node_count))
 
-    def objective(diagonal_case, transition_case, vector_case, valid_case):
+    def objective(
+        diagonal_case: Array,
+        transition_case: Array,
+        vector_case: Array,
+        valid_case: Array,
+    ) -> tuple[Array, tuple[Array, Array]]:
         value, valid, status = _gaussian_markov_log_normalizer_arrays(
             diagonal_case,
             transition_case,
@@ -1304,7 +1314,7 @@ def gaussian_markov_information_from_moments(
 
 
 def sample_gaussian_markov(
-    key: Key[Array, ""],
+    key: PRNGKey,
     moments: GaussianMarkovMoments,
     /,
     *,
@@ -1333,10 +1343,10 @@ def sample_gaussian_markov(
     case_indices = jnp.arange(case_count, dtype=jnp.uint32)
     node_indices = jnp.arange(node_count, dtype=jnp.uint32)
 
-    def member_keys(member):
+    def member_keys(member: Array) -> Array:
         member_key = jr.fold_in(key, member)
 
-        def case_keys(case):
+        def case_keys(case: Array) -> Array:
             case_key = jr.fold_in(member_key, case)
             return jax.vmap(lambda node: jr.fold_in(case_key, node))(node_indices)
 
@@ -1374,7 +1384,9 @@ def sample_gaussian_markov(
         )
         conditional_factor = jnp.linalg.cholesky(conditional_covariance)
 
-        def sample_step(previous, inputs):
+        def sample_step(
+            previous: Array, inputs: tuple[Array, Array, Array, Array, Array]
+        ) -> tuple[Array, Array]:
             transition_, offset_, factor_, normal_, active_ = inputs
             value = (
                 ein.contract("cij,scj->sci", transition_, previous)

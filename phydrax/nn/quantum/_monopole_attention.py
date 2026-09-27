@@ -12,7 +12,8 @@ from math import comb, pi, sqrt
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -20,6 +21,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
 from ...operators.quantum import LogAmplitude
+from ...typing import PRNGKey
 from ._complex_determinant import complex_determinant_mixture
 
 
@@ -49,7 +51,7 @@ class MonopoleAttentionAmplitude(StrictModule, ParameterOwner):
         self,
         particle_count: int,
         twice_monopole_flux: int,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
         *,
         hidden_dimension: int = 32,
@@ -57,7 +59,7 @@ class MonopoleAttentionAmplitude(StrictModule, ParameterOwner):
         determinant_count: int = 4,
         component_indices: Sequence[int] | None = None,
         maximum_parameter_elements: int = 20_000_000,
-    ):
+    ) -> None:
         particles = int(particle_count)
         flux = int(twice_monopole_flux)
         hidden = int(hidden_dimension)

@@ -6,12 +6,14 @@ from __future__ import annotations
 
 from enum import IntEnum
 from math import isfinite
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -24,6 +26,25 @@ from ..equations._charged_radiation_interactions import (
 
 
 _POSITRON_ANNIHILATION_ENERGY_EV = 2.0 * 510998.95
+
+_TransportCarry: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+_TransportOutcome: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 
 class ChargedParticleTransportStatus(IntEnum):
@@ -53,11 +74,11 @@ class ChargedParticleTransportResult(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
 
-def _key(key, history, step, stream):
+def _key(key: Array, history: ArrayLike, step: ArrayLike, stream: int) -> Array:
     return jr.fold_in(jr.fold_in(jr.fold_in(key, history), step), stream)
 
 
-def _scatter_direction(direction, theta, phi):
+def _scatter_direction(direction: Array, theta: Array, phi: Array) -> Array:
     z = jnp.asarray((0.0, 0.0, 1.0), dtype=direction.dtype)
     x = jnp.asarray((1.0, 0.0, 0.0), dtype=direction.dtype)
     reference = jnp.where(jnp.abs(direction[2]) < 0.9, z, x)
@@ -89,7 +110,7 @@ class ChargedParticleTransportPlan(StrictModule, NonTrainableState):
         maximum_step_length: float,
         maximum_fractional_energy_loss: float = 0.05,
         cutoff_energy_ev: float,
-    ):
+    ) -> None:
         if not isinstance(geometry, VoxelRadiationGeometryPlan):
             raise TypeError("geometry must be VoxelRadiationGeometryPlan.")
         if not isinstance(materials, ChargedRadiationMaterialLibrary):
@@ -133,7 +154,15 @@ class ChargedParticleTransportPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _one(self, key, history, origin, direction, energy, particle_kind):
+    def _one(
+        self,
+        key: Array,
+        history: Array,
+        origin: Array,
+        direction: Array,
+        energy: Array,
+        particle_kind: Array,
+    ) -> _TransportOutcome:
         norm = jnp.linalg.norm(direction)
         kind_valid = (particle_kind == int(ChargedRadiationParticleKind.ELECTRON)) | (
             particle_kind == int(ChargedRadiationParticleKind.POSITRON)
@@ -167,7 +196,7 @@ class ChargedParticleTransportPlan(StrictModule, NonTrainableState):
             ).astype(jnp.int32),
         )
 
-        def advance(step_index, carry):
+        def advance(step_index: Array, carry: _TransportCarry) -> _TransportCarry:
             (
                 position,
                 ray,

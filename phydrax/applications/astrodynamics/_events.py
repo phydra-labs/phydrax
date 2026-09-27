@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._identity import callable_payload
@@ -88,7 +89,7 @@ class AstrodynamicsEventPlan(StrictModule, NonTrainableState):
         vector_field_after_numeric_id: str | None = None,
         competing_guard_semantic_ids: Sequence[str] | None = None,
         competing_guard_numeric_ids: Sequence[str] | None = None,
-    ):
+    ) -> None:
         """Bind one hybrid event; opaque callables require semantic and numeric IDs.
 
         StrictModule callables and plain module-level functions are identified by
@@ -209,7 +210,7 @@ class IdentityReset(StrictModule):
 class ImpulsiveVelocityReset(StrictModule):
     delta_velocity: Array
 
-    def __init__(self, delta_velocity: ArrayLike, /):
+    def __init__(self, delta_velocity: ArrayLike, /) -> None:
         value = jnp.asarray(delta_velocity)
         if value.shape != (3,) or not bool(jnp.all(jnp.isfinite(value))):
             raise ValueError("delta_velocity must be a finite vector with shape (3,).")
@@ -225,7 +226,7 @@ class ImpulsiveVelocityReset(StrictModule):
 class RadiusGuard(StrictModule):
     radius: Array
 
-    def __init__(self, radius: ArrayLike, /):
+    def __init__(self, radius: ArrayLike, /) -> None:
         value = jnp.asarray(radius).reshape(())
         if not bool(jnp.isfinite(value)) or not bool(value > 0.0):
             raise ValueError("radius must be finite and positive.")
@@ -251,7 +252,7 @@ class PlaneGuard(StrictModule):
         normal: ArrayLike,
         offset: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
         /,
-    ):
+    ) -> None:
         normal_host = np.asarray(normal, dtype=np.float64)
         offset_host = np.asarray(offset, dtype=np.float64)
         if normal_host.shape != (3,) or offset_host.shape != (3,):

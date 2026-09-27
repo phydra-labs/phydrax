@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeAlias
 
 import equinox as eqx
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -17,10 +20,12 @@ from ..discretization import (
     DiscretizationRecord,
     DiscretizationRole,
 )
+from ..discretization._conservation_boundary import SourceFunction
 from ..discretization.fem._boundary import FiniteElementBoundarySet
 from ..discretization.fem._generic import FiniteElementDiscretization
 from ..discretization.finite_difference import (
     PreparedSBPConservationDynamics,
+    SBPFluxDifferencingDiagnostics,
     SBPFluxDifferencingMethodPlan,
     TensorSBPDiscretization,
 )
@@ -37,6 +42,7 @@ from ..discretization.finite_volume import (
     FiniteVolumeDiscretization,
     FiniteVolumeMethodPlan,
     FiniteVolumePrecisionPolicy,
+    FiniteVolumeResidualDiagnostics,
     HLLCFluxPlan,
     MappedFiniteVolumeDiscretization,
     NoSlipAdiabaticWallBoundary,
@@ -49,17 +55,20 @@ from ..discretization.finite_volume import (
     RoeFluxPlan,
     ShallowWaterHydrostaticHLLPlan,
     TriangleFiniteVolumeBoundarySet,
+    TriangleFiniteVolumeDiagnostics,
     TriangleFiniteVolumeDiscretization,
     TriangleFiniteVolumeMethodPlan,
     TriangleKExactReconstructionPlan,
     TriangleMUSCLReconstructionPlan,
     UnstructuredFiniteVolumeBoundarySet,
     UnstructuredFiniteVolumeCouplingPlan,
+    UnstructuredFiniteVolumeDiagnostics,
     UnstructuredFiniteVolumeDiscretization,
     UnstructuredFiniteVolumeMethodPlan,
 )
 from ..discretization.spectral import (
     PreparedSpectralConservationDynamics,
+    SpectralConservationDiagnostics,
     SpectralConservationMethodPlan,
     TensorSpectralDiscretization,
 )
@@ -75,13 +84,50 @@ from ._hyperbolic_systems import (
 from ._multiphase import TwoMaterialVOFSystem
 from ._shallow_water_sources import ShallowWaterCoriolisSource
 from .fem._conservation import (
+    DGSEMConservationDiagnostics,
     DGSEMConservationMethodPlan,
+    DGSEMFaceFluxes,
     PreparedDGSEMConservationDynamics,
 )
 from .fem._nodal_conservation import (
+    NodalDGConservationDiagnostics,
     NodalDGConservationMethodPlan,
+    NodalDGFaceFluxes,
     PreparedNodalDGConservationDynamics,
 )
+
+
+_ConservationMethod: TypeAlias = (
+    FiniteVolumeMethodPlan
+    | TriangleFiniteVolumeMethodPlan
+    | UnstructuredFiniteVolumeMethodPlan
+    | SpectralConservationMethodPlan
+    | SBPFluxDifferencingMethodPlan
+    | DGSEMConservationMethodPlan
+    | NodalDGConservationMethodPlan
+)
+_ConservationFaceFluxes: TypeAlias = (
+    tuple[tuple[Array, ...], tuple[Array, ...]]
+    | tuple[Array, Array]
+    | DGSEMFaceFluxes
+    | NodalDGFaceFluxes
+)
+_ConservationDiagnostics: TypeAlias = (
+    FiniteVolumeResidualDiagnostics
+    | TriangleFiniteVolumeDiagnostics
+    | UnstructuredFiniteVolumeDiagnostics
+    | SpectralConservationDiagnostics
+    | SBPFluxDifferencingDiagnostics
+    | DGSEMConservationDiagnostics
+    | NodalDGConservationDiagnostics
+    | None
+)
+# (primal, pushforward, pullback) of the prepared dynamics linearization.
+_ConservationLinearization: TypeAlias = tuple[
+    PyTree[Array],
+    Callable[[PyTree[Any]], PyTree[Array]],
+    Callable[[PyTree[Any]], tuple[PyTree[Array]]],
+]
 
 
 class ConservationProblemIR(StrictModule):
@@ -115,10 +161,10 @@ class ConservationProblemIR(StrictModule):
         ),
         /,
         *,
-        source=None,
+        source: SourceFunction | None = None,
         source_id: str | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         field = str(field_name)
         if not name_ or not field:
@@ -238,7 +284,7 @@ class CompiledConservationProblem(StrictModule):
             | PreparedNodalDGConservationDynamics
         ),
         /,
-    ):
+    ) -> None:
         if isinstance(discretization, TensorSpectralDiscretization):
             state_space_name = discretization.modal_space.name
         elif isinstance(discretization, TensorSBPDiscretization):
@@ -306,7 +352,9 @@ class CompiledConservationProblem(StrictModule):
         )
         self.compilation_id = compilation_id
 
-    def face_fluxes(self, time: Array, state: Array, args: Any = None, /):
+    def face_fluxes(
+        self, time: Array, state: Array, args: Any = None, /
+    ) -> _ConservationFaceFluxes:
         if isinstance(self.dynamics, PreparedSpectralConservationDynamics):
             raise NotImplementedError(
                 "Global spectral conservation has no interface face-flux array."
@@ -339,7 +387,7 @@ class CompiledConservationProblem(StrictModule):
         state: Array,
         args: Any = None,
         /,
-    ):
+    ) -> tuple[Array, _ConservationDiagnostics]:
         return self.dynamics.residual_with_diagnostics(time, state, args)
 
     def stable_step(
@@ -356,7 +404,9 @@ class CompiledConservationProblem(StrictModule):
             )
         return self.dynamics.stable_step(state, args, cfl=cfl)
 
-    def linearize(self, time: Array, state: Array, args: Any = None, /):
+    def linearize(
+        self, time: Array, state: Array, args: Any = None, /
+    ) -> _ConservationLinearization | tuple[Array, Callable[[Array], Array]]:
         return self.dynamics.linearize(time, state, args)
 
     def __call__(self, time: Array, state: Array, args: Any = None) -> Array:
@@ -453,15 +503,15 @@ def _validate_method(
 
 def _compile_finite_element_conservation(
     problem: ConservationProblemIR,
-    discretization,
-    method,
+    discretization: FiniteElementDiscretization,
+    method: _ConservationMethod,
     /,
     *,
-    capacity,
-    bathymetry,
-    precision,
-    coupling,
-    entropy_pair,
+    capacity: ArrayLike | None,
+    bathymetry: ArrayLike | None,
+    precision: FiniteVolumePrecisionPolicy | None,
+    coupling: UnstructuredFiniteVolumeCouplingPlan | None,
+    entropy_pair: ConvexEntropyPair | None,
 ) -> CompiledConservationProblem:
     if isinstance(method, NodalDGConservationMethodPlan):
         if not isinstance(problem.boundaries, FiniteElementBoundarySet):
@@ -524,15 +574,15 @@ def _compile_finite_element_conservation(
 
 def _compile_sbp_conservation(
     problem: ConservationProblemIR,
-    discretization,
-    method,
+    discretization: TensorSBPDiscretization,
+    method: _ConservationMethod,
     /,
     *,
-    capacity,
-    bathymetry,
-    precision,
-    coupling,
-    entropy_pair,
+    capacity: ArrayLike | None,
+    bathymetry: ArrayLike | None,
+    precision: FiniteVolumePrecisionPolicy | None,
+    coupling: UnstructuredFiniteVolumeCouplingPlan | None,
+    entropy_pair: ConvexEntropyPair | None,
 ) -> CompiledConservationProblem:
     if not isinstance(method, SBPFluxDifferencingMethodPlan):
         raise TypeError("Tensor SBP geometry requires SBPFluxDifferencingMethodPlan.")
@@ -562,15 +612,15 @@ def _compile_sbp_conservation(
 
 def _compile_spectral_conservation(
     problem: ConservationProblemIR,
-    discretization,
-    method,
+    discretization: TensorSpectralDiscretization,
+    method: _ConservationMethod,
     /,
     *,
-    capacity,
-    bathymetry,
-    precision,
-    coupling,
-    entropy_pair,
+    capacity: ArrayLike | None,
+    bathymetry: ArrayLike | None,
+    precision: FiniteVolumePrecisionPolicy | None,
+    coupling: UnstructuredFiniteVolumeCouplingPlan | None,
+    entropy_pair: ConvexEntropyPair | None,
 ) -> CompiledConservationProblem:
     if not isinstance(method, SpectralConservationMethodPlan):
         raise TypeError(
@@ -599,15 +649,16 @@ def _compile_spectral_conservation(
 
 def _compile_unstructured_conservation(
     problem: ConservationProblemIR,
-    discretization,
-    method,
+    discretization: UnstructuredFiniteVolumeDiscretization
+    | DyadicFiniteVolumeDiscretization,
+    method: _ConservationMethod,
     /,
     *,
-    capacity,
-    bathymetry,
-    precision,
-    coupling,
-    entropy_pair,
+    capacity: ArrayLike | None,
+    bathymetry: ArrayLike | None,
+    precision: FiniteVolumePrecisionPolicy | None,
+    coupling: UnstructuredFiniteVolumeCouplingPlan | None,
+    entropy_pair: ConvexEntropyPair | None,
 ) -> CompiledConservationProblem:
     if not isinstance(method, UnstructuredFiniteVolumeMethodPlan):
         raise TypeError(
@@ -688,15 +739,15 @@ def _compile_unstructured_conservation(
 
 def _compile_triangle_conservation(
     problem: ConservationProblemIR,
-    discretization,
-    method,
+    discretization: TriangleFiniteVolumeDiscretization,
+    method: _ConservationMethod,
     /,
     *,
-    capacity,
-    bathymetry,
-    precision,
-    coupling,
-    entropy_pair,
+    capacity: ArrayLike | None,
+    bathymetry: ArrayLike | None,
+    precision: FiniteVolumePrecisionPolicy | None,
+    coupling: UnstructuredFiniteVolumeCouplingPlan | None,
+    entropy_pair: ConvexEntropyPair | None,
 ) -> CompiledConservationProblem:
     if not isinstance(method, TriangleFiniteVolumeMethodPlan):
         raise TypeError("Triangle geometry requires TriangleFiniteVolumeMethodPlan.")
@@ -765,15 +816,15 @@ def _compile_triangle_conservation(
 
 def _compile_structured_finite_volume_conservation(
     problem: ConservationProblemIR,
-    discretization,
-    method,
+    discretization: FiniteVolumeDiscretization | MappedFiniteVolumeDiscretization,
+    method: _ConservationMethod,
     /,
     *,
-    capacity,
-    bathymetry,
-    precision,
-    coupling,
-    entropy_pair,
+    capacity: ArrayLike | None,
+    bathymetry: ArrayLike | None,
+    precision: FiniteVolumePrecisionPolicy | None,
+    coupling: UnstructuredFiniteVolumeCouplingPlan | None,
+    entropy_pair: ConvexEntropyPair | None,
 ) -> CompiledConservationProblem:
     if not isinstance(
         discretization,
@@ -791,11 +842,14 @@ def _compile_structured_finite_volume_conservation(
         raise ValueError(
             "Bathymetry requires a bed-aware shallow-water interface method."
         )
+    boundaries = problem.boundaries
+    if not isinstance(boundaries, FiniteVolumeBoundarySet):
+        raise TypeError("boundaries must be a FiniteVolumeBoundarySet.")
     dynamics = PreparedFiniteVolumeDynamics(
         problem.system,
         discretization,
         method,
-        problem.boundaries,
+        boundaries,
         capacity=capacity,
         bathymetry=bathymetry,
         precision=precision,
@@ -818,19 +872,11 @@ def compile_conservation_problem(
         | TensorSBPDiscretization
         | FiniteElementDiscretization
     ),
-    method: (
-        FiniteVolumeMethodPlan
-        | TriangleFiniteVolumeMethodPlan
-        | UnstructuredFiniteVolumeMethodPlan
-        | SpectralConservationMethodPlan
-        | SBPFluxDifferencingMethodPlan
-        | DGSEMConservationMethodPlan
-        | NodalDGConservationMethodPlan
-    ),
+    method: _ConservationMethod,
     /,
     *,
-    capacity=None,
-    bathymetry=None,
+    capacity: ArrayLike | None = None,
+    bathymetry: ArrayLike | None = None,
     precision: FiniteVolumePrecisionPolicy | None = None,
     coupling: UnstructuredFiniteVolumeCouplingPlan | None = None,
     entropy_pair: ConvexEntropyPair | None = None,

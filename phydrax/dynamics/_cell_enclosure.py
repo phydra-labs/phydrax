@@ -32,7 +32,7 @@ class CellMapEnclosure(StrictModule, NonTrainableState):
         /,
         *,
         degree: int,
-    ):
+    ) -> None:
         degree_ = int(degree)
         if neighborhood.topology.topology_id != exit_set.topology.topology_id:
             raise ValueError("Cell enclosure index pair must share one topology.")

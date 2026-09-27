@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._mna import AbstractMNAComponent, MNAStamp
 
@@ -35,7 +36,9 @@ class Resistor(AbstractMNAComponent):
     resistance: Array
     component_id: str = eqx.field(static=True)
 
-    def __init__(self, resistance: ArrayLike, /, *, component_id: str = "resistor"):
+    def __init__(
+        self, resistance: ArrayLike, /, *, component_id: str = "resistor"
+    ) -> None:
         value = jnp.asarray(resistance)
         value = eqx.error_if(
             value,
@@ -70,7 +73,9 @@ class Capacitor(AbstractMNAComponent):
     capacitance: Array
     component_id: str = eqx.field(static=True)
 
-    def __init__(self, capacitance: ArrayLike, /, *, component_id: str = "capacitor"):
+    def __init__(
+        self, capacitance: ArrayLike, /, *, component_id: str = "capacitor"
+    ) -> None:
         value = jnp.asarray(capacitance)
         value = eqx.error_if(
             value,
@@ -105,7 +110,9 @@ class Inductor(AbstractMNAComponent):
     inductance: Array
     component_id: str = eqx.field(static=True)
 
-    def __init__(self, inductance: ArrayLike, /, *, component_id: str = "inductor"):
+    def __init__(
+        self, inductance: ArrayLike, /, *, component_id: str = "inductor"
+    ) -> None:
         value = jnp.asarray(inductance)
         value = eqx.error_if(
             value,
@@ -149,7 +156,7 @@ class AdmittanceComponent(AbstractMNAComponent):
 
     def __init__(
         self, admittance: ArrayLike, /, *, component_id: str = "admittance-component"
-    ):
+    ) -> None:
         value = jnp.asarray(admittance)
         if value.ndim < 2 or value.shape[-2] != value.shape[-1]:
             raise ValueError("admittance must end in one square terminal matrix.")
@@ -195,7 +202,7 @@ class ImpedanceComponent(AbstractMNAComponent):
 
     def __init__(
         self, impedance: ArrayLike, /, *, component_id: str = "impedance-component"
-    ):
+    ) -> None:
         value = jnp.asarray(impedance)
         if value.ndim < 2 or value.shape[-2] != value.shape[-1]:
             raise ValueError("impedance must end in one square port matrix.")

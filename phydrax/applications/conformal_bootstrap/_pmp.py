@@ -13,7 +13,8 @@ from decimal import Decimal, InvalidOperation
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -66,7 +67,7 @@ class DampedRationalPrefactor(StrictModule):
         constant: str,
         poles: Sequence[str] = (),
         /,
-    ):
+    ) -> None:
         base_value = _decimal(base, name="prefactor base")
         constant_value = _decimal(constant, name="prefactor constant")
         pole_values = tuple(_decimal(value, name="prefactor pole") for value in poles)
@@ -120,7 +121,7 @@ class PolynomialMatrixBlock(StrictModule):
         sample_scalings: Sequence[str] = (),
         reduced_sample_scalings: Sequence[str] = (),
         bilinear_basis: Sequence[Sequence[str]] = (),
-    ):
+    ) -> None:
         if not isinstance(prefactor, DampedRationalPrefactor):
             raise TypeError("prefactor must be DampedRationalPrefactor.")
         raw_rows = tuple(tuple(row) for row in polynomials)
@@ -239,7 +240,7 @@ class ConformalPolynomialMatrixProgram(StrictModule):
         frontend_id: str,
         frontend_precision_bits: int,
         maximum_decimal_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         objective_values = _decimal_tuple(objective, name="objective")
         normalization_values = _decimal_tuple(normalization, name="normalization")
         block_values = tuple(blocks)

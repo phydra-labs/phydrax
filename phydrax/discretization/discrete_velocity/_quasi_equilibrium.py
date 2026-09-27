@@ -9,7 +9,8 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -54,7 +55,7 @@ class FullRangeQuasiEquilibriumPlan(StrictModule, NonTrainableState):
         /,
         *,
         prandtl_number: float,
-    ):
+    ) -> None:
         if not isinstance(model, PositiveCompressibleKineticPlan):
             raise TypeError("model must be a PositiveCompressibleKineticPlan.")
         prandtl = float(prandtl_number)

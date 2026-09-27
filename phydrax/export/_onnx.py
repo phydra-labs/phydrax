@@ -171,7 +171,9 @@ def _onnx_schema(
                 f"ONNX {role} {argument.name!r} has unsupported type {argument.type!r}."
             )
         specs.append(
-            ExternalTensorSpec(argument.name, shape, _ONNX_TENSOR_DTYPES[argument.type])
+            ExternalTensorSpec(
+                argument.name, shape, _ONNX_TENSOR_DTYPES[argument.type].str
+            )
         )
     return tuple(specs)
 
@@ -199,8 +201,8 @@ def _onnx_binding(
         semantic,
         NumericRevision(semantic, {"model_sha256": model_sha256}),
         ExecutableSignature(
-            shapes=zip(names, (spec.shape for spec in specs), strict=True),
-            dtypes=zip(names, (spec.dtype for spec in specs), strict=True),
+            shapes=tuple(zip(names, (spec.shape for spec in specs), strict=True)),
+            dtypes=tuple(zip(names, (spec.dtype for spec in specs), strict=True)),
             backend_facts={
                 "runtime": "onnxruntime",
                 "runtime_version": runtime_version,

@@ -13,11 +13,13 @@ import jax
 import jax.core as jax_core
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 from .._trainable import fixed_field
 from ._operators import (
     _array_value,
@@ -52,7 +54,9 @@ def _same(left: AbstractVectorSpace, right: AbstractVectorSpace, /) -> None:
         raise ValueError("Operator spaces are incompatible.")
 
 
-def _space(size: int, dtype: Any, supplied: AbstractVectorSpace | None, /):
+def _space(
+    size: int, dtype: DTypeLike, supplied: AbstractVectorSpace | None, /
+) -> AbstractVectorSpace:
     result = ArraySpace((size,), dtype=dtype) if supplied is None else supplied
     if not isinstance(result, AbstractVectorSpace) or result.size != size:
         raise ValueError("space must have the operator's coordinate dimension.")
@@ -84,7 +88,7 @@ def _apply_factor_axis(
     trailing_shape = moved.shape[1:]
     columns = moved.reshape((input_space.size, -1)).T
 
-    def apply_column(coordinates):
+    def apply_column(coordinates: Array) -> Array:
         vector = input_space.unflatten(coordinates)
         return output_space.flatten(action(vector))
 
@@ -156,7 +160,7 @@ class PermutationLinearOperator(AbstractLinearOperator):
         space: AbstractVectorSpace | None = None,
         dtype: Any = np.float64,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         permutation_ = jnp.asarray(permutation)
         if permutation_.ndim != 1 or not jnp.issubdtype(permutation_.dtype, jnp.integer):
             raise TypeError("permutation must be one integer vector.")
@@ -220,7 +224,7 @@ class TriangularLinearOperator(AbstractLinearOperator):
         unit_diagonal: bool = False,
         space: AbstractVectorSpace | None = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         matrix_ = jnp.asarray(matrix)
         if matrix_.ndim != 2 or matrix_.shape[0] != matrix_.shape[1]:
             raise ValueError("matrix must be one square matrix.")
@@ -298,7 +302,7 @@ class TridiagonalLinearOperator(AbstractLinearOperator):
         *,
         space: AbstractVectorSpace | None = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         lower_, diagonal_, upper_ = map(jnp.asarray, (lower, diagonal, upper))
         if (
             diagonal_.ndim != 1
@@ -374,7 +378,7 @@ class BandedLinearOperator(AbstractLinearOperator):
         upper_bandwidth: int,
         space: AbstractVectorSpace | None = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         bands_ = jnp.asarray(bands)
         lower_ = int(lower_bandwidth)
         upper_ = int(upper_bandwidth)
@@ -537,7 +541,7 @@ class LocalBlockDiagonalLinearOperator(AbstractLinearOperator):
         target: ArraySpace | None = None,
         properties: OperatorProperties | None = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         blocks_ = jnp.asarray(blocks)
         if blocks_.ndim != 3:
             raise ValueError(
@@ -694,7 +698,7 @@ class BlockDiagonalLinearOperator(AbstractLinearOperator):
         /,
         *,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         blocks_ = tuple(blocks)
         if not blocks_ or not all(
             isinstance(block, AbstractLinearOperator) for block in blocks_
@@ -797,7 +801,7 @@ class LowRankLinearOperator(AbstractLinearOperator):
         target: AbstractVectorSpace | None = None,
         exact_rank: bool = False,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         left_, right_ = jnp.asarray(left_factor), jnp.asarray(right_factor)
         if left_.ndim != 2 or right_.ndim != 2 or left_.shape[1] != right_.shape[1]:
             raise ValueError("factors must have shapes (m, r) and (n, r).")
@@ -866,7 +870,7 @@ class SymmetricLowRankLinearOperator(AbstractLinearOperator):
         space: AbstractVectorSpace | None = None,
         positive_semidefinite: bool = False,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         factor_ = jnp.asarray(factor)
         if factor_.ndim != 2:
             raise ValueError("factor must have shape (n, r).")
@@ -966,7 +970,7 @@ class TwoSidedScaledLinearOperator(AbstractLinearOperator):
         *,
         congruence: bool = False,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape:
@@ -1119,7 +1123,7 @@ class BasePlusLowRankLinearOperator(AbstractLinearOperator):
         *,
         properties: OperatorProperties | None = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(base, AbstractLinearOperator):
             raise TypeError("base must be an AbstractLinearOperator.")
         if base.batch_shape or not base.source.compatible(base.target):
@@ -1228,7 +1232,7 @@ class DiagonalPlusLowRankLinearOperator(AbstractLinearOperator):
         space: AbstractVectorSpace | None = None,
         nonsingular_diagonal: bool = False,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         diagonal_ = jnp.asarray(diagonal)
         left_ = jnp.asarray(left_factor)
         right_ = left_ if right_factor is None else jnp.asarray(right_factor)
@@ -1308,7 +1312,7 @@ class KroneckerLinearOperator(AbstractLinearOperator):
         /,
         *,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         factors_ = tuple(factors)
         if not factors_ or any(factor.batch_shape for factor in factors_):
             raise ValueError("Kronecker factors must be nonempty and unbatched.")
@@ -1342,7 +1346,9 @@ class KroneckerLinearOperator(AbstractLinearOperator):
             {"kind": "kronecker", "factors": [factor.operator_id for factor in factors_]},
         )
 
-    def _apply(self, vector: Any, mode: Literal["forward", "transpose", "adjoint"]):
+    def _apply(
+        self, vector: Any, mode: Literal["forward", "transpose", "adjoint"]
+    ) -> Array:
         value = (
             self.source.validate(vector)
             if mode == "forward"
@@ -1390,7 +1396,7 @@ class EmbeddedTensorProductLinearOperator(AbstractLinearOperator):
         /,
         *,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(local_operator, AbstractLinearOperator):
             raise TypeError("local_operator must be an AbstractLinearOperator.")
         if not isinstance(ambient_space, TensorProductSpace):
@@ -1516,7 +1522,7 @@ class EmbeddedTensorProductLinearOperator(AbstractLinearOperator):
         moved = jnp.transpose(value, permutation)
         columns = moved.reshape((input_space.size, -1)).T
 
-        def apply_column(coordinates):
+        def apply_column(coordinates: Array) -> Array:
             local_vector = input_space.unflatten(coordinates)
             return output_space.flatten(action(local_vector))
 
@@ -1537,7 +1543,7 @@ class EmbeddedTensorProductLinearOperator(AbstractLinearOperator):
         coordinate_dtype = _coordinate_dtype(self.source)
         basis = jnp.eye(self.source.size, dtype=coordinate_dtype)
 
-        def apply_column(coordinates):
+        def apply_column(coordinates: Array) -> Array:
             vector = self.source.unflatten(coordinates)
             return self.target.flatten(self.mv(vector))
 
@@ -1572,7 +1578,7 @@ class KroneckerSumLinearOperator(AbstractLinearOperator):
         /,
         *,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         factors_ = tuple(factors)
         if not factors_ or any(
             factor.batch_shape or not factor.source.compatible(factor.target)
@@ -1643,7 +1649,9 @@ class KroneckerSumLinearOperator(AbstractLinearOperator):
             },
         )
 
-    def _apply(self, vector: Any, mode: Literal["forward", "transpose", "adjoint"]):
+    def _apply(
+        self, vector: Any, mode: Literal["forward", "transpose", "adjoint"]
+    ) -> Array:
         value = self.source.validate(vector)
         output = jnp.zeros_like(value)
         for axis, factor in enumerate(self.factors):
@@ -1696,7 +1704,7 @@ class StackedLinearOperator(AbstractLinearOperator):
         *,
         axis: Literal["vertical", "horizontal"] = "vertical",
         operator_id: str | None = None,
-    ):
+    ) -> None:
         operators_ = tuple(operators)
         if not operators_ or any(operator.batch_shape for operator in operators_):
             raise ValueError("Stacked operators must be nonempty and unbatched.")
@@ -1783,7 +1791,7 @@ class SchurComplementLinearOperator(AbstractLinearOperator):
         /,
         *,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(inverse_action, AbstractPreconditioner):
             raise TypeError("inverse_action must be an AbstractPreconditioner.")
         blocks = (diagonal_block, lower_block, upper_block)

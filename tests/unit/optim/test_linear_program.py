@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def test_bounded_linear_program_uses_native_bounds_without_stored_hessian():
+def test_bounded_linear_program_uses_native_bounds_without_stored_hessian() -> None:
     problem = phx.optim.LinearProgram(
         jnp.asarray([-1.0, -0.5]),
         inequality_matrix=jnp.asarray([[1.0, 1.0]]),
@@ -27,7 +30,7 @@ def test_bounded_linear_program_uses_native_bounds_without_stored_hessian():
     assert not result.certificate.primal_ray_valid
 
 
-def test_linear_program_result_produces_reusable_warm_start():
+def test_linear_program_result_produces_reusable_warm_start() -> None:
     problem = phx.optim.LinearProgram(
         jnp.asarray([-1.0, -0.5]),
         inequality_matrix=jnp.asarray([[1.0, 1.0]]),
@@ -43,7 +46,7 @@ def test_linear_program_result_produces_reusable_warm_start():
     assert warm.iterations <= cold.iterations
 
 
-def test_linear_program_reports_independently_audited_terminal_certificates():
+def test_linear_program_reports_independently_audited_terminal_certificates() -> None:
     infeasible = phx.optim.LinearProgram(
         jnp.zeros(1),
         inequality_matrix=jnp.asarray([[1.0], [-1.0]]),
@@ -61,7 +64,7 @@ def test_linear_program_reports_independently_audited_terminal_certificates():
     assert unbounded_result.certificate.primal_ray_objective < 0.0
 
 
-def test_fixed_and_one_sided_bounds_preserve_kkt_dual_signs():
+def test_fixed_and_one_sided_bounds_preserve_kkt_dual_signs() -> None:
     problem = phx.optim.LinearProgram(
         jnp.asarray([1.0, 1.0, -2.0]),
         bounds=phx.optim.Bounds(
@@ -78,7 +81,7 @@ def test_fixed_and_one_sided_bounds_preserve_kkt_dual_signs():
     assert result.status == phx.optim.ConvexProgramStatus.OPTIMAL
 
 
-def test_bound_roles_must_be_shared_across_program_batch():
+def test_bound_roles_must_be_shared_across_program_batch() -> None:
     with pytest.raises(ValueError, match="shared finite/fixed role pattern"):
         phx.optim.LinearProgram(
             jnp.asarray([[-1.0], [-1.0]]),
@@ -89,11 +92,11 @@ def test_bound_roles_must_be_shared_across_program_batch():
         ).as_quadratic_program()
 
 
-def test_linear_program_is_jittable_for_static_bound_topology():
+def test_linear_program_is_jittable_for_static_bound_topology() -> None:
     bounds = phx.optim.Bounds(jnp.zeros(2), jnp.ones(2))
 
     @jax.jit
-    def solve(linear):
+    def solve(linear: Any) -> Any:
         return phx.optim.solve_linear_program(
             phx.optim.LinearProgram(linear, bounds=bounds)
         ).primal

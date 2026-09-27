@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -30,7 +32,7 @@ def case(fibers: int, nodes: int, angular: int, axial: int) -> dict[str, object]
     prior_source, prior_conductor = source.initialize(), conductor.initialize()
 
     @eqx.filter_jit
-    def observe(source_state, conductor_state, fiber_state):
+    def observe(source_state: Any, conductor_state: Any, fiber_state: Any) -> Any:
         candidate = source.propose(
             source_state,
             fiber_state,
@@ -78,7 +80,7 @@ def case(fibers: int, nodes: int, angular: int, axial: int) -> dict[str, object]
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument(

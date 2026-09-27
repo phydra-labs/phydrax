@@ -7,11 +7,18 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, TypeAlias
 
 from ..._fingerprint import canonical_fingerprint
 from ...qualification._criterion import QualificationCriterion
 from ...qualification._evidence import QualificationMatrix
+
+
+if TYPE_CHECKING:
+    from ._release import CleanReplayComparison
+    from ._validity import BatteryValidityEnvelope
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,7 +212,7 @@ THERMAL_ECM_SCIENTIFIC_METRICS = (
 )
 
 
-def _spme_metric(name, unit, ceiling, formula):
+def _spme_metric(name: str, unit: str, ceiling: float, formula: str) -> CampaignMetric:
     return CampaignMetric(
         name, unit, "maximum", "deterministic", "less-than-or-equal", ceiling, formula
     )
@@ -467,6 +474,10 @@ CIRCUIT_ECM_ADVANCED_METRICS = {
 }
 
 
+# Required (case, metric) -> (metric contract, evidence kind).
+_Requirements: TypeAlias = dict[tuple[str, str], tuple[CampaignMetric, str]]
+
+
 @dataclass(frozen=True, slots=True)
 class BatteryReleaseContract:
     model_id: str
@@ -507,12 +518,14 @@ class BatteryReleaseContract:
             for name, _ in self.replay_observables
         )
 
-    def requirements(self, envelope, replay_limits):
+    def requirements(
+        self, envelope: BatteryValidityEnvelope, replay_limits: Mapping[str, float]
+    ) -> _Requirements:
         if set(replay_limits) != set(self.replay_keys):
             raise ValueError(
                 "Clean replay must compare every fixed model case and observable."
             )
-        required = {}
+        required: _Requirements = {}
         for case, metrics in self.scientific_cases:
             for metric in metrics:
                 required[(case, metric.name)] = (
@@ -560,8 +573,16 @@ class BatteryReleaseContract:
         return required
 
     def validate(
-        self, criteria, matrix, envelope, replay, /, *, support_tuple_id, build_id
-    ):
+        self,
+        criteria: Sequence[QualificationCriterion],
+        matrix: QualificationMatrix,
+        envelope: BatteryValidityEnvelope,
+        replay: CleanReplayComparison,
+        /,
+        *,
+        support_tuple_id: str,
+        build_id: str,
+    ) -> _Requirements:
         required = self.requirements(envelope, dict(replay.observable_limits))
         if tuple(replay.case_ids) != self.replay_case_ids:
             raise ValueError(

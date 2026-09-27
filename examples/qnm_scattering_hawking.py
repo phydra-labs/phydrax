@@ -8,6 +8,8 @@ the illustrative Hawking quadrature from claiming a complete physical spectrum.
 
 from __future__ import annotations
 
+from typing import Any
+
 from jax import config
 
 
@@ -18,7 +20,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def qnm_plan(compact):
+def qnm_plan(compact: Any) -> Any:
     mode = compact.SeparatedMode(
         -2,
         2,
@@ -164,12 +166,16 @@ def main() -> None:
         (species,),
         frequencies,
         (species.species_id,),
+        # ty: ignore[invalid-argument-type]
         (0,),
+        # ty: ignore[invalid-argument-type]
         (0,),
         mode_ids=(scatter_mode.mode_id,),
     )
     tails = compact.HawkingTailEvidence(
+        # ty: ignore[invalid-argument-type]
         (0.0, 0.0, 0.0),
+        # ty: ignore[invalid-argument-type]
         (0.0, 0.0, 0.0),
         qualified=False,
         derivative_valid=False,

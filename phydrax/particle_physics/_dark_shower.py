@@ -10,12 +10,14 @@ import math
 from collections.abc import Sequence
 from enum import IntEnum, StrEnum
 from numbers import Integral
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -33,6 +35,32 @@ from ..solver._dark_sector_epoch_runtime import (
 from ._events import ParticleEventBatch
 from ._identity import ParticleRole
 from ._species import ParticleSpeciesTable
+
+
+# Twenty-one fixed-shape event and proposal arrays threaded through the shower loop.
+_ShowerCarry: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 
 def _pdg_id(value: object, name: str, /) -> int:
@@ -95,12 +123,15 @@ class DarkSplittingChannel(StrictModule, NonTrainableState):
         color_rule: DarkColorRule | str,
         kernel_coefficient: float,
         envelope_coefficient: float,
-    ):
+    ) -> None:
         daughters_raw = tuple(daughter_pdg_ids)
         if len(daughters_raw) != 2:
             raise ValueError("daughter_pdg_ids must contain exactly two species.")
         parent = _pdg_id(parent_pdg_id, "parent_pdg_id")
-        daughters = tuple(_pdg_id(value, "daughter_pdg_id") for value in daughters_raw)
+        daughters = (
+            _pdg_id(daughters_raw[0], "daughter_pdg_id"),
+            _pdg_id(daughters_raw[1], "daughter_pdg_id"),
+        )
         kind = DarkSplittingKernelKind(kernel_kind)
         rule = DarkColorRule(color_rule)
         coefficient = float(kernel_coefficient)
@@ -189,7 +220,7 @@ class DarkShowerEpochPlan(StrictModule, NonTrainableState):
         proposal_capacity: int,
         production_evidence_ids: Sequence[str],
         provider_status: int = 1,
-    ):
+    ) -> None:
         if not isinstance(runtime_plan, DarkSectorEpochPlan):
             raise TypeError("runtime_plan must be DarkSectorEpochPlan.")
         if not isinstance(species, ParticleSpeciesTable):
@@ -470,7 +501,9 @@ def sudakov_no_emission_probability(
     return jnp.where(supported, jnp.exp(-z_integral * scale_integral), jnp.nan)
 
 
-def _channel_tables(plan: DarkShowerEpochPlan):
+def _channel_tables(
+    plan: DarkShowerEpochPlan,
+) -> tuple[Array, Array, Array, Array, Array, Array]:
     kind = tuple(DarkSplittingKernelKind).index
     rule = tuple(DarkColorRule).index
     return (
@@ -485,7 +518,7 @@ def _channel_tables(plan: DarkShowerEpochPlan):
     )
 
 
-def _kernel_from_table(kind, coefficient, z):
+def _kernel_from_table(kind: Array, coefficient: Array, z: Array) -> Array:
     fermion = coefficient * (1.0 + z * z) / (1.0 - z)
     pair = coefficient * (z * z + (1.0 - z) ** 2)
     self_split = 2.0 * coefficient * (z / (1.0 - z) + (1.0 - z) / z + z * (1.0 - z))
@@ -574,7 +607,7 @@ def evolve_dark_shower_epoch(
         backpressured,
     )
 
-    def proposal_step(index, state):
+    def proposal_step(index: Array, state: _ShowerCarry) -> _ShowerCarry:
         (
             pids_,
             roles_,
@@ -692,7 +725,7 @@ def evolve_dark_shower_epoch(
             second_color,
         )
 
-        def scatter_if(array, slot, values):
+        def scatter_if(array: Array, slot: Array, values: Array) -> Array:
             old = array[event_indices, slot]
             return array.at[event_indices, slot].set(
                 jnp.where(publish.reshape((-1,) + (1,) * (values.ndim - 1)), values, old)

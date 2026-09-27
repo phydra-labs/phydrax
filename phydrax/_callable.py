@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
+from typing import Any
 
 from ._strict import StrictModule
 
@@ -14,26 +15,28 @@ _MISSING = object()
 
 
 class _KeyIterAdapter(StrictModule):
-    func: Callable
+    func: Callable[..., Any]
     has_var_kwargs: bool
     has_key: bool
     has_iter: bool
 
     def __init__(
         self,
-        func: Callable,
+        func: Callable[..., Any],
         /,
         *,
         has_var_kwargs: bool,
         has_key: bool,
         has_iter: bool,
-    ):
+    ) -> None:
         self.func = func
         self.has_var_kwargs = bool(has_var_kwargs)
         self.has_key = bool(has_key)
         self.has_iter = bool(has_iter)
 
-    def __call__(self, *args, key=_MISSING, iter_=None, **kwargs):
+    def __call__(
+        self, *args: Any, key: object = _MISSING, iter_: object = None, **kwargs: Any
+    ) -> Any:
         out_kwargs = kwargs
         if key is not _MISSING and (self.has_key or self.has_var_kwargs):
             out_kwargs = dict(out_kwargs)
@@ -45,7 +48,7 @@ class _KeyIterAdapter(StrictModule):
         return self.func(*args, **out_kwargs)
 
 
-def _ensure_special_kwonly_args(func: Callable, /) -> Callable:
+def _ensure_special_kwonly_args(func: Callable[..., Any], /) -> Callable[..., Any]:
     """Ensure that `func` can accept special keyword-only arguments.
 
     This adapter is used to normalize call signatures across user callables so that
@@ -66,7 +69,9 @@ def _ensure_special_kwonly_args(func: Callable, /) -> Callable:
 
     if is_bound_method:
 
-        def _wrapped(*args, key=_MISSING, iter_=None, **kwargs):
+        def _wrapped(
+            *args: Any, key: object = _MISSING, iter_: object = None, **kwargs: Any
+        ) -> Any:
             out_kwargs = kwargs
             if key is not _MISSING and (has_key or has_var_kwargs):
                 out_kwargs = dict(out_kwargs)

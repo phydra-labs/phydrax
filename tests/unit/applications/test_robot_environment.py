@@ -1,5 +1,6 @@
 import functools
 from collections.abc import Callable
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -36,18 +37,18 @@ class _ThresholdTask(AbstractRobotTask):
     reward_component_names: tuple[str, ...] = eqx.field(static=True)
     descriptor_shape: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, threshold):
+    def __init__(self, threshold: Any) -> None:
         self.threshold = jnp.asarray(threshold)
         self.task_id = "threshold-task"
         self.observation_shape = (2,)
         self.reward_component_names = ("progress", "effort")
         self.descriptor_shape = (1,)
 
-    def initialize(self, plant_state, key, /):
+    def initialize(self, plant_state: Any, key: Any, /) -> Any:
         del plant_state
         return jnp.asarray([0.0, key[0].astype(jnp.float32)])
 
-    def evaluate(self, plant_state, task_state, /):
+    def evaluate(self, plant_state: Any, task_state: Any, /) -> Any:
         payload = plant_state.payload
         return RobotTaskEvaluation(
             jnp.asarray([payload[0], task_state[0]]),
@@ -57,14 +58,14 @@ class _ThresholdTask(AbstractRobotTask):
 
     def transition(
         self,
-        context,
-        source_plant_state,
-        accepted_plant_state,
-        action,
-        task_state,
-        key,
+        context: Any,
+        source_plant_state: Any,
+        accepted_plant_state: Any,
+        action: Any,
+        task_state: Any,
+        key: Any,
         /,
-    ):
+    ) -> Any:
         del context
         source = source_plant_state.payload
         accepted = accepted_plant_state.payload
@@ -92,27 +93,29 @@ class _EpisodeWrapper(AbstractRobotEnvironmentWrapper):
     horizon: int | None = eqx.field(static=True)
     auto_reset: bool = eqx.field(static=True)
 
-    def __init__(self, *, action_repeat, horizon=None, auto_reset=False):
+    def __init__(
+        self, *, action_repeat: Any, horizon: Any = None, auto_reset: Any = False
+    ) -> None:
         self.wrapper_id = "episode-wrapper"
         self.action_repeat = action_repeat
         self.horizon = horizon
         self.auto_reset = auto_reset
 
-    def initialize(self, plant_state, task_state, key, /):
+    def initialize(self, plant_state: Any, task_state: Any, key: Any, /) -> Any:
         del plant_state, task_state
         return jnp.asarray([0.0, key[0].astype(jnp.float32)])
 
     def transition(
         self,
-        context,
-        wrapper_state,
-        plant_state,
-        task_state,
-        observation,
-        terminated,
-        key,
+        context: Any,
+        wrapper_state: Any,
+        plant_state: Any,
+        task_state: Any,
+        observation: Any,
+        terminated: Any,
+        key: Any,
         /,
-    ):
+    ) -> Any:
         del context, plant_state, task_state, observation, terminated
         candidate = wrapper_state.at[0].add(1.0)
         candidate = candidate.at[1].set(key[0].astype(wrapper_state.dtype))
@@ -125,27 +128,29 @@ class _PlantRecordingWrapper(AbstractRobotEnvironmentWrapper):
     horizon: int | None = eqx.field(static=True)
     auto_reset: bool = eqx.field(static=True)
 
-    def __init__(self, *, action_repeat=1, horizon=None, auto_reset=False):
+    def __init__(
+        self, *, action_repeat: Any = 1, horizon: Any = None, auto_reset: Any = False
+    ) -> None:
         self.wrapper_id = "plant-recording-wrapper"
         self.action_repeat = action_repeat
         self.horizon = horizon
         self.auto_reset = auto_reset
 
-    def initialize(self, plant_state, task_state, key, /):
+    def initialize(self, plant_state: Any, task_state: Any, key: Any, /) -> Any:
         del plant_state, task_state, key
         return jnp.zeros((1,))
 
     def transition(
         self,
-        context,
-        wrapper_state,
-        plant_state,
-        task_state,
-        observation,
-        terminated,
-        key,
+        context: Any,
+        wrapper_state: Any,
+        plant_state: Any,
+        task_state: Any,
+        observation: Any,
+        terminated: Any,
+        key: Any,
         /,
-    ):
+    ) -> Any:
         del context, wrapper_state, task_state, observation, terminated, key
         return RobotEnvironmentWrapperTransition(
             plant_state.payload[:1],
@@ -153,22 +158,22 @@ class _PlantRecordingWrapper(AbstractRobotEnvironmentWrapper):
         )
 
 
-def _initial_state(key):
+def _initial_state(key: Any) -> Any:
     del key
     return jnp.zeros((2,))
 
 
-def _unit_initial_state(key):
+def _unit_initial_state(key: Any) -> Any:
     del key
     return jnp.ones((2,))
 
 
 def _bounded_transition(
     context: DiscreteStepContext,
-    state,
-    action,
-    args,
-):
+    state: Any,
+    action: Any,
+    args: Any,
+) -> Any:
     del context
     limit = jnp.asarray(1.0 if args is None else args)
     candidate = state.at[0].add(action[0])
@@ -178,7 +183,7 @@ def _bounded_transition(
     return DiscreteTransitionResult(candidate, accepted, successful, status)
 
 
-def _projected_transition(context, state, action, args):
+def _projected_transition(context: Any, state: Any, action: Any, args: Any) -> Any:
     del context, args
     candidate = state.at[0].add(10.0 * action[0])
     accepted = state.at[0].add(action[0])
@@ -193,10 +198,10 @@ def _projected_transition(context, state, action, args):
 class _GainTransition(StrictModule):
     gain: jax.Array
 
-    def __init__(self, gain):
+    def __init__(self, gain: Any) -> None:
         self.gain = jnp.asarray(gain)
 
-    def __call__(self, context, state, action, args):
+    def __call__(self, context: Any, state: Any, action: Any, args: Any) -> Any:
         del context, args
         accepted = state.at[0].add(self.gain * action[0])
         return DiscreteTransitionResult(
@@ -207,11 +212,11 @@ class _GainTransition(StrictModule):
         )
 
 
-def _halve(value):
+def _halve(value: Any) -> Any:
     return 0.5 * value
 
 
-def _double(value):
+def _double(value: Any) -> Any:
     return 2.0 * value
 
 
@@ -222,28 +227,28 @@ class _ShapedWrapper(AbstractRobotEnvironmentWrapper):
     horizon: int | None = eqx.field(static=True)
     auto_reset: bool = eqx.field(static=True)
 
-    def __init__(self, shaping):
+    def __init__(self, shaping: Any) -> None:
         self.shaping = shaping
         self.wrapper_id = "shaped-wrapper"
         self.action_repeat = 1
         self.horizon = None
         self.auto_reset = False
 
-    def initialize(self, plant_state, task_state, key, /):
+    def initialize(self, plant_state: Any, task_state: Any, key: Any, /) -> Any:
         del plant_state, task_state, key
         return jnp.ones((1,))
 
     def transition(
         self,
-        context,
-        wrapper_state,
-        plant_state,
-        task_state,
-        observation,
-        terminated,
-        key,
+        context: Any,
+        wrapper_state: Any,
+        plant_state: Any,
+        task_state: Any,
+        observation: Any,
+        terminated: Any,
+        key: Any,
         /,
-    ):
+    ) -> Any:
         del context, plant_state, task_state, observation, terminated, key
         return RobotEnvironmentWrapperTransition(
             self.shaping(wrapper_state),
@@ -253,18 +258,18 @@ class _ShapedWrapper(AbstractRobotEnvironmentWrapper):
 
 def _environment(
     *,
-    threshold=100.0,
-    repeat=1,
-    horizon=None,
-    auto_reset=False,
-    transition=_bounded_transition,
-    state_layout=None,
-    input_layout=None,
-    system_id="bounded-plant",
-    initializer=_initial_state,
-    environment_id=None,
-    **callable_ids,
-):
+    threshold: Any = 100.0,
+    repeat: Any = 1,
+    horizon: Any = None,
+    auto_reset: Any = False,
+    transition: Any = _bounded_transition,
+    state_layout: Any = None,
+    input_layout: Any = None,
+    system_id: Any = "bounded-plant",
+    initializer: Any = _initial_state,
+    environment_id: Any = None,
+    **callable_ids: Any,
+) -> Any:
     system = DiscreteSystem(
         transition,
         state_layout=StateLayout((2,)) if state_layout is None else state_layout,
@@ -290,7 +295,7 @@ def _environment(
     )
 
 
-def _assert_tree_equal(left, right):
+def _assert_tree_equal(left: Any, right: Any) -> None:
     for left_leaf, right_leaf in zip(
         jax.tree.leaves(left),
         jax.tree.leaves(right),
@@ -299,7 +304,7 @@ def _assert_tree_equal(left, right):
         assert jnp.array_equal(left_leaf, right_leaf)
 
 
-def test_array_system_bridge_preserves_repetition_and_atomic_rollback():
+def test_array_system_bridge_preserves_repetition_and_atomic_rollback() -> None:
     environment = _environment(repeat=2)
     reset = environment.reset(jax.random.key(4))
     assert isinstance(environment.plant, ArrayDiscreteSystemPlant)
@@ -329,7 +334,7 @@ def test_array_system_bridge_preserves_repetition_and_atomic_rollback():
     assert not result.truncated
 
 
-def test_array_adapter_accepted_state_drives_task_wrappers_and_repetition():
+def test_array_adapter_accepted_state_drives_task_wrappers_and_repetition() -> None:
     environment = _environment(transition=_projected_transition)
     environment = PreparedRobotEnvironment(
         environment.plant,
@@ -352,7 +357,7 @@ def test_array_adapter_accepted_state_drives_task_wrappers_and_repetition():
     assert jnp.array_equal(result.reward_components, jnp.asarray([2.0, -2.0]))
 
 
-def test_domain_termination_and_horizon_use_environment_episode_index():
+def test_domain_termination_and_horizon_use_environment_episode_index() -> None:
     terminated_environment = _environment(threshold=1.0, repeat=3, horizon=1)
     terminated_reset = terminated_environment.reset(jax.random.key(5))
     terminated = terminated_environment.step(
@@ -385,7 +390,7 @@ def test_domain_termination_and_horizon_use_environment_episode_index():
     assert horizon.accepted_state.plant_state.time == 2.0
 
 
-def test_auto_reset_keeps_terminal_outputs_and_resets_both_state_domains():
+def test_auto_reset_keeps_terminal_outputs_and_resets_both_state_domains() -> None:
     environment = _environment(threshold=1.0, repeat=3, auto_reset=True)
     reset = environment.reset(jax.random.key(7))
 
@@ -409,7 +414,7 @@ def test_auto_reset_keeps_terminal_outputs_and_resets_both_state_domains():
     assert not jnp.array_equal(result.reset_state.key, result.accepted_state.key)
 
 
-def test_environment_provenance_binds_all_plant_identities_and_task_content():
+def test_environment_provenance_binds_all_plant_identities_and_task_content() -> None:
     display_id = "shared-display-id"
     baseline = _environment(threshold=1.0, environment_id=display_id)
     changed_task = _environment(threshold=2.0, environment_id=display_id)
@@ -437,8 +442,8 @@ def test_environment_provenance_binds_all_plant_identities_and_task_content():
         changed_task.step(reset.state, jnp.asarray([0.25]))
 
 
-def test_opaque_environment_callables_without_declared_ids_are_refused():
-    def closure_transition(context, state, action, args):
+def test_opaque_environment_callables_without_declared_ids_are_refused() -> None:
+    def closure_transition(context: Any, state: Any, action: Any, args: Any) -> Any:
         return _bounded_transition(context, state, action, args)
 
     with pytest.raises(TypeError, match="Opaque callables"):
@@ -464,7 +469,7 @@ def test_opaque_environment_callables_without_declared_ids_are_refused():
         )
 
 
-def test_distinct_opaque_initializers_bind_their_declared_identities():
+def test_distinct_opaque_initializers_bind_their_declared_identities() -> None:
     first = _environment(
         initializer=lambda key: jnp.zeros((2,)),
         initializer_semantic_id="zero-initializer",
@@ -496,7 +501,7 @@ def test_distinct_opaque_initializers_bind_their_declared_identities():
     )
 
 
-def test_strict_module_transition_is_content_addressed():
+def test_strict_module_transition_is_content_addressed() -> None:
     slow = _environment(transition=_GainTransition(1.0))
     fast = _environment(transition=_GainTransition(2.0))
 
@@ -516,10 +521,10 @@ def test_strict_module_transition_is_content_addressed():
         )
 
 
-def test_wrapper_callable_fields_bind_function_content():
+def test_wrapper_callable_fields_bind_function_content() -> None:
     baseline = _environment()
 
-    def prepared(shaping):
+    def prepared(shaping: Any) -> Any:
         return PreparedRobotEnvironment(
             baseline.plant,
             baseline.parameters,
@@ -538,17 +543,17 @@ class _BatchedTask(AbstractRobotTask):
     reward_component_names: tuple[str, ...] = eqx.field(static=True)
     descriptor_shape: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.task_id = "batched-complete-state-task"
         self.observation_shape = (1,)
         self.reward_component_names = ("progress",)
         self.descriptor_shape = (1,)
 
-    def initialize(self, plant_state, key, /):
+    def initialize(self, plant_state: Any, key: Any, /) -> Any:
         del key
         return {"accepted_position": plant_state.payload["position"][..., 0]}
 
-    def evaluate(self, plant_state, task_state, /):
+    def evaluate(self, plant_state: Any, task_state: Any, /) -> Any:
         position = plant_state.payload["position"]
         return RobotTaskEvaluation(
             position,
@@ -558,14 +563,14 @@ class _BatchedTask(AbstractRobotTask):
 
     def transition(
         self,
-        context,
-        source_plant_state,
-        accepted_plant_state,
-        action,
-        task_state,
-        key,
+        context: Any,
+        source_plant_state: Any,
+        accepted_plant_state: Any,
+        action: Any,
+        task_state: Any,
+        key: Any,
         /,
-    ):
+    ) -> Any:
         del context, action, task_state, key
         source = source_plant_state.payload["position"][..., 0]
         accepted = accepted_plant_state.payload["position"][..., 0]
@@ -584,27 +589,27 @@ class _BatchedEpisodeWrapper(AbstractRobotEnvironmentWrapper):
     horizon: int | None = eqx.field(static=True)
     auto_reset: bool = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.wrapper_id = "batched-auto-reset"
         self.action_repeat = 1
         self.horizon = None
         self.auto_reset = True
 
-    def initialize(self, plant_state, task_state, key, /):
+    def initialize(self, plant_state: Any, task_state: Any, key: Any, /) -> Any:
         del task_state, key
         return {"count": jnp.zeros_like(plant_state.step_index, dtype=jnp.int32)}
 
     def transition(
         self,
-        context,
-        wrapper_state,
-        plant_state,
-        task_state,
-        observation,
-        terminated,
-        key,
+        context: Any,
+        wrapper_state: Any,
+        plant_state: Any,
+        task_state: Any,
+        observation: Any,
+        terminated: Any,
+        key: Any,
         /,
-    ):
+    ) -> Any:
         del context, task_state, observation, terminated, key
         return RobotEnvironmentWrapperTransition(
             {"count": wrapper_state["count"] + 1},
@@ -625,7 +630,9 @@ class _MixedBatchedPlant(AbstractDiscretePlant):
     require_finite_parameters: bool = eqx.field(static=True)
     reset_successful: bool = eqx.field(static=True)
 
-    def __init__(self, semantic_tag="mixed", *, reset_successful=True):
+    def __init__(
+        self, semantic_tag: Any = "mixed", *, reset_successful: Any = True
+    ) -> None:
         fallback = {
             "position": jnp.zeros((1,), dtype=jnp.float32),
             "memory": {
@@ -663,13 +670,13 @@ class _MixedBatchedPlant(AbstractDiscretePlant):
 
     def propose_reset(
         self,
-        keys,
-        parameters,
+        keys: Any,
+        parameters: Any,
         /,
         *,
-        case_shape,
-        initial_time,
-    ):
+        case_shape: Any,
+        initial_time: Any,
+    ) -> Any:
         del keys, parameters, initial_time
         payload = self.state_schema.zeros(case_shape)
         return PlantProposal(
@@ -690,7 +697,9 @@ class _MixedBatchedPlant(AbstractDiscretePlant):
             (),
         )
 
-    def propose_step(self, context, source, commands, parameters, keys, /):
+    def propose_step(
+        self, context: Any, source: Any, commands: Any, parameters: Any, keys: Any, /
+    ) -> Any:
         del context, parameters, keys
         drive = commands["drive"][..., 0]
         candidate_position = source["position"][..., 0] + drive
@@ -714,7 +723,9 @@ class _MixedBatchedPlant(AbstractDiscretePlant):
         )
 
 
-def _mixed_environment(*, semantic_tag="mixed", reset_successful=True):
+def _mixed_environment(
+    *, semantic_tag: Any = "mixed", reset_successful: Any = True
+) -> Any:
     plant = _MixedBatchedPlant(semantic_tag, reset_successful=reset_successful)
     parameters = PlantParameters(
         (),
@@ -731,7 +742,7 @@ def _mixed_environment(*, semantic_tag="mixed", reset_successful=True):
     )
 
 
-def test_environment_reset_retains_failed_plant_disposition():
+def test_environment_reset_retains_failed_plant_disposition() -> None:
     environment = _mixed_environment(reset_successful=False)
     keys = jax.random.split(jax.random.key(59), 2)
     reset = environment.reset(keys, case_shape=(2,))
@@ -743,7 +754,9 @@ def test_environment_reset_retains_failed_plant_disposition():
     assert reset.evidence == ()
 
 
-def test_mixed_pytree_cases_never_expose_failed_candidate_and_roll_back_all_leaves():
+def test_mixed_pytree_cases_never_expose_failed_candidate_and_roll_back_all_leaves() -> (
+    None
+):
     environment = _mixed_environment()
     keys = jax.random.split(jax.random.key(60), 2)
     reset = environment.reset(keys, case_shape=(2,))
@@ -812,7 +825,7 @@ def test_mixed_pytree_cases_never_expose_failed_candidate_and_roll_back_all_leav
     assert result.reset_state.wrapper_states[0]["count"][1] == 0
 
 
-def test_same_shape_stale_plant_provenance_is_rejected_before_transition():
+def test_same_shape_stale_plant_provenance_is_rejected_before_transition() -> None:
     environment = _mixed_environment()
     stale_environment = _mixed_environment(semantic_tag="stale-mixed")
     keys = jax.random.split(jax.random.key(61), 2)

@@ -10,13 +10,15 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from .._lagrangian_marker import LagrangianMarkerDiscretization
 from ._incompressible import FaceVelocity
 from ._mac_marker_transfer import MACMarkerAccumulation
@@ -81,7 +83,7 @@ class CompositeMACMarkerTransferPlan(StrictModule, NonTrainableState):
         *,
         accumulation: MACMarkerAccumulation = "deterministic",
         condition_limit: float = 1.0e10,
-    ):
+    ) -> None:
         if not isinstance(markers, LagrangianMarkerDiscretization):
             raise TypeError("markers must be LagrangianMarkerDiscretization.")
         measures = tuple(
@@ -100,8 +102,7 @@ class CompositeMACMarkerTransferPlan(StrictModule, NonTrainableState):
             for value in level
         ):
             raise ValueError("Composite face measures must be positive and finite.")
-        if accumulation not in ("fast", "deterministic", "compensated"):
-            raise ValueError("Unknown marker accumulation policy.")
+        accumulation = parse(accumulation, MACMarkerAccumulation, "accumulation")
         limit = float(condition_limit)
         if not np.isfinite(limit) or limit <= 1.0:
             raise ValueError("condition_limit must be finite and greater than one.")
@@ -305,12 +306,12 @@ class CompositeMACMarkerTransferPlan(StrictModule, NonTrainableState):
                 else:
 
                     def add_marker(
-                        marker_order,
-                        values,
-                        component_=component,
-                        valid_=valid,
-                        contribution_=contribution,
-                    ):
+                        marker_order: Array,
+                        values: Array,
+                        component_: int = component,
+                        valid_: Array = valid,
+                        contribution_: Array = contribution,
+                    ) -> Array:
                         marker = order[marker_order]
                         return values.at[relation.route_index[component_][marker]].add(
                             jnp.where(valid_[marker], contribution_[marker], 0.0)
@@ -340,14 +341,16 @@ class CompositeMACMarkerTransferPlan(StrictModule, NonTrainableState):
         interpolation_work = jnp.real(
             self.markers.active_velocity_space.inner(gathered, force)
         )
-        spreading_work = sum(
-            jnp.sum(
-                self.face_measures[level][component]
-                * velocity[level][component]
-                * spread[level][component]
+        spreading_work = jnp.asarray(
+            sum(
+                jnp.sum(
+                    self.face_measures[level][component]
+                    * velocity[level][component]
+                    * spread[level][component]
+                )
+                for level in range(self.level_count)
+                for component in range(self.markers.ambient_dimension)
             )
-            for level in range(self.level_count)
-            for component in range(self.markers.ambient_dimension)
         )
         residual = interpolation_work - spreading_work
         finite = relation.finite & jnp.isfinite(residual)
@@ -505,7 +508,7 @@ def reflux_composite_marker_impulse(
         residual,
         coarse.start_time,
         coarse.end_time,
-        sum(ledger.accepted_substeps for ledger in fine),
+        jnp.asarray(sum(ledger.accepted_substeps for ledger in fine)),
         finite,
         successful,
         coarse.transfer_id,

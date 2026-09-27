@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import Mapping
 from math import isfinite
 from pathlib import Path
 from time import perf_counter
@@ -15,7 +16,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._fingerprint import canonical_fingerprint
@@ -33,8 +35,11 @@ from .._training_kernel import (
     KernelObjective,
     OptaxUpdateRule,
     prepare_training_kernel,
+    PreparedTrainingKernel,
     run_training_attempt,
     TrainingKernelSpec,
+    TrainingKernelState,
+    TrainingKeys,
     TrainingRejectionBudgetError,
 )
 from .._training_objective import _ObjectiveContribution
@@ -111,7 +116,7 @@ class MeanFieldGaussianFamily(AbstractVariationalFamily):
         /,
         *,
         scale_floor: float = 1e-6,
-    ):
+    ) -> None:
         location_tree = jax.tree.map(jnp.asarray, location)
         raw_scale_tree = jax.tree.map(jnp.asarray, raw_scale)
         if jax.tree.structure(location_tree) != jax.tree.structure(raw_scale_tree):
@@ -250,7 +255,7 @@ class VariationalConfig(StrictModule):
         learning_rate: float = 1e-3,
         gradient_clip: float = 100.0,
         record_every: int = 10,
-    ):
+    ) -> None:
         steps = int(num_steps)
         samples = int(samples_per_step)
         interval = int(record_every)
@@ -365,7 +370,14 @@ class _ReverseKLObjective(StrictModule):
 
     samples_per_step: int = eqx.field(static=True)
 
-    def __call__(self, parameters, model_state, fixed, problem, keys):
+    def __call__(
+        self,
+        parameters: PyTree[Any],
+        model_state: PyTree[Any],
+        fixed: PyTree[Any],
+        problem: PosteriorProblem,
+        keys: TrainingKeys,
+    ) -> tuple[_ObjectiveContribution, PyTree[Any], Array]:
         family = combine_parameters(parameters, model_state, fixed)
         positions, log_variational = family.sample_and_log_prob(
             keys.attempt_key("reparameterization"),
@@ -397,7 +409,14 @@ def _history_template(count: int, dtype: Any, /) -> dict[str, Array]:
     }
 
 
-def _read_variational_checkpoint(source: Path, kernel, template, /, *, compatibility):
+def _read_variational_checkpoint(
+    source: Path,
+    kernel: PreparedTrainingKernel,
+    template: TrainingKernelState,
+    /,
+    *,
+    compatibility: Mapping[str, Any],
+) -> tuple[TrainingKernelState, dict[str, Array], float]:
     metadata = read_training_checkpoint_metadata(source, format=_CHECKPOINT_FORMAT)
     if set(metadata) != _CHECKPOINT_METADATA:
         raise CheckpointCorruptionError(
@@ -518,8 +537,8 @@ def fit_variational(
                 rule_id=canonical_fingerprint(
                     {
                         "kind": "reverse-kl-clipped-adam",
-                        "gradient_clip": config_.gradient_clip.hex(),
-                        "learning_rate": config_.learning_rate.hex(),
+                        "gradient_clip": float(config_.gradient_clip).hex(),
+                        "learning_rate": float(config_.learning_rate).hex(),
                     }
                 ),
             ),

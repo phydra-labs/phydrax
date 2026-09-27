@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -46,7 +47,7 @@ class PfaffianControlPlan(StrictModule):
         determinant_tolerance: float = 1e-8,
         minimum_magnitude: float = 1e-14,
         maximum_phase_magnitude: float = np.pi,
-    ):
+    ) -> None:
         maximum = int(maximum_dimension)
         antisymmetry = float(antisymmetry_tolerance)
         determinant = float(determinant_tolerance)
@@ -188,7 +189,7 @@ class WardIdentityPlan(StrictModule):
         absolute_tolerance: float,
         standard_error_multiplier: float = 3.0,
         maximum_samples: int = 4096,
-    ):
+    ) -> None:
         expected = float(expected_bosonic_action)
         absolute = float(absolute_tolerance)
         multiplier = float(standard_error_multiplier)

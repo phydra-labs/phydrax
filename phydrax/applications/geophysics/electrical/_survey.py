@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -29,7 +30,7 @@ class ElectrodePatch(StrictModule, NonTrainableState):
     facet_indices: Array
     patch_id: str = eqx.field(static=True)
 
-    def __init__(self, name: str, facet_indices: ArrayLike, /):
+    def __init__(self, name: str, facet_indices: ArrayLike, /) -> None:
         name_ = str(name).strip()
         indices = np.asarray(facet_indices)
         if (
@@ -81,7 +82,7 @@ class ElectricalSurvey(StrictModule, NonTrainableState):
         /,
         *,
         current_unit: UnitDefinition = AMPERE,
-    ):
+    ) -> None:
         patches_ = tuple(patches)
         if len(patches_) < 2 or not all(isinstance(p, ElectrodePatch) for p in patches_):
             raise ValueError("A DC survey requires at least two electrode patches.")

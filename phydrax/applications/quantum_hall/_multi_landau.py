@@ -44,7 +44,7 @@ class ProjectedOrbitalTerm:
         creators: Sequence[int],
         annihilators: Sequence[int],
         coefficient: complex,
-    ):
+    ) -> None:
         creators_ = tuple(int(value) for value in creators)
         annihilators_ = tuple(int(value) for value in annihilators)
         coefficient_ = complex(coefficient)
@@ -91,7 +91,7 @@ class MultiLandauLevelSpherePlan(StrictModule, NonTrainableState):
         maximum_basis_dimension: int = 100_000,
         maximum_terms: int = 2_000_000,
         maximum_table_bytes: int = 128 * 1024 * 1024,
-    ):
+    ) -> None:
         particles = int(particle_count)
         manifolds_ = tuple(manifolds)
         terms_ = tuple(terms)

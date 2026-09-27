@@ -4,15 +4,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.tree_util import PyTreeDef
+from jax.typing import ArrayLike
 
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
@@ -26,7 +27,12 @@ from .._certificate import (
     ZeroSetAccuracy,
 )
 from .._closest_point import represented_mesh_closest_point, triangle_query_evidence
-from .._contracts import GeometryKernel, GeometryKind, GeometrySource
+from .._contracts import (
+    ClosestPointResult,
+    GeometryKernel,
+    GeometryKind,
+    GeometrySource,
+)
 from .._sampling import (
     bounded_rejection_sample,
     RejectionSamplingPlan,
@@ -54,7 +60,7 @@ class BRepParameterLink:
     field: str
     parameter_id: ParameterId
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.face_index < 0:
             raise ValueError("face_index must be non-negative.")
         if not self.field:
@@ -63,9 +69,11 @@ class BRepParameterLink:
 
 class _PatchBinding(StrictModule):
     bindings: tuple[ParameterBinding, ...] = eqx.field(static=True)
-    tree_definition: Any = eqx.field(static=True)
+    tree_definition: PyTreeDef = eqx.field(static=True)
 
-    def __init__(self, bindings, tree_definition):
+    def __init__(
+        self, bindings: Iterable[ParameterBinding], tree_definition: PyTreeDef
+    ) -> None:
         self.bindings = tuple(bindings)
         self.tree_definition = tree_definition
 
@@ -85,7 +93,15 @@ class FixedTopologyBRepRealization(StrictModule):
     atlas: BoundaryAtlas
     seam_residual: Array
 
-    def __init__(self, *, patches, vertices, faces, atlas, seam_residual):
+    def __init__(
+        self,
+        *,
+        patches: Iterable[AbstractSurfacePatch],
+        vertices: ArrayLike,
+        faces: ArrayLike,
+        atlas: BoundaryAtlas,
+        seam_residual: ArrayLike,
+    ) -> None:
         self.patches = tuple(patches)
         self.vertices = jnp.asarray(vertices, dtype=jnp.float64)
         self.faces = jnp.asarray(faces, dtype=jnp.int32)
@@ -194,7 +210,7 @@ class FixedTopologyBRepSource(GeometrySource):
             "control_points",
             "weights",
         ),
-    ):
+    ) -> None:
         if not isinstance(model, BRepModel):
             raise TypeError("model must be a BRepModel.")
         _require_watertight_query_mesh(model)
@@ -257,7 +273,12 @@ class _FixedTopologyBRepKernel(GeometryKernel):
     patch_bindings: tuple[_PatchBinding, ...] = eqx.field(static=True)
     corner_weights: Array
 
-    def __init__(self, model, patch_bindings, corner_weights):
+    def __init__(
+        self,
+        model: BRepModel,
+        patch_bindings: Iterable[_PatchBinding],
+        corner_weights: ArrayLike,
+    ) -> None:
         self.model = model
         self.patch_bindings = tuple(patch_bindings)
         self.corner_weights = jnp.asarray(corner_weights, dtype=jnp.float64)
@@ -401,7 +422,7 @@ class _FixedTopologyBRepKernel(GeometryKernel):
     def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
         return self._query(state, points).normal
 
-    def closest_point(self, state: DesignState, points: Array, /):
+    def closest_point(self, state: DesignState, points: Array, /) -> ClosestPointResult:
         points_ = jnp.asarray(points, dtype=jnp.float64)
         leading = points_.shape[:-1]
         flat = points_.reshape((-1, 3))

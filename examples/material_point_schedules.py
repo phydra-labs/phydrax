@@ -4,12 +4,14 @@
 
 """Compare fixed USL/USF/MUSL and adaptive explicit MPM."""
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _compile(schedule):
+def _compile(schedule: Any) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformAxisSpec(12, periodic=True, endpoint=False)
@@ -47,7 +49,7 @@ def _compile(schedule):
     return compiled, arguments, state
 
 
-def run():
+def run() -> Any:
     results = {}
     for schedule in (
         phx.discretization.USLMPMSchedule(),

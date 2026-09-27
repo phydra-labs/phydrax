@@ -8,20 +8,19 @@ import math
 from abc import abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from math import prod
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax import core as jax_core
-from jaxtyping import Array
+from jax import Array, core as jax_core
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._frozendict import frozendict
 from phydrax._model import AbstractArrayModel, FrozenModel, register_artifact_value
-from phydrax._numerics import solve_weighted_least_squares
+from phydrax._numerics import solve_weighted_least_squares, WeightedLeastSquaresResult
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 from phydrax.nn._contracts import AFFINE, model_regularity, sum_regularity
@@ -31,6 +30,7 @@ from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.encoded import AbstractEncodedOperatorModel
 from phydrax.nn.operator.topology import gather_operator_graph_entities
 
+from .....typing import parse
 from ._deeponet import (
     AbstractBasisTrunk,
     AbstractBranchEncoder,
@@ -38,7 +38,7 @@ from ._deeponet import (
 )
 
 
-FunctionProjectionRankPolicy = Literal["error", "regularized"]
+FunctionProjectionRankPolicy: TypeAlias = Literal["error", "regularized"]
 
 FUNCTION_PROJECTION_SUCCESS = 0
 FUNCTION_PROJECTION_INSUFFICIENT_SUPPORT = 1
@@ -78,7 +78,7 @@ class FunctionProjectionPolicy(StrictModule, NonTrainableState):
         require_physical_quadrature: bool = False,
         rank_policy: FunctionProjectionRankPolicy = "error",
         channel_metric: Array | None = None,
-    ):
+    ) -> None:
         ridge_ = float(ridge)
         if not math.isfinite(ridge_) or ridge_ < 0.0:
             raise ValueError("ridge must be finite and nonnegative.")
@@ -88,8 +88,7 @@ class FunctionProjectionPolicy(StrictModule, NonTrainableState):
         minimum = None if min_samples is None else int(min_samples)
         if minimum is not None and minimum <= 0:
             raise ValueError("min_samples must be positive or None.")
-        if rank_policy not in ("error", "regularized"):
-            raise ValueError("rank_policy must be 'error' or 'regularized'.")
+        rank_policy = parse(rank_policy, FunctionProjectionRankPolicy, "rank_policy")
         if rank_policy == "regularized" and ridge_ <= 0.0:
             raise ValueError("rank_policy='regularized' requires positive ridge.")
 
@@ -176,7 +175,7 @@ class FunctionProjectionReport(StrictModule):
         case_shape: tuple[int, ...],
         frame_id: str,
         method: str,
-    ):
+    ) -> None:
         shape = tuple(case_shape)
         coefficient_array = jnp.asarray(coefficients)
         if coefficient_array.shape[: len(shape)] != shape:
@@ -336,7 +335,7 @@ class TopologyFunctionFrameEvaluator(AbstractFunctionFrameEvaluator):
         *,
         feature_name: str,
         evaluator_id: str,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("model must be AbstractArrayModel.")
         if not feature_name or not evaluator_id:
@@ -391,7 +390,7 @@ class PreparedManifoldFunctionFrameEvaluator(AbstractFunctionFrameEvaluator):
     evaluator: Callable[..., Array]
     evidence_id: str = eqx.field(static=True)
 
-    def __init__(self, evaluator: Callable[..., Array], /, *, evidence_id: str):
+    def __init__(self, evaluator: Callable[..., Array], /, *, evidence_id: str) -> None:
         if not callable(evaluator) or not evidence_id:
             raise ValueError(
                 "Prepared manifold evaluator requires callable and evidence id."
@@ -446,7 +445,7 @@ class LearnedFunctionFrame(AbstractBasisTrunk):
         offset_model: AbstractArrayModel | None = None,
         evaluator: AbstractFunctionFrameEvaluator | None = None,
         frame_id: str,
-    ):
+    ) -> None:
         if basis_model is not None and not isinstance(
             basis_model,
             AbstractArrayModel,
@@ -672,7 +671,9 @@ class LearnedFunctionFrame(AbstractBasisTrunk):
         flat_response = response.reshape((case_count, equation_count))
         flat_weights = weights.reshape((case_count, equation_count))
 
-        def solve_case(matrix, values, equation_weight):
+        def solve_case(
+            matrix: Array, values: Array, equation_weight: Array
+        ) -> WeightedLeastSquaresResult:
             return solve_weighted_least_squares(
                 matrix,
                 values,
@@ -842,7 +843,7 @@ class ProjectionBranchEncoder(AbstractBranchEncoder):
         policy: FunctionProjectionPolicy | None = None,
         coefficient_map: AbstractArrayModel | None = None,
         latent_size: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(frame, LearnedFunctionFrame):
             raise TypeError("frame must be a LearnedFunctionFrame.")
         resolved_policy = FunctionProjectionPolicy() if policy is None else policy
@@ -940,7 +941,7 @@ class FunctionFrameSource(StrictModule):
         *,
         projection_policy: FunctionProjectionPolicy | None = None,
         coefficient_map: AbstractArrayModel | None = None,
-    ):
+    ) -> None:
         if not name:
             raise ValueError("FunctionFrameSource name must be nonempty.")
         if not isinstance(frame, LearnedFunctionFrame):
@@ -981,7 +982,7 @@ class FunctionFrameEncoding(StrictModule):
         case_shape: tuple[int, ...],
         frame_ids: Sequence[tuple[str, str]],
         fusion: Literal["sum", "product", "concat"],
-    ):
+    ) -> None:
         coefficient_values = frozendict(
             (str(name), jnp.asarray(value)) for name, value in coefficients.items()
         )
@@ -1031,7 +1032,7 @@ class FunctionFrameReconstructor(AbstractEncodedOperatorModel):
         target_frame: LearnedFunctionFrame,
         fusion: Literal["sum", "product", "concat"] = "sum",
         branch_mixer: AbstractArrayModel | None = None,
-    ):
+    ) -> None:
         source_values = (
             tuple(sources.values()) if isinstance(sources, Mapping) else tuple(sources)
         )

@@ -9,6 +9,7 @@ import hashlib
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -278,7 +279,9 @@ def _documents(directory: Path) -> tuple[dict[str, object], dict[str, object]]:
     profile = THERMAL_ECM_CANDIDATE
     schedule = _schedule_record()
     builtin = battery_qualification.prepare_builtin_campaign(
-        "ecm-analytic", schedule["sample_times_s"]
+        "ecm-analytic",
+        # ty: ignore[invalid-argument-type]
+        schedule["sample_times_s"],
     )
     dependency = SupportDependency(profile.profile_id, support.support_tuple_id)
     run_spec = ResolvedRunSpec(
@@ -287,10 +290,14 @@ def _documents(directory: Path) -> tuple[dict[str, object], dict[str, object]]:
         release_index_id="release-index:test",
         profile_ids=(profile.profile_id,),
         trust_policy_id="trust-policy:test",
+        # ty: ignore[invalid-argument-type]
         valid_at=schedule["not_before"],
+        # ty: ignore[invalid-argument-type]
         valid_from=schedule["not_before"],
+        # ty: ignore[invalid-argument-type]
         valid_until=schedule["deadline"],
         prepared_configuration_id=builtin.prepared_configuration_id(
+            # ty: ignore[invalid-argument-type]
             schedule["schedule_id"]
         ),
         precision_policy_id="precision-policy:test",
@@ -303,7 +310,9 @@ def _documents(directory: Path) -> tuple[dict[str, object], dict[str, object]]:
     )
     criteria = _criteria_record(
         support.support_tuple_id,
+        # ty: ignore[unsupported-operator]
         issued_at=schedule["not_before"] - 1,
+        # ty: ignore[unsupported-operator]
         valid_until=schedule["deadline"] + schedule["evidence_validity_duration"],
     )
     runtime = battery_qualification.capture_runtime_identity()
@@ -343,6 +352,7 @@ def _replace_criterion(
     criterion: dict[str, object],
 ) -> None:
     criteria["criteria"] = sorted(
+        # ty: ignore[not-iterable]
         [item for item in criteria["criteria"] if item["metric"] != criterion["metric"]]
         + [criterion],
         key=lambda item: item["criterion_id"],
@@ -354,7 +364,7 @@ def _replace_criterion(
     _seal_campaign(campaign)
 
 
-def _run(directory, campaign, criteria, *, timestamps=None):
+def _run(directory: Any, campaign: Any, criteria: Any, *, timestamps: Any = None) -> Any:
     campaign_path, criteria_path = _write_documents(directory, campaign, criteria)
     options = {}
     if timestamps is not None:
@@ -366,12 +376,16 @@ def _run(directory, campaign, criteria, *, timestamps=None):
         battery_qualification.load_campaign_spec(campaign_path),
         battery_qualification.load_criteria_set(criteria_path),
         campaign_directory=directory,
+        # ty: ignore[invalid-argument-type]
         **options,
     )
 
 
-def test_native_campaign_persists_one_causal_outcome_per_complete_criterion(tmp_path):
+def test_native_campaign_persists_one_causal_outcome_per_complete_criterion(
+    tmp_path: Any,
+) -> None:
     campaign, criteria = _documents(tmp_path)
+    # ty: ignore[not-subscriptable]
     beginning = campaign["planned_schedule"]["not_before"]
     result = _run(
         tmp_path,
@@ -422,10 +436,13 @@ def test_native_campaign_persists_one_causal_outcome_per_complete_criterion(tmp_
     assert again == result
 
 
-def test_observed_threshold_failure_does_not_discard_passing_criteria(tmp_path):
+def test_observed_threshold_failure_does_not_discard_passing_criteria(
+    tmp_path: Any,
+) -> None:
     campaign, criteria = _documents(tmp_path)
     criterion_record = next(
         item
+        # ty: ignore[not-iterable]
         for item in criteria["criteria"]
         if item["metric"] == "maximum-normalized-analytic-residual"
     )
@@ -444,6 +461,7 @@ def test_observed_threshold_failure_does_not_discard_passing_criteria(tmp_path):
     assert list(outcomes.values()).count("passed") == 2
     assert (
         result["raw_output"]["metrics"][
+            # ty: ignore[invalid-argument-type]
             metric_key("ecm-analytic", replacement["metric"])
         ]["value"]
         > 0.0
@@ -461,12 +479,15 @@ def test_observed_threshold_failure_does_not_discard_passing_criteria(tmp_path):
         "build-mismatch",
     ),
 )
-def test_cli_preflight_refusal_is_an_immutable_audit_not_an_observation(tmp_path, case):
+def test_cli_preflight_refusal_is_an_immutable_audit_not_an_observation(
+    tmp_path: Any, case: Any
+) -> None:
     campaign, criteria = _documents(tmp_path)
     if case == "unknown-campaign":
         campaign["campaign_kind"] = "dfn-unimplemented-campaign"
         _seal_campaign(campaign)
     elif case == "incomplete-matrix":
+        # ty: ignore[not-subscriptable]
         criteria["criteria"] = criteria["criteria"][:1]
         content = {
             key: value for key, value in criteria.items() if key != "criteria_set_id"
@@ -511,7 +532,9 @@ def test_cli_preflight_refusal_is_an_immutable_audit_not_an_observation(tmp_path
     assert json.loads(output.read_text()) == result
 
 
-def test_post_start_clock_infrastructure_failure_retains_native_observations(tmp_path):
+def test_post_start_clock_infrastructure_failure_retains_native_observations(
+    tmp_path: Any,
+) -> None:
     campaign, criteria = _documents(tmp_path)
     schedule = campaign["planned_schedule"]
     result = _run(
@@ -519,8 +542,11 @@ def test_post_start_clock_infrastructure_failure_retains_native_observations(tmp
         campaign,
         criteria,
         timestamps=(
+            # ty: ignore[not-subscriptable]
             schedule["not_before"] + 1,
+            # ty: ignore[not-subscriptable]
             schedule["deadline"] + 1,
+            # ty: ignore[not-subscriptable]
             schedule["deadline"] + 2,
         ),
     )
@@ -539,9 +565,11 @@ def test_post_start_clock_infrastructure_failure_retains_native_observations(tmp
     )
 
 
-def test_expired_criterion_is_historical_inconclusive_not_dropped(tmp_path):
+def test_expired_criterion_is_historical_inconclusive_not_dropped(tmp_path: Any) -> None:
     campaign, criteria = _documents(tmp_path)
+    # ty: ignore[not-subscriptable]
     start = campaign["planned_schedule"]["not_before"] + 10
+    # ty: ignore[not-subscriptable]
     selected = criteria["criteria"][0]
     content = {key: value for key, value in selected.items() if key != "criterion_id"}
     content["valid_until"] = start + 5
@@ -559,10 +587,13 @@ def test_expired_criterion_is_historical_inconclusive_not_dropped(tmp_path):
     assert sum(item["outcome"] == "passed" for item in result["evidence_records"]) == 2
 
 
-def test_native_observations_encode_absent_samples_without_nonfinite_json():
+def test_native_observations_encode_absent_samples_without_nonfinite_json() -> None:
     outputs = BatterySelectedOutputs(
+        # ty: ignore[invalid-argument-type]
         (0.0, 1.0, float("inf")),
+        # ty: ignore[invalid-argument-type]
         ((0.0,), (3.8,), (float("nan"),)),
+        # ty: ignore[invalid-argument-type]
         (True, True, False),
         names=("voltage_v",),
         units=("V",),
@@ -577,9 +608,12 @@ def test_native_observations_encode_absent_samples_without_nonfinite_json():
     assert decoded["valid"] == [True, True, False]
 
 
-def test_registry_rejects_raw_unavailable_without_reason_and_relabeled_units(tmp_path):
+def test_registry_rejects_raw_unavailable_without_reason_and_relabeled_units(
+    tmp_path: Any,
+) -> None:
     campaign, criteria = _documents(tmp_path)
     entry = get_campaign_entry("ecm-analytic")
+    # ty: ignore[not-subscriptable]
     selected = criteria["criteria"][0]
     content = {key: value for key, value in selected.items() if key != "criterion_id"}
     content["unit"] = "A"
@@ -602,7 +636,7 @@ def test_registry_rejects_raw_unavailable_without_reason_and_relabeled_units(tmp
         )
 
 
-def _resource_plan(spec):
+def _resource_plan(spec: Any) -> Any:
     criteria = tuple(
         QualificationCriterion(
             support_tuple_id=spec.candidate_support.support_tuple_id,
@@ -627,8 +661,8 @@ def _resource_plan(spec):
 
 
 def test_absolute_performance_preserves_unavailable_and_measures_complete_output(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     campaign, criteria = _documents(tmp_path)
     campaign_path, _ = _write_documents(tmp_path, campaign, criteria)
     spec = battery_qualification.load_campaign_spec(campaign_path)
@@ -638,8 +672,10 @@ def test_absolute_performance_preserves_unavailable_and_measures_complete_output
     )
     raw = result["performance"]
     assert result["outcome"] == "inconclusive"
+    # ty: ignore[not-subscriptable]
     assert not raw["infrastructure_failures"]
     metrics = {
+        # ty: ignore[not-subscriptable]
         name: raw["metrics"][metric_key(plan.case_id, name)]
         for name, _, _, _ in RESOURCE_METRICS
     }
@@ -647,7 +683,9 @@ def test_absolute_performance_preserves_unavailable_and_measures_complete_output
     assert metrics["output-bytes"]["value"] > 3 * 8
     assert metrics["checkpoint-bytes"]["value"] is None
     assert metrics["checkpoint-bytes"]["unavailable_reason"]
+    # ty: ignore[not-subscriptable]
     assert len(raw["timing"]["warm_samples_seconds"]) == plan.sample_count
+    # ty: ignore[not-iterable]
     for record in result["evidence_records"]:
         criterion = next(
             item
@@ -656,18 +694,25 @@ def test_absolute_performance_preserves_unavailable_and_measures_complete_output
         )
         if metrics[criterion.metric]["value"] is None:
             assert record["outcome"] == "inconclusive"
+    # ty: ignore[invalid-argument-type]
     comparison = battery_performance.compare_performance(raw, raw)
+    # ty: ignore[not-subscriptable]
     assert comparison["statistics"]["regressed"] is False
     changed = copy.deepcopy(raw)
+    # ty: ignore[invalid-assignment]
     changed["environment_id"] = "different-environment"
+    # ty: ignore[invalid-assignment]
     changed["raw_artifact_id"] = canonical_fingerprint(
         {key: value for key, value in changed.items() if key != "raw_artifact_id"}
     )
     with pytest.raises(ValueError):
+        # ty: ignore[invalid-argument-type]
         battery_performance.compare_performance(raw, changed)
 
 
-def test_absolute_resource_plan_refuses_missing_or_unbounded_targets(tmp_path):
+def test_absolute_resource_plan_refuses_missing_or_unbounded_targets(
+    tmp_path: Any,
+) -> None:
     campaign, criteria = _documents(tmp_path)
     campaign_path, _ = _write_documents(tmp_path, campaign, criteria)
     plan = _resource_plan(battery_qualification.load_campaign_spec(campaign_path))
@@ -681,7 +726,7 @@ def test_absolute_resource_plan_refuses_missing_or_unbounded_targets(tmp_path):
         BatteryResourcePlan.from_record(record)
 
 
-def test_no_dense_audit_checks_closed_constants_and_nested_computations():
+def test_no_dense_audit_checks_closed_constants_and_nested_computations() -> None:
     import jax
     import jax.numpy as jnp
 
@@ -694,7 +739,9 @@ def test_no_dense_audit_checks_closed_constants_and_nested_computations():
     assert battery_performance._dense_array_count(oracle) == 0
 
 
-def test_live_execution_closure_covers_unlisted_sources_and_lockfile(tmp_path):
+def test_live_execution_closure_covers_unlisted_sources_and_lockfile(
+    tmp_path: Any,
+) -> None:
     source_root = _synthetic_source_root(tmp_path)
     original = battery_qualification.execution_source_build_id(source_root)
     transitive = source_root / "phydrax/transitive.py"
@@ -723,7 +770,9 @@ def test_live_execution_closure_covers_unlisted_sources_and_lockfile(tmp_path):
     assert battery_qualification.execution_source_build_id(source_root) != original
 
 
-def test_runtime_identity_requires_installed_versions_to_match_lock(tmp_path):
+def test_runtime_identity_requires_installed_versions_to_match_lock(
+    tmp_path: Any,
+) -> None:
     source_root, versions = _synthetic_runtime_lock(tmp_path)
     identity = battery_qualification.capture_runtime_identity(
         source_root=source_root,
@@ -753,7 +802,9 @@ def test_runtime_identity_requires_installed_versions_to_match_lock(tmp_path):
         )
 
 
-def test_atomic_output_does_not_follow_predictable_temporary_symlink(tmp_path):
+def test_atomic_output_does_not_follow_predictable_temporary_symlink(
+    tmp_path: Any,
+) -> None:
     output = tmp_path / "result.json"
     victim = tmp_path / "victim.txt"
     victim.write_text("unchanged", encoding="utf-8")
@@ -763,7 +814,7 @@ def test_atomic_output_does_not_follow_predictable_temporary_symlink(tmp_path):
     assert json.loads(output.read_text(encoding="utf-8")) == {"kind": "synthetic"}
 
 
-def test_performance_harness_identity_tracks_both_source_files(tmp_path):
+def test_performance_harness_identity_tracks_both_source_files(tmp_path: Any) -> None:
     root = _synthetic_harness_root(tmp_path)
     original = battery_performance.performance_harness_source_id(root)
     runner = root / "benchmarks/battery_performance.py"

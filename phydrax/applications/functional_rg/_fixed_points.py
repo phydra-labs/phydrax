@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.linalg import SmallLinearSolvePlan, solve_small_linear
 
@@ -43,7 +44,7 @@ class PolynomialONFlowPlan(StrictModule, NonTrainableState):
         *,
         coupling_count: int = 2,
         lpa_prime: bool = False,
-    ):
+    ) -> None:
         components = int(component_count)
         dimension_ = float(dimension)
         count = int(coupling_count)
@@ -104,7 +105,7 @@ class PolynomialONFlowPlan(StrictModule, NonTrainableState):
         sextic = value[2] if self.coupling_count == 3 else jnp.zeros_like(mass)
         eta = self.anomalous_dimension(value)
 
-        def threshold(mass_squared):
+        def threshold(mass_squared: Array) -> Array:
             return self.threshold.evaluate(self.regulator, mass_squared, eta).value
 
         first = jax.grad(threshold)(mass)
@@ -162,7 +163,7 @@ class FixedPointSearchPlan(StrictModule, NonTrainableState):
         absolute_tolerance: float = 1.0e-9,
         relative_tolerance: float = 1.0e-8,
         damping: float = 1.0,
-    ):
+    ) -> None:
         count = int(coupling_count)
         iterations = int(maximum_iterations)
         absolute = float(absolute_tolerance)
@@ -213,7 +214,9 @@ class FixedPointSearchPlan(StrictModule, NonTrainableState):
             raise ValueError("Initial couplings have the wrong fixed shape.")
         initial_scale = jnp.maximum(jnp.linalg.norm(initial), 1.0)
 
-        def body(index, carry):
+        def body(
+            index: Array, carry: tuple[Array, Array, Array, Array]
+        ) -> tuple[Array, Array, Array, Array]:
             current, active, iterations, linear_success = carry
             residual = flow.beta(current)
             norm = jnp.linalg.norm(residual)

@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -28,7 +29,7 @@ class CorrelatedKDistributionPlan(StrictModule, NonTrainableState):
         quadrature_weights: ArrayLike,
         band_ids: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         weights = np.asarray(quadrature_weights, dtype=np.float64)
         bands = tuple(str(value).strip() for value in band_ids)
         if (
@@ -66,7 +67,7 @@ class RadiativeSensorPlan(StrictModule, NonTrainableState):
     response_weights: Array
     sensor_id: str = eqx.field(static=True)
 
-    def __init__(self, response_weights: ArrayLike, /, *, sensor_id: str):
+    def __init__(self, response_weights: ArrayLike, /, *, sensor_id: str) -> None:
         weights = np.asarray(response_weights, dtype=np.float64)
         identifier = str(sensor_id).strip()
         if (
@@ -110,7 +111,7 @@ class ScalarRadiativeExperimentPlan(StrictModule, NonTrainableState):
         spectral: CorrelatedKDistributionPlan,
         sensor: RadiativeSensorPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(transfer, RayTransferPlan):
             raise TypeError("transfer must be RayTransferPlan.")
         if not isinstance(spectral, CorrelatedKDistributionPlan):
@@ -209,7 +210,7 @@ class PolarizedRadiativeExperimentPlan(StrictModule, NonTrainableState):
         segment_lengths: ArrayLike,
         sensor: RadiativeSensorPlan,
         /,
-    ):
+    ) -> None:
         lengths = np.asarray(segment_lengths, dtype=np.float64)
         if (
             lengths.ndim != 2

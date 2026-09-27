@@ -8,7 +8,8 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -28,7 +29,7 @@ class PhaseGeometryMetrics(StrictModule):
         measure: ArrayLike,
         centroid: ArrayLike,
         centroid_defined: ArrayLike,
-    ):
+    ) -> None:
         self.measure = jnp.asarray(measure)
         self.centroid = jnp.asarray(centroid)
         self.centroid_defined = jnp.asarray(centroid_defined, dtype=jnp.bool_)
@@ -47,7 +48,7 @@ class InterfaceDistanceMetrics(StrictModule):
         symmetric_mean_distance: ArrayLike,
         hausdorff_distance: ArrayLike,
         percentile_hausdorff_distance: ArrayLike,
-    ):
+    ) -> None:
         self.symmetric_mean_distance = jnp.asarray(symmetric_mean_distance)
         self.hausdorff_distance = jnp.asarray(hausdorff_distance)
         self.percentile_hausdorff_distance = jnp.asarray(percentile_hausdorff_distance)
@@ -108,7 +109,9 @@ def _point_cloud(value: ArrayLike, name: str, /) -> Array:
     return points
 
 
-def _point_mask_shape(mask: ArrayLike | None, count: int, name: str, /):
+def _point_mask_shape(
+    mask: ArrayLike | None, count: int, name: str, /
+) -> tuple[tuple[int, ...], Array | None]:
     if mask is None:
         return (), None
     values = jnp.asarray(mask, dtype=jnp.bool_)

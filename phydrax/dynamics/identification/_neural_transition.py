@@ -10,7 +10,7 @@ from typing import Any, ClassVar
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._admissibility import (
     AdmissibilityHeader,
@@ -86,7 +86,7 @@ class DiscreteModelRolloutTransitionResult(StrictModule):
         derivative_contract: DerivativeContract,
         derivative_valid: Any,
         transition_id: str,
-    ):
+    ) -> None:
         if not isinstance(header, AdmissibilityHeader):
             raise TypeError("header must be an AdmissibilityHeader.")
         if not isinstance(derivative_contract, DerivativeContract):
@@ -267,7 +267,7 @@ class DirectDiscreteModelRolloutTransition(
         step_rtol: float = 1e-7,
         step_atol: float = 1e-12,
         port_mapping: PortMapping | None = None,
-    ):
+    ) -> None:
         if not isinstance(state_layout, StateLayout):
             raise TypeError("state_layout must be a StateLayout.")
         if input_layout is not None and not isinstance(input_layout, InputLayout):
@@ -374,7 +374,7 @@ class _BoundDiscreteModelRolloutTransition(StrictModule):
         model: AbstractArrayModel,
         transition: AbstractDiscreteModelRolloutTransition,
         /,
-    ):
+    ) -> None:
         self.model = model
         self.transition = transition
 

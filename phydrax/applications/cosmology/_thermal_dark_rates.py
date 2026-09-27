@@ -14,7 +14,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 import phydrax.linalg as la
@@ -221,7 +222,7 @@ class ThermalKernelArtifact(StrictModule, NonTrainableState):
         export: bool = False,
         thermodynamic_tolerance: float = 5.0e-3,
         covariance_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         if not isinstance(units, RelativisticUnitContract):
             raise TypeError("units must be a RelativisticUnitContract.")
         if (
@@ -359,7 +360,7 @@ class ThermalKernelArtifact(StrictModule, NonTrainableState):
         nonnegative_widths = bool(np.all(widths_ >= 0.0) and np.all(masses >= 0.0))
         nonnegative_spectral = bool(np.all(spectral >= 0.0))
         nonnegative_rates = bool(np.all(rates_ >= 0.0))
-        numerical_floor = np.finfo(np.float64).tiny
+        numerical_floor = float(np.finfo(np.float64).tiny)
         covariance_scale = max(float(np.max(np.abs(covariance))), numerical_floor)
         covariance_symmetry_residual = float(
             np.max(np.abs(covariance - covariance.T)) / covariance_scale
@@ -584,7 +585,7 @@ class HTLPolarizationPlan(StrictModule, NonTrainableState):
         /,
         *,
         ward_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         mass_squared = float(debye_mass_squared)
         tolerance = float(ward_tolerance)
         if not np.isfinite(mass_squared) or mass_squared < 0.0:
@@ -751,7 +752,7 @@ class LPMIntegralPlan(StrictModule, NonTrainableState):
         *,
         rate_prefactor: float,
         residual_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         nodes = np.asarray(basis_nodes, dtype=np.float64)
         weights = np.asarray(quadrature_weights, dtype=np.float64)
         collision = np.asarray(collision_matrix)
@@ -938,7 +939,7 @@ class ThermalDarkRatePlan(StrictModule, NonTrainableState):
     heat_capacity: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, artifact: ThermalKernelArtifact, /):
+    def __init__(self, artifact: ThermalKernelArtifact, /) -> None:
         if not isinstance(artifact, ThermalKernelArtifact):
             raise TypeError("artifact must be ThermalKernelArtifact.")
         if not artifact.evidence.qualified:
@@ -967,7 +968,7 @@ class ThermalDarkRatePlan(StrictModule, NonTrainableState):
         right = left + 1
         fraction = (query - axis[left]) / (axis[right] - axis[left])
 
-        def interpolate(values):
+        def interpolate(values: Array) -> Array:
             return values[..., left] + fraction * (values[..., right] - values[..., left])
 
         rates = interpolate(self.artifact.rates)

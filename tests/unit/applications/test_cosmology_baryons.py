@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -7,7 +9,7 @@ import phydrax as phx
 cosmology = phx.applications.cosmology
 
 
-def _case(count=8):
+def _case(count: Any = 8) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(count, periodic=True),),
         axis_names=("x",),
@@ -31,6 +33,7 @@ def _case(count=8):
         ),
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.3, maximum_retries=0),
@@ -52,13 +55,18 @@ def _case(count=8):
     )
     kdk = cosmology.CosmologicalKDKPlan(particles, (1.0,), scale=scale)
     gas = cosmology.ComovingEulerPlan(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         adiabatic_index=5.0 / 3.0,
         expansion_dimension=3,
         substeps=8,
     )
     plan = cosmology.CosmologicalGasParticleGravityPlan(
-        gas, kdk, particle_gravity, [0.5, 0.51]
+        gas,
+        kdk,
+        particle_gravity,
+        # ty: ignore[invalid-argument-type]
+        [0.5, 0.51],
     )
     background = cosmology.FLRWBackground(1.0, 1.0, scale=scale)
     gas_average = jnp.zeros((count, 3)).at[:, 0].set(1.0).at[:, 2].set(1.0)
@@ -69,7 +77,7 @@ def _case(count=8):
     return background, gas, plan, state
 
 
-def test_uniform_comoving_euler_has_adiabatic_expansion_scaling():
+def test_uniform_comoving_euler_has_adiabatic_expansion_scaling() -> None:
     background, gas, _, state = _case()
     zero = jnp.zeros((state.gas.cell_average.shape[0], 1))
     evolved, diagnostics = gas.advance(background, state.gas, 0.51, zero, zero)
@@ -79,7 +87,9 @@ def test_uniform_comoving_euler_has_adiabatic_expansion_scaling():
     np.testing.assert_allclose(evolved.cell_average[:, 2], expected_energy, rtol=2e-5)
 
 
-def test_uniform_gas_particle_epoch_uses_shared_zero_force_and_commits_atomically():
+def test_uniform_gas_particle_epoch_uses_shared_zero_force_and_commits_atomically() -> (
+    None
+):
     background, _, plan, state = _case()
     shared = plan.shared_gravity(state)
     assert bool(shared.successful)

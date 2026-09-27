@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from time import perf_counter
@@ -16,7 +18,7 @@ from benchmarks._runtime import capture_environment
 periodic = phx.chemistry.periodic
 
 
-def _measure(function, warmup: int, repeats: int):
+def _measure(function: Any, warmup: int, repeats: int) -> Any:
     for _ in range(warmup):
         value = function()
         jax.block_until_ready(value)
@@ -36,24 +38,24 @@ def _measure(function, warmup: int, repeats: int):
     }
 
 
-def _units():
+def _units() -> Any:
     return phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
 
 
-def _cell():
+def _cell() -> Any:
     return phx.discretization.PeriodicCell(
         np.asarray([[5.0, 0.0, 0.0], [0.6, 4.8, 0.0], [0.3, 0.2, 5.2]]),
         periodic_axes=(True, True, True),
     )
 
 
-def _manifest(source_id: str):
+def _manifest(source_id: str) -> Any:
     return periodic.PeriodicProvenanceManifest.for_bytes(
         f"{source_id}:benchmark".encode(), source_id, "benchmark-generated"
     )
 
 
-def _ewald_case(shell: int, warmup: int, repeats: int):
+def _ewald_case(shell: int, warmup: int, repeats: int) -> Any:
     prepared = periodic.PeriodicEwaldPlan(
         _cell(), _units(), 0.75, real_shell=shell, reciprocal_shell=shell
     ).prepare()
@@ -84,7 +86,7 @@ def _ewald_case(shell: int, warmup: int, repeats: int):
     }
 
 
-def _gdf_case(orbital_count: int, warmup: int, repeats: int):
+def _gdf_case(orbital_count: int, warmup: int, repeats: int) -> Any:
     manifest = _manifest(f"gdf-benchmark-{orbital_count}")
     factors = np.zeros((orbital_count, orbital_count, orbital_count))
     for index in range(orbital_count):
@@ -126,7 +128,7 @@ def _gdf_case(orbital_count: int, warmup: int, repeats: int):
     }
 
 
-def _fftdf_case(grid_size: int, warmup: int, repeats: int):
+def _fftdf_case(grid_size: int, warmup: int, repeats: int) -> Any:
     manifest = _manifest(f"local-gth-grid-{grid_size}")
     pseudopotential = periodic.GTHPseudopotentialPlan(
         2.0,

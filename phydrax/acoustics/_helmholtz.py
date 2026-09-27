@@ -2,13 +2,14 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..linalg import (
     ArraySpace,
     DenseLinearOperator,
     DenseLU,
     LinearSolvePolicy,
+    LinearSolveResult,
     LinearSystem,
     solve,
 )
@@ -20,7 +21,7 @@ def solve_helmholtz(
     source: ArrayLike,
     angular_frequency_rad_s: float,
     /,
-):
+) -> LinearSolveResult:
     matrix = jnp.asarray(stiffness).astype("complex128") - float(
         angular_frequency_rad_s
     ) ** 2 * jnp.asarray(mass)

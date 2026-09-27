@@ -1,21 +1,23 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
+from jax.typing import ArrayLike
 
 from phydrax._strict import StrictModule
 
 from ..sparse import EdgeRelation, gather_routes, route_reduce
+from ..typing import parse
 from ._graph import ensure_graph
 from ._ir import GraphIR
 
 
-GraphPoolReduce = Literal["sum", "mean"]
+GraphPoolReduce: TypeAlias = Literal["sum", "mean"]
 
 
 def _tree_leading_size(tree: Any, /) -> int:
@@ -29,7 +31,7 @@ def _mask_tree(tree: Any, mask: jnp.ndarray | None, /) -> Any:
     if mask is None:
         return tree
 
-    def mask_leaf(value):
+    def mask_leaf(value: ArrayLike) -> jnp.ndarray:
         arr = jnp.asarray(value)
         leaf_mask = mask
         while leaf_mask.ndim < arr.ndim:
@@ -54,9 +56,7 @@ def _membership_relation(
 
 
 def _pool_reduction(reduce: GraphPoolReduce, /) -> GraphPoolReduce:
-    if reduce not in ("sum", "mean"):
-        raise ValueError("Graph pool reduce must be 'sum' or 'mean'.")
-    return reduce
+    return parse(reduce, GraphPoolReduce, "reduce")
 
 
 def _valid_node_mask(graph: GraphIR, cluster_ids: jnp.ndarray, /) -> jnp.ndarray:
@@ -176,7 +176,7 @@ def unpool_nodes_by_cluster(
     )
     lifted = gather_routes(membership.transpose(), coarse_nodes)
 
-    def fill_leaf(value):
+    def fill_leaf(value: jnp.ndarray) -> jnp.ndarray:
         fill = jnp.asarray(fill_value, dtype=value.dtype)
         mask = valid.reshape(valid.shape + (1,) * (value.ndim - 1))
         return jnp.where(mask, value, fill)
@@ -200,7 +200,7 @@ class GraphClusterPool(StrictModule):
         reduce_nodes: GraphPoolReduce = "mean",
         reduce_edges: GraphPoolReduce = "mean",
         drop_self_edges: bool = True,
-    ):
+    ) -> None:
         self.cluster_ids = jnp.asarray(cluster_ids, dtype=jnp.int32)
         self.reduce_nodes = reduce_nodes
         self.reduce_edges = reduce_edges
@@ -238,7 +238,7 @@ class GraphMultiscaleBlock(StrictModule):
         reduce_nodes: GraphPoolReduce = "mean",
         reduce_edges: GraphPoolReduce = "mean",
         residual: bool = True,
-    ):
+    ) -> None:
         self.cluster_ids = jnp.asarray(cluster_ids, dtype=jnp.int32)
         self.coarse_block = coarse_block
         self.fine_block = fine_block

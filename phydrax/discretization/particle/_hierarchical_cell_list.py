@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...sparse import EdgeRelation, KeyGroupPlan
@@ -64,7 +65,7 @@ class HierarchicalRadiusParticleNeighborhoodPlan(AbstractParticleNeighborhoodPla
         maximum_candidate_slots: int = 10_000_000,
         name: str = "hierarchical-radius-particle-neighborhood",
         plan_id: str | None = None,
-    ):
+    ) -> None:
         radii = np.asarray(interaction_radii)
         edges = np.asarray(level_edges)
         cell_capacity = int(maximum_particles_per_cell)
@@ -164,7 +165,7 @@ class PreparedHierarchicalRadiusParticleNeighborhood(
         plan: HierarchicalRadiusParticleNeighborhoodPlan,
         particles: ParticleDiscretization,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, HierarchicalRadiusParticleNeighborhoodPlan):
             raise TypeError("plan must be a HierarchicalRadiusParticleNeighborhoodPlan.")
         if not isinstance(particles, ParticleDiscretization):

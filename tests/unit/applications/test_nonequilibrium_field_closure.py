@@ -7,7 +7,7 @@ import pytest
 from phydrax.applications import nonequilibrium_field as nef
 
 
-def test_closed_time_path_and_free_keldysh_identities():
+def test_closed_time_path_and_free_keldysh_identities() -> None:
     grid = nef.ClosedTimePathPlan(
         jnp.linspace(0.0, 1.0, 11), maximum_two_point_elements=10_000
     ).prepare()
@@ -29,7 +29,7 @@ def test_closed_time_path_and_free_keldysh_identities():
     np.testing.assert_allclose(functions.retarded[jnp.triu_indices(11, 1)], 0.0, atol=0.0)
 
 
-def test_fermionic_keldysh_rejects_pauli_forbidden_density():
+def test_fermionic_keldysh_rejects_pauli_forbidden_density() -> None:
     grid = nef.ClosedTimePathPlan(
         jnp.linspace(0.0, 1.0, 3), maximum_two_point_elements=100
     ).prepare()
@@ -43,7 +43,7 @@ def test_fermionic_keldysh_rejects_pauli_forbidden_density():
         )
 
 
-def test_finite_kadanoff_baym_memory_is_causal_and_free_energy_is_conserved():
+def test_finite_kadanoff_baym_memory_is_causal_and_free_energy_is_conserved() -> None:
     grid = nef.ClosedTimePathPlan(
         jnp.linspace(0.0, 1.0, 11), maximum_two_point_elements=10_000
     ).prepare()
@@ -82,7 +82,7 @@ def test_finite_kadanoff_baym_memory_is_causal_and_free_energy_is_conserved():
     np.testing.assert_allclose(result.self_energy.retarded[upper], 0.0, atol=0.0)
 
 
-def test_gauss_constrained_symplectic_yang_mills_and_ward_identity():
+def test_gauss_constrained_symplectic_yang_mills_and_ward_identity() -> None:
     plan = nef.ClassicalYangMillsPlan(
         (2, 2),
         (1.0, 1.0),
@@ -123,7 +123,7 @@ def test_gauss_constrained_symplectic_yang_mills_and_ward_identity():
     assert ward.gauss_covariance_residual < 1.0e-10
 
 
-def test_nonequilibrium_resource_and_constraint_guards():
+def test_nonequilibrium_resource_and_constraint_guards() -> None:
     with pytest.raises(ValueError, match="resource budget"):
         nef.ClosedTimePathPlan(jnp.linspace(0.0, 1.0, 20), maximum_contour_points=10)
     grid = nef.ClosedTimePathPlan(jnp.linspace(0.0, 1.0, 11)).prepare()

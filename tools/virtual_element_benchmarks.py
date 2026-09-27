@@ -18,6 +18,7 @@ def benchmark(degree: int) -> dict[str, float | int | bool]:
     coordinates = jnp.asarray(
         ((0.0, 0.0), (1.0, 0.0), (1.2, 0.8), (0.5, 1.3), (-0.2, 0.8))
     )
+    # ty: ignore[invalid-argument-type]
     mesh = phx.discretization.CellMesh.from_polygons(coordinates, ((0, 1, 2, 3, 4),))
     field = phx.discretization.VirtualElementFieldSpec(
         "u", phx.discretization.conforming_h1_virtual_element(degree)

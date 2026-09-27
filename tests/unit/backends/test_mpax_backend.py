@@ -8,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_mpax_capabilities_are_lazy_and_specific():
+def test_mpax_capabilities_are_lazy_and_specific() -> None:
     availability = phx.backends.mpax_availability()
     capabilities = availability.capabilities
 
@@ -24,7 +24,7 @@ def test_mpax_capabilities_are_lazy_and_specific():
     assert not method_capabilities.matrix_free
 
 
-def test_missing_mpax_raises_selected_backend_error():
+def test_missing_mpax_raises_selected_backend_error() -> None:
     availability = phx.backends.mpax_availability()
     if availability.available:
         pytest.skip("MPAX is installed in this environment.")
@@ -32,7 +32,7 @@ def test_missing_mpax_raises_selected_backend_error():
         phx.backends.prepare_mpax()
 
 
-def test_mpax_methods_validate_problem_kind_before_provider_import():
+def test_mpax_methods_validate_problem_kind_before_provider_import() -> None:
     problem = phx.optim.QuadraticProgram(jnp.eye(1), jnp.zeros(1))
     policy = phx.optim.ConvexSolvePolicy(phx.optim.MPAXr2HPDHG())
 
@@ -40,6 +40,6 @@ def test_mpax_methods_validate_problem_kind_before_provider_import():
         phx.optim.plan_convex_program(problem, policy)
 
 
-def test_unrolled_mpax_requires_finite_bounded_iteration_capacity():
+def test_unrolled_mpax_requires_finite_bounded_iteration_capacity() -> None:
     with pytest.raises(ValueError, match="bounded finite budget"):
         phx.backends.MPAXPlan("rapdhg", unroll=True, iteration_limit=100_000)

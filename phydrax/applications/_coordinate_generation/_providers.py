@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from ..._fingerprint import canonical_fingerprint
@@ -33,11 +34,11 @@ class CoordinateProviderProvenance:
     def admit(
         self,
         *,
-        commercial_use=False,
-        training_use=False,
-        redistribution=False,
-        export=False,
-    ):
+        commercial_use: bool = False,
+        training_use: bool = False,
+        redistribution: bool = False,
+        export: bool = False,
+    ) -> tuple[ReferenceArtifactManifest, ...]:
         if not self.provider_id or self.provider_id != self.provider_id.strip():
             raise ValueError("Provider identity must be explicit and canonical.")
         if self.learned_model and (
@@ -79,7 +80,7 @@ class CoordinateProviderProvenance:
         # Retain every parent restriction even when several refer to the same file.
         return inherited
 
-    def require_sources(self, sources):
+    def require_sources(self, sources: Iterable[ScientificArtifactEnvelope]) -> None:
         """Bind raw output envelopes to admitted bytes, not unrelated license labels."""
         admitted = {(item.checksum, item.license_id) for item in self.output_rights}
         for source in sources:
@@ -95,7 +96,7 @@ class CoordinateProviderProvenance:
                     "Raw provider output digest/license lacks a matching admitted output manifest."
                 )
 
-    def fingerprint(self):
+    def fingerprint(self) -> str:
         return canonical_fingerprint(
             {
                 "provider": self.provider_id,

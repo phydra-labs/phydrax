@@ -9,11 +9,13 @@ from __future__ import annotations
 from enum import IntEnum
 from math import prod
 from numbers import Integral
+from typing import TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._checkpointed_scan import checkpointed_scan
@@ -40,6 +42,9 @@ from ._nonlinear_response import (
 )
 from ._pulse_time import PulseTimeSpace
 from ._unidirectional import _forward_square_root, _relative_error, _uniform_spacing
+
+
+_RK4Carry: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class CylindricalUnidirectionalPropagationStatus(IntEnum):
@@ -80,7 +85,7 @@ class CylindricalAnalyticPulseField(StrictModule):
         angular_frequency: ArrayLike,
         longitudinal_coordinate: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(hankel, PreparedCylindricalHankel):
             raise TypeError("hankel must be PreparedCylindricalHankel.")
         if hankel.plan.order != 0:
@@ -186,7 +191,7 @@ class CylindricalUnidirectionalPropagationPlan(StrictModule, NonTrainableState):
         maximum_radial_high_mode_fraction: float = 1.0e-6,
         maximum_longitudinal_cutoff_fraction: float = 0.0,
         maximum_workspace_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         if not isinstance(hankel, PreparedCylindricalHankel):
             raise TypeError("hankel must be PreparedCylindricalHankel.")
         if hankel.plan.order != 0:
@@ -633,7 +638,7 @@ def _interaction_picture_solve(
     zero = jnp.asarray(0.0, dtype=initial_spectrum.real.dtype)
     valid = jnp.asarray(True)
 
-    def scan_step(carry, _):
+    def scan_step(carry: _RK4Carry, _: Array) -> tuple[_RK4Carry, None]:
         state, maximum_rejected, maximum_backward, response_successful = carry
         k1, rejected1, backward1, valid1 = _nonlinear_rate(prepared, state, response)
         state2 = half_linear * (state + 0.5 * step * k1)

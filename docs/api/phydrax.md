@@ -49,6 +49,9 @@ authority, capability evidence) and explicit scientific value ports; see
   rearrangement, reduction, and repetition
 - `phydrax.units`: exact physical dimensions, immutable multiplicative units,
   canonical definitions, explicit conversion, and content-addressed metadata
+- `phydrax.typing`: nominal dimensions, JAX and host tensor forms, metadata and
+  selector forms, binding scopes, explicit parsing and one-time conversion, and
+  structural field contracts ([guide](../guides_typing.md))
 - `phydrax.chemistry`: finite-molecule electronic sectors, model chemistry,
   explicit electronic providers, potential-energy surfaces, geometry
   optimization, Hessians, normal modes, RRHO thermochemistry, IR spectra, and

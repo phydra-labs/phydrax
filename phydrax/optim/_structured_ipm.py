@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..linalg import (
@@ -18,12 +19,14 @@ from ..linalg import (
     LinearSolvePolicy,
     LinearSystem,
     prepare as prepare_linear,
+    PreparedLinearSolve,
     refresh as refresh_linear,
     release as release_linear,
     solve as solve_linear,
     sparse_provider_capabilities,
     SparseLDLT,
 )
+from ..sparse import SparseLinearMap
 from ._iterative import (
     MinimizationResult,
     OptimizationDiagnostics,
@@ -38,6 +41,7 @@ from ._sparse_kkt import (
 )
 from ._structured_nonlinear import (
     PreparedStructuredNonlinearProgram,
+    StructuredNonlinearEvaluation,
     StructuredNonlinearResult,
     StructuredNonlinearWarmStart,
     StructuredOptimizationWork,
@@ -79,11 +83,36 @@ class SparseStructuredIPMEvidence(StrictModule):
     final_barrier: Array
 
 
+_Complementarity: TypeAlias = tuple[Array, Array, Array, Array]
+# (evaluation, multipliers, stationarity_x, stationarity_s, equality, general,
+#  lower_x_gap, upper_x_gap, lower_s_gap, upper_s_gap, complementarity, norm)
+_Residuals: TypeAlias = tuple[
+    StructuredNonlinearEvaluation,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    _Complementarity,
+    Array,
+]
+# (dx, ds, dyc, dyd, dzl, dzu, dvl, dvu)
+_Direction: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
+# (accepted, candidate, candidate_norm, rate, evaluations)
+_LineSearchCarry: TypeAlias = tuple[
+    Array, "SparseStructuredIPMState", Array, Array, Array
+]
+
+
 def _maximum(value: Array, /) -> Array:
     return jnp.max(jnp.abs(value), initial=jnp.asarray(0.0, dtype=value.dtype))
 
 
-def _strict_interior(value, lower, upper, push):
+def _strict_interior(value: Array, lower: Array, upper: Array, push: Array) -> Array:
     lower_finite = jnp.isfinite(lower)
     upper_finite = jnp.isfinite(upper)
     width = upper - lower
@@ -100,20 +129,24 @@ def _strict_interior(value, lower, upper, push):
     return result
 
 
-def _safe_gap(gap, finite):
+def _safe_gap(gap: Array, finite: Array) -> Array:
     return jnp.where(finite, gap, 1.0)
 
 
-def _positive_multiplier(value, finite):
+def _positive_multiplier(value: Array, finite: Array) -> Array:
     return jnp.where(finite, jnp.maximum(value, 1e-4), 0.0)
 
 
-def _fraction(gap, direction, finite, fraction):
+def _fraction(gap: Array, direction: Array, finite: Array, fraction: float) -> Array:
     ratio = jnp.where(finite & (direction < 0.0), -gap / direction, jnp.inf)
     return jnp.minimum(1.0, fraction * jnp.min(ratio, initial=jnp.inf))
 
 
-def _split_values(prepared, plan, coordinates):
+def _split_values(
+    prepared: PreparedStructuredNonlinearProgram,
+    plan: SparseAugmentedKKTPlan,
+    coordinates: ArrayLike,
+) -> tuple[StructuredNonlinearEvaluation, Array, Array]:
     evaluation = prepared.evaluate(coordinates)
     constraints = evaluation.constraints
     equality = (
@@ -124,13 +157,22 @@ def _split_values(prepared, plan, coordinates):
     return evaluation, equality, general
 
 
-def _full_constraint_multipliers(prepared, plan, equality_dual, general_dual):
+def _full_constraint_multipliers(
+    prepared: PreparedStructuredNonlinearProgram,
+    plan: SparseAugmentedKKTPlan,
+    equality_dual: Array,
+    general_dual: Array,
+) -> Array:
     values = jnp.zeros((prepared.program.num_constraints,), dtype=equality_dual.dtype)
     values = values.at[plan.equality_indices].set(equality_dual)
     return values.at[plan.general_indices].set(general_dual)
 
 
-def _residuals(prepared, plan, state):
+def _residuals(
+    prepared: PreparedStructuredNonlinearProgram,
+    plan: SparseAugmentedKKTPlan,
+    state: SparseStructuredIPMState,
+) -> _Residuals:
     evaluation, equality, general = _split_values(prepared, plan, state.primal)
     multipliers = _full_constraint_multipliers(
         prepared,
@@ -228,7 +270,11 @@ def _residuals(prepared, plan, state):
     )
 
 
-def _average_complementarity(state, prepared, plan):
+def _average_complementarity(
+    state: SparseStructuredIPMState,
+    prepared: PreparedStructuredNonlinearProgram,
+    plan: SparseAugmentedKKTPlan,
+) -> Array:
     lower_x_finite = jnp.isfinite(prepared.variable_lower)
     upper_x_finite = jnp.isfinite(prepared.variable_upper)
     lower_s = prepared.constraint_lower[plan.general_indices]
@@ -349,18 +395,20 @@ def initialize_sparse_structured_ipm(
     )
 
 
-def _complementarity_rhs(product, finite, barrier, affine_product=None):
+def _complementarity_rhs(
+    product: Array, finite: Array, barrier: Array, affine_product: Array | None = None
+) -> Array:
     correction = 0.0 if affine_product is None else affine_product
     return jnp.where(finite, product + correction - barrier, 0.0)
 
 
 def _direction_rhs(
-    state,
-    prepared,
-    plan,
-    residuals,
-    complementarity,
-):
+    state: SparseStructuredIPMState,
+    prepared: PreparedStructuredNonlinearProgram,
+    plan: SparseAugmentedKKTPlan,
+    residuals: _Residuals,
+    complementarity: _Complementarity,
+) -> Array:
     (
         _,
         _,
@@ -407,7 +455,14 @@ def _direction_rhs(
     )
 
 
-def _recover_direction(state, prepared, plan, residuals, complementarity, solved):
+def _recover_direction(
+    state: SparseStructuredIPMState,
+    prepared: PreparedStructuredNonlinearProgram,
+    plan: SparseAugmentedKKTPlan,
+    residuals: _Residuals,
+    complementarity: _Complementarity,
+    solved: Array,
+) -> _Direction:
     n = plan.num_primal
     nd = plan.num_slacks
     nc = plan.num_equalities
@@ -443,7 +498,13 @@ def _recover_direction(state, prepared, plan, residuals, complementarity, solved
     return dx, ds, dyc, dyd, dzl, dzu, dvl, dvu
 
 
-def _step_fraction(state, prepared, plan, direction, fraction):
+def _step_fraction(
+    state: SparseStructuredIPMState,
+    prepared: PreparedStructuredNonlinearProgram,
+    plan: SparseAugmentedKKTPlan,
+    direction: _Direction,
+    fraction: float,
+) -> Array:
     dx, ds, _, _, dzl, dzu, dvl, dvu = direction
     lower_x_finite = jnp.isfinite(prepared.variable_lower)
     upper_x_finite = jnp.isfinite(prepared.variable_upper)
@@ -474,7 +535,9 @@ def _step_fraction(state, prepared, plan, direction, fraction):
     return jnp.min(jnp.stack(values))
 
 
-def _candidate(state, direction, rate):
+def _candidate(
+    state: SparseStructuredIPMState, direction: _Direction, rate: Array
+) -> SparseStructuredIPMState:
     dx, ds, dyc, dyd, dzl, dzu, dvl, dvu = direction
     return eqx.tree_at(
         lambda value: (
@@ -501,7 +564,11 @@ def _candidate(state, direction, rate):
     )
 
 
-def _prepare_kkt_linear(operator, policy, previous=None):
+def _prepare_kkt_linear(
+    operator: SparseLinearMap,
+    policy: LinearSolvePolicy,
+    previous: PreparedLinearSolve | None = None,
+) -> PreparedLinearSolve:
     if isinstance(policy.method, SparseLDLT):
         problem = LinearSystem(operator)
     else:
@@ -514,20 +581,20 @@ def _prepare_kkt_linear(operator, policy, previous=None):
 
 
 def advance_sparse_structured_ipm(
-    prepared,
-    plan,
-    state,
-    termination,
-    linear_policy,
+    prepared: PreparedStructuredNonlinearProgram,
+    plan: SparseAugmentedKKTPlan,
+    state: SparseStructuredIPMState,
+    termination: OptimizationTermination,
+    linear_policy: LinearSolvePolicy,
     *,
-    fraction_to_boundary,
-    sufficient_decrease,
-    maximum_line_search_steps,
-    regularization,
-    optimality_threshold,
-    maximum_evaluations,
-    assume_active=False,
-):
+    fraction_to_boundary: float,
+    sufficient_decrease: float,
+    maximum_line_search_steps: int,
+    regularization: float,
+    optimality_threshold: Array,
+    maximum_evaluations: int | None,
+    assume_active: bool = False,
+) -> SparseStructuredIPMState:
     residuals = _residuals(prepared, plan, state)
     current_norm = residuals[-1]
     threshold = optimality_threshold
@@ -653,7 +720,7 @@ def advance_sparse_structured_ipm(
         )
     )
 
-    def evaluate_trial(carry):
+    def evaluate_trial(carry: _LineSearchCarry) -> _LineSearchCarry:
         accepted_, candidate_, candidate_norm_, rate_, evaluations_ = carry
         trial = _candidate(state, direction, rate_)
         trial_norm = _residuals(prepared, plan, trial)[-1]
@@ -688,7 +755,7 @@ def advance_sparse_structured_ipm(
             evaluations_ + 1,
         )
 
-    def line_search_step(_, carry):
+    def line_search_step(_: Array, carry: _LineSearchCarry) -> _LineSearchCarry:
         active = (~carry[0]) & (carry[4] < trial_budget)
         return jax.lax.cond(active, evaluate_trial, lambda value: value, carry)
 
@@ -964,7 +1031,9 @@ def solve_sparse_structured_ipm(
             )
     else:
 
-        def iteration(_, current):
+        def iteration(
+            _: Array, current: SparseStructuredIPMState
+        ) -> SparseStructuredIPMState:
             within_evaluations = (
                 jnp.asarray(True)
                 if termination.maximum_evaluations is None

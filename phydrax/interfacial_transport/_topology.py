@@ -2,10 +2,13 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
-def transfer_surface_content(transfer_matrix: ArrayLike, source_content: ArrayLike, /):
+def transfer_surface_content(
+    transfer_matrix: ArrayLike, source_content: ArrayLike, /
+) -> Array:
     matrix = jnp.asarray(transfer_matrix)
     source = jnp.asarray(source_content)
     if matrix.shape[-1] != source.shape[0]:
@@ -15,7 +18,7 @@ def transfer_surface_content(transfer_matrix: ArrayLike, source_content: ArrayLi
 
 def surface_transfer_balance(
     transfer_matrix: ArrayLike, source_measure: ArrayLike, target_measure: ArrayLike, /
-):
+) -> Array:
     return jnp.linalg.norm(
         jnp.asarray(transfer_matrix).T @ jnp.asarray(target_measure)
         - jnp.asarray(source_measure)

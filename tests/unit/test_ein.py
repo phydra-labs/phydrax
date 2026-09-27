@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from collections.abc import Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -12,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def test_contract_boundary_is_exact_and_jittable():
+def test_contract_boundary_is_exact_and_jittable() -> None:
     assert phx.ein.__all__ == ["contract", "rearrange", "reduce", "repeat"]
     assert phx.ein.contract is oe.contract
 
@@ -34,7 +36,7 @@ def test_contract_boundary_is_exact_and_jittable():
     assert jnp.array_equal(result, expected)
 
 
-def test_rearrange_regroups_reorders_singletons_and_ellipsis():
+def test_rearrange_regroups_reorders_singletons_and_ellipsis() -> None:
     values = jnp.arange(2 * 12 * 5, dtype=jnp.int32).reshape(2, 12, 5)
     result = phx.ein.rearrange(
         values,
@@ -92,7 +94,7 @@ def test_reduce_matches_jax_primitives(
     name: str,
     function: Callable,
     values: jax.Array,
-):
+) -> None:
     result = phx.ein.reduce(
         values,
         "batch time channel -> batch channel",
@@ -104,7 +106,7 @@ def test_reduce_matches_jax_primitives(
     assert jnp.array_equal(result, expected)
 
 
-def test_reduce_preserves_jax_zero_axis_semantics():
+def test_reduce_preserves_jax_zero_axis_semantics() -> None:
     numeric = jnp.empty((2, 0, 3), dtype=jnp.int32)
     boolean = jnp.empty((2, 0, 3), dtype=jnp.bool_)
 
@@ -142,7 +144,7 @@ def test_reduce_preserves_jax_zero_axis_semantics():
             )
 
 
-def test_repeat_broadcasts_new_axes_without_tiling_semantics():
+def test_repeat_broadcasts_new_axes_without_tiling_semantics() -> None:
     values = jnp.arange(6).reshape(2, 3)
     repeated = phx.ein.repeat(
         values,
@@ -170,10 +172,10 @@ def test_repeat_broadcasts_new_axes_without_tiling_semantics():
     assert empty.shape == (0, 2, 3)
 
 
-def test_transforms_compose_under_jit_grad_jvp_and_vmap():
+def test_transforms_compose_under_jit_grad_jvp_and_vmap() -> None:
     weight = jnp.arange(12.0).reshape(3, 4) / 7.0
 
-    def objective(values, matrix):
+    def objective(values: Any, matrix: Any) -> Any:
         heads = phx.ein.rearrange(
             values,
             "batch (head channel) -> batch head channel",
@@ -196,7 +198,7 @@ def test_transforms_compose_under_jit_grad_jvp_and_vmap():
             "sum",
         )
 
-    def reference(values, matrix):
+    def reference(values: Any, matrix: Any) -> Any:
         heads = values.reshape(values.shape[0], 2, 3)
         replicated = jnp.broadcast_to(
             heads[:, None, :, :],
@@ -327,13 +329,15 @@ def test_transforms_compose_under_jit_grad_jvp_and_vmap():
         ),
     ],
 )
-def test_invalid_patterns_and_shapes_fail_with_context(call: Callable, message: str):
+def test_invalid_patterns_and_shapes_fail_with_context(
+    call: Callable, message: str
+) -> None:
     with pytest.raises((TypeError, ValueError), match=message) as error:
         call()
     assert "^" in str(error.value)
 
 
-def test_dynamic_axis_sizes_are_rejected_during_tracing():
+def test_dynamic_axis_sizes_are_rejected_during_tracing() -> None:
     transform = jax.jit(
         lambda values, copies: phx.ein.repeat(
             values,

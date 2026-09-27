@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -17,7 +18,7 @@ import phydrax as phx
 from phydrax._fingerprint import canonical_fingerprint
 
 
-def _square_mesh():
+def _square_mesh() -> Any:
     return phx.discretization.CellMesh.from_triangles(
         jnp.asarray(
             ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)),
@@ -27,7 +28,7 @@ def _square_mesh():
     )
 
 
-def _multiblock_mesh():
+def _multiblock_mesh() -> Any:
     coordinates = jnp.asarray(
         (
             (0.0, 0.0),
@@ -58,7 +59,7 @@ def _multiblock_mesh():
     )
 
 
-def _binary_model(*, polynomial=False):
+def _binary_model(*, polynomial: Any = False) -> Any:
     parameters = phx.equations.BinaryThermodynamicParameters(1.0, 1.0)
     if not polynomial:
         return phx.applications.phase_field.BinaryPhaseFieldModel(parameters)
@@ -299,10 +300,12 @@ def _adaptive_stochastic_distributed() -> dict[str, object]:
     )
     replay_defect = float(
         np.max(
+            # ty: ignore[unresolved-attribute]
             np.abs(np.asarray(first.candidate_state.phase - replay.candidate_state.phase))
         )
     )
     epoch = phx.applications.phase_field.PhaseFieldAdaptiveEpoch(method, initial)
+    # ty: ignore[missing-argument]
     adaptation = phx.applications.phase_field.PhaseFieldAdaptivityPlan(
         gradient_threshold=0.0,
         energy_tolerance=1.0,
@@ -318,7 +321,7 @@ def _adaptive_stochastic_distributed() -> dict[str, object]:
             (distributed.axis_name,),
         )
 
-        def execute_collective(values):
+        def execute_collective(values: Any) -> Any:
             return distributed.collective_owned_sum(values).global_value
 
         collective = jax.shard_map(

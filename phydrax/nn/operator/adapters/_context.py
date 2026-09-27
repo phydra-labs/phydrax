@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from phydrax.domain import Domain, DomainFunction
 
@@ -116,7 +116,7 @@ class OperatorContextModel(_AbstractBaseModel):
         port_mapping: PortMapping | None = None,
         owner_ports: ModelPorts | None = None,
         coord_dim: int | None = None,
-    ):
+    ) -> None:
         from ..training._trained_operator import TrainedOperator
 
         if not isinstance(batch, OperatorBatch):

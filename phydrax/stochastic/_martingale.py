@@ -12,9 +12,11 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import parse, PRNGKey
 from ._jump import AbstractJumpProcess
 from ._trajectory import StochasticTrajectory
 
@@ -26,7 +28,7 @@ def jump_generator_observable(
     *,
     time: ArrayLike,
     observable: Callable[[Array], Array],
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_mark_samples: int = 1,
     args: Any = None,
 ) -> Array:
@@ -108,7 +110,7 @@ class MartingaleProblem(StrictModule):
         observable_shape: Sequence[int] = (),
         bracket_density: Callable[[Array, Array], Array] | None = None,
         label: str = "martingale",
-    ):
+    ) -> None:
         if not callable(observable) or not callable(generator_observable):
             raise TypeError("observable and generator_observable must be callable.")
         if bracket_density is not None and not callable(bracket_density):
@@ -197,8 +199,7 @@ def martingale_increments(
         raise TypeError("problem must be a MartingaleProblem.")
     if trajectory.num_times < 2:
         raise ValueError("Martingale increments require at least two saved times.")
-    if quadrature not in ("left", "midpoint", "trapezoid"):
-        raise ValueError("quadrature must be 'left', 'midpoint', or 'trapezoid'.")
+    quadrature = parse(quadrature, MartingaleQuadrature, "quadrature")
     solution_spec = trajectory.metadata.get("spde_solution_spec")
     if solution_spec is not None:
         from ._solution import SPDESolutionSpec
@@ -550,8 +551,7 @@ def martingale_moment_loss(
     reduction: MartingaleReduction = "mean",
 ) -> Array:
     """Penalize predictable-instrument martingale moments differentiably."""
-    if reduction not in ("mean", "sum", "none"):
-        raise ValueError("reduction must be 'mean', 'sum', or 'none'.")
+    reduction = parse(reduction, MartingaleReduction, "reduction")
     resolved = (
         (lambda _state, _time: jnp.asarray(1.0),)
         if not instruments

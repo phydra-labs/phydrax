@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -13,7 +15,7 @@ from phydrax.uq._sing_transition import (
 )
 
 
-def test_affine_sing_support_is_hausdorff_and_constant_rank():
+def test_affine_sing_support_is_hausdorff_and_constant_rank() -> None:
     support = SINGSupportPlan(
         jnp.asarray([[0.0, 1.0]]),
         jnp.asarray([[1.0], [0.0]]),
@@ -26,10 +28,11 @@ def test_affine_sing_support_is_hausdorff_and_constant_rank():
     assert support.rank == 1
     assert jnp.allclose(support.residual(jnp.asarray([3.0, 2.0])), 0.0)
     plan = SINGTransitionPlan(support=support)
+    # ty: ignore[unresolved-attribute]
     assert plan.support.support_id == "horizontal-line"
 
 
-def test_affine_sing_support_rejects_misaligned_or_rank_changing_basis():
+def test_affine_sing_support_rejects_misaligned_or_rank_changing_basis() -> None:
     with pytest.raises(ValueError, match="tangent_basis"):
         SINGSupportPlan(
             jnp.asarray([[0.0, 1.0]]),
@@ -39,7 +42,7 @@ def test_affine_sing_support_rejects_misaligned_or_rank_changing_basis():
         )
 
 
-def test_sparse_gp_drift_has_fixed_inducing_topology_and_exact_whitened_kl():
+def test_sparse_gp_drift_has_fixed_inducing_topology_and_exact_whitened_kl() -> None:
     points = jnp.asarray([[-1.0], [0.0], [1.0]])
     kernel = phx.kernels.SquaredExponentialKernel(length_scale=0.7)
     drift = SINGSparseGPDrift(
@@ -57,12 +60,12 @@ def test_sparse_gp_drift_has_fixed_inducing_topology_and_exact_whitened_kl():
     assert jnp.all(drift.fitc_variance(jnp.asarray([0.2])) >= 0.0)
 
 
-def test_solver_backed_sing_requires_explicit_surrogate_provider():
+def test_solver_backed_sing_requires_explicit_surrogate_provider() -> None:
     with pytest.raises(TypeError, match="surrogate_provider"):
         SINGTransitionPlan("local-linearization")
 
 
-def _affine_singular_problem():
+def _affine_singular_problem() -> Any:
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, args: jnp.asarray([-0.25 * state[0], 0.0]),
         state_layout=phx.dynamics.StateLayout((2,)),
@@ -113,7 +116,7 @@ def _affine_singular_problem():
     )
 
 
-def test_affine_hausdorff_smoother_has_normalized_objective_and_solve_evidence():
+def test_affine_hausdorff_smoother_has_normalized_objective_and_solve_evidence() -> None:
     problem = _affine_singular_problem()
     support = SINGSupportPlan(
         jnp.asarray([[0.0, 1.0]]),
@@ -158,7 +161,7 @@ def test_affine_hausdorff_smoother_has_normalized_objective_and_solve_evidence()
     assert jnp.isfinite(transition_evidence.log_density)
 
 
-def test_affine_hausdorff_smoother_rejects_nontangent_diffusion():
+def test_affine_hausdorff_smoother_rejects_nontangent_diffusion() -> None:
     problem = _affine_singular_problem()
     bad_support = SINGSupportPlan(
         jnp.asarray([[1.0, 0.0]]),
@@ -172,5 +175,37 @@ def test_affine_hausdorff_smoother_rejects_nontangent_diffusion():
             problem,
             transition_plan=SINGTransitionPlan(support=bad_support),
             key=jr.key(42),
+            max_iterations=2,
+        )
+
+
+def test_affine_hausdorff_smoother_rejects_non_gaussian_prior() -> None:
+    base = _affine_singular_problem()
+    model = phx.stochastic.StateSpaceModel(
+        phx.stochastic.CategoricalStatePrior(
+            jnp.asarray([[0.0, 2.0], [1.0, 2.0]]), jnp.asarray([0.5, 0.5])
+        ),
+        base.model.transition,
+        base.model.observation,
+        model_id="affine-categorical-model",
+    )
+    problem = phx.stochastic.StateSpaceProblem(
+        model,
+        base.observations,
+        initial_time=0.0,
+        problem_id="affine-categorical-problem",
+    )
+    support = SINGSupportPlan(
+        jnp.asarray([[0.0, 1.0]]),
+        jnp.asarray([[1.0], [0.0]]),
+        offset=jnp.asarray([2.0]),
+        rank=1,
+        support_id="horizontal-affine-support",
+    )
+    with pytest.raises(TypeError, match="GaussianStatePrior"):
+        sing_constrained_smoother(
+            problem,
+            transition_plan=SINGTransitionPlan(support=support),
+            key=jr.key(43),
             max_iterations=2,
         )

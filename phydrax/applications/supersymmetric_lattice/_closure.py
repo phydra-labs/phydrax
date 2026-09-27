@@ -15,7 +15,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._limit_study import (
@@ -37,6 +38,7 @@ from ...linalg import (
     ShiftedSolveResult,
     solve_shifted,
 )
+from ...typing import parse, PRNGKey
 from ._rhmc import (
     PreparedTwistedN2RHMC,
     sample_twisted_n2_rhmc,
@@ -66,7 +68,7 @@ class ScalablePfaffianPlan(StrictModule):
         antisymmetry_tolerance: float = 1e-10,
         pivot_tolerance: float = 1e-14,
         determinant_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         maximum = int(maximum_dimension)
         antisymmetry = float(antisymmetry_tolerance)
         pivot = float(pivot_tolerance)
@@ -458,8 +460,7 @@ def run_supersymmetric_limit_campaign(
 ) -> ScientificLimitStudyResult:
     """Run a prespecified linear/quadratic regulator, continuum, volume, or rank limit."""
 
-    if kind not in ("regulator", "continuum", "thermodynamic", "large-rank"):
-        raise ValueError("Unknown supersymmetric limit kind.")
+    kind = parse(kind, SupersymmetricLimitKind, "kind")
     points = tuple(float(value) for value in coordinates)
     observations = tuple(float(value) for value in values)
     errors = tuple(float(value) for value in standard_errors)
@@ -498,7 +499,7 @@ class DistributedTwistedN2Run:
 def sample_distributed_twisted_n2_rhmc(
     prepared: PreparedTwistedN2RHMC,
     initial_configurations: Sequence[ArrayLike],
-    keys: Sequence[Key[Array, ""]],
+    keys: Sequence[PRNGKey],
     /,
     *,
     num_draws: int,

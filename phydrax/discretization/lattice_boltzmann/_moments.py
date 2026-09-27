@@ -10,7 +10,8 @@ from math import comb
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -84,7 +85,9 @@ _D3Q27_EXPONENTS = (
 )
 
 
-def _default_exponents(velocity_set: LatticeBoltzmannVelocitySet, /):
+def _default_exponents(
+    velocity_set: LatticeBoltzmannVelocitySet, /
+) -> tuple[tuple[int, ...], ...]:
     key = (velocity_set.dimension, velocity_set.population_count)
     if key == (2, 9):
         return _D2Q9_EXPONENTS
@@ -142,7 +145,7 @@ class MomentBasisPlan(StrictModule, NonTrainableState):
         *,
         basis_name: str = "raw-monomial",
         maximum_condition_number: float = 1.0e12,
-    ):
+    ) -> None:
         name = str(basis_name)
         condition_limit = float(maximum_condition_number)
         if not name:
@@ -330,7 +333,7 @@ class RelaxationSpectrumPlan(StrictModule, NonTrainableState):
         *,
         default_rate: float = 1.0,
         shear_rate_indices: Sequence[int] | None = None,
-    ):
+    ) -> None:
         default = float(default_rate)
         if not np.isfinite(default) or default <= 0.0 or default >= 2.0:
             raise ValueError("default_rate must lie strictly between zero and two.")

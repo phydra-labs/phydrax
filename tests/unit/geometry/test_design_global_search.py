@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from dataclasses import replace
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -14,23 +16,24 @@ from phydrax.geometry.design import AbstractDesignConstraint
 
 
 class _ConstantConstraint(AbstractDesignConstraint):
-    def residual(self, kernel, schema, state, /):
+    def residual(self, kernel: Any, schema: Any, state: Any, /) -> Any:
         del kernel, schema, state
         return self._weighted(jnp.ones((1,)))
 
 
 class _InvalidConstraint(AbstractDesignConstraint):
-    def residual(self, kernel, schema, state, /):
+    def residual(self, kernel: Any, schema: Any, state: Any, /) -> Any:
         del kernel, schema, state
         return self._weighted(jnp.full((1,), jnp.nan))
 
 
-def _sphere_problem(*, constraint=None):
+def _sphere_problem(*, constraint: Any = None) -> Any:
     geometry = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile()
     parameter_ids = {
         parameter_id.name: parameter_id for parameter_id in geometry.schema.parameter_ids
     }
     if constraint is None:
+        # ty: ignore[invalid-argument-type]
         constraint = phx.geometry.ParameterTarget(parameter_ids["radius"], 1.5)
     system = phx.geometry.DesignConstraintSystem(geometry, (constraint,))
     bounds = {
@@ -40,7 +43,7 @@ def _sphere_problem(*, constraint=None):
     return geometry, system, parameter_ids, bounds
 
 
-def test_search_bounds_are_complete_finite_and_physically_admissible():
+def test_search_bounds_are_complete_finite_and_physically_admissible() -> None:
     geometry, system, parameter_ids, bounds = _sphere_problem()
     search = phx.optim.DifferentialEvolutionSearch(4, 0)
 
@@ -94,7 +97,7 @@ def test_search_bounds_are_complete_finite_and_physically_admissible():
         )
 
 
-def test_search_is_reproducible_bounded_and_exactly_accounted():
+def test_search_is_reproducible_bounded_and_exactly_accounted() -> None:
     geometry, system, _parameter_ids, bounds = _sphere_problem()
     search = phx.optim.DifferentialEvolutionSearch(
         8,
@@ -148,7 +151,7 @@ def test_search_is_reproducible_bounded_and_exactly_accounted():
     assert domain.geometry.equivalent(optimized)
 
 
-def test_initial_population_convergence_and_invalid_objectives_are_explicit():
+def test_initial_population_convergence_and_invalid_objectives_are_explicit() -> None:
     _geometry, constant_system, _parameter_ids, bounds = _sphere_problem(
         constraint=_ConstantConstraint()
     )
@@ -180,7 +183,9 @@ def test_initial_population_convergence_and_invalid_objectives_are_explicit():
     assert bool(jnp.isnan(invalid.objective))
 
 
-def test_restricted_geometry_validity_region_fails_before_evaluation(monkeypatch):
+def test_restricted_geometry_validity_region_fails_before_evaluation(
+    monkeypatch: Any,
+) -> None:
     geometry, system, _parameter_ids, bounds = _sphere_problem()
     restricted = replace(geometry.field_certificate, validity_region="fixed_topology")
     monkeypatch.setattr(

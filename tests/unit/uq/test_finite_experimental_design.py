@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,15 +14,15 @@ import pytest
 import phydrax as phx
 
 
-def _space(values):
+def _space(values: Any) -> Any:
     return phx.optim.FiniteProductSpace(phx.optim.FiniteAxis(jnp.asarray(values)))
 
 
-def _table_problem(table, *, design_mask=None, context=None):
+def _table_problem(table: Any, *, design_mask: Any = None, context: Any = None) -> Any:
     logs = jnp.asarray(table)
     d, p, o = logs.shape
 
-    def channel(parameters, design, outcomes, context):
+    def channel(parameters: Any, design: Any, outcomes: Any, context: Any) -> Any:
         return logs[design, parameters[:, None], outcomes[None, :]]
 
     return phx.uq.FiniteExperimentalDesignProblem(
@@ -33,7 +36,7 @@ def _table_problem(table, *, design_mask=None, context=None):
     )
 
 
-def _dense_eig(probabilities, prior):
+def _dense_eig(probabilities: Any, prior: Any) -> Any:
     predictive = np.sum(prior[None, :, None] * probabilities, axis=1)
     joint = prior[None, :, None] * probabilities
     supported = joint > 0
@@ -43,7 +46,7 @@ def _dense_eig(probabilities, prior):
     return np.sum(joint * log_ratio, axis=(1, 2))
 
 
-def test_exact_channel_selection_observation_and_next_design():
+def test_exact_channel_selection_observation_and_next_design() -> None:
     # Design d asks whether the unknown parameter equals d.
     probability = np.stack(
         [np.stack((np.arange(3) != d, np.arange(3) == d), axis=1) for d in range(3)]
@@ -88,7 +91,7 @@ def test_exact_channel_selection_observation_and_next_design():
     assert float(observed.conditions["context:sensor_temperature"]) == 295.0
 
 
-def test_chunked_complete_support_matches_dense_oracle_and_jit():
+def test_chunked_complete_support_matches_dense_oracle_and_jit() -> None:
     probability = np.random.default_rng(17).uniform(0.05, 1.0, (4, 3, 5))
     probability /= probability.sum(axis=2, keepdims=True)
     problem = _table_problem(np.log(probability))
@@ -120,7 +123,7 @@ def test_chunked_complete_support_matches_dense_oracle_and_jit():
         )
 
 
-def test_flat_identity_masks_zero_prior_rows_and_stable_ties():
+def test_flat_identity_masks_zero_prior_rows_and_stable_ties() -> None:
     parameters = _space(np.arange(3))
     designs = phx.optim.FiniteProductSpace(
         {
@@ -129,7 +132,7 @@ def test_flat_identity_masks_zero_prior_rows_and_stable_ties():
         }
     )
 
-    def channel(parameters, design, outcomes, context):
+    def channel(parameters: Any, design: Any, outcomes: Any, context: Any) -> Any:
         finite = jnp.where(parameters[:, None] == outcomes[None, :], 0.0, -jnp.inf)
         return jnp.where(parameters[:, None] == 2, jnp.nan, finite)
 
@@ -139,10 +142,15 @@ def test_flat_identity_masks_zero_prior_rows_and_stable_ties():
         _space([0, 1]),
         channel,
         likelihood_id="masked-perfect-channel",
+        # ty: ignore[invalid-argument-type]
         design_mask=[False, False, True, True],
     )
     belief = phx.uq.FiniteDesignBelief(
-        parameters, [0.0, 0.0, jnp.nan], parameter_mask=[True, True, False]
+        parameters,
+        # ty: ignore[invalid-argument-type]
+        [0.0, 0.0, jnp.nan],
+        # ty: ignore[invalid-argument-type]
+        parameter_mask=[True, True, False],
     )
     selection = phx.uq.select_finite_experimental_design(
         problem,
@@ -161,6 +169,7 @@ def test_flat_identity_masks_zero_prior_rows_and_stable_ties():
     assert not bool(inactive.valid)
     assert int(inactive.status) == int(phx.uq.FiniteDesignStatus.INACTIVE_DESIGN)
     # A finite but underflowing mass is NOT a zero-prior row: its NaN is invalid.
+    # ty: ignore[invalid-argument-type]
     tiny = phx.uq.FiniteDesignBelief(parameters, [0.0, -2.0, -1000.0])
     invalid = phx.uq.evaluate_finite_experimental_design(problem, tiny, 2)
     assert bool(tiny.active_parameters[2])
@@ -168,10 +177,12 @@ def test_flat_identity_masks_zero_prior_rows_and_stable_ties():
     assert int(invalid.status) == int(phx.uq.FiniteDesignStatus.INVALID_LIKELIHOOD)
 
 
-def test_zero_mass_parameter_payload_is_not_evaluated():
+def test_zero_mass_parameter_payload_is_not_evaluated() -> None:
     parameters = _space([0, 1, 2])
 
-    def strict_channel(parameter_values, design, outcomes, context):
+    def strict_channel(
+        parameter_values: Any, design: Any, outcomes: Any, context: Any
+    ) -> Any:
         del design, context
         checked = eqx.error_if(
             parameter_values,
@@ -193,6 +204,7 @@ def test_zero_mass_parameter_payload_is_not_evaluated():
     )
     belief = phx.uq.FiniteDesignBelief(
         parameters,
+        # ty: ignore[invalid-argument-type]
         [0.0, 0.0, -jnp.inf],
     )
     score = phx.uq.evaluate_finite_experimental_design(problem, belief, 0)
@@ -208,8 +220,9 @@ def test_zero_mass_parameter_payload_is_not_evaluated():
         [np.nan, 0.0],
     ],
 )
-def test_active_likelihood_rows_are_rejected_not_renormalized(bad_row):
+def test_active_likelihood_rows_are_rejected_not_renormalized(bad_row: Any) -> None:
     problem = _table_problem(np.asarray([[bad_row, [np.log(0.5), np.log(0.5)]]]))
+    # ty: ignore[invalid-argument-type]
     belief = phx.uq.FiniteDesignBelief(problem.parameters, [0.0, 0.0])
     score = phx.uq.evaluate_finite_experimental_design(
         problem,
@@ -226,10 +239,14 @@ def test_active_likelihood_rows_are_rejected_not_renormalized(bad_row):
     assert int(selection.status) == int(phx.uq.FiniteDesignStatus.NO_VALID_DESIGNS)
 
 
-def test_log_masses_and_rare_observations_never_round_trip_through_probabilities():
+def test_log_masses_and_rare_observations_never_round_trip_through_probabilities() -> (
+    None
+):
     perfect = _table_problem([[[0.0, -np.inf], [-np.inf, 0.0]]])
+    # ty: ignore[invalid-argument-type]
     offset = phx.uq.FiniteDesignBelief(perfect.parameters, [1e300, 1e300])
     np.testing.assert_allclose(offset.log_masses, [-np.log(2), -np.log(2)], atol=1e-15)
+    # ty: ignore[invalid-argument-type]
     rare = phx.uq.FiniteDesignBelief(perfect.parameters, [0.0, -1000.0])
     selected = phx.uq.evaluate_finite_experimental_design(perfect, rare, 0)
     observed = phx.uq.bind_finite_design_experiment(
@@ -253,9 +270,10 @@ def test_log_masses_and_rare_observations_never_round_trip_through_probabilities
     assert float(posterior.log_predictive_probability) == -1e300
 
 
-def test_impossible_stale_replayed_and_tampered_observations_preserve_belief():
+def test_impossible_stale_replayed_and_tampered_observations_preserve_belief() -> None:
     logs = [[[0.0, -np.inf, -np.inf], [-np.inf, 0.0, -np.inf]]]
     problem = _table_problem(logs, context={"calibration": 1.0})
+    # ty: ignore[invalid-argument-type]
     belief = phx.uq.FiniteDesignBelief(problem.parameters, [0.0, 0.0])
     selection = phx.uq.select_finite_experimental_design(problem, belief)
     impossible = phx.uq.bind_finite_design_experiment(
@@ -290,10 +308,10 @@ def test_impossible_stale_replayed_and_tampered_observations_preserve_belief():
     assert len(replayed.belief.history) == 1
 
 
-def test_resource_refusal_precedes_likelihood_tracing_and_search_allocation():
+def test_resource_refusal_precedes_likelihood_tracing_and_search_allocation() -> None:
     calls = []
 
-    def channel(parameters, design, outcomes, context):
+    def channel(parameters: Any, design: Any, outcomes: Any, context: Any) -> Any:
         calls.append(outcomes.shape)
         return jnp.full((parameters.shape[0], outcomes.shape[0]), -jnp.log(2.0))
 
@@ -307,6 +325,7 @@ def test_resource_refusal_precedes_likelihood_tracing_and_search_allocation():
         channel,
         likelihood_id="uniform",
     )
+    # ty: ignore[invalid-argument-type]
     belief = phx.uq.FiniteDesignBelief(problem.parameters, [0.0, 0.0])
     policy = phx.uq.ExpectedInformationGain(maximum_bytes=1)
     with pytest.raises(MemoryError):

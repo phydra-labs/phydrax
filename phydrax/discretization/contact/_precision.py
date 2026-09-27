@@ -9,6 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -31,7 +33,7 @@ class ContactPrecisionPolicy(StrictModule, NonTrainableState):
         accumulation_dtype: Any = np.float64,
         certification_dtype: Any = np.float64,
         output_dtype: Any = np.float64,
-    ):
+    ) -> None:
         geometry = np.dtype(geometry_dtype)
         accumulation = np.dtype(accumulation_dtype)
         certification = np.dtype(certification_dtype)
@@ -68,16 +70,16 @@ class ContactPrecisionPolicy(StrictModule, NonTrainableState):
             self.geometry_dtype.itemsize >= 8 and self.certification_dtype.itemsize >= 8
         )
 
-    def geometry(self, value):
+    def geometry(self, value: ArrayLike) -> Array:
         return jnp.asarray(value, dtype=self.geometry_dtype)
 
-    def accumulation(self, value):
+    def accumulation(self, value: ArrayLike) -> Array:
         return jnp.asarray(value, dtype=self.accumulation_dtype)
 
-    def certification(self, value):
+    def certification(self, value: ArrayLike) -> Array:
         return jnp.asarray(value, dtype=self.certification_dtype)
 
-    def output(self, value):
+    def output(self, value: ArrayLike) -> Array:
         return jnp.asarray(value, dtype=self.output_dtype)
 
 

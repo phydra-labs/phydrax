@@ -4,15 +4,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from math import prod
-from typing import Any
+from typing import Any, cast
 
 import diffrax as dfx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._probability import AbstractProbabilityLaw
@@ -22,12 +24,14 @@ from ...dynamics._evolution import (
     EVOLUTION_NONFINITE,
     EVOLUTION_SUCCESS,
 )
+from ...dynamics._system import ContinuousSystem
 from ...operators.differential._stochastic_estimators import (
     exact_state_divergence,
     stochastic_divergence_samples,
     StochasticTracePolicy,
 )
-from ._transport import ContinuousTransport
+from ...typing import PRNGKey
+from ._transport import ContinuousTransport, ContinuousTransportSample
 
 
 _DIFFRAX_SUCCESS = jax.tree.leaves(dfx.RESULTS.successful)[0]
@@ -71,7 +75,7 @@ class _ExactAugmentedField(StrictModule):
     event_shape: tuple[int, ...] = eqx.field(static=True)
     event_size: int = eqx.field(static=True)
 
-    def __init__(self, transport: ContinuousTransport, /, *, reverse: bool):
+    def __init__(self, transport: ContinuousTransport, /, *, reverse: bool) -> None:
         self.transport = transport
         self.reverse = bool(reverse)
         self.event_shape = transport.event_shape
@@ -88,8 +92,11 @@ class _ExactAugmentedField(StrictModule):
             else coordinate
         )
 
-        def vector_field(current):
-            return self.transport.evolution.system.evaluate(
+        # `_validate_density_transport` admits only DiffraxEvolution systems.
+        system = cast(ContinuousSystem, self.transport.evolution.system)
+
+        def vector_field(current: Array) -> Array:
+            return system.evaluate(
                 physical_coordinate,
                 current,
                 self.transport.args,
@@ -113,10 +120,10 @@ class _StochasticAugmentedField(StrictModule):
     def __init__(
         self,
         transport: ContinuousTransport,
-        probe_key: Key[Array, ""],
+        probe_key: PRNGKey,
         policy: StochasticTracePolicy,
         /,
-    ):
+    ) -> None:
         self.transport = transport
         self.probe_key = jnp.asarray(probe_key)
         self.policy = policy
@@ -132,8 +139,11 @@ class _StochasticAugmentedField(StrictModule):
             - coordinate
         )
 
-        def vector_field(current):
-            return self.transport.evolution.system.evaluate(
+        # `_validate_density_transport` admits only DiffraxEvolution systems.
+        system = cast(ContinuousSystem, self.transport.evolution.system)
+
+        def vector_field(current: Array) -> Array:
+            return system.evaluate(
                 physical_coordinate,
                 current,
                 self.transport.args,
@@ -248,13 +258,13 @@ class ContinuousFlowDensityResult(StrictModule):
         backend_status: ArrayLike,
         accepted_steps: ArrayLike,
         rejected_steps: ArrayLike,
-        event_shape,
+        event_shape: Iterable[int],
         direction: str,
         divergence_method: str,
         num_probes: int,
         probe_distribution: str,
         flow_id: str,
-    ):
+    ) -> None:
         events = tuple(event_shape)
         data = jnp.asarray(data_state)
         base = jnp.asarray(base_state, dtype=data.dtype)
@@ -320,7 +330,9 @@ class ContinuousFlowDensityResult(StrictModule):
         return jnp.all(self.valid) & jnp.all(self.status == EVOLUTION_SUCCESS)
 
 
-def _base_log_prob(law: AbstractProbabilityLaw, states: Array, event_shape, /) -> Array:
+def _base_log_prob(
+    law: AbstractProbabilityLaw, states: Array, event_shape: tuple[int, ...], /
+) -> Array:
     leading = _event_shape(states, event_shape)
     count = prod(leading) if leading else 1
     flat = states.reshape((count,) + tuple(event_shape))
@@ -328,7 +340,9 @@ def _base_log_prob(law: AbstractProbabilityLaw, states: Array, event_shape, /) -
     return values.reshape(leading)
 
 
-def _base_contains(law: AbstractProbabilityLaw, states: Array, event_shape, /) -> Array:
+def _base_contains(
+    law: AbstractProbabilityLaw, states: Array, event_shape: tuple[int, ...], /
+) -> Array:
     leading = _event_shape(states, event_shape)
     count = prod(leading) if leading else 1
     flat = states.reshape((count,) + tuple(event_shape))
@@ -350,7 +364,7 @@ def _exact_density_batch(
     flat = states.reshape((count,) + event_shape)
     field = _ExactAugmentedField(transport, reverse=reverse)
 
-    def one(state):
+    def one(state: Array) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
         return _solve_augmented(transport, state, field, 1)
 
     transformed, raw_volume, valid, status, backend, accepted, rejected = jax.vmap(one)(
@@ -407,7 +421,7 @@ class ContinuousFlowLaw(AbstractProbabilityLaw):
         *,
         max_exact_dimension: int = 32,
         flow_id: str | None = None,
-    ):
+    ) -> None:
         _validate_density_transport(transport)
         limit = int(max_exact_dimension)
         if limit <= 0:
@@ -448,21 +462,21 @@ class ContinuousFlowLaw(AbstractProbabilityLaw):
 
     def sample_with_diagnostics(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
-    ):
+    ) -> ContinuousTransportSample:
         return self.transport.sample_with_diagnostics(key, sample_shape)
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         return self.transport.sample(key, sample_shape)
 
     def sample_and_log_prob(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> tuple[Array, Array]:
         samples = tuple(sample_shape)
@@ -522,7 +536,7 @@ class ContinuousFlowLaw(AbstractProbabilityLaw):
 def estimate_continuous_flow_log_prob(
     transport: ContinuousTransport,
     value: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     policy: StochasticTracePolicy | None = None,
@@ -539,7 +553,9 @@ def estimate_continuous_flow_log_prob(
     flat = states.reshape((count,) + event_shape)
     keys = jr.split(key, count)
 
-    def one(state, probe_key):
+    def one(
+        state: Array, probe_key: Array
+    ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
         field = _StochasticAugmentedField(transport, probe_key, resolved)
         return _solve_augmented(
             transport,

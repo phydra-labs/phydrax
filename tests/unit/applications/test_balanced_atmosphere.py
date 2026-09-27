@@ -1,5 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -13,18 +16,18 @@ from phydrax.discretization.spectral._spherical import SphericalSpectralPlan
 
 
 @pytest.fixture(scope="module")
-def space():
+def space() -> Any:
     return SphericalSpectralPlan(6, sampling="gl").prepare(radius=6.371e6)
 
 
-def model_at(space, levels=4, **kwargs):
+def model_at(space: Any, levels: Any = 4, **kwargs: Any) -> Any:
     sigma = np.linspace(0, 1, levels + 1)
     return GlobalPrimitiveEquationPlan(
         space, HybridPressureCoordinate(0.1 * (1 - sigma), sigma), dt=30.0, **kwargs
     ).prepare()
 
 
-def test_nonzero_shear_independently_satisfies_hydrostatic_and_thermal_wind():
+def test_nonzero_shear_independently_satisfies_hydrostatic_and_thermal_wind() -> None:
     reference = DryGradientWindReference()
     pressure = np.geomspace(1200, 110000, 9)[:, None]
     latitude = np.linspace(-1.4, 1.4, 11)[None, :]
@@ -61,7 +64,7 @@ def test_nonzero_shear_independently_satisfies_hydrostatic_and_thermal_wind():
     )
 
 
-def test_surface_branch_and_zero_shear_equator_pole_limits():
+def test_surface_branch_and_zero_shear_equator_pole_limits() -> None:
     latitude = np.array([-np.pi / 2, -0.7, 0.0, 0.7, np.pi / 2])
     for shear in (-10.0, 0.0, 1e-12):
         reference = DryGradientWindReference(shear=shear)
@@ -86,7 +89,9 @@ def test_surface_branch_and_zero_shear_equator_pole_limits():
     np.testing.assert_allclose(reference.surface_pressure(latitude), expected, rtol=3e-16)
 
 
-def test_native_sheared_state_residual_decreases_with_vertical_resolution(space):
+def test_native_sheared_state_residual_decreases_with_vertical_resolution(
+    space: Any,
+) -> None:
     reference = DryGradientWindReference()
     coarse, fine = model_at(space, 2), model_at(space, 8)
     initial_coarse, initial_fine = (
@@ -108,7 +113,7 @@ def test_native_sheared_state_residual_decreases_with_vertical_resolution(space)
     assert float(jnp.abs(fine.step_energy_flux(result.evidence))) < 1.0
 
 
-def test_atmospheric_angular_momentum_and_external_drag_torque(space):
+def test_atmospheric_angular_momentum_and_external_drag_torque(space: Any) -> None:
     model = model_at(space, 2, processes=GlobalAtmosphereProcesses(held_suarez=True))
     speed = 20.0
     initial = model.initialize(
@@ -132,7 +137,7 @@ def test_atmospheric_angular_momentum_and_external_drag_torque(space):
     assert abs(float(rates.torque_residual_nm)) < 1e-11 * abs(expected_torque)
 
 
-def test_energy_neutral_projection_closes_resolved_angular_momentum(space):
+def test_energy_neutral_projection_closes_resolved_angular_momentum(space: Any) -> None:
     model = model_at(
         space,
         2,
@@ -173,7 +178,9 @@ def test_energy_neutral_projection_closes_resolved_angular_momentum(space):
     assert bool(result.evidence.angular_momentum_projection_evaluated)
 
 
-def test_filter_angular_momentum_matches_independent_unfiltered_trajectory(space):
+def test_filter_angular_momentum_matches_independent_unfiltered_trajectory(
+    space: Any,
+) -> None:
     plain = model_at(space, 2)
     filtered = model_at(space, 2, filter_rate=0.1)
     wind = 20.0 * jnp.sin(plain.work_space.transform.theta)[:, None, None]
@@ -191,7 +198,7 @@ def test_filter_angular_momentum_matches_independent_unfiltered_trajectory(space
     np.testing.assert_array_equal(no_filter.evidence.filter_angular_momentum, 0.0)
 
 
-def test_rejects_reference_domain_mismatch_and_unrepresentable_water(space):
+def test_rejects_reference_domain_mismatch_and_unrepresentable_water(space: Any) -> None:
     reference = DryGradientWindReference()
     with pytest.raises(ValueError):
         DryGradientWindReference(shear=200)

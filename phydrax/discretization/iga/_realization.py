@@ -9,7 +9,8 @@ from typing import Protocol, runtime_checkable
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -62,7 +63,9 @@ class DirectTensorRealization(StrictModule, NonTrainableState):
     cell_gathers: Array
     realization_id: str = eqx.field(static=True)
 
-    def __init__(self, basis: TensorSplineBasisSpec, topology: SplineSpanTopology, /):
+    def __init__(
+        self, basis: TensorSplineBasisSpec, topology: SplineSpanTopology, /
+    ) -> None:
         if not isinstance(basis, TensorSplineBasisSpec) or not isinstance(
             topology, SplineSpanTopology
         ):
@@ -129,7 +132,7 @@ class ExtractedBernsteinRealization(StrictModule, NonTrainableState):
     extraction: Array
     realization_id: str = eqx.field(static=True)
 
-    def __init__(self, direct: DirectTensorRealization, extraction: ArrayLike, /):
+    def __init__(self, direct: DirectTensorRealization, extraction: ArrayLike, /) -> None:
         if not isinstance(direct, DirectTensorRealization):
             raise TypeError("direct must be a DirectTensorRealization.")
         matrices = np.asarray(extraction)

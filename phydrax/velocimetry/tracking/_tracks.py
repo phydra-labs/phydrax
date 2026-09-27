@@ -11,7 +11,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax.ein import contract
 
@@ -65,7 +66,7 @@ class TrackLinkPlan(StrictModule, NonTrainableState):
         initial_velocity_variance: float = 1.0,
         ambiguity_margin: float = 0.25,
         small_solve_plan: SmallLinearSolvePlan | None = None,
-    ):
+    ) -> None:
         for name, value in (
             ("maximum_tracks", maximum_tracks),
             ("maximum_missed", maximum_missed),
@@ -161,7 +162,9 @@ def initialize_tracks(
     )
 
 
-def _motion_matrices(dt: Array, acceleration_variance: float, dtype, /):
+def _motion_matrices(
+    dt: Array, acceleration_variance: float, dtype: DTypeLike, /
+) -> tuple[Array, Array]:
     identity = jnp.eye(3, dtype=dtype)
     transition = jnp.eye(6, dtype=dtype).at[:3, 3:].set(dt * identity)
     process = jnp.zeros((6, 6), dtype=dtype)
@@ -172,7 +175,9 @@ def _motion_matrices(dt: Array, acceleration_variance: float, dtype, /):
     return transition, acceleration_variance * process
 
 
-def _validate_measurements(positions, covariance, valid, /):
+def _validate_measurements(
+    positions: Array, covariance: Array, valid: Array, /
+) -> tuple[Array, Array, Array]:
     if positions.ndim != 2 or positions.shape[-1] != 3:
         raise ValueError("positions_xyz must have shape (observation, 3).")
     capacity = positions.shape[0]
@@ -610,7 +615,7 @@ class OfflineTrackRefinementPlan(StrictModule, NonTrainableState):
         death_cost: float = 1.0,
         gap_penalty: float = 0.25,
         maximum_iterations: int = 10_000,
-    ):
+    ) -> None:
         for name, value in (
             ("maximum_gap", maximum_gap),
             ("maximum_iterations", maximum_iterations),

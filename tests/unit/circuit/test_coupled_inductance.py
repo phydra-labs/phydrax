@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -6,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def _plan():
+def _plan() -> Any:
     return phx.circuit.CoupledInductancePlan(
         np.asarray([[2.0, 0.5], [0.5, 1.0]]),
         np.asarray([[0.1, 0.0], [0.0, 0.2]]),
@@ -14,7 +16,7 @@ def _plan():
     ).prepare()
 
 
-def test_coupled_inductance_implicit_step_closes_energy_ledger():
+def test_coupled_inductance_implicit_step_closes_energy_ledger() -> None:
     prepared = _plan()
     result = prepared.step_implicit_euler(
         np.asarray([1.0, -0.5]), np.asarray([2.0, 1.0]), 0.1
@@ -26,7 +28,7 @@ def test_coupled_inductance_implicit_step_closes_energy_ledger():
     assert result.energy.resistive_power_w >= 0.0
 
 
-def test_coupled_inductance_rejects_nonreciprocal_matrix():
+def test_coupled_inductance_rejects_nonreciprocal_matrix() -> None:
     with pytest.raises(ValueError, match="reciprocal"):
         phx.circuit.CoupledInductancePlan(
             np.asarray([[1.0, 0.2], [0.1, 1.0]]),
@@ -35,10 +37,10 @@ def test_coupled_inductance_rejects_nonreciprocal_matrix():
         )
 
 
-def test_coupled_inductance_step_is_differentiable():
+def test_coupled_inductance_step_is_differentiable() -> None:
     prepared = _plan()
 
-    def final_current(voltage):
+    def final_current(voltage: Any) -> Any:
         result = prepared.step_implicit_euler(
             jnp.asarray([0.0, 0.0]),
             jnp.asarray([voltage, 0.0]),

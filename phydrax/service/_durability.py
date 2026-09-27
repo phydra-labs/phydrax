@@ -286,7 +286,7 @@ class _SchedulerReservation:
 
 
 class _SQLiteTransaction:
-    def __init__(self, connection: sqlite3.Connection):
+    def __init__(self, connection: sqlite3.Connection) -> None:
         self._connection = connection
 
     def insert_job(self, record: DurableJobRecord, /) -> DurableJobRecord:
@@ -499,7 +499,7 @@ class SQLiteServiceStore:
         /,
         *,
         maximum_database_bytes: int = 4 * 1024 * 1024 * 1024,
-    ):
+    ) -> None:
         if type(maximum_database_bytes) is not int or maximum_database_bytes <= 0:
             raise ValueError("SQLite database bound must be a positive integer.")
         self._lock = threading.RLock()
@@ -915,7 +915,7 @@ class OutboxDispatcher:
         /,
         *,
         retry_delay_seconds: int = 30,
-    ):
+    ) -> None:
         if not handlers or any(not topic for topic in handlers):
             raise ValueError("Outbox dispatcher requires nonempty topic handlers.")
         if retry_delay_seconds <= 0:

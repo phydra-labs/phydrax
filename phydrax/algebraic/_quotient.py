@@ -7,13 +7,14 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterator
 from enum import IntEnum
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import scipy.linalg as scipy_linalg
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -100,7 +101,7 @@ class QuotientRootResourcePolicy(StrictModule):
         maximum_assembly_entries: int = 1_000_000,
         maximum_dense_entries: int = 4_000_000,
         maximum_quotient_dimension: int = 256,
-    ):
+    ) -> None:
         values = tuple(
             _positive_integer(value, name)
             for value, name in (
@@ -147,7 +148,7 @@ class QuotientRankPolicy(StrictModule):
         ambiguity_factor: float = 8.0,
         maximum_basis_condition: float = 1e10,
         maximum_eigenvalue_condition: float = 1e10,
-    ):
+    ) -> None:
         relative = _nonnegative_finite(relative_tolerance, "relative_tolerance")
         absolute = _nonnegative_finite(absolute_tolerance, "absolute_tolerance")
         ambiguity = float(ambiguity_factor)
@@ -208,7 +209,7 @@ class QuotientRootPolicy(StrictModule):
         residual_relative_tolerance: float = 1e-7,
         simple_root_relative_tolerance: float = 1e-7,
         polish_maximum_steps: int = 12,
-    ):
+    ) -> None:
         resources_ = QuotientRootResourcePolicy() if resources is None else resources
         rank_ = QuotientRankPolicy() if rank is None else rank
         if not isinstance(resources_, QuotientRootResourcePolicy):
@@ -367,7 +368,7 @@ class QuotientRootResult(StrictModule):
 
 def _exact_degree_monomials(
     variable_count: int, degree: int, prefix: tuple[int, ...] = ()
-):
+) -> Iterator[tuple[int, ...]]:
     if variable_count == 1:
         yield prefix + (degree,)
         return
@@ -588,7 +589,9 @@ def assemble_macaulay_matrix(
     )
 
 
-def _rank_interval(matrix: np.ndarray, policy: QuotientRankPolicy, /):
+def _rank_interval(
+    matrix: np.ndarray, policy: QuotientRankPolicy, /
+) -> tuple[np.ndarray, int, int, np.ndarray]:
     _, singular_values, right = np.linalg.svd(matrix, full_matrices=True)
     if singular_values.size == 0:
         return singular_values, 0, 0, right
@@ -1026,8 +1029,10 @@ def _minimum_separation(values: np.ndarray, /) -> float:
     return float(np.min(difference))
 
 
-def _joint_schur_recovery(matrices: np.ndarray, /):
-    best = None
+def _joint_schur_recovery(
+    matrices: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, float, float, np.ndarray]:
+    best: tuple[np.ndarray, np.ndarray, float, float, np.ndarray] | None = None
     best_scaled_separation = -math.inf
     for weights in _joint_weight_candidates(matrices.shape[0]):
         joint = ein.contract("v,vij->ij", weights, matrices)
@@ -1166,7 +1171,7 @@ def _polish_simple_roots(
         return roots, polished, statuses
     variable_count = system.support.variable_count
 
-    def embedded_residual(state, _):
+    def embedded_residual(state: Array, _: object) -> Array:
         point = state[:variable_count] + 1j * state[variable_count:]
         residual = system.evaluate(point)
         return jnp.concatenate((jnp.real(residual), jnp.imag(residual)))

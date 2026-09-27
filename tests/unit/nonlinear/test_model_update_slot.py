@@ -4,6 +4,8 @@
 
 """A learned model inside the canonical `FunctionNonlinearUpdate` accelerator slot."""
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -21,12 +23,12 @@ class _AbstractGain(phx.AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, gain):
+    def __init__(self, gain: Any) -> None:
         self.gain = jnp.asarray([gain])
         self.in_size = 1
         self.out_size = 1
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         return self.gain * x
 
 
@@ -35,7 +37,7 @@ class _Gain(_AbstractGain):
 
 
 class _HostGain(_AbstractGain):
-    def model_execution_contract(self):
+    def model_execution_contract(self) -> Any:
         return phx.ModelExecutionContract(
             derivative=phx.DerivativeContract(route=phx.DerivativeRoute.STOPPED),
             execution=phx.ExecutionCapabilities("host-inference", host_only=True),
@@ -47,16 +49,17 @@ class _Correction(phx.StrictModule):
 
     model: object
 
-    def __call__(self, state, target):
+    def __call__(self, state: Any, target: Any) -> Any:
         model = (
             self.model.model
             if isinstance(self.model, phx.ComponentBinding)
             else self.model
         )
+        # ty: ignore[call-non-callable]
         return state + model(target - state)
 
 
-def _problem():
+def _problem() -> Any:
     return nl.NonlinearSystemProblem(
         lambda state, target: state - target,
         trial_validity=lambda state, target: jnp.all(state > 0.0),
@@ -65,17 +68,21 @@ def _problem():
     )
 
 
-def _apply(update, state, target):
+def _apply(update: Any, state: Any, target: Any) -> Any:
     prepared = nl.prepare_nonlinear_update(_problem(), state, update, args=target)
     return nl.apply_prepared_nonlinear_update(prepared, state, args=target)[0]
 
 
-def test_out_of_domain_or_nonfinite_learned_proposals_never_report_success():
+def test_out_of_domain_or_nonfinite_learned_proposals_never_report_success() -> None:
     state, target = jnp.asarray([1.0]), jnp.asarray([2.0])
 
+    # ty: ignore[invalid-argument-type, missing-argument]
     outside = _apply(nl.FunctionNonlinearUpdate(_Correction(_Gain(-5.0))), state, target)
     nonfinite = _apply(
-        nl.FunctionNonlinearUpdate(_Correction(_Gain(jnp.nan))), state, target
+        # ty: ignore[invalid-argument-type, missing-argument]
+        nl.FunctionNonlinearUpdate(_Correction(_Gain(jnp.nan))),
+        state,
+        target,
     )
 
     assert not bool(outside.applied)
@@ -85,6 +92,7 @@ def test_out_of_domain_or_nonfinite_learned_proposals_never_report_success():
     assert nonfinite.status == int(nl.NonlinearUpdateStatus.NONFINITE_EVALUATION)
 
     result = nl.NonlinearRichardson(
+        # ty: ignore[invalid-argument-type, missing-argument]
         nl.FunctionNonlinearUpdate(_Correction(_Gain(-5.0)))
     ).solve(
         _problem(),
@@ -96,8 +104,9 @@ def test_out_of_domain_or_nonfinite_learned_proposals_never_report_success():
     assert jnp.array_equal(result.state, state)
 
 
-def test_globalization_re_evaluates_the_residual_of_an_overshooting_proposal():
+def test_globalization_re_evaluates_the_residual_of_an_overshooting_proposal() -> None:
     state, target = jnp.asarray([1.0]), jnp.asarray([2.0])
+    # ty: ignore[invalid-argument-type, missing-argument]
     update = nl.FunctionNonlinearUpdate(_Correction(_Gain(3.0)), update_id="learned")
 
     proposal = _apply(update, state, target)
@@ -122,7 +131,8 @@ def test_globalization_re_evaluates_the_residual_of_an_overshooting_proposal():
     assert int(result.diagnostics.residual_evaluations) > 2 * iterations + 2
 
 
-def test_models_bind_as_accelerator_components_and_keep_parameters():
+def test_models_bind_as_accelerator_components_and_keep_parameters() -> None:
+    # ty: ignore[invalid-argument-type, missing-argument]
     model = _Gain(0.5)
     update = nl.FunctionNonlinearUpdate(_Correction(model))
 
@@ -141,10 +151,11 @@ def test_models_bind_as_accelerator_components_and_keep_parameters():
             _Correction(phx.bind_component(model, phx.ComponentAuthority.MODEL))
         )
     with pytest.raises(TypeError, match="callable module"):
+        # ty: ignore[invalid-argument-type]
         nl.FunctionNonlinearUpdate(model)
 
 
-def test_port_declaring_models_bind_through_the_callable_owner_ports():
+def test_port_declaring_models_bind_through_the_callable_owner_ports() -> None:
     owner = phx.ModelPorts(
         inputs=(full_port("root.defect", (1,)),),
         outputs=(full_port("root.correction", (1,)),),
@@ -162,15 +173,19 @@ def test_port_declaring_models_bind_through_the_callable_owner_ports():
     update = nl.FunctionNonlinearUpdate(_Correction(bound))
     ((location, contract),) = update.component_contracts()
     assert location == "function.model"
+    # ty: ignore[unresolved-attribute]
     assert contract.port_binding.outputs == ((owner.outputs[0].port_id,) * 2,)
+    # ty: ignore[unresolved-attribute]
     assert contract.port_binding.unverified == ()
     assert jnp.allclose(
         _apply(update, jnp.asarray([1.0]), jnp.asarray([2.0])).state, jnp.asarray([1.5])
     )
 
 
-def test_capabilities_follow_the_bound_model_execution_contract():
+def test_capabilities_follow_the_bound_model_execution_contract() -> None:
+    # ty: ignore[invalid-argument-type, missing-argument]
     native = nl.FunctionNonlinearUpdate(_Correction(_Gain(0.5)))
+    # ty: ignore[invalid-argument-type, missing-argument]
     host = nl.FunctionNonlinearUpdate(_Correction(_HostGain(0.5)))
 
     assert native.capabilities.jit and native.capabilities.differentiable_action

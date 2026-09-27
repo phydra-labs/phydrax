@@ -12,7 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ... import ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -41,7 +41,7 @@ class CanonicalFugacityPlan(StrictModule, NonTrainableState):
         temperature: float,
         maximum_nodes: int = 4096,
         maximum_fourier_entries: int = 4_194_304,
-    ):
+    ) -> None:
         minimum = int(minimum_charge)
         maximum = int(maximum_charge)
         nodes = int(node_count)
@@ -172,7 +172,7 @@ def evaluate_imaginary_chemical_potential_reference(
     if not identifier:
         raise ValueError("grand_partition_id must be non-empty.")
 
-    def evaluate(mu):
+    def evaluate(mu: Array) -> Array:
         value = jnp.asarray(grand_partition(mu))
         if value.shape != ():
             raise ValueError("grand_partition must return one scalar.")

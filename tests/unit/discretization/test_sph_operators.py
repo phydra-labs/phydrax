@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -12,11 +15,12 @@ from phydrax.discretization.particle._sph_operators import (
 )
 
 
-def _context(count=6):
+def _context(count: Any = 6) -> Any:
     spacing = 1.0 / count
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(count), jnp.full((count,), spacing), ambient_dimension=1
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     prepared = phx.discretization.DenseParticleNeighborhoodPlan(
         count * (count - 1) // 2, box=box
@@ -47,7 +51,7 @@ def _context(count=6):
     )
 
 
-def test_shared_summation_density_matches_direct_all_particle_sum():
+def test_shared_summation_density_matches_direct_all_particle_sum() -> None:
     (
         particles,
         position,
@@ -81,7 +85,7 @@ def test_shared_summation_density_matches_direct_all_particle_sum():
     assert jnp.allclose(density, direct, atol=2e-14)
 
 
-def test_pair_once_continuity_rate_matches_direct_directed_sum():
+def test_pair_once_continuity_rate_matches_direct_directed_sum() -> None:
     (
         particles,
         position,
@@ -132,7 +136,7 @@ def test_pair_once_continuity_rate_matches_direct_directed_sum():
     assert jnp.array_equal(translated, jnp.zeros_like(translated))
 
 
-def test_shared_pressure_gradient_matches_conservative_barotropic_dynamics():
+def test_shared_pressure_gradient_matches_conservative_barotropic_dynamics() -> None:
     (
         particles,
         position,
@@ -177,6 +181,7 @@ def test_shared_pressure_gradient_matches_conservative_barotropic_dynamics():
         phx.discretization.BarotropicSPHMethodPlan(kernel, smoothing_length),
         neighborhood=phx.discretization.DenseParticleNeighborhoodPlan(
             particles.capacity * (particles.capacity - 1) // 2,
+            # ty: ignore[invalid-argument-type]
             box=phx.discretization.ParticleBox([0.0], [1.0]),
         ),
     )

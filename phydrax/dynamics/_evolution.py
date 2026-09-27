@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 import abc
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -25,6 +26,13 @@ from ._system import (
     DiscreteTransitionEvidence,
     DiscreteTransitionResult,
 )
+
+
+# (final state, valid, status, backend status, candidate, accepted,
+#  transition attempted, transition successful, transition status)
+_EvolveStepRecord: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 EVOLUTION_SUCCESS = 0
@@ -230,7 +238,7 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
         *,
         input_policy: AbstractInputPolicy | None = None,
         evolution_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(system, DiscreteSystem):
             raise TypeError("DiscreteEvolution system must be a DiscreteSystem.")
         if input_policy is not None and not isinstance(input_policy, AbstractInputPolicy):
@@ -384,7 +392,7 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
         else:
             zero = jnp.zeros_like(state_array)
 
-            def local_map(local):
+            def local_map(local: Array) -> Array:
                 perturbed = geometry.retract(state_array, local)
                 endpoint = self._map(
                     DiscreteStepContext(source, target, jnp.asarray(0, dtype=jnp.int32)),
@@ -437,14 +445,14 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
         if geometry.trivial:
             point = state_array
 
-            def endpoint(current_state):
+            def endpoint(current_state: Array) -> Array:
                 return self._map(context, current_state, args)
 
         else:
             point = jnp.zeros_like(state_array)
             primal = self.advance(state_array, source, target, args)
 
-            def endpoint(local):
+            def endpoint(local: Array) -> Array:
                 perturbed = geometry.retract(state_array, local)
                 mapped = self._map(context, perturbed, args)
                 return geometry.inverse_retract(primal.final_state, mapped)
@@ -520,11 +528,13 @@ def evolve(
     sources = grid.coordinates[:-1]
     targets = grid.coordinates[1:]
 
-    def step(carry, coordinates):
+    def step(
+        carry: tuple[Array, Array], coordinates: tuple[Array, Array]
+    ) -> tuple[tuple[Array, Array], _EvolveStepRecord]:
         state, prior_valid = carry
         source, target = coordinates
 
-        def attempt(_):
+        def attempt(_: None) -> _EvolveStepRecord:
             result = evolution.advance(state, source, target, args)
             evidence = result.transition_evidence
             if evidence is None:
@@ -551,7 +561,7 @@ def evolve(
                 transition_status,
             )
 
-        def skip(_):
+        def skip(_: None) -> _EvolveStepRecord:
             return (
                 state,
                 jnp.asarray(False),

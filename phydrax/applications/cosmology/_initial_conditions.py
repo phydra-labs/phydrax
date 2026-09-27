@@ -5,24 +5,26 @@
 from __future__ import annotations
 
 from math import prod
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.particle import ParticleDiscretization
+from ...typing import parse
 from ._background import FLRWBackground
 from ._particles import CosmologicalParticleState
 from ._products import LagrangianGrowthHistory, MatterPowerTable
 from ._scales import CODE_COSMOLOGY_SCALE, CosmologyScaleContract
 
 
-LagrangianDealiasing = Literal["none", "three_halves"]
+LagrangianDealiasing: TypeAlias = Literal["none", "three_halves"]
 
 
 class LagrangianInitialConditionResult(StrictModule):
@@ -47,7 +49,7 @@ class LagrangianInitialConditionResult(StrictModule):
 
 
 def _wavevectors(
-    shape: tuple[int, ...], box_size: tuple[float, ...], dtype, /
+    shape: tuple[int, ...], box_size: tuple[float, ...], dtype: DTypeLike, /
 ) -> tuple[tuple[Array, ...], tuple[Array, ...]]:
     components = tuple(
         2.0 * jnp.pi * jnp.fft.fftfreq(count, length / count, dtype=dtype)
@@ -139,7 +141,7 @@ class LagrangianPerturbationInitialConditionPlan(StrictModule, NonTrainableState
         order: int = 1,
         dealiasing: LagrangianDealiasing = "none",
         scale: CosmologyScaleContract = CODE_COSMOLOGY_SCALE,
-    ):
+    ) -> None:
         shape_ = tuple(shape)
         box = tuple(float(value) for value in box_size)
         order_ = int(order)
@@ -158,8 +160,7 @@ class LagrangianPerturbationInitialConditionPlan(StrictModule, NonTrainableState
             raise ValueError("Lagrangian initial-condition domain is invalid.")
         if order_ not in (1, 2):
             raise ValueError("Lagrangian perturbation order must be 1 or 2.")
-        if dealiasing not in ("none", "three_halves"):
-            raise ValueError("Unknown Lagrangian de-aliasing policy.")
+        dealiasing = parse(dealiasing, LagrangianDealiasing, "dealiasing")
         if order_ == 1 and dealiasing != "none":
             raise ValueError("De-aliasing applies only to second-order LPT.")
         self.particles = particles

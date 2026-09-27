@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Literal
 
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from phydrax.domain import DomainComponent, DomainFunction, PointSampling
 from phydrax.domain.graph import (

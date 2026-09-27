@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -13,7 +16,7 @@ import phydrax as phx
 cpl = phx.solver.coupling
 
 
-def _waveform_capabilities():
+def _waveform_capabilities() -> Any:
     return cpl.CouplingSubsystemCapabilities(
         jit=True,
         differentiable=True,
@@ -24,7 +27,7 @@ def _waveform_capabilities():
     )
 
 
-def test_barycentric_waveform_interpolation_is_exact_and_capacity_padded():
+def test_barycentric_waveform_interpolation_is_exact_and_capacity_padded() -> None:
     space = phx.linalg.ArraySpace((1,), dtype=jnp.float64, space_id="waveform-scalar")
     source_plan = cpl.CouplingWaveformPlan(4, 2, (0.0, 0.5, 1.0))
     target_plan = cpl.CouplingWaveformPlan(5, 2, (0.0, 0.25, 0.75, 1.0))
@@ -48,7 +51,7 @@ def test_barycentric_waveform_interpolation_is_exact_and_capacity_padded():
     assert transferred.values[-1, 0] == 0.0
 
 
-def _waveform_graph(*, parameterized=False):
+def _waveform_graph(*, parameterized: Any = False) -> Any:
     waveform_plan = cpl.CouplingWaveformPlan(
         3, 1, (0.0, 0.5, 1.0), plan_id="canonical-coupling-grid"
     )
@@ -87,14 +90,14 @@ def _waveform_graph(*, parameterized=False):
         reference_scale=1.0,
     )
 
-    def advance_a(window, state, inputs, args):
+    def advance_a(window: Any, state: Any, inputs: Any, args: Any) -> Any:
         del window, state, args
         waveform = cpl.CouplingWaveform(grid, 0.5 * inputs[0].values, space)
         return cpl.CouplingSubsystemResult(
             waveform.values[-1], (waveform,), successful=True, status=0
         )
 
-    def advance_b(window, state, inputs, args):
+    def advance_b(window: Any, state: Any, inputs: Any, args: Any) -> Any:
         del window, state
         forcing = args if parameterized else jnp.asarray(1.0)
         waveform = cpl.CouplingWaveform(grid, 0.5 * (inputs[0].values + forcing), space)
@@ -127,7 +130,7 @@ def _waveform_graph(*, parameterized=False):
     return graph, (jnp.zeros(1), jnp.zeros(1)), (zero, zero)
 
 
-def _waveform_fixed_point_policy():
+def _waveform_fixed_point_policy() -> Any:
     return cpl.ImplicitCouplingPolicy(
         phx.nonlinear.FixedPointIteration(
             acceleration=phx.nonlinear.AndersonAcceleration(history=4)
@@ -145,7 +148,7 @@ def _waveform_fixed_point_policy():
     )
 
 
-def test_waveform_fixed_point_and_jit_certify_every_canonical_sample():
+def test_waveform_fixed_point_and_jit_certify_every_canonical_sample() -> None:
     graph, states, values = _waveform_graph()
     prepared = cpl.prepare_coupling(
         graph, states, values, policy=_waveform_fixed_point_policy()
@@ -169,7 +172,7 @@ def test_waveform_fixed_point_and_jit_certify_every_canonical_sample():
     )
 
 
-def test_fixed_grid_subcycling_adapter_samples_each_substep_endpoint():
+def test_fixed_grid_subcycling_adapter_samples_each_substep_endpoint() -> None:
     waveform_plan = cpl.CouplingWaveformPlan(
         4, 1, (0.0, 0.5, 1.0), plan_id="subcycle-grid"
     )
@@ -192,7 +195,7 @@ def test_fixed_grid_subcycling_adapter_samples_each_substep_endpoint():
         reference_scale=1.0,
     )
 
-    def substep(window, state, inputs, args):
+    def substep(window: Any, state: Any, inputs: Any, args: Any) -> Any:
         del args
         candidate = state + window.size * inputs[0]
         return cpl.CouplingSubsystemResult(
@@ -222,7 +225,7 @@ def test_fixed_grid_subcycling_adapter_samples_each_substep_endpoint():
     assert not result.outputs[0].grid.active[-1]
 
 
-def test_fixed_grid_subcycling_stops_work_after_the_first_failed_substep():
+def test_fixed_grid_subcycling_stops_work_after_the_first_failed_substep() -> None:
     waveform_plan = cpl.CouplingWaveformPlan(
         3, 1, (0.0, 0.5, 1.0), plan_id="failing-subcycle-grid"
     )
@@ -247,7 +250,7 @@ def test_fixed_grid_subcycling_stops_work_after_the_first_failed_substep():
         reference_scale=1.0,
     )
 
-    def fail(window, state, inputs, args):
+    def fail(window: Any, state: Any, inputs: Any, args: Any) -> Any:
         del window, inputs, args
         candidate = state + 1.0
         return cpl.CouplingSubsystemResult(
@@ -278,7 +281,7 @@ def test_fixed_grid_subcycling_stops_work_after_the_first_failed_substep():
     assert jnp.allclose(result.outputs[0].values[:, 0], jnp.asarray([0.0, 1.0, 1.0]))
 
 
-def test_waveform_implicit_root_derivative_uses_the_fixed_sample_grid():
+def test_waveform_implicit_root_derivative_uses_the_fixed_sample_grid() -> None:
     graph, states, values = _waveform_graph(parameterized=True)
     policy = cpl.ImplicitCouplingPolicy(
         phx.nonlinear.NewtonKrylov(),
@@ -301,7 +304,7 @@ def test_waveform_implicit_root_derivative_uses_the_fixed_sample_grid():
         args=jnp.asarray(1.0, dtype=jnp.float64),
     )
 
-    def observable(parameter):
+    def observable(parameter: Any) -> Any:
         result = cpl.advance_coupling_window(
             prepared, prepared.reference_state, 1.0, parameter
         )
@@ -314,7 +317,7 @@ def test_waveform_implicit_root_derivative_uses_the_fixed_sample_grid():
     assert float(derivative) == pytest.approx(1.0 / 3.0, abs=1e-8)
 
 
-def _waveform_field_space(name):
+def _waveform_field_space(name: Any) -> Any:
     topology = phx.discretization.TensorTopology(("x",), (2,))
     support = phx.discretization.DiscreteSupport(topology, 1, f"{name}-waveform-support")
     layout = phx.discretization.TensorDofLayout(("x",), (2,))
@@ -328,7 +331,7 @@ def _waveform_field_space(name):
     )
 
 
-def test_field_transfer_is_applied_samplewise_to_waveform_exchanges():
+def test_field_transfer_is_applied_samplewise_to_waveform_exchanges() -> None:
     waveform_plan = cpl.CouplingWaveformPlan(
         3, 1, (0.0, 0.5, 1.0), plan_id="field-waveform-grid"
     )
@@ -451,7 +454,7 @@ def test_field_transfer_is_applied_samplewise_to_waveform_exchanges():
     assert jnp.allclose(adjoint_values, target_values @ matrix)
 
 
-def test_waveform_adaptation_activates_one_candidate_and_requests_growth():
+def test_waveform_adaptation_activates_one_candidate_and_requests_growth() -> None:
     adaptation = cpl.CouplingWaveformAdaptationPolicy(
         (0.25, 0.75), observable_tolerance=0.1
     )
@@ -471,7 +474,7 @@ def test_waveform_adaptation_activates_one_candidate_and_requests_growth():
     assert request.required_samples == 4
 
 
-def test_coupling_epoch_transition_is_explicit_and_atomic():
+def test_coupling_epoch_transition_is_explicit_and_atomic() -> None:
     graph, states, values = _waveform_graph()
     prepared = cpl.prepare_coupling(
         graph, states, values, policy=_waveform_fixed_point_policy()
@@ -568,7 +571,7 @@ def test_coupling_epoch_transition_is_explicit_and_atomic():
     assert ignored.state is prepared.reference_state
 
 
-def test_coupling_epoch_transition_rejects_stale_request_contract():
+def test_coupling_epoch_transition_rejects_stale_request_contract() -> None:
     graph, states, values = _waveform_graph()
     prepared = cpl.prepare_coupling(
         graph, states, values, policy=_waveform_fixed_point_policy()
@@ -601,6 +604,7 @@ def test_coupling_epoch_transition_rejects_stale_request_contract():
         target_exchange_ids=prepared.reference_state.exchange_ids,
         transition_id="stale-request",
     )
+    # ty: ignore[invalid-argument-type]
     stale = cpl.CouplingTopologyRequest(True, (1, 0), (3, 3), 1)
     result = cpl.transition_coupling_epoch(
         current,

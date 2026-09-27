@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import cast, Protocol
 
 import equinox as eqx
 import jax
@@ -17,7 +17,9 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.linalg as la
 from phydrax import ein
@@ -25,6 +27,7 @@ from phydrax import ein
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ...._validation import canonical_identifier, positive_finite_float
 from ....qualification import ReferenceArtifactManifest, ScientificCampaign
 from ....uq import (
     AbstractPosteriorTerm,
@@ -46,20 +49,12 @@ _AVOGADRO_CONSTANT_PER_MOL = 6.02214076e23
 _RIGHTS_KEYS = frozenset(("commercial_use", "redistribution", "training_use", "export"))
 
 
-def _identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    if not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty canonical identifier.")
-    return value
-
-
 def _identifiers(
     values: Sequence[str], name: str, /, *, allow_empty: bool = False
 ) -> tuple[str, ...]:
     if isinstance(values, str) or not isinstance(values, Sequence):
         raise TypeError(f"{name} must be a sequence of identifiers.")
-    result = tuple(_identifier(value, name) for value in values)
+    result = tuple(canonical_identifier(value, name) for value in values)
     if not allow_empty and not result:
         raise ValueError(f"{name} must not be empty.")
     if len(set(result)) != len(result):
@@ -70,16 +65,9 @@ def _identifiers(
 def _ordered_identifiers(values: Sequence[str], name: str, /) -> tuple[str, ...]:
     if isinstance(values, str) or not isinstance(values, Sequence):
         raise TypeError(f"{name} must be a sequence of identifiers.")
-    result = tuple(_identifier(value, name) for value in values)
+    result = tuple(canonical_identifier(value, name) for value in values)
     if not result or len(set(result)) != len(result):
         raise ValueError(f"{name} must be non-empty and unique.")
-    return result
-
-
-def _positive(value: float, name: str, /) -> float:
-    result = float(value)
-    if not math.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
     return result
 
 
@@ -192,7 +180,7 @@ class ReporterCalibration(StrictModule, NonTrainableState):
         *,
         source_manifests: Sequence[ReferenceArtifactManifest],
         requested_use: Mapping[str, bool],
-    ):
+    ) -> None:
         if not isinstance(campaign, ScientificCampaign):
             raise TypeError("campaign must be a ScientificCampaign.")
         gain_ = jnp.asarray(gain, dtype=jnp.float64)
@@ -265,7 +253,7 @@ class ReporterCalibration(StrictModule, NonTrainableState):
         self.background = background_
         self.delay_parameters = delay
         self.covariance = covariance_
-        self.reporter_id = _identifier(reporter_id, "reporter_id")
+        self.reporter_id = canonical_identifier(reporter_id, "reporter_id")
         self.calibration_case_ids = cases
         self.campaign_id = campaign.campaign_id
         self.source_manifests = tuple(
@@ -309,7 +297,7 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
         /,
         *,
         intensity_unit_id: str = "instrument-fluorescence-unit",
-    ):
+    ) -> None:
         if not isinstance(calibration, ReporterCalibration):
             raise TypeError("calibration must be a ReporterCalibration.")
         if not isinstance(campaign, ScientificCampaign):
@@ -318,7 +306,7 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
             raise ValueError(
                 "Reporter calibration and observation model must share one campaign."
             )
-        sigma = _positive(
+        sigma = positive_finite_float(
             noise_standard_deviation_intensity,
             "noise_standard_deviation_intensity",
         )
@@ -332,7 +320,9 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
         self.noise_standard_deviation_intensity = jnp.asarray(sigma)
         self.campaign_id = campaign.campaign_id
         self.noise_basis_case_ids = cases
-        self.intensity_unit_id = _identifier(intensity_unit_id, "intensity_unit_id")
+        self.intensity_unit_id = canonical_identifier(
+            intensity_unit_id, "intensity_unit_id"
+        )
         self.uncertainty_limitations = (
             ("reporter-calibration-parameter-uncertainty-unquantified",)
             if calibration.covariance is None
@@ -360,7 +350,7 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
         first_time = jnp.maximum(time_seconds[0], 0.0)
         first = product_molar[0] * (1.0 - jnp.exp(-first_time / tau))
 
-        def advance(previous, values):
+        def advance(previous: Array, values: tuple[Array, Array]) -> tuple[Array, Array]:
             product, delta_time = values
             reported = product + (previous - product) * jnp.exp(-delta_time / tau)
             return reported, reported
@@ -477,7 +467,7 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
                 )
             )
 
-            def response(parameter_vector):
+            def response(parameter_vector: Array) -> Array:
                 background, gain = parameter_vector[0], parameter_vector[1]
                 if delay_count == 0:
                     reported = product
@@ -486,7 +476,9 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
                     first_time = jnp.maximum(trace.time_seconds[0], 0.0)
                     first = product[0] * (1.0 - jnp.exp(-first_time / tau))
 
-                    def advance(previous, values):
+                    def advance(
+                        previous: Array, values: tuple[Array, Array]
+                    ) -> tuple[Array, Array]:
                         current, delta_time = values
                         result = current + (previous - current) * jnp.exp(
                             -delta_time / tau
@@ -538,12 +530,14 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
         basis_id = (
             None
             if model_uncertainty_basis_id is None
-            else _identifier(model_uncertainty_basis_id, "model_uncertainty_basis_id")
+            else canonical_identifier(
+                model_uncertainty_basis_id, "model_uncertainty_basis_id"
+            )
         )
         return FluorescencePrediction(
             case_id=trace.case_id,
             trace_id=trace.trace_id,
-            forward_model_id=_identifier(forward_model_id, "forward_model_id"),
+            forward_model_id=canonical_identifier(forward_model_id, "forward_model_id"),
             time_seconds=trace.time_seconds,
             mean_intensity=mean,
             standard_deviation_intensity=standard_deviation,
@@ -636,7 +630,7 @@ class EffectiveDisplacementRateModel(StrictModule, NonTrainableState):
     parameter_plan_id: str = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, fit: StrandDisplacementModelFit, /):
+    def __init__(self, fit: StrandDisplacementModelFit, /) -> None:
         if not isinstance(fit, StrandDisplacementModelFit):
             raise TypeError(
                 "Effective displacement models require a StrandDisplacementModelFit."
@@ -646,7 +640,7 @@ class EffectiveDisplacementRateModel(StrictModule, NonTrainableState):
             raise ValueError("Fit did not select an effective mass-action model.")
         if prepared.parameter_plan.parameter_names != (_PARAMETER_NAME,):
             raise ValueError("Effective fit has incompatible parameter semantics.")
-        rate = _positive(float(fit.parameter_values[0]), _PARAMETER_NAME)
+        rate = positive_finite_float(float(fit.parameter_values[0]), _PARAMETER_NAME)
         self.fit = fit
         self.rate_constant_per_molar_second = jnp.asarray(rate)
         self.reactant_construct_ids = prepared.reactant_construct_ids
@@ -737,7 +731,7 @@ class MechanisticDisplacementRateModel(StrictModule, NonTrainableState):
     channel_capacity: int = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, fit: StrandDisplacementModelFit, /):
+    def __init__(self, fit: StrandDisplacementModelFit, /) -> None:
         if not isinstance(fit, StrandDisplacementModelFit):
             raise TypeError(
                 "Mechanistic displacement models require a StrandDisplacementModelFit."
@@ -747,7 +741,7 @@ class MechanisticDisplacementRateModel(StrictModule, NonTrainableState):
             raise ValueError("Fit did not select an exhaustive mechanistic model.")
         if template.parameter_plan.parameter_names != ("rate_scale",):
             raise ValueError("Mechanistic fit has incompatible parameter semantics.")
-        scale = _positive(float(fit.parameter_values[0]), "rate_scale")
+        scale = positive_finite_float(float(fit.parameter_values[0]), "rate_scale")
         self.fit = fit
         self.prepared = template.prepared
         self.base_generator = template.base_generator
@@ -820,9 +814,9 @@ class MechanisticDisplacementRateModel(StrictModule, NonTrainableState):
         if self.prepared.association.mode != "fixed_volume":
             reasons.append("mechanistic-concentration-scale-undefined")
         else:
-            prepared_molar = 1.0 / (
-                1000.0 * _AVOGADRO_CONSTANT_PER_MOL * self.prepared.association.volume_m3
-            )
+            # The fixed-volume association constructor always records a volume.
+            volume_m3 = cast(float, self.prepared.association.volume_m3)
+            prepared_molar = 1.0 / (1000.0 * _AVOGADRO_CONSTANT_PER_MOL * volume_m3)
             if any(
                 not math.isclose(value, prepared_molar, rel_tol=1e-12, abs_tol=0.0)
                 for value in self.supported_initial_concentrations_molar
@@ -843,7 +837,7 @@ class MechanisticDisplacementRateModel(StrictModule, NonTrainableState):
         initial = jax.nn.one_hot(self.initial_state_index, self.state_count)
         nonnegative_time = jnp.maximum(trace.time_seconds, 0.0)
 
-        def occupancy(time):
+        def occupancy(time: Array) -> Array:
             action = la.matrix_exponential_action(
                 la.DenseLinearOperator(generator.T), initial, time
             )
@@ -864,10 +858,17 @@ class MechanisticDisplacementRateModel(StrictModule, NonTrainableState):
 
 
 class StrandDisplacementForwardModel(Protocol):
-    fit: StrandDisplacementModelFit
-    model_id: str
-    fit_case_ids: tuple[str, ...]
-    uncertainty_limitations: tuple[str, ...]
+    @property
+    def fit(self) -> StrandDisplacementModelFit: ...
+
+    @property
+    def model_id(self) -> str: ...
+
+    @property
+    def fit_case_ids(self) -> tuple[str, ...]: ...
+
+    @property
+    def uncertainty_limitations(self) -> tuple[str, ...]: ...
 
     def support_reasons(self, trace: FluorescenceTimeTrace, /) -> tuple[str, ...]: ...
 
@@ -902,12 +903,12 @@ class SecondaryKineticParameterPlan:
         prior_ids: Sequence[str],
         *,
         requested_use: Mapping[str, bool],
-    ):
+    ) -> None:
         names = _ordered_identifiers(parameter_names, "parameter_names")
         priors = _ordered_identifiers(prior_ids, "prior_ids")
         if len(names) != len(priors):
             raise ValueError("Every kinetic parameter requires one declared prior ID.")
-        temperature = _positive(temperature_kelvin, "temperature_kelvin")
+        temperature = positive_finite_float(temperature_kelvin, "temperature_kelvin")
         manifest_values = tuple(source_manifests)
         if not manifest_values or any(
             not isinstance(value, ReferenceArtifactManifest) for value in manifest_values
@@ -927,8 +928,8 @@ class SecondaryKineticParameterPlan:
         if len(manifest_by_id) != len(manifest_values):
             raise ValueError("Kinetic parameter manifests must be unique.")
         manifests = tuple(sorted(manifest_by_id))
-        chemistry_ = _identifier(chemistry, "chemistry")
-        condition = _identifier(condition_domain_id, "condition_domain_id")
+        chemistry_ = canonical_identifier(chemistry, "chemistry")
+        condition = canonical_identifier(condition_domain_id, "condition_domain_id")
         object.__setattr__(self, "parameter_names", names)
         object.__setattr__(self, "chemistry", chemistry_)
         object.__setattr__(self, "temperature_kelvin", temperature)
@@ -1100,7 +1101,7 @@ class PreparedEffectiveDisplacementInference(StrictModule, NonTrainableState):
         *,
         trace_source_manifests: Sequence[ReferenceArtifactManifest],
         trace_requested_use: Mapping[str, bool],
-    ):
+    ) -> None:
         traces_ = _validate_campaign_role_traces(traces, campaign, "calibration")
         if observation_model.campaign_id != campaign.campaign_id:
             raise ValueError(
@@ -1244,7 +1245,9 @@ class PreparedEffectiveDisplacementInference(StrictModule, NonTrainableState):
                     jnp.zeros(item.epistemic_parameter_covariance.shape[0]),
                     item.epistemic_parameter_covariance,
                 )
-                result = result + item.epistemic_sensitivity @ epistemic_draw
+                # Predictions always carry sensitivity alongside covariance.
+                sensitivity = cast(Array, item.epistemic_sensitivity)
+                result = result + sensitivity @ epistemic_draw
             return result
 
         return tuple(
@@ -1267,7 +1270,7 @@ class EffectiveFluorescencePosteriorTerm(AbstractPosteriorTerm):
 
     prepared: PreparedEffectiveDisplacementInference
 
-    def __init__(self, prepared: PreparedEffectiveDisplacementInference):
+    def __init__(self, prepared: PreparedEffectiveDisplacementInference) -> None:
         if not isinstance(prepared, PreparedEffectiveDisplacementInference):
             raise TypeError("prepared must be PreparedEffectiveDisplacementInference.")
         self.prepared = prepared
@@ -1323,7 +1326,7 @@ class PreparedMechanisticDisplacementInference(StrictModule, NonTrainableState):
         trace_requested_use: Mapping[str, bool],
         state_capacity: int,
         channel_capacity: int,
-    ):
+    ) -> None:
         traces_ = _validate_campaign_role_traces(traces, campaign, "calibration")
         if observation_model.campaign_id != campaign.campaign_id:
             raise ValueError(
@@ -1388,8 +1391,8 @@ class PreparedMechanisticDisplacementInference(StrictModule, NonTrainableState):
             raise ValueError(
                 "Mechanistic inference requires two prepared reactants and concentrations."
             )
-        chemistry = _identifier(chemistry_direction, "chemistry_direction")
-        condition = _identifier(condition_id, "condition_id")
+        chemistry = canonical_identifier(chemistry_direction, "chemistry_direction")
+        condition = canonical_identifier(condition_id, "condition_id")
         if (
             parameter_plan.chemistry != chemistry
             or parameter_plan.condition_domain_id != condition
@@ -1484,7 +1487,7 @@ class PreparedMechanisticDisplacementInference(StrictModule, NonTrainableState):
         initial = jax.nn.one_hot(self.initial_state_index, self.state_count)
         time = jnp.maximum(trace.time_seconds, 0.0)
 
-        def occupancy(value):
+        def occupancy(value: Array) -> Array:
             action = la.matrix_exponential_action(
                 la.DenseLinearOperator(generator.T), initial, value
             )
@@ -1552,7 +1555,7 @@ class MechanisticFluorescencePosteriorTerm(AbstractPosteriorTerm):
 
     prepared: PreparedMechanisticDisplacementInference
 
-    def __init__(self, prepared: PreparedMechanisticDisplacementInference):
+    def __init__(self, prepared: PreparedMechanisticDisplacementInference) -> None:
         if not isinstance(prepared, PreparedMechanisticDisplacementInference):
             raise TypeError("prepared must be PreparedMechanisticDisplacementInference.")
         self.prepared = prepared
@@ -1737,7 +1740,7 @@ class StrandDisplacementModelFit(StrictModule, NonTrainableState):
         *,
         model_selection_source_manifests: Sequence[ReferenceArtifactManifest],
         model_selection_requested_use: Mapping[str, bool],
-    ):
+    ) -> None:
         values = tuple(candidates)
         if not values:
             raise ValueError("Model selection requires at least one posterior candidate.")

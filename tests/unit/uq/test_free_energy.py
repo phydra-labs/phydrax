@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -6,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def _lineage(capacity, *, active=None):
+def _lineage(capacity: Any, *, active: Any = None) -> Any:
     active_ = (
         jnp.ones((capacity,), dtype="bool") if active is None else jnp.asarray(active)
     )
@@ -19,7 +21,7 @@ def _lineage(capacity, *, active=None):
     }
 
 
-def _work_dataset(values, sources, *, inverse_temperature=1.0):
+def _work_dataset(values: Any, sources: Any, *, inverse_temperature: Any = 1.0) -> Any:
     values = jnp.asarray(values, dtype="float64")
     source = jnp.asarray(sources, dtype=jnp.int32)
     lineage = _lineage(values.size)
@@ -48,7 +50,9 @@ def _work_dataset(values, sources, *, inverse_temperature=1.0):
     )
 
 
-def _potential_dataset(values, origins, *, active=None, coverage=None):
+def _potential_dataset(
+    values: Any, origins: Any, *, active: Any = None, coverage: Any = None
+) -> Any:
     values = jnp.asarray(values, dtype="float64")
     lineage = _lineage(values.shape[1], active=active)
     covered = (
@@ -80,7 +84,7 @@ def _potential_dataset(values, origins, *, active=None, coverage=None):
     )
 
 
-def test_reduced_potential_dataset_derives_counts_and_canonicalizes_padding():
+def test_reduced_potential_dataset_derives_counts_and_canonicalizes_padding() -> None:
     values = jnp.asarray([[0.0, 1.0, jnp.nan], [1.0, 2.0, jnp.nan]])
     dataset = _potential_dataset(
         values,
@@ -104,10 +108,15 @@ def test_reduced_potential_dataset_derives_counts_and_canonicalizes_padding():
             jnp.zeros((2, 2)),
             jnp.ones((2, 2), dtype="bool"),
             jnp.ones((2,), dtype="bool"),
+            # ty: ignore[invalid-argument-type]
             [0, 1],
+            # ty: ignore[invalid-argument-type]
             [0, 0],
+            # ty: ignore[invalid-argument-type]
             [0, 1],
+            # ty: ignore[invalid-argument-type]
             [0, 0],
+            # ty: ignore[invalid-argument-type]
             [0, 0],
             state_ids=("a", "b"),
             potential_ids=("u-a", "u-b"),
@@ -123,7 +132,7 @@ def test_reduced_potential_dataset_derives_counts_and_canonicalizes_padding():
         )
 
 
-def test_fep_and_bar_use_directed_work_and_report_block_covariance():
+def test_fep_and_bar_use_directed_work_and_report_block_covariance() -> None:
     delta = 1.7
     dataset = _work_dataset(
         [delta] * 8 + [-delta] * 8,
@@ -174,7 +183,7 @@ def test_fep_and_bar_use_directed_work_and_report_block_covariance():
     assert blocked.standard_errors[0, 1] > singleton.standard_errors[0, 1]
 
 
-def test_block_bootstrap_is_explicitly_keyed_and_replayable():
+def test_block_bootstrap_is_explicitly_keyed_and_replayable() -> None:
     dataset = _work_dataset(
         [0.0, 0.1, -0.1, 0.2, 0.0, -0.2, 0.1, -0.1],
         [0] * 8,
@@ -191,7 +200,7 @@ def test_block_bootstrap_is_explicitly_keyed_and_replayable():
     np.testing.assert_array_equal(first.covariance, replay.covariance)
 
 
-def test_ti_consumes_raw_complete_path_derivatives_and_joint_blocks():
+def test_ti_consumes_raw_complete_path_derivatives_and_joint_blocks() -> None:
     state_count, capacity = 3, 8
     active = jnp.ones((state_count, capacity), dtype="bool")
     draw = jnp.broadcast_to(jnp.arange(capacity), active.shape)
@@ -203,6 +212,7 @@ def test_ti_consumes_raw_complete_path_derivatives_and_joint_blocks():
         draw,
         jnp.zeros_like(draw),
         jnp.zeros_like(draw),
+        # ty: ignore[invalid-argument-type]
         [0.0, 0.5, 1.0],
         state_ids=("lambda-0", "lambda-half", "lambda-1"),
         potential_ids=("u-0", "u-half", "u-1"),
@@ -222,7 +232,7 @@ def test_ti_consumes_raw_complete_path_derivatives_and_joint_blocks():
     assert bool(result.successful)
 
 
-def test_mbar_has_fixed_gauge_rank_aware_covariance_and_connectivity_evidence():
+def test_mbar_has_fixed_gauge_rank_aware_covariance_and_connectivity_evidence() -> None:
     delta = 0.8
     values = jnp.stack((jnp.zeros(12), jnp.full(12, delta)))
     dataset = _potential_dataset(values, [0] * 6 + [1] * 6)
@@ -249,7 +259,7 @@ def test_mbar_has_fixed_gauge_rank_aware_covariance_and_connectivity_evidence():
     assert not bool(disconnected.successful)
 
 
-def test_mbar_admits_a_dense_cross_evaluated_unsampled_connected_state():
+def test_mbar_admits_a_dense_cross_evaluated_unsampled_connected_state() -> None:
     values = jnp.zeros((3, 12))
     dataset = _potential_dataset(values, [0] * 6 + [1] * 6)
     result = phx.uq.multistate_bennett_acceptance_ratio(dataset)
@@ -259,7 +269,9 @@ def test_mbar_admits_a_dense_cross_evaluated_unsampled_connected_state():
     assert bool(result.successful)
 
 
-def test_selection_evidence_is_content_bound_and_blocks_dependence_groups_synchronously():
+def test_selection_evidence_is_content_bound_and_blocks_dependence_groups_synchronously() -> (
+    None
+):
     values = jnp.zeros((2, 8))
     dataset = _potential_dataset(values, [0, 1] * 4)
     evidence = phx.uq.FreeEnergySelectionPlan(block_length=2).select(dataset)

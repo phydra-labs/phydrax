@@ -10,7 +10,8 @@ from typing import Any, TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -38,7 +39,7 @@ class ShallowWaterWetDryPolicy(StrictModule, NonTrainableState):
         *,
         wet_depth: float = 1e-10,
         velocity_depth: float = 1e-10,
-    ):
+    ) -> None:
         wet = float(wet_depth)
         velocity = float(velocity_depth)
         if (
@@ -94,7 +95,7 @@ class ShallowWaterBathymetryPlan(StrictModule, NonTrainableState):
         cell_values: ArrayLike | None = None,
         evaluator: Callable[[Array], ArrayLike] | None = None,
         field_id: str,
-    ):
+    ) -> None:
         if (cell_values is None) == (evaluator is None):
             raise ValueError(
                 "Bathymetry requires exactly one of cell_values or evaluator."
@@ -129,11 +130,15 @@ class ShallowWaterBathymetryPlan(StrictModule, NonTrainableState):
         policy = FiniteVolumePrecisionPolicy() if precision is None else precision
         if not isinstance(policy, FiniteVolumePrecisionPolicy):
             raise TypeError("precision must be FiniteVolumePrecisionPolicy or None.")
-        values = (
-            self.cell_values
-            if self.cell_values is not None
-            else self.evaluator(discretization.cell_centers)
-        )
+        if self.cell_values is not None:
+            values = self.cell_values
+        else:
+            # Plans carry exactly one of cell values or an evaluator.
+            if not (self.evaluator is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: self.evaluator is not None."
+                )
+            values = self.evaluator(discretization.cell_centers)
         return PreparedShallowWaterBathymetry(
             values,
             discretization.cell_shape,
@@ -166,7 +171,7 @@ class PreparedShallowWaterBathymetry(StrictModule, NonTrainableState):
         dtype: Any,
         evaluator: Callable[[Array], ArrayLike] | None = None,
         field_id: str = "bathymetry",
-    ):
+    ) -> None:
         host = np.asarray(values)
         if host.shape != cell_shape:
             raise ValueError("Bathymetry must match the finite-volume cell shape.")
@@ -252,7 +257,7 @@ class ShallowWaterBalancedFaceResult(StrictModule):
         reconstructed_right: ArrayLike,
         dry_face: ArrayLike,
         /,
-    ):
+    ) -> None:
         flux = jnp.asarray(normal_flux)
         left = jnp.asarray(left_correction)
         right = jnp.asarray(right_correction)
@@ -292,7 +297,7 @@ class ShallowWaterHydrostaticHLLPlan(StrictModule, NonTrainableState):
     differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, wet_dry: ShallowWaterWetDryPolicy | None = None, /):
+    def __init__(self, wet_dry: ShallowWaterWetDryPolicy | None = None, /) -> None:
         policy = ShallowWaterWetDryPolicy() if wet_dry is None else wet_dry
         if not isinstance(policy, ShallowWaterWetDryPolicy):
             raise TypeError("wet_dry must be a ShallowWaterWetDryPolicy.")
@@ -557,7 +562,7 @@ class ShallowWaterAcceptedFaceIntegrals(StrictModule):
         axis_names: tuple[str, ...],
         bed_id: str,
         plan_id: str,
-    ):
+    ) -> None:
         if len(contributions) != len(face_measures) or len(contributions) != len(
             axis_names
         ):

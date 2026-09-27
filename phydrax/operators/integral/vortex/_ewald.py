@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -69,7 +70,7 @@ class PeriodicVortexEwaldPlan(AbstractVortexVelocityPlan):
         reciprocal_mode_radius: int,
         compatibility_tolerance: float = 1.0e-12,
         precision: VortexPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         period_host = np.asarray(periods, dtype=np.float64)
         if (
             period_host.ndim != 1
@@ -174,7 +175,7 @@ class PreparedPeriodicVortexEwald(AbstractPreparedVortexVelocity):
 
     def __init__(
         self, plan: PeriodicVortexEwaldPlan, compatibility: VortexVelocityCompatibility, /
-    ):
+    ) -> None:
         self.plan = plan
         self.compatibility = compatibility
         self.dimension = plan.dimension
@@ -288,24 +289,24 @@ class PreparedPeriodicVortexEwald(AbstractPreparedVortexVelocity):
         )
         velocity_all = self._velocity(source, positions, target.source_indices)
         gradient_all = None
+        vorticity_all = None
         if request.velocity_gradient or request.vorticity:
-            gradient_all = jax.vmap(
+            jacobian = jax.vmap(
                 jax.jacfwd(lambda point: self._velocity(source, point[None, :], None)[0])
             )(positions)
-        if request.vorticity:
-            if self.dimension == 2:
-                vorticity_all = gradient_all[:, 1, 0] - gradient_all[:, 0, 1]
-            else:
-                vorticity_all = jnp.stack(
-                    (
-                        gradient_all[:, 2, 1] - gradient_all[:, 1, 2],
-                        gradient_all[:, 0, 2] - gradient_all[:, 2, 0],
-                        gradient_all[:, 1, 0] - gradient_all[:, 0, 1],
-                    ),
-                    axis=-1,
-                )
-        else:
-            vorticity_all = None
+            gradient_all = jacobian
+            if request.vorticity:
+                if self.dimension == 2:
+                    vorticity_all = jacobian[:, 1, 0] - jacobian[:, 0, 1]
+                else:
+                    vorticity_all = jnp.stack(
+                        (
+                            jacobian[:, 2, 1] - jacobian[:, 1, 2],
+                            jacobian[:, 0, 2] - jacobian[:, 2, 0],
+                            jacobian[:, 1, 0] - jacobian[:, 0, 1],
+                        ),
+                        axis=-1,
+                    )
         velocity = velocity_all if request.velocity else None
         gradient = gradient_all if request.velocity_gradient else None
         real_extent = self.plan.real_image_radius * jnp.min(self.plan.periods)

@@ -12,7 +12,9 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from phydrax.ein import contract
 
@@ -68,7 +70,7 @@ class AffineCoefficientEvaluation(StrictModule, NonTrainableState):
         *,
         coefficient_map_id: str,
         support_id: str,
-    ):
+    ) -> None:
         self.operator = jnp.asarray(operator)
         self.right_hand_side = jnp.asarray(right_hand_side)
         self.lift = jnp.asarray(lift)
@@ -132,7 +134,7 @@ class ArrayAffineCoefficientMap(AbstractAffineCoefficientMap):
         input_contract_id: str,
         unit_contract_id: str,
         support_id: str,
-    ):
+    ) -> None:
         operator = jnp.asarray(operator_matrix)
         operator_base = jnp.asarray(operator_offset)
         rhs = jnp.asarray(right_hand_side_matrix)
@@ -298,7 +300,7 @@ class AffineLinearROMProblem(StrictModule, NonTrainableState):
         observations: Sequence[tuple[str, AbstractLinearOperator]] = (),
         source_artifact_ids: Sequence[str],
         family_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(reduction, TrialTestReduction):
             raise TypeError("reduction must be a TrialTestReduction.")
         if not reduction.square:
@@ -389,7 +391,7 @@ class PreparedAffineObservation(StrictModule, NonTrainableState):
     output_space: Any
     observation_id: str = eqx.field(static=True)
 
-    def evaluate(self, reduced: Array, lift_coefficients: Array, /):
+    def evaluate(self, reduced: Array, lift_coefficients: Array, /) -> PyTree[Array]:
         coordinates = self.output_map @ reduced
         if self.lift_values.shape[0]:
             coordinates = coordinates + lift_coefficients @ self.lift_values
@@ -580,7 +582,7 @@ class AffineLinearROMPlan(StrictModule, NonTrainableState):
     solve_policy: LinearSolvePolicy
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, *, solve_policy: LinearSolvePolicy | None = None):
+    def __init__(self, *, solve_policy: LinearSolvePolicy | None = None) -> None:
         policy = LinearSolvePolicy() if solve_policy is None else solve_policy
         if not isinstance(policy, LinearSolvePolicy):
             raise TypeError("solve_policy must be a LinearSolvePolicy or None.")

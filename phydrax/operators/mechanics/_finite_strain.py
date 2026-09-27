@@ -5,20 +5,22 @@
 from __future__ import annotations
 
 import abc
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...typing import parse
 
 
-VolumetricConstraintKind = Literal["jacobian", "logarithmic"]
+VolumetricConstraintKind: TypeAlias = Literal["jacobian", "logarithmic"]
 _FINITE_STRAIN_SOLVE_PLAN = SmallLinearSolvePlan(3)
 
 
@@ -53,7 +55,7 @@ class FiniteStrainKinematics(StrictModule):
     dimension: int = eqx.field(static=True)
     kinematics: str = eqx.field(static=True)
 
-    def __init__(self, deformation_gradient: ArrayLike, /):
+    def __init__(self, deformation_gradient: ArrayLike, /) -> None:
         deformation = jnp.asarray(deformation_gradient)
         trailing_shape = deformation.shape[-2:]
         if trailing_shape == (2, 2):
@@ -126,12 +128,8 @@ class VolumetricConstraint(StrictModule, NonTrainableState):
 
     kind: VolumetricConstraintKind = eqx.field(static=True)
 
-    def __init__(self, kind: VolumetricConstraintKind = "jacobian", /):
-        if kind not in ("jacobian", "logarithmic"):
-            raise ValueError(
-                "Volumetric constraint kind must be 'jacobian' or 'logarithmic'."
-            )
-        self.kind = kind
+    def __init__(self, kind: VolumetricConstraintKind = "jacobian", /) -> None:
+        self.kind = parse(kind, VolumetricConstraintKind, "kind")
 
     def value(self, deformation_gradient: FiniteStrainKinematics | ArrayLike, /) -> Array:
         kinematics = finite_strain_kinematics(deformation_gradient)
@@ -356,7 +354,7 @@ class NeoHookeanParameters(StrictModule, NonTrainableState):
     shear_modulus: Array
     lame_lambda: Array
 
-    def __init__(self, shear_modulus: ArrayLike, lame_lambda: ArrayLike, /):
+    def __init__(self, shear_modulus: ArrayLike, lame_lambda: ArrayLike, /) -> None:
         shear = jnp.asarray(shear_modulus)
         lambda_ = jnp.asarray(lame_lambda)
         bulk = lambda_ + (2.0 / 3.0) * shear
@@ -639,7 +637,7 @@ class NeoHookeanLaw(HyperelasticLaw, NonTrainableState):
 
     parameters: NeoHookeanParameters
 
-    def __init__(self, parameters: NeoHookeanParameters, /):
+    def __init__(self, parameters: NeoHookeanParameters, /) -> None:
         if not isinstance(parameters, NeoHookeanParameters):
             raise TypeError("parameters must be NeoHookeanParameters.")
         self.parameters = parameters

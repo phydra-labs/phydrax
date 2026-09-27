@@ -12,12 +12,15 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
+from .._dtype_names import precision_dtype_name
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._precision import precision_dtype_name
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._pairings import DiagonalPairing, EuclideanPairing
 from ._spaces import AbstractVectorSpace, ArraySpace, PyTreeSpace
 
@@ -59,16 +62,9 @@ class RealCoordinateEvidence(StrictModule, NonTrainableState):
         norm_relation: RealCoordinateNormRelation,
         projection_kind: str,
         map_id: str,
-    ):
-        if domain_kind not in ("full", "constrained_subspace"):
-            raise ValueError("Unknown real-coordinate domain kind.")
-        if norm_relation not in (
-            "isometry",
-            "scaled_isometry",
-            "coordinate_equivalence",
-            "unknown",
-        ):
-            raise ValueError("Unknown real-coordinate norm relation.")
+    ) -> None:
+        domain_kind = parse(domain_kind, RealCoordinateDomainKind, "domain_kind")
+        norm_relation = parse(norm_relation, RealCoordinateNormRelation, "norm_relation")
         identifiers = tuple(
             str(value)
             for value in (
@@ -156,7 +152,7 @@ class PreparedRealCoordinateTree(AbstractRealCoordinateMap, NonTrainableState):
     coordinate_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     paths: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self, template: PyTree[Any], maps: PyTree[Any], /):
+    def __init__(self, template: PyTree[Any], maps: PyTree[Any], /) -> None:
         source_leaves, treedef = jax.tree.flatten(template)
         if not source_leaves:
             raise ValueError("A prepared real-coordinate tree requires array leaves.")
@@ -324,9 +320,10 @@ def prepare_real_coordinate_tree(
 class ComplexCartesianCoordinates(AbstractRealCoordinateMap, NonTrainableState):
     """Full Cartesian real coordinates for one native-complex array space."""
 
+    source_space: ArraySpace
     pair_axis: int = eqx.field(static=True)
 
-    def __init__(self, source_space: ArraySpace, /, *, pair_axis: int = 0):
+    def __init__(self, source_space: ArraySpace, /, *, pair_axis: int = 0) -> None:
         if not isinstance(source_space, ArraySpace):
             raise TypeError("source_space must be an ArraySpace.")
         if not jnp.issubdtype(source_space.dtype, jnp.complexfloating):
@@ -441,6 +438,7 @@ class HermitianInvolutionCoordinates(AbstractRealCoordinateMap, NonTrainableStat
     pairing must be invariant under ``J``.
     """
 
+    source_space: ArraySpace
     conjugate_indices: Array
     involution_phases: Array
     fixed_indices: Array
@@ -459,7 +457,7 @@ class HermitianInvolutionCoordinates(AbstractRealCoordinateMap, NonTrainableStat
         *,
         phases: ArrayLike | None = None,
         reality_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         if not isinstance(source_space, ArraySpace):
             raise TypeError("source_space must be an ArraySpace.")
         if not jnp.issubdtype(source_space.dtype, jnp.complexfloating):

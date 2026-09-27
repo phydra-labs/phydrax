@@ -7,22 +7,28 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._cut_transition import MultivaluedCutCellTransition
-from ._mapped_geometry import CanonicalMappedGeometryPlan
+from ._mapped_geometry import CanonicalMappedGeometryPlan, CanonicalMappedGeometryState
 
 
-BlockAMRDerivativeMode = Literal["frozen-history", "event-aware", "relaxed"]
+if TYPE_CHECKING:
+    from ...solver._hybrid_event import HybridEventActionResult
+
+
+BlockAMRDerivativeMode: TypeAlias = Literal["frozen-history", "event-aware", "relaxed"]
 
 
 class BlockAMRDerivativePolicy(StrictModule, NonTrainableState):
@@ -42,12 +48,11 @@ class BlockAMRDerivativePolicy(StrictModule, NonTrainableState):
         minimum_topology_margin: float = 1.0e-8,
         minimum_transversality: float = 1.0e-8,
         relaxation_temperature: float = 0.05,
-    ):
+    ) -> None:
         topology = float(minimum_topology_margin)
         transversality = float(minimum_transversality)
         temperature = float(relaxation_temperature)
-        if mode not in ("frozen-history", "event-aware", "relaxed"):
-            raise ValueError("Unknown block-AMR derivative mode.")
+        mode = parse(mode, BlockAMRDerivativeMode, "mode")
         if any(
             not np.isfinite(value) or value <= 0.0
             for value in (topology, transversality, temperature)
@@ -88,7 +93,7 @@ class BlockAMRDerivativeEvidence(StrictModule, NonTrainableState):
         /,
         *,
         reason: str,
-    ):
+    ) -> None:
         if not isinstance(policy, BlockAMRDerivativePolicy):
             raise TypeError("Derivative evidence requires BlockAMRDerivativePolicy.")
         margin = jnp.asarray(topology_margin)
@@ -139,7 +144,7 @@ class FrozenCutCellTransitionDerivativePlan(StrictModule, NonTrainableState):
         *,
         topology_margin: float,
         policy: BlockAMRDerivativePolicy | None = None,
-    ):
+    ) -> None:
         policy_ = BlockAMRDerivativePolicy("frozen-history") if policy is None else policy
         margin = float(topology_margin)
         if not isinstance(transition, MultivaluedCutCellTransition):
@@ -217,7 +222,7 @@ class EventAwareCutCellDerivativePlan(StrictModule, NonTrainableState):
         /,
         *,
         policy: BlockAMRDerivativePolicy | None = None,
-    ):
+    ) -> None:
         from ...solver._hybrid_event import HybridEventPlan
 
         policy_ = BlockAMRDerivativePolicy("event-aware") if policy is None else policy
@@ -248,7 +253,7 @@ class EventAwareCutCellDerivativePlan(StrictModule, NonTrainableState):
         args: Any = None,
         time_tangent: ArrayLike = 0.0,
         args_tangent: Any = None,
-    ):
+    ) -> HybridEventActionResult:
         from ...solver._hybrid_event import hybrid_event_jvp
 
         return hybrid_event_jvp(
@@ -269,7 +274,7 @@ class EventAwareCutCellDerivativePlan(StrictModule, NonTrainableState):
         /,
         *,
         args: Any = None,
-    ):
+    ) -> tuple[Array, Array, Any, HybridEventActionResult]:
         from ...solver._hybrid_event import hybrid_event_vjp
 
         return hybrid_event_vjp(
@@ -287,7 +292,7 @@ class RelaxedHierarchyBlendPlan(StrictModule, NonTrainableState):
     policy: BlockAMRDerivativePolicy
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, policy: BlockAMRDerivativePolicy | None = None, /):
+    def __init__(self, policy: BlockAMRDerivativePolicy | None = None, /) -> None:
         policy_ = BlockAMRDerivativePolicy("relaxed") if policy is None else policy
         if not isinstance(policy_, BlockAMRDerivativePolicy) or policy_.mode != "relaxed":
             raise ValueError("Relaxed hierarchy blend requires relaxed policy.")
@@ -333,7 +338,7 @@ class MappedGeometryDerivativePlan(StrictModule, NonTrainableState):
         /,
         *,
         topology_margin: float,
-    ):
+    ) -> None:
         margin = float(topology_margin)
         if not isinstance(geometry, CanonicalMappedGeometryPlan):
             raise TypeError("Mapped geometry derivatives require mapped geometry plan.")
@@ -350,7 +355,19 @@ class MappedGeometryDerivativePlan(StrictModule, NonTrainableState):
             }
         )
 
-    def jvp(self, time: ArrayLike, args: Any, args_tangent: Any, /, *, revision=0):
+    def jvp(
+        self,
+        time: ArrayLike,
+        args: Any,
+        args_tangent: Any,
+        /,
+        *,
+        revision: ArrayLike = 0,
+    ) -> tuple[
+        CanonicalMappedGeometryState,
+        CanonicalMappedGeometryState,
+        BlockAMRDerivativeEvidence,
+    ]:
         primal, tangent = jax.jvp(
             lambda parameters: self.geometry.evaluate(
                 time,

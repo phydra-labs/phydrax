@@ -6,14 +6,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from math import isfinite
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.tree_util as jtu
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.axes as cx
 from phydrax.coresets import (
@@ -32,6 +32,7 @@ from phydrax.kernels import (
 from ..._doc import DOC_KEY0
 from ..._sampling import DesignLike, resolve_design, UnitDesign
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from ._adaptive import (
     _collocation_population_metrics,
     _concat_batches,
@@ -81,7 +82,7 @@ class _CoresetCollocationDiagnostics(StrictModule):
         coverage_baseline_fill_distance: float | Array = 0.0,
         coverage_guard_triggered: bool | Array = False,
         selection_kernel_evaluations: int | Array = 0,
-    ):
+    ) -> None:
         self.selection_valid = jnp.asarray(selection_valid, dtype=jnp.bool_)
         self.selection_accepted = jnp.asarray(selection_accepted, dtype=jnp.bool_)
         self.selection_mmd = jnp.asarray(selection_mmd, dtype=jnp.float64)
@@ -167,7 +168,7 @@ class CoresetCollocationPolicy(AbstractCollocationPolicy):
         kernel: AbstractPositiveDefiniteKernel | None = None,
         kernel_scale_factor: float = 1.0,
         block_size: int = 256,
-    ):
+    ) -> None:
         refresh = int(refresh_every)
         activation = 2 * refresh if start_at is None else int(start_at)
         multiplier = int(candidate_multiplier)
@@ -218,7 +219,7 @@ class CoresetCollocationPolicy(AbstractCollocationPolicy):
         term: PointwiseSamplingTerm,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> CollocationPopulation:
         batch = term.sample(key=key)
         if not isinstance(batch, PointBatch):
@@ -350,7 +351,7 @@ class CoresetCollocationPolicy(AbstractCollocationPolicy):
         population: CollocationPopulation,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array,
     ) -> CollocationPopulation:
         _coreset_diagnostics(population)
@@ -598,7 +599,7 @@ def _coverage_fill_distance(
     )
     offsets = jnp.arange(block, dtype=jnp.int32)
 
-    def source_body(source_block, maximum_squared_distance):
+    def source_body(source_block: Array, maximum_squared_distance: Array) -> Array:
         source_start = source_block * block
         left = jax.lax.dynamic_slice(
             source_padded,
@@ -606,7 +607,9 @@ def _coverage_fill_distance(
             (block, coordinate_size),
         )
 
-        def retained_body(retained_block, minimum_squared_distance):
+        def retained_body(
+            retained_block: Array, minimum_squared_distance: Array
+        ) -> Array:
             retained_start = retained_block * block
             right = jax.lax.dynamic_slice(
                 retained_padded,
@@ -663,7 +666,7 @@ def _point_feature_matrix(batch: PointBatch, axis: str, count: int, /) -> Array:
     return features
 
 
-def CoresetCollocation(**kwargs) -> CoresetCollocationPolicy:
+def CoresetCollocation(**kwargs: Any) -> CoresetCollocationPolicy:
     """Construct residual-weighted, diversity-preserving paired collocation."""
     return CoresetCollocationPolicy(**kwargs)
 

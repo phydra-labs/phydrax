@@ -4,15 +4,17 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.scipy.special import logsumexp
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import parse
 from ._base import (
     _nan_where_invalid,
     _prepare_pair,
@@ -25,7 +27,7 @@ from ._base import (
 from ._classification import _probability_inputs, _require_integer_labels
 
 
-CalibrationNorm = Literal["l1", "l2"]
+CalibrationNorm: TypeAlias = Literal["l1", "l2"]
 
 
 class CalibrationResult(StrictModule):
@@ -52,7 +54,7 @@ class CalibrationResult(StrictModule):
         status: ArrayLike,
         effective_weight: ArrayLike,
         hard_binning: bool,
-    ):
+    ) -> None:
         self.value = jnp.asarray(value)
         self.bin_weight = jnp.asarray(bin_weight)
         self.mean_probability = jnp.asarray(mean_probability)
@@ -73,7 +75,7 @@ def _binary_probability_inputs(
     sample_axis: int,
     metric: str,
     from_logits: bool,
-):
+) -> tuple[Array, Array, Array, Array, Array, Array]:
     labels_raw = jnp.asarray(y_true)
     probability_raw = jnp.asarray(probability)
     _require_integer_labels(labels_raw, metric)
@@ -167,8 +169,7 @@ def expected_calibration_error(
     bins = int(num_bins)
     if bins <= 0:
         raise ValueError("num_bins must be positive.")
-    if norm not in {"l1", "l2"}:
-        raise ValueError("norm must be 'l1' or 'l2'.")
+    norm = parse(norm, CalibrationNorm, "norm")
     labels, values, weights, _, invalid, mass = _binary_probability_inputs(
         y_true,
         probability,
@@ -259,8 +260,7 @@ def smooth_expected_calibration_error(
         raise ValueError("num_bins must be positive.")
     if bin_temperature <= 0.0 or gap_smoothing <= 0.0:
         raise ValueError("bin_temperature and gap_smoothing must be positive.")
-    if norm not in {"l1", "l2"}:
-        raise ValueError("norm must be 'l1' or 'l2'.")
+    norm = parse(norm, CalibrationNorm, "norm")
     labels, values, weights, _, invalid, mass = _binary_probability_inputs(
         y_true,
         probability,

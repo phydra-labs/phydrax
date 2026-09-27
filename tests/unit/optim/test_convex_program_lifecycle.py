@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _problem(scale=1.0):
+def _problem(scale: Any = 1.0) -> Any:
     return phx.optim.QuadraticProgram(
         scale * jnp.eye(2),
         jnp.asarray([-1.0, -2.0]),
@@ -19,7 +22,7 @@ def _problem(scale=1.0):
     )
 
 
-def test_plan_prepare_refresh_and_solve_match_one_shot():
+def test_plan_prepare_refresh_and_solve_match_one_shot() -> None:
     initial = _problem()
     policy = phx.optim.ConvexSolvePolicy(
         phx.optim.DensePrimalDualQP(),
@@ -46,7 +49,7 @@ def test_plan_prepare_refresh_and_solve_match_one_shot():
     assert second.result.provenance.policy_id == policy.policy_id
 
 
-def test_refresh_rejects_topology_and_identity_changes():
+def test_refresh_rejects_topology_and_identity_changes() -> None:
     prepared = phx.optim.prepare_convex_program(_problem())
     changed_dimension = phx.optim.QuadraticProgram(
         jnp.eye(3),
@@ -67,7 +70,7 @@ def test_refresh_rejects_topology_and_identity_changes():
         phx.optim.refresh_convex_program(prepared, changed_identity)
 
 
-def test_prepared_solve_rejects_policy_override():
+def test_prepared_solve_rejects_policy_override() -> None:
     prepared = phx.optim.prepare_convex_program(_problem())
     with pytest.raises(ValueError, match="policy must be omitted"):
         phx.optim.solve_convex_program(
@@ -76,7 +79,7 @@ def test_prepared_solve_rejects_policy_override():
         )
 
 
-def test_dense_planning_and_direct_solve_enforce_resource_contracts():
+def test_dense_planning_and_direct_solve_enforce_resource_contracts() -> None:
     problem = _problem()
     materialization_limited = phx.optim.ConvexSolvePolicy(
         materialization=phx.linalg.MaterializationPolicy(
@@ -95,7 +98,7 @@ def test_dense_planning_and_direct_solve_enforce_resource_contracts():
     assert materialization_limited.policy_id != factorization_limited.policy_id
 
 
-def test_dense_warm_start_is_explicit_and_reuses_audited_state():
+def test_dense_warm_start_is_explicit_and_reuses_audited_state() -> None:
     problem = _problem()
     cold = phx.optim.solve_quadratic_program(problem)
     warm = phx.optim.ConvexWarmStart.from_result(cold, interior_margin=1e-7)

@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._array_archive import (
     ArrayArchiveLimits,
@@ -41,7 +42,7 @@ class GeophysicalResourcePolicy(StrictModule, NonTrainableState):
         maximum_sources: int,
         maximum_observations: int,
         maximum_steps: int,
-    ):
+    ) -> None:
         values = tuple(
             (
                 maximum_device_bytes,
@@ -111,7 +112,7 @@ class GeophysicalContinuationState(StrictModule):
         source_position: ArrayLike,
         random_key: ArrayLike,
         topology_epoch: ArrayLike,
-    ):
+    ) -> None:
         time_ = jnp.asarray(time)
         step = jnp.asarray(accepted_step, dtype=jnp.int64)
         source = jnp.asarray(source_position, dtype=jnp.int64)
@@ -160,7 +161,7 @@ class GeophysicalCheckpointPlan(StrictModule, NonTrainableState):
         partition_id: str,
         resource_policy: GeophysicalResourcePolicy,
         /,
-    ):
+    ) -> None:
         values = tuple(
             str(value).strip()
             for value in (plan_id, geometry_id, observation_id, partition_id)

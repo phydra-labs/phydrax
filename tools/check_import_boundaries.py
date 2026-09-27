@@ -40,6 +40,7 @@ def _resolves_public_symbol(symbol: str, public_paths: frozenset[str], /) -> boo
         try:
             value: object = importlib.import_module(module_name)
         except ModuleNotFoundError as error:
+            # ty: ignore[unsupported-operator]
             if error.name != module_name and not module_name.startswith(error.name + "."):
                 raise
             continue

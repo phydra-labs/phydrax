@@ -4,10 +4,11 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import jax
 import jax.numpy as jnp
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax.domain import AbstractGeometry, AbstractScalarDomain, DomainFunction
@@ -15,6 +16,7 @@ from phydrax.domain import AbstractGeometry, AbstractScalarDomain, DomainFunctio
 from ..._strict import StrictModule
 from ...metrix import LeviCivitaConnection, RiemannianMetric
 from ...stochastic._calculus import stratonovich_correction
+from ...typing import parse
 from ._domain_ops import (
     _factor_and_dim,
     div,
@@ -30,7 +32,11 @@ from ._riemannian_ops import (
 from ._stochastic_estimators import factor_hvp_contraction
 
 
-StochasticInterpretation = Literal["ito", "stratonovich"]
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
+
+
+StochasticInterpretation: TypeAlias = Literal["ito", "stratonovich"]
 GeneratorContraction: TypeAlias = Literal["auto", "factor_hvp", "dense"]
 
 
@@ -41,9 +47,7 @@ def _require_function(value: Any, name: str, /) -> DomainFunction:
 
 
 def _require_interpretation(value: str, /) -> StochasticInterpretation:
-    if value not in ("ito", "stratonovich"):
-        raise ValueError("interpretation must be 'ito' or 'stratonovich'.")
-    return value
+    return parse(value, StochasticInterpretation, "interpretation")
 
 
 def _join_fields(*fields: DomainFunction) -> tuple[Any, tuple[DomainFunction, ...]]:
@@ -89,7 +93,7 @@ def _batch_ndim(field: DomainFunction, args: list[Any], /) -> int:
 class _DiffusionCovarianceCallable(StrictModule):
     diffusion: DomainFunction
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         sigma = jnp.asarray(self.diffusion.func(*args, key=key, **kwargs))
         if sigma.ndim < 2:
             raise ValueError("diffusion must have trailing shape (state_dim, noise_dim).")
@@ -101,14 +105,14 @@ class _StratonovichCorrectionCallable(StrictModule):
     state_position: int
     state_dim: int
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         state = jnp.asarray(args[self.state_position])
         if state.shape != (self.state_dim,):
             raise ValueError(
                 f"state coordinate must have shape ({self.state_dim},); got {state.shape}."
             )
 
-        def evaluate(value):
+        def evaluate(value: Array) -> Any:
             local_args = list(args)
             local_args[self.state_position] = value
             return self.diffusion.func(*local_args, key=key, **kwargs)
@@ -125,7 +129,7 @@ class _CoordinateToCovariantDriftCallable(StrictModule):
     coordinate_position: int
     state_dim: int
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         drift = jnp.asarray(
             self.drift.func(
                 *_field_args(args, self.drift_positions),
@@ -170,7 +174,7 @@ class _KolmogorovCallable(StrictModule):
     covariance_positions: tuple[int, ...]
     state_dim: int
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         gradient = jnp.asarray(
             self.observable_gradient.func(
                 *_field_args(args, self.gradient_positions), key=key, **kwargs
@@ -237,7 +241,7 @@ class _FactorHVPKolmogorovCallable(StrictModule):
     observable_state_position: int
     state_dim: int
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         observable_args = _field_args(args, self.observable_positions)
         state = jnp.asarray(args[self.state_position])
         if state.shape != (self.state_dim,):
@@ -261,7 +265,7 @@ class _FactorHVPKolmogorovCallable(StrictModule):
                 f"diffusion must have trailing shape ({self.state_dim}, noise_dim); got {diffusion.shape}."
             )
 
-        def evaluate(value):
+        def evaluate(value: Array) -> Any:
             if self.observable_state_position < 0:
                 return self.observable.func(*observable_args, key=key, **kwargs)
             local_args = list(observable_args)
@@ -283,7 +287,7 @@ class _DensityCoefficientProductCallable(StrictModule):
     state_dim: int
     tensor: bool
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         density_args = _field_args(args, self.density_positions)
         coefficient_args = _field_args(args, self.coefficient_positions)
         density = jnp.asarray(self.density.func(*density_args, key=key, **kwargs))
@@ -452,8 +456,7 @@ def kolmogorov_generator(
         None if covariance is None else _require_function(covariance, "covariance")
     )
     interpretation_value = _require_interpretation(interpretation)
-    if contraction not in ("auto", "factor_hvp", "dense"):
-        raise ValueError("contraction must be 'auto', 'factor_hvp', or 'dense'.")
+    contraction = parse(contraction, GeneratorContraction, "contraction")
     if contraction == "factor_hvp" and diffusion_field is None:
         raise ValueError("factor_hvp contraction requires a diffusion factor.")
     if contraction == "factor_hvp" and metric is not None:

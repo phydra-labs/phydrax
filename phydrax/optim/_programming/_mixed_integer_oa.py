@@ -6,10 +6,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 
 from .._bounds import Bounds
 from ._conic_cuts import (
@@ -45,7 +47,12 @@ from ._mixed_integer_policy import (
 )
 from ._policy import ConvexSolvePolicy, NativeHomogeneousConic
 from ._problem import ConicProgram, LinearProgram
+from ._quadratic import ConvexProgramResult
 from ._types import ConvexProgramStatus
+
+
+if TYPE_CHECKING:
+    from ._mixed_integer_lifecycle import PreparedMixedIntegerProgram
 
 
 class ConicOuterApproximation(AbstractMixedIntegerMethod):
@@ -72,7 +79,7 @@ class ConicOuterApproximation(AbstractMixedIntegerMethod):
         duplicate_tolerance: float = 1e-9,
         absolute_gap: float = 1e-7,
         relative_gap: float = 1e-7,
-    ):
+    ) -> None:
         master_ = NativeMixedIntegerBranchAndBound() if master is None else master
         conic_ = ConvexSolvePolicy(NativeHomogeneousConic()) if conic is None else conic
         if not isinstance(master_, AbstractMixedIntegerMethod):
@@ -227,7 +234,7 @@ def _master_program(
 
 def _fixed_program(
     program: MixedIntegerProgram,
-    assignment,
+    assignment: npt.ArrayLike,
     /,
 ) -> ConicProgram:
     conic = program.relaxation
@@ -254,7 +261,7 @@ def _gap(objective: float, lower_bound: float, /) -> tuple[float, float]:
 
 
 def _oa_result(
-    prepared,
+    prepared: PreparedMixedIntegerProgram,
     method: ConicOuterApproximation,
     /,
     *,
@@ -263,8 +270,8 @@ def _oa_result(
     lower_bound: float,
     global_bound_certified: bool,
     search_complete: bool,
-    incumbent_relaxation,
-    last_master,
+    incumbent_relaxation: ConvexProgramResult | None,
+    last_master: MixedIntegerResult | None,
     explored_nodes: int,
     pruned_nodes: int,
     frontier_size: int,
@@ -352,7 +359,11 @@ def _oa_result(
     )
 
 
-def solve_conic_outer_approximation(prepared, candidates, /) -> MixedIntegerResult:
+def solve_conic_outer_approximation(
+    prepared: PreparedMixedIntegerProgram,
+    candidates: tuple[MixedIntegerCandidate, ...],
+    /,
+) -> MixedIntegerResult:
     from ._mixed_integer_lifecycle import PreparedMixedIntegerProgram
 
     if not isinstance(prepared, PreparedMixedIntegerProgram):
@@ -386,7 +397,10 @@ def solve_conic_outer_approximation(prepared, candidates, /) -> MixedIntegerResu
     candidates_accepted = 0
     last_master = None
 
-    def consider(candidate, relaxation_result=None):
+    def consider(
+        candidate: MixedIntegerCandidate,
+        relaxation_result: ConvexProgramResult | None = None,
+    ) -> bool:
         nonlocal incumbent_audit, incumbent_relaxation
         nonlocal candidates_audited, candidates_accepted
         audit = audit_mixed_integer_candidate(program, candidate, certification)
@@ -401,7 +415,7 @@ def solve_conic_outer_approximation(prepared, candidates, /) -> MixedIntegerResu
             incumbent_relaxation = relaxation_result
         return True
 
-    def accept_cut(cut, *, require_violation):
+    def accept_cut(cut: ConicCut, *, require_violation: bool) -> bool:
         nonlocal cuts_proposed, cuts_accepted
         cuts_proposed += 1
         audit = audit_conic_cut(
@@ -432,12 +446,13 @@ def solve_conic_outer_approximation(prepared, candidates, /) -> MixedIntegerResu
             return False
         accepted_cuts.append(cut)
         dual = np.asarray(cut.dual)
+        duplicate_tolerance = method.duplicate_tolerance
         if not any(
             np.allclose(
                 dual,
                 existing,
-                atol=method.duplicate_tolerance,
-                rtol=method.duplicate_tolerance,
+                atol=duplicate_tolerance,
+                rtol=duplicate_tolerance,
             )
             for existing in state.retained_duals
         ):

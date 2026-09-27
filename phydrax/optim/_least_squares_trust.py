@@ -4,12 +4,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import isfinite
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
+from jaxtyping import PyTree
 
 from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._tree_math import validate_real_inexact_tree
@@ -21,6 +24,7 @@ from ..linalg import (
     PyTreeSpace,
     solve as solve_linear,
 )
+from ..typing import parse
 from ._iterative import (
     AbstractLeastSquaresMethod,
     IterativeStepMetrics,
@@ -36,19 +40,26 @@ from ._least_squares import BoundedLevenbergMarquardt, LeastSquaresState
 
 
 DoglegMode: TypeAlias = Literal["traditional", "subspace", "dogbox"]
+_ResidualFunction: TypeAlias = Callable[[PyTree[Any]], PyTree[Any]]
 
 
-def _inner(left, right, precision: NonlinearPrecisionPolicy, /):
+def _inner(left: Array, right: Array, precision: NonlinearPrecisionPolicy, /) -> Array:
     left_ = precision.accumulation(left)
     right_ = precision.accumulation(right)
     return precision.decision(jnp.real(jnp.sum(jnp.conj(left_) * right_)))
 
 
-def _norm(value, precision: NonlinearPrecisionPolicy, /):
+def _norm(value: Array, precision: NonlinearPrecisionPolicy, /) -> Array:
     return precision.decision(jnp.linalg.norm(precision.accumulation(value)))
 
 
-def _boundary_rate(point, direction, radius, precision, /):
+def _boundary_rate(
+    point: Array,
+    direction: Array,
+    radius: float,
+    precision: NonlinearPrecisionPolicy,
+    /,
+) -> Array:
     a = _inner(direction, direction, precision)
     b = 2.0 * _inner(point, direction, precision)
     c = _inner(point, point, precision) - radius * radius
@@ -56,7 +67,15 @@ def _boundary_rate(point, direction, radius, precision, /):
     return (-b + jnp.sqrt(discriminant)) / jnp.maximum(2.0 * a, 1e-30)
 
 
-def _dogleg_step(gradient, normal, radius, mode, precision, linear, /):
+def _dogleg_step(
+    gradient: Array,
+    normal: Array,
+    radius: float,
+    mode: DoglegMode,
+    precision: NonlinearPrecisionPolicy,
+    linear: LinearSolvePolicy,
+    /,
+) -> Array:
     dimension = gradient.size
     regularized = normal + 1e-12 * jnp.eye(dimension, dtype=normal.dtype)
     gauss_newton = precision.direction(
@@ -135,9 +154,8 @@ class DoglegLeastSquares(AbstractLeastSquaresMethod):
         nonmonotone_window: int = 1,
         linear: LinearSolvePolicy | None = None,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
-        if mode not in ("traditional", "subspace", "dogbox"):
-            raise ValueError("Unknown dogleg mode.")
+    ) -> None:
+        mode = parse(mode, DoglegMode, "mode")
         values = tuple(
             float(value) for value in (initial_radius, minimum_radius, maximum_radius)
         )
@@ -163,11 +181,11 @@ class DoglegLeastSquares(AbstractLeastSquaresMethod):
         self.precision = precision_
 
     @property
-    def method_id(self):
+    def method_id(self) -> str:
         return f"least-squares-{self.mode}"
 
     @property
-    def capabilities(self):
+    def capabilities(self) -> OptimizationCapabilities:
         return OptimizationCapabilities(
             scalar_objective=False,
             residual_objective=True,
@@ -176,7 +194,7 @@ class DoglegLeastSquares(AbstractLeastSquaresMethod):
             implicit_differentiation=True,
         )
 
-    def init(self, parameters, /):
+    def init(self, parameters: PyTree[Any], /) -> LeastSquaresState:
         parameters_ = validate_real_inexact_tree(parameters, name="parameters")
         dtype = jax.tree.leaves(parameters_)[0].dtype
         nan = jnp.asarray(jnp.nan, dtype=dtype)
@@ -185,12 +203,23 @@ class DoglegLeastSquares(AbstractLeastSquaresMethod):
             metrics=IterativeStepMetrics(objective=nan, damping=self.initial_radius),
         )
 
-    def prepare_state(self, residual_function, parameters, /):
+    def prepare_state(
+        self, residual_function: _ResidualFunction, parameters: PyTree[Any], /
+    ) -> LeastSquaresState:
         if not callable(residual_function):
             raise TypeError("residual_function must be callable.")
         return self.init(parameters)
 
-    def step(self, residual_function, parameters, state, /, *, termination):
+    def step(
+        self,
+        residual_function: _ResidualFunction,
+        parameters: PyTree[Any],
+        state: LeastSquaresState,
+        /,
+        *,
+        termination: OptimizationTermination | None,
+    ) -> tuple[PyTree[Any], LeastSquaresState, Array]:
+        termination_ = OptimizationTermination() if termination is None else termination
         problem = NonlinearLeastSquaresProblem(
             lambda value, args: residual_function(value)
         )
@@ -198,12 +227,12 @@ class DoglegLeastSquares(AbstractLeastSquaresMethod):
             problem,
             parameters,
             termination=OptimizationTermination(
-                absolute_optimality=termination.absolute_optimality,
-                relative_optimality=termination.relative_optimality,
-                absolute_step=termination.absolute_step,
-                relative_step=termination.relative_step,
+                absolute_optimality=termination_.absolute_optimality,
+                relative_optimality=termination_.relative_optimality,
+                absolute_step=termination_.absolute_step,
+                relative_step=termination_.relative_step,
                 maximum_steps=1,
-                maximum_evaluations=termination.maximum_evaluations,
+                maximum_evaluations=termination_.maximum_evaluations,
             ),
             args=None,
         )
@@ -227,10 +256,18 @@ class DoglegLeastSquares(AbstractLeastSquaresMethod):
         )
         return result.parameters, next_state, result.objective
 
-    def step_metrics(self, state, /):
+    def step_metrics(self, state: LeastSquaresState, /) -> IterativeStepMetrics:
         return state.metrics
 
-    def solve(self, problem, initial_parameters, /, *, termination, args):
+    def solve(
+        self,
+        problem: NonlinearLeastSquaresProblem,
+        initial_parameters: PyTree[Any],
+        /,
+        *,
+        termination: OptimizationTermination,
+        args: Any,
+    ) -> LeastSquaresResult:
         if not isinstance(problem, NonlinearLeastSquaresProblem):
             raise TypeError("problem must be NonlinearLeastSquaresProblem.")
         self.precision.validate_tolerance(termination.absolute_optimality)
@@ -247,13 +284,13 @@ class DoglegLeastSquares(AbstractLeastSquaresMethod):
         if space.size > self.maximum_dimension:
             raise ValueError("Dogleg dimension exceeds maximum_dimension.")
 
-        def residual_coordinates(coordinates):
+        def residual_coordinates(coordinates: Array) -> Array:
             value = space.unflatten(coordinates)
             residual, _ = problem.value(value, args)
             residual = self.precision.residual(residual)
             return PyTreeSpace(residual).flatten(residual)
 
-        def optimality_norm(gradient_coordinates, point):
+        def optimality_norm(gradient_coordinates: Array, point: PyTree[Any]) -> Array:
             if bounds is None:
                 return self.precision.decision(
                     jnp.linalg.norm(
@@ -446,32 +483,50 @@ class TrustRegionReflective(AbstractLeastSquaresMethod):
 
     method: BoundedLevenbergMarquardt
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
         self.method = BoundedLevenbergMarquardt(**kwargs)
 
     @property
-    def method_id(self):
+    def method_id(self) -> str:
         return "trust-region-reflective"
 
     @property
-    def capabilities(self):
+    def capabilities(self) -> OptimizationCapabilities:
         return self.method.capabilities
 
-    def init(self, parameters, /):
+    def init(self, parameters: PyTree[Any], /) -> LeastSquaresState:
         return self.method.init(parameters)
 
-    def prepare_state(self, residual_function, parameters, /):
+    def prepare_state(
+        self, residual_function: _ResidualFunction, parameters: PyTree[Any], /
+    ) -> LeastSquaresState:
         return self.method.prepare_state(residual_function, parameters)
 
-    def step(self, residual_function, parameters, state, /, *, termination):
+    def step(
+        self,
+        residual_function: _ResidualFunction,
+        parameters: PyTree[Any],
+        state: LeastSquaresState,
+        /,
+        *,
+        termination: OptimizationTermination | None,
+    ) -> tuple[PyTree[Any], LeastSquaresState, Array]:
         return self.method.step(
             residual_function, parameters, state, termination=termination
         )
 
-    def step_metrics(self, state, /):
+    def step_metrics(self, state: LeastSquaresState, /) -> IterativeStepMetrics:
         return self.method.step_metrics(state)
 
-    def solve(self, problem, initial_parameters, /, *, termination, args):
+    def solve(
+        self,
+        problem: NonlinearLeastSquaresProblem,
+        initial_parameters: PyTree[Any],
+        /,
+        *,
+        termination: OptimizationTermination,
+        args: Any,
+    ) -> LeastSquaresResult:
         result = self.method.solve(
             problem,
             initial_parameters,

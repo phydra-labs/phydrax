@@ -10,11 +10,13 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._relation import EdgeRelation
 
 
@@ -36,11 +38,10 @@ class SparsePattern(StrictModule, NonTrainableState):
         *,
         symmetric: bool = False,
         origin: SparsePatternOrigin = "declared",
-    ):
+    ) -> None:
         if not isinstance(relation, EdgeRelation):
             raise TypeError("relation must be an EdgeRelation.")
-        if origin not in ("declared", "structural"):
-            raise ValueError(f"Unknown sparse-pattern origin {origin!r}.")
+        origin = parse(origin, SparsePatternOrigin, "origin")
 
         source = np.asarray(relation.source_indices, dtype=np.int64)
         target = np.asarray(relation.target_indices, dtype=np.int64)

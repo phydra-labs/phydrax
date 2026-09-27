@@ -10,7 +10,8 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -38,7 +39,7 @@ class ChemistryPhysicalConstants(StrictModule, NonTrainableState):
     planck_constant: float = eqx.field(static=True)
     constants_id: str = eqx.field(static=True)
 
-    def __init__(self, units: AtomisticUnitSystem, /):
+    def __init__(self, units: AtomisticUnitSystem, /) -> None:
         if not isinstance(units, AtomisticUnitSystem):
             raise TypeError("units must be AtomisticUnitSystem.")
         if (

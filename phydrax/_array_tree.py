@@ -12,8 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax import core as jax_core
-from jaxtyping import Array, PyTree
+from jax import Array, core as jax_core
+from jaxtyping import PyTree
 
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
@@ -64,7 +64,7 @@ class ArrayLeafSchema(StrictModule):
     storage_bytes: int = eqx.field(static=True)
     content_id: str = eqx.field(static=True)
 
-    def __init__(self, path: str, shape: Sequence[int], dtype: Any, /):
+    def __init__(self, path: str, shape: Sequence[int], dtype: Any, /) -> None:
         path_ = str(path)
         shape_ = tuple(
             _nonnegative_integer(size, "Array leaf dimension") for size in shape
@@ -111,7 +111,7 @@ class ArrayPyTreeSchema(StrictModule):
         /,
         *,
         schema_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(treedef, jax.tree_util.PyTreeDef):
             raise TypeError("treedef must be a JAX PyTreeDef.")
         leaves_ = tuple(leaves)

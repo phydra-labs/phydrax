@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -50,19 +52,26 @@ from phydrax.discretization import DenseParticleNeighborhoodPlan, PeriodicCell
 from phydrax.uq import FreeEnergyResult, ReducedWorkDataset
 
 
-def _force_field():
+def _force_field() -> Any:
     units = AtomisticUnitSystem.reduced()
     system = AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [10, 20, 30],
+        # ty: ignore[invalid-argument-type]
         [1, 1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0, 1.0],
         units,
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0, 1],
+        # ty: ignore[invalid-argument-type]
         charges=[1.0, -1.0, 0.5],
+        # ty: ignore[invalid-argument-type]
         region_ids=[1, 1, 0],
     )
     potential = AtomisticPotentialProgram(
         [
+            # ty: ignore[invalid-argument-type]
             LennardJonesPotential([0.4, 0.8], [1.0, 1.2], 3.0),
             DirectCoulombPotential(),
         ]
@@ -79,7 +88,7 @@ def _force_field():
     return force_field, neighborhood
 
 
-def _controlled():
+def _controlled() -> Any:
     force_field, neighborhood = _force_field()
     schedule = AlchemicalControlSchedulePlan(
         ("coupled", "middle", "decoupled"),
@@ -89,7 +98,9 @@ def _controlled():
     )
     partition = AlchemicalInteractionPartitionPlan(
         schedule.control_ids,
+        # ty: ignore[invalid-argument-type]
         ([10, 20], [10, 20]),
+        # ty: ignore[invalid-argument-type]
         mapped_particle_ids=[[10, 10], [20, 20]],
     )
     return ControlledHamiltonianPlan(
@@ -97,7 +108,7 @@ def _controlled():
     ).prepare(), neighborhood
 
 
-def _runtime(controlled, neighborhood, *, temperature=1.0):
+def _runtime(controlled: Any, neighborhood: Any, *, temperature: Any = 1.0) -> Any:
     dynamics = AtomisticDynamicsPlan(
         controlled.system,
         controlled,
@@ -123,7 +134,7 @@ def _runtime(controlled, neighborhood, *, temperature=1.0):
     return dynamics, PreparedThermodynamicStateTable(dynamics, plans)
 
 
-def test_controlled_hamiltonian_has_exact_base_endpoint_and_control_derivatives():
+def test_controlled_hamiltonian_has_exact_base_endpoint_and_control_derivatives() -> None:
     controlled, neighborhood = _controlled()
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0], [2.2, 0.2, 0.0]])
     relation = neighborhood.build(positions)
@@ -155,7 +166,7 @@ def test_controlled_hamiltonian_has_exact_base_endpoint_and_control_derivatives(
     )
 
 
-def test_soft_core_and_reduced_potential_evidence_fail_closed():
+def test_soft_core_and_reduced_potential_evidence_fail_closed() -> None:
     controlled, neighborhood = _controlled()
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0], [0.0, 0.0, 0.0]])
     relation = neighborhood.build(positions)
@@ -197,7 +208,7 @@ def test_soft_core_and_reduced_potential_evidence_fail_closed():
         )
 
 
-def test_preparation_rejects_charge_change_and_state_dependent_geometry():
+def test_preparation_rejects_charge_change_and_state_dependent_geometry() -> None:
     force_field, _ = _force_field()
     schedule = AlchemicalControlSchedulePlan(
         ("on", "off"),
@@ -205,21 +216,31 @@ def test_preparation_rejects_charge_change_and_state_dependent_geometry():
         (AlchemicalControlKind.ELECTROSTATICS,),
         jnp.asarray([[1.0], [0.0]]),
     )
+    # ty: ignore[invalid-argument-type]
     charged = AlchemicalInteractionPartitionPlan(schedule.control_ids, ([10],))
     with pytest.raises(ValueError, match="zero net charge"):
         ControlledHamiltonianPlan(force_field, schedule, charged).prepare()
     changed_masses = AlchemicalInteractionPartitionPlan(
-        schedule.control_ids, ([10, 20],), changes_masses=True
+        schedule.control_ids,
+        # ty: ignore[invalid-argument-type]
+        ([10, 20],),
+        changes_masses=True,
     )
     with pytest.raises(ValueError, match="State-dependent masses"):
         ControlledHamiltonianPlan(force_field, schedule, changed_masses).prepare()
     changed_constraints = AlchemicalInteractionPartitionPlan(
-        schedule.control_ids, ([10, 20],), changes_constraints=True
+        schedule.control_ids,
+        # ty: ignore[invalid-argument-type]
+        ([10, 20],),
+        changes_constraints=True,
     )
     with pytest.raises(ValueError, match="State-dependent constraints"):
         ControlledHamiltonianPlan(force_field, schedule, changed_constraints).prepare()
     changed_virtual_geometry = AlchemicalInteractionPartitionPlan(
-        schedule.control_ids, ([10, 20],), changes_virtual_geometry=True
+        schedule.control_ids,
+        # ty: ignore[invalid-argument-type]
+        ([10, 20],),
+        changes_virtual_geometry=True,
     )
     with pytest.raises(ValueError, match="State-dependent virtual-site geometry"):
         ControlledHamiltonianPlan(
@@ -227,24 +248,30 @@ def test_preparation_rejects_charge_change_and_state_dependent_geometry():
         ).prepare()
     unknown_mapping = AlchemicalInteractionPartitionPlan(
         schedule.control_ids,
+        # ty: ignore[invalid-argument-type]
         ([10, 20],),
+        # ty: ignore[invalid-argument-type]
         mapped_particle_ids=[[10, 999]],
     )
     with pytest.raises(ValueError, match="mapping references"):
         ControlledHamiltonianPlan(force_field, schedule, unknown_mapping).prepare()
 
 
-def test_disappearing_bond_has_defined_off_endpoint_at_collapsed_geometry():
+def test_disappearing_bond_has_defined_off_endpoint_at_collapsed_geometry() -> None:
     units = AtomisticUnitSystem.reduced()
     system = AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [10, 20],
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         units,
         topology=MolecularTopologyPlan(bonds=[[10, 20]]),
     )
     force_field = AtomisticForceFieldPlan(
         system,
+        # ty: ignore[invalid-argument-type]
         AtomisticPotentialProgram([HarmonicBondPotential([3.0], [1.0])]),
         AtomisticNonbondedPolicy(3.0, electrostatics="direct"),
         AtomisticForceFieldProvenance(
@@ -260,6 +287,7 @@ def test_disappearing_bond_has_defined_off_endpoint_at_collapsed_geometry():
     controlled = ControlledHamiltonianPlan(
         force_field,
         schedule,
+        # ty: ignore[invalid-argument-type]
         AlchemicalInteractionPartitionPlan(schedule.control_ids, ([10],)),
     ).prepare()
     neighborhood = DenseParticleNeighborhoodPlan(1).prepare(force_field.system.particles)
@@ -273,14 +301,18 @@ def test_disappearing_bond_has_defined_off_endpoint_at_collapsed_geometry():
     assert bool(evaluation.successful)
 
 
-def test_preparation_refuses_partial_reciprocal_electrostatic_control():
+def test_preparation_refuses_partial_reciprocal_electrostatic_control() -> None:
     units = AtomisticUnitSystem.reduced()
     cell = PeriodicCell(jnp.eye(3) * 10.0, periodic_axes=(True, True, True))
     system = AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [10, 20, 30],
+        # ty: ignore[invalid-argument-type]
         [1, 1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0, 1.0],
         units,
+        # ty: ignore[invalid-argument-type]
         charges=[1.0, -1.0, 0.0],
         cell=cell,
     )
@@ -298,24 +330,30 @@ def test_preparation_refuses_partial_reciprocal_electrostatic_control():
         (AlchemicalControlKind.ELECTROSTATICS,),
         jnp.asarray([[1.0], [0.0]]),
     )
+    # ty: ignore[invalid-argument-type]
     partition = AlchemicalInteractionPartitionPlan(schedule.control_ids, ([10, 20],))
     with pytest.raises(ValueError, match="cannot diverge"):
         ControlledHamiltonianPlan(force_field, schedule, partition).prepare()
 
 
-def test_controlled_cell_stress_differentiates_the_same_scalar():
+def test_controlled_cell_stress_differentiates_the_same_scalar() -> None:
     units = AtomisticUnitSystem.reduced()
     cell = PeriodicCell(jnp.eye(3) * 10.0, periodic_axes=(True, True, True))
     system = AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [10, 20],
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         units,
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0],
         cell=cell,
     )
     force_field = AtomisticForceFieldPlan(
         system,
+        # ty: ignore[invalid-argument-type]
         AtomisticPotentialProgram([LennardJonesPotential([0.5], [1.0], 3.0)]),
         AtomisticNonbondedPolicy(3.0, electrostatics="direct"),
         AtomisticForceFieldProvenance(
@@ -331,6 +369,7 @@ def test_controlled_cell_stress_differentiates_the_same_scalar():
     controlled = ControlledHamiltonianPlan(
         force_field,
         schedule,
+        # ty: ignore[invalid-argument-type]
         AlchemicalInteractionPartitionPlan(schedule.control_ids, ([10],)),
     ).prepare()
     fractional = jnp.asarray([[0.1, 0.1, 0.1], [0.25, 0.1, 0.1]])
@@ -349,7 +388,7 @@ def test_controlled_cell_stress_differentiates_the_same_scalar():
     assert bool(result.successful)
 
 
-def _leg(controlled, thermodynamic, environment):
+def _leg(controlled: Any, thermodynamic: Any, environment: Any) -> Any:
     return FreeEnergyProtocolLegPlan(
         FreeEnergyStatePlan(controlled, thermodynamic, 0),
         FreeEnergyStatePlan(controlled, thermodynamic, 2),
@@ -357,7 +396,9 @@ def _leg(controlled, thermodynamic, environment):
     )
 
 
-def _analysis(leg, value, variance, identity, *, mapping_id=None):
+def _analysis(
+    leg: Any, value: Any, variance: Any, identity: Any, *, mapping_id: Any = None
+) -> Any:
     states = (leg.source, leg.destination)
     dataset = ReducedWorkDataset(
         jnp.zeros((2,)),
@@ -408,7 +449,7 @@ def _analysis(leg, value, variance, identity, *, mapping_id=None):
     return result, dataset
 
 
-def test_protocol_signs_and_covariance_are_explicit():
+def test_protocol_signs_and_covariance_are_explicit() -> None:
     controlled, neighborhood = _controlled()
     _, thermodynamic = _runtime(controlled, neighborhood)
     vacuum_plan = _leg(controlled, thermodynamic, "vacuum")
@@ -447,7 +488,7 @@ def test_protocol_signs_and_covariance_are_explicit():
         ).evaluate(vacuum, hot_solvent, (correction,), covariance)
 
 
-def test_absolute_and_mapped_protocol_formulas_are_oriented():
+def test_absolute_and_mapped_protocol_formulas_are_oriented() -> None:
     controlled, neighborhood = _controlled()
     _, thermodynamic = _runtime(controlled, neighborhood)
     solvent_plan = _leg(controlled, thermodynamic, "solvent")
@@ -532,7 +573,7 @@ def test_absolute_and_mapped_protocol_formulas_are_oriented():
     assert complex_mapped.mapping_plan_id == complex_mapping.plan_id
 
 
-def test_switching_executes_native_dynamics_and_emits_lineage():
+def test_switching_executes_native_dynamics_and_emits_lineage() -> None:
     controlled, neighborhood = _controlled()
     dynamics, thermodynamic = _runtime(controlled, neighborhood)
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0], [2.2, 0.2, 0.0]])
@@ -574,7 +615,9 @@ def test_switching_executes_native_dynamics_and_emits_lineage():
         2.0e-3,
         2,
     )
+    # ty: ignore[invalid-argument-type]
     forward_lineage = AlchemicalSwitchingLineage([0, 0], [10, 11], [0, 0], [0, 0], [7, 7])
+    # ty: ignore[invalid-argument-type]
     reverse_lineage = AlchemicalSwitchingLineage([2, 2], [12, 13], [0, 0], [0, 0], [7, 7])
     record = switching.execute(
         forward,

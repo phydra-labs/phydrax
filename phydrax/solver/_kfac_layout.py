@@ -37,7 +37,7 @@ class KFACPlan:
     config: KFAC
     layout: ParameterLayout
     num_terms: int
-    dtype: object
+    dtype: np.dtype
 
     def initialize(self, parameters: PyTree[Any], /) -> KFACState:
         flat, _ = ravel_pytree(parameters)

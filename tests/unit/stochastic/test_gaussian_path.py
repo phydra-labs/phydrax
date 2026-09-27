@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -11,7 +13,7 @@ from phydrax.stochastic._gaussian_path import (
 )
 
 
-def _expected_covariance(times):
+def _expected_covariance(times: Any) -> Any:
     elapsed = np.asarray(times)[1:] - float(np.asarray(times)[0])
     return np.minimum(elapsed[:, None], elapsed[None, :])
 
@@ -28,26 +30,30 @@ def _expected_covariance(times):
         jnp.asarray([0.0, 1.0, 0.5]),
     ],
 )
-def test_gaussian_path_plan_rejects_invalid_grids(times):
+def test_gaussian_path_plan_rejects_invalid_grids(times: Any) -> None:
     with pytest.raises(ValueError):
         GaussianPathConstructionPlan(times)
 
 
-def test_gaussian_path_plan_rejects_invalid_methods_and_ranks():
+def test_gaussian_path_plan_rejects_invalid_methods_and_ranks() -> None:
     times = jnp.asarray([0.0, 0.2, 0.6, 1.0])
     with pytest.raises(ValueError, match="method"):
+        # ty: ignore[invalid-argument-type]
         GaussianPathConstructionPlan(times, "unknown")
     with pytest.raises(TypeError, match="integer"):
+        # ty: ignore[invalid-argument-type]
         GaussianPathConstructionPlan(times, "pca", 1.5)
-    with pytest.raises(ValueError, match="\[1, 3\]"):
+    with pytest.raises(ValueError, match=r"\[1, 3\]"):
         GaussianPathConstructionPlan(times, "pca", 0)
-    with pytest.raises(ValueError, match="\[1, 3\]"):
+    with pytest.raises(ValueError, match=r"\[1, 3\]"):
         GaussianPathConstructionPlan(times, "pca", 4)
     with pytest.raises(ValueError, match="Only the PCA"):
         GaussianPathConstructionPlan(times, "bridge", 2)
 
 
-def test_chronological_construction_preserves_leading_axes_and_increment_identity():
+def test_chronological_construction_preserves_leading_axes_and_increment_identity() -> (
+    None
+):
     times = jnp.asarray([2.0, 2.1, 2.5, 3.4])
     prepared = prepare_gaussian_path_construction(
         GaussianPathConstructionPlan(times, "chronological")
@@ -77,7 +83,7 @@ def test_chronological_construction_preserves_leading_axes_and_increment_identit
     assert np.asarray(result.evidence.finite).all()
 
 
-def test_bridge_orders_conditional_nodes_and_preserves_endpoint_factor():
+def test_bridge_orders_conditional_nodes_and_preserves_endpoint_factor() -> None:
     times = jnp.asarray([0.0, 0.25, 0.5, 0.75, 1.0])
     prepared = prepare_gaussian_path_construction(
         GaussianPathConstructionPlan(times, "bridge")
@@ -105,7 +111,9 @@ def test_bridge_orders_conditional_nodes_and_preserves_endpoint_factor():
 
 
 @pytest.mark.parametrize("method", ["chronological", "bridge", "pca"])
-def test_full_rank_constructions_preserve_finite_grid_brownian_covariance(method):
+def test_full_rank_constructions_preserve_finite_grid_brownian_covariance(
+    method: Any,
+) -> None:
     times = jnp.asarray([1.3, 1.35, 1.7, 2.4, 3.0])
     prepared = prepare_gaussian_path_construction(
         GaussianPathConstructionPlan(times, method)
@@ -127,7 +135,7 @@ def test_full_rank_constructions_preserve_finite_grid_brownian_covariance(method
     assert float(prepared.relative_covariance_residual) < 2e-14
 
 
-def test_rank_truncated_pca_exposes_exact_covariance_residual():
+def test_rank_truncated_pca_exposes_exact_covariance_residual() -> None:
     times = jnp.asarray([0.0, 0.05, 0.2, 0.6, 1.1, 2.0])
     plan = GaussianPathConstructionPlan(times, "pca", 2)
     prepared = prepare_gaussian_path_construction(plan)
@@ -153,7 +161,7 @@ def test_rank_truncated_pca_exposes_exact_covariance_residual():
     assert np.asarray(result.valid).all()
 
 
-def test_gaussian_path_validates_factor_shapes_and_active_values():
+def test_gaussian_path_validates_factor_shapes_and_active_values() -> None:
     prepared = prepare_gaussian_path_construction(
         GaussianPathConstructionPlan(jnp.asarray([0.0, 0.5, 1.0]), "bridge")
     )
@@ -173,7 +181,7 @@ def test_gaussian_path_validates_factor_shapes_and_active_values():
             gaussian_path_from_unit_design(prepared, invalid)
 
 
-def test_construction_and_realization_identities_bind_order_and_unit_design():
+def test_construction_and_realization_identities_bind_order_and_unit_design() -> None:
     times = jnp.asarray([0.0, 0.25, 0.8, 1.0])
     first = prepare_gaussian_path_construction(
         GaussianPathConstructionPlan(times, "bridge")

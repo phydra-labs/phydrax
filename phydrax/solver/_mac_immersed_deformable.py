@@ -6,11 +6,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from enum import IntFlag
-from typing import Any
+from typing import Any, TypeVar
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -125,7 +126,7 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
         nonlinear_method: NewtonKrylov | None = None,
         termination: NonlinearTermination | None = None,
         structural_contact_residual: StructuralContactResidual | None = None,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
             raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
         if dynamics.algebraic_les is not None:
@@ -274,7 +275,9 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
         operators = self.dynamics.momentum.operators
         boundaries = self.dynamics.momentum.boundaries
 
-        def residual(unknown, _):
+        def residual(
+            unknown: tuple[Array, Array, Array, Array, Array], _: object
+        ) -> tuple[Array, Array, Array, Array, Array]:
             fluid_coordinates, q, v, pressure, multiplier = unknown
             fluid_velocity = tuple(operators.velocity_space.unflatten(fluid_coordinates))
             marker_kinematics = self.marker_map.kinematics(q, v)
@@ -513,7 +516,10 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
         )
 
 
-def jax_tree_where(condition: Array, candidate, fallback):
+_Tree = TypeVar("_Tree")
+
+
+def jax_tree_where(condition: Array, candidate: _Tree, fallback: _Tree) -> _Tree:
     import jax
 
     return jax.tree.map(

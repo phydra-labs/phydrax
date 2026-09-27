@@ -14,7 +14,7 @@ from ._iga_solids import _identifier, _prepared
 def _surface(value: SurfaceEmbeddingCertificate, /) -> SurfaceEmbeddingCertificate:
     if not isinstance(value, SurfaceEmbeddingCertificate):
         raise TypeError("surface_certificate must be a SurfaceEmbeddingCertificate.")
-    if not bool(value.passed):
+    if not bool(value.accepted):
         raise ValueError("surface_certificate did not pass; shell lowering fails closed.")
     return value
 
@@ -40,7 +40,7 @@ class IGAKirchhoffLovePlan(StrictModule, NonTrainableState):
         *,
         displacement_field: str = "u",
         material_plan_id: str,
-    ):
+    ) -> None:
         prepared_ = _prepared(prepared)
         certificate = _surface(surface_certificate)
         self.prepared = prepared_
@@ -89,7 +89,7 @@ class IGAReissnerMindlinPlan(StrictModule, NonTrainableState):
         tangent_frame_id: str,
         shear_policy_id: str,
         material_plan_id: str,
-    ):
+    ) -> None:
         prepared_ = _prepared(prepared)
         certificate = _surface(surface_certificate)
         displacement = _identifier(displacement_field, "displacement_field")

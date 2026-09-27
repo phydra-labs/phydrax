@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -33,7 +34,7 @@ class AerodynamicLoadHistory(StrictModule):
         /,
         *,
         history_id: str | None = None,
-    ):
+    ) -> None:
         time = jnp.asarray(times)
         position, velocity, force_ = (
             jnp.asarray(source_position),
@@ -89,7 +90,7 @@ class FWHTonalAcousticsPlan(StrictModule, NonTrainableState):
     ambient_density: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, sound_speed: float, ambient_density: float, /):
+    def __init__(self, sound_speed: float, ambient_density: float, /) -> None:
         if float(sound_speed) <= 0.0 or float(ambient_density) <= 0.0:
             raise ValueError("FW-H sound speed/density must be positive.")
         self.sound_speed, self.ambient_density = (
@@ -172,7 +173,7 @@ class BroadbandSectionNoiseResult(StrictModule):
 class BroadbandSectionNoisePlan(StrictModule, NonTrainableState):
     model_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.model_id = canonical_fingerprint({"kind": "broadband-section-noise"})
 
     def evaluate(

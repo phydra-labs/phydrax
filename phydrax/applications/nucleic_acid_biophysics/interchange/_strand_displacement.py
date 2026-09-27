@@ -18,7 +18,7 @@ import io
 import json
 import math
 import zipfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from xml.etree import ElementTree
@@ -26,9 +26,11 @@ from xml.etree import ElementTree
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+import numpy.typing as npt
+from jax import Array
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ...._validation import canonical_identifier, positive_finite_float
 from ....qualification import (
     CampaignRole,
     read_reference_artifact,
@@ -81,27 +83,12 @@ _XLSX_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationsh
 _XLSX_PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 
 
-def _identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    if not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty canonical identifier.")
-    return value
-
-
 def _identifiers(values: Sequence[str], name: str, /) -> tuple[str, ...]:
     if isinstance(values, str) or not isinstance(values, Sequence):
         raise TypeError(f"{name} must be a sequence of identifiers.")
-    result = tuple(_identifier(value, name) for value in values)
+    result = tuple(canonical_identifier(value, name) for value in values)
     if not result or len(set(result)) != len(result):
         raise ValueError(f"{name} must be non-empty and unique.")
-    return result
-
-
-def _positive(value: float, name: str, /) -> float:
-    result = float(value)
-    if not math.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
     return result
 
 
@@ -135,7 +122,7 @@ def _require_manifest_bytes(
 
 
 def _member_path(value: str, name: str, /) -> str:
-    result = _identifier(value, name)
+    result = canonical_identifier(value, name)
     path = PurePosixPath(result)
     if path.is_absolute() or ".." in path.parts or "." in path.parts:
         raise ValueError(f"{name} must be a canonical relative archive member path.")
@@ -152,7 +139,7 @@ class PlateWellIdentity:
     preparation_id: str
     replicate_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for value, name in (
             (self.experiment_id, "experiment_id"),
             (self.plate_id, "plate_id"),
@@ -160,7 +147,7 @@ class PlateWellIdentity:
             (self.preparation_id, "preparation_id"),
             (self.replicate_id, "replicate_id"),
         ):
-            _identifier(value, name)
+            canonical_identifier(value, name)
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -196,11 +183,11 @@ class FluorescenceTimeTrace:
         self,
         case_id: str,
         identity: PlateWellIdentity,
-        time_seconds,
-        intensity,
-        saturation_mask,
+        time_seconds: npt.ArrayLike,
+        intensity: npt.ArrayLike,
+        saturation_mask: npt.ArrayLike,
         construct_ids: Sequence[str],
-        initial_concentrations_molar,
+        initial_concentrations_molar: npt.ArrayLike,
         *,
         temperature_kelvin: float,
         condition_id: str,
@@ -211,10 +198,10 @@ class FluorescenceTimeTrace:
         injection_reference_seconds: float | None,
         saturation_threshold_intensity: float | None,
         intensity_unit_id: str = "instrument-fluorescence-unit",
-    ):
+    ) -> None:
         if not isinstance(identity, PlateWellIdentity):
             raise TypeError("identity must be a PlateWellIdentity.")
-        case = _identifier(case_id, "case_id")
+        case = canonical_identifier(case_id, "case_id")
         times = np.asarray(time_seconds, dtype=np.float64)
         values = np.asarray(intensity, dtype=np.float64)
         saturated = np.asarray(saturation_mask, dtype=np.bool_)
@@ -242,7 +229,7 @@ class FluorescenceTimeTrace:
             raise ValueError(
                 "Initial molar concentrations must be finite and non-negative."
             )
-        temperature = _positive(temperature_kelvin, "temperature_kelvin")
+        temperature = positive_finite_float(temperature_kelvin, "temperature_kelvin")
         injection = (
             None
             if injection_reference_seconds is None
@@ -253,7 +240,7 @@ class FluorescenceTimeTrace:
         threshold = (
             None
             if saturation_threshold_intensity is None
-            else _positive(
+            else positive_finite_float(
                 saturation_threshold_intensity, "saturation_threshold_intensity"
             )
         )
@@ -274,22 +261,26 @@ class FluorescenceTimeTrace:
         object.__setattr__(
             self,
             "chemistry_direction",
-            _identifier(chemistry_direction, "chemistry_direction"),
+            canonical_identifier(chemistry_direction, "chemistry_direction"),
         )
         object.__setattr__(
-            self, "condition_id", _identifier(condition_id, "condition_id")
+            self, "condition_id", canonical_identifier(condition_id, "condition_id")
         )
-        object.__setattr__(self, "reporter_id", _identifier(reporter_id, "reporter_id"))
+        object.__setattr__(
+            self, "reporter_id", canonical_identifier(reporter_id, "reporter_id")
+        )
         object.__setattr__(
             self,
             "sequence_family_id",
-            _identifier(sequence_family_id, "sequence_family_id"),
+            canonical_identifier(sequence_family_id, "sequence_family_id"),
         )
         object.__setattr__(self, "source_manifest_ids", manifests)
         object.__setattr__(self, "injection_reference_seconds", injection)
         object.__setattr__(self, "saturation_threshold_intensity", threshold)
         object.__setattr__(
-            self, "intensity_unit_id", _identifier(intensity_unit_id, "intensity_unit_id")
+            self,
+            "intensity_unit_id",
+            canonical_identifier(intensity_unit_id, "intensity_unit_id"),
         )
         object.__setattr__(
             self,
@@ -348,14 +339,18 @@ _TRACE_META_FIELDS = (
 )
 
 
-def _flatten_fluorescence_trace(trace):
+def _flatten_fluorescence_trace(
+    trace: FluorescenceTimeTrace,
+) -> tuple[tuple[object, ...], tuple[object, ...]]:
     return (
         tuple(getattr(trace, name) for name in _TRACE_DATA_FIELDS),
         tuple(getattr(trace, name) for name in _TRACE_META_FIELDS),
     )
 
 
-def _unflatten_fluorescence_trace(metadata, arrays):
+def _unflatten_fluorescence_trace(
+    metadata: tuple[object, ...], arrays: Iterable[object]
+) -> FluorescenceTimeTrace:
     trace = object.__new__(FluorescenceTimeTrace)
     for name, value in zip(_TRACE_DATA_FIELDS, arrays, strict=True):
         object.__setattr__(trace, name, value)
@@ -379,7 +374,7 @@ class StrandDisplacementSourceMember:
     path: str
     manifest: ReferenceArtifactManifest
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.relationship not in (
             "raw-workbook",
             "plate-layout",
@@ -429,7 +424,7 @@ class StrandDisplacementWellManifest:
         role: str,
         parent_case_ids: Sequence[str] = (),
         saturation_threshold_intensity: float | None = None,
-    ):
+    ) -> None:
         constructs = _identifiers(tuple(construct_ids), "construct_ids")
         raw = np.asarray(tuple(initial_concentrations), dtype=np.float64)
         if (
@@ -452,30 +447,32 @@ class StrandDisplacementWellManifest:
         threshold = (
             None
             if saturation_threshold_intensity is None
-            else _positive(
+            else positive_finite_float(
                 saturation_threshold_intensity, "saturation_threshold_intensity"
             )
         )
         object.__setattr__(
-            self, "sample_label", _identifier(sample_label, "sample_label")
+            self, "sample_label", canonical_identifier(sample_label, "sample_label")
         )
         object.__setattr__(
             self,
             "source_description",
-            _identifier(source_description, "source_description"),
+            canonical_identifier(source_description, "source_description"),
         )
-        object.__setattr__(self, "case_id", _identifier(case_id, "case_id"))
+        object.__setattr__(self, "case_id", canonical_identifier(case_id, "case_id"))
         object.__setattr__(
-            self, "preparation_id", _identifier(preparation_id, "preparation_id")
+            self, "preparation_id", canonical_identifier(preparation_id, "preparation_id")
         )
         object.__setattr__(
-            self, "replicate_id", _identifier(replicate_id, "replicate_id")
+            self, "replicate_id", canonical_identifier(replicate_id, "replicate_id")
         )
-        object.__setattr__(self, "reporter_id", _identifier(reporter_id, "reporter_id"))
+        object.__setattr__(
+            self, "reporter_id", canonical_identifier(reporter_id, "reporter_id")
+        )
         object.__setattr__(
             self,
             "sequence_family_id",
-            _identifier(sequence_family_id, "sequence_family_id"),
+            canonical_identifier(sequence_family_id, "sequence_family_id"),
         )
         object.__setattr__(self, "construct_ids", constructs)
         object.__setattr__(self, "initial_concentrations_molar", concentrations)
@@ -505,7 +502,7 @@ class StrandDisplacementSourceManifest:
     readme: StrandDisplacementSourceMember | None = None
     manifest_id: str = field(init=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (self.record_id, self.version, self.doi, self.license_id) != (
             _ZENODO_RECORD_ID,
             _ZENODO_VERSION,
@@ -532,10 +529,10 @@ class StrandDisplacementSourceManifest:
             raise ValueError("readme must declare the readme relationship.")
         if self.chemistry_direction not in _DIRECTIONS:
             raise ValueError("Unsupported chemistry direction for Zenodo 10090783.")
-        _identifier(self.experiment_id, "experiment_id")
-        _identifier(self.plate_id, "plate_id")
-        _identifier(self.condition_id, "condition_id")
-        temperature = _positive(self.temperature_kelvin, "temperature_kelvin")
+        canonical_identifier(self.experiment_id, "experiment_id")
+        canonical_identifier(self.plate_id, "plate_id")
+        canonical_identifier(self.condition_id, "condition_id")
+        temperature = positive_finite_float(self.temperature_kelvin, "temperature_kelvin")
         object.__setattr__(self, "temperature_kelvin", temperature)
         if not isinstance(self.wells, tuple) or not self.wells:
             raise ValueError("A source manifest requires a non-empty tuple of wells.")
@@ -720,11 +717,11 @@ def _parse_admitted_workbooks(
     injection_marker: str,
 ) -> StrandDisplacementAdmission:
     markers = frozenset(
-        _identifier(value, "saturation marker") for value in saturation_markers
+        canonical_identifier(value, "saturation marker") for value in saturation_markers
     )
     if not markers:
         raise ValueError("At least one exact instrument saturation marker is required.")
-    injection = _identifier(injection_marker, "injection marker")
+    injection = canonical_identifier(injection_marker, "injection marker")
     plate_rows = _xlsx_sheet_rows(plate_content, "Sheet1")
     plate_labels: dict[str, str] = {}
     for row in plate_rows:
@@ -742,15 +739,19 @@ def _parse_admitted_workbooks(
     if len(header_rows) != 1:
         raise ValueError("Raw workbook requires exactly one Time [s] row.")
     header = header_rows[0]
-    measurement_rows = tuple(
-        row
-        for row in raw_rows
-        if row.get("A") is not None and row.get("B", "").startswith("Sample X")
-    )
+    measurement_rows: list[tuple[str, str, dict[str, str | None]]] = []
+    for row in raw_rows:
+        well_label, sample_label = row.get("A"), row.get("B")
+        if (
+            well_label is not None
+            and sample_label is not None
+            and sample_label.startswith("Sample X")
+        ):
+            measurement_rows.append((well_label, sample_label, row))
     if not measurement_rows:
         raise ValueError("Raw workbook contains no well/sample fluorescence rows.")
-    wells = tuple(row["A"] for row in measurement_rows)
-    samples = tuple(row["B"] for row in measurement_rows)
+    wells = tuple(well for well, _, _ in measurement_rows)
+    samples = tuple(sample for _, sample, _ in measurement_rows)
     if len(set(wells)) != len(wells):
         raise ValueError("Raw workbook contains duplicate plate/well identities.")
     if len(set(samples)) != len(samples):
@@ -779,11 +780,17 @@ def _parse_admitted_workbooks(
             key=column_number,
         )
     )
-    if not data_columns or any(header[column] is None for column in data_columns):
+    if not data_columns:
         raise ValueError("Raw workbook time columns must be complete.")
+    header_times: dict[str, str] = {}
+    for column in data_columns:
+        time_label = header[column]
+        if time_label is None:
+            raise ValueError("Raw workbook time columns must be complete.")
+        header_times[column] = time_label
     marker_columns_by_row = tuple(
         frozenset(column for column in data_columns if row.get(column) == injection)
-        for row in measurement_rows
+        for _, _, row in measurement_rows
     )
     marker_columns = marker_columns_by_row[0]
     if any(columns != marker_columns for columns in marker_columns_by_row):
@@ -798,13 +805,13 @@ def _parse_admitted_workbooks(
         column for column in data_columns if column not in marker_columns
     )
     source_times = np.asarray(
-        [float(header[column]) for column in kept_columns], dtype=np.float64
+        [float(header_times[column]) for column in kept_columns], dtype=np.float64
     )
     marker_column = next(iter(marker_columns))
     marker_position = data_columns.index(marker_column)
     if marker_position == 0:
         raise ValueError("Injection marker requires a preceding source time sample.")
-    injection_reference = float(header[data_columns[marker_position - 1]])
+    injection_reference = float(header_times[data_columns[marker_position - 1]])
     source_times = source_times - injection_reference
     if np.any(~np.isfinite(source_times)) or np.any(np.diff(source_times) <= 0.0):
         raise ValueError(
@@ -813,8 +820,7 @@ def _parse_admitted_workbooks(
 
     manifest_ids = _source_manifest_ids(source)
     traces: list[FluorescenceTimeTrace] = []
-    for row in measurement_rows:
-        sample = row["B"]
+    for well, sample, row in measurement_rows:
         specification = specifications[sample]
         if plate_labels[sample] != specification.source_description:
             raise ValueError(
@@ -829,13 +835,11 @@ def _parse_admitted_workbooks(
                 saturated.append(True)
             else:
                 if scalar is None:
-                    raise ValueError(
-                        f"Well {row['A']!r} has a missing fluorescence value."
-                    )
+                    raise ValueError(f"Well {well!r} has a missing fluorescence value.")
                 number = float(scalar)
                 if not math.isfinite(number):
                     raise ValueError(
-                        f"Well {row['A']!r} has a non-finite fluorescence value."
+                        f"Well {well!r} has a non-finite fluorescence value."
                     )
                 values.append(number)
                 saturated.append(False)
@@ -845,7 +849,7 @@ def _parse_admitted_workbooks(
                 PlateWellIdentity(
                     source.experiment_id,
                     source.plate_id,
-                    row["A"],
+                    well,
                     specification.preparation_id,
                     specification.replicate_id,
                 ),
@@ -955,7 +959,7 @@ def admit_strand_displacement_paths(
         raise ValueError(
             "Processed CSV path and manifest must either both be present or both absent."
         )
-    if source.processed_csv is not None:
+    if source.processed_csv is not None and processed_csv_path is not None:
         processed = read_reference_artifact(
             processed_csv_path, source.processed_csv.manifest
         ).data
@@ -964,7 +968,7 @@ def admit_strand_displacement_paths(
         raise ValueError(
             "README path and manifest must either both be present or both absent."
         )
-    if source.readme is not None:
+    if source.readme is not None and readme_path is not None:
         readme = read_reference_artifact(readme_path, source.readme.manifest).data
         _require_manifest_bytes(readme, source.readme.manifest, use)
     return _parse_admitted_workbooks(
@@ -1045,7 +1049,7 @@ def admit_prepared_strand_displacement_csv(
     closed: set[str] = set()
     previous_case: str | None = None
     for row in rows:
-        case_id = _identifier(row["case_id"], "CSV case_id")
+        case_id = canonical_identifier(row["case_id"], "CSV case_id")
         if case_id != previous_case:
             if case_id in closed:
                 raise ValueError("Prepared trace rows for each case must be contiguous.")
@@ -1095,7 +1099,7 @@ def admit_prepared_strand_displacement_csv(
             raise ValueError(
                 f"Prepared trace metadata disagrees with source case {case_id!r}."
             )
-        well_id = _identifier(first["well_id"], "CSV well_id")
+        well_id = canonical_identifier(first["well_id"], "CSV well_id")
         if well_id in seen_wells:
             raise ValueError(
                 "Prepared trace CSV contains duplicate physical well identities."
@@ -1191,7 +1195,7 @@ def admit_prepared_strand_displacement_csv(
                 source_manifest_ids=trace_source_ids,
                 injection_reference_seconds=injection,
                 saturation_threshold_intensity=threshold,
-                intensity_unit_id=_identifier(
+                intensity_unit_id=canonical_identifier(
                     first["intensity_unit_id"], "CSV intensity_unit_id"
                 ),
             )

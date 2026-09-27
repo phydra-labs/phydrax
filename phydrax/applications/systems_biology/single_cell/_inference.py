@@ -17,7 +17,8 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax.optim import (
@@ -224,13 +225,13 @@ def fit_stationary_counts(
     indices = jnp.asarray(free, dtype=jnp.int32)
     logs = jnp.log(jnp.asarray(base))
 
-    def realize(free_logs):
+    def realize(free_logs: Array) -> Array:
         return jnp.exp(logs.at[indices].set(free_logs))
 
-    def forward(free_logs):
+    def forward(free_logs: Array) -> Array:
         return predicted_count_moments(model, realize(free_logs), assay)
 
-    def residual(free_logs, args):
+    def residual(free_logs: Array, args: object) -> Array:
         del args
         return (
             forward(free_logs) - target.target.moments

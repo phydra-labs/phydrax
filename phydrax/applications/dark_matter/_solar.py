@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -238,7 +239,7 @@ def stellar_specific_energy_evidence(
     knot_left = profile.radii_m[:-1]
     knot_right = profile.radii_m[1:]
 
-    def integrate_rule(value, nodes, weights):
+    def integrate_rule(value: Array, nodes: Array, weights: Array) -> Array:
         left = jnp.maximum(value, knot_left)
         lengths = jnp.maximum(knot_right - left, 0.0)
         coordinates = left[:, None] + 0.5 * lengths[:, None] * (nodes[None, :] + 1.0)
@@ -259,7 +260,7 @@ def stellar_specific_energy_evidence(
             gravity,
         )
 
-    def potential_one(value):
+    def potential_one(value: Array) -> tuple[Array, Array]:
         high_integral = integrate_rule(value, high_rule.nodes, high_rule.weights)
         low_integral = integrate_rule(value, low_rule.nodes, low_rule.weights)
         interior = surface_potential - high_integral
@@ -375,7 +376,7 @@ class SolarTransportPlan(StrictModule, NonTrainableState):
         observation_radius_m: float,
         maximum_jump_events: int = 128,
         maximum_guard_events: int = 1,
-    ):
+    ) -> None:
         if not isinstance(profile, SmoothStellarRadialProfile) or not isinstance(
             scattering, ElasticScatteringTable
         ):
@@ -472,7 +473,9 @@ class SolarTransportPlan(StrictModule, NonTrainableState):
         active: Array,
         /,
     ) -> tuple[Array, Array, Array, Array]:
-        def one(surface_state, available, enabled):
+        def one(
+            surface_state: Array, available: Array, enabled: Array
+        ) -> tuple[Array, Array, Array, Array]:
             surface_energy = kepler_specific_energy(
                 surface_state, self.profile.total_mass_kg
             )

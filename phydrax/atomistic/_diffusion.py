@@ -9,12 +9,14 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..stochastic._categorical_diffusion import CategoricalDiffusionSchedule
 from ..stochastic._gaussian_diffusion import AbstractGaussianDiffusion
+from ..typing import PRNGKey
 from ._types import AtomisticBatch
 
 
@@ -44,7 +46,14 @@ class AtomisticCoordinateDiffusion(StrictModule):
     active_count: Array
     process_id: str = eqx.field(static=True)
 
-    def __init__(self, template, process, /, *, process_id: str | None = None):
+    def __init__(
+        self,
+        template: AtomisticBatch,
+        process: AbstractGaussianDiffusion,
+        /,
+        *,
+        process_id: str | None = None,
+    ) -> None:
         if not isinstance(template, AtomisticBatch):
             raise TypeError("template must be an AtomisticBatch.")
         if not isinstance(process, AbstractGaussianDiffusion):
@@ -99,7 +108,7 @@ class AtomisticCoordinateDiffusion(StrictModule):
         return eqx.tree_at(lambda value: value.positions, batch, checked_positions)
 
     def perturb(
-        self, batch: AtomisticBatch, key: Key[Array, ""], /, *, time
+        self, batch: AtomisticBatch, key: PRNGKey, /, *, time: ArrayLike
     ) -> AtomisticBatch:
         batch = self._require_batch(batch)
         centered, _ = _center_positions(batch, batch.positions)
@@ -111,8 +120,8 @@ class AtomisticCoordinateDiffusion(StrictModule):
         return batch.with_positions(perturbed)
 
     def conditional_score(
-        self, perturbed: AtomisticBatch, clean: AtomisticBatch, /, *, time
-    ):
+        self, perturbed: AtomisticBatch, clean: AtomisticBatch, /, *, time: ArrayLike
+    ) -> Array:
         perturbed = self._require_batch(perturbed)
         clean = self._require_batch(clean)
         noisy, _ = _center_positions(perturbed, perturbed.positions)
@@ -144,7 +153,7 @@ class AtomisticHybridDiffusion(StrictModule):
         species_schedule: CategoricalDiffusionSchedule,
         species: Sequence[int],
         /,
-    ):
+    ) -> None:
         if not isinstance(coordinate, AtomisticCoordinateDiffusion):
             raise TypeError("coordinate must be an AtomisticCoordinateDiffusion.")
         if not isinstance(species_schedule, CategoricalDiffusionSchedule):
@@ -184,12 +193,12 @@ class AtomisticHybridDiffusion(StrictModule):
     def perturb(
         self,
         batch: AtomisticBatch,
-        coordinate_key: Key[Array, ""],
-        species_key: Key[Array, ""],
+        coordinate_key: PRNGKey,
+        species_key: PRNGKey,
         /,
         *,
-        continuous_time,
-        discrete_timestep,
+        continuous_time: ArrayLike,
+        discrete_timestep: ArrayLike,
     ) -> tuple[AtomisticBatch, Array]:
         coordinates = self.coordinate.perturb(batch, coordinate_key, time=continuous_time)
         indices = jnp.where(

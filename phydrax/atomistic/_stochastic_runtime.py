@@ -11,7 +11,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -23,7 +24,10 @@ from ._dynamics import (
     PreparedAtomisticDynamics,
     VelocityVerletPlan,
 )
-from ._hydrodynamic_brownian import HydrodynamicBrownianPlan
+from ._hydrodynamic_brownian import (
+    HydrodynamicBrownianPlan,
+    PreparedHydrodynamicBrownian,
+)
 from ._hydrodynamic_mobility import ConstantIsotropicMobilityPlan
 from ._thermal import stable_particle_normals
 from ._thermodynamic import PreparedThermodynamicStateTable
@@ -44,7 +48,7 @@ class OverdampedAtomisticPlan(StrictModule, NonTrainableState):
         /,
         *,
         realization_id: int = 0,
-    ):
+    ) -> None:
         step = float(step_size)
         mobility_ = float(mobility)
         thermal = float(temperature)
@@ -73,7 +77,9 @@ class OverdampedAtomisticPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def prepare(self, dynamics: PreparedAtomisticDynamics, /):
+    def prepare(
+        self, dynamics: PreparedAtomisticDynamics, /
+    ) -> PreparedHydrodynamicBrownian:
         return HydrodynamicBrownianPlan(
             self.step_size,
             self.temperature,
@@ -104,7 +110,7 @@ class GeneralizedLangevinRuntimePlan(StrictModule, NonTrainableState):
         *,
         covariance_tolerance: float = 1.0e-10,
         realization_id: int = 0,
-    ):
+    ) -> None:
         transition = np.asarray(transition_matrix, dtype=np.float64)
         noise = np.asarray(noise_factor, dtype=np.float64)
         thermal = float(temperature)
@@ -181,7 +187,7 @@ class PreparedGeneralizedLangevinRuntime(StrictModule, NonTrainableState):
         plan: GeneralizedLangevinRuntimePlan,
         dynamics: PreparedAtomisticDynamics,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, GeneralizedLangevinRuntimePlan):
             raise TypeError("plan must be GeneralizedLangevinRuntimePlan.")
         if not isinstance(dynamics, PreparedAtomisticDynamics):

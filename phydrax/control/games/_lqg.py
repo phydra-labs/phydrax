@@ -10,11 +10,12 @@ from enum import IntEnum
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ...dynamics import TimeGrid
 from .._lqr import AffineFeedbackPolicy, QuadraticValueFunction

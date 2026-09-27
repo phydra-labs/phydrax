@@ -13,7 +13,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -53,7 +54,7 @@ class CertifiedImplicitBody(StrictModule, NonTrainableState):
         simplex_certificate: SimplexCertificate,
         certificate_id: str,
         /,
-    ):
+    ) -> None:
         identifier = str(certificate_id)
         if (
             not isinstance(body, EmbeddedLevelSetBody)
@@ -120,7 +121,7 @@ class AdaptiveImplicitSamplingPlan(StrictModule, NonTrainableState):
         *,
         maximum_depth: int = 6,
         interval_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         hierarchy = canonicalize_patch_hierarchy(topology)
         bodies_ = tuple(bodies)
         depth = int(maximum_depth)
@@ -154,7 +155,7 @@ class AdaptiveImplicitSamplingPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _leaf_cells(self):
+    def _leaf_cells(self) -> tuple[tuple[int, tuple[int, ...], str], ...]:
         cells = []
         for level in self.hierarchy.levels:
             for bucket in level.buckets:

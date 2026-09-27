@@ -4,12 +4,14 @@
 
 """Evaluate plane-stress and finite-strain J2 MPM material contracts."""
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def run():
+def run() -> Any:
     neo_parameters = (
         phx.applications.solid_mechanics.NeoHookeanParameters.from_shear_bulk(3.0, 11.0)
     )

@@ -5,11 +5,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...ein import contract
 from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
@@ -71,7 +73,7 @@ class RigidBodyFlightSystem:
         inertia_body_kg_m2: ArrayLike,
         /,
         *,
-        gravity_inertial_m_s2: ArrayLike = (0.0, 0.0, -9.80665),
+        gravity_inertial_m_s2: ArrayLike | Sequence[float] = (0.0, 0.0, -9.80665),
         tolerance: float = 1e-10,
     ) -> RigidBodyFlightSystem:
         inertia = np.asarray(inertia_body_kg_m2, dtype=np.float64)

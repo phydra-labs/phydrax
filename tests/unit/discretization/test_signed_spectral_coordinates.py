@@ -76,6 +76,7 @@ def test_signed_coordinates_preserve_real_and_complex_precision(
         coefficient_dtype=coefficient_dtype,
         layout_id=f"precision-{jnp.dtype(coefficient_dtype).name}",
     )
+    # ty: ignore[invalid-argument-type]
     real = jnp.asarray((1.25, -2.0, 0.75), dtype=coordinate_dtype)
 
     state = coordinates.from_real_coordinates(real)
@@ -112,6 +113,7 @@ def test_signed_coordinates_reject_invalid_involution_maps(
             (3,),
             np.asarray(partners),
             np.asarray(signs),
+            # ty: ignore[invalid-argument-type]
             valid_mask=valid_mask,
             coefficient_dtype=jnp.complex128,
             layout_id="invalid-map",

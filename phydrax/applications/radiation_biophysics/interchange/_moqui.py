@@ -13,6 +13,7 @@ from io import BytesIO
 import numpy as np
 
 from ...._fingerprint import canonical_fingerprint
+from ...._validation import positive_integer
 from ....interchange import (
     AdapterFormatProfile,
     AdapterLoss,
@@ -24,7 +25,6 @@ from ....interchange import (
 from ....qualification import ReferenceArtifactManifest
 from .._scores import (
     _identifier,
-    _positive_integer,
     _UNCERTAINTY_KINDS,
     ExternalRadiationRunIdentity,
     ExternalRadiationScoreResult,
@@ -264,8 +264,7 @@ class MoquiArrayProfile:
         if not isinstance(self.score, RadiationScoreDefinition):
             raise TypeError("score must be RadiationScoreDefinition.")
         storage_shape = tuple(
-            _positive_integer(value, "storage shape entry")
-            for value in self.storage_shape
+            positive_integer(value, "storage shape entry") for value in self.storage_shape
         )
         if len(storage_shape) != len(self.score.shape):
             raise ValueError("Storage rank must match the pinned score rank.")
@@ -312,8 +311,8 @@ class MoquiArrayProfile:
             "assumed-independent",
         ):
             raise ValueError("Moqui uncertainty requires upstream correlation evidence.")
-        histories = _positive_integer(self.history_count, "history_count")
-        batches = _positive_integer(self.batch_count, "batch_count")
+        histories = positive_integer(self.history_count, "history_count")
+        batches = positive_integer(self.batch_count, "batch_count")
         losses = tuple(self.declared_losses)
         if any(not isinstance(loss, AdapterLoss) for loss in losses):
             raise TypeError("declared_losses must contain AdapterLoss values.")

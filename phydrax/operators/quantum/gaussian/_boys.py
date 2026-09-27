@@ -12,8 +12,9 @@ from math import factorial
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.scipy.special import gammainc, gammaln
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 
 def _boys_values_impl(maximum: int, value: Array, /) -> Array:
@@ -57,7 +58,11 @@ def boys_values(maximum_order: int, argument: ArrayLike, /) -> Array:
 
 
 @boys_values.defjvp
-def _boys_values_jvp(maximum_order: int, primals, tangents):
+def _boys_values_jvp(
+    maximum_order: int,
+    primals: tuple[ArrayLike],
+    tangents: tuple[ArrayLike],
+) -> tuple[Array, Array]:
     (argument,), (argument_tangent,) = primals, tangents
     extended = _boys_values_impl(maximum_order + 1, jnp.asarray(argument))
     values = extended[..., :-1]

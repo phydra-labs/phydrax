@@ -5,11 +5,11 @@
 from __future__ import annotations
 
 from math import prod
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax.graph._query_batch import query_neighbors
@@ -20,8 +20,10 @@ from phydrax.nn.layers._linear import Linear
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
+from .....typing import parse
 
-LocalGlobalFusion = Literal["sum", "concat"]
+
+LocalGlobalFusion: TypeAlias = Literal["sum", "concat"]
 
 
 def _coordinates(
@@ -149,7 +151,7 @@ class LocalIntegralOperator(AbstractOperatorModel):
         source_key: str | None = None,
         query_chunk_size: int = 256,
         max_neighbors: int | None = None,
-    ):
+    ) -> None:
         self.kernel_model = kernel_model
         self.coord_dim = int(coord_dim)
         self.in_size = in_channels
@@ -290,7 +292,7 @@ class LocalDifferentialOperator(AbstractOperatorModel):
         source_key: str | None = None,
         query_chunk_size: int = 256,
         max_neighbors: int | None = None,
-    ):
+    ) -> None:
         self.kernel_model = kernel_model
         self.coord_dim = int(coord_dim)
         self.radius = float(radius)
@@ -443,7 +445,7 @@ class LocalGlobalOperator(AbstractOperatorModel):
         local_operator: AbstractOperatorModel,
         fusion: LocalGlobalFusion = "sum",
         mixer: Linear | None = None,
-    ):
+    ) -> None:
         self.global_operator = global_operator
         self.local_operator = local_operator
         self.fusion = fusion
@@ -452,8 +454,7 @@ class LocalGlobalOperator(AbstractOperatorModel):
         self.out_size = global_operator.out_size
         if global_operator.out_size != local_operator.out_size:
             raise ValueError("Local and global operator output sizes must match.")
-        if fusion not in ("sum", "concat"):
-            raise ValueError("fusion must be 'sum' or 'concat'.")
+        fusion = parse(fusion, LocalGlobalFusion, "fusion")
         channels = _get_size(self.out_size)
         if fusion == "concat":
             if mixer is None:

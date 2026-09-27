@@ -11,7 +11,7 @@ import phydrax as phx
 from phydrax.discretization import iga
 
 
-def test_public_isogeometric_workflow_compiles_and_executes():
+def test_public_isogeometric_workflow_compiles_and_executes() -> None:
     grid = iga.BSplineGrid.open_uniform(2, 1)
     coordinates = grid.greville_abscissae
     xx, yy = jnp.meshgrid(coordinates, coordinates, indexing="ij")

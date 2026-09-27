@@ -28,6 +28,7 @@ from ...operators.periodic import (
     PeriodicTimeReversalPlan,
     PeriodicZ2Plan,
     PeriodicZ2Result,
+    PreparedPeriodicOrbitalPencil,
 )
 from ._lattice import HaldaneModelPlan, HofstadterModelPlan, KaneMeleModelPlan
 
@@ -42,7 +43,7 @@ class HallBulkTopologyResult(StrictModule, NonTrainableState):
 
 
 def _chern_result(
-    prepared,
+    prepared: PreparedPeriodicOrbitalPencil,
     mesh_shape: tuple[int, int],
     occupied_bands: Sequence[int],
     /,
@@ -118,7 +119,9 @@ def evaluate_hofstadter_topology(
     )
 
 
-def _time_reversal_mesh(prepared, mesh_shape: tuple[int, int]) -> ReciprocalMeshPlan:
+def _time_reversal_mesh(
+    prepared: PreparedPeriodicOrbitalPencil, mesh_shape: tuple[int, int]
+) -> ReciprocalMeshPlan:
     shape = tuple(int(value) for value in mesh_shape)
     if len(shape) != 2 or any(value < 4 or value % 2 for value in shape):
         raise ValueError(

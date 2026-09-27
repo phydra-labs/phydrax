@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import isfinite
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, cast, Literal, Protocol, runtime_checkable
 
 import diffrax as dfx
 import equinox as eqx
@@ -14,19 +14,21 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optimistix as optx
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import HeldInputPolicy, TimeGrid
-from ...linalg import prepare_real_coordinate_tree
+from ...linalg import prepare_real_coordinate_tree, PreparedRealCoordinateTree
 from ...qualification import CapabilityProfile, SupportTuple
 from ...solver import (
     DAEConsistencyPolicy,
     DAEEventPlan,
     DAEEventStatus,
+    DAEInitializationResult,
     DAEInitializationSpec,
     DAEInitializationStatus,
     DAEResetMap,
@@ -34,12 +36,14 @@ from ...solver import (
     DAEStatus,
     DAETerminationStatus,
     DifferentialAlgebraicProblem,
+    DifferentialAlgebraicSolution,
     DifferentialProblem,
     DifferentialSolution,
     HybridGuardPlan,
     HybridSchedulePlan,
     initialize_dae,
     prepare_dae,
+    PreparedDAESolve,
     ScheduledHybridGuard,
     solve_dae,
     solve_diffrax,
@@ -122,7 +126,7 @@ class BatteryOutputPlan(StrictModule, NonTrainableState):
     names: tuple[str, ...] = eqx.field(static=True)
     output_plan_id: str = eqx.field(static=True)
 
-    def __init__(self, names: Sequence[str], /):
+    def __init__(self, names: Sequence[str], /) -> None:
         resolved = tuple(_identifier(name, "Battery output name") for name in names)
         if not resolved:
             raise ValueError("BatteryOutputPlan requires at least one selected output.")
@@ -161,7 +165,7 @@ class BatteryDiffraxSolvePlan(StrictModule, NonTrainableState):
         event_relative_tolerance: float = 1.0e-7,
         event_absolute_tolerance: float = 1.0e-9,
         maximum_steps: int = 4096,
-    ):
+    ) -> None:
         solver_ = dfx.Tsit5() if solver is None else solver
         if not isinstance(solver_, dfx.AbstractSolver):
             raise TypeError("Battery ODE solver must be a Diffrax AbstractSolver.")
@@ -270,7 +274,7 @@ class BatteryDAESolvePlan(StrictModule, NonTrainableState):
         initial_guard_policy: Literal[
             "terminate-nondifferentiable"
         ] = "terminate-nondifferentiable",
-    ):
+    ) -> None:
         resolved = DAESolvePolicy() if policy is None else policy
         if not isinstance(resolved, DAESolvePolicy):
             raise TypeError("Battery DAE policy must be DAESolvePolicy.")
@@ -346,7 +350,7 @@ class BatteryExperimentPlan(StrictModule, NonTrainableState):
         capability_profile: CapabilityProfile,
         support_tuple: SupportTuple,
         /,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractBatteryModelAdapter):
             raise TypeError("model must implement AbstractBatteryModelAdapter.")
         if not isinstance(protocol, BatteryProtocolPlan):
@@ -453,7 +457,7 @@ class BatteryRuntimeInputs(StrictModule):
         *,
         protocol_id: str,
         observation_input_policy: HeldInputPolicy,
-    ):
+    ) -> None:
         if not isinstance(input_policy, HeldInputPolicy):
             raise TypeError("input_policy must be HeldInputPolicy.")
         if input_policy.node_side != "right":
@@ -523,7 +527,7 @@ class PreparedBatteryExperiment(StrictModule, NonTrainableState):
         native_guards: tuple[HybridGuardPlan, ...],
         admission: Any,
         distribution_id: str | None,
-    ):
+    ) -> None:
         self.plan = plan
         self.prepared_model = prepared_model
         self.transition_times_s = transition_times_s
@@ -557,7 +561,14 @@ class PreparedBatteryExperiment(StrictModule, NonTrainableState):
         )
 
 
-def _model_current(adapter, prepared_model, times, states, runtime, /):
+def _model_current(
+    adapter: AbstractBatteryModelAdapter,
+    prepared_model: Any,
+    times: ArrayLike,
+    states: PyTree,
+    runtime: BatteryRuntimeInputs,
+    /,
+) -> Array:
     current = getattr(adapter, "current", None)
     if callable(current):
         values = jnp.asarray(current(prepared_model, times, states, runtime))
@@ -624,7 +635,7 @@ class _BatteryInitialGuardCondition(StrictModule, NonTrainableState):
         if self.segment_index is not None:
             at_start = at_start & (step == self.segment_index)
 
-        def check():
+        def check() -> Array:
             restarted_runtime = eqx.tree_at(
                 lambda value: value.observation_input_policy, args, args.input_policy
             )
@@ -895,7 +906,7 @@ def _validated_problem(
 
 
 def _safe_states(states: PyTree, initial_state: PyTree, valid: Array, /) -> PyTree:
-    def sanitize(values, initial):
+    def sanitize(values: ArrayLike, initial: ArrayLike) -> Array:
         values_ = jnp.asarray(values)
         initial_ = jnp.asarray(initial)
         mask = valid.reshape(valid.shape + (1,) * (values_.ndim - valid.ndim))
@@ -1029,7 +1040,7 @@ def _selected_outputs(
         )
         root_state = native_solution.terminal_state
 
-        def repair(values, root):
+        def repair(values: ArrayLike, root: ArrayLike) -> Array:
             values_ = jnp.asarray(values)
             mask = coincident.reshape(
                 coincident.shape + (1,) * (values_.ndim - coincident.ndim)
@@ -1069,7 +1080,9 @@ def _selected_outputs(
     if isinstance(native_solution, BatteryDAESolution):
         forcing_currents = native_solution.forcing_currents_a[prepared.save_indices]
 
-        def observe_one(time, state, current):
+        def observe_one(
+            time: Array, state: Array, current: Array
+        ) -> tuple[BatteryModelOutput, Array]:
             policy = HeldInputPolicy(
                 runtime.input_policy.times,
                 jnp.broadcast_to(current, (len(prepared.plan.protocol.steps), 1)),
@@ -1130,7 +1143,7 @@ def _selected_outputs(
     return outputs, domain_ok, finite_ok
 
 
-def _identity_coordinates(state: PyTree, /):
+def _identity_coordinates(state: PyTree, /) -> PreparedRealCoordinateTree:
     leaves, treedef = jax.tree.flatten(state)
     maps = jax.tree.unflatten(treedef, [None] * len(leaves))
     return prepare_real_coordinate_tree(state, maps)
@@ -1305,7 +1318,9 @@ class _BatteryDAEProtocolGuard(StrictModule, NonTrainableState):
     threshold_index: int = eqx.field(static=True)
     polarity: int = eqx.field(static=True)
 
-    def __call__(self, time, state, runtime, /):
+    def __call__(
+        self, time: Array, state: Array, runtime: BatteryRuntimeInputs, /
+    ) -> Array:
         if self.output_index < 0:
             value = _model_current(
                 self.adapter, self.prepared_model, time, state, runtime
@@ -1318,13 +1333,18 @@ class _BatteryDAEProtocolGuard(StrictModule, NonTrainableState):
         return self.polarity * (value - runtime.stop_thresholds[self.threshold_index])
 
 
-def _identity_dae_reset(time, state, rate, args, /):
+def _identity_dae_reset(
+    time: Array, state: Array, rate: Array, args: Any, /
+) -> tuple[Array, Array]:
     del time, args
     return state, rate
 
 
-def _dae_event_plan(prepared, segment_index, /):
-    solve_plan = prepared.plan.native_solve_plan
+def _dae_event_plan(
+    prepared: PreparedBatteryExperiment, segment_index: int, /
+) -> tuple[DAEEventPlan | None, tuple[int, ...]]:
+    # DAE event plans are only built for DAE experiments, which own a DAE solve plan.
+    solve_plan = cast(BatteryDAESolvePlan, prepared.plan.native_solve_plan)
     guards = []
     indices = []
     for index, guard in enumerate(prepared.plan.protocol.stop_guards):
@@ -1375,7 +1395,9 @@ def _dae_event_plan(prepared, segment_index, /):
     ), tuple(indices)
 
 
-def _neutral_dae_solution(native_prepared, runtime, /):
+def _neutral_dae_solution(
+    native_prepared: PreparedDAESolve, runtime: BatteryRuntimeInputs, /
+) -> DifferentialAlgebraicSolution:
     """Allocate inactive native slots without evaluating a physical trajectory."""
     shape = eqx.filter_eval_shape(lambda: solve_dae(native_prepared, args=runtime))
     return jax.tree.map(
@@ -1388,7 +1410,13 @@ def _neutral_dae_solution(native_prepared, runtime, /):
     )
 
 
-def _initial_guard_margins(event_plan, time, initialization, runtime, /):
+def _initial_guard_margins(
+    event_plan: DAEEventPlan,
+    time: Array,
+    initialization: DAEInitializationResult,
+    runtime: BatteryRuntimeInputs,
+    /,
+) -> Array:
     return jax.lax.cond(
         initialization.valid,
         lambda: jnp.stack(
@@ -1403,7 +1431,13 @@ def _initial_guard_margins(event_plan, time, initialization, runtime, /):
     )
 
 
-def _initial_dae_solution(native_prepared, runtime, initialization, event_plan, /):
+def _initial_dae_solution(
+    native_prepared: PreparedDAESolve,
+    runtime: BatteryRuntimeInputs,
+    initialization: DAEInitializationResult,
+    event_plan: DAEEventPlan | None,
+    /,
+) -> DifferentialAlgebraicSolution:
     """Represent a genuine initial consistency failure or immediate terminal guard."""
     solution = _neutral_dae_solution(native_prepared, runtime)
     time = native_prepared.time_grid.times[0]
@@ -1585,8 +1619,15 @@ def _initial_dae_solution(native_prepared, runtime, initialization, event_plan, 
     )
 
 
-def _solve_dae_segments(prepared, problem, initial_state, runtime, /):
-    solve_plan = prepared.plan.native_solve_plan
+def _solve_dae_segments(
+    prepared: PreparedBatteryExperiment,
+    problem: DifferentialAlgebraicProblem,
+    initial_state: ArrayLike,
+    runtime: BatteryRuntimeInputs,
+    /,
+) -> BatteryDAESolution:
+    # The caller has already verified that DAE experiments own a DAE solve plan.
+    solve_plan = cast(BatteryDAESolvePlan, prepared.plan.native_solve_plan)
     boundaries = np.asarray(prepared.transition_times_s)
     requested = np.asarray(prepared.integration_time_grid.times)
     sample_count = requested.size
@@ -1671,7 +1712,9 @@ def _solve_dae_segments(prepared, problem, initial_state, runtime, /):
             event_plan=event_plan,
         )
 
-        def run_segment():
+        def run_segment() -> tuple[
+            DifferentialAlgebraicSolution, DAEInitializationResult, Array
+        ]:
             initialization = initialize_dae(
                 local_problem,
                 jnp.asarray(start),

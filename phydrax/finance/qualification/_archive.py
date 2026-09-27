@@ -12,7 +12,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._array_archive import (
     array_collection_digest,
@@ -24,17 +24,10 @@ from ..._array_archive import (
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import canonical_identifier
 from ...lifecycle._archive import payload_digest
 from ...lifecycle._models import ResultManifest
 from ...qualification._registry import SupportTuple
-
-
-def _text(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    if not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty canonical identifier.")
-    return value
 
 
 def _identifiers(
@@ -42,7 +35,7 @@ def _identifiers(
 ) -> tuple[str, ...]:
     if not isinstance(values, Sequence) or isinstance(values, str):
         raise TypeError(f"{name} must be a sequence of strings.")
-    result = tuple(sorted(_text(value, name) for value in values))
+    result = tuple(sorted(canonical_identifier(value, name) for value in values))
     if not allow_empty and not result:
         raise ValueError(f"{name} must not be empty.")
     if len(set(result)) != len(result):
@@ -55,7 +48,7 @@ def _named_arrays(values: Mapping[str, Any], /) -> tuple[tuple[str, np.ndarray],
         raise TypeError("arrays must be a non-empty mapping of named physical arrays.")
     result: list[tuple[str, np.ndarray]] = []
     for name, value in values.items():
-        name_ = _text(name, "array name")
+        name_ = canonical_identifier(name, "array name")
         array = np.asarray(value)
         if array.dtype.hasobject:
             raise TypeError(f"Finance result array {name_!r} cannot have object dtype.")
@@ -92,6 +85,12 @@ def _manifest_record(manifest: ResultManifest, /) -> dict[str, object]:
     }
 
 
+def _archived_sequence(value: object, /) -> Sequence[object]:
+    if not isinstance(value, Sequence) or isinstance(value, str):
+        raise TypeError("Archived result manifest collections must be sequences.")
+    return value
+
+
 def _manifest_from_record(record: Mapping[str, object], /) -> ResultManifest:
     expected = {
         "kind",
@@ -106,22 +105,11 @@ def _manifest_from_record(record: Mapping[str, object], /) -> ResultManifest:
     }
     if set(record) != expected or record["kind"] != "result-manifest":
         raise ValueError("Archived finance result manifest fields are not canonical.")
-    fields_record = record["fields"]
-    payloads_record = record["payloads"]
-    evidence_record = record["evidence_ids"]
-    diagnostics_record = record["diagnostic_ids"]
-    semantics_record = record["sampled_semantics"]
-    sequences = (
-        fields_record,
-        payloads_record,
-        evidence_record,
-        diagnostics_record,
-        semantics_record,
-    )
-    if any(
-        not isinstance(value, Sequence) or isinstance(value, str) for value in sequences
-    ):
-        raise TypeError("Archived result manifest collections must be sequences.")
+    fields_record = _archived_sequence(record["fields"])
+    payloads_record = _archived_sequence(record["payloads"])
+    evidence_record = _archived_sequence(record["evidence_ids"])
+    diagnostics_record = _archived_sequence(record["diagnostic_ids"])
+    semantics_record = _archived_sequence(record["sampled_semantics"])
     fields: list[tuple[str, str, str]] = []
     for item in fields_record:
         if not isinstance(item, Sequence) or isinstance(item, str) or len(item) != 3:
@@ -189,7 +177,7 @@ class FinanceArchiveRecord(StrictModule, NonTrainableState):
         law_ids: Sequence[str],
         archive_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(result_manifest, ResultManifest):
             raise TypeError("result_manifest must be a ResultManifest.")
         values = _named_arrays(arrays)
@@ -199,9 +187,9 @@ class FinanceArchiveRecord(StrictModule, NonTrainableState):
         self.array_names = tuple(name for name, _ in values)
         self.array_values = tuple(jnp.asarray(value) for _, value in values)
         self.support_tuples = _support_tuples(support_tuples)
-        self.replay_id = _text(replay_id, "replay_id")
+        self.replay_id = canonical_identifier(replay_id, "replay_id")
         self.law_ids = _identifiers(law_ids, "law_ids", allow_empty=True)
-        self.archive_id = _text(archive_id, "archive_id")
+        self.archive_id = canonical_identifier(archive_id, "archive_id")
 
     @property
     def arrays(self) -> Mapping[str, Array]:
@@ -227,13 +215,16 @@ def finance_result_manifest(
         raise TypeError("field_units must be a mapping.")
     if set(field_units) != {name for name, _ in values}:
         raise ValueError("field_units must cover every physical result array exactly.")
-    units = {name: _text(field_units[name], f"unit for {name}") for name, _ in values}
+    units = {
+        name: canonical_identifier(field_units[name], f"unit for {name}")
+        for name, _ in values
+    }
     payloads = {name: payload_digest(value) for name, value in values}
     evidence = _identifiers(evidence_ids, "evidence_ids", allow_empty=True)
     diagnostics = _identifiers(diagnostic_ids, "diagnostic_ids", allow_empty=True)
     return ResultManifest(
-        _text(result_id, "result_id"),
-        _text(run_id, "run_id"),
+        canonical_identifier(result_id, "result_id"),
+        canonical_identifier(run_id, "run_id"),
         units,
         payloads,
         evidence_ids=evidence,
@@ -251,7 +242,7 @@ def _archive_content(
 ) -> dict[str, object]:
     supports = _support_tuples(support_tuples)
     laws = _identifiers(law_ids, "law_ids", allow_empty=True)
-    replay = _text(replay_id, "replay_id")
+    replay = canonical_identifier(replay_id, "replay_id")
     _verify_arrays(result_manifest, arrays)
     return {
         "kind": "finance-result-archive",

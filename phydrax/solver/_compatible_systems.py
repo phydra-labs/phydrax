@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -47,7 +49,7 @@ class CompatibleElasticityDynamics(StrictModule, NonTrainableState):
         *,
         wave_speed: float = 1.0,
         components: int = 1,
-    ):
+    ) -> None:
         speed = float(wave_speed)
         components_ = int(components)
         if (
@@ -68,7 +70,9 @@ class CompatibleElasticityDynamics(StrictModule, NonTrainableState):
             }
         )
 
-    def _apply_components(self, function, values: Array, /) -> Array:
+    def _apply_components(
+        self, function: Callable[[Array], Array], values: Array, /
+    ) -> Array:
         return (
             function(values)
             if self.components == 1
@@ -135,7 +139,9 @@ class CompatibleIncompressibleProjection(StrictModule, NonTrainableState):
     poisson_pseudoinverse: Array
     projection_id: str = eqx.field(static=True)
 
-    def __init__(self, bridge: StructuredCochainBridge, /, *, size_budget: int = 4096):
+    def __init__(
+        self, bridge: StructuredCochainBridge, /, *, size_budget: int = 4096
+    ) -> None:
         if not isinstance(bridge, StructuredCochainBridge) or bridge.dimension < 2:
             raise ValueError(
                 "Incompressible projection requires a multidimensional bridge."
@@ -197,10 +203,15 @@ class CompatibleIdealMHDInductionDynamics(StrictModule):
     """Constrained magnetic induction B'=-dE with caller-supplied ideal Ohm field."""
 
     bridge: StructuredCochainBridge
-    electromotive_circulation: Any
+    electromotive_circulation: Callable[[Array, Array, Any], ArrayLike]
     dynamics_id: str = eqx.field(static=True)
 
-    def __init__(self, bridge: StructuredCochainBridge, electromotive_circulation, /):
+    def __init__(
+        self,
+        bridge: StructuredCochainBridge,
+        electromotive_circulation: Callable[[Array, Array, Any], ArrayLike],
+        /,
+    ) -> None:
         if (
             not isinstance(bridge, StructuredCochainBridge)
             or bridge.dimension != 3
@@ -259,7 +270,9 @@ class CompatibleVariableDensityProjection(StrictModule, NonTrainableState):
     size_budget: int = eqx.field(static=True)
     projection_id: str = eqx.field(static=True)
 
-    def __init__(self, bridge: StructuredCochainBridge, /, *, size_budget: int = 2048):
+    def __init__(
+        self, bridge: StructuredCochainBridge, /, *, size_budget: int = 2048
+    ) -> None:
         if not isinstance(bridge, StructuredCochainBridge) or bridge.dimension < 2:
             raise ValueError(
                 "Variable-density projection requires multidimensional bridge."
@@ -312,7 +325,7 @@ class CompatibleVariableDensityProjection(StrictModule, NonTrainableState):
         )
         inverse_density = self._edge_inverse_density(density_)
 
-        def poisson_action(pressure):
+        def poisson_action(pressure: Array) -> Array:
             return self.bridge.codifferential(
                 1,
                 inverse_density * self.bridge.exterior_derivative(0, pressure),
@@ -367,7 +380,7 @@ class CompatiblePoroelasticDynamics(StrictModule, NonTrainableState):
         wave_speed: float = 1.0,
         hydraulic_diffusivity: float = 0.1,
         coupling: float = 0.2,
-    ):
+    ) -> None:
         if (
             not isinstance(bridge, StructuredCochainBridge)
             or not np.isfinite(wave_speed)
@@ -415,7 +428,7 @@ class CompatibleThermoelasticDynamics(StrictModule, NonTrainableState):
         wave_speed: float = 1.0,
         thermal_diffusivity: float = 0.1,
         expansion: float = 0.2,
-    ):
+    ) -> None:
         if (
             not isinstance(bridge, StructuredCochainBridge)
             or not np.isfinite(wave_speed)

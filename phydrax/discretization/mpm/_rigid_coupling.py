@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -25,6 +26,7 @@ from ..particle._rigid_body import (
     RigidBodyKinematics,
     RigidBodyLoad,
 )
+from ..splatting import ParticleGridSplatState
 from ._dynamics import PreparedMPMDynamics
 from ._types import MPMRuntimeState, MPMStepResult
 
@@ -89,7 +91,7 @@ def _stable_keys(
     return keys
 
 
-def _route_digest(route_state, /) -> Array:
+def _route_digest(route_state: ParticleGridSplatState, /) -> Array:
     slots = jnp.arange(route_state.stencil.indices.shape[1], dtype=jnp.int64)[None, :]
     values = jnp.where(
         route_state.stencil.valid,
@@ -176,7 +178,7 @@ class RigidMPMCouplingPlan(StrictModule, NonTrainableState):
         baumgarte_factor: float = 0.1,
         geometry_tolerance: float = 1.0e-12,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         particle = np.asarray(particle_indices)
         body = np.asarray(body_indices)
         if (
@@ -398,7 +400,7 @@ class PreparedRigidMPMCoupling(StrictModule, NonTrainableState):
         dynamics: PreparedMPMDynamics,
         bodies: PreparedRigidBodySet,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, RigidMPMCouplingPlan):
             raise TypeError("plan must be RigidMPMCouplingPlan.")
         if not isinstance(dynamics, PreparedMPMDynamics):
@@ -490,7 +492,7 @@ class PreparedRigidMPMCoupling(StrictModule, NonTrainableState):
 
     def _certificate(
         self,
-        route_state,
+        route_state: ParticleGridSplatState,
         mpm_state: MPMRuntimeState,
         coupling_state: RigidMPMCouplingState,
         /,
@@ -703,13 +705,13 @@ class PreparedRigidMPMCoupling(StrictModule, NonTrainableState):
             0.0,
         )
 
-        def scatter_grid_force(_):
+        def scatter_grid_force(_: None) -> tuple[Array, Array]:
             result = self.dynamics.splat.scatter_route_payload(
                 routes, particle_grid_payload
             )
             return result.values, result.successful
 
-        def reject_grid_force(_):
+        def reject_grid_force(_: None) -> tuple[Array, Array]:
             output_dtype = self.dynamics.splat.plan.precision.output_dtype
             return (
                 jnp.zeros(

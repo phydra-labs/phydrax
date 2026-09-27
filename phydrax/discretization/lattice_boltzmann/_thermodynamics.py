@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -79,7 +80,7 @@ class PreparedBinaryKineticThermodynamics(StrictModule, NonTrainableState):
         velocity_set: LatticeBoltzmannVelocitySet,
         force_representation: ThermodynamicForceRepresentation,
         /,
-    ):
+    ) -> None:
         if not isinstance(closure, AbstractKineticThermodynamicClosure):
             raise TypeError("closure must implement AbstractKineticThermodynamicClosure.")
         if not isinstance(velocity_set, LatticeBoltzmannVelocitySet):

@@ -4,10 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import cast
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 import phydrax.linalg as la
@@ -16,6 +20,7 @@ from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....discretization import CellGeometrySpec, CellMesh
+from ....discretization._cell_geometry import CellGeometryElement
 from ....discretization.fem import FiniteElementSpec
 from ._roles import CardiacBoundaryProfile
 
@@ -26,7 +31,7 @@ class HighOrderGeometryEpoch(StrictModule, NonTrainableState):
     geometry: Array
     reference: Array
 
-    def __init__(self, geometry: int | ArrayLike, reference: int | ArrayLike, /):
+    def __init__(self, geometry: int | ArrayLike, reference: int | ArrayLike, /) -> None:
         geometry_host = np.asarray(geometry)
         reference_host = np.asarray(reference)
         if geometry_host.shape != () or reference_host.shape != ():
@@ -92,7 +97,7 @@ class HighOrderCardiacGeometryPlan(StrictModule, NonTrainableState):
         minimum_jacobian_determinant: float = 1.0e-10,
         minimum_cell_measure_mm3: float = 1.0e-10,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be a CellMesh.")
         if not isinstance(coordinate_spec, CellGeometrySpec):
@@ -155,7 +160,9 @@ class HighOrderCardiacGeometryPlan(StrictModule, NonTrainableState):
         self.plan_id = _resolved_id("plan_id", plan_id, payload)
 
     def prepare(self, /) -> PreparedHighOrderCardiacGeometry:
-        elements, routes, coordinates = self.coordinate_spec.resolve(self.mesh)
+        resolved, routes, coordinates = self.coordinate_spec.resolve(self.mesh)
+        # The plan constructor admits only qualified FiniteElementSpec coordinates.
+        elements = cast(tuple[FiniteElementSpec, ...], resolved)
         quadrature_points: list[Array] = []
         quadrature_weights: list[Array] = []
         quadrature_gradients: list[Array] = []
@@ -241,7 +248,7 @@ class PreparedHighOrderCardiacGeometry(StrictModule, NonTrainableState):
         qualification_gradients: tuple[Array, ...],
         quadrature_orders: tuple[int, ...],
         prepared_id: str,
-    ):
+    ) -> None:
         if not isinstance(plan, HighOrderCardiacGeometryPlan):
             raise TypeError("plan must be a HighOrderCardiacGeometryPlan.")
         block_count = len(plan.mesh.blocks)
@@ -558,14 +565,15 @@ class PreparedHighOrderCardiacGeometry(StrictModule, NonTrainableState):
 
 
 def _validate_quadratic_coordinate_element(
-    cell_kind: str, element: FiniteElementSpec, /
+    cell_kind: str, element: CellGeometryElement, /
 ) -> None:
     expected_dofs = 10 if cell_kind == "tetrahedron" else 27
     expected_family = (
         "SimplexLagrange" if cell_kind == "tetrahedron" else "TensorProductLagrange"
     )
     if (
-        element.cell_kind != cell_kind
+        not isinstance(element, FiniteElementSpec)
+        or element.cell_kind != cell_kind
         or element.degree != 2
         or element.family != expected_family
         or element.conformity != "H1"
@@ -616,7 +624,7 @@ def _reference_quadrature(cell_kind: str, order: int, /) -> tuple[Array, Array]:
     )
 
 
-def _resolved_id(name: str, value: str | None, payload: dict[str, object], /) -> str:
+def _resolved_id(name: str, value: str | None, payload: Mapping[str, object], /) -> str:
     if value is None:
         return canonical_fingerprint(payload)
     identifier = str(value)

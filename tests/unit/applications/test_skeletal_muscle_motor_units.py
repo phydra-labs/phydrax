@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -18,7 +20,7 @@ from phydrax.applications.skeletal_muscle.motor_units import (
 )
 
 
-def _prepared(*, capacity: int = 8):
+def _prepared(*, capacity: int = 8) -> Any:
     return FuglevandWinterPatla1993Plan(
         32,
         event_capacity_per_unit=capacity,
@@ -26,7 +28,7 @@ def _prepared(*, capacity: int = 8):
     ).prepare()
 
 
-def _random(state, key=jr.key(17)):
+def _random(state: Any, key: Any = jr.key(17)) -> Any:
     return FuglevandWinterPatla1993RandomInput(
         key,
         state.random_step,
@@ -34,7 +36,7 @@ def _random(state, key=jr.key(17)):
     )
 
 
-def test_source_distributions_and_truncated_normal_statistics():
+def test_source_distributions_and_truncated_normal_statistics() -> None:
     prepared = _prepared(capacity=32)
     state = prepared.initialize()
     candidate = prepared.evaluate(
@@ -56,7 +58,7 @@ def test_source_distributions_and_truncated_normal_statistics():
     assert abs(scores.std(ddof=1) - 1.0) < 0.1
 
 
-def test_stochastic_step_replays_exactly_and_commits_once():
+def test_stochastic_step_replays_exactly_and_commits_once() -> None:
     prepared = _prepared()
     state = prepared.initialize()
     random_input = _random(state)
@@ -78,7 +80,7 @@ def test_stochastic_step_replays_exactly_and_commits_once():
     assert int(stale.random_step) == 1
 
 
-def test_event_overflow_rolls_back_whole_state_including_rng_counter():
+def test_event_overflow_rolls_back_whole_state_including_rng_counter() -> None:
     prepared = _prepared(capacity=1)
     state = prepared.initialize()
     candidate = prepared.evaluate(
@@ -98,7 +100,7 @@ def test_event_overflow_rolls_back_whole_state_including_rng_counter():
     np.testing.assert_array_equal(rolled_back.motor_unit_force, state.motor_unit_force)
 
 
-def test_force_trace_has_finite_nonzero_variability():
+def test_force_trace_has_finite_nonzero_variability() -> None:
     prepared = _prepared(capacity=4)
     state = prepared.initialize()
     key = jr.key(101)
@@ -121,12 +123,12 @@ def test_force_trace_has_finite_nonzero_variability():
     assert float(evidence.coefficient_of_variation) > 0.0
 
 
-def test_event_topology_and_times_are_excluded_from_ad():
+def test_event_topology_and_times_are_excluded_from_ad() -> None:
     prepared = _prepared()
     state = prepared.initialize()
     random_input = _random(state)
 
-    def endpoint_force(excitation):
+    def endpoint_force(excitation: Any) -> Any:
         candidate = prepared.evaluate(state, excitation, 10.0, random_input)
         return candidate.evidence.total_force_arbitrary
 

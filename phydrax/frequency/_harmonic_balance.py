@@ -1,13 +1,19 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+from collections.abc import Callable
+
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 def harmonic_balance_residual(
-    coefficients: ArrayLike, base_angular_frequency_rad_s: float, rhs, /
-):
+    coefficients: ArrayLike,
+    base_angular_frequency_rad_s: float,
+    rhs: Callable[[Array, Array], ArrayLike],
+    /,
+) -> Array:
     coefficients_ = jnp.asarray(coefficients)
     sample_count = coefficients_.shape[0]
     state = jnp.fft.ifft(coefficients_, axis=0)

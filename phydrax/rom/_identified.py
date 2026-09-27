@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -25,7 +26,7 @@ def _encode_flat(basis: ReducedBasisArtifact, values: Array, offset: Array, /) -
     columns = basis.basis_matrix
     space = basis.subspace.space
 
-    def encode_one(value):
+    def encode_one(value: Array) -> Array:
         vector = space.unflatten(value)
         return jax.vmap(
             lambda column: space.inner(space.unflatten(column), vector),
@@ -128,7 +129,7 @@ class IdentifiedReducedDynamics(StrictModule, NonTrainableState):
         *,
         identification_id: str,
         partition_id: str,
-    ):
+    ) -> None:
         if not isinstance(basis, ReducedBasisArtifact) or basis.role != "state":
             raise TypeError("basis must be a state ReducedBasisArtifact.")
         if not isinstance(system, (ContinuousSystem, DiscreteSystem)):

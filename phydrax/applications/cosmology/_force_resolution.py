@@ -9,7 +9,8 @@ from itertools import product
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -53,7 +54,7 @@ class PeriodicImageForcePlan(StrictModule, NonTrainableState):
         image_shells: int = 1,
         absolute_tolerance: float = 1.0e-6,
         relative_tolerance: float = 1.0e-3,
-    ):
+    ) -> None:
         lengths = tuple(float(value) for value in box_size)
         gravity = float(gravitational_constant)
         epsilon = float(softening)

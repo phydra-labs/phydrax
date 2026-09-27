@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -33,6 +35,7 @@ from phydrax.applications.cardiovascular.mechanics._materials import (
 )
 from phydrax.applications.cardiovascular.mechanics._supports import (
     BasalSupport,
+    cardiac_support_functional,
     EpicardialSupport,
     PericardialSupport,
     VascularSupport,
@@ -50,6 +53,7 @@ from phydrax.discretization import (
     MixedFiniteElementConstraintPlan,
     PressureGaugePolicy,
 )
+from phydrax.variational import FunctionalContext, LocalFieldJet, LocalGeometry
 
 
 def _anatomy_frame() -> CardiacMaterialFrame:
@@ -83,7 +87,7 @@ def _mixed_hexahedral_mesh() -> CellMesh:
     return CellMesh(coordinates, (block,))
 
 
-def _energies():
+def _energies() -> Any:
     frame = _anatomy_frame()
     guccione = Guccione1991Energy(
         Guccione1991Parameters(0.9, 8.0, 2.0, 4.0),
@@ -98,7 +102,7 @@ def _energies():
     return guccione, holzapfel
 
 
-def _tetra_surface():
+def _tetra_surface() -> Any:
     coordinates = jnp.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -257,13 +261,17 @@ def test_finite_bulk_variational_functional_retains_material_identity() -> None:
 @pytest.mark.parametrize(
     "support",
     (
+        # ty: ignore[invalid-argument-type]
         BasalSupport((0.0, 0.0, 1.0), 3.0, 2.0, support_id="base"),
+        # ty: ignore[invalid-argument-type]
         VascularSupport((1.0, 0.0, 0.0), 3.0, 2.0, support_id="vessel"),
+        # ty: ignore[invalid-argument-type]
         EpicardialSupport((0.0, 1.0, 0.0), 3.0, 2.0, support_id="epi"),
+        # ty: ignore[invalid-argument-type]
         PericardialSupport((0.0, 1.0, 0.0), 3.0, 2.0, support_id="peri"),
     ),
 )
-def test_named_support_energy_traction_and_tangent(support) -> None:
+def test_named_support_energy_traction_and_tangent(support: Any) -> None:
     displacement = jnp.asarray((0.12, -0.07, 0.03))
     response = support.evaluate(displacement)
     gradient = jax.grad(support.energy_density)(displacement)
@@ -278,11 +286,28 @@ def test_named_support_energy_traction_and_tangent(support) -> None:
 
 def test_support_zero_stiffness_is_exact_traction_free_limit() -> None:
     displacement = jnp.asarray((1.0, -2.0, 3.0))
+    # ty: ignore[invalid-argument-type]
     support = PericardialSupport((0.0, 0.0, 1.0), 0.0, 0.0)
     response = support.evaluate(displacement)
     assert jnp.allclose(response.energy_density, 0.0)
     assert jnp.allclose(response.restoring_traction, jnp.zeros((3,)))
     assert jnp.allclose(response.traction_tangent, jnp.zeros((3, 3)))
+
+
+def test_support_functional_requests_and_integrates_displacement_value() -> None:
+    # ty: ignore[invalid-argument-type]
+    support = BasalSupport((0.0, 0.0, 1.0), 3.0, 2.0, support_id="base")
+    functional = cardiac_support_functional("u", support, region="base-surface")
+    term = functional.terms[0]
+    assert term.fields[0].value
+    assert not term.fields[0].gradient
+    displacement = jnp.asarray(((0.12, -0.07, 0.03),))
+    density = term.density(
+        {"u": LocalFieldJet(value=displacement)},
+        LocalGeometry(jnp.zeros((1, 3))),
+        FunctionalContext(),
+    )
+    assert jnp.allclose(density, support.energy_density(displacement))
 
 
 def test_oriented_volume_derivative_follower_work_and_volume_rate() -> None:
@@ -329,7 +354,7 @@ def test_oriented_volume_derivative_follower_work_and_volume_rate() -> None:
     assert generic_load.semantics.orientation_id == volume_plan.orientation_id
 
 
-def test_continuation_unloaded_reference_recovery_and_checkpoint(tmp_path) -> None:
+def test_continuation_unloaded_reference_recovery_and_checkpoint(tmp_path: Any) -> None:
     unloaded = jnp.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     )
@@ -338,7 +363,7 @@ def test_continuation_unloaded_reference_recovery_and_checkpoint(tmp_path) -> No
     )
     loaded = unloaded + load_displacement
 
-    def forward_path(reference, load_factors, args):
+    def forward_path(reference: Any, load_factors: Any, args: Any) -> Any:
         del args
         coordinates = (
             reference[None, ...] + load_factors[:, None, None] * load_displacement

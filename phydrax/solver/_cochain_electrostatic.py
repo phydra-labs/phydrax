@@ -5,11 +5,13 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Self
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -60,7 +62,7 @@ class CochainElectrostaticBoundaryPlan(StrictModule, NonTrainableState):
         dirichlet_mask: ArrayLike | None = None,
         dirichlet_values: ArrayLike = 0.0,
         neumann_source: ArrayLike = 0.0,
-    ):
+    ) -> None:
         if not isinstance(bridge, StructuredCochainBridge):
             raise TypeError("bridge must be StructuredCochainBridge.")
         if not isinstance(kind, ElectrostaticBoundaryKind):
@@ -130,7 +132,7 @@ class CochainElectrostaticBoundaryPlan(StrictModule, NonTrainableState):
         )
 
     @classmethod
-    def periodic(cls, bridge: StructuredCochainBridge, /):
+    def periodic(cls, bridge: StructuredCochainBridge, /) -> Self:
         return cls(bridge, ElectrostaticBoundaryKind.PERIODIC)
 
     @classmethod
@@ -141,7 +143,7 @@ class CochainElectrostaticBoundaryPlan(StrictModule, NonTrainableState):
         /,
         *,
         mask: ArrayLike | None = None,
-    ):
+    ) -> Self:
         return cls(
             bridge,
             ElectrostaticBoundaryKind.DIRICHLET,
@@ -150,7 +152,7 @@ class CochainElectrostaticBoundaryPlan(StrictModule, NonTrainableState):
         )
 
     @classmethod
-    def neumann(cls, bridge: StructuredCochainBridge, source: ArrayLike = 0.0, /):
+    def neumann(cls, bridge: StructuredCochainBridge, source: ArrayLike = 0.0, /) -> Self:
         return cls(
             bridge,
             ElectrostaticBoundaryKind.NEUMANN,
@@ -227,7 +229,7 @@ class CochainElectrostaticPlan(StrictModule, NonTrainableState):
         compatibility_tolerance: float = 1.0e-10,
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(bridge, StructuredCochainBridge):
             raise TypeError("bridge must be StructuredCochainBridge.")
         if not isinstance(boundary, CochainElectrostaticBoundaryPlan):

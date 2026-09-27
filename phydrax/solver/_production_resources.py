@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.stages import Compiled
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -34,7 +35,7 @@ class ProductionResourceBudget(StrictModule, NonTrainableState):
         maximum_host_bytes: int,
         maximum_device_bytes: int,
         maximum_output_queue_bytes: int,
-    ):
+    ) -> None:
         values = tuple(
             (
                 maximum_compile_units,
@@ -130,8 +131,8 @@ def prepare_production_resource_forecast(
 class PreparedCompilationService:
     """Single-process in-memory executable cache keyed by semantic program IDs."""
 
-    def __init__(self):
-        self._executables: dict[str, Any] = {}
+    def __init__(self) -> None:
+        self._executables: dict[str, Compiled] = {}
 
     @property
     def entry_count(self) -> int:
@@ -142,7 +143,7 @@ class PreparedCompilationService:
         lowered: LoweredOperatorProgram,
         sample_inputs: Mapping[str, Any],
         /,
-    ):
+    ) -> Compiled:
         if not isinstance(lowered, LoweredOperatorProgram):
             raise TypeError("compile requires LoweredOperatorProgram.")
         backend = jax.default_backend()

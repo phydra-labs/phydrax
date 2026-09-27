@@ -11,7 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._numerics._checkpointed_scan import checkpointed_scan
@@ -27,12 +27,16 @@ from ..discretization.mpm import (
     PreparedMPMDynamics,
 )
 from ..equations import MaterialPointArguments
+from ..typing import parse
 
 
 MPMReplayMode: TypeAlias = Literal["full", "step", "block"]
 MPMRetentionMode: TypeAlias = Literal["final", "checkpoints", "trajectory"]
 MPMGradientKind: TypeAlias = Literal["piecewise-discrete", "frozen-surrogate"]
 MPMRolloutLoss = Callable[[MPMRuntimeState, MaterialPointArguments], Array]
+_MPMRolloutCarry: TypeAlias = tuple[MPMRuntimeState, Array]
+_MPMRolloutInterval: TypeAlias = tuple[Array, Array]
+_MPMRolloutOutput: TypeAlias = tuple[MPMParticleState | Array, ...]
 
 
 class MPMReplayPolicy(StrictModule, NonTrainableState):
@@ -46,9 +50,8 @@ class MPMReplayPolicy(StrictModule, NonTrainableState):
         /,
         *,
         block_size: int | None = None,
-    ):
-        if mode not in ("full", "step", "block"):
-            raise ValueError("Unknown MPM replay mode.")
+    ) -> None:
+        mode = parse(mode, MPMReplayMode, "mode")
         size = None if block_size is None else int(block_size)
         if mode == "block":
             if size is None or size <= 0:
@@ -170,7 +173,7 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
         retention: MPMRetentionMode = "final",
         checkpoint_stride: int = 1,
         replay: MPMReplayPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedMPMDynamics):
             raise TypeError("dynamics must be PreparedMPMDynamics.")
         if not isinstance(temporal_mesh, TemporalMesh):
@@ -181,8 +184,7 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Scheduled MPM rollout requires an all-active internal mesh."
             )
-        if retention not in ("final", "checkpoints", "trajectory"):
-            raise ValueError("Unknown MPM retention mode.")
+        retention = parse(retention, MPMRetentionMode, "retention")
         stride = int(checkpoint_stride)
         if stride <= 0:
             raise ValueError("checkpoint_stride must be positive.")
@@ -268,11 +270,13 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
         del initial_time
         retain_states = self.retention != "final"
 
-        def step(carry, interval):
+        def step(
+            carry: _MPMRolloutCarry, interval: _MPMRolloutInterval
+        ) -> tuple[_MPMRolloutCarry, _MPMRolloutOutput]:
             runtime_state, active = carry
             start, width = interval
 
-            def execute(_):
+            def execute(_: None) -> tuple[_MPMRolloutCarry, _MPMRolloutOutput]:
                 current = eqx.error_if(
                     runtime_state.time,
                     jnp.abs(runtime_state.time - start) > tolerance,
@@ -304,7 +308,7 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
                 )
                 return (detail.accepted_state, next_active), output
 
-            def skip(_):
+            def skip(_: None) -> tuple[_MPMRolloutCarry, _MPMRolloutOutput]:
                 dtype = runtime_state.time.dtype
                 common = (
                     runtime_state.time,
@@ -449,7 +453,9 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
         if not np.isfinite(epsilon_) or epsilon_ <= 0.0:
             raise ValueError("epsilon must be finite and positive.")
 
-        def objective(particle_state, argument_values):
+        def objective(
+            particle_state: MPMParticleState, argument_values: MaterialPointArguments
+        ) -> Array:
             runtime = MPMRuntimeState(
                 particle_state,
                 initial_state.time,

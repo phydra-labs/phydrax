@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -48,17 +51,17 @@ from phydrax.linalg import ArraySpace, DenseLinearOperator
 from phydrax.solver._discrete_velocity import ConservativeFiniteVolumeDVMPlan
 
 
-def _mean_equilibrium(state, args):
+def _mean_equilibrium(state: Any, args: Any) -> Any:
     del args
     return jnp.broadcast_to(jnp.mean(state, axis=-1, keepdims=True), state.shape)
 
 
-def _identity_equilibrium(state, args):
+def _identity_equilibrium(state: Any, args: Any) -> Any:
     del args
     return state
 
 
-def _compressible_method(quadrature=None):
+def _compressible_method(quadrature: Any = None) -> Any:
     return SmoothCompressibleD2VKineticMethod(
         d2v17_quadrature() if quadrature is None else quadrature,
         IdealGasMaterial(1.4, 1.0),
@@ -66,7 +69,7 @@ def _compressible_method(quadrature=None):
     )
 
 
-def _conserved_state():
+def _conserved_state() -> Any:
     density = 1.0
     momentum_x = 0.03
     momentum_y = -0.02
@@ -76,7 +79,7 @@ def _conserved_state():
     return jnp.asarray((density, momentum_x, momentum_y, total_energy))
 
 
-def _identity_field_transfer(*, conservative=True, positive=True):
+def _identity_field_transfer(*, conservative: Any = True, positive: Any = True) -> Any:
     space = ArraySpace((3,), dtype=jnp.float64)
     field = DiscreteFieldSpace(
         "departure_values",
@@ -101,7 +104,7 @@ def _identity_field_transfer(*, conservative=True, positive=True):
     )
 
 
-def test_d2v_quadratures_certify_centered_maxwellian_moments():
+def test_d2v_quadratures_certify_centered_maxwellian_moments() -> None:
     d2v17 = d2v17_quadrature()
     d2v37 = d2v37_off_lattice_quadrature()
 
@@ -123,7 +126,7 @@ def test_d2v_quadratures_certify_centered_maxwellian_moments():
     )
 
 
-def test_quadrature_rejects_false_lattice_and_failed_moment_claims():
+def test_quadrature_rejects_false_lattice_and_failed_moment_claims() -> None:
     rule = d2v17_quadrature()
     off_grid_velocities = np.asarray(rule.velocities).copy()
     off_grid_velocities[1, 0] += 0.1
@@ -147,7 +150,7 @@ def test_quadrature_rejects_false_lattice_and_failed_moment_claims():
         )
 
 
-def test_conservative_source_and_composition_preserve_declared_moments():
+def test_conservative_source_and_composition_preserve_declared_moments() -> None:
     quadrature = d2v17_quadrature()
     moment_matrix = quadrature.hydrodynamic_moment_matrix()
     source = ConservativeRelaxationDVMSource(
@@ -171,7 +174,7 @@ def test_conservative_source_and_composition_preserve_declared_moments():
     np.testing.assert_allclose(composed_evidence.moment_residual, 0.0, atol=4e-6)
 
 
-def test_prepared_off_lattice_semi_lagrangian_transport_and_capabilities():
+def test_prepared_off_lattice_semi_lagrangian_transport_and_capabilities() -> None:
     quadrature = d2v37_off_lattice_quadrature()
     transfer = _identity_field_transfer()
     prepared = PreparedOffLatticeSemiLagrangianDVM(
@@ -203,7 +206,7 @@ def test_prepared_off_lattice_semi_lagrangian_transport_and_capabilities():
         )
 
 
-def test_finite_volume_dvm_constant_transport_is_conservative():
+def test_finite_volume_dvm_constant_transport_is_conservative() -> None:
     quadrature = d2v17_quadrature()
     component_names = tuple(
         f"population_{index}" for index in range(quadrature.population_count)
@@ -257,8 +260,8 @@ def test_finite_volume_dvm_constant_transport_is_conservative():
     "quadrature_factory", (d2v17_quadrature, d2v37_off_lattice_quadrature)
 )
 def test_particle_equilibrium_recovers_variable_temperature_momentum_flux(
-    quadrature_factory,
-):
+    quadrature_factory: Any,
+) -> None:
     method = _compressible_method(quadrature_factory())
     conserved = _conserved_state()
     equilibrium, evidence = method.equilibrium_with_evidence(conserved)
@@ -289,30 +292,35 @@ def test_particle_equilibrium_recovers_variable_temperature_momentum_flux(
         6,
         method.quadrature.population_count,
     )
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         recovered_particle_moments,
         expected_particle_moments,
         rtol=0.0,
         atol=tolerance,
     )
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         evidence.target_particle_momentum_flux,
         expected_momentum_flux,
         rtol=0.0,
         atol=tolerance,
     )
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         evidence.recovered_particle_momentum_flux,
         expected_momentum_flux,
         rtol=0.0,
         atol=tolerance,
     )
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         evidence.recovered_particle_momentum_flux,
         jnp.swapaxes(evidence.recovered_particle_momentum_flux, -1, -2),
         rtol=0.0,
         atol=tolerance,
     )
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         evidence.particle_momentum_flux_residual,
         0.0,
@@ -320,6 +328,7 @@ def test_particle_equilibrium_recovers_variable_temperature_momentum_flux(
         atol=tolerance,
     )
     assert float(evidence.maximum_absolute_particle_momentum_flux_residual) <= tolerance
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         evidence.minimum_particle_equilibrium_population,
         jnp.min(equilibrium.particle_populations),
@@ -332,8 +341,8 @@ def test_particle_equilibrium_recovers_variable_temperature_momentum_flux(
     "quadrature_factory", (d2v17_quadrature, d2v37_off_lattice_quadrature)
 )
 def test_total_energy_equilibrium_and_collision_are_coupled_and_conservative(
-    quadrature_factory,
-):
+    quadrature_factory: Any,
+) -> None:
     method = _compressible_method(quadrature_factory())
     assert tuple(stage.name for stage in method.program_manifest.stages) == (
         "moments",
@@ -409,6 +418,7 @@ def test_total_energy_equilibrium_and_collision_are_coupled_and_conservative(
         rtol=2e-6,
         atol=2e-6,
     )
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         post_particle_moments,
         pre_particle_moments,
@@ -426,7 +436,7 @@ def test_total_energy_equilibrium_and_collision_are_coupled_and_conservative(
     )
 
 
-def test_learned_energy_equilibrium_preserves_particle_physics_and_rolls_back():
+def test_learned_energy_equilibrium_preserves_particle_physics_and_rolls_back() -> None:
     method = _compressible_method()
     conserved = _conserved_state()
     analytic, analytic_evidence = method.equilibrium_with_evidence(conserved)
@@ -502,7 +512,7 @@ def test_learned_energy_equilibrium_preserves_particle_physics_and_rolls_back():
     )
 
 
-def test_realizability_and_shock_sensor_evidence_are_explicit():
+def test_realizability_and_shock_sensor_evidence_are_explicit() -> None:
     method = _compressible_method()
     conserved = _conserved_state()
     equilibrium = method.equilibrium(conserved)
@@ -538,7 +548,7 @@ def test_realizability_and_shock_sensor_evidence_are_explicit():
     assert sensor.shock_owner == "finite_volume"
 
 
-def test_fixed_hybrid_interface_uses_common_flux_and_atomic_rollback():
+def test_fixed_hybrid_interface_uses_common_flux_and_atomic_rollback() -> None:
     method = _compressible_method()
     system = EulerSystem(2, material=method.material)
     plan = FixedConformingFVKineticInterfacePlan(
@@ -570,7 +580,7 @@ def test_fixed_hybrid_interface_uses_common_flux_and_atomic_rollback():
     assert plan.shock_owner == "finite_volume"
 
 
-def test_hybrid_interface_rejects_nonunit_normal_and_wrong_system_layout():
+def test_hybrid_interface_rejects_nonunit_normal_and_wrong_system_layout() -> None:
     method = _compressible_method()
     with pytest.raises(ValueError, match="unit length"):
         FixedConformingFVKineticInterfacePlan(

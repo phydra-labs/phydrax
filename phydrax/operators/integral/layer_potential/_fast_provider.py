@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -24,6 +25,7 @@ from ....linalg import (
     estimate_operator_action_cost,
     LinearCapabilityError,
 )
+from ....typing import parse
 from ._fmm2d import LaplaceFMMBackend2D
 from ._galerkin3d import (
     _LaplaceDP0StrongOperator3D,
@@ -88,7 +90,7 @@ class BEMExecutionEnvelope(StrictModule, NonTrainableState):
         error_evidence: tuple[str, ...],
         non_goals: tuple[str, ...],
         accelerated: bool,
-    ):
+    ) -> None:
         dimension = int(ambient_dimension)
         strings = tuple(
             str(value).strip()
@@ -290,7 +292,7 @@ class FusedBlockedBEMAction3D(StrictModule, NonTrainableState):
         *,
         formulation: BoundaryGalerkinFormulation = "strong",
         provider: str = "blocked-direct-dp0-galerkin-3d",
-    ):
+    ) -> None:
         if not isinstance(prepared, LaplaceSingleLayerDP0Galerkin3D):
             raise TypeError("Fused blocked action requires prepared 3D Laplace DP0 BEM.")
         if not bool(prepared.assembly_report.accuracy_supported):
@@ -300,8 +302,7 @@ class FusedBlockedBEMAction3D(StrictModule, NonTrainableState):
         columns = int(rhs_count)
         if columns <= 0:
             raise ValueError("rhs_count must be positive and fixed at preparation.")
-        if formulation not in ("weak", "strong"):
-            raise ValueError("formulation must be 'weak' or 'strong'.")
+        formulation = parse(formulation, BoundaryGalerkinFormulation, "formulation")
         capabilities = boundary_fast_provider_capabilities(provider, ambient_dimension=3)
         if capabilities.name != "blocked-direct-dp0-galerkin-3d":
             raise BEMFastCapabilityError(
@@ -310,21 +311,18 @@ class FusedBlockedBEMAction3D(StrictModule, NonTrainableState):
         operator = (
             prepared.weak_operator if formulation == "weak" else prepared.strong_operator
         )
-        if formulation == "weak" and not isinstance(operator, _LaplaceDP0WeakOperator3D):
-            raise TypeError(
-                "Prepared weak operator is not the supported blocked DP0 route."
-            )
-        if formulation == "strong" and not isinstance(
-            operator, _LaplaceDP0StrongOperator3D
-        ):
-            raise TypeError(
-                "Prepared strong operator is not the supported blocked DP0 route."
-            )
-        pair_data = (
-            operator.pair_data
-            if isinstance(operator, _LaplaceDP0WeakOperator3D)
-            else operator.weak.pair_data
-        )
+        if formulation == "weak":
+            if not isinstance(operator, _LaplaceDP0WeakOperator3D):
+                raise TypeError(
+                    "Prepared weak operator is not the supported blocked DP0 route."
+                )
+            pair_data = operator.pair_data
+        else:
+            if not isinstance(operator, _LaplaceDP0StrongOperator3D):
+                raise TypeError(
+                    "Prepared strong operator is not the supported blocked DP0 route."
+                )
+            pair_data = operator.weak.pair_data
         precision = np.dtype(pair_data.regular_points.dtype).name
         action_cost = estimate_operator_action_cost(operator)
         workspace = action_cost.apply_workspace_bytes_per_rhs * columns
@@ -481,11 +479,10 @@ class LaplaceDP0ExactNearProvider3D(AbstractExactNearProvider3D):
         formulation: BoundaryGalerkinFormulation = "strong",
         max_block_entries: int = 1_000_000,
         max_block_workspace_bytes: int = 256 * 1024 * 1024,
-    ):
+    ) -> None:
         if not isinstance(prepared, LaplaceSingleLayerDP0Galerkin3D):
             raise TypeError("Exact-near provider requires prepared 3D Laplace DP0 BEM.")
-        if formulation not in ("weak", "strong"):
-            raise ValueError("formulation must be 'weak' or 'strong'.")
+        formulation = parse(formulation, BoundaryGalerkinFormulation, "formulation")
         limit = int(max_block_entries)
         workspace_limit = int(max_block_workspace_bytes)
         if limit <= 0 or workspace_limit <= 0:

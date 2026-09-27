@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -12,7 +15,7 @@ import pytest
 import phydrax as phx
 
 
-def test_simplex_bijector_round_trip_shape_and_hausdorff_jacobian():
+def test_simplex_bijector_round_trip_shape_and_hausdorff_jacobian() -> None:
     bijector = phx.uq.SimplexBijector(4)
     raw = jnp.asarray([0.4, -0.7, 1.1])
     physical = bijector.forward(raw)
@@ -29,7 +32,7 @@ def test_simplex_bijector_round_trip_shape_and_hausdorff_jacobian():
     assert bijector.inverse_shape((2, 4)) == (2, 3)
 
 
-def test_dirichlet_density_uses_hausdorff_measure_and_normalizes():
+def test_dirichlet_density_uses_hausdorff_measure_and_normalizes() -> None:
     family = phx.uq.DirichletFamily(2)
     concentration = jnp.asarray([2.3, 1.7])
     natural = family.natural_from_concentration(concentration)
@@ -51,7 +54,7 @@ def test_dirichlet_density_uses_hausdorff_measure_and_normalizes():
     assert family.signature.density_measure_kind == "hausdorff"
 
 
-def test_dirichlet_duality_inverse_kl_and_fisher():
+def test_dirichlet_duality_inverse_kl_and_fisher() -> None:
     family = phx.uq.DirichletFamily(4)
     concentration = jnp.asarray([0.4, 1.2, 2.5, 4.0])
     natural = family.natural_from_concentration(concentration)
@@ -67,7 +70,7 @@ def test_dirichlet_duality_inverse_kl_and_fisher():
     other_concentration = jnp.asarray([1.5, 0.8, 3.2, 2.0])
     other = family.natural_from_concentration(other_concentration)
 
-    def log_beta(value):
+    def log_beta(value: Any) -> Any:
         return jnp.sum(jsp.special.gammaln(value)) - jsp.special.gammaln(jnp.sum(value))
 
     expected_kl = (
@@ -92,7 +95,9 @@ def test_dirichlet_duality_inverse_kl_and_fisher():
     assert int(conversion.iterations) > 0
 
 
-def test_dirichlet_inverse_has_implicit_reverse_derivative_and_supports_empty_batches():
+def test_dirichlet_inverse_has_implicit_reverse_derivative_and_supports_empty_batches() -> (
+    None
+):
     family = phx.uq.DirichletFamily(3)
     natural = family.natural_from_concentration(jnp.asarray([0.7, 1.8, 3.1]))
     mean = family.mean_from_natural(natural)
@@ -116,7 +121,7 @@ def test_dirichlet_inverse_has_implicit_reverse_derivative_and_supports_empty_ba
     assert empty.valid.shape == (0,)
 
 
-def test_dirichlet_mean_domain_and_solver_failure_are_distinct():
+def test_dirichlet_mean_domain_and_solver_failure_are_distinct() -> None:
     family = phx.uq.DirichletFamily(3)
     boundary_values = jnp.log(jnp.asarray([0.2, 0.3, 0.5]))
     boundary = family.mean_domain(family.mean(boundary_values))
@@ -139,7 +144,7 @@ def test_dirichlet_mean_domain_and_solver_failure_are_distinct():
     assert not bool(large_family.sufficient_statistics(off_simplex).valid)
 
 
-def test_dirichlet_sampling_projection_and_batched_inverse():
+def test_dirichlet_sampling_projection_and_batched_inverse() -> None:
     family = phx.uq.DirichletFamily(3)
     concentration = jnp.asarray([1.5, 3.0, 5.5])
     law = family.law_from_concentration(concentration)
@@ -173,7 +178,7 @@ def test_dirichlet_sampling_projection_and_batched_inverse():
     assert jnp.all(converted.valid)
 
 
-def test_dirichlet_prior_uses_distinct_raw_and_physical_shapes():
+def test_dirichlet_prior_uses_distinct_raw_and_physical_shapes() -> None:
     family = phx.uq.DirichletFamily(3)
     prior = family.law_from_concentration(jnp.asarray([1.5, 2.0, 3.0]))
     bijector = phx.uq.SimplexBijector(3)

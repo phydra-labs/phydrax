@@ -10,7 +10,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -28,8 +28,8 @@ MappedKineticSource = Callable[[Array, Array, PreparedMappedTensorGrid, Any], Ar
 class MappedLatticeBoltzmannEvidence(StrictModule):
     minimum_jacobian: Array
     maximum_jacobian: Array
-    metric_identity_residual: Array
-    free_stream_residual: Array
+    metric_identity_residual: float
+    free_stream_residual: float
     source_mass_residual: Array
     source_momentum_residual: Array
     successful: Array
@@ -62,7 +62,7 @@ class MappedLatticeBoltzmannPlan(StrictModule, NonTrainableState):
         *,
         source_id: str,
         metric_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(reference, LatticeBoltzmannDiscretization):
             raise TypeError("reference must be LatticeBoltzmannDiscretization.")
         if not isinstance(mapped_grid, PreparedMappedTensorGrid):

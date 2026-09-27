@@ -10,7 +10,8 @@ from collections.abc import Mapping, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -35,7 +36,7 @@ class PolymerQualificationCase(StrictModule, NonTrainableState):
         absolute_tolerance: float,
         relative_tolerance: float = 0.0,
         required: bool = True,
-    ):
+    ) -> None:
         identifier = str(name)
         value = np.asarray(reference)
         absolute = float(absolute_tolerance)
@@ -78,7 +79,7 @@ class PolymerQualificationCampaignPlan(StrictModule, NonTrainableState):
         regime: PolymerProductionRegime,
         cases: Sequence[PolymerQualificationCase],
         /,
-    ):
+    ) -> None:
         decision = decide_polymer_production_regime(regime)
         decision.require_supported()
         values = tuple(cases)

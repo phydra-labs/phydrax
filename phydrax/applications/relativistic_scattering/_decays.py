@@ -9,7 +9,8 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -34,7 +35,7 @@ class TwoBodyDecayPlan(StrictModule, NonTrainableState):
         *,
         branching_fraction: float,
         decay_model_id: str = "isotropic-two-body",
-    ):
+    ) -> None:
         daughters = tuple(daughter_pdg_ids)
         masses = tuple(float(value) for value in daughter_masses)
         fraction = float(branching_fraction)

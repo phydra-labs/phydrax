@@ -121,7 +121,9 @@ def _adaptation_quality_records() -> dict[str, dict[str, float | int]]:
             ),
         )
         adaptation_ms = 1e3 * (time.perf_counter() - started)
+        # ty: ignore[unresolved-attribute]
         adapted_grid = adapted.layers[0].edge_basis.grid
+        # ty: ignore[invalid-argument-type]
         uniform_error = _fit_relative_error(uniform_grid, target)
         adapted_error = _fit_relative_error(adapted_grid, target)
         records[name] = {
@@ -188,7 +190,9 @@ def _per_input_grid_record(repeats: int) -> dict[str, Any]:
         fitting,
         plan=phx.nn.models.KANGridAdaptationPlan(blend=0.0, per_input=True),
     )
+    # ty: ignore[unresolved-attribute]
     shared_grid = shared.layers[0].edge_basis.grid
+    # ty: ignore[unresolved-attribute]
     grid_bank = per_input.layers[0].edge_basis.grid
     shared_errors = tuple(
         _sampled_fit_relative_error(
@@ -209,10 +213,12 @@ def _per_input_grid_record(repeats: int) -> dict[str, Any]:
         for index, target in enumerate(targets)
     )
     coefficients = jr.normal(
-        jr.key(115), (1, 2, shared.layers[0].edge_basis.coefficient_count)
+        jr.key(115),
+        # ty: ignore[unresolved-attribute]
+        (1, 2, shared.layers[0].edge_basis.coefficient_count),
     )
 
-    def evaluate_basis(edge_basis, edge_coefficients, values):
+    def evaluate_basis(edge_basis: Any, edge_coefficients: Any, values: Any) -> Any:
         return jax.vmap(
             lambda row: edge_basis.evaluate(
                 edge_coefficients, jnp.broadcast_to(row, (1, 2))
@@ -275,6 +281,7 @@ def _trainable_grid_record() -> dict[str, float | int | bool]:
         calibration,
         plan=phx.nn.models.KANGridAdaptationPlan(blend=0.0),
     )
+    # ty: ignore[unresolved-attribute]
     fixed_grid = adapted.layers[0].edge_basis.grid
     trainable_grid = phx.nn.models.TrainableBSplineGrid.from_grid(
         fixed_grid,
@@ -287,7 +294,7 @@ def _trainable_grid_record() -> dict[str, float | int | bool]:
     parameters = (trainable_grid.raw_span_logits, initial_coefficients)
     optimizer_state = optimizer.init(parameters)
 
-    def objective(candidate):
+    def objective(candidate: Any) -> Any:
         logits, coefficients = candidate
         grid = eqx.tree_at(
             lambda value: value.raw_span_logits,
@@ -298,7 +305,7 @@ def _trainable_grid_record() -> dict[str, float | int | bool]:
         return jnp.mean(residual**2) + 1.0e-6 * grid.regularization()
 
     @jax.jit
-    def step(candidate, state):
+    def step(candidate: Any, state: Any) -> Any:
         loss, gradient = jax.value_and_grad(objective)(candidate)
         updates, new_state = optimizer.update(gradient, state, candidate)
         return optax.apply_updates(candidate, updates), new_state, loss

@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -44,7 +45,7 @@ class SINGSparseGPDrift(StrictModule):
         *,
         output_mixing: ArrayLike | None = None,
         drift_id: str | None = None,
-    ):
+    ) -> None:
         points = jnp.asarray(inducing_points)
         selected = tuple(kernels)
         mean = jnp.asarray(whitened_mean)
@@ -119,7 +120,7 @@ class SINGSparseGPDrift(StrictModule):
             self.cholesky_factors, cross
         )
 
-    def __call__(self, state: ArrayLike, /, *, key=None) -> Array:
+    def __call__(self, state: ArrayLike, /, *, key: Array | None = None) -> Array:
         del key
         value = jnp.asarray(state).reshape((-1,))
         if value.shape != (self.inducing_points.shape[1],):

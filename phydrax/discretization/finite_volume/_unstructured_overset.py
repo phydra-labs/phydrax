@@ -10,7 +10,8 @@ from typing import Any, Callable, cast
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._numerics._compensated import compensated_sum_chunks
@@ -53,7 +54,7 @@ class _OversetPolicy:
 class _OversetRoutes:
     donor_mesh_ids: np.ndarray
     receptor_mesh_ids: np.ndarray
-    receptor_positions: np.ndarray
+    receptor_positions: dict[int, int]
     receptors: np.ndarray
     offsets: np.ndarray
     donors_raw: np.ndarray
@@ -77,14 +78,14 @@ class _OversetMasks:
 
 @dataclass(frozen=True, slots=True)
 class _OversetCoverage:
-    routes: tuple[np.ndarray, ...]
+    routes: np.ndarray
     receptor_coverage: np.ndarray
     receptor_volumes: np.ndarray
     defect: np.ndarray
     coverage_status_mask: np.ndarray
     donor_coverage: np.ndarray
-    union_certificate: float
-    union_defect: float
+    union_certificate: np.ndarray
+    union_defect: np.ndarray
     covered_fraction: np.ndarray
     coverage_status: str
     donor_route_ids: np.ndarray
@@ -824,7 +825,7 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
         coverage_policy: str | None = None,
         bounded_interpolation: bool | None = None,
         bounded: bool | None = None,
-    ):
+    ) -> None:
         policy_data = _resolve_overset_policy(
             donor,
             receptor,
@@ -1255,7 +1256,7 @@ class PeriodicSlidingInterfacePlan(StrictModule, NonTrainableState):
         interface_id: str,
         shift_precision: int = 14,
         coverage_tolerance: float = 1e-12,
-    ):
+    ) -> None:
         period_ = float(period)
         left = np.asarray(left_breaks, dtype=np.float64)
         right = np.asarray(right_breaks, dtype=np.float64)

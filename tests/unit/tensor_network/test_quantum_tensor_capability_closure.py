@@ -30,7 +30,7 @@ from phydrax.tensor_network import (
 )
 
 
-def test_canonical_quantum_program_executes_on_mps_without_densification():
+def test_canonical_quantum_program_executes_on_mps_without_densification() -> None:
     layout = HilbertRegisterLayout(("a", "b"), (2, 2))
     x = jnp.array([[0, 1], [1, 0]], dtype=jnp.complex64)
     cnot = jnp.array(
@@ -54,7 +54,7 @@ def test_canonical_quantum_program_executes_on_mps_without_densification():
     assert jnp.allclose(result.final_state.to_dense(), jnp.array([0, 0, 0, 1]))
 
 
-def test_tensor_program_executors_reject_nonphysical_local_operations():
+def test_tensor_program_executors_reject_nonphysical_local_operations() -> None:
     layout = HilbertRegisterLayout(("q",), (2,))
     initial_mps = product_mps(jnp.array([[1, 0]], dtype=jnp.complex64))
     nonunitary = QuantumProgram(
@@ -100,7 +100,7 @@ def test_tensor_program_executors_reject_nonphysical_local_operations():
     assert not bool(density_result.diagnostics.successful)
 
 
-def test_lpdo_compression_remains_psd_by_factor_construction_with_bound():
+def test_lpdo_compression_remains_psd_by_factor_construction_with_bound() -> None:
     tensors = (jnp.array([[[[1.0], [0.1]], [[0.0], [0.2]]]], dtype=jnp.complex64),)
     state = LocallyPurifiedDensity(tensors)
     result = compress_lpdo(
@@ -119,7 +119,7 @@ def test_lpdo_compression_remains_psd_by_factor_construction_with_bound():
     assert result.trace_distance_upper_bound >= 0.0
 
 
-def test_lpdo_compression_tolerance_controls_acceptance():
+def test_lpdo_compression_tolerance_controls_acceptance() -> None:
     state = LocallyPurifiedDensity(
         (jnp.array([[[[1.0], [0.5]], [[0.0], [0.5]]]], dtype=jnp.complex64),)
     )
@@ -136,7 +136,7 @@ def test_lpdo_compression_tolerance_controls_acceptance():
     assert result.trace_distance_upper_bound > result.requested_tolerance
 
 
-def test_impossible_causal_process_outcome_returns_zero_with_status():
+def test_impossible_causal_process_outcome_returns_zero_with_status() -> None:
     spec = CombLegSpec(2, 1, 1)
     initial = jnp.asarray([[1.0, 0.0], [0.0, 0.0]], dtype=jnp.complex64)
     identity_channel = (jnp.eye(2, dtype=jnp.complex64)[None, ...],)

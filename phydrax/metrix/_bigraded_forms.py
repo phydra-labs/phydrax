@@ -9,7 +9,8 @@ from itertools import combinations
 from math import comb
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._complex import ComplexCoordinateConvention, wirtinger_derivatives
@@ -44,7 +45,7 @@ class BigradedForm(StrictModule):
         *,
         convention: ComplexCoordinateConvention,
         bidegree: tuple[int, int],
-    ):
+    ) -> None:
         if not callable(coefficients):
             raise TypeError("Bigraded coefficients must be callable.")
         if not isinstance(convention, ComplexCoordinateConvention):
@@ -102,7 +103,7 @@ class _DolbeaultCoefficients(StrictModule):
     output_pairs: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...]
     input_lookup: dict[tuple[tuple[int, ...], tuple[int, ...]], int]
 
-    def __init__(self, form: BigradedForm, *, antiholomorphic: bool):
+    def __init__(self, form: BigradedForm, *, antiholomorphic: bool) -> None:
         self.form = form
         self.antiholomorphic = bool(antiholomorphic)
         output_p = form.p if antiholomorphic else form.p + 1
@@ -152,7 +153,7 @@ class _BigradedWedgeCoefficients(StrictModule):
     right: BigradedForm
     output_pairs: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...]
 
-    def __init__(self, left: BigradedForm, right: BigradedForm, /):
+    def __init__(self, left: BigradedForm, right: BigradedForm, /) -> None:
         self.left = left
         self.right = right
         self.output_pairs = tuple(

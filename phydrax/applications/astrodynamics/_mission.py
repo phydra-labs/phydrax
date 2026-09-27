@@ -5,13 +5,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.linalg as la
 
@@ -26,16 +28,25 @@ _CONJUNCTION_COVARIANCE_POLICY = la.DensePropertyVerificationPolicy(
     require_positive_semidefinite=True,
 )
 
+_Propagator: TypeAlias = Callable[[Array, Any], PyTree]
+_TerminalProjection: TypeAlias = Callable[[PyTree], Array]
+
 
 class TargetingResidualPlan(StrictModule, NonTrainableState):
-    propagator: Callable
-    terminal_projection: Callable
+    propagator: _Propagator
+    terminal_projection: _TerminalProjection
     target: Array
     plan_id: str = eqx.field(static=True)
 
     def __init__(
-        self, propagator, terminal_projection, target, /, *, plan_id="mission-targeting"
-    ):
+        self,
+        propagator: _Propagator,
+        terminal_projection: _TerminalProjection,
+        target: ArrayLike,
+        /,
+        *,
+        plan_id: str = "mission-targeting",
+    ) -> None:
         if not callable(propagator) or not callable(terminal_projection):
             raise TypeError("Targeting models must be callable.")
         self.propagator = propagator
@@ -76,7 +87,7 @@ class AccessPlan(StrictModule, NonTrainableState):
         horizon_elevation: ArrayLike = 0.0,
         maximum_range: ArrayLike = np.finfo(np.float32).max,
         /,
-    ):
+    ) -> None:
         horizon = np.asarray(horizon_elevation, dtype=np.float64)
         maximum = np.asarray(maximum_range, dtype=np.float64)
         if (
@@ -145,7 +156,7 @@ class ConjunctionPlan(StrictModule, NonTrainableState):
     hard_body_radius: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, hard_body_radius: ArrayLike, /):
+    def __init__(self, hard_body_radius: ArrayLike, /) -> None:
         radius = np.asarray(hard_body_radius, dtype=np.float64)
         if radius.shape != () or not np.isfinite(radius) or radius < 0.0:
             raise ValueError("hard_body_radius must be a finite nonnegative scalar.")

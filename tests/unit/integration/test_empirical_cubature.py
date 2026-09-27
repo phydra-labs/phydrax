@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_empirical_cubature_preserves_physical_complex_feature_moments_and_mask():
+def test_empirical_cubature_preserves_physical_complex_feature_moments_and_mask() -> None:
     samples = jnp.linspace(-1.0, 1.0, 21)
     source = phx.integration.materialize(
         phx.integration.weighted(

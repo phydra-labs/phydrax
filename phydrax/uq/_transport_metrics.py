@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from .._strict import StrictModule
 from ..integration import weighted
@@ -106,7 +107,7 @@ def operator_ensemble_sinkhorn_divergence(
     left_cases = jnp.swapaxes(left_samples * coordinate_scale[None, ...], 0, 1)
     right_cases = jnp.swapaxes(right_samples * coordinate_scale[None, ...], 0, 1)
 
-    def solve_case(source, target):
+    def solve_case(source: Array, target: Array) -> SinkhornDivergenceResult:
         return predictive_sinkhorn_divergence(
             source,
             target,
@@ -159,7 +160,9 @@ def operator_ensemble_sliced_wasserstein(
             jnp.arange(count, dtype=jnp.uint32)
         )
 
-        def solve_case(source, target, case_key):
+        def solve_case(
+            source: Array, target: Array, case_key: Array
+        ) -> SlicedWassersteinResult:
             return sliced_wasserstein_distance(
                 source,
                 target,
@@ -174,7 +177,7 @@ def operator_ensemble_sliced_wasserstein(
     else:
         directions = jnp.asarray(projections, dtype=left_cases.dtype)
 
-        def solve_case(source, target):
+        def solve_case(source: Array, target: Array) -> SlicedWassersteinResult:
             return sliced_wasserstein_distance(
                 source,
                 target,
@@ -242,7 +245,7 @@ def _log_sample_weights(
     count: int,
     /,
     *,
-    dtype,
+    dtype: DTypeLike,
 ) -> Array:
     if weights is None:
         return jnp.zeros((count,), dtype=dtype)

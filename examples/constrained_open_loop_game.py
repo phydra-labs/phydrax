@@ -1,5 +1,7 @@
 """Solve an opponent-dependent private nonlinear open-loop KKT system."""
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -9,7 +11,7 @@ HORIZON = 2
 partition = phx.control.games.PlayerControlPartition(("left", "right"), (1, 1))
 
 
-def left_capacity(time, state, control, args):
+def left_capacity(time: Any, state: Any, control: Any, args: Any) -> Any:
     del time, state, args
     return control[0] + 0.1 * control[1] ** 2 - 1.0
 
@@ -34,22 +36,22 @@ capacity = phx.control.games.GameConstraintBlock(
 constraints = phx.control.games.OpenLoopGameConstraints(partition, (capacity,))
 
 
-def transition(context, state, control, args):
+def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
     del context, args
     return jnp.asarray([state[0] + control[0] - control[1] + 0.02 * state[0] ** 2])
 
 
-def left_cost(context, state, control, args):
+def left_cost(context: Any, state: Any, control: Any, args: Any) -> Any:
     del context, state, args
     return 0.5 * (control[0] - 2.0) ** 2 + 0.01 * control[0] ** 4
 
 
-def right_cost(context, state, control, args):
+def right_cost(context: Any, state: Any, control: Any, args: Any) -> Any:
     del context, state, args
     return 0.5 * control[1] ** 2 + 0.01 * control[1] ** 4
 
 
-def zero_terminal(time, state, args):
+def zero_terminal(time: Any, state: Any, args: Any) -> float:
     del time, state, args
     return 0.0
 

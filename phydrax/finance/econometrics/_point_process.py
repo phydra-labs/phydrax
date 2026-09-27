@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -44,7 +45,7 @@ class MarketPointProcessDefinition(StrictModule):
         *,
         tie_policy: Literal["simultaneous", "ordered"] = "simultaneous",
         require_stable: bool = True,
-    ):
+    ) -> None:
         start = int(start_time_ns)
         end = int(end_time_ns)
         if end <= start:
@@ -83,7 +84,7 @@ class HawkesDefinition(StrictModule):
         /,
         *,
         maximum_steps: int = 128,
-    ):
+    ) -> None:
         process = ExponentialHawkesProcess(baseline, excitation, decay)
         steps = int(maximum_steps)
         if steps < 1:
@@ -307,7 +308,7 @@ def fit_hawkes(
         plan=plan.likelihood_plan,
     )
 
-    def objective(parameters, _):
+    def objective(parameters: Array, _: object) -> Array:
         process = _decode_parameters(parameters, channels)
         result = evaluate_hawkes_likelihood(
             plan.observation,

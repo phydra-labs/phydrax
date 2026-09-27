@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -429,7 +430,7 @@ class SparseMACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         any_liquid = jnp.any(liquid)
         topology_complete = jnp.all(~liquid | relations.complete)
 
-        def gauge(field):
+        def gauge(field: Array) -> Array:
             denominator = jnp.sum(jnp.where(liquid, cell_measure, 0.0))
             mean = jnp.where(
                 denominator > 0.0,
@@ -492,22 +493,18 @@ class SparseMACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         active_divergence_norm = jnp.sqrt(
             jnp.sum(cell_measure * jnp.where(liquid, divergence_after, 0.0) ** 2)
         )
-        energy_before = (
-            0.5
-            * self.density
-            * sum(
-                jnp.sum(jnp.where(valid, value * value, 0.0))
-                for value, valid in zip(values, relations.face_valid, strict=True)
-            )
+        # The face-axis fields are non-empty (validated above), so the sums start at
+        # the first axis contribution.
+        kinetic_before = tuple(
+            jnp.sum(jnp.where(valid, value * value, 0.0))
+            for value, valid in zip(values, relations.face_valid, strict=True)
         )
-        energy_after = (
-            0.5
-            * self.density
-            * sum(
-                jnp.sum(jnp.where(valid, value * value, 0.0))
-                for value, valid in zip(corrected, relations.face_valid, strict=True)
-            )
+        kinetic_after = tuple(
+            jnp.sum(jnp.where(valid, value * value, 0.0))
+            for value, valid in zip(corrected, relations.face_valid, strict=True)
         )
+        energy_before = 0.5 * self.density * sum(kinetic_before[1:], kinetic_before[0])
+        energy_after = 0.5 * self.density * sum(kinetic_after[1:], kinetic_after[0])
         rhs_norm = jnp.sqrt(jnp.sum(cell_measure * rhs**2))
         finite = (
             jnp.isfinite(dt)

@@ -2,10 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 from dataclasses import dataclass
+from typing import Self
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,7 +16,7 @@ class SystemEvent:
     indicator_index: int
     direction: int = 0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.event_id, str) or not self.event_id:
             raise ValueError("System event identifier must be nonempty.")
         if (
@@ -34,7 +36,9 @@ class SystemRuntimeState:
     time_s: Array
 
     @classmethod
-    def create(cls, continuous: ArrayLike, discrete: ArrayLike, time_s: ArrayLike):
+    def create(
+        cls, continuous: ArrayLike, discrete: ArrayLike, time_s: ArrayLike
+    ) -> Self:
         continuous_ = jnp.asarray(continuous)
         discrete_ = jnp.asarray(discrete)
         time_ = jnp.asarray(time_s)
@@ -52,7 +56,7 @@ class SystemRuntimeState:
         return cls(continuous_, discrete_, time_)
 
 
-def detect_zero_crossings(previous: ArrayLike, current: ArrayLike, /):
+def detect_zero_crossings(previous: ArrayLike, current: ArrayLike, /) -> Array:
     a = jnp.asarray(previous)
     b = jnp.asarray(current)
     if a.shape != b.shape:

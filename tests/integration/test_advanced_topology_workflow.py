@@ -8,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_phase_field_functorial_extended_and_uq_workflow():
+def test_phase_field_functorial_extended_and_uq_workflow() -> None:
     topology = phx.geometry.simplicial.TriangleTopology(
         jnp.asarray([[0, 1, 2]], dtype=jnp.int32),
         num_vertices=3,

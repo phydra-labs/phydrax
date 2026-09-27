@@ -5,21 +5,26 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
+from phydrax.typing import parse
 
 
 ClassificationKind: TypeAlias = Literal["binary", "multiclass", "multilabel", "ordinal"]
 ClassificationObjectiveKind: TypeAlias = Literal["nll", "soft_cross_entropy", "focal"]
+_OrdinalObjectiveKind: TypeAlias = Literal["nll", "soft_cross_entropy"]
+_RealVectorLike: TypeAlias = ArrayLike | Sequence[float]
 
 
-def _real_array(name: str, values: ArrayLike, /) -> Array:
+def _real_array(name: str, values: _RealVectorLike, /) -> Array:
     result = jnp.asarray(values)
     if jnp.issubdtype(result.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real-valued.")
@@ -216,7 +221,7 @@ def binary_focal_risk_from_logits(
     /,
     *,
     gamma: float = 2.0,
-    alpha: ArrayLike | None = None,
+    alpha: _RealVectorLike | None = None,
 ) -> Array:
     """Return hard binary focal risk without probability clipping."""
     gamma_value = float(gamma)
@@ -254,7 +259,7 @@ def categorical_focal_risk_from_logits(
     /,
     *,
     gamma: float = 2.0,
-    alpha: ArrayLike | None = None,
+    alpha: _RealVectorLike | None = None,
 ) -> Array:
     """Return hard categorical focal risk through gathered class logits."""
     values = _real_array("Categorical logits", logits)
@@ -290,7 +295,7 @@ def categorical_focal_risk_from_logits(
     return class_weight * factor * cross_entropy
 
 
-def _ordinal_threshold_array(thresholds: ArrayLike, /) -> Array:
+def _ordinal_threshold_array(thresholds: _RealVectorLike, /) -> Array:
     cutpoints = _real_array("Ordinal thresholds", thresholds)
     if cutpoints.ndim != 1 or cutpoints.shape[0] < 2:
         raise ValueError("Ordinal thresholds must be a vector with at least two entries.")
@@ -300,7 +305,7 @@ def _ordinal_threshold_array(thresholds: ArrayLike, /) -> Array:
 
 def ordinal_class_probabilities_from_location(
     location: ArrayLike,
-    thresholds: ArrayLike,
+    thresholds: _RealVectorLike,
     /,
 ) -> Array:
     """Return ordered-logistic class probabilities from scalar latent locations."""
@@ -410,7 +415,7 @@ def soft_ordinal_cross_entropy_from_cumulative_logits(
 def ordinal_log_prob_from_location(
     location: ArrayLike,
     target: ArrayLike,
-    thresholds: ArrayLike,
+    thresholds: _RealVectorLike,
     /,
 ) -> Array:
     """Return stable ordered-logistic hard-label log probabilities."""
@@ -453,7 +458,7 @@ def classification_probabilities(
     *,
     kind: ClassificationKind,
     class_count: int | None = None,
-    thresholds: ArrayLike | None = None,
+    thresholds: _RealVectorLike | None = None,
 ) -> Array:
     """Convert declared classification coordinates to explicit probabilities."""
     match kind:
@@ -484,21 +489,15 @@ def pointwise_classification_loss(
     class_count: int | None = None,
     target_mask: ArrayLike | None = None,
     gamma: float = 2.0,
-    alpha: ArrayLike | float | None = None,
-    thresholds: ArrayLike | None = None,
+    alpha: _RealVectorLike | None = None,
+    thresholds: _RealVectorLike | None = None,
 ) -> Array:
     """Return one unreduced classification score per observation prefix."""
     match kind:
         case "binary" | "multiclass" | "multilabel":
-            if objective not in ("nll", "soft_cross_entropy", "focal"):
-                raise ValueError(
-                    f"Unknown {kind} classification objective {objective!r}."
-                )
+            objective = parse(objective, ClassificationObjectiveKind, "objective")
         case "ordinal":
-            if objective not in ("nll", "soft_cross_entropy"):
-                raise ValueError(
-                    "Ordinal classification supports NLL or soft cross entropy."
-                )
+            objective = parse(objective, _OrdinalObjectiveKind, "objective")
         case _:
             raise ValueError(f"Unknown classification kind {kind!r}.")
 

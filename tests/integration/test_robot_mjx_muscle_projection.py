@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -52,20 +55,20 @@ _MUSCLE_MODEL = """
 
 
 @pytest.fixture
-def cpu_mjx_muscle():
+def cpu_mjx_muscle() -> Any:
     model = mujoco.MjModel.from_xml_string(_MUSCLE_MODEL)
     adapter = prepare_mjx_adapter(model, device=jax.devices("cpu")[0])
     return model, adapter, adapter.prepare_muscle_projection()
 
 
-def _reset(adapter):
+def _reset(adapter: Any) -> Any:
     return adapter.reset(
         jax.random.key(7),
         adapter.parameters,
     ).accepted_state
 
 
-def _context(state):
+def _context(state: Any) -> Any:
     return PlantStepContext(
         state.time,
         state.time + jnp.asarray(0.001, dtype=state.time.dtype),
@@ -73,7 +76,9 @@ def _context(state):
     )
 
 
-def test_all_and_named_compiled_muscles_have_deterministic_fixed_maps(cpu_mjx_muscle):
+def test_all_and_named_compiled_muscles_have_deterministic_fixed_maps(
+    cpu_mjx_muscle: Any,
+) -> None:
     model, adapter, projection = cpu_mjx_muscle
     named = MJXMuscleProjectionPlan(("soleus",)).prepare(adapter)
 
@@ -90,7 +95,9 @@ def test_all_and_named_compiled_muscles_have_deterministic_fixed_maps(cpu_mjx_mu
         adapter.prepare_muscle_projection(("assist",))
 
 
-def test_control_scatter_is_complete_and_snapshot_freshness_is_explicit(cpu_mjx_muscle):
+def test_control_scatter_is_complete_and_snapshot_freshness_is_explicit(
+    cpu_mjx_muscle: Any,
+) -> None:
     model, adapter, projection = cpu_mjx_muscle
     source = _reset(adapter)
     base = adapter.control(source)
@@ -132,8 +139,8 @@ def test_control_scatter_is_complete_and_snapshot_freshness_is_explicit(cpu_mjx_
 
 
 def test_scatter_rejects_wrong_kind_and_incomplete_typed_control_maps(
-    cpu_mjx_muscle,
-):
+    cpu_mjx_muscle: Any,
+) -> None:
     _, adapter, projection = cpu_mjx_muscle
     source = _reset(adapter)
     control = adapter.control(source)
@@ -173,7 +180,9 @@ def test_scatter_rejects_wrong_kind_and_incomplete_typed_control_maps(
         projection.scatter_control(partial, excitation)
 
 
-def test_failed_step_rolls_back_whole_state_then_refreshes_that_source(cpu_mjx_muscle):
+def test_failed_step_rolls_back_whole_state_then_refreshes_that_source(
+    cpu_mjx_muscle: Any,
+) -> None:
     _, adapter, projection = cpu_mjx_muscle
     source = _reset(adapter)
     first_control = projection.scatter_control(
@@ -211,7 +220,9 @@ def test_failed_step_rolls_back_whole_state_then_refreshes_that_source(cpu_mjx_m
     assert bool(projection.snapshot(refreshed.accepted_state).freshness)
 
 
-def test_scatter_and_forward_projection_support_jit_vmap_and_jvp(cpu_mjx_muscle):
+def test_scatter_and_forward_projection_support_jit_vmap_and_jvp(
+    cpu_mjx_muscle: Any,
+) -> None:
     _, adapter, projection = cpu_mjx_muscle
     source = _reset(adapter)
     base = adapter.control(source).values
@@ -220,7 +231,7 @@ def test_scatter_and_forward_projection_support_jit_vmap_and_jvp(cpu_mjx_muscle)
     scattered = jax.jit(jax.vmap(projection.scatter_control))(bases, excitations)
     assert scattered.values.shape == (2, adapter.control_map.size)
 
-    def raw_force_at_qpos(qpos):
+    def raw_force_at_qpos(qpos: Any) -> Any:
         changed_data = source.payload.opaque.replace(qpos=qpos)
         changed_payload = eqx.tree_at(
             lambda payload: payload.opaque,

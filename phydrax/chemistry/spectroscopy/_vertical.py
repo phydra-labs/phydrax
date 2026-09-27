@@ -11,7 +11,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -53,7 +54,7 @@ class UVVisibleSpectrumResult(StrictModule, NonTrainableState):
         axis: SpectralAxis,
         source_result_id: str,
         /,
-    ):
+    ) -> None:
         positions = jnp.asarray(line_positions)
         strengths = jnp.asarray(oscillator_strengths, dtype=positions.dtype)
         dipoles = jnp.asarray(transition_dipoles, dtype=positions.dtype)
@@ -132,7 +133,7 @@ class UVVisibleSpectrumPlan(StrictModule, NonTrainableState):
         grid_size: int = 2001,
         fwhm: float,
         area_tolerance: float = 5.0e-3,
-    ):
+    ) -> None:
         if not isinstance(axis, SpectralAxis) or not isinstance(
             line_shape, SpectralLineShape
         ):

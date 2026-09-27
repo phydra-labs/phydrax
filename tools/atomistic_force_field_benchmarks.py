@@ -10,7 +10,15 @@ import phydrax as phx
 
 units = phx.atomistic.AtomisticUnitSystem.reduced()
 system = phx.atomistic.AtomisticSystemPlan(
-    [0, 1, 2], [1, 1, 1], [1.0, 1.0, 1.0], units, atom_type_ids=[0, 0, 0]
+    # ty: ignore[invalid-argument-type]
+    [0, 1, 2],
+    # ty: ignore[invalid-argument-type]
+    [1, 1, 1],
+    # ty: ignore[invalid-argument-type]
+    [1.0, 1.0, 1.0],
+    units,
+    # ty: ignore[invalid-argument-type]
+    atom_type_ids=[0, 0, 0],
 ).prepare()
 positions = jnp.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0], [0.0, 1.2, 0.0]])
 neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(3).prepare(
@@ -19,7 +27,9 @@ neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(3).prepare(
 relation = neighborhood.build(positions)
 program = phx.atomistic.AtomisticPotentialProgram(
     [
+        # ty: ignore[invalid-argument-type]
         phx.atomistic.MorsePotential([[0.2]], [[2.0]], [[1.0]], 2.5),
+        # ty: ignore[invalid-argument-type]
         phx.atomistic.BuckinghamPotential([[1.0]], [[2.0]], [[0.1]], 2.5),
     ]
 ).prepare(system)

@@ -10,7 +10,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -46,7 +47,7 @@ class EvolutionSensitivityPolicy(StrictModule, NonTrainableState):
         *,
         relative_tolerance: float = 2.0e-4,
         absolute_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         steps = tuple(float(value) for value in perturbations)
         relative = float(relative_tolerance)
         absolute = float(absolute_tolerance)

@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -22,26 +24,26 @@ class _LinearOperator(phx.nn.operator.AbstractOperatorModel):
     in_size: str = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.weight = jnp.asarray([[1.0]], dtype=jnp.float32)
         self.in_size = "scalar"
         self.out_size = "scalar"
 
     @property
-    def operator_contract(self):
+    def operator_contract(self) -> Any:
         return phx.nn.operator.operator_architecture_contract("DeepONet")
 
-    def __call_operator_batch__(self, batch, *, key=None):
+    def __call_operator_batch__(self, batch: Any, *, key: Any = None) -> Any:
         del key
         values = batch.input("state").values
         assert values is not None
         return (values[..., None] @ self.weight)[..., 0]
 
-    def __call__(self, batch, *, key=None):
+    def __call__(self, batch: Any, *, key: Any = None) -> Any:
         return self.__call_operator_batch__(batch, key=key)
 
 
-def _dataset(cases: int = 4):
+def _dataset(cases: int = 4) -> Any:
     axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, 8),
@@ -57,7 +59,7 @@ def _dataset(cases: int = 4):
     )
 
 
-def _task():
+def _task() -> Any:
     return phx.nn.operator.OperatorTask(
         "private-map",
         dimension_basis=("length",),
@@ -90,7 +92,7 @@ def _task():
     )
 
 
-def _privacy(iterations: int = 2):
+def _privacy(iterations: int = 2) -> Any:
     definition = phx.privacy.PrivacyDefinition(
         phx.privacy.PrivacyUnit("operator-case"),
         phx.privacy.NeighboringRelation.ADD_OR_REMOVE_ONE,
@@ -109,7 +111,15 @@ def _privacy(iterations: int = 2):
     )
 
 
-def _fit(dataset, privacy, *, steps, checkpoint_path=None, resume=False, key_seed=7):
+def _fit(
+    dataset: Any,
+    privacy: Any,
+    *,
+    steps: Any,
+    checkpoint_path: Any = None,
+    resume: Any = False,
+    key_seed: Any = 7,
+) -> Any:
     task = _task()
     output_port = task.field_by_name["output"].value_port()
     return phx.nn.operator.training.fit_operator(
@@ -133,7 +143,7 @@ def _fit(dataset, privacy, *, steps, checkpoint_path=None, resume=False, key_see
     )
 
 
-def _assert_models_equal(left, right):
+def _assert_models_equal(left: Any, right: Any) -> None:
     for left_leaf, right_leaf in zip(
         jax.tree.leaves(left), jax.tree.leaves(right), strict=True
     ):
@@ -141,7 +151,9 @@ def _assert_models_equal(left, right):
             assert jnp.array_equal(left_leaf, right_leaf)
 
 
-def test_private_operator_fit_resume_and_artifact_preserve_release_boundary(tmp_path):
+def test_private_operator_fit_resume_and_artifact_preserve_release_boundary(
+    tmp_path: Any,
+) -> None:
     dataset = _dataset()
     privacy = _privacy()
     uninterrupted = _fit(dataset, privacy, steps=2)
@@ -233,7 +245,7 @@ def test_private_operator_fit_resume_and_artifact_preserve_release_boundary(tmp_
     assert restored.privacy_certificate == uninterrupted.privacy_certificate
 
 
-def test_private_operator_fit_rejects_unaccounted_surfaces():
+def test_private_operator_fit_rejects_unaccounted_surfaces() -> None:
     dataset = _dataset()
     privacy = _privacy(iterations=1)
     common = {
@@ -245,15 +257,24 @@ def test_private_operator_fit_rejects_unaccounted_surfaces():
     }
     with pytest.raises(ValueError, match="normalization"):
         phx.nn.operator.training.fit_operator(
-            _LinearOperator(), dataset, normalization="fit", **common
+            _LinearOperator(),
+            dataset,
+            normalization="fit",
+            # ty: ignore[invalid-argument-type]
+            **common,
         )
     with pytest.raises(ValueError, match="include_model_losses"):
         phx.nn.operator.training.fit_operator(
             _LinearOperator(),
             dataset,
+            # ty: ignore[invalid-argument-type]
             **(common | {"include_model_losses": True}),
         )
     with pytest.raises(ValueError, match="explicitly public"):
         phx.nn.operator.training.fit_operator(
-            _LinearOperator(), dataset, validation=dataset, **common
+            _LinearOperator(),
+            dataset,
+            validation=dataset,
+            # ty: ignore[invalid-argument-type]
+            **common,
         )

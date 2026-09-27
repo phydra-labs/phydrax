@@ -8,7 +8,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.axes as cx
 from phydrax.domain import (
@@ -30,6 +30,7 @@ from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._strict import StrictModule
 from ..geometry import CubatureAtlasProvider
+from ..typing import PRNGKey
 from ._adaptive_callable import (
     _error_norm,
     _meets_plan_tolerance,
@@ -48,12 +49,14 @@ from ._targets import as_target_domain_function, ComponentTarget, DensityTarget
 
 
 class _TriangleIntegrand(StrictModule):
+    __strict_contract__ = True
+
     integrand: DomainFunction
     component: DomainComponent
     fixed_points: frozendict[str, cx.AxisArray]
     structure: SampleLayout
     log_density: DomainFunction | None
-    key: Key[Array, ""]
+    key: PRNGKey
     kwargs: frozendict[str, Any]
     label: str = eqx.field(static=True)
     axis: str = eqx.field(static=True)
@@ -197,7 +200,7 @@ def _run_triangle_raw(
     /,
     *,
     log_density: Any | None,
-    key: Key[Array, ""],
+    key: PRNGKey,
     kwargs: dict[str, Any],
     precision: IntegrationPrecisionPolicy,
 ) -> IntegrationEstimate:
@@ -282,10 +285,17 @@ def _ratio_estimate(
             jnp.finfo(jnp.real(denominator_data).dtype).tiny,
         )
     )
+    numerator_error = numerator.error_estimate
+    denominator_error = denominator.error_estimate
+    # Adaptive triangle estimates always carry their paired-rule error estimate.
+    if not (numerator_error is not None and denominator_error is not None):
+        raise RuntimeError(
+            "Internal invariant failed: numerator_error is not None and denominator_error is not None."
+        )
     error = precision.decision(
-        numerator.error_estimate / denominator_norm
+        numerator_error / denominator_norm
         + precision.decision(_error_norm(numerator.value.data))
-        * denominator.error_estimate
+        * denominator_error
         / denominator_norm**2
     )
     ratio_converged = _meets_plan_tolerance(value_data, error, plan, precision)
@@ -328,7 +338,7 @@ def integrate_adaptive_triangle(
     plan: AdaptiveTrianglePlan,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:

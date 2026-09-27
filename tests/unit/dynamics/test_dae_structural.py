@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -18,7 +20,7 @@ from phydrax.dynamics._dae_structural import (
 from phydrax.solver import DifferentialAlgebraicProblem
 
 
-def _equation(name, residual, incidence, **kwargs):
+def _equation(name: Any, residual: Any, incidence: Any, **kwargs: Any) -> Any:
     return DAEEquationBlock(
         name,
         residual,
@@ -29,7 +31,7 @@ def _equation(name, residual, incidence, **kwargs):
     )
 
 
-def _pendulum_like_source():
+def _pendulum_like_source() -> Any:
     variables = (
         DAEVariableBlock("q", (), 2, state_scale=1.0, rate_scale=1.0),
         DAEVariableBlock("lambda", (), 0, state_scale=1.0, rate_scale=1.0),
@@ -52,7 +54,7 @@ def _pendulum_like_source():
     return AcausalDAESource((DAEComponent("body", variables, equations),))
 
 
-def test_index_three_original_constraint_audit_detects_inconsistent_state():
+def test_index_three_original_constraint_audit_detects_inconsistent_state() -> None:
     source = _pendulum_like_source()
     policy = DAEStructuralPolicy(2, 1)
     compilation = compile_acausal_dae(source, policy)
@@ -64,11 +66,12 @@ def test_index_three_original_constraint_audit_detects_inconsistent_state():
     # Differentiating a holonomic constraint does not establish its initial
     # invariant: a stationary off-manifold state must fail the original audit.
     inconsistent = state.at[1].set(1.1)
+    # ty: ignore[invalid-argument-type, missing-argument]
     assert jnp.allclose(compilation.system.residual(0.0, inconsistent, rate, None), 0)
     assert jnp.max(jnp.abs(compilation.residual_audit(0.0, inconsistent, rate))) > 0.2
 
 
-def test_index_one_lowering_preserves_physical_flow_and_state_derivative():
+def test_index_one_lowering_preserves_physical_flow_and_state_derivative() -> None:
     component = DAEComponent(
         "decay",
         (DAEVariableBlock("a_flow", (), 0), DAEVariableBlock("z_state", (), 1)),
@@ -94,7 +97,7 @@ def test_index_one_lowering_preserves_physical_flow_and_state_derivative():
     assert jnp.allclose(compilation.residual_audit(0.0, state, rate), 0)
 
 
-def test_structural_failure_names_unmatched_variables_and_capacity():
+def test_structural_failure_names_unmatched_variables_and_capacity() -> None:
     component = DAEComponent(
         "singular",
         (DAEVariableBlock("x"), DAEVariableBlock("y")),
@@ -117,7 +120,7 @@ def test_structural_failure_names_unmatched_variables_and_capacity():
         compile_acausal_dae(_pendulum_like_source(), DAEStructuralPolicy(1, 1))
 
 
-def test_missing_declared_jvp_incidence_fails_compilation():
+def test_missing_declared_jvp_incidence_fails_compilation() -> None:
     component = DAEComponent(
         "bad",
         (DAEVariableBlock("x", (), 1),),
@@ -136,7 +139,7 @@ def test_missing_declared_jvp_incidence_fails_compilation():
         )
 
 
-def test_input_aware_structural_dae_propagates_independent_scales_and_jits():
+def test_input_aware_structural_dae_propagates_independent_scales_and_jits() -> None:
     layout = InputLayout(
         (2,),
         axes=("input",),
@@ -223,7 +226,7 @@ def test_input_aware_structural_dae_propagates_independent_scales_and_jits():
     assert held_problem.input_policy is held_policy
 
 
-def test_structural_input_and_residual_scale_shape_mismatches_fail_preparation():
+def test_structural_input_and_residual_scale_shape_mismatches_fail_preparation() -> None:
     layout = InputLayout(
         (2,),
         component_names=("bias", "gain"),
@@ -293,7 +296,7 @@ def test_structural_input_and_residual_scale_shape_mismatches_fail_preparation()
         )
 
 
-def test_component_rejects_incidence_above_variable_derivative_order():
+def test_component_rejects_incidence_above_variable_derivative_order() -> None:
     with pytest.raises(ValueError, match="exceeds the declared variable maximum"):
         DAEComponent(
             "bad-order",
@@ -308,7 +311,9 @@ def test_component_rejects_incidence_above_variable_derivative_order():
         )
 
 
-def test_source_identity_includes_connection_orientation_and_tearing_fails_closed():
+def test_source_identity_includes_connection_orientation_and_tearing_fails_closed() -> (
+    None
+):
     left = DAEComponent(
         "left",
         (DAEVariableBlock("potential", (), 0),),

@@ -2,14 +2,24 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
+import pytest
 
 import phydrax as phx
 
 
-def _dem(dimension=3, *, contact=None, particle_count=2, maximum_pairs=None):
+def _dem(
+    dimension: Any = 3,
+    *,
+    contact: Any = None,
+    particle_count: Any = 2,
+    maximum_pairs: Any = None,
+) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(particle_count),
         jnp.ones((particle_count,)),
@@ -49,7 +59,7 @@ def _dem(dimension=3, *, contact=None, particle_count=2, maximum_pairs=None):
     return compiled, particles
 
 
-def test_compositional_contact_history_cohesion_and_rotational_energy_are_valid():
+def test_compositional_contact_history_cohesion_and_rotational_energy_are_valid() -> None:
     cohesion = phx.discretization.CompositeDEMCohesionPlan(
         (
             phx.discretization.DMTContactCohesionPlan(0.05, 0.1),
@@ -92,7 +102,7 @@ def test_compositional_contact_history_cohesion_and_rotational_energy_are_valid(
     )
 
 
-def test_superquadric_geometry_contact_and_rigid_step_recover_sphere_limit():
+def test_superquadric_geometry_contact_and_rigid_step_recover_sphere_limit() -> None:
     geometry = phx.geometry.Superquadric((0.0, 0.0, 0.0), (0.5, 0.5, 0.5)).compile()
     points = jnp.asarray([[0.5, 0.0, 0.0], [0.0, 0.5, 0.0]])
     curvature = geometry.contact_curvature(points)
@@ -140,7 +150,7 @@ def test_superquadric_geometry_contact_and_rigid_step_recover_sphere_limit():
     assert step.successful
 
 
-def test_multicontact_correction_is_nonlocal_convergent_and_optional():
+def test_multicontact_correction_is_nonlocal_convergent_and_optional() -> None:
     contact = phx.discretization.DEMContactModelPlan(
         phx.discretization.LinearSpringDashpotNormalPlan(1.0e4)
     )
@@ -178,12 +188,15 @@ def test_multicontact_correction_is_nonlocal_convergent_and_optional():
         jnp.asarray(0.0), state, jnp.asarray(1.0e-4), None
     )
     assert evaluation.successful
+    # ty: ignore[unresolved-attribute]
     assert evaluation.multicontact.successful
+    # ty: ignore[unresolved-attribute]
     assert jnp.max(evaluation.multicontact.gap_correction) > 0.0
+    # ty: ignore[unresolved-attribute]
     assert evaluation.multicontact.residual < 1.0e-4
 
 
-def test_radial_mesh_morphology_and_fixed_pool_insertion_preserve_inventory():
+def test_radial_mesh_morphology_and_fixed_pool_insertion_preserve_inventory() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0, 1]), jnp.ones((2,)), ambient_dimension=3
     ).prepare()
@@ -289,7 +302,35 @@ def test_radial_mesh_morphology_and_fixed_pool_insertion_preserve_inventory():
     assert insertion.accepted_internal_state.internal_energy[1, 0] < 0.0
 
 
-def test_wall_observables_and_wear_close_force_and_volume_channels():
+def test_density_porosity_morphology_rejects_unstructured_internal_meshes() -> None:
+    mesh = phx.discretization.UnstructuredParticleInternalMeshPlan(
+        jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]),
+        tetrahedra=jnp.asarray([[0, 1, 2, 3]]),
+    )
+    particles = phx.discretization.ParticleSetPlan(
+        jnp.asarray([0]), jnp.ones((1,)), ambient_dimension=3
+    ).prepare()
+    batch = phx.discretization.ParticleInternalBatchPlan(
+        jnp.asarray([0]), mesh, 1
+    ).prepare(particles)
+    state = phx.discretization.initialize_particle_internal_batch(
+        batch,
+        jnp.ones((1, 1)),
+        jnp.ones((1, 1, 1)),
+        jnp.asarray([[0.2]]),
+        jnp.ones((1, 1)),
+        jnp.asarray([1.0]),
+    )
+    conversion = phx.discretization.initialize_particle_conversion_state((state,))
+    morphology = phx.discretization.DensityPorosityMorphologyPlan(
+        (jnp.asarray([1.0]),), neighborhood_skin=0.1
+    )
+
+    with pytest.raises(TypeError, match="radial shell meshes"):
+        morphology.evaluate((batch,), conversion, (jnp.asarray([1.0]),))
+
+
+def test_wall_observables_and_wear_close_force_and_volume_channels() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0]), jnp.asarray([1.0]), ambient_dimension=3
     ).prepare()

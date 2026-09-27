@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -62,7 +63,7 @@ class VerletParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
         *,
         name: str = "verlet-particle-neighborhood",
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(base, AbstractParticleNeighborhoodPlan):
             raise TypeError("base must be an AbstractParticleNeighborhoodPlan.")
         interaction = float(interaction_radius)
@@ -125,7 +126,7 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
 
     def __init__(
         self, plan: VerletParticleNeighborhoodPlan, particles: ParticleDiscretization, /
-    ):
+    ) -> None:
         if not isinstance(plan, VerletParticleNeighborhoodPlan):
             raise TypeError("plan must be a VerletParticleNeighborhoodPlan.")
         if not isinstance(particles, ParticleDiscretization):
@@ -178,7 +179,9 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
         active = self._active(active_mask)
         return self.base.build(positions, active_mask=active)
 
-    def _resolved_cell_vectors(self, dtype, cell_vectors: ArrayLike | None, /) -> Array:
+    def _resolved_cell_vectors(
+        self, dtype: DTypeLike, cell_vectors: ArrayLike | None, /
+    ) -> Array:
         if cell_vectors is not None:
             value = jnp.asarray(cell_vectors, dtype=dtype)
         elif isinstance(self.box, PeriodicCell):
@@ -262,7 +265,7 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
             | jnp.any(active != previous.reference_active_mask)
         )
 
-        def rebuild_routes(_):
+        def rebuild_routes(_: None) -> ParticleVerletState:
             neighborhood = self.base.build(value, active_mask=active)
             successful = neighborhood.successful & finite
             return ParticleVerletState(
@@ -280,7 +283,7 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
                 self.prepared_id,
             )
 
-        def reuse_routes(_):
+        def reuse_routes(_: None) -> ParticleVerletState:
             return ParticleVerletState(
                 previous.neighborhood,
                 previous.reference_position,

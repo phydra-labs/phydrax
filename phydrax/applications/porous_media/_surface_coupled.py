@@ -4,11 +4,14 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...nonlinear import (
@@ -22,13 +25,20 @@ from ._state import PorousState
 from ._surface_exchange import OrthogonalDiffusiveWaveSurfacePlan, SurfaceWaterState
 
 
+_SurfaceRichardsArgs: TypeAlias = tuple[
+    PorousState, SurfaceWaterState, Array, Array, Array
+]
+
+
 @jax.custom_jvp
-def _complementarity(a, b):
+def _complementarity(a: Array, b: Array) -> Array:
     return jnp.sqrt(a * a + b * b) - a - b
 
 
 @_complementarity.defjvp
-def _complementarity_jvp(primals, tangents):
+def _complementarity_jvp(
+    primals: tuple[Array, Array], tangents: tuple[Array, Array]
+) -> tuple[Array, Array]:
     a, b = primals
     da, db = tangents
     norm = jnp.sqrt(a * a + b * b)
@@ -79,7 +89,7 @@ class SurfaceRichardsPlan(StrictModule):
         mass_scale_kg_s: float = 1.0,
         head_scale_m: float = 1.0,
         termination: NonlinearTermination | None = None,
-    ):
+    ) -> None:
         if not isinstance(water, RichardsPlan) or not isinstance(
             surface, OrthogonalDiffusiveWaveSurfacePlan
         ):
@@ -178,7 +188,7 @@ class SurfaceRichardsPlan(StrictModule):
         )
         anchored_cells = jnp.zeros(nc, dtype=jnp.bool_).at[trace.parent_cells].set(True)
 
-        def residual(scaled_unknown, args):
+        def residual(scaled_unknown: Array, args: _SurfaceRichardsArgs) -> Array:
             old, old_surface, time_step, rainfall_rate, mass_source = args
             unknown = scaled_unknown * unknown_scale
             pressure = unknown[:nc]
@@ -216,7 +226,12 @@ class SurfaceRichardsPlan(StrictModule):
                 )
             )
 
-        def valid(scaled_unknown, residual_value, auxiliary, args):
+        def valid(
+            scaled_unknown: Array,
+            residual_value: object,
+            auxiliary: object,
+            args: object,
+        ) -> Array:
             del residual_value, auxiliary, args
             unknown = scaled_unknown * unknown_scale
             pressure = unknown[:nc]

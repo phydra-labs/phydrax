@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 
 import phydrax as phx
@@ -32,7 +34,13 @@ _KIND_UNITS = {
 }
 
 
-def _quantity(kind, *, name=None, reference=None, support="voxel-cell-average"):
+def _quantity(
+    kind: Any,
+    *,
+    name: Any = None,
+    reference: Any = None,
+    support: Any = "voxel-cell-average",
+) -> Any:
     return phx.measurement.resolve_radiation_quantity(
         kind.value if name is None else name,
         kind,
@@ -44,7 +52,9 @@ def _quantity(kind, *, name=None, reference=None, support="voxel-cell-average"):
     )
 
 
-def test_radiation_catalog_returns_standard_quantity_specs_for_supported_meanings():
+def test_radiation_catalog_returns_standard_quantity_specs_for_supported_meanings() -> (
+    None
+):
     quantities = tuple(_quantity(kind) for kind in phx.measurement.RadiationQuantityKind)
 
     assert all(isinstance(value, phx.measurement.QuantitySpec) for value in quantities)
@@ -54,7 +64,7 @@ def test_radiation_catalog_returns_standard_quantity_specs_for_supported_meaning
     assert all(value.namespace == "radiation" for value in quantities)
 
 
-def test_radiation_meanings_remain_semantically_incompatible():
+def test_radiation_meanings_remain_semantically_incompatible() -> None:
     absorbed = _quantity(phx.measurement.RadiationQuantityKind.ABSORBED_DOSE)
     water = _quantity(phx.measurement.RadiationQuantityKind.DOSE_TO_WATER)
     medium = _quantity(phx.measurement.RadiationQuantityKind.DOSE_TO_MEDIUM)
@@ -77,7 +87,7 @@ def test_radiation_meanings_remain_semantically_incompatible():
     assert not activity.compatible_with(integrated_activity)
 
 
-def test_reference_and_support_semantics_participate_in_compatibility():
+def test_reference_and_support_semantics_participate_in_compatibility() -> None:
     baseline = _quantity(
         phx.measurement.RadiationQuantityKind.DOSE_TO_MEDIUM,
         reference="water-equivalent-medium",
@@ -98,7 +108,7 @@ def test_reference_and_support_semantics_participate_in_compatibility():
     assert not baseline.compatible_with(changed_support)
 
 
-def test_radiation_resolution_rejects_wrong_units_and_underspecified_meanings():
+def test_radiation_resolution_rejects_wrong_units_and_underspecified_meanings() -> None:
     with pytest.raises(ValueError, match="matching dimensions"):
         phx.measurement.resolve_radiation_quantity(
             "wrong-dose-unit",
@@ -122,7 +132,7 @@ def test_radiation_resolution_rejects_wrong_units_and_underspecified_meanings():
         )
 
 
-def test_nuclear_activity_resolution_uses_the_shared_radiation_identity():
+def test_nuclear_activity_resolution_uses_the_shared_radiation_identity() -> None:
     shared = _quantity(
         phx.measurement.RadiationQuantityKind.ACTIVITY,
         name="f18-activity",

@@ -7,20 +7,27 @@ from __future__ import annotations
 import hashlib
 import warnings
 from collections.abc import Sequence
-from typing import Any, Literal, TypeAlias
+from typing import Any, assert_never, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 import scipy.fft as scipy_fft
 import scipy.linalg as scipy_linalg
 import scipy.sparse as scipy_sparse
 import scipy.sparse.linalg as scipy_sparse_linalg
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
+
+
+if TYPE_CHECKING:
+    from ..linalg import AbstractLinearOperator, TransformDiagonalRepresentation
 
 
 ModalTransformKind: TypeAlias = Literal["fourier", "sine", "cosine", "legendre"]
@@ -50,7 +57,9 @@ def _canonicalize_eigenvector_signs(vectors: np.ndarray, /) -> np.ndarray:
     return result
 
 
-def _finite_symmetric_matrix(value: Any, /, *, name: str):
+def _finite_symmetric_matrix(
+    value: Any, /, *, name: str
+) -> npt.NDArray[np.float64] | scipy_sparse.csr_array | scipy_sparse.csr_matrix:
     if scipy_sparse.issparse(value):
         matrix = value.astype("float64").tocsr(copy=True)
         if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
@@ -126,7 +135,7 @@ class ModalTransform(StrictModule, NonTrainableState):
         active_mask: ArrayLike | None = None,
         mode_ids: Sequence[str] | None = None,
         transform_id: str | None = None,
-    ):
+    ) -> None:
         analysis_host = np.asarray(analysis)
         synthesis_host = np.asarray(synthesis)
         weights_host = np.asarray(quadrature_weights, dtype=np.float64).reshape((-1,))
@@ -246,7 +255,7 @@ class LaplacianEigenbasisReport(StrictModule, NonTrainableState):
         next_eigenvalue: float,
         boundary_gap: float,
         orthonormality_residual: float,
-    ):
+    ) -> None:
         method = str(method_id)
         source = str(source_id)
         requested = None if requested_modes is None else int(requested_modes)
@@ -329,7 +338,7 @@ class OperatorSpectrum(StrictModule, NonTrainableState):
         report: LaplacianEigenbasisReport | None = None,
         spectrum_id: str | None = None,
         zero_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         if not isinstance(transform, ModalTransform):
             raise TypeError("transform must be a ModalTransform.")
         operator = str(operator_id)
@@ -358,13 +367,7 @@ class OperatorSpectrum(StrictModule, NonTrainableState):
         )
         if nullspace.shape != values.shape:
             raise ValueError("nullspace_mask must contain one value per mode.")
-        if classification not in (
-            "discrete",
-            "pseudospectral",
-            "eigendecomposition",
-            "custom",
-        ):
-            raise ValueError("Unknown operator spectrum classification.")
+        classification = parse(classification, SpectrumClassification, "classification")
         dimension = None if spectral_dimension is None else float(spectral_dimension)
         if dimension is not None and (not np.isfinite(dimension) or dimension <= 0.0):
             raise ValueError("spectral_dimension must be finite and positive.")
@@ -459,7 +462,7 @@ class TensorModalTransform(StrictModule, NonTrainableState):
     modal_shape: tuple[int, ...] = eqx.field(static=True)
     transform_id: str = eqx.field(static=True)
 
-    def __init__(self, transforms: Sequence[ModalTransform], /):
+    def __init__(self, transforms: Sequence[ModalTransform], /) -> None:
         values = tuple(transforms)
         if not values or not all(isinstance(value, ModalTransform) for value in values):
             raise TypeError("transforms must contain one or more ModalTransform values.")
@@ -529,7 +532,7 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
         negative_eigenvalue_tolerance: float = 1e-10,
         orthonormality_tolerance: float = 1e-8,
         max_construction_bytes: int = _DEFAULT_CONSTRUCTION_BYTES,
-    ):
+    ) -> None:
         legacy = bool(eigenbasis)
         if legacy:
             if len(eigenbasis) != 3:
@@ -787,11 +790,11 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
 
     def diagonal_representation(
         self,
-        operator: Any,
+        operator: AbstractLinearOperator,
         /,
         *,
         spectrum: OperatorSpectrum | None = None,
-    ):
+    ) -> TransformDiagonalRepresentation:
         from ..linalg import DenseLinearTransform, TransformDiagonalRepresentation
 
         spectrum_ = self.spectrum if spectrum is None else spectrum
@@ -930,7 +933,7 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
                 diagonal_mass = True
             elif mass_array.shape == (count, count):
                 mass_matrix = _finite_symmetric_matrix(mass_array, name="Mass")
-                measure = np.asarray(np.diag(mass_matrix), dtype=np.float64)
+                measure = np.asarray(mass_matrix.diagonal(), dtype=np.float64)
             else:
                 raise ValueError("Mass must be diagonal entries or a square matrix.")
         if np.any(~np.isfinite(measure)) or np.any(measure <= 0.0):
@@ -939,7 +942,7 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
         if modes <= 0 or modes > count:
             raise ValueError("n_modes must lie between one and the matrix size.")
         if not diagonal_mass:
-            if scipy_sparse.issparse(mass_matrix):
+            if not isinstance(mass_matrix, np.ndarray):
                 if count == 1:
                     smallest_mass = float(mass_matrix[0, 0])
                 else:
@@ -966,8 +969,8 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
             count <= _DENSE_GENERALIZED_EIGH_THRESHOLD
             or 5 * modes >= count
             or (
-                not scipy_sparse.issparse(stiffness_matrix)
-                and not scipy_sparse.issparse(mass_matrix)
+                isinstance(stiffness_matrix, np.ndarray)
+                and isinstance(mass_matrix, np.ndarray)
             )
         )
         estimate = (
@@ -982,17 +985,18 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
         )
         if use_dense:
             stiffness_dense = (
-                stiffness_matrix.toarray()
-                if scipy_sparse.issparse(stiffness_matrix)
-                else stiffness_matrix
+                stiffness_matrix
+                if isinstance(stiffness_matrix, np.ndarray)
+                else stiffness_matrix.toarray()
             )
             mass_dense = (
-                mass_matrix.toarray()
-                if scipy_sparse.issparse(mass_matrix)
-                else mass_matrix
+                mass_matrix
+                if isinstance(mass_matrix, np.ndarray)
+                else mass_matrix.toarray()
             )
             try:
-                values, physical = scipy_linalg.eigh(
+                # ty selects scipy-stubs' deprecated bool/float16 overload for float64 input.
+                values, physical = scipy_linalg.eigh(  # ty: ignore[deprecated]
                     stiffness_dense,
                     mass_dense,
                     subset_by_index=(0, modes - 1),
@@ -1004,14 +1008,14 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
                 ) from exc
         else:
             stiffness_sparse = (
-                stiffness_matrix.tocsr()
-                if scipy_sparse.issparse(stiffness_matrix)
-                else scipy_sparse.csr_matrix(stiffness_matrix)
+                scipy_sparse.csr_matrix(stiffness_matrix)
+                if isinstance(stiffness_matrix, np.ndarray)
+                else stiffness_matrix.tocsr()
             )
             mass_sparse = (
-                mass_matrix.tocsr()
-                if scipy_sparse.issparse(mass_matrix)
-                else scipy_sparse.csr_matrix(mass_matrix)
+                scipy_sparse.csr_matrix(mass_matrix)
+                if isinstance(mass_matrix, np.ndarray)
+                else mass_matrix.tocsr()
             )
             initial = np.random.default_rng(0).standard_normal((count, modes))
             initial[:, 0] = 1.0
@@ -1133,39 +1137,46 @@ def _basis_matrix(
 ) -> Array:
     coordinate = _normalized_nodes(nodes, quadrature_weights, periodic)
     columns: list[Array] = []
-    if basis == "fourier":
-        columns.append(jnp.ones_like(coordinate))
-        frequency = 1
-        while len(columns) < modes:
-            columns.append(jnp.sqrt(2.0) * jnp.cos(2.0 * jnp.pi * frequency * coordinate))
-            if len(columns) < modes:
+    basis = parse(basis, ModalTransformKind, "basis")
+    match basis:
+        case "fourier":
+            columns.append(jnp.ones_like(coordinate))
+            frequency = 1
+            while len(columns) < modes:
                 columns.append(
-                    jnp.sqrt(2.0) * jnp.sin(2.0 * jnp.pi * frequency * coordinate)
+                    jnp.sqrt(2.0) * jnp.cos(2.0 * jnp.pi * frequency * coordinate)
                 )
-            frequency += 1
-    elif basis == "sine":
-        columns.extend(
-            jnp.sqrt(2.0) * jnp.sin(jnp.pi * (index + 1) * coordinate)
-            for index in range(modes)
-        )
-    elif basis == "cosine":
-        columns.append(jnp.ones_like(coordinate))
-        columns.extend(
-            jnp.sqrt(2.0) * jnp.cos(jnp.pi * index * coordinate)
-            for index in range(1, modes)
-        )
-    elif basis == "legendre":
-        z = 2.0 * coordinate - 1.0
-        columns.append(jnp.ones_like(z))
-        if modes > 1:
-            columns.append(z)
-        for degree in range(2, modes):
-            columns.append(
-                ((2.0 * degree - 1.0) * z * columns[-1] - (degree - 1.0) * columns[-2])
-                / float(degree)
+                if len(columns) < modes:
+                    columns.append(
+                        jnp.sqrt(2.0) * jnp.sin(2.0 * jnp.pi * frequency * coordinate)
+                    )
+                frequency += 1
+        case "sine":
+            columns.extend(
+                jnp.sqrt(2.0) * jnp.sin(jnp.pi * (index + 1) * coordinate)
+                for index in range(modes)
             )
-    else:
-        raise ValueError("basis must be 'fourier', 'sine', 'cosine', or 'legendre'.")
+        case "cosine":
+            columns.append(jnp.ones_like(coordinate))
+            columns.extend(
+                jnp.sqrt(2.0) * jnp.cos(jnp.pi * index * coordinate)
+                for index in range(1, modes)
+            )
+        case "legendre":
+            z = 2.0 * coordinate - 1.0
+            columns.append(jnp.ones_like(z))
+            if modes > 1:
+                columns.append(z)
+            for degree in range(2, modes):
+                columns.append(
+                    (
+                        (2.0 * degree - 1.0) * z * columns[-1]
+                        - (degree - 1.0) * columns[-2]
+                    )
+                    / float(degree)
+                )
+        case _:
+            assert_never(basis)
     return jnp.stack(columns[:modes], axis=-1)
 
 
@@ -1189,7 +1200,7 @@ class BasisTransformPlan(StrictModule, NonTrainableState):
         /,
         *,
         max_construction_bytes: int = _DEFAULT_CONSTRUCTION_BYTES,
-    ):
+    ) -> None:
         nodes_value = tuple(
             jnp.asarray(value, dtype=jnp.float64).reshape((-1,)) for value in nodes
         )

@@ -6,6 +6,8 @@ force-field accuracy. No external implementation/table data are copied.
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from dataclasses import asdict
@@ -37,7 +39,7 @@ from phydrax.atomistic import AtomisticSystemPlan, AtomisticUnitSystem
 from phydrax.units import ANGSTROM
 
 
-def run(length, repeats, smooth_width):
+def run(length: Any, repeats: Any, smooth_width: Any) -> Any:
     construct = NucleicAcidConstruct(("rna",), ("A" * length,), ("RNA",), (False,))
     keys = construct.nucleotide_keys
     ids = tuple(100 + 17 * i for i in range(3 * length))
@@ -129,7 +131,7 @@ def run(length, repeats, smooth_width):
     }
 
 
-def torsion_probe(repeats):
+def torsion_probe(repeats: Any) -> Any:
     construct = NucleicAcidConstruct(("ring",), ("A",), ("RNA",), (False,))
     names = ("P", "O5'", "C5'", "C4'", "C3'", "O3'", "O4'", "C1'", "C2'", "N9", "C4")
     ids = tuple(13 * i + 50 for i in range(len(names)))
@@ -167,7 +169,7 @@ def torsion_probe(repeats):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--lengths", type=int, nargs="+", default=[16, 64])
     parser.add_argument("--repeats", type=int, default=5)

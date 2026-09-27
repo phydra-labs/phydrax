@@ -20,7 +20,7 @@ def _make_graph(n_nodes: int, n_edges: int | None = None) -> vx.GraphIR:
     )
 
 
-def test_pad_with_graphs_and_unpad_roundtrip():
+def test_pad_with_graphs_and_unpad_roundtrip() -> None:
     graph = _make_graph(3, 3)
     padded = vx.pad_with_graphs(graph, n_node=6, n_edge=5, n_graph=3)
     assert padded.node_mask is not None
@@ -44,7 +44,7 @@ def test_pad_with_graphs_and_unpad_roundtrip():
     assert jnp.array_equal(unpadded.edges, graph.edges)
 
 
-def test_padding_masks_fallback_without_stored_masks():
+def test_padding_masks_fallback_without_stored_masks() -> None:
     graph = _make_graph(3, 3)
     padded = vx.pad_with_graphs(graph, n_node=6, n_edge=5, n_graph=3)
     no_masks = padded.replace(
@@ -63,7 +63,7 @@ def test_padding_masks_fallback_without_stored_masks():
     assert int(jnp.sum(graph_mask.astype(jnp.int32))) == 1
 
 
-def test_pad_with_graphs_rejects_invalid_limits():
+def test_pad_with_graphs_rejects_invalid_limits() -> None:
     graph = _make_graph(3, 3)
     with pytest.raises(ValueError):
         vx.pad_with_graphs(graph, n_node=8, n_edge=8, n_graph=1)
@@ -71,7 +71,7 @@ def test_pad_with_graphs_rejects_invalid_limits():
         vx.pad_with_graphs(graph, n_node=3, n_edge=5, n_graph=3)
 
 
-def test_zero_out_padding_and_wrapper():
+def test_zero_out_padding_and_wrapper() -> None:
     graph = _make_graph(3, 3)
     padded = vx.pad_with_graphs(graph, n_node=6, n_edge=5, n_graph=3)
     poisoned = padded.replace(
@@ -107,7 +107,7 @@ def test_zero_out_padding_and_wrapper():
     assert jnp.all(wrapped_out.globals[~graph_mask] == 0)
 
 
-def test_dynamically_batch_batches_and_pads():
+def test_dynamically_batch_batches_and_pads() -> None:
     graphs = [_make_graph(2, 2), _make_graph(2, 2), _make_graph(1, 1)]
     batches = list(vx.dynamically_batch(iter(graphs), n_node=6, n_edge=6, n_graph=3))
 
@@ -116,13 +116,13 @@ def test_dynamically_batch_batches_and_pads():
     assert int(jnp.sum(vx.get_graph_padding_mask(batches[1]).astype(jnp.int32))) == 1
 
 
-def test_dynamically_batch_raises_for_oversized_graph():
+def test_dynamically_batch_raises_for_oversized_graph() -> None:
     graphs = [_make_graph(6, 1)]
     with pytest.raises(RuntimeError):
         list(vx.dynamically_batch(iter(graphs), n_node=6, n_edge=10, n_graph=3))
 
 
-def test_dynamically_batch_rejects_n_graph_lt_two():
+def test_dynamically_batch_rejects_n_graph_lt_two() -> None:
     graphs = [_make_graph(2, 1)]
     with pytest.raises(ValueError):
         list(vx.dynamically_batch(iter(graphs), n_node=6, n_edge=10, n_graph=1))

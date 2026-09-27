@@ -5,7 +5,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 def hamrock_dowson_central_film(
@@ -14,7 +15,7 @@ def hamrock_dowson_central_film(
     material_parameter: ArrayLike,
     load_parameter: ArrayLike,
     /,
-):
+) -> Array:
     if not isfinite(radius_m) or radius_m <= 0:
         raise ValueError("Hamrock-Dowson radius must be finite and positive.")
     speed = jnp.asarray(speed_parameter)

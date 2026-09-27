@@ -11,7 +11,8 @@ from numbers import Integral, Real
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._exponential_family import BernoulliFamily, PoissonFamily
 from .._likelihoods import AbstractLikelihood, ScalarNaturalExponentialFamilyLikelihood
@@ -45,7 +46,7 @@ class StateSpaceGaussianProcessLaplace(StrictModule):
         damping: float = 1.0,
         tolerance: float = 1e-5,
         minimum_curvature: float = 1e-8,
-    ):
+    ) -> None:
         if not isinstance(max_iterations, Integral) or isinstance(max_iterations, bool):
             raise TypeError("max_iterations must be an integer.")
         count = int(max_iterations)
@@ -231,7 +232,7 @@ def _validate_likelihood(likelihood: AbstractLikelihood, /) -> None:
         )
 
 
-def _positive_real(value: Real, /, *, name: str) -> float:
+def _positive_real(value: object, /, *, name: str) -> float:
     if not isinstance(value, Real) or isinstance(value, bool):
         raise TypeError(f"{name} must be a real scalar.")
     result = float(value)
@@ -241,7 +242,7 @@ def _positive_real(value: Real, /, *, name: str) -> float:
 
 
 def _bounded_real(
-    value: Real,
+    value: object,
     /,
     *,
     name: str,

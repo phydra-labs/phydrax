@@ -4,7 +4,8 @@
 from dataclasses import dataclass
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,7 +15,9 @@ class InitializationResult:
     successful: Array
 
 
-def initialization_result(state: ArrayLike, residual: ArrayLike, tolerance: float, /):
+def initialization_result(
+    state: ArrayLike, residual: ArrayLike, tolerance: float, /
+) -> InitializationResult:
     value = jnp.asarray(state)
     norm = jnp.linalg.norm(jnp.asarray(residual))
     return InitializationResult(

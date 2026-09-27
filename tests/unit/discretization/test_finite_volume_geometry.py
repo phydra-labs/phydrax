@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -20,7 +23,7 @@ from phydrax.geometry._certificate import (
 )
 
 
-def _cell_grid(shape, *, periodic=None):
+def _cell_grid(shape: Any, *, periodic: Any = None) -> Any:
     periodic = (False,) * len(shape) if periodic is None else tuple(periodic)
     return phx.discretization.TensorGridPlan(
         tuple(
@@ -31,7 +34,7 @@ def _cell_grid(shape, *, periodic=None):
     ).prepare(jnp.stack((jnp.zeros(len(shape)), jnp.ones(len(shape)))))
 
 
-def test_structured_finite_volume_has_exact_cell_and_face_geometry():
+def test_structured_finite_volume_has_exact_cell_and_face_geometry() -> None:
     grid = _cell_grid((4, 3))
     discretization = phx.discretization.FiniteVolumePlan(
         grid,
@@ -54,7 +57,7 @@ def test_structured_finite_volume_has_exact_cell_and_face_geometry():
     )
 
 
-def test_periodic_faces_are_unique_and_one_dimensional_measure_is_one():
+def test_periodic_faces_are_unique_and_one_dimensional_measure_is_one() -> None:
     grid = _cell_grid((7,), periodic=(True,))
     discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
 
@@ -63,7 +66,7 @@ def test_periodic_faces_are_unique_and_one_dimensional_measure_is_one():
     np.testing.assert_allclose(discretization.cell_volumes, jnp.full((7,), 1.0 / 7.0))
 
 
-def test_interval_quadrature_weights_define_nonuniform_cell_edges():
+def test_interval_quadrature_weights_define_nonuniform_cell_edges() -> None:
     axis = phx.discretization.AxisDiscretization(
         nodes=jnp.asarray([0.1, 0.45, 0.85]),
         quad_weights=jnp.asarray([0.2, 0.5, 0.3]),
@@ -83,7 +86,7 @@ def test_interval_quadrature_weights_define_nonuniform_cell_edges():
     np.testing.assert_allclose(discretization.cell_centers[:, 0], [0.1, 0.45, 0.85])
 
 
-def test_nonuniform_cell_axis_rejects_inconsistent_centers():
+def test_nonuniform_cell_axis_rejects_inconsistent_centers() -> None:
     axis = phx.discretization.AxisDiscretization(
         nodes=jnp.asarray([0.1, 0.4]),
         quad_weights=jnp.asarray([0.2, 0.8]),
@@ -97,7 +100,7 @@ def test_nonuniform_cell_axis_rejects_inconsistent_centers():
         phx.discretization.PreparedTensorGrid((axis,), axis_names=("x",))
 
 
-def test_finite_volume_rejects_point_primary_support_and_duplicate_components():
+def test_finite_volume_rejects_point_primary_support_and_duplicate_components() -> None:
     point_grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(8),), axis_names=("x",)
     ).prepare(jnp.asarray([[0.0], [1.0]]))
@@ -108,11 +111,11 @@ def test_finite_volume_rejects_point_primary_support_and_duplicate_components():
         phx.discretization.FiniteVolumePlan(_cell_grid((4,)), component_names=("u", "u"))
 
 
-def test_exact_sdf_enclosure_carries_absolute_bounds_and_source_identity():
+def test_exact_sdf_enclosure_carries_absolute_bounds_and_source_identity() -> None:
     discretization = phx.discretization.FiniteVolumePlan(_cell_grid((4, 4))).prepare()
     operators = phx.discretization.MACOperatorPlan(discretization).prepare()
 
-    def plane(points, time, args):
+    def plane(points: Any, time: Any, args: Any) -> Any:
         del args
         return points[..., 0] - (0.35 + time)
 
@@ -122,6 +125,7 @@ def test_exact_sdf_enclosure_carries_absolute_bounds_and_source_identity():
     coarse = MACExactSDFMeasurePlan(
         operators,
         plane,
+        # ty: ignore[invalid-argument-type]
         certificate,
         source_id="translating-plane",
         subdivisions=4,
@@ -129,6 +133,7 @@ def test_exact_sdf_enclosure_carries_absolute_bounds_and_source_identity():
     fine = MACExactSDFMeasurePlan(
         operators,
         plane,
+        # ty: ignore[invalid-argument-type]
         certificate,
         source_id="translating-plane",
         subdivisions=8,
@@ -148,17 +153,18 @@ def test_exact_sdf_enclosure_carries_absolute_bounds_and_source_identity():
     assert analytic_cut_volume <= fine.cell_fluid_measure_upper[1, 0]
 
 
-def test_exact_sdf_refresh_rejects_inconsistent_swept_rate_atomically():
+def test_exact_sdf_refresh_rejects_inconsistent_swept_rate_atomically() -> None:
     discretization = phx.discretization.FiniteVolumePlan(_cell_grid((4, 4))).prepare()
     operators = phx.discretization.MACOperatorPlan(discretization).prepare()
 
-    def plane(points, time, args):
+    def plane(points: Any, time: Any, args: Any) -> Any:
         del args
         return points[..., 0] - (0.35 + time)
 
     plan = MACExactSDFMeasurePlan(
         operators,
         plane,
+        # ty: ignore[invalid-argument-type]
         ExactSDFEnclosureCertificate(exact_signed_distance_certificate(smooth=True)),
         source_id="moving-plane-without-swept-flux",
         subdivisions=8,
@@ -174,11 +180,11 @@ def test_exact_sdf_refresh_rejects_inconsistent_swept_rate_atomically():
     assert refreshed.geometry.epoch == initial.epoch
 
 
-def test_diffuse_sdf_ramp_is_honestly_unqualified():
+def test_diffuse_sdf_ramp_is_honestly_unqualified() -> None:
     discretization = phx.discretization.FiniteVolumePlan(_cell_grid((4, 4))).prepare()
     operators = phx.discretization.MACOperatorPlan(discretization).prepare()
 
-    def plane(points, time, args):
+    def plane(points: Any, time: Any, args: Any) -> Any:
         del time, args
         return points[..., 0] - 0.35
 
@@ -195,11 +201,11 @@ def test_diffuse_sdf_ramp_is_honestly_unqualified():
     assert not isinstance(diffuse, QualifiedSharpGeometry)
 
 
-def test_diffuse_sdf_refresh_requires_matching_plan_and_positive_paired_step():
+def test_diffuse_sdf_refresh_requires_matching_plan_and_positive_paired_step() -> None:
     discretization = phx.discretization.FiniteVolumePlan(_cell_grid((4, 4))).prepare()
     operators = phx.discretization.MACOperatorPlan(discretization).prepare()
 
-    def plane(points, time, args):
+    def plane(points: Any, time: Any, args: Any) -> Any:
         del time, args
         return points[..., 0] - 0.35
 

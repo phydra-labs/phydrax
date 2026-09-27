@@ -14,7 +14,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -110,7 +111,7 @@ class OpenLoopStochasticGameSMPProblem(StrictModule):
         noise_shape: Sequence[int],
         args: Any = None,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(time_grid, TimeGrid):
             raise TypeError("time_grid must be a TimeGrid.")
         if not isinstance(partition, PlayerControlPartition):
@@ -333,8 +334,8 @@ def _player_predictions(
             raise ValueError(f"adjoint_predictions[{player}] must have shape {expected}.")
         adjoints.append(value)
 
-    for player, prediction in enumerate(integrand_inputs):
-        if callable(prediction):
+    for player, integrand_prediction in enumerate(integrand_inputs):
+        if callable(integrand_prediction):
             stages = []
             for step in range(steps):
                 context = DiscreteStepContext(
@@ -345,7 +346,7 @@ def _player_predictions(
                 stages.append(
                     jax.vmap(
                         lambda state, action: jnp.asarray(
-                            prediction(context, state, action, problem.args)
+                            integrand_prediction(context, state, action, problem.args)
                         )
                     )(safe_states[:, step], safe_actions[:, step])
                 )
@@ -354,7 +355,9 @@ def _player_predictions(
                 f"martingale_integrand_predictions[{player}]",
             )
         else:
-            value = _real_array(prediction, f"martingale_integrand_predictions[{player}]")
+            value = _real_array(
+                integrand_prediction, f"martingale_integrand_predictions[{player}]"
+            )
         expected = (count, steps, problem.state_size, problem.noise_size)
         if tuple(value.shape) != expected:
             raise ValueError(
@@ -404,7 +407,7 @@ def _optional_evidence(
     resolved: list[str | None] = []
     for player, (is_checked, item) in enumerate(zip(checked, values, strict=True)):
         if is_checked:
-            resolved.append(_identifier(item, f"convexity_evidence[{player}]"))  # type: ignore[arg-type]
+            resolved.append(_identifier(item, f"convexity_evidence[{player}]"))
         elif item is not None:
             raise ValueError(
                 "convexity evidence requires the corresponding checked flag."

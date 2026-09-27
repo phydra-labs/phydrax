@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -43,7 +44,7 @@ NATIVE_DIFFERENTIATION = phx.DerivativeContract.smooth(
 jax.config.update("jax_enable_x64", True)
 
 
-def _provenance(*, source_kind="native", differentiation=None):
+def _provenance(*, source_kind: Any = "native", differentiation: Any = None) -> Any:
     contract = NATIVE_DIFFERENTIATION if differentiation is None else differentiation
     return CosmologyProductProvenance(
         producer="test-dark-matter-inference",
@@ -58,11 +59,11 @@ def _provenance(*, source_kind="native", differentiation=None):
     )
 
 
-def _decode_float64(data):
+def _decode_float64(data: Any) -> Any:
     return np.frombuffer(data, dtype=np.float64).copy()
 
 
-def _external_product(values):
+def _external_product(values: Any) -> Any:
     values_host = np.asarray(values, dtype=np.float64)
     payload = values_host.tobytes()
     manifest = ReferenceArtifactManifest(
@@ -113,7 +114,7 @@ def _external_product(values):
     )
 
 
-def _smooth_evaluator(parameters):
+def _smooth_evaluator(parameters: Any) -> Any:
     return DarkMatterInferenceEvaluation(
         jnp.asarray((parameters[0] ** 2, parameters[0] * parameters[1])),
         jnp.asarray((3, 7)),
@@ -129,7 +130,7 @@ def _smooth_evaluator(parameters):
     )
 
 
-def test_smooth_fixed_grid_wave_jvp_matches_known_derivative():
+def test_smooth_fixed_grid_wave_jvp_matches_known_derivative() -> None:
     plan = SmoothFixedGridDarkMatterInferencePlan(
         _smooth_evaluator,
         jnp.asarray((3, 7)),
@@ -156,7 +157,7 @@ def test_smooth_fixed_grid_wave_jvp_matches_known_derivative():
     assert bool(result.successful)
 
 
-def test_soliton_and_vortex_topology_products_refuse_gradients():
+def test_soliton_and_vortex_topology_products_refuse_gradients() -> None:
     plan = SmoothFixedGridDarkMatterInferencePlan(
         _smooth_evaluator,
         jnp.asarray((3, 7)),
@@ -173,8 +174,8 @@ def test_soliton_and_vortex_topology_products_refuse_gradients():
         plan.sensitivity(jnp.asarray((2.0, 3.0)), jnp.asarray((1.0, 0.0)))
 
 
-def _stochastic_evaluator(score_multiplier):
-    def evaluate(parameters, tape):
+def _stochastic_evaluator(score_multiplier: Any) -> Any:
+    def evaluate(parameters: Any, tape: Any) -> Any:
         values = (parameters[0] + tape)[:, None]
         score = (score_multiplier * tape)[:, None]
         active = jnp.ones(tape.shape, dtype="bool")
@@ -195,7 +196,7 @@ def _stochastic_evaluator(score_multiplier):
     return evaluate
 
 
-def _stochastic_plan(score_multiplier, tape=None):
+def _stochastic_plan(score_multiplier: Any, tape: Any = None) -> Any:
     tape_ = jnp.asarray((-1.0, 1.0, -1.0, 1.0)) if tape is None else jnp.asarray(tape)
     return FixedTapeStochasticSensitivityPlan(
         _stochastic_evaluator(score_multiplier),
@@ -212,7 +213,7 @@ def _stochastic_plan(score_multiplier, tape=None):
     )
 
 
-def test_fixed_tape_score_and_common_random_difference_report_uncertainty():
+def test_fixed_tape_score_and_common_random_difference_report_uncertainty() -> None:
     result = _stochastic_plan(1.0).sensitivity(
         jnp.asarray((2.0,)), jnp.asarray((1.0,)), epsilon=1e-4
     )
@@ -248,7 +249,7 @@ def test_fixed_tape_score_and_common_random_difference_report_uncertainty():
     assert bool(result.successful)
 
 
-def test_stochastic_sensitivity_flags_biased_score_estimator():
+def test_stochastic_sensitivity_flags_biased_score_estimator() -> None:
     result = _stochastic_plan(0.0).sensitivity(
         jnp.asarray((2.0,)), jnp.asarray((1.0,)), epsilon=1e-4
     )
@@ -259,7 +260,7 @@ def test_stochastic_sensitivity_flags_biased_score_estimator():
     assert not bool(result.successful)
 
 
-def test_discrepancy_budget_preserves_decomposition_and_exact_standardization():
+def test_discrepancy_budget_preserves_decomposition_and_exact_standardization() -> None:
     layout = CoordinateLayout(("density", "dispersion"))
     coordinates = DarkMatterCoordinateContract(
         layout,
@@ -317,7 +318,7 @@ def test_discrepancy_budget_preserves_decomposition_and_exact_standardization():
     assert bool(product.successful)
 
 
-def test_external_reference_is_constant_and_emulator_calibration_keeps_lineage():
+def test_external_reference_is_constant_and_emulator_calibration_keeps_lineage() -> None:
     reference = _external_product(jnp.asarray((-1.0, 1.0, -1.0, 1.0)))
     assert reference.as_theory_vector().layout.layout_id == reference.layout.layout_id
     tangent = jax.jvp(
@@ -424,7 +425,7 @@ def test_external_reference_is_constant_and_emulator_calibration_keeps_lineage()
         )
 
 
-def test_external_emulator_calibration_denies_unlicensed_use_and_raw_bypass():
+def test_external_emulator_calibration_denies_unlicensed_use_and_raw_bypass() -> None:
     payload = np.concatenate(
         (np.zeros((4,), dtype=np.float64), np.ones((4,), dtype=np.float64))
     ).tobytes()

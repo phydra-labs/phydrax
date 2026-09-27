@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -12,14 +15,14 @@ from phydrax.discretization.fem._sbp import (
 )
 
 
-def _field():
+def _field() -> Any:
     return phx.discretization.FiniteElementFieldSpec(
         "u",
         phx.discretization.lagrange_element("triangle", 1),
     )
 
 
-def test_embedded_finite_element_local_metric_uses_the_gram_inverse():
+def test_embedded_finite_element_local_metric_uses_the_gram_inverse() -> None:
     mesh = phx.discretization.CellMesh.from_triangles(
         jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 1.0))),
         jnp.asarray(((0, 1, 2),), dtype=jnp.int32),
@@ -40,7 +43,7 @@ def test_embedded_finite_element_local_metric_uses_the_gram_inverse():
     assert jnp.all(metric.physical_weights > 0.0)
 
 
-def test_local_finite_element_provider_rejects_a_foreign_cell_domain():
+def test_local_finite_element_provider_rejects_a_foreign_cell_domain() -> None:
     target_mesh = phx.discretization.CellMesh.from_triangles(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
         jnp.asarray(((0, 1, 2),), dtype=jnp.int32),
@@ -64,7 +67,7 @@ def test_local_finite_element_provider_rejects_a_foreign_cell_domain():
         )
 
 
-def test_mapped_tensor_metric_identity_includes_coordinate_content():
+def test_mapped_tensor_metric_identity_includes_coordinate_content() -> None:
     sbp = TensorGLLSBPPlan(2).prepare()
     x, y = jnp.meshgrid(sbp.nodes, sbp.nodes, indexing="ij")
     coordinates = jnp.stack((x, y), axis=-1)[None, ...]

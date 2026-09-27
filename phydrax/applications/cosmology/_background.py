@@ -6,11 +6,16 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ._closure import CosmologyPhysicalState, PhysicalDependencyProjection
+from ._closure import (
+    CosmologyPhysicalState,
+    CosmologyRealizationSignature,
+    PhysicalDependencyProjection,
+)
 from ._scales import CODE_COSMOLOGY_SCALE, CosmologyScaleContract
 
 
@@ -39,7 +44,7 @@ class FLRWBackground(StrictModule):
         dark_energy_w0: ArrayLike = -1.0,
         dark_energy_wa: ArrayLike = 0.0,
         scale: CosmologyScaleContract = CODE_COSMOLOGY_SCALE,
-    ):
+    ) -> None:
         if not isinstance(scale, CosmologyScaleContract):
             raise TypeError("scale must be a CosmologyScaleContract.")
         dtype = jnp.result_type(
@@ -117,7 +122,7 @@ class FLRWBackground(StrictModule):
         )
 
     @property
-    def realization(self):
+    def realization(self) -> CosmologyRealizationSignature:
         return PhysicalDependencyProjection(self.physical_state.names).project(
             self.physical_state
         )

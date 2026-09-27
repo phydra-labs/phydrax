@@ -6,6 +6,7 @@
 
 from collections.abc import Sequence
 from math import prod
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -52,6 +53,7 @@ def in_order(model_ports: ModelPorts, owner_ports: ModelPorts, /) -> PortMapping
 def _shape(size: int | tuple[int, ...] | str, /) -> tuple[int, ...]:
     if size == "scalar":
         return ()
+    # ty: ignore[invalid-return-type]
     return (size,) if isinstance(size, int) else tuple(size)
 
 
@@ -70,7 +72,7 @@ class PortedAffine(AbstractArrayModel):
         *,
         out_size: int | tuple[int, ...] | str,
         weight: jax.Array | None = None,
-    ):
+    ) -> None:
         in_size = sum(prod(port.event_shape) for port in ports.inputs)
         out = prod(_shape(out_size))
         self.weight = jnp.zeros((out, in_size)) if weight is None else weight
@@ -78,7 +80,7 @@ class PortedAffine(AbstractArrayModel):
         self.in_size = in_size
         self.out_size = out_size
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         del key
         return (self.weight @ jnp.ravel(x)).reshape(_shape(self.out_size))
 

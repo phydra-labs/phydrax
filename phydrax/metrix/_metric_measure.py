@@ -8,9 +8,11 @@ from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ._chart import CoordinateChart
 from ._curvature import ricci_tensor
 from ._density import VolumeDensity
 from ._metric import RiemannianMetric
@@ -22,7 +24,7 @@ from ._utils import _pointwise_array
 class _WeightedDensityCoefficient(StrictModule):
     measure: WeightedRiemannianMeasure
 
-    def __init__(self, measure: WeightedRiemannianMeasure, /):
+    def __init__(self, measure: WeightedRiemannianMeasure, /) -> None:
         self.measure = measure
 
     def __call__(self, coordinates: Array, /) -> Array:
@@ -32,7 +34,7 @@ class _WeightedDensityCoefficient(StrictModule):
 class _WeightedLogDensityCoefficient(StrictModule):
     measure: WeightedRiemannianMeasure
 
-    def __init__(self, measure: WeightedRiemannianMeasure, /):
+    def __init__(self, measure: WeightedRiemannianMeasure, /) -> None:
         self.measure = measure
 
     def __call__(self, coordinates: Array, /) -> Array:
@@ -48,7 +50,7 @@ class _WeightedGradientField(StrictModule):
         field: Callable[[Array], Array],
         measure: WeightedRiemannianMeasure,
         /,
-    ):
+    ) -> None:
         self.field = field
         self.measure = measure
 
@@ -67,7 +69,7 @@ class WeightedRiemannianMeasure(StrictModule):
         metric: RiemannianMetric,
         log_weight: Callable[[Array], Array],
         /,
-    ):
+    ) -> None:
         if not isinstance(metric, RiemannianMetric):
             raise TypeError("WeightedRiemannianMeasure requires a RiemannianMetric.")
         if not callable(log_weight):
@@ -76,7 +78,7 @@ class WeightedRiemannianMeasure(StrictModule):
         self.log_weight_function = log_weight
 
     @property
-    def chart(self):
+    def chart(self) -> CoordinateChart:
         return self.metric.chart
 
     def _log_weight_point(self, coordinates: Array, /) -> Array:

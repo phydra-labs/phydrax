@@ -47,7 +47,7 @@ class StructuredNonlinearCapabilities(StrictModule):
         pooled_batch: bool,
         implicit_differentiation: bool,
         device_execution: bool,
-    ):
+    ) -> None:
         self.exact_sparse_jacobian = bool(exact_sparse_jacobian)
         self.exact_sparse_hessian = bool(exact_sparse_hessian)
         self.limited_memory_hessian = bool(limited_memory_hessian)

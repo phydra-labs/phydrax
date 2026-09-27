@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import coordax as cx
 import equinox as eqx
@@ -29,7 +30,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _problem(size: int, dimension: int):
+def _problem(size: int, dimension: int) -> Any:
     source_points = jnp.reshape(
         jnp.sin(jnp.arange(size * dimension, dtype="float64") * 0.013),
         (size, dimension),
@@ -41,6 +42,7 @@ def _problem(size: int, dimension: int):
     weights = cx.Field(jnp.ones((size,), dtype="float64"), dims=("atom",))
     source = phx.integration.discrete(
         source_points,
+        # ty: ignore[invalid-argument-type]
         weights,
         axes="atom",
         normalized=True,
@@ -48,6 +50,7 @@ def _problem(size: int, dimension: int):
     )
     target = phx.integration.discrete(
         target_points,
+        # ty: ignore[invalid-argument-type]
         weights,
         axes="atom",
         normalized=True,
@@ -60,7 +63,7 @@ def _problem(size: int, dimension: int):
     )
 
 
-def _bytes(tree) -> int:
+def _bytes(tree: Any) -> int:
     return sum(
         leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree.leaves(tree)
@@ -68,7 +71,15 @@ def _bytes(tree) -> int:
     )
 
 
-def _record(size, dimension, block_size, iterations, repeats, *, blockwise):
+def _record(
+    size: Any,
+    dimension: Any,
+    block_size: Any,
+    iterations: Any,
+    repeats: Any,
+    *,
+    blockwise: Any,
+) -> Any:
     problem = _problem(size, dimension)
     solver = phx.transport.Sinkhorn(
         0.5,
@@ -100,10 +111,11 @@ def _record(size, dimension, block_size, iterations, repeats, *, blockwise):
         jax.block_until_ready(applied)
     apply_ms = 1e3 * (time.perf_counter() - started) / repeats
 
-    def scalar(points):
+    def scalar(points: Any) -> Any:
         weights = cx.Field(jnp.ones((size,), dtype="float64"), dims=("atom",))
         source = phx.integration.discrete(
             points,
+            # ty: ignore[invalid-argument-type]
             weights,
             axes="atom",
             normalized=True,
@@ -112,6 +124,7 @@ def _record(size, dimension, block_size, iterations, repeats, *, blockwise):
             source,
             phx.integration.discrete(
                 problem.target.points,
+                # ty: ignore[invalid-argument-type]
                 weights,
                 axes="atom",
                 normalized=True,

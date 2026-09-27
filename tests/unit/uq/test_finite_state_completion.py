@@ -1,4 +1,5 @@
 from itertools import product
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -11,7 +12,7 @@ import phydrax as phx
 EMISSION = jnp.asarray([[0.85, 0.15], [0.25, 0.75]])
 
 
-def _generator(*, forward=0.7, backward=0.4):
+def _generator(*, forward: Any = 0.7, backward: Any = 0.4) -> Any:
     process = phx.stochastic.JumpProcess(
         lambda time, state, args: jnp.asarray(
             [
@@ -34,8 +35,8 @@ def _generator(*, forward=0.7, backward=0.4):
     )
 
 
-def _observation_model(emission=EMISSION):
-    def log_prob(value, state, time, mask, context):
+def _observation_model(emission: Any = EMISSION) -> Any:
+    def log_prob(value: Any, state: Any, time: Any, mask: Any, context: Any) -> Any:
         del time, context
         probability = emission[state[0], value[0].astype(jnp.int32)]
         exact = jnp.where(probability > 0.0, jnp.log(probability), -jnp.inf)
@@ -56,17 +57,17 @@ def _observation_model(emission=EMISSION):
 
 def _problem(
     *,
-    times=jnp.asarray([0.4, 1.1, 1.8]),
-    values=jnp.asarray([[0], [1], [1]]),
-    probabilities=jnp.asarray([0.6, 0.4]),
-    step_valid=None,
-    observation_mask=None,
-    generator=None,
-    emission=EMISSION,
-    initial_time=0.0,
-    input_signal=None,
-    case_ids=("only",),
-):
+    times: Any = jnp.asarray([0.4, 1.1, 1.8]),
+    values: Any = jnp.asarray([[0], [1], [1]]),
+    probabilities: Any = jnp.asarray([0.6, 0.4]),
+    step_valid: Any = None,
+    observation_mask: Any = None,
+    generator: Any = None,
+    emission: Any = EMISSION,
+    initial_time: Any = 0.0,
+    input_signal: Any = None,
+    case_ids: Any = ("only",),
+) -> Any:
     values = jnp.asarray(values)
     probabilities = jnp.asarray(probabilities)
     case_shape = tuple(probabilities.shape[:-1])
@@ -106,7 +107,9 @@ def _problem(
     )
 
 
-def _enumerate_single_case(problem, filter_result, case_index=None):
+def _enumerate_single_case(
+    problem: Any, filter_result: Any, case_index: Any = None
+) -> Any:
     prior = np.asarray(problem.model.prior.probabilities)
     matrices = np.asarray(filter_result.transition_matrices)
     values = np.asarray(problem.observations.values)
@@ -144,7 +147,7 @@ def _enumerate_single_case(problem, filter_result, case_index=None):
     return initial, smoothed, pairwise, paths[map_index], masses[map_index]
 
 
-def test_smoothing_viterbi_and_counts_match_complete_path_enumeration():
+def test_smoothing_viterbi_and_counts_match_complete_path_enumeration() -> None:
     problem = _problem(observation_mask=jnp.asarray([[True], [False], [True]]))
     likelihood = phx.uq.exact_state_space_log_likelihood(problem)
     filtered = likelihood.backend
@@ -168,7 +171,7 @@ def test_smoothing_viterbi_and_counts_match_complete_path_enumeration():
     assert viterbi.joint_log_probability == pytest.approx(np.log(map_mass))
 
 
-def test_viterbi_ties_and_zero_probability_transitions_are_exact():
+def test_viterbi_ties_and_zero_probability_transitions_are_exact() -> None:
     zero_generator = _generator(forward=0.0, backward=0.0)
     problem = _problem(
         generator=zero_generator,
@@ -197,7 +200,7 @@ def test_viterbi_ties_and_zero_probability_transitions_are_exact():
     )
 
 
-def test_zero_mass_pairs_mask_nonfinite_sufficient_statistics():
+def test_zero_mass_pairs_mask_nonfinite_sufficient_statistics() -> None:
     problem = _problem(
         generator=_generator(forward=0.0, backward=0.0),
         probabilities=jnp.asarray([0.5, 0.5]),
@@ -207,7 +210,7 @@ def test_zero_mass_pairs_mask_nonfinite_sufficient_statistics():
     filtered = phx.uq.exact_state_space_log_likelihood(problem).backend
     smoother = phx.uq.finite_state_backward_smoother(filtered)
 
-    def statistic(previous_state, state, t0, t1, context):
+    def statistic(previous_state: Any, state: Any, t0: Any, t1: Any, context: Any) -> Any:
         del t0, t1
         finite_pair = (previous_state[0] == state[0]) & (context.step_index < 2)
         nonfinite = jnp.where(previous_state[0] < state[0], jnp.nan, jnp.inf)
@@ -221,7 +224,7 @@ def test_zero_mass_pairs_mask_nonfinite_sufficient_statistics():
     assert statistics.total_statistics == pytest.approx(4.0)
 
 
-def test_masked_observation_value_has_no_effect_on_exact_posteriors():
+def test_masked_observation_value_has_no_effect_on_exact_posteriors() -> None:
     first = _problem(
         values=jnp.asarray([[0], [0], [1]]),
         observation_mask=jnp.asarray([[True], [False], [True]]),
@@ -248,7 +251,7 @@ def test_masked_observation_value_has_no_effect_on_exact_posteriors():
     )
 
 
-def test_cases_padding_ids_and_sufficient_statistic_context_are_preserved():
+def test_cases_padding_ids_and_sufficient_statistic_context_are_preserved() -> None:
     times = jnp.asarray([[0.4, 1.0, 1.6], [0.5, 1.1, 1.8]])
     values = jnp.asarray([[[0], [1], [1]], [[1], [0], [1]]])
     step_valid = jnp.asarray([[True, True, True], [True, True, False]])
@@ -280,7 +283,7 @@ def test_cases_padding_ids_and_sufficient_statistic_context_are_preserved():
     viterbi = phx.uq.finite_state_viterbi(filtered)
     counts = phx.uq.finite_state_expected_transition_counts(smoother)
 
-    def statistic(previous_state, state, t0, t1, context):
+    def statistic(previous_state: Any, state: Any, t0: Any, t1: Any, context: Any) -> Any:
         return {
             "changed": (previous_state[0] != state[0]).astype("float64"),
             "context": jnp.stack(
@@ -355,7 +358,7 @@ def test_cases_padding_ids_and_sufficient_statistic_context_are_preserved():
     assert jnp.all(statistics.per_step_statistics["context"][1, 2] == 0.0)
 
 
-def test_generator_semigroup_and_exact_completion_are_jittable():
+def test_generator_semigroup_and_exact_completion_are_jittable() -> None:
     generator = _generator()
     transition_matrix = eqx.filter_jit(generator.transition_matrix)
     first = transition_matrix(jnp.asarray(0.35))
@@ -394,7 +397,7 @@ def test_generator_semigroup_and_exact_completion_are_jittable():
     assert jnp.allclose(jnp.sum(smoother.smoothed_probabilities, axis=-1), 1.0)
 
 
-def test_factor_graph_chain_matches_exact_finite_state_completion():
+def test_factor_graph_chain_matches_exact_finite_state_completion() -> None:
     problem = _problem()
     likelihood = phx.uq.exact_state_space_log_likelihood(problem)
     filtered = likelihood.backend
@@ -452,13 +455,18 @@ def test_factor_graph_chain_matches_exact_finite_state_completion():
         max_plan,
         phx.pgm.initialize_belief_propagation(max_plan),
     )
+    # ty: ignore[unresolved-attribute]
     probabilities = jnp.exp(sum_result.variable_log_probabilities.values).reshape(
         (steps + 1, 2)
     )
 
+    # ty: ignore[unresolved-attribute]
     assert sum_result.marginals_exact
+    # ty: ignore[unresolved-attribute]
     assert sum_result.log_normalizer == pytest.approx(likelihood.total_log_likelihood)
     assert jnp.allclose(probabilities[0], smoother.initial_probabilities)
     assert jnp.allclose(probabilities[1:], smoother.smoothed_probabilities)
+    # ty: ignore[unresolved-attribute]
     assert int(max_result.map_assignment[0]) == int(viterbi.initial_state_indices)
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(max_result.map_assignment[1:], viterbi.state_indices)

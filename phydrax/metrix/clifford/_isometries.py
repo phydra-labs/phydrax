@@ -10,7 +10,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -80,7 +81,7 @@ class MetricIsometryAction(StrictModule, NonTrainableState):
         /,
         *,
         tolerance: float = 1e-10,
-    ):
+    ) -> None:
         host, defect = _validated_matrix(algebra, matrix, tolerance)
         inverse = np.linalg.solve(
             host,
@@ -134,7 +135,7 @@ class MetricIsometryAuditSet(StrictModule, NonTrainableState):
         algebra: CliffordAlgebraSpec,
         actions: Sequence[MetricIsometryAction],
         /,
-    ):
+    ) -> None:
         resolved = tuple(actions)
         if not resolved:
             raise ValueError(
@@ -175,7 +176,7 @@ class FiniteMetricIsometryGroup(StrictModule, NonTrainableState):
         /,
         *,
         tolerance: float = 1e-10,
-    ):
+    ) -> None:
         host = np.asarray(matrices)
         expected = (algebra.dimension, algebra.dimension)
         if host.ndim != 3 or host.shape[0] == 0 or host.shape[1:] != expected:

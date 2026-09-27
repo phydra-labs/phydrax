@@ -9,7 +9,8 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -56,7 +57,7 @@ class MaxwellEFIEPolicy3D(StrictModule, NonTrainableState):
         max_edges: int = 1024,
         max_dense_bytes: int = 256 * 1024 * 1024,
         max_condition_number: float = 1.0e10,
-    ):
+    ) -> None:
         orders = (int(regular_order), int(singular_order), int(near_order))
         values = (
             float(near_ratio),

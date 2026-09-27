@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
+from .._numerics import QuadratureRuleData
 from ..geometry.simplicial._affine import AffineSimplexMap
 from ._breakpoints import discover_breakpoints
 from ._estimates import (
@@ -28,13 +30,28 @@ from ._rules import (
     ClenshawCurtisRule,
     GaussKronrodRule,
     interval_rule_data,
+    ReferenceCellData,
     tanh_sinh_data,
     TanhSinhRule,
 )
 from ._status import IntegrationStatus
 
 
-def _local_rule(plan: AdaptiveQuadraturePlan, /):
+# (lower, upper, estimates, errors, active, count, total, total error,
+#  evaluations, status, done)
+_IntervalState: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+# (vertices, estimates, errors, active, count, total, total error, evaluations,
+#  status, done)
+_TriangleState: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+
+
+def _local_rule(
+    plan: AdaptiveQuadraturePlan, /
+) -> tuple[QuadratureRuleData, QuadratureRuleData | None, int]:
     high = interval_rule_data(plan.rule)
     if isinstance(plan.rule, GaussKronrodRule):
         if high.embedded_weights is None:
@@ -217,7 +234,7 @@ def adaptive_interval_callable(
         )
 
     def evaluate_interval(lower: Array, upper: Array) -> tuple[Array, Array, Array]:
-        def evaluate(_):
+        def evaluate(_: None) -> tuple[Array, Array, Array]:
             half = 0.5 * (upper - lower)
             center = 0.5 * (upper + lower)
             high_nodes = precision_.accumulation(high.nodes)
@@ -341,7 +358,7 @@ def adaptive_interval_callable(
         done,
     )
 
-    def iteration(carry, _):
+    def iteration(carry: _IntervalState, _: None) -> tuple[_IntervalState, None]:
         (
             lowers,
             uppers,
@@ -356,7 +373,7 @@ def adaptive_interval_callable(
             finished,
         ) = carry
 
-        def refine(current):
+        def refine(current: _IntervalState) -> _IntervalState:
             (
                 lowers_,
                 uppers_,
@@ -373,7 +390,7 @@ def adaptive_interval_callable(
             capacity_exhausted = count_ >= capacity
             evaluation_exhausted = evaluations_ + 2 * local_cost > max_evaluations
 
-            def fail_capacity(values):
+            def fail_capacity(values: _IntervalState) -> _IntervalState:
                 status_value = jnp.where(
                     capacity_exhausted,
                     int(IntegrationStatus.MAXIMUM_INTERVALS_REACHED),
@@ -384,7 +401,7 @@ def adaptive_interval_callable(
                     jnp.asarray(True),
                 )
 
-            def split(values):
+            def split(values: _IntervalState) -> _IntervalState:
                 (
                     lower_values,
                     upper_values,
@@ -599,7 +616,7 @@ def adaptive_triangle_callable(
     def physical_jacobian(vertices: Array) -> Array:
         return AffineSimplexMap(vertices).evidence.jacobian_measure
 
-    def evaluate_field(vertices: Array, rule_data) -> Array:
+    def evaluate_field(vertices: Array, rule_data: ReferenceCellData) -> Array:
         origin = vertices[0]
         first = vertices[1] - origin
         second = vertices[2] - origin
@@ -726,7 +743,7 @@ def adaptive_triangle_callable(
     )
     iterations = max(0, (capacity - initial_count) // 3)
 
-    def iteration(carry, _):
+    def iteration(carry: _TriangleState, _: None) -> tuple[_TriangleState, None]:
         (
             vertices_,
             estimates_,
@@ -740,7 +757,7 @@ def adaptive_triangle_callable(
             finished_,
         ) = carry
 
-        def advance(current):
+        def advance(current: _TriangleState) -> _TriangleState:
             (
                 vertices__,
                 estimates__,
@@ -755,16 +772,16 @@ def adaptive_triangle_callable(
             ) = current
             budget_ok = evaluations__ + child_cost <= maximum_evaluations
 
-            def budget_failure(values):
-                values = list(values)
-                values[-2] = jnp.asarray(
-                    int(IntegrationStatus.MAXIMUM_EVALUATIONS_REACHED),
-                    dtype=jnp.int32,
+            def budget_failure(values: _TriangleState) -> _TriangleState:
+                return values[:-2] + (
+                    jnp.asarray(
+                        int(IntegrationStatus.MAXIMUM_EVALUATIONS_REACHED),
+                        dtype=jnp.int32,
+                    ),
+                    jnp.asarray(True),
                 )
-                values[-1] = jnp.asarray(True)
-                return tuple(values)
 
-            def refine(values):
+            def refine(values: _TriangleState) -> _TriangleState:
                 (
                     vertices___,
                     estimates___,

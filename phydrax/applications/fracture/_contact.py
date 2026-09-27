@@ -9,7 +9,8 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -244,7 +245,7 @@ class CrackFaceContactAdapter(StrictModule, NonTrainableState):
         plus_material_id: int = 0,
         minus_material_id: int = 0,
         adapter_id: str = "sharp-crack-face-contact",
-    ):
+    ) -> None:
         if not isinstance(topology, SharpCrackTopology):
             raise TypeError("topology must be SharpCrackTopology.")
         if not isinstance(normal_law, AbstractNormalContactLaw):

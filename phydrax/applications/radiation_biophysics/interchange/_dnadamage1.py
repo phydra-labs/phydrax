@@ -28,6 +28,7 @@ import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, SupportsInt, TypeAlias
 
 import numpy as np
 
@@ -57,6 +58,8 @@ _UNREPORTED = (
     "event_time",
     "carried_energy",
 )
+# Column element types are heterogeneous per profile column (numbers and text).
+_Columns: TypeAlias = Mapping[str, Sequence[Any] | np.ndarray]
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,8 +70,8 @@ class ImportedRadiationLedgers:
 
 
 def dnadamage1_column_payload(
-    physical: Mapping[str, Sequence],
-    chemical: Mapping[str, Sequence],
+    physical: _Columns,
+    chemical: _Columns,
     physical_entry_ids: Sequence[int],
     chemical_entry_ids: Sequence[int],
 ) -> bytes:
@@ -92,14 +95,16 @@ def dnadamage1_column_payload(
     ).encode("utf-8")
 
 
-def _integer(value, name: str) -> int:
+def _integer(value: SupportsInt, name: str) -> int:
     integer = int(value)
     if isinstance(value, bool) or integer != value or integer < 0:
         raise ValueError(f"{name} must be a nonnegative integer, not a truncated float.")
     return integer
 
 
-def _check_columns(columns, expected, entry_ids):
+def _check_columns(
+    columns: _Columns, expected: tuple[str, ...], entry_ids: Sequence[int]
+) -> tuple[int, ...]:
     if set(columns) != set(expected):
         raise ValueError("Source columns do not match the pinned dnadamage1 profile.")
     n = len(entry_ids)
@@ -111,19 +116,27 @@ def _check_columns(columns, expected, entry_ids):
     return ids
 
 
+def _point(columns: _Columns, index: int) -> tuple[float, float, float]:
+    return (
+        float(columns["x"][index]),
+        float(columns["y"][index]),
+        float(columns["z"][index]),
+    )
+
+
 def _import_columns(
-    physical_columns,
-    chemical_columns,
+    physical_columns: _Columns,
+    chemical_columns: _Columns,
     *,
-    source,
-    run_id,
-    fraction_id,
-    physical_entry_ids,
-    chemical_entry_ids,
-    volume_materials,
-    required_semantics,
-    commercial_use,
-):
+    source: RadiationSource,
+    run_id: str,
+    fraction_id: str,
+    physical_entry_ids: Sequence[int],
+    chemical_entry_ids: Sequence[int],
+    volume_materials: Mapping[int, str],
+    required_semantics: tuple[str, ...],
+    commercial_use: bool,
+) -> ImportedRadiationLedgers:
     source.require_rights(commercial_use=commercial_use)
     if (
         source.engine != "Geant4-dnadamage1"
@@ -182,7 +195,7 @@ def _import_columns(
         physical.append(
             PhysicalInteraction(
                 RadiationEventKey(history, "physical", f"ntuple_1:{entry_id}"),
-                tuple(float(physical_columns[name][index]) for name in ("x", "y", "z")),
+                _point(physical_columns, index),
                 float(physical_columns["edep"][index]),
                 source_site_id=f"{volume}:{copy}",
                 material=volume_materials[volume],
@@ -200,7 +213,7 @@ def _import_columns(
         chemical.append(
             ChemicalReaction(
                 RadiationEventKey(history, "chemical", f"ntuple_2:{entry_id}"),
-                tuple(float(chemical_columns[name][index]) for name in ("x", "y", "z")),
+                _point(chemical_columns, index),
                 "OH-deoxyribose-damage",
                 (radical, "Deoxyribose"),
                 ("DamagedDeoxyribose",),
@@ -260,17 +273,17 @@ def _import_columns(
 
 
 def import_dnadamage1_columns(
-    physical_columns,
-    chemical_columns,
+    physical_columns: _Columns,
+    chemical_columns: _Columns,
     *,
     source: RadiationSource,
     run_id: str,
     fraction_id: str,
-    physical_entry_ids,
-    chemical_entry_ids,
-    volume_materials,
+    physical_entry_ids: Sequence[int],
+    chemical_entry_ids: Sequence[int],
+    volume_materials: Mapping[int, str],
     required_semantics: tuple[str, ...] = (),
-    commercial_use=False,
+    commercial_use: bool = False,
 ) -> ImportedRadiationLedgers:
     payload = dnadamage1_column_payload(
         physical_columns, chemical_columns, physical_entry_ids, chemical_entry_ids
@@ -301,9 +314,9 @@ def import_dnadamage1_root(
     source: RadiationSource,
     run_id: str,
     fraction_id: str,
-    volume_materials,
+    volume_materials: Mapping[int, str],
     required_semantics: tuple[str, ...] = (),
-    commercial_use=False,
+    commercial_use: bool = False,
 ) -> ImportedRadiationLedgers:
     """Import an admitted real ROOT file; requires the optional ``uproot`` package."""
     source.require_rights(commercial_use=commercial_use)

@@ -12,7 +12,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -67,7 +68,7 @@ class MarkerFlowCheckpointPlan(StrictModule, NonTrainableState):
         transfer_id: str,
         topology_id: str = "fixed-marker-topology",
         decomposition_id: str = "serial",
-    ):
+    ) -> None:
         identities = tuple(
             str(value)
             for value in (
@@ -208,7 +209,7 @@ class MarkerFlowReplayPlan(StrictModule, NonTrainableState):
         fixed_topology: bool = True,
         event_map_certified: bool = False,
         pathwise_noise: bool = True,
-    ):
+    ) -> None:
         identifier = str(replay_id)
         if not identifier:
             raise ValueError("replay_id must be nonempty.")
@@ -220,7 +221,7 @@ class MarkerFlowReplayPlan(StrictModule, NonTrainableState):
 
     def replay(
         self,
-        initial_state,
+        initial_state: object,
         record: MarkerFlowReplayRecord,
         step: Callable[[object, Array, Array, Array, Array], tuple[object, Array, Array]],
         /,

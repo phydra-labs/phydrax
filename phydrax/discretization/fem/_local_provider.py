@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -32,12 +33,13 @@ from .._local_variational import (
 
 if TYPE_CHECKING:
     from ._generic import FiniteElementDiscretization
+    from ._reference import FiniteElementSpec
 
 
-def _tabulation_hessians(element, points: Array, /) -> Array:
+def _tabulation_hessians(element: FiniteElementSpec, points: Array, /) -> Array:
     """Differentiate the element's owned reference-gradient action."""
 
-    def point_gradient(point):
+    def point_gradient(point: Array) -> Array:
         return element.tabulate(point[None, :])[1][0]
 
     return jax.vmap(jax.jacfwd(point_gradient))(points)
@@ -66,7 +68,7 @@ class FiniteElementReferenceActions(LocalReferenceActions):
         maximum_derivative_order: int,
         kernel_modes: Sequence[str],
         action_id: str | None = None,
-    ):
+    ) -> None:
         values = jnp.asarray(basis_values)
         gradients = jnp.asarray(basis_gradients)
         hessians = (
@@ -214,7 +216,7 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         /,
         *,
         coordinate_hessians: ArrayLike | None = None,
-    ):
+    ) -> None:
         layout = str(runtime_layout_id)
         kind = str(domain_kind)
         basis = jnp.asarray(coordinate_basis)
@@ -265,6 +267,10 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         )
 
     def realize(self, runtime: object, /) -> LocalMetricResult:
+        from ._generic import FiniteElementRuntimeData
+
+        if not isinstance(runtime, FiniteElementRuntimeData):
+            raise TypeError("runtime must be FiniteElementRuntimeData.")
         coordinates = jnp.asarray(runtime.coordinates)[self.coordinate_gathers]
         points = ein.contract("qi,cid->cqd", self.coordinate_basis, coordinates)
         jacobian = ein.contract("qir,cid->cqdr", self.coordinate_gradients, coordinates)
@@ -311,9 +317,9 @@ class FiniteElementGeometryActions(LocalGeometryActions):
 class FiniteElementLocalProvider(StrictModule):
     """Adapter from stable FE storage to the prepared-local contract."""
 
-    discretization: object
+    discretization: FiniteElementDiscretization
 
-    def __init__(self, discretization: FiniteElementDiscretization, /):
+    def __init__(self, discretization: FiniteElementDiscretization, /) -> None:
         from ._generic import FiniteElementDiscretization
 
         if not isinstance(discretization, FiniteElementDiscretization):
@@ -517,8 +523,10 @@ class FiniteElementLocalProvider(StrictModule):
                     discretization.dof_maps[field_index].cell_dofs[block_index][selected]
                 )
             coordinate_element = discretization.coordinate_elements[block_index]
+            # ty: ignore[unresolved-attribute]
             coordinate_basis, coordinate_gradients = coordinate_element.tabulate(points)
             coordinate_hessians = (
+                # ty: ignore[invalid-argument-type]
                 _tabulation_hessians(coordinate_element, points)
                 if maximum_derivative_order == 2
                 else None

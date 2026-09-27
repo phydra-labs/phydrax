@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -13,7 +16,7 @@ from phydrax._interpolation import (
 )
 
 
-def test_nonuniform_rectilinear_map_is_affine_exact_with_complex_payload():
+def test_nonuniform_rectilinear_map_is_affine_exact_with_complex_payload() -> None:
     x = jnp.asarray([-1.0, -0.2, 0.4, 2.0])
     query = jnp.asarray([[-0.7], [0.1], [1.25]])
     values = jnp.stack((2.0 * x + 3.0, (1.0 - x) * (1.0 + 2.0j)), axis=-1)
@@ -26,7 +29,7 @@ def test_nonuniform_rectilinear_map_is_affine_exact_with_complex_payload():
     assert jnp.allclose(output[:, 1], (1.0 - query[:, 0]) * (1.0 + 2.0j))
 
 
-def test_batched_two_dimensional_map_uses_case_local_sources():
+def test_batched_two_dimensional_map_uses_case_local_sources() -> None:
     x = jnp.asarray([0.0, 0.3, 1.0])
     y = jnp.asarray([-1.0, 0.5, 2.0])
     xx, yy = jnp.meshgrid(x, y, indexing="ij")
@@ -51,7 +54,7 @@ def test_batched_two_dimensional_map_uses_case_local_sources():
     assert jnp.allclose(output, expected)
 
 
-def test_boundary_modes_have_distinct_explicit_support():
+def test_boundary_modes_have_distinct_explicit_support() -> None:
     nodes = jnp.asarray([0.0, 1.0])
     values = jnp.asarray([0.0, 1.0])
     query = jnp.asarray([[-0.25], [1.25]])
@@ -85,7 +88,7 @@ def test_boundary_modes_have_distinct_explicit_support():
     )
 
 
-def test_rectilinear_source_masks_support_strict_and_renormalized_modes():
+def test_rectilinear_source_masks_support_strict_and_renormalized_modes() -> None:
     nodes = jnp.asarray([0.0, 1.0])
     query = jnp.asarray([[0.25]])
     values = jnp.asarray([2.0, 10.0])
@@ -111,12 +114,12 @@ def test_rectilinear_source_masks_support_strict_and_renormalized_modes():
     assert jnp.allclose(renormalized.values, 2.0)
 
 
-def test_rectilinear_map_is_jittable_and_differentiable_inside_cells():
+def test_rectilinear_map_is_jittable_and_differentiable_inside_cells() -> None:
     nodes = jnp.asarray([-1.0, 0.0, 2.0])
     values = 4.0 * nodes - 3.0
 
     @jax.jit
-    def evaluate(query):
+    def evaluate(query: Any) -> Any:
         stencil = rectilinear_stencil(
             (nodes,),
             query.reshape((1, 1)),
@@ -128,7 +131,7 @@ def test_rectilinear_map_is_jittable_and_differentiable_inside_cells():
     assert jnp.allclose(jax.grad(evaluate)(jnp.asarray(0.5)), 4.0)
 
 
-def test_four_dimensional_rectilinear_map_is_affine_exact_and_resource_bounded():
+def test_four_dimensional_rectilinear_map_is_affine_exact_and_resource_bounded() -> None:
     nodes = tuple(jnp.asarray((0.0, 1.0)) for _ in range(4))
     mesh = jnp.meshgrid(*nodes, indexing="ij")
     values = sum((axis + 1.0) * coordinate for axis, coordinate in enumerate(mesh))
@@ -140,6 +143,7 @@ def test_four_dimensional_rectilinear_map_is_affine_exact_and_resource_bounded()
     )
 
     assert jnp.allclose(
+        # ty: ignore[unresolved-attribute]
         apply_gather_stencil(values.reshape((-1,)), stencil).values,
         jnp.asarray((3.0,)),
     )

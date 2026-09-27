@@ -62,7 +62,7 @@ class TensorNetworkArchiveLimits(StrictModule, NonTrainableState):
         maximum_total_array_bytes: int = 4 * 1024**3,
         maximum_array_rank: int = 16,
         maximum_array_elements: int = 1_000_000_000,
-    ):
+    ) -> None:
         values = tuple(
             _positive_integer(value, name)
             for value, name in (
@@ -92,7 +92,7 @@ class TensorNetworkArchiveLimits(StrictModule, NonTrainableState):
 class TensorNetworkArchiveError(RuntimeError):
     failure: TensorNetworkFailure
 
-    def __init__(self, failure: TensorNetworkFailure, detail: str, /):
+    def __init__(self, failure: TensorNetworkFailure, detail: str, /) -> None:
         failure_ = TensorNetworkFailure(failure)
         detail_ = _identifier(detail, "archive failure detail")
         if failure_ == TensorNetworkFailure.NONE:
@@ -103,17 +103,17 @@ class TensorNetworkArchiveError(RuntimeError):
 
 
 class TensorNetworkArchiveCorruptionError(TensorNetworkArchiveError):
-    def __init__(self, detail: str, /):
+    def __init__(self, detail: str, /) -> None:
         super().__init__(TensorNetworkFailure.ARCHIVE_CORRUPTION, detail)
 
 
 class TensorNetworkArchiveMismatchError(TensorNetworkArchiveError):
-    def __init__(self, detail: str, /):
+    def __init__(self, detail: str, /) -> None:
         super().__init__(TensorNetworkFailure.ARCHIVE_MISMATCH, detail)
 
 
 class TensorNetworkArchiveSecurityError(TensorNetworkArchiveError):
-    def __init__(self, detail: str, /):
+    def __init__(self, detail: str, /) -> None:
         super().__init__(TensorNetworkFailure.SECURITY_LIMIT, detail)
 
 
@@ -138,7 +138,7 @@ class TensorNetworkArchiveRecord(StrictModule, NonTrainableState):
         payload_bytes: int,
         array_digest: str,
         /,
-    ):
+    ) -> None:
         kind = TensorNetworkArchiveKind(artifact_kind)
         identifiers = tuple(
             _identifier(value, name)
@@ -184,7 +184,7 @@ class TensorNetworkArchiveValidation(StrictModule, NonTrainableState):
         member_count: int,
         valid: bool,
         /,
-    ):
+    ) -> None:
         if not isinstance(record, TensorNetworkArchiveRecord):
             raise TypeError("record must be TensorNetworkArchiveRecord.")
         limits = _identifier(limits_id, "limits_id")
@@ -222,7 +222,7 @@ class TensorNetworkArchivedArtifact(StrictModule):
         record: TensorNetworkArchiveRecord,
         validation: TensorNetworkArchiveValidation,
         /,
-    ):
+    ) -> None:
         if not isinstance(record, TensorNetworkArchiveRecord) or not isinstance(
             validation, TensorNetworkArchiveValidation
         ):
@@ -580,7 +580,7 @@ def write_tensor_network_archive(
             raise TensorNetworkArchiveMismatchError(
                 "supplied precision_policy_id differs from the tensor value"
             )
-    arrays: dict[str, object] = {}
+    arrays: dict[str, Any] = {}
     tree_record = pack_array_tree("artifact", tree, arrays)
     _check_array_bounds(arrays, limits_)
     # Encoded payloads always carry a format header; emptiness is a data property.

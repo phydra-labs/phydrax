@@ -9,7 +9,8 @@ from collections.abc import Mapping, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -29,7 +30,8 @@ def _pair(value: Sequence[str], description: str, /) -> tuple[str, str]:
     pair = tuple(str(item) for item in value)
     if len(pair) != 2 or not pair[0] or not pair[1] or pair[0] == pair[1]:
         raise ValueError(f"{description} entries must name two distinct roles.")
-    return tuple(sorted(pair))
+    first, second = sorted(pair)
+    return first, second
 
 
 def _components(faces: np.ndarray, /) -> int:
@@ -38,7 +40,8 @@ def _components(faces: np.ndarray, /) -> int:
     edge_owners: dict[tuple[int, int], list[int]] = {}
     for face_index, face in enumerate(faces):
         for first, second in ((face[0], face[1]), (face[1], face[2]), (face[2], face[0])):
-            edge = tuple(sorted((int(first), int(second))))
+            low, high = sorted((int(first), int(second)))
+            edge = (low, high)
             edge_owners.setdefault(edge, []).append(face_index)
     neighbors = [set() for _ in range(faces.shape[0])]
     for owners in edge_owners.values():
@@ -87,7 +90,7 @@ class BoundaryRoleAssignment(StrictModule, NonTrainableState):
     face_indices: Array
     assignment_id: str = eqx.field(static=True)
 
-    def __init__(self, name: str, face_indices: ArrayLike, /):
+    def __init__(self, name: str, face_indices: ArrayLike, /) -> None:
         role_name = _name(name, "Boundary role name")
         indices = np.asarray(face_indices, dtype=np.int32)
         if indices.ndim != 1 or indices.size == 0:
@@ -134,7 +137,7 @@ class CardiacBoundaryProfile(StrictModule, NonTrainableState):
         disjoint_closure_pairs: Sequence[Sequence[str]] = (),
         shared_closure_pairs: Sequence[Sequence[str]] = (),
         exhaustive: bool = False,
-    ):
+    ) -> None:
         profile_name = _name(name, "Boundary profile name")
         required = tuple(_name(role, "Required role") for role in required_roles)
         connected = tuple(_name(role, "Connected role") for role in connected_roles)
@@ -193,7 +196,7 @@ class BoundaryRoleEvidence(StrictModule, NonTrainableState):
         unassigned_face_count: ArrayLike,
         successful: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.role_component_counts = jnp.asarray(role_component_counts, dtype=jnp.int32)
         self.shared_closure_component_counts = jnp.asarray(
             shared_closure_component_counts, dtype=jnp.int32
@@ -223,7 +226,7 @@ class CardiacBoundaryRoles(StrictModule, NonTrainableState):
         /,
         *,
         profile: CardiacBoundaryProfile,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be a CellMesh.")
         if mesh.topological_dimension != 3 or not all(

@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import hashlib
+from typing import Any
 
 import numpy as np
 import pytest
@@ -22,7 +24,7 @@ from phydrax.backends.homotopy_continuation import (
 _UUID = "f213a82b-91d6-5c58-9dd6-746a5d3f2e4c"
 
 
-def _provider(tmp_path, behavior="complete"):
+def _provider(tmp_path: Any, behavior: Any = "complete") -> Any:
     project = tmp_path / "julia-project"
     project.mkdir()
     project_bytes = (
@@ -100,7 +102,7 @@ with open("homotopy-output.json", "w", encoding="ascii") as stream:
     )
 
 
-def _request():
+def _request() -> Any:
     return HomotopyContinuationRequest(
         "request",
         "support",
@@ -114,8 +116,8 @@ def _request():
 
 
 def test_explicit_provider_retains_protocol_identity_shape_and_raw_path_evidence(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     provider = _provider(tmp_path)
     result = execute_homotopy_continuation(
         provider,
@@ -144,8 +146,8 @@ def test_explicit_provider_retains_protocol_identity_shape_and_raw_path_evidence
     ),
 )
 def test_output_identity_shape_and_path_accounting_fail_separately(
-    tmp_path, behavior, status
-):
+    tmp_path: Any, behavior: Any, status: Any
+) -> None:
     result = execute_homotopy_continuation(
         _provider(tmp_path, behavior),
         HomotopyContinuationPolicy(path_capacity=2, timeout_seconds=10),
@@ -156,7 +158,7 @@ def test_output_identity_shape_and_path_accounting_fail_separately(
     assert result.run is not None
 
 
-def test_process_failure_retains_raw_return_code(tmp_path):
+def test_process_failure_retains_raw_return_code(tmp_path: Any) -> None:
     result = execute_homotopy_continuation(
         _provider(tmp_path, "process-failure"),
         HomotopyContinuationPolicy(path_capacity=2, timeout_seconds=10),
@@ -168,7 +170,7 @@ def test_process_failure_retains_raw_return_code(tmp_path):
     assert result.run.returncode == 7
 
 
-def test_project_pin_is_rechecked_before_execution(tmp_path):
+def test_project_pin_is_rechecked_before_execution(tmp_path: Any) -> None:
     provider = _provider(tmp_path)
     (tmp_path / "julia-project" / "Project.toml").write_text("[deps]\n", encoding="utf-8")
 
@@ -183,14 +185,20 @@ def test_project_pin_is_rechecked_before_execution(tmp_path):
     assert "before execution" in result.error
 
 
-def test_numpy_integer_support_serializes_through_the_public_execution_boundary(tmp_path):
+def test_numpy_integer_support_serializes_through_the_public_execution_boundary(
+    tmp_path: Any,
+) -> None:
     request = HomotopyContinuationRequest(
         "request",
         "support",
         "system",
+        # ty: ignore[invalid-argument-type]
         np.int64(1),
+        # ty: ignore[invalid-argument-type]
         np.int64(1),
+        # ty: ignore[invalid-argument-type]
         (np.int64(0), np.int64(0)),
+        # ty: ignore[invalid-argument-type]
         ((np.int64(0),), (np.int64(2),)),
         (-1.0, 1.0),
     )
@@ -204,7 +212,7 @@ def test_numpy_integer_support_serializes_through_the_public_execution_boundary(
     assert result.status is HomotopyContinuationExecutionStatus.COMPLETE
 
 
-def test_resource_refusal_occurs_before_provider_launch(tmp_path):
+def test_resource_refusal_occurs_before_provider_launch(tmp_path: Any) -> None:
     request = HomotopyContinuationRequest(
         "request",
         "support",
@@ -229,7 +237,7 @@ def test_resource_refusal_occurs_before_provider_launch(tmp_path):
     assert result.run is None
 
 
-def test_availability_rejects_changed_executable_bytes(tmp_path):
+def test_availability_rejects_changed_executable_bytes(tmp_path: Any) -> None:
     provider = _provider(tmp_path)
     executable = provider.executable.path
     with open(executable, "a", encoding="utf-8") as stream:

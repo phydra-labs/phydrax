@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..discretization._conservation_ledger import (
@@ -79,7 +80,7 @@ class FiniteVolumeConservativeContentState(StrictModule):
         evidence_policy_id: str,
         evidence_version: ArrayLike,
         precision: FiniteVolumePrecisionPolicy,
-    ):
+    ) -> None:
         if not isinstance(precision, FiniteVolumePrecisionPolicy):
             raise TypeError("precision must be a FiniteVolumePrecisionPolicy.")
         content = precision.storage(conservative_content)

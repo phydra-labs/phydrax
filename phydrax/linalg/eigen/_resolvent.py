@@ -6,12 +6,14 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
+from typing import cast
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -51,7 +53,7 @@ class ResolventScanProblem(StrictModule):
         /,
         *,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape or not operator.source.compatible(operator.target):
@@ -103,7 +105,7 @@ class ResolventScanPolicy(StrictModule, NonTrainableState):
         absolute_singularity_tolerance: float = 0.0,
         maximum_shifts: int = 65_536,
         maximum_workspace_bytes: int = 1024 * 1024**2,
-    ):
+    ) -> None:
         schur_ = SchurSolvePolicy() if schur is None else schur
         relative = float(relative_singularity_tolerance)
         absolute = float(absolute_singularity_tolerance)
@@ -194,7 +196,7 @@ def plan_resolvent_scan(
     if shift_count > policy_.maximum_shifts:
         raise ValueError("Resolvent shift count exceeds maximum_shifts.")
     itemsize = np.dtype(
-        jnp.result_type(problem.shifts.dtype, problem.operator.source.dtype)
+        jnp.result_type(problem.shifts.dtype, _resolvent_source(problem).dtype)
     ).itemsize
     workspace = shift_count * dimension * dimension * itemsize
     if workspace > policy_.maximum_workspace_bytes:
@@ -268,7 +270,7 @@ def resolvent_scan(
     form = schur.schur_form
     identity = jnp.eye(prepared.plan.dimension, dtype=form.dtype)
 
-    def minimum_singular_value(shift):
+    def minimum_singular_value(shift: Array) -> Array:
         singular_values = jnp.linalg.svd(
             form - shift.astype(form.dtype) * identity,
             full_matrices=False,
@@ -301,7 +303,7 @@ def resolvent_scan(
             ),
         ),
     ).astype(jnp.int32)
-    pairing = prepared.problem.operator.source.pairing
+    pairing = _resolvent_source(prepared.problem).pairing
     return ResolventScanResult(
         shifts=prepared.problem.shifts,
         minimum_singular_values=minimum,
@@ -352,7 +354,8 @@ def _prepare_resolvent(
         problem.operator,
         plan.policy.schur.materialization,
     )
-    canonical = _canonical_pairing_matrix(problem.operator.source, matrix)
+    source = _resolvent_source(problem)
+    canonical = _canonical_pairing_matrix(source, matrix)
     space = ArraySpace((plan.dimension,), dtype=canonical.dtype)
     canonical_operator = DenseLinearOperator(
         canonical,
@@ -362,7 +365,7 @@ def _prepare_resolvent(
             {
                 "kind": "pairing-canonical-resolvent-operator",
                 "operator": problem.operator.operator_id,
-                "pairing": problem.operator.source.pairing.pairing_id,
+                "pairing": source.pairing.pairing_id,
             }
         ),
     )
@@ -403,6 +406,24 @@ def _canonical_pairing_matrix(space: ArraySpace, matrix: Array, /) -> Array:
     raise TypeError("Resolvent scans require Euclidean or positive diagonal pairings.")
 
 
+def _resolvent_source(problem: ResolventScanProblem, /) -> ArraySpace:
+    # ResolventScanProblem.__init__ rejects operators without an ArraySpace source.
+    return cast(ArraySpace, problem.operator.source)
+
+
+def _dense_pencil(
+    problem: PencilPseudospectrumProblem, /
+) -> tuple[ArraySpace, DenseLinearOperator, DenseLinearOperator | None]:
+    # PencilPseudospectrumProblem.__init__ admits only dense pencil members over
+    # an ArraySpace source.
+    eigenproblem = problem.eigenproblem
+    return (
+        cast(ArraySpace, eigenproblem.operator.source),
+        cast(DenseLinearOperator, eigenproblem.operator),
+        cast("DenseLinearOperator | None", eigenproblem.mass_operator),
+    )
+
+
 class PencilPseudospectrumStatus(IntEnum):
     """Portable execution status for an explicit-norm pencil scan."""
 
@@ -423,7 +444,7 @@ class PencilPerturbationNorm(StrictModule, NonTrainableState):
     mass_scale: float = eqx.field(static=True)
     norm_id: str = eqx.field(static=True)
 
-    def __init__(self, operator_scale: float = 1.0, mass_scale: float = 0.0, /):
+    def __init__(self, operator_scale: float = 1.0, mass_scale: float = 0.0, /) -> None:
         operator = float(operator_scale)
         mass = float(mass_scale)
         if (
@@ -463,7 +484,7 @@ class PencilPseudospectrumProblem(StrictModule):
         /,
         *,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(eigenproblem, GeneralEigenproblem):
             raise TypeError("eigenproblem must be a GeneralEigenproblem.")
         if not isinstance(eigenproblem.operator, DenseLinearOperator) or (
@@ -556,7 +577,7 @@ class PencilPseudospectrumPolicy(StrictModule, NonTrainableState):
         maximum_dimension: int = 4096,
         maximum_shifts: int = 65_536,
         maximum_workspace_bytes: int = 1024 * 1024**2,
-    ):
+    ) -> None:
         reconstruction = float(reconstruction_tolerance)
         singularity = float(singularity_tolerance)
         dimension = int(maximum_dimension)
@@ -683,12 +704,13 @@ def plan_pencil_pseudospectrum(
         raise ValueError("Pencil dimension exceeds maximum_dimension.")
     if shift_count > policy_.maximum_shifts:
         raise ValueError("Pencil shift count exceeds maximum_shifts.")
+    space, operator, mass_operator = _dense_pencil(problem)
     dtype = jnp.result_type(
-        problem.eigenproblem.operator.matrix.dtype,
+        operator.matrix.dtype,
         (
-            problem.eigenproblem.mass_operator.matrix.dtype
-            if problem.eigenproblem.mass_operator is not None
-            else problem.eigenproblem.operator.matrix.dtype
+            mass_operator.matrix.dtype
+            if mass_operator is not None
+            else operator.matrix.dtype
         ),
         problem.homogeneous_shifts.dtype,
         1j,
@@ -697,8 +719,7 @@ def plan_pencil_pseudospectrum(
     workspace = (shift_count + 6) * dimension * dimension * itemsize
     if workspace > policy_.maximum_workspace_bytes:
         raise ValueError("Pencil scan exceeds maximum_workspace_bytes.")
-    space = problem.eigenproblem.operator.source
-    _canonical_pairing_matrix(space, problem.eigenproblem.operator.matrix)
+    _canonical_pairing_matrix(space, operator.matrix)
     return PencilPseudospectrumPlan(
         policy=policy_,
         perturbation_norm=problem.perturbation_norm,
@@ -771,7 +792,7 @@ def pencil_pseudospectrum(
     schur_a = jax.lax.stop_gradient(prepared.schur_operator)
     schur_b = jax.lax.stop_gradient(prepared.schur_mass)
 
-    def minimum_singular_value(alpha_beta):
+    def minimum_singular_value(alpha_beta: Array) -> Array:
         alpha_, beta_ = alpha_beta
         singular_values = jnp.linalg.svd(
             beta_.astype(schur_a.dtype) * schur_a
@@ -856,7 +877,7 @@ def pencil_pseudospectrum(
             operator_id=problem.operator.operator_id,
             mass_operator_id=mass_id,
             source_space_id=problem.operator.source.space_id,
-            pairing_id=problem.operator.source.pairing.pairing_id,
+            pairing_id=_dense_pencil(prepared.problem)[0].pairing.pairing_id,
             perturbation_norm_id=norm.norm_id,
             norm_definition=(
                 "joint weighted unstructured complex Frobenius norm in pairing-square-root coordinates"
@@ -881,7 +902,7 @@ def _prepare_pencil_pseudospectrum(
     ):
         raise TypeError("Pencil preparation requires a problem and plan.")
     eigenproblem = problem.eigenproblem
-    space = eigenproblem.operator.source
+    space, operator, mass_operator = _dense_pencil(problem)
     if (
         eigenproblem.dimension != plan.dimension
         or problem.homogeneous_shifts.shape[0] != plan.shift_count
@@ -890,11 +911,11 @@ def _prepare_pencil_pseudospectrum(
         or problem.perturbation_norm.norm_id != plan.perturbation_norm.norm_id
     ):
         raise ValueError("Pencil problem is incompatible with the symbolic plan.")
-    matrix = _canonical_pairing_matrix(space, eigenproblem.operator.matrix)
+    matrix = _canonical_pairing_matrix(space, operator.matrix)
     mass = (
         jnp.eye(plan.dimension, dtype=matrix.dtype)
-        if eigenproblem.mass_operator is None
-        else _canonical_pairing_matrix(space, eigenproblem.mass_operator.matrix)
+        if mass_operator is None
+        else _canonical_pairing_matrix(space, mass_operator.matrix)
     )
     dtype = jnp.result_type(matrix.dtype, mass.dtype, 1j)
     matrix = matrix.astype(dtype)

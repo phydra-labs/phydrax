@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import numpy as np
@@ -19,7 +21,7 @@ from phydrax.interchange import AdapterStatus
 from phydrax.qualification import ReferenceArtifactManifest
 
 
-def _manifest(*, commercial=True):
+def _manifest(*, commercial: Any = True) -> Any:
     return ReferenceArtifactManifest(
         "deposition-history.npz",
         checksum_algorithm="sha256",
@@ -37,7 +39,7 @@ def _manifest(*, commercial=True):
     )
 
 
-def _kernel(*, escaped_fraction=0.4):
+def _kernel(*, escaped_fraction: Any = 0.4) -> Any:
     scale = np.asarray([0.25, 0.5, 1.0])
     energy = np.asarray([1.0, 3.0])
     deposited_fraction = np.asarray([0.2, 0.1, 0.4])
@@ -61,7 +63,9 @@ def _kernel(*, escaped_fraction=0.4):
     )
 
 
-def _injection(values=None, *, redshift=(4.0, 2.0, 1.0), energy=(1.0, 3.0)):
+def _injection(
+    values: Any = None, *, redshift: Any = (4.0, 2.0, 1.0), energy: Any = (1.0, 3.0)
+) -> Any:
     if values is None:
         values = np.ones((3, 2, 2))
     return InjectionSpectrum(
@@ -73,7 +77,7 @@ def _injection(values=None, *, redshift=(4.0, 2.0, 1.0), energy=(1.0, 3.0)):
     )
 
 
-def _history_context(manifest):
+def _history_context(manifest: Any) -> Any:
     scale = CODE_COSMOLOGY_SCALE
     background = FLRWBackground(1.0, 0.3, scale=scale)
     provenance = CosmologyProductProvenance(
@@ -91,7 +95,7 @@ def _history_context(manifest):
     return scale, background, provenance
 
 
-def _history(manifest, *, redshift=(1.0, 2.0, 4.0)):
+def _history(manifest: Any, *, redshift: Any = (1.0, 2.0, 4.0)) -> Any:
     scale, background, provenance = _history_context(manifest)
     h_ii = np.asarray([0.8, 0.4, 0.1])
     he_ii = np.asarray([0.1, 0.2, 0.3])
@@ -104,6 +108,7 @@ def _history(manifest, *, redshift=(1.0, 2.0, 4.0)):
         he_ii,
         he_iii,
         electron,
+        # ty: ignore[invalid-argument-type]
         [100.0, 500.0, 1000.0],
         helium_ratio,
         scale,
@@ -114,7 +119,9 @@ def _history(manifest, *, redshift=(1.0, 2.0, 4.0)):
     return history
 
 
-def test_injection_preserves_source_redshift_metadata_and_reverses_to_increasing_scale_factor():
+def test_injection_preserves_source_redshift_metadata_and_reverses_to_increasing_scale_factor() -> (
+    None
+):
     values = np.arange(12.0).reshape(3, 2, 2)
     injection = _injection(values, redshift=(1.0, 2.0, 4.0))
 
@@ -130,7 +137,7 @@ def test_injection_preserves_source_redshift_metadata_and_reverses_to_increasing
     assert decreasing.source_axis_direction == "decreasing"
 
 
-def test_native_cascade_action_has_complete_ledger_and_separate_cmb_energy():
+def test_native_cascade_action_has_complete_ledger_and_separate_cmb_energy() -> None:
     result = _kernel().apply(_injection())
 
     np.testing.assert_allclose(
@@ -153,7 +160,7 @@ def test_native_cascade_action_has_complete_ledger_and_separate_cmb_energy():
     assert np.all(np.asarray(result.valid))
 
 
-def test_zero_injection_is_valid_physical_baseline_not_a_numerical_failure():
+def test_zero_injection_is_valid_physical_baseline_not_a_numerical_failure() -> None:
     result = _kernel().apply(_injection(np.zeros((3, 2, 2))))
 
     np.testing.assert_allclose(result.injected_energy_gev, 0.0)
@@ -166,7 +173,7 @@ def test_zero_injection_is_valid_physical_baseline_not_a_numerical_failure():
     assert np.all(np.asarray(result.valid))
 
 
-def test_numerical_nonclosure_is_distinct_from_no_injection():
+def test_numerical_nonclosure_is_distinct_from_no_injection() -> None:
     result = _kernel(escaped_fraction=0.2).apply(_injection())
 
     assert not np.any(np.asarray(result.valid))
@@ -176,7 +183,7 @@ def test_numerical_nonclosure_is_distinct_from_no_injection():
     )
 
 
-def test_cascade_domain_mismatch_is_rejected_without_table_clamping():
+def test_cascade_domain_mismatch_is_rejected_without_table_clamping() -> None:
     outside = _injection(energy=(1.0, 4.0))
     with pytest.raises(
         (ValueError, eqx.EquinoxRuntimeError), match="no clamp|exact cascade table domain"
@@ -184,7 +191,9 @@ def test_cascade_domain_mismatch_is_rejected_without_table_clamping():
         jax.block_until_ready(_kernel().apply(outside).injected_energy_gev)
 
 
-def test_species_history_enforces_hydrogen_helium_electron_relation_and_projects_with_declared_loss():
+def test_species_history_enforces_hydrogen_helium_electron_relation_and_projects_with_declared_loss() -> (
+    None
+):
     manifest = _manifest()
     history = _history(manifest)
 
@@ -211,11 +220,17 @@ def test_species_history_enforces_hydrogen_helium_electron_relation_and_projects
     scale, background, provenance = _history_context(manifest)
     with pytest.raises(ValueError, match="Electron fraction"):
         SpeciesResolvedThermodynamicsHistory(
+            # ty: ignore[invalid-argument-type]
             [4.0, 2.0, 1.0],
+            # ty: ignore[invalid-argument-type]
             [0.1, 0.4, 0.8],
+            # ty: ignore[invalid-argument-type]
             [0.3, 0.2, 0.1],
+            # ty: ignore[invalid-argument-type]
             [0.01, 0.03, 0.05],
+            # ty: ignore[invalid-argument-type]
             [0.2, 0.5, 0.9],
+            # ty: ignore[invalid-argument-type]
             [1000.0, 500.0, 100.0],
             0.1,
             scale,
@@ -225,17 +240,22 @@ def test_species_history_enforces_hydrogen_helium_electron_relation_and_projects
         )
 
 
-def test_external_history_and_injection_require_admitted_manifest_rights():
+def test_external_history_and_injection_require_admitted_manifest_rights() -> None:
     denied = _manifest(commercial=False)
     scale, background, provenance = _history_context(denied)
     with pytest.raises(PermissionError, match="commercial-use-not-permitted"):
         SpeciesResolvedThermodynamicsHistory(
+            # ty: ignore[invalid-argument-type]
             [4.0, 2.0, 1.0],
+            # ty: ignore[invalid-argument-type]
             [0.1, 0.4, 0.8],
+            # ty: ignore[invalid-argument-type]
             [0.3, 0.2, 0.1],
+            # ty: ignore[invalid-argument-type]
             [0.01, 0.03, 0.05],
             np.asarray([0.1, 0.4, 0.8])
             + 0.1 * (np.asarray([0.3, 0.2, 0.1]) + 2.0 * np.asarray([0.01, 0.03, 0.05])),
+            # ty: ignore[invalid-argument-type]
             [1000.0, 500.0, 100.0],
             0.1,
             scale,
@@ -246,7 +266,9 @@ def test_external_history_and_injection_require_admitted_manifest_rights():
         )
     with pytest.raises(PermissionError, match="commercial-use-not-permitted"):
         InjectionSpectrum(
+            # ty: ignore[invalid-argument-type]
             [4.0, 2.0, 1.0],
+            # ty: ignore[invalid-argument-type]
             [1.0, 3.0],
             np.ones((3, 2, 2)),
             ("photon", "electron"),
@@ -258,7 +280,7 @@ def test_external_history_and_injection_require_admitted_manifest_rights():
         )
 
 
-def test_generic_subprocess_provider_result_binds_history_ledger_and_manifest():
+def test_generic_subprocess_provider_result_binds_history_ledger_and_manifest() -> None:
     manifest = _manifest()
     history = _history(manifest, redshift=(4.0, 2.0, 1.0))
     ledger = _kernel().apply(_injection())

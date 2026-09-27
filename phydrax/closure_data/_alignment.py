@@ -9,7 +9,8 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -26,7 +27,7 @@ class ConservativeAlignmentPlan(StrictModule, NonTrainableState):
     conservation_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, *, conservation_tolerance: float = 1e-10):
+    def __init__(self, *, conservation_tolerance: float = 1e-10) -> None:
         tolerance = float(conservation_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("conservation_tolerance must be finite and nonnegative.")
@@ -70,7 +71,7 @@ class ConservativeAlignmentResult(StrictModule, NonTrainableState):
         source_integral: ArrayLike,
         target_integral: ArrayLike,
         alignment_id: str,
-    ):
+    ) -> None:
         source = jnp.asarray(source_integral)
         target = jnp.asarray(target_integral)
         if source.shape != target.shape:
@@ -106,7 +107,7 @@ class PreparedConservativeAlignment(StrictModule, NonTrainableState):
         *,
         source_cell_volumes: ArrayLike | None = None,
         target_cell_volumes: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, ConservativeAlignmentPlan):
             raise TypeError("plan must be a ConservativeAlignmentPlan.")
         source = tuple(source_shape)

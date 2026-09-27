@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _compiled_accelerated_flow():
+def _compiled_accelerated_flow() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(8, periodic=True),
@@ -39,7 +42,7 @@ def _compiled_accelerated_flow():
     )
 
 
-def test_lbm_adapter_fails_closed_on_time_step_mismatch():
+def test_lbm_adapter_fails_closed_on_time_step_mismatch() -> None:
     compiled = _compiled_accelerated_flow()
     parameters = phx.discretization.LatticeBoltzmannRuntimeParameters(
         0.05, force_parameters=jnp.asarray(0.001)
@@ -58,14 +61,14 @@ def test_lbm_adapter_fails_closed_on_time_step_mismatch():
     np.testing.assert_array_equal(result.accepted_state, state)
 
 
-def test_lbm_short_rollout_force_gradient_matches_finite_difference():
+def test_lbm_short_rollout_force_gradient_matches_finite_difference() -> None:
     compiled = _compiled_accelerated_flow()
     method = phx.solver.LatticeBoltzmannFixedStepMethod(compiled.dynamics)
     rollout = phx.solver.FixedStepRolloutPlan(
         retention="final", replay=phx.solver.FixedStepReplayPolicy("step")
     )
 
-    def objective(amplitude):
+    def objective(amplitude: Any) -> Any:
         parameters = phx.discretization.LatticeBoltzmannRuntimeParameters(
             0.05, force_parameters=amplitude
         )

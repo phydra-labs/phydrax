@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -25,6 +26,7 @@ from ..linalg import (
     LinearSolvePolicy,
     LinearSystem,
     OperatorProperties,
+    PropertyEvidence,
     solve,
     TolerancePolicy,
 )
@@ -62,7 +64,7 @@ def _verified_dense_operator(
         and np.linalg.eigvalsh(0.5 * (host + host.conj().T))[0] <= tolerance
     ):
         raise ValueError(f"{name} must be positive definite.")
-    evidence = {"self_adjoint": "verified"}
+    evidence: dict[str, PropertyEvidence] = {"self_adjoint": "verified"}
     if positive_definite:
         evidence["positive_definite"] = "verified"
     return DenseLinearOperator(
@@ -120,7 +122,7 @@ class FrequencyMaxwellOperator(StrictModule):
         /,
         *,
         material_state: Any = None,
-    ):
+    ) -> None:
         if not isinstance(cochain, CochainDiscretization):
             raise TypeError("Frequency Maxwell requires a CochainDiscretization.")
         if not isinstance(layout, MaxwellCochainLayout):
@@ -443,7 +445,7 @@ class MaxwellHarmonicSource(StrictModule):
         /,
         *,
         convention: str = "exp(-i*omega*t)",
-    ):
+    ) -> None:
         if convention != "exp(-i*omega*t)":
             raise ValueError(
                 "Maxwell harmonic source convention must be exp(-i*omega*t)."

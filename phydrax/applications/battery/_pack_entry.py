@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any, Self, TYPE_CHECKING
 
 from ..._fingerprint import canonical_fingerprint
 from ...qualification._evidence import SupportDependency
@@ -20,6 +22,10 @@ from ...qualification._trust import (
 )
 from ._release import BatteryReleaseRecord
 from ._release_contracts import CIRCUIT_ECM_SCIENTIFIC_METRICS
+
+
+if TYPE_CHECKING:
+    from ._qualification import BatteryExpansionGateDecision
 
 
 SERIES_PACK_ENTRY_CASES = ("charge-rest", "discharge-rest")
@@ -79,7 +85,7 @@ class SeriesPackEntryAssessment:
         }
 
     @classmethod
-    def from_record(cls, record, /):
+    def from_record(cls, record: Mapping[str, Any], /) -> Self:
         if record.get("kind") != "series-pack-entry-assessment":
             raise ValueError("Invalid pack-entry assessment record.")
         return cls(
@@ -154,7 +160,7 @@ def evaluate_series_pack_entry_gate(
     trust_policy: AsymmetricReleaseTrustPolicy | None,
     assessment: SeriesPackEntryAssessment | None,
     at_time: int,
-):
+) -> BatteryExpansionGateDecision:
     from ._qualification import BatteryExpansionGateDecision
 
     try:
@@ -164,6 +170,8 @@ def evaluate_series_pack_entry_gate(
             or profile_id != assessment.circuit_release.profile.profile_id
         ):
             raise ValueError("Exact typed circuit entry assessment is missing.")
+        if release_index is None or trust_policy is None:
+            raise TypeError("Pack entry requires a release index and role trust.")
         assessment.verify(release_index, trust_policy, at_time=at_time)
     except (TypeError, ValueError, KeyError, RuntimeError):
         return BatteryExpansionGateDecision(
@@ -200,7 +208,7 @@ class SeriesPackEntryReleaseRecord:
     def envelope_id(self) -> str:
         return self.assessment.circuit_release.envelope_id
 
-    def verify(self, policy, /, *, at_time: int) -> None:
+    def verify(self, policy: AsymmetricReleaseTrustPolicy, /, *, at_time: int) -> None:
         cap = self.assessment.verify(self.prerequisite_index, policy, at_time=at_time)
         if not self.issued_at <= at_time < self.expires_at or self.expires_at > cap:
             raise ValueError("Pack-entry release is stale or outlives its proof.")
@@ -219,7 +227,7 @@ class SeriesPackEntryReleaseRecord:
         }
 
     @classmethod
-    def from_record(cls, record, /):
+    def from_record(cls, record: Mapping[str, Any], /) -> Self:
         if record.get("kind") != "series-pack-entry-release-record":
             raise ValueError("Invalid pack-entry release record.")
         return cls(
@@ -231,7 +239,9 @@ class SeriesPackEntryReleaseRecord:
         )
 
 
-def _entry_profile(assessment, issued_at, expires_at):
+def _entry_profile(
+    assessment: SeriesPackEntryAssessment, issued_at: int, expires_at: int
+) -> CapabilityProfile:
     from ._qualification import CIRCUIT_ECM_SUPPORT, SERIES_PACK_ENTRY_SUPPORT
 
     gate = ReleaseGateEvidence(

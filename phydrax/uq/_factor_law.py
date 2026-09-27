@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from math import prod
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -36,9 +38,9 @@ class GaussianFactorLaw(AbstractProbabilityLaw):
         factor: GaussianFactor,
         /,
         *,
-        event_shape,
+        event_shape: Iterable[int],
         support_tolerance: ArrayLike = 1e-8,
-    ):
+    ) -> None:
         if not isinstance(factor, GaussianFactor):
             raise TypeError("factor must be a GaussianFactor.")
         events = tuple(event_shape)
@@ -100,7 +102,7 @@ class GaussianFactorLaw(AbstractProbabilityLaw):
         leading = tuple(array.shape[:-rank])
         return array.reshape(leading + (self.event_size,)), leading
 
-    def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: Array, sample_shape: tuple[int, ...] = ()) -> Array:
         samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
             raise ValueError("sample_shape dimensions must be positive.")
@@ -114,7 +116,9 @@ class GaussianFactorLaw(AbstractProbabilityLaw):
             samples + self.event_shape
         )
 
-    def _coordinates_and_residual(self, value: ArrayLike, /):
+    def _coordinates_and_residual(
+        self, value: ArrayLike, /
+    ) -> tuple[Array, Array, tuple[int, ...]]:
         flat, leading = self._flat(value)
         residual = flat - self.location.reshape((self.event_size,))
         projected = ein.contract("ir,...i->...r", self.left_vectors, residual)

@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from math import pi
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -12,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _chart(name="adm_spacetime"):
+def _chart(name: Any = "adm_spacetime") -> Any:
     return phx.metrix.CoordinateChart(name, ("t", "x", "y", "z"))
 
 
@@ -21,9 +23,9 @@ def _chart(name="adm_spacetime"):
     (("mostly_plus", -1.0), ("mostly_minus", 1.0)),
 )
 def test_adm_normal_and_projector_obey_signed_hypersurface_identities(
-    convention,
-    timelike_sign,
-):
+    convention: Any,
+    timelike_sign: Any,
+) -> None:
     metric = phx.metrix.adm_metric(
         lambda q: 1.3 + 0.1 * q[0],
         lambda q: jnp.array([0.2, -0.1 * q[1], 0.05]),
@@ -44,8 +46,8 @@ def test_adm_normal_and_projector_obey_signed_hypersurface_identities(
     assert jnp.allclose(jnp.trace(projector), 3.0)
 
 
-def _inhomogeneous_metric(convention="mostly_plus"):
-    def matrix(coordinates):
+def _inhomogeneous_metric(convention: Any = "mostly_plus") -> Any:
+    def matrix(coordinates: Any) -> Any:
         time, x, _, _ = coordinates
         lapse = jnp.exp(0.2 * x)
         spatial = jnp.diag(
@@ -75,8 +77,8 @@ def _inhomogeneous_metric(convention="mostly_plus"):
 
 @pytest.mark.parametrize("convention", ("mostly_plus", "mostly_minus"))
 def test_adm_gauss_codazzi_constraints_match_spacetime_einstein_projections(
-    convention,
-):
+    convention: Any,
+) -> None:
     metric = _inhomogeneous_metric(convention)
     point = jnp.array([0.3, 0.2, 0.1, -0.1])
     decomposition = phx.metrix.decompose_adm_metric(metric, point)
@@ -109,11 +111,11 @@ def test_adm_gauss_codazzi_constraints_match_spacetime_einstein_projections(
     assert jnp.allclose(momentum, expected_momentum, atol=1e-10)
 
 
-def test_adm_extrinsic_curvature_and_sourced_constraints_match_flat_flrw():
+def test_adm_extrinsic_curvature_and_sourced_constraints_match_flat_flrw() -> None:
     chart = _chart("flat_flrw")
     expansion_rate = 0.2
 
-    def metric_from_rate(rate):
+    def metric_from_rate(rate: Any) -> Any:
         return phx.metrix.LorentzianMetric(
             lambda q: jnp.diag(
                 jnp.array(
@@ -142,7 +144,7 @@ def test_adm_extrinsic_curvature_and_sourced_constraints_match_flat_flrw():
         einstein_coupling=coupling,
     )
 
-    def vacuum_hamiltonian(rate):
+    def vacuum_hamiltonian(rate: Any) -> Any:
         return phx.metrix.adm_hamiltonian_constraint(
             metric_from_rate(rate),
             point,
@@ -161,7 +163,7 @@ def test_adm_extrinsic_curvature_and_sourced_constraints_match_flat_flrw():
     assert jnp.allclose(derivative, 12.0 * expansion_rate)
 
 
-def test_adm_constraint_sources_reject_incompatible_shapes():
+def test_adm_constraint_sources_reject_incompatible_shapes() -> None:
     metric = phx.metrix.minkowski_metric(_chart())
     points = jnp.zeros((2, 4))
 

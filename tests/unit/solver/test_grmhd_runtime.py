@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -28,13 +31,13 @@ from phydrax.solver._grmhd_runtime import (
 from phydrax.units import KILOGRAM, METER, SECOND
 
 
-def _scale():
+def _scale() -> Any:
     return RelativityScaleContract(
         DimensionalScaleContract(METER, KILOGRAM, SECOND), 1, 1, 1, 1
     )
 
 
-def _periodic_grid(dimension, count):
+def _periodic_grid(dimension: Any, count: Any) -> Any:
     names = tuple("xyz"[:dimension])
     grid = phx.discretization.TensorGridPlan(
         tuple(
@@ -46,7 +49,7 @@ def _periodic_grid(dimension, count):
     return grid, phx.discretization.StructuredCochainBridge(grid)
 
 
-def _geometry(grid, scale, convention):
+def _geometry(grid: Any, scale: Any, convention: Any) -> Any:
     shape = grid.shape
     identity = jnp.broadcast_to(jnp.eye(3), shape + (3, 3))
     return ADMGridGeometry(
@@ -67,7 +70,7 @@ def _geometry(grid, scale, convention):
     )
 
 
-def test_vector_potential_ct_preserves_discrete_divergence_and_faraday_balance():
+def test_vector_potential_ct_preserves_discrete_divergence_and_faraday_balance() -> None:
     _, bridge = _periodic_grid(2, 4)
     gauge = GRMHDVectorPotentialGauge("weyl")
     plan = GRMHDConstrainedTransportPlan(bridge, gauge=gauge)
@@ -104,7 +107,7 @@ def test_vector_potential_ct_preserves_discrete_divergence_and_faraday_balance()
     assert bool(ledger.qualified)
 
 
-def test_generalized_lorenz_gauge_has_fixed_cochain_shapes():
+def test_generalized_lorenz_gauge_has_fixed_cochain_shapes() -> None:
     _, bridge = _periodic_grid(3, 2)
     gauge = GRMHDVectorPotentialGauge(
         "generalized_lorenz", propagation_speed=0.8, damping_rate=0.1
@@ -123,7 +126,7 @@ def test_generalized_lorenz_gauge_has_fixed_cochain_shapes():
     np.testing.assert_allclose(rate.faraday_defect, 0.0, atol=2.0e-7)
 
 
-def test_bounded_grid_constructs_boundary_aware_ct_with_zero_flux():
+def test_bounded_grid_constructs_boundary_aware_ct_with_zero_flux() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(4, periodic=False),),
         axis_names=("x",),
@@ -137,7 +140,9 @@ def test_bounded_grid_constructs_boundary_aware_ct_with_zero_flux():
     np.testing.assert_allclose(plan.magnetic_divergence(state.magnetic_flux), 0.0)
 
 
-def test_conducting_grmhd_boundary_preserves_normal_flux_and_zeroes_tangential_emf():
+def test_conducting_grmhd_boundary_preserves_normal_flux_and_zeroes_tangential_emf() -> (
+    None
+):
     grid, _ = _periodic_grid(1, 4)
     scale = _scale()
     convention = RelativityConvention.canonical()
@@ -158,7 +163,7 @@ def test_conducting_grmhd_boundary_preserves_normal_flux_and_zeroes_tangential_e
     assert bool(jnp.all(trace.physically_valid))
 
 
-def test_atomic_ssprk_acceptance_and_rejected_ledger_are_material_ct_consistent():
+def test_atomic_ssprk_acceptance_and_rejected_ledger_are_material_ct_consistent() -> None:
     grid, bridge = _periodic_grid(2, 2)
     scale = _scale()
     convention = RelativityConvention.canonical()

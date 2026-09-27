@@ -8,8 +8,9 @@ from dataclasses import dataclass
 from typing import Any
 
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
+from ....typing import PRNGKey
 from ..data import OperatorBatch, OperatorPrediction, OperatorTargetBatch
 from ..metrics import operator_l2_loss
 from ._losses import (
@@ -28,7 +29,7 @@ class TargetOperatorConsistencyLoss(AbstractOperatorLossTerm):
     name: str = "target_operator_consistency"
     weight: float = 1.0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.field_name or not self.name or not jnp.isfinite(self.weight):
             raise ValueError("Target operator consistency configuration is invalid.")
 
@@ -40,7 +41,7 @@ class TargetOperatorConsistencyLoss(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,

@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Literal
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 
@@ -19,10 +20,11 @@ from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
 from ..domain import DomainFunction
 from ..nn.layers._dropout import Dropout
+from ..typing import parse
 from ._predictive import PredictionInterval, PredictiveField, SampleAxis
 
 
-MCDropoutCalibrationMethod = Literal[
+MCDropoutCalibrationMethod: TypeAlias = Literal[
     "gaussian_scale", "normalized_conformal", "functional_conformal"
 ]
 
@@ -51,7 +53,7 @@ class MCDropoutCalibrationEvidence(StrictModule):
         method: MCDropoutCalibrationMethod,
         split_identity: str,
         draw_count: int,
-    ):
+    ) -> None:
         self.nominal_coverage = jnp.asarray(nominal_coverage, dtype=jnp.float64).reshape(
             ()
         )
@@ -87,19 +89,14 @@ class MCDropoutCalibration(StrictModule):
         split_identity: str,
         case_dim: str | None,
         evidence: MCDropoutCalibrationEvidence,
-    ):
+    ) -> None:
         coefficient_ = jnp.asarray(coefficient, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(coefficient_)) or not bool(coefficient_ > 0.0):
             raise ValueError("Calibration coefficient must be finite and positive.")
         coverage = float(nominal_coverage)
         if not 0.0 < coverage < 1.0:
             raise ValueError("nominal_coverage must lie strictly between zero and one.")
-        if method not in (
-            "gaussian_scale",
-            "normalized_conformal",
-            "functional_conformal",
-        ):
-            raise ValueError("Unknown MC-dropout calibration method.")
+        method = parse(method, MCDropoutCalibrationMethod, "method")
         identity = str(split_identity)
         if not identity:
             raise ValueError("split_identity must be non-empty.")
@@ -181,44 +178,48 @@ class MCDropoutCalibration(StrictModule):
         )
         if bool(jnp.any((~jnp.isfinite(weight_array) | (weight_array <= 0.0)) & active)):
             raise ValueError("Active calibration weights must be finite and positive.")
-        if method == "gaussian_scale":
-            effective = jnp.where(active, weight_array, 0.0)
-            coefficient = jnp.sqrt(
-                jnp.sum(effective * normalized**2) / jnp.sum(effective)
-            )
-            width_coefficient = coefficient * jsp.special.ndtri(
-                jnp.asarray(0.5 * (1.0 + coverage))
-            )
-        elif method == "normalized_conformal":
-            if weights is not None:
-                raise ValueError(
-                    "Normalized split conformal currently requires unweighted cases."
+        method = parse(method, MCDropoutCalibrationMethod, "method")
+        match method:
+            case "gaussian_scale":
+                effective = jnp.where(active, weight_array, 0.0)
+                coefficient = jnp.sqrt(
+                    jnp.sum(effective * normalized**2) / jnp.sum(effective)
                 )
-            coefficient = _finite_sample_quantile(normalized[active], coverage)
-            width_coefficient = coefficient
-        elif method == "functional_conformal":
-            if weights is not None:
-                raise ValueError(
-                    "Functional max-score conformal does not accept element weights."
+                width_coefficient = coefficient * jsp.special.ndtri(
+                    jnp.asarray(0.5 * (1.0 + coverage))
                 )
-            if case_dim is None or case_dim not in center_field.dims:
-                raise ValueError("case_dim must name one calibration field dimension.")
-            axis = center_field.dims.index(case_dim)
-            residual = jnp.moveaxis(normalized, axis, 0)
-            active_by_case = jnp.moveaxis(active, axis, 0)
-            flat = residual.reshape((residual.shape[0], -1))
-            flat_active = active_by_case.reshape((active_by_case.shape[0], -1))
-            valid_case = jnp.any(flat_active, axis=1)
-            if not bool(jnp.all(valid_case)):
-                raise ValueError(
-                    "Every functional calibration case needs active support."
-                )
-            case_scores = jnp.max(jnp.where(flat_active, flat, -jnp.inf), axis=1)
-            coefficient = _finite_sample_quantile(case_scores, coverage)
-            width_coefficient = coefficient
-            count = case_scores.shape[0]
-        else:
-            raise ValueError("Unknown MC-dropout calibration method.")
+            case "normalized_conformal":
+                if weights is not None:
+                    raise ValueError(
+                        "Normalized split conformal currently requires unweighted cases."
+                    )
+                coefficient = _finite_sample_quantile(normalized[active], coverage)
+                width_coefficient = coefficient
+            case "functional_conformal":
+                if weights is not None:
+                    raise ValueError(
+                        "Functional max-score conformal does not accept element weights."
+                    )
+                if case_dim is None or case_dim not in center_field.dims:
+                    raise ValueError(
+                        "case_dim must name one calibration field dimension."
+                    )
+                axis = center_field.dims.index(case_dim)
+                residual = jnp.moveaxis(normalized, axis, 0)
+                active_by_case = jnp.moveaxis(active, axis, 0)
+                flat = residual.reshape((residual.shape[0], -1))
+                flat_active = active_by_case.reshape((active_by_case.shape[0], -1))
+                valid_case = jnp.any(flat_active, axis=1)
+                if not bool(jnp.all(valid_case)):
+                    raise ValueError(
+                        "Every functional calibration case needs active support."
+                    )
+                case_scores = jnp.max(jnp.where(flat_active, flat, -jnp.inf), axis=1)
+                coefficient = _finite_sample_quantile(case_scores, coverage)
+                width_coefficient = coefficient
+                count = case_scores.shape[0]
+            case _:
+                assert_never(method)
         lower = center - width_coefficient * scale
         upper = center + width_coefficient * scale
         covered = (target_array >= lower) & (target_array <= upper)
@@ -361,7 +362,7 @@ def sample_mc_dropout_predictive(
         axis=0,
     )
 
-    def evaluate_batch(batch_keys):
+    def evaluate_batch(batch_keys: Array) -> Array:
         return jax.vmap(
             lambda draw_key: jnp.asarray(function(points, key=draw_key, **kwargs).data)
         )(batch_keys)

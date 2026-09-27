@@ -4,12 +4,14 @@
 
 """A minimal one-particle reactive CFD-DEM window shared by integration tests."""
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def reactive_problem():
+def reactive_problem() -> Any:
     """Return `(plan, state, boundary, schedule)` of one reacting particle."""
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0]), jnp.ones((1,)), ambient_dimension=2
@@ -125,7 +127,7 @@ def reactive_problem():
     return plan, state, boundary, schedule
 
 
-def reactive_fluid_sample(fluid_state):
+def reactive_fluid_sample(fluid_state: Any) -> Any:
     """Sample the fluid carried as `(energy, species)` at the single particle."""
     return phx.solver.ReactiveFluidFields(
         jnp.zeros((1, 2)),

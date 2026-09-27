@@ -1,5 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
+from typing import Any
+
 import numpy as np
 
 from tools.global_feedback_qualification import (
@@ -11,7 +14,7 @@ from tools.global_feedback_qualification import (
 )
 
 
-def test_spinup_and_incomplete_tail_do_not_bias_complete_block_means():
+def test_spinup_and_incomplete_tail_do_not_bias_complete_block_means() -> None:
     days = np.arange(1.0, 33.0)
     values = np.full_like(days, 2.0)
     values[:10], values[30:] = 100.0, 1000.0
@@ -22,7 +25,7 @@ def test_spinup_and_incomplete_tail_do_not_bias_complete_block_means():
     assert not result["stationarity_consistent"]
 
 
-def test_long_correlated_drift_is_not_stationary_despite_many_samples():
+def test_long_correlated_drift_is_not_stationary_despite_many_samples() -> None:
     days = np.arange(1.0, 121.0)
     result = block_statistics(days, 280.0 + days / 100, spinup_days=20.0, block_days=10.0)
     assert result["complete_blocks"] == 10
@@ -31,7 +34,7 @@ def test_long_correlated_drift_is_not_stationary_despite_many_samples():
     assert not result["stationarity_consistent"]
 
 
-def test_two_steps_do_not_produce_a_climate_confidence_interval():
+def test_two_steps_do_not_produce_a_climate_confidence_interval() -> None:
     result = block_statistics(
         [20 / 86400, 40 / 86400], [290.0, 290.001], spinup_days=0.0, block_days=30.0
     )
@@ -42,13 +45,13 @@ def test_two_steps_do_not_produce_a_climate_confidence_interval():
 
 
 def _response_record(
-    scenario,
+    scenario: Any,
     *,
-    offset=0.0,
-    response_scale=1.0,
-    uncertainty_scale=0.001,
-    absolute_filter_work=0.01,
-):
+    offset: Any = 0.0,
+    response_scale: Any = 1.0,
+    uncertainty_scale: Any = 0.001,
+    absolute_filter_work: Any = 0.01,
+) -> Any:
     """Numerical inputs to the report gate, not simulated climate evidence."""
     return {
         "scenario": scenario,
@@ -66,7 +69,7 @@ def _response_record(
     }
 
 
-def test_statistical_response_requires_all_paired_numerical_sensitivities():
+def test_statistical_response_requires_all_paired_numerical_sensitivities() -> None:
     baseline, forced = _response_record("baseline"), _response_record("solar")
     without = compare(baseline, forced)
     assert without["sst_k"]["statistically_resolved_difference"]
@@ -88,7 +91,7 @@ def test_statistical_response_requires_all_paired_numerical_sensitivities():
     ]
 
 
-def test_changed_response_or_unresolved_sensitivity_blocks_physical_claim():
+def test_changed_response_or_unresolved_sensitivity_blocks_physical_claim() -> None:
     baseline, forced = _response_record("baseline"), _response_record("solar")
     pairs = {name: (baseline, forced) for name in REQUIRED_SENSITIVITIES}
     pairs["half_dt"] = (baseline, _response_record("solar", response_scale=1.2))
@@ -101,7 +104,7 @@ def test_changed_response_or_unresolved_sensitivity_blocks_physical_claim():
     assert not uncertain["response_claim_supported"]
 
 
-def test_filter_work_budget_cannot_disappear_in_zero_signed_accounting():
+def test_filter_work_budget_cannot_disappear_in_zero_signed_accounting() -> None:
     baseline = _response_record("baseline")
     forced = _response_record("solar", absolute_filter_work=0.2)
     pairs = {name: (baseline, forced) for name in REQUIRED_SENSITIVITIES}
@@ -114,7 +117,7 @@ def test_filter_work_budget_cannot_disappear_in_zero_signed_accounting():
     assert not result["response_claim_supported"]
 
 
-def test_deterministic_equilibrium_does_not_fabricate_independent_samples():
+def test_deterministic_equilibrium_does_not_fabricate_independent_samples() -> None:
     changes = {
         "sst_k": 0.08,
         "atmosphere_temperature_k": 0.11,

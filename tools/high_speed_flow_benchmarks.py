@@ -6,6 +6,7 @@ import argparse
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -26,7 +27,7 @@ from phydrax.equations import (
 )
 
 
-def _system():
+def _system() -> Any:
     schema = ChemicalSpeciesSchema.from_unique_species(
         ("air",),
         (ChemicalPhaseKind.GAS,),
@@ -53,7 +54,7 @@ def _system():
     )
 
 
-def _timed(function, arguments, iterations):
+def _timed(function: Any, arguments: Any, iterations: Any) -> Any:
     start = time.perf_counter()
     compiled = function(*arguments)
     jax.block_until_ready(compiled)

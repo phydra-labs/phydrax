@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -18,9 +19,10 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.fem import FiniteElementTopologyTransfer
 from ...stochastic import WienerRealization
+from ...typing import parse
 
 
-PhaseFieldNoiseKind = Literal["allen-cahn", "cahn-hilliard"]
+PhaseFieldNoiseKind: TypeAlias = Literal["allen-cahn", "cahn-hilliard"]
 
 
 class PhaseFieldNoiseEvidence(StrictModule):
@@ -51,9 +53,8 @@ class PhaseFieldNoisePlan(StrictModule, NonTrainableState):
         *,
         amplitude: ArrayLike = 1.0,
         conservation_weights: ArrayLike | None = None,
-    ):
-        if kind not in ("allen-cahn", "cahn-hilliard"):
-            raise ValueError("Unknown phase-field noise kind.")
+    ) -> None:
+        kind = parse(kind, PhaseFieldNoiseKind, "kind")
         if not isinstance(realization, WienerRealization):
             raise TypeError("realization must be WienerRealization.")
         modes = np.asarray(basis)
@@ -159,7 +160,7 @@ class PhaseFieldNoisePlan(StrictModule, NonTrainableState):
         end: ArrayLike,
         /,
         *,
-        dtype=jnp.float64,
+        dtype: np.dtype | type = jnp.float64,
     ) -> PhaseFieldNoiseEvidence:
         lower = jnp.asarray(start)
         upper = jnp.asarray(end, dtype=lower.dtype)

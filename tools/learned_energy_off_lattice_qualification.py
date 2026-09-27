@@ -614,6 +614,7 @@ def _runtime_record(
     d2v17 = D2V17PeriodicTransportPlan(
         d2v17_method.quadrature,
         (resolution, resolution),
+        # ty: ignore[invalid-argument-type]
         spacing,
         spacing[0],
     )
@@ -1171,6 +1172,7 @@ def main() -> int:
     payload = canonical_json(report) + "\n"
     atomic_write(
         output,
+        # ty: ignore[invalid-argument-type]
         lambda temporary: temporary.write_text(payload, encoding="utf-8"),
     )
     return 0

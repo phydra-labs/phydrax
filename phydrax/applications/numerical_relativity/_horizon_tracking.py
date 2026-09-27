@@ -12,7 +12,8 @@ from typing import Callable
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -148,7 +149,7 @@ class ApparentHorizonSearchPlan(StrictModule, NonTrainableState):
         active: ArrayLike | None = None,
         equivalence_tolerance: float = 1.0e-5,
         nesting_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         if not isinstance(mots_plan, MOTSSolvePlan):
             raise TypeError("mots_plan must be a MOTSSolvePlan.")
         radii = np.asarray(seed_radii, dtype=np.float64).reshape((-1,))
@@ -195,7 +196,7 @@ class ApparentHorizonSearchPlan(StrictModule, NonTrainableState):
         expansion_operator: Callable[[SphericalSpectralSurface], ArrayLike],
         /,
         *,
-        center: ArrayLike = (0.0, 0.0, 0.0),
+        center: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
         excluded: ArrayLike | None = None,
         search_complete: ArrayLike = False,
     ) -> ApparentHorizonResult:
@@ -394,7 +395,7 @@ class HorizonTrackerPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_relative_area_change: float = 0.25,
-    ):
+    ) -> None:
         if not isinstance(mots_plan, MOTSSolvePlan):
             raise TypeError("mots_plan must be a MOTSSolvePlan.")
         maximum_change = float(maximum_relative_area_change)

@@ -11,12 +11,15 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._potential import AtomisticPotentialCapabilities, AtomisticPotentialRequirements
 from ._potential_program import (
     AbstractAtomisticEnergyTerm,
@@ -33,7 +36,7 @@ def _safe_norm(value: Array, /) -> Array:
 
 
 @_safe_norm.defjvp
-def _safe_norm_jvp(primals, tangents):
+def _safe_norm_jvp(primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:
     (value,), (tangent,) = primals, tangents
     norm = _safe_norm(value)
     derivative = jnp.where(
@@ -58,7 +61,9 @@ def _parameters(name: str, value: ArrayLike, /, *, positive: bool = False) -> Ar
     return jnp.asarray(host)
 
 
-def _term_identity(kind: str, name: str, group: int, arrays, /, **extra) -> str:
+def _term_identity(
+    kind: str, name: str, group: int, arrays: PyTree[ArrayLike], /, **extra: object
+) -> str:
     return canonical_fingerprint(
         {
             "kind": kind,
@@ -95,7 +100,7 @@ class HarmonicBondPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
         *,
         name: str = "harmonic-bond",
         force_group: int = 0,
-    ):
+    ) -> None:
         k = _parameters("stiffness", stiffness, positive=True)
         distance = _parameters(
             "equilibrium_distance", equilibrium_distance, positive=True
@@ -140,7 +145,9 @@ class PreparedHarmonicBondPotential(AbstractPreparedAtomisticEnergyTerm):
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
-    def __init__(self, plan: HarmonicBondPotential, system: PreparedAtomisticSystem, /):
+    def __init__(
+        self, plan: HarmonicBondPotential, system: PreparedAtomisticSystem, /
+    ) -> None:
         self.plan = plan
         self.system = system
         self.name = plan.name
@@ -162,7 +169,9 @@ class PreparedHarmonicBondPotential(AbstractPreparedAtomisticEnergyTerm):
         if count == 0:
             zero = jnp.zeros((), dtype=context.positions.dtype)
             return AtomisticTermEvaluation(
-                zero, jnp.zeros((self.system.capacity,), dtype=zero.dtype), True
+                zero,
+                jnp.zeros((self.system.capacity,), dtype=zero.dtype),
+                jnp.asarray(True),
             )
         displacement = (
             context.unwrapped_positions[indices[:, 0]]
@@ -202,7 +211,7 @@ class FiniteExtensibleNonlinearElasticBondPotential(
         *,
         name: str = "finite-extensible-nonlinear-elastic-bond",
         force_group: int = 0,
-    ):
+    ) -> None:
         k = _parameters("stiffness", stiffness, positive=True)
         extension = _parameters("maximum_extension", maximum_extension, positive=True)
         if k.shape != extension.shape:
@@ -255,7 +264,7 @@ class PreparedFiniteExtensibleNonlinearElasticBondPotential(
         plan: FiniteExtensibleNonlinearElasticBondPotential,
         system: PreparedAtomisticSystem,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.system = system
         self.name = plan.name
@@ -277,7 +286,9 @@ class PreparedFiniteExtensibleNonlinearElasticBondPotential(
         if count == 0:
             zero = jnp.zeros((), dtype=context.positions.dtype)
             return AtomisticTermEvaluation(
-                zero, jnp.zeros((self.system.capacity,), dtype=zero.dtype), True
+                zero,
+                jnp.zeros((self.system.capacity,), dtype=zero.dtype),
+                jnp.asarray(True),
             )
         displacement = (
             context.unwrapped_positions[indices[:, 0]]
@@ -329,7 +340,7 @@ class HarmonicAnglePotential(AbstractAtomisticEnergyTerm, NonTrainableState):
         *,
         name: str = "harmonic-angle",
         force_group: int = 0,
-    ):
+    ) -> None:
         k = _parameters("stiffness", stiffness, positive=True)
         angle = _parameters("equilibrium_angle", equilibrium_angle)
         if k.shape != angle.shape or bool(jnp.any((angle <= 0.0) | (angle >= jnp.pi))):
@@ -374,7 +385,9 @@ class PreparedHarmonicAnglePotential(AbstractPreparedAtomisticEnergyTerm):
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
-    def __init__(self, plan: HarmonicAnglePotential, system: PreparedAtomisticSystem, /):
+    def __init__(
+        self, plan: HarmonicAnglePotential, system: PreparedAtomisticSystem, /
+    ) -> None:
         self.plan = plan
         self.system = system
         self.name = plan.name
@@ -396,7 +409,9 @@ class PreparedHarmonicAnglePotential(AbstractPreparedAtomisticEnergyTerm):
         if count == 0:
             zero = jnp.zeros((), dtype=context.positions.dtype)
             return AtomisticTermEvaluation(
-                zero, jnp.zeros((self.system.capacity,), dtype=zero.dtype), True
+                zero,
+                jnp.zeros((self.system.capacity,), dtype=zero.dtype),
+                jnp.asarray(True),
             )
         route_scale = context.interaction_scales.angle
         route_active = route_scale > 0.0
@@ -461,7 +476,7 @@ class PeriodicTorsionPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
         improper: bool = False,
         name: str = "periodic-torsion",
         force_group: int = 0,
-    ):
+    ) -> None:
         amplitude_ = _parameters("amplitude", amplitude)
         periodicity_host = np.asarray(periodicity)
         phase_ = _parameters("phase", phase)
@@ -525,7 +540,7 @@ class PreparedPeriodicTorsionPotential(AbstractPreparedAtomisticEnergyTerm):
 
     def __init__(
         self, plan: PeriodicTorsionPotential, system: PreparedAtomisticSystem, /
-    ):
+    ) -> None:
         self.plan = plan
         self.system = system
         self.name = plan.name
@@ -556,7 +571,9 @@ class PreparedPeriodicTorsionPotential(AbstractPreparedAtomisticEnergyTerm):
         if count == 0:
             zero = jnp.zeros((), dtype=context.positions.dtype)
             return AtomisticTermEvaluation(
-                zero, jnp.zeros((self.system.capacity,), dtype=zero.dtype), True
+                zero,
+                jnp.zeros((self.system.capacity,), dtype=zero.dtype),
+                jnp.asarray(True),
             )
         route_scale = (
             context.interaction_scales.improper
@@ -654,7 +671,7 @@ class LennardJonesPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
         explicit_sigma: ArrayLike | None = None,
         name: str = "lennard-jones",
         force_group: int = 0,
-    ):
+    ) -> None:
         epsilon_ = _parameters("epsilon", epsilon)
         sigma_ = _parameters("sigma", sigma, positive=True)
         if epsilon_.shape != sigma_.shape or bool(jnp.any(epsilon_ < 0.0)):
@@ -679,8 +696,9 @@ class LennardJonesPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
             raise ValueError(
                 "Lennard-Jones switching and cutoff-energy shifting are mutually exclusive."
             )
-        if combining_rule not in ("lorentz-berthelot", "geometric", "explicit"):
-            raise ValueError("Unknown Lennard-Jones combining rule.")
+        combining_rule = parse(
+            combining_rule, LennardJonesCombiningRule, "combining_rule"
+        )
         explicit_epsilon_ = None
         explicit_sigma_ = None
         if combining_rule == "explicit":
@@ -768,7 +786,9 @@ class PreparedLennardJonesPotential(AbstractPreparedAtomisticEnergyTerm):
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
-    def __init__(self, plan: LennardJonesPotential, system: PreparedAtomisticSystem, /):
+    def __init__(
+        self, plan: LennardJonesPotential, system: PreparedAtomisticSystem, /
+    ) -> None:
         self.plan = plan
         self.system = system
         self.name = plan.name

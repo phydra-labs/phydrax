@@ -10,8 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from .._execution_runtime import ExecutionGroup
 from .._fingerprint import canonical_fingerprint
@@ -69,7 +70,9 @@ class DistributedHaloPlan(StrictModule, NonTrainableState):
     message_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, entity_owner: ArrayLike, adjacency: ArrayLike, part_count: int, /):
+    def __init__(
+        self, entity_owner: ArrayLike, adjacency: ArrayLike, part_count: int, /
+    ) -> None:
         owner = np.asarray(entity_owner)
         pairs = np.asarray(adjacency)
         parts = int(part_count)
@@ -276,7 +279,7 @@ class DistributedLocalOperator(StrictModule, NonTrainableState):
         /,
         *,
         operator_name: str,
-    ):
+    ) -> None:
         if not isinstance(halo, DistributedHaloPlan):
             raise TypeError("Distributed local operator requires a halo plan.")
         if not callable(local_action) or not callable(local_transpose):
@@ -336,7 +339,7 @@ class DistributedLocalOperator(StrictModule, NonTrainableState):
         packed = jax.device_put(packed, NamedSharding(mesh, packed_spec))
         parts = jax.device_put(parts, NamedSharding(mesh, part_spec))
 
-        def action(local, part):
+        def action(local: Array, part: Array) -> Array:
             part_index = part[0]
             exchanged = self.halo.exchange(
                 local[0],
@@ -409,7 +412,7 @@ class DistributedLocalOperator(StrictModule, NonTrainableState):
         packed = jax.device_put(packed, NamedSharding(mesh, packed_spec))
         parts = jax.device_put(parts, NamedSharding(mesh, part_spec))
 
-        def action(local, part):
+        def action(local: Array, part: Array) -> Array:
             part_index = part[0]
             local_result = self.local_transpose(
                 part_index,

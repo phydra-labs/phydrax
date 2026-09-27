@@ -5,18 +5,19 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...graph._gauge_transport import GaugeStaplePlan
-from ...metrix._complex_matrix_manifold import SpecialUnitaryGroup
+from ...metrix._complex_matrix_manifold import SpecialUnitaryGroup, UnitaryGroup
 
 
 class StoutSmearingResourcePolicy(StrictModule):
@@ -35,7 +36,7 @@ class StoutSmearingResourcePolicy(StrictModule):
         maximum_matrix_dimension: int = 64,
         maximum_iterations: int = 64,
         maximum_workspace_bytes: int = 2_147_483_648,
-    ):
+    ) -> None:
         values = tuple(
             (
                 maximum_links,
@@ -88,7 +89,7 @@ class StoutSmearingPlan(StrictModule):
         iterations: int = 1,
         resources: StoutSmearingResourcePolicy | None = None,
         dtype: Any = jnp.complex64,
-    ):
+    ) -> None:
         if not isinstance(staples, GaugeStaplePlan):
             raise TypeError("staples must be GaugeStaplePlan.")
         rho_ = float(rho)
@@ -195,14 +196,15 @@ def stout_smear(plan: StoutSmearingPlan, links: ArrayLike, /) -> StoutSmearingRe
             f"links must have planned dtype {plan.dtype}; got {values.dtype}."
         )
 
-    group = plan.staples.link_space.group
+    # GaugeStaplePlan construction admits only U(N) or SU(N) link groups.
+    group = cast(UnitaryGroup | SpecialUnitaryGroup, plan.staples.link_space.group)
     tolerance = jnp.asarray(
         max(float(group.tolerance), 64.0 * np.finfo(plan.dtype).eps),
         dtype=values.real.dtype,
     )
     requires_special = isinstance(group, SpecialUnitaryGroup)
 
-    def iteration(current, _):
+    def iteration(current: Array, _: None) -> tuple[Array, Array]:
         updated = _stout_step(plan, current)
         finite = jnp.all(jnp.isfinite(updated))
         unitarity, determinant = _membership_defects(updated)

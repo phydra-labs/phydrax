@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -16,12 +18,12 @@ from phydrax.applications.thermofluids._topology_design import (
 )
 
 
-def _drive(_time, velocity, _args):
+def _drive(_time: Any, velocity: Any, _args: Any) -> Any:
     return jnp.ones_like(velocity[0]), jnp.zeros_like(velocity[1])
 
 
 @pytest.fixture(scope="module")
-def channel():
+def channel() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4, periodic=True),
@@ -91,7 +93,9 @@ def channel():
     return workflow, dynamics
 
 
-def test_spatial_material_transport_conserves_heat_and_brinkman_work(channel):
+def test_spatial_material_transport_conserves_heat_and_brinkman_work(
+    channel: Any,
+) -> None:
     workflow, _ = channel
     fluid_density = jnp.zeros((4, 4))
     solid_density = jnp.ones((4, 4))
@@ -126,13 +130,13 @@ def test_spatial_material_transport_conserves_heat_and_brinkman_work(channel):
     assert float(solid_evidence.heat_content) < float(fluid_evidence.heat_content)
 
 
-def test_fixed_algorithm_gradient_and_stale_realization_rejection(channel):
+def test_fixed_algorithm_gradient_and_stale_realization_rejection(channel: Any) -> None:
     workflow, _ = channel
     design = jnp.linspace(0.2, 0.4, 16)
     direction = jnp.cos(jnp.arange(16, dtype=design.dtype))
     direction = direction / jnp.sqrt(jnp.sum(direction * direction))
 
-    def objective(current):
+    def objective(current: Any) -> Any:
         return workflow.objective(workflow.integrate(current).final_state, current)
 
     _, derivative = jax.jvp(objective, (design,), (direction,))
@@ -163,7 +167,7 @@ def test_fixed_algorithm_gradient_and_stale_realization_rejection(channel):
     assert bool(jnp.all((binary.density == 0.0) | (binary.density == 1.0)))
 
 
-def test_invalid_material_and_unstable_realization_are_rejected(channel):
+def test_invalid_material_and_unstable_realization_are_rejected(channel: Any) -> None:
     workflow, dynamics = channel
     with pytest.raises(ValueError, match="positive"):
         ThermofluidMaterial(

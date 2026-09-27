@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from math import prod
 from typing import Any
 
@@ -14,7 +14,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -53,7 +54,7 @@ class ComplexCompositeAMRCellLayout(StrictModule, NonTrainableState):
         *,
         component_shape: Sequence[int] = (),
         dtype: Any = np.complex128,
-    ):
+    ) -> None:
         dtype_ = np.dtype(jax.dtypes.canonicalize_dtype(np.dtype(dtype)))
         if not np.issubdtype(dtype_, np.complexfloating):
             raise TypeError("Complex AMR field storage requires a complex dtype.")
@@ -180,7 +181,11 @@ class ComplexCompositeAMRCellLayout(StrictModule, NonTrainableState):
         return jnp.sum(weights[:, None] * density, axis=0).reshape(self.component_shape)
 
 
-def _componentwise_real_action(action, values: tuple[Array, ...], /) -> tuple[Array, ...]:
+def _componentwise_real_action(
+    action: Callable[[tuple[Array, ...]], tuple[Array, ...]],
+    values: tuple[Array, ...],
+    /,
+) -> tuple[Array, ...]:
     real = action(tuple(jnp.real(value) for value in values))
     imaginary = action(tuple(jnp.imag(value) for value in values))
     return tuple(
@@ -208,10 +213,10 @@ def complexify_composite_amr_operator(
     ):
         raise ValueError("Real operator and complex AMR layout geometry must agree.")
 
-    def action(values):
+    def action(values: tuple[Array, ...]) -> tuple[Array, ...]:
         return _componentwise_real_action(operator.mv, values)
 
-    def transpose_action(values):
+    def transpose_action(values: tuple[Array, ...]) -> tuple[Array, ...]:
         return _componentwise_real_action(operator.transpose_mv, values)
 
     properties = OperatorProperties(
@@ -246,8 +251,8 @@ def _u1_linear_prolong(values: Array, ratio: int, dimension: int, /) -> Array:
     for axis in range(dimension):
         previous = jnp.roll(result, 1, axis=axis)
         following = jnp.roll(result, -1, axis=axis)
-        lower = [slice(None)] * result.ndim
-        upper = [slice(None)] * result.ndim
+        lower: list[slice | int] = [slice(None)] * result.ndim
+        upper: list[slice | int] = [slice(None)] * result.ndim
         lower[axis] = 0
         upper[axis] = result.shape[axis] - 1
         previous = previous.at[tuple(lower)].set(result[tuple(lower)])
@@ -310,7 +315,8 @@ def complex_amr_fill_patch(
         values = jnp.where(same_mask, same_values, 0.0)
         valid = same_mask
         if fill.level > 0:
-            if fill.transfer is None:
+            transfer = fill.transfer
+            if transfer is None:
                 raise RuntimeError("Complex FillPatch lost its coarse transfer geometry.")
             donors = fill._coarse_donor_values(state)
             dimension = len(state.topology.plan.grid.shape)
@@ -320,7 +326,7 @@ def complex_amr_fill_patch(
             prolonged = jax.vmap(
                 lambda patch: _u1_linear_prolong(
                     patch,
-                    fill.transfer.refinement_ratio,
+                    transfer.refinement_ratio,
                     dimension,
                 )
             )(flat_patches)
@@ -328,7 +334,7 @@ def complex_amr_fill_patch(
                 fill.coarse_child_indices.reshape((route_count, dimension)),
                 0,
             )
-            ratio = fill.transfer.refinement_ratio
+            ratio = transfer.refinement_ratio
             fine_index = (jnp.arange(route_count, dtype=jnp.int32),) + tuple(
                 ratio + child[:, axis] for axis in range(dimension)
             )

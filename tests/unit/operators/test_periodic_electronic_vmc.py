@@ -1,4 +1,5 @@
 import itertools
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -32,7 +33,7 @@ from phydrax.sampling import SingleCoordinateProposalPayload
 from phydrax.units import ANGSTROM, BOHR, conversion_factor, ELECTRONVOLT, HARTREE
 
 
-def _structure(charges, positions, cell, scale, *, name):
+def _structure(charges: Any, positions: Any, cell: Any, scale: Any, *, name: Any) -> Any:
     return AtomicStructure(
         jnp.asarray(charges, dtype=jnp.int32),
         jnp.asarray(positions, dtype=jnp.float64),
@@ -45,8 +46,12 @@ def _structure(charges, positions, cell, scale, *, name):
 
 
 def _ewald(
-    *, screening, background=False, maximum_real=10_000, maximum_reciprocal=10_000
-):
+    *,
+    screening: Any,
+    background: Any = False,
+    maximum_real: Any = 10_000,
+    maximum_reciprocal: Any = 10_000,
+) -> Any:
     return PeriodicElectronicEwaldPolicy(
         real_image_radius=1,
         reciprocal_radius=1,
@@ -57,7 +62,7 @@ def _ewald(
     )
 
 
-def _one_electron_model(cell, twist):
+def _one_electron_model(cell: Any, twist: Any) -> Any:
     resource = ElectronicVMCResourcePlan(1, determinant_count=1, spatial_dimension=3)
     model = PeriodicFermiNet(
         cell,
@@ -70,7 +75,7 @@ def _one_electron_model(cell, twist):
     return model, resource
 
 
-def _determinant_update_policy():
+def _determinant_update_policy() -> Any:
     return LowRankSolvePolicy(
         LinearSolvePolicy(DenseLU(), failure=FailurePolicy("status")),
         base_nonsingularity="asserted",
@@ -78,7 +83,7 @@ def _determinant_update_policy():
     )
 
 
-def test_periodic_incremental_target_rejects_mixed_precision_lu():
+def test_periodic_incremental_target_rejects_mixed_precision_lu() -> None:
     model, _ = _one_electron_model(
         PeriodicCell(jnp.eye(3, dtype=jnp.float64)),
         jnp.zeros((3,), dtype=jnp.float64),
@@ -106,7 +111,7 @@ def test_periodic_incremental_target_rejects_mixed_precision_lu():
         )
 
 
-def test_cell_features_use_physical_metric_and_preserve_integer_translations():
+def test_cell_features_use_physical_metric_and_preserve_integer_translations() -> None:
     vectors = jnp.asarray([[1.0, 0.0], [0.9, 0.2]], dtype=jnp.float64)
     cell = PeriodicCell(vectors)
     feature_map = PeriodicCellFeatures(
@@ -136,7 +141,7 @@ def test_cell_features_use_physical_metric_and_preserve_integer_translations():
     assert jnp.allclose(translated.pair_distances, result.pair_distances)
 
 
-def test_periodic_ferminet_is_antisymmetric_twist_covariant_and_batched():
+def test_periodic_ferminet_is_antisymmetric_twist_covariant_and_batched() -> None:
     vectors = jnp.asarray(
         [[2.0, 0.1, 0.0], [0.3, 1.7, 0.1], [0.0, 0.2, 2.3]],
         dtype=jnp.float64,
@@ -172,7 +177,7 @@ def test_periodic_ferminet_is_antisymmetric_twist_covariant_and_batched():
     assert batched.valid.shape == (2,)
 
 
-def test_periodic_ferminet_mixture_ignores_singular_components():
+def test_periodic_ferminet_mixture_ignores_singular_components() -> None:
     cell = PeriodicCell(2.0 * jnp.eye(2, dtype=jnp.float64))
     modes = jnp.asarray([[0, 0], [1, 0]], dtype=jnp.int32)
     coefficients = jnp.asarray(
@@ -217,7 +222,7 @@ def test_periodic_ferminet_mixture_ignores_singular_components():
     assert jnp.allclose(actual.phase, expected.phase)
 
 
-def test_periodic_ferminet_singular_component_retains_parameter_derivative():
+def test_periodic_ferminet_singular_component_retains_parameter_derivative() -> None:
     cell = PeriodicCell(jnp.asarray([[1.0]], dtype=jnp.float64))
     modes = jnp.asarray([[0], [1]], dtype=jnp.int32)
     coefficients = jnp.asarray(
@@ -242,10 +247,10 @@ def test_periodic_ferminet_singular_component_retains_parameter_derivative():
     )
     coordinates = jnp.asarray([[0.1], [0.4]], dtype=jnp.float64)
 
-    def candidate_coefficients(parameter):
+    def candidate_coefficients(parameter: Any) -> Any:
         return coefficients.at[0, 1, 1].set(parameter)
 
-    def amplitude_log_abs(parameter):
+    def amplitude_log_abs(parameter: Any) -> Any:
         candidate = eqx.tree_at(
             lambda value: value.orbital_coefficients,
             model,
@@ -253,7 +258,7 @@ def test_periodic_ferminet_singular_component_retains_parameter_derivative():
         )
         return candidate(coordinates).log_abs
 
-    def explicit_log_abs(parameter):
+    def explicit_log_abs(parameter: Any) -> Any:
         features = model.cell_features(coordinates).reciprocal_features
         matrices = jax.vmap(lambda value: features @ value.T)(
             candidate_coefficients(parameter)
@@ -271,7 +276,7 @@ def test_periodic_ferminet_singular_component_retains_parameter_derivative():
     assert jnp.allclose(actual, expected, rtol=1.0e-10, atol=1.0e-11)
 
 
-def test_periodic_mixture_avoids_zero_times_infinite_lane_scaling():
+def test_periodic_mixture_avoids_zero_times_infinite_lane_scaling() -> None:
     cell = PeriodicCell(jnp.asarray([[1.0]], dtype=jnp.float64))
     modes = jnp.asarray([[0], [1]], dtype=jnp.int32)
     coefficients = jnp.asarray(
@@ -316,7 +321,7 @@ def test_periodic_mixture_avoids_zero_times_infinite_lane_scaling():
     assert jnp.allclose(actual.phase, expected.phase)
 
 
-def test_periodic_ferminet_incremental_target_is_exact_jittable_and_rebases():
+def test_periodic_ferminet_incremental_target_is_exact_jittable_and_rebases() -> None:
     cell = PeriodicCell(2.0 * jnp.eye(2, dtype=jnp.float64))
     modes = jnp.asarray([[0, 0], [1, 0], [0, 1]], dtype=jnp.int32)
     coefficients = jnp.asarray(
@@ -433,7 +438,7 @@ def test_periodic_ferminet_incremental_target_is_exact_jittable_and_rebases():
     assert reconstructed_target.target_id == target.target_id
 
 
-def test_periodic_ferminet_incremental_target_rebases_singular_components():
+def test_periodic_ferminet_incremental_target_rebases_singular_components() -> None:
     cell = PeriodicCell(2.0 * jnp.eye(2, dtype=jnp.float64))
     modes = jnp.asarray([[0, 0], [1, 0]], dtype=jnp.int32)
     coefficients = jnp.asarray(
@@ -488,7 +493,7 @@ def test_periodic_ferminet_incremental_target_rebases_singular_components():
     assert jnp.allclose(proposal.proposed_cache.phase, exact.phase)
 
 
-def test_periodic_local_energy_is_periodic_and_exactly_decomposed():
+def test_periodic_local_energy_is_periodic_and_exactly_decomposed() -> None:
     vectors = 4.0 * jnp.eye(3, dtype=jnp.float64)
     cell = PeriodicCell(vectors)
     scale = AtomisticScaleContract(BOHR, HARTREE)
@@ -534,7 +539,7 @@ def test_periodic_local_energy_is_periodic_and_exactly_decomposed():
     assert operator.resource_evidence.ewald_reciprocal_structure_terms == 52
 
 
-def test_periodic_local_energy_converts_length_and_energy_units_consistently():
+def test_periodic_local_energy_converts_length_and_energy_units_consistently() -> None:
     bohr_per_angstrom = float(conversion_factor(ANGSTROM, BOHR))
     hartree_per_ev = float(conversion_factor(ELECTRONVOLT, HARTREE))
     vectors_bohr = 5.0 * jnp.eye(3, dtype=jnp.float64)
@@ -584,7 +589,7 @@ def test_periodic_local_energy_converts_length_and_energy_units_consistently():
     assert jnp.allclose(energy_bohr, energy_ev * hartree_per_ev, rtol=1e-10, atol=1e-10)
 
 
-def test_neutrality_boundary_and_ewald_work_fail_closed():
+def test_neutrality_boundary_and_ewald_work_fail_closed() -> None:
     vectors = 3.5 * jnp.eye(3, dtype=jnp.float64)
     cell = PeriodicCell(vectors)
     nuclei = _structure(

@@ -12,7 +12,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint
 from .._model import ValuePort
@@ -21,6 +22,7 @@ from .._trainable import NonTrainableState
 from ..axes import AxisKey
 from ..linalg import AbstractVectorSpace, DualSpace
 from ..sparse import RowRelation
+from ..typing import parse
 from ._core import nonempty_identifier, resolved_identifier
 
 
@@ -72,7 +74,7 @@ class GlobalCoefficientId(StrictModule, NonTrainableState):
         /,
         *,
         coefficient_id: str | None = None,
-    ):
+    ) -> None:
         space = nonempty_identifier("field_space_id", field_space_id)
         ordinal_ = int(ordinal)
         component_ = tuple(component)
@@ -121,7 +123,7 @@ class TensorDofLayout(AbstractDofLayout):
         component_shape: Sequence[int] = (),
         location_id: str | None = None,
         layout_id: str | None = None,
-    ):
+    ) -> None:
         names = tuple(str(name) for name in axis_names)
         shape = tuple(axis_shape)
         components = _component_shape(component_shape)
@@ -182,7 +184,7 @@ class EntityDofLayout(AbstractDofLayout):
         local_to_global: RowRelation | None = None,
         orientation: ArrayLike | None = None,
         layout_id: str | None = None,
-    ):
+    ) -> None:
         entity_set_id_ = nonempty_identifier("entity_set_id", entity_set_id)
         entity_count_ = int(entity_count)
         global_count = int(global_dof_count)
@@ -270,7 +272,7 @@ class ModalDofLayout(AbstractDofLayout):
         group_ids: Sequence[int] | None = None,
         component_shape: Sequence[int] = (),
         layout_id: str | None = None,
-    ):
+    ) -> None:
         modes = tuple(str(value) for value in mode_ids)
         if not modes or any(not value for value in modes):
             raise ValueError("Modal DOF layouts require non-empty mode IDs.")
@@ -312,7 +314,7 @@ class BlockDofLayout(AbstractDofLayout):
         /,
         *,
         layout_id: str | None = None,
-    ):
+    ) -> None:
         names_ = tuple(str(name) for name in names)
         layouts_ = tuple(layouts)
         if not names_ or any(not name for name in names_):
@@ -373,7 +375,7 @@ class DiscreteFieldSpace(StrictModule, NonTrainableState):
         reconstruction_id: str | None = None,
         trace_space_id: str | None = None,
         field_space_id: str | None = None,
-    ):
+    ) -> None:
         name_ = nonempty_identifier("name", name)
         support_id_ = nonempty_identifier("support_id", support_id)
         if not isinstance(
@@ -387,31 +389,8 @@ class DiscreteFieldSpace(StrictModule, NonTrainableState):
             raise ValueError(
                 f"Vector-space size {vector_space.size} does not match DOF-layout size {layout.size}."
             )
-        if representation not in (
-            "point_value",
-            "basis_coefficient",
-            "cell_average",
-            "cell_integral",
-            "flux_moment",
-            "circulation_moment",
-            "polynomial_moment",
-            "modal_coefficient",
-            "particle_value",
-            "cochain",
-            "functional",
-            "custom",
-        ):
-            raise ValueError("Unknown field representation.")
-        if conformity not in (
-            "H1",
-            "Hdiv",
-            "Hcurl",
-            "L2",
-            "discontinuous",
-            "cochain",
-            "unrestricted",
-        ):
-            raise ValueError("Unknown field conformity.")
+        representation = parse(representation, FieldRepresentation, "representation")
+        conformity = parse(conformity, FieldConformity, "conformity")
         projection = (
             None
             if projection_id is None

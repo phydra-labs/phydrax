@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -5,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _tree_paths(*, num_steps=3, repeats=32):
+def _tree_paths(*, num_steps: Any = 3, repeats: Any = 32) -> Any:
     branches = 2**num_steps
     indices = jnp.repeat(jnp.arange(branches, dtype=jnp.int32), repeats)
     bits = (indices[:, None] >> jnp.arange(num_steps, dtype=jnp.int32)) & 1
@@ -27,7 +29,7 @@ def _tree_paths(*, num_steps=3, repeats=32):
     )
 
 
-def test_empirical_mean_field_interpolates_weighted_lagrangian_law():
+def test_empirical_mean_field_interpolates_weighted_lagrangian_law() -> None:
     mean_field = phx.stochastic.EmpiricalMeanField(
         jnp.asarray([0.0, 1.0]),
         jnp.asarray([[[0.0], [2.0]], [[2.0], [4.0]]]),
@@ -49,7 +51,7 @@ def test_empirical_mean_field_interpolates_weighted_lagrangian_law():
     assert not mean_field.snapshot(-0.1).valid
 
 
-def test_mean_field_control_adapter_builds_hamiltonian_bsde_and_recovers_policy():
+def test_mean_field_control_adapter_builds_hamiltonian_bsde_and_recovers_policy() -> None:
     paths = _tree_paths()
     mean_field = phx.stochastic.EmpiricalMeanField.from_paths(paths)
     adapter = phx.stochastic.MeanFieldBSDEControlAdapter(
@@ -106,7 +108,7 @@ def test_mean_field_control_adapter_builds_hamiltonian_bsde_and_recovers_policy(
     assert jnp.all(jnp.isfinite(result.controls))
 
 
-def test_mean_field_adapter_rejects_forward_support_mismatch():
+def test_mean_field_adapter_rejects_forward_support_mismatch() -> None:
     paths = _tree_paths()
     shifted_paths = phx.stochastic.BSDEPathBatch(
         paths.times + 1.0,

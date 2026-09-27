@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import DTypeLike
 
 from phydrax._strict import StrictModule
 
@@ -62,7 +63,7 @@ class SpectralOUForcingPlan(AbstractBalanceLawProcessPlan):
         correlation_argument: str | None = None,
         rms_argument: str | None = None,
         realization_name: str = "spectral_ou",
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -140,7 +141,7 @@ class PreparedSpectralOUForcing(AbstractPreparedBalanceLawProcess):
         plan: SpectralOUForcingPlan,
         transport: AbstractPreparedBalanceLawTransport,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, SpectralOUForcingPlan):
             raise TypeError("plan must be SpectralOUForcingPlan.")
         if not isinstance(
@@ -228,7 +229,14 @@ class PreparedSpectralOUForcing(AbstractPreparedBalanceLawProcess):
             self.process_id, ("spectral_acceleration",), (coefficients,)
         )
 
-    def _parameter(self, fixed: float, argument: str | None, args: Any, dtype, name: str):
+    def _parameter(
+        self,
+        fixed: float,
+        argument: str | None,
+        args: Any,
+        dtype: DTypeLike,
+        name: str,
+    ) -> Array:
         raw = fixed if argument is None else args[argument]
         value = jnp.asarray(raw, dtype=dtype).reshape(())
         return eqx.error_if(

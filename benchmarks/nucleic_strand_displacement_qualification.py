@@ -14,6 +14,8 @@ python benchmarks/nucleic_strand_displacement_qualification.py
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import hashlib
 import json
@@ -103,7 +105,7 @@ _STRAND_CRITERION_IDS = (
 )
 
 
-def _energy_model():
+def _energy_model() -> Any:
     content = json.dumps(
         {
             "profile": "pair_loop",
@@ -149,7 +151,7 @@ def _energy_model():
     )
 
 
-def _campaign():
+def _campaign() -> Any:
     definitions = (
         (
             "reporter-calibration",
@@ -184,7 +186,7 @@ def _campaign():
     )
 
 
-def _trace(case_id, family, preparation, plate, concentration, values):
+def _trace(case_id: Any, family: Any, preparation: Any, plate: Any, concentration: Any, values: Any) -> Any:
     return FluorescenceTimeTrace(
         case_id,
         PlateWellIdentity(
@@ -206,7 +208,7 @@ def _trace(case_id, family, preparation, plate, concentration, values):
     )
 
 
-def _claim(campaign, *, mechanistic):
+def _claim(campaign: Any, *, mechanistic: Any) -> Any:
     criteria = [_RAW_TRACE_CRITERION]
     stages = [
         "source-admission",
@@ -232,7 +234,7 @@ def _claim(campaign, *, mechanistic):
     )
 
 
-def _inconclusive_stage(campaign, criterion, *, model=None):
+def _inconclusive_stage(campaign: Any, criterion: Any, *, model: Any=None) -> Any:
     subject_ids = (
         (campaign.campaign_id,)
         if model is None
@@ -262,7 +264,7 @@ def _inconclusive_stage(campaign, criterion, *, model=None):
     )
 
 
-def run(*, state_capacity=8, channel_capacity=8):
+def run(*, state_capacity: Any=8, channel_capacity: Any=8) -> Any:
     if state_capacity <= 0 or channel_capacity <= 0:
         raise ValueError("Declared CTMC capacities must be positive.")
     campaign = _campaign()
@@ -456,7 +458,7 @@ def run(*, state_capacity=8, channel_capacity=8):
         expires_at=2,
     )
 
-    def evaluation(value):
+    def evaluation(value: Any) -> Any:
         return {
             "model_id": value.model_id,
             "model_kind": value.model_kind,

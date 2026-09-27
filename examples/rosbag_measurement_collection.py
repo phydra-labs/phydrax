@@ -72,6 +72,7 @@ records = (
 result = phx.sensing.RosbagImportPlan(profiles).lower(
     records, reference, campaign_id="ros-example"
 )
+# ty: ignore[unresolved-attribute]
 _, translation, evidence = result.frame_graph.prepare_route("sensor", "world").evaluate(
     0.5
 )

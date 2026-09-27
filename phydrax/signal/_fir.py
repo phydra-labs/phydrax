@@ -8,7 +8,8 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
@@ -47,7 +48,7 @@ class FIRFilterPlan(StrictModule, NonTrainableState):
     axis: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, tap_count: int, /, *, axis: int = -1):
+    def __init__(self, tap_count: int, /, *, axis: int = -1) -> None:
         self.tap_count = _positive_int(tap_count, "tap_count")
         if isinstance(axis, bool) or not isinstance(axis, int):
             raise TypeError("axis must be an integer.")

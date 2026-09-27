@@ -9,7 +9,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -118,7 +119,7 @@ def finite_correlation_matrix(
     )
     identity = jnp.eye(dimension, dtype=value_dtype)
 
-    def insert(environment, tensor, local_operator):
+    def insert(environment: Array, tensor: Array, local_operator: Array) -> Array:
         return ein.contract(
             "ab,api,pq,bqj->ij",
             environment,
@@ -127,7 +128,7 @@ def finite_correlation_matrix(
             tensor,
         )
 
-    def close(environment, terminal):
+    def close(environment: Array, terminal: Array) -> Array:
         return ein.contract("ab,ab->", environment, terminal)
 
     for row, tensor in enumerate(tensors):

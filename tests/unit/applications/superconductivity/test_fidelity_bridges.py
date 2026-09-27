@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _mesh():
+def _mesh() -> Any:
     return phx.geometry.TriangleMesh(
         jnp.asarray(
             (
@@ -23,7 +26,7 @@ def _mesh():
     )
 
 
-def test_gl_london_bridge_uses_declared_current_projection_and_support():
+def test_gl_london_bridge_uses_declared_current_projection_and_support() -> None:
     mesh = _mesh()
     gl_plan = phx.applications.superconductivity.GaugeCovariantGLPlan(
         mesh,

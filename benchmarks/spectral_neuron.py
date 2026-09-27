@@ -32,7 +32,7 @@ def _array_outputs(value: Any, /) -> tuple[jax.Array, ...]:
 
 def _timed_case(
     name: str,
-    function,
+    function: Any,
     arguments: tuple[Any, ...],
     /,
     *,

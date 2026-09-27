@@ -10,7 +10,7 @@ from typing import Any, TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.axes as cx
 from phydrax.domain import DomainComponent, GridBatch
@@ -18,6 +18,7 @@ from phydrax.domain import DomainComponent, GridBatch
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from ._adaptive import AbstractCollocationPolicy
 
 
@@ -46,7 +47,7 @@ class SeparableCollocationPopulation(StrictModule):
         axis_active_by_axis: Mapping[str, cx.AxisArray] | None = None,
         refresh_count: int | Array = 0,
         last_refresh: int | Array = 0,
-    ):
+    ) -> None:
         axis_fields = _axis_fields(batch)
         if axis_age_by_axis is None:
             ages = {
@@ -134,7 +135,7 @@ class SeparableCollocationPolicy(AbstractCollocationPolicy):
 
     refresh_every: int
 
-    def __init__(self, *, refresh_every: int = 100):
+    def __init__(self, *, refresh_every: int = 100) -> None:
         if int(refresh_every) <= 0:
             raise ValueError("refresh_every must be positive.")
         self.refresh_every = int(refresh_every)
@@ -152,7 +153,7 @@ class SeparableCollocationPolicy(AbstractCollocationPolicy):
         constraint: PointwiseSamplingTerm,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> SeparableCollocationPopulation:
         batch = constraint.sample(key=key)
         if not isinstance(batch, GridBatch):
@@ -190,7 +191,7 @@ class SeparableCollocationPolicy(AbstractCollocationPolicy):
         population: SeparableCollocationPopulation,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array,
     ) -> SeparableCollocationPopulation:
         del functions
@@ -218,7 +219,7 @@ class HierarchicalAxisPolicy(AbstractCollocationPolicy):
         refresh_every: int = 100,
         refinement_fraction: float = 0.1,
         epsilon: float = 1e-12,
-    ):
+    ) -> None:
         if int(refresh_every) <= 0:
             raise ValueError("refresh_every must be positive.")
         if not 0.0 < float(refinement_fraction) <= 1.0:
@@ -242,7 +243,7 @@ class HierarchicalAxisPolicy(AbstractCollocationPolicy):
         constraint: PointwiseSamplingTerm,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> SeparableCollocationPopulation:
         batch = constraint.sample(key=key)
         if not isinstance(batch, GridBatch):
@@ -290,7 +291,7 @@ class HierarchicalAxisPolicy(AbstractCollocationPolicy):
         population: SeparableCollocationPopulation,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array,
     ) -> SeparableCollocationPopulation:
         marginals = _axis_residual_marginals(
@@ -464,7 +465,7 @@ def _axis_residual_marginals(
     batch: GridBatch,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     epsilon: Array,
 ) -> frozendict[str, cx.AxisArray]:
     _single_component(constraint)
@@ -497,7 +498,7 @@ def _axis_residual_marginals(
     return frozendict(marginals)
 
 
-def _replace_coordinate_blocks(old, sampled):
+def _replace_coordinate_blocks(old: GridBatch, sampled: GridBatch) -> GridBatch:
     if old.coord_axes_by_label != sampled.coord_axes_by_label:
         raise ValueError("Periodic refresh changed coordinate-separable axis metadata.")
     points = dict(old.points)
@@ -522,7 +523,7 @@ def _replace_coordinate_blocks(old, sampled):
     )
 
 
-def _sum_or_max_named(field, axis, *, maximum):
+def _sum_or_max_named(field: cx.AxisArray, axis: str, *, maximum: bool) -> cx.AxisArray:
     position = field.dims.index(axis)
     if maximum:
         data = jnp.max(field.data, axis=position)

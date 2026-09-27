@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -61,7 +62,7 @@ class WaveFiniteDifferencePolicy(StrictModule, NonTrainableState):
         norm_relative_tolerance: float = 1.0e-9,
         self_adjoint_tolerance: float = 1.0e-11,
         maximum_phase_radians: float = 0.75,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -118,7 +119,7 @@ class WaveContactSelfInteractionPlan(StrictModule, NonTrainableState):
         maximum_dealiasing_defect: float = 0.1,
         energy_relative_tolerance: float = 1.0e-9,
         maximum_phase_radians: float = 0.5,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -228,7 +229,7 @@ class PeriodicWaveFiniteDifferencePlan(StrictModule, NonTrainableState):
         policy: WaveFiniteDifferencePolicy | None = None,
         contact: WaveContactSelfInteractionPlan | None = None,
         dtype: Any = np.complex128,
-    ):
+    ) -> None:
         mass = float(boson_mass)
         hbar = float(reduced_planck_constant)
         policy_ = WaveFiniteDifferencePolicy() if policy is None else policy
@@ -286,7 +287,7 @@ class PreparedPeriodicWaveFiniteDifference(StrictModule, NonTrainableState):
 
     def __init__(
         self, plan: PeriodicWaveFiniteDifferencePlan, grid: PreparedTensorGrid, /
-    ):
+    ) -> None:
         if not isinstance(plan, PeriodicWaveFiniteDifferencePlan):
             raise TypeError("plan must be PeriodicWaveFiniteDifferencePlan.")
         if not isinstance(grid, PreparedTensorGrid):
@@ -318,7 +319,7 @@ class PreparedPeriodicWaveFiniteDifference(StrictModule, NonTrainableState):
         )
         space = field.vector_space
 
-        def kinetic_action(psi):
+        def kinetic_action(psi: Array) -> Array:
             output = jnp.zeros_like(psi)
             for axis, spacing in enumerate(spacings):
                 output = (

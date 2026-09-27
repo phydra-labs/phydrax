@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -16,7 +19,7 @@ from phydrax.equations import (
 )
 
 
-def _autocatalytic_mechanism():
+def _autocatalytic_mechanism() -> Any:
     schema = ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (ChemicalPhaseKind.GAS,) * 2,
@@ -48,7 +51,7 @@ def _autocatalytic_mechanism():
     ).prepare()
 
 
-def test_cema_projects_conservation_modes_and_tracks_explosive_mode_atomically():
+def test_cema_projects_conservation_modes_and_tracks_explosive_mode_atomically() -> None:
     plan = ChemicalExplosiveModePlan(
         _autocatalytic_mechanism(), contribution_labels=("transport",)
     )

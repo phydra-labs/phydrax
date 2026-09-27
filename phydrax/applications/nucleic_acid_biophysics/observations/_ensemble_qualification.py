@@ -3,16 +3,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from numbers import Real
-from typing import Literal
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -24,6 +25,7 @@ from ....qualification import (
     ScientificCase,
     ScientificClaimProfile,
 )
+from ....typing import parse
 from ._conditional_mapping import ConditionalMappingFit, ConditionalMutationLaw
 from ._ensemble_inference import (
     EnsembleDiagnostics,
@@ -34,7 +36,7 @@ from ._ensemble_inference import (
 from ._mutation_profiles import MutationProfileBatch
 
 
-ModelLadderLevel = Literal[
+ModelLadderLevel: TypeAlias = Literal[
     "binary-accessibility", "context", "hierarchical", "finite-mixture"
 ]
 PredictiveStageId = Literal["predictive-calibration", "locked-prediction"]
@@ -82,7 +84,7 @@ class EnsemblePredictiveScoreCriterion(StrictModule, NonTrainableState):
         stage_id: PredictiveStageId,
         minimum_independent_unit_macro: float,
         /,
-    ):
+    ) -> None:
         if stage_id not in _SCORE_ROLE_BY_STAGE:
             raise ValueError(
                 "Predictive score stage must be predictive-calibration or locked-prediction."
@@ -124,9 +126,10 @@ class EnsemblePredictiveScoreCriterion(StrictModule, NonTrainableState):
         """Reconstruct and content-verify a predictive-score threshold."""
         if not isinstance(record, Mapping):
             raise TypeError("Predictive-score criterion record must be a mapping.")
+        # The constructor re-validates the serialized stage and threshold domains.
         value = cls(
-            str(record["stage_id"]),
-            record["minimum_independent_unit_macro"],
+            cast(PredictiveStageId, str(record["stage_id"])),
+            cast(float, record["minimum_independent_unit_macro"]),
         )
         expected = value._content_record()
         if any(record.get(name) != item for name, item in expected.items()):
@@ -148,7 +151,7 @@ class EnsembleMixtureAdvantageCriterion(StrictModule, NonTrainableState):
     aggregation: str = eqx.field(static=True)
     criterion_id: str = eqx.field(static=True)
 
-    def __init__(self, minimum_independent_unit_macro: float, /):
+    def __init__(self, minimum_independent_unit_macro: float, /) -> None:
         if isinstance(minimum_independent_unit_macro, bool) or not isinstance(
             minimum_independent_unit_macro, Real
         ):
@@ -182,7 +185,8 @@ class EnsembleMixtureAdvantageCriterion(StrictModule, NonTrainableState):
         """Reconstruct and content-verify a mixture-advantage threshold."""
         if not isinstance(record, Mapping):
             raise TypeError("Mixture-advantage criterion record must be a mapping.")
-        value = cls(record["minimum_independent_unit_macro"])
+        # The constructor re-validates the serialized threshold domain.
+        value = cls(cast(float, record["minimum_independent_unit_macro"]))
         expected = value._content_record()
         if any(record.get(name) != item for name, item in expected.items()):
             raise ValueError("Serialized mixture-advantage criterion is inconsistent.")
@@ -194,7 +198,12 @@ class EnsembleMixtureAdvantageCriterion(StrictModule, NonTrainableState):
         return value
 
 
-def _fit_identity(model, fit, campaign: ScientificCampaign, /):
+def _fit_identity(
+    model: ConditionalMutationLaw | FiniteStructuralEnsembleModel,
+    fit: ConditionalMappingFit | FiniteEnsembleFit,
+    campaign: ScientificCampaign,
+    /,
+) -> tuple[tuple[str, ...], Array, Callable[[Array], Any], str]:
     if (
         isinstance(model, ConditionalMutationLaw)
         and isinstance(fit, ConditionalMappingFit)
@@ -266,7 +275,7 @@ class EnsemblePosteriorUncertainty(StrictModule, NonTrainableState):
         fit: ConditionalMappingFit | FiniteEnsembleFit,
         campaign: ScientificCampaign,
         /,
-    ):
+    ) -> None:
         if not isinstance(campaign, ScientificCampaign):
             raise TypeError("campaign must be a ScientificCampaign.")
         cases, fitted, _, fit_id = _fit_identity(model, fit, campaign)
@@ -646,15 +655,9 @@ class ModelLadderEvaluation(StrictModule, NonTrainableState):
         derivation_id: str | None = None,
         posterior_uncertainty: EnsemblePosteriorUncertainty | None = None,
         execution_valid: bool | ArrayLike,
-    ):
+    ) -> None:
         model = _identifier(model_id, "model_id")
-        if level not in (
-            "binary-accessibility",
-            "context",
-            "hierarchical",
-            "finite-mixture",
-        ):
-            raise ValueError("Unknown model-ladder level.")
+        level = parse(level, ModelLadderLevel, "level")
         scores = tuple(
             score
             for score in (
@@ -853,7 +856,7 @@ class ConditionalEnsembleQualificationWorkflow(StrictModule, NonTrainableState):
         /,
         *,
         model_selection_tolerance: float,
-    ):
+    ) -> None:
         if not isinstance(batch, MutationProfileBatch) or not isinstance(
             campaign, ScientificCampaign
         ):

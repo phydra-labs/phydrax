@@ -11,7 +11,8 @@ from math import isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...linalg import DenseLinearOperator, LinearSystem, solve
@@ -36,7 +37,7 @@ class LSMPlan(StrictModule):
         polynomial_degree: int = 3,
         ridge: float = 1.0e-10,
         minimum_in_the_money_paths: int = 16,
-    ):
+    ) -> None:
         if (
             isinstance(polynomial_degree, bool)
             or not isinstance(polynomial_degree, int)
@@ -79,7 +80,7 @@ class LSMProblem(StrictModule):
         currency: Currency | None = None,
         evidence_binding: FinanceEvidenceBinding | None = None,
         pricing_law: PricingLaw | None = None,
-    ):
+    ) -> None:
         if not isinstance(paths, MonteCarloPathBatch) or paths.asset_count != 1:
             raise ValueError("LSM requires a one-asset MonteCarloPathBatch.")
         if not isinstance(payoff, BermudanPayoff):
@@ -128,7 +129,9 @@ def _polynomial_basis(spots: Array, strike: Array, degree: int) -> Array:
     return scaled[:, None] ** powers[None, :]
 
 
-def _masked_regression(features: Array, targets: Array, mask: Array, ridge: float):
+def _masked_regression(
+    features: Array, targets: Array, mask: Array, ridge: float
+) -> tuple[Array, Array]:
     weights = mask.astype(features.dtype)
     gram = features.T @ (weights[:, None] * features) + ridge * jnp.eye(
         features.shape[1], dtype=features.dtype
@@ -229,7 +232,7 @@ class ReflectedBSDEPlan(StrictModule):
         ridge: float = 1.0e-8,
         minimum_paths: int = 32,
         residual_tolerance: float = 1.0e-4,
-    ):
+    ) -> None:
         ridge_, tolerance = float(ridge), float(residual_tolerance)
         if (
             not isfinite(ridge_)
@@ -308,7 +311,9 @@ def prepare_reflected_bsde(
     )
 
 
-def _feature_regression(features: Array, targets: Array, valid: Array, ridge: float):
+def _feature_regression(
+    features: Array, targets: Array, valid: Array, ridge: float
+) -> tuple[Array, Array]:
     design = jnp.concatenate(
         (jnp.ones((features.shape[0], 1), dtype=features.dtype), features), axis=1
     )
@@ -340,6 +345,7 @@ def evaluate_reflected_bsde(prepared: PreparedReflectedBSDE, /) -> ValuationResu
     upper_history = jnp.zeros_like(value_history)
     maximum_residual = jnp.asarray(0.0, dtype=y.dtype)
     regression_successful = jnp.asarray(True)
+    lower_obstacle, upper_obstacle = problem.lower_obstacle, problem.upper_obstacle
     for time_index in range(paths.num_steps - 1, -1, -1):
         time = times[time_index]
         dt = times[time_index + 1] - time
@@ -366,19 +372,19 @@ def evaluate_reflected_bsde(prepared: PreparedReflectedBSDE, /) -> ValuationResu
         unreflected = conditional_y + dt * generators
         lower = (
             jnp.full_like(unreflected, -jnp.inf)
-            if problem.lower_obstacle is None
+            if lower_obstacle is None
             else jax.vmap(
                 lambda prefix, feature: jnp.asarray(
-                    problem.lower_obstacle(time, prefix, feature, problem.args)
+                    lower_obstacle(time, prefix, feature, problem.args)
                 ).reshape(())
             )(prefixes, features)
         )
         upper = (
             jnp.full_like(unreflected, jnp.inf)
-            if problem.upper_obstacle is None
+            if upper_obstacle is None
             else jax.vmap(
                 lambda prefix, feature: jnp.asarray(
-                    problem.upper_obstacle(time, prefix, feature, problem.args)
+                    upper_obstacle(time, prefix, feature, problem.args)
                 ).reshape(())
             )(prefixes, features)
         )

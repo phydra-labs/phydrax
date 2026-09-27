@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._physical import RelativityScaleContract
@@ -200,7 +201,7 @@ class NonthermalElectronEvolutionPlan(StrictModule, NonTrainableState):
         energy = self.particle_rest_energy * jnp.sum(density * (gamma - 1.0), axis=-1)
         return number, energy
 
-    def _injection(self, energy: Array, dtype, /) -> tuple[Array, Array]:
+    def _injection(self, energy: Array, dtype: DTypeLike, /) -> tuple[Array, Array]:
         gamma = self.grid.centers.astype(dtype)
         mask = (gamma >= self.injection_minimum) & (gamma <= self.injection_maximum)
         shape = gamma ** (-self.injection_slope) * mask

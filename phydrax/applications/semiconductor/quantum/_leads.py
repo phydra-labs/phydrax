@@ -3,18 +3,27 @@
 
 from __future__ import annotations
 
+from typing import Self
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from .._quantities import _text
 from ._basis import _array, KB
 
 
-def scalar_embedding(energy, surface_green, coupling_h, coupling_s=0.0):
+def scalar_embedding(
+    energy: Array,
+    surface_green: Array,
+    coupling_h: ArrayLike,
+    coupling_s: ArrayLike = 0.0,
+) -> Array:
     """Scalar Schur complement with the full nonorthogonal ES-H coupling.
 
     The reverse analytic block is z*S_cd-H_cd, NOT the complex conjugate of
@@ -45,14 +54,14 @@ class SemiInfiniteLead(StrictModule):
 
     def __init__(
         self,
-        onsite,
-        hopping,
-        coupling,
-        chemical_potential,
-        temperature,
+        onsite: npt.ArrayLike,
+        hopping: npt.ArrayLike,
+        coupling: npt.ArrayLike,
+        chemical_potential: npt.ArrayLike,
+        temperature: npt.ArrayLike,
         *,
-        energy_reference,
-    ):
+        energy_reference: str,
+    ) -> None:
         values = [
             _array(v, n)
             for v, n in zip(
@@ -85,30 +94,30 @@ class SemiInfiniteLead(StrictModule):
         ) = values
         self.energy_reference = _text(energy_reference, "electronic energy reference")
 
-    def band(self):
+    def band(self) -> Array:
         width = 2 * jnp.abs(self.hopping)
         return jnp.stack((self.onsite - width, self.onsite + width))
 
-    def surface_green(self, energy, *, eta=0.0):
+    def surface_green(self, energy: ArrayLike, *, eta: ArrayLike = 0.0) -> Array:
         z = jnp.asarray(energy) + 1j * jnp.asarray(eta)
         delta = z - self.onsite
         width = 2 * jnp.abs(self.hopping)
         root = jnp.sqrt(delta - width + 0j) * jnp.sqrt(delta + width + 0j)
         return 2.0 / (delta + root)
 
-    def self_energy(self, energy, *, eta=0.0):
+    def self_energy(self, energy: ArrayLike, *, eta: ArrayLike = 0.0) -> Array:
         z = jnp.asarray(energy) + 1j * jnp.asarray(eta)
         return scalar_embedding(z, self.surface_green(energy, eta=eta), self.coupling)
 
-    def broadening(self, energy, *, eta=0.0):
+    def broadening(self, energy: ArrayLike, *, eta: ArrayLike = 0.0) -> Array:
         return -2 * jnp.imag(self.self_energy(energy, eta=eta))
 
-    def occupation(self, energy):
+    def occupation(self, energy: ArrayLike) -> Array:
         return jax.nn.sigmoid(
             (self.chemical_potential - energy) / (KB * self.temperature)
         )
 
-    def shifted(self, energy):
+    def shifted(self, energy: ArrayLike) -> Self:
         return eqx.tree_at(
             lambda lead: (lead.onsite, lead.chemical_potential),
             self,
@@ -128,7 +137,13 @@ class BoundStateOccupation(StrictModule):
     temperature: Array
     preparation: str = eqx.field(static=True)
 
-    def __init__(self, chemical_potential, temperature, *, preparation):
+    def __init__(
+        self,
+        chemical_potential: npt.ArrayLike,
+        temperature: npt.ArrayLike,
+        *,
+        preparation: str,
+    ) -> None:
         self.chemical_potential = _array(
             chemical_potential, "bound-state chemical potential"
         )
@@ -138,7 +153,7 @@ class BoundStateOccupation(StrictModule):
         self.preparation = _text(preparation, "bound-state preparation")
 
     @classmethod
-    def equilibrium(cls, left, right):
+    def equilibrium(cls, left: SemiInfiniteLead, right: SemiInfiniteLead) -> Self:
         if not np.array_equal(
             np.asarray(left.chemical_potential), np.asarray(right.chemical_potential)
         ) or not np.array_equal(

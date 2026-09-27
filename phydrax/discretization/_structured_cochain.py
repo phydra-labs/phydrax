@@ -9,7 +9,8 @@ from itertools import combinations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -35,7 +36,7 @@ class StructuredCochainResourcePolicy(StrictModule):
         maximum_incidence_routes: int = 20_000_000,
         maximum_coordinate_values: int = 20_000_000,
         maximum_preparation_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         values = (
             maximum_entities,
             maximum_incidence_routes,
@@ -71,7 +72,7 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
         /,
         *,
         resources: StructuredCochainResourcePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("Structured cochain bridge requires PreparedTensorGrid.")
         resource_policy = (
@@ -365,7 +366,8 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
             bx, by = values
             measure_x, measure_y = self.unpack(1, self.cochain.primal_measures[1])
             return self.pack(1, (-by * measure_x, bx * measure_y))
-        return self.pack_face_flux(values)
+        bx, by, bz = values
+        return self.pack_face_flux((bx, by, bz))
 
     def unpack_normal_flux(self, values: ArrayLike, /) -> tuple[Array, ...]:
         """Recover Cartesian normal fields from codimension-one flux integrals."""
@@ -430,10 +432,12 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
             raise ValueError(
                 "Edge-circulation unpacking requires a three-dimensional bridge."
             )
-        integrated = self.unpack(1, values)
-        measures = self.unpack(1, self.cochain.primal_measures[1])
-        return tuple(
-            value / measure for value, measure in zip(integrated, measures, strict=True)
+        integrated_x, integrated_y, integrated_z = self.unpack(1, values)
+        measure_x, measure_y, measure_z = self.unpack(1, self.cochain.primal_measures[1])
+        return (
+            integrated_x / measure_x,
+            integrated_y / measure_y,
+            integrated_z / measure_z,
         )
 
     def pack_face_flux(

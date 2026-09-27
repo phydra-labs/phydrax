@@ -7,7 +7,8 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._exponential_family import (
     AbstractExponentialFamily,
@@ -36,7 +37,7 @@ class ExponentialFamilyInformationGeometry(StrictModule):
         /,
         *,
         precision: GeometryPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(family, AbstractExponentialFamily):
             raise TypeError("family must implement AbstractExponentialFamily.")
         precision_ = GeometryPrecisionPolicy() if precision is None else precision

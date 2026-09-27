@@ -2,11 +2,13 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import copy
 import json
 import zipfile
 from importlib.util import find_spec
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -16,7 +18,7 @@ import phydrax as phx
 from phydrax._fingerprint import array_tree_fingerprint
 
 
-def _prepared_runtime(cells=16):
+def _prepared_runtime(cells: Any = 16) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(cells, periodic=True),),
         axis_names=("x",),
@@ -37,7 +39,9 @@ def _prepared_runtime(cells=16):
     )
     compiled = phx.equations.compile_conservation_problem(problem, discretization, method)
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
-        compiled.dynamics, phx.discretization.FluxPositivityPlan()
+        # ty: ignore[invalid-argument-type]
+        compiled.dynamics,
+        phx.discretization.FluxPositivityPlan(),
     )
     primitive = jnp.broadcast_to(jnp.asarray([1.0, 0.1, 1.0]), (cells, 3))
     state = runtime.initialize_state(
@@ -52,7 +56,7 @@ def _prepared_runtime(cells=16):
     return runtime, discretization, state
 
 
-def _prepared_block_runtime():
+def _prepared_block_runtime() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8),),
         axis_names=("x",),
@@ -115,7 +119,7 @@ def _prepared_block_runtime():
     return prepared, compiled, runtime, state
 
 
-def _assert_runtime_state_exact(actual, expected):
+def _assert_runtime_state_exact(actual: Any, expected: Any) -> None:
     np.testing.assert_array_equal(
         actual.content_state.conservative_content,
         expected.content_state.conservative_content,
@@ -170,7 +174,7 @@ def _assert_runtime_state_exact(actual, expected):
     np.testing.assert_array_equal(actual.sliding_shift, expected.sliding_shift)
 
 
-def _replace_journal(state, journal, *, content_state=None):
+def _replace_journal(state: Any, journal: Any, *, content_state: Any = None) -> Any:
     return phx.solver.FiniteVolumeRuntimeState(
         state.content_state if content_state is None else content_state,
         journal,
@@ -186,7 +190,7 @@ def _replace_journal(state, journal, *, content_state=None):
     )
 
 
-def test_case_schema_is_content_addressed_and_strict():
+def test_case_schema_is_content_addressed_and_strict() -> None:
     runtime, _, _ = _prepared_runtime()
     execution = phx.solver.FiniteVolumeExecutionSpec(1.0, 1000)
     case = phx.solver.FiniteVolumeCaseSpec(
@@ -208,7 +212,7 @@ def test_case_schema_is_content_addressed_and_strict():
         )
 
 
-def test_checkpoint_roundtrip_preserves_exact_runtime_state(tmp_path):
+def test_checkpoint_roundtrip_preserves_exact_runtime_state(tmp_path: Any) -> None:
     runtime, _, state = _prepared_runtime()
     initial = state.topology_journal.epoch_table[0]
     request = phx.solver.FiniteVolumeTopologyEventRequest(
@@ -277,7 +281,9 @@ def test_checkpoint_roundtrip_preserves_exact_runtime_state(tmp_path):
     assert not path.with_suffix(path.suffix + ".tmp").exists()
 
 
-def test_block_checkpoint_roundtrip_preserves_canonical_hierarchy_and_routes(tmp_path):
+def test_block_checkpoint_roundtrip_preserves_canonical_hierarchy_and_routes(
+    tmp_path: Any,
+) -> None:
     prepared, compiled, runtime, state = _prepared_block_runtime()
     partition = phx.discretization.BlockAMRPartitionPlan(
         compiled.topology.plan, 1
@@ -334,7 +340,7 @@ def test_block_checkpoint_roundtrip_preserves_canonical_hierarchy_and_routes(tmp
     )
 
 
-def test_block_checkpoint_rejects_a_different_topology_runtime(tmp_path):
+def test_block_checkpoint_rejects_a_different_topology_runtime(tmp_path: Any) -> None:
     prepared, _, runtime, state = _prepared_block_runtime()
     path = tmp_path / "block.fvckpt"
     phx.solver.write_finite_volume_checkpoint(
@@ -353,7 +359,7 @@ def test_block_checkpoint_rejects_a_different_topology_runtime(tmp_path):
         )
 
 
-def test_block_checkpoint_rejects_stale_prepared_route_artifacts(tmp_path):
+def test_block_checkpoint_rejects_stale_prepared_route_artifacts(tmp_path: Any) -> None:
     _, _, runtime, state = _prepared_block_runtime()
     topology = state.hierarchy_state.topology
     stale_artifacts = phx.solver.FiniteVolumeTopologyArtifacts(
@@ -381,7 +387,9 @@ def test_block_checkpoint_rejects_stale_prepared_route_artifacts(tmp_path):
         )
 
 
-def test_block_output_records_epoch_metadata_coverage_routes_and_precision(tmp_path):
+def test_block_output_records_epoch_metadata_coverage_routes_and_precision(
+    tmp_path: Any,
+) -> None:
     prepared, compiled, runtime, state = _prepared_block_runtime()
     partition = phx.discretization.BlockAMRPartitionPlan(
         compiled.topology.plan, 1
@@ -436,7 +444,7 @@ def test_block_output_records_epoch_metadata_coverage_routes_and_precision(tmp_p
     assert Path(plan.xdmf_path).exists()
 
 
-def test_checkpoint_rejects_manifest_corruption(tmp_path):
+def test_checkpoint_rejects_manifest_corruption(tmp_path: Any) -> None:
     runtime, _, state = _prepared_runtime()
     case = phx.solver.FiniteVolumeCaseSpec(
         "corrupt-euler",
@@ -459,7 +467,7 @@ def test_checkpoint_rejects_manifest_corruption(tmp_path):
         phx.solver.read_finite_volume_checkpoint(path, plan)
 
 
-def test_topology_archive_reconstruction_rejects_malformed_epoch_and_event():
+def test_topology_archive_reconstruction_rejects_malformed_epoch_and_event() -> None:
     _, _, state = _prepared_runtime()
     initial = state.topology_journal.epoch_table[0]
     malformed_epoch = initial.to_archive_record()
@@ -493,7 +501,9 @@ def test_topology_archive_reconstruction_rejects_malformed_epoch_and_event():
         )
 
 
-def test_output_plan_is_explicitly_optional_when_h5py_is_unavailable(tmp_path):
+def test_output_plan_is_explicitly_optional_when_h5py_is_unavailable(
+    tmp_path: Any,
+) -> None:
     _, discretization, state = _prepared_runtime()
     plan = phx.solver.FiniteVolumeOutputPlan(tmp_path / "solution.h5", discretization)
     if find_spec("h5py") is None:
@@ -506,7 +516,7 @@ def test_output_plan_is_explicitly_optional_when_h5py_is_unavailable(tmp_path):
         assert Path(plan.xdmf_path).exists()
 
 
-def test_allowlisted_case_loader_builds_portable_runtime():
+def test_allowlisted_case_loader_builds_portable_runtime() -> None:
     payload = {
         "name": "loaded-euler",
         "grid": {
@@ -544,10 +554,10 @@ def test_allowlisted_case_loader_builds_portable_runtime():
         phx.solver.load_finite_volume_case({**payload, "misspelled_method": "hllc"})
 
 
-def test_interrupted_checkpoint_trajectory_matches_uninterrupted(tmp_path):
+def test_interrupted_checkpoint_trajectory_matches_uninterrupted(tmp_path: Any) -> None:
     runtime, _, initial = _prepared_runtime()
 
-    def advance_many(state, count):
+    def advance_many(state: Any, count: Any) -> Any:
         current = state
         for _ in range(count):
             current = runtime.advance(current).runtime_state

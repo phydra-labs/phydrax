@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -25,7 +26,12 @@ from ...backends import (
     BackendCapabilities,
 )
 from ...logging import emit
-from ._closure import CosmologyPhysicalState, PhysicalDependencyProjection
+from ...typing import parse
+from ._closure import (
+    CosmologyPhysicalState,
+    CosmologyRealizationSignature,
+    PhysicalDependencyProjection,
+)
 from ._products import (
     CosmologyProductProvenance,
     LinearTransferDescriptor,
@@ -33,6 +39,7 @@ from ._products import (
     MatterPowerDescriptor,
     MatterPowerTable,
     ThermodynamicsHistory,
+    TransferGauge,
 )
 from ._scales import CosmologyScaleContract
 
@@ -54,7 +61,7 @@ class MassiveNeutrinoSpecies(StrictModule, NonTrainableState):
         temperature_ratio: float = 0.71611,
         degeneracy: float = 1.0,
         distribution_id: str = "fermi-dirac-zero-chemical-potential",
-    ):
+    ) -> None:
         mass = float(mass_ev)
         temperature = float(temperature_ratio)
         weight = float(degeneracy)
@@ -110,8 +117,8 @@ class CosmologyModelRequest(StrictModule, NonTrainableState):
     primordial_pivot: float = eqx.field(static=True)
     reionization_optical_depth: float = eqx.field(static=True)
     transfer_fields: tuple[str, ...] = eqx.field(static=True)
-    gauge: str = eqx.field(static=True)
-    power_field: str = eqx.field(static=True)
+    gauge: TransferGauge = eqx.field(static=True)
+    power_field: Literal["cold_baryon", "total_matter"] = eqx.field(static=True)
     request_id: str = eqx.field(static=True)
     model_form_id: str = eqx.field(static=True)
 
@@ -139,7 +146,7 @@ class CosmologyModelRequest(StrictModule, NonTrainableState):
         ),
         gauge: str = "synchronous",
         power_field: str = "cold_baryon",
-    ):
+    ) -> None:
         if not isinstance(scale, CosmologyScaleContract):
             raise TypeError("scale must be CosmologyScaleContract.")
         scalar_values = tuple(
@@ -183,8 +190,7 @@ class CosmologyModelRequest(StrictModule, NonTrainableState):
         ):
             raise ValueError("Transfer fields must be non-empty and unique.")
         gauge_ = str(gauge).strip()
-        if gauge_ not in ("synchronous", "newtonian", "gauge-invariant"):
-            raise ValueError("Unknown linear-theory gauge.")
+        gauge_ = parse(gauge_, TransferGauge, "gauge_")
         power_field_ = str(power_field).strip()
         if power_field_ not in ("cold_baryon", "total_matter"):
             raise ValueError("power_field must be cold_baryon or total_matter.")
@@ -280,7 +286,7 @@ class CosmologyModelRequest(StrictModule, NonTrainableState):
         )
 
     @property
-    def realization(self):
+    def realization(self) -> CosmologyRealizationSignature:
         return PhysicalDependencyProjection(self.physical_state.names).project(
             self.physical_state
         )
@@ -340,7 +346,7 @@ class SubprocessCosmologyModelBackend(AbstractExternalBackend, NonTrainableState
         backend_name: str = "linear-theory-subprocess",
         backend_version: str = "user-provided",
         numerical_policy_id: str = "user-provided",
-    ):
+    ) -> None:
         executable = str(application).strip()
         arguments_ = tuple(str(argument) for argument in arguments)
         timeout = float(timeout_seconds)
@@ -490,14 +496,11 @@ class SubprocessCosmologyModelBackend(AbstractExternalBackend, NonTrainableState
                     "visibility",
                 }.issubset(output.files)
                 thermodynamics_arrays = (
-                    tuple(
-                        jnp.asarray(output[name])
-                        for name in (
-                            "ionization_fraction",
-                            "baryon_temperature",
-                            "opacity_derivative",
-                            "visibility",
-                        )
+                    (
+                        jnp.asarray(output["ionization_fraction"]),
+                        jnp.asarray(output["baryon_temperature"]),
+                        jnp.asarray(output["opacity_derivative"]),
+                        jnp.asarray(output["visibility"]),
                     )
                     if has_thermodynamics
                     else None

@@ -9,10 +9,12 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PRNGKeyArray
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import PRNGKey
 
 
 class StructuralRandomModel(StrictModule, NonTrainableState):
@@ -31,7 +33,7 @@ class StructuralRandomModel(StrictModule, NonTrainableState):
         /,
         *,
         model_id: str = "structural-random-model",
-    ):
+    ) -> None:
         mean_ = jnp.asarray(mean)
         covariance_ = jnp.asarray(covariance, dtype=mean_.dtype)
         if mean_.ndim != 1 or covariance_.shape != (mean_.size, mean_.size):
@@ -60,7 +62,7 @@ class StructuralRandomModel(StrictModule, NonTrainableState):
         factor = jnp.linalg.cholesky(self.covariance)
         return self.mean + standard @ factor.T
 
-    def sample(self, key: PRNGKeyArray, sample_count: int, /) -> Array:
+    def sample(self, key: PRNGKey, sample_count: int, /) -> Array:
         standard = jax.random.normal(
             key, (int(sample_count), self.dimension), dtype=self.mean.dtype
         )
@@ -77,7 +79,7 @@ class StructuralLimitState(StrictModule, NonTrainableState):
         /,
         *,
         limit_state_id: str,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("Limit-state function must be callable.")
         self.function = function
@@ -112,7 +114,7 @@ class FORMReliabilityResult(StrictModule):
 def monte_carlo_reliability(
     model: StructuralRandomModel,
     limit_state: StructuralLimitState,
-    key: PRNGKeyArray,
+    key: PRNGKey,
     sample_count: int,
     /,
 ) -> MonteCarloReliabilityResult:
@@ -142,7 +144,7 @@ def form_reliability(
     """Hasofer--Lind--Rackwitz--Fiessler iteration in standard-normal space."""
     factor = jnp.linalg.cholesky(model.covariance)
 
-    def margin_standard(value):
+    def margin_standard(value: Array) -> Array:
         return limit_state.margin(model.mean + factor @ value)
 
     point = jnp.zeros((model.dimension,), dtype=model.mean.dtype)

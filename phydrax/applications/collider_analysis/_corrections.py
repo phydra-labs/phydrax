@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._interpolation import linear_interpolate
@@ -38,7 +39,7 @@ class CorrectionMap(StrictModule, NonTrainableState):
         output_name: str,
         correlation_id: str,
         source_id: str,
-    ):
+    ) -> None:
         coordinates_ = np.asarray(coordinates, dtype=np.float64)
         values_ = np.asarray(values, dtype=np.float64)
         uncertainties_ = np.asarray(uncertainties, dtype=np.float64)

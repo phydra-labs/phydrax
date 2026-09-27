@@ -10,9 +10,10 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._frozendict import frozendict
 from .._model import AbstractArrayModel
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -25,7 +26,7 @@ from ..discretization import (
 from ..domain import DomainFunction
 from ..enforcement import EnforcementProgram
 from ..fidelity import FidelityPath, FidelityRelation
-from ..nn._keys import split_eval_key
+from ..nn._keys import EvalKey, split_eval_key
 from ..terms import PreparedFidelityObservation, ResidualPenalty
 from ._functional_correction import (
     freeze_domain_function,
@@ -51,7 +52,7 @@ class FidelityFieldTransfer(StrictModule, NonTrainableState):
         *,
         transfer_id: str | None = None,
         transform: Callable[[DomainFunction], DomainFunction] | None = None,
-    ):
+    ) -> None:
         source = str(source_level_id)
         target = str(target_level_id)
         if not source or not target or source == target:
@@ -90,12 +91,12 @@ class _ConditionedCorrectionEvaluator(StrictModule):
         model: AbstractArrayModel,
         correction_id: str,
         /,
-    ):
+    ) -> None:
         self.parent = freeze_domain_function(parent)
         self.model = model
         self.correction_id = correction_id
 
-    def __call__(self, *coordinates: Any, key=None, **kwargs: Any):
+    def __call__(self, *coordinates: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         parent_key, model_key = split_eval_key(key, 2)
         parent = self.parent.func(*coordinates, key=parent_key, **kwargs)
         packed = jnp.concatenate(
@@ -157,7 +158,7 @@ class FidelityPINNResult(StrictModule, NonTrainableState):
         training_observations: Sequence[PreparedFidelityObservation] = (),
         validation_observations: Sequence[PreparedFidelityObservation] = (),
         source_result_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(path, FidelityPath):
             raise TypeError("path must be a FidelityPath.")
         if not isinstance(solver, FunctionalSolver):
@@ -222,7 +223,7 @@ class FidelityPINNResult(StrictModule, NonTrainableState):
         )
 
     @property
-    def functions(self):
+    def functions(self) -> frozendict[str, DomainFunction]:
         return self.solver.ansatz_functions()
 
 

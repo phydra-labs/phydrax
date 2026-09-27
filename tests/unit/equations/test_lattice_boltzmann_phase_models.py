@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -35,7 +38,7 @@ from phydrax.equations._lattice_boltzmann_free_energy import (
 )
 
 
-def _discretization(count=24):
+def _discretization(count: Any = 24) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(count, periodic=True),
@@ -46,11 +49,11 @@ def _discretization(count=24):
     return LatticeBoltzmannPlan(grid, D2Q9()).prepare()
 
 
-def _forced_method():
+def _forced_method() -> Any:
     return LatticeBoltzmannMethodPlan(BGKCollisionPlan(), forcing=GuoForcingPlan())
 
 
-def test_color_gradient_compiler_routes_both_populations_and_fails_atomically():
+def test_color_gradient_compiler_routes_both_populations_and_fails_atomically() -> None:
     discretization = _discretization()
     method = ColorGradientLBMMethod(_forced_method(), maximum_capillary_number=10.0)
     compiled = compile_color_gradient_lattice_boltzmann_problem(
@@ -67,6 +70,7 @@ def test_color_gradient_compiler_routes_both_populations_and_fails_atomically():
     parameters = ColorGradientLBMRuntimeParameters(0.01, 1.0e-4)
     state = compiled.initialize_state(red, blue, jnp.zeros((2,)), parameters)
 
+    # ty: ignore[invalid-argument-type]
     result = compiled.dynamics.step_detailed(0, 0.0, state, 0.01, parameters)
     assert result.candidate_state.red_populations.shape == discretization.population_shape
     assert (
@@ -80,6 +84,7 @@ def test_color_gradient_compiler_routes_both_populations_and_fails_atomically():
     assert result.diagnostics.recoloring.population_closure_defect <= 1e-11
     assert result.diagnostics.recoloring.momentum_closure_defect <= 1e-11
 
+    # ty: ignore[invalid-argument-type]
     rejected = compiled.dynamics.step_detailed(0, 0.0, state, 0.02, parameters)
     assert not bool(rejected.successful)
     np.testing.assert_array_equal(
@@ -90,7 +95,9 @@ def test_color_gradient_compiler_routes_both_populations_and_fails_atomically():
     )
 
 
-def test_free_energy_compiler_preserves_moments_and_has_nonincreasing_accepted_energy():
+def test_free_energy_compiler_preserves_moments_and_has_nonincreasing_accepted_energy() -> (
+    None
+):
     discretization = _discretization()
     method = FreeEnergyLBMMethod(
         _forced_method(),
@@ -114,8 +121,10 @@ def test_free_energy_compiler_preserves_moments_and_has_nonincreasing_accepted_e
         phx.equations.BinaryThermodynamicParameters(0.02, 0.02),
     )
     state = compiled.initialize_state(1.0, phase, jnp.zeros((2,)), parameters)
+    # ty: ignore[invalid-argument-type]
     initial = compiled.dynamics.scalar_diagnostics(0, 0.0, state, parameters)
 
+    # ty: ignore[invalid-argument-type]
     result = compiled.dynamics.step_detailed(0, 0.0, state, 0.01, parameters)
     assert (
         result.candidate_state.hydrodynamic_populations.shape
@@ -142,6 +151,7 @@ def test_free_energy_compiler_preserves_moments_and_has_nonincreasing_accepted_e
         0.0,
         phx.equations.BinaryThermodynamicParameters(0.02, 0.02),
     )
+    # ty: ignore[invalid-argument-type]
     rejected = compiled.dynamics.step_detailed(0, 0.0, state, 0.01, invalid)
     assert not bool(rejected.successful)
     np.testing.assert_array_equal(
@@ -153,7 +163,7 @@ def test_free_energy_compiler_preserves_moments_and_has_nonincreasing_accepted_e
     )
 
 
-def test_free_energy_lbm_rejects_grid_beyond_declared_capacity():
+def test_free_energy_lbm_rejects_grid_beyond_declared_capacity() -> None:
     discretization = _discretization()
     method = FreeEnergyLBMMethod(
         _forced_method(),

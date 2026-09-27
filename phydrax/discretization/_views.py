@@ -19,15 +19,16 @@ import operator
 from collections.abc import Callable
 from enum import IntEnum
 from functools import partial
-from typing import Any, final, Literal, TYPE_CHECKING, TypeAlias
+from typing import Any, final, get_args, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.core as jax_core
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.custom_derivatives import SymbolicZero
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from .._differentiation import (
     _regularity_payload,
@@ -39,6 +40,7 @@ from .._model._ports import intrinsic_model_ports, ValuePort
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
+from ..typing import parse
 
 
 if TYPE_CHECKING:
@@ -50,7 +52,6 @@ if TYPE_CHECKING:
 
 FieldTraceSide: TypeAlias = Literal["owner", "neighbor", "average"]
 FieldSupportCoverage: TypeAlias = Literal["complete", "partial"]
-_TRACE_SIDES: tuple[FieldTraceSide, ...] = ("owner", "neighbor", "average")
 _INVALID_QUERY_MESSAGE = (
     "Discrete field view query is invalid at one or more points (outside the "
     "reconstruction support, on a non-smooth locus without a bound trace side, "
@@ -132,8 +133,8 @@ class FieldTracePolicy(StrictModule, NonTrainableState):
         kind: Literal["single-valued", "cell-sided"],
         /,
         *,
-        sides: tuple[FieldTraceSide, ...] = _TRACE_SIDES,
-    ):
+        sides: tuple[FieldTraceSide, ...] = get_args(FieldTraceSide),
+    ) -> None:
         match kind:
             case "single-valued" | "cell-sided":
                 pass
@@ -142,11 +143,14 @@ class FieldTracePolicy(StrictModule, NonTrainableState):
                     "Field trace policy kind must be 'single-valued' or 'cell-sided'."
                 )
         sides_ = tuple(sides)
-        if not sides_ or any(side not in _TRACE_SIDES for side in sides_):
-            raise ValueError(f"Trace sides must be a nonempty subset of {_TRACE_SIDES}.")
+        if not sides_:
+            raise ValueError(
+                f"Trace sides must be a nonempty subset of {get_args(FieldTraceSide)}."
+            )
+        sides_ = tuple(parse(side, FieldTraceSide, "sides") for side in sides_)
         if len(set(sides_)) != len(sides_):
             raise ValueError("Trace sides must be unique.")
-        ordered = tuple(side for side in _TRACE_SIDES if side in sides_)
+        ordered = tuple(side for side in get_args(FieldTraceSide) if side in sides_)
         self.kind = kind
         self.sides = ordered
         self.policy_id = canonical_fingerprint(
@@ -179,9 +183,8 @@ class FieldSideBinding(StrictModule, NonTrainableState):
         /,
         *,
         reconstruction_id: str,
-    ):
-        if side not in _TRACE_SIDES:
-            raise ValueError(f"side must be one of {_TRACE_SIDES}.")
+    ) -> None:
+        side = parse(side, FieldTraceSide, "side")
         sites_ = np.asarray(sites)
         cells = np.asarray(site_cells, dtype=np.int32)
         if sites_.ndim != 2 or sites_.shape[0] == 0:
@@ -225,7 +228,7 @@ class FieldQueryEvidence(StrictModule):
         /,
         *,
         kernel_id: str,
-    ):
+    ) -> None:
         status_ = jnp.asarray(status, dtype=jnp.int32)
         conditioning_ = jnp.asarray(conditioning)
         count = jnp.asarray(support_count, dtype=jnp.int32)
@@ -370,7 +373,7 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
         field_space_id: str,
         support_id: str,
         coefficient_linear: bool = True,
-    ):
+    ) -> None:
         from ..geometry import CompiledGeometry, GeometryKind
 
         if not isinstance(kernel, AbstractFieldReconstructionKernel):
@@ -817,7 +820,7 @@ class DiscreteFieldEvaluator(StrictModule, NonTrainableState):
         *,
         side: FieldSideBinding | None = None,
         derivative: tuple[int, ...] | None = None,
-    ):
+    ) -> None:
         if not isinstance(reconstruction, PreparedFieldReconstruction):
             raise TypeError("reconstruction must be a PreparedFieldReconstruction.")
         self.reconstruction = reconstruction
@@ -981,7 +984,7 @@ class DiscreteFieldFunctionView(StrictModule, NonTrainableState):
         *,
         variable: str,
         field_name: str | None = None,
-    ):
+    ) -> None:
         from ..domain import GeometryDomain
 
         if not isinstance(reconstruction, PreparedFieldReconstruction):
@@ -1133,13 +1136,17 @@ def require_compatible_field_composition(
         other_port = _declared_value_port(other)
         if other_port is _CONSTANT_PORT:
             continue
-        if other_port is None:
+        if not isinstance(other_port, ValuePort):
             raise ValueError(
                 "Adding a discrete field view requires the other field to declare a "
                 "value port (units, frame, axis identity); bind a port-declaring "
                 "model or another view."
             )
-        mismatches = _port_mismatches(evaluator.value_port, other_port)
+        view_port = evaluator.value_port
+        # Zeroth-order evaluators always expose their reconstruction value port.
+        if not (view_port is not None):
+            raise RuntimeError("Internal invariant failed: view_port is not None.")
+        mismatches = _port_mismatches(view_port, other_port)
         if mismatches:
             raise ValueError(
                 "Discrete field view and operand value ports are incompatible: "

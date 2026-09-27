@@ -10,7 +10,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -26,6 +27,8 @@ ShallowWaterBoundaryStatus: TypeAlias = Literal[
 ShorelineDerivativeStatus: TypeAlias = Literal[
     "fixed-mask", "isolated-event", "grazing", "simultaneous", "overflow", "unsupported"
 ]
+# Boundary data callbacks receive (time, face points, args).
+_BoundaryData: TypeAlias = Callable[[ArrayLike, Array, Any], ArrayLike]
 
 
 def _weno_z5(values: Array, epsilon: float, power: int, /) -> tuple[Array, Array]:
@@ -107,7 +110,7 @@ class ShallowWaterEquilibriumWENOZPlan(StrictModule, NonTrainableState):
         condition_limit: float = 1e8,
         epsilon: float = 1e-12,
         power: int = 2,
-    ):
+    ) -> None:
         if int(order) != 5:
             raise ValueError("Equilibrium WENO-Z currently requires order=5.")
         values = (float(characteristic_depth), float(condition_limit), float(epsilon))
@@ -145,7 +148,7 @@ class ShallowWaterEquilibriumWENOZPlan(StrictModule, NonTrainableState):
         *,
         normal: ArrayLike | None = None,
         gravity: float = 9.81,
-    ):
+    ) -> tuple[Array, Array, Array, Array, ShallowWaterReconstructionEvidence]:
         value, bed, axis_ = jnp.asarray(state), jnp.asarray(bathymetry), int(axis)
         if value.shape[:-1] != bed.shape or value.shape[-1] < 2:
             raise ValueError("State and bathymetry shapes do not agree.")
@@ -208,20 +211,20 @@ class ShallowWaterBoundaryTrace(StrictModule):
 
 
 class ShallowWaterNormalDischargeBoundary(StrictModule, NonTrainableState):
-    normal_discharge: Callable[[Array, Array, Any], ArrayLike]
-    exterior_surface: Callable[[Array, Array, Any], ArrayLike]
-    tangential_velocity: Callable[[Array, Array, Any], ArrayLike] | None
+    normal_discharge: _BoundaryData
+    exterior_surface: _BoundaryData
+    tangential_velocity: _BoundaryData | None
     boundary_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        normal_discharge,
-        exterior_surface,
+        normal_discharge: _BoundaryData,
+        exterior_surface: _BoundaryData,
         /,
         *,
-        tangential_velocity=None,
+        tangential_velocity: _BoundaryData | None = None,
         boundary_id: str,
-    ):
+    ) -> None:
         if not callable(normal_discharge) or not callable(exterior_surface):
             raise TypeError("Discharge and surface data must be callable.")
         if tangential_velocity is not None and not callable(tangential_velocity):
@@ -231,7 +234,17 @@ class ShallowWaterNormalDischargeBoundary(StrictModule, NonTrainableState):
         self.normal_discharge, self.exterior_surface = normal_discharge, exterior_surface
         self.tangential_velocity, self.boundary_id = tangential_velocity, str(boundary_id)
 
-    def trace(self, time, interior, coordinates, normal, bed, wet_dry, args=None, /):
+    def trace(
+        self,
+        time: ArrayLike,
+        interior: ArrayLike,
+        coordinates: ArrayLike,
+        normal: ArrayLike,
+        bed: ArrayLike,
+        wet_dry: ShallowWaterWetDryPolicy,
+        args: Any = None,
+        /,
+    ) -> ShallowWaterBoundaryTrace:
         state, points, normal_ = (
             jnp.asarray(interior),
             jnp.asarray(coordinates),
@@ -274,20 +287,20 @@ class ShallowWaterNormalDischargeBoundary(StrictModule, NonTrainableState):
 
 
 class ShallowWaterCharacteristicOpenBoundary(StrictModule, NonTrainableState):
-    exterior_surface: Callable[[Array, Array, Any], ArrayLike]
-    exterior_velocity: Callable[[Array, Array, Any], ArrayLike]
+    exterior_surface: _BoundaryData
+    exterior_velocity: _BoundaryData
     critical_tolerance: float = eqx.field(static=True)
     boundary_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        exterior_surface,
-        exterior_velocity,
+        exterior_surface: _BoundaryData,
+        exterior_velocity: _BoundaryData,
         /,
         *,
-        critical_tolerance=1e-6,
+        critical_tolerance: float = 1e-6,
         boundary_id: str,
-    ):
+    ) -> None:
         if not callable(exterior_surface) or not callable(exterior_velocity):
             raise TypeError("Open-boundary data must be callable.")
         tolerance = float(critical_tolerance)
@@ -300,8 +313,17 @@ class ShallowWaterCharacteristicOpenBoundary(StrictModule, NonTrainableState):
         self.critical_tolerance, self.boundary_id = tolerance, str(boundary_id)
 
     def trace(
-        self, time, interior, coordinates, normal, bed, wet_dry, gravity, args=None, /
-    ):
+        self,
+        time: ArrayLike,
+        interior: ArrayLike,
+        coordinates: ArrayLike,
+        normal: ArrayLike,
+        bed: ArrayLike,
+        wet_dry: ShallowWaterWetDryPolicy,
+        gravity: float,
+        args: Any = None,
+        /,
+    ) -> ShallowWaterBoundaryTrace:
         state, normal_, points = (
             jnp.asarray(interior),
             jnp.asarray(normal),
@@ -356,7 +378,13 @@ class PreparedGeostrophicBalance(StrictModule, NonTrainableState):
     geometry_id: str = eqx.field(static=True)
     balance_id: str = eqx.field(static=True)
 
-    def deviation_residual(self, residual, state, args=None, /):
+    def deviation_residual(
+        self,
+        residual: Callable[[Array, Any], ArrayLike],
+        state: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> Array:
         return jnp.asarray(residual(jnp.asarray(state), args)) - self.reference_residual
 
 
@@ -369,13 +397,13 @@ class GeostrophicBalancePlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        reference_surface,
-        reference_discharge,
-        coriolis_source,
+        reference_surface: ArrayLike,
+        reference_discharge: ArrayLike,
+        coriolis_source: object,
         /,
         *,
-        tolerance=1e-10,
-    ):
+        tolerance: float = 1e-10,
+    ) -> None:
         surface = np.asarray(reference_surface)
         discharge = np.asarray(reference_discharge)
         tol = float(tolerance)
@@ -400,7 +428,14 @@ class GeostrophicBalancePlan(StrictModule, NonTrainableState):
             }
         )
 
-    def prepare(self, bathymetry, geometry_id, residual, args=None, /):
+    def prepare(
+        self,
+        bathymetry: ArrayLike,
+        geometry_id: str,
+        residual: Callable[[Array, Any], ArrayLike],
+        args: Any = None,
+        /,
+    ) -> PreparedGeostrophicBalance:
         if not callable(residual):
             raise TypeError("residual must be callable.")
         bed = jnp.asarray(bathymetry)
@@ -439,7 +474,9 @@ class ShallowWaterShorelineEvent(StrictModule):
     reset_jacobian: Array
     status: ShorelineDerivativeStatus = eqx.field(static=True)
 
-    def saltation_action(self, tangent, pre_rate, post_rate, /):
+    def saltation_action(
+        self, tangent: ArrayLike, pre_rate: ArrayLike, post_rate: ArrayLike, /
+    ) -> Array:
         if self.status != "isolated-event":
             raise ValueError("Saltation requires an isolated transverse shoreline event.")
         tangent_ = jnp.asarray(tangent)

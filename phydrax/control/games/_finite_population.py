@@ -14,12 +14,14 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...stochastic import EmpiricalMeanField
+from ...typing import parse
 from ._mean_field_fixed_point import (
     MEAN_FIELD_GAME_FIXED_POINT_CANDIDATE,
     MeanFieldGameFixedPointResult,
@@ -80,7 +82,7 @@ class FinitePopulationJointPolicyEvaluation(StrictModule):
         evaluation_id: str,
         path_valid: ArrayLike | None = None,
         statistically_exact: bool = False,
-    ):
+    ) -> None:
         costs = _real_matrix(player_costs, "player_costs")
         population_size, num_paths = map(int, costs.shape)
         if population_size < 1 or num_paths < 1:
@@ -164,7 +166,7 @@ class FinitePopulationBestResponseEvidence(StrictModule):
         valid: ArrayLike = True,
         certified: ArrayLike = True,
         failure_reason: str | None = None,
-    ):
+    ) -> None:
         if (
             isinstance(player_index, bool)
             or not isinstance(player_index, int)
@@ -268,7 +270,7 @@ class FinitePopulationGameProblem(StrictModule):
         finite_law_builder_id: str,
         law_distance_id: str,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(fixed_point_result, MeanFieldGameFixedPointResult):
             raise TypeError("fixed_point_result must be a MeanFieldGameFixedPointResult.")
         if (
@@ -345,7 +347,7 @@ class FinitePopulationContinuationPlan(StrictModule):
         coverage_method: CoverageMethod,
         minimum_clusters: int,
         problem_id: str,
-    ):
+    ) -> None:
         epsilon_value = _nonnegative_finite(epsilon, "epsilon")
         tolerance = _nonnegative_finite(law_tolerance, "law_tolerance")
         level = float(confidence)
@@ -520,11 +522,7 @@ def _optional_bound(value: ArrayLike | None, dtype: Any, /) -> Array:
 
 
 def _coverage_method(value: str, /) -> CoverageMethod:
-    if value in ("exact", "asymptotic-normal", "hoeffding", "none"):
-        return value  # type: ignore[return-value]
-    raise ValueError(
-        "coverage_method must be 'exact', 'asymptotic-normal', 'hoeffding', or 'none'."
-    )
+    return parse(value, CoverageMethod, "coverage_method")
 
 
 def _integer_labels(value: ArrayLike, count: int, /) -> Array:

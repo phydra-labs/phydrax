@@ -6,11 +6,13 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -33,6 +35,12 @@ from ._reduced_articulation import (
 )
 from ._rigid_body import RigidBodyLoad
 from ._rigid_joints import RigidJointKind
+
+
+_EdgeSweepCarry: TypeAlias = tuple[Array, Array]
+_ArticulatedSweepCarry: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class ReducedDynamicsStatus(IntEnum):
@@ -117,7 +125,7 @@ class ReducedSemiImplicitVelocityEulerStepPolicy(StrictModule):
         absolute_energy_tolerance: float = 1.0e-6,
         relative_energy_tolerance: float = 1.0e-4,
         inverse_forward_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         maximum = float(maximum_step_size)
         absolute = float(absolute_energy_tolerance)
         relative = float(relative_energy_tolerance)
@@ -533,7 +541,7 @@ def _rnea_effort(
         axis=-1,
     )
 
-    def reverse_edge(index, carry):
+    def reverse_edge(index: Array, carry: _EdgeSweepCarry) -> _EdgeSweepCarry:
         body_force_, edge_effort_ = carry
         edge = child.shape[0] - 1 - index
         child_force = body_force_[child[edge]]
@@ -736,7 +744,9 @@ def _aba_acceleration(
     positive = jnp.asarray(True)
     pivot_tolerance = jnp.finfo(configuration.dtype).tiny
 
-    def reverse_edge(index, carry):
+    def reverse_edge(
+        index: Array, carry: _ArticulatedSweepCarry
+    ) -> _ArticulatedSweepCarry:
         (
             articulated_inertia_,
             articulated_bias_,
@@ -819,7 +829,7 @@ def _aba_acceleration(
         ),
     )
 
-    def forward_edge(edge, carry):
+    def forward_edge(edge: Array, carry: _EdgeSweepCarry) -> _EdgeSweepCarry:
         body_acceleration_, edge_acceleration_ = carry
         base = (
             motion_transform[edge] @ body_acceleration_[parent[edge]]

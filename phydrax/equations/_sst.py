@@ -9,7 +9,8 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -50,7 +51,7 @@ class SSTTurbulencePlan(StrictModule, NonTrainableState):
         *,
         turbulent_prandtl: float = 0.9,
         turbulent_schmidt: float = 0.9,
-    ):
+    ) -> None:
         prandtl = float(turbulent_prandtl)
         schmidt = float(turbulent_schmidt)
         if (

@@ -7,7 +7,7 @@ from tools.complex_parameter_interchange_benchmarks import (
 )
 
 
-def test_complex_parameter_interchange_benchmark_contract():
+def test_complex_parameter_interchange_benchmark_contract() -> None:
     result = run_complex_parameter_interchange_benchmarks()
     assert result["kind"] == "complex-parameter-interchange-benchmark"
     assert result["passed"]

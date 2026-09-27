@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -31,7 +33,7 @@ def _mode_case(cutoff: int, repeats: int) -> dict[str, object]:
         policy=quantum.ModeReductionPolicy(4),
     )
 
-    def transition(charging_rate):
+    def transition(charging_rate: Any) -> Any:
         refreshed = quantum.refresh_mode_reduction(
             prepared,
             quantum.transmon_mode_problem(
@@ -74,7 +76,7 @@ def _mode_case(cutoff: int, repeats: int) -> dict[str, object]:
     }
 
 
-def _device(site_count: int):
+def _device(site_count: int) -> Any:
     quantum = phx.operators.quantum
     solver = phx.solver
     topology = phx.graph.GraphIR(
@@ -143,7 +145,7 @@ def _evolution_case(
         repeats=repeats,
     )
 
-    def population(scale):
+    def population(scale: Any) -> Any:
         refreshed_schedule = solver.FixedGridLocalHamiltonian(
             device.drift,
             grid,

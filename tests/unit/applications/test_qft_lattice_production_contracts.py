@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 from phydrax.applications.lattice_field._production_contracts import (
@@ -14,7 +17,7 @@ from phydrax.discretization import TensorTopology
 from phydrax.discretization._lattice_boundary import LatticeBoundaryPhasePlan
 
 
-def _theory_point(size, spacing):
+def _theory_point(size: Any, spacing: Any) -> Any:
     boundary = LatticeBoundaryPhasePlan(
         TensorTopology(("x",), (size,), periodic=(True,)),
         jnp.ones((1,), dtype="complex128"),
@@ -33,7 +36,7 @@ def _theory_point(size, spacing):
     )
 
 
-def test_ensemble_admission_retains_finite_statistics_and_qualification_ids():
+def test_ensemble_admission_retains_finite_statistics_and_qualification_ids() -> None:
     point = _theory_point(4, 0.25)
     plan = LatticeEnsemblePlan(
         point,
@@ -53,7 +56,7 @@ def test_ensemble_admission_retains_finite_statistics_and_qualification_ids():
     assert jnp.allclose(evidence.covariance, jnp.cov(values, rowvar=False))
 
 
-def test_continuum_fit_is_fixed_volume_and_uses_native_weighted_solve():
+def test_continuum_fit_is_fixed_volume_and_uses_native_weighted_solve() -> None:
     points = (
         _theory_point(4, 0.25),
         _theory_point(8, 0.125),

@@ -13,7 +13,8 @@ from typing import Sequence
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 from phydrax.ein import contract
@@ -182,7 +183,7 @@ class PreparedStrainEvaluation(StrictModule, NonTrainableState):
         require_uncertainty: bool,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         self.sample_shape = tuple(sample_shape)
         self.reference_frame_id = _identifier(reference_frame_id, "reference_frame_id")
         self.measure = measure

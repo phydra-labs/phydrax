@@ -9,7 +9,8 @@ from typing import Any, ClassVar
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -60,7 +61,7 @@ class LinearMetricModel(AbstractFittedModel):
         component_count: int,
         case_shape: tuple[int, ...],
         method: str,
-    ):
+    ) -> None:
         factor_ = jnp.asarray(factor)
         features = int(feature_count)
         components = int(component_count)
@@ -131,7 +132,7 @@ class NeighborhoodComponentsAnalysisRecipe(AbstractRecipe):
         temperature: ArrayLike = 1.0,
         ridge: ArrayLike = 1e-4,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if component_count is not None and int(component_count) <= 0:
             raise ValueError("component_count must be positive.")
         if int(iterations) <= 0:
@@ -193,7 +194,7 @@ class NeighborhoodComponentsAnalysisRecipe(AbstractRecipe):
         w_cases = weights.reshape((cases, batch.sample_count))
         initial = jnp.eye(components, batch.feature_count, dtype=x.dtype)
 
-        def fit_one(points, target, weight):
+        def fit_one(points: Array, target: Array, weight: Array) -> tuple[Array, Array]:
             same = target[:, None] == target[None, :]
             active = weight > 0
             pair_mask = (
@@ -202,7 +203,7 @@ class NeighborhoodComponentsAnalysisRecipe(AbstractRecipe):
                 & ~jnp.eye(points.shape[0], dtype=jnp.bool_)
             )
 
-            def objective(factor):
+            def objective(factor: Array) -> Array:
                 embedded = points @ factor.T
                 delta = embedded[:, None, :] - embedded[None, :, :]
                 distance = jnp.sum(delta * delta, axis=-1)
@@ -292,7 +293,7 @@ class MahalanobisMetricRecipe(AbstractRecipe):
         ridge: ArrayLike = 1e-6,
         component_count: int | None = None,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         ridge_ = jnp.asarray(ridge, dtype=jnp.float64)
         if ridge_.ndim != 0:
             raise ValueError("ridge must be scalar.")

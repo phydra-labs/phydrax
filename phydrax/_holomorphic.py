@@ -6,23 +6,26 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import ClassVar, Literal, Protocol, runtime_checkable
+from typing import ClassVar, Literal, Protocol, runtime_checkable, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._differentiation import AbstractConstructionCertificate
 from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
 from .metrix.algebra import ComplexAlgebraSpec
+from .typing import parse
 
 
 _CANONICAL_COMPLEX_ALGEBRA_ID = ComplexAlgebraSpec().algebra_id
 
-HolomorphicParameterCoverage = Literal[
+HolomorphicParameterCoverage: TypeAlias = Literal[
     "finite-subspace",
     "finite-parametric-family",
 ]
@@ -35,7 +38,7 @@ class ComplexAffineNormalization(StrictModule, NonTrainableState):
     matrix: Array
     normalization_id: str = eqx.field(static=True)
 
-    def __init__(self, center: ArrayLike, matrix: ArrayLike, /):
+    def __init__(self, center: npt.ArrayLike, matrix: npt.ArrayLike, /) -> None:
         center_ = np.asarray(center, dtype=np.complex128).reshape((-1,))
         matrix_ = np.asarray(matrix, dtype=np.complex128)
         if center_.size == 0 or matrix_.shape != (center_.size, center_.size):
@@ -132,7 +135,7 @@ class HolomorphicMapCertificate(AbstractConstructionCertificate):
         parameter_mode: str = "real-cartesian",
         complex_algebra_id: str | None = None,
         construction_dependencies: Sequence[str] = (),
-    ):
+    ) -> None:
         input_size = int(complex_input_size)
         output_size = int(complex_output_size)
         derivative_order = int(maximum_derivative_order)
@@ -157,11 +160,9 @@ class HolomorphicMapCertificate(AbstractConstructionCertificate):
             )
         if any(not value for value in dependencies):
             raise ValueError("Holomorphic construction dependency IDs must be non-empty.")
-        if parameter_coverage not in (
-            "finite-subspace",
-            "finite-parametric-family",
-        ):
-            raise ValueError("Unknown holomorphic parameter coverage.")
+        parameter_coverage = parse(
+            parameter_coverage, HolomorphicParameterCoverage, "parameter_coverage"
+        )
         if parameter_coverage == "finite-subspace" and not linear_in_parameters:
             raise ValueError(
                 "Finite-subspace holomorphic maps must be linear in their parameters."
@@ -201,7 +202,7 @@ class HolomorphicJet(StrictModule):
     value: Array
     derivatives: tuple[Array, ...]
 
-    def __init__(self, value: ArrayLike, derivatives: Sequence[ArrayLike], /):
+    def __init__(self, value: ArrayLike, derivatives: Sequence[ArrayLike], /) -> None:
         value_ = jnp.asarray(value)
         derivatives_ = tuple(jnp.asarray(item) for item in derivatives)
         if any(item.shape != value_.shape for item in derivatives_):

@@ -35,7 +35,7 @@ class Equality(AbstractConditionRelation):
     target: Any
     has_target: bool = eqx.field(static=True)
 
-    def __init__(self, target: Any = None, /):
+    def __init__(self, target: Any = None, /) -> None:
         self.target = target
         self.has_target = target is not None
 
@@ -61,7 +61,7 @@ class Inequality(AbstractConditionRelation):
         upper: Any = None,
         strict_lower: bool = False,
         strict_upper: bool = False,
-    ):
+    ) -> None:
         has_lower = lower is not None
         has_upper = upper is not None
         if not has_lower and not has_upper:
@@ -98,7 +98,7 @@ class ConeMembership(AbstractConditionRelation):
     cone: ConeKind = eqx.field(static=True)
     axis: int = eqx.field(static=True)
 
-    def __init__(self, cone: ConeKind, /, *, axis: int = -1):
+    def __init__(self, cone: ConeKind, /, *, axis: int = -1) -> None:
         self.cone = ConeKind(cone)
         self.axis = int(axis)
 
@@ -124,7 +124,7 @@ class ConeMembership(AbstractConditionRelation):
 class Complementarity(AbstractConditionRelation):
     """Complementarity of two equally typed nonnegative product factors."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     def validate(self, codomain: ConditionCodomain, /) -> None:
@@ -141,7 +141,7 @@ class NoisyObservation(AbstractConditionRelation):
     observed: Any
     noise_scale: Any
 
-    def __init__(self, observed: Any, noise_scale: Any, /):
+    def __init__(self, observed: Any, noise_scale: Any, /) -> None:
         self.observed = observed
         self.noise_scale = noise_scale
 

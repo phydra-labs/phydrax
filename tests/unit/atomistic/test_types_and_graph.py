@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -16,13 +18,18 @@ from phydrax.units import ANGSTROM, ELECTRONVOLT, JOULE, METER
 SCALE = AtomisticScaleContract(ANGSTROM, ELECTRONVOLT)
 
 
-def test_structure_preserves_particles_masks_ids_masses_and_scale():
+def test_structure_preserves_particles_masks_ids_masses_and_scale() -> None:
     structure = AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [8, 1, 1, 0],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0], [0.8, 0.0, 0.0], [-0.2, 0.7, 0.0], [0.0, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [15.999, 1.008, 1.008, 0.0],
         SCALE,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[40, 11, 23, 99],
+        # ty: ignore[invalid-argument-type]
         active_mask=[True, True, True, False],
     )
     assert structure.scale.scale_id == SCALE.scale_id
@@ -40,7 +47,9 @@ def test_structure_preserves_particles_masks_ids_masses_and_scale():
         ([1, 6], [True, False], "padded"),
     ],
 )
-def test_atomic_number_zero_is_padding_only(numbers, mask, message):
+def test_atomic_number_zero_is_padding_only(
+    numbers: Any, mask: Any, message: Any
+) -> None:
     with pytest.raises(ValueError, match=message):
         AtomicStructure(
             numbers,
@@ -51,13 +60,18 @@ def test_atomic_number_zero_is_padding_only(numbers, mask, message):
         )
 
 
-def test_batch_padding_does_not_change_structure_identity_or_graph_isolation():
+def test_batch_padding_does_not_change_structure_identity_or_graph_isolation() -> None:
+    # ty: ignore[invalid-argument-type]
     hydrogen = AtomicStructure([1], [[0.0, 0.0, 0.0]], [1.008], SCALE, name="h")
     oxygen = AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [8, 8],
+        # ty: ignore[invalid-argument-type]
         [[100.0, 0.0, 0.0], [101.0, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [15.999, 15.999],
         SCALE,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[7, 3],
         name="o2",
     )
@@ -68,17 +82,22 @@ def test_batch_padding_does_not_change_structure_identity_or_graph_isolation():
     assert graph.graph.num_graphs == 2
     assert graph.graph.nodes["atomic_numbers"].shape == (6,)
     assert not bool(jnp.any(graph.overflow))
+    # ty: ignore[unsupported-operator]
     send_case = graph.graph.senders // batch.atom_capacity
+    # ty: ignore[unsupported-operator]
     receive_case = graph.graph.receivers // batch.atom_capacity
     np.testing.assert_array_equal(send_case, receive_case)
     np.testing.assert_array_equal(batch.atomic_numbers[0], [1, 0, 0])
     np.testing.assert_array_equal(batch.particle_ids[1, :2], [7, 3])
 
 
-def test_graph_displacement_distance_direction_and_coincident_atom_semantics():
+def test_graph_displacement_distance_direction_and_coincident_atom_semantics() -> None:
     structure = AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         SCALE,
     )
@@ -90,13 +109,17 @@ def test_graph_displacement_distance_direction_and_coincident_atom_semantics():
     np.testing.assert_allclose(graph.graph.edges["distance"], 0.0)
     np.testing.assert_allclose(graph.graph.edges["direction"], 0.0)
     assert bool(jnp.all(jnp.isfinite(graph.graph.edges["direction"])))
+    # ty: ignore[invalid-argument-type]
     assert bool(jnp.all(graph.graph.edge_mask))
 
 
-def test_neighborhood_overflow_is_reported_without_truncation():
+def test_neighborhood_overflow_is_reported_without_truncation() -> None:
     structure = AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [1, 1, 1],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0], [0.3, 0.0, 0.0], [0.0, 0.3, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0, 1.0],
         SCALE,
     )
@@ -107,16 +130,23 @@ def test_neighborhood_overflow_is_reported_without_truncation():
     )
     assert bool(graph.overflow[0])
     assert int(graph.maximum_neighbor_count[0]) == 2
+    # ty: ignore[invalid-argument-type]
     assert int(jnp.sum(graph.graph.edge_mask)) == 6
 
 
-def test_dense_graph_guards_before_candidate_allocation(monkeypatch):
+def test_dense_graph_guards_before_candidate_allocation(monkeypatch: Any) -> None:
     structure = AtomicStructure(
-        [1, 1], [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], [1.0, 1.0], SCALE
+        # ty: ignore[invalid-argument-type]
+        [1, 1],
+        # ty: ignore[invalid-argument-type]
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.0],
+        SCALE,
     )
     batch = AtomisticBatch.from_structure(structure)
 
-    def forbidden_allocation(*args, **kwargs):
+    def forbidden_allocation(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("candidate allocation happened before the guard")
 
     monkeypatch.setattr(graph_module.np, "repeat", forbidden_allocation)
@@ -126,19 +156,24 @@ def test_dense_graph_guards_before_candidate_allocation(monkeypatch):
         )
 
 
-def test_scale_mismatch_prevents_batch_construction():
+def test_scale_mismatch_prevents_batch_construction() -> None:
     second_scale = AtomisticScaleContract(METER, JOULE)
+    # ty: ignore[invalid-argument-type]
     first = AtomicStructure([1], [[0.0, 0.0, 0.0]], [1.0], SCALE)
+    # ty: ignore[invalid-argument-type]
     second = AtomicStructure([1], [[0.0, 0.0, 0.0]], [1.0], second_scale)
     with pytest.raises(ValueError, match="scale"):
         AtomisticBatch.from_structures((first, second))
 
 
-def test_with_positions_preserves_topology_and_refreshes_content_identity():
+def test_with_positions_preserves_topology_and_refreshes_content_identity() -> None:
     batch = AtomisticBatch.from_structure(
         AtomicStructure(
+            # ty: ignore[invalid-argument-type]
             [1, 1],
+            # ty: ignore[invalid-argument-type]
             [[0.0, 0.0, 0.0], [0.8, 0.0, 0.0]],
+            # ty: ignore[invalid-argument-type]
             [1.0, 1.0],
             SCALE,
         )

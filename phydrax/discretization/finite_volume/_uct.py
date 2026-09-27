@@ -8,7 +8,7 @@ import abc
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -39,7 +39,7 @@ class AbstractUCTElectromotivePlan(StrictModule, NonTrainableState):
 class FluxCTElectromotivePlan(AbstractUCTElectromotivePlan):
     """Arithmetic flux-CT reference used as the monotone fallback."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.electromotive_id = canonical_fingerprint({"kind": "flux-ct-emf"})
 
     def electromotive(
@@ -106,7 +106,7 @@ class HLLUCTElectromotivePlan(AbstractUCTElectromotivePlan):
     reference: FluxCTElectromotivePlan
     dissipation_scale: float = eqx.field(static=True)
 
-    def __init__(self, *, dissipation_scale: float = 1.0):
+    def __init__(self, *, dissipation_scale: float = 1.0) -> None:
         scale = float(dissipation_scale)
         if not 0.0 <= scale <= 2.0:
             raise ValueError("HLL-UCT dissipation scale must be between zero and two.")

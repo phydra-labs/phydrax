@@ -69,8 +69,11 @@ def qualification_record() -> dict[str, object]:
     return {
         "kind": "quantum-hall-candidate-qualification",
         "haldane": {
+            # ty: ignore[unresolved-attribute]
             "chern": int(np.asarray(bulk.chern.nearest_integer)),
+            # ty: ignore[unresolved-attribute]
             "quantization_residual": float(np.asarray(bulk.chern.quantization_residual)),
+            # ty: ignore[unresolved-attribute]
             "minimum_gap": float(np.asarray(bulk.chern.minimum_direct_gap)),
             "successful": bool(np.asarray(bulk.successful)),
         },

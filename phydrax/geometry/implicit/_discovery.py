@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._bvh import bvh_overlap_pairs_host, prepare_bvh
 from ...discretization._tensor_support import PreparedTensorGrid
@@ -225,7 +226,7 @@ def _isolate_roots(
 
     direction = upper_points - lower_points
 
-    def field(parameter):
+    def field(parameter: Any) -> Any:
         return kernel.boundary_field(state, lower_points + parameter[:, None] * direction)
 
     count = lower_points.shape[0]
@@ -239,14 +240,14 @@ def _isolate_roots(
         jnp.zeros((count,), dtype=jnp.bool_),
     )
 
-    def active(carry):
+    def active(carry: Any) -> Any:
         _, left, right, _, _, _, converged = carry
         return ~converged & (right - left > 2.0 * _ITP_BRACKET_TOLERANCE)
 
-    def condition(carry):
+    def condition(carry: Any) -> Any:
         return (carry[0] < _ITP_MAXIMUM_ITERATIONS) & jnp.any(active(carry))
 
-    def body(carry):
+    def body(carry: Any) -> Any:
         iteration, left, right, left_value, right_value, root, converged = carry
         running = active(carry)
         width = right - left
@@ -521,7 +522,7 @@ def discover_implicit_surface(
     *,
     policy: ImplicitSurfacePolicy = _DEFAULT_SURFACE_POLICY,
     source_id: str,
-):
+) -> Any:
     """Discover a closed manifold dual surface and freeze its topology."""
 
     _validate_discovery_inputs(geometry, grid, policy, source_id)
@@ -591,6 +592,7 @@ def discover_implicit_surface(
         policy.projection.root_tolerance,
     )
     faces = _dual_faces(geometry, inside, crossings, dual, base_vertices, policy)
+    # ty: ignore[invalid-argument-type]
     topology = TriangleTopology(faces, num_vertices=base_vertices.shape[0])
     if not topology.watertight:
         raise ValueError("Implicit surface discovery did not produce a closed surface.")

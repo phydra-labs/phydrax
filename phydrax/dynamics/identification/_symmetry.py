@@ -9,7 +9,8 @@ from collections.abc import Callable, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from .._layout import InputLayout, StateLayout
@@ -34,7 +35,7 @@ class LinearTransformedFeatureLibrary(AbstractFeatureLibrary):
         *,
         feature_names: Sequence[str],
         transform_id: str,
-    ):
+    ) -> None:
         if not isinstance(base, AbstractFeatureLibrary):
             raise TypeError("base must be an AbstractFeatureLibrary.")
         matrix = jnp.asarray(transform)
@@ -98,7 +99,7 @@ class SymmetryAveragedFeatureLibrary(AbstractFeatureLibrary):
         input_actions: Sequence[Callable[[Array], Array] | None] | None = None,
         weights: Sequence[float] | None = None,
         symmetry_id: str,
-    ):
+    ) -> None:
         if not isinstance(base, AbstractFeatureLibrary):
             raise TypeError("base must be an AbstractFeatureLibrary.")
         actions = tuple(state_actions)

@@ -9,12 +9,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from enum import IntFlag
 from math import isfinite
-from typing import TypeAlias
+from typing import TypeAlias, TypeVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -91,7 +92,7 @@ class EinsteinVlasovConstraintSolveEvidence(StrictModule):
         /,
         *,
         solver_id: str,
-    ):
+    ) -> None:
         scalar = tuple(
             jnp.asarray(value) for value in (hamiltonian_before, hamiltonian_after)
         )
@@ -167,7 +168,7 @@ class EinsteinVlasovMatterState(StrictModule):
         /,
         *,
         runtime_id: str,
-    ):
+    ) -> None:
         if not isinstance(z4c, Z4cState):
             raise TypeError("z4c must be a Z4cState.")
         if not isinstance(particles, RelativisticParticleState):
@@ -259,7 +260,10 @@ class _EinsteinVlasovStage(StrictModule):
     evidence: EinsteinVlasovStageEvidence
 
 
-def _select_tree(condition: Array, proposed, current):
+_TreeT = TypeVar("_TreeT")
+
+
+def _select_tree(condition: Array, proposed: _TreeT, current: _TreeT) -> _TreeT:
     if jax.tree.structure(proposed) != jax.tree.structure(current):
         raise ValueError(
             "Atomic Einstein-Vlasov alternatives must have one tree structure."
@@ -424,7 +428,7 @@ class EinsteinVlasovMatterPlan(StrictModule, NonTrainableState):
         maximum_extrinsic_curvature: float = 1.0e3,
         maximum_consecutive_failures: int = 1,
         require_derivative_valid: bool = False,
-    ):
+    ) -> None:
         if not isinstance(system, Z4cSystem) or not isinstance(grid, FixedGridGeometry):
             raise TypeError(
                 "Einstein-Vlasov requires canonical Z4c system and grid owners."
@@ -945,7 +949,9 @@ class EinsteinVlasovMatterPlan(StrictModule, NonTrainableState):
         )
         status = jnp.asarray(int(EinsteinVlasovStatus.SUCCESS), dtype=jnp.int32)
 
-        def add_status(current, predicate, flag):
+        def add_status(
+            current: Array, predicate: Array, flag: EinsteinVlasovStatus
+        ) -> Array:
             return jnp.where(
                 predicate,
                 current,

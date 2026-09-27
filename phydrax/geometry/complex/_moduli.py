@@ -9,7 +9,8 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 
@@ -36,7 +37,7 @@ class TrainableHomogeneousHypersurface(StrictModule):
         pivot_tolerance: float = 1e-8,
         pgl_slice: ArrayLike | None = None,
         family_id: str,
-    ):
+    ) -> None:
         exponents_ = jnp.asarray(exponents, dtype=jnp.int32)
         coefficients_ = jnp.asarray(coefficients)
         if (
@@ -137,7 +138,7 @@ class HypersurfaceEpochEvidence(StrictModule):
         chart_valid: ArrayLike,
         finite: ArrayLike,
         valid: ArrayLike,
-    ):
+    ) -> None:
         self.root_residuals = jnp.asarray(root_residuals)
         self.root_derivative_margins = jnp.asarray(root_derivative_margins)
         self.pivot_margin = jnp.asarray(pivot_margin)
@@ -170,7 +171,7 @@ class PreparedHypersurfaceEpoch(StrictModule):
         derivative_tolerance: float = 1e-8,
         newton_iterations: int = 8,
         epoch_id: str,
-    ):
+    ) -> None:
         origins_ = jnp.asarray(origins)
         directions_ = jnp.asarray(directions, dtype=origins_.dtype)
         roots_ = jnp.asarray(roots, dtype=origins_.dtype)
@@ -210,7 +211,7 @@ class PreparedHypersurfaceEpoch(StrictModule):
     ) -> tuple[Array, HypersurfaceEpochEvidence]:
         roots = self.roots
 
-        def line_value(root):
+        def line_value(root: Array) -> Array:
             return hypersurface(self.origins + root[:, None] * self.directions)
 
         for _ in range(self.newton_iterations):
@@ -288,7 +289,7 @@ class CalabiYauCertificate(StrictModule):
         monge_ampere_sup_bound: ArrayLike,
         topology_certified: ArrayLike,
         tolerance: float,
-    ):
+    ) -> None:
         exact_degree = jnp.asarray(int(degree) == int(projective_dimension) + 1)
         nonzero = jnp.asarray(nonzero_polynomial, dtype=jnp.bool_)
         cover = jnp.asarray(cellular_cover_certified, dtype=jnp.bool_)
@@ -341,7 +342,7 @@ class CalabiYauModuliProblem(StrictModule):
         steps: int,
         learning_rate: float,
         backtracking_steps: int = 8,
-    ):
+    ) -> None:
         if (
             not callable(objective)
             or int(steps) < 1
@@ -373,7 +374,7 @@ class CalabiYauModuliResult(StrictModule):
         accepted_steps: ArrayLike,
         epoch_evidence: HypersurfaceEpochEvidence,
         /,
-    ):
+    ) -> None:
         self.hypersurface = hypersurface
         self.roots = jnp.asarray(roots)
         self.loss_history = jnp.asarray(loss_history)
@@ -394,7 +395,7 @@ def solve_calabi_yau_moduli(
     evidence = problem.epoch.continue_roots(initial)[1]
     for _ in range(problem.steps):
 
-        def loss(coefficient):
+        def loss(coefficient: Array) -> Array:
             family = initial.with_coefficients(coefficient)
             return jnp.real(problem.objective(family, jnp.asarray(potential_parameters)))
 

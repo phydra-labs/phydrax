@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -32,7 +35,7 @@ def _time_space(count: int) -> PulseTimeSpace:
     return PulseTimeSpace(grid, topology="periodic-cell")
 
 
-def test_scalar_projection_keeps_sum_and_difference_frequency_mixing():
+def test_scalar_projection_keeps_sum_and_difference_frequency_mixing() -> None:
     count = 64
     samples = jnp.arange(count)
     fundamental = jnp.exp(-2j * jnp.pi * 7.0 * samples / count)
@@ -52,7 +55,7 @@ def test_scalar_projection_keeps_sum_and_difference_frequency_mixing():
     assert jnp.max(jnp.abs(spectrum[~_positive_mask(count)])) < 1.0e-11
 
 
-def test_instantaneous_susceptibility_implements_prepared_response_contract():
+def test_instantaneous_susceptibility_implements_prepared_response_contract() -> None:
     count = 32
     time_space = _time_space(count)
     mask = _positive_mask(count)
@@ -85,7 +88,7 @@ def test_instantaneous_susceptibility_implements_prepared_response_contract():
     )
 
 
-def test_oriented_tensor_response_is_rotation_covariant():
+def test_oriented_tensor_response_is_rotation_covariant() -> None:
     chi2 = jnp.zeros((3, 3, 3), dtype=jnp.float64)
     chi2 = chi2.at[0, 1, 1].set(1.7e-12)
     chi2 = chi2.at[2, 0, 1].set(-0.4e-12)
@@ -104,7 +107,7 @@ def test_oriented_tensor_response_is_rotation_covariant():
     assert jnp.allclose(actual, expected, rtol=1.0e-10, atol=1.0e-25)
 
 
-def test_zero_tensor_components_are_exactly_inactive():
+def test_zero_tensor_components_are_exactly_inactive() -> None:
     response = OrientedTensorSusceptibility(
         jnp.zeros((3, 3, 3)),
         jnp.zeros((3, 3, 3, 3)),
@@ -114,13 +117,13 @@ def test_zero_tensor_components_are_exactly_inactive():
     assert jnp.all(response.physical_polarization(field) == 0.0)
 
 
-def test_instantaneous_response_has_smooth_field_and_susceptibility_gradients():
+def test_instantaneous_response_has_smooth_field_and_susceptibility_gradients() -> None:
     count = 32
     samples = jnp.arange(count)
     carrier = jnp.exp(-2j * jnp.pi * 6.0 * samples / count)
     mask = _positive_mask(count)
 
-    def objective(amplitude, chi3):
+    def objective(amplitude: Any, chi3: Any) -> Any:
         response = InstantaneousScalarSusceptibility(0.0, chi3)
         polarization = instantaneous_nonlinear_polarization(
             response, amplitude * carrier, mask

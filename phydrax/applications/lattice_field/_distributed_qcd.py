@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -67,6 +68,7 @@ from ...sampling._rhmc import (
     SeparableActionRegistry,
     SeparableActionTerm,
 )
+from ...typing import PRNGKey
 
 
 def _matrix_product(left: Array, right: Array, /) -> Array:
@@ -644,7 +646,7 @@ def prepare_deflation(
         orthogonality_error,
         residual_norms,
         finite,
-        tuple(operator.source.shape),
+        (operator.site_count, operator.spin_components, operator.color_components),
         operator.operator_id,
         prepared_id,
     )
@@ -968,7 +970,7 @@ class PreparedDistributedHMC(StrictModule, NonTrainableState):
         links: ArrayLike,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step_index: int | Array = 0,
     ) -> DistributedHMCTransitionResult:
         values = self.gauge._configuration(links)
@@ -1126,7 +1128,7 @@ class PreparedDistributedRHMC(StrictModule, NonTrainableState):
         links: ArrayLike,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> RHMCChainState:
         values = self.gauge._configuration(links)
         return initialize_rhmc_state(self.kernel, values, key=key)

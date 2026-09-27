@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
+from typing import Any
 
 import numpy as np
 import pytest
@@ -16,7 +18,7 @@ from phydrax.interchange._geospatial import (
 from phydrax.units import DEGREE, METER, RADIAN, UnitDefinition
 
 
-def _local(*, registration="pixel", mask_semantics="valid_true"):
+def _local(*, registration: Any = "pixel", mask_semantics: Any = "valid_true") -> Any:
     return GeospatialContract.local_cartesian(
         SpatialCoordinateContract(METER, reference_frame="survey-site"),
         vertical_datum="survey-benchmark-A",
@@ -25,7 +27,9 @@ def _local(*, registration="pixel", mask_semantics="valid_true"):
     )
 
 
-def _geographic(*, registration="gridline", seam="none", units=DEGREE):
+def _geographic(
+    *, registration: Any = "gridline", seam: Any = "none", units: Any = DEGREE
+) -> Any:
     return GeospatialContract(
         SpatialCoordinateContract(METER, reference_frame="earth"),
         horizontal_crs="EPSG:4326",
@@ -45,7 +49,7 @@ def _geographic(*, registration="gridline", seam="none", units=DEGREE):
     )
 
 
-def test_geospatial_metadata_cannot_change_native_spatial_serialization():
+def test_geospatial_metadata_cannot_change_native_spatial_serialization() -> None:
     spatial = SpatialCoordinateContract(METER, reference_frame="survey-site")
     original = spatial.to_dict()
     extension = {"unrecognized_vendor_reference": {"offsets": [1, 2], "authority": None}}
@@ -64,7 +68,9 @@ def test_geospatial_metadata_cannot_change_native_spatial_serialization():
         contract.require_cartesian()
 
 
-def test_cartesian_qualification_rejects_angular_swapped_and_mismatched_coordinates():
+def test_cartesian_qualification_rejects_angular_swapped_and_mismatched_coordinates() -> (
+    None
+):
     local = _local()
     assert local.require_cartesian().spatial_id == local.spatial.spatial_id
     with pytest.raises(ValueError):
@@ -92,7 +98,7 @@ def test_cartesian_qualification_rejects_angular_swapped_and_mismatched_coordina
         )
 
 
-def test_dynamic_epoch_and_vertical_datum_are_required_for_composition():
+def test_dynamic_epoch_and_vertical_datum_are_required_for_composition() -> None:
     spatial = SpatialCoordinateContract(METER, reference_frame="survey-site")
     common = dict(
         horizontal_crs="qualified-projection",
@@ -108,9 +114,12 @@ def test_dynamic_epoch_and_vertical_datum_are_required_for_composition():
         vertical_unit=METER,
     )
     with pytest.raises(ValueError):
+        # ty: ignore[invalid-argument-type]
         GeospatialContract(spatial, **common).require_cartesian()
+    # ty: ignore[invalid-argument-type]
     qualified = GeospatialContract(spatial, **common, coordinate_epoch=2020.0)
     assert qualified.require_cartesian().spatial_id == spatial.spatial_id
+    # ty: ignore[invalid-argument-type]
     other_epoch = GeospatialContract(spatial, **common, coordinate_epoch=2021.0)
     with pytest.raises(ValueError):
         qualified.require_compatible(other_epoch)
@@ -118,12 +127,14 @@ def test_dynamic_epoch_and_vertical_datum_are_required_for_composition():
         {"vertical_datum": "geoid-B"},
         {"vertical_kind": "ellipsoidal_height"},
     ):
+        # ty: ignore[invalid-argument-type]
         other = GeospatialContract(spatial, **(common | change), coordinate_epoch=2020.0)
         with pytest.raises(ValueError):
             qualified.require_compatible(other)
         qualified.require_compatible(other, dimensions=2)
     depth = GeospatialContract(
         spatial,
+        # ty: ignore[invalid-argument-type]
         **(common | {"vertical_kind": "depth", "vertical_positive": "down"}),
         coordinate_epoch=2020.0,
     )
@@ -131,7 +142,7 @@ def test_dynamic_epoch_and_vertical_datum_are_required_for_composition():
         depth.require_cartesian()
 
 
-def test_pixel_and_gridline_bounds_do_not_silently_shift_samples():
+def test_pixel_and_gridline_bounds_do_not_silently_shift_samples() -> None:
     x, y = np.array([10.0, 12.0, 14.0]), np.array([8.0, 5.0])
     values = np.array([[11.0, 12.0, 19.0], [31.0, 38.0, 45.0]])
     pixel = QualifiedGeospatialGrid(x, y, values, _local(), value_unit=METER)
@@ -154,7 +165,7 @@ def test_pixel_and_gridline_bounds_do_not_silently_shift_samples():
         QualifiedGeospatialGrid(x, [5, 5], values, _local(), value_unit=METER)
 
 
-def test_unknown_registration_and_missing_data_are_not_inferred():
+def test_unknown_registration_and_missing_data_are_not_inferred() -> None:
     with pytest.raises(ValueError):
         QualifiedGeospatialGrid(
             [0, 1],
@@ -182,7 +193,7 @@ def test_unknown_registration_and_missing_data_are_not_inferred():
         )
 
 
-def test_periodic_seams_require_matching_endpoint_values_and_masks():
+def test_periodic_seams_require_matching_endpoint_values_and_masks() -> None:
     contract = _geographic(seam="periodic")
     values = np.array([[1, 2, 3, 4, 1], [5, 6, 7, 8, 5]], dtype="float64")
     grid = QualifiedGeospatialGrid(
@@ -211,7 +222,9 @@ def test_periodic_seams_require_matching_endpoint_values_and_masks():
         )
 
 
-def test_pixel_periodic_seam_and_radian_support_are_qualified_without_resampling():
+def test_pixel_periodic_seam_and_radian_support_are_qualified_without_resampling() -> (
+    None
+):
     contract = _geographic(registration="pixel", seam="periodic", units=RADIAN)
     x = np.deg2rad([-135, -45, 45, 135])
     y = np.deg2rad([-45, 45])
@@ -223,7 +236,7 @@ def test_pixel_periodic_seam_and_radian_support_are_qualified_without_resampling
         QualifiedGeospatialGrid(x[1:], y, values[:, 1:], contract, value_unit=METER)
 
 
-def test_vertical_grid_preserves_depth_and_does_not_relabel_it_as_height():
+def test_vertical_grid_preserves_depth_and_does_not_relabel_it_as_height() -> None:
     local = _local()
     args = dict(
         horizontal_crs=local.horizontal_crs,
@@ -240,6 +253,7 @@ def test_vertical_grid_preserves_depth_and_does_not_relabel_it_as_height():
         vertical_datum="survey-benchmark-A",
         vertical_unit=METER,
     )
+    # ty: ignore[invalid-argument-type]
     depth = GeospatialContract(local.spatial, **args)
     values = np.array([[1.0, 2.0], [4.0, 8.0]])
     grid = QualifiedGeospatialGrid(
@@ -249,6 +263,7 @@ def test_vertical_grid_preserves_depth_and_does_not_relabel_it_as_height():
     assert grid.contract.vertical_positive == "down"
     with pytest.raises(ValueError):
         grid.contract.require_cartesian()
+    # ty: ignore[invalid-argument-type]
     unknown = GeospatialContract(local.spatial, **(args | {"vertical_datum": None}))
     with pytest.raises(ValueError):
         QualifiedGeospatialGrid(
@@ -256,7 +271,9 @@ def test_vertical_grid_preserves_depth_and_does_not_relabel_it_as_height():
         )
 
 
-def test_transformation_provenance_must_end_at_the_qualified_coordinate_identity():
+def test_transformation_provenance_must_end_at_the_qualified_coordinate_identity() -> (
+    None
+):
     source, target = _geographic(), _local()
     operation = GeospatialTransform(
         "caller-qualified-local-projection",

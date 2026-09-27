@@ -3,7 +3,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_triangle_topology_traces_oriented_boundary_loops_and_components():
+def test_triangle_topology_traces_oriented_boundary_loops_and_components() -> None:
     index = np.arange(16).reshape((4, 4))
     triangles = []
     for i in range(3):
@@ -18,6 +18,7 @@ def test_triangle_topology_traces_oriented_boundary_loops_and_components():
             )
             triangles += [(a, b, c), (a, c, d)]
     faces = np.asarray(triangles + [(16, 17, 18)])
+    # ty: ignore[invalid-argument-type]
     topology = phx.geometry.simplicial.TriangleTopology(faces)
 
     assert topology.num_face_components == 2

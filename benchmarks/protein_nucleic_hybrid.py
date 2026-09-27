@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import hashlib
 import json
@@ -54,7 +56,7 @@ def source(payload: bytes, name: str) -> ReferenceArtifactManifest:
     )
 
 
-def prepare(count: int):
+def prepare(count: int) -> Any:
     units = AtomisticUnitSystem.reduced()
     ids = np.arange(count, dtype=np.int64)
     parameter_record = parameter_data()
@@ -140,8 +142,8 @@ def main() -> None:
         dt = args.step_size / refinement
         steps = args.steps * refinement
 
-        def rollout(initial):
-            def body(current, _):
+        def rollout(initial: Any) -> Any:
+            def body(current: Any, _: Any) -> Any:
                 result = model.step(current, dt)
                 return result.state, (result.total_energy, result.successful)
 

@@ -3,6 +3,8 @@
 #
 
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -15,7 +17,7 @@ from tools.open_system_campaigns import (
 )
 
 
-def test_approximation_evidence_requires_quantified_axes():
+def test_approximation_evidence_requires_quantified_axes() -> None:
     with pytest.raises(ValueError):
         phx.operators.quantum.OpenSystemApproximationEvidence(
             "empty", (), (), execution_valid=True
@@ -37,7 +39,7 @@ def test_approximation_evidence_requires_quantified_axes():
     assert bool(evidence.valid)
 
 
-def test_promotion_policy_is_fail_closed_for_unknown_physicality():
+def test_promotion_policy_is_fail_closed_for_unknown_physicality() -> None:
     quantity = phx.operators.quantum.ApproximationQuantity(
         "error",
         0.01,
@@ -69,7 +71,7 @@ def test_promotion_policy_is_fail_closed_for_unknown_physicality():
     assert not bool(decision.promoted)
 
 
-def test_pseudomode_preserves_pure_initial_state_exactly():
+def test_pseudomode_preserves_pure_initial_state_exactly() -> None:
     _, mode, _ = phx.operators.quantum.lorentzian_pseudomode(1.0, 0.5, 0.2, cutoff=3)
     initial = jnp.asarray([[1.0 + 0j, 0j], [0j, 0j]])
     problem = phx.solver.jaynes_cummings_pseudomode_problem(mode, initial)
@@ -77,7 +79,7 @@ def test_pseudomode_preserves_pure_initial_state_exactly():
     assert jnp.allclose(reduced, initial)
 
 
-def test_memory_execution_and_physicality_are_distinct():
+def test_memory_execution_and_physicality_are_distinct() -> None:
     initial = jnp.asarray([[0.6 + 0j, 0j], [0j, 0.4 + 0j]])
     result = phx.solver.solve_memory_kernel(
         phx.solver.exponential_memory_qubit_problem(0.01, 1.0, initial),
@@ -90,7 +92,7 @@ def test_memory_execution_and_physicality_are_distinct():
     assert result.physicality.status == "unknown"
 
 
-def test_process_physicality_rejects_negative_initial_state():
+def test_process_physicality_rejects_negative_initial_state() -> None:
     initial = jnp.asarray([[2.0 + 0j, 0j], [0j, -1.0 + 0j]])
     process = phx.tensor_network.markov_process_tensor(
         (jnp.eye(4, dtype="complex128"),), initial
@@ -98,7 +100,7 @@ def test_process_physicality_rejects_negative_initial_state():
     assert not bool(process.physicality().valid)
 
 
-def test_fixed_step_jump_probability_guard():
+def test_fixed_step_jump_probability_guard() -> None:
     problem = phx.solver.amplitude_damping_trajectory_problem(
         100.0, jnp.asarray([0j, 1.0 + 0j])
     )
@@ -112,7 +114,7 @@ def test_fixed_step_jump_probability_guard():
         )
 
 
-def test_gaussian_hbar_and_generator_conventions():
+def test_gaussian_hbar_and_generator_conventions() -> None:
     state = phx.metrix.BosonicGaussianState(jnp.zeros(2), jnp.eye(2), hbar=2.0)
     channel = phx.metrix.BosonicGaussianChannel(
         jnp.eye(2),
@@ -133,7 +135,7 @@ def test_gaussian_hbar_and_generator_conventions():
     assert problem.generator_cp_margin >= -1e-9
 
 
-def test_open_system_artifact_roundtrip_and_identity(tmp_path):
+def test_open_system_artifact_roundtrip_and_identity(tmp_path: Any) -> None:
     path = tmp_path / "artifact.zip"
     record = gaussian_campaign()
     write_open_system_artifact(
@@ -156,7 +158,7 @@ def test_open_system_artifact_roundtrip_and_identity(tmp_path):
         read_open_system_artifact(path, expected_campaign_id="wrong")
 
 
-def test_generic_quantum_jump_adapter():
+def test_generic_quantum_jump_adapter() -> None:
     problem = phx.solver.amplitude_damping_trajectory_problem(
         1.0, jnp.asarray([0j, 1.0 + 0j])
     )
@@ -173,7 +175,7 @@ def test_generic_quantum_jump_adapter():
     assert jnp.all(solution.valid)
 
 
-def test_local_lindblad_channel_and_purified_certificate():
+def test_local_lindblad_channel_and_purified_certificate() -> None:
     lowering = jnp.asarray([[0, 1], [0, 0]], dtype="complex128")
     prepared = phx.tensor_network.prepare_local_lindblad_channel(
         jnp.zeros((2, 2), dtype="complex128"),
@@ -199,7 +201,7 @@ def test_local_lindblad_channel_and_purified_certificate():
     assert bool(certificate.valid)
 
 
-def test_heom_bdf_grid_and_process_identifiability():
+def test_heom_bdf_grid_and_process_identifiability() -> None:
     density = jnp.asarray([[0.6 + 0j, 0j], [0j, 0.4 + 0j]])
     expansion = phx.operators.quantum.drude_lorentz_matsubara(0.01, 1.0, 2.0, 1)
     problem = phx.solver.HEOMProblem(
@@ -221,7 +223,7 @@ def test_heom_bdf_grid_and_process_identifiability():
     assert bool(grid.valid)
 
 
-def test_neural_rate_evidence_blocks_uncertain_rates():
+def test_neural_rate_evidence_blocks_uncertain_rates() -> None:
     evidence = phx.solver.NeuralRateEvidence(
         jnp.asarray([1.0]),
         jnp.asarray([1.0]),
@@ -231,7 +233,7 @@ def test_neural_rate_evidence_blocks_uncertain_rates():
     assert not bool(evidence.valid)
 
 
-def test_complex_stiefel_and_sequential_process_tomography():
+def test_complex_stiefel_and_sequential_process_tomography() -> None:
     manifold = phx.metrix.ComplexStiefelManifold(2, 2)
     isometry = jnp.eye(2, dtype="complex128")
     assert bool(manifold.contains(isometry))

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,12 +12,19 @@ import pytest
 import phydrax as phx
 
 
-def _compiled(*, continuity, backend="dense", viscosity=None, acceleration=None):
+def _compiled(
+    *,
+    continuity: Any,
+    backend: Any = "dense",
+    viscosity: Any = None,
+    acceleration: Any = None,
+) -> Any:
     count = 8
     spacing = 1.0 / count
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(count), jnp.full((count,), spacing), ambient_dimension=1
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     density = (
         phx.discretization.ContinuityDensityPlan()
@@ -50,7 +60,7 @@ def _compiled(*, continuity, backend="dense", viscosity=None, acceleration=None)
     )
 
 
-def _initial(compiled):
+def _initial(compiled: Any) -> Any:
     count = compiled.dynamics.particles.capacity
     position = (jnp.arange(count, dtype="float64") + 0.5)[:, None] / count
     position = position + 0.002 * jnp.sin(2.0 * jnp.pi * position)
@@ -58,7 +68,7 @@ def _initial(compiled):
     return compiled.initialize_state(position, velocity)
 
 
-def test_wcsph_density_formulations_have_explicit_state_and_drift_layouts():
+def test_wcsph_density_formulations_have_explicit_state_and_drift_layouts() -> None:
     summation = _compiled(continuity=False)
     continuity = _compiled(continuity=True)
     summation_state = _initial(summation)
@@ -78,12 +88,12 @@ def test_wcsph_density_formulations_have_explicit_state_and_drift_layouts():
         )
 
 
-def test_continuity_density_pressure_work_is_semidiscretely_energy_balanced():
+def test_continuity_density_pressure_work_is_semidiscretely_energy_balanced() -> None:
     compiled = _compiled(continuity=True)
     state = _initial(compiled)
     diagnostics = compiled.dynamics.diagnostics(0.0, state, None)
 
-    def total_energy(value):
+    def total_energy(value: Any) -> Any:
         position, velocity, density = compiled.dynamics.state_layout.unpack(value)
         masses = compiled.dynamics.particles.safe_masses
         return jnp.sum(
@@ -100,7 +110,7 @@ def test_continuity_density_pressure_work_is_semidiscretely_energy_balanced():
     assert jnp.allclose(diagnostics.total_energy_rate, 0.0, atol=2e-13)
 
 
-def test_summation_wcsph_pressure_acceleration_matches_barotropic_reference():
+def test_summation_wcsph_pressure_acceleration_matches_barotropic_reference() -> None:
     compiled = _compiled(continuity=False)
     state = _initial(compiled)
     position, velocity, _ = compiled.dynamics.state_layout.unpack(state)
@@ -126,8 +136,8 @@ def test_summation_wcsph_pressure_acceleration_matches_barotropic_reference():
     )
 
 
-def test_wcsph_external_acceleration_and_power_are_explicit():
-    def gravity(time, position, velocity, density, scale):
+def test_wcsph_external_acceleration_and_power_are_explicit() -> None:
+    def gravity(time: Any, position: Any, velocity: Any, density: Any, scale: Any) -> Any:
         del time, velocity, density
         return jnp.ones_like(position) * scale
 
@@ -147,7 +157,7 @@ def test_wcsph_external_acceleration_and_power_are_explicit():
     assert jnp.isfinite(diagnostics.external_power)
 
 
-def test_wcsph_step_graph_and_linearization_contracts():
+def test_wcsph_step_graph_and_linearization_contracts() -> None:
     compiled = _compiled(
         continuity=True,
         backend="cell",

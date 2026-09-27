@@ -4,11 +4,13 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 from phydrax.kernels import (
     AbstractPositiveDefiniteKernel,
@@ -18,7 +20,11 @@ from phydrax.kernels import (
 from .._doc import DOC_KEY0
 from .._measure_weights import log_weights_from_normalized
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._types import CoresetSelection, PivotedCholeskyDiagnostics
+
+
+_CholeskyCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 class RandomizedPivotedCholesky(StrictModule):
@@ -33,7 +39,7 @@ class RandomizedPivotedCholesky(StrictModule):
         /,
         *,
         kernel: AbstractPositiveDefiniteKernel | None = None,
-    ):
+    ) -> None:
         count = int(num_points)
         if count <= 0:
             raise ValueError("num_points must be positive.")
@@ -48,7 +54,7 @@ def randomized_pivoted_cholesky(
     method: RandomizedPivotedCholesky,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> CoresetSelection:
     """Select source rows using randomized residual Cholesky pivots."""
     if not isinstance(method, RandomizedPivotedCholesky):
@@ -79,7 +85,7 @@ def randomized_pivoted_cholesky(
         jnp.finfo(safe_points.dtype).eps * jnp.maximum(initial_trace, 1.0) * 32.0
     )
 
-    def body(iteration, state):
+    def body(iteration: Array, state: _CholeskyCarry) -> _CholeskyCarry:
         residual, factors, chosen, active, used = state
         eligible_residual = jnp.where(~used, jnp.maximum(residual, 0.0), 0.0)
         total = jnp.sum(eligible_residual)

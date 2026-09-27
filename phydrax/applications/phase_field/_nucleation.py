@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -44,7 +45,7 @@ class ClassicalNucleationRateLaw(StrictModule, NonTrainableState):
         spatial_dimension: int = 3,
         heterogeneous_factor: ArrayLike = 1.0,
         law_id: str,
-    ):
+    ) -> None:
         values = tuple(
             np.asarray(value)
             for value in (
@@ -185,7 +186,7 @@ class NucleationEventPlan(StrictModule, NonTrainableState):
         component_cost_density: ArrayLike,
         energy_cost_density: ArrayLike,
         radius_overshoot: float = 0.05,
-    ):
+    ) -> None:
         if not isinstance(realization, PoissonClockRealization):
             raise TypeError("realization must be PoissonClockRealization.")
         if not isinstance(rate_law, ClassicalNucleationRateLaw):

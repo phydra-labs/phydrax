@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -80,7 +83,7 @@ class PhaseFieldAdaptiveEpoch(StrictModule, NonTrainableState):
         /,
         *,
         hierarchy: BisectionHierarchy | None = None,
-    ):
+    ) -> None:
         index = int(epoch_index)
         if not isinstance(method, (PreparedAllenCahnFEM, PreparedCahnHilliardFEM)):
             raise TypeError("Adaptive phase-field method has an invalid type.")
@@ -104,7 +107,7 @@ class PhaseFieldAdaptiveEpoch(StrictModule, NonTrainableState):
         )
 
 
-def _integration_weights(discretization, field_index: int, /) -> Array:
+def _integration_weights(discretization: Any, field_index: int, /) -> Array:
     space = discretization.field_spaces[field_index].vector_space
     if not isinstance(space, ArraySpace):
         raise TypeError("Adaptive phase-field integration weights require ArraySpace.")
@@ -150,7 +153,7 @@ class PhaseFieldAdaptivityPlan(StrictModule, NonTrainableState):
         mass_tolerance: float = 1.0e-10,
         energy_tolerance: float = 1.0e-6,
         compatibility: BisectionCompatibility = BisectionCompatibility.REJECT,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (gradient_threshold, mass_tolerance, energy_tolerance)
@@ -254,6 +257,14 @@ class PhaseFieldAdaptivityPlan(StrictModule, NonTrainableState):
             )
         target_mesh = adaptation.target.mesh
         transfer = adaptation.transfer
+        if transfer is None:
+            raise RuntimeError(
+                "Native bisection adaptation did not provide its required transfer."
+            )
+        if not isinstance(adaptation.hierarchy, BisectionHierarchy):
+            raise RuntimeError(
+                "Native bisection adaptation did not provide a bisection hierarchy."
+            )
         element = lagrange_element("triangle", 1)
         if isinstance(method, PreparedAllenCahnFEM):
             if not isinstance(state, AllenCahnAcceptedState):
@@ -355,12 +366,14 @@ class PhaseFieldHPTransactionPlan(StrictModule, NonTrainableState):
     transaction: FiniteElementTopologyTransaction
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, *, mass_tolerance: float = 1.0e-10):
+    def __init__(self, *, mass_tolerance: float = 1.0e-10) -> None:
         tolerance = float(mass_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("hp phase-field mass tolerance must be nonnegative.")
 
-        def certify(epoch, fields, materials, transaction, args):
+        def certify(
+            epoch: Any, fields: Any, materials: Any, transaction: Any, args: Any
+        ) -> Any:
             del epoch, materials, args
             finite = jnp.all(
                 jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in fields))

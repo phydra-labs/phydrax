@@ -7,6 +7,7 @@ import argparse
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -15,22 +16,22 @@ import numpy as np
 import phydrax as phx
 
 
-def _identity(points, time, args):
+def _identity(points: Any, time: Any, args: Any) -> Any:
     del time, args
     return points
 
 
-def _static_plane(points, time, args):
+def _static_plane(points: Any, time: Any, args: Any) -> Any:
     del time, args
     return points[:, 0] - 0.37
 
 
-def _moving_plane(points, time, args):
+def _moving_plane(points: Any, time: Any, args: Any) -> Any:
     del args
     return points[:, 0] - (0.35 + 0.01 * time)
 
 
-def _topology(*, x_cells=1):
+def _topology(*, x_cells: Any = 1) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(x_cells),
@@ -53,7 +54,7 @@ def _topology(*, x_cells=1):
     return phx.discretization.VariablePatchTopologyCompiler(hierarchy).initial_topology()
 
 
-def _topology_2d():
+def _topology_2d() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(1),
@@ -75,7 +76,7 @@ def _topology_2d():
     return phx.discretization.VariablePatchTopologyCompiler(hierarchy).initial_topology()
 
 
-def _resources():
+def _resources() -> Any:
     return phx.discretization.BlockAMRResourcePlan(
         maximum_components_per_cell=4,
         maximum_apertures_per_face=96,
@@ -87,7 +88,7 @@ def _resources():
     )
 
 
-def _cut_plan(level_set=_static_plane, field_id="production-plane"):
+def _cut_plan(level_set: Any = _static_plane, field_id: Any = "production-plane") -> Any:
     return phx.discretization.MultivaluedCutCellPlan(
         _topology(),
         _identity,
@@ -139,7 +140,7 @@ def qualify() -> dict[str, object]:
         subdivision=4,
     ).prepare()
 
-    def slab_interval(lower, upper, time, args):
+    def slab_interval(lower: Any, upper: Any, time: Any, args: Any) -> Any:
         del time, args
         midpoint = jnp.clip(0.5, lower[0], upper[0])
         candidates = jnp.asarray(
@@ -210,6 +211,7 @@ def qualify() -> dict[str, object]:
         problem, discretization, method
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
     )
@@ -252,7 +254,7 @@ def qualify() -> dict[str, object]:
         jnp.asarray(2.0),
     )
 
-    def oscillating_plane(points, time, args):
+    def oscillating_plane(points: Any, time: Any, args: Any) -> Any:
         del args
         return points[:, 0] - (0.5 - 2.8 * (time - 0.5) ** 2)
 
@@ -300,6 +302,7 @@ def qualify() -> dict[str, object]:
         hierarchy,
         physical_component_count=2,
         method_id="production-qualification-kernel",
+        # ty: ignore[invalid-argument-type]
         dtype=np.float64,
     )
     cache_result = cache_plan.install(

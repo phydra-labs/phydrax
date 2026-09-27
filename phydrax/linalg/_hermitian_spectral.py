@@ -4,9 +4,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+import numpy as np
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
@@ -38,9 +42,9 @@ class HermitianSpectrum(StrictModule):
         matrix: ArrayLike,
         /,
         *,
-        tolerance: float = 1e-10,
+        tolerance: float | np.floating = 1e-10,
         precision: HermitianPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         original = jnp.asarray(matrix)
         precision_ = HermitianPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, HermitianPrecisionPolicy):
@@ -108,7 +112,7 @@ class HermitianFunctionResult(StrictModule):
         *,
         function_id: str,
         valid: ArrayLike,
-    ):
+    ) -> None:
         self.value = jnp.asarray(value)
         self.spectrum = spectrum
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
@@ -117,7 +121,7 @@ class HermitianFunctionResult(StrictModule):
 
 def _spectral_result(
     matrix: ArrayLike,
-    function,
+    function: Callable[[Array], Array],
     /,
     *,
     function_id: str,
@@ -232,7 +236,7 @@ class SylvesterSolveResult(StrictModule):
         valid: ArrayLike,
         precision_evidence: PrecisionEvidenceEnvelope,
         /,
-    ):
+    ) -> None:
         self.value = jnp.asarray(value)
         self.residual_norm = jnp.asarray(residual_norm)
         self.minimum_denominator = jnp.asarray(minimum_denominator)
@@ -257,7 +261,7 @@ class HermitianSylvesterOperator(StrictModule):
         *,
         tolerance: float = 1e-10,
         precision: HermitianPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = HermitianPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, HermitianPrecisionPolicy):
             raise TypeError("precision must be a HermitianPrecisionPolicy or None.")
@@ -308,7 +312,7 @@ class TracelessHermitianSpace(StrictModule):
     dimension: int = eqx.field(static=True)
     space_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /):
+    def __init__(self, dimension: int, /) -> None:
         dimension_ = int(dimension)
         if dimension_ < 2:
             raise ValueError("Density tangent dimension must be at least two.")

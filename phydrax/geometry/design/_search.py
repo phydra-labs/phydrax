@@ -9,11 +9,13 @@ from collections.abc import Mapping
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...optim import DifferentialEvolutionSearch
 from ...optim._differential_evolution import _bounded_differential_evolution
+from ...typing import PRNGKey
 from ._constraints import DesignConstraintSystem
 from ._schema import DesignState, ParameterId
 
@@ -30,7 +32,7 @@ class _DesignObjective(StrictModule):
         system: DesignConstraintSystem,
         base_state: DesignState,
         /,
-    ):
+    ) -> None:
         self.system = system
         self.base_state = base_state
 
@@ -53,6 +55,8 @@ class _DesignValidity(StrictModule):
 class DesignSearchResult(StrictModule):
     """Best design state and convergence evidence from a bounded global search."""
 
+    __strict_contract__ = True
+
     state: DesignState
     residual: Array
     residual_norm: Array
@@ -62,7 +66,7 @@ class DesignSearchResult(StrictModule):
     best_objective_history: Array
     lower_bounds: Array
     upper_bounds: Array
-    key: Key[Array, ""]
+    key: PRNGKey
     search: DifferentialEvolutionSearch
     converged: bool = eqx.field(static=True)
     termination_reason: str = eqx.field(static=True)
@@ -82,7 +86,7 @@ class DesignSearchResult(StrictModule):
         best_objective_history: Array,
         lower_bounds: Array,
         upper_bounds: Array,
-        key: Key[Array, ""],
+        key: PRNGKey,
         search: DifferentialEvolutionSearch,
         converged: bool,
         termination_reason: str,
@@ -90,7 +94,7 @@ class DesignSearchResult(StrictModule):
         objective_evaluations: int,
         invalid_evaluations: int,
         design_signature: str,
-    ):
+    ) -> None:
         residual_ = jnp.asarray(residual, dtype=jnp.float64).reshape((-1,))
         self.state = state
         self.residual = residual_
@@ -216,7 +220,7 @@ def search_design_constraints(
     search: DifferentialEvolutionSearch,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     bounds: SearchBounds | None = None,
     initial_state: DesignState | None = None,
 ) -> DesignSearchResult:

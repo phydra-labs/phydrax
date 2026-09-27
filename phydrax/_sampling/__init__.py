@@ -76,7 +76,6 @@ from ._types import (
     RandomizedQMCDesign,
     resolve_design,
     SobolDesign,
-    SUPPORTED_DESIGNS,
     UnitDesign,
 )
 
@@ -114,7 +113,6 @@ __all__ = [
     "LatinHypercubeDesign",
     "RandomizedQMCDesign",
     "UnitCubeTransport",
-    "SUPPORTED_DESIGNS",
     "SampleAddress",
     "PreparedHamiltonianKernel",
     "ProposalMove",

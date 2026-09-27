@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import abc
 import math
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -27,6 +28,10 @@ from ....geometry import (
     SignReliability,
     ZeroSetAccuracy,
 )
+
+
+if TYPE_CHECKING:
+    from ._surface3d import SurfacePanelization3D
 
 
 KernelActionSide = Literal["left", "right"]
@@ -116,7 +121,7 @@ class BoundaryCornerTopology2D(StrictModule, NonTrainableState):
         /,
         *,
         interior_angles: ArrayLike | None = None,
-    ):
+    ) -> None:
         count = int(chart_count)
         if count <= 0:
             raise ValueError("chart_count must be positive.")
@@ -168,7 +173,7 @@ class BoundaryPanelPartition2D(StrictModule, NonTrainableState):
         grading: Literal["uniform", "kress", "dyadic"] = "uniform",
         grading_order: int = 3,
         corner_topology: BoundaryCornerTopology2D | None = None,
-    ):
+    ) -> None:
         if not isinstance(atlas, BoundaryAtlas):
             raise TypeError("BoundaryPanelPartition2D requires a BoundaryAtlas.")
         panels = int(panels_per_chart)
@@ -266,7 +271,7 @@ class BoundaryPanelization2D(StrictModule, NonTrainableState):
         quadrature_order: int,
         geometry: CompiledGeometry | None = None,
         partition: BoundaryPanelPartition2D | None = None,
-    ):
+    ) -> None:
         if not isinstance(atlas, BoundaryAtlas):
             raise TypeError("BoundaryPanelization2D requires a BoundaryAtlas.")
         if atlas.ambient_dimension != 2 or atlas.reference_dimension != 1:
@@ -410,7 +415,7 @@ class LayerPotentialTargetReport(AbstractTrialSpaceAdmissibility):
         *,
         target_side: Literal["interior", "exterior", "boundary"],
         accuracy_clearance: float = 0.0,
-    ):
+    ) -> None:
         values = jnp.asarray(targets, dtype=jnp.float64)
         if values.ndim == 1:
             values = values[None, :]
@@ -505,14 +510,14 @@ class BoundaryOperatorAssemblyReport(StrictModule, NonTrainableState):
     def __init__(
         self,
         *,
-        panelization: BoundaryPanelization2D,
+        panelization: BoundaryPanelization2D | SurfacePanelization3D,
         kernel_id: str,
         policy_id: str,
         trace_policy: str,
         block_status: ArrayLike,
         block_errors: ArrayLike,
         block_evaluations: ArrayLike,
-    ):
+    ) -> None:
         statuses = jnp.asarray(block_status, dtype=jnp.int32).reshape((-1,))
         errors = jnp.asarray(block_errors).reshape((-1,))
         evaluations = jnp.asarray(block_evaluations, dtype=jnp.int32).reshape((-1,))
@@ -563,11 +568,11 @@ class LayerDiscretizationReport(StrictModule, NonTrainableState):
     def __init__(
         self,
         *,
-        panelization: BoundaryPanelization2D,
+        panelization: BoundaryPanelization2D | SurfacePanelization3D,
         kernel_id: str,
         density_space: str,
         trace_policy: str,
-    ):
+    ) -> None:
         if not kernel_id or not density_space or not trace_policy:
             raise ValueError("Layer discretization identifiers must be nonempty.")
         self.panelization_id = panelization.panelization_id

@@ -12,10 +12,10 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._coefficients import PrimeField
-from ._complex import compact_boundary
+from ._complex import CellComplexPair, CellSubcomplex, compact_boundary
 from ._integer import block_matrix, ExactChainComplex, ExactIntegerCOO
 from ._maps import CellularChainMap
-from ._reduction import field_rank
+from ._reduction import field_rank, FieldVector
 from ._resources import TopologyReductionEvidence, TopologyResourcePolicy
 
 
@@ -36,7 +36,7 @@ class MappingConeResult(StrictModule, NonTrainableState):
         dimensions: Sequence[int],
         evidence: TopologyReductionEvidence,
         /,
-    ):
+    ) -> None:
         values = tuple(dimensions)
         if len(values) != len(cone.counts) or any(value < 0 for value in values):
             raise ValueError("Mapping-cone dimensions do not match the chain complex.")
@@ -56,7 +56,9 @@ class MappingConeResult(StrictModule, NonTrainableState):
         )
 
 
-def _boundary_matrix(complex, degree: int, /) -> ExactIntegerCOO:
+def _boundary_matrix(
+    complex: CellSubcomplex | CellComplexPair, degree: int, /
+) -> ExactIntegerCOO:
     return ExactIntegerCOO.from_boundary(compact_boundary(complex, degree))
 
 
@@ -129,8 +131,8 @@ def mapping_cone(chain_map: CellularChainMap, /) -> ExactChainComplex:
     )
 
 
-def _field_columns(matrix: ExactIntegerCOO, field: PrimeField, /):
-    columns = []
+def _field_columns(matrix: ExactIntegerCOO, field: PrimeField, /) -> list[FieldVector]:
+    columns: list[FieldVector] = []
     for column in matrix.columns():
         values = {
             row: field.normalize(value)

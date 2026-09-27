@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -105,7 +106,7 @@ def _parameters() -> ThermalEquivalentCircuitParameters:
     )
 
 
-def _analytic_segment(times, initial, a, b, /):
+def _analytic_segment(times: Any, initial: Any, a: Any, b: Any, /) -> Any:
     """Exact one-RC solution for the physical boundary I = a + b w.
 
     The fixed cases avoid coincident thermal/electrical rates. This reference
@@ -135,7 +136,7 @@ def _analytic_segment(times, initial, a, b, /):
     )
     second_heat = series * current_amplitude**2 + amplitude**2 / resistance
 
-    def convolution(decay):
+    def convolution(decay: Any) -> Any:
         return (np.exp(-decay * t) - np.exp(-ambient_rate * t)) / (ambient_rate - decay)
 
     temperature = 300.0 + (temperature0 - 300.0) * np.exp(-ambient_rate * t)
@@ -148,7 +149,7 @@ def _analytic_segment(times, initial, a, b, /):
     return np.stack((charge, polarization, temperature, current, voltage), axis=-1)
 
 
-def analytic_outputs(case: str, times, /) -> np.ndarray:
+def analytic_outputs(case: str, times: Any, /) -> np.ndarray:
     initial = (400.0, 0.0, 300.0)
     times = np.asarray(times, dtype="float64")
     if case in ("charge-rest", "discharge-rest"):
@@ -222,6 +223,7 @@ def prepare_campaign(sample_times_s: Sequence[float], /) -> PreparedCampaign:
             ),
         )
         experiment = BatteryExperimentPlan(
+            # ty: ignore[invalid-argument-type]
             adapter,
             protocol,
             BatteryOutputPlan(_OUTPUTS),
@@ -240,7 +242,7 @@ def prepare_campaign(sample_times_s: Sequence[float], /) -> PreparedCampaign:
         experiments.append(experiment)
         values.append(BatteryProtocolValues(protocol, jnp.asarray(amplitude)))
 
-    def execute():
+    def execute() -> Any:
         return tuple(
             experiment.run(parameters, initial, protocol_values)
             for experiment, protocol_values in zip(experiments, values, strict=True)
@@ -260,7 +262,9 @@ def prepare_campaign(sample_times_s: Sequence[float], /) -> PreparedCampaign:
     )
 
 
-def raw_output(spec, executed, campaign_directory: Path, /) -> dict[str, object]:
+def raw_output(
+    spec: Any, executed: Any, campaign_directory: Path, /
+) -> dict[str, object]:
     del spec, campaign_directory
     if not isinstance(executed, tuple) or len(executed) != len(CIRCUIT_ECM_CASE_IDS):
         raise ValueError("Circuit campaign output must contain every ordered case.")

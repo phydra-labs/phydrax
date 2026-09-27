@@ -5,13 +5,14 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _mesh():
+def _mesh() -> Any:
     return phx.geometry.TriangleMesh(
         jnp.asarray(
             (
@@ -27,7 +28,7 @@ def _mesh():
     )
 
 
-def _manifest():
+def _manifest() -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         "synthetic-superconducting-material",
         checksum_algorithm="sha256",
@@ -45,7 +46,7 @@ def _manifest():
     )
 
 
-def build_quasiclassical_case():
+def build_quasiclassical_case() -> Any:
     velocities = 1.0e6 * jnp.asarray(((1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0)))
     fermi = phx.applications.superconductivity.FermiSurfacePlan(
         velocities,
@@ -74,7 +75,7 @@ def build_quasiclassical_case():
     return equilibrium, gap
 
 
-def build_cable_case():
+def build_cable_case() -> Any:
     material = phx.equations.SuperconductingMaterialLawPlan(
         jnp.asarray((2.0, 10.0, 19.0)),
         jnp.asarray((0.0, 5.0)),

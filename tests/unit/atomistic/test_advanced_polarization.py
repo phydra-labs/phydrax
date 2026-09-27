@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -39,7 +41,7 @@ from phydrax.atomistic._polarization import (
 )
 
 
-def _multipoles(charges, polarizabilities, *, damping=4.0):
+def _multipoles(charges: Any, polarizabilities: Any, *, damping: Any = 4.0) -> Any:
     count = len(charges)
     return PermanentMultipoleSiteData(
         charges,
@@ -50,13 +52,13 @@ def _multipoles(charges, polarizabilities, *, damping=4.0):
     )
 
 
-def _two_site_case():
+def _two_site_case() -> Any:
     positions = jnp.asarray([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
     multipoles = _multipoles([1.0, -1.0], [0.1, 0.2], damping=10.0)
     return positions, multipoles
 
 
-def test_small_analytic_induced_dipoles_and_jit():
+def test_small_analytic_induced_dipoles_and_jit() -> None:
     positions, multipoles = _two_site_case()
     plan = PolarizationPlan(maximum_iterations=12, tolerance=1.0e-6)
     prepared = plan.prepare(multipoles)
@@ -76,7 +78,7 @@ def test_small_analytic_induced_dipoles_and_jit():
     np.testing.assert_allclose(compiled, expected, rtol=2.0e-5, atol=2.0e-7)
 
 
-def test_pcg_tcg_parity_and_fixed_tcg_order():
+def test_pcg_tcg_parity_and_fixed_tcg_order() -> None:
     positions, multipoles = _two_site_case()
     pcg = (
         PolarizationPlan(
@@ -107,7 +109,7 @@ def test_pcg_tcg_parity_and_fixed_tcg_order():
     )
 
 
-def test_polarizability_preconditioner_is_local_inverse_diagonal():
+def test_polarizability_preconditioner_is_local_inverse_diagonal() -> None:
     positions, multipoles = _two_site_case()
     operator = PolarizationPlan().operator.prepare(multipoles)
     residual = jnp.asarray([[1.0, -2.0, 3.0], [4.0, -5.0, 6.0]])
@@ -153,7 +155,7 @@ def test_polarizability_preconditioner_is_local_inverse_diagonal():
     )
 
 
-def test_solver_convergence_and_force_validity_are_separate_gates():
+def test_solver_convergence_and_force_validity_are_separate_gates() -> None:
     positions, multipoles = _two_site_case()
     plan = PolarizationPlan(
         maximum_iterations=1,
@@ -179,7 +181,7 @@ def test_solver_convergence_and_force_validity_are_separate_gates():
     assert not bool(unstable.successful)
 
 
-def test_retained_result_types_preserve_keyword_construction():
+def test_retained_result_types_preserve_keyword_construction() -> None:
     state = PolarizationState(
         induced_dipoles=jnp.zeros((1, 3)),
         residual=jnp.asarray(0.0),
@@ -197,7 +199,7 @@ def test_retained_result_types_preserve_keyword_construction():
     assert bool(evaluation.successful)
 
 
-def test_predictor_warm_start_reuses_fixed_shape_history():
+def test_predictor_warm_start_reuses_fixed_shape_history() -> None:
     positions, multipoles = _two_site_case()
     prepared = PolarizationPlan(maximum_iterations=12, tolerance=1.0e-6).prepare(
         multipoles
@@ -213,7 +215,7 @@ def test_predictor_warm_start_reuses_fixed_shape_history():
     assert bool(warm.successful)
 
 
-def test_d_p_u_scaling_semantics_remain_distinct():
+def test_d_p_u_scaling_semantics_remain_distinct() -> None:
     positions, multipoles = _two_site_case()
     off_diagonal = np.ones((2, 2)) - np.eye(2)
     scaling = PolarizationScaleData(
@@ -236,10 +238,11 @@ def test_d_p_u_scaling_semantics_remain_distinct():
     np.testing.assert_allclose(result.u_field, 0.25 * full_result.u_field)
 
 
-def test_zero_alpha_sources_and_fully_excluded_coincident_pairs_are_masked():
+def test_zero_alpha_sources_and_fully_excluded_coincident_pairs_are_masked() -> None:
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]])
     multipoles = _multipoles([0.0, 0.0], [0.2, 0.0])
     operator = PolarizationPlan().operator.prepare(multipoles)
+    # ty: ignore[invalid-argument-type]
     result = operator.apply(positions, [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
     np.testing.assert_allclose(result.u_field, 0.0, atol=1.0e-8)
     np.testing.assert_allclose(result.action[0], 0.0, atol=1.0e-8)
@@ -268,7 +271,7 @@ def test_zero_alpha_sources_and_fully_excluded_coincident_pairs_are_masked():
     np.testing.assert_allclose(coincident.u_field, 0.0)
 
 
-def test_envelope_force_and_implicit_jvp_match_finite_differences():
+def test_envelope_force_and_implicit_jvp_match_finite_differences() -> None:
     positions, multipoles = _two_site_case()
     plan = PolarizationPlan(
         maximum_iterations=16, tolerance=1.0e-6, force_tolerance=2.0e-6
@@ -298,7 +301,7 @@ def test_envelope_force_and_implicit_jvp_match_finite_differences():
     np.testing.assert_allclose(tangent, finite_tangent, rtol=4.0e-3, atol=2.0e-5)
 
 
-def test_periodic_multipole_contract_is_bidirectional_and_fail_closed():
+def test_periodic_multipole_contract_is_bidirectional_and_fail_closed() -> None:
     positions, multipoles = _two_site_case()
     nonperiodic = PolarizationPlan().prepare(multipoles)
     with pytest.raises(ValueError, match="cell_vectors require"):
@@ -372,7 +375,7 @@ def test_periodic_multipole_contract_is_bidirectional_and_fail_closed():
     assert bool(jnp.isnan(evaluation.energy))
 
 
-def _advanced_terms():
+def _advanced_terms() -> Any:
     positions = jnp.asarray(
         [
             [1.0, 0.0, 0.2],
@@ -386,15 +389,21 @@ def _advanced_terms():
     terms = (
         Buffered147Potential(np.full(count, 0.55), np.full(count, 0.2)),
         ChargePenetrationPotential(
+            # ty: ignore[invalid-argument-type]
             [0.5, 0.4, 0.3, 0.2],
+            # ty: ignore[invalid-argument-type]
             [-0.4, -0.3, -0.2, -0.1],
             np.full(count, 1.6),
         ),
         ChargeTransferPotential(np.full(count, 0.3), np.full(count, 1.7)),
         ChargeFluxPotential(
+            # ty: ignore[invalid-argument-type]
             [0.2, -0.1, -0.1, 0.0],
+            # ty: ignore[invalid-argument-type]
             [[0, 1]],
+            # ty: ignore[invalid-argument-type]
             [0.03],
+            # ty: ignore[invalid-argument-type]
             [1.0],
             empty_angles,
             np.empty((0, 2)),
@@ -407,15 +416,20 @@ def _advanced_terms():
             c10=np.full(count, 0.01),
         ),
         PauliRepulsionPotential(np.full(count, 1.2), np.full(count, 2.0)),
+        # ty: ignore[invalid-argument-type]
         StretchBendPotential(count, [[0, 1, 2]], [[0.2, -0.1]], [[1.0, 1.1]], [1.4]),
+        # ty: ignore[invalid-argument-type]
         AngleAnglePotential(count, [[0, 1, 2, 3]], [0.15], [[1.4, 1.2]]),
+        # ty: ignore[invalid-argument-type]
         OutOfPlaneBendPotential(count, [[0, 1, 2, 3]], [0.4]),
     )
     return positions, terms
 
 
 @pytest.mark.parametrize("term_index", range(9))
-def test_advanced_energy_terms_are_invariant_and_forces_are_gradients(term_index):
+def test_advanced_energy_terms_are_invariant_and_forces_are_gradients(
+    term_index: Any,
+) -> None:
     positions, terms = _advanced_terms()
     term = terms[term_index]
     evaluation = evaluate_polarizable_term(term, positions)
@@ -437,7 +451,8 @@ def test_advanced_energy_terms_are_invariant_and_forces_are_gradients(term_index
     np.testing.assert_allclose(analytic, finite_difference, rtol=5.0e-3, atol=5.0e-5)
 
 
-def test_tang_toennies_dispersion_is_stable_at_short_range():
+def test_tang_toennies_dispersion_is_stable_at_short_range() -> None:
+    # ty: ignore[invalid-argument-type]
     term = DampedDispersionPotential([0.2, 0.3], [2.0, 2.4])
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.0e-4, 0.0, 0.0]])
     evaluation = evaluate_polarizable_term(term, positions)
@@ -446,7 +461,7 @@ def test_tang_toennies_dispersion_is_stable_at_short_range():
     assert bool(jnp.all(jnp.isfinite(evaluation.forces)))
 
 
-def test_charge_flux_conserves_total_charge_and_force_field_is_coherent():
+def test_charge_flux_conserves_total_charge_and_force_field_is_coherent() -> None:
     positions, terms = _advanced_terms()
     charge_flux = terms[3]
     charges = charge_flux.charges(positions)

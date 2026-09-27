@@ -17,11 +17,13 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ...discretization import TemporalMesh
+from ...typing import PRNGKey
 from ._action import kinetic_action, potential_action
 from ._sampling import _endpoints, brownian_bridge_from_noise
 
@@ -48,7 +50,7 @@ class RealTimePathIntegralPlan(StrictModule):
         num_paths: int,
         chunk_size: int | None = None,
         minimum_mean_phase: float = 1e-3,
-    ):
+    ) -> None:
         if not isinstance(slicing, TemporalMesh) or slicing.role != "path":
             raise TypeError("slicing must be a uniform path TemporalMesh.")
         mass_, hbar_, regulator_ = float(mass), float(hbar), float(regulator)
@@ -77,7 +79,7 @@ class RealTimeRegulatorContinuation(StrictModule):
 
     regulators: tuple[float, ...] = eqx.field(static=True)
 
-    def __init__(self, regulators: Sequence[float], /):
+    def __init__(self, regulators: Sequence[float], /) -> None:
         values = tuple(float(value) for value in regulators)
         if not values or any(not np.isfinite(value) or value <= 0.0 for value in values):
             raise ValueError("regulators must be a nonempty finite positive sequence.")
@@ -193,7 +195,7 @@ def real_time_kernel(
     /,
     *,
     plan: RealTimePathIntegralPlan,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> OscillatoryPathIntegralEstimate:
     start, _ = _endpoints(x0, x1)
     if start.ndim != 1:

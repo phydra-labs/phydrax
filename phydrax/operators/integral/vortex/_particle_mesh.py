@@ -9,7 +9,7 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -80,7 +80,7 @@ class PeriodicVortexInCellPlan(AbstractVortexVelocityPlan):
         execution: SplatExecutionPolicy | None = None,
         precision: VortexPrecisionPolicy | None = None,
         compatibility_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         if not isinstance(particles, ParticleDiscretization):
             raise TypeError("particles must be ParticleDiscretization.")
         if not isinstance(grid, PreparedTensorGrid):
@@ -211,7 +211,7 @@ class PreparedPeriodicVortexInCell(AbstractPreparedVortexVelocity):
         transfer: PreparedParticleGridSplat,
         compatibility: VortexVelocityCompatibility,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.transfer = transfer
         self.capabilities = plan.capabilities

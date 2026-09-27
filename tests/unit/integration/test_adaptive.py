@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -14,7 +16,7 @@ import phydrax as phx
         phx.integration.TanhSinhRule(3),
     ],
 )
-def test_adaptive_rules_share_one_plan_and_estimate_contract(rule):
+def test_adaptive_rules_share_one_plan_and_estimate_contract(rule: Any) -> None:
     domain = phx.domain.ScalarInterval(-1.0, 2.0, label="x")
     function = domain.Function("x")(lambda x: x**4 - 2.0 * x + 1.0)
     plan = phx.integration.AdaptiveQuadraturePlan(
@@ -36,7 +38,7 @@ def test_adaptive_rules_share_one_plan_and_estimate_contract(rule):
     assert estimate.diagnostics.partition is not None
 
 
-def test_adaptive_callable_interval_reuses_plan_and_diagnostics():
+def test_adaptive_callable_interval_reuses_plan_and_diagnostics() -> None:
     plan = phx.integration.AdaptiveQuadraturePlan(
         absolute_tolerance=1e-10,
         relative_tolerance=1e-10,
@@ -56,7 +58,7 @@ def test_adaptive_callable_interval_reuses_plan_and_diagnostics():
     assert estimate.diagnostics.partition is not None
 
 
-def test_adaptive_breakpoints_cover_each_initial_subinterval():
+def test_adaptive_breakpoints_cover_each_initial_subinterval() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     function = domain.Function("x")(lambda x: jnp.abs(x - 0.3))
     plan = phx.integration.AdaptiveQuadraturePlan(
@@ -76,7 +78,7 @@ def test_adaptive_breakpoints_cover_each_initial_subinterval():
     assert estimate.diagnostics.partition.count >= 2
 
 
-def test_adaptive_resource_failure_is_status_when_throw_is_false():
+def test_adaptive_resource_failure_is_status_when_throw_is_false() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     function = domain.Function("x")(lambda x: jnp.sin(100.0 * x))
     plan = phx.integration.AdaptiveQuadraturePlan(
@@ -96,7 +98,7 @@ def test_adaptive_resource_failure_is_status_when_throw_is_false():
     assert not estimate.successful
 
 
-def test_adaptive_nonfinite_integrand_has_distinct_status():
+def test_adaptive_nonfinite_integrand_has_distinct_status() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     function = domain.Function("x")(lambda x: jnp.where(x > 0.5, jnp.nan, x))
     plan = phx.integration.AdaptiveQuadraturePlan(max_intervals=4, throw=False)
@@ -108,7 +110,7 @@ def test_adaptive_nonfinite_integrand_has_distinct_status():
     assert estimate.status == int(phx.integration.IntegrationStatus.NONFINITE_INTEGRAND)
 
 
-def test_adaptive_execution_is_jittable_and_differentiable():
+def test_adaptive_execution_is_jittable_and_differentiable() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     target = phx.integration.over(domain.component())
     plan = phx.integration.AdaptiveQuadraturePlan(
@@ -117,7 +119,7 @@ def test_adaptive_execution_is_jittable_and_differentiable():
         max_intervals=16,
     )
 
-    def objective(coefficient):
+    def objective(coefficient: Any) -> Any:
         function = domain.Function("x")(lambda x: coefficient * x**2)
         return phx.integration.integrate(function, target, plan).value.data
 
@@ -130,7 +132,7 @@ def test_adaptive_execution_is_jittable_and_differentiable():
     assert jnp.allclose(gradient, 1.0 / 3.0, atol=1e-12)
 
 
-def test_normalized_adaptive_density_uses_density_in_both_ratio_terms():
+def test_normalized_adaptive_density_uses_density_in_both_ratio_terms() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     function = domain.Function("x")(lambda x: x)
     log_density = domain.Function("x")(lambda x: jnp.log1p(x))
@@ -152,7 +154,7 @@ def test_normalized_adaptive_density_uses_density_in_both_ratio_terms():
     assert estimate.error_kind == "ratio-embedded-rule"
 
 
-def test_adaptive_initial_rule_never_exceeds_evaluation_budget():
+def test_adaptive_initial_rule_never_exceeds_evaluation_budget() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     function = domain.Function("x")(lambda x: jnp.ones_like(x))
     plan = phx.integration.AdaptiveQuadraturePlan(
@@ -173,7 +175,7 @@ def test_adaptive_initial_rule_never_exceeds_evaluation_budget():
     assert not estimate.successful
 
 
-def test_adaptive_ratio_rechecks_the_propagated_error_tolerance():
+def test_adaptive_ratio_rechecks_the_propagated_error_tolerance() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     function = domain.Function("x")(lambda x: jnp.exp(3.0 * x))
     log_density = domain.Function("x")(lambda x: -5.0 + 2.0 * x)
@@ -191,12 +193,13 @@ def test_adaptive_ratio_rechecks_the_propagated_error_tolerance():
 
     estimate = phx.integration.integrate(function, target, plan)
 
+    # ty: ignore[unsupported-operator]
     assert estimate.error_estimate > plan.absolute_tolerance
     assert estimate.status == int(phx.integration.IntegrationStatus.REFINEMENT_STAGNATION)
     assert not estimate.successful
 
 
-def test_adaptive_component_sum_applies_aggregate_throw_policy():
+def test_adaptive_component_sum_applies_aggregate_throw_policy() -> None:
     x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     t = phx.domain.ScalarInterval(0.0, 1.0, label="t")
     domain = phx.domain.ProductDomain(x, t)
@@ -218,6 +221,7 @@ def test_adaptive_component_sum_applies_aggregate_throw_policy():
 
     estimate = phx.integration.integrate(function, target, plan)
 
+    # ty: ignore[unsupported-operator]
     assert estimate.error_estimate > plan.relative_tolerance * jnp.abs(
         estimate.value.data
     )

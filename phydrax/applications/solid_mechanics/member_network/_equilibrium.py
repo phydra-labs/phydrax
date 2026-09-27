@@ -11,7 +11,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -82,7 +83,7 @@ class MemberNetworkTolerances(StrictModule, NonTrainableState):
         minimum_length: float = 1.0e-12,
         maximum_rotation: float = 3.0,
         strict_cable_margin: float = 1.0e-7,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -126,7 +127,7 @@ class MemberNetworkInputs(StrictModule):
         initial_strain: ArrayLike | None = None,
         initial_temperature: ArrayLike | None = None,
         cable_active: ArrayLike | None = None,
-    ):
+    ) -> None:
         prescribed_positions_ = jnp.asarray(prescribed_positions)
         dtype = prescribed_positions_.dtype
         self.prescribed_positions = prescribed_positions_
@@ -165,7 +166,7 @@ class MemberNetworkProblem(StrictModule, NonTrainableState):
         *,
         tolerances: MemberNetworkTolerances | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(definition, MemberNetworkDefinition):
             raise TypeError("definition must be a MemberNetworkDefinition.")
         if not isinstance(assembly, MemberNetworkAssembly):
@@ -412,10 +413,15 @@ def _nonlinear_problem(
 ) -> NonlinearSystemProblem:
     space = ArraySpace((problem.definition.dofs.reduced_size,), dtype=dtype)
 
-    def residual(reduced, inputs):
+    def residual(reduced: Array, inputs: MemberNetworkInputs) -> Array:
         return _residual(problem, reduced, inputs)
 
-    def validity(reduced, residual_value, auxiliary, inputs):
+    def validity(
+        reduced: Array,
+        residual_value: Array,
+        auxiliary: object,
+        inputs: MemberNetworkInputs,
+    ) -> Array:
         del residual_value, auxiliary
         definition = _dynamic_definition(problem, inputs)
         kinematics = definition.dofs.expand(
@@ -441,7 +447,7 @@ def _nonlinear_problem(
             & assembly.valid
         )
 
-    def linear_setup(reduced, inputs):
+    def linear_setup(reduced: Array, inputs: MemberNetworkInputs) -> DenseLinearOperator:
         return _tangent_setup_operator(problem, inputs, reduced)
 
     return NonlinearSystemProblem(
@@ -515,6 +521,11 @@ def plan_member_network(
     )
     precision_ = NonlinearPrecisionPolicy() if precision is None else precision
     if derivative_policy is None and uses_linear_setup:
+        # uses_linear_setup is only set for the default NewtonKrylov method.
+        if not (isinstance(method, NewtonKrylov)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(method, NewtonKrylov)."
+            )
         derivative_linear_policy = eqx.tree_at(
             lambda selected: selected.preconditioning,
             method.linear_policy,
@@ -631,7 +642,7 @@ def _full_internal(
 ) -> tuple[Array, Array]:
     definition = _dynamic_definition(problem, inputs)
 
-    def energy(positions, rotations):
+    def energy(positions: Array, rotations: Array) -> Array:
         return problem.assembly.evaluate(
             definition, MemberKinematics(positions, rotations)
         ).energy
@@ -790,7 +801,7 @@ def member_network_equilibrium(
     inputs: MemberNetworkInputs,
     initial_kinematics: MemberKinematics,
     /,
-    **plan_options,
+    **plan_options: Any,
 ) -> MemberNetworkResult:
     plan = plan_member_network(
         problem,

@@ -2,7 +2,7 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from typing import Literal
+from typing import Any, Literal
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -15,7 +15,7 @@ from phydrax.nn.models import LatentContractionModel, LatentExecutionPolicy, MLP
 FlatTopology = Literal["flat", "best_effort_flat", "strict_flat"]
 
 
-def _as_scalar(x):
+def _as_scalar(x: Any) -> Any:
     arr = jnp.asarray(x)
     if arr.ndim == 0:
         return arr
@@ -32,7 +32,7 @@ class XYLatentModel(_AbstractBaseModel):
         self.in_size = 2
         self.out_size = 2
 
-    def __call__(self, x, /, *, key=jr.key(0)):
+    def __call__(self, x: Any, /, *, key: Any = jr.key(0)) -> Any:
         x = jnp.asarray(x)
         return jnp.stack([x[0] + x[1], x[0] - x[1]], axis=-1)
 
@@ -45,12 +45,12 @@ class ScalarLatentModel(_AbstractBaseModel):
         self.in_size = "scalar"
         self.out_size = 2
 
-    def __call__(self, x, /, *, key=jr.key(0)):
+    def __call__(self, x: Any, /, *, key: Any = jr.key(0)) -> Any:
         x = _as_scalar(x)
         return jnp.stack([x, 2.0 * x], axis=-1)
 
 
-def test_latent_contraction_mixed_inputs_shape_and_values():
+def test_latent_contraction_mixed_inputs_shape_and_values() -> None:
     model = LatentContractionModel(
         latent_size=2,
         out_size="scalar",
@@ -69,7 +69,7 @@ def test_latent_contraction_mixed_inputs_shape_and_values():
     assert jnp.allclose(out, expected)
 
 
-def test_latent_contraction_aligned_points():
+def test_latent_contraction_aligned_points() -> None:
     model = LatentContractionModel(
         latent_size=2,
         out_size="scalar",
@@ -89,7 +89,7 @@ def test_latent_contraction_aligned_points():
     assert jnp.allclose(out, expected)
 
 
-def test_latent_contraction_dense_factor_batches():
+def test_latent_contraction_dense_factor_batches() -> None:
     model = LatentContractionModel(
         latent_size=2,
         out_size="scalar",
@@ -112,7 +112,7 @@ def test_latent_contraction_dense_factor_batches():
 
 
 @pytest.mark.parametrize("topology", ("flat", "best_effort_flat", "strict_flat"))
-def test_latent_contraction_flat_topologies_match_grouped(topology: FlatTopology):
+def test_latent_contraction_flat_topologies_match_grouped(topology: FlatTopology) -> None:
     grouped = LatentContractionModel(
         latent_size=2,
         out_size="scalar",
@@ -134,7 +134,7 @@ def test_latent_contraction_flat_topologies_match_grouped(topology: FlatTopology
     assert jnp.allclose(out, expected)
 
 
-def test_latent_contraction_aligned_scan_matches_loop_for_homogeneous_factors():
+def test_latent_contraction_aligned_scan_matches_loop_for_homogeneous_factors() -> None:
     latent_size = 4
     out_size = 2
     m1 = MLP(
@@ -176,7 +176,7 @@ def test_latent_contraction_aligned_scan_matches_loop_for_homogeneous_factors():
     assert jnp.allclose(out_scan, out_loop)
 
 
-def test_latent_contraction_scan_falls_back_when_aligned_factors_not_uniform():
+def test_latent_contraction_scan_falls_back_when_aligned_factors_not_uniform() -> None:
     latent_size = 4
     out_size = 2
     scalar_model = MLP(

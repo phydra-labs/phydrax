@@ -12,8 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 
@@ -26,6 +27,7 @@ from ..stochastic._state_space import (
     LinearGaussianTransitionKernel,
     StateSpaceProblem,
 )
+from ..typing import parse
 from ._kalman import kalman_filter, KalmanExecutionMethod
 from ._posterior_terms import AbstractPosteriorTerm
 
@@ -187,14 +189,11 @@ class StateSpaceMarginalLikelihood(AbstractPosteriorTerm):
         covariance_regularization: float = 0.0,
         temporal_method: KalmanExecutionMethod = "auto",
         label: str = "state_space",
-    ):
+    ) -> None:
         if not callable(problem):
             raise TypeError("problem must be callable.")
-        _validate_method(method)
-        if temporal_method not in ("sequential", "parallel", "auto"):
-            raise ValueError(
-                "temporal_method must be 'sequential', 'parallel', or 'auto'."
-            )
+        method = _validate_method(method)
+        temporal_method = parse(temporal_method, KalmanExecutionMethod, "temporal_method")
         regularization = float(covariance_regularization)
         if not np.isfinite(regularization) or regularization < 0.0:
             raise ValueError("covariance_regularization must be finite and nonnegative.")
@@ -245,13 +244,12 @@ class StateSpaceIdentifiabilityReport(StrictModule):
         return self.finite and self.numerical_rank == self.dimension
 
 
-def _validate_method(method: str, /) -> None:
-    if method not in ("auto", "kalman", "finite-state"):
-        raise ValueError("method must be 'auto', 'kalman', or 'finite-state'.")
+def _validate_method(method: str, /) -> ExactStateSpaceMethod:
+    return parse(method, ExactStateSpaceMethod, "method")
 
 
 def _resolved_method(problem: StateSpaceProblem, method: ExactStateSpaceMethod, /) -> str:
-    _validate_method(method)
+    method = _validate_method(method)
     prior = problem.model.prior
     transition = problem.model.transition
     observation = problem.model.observation
@@ -825,8 +823,7 @@ def exact_state_space_log_likelihood(
     """Evaluate an exact Kalman or finite-state marginal likelihood."""
     if not isinstance(problem, StateSpaceProblem):
         raise TypeError("problem must be a StateSpaceProblem.")
-    if temporal_method not in ("sequential", "parallel", "auto"):
-        raise ValueError("temporal_method must be 'sequential', 'parallel', or 'auto'.")
+    temporal_method = parse(temporal_method, KalmanExecutionMethod, "temporal_method")
     resolved = _resolved_method(problem, method)
     if resolved == "kalman":
         backend = kalman_filter(

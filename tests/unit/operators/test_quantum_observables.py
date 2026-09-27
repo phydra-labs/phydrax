@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -28,13 +31,13 @@ from phydrax.tensor_network import (
 )
 
 
-def _paulis():
+def _paulis() -> Any:
     x = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128)
     z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=jnp.complex128)
     return x, z
 
 
-def test_local_observable_state_density_and_target_order():
+def test_local_observable_state_density_and_target_order() -> None:
     layout = HilbertRegisterLayout(("a", "b"), (2, 2))
     _, z = _paulis()
     state = jnp.asarray([0.0, 1.0, 0.0, 0.0], dtype=jnp.complex128)
@@ -54,7 +57,7 @@ def test_local_observable_state_density_and_target_order():
     assert jnp.allclose(local_state_expectation(layout, ordered, state), 3.0)
 
 
-def test_dense_observable_plan_groups_targets_and_preserves_output_order():
+def test_dense_observable_plan_groups_targets_and_preserves_output_order() -> None:
     layout = HilbertRegisterLayout(("a", "b"), (2, 2))
     x, z = _paulis()
     program = QuantumProgram(
@@ -80,7 +83,7 @@ def test_dense_observable_plan_groups_targets_and_preserves_output_order():
     assert jnp.allclose(result.real_values, jnp.asarray([1.0, 0.0, 1.0]))
 
 
-def test_dense_observable_plan_supports_state_and_density_batches():
+def test_dense_observable_plan_supports_state_and_density_batches() -> None:
     layout = HilbertRegisterLayout(("q",), (2,))
     _, z = _paulis()
     observable = LocalObservable(z, ("q",))
@@ -108,7 +111,7 @@ def test_dense_observable_plan_supports_state_and_density_batches():
     assert jnp.allclose(density_result.real_values, expected)
 
 
-def test_nonhermitian_observable_is_not_certified_real():
+def test_nonhermitian_observable_is_not_certified_real() -> None:
     layout = HilbertRegisterLayout(("q",), (2,))
     raising = LocalObservable(
         jnp.asarray([[0.0, 1.0], [0.0, 0.0]], dtype=jnp.complex128),
@@ -130,7 +133,7 @@ def test_nonhermitian_observable_is_not_certified_real():
     )
 
 
-def test_tensor_network_local_observables_match_dense_and_reject_multisite():
+def test_tensor_network_local_observables_match_dense_and_reject_multisite() -> None:
     layout = HilbertRegisterLayout(("a", "b"), (2, 2))
     _, z = _paulis()
     observable = LocalObservable(z, ("b",))

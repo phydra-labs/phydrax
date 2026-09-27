@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -11,7 +13,7 @@ _M2_PER_KG = phx.units.derived_unit(
 )
 
 
-def _manifest():
+def _manifest() -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         "synthetic-diagnostic-photon-table",
         checksum_algorithm="sha256",
@@ -29,7 +31,7 @@ def _manifest():
     )
 
 
-def _provenance():
+def _provenance() -> Any:
     return phx.nuclear.NuclearDataProvenance(
         _manifest(),
         "https://example.invalid/synthetic-diagnostic-photon",
@@ -39,11 +41,11 @@ def _provenance():
     )
 
 
-def _energy_grid():
+def _energy_grid() -> Any:
     return phx.equations.PhotonEnergyGrid(np.asarray((40.0, 80.0)) * 1.602176634e-16)
 
 
-def _support():
+def _support() -> Any:
     contract = phx.SpatialCoordinateContract(
         phx.units.METER,
         coordinate_system="cartesian-world",
@@ -59,7 +61,9 @@ def _support():
     return phx.imaging.tomography.ProjectionSupport(rays, (1,), ("view-0",))
 
 
-def _protocol(grid, *, exposure_basis="absolute", dark=5.0, gain=3.0):
+def _protocol(
+    grid: Any, *, exposure_basis: Any = "absolute", dark: Any = 5.0, gain: Any = 3.0
+) -> Any:
     tomography = phx.imaging.tomography
     return tomography.CTAcquisitionProtocol(
         (
@@ -80,7 +84,7 @@ def _protocol(grid, *, exposure_basis="absolute", dark=5.0, gain=3.0):
     )
 
 
-def _coefficients(grid):
+def _coefficients(grid: Any) -> Any:
     return phx.equations.DiagnosticPhotonCoefficientTable(
         phx.equations.DiagnosticPhotonCoefficientRole.MASS_ATTENUATION,
         grid,
@@ -92,12 +96,14 @@ def _coefficients(grid):
     )
 
 
-def test_material_basis_projection_preserves_declared_order():
+def test_material_basis_projection_preserves_declared_order() -> None:
     support = _support()
     transform = phx.imaging.tomography.VoxelXRayTransformPlan(
         support,
         (2, 1, 1),
+        # ty: ignore[invalid-argument-type]
         (0.0, 0.0, 0.0),
+        # ty: ignore[invalid-argument-type]
         (1.0, 1.0, 1.0),
         support.rays.coordinate_contract,
     )
@@ -113,7 +119,7 @@ def test_material_basis_projection_preserves_declared_order():
         plan.project(density, 0.5 * fractions)
 
 
-def test_two_material_two_energy_signal_and_detector_semantics():
+def test_two_material_two_energy_signal_and_detector_semantics() -> None:
     grid = _energy_grid()
     plan = phx.imaging.tomography.PolychromaticDetectorPlan(
         _support(), _protocol(grid), _coefficients(grid)
@@ -134,7 +140,7 @@ def test_two_material_two_energy_signal_and_detector_semantics():
     assert bool(result.successful)
 
 
-def test_energy_and_exposure_bases_fail_closed():
+def test_energy_and_exposure_bases_fail_closed() -> None:
     grid = _energy_grid()
     other_grid = phx.equations.PhotonEnergyGrid(
         np.asarray((41.0, 81.0)) * 1.602176634e-16
@@ -167,7 +173,7 @@ def test_energy_and_exposure_bases_fail_closed():
         )
 
 
-def test_scatter_requires_a_label_and_forward_model_is_differentiable():
+def test_scatter_requires_a_label_and_forward_model_is_differentiable() -> None:
     grid = _energy_grid()
     plan = phx.imaging.tomography.PolychromaticDetectorPlan(
         _support(), _protocol(grid), _coefficients(grid)

@@ -7,7 +7,11 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Any, cast, TYPE_CHECKING
+
+from jaxtyping import PyTree
 
 from ..._fingerprint import canonical_fingerprint
 from ...qualification._evidence import SupportDependency
@@ -22,6 +26,15 @@ from ...qualification._trust import AsymmetricReleaseTrustPolicy
 from ._qualification import validate_battery_candidate_profile
 from ._release import BatteryReleaseRecord
 from ._validity import BatteryValidityEnvelope
+
+
+if TYPE_CHECKING:
+    from ._circuit_ecm import CircuitConnectedEcmInitialCondition
+    from ._dfn_entry import DfnEntryReleaseRecord
+    from ._ecm import ThermalEquivalentCircuitInitialCondition
+    from ._experiment import AbstractBatteryModelAdapter
+    from ._pack_entry import SeriesPackEntryReleaseRecord
+    from ._protocol import BatteryProtocolPlan, BatteryProtocolValues
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,17 +86,19 @@ class BatteryExecutionAdmission:
     def predictive_admission_id(self) -> str | None:
         if self.predictive_profile_id is None:
             return None
+        # _verify_admission requires a SupportTuple whenever a predictive profile is set.
+        support = cast(SupportTuple, self.predictive_support)
         return canonical_fingerprint(
             {
                 "kind": "battery-predictive-admission",
                 "numerical_admission_id": self.numerical_admission_id,
                 "profile_id": self.predictive_profile_id,
-                "support_tuple_id": self.predictive_support.support_tuple_id,
+                "support_tuple_id": support.support_tuple_id,
                 "parameter_manifest_id": self.parameter_manifest_id,
             }
         )
 
-    def validate_adapter(self, model, /) -> None:
+    def validate_adapter(self, model: AbstractBatteryModelAdapter, /) -> None:
         """Refuse model-ID lookalikes and subclasses outside the signed implementation."""
         from ._circuit_ecm import CircuitConnectedEcmAdapter
         from ._ecm import ThermalEquivalentCircuitAdapter
@@ -109,11 +124,11 @@ class BatteryExecutionAdmission:
 
     def validate_run(
         self,
-        prepared_model,
-        parameters,
-        initial_condition,
-        protocol,
-        protocol_values,
+        prepared_model: Any,
+        parameters: PyTree,
+        initial_condition: PyTree,
+        protocol: BatteryProtocolPlan,
+        protocol_values: BatteryProtocolValues,
         /,
         *,
         at_time: int | None = None,
@@ -127,7 +142,9 @@ class BatteryExecutionAdmission:
         _verify_admission(self, int(time.time()) if at_time is None else at_time)
         self.envelope.require_production_bounds()
 
-        def check_tree(tree, declared, group):
+        def check_tree(
+            tree: PyTree, declared: Sequence[tuple[str, float, float]], group: str
+        ) -> None:
             bounds = {name: (lower, upper) for name, lower, upper in declared}
             actual = {}
             for path, leaf in jax.tree_util.tree_flatten_with_path(tree)[0]:
@@ -208,7 +225,8 @@ class BatteryExecutionAdmission:
         if self.predictive_profile_id is not None:
             # The product manifest must bind actual numeric parameters, not a
             # structural parameter_id shared by multiple parameterizations.
-            attributes = dict(self.predictive_support.attributes)
+            # _verify_admission above requires a predictive SupportTuple here.
+            attributes = dict(cast(SupportTuple, self.predictive_support).attributes)
             if (
                 attributes.get("parameter_digest")
                 != array_tree_fingerprint(parameters)["sha256"]
@@ -239,9 +257,9 @@ class BatteryExecutionAdmission:
 
 
 def _verify_admission(admission: BatteryExecutionAdmission, at_time: int) -> int:
-    import jax
+    from jax import core as jax_core
 
-    if not jax.core.trace_ctx.is_top_level():
+    if not jax_core.trace_ctx.is_top_level():
         raise ValueError(
             "Production admission requires a fresh host dispatch; "
             "transformed/cached whole-run execution is not authorized."
@@ -436,7 +454,11 @@ def validate_battery_execution_admission(
 
 
 def battery_release_deployment_record(
-    index: ReleaseIndex, proofs, /
+    index: ReleaseIndex,
+    proofs: Sequence[
+        BatteryReleaseRecord | DfnEntryReleaseRecord | SeriesPackEntryReleaseRecord
+    ],
+    /,
 ) -> dict[str, object]:
     """Serialize an index and its retained typed proof DAG, never private keys."""
     return {
@@ -447,8 +469,8 @@ def battery_release_deployment_record(
 
 
 def load_battery_execution_admission(
-    deployment,
-    public_trust_config,
+    deployment: Mapping[str, Any],
+    public_trust_config: Mapping[str, object],
     /,
     *,
     profile_id: str,
@@ -521,7 +543,14 @@ def load_battery_execution_admission(
     )
 
 
-def _validate_ecm_run(prepared_model, parameters, initial, protocol, values):
+def _validate_ecm_run(
+    prepared_model: Any,
+    parameters: object,
+    initial: ThermalEquivalentCircuitInitialCondition
+    | CircuitConnectedEcmInitialCondition,
+    protocol: BatteryProtocolPlan,
+    values: BatteryProtocolValues,
+) -> None:
     import numpy as np
 
     from ._circuit_ecm import PreparedCircuitConnectedEcm

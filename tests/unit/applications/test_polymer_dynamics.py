@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -6,17 +8,24 @@ import phydrax as phx
 from phydrax.applications import cellular_mechanics as cm, polymer_liquids as pl
 
 
-def _runtime():
+def _runtime() -> Any:
     system = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [10, 20, 30, 40],
+        # ty: ignore[invalid-argument-type]
         [0, 0, 0, 0],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0, 1.0, 1.0],
         phx.atomistic.AtomisticUnitSystem.reduced(),
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0, 0, 0],
+        # ty: ignore[invalid-argument-type]
         element_mask=[False, False, False, False],
+        # ty: ignore[invalid-argument-type]
         molecule_ids=[0, 0, 0, 0],
     ).prepare()
     potential = phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.LennardJonesPotential([0.01], [0.5], 1.0)]
     ).prepare(system)
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(6).prepare(
@@ -43,7 +52,7 @@ def _runtime():
     return dynamics, thermodynamic, state, positions
 
 
-def test_chromatin_uses_live_coordinates_and_joint_checkpoint_replays():
+def test_chromatin_uses_live_coordinates_and_joint_checkpoint_replays() -> None:
     dynamics, thermodynamic, atomistic, positions = _runtime()
     chromatin = cm.ChromatinDynamicsPlan(
         4,
@@ -53,9 +62,12 @@ def test_chromatin_uses_live_coordinates_and_joint_checkpoint_replays():
         spring_stiffness=0.1,
         spring_rest_length=1.0,
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     chromatin_state = chromatin.initialize(left=[0], right=[3])
     coupling = cm.ChromatinAtomisticCouplingPlan(
-        [10, 20, 30, 40], maximum_spring_energy=100.0
+        # ty: ignore[invalid-argument-type]
+        [10, 20, 30, 40],
+        maximum_spring_energy=100.0,
     ).prepare(dynamics, chromatin)
     state = coupling.initialize(atomistic, chromatin_state)
 
@@ -74,7 +86,7 @@ def test_chromatin_uses_live_coordinates_and_joint_checkpoint_replays():
     )
 
 
-def test_overdamped_runtime_has_stable_addressed_replay():
+def test_overdamped_runtime_has_stable_addressed_replay() -> None:
     dynamics, _, _, positions = _runtime()
     runtime = phx.atomistic.OverdampedAtomisticPlan(
         1.0e-3, 0.2, 1.0, realization_id=11
@@ -91,7 +103,7 @@ def test_overdamped_runtime_has_stable_addressed_replay():
     assert int(left.accepted_state.step_index) == 1
 
 
-def test_generalized_langevin_runtime_enforces_discrete_fdt_and_replays():
+def test_generalized_langevin_runtime_enforces_discrete_fdt_and_replays() -> None:
     dynamics, thermodynamic, atomistic, _ = _runtime()
     decay = 0.9
     transition = np.eye(2) * decay
@@ -113,7 +125,7 @@ def test_generalized_langevin_runtime_enforces_discrete_fdt_and_replays():
     assert left.accepted_state.auxiliary.shape == (4, 3, 1)
 
 
-def test_equilibrium_rheology_retains_correlation_uncertainty_evidence():
+def test_equilibrium_rheology_retains_correlation_uncertainty_evidence() -> None:
     time = np.arange(64, dtype="float64")
     shear = np.sin(0.2 * time) + 0.2 * np.cos(0.7 * time)
     stress = np.zeros((64, 3, 3), dtype="float64")

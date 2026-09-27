@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -40,7 +42,7 @@ from phydrax.applications.solid_mechanics._rod_tendon_plant import (
 from phydrax.dynamics import PlantStepContext
 
 
-def _tree_arrays_equal(left, right):
+def _tree_arrays_equal(left: Any, right: Any) -> None:
     assert jax.tree.structure(left) == jax.tree.structure(right)
     for left_leaf, right_leaf in zip(
         jax.tree.leaves(left), jax.tree.leaves(right), strict=True
@@ -48,7 +50,7 @@ def _tree_arrays_equal(left, right):
         assert jnp.array_equal(left_leaf, right_leaf)
 
 
-def _base_plant(route: str):
+def _base_plant(route: str) -> Any:
     dtype = jnp.float32
     rod = prepare_rod(
         RodPlan(
@@ -95,7 +97,7 @@ def _plant(
     *,
     route: str = "semi-implicit",
     sensor: bool = False,
-):
+) -> Any:
     base, reduction = _base_plant(route)
     offsets = (0.0,) if count == 1 else (-0.02, 0.0, 0.02)
     tendons = tuple(
@@ -145,20 +147,20 @@ def _plant(
     )
 
 
-def _reset(plant, seed: int = 7):
+def _reset(plant: Any, seed: int = 7) -> Any:
     parameters = plant.bind_parameters()
     result = plant.reset(jax.random.key(seed), parameters)
     assert bool(result.successful)
     return parameters, result.accepted_state
 
 
-def _context(state, duration: float = 1.0e-4):
+def _context(state: Any, duration: float = 1.0e-4) -> Any:
     step = jnp.asarray(duration, dtype=state.time.dtype)
     return PlantStepContext(state.time, state.time + step, state.step_index)
 
 
 @pytest.mark.parametrize("count", (1, 3))
-def test_one_and_three_tendon_commands_drive_exact_ledgers(count):
+def test_one_and_three_tendon_commands_drive_exact_ledgers(count: Any) -> None:
     plant = _plant(count)
     parameters, source = _reset(plant)
     rates = tuple(0.01 * (index + 1) for index in range(count))
@@ -189,7 +191,7 @@ def test_one_and_three_tendon_commands_drive_exact_ledgers(count):
         )
 
 
-def test_bounds_failure_retains_candidate_but_rolls_back_every_committed_atom():
+def test_bounds_failure_retains_candidate_but_rolls_back_every_committed_atom() -> None:
     plant = _plant()
     parameters, source = _reset(plant)
     result = plant.step(_context(source), source, plant.command((0.25,)), parameters)
@@ -217,7 +219,9 @@ def test_bounds_failure_retains_candidate_but_rolls_back_every_committed_atom():
         ("implicit", "implicit-midpoint"),
     ),
 )
-def test_prepared_integrator_route_is_executed_without_passive_fallback(route, expected):
+def test_prepared_integrator_route_is_executed_without_passive_fallback(
+    route: Any, expected: Any
+) -> None:
     plant = _plant(route=route)
     parameters, source = _reset(plant)
     result = plant.step(_context(source), source, plant.zero_command(), parameters)
@@ -234,7 +238,7 @@ def test_prepared_integrator_route_is_executed_without_passive_fallback(route, e
         assert bool(integration.evidence.linear_solve_successful)
 
 
-def test_sensor_sampling_is_part_of_reset_and_step_atomic_commit():
+def test_sensor_sampling_is_part_of_reset_and_step_atomic_commit() -> None:
     plant = _plant(sensor=True)
     parameters, source = _reset(plant)
 
@@ -263,7 +267,9 @@ def test_sensor_sampling_is_part_of_reset_and_step_atomic_commit():
     assert any("initialized" in path for path in encoded.mode_paths)
 
 
-def test_late_sensor_invalidity_rolls_back_mechanics_actuator_sensor_clock_and_key():
+def test_late_sensor_invalidity_rolls_back_mechanics_actuator_sensor_clock_and_key() -> (
+    None
+):
     plant = _plant(sensor=True)
     parameters, source = _reset(plant)
     broken = eqx.tree_at(
@@ -287,7 +293,7 @@ def test_late_sensor_invalidity_rolls_back_mechanics_actuator_sensor_clock_and_k
     )
 
 
-def test_exact_state_and_control_codecs_are_bound_to_plant_identities():
+def test_exact_state_and_control_codecs_are_bound_to_plant_identities() -> None:
     plant = _plant(count=3)
     state_encoded = plant.state_codec.encode_point(plant.initial_state)
     state_decoded = plant.state_codec.decode_point(state_encoded)
@@ -308,7 +314,7 @@ def test_exact_state_and_control_codecs_are_bound_to_plant_identities():
         other.control_codec.decode_command(control_encoded)
 
 
-def test_rollout_checkpoint_and_replay_preserve_exact_accepted_trajectory():
+def test_rollout_checkpoint_and_replay_preserve_exact_accepted_trajectory() -> None:
     plant = _plant()
     parameters, source = _reset(plant, seed=23)
     checkpoint = plant.checkpoint(source)

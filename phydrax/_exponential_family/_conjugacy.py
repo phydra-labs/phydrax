@@ -12,9 +12,11 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._categorical import CategoricalFamily
 from ._contracts import ExponentialFamilyLaw, NaturalCoordinates
 from ._dirichlet import DirichletFamily
@@ -52,7 +54,7 @@ class GammaPoissonStatistics(StrictModule):
         log_base_measure: ArrayLike,
         num_observations: ArrayLike,
         valid: ArrayLike,
-    ):
+    ) -> None:
         arrays = tuple(
             jnp.asarray(value)
             for value in (
@@ -121,7 +123,7 @@ class GammaPoissonUpdate(StrictModule):
         statistics: GammaPoissonStatistics,
         log_evidence: Array,
         valid: Array,
-    ):
+    ) -> None:
         self.family = family
         self.prior_natural = prior_natural
         self.posterior_natural = posterior_natural
@@ -171,7 +173,7 @@ class GammaPoissonUpdate(StrictModule):
 
     def sample_predictive(
         self,
-        key,
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
         *,
         exposure: ArrayLike = 1.0,
@@ -217,7 +219,7 @@ class GammaPoissonConjugacy(StrictModule):
         rate: ArrayLike,
         *,
         family: GammaFamily | None = None,
-    ):
+    ) -> None:
         selected_family = GammaFamily() if family is None else family
         if not isinstance(selected_family, GammaFamily):
             raise TypeError("family must be a GammaFamily.")
@@ -378,7 +380,7 @@ class DirichletCategoricalStatistics(StrictModule):
         category_counts: ArrayLike,
         num_observations: ArrayLike,
         valid: ArrayLike,
-    ):
+    ) -> None:
         counts = jnp.asarray(category_counts)
         observations = jnp.asarray(num_observations)
         if counts.ndim == 0 or counts.shape[-1] < 2:
@@ -443,7 +445,7 @@ class DirichletCategoricalUpdate(StrictModule):
         statistics: DirichletCategoricalStatistics,
         log_evidence: Array,
         valid: Array,
-    ):
+    ) -> None:
         self.dirichlet_family = dirichlet_family
         self.categorical_family = categorical_family
         self.prior_natural = prior_natural
@@ -498,7 +500,9 @@ class DirichletCategoricalUpdate(StrictModule):
             jnp.nan,
         )
 
-    def sample_predictive(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample_predictive(
+        self, key: PRNGKey, sample_shape: tuple[int, ...] = ()
+    ) -> Array:
         return self.predictive_law.sample(key, tuple(sample_shape))
 
 
@@ -514,7 +518,7 @@ class DirichletCategoricalConjugacy(StrictModule):
         concentration: ArrayLike,
         *,
         family: DirichletFamily | None = None,
-    ):
+    ) -> None:
         concentration_array = jnp.asarray(concentration)
         if concentration_array.ndim == 0:
             raise ValueError("Dirichlet concentration must have a category axis.")

@@ -13,7 +13,7 @@ import phydrax as phx
 import phydrax.uq._smc as smc_module
 
 
-def _problem(observation=1.1):
+def _problem(observation: Any = 1.1) -> Any:
     return phx.uq.PosteriorProblem(
         phx.uq.ParameterSpace(
             jnp.asarray(0.0),
@@ -23,20 +23,20 @@ def _problem(observation=1.1):
     )
 
 
-def _assert_tree_equal(left, right):
+def _assert_tree_equal(left: Any, right: Any) -> None:
     comparisons = jax.tree_util.tree_map(jnp.array_equal, left, right)
     assert all(jax.tree_util.tree_leaves(comparisons))
 
 
 @pytest.mark.parametrize("resampling_method", ["systematic", "stratified"])
 def test_interrupted_smc_resume_is_exact_and_does_not_resample_prior(
-    tmp_path,
-    monkeypatch,
-    resampling_method,
-):
+    tmp_path: Any,
+    monkeypatch: Any,
+    resampling_method: Any,
+) -> None:
     problem = _problem()
 
-    def deterministic_prior(key, count):
+    def deterministic_prior(key: Any, count: Any) -> Any:
         return 2.0 * jr.normal(key, (count,))
 
     settings: dict[str, Any] = {
@@ -55,7 +55,7 @@ def test_interrupted_smc_resume_is_exact_and_does_not_resample_prior(
     checkpoint = tmp_path / f"{resampling_method}.phxckpt"
     original_write = smc_module._write_smc_checkpoint
 
-    def interrupting_write(destination, **kwargs):
+    def interrupting_write(destination: Any, **kwargs: Any) -> None:
         original_write(destination, **kwargs)
         if kwargs["completed"] == 1:
             raise RuntimeError("simulated interruption")
@@ -69,7 +69,7 @@ def test_interrupted_smc_resume_is_exact_and_does_not_resample_prior(
         )
     monkeypatch.setattr(smc_module, "_write_smc_checkpoint", original_write)
 
-    def prior_must_not_run(key, count):
+    def prior_must_not_run(key: Any, count: Any) -> None:
         raise AssertionError("prior sampler repeated during resume")
 
     resumed = phx.uq.sample_tempered_smc(
@@ -93,7 +93,9 @@ def test_interrupted_smc_resume_is_exact_and_does_not_resample_prior(
     assert resumed.num_unique_initial_particles == direct.num_unique_initial_particles
 
 
-def test_smc_checkpoint_rejects_incompatible_identity_and_corruption(tmp_path):
+def test_smc_checkpoint_rejects_incompatible_identity_and_corruption(
+    tmp_path: Any,
+) -> None:
     problem = _problem()
     checkpoint = tmp_path / "state.phxckpt"
     settings: dict[str, Any] = {

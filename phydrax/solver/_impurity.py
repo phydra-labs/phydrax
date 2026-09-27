@@ -14,11 +14,13 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import positive_finite_float
 from ..discretization.dlr import matsubara_frequencies
 from ..linalg import HermitianSpectrum
 from ..operators.quantum._fermionic_fock import FermionModeOrder
@@ -53,13 +55,6 @@ def _positive_int(value: int, name: str, /) -> int:
     return result
 
 
-def _positive(value: float, name: str, /) -> float:
-    result = float(value)
-    if not isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
-
-
 class AndersonBathFitPlan(StrictModule, NonTrainableState):
     """Fixed causal NNLS profile on a declared bath-energy support."""
 
@@ -83,15 +78,15 @@ class AndersonBathFitPlan(StrictModule, NonTrainableState):
         residual_tolerance: float = 2e-2,
         moment_tolerance: float = 2e-2,
         maximum_bytes: int = 64 * 1024**2,
-    ):
+    ) -> None:
         sites = _positive_int(site_count, "site_count")
         iterations = _positive_int(maximum_iterations, "maximum_iterations")
         lower = float(lower_energy)
         upper = float(upper_energy)
         if not isfinite(lower) or not isfinite(upper) or lower >= upper:
             raise ValueError("Bath energy bounds must be finite and strictly ordered.")
-        residual = _positive(residual_tolerance, "residual_tolerance")
-        moment = _positive(moment_tolerance, "moment_tolerance")
+        residual = positive_finite_float(residual_tolerance, "residual_tolerance")
+        moment = positive_finite_float(moment_tolerance, "moment_tolerance")
         budget = _positive_int(maximum_bytes, "maximum_bytes")
         self.site_count = sites
         self.lower_energy = lower
@@ -265,7 +260,7 @@ class EDImpurityPolicy(StrictModule, NonTrainableState):
         hermiticity_tolerance: float = 1e-10,
         dyson_tolerance: float = 1e-8,
         moment_tolerance: float = 2e-1,
-    ):
+    ) -> None:
         self.maximum_modes = _positive_int(maximum_modes, "maximum_modes")
         self.maximum_sector_dimension = _positive_int(
             maximum_sector_dimension, "maximum_sector_dimension"
@@ -277,11 +272,13 @@ class EDImpurityPolicy(StrictModule, NonTrainableState):
             maximum_transitions, "maximum_transitions"
         )
         self.maximum_bytes = _positive_int(maximum_bytes, "maximum_bytes")
-        self.hermiticity_tolerance = _positive(
+        self.hermiticity_tolerance = positive_finite_float(
             hermiticity_tolerance, "hermiticity_tolerance"
         )
-        self.dyson_tolerance = _positive(dyson_tolerance, "dyson_tolerance")
-        self.moment_tolerance = _positive(moment_tolerance, "moment_tolerance")
+        self.dyson_tolerance = positive_finite_float(dyson_tolerance, "dyson_tolerance")
+        self.moment_tolerance = positive_finite_float(
+            moment_tolerance, "moment_tolerance"
+        )
 
 
 class ImpuritySolveRequest(StrictModule, NonTrainableState):
@@ -304,11 +301,11 @@ class ImpuritySolveRequest(StrictModule, NonTrainableState):
         indices: ArrayLike,
         environment: ImpurityEnvironment,
         /,
-    ):
+    ) -> None:
         onsite = float(onsite_energy)
         interaction_ = float(interaction)
         chemical = float(chemical_potential)
-        beta_ = _positive(beta, "beta")
+        beta_ = positive_finite_float(beta, "beta")
         if not all(isfinite(value) for value in (onsite, interaction_, chemical)):
             raise ValueError("Impurity energies must be finite.")
         if interaction_ < 0.0:
@@ -667,7 +664,7 @@ class ExactDiagonalizationImpurityProvider(AbstractImpurityProvider):
         /,
         *,
         provider_id: str = "phydrax.all-sector-ed.single-orbital",
-    ):
+    ) -> None:
         policy_ = EDImpurityPolicy() if policy is None else policy
         if not isinstance(policy_, EDImpurityPolicy):
             raise TypeError("policy must be EDImpurityPolicy or None.")

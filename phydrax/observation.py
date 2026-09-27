@@ -12,14 +12,14 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from numbers import Integral
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -48,7 +48,7 @@ class CoordinateLayout(StrictModule, NonTrainableState):
     labels: tuple[str, ...] = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, labels: tuple[str, ...], /):
+    def __init__(self, labels: tuple[str, ...], /) -> None:
         labels_ = tuple(str(label).strip() for label in labels)
         if (
             not labels_
@@ -71,7 +71,9 @@ class TheoryVector(StrictModule):
     layout: CoordinateLayout
     product_id: str = eqx.field(static=True)
 
-    def __init__(self, values: ArrayLike, layout: CoordinateLayout, product_id: str, /):
+    def __init__(
+        self, values: ArrayLike, layout: CoordinateLayout, product_id: str, /
+    ) -> None:
         value = jnp.asarray(values)
         if value.shape != (layout.size,):
             raise ValueError("Observation product must match its coordinate layout.")
@@ -98,7 +100,7 @@ class LinearObservationPlan(StrictModule, NonTrainableState):
         source: CoordinateLayout,
         target: CoordinateLayout,
         /,
-    ):
+    ) -> None:
         values = jax.lax.stop_gradient(jnp.asarray(matrix))
         if values.shape != (target.size, source.size):
             raise ValueError("Observation matrix shape must match layouts.")
@@ -148,7 +150,7 @@ class PrecisionCovarianceAction(StrictModule, NonTrainableState):
         logdet_covariance: ArrayLike,
         layout: CoordinateLayout,
         /,
-    ):
+    ) -> None:
         matrix = jax.lax.stop_gradient(jnp.asarray(precision))
         logdet = jax.lax.stop_gradient(jnp.asarray(logdet_covariance, dtype=matrix.dtype))
         if matrix.shape != (layout.size, layout.size) or logdet.shape != ():
@@ -186,7 +188,7 @@ class CholeskyCovarianceAction(StrictModule, NonTrainableState):
     layout: CoordinateLayout
     action_id: str = eqx.field(static=True)
 
-    def __init__(self, lower_cholesky: ArrayLike, layout: CoordinateLayout, /):
+    def __init__(self, lower_cholesky: ArrayLike, layout: CoordinateLayout, /) -> None:
         cholesky = jax.lax.stop_gradient(jnp.asarray(lower_cholesky))
         if cholesky.shape != (layout.size, layout.size):
             raise ValueError("Covariance Cholesky shape must match its layout.")
@@ -244,7 +246,7 @@ class CorrelatedGaussianPlan(StrictModule, NonTrainableState):
         observation: LinearObservationPlan,
         covariance: CovarianceAction,
         /,
-    ):
+    ) -> None:
         values = jax.lax.stop_gradient(jnp.asarray(data))
         if values.shape != (observation.target.size,):
             raise ValueError("Observed data must match response target layout.")
@@ -279,22 +281,6 @@ class CorrelatedGaussianPlan(StrictModule, NonTrainableState):
         return CorrelatedGaussianResult(
             residual, quadratic, log_probability, finite, finite
         )
-
-
-def _positive_integer(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
-    normalized = int(value)
-    if normalized < 1:
-        raise ValueError(f"{name} must be positive.")
-    return normalized
-
-
-def _finite_positive(value: float, name: str, /) -> float:
-    normalized = float(value)
-    if not math.isfinite(normalized) or normalized <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return normalized
 
 
 def _unit(value: str, name: str, /) -> str:
@@ -342,13 +328,13 @@ class MeanSquareDisplacementPlan(StrictModule, NonTrainableState):
         *,
         distance_unit: str = "m",
         time_unit: str = "s",
-    ):
-        samples = _positive_integer(sample_count, "sample_count")
-        dimension = _positive_integer(spatial_dimension, "spatial_dimension")
-        lag = _positive_integer(max_lag, "max_lag")
+    ) -> None:
+        samples = positive_integer(sample_count, "sample_count")
+        dimension = positive_integer(spatial_dimension, "spatial_dimension")
+        lag = positive_integer(max_lag, "max_lag")
         if lag >= samples:
             raise ValueError("max_lag must be smaller than sample_count.")
-        step = _finite_positive(time_step, "time_step")
+        step = positive_finite_float(time_step, "time_step")
         distance = _unit(distance_unit, "distance_unit")
         time = _unit(time_unit, "time_unit")
         self.sample_count = samples
@@ -382,7 +368,7 @@ class PreparedMeanSquareDisplacement(StrictModule, NonTrainableState):
     valid_pairs: Array
     runtime_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MeanSquareDisplacementPlan, /):
+    def __init__(self, plan: MeanSquareDisplacementPlan, /) -> None:
         if not isinstance(plan, MeanSquareDisplacementPlan):
             raise TypeError("plan must be a MeanSquareDisplacementPlan.")
         lag = jnp.arange(plan.max_lag + 1, dtype=jnp.int32)[:, None]
@@ -455,12 +441,12 @@ class AutocorrelationPlan(StrictModule, NonTrainableState):
         normalized: bool = True,
         time_unit: str = "s",
         signal_unit: str = "1",
-    ):
-        samples = _positive_integer(sample_count, "sample_count")
-        lag = _positive_integer(max_lag, "max_lag")
+    ) -> None:
+        samples = positive_integer(sample_count, "sample_count")
+        lag = positive_integer(max_lag, "max_lag")
         if lag >= samples:
             raise ValueError("max_lag must be smaller than sample_count.")
-        step = _finite_positive(time_step, "time_step")
+        step = positive_finite_float(time_step, "time_step")
         if not isinstance(normalized, bool):
             raise TypeError("normalized must be a boolean.")
         time = _unit(time_unit, "time_unit")
@@ -496,7 +482,7 @@ class PreparedAutocorrelation(StrictModule, NonTrainableState):
     valid_pairs: Array
     runtime_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: AutocorrelationPlan, /):
+    def __init__(self, plan: AutocorrelationPlan, /) -> None:
         if not isinstance(plan, AutocorrelationPlan):
             raise TypeError("plan must be an AutocorrelationPlan.")
         lag = jnp.arange(plan.max_lag + 1, dtype=jnp.int32)[:, None]
@@ -598,12 +584,12 @@ class FluorescenceCorrelationPlan(StrictModule, NonTrainableState):
         *,
         time_unit: str = "s",
         intensity_unit: str = "count/s",
-    ):
-        samples = _positive_integer(sample_count, "sample_count")
-        lag = _positive_integer(max_lag, "max_lag")
+    ) -> None:
+        samples = positive_integer(sample_count, "sample_count")
+        lag = positive_integer(max_lag, "max_lag")
         if lag >= samples:
             raise ValueError("max_lag must be smaller than sample_count.")
-        step = _finite_positive(time_step, "time_step")
+        step = positive_finite_float(time_step, "time_step")
         time = _unit(time_unit, "time_unit")
         intensity = _unit(intensity_unit, "intensity_unit")
         self.sample_count = samples
@@ -635,7 +621,7 @@ class PreparedFluorescenceCorrelation(StrictModule, NonTrainableState):
     valid_pairs: Array
     runtime_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: FluorescenceCorrelationPlan, /):
+    def __init__(self, plan: FluorescenceCorrelationPlan, /) -> None:
         if not isinstance(plan, FluorescenceCorrelationPlan):
             raise TypeError("plan must be a FluorescenceCorrelationPlan.")
         lag = jnp.arange(plan.max_lag + 1, dtype=jnp.int32)[:, None]
@@ -731,12 +717,12 @@ class PairCorrelationPlan(StrictModule, NonTrainableState):
         /,
         *,
         time_unit: str = "s",
-    ):
-        samples = _positive_integer(sample_count, "sample_count")
-        lag = _positive_integer(max_lag, "max_lag")
+    ) -> None:
+        samples = positive_integer(sample_count, "sample_count")
+        lag = positive_integer(max_lag, "max_lag")
         if lag >= samples:
             raise ValueError("max_lag must be smaller than sample_count.")
-        step = _finite_positive(time_step, "time_step")
+        step = positive_finite_float(time_step, "time_step")
         time = _unit(time_unit, "time_unit")
         self.sample_count = samples
         self.max_lag = lag
@@ -766,7 +752,7 @@ class PreparedPairCorrelation(StrictModule, NonTrainableState):
     valid_pairs: Array
     runtime_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: PairCorrelationPlan, /):
+    def __init__(self, plan: PairCorrelationPlan, /) -> None:
         if not isinstance(plan, PairCorrelationPlan):
             raise TypeError("plan must be a PairCorrelationPlan.")
         lag = jnp.arange(-plan.max_lag, plan.max_lag + 1, dtype=jnp.int32)[:, None]
@@ -933,13 +919,13 @@ class DiffusionModelPlan(StrictModule, NonTrainableState):
         *,
         distance_unit: str = "m",
         time_unit: str = "s",
-    ):
+    ) -> None:
         lag = jax.lax.stop_gradient(_floating_array(lag_times))
         if lag.ndim != 1 or lag.size < 2:
             raise ValueError(
                 "lag_times must be a one-dimensional array with two or more entries."
             )
-        dimension = _positive_integer(spatial_dimension, "spatial_dimension")
+        dimension = positive_integer(spatial_dimension, "spatial_dimension")
         if not isinstance(model, str):
             raise TypeError("model must be a string.")
         model_ = model
@@ -980,7 +966,7 @@ class PreparedDiffusionModel(StrictModule, NonTrainableState):
     plan: DiffusionModelPlan
     runtime_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: DiffusionModelPlan, /):
+    def __init__(self, plan: DiffusionModelPlan, /) -> None:
         if not isinstance(plan, DiffusionModelPlan):
             raise TypeError("plan must be a DiffusionModelPlan.")
         self.plan = plan
@@ -1190,16 +1176,16 @@ class BrightnessConditionedTransportPlan(StrictModule, NonTrainableState):
         brightness_unit: str = "count/s",
         distance_unit: str = "m",
         time_unit: str = "s",
-    ):
+    ) -> None:
         edges = jax.lax.stop_gradient(_floating_array(brightness_edges))
         if edges.ndim != 1 or edges.size < 2:
             raise ValueError(
                 "brightness_edges must contain at least two one-dimensional edges."
             )
-        capacity = _positive_integer(sample_capacity, "sample_capacity")
-        dimension = _positive_integer(spatial_dimension, "spatial_dimension")
-        step = _finite_positive(time_step, "time_step")
-        count = _positive_integer(minimum_count, "minimum_count")
+        capacity = positive_integer(sample_capacity, "sample_capacity")
+        dimension = positive_integer(spatial_dimension, "spatial_dimension")
+        step = positive_finite_float(time_step, "time_step")
+        count = positive_integer(minimum_count, "minimum_count")
         brightness = _unit(brightness_unit, "brightness_unit")
         distance = _unit(distance_unit, "distance_unit")
         time = _unit(time_unit, "time_unit")
@@ -1243,7 +1229,7 @@ class PreparedBrightnessConditionedTransport(StrictModule, NonTrainableState):
     bin_centers: Array
     runtime_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: BrightnessConditionedTransportPlan, /):
+    def __init__(self, plan: BrightnessConditionedTransportPlan, /) -> None:
         if not isinstance(plan, BrightnessConditionedTransportPlan):
             raise TypeError("plan must be a BrightnessConditionedTransportPlan.")
         self.plan = plan
@@ -1387,7 +1373,7 @@ class FluorescencePhotonPlan(StrictModule, NonTrainableState):
         *,
         time_unit: str = "s",
         count_unit: str = "photon",
-    ):
+    ) -> None:
         edges = jax.lax.stop_gradient(_floating_array(bin_edges))
         response = jax.lax.stop_gradient(
             jnp.asarray(instrument_response, dtype=edges.dtype)
@@ -1443,7 +1429,7 @@ class PreparedFluorescencePhotonModel(StrictModule, NonTrainableState):
     response_matrix: Array
     runtime_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: FluorescencePhotonPlan, /):
+    def __init__(self, plan: FluorescencePhotonPlan, /) -> None:
         if not isinstance(plan, FluorescencePhotonPlan):
             raise TypeError("plan must be a FluorescencePhotonPlan.")
         size = plan.instrument_response.size
@@ -1640,8 +1626,8 @@ class DwellTimeLikelihoodPlan(StrictModule, NonTrainableState):
     time_unit: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, sample_capacity: int, /, *, time_unit: str = "s"):
-        capacity = _positive_integer(sample_capacity, "sample_capacity")
+    def __init__(self, sample_capacity: int, /, *, time_unit: str = "s") -> None:
+        capacity = positive_integer(sample_capacity, "sample_capacity")
         time = _unit(time_unit, "time_unit")
         self.sample_capacity = capacity
         self.time_unit = time
@@ -1663,7 +1649,7 @@ class PreparedDwellTimeLikelihood(StrictModule, NonTrainableState):
     plan: DwellTimeLikelihoodPlan
     runtime_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: DwellTimeLikelihoodPlan, /):
+    def __init__(self, plan: DwellTimeLikelihoodPlan, /) -> None:
         if not isinstance(plan, DwellTimeLikelihoodPlan):
             raise TypeError("plan must be a DwellTimeLikelihoodPlan.")
         self.plan = plan
@@ -1777,7 +1763,7 @@ class IVReversalPlan(StrictModule, NonTrainableState):
         minimum_conductance: float = 0.0,
         voltage_unit: str = "V",
         current_unit: str = "A",
-    ):
+    ) -> None:
         voltage = jax.lax.stop_gradient(_floating_array(voltages))
         if voltage.ndim != 1 or voltage.size < 2:
             raise ValueError(
@@ -1839,7 +1825,7 @@ class PreparedIVReversalInference(StrictModule, NonTrainableState):
     voltage_variation: Array
     runtime_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: IVReversalPlan, /):
+    def __init__(self, plan: IVReversalPlan, /) -> None:
         if not isinstance(plan, IVReversalPlan):
             raise TypeError("plan must be an IVReversalPlan.")
         weight_sum = jnp.sum(plan.weights)
@@ -2010,7 +1996,7 @@ class MeasurementComparisonPlan(StrictModule, NonTrainableState):
         /,
         *,
         covariance: CovarianceAction | None = None,
-    ):
+    ) -> None:
         if not isinstance(observed, PreparedQuantityField):
             raise TypeError("observed must be PreparedQuantityField.")
         covariance_types = (
@@ -2108,6 +2094,7 @@ class MeasurementComparisonPlan(StrictModule, NonTrainableState):
         )
 
 
+from ._validation import positive_finite_float, positive_integer
 from ._variable_projection import LinearNuisancePlan, NuisanceProjectionResult
 
 

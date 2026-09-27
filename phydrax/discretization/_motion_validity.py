@@ -24,7 +24,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -154,7 +155,7 @@ class MotionValidityPolicy(StrictModule, NonTrainableState):
         minimum_absolute_jacobian: float = 1.0e-10,
         minimum_relative_jacobian: float = 0.05,
         maximum_displacement_fraction: float | None = 0.5,
-    ):
+    ) -> None:
         absolute = float(minimum_absolute_jacobian)
         relative = float(minimum_relative_jacobian)
         for name, value in (
@@ -208,7 +209,7 @@ class MotionValidityEvidence(StrictModule):
         minimum_relative_jacobian: Any,
         maximum_displacement_ratio: Any,
         status: Any,
-    ):
+    ) -> None:
         self.finite = jnp.asarray(finite, dtype=jnp.bool_).reshape(())
         self.orientation_preserved = jnp.asarray(
             orientation_preserved, dtype=jnp.bool_
@@ -259,7 +260,7 @@ class MotionValidityPlan(StrictModule, NonTrainableState):
         *,
         policy: MotionValidityPolicy | None = None,
         active_cells: Sequence[ArrayLike] | None = None,
-    ):
+    ) -> None:
         policy_ = MotionValidityPolicy() if policy is None else policy
         if not isinstance(policy_, MotionValidityPolicy):
             raise TypeError("policy must be MotionValidityPolicy or None.")

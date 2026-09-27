@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from dataclasses import asdict
@@ -29,7 +31,7 @@ import phydrax as phx
 jax.config.update("jax_enable_x64", True)
 
 
-def _compiler_record(compiled) -> dict[str, object]:
+def _compiler_record(compiled: Any) -> dict[str, object]:
     evidence = compiler_evidence(
         compiled.cost_analysis(),
         compiled.memory_analysis(),
@@ -41,7 +43,7 @@ def _compiler_record(compiled) -> dict[str, object]:
     return record
 
 
-def _measure(function, arguments, warmup, repeats):
+def _measure(function: Any, arguments: Any, warmup: Any, repeats: Any) -> Any:
     compiled, compilation = measure_lower_and_compile(
         lambda: jax.jit(function).lower(*arguments),
         lambda lowered: lowered.compile(),
@@ -56,7 +58,7 @@ def _measure(function, arguments, warmup, repeats):
     }
 
 
-def _field(reconstruction, coefficient_scale, field_id):
+def _field(reconstruction: Any, coefficient_scale: Any, field_id: Any) -> Any:
     gw = phx.applications.astrophysics.gravitational_waves
     coefficients = coefficient_scale * jnp.asarray(
         [
@@ -82,7 +84,7 @@ def _field(reconstruction, coefficient_scale, field_id):
     )
 
 
-def _setup(time_samples: int):
+def _setup(time_samples: int) -> Any:
     gw = phx.applications.astrophysics.gravitational_waves
     time = np.linspace(-100.0, 20.0, time_samples)
     centers = np.linspace(-100.0, 20.0, 4)
@@ -158,7 +160,7 @@ def run(time_samples: int, warmup: int, repeats: int) -> dict[str, object]:
     primary_spin = jnp.asarray(0.2)
     secondary_spin = jnp.asarray(-0.1)
 
-    def surrogate_kernel(q, chi1, chi2):
+    def surrogate_kernel(q: Any, chi1: Any, chi2: Any) -> Any:
         result = surrogate.evaluate_modes(
             {
                 "mass_ratio": q,
@@ -174,18 +176,18 @@ def run(time_samples: int, warmup: int, repeats: int) -> dict[str, object]:
             result.qualified,
         )
 
-    def surrogate_jvp_kernel(q, chi1, chi2):
+    def surrogate_jvp_kernel(q: Any, chi1: Any, chi2: Any) -> Any:
         return jax.jvp(
             lambda value: jnp.real(surrogate_kernel(value, chi1, chi2)[0]).sum(),
             (q,),
             (jnp.ones_like(q),),
         )
 
-    def match_kernel(first_, second_):
+    def match_kernel(first_: Any, second_: Any) -> Any:
         result = match_plan.match(first_, second_)
         return result.match, result.lag_seconds, result.valid, result.status
 
-    def remnant_kernel(m1, m2, chi1, chi2):
+    def remnant_kernel(m1: Any, m2: Any, chi1: Any, chi2: Any) -> Any:
         result = remnant_plan.evaluate(m1, m2, chi1, chi2)
         return (
             result.final_mass,

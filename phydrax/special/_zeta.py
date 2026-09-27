@@ -166,7 +166,7 @@ def _zeta_array(s: Array, /) -> Array:
 
 
 @_zeta_array.defjvp
-def _zeta_jvp(primals, tangents):
+def _zeta_jvp(primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:
     (s,) = primals
     (s_tangent,) = tangents
     value, derivative = _zeta_value_derivative(s)
@@ -179,7 +179,9 @@ def _hurwitz_zeta_array(s: Array, a: Array, /) -> Array:
 
 
 @_hurwitz_zeta_array.defjvp
-def _hurwitz_zeta_jvp(primals, tangents):
+def _hurwitz_zeta_jvp(
+    primals: tuple[Array, Array], tangents: tuple[Array, Array]
+) -> tuple[Array, Array]:
     s, a = primals
     s_tangent, a_tangent = tangents
     value, derivative_s, derivative_a = _hurwitz_value_derivatives(s, a)

@@ -7,7 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -46,15 +46,15 @@ class PreparedMaxwellMortarInterfaceTrace3D(StrictModule, NonTrainableState):
 
 
 def _evidence(
-    matrix,
+    matrix: np.ndarray,
     *,
-    coverage_fraction,
-    orientation_margin,
-    geometric_residual,
-    commuting_defect,
-    minimum_inf_sup,
-    kind,
-):
+    coverage_fraction: float,
+    orientation_margin: float,
+    geometric_residual: float,
+    commuting_defect: float,
+    minimum_inf_sup: float,
+    kind: str,
+) -> MortarInterfaceEvidence3D:
     coverage = float(coverage_fraction)
     orientation = float(orientation_margin)
     residual = float(geometric_residual)

@@ -1,5 +1,6 @@
 import hashlib
 import math
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -8,7 +9,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _data(name="activation"):
+def _data(name: Any = "activation") -> Any:
     payload = name.encode()
     reference = phx.qualification.ReferenceArtifactManifest(
         name,
@@ -34,11 +35,14 @@ def _data(name="activation"):
     )
 
 
-def _decay_network():
+def _decay_network() -> Any:
     cobalt = phx.nuclear.NuclideKey(27, 60)
     nickel = phx.nuclear.NuclideKey(28, 60)
     groups = phx.nuclear.EnergyGroupStructure(
-        [0.0, 1.0], phx.units.MEGAELECTRONVOLT, source_id="decay-groups"
+        # ty: ignore[invalid-argument-type]
+        [0.0, 1.0],
+        phx.units.MEGAELECTRONVOLT,
+        source_id="decay-groups",
     )
     decay_rate = math.log(2.0) / 10.0
     transition = phx.nuclear.InventoryTransition(
@@ -63,7 +67,7 @@ def _decay_network():
     )
 
 
-def test_activation_matches_two_member_bateman_decay_chain():
+def test_activation_matches_two_member_bateman_decay_chain() -> None:
     network, decay_rate = _decay_network()
     initial = network.inventory(np.asarray([1.0, 0.0]))
     result = network.step(initial, np.asarray([0.0]), 5.0)
@@ -84,11 +88,14 @@ def test_activation_matches_two_member_bateman_decay_chain():
     assert result.decay_heat_w > 0.0
 
 
-def test_flux_driven_capture_uses_group_integrated_scalar_flux():
+def test_flux_driven_capture_uses_group_integrated_scalar_flux() -> None:
     hydrogen = phx.nuclear.NuclideKey(1, 1)
     deuterium = phx.nuclear.NuclideKey(1, 2)
     groups = phx.nuclear.EnergyGroupStructure(
-        [0.0, 1.0, 2.0], phx.units.MEGAELECTRONVOLT, source_id="capture-groups"
+        # ty: ignore[invalid-argument-type]
+        [0.0, 1.0, 2.0],
+        phx.units.MEGAELECTRONVOLT,
+        source_id="capture-groups",
     )
     transition = phx.nuclear.InventoryTransition(
         "capture",
@@ -112,11 +119,14 @@ def test_flux_driven_capture_uses_group_integrated_scalar_flux():
     np.testing.assert_allclose(rate, [1.1e-9])
 
 
-def test_activation_is_differentiable_with_respect_to_flux():
+def test_activation_is_differentiable_with_respect_to_flux() -> None:
     hydrogen = phx.nuclear.NuclideKey(1, 1)
     deuterium = phx.nuclear.NuclideKey(1, 2)
     groups = phx.nuclear.EnergyGroupStructure(
-        [0.0, 1.0], phx.units.MEGAELECTRONVOLT, source_id="gradient-groups"
+        # ty: ignore[invalid-argument-type]
+        [0.0, 1.0],
+        phx.units.MEGAELECTRONVOLT,
+        source_id="gradient-groups",
     )
     transition = phx.nuclear.InventoryTransition(
         "capture",
@@ -135,9 +145,10 @@ def test_activation_is_differentiable_with_respect_to_flux():
     network = phx.nuclear.ActivationNetworkPlan(
         (hydrogen, deuterium), groups, (transition,)
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     initial = network.inventory([1.0, 0.0])
 
-    def product(flux):
+    def product(flux: Any) -> Any:
         return network.step(initial, jnp.asarray([flux]), 1.0).accepted.amounts_mol[1]
 
     derivative = jax.grad(product)(jnp.asarray(1.0e28))
@@ -145,7 +156,7 @@ def test_activation_is_differentiable_with_respect_to_flux():
     assert derivative > 0.0
 
 
-def test_irradiation_schedule_tracks_valid_prefix():
+def test_irradiation_schedule_tracks_valid_prefix() -> None:
     network, _ = _decay_network()
     schedule = phx.nuclear.IrradiationSchedulePlan(
         np.asarray([1.0, 2.0]), np.zeros((2, 1))

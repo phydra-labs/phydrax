@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -44,7 +47,9 @@ from tests._control_systems import (
 DENSE = MaterializationPolicy(max_entries=4096, max_bytes=32_768)
 
 
-def test_quaternion_pose_discrete_linearization_is_six_dimensional_and_sign_invariant():
+def test_quaternion_pose_discrete_linearization_is_six_dimensional_and_sign_invariant() -> (
+    None
+):
     geometry = QuaternionPoseStateGeometry()
     local_space = ArraySpace((6,), dtype=jnp.float32)
     state_layout = StateLayout(
@@ -97,13 +102,13 @@ def test_quaternion_pose_discrete_linearization_is_six_dimensional_and_sign_inva
     assert bool(negative.valid)
 
 
-def test_nonlinear_input_output_linearization_has_affine_offsets():
-    def vector_field(t, x, u, args):
+def test_nonlinear_input_output_linearization_has_affine_offsets() -> None:
+    def vector_field(t: Any, x: Any, u: Any, args: Any) -> Any:
         return jnp.array(
             [x[0] ** 2 + jnp.sin(x[1]) + args * u[0] + t, x[0] * x[1] + u[0] ** 2]
         )
 
-    def output(t, x, u, args):
+    def output(t: Any, x: Any, u: Any, args: Any) -> Any:
         del t, args
         return jnp.array([x[0] + u[0] ** 2, x[1] * u[0]])
 
@@ -137,8 +142,8 @@ def test_nonlinear_input_output_linearization_has_affine_offsets():
     assert result.provenance.system_type == "continuous"
 
 
-def test_discrete_linearization_preserves_batched_operating_points():
-    def transition(context, x, u, args):
+def test_discrete_linearization_preserves_batched_operating_points() -> None:
+    def transition(context: Any, x: Any, u: Any, args: Any) -> Any:
         return jnp.array([x[0] ** 2 + args * u[0] + context.source])
 
     dynamics = make_discrete_control_dynamics(
@@ -172,10 +177,10 @@ def test_discrete_linearization_preserves_batched_operating_points():
     assert result.provenance.system_type == "discrete"
 
 
-def test_discrete_linearization_rejects_finite_failed_rollbacks():
+def test_discrete_linearization_rejects_finite_failed_rollbacks() -> None:
     failure_status = 43
 
-    def transition(context, state, control, args):
+    def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, args
         successful = control[0] >= 0.0
         accepted = jnp.where(successful, state + control, state)
@@ -213,7 +218,7 @@ def test_discrete_linearization_rejects_finite_failed_rollbacks():
     assert bool(jnp.all(jnp.isnan(result.affine_offset[1])))
 
 
-def test_linearization_marks_nonfinite_operating_time_invalid():
+def test_linearization_marks_nonfinite_operating_time_invalid() -> None:
     dynamics = make_differential_control_dynamics(
         lambda time, state, control, args: jnp.ones((1,)),
         state_shape=(1,),
@@ -232,7 +237,7 @@ def test_linearization_marks_nonfinite_operating_time_invalid():
     assert not bool(result.valid)
 
 
-def test_scalar_state_and_control_linearization_preserves_case_axes():
+def test_scalar_state_and_control_linearization_preserves_case_axes() -> None:
     discrete = make_discrete_control_dynamics(
         lambda context, state, control, args: state**2 + 3.0 * control + context.source,
         state_shape=(),
@@ -283,12 +288,14 @@ def test_scalar_state_and_control_linearization_preserves_case_axes():
     assert bool(scalar.valid)
 
 
-def test_prepared_linearization_actions_match_the_dense_model_without_materializing():
-    def vector_field(t, x, u, args):
+def test_prepared_linearization_actions_match_the_dense_model_without_materializing() -> (
+    None
+):
+    def vector_field(t: Any, x: Any, u: Any, args: Any) -> Any:
         del args
         return jnp.array([x[0] * x[1] + jnp.sin(u[0]), x[1] ** 2 - t * u[1]])
 
-    def output(t, x, u, args):
+    def output(t: Any, x: Any, u: Any, args: Any) -> Any:
         del t, args
         return jnp.array([x[0] + u[0] * u[1], x[0] * x[1], jnp.cos(u[1])])
 
@@ -345,7 +352,7 @@ def test_prepared_linearization_actions_match_the_dense_model_without_materializ
         prepare_control_linearization(discrete, t, x, u)
 
 
-def test_dense_linearization_is_bounded_by_the_required_materialization_policy():
+def test_dense_linearization_is_bounded_by_the_required_materialization_policy() -> None:
     dynamics = make_discrete_control_dynamics(
         lambda context, state, control, args: state * control[0] + context.source,
         state_shape=(2,),
@@ -356,7 +363,7 @@ def test_dense_linearization_is_bounded_by_the_required_materialization_policy()
     states = jnp.ones((3, 2))
     controls = jnp.ones((3, 1))
 
-    def linearize(policy):
+    def linearize(policy: Any) -> Any:
         return linearize_discrete_dynamics(
             dynamics,
             times,
@@ -379,10 +386,12 @@ def test_dense_linearization_is_bounded_by_the_required_materialization_policy()
         linearize(None)
 
 
-def test_discrete_bridge_builds_the_affine_lq_problem_along_an_operating_trajectory():
+def test_discrete_bridge_builds_the_affine_lq_problem_along_an_operating_trajectory() -> (
+    None
+):
     step = 0.1
 
-    def transition(context, state, control, args):
+    def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, args
         return jnp.array(
             [
@@ -432,6 +441,7 @@ def test_discrete_bridge_builds_the_affine_lq_problem_along_an_operating_traject
     assert problem.time_grid is time_grid
     assert problem.problem_id == "bridge-problem"
     assert problem.dynamics_id.startswith("pendulum-like:linearized:")
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(problem.control_upper_bounds, 1.0)
 
     with pytest.raises(TypeError, match="dynamics_bias"):
@@ -449,8 +459,8 @@ def test_discrete_bridge_builds_the_affine_lq_problem_along_an_operating_traject
         )
 
 
-def test_discrete_bridge_refuses_failed_transitions_and_manifold_states():
-    def transition(context, state, control, args):
+def test_discrete_bridge_refuses_failed_transitions_and_manifold_states() -> None:
+    def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
         del args
         successful = context.step_index != 1
         accepted = jnp.where(successful, state + control, state)
@@ -507,7 +517,7 @@ def test_discrete_bridge_refuses_failed_transitions_and_manifold_states():
         )
 
 
-def test_known_siso_continuous_and_discrete_resolvents():
+def test_known_siso_continuous_and_discrete_resolvents() -> None:
     a = jnp.array([[-2.0]])
     b = jnp.array([[3.0]])
     c = jnp.array([[4.0]])
@@ -526,7 +536,7 @@ def test_known_siso_continuous_and_discrete_resolvents():
     assert bool(jnp.all(discrete.valid))
 
 
-def test_mimo_frequency_response_and_gradient():
+def test_mimo_frequency_response_and_gradient() -> None:
     a = jnp.diag(jnp.array([-1.0, -3.0]))
     b = jnp.array([[1.0, 2.0], [0.5, -1.0]])
     c = jnp.array([[1.0, 0.25], [-2.0, 1.0]])
@@ -539,7 +549,7 @@ def test_mimo_frequency_response_and_gradient():
     np.testing.assert_allclose(result.response, expected)
     assert result.response.shape == (2, 2, 2)
 
-    def real_response(rate):
+    def real_response(rate: Any) -> Any:
         scalar = frequency_response(
             jnp.array([[-rate]]),
             jnp.ones((1, 1)),
@@ -552,7 +562,7 @@ def test_mimo_frequency_response_and_gradient():
     np.testing.assert_allclose(jax.grad(real_response)(2.0), -0.12)
 
 
-def test_descriptor_frequency_uses_i_omega_e_minus_a_resolvent():
+def test_descriptor_frequency_uses_i_omega_e_minus_a_resolvent() -> None:
     system = LinearDescriptorSystem(
         jnp.asarray([[2.0]]),
         jnp.asarray([[-3.0]]),
@@ -569,7 +579,7 @@ def test_descriptor_frequency_uses_i_omega_e_minus_a_resolvent():
     assert bool(result.successful)
 
 
-def test_unstable_and_singular_statuses_are_explicit():
+def test_unstable_and_singular_statuses_are_explicit() -> None:
     one = jnp.ones((1, 1))
     zero = jnp.zeros((1, 1))
     unstable = frequency_response(jnp.array([[0.25]]), one, one, zero, jnp.asarray(1.0))

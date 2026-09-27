@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -61,12 +62,12 @@ class CameraIntrinsics(StrictModule):
 
     def __init__(
         self,
-        focal_length: ArrayLike,
-        principal_point: ArrayLike,
+        focal_length: npt.ArrayLike,
+        principal_point: npt.ArrayLike,
         *,
         image_shape: tuple[int, int] | None = None,
-        skew: Any = 0.0,
-    ):
+        skew: npt.ArrayLike = 0.0,
+    ) -> None:
         focal_host = np.asarray(focal_length, dtype=np.float64)
         principal_host = np.asarray(principal_point, dtype=np.float64)
         skew_host = np.asarray(skew, dtype=np.float64)
@@ -104,7 +105,7 @@ class BrownConradyDistortion(StrictModule):
         self,
         radial: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
         tangential: ArrayLike | tuple[float, float] = (0.0, 0.0),
-    ):
+    ) -> None:
         radial_host = np.asarray(radial, dtype=np.float64)
         tangential_host = np.asarray(tangential, dtype=np.float64)
         if radial_host.shape != (3,) or tangential_host.shape != (2,):
@@ -122,7 +123,7 @@ class CameraPose(StrictModule):
 
     frame: RigidFrame
 
-    def __init__(self, frame: RigidFrame):
+    def __init__(self, frame: RigidFrame) -> None:
         if not isinstance(frame, RigidFrame) or frame.dimension != 3:
             raise TypeError("frame must be a three-dimensional RigidFrame.")
         self.frame = frame
@@ -141,7 +142,7 @@ class CameraModel(StrictModule):
         pose: CameraPose | None = None,
         distortion: BrownConradyDistortion | None = None,
         refractive_stack: PlanarRefractiveStack | None = None,
-    ):
+    ) -> None:
         if not isinstance(intrinsics, CameraIntrinsics):
             raise TypeError("intrinsics must be CameraIntrinsics.")
         pose_ = CameraPose(RigidFrame.identity(3)) if pose is None else pose
@@ -315,8 +316,8 @@ def _project_through_refractive_stack(
         refinement_iterations=1,
     )
 
-    def solve_one(point, initial):
-        def path(candidate):
+    def solve_one(point: Array, initial: Array) -> tuple[Array, Array, Array]:
+        def path(candidate: Array) -> tuple[Array, Array]:
             direction_camera = jnp.stack(
                 (candidate[0], candidate[1], jnp.ones((), dtype=candidate.dtype))
             )

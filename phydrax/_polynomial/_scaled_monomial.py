@@ -9,7 +9,8 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -33,7 +34,7 @@ class ScaledMonomialBasis(StrictModule, NonTrainableState):
         /,
         *,
         maximum_features: int = 4096,
-    ):
+    ) -> None:
         indices = total_degree_multiindices(dimension, degree)
         if len(indices) > int(maximum_features):
             raise ValueError("Scaled monomial feature budget exceeded.")

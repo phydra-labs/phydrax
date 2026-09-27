@@ -10,7 +10,7 @@ from typing import Any, ClassVar
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._differentiation import ComponentAuthority
 from .._fingerprint import canonical_fingerprint
@@ -62,7 +62,7 @@ class ConstantTransport(AbstractTransportClosure, NonTrainableState):
         /,
         *,
         bulk_viscosity: float = 0.0,
-    ):
+    ) -> None:
         viscosity = float(dynamic_viscosity)
         conductivity = float(thermal_conductivity)
         bulk = float(bulk_viscosity)
@@ -126,7 +126,7 @@ class SutherlandTransport(AbstractTransportClosure, NonTrainableState):
         /,
         *,
         bulk_viscosity: float = 0.0,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -209,7 +209,7 @@ class PrandtlTransport(AbstractTransportClosure):
         specific_heat_cp: float,
         prandtl_number: float,
         /,
-    ):
+    ) -> None:
         cp = float(specific_heat_cp)
         prandtl = float(prandtl_number)
         if not isinstance(viscosity, AbstractTransportClosure):

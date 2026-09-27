@@ -7,7 +7,8 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ._hypersurface import ProjectiveHypersurface
@@ -35,7 +36,7 @@ class ProjectiveLineSamples(StrictModule):
         valid: ArrayLike,
         line_ids: ArrayLike,
         root_ids: ArrayLike,
-    ):
+    ) -> None:
         self.homogeneous_points = jnp.asarray(homogeneous_points)
         self.chart_indices = jnp.asarray(chart_indices, dtype=jnp.int32)
         self.pivot_indices = jnp.asarray(pivot_indices, dtype=jnp.int32)

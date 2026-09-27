@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import hashlib
 import json
@@ -42,7 +44,7 @@ from phydrax.solver._dark_sector_epoch_runtime import (
 from phydrax.units import COULOMB
 
 
-def _case(proposal_capacity: int):
+def _case(proposal_capacity: int) -> Any:
     units = RelativisticUnitContract(
         RelativityScaleContract(DimensionalScaleContract.si(), 1, 1, 1, 1),
         RelativityConvention(metric_signature="mostly_minus"),

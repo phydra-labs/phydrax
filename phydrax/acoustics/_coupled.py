@@ -10,7 +10,8 @@ from math import isfinite
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..ein import contract
 from ..linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
@@ -106,8 +107,12 @@ class VibroacousticSystem:
                 "Vibroacoustic mass must be positive definite and damping/stiffness positive semidefinite."
             )
         return cls(
-            *(jnp.asarray(value) for value in structural),
-            *(jnp.asarray(value) for value in acoustic),
+            jnp.asarray(structural[0]),
+            jnp.asarray(structural[1]),
+            jnp.asarray(structural[2]),
+            jnp.asarray(acoustic[0]),
+            jnp.asarray(acoustic[1]),
+            jnp.asarray(acoustic[2]),
             jnp.asarray(coupling),
         )
 

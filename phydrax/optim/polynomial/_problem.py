@@ -9,7 +9,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -63,7 +63,7 @@ class PolynomialOptimizationProblem(StrictModule):
         *,
         equalities: SparsePolynomialSystem | None = None,
         inequalities: SparsePolynomialSystem | None = None,
-    ):
+    ) -> None:
         _validate_real_system(objective, "objective")
         if objective.support.equation_count != 1:
             raise ValueError("objective must contain exactly one polynomial equation.")

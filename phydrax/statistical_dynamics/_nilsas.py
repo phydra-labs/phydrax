@@ -10,7 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from phydrax import ein
 
@@ -112,8 +114,8 @@ class NILSASPlan(AbstractShadowingSolvePlan):
         memory_mode: ShadowingMemoryMode = "store",
         maximum_retained_bytes: int = 2 * 1024 * 1024 * 1024,
         maximum_workspace_bytes: int = 4 * 1024 * 1024 * 1024,
-    ):
-        values = validate_shadowing_plan(
+    ) -> None:
+        values, memory = validate_shadowing_plan(
             "nilsas",
             state_dimension,
             unstable_dimension,
@@ -138,8 +140,8 @@ class NILSASPlan(AbstractShadowingSolvePlan):
             self.maximum_workspace_bytes,
         ) = values
         self.method = "nilsas"
-        self.memory_mode = memory_mode
-        self.plan_id = shadowing_plan_id("nilsas", values, memory_mode)
+        self.memory_mode = memory
+        self.plan_id = shadowing_plan_id("nilsas", values, memory)
 
     def prepare(
         self,
@@ -198,13 +200,13 @@ class NILSASPlan(AbstractShadowingSolvePlan):
             if (terminal_basis is None) == (key is None):
                 raise ValueError("Provide exactly one of terminal_basis and key.")
             basis = (
-                jax.random.normal(
+                jnp.asarray(terminal_basis, dtype=trajectory.states.dtype)
+                if key is None
+                else jax.random.normal(
                     key,
                     (self.state_dimension, self.basis_dimension),
                     dtype=trajectory.states.dtype,
                 )
-                if terminal_basis is None
-                else jnp.asarray(terminal_basis, dtype=trajectory.states.dtype)
             )
             if basis.shape != (self.state_dimension, self.basis_dimension):
                 raise ValueError("terminal_basis has an incompatible shape.")
@@ -282,7 +284,7 @@ class PreparedNILSAS(StrictModule, NonTrainableState):
         args: PyTree[Array],
         terminal_basis: Array,
         terminal_basis_defect: ArrayLike,
-    ):
+    ) -> None:
         self.plan = plan
         self.cost = cost
         self.problem = problem

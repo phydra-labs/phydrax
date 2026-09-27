@@ -37,7 +37,7 @@ class PhaseFieldCouplingTerm(StrictModule, NonTrainableState):
         exchange_inputs: tuple[str, ...] = (),
         exchange_outputs: tuple[str, ...] = (),
         conservation_channels: tuple[str, ...] = (),
-    ):
+    ) -> None:
         identifier = str(term_id)
         groups = tuple(
             tuple(str(item) for item in values)
@@ -78,7 +78,7 @@ class PhaseFieldCouplingGraph(StrictModule, NonTrainableState):
     exchange_channels: tuple[str, ...] = eqx.field(static=True)
     graph_id: str = eqx.field(static=True)
 
-    def __init__(self, terms: tuple[PhaseFieldCouplingTerm, ...], /):
+    def __init__(self, terms: tuple[PhaseFieldCouplingTerm, ...], /) -> None:
         values = tuple(terms)
         if not values or any(
             not isinstance(value, PhaseFieldCouplingTerm) for value in values

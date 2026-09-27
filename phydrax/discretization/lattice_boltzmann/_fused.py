@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -46,7 +46,7 @@ class FusedLatticeBoltzmannExecutionPlan(StrictModule, NonTrainableState):
         /,
         *,
         backend: str = "jax",
-    ):
+    ) -> None:
         if not isinstance(reference, ReferenceLatticeBoltzmannExecutionPlan):
             raise TypeError("reference must be a reference LBM execution plan.")
         if backend != "jax":

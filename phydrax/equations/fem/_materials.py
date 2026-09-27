@@ -11,7 +11,8 @@ from typing import ClassVar, final
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._admissibility import (
     AdmissibilityHeader,
@@ -62,7 +63,7 @@ class FiniteElementAuxiliaryEvaluation(StrictModule):
         retry_requested: ArrayLike = False,
         suggested_step: ArrayLike = 0.0,
         diagnostics: object = None,
-    ):
+    ) -> None:
         successful_ = jnp.asarray(successful, dtype=jnp.bool_)
         admissible_ = jnp.asarray(admissible, dtype=jnp.bool_)
         retry_ = jnp.asarray(retry_requested, dtype=jnp.bool_)
@@ -112,8 +113,10 @@ class AbstractLocalImplicitMaterial(AbstractComponentSlot):
         """Constitutive response at a local state."""
         raise NotImplementedError
 
-    def _newton_solve(self, function: Callable, initial: Array, args: object) -> Array:
-        def body(_, value):
+    def _newton_solve(
+        self, function: Callable[[Array, object], Array], initial: Array, args: object
+    ) -> Array:
+        def body(_: Array, value: Array) -> Array:
             residual = function(value, args)
             jacobian = jax.jacfwd(lambda candidate: function(candidate, args))(value)
             flat_residual = residual.reshape((-1,))
@@ -131,14 +134,16 @@ class AbstractLocalImplicitMaterial(AbstractComponentSlot):
             raise ValueError("Initial local state has the wrong trailing shape.")
         function = self.local_residual
 
-        def solve_fn(residual_fn, guess):
+        def solve_fn(residual_fn: Callable[[Array], Array], guess: Array) -> Array:
             return self._newton_solve(
                 lambda state, parameters: residual_fn(state),
                 guess,
                 None,
             )
 
-        def tangent_solve(linearize, right_hand_side):
+        def tangent_solve(
+            linearize: Callable[[Array], Array], right_hand_side: Array
+        ) -> Array:
             zero = jnp.zeros_like(right_hand_side)
             matrix = jax.jacfwd(linearize)(zero)
             flat_rhs = right_hand_side.reshape((-1,))
@@ -242,7 +247,7 @@ class LocalImplicitMaterial(AbstractLocalImplicitMaterial, NonTrainableState):
         max_steps: int = 25,
         tolerance: float = 1.0e-10,
         model_id: str,
-    ):
+    ) -> None:
         if not callable(residual) or not callable(response):
             raise TypeError("Local material residual and response must be callable.")
         shape, steps, tolerance_, identifier = _root_configuration(
@@ -330,7 +335,7 @@ class LearnedLocalImplicitMaterial(AbstractLocalImplicitMaterial):
         residual_scale: float | None = None,
         ports: ModelPorts | None = None,
         port_mapping: PortMapping | None = None,
-    ):
+    ) -> None:
         site = "LearnedLocalImplicitMaterial"
         if not callable(residual) or not callable(response):
             raise TypeError("Local material residual and response must be callable.")
@@ -345,8 +350,12 @@ class LearnedLocalImplicitMaterial(AbstractLocalImplicitMaterial):
         precision = NonlinearPrecisionPolicy(
             components=(contract,), residual_scale=residual_scale
         )
+        model_precision = contract.model_contract.precision
+        # _bind_learned_law rejects models without a ComponentPrecisionContract.
+        if not (model_precision is not None):
+            raise RuntimeError("Internal invariant failed: model_precision is not None.")
         precision.validate_tolerance(
-            tolerance_, residual_dtype=contract.model_contract.precision.output_dtype
+            tolerance_, residual_dtype=model_precision.output_dtype
         )
         self.binding = binding
         self.residual = residual

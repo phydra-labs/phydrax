@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -13,7 +16,7 @@ from tools._battery_spme_references import (
 )
 
 
-def test_independent_paper_solver_conserves_species_and_exact_current_integrals():
+def test_independent_paper_solver_conserves_species_and_exact_current_integrals() -> None:
     times = (0.0, 0.1, 0.2, 0.3)
     result = paper_reference(
         times, times, (0.2, 0.0, -0.1), radial_cells=8, region_cells=(4, 3, 4)
@@ -38,7 +41,7 @@ def test_independent_paper_solver_conserves_species_and_exact_current_integrals(
     np.testing.assert_array_equal(result["current_a"], (0.2, 0.2, 0.0, -0.1))
 
 
-def test_independent_equilibrium_has_no_voltage_or_inventory_drift():
+def test_independent_equilibrium_has_no_voltage_or_inventory_drift() -> None:
     data = SyntheticSpmeData()
     result = paper_reference(
         (0.0, 0.5, 1.0),
@@ -58,7 +61,9 @@ def test_independent_equilibrium_has_no_voltage_or_inventory_drift():
 
 
 @pytest.mark.parametrize("spherical", (False, True))
-def test_nonuniform_overlap_projection_preserves_extensive_inventory(spherical):
+def test_nonuniform_overlap_projection_preserves_extensive_inventory(
+    spherical: Any,
+) -> None:
     source = np.asarray((0.0, 0.1, 0.4, 1.0))
     target = np.asarray((0.0, 0.3, 0.7, 1.0))
     values = np.asarray(((2.0, 4.0, 1.0), (3.0, 2.0, 5.0)))
@@ -71,6 +76,6 @@ def test_nonuniform_overlap_projection_preserves_extensive_inventory(spherical):
         conservative_projection(source, (0.0, 0.5, 0.9), values, spherical=spherical)
 
 
-def test_reference_refuses_unsupported_current_instead_of_clipping():
+def test_reference_refuses_unsupported_current_instead_of_clipping() -> None:
     with pytest.raises(ValueError):
         paper_reference((0.0, 1.0), (0.0, 1.0), (0.6,))

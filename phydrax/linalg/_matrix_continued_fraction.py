@@ -9,7 +9,8 @@ from enum import IntEnum
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -229,7 +230,9 @@ def _evaluate_matrix_fraction(
     tiny = jnp.asarray(jnp.finfo(real_dtype).tiny, dtype=real_dtype)
     identity_norm = jnp.asarray(jnp.sqrt(block_size), dtype=real_dtype)
 
-    def step(offset, current):
+    def step(
+        offset: Array, current: tuple[Array, Array, Array, Array, Array]
+    ) -> tuple[Array, Array, Array, Array, Array]:
         next_value, healthy, singular_level, nonfinite_level, max_residual = current
         index = block_count - 1 - offset
         correction = contract(

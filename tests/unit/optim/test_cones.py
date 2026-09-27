@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -22,7 +25,7 @@ import phydrax as phx
         phx.optim.PowerCone(0.4),
     ],
 )
-def test_cone_projection_is_idempotent_batched_and_jittable(cone):
+def test_cone_projection_is_idempotent_batched_and_jittable(cone: Any) -> None:
     values = jnp.asarray([[-2.0, 1.0, 3.0, -1.0], [4.0, -3.0, 0.5, 2.0]])[
         ..., : cone.dimension
     ]
@@ -33,7 +36,7 @@ def test_cone_projection_is_idempotent_batched_and_jittable(cone):
     assert jnp.all(cone.contains(projected, tolerance=1e-7))
 
 
-def test_cone_residuals_preserve_nonfinite_norm_semantics():
+def test_cone_residuals_preserve_nonfinite_norm_semantics() -> None:
     cone = phx.optim.ZeroCone(1)
     values = jnp.asarray([[jnp.inf], [-jnp.inf], [jnp.nan]])
     residuals = jax.jit(cone.residual)(values)
@@ -42,7 +45,7 @@ def test_cone_residuals_preserve_nonfinite_norm_semantics():
     assert jnp.isnan(residuals[2])
 
 
-def test_self_dual_cones_satisfy_moreau_decomposition():
+def test_self_dual_cones_satisfy_moreau_decomposition() -> None:
     cones = (
         phx.optim.NonnegativeCone(3),
         phx.optim.SecondOrderCone(3),
@@ -63,7 +66,7 @@ def test_self_dual_cones_satisfy_moreau_decomposition():
         )
 
 
-def test_soc_and_rotated_soc_boundary_and_apex_are_finite():
+def test_soc_and_rotated_soc_boundary_and_apex_are_finite() -> None:
     soc = phx.optim.SecondOrderCone(3)
     rotated = phx.optim.RotatedSecondOrderCone(4)
 
@@ -78,7 +81,7 @@ def test_soc_and_rotated_soc_boundary_and_apex_are_finite():
     assert jnp.all(rotated.contains(rotated.project(rotated_values), tolerance=1e-7))
 
 
-def test_product_cone_preserves_block_layout_and_complementarity():
+def test_product_cone_preserves_block_layout_and_complementarity() -> None:
     cone = phx.optim.ProductCone(
         (
             phx.optim.ZeroCone(1),
@@ -96,7 +99,7 @@ def test_product_cone_preserves_block_layout_and_complementarity():
     assert cone.block_complementarity(projected, jnp.zeros_like(projected)).shape == (3,)
 
 
-def test_cones_reject_wrong_shape_and_complex_values():
+def test_cones_reject_wrong_shape_and_complex_values() -> None:
     cone = phx.optim.SecondOrderCone(3)
     with pytest.raises(ValueError, match="must end in shape"):
         cone.project(jnp.zeros(2))

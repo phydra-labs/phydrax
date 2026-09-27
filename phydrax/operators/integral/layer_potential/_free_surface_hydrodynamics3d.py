@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -129,7 +130,9 @@ def _clip_triangle_below(
 
 
 def _waterline_loops(
-    segments: Sequence[tuple[np.ndarray, np.ndarray]], tolerance: float, /
+    segments: Sequence[tuple[np.ndarray, np.ndarray]],
+    tolerance: float | np.floating,
+    /,
 ) -> list[np.ndarray]:
     points: dict[tuple[int, int], np.ndarray] = {}
     adjacency: dict[tuple[int, int], list[tuple[int, int]]] = {}
@@ -147,7 +150,7 @@ def _waterline_loops(
         points.setdefault(end_key, end[:2].copy())
         adjacency.setdefault(start_key, []).append(end_key)
         adjacency.setdefault(end_key, []).append(start_key)
-        edges.add(tuple(sorted((start_key, end_key))))
+        edges.add((min(start_key, end_key), max(start_key, end_key)))
     if not edges or any(len(neighbors) != 2 for neighbors in adjacency.values()):
         raise ValueError(
             "Waterline segments must form one or more closed degree-two loops."
@@ -165,7 +168,7 @@ def _waterline_loops(
             loop_keys.append(current)
             neighbors = adjacency[current]
             following = neighbors[0] if neighbors[0] != previous else neighbors[1]
-            edge = tuple(sorted((current, following)))
+            edge = (min(current, following), max(current, following))
             if edge not in remaining:
                 raise ValueError("Waterline loop repeats an edge before closing.")
             remaining.remove(edge)
@@ -409,7 +412,7 @@ class FreeSurfaceHydrodynamicsPolicy3D(StrictModule, NonTrainableState):
         max_resident_bytes: int = 256 * 1024 * 1024,
         max_preparation_workspace_bytes: int = 512 * 1024 * 1024,
         minimum_geometric_clearance: float = 1.0e-8,
-    ):
+    ) -> None:
         green_ = FreeSurfaceGreenPolicy3D() if green is None else green
         galerkin_ = (
             LaplaceSingleLayerDP0GalerkinPolicy3D() if galerkin is None else galerkin
@@ -838,7 +841,11 @@ def prepare_free_surface_hydrodynamics_3d(
         target_block_size,
         source_block_size,
     )
-    direct_trace = jnp.asarray(galerkin.dense_oracle.matrix, dtype=jnp.complex128)
+    dense_oracle = galerkin.dense_oracle
+    # _galerkin_policy_with_oracle always requests the dense oracle.
+    if not (dense_oracle is not None):
+        raise RuntimeError("Internal invariant failed: dense_oracle is not None.")
+    direct_trace = jnp.asarray(dense_oracle.matrix, dtype=jnp.complex128)
     trace_matrix = direct_trace + integrated_wave
     boundary_operator = DenseLinearOperator(
         boundary_matrix,

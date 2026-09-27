@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -5,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _surface_mechanism():
+def _surface_mechanism() -> Any:
     gas = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A",),
         (phx.equations.ChemicalPhaseKind.GAS,),
@@ -32,7 +34,7 @@ def _surface_mechanism():
     return phx.equations.PreparedGasSurfaceMechanism(gas, surface, (reaction,))
 
 
-def test_surface_chemistry_preserves_sites_elements_and_charge():
+def test_surface_chemistry_preserves_sites_elements_and_charge() -> None:
     mechanism = _surface_mechanism()
     state = phx.equations.SurfaceChemicalState(
         jnp.asarray((0.8, 0.2)),
@@ -50,7 +52,7 @@ def test_surface_chemistry_preserves_sites_elements_and_charge():
     assert result.surface_amount_rate[1] > 0.0
 
 
-def _material():
+def _material() -> Any:
     return phx.equations.PorousAblatingMaterialPlan(
         jnp.asarray((1000.0, 800.0)),
         jnp.asarray((0.2, 0.1)),
@@ -68,7 +70,7 @@ def _material():
     )
 
 
-def test_porous_material_decomposition_conserves_closed_mass():
+def test_porous_material_decomposition_conserves_closed_mass() -> None:
     material = _material()
     state = phx.equations.AblatingMaterialState(
         jnp.asarray((1.0, 0.0)),
@@ -93,7 +95,9 @@ def test_porous_material_decomposition_conserves_closed_mass():
 
 
 @pytest.mark.parametrize("reaction_count", (0, 3))
-def test_porous_material_reaction_slots_must_map_to_solid_components(reaction_count):
+def test_porous_material_reaction_slots_must_map_to_solid_components(
+    reaction_count: Any,
+) -> None:
     with pytest.raises(ValueError, match="arrays are invalid"):
         phx.equations.PorousAblatingMaterialPlan(
             jnp.asarray((1000.0, 800.0)),
@@ -112,7 +116,7 @@ def test_porous_material_reaction_slots_must_map_to_solid_components(reaction_co
         )
 
 
-def test_conjugate_exchange_and_recession_remap_are_conservative():
+def test_conjugate_exchange_and_recession_remap_are_conservative() -> None:
     interface = phx.solver.ConjugateAerothermalInterfacePlan(
         jnp.eye(2),
         jnp.eye(2),

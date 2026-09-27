@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -40,7 +41,7 @@ class ParticleSpeciesTable(StrictModule, NonTrainableState):
         catalog: ParticleCatalogReference,
         energy_unit: UnitDefinition,
         charge_unit: UnitDefinition,
-    ):
+    ) -> None:
         identifiers = np.asarray(pdg_ids)
         energies = np.asarray(rest_energies)
         charges_ = np.asarray(charges)

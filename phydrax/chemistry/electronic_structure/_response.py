@@ -9,7 +9,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -76,7 +77,7 @@ class MeanFieldResponsePlan(StrictModule, NonTrainableState):
         *,
         residual_tolerance: float = 1.0e-8,
         condition_limit: float = 1.0e12,
-    ):
+    ) -> None:
         residual = float(residual_tolerance)
         condition = float(condition_limit)
         if residual <= 0.0 or condition <= 1.0:
@@ -315,7 +316,7 @@ class MeanFieldResponsePlan(StrictModule, NonTrainableState):
         position_shape = coordinate.shape
         coordinate_count = coordinate.size
 
-        def residual_flat(current_density, current_positions):
+        def residual_flat(current_density: Array, current_positions: Array) -> Array:
             density = current_density.reshape(density_shape)
             positions_ = current_positions.reshape(position_shape)
             return (
@@ -353,7 +354,7 @@ class MeanFieldResponsePlan(StrictModule, NonTrainableState):
             )
         )
 
-        def gradient_flat(current_density, current_positions):
+        def gradient_flat(current_density: Array, current_positions: Array) -> Array:
             return self._stationary_gradient(
                 calculation,
                 state,

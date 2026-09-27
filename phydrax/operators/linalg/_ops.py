@@ -4,24 +4,28 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.domain import DomainFunction
 from phydrax.ein import contract
 
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 
 
 class _PointwiseTransformCallable(StrictModule):
     source: DomainFunction
     operation: str
 
-    def __init__(self, source: DomainFunction, operation: str):
+    def __init__(self, source: DomainFunction, operation: str) -> None:
         self.source = source
         self.operation = operation
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         value = jnp.asarray(self.source.func(*args, key=key, **kwargs))
         if self.operation == "conjugate":
             return jnp.conj(value)
@@ -85,7 +89,7 @@ def norm(u: DomainFunction, /, *, order: int = 2) -> DomainFunction:
     """
     order_i = int(order)
 
-    def _op(*args, key=None, **kwargs):
+    def _op(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         val = jnp.asarray(u.func(*args, key=key, **kwargs))
         if val.ndim == 0:
             return jnp.abs(val)
@@ -109,7 +113,7 @@ def det(u: DomainFunction, /) -> DomainFunction:
     - A `DomainFunction` representing the scalar determinant field.
     """
 
-    def _op(*args, key=None, **kwargs):
+    def _op(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         val = jnp.asarray(u.func(*args, key=key, **kwargs))
         return jnp.linalg.det(val)
 
@@ -131,7 +135,7 @@ def trace(u: DomainFunction, /) -> DomainFunction:
     - A `DomainFunction` representing the scalar trace field.
     """
 
-    def _op(*args, key=None, **kwargs):
+    def _op(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         val = jnp.asarray(u.func(*args, key=key, **kwargs))
         return jnp.trace(val, axis1=-2, axis2=-1)
 
@@ -194,7 +198,7 @@ def einsum(subscript: str, /, *operands: DomainFunction | ArrayLike) -> DomainFu
             meta = {}
             break
 
-    def _op(*args, key=None, **kwargs):
+    def _op(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         arrays = []
         for op, pos, const in operand_specs:
             if op is None:

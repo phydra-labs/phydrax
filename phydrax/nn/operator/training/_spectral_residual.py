@@ -15,11 +15,19 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 from ...._frozendict import frozendict
+from ....equations._ir import PDEExpression
 from ....equations._spectral_residual import CompiledSpectralResidual
-from ..data import OperatorBatch, OperatorPrediction, OperatorTargetBatch
+from ....typing import PRNGKey
+from ..data import (
+    FunctionSamples,
+    OperatorAxis,
+    OperatorBatch,
+    OperatorPrediction,
+    OperatorTargetBatch,
+)
 from ._losses import (
     _weighted_case_reduction,
     AbstractOperatorLossTerm,
@@ -28,7 +36,7 @@ from ._losses import (
 )
 
 
-def _parameter_names(expression) -> frozenset[str]:
+def _parameter_names(expression: PDEExpression) -> frozenset[str]:
     names = (
         frozenset((expression.symbol,))
         if expression.op == "parameter" and expression.symbol is not None
@@ -50,7 +58,7 @@ class SpectralPDEResidualLoss(AbstractOperatorLossTerm):
     weight: float = 1.0
     query_name: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("Spectral PDE residual loss names must be non-empty.")
         if not isinstance(self.compiled, CompiledSpectralResidual):
@@ -123,7 +131,9 @@ class SpectralPDEResidualLoss(AbstractOperatorLossTerm):
         object.__setattr__(self, "weight", float(self.weight))
         object.__setattr__(self, "query_name", query)
 
-    def _query(self, prediction: OperatorPrediction, batch: OperatorBatch):
+    def _query(
+        self, prediction: OperatorPrediction, batch: OperatorBatch
+    ) -> FunctionSamples:
         predicted_queries = {
             prediction.field(field).query_name
             for field in self.prediction_fields.values()
@@ -162,7 +172,7 @@ class SpectralPDEResidualLoss(AbstractOperatorLossTerm):
             )
         return query
 
-    def _node_mismatch(self, axes) -> Array:
+    def _node_mismatch(self, axes: tuple[OperatorAxis, ...]) -> Array:
         mismatch = jnp.asarray(False)
         for source, target in zip(
             axes,
@@ -185,7 +195,7 @@ class SpectralPDEResidualLoss(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,

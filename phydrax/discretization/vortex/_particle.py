@@ -8,7 +8,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -33,7 +34,7 @@ class VortexParticleProperties(StrictModule):
         /,
         *,
         properties_id: str | None = None,
-    ):
+    ) -> None:
         core = None if core_radius is None else jnp.asarray(core_radius)
         volumes = None if volume is None else jnp.asarray(volume)
         if core is not None and core.ndim != 1:
@@ -143,7 +144,7 @@ class VortexParticleStateLayout(StrictModule, NonTrainableState):
         *,
         dynamic_core: bool = False,
         layout_id: str | None = None,
-    ):
+    ) -> None:
         capacity_, dimension_ = int(capacity), int(dimension)
         if capacity_ <= 0:
             raise ValueError("Vortex-particle state capacity must be positive.")

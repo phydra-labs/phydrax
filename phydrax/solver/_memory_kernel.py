@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
@@ -43,7 +44,7 @@ class QuantumMemoryKernel(StrictModule):
         *,
         memory_horizon: float,
         kernel_id: str,
-    ):
+    ) -> None:
         if not callable(action):
             raise TypeError("Memory-kernel action must be callable.")
         if memory_horizon <= 0.0:
@@ -82,7 +83,7 @@ class MemoryKernelMasterEquation(StrictModule):
         geometry_precision: GeometryPrecisionPolicy | None = None,
         hermitian_precision: HermitianPrecisionPolicy | None = None,
         problem_id: str = "memory-kernel-master",
-    ):
+    ) -> None:
         if not callable(local_generator):
             raise TypeError("local_generator must be callable.")
         density = jnp.asarray(initial_density)
@@ -135,7 +136,7 @@ class TimeLocalOpenSystemProblem(StrictModule):
         geometry_precision: GeometryPrecisionPolicy | None = None,
         hermitian_precision: HermitianPrecisionPolicy | None = None,
         problem_id: str = "time-local-open-system",
-    ):
+    ) -> None:
         if not callable(generator):
             raise TypeError("generator must be callable.")
         density = jnp.asarray(initial_density)
@@ -197,12 +198,12 @@ class OpenSystemHistorySolution(StrictModule):
         *,
         problem_id: str,
         representation_id: str,
-        approximation_axes,
+        approximation_axes: Sequence[ApproximationAxis],
         temporal_precision: TemporalPrecisionPolicy,
         geometry_precision: GeometryPrecisionPolicy,
         hermitian_precision: HermitianPrecisionPolicy,
         integration_precision: IntegrationPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         values = jnp.asarray(states)
         times_ = jnp.asarray(times)
         temporal_precision.validate_state(values[0])
@@ -316,7 +317,7 @@ class DynamicalMapPhysicality(StrictModule):
         *,
         geometry_precision: GeometryPrecisionPolicy | None = None,
         hermitian_precision: HermitianPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         matrix = jnp.asarray(superoperator)
         geometry_ = (
             GeometryPrecisionPolicy()
@@ -550,7 +551,7 @@ class MemoryKernelMapCertification(StrictModule):
         superoperators: ArrayLike,
         certifications: tuple[DynamicalMapPhysicality, ...],
         /,
-    ):
+    ) -> None:
         self.superoperators = jnp.asarray(superoperators)
         self.choi_matrices = jnp.stack([value.choi_matrix for value in certifications])
         self.cp_margins = jnp.stack([value.cp_margin for value in certifications])
@@ -613,7 +614,7 @@ def exponential_memory_qubit_problem(
     sigma_minus = jnp.asarray([[0, 0], [1, 0]], dtype=jnp.complex128)
     sigma_plus = jnp.conj(sigma_minus.T)
 
-    def kernel(lag, density):
+    def kernel(lag: Array, density: Array) -> Array:
         commutator = sigma_minus @ density @ sigma_plus - 0.5 * (
             sigma_plus @ sigma_minus @ density + density @ sigma_plus @ sigma_minus
         )

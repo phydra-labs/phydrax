@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -5,12 +7,13 @@ import jax.random as jr
 import phydrax as phx
 
 
-def _periodic_discretization(size):
+def _periodic_discretization(size: Any) -> Any:
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.FourierAxisSpec(size).materialize(0.0, 1.0)
     return phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
 
 
-def test_stochastic_heat_ensemble_matches_semidiscrete_gaussian_moments():
+def test_stochastic_heat_ensemble_matches_semidiscrete_gaussian_moments() -> None:
     discretization = _periodic_discretization(4)
     kappa, duration = 0.1, 0.05
     initial = discretization.project(jnp.asarray([0.7, -0.2, 0.1, 0.4]))
@@ -80,7 +83,7 @@ def test_stochastic_heat_ensemble_matches_semidiscrete_gaussian_moments():
     assert predictive.samples.shape == (2048, 1, 4)
 
 
-def test_semidiscrete_heat_replays_realization_and_changes_with_key():
+def test_semidiscrete_heat_replays_realization_and_changes_with_key() -> None:
     discretization = _periodic_discretization(5)
     basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
         discretization,
@@ -102,7 +105,7 @@ def test_semidiscrete_heat_replays_realization_and_changes_with_key():
         tolerance=1e-4,
     )
 
-    def solve(selected_realization):
+    def solve(selected_realization: Any) -> Any:
         return phx.solver.solve_diffrax_ensemble(
             spde.problem,
             save_times=jnp.asarray([0.03]),
@@ -124,7 +127,7 @@ def test_semidiscrete_heat_replays_realization_and_changes_with_key():
     assert not jnp.array_equal(first.states, changed.states)
 
 
-def test_stochastic_allen_cahn_semidiscretization_is_finite_and_reproducible():
+def test_stochastic_allen_cahn_semidiscretization_is_finite_and_reproducible() -> None:
     discretization = _periodic_discretization(6)
     basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
         discretization,
@@ -189,8 +192,10 @@ def test_stochastic_allen_cahn_semidiscretization_is_finite_and_reproducible():
     assert first.temporal_evidence.state_coordinates.domain_kind == "full"
 
 
-def test_two_dimensional_tensor_state_preserves_channels_and_noise_axes():
+def test_two_dimensional_tensor_state_preserves_channels_and_noise_axes() -> None:
+    # ty: ignore[invalid-argument-type]
     x_axis = phx.discretization.FourierAxisSpec(4).materialize(0.0, 1.0)
+    # ty: ignore[invalid-argument-type]
     y_axis = phx.discretization.FourierAxisSpec(5).materialize(0.0, 1.0)
     discretization = phx.discretization.TensorSpectralDiscretization.from_axes(
         (x_axis, y_axis)
@@ -243,7 +248,7 @@ def test_two_dimensional_tensor_state_preserves_channels_and_noise_axes():
     assert jnp.all(jnp.isfinite(solution.states))
 
 
-def test_refined_grid_changes_discretization_and_basis_provenance():
+def test_refined_grid_changes_discretization_and_basis_provenance() -> None:
     coarse = _periodic_discretization(6)
     refined = _periodic_discretization(10)
     coarse_basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(coarse, 0.02, rank=2)
@@ -255,7 +260,7 @@ def test_refined_grid_changes_discretization_and_basis_provenance():
     assert refined_basis.field_space_id == refined.field_spaces[0].field_space_id
 
 
-def test_semidiscrete_stratonovich_geometric_noise_matches_analytic_moments():
+def test_semidiscrete_stratonovich_geometric_noise_matches_analytic_moments() -> None:
     discretization = _periodic_discretization(2)
     initial = jnp.asarray([1.0, 1.5])
     rate, noise, duration = 0.2, 0.4, 0.2

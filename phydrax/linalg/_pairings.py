@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -79,7 +80,7 @@ class AbstractPairing(StrictModule):
 class EuclideanPairing(AbstractPairing):
     """Euclidean/Hermitian pairing on an array or PyTree of arrays."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.pairing_id = "euclidean-hermitian"
 
     def inner(self, left: PyTree[Any], right: PyTree[Any], /) -> Array:
@@ -106,7 +107,7 @@ class DiagonalPairing(AbstractPairing):
 
     weights: PyTree[Array]
 
-    def __init__(self, weights: PyTree[Any], /, *, pairing_id: str | None = None):
+    def __init__(self, weights: PyTree[Any], /, *, pairing_id: str | None = None) -> None:
         values = jax.tree.map(
             lambda value: eqx.error_if(
                 value,

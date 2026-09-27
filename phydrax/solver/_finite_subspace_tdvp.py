@@ -9,7 +9,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..linalg import (
@@ -42,7 +43,7 @@ class FiniteVariationalSubspaceTDVPProblem(StrictModule):
         *,
         tolerance: float = 1e-10,
         problem_id: str,
-    ):
+    ) -> None:
         metric, operator, coefficients = map(
             jnp.asarray, (overlap, hamiltonian, initial_coefficients)
         )
@@ -141,11 +142,13 @@ def prepare_finite_subspace_tdvp(
     )
 
 
-def _metric_norm(problem, coefficients):
+def _metric_norm(
+    problem: FiniteVariationalSubspaceTDVPProblem, coefficients: Array
+) -> Array:
     return jnp.real(jnp.vdot(coefficients, problem.overlap @ coefficients))
 
 
-def _energy(problem, coefficients):
+def _energy(problem: FiniteVariationalSubspaceTDVPProblem, coefficients: Array) -> Array:
     return jnp.real(jnp.vdot(coefficients, problem.hamiltonian @ coefficients))
 
 

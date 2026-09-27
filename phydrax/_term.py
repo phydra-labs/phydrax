@@ -8,13 +8,14 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 from phydrax.domain import DomainFunction
 
 from ._doc import DOC_KEY0
 from ._frozendict import frozendict
 from ._strict import StrictModule
+from .typing import PRNGKey
 
 
 class TermEvaluation(StrictModule):
@@ -23,7 +24,7 @@ class TermEvaluation(StrictModule):
     value: Array
     diagnostics: Any
 
-    def __init__(self, value: Any, /, *, diagnostics: Any = None):
+    def __init__(self, value: Any, /, *, diagnostics: Any = None) -> None:
         scalar = jnp.asarray(value)
         if scalar.shape != ():
             raise ValueError(f"Scalar terms must return shape (), got {scalar.shape}.")
@@ -44,7 +45,7 @@ class AbstractScalarTerm(StrictModule):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -55,7 +56,7 @@ class AbstractScalarTerm(StrictModule):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         step: int | Array | None = None,
         **kwargs: Any,
     ) -> TermEvaluation:
@@ -67,7 +68,7 @@ class AbstractSamplingTerm(AbstractScalarTerm):
     """A scalar term with an explicitly materializable evaluation batch."""
 
     @abstractmethod
-    def sample(self, *, key: Key[Array, ""] = DOC_KEY0) -> Any:
+    def sample(self, *, key: PRNGKey = DOC_KEY0) -> Any:
         raise NotImplementedError
 
 
@@ -80,7 +81,7 @@ class AbstractEvaluatedScalarTerm(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> TermEvaluation:
@@ -92,7 +93,7 @@ def evaluate(
     functions: Mapping[str, DomainFunction],
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     step: int | Array | None = None,
     **kwargs: Any,
 ) -> TermEvaluation:

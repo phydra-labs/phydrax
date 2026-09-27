@@ -7,7 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -88,8 +88,10 @@ def finite_element_geometry_quality(
     maximum_conditions = []
     for block_index, block in enumerate(mesh.blocks):
         coordinate_element = discretization.coordinate_elements[block_index]
+        # ty: ignore[unresolved-attribute]
         degree = max(coordinate_element.degree + increment, 2)
         points, _weights = _degree_aware_reference_rule(block.cell_kind, degree)
+        # ty: ignore[unresolved-attribute]
         _basis, gradients = coordinate_element.tabulate(points)
         local_coordinates = runtime_.coordinates[
             discretization.coordinate_dofs[block_index]

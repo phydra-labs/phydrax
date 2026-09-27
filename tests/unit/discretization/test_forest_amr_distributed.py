@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _topology():
+def _topology() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(2, periodic=True),
@@ -28,14 +31,16 @@ def _topology():
     return compiler, compiler.adapt(topology, marks).topology
 
 
-def _values(topology, seed, *, components=2):
+def _values(topology: Any, seed: Any, *, components: Any = 2) -> Any:
     rng = np.random.default_rng(seed)
     values = rng.normal(size=(topology.signature.leaf_capacity, components)) + 10.0
     return jnp.where(topology.workset.leaf_valid[:, None], jnp.asarray(values), 0.0)
 
 
 @pytest.mark.parametrize("stencil", ["face", "corner"])
-def test_partition_owns_weighted_morton_ranges_with_closed_ghost_layers(stencil):
+def test_partition_owns_weighted_morton_ranges_with_closed_ghost_layers(
+    stencil: Any,
+) -> None:
     _, topology = _topology()
     weights = np.linspace(1.0, 3.0, topology.leaf_count)
     partition = phx.discretization.ForestPartitionPlan(
@@ -61,7 +66,7 @@ def test_partition_owns_weighted_morton_ranges_with_closed_ghost_layers(stencil)
         np.testing.assert_array_equal(np.sort(local), touching)
 
 
-def test_part_local_faces_reproduce_global_face_divergence():
+def test_part_local_faces_reproduce_global_face_divergence() -> None:
     _, topology = _topology()
     partition = phx.discretization.ForestPartitionPlan(3).prepare(topology)
     workset = topology.workset
@@ -71,7 +76,9 @@ def test_part_local_faces_reproduce_global_face_divergence():
     jump = jnp.where(workset.face_valid, values[plus] - values[minus], 0.0)
     expected = jnp.zeros_like(values).at[minus].add(jump).at[plus].add(-jump)
 
-    def local_divergence(local, face_minus, face_plus, face_valid, owned):
+    def local_divergence(
+        local: Any, face_minus: Any, face_plus: Any, face_valid: Any, owned: Any
+    ) -> Any:
         local_jump = jnp.where(face_valid, local[face_plus] - local[face_minus], 0.0)
         result = jnp.zeros_like(local).at[face_minus].add(local_jump)
         return jnp.where(owned, result.at[face_plus].add(-local_jump), 0.0)
@@ -88,7 +95,7 @@ def test_part_local_faces_reproduce_global_face_divergence():
 
 @pytest.mark.skipif(len(jax.devices()) < 4, reason="requires four JAX devices")
 @pytest.mark.parametrize("stencil", ["face", "edge", "corner"])
-def test_sharded_ghost_exchange_delivers_owner_values(stencil):
+def test_sharded_ghost_exchange_delivers_owner_values(stencil: Any) -> None:
     _, topology = _topology()
     partition = phx.discretization.ForestPartitionPlan(
         4, ghost_stencil=phx.discretization.AMRBalanceStencil(stencil)
@@ -98,7 +105,7 @@ def test_sharded_ghost_exchange_delivers_owner_values(stencil):
     np.testing.assert_array_equal(exchanged, partition.pack_with_ghosts(values))
 
 
-def test_migration_after_adaptation_moves_and_transfers_conservatively():
+def test_migration_after_adaptation_moves_and_transfers_conservatively() -> None:
     compiler, source = _topology()
     marks = np.zeros((source.signature.leaf_capacity,), dtype=np.int8)
     marks[[8, 9]] = 1

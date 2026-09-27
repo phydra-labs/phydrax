@@ -13,10 +13,12 @@ import jax
 import jax.core as jax_core
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._operators import (
     AbstractLinearOperator,
     adjoint,
@@ -68,7 +70,7 @@ class MatrixEquationTerm(StrictModule):
         /,
         *,
         coefficient: ArrayLike = 1.0,
-    ):
+    ) -> None:
         left_ = _coerce_square_operator(left, "left")
         right_ = _coerce_square_operator(right, "right")
         if not left_.capabilities.transpose or not right_.capabilities.transpose:
@@ -113,7 +115,7 @@ class MatrixEquationLinearOperator(AbstractLinearOperator):
         *,
         dtype: Any | None = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         terms_ = tuple(terms)
         if not terms_ or any(not isinstance(term, MatrixEquationTerm) for term in terms_):
             raise TypeError(
@@ -251,14 +253,8 @@ class MatrixEquationProblem(StrictModule):
         kind: MatrixEquationKind = "generalized",
         expected_self_adjoint_solution: bool = False,
         problem_id: str | None = None,
-    ):
-        if kind not in (
-            "generalized",
-            "sylvester",
-            "continuous-lyapunov",
-            "discrete-lyapunov",
-        ):
-            raise ValueError("Unknown matrix-equation kind.")
+    ) -> None:
+        kind = parse(kind, MatrixEquationKind, "kind")
         rhs = jnp.asarray(right_hand_side)
         if rhs.ndim != 2:
             raise ValueError("right_hand_side must be one rank-two matrix.")
@@ -350,7 +346,7 @@ class MatrixEquationPolicy(StrictModule):
         linear: LinearSolvePolicy | None = None,
         structure_tolerance: float = 1e-8,
         failure: FailurePolicy | None = None,
-    ):
+    ) -> None:
         linear_ = LinearSolvePolicy() if linear is None else linear
         tolerance = float(structure_tolerance)
         failure_ = FailurePolicy() if failure is None else failure
@@ -788,7 +784,7 @@ def _promoted_coordinate_action(
 ) -> Array:
     native_dtype = _coordinate_dtype(operator.source)
 
-    def native_action(value):
+    def native_action(value: Array) -> Array:
         native = value.astype(native_dtype)
         if transpose:
             return operator.source.flatten(

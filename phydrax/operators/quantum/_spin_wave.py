@@ -9,7 +9,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -53,7 +54,7 @@ class SpinWaveReferenceState(StrictModule):
         /,
         *,
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         values = np.asarray(directions, dtype=np.float64)
         magnitudes = np.asarray(spin_magnitudes, dtype=np.float64)
         if (
@@ -130,7 +131,7 @@ class LinearSpinWavePlan(StrictModule):
         torque_tolerance: float = 1.0e-9,
         stability_tolerance: float = 1.0e-9,
         krein_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(reference, SpinWaveReferenceState):
             raise TypeError("reference must be SpinWaveReferenceState.")
         if not isinstance(mesh, ReciprocalMeshPlan):

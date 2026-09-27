@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 
 from phydrax._physical import RelativityScaleContract
@@ -23,11 +25,13 @@ from phydrax.metrix._spacetime_conventions import RelativityConvention
 from phydrax.units import KILOGRAM
 
 
-def _eos():
+def _eos() -> Any:
     return GammaLawEOS(RelativityScaleContract.geometric(KILOGRAM), 5.0 / 3.0)
 
 
-def _geometry(shape, scale_id, *, alpha=None, extrinsic=None):
+def _geometry(
+    shape: Any, scale_id: Any, *, alpha: Any = None, extrinsic: Any = None
+) -> Any:
     dtype = jnp.float64
     identity = jnp.broadcast_to(jnp.eye(3, dtype=dtype), shape + (3, 3))
     return ADMGridGeometry(
@@ -48,7 +52,7 @@ def _geometry(shape, scale_id, *, alpha=None, extrinsic=None):
     )
 
 
-def test_srhd_primitive_round_trip_and_causal_characteristic_bounds():
+def test_srhd_primitive_round_trip_and_causal_characteristic_bounds() -> None:
     system = SRHDSystem(_eos(), 3)
     primitive = jnp.asarray(
         (
@@ -70,7 +74,7 @@ def test_srhd_primitive_round_trip_and_causal_characteristic_bounds():
     assert bool(jnp.all(lower <= upper))
 
 
-def test_minkowski_valencia_is_exactly_the_densitized_srhd_specialization():
+def test_minkowski_valencia_is_exactly_the_densitized_srhd_specialization() -> None:
     eos = _eos()
     srhd = SRHDSystem(eos, 3)
     grhd = ValenciaGRHDSystem(eos)
@@ -98,7 +102,7 @@ def test_minkowski_valencia_is_exactly_the_densitized_srhd_specialization():
     assert jnp.allclose(grhd_bounds[1], srhd_bounds[1])
 
 
-def test_valencia_local_lapse_gradient_and_extrinsic_curvature_sources():
+def test_valencia_local_lapse_gradient_and_extrinsic_curvature_sources() -> None:
     eos = _eos()
     system = ValenciaGRHDSystem(eos)
     primitive = jnp.asarray(((1.0, 0.3, 0.0, 0.0, 0.0),), dtype=jnp.float64)
@@ -135,7 +139,7 @@ def test_valencia_local_lapse_gradient_and_extrinsic_curvature_sources():
     assert jnp.allclose(projection.stress_covariant[0], jnp.eye(3) * evaluation.pressure)
 
 
-def test_srhd_runs_on_native_finite_volume_smooth_and_shock_paths():
+def test_srhd_runs_on_native_finite_volume_smooth_and_shock_paths() -> None:
     system = SRHDSystem(_eos(), 1)
     grid = TensorGridPlan(
         (UniformCellAxisSpec(16, periodic=True),), axis_names=("x",)

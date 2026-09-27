@@ -4,14 +4,15 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 from phydrax.linalg import HermitianSpectrum
@@ -24,6 +25,7 @@ from ...discretization.particle import (
     AbstractSPHSmoothingKernel,
     particle_pair_geometry,
     ParticleBox,
+    ParticleDiscretization,
     ParticlePairRelation,
 )
 from ...discretization.splatting import ParticleGridSplatState, SplatDepositResult
@@ -37,6 +39,11 @@ from ._sidm_kernels import (
     SmallAngleSplitPlan,
     TwoBodyDifferentialKernelPlan,
 )
+
+
+_ChildAssignmentCarry: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class WeightedSIDMPacketState(StrictModule):
@@ -74,7 +81,7 @@ class WeightedSIDMPacketState(StrictModule):
         lineage_depth: ArrayLike,
         scale_factor: ArrayLike,
         /,
-    ):
+    ) -> None:
         position = jnp.asarray(positions)
         self.positions = position
         self.microscopic_masses = jnp.asarray(microscopic_masses, dtype=position.dtype)
@@ -244,7 +251,7 @@ def _shape_check(state: WeightedSIDMPacketState, capacity: int, dimension: int) 
 def _state_where(
     accepted: Array, candidate: WeightedSIDMPacketState, original: WeightedSIDMPacketState
 ) -> WeightedSIDMPacketState:
-    def choose(new, old):
+    def choose(new: Array, old: Array) -> Array:
         condition = accepted.reshape((1,) * new.ndim) if new.ndim else accepted
         return jnp.where(condition, new, old)
 
@@ -349,7 +356,7 @@ class WeightedSIDMPlan(StrictModule):
         smoothing_length_comoving: float,
         angular_split: SmallAngleSplitPlan | None = None,
         time: FLRWDistancePlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(particle_mesh, CosmologicalParticleMeshPlan):
             raise TypeError("particle_mesh must be CosmologicalParticleMeshPlan.")
         if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
@@ -419,7 +426,7 @@ class WeightedSIDMPlan(StrictModule):
         )
 
     @property
-    def particles(self):
+    def particles(self) -> ParticleDiscretization:
         return self.particle_mesh.kinematics.particles
 
     def initialize(
@@ -827,7 +834,9 @@ class WeightedSIDMPlan(StrictModule):
         request_side = jnp.concatenate((jnp.zeros_like(left), jnp.ones_like(right)))
         request_order = jnp.lexsort((request_side, parent_ids))
 
-        def assign_child(index, carry):
+        def assign_child(
+            index: Array, carry: _ChildAssignmentCarry
+        ) -> _ChildAssignmentCarry:
             (
                 next_slot,
                 position_values,
@@ -1118,7 +1127,18 @@ class WeightedSIDMPlan(StrictModule):
         running = scale_valid & initial_force.successful
         accepted_count = jnp.asarray(0, dtype=jnp.int32)
 
-        def step(carry, item):
+        def step(
+            carry: tuple[WeightedSIDMPacketState, Array, Array, Array],
+            item: tuple[Array, Array],
+        ) -> tuple[
+            tuple[WeightedSIDMPacketState, Array, Array, Array],
+            tuple[
+                WeightedSIDMCollisionDiagnostics,
+                WeightedPMIntervalDiagnostics,
+                WeightedSIDMCollisionDiagnostics,
+                Array,
+            ],
+        ]:
             current, acceleration, active_run, accepted_steps = carry
             index, end_scale = item
             dt = self.time.cosmic_time_between(
@@ -1209,9 +1229,9 @@ class WeightedPacketResamplingPlan(StrictModule, NonTrainableState):
         *,
         periodic_box_size: tuple[float, ...],
         velocity_moment: Literal["kinetic_energy", "covariance"] = "kinetic_energy",
-        maximum_packet_weight: float = np.finfo(np.float64).max,
+        maximum_packet_weight: float = float(np.finfo(np.float64).max),
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         count = int(target_active_count)
         maximum = float(maximum_packet_weight)
         tolerance_ = float(tolerance)

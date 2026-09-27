@@ -6,15 +6,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jax import lax
-from jaxtyping import Array, Key
+from jax import Array, lax
 
 from .._strict import StrictModule
+from ..typing import PRNGKey
 
 
 if TYPE_CHECKING:
@@ -28,7 +28,7 @@ class RejectionSamplingPlan:
     proposals_per_round: int = 256
     maximum_rounds: int = 64
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.proposals_per_round <= 0:
             raise ValueError("proposals_per_round must be positive.")
         if self.maximum_rounds <= 0:
@@ -46,7 +46,7 @@ class AtlasSamplingPlan:
     candidates_per_sample: int = 8
     minimum_candidates: int = 64
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.candidates_per_sample <= 0 or self.minimum_candidates <= 0:
             raise ValueError("Atlas sampling candidate counts must be positive.")
 
@@ -68,7 +68,7 @@ class SamplingReport(StrictModule):
         proposed: Array,
         accepted: Array,
         rounds: Array,
-    ):
+    ) -> None:
         proposed_ = jnp.asarray(proposed, dtype=jnp.int32).reshape(())
         accepted_ = jnp.asarray(accepted, dtype=jnp.int32).reshape(())
         rounds_ = jnp.asarray(rounds, dtype=jnp.int32).reshape(())
@@ -101,7 +101,7 @@ class SamplingResult(StrictModule):
         *,
         weights: Array | None = None,
         strata: Array | None = None,
-    ):
+    ) -> None:
         points_ = jnp.asarray(points)
         if points_.ndim != 2:
             raise ValueError("SamplingResult.points must have shape (num_points, dim).")
@@ -153,13 +153,17 @@ def complete_sampling_result(
     )
 
 
+# (key, points, accepted count, proposed count, rounds)
+_RejectionState: TypeAlias = tuple[PRNGKey, Array, Array, Array, Array]
+
+
 def bounded_rejection_sample(
-    proposal: Callable[[Key[Array, ""], int], Array],
+    proposal: Callable[[PRNGKey, int], Array],
     accept: Callable[[Array], Array],
     *,
     num_points: int,
     point_dimension: int,
-    key: Key[Array, ""],
+    key: PRNGKey,
     plan: RejectionSamplingPlan = RejectionSamplingPlan(),
     dtype: jnp.dtype | None = None,
 ) -> SamplingResult:
@@ -189,11 +193,11 @@ def bounded_rejection_sample(
         jnp.asarray(0, dtype=jnp.int32),
     )
 
-    def condition(state):
+    def condition(state: _RejectionState) -> Array:
         _, _, accepted_count, _, rounds = state
         return (accepted_count < requested_count) & (rounds < maximum_rounds)
 
-    def body(state):
+    def body(state: _RejectionState) -> _RejectionState:
         loop_key, points, accepted_count, proposed_count, rounds = state
         loop_key, proposal_key = jr.split(loop_key)
         candidates = jnp.asarray(
@@ -249,7 +253,7 @@ def sample_boundary_atlas(
     num_points: int,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     plan: AtlasSamplingPlan = AtlasSamplingPlan(),
 ) -> SamplingResult:
     """Sample charts in physical measure using Jacobian-weighted candidates."""

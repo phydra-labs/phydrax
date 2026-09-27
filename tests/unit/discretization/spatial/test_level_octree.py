@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from itertools import combinations
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -25,7 +26,7 @@ def _address(dimension: int, depth: int = 8) -> MortonAddressPlan:
     return MortonAddressPlan((0.0,) * dimension, (1.0,) * dimension, depth)
 
 
-def _leaf_coverage(tree) -> np.ndarray:
+def _leaf_coverage(tree: Any) -> np.ndarray:
     """Count, for every leaf and every point, the routes whose source spans the point."""
     parents = np.asarray(tree.node_parents)
     starts = np.asarray(tree.node_point_starts)
@@ -59,7 +60,7 @@ def _leaf_coverage(tree) -> np.ndarray:
     return coverage
 
 
-def _touching_leaf_level_gap(tree) -> int:
+def _touching_leaf_level_gap(tree: Any) -> int:
     leaves = np.asarray(tree.leaf_nodes)
     centers = np.asarray(tree.node_centers)[leaves]
     half_widths = np.asarray(tree.node_half_widths)[leaves]
@@ -157,7 +158,7 @@ def test_interaction_lists_cover_every_source_point_exactly_once(
     leaf = np.asarray(tree.node_child_counts) == 0
     occupied = np.asarray(tree.node_point_ends) > np.asarray(tree.node_point_starts)
 
-    def routes(name):
+    def routes(name: Any) -> Any:
         relation = getattr(tree, name).routes
         valid = np.asarray(relation.valid)
         return (
@@ -234,6 +235,7 @@ def test_plan_rejects_invalid_configuration_and_points() -> None:
     with pytest.raises(ValueError, match="capacities"):
         AdaptiveOctreePlan(_address(2), leaf_capacity=2, v_capacity=0)
     with pytest.raises(TypeError, match="balanced"):
+        # ty: ignore[invalid-argument-type]
         AdaptiveOctreePlan(_address(2), leaf_capacity=2, balanced=1)
     plan = AdaptiveOctreePlan(_address(2), leaf_capacity=2)
     with pytest.raises(ValueError, match="lie in"):

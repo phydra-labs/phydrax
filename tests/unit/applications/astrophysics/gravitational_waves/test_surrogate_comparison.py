@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -19,9 +21,9 @@ NATIVE_DIFFERENTIATION = phx.DerivativeContract.smooth(
 
 def _surrogate_plan(
     *,
-    resource_policy=None,
-    time_origin_id="test:analytic-grid-origin",
-):
+    resource_policy: Any = None,
+    time_origin_id: Any = "test:analytic-grid-origin",
+) -> Any:
     gw = phx.applications.astrophysics.gravitational_waves
     provenance = phx.applications.astrophysics.ObservationDataProvenance.native(
         "nr-polynomial-surrogate-test"
@@ -84,7 +86,7 @@ def _surrogate_plan(
     )
 
 
-def _parameters(mass_ratio=2.0):
+def _parameters(mass_ratio: Any = 2.0) -> Any:
     return {
         "mass_ratio": jnp.asarray(mass_ratio),
         "primary_spin": jnp.asarray(0.2),
@@ -92,7 +94,7 @@ def _parameters(mass_ratio=2.0):
     }
 
 
-def test_nr_surrogate_reconstructs_polynomial_nodes_and_mode_symmetry():
+def test_nr_surrogate_reconstructs_polynomial_nodes_and_mode_symmetry() -> None:
     plan = _surrogate_plan()
     result = eqx.filter_jit(plan.evaluate_modes)(_parameters())
     coordinates = phx.applications.astrophysics.gravitational_waves.aligned_spin_surrogate_coordinates(
@@ -138,7 +140,7 @@ def test_nr_surrogate_reconstructs_polynomial_nodes_and_mode_symmetry():
     assert float(derivative) != 0.0
 
 
-def test_nr_surrogate_reports_time_support_and_physical_distance_scaling():
+def test_nr_surrogate_reports_time_support_and_physical_distance_scaling() -> None:
     plan = _surrogate_plan()
     geometric = plan.evaluate_geometric(
         jnp.asarray([-2.0, -0.5, 0.5, 2.0]),
@@ -222,7 +224,7 @@ def test_nr_surrogate_reports_time_support_and_physical_distance_scaling():
     )
 
 
-def test_nr_surrogate_keeps_caller_provenance_unqualified_and_enforces_caps():
+def test_nr_surrogate_keeps_caller_provenance_unqualified_and_enforces_caps() -> None:
     gw = phx.applications.astrophysics.gravitational_waves
     template = _surrogate_plan()
     native = template.artifact
@@ -291,7 +293,7 @@ def test_nr_surrogate_keeps_caller_provenance_unqualified_and_enforces_caps():
         )
 
 
-def test_waveform_match_recovers_phase_and_sample_aligned_time_shift():
+def test_waveform_match_recovers_phase_and_sample_aligned_time_shift() -> None:
     gw = phx.applications.astrophysics.gravitational_waves
     sample_count = 64
     sample_interval = 1.0 / 64.0

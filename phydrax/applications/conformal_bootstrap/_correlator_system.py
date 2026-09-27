@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import cast, Literal
+from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -49,7 +50,7 @@ class ExternalPrimaryOperator(StrictModule):
         *,
         parity: Literal[-1, 1] = 1,
         reality: Literal["real", "complex", "pseudoreal"] = "real",
-    ):
+    ) -> None:
         label_ = _identifier(label, "primary label")
         dimension = float(scaling_dimension)
         weight = tuple(lorentz_highest_weight)
@@ -105,7 +106,7 @@ class CorrelatorSpecification(StrictModule):
         /,
         *,
         structure_parities: Sequence[Literal[-1, 1]] | None = None,
-    ):
+    ) -> None:
         label_ = _identifier(label, "correlator label")
         external = tuple(
             _identifier(value, "external label") for value in external_labels
@@ -137,7 +138,7 @@ class CorrelatorSpecification(StrictModule):
         self.label = label_
         self.external_labels = external
         self.tensor_structure_labels = structures
-        self.structure_parities = cast(tuple[Literal[-1, 1], ...], parities)
+        self.structure_parities = parities
         self.correlator_id = canonical_fingerprint(content)
 
 
@@ -149,7 +150,7 @@ class CrossingSystemGenerator(StrictModule):
     order: int = eqx.field(static=True)
     generator_id: str = eqx.field(static=True)
 
-    def __init__(self, label: str, matrix: ArrayLike, order: int, /):
+    def __init__(self, label: str, matrix: ArrayLike, order: int, /) -> None:
         label_ = _identifier(label, "crossing generator label")
         matrix_ = np.asarray(matrix, dtype=np.complex128)
         order_ = int(order)
@@ -192,7 +193,7 @@ class CorrelatorSystemPlan(StrictModule):
         basis_gauge_id: str,
         tolerance: float = 1e-10,
         maximum_group_order: int = 48,
-    ):
+    ) -> None:
         primaries_ = tuple(primaries)
         correlators_ = tuple(correlators)
         generators_ = tuple(generators)

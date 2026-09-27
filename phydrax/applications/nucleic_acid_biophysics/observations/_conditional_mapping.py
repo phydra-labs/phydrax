@@ -3,25 +3,28 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from collections.abc import Mapping
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import parse
 from ....uq._map import find_map, MAPResult
 from ....uq._posterior import ParameterSpace, PosteriorProblem
 from ._mutation_profiles import MutationProfileBatch
 
 
-MappingLawKind = Literal["binary-accessibility", "context", "hierarchical"]
+MappingLawKind: TypeAlias = Literal["binary-accessibility", "context", "hierarchical"]
 
 
 class ConditionalMappingFit(StrictModule):
@@ -64,11 +67,10 @@ class ConditionalMutationLaw(StrictModule, NonTrainableState):
         prior_scale: ArrayLike,
         source_case_ids: tuple[str, ...],
         parent_case_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         if not isinstance(batch, MutationProfileBatch):
             raise TypeError("batch must be a MutationProfileBatch.")
-        if kind not in ("binary-accessibility", "context", "hierarchical"):
-            raise ValueError("Unknown conditional mutation-law kind.")
+        kind = parse(kind, MappingLawKind, "kind")
         matrix = np.asarray(design, float)
         names = tuple(parameter_names)
         scales = np.asarray(prior_scale, float)
@@ -185,7 +187,7 @@ class ConditionalMutationLaw(StrictModule, NonTrainableState):
         initial_parameters: ArrayLike | None = None,
         /,
         *,
-        requested_use=None,
+        requested_use: Mapping[str, bool] | None = None,
         fit_profile_mask: ArrayLike | None = None,
         max_steps: int = 500,
         gradient_tolerance: float = 1e-6,
@@ -258,7 +260,7 @@ class ConditionalMappingLadder(StrictModule, NonTrainableState):
         baseline: ConditionalMutationLaw,
         context: ConditionalMutationLaw,
         hierarchical: ConditionalMutationLaw,
-    ):
+    ) -> None:
         laws = (baseline, context, hierarchical)
         if (
             tuple(law.kind for law in laws)
@@ -454,7 +456,9 @@ def prepare_conditional_mapping_ladder(
     )
 
 
-def _treatment_contrasts(indices, labels, site_count: int, prefix: str):
+def _treatment_contrasts(
+    indices: Array, labels: tuple[str, ...], site_count: int, prefix: str
+) -> tuple[np.ndarray, tuple[str, ...]]:
     count = len(labels)
     if count <= 1:
         return np.zeros((len(indices), site_count, 0)), ()

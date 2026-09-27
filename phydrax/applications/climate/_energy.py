@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -41,11 +42,11 @@ class MultilayerEnergyBalance(StrictModule):
 
     def __init__(
         self,
-        capacities: ArrayLike = (8.0, 100.0),
-        exchanges: ArrayLike = (0.7,),
+        capacities: npt.ArrayLike = (8.0, 100.0),
+        exchanges: npt.ArrayLike = (0.7,),
         *,
         feedback: float = 1.2,
-    ):
+    ) -> None:
         capacities_ = np.asarray(capacities, dtype=np.float64)
         exchanges_ = np.asarray(exchanges, dtype=np.float64)
         if (

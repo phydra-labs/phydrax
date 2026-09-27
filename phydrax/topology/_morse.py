@@ -34,7 +34,7 @@ class MorseReductionResult(StrictModule, NonTrainableState):
         upper_cell: int,
         pivot: int,
         /,
-    ):
+    ) -> None:
         self.source = source
         self.reduced = reduced
         self.degree = int(degree)
@@ -54,7 +54,9 @@ class MorseReductionResult(StrictModule, NonTrainableState):
         )
 
 
-def _from_dense(matrix, /, *, source_id: str, target_id: str):
+def _from_dense(
+    matrix: np.ndarray, /, *, source_id: str, target_id: str
+) -> ExactIntegerCOO:
     rows, columns = np.nonzero(np.asarray(matrix, dtype=object))
     return ExactIntegerCOO(
         matrix.shape[0],

@@ -7,11 +7,13 @@ from __future__ import annotations
 from enum import IntEnum
 from math import prod
 from numbers import Integral
+from typing import TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -19,6 +21,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._numerics._checkpointed_scan import checkpointed_scan
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ..materials._refractive_index import (
     AbstractRefractiveIndexLaw,
     evaluate_refractive_index,
@@ -33,6 +36,9 @@ from ._nonlinear_response import (
     PreparedCarrierResolvedResponse,
 )
 from ._pulse_time import PulseTimeSpace
+
+
+_RK4Carry: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class UnidirectionalPropagationStatus(IntEnum):
@@ -121,7 +127,7 @@ class UnidirectionalPropagationPlan(StrictModule, NonTrainableState):
         maximum_refinement_error: float = 1.0e-5,
         maximum_backward_wave_estimate: float = 1.0e-3,
         maximum_workspace_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         if not isinstance(space, PlaneFieldSpace):
             raise TypeError("space must be a PlaneFieldSpace.")
         if not isinstance(time_space, PulseTimeSpace):
@@ -130,8 +136,7 @@ class UnidirectionalPropagationPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Unidirectional propagation requires periodic-cell pulse time."
             )
-        if polarization not in ("scalar", "tangential"):
-            raise ValueError("polarization must be 'scalar' or 'tangential'.")
+        polarization = parse(polarization, AnalyticPulsePolarization, "polarization")
         steps = int(step_count)
         if steps < 2 or steps % 2 != 0:
             raise ValueError("step_count must be an even integer of at least two.")
@@ -618,7 +623,7 @@ def _interaction_picture_solve(
     zero = jnp.asarray(0.0, dtype=initial_spectrum.real.dtype)
     valid = jnp.asarray(True)
 
-    def scan_step(carry, _):
+    def scan_step(carry: _RK4Carry, _: Array) -> tuple[_RK4Carry, None]:
         state, maximum_rejected, maximum_backward, response_successful = carry
         k1, rejected1, backward1, valid1 = _nonlinear_rate(prepared, state, response)
         state2 = half_linear * (state + 0.5 * step * k1)

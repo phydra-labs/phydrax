@@ -12,10 +12,13 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
+from ....typing import parse
 from .._fermionic_fock import FermionModeOrder
 
 
@@ -39,12 +42,12 @@ class LocalSpacePlan(StrictModule):
         site_id: str,
         basis_labels: Sequence[str],
         charge_labels: Sequence[str],
-        charges: ArrayLike,
+        charges: npt.ArrayLike,
         /,
         *,
         statistics: LocalStatistics = "finite",
         fermion_mode_label: str | None = None,
-    ):
+    ) -> None:
         site = str(site_id)
         labels = tuple(str(value) for value in basis_labels)
         charge_names = tuple(str(value) for value in charge_labels)
@@ -63,8 +66,7 @@ class LocalSpacePlan(StrictModule):
             raise ValueError(
                 "charges must be integral with shape (dimension, charge_count)."
             )
-        if statistics not in ("finite", "fermion", "spin", "boson"):
-            raise ValueError("Unknown local statistics.")
+        statistics = parse(statistics, LocalStatistics, "statistics")
         mode = None if fermion_mode_label is None else str(fermion_mode_label)
         if statistics == "fermion":
             if len(labels) != 2 or tuple(values[:, 0]) != (0, 1):
@@ -171,12 +173,12 @@ class LocalOperatorPlan(StrictModule):
         self,
         space: LocalSpacePlan,
         label: str,
-        matrix: ArrayLike,
+        matrix: npt.ArrayLike,
         charge_delta: Sequence[int],
         /,
         *,
         fermion_parity: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(space, LocalSpacePlan):
             raise TypeError("space must be LocalSpacePlan.")
         name = str(label)
@@ -260,7 +262,7 @@ class QuantumLatticeTerm(StrictModule):
         coefficient: ArrayLike = 1.0,
         add_adjoint: bool = False,
         label: str,
-    ):
+    ) -> None:
         values = tuple(factors)
         scalar = jnp.asarray(coefficient)
         name = str(label)
@@ -315,7 +317,7 @@ class QuantumLatticeSpecification(StrictModule):
         /,
         *,
         fermion_mode_order: FermionModeOrder | None = None,
-    ):
+    ) -> None:
         local_spaces = tuple(spaces)
         local_terms = tuple(terms)
         if not local_spaces or any(

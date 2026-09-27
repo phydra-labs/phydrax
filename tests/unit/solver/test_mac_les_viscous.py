@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -19,14 +22,14 @@ from phydrax.solver._mac_stage_inverse_general import MACVariableViscosityStageP
 from phydrax.solver._mac_viscous import MACSBDF2GStabilityLedger
 
 
-def _linear_policy():
+def _linear_policy() -> Any:
     return LinearSolvePolicy(
         DenseLU(),
         tolerance=TolerancePolicy(relative=2.0e-8, absolute=2.0e-8, max_steps=40),
     )
 
 
-def _grid(*, count=2, boundary_provider=None):
+def _grid(*, count: Any = 2, boundary_provider: Any = None) -> Any:
     if boundary_provider is None:
         specs = tuple(
             phx.discretization.UniformCellAxisSpec(count, periodic=True) for _ in range(3)
@@ -64,7 +67,7 @@ def _grid(*, count=2, boundary_provider=None):
     return discretization, operators, momentum, boundary_class
 
 
-def _les(discretization, coefficient, boundary_class):
+def _les(discretization: Any, coefficient: Any, boundary_class: Any) -> Any:
     resolved_filter = ResolvedLESFilter(
         "mac-cell-volume",
         family="implicit-grid-volume",
@@ -85,7 +88,13 @@ def _les(discretization, coefficient, boundary_class):
     return MACAlgebraicLESPlan(SmagorinskyLESPlan(coefficient).prepare(provenance))
 
 
-def _compiled(*, coefficient=None, count=2, viscosity=0.01, provider=None):
+def _compiled(
+    *,
+    coefficient: Any = None,
+    count: Any = 2,
+    viscosity: Any = 0.01,
+    provider: Any = None,
+) -> Any:
     discretization, operators, momentum, boundary_class = _grid(
         count=count, boundary_provider=provider
     )
@@ -108,7 +117,7 @@ def _compiled(*, coefficient=None, count=2, viscosity=0.01, provider=None):
     return discretization, operators, dynamics
 
 
-def _taylor_green(discretization):
+def _taylor_green(discretization: Any) -> Any:
     x_faces, y_faces, z_faces = discretization.face_centers
     return (
         jnp.sin(x_faces[..., 1]),
@@ -117,7 +126,7 @@ def _taylor_green(discretization):
     )
 
 
-def _method(dynamics, step=1.0e-3):
+def _method(dynamics: Any, step: Any = 1.0e-3) -> Any:
     return phx.solver.MACIMEXEulerMethod(
         dynamics,
         fixed_step_size=step,
@@ -128,7 +137,7 @@ def _method(dynamics, step=1.0e-3):
     )
 
 
-def test_zero_coefficient_imex_and_sbdf2_select_exact_constant_profiles():
+def test_zero_coefficient_imex_and_sbdf2_select_exact_constant_profiles() -> None:
     discretization, _, base = _compiled(coefficient=None)
     _, _, zero = _compiled(coefficient=0.0)
     state = base.pack_velocity(_taylor_green(discretization))
@@ -157,7 +166,7 @@ def test_zero_coefficient_imex_and_sbdf2_select_exact_constant_profiles():
     )
 
 
-def test_frozen_imex_uses_one_inverse_for_predictor_and_composite_projection():
+def test_frozen_imex_uses_one_inverse_for_predictor_and_composite_projection() -> None:
     discretization, operators, dynamics = _compiled(coefficient=0.12)
     state = dynamics.pack_velocity(_taylor_green(discretization))
 
@@ -174,7 +183,7 @@ def test_frozen_imex_uses_one_inverse_for_predictor_and_composite_projection():
     assert jnp.max(jnp.abs(operators.divergence(result.velocity))) < 2.0e-7
 
 
-def test_frozen_sbdf2_restart_extrapolation_and_g_stability_identity():
+def test_frozen_sbdf2_restart_extrapolation_and_g_stability_identity() -> None:
     discretization, _, dynamics = _compiled(coefficient=0.12)
     state = dynamics.pack_velocity(_taylor_green(discretization))
     method = phx.solver.MACSBDF2Method(
@@ -206,12 +215,12 @@ def test_frozen_sbdf2_restart_extrapolation_and_g_stability_identity():
     assert not method.allows_adaptive_step
 
 
-def test_manufactured_variable_viscosity_refresh_has_declared_temporal_orders():
+def test_manufactured_variable_viscosity_refresh_has_declared_temporal_orders() -> None:
     discretization, _, dynamics = _compiled(coefficient=0.12, count=4)
     base = _taylor_green(discretization)
     stage = dynamics.boundary_stage(1.0)
 
-    def viscosity(amplitude):
+    def viscosity(amplitude: Any) -> Any:
         result = dynamics.algebraic_les.evaluate(
             tuple(amplitude * value for value in base), stage
         )
@@ -234,7 +243,7 @@ def test_manufactured_variable_viscosity_refresh_has_declared_temporal_orders():
     assert errors_sbdf[1] / errors_sbdf[2] > 3.4
 
 
-def test_frozen_imex_preserves_affine_boundary_data_and_rolls_back_failure():
+def test_frozen_imex_preserves_affine_boundary_data_and_rolls_back_failure() -> None:
     provider = phx.discretization.MACBoundaryProvider(0.125)
     discretization, _, dynamics = _compiled(coefficient=0.12, provider=provider)
     velocity = tuple(
@@ -251,7 +260,7 @@ def test_frozen_imex_preserves_affine_boundary_data_and_rolls_back_failure():
     np.testing.assert_allclose(result.velocity[2][..., -1], 0.125)
     assert result.stage_inverse.boundary_defect < 1.0e-12
 
-    def failed_boundary(time, coordinates, args):
+    def failed_boundary(time: Any, coordinates: Any, args: Any) -> Any:
         del coordinates, args
         value = jnp.where(time > 0.0, jnp.nan, 0.125)
         return value, jnp.asarray(0.0)
@@ -278,8 +287,8 @@ def test_frozen_imex_preserves_affine_boundary_data_and_rolls_back_failure():
     assert failed.time == 0.0
 
 
-def test_failed_sbdf2_attempt_retains_complete_restart_history_atomically():
-    def boundary(time, coordinates, args):
+def test_failed_sbdf2_attempt_retains_complete_restart_history_atomically() -> None:
+    def boundary(time: Any, coordinates: Any, args: Any) -> Any:
         del coordinates, args
         value = jnp.where(time > 1.5e-3, jnp.nan, 0.125)
         return value, jnp.asarray(0.0)
@@ -331,7 +340,7 @@ def test_failed_sbdf2_attempt_retains_complete_restart_history_atomically():
     np.testing.assert_array_equal(failed.history.pressure, startup.history.pressure)
 
 
-def test_mismatched_variational_action_and_unsupported_routes_are_rejected():
+def test_mismatched_variational_action_and_unsupported_routes_are_rejected() -> None:
     discretization, _, dynamics = _compiled(coefficient=0.12)
     other_discretization, _, other = _compiled(coefficient=0.12, count=3)
     assert discretization.prepared_id != other_discretization.prepared_id
@@ -353,7 +362,7 @@ def test_mismatched_variational_action_and_unsupported_routes_are_rejected():
         )
 
 
-def test_sbdf2_is_explicitly_rejected_by_adaptive_rollout():
+def test_sbdf2_is_explicitly_rejected_by_adaptive_rollout() -> None:
     discretization, _, dynamics = _compiled(coefficient=0.0)
     state = dynamics.pack_velocity(_taylor_green(discretization))
     del state
@@ -362,8 +371,11 @@ def test_sbdf2_is_explicitly_rejected_by_adaptive_rollout():
     with pytest.raises(ValueError, match="fixed-step"):
         phx.solver.MACAdaptiveRolloutPlan(
             dynamics,
+            # ty: ignore[invalid-argument-type]
             method,
+            # ty: ignore[invalid-argument-type]
             None,
+            # ty: ignore[invalid-argument-type]
             None,
             final_time=0.01,
             initial_step_size=1.0e-3,

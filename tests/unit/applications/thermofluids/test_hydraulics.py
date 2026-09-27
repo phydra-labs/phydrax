@@ -2,17 +2,20 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _reduced_pressure_drop(flow):
+def _reduced_pressure_drop(flow: Any) -> Any:
     return 10.0 * flow + 5.0 * flow**2
 
 
-def _fluid():
+def _fluid() -> Any:
     return phx.applications.thermofluids.HydraulicFluidProperties(
         density=1000.0,
         dynamic_viscosity=1.0e-3,
@@ -22,7 +25,7 @@ def _fluid():
     )
 
 
-def _initialize(process, initial_values):
+def _initialize(process: Any, initial_values: Any) -> Any:
     compilation = phx.dynamics.compile_acausal_dae(
         process.source, phx.dynamics.DAEStructuralPolicy(1, 0, tearing="none")
     )
@@ -58,7 +61,7 @@ def _initialize(process, initial_values):
     return compilation.reconstruction(result.state, result.state_rate)
 
 
-def test_circular_hydraulic_network_solves_pressure_drop_and_directed_flow():
+def test_circular_hydraulic_network_solves_pressure_drop_and_directed_flow() -> None:
     tf = phx.applications.thermofluids
     fluid = _fluid()
     law = tf.HydraulicChannelPlan.circular(
@@ -99,7 +102,7 @@ def test_circular_hydraulic_network_solves_pressure_drop_and_directed_flow():
     assert bool(jnp.isnan(unsupported.pressure_drop))
 
 
-def test_rectangular_resistance_is_orientation_symmetric_and_bounded():
+def test_rectangular_resistance_is_orientation_symmetric_and_bounded() -> None:
     tf = phx.applications.thermofluids
     first = tf.HydraulicChannelPlan.rectangular(
         _fluid(), width=2.0e-3, height=1.0e-3, length=0.1, series_terms=32
@@ -112,7 +115,7 @@ def test_rectangular_resistance_is_orientation_symmetric_and_bounded():
     assert first.truncation_error_bound <= 1.0e-8
 
 
-def test_compliance_and_inertance_encode_storage_and_momentum_equations():
+def test_compliance_and_inertance_encode_storage_and_momentum_equations() -> None:
     tf = phx.applications.thermofluids
     compliance = tf.hydraulic_compliance_component(
         "compliance",
@@ -129,9 +132,12 @@ def test_compliance_and_inertance_encode_storage_and_momentum_equations():
         ),
     )
     np.testing.assert_allclose(
-        compliance.dae_component.equations[0].residual(0.0, compliance_jet, None), 0.0
+        # ty: ignore[invalid-argument-type, missing-argument]
+        compliance.dae_component.equations[0].residual(0.0, compliance_jet, None),
+        0.0,
     )
     np.testing.assert_allclose(
+        # ty: ignore[invalid-argument-type, missing-argument]
         compliance.dae_component.equations[1].residual(0.0, compliance_jet, None),
         0.0,
     )
@@ -152,16 +158,18 @@ def test_compliance_and_inertance_encode_storage_and_momentum_equations():
         ),
     )
     np.testing.assert_allclose(
+        # ty: ignore[invalid-argument-type, missing-argument]
         inertance.dae_component.equations[0].residual(0.0, inertance_jet, None),
         0.0,
     )
     np.testing.assert_allclose(
+        # ty: ignore[invalid-argument-type, missing-argument]
         inertance.dae_component.equations[1].residual(0.0, inertance_jet, None),
         0.0,
     )
 
 
-def test_calibrated_hydraulic_response_never_extrapolates():
+def test_calibrated_hydraulic_response_never_extrapolates() -> None:
     tf = phx.applications.thermofluids
     response = tf.MonotoneHydraulicResponsePlan(
         _fluid(),
@@ -179,7 +187,7 @@ def test_calibrated_hydraulic_response_never_extrapolates():
     assert bool(jnp.isnan(outside.pressure_drop))
 
 
-def test_fixed_reduced_hydraulic_response_has_no_truth_fallback():
+def test_fixed_reduced_hydraulic_response_has_no_truth_fallback() -> None:
     tf = phx.applications.thermofluids
     response = tf.HydraulicReducedResponsePlan(
         _fluid(),

@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
@@ -35,7 +36,7 @@ class WarpingBeamSection(StrictModule, NonTrainableState):
         monosymmetry_y: ArrayLike = 0.0,
         monosymmetry_z: ArrayLike = 0.0,
         section_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(base, BeamSection):
             raise TypeError("base must be a BeamSection.")
         values = tuple(

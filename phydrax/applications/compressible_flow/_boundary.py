@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -18,7 +21,10 @@ from ...equations._gas_dynamics import (
     HomogeneousMixtureCompressibleNavierStokesSystem,
     HomogeneousMixtureEulerSystem,
 )
-from ...equations._hyperbolic_systems import AbstractNormalCharacteristicSystem
+from ...equations._hyperbolic_systems import (
+    AbstractConservationSystem,
+    AbstractNormalCharacteristicSystem,
+)
 
 
 class CharacteristicReflectionLedger(StrictModule):
@@ -51,7 +57,7 @@ class CharacteristicNonreflectingBoundaryPlan(StrictModule, NonTrainableState):
         *,
         relaxation: float = 1.0,
         sonic_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         relaxation_ = float(relaxation)
         tolerance = float(sonic_tolerance)
         if (
@@ -73,11 +79,11 @@ class CharacteristicNonreflectingBoundaryPlan(StrictModule, NonTrainableState):
 
     def apply(
         self,
-        system: AbstractNormalCharacteristicSystem,
+        system: AbstractConservationSystem,
         interior_state: ArrayLike,
         far_field_state: ArrayLike,
         outward_normal: ArrayLike,
-        args=None,
+        args: Any = None,
         /,
     ) -> CharacteristicBoundaryResult:
         if not isinstance(system, AbstractNormalCharacteristicSystem):
@@ -196,7 +202,7 @@ class CompressibleSpongePlan(StrictModule):
         start_coordinate: float,
         end_coordinate: float,
         profile_power: float = 2.0,
-    ):
+    ) -> None:
         target = jnp.asarray(target_state)
         strength_ = float(strength)
         start = float(start_coordinate)

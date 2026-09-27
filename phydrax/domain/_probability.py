@@ -5,22 +5,25 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, Bool, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._sampling import materialize_design
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import Bool, parse, PRNGKey
+from ._base import _PointDim
 from ._measure import BaseMeasure, ExactMass
 from ._scalar import AbstractScalarDomain
 from ._selection import Fixed, Interior, Selection
 
 
-ReferenceMeasure = Literal["uniform", "standard-normal"]
+ReferenceMeasure: TypeAlias = Literal["uniform", "standard-normal"]
 
 
 def open_unit_interval(values: Any, /) -> Array:
@@ -49,11 +52,12 @@ class ReferenceTransportEvidence(StrictModule, NonTrainableState):
         maximum_round_trip_residual: float = 0.0,
         orientation_preserving: bool = True,
         tail_open: bool = False,
-    ):
+    ) -> None:
         if not provider:
             raise ValueError("Reference transport provider identity must be nonempty.")
-        if reference_measure not in ("uniform", "standard-normal"):
-            raise ValueError("Unsupported reference measure.")
+        reference_measure = parse(
+            reference_measure, ReferenceMeasure, "reference_measure"
+        )
         residual = float(maximum_round_trip_residual)
         if not np.isfinite(residual) or residual < 0.0:
             raise ValueError(
@@ -86,9 +90,10 @@ class ReferenceTransport(StrictModule, NonTrainableState):
         event_shape: tuple[int, ...] = (),
         log_abs_det_jacobian: Callable | None = None,
         evidence: ReferenceTransportEvidence | None = None,
-    ):
-        if reference_measure not in ("uniform", "standard-normal"):
-            raise ValueError("reference_measure must be 'uniform' or 'standard-normal'.")
+    ) -> None:
+        reference_measure = parse(
+            reference_measure, ReferenceMeasure, "reference_measure"
+        )
         if not callable(forward) or not callable(inverse):
             raise TypeError(
                 "Reference transport forward and inverse maps must be callable."
@@ -146,9 +151,7 @@ class _ProbabilityLaw(Protocol):
     @property
     def support(self) -> tuple[Array, Array] | None: ...
 
-    def sample(
-        self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()
-    ) -> Array: ...
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array: ...
 
     def icdf(self, probability: Any, /) -> Array: ...
 
@@ -206,11 +209,11 @@ def construct_reference_transport(distribution: Any, /) -> ReferenceTransport:
             "Quantile transport construction requires the declared CDF hypothesis."
         )
 
-    def forward(reference):
+    def forward(reference: ArrayLike) -> Array:
         probability = open_unit_interval(0.5 * (jnp.asarray(reference) + 1.0))
         return distribution.icdf(probability)
 
-    def inverse(value):
+    def inverse(value: Any) -> Array:
         return 2.0 * jnp.asarray(distribution.cdf(value)) - 1.0
 
     return _validate_transport(
@@ -242,7 +245,7 @@ class ProbabilityDomain(AbstractScalarDomain):
         *,
         label: str,
         transport: ReferenceTransport | None = None,
-    ):
+    ) -> None:
         if not isinstance(distribution, _ProbabilityLaw):
             raise TypeError(
                 "distribution must provide sample, icdf, log_prob, contains, support, and equivalent."
@@ -319,7 +322,7 @@ class ProbabilityDomain(AbstractScalarDomain):
         num_points: int,
         *,
         sampler: str = "latin_hypercube",
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> Array:
         count = int(num_points)
         if count < 0:
@@ -343,7 +346,7 @@ class ProbabilityDomain(AbstractScalarDomain):
             other.distribution
         )
 
-    def _contains(self, points: Array) -> Bool[Array, " num_points"]:
+    def _contains(self, points: Array) -> Bool[_PointDim]:
         return jnp.asarray(self.distribution.contains(points), dtype=jnp.bool_)
 
 

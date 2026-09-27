@@ -8,12 +8,17 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
-from ..geometry.complex import HypersurfaceKahlerGeometry, ProjectiveHypersurface
+from ..geometry.complex import (
+    HypersurfaceKahlerEvaluation,
+    HypersurfaceKahlerGeometry,
+    ProjectiveHypersurface,
+)
 from ._calabi_yau import CalabiYauMetricResult
 from ._calabi_yau_evidence import CalabiYauMetricEvidence
 
@@ -50,7 +55,7 @@ class CalabiYauMetricArtifact(StrictModule):
         precision_evidence: PrecisionEvidenceEnvelope,
         precision_policy_id: str,
         metric_evidence: CalabiYauMetricEvidence | None = None,
-    ):
+    ) -> None:
         self.potential_model = potential_model
         self.normalization = jnp.asarray(normalization)
         self.hypersurface_id = str(hypersurface_id)
@@ -108,7 +113,7 @@ class CalabiYauMetricArtifact(StrictModule):
         hypersurface: ProjectiveHypersurface,
         homogeneous_point: ArrayLike,
         /,
-    ):
+    ) -> HypersurfaceKahlerEvaluation:
         if (
             hypersurface.hypersurface_id != self.hypersurface_id
             or hypersurface.projective_dimension != self.projective_dimension

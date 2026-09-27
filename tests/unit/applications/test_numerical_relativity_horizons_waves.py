@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -31,7 +34,7 @@ from phydrax.applications.numerical_relativity._wave_extraction import (
 )
 
 
-def test_schwarzschild_and_kerr_surface_geometry_matches_analytic_values():
+def test_schwarzschild_and_kerr_surface_geometry_matches_analytic_values() -> None:
     surface_plan = SphericalSurfacePlan(3)
     mass = 1.0
     surface = surface_plan.constant(mass / 2.0)
@@ -69,11 +72,11 @@ def test_schwarzschild_and_kerr_surface_geometry_matches_analytic_values():
     assert bool(kerr.physically_valid)
 
 
-def test_mots_is_not_promoted_without_complete_outermost_search_evidence():
+def test_mots_is_not_promoted_without_complete_outermost_search_evidence() -> None:
     surface_plan = SphericalSurfacePlan(3)
     mots_plan = MOTSSolvePlan(surface_plan, residual_tolerance=1.0e-8, maximum_steps=20)
 
-    def two_surface_expansion(surface):
+    def two_surface_expansion(surface: Any) -> Any:
         radius = surface_plan.radius(surface)
         return (radius - 1.0) * (radius - 2.0)
 
@@ -89,6 +92,7 @@ def test_mots_is_not_promoted_without_complete_outermost_search_evidence():
     assert not bool(solved.derivative_valid)
     np.testing.assert_allclose(surface_plan.mean_radius(solved.surface), 2.0, atol=1e-7)
 
+    # ty: ignore[invalid-argument-type]
     search = ApparentHorizonSearchPlan(mots_plan, (0.8, 1.2, 2.2))
     incomplete = search.search(two_surface_expansion)
     assert not bool(incomplete.certified)
@@ -100,7 +104,7 @@ def test_mots_is_not_promoted_without_complete_outermost_search_evidence():
     assert bool(multiple.certified)
     np.testing.assert_allclose(surface_plan.mean_radius(multiple.surface), 2.0, atol=1e-7)
 
-    def no_physical_surface(surface):
+    def no_physical_surface(surface: Any) -> Any:
         return surface_plan.radius(surface) + 1.0
 
     no_surface = search.search(
@@ -114,7 +118,7 @@ def test_mots_is_not_promoted_without_complete_outermost_search_evidence():
     assert int(no_surface.status) == int(ApparentHorizonSearchStatus.NO_SURFACE)
 
 
-def test_psi4_respects_explicit_sign_and_spin_frame_conventions():
+def test_psi4_respects_explicit_sign_and_spin_frame_conventions() -> None:
     surface_plan = SphericalSurfacePlan(3)
     multipole_plan = SpinWeightedMultipolePlan(3)
     sample_shape = multipole_plan.transform.sample_shape
@@ -155,7 +159,7 @@ def test_psi4_respects_explicit_sign_and_spin_frame_conventions():
     assert bool(quarter_turn.qualified)
 
 
-def test_multipole_strain_and_finite_radius_evidence_converges_at_fixed_shapes():
+def test_multipole_strain_and_finite_radius_evidence_converges_at_fixed_shapes() -> None:
     multipole_plan = SpinWeightedMultipolePlan(4)
     coefficients = (
         jnp.zeros(multipole_plan.transform.coefficient_shape, dtype=jnp.complex128)

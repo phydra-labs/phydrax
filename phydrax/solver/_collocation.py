@@ -12,12 +12,13 @@ from typing import cast, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.domain import ProbabilityDomain
 
+from .._dtype_names import inexact_result_type
 from .._frozendict import frozendict
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ..integration._sparse_grid import _smolyak_rule
 from ..operators.interpolation._plans import SmolyakInterpolationRule
@@ -105,7 +106,7 @@ class StochasticCollocationPlan(StrictModule):
         axis_rules: (CollocationAxisRule | Sequence[CollocationAxisRule] | None) = "auto",
         include_previous: bool = True,
         plan_id: str = "stochastic-collocation",
-    ):
+    ) -> None:
         probability_factors = tuple(factors)
         if not probability_factors or any(
             not isinstance(factor, ProbabilityDomain) for factor in probability_factors
@@ -185,7 +186,7 @@ class StochasticCollocationNodeEvaluation(StrictModule):
         valid: ArrayLike = True,
         status: ArrayLike = COLLOCATION_SUCCESS,
         provenance: str = "conditional-solver",
-    ):
+    ) -> None:
         valid_value = jnp.asarray(valid, dtype=jnp.bool_)
         status_value = jnp.asarray(status, dtype=jnp.int32)
         if valid_value.shape != () or status_value.shape != ():

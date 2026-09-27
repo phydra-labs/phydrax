@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -8,7 +10,7 @@ import phydrax as phx
 cosmology = phx.applications.cosmology
 
 
-def _artifact(kind):
+def _artifact(kind: Any) -> Any:
     return cosmology.ScientificArtifactEnvelope(
         artifact_kind=kind,
         content_digest=f"{kind}-fixture",
@@ -21,7 +23,7 @@ def _artifact(kind):
     )
 
 
-def test_low_resolution_sky_tod_mapmaking_and_bandpower_handoff():
+def test_low_resolution_sky_tod_mapmaking_and_bandpower_handoff() -> None:
     pixel_count = 12
     synthesis = jnp.zeros((3 * pixel_count, 3))
     for pixel in range(pixel_count):
@@ -60,8 +62,10 @@ def test_low_resolution_sky_tod_mapmaking_and_bandpower_handoff():
     raw_layout = cosmology.CoordinateLayout(("TT:l2", "EE:l2", "BB:l2"))
     binned_layout = cosmology.CoordinateLayout(("TT:b0", "POL:b0"))
     handoff = cosmology.CmbBandpowerHandoff(
+        # ty: ignore[invalid-argument-type]
         [1.0, 2.0, 3.0],
         raw_layout,
+        # ty: ignore[invalid-argument-type]
         [[1.0, 0.0, 0.0], [0.0, 0.5, 0.5]],
         binned_layout,
         "cmb-spectrum-product",

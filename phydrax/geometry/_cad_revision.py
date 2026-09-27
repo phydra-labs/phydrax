@@ -432,7 +432,7 @@ class AssociationGraph:
         target_revision: CADRevision,
         transaction: OccurrenceCorrespondenceTransaction,
         /,
-    ):
+    ) -> None:
         if not isinstance(source_revision, CADRevision) or not isinstance(
             target_revision, CADRevision
         ):

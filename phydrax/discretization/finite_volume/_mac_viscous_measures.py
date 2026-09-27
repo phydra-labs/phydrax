@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._sharp_measures import QualifiedSharpGeometry
@@ -25,8 +26,8 @@ def _cell_to_face_fraction(value: Array, shape: tuple[int, ...], axis: int, /) -
     face_index[axis] = slice(1, shape[axis] - 1)
     cell_index[axis] = slice(0, value.shape[axis] - 1)
     result = result.at[tuple(face_index)].set(value[tuple(cell_index)])
-    lower = [slice(None)] * value.ndim
-    upper = [slice(None)] * value.ndim
+    lower: list[slice | int] = [slice(None)] * value.ndim
+    upper: list[slice | int] = [slice(None)] * value.ndim
     lower[axis] = 0
     upper[axis] = shape[axis] - 1
     return result.at[tuple(lower)].set(0.0).at[tuple(upper)].set(0.0)
@@ -48,7 +49,7 @@ class MACFreeSurfaceViscousMeasurePlan(StrictModule, NonTrainableState):
     density: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, operators: PreparedMACOperators, density: float, /):
+    def __init__(self, operators: PreparedMACOperators, density: float, /) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         density_ = float(density)

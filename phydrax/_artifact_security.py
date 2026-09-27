@@ -21,6 +21,7 @@ from ._external_resource import (
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
+from ._validation import normalized_identifier
 
 
 if TYPE_CHECKING:
@@ -30,19 +31,10 @@ if TYPE_CHECKING:
 _FORBIDDEN_PICKLE_SUFFIXES = frozenset({".dill", ".joblib", ".pickle", ".pkl"})
 
 
-def _identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    normalized = value.strip()
-    if not normalized:
-        raise ValueError(f"{name} must be non-empty.")
-    return normalized
-
-
 def _identifiers(values: Sequence[str], name: str, /) -> tuple[str, ...]:
     if isinstance(values, str):
         raise TypeError(f"{name} must be a sequence of strings.")
-    normalized = tuple(sorted(_identifier(value, name) for value in values))
+    normalized = tuple(sorted(normalized_identifier(value, name) for value in values))
     if not normalized or len(set(normalized)) != len(normalized):
         raise ValueError(f"{name} must be non-empty and unique.")
     return normalized
@@ -67,7 +59,7 @@ class ExternalArtifactPolicy(StrictModule, NonTrainableState):
         allowed_license_ids: Sequence[str],
         allowed_suffixes: Sequence[str],
         maximum_depth: int = 32,
-    ):
+    ) -> None:
         root_path = Path(root)
         if root_path.is_symlink():
             raise ValueError("External artifact root cannot be a symbolic link.")
@@ -89,7 +81,8 @@ class ExternalArtifactPolicy(StrictModule, NonTrainableState):
         licenses = _identifiers(allowed_license_ids, "allowed license ID")
         suffixes = tuple(
             sorted(
-                _identifier(value, "allowed suffix").lower() for value in allowed_suffixes
+                normalized_identifier(value, "allowed suffix").lower()
+                for value in allowed_suffixes
             )
         )
         if (
@@ -143,19 +136,19 @@ class AdmittedExternalArtifact(StrictModule, NonTrainableState):
         manifest_id: str,
         policy_id: str,
         /,
-    ):
-        relative = _identifier(relative_path, "relative artifact path")
-        resolved = _identifier(resolved_path, "resolved artifact path")
-        digest = _identifier(sha256, "artifact SHA-256")
+    ) -> None:
+        relative = normalized_identifier(relative_path, "relative artifact path")
+        resolved = normalized_identifier(resolved_path, "resolved artifact path")
+        digest = normalized_identifier(sha256, "artifact SHA-256")
         if len(digest) != 64 or any(
             character not in "0123456789abcdef" for character in digest
         ):
             raise ValueError("Artifact SHA-256 must be lowercase hexadecimal.")
         if isinstance(byte_size, bool) or not isinstance(byte_size, int) or byte_size < 0:
             raise ValueError("Artifact byte size must be a non-negative integer.")
-        license_ = _identifier(license_id, "artifact license ID")
-        manifest = _identifier(manifest_id, "artifact manifest ID")
-        policy = _identifier(policy_id, "artifact policy ID")
+        license_ = normalized_identifier(license_id, "artifact license ID")
+        manifest = normalized_identifier(manifest_id, "artifact manifest ID")
+        policy = normalized_identifier(policy_id, "artifact policy ID")
         self.relative_path = relative
         self.resolved_path = resolved
         self.sha256 = digest

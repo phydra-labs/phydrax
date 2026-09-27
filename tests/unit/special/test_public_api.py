@@ -1,7 +1,7 @@
 import phydrax as phx
 
 
-def test_special_namespace_is_public():
+def test_special_namespace_is_public() -> None:
     expected = [
         "airy",
         "airye",

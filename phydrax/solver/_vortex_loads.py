@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -30,7 +31,7 @@ class KuttaJoukowskiLoadPlan(StrictModule, NonTrainableState):
     density: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, density: float = 1.0, /):
+    def __init__(self, density: float = 1.0, /) -> None:
         if float(density) <= 0.0:
             raise ValueError("Kutta-Joukowski density must be positive.")
         self.density = float(density)
@@ -45,7 +46,7 @@ class KuttaJoukowskiLoadPlan(StrictModule, NonTrainableState):
         velocity: ArrayLike,
         /,
         *,
-        reference_point: ArrayLike = (0.0, 0.0, 0.0),
+        reference_point: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
     ) -> VortexLoadResult:
         gamma = jnp.asarray(circulation, dtype=surface.control_point.dtype)
         flow = jnp.asarray(velocity, dtype=surface.control_point.dtype)
@@ -77,7 +78,7 @@ class UnsteadyBernoulliLoadPlan(StrictModule, NonTrainableState):
     density: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, density: float = 1.0, /):
+    def __init__(self, density: float = 1.0, /) -> None:
         if float(density) <= 0.0:
             raise ValueError("Bernoulli density must be positive.")
         self.density = float(density)
@@ -93,7 +94,7 @@ class UnsteadyBernoulliLoadPlan(StrictModule, NonTrainableState):
         reference_speed: ArrayLike,
         /,
         *,
-        reference_point: ArrayLike = (0.0, 0.0, 0.0),
+        reference_point: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
     ) -> VortexLoadResult:
         speed = jnp.asarray(tangential_speed, dtype=surface.control_point.dtype)
         rate = jnp.asarray(potential_rate, dtype=speed.dtype)
@@ -127,7 +128,7 @@ class ImpulseLoadPlan(StrictModule, NonTrainableState):
     density: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, density: float = 1.0, /):
+    def __init__(self, density: float = 1.0, /) -> None:
         if float(density) <= 0.0:
             raise ValueError("Impulse density must be positive.")
         self.density = float(density)
@@ -142,7 +143,7 @@ class ImpulseLoadPlan(StrictModule, NonTrainableState):
         time_step: ArrayLike,
         /,
         *,
-        reference_point: ArrayLike = (0.0, 0.0, 0.0),
+        reference_point: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
     ) -> VortexLoadResult:
         previous = jnp.asarray(previous_impulse)
         current = jnp.asarray(current_impulse, dtype=previous.dtype)
@@ -174,7 +175,7 @@ class TrefftzInducedDragPlan(StrictModule, NonTrainableState):
     density: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, density: float = 1.0, /):
+    def __init__(self, density: float = 1.0, /) -> None:
         self.density = float(density)
         if self.density <= 0.0:
             raise ValueError("Trefftz density must be positive.")

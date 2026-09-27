@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -21,7 +24,7 @@ from phydrax.observation import (
 )
 
 
-def test_msd_acf_and_fcs_match_analytic_lag_estimators_with_explicit_units():
+def test_msd_acf_and_fcs_match_analytic_lag_estimators_with_explicit_units() -> None:
     positions_m = jnp.stack((jnp.arange(6.0), jnp.zeros(6)), axis=-1)
     msd_plan = MeanSquareDisplacementPlan(6, 2, 3, 0.25, distance_unit="m", time_unit="s")
     msd = msd_plan.prepare().forward(positions_m)
@@ -67,7 +70,7 @@ def test_msd_acf_and_fcs_match_analytic_lag_estimators_with_explicit_units():
     np.testing.assert_allclose(sample_centered.values, np.asarray(expected) / expected[0])
 
 
-def test_normalized_correlations_are_invariant_to_signal_unit_scale():
+def test_normalized_correlations_are_invariant_to_signal_unit_scale() -> None:
     alternating = jnp.asarray([1.0, -1.0, 1.0, -1.0, 1.0, -1.0])
     acf_runtime = AutocorrelationPlan(6, 2, 1.0).prepare()
     base_acf = acf_runtime.forward(alternating)
@@ -92,7 +95,7 @@ def test_normalized_correlations_are_invariant_to_signal_unit_scale():
     assert bool(scaled_pair.successful)
 
 
-def test_correlation_evidence_fails_closed_for_nonfinite_or_constant_data():
+def test_correlation_evidence_fails_closed_for_nonfinite_or_constant_data() -> None:
     acf_runtime = AutocorrelationPlan(4, 2, 1.0).prepare()
     constant = acf_runtime.forward(jnp.ones(4))
     assert not bool(constant.finite)
@@ -108,7 +111,7 @@ def test_correlation_evidence_fails_closed_for_nonfinite_or_constant_data():
     assert not bool(dark.successful)
 
 
-def test_pair_correlation_peak_lag_sign_and_directionality_follow_leader():
+def test_pair_correlation_peak_lag_sign_and_directionality_follow_leader() -> None:
     leading = jnp.asarray([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
     trailing = jnp.asarray([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
     runtime = PairCorrelationPlan(8, 3, 0.2, time_unit="s").prepare()
@@ -131,7 +134,7 @@ def test_pair_correlation_peak_lag_sign_and_directionality_follow_leader():
     assert np.isnan(float(tied.directionality))
 
 
-def test_anomalous_and_confined_diffusion_forward_and_evaluation_are_analytic():
+def test_anomalous_and_confined_diffusion_forward_and_evaluation_are_analytic() -> None:
     lag_s = jnp.asarray([0.0, 1.0, 4.0])
     anomalous = DiffusionModelPlan(
         lag_s, 2, "anomalous", distance_unit="m", time_unit="s"
@@ -164,11 +167,13 @@ def test_anomalous_and_confined_diffusion_forward_and_evaluation_are_analytic():
     )
 
     unresolved_anomalous = (
+        # ty: ignore[invalid-argument-type]
         DiffusionModelPlan([0.0, 1.0], 2, "anomalous")
         .prepare()
         .forward(2.0, exponent=0.5)
     )
     unresolved_confined = (
+        # ty: ignore[invalid-argument-type]
         DiffusionModelPlan([0.0, 1.0], 2, "confined")
         .prepare()
         .forward(2.0, confinement_time=3.0)
@@ -181,8 +186,11 @@ def test_anomalous_and_confined_diffusion_forward_and_evaluation_are_analytic():
     assert not bool(unresolved_confined.successful)
 
 
-def test_brightness_conditioned_transport_recovers_each_bin_and_capacity_evidence():
+def test_brightness_conditioned_transport_recovers_each_bin_and_capacity_evidence() -> (
+    None
+):
     runtime = BrightnessConditionedTransportPlan(
+        # ty: ignore[invalid-argument-type]
         [0.0, 5.0, 10.0],
         4,
         2,
@@ -212,10 +220,15 @@ def test_brightness_conditioned_transport_recovers_each_bin_and_capacity_evidenc
 
 @pytest.mark.parametrize("outside_brightness", [0.5, 11.0])
 def test_brightness_conditioning_fails_closed_outside_recorded_bins(
-    outside_brightness,
-):
+    outside_brightness: Any,
+) -> None:
     runtime = BrightnessConditionedTransportPlan(
-        [1.0, 5.0, 10.0], 5, 2, 0.5, minimum_count=2
+        # ty: ignore[invalid-argument-type]
+        [1.0, 5.0, 10.0],
+        5,
+        2,
+        0.5,
+        minimum_count=2,
     ).prepare()
     result = runtime.evaluate(
         jnp.asarray([2.0, 3.0, 7.0, 8.0, outside_brightness]),
@@ -226,7 +239,7 @@ def test_brightness_conditioning_fails_closed_outside_recorded_bins(
     assert not bool(result.successful)
 
 
-def test_lifetime_fret_irf_limits_and_poisson_draws_are_reproducible():
+def test_lifetime_fret_irf_limits_and_poisson_draws_are_reproducible() -> None:
     plan = FluorescencePhotonPlan(
         jnp.arange(5.0),
         jnp.asarray([0.0, 1.0, 0.0, 0.0]),
@@ -263,7 +276,7 @@ def test_lifetime_fret_irf_limits_and_poisson_draws_are_reproducible():
     assert bool(long_lifetime.successful)
 
 
-def test_censored_dwell_likelihood_counts_only_observed_exits():
+def test_censored_dwell_likelihood_counts_only_observed_exits() -> None:
     runtime = DwellTimeLikelihoodPlan(3, time_unit="s").prepare()
     result = eqx.filter_jit(runtime.evaluate)(
         jnp.asarray([1.0, 2.0, 3.0]),
@@ -284,7 +297,7 @@ def test_censored_dwell_likelihood_counts_only_observed_exits():
     assert np.isnan(float(all_censored.maximum_likelihood_rate))
 
 
-def test_iv_reversal_inference_recovers_conductance_and_reports_flat_curve():
+def test_iv_reversal_inference_recovers_conductance_and_reports_flat_curve() -> None:
     voltages_v = jnp.asarray([-0.1, 0.0, 0.1, 0.2, 0.3])
     runtime = IVReversalPlan(
         voltages_v,
@@ -334,15 +347,19 @@ def test_iv_reversal_inference_recovers_conductance_and_reports_flat_curve():
     assert np.isnan(float(overflowing_reversal.reversal_potential))
 
 
-def test_plan_constructors_reject_ambiguous_static_configuration():
+def test_plan_constructors_reject_ambiguous_static_configuration() -> None:
     with pytest.raises(ValueError, match="max_lag"):
         MeanSquareDisplacementPlan(4, 2, 4, 1.0)
     with pytest.raises(TypeError, match="normalized"):
+        # ty: ignore[invalid-argument-type]
         AutocorrelationPlan(4, 2, 1.0, normalized=1)
     with pytest.raises(ValueError, match="model"):
+        # ty: ignore[invalid-argument-type]
         DiffusionModelPlan([0.0, 1.0], 2, "free")
     with pytest.raises(ValueError, match="minimum_conductance"):
+        # ty: ignore[invalid-argument-type]
         IVReversalPlan([0.0, 1.0], minimum_conductance=-1.0)
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="uniformly spaced"):
+        # ty: ignore[invalid-argument-type]
         invalid = FluorescencePhotonPlan([0.0, 1.0, 3.0], [1.0, 0.0])
         jax.block_until_ready(invalid.bin_edges)

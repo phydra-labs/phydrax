@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -22,13 +23,19 @@ from ...linalg import (
     OperatorCapabilities,
     OperatorProperties,
 )
+from ...typing import parse
 from .._spaces import DiscreteFieldSpace
 from .._tensor_support import PreparedTensorGrid
 from ._certification import FDStabilityReport
 from ._coefficients import StencilCoefficientPlan
 from ._operators import PreparedStencilOperator
 from ._request import DerivativeRequest
-from ._stencil import BoundaryStencilSet, LinearStencil, StencilFootprint
+from ._stencil import (
+    BoundaryStencilSet,
+    LinearStencil,
+    StencilFootprint,
+    StencilRowKind,
+)
 
 
 SBPInteriorOrder: TypeAlias = Literal[2, 4, 6, 8]
@@ -94,10 +101,8 @@ class SBPFamily(StrictModule, NonTrainableState):
     norm_boundary_weights: tuple[float, ...] = eqx.field(static=True)
     family_id: str = eqx.field(static=True)
 
-    def __init__(self, interior_order: SBPInteriorOrder, /):
-        order = int(interior_order)
-        if order not in (2, 4, 6, 8):
-            raise ValueError("Diagonal-norm SBP interior order must be 2, 4, 6, or 8.")
+    def __init__(self, interior_order: SBPInteriorOrder, /) -> None:
+        order = parse(int(interior_order), SBPInteriorOrder, "interior_order")
         norm = _NORM_BOUNDARY_WEIGHTS[order]
         self.interior_order = order
         self.closure_order = order // 2
@@ -249,7 +254,7 @@ class SBPDerivativePlan(StrictModule, NonTrainableState):
         /,
         *,
         interior_order: SBPInteriorOrder = 2,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("grid must be a PreparedTensorGrid.")
         axis_ = str(axis)
@@ -294,7 +299,7 @@ class CompatibleSBPSecondDerivative(AbstractLinearOperator):
         /,
         *,
         coefficient: ArrayLike = 1.0,
-    ):
+    ) -> None:
         if not isinstance(first_derivative, PreparedSBPOperator):
             raise TypeError("first_derivative must be a PreparedSBPOperator.")
         coefficient_ = jnp.broadcast_to(
@@ -395,7 +400,7 @@ class PreparedSBPOperator(StrictModule, NonTrainableState):
     stability_report: FDStabilityReport
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: SBPDerivativePlan, /):
+    def __init__(self, plan: SBPDerivativePlan, /) -> None:
         if not isinstance(plan, SBPDerivativePlan):
             raise TypeError("plan must be an SBPDerivativePlan.")
         grid = plan.grid
@@ -416,7 +421,7 @@ class PreparedSBPOperator(StrictModule, NonTrainableState):
         matrix = normalized / delta
         axis_norm = jnp.asarray(delta * normalized_norm)
         row_plans = []
-        row_kinds = []
+        row_kinds: list[StencilRowKind] = []
         if periodic:
             half_order = plan.family.interior_order // 2
             relative = np.arange(-half_order, half_order + 1, dtype=np.int32)
@@ -619,21 +624,11 @@ class SATBoundaryPlan(StrictModule, NonTrainableState):
         lower_penalty: float = 0.0,
         upper_penalty: float = 0.0,
         stability_report: FDStabilityReport | None = None,
-    ):
+    ) -> None:
         if not isinstance(sbp, PreparedSBPOperator):
             raise TypeError("sbp must be a PreparedSBPOperator.")
-        if lower_kind not in (
-            "none",
-            "dirichlet",
-            "neumann",
-            "robin",
-        ) or upper_kind not in (
-            "none",
-            "dirichlet",
-            "neumann",
-            "robin",
-        ):
-            raise ValueError("Unknown SAT boundary condition kind.")
+        lower_kind = parse(lower_kind, SATConditionKind, "lower_kind")
+        upper_kind = parse(upper_kind, SATConditionKind, "upper_kind")
         coefficients = tuple(
             float(value) for value in (lower_alpha, lower_beta, upper_alpha, upper_beta)
         )
@@ -784,22 +779,15 @@ class SATInterfacePlan(StrictModule, NonTrainableState):
         /,
         *,
         flux: SATInterfaceFlux = "central",
-    ):
+    ) -> None:
         if not isinstance(left, PreparedSBPOperator) or not isinstance(
             right, PreparedSBPOperator
         ):
             raise TypeError("SAT interface requires two prepared SBP operators.")
         speed_ = float(speed)
-        if (
-            not np.isfinite(speed_)
-            or speed_ == 0.0
-            or flux
-            not in (
-                "central",
-                "upwind",
-            )
-        ):
-            raise ValueError("SAT interface speed/flux is invalid.")
+        if not np.isfinite(speed_) or speed_ == 0.0:
+            raise ValueError("SAT interface speed is invalid.")
+        flux = parse(flux, SATInterfaceFlux, "flux")
         left_trace_shape = (
             left.grid.shape[: left.axis_index] + left.grid.shape[left.axis_index + 1 :]
         )

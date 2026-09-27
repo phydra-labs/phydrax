@@ -9,10 +9,13 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite
+from ..typing import parse
 from ._newton import NewtonKrylov, NewtonTrustRegion
 from ._precision import NonlinearPrecisionPolicy
 from ._types import (
@@ -65,26 +68,25 @@ class ShardedNonlinearPolicy(StrictModule):
         axis_name: str | None = None,
         norm_reduction: NormReduction = "global-l2",
         replicated_status: bool = True,
-    ):
+    ) -> None:
         if not isinstance(state_sharding, jax.sharding.Sharding):
             raise TypeError("state_sharding must implement jax.sharding.Sharding.")
         if not isinstance(residual_sharding, jax.sharding.Sharding):
             raise TypeError("residual_sharding must implement jax.sharding.Sharding.")
-        if norm_reduction not in ("local-l2", "global-l2"):
-            raise ValueError("Unknown norm_reduction.")
+        norm_reduction = parse(norm_reduction, NormReduction, "norm_reduction")
         self.state_sharding = state_sharding
         self.residual_sharding = residual_sharding
         self.axis_name = None if axis_name is None else str(axis_name)
         self.norm_reduction = norm_reduction
         self.replicated_status = bool(replicated_status)
 
-    def place_state(self, state: PyTree[Any], /):
+    def place_state(self, state: PyTree[Any], /) -> PyTree[Array]:
         return jax.tree.map(
             lambda value: jax.device_put(value, self.state_sharding),
             state,
         )
 
-    def place_residual(self, residual: PyTree[Any], /):
+    def place_residual(self, residual: PyTree[Any], /) -> PyTree[Array]:
         return jax.tree.map(
             lambda value: jax.device_put(value, self.residual_sharding),
             residual,
@@ -106,7 +108,7 @@ class MixedPrecisionRootExecution(StrictModule):
 
     precision: NonlinearPrecisionPolicy
 
-    def __init__(self, precision: NonlinearPrecisionPolicy | None = None, /):
+    def __init__(self, precision: NonlinearPrecisionPolicy | None = None, /) -> None:
         policy = NonlinearPrecisionPolicy() if precision is None else precision
         if not isinstance(policy, NonlinearPrecisionPolicy):
             raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
@@ -154,13 +156,20 @@ class MixedPrecisionRootExecution(StrictModule):
         )
         model_initial = self.precision.state(initial_state)
 
-        def model_residual(state, current_args):
+        def model_residual(
+            state: PyTree[Any], current_args: Any
+        ) -> tuple[PyTree[Array], Any]:
             residual, auxiliary = problem.residual_function(state, current_args), None
             if problem.has_aux:
                 residual, auxiliary = residual
             return self.precision.residual(residual), auxiliary
 
-        def model_validity(state, residual, auxiliary, current_args):
+        def model_validity(
+            state: PyTree[Any],
+            residual: PyTree[Any],
+            auxiliary: Any,
+            current_args: Any,
+        ) -> ArrayLike:
             assert problem.validity_function is not None
             return problem.validity_function(
                 state,

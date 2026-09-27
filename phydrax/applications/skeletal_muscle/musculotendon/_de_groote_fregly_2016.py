@@ -23,7 +23,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -120,10 +121,10 @@ class DeGrooteFregly2016Parameters(StrictModule):
         tendon_c1: ArrayLike = 0.200,
         tendon_c2: ArrayLike = 0.995,
         tendon_c3: ArrayLike = 0.250,
-        active_force_length_b1: ArrayLike = (0.815, 0.433, 0.100),
-        active_force_length_b2: ArrayLike = (1.055, 0.717, 1.000),
-        active_force_length_b3: ArrayLike = (0.162, -0.030, 0.354),
-        active_force_length_b4: ArrayLike = (0.063, 0.200, 0.000),
+        active_force_length_b1: ArrayLike | Sequence[float] = (0.815, 0.433, 0.100),
+        active_force_length_b2: ArrayLike | Sequence[float] = (1.055, 0.717, 1.000),
+        active_force_length_b3: ArrayLike | Sequence[float] = (0.162, -0.030, 0.354),
+        active_force_length_b4: ArrayLike | Sequence[float] = (0.063, 0.200, 0.000),
         passive_stiffness: ArrayLike = 4.0,
         passive_strain: ArrayLike = 0.6,
         force_velocity_d1: ArrayLike = -0.318,
@@ -131,7 +132,7 @@ class DeGrooteFregly2016Parameters(StrictModule):
         force_velocity_d3: ArrayLike = -0.374,
         force_velocity_d4: ArrayLike = 0.886,
         implicit_force_rate_scale_per_s: ArrayLike = 10.0,
-    ):
+    ) -> None:
         force = _positive_vector(maximum_isometric_force_N, "maximum_isometric_force_N")
         dtype = force.dtype
         optimal = _positive_vector(
@@ -246,7 +247,9 @@ class DeGrooteFregly2016State(StrictModule):
     activation: Array
     normalized_tendon_force: Array
 
-    def __init__(self, activation: ArrayLike, normalized_tendon_force: ArrayLike, /):
+    def __init__(
+        self, activation: ArrayLike, normalized_tendon_force: ArrayLike, /
+    ) -> None:
         activation_ = jnp.asarray(activation)
         tendon_force = jnp.asarray(normalized_tendon_force, dtype=activation_.dtype)
         if activation_.ndim != 1 or activation_.shape != tendon_force.shape:
@@ -545,7 +548,7 @@ class DeGrooteFregly2016Plan(StrictModule):
         *,
         muscle_mask: Sequence[bool] | None = None,
         model_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(parameters, DeGrooteFregly2016Parameters):
             raise TypeError("parameters must be DeGrooteFregly2016Parameters.")
         names = tuple(_identifier(name, "muscle name") for name in muscle_names)
@@ -599,7 +602,7 @@ class PreparedDeGrooteFregly2016Musculotendon(StrictModule):
         plan: DeGrooteFregly2016Plan,
         reference_state: DeGrooteFregly2016State,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, DeGrooteFregly2016Plan):
             raise TypeError("plan must be DeGrooteFregly2016Plan.")
         self.plan = plan
@@ -993,7 +996,7 @@ class DeGrooteFregly2016ImplicitTendonForcePlan(StrictModule):
         *,
         muscle_mask: Sequence[bool] | None = None,
         model_id: str | None = None,
-    ):
+    ) -> None:
         explicit = DeGrooteFregly2016Plan(
             parameters,
             muscle_names,
@@ -1071,7 +1074,7 @@ class PreparedDeGrooteFregly2016ImplicitTendonForce(StrictModule):
         plan: DeGrooteFregly2016ImplicitTendonForcePlan,
         reference_state: DeGrooteFregly2016State,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, DeGrooteFregly2016ImplicitTendonForcePlan):
             raise TypeError("plan must be DeGrooteFregly2016ImplicitTendonForcePlan.")
         explicit_plan = DeGrooteFregly2016Plan(
@@ -1168,7 +1171,7 @@ class PreparedDeGrooteFregly2016ImplicitTendonForce(StrictModule):
         scale = self.plan.parameters.implicit_force_rate_scale_per_s
         initial = source.rates.normalized_tendon_force_per_s / scale
 
-        def residual(scaled_force_rate, runtime_args):
+        def residual(scaled_force_rate: Array, runtime_args: object) -> Array:
             del runtime_args
             return self._algebraic_residual(scaled_force_rate, state, length, velocity)
 

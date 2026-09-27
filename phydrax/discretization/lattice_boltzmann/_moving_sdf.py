@@ -10,7 +10,7 @@ from typing import Any, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -68,7 +68,7 @@ class MovingSDFGeometryPlan(StrictModule, NonTrainableState):
         *,
         sdf_id: str,
         body_names: Sequence[str] = ("body",),
-    ):
+    ) -> None:
         if not isinstance(discretization, LatticeBoltzmannDiscretization):
             raise TypeError("discretization must be LatticeBoltzmannDiscretization.")
         if not callable(signed_distance):

@@ -9,7 +9,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._doc import DOC_KEY0
 from .._term import AbstractEvaluatedScalarTerm, TermEvaluation
@@ -51,7 +52,7 @@ class SpatialUnbalancedSinkhornDivergenceTerm(AbstractEvaluatedScalarTerm):
         objective_vars: Sequence[str] | None = None,
         weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not callable(measure_builder):
             raise TypeError("measure_builder must be callable.")
         if not isinstance(reference, PreparedUnbalancedSinkhornReference):

@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._differentiation import (
     DerivativeContract,
@@ -20,6 +20,7 @@ from ..._differentiation import (
 )
 from ..._model import ModelBinding
 from ..._trainable import fixed_field
+from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import AbstractRecipe, FitResult, prediction_fit_contract
 from .._schema import AbstractFittedModel, FeatureSchema
@@ -146,7 +147,7 @@ class FittedStandardScaler(_AbstractAffineTransform):
         *,
         schema: FeatureSchema,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.in_size = len(schema.names)
         self.out_size = len(schema.names)
         self.center = jnp.asarray(center)
@@ -172,9 +173,8 @@ class StandardScaler(AbstractRecipe):
         with_mean: bool = True,
         with_std: bool = True,
         weight_policy: WeightPolicy = "statistical",
-    ):
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+    ) -> None:
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.with_mean = bool(with_mean)
         self.with_std = bool(with_std)
         self.weight_policy = weight_policy
@@ -246,7 +246,7 @@ class FittedMinMaxScaler(_AbstractAffineTransform):
         case_shape: tuple[int, ...],
         feature_range: tuple[float, float],
         clip: bool,
-    ):
+    ) -> None:
         self.in_size = len(schema.names)
         self.out_size = len(schema.names)
         self.center = jnp.asarray(center)
@@ -274,12 +274,11 @@ class MinMaxScaler(AbstractRecipe):
         *,
         clip: bool = False,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         lower, upper = (float(feature_range[0]), float(feature_range[1]))
         if not jnp.isfinite(lower) or not jnp.isfinite(upper) or not upper > lower:
             raise ValueError("feature_range must contain finite increasing bounds.")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.feature_range = (lower, upper)
         self.clip = bool(clip)
         self.weight_policy = weight_policy
@@ -347,7 +346,7 @@ class FittedMaxAbsScaler(_AbstractAffineTransform):
         *,
         schema: FeatureSchema,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.in_size = len(schema.names)
         self.out_size = len(schema.names)
         self.center = jnp.zeros_like(scale)
@@ -363,9 +362,8 @@ class FittedMaxAbsScaler(_AbstractAffineTransform):
 class MaxAbsScaler(AbstractRecipe):
     weight_policy: WeightPolicy = eqx.field(static=True)
 
-    def __init__(self, *, weight_policy: WeightPolicy = "statistical"):
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+    def __init__(self, *, weight_policy: WeightPolicy = "statistical") -> None:
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.weight_policy = weight_policy
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
@@ -417,7 +415,7 @@ class FittedRobustScaler(_AbstractAffineTransform):
         schema: FeatureSchema,
         case_shape: tuple[int, ...],
         quantile_range: tuple[float, float],
-    ):
+    ) -> None:
         self.in_size = len(schema.names)
         self.out_size = len(schema.names)
         self.center = jnp.asarray(center)
@@ -446,12 +444,11 @@ class RobustScaler(AbstractRecipe):
         with_scaling: bool = True,
         quantile_range: tuple[float, float] = (25.0, 75.0),
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         low, high = float(quantile_range[0]), float(quantile_range[1])
         if not 0.0 <= low < high <= 100.0:
             raise ValueError("quantile_range must be an increasing interval in [0, 100].")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.with_centering = bool(with_centering)
         self.with_scaling = bool(with_scaling)
         self.quantile_range = (low, high)
@@ -516,7 +513,7 @@ class FittedNormScaler(AbstractFittedModel):
 
     def __init__(
         self, size: int, /, *, norm: Literal["l1", "l2", "max"], schema: FeatureSchema
-    ):
+    ) -> None:
         self.in_size = int(size)
         self.out_size = int(size)
         self.norm = norm
@@ -582,11 +579,10 @@ class NormScaler(AbstractRecipe):
         norm: Literal["l1", "l2", "max"] = "l2",
         *,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if norm not in ("l1", "l2", "max"):
             raise ValueError("norm must be 'l1', 'l2', or 'max'.")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.norm = norm
         self.weight_policy = weight_policy
 

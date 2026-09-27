@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -9,7 +11,7 @@ import pytest
 import phydrax as phx
 
 
-def _indexed_geometry():
+def _indexed_geometry() -> Any:
     positions = jnp.asarray(((0.0, 0.0, 0.0), (0.0, 0.0, -1.0), (1.2, 0.0, 0.0)))
     ids = jnp.asarray((10, 11, 12), dtype=jnp.int64)
     prepared = phx.discretization.SurfelSetPlan(ids, positions, jnp.ones((3,))).prepare()
@@ -39,7 +41,7 @@ def _indexed_geometry():
     return geometry, hierarchy, bounds
 
 
-def test_surfel_ray_query_rejects_permuted_bvh_slot_identity():
+def test_surfel_ray_query_rejects_permuted_bvh_slot_identity() -> None:
     geometry, _, _ = _indexed_geometry()
     permutation = jnp.asarray((1, 0, 2))
     positions = geometry.position[permutation]
@@ -129,7 +131,7 @@ def test_surfel_ray_query_jits_and_has_fixed_route_gradient() -> None:
     result = query(jnp.asarray(((0.0, 0.0, 2.0),)), direction)
     assert bool(result.evidence.successful[0])
 
-    def distance(origin_z):
+    def distance(origin_z: Any) -> Any:
         hits = plan.query(jnp.asarray(((0.0, 0.0, origin_z),)), direction)
         return hits.distance[0, 0]
 

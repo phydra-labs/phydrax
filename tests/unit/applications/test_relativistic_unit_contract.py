@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -24,7 +26,7 @@ from phydrax.metrix import (
 )
 
 
-def _scale(*, quantum_constants_explicit: bool = True):
+def _scale(*, quantum_constants_explicit: bool = True) -> Any:
     return RelativityScaleContract(
         DimensionalScaleContract.si(),
         1,
@@ -35,7 +37,7 @@ def _scale(*, quantum_constants_explicit: bool = True):
     )
 
 
-def _units(*, convention: RelativityConvention | None = None):
+def _units(*, convention: RelativityConvention | None = None) -> Any:
     return RelativisticUnitContract(
         _scale(),
         RelativityConvention(metric_signature="mostly_minus")
@@ -44,7 +46,7 @@ def _units(*, convention: RelativityConvention | None = None):
     )
 
 
-def _geometry(units, *, snapshot_token=7, valid=True):
+def _geometry(units: Any, *, snapshot_token: Any = 7, valid: Any = True) -> Any:
     return ADMGridGeometry(
         jnp.asarray(1.0),
         jnp.zeros((3,)),
@@ -63,7 +65,7 @@ def _geometry(units, *, snapshot_token=7, valid=True):
     )
 
 
-def _tetrad(units, *, vectors=None):
+def _tetrad(units: Any, *, vectors: Any = None) -> Any:
     chart = CoordinateChart("minkowski", ("t", "x", "y", "z"))
     metric = minkowski_metric(chart, convention="mostly_minus")
     return orthonormal_tetrad(
@@ -76,7 +78,7 @@ def _tetrad(units, *, vectors=None):
     )
 
 
-def _frame(*, snapshot_token=7, time=0.5, scale_factor=0.75):
+def _frame(*, snapshot_token: Any = 7, time: Any = 0.5, scale_factor: Any = 0.75) -> Any:
     units = _units()
     return LocalRelativisticFramePlan(
         _geometry(units, snapshot_token=snapshot_token),
@@ -90,7 +92,9 @@ def _frame(*, snapshot_token=7, time=0.5, scale_factor=0.75):
     )
 
 
-def test_physical_natural_and_constant_bridges_round_trip_without_hidden_c_or_hbar():
+def test_physical_natural_and_constant_bridges_round_trip_without_hidden_c_or_hbar() -> (
+    None
+):
     units = _units()
     energy = jnp.asarray((10.0, 17.0))
     momentum = jnp.asarray(((1.0, -2.0, 0.5), (2.0, 0.0, -1.0)))
@@ -123,7 +127,7 @@ def test_physical_natural_and_constant_bridges_round_trip_without_hidden_c_or_hb
     )
 
 
-def test_lorentz_scalar_and_mass_shell_are_invariant_in_E_cp_components():
+def test_lorentz_scalar_and_mass_shell_are_invariant_in_E_cp_components() -> None:
     units = _units()
     mass = jnp.asarray(2.0)
     spatial_momentum = jnp.asarray((0.5, -0.25, 0.75))
@@ -150,7 +154,7 @@ def test_lorentz_scalar_and_mass_shell_are_invariant_in_E_cp_components():
     )
 
 
-def test_metric_signature_is_explicit_in_scalar_and_contract_identity():
+def test_metric_signature_is_explicit_in_scalar_and_contract_identity() -> None:
     mostly_minus = _units()
     mostly_plus = _units(convention=RelativityConvention(metric_signature="mostly_plus"))
     rest = jnp.asarray((2.0, 0.0, 0.0, 0.0))
@@ -160,7 +164,7 @@ def test_metric_signature_is_explicit_in_scalar_and_contract_identity():
     assert mostly_minus.contract_id != mostly_plus.contract_id
 
 
-def test_local_frame_round_trip_and_identity_bind_snapshot_time_and_scale():
+def test_local_frame_round_trip_and_identity_bind_snapshot_time_and_scale() -> None:
     frame = _frame()
     coordinate = jnp.asarray((9.0, 1.0, -2.0, 3.0))
 
@@ -181,7 +185,7 @@ def test_local_frame_round_trip_and_identity_bind_snapshot_time_and_scale():
     assert frame.units.contract_id == _units().contract_id
 
 
-def test_eulerian_frame_from_arbitrary_adm_is_jax_safe_and_invertible():
+def test_eulerian_frame_from_arbitrary_adm_is_jax_safe_and_invertible() -> None:
     units = _units()
     spatial_host = (
         np.asarray(((2.0, 0.1, 0.0), (0.1, 1.5, 0.05), (0.0, 0.05, 0.75))) * 1.0e-12
@@ -227,7 +231,7 @@ def test_eulerian_frame_from_arbitrary_adm_is_jax_safe_and_invertible():
     assert int(frame.frame_token) == 11
 
 
-def test_invalid_unit_and_physical_domain_inputs_are_refused():
+def test_invalid_unit_and_physical_domain_inputs_are_refused() -> None:
     convention = RelativityConvention(metric_signature="mostly_minus")
     with pytest.raises(ValueError, match="explicitly declared c and hbar"):
         RelativisticUnitContract(
@@ -243,22 +247,18 @@ def test_invalid_unit_and_physical_domain_inputs_are_refused():
 
 
 @pytest.mark.parametrize(
-    ("keyword", "invalid", "message"),
+    ("keyword", "invalid"),
     (
-        ("phase_space_normalization", "flat-d3p", "phase-space normalization"),
-        ("s_matrix_normalization", "implicit-delta", "S-matrix normalization"),
-        ("spin_normalization", "implicit-average", "spin normalization"),
-        ("color_normalization", "implicit-average", "color normalization"),
-        ("polarization_normalization", "implicit-gauge", "polarization normalization"),
-        (
-            "identical_particle_normalization",
-            "implicit-symmetry",
-            "identical-particle normalization",
-        ),
+        ("phase_space_normalization", "flat-d3p"),
+        ("s_matrix_normalization", "implicit-delta"),
+        ("spin_normalization", "implicit-average"),
+        ("color_normalization", "implicit-average"),
+        ("polarization_normalization", "implicit-gauge"),
+        ("identical_particle_normalization", "implicit-symmetry"),
     ),
 )
-def test_unknown_scattering_normalization_is_refused(keyword, invalid, message):
-    with pytest.raises(ValueError, match=message):
+def test_unknown_scattering_normalization_is_refused(keyword: Any, invalid: Any) -> None:
+    with pytest.raises(ValueError, match=keyword):
         RelativisticUnitContract(
             _scale(),
             RelativityConvention(metric_signature="mostly_minus"),
@@ -266,7 +266,7 @@ def test_unknown_scattering_normalization_is_refused(keyword, invalid, message):
         )
 
 
-def test_invalid_tetrad_geometry_or_scale_binding_is_refused():
+def test_invalid_tetrad_geometry_or_scale_binding_is_refused() -> None:
     units = _units()
     bad_tetrad = _tetrad(units, vectors=2.0 * jnp.eye(4))
     with pytest.raises(
@@ -307,7 +307,7 @@ def test_invalid_tetrad_geometry_or_scale_binding_is_refused():
         )
 
 
-def test_contract_identity_covers_every_normalization_convention():
+def test_contract_identity_covers_every_normalization_convention() -> None:
     units = _units()
     alternative = RelativisticUnitContract(
         units.scale,

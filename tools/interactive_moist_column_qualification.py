@@ -14,6 +14,7 @@ import json
 import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -26,20 +27,20 @@ from phydrax.metrix import EuclideanStateGeometry
 from phydrax.solver._fixed_step import FixedStepProblem, FixedStepRolloutPlan
 
 
-def _accepted(successful, role):
+def _accepted(successful: Any, role: Any) -> None:
     if not bool(jnp.all(successful)):
         raise RuntimeError(
             f"{role} rejected a physical step; lower dt or inspect inventory/domain limits."
         )
 
 
-def _same(a, b):
+def _same(a: Any, b: Any) -> Any:
     return all(
         np.array_equal(x, y) for x, y in zip(jax.tree.leaves(a), jax.tree.leaves(b))
     )
 
 
-def _roundoff_equivalent(a, b):
+def _roundoff_equivalent(a: Any, b: Any) -> Any:
     maximum = 0.0
     for left, right in zip(jax.tree.leaves(a), jax.tree.leaves(b), strict=True):
         left, right = np.asarray(left), np.asarray(right)
@@ -56,7 +57,7 @@ def _roundoff_equivalent(a, b):
     return True, maximum
 
 
-def precipitation_limits(thermo):
+def precipitation_limits(thermo: Any) -> Any:
     plan = InteractiveMoistColumnPlan(
         thermo,
         mixing_length=0.0,
@@ -106,7 +107,7 @@ def precipitation_limits(thermo):
     }
 
 
-def short_derivative(plan):
+def short_derivative(plan: Any) -> Any:
     plan = eqx.tree_at(lambda p: p.mixing_length, plan, jnp.asarray(0.0))
     initial = plan.initialize(
         jnp.asarray([100.0, 110.0]),
@@ -116,7 +117,7 @@ def short_derivative(plan):
         surface_temperature=295.0,
     )
 
-    def observable(scale):
+    def observable(scale: Any) -> Any:
         varied = eqx.tree_at(
             lambda p: p.radiation.longwave_absorption_scale,
             plan,
@@ -162,7 +163,7 @@ def short_derivative(plan):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--layers", type=int, default=8)
     parser.add_argument("--steps", type=int, default=600)

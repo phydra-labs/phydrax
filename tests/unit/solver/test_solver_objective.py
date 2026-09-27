@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import equinox as eqx
 import jax
@@ -21,7 +21,7 @@ class _Relaxation(phx.AbstractComponentSlot):
     slot_semantic_id: ClassVar[str] = "test.relaxation"
     log_omega: jax.Array = phx.parameter_field()
 
-    def __init__(self, omega):
+    def __init__(self, omega: Any) -> None:
         self.log_omega = jnp.log(jnp.asarray(omega))
 
 
@@ -32,7 +32,7 @@ class _Gain(phx.AbstractComponentSlot):
     slot_semantic_id: ClassVar[str] = "test.gain"
     gain: jax.Array = phx.parameter_field()
 
-    def __init__(self, gain):
+    def __init__(self, gain: Any) -> None:
         self.gain = jnp.asarray(gain)
 
 
@@ -44,19 +44,19 @@ class _Response(phx.AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, gain, *, noisy=False):
+    def __init__(self, gain: Any, *, noisy: Any = False) -> None:
         self.gain = jnp.asarray(gain)
         self.noisy = noisy
         self.in_size = 2
         self.out_size = 2
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         value = self.gain * jnp.tanh(x)
         if self.noisy:
             value = value + 0.05 * jr.normal(key, jnp.shape(x), dtype=x.dtype)
         return value
 
-    def model_execution_contract(self):
+    def model_execution_contract(self) -> Any:
         return phx.ModelExecutionContract(
             derivative=phx.DerivativeContract.smooth(
                 (phx.DerivativeSurface.INPUT, phx.DerivativeSurface.MODEL_PARAMETER)
@@ -73,11 +73,11 @@ class _Richardson(eqx.Module):
     relaxation: _Relaxation | None
 
 
-def _bind_relaxation(solve, relaxation):
+def _bind_relaxation(solve: Any, relaxation: Any) -> Any:
     return _Richardson(solve.matrix, relaxation)
 
 
-def _richardson_work(owner, rhs):
+def _richardson_work(owner: Any, rhs: Any) -> Any:
     omega = jnp.exp(owner.relaxation.log_omega)
     initial = jnp.zeros_like(rhs)
     state = jax.lax.fori_loop(
@@ -91,7 +91,7 @@ def _richardson_work(owner, rhs):
     )
 
 
-def _never_traced(*_):
+def _never_traced(*_: Any) -> None:
     raise AssertionError("a refused objective must not bind or measure")
 
 
@@ -100,16 +100,16 @@ class _Equilibrium(eqx.Module):
 
     response: phx.ComponentBinding
 
-    def __call__(self, state, target):
+    def __call__(self, state: Any, target: Any) -> Any:
         return state + self.response.model(state) - target
 
 
-def _bind_equilibrium(solve, binding):
+def _bind_equilibrium(solve: Any, binding: Any) -> Any:
     del solve
     return _Equilibrium(binding)
 
 
-def _root_misfit(owner, case):
+def _root_misfit(owner: Any, case: Any) -> Any:
     target, observed = case
     root = phx.nonlinear.implicit_root_result(
         phx.nonlinear.NonlinearSystemProblem(owner),
@@ -124,10 +124,14 @@ def _root_misfit(owner, case):
     )
 
 
-def test_accelerator_under_a_solution_map_is_refused_before_tracing():
+def test_accelerator_under_a_solution_map_is_refused_before_tracing() -> None:
     solve = _Richardson(jnp.eye(2), None)
     refused = phx.solver.SolverObjective(
-        solve, _never_traced, _never_traced, objective_id="solution-map"
+        solve,
+        _never_traced,
+        # ty: ignore[invalid-argument-type]
+        _never_traced,
+        objective_id="solution-map",
     )
 
     with pytest.raises(ValueError, match="no admissible training signal.*accelerator"):
@@ -153,13 +157,13 @@ def test_accelerator_under_a_solution_map_is_refused_before_tracing():
     assert float(jnp.abs(gradient.log_omega)) > 0.0
 
 
-def test_stochastic_component_needs_one_frozen_realization():
+def test_stochastic_component_needs_one_frozen_realization() -> None:
     cases = (
         jnp.asarray([[0.4, -0.2], [0.1, 0.3]]),
         jnp.asarray([[0.2, -0.1], [0.0, 0.2]]),
     )
 
-    def objective():
+    def objective() -> Any:
         return phx.solver.SolverObjective(
             None, _bind_equilibrium, _root_misfit, objective_id="balance", cases=cases
         )
@@ -168,7 +172,7 @@ def test_stochastic_component_needs_one_frozen_realization():
     with pytest.raises(ValueError, match="resampled-randomness-not-admitted"):
         objective().evaluate(noisy)
 
-    def frozen(seed):
+    def frozen(seed: Any) -> Any:
         model = phx.FrozenRealization(
             _Response(0.5, noisy=True), jr.key(seed), realization_id=f"draw-{seed}"
         )
@@ -183,7 +187,7 @@ def test_stochastic_component_needs_one_frozen_realization():
     assert not jnp.allclose(redrawn.value, first.value)
 
 
-def test_solution_map_gradient_is_the_implicit_derivative_of_accepted_roots():
+def test_solution_map_gradient_is_the_implicit_derivative_of_accepted_roots() -> None:
     cases = (
         jnp.asarray([[0.4, -0.2], [0.1, 0.3]]),
         jnp.asarray([[0.2, -0.1], [0.0, 0.2]]),
@@ -192,7 +196,7 @@ def test_solution_map_gradient_is_the_implicit_derivative_of_accepted_roots():
         None, _bind_equilibrium, _root_misfit, objective_id="balance", cases=cases
     )
 
-    def value(gain):
+    def value(gain: Any) -> Any:
         tree = phx.bind_component(_Response(gain), phx.ComponentAuthority.MODEL)
         return objective.evaluate(tree).value
 
@@ -214,8 +218,8 @@ def test_solution_map_gradient_is_the_implicit_derivative_of_accepted_roots():
         objective.evaluate(kinked)
 
 
-def _gain_objective(accepted_results):
-    def measure(owner, case):
+def _gain_objective(accepted_results: Any) -> Any:
+    def measure(owner: Any, case: Any) -> Any:
         # A negative input is outside the owner's support: its loss and its
         # derivative are not numbers.
         loss = (owner.gain * jnp.sqrt(case) - 1.0) ** 2
@@ -231,7 +235,7 @@ def _gain_objective(accepted_results):
     )
 
 
-def test_failed_cases_reduce_support_with_exact_zero_derivative():
+def test_failed_cases_reduce_support_with_exact_zero_derivative() -> None:
     reduced = _gain_objective("reduce-support")
     evaluation = reduced.evaluate(_Gain(0.5))
     assert evaluation.support == 2.0
@@ -257,13 +261,13 @@ class _OffsetGain(phx.AbstractComponentSlot):
     gain: jax.Array = phx.parameter_field()
     offset: jax.Array = phx.fixed_field()
 
-    def __init__(self, gain, offset):
+    def __init__(self, gain: Any, offset: Any) -> None:
         self.gain = jnp.asarray(gain)
         self.offset = jnp.asarray(offset)
 
 
-def test_evaluate_differentiates_only_the_parameter_lane():
-    def measure(owner, case):
+def test_evaluate_differentiates_only_the_parameter_lane() -> None:
+    def measure(owner: Any, case: Any) -> Any:
         x, target = case
         return phx.solver.SolverCaseResult(
             value=(owner.gain * x + owner.offset - target) ** 2,
@@ -288,8 +292,8 @@ def test_evaluate_differentiates_only_the_parameter_lane():
     assert float(gradient.gain) == pytest.approx(float(expected), rel=1e-12)
 
 
-def test_algorithmic_work_loss_is_finite_at_exact_convergence_and_saturates():
-    def loss(final, dtype):
+def test_algorithmic_work_loss_is_finite_at_exact_convergence_and_saturates() -> None:
+    def loss(final: Any, dtype: Any) -> Any:
         return phx.solver.algorithmic_work_loss(
             phx.solver.AlgorithmicWorkResult(
                 initial_residual=jnp.asarray([3.0, 4.0], dtype),
@@ -309,8 +313,8 @@ def test_algorithmic_work_loss_is_finite_at_exact_convergence_and_saturates():
     assert float(halved) == pytest.approx(jnp.log(0.5), rel=1e-12)
 
 
-def test_fixed_work_objective_fails_cases_that_exit_early():
-    def early_exit(owner, rhs):
+def test_fixed_work_objective_fails_cases_that_exit_early() -> None:
+    def early_exit(owner: Any, rhs: Any) -> Any:
         result = _richardson_work(owner, rhs)
         return phx.solver.AlgorithmicWorkResult(
             initial_residual=result.initial_residual,
@@ -328,12 +332,13 @@ def test_fixed_work_objective_fails_cases_that_exit_early():
         cases=jnp.asarray([[1.0, 2.0]]),
     )
     evaluation = objective.evaluate(_Relaxation(0.5))
+    # ty: ignore[unresolved-attribute]
     assert evaluation.work.tolist() == [3]
     assert not bool(evaluation.accepted[0])
     assert jnp.isnan(evaluation.value)
 
 
-def test_mixed_component_trains_its_admitted_group_and_stops_the_rest():
+def test_mixed_component_trains_its_admitted_group_and_stops_the_rest() -> None:
     tree = (
         phx.bind_component(_Response(0.5), phx.ComponentAuthority.MODEL),
         _Relaxation(0.5),

@@ -12,7 +12,8 @@ from typing import TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
@@ -57,7 +58,7 @@ class DeclaredPopulationMomentMap(StrictModule, NonTrainableState):
         *,
         moment_names: Sequence[str],
         name: str,
-    ):
+    ) -> None:
         if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
             raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         values = np.asarray(coefficients)
@@ -145,8 +146,8 @@ class PeriodicUniformGridDepartureTransfer(StrictModule, NonTrainableState):
         /,
         *,
         periodic_axes: Sequence[bool] = (True, True),
-        dtype: object = jnp.float64,
-    ):
+        dtype: DTypeLike = jnp.float64,
+    ) -> None:
         shape = tuple(spatial_shape)
         spacing = tuple(float(value) for value in cell_spacing)
         offset = tuple(float(value) for value in offset_in_cells)
@@ -165,10 +166,8 @@ class PeriodicUniformGridDepartureTransfer(StrictModule, NonTrainableState):
             raise ValueError(
                 "Periodic multilinear departure transfer requires periodic 2-D geometry."
             )
-        integer = tuple(floor(value) for value in offset)
-        fractional = tuple(
-            value - base for value, base in zip(offset, integer, strict=True)
-        )
+        integer = (floor(offset[0]), floor(offset[1]))
+        fractional = (offset[0] - integer[0], offset[1] - integer[1])
         volume = prod(spacing)
         pairing = DiagonalPairing(
             jnp.full(shape, volume, dtype=dtype),
@@ -299,7 +298,13 @@ class PeriodicUniformGridDepartureTransfer(StrictModule, NonTrainableState):
 
     @property
     def primal_operator(self) -> FunctionLinearOperator:
-        return self.field_transfer.primal_operator
+        operator = self.field_transfer.primal_operator
+        # Construction always wraps the departure pull in a FunctionLinearOperator.
+        if not (isinstance(operator, FunctionLinearOperator)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(operator, FunctionLinearOperator)."
+            )
+        return operator
 
     @property
     def properties(self) -> TransferProperties:
@@ -328,7 +333,7 @@ class SemiLagrangianTransferRequirements(StrictModule, NonTrainableState):
         positivity_preserving: bool = True,
         differentiable_geometry: bool = False,
         exact_on: Sequence[str] = (),
-    ):
+    ) -> None:
         exact = tuple(str(value) for value in exact_on)
         if any(not value for value in exact) or len(set(exact)) != len(exact):
             raise ValueError("exact_on requirements must be unique non-empty strings.")
@@ -436,7 +441,7 @@ class PreparedOffLatticeSemiLagrangianDVM(StrictModule, NonTrainableState):
         *,
         requirements: SemiLagrangianTransferRequirements | None = None,
         declared_moments: DeclaredPopulationMomentMap | None = None,
-    ):
+    ) -> None:
         if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
             raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         if quadrature.transport_kind != "off_lattice":
@@ -651,7 +656,7 @@ class PreparedCoupledD2V37OffLatticeTransport(StrictModule, NonTrainableState):
         /,
         *,
         conservation_tolerance: float = 1.0e-11,
-    ):
+    ) -> None:
         from ._smooth_compressible import SmoothCompressibleD2VKineticMethod
 
         if not isinstance(method, SmoothCompressibleD2VKineticMethod):

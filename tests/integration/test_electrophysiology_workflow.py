@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -13,12 +15,12 @@ from phydrax.applications import electrophysiology as ep
 
 
 @pytest.fixture(autouse=True)
-def _double_precision():
+def _double_precision() -> Any:
     with jax.enable_x64(True):
         yield
 
 
-def test_branched_multicell_ion_channel_plasticity_workflow_is_jittable():
+def test_branched_multicell_ion_channel_plasticity_workflow_is_jittable() -> None:
     swc = ep.parse_swc_text(
         """
         1 1 0 0 0 6 -1
@@ -102,7 +104,7 @@ def test_branched_multicell_ion_channel_plasticity_workflow_is_jittable():
         jax.random.key(2026),
     )
 
-    def one_step(carry, index):
+    def one_step(carry: Any, index: Any) -> Any:
         cells, ions, relations, plasticity, channels = carry
         spikes = (
             jnp.zeros((8,)).at[(index % 2) * 4].set((index % 7 == 0).astype(jnp.float64))
@@ -180,7 +182,7 @@ def test_branched_multicell_ion_channel_plasticity_workflow_is_jittable():
         ), evidence
 
     @jax.jit
-    def run(initial):
+    def run(initial: Any) -> Any:
         return jax.lax.scan(one_step, initial, jnp.arange(24))
 
     final, evidence = run(

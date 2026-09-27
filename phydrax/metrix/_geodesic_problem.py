@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
@@ -35,7 +36,7 @@ class MetricGeodesicResult(StrictModule):
         steps: int,
         duration: float,
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
-    ):
+    ) -> None:
         endpoint_ = jnp.asarray(endpoint)
         evidence = (
             GeometryPrecisionPolicy().evidence_for(endpoint_)
@@ -65,12 +66,12 @@ class _RK4GeodesicStep(StrictModule):
         step_size: float,
         precision: GeometryPrecisionPolicy,
         /,
-    ):
+    ) -> None:
         self.metric = metric
         self.step_size = float(step_size)
         self.precision = precision
 
-    def __call__(self, _, state: Array) -> Array:
+    def __call__(self, _: Array, state: Array) -> Array:
         self.precision.validate_coordinates(state)
         staged = self.precision.compute(state)
         step = self.precision.compute(jnp.asarray(self.step_size, dtype=state.dtype))

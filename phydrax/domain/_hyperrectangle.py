@@ -3,26 +3,38 @@
 #
 
 from collections.abc import Callable, Sequence
+from typing import Literal
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Bool, Float, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._doc import DOC_KEY0
 from .._sampling import (
+    DesignLike,
     HammersleyDesign,
     host_design_factory,
     resolve_design,
     seed_from_key,
 )
 from ..discretization._axis import broadcasted_grid
-from ._base import AbstractGeometry, EnforcementGateMethod, GeometryTransitionKind
+from ..typing import AnyShape, Bool, Float, PRNGKey, Scalar
+from ._base import (
+    _PointDim,
+    _SpatialDim,
+    AbstractGeometry,
+    EnforcementGateMethod,
+    GeometryTransitionKind,
+)
 from ._structure import _validate_label
 
 
-def _validate_rejection_design(where: Callable | None, sampler, /) -> None:
+def _validate_rejection_design(
+    where: Callable[..., object] | None, sampler: DesignLike, /
+) -> None:
     if where is not None and isinstance(resolve_design(sampler), HammersleyDesign):
         raise ValueError(
             "Hammersley is count-dependent and cannot be used with a rejection "
@@ -53,7 +65,7 @@ class HyperRectangle(AbstractGeometry):
         upper: ArrayLike,
         *,
         label: str = "x",
-    ):
+    ) -> None:
         lower_arr = jnp.asarray(lower, dtype=jnp.float64)
         upper_arr = jnp.asarray(upper, dtype=jnp.float64)
         if lower_arr.ndim != 1 or upper_arr.ndim != 1:
@@ -115,7 +127,7 @@ class HyperRectangle(AbstractGeometry):
         return "box_reflection"
 
     @property
-    def bounds(self) -> Float[Array, "2 spatial_dim"]:
+    def bounds(self) -> Float[Literal[2], _SpatialDim]:
         return jnp.stack((self.lower, self.upper), axis=0)
 
     @property
@@ -169,7 +181,7 @@ class HyperRectangle(AbstractGeometry):
         *,
         where: Callable | None = None,
         sampler: str = "latin_hypercube",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         _validate_rejection_design(where, sampler)
         lower = np.asarray(self.lower, dtype=np.float64)
@@ -177,7 +189,12 @@ class HyperRectangle(AbstractGeometry):
         dim = int(self.spatial_dim)
         where_fn = where or (lambda _: True)
 
-        def _sample_interior_host(num_points, sampler, where_fn, key):
+        def _sample_interior_host(
+            num_points: int,
+            sampler: str,
+            where_fn: Callable[..., object],
+            key: ArrayLike,
+        ) -> np.ndarray:
             rng = np.random.default_rng(seed_from_key(key))
             sampler_fn = host_design_factory(sampler, dimension=dim, seed=rng)
             sampled = np.empty((0, dim), dtype=np.float64)
@@ -213,7 +230,7 @@ class HyperRectangle(AbstractGeometry):
         *,
         where: Callable | None = None,
         sampler: str = "latin_hypercube",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         _validate_rejection_design(where, sampler)
         lower = np.asarray(self.lower, dtype=np.float64)
@@ -229,7 +246,12 @@ class HyperRectangle(AbstractGeometry):
             face_probs = np.repeat(face_measures, 2)
             face_probs = face_probs / np.sum(face_probs)
 
-        def _sample_boundary_host(num_points, sampler, where_fn, key):
+        def _sample_boundary_host(
+            num_points: int,
+            sampler: str,
+            where_fn: Callable[..., object],
+            key: ArrayLike,
+        ) -> np.ndarray:
             rng = np.random.default_rng(seed_from_key(key))
             sampler_dim = max(dim - 1, 1)
             sampler_fn = host_design_factory(sampler, dimension=sampler_dim, seed=rng)
@@ -284,8 +306,8 @@ class HyperRectangle(AbstractGeometry):
         *,
         sampler: str = "latin_hypercube",
         where: Callable | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
-    ) -> tuple[tuple[Array, ...], Bool[Array, "..."]]:
+        key: PRNGKey = DOC_KEY0,
+    ) -> tuple[tuple[Array, ...], Bool[AnyShape]]:
         dim = int(self.spatial_dim)
         if isinstance(num_points, int):
             counts = (int(num_points),) * dim
@@ -299,7 +321,9 @@ class HyperRectangle(AbstractGeometry):
         lower = np.asarray(self.lower, dtype=np.float64)
         upper = np.asarray(self.upper, dtype=np.float64)
 
-        def _sample_axes_host(counts, sampler, key):
+        def _sample_axes_host(
+            counts: tuple[int, ...], sampler: str, key: ArrayLike
+        ) -> tuple[np.ndarray, ...]:
             rng = np.random.default_rng(seed_from_key(key))
             axes = []
             for i, n in enumerate(counts):
@@ -330,18 +354,18 @@ class HyperRectangle(AbstractGeometry):
 
         return coords, mask
 
-    def _contains(self, points: Array) -> Bool[Array, " num_points"]:
+    def _contains(self, points: Array) -> Bool[_PointDim]:
         pts, _ = self._points_2d(points)
         return jnp.all((pts >= self.lower) & (pts <= self.upper), axis=-1)
 
-    def _on_boundary(self, points: Array) -> Bool[Array, " num_points"]:
+    def _on_boundary(self, points: Array) -> Bool[_PointDim]:
         pts, _ = self._points_2d(points)
         inside = self._contains(pts)
         lower_face = jnp.isclose(pts, self.lower)
         upper_face = jnp.isclose(pts, self.upper)
         return inside & jnp.any(lower_face | upper_face, axis=-1)
 
-    def _boundary_normals(self, points: Array) -> Float[Array, "num_points spatial_dim"]:
+    def _boundary_normals(self, points: Array) -> Float[_PointDim, _SpatialDim]:
         pts, _ = self._points_2d(points)
         lower_face = jnp.isclose(pts, self.lower)
         upper_face = jnp.isclose(pts, self.upper)
@@ -376,10 +400,10 @@ class HyperRectangle(AbstractGeometry):
 
     def estimate_boundary_subset_measure(
         self,
-        where: Callable[[Array], Bool[Array, ""]],
+        where: Callable[[Array], Bool[Scalar]],
         *,
         num_samples: int = 4096,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         pts = self.sample_boundary(int(num_samples), key=key)
         mask = jax.vmap(where)(pts)

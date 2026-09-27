@@ -9,7 +9,8 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -22,6 +23,7 @@ from ...linalg import (
     solve_local_blocks_detailed,
     verify_dense_properties,
 )
+from ...typing import parse
 
 
 FiniteElementHPCellKind = Literal["quadrilateral", "hexahedron"]
@@ -67,7 +69,7 @@ class FiniteElementHPTopology(StrictModule, NonTrainableState):
         parent_slots: ArrayLike | None = None,
         child_slots: ArrayLike | None = None,
         child_valid: ArrayLike | None = None,
-    ):
+    ) -> None:
         kind = cell_kind
         identifier = str(topology_id)
         identifiers = np.asarray(cell_global_ids, dtype=np.int64)
@@ -245,7 +247,7 @@ class FiniteElementHPLineage(StrictModule, NonTrainableState):
         /,
         *,
         valid: ArrayLike | None = None,
-    ):
+    ) -> None:
         source_id = str(source_topology_id)
         target_id = str(target_topology_id)
         source_count = int(source_capacity)
@@ -348,7 +350,7 @@ class FiniteElementHPWorksetPlan(StrictModule, NonTrainableState):
         cell_valid: ArrayLike,
         cell_bucket: ArrayLike,
         /,
-    ):
+    ) -> None:
         identifier = str(topology_id)
         topology_plan = str(topology_plan_id)
         degrees = np.asarray(bucket_degrees, dtype=np.int32)
@@ -475,7 +477,7 @@ class FiniteElementHPProjectionEvidence(StrictModule, NonTrainableState):
         positive_definite: ArrayLike,
         failed: ArrayLike,
         /,
-    ):
+    ) -> None:
         slots = np.asarray(target_slots, dtype=np.int32)
         counts = np.asarray(dof_counts, dtype=np.int32)
         rank = np.asarray(numerical_rank, dtype=np.int32)
@@ -641,12 +643,12 @@ class FiniteElementHPTransferPlan(StrictModule, NonTrainableState):
         pairing_adjoint: ArrayLike | None = None,
         l2_mass: ArrayLike | None = None,
         l2_coupling: ArrayLike | None = None,
-    ):
+    ) -> None:
         source_id = str(source_topology_id)
         target_id = str(target_topology_id)
         source_plan = str(source_plan_id)
         target_plan = str(target_plan_id)
-        kind = str(transfer_kind)
+        kind = parse(str(transfer_kind), FiniteElementHPTransferKind, "transfer_kind")
         source_capacity_ = int(source_capacity)
         target_capacity_ = int(target_capacity)
         source = np.asarray(source_slots, dtype=np.int32)
@@ -665,7 +667,6 @@ class FiniteElementHPTransferPlan(StrictModule, NonTrainableState):
             or (source_id == target_id and kind != "p")
             or not source_plan
             or not target_plan
-            or kind not in ("p", "h-refinement", "h-coarsening")
             or source_capacity_ <= 0
             or target_capacity_ <= 0
             or source.ndim != 1

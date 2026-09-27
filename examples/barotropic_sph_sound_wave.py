@@ -17,6 +17,7 @@ particles = phx.discretization.ParticleSetPlan(
     ambient_dimension=1,
     name="sound-wave-particles",
 ).prepare()
+# ty: ignore[invalid-argument-type]
 box = phx.discretization.ParticleBox([0.0], [1.0])
 neighborhood = phx.discretization.CellListParticleNeighborhoodPlan(
     search_radius=2.5 * spacing,
@@ -80,6 +81,7 @@ if not bool(final_neighborhood.successful):
 
 print("solver", solution.resolved_method)
 print("particle count", particle_count)
+# ty: ignore[unresolved-attribute]
 print("cell shape", compiled.dynamics.neighborhood.cell_shape)
 print("pair capacity", compiled.dynamics.neighborhood.pair_capacity)
 print("initial candidate pairs", int(initial_neighborhood.pair_count))

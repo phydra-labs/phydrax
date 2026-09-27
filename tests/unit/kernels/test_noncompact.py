@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _hyperbolic_points():
+def _hyperbolic_points() -> Any:
     radii = jnp.asarray([0.0, 0.35, 0.7])
     return jnp.stack(
         (
@@ -22,7 +25,7 @@ def _hyperbolic_points():
     )
 
 
-def _spd_points():
+def _spd_points() -> Any:
     return jnp.asarray(
         [
             [[1.0, 0.0], [0.0, 1.0]],
@@ -32,17 +35,17 @@ def _spd_points():
     )
 
 
-def _assert_psd(matrix, tolerance=1e-9):
+def _assert_psd(matrix: Any, tolerance: Any = 1e-9) -> None:
     assert np.min(np.linalg.eigvalsh(np.asarray(matrix))) >= -tolerance
 
 
-def test_hyperbolic_random_features_are_fixed_psd_and_differentiable():
+def test_hyperbolic_random_features_are_fixed_psd_and_differentiable() -> None:
     proposal = phx.kernels.hyperbolic_feature_proposal(
         jax.random.key(3), 2, 128, proposal_scale=1.0
     )
     points = _hyperbolic_points()
 
-    def objective(length_scale, smoothness):
+    def objective(length_scale: Any, smoothness: Any) -> Any:
         kernel = phx.kernels.HyperbolicRandomFeatureKernel(
             proposal, length_scale, smoothness
         )
@@ -65,13 +68,13 @@ def test_hyperbolic_random_features_are_fixed_psd_and_differentiable():
         kernel.pairwise(points[:2], points[0])
 
 
-def test_spd_random_features_are_fixed_psd_and_differentiable():
+def test_spd_random_features_are_fixed_psd_and_differentiable() -> None:
     proposal = phx.kernels.spd_feature_proposal(
         jax.random.key(5), 2, 128, proposal_scale=1.0
     )
     points = _spd_points()
 
-    def objective(length_scale, smoothness):
+    def objective(length_scale: Any, smoothness: Any) -> Any:
         kernel = phx.kernels.SPDRandomFeatureKernel(proposal, length_scale, smoothness)
         return jnp.sum(kernel.matrix(points, points))
 
@@ -91,7 +94,7 @@ def test_spd_random_features_are_fixed_psd_and_differentiable():
         kernel.pairwise(points[:2], points[0])
 
 
-def test_spd_plane_wave_uses_affine_metric_log_eigenvalue_coordinates():
+def test_spd_plane_wave_uses_affine_metric_log_eigenvalue_coordinates() -> None:
     frequency = jnp.asarray([[0.3, -0.1]])
     proposal = phx.kernels.NoncompactFeatureProposal(
         frequency,
@@ -114,7 +117,7 @@ def test_spd_plane_wave_uses_affine_metric_log_eigenvalue_coordinates():
     assert jnp.allclose(features[1, 0] / features[0, 0], expected_ratio)
 
 
-def test_importance_diagnostics_report_weight_degeneracy_and_uncertainty():
+def test_importance_diagnostics_report_weight_degeneracy_and_uncertainty() -> None:
     hyperbolic = phx.kernels.HyperbolicRandomFeatureKernel(
         phx.kernels.hyperbolic_feature_proposal(jax.random.key(7), 2, 256),
         0.8,
@@ -137,7 +140,7 @@ def test_importance_diagnostics_report_weight_degeneracy_and_uncertainty():
         assert report.finite_importance_variance
 
 
-def test_importance_diagnostics_are_stable_and_use_unbiased_standard_error():
+def test_importance_diagnostics_are_stable_and_use_unbiased_standard_error() -> None:
     report = phx.kernels.ImportanceFeatureDiagnostics(
         jnp.log(jnp.asarray([1.0, 3.0])),
         "two-weights",
@@ -157,7 +160,7 @@ def test_importance_diagnostics_are_stable_and_use_unbiased_standard_error():
     assert jnp.allclose(extreme.monte_carlo_standard_error, expected)
 
 
-def test_importance_diagnostics_expose_unavailable_or_infinite_variance():
+def test_importance_diagnostics_expose_unavailable_or_infinite_variance() -> None:
     singleton = phx.kernels.ImportanceFeatureDiagnostics(jnp.asarray([0.0]), "one")
     infinite_variance = phx.kernels.ImportanceFeatureDiagnostics(
         jnp.log(jnp.asarray([1.0, 3.0])),
@@ -175,7 +178,7 @@ def test_importance_diagnostics_expose_unavailable_or_infinite_variance():
         )
 
 
-def test_noncompact_matern_diagnostics_flag_infinite_cauchy_variance():
+def test_noncompact_matern_diagnostics_flag_infinite_cauchy_variance() -> None:
     proposal = phx.kernels.hyperbolic_feature_proposal(jax.random.key(10), 2, 32)
     report = phx.kernels.HyperbolicRandomFeatureKernel(
         proposal,
@@ -187,7 +190,7 @@ def test_noncompact_matern_diagnostics_flag_infinite_cauchy_variance():
     assert jnp.isinf(report.monte_carlo_standard_error)
 
 
-def test_resampling_is_explicit_and_fixed_proposal_prefixes_are_nested():
+def test_resampling_is_explicit_and_fixed_proposal_prefixes_are_nested() -> None:
     key = jax.random.key(11)
     proposal = phx.kernels.hyperbolic_feature_proposal(key, 2, 128)
     repeated = phx.kernels.hyperbolic_feature_proposal(key, 2, 128)
@@ -206,13 +209,13 @@ def test_resampling_is_explicit_and_fixed_proposal_prefixes_are_nested():
     assert resampled.proposal.proposal_id != proposal.proposal_id
 
 
-def test_fixed_noise_hyperbolic_features_converge_under_nested_rank_growth():
+def test_fixed_noise_hyperbolic_features_converge_under_nested_rank_growth() -> None:
     proposal = phx.kernels.hyperbolic_feature_proposal(
         jax.random.key(21), 2, 2048, proposal_scale=1.0
     )
     points = _hyperbolic_points()
 
-    def covariance(count):
+    def covariance(count: Any) -> Any:
         kernel = phx.kernels.HyperbolicRandomFeatureKernel(
             proposal.prefix(count), 0.8, 1.5
         )
@@ -227,7 +230,7 @@ def test_fixed_noise_hyperbolic_features_converge_under_nested_rank_growth():
     assert large_error < small_error
 
 
-def test_noncompact_finite_features_reuse_weight_space_gp():
+def test_noncompact_finite_features_reuse_weight_space_gp() -> None:
     proposal = phx.kernels.hyperbolic_feature_proposal(jax.random.key(31), 2, 16)
     kernel = phx.kernels.HyperbolicRandomFeatureKernel(proposal, 0.8, 1.5)
     points = jnp.tile(_hyperbolic_points(), (8, 1))
@@ -242,7 +245,7 @@ def test_noncompact_finite_features_reuse_weight_space_gp():
     )
 
 
-def test_real_noncompact_kernel_families_reject_complex_coordinates():
+def test_real_noncompact_kernel_families_reject_complex_coordinates() -> None:
     hyperbolic = phx.kernels.HyperbolicRandomFeatureKernel(
         phx.kernels.hyperbolic_feature_proposal(jax.random.key(20), 2, 8),
         0.8,

@@ -1,4 +1,5 @@
 import itertools
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -8,7 +9,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _target(weights, provenance):
+def _target(weights: Any, provenance: Any) -> Any:
     return phx.integration.discrete(
         jnp.asarray([0.0, 1.0]),
         cx.AxisArray(jnp.asarray(weights), dims=("state",)),
@@ -18,14 +19,14 @@ def _target(weights, provenance):
     )
 
 
-def _kernel(matrix):
+def _kernel(matrix: Any) -> Any:
     matrix = jnp.asarray(matrix)
 
-    def sample(key, state, _t0, _t1, _context):
+    def sample(key: Any, state: Any, _t0: Any, _t1: Any, _context: Any) -> Any:
         probabilities = matrix[jnp.asarray(state, dtype=jnp.int32)]
         return jax.random.categorical(key, jnp.log(probabilities)).astype("float64")
 
-    def log_prob(next_state, state, _t0, _t1, _context):
+    def log_prob(next_state: Any, state: Any, _t0: Any, _t1: Any, _context: Any) -> Any:
         probability = matrix[
             jnp.asarray(state, dtype=jnp.int32),
             jnp.asarray(next_state, dtype=jnp.int32),
@@ -41,7 +42,7 @@ def _kernel(matrix):
     )
 
 
-def _result():
+def _result() -> Any:
     problem = phx.transport.dynamic.SchrodingerBridgeProblem(
         _target([0.65, 0.35], "inference-prior"),
         _target([0.2, 0.8], "terminal-control-target"),
@@ -54,7 +55,7 @@ def _result():
     ).solve(problem)
 
 
-def test_exact_path_enumeration_recovers_normalization_endpoints_and_kl():
+def test_exact_path_enumeration_recovers_normalization_endpoints_and_kl() -> None:
     result = _result()
     paths = jnp.asarray(list(itertools.product((0.0, 1.0), repeat=3)))
     controlled = jnp.exp(result.path_log_prob(paths))
@@ -79,7 +80,7 @@ def test_exact_path_enumeration_recovers_normalization_endpoints_and_kl():
     assert jnp.allclose(enumerated_kl, result.diagnostics.path_kl, atol=1e-11)
 
 
-def test_inference_control_and_path_law_adapters_compose_native_contracts():
+def test_inference_control_and_path_law_adapters_compose_native_contracts() -> None:
     result = _result()
     inference = phx.transport.dynamic.BridgeInferenceAdapter(result)
     control = phx.transport.dynamic.TerminalDistributionControlAdapter(result)

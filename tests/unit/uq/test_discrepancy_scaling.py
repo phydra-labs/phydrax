@@ -12,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def test_multi_output_gp_uses_declared_cross_output_covariance():
+def test_multi_output_gp_uses_declared_cross_output_covariance() -> None:
     observation_x = jnp.linspace(0.0, 1.0, 18)
     base = jnp.stack([observation_x, 2.0 * observation_x], axis=1)
     latent = 0.15 * jnp.sin(2.0 * jnp.pi * observation_x)
@@ -81,7 +81,7 @@ def test_multi_output_gp_uses_declared_cross_output_covariance():
     assert jnp.linalg.eigvalsh(coregionalization.covariance).min() >= 0.0
 
 
-def test_sparse_fitc_matches_exact_gp_without_quadratic_training_storage():
+def test_sparse_fitc_matches_exact_gp_without_quadratic_training_storage() -> None:
     observation_x = jnp.linspace(0.0, 1.0, 120)
     physical_mean = 1.2 * observation_x
     discrepancy = 0.2 * jnp.sin(2.0 * jnp.pi * observation_x)
@@ -97,7 +97,7 @@ def test_sparse_fitc_matches_exact_gp_without_quadratic_training_storage():
     )
     query = jnp.linspace(0.0, 1.0, 75)
 
-    def state(length_scale):
+    def state(length_scale: Any) -> Any:
         return phx.uq.GaussianProcessLikelihoodState(
             kernel=phx.kernels.AmplitudeKernel(
                 phx.kernels.SquaredExponentialKernel(length_scale=length_scale),
@@ -142,7 +142,7 @@ def test_sparse_fitc_matches_exact_gp_without_quadratic_training_storage():
     )
 
 
-def test_fixed_gp_factors_reuse_likelihood_gradients_and_conditioning_geometry():
+def test_fixed_gp_factors_reuse_likelihood_gradients_and_conditioning_geometry() -> None:
     coordinate = jnp.linspace(0.0, 1.0, 32)
     observation_points = jnp.stack([coordinate, coordinate**2], axis=1)
     physical = lambda parameter: parameter * coordinate
@@ -159,7 +159,7 @@ def test_fixed_gp_factors_reuse_likelihood_gradients_and_conditioning_geometry()
         num_inducing=12,
     )
 
-    def state(length_scale):
+    def state(length_scale: Any) -> Any:
         return phx.uq.GaussianProcessLikelihoodState(
             kernel=phx.kernels.AmplitudeKernel(
                 phx.kernels.Matern52Kernel(length_scale=length_scale),
@@ -174,16 +174,16 @@ def test_fixed_gp_factors_reuse_likelihood_gradients_and_conditioning_geometry()
     exact_conditioner = exact_factor.conditioner(query_points, output_dim="query")
     sparse_conditioner = sparse_factor.conditioner(query_points, output_dim="query")
 
-    def dynamic_exact(parameter):
+    def dynamic_exact(parameter: Any) -> Any:
         return exact.log_marginal_likelihood(physical(parameter), state=fixed_state)
 
-    def factored_exact(parameter):
+    def factored_exact(parameter: Any) -> Any:
         return exact_factor.log_probability(exact.residual(physical(parameter)))
 
-    def dynamic_sparse(parameter):
+    def dynamic_sparse(parameter: Any) -> Any:
         return sparse.log_marginal_likelihood(physical(parameter), state=fixed_state)
 
-    def factored_sparse(parameter):
+    def factored_sparse(parameter: Any) -> Any:
         return sparse_factor.log_probability(sparse.residual(physical(parameter)))
 
     parameter = jnp.asarray(0.75)
@@ -258,7 +258,9 @@ def test_fixed_gp_factors_reuse_likelihood_gradients_and_conditioning_geometry()
     assert sparse_factored_condition.output_dims == ("query",)
 
 
-def test_repeated_identifiability_report_gates_bias_scores_coverage_and_confounding():
+def test_repeated_identifiability_report_gates_bias_scores_coverage_and_confounding() -> (
+    None
+):
     baseline = jnp.array([1.48, 1.52, 1.47, 1.51, 1.50, 1.49])
     fixed = jnp.array([1.19, 1.23, 1.18, 1.22, 1.21, 1.20])
     joint = jnp.array([1.18, 1.24, 1.19, 1.21, 1.22, 1.20])

@@ -4,16 +4,17 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, Key, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._doc import DOC_KEY0
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
-from ..linalg import ArraySpace, LinearizationPolicy
+from ..linalg import ArraySpace, FunctionLinearOperator, LinearizationPolicy
 from ..nn.neural_tangent import (
     analyze_ntk,
     NTKDiagnostics,
@@ -23,7 +24,12 @@ from ..nn.neural_tangent import (
 )
 from ..nn.parameters import ParameterSubspace
 from ..terms import ResidualBlockRef
-from ._functional_residual import prepare_functional_residual, PreparedFunctionalResidual
+from ..typing import parse, PRNGKey
+from ._functional_residual import (
+    FunctionalResidualLayout,
+    prepare_functional_residual,
+    PreparedFunctionalResidual,
+)
 from ._functional_run import partition_functional_parameters
 from ._functional_surrogate import PreparedFunctionalUpdate
 
@@ -32,7 +38,7 @@ if TYPE_CHECKING:
     from ._functional_solver import FunctionalSolver
 
 
-FunctionalNTKView = Literal["physical", "surrogate"]
+FunctionalNTKView: TypeAlias = Literal["physical", "surrogate"]
 
 _NTK_EVALUATION_ADDRESS = SampleAddress(
     "functional", "ntk-residual", target="objective", role="evaluation"
@@ -62,13 +68,12 @@ class PreparedFunctionalNTK(StrictModule):
         view: FunctionalNTKView,
         discretization_bundle_id: str,
         parameter_paths: tuple[str, ...],
-    ):
+    ) -> None:
         if not isinstance(ntk, PreparedEmpiricalNTK):
             raise TypeError("ntk must be a PreparedEmpiricalNTK.")
         if not isinstance(residual, PreparedFunctionalResidual):
             raise TypeError("residual must be a PreparedFunctionalResidual.")
-        if view not in ("physical", "surrogate"):
-            raise ValueError("Unknown functional NTK view.")
+        view = parse(view, FunctionalNTKView, "view")
         self.ntk = ntk
         self.residual = residual
         self.parameters = parameters
@@ -77,11 +82,11 @@ class PreparedFunctionalNTK(StrictModule):
         self.parameter_paths = tuple(parameter_paths)
 
     @property
-    def kernel(self):
+    def kernel(self) -> FunctionLinearOperator:
         return self.ntk.kernel
 
     @property
-    def layout(self):
+    def layout(self) -> FunctionalResidualLayout:
         return self.residual.layout
 
     def diagnostics(
@@ -89,7 +94,7 @@ class PreparedFunctionalNTK(StrictModule):
         /,
         *,
         policy: NTKDiagnosticsPolicy | None = None,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
     ) -> NTKDiagnostics:
         return analyze_ntk(self.ntk, policy=policy, key=key)
 
@@ -111,7 +116,7 @@ class PreparedFunctionalNTK(StrictModule):
                 reference.term_index, reference.block_name
             )
 
-        def block_roots(parameters):
+        def block_roots(parameters: PyTree[Any]) -> Array:
             return self.residual.roots(parameters)[indices]
 
         output = block_roots(self.parameters)
@@ -131,7 +136,7 @@ def prepare_functional_ntk(
     solver: FunctionalSolver,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     step: int | Array | None = None,
     term_indices: tuple[int, ...] | None = None,
     parameter_subspace: ParameterSubspace | None = None,
@@ -140,8 +145,7 @@ def prepare_functional_ntk(
     linearization: LinearizationPolicy | None = None,
 ) -> PreparedFunctionalNTK:
     """Prepare the finite-width NTK of measure-weighted functional residuals."""
-    if view not in ("physical", "surrogate"):
-        raise ValueError("view must be 'physical' or 'surrogate'.")
+    view = parse(view, FunctionalNTKView, "view")
     if prepared_update is not None and not isinstance(
         prepared_update, PreparedFunctionalUpdate
     ):

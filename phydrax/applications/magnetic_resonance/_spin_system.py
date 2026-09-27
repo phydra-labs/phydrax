@@ -13,7 +13,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...linalg import MaterializationPolicy
@@ -23,6 +24,7 @@ from ...solver._local_hamiltonian import (
     LocalHamiltonianTerm,
     materialize_local_hamiltonian,
 )
+from ...typing import parse
 from ._conventions import (
     HBAR_J_S,
     MagneticResonanceConvention,
@@ -34,6 +36,8 @@ from ._orientation import SingleCrystalOrientation
 
 
 ParticleKind: TypeAlias = Literal["nucleus", "electron", "positive-muon"]
+_Vector3: TypeAlias = tuple[float, float, float]
+_Tensor3: TypeAlias = tuple[_Vector3, _Vector3, _Vector3]
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -43,14 +47,14 @@ def _identifier(value: str, name: str, /) -> str:
     return result
 
 
-def _finite_vector(value: ArrayLike, name: str, /) -> Array:
+def _finite_vector(value: ArrayLike | _Vector3, name: str, /) -> Array:
     host = np.asarray(value, dtype=np.float64)
     if host.shape != (3,) or np.any(~np.isfinite(host)):
         raise ValueError(f"{name} must be finite with shape (3,).")
     return jnp.asarray(host)
 
 
-def _finite_tensor(value: ArrayLike, name: str, /) -> Array:
+def _finite_tensor(value: ArrayLike | _Tensor3, name: str, /) -> Array:
     host = np.asarray(value, dtype=np.float64)
     if host.shape != (3, 3) or np.any(~np.isfinite(host)):
         raise ValueError(f"{name} must be finite with shape (3, 3).")
@@ -83,10 +87,9 @@ class ResonanceIsotope(StrictModule):
         spin: float,
         gyromagnetic_ratio_rad_s_t: float,
         /,
-    ):
+    ) -> None:
         identifier = _identifier(isotope_id, "isotope_id")
-        if particle_kind not in ("nucleus", "electron", "positive-muon"):
-            raise ValueError("particle_kind must be nucleus, electron, or positive-muon.")
+        particle_kind = parse(particle_kind, ParticleKind, "particle_kind")
         spin_, dimension = _validate_spin(spin)
         gamma = float(gyromagnetic_ratio_rad_s_t)
         if not math.isfinite(gamma) or gamma == 0.0:
@@ -146,18 +149,18 @@ class SpinSite(StrictModule):
         isotope: ResonanceIsotope,
         /,
         *,
-        position_m: ArrayLike = (0.0, 0.0, 0.0),
-        zeeman_tensor: ArrayLike = (
+        position_m: ArrayLike | _Vector3 = (0.0, 0.0, 0.0),
+        zeeman_tensor: ArrayLike | _Tensor3 = (
             (1.0, 0.0, 0.0),
             (0.0, 1.0, 0.0),
             (0.0, 0.0, 1.0),
         ),
-        chemical_shift_ppm: ArrayLike = (
+        chemical_shift_ppm: ArrayLike | _Tensor3 = (
             (0.0, 0.0, 0.0),
             (0.0, 0.0, 0.0),
             (0.0, 0.0, 0.0),
         ),
-    ):
+    ) -> None:
         if not isinstance(isotope, ResonanceIsotope):
             raise TypeError("isotope must be a ResonanceIsotope.")
         self.isotope = isotope
@@ -172,7 +175,7 @@ class ScalarJCoupling(StrictModule):
     site_b: str = eqx.field(static=True)
     coupling_hz: float = eqx.field(static=True)
 
-    def __init__(self, site_a: str, site_b: str, coupling_hz: float, /):
+    def __init__(self, site_a: str, site_b: str, coupling_hz: float, /) -> None:
         a = _identifier(site_a, "site_a")
         b = _identifier(site_b, "site_b")
         value = float(coupling_hz)
@@ -187,7 +190,7 @@ class DipolarCoupling(StrictModule):
     site_a: str = eqx.field(static=True)
     site_b: str = eqx.field(static=True)
 
-    def __init__(self, site_a: str, site_b: str, /):
+    def __init__(self, site_a: str, site_b: str, /) -> None:
         a = _identifier(site_a, "site_a")
         b = _identifier(site_b, "site_b")
         if a == b:
@@ -208,7 +211,7 @@ class HyperfineCoupling(StrictModule):
         site_b: str,
         tensor_hz: ArrayLike,
         /,
-    ):
+    ) -> None:
         a = _identifier(site_a, "site_a")
         b = _identifier(site_b, "site_b")
         if a == b:
@@ -223,7 +226,7 @@ class QuadrupolarInteraction(StrictModule):
     tensor_hz: Array
     site_id: str = eqx.field(static=True)
 
-    def __init__(self, site_id: str, tensor_hz: ArrayLike, /):
+    def __init__(self, site_id: str, tensor_hz: ArrayLike, /) -> None:
         tensor = np.asarray(tensor_hz, dtype=np.float64)
         if tensor.shape != (3, 3) or np.any(~np.isfinite(tensor)):
             raise ValueError("tensor_hz must be finite with shape (3, 3).")
@@ -260,7 +263,7 @@ class MagneticResonanceSpinSystem(StrictModule):
         orientation: SingleCrystalOrientation | None = None,
         resource_policy: MagneticResonanceResourcePolicy | None = None,
         system_id: str = "finite-spin-system",
-    ):
+    ) -> None:
         selected = tuple(sites)
         if not selected or not all(isinstance(site, SpinSite) for site in selected):
             raise ValueError("sites must contain at least one SpinSite.")

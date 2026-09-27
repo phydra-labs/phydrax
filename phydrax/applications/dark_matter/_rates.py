@@ -5,18 +5,24 @@
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import cast, Literal, TypeAlias
+from typing import cast, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ..._numerics import log_normalize, weight_ess
 from ..._strict import StrictModule
 from ...integration import WeightedSampleBatch
+from ...typing import parse
+
+
+if TYPE_CHECKING:
+    import phydrax.axes as cx
 
 
 CrossingDirection: TypeAlias = Literal["inward", "outward", "both"]
@@ -124,8 +130,7 @@ def spherical_surface_crossings(
     source_states = jnp.asarray(source_paths.samples, dtype=states.dtype)
     if source_states.shape != (states.shape[0], 6):
         raise ValueError("Source samples must retain one initial packed state per path.")
-    if direction not in ("inward", "outward", "both"):
-        raise ValueError("direction must be 'inward', 'outward', or 'both'.")
+    direction = parse(direction, CrossingDirection, "direction")
     tolerance = float(grazing_tolerance_m_s)
     if not np.isfinite(tolerance) or tolerance <= 0.0:
         raise ValueError("grazing_tolerance_m_s must be finite and positive.")
@@ -183,7 +188,9 @@ def spherical_surface_crossings(
     flux_log_weights = repeated_log_weights
     density_log_weights = repeated_log_weights + jnp.log(jacobian)
 
-    def repeat_identifier(value, default=None):
+    def repeat_identifier(
+        value: Array | cx.AxisArray | None, default: Array | None = None
+    ) -> Array | None:
         if value is None:
             if default is None:
                 return None

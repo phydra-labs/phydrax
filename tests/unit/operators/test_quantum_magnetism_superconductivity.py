@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -37,7 +39,7 @@ from phydrax.operators.quantum.lattice._sector import SectorBasisResourcePolicy
 from phydrax.sparse import EdgeRelation
 
 
-def _constant_family(matrix, *, hermitian):
+def _constant_family(matrix: Any, *, hermitian: Any) -> Any:
     value = np.asarray(matrix, dtype="complex128")
     count = value.shape[0]
     target = np.repeat(np.arange(count), count)
@@ -56,7 +58,7 @@ def _constant_family(matrix, *, hermitian):
     return prepare_periodic_translation_family(plan, state)
 
 
-def test_spin_matrices_use_s_not_pauli_and_obey_su2_casimir():
+def test_spin_matrices_use_s_not_pauli_and_obey_su2_casimir() -> None:
     sx, sy, sz, _, _ = spin_matrices(1)
     identity = jnp.eye(2)
     assert jnp.allclose(sx @ sy - sy @ sx, 1.0j * sz)
@@ -64,9 +66,15 @@ def test_spin_matrices_use_s_not_pauli_and_obey_su2_casimir():
     assert jnp.allclose(jnp.linalg.eigvalsh(sz), jnp.asarray([-0.5, 0.5]))
 
 
-def test_heisenberg_dimer_lowers_to_fixed_projection_without_ambient_basis():
+def test_heisenberg_dimer_lowers_to_fixed_projection_without_ambient_basis() -> None:
     model = heisenberg_spin_model(
-        ("left", "right"), (1, 1), [[0, 1]], [1.0], energy_unit="reduced-energy"
+        ("left", "right"),
+        (1, 1),
+        # ty: ignore[invalid-argument-type]
+        [[0, 1]],
+        # ty: ignore[invalid-argument-type]
+        [1.0],
+        energy_unit="reduced-energy",
     )
     prepared = prepare_quantum_spin_model(
         model,
@@ -97,7 +105,7 @@ def test_heisenberg_dimer_lowers_to_fixed_projection_without_ambient_basis():
     assert jnp.allclose(jnp.linalg.eigvalsh(columns), jnp.asarray([-0.25, 0.75]))
 
 
-def test_dmi_orientation_and_fixed_sz_conservation_are_compiler_proved():
+def test_dmi_orientation_and_fixed_sz_conservation_are_compiler_proved() -> None:
     resources = QuantumLatticeResourcePolicy(
         maximum_terms=16,
         maximum_factors_per_term=2,
@@ -111,7 +119,9 @@ def test_dmi_orientation_and_fixed_sz_conservation_are_compiler_proved():
     longitudinal = dmi_spin_model(
         ("left", "right"),
         (1, 1),
+        # ty: ignore[invalid-argument-type]
         [[0, 1]],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 1.0]],
         energy_unit="reduced-energy",
     )
@@ -127,7 +137,9 @@ def test_dmi_orientation_and_fixed_sz_conservation_are_compiler_proved():
     transverse = dmi_spin_model(
         ("left", "right"),
         (1, 1),
+        # ty: ignore[invalid-argument-type]
         [[0, 1]],
+        # ty: ignore[invalid-argument-type]
         [[1.0, 0.0, 0.0]],
         energy_unit="reduced-energy",
     )
@@ -141,24 +153,30 @@ def test_dmi_orientation_and_fixed_sz_conservation_are_compiler_proved():
         )
 
 
-def test_collinear_lswt_returns_positive_krein_modes_and_rejects_instability():
+def test_collinear_lswt_returns_positive_krein_modes_and_rejects_instability() -> None:
+    # ty: ignore[invalid-argument-type]
     reference = SpinWaveReferenceState([[0.0, 0.0, 1.0]], [1.0])
+    # ty: ignore[invalid-argument-type]
     mesh = ReciprocalMeshPlan.monkhorst_pack(PeriodicCell([[1.0]]), (1,))
     plan = LinearSpinWavePlan(
         reference,
         mesh,
+        # ty: ignore[invalid-argument-type]
         [0],
+        # ty: ignore[invalid-argument-type]
         [0],
         energy_unit="reduced-energy",
         maximum_site_count=2,
     )
     lowering = lower_collinear_spin_wave_bonds(
         plan,
+        # ty: ignore[invalid-argument-type]
         [[[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]]],
         np.empty((0,), dtype="int64"),
         np.empty((0,), dtype="int64"),
         np.empty((0, 1), dtype="int64"),
         np.empty((0, 3, 3)),
+        # ty: ignore[invalid-argument-type]
         zeeman_energies=[[0.0, 0.0, 2.0]],
     )
     prepared = prepare_linear_spin_wave(
@@ -176,17 +194,20 @@ def test_collinear_lswt_returns_positive_krein_modes_and_rejects_instability():
         plan,
         _constant_family([[-1.0]], hermitian=True),
         _constant_family([[0.0]], hermitian=False),
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0]],
     )
     with pytest.raises(ValueError, match="Krein|stability|branch"):
         evaluate_linear_spin_wave(unstable)
 
 
-def test_fermionic_bdg_phs_pair_antisymmetry_and_double_counting_are_explicit():
+def test_fermionic_bdg_phs_pair_antisymmetry_and_double_counting_are_explicit() -> None:
     order = FermionModeOrder(("up", "down"))
     pairing_plan = FermionicPairingPlan(
         order,
+        # ty: ignore[invalid-argument-type]
         [0],
+        # ty: ignore[invalid-argument-type]
         [1.0],
         mesh_id="gamma",
         energy_unit="reduced-energy",
@@ -195,6 +216,7 @@ def test_fermionic_bdg_phs_pair_antisymmetry_and_double_counting_are_explicit():
     pairing = np.asarray([[[0.0, 0.7], [-0.7, 0.0]]])
     prepared = prepare_fermionic_bdg(
         plan,
+        # ty: ignore[invalid-argument-type]
         [[[0.2, 0.0], [0.0, 0.2]]],
         pairing,
         chemical_potential=0.0,
@@ -220,7 +242,9 @@ def test_fermionic_bdg_phs_pair_antisymmetry_and_double_counting_are_explicit():
     with pytest.raises(ValueError, match="antisymmetry"):
         prepare_fermionic_bdg(
             plan,
+            # ty: ignore[invalid-argument-type]
             [[[0.2, 0.0], [0.0, 0.2]]],
+            # ty: ignore[invalid-argument-type]
             [[[0.0, 0.7], [0.7, 0.0]]],
             chemical_potential=0.0,
             normal_family_id="normal",

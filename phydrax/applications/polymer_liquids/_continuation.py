@@ -8,7 +8,7 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -44,7 +44,7 @@ class PRISMDensityContinuationPlan(StrictModule, NonTrainableState):
         maximum_step: float = 0.25,
         maximum_steps: int = 64,
         maximum_retries: int = 8,
-    ):
+    ) -> None:
         lower = float(minimum_density_scale)
         upper = float(maximum_density_scale)
         initial = float(initial_step)
@@ -126,7 +126,7 @@ def continue_prism_density(
         space_id=f"{prepared.prepared_id}:density-continuation-space",
     )
 
-    def residual(gamma, density_scale, _):
+    def residual(gamma: Array, density_scale: Array, _: object) -> Array:
         evaluation = prepared.evaluate(
             gamma,
             number_densities=prepared.mixture.number_densities * density_scale,

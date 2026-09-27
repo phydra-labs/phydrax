@@ -11,8 +11,10 @@ from typing import Any, Literal
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
+from phydrax.conditions._ir import Condition
 from phydrax.domain import (
     AbstractGeometry,
     AbstractScalarDomain,
@@ -40,6 +42,7 @@ from .._strict import StrictModule
 from ..domain._derivative import DerivativeRule, DerivativeRuleProvider
 from ..domain._function import differentiate_operands
 from ..operators.differential._hooks import blend_with_gate
+from ..typing import PRNGKey
 from ._ansatz import _enforcement_weight, _enforcement_weight_fn, enforce_initial
 from ._lifecycle import (
     EnforcementState,
@@ -101,7 +104,7 @@ def _boundary_piece_where(
     local_fn = _ensure_special_kwonly_args(local)
     global_fn = _ensure_special_kwonly_args(global_filter.func)
 
-    def _conjunction(point, *, key=None, **kwargs):
+    def _conjunction(point: Array, *, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         return jnp.logical_and(
             local_fn(point, key=key, **kwargs),
             global_fn(point, key=key, **kwargs),
@@ -184,7 +187,7 @@ class InteriorAnchors(StrictModule):
         space_label: str = "x",
         time_label: str = "t",
         time_interp: Literal["idw", "hermite"] = "idw",
-    ):
+    ) -> None:
         r"""Create an enforced interior data source.
 
         **Arguments:**
@@ -691,7 +694,7 @@ def _initial_overlay_boundary_compatible(
     u_base: DomainFunction,
     boundary_overlays: Sequence["_BoundaryBlendOverlay"],
     initial_overlay: "_InitialEnforcedOverlay",
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_probe: int = 64,
     atol: float = 1e-8,
 ) -> bool:
@@ -785,7 +788,7 @@ class _BoundaryWeightedQuotientCallable(StrictModule, DerivativeRuleProvider):
         weight_pos: tuple[tuple[int, ...], ...],
         remainder_weight_pos: tuple[int, ...] | None,
         base_pos: tuple[int, ...],
-    ):
+    ) -> None:
         self.pieces = pieces
         self.weights = weights
         self.remainder_weight = remainder_weight
@@ -795,7 +798,7 @@ class _BoundaryWeightedQuotientCallable(StrictModule, DerivativeRuleProvider):
         self.remainder_weight_pos = remainder_weight_pos
         self.base_pos = base_pos
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         num = jnp.asarray(0.0, dtype=jnp.float64)
         den = jnp.asarray(0.0, dtype=jnp.float64)
 
@@ -856,8 +859,8 @@ class _BoundaryBlendOverlay(StrictModule):
         include_identity_remainder: bool,
         num_reference: int,
         sampler: str,
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         if not pieces:
             raise ValueError("_BoundaryBlendOverlay requires at least one piece.")
         self.var = str(var)
@@ -945,7 +948,11 @@ class _BoundaryBlendOverlay(StrictModule):
         piece_functions: list[DomainFunction] = []
 
         for c, w in zip(self.pieces, self.weights, strict=True):
-            u_piece = c.transform.apply(
+            transform = c.transform
+            # Boundary-stage specifications are local ansätze, which always carry one.
+            if not (transform is not None):
+                raise RuntimeError("Internal invariant failed: transform is not None.")
+            u_piece = transform.apply(
                 u,
                 get_field,
                 _unfiltered_component(c.component),
@@ -1005,7 +1012,7 @@ class _InitialEnforcedOverlay(StrictModule):
         *,
         var: str,
         targets: Mapping[int, DomainFunction | ArrayLike],
-    ):
+    ) -> None:
         self.component = component
         self.var = str(var)
         self.targets = frozendict({int(k): v for k, v in targets.items()})
@@ -1020,7 +1027,7 @@ def _complement_where(wheres: Sequence[Callable | None], /) -> Callable | None:
     if not wheres:
         return lambda x: jnp.asarray(True)
 
-    def _union(x):
+    def _union(x: Array) -> Array:
         fn = wheres[0]
         assert callable(fn)
         out = fn(x)
@@ -1029,7 +1036,7 @@ def _complement_where(wheres: Sequence[Callable | None], /) -> Callable | None:
             out = jnp.logical_or(out, fn(x))
         return out
 
-    def _comp(x):
+    def _comp(x: Array) -> Array:
         return jnp.logical_not(_union(x))
 
     return _comp
@@ -1075,7 +1082,7 @@ class _InteriorAnchorOverlay(StrictModule):
         gate_method: EnforcementGateMethod,
         gate_saturation_fraction: float,
         gate_linear_fraction: float,
-    ):
+    ) -> None:
         self.anchor_set = anchor_set
         self.gate_exponents = frozendict(
             {str(k): int(v) for k, v in gate_exponents.items()}
@@ -1227,10 +1234,10 @@ class _InteriorAnchorOverlay(StrictModule):
                 m = m * (jnp.maximum(t - t0, 0.0) ** int(q))
             return m
 
-        def _correction(*args: Any, key=None, **kwargs: Any):
+        def _correction(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
             z = {lbl: args[idx[lbl]] for lbl in deps}
 
-            def _u0_at_anchor(*dep_vals):
+            def _u0_at_anchor(*dep_vals: Array) -> Array:
                 return jnp.asarray(
                     u0.func(*dep_vals, key=key, **kwargs), dtype=jnp.float64
                 )
@@ -1632,8 +1639,8 @@ class _FieldEnforcementPipeline(StrictModule):
         gate_linear_fraction: float = 0.5,
         num_reference: int = 3_000_000,
         sampler: str = "latin_hypercube",
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         r"""Build a pipeline for one field.
 
         **Arguments:**
@@ -1803,7 +1810,7 @@ class _FieldEnforcementPipeline(StrictModule):
                 for factor in gate_factors
             )
 
-            def _gate(*args, key=None, **kwargs):
+            def _gate(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
                 del key, kwargs
                 value = jnp.asarray(1.0, dtype=jnp.float64)
                 for arg, gate, power in zip(
@@ -1896,13 +1903,18 @@ class EnforcementProgram(StrictModule):
         *,
         field_order: Sequence[str],
         realization_specs: Sequence[EnforcementSpec] = (),
-    ):
+    ) -> None:
         typed = tuple(realization_specs)
         if any(spec.realization is None for spec in typed):
             raise TypeError(
                 "realization_specs must contain only typed realization specifications."
             )
-        condition_ids = tuple(spec.condition.condition_id for spec in typed)
+        # Specifications carrying a realization always hold a typed ``Condition``.
+        condition_ids = tuple(
+            spec.condition.condition_id
+            for spec in typed
+            if isinstance(spec.condition, Condition)
+        )
         if len(set(condition_ids)) != len(condition_ids):
             raise ValueError("Typed realization condition identifiers must be unique.")
         self.pipelines = frozendict(pipelines)
@@ -1923,7 +1935,7 @@ class EnforcementProgram(StrictModule):
         gate_linear_fraction: float = 0.5,
         num_reference: int = 3_000_000,
         sampler: str = "latin_hypercube",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> "EnforcementProgram":
         field_order = tuple(functions.keys())
         resolved_specs = tuple(specs)
@@ -2016,6 +2028,11 @@ class EnforcementProgram(StrictModule):
                     "Typed realization specification lost its realization."
                 )
             condition = spec.condition
+            # EnforcementSpec pairs every realization with a typed ``Condition``.
+            if not (isinstance(condition, Condition)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(condition, Condition)."
+                )
             condition_id = condition.condition_id
             context = ConditionEvaluationContext(
                 condition,

@@ -10,7 +10,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -164,7 +165,7 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
         maximum_rank_check_size: int = 256,
         condition_limit: float = 1.0e10,
         require_rank_certification: bool = True,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         if not isinstance(transfer, PreparedMACMarkerTransfer):
@@ -355,17 +356,17 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
                 pairing=DiagonalPairing(active_weights),
             )
 
-            def gather_constraint(face_velocity):
+            def gather_constraint(face_velocity: FaceVelocity) -> Array:
                 sampled = self.transfer.gather(relation, face_velocity)
                 return jnp.sum(sampled * unit_normals, axis=-1)
 
-            def spread_constraint(multiplier):
+            def spread_constraint(multiplier: Array) -> FaceVelocity:
                 return self.transfer.spread(relation, multiplier[:, None] * unit_normals)
 
-            def multiplier_vector(multiplier):
+            def multiplier_vector(multiplier: Array) -> Array:
                 return multiplier[:, None] * unit_normals
 
-            def multiplier_coordinates(force_density):
+            def multiplier_coordinates(force_density: Array) -> Array:
                 return jnp.sum(force_density * unit_normals, axis=-1)
 
             target_constraint = jnp.sum(target_velocity * unit_normals, axis=-1)
@@ -374,16 +375,16 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
             unit_normals = jnp.zeros_like(target_velocity)
             marker_space = markers.active_velocity_space
 
-            def gather_constraint(face_velocity):
+            def gather_constraint(face_velocity: FaceVelocity) -> Array:
                 return self.transfer.gather(relation, face_velocity)
 
-            def spread_constraint(multiplier):
+            def spread_constraint(multiplier: Array) -> FaceVelocity:
                 return self.transfer.spread(relation, multiplier)
 
-            def multiplier_vector(multiplier):
+            def multiplier_vector(multiplier: Array) -> Array:
                 return multiplier
 
-            def multiplier_coordinates(force_density):
+            def multiplier_coordinates(force_density: Array) -> Array:
                 return force_density
 
             target_constraint = target_velocity
@@ -413,7 +414,7 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
         marker_rank_certified = marker_space.size <= self.maximum_rank_check_size
         if marker_rank_certified:
 
-            def mobility_action(multiplier):
+            def mobility_action(multiplier: Array) -> Array:
                 return gather_constraint(
                     stage_inverse.apply_inverse(spread_constraint(multiplier))
                 )
@@ -468,7 +469,7 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
             names=("pressure", "marker"),
         )
 
-        def correction_rhs(dual):
+        def correction_rhs(dual: tuple[Array, Array]) -> tuple[FaceVelocity, Array]:
             scaled_pressure, multiplier = dual
             scaled_pressure = self.operators.validate_pressure(scaled_pressure)
             if self.boundaries.closure_kind == "neumann":
@@ -492,12 +493,12 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
                 mean,
             )
 
-        def correction(dual):
+        def correction(dual: tuple[Array, Array]) -> tuple[FaceVelocity, Array]:
             rhs, mean = correction_rhs(dual)
             raw = stage_inverse.apply_inverse(rhs)
             return boundary.homogeneous(raw), mean
 
-        def dual_action(dual):
+        def dual_action(dual: tuple[Array, Array]) -> tuple[Array, Array]:
             image, mean = correction(dual)
             pressure_image = -ell * self.operators.divergence(image)
             if self.boundaries.closure_kind == "neumann":
@@ -507,16 +508,16 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
 
         zero_marker = marker_space.zeros()
 
-        def pressure_diagonal_action(pressure_value):
+        def pressure_diagonal_action(pressure_value: Array) -> Array:
             return dual_action((pressure_value, zero_marker))[0]
 
-        def marker_diagonal_action(marker_value):
+        def marker_diagonal_action(marker_value: Array) -> Array:
             return dual_action((zero_pressure, marker_value))[1]
 
-        def pressure_from_marker(marker_value):
+        def pressure_from_marker(marker_value: Array) -> Array:
             return dual_action((zero_pressure, marker_value))[0]
 
-        def marker_from_pressure(pressure_value):
+        def marker_from_pressure(pressure_value: Array) -> Array:
             return dual_action((pressure_value, zero_marker))[1]
 
         pressure_diagonal = FunctionLinearOperator(

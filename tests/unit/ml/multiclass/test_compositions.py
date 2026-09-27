@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -81,11 +84,11 @@ _MULTILABEL_TARGETS = jnp.stack(
 _MULTILABEL_SCHEMA = TargetSchema("multilabel", names=("warm", "wet", "favorable"))
 
 
-def _base():
+def _base() -> Any:
     return GaussianNaiveBayesRecipe(var_smoothing=0.03)
 
 
-def _sparse(values):
+def _sparse(values: Any) -> Any:
     columns = jnp.broadcast_to(jnp.arange(values.shape[-1]), values.shape)
     return SparseFeatures(values, columns, feature_count=values.shape[-1])
 
@@ -99,8 +102,8 @@ def _sparse(values):
     ],
 )
 def test_multiclass_compositions_preserve_labels_normalization_and_distinct_evidence(
-    recipe, model_type, method, component_count
-):
+    recipe: Any, model_type: Any, method: Any, component_count: Any
+) -> None:
     result = recipe.fit_batch(
         MLBatch(_FEATURES, _TARGETS, target_schema=_SCHEMA),
         key=jax.random.key(4),
@@ -135,7 +138,9 @@ def test_multiclass_compositions_preserve_labels_normalization_and_distinct_evid
         assert model.code_decision_function(_FEATURES).shape[-1] == 6
 
 
-def test_one_vs_rest_preserves_case_masks_weights_and_keys_and_rejects_sparse_input():
+def test_one_vs_rest_preserves_case_masks_weights_and_keys_and_rejects_sparse_input() -> (
+    None
+):
     features = jnp.stack((_FEATURES, 1.1 * _FEATURES + 0.2))
     targets = jnp.stack((_TARGETS, _TARGETS))
     feature_mask = jnp.ones_like(features, dtype="bool").at[:, 3, 0].set(False)
@@ -190,8 +195,8 @@ def test_one_vs_rest_preserves_case_masks_weights_and_keys_and_rejects_sparse_in
     ],
 )
 def test_multilabel_and_chain_families_preserve_target_axis_masks_and_probabilities(
-    recipe, model_type, method, input_level
-):
+    recipe: Any, model_type: Any, method: Any, input_level: Any
+) -> None:
     target_mask = jnp.ones_like(_MULTILABEL_TARGETS, dtype="bool").at[1, 2].set(False)
     batch = MLBatch(
         _MULTILABEL_FEATURES,
@@ -224,7 +229,7 @@ def test_multilabel_and_chain_families_preserve_target_axis_masks_and_probabilit
     )
 
 
-def test_exact_and_smooth_classifier_chains_use_hard_and_smooth_link_outputs():
+def test_exact_and_smooth_classifier_chains_use_hard_and_smooth_link_outputs() -> None:
     batch = MLBatch(
         _MULTILABEL_FEATURES,
         _MULTILABEL_TARGETS,
@@ -237,7 +242,9 @@ def test_exact_and_smooth_classifier_chains_use_hard_and_smooth_link_outputs():
     hard = hard_result.as_trainable()
     smooth = smooth_result.as_trainable()
     points = jnp.array([[0.05, 0.05], [-0.05, -0.05]])
+    # ty: ignore[unresolved-attribute]
     hard_first = hard.models[0].decision_function(points)
+    # ty: ignore[unresolved-attribute]
     smooth_first = smooth.models[0].decision_function(points)
     hard_link = (hard_first[..., 1] - hard_first[..., 0] >= 0.0).astype(points.dtype)
     smooth_link = jax.nn.sigmoid(smooth_first[..., 1] - smooth_first[..., 0]).astype(
@@ -249,17 +256,26 @@ def test_exact_and_smooth_classifier_chains_use_hard_and_smooth_link_outputs():
     assert jnp.all((hard_link == 0.0) | (hard_link == 1.0))
     assert jnp.all((smooth_link > 0.0) & (smooth_link < 1.0))
     assert jnp.allclose(
+        # ty: ignore[unresolved-attribute]
         hard.decision_function(points)[..., 1],
+        # ty: ignore[unresolved-attribute]
         hard.models[1].decision_function(hard_augmented)[..., 1]
+        # ty: ignore[unresolved-attribute]
         - hard.models[1].decision_function(hard_augmented)[..., 0],
     )
     assert jnp.allclose(
+        # ty: ignore[unresolved-attribute]
         smooth.decision_function(points)[..., 1],
+        # ty: ignore[unresolved-attribute]
         smooth.models[1].decision_function(smooth_augmented)[..., 1]
+        # ty: ignore[unresolved-attribute]
         - smooth.models[1].decision_function(smooth_augmented)[..., 0],
     )
     assert not jnp.allclose(
-        hard.decision_function(points), smooth.decision_function(points)
+        # ty: ignore[unresolved-attribute]
+        hard.decision_function(points),
+        # ty: ignore[unresolved-attribute]
+        smooth.decision_function(points),
     )
     assert (
         hard_result.derivative_contract.level(DerivativeSurface.INPUT)
@@ -319,11 +335,11 @@ def test_exact_and_smooth_classifier_chains_use_hard_and_smooth_link_outputs():
     ],
 )
 def test_every_composition_has_declared_fit_and_prediction_parameter_gradients(
-    recipe, features, targets, probe, prediction_gradient
-):
+    recipe: Any, features: Any, targets: Any, probe: Any, prediction_gradient: Any
+) -> None:
     weights = jnp.linspace(0.8, 1.3, features.shape[0])
 
-    def fit_loss(values, sample_weight, smoothing):
+    def fit_loss(values: Any, sample_weight: Any, smoothing: Any) -> Any:
         configured = eqx.tree_at(
             lambda item: item.base_recipe.var_smoothing,
             recipe,
@@ -368,7 +384,9 @@ def test_every_composition_has_declared_fit_and_prediction_parameter_gradients(
         )
 
 
-def test_composition_failures_report_vocabulary_support_multilabel_domain_and_capacity():
+def test_composition_failures_report_vocabulary_support_multilabel_domain_and_capacity() -> (
+    None
+):
     invalid_labels = OneVsRestRecipe(_base(), num_classes=3).fit_batch(
         MLBatch(_FEATURES, _TARGETS.at[0].set(9))
     )

@@ -58,7 +58,7 @@ class DesignQualificationEvidence:
     diagnostic_ids: tuple[str, ...] = ()
     evidence_id: str = field(init=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         tier = (
             self.tier
             if isinstance(self.tier, DerivativeTier)

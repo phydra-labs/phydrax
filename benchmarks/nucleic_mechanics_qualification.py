@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 """Exercise restricted force/twist fitting; synthetic rows are not calibration."""
 
+
+from typing import Any
 import hashlib
 import json
 
@@ -40,7 +42,7 @@ def _reference() -> ReferenceArtifactManifest:
     )
 
 
-def _data(prefix: str, units: tuple[str, ...], model) -> NucleotideMechanicalResponseData:
+def _data(prefix: str, units: tuple[str, ...], model: Any) -> NucleotideMechanicalResponseData:
     count = len(units)
     sensitivity = np.zeros((count, 2, 3))
     sensitivity[:, 0, 0] = np.arange(1, count + 1)

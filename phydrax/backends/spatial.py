@@ -83,7 +83,7 @@ def _pallas_squared_norm(
     flattened = values.reshape((item_count, dimension))
     padded = jnp.pad(flattened, ((0, padded_count - item_count), (0, 0)))
 
-    def kernel(value_ref, output_ref):
+    def kernel(value_ref: jax.Ref, output_ref: jax.Ref) -> None:
         value = value_ref[...]
         output_ref[...] = jnp.sum(value * value, axis=1)
 
@@ -160,7 +160,12 @@ def _pallas_pair_acceleration(
         (0, padded_count - item_count),
     )
 
-    def kernel(relative_ref, mass_ref, valid_ref, output_ref):
+    def kernel(
+        relative_ref: jax.Ref,
+        mass_ref: jax.Ref,
+        valid_ref: jax.Ref,
+        output_ref: jax.Ref,
+    ) -> None:
         value = relative_ref[...]
         squared = jnp.sum(value * value, axis=1) + softening**2
         output_ref[...] = jnp.where(
@@ -189,13 +194,13 @@ def _pallas_pair_acceleration(
 
 @_pallas_pair_acceleration.defjvp
 def _pallas_pair_acceleration_jvp(
-    softening,
-    coefficient,
-    block_size,
-    interpret,
-    primals,
-    tangents,
-):
+    softening: float,
+    coefficient: float,
+    block_size: int,
+    interpret: bool,
+    primals: tuple[jax.Array, jax.Array, jax.Array],
+    tangents: tuple[jax.Array, jax.Array, jax.Array],
+) -> tuple[jax.Array, jax.Array]:
     relative, source_mass, valid = primals
     relative_tangent, mass_tangent, _ = tangents
     value = _pallas_pair_acceleration(

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -28,7 +30,7 @@ from benchmarks.advanced_solvers.problems import (
 )
 
 
-def test_generators_are_seed_deterministic_and_fingerprints_cover_values():
+def test_generators_are_seed_deterministic_and_fingerprints_cover_values() -> None:
     first = default_problems(size=12, seed=17)
     second = default_problems(size=12, seed=17)
     changed = default_problems(size=12, seed=18)
@@ -43,7 +45,7 @@ def test_generators_are_seed_deterministic_and_fingerprints_cover_values():
     )
 
 
-def test_sparse_scalar_and_block_systems_are_symmetric_positive_definite():
+def test_sparse_scalar_and_block_systems_are_symmetric_positive_definite() -> None:
     scalar = sparse_scalar_linear(size=10, right_hand_sides=1, seed=2)
     block = sparse_block_linear(
         block_count=6,
@@ -64,7 +66,7 @@ def test_sparse_scalar_and_block_systems_are_symmetric_positive_definite():
     assert block.rhs.shape == (12, 2)
 
 
-def test_nonlinear_root_and_vi_certificates_use_matched_problem_relations():
+def test_nonlinear_root_and_vi_certificates_use_matched_problem_relations() -> None:
     root = nonlinear_root(size=8, seed=5)
     root_solution = np.sqrt(root.target)
     root_certificate = independent_certificate(root, root_solution, {})
@@ -79,7 +81,7 @@ def test_nonlinear_root_and_vi_certificates_use_matched_problem_relations():
     assert 0 < vi_certificate["details"]["active_lower_count"] < vi.initial.size
 
 
-def test_semilinear_poisson_root_has_sparse_spd_jacobian_and_exact_solution():
+def test_semilinear_poisson_root_has_sparse_spd_jacobian_and_exact_solution() -> None:
     problem = semilinear_poisson_root(size=12, seed=9)
     coordinates = np.arange(1, 13, dtype=np.float64) / 13.0
     exact = np.sin(np.pi * coordinates)
@@ -92,7 +94,7 @@ def test_semilinear_poisson_root_has_sparse_spd_jacobian_and_exact_solution():
     assert np.min(np.linalg.eigvalsh(jacobian)) > 0.0
 
 
-def test_campaign_exposes_matched_root_modes_without_changing_default_cases():
+def test_campaign_exposes_matched_root_modes_without_changing_default_cases() -> None:
     cases = build_cases(CampaignConfig(seed=17, size=8, warmup=0, repeats=1))
 
     assert cases["nonlinear-root-dense"].solver_mode == "dense"
@@ -102,12 +104,13 @@ def test_campaign_exposes_matched_root_modes_without_changing_default_cases():
         cases["nonlinear-root-dense"].problem.identity()["fingerprint"]
         == cases["nonlinear-root-matrix-free"].problem.identity()["fingerprint"]
     )
+    # ty: ignore[unresolved-attribute]
     assert cases["nonlinear-root-sparse-pde"].problem.root_kind == (
         "semilinear-poisson-1d"
     )
 
 
-def test_general_eigen_and_continuation_certificates_are_independent_relations():
+def test_general_eigen_and_continuation_certificates_are_independent_relations() -> None:
     eigen = general_eigenproblem(size=10, eigenpairs=3, seed=7)
     eigenvalues, eigenvectors = np.linalg.eig(eigen.matrix)
     selected = np.argsort(np.abs(eigenvalues))[-eigen.eigenpairs :]
@@ -139,7 +142,9 @@ def test_general_eigen_and_continuation_certificates_are_independent_relations()
     assert branch_certificate["details"]["successful_fold_traversal"] is True
 
 
-def test_optimization_certificates_use_independent_stationarity_and_kkt_relations():
+def test_optimization_certificates_use_independent_stationarity_and_kkt_relations() -> (
+    None
+):
     unconstrained = rosenbrock_optimization(size=6, seed=19)
     unconstrained_certificate = independent_certificate(
         unconstrained,
@@ -170,7 +175,7 @@ def test_optimization_certificates_use_independent_stationarity_and_kkt_relation
     assert proximal_certificate["residual_norm"] < 1e-15
 
 
-def _exact_bound_duals(problem):
+def _exact_bound_duals(problem: Any) -> Any:
     gradient = problem.gradient(problem.optimum)
     return {
         "equality_dual": np.zeros(problem.equality_rhs.shape),
@@ -180,7 +185,7 @@ def _exact_bound_duals(problem):
     }
 
 
-def test_mathematical_program_certificates_require_duals_for_lp_qp_and_socp():
+def test_mathematical_program_certificates_require_duals_for_lp_qp_and_socp() -> None:
     linear = bounded_linear_program(size=8, seed=22)
     quadratic = bounded_quadratic_program(size=8, seed=23)
     cases = (
@@ -233,7 +238,7 @@ def test_mathematical_program_certificates_require_duals_for_lp_qp_and_socp():
     assert primal_dual["details"]["dual_stationarity_norm"] == 0.0
 
 
-def test_continuation_certificate_rejects_residual_only_nonfold_branch():
+def test_continuation_certificate_rejects_residual_only_nonfold_branch() -> None:
     fold = quadratic_fold(seed=9)
     states = np.linspace(1.0, 0.5, 8)
     certificate = independent_certificate(

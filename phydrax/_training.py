@@ -10,13 +10,15 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from enum import IntEnum
 from pathlib import Path
-from typing import Any, Literal
+from types import TracebackType
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._iteration import (
     bind_iteration_scope,
@@ -32,11 +34,12 @@ from ._strict import StrictModule
 from ._tensorboard import ScalarEventWriter
 from ._trainable import NonTrainableState
 from .logging import emit
+from .typing import parse
 
 
-SelectionMode = Literal["min", "max"]
+SelectionMode: TypeAlias = Literal["min", "max"]
 EvaluationParametersFn = Callable[[Any, Any], Any]
-TargetParameterSource = Literal["raw", "evaluation"]
+TargetParameterSource: TypeAlias = Literal["raw", "evaluation"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +48,7 @@ class DelayedTargetPolicy:
 
     delay: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if isinstance(self.delay, bool) or int(self.delay) < 0:
             raise ValueError("Delayed target delay must be a nonnegative integer.")
         object.__setattr__(self, "delay", int(self.delay))
@@ -64,13 +67,14 @@ class ExponentialMovingAverageTargetPolicy:
     update_every: int = 1
     source: TargetParameterSource = "raw"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not 0.0 <= float(self.decay) < 1.0:
             raise ValueError("EMA decay must lie in [0, 1).")
         if int(self.start_step) < 0 or int(self.update_every) <= 0:
             raise ValueError("EMA start/update cadence is invalid.")
-        if self.source not in ("raw", "evaluation"):
-            raise ValueError("EMA target source must be raw or evaluation.")
+        object.__setattr__(
+            self, "source", parse(self.source, TargetParameterSource, "source")
+        )
         object.__setattr__(self, "decay", float(self.decay))
         object.__setattr__(self, "start_step", int(self.start_step))
         object.__setattr__(self, "update_every", int(self.update_every))
@@ -249,7 +253,7 @@ class TrainingProgress:
     iteration_session_cursor: int = 0
     iteration_stop_requested: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         indices = (
             ("epoch", self.epoch),
             ("next_batch_index", self.next_batch_index),
@@ -378,7 +382,7 @@ class TrainingIterationMetrics(StrictModule, NonTrainableState):
         progress: TrainingProgress,
         metrics: Mapping[str, Any] | None,
         /,
-    ):
+    ) -> None:
         if not isinstance(kind, TrainingIterationKind):
             raise TypeError("kind must be TrainingIterationKind.")
         names = () if metrics is None else tuple(str(name) for name in metrics)
@@ -457,8 +461,7 @@ def update_training_selection(
 ) -> tuple[TrainingProgress, bool]:
     """Update strict best-state and early-stopping counters deterministically."""
 
-    if mode not in ("min", "max"):
-        raise ValueError("mode must be 'min' or 'max'.")
+    mode = parse(mode, SelectionMode, "mode")
     delta = _finite_selection_value(min_delta, "min_delta")
     if delta < 0.0:
         raise ValueError("min_delta must be non-negative.")
@@ -551,7 +554,7 @@ class TrainingController:
         algorithm_id: str,
         progress: TrainingProgress | None = None,
         session: IterationSession | None = None,
-    ):
+    ) -> None:
         if int(total_steps) < 0:
             raise ValueError("total_steps must be non-negative.")
         algorithm_id_ = str(algorithm_id)
@@ -666,7 +669,7 @@ class TrainingController:
 class TrainingSignalGuard:
     """Convert process interrupts into a graceful training-loop stop request."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._previous_handlers: dict[int, Any] = {}
         self._signum: int | None = None
         self._reason: str | None = None
@@ -681,7 +684,12 @@ class TrainingSignalGuard:
         self._installed = True
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         if not self._installed:
             return
         for signum, handler in self._previous_handlers.items():
@@ -713,13 +721,18 @@ class TrainingSignalGuard:
 class TensorBoardLogger:
     """Small context-managed scalar writer shared by training frontends."""
 
-    def __init__(self, log_dir: str | Path):
+    def __init__(self, log_dir: str | Path) -> None:
         self._writer = ScalarEventWriter(log_dir)
 
     def __enter__(self) -> "TensorBoardLogger":
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         self.flush()
         self._writer.close()
 

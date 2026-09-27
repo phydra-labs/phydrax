@@ -9,7 +9,8 @@ from collections.abc import Callable, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -43,7 +44,7 @@ class FourierModalHarmonicAdaptationPolicy(StrictModule, NonTrainableState):
         observable_tolerances: ArrayLike,
         maximum_epochs: int,
         /,
-    ):
+    ) -> None:
         candidates = tuple(candidate_plans)
         tolerances = np.asarray(observable_tolerances, dtype=np.float64)
         epochs = int(maximum_epochs)

@@ -50,7 +50,7 @@ class FunctionalPatchParticipant(StrictModule):
         /,
         *,
         participant_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(solver, FunctionalSolver):
             raise TypeError("solver must be a FunctionalSolver.")
         patch = str(patch_id)
@@ -63,7 +63,7 @@ class FunctionalPatchParticipant(StrictModule):
         self.solver = solver
 
     @property
-    def functions(self):
+    def functions(self) -> frozendict[str, DomainFunction]:
         return self.solver.functions
 
     def solve(
@@ -106,7 +106,7 @@ class FixedPatchParticipant(StrictModule):
         /,
         *,
         participant_id: str | None = None,
-    ):
+    ) -> None:
         values = frozendict(functions)
         if not values or any(
             not isinstance(value, DomainFunction) for value in values.values()
@@ -136,7 +136,7 @@ class HybridFunctionalDecomposition(StrictModule):
         cover: SubdomainCover,
         participants: Sequence[PatchParticipant],
         /,
-    ):
+    ) -> None:
         values = tuple(participants)
         if any(
             not isinstance(value, (FunctionalPatchParticipant, FixedPatchParticipant))
@@ -202,7 +202,7 @@ class DecompositionDeploymentArtifact(StrictModule):
         /,
         *,
         assembly: Literal["partition-of-unity", "broken-first-owner"],
-    ):
+    ) -> None:
         if assembly not in ("partition-of-unity", "broken-first-owner"):
             raise ValueError("Unknown deployment assembly.")
         self.family = family

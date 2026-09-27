@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -32,7 +33,7 @@ class MortarContactPlan(StrictModule, NonTrainableState):
         penalty: float,
         friction: float = 0.0,
         augmentation_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         penalty_ = float(penalty)
         friction_ = float(friction)
         tolerance = float(augmentation_tolerance)
@@ -70,7 +71,7 @@ class MortarContactState(StrictModule, NonTrainableState):
         plan: MortarContactPlan,
         /,
         *,
-        dtype=jnp.float64,
+        dtype: DTypeLike = jnp.float64,
     ) -> MortarContactState:
         tangent_dimension = interface.ambient_dimension - 1
         return cls(
@@ -199,7 +200,7 @@ class OneSidedNitscheContactPlan(StrictModule, NonTrainableState):
     stabilization: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, stabilization: float, /):
+    def __init__(self, stabilization: float, /) -> None:
         value = float(stabilization)
         if not np.isfinite(value) or value <= 0.0:
             raise ValueError("Nitsche stabilization must be finite and positive.")
@@ -216,7 +217,7 @@ class UnbiasedNitscheContactPlan(StrictModule, NonTrainableState):
     stabilization: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, stabilization: float, /):
+    def __init__(self, stabilization: float, /) -> None:
         value = float(stabilization)
         if not np.isfinite(value) or value <= 0.0:
             raise ValueError("Nitsche stabilization must be finite and positive.")
@@ -293,7 +294,7 @@ class MeshTiePlan(StrictModule, NonTrainableState):
     tension_limit: float | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, penalty: float, /, *, tension_limit: float | None = None):
+    def __init__(self, penalty: float, /, *, tension_limit: float | None = None) -> None:
         penalty_ = float(penalty)
         tension = None if tension_limit is None else float(tension_limit)
         if not np.isfinite(penalty_) or penalty_ <= 0.0:

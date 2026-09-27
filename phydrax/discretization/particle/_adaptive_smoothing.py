@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -29,7 +30,7 @@ class AlgebraicSmoothingLengthPlan(StrictModule, NonTrainableState):
     maximum_h: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, eta: float, minimum_h: float, maximum_h: float, /):
+    def __init__(self, eta: float, minimum_h: float, maximum_h: float, /) -> None:
         eta_ = float(eta)
         minimum = float(minimum_h)
         maximum = float(maximum_h)
@@ -77,7 +78,7 @@ class CoupledSummationSmoothingLengthPlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 20,
         tolerance: float = 1e-8,
         relaxation: float = 0.7,
-    ):
+    ) -> None:
         if eta <= 0.0 or minimum_h <= 0.0 or maximum_h < minimum_h:
             raise ValueError("Coupled smoothing-length bounds are invalid.")
         if maximum_iterations <= 0 or tolerance <= 0.0 or not 0.0 < relaxation <= 1.0:
@@ -155,7 +156,7 @@ def variable_h_density(
 
 
 def adaptive_smoothing_state(
-    plan: AlgebraicSmoothingLengthPlan,
+    plan: AlgebraicSmoothingLengthPlan | CoupledSummationSmoothingLengthPlan,
     particles: ParticleDiscretization,
     pairs: ParticlePairRelation,
     geometry: ParticlePairGeometry,
@@ -173,7 +174,9 @@ def adaptive_smoothing_state(
             else jnp.asarray(initial_h)
         )
 
-        def body(_, carry):
+        def body(
+            _: Array, carry: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array, Array]:
             h, _, iterations = carry
             rho = variable_h_density(particles, pairs, geometry, kernel, h, execution)
             target, _ = plan.evaluate(particles, rho)

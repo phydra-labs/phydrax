@@ -40,7 +40,7 @@ class DiscretizationRecord(StrictModule, NonTrainableState):
         precision_evidence_id: str | None = None,
         resource_evidence_id: str | None = None,
         record_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(key, DiscretizationKey):
             raise TypeError("key must be a DiscretizationKey.")
         kind = nonempty_identifier("artifact_kind", artifact_kind)
@@ -113,7 +113,7 @@ class DiscretizationBundle(StrictModule, NonTrainableState):
         transfers: Sequence[FieldTransfer] = (),
         stochastic_coupling_ids: Sequence[str] = (),
         bundle_id: str | None = None,
-    ):
+    ) -> None:
         records_ = tuple(records)
         if not records_ or not all(
             isinstance(record, DiscretizationRecord) for record in records_
@@ -204,7 +204,7 @@ class DiscretizationLevel(StrictModule, NonTrainableState):
         transfers: Sequence[FieldTransfer] = (),
         refinements: Sequence[str] = (),
         level_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(bundle, DiscretizationBundle):
             raise TypeError("bundle must be a DiscretizationBundle.")
         parent = (
@@ -251,7 +251,7 @@ class DiscretizationHierarchy(StrictModule, NonTrainableState):
         /,
         *,
         hierarchy_id: str | None = None,
-    ):
+    ) -> None:
         levels_ = tuple(levels)
         if not levels_ or not all(
             isinstance(level, DiscretizationLevel) for level in levels_

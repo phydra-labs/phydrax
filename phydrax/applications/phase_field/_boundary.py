@@ -10,7 +10,8 @@ from collections.abc import Callable, Mapping, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -40,7 +41,7 @@ class PolynomialSurfaceEnergy(AbstractPhaseFieldSurfaceEnergy):
     surface_energy_id: str = eqx.field(static=True)
     time_dependent: bool = eqx.field(static=True)
 
-    def __init__(self, coefficients: Sequence[float] | ArrayLike, /):
+    def __init__(self, coefficients: Sequence[float] | ArrayLike, /) -> None:
         values = np.asarray(coefficients, dtype=np.float64)
         if values.ndim != 1 or values.size == 0 or np.any(~np.isfinite(values)):
             raise ValueError("Surface-energy coefficients must be finite and rank one.")
@@ -80,7 +81,7 @@ class YoungAngleSurfaceEnergy(AbstractPhaseFieldSurfaceEnergy):
         liquid_interface_tension: ArrayLike,
         contact_angle_radians: ArrayLike,
         /,
-    ):
+    ) -> None:
         tension = np.asarray(liquid_interface_tension)
         angle = np.asarray(contact_angle_radians)
         if (
@@ -126,7 +127,7 @@ class PrescribedMicrotractionEnergy(AbstractPhaseFieldSurfaceEnergy):
     surface_energy_id: str = eqx.field(static=True)
     time_dependent: bool = eqx.field(static=True)
 
-    def __init__(self, traction: Callable, /, *, traction_id: str):
+    def __init__(self, traction: Callable, /, *, traction_id: str) -> None:
         if not callable(traction):
             raise TypeError("Prescribed microtraction requires a callable.")
         identifier = str(traction_id)
@@ -154,7 +155,7 @@ class PrescribedPhaseFieldFlux(StrictModule, NonTrainableState):
     evaluator: Callable = eqx.field(static=True)
     flux_id: str = eqx.field(static=True)
 
-    def __init__(self, evaluator: Callable, /, *, flux_id: str):
+    def __init__(self, evaluator: Callable, /, *, flux_id: str) -> None:
         if not callable(evaluator):
             raise TypeError("Prescribed phase-field flux requires a callable.")
         identifier = str(flux_id)
@@ -191,7 +192,7 @@ class PhaseFieldBoundaryPatch(StrictModule, NonTrainableState):
         *,
         surface_energy: AbstractPhaseFieldSurfaceEnergy | None = None,
         mass_flux: PrescribedPhaseFieldFlux | None = None,
-    ):
+    ) -> None:
         patch_name = str(name)
         if not patch_name:
             raise ValueError("Phase-field boundary patch name must be nonempty.")
@@ -241,7 +242,7 @@ class PhaseFieldBoundaryPlan(StrictModule, NonTrainableState):
         /,
         *,
         boundary_set: FiniteElementBoundarySet | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, FiniteElementDiscretization):
             raise TypeError("discretization must be FiniteElementDiscretization.")
         exterior = discretization.exterior_facet_domain

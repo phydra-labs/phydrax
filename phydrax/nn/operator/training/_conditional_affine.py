@@ -7,14 +7,20 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
+from ....typing import parse, PRNGKey
 from ..architectures import ChemicalConditionalAffineOperator
-from ..data import OperatorBatch, OperatorPrediction, OperatorTargetBatch
+from ..data import (
+    FunctionSamples,
+    OperatorBatch,
+    OperatorPrediction,
+    OperatorTargetBatch,
+)
 from ..metrics import operator_l2_loss
 from ._losses import (
     _weighted_case_reduction,
@@ -23,7 +29,7 @@ from ._losses import (
 )
 
 
-Reduction = Literal["mean", "sum"]
+Reduction: TypeAlias = Literal["mean", "sum"]
 
 
 def _loss_fingerprint(kind: str, payload: dict[str, Any], /) -> str:
@@ -40,7 +46,7 @@ def _scaled_case_loss(
     prediction: Array,
     target: Array,
     scale: Array,
-    query,
+    query: FunctionSamples,
     context: OperatorLossContext,
     reduction: Reduction,
     /,
@@ -86,13 +92,14 @@ class ChemicalConditionalAffineDriverLoss(AbstractOperatorLossTerm):
     driver_source: str = "driver_targets"
     reduction: Reduction = "mean"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.name or not self.driver_source:
             raise ValueError("Driver loss names must be non-empty.")
         if not jnp.isfinite(self.weight):
             raise ValueError("Driver loss weight must be finite.")
-        if self.reduction not in ("mean", "sum"):
-            raise ValueError("Driver loss reduction must be 'mean' or 'sum'.")
+        object.__setattr__(
+            self, "reduction", parse(self.reduction, Reduction, "reduction")
+        )
 
     def __call__(
         self,
@@ -102,7 +109,7 @@ class ChemicalConditionalAffineDriverLoss(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -153,13 +160,14 @@ class ChemicalConditionalAffineTeacherForcedLoss(AbstractOperatorLossTerm):
     driver_source: str = "driver_targets"
     reduction: Reduction = "mean"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.name or not self.state_target_field or not self.driver_source:
             raise ValueError("Teacher-forced loss names must be non-empty.")
         if not jnp.isfinite(self.weight):
             raise ValueError("Teacher-forced loss weight must be finite.")
-        if self.reduction not in ("mean", "sum"):
-            raise ValueError("Teacher-forced loss reduction must be 'mean' or 'sum'.")
+        object.__setattr__(
+            self, "reduction", parse(self.reduction, Reduction, "reduction")
+        )
 
     def __call__(
         self,
@@ -169,7 +177,7 @@ class ChemicalConditionalAffineTeacherForcedLoss(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,

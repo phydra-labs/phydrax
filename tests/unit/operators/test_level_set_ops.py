@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -11,15 +14,15 @@ import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 
 
-def _points_1d(values):
+def _points_1d(values: Any) -> Any:
     return frozendict({"x": cx.AxisArray(values[:, None], dims=("point", None))})
 
 
-def test_compact_level_set_regularizations_are_complementary_and_differentiable():
+def test_compact_level_set_regularizations_are_complementary_and_differentiable() -> None:
     domain = phx.domain.Interval1d(-1.0, 1.0)
 
     @domain.Function("x")
-    def level_set(point):
+    def level_set(point: Any) -> Any:
         return point[0]
 
     width = 0.2
@@ -48,14 +51,14 @@ def test_compact_level_set_regularizations_are_complementary_and_differentiable(
     assert delta_values[2] == pytest.approx(1.0 / width)
 
 
-def test_circle_level_set_geometry_and_motion_are_recovered():
+def test_circle_level_set_geometry_and_motion_are_recovered() -> None:
     spatial = phx.domain.GeometryDomain(
         phx.geometry.Circle(center=(0.0, 0.0), radius=3.0).compile()
     )
     domain = spatial @ phx.domain.TimeInterval(0.0, 1.0)
 
     @domain.Function("x", "t")
-    def level_set(point, time):
+    def level_set(point: Any, time: Any) -> Any:
         radius = 1.0 + time
         return jnp.sum(point * point) - radius * radius
 
@@ -93,11 +96,11 @@ def test_circle_level_set_geometry_and_motion_are_recovered():
     np.testing.assert_allclose(coarea(batch).data, 20.0 * radii, atol=1.0e-10)
 
 
-def test_level_set_regularization_rejects_ambiguous_policy_values():
+def test_level_set_regularization_rejects_ambiguous_policy_values() -> None:
     domain = phx.domain.Interval1d(-1.0, 1.0)
 
     @domain.Function("x")
-    def level_set(point):
+    def level_set(point: Any) -> Any:
         return point[0]
 
     with pytest.raises(ValueError, match="width must be finite and positive"):
@@ -106,5 +109,6 @@ def test_level_set_regularization_rejects_ambiguous_policy_values():
         phx.operators.level_set_phase_indicator(
             level_set,
             width=0.1,
+            # ty: ignore[invalid-argument-type]
             phase="unknown",
         )

@@ -8,7 +8,8 @@ from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -31,7 +32,7 @@ class QuantumGeometricTensorResult(StrictModule):
         tensor: ArrayLike,
         berry_connection: ArrayLike,
         normalization_residual: ArrayLike,
-    ):
+    ) -> None:
         self.state = jnp.asarray(state)
         self.tensor = jnp.asarray(tensor)
         self.metric = jnp.real(self.tensor)

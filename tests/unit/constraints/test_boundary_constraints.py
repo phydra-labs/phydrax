@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -9,7 +12,7 @@ import phydrax as phx
 from phydrax.domain import Boundary, Interval1d
 
 
-def _penalty(condition, *, num_samples=8):
+def _penalty(condition: Any, *, num_samples: Any = 8) -> Any:
     source = phx.integration.per_step(
         phx.integration.mean_over(condition.on),
         phx.integration.MonteCarloPlan(num_samples),
@@ -17,7 +20,7 @@ def _penalty(condition, *, num_samples=8):
     return phx.terms.ResidualPenalty(condition, source)
 
 
-def test_dirichlet_boundary_constraint_zero_when_satisfied():
+def test_dirichlet_boundary_constraint_zero_when_satisfied() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component({"x": Boundary()})
     u = geom.Function()(2.0)
@@ -26,7 +29,7 @@ def test_dirichlet_boundary_constraint_zero_when_satisfied():
     assert jnp.allclose(loss, 0.0)
 
 
-def test_neumann_boundary_constraint_zero_when_satisfied():
+def test_neumann_boundary_constraint_zero_when_satisfied() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component({"x": Boundary()})
 
@@ -36,7 +39,7 @@ def test_neumann_boundary_constraint_zero_when_satisfied():
     assert jnp.allclose(loss, 0.0)
 
 
-def test_robin_boundary_constraint_zero_when_satisfied():
+def test_robin_boundary_constraint_zero_when_satisfied() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component({"x": Boundary()})
 

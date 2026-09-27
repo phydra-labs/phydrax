@@ -5,22 +5,24 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._regulators import FunctionalRGStatus, Regulator, ThresholdQuadraturePlan
 
 
-DerivativeExpansion = Literal["lpa", "lpa-prime"]
+DerivativeExpansion: TypeAlias = Literal["lpa", "lpa-prime"]
 
 
 def _volume_factor(dimension: float) -> float:
@@ -61,7 +63,7 @@ class ONPotentialState(StrictModule):
         potential: ArrayLike,
         wavefunction_renormalization: ArrayLike = 1.0,
         /,
-    ):
+    ) -> None:
         self.potential = jnp.asarray(potential)
         self.wavefunction_renormalization = jnp.asarray(
             wavefunction_renormalization
@@ -113,7 +115,7 @@ class ONLocalPotentialPlan(StrictModule, NonTrainableState):
         *,
         approximation: DerivativeExpansion = "lpa",
         maximum_field_nodes: int = 4096,
-    ):
+    ) -> None:
         components = int(component_count)
         dimension_ = float(dimension)
         capacity = int(maximum_field_nodes)
@@ -125,10 +127,10 @@ class ONLocalPotentialPlan(StrictModule, NonTrainableState):
             components <= 0
             or not 1.0 < dimension_ < 6.0
             or threshold.dimension != dimension_
-            or approximation not in ("lpa", "lpa-prime")
             or capacity < 3
         ):
             raise ValueError("O(N) flow physics or field-node capacity is invalid.")
+        approximation = parse(approximation, DerivativeExpansion, "approximation")
         self.regulator = regulator
         self.threshold = threshold
         self.component_count = components
@@ -163,7 +165,7 @@ class PreparedONLocalPotentialFlow(StrictModule, NonTrainableState):
     second_derivative_matrix: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ONLocalPotentialPlan, field_nodes: ArrayLike, /):
+    def __init__(self, plan: ONLocalPotentialPlan, field_nodes: ArrayLike, /) -> None:
         if not isinstance(plan, ONLocalPotentialPlan):
             raise TypeError("plan must be ONLocalPotentialPlan.")
         nodes = np.asarray(field_nodes, dtype=np.float64)

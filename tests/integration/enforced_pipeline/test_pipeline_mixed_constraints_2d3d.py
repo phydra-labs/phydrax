@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 
@@ -22,7 +25,7 @@ from phydrax.enforcement import (
 )
 
 
-def _paired_batch(domain, xs, ts):
+def _paired_batch(domain: Any, xs: Any, ts: Any) -> Any:
     structure = SampleLayout((("x", "t"),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
@@ -38,12 +41,12 @@ def _paired_batch(domain, xs, ts):
     return PointBatch(points=points, structure=structure)
 
 
-def _eval(domain, u_enforced, xs, ts):
+def _eval(domain: Any, u_enforced: Any, xs: Any, ts: Any) -> Any:
     batch = _paired_batch(domain, xs=xs, ts=ts)
     return jnp.asarray(u_enforced(batch).data).reshape((-1,))
 
 
-def test_mixed_constraints_2d_transient():
+def test_mixed_constraints_2d_transient() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -51,7 +54,7 @@ def test_mixed_constraints_2d_transient():
     domain = geom @ time
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return x[0] + 2.0 * x[1] + t
 
     left = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] < -0.9})
@@ -120,7 +123,7 @@ def test_mixed_constraints_2d_transient():
     assert jnp.isfinite(loss)
 
 
-def test_mixed_constraints_3d_transient():
+def test_mixed_constraints_3d_transient() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile()
     )
@@ -128,7 +131,7 @@ def test_mixed_constraints_3d_transient():
     domain = geom @ time
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return x[0] + x[1] + x[2] + t
 
     left = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] < -0.9})

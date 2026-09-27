@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -24,12 +25,12 @@ from phydrax.applications.skeletal_muscle.continuum._almonacid_2024_material imp
 
 
 @pytest.fixture(autouse=True)
-def _double_precision():
+def _double_precision() -> Any:
     with jax.enable_x64(True):
         yield
 
 
-def _parameters(tissue=1, fraction=0.0):
+def _parameters(tissue: Any = 1, fraction: Any = 0.0) -> Any:
     return Almonacid2024MaterialParameters(
         maximum_fiber_stress_Pa=2e5,
         bulk_modulus_Pa=1e7,
@@ -40,6 +41,7 @@ def _parameters(tissue=1, fraction=0.0):
         fat_scale=0.8 if tissue == 1 else 0.0,
         fat_c1_Pa=1.3e5 if tissue == 1 else 0.0,
         fat_fraction=fraction,
+        # ty: ignore[invalid-argument-type]
         base_coefficients=(0.1990559575103343, 0.3662334826469149, 0.0)
         if tissue == 1
         else (4.6896264975, -3.4551410975, 484.92055395),
@@ -47,18 +49,18 @@ def _parameters(tissue=1, fraction=0.0):
 
 
 def _response(
-    F,
+    F: Any,
     *,
-    tissue=1,
-    parameters=None,
-    previous=None,
-    activation=0.63,
-    pressure=1700.0,
-    dilation=1.013,
-    direction=(1.0, 0.0, 0.0),
-    dt=0.01,
-    dynamic=True,
-):
+    tissue: Any = 1,
+    parameters: Any = None,
+    previous: Any = None,
+    activation: Any = 0.63,
+    pressure: Any = 1700.0,
+    dilation: Any = 1.013,
+    direction: Any = (1.0, 0.0, 0.0),
+    dt: Any = 0.01,
+    dynamic: Any = True,
+) -> Any:
     return almonacid_2024_material_response(
         _parameters(tissue) if parameters is None else parameters,
         F,
@@ -75,8 +77,8 @@ def _response(
 
 @pytest.mark.parametrize("stretch", (0.4, 1.75))
 def test_active_length_support_retains_source_endpoint_value_and_one_sided_derivative(
-    stretch,
-):
+    stretch: Any,
+) -> None:
     harmonics = (
         (0.642587074375392, 1.290128342448810, 0.629168420414746),
         (0.325979591577056, 5.308969899884336, -4.520101562237307),
@@ -107,8 +109,8 @@ def test_active_length_support_retains_source_endpoint_value_and_one_sided_deriv
     ),
 )
 def test_velocity_knots_have_source_right_branch_value_and_derivative(
-    rate, value, derivative
-):
+    rate: Any, value: Any, derivative: Any
+) -> None:
     actual, tangent = jax.value_and_grad(_active_force_velocity)(jnp.asarray(rate))
     np.testing.assert_allclose(actual, value, rtol=0, atol=2e-15)
     np.testing.assert_allclose(tangent, derivative, rtol=0, atol=2e-15)
@@ -132,7 +134,9 @@ def test_velocity_knots_have_source_right_branch_value_and_derivative(
         (True, 1.15, 2.9605686155904847, 19.745861872326614),
     ),
 )
-def test_passive_source_knots_and_energy_primitive(aponeurosis, stretch, stress, tangent):
+def test_passive_source_knots_and_energy_primitive(
+    aponeurosis: Any, stretch: Any, stress: Any, tangent: Any
+) -> None:
     stress_function = lambda x: _passive_fiber(x, aponeurosis=aponeurosis)[0]
     energy_function = lambda x: _passive_fiber(x, aponeurosis=aponeurosis)[1]
     value, derivative = jax.value_and_grad(stress_function)(jnp.asarray(stretch))
@@ -154,12 +158,12 @@ def test_passive_source_knots_and_energy_primitive(aponeurosis, stretch, stress,
 
 @pytest.mark.parametrize("tissue,fraction", ((1, 0.37), (2, 0.0)))
 def test_passive_mixed_energy_generates_stress_and_symmetric_consistent_tangent(
-    tissue, fraction
-):
+    tissue: Any, fraction: Any
+) -> None:
     parameters = _parameters(tissue, fraction)
     F = jnp.asarray(((1.19, 0.12, -0.03), (0.04, 0.94, 0.08), (0.01, 0.0, 1.02)))
 
-    def response(deformation, dilation):
+    def response(deformation: Any, dilation: Any) -> Any:
         return _response(
             deformation,
             tissue=tissue,
@@ -169,7 +173,7 @@ def test_passive_mixed_energy_generates_stress_and_symmetric_consistent_tangent(
             dynamic=False,
         )
 
-    def potential(deformation, dilation):
+    def potential(deformation: Any, dilation: Any) -> Any:
         point = response(deformation, dilation)
         return point.passive_energy_density_J_per_m3 + 1700.0 * point.volume_constraint
 
@@ -187,7 +191,9 @@ def test_passive_mixed_energy_generates_stress_and_symmetric_consistent_tangent(
     )
 
 
-def test_dynamic_stress_is_objective_and_uses_spatial_isochoric_rate_not_secant_length():
+def test_dynamic_stress_is_objective_and_uses_spatial_isochoric_rate_not_secant_length() -> (
+    None
+):
     F = jnp.asarray(((1.17, 0.12, -0.03), (0.04, 0.92, 0.08), (0.01, 0.0, 1.04)))
     previous = jnp.asarray(((1.16, 0.10, -0.01), (0.03, 0.93, 0.07), (0.0, 0.01, 1.03)))
     direction = jnp.asarray((0.8, 0.0, 0.6))
@@ -228,7 +234,9 @@ def test_dynamic_stress_is_objective_and_uses_spatial_isochoric_rate_not_secant_
     )
 
 
-def test_fat_mixture_scales_actual_parts_and_bulk_without_double_normalizing_fat():
+def test_fat_mixture_scales_actual_parts_and_bulk_without_double_normalizing_fat() -> (
+    None
+):
     F = jnp.diag(jnp.asarray((1.2, 0.96, 0.91)))
     pure = _response(F, parameters=_parameters(fraction=0.0))
     mixed = _response(F, parameters=_parameters(fraction=0.37))
@@ -259,7 +267,9 @@ def test_fat_mixture_scales_actual_parts_and_bulk_without_double_normalizing_fat
     np.testing.assert_allclose(fat.kirchhoff_passive_fiber_Pa, 0.0, atol=0.0)
 
 
-def test_active_power_is_separate_from_passive_energy_and_dynamic_tangent_includes_rate():
+def test_active_power_is_separate_from_passive_energy_and_dynamic_tangent_includes_rate() -> (
+    None
+):
     F = jnp.diag(jnp.asarray((1.1, 0.97, 0.96)))
     previous = 0.997 * F + jnp.diag(jnp.asarray((0.0, 0.002, 0.0)))
     active = _response(F, previous=previous)
@@ -292,7 +302,7 @@ def test_active_power_is_separate_from_passive_energy_and_dynamic_tangent_includ
         ((float("nan"), 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
     ),
 )
-def test_invalid_deformation_never_becomes_finite_stress_or_zero_gradient(F):
+def test_invalid_deformation_never_becomes_finite_stress_or_zero_gradient(F: Any) -> None:
     deformation = jnp.asarray(F)
     point = _response(deformation, previous=jnp.eye(3))
     assert not bool(point.admissible)
@@ -305,7 +315,7 @@ def test_invalid_deformation_never_becomes_finite_stress_or_zero_gradient(F):
     assert not bool(jnp.any(jnp.isfinite(gradient)))
 
 
-def test_small_nonunit_direction_retains_finite_passive_energy_gradient():
+def test_small_nonunit_direction_retains_finite_passive_energy_gradient() -> None:
     deformation = jnp.eye(3)
     response = _response(
         deformation,
@@ -329,7 +339,7 @@ def test_small_nonunit_direction_retains_finite_passive_energy_gradient():
     np.testing.assert_allclose(gradient, response.first_piola_Pa, rtol=0, atol=1e-9)
 
 
-def test_invalid_mixed_state_and_aponeurosis_fat_are_rejected_inside_transforms():
+def test_invalid_mixed_state_and_aponeurosis_fat_are_rejected_inside_transforms() -> None:
     parameters = eqx.tree_at(lambda p: p.fat_fraction, _parameters(2), jnp.asarray(0.1))
     incompatible = _response(jnp.eye(3), tissue=2, parameters=parameters)
     assert not bool(incompatible.admissible)

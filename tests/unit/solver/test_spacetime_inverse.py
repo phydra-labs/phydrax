@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,13 +14,13 @@ import phydrax as phx
 
 
 class _ConstantRawLapse(eqx.Module):
-    def __call__(self, coordinates):
+    def __call__(self, coordinates: Any) -> Any:
         minimum = jnp.asarray(1e-6, dtype=coordinates.dtype)
         return jnp.log(jnp.expm1(1.0 - minimum))
 
 
 class _ZeroShift(eqx.Module):
-    def __call__(self, coordinates):
+    def __call__(self, coordinates: Any) -> Any:
         return jnp.zeros((3,), dtype=coordinates.dtype)
 
 
@@ -25,16 +28,16 @@ class _IsotropicRawFactor(eqx.Module):
     expansion: jax.Array = phx.parameter_field()
     baseline: float = eqx.field(static=True)
 
-    def __init__(self, expansion):
+    def __init__(self, expansion: Any) -> None:
         self.expansion = jnp.asarray(expansion)
         self.baseline = 0.4
 
-    def __call__(self, coordinates):
+    def __call__(self, coordinates: Any) -> Any:
         diagonal = self.baseline + self.expansion * coordinates[0]
         return jnp.eye(3, dtype=coordinates.dtype) * diagonal
 
 
-def _parameterization(expansion, chart):
+def _parameterization(expansion: Any, chart: Any) -> Any:
     return phx.metrix.ADMParameterization(
         _ConstantRawLapse(),
         _ZeroShift(),
@@ -43,7 +46,10 @@ def _parameterization(expansion, chart):
     )
 
 
-def test_functional_solver_recovers_one_signature_safe_spacetime_from_shared_observables():
+def test_functional_solver_recovers_one_signature_safe_spacetime_from_shared_observables() -> (
+    None
+):
+    # ty: ignore[invalid-argument-type]
     domain = phx.domain.HyperRectangle([-1.0] * 4, [1.0] * 4, label="x")
     component = domain.component()
     chart = phx.metrix.CoordinateChart("inverse_adm", ("t", "x", "y", "z"))
@@ -67,7 +73,7 @@ def test_functional_solver_recovers_one_signature_safe_spacetime_from_shared_obs
         var="x",
     )
 
-    def scalar_curvature_observable(candidate_field):
+    def scalar_curvature_observable(candidate_field: Any) -> Any:
         candidate_metric = phx.operators.lorentzian_metric_from_field(
             candidate_field,
             chart=chart,

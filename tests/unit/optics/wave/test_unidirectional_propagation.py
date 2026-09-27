@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -49,7 +52,7 @@ def _provenance() -> RefractiveIndexProvenance:
     return RefractiveIndexProvenance(manifest, record_id="analytic-test-law")
 
 
-def _grids(spatial_count: int = 4, temporal_count: int = 64):
+def _grids(spatial_count: int = 4, temporal_count: int = 64) -> Any:
     plane_grid = TensorGridPlan(
         (FourierAxisSpec(spatial_count), FourierAxisSpec(spatial_count)),
         axis_names=("u", "v"),
@@ -62,7 +65,7 @@ def _grids(spatial_count: int = 4, temporal_count: int = 64):
     return space, time_space
 
 
-def _constant_law(index=1.5):
+def _constant_law(index: Any = 1.5) -> Any:
     return ConstantRefractiveIndex(
         index,
         validity=AngularFrequencyValidity(0.5, 40.0),
@@ -72,7 +75,7 @@ def _constant_law(index=1.5):
     )
 
 
-def _cauchy_law():
+def _cauchy_law() -> Any:
     return CauchyRefractiveIndex(
         jnp.asarray([1.4, 0.012]),
         1.0,
@@ -83,7 +86,7 @@ def _cauchy_law():
     )
 
 
-def _mode_field(space, time_space, mode: int, amplitude=1.0):
+def _mode_field(space: Any, time_space: Any, mode: int, amplitude: Any = 1.0) -> Any:
     time = time_space.coordinates
     omega = float(mode)
     values = amplitude * jnp.exp(-1j * omega * time)
@@ -93,7 +96,7 @@ def _mode_field(space, time_space, mode: int, amplitude=1.0):
     )
 
 
-def _plan(space, time_space, omega, steps, **overrides):
+def _plan(space: Any, time_space: Any, omega: Any, steps: Any, **overrides: Any) -> Any:
     options = {
         "dealias_fraction": 1.0,
         "edge_guard_fraction": 0.05,
@@ -110,11 +113,12 @@ def _plan(space, time_space, omega, steps, **overrides):
         omega,
         polarization="scalar",
         step_count=steps,
+        # ty: ignore[invalid-argument-type]
         **options,
     )
 
 
-def test_zero_susceptibility_has_linear_parity_and_dispersive_phase():
+def test_zero_susceptibility_has_linear_parity_and_dispersive_phase() -> None:
     space, time_space = _grids()
     mode = 9
     field = _mode_field(space, time_space, mode)
@@ -141,7 +145,7 @@ def test_zero_susceptibility_has_linear_parity_and_dispersive_phase():
     assert jnp.all(result.response_evaluation.ledger.optical_work_density == 0.0)
 
 
-def test_scalar_kerr_matches_b_integral_and_has_fourth_order_refinement():
+def test_scalar_kerr_matches_b_integral_and_has_fourth_order_refinement() -> None:
     space, time_space = _grids()
     mode = 12
     amplitude = 0.8
@@ -179,7 +183,7 @@ def test_scalar_kerr_matches_b_integral_and_has_fourth_order_refinement():
     assert errors[1] / errors[2] >= 8.0
 
 
-def test_phase_matched_chi2_preserves_manley_rowe_energy():
+def test_phase_matched_chi2_preserves_manley_rowe_energy() -> None:
     space, time_space = _grids()
     time = time_space.coordinates
     fundamental_mode = 5
@@ -215,7 +219,7 @@ def test_phase_matched_chi2_preserves_manley_rowe_energy():
     assert jnp.abs(final_energy / initial_energy - 1.0) < 1.0e-4
 
 
-def test_spectral_edge_violation_has_explicit_status():
+def test_spectral_edge_violation_has_explicit_status() -> None:
     space, time_space = _grids()
     field = _mode_field(space, time_space, 31)
     plan = _plan(
@@ -238,7 +242,7 @@ def test_spectral_edge_violation_has_explicit_status():
     assert result.evidence.spectral_edge_fraction > 0.99
 
 
-def test_execution_is_deterministic_and_has_smooth_runtime_gradients():
+def test_execution_is_deterministic_and_has_smooth_runtime_gradients() -> None:
     space, time_space = _grids(4, 32)
     mode = 6
     law = _cauchy_law()
@@ -254,7 +258,7 @@ def test_execution_is_deterministic_and_has_smooth_runtime_gradients():
 
     carrier = field.values / 0.4
 
-    def objective(amplitude, chi3, distance):
+    def objective(amplitude: Any, chi3: Any, distance: Any) -> Any:
         varied_field = AnalyticPulseField(
             space,
             time_space,
@@ -273,7 +277,7 @@ def test_execution_is_deterministic_and_has_smooth_runtime_gradients():
     assert all(jnp.isfinite(value) for value in gradients)
     assert all(value != 0.0 for value in gradients)
 
-    def dispersion_objective(coefficients):
+    def dispersion_objective(coefficients: Any) -> Any:
         varied_law = eqx.tree_at(
             lambda selected: selected.coefficients, law, coefficients
         )
@@ -286,7 +290,7 @@ def test_execution_is_deterministic_and_has_smooth_runtime_gradients():
     assert jnp.any(dispersion_gradient != 0.0)
 
 
-def test_workspace_is_rejected_before_cartesian_propagation_preparation():
+def test_workspace_is_rejected_before_cartesian_propagation_preparation() -> None:
     space, time_space = _grids()
     plan = _plan(
         space,

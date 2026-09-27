@@ -2,8 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from fractions import Fraction
 from itertools import product
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -30,7 +32,7 @@ requires_meshcore = pytest.mark.skipif(
 ULP = 2.0**-53
 
 
-def _det(matrix):
+def _det(matrix: Any) -> Any:
     size = len(matrix)
     if size == 1:
         return matrix[0][0]
@@ -43,30 +45,30 @@ def _det(matrix):
     return total
 
 
-def _sign(value):
+def _sign(value: Any) -> Any:
     return (value > 0) - (value < 0)
 
 
-def _rows(*points):
+def _rows(*points: Any) -> Any:
     return [[Fraction(float(value)) for value in point] for point in points]
 
 
-def reference_orient2d(a, b, c):
+def reference_orient2d(a: Any, b: Any, c: Any) -> Any:
     rows = _rows(a, b, c)
     return _sign(_det([row + [Fraction(1)] for row in rows]))
 
 
-def reference_orient3d(a, b, c, d):
+def reference_orient3d(a: Any, b: Any, c: Any, d: Any) -> Any:
     rows = _rows(a, b, c, d)
     return -_sign(_det([row + [Fraction(1)] for row in rows]))
 
 
-def reference_incircle(a, b, c, d):
+def reference_incircle(a: Any, b: Any, c: Any, d: Any) -> Any:
     rows = _rows(a, b, c, d)
     return _sign(_det([row + [row[0] ** 2 + row[1] ** 2, Fraction(1)] for row in rows]))
 
 
-def reference_insphere(a, b, c, d, e):
+def reference_insphere(a: Any, b: Any, c: Any, d: Any, e: Any) -> Any:
     rows = _rows(a, b, c, d, e)
     lifted = [
         row + [row[0] ** 2 + row[1] ** 2 + row[2] ** 2, Fraction(1)] for row in rows
@@ -74,11 +76,11 @@ def reference_insphere(a, b, c, d, e):
     return -_sign(_det(lifted))
 
 
-def _grid(offsets, dimension):
+def _grid(offsets: Any, dimension: Any) -> Any:
     return np.asarray(list(product(offsets, repeat=dimension)), dtype=np.float64)
 
 
-def _orient2d_case():
+def _orient2d_case() -> Any:
     # Kettner et al.: points near the line y = x with 2^-53 perturbations.
     a = 0.5 + _grid(np.arange(24) * ULP, 2)
     b = np.broadcast_to(np.asarray([12.0, 12.0]), a.shape)
@@ -86,7 +88,7 @@ def _orient2d_case():
     return (a, b, c), reference_orient2d, orient2d
 
 
-def _orient3d_case():
+def _orient3d_case() -> Any:
     # Plane z = y through three points; the query grid straddles it.
     d = 0.5 + _grid(np.arange(8) * ULP, 3)
     a = np.broadcast_to(np.asarray([1.0, 12.0, 12.0]), d.shape)
@@ -95,7 +97,7 @@ def _orient3d_case():
     return (a, b, c, d), reference_orient3d, orient3d
 
 
-def _incircle_case():
+def _incircle_case() -> Any:
     # Unit circle through (1, 0), (0, 1), (-1, 0); queries around (0, -1).
     offsets = _grid(np.arange(-8, 8) * ULP, 2)
     d = np.asarray([0.0, -1.0]) + offsets
@@ -105,7 +107,7 @@ def _incircle_case():
     return (a, b, c, d), reference_incircle, incircle
 
 
-def _insphere_case():
+def _insphere_case() -> Any:
     # Unit sphere through four axis points; queries around (0, 0, -1).
     offsets = _grid(np.arange(-3, 3) * ULP, 3)
     e = np.asarray([0.0, 0.0, -1.0]) + offsets
@@ -122,11 +124,11 @@ CASES = {
 }
 
 
-def _reference(reference, arrays):
+def _reference(reference: Any, arrays: Any) -> Any:
     return np.asarray([reference(*row) for row in zip(*arrays, strict=True)])
 
 
-def _with_generic_rows(arrays):
+def _with_generic_rows(arrays: Any) -> Any:
     # Generic random rows that a sound filter must resolve.
     rng = np.random.default_rng(11)
     generic = tuple(rng.standard_normal((64, array.shape[1])) for array in arrays)
@@ -137,7 +139,7 @@ def _with_generic_rows(arrays):
 
 
 @pytest.mark.parametrize("name", sorted(CASES))
-def test_filters_never_certify_a_wrong_sign_on_near_degenerate_grids(name):
+def test_filters_never_certify_a_wrong_sign_on_near_degenerate_grids(name: Any) -> None:
     near_degenerate, reference, predicate = CASES[name]()
     arrays = _with_generic_rows(near_degenerate)
     expected = _reference(reference, arrays)
@@ -162,7 +164,7 @@ def test_filters_never_certify_a_wrong_sign_on_near_degenerate_grids(name):
 @requires_meshcore
 @pytest.mark.meshcore
 @pytest.mark.parametrize("name", sorted(CASES))
-def test_exact_mode_matches_rational_reference(name):
+def test_exact_mode_matches_rational_reference(name: Any) -> None:
     arrays, reference, predicate = CASES[name]()
     expected = _reference(reference, arrays)
     result = predicate(*arrays, mode=PredicateMode.EXACT)
@@ -174,7 +176,7 @@ def test_exact_mode_matches_rational_reference(name):
 
 @requires_meshcore
 @pytest.mark.meshcore
-def test_exact_signs_are_antisymmetric_under_argument_exchange():
+def test_exact_signs_are_antisymmetric_under_argument_exchange() -> None:
     rng = np.random.default_rng(3)
     # A small integer lattice makes many configurations exactly degenerate.
     points = rng.integers(-2, 3, size=(400, 5, 3)).astype(np.float64)
@@ -199,7 +201,7 @@ def test_exact_signs_are_antisymmetric_under_argument_exchange():
     assert np.any(o2 == 0) and np.any(o3 == 0)
 
 
-def test_structural_zeros_are_certified_without_meshcore():
+def test_structural_zeros_are_certified_without_meshcore() -> None:
     collinear = orient2d([0.0, 0.0], [1.0, 0.0], [5.0, 0.0], mode=PredicateMode.FILTERED)
     coplanar = orient3d(
         [0.0, 0.0, 2.0],
@@ -216,7 +218,7 @@ def test_structural_zeros_are_certified_without_meshcore():
         assert int(result.signs) == PredicateSign.ZERO
 
 
-def test_device_filter_refuses_subnormal_and_nonfinite_inputs():
+def test_device_filter_refuses_subnormal_and_nonfinite_inputs() -> None:
     tiny = np.finfo(np.float64).tiny / 4.0
     a = jnp.asarray([[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]])
     b = jnp.asarray([[tiny, 0.0], [1.0, 0.0], [jnp.inf, 0.0]])
@@ -226,7 +228,7 @@ def test_device_filter_refuses_subnormal_and_nonfinite_inputs():
     assert int(result.signs[1]) == PredicateSign.POSITIVE
 
 
-def test_device_filter_matches_float32_orientation_conventions():
+def test_device_filter_matches_float32_orientation_conventions() -> None:
     a = jnp.zeros((3,), dtype=jnp.float32)
     x = jnp.asarray([1.0, 0.0, 0.0], dtype=jnp.float32)
     y = jnp.asarray([0.0, 1.0, 0.0], dtype=jnp.float32)
@@ -239,7 +241,7 @@ def test_device_filter_matches_float32_orientation_conventions():
     assert int(incircle(a[:2], x[:2], y[:2], inside[:2], mode=mode).signs) == 1
 
 
-def test_missing_library_is_explicit(monkeypatch, tmp_path):
+def test_missing_library_is_explicit(monkeypatch: Any, tmp_path: Any) -> None:
     monkeypatch.setenv("PHYDRAX_MESHCORE_LIBRARY", str(tmp_path / "missing.dylib"))
     assert not meshcore_available()
     assert resolve_host_predicate_mode(PredicateMode.EXACT) is PredicateMode.FILTERED
@@ -251,11 +253,12 @@ def test_missing_library_is_explicit(monkeypatch, tmp_path):
         resolve_host_predicate_mode(PredicateMode.FILTERED_DEVICE)
 
 
-def test_geometry_precision_policy_predicate_mode():
+def test_geometry_precision_policy_predicate_mode() -> None:
     default = GeometryPrecisionPolicy()
     filtered = GeometryPrecisionPolicy(predicate_mode=PredicateMode.FILTERED)
     assert default.predicate_mode is PredicateMode.EXACT
     assert filtered.predicate_mode is PredicateMode.FILTERED
     assert default.policy_id != filtered.policy_id
     with pytest.raises(TypeError):
+        # ty: ignore[invalid-argument-type]
         GeometryPrecisionPolicy(predicate_mode="exact")

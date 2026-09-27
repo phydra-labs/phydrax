@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._trainable import NonTrainableState
@@ -37,7 +38,7 @@ class NeoHookeanMPMConstitutivePlan(
     capabilities: MPMConstitutiveCapabilities
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /):
+    def __init__(self, dimension: int, /) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (1, 2, 3):
             raise ValueError("Neo-Hookean MPM supports dimensions one, two, and three.")
@@ -65,7 +66,7 @@ class NeoHookeanMPMConstitutivePlan(
             }
         )
 
-    def _embed(self, deformation):
+    def _embed(self, deformation: Array) -> Array:
         if self.dimension == 3:
             return deformation
         shape = deformation.shape[:-2] + (3, 3)
@@ -75,7 +76,9 @@ class NeoHookeanMPMConstitutivePlan(
             embedded = embedded.at[..., axis, axis].set(1.0)
         return embedded
 
-    def initialize_state(self, batch_shape, dtype, /):
+    def initialize_state(
+        self, batch_shape: tuple[int, ...], dtype: DTypeLike, /
+    ) -> Array:
         return jnp.empty(tuple(batch_shape) + (0,), dtype=dtype)
 
     def evaluate(

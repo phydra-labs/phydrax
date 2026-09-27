@@ -1,8 +1,10 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
-from jaxtyping import Array
+from jax import Array
 
 import phydrax as phx
 
@@ -13,17 +15,19 @@ class _BrownianTransition(phx.nn.operator.AbstractProbabilisticOperatorModel):
     in_size: str
     out_size: str
 
-    def __init__(self, scale_power=0.5, uncertainty_source="process"):
+    def __init__(
+        self, scale_power: Any = 0.5, uncertainty_source: Any = "process"
+    ) -> None:
         self.scale_power = jnp.asarray(scale_power, dtype="float64")
         self.uncertainty_source = str(uncertainty_source)
         self.in_size = "scalar"
         self.out_size = "scalar"
 
     @property
-    def operator_output_specs(self):
+    def operator_output_specs(self) -> Any:
         return {"output": phx.nn.operator.OperatorOutputSpec("scalar")}
 
-    def distribution(self, batch, /, *, key=None):
+    def distribution(self, batch: Any, /, *, key: Any = None) -> Any:
         state = batch.input("state").values
         duration = batch.input("duration").values[..., 0]
         scale = jnp.broadcast_to(
@@ -38,11 +42,12 @@ class _BrownianTransition(phx.nn.operator.AbstractProbabilisticOperatorModel):
             output_spec=phx.nn.operator.OperatorOutputSpec("scalar"),
             case_axes=batch.case_axes,
             case_shape=batch.case_shape,
+            # ty: ignore[invalid-argument-type]
             uncertainty_source=self.uncertainty_source,
         )
 
 
-def _transition_batch(cases=2, size=4):
+def _transition_batch(cases: Any = 2, size: Any = 4) -> Any:
     axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, size, endpoint=False),
@@ -61,7 +66,7 @@ def _transition_batch(cases=2, size=4):
     )
 
 
-def _condition(batch, duration):
+def _condition(batch: Any, duration: Any) -> Any:
     values = jnp.broadcast_to(
         jnp.asarray(duration)[..., None],
         batch.input("duration").values.shape,
@@ -69,11 +74,11 @@ def _condition(batch, duration):
     return eqx.tree_at(lambda item: item.inputs["duration"].values, batch, values)
 
 
-def _advance(batch, values):
+def _advance(batch: Any, values: Any) -> Any:
     return eqx.tree_at(lambda item: item.inputs["state"].values, batch, values)
 
 
-def test_energy_distance_is_zero_for_identical_ensembles_and_chunk_invariant():
+def test_energy_distance_is_zero_for_identical_ensembles_and_chunk_invariant() -> None:
     left = jr.normal(jr.key(0), (17, 3, 4))
     right = left + 0.6
     identical = phx.uq.energy_distance(left, left)
@@ -89,7 +94,7 @@ def test_energy_distance_is_zero_for_identical_ensembles_and_chunk_invariant():
         phx.uq.energy_distance(left, right, beta=0.0)
 
 
-def test_operator_ensemble_energy_distance_respects_query_measure_and_geometry():
+def test_operator_ensemble_energy_distance_respects_query_measure_and_geometry() -> None:
     batch = _transition_batch(cases=2, size=4)
     left_samples = jr.normal(jr.key(1), (8, 2, 4))
     right_samples = left_samples + jnp.asarray([0.0, 0.2, 0.4, 0.8])
@@ -141,7 +146,9 @@ def test_operator_ensemble_energy_distance_respects_query_measure_and_geometry()
         phx.uq.operator_ensemble_energy_distance(left, shifted)
 
 
-def test_distributional_semigroup_recognizes_brownian_composition_and_key_replay():
+def test_distributional_semigroup_recognizes_brownian_composition_and_key_replay() -> (
+    None
+):
     batch = _transition_batch(cases=2, size=4)
     objective = phx.nn.operator.training.DistributionalSemigroupObjective(
         num_samples=32,
@@ -225,7 +232,7 @@ def test_distributional_semigroup_recognizes_brownian_composition_and_key_replay
         )
 
 
-def test_sinkhorn_distributional_semigroup_recognizes_process_composition():
+def test_sinkhorn_distributional_semigroup_recognizes_process_composition() -> None:
     batch = _transition_batch(cases=2, size=4)
     objective = phx.nn.operator.training.SinkhornDistributionalSemigroupObjective(
         num_samples=8,

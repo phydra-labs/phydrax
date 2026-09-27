@@ -14,7 +14,7 @@ import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
@@ -36,7 +36,10 @@ from phydrax.nn.layers._measure_attention import (
     AttentionKernel,
     MeasureAwareAttention,
 )
-from phydrax.nn.operator.architectures.attention._upt import _feature_norm_regularity
+from phydrax.nn.operator.architectures.attention._upt import (
+    _ChanneledAttentionOptions,
+    _feature_norm_regularity,
+)
 from phydrax.nn.operator.architectures.spectral._fno import Factorization, SpectralConvND
 from phydrax.nn.operator.data import (
     FunctionSamples,
@@ -52,8 +55,10 @@ from phydrax.nn.operator.layers._attention import (
     CodomainAttention,
 )
 
+from .....typing import PRNGKey
 
-def _named_key(key: Key[Array, ""], label: str, /) -> Key[Array, ""]:
+
+def _named_key(key: PRNGKey, label: str, /) -> PRNGKey:
     digest = hashlib.sha256(label.encode("utf-8")).digest()
     return jr.fold_in(key, int.from_bytes(digest[:4], "little"))
 
@@ -107,7 +112,7 @@ class CoDAOperatorState(StrictModule):
         quadrature_weights: Array,
         case_shape: Sequence[int],
         layer_values: Sequence[Array] = (),
-    ):
+    ) -> None:
         values_ = jnp.asarray(values)
         cases = tuple(case_shape)
         if values_.ndim < len(cases) + 3:
@@ -160,8 +165,8 @@ class CoDABlock(StrictModule):
         feed_forward_multiplier: float,
         factorization: Factorization,
         rank: int | float,
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         self.width = int(width)
         self.spatial_ndim = int(spatial_ndim)
         hidden = round(float(feed_forward_multiplier) * self.width)
@@ -349,8 +354,8 @@ class CoDANO(AbstractEncodedOperatorModel):
         attention_execution: AttentionExecution = "auto",
         attention_block_size: int = 256,
         accumulation_dtype: str = "input",
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.fields = tuple(fields)
         if not self.fields or len({field.name for field in self.fields}) != len(
             self.fields
@@ -401,17 +406,17 @@ class CoDANO(AbstractEncodedOperatorModel):
             )
             for name in self.source_names
         )
-        attention_kwargs = dict(
-            source_channels=self.width,
-            query_channels=self.width,
-            out_channels=self.width,
-            num_heads=int(num_heads),
-            head_dim=int(head_dim),
-            kernel=attention_kernel,
-            execution=attention_execution,
-            block_size=attention_block_size,
-            accumulation_dtype=accumulation_dtype,
-        )
+        attention_kwargs: _ChanneledAttentionOptions = {
+            "source_channels": self.width,
+            "query_channels": self.width,
+            "out_channels": self.width,
+            "num_heads": int(num_heads),
+            "head_dim": int(head_dim),
+            "kernel": attention_kernel,
+            "execution": attention_execution,
+            "block_size": attention_block_size,
+            "accumulation_dtype": accumulation_dtype,
+        }
         self.source_transfer = tuple(
             MeasureAwareAttention(
                 key=_named_key(key, f"source_transfer:{name}"),

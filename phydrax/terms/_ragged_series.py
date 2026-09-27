@@ -10,7 +10,8 @@ from typing import Any, Literal
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 from phydrax.domain import (
@@ -25,6 +26,7 @@ from phydrax.domain import (
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
+from ..typing import PRNGKey
 from ._data_metrics import (
     case_sample_count,
     normalize_case_sampling,
@@ -50,7 +52,7 @@ class RaggedSeriesSupervisedBatch(StrictModule):
         points: PointBatch,
         target: ArrayLike,
         indices: ArrayLike,
-    ):
+    ) -> None:
         self.points = points
         self.target = jnp.asarray(target, dtype=jnp.float64)
         self.indices = jnp.asarray(indices, dtype=jnp.int32)
@@ -101,7 +103,7 @@ class RaggedSeriesSupervisedTerm(AbstractSamplingTerm):
         indices: ArrayLike | None = None,
         label: str | None = None,
         data_accuracy_eps: float = 1e-12,
-    ):
+    ) -> None:
         """Create a ragged-series supervised data constraint.
 
         Parameters:
@@ -318,7 +320,7 @@ class RaggedSeriesSupervisedTerm(AbstractSamplingTerm):
     def sample(
         self,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Any:
         """Draw a case mini-batch and return aligned model inputs and targets."""
         domain = self.domain
@@ -358,7 +360,7 @@ class RaggedSeriesSupervisedTerm(AbstractSamplingTerm):
         batch: RaggedSeriesSupervisedBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         var = self.fields[0]
@@ -374,7 +376,7 @@ class RaggedSeriesSupervisedTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: RaggedSeriesSupervisedBatch | None = None,
         **kwargs: Any,
     ) -> dict[str, Array]:
@@ -392,7 +394,7 @@ class RaggedSeriesSupervisedTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: RaggedSeriesSupervisedBatch | None = None,
         **kwargs: Any,

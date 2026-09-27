@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _problem(*, step_valid=None):
+def _problem(*, step_valid: Any = None) -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0, 1.5]),
         jnp.asarray([[1.0], [2.0], [2.0]]),
@@ -47,7 +50,7 @@ def _problem(*, step_valid=None):
     )
 
 
-def test_state_space_path_density_decomposes_normalized_model_terms():
+def test_state_space_path_density_decomposes_normalized_model_terms() -> None:
     problem = _problem()
     states = jnp.asarray([[0.0], [0.5], [1.0], [1.5]])
     result = jax.jit(phx.uq.state_space_path_log_density)(problem, states)
@@ -62,7 +65,7 @@ def test_state_space_path_density_decomposes_normalized_model_terms():
     )
 
 
-def test_state_space_path_density_requires_frozen_padding():
+def test_state_space_path_density_requires_frozen_padding() -> None:
     problem = _problem(step_valid=jnp.asarray([True, True, False]))
     frozen = phx.uq.state_space_path_log_density(
         problem,
@@ -80,7 +83,7 @@ def test_state_space_path_density_requires_frozen_padding():
     assert frozen.observation[-1] == 0.0
 
 
-def test_gaussian_markov_family_sampling_and_density_are_consistent():
+def test_gaussian_markov_family_sampling_and_density_are_consistent() -> None:
     problem = _problem(step_valid=jnp.asarray([True, True, False]))
     family = phx.uq.GaussianMarkovVariationalFamily.from_problem(problem)
     states, sampled_log_prob = family.sample_and_log_prob(
@@ -94,7 +97,7 @@ def test_gaussian_markov_family_sampling_and_density_are_consistent():
     assert jnp.array_equal(states[:, -1], states[:, -2])
 
 
-def test_full_path_variational_matches_linear_gaussian_smoother_means():
+def test_full_path_variational_matches_linear_gaussian_smoother_means() -> None:
     problem = _problem()
     exact = phx.uq.rts_smoother(phx.uq.kalman_filter(problem))
     result = phx.uq.fit_state_space_variational(

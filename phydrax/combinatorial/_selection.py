@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 
 def stable_masked_order(values: Array, valid: Array, /) -> Array:

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,14 +13,14 @@ import pytest
 import phydrax as phx
 
 
-def test_binary_classification_matches_weighted_bernoulli_nll_and_metrics():
+def test_binary_classification_matches_weighted_bernoulli_nll_and_metrics() -> None:
     logits = jnp.asarray([-2.0, -0.4, 0.6, 2.2])
     domain = phx.domain.DatasetDomain(logits[:, None])
     targets = jnp.asarray([0, 0, 1, 1], dtype=jnp.int32)
     weights = jnp.asarray([1.0, 2.0, 3.0, 4.0])
 
     @domain.Function("data")
-    def field(row):
+    def field(row: Any) -> Any:
         return row[0]
 
     term = phx.terms.SupervisedClassificationTerm(
@@ -46,7 +49,7 @@ def test_binary_classification_matches_weighted_bernoulli_nll_and_metrics():
     assert 0.0 <= float(metrics["data_brier_score"]) < 0.25
 
 
-def test_multiclass_classification_matches_log_softmax_and_is_shift_invariant():
+def test_multiclass_classification_matches_log_softmax_and_is_shift_invariant() -> None:
     logits = jnp.asarray(
         [
             [3.0, 0.2, -1.0],
@@ -59,11 +62,11 @@ def test_multiclass_classification_matches_log_softmax_and_is_shift_invariant():
     targets = jnp.asarray([0, 1, 2, 0], dtype=jnp.int32)
 
     @domain.Function("data")
-    def field(row):
+    def field(row: Any) -> Any:
         return row
 
     @domain.Function("data")
-    def shifted_field(row):
+    def shifted_field(row: Any) -> Any:
         return row + 17.0
 
     term = phx.terms.SupervisedClassificationTerm(
@@ -92,7 +95,7 @@ def test_multiclass_classification_matches_log_softmax_and_is_shift_invariant():
     assert bool(metrics["data_valid"])
 
 
-def test_zero_weight_short_circuits_nonfinite_nll_and_gradient():
+def test_zero_weight_short_circuits_nonfinite_nll_and_gradient() -> None:
     domain = phx.domain.DatasetDomain(jnp.asarray([[1.0], [2.0]]))
     term = phx.terms.SupervisedClassificationTerm(
         "u",
@@ -104,7 +107,7 @@ def test_zero_weight_short_circuits_nonfinite_nll_and_gradient():
     )
     batch = term.observed_batch()
 
-    def objective(coefficient):
+    def objective(coefficient: Any) -> Any:
         field = domain.Function("data")(
             lambda row: coefficient * row[0] / jnp.asarray(0.0)
         )
@@ -117,7 +120,7 @@ def test_zero_weight_short_circuits_nonfinite_nll_and_gradient():
     assert jnp.isfinite(gradient)
 
 
-def test_classification_validates_schema_targets_masks_and_output_width():
+def test_classification_validates_schema_targets_masks_and_output_width() -> None:
     domain = phx.domain.DatasetDomain(jnp.asarray([[2.0], [-1.0], [0.5]]))
     sampling = phx.domain.PointSampling(3, design="uniform")
     binary = phx.ml.TargetSchema("binary", class_labels=(0, 1))
@@ -166,7 +169,7 @@ def test_classification_validates_schema_targets_masks_and_output_width():
     assert jnp.array_equal(masked.observed_batch().target, jnp.asarray([0, 1]))
 
     @domain.Function("data")
-    def wrong_width(row):
+    def wrong_width(row: Any) -> Any:
         return jnp.asarray([row[0], -row[0], 0.0])
 
     with pytest.raises(ValueError, match="incompatible"):

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -5,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _astrodynamics_context(scale=None):
+def _astrodynamics_context(scale: Any = None) -> Any:
     astro = phx.applications.astrodynamics
     resolved_scale = astro.AstrodynamicsScaleContract.si() if scale is None else scale
     return astro.AstrodynamicsContext(
@@ -16,14 +18,14 @@ def _astrodynamics_context(scale=None):
 
 
 def _qnm_table(
-    frequency=(0.1, 0.2),
-    damping_time=(10.0, 5.0),
-    mode_indices=((2, 2, 0), (2, 2, 1)),
+    frequency: Any = (0.1, 0.2),
+    damping_time: Any = (10.0, 5.0),
+    mode_indices: Any = ((2, 2, 0), (2, 2, 1)),
     *,
-    source="catalog-a",
-    time_unit="geometric-time",
-    frequency_convention="cycles-per-time",
-):
+    source: Any = "catalog-a",
+    time_unit: Any = "geometric-time",
+    frequency_convention: Any = "cycles-per-time",
+) -> Any:
     physics = phx.applications.astrophysics
     return physics.QnmModeTable(
         frequency,
@@ -35,7 +37,7 @@ def _qnm_table(
     )
 
 
-def test_schwarzschild_1pn_identity_binds_parameters_and_scale_contract():
+def test_schwarzschild_1pn_identity_binds_parameters_and_scale_contract() -> None:
     astro = phx.applications.astrodynamics
     context = _astrodynamics_context()
     baseline = astro.Schwarzschild1PNForce(4.0, context, speed_of_light=10.0)
@@ -71,7 +73,7 @@ def test_schwarzschild_1pn_identity_binds_parameters_and_scale_contract():
         baseline.evaluate(0.0, jnp.ones(5))
 
 
-def test_eos_and_tov_ids_bind_numeric_tables_labels_units_and_radial_grid():
+def test_eos_and_tov_ids_bind_numeric_tables_labels_units_and_radial_grid() -> None:
     compact = phx.applications.compact_objects
     pressure = np.asarray([0.0, 0.1, 0.2])
     energy = np.asarray([1.0, 1.2, 1.4])
@@ -92,26 +94,33 @@ def test_eos_and_tov_ids_bind_numeric_tables_labels_units_and_radial_grid():
     assert len({plan.plan_id, changed_grid.plan_id, changed_eos.plan_id}) == 3
 
 
-def test_malformed_eos_tables_fail_before_entering_tov_workflows():
+def test_malformed_eos_tables_fail_before_entering_tov_workflows() -> None:
     compact = phx.applications.compact_objects
     with pytest.raises(ValueError, match="finite monotone"):
+        # ty: ignore[invalid-argument-type]
         compact.EquationOfStateTable([0.0, 0.1], [1.0, np.nan])
     with pytest.raises(ValueError, match="positive energy density"):
+        # ty: ignore[invalid-argument-type]
         compact.EquationOfStateTable([0.0, 0.1], [0.0, 1.0])
     with pytest.raises(ValueError, match="stable and causal"):
+        # ty: ignore[invalid-argument-type]
         compact.EquationOfStateTable([0.0, 1.0], [1.0, 1.1])
     with pytest.raises(ValueError, match="Every piecewise-linear EOS segment"):
         compact.EquationOfStateTable(
+            # ty: ignore[invalid-argument-type]
             [0.0, 0.01, 1.51, 1.52],
+            # ty: ignore[invalid-argument-type]
             [1.0, 2.0, 3.0, 4.0],
         )
     with pytest.raises(ValueError, match="eos_id"):
+        # ty: ignore[invalid-argument-type]
         compact.EquationOfStateTable([0.0, 0.1], [1.0, 1.2], eos_id=" ")
     with pytest.raises(ValueError, match="geometric units"):
+        # ty: ignore[invalid-argument-type]
         compact.EquationOfStateTable([0.0, 0.1], [1.0, 1.2], unit_system="SI")
 
 
-def test_qnm_and_ringdown_ids_bind_content_units_convention_and_provenance():
+def test_qnm_and_ringdown_ids_bind_content_units_convention_and_provenance() -> None:
     baseline = _qnm_table()
     changed_frequency = _qnm_table(frequency=(0.11, 0.2))
     changed_damping = _qnm_table(damping_time=(11.0, 5.0))
@@ -150,19 +159,25 @@ def test_qnm_and_ringdown_ids_bind_content_units_convention_and_provenance():
     np.testing.assert_allclose(angular, np.exp(-0.5 + 0.5j), atol=1.0e-7)
 
 
-def test_malformed_qnm_catalog_data_fail_explicitly():
+def test_malformed_qnm_catalog_data_fail_explicitly() -> None:
     physics = phx.applications.astrophysics
     provenance = physics.ObservationDataProvenance.native("catalog")
 
     with pytest.raises(ValueError, match="positive damping times"):
+        # ty: ignore[invalid-argument-type]
         physics.QnmModeTable([np.nan], [1.0], [[2, 2, 0]], provenance)
     with pytest.raises(ValueError, match="positive damping times"):
+        # ty: ignore[invalid-argument-type]
         physics.QnmModeTable([0.1], [0.0], [[2, 2, 0]], provenance)
     with pytest.raises(ValueError, match="indices must be integers"):
+        # ty: ignore[invalid-argument-type]
         physics.QnmModeTable([0.1], [1.0], [[2.0, 2.0, 0.5]], provenance)
     with pytest.raises(ValueError, match="unique valid modes"):
+        # ty: ignore[invalid-argument-type]
         physics.QnmModeTable([0.1, 0.2], [1.0, 2.0], [[2, 2, 0], [2, 2, 0]], provenance)
     with pytest.raises(ValueError, match="unique valid modes"):
+        # ty: ignore[invalid-argument-type]
         physics.QnmModeTable([0.1], [1.0], [[-1, 0, 0]], provenance)
     with pytest.raises(TypeError, match="ObservationDataProvenance"):
+        # ty: ignore[invalid-argument-type]
         physics.QnmModeTable([0.1], [1.0], [[2, 2, 0]], "catalog")

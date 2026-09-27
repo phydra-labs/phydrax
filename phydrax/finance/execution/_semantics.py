@@ -13,7 +13,8 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..core import Currency, InstrumentReference
@@ -149,7 +150,7 @@ class ExecutionOrder(StrictModule):
         sequence: int,
         limit_price: ArrayLike | None = None,
         expires_ns: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(instrument, InstrumentReference):
             raise TypeError("instrument must be an InstrumentReference.")
         if not isinstance(side, Side):
@@ -203,7 +204,7 @@ class ExecutionFill(StrictModule):
         executed_ns: int,
         sequence: int,
         fee: ArrayLike = 0.0,
-    ):
+    ) -> None:
         self.quantity = _positive_scalar(quantity, "quantity")
         self.price = _positive_scalar(price, "price")
         self.fee = _nonnegative_scalar(fee, "fee")
@@ -231,7 +232,7 @@ class ExecutionInventory(StrictModule):
         cash: ArrayLike = 0.0,
         quantity: ArrayLike = 0.0,
         fees: ArrayLike = 0.0,
-    ):
+    ) -> None:
         if not isinstance(instrument, InstrumentReference):
             raise TypeError("instrument must be an InstrumentReference.")
         if not isinstance(currency, Currency):
@@ -274,7 +275,7 @@ class ExecutionAction(StrictModule):
         impulse_quantity: ArrayLike = 0.0,
         cancel_active: bool = False,
         action_id: str,
-    ):
+    ) -> None:
         self.market_quantity = _finite_scalar(market_quantity, "market_quantity")
         self.trading_rate = _finite_scalar(trading_rate, "trading_rate")
         self.bid_offset = _nonnegative_scalar(bid_offset, "bid_offset")
@@ -325,7 +326,7 @@ class ExecutionState(StrictModule):
         transient_impact: ArrayLike = 0.0,
         queue_depth: ArrayLike,
         hawkes_excitation: ArrayLike,
-    ):
+    ) -> None:
         queue = jnp.asarray(queue_depth)
         excitation = jnp.asarray(hawkes_excitation)
         if queue.ndim != 1:
@@ -390,7 +391,7 @@ class ExecutionConstraints(StrictModule):
         minimum_quote_offset: float = 0.0,
         maximum_quote_offset: float,
         require_terminal_flat: bool = False,
-    ):
+    ) -> None:
         values = (
             maximum_absolute_inventory,
             maximum_order_quantity,
@@ -454,7 +455,7 @@ class ExecutionEvent(StrictModule):
         order: ExecutionOrder | None = None,
         fill: ExecutionFill | None = None,
         order_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(kind, ExecutionEventKind):
             raise TypeError("kind must be a supported ExecutionEventKind.")
         kind_value = kind
@@ -507,7 +508,7 @@ class ExecutionLedger(StrictModule):
         /,
         *,
         quantity_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(initial_inventory, ExecutionInventory):
             raise TypeError("initial_inventory must be an ExecutionInventory.")
         tolerance = float(quantity_tolerance)
@@ -560,7 +561,9 @@ def _order_index(ledger: ExecutionLedger, order_id: str, /) -> int:
     raise ValueError(f"Unknown order_id {order_id!r}.")
 
 
-def _replace_tuple(values: tuple, index: int, value, /) -> tuple:
+def _replace_tuple(
+    values: tuple[OrderStatus, ...], index: int, value: OrderStatus, /
+) -> tuple[OrderStatus, ...]:
     return values[:index] + (value,) + values[index + 1 :]
 
 

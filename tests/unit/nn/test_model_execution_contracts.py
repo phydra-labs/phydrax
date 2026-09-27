@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import pytest
@@ -27,20 +30,21 @@ _C0_LINEAR = DerivativeRegularity.piecewise_polynomial(continuity=0, degree_boun
 _ALLOW_AE = RegularityPolicy(allow_almost_everywhere=True)
 
 
-def _mlp(**overrides):
+def _mlp(**overrides: Any) -> Any:
     fields = dict(in_size=2, out_size=1, width_size=4, depth=2, key=jax.random.key(0))
     fields.update(overrides)
+    # ty: ignore[invalid-argument-type]
     return MLP(**fields)
 
 
-def _admit(model, order, policy=_ALLOW_AE):
+def _admit(model: Any, order: Any, policy: Any = _ALLOW_AE) -> Any:
     request = DifferentiationRequest(
         (INPUT,), order=order, authority=ComponentAuthority.MODEL
     )
     return model.model_execution_contract().derivative.admit(request, policy=policy)
 
 
-def test_tanh_mlp_is_smooth_to_every_order():
+def test_tanh_mlp_is_smooth_to_every_order() -> None:
     contract = _mlp().model_execution_contract()
     assert contract.regularity == DerivativeRegularity.smooth()
     assert contract.derivative.level(INPUT) is GradientLevel.SMOOTH
@@ -50,7 +54,7 @@ def test_tanh_mlp_is_smooth_to_every_order():
     assert admission.level(INPUT) is GradientLevel.SMOOTH
 
 
-def test_relu_mlp_with_linear_output_rejects_second_derivatives():
+def test_relu_mlp_with_linear_output_rejects_second_derivatives() -> None:
     model = _mlp(activation=jax.nn.relu)
     contract = model.model_execution_contract()
     assert contract.regularity == _C0_LINEAR
@@ -62,7 +66,7 @@ def test_relu_mlp_with_linear_output_rejects_second_derivatives():
     assert laplacian.reasons == ("regularity-degenerate",)
 
 
-def test_relu_mlp_with_tanh_output_has_smooth_pieces():
+def test_relu_mlp_with_tanh_output_has_smooth_pieces() -> None:
     model = _mlp(activation=jax.nn.relu, final_activation=jax.nn.tanh)
     assert model.model_execution_contract().regularity == (
         DerivativeRegularity.piecewise_smooth(continuity=0)
@@ -74,7 +78,7 @@ def test_relu_mlp_with_tanh_output_has_smooth_pieces():
     assert not _admit(model, 2, policy=RegularityPolicy()).supported
 
 
-def test_depth_two_squared_relu_bounds_piece_degree_by_four():
+def test_depth_two_squared_relu_bounds_piece_degree_by_four() -> None:
     model = _mlp(activation=squared_relu)
     regularity = model.model_execution_contract().regularity
     assert regularity == DerivativeRegularity.piecewise_polynomial(
@@ -84,12 +88,12 @@ def test_depth_two_squared_relu_bounds_piece_degree_by_four():
     assert not _admit(model, 5).supported
 
 
-def test_skip_connection_keeps_the_piecewise_linear_bound():
+def test_skip_connection_keeps_the_piecewise_linear_bound() -> None:
     model = _mlp(activation=jax.nn.relu, skip_connection=True)
     assert model.model_execution_contract().regularity == _C0_LINEAR
 
 
-def test_unknown_activation_leaves_regularity_undeclared():
+def test_unknown_activation_leaves_regularity_undeclared() -> None:
     contract = _mlp(activation=lambda x: x * x * x).model_execution_contract()
     assert contract.regularity is None
     assert contract.randomness is None
@@ -98,14 +102,14 @@ def test_unknown_activation_leaves_regularity_undeclared():
     assert rejected.reasons == ("regularity-undeclared",)
 
 
-def test_network_precision_follows_parameter_dtype():
+def test_network_precision_follows_parameter_dtype() -> None:
     precision = _mlp().model_execution_contract().precision
     dtype = _mlp().layers[0].weight.dtype.name
     assert (precision.parameter_dtype, precision.compute_dtype) == (dtype, dtype)
     assert precision.residual_floor(1.0) is None
 
 
-def test_active_dropout_requires_the_inference_state():
+def test_active_dropout_requires_the_inference_state() -> None:
     deterministic = _mlp().model_execution_contract().randomness
     assert deterministic.mode == "deterministic"
     assert not deterministic.requires_inference_state
@@ -126,7 +130,9 @@ def test_active_dropout_requires_the_inference_state():
         ),
     ],
 )
-def test_input_convex_network_carries_its_certificate(activation, regularity):
+def test_input_convex_network_carries_its_certificate(
+    activation: Any, regularity: Any
+) -> None:
     model = InputConvexNetwork(
         in_size=2, width_size=4, depth=2, activation=activation, key=jax.random.key(1)
     )
@@ -142,7 +148,7 @@ def test_input_convex_network_carries_its_certificate(activation, regularity):
     )
 
 
-def test_equinox_mlp_regularity_is_derived_structurally():
+def test_equinox_mlp_regularity_is_derived_structurally() -> None:
     module = eqx.nn.MLP(2, 1, 4, 2, activation=jax.nn.relu, key=jax.random.key(0))
     wrapped = EquinoxModel(module, in_size=2, out_size=1)
     assert wrapped.model_execution_contract().regularity == _C0_LINEAR
@@ -162,7 +168,7 @@ def test_equinox_mlp_regularity_is_derived_structurally():
     )
 
 
-def test_equinox_unknown_layers_stay_undeclared():
+def test_equinox_unknown_layers_stay_undeclared() -> None:
     module = eqx.nn.MLP(2, 1, 4, 1, activation=lambda x: x * x * x, key=jax.random.key(0))
     wrapped = EquinoxModel(module, in_size=2, out_size=1)
     assert wrapped.model_execution_contract().regularity is None
@@ -172,7 +178,7 @@ def test_equinox_unknown_layers_stay_undeclared():
     assert embedding.model_execution_contract().regularity is None
 
 
-def test_equinox_sequential_dropout_requires_the_inference_state():
+def test_equinox_sequential_dropout_requires_the_inference_state() -> None:
     module = eqx.nn.Sequential(
         [
             eqx.nn.Linear(2, 3, key=jax.random.key(0)),
@@ -183,10 +189,11 @@ def test_equinox_sequential_dropout_requires_the_inference_state():
     )
     contract = EquinoxModel(module, in_size=2, out_size=1).model_execution_contract()
     assert contract.regularity == DerivativeRegularity.smooth()
+    # ty: ignore[unresolved-attribute]
     assert contract.randomness.requires_inference_state
 
 
-def test_frozen_model_delegates_its_contract():
+def test_frozen_model_delegates_its_contract() -> None:
     model = _mlp(activation=jax.nn.relu)
     assert (
         FrozenModel(model).model_execution_contract().contract_id

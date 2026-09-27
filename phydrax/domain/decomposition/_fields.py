@@ -11,8 +11,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax import Array
 
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from .._function import DomainFunction
 from ._cover import SubdomainCover
 
@@ -47,7 +49,7 @@ class LocalFieldRef(StrictModule):
     field_id: str = eqx.field(static=True)
     patch_id: str = eqx.field(static=True)
 
-    def __init__(self, field_id: str, patch_id: str, /):
+    def __init__(self, field_id: str, patch_id: str, /) -> None:
         self.field_id = _identifier(field_id, "field_id")
         self.patch_id = _identifier(patch_id, "patch_id")
 
@@ -69,7 +71,7 @@ class LocalFieldFamily(StrictModule):
         cover: SubdomainCover,
         fields: Mapping[str, DomainFunction],
         /,
-    ):
+    ) -> None:
         if not isinstance(cover, SubdomainCover):
             raise TypeError("cover must be a SubdomainCover.")
         values = dict(fields)
@@ -130,7 +132,7 @@ class _PartitionOfUnityEvaluator(StrictModule):
         self,
         family: LocalFieldFamily,
         deps: tuple[str, ...],
-    ):
+    ) -> None:
         lifted = family.lifted_fields()
         supports = tuple(patch.support for patch in family.cover.patches)
         windows = tuple(patch.window for patch in family.cover.patches)
@@ -159,13 +161,13 @@ class _PartitionOfUnityEvaluator(StrictModule):
         positions: tuple[int, ...],
         args: tuple[Any, ...],
         *,
-        key,
+        key: PRNGKey | None,
         kwargs: dict[str, Any],
-    ):
+    ) -> Any:
         selected = tuple(args[position] for position in positions)
         return field.func(*selected, key=key, **kwargs)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         arguments = tuple(args)
         effective_key = jr.key(0) if key is None else key
         call_kwargs = dict(kwargs)
@@ -239,7 +241,7 @@ class _PartitionOfUnityEvaluator(StrictModule):
             index = active_indices[slot]
             valid = slot < active_count
 
-            def contribution(_, index=index):
+            def contribution(_: None, index: Array = index) -> tuple[Array, Array]:
                 value = jax.lax.switch(
                     index,
                     branches,
@@ -247,7 +249,7 @@ class _PartitionOfUnityEvaluator(StrictModule):
                 )
                 return weights[index] * value, weights[index]
 
-            def empty(_):
+            def empty(_: None) -> tuple[Array, Array]:
                 return jnp.zeros_like(first_value), jnp.zeros_like(first_weight)
 
             value_part, weight_part = jax.lax.cond(
@@ -273,7 +275,7 @@ class _BrokenFieldEvaluator(StrictModule):
     field_positions: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     support_positions: tuple[tuple[int, ...], ...] = eqx.field(static=True)
 
-    def __init__(self, family: LocalFieldFamily, deps: tuple[str, ...]):
+    def __init__(self, family: LocalFieldFamily, deps: tuple[str, ...]) -> None:
         lifted = family.lifted_fields()
         supports = tuple(patch.support for patch in family.cover.patches)
         self.fields = lifted
@@ -281,7 +283,7 @@ class _BrokenFieldEvaluator(StrictModule):
         self.field_positions = tuple(_positions(field, deps) for field in lifted)
         self.support_positions = tuple(_positions(field, deps) for field in supports)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         arguments = tuple(args)
         effective_key = jr.key(0) if key is None else key
         supports = jnp.stack(
@@ -321,7 +323,7 @@ class BrokenField(StrictModule):
 
     family: LocalFieldFamily
 
-    def __init__(self, family: LocalFieldFamily, /):
+    def __init__(self, family: LocalFieldFamily, /) -> None:
         if not isinstance(family, LocalFieldFamily):
             raise TypeError("family must be a LocalFieldFamily.")
         self.family = family

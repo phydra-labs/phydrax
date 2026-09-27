@@ -17,7 +17,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 
@@ -215,7 +216,7 @@ class PreparedRegistrationEvaluation(StrictModule, NonTrainableState):
         length_unit_id: str,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         points = jax.lax.stop_gradient(jnp.asarray(reference_points_mm))
         if points.ndim < 1 or points.shape[-1] != 3:
             raise ValueError("reference_points_mm must end in three coordinates.")

@@ -5,13 +5,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -22,11 +24,13 @@ from ..linalg import (
     FunctionLinearOperator,
     matrix_function_action,
     MatrixFunctionPolicy,
+    MatrixFunctionResult,
     OperatorProperties,
 )
+from ..typing import parse
 
 
-StochasticDifferentiationPolicy = Literal["pathwise", "weak"]
+StochasticDifferentiationPolicy: TypeAlias = Literal["pathwise", "weak"]
 MobilityProvider = Callable[[Array], AbstractLinearOperator]
 
 
@@ -35,7 +39,7 @@ def _metric_white(
     coordinates: Array,
     policy: MatrixFunctionPolicy,
     /,
-):
+) -> MatrixFunctionResult:
     pairing = FunctionLinearOperator(
         space.riesz,
         source=space,
@@ -66,7 +70,7 @@ class StochasticReplayKey(StrictModule, NonTrainableState):
     sample: Array
 
     def key(self, /) -> Array:
-        key = jax.random.PRNGKey(self.seed.astype(jnp.uint32))
+        key = jax.random.key(self.seed.astype(jnp.uint32))
         key = jax.random.fold_in(key, self.accepted_step.astype(jnp.uint32))
         key = jax.random.fold_in(key, self.stage.astype(jnp.uint32))
         return jax.random.fold_in(key, self.sample.astype(jnp.uint32))
@@ -105,7 +109,7 @@ class MACDiscreteStochasticStressPlan(StrictModule, NonTrainableState):
         /,
         *,
         stress_id: str,
-    ):
+    ) -> None:
         if not stress_divergence.target.compatible(dissipation.source) or not (
             dissipation.source.compatible(dissipation.target)
         ):
@@ -171,7 +175,7 @@ class MACFluctuatingHydrodynamicsPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-8,
         matrix_function_policy: MatrixFunctionPolicy | None = None,
         differentiation: StochasticDifferentiationPolicy = "pathwise",
-    ):
+    ) -> None:
         if not noise_factor.target.compatible(dissipation.source) or not (
             dissipation.source.compatible(dissipation.target)
         ):
@@ -187,8 +191,9 @@ class MACFluctuatingHydrodynamicsPlan(StrictModule, NonTrainableState):
             or tolerance_ <= 0.0
         ):
             raise ValueError("Thermal parameters must be finite and admissible.")
-        if differentiation not in ("pathwise", "weak"):
-            raise ValueError("Unknown stochastic differentiation policy.")
+        differentiation = parse(
+            differentiation, StochasticDifferentiationPolicy, "differentiation"
+        )
         self.noise_factor = noise_factor
         self.dissipation = dissipation
         self.matrix_function_policy = (
@@ -326,7 +331,7 @@ class MACInertialStochasticStepPlan(StrictModule, NonTrainableState):
         inverse_mass: AbstractLinearOperator,
         forcing: MACFluctuatingHydrodynamicsPlan,
         /,
-    ):
+    ) -> None:
         if not inverse_mass.source.compatible(velocity_space) or not (
             inverse_mass.target.compatible(velocity_space)
         ):
@@ -347,8 +352,8 @@ class MACInertialStochasticStepPlan(StrictModule, NonTrainableState):
 
     def step(
         self,
-        velocity,
-        deterministic_force,
+        velocity: PyTree[ArrayLike],
+        deterministic_force: PyTree[ArrayLike],
         step_size: ArrayLike,
         replay_key: StochasticReplayKey,
         /,
@@ -422,7 +427,7 @@ class FIBOverdampedPlan(StrictModule, NonTrainableState):
         drift_epsilon: float = 1.0e-6,
         matrix_function_policy: MatrixFunctionPolicy | None = None,
         differentiation: StochasticDifferentiationPolicy = "pathwise",
-    ):
+    ) -> None:
         if not callable(mobility):
             raise TypeError("mobility must be callable.")
         temperature_ = float(temperature)
@@ -430,8 +435,9 @@ class FIBOverdampedPlan(StrictModule, NonTrainableState):
         epsilon = float(drift_epsilon)
         if temperature_ < 0.0 or boltzmann <= 0.0 or epsilon <= 0.0:
             raise ValueError("FIB thermal parameters must be admissible.")
-        if differentiation not in ("pathwise", "weak"):
-            raise ValueError("Unknown stochastic differentiation policy.")
+        differentiation = parse(
+            differentiation, StochasticDifferentiationPolicy, "differentiation"
+        )
         self.marker_space = marker_space
         self.mobility = mobility
         self.temperature = temperature_

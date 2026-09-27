@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..linalg import HermitianSpectrum, solve_matrix_equation, sylvester_equation
@@ -27,7 +28,7 @@ class FermionicGaussianProblem(StrictModule):
         /,
         *,
         problem_id: str = "fermionic-gaussian",
-    ):
+    ) -> None:
         if not isinstance(initial_state, FermionicGaussianState):
             raise TypeError("initial_state must be FermionicGaussianState.")
         drift_ = jnp.asarray(drift, dtype=jnp.float64)
@@ -85,7 +86,7 @@ class FermionicGaussianSolution(StrictModule):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         values = jnp.asarray(covariances)
         times_ = jnp.asarray(times)
         if (
@@ -125,7 +126,7 @@ def solve_fermionic_gaussian(
     if count < 0 or not bool(jnp.isfinite(step) & (step > 0.0)):
         raise ValueError("steps must be nonnegative and step_size finite and positive.")
 
-    def advance(covariance, _):
+    def advance(covariance: Array, _: None) -> tuple[Array, Array]:
         first = problem.rhs(covariance)
         second = problem.rhs(covariance + 0.5 * step * first)
         third = problem.rhs(covariance + 0.5 * step * second)

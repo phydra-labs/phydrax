@@ -11,7 +11,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -49,7 +50,7 @@ class AbstractConstrainedMHDBoundary(StrictModule, NonTrainableState):
 class PerfectlyConductingWallBoundary(AbstractConstrainedMHDBoundary):
     """Stationary slip wall with frozen normal B and vanishing tangential E."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.boundary_id = canonical_fingerprint({"kind": "conducting-mhd-wall"})
 
     def trace(
@@ -82,7 +83,7 @@ class MHDOutflowBoundary(AbstractConstrainedMHDBoundary):
 
     allow_inflow: bool = eqx.field(static=True)
 
-    def __init__(self, *, allow_inflow: bool = False):
+    def __init__(self, *, allow_inflow: bool = False) -> None:
         self.allow_inflow = bool(allow_inflow)
         self.boundary_id = canonical_fingerprint(
             {"kind": "mhd-outflow", "allow_inflow": self.allow_inflow}
@@ -127,7 +128,7 @@ class MHDOutflowBoundary(AbstractConstrainedMHDBoundary):
 class PrescribedMHDInflowBoundary(AbstractConstrainedMHDBoundary):
     primitive_state: Array
 
-    def __init__(self, primitive_state: ArrayLike, /):
+    def __init__(self, primitive_state: ArrayLike, /) -> None:
         primitive = np.asarray(primitive_state, dtype=np.float64)
         if primitive.shape[-1:] != (8,) or np.any(~np.isfinite(primitive)):
             raise ValueError("Prescribed MHD inflow primitive state is invalid.")
@@ -182,7 +183,7 @@ class ConstrainedMHDBoundarySet(StrictModule, NonTrainableState):
             tuple[AbstractConstrainedMHDBoundary, AbstractConstrainedMHDBoundary],
         ],
         /,
-    ):
+    ) -> None:
         names = tuple(str(name) for name in axis_names)
         supplied = dict(boundaries)
         if set(supplied) != set(names):

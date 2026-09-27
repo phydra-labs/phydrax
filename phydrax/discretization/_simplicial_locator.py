@@ -6,12 +6,14 @@ from __future__ import annotations
 
 import abc
 from enum import IntEnum
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -20,6 +22,10 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .fem._cell_map import PreparedFiniteElementCellMap
+
+
+# (reference points, converged, first converged iteration, ever-valid geometry)
+_NewtonCarry: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class CellLocationStatus(IntEnum):
@@ -50,7 +56,7 @@ class SimplicialLocationPolicy(StrictModule, NonTrainableState):
         residual_tolerance: float = 1.0e-10,
         reference_tolerance: float = 1.0e-10,
         trust_radius: float = 0.5,
-    ):
+    ) -> None:
         capacities = (
             int(maximum_candidates),
             int(maximum_iterations),
@@ -149,7 +155,7 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
         coordinates: ArrayLike,
         policy: SimplicialLocationPolicy,
         /,
-    ):
+    ) -> None:
         if not isinstance(cell_map, PreparedFiniteElementCellMap):
             raise TypeError("cell_map must be PreparedFiniteElementCellMap.")
         if cell_map.coordinate_element.cell_kind not in ("triangle", "tetrahedron"):
@@ -249,7 +255,7 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
         reference_flat = reference.reshape((-1, reference_dimension))
         ever_valid_geometry = jnp.zeros_like(converged)
 
-        def newton_step(iteration, carry):
+        def newton_step(iteration: Array, carry: _NewtonCarry) -> _NewtonCarry:
             current_reference, current_converged, first, ever_valid = carry
             evaluation = self.cell_map.evaluate(
                 self.coordinates,

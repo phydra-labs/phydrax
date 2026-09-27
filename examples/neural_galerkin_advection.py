@@ -4,9 +4,11 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array
+from jax import Array
 
 import phydrax as phx
 from phydrax import StrictModule
@@ -40,7 +42,7 @@ def main() -> None:
         batch,
     )
 
-    def rate(_time, functions, _args):
+    def rate(_time: Any, functions: Any, _args: Any) -> Any:
         return {"u": -speed * phx.operators.partial_n(functions["u"], var="x", order=1)}
 
     problem = phx.solver.NeuralGalerkinProblem(

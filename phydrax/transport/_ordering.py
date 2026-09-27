@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import TypeAlias
+from typing import overload, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 
@@ -35,21 +36,21 @@ class HardOrdering(StrictModule):
 class PAVOrdering(StrictModule):
     temperature: float = eqx.field(static=True)
 
-    def __init__(self, temperature: float = 0.5, /):
+    def __init__(self, temperature: float = 0.5, /) -> None:
         self.temperature = _positive_temperature(temperature)
 
 
 class WeightedPAVOrdering(StrictModule):
     temperature: float = eqx.field(static=True)
 
-    def __init__(self, temperature: float = 0.5, /):
+    def __init__(self, temperature: float = 0.5, /) -> None:
         self.temperature = _positive_temperature(temperature)
 
 
 class SinkhornOrdering(StrictModule):
     epsilon: float = eqx.field(static=True)
 
-    def __init__(self, epsilon: float = 0.05, /):
+    def __init__(self, epsilon: float = 0.05, /) -> None:
         self.epsilon = _positive_temperature(epsilon)
 
 
@@ -61,7 +62,7 @@ class StraightThroughOrdering(StrictModule):
 
     surrogate: OrderingSurrogate
 
-    def __init__(self, surrogate: OrderingSurrogate | None = None, /):
+    def __init__(self, surrogate: OrderingSurrogate | None = None, /) -> None:
         surrogate_ = PAVOrdering() if surrogate is None else surrogate
         if not isinstance(
             surrogate_, (PAVOrdering, WeightedPAVOrdering, SinkhornOrdering)
@@ -138,13 +139,16 @@ def ordered_values(
             descending=descending,
         )
     if isinstance(method, SinkhornOrdering):
-        return soft_sort(
+        ascending = soft_sort(
             values,
             weights=weights,
             epsilon=method.epsilon,
             axis=axis,
-            descending=descending,
         )
+        if not descending:
+            return ascending
+        data, position, dims = _data_axis(ascending, axis=axis)
+        return _restore(jnp.flip(data, axis=position), dims)
     if isinstance(method, StraightThroughOrdering):
         return straight_through_sort(
             values,
@@ -154,6 +158,30 @@ def ordered_values(
             descending=descending,
         )
     raise TypeError("method must be an OrderingMethod.")
+
+
+@overload
+def ordered_ranks(
+    values: ArrayLike,
+    method: OrderingMethod,
+    /,
+    *,
+    weights: Value | None = None,
+    axis: int | str = -1,
+    descending: bool = False,
+) -> Array: ...
+
+
+@overload
+def ordered_ranks(
+    values: cx.AxisArray,
+    method: OrderingMethod,
+    /,
+    *,
+    weights: Value | None = None,
+    axis: int | str = -1,
+    descending: bool = False,
+) -> cx.AxisArray: ...
 
 
 def ordered_ranks(
@@ -187,13 +215,16 @@ def ordered_ranks(
             descending=descending,
         )
     if isinstance(method, SinkhornOrdering):
-        return soft_rank(
+        ascending = soft_rank(
             values,
             weights=weights,
             epsilon=method.epsilon,
             axis=axis,
-            descending=descending,
         )
+        if not descending:
+            return ascending
+        data, position, dims = _data_axis(ascending, axis=axis)
+        return _restore(data.shape[position] - 1 - data, dims)
     if isinstance(method, StraightThroughOrdering):
         return straight_through_rank(
             values,
@@ -205,7 +236,9 @@ def ordered_ranks(
     raise TypeError("method must be an OrderingMethod.")
 
 
-def _straight_through(hard, soft):
+def _straight_through(
+    hard: Array | cx.AxisArray, soft: Array | cx.AxisArray
+) -> Array | cx.AxisArray:
     if isinstance(hard, cx.AxisArray):
         if not isinstance(soft, cx.AxisArray) or hard.dims != soft.dims:
             raise ValueError("Hard and soft ordering fields must share dimensions.")
@@ -225,7 +258,7 @@ def straight_through_sort(
     weights: Value | None = None,
     axis: int | str = -1,
     descending: bool = False,
-):
+) -> Array | cx.AxisArray:
     """Stable hard-sort forward with a declared PAV or Sinkhorn gradient estimator."""
     hard = _hard_values(values, axis=axis, descending=descending)
     soft = ordered_values(
@@ -246,7 +279,7 @@ def straight_through_rank(
     weights: Value | None = None,
     axis: int | str = -1,
     descending: bool = False,
-):
+) -> Array | cx.AxisArray:
     """Stable hard-rank forward with a declared PAV or Sinkhorn gradient estimator."""
     hard = _hard_ranks(values, axis=axis, descending=descending)
     soft = ordered_ranks(

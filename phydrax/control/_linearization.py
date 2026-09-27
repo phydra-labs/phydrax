@@ -6,13 +6,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import prod
-from typing import Any, Literal
+from typing import Any, cast, Literal
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -143,7 +144,9 @@ def _inexact(value: ArrayLike, /) -> Array:
     return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
-def _case_shape(array: Array, physical_shape: tuple[int, ...], /, *, owner: str):
+def _case_shape(
+    array: Array, physical_shape: tuple[int, ...], /, *, owner: str
+) -> tuple[int, ...]:
     physical_rank = len(physical_shape)
     if not physical_rank:
         return array.shape
@@ -356,7 +359,8 @@ def _linearize(
     state_cases = _case_shape(states, state_shape, owner="state")
     control_cases = _case_shape(controls, control_shape, owner="control")
     if system_type == "discrete":
-        target_times = _inexact(target_time)
+        # _validate_context rejects discrete linearization without target_time.
+        target_times = _inexact(cast(ArrayLike, target_time))
         step_indices = jnp.asarray(step_index, dtype=jnp.int32)
         case_shape = jnp.broadcast_shapes(
             state_cases,
@@ -405,7 +409,13 @@ def _linearize(
         case_count * output_size * joint_size, dtype, materialization
     )
 
-    def dense_point(t, target_t, index, flat_state, flat_control):
+    def dense_point(
+        t: Array,
+        target_t: Array,
+        index: Array,
+        flat_state: Array,
+        flat_control: Array,
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
         value, successful, dynamics_linearization, output_linearization = _point_model(
             dynamics,
             system_type,
@@ -540,7 +550,8 @@ def prepare_control_linearization(
     if times.shape:
         raise ValueError("prepare_control_linearization requires a scalar time.")
     if system_type == "discrete":
-        target_times = _inexact(target_time)
+        # _validate_context rejects discrete linearization without target_time.
+        target_times = _inexact(cast(ArrayLike, target_time))
         step_indices = jnp.asarray(step_index, dtype=jnp.int32)
         if target_times.shape or step_indices.shape:
             raise ValueError(

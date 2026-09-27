@@ -27,7 +27,7 @@ class FlatComplexTorus(StrictModule):
     complex_dimension: int = eqx.field(static=True)
     period: float = eqx.field(static=True)
 
-    def __init__(self, complex_dimension: int, /, *, period: float = 1.0):
+    def __init__(self, complex_dimension: int, /, *, period: float = 1.0) -> None:
         dimension = int(complex_dimension)
         if dimension < 1 or float(period) <= 0.0:
             raise ValueError("Complex dimension and period must be positive.")

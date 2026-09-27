@@ -9,7 +9,8 @@ from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._operators import AbstractLinearOperator
@@ -42,7 +43,7 @@ class SparseStorage(StrictModule):
         shape: tuple[int, int],
         sorted_indices: bool = True,
         canonical: bool = True,
-    ):
+    ) -> None:
         values_ = jnp.asarray(values)
         indices_ = jnp.asarray(indices)
         indptr_ = jnp.asarray(indptr)

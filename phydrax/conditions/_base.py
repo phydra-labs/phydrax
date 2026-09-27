@@ -2,19 +2,26 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from __future__ import annotations
+
 from abc import abstractmethod
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.core as jax_core
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.domain import ComponentSum, Domain, DomainComponent, DomainFunction
 
 from .._strict import StrictModule
+
+
+if TYPE_CHECKING:
+    from ._ir import Condition, ConditionCodomain, FieldSpec, ProductFieldSpec
 
 
 ConditionSupport = DomainComponent | ComponentSum
@@ -71,10 +78,10 @@ class AbstractCondition(StrictModule):
     def as_condition(
         self,
         *,
-        fields: Any = None,
-        codomain: Any = None,
+        fields: ProductFieldSpec | Sequence[FieldSpec] | None = None,
+        codomain: ConditionCodomain | None = None,
         condition_id: str | None = None,
-    ):
+    ) -> Condition:
         """Lower this legacy declaration to the typed condition IR."""
         from ._lowering import lower_condition
 
@@ -128,7 +135,7 @@ class Residual(AbstractResidualCondition):
         /,
         *,
         label: str | None = None,
-    ):
+    ) -> None:
         if not callable(operator):
             raise TypeError("Residual condition operator must be callable.")
         self.fields = _fields(fields)
@@ -167,7 +174,7 @@ class Moment(AbstractMomentCondition):
         *,
         target: ArrayLike = 0.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not callable(operator):
             raise TypeError("Moment condition operator must be callable.")
         self.fields = _fields(fields)
@@ -207,7 +214,7 @@ class Observation(AbstractResidualCondition):
         *,
         operator: Callable[..., DomainFunction] | None = None,
         label: str | None = None,
-    ):
+    ) -> None:
         resolved_fields = _fields(fields)
         if not isinstance(target, DomainFunction):
             raise TypeError("Observation target must be a DomainFunction.")

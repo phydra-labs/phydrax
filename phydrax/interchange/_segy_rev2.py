@@ -70,7 +70,7 @@ class SEGYRev2IEEEProfile(StrictModule, NonTrainableState):
         coordinate_mapping: str = "source-group-xyz",
         pressure_calibration: float | None = None,
         pressure_polarity: Literal["positive", "negative"] | None = None,
-    ):
+    ) -> None:
         if byte_order not in ("big", "little") or text_encoding not in (
             "ascii",
             "cp500",
@@ -150,10 +150,10 @@ def decode_segy_rev2_resource(
     endian = ">" if profile.byte_order == "big" else "<"
     binary = memoryview(data)[3200:3600]
 
-    def u16(offset):
+    def u16(offset: int) -> int:
         return struct.unpack_from(endian + "H", binary, offset)[0]
 
-    def i16(offset):
+    def i16(offset: int) -> int:
         return struct.unpack_from(endian + "h", binary, offset)[0]
 
     if u16(300) != 0x0200 or u16(24) != 5:
@@ -234,10 +234,10 @@ def decode_segy_rev2_resource(
     ):
         header = memoryview(data)[start : start + 240]
 
-        def h(offset, current=header):
+        def h(offset: int, current: memoryview = header) -> int:
             return struct.unpack_from(endian + "h", current, offset)[0]
 
-        def i(offset, current=header):
+        def i(offset: int, current: memoryview = header) -> int:
             return struct.unpack_from(endian + "i", current, offset)[0]
 
         sequence[trace], identification[trace] = i(4), h(28)
@@ -324,7 +324,7 @@ def decode_segy_rev2_resource(
                 "sample_format": "5-ieee-binary32",
                 "trace_length": profile.trace_length,
                 "sample_count": "unsigned-16-bit-trace-header",
-                "extended_textual_headers": profile.extended_textual_header_count,
+                "extended_textual_headers": str(profile.extended_textual_header_count),
                 "trace_header_extensions": "none",
             },
         ),

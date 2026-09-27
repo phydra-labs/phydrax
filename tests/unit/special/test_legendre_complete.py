@@ -9,7 +9,7 @@ import scipy.special
 import phydrax as phx
 
 
-def test_complete_legendre_integrals_match_scipy():
+def test_complete_legendre_integrals_match_scipy() -> None:
     parameters = np.concatenate(
         [
             -np.geomspace(1e-12, 1e200, 80),
@@ -26,7 +26,7 @@ def test_complete_legendre_integrals_match_scipy():
         np.testing.assert_allclose(actual, expected, rtol=8e-13, atol=2e-15)
 
 
-def test_complete_third_kind_matches_high_precision_reference_and_broadcasts():
+def test_complete_third_kind_matches_high_precision_reference_and_broadcasts() -> None:
     characteristics = np.asarray([-3.0, -0.2, 0.0, 0.4, 0.9])[:, None]
     parameters = np.asarray([-1.0, 0.0, 0.3, 0.8, 0.99])[None, :]
     with mp.workdps(70):
@@ -43,7 +43,7 @@ def test_complete_third_kind_matches_high_precision_reference_and_broadcasts():
     np.testing.assert_allclose(actual, expected, rtol=2e-12, atol=3e-14)
 
 
-def test_complete_third_kind_large_negative_characteristic_is_factored():
+def test_complete_third_kind_large_negative_characteristic_is_factored() -> None:
     characteristics = np.asarray([-1e10, -1e100, -1e300])
     expected = math.pi / (2.0 * np.sqrt(1.0 - characteristics))
     actual = phx.special.ellippi(jnp.asarray(characteristics), 0.0)
@@ -64,7 +64,7 @@ def test_complete_third_kind_large_negative_characteristic_is_factored():
     )
 
 
-def test_complete_third_kind_derivatives_match_high_precision():
+def test_complete_third_kind_derivatives_match_high_precision() -> None:
     characteristic = mp.mpf("0.2")
     parameter = mp.mpf("0.4")
     with mp.workdps(70):
@@ -126,7 +126,7 @@ def test_complete_third_kind_derivatives_match_high_precision():
     )
 
 
-def test_ellipkm1_is_accurate_across_its_positive_domain():
+def test_ellipkm1_is_accurate_across_its_positive_domain() -> None:
     parameters = np.geomspace(1e-300, 1e200, 180)
     actual = np.asarray(phx.special.ellipkm1(jnp.asarray(parameters)))
     expected = scipy.special.ellipkm1(parameters)
@@ -134,7 +134,7 @@ def test_ellipkm1_is_accurate_across_its_positive_domain():
     np.testing.assert_allclose(phx.special.ellipkm1(1.0), math.pi / 2.0, rtol=2e-15)
 
 
-def test_ellipkm1_preserves_smallest_positive_values_and_signed_zero_boundary():
+def test_ellipkm1_preserves_smallest_positive_values_and_signed_zero_boundary() -> None:
     for dtype, value_tolerance, derivative_tolerance in (
         (np.float32, 3e-6, 3e-6),
         (np.float64, 3e-15, 3e-14),
@@ -162,7 +162,7 @@ def test_ellipkm1_preserves_smallest_positive_values_and_signed_zero_boundary():
     assert np.isposinf(phx.special.ellipkm1(-0.0))
 
 
-def test_ellipkm1_derivatives_cover_singular_and_transformed_regimes():
+def test_ellipkm1_derivatives_cover_singular_and_transformed_regimes() -> None:
     parameters = np.asarray([1e-200, 1e-12, 0.2, 1.0, 10.0, 1e100, 1e200])
     with mp.workdps(250):
         expected = []
@@ -188,7 +188,7 @@ def test_ellipkm1_derivatives_cover_singular_and_transformed_regimes():
     )
 
 
-def test_complete_legendre_values_and_derivatives_obey_identities():
+def test_complete_legendre_values_and_derivatives_obey_identities() -> None:
     parameters = jnp.asarray([-10.0, -0.5, 0.0, 0.2, 0.8, 1.0 - 1e-10])
     k = phx.special.ellipk(parameters)
     e = phx.special.ellipe(parameters)
@@ -219,7 +219,7 @@ def test_complete_legendre_values_and_derivatives_obey_identities():
     assert np.isfinite(jax.grad(jax.grad(phx.special.ellipk))(point))
 
 
-def test_complete_legendre_degenerate_hessians_are_analytic():
+def test_complete_legendre_degenerate_hessians_are_analytic() -> None:
     np.testing.assert_allclose(
         jax.grad(jax.grad(phx.special.ellipk))(0.0), 9.0 * math.pi / 64.0
     )
@@ -241,7 +241,7 @@ def test_complete_legendre_degenerate_hessians_are_analytic():
         )
 
 
-def test_complete_legendre_boundaries_and_invalid_lanes():
+def test_complete_legendre_boundaries_and_invalid_lanes() -> None:
     k = np.asarray(phx.special.ellipk(jnp.asarray([0.0, 1.0, 2.0, np.nan])))
     e = np.asarray(phx.special.ellipe(jnp.asarray([0.0, 1.0, 2.0, np.nan])))
     np.testing.assert_allclose(k[0], math.pi / 2.0)

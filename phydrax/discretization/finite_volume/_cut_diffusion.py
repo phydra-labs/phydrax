@@ -11,7 +11,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -22,6 +23,7 @@ from ...linalg import (
     FunctionLinearOperator,
     KernelCertificate,
     LinearSolvePolicy,
+    LinearSolveResult,
     LinearSubspace,
     LinearSystem,
     NullspacePolicy,
@@ -56,7 +58,7 @@ class MultivaluedCutCellDiffusionPlan(StrictModule, NonTrainableState):
         /,
         *,
         dirichlet_face_indices: Sequence[int] = (),
-    ):
+    ) -> None:
         if not isinstance(complex_, MultivaluedCutCellComplex):
             raise TypeError("Cut-cell diffusion requires MultivaluedCutCellComplex.")
         cell_count = complex_.component_count
@@ -252,7 +254,7 @@ class MultivaluedCutCellDiffusionPlan(StrictModule, NonTrainableState):
         relative_tolerance: float = 1.0e-9,
         absolute_tolerance: float = 1.0e-11,
         maximum_iterations: int = 1000,
-    ):
+    ) -> LinearSolveResult:
         rhs = jnp.asarray(right_hand_side)
         if rhs.shape != (self.cell_count,):
             raise ValueError("Cut-cell diffusion right-hand side has invalid shape.")

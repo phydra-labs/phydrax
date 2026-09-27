@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import hashlib
 import json
@@ -29,7 +31,7 @@ from phydrax.artifacts import ScientificArtifactEnvelope
 from phydrax.qualification import ReferenceArtifactManifest
 
 
-def _source_kwargs(speeds, cosines, differential):
+def _source_kwargs(speeds: Any, cosines: Any, differential: Any) -> Any:
     payload = TwoBodyDifferentialKernelPlan.canonical_table_bytes(
         speeds, cosines, differential
     )
@@ -71,7 +73,7 @@ def _source_kwargs(speeds, cosines, differential):
     }
 
 
-def _setup(node_count: int):
+def _setup(node_count: int) -> Any:
     species = DarkSectorSpeciesPlan("benchmark-chi", 1.0)
     speeds = jnp.asarray((0.25, 1.0, 4.0))
     cosines = jnp.linspace(-1.0, 1.0, node_count)
@@ -102,7 +104,7 @@ def run(
     speed = jnp.asarray(1.5)
     keys = jr.split(jr.key(20260915), sample_count)
 
-    def sample_many(sample_keys):
+    def sample_many(sample_keys: Any) -> Any:
         return jax.vmap(lambda key: kernel.sample_angles(key, speed))(sample_keys)
 
     compiled, compilation = measure_lower_and_compile(

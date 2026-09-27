@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import isfinite
 from typing import Any, Literal, TypeAlias
 
@@ -11,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -24,6 +26,7 @@ from ..linalg import (
     PyTreeSpace,
 )
 from ..linalg._spaces import _coordinate_pairing_weights, _has_diagonal_pairing
+from ..typing import parse
 from ._preconditioning import (
     _TransformationEvaluation,
     AbstractNonlinearSystemTransformation,
@@ -48,7 +51,7 @@ class NonlinearScaling(StrictModule):
         /,
         *,
         scaling_id: str | None = None,
-    ):
+    ) -> None:
         state_scale_ = validate_inexact_tree(
             state_scale,
             name="state_scale",
@@ -99,28 +102,28 @@ class NonlinearScaling(StrictModule):
         self.residual_scale = residual_scale_
         self.scaling_id = fingerprint if label is None else f"{label}/{fingerprint}"
 
-    def to_solver_state(self, physical_state, /):
+    def to_solver_state(self, physical_state: PyTree[Array], /) -> PyTree[Array]:
         return jax.tree.map(
             lambda value, scale: value / scale,
             physical_state,
             self.state_scale,
         )
 
-    def to_physical_state(self, solver_state, /):
+    def to_physical_state(self, solver_state: PyTree[Array], /) -> PyTree[Array]:
         return jax.tree.map(
             lambda value, scale: value * scale,
             solver_state,
             self.state_scale,
         )
 
-    def to_solver_residual(self, physical_residual, /):
+    def to_solver_residual(self, physical_residual: PyTree[Array], /) -> PyTree[Array]:
         return jax.tree.map(
             lambda value, scale: value / scale,
             physical_residual,
             self.residual_scale,
         )
 
-    def to_physical_residual(self, solver_residual, /):
+    def to_physical_residual(self, solver_residual: PyTree[Array], /) -> PyTree[Array]:
         return jax.tree.map(
             lambda value, scale: value * scale,
             solver_residual,
@@ -191,9 +194,8 @@ class NonlinearScalingPolicy(StrictModule):
         state_floor: float = 1.0,
         residual_floor: float = 1.0,
         explicit: NonlinearScaling | None = None,
-    ):
-        if mode not in ("none", "automatic", "explicit"):
-            raise ValueError("Unknown nonlinear scaling mode.")
+    ) -> None:
+        mode = parse(mode, ScalingMode, "mode")
         values = (float(state_floor), float(residual_floor))
         if any(not isfinite(value) or value <= 0.0 for value in values):
             raise ValueError("Scaling floors must be finite and positive.")
@@ -259,7 +261,7 @@ class ScaledRootSystem(AbstractNonlinearSystemTransformation):
         problem: NonlinearSystemProblem,
         scaling: NonlinearScaling,
         /,
-    ):
+    ) -> None:
         if not isinstance(problem, NonlinearSystemProblem):
             raise TypeError("problem must be a NonlinearSystemProblem.")
         if not isinstance(scaling, NonlinearScaling):
@@ -307,7 +309,9 @@ class ScaledRootSystem(AbstractNonlinearSystemTransformation):
         physical_state_to_solver_adjoint = adjoint(state_to_physical)
         solver_residual_to_physical_adjoint = adjoint(physical_residual_to_solver)
 
-        def residual(solver_state, current_args):
+        def residual(
+            solver_state: PyTree[Any], current_args: Any
+        ) -> tuple[PyTree[Array], _TransformationEvaluation]:
             state = scaling.to_physical_state(solver_state)
             physical_value, auxiliary = problem.evaluate(state, current_args)
             transformed = scaling.to_solver_residual(physical_value)
@@ -317,7 +321,12 @@ class ScaledRootSystem(AbstractNonlinearSystemTransformation):
                 auxiliary,
             )
 
-        def valid(_, __, payload, current_args):
+        def valid(
+            _: PyTree[Array],
+            __: PyTree[Array],
+            payload: _TransformationEvaluation,
+            current_args: Any,
+        ) -> Array:
             return problem.valid(
                 payload.state,
                 payload.residual,
@@ -325,8 +334,12 @@ class ScaledRootSystem(AbstractNonlinearSystemTransformation):
                 current_args,
             )
 
-        def transform_setup(factory):
-            def setup(solver_state, current_args):
+        def transform_setup(
+            factory: Callable[[PyTree[Any], Any], AbstractLinearOperator],
+        ) -> Callable[[PyTree[Any], Any], AbstractLinearOperator]:
+            def setup(
+                solver_state: PyTree[Any], current_args: Any
+            ) -> AbstractLinearOperator:
                 state = scaling.to_physical_state(solver_state)
                 physical_operator = factory(state, current_args)
                 if not isinstance(physical_operator, AbstractLinearOperator):
@@ -335,8 +348,12 @@ class ScaledRootSystem(AbstractNonlinearSystemTransformation):
 
             return setup
 
-        def transform_adjoint_setup(factory):
-            def setup(solver_state, current_args):
+        def transform_adjoint_setup(
+            factory: Callable[[PyTree[Any], Any], AbstractLinearOperator],
+        ) -> Callable[[PyTree[Any], Any], AbstractLinearOperator]:
+            def setup(
+                solver_state: PyTree[Any], current_args: Any
+            ) -> AbstractLinearOperator:
                 state = scaling.to_physical_state(solver_state)
                 physical_operator = factory(state, current_args)
                 if not isinstance(physical_operator, AbstractLinearOperator):

@@ -10,7 +10,7 @@ import pytest
 import phydrax as phx
 
 
-def test_diffrax_characteristics_recover_constant_velocity_foot():
+def test_diffrax_characteristics_recover_constant_velocity_foot() -> None:
     terminal = jnp.asarray([[0.8], [0.2]])
     result = phx.solver.trace_characteristics(
         lambda _time, points, _args: jnp.ones_like(points),
@@ -26,7 +26,7 @@ def test_diffrax_characteristics_recover_constant_velocity_foot():
     assert jnp.allclose(result.foot_points, terminal - 0.5, rtol=1e-6, atol=1e-7)
 
 
-def test_characteristic_projection_advances_fixed_field_over_time_grid():
+def test_characteristic_projection_advances_fixed_field_over_time_grid() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     field = domain.Parameter(jnp.asarray(2.0))
     solver = phx.solver.FunctionalSolver(functions={"u": field}, terms=())
@@ -64,7 +64,7 @@ def test_characteristic_projection_advances_fixed_field_over_time_grid():
     assert len(result.solver.terms) == 0
 
 
-def test_characteristic_trace_and_projection_validate_shapes_and_labels():
+def test_characteristic_trace_and_projection_validate_shapes_and_labels() -> None:
     with pytest.raises(ValueError, match="increasing"):
         phx.solver.trace_characteristics(
             lambda _time, points, _args: points,

@@ -72,7 +72,7 @@ class CompositeStochasticRealization(StrictModule):
         self,
         components: Mapping[str, AtomicStochasticRealization],
         /,
-    ):
+    ) -> None:
         resolved = frozendict(components)
         if not resolved:
             raise ValueError("CompositeStochasticRealization requires components.")

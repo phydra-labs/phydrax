@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import abc
 import math
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -26,6 +27,23 @@ from ._partitioned_coupling_types import (
     CouplingWindow,
     CouplingWindowErrorEstimate,
 )
+
+
+# Substep state, outputs, success, status, residual, iterations, work, and error
+# norm/reference/order/reliability.
+_SubstepOutcome: TypeAlias = tuple[
+    Any,
+    tuple[Any, ...],
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 
 class CouplingWaveformAdaptationPolicy(StrictModule, NonTrainableState):
@@ -43,7 +61,7 @@ class CouplingWaveformAdaptationPolicy(StrictModule, NonTrainableState):
         *,
         observable_tolerance: float,
         maximum_additions_per_attempt: int = 1,
-    ):
+    ) -> None:
         candidates = np.asarray(candidate_nodes, dtype=np.float64)
         tolerance = float(observable_tolerance)
         maximum = int(maximum_additions_per_attempt)
@@ -86,7 +104,7 @@ class CouplingWaveformGrid(StrictModule):
         /,
         *,
         capacity_id: str,
-    ):
+    ) -> None:
         nodes_ = jnp.asarray(nodes)
         active_ = jnp.asarray(active, dtype=jnp.bool_)
         count = jnp.asarray(sample_count, dtype=jnp.int32).reshape(())
@@ -139,7 +157,7 @@ class CouplingWaveformPlan(StrictModule, NonTrainableState):
         metric_order: int | None = None,
         adaptation: CouplingWaveformAdaptationPolicy | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         capacity = int(sample_capacity)
         degree = int(polynomial_degree)
         nodes = np.asarray(initial_nodes, dtype=np.float64)
@@ -212,7 +230,7 @@ class CouplingWaveform(StrictModule):
         values: Any,
         space: AbstractVectorSpace,
         /,
-    ):
+    ) -> None:
         if not isinstance(grid, CouplingWaveformGrid):
             raise TypeError("Coupling waveform grid must be CouplingWaveformGrid.")
         if not isinstance(space, AbstractVectorSpace):
@@ -330,7 +348,7 @@ class BarycentricCouplingTemporalTransfer(AbstractCouplingTemporalTransfer):
     degree: int = eqx.field(static=True)
     transfer_id: str = eqx.field(static=True)
 
-    def __init__(self, degree: int = 1, /):
+    def __init__(self, degree: int = 1, /) -> None:
         degree_ = int(degree)
         if degree_ not in (0, 1, 2, 3):
             raise ValueError("Coupling temporal transfer degree must be 0..3.")
@@ -440,19 +458,20 @@ def adapt_coupling_waveform_grid(
     return next_grid, evidence, request
 
 
-def coupling_signal_structure(port, /) -> Any:
+def coupling_signal_structure(port: CouplingPort, /) -> Any:
     structure = port.space.structure()
-    if port.waveform_plan is None:
+    plan = port.waveform_plan
+    if plan is None:
         return structure
     return jax.tree.map(
         lambda spec: jax.ShapeDtypeStruct(
-            (port.waveform_plan.sample_capacity, *spec.shape), spec.dtype
+            (plan.sample_capacity, *spec.shape), spec.dtype
         ),
         structure,
     )
 
 
-def validate_coupling_signal(port, value: Any, /) -> Any:
+def validate_coupling_signal(port: CouplingPort, value: Any, /) -> Any:
     if port.waveform_plan is None:
         return port.space.validate(value)
     if not isinstance(value, CouplingWaveform):
@@ -478,7 +497,7 @@ def coupling_signal_finite(value: Any, /) -> Array:
     return finite
 
 
-def flatten_coupling_signal(port, value: Any, /) -> Array:
+def flatten_coupling_signal(port: CouplingPort, value: Any, /) -> Array:
     validated = validate_coupling_signal(port, value)
     if port.waveform_plan is None:
         return port.space.flatten(validated)
@@ -489,7 +508,7 @@ def flatten_coupling_signal(port, value: Any, /) -> Array:
     return jnp.concatenate(samples)
 
 
-def unflatten_coupling_signal(port, coordinates: Array, /) -> Any:
+def unflatten_coupling_signal(port: CouplingPort, coordinates: Array, /) -> Any:
     value = jnp.asarray(coordinates)
     if port.waveform_plan is None:
         return port.space.unflatten(value)
@@ -506,7 +525,7 @@ def unflatten_coupling_signal(port, coordinates: Array, /) -> Any:
     return CouplingWaveform(port.waveform_plan.initial_grid(), values, port.space)
 
 
-def subtract_coupling_signals(port, left: Any, right: Any, /) -> Any:
+def subtract_coupling_signals(port: CouplingPort, left: Any, right: Any, /) -> Any:
     left_ = validate_coupling_signal(port, left)
     right_ = validate_coupling_signal(port, right)
     if port.waveform_plan is None:
@@ -520,7 +539,7 @@ def subtract_coupling_signals(port, left: Any, right: Any, /) -> Any:
     )
 
 
-def coupling_signal_norm(port, value: Any, /) -> Array:
+def coupling_signal_norm(port: CouplingPort, value: Any, /) -> Array:
     validated = validate_coupling_signal(port, value)
     if port.waveform_plan is None:
         squared = jnp.real(port.space.inner(validated, validated))
@@ -529,7 +548,11 @@ def coupling_signal_norm(port, value: Any, /) -> Array:
     gauss_nodes, gauss_weights = np.polynomial.legendre.leggauss(order)
     gauss_nodes_ = jnp.asarray(gauss_nodes, dtype=validated.grid.nodes.dtype)
     gauss_weights_ = jnp.asarray(gauss_weights, dtype=validated.grid.nodes.dtype)
-    degree = port.temporal_transfer.degree
+    temporal_transfer = port.temporal_transfer
+    # Waveform ports require an explicit temporal transfer at construction.
+    if not (temporal_transfer is not None):
+        raise RuntimeError("Internal invariant failed: temporal_transfer is not None.")
+    degree = temporal_transfer.degree
     squared = jnp.asarray(0.0, dtype=validated.grid.nodes.dtype)
     for interval_index in range(port.waveform_plan.sample_capacity - 1):
         left = validated.grid.nodes[interval_index]
@@ -558,37 +581,41 @@ def coupling_signal_norm(port, value: Any, /) -> Array:
 
 
 def transfer_coupling_signal(
-    source_port,
-    target_port,
+    source_port: CouplingPort,
+    target_port: CouplingPort,
     source_value: Any,
-    spatial_action,
+    spatial_action: Callable[[Any], Any],
     /,
 ) -> Any:
     """Apply one explicit temporal transfer and one supplied spatial action."""
 
     source = validate_coupling_signal(source_port, source_value)
-    if source_port.waveform_plan is None and target_port.waveform_plan is None:
-        return target_port.space.validate(spatial_action(source))
-    if source_port.waveform_plan is None:
+    source_plan = source_port.waveform_plan
+    target_plan = target_port.waveform_plan
+    if target_plan is None:
+        if source_plan is None:
+            return target_port.space.validate(spatial_action(source))
+        source_sample = source.sample(source.grid.sample_count - 1, source_port.space)
+        return target_port.space.validate(spatial_action(source_sample))
+    if source_plan is None:
         source_waveform = CouplingWaveform.constant(
-            target_port.waveform_plan.initial_grid(), source, source_port.space
+            target_plan.initial_grid(), source, source_port.space
         )
     else:
         source_waveform = source
-    if target_port.waveform_plan is None:
-        source_sample = source_waveform.sample(
-            source_waveform.grid.sample_count - 1, source_port.space
-        )
-        return target_port.space.validate(spatial_action(source_sample))
-    target_grid = target_port.waveform_plan.initial_grid()
-    source_waveform = target_port.temporal_transfer.interpolate(
+    target_grid = target_plan.initial_grid()
+    temporal_transfer = target_port.temporal_transfer
+    # Waveform ports require an explicit temporal transfer at construction.
+    if not (temporal_transfer is not None):
+        raise RuntimeError("Internal invariant failed: temporal_transfer is not None.")
+    source_waveform = temporal_transfer.interpolate(
         source_waveform, target_grid, source_port.space
     )
     samples = tuple(
         target_port.space.validate(
             spatial_action(source_waveform.sample(index, source_port.space))
         )
-        for index in range(target_port.waveform_plan.sample_capacity)
+        for index in range(target_plan.sample_capacity)
     )
     values = jax.tree.map(lambda *leaves: jnp.stack(leaves), *samples)
     return CouplingWaveform(target_grid, values, target_port.space)
@@ -617,7 +644,7 @@ class FixedGridSubcyclingSubsystem(AbstractCouplingSubsystem, NonTrainableState)
         differentiable: bool,
         discretization_bundle_id: str | None = None,
         counts_complete: bool = True,
-    ):
+    ) -> None:
         if not callable(advance_substep) or not callable(observe):
             raise TypeError("Subcycling advance_substep and observe must be callable.")
         inputs = tuple(input_ports)
@@ -706,11 +733,11 @@ class FixedGridSubcyclingSubsystem(AbstractCouplingSubsystem, NonTrainableState)
             previous_outputs = tuple(samples[-1] for samples in output_samples)
 
             def execute(
-                _,
-                current_state=state,
-                current_inputs=subinputs,
-                current_step_index=step_index,
-            ):
+                _: None,
+                current_state: Any = state,
+                current_inputs: tuple[Any, ...] = subinputs,
+                current_step_index: int = step_index,
+            ) -> _SubstepOutcome:
                 current_window = CouplingWindow(
                     current_step_index,
                     window.start + window.size * grid.nodes[current_step_index],
@@ -750,12 +777,12 @@ class FixedGridSubcyclingSubsystem(AbstractCouplingSubsystem, NonTrainableState)
                 )
 
             def skip(
-                _,
-                current_state=state,
-                current_outputs=previous_outputs,
-                current_status=status,
-                current_residual=residual_norm,
-            ):
+                _: None,
+                current_state: Any = state,
+                current_outputs: tuple[Any, ...] = previous_outputs,
+                current_status: Array = status,
+                current_residual: Array = residual_norm,
+            ) -> _SubstepOutcome:
                 return (
                     current_state,
                     current_outputs,
@@ -796,14 +823,20 @@ class FixedGridSubcyclingSubsystem(AbstractCouplingSubsystem, NonTrainableState)
             auxiliary.append(step_status)
             for samples, value in zip(output_samples, step_outputs, strict=True):
                 samples.append(value)
-        outputs = tuple(
-            CouplingWaveform(
-                port.waveform_plan.initial_grid(),
-                jax.tree.map(lambda *values: jnp.stack(values), *samples),
-                port.space,
+        output_waveforms: list[CouplingWaveform] = []
+        for port, samples in zip(self.output_ports, output_samples, strict=True):
+            plan = port.waveform_plan
+            # Construction requires a waveform plan on every subcycling port.
+            if not (plan is not None):
+                raise RuntimeError("Internal invariant failed: plan is not None.")
+            output_waveforms.append(
+                CouplingWaveform(
+                    plan.initial_grid(),
+                    jax.tree.map(lambda *values: jnp.stack(values), *samples),
+                    port.space,
+                )
             )
-            for port, samples in zip(self.output_ports, output_samples, strict=True)
-        )
+        outputs = tuple(output_waveforms)
         return CouplingSubsystemResult(
             state,
             outputs,

@@ -29,7 +29,7 @@ from typing import Any, final
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._bvh import BVHBuildPolicy, PackedBVH, point_select_leaf_items, prepare_bvh
 from .._differentiation import DerivativeRegularity
@@ -97,7 +97,7 @@ class PointCloudFieldReconstructionKernel(
         minimum_neighbors: int,
         condition_limit: float,
         field_space_id: str,
-    ):
+    ) -> None:
         cloud = np.asarray(points, dtype=np.float64)
         if cloud.ndim != 2 or cloud.shape[0] == 0 or not np.all(np.isfinite(cloud)):
             raise ValueError(

@@ -17,7 +17,7 @@ from phydrax.tensor_network import (
 )
 
 
-def test_abelian_lowering_matches_exact_dense_mpo():
+def test_abelian_lowering_matches_exact_dense_mpo() -> None:
     labels = ("left", "right")
     order = FermionModeOrder(labels)
     spaces = tuple(LocalSpacePlan.fermion(label, label) for label in labels)

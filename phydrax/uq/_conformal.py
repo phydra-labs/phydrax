@@ -8,7 +8,8 @@ import math
 from typing import Literal
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 
@@ -22,7 +23,7 @@ class SplitConformal(StrictModule):
     radius: Array
     alpha: float
 
-    def __init__(self, radius: ArrayLike, alpha: float):
+    def __init__(self, radius: ArrayLike, alpha: float) -> None:
         radius_array = jnp.asarray(radius, dtype=jnp.float64).reshape(())
         _validate_radius(radius_array)
         self.radius = radius_array
@@ -71,7 +72,9 @@ class NormalizedConformal(StrictModule):
     alpha: float
     min_scale: float
 
-    def __init__(self, radius: ArrayLike, alpha: float, *, min_scale: float = 1e-8):
+    def __init__(
+        self, radius: ArrayLike, alpha: float, *, min_scale: float = 1e-8
+    ) -> None:
         radius_array = jnp.asarray(radius, dtype=jnp.float64).reshape(())
         _validate_radius(radius_array)
         minimum = float(min_scale)
@@ -165,7 +168,7 @@ class FunctionalConformal(StrictModule):
         min_scale: float = 1e-8,
         normalized: bool,
         score: Literal["max", "l2"] = "max",
-    ):
+    ) -> None:
         radius_array = jnp.asarray(radius, dtype=jnp.float64).reshape(())
         _validate_radius(radius_array)
         minimum = float(min_scale)

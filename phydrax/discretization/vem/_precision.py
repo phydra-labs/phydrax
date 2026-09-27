@@ -8,15 +8,12 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax import Array
+from jax.typing import ArrayLike
 
+from ..._dtype_names import real_precision_dtype_name, RealPrecisionDType
 from ..._fingerprint import canonical_fingerprint
-from ..._precision import (
-    PrecisionEvidenceEnvelope,
-    PrecisionRequest,
-    PrecisionResolution,
-    real_precision_dtype_name,
-    RealPrecisionDType,
-)
+from ..._precision import PrecisionEvidenceEnvelope, PrecisionRequest, PrecisionResolution
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
@@ -37,7 +34,7 @@ class VirtualElementPrecisionPolicy(StrictModule, NonTrainableState):
         accumulation_dtype: Any | None = None,
         output_dtype: Any | None = None,
         certification_dtype: Any = "float64",
-    ):
+    ) -> None:
         geometry = real_precision_dtype_name(geometry_dtype)
         projection = real_precision_dtype_name(projection_dtype)
         accumulation = real_precision_dtype_name(
@@ -77,13 +74,13 @@ class VirtualElementPrecisionPolicy(StrictModule, NonTrainableState):
             },
         )
 
-    def geometry(self, value: Any, /):
+    def geometry(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=self.geometry_dtype)
 
-    def projection(self, value: Any, /):
+    def projection(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=self.projection_dtype)
 
-    def accumulation(self, value: Any, /):
+    def accumulation(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         return (
             array
@@ -91,7 +88,7 @@ class VirtualElementPrecisionPolicy(StrictModule, NonTrainableState):
             else array.astype(self.accumulation_dtype)
         )
 
-    def output(self, value: Any, /):
+    def output(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=self.output_dtype)
 
     def evidence(self) -> PrecisionEvidenceEnvelope:
@@ -116,7 +113,7 @@ class VirtualElementResourceBudget(StrictModule, NonTrainableState):
         maximum_local_dofs: int = 256,
         maximum_cells: int = 1_000_000,
         maximum_projector_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         local = int(maximum_local_dofs)
         cells = int(maximum_cells)
         storage = int(maximum_projector_bytes)

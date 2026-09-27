@@ -10,12 +10,13 @@ import diffrax as dfx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..dynamics import ContinuousSystem, DiscreteStepContext, DiscreteSystem, TimeGrid
-from ..dynamics._system import DiscreteTransitionEvidence
-from ..solver._differential import DifferentialProblem
+from ..dynamics._system import DiscreteTransitionEvidence, DiscreteTransitionResult
+from ..solver._differential import DifferentialProblem, DifferentialSolution
 from ..solver._diffrax_backend import solve_diffrax
 from ._parameterization import (
     _validate_parameterization_grid,
@@ -81,7 +82,7 @@ def _batched_transition(
     flat_states = states.reshape((count,) + state_shape)
     flat_controls = controls.reshape((count,) + control_shape)
 
-    def apply(state: Array, control: Array):
+    def apply(state: Array, control: Array) -> DiscreteTransitionResult:
         return system.evaluate_result(context, state, args, inputs=control)
 
     result = jax.vmap(apply)(flat_states, flat_controls)
@@ -105,7 +106,7 @@ class DiscreteControlDynamics(StrictModule):
         /,
         *,
         method_id: str = "explicit-discrete-transition",
-    ):
+    ) -> None:
         if not isinstance(system, DiscreteSystem):
             raise TypeError("DiscreteControlDynamics system must be a DiscreteSystem.")
         if system.input_layout is None:
@@ -357,7 +358,7 @@ class DifferentialControlDynamics(StrictModule):
         /,
         *,
         method_id: str = "canonical-differential-problem",
-    ):
+    ) -> None:
         if not isinstance(system, ContinuousSystem):
             raise TypeError(
                 "DifferentialControlDynamics system must be a ContinuousSystem."
@@ -421,7 +422,7 @@ class DifferentialControlDynamics(StrictModule):
             self.state_shape,
         ).reshape((case_count,) + self.state_shape)
 
-        def solve_case(case_index: Array, case_state: Array):
+        def solve_case(case_index: Array, case_state: Array) -> DifferentialSolution:
             def controlled_field(time: Array, current: Array, field_args: Any) -> Array:
                 current_finite = _event_finite(current, self.state_shape)
                 safe_current = _event_where(

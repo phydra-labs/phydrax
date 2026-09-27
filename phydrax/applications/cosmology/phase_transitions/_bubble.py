@@ -9,7 +9,8 @@ import math
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -38,7 +39,7 @@ class ThinWallBubblePlan(StrictModule, NonTrainableState):
         maximum_steps: int,
         minimum_radius: float = 1.0e-8,
         maximum_energy_residual: float = 1.0e-6,
-    ):
+    ) -> None:
         values = tuple(
             map(
                 float,
@@ -108,7 +109,7 @@ class BubbleParticleEnsemble(StrictModule, NonTrainableState):
         inside: ArrayLike,
         active: ArrayLike,
         /,
-    ):
+    ) -> None:
         positions_ = jnp.asarray(positions)
         momenta_ = jnp.asarray(momenta, dtype=positions_.dtype)
         weights_ = jnp.asarray(weights, dtype=positions_.dtype)
@@ -151,7 +152,7 @@ class ThinWallBubbleState(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
 
-def _wall_energy(plan: ThinWallBubblePlan, radius, velocity):
+def _wall_energy(plan: ThinWallBubblePlan, radius: Array, velocity: Array) -> Array:
     gamma = 1.0 / jnp.sqrt(
         jnp.maximum(1.0 - velocity * velocity, jnp.finfo(radius.dtype).tiny)
     )
@@ -160,7 +161,9 @@ def _wall_energy(plan: ThinWallBubblePlan, radius, velocity):
     return area * plan.surface_tension * gamma - volume * plan.vacuum_energy_difference
 
 
-def _particle_energy(plan: ThinWallBubblePlan, particles: BubbleParticleEnsemble):
+def _particle_energy(
+    plan: ThinWallBubblePlan, particles: BubbleParticleEnsemble
+) -> tuple[Array, Array]:
     masses = jnp.where(particles.inside, plan.inside_mass, plan.outside_mass)
     energy = jnp.sqrt(
         jnp.sum(particles.momenta * particles.momenta, axis=-1) + masses * masses
@@ -378,7 +381,9 @@ def simulate_thin_wall_bubble(
     ):
         raise TypeError("plan and initial must use phase-transition types.")
 
-    def step(state, _):
+    def step(
+        state: ThinWallBubbleState, _: None
+    ) -> tuple[ThinWallBubbleState, tuple[Array, Array, Array, Array, Array, Array]]:
         result = step_thin_wall_bubble(plan, state)
         summary = (
             result.state.radius,

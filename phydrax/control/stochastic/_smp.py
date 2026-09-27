@@ -15,16 +15,17 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ...dynamics import DiscreteStepContext, TimeGrid
+from ...typing import parse
 from ._evaluation import ControlledPathBatch
 
 
-_SAMPLE_ROLES = ("training", "holdout")
 _METHOD_ID = "pathwise-euler-open-loop-stochastic-maximum-principle"
 _CERTIFICATE = "OPEN_LOOP_SMP_STATIONARY"
 
@@ -157,7 +158,7 @@ class StochasticMaximumPrincipleProblem(StrictModule):
         noise_shape: Sequence[int],
         args: Any = None,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(time_grid, TimeGrid):
             raise TypeError("time_grid must be a TimeGrid.")
         callbacks = (
@@ -311,7 +312,7 @@ class StochasticMaximumPrincipleResult(StrictModule):
         return self.conditional_stationarity_residuals
 
 
-def _identifier(value: str, owner: str, /) -> str:
+def _identifier(value: object, owner: str, /) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{owner} must be a non-empty string.")
     return value
@@ -332,9 +333,7 @@ def _positive_tolerance(value: float, owner: str, /) -> float:
 
 
 def _sample_role(value: str, /) -> SampleRole:
-    if value not in _SAMPLE_ROLES:
-        raise ValueError("sample_role must be 'training' or 'holdout'.")
-    return value  # type: ignore[return-value]
+    return parse(value, SampleRole, "sample_role")
 
 
 def _real_array(value: ArrayLike, owner: str, /) -> Array:
@@ -607,7 +606,7 @@ def evaluate_stochastic_maximum_principle(
     if not isinstance(convexity_checked, bool):
         raise TypeError("convexity_checked must be a bool.")
     if convexity_checked:
-        convexity_evidence = _identifier(convexity_evidence, "convexity_evidence")  # type: ignore[arg-type]
+        convexity_evidence = _identifier(convexity_evidence, "convexity_evidence")
     elif convexity_evidence is not None:
         raise ValueError(
             "convexity_evidence requires convexity_checked=True; unchecked text is not evidence."

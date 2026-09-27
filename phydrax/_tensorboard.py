@@ -83,7 +83,7 @@ def _write_record(stream: BinaryIO, payload: bytes, /) -> None:
 class ScalarEventWriter:
     """Append TensorBoard-compatible scalar events without TensorBoard runtime code."""
 
-    def __init__(self, log_dir: str | Path, /):
+    def __init__(self, log_dir: str | Path, /) -> None:
         directory = Path(log_dir)
         directory.mkdir(parents=True, exist_ok=True)
         timestamp = int(time.time())

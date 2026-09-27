@@ -9,7 +9,8 @@ from numbers import Integral
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 def dominance_matrix(objectives: ArrayLike, valid: ArrayLike | None = None, /) -> Array:
@@ -113,7 +114,7 @@ def _hypervolume(points: Array, reference: Array, valid: Array, /) -> Array:
     projected = clipped[yz_order]
     right = jnp.concatenate((ordered[1:, 0], reference[:1]))
 
-    def slab(index, volume):
+    def slab(index: Array, volume: Array) -> Array:
         selected = projected[:, 0] <= ordered[index, 0]
         z = jnp.where(selected, projected[:, 2], reference[2])
         height = reference[2] - jax.lax.associative_scan(jnp.minimum, z)

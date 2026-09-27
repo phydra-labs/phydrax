@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -35,7 +36,7 @@ class _Validator:
         )
 
 
-def _analysis_and_execution():
+def _analysis_and_execution() -> Any:
     analysis = phx.lifecycle.AnalysisPlan(
         "analysis",
         "provider-plan",
@@ -51,7 +52,7 @@ def _analysis_and_execution():
     return analysis, execution
 
 
-def test_lifecycle_model_round_trip(tmp_path: Path):
+def test_lifecycle_model_round_trip(tmp_path: Path) -> None:
     values = np.arange(4.0)
     digest = phx.lifecycle.payload_digest(values)
     revision = phx.NumericRevision(
@@ -75,7 +76,7 @@ def test_lifecycle_model_round_trip(tmp_path: Path):
     np.testing.assert_array_equal(query.fields[0].values, values)
 
 
-def test_unit_square_nurbs_has_local_geometry_certificate():
+def test_unit_square_nurbs_has_local_geometry_certificate() -> None:
     from phydrax.discretization import iga
     from phydrax.discretization.iga._certificate import (
         CertificateDisposition,
@@ -104,7 +105,7 @@ def test_unit_square_nurbs_has_local_geometry_certificate():
     assert certificate.cells
 
 
-def test_spline_de_rham_complex_squares_to_zero():
+def test_spline_de_rham_complex_squares_to_zero() -> None:
     from phydrax.discretization import iga
     from phydrax.discretization.iga._compatible import SplineDeRhamComplex
 
@@ -114,14 +115,16 @@ def test_spline_de_rham_complex_squares_to_zero():
     np.testing.assert_allclose(complex_.d_squared_defects, 0.0, atol=1.0e-13)
 
 
-def test_thb_certificate_and_goal_marking_are_deterministic():
+def test_thb_certificate_and_goal_marking_are_deterministic() -> None:
     from phydrax.discretization.iga._adaptive import DWREstimate, QoICertificate
     from phydrax.discretization.iga._identity import OverlayCellId
     from phydrax.discretization.iga._thb import THBHierarchy, THBLevel
 
     hierarchy = THBHierarchy(
         (
+            # ty: ignore[invalid-argument-type]
             THBLevel(0, "coarse", (True,), (True, False)),
+            # ty: ignore[invalid-argument-type]
             THBLevel(1, "fine", (True, True), (False, True, True)),
         ),
         (np.asarray(((1.0, 0.0), (0.5, 0.5), (0.0, 1.0))),),
@@ -133,6 +136,7 @@ def test_thb_certificate_and_goal_marking_are_deterministic():
     )
     estimate = DWREstimate(
         cells,
+        # ty: ignore[invalid-argument-type]
         (0.25, -0.75),
         pollution=(("algebraic", 0.0), ("quadrature", 0.0)),
     )
@@ -156,7 +160,7 @@ def test_thb_certificate_and_goal_marking_are_deterministic():
     ).passed
 
 
-def test_capability_names_reject_pascal_case_namespaces():
+def test_capability_names_reject_pascal_case_namespaces() -> None:
     with pytest.raises(ValueError, match="lowercase dotted"):
         phx.qualification.SupportTuple(
             "IGA.Core.Tensor",
@@ -164,7 +168,7 @@ def test_capability_names_reject_pascal_case_namespaces():
         )
 
 
-def test_capability_registry_signs_and_requires_profile():
+def test_capability_registry_signs_and_requires_profile() -> None:
     support = phx.qualification.SupportTuple(
         "iga.tensor",
         {"dimension": 2, "backend": "cpu", "precision": "float64"},
@@ -205,7 +209,7 @@ def test_capability_registry_signs_and_requires_profile():
     assert selected.profile_id == profile.profile_id
 
 
-def test_in_process_service_executes_authorized_provider():
+def test_in_process_service_executes_authorized_provider() -> None:
     analysis, execution = _analysis_and_execution()
     service = phx.service.InProcessReferenceService(
         _Validator(),

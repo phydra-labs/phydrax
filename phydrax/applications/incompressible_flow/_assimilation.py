@@ -20,7 +20,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -73,7 +74,7 @@ class TimeAverageWindows(StrictModule, NonTrainableState):
         /,
         *,
         labels: Sequence[str] | None = None,
-    ):
+    ) -> None:
         times = _real_array(sample_times, "Time-average sample times")
         raw_weights = _real_array(weights, "Time-average weights")
         host_times = np.asarray(times)
@@ -214,7 +215,7 @@ class SparseTimeAverageObservationOperator(StrictModule, NonTrainableState):
         window_indices: ArrayLike,
         source_indices: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(windows, TimeAverageWindows):
             raise TypeError("windows must be TimeAverageWindows.")
         if isinstance(source_size, bool):
@@ -297,7 +298,7 @@ class SparseTimeAverageObservationData(StrictModule, NonTrainableState):
         standard_deviations: ArrayLike,
         training_mask: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(operator, SparseTimeAverageObservationOperator):
             raise TypeError("operator must be a SparseTimeAverageObservationOperator.")
         observed = _real_array(values, "Sparse observation values")
@@ -374,7 +375,7 @@ class QuadraticModelErrorRegularization(StrictModule, NonTrainableState):
         *,
         amplitude_weight: float = 0.0,
         temporal_difference_weight: float = 0.0,
-    ):
+    ) -> None:
         amplitude = float(amplitude_weight)
         temporal = float(temporal_difference_weight)
         if (
@@ -439,7 +440,7 @@ class PeriodicModelErrorParameterization(AbstractControlParameterization):
         /,
         *,
         base_forcing_id: str,
-    ):
+    ) -> None:
         if not isinstance(basis, SolenoidalHermitianFourierBasis):
             raise TypeError("basis must be a SolenoidalHermitianFourierBasis.")
         if not isinstance(time_grid, TimeGrid):
@@ -533,7 +534,7 @@ class ModelErrorAssimilationIdentity(StrictModule, NonTrainableState):
         filter_id: str,
         forcing_id: str,
         observation_id: str,
-    ):
+    ) -> None:
         problem = _identifier(problem_id, "problem_id")
         compiler = _identifier(compiler_id, "compiler_id")
         filter_ = _identifier(filter_id, "filter_id")
@@ -619,7 +620,7 @@ class ModelErrorRolloutEvaluator(StrictModule, NonTrainableState):
         *,
         rollout_id: str,
         evaluator_id: str,
-    ):
+    ) -> None:
         if not isinstance(identity, ModelErrorAssimilationIdentity):
             raise TypeError("identity must be a ModelErrorAssimilationIdentity.")
         if not callable(rollout) or not callable(evaluator):
@@ -694,7 +695,7 @@ class ModelErrorAssimilationObjective(StrictModule):
         problem_id: str,
         compiler_id: str,
         filter_id: str,
-    ):
+    ) -> None:
         if not isinstance(parameterization, PeriodicModelErrorParameterization):
             raise TypeError(
                 "parameterization must be PeriodicModelErrorParameterization."

@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
@@ -39,7 +40,7 @@ class DeterministicEventAddress(StrictModule, NonTrainableState):
         channel: int,
         ordinal: int,
         /,
-    ):
+    ) -> None:
         realization = str(realization_id).strip()
         integers = tuple(
             (
@@ -88,7 +89,7 @@ class FixedCapacityEventState(StrictModule):
         active_mask: ArrayLike,
         overflow: ArrayLike,
         /,
-    ):
+    ) -> None:
         source = jnp.asarray(source_ids)
         recipient = jnp.asarray(recipient_ids, dtype=source.dtype)
         channel = jnp.asarray(channels, dtype=jnp.int32)

@@ -9,24 +9,32 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from enum import IntEnum
 from math import prod
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ... import ein
 from ..._fingerprint import canonical_fingerprint
 from ..._sampling._addressing import derive_key, SampleAddress
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 
 
 _NOISE_ADDRESS = SampleAddress(
     "sign-problem", "complex-langevin", target="real-noise", role="transition"
 )
+
+
+_LangevinStepOutput: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class ComplexLangevinStatus(IntEnum):
@@ -53,7 +61,7 @@ class GaugeCoolingPlan(StrictModule, NonTrainableState):
         step_size: float,
         monotonicity_tolerance: float = 1e-10,
         maximum_state_size: int = 1_000_000,
-    ):
+    ) -> None:
         iterations_ = int(iterations)
         step = float(step_size)
         tolerance = float(monotonicity_tolerance)
@@ -171,7 +179,7 @@ class ComplexLangevinPlan(StrictModule, NonTrainableState):
         maximum_tail_probability: float = 0.01,
         maximum_state_norm: float = 1e6,
         maximum_state_size: int = 1_000_000,
-    ):
+    ) -> None:
         steps = int(num_steps)
         step = float(step_size)
         burn = int(burn_in)
@@ -335,7 +343,9 @@ def _cool_state(
     if initial_norm.shape != () or jnp.iscomplexobj(initial_norm):
         raise TypeError("unitarity_norm must return one real scalar.")
 
-    def iteration(carry, _):
+    def iteration(
+        carry: tuple[Array, Array, Array, Array, Array], _: None
+    ) -> tuple[tuple[Array, Array, Array, Array, Array], None]:
         current, current_norm, accepted_count, rejected_count, valid = carry
         gradient = jnp.asarray(cooling.gauge_gradient(current))
         if gradient.shape != cooling.configuration_shape:
@@ -394,7 +404,7 @@ def sample_complex_langevin(
     initial_state: ArrayLike,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> ComplexLangevinResult:
     """Run one fixed-length real-noise complex Langevin trajectory."""
     if not isinstance(runtime, PreparedComplexLangevin):
@@ -414,7 +424,9 @@ def sample_complex_langevin(
         & (jnp.linalg.norm(state.reshape((-1,))) <= runtime.plan.maximum_state_norm)
     )
 
-    def step(carry, step_index):
+    def step(
+        carry: tuple[Array, Array, Array], step_index: Array
+    ) -> tuple[tuple[Array, Array, Array], _LangevinStepOutput]:
         current, active, first_invalid = carry
         drift = _action_drift(runtime, current)
         drift_norm = jnp.linalg.norm(drift.reshape((-1,)))

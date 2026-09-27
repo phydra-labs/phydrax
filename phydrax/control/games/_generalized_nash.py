@@ -7,18 +7,20 @@
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ..._bounds import Bounds
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ..._validation import positive_finite_float
 from ...dynamics import TimeGrid
 from ...linalg import (
     DenseLinearOperator,
@@ -62,10 +64,11 @@ from ._variational import (
     _exact_array,
     _identifier,
     _initial_array,
+    _KKTArgs,
+    _KKTState,
     _maximum_abs,
     _owned_indices,
     _player_costs,
-    _positive_tolerance,
     _rank,
     _real_array,
     _safe,
@@ -77,6 +80,41 @@ OPEN_LOOP_GENERALIZED_NASH_KKT = "OPEN_LOOP_GENERALIZED_NASH_KKT"
 GLOBAL_CONVEX_GNE_GAP_EVIDENCE = "GLOBAL_CONVEX_GNE_GAP_EVIDENCE"
 _KKT_CLAIM = "numerically certified open-loop generalized Nash KKT candidate"
 _UNSET = object()
+
+_GNELoweredConstraints: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+_GNENumericPreparation: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    ConvexProgramResult,
+    Array,
+    VariationalInequalityProblem,
+    _KKTState,
+    _KKTArgs,
+]
 
 
 class OpenLoopGNEStatus(IntEnum):
@@ -148,7 +186,7 @@ class FiniteHorizonLQOpenLoopGNEProblem(StrictModule):
         time_grid: TimeGrid | None = None,
         problem_id: str = "control:game:lq-open-loop-gne",
         dynamics_id: str = "control:game:dynamics:affine-discrete",
-    ):
+    ) -> None:
         if not isinstance(partition, PlayerControlPartition):
             raise TypeError("partition must be a PlayerControlPartition.")
         a = _real_array(dynamics_matrices, "dynamics_matrices")
@@ -543,17 +581,17 @@ def _gne_multiplier_metadata(
     player_shared_positions: list[tuple[int, ...]] = []
     cursor = 0
     for player, block_indices in enumerate(layout.player_block_indices):
-        equality_rows: list[int] = []
-        inequality_rows: list[int] = []
+        player_equality_rows: list[int] = []
+        player_inequality_rows: list[int] = []
         shared_positions: list[int] = []
         for block_index in block_indices:
             block = blocks[block_index]
             start, stop = constraint_layout.block_slices[block_index]
             block_rows = tuple(range(start, stop))
             if block.equality:
-                equality_rows.extend(block_rows)
+                player_equality_rows.extend(block_rows)
             else:
-                inequality_rows.extend(block_rows)
+                player_inequality_rows.extend(block_rows)
             for physical_row in block_rows:
                 rows.append(physical_row)
                 owners.append(owned[player])
@@ -561,8 +599,8 @@ def _gne_multiplier_metadata(
                 if block.scope is GameConstraintScope.SHARED:
                     shared_positions.append(cursor)
                 cursor += 1
-        player_equalities.append(tuple(equality_rows))
-        player_inequalities.append(tuple(inequality_rows))
+        player_equalities.append(tuple(player_equality_rows))
+        player_inequalities.append(tuple(player_inequality_rows))
         player_shared_positions.append(tuple(shared_positions))
     if len(rows) != layout.num_multipliers or cursor != layout.num_multipliers:
         raise RuntimeError("GNE multiplier metadata does not match its fixed layout.")
@@ -604,11 +642,11 @@ def plan_open_loop_gne(
     if not isinstance(audit_best_responses, bool):
         raise TypeError("audit_best_responses must be a bool.")
     tolerances = (
-        _positive_tolerance(structural_tolerance, "structural_tolerance"),
-        _positive_tolerance(convexity_tolerance, "convexity_tolerance"),
-        _positive_tolerance(regularity_tolerance, "regularity_tolerance"),
-        _positive_tolerance(feasibility_tolerance, "feasibility_tolerance"),
-        _positive_tolerance(kkt_tolerance, "kkt_tolerance"),
+        positive_finite_float(structural_tolerance, "structural_tolerance"),
+        positive_finite_float(convexity_tolerance, "convexity_tolerance"),
+        positive_finite_float(regularity_tolerance, "regularity_tolerance"),
+        positive_finite_float(feasibility_tolerance, "feasibility_tolerance"),
+        positive_finite_float(kkt_tolerance, "kkt_tolerance"),
     )
     method_ = (
         SemismoothNewton(
@@ -724,7 +762,7 @@ def _lower_constraints(
     matrix: Array,
     offset: Array,
     /,
-) -> tuple[Array, ...]:
+) -> _GNELoweredConstraints:
     dtype = matrix.dtype
     combined_stationarity = jnp.zeros(
         plan.case_shape
@@ -813,7 +851,7 @@ def _phase_one(
     return solve_quadratic_program(program, policy=plan.phase_one_policy)
 
 
-def _kkt_operator(state, args, /):
+def _kkt_operator(state: _KKTState, args: _KKTArgs, /) -> _KKTState:
     controls, equality_variables, inequality_variables = state
     (
         pseudogradient,
@@ -854,7 +892,7 @@ def _numeric_preparation(
     initial_inequality_multipliers: Array | None,
     constraint_args: Any,
     /,
-):
+) -> _GNENumericPreparation:
     state_maps, state_offsets = _condense_dynamics(problem)
     (
         player_hessians,
@@ -898,7 +936,12 @@ def _numeric_preparation(
         & jnp.all(player_convex, axis=-1)
         & (affinity <= plan.structural_tolerance)
     )
-    safe_physical = tuple(_safe(value) for value in physical)
+    safe_physical = (
+        _safe(physical[0]),
+        _safe(physical[1]),
+        _safe(physical[2]),
+        _safe(physical[3]),
+    )
     safe_multiplier = tuple(_safe(value) for value in multiplier)
     safe_pseudogradient = _safe(pseudogradient)
     safe_pseudolinear = _safe(pseudolinear)

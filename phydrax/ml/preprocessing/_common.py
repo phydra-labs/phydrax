@@ -8,11 +8,12 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._differentiation import (
     DerivativeContract,
 )
+from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
@@ -56,7 +57,7 @@ class PreprocessingDiagnostics(StrictModule):
         output_shape: tuple[int, ...],
         method: str,
         details: tuple[tuple[str, Any], ...] = (),
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.observed_weight = jnp.asarray(observed_weight)
@@ -207,7 +208,7 @@ def _diagnostics(
 
 
 def _fit_result(
-    model,
+    model: AbstractArrayModel,
     diagnostics: PreprocessingDiagnostics,
     contract: DerivativeContract,
     /,

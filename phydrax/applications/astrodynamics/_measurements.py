@@ -10,11 +10,13 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._context import AstrodynamicsContext
 from ._status import AstrodynamicsStatus
 
@@ -52,9 +54,8 @@ class OrbitMeasurementPlan(StrictModule, NonTrainableState):
         /,
         *,
         measurement_id: str,
-    ):
-        if kind not in ("range", "range_rate", "right_ascension_declination"):
-            raise ValueError("Unknown orbit measurement kind.")
+    ) -> None:
+        kind = parse(kind, OrbitMeasurementKind, "kind")
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         times_host = np.asarray(times, dtype=np.float64)

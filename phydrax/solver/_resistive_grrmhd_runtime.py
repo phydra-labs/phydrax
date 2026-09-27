@@ -5,18 +5,21 @@
 from __future__ import annotations
 
 from enum import IntEnum
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..equations._relativistic_mhd import ValenciaPrimitiveRecovery
 from ..equations._resistive_grmhd import (
     RelativisticOhmEvaluation,
     ResistiveGRMHDOhmicClosure,
@@ -27,6 +30,10 @@ from ._grrmhd_runtime import (
     GRRMHDStepResult,
 )
 from ._relativistic_finite_volume import ValenciaFiniteVolumeStageGeometry
+
+
+if TYPE_CHECKING:
+    from ..discretization.finite_volume import FiniteVolumeDiscretization
 
 
 class ResistiveGRRMHDRunStatus(IntEnum):
@@ -132,7 +139,7 @@ class FixedGridResistiveGRRMHDIMEXPlan(StrictModule, NonTrainableState):
         geometry: ValenciaFiniteVolumeStageGeometry,
         composition: ArrayLike | None,
         /,
-    ):
+    ) -> ValenciaPrimitiveRecovery:
         transport = self.base.material_transport
         full = transport.constrained_transport.full_state(
             state.material_state, state.constrained_transport.magnetic_flux
@@ -230,7 +237,7 @@ class FixedGridResistiveGRRMHDIMEXPlan(StrictModule, NonTrainableState):
     def _charge_rate(
         self,
         coordinate_current: Array,
-        discretization,
+        discretization: FiniteVolumeDiscretization,
         /,
     ) -> tuple[Array, Array]:
         volumes = discretization.cell_volumes.astype(coordinate_current.dtype)

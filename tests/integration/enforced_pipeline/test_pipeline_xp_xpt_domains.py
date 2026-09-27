@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 
@@ -24,7 +27,7 @@ from phydrax.enforcement import (
 from phydrax.operators.differential import partial_x
 
 
-def _paired_batch_xp(domain, xs, ps):
+def _paired_batch_xp(domain: Any, xs: Any, ps: Any) -> Any:
     structure = SampleLayout((("x", "p"),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
@@ -42,7 +45,7 @@ def _paired_batch_xp(domain, xs, ps):
     return PointBatch(points=points, structure=structure)
 
 
-def _paired_batch_xpt(domain, xs, ps, ts):
+def _paired_batch_xpt(domain: Any, xs: Any, ps: Any, ts: Any) -> Any:
     structure = SampleLayout((("x", "p", "t"),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
@@ -63,13 +66,13 @@ def _paired_batch_xpt(domain, xs, ps, ts):
     return PointBatch(points=points, structure=structure)
 
 
-def test_xp_steady_state_explicit_anchors():
+def test_xp_steady_state_explicit_anchors() -> None:
     geom = Interval1d(0.0, 1.0)
     momentum = Interval1d(-1.0, 1.0).relabel("p")
     domain = geom @ momentum
 
     @domain.Function("x", "p")
-    def u(x, p):
+    def u(x: Any, p: Any) -> Any:
         return x[0] + 2.0 * p[0]
 
     left = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] < 0.5})
@@ -110,13 +113,13 @@ def test_xp_steady_state_explicit_anchors():
     assert jnp.allclose(out, values, atol=1e-3)
 
 
-def test_xp_coord_separable_partials():
+def test_xp_coord_separable_partials() -> None:
     geom = Interval1d(0.0, 1.0)
     momentum = Interval1d(-1.0, 1.0).relabel("p")
     domain = geom @ momentum
 
     @domain.Function("x", "p")
-    def u(x, p):
+    def u(x: Any, p: Any) -> Any:
         return x[0] ** 2 + 3.0 * p[0]
 
     component = domain.component()
@@ -136,14 +139,14 @@ def test_xp_coord_separable_partials():
     assert jnp.allclose(dp, 3.0 * jnp.ones_like(pp), atol=1e-5)
 
 
-def test_xpt_transient_explicit_anchors():
+def test_xpt_transient_explicit_anchors() -> None:
     geom = Interval1d(0.0, 1.0)
     momentum = Interval1d(-1.0, 1.0).relabel("p")
     time = TimeInterval(0.0, 1.0)
     domain = geom @ momentum @ time
 
     @domain.Function("x", "p", "t")
-    def u(x, p, t):
+    def u(x: Any, p: Any, t: Any) -> Any:
         return x[0] + p[0] + t
 
     left = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] < 0.5})
@@ -199,14 +202,14 @@ def test_xpt_transient_explicit_anchors():
     assert jnp.allclose(out, values, atol=1e-3)
 
 
-def test_xpt_coord_separable_partials():
+def test_xpt_coord_separable_partials() -> None:
     geom = Interval1d(0.0, 1.0)
     momentum = Interval1d(-1.0, 1.0).relabel("p")
     time = TimeInterval(0.0, 1.0)
     domain = geom @ momentum @ time
 
     @domain.Function("x", "p", "t")
-    def u(x, p, t):
+    def u(x: Any, p: Any, t: Any) -> Any:
         return x[0] ** 2 + 3.0 * p[0] + t
 
     component = domain.component()

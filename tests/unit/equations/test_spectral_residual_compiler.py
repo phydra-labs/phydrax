@@ -1,4 +1,5 @@
 from fractions import Fraction
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -7,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def _fourier_space(count=12):
+def _fourier_space(count: Any = 12) -> Any:
     return phx.discretization.TensorSpectralPlan(
         (phx.discretization.FourierBasisPlan(count),),
         axis_names=("x",),
@@ -15,7 +16,7 @@ def _fourier_space(count=12):
     ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
 
 
-def _quadratic_problem(*, condition=False):
+def _quadratic_problem(*, condition: Any = False) -> Any:
     x = phx.equations.PDECoordinate(
         "x",
         "space",
@@ -55,7 +56,7 @@ def _quadratic_problem(*, condition=False):
     )
 
 
-def test_full_closure_detects_residual_outside_retained_projection():
+def test_full_closure_detects_residual_outside_retained_projection() -> None:
     space = _fourier_space()
     x = space.axes[0].nodes
     wave_number = space.modal_shape[0] // 2 - 1
@@ -76,14 +77,19 @@ def test_full_closure_detects_residual_outside_retained_projection():
         ),
     )
 
+    # ty: ignore[unresolved-attribute]
     assert retained.residual_energy(state) < 1e-20
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(full.residual_energy(state), 0.125, rtol=1e-11, atol=1e-11)
+    # ty: ignore[unresolved-attribute]
     assert full.report.exact
+    # ty: ignore[unresolved-attribute]
     assert full.report.evaluation_shape == (23,)
+    # ty: ignore[unresolved-attribute]
     assert full.residual_coefficients(state)[0].shape == (23,)
 
 
-def test_all_coordinate_chebyshev_time_derivative_is_exact_and_differentiable():
+def test_all_coordinate_chebyshev_time_derivative_is_exact_and_differentiable() -> None:
     t = phx.equations.PDECoordinate("t", "time", bounds=(0.0, 1.0))
     field = phx.equations.PDEField("u", coordinates=("t",))
     u = phx.equations.PDEExpression.field("u")
@@ -108,8 +114,11 @@ def test_all_coordinate_chebyshev_time_derivative_is_exact_and_differentiable():
         space,
         phx.discretization.PseudospectralMethodPlan(),
     )
+    # ty: ignore[unresolved-attribute]
     state = compiled.project_state(space.axes[0].nodes)
+    # ty: ignore[unresolved-attribute]
     energy = jax.jit(lambda value: compiled.residual_energy(value))(state)
+    # ty: ignore[unresolved-attribute]
     gradient = jax.grad(lambda value: compiled.residual_energy(value))(state)
 
     assert energy < 1e-20
@@ -117,7 +126,7 @@ def test_all_coordinate_chebyshev_time_derivative_is_exact_and_differentiable():
     assert jnp.sqrt(jnp.real(jnp.vdot(gradient, gradient))) < 1e-8
 
 
-def test_nonpolynomial_full_residual_requires_explicit_approximation():
+def test_nonpolynomial_full_residual_requires_explicit_approximation() -> None:
     space = _fourier_space(8)
     problem = _quadratic_problem()
     u = phx.equations.PDEExpression.field("u")
@@ -139,10 +148,11 @@ def test_nonpolynomial_full_residual_requires_explicit_approximation():
         method,
         require_exact=False,
     )
+    # ty: ignore[unresolved-attribute]
     assert not compiled.report.exact
 
 
-def test_conditions_are_rejected_unless_external_handling_is_explicit():
+def test_conditions_are_rejected_unless_external_handling_is_explicit() -> None:
     space = _fourier_space(8)
     problem = _quadratic_problem(condition=True)
     method = phx.discretization.PseudospectralMethodPlan(
@@ -158,10 +168,11 @@ def test_conditions_are_rejected_unless_external_handling_is_explicit():
         method,
         condition_handling="external",
     )
+    # ty: ignore[unresolved-attribute]
     assert compiled.report.condition_handling == "external"
 
 
-def test_closure_plan_rejects_unsupported_capacity_and_basis():
+def test_closure_plan_rejects_unsupported_capacity_and_basis() -> None:
     space = _fourier_space(12)
     with pytest.raises(ValueError, match="maximum_evaluation_modes"):
         phx.discretization.PolynomialClosureDealiasingPlan(
@@ -180,7 +191,7 @@ def test_closure_plan_rejects_unsupported_capacity_and_basis():
         )
 
 
-def test_periodic_coordinate_values_do_not_claim_finite_exactness():
+def test_periodic_coordinate_values_do_not_claim_finite_exactness() -> None:
     space = _fourier_space(8)
     x = phx.equations.PDECoordinate(
         "x",
@@ -210,10 +221,11 @@ def test_periodic_coordinate_values_do_not_claim_finite_exactness():
         phx.discretization.PseudospectralMethodPlan(),
         require_exact=False,
     )
+    # ty: ignore[unresolved-attribute]
     assert not compiled.report.exact
 
 
-def test_spectral_dynamics_accepts_exact_integer_power_literals():
+def test_spectral_dynamics_accepts_exact_integer_power_literals() -> None:
     space = _fourier_space(8)
     x = phx.equations.PDECoordinate(
         "x",
@@ -286,7 +298,7 @@ def test_spectral_dynamics_accepts_exact_integer_power_literals():
         )
 
 
-def test_spectral_compilation_identity_includes_measure_mask():
+def test_spectral_compilation_identity_includes_measure_mask() -> None:
     space = _fourier_space(8)
     problem = _quadratic_problem()
     method = phx.discretization.PseudospectralMethodPlan(
@@ -295,7 +307,7 @@ def test_spectral_compilation_identity_includes_measure_mask():
     first_mask = jnp.ones(space.physical_shape, dtype=jnp.bool_)
     second_mask = first_mask.at[0].set(False)
 
-    def compile_with(mask):
+    def compile_with(mask: Any) -> Any:
         return phx.equations.compile_spectral_residual(
             problem,
             space,

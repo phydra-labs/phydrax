@@ -11,7 +11,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -20,6 +21,7 @@ from ..operators.quantum._operations import (
     LocalKrausChannelOperation,
     LocalUnitaryOperation,
     QuantumProgram,
+    QuantumStateKind,
 )
 from ..operators.quantum._register import HilbertRegisterLayout
 from ._quantum_compilation import HardwareTopology
@@ -38,12 +40,12 @@ class QuantumProgramInterchange(StrictModule, NonTrainableState):
     valid: Array
     wire_ids: tuple[str, ...] = eqx.field(static=True)
     local_dimensions: tuple[int, ...] = eqx.field(static=True)
-    state_kind: str = eqx.field(static=True)
+    state_kind: QuantumStateKind = eqx.field(static=True)
     operation_kinds: tuple[str, ...] = eqx.field(static=True)
     operation_targets: tuple[tuple[str, ...], ...] = eqx.field(static=True)
     payload_id: str = eqx.field(static=True)
 
-    def __init__(self, program: QuantumProgram, /):
+    def __init__(self, program: QuantumProgram, /) -> None:
         if not isinstance(program, QuantumProgram):
             raise TypeError("program must be QuantumProgram.")
         numerical: list[Array] = []
@@ -128,7 +130,7 @@ class QuantumResultInterchange(StrictModule, NonTrainableState):
         *,
         experiment_id: str,
         tolerance: float = 1e-6,
-    ):
+    ) -> None:
         probabilities_ = jnp.asarray(probabilities)
         counts_ = jnp.asarray(counts)
         status = jnp.asarray(branch_status)
@@ -208,7 +210,7 @@ class QuantumServicePolicy(StrictModule, NonTrainableState):
         maximum_shots: int,
         maximum_classical_bits: int,
         allowed_topology_ids: Sequence[str],
-    ):
+    ) -> None:
         capacities = tuple(
             (
                 maximum_wires,
@@ -251,7 +253,7 @@ class QuantumServiceRequest(StrictModule, NonTrainableState):
         /,
         *,
         requested_shots: int,
-    ):
+    ) -> None:
         if not isinstance(experiment, QuantumExperimentProgram) or not isinstance(
             topology, HardwareTopology
         ):

@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -64,7 +65,7 @@ class FixedWorkThermochemicalSourcePlan(StrictModule, NonTrainableState):
         newton_iterations: int = 10,
         residual_tolerance: float = 1.0e-9,
         minimum_line_fraction: float = 1.0e-8,
-    ):
+    ) -> None:
         substeps_ = int(substeps)
         iterations = int(newton_iterations)
         tolerance = float(residual_tolerance)
@@ -122,11 +123,11 @@ class FixedWorkThermochemicalSourcePlan(StrictModule, NonTrainableState):
         species_count = system.species_count
         molar_masses = system.thermodynamics.schema.molar_masses.astype(incoming.dtype)
 
-        def assemble(base, unknown):
+        def assemble(base: Array, unknown: Array) -> Array:
             value = base.at[:species_count].set(unknown[:species_count])
             return value.at[system.mode_slice].set(unknown[species_count:])
 
-        def source(unknown, base):
+        def source(unknown: Array, base: Array) -> Array:
             state = assemble(base, unknown)
             recovered = system.recover_thermodynamics(state)
             concentrations = state[:species_count] / molar_masses
@@ -141,16 +142,16 @@ class FixedWorkThermochemicalSourcePlan(StrictModule, NonTrainableState):
             species_rate = evaluation.species_amount_rate * molar_masses
             return jnp.concatenate((species_rate, evaluation.mode_energy_rate))
 
-        def one_substep(_, carry):
+        def one_substep(_: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             state, maximum_residual = carry
             initial_unknown = jnp.concatenate(
                 (state[:species_count], state[system.mode_slice])
             )
 
-            def residual(unknown):
+            def residual(unknown: Array) -> Array:
                 return unknown - initial_unknown - step * source(unknown, state)
 
-            def newton_body(_, unknown):
+            def newton_body(_: Array, unknown: Array) -> Array:
                 value = residual(unknown)
                 jacobian = jax.jacfwd(residual)(unknown)
                 direction = -contract(

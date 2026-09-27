@@ -10,7 +10,8 @@ from typing import Any, TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from scipy.special import eval_legendre
 
 import phydrax.ein as ein
@@ -70,7 +71,7 @@ class EntropyFilterPlan(StrictModule, NonTrainableState):
         differentiability: BranchDifferentiationPolicy = (
             BranchDifferentiationPolicy.BRANCHWISE
         ),
-    ):
+    ) -> None:
         density = None if density_floor is None else float(density_floor)
         pressure = None if pressure_floor is None else float(pressure_floor)
         entropy = float(entropy_tolerance)
@@ -128,7 +129,11 @@ class EntropyFilterPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def prepare(self, dynamics, /) -> PreparedEntropyFilter:
+    def prepare(
+        self,
+        dynamics: PreparedDGSEMConservationDynamics | PreparedNodalDGConservationDynamics,
+        /,
+    ) -> PreparedEntropyFilter:
         from ._nodal_conservation import PreparedNodalDGConservationDynamics
 
         if isinstance(dynamics, PreparedDGSEMConservationDynamics):
@@ -156,7 +161,7 @@ class _PreparedTensorEntropyFilter(AbstractSSPRKStageTransform):
         plan: EntropyFilterPlan,
         dynamics: PreparedDGSEMConservationDynamics,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, EntropyFilterPlan):
             raise TypeError("plan must be EntropyFilterPlan.")
         if not isinstance(dynamics, PreparedDGSEMConservationDynamics):
@@ -426,7 +431,7 @@ class _PreparedNodalEntropyFilter(AbstractSSPRKStageTransform):
         plan: EntropyFilterPlan,
         dynamics: PreparedNodalDGConservationDynamics,
         /,
-    ):
+    ) -> None:
         if dynamics.entropy_pair is None:
             raise ValueError("Nodal entropy filtering requires an entropy pair.")
         cell_by_dof = np.full((dynamics.state_space.shape[0],), -1, dtype=np.int32)
@@ -459,7 +464,11 @@ class _PreparedNodalEntropyFilter(AbstractSSPRKStageTransform):
             axis=1,
         )
         safe = jnp.where(admissible[..., None], local, first)
-        entropy = self.dynamics.entropy_pair._entropy_unchecked(safe)
+        entropy_pair = self.dynamics.entropy_pair
+        # __init__ rejects nodal dynamics without an entropy pair.
+        if not (entropy_pair is not None):
+            raise RuntimeError("Internal invariant failed: entropy_pair is not None.")
+        entropy = entropy_pair._entropy_unchecked(safe)
         entropy = jnp.nan_to_num(
             entropy,
             nan=invalid_value,
@@ -515,7 +524,7 @@ class _PreparedNodalEntropyFilter(AbstractSSPRKStageTransform):
             mean_local = jnp.broadcast_to(mean[:, None, :], local.shape)
             block_bounds = entropy_bounds[cell_offset : cell_offset + local.shape[0]]
 
-            def admissible(candidate):
+            def admissible(candidate: Array) -> Array:
                 physical = jnp.all(self.dynamics.system.admissible(candidate), axis=1)
                 entropy = self._safe_entropy(candidate, jnp.inf)
                 entropy_ok = jnp.max(entropy, axis=1) <= (
@@ -596,7 +605,7 @@ class PreparedEntropyFilter(AbstractSSPRKStageTransform):
         self,
         implementation: _PreparedTensorEntropyFilter | _PreparedNodalEntropyFilter,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             implementation, (_PreparedTensorEntropyFilter, _PreparedNodalEntropyFilter)
         ):

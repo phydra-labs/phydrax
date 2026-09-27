@@ -9,7 +9,9 @@ import numpy as np
 import phydrax as phx
 
 
-def test_vortex_particle_diffrax_rollout_preserves_pair_circulation_and_is_differentiable():
+def test_vortex_particle_diffrax_rollout_preserves_pair_circulation_and_is_differentiable() -> (
+    None
+):
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(2),
         jnp.ones((2,)),

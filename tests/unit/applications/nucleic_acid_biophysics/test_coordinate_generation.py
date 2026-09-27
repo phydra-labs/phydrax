@@ -1,4 +1,5 @@
 import hashlib
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -27,7 +28,7 @@ NANOMETER = UnitDefinition(
 )
 
 
-def _rights(*, training=True):
+def _rights(*, training: Any = True) -> Any:
     payload = b"original-nucleotide-token-test-fixture"
     return ReferenceArtifactManifest(
         "original-nucleotide-fixture",
@@ -46,7 +47,7 @@ def _rights(*, training=True):
     )
 
 
-def _source(rights):
+def _source(rights: Any) -> Any:
     return ScientificArtifactEnvelope(
         artifact_kind="raw-nucleic-output",
         content_digest=rights.checksum,
@@ -59,7 +60,7 @@ def _source(rights):
     )
 
 
-def _fixture(polymer="DNA"):
+def _fixture(polymer: Any = "DNA") -> Any:
     construct = NucleicAcidConstruct(("strand",), ("A",), (polymer,), (False,))
     mapping = NucleotideAtomMapping(
         construct,
@@ -89,7 +90,7 @@ def _fixture(polymer="DNA"):
     return mapping, support, x
 
 
-def test_nucleic_provider_preserves_unit_equivalence_and_stable_atom_mapping():
+def test_nucleic_provider_preserves_unit_equivalence_and_stable_atom_mapping() -> None:
     mapping, support, x = _fixture()
     rights = _rights()
     order = (3, 1, 0, 2)
@@ -115,7 +116,9 @@ def test_nucleic_provider_preserves_unit_equivalence_and_stable_atom_mapping():
         map_nucleic_hypothesis(result.hypotheses[0], rna_support)
 
 
-def test_nucleic_provider_refuses_incomplete_training_and_inherited_weight_restrictions():
+def test_nucleic_provider_refuses_incomplete_training_and_inherited_weight_restrictions() -> (
+    None
+):
     mapping, support, x = _fixture()
     rights, restricted = _rights(), _rights(training=False)
     provenance = CoordinateProviderProvenance(

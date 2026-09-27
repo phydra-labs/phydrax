@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._differentiation import BranchDifferentiationPolicy
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -358,7 +359,7 @@ class ConservationStageFluxRateBlock(StrictModule):
         /,
         *,
         route_signature_id: str | None = None,
-    ):
+    ) -> None:
         """Validate one owner-oriented route block.
 
         Without ``route_signature_id`` the routes are host topology: they are
@@ -475,7 +476,7 @@ class ConservationStageLedger(StrictModule):
         correction_level: ArrayLike | None = None,
         accepted: ArrayLike = True,
         differentiability_policy_id: str = BranchDifferentiationPolicy.SMOOTH.value,
-    ):
+    ) -> None:
         geometry_family = _flux_identity(geometry_family_id, "geometry_family_id")
         geometry_layout = _flux_identity(geometry_layout_id, "geometry_layout_id")
         version = _integer_scalar(geometry_version, "geometry_version")
@@ -698,7 +699,7 @@ class AcceptedConservationFluxIntegralBlock(StrictModule):
         /,
         *,
         _validated_route_id: str | None = None,
-    ):
+    ) -> None:
         block_id_ = _flux_identity(block_id, "block_id")
         block_kind_ = _flux_identity(block_kind, "block_kind")
         owner = jnp.asarray(owner_cells)
@@ -822,7 +823,7 @@ class AcceptedConservationIntegralLedger(StrictModule):
         start_time: ArrayLike,
         end_time: ArrayLike,
         accepted_step: ArrayLike,
-    ):
+    ) -> None:
         start_time_ = _finite_scalar(start_time, "start_time")
         end_time_ = _finite_scalar(end_time, "end_time")
         end_time_ = eqx.error_if(
@@ -1078,10 +1079,12 @@ class AcceptedConservationIntegralLedger(StrictModule):
             stage1.active_cell_mask,
             geometry_family_id=stage1.geometry_family_id,
             geometry_layout_id=stage1.geometry_layout_id,
+            # ty: ignore[invalid-argument-type]
             stage_geometry_versions=tuple(stage.geometry_version for stage in stages),
             start_geometry_version=start_version,
             end_geometry_version=end_version,
             evidence_policy_id=stage1.evidence_policy_id,
+            # ty: ignore[invalid-argument-type]
             stage_evidence_versions=tuple(stage.evidence_version for stage in stages),
             start_evidence_version=start_evidence,
             end_evidence_version=end_evidence,

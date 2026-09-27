@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -19,6 +20,7 @@ from ..linalg import (
     LinearSystem,
     OperatorProperties,
     prepare,
+    PreparedLinearSolve,
     solve,
     TolerancePolicy,
 )
@@ -46,7 +48,7 @@ class ElectrostaticConductorCoupling(StrictModule, NonTrainableState):
 
     stiffness: Array
     constraint: Array
-    prepared_linear: object
+    prepared_linear: PreparedLinearSolve
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -58,7 +60,7 @@ class ElectrostaticConductorCoupling(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-10,
         maximum_iterations: int = 500,
-    ):
+    ) -> None:
         matrix = np.asarray(stiffness, dtype=np.float64)
         constraint = np.asarray(constraint_matrix, dtype=np.float64)
         if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:

@@ -11,13 +11,15 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import PRNGKey
 from .._core import DigitBank
 from ._geometry import CalorimeterGeometry
 from ._truth import CalorimeterTruth
@@ -44,7 +46,7 @@ class CalorimeterResponsePlan(StrictModule, NonTrainableState):
         adc_lsb: float,
         threshold: float,
         maximum_adc: int,
-    ):
+    ) -> None:
         if not isinstance(geometry, CalorimeterGeometry):
             raise TypeError("geometry must be CalorimeterGeometry.")
         gain_ = np.asarray(gain, dtype=np.float64)
@@ -112,7 +114,7 @@ class CalorimeterResponse(StrictModule, NonTrainableState):
 def apply_calorimeter_response(
     plan: CalorimeterResponsePlan,
     truth: CalorimeterTruth,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> CalorimeterResponse:
     if not isinstance(plan, CalorimeterResponsePlan) or not isinstance(
@@ -122,7 +124,7 @@ def apply_calorimeter_response(
     if truth.geometry_id != plan.geometry.geometry_id:
         raise ValueError("Calorimeter truth and response geometry differ.")
 
-    def event_noise(event_id):
+    def event_noise(event_id: Array) -> Array:
         event_key = jr.fold_in(key, jnp.asarray(event_id, dtype=jnp.uint32))
         return jr.normal(
             event_key, (plan.geometry.cell_count,), dtype=truth.cell_energies.dtype

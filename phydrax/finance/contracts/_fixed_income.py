@@ -6,14 +6,15 @@
 
 from __future__ import annotations
 
-from math import isfinite
 from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._validation import positive_finite_float
 from ..core import Currency, FinanceDate
 from ._base import AbstractResolvedContract
 from ._cashflows import CashflowBatch
@@ -26,7 +27,7 @@ from ._rates import (
 
 
 if TYPE_CHECKING:
-    from ..curves._core import CurveSet
+    from ..curves._core import CurveSet, PreparedCurve
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -34,13 +35,6 @@ def _identifier(value: str, name: str, /) -> str:
     if not identifier:
         raise ValueError(f"{name} must be a non-empty string.")
     return identifier
-
-
-def _positive(value: float, name: str, /) -> float:
-    number = float(value)
-    if not isfinite(number) or number <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return number
 
 
 def _settlement_time(value: ArrayLike, /) -> Array:
@@ -60,7 +54,7 @@ def _discount_curve(
     valuation_date: FinanceDate,
     currency: Currency,
     /,
-):
+) -> PreparedCurve:
     curve = curves.curve(curve_id)
     definition = curve.definition
     if definition.valuation_date.ordinal != valuation_date.ordinal:
@@ -103,7 +97,7 @@ class ResolvedZeroCouponBond(AbstractResolvedContract):
         maturity_time: float,
         face_value: float,
         discount_curve_id: str,
-    ):
+    ) -> None:
         if not isinstance(currency, Currency):
             raise TypeError("currency must be a Currency.")
         if not isinstance(valuation_date, FinanceDate) or not isinstance(
@@ -114,10 +108,10 @@ class ResolvedZeroCouponBond(AbstractResolvedContract):
             )
         if maturity_date.ordinal <= valuation_date.ordinal:
             raise ValueError("maturity_date must be later than valuation_date.")
-        maturity = _positive(maturity_time, "maturity_time")
+        maturity = positive_finite_float(maturity_time, "maturity_time")
         contract = _identifier(contract_id, "contract_id")
         discount_id = _identifier(discount_curve_id, "discount_curve_id")
-        face = _positive(face_value, "face_value")
+        face = positive_finite_float(face_value, "face_value")
         self.contract_id = contract
         self.currency = currency
         self.valuation_date = valuation_date
@@ -201,7 +195,7 @@ class ResolvedFixedRateBond(AbstractResolvedContract):
     contract_id: str = eqx.field(static=True)
     resolved_id: str = eqx.field(static=True)
 
-    def __init__(self, contract_id: str, coupon_leg: ResolvedFixedLeg, /):
+    def __init__(self, contract_id: str, coupon_leg: ResolvedFixedLeg, /) -> None:
         if not isinstance(coupon_leg, ResolvedFixedLeg):
             raise TypeError("coupon_leg must be a ResolvedFixedLeg.")
         if coupon_leg.pay_receive is not PayReceive.RECEIVE:
@@ -289,7 +283,7 @@ class ResolvedFloatingRateBond(AbstractResolvedContract):
     contract_id: str = eqx.field(static=True)
     resolved_id: str = eqx.field(static=True)
 
-    def __init__(self, contract_id: str, coupon_leg: ResolvedFloatingLeg, /):
+    def __init__(self, contract_id: str, coupon_leg: ResolvedFloatingLeg, /) -> None:
         if not isinstance(coupon_leg, ResolvedFloatingLeg):
             raise TypeError("coupon_leg must be a ResolvedFloatingLeg.")
         if coupon_leg.pay_receive is not PayReceive.RECEIVE:

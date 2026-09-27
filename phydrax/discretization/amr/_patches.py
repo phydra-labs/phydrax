@@ -35,7 +35,7 @@ class LogicalPatchBox(StrictModule, NonTrainableState):
         lower: Sequence[int],
         upper: Sequence[int],
         /,
-    ):
+    ) -> None:
         level_ = int(level)
         lower_ = tuple(int(value) for value in lower)
         upper_ = tuple(int(value) for value in upper)
@@ -205,7 +205,7 @@ class PatchShapeSignature(StrictModule, NonTrainableState):
         *,
         halo_width: int | Sequence[int] = 1,
         alignment: int | Sequence[int] = 1,
-    ):
+    ) -> None:
         shape = tuple(envelope_shape)
         halo = (
             (int(halo_width),) * len(shape)
@@ -261,7 +261,7 @@ class PatchBucketPlan(StrictModule, NonTrainableState):
     lane_capacity: int = eqx.field(static=True)
     bucket_id: str = eqx.field(static=True)
 
-    def __init__(self, signature: PatchShapeSignature, lane_capacity: int, /):
+    def __init__(self, signature: PatchShapeSignature, lane_capacity: int, /) -> None:
         capacity = int(lane_capacity)
         if not isinstance(signature, PatchShapeSignature) or capacity <= 0:
             raise ValueError(
@@ -290,7 +290,7 @@ class BlockHierarchyCapacityPlan(StrictModule, NonTrainableState):
         entity_capacities: Sequence[Sequence[int]],
         route_capacities: Sequence[int],
         /,
-    ):
+    ) -> None:
         entities = tuple(tuple(row) for row in entity_capacities)
         routes = tuple(route_capacities)
         if (

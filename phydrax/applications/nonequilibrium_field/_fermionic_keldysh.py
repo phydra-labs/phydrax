@@ -9,7 +9,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -246,7 +247,7 @@ class FermionicSecondBornPlan(StrictModule, NonTrainableState):
         damping: float = 0.5,
         conservation_tolerance: float = 1.0e-6,
         maximum_matrix_elements: int = 4_000_000,
-    ):
+    ) -> None:
         if not isinstance(grid, ClosedTimePathGrid):
             raise TypeError("grid must be ClosedTimePathGrid.")
         hamiltonian = np.asarray(one_particle_hamiltonian, dtype=np.complex128)
@@ -323,7 +324,12 @@ class PreparedFermionicSecondBorn(StrictModule, NonTrainableState):
     quadrature_weights: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, free_functions, /):
+    def __init__(
+        self,
+        plan: FermionicSecondBornPlan,
+        free_functions: FermionicKeldyshFunctions,
+        /,
+    ) -> None:
         times = np.asarray(plan.grid.plan.time_nodes)
         differences = np.diff(times)
         weights = np.empty_like(times)

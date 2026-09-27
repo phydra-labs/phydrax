@@ -3,7 +3,7 @@
 #
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, TypeAlias
 
 import equinox as eqx
@@ -109,7 +109,7 @@ class SampleLayout(StrictModule):
         blocks: tuple[tuple[str, ...], ...],
         *,
         axis_names: tuple[str, ...] | None = None,
-    ):
+    ) -> None:
         for block in blocks:
             for label in block:
                 _validate_label(label)
@@ -217,7 +217,7 @@ class PointSampling(StrictModule):
         *,
         layout: SampleLayout | None = None,
         design: DesignLike = "latin_hypercube",
-    ):
+    ) -> None:
         counts = (int(count),) if isinstance(count, int) else tuple(count)
         if any(n < 0 for n in counts):
             raise ValueError("PointSampling counts must be non-negative.")
@@ -249,7 +249,7 @@ class GridSampling(StrictModule):
         *,
         dense: PointSampling | None = None,
         design: DesignLike = "latin_hypercube",
-    ):
+    ) -> None:
         normalized: dict[str, AxisSampling] = {}
         for label, request in axes.items():
             _validate_label(label)
@@ -295,7 +295,7 @@ class PointBatch(StrictModule, Mapping[str, PyTree[cx.AxisArray]]):  # ty: ignor
         structure: SampleLayout,
         *,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         """Construct a `PointBatch` from sampled points and a canonical layout."""
         if structure.axis_names is None:
             raise ValueError(
@@ -309,7 +309,7 @@ class PointBatch(StrictModule, Mapping[str, PyTree[cx.AxisArray]]):  # ty: ignor
     def __getitem__(self, key: str) -> PyTree[cx.AxisArray]:
         return self.points[key]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         return iter(self.points)
 
     def __len__(self) -> int:
@@ -359,7 +359,7 @@ class GridBatch(StrictModule, Mapping[str, PyTree[cx.AxisArray]]):  # ty: ignore
         axis_discretization_by_axis: frozendict[str, AxisDiscretization]
         | Mapping[str, AxisDiscretization]
         | None = None,
-    ):
+    ) -> None:
         """Construct a coordinate-separable batch of points."""
         if dense_structure.axis_names is None:
             raise ValueError(
@@ -478,7 +478,7 @@ class GridBatch(StrictModule, Mapping[str, PyTree[cx.AxisArray]]):  # ty: ignore
     def __getitem__(self, key: str) -> PyTree[cx.AxisArray]:
         return self.points[key]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         return iter(self.points)
 
     def __len__(self) -> int:

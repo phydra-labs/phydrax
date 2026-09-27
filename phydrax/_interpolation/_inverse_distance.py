@@ -9,8 +9,10 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from ..typing import parse
 from ._stencil import GatherStencil
 from ._types import InterpolationCapabilities
 
@@ -70,8 +72,7 @@ def inverse_distance_stencil(
     proportional to ``(distance² + regularization)^(-p/2)``. Exact candidates
     always snap, including when the configured snap tolerance is zero.
     """
-    if snap_policy not in ("average", "first"):
-        raise ValueError("snap_policy must be 'average' or 'first'.")
+    snap_policy = parse(snap_policy, SnapPolicy, "snap_policy")
 
     indices_ = jnp.asarray(indices)
     distance_input = jnp.asarray(squared_distances)

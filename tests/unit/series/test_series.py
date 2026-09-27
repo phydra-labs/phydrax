@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -7,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def test_support_preserves_shared_coordinates_and_disconnected_restarts():
+def test_support_preserves_shared_coordinates_and_disconnected_restarts() -> None:
     shared = phx.series.SeriesSupport(
         jnp.asarray([0.0, 1.0, 2.0]),
         node_valid=jnp.asarray([[True, True, True], [True, True, False]]),
@@ -41,7 +43,7 @@ def test_support_preserves_shared_coordinates_and_disconnected_restarts():
         jax.block_until_ready(invalid.edge_valid)
 
 
-def test_sampled_series_supports_pytrees_component_masks_and_edge_values():
+def test_sampled_series_supports_pytrees_component_masks_and_edge_values() -> None:
     support = phx.series.SeriesSupport(
         jnp.asarray([0.0, 1.0, 2.0]),
         coordinate_name="parameter",
@@ -73,7 +75,7 @@ def test_sampled_series_supports_pytrees_component_masks_and_edge_values():
     np.testing.assert_allclose(edge.values_for(0), [[2.0], [4.0]])
 
 
-def test_pair_view_is_lazy_and_never_crosses_disconnected_edges():
+def test_pair_view_is_lazy_and_never_crosses_disconnected_edges() -> None:
     support = phx.series.SeriesSupport(
         jnp.asarray([0.0, 1.0, 2.0, 0.0, 1.0]),
         edge_valid=jnp.asarray([True, True, False, True]),
@@ -106,7 +108,7 @@ def test_pair_view_is_lazy_and_never_crosses_disconnected_edges():
     assert not bool(phx.series.SeriesPairView.from_lag(incomplete, 2).valid[0])
 
 
-def test_reconstruction_handles_irregular_cases_bounds_and_breakpoints():
+def test_reconstruction_handles_irregular_cases_bounds_and_breakpoints() -> None:
     times = jnp.asarray([[0.0, 1.0, 3.0, 99.0], [-1.0, 0.5, 2.0, 123.0]])
     valid = jnp.asarray([[True, True, True, False], [True, True, True, False]])
     values = jnp.asarray(
@@ -161,7 +163,7 @@ def test_reconstruction_handles_irregular_cases_bounds_and_breakpoints():
     np.testing.assert_array_equal(integer_mask, [False, True, False])
 
 
-def test_reconstruction_preserves_hold_ties_derivatives_and_gradients():
+def test_reconstruction_preserves_hold_ties_derivatives_and_gradients() -> None:
     support = phx.series.SeriesSupport(
         jnp.asarray([0.0, 1.0, 2.0, 3.0]),
         coordinate_name="time",
@@ -215,7 +217,7 @@ def test_reconstruction_preserves_hold_ties_derivatives_and_gradients():
     np.testing.assert_allclose(left.evaluate(1.0).values, 3.0)
     np.testing.assert_allclose(right.evaluate(1.0).values, 5.0)
 
-    def at_half(values):
+    def at_half(values: Any) -> Any:
         candidate = phx.series.SampledSeries(
             support,
             values,
@@ -233,7 +235,7 @@ def test_reconstruction_preserves_hold_ties_derivatives_and_gradients():
     )
 
 
-def test_reconstruction_rejects_disconnected_support():
+def test_reconstruction_rejects_disconnected_support() -> None:
     support = phx.series.SeriesSupport(
         jnp.asarray([0.0, 1.0, 0.0, 1.0]),
         edge_valid=jnp.asarray([True, False, True]),
@@ -255,7 +257,7 @@ def test_reconstruction_rejects_disconnected_support():
         jax.block_until_ready(reconstruction.series.support.coordinates)
 
 
-def test_reconstruction_rejects_nonfinite_snap_tolerance():
+def test_reconstruction_rejects_nonfinite_snap_tolerance() -> None:
     support = phx.series.SeriesSupport(
         jnp.asarray([0.0, 1.0]),
         coordinate_name="time",

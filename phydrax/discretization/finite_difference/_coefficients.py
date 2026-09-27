@@ -9,7 +9,8 @@ from math import factorial
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -90,7 +91,7 @@ class StencilCoefficientPlan(StrictModule, NonTrainableState):
         residual_tolerance: float = 1e-9,
         plan_id: str | None = None,
         precision: FDExecutionPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, FDExecutionPrecisionPolicy):
             raise TypeError("precision must be an FDExecutionPrecisionPolicy.")

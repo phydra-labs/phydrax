@@ -13,7 +13,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._doc import DOC_KEY0
 from .._fingerprint import canonical_fingerprint
@@ -23,6 +24,7 @@ from .._trainable import NonTrainableState
 from ..domain import DomainFunction
 from ..transport.continuous._coupling import EndpointCouplingSample
 from ..transport.continuous._interpolant import AbstractEndpointInterpolant
+from ..typing import PRNGKey
 from ._flow_matching import (
     AbstractFlowMatchingMetric,
     FlowEndpointProvider,
@@ -58,7 +60,7 @@ class CallableFlowEndpointFunctional(AbstractFlowEndpointFunctional):
         *,
         event_shape: tuple[int, ...],
         functional_id: str,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         shape = tuple(event_shape)
@@ -94,7 +96,7 @@ class FlowEndpointRolloutPolicy(StrictModule, NonTrainableState):
         schedule: Literal["constant", "linear"] = "constant",
         rematerialize: bool = False,
         time_power: float = 0.0,
-    ):
+    ) -> None:
         maximum = int(maximum_steps)
         initial = maximum if initial_steps is None else int(initial_steps)
         transition = int(transition_steps)
@@ -176,7 +178,7 @@ class PhysicsFlowMatchingTerm(AbstractSamplingTerm):
         state_label: str = "x",
         time_label: str = "t",
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(endpoint_functional, AbstractFlowEndpointFunctional):
             raise TypeError(
                 "endpoint_functional must implement AbstractFlowEndpointFunctional."
@@ -207,7 +209,7 @@ class PhysicsFlowMatchingTerm(AbstractSamplingTerm):
         self.physics_weight = physics
         self.label = self.flow.label
 
-    def sample(self, *, key: Key[Array, ""] = DOC_KEY0) -> FlowMatchingBatch:
+    def sample(self, *, key: PRNGKey = DOC_KEY0) -> FlowMatchingBatch:
         return self.flow.sample(key=key)
 
     def _terminal_endpoint(
@@ -234,17 +236,21 @@ class PhysicsFlowMatchingTerm(AbstractSamplingTerm):
         context_values = tuple(batch.context[name] for name in context_names)
         node_keys = jr.split(batch.evaluation_key, count)
 
-        def step(carry, depth):
+        def step(
+            carry: tuple[Array, Array], depth: Array
+        ) -> tuple[tuple[Array, Array], None]:
             state, time = carry
             enabled = depth < active_steps
             keys = jax.vmap(lambda value: jr.fold_in(value, depth))(node_keys)
 
-            def velocity_at(key, point, coordinate, *contexts):
+            def velocity_at(
+                key: PRNGKey, point: Array, coordinate: Array, *contexts: Array
+            ) -> Array:
                 values = {
                     name: context
                     for name, context in zip(context_names, contexts, strict=True)
                 }
-                arguments = []
+                arguments: list[Array] = []
                 for dependency in velocity.deps:
                     if dependency == self.flow.state_label:
                         arguments.append(point)
@@ -305,7 +311,7 @@ class PhysicsFlowMatchingTerm(AbstractSamplingTerm):
         context_names = tuple(batch.context)
         context_values = tuple(batch.context[name] for name in context_names)
 
-        def evaluate_endpoint(state, *contexts):
+        def evaluate_endpoint(state: Array, *contexts: Array) -> Array:
             values = {
                 name: context
                 for name, context in zip(context_names, contexts, strict=True)
@@ -337,7 +343,7 @@ class PhysicsFlowMatchingTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: Any = None,
         batch: FlowMatchingBatch | None = None,
         **kwargs: Any,
@@ -362,7 +368,7 @@ class PhysicsFlowMatchingTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: Any = None,
         batch: FlowMatchingBatch | None = None,
         **kwargs: Any,
@@ -381,7 +387,7 @@ class PhysicsFlowMatchingTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: FlowMatchingBatch | None = None,
         iter_: Any = None,
     ) -> PhysicsFlowMatchingDiagnostics:

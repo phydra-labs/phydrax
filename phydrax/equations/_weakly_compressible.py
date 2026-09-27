@@ -8,7 +8,8 @@ from collections.abc import Callable
 from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -51,7 +52,7 @@ class WeaklyCompressibleFluidProblemIR(StrictModule, NonTrainableState):
         external_acceleration: ExternalParticleAcceleration | None = None,
         external_acceleration_id: str | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         if not name_:
             raise ValueError("Weakly compressible fluid problem name must be non-empty.")
@@ -95,7 +96,7 @@ class CompiledWeaklyCompressibleSPHProblem(StrictModule, NonTrainableState):
         dynamics: PreparedWeaklyCompressibleSPHDynamics,
         discretization_bundle: DiscretizationBundle,
         /,
-    ):
+    ) -> None:
         if not isinstance(problem, WeaklyCompressibleFluidProblemIR):
             raise TypeError("problem must be a WeaklyCompressibleFluidProblemIR.")
         if not isinstance(dynamics, PreparedWeaklyCompressibleSPHDynamics):

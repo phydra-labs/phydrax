@@ -5,18 +5,21 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
+from jax import Array
+from jaxtyping import PyTree
 
 import phydrax.linalg as la
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
-FieldSlotRole = Literal[
+FieldSlotRole: TypeAlias = Literal[
     "unknown",
     "cell-local",
     "trace",
@@ -26,7 +29,7 @@ FieldSlotRole = Literal[
     "trial",
     "control",
 ]
-RegionKind = Literal[
+RegionKind: TypeAlias = Literal[
     "cell",
     "exterior-facet",
     "interior-facet",
@@ -36,7 +39,7 @@ RegionKind = Literal[
     "embedded-interface",
     "contact-pair",
 ]
-DifferentialOperator = Literal[
+DifferentialOperator: TypeAlias = Literal[
     "value",
     "grad",
     "sym-grad",
@@ -50,7 +53,7 @@ DifferentialOperator = Literal[
     "shape-average",
     "primitive-moment",
 ]
-ActionKind = Literal[
+ActionKind: TypeAlias = Literal[
     "residual",
     "energy",
     "bilinear",
@@ -76,23 +79,13 @@ class FieldSlot(StrictModule, NonTrainableState):
         /,
         *,
         value_shape: Sequence[int] = (),
-    ):
+    ) -> None:
         name_ = str(name)
         space = str(space_id)
         shape = tuple(value_shape)
         if not name_ or not space or any(size <= 0 for size in shape):
             raise ValueError("Field slot name, space, or value shape is invalid.")
-        if role not in (
-            "unknown",
-            "cell-local",
-            "trace",
-            "coefficient",
-            "quadrature-state",
-            "test",
-            "trial",
-            "control",
-        ):
-            raise ValueError("Unknown field slot role.")
+        role = parse(role, FieldSlotRole, "role")
         self.name = name_
         self.role = role
         self.space_id = space
@@ -120,22 +113,12 @@ class RegionIR(StrictModule, NonTrainableState):
         domain_id: str,
         rule_ids: Sequence[tuple[str, str]],
         /,
-    ):
+    ) -> None:
         domain = str(domain_id)
         rules = tuple(sorted((str(block), str(rule)) for block, rule in rule_ids))
         if not domain or any(not block or not rule for block, rule in rules):
             raise ValueError("Region domain/rule identities must be non-empty.")
-        if region_kind not in (
-            "cell",
-            "exterior-facet",
-            "interior-facet",
-            "interface",
-            "smoothing-patch",
-            "embedded-volume",
-            "embedded-interface",
-            "contact-pair",
-        ):
-            raise ValueError("Unknown integration region kind.")
+        region_kind = parse(region_kind, RegionKind, "region_kind")
         self.region_kind = region_kind
         self.domain_id = domain
         self.rule_ids = rules
@@ -167,7 +150,7 @@ class FiniteElementActionIR(StrictModule, NonTrainableState):
         region: RegionIR,
         kernel_id: str,
         /,
-    ):
+    ) -> None:
         outputs = tuple(str(name) for name in output_slots)
         inputs = tuple(str(name) for name in input_slots)
         operations = tuple((str(name), operation) for name, operation in operators)
@@ -186,16 +169,7 @@ class FiniteElementActionIR(StrictModule, NonTrainableState):
             raise ValueError("Local action input slots must be unique.")
         if not isinstance(region, RegionIR):
             raise TypeError("region must be RegionIR.")
-        if action_kind not in (
-            "residual",
-            "energy",
-            "bilinear",
-            "linear",
-            "functional",
-            "material",
-            "pairwise-volume-flux",
-        ):
-            raise ValueError("Unknown finite-element action kind.")
+        action_kind = parse(action_kind, ActionKind, "action_kind")
         self.action_kind = action_kind
         self.output_slots = outputs
         self.input_slots = inputs
@@ -225,7 +199,7 @@ class LocalActionIR(StrictModule, NonTrainableState):
         slots: Sequence[FieldSlot],
         actions: Sequence[FiniteElementActionIR],
         /,
-    ):
+    ) -> None:
         slots_ = tuple(slots)
         actions_ = tuple(actions)
         if not slots_ or not actions_:
@@ -250,7 +224,7 @@ class LocalActionIR(StrictModule, NonTrainableState):
         )
 
 
-OperatorValueRole = Literal[
+OperatorValueRole: TypeAlias = Literal[
     "state",
     "coefficient",
     "geometry",
@@ -260,7 +234,7 @@ OperatorValueRole = Literal[
     "dual",
     "status",
 ]
-OperatorOpcode = Literal[
+OperatorOpcode: TypeAlias = Literal[
     "gather",
     "orient",
     "interpolate",
@@ -276,7 +250,7 @@ OperatorOpcode = Literal[
     "kernel",
     "reduction",
 ]
-OperatorADPolicy = Literal["analytic", "autodiff", "custom", "unsupported"]
+OperatorADPolicy: TypeAlias = Literal["analytic", "autodiff", "custom", "unsupported"]
 
 
 class OperatorValue(StrictModule, NonTrainableState):
@@ -296,28 +270,15 @@ class OperatorValue(StrictModule, NonTrainableState):
         value_shape: Sequence[int] = (),
         dtype_name: str = "dynamic",
         layout_id: str,
-    ):
+    ) -> None:
         name_ = str(name)
         shape = tuple(value_shape)
         dtype = str(dtype_name)
         layout = str(layout_id)
-        if (
-            not name_
-            or role
-            not in (
-                "state",
-                "coefficient",
-                "geometry",
-                "trace",
-                "test",
-                "trial",
-                "dual",
-                "status",
-            )
-            or any(value <= 0 for value in shape)
-            or not dtype
-            or not layout
-        ):
+        if not name_:
+            raise ValueError("Operator value metadata is incomplete.")
+        role = parse(role, OperatorValueRole, "role")
+        if any(value <= 0 for value in shape) or not dtype or not layout:
             raise ValueError("Operator value metadata is incomplete.")
         self.name = name_
         self.role = role
@@ -355,35 +316,19 @@ class OperatorNode(StrictModule, NonTrainableState):
         *,
         ad_policy: OperatorADPolicy = "autodiff",
         recompute: bool = False,
-    ):
+    ) -> None:
         inputs = tuple(str(value) for value in input_names)
         outputs = tuple(str(value) for value in output_names)
         kernel = str(kernel_id)
+        opcode = parse(opcode, OperatorOpcode, "opcode")
         if (
-            opcode
-            not in (
-                "gather",
-                "orient",
-                "interpolate",
-                "differentiate",
-                "metric-transform",
-                "physical-flux",
-                "numerical-flux",
-                "source",
-                "mortar-project",
-                "lift",
-                "scatter",
-                "mass-solve",
-                "kernel",
-                "reduction",
-            )
-            or not inputs
+            not inputs
             or not outputs
             or any(not value for value in (*inputs, *outputs))
             or not kernel
-            or ad_policy not in ("analytic", "autodiff", "custom", "unsupported")
         ):
             raise ValueError("Operator node metadata is incomplete.")
+        ad_policy = parse(ad_policy, OperatorADPolicy, "ad_policy")
         self.opcode = opcode
         self.input_names = inputs
         self.output_names = outputs
@@ -418,7 +363,7 @@ class OperatorProgram(StrictModule, NonTrainableState):
         /,
         *,
         bucket_id: str,
-    ):
+    ) -> None:
         values_ = tuple(values)
         nodes_ = tuple(nodes)
         outputs = tuple(str(value) for value in output_names)
@@ -490,7 +435,7 @@ def operator_program_from_local_ir(
 ) -> OperatorProgram:
     if not isinstance(ir, LocalActionIR):
         raise TypeError("ir must be LocalActionIR.")
-    role_map = {
+    role_map: dict[FieldSlotRole, OperatorValueRole] = {
         "unknown": "state",
         "cell-local": "state",
         "trace": "trace",
@@ -538,7 +483,7 @@ class OperatorFusionPlan(StrictModule, NonTrainableState):
     groups: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, program: OperatorProgram, /):
+    def __init__(self, program: OperatorProgram, /) -> None:
         if not isinstance(program, OperatorProgram):
             raise TypeError("program must be OperatorProgram.")
         consumers: dict[str, int] = {}
@@ -580,7 +525,7 @@ class LoweredOperatorProgram(StrictModule, NonTrainableState):
         program: OperatorProgram,
         kernels: Mapping[str, Callable],
         /,
-    ):
+    ) -> None:
         if not isinstance(program, OperatorProgram):
             raise TypeError("program must be OperatorProgram.")
         required = tuple(dict.fromkeys(node.kernel_id for node in program.nodes))
@@ -604,11 +549,17 @@ class LoweredOperatorProgram(StrictModule, NonTrainableState):
     def __call__(self, inputs: Mapping[str, Any], /) -> tuple[Any, ...]:
         return self.program.execute(inputs, dict(self.kernels))
 
-    def linearize(self, inputs: Mapping[str, Any], /):
+    def linearize(
+        self, inputs: Mapping[str, Any], /
+    ) -> tuple[
+        PyTree[Array],
+        Callable[..., PyTree[Array]],
+        Callable[[PyTree[Any]], PyTree[Array]],
+    ]:
         names = tuple(value.name for value in self.program.values)
         values = tuple(inputs[name] for name in names)
 
-        def execute(arguments):
+        def execute(arguments: tuple[Any, ...]) -> Any:
             result = self(
                 {name: value for name, value in zip(names, arguments, strict=True)}
             )
@@ -616,7 +567,7 @@ class LoweredOperatorProgram(StrictModule, NonTrainableState):
 
         linearization = la.prepare_linearization(execute, values)
 
-        def pushforward(*tangents):
+        def pushforward(*tangents: Any) -> PyTree[Array]:
             return linearization.pushforward(tangents)
 
         return linearization.primal, pushforward, linearization.pullback

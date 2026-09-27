@@ -6,28 +6,37 @@ import phydrax as phx
 
 physical_ids = np.asarray([10, 20, 30])
 sites = phx.atomistic.AtomisticInteractionSitePlan(
+    # ty: ignore[invalid-argument-type]
     [10, 20, 30, 40],
+    # ty: ignore[invalid-argument-type]
     [8, 1, 1, 0],
+    # ty: ignore[invalid-argument-type]
     [0, 0, 0, 1],
+    # ty: ignore[invalid-argument-type]
     [-0.8, 0.4, 0.4, 0.0],
+    # ty: ignore[invalid-argument-type]
     physical_mask=[True, True, True, False],
 )
 coordinate_map = phx.atomistic.AtomisticCoordinateMapPlan(
     physical_ids,
     sites,
+    # ty: ignore[invalid-argument-type]
     [0, 1, 2, -1],
     virtual_rules=(
         phx.atomistic.VirtualSiteRule(
             phx.atomistic.VirtualSiteKind.LOCAL_FRAME,
             40,
             physical_ids,
+            # ty: ignore[invalid-argument-type]
             [0.15, 0.0, 0.0],
         ),
     ),
 )
 system = phx.atomistic.AtomisticSystemPlan(
     physical_ids,
+    # ty: ignore[invalid-argument-type]
     [8, 1, 1],
+    # ty: ignore[invalid-argument-type]
     [16.0, 1.0, 1.0],
     phx.atomistic.AtomisticUnitSystem.reduced(),
     coordinate_map=coordinate_map,

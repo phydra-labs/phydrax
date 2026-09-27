@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -46,7 +47,7 @@ class KineticSpeciesTransportPlan(StrictModule, NonTrainableState):
         element_matrix: ArrayLike,
         species_charges: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(transport, IntegerLatticeTransportPlan):
             raise TypeError("transport must be an IntegerLatticeTransportPlan.")
         elements = np.asarray(element_matrix)
@@ -164,7 +165,7 @@ class EquilibratingKineticSourceLiftPlan(StrictModule, NonTrainableState):
     model: PositiveCompressibleKineticPlan
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, model: PositiveCompressibleKineticPlan, /):
+    def __init__(self, model: PositiveCompressibleKineticPlan, /) -> None:
         if not isinstance(model, PositiveCompressibleKineticPlan):
             raise TypeError("model must be a PositiveCompressibleKineticPlan.")
         self.model = model
@@ -276,7 +277,7 @@ class KineticEffectiveTransportPlan(StrictModule, NonTrainableState):
     lattice_time_step: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, lattice_time_step: float = 1.0, /):
+    def __init__(self, lattice_time_step: float = 1.0, /) -> None:
         step = float(lattice_time_step)
         if not np.isfinite(step) or step <= 0.0:
             raise ValueError("lattice_time_step must be finite and positive.")
@@ -403,7 +404,7 @@ class KineticSpectralAnalysisPlan(StrictModule, NonTrainableState):
     shape: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, shape: tuple[int, ...], /):
+    def __init__(self, shape: tuple[int, ...], /) -> None:
         grid = tuple(int(value) for value in shape)
         if len(grid) not in (2, 3) or any(value < 2 for value in grid):
             raise ValueError("Spectral kinetic grid must be two- or three-dimensional.")

@@ -90,7 +90,7 @@ def _scalar_schema(
     )
 
 
-def test_parameter_schema_preserves_units_transforms_support_prior_and_owner():
+def test_parameter_schema_preserves_units_transforms_support_prior_and_owner() -> None:
     schema = _scalar_schema()
     physical = (jnp.asarray(2.0),)
     raw = schema.unconstrain(physical)
@@ -106,7 +106,7 @@ def test_parameter_schema_preserves_units_transforms_support_prior_and_owner():
         schema.unconstrain((jnp.asarray(5.0),))
 
 
-def test_multimodal_likelihood_masks_gauge_covariance_nuisance_and_discrepancy():
+def test_multimodal_likelihood_masks_gauge_covariance_nuisance_and_discrepancy() -> None:
     timebase = SampleTimeAxis("ecg-time", np.asarray([0.0, 1.0, 2.0]), MILLISECOND)
     field = QuantityField(
         "ecg-field",
@@ -194,7 +194,7 @@ def test_multimodal_likelihood_masks_gauge_covariance_nuisance_and_discrepancy()
     assert full.plan.plan_id != full.plan.held_out(("strain",)).plan_id
 
 
-def test_subsystem_inverse_recovers_synthetic_parameter_from_multiple_starts():
+def test_subsystem_inverse_recovers_synthetic_parameter_from_multiple_starts() -> None:
     observation = ModalityObservation(
         "activation-1",
         "activation_time",
@@ -259,7 +259,7 @@ def test_subsystem_inverse_recovers_synthetic_parameter_from_multiple_starts():
         )
 
 
-def test_inverse_routes_reject_monolithic_cross_subsystem_parameter_blocks():
+def test_inverse_routes_reject_monolithic_cross_subsystem_parameter_blocks() -> None:
     observation = ModalityObservation(
         "activation-2",
         "activation_time",
@@ -284,7 +284,7 @@ def test_inverse_routes_reject_monolithic_cross_subsystem_parameter_blocks():
         )
 
 
-def test_sensitivity_svd_fisher_and_profile_expose_confounding():
+def test_sensitivity_svd_fisher_and_profile_expose_confounding() -> None:
     sensitivity = SensitivitySVDPlan(
         lambda parameters, args: jnp.asarray(
             [parameters[0] + parameters[1], 2.0 * (parameters[0] + parameters[1])]
@@ -335,7 +335,7 @@ def test_sensitivity_svd_fisher_and_profile_expose_confounding():
     )
 
 
-def test_derivative_check_and_experiment_design_require_accepted_evidence():
+def test_derivative_check_and_experiment_design_require_accepted_evidence() -> None:
     derivative = check_directional_derivative(
         lambda values: jnp.sum(jnp.sin(values) ** 2),
         jnp.asarray([0.2, -0.4]),
@@ -401,7 +401,7 @@ def test_derivative_check_and_experiment_design_require_accepted_evidence():
         assert set(np.asarray(exact.selected_indices).tolist()) == {0, 1}
 
 
-def test_clinical_research_validation_is_governed_complete_and_fail_closed():
+def test_clinical_research_validation_is_governed_complete_and_fail_closed() -> None:
     context = ClinicalResearchContext(
         "Does the model preserve a prespecified held-out endpoint?",
         "Retrospective multi-site methods study",

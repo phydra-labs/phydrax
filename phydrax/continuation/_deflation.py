@@ -13,7 +13,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._tree_math import tree_norm, tree_scale, validate_inexact_tree
@@ -63,7 +64,7 @@ class VectorSpaceDeflationMetric(AbstractDeflationMetric):
         /,
         *,
         metric_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(space, AbstractVectorSpace):
             raise TypeError("space must be an AbstractVectorSpace.")
         identifier = (
@@ -99,7 +100,7 @@ class CallableDeflationMetric(AbstractDeflationMetric):
         /,
         *,
         metric_id: str = "callable-deflation-metric",
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         identifier = str(metric_id)
@@ -137,7 +138,7 @@ class DeflationPolicy(StrictModule):
         distance_floor: float = 1e-6,
         known_root_tolerance: float = 1e-5,
         original_residual_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         power_ = float(power)
         shift_ = float(shift)
         floor_ = float(distance_floor)
@@ -177,7 +178,7 @@ class DeflationProvenance(StrictModule):
         deflated_problem_id: str,
         method_id: str,
         metric_id: str,
-    ):
+    ) -> None:
         values = tuple(
             str(value)
             for value in (problem_id, deflated_problem_id, method_id, metric_id)
@@ -215,7 +216,7 @@ class DeflatedRootResult(StrictModule):
         deflation_factor: Any,
         nearest_known_root: Any,
         provenance: DeflationProvenance,
-    ):
+    ) -> None:
         if not isinstance(nonlinear_result, NonlinearResult):
             raise TypeError("nonlinear_result must be a NonlinearResult.")
         if not isinstance(provenance, DeflationProvenance):
@@ -252,7 +253,7 @@ class RootDeflation(StrictModule):
         metric: AbstractDeflationMetric,
         policy: DeflationPolicy | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(problem, NonlinearSystemProblem):
             raise TypeError("problem must be a NonlinearSystemProblem.")
         roots = tuple(
@@ -310,14 +311,21 @@ class RootDeflation(StrictModule):
         return tree_scale(self.factor(state), residual)
 
     def as_problem(self, /) -> NonlinearSystemProblem:
-        def residual(state, args):
+        def residual(
+            state: PyTree[Any], args: Any
+        ) -> tuple[PyTree[Array], tuple[PyTree[Array], Any]]:
             original_residual, original_auxiliary = self.problem.evaluate(state, args)
             return (
                 tree_scale(self.factor(state), original_residual),
                 (original_residual, original_auxiliary),
             )
 
-        def validity(state, transformed_residual, auxiliary, args):
+        def validity(
+            state: PyTree[Any],
+            transformed_residual: PyTree[Array],
+            auxiliary: tuple[PyTree[Array], Any],
+            args: Any,
+        ) -> Array:
             del transformed_residual
             original_residual, original_auxiliary = auxiliary
             return self.problem.valid(

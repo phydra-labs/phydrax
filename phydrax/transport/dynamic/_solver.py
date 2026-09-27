@@ -5,17 +5,23 @@
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
 from ...stochastic._state_space import StateSpaceStepContext
+from ...typing import PRNGKey
 from .._status import TransportStatus
 from ._problem import SchrodingerBridgeProblem
+
+
+if TYPE_CHECKING:
+    from ._kernel import ControlledTransitionKernel
 
 
 class BridgeProvenance(StrictModule):
@@ -87,19 +93,21 @@ class SchrodingerBridgeResult(StrictModule):
     def physical_endpoint_coupling(self) -> Array:
         return self.problem.mass[..., None, None] * self.endpoint_coupling
 
-    def controlled_kernel(self):
+    def controlled_kernel(self) -> ControlledTransitionKernel:
         """Return the exact Doob-transformed stochastic transition contract."""
         from ._kernel import ControlledTransitionKernel
 
         return ControlledTransitionKernel(self)
 
-    def sample_state_indices(self, key, sample_shape=()):
+    def sample_state_indices(
+        self, key: PRNGKey, sample_shape: tuple[int, ...] = ()
+    ) -> Array:
         """Sample stable finite-state index paths from the controlled law."""
         from ._kernel import sample_bridge_state_indices
 
         return sample_bridge_state_indices(key, self, sample_shape=sample_shape)
 
-    def sample_paths(self, key, sample_shape=()):
+    def sample_paths(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         """Sample stable state-value paths from the controlled law."""
         from ._kernel import sample_bridge_paths
 
@@ -124,7 +132,7 @@ class SchrodingerBridgeSolver(StrictModule):
     max_iterations: int = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
 
-    def __init__(self, *, max_iterations: int = 500, tolerance: float = 1e-9):
+    def __init__(self, *, max_iterations: int = 500, tolerance: float = 1e-9) -> None:
         iterations = int(max_iterations)
         tolerance = float(tolerance)
         if iterations <= 0:
@@ -256,6 +264,10 @@ def _coupling_statistics(
     return coupling, initial_residual, terminal_residual, residual, path_kl, log_coupling
 
 
+# Per-iteration (endpoint residual, path KL, initial residual, terminal residual).
+_IPFHistory: TypeAlias = tuple[Array, Array, Array, Array]
+
+
 def _ipf_case(
     mu0: Array,
     mu1: Array,
@@ -296,7 +308,9 @@ def _ipf_case(
         log_reference, initial_a, initial_b, mu0, mu1
     )
 
-    def update(carry, _):
+    def update(
+        carry: tuple[Array, Array], _step: None
+    ) -> tuple[tuple[Array, Array], _IPFHistory]:
         log_a, log_b = carry
         source_denominator = jsp.special.logsumexp(
             log_reference + log_b[None, :], axis=-1

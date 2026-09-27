@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -47,7 +48,7 @@ class _ElementRows:
 
 
 def _element_rows(
-    gmsh, dimension: int, geometry_order: int, /
+    gmsh: Any, dimension: int, geometry_order: int, /
 ) -> tuple[_ElementRows, ...]:
     records: dict[int, list[tuple[np.ndarray, np.ndarray, np.ndarray]]] = {}
     properties = {}
@@ -114,7 +115,9 @@ def _local_connectivity(node_tags: np.ndarray, values: np.ndarray, /) -> np.ndar
     return locations.astype(np.int32, copy=False)
 
 
-def _curve_corner_rows(gmsh, geometry_order: int, /) -> tuple[np.ndarray, np.ndarray]:
+def _curve_corner_rows(
+    gmsh: Any, geometry_order: int, /
+) -> tuple[np.ndarray, np.ndarray]:
     node_chunks = []
     entity_chunks = []
     for _, curve in sorted(gmsh.model.getEntities(1)):
@@ -150,7 +153,7 @@ def _curve_corner_rows(gmsh, geometry_order: int, /) -> tuple[np.ndarray, np.nda
 
 
 def _evaluate_element_maps(
-    gmsh,
+    gmsh: Any,
     element_type: int,
     element_points: np.ndarray,
     local_points: np.ndarray,
@@ -201,7 +204,7 @@ class _NativeQuality:
         )
 
 
-def _audit_jacobians(gmsh, rows: tuple[_ElementRows, ...], /) -> float:
+def _audit_jacobians(gmsh: Any, rows: tuple[_ElementRows, ...], /) -> float:
     """Audit the curved map with Gmsh's adaptive determinant extrema, not corners."""
     minimum = np.inf
     for block in rows:
@@ -222,7 +225,7 @@ def _audit_jacobians(gmsh, rows: tuple[_ElementRows, ...], /) -> float:
     return minimum
 
 
-def _native_quality(gmsh, rows: tuple[_ElementRows, ...], /) -> _NativeQuality:
+def _native_quality(gmsh: Any, rows: tuple[_ElementRows, ...], /) -> _NativeQuality:
     """Certify curved maps with Gmsh's own per-element quality measures.
 
     `minSICN` and `minSIGE` are Gmsh's scaled inverse condition number and
@@ -253,7 +256,9 @@ def _native_quality(gmsh, rows: tuple[_ElementRows, ...], /) -> _NativeQuality:
     )
 
 
-def _reference_permutation(gmsh, rows: _ElementRows, element, /) -> np.ndarray | None:
+def _reference_permutation(
+    gmsh: Any, rows: _ElementRows, element: Any, /
+) -> np.ndarray | None:
     """Map Gmsh reference nodes onto canonical element nodes when they coincide.
 
     This maps actual Gmsh reference nodes, not meshio's distinct wedge/hex
@@ -288,7 +293,7 @@ class _CanonicalElementNodes:
     canonical: dict[int, np.ndarray]
 
 
-def _canonical_element_nodes(element, dimension: int, /) -> _CanonicalElementNodes:
+def _canonical_element_nodes(element: Any, dimension: int, /) -> _CanonicalElementNodes:
     reference = np.asarray(element.reference_nodes, dtype=np.float64)
     barycentric = np.concatenate(
         (1.0 - np.sum(reference, axis=1, keepdims=True), reference), axis=1
@@ -318,9 +323,9 @@ def _canonical_element_nodes(element, dimension: int, /) -> _CanonicalElementNod
 
 
 def _resampled_block(
-    gmsh,
+    gmsh: Any,
     rows: _ElementRows,
-    element,
+    element: Any,
     cell_corners: np.ndarray,
     gmsh_corners: np.ndarray,
     element_points: np.ndarray,
@@ -391,7 +396,7 @@ class _CurvedGeometry:
 
 
 def _cell_geometry(
-    gmsh,
+    gmsh: Any,
     mesh: CellMesh,
     rows: tuple[_ElementRows, ...],
     row_orders: dict[str, np.ndarray],
@@ -399,7 +404,7 @@ def _cell_geometry(
     corner_nodes: np.ndarray,
     points: np.ndarray,
     output_points: np.ndarray,
-    to_output,
+    to_output: Any,
     geometry_order: int,
     flip_surface_routes: bool,
     /,
@@ -422,6 +427,7 @@ def _cell_geometry(
                 corner_nodes,
                 output_points,
                 elements,
+                # ty: ignore[invalid-argument-type]
                 permutations,
                 flip_surface_routes,
             ),

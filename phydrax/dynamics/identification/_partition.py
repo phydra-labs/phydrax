@@ -8,7 +8,7 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -32,7 +32,7 @@ class TrajectoryDataPartition(StrictModule, NonTrainableState):
         test: TrajectoryData,
         partition: CasePartitionManifest,
         /,
-    ):
+    ) -> None:
         if not isinstance(partition, CasePartitionManifest):
             raise TypeError("partition must be a CasePartitionManifest.")
         expected = tuple(
@@ -126,7 +126,7 @@ def partition_trajectory_data(
     ordered = tuple(str(case_id) for case_id in ordered_case_ids)
     if len(ordered) != data.num_cases:
         raise ValueError("ordered_case_ids must assign one ID to every trajectory case.")
-    subsets = tuple(
+    train, validation, test = tuple(
         _take_cases(
             data,
             partition.indices(ordered, name),
@@ -135,7 +135,7 @@ def partition_trajectory_data(
         )
         for name in ("train", "validation", "test")
     )
-    return TrajectoryDataPartition(*subsets, partition)
+    return TrajectoryDataPartition(train, validation, test, partition)
 
 
 __all__ = ["TrajectoryDataPartition", "partition_trajectory_data"]

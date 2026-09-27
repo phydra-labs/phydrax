@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._interpolation import linear_interpolate
 
@@ -29,13 +30,13 @@ class EquationOfStateTable(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        pressure,
-        energy_density,
+        pressure: ArrayLike,
+        energy_density: ArrayLike,
         /,
         *,
-        eos_id="tabulated-eos",
-        unit_system="geometric",
-    ):
+        eos_id: str = "tabulated-eos",
+        unit_system: str = "geometric",
+    ) -> None:
         label = str(eos_id).strip()
         units = str(unit_system).strip().lower()
         if not label:
@@ -111,7 +112,7 @@ class TovPlan(StrictModule, NonTrainableState):
     radial_nodes: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, eos, radial_nodes, /):
+    def __init__(self, eos: EquationOfStateTable, radial_nodes: ArrayLike, /) -> None:
         if not isinstance(eos, EquationOfStateTable):
             raise TypeError("eos must be an EquationOfStateTable.")
         radii = np.asarray(radial_nodes, dtype=np.float64)
@@ -141,7 +142,7 @@ class TovPlan(StrictModule, NonTrainableState):
         energy0 = self.eos.energy_from_pressure(pressure0)
         mass0 = 4.0 / 3.0 * jnp.pi * radius0**3 * energy0
 
-        def derivative(radius, values):
+        def derivative(radius: Array, values: Array) -> Array:
             mass, pressure = values
             energy = self.eos.energy_from_pressure(
                 jnp.maximum(pressure, self.eos.pressure[0])
@@ -156,7 +157,9 @@ class TovPlan(StrictModule, NonTrainableState):
                 )
             )
 
-        def step(carry, interval):
+        def step(
+            carry: tuple[Array, Array], interval: Array
+        ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
             values, active = carry
             start, end = interval
             dt = end - start

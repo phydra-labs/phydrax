@@ -7,13 +7,14 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Sequence
 from operator import index
-from typing import Any, Literal
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -24,6 +25,7 @@ from ...equations._mac_incompressible import (
     compile_mac_incompressible_flow,
     CompiledMACIncompressibleDynamics,
 )
+from ...equations._mac_les import PreparedMACAlgebraicLES
 from ...linalg import (
     DenseLinearOperator,
     DenseLU,
@@ -39,10 +41,11 @@ from ...solver._mac_viscous import (
     MACSBDF2Method,
     MACSBDF2State,
 )
+from ...typing import parse
 from ._statistics import _mac_face_to_cell
 
 
-MACFlowControlKind = Literal[
+MACFlowControlKind: TypeAlias = Literal[
     "pressure_gradient",
     "bulk_velocity",
     "frozen_density_mass_flux",
@@ -54,7 +57,7 @@ class _ConstantMACFlowTargetSchedule(StrictModule, NonTrainableState):
     value: Array
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self, value: ArrayLike, /):
+    def __init__(self, value: ArrayLike, /) -> None:
         values = np.asarray(value, dtype=np.float64)
         if values.ndim == 0:
             values = values.reshape((1,))
@@ -105,13 +108,8 @@ class MACFlowControlTarget(StrictModule, NonTrainableState):
         frozen_density: ArrayLike | None = None,
         schedule_id: str | None = None,
         density_id: str | None = None,
-    ):
-        if kind not in (
-            "pressure_gradient",
-            "bulk_velocity",
-            "frozen_density_mass_flux",
-        ):
-            raise ValueError(f"Unknown MAC flow-control target kind {kind!r}.")
+    ) -> None:
+        kind = parse(kind, MACFlowControlKind, "kind")
         raw_axes = tuple(axes)
         if any(isinstance(axis, bool) for axis in raw_axes):
             raise TypeError("MAC flow-control axes must be integer indices.")
@@ -128,7 +126,8 @@ class MACFlowControlTarget(StrictModule, NonTrainableState):
             identifier = "" if schedule_id is None else str(schedule_id)
             if not identifier:
                 raise ValueError("A callable target schedule requires schedule_id.")
-            schedule = target
+            # callable() excludes the array-like members of the target union.
+            schedule = cast(Callable[[Array], ArrayLike], target)
         else:
             if schedule_id is not None:
                 raise ValueError("schedule_id is derived for a constant target vector.")
@@ -424,8 +423,13 @@ def _face_density(
     return tuple(output)
 
 
+_MACControlMethod: TypeAlias = (
+    AbstractSSPRKFixedStepMethod | MACIMEXEulerMethod | MACSBDF2Method
+)
+
+
 def _method_dynamics(
-    method: AbstractSSPRKFixedStepMethod | MACIMEXEulerMethod | MACSBDF2Method,
+    method: _MACControlMethod,
     /,
 ) -> tuple[CompiledMACIncompressibleDynamics, MACFlowControlMethodKind]:
     if isinstance(method, AbstractSSPRKFixedStepMethod):
@@ -440,10 +444,10 @@ def _method_dynamics(
 
 
 def _bind_dynamics(
-    method: AbstractSSPRKFixedStepMethod | MACIMEXEulerMethod | MACSBDF2Method,
+    method: _MACControlMethod,
     dynamics: CompiledMACIncompressibleDynamics,
     /,
-):
+) -> _MACControlMethod:
     if isinstance(method, AbstractSSPRKFixedStepMethod):
         return eqx.tree_at(lambda selected: selected.vector_field, method, dynamics)
     if isinstance(method, MACIMEXEulerMethod):
@@ -455,7 +459,7 @@ def _bind_dynamics(
     )
 
 
-def _set_control(method, control: Array, /):
+def _set_control(method: _MACControlMethod, control: Array, /) -> _MACControlMethod:
     if isinstance(method, AbstractSSPRKFixedStepMethod):
         return eqx.tree_at(
             lambda selected: selected.vector_field.problem.forcing.control,
@@ -505,7 +509,7 @@ class MACFlowControlPlan(StrictModule):
         projection_tolerance: float = 1.0e-7,
         condition_limit: float = 1.0e10,
         maximum_resource_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         dynamics, _ = _method_dynamics(method)
         if not isinstance(target, MACFlowControlTarget):
             raise TypeError("target must be a MACFlowControlTarget.")
@@ -568,7 +572,7 @@ class PreparedMACFlowControl(StrictModule):
     control_space_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MACFlowControlPlan, /):
+    def __init__(self, plan: MACFlowControlPlan, /) -> None:
         if not isinstance(plan, MACFlowControlPlan):
             raise TypeError("plan must be a MACFlowControlPlan.")
         dynamics, method_kind = _method_dynamics(plan.method)
@@ -615,7 +619,11 @@ class PreparedMACFlowControl(StrictModule):
             dynamics.momentum,
             dynamics.projection,
             algebraic_les=(
-                None if dynamics.algebraic_les is None else dynamics.algebraic_les.plan
+                None
+                if dynamics.algebraic_les is None
+                # Recompilation re-prepares factored-grid MAC LES from its plan;
+                # compile_mac_incompressible_flow rejects any other plan type.
+                else cast(PreparedMACAlgebraicLES, dynamics.algebraic_les).plan
             ),
         )
         method = _bind_dynamics(plan.method, controlled)
@@ -758,7 +766,13 @@ class PreparedMACFlowControl(StrictModule):
     def _step_size(self, value: ArrayLike | None, /) -> Array:
         dtype = self.dynamics.momentum.operators.pressure_space.dtype
         if self.method_kind == "sbdf2":
-            step = jnp.asarray(self.method.step_size, dtype=dtype)
+            sbdf2 = self.method
+            # method_kind is derived from the method type at preparation.
+            if not (isinstance(sbdf2, MACSBDF2Method)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(sbdf2, MACSBDF2Method)."
+                )
+            step = jnp.asarray(sbdf2.step_size, dtype=dtype)
             if value is not None:
                 supplied = jnp.asarray(value, dtype=dtype).reshape(())
                 step = eqx.error_if(
@@ -766,7 +780,13 @@ class PreparedMACFlowControl(StrictModule):
                 )
             return step
         if self.method_kind == "imex_euler":
-            return self.method._step_size(value)
+            imex = self.method
+            # method_kind is derived from the method type at preparation.
+            if not (isinstance(imex, MACIMEXEulerMethod)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(imex, MACIMEXEulerMethod)."
+                )
+            return imex._step_size(value)
         if value is None:
             raise ValueError("MAC SSPRK flow control requires step_size.")
         step = jnp.asarray(value, dtype=dtype).reshape(())
@@ -813,7 +833,12 @@ class PreparedMACFlowControl(StrictModule):
         /,
     ) -> tuple[MACFlowControlState, Array]:
         method = _set_control(self.method, control)
+        # method_kind is derived from the method type at preparation.
         if self.method_kind == "ssprk":
+            if not (isinstance(method, AbstractSSPRKFixedStepMethod)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(method, AbstractSSPRKFixedStepMethod)."
+                )
             result = method.step(state.step_index, state.time, state.state, step, args)
             candidate = MACFlowControlState(
                 time=state.time + step,
@@ -837,6 +862,10 @@ class PreparedMACFlowControl(StrictModule):
             )
             return candidate, result.successful
         if self.method_kind == "imex_euler":
+            if not (isinstance(method, MACIMEXEulerMethod)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(method, MACIMEXEulerMethod)."
+                )
             result = method.step(
                 state.time,
                 state.state,
@@ -865,17 +894,22 @@ class PreparedMACFlowControl(StrictModule):
                 plan_id=self.prepared_id,
             )
             return candidate, result.accepted
+        if not (isinstance(method, MACSBDF2Method)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(method, MACSBDF2Method)."
+            )
+        sbdf2 = method
 
-        def startup(_):
-            result = method.initialize(
+        def startup(_: None) -> tuple[MACFlowControlState, Array]:
+            result = sbdf2.initialize(
                 state.time, state.state, pressure=state.pressure, args=args
             )
             return self._from_sbdf2_history(
                 state, result.history, control
             ), result.accepted
 
-        def multistep(_):
-            components = method.dynamics.rate_components(state.time, state.state, args)
+        def multistep(_: None) -> tuple[MACFlowControlState, Array]:
+            components = sbdf2.dynamics.rate_components(state.time, state.state, args)
             controlled_explicit = tuple(
                 -advective + source
                 for advective, source in zip(
@@ -892,9 +926,9 @@ class PreparedMACFlowControl(StrictModule):
                 accepted_steps=state.accepted_steps,
                 valid=state.sbdf2_valid,
                 status=state.method_status,
-                method_id=method.method_id,
+                method_id=sbdf2.method_id,
             )
-            result = method.step(history, args=args)
+            result = sbdf2.step(history, args=args)
             return self._from_sbdf2_history(
                 state, result.history, control
             ), result.accepted
@@ -1017,7 +1051,7 @@ class PreparedMACFlowControl(StrictModule):
             zero_candidate, zero_success = self._advance(state, step, zeros, args)
             zero_response = self._observable(zero_candidate.state)
 
-            def influence_column(unit):
+            def influence_column(unit: Array) -> tuple[Array, Array]:
                 unit_candidate, unit_success = self._advance(
                     state,
                     step,
@@ -1042,7 +1076,13 @@ class PreparedMACFlowControl(StrictModule):
 
         controlled_method = _set_control(self.method, control)
         if isinstance(controlled_method, AbstractSSPRKFixedStepMethod):
-            diagnostic_dynamics = controlled_method.vector_field
+            vector_field = controlled_method.vector_field
+            # Preparation binds compiled MAC dynamics as the SSPRK vector field.
+            if not (isinstance(vector_field, CompiledMACIncompressibleDynamics)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(vector_field, CompiledMACIncompressibleDynamics)."
+                )
+            diagnostic_dynamics = vector_field
         else:
             diagnostic_dynamics = controlled_method.dynamics
         flow = diagnostic_dynamics.diagnostics(attempted_time, candidate.state, args)

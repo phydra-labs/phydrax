@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -16,7 +19,7 @@ from phydrax.control.stochastic._multiplicative_lq import (
 from phydrax.dynamics import TimeGrid
 
 
-def test_scalar_affine_recursion_matches_direct_correlated_noise_algebra():
+def test_scalar_affine_recursion_matches_direct_correlated_noise_algebra() -> None:
     a = 1.2
     b = 0.7
     c = 0.3
@@ -106,7 +109,7 @@ def test_scalar_affine_recursion_matches_direct_correlated_noise_algebra():
     assert result.diagnostics.maximum_bellman_residual < 1e-12
 
 
-def test_zero_noise_reduces_to_exact_finite_horizon_lqr():
+def test_zero_noise_reduces_to_exact_finite_horizon_lqr() -> None:
     horizon = 3
     a = jnp.asarray([[[1.0]], [[0.9]], [[1.1]]])
     b = jnp.asarray([[[0.8]], [[1.0]], [[0.7]]])
@@ -162,7 +165,7 @@ def test_zero_noise_reduces_to_exact_finite_horizon_lqr():
     np.testing.assert_array_equal(result.trace_increments, jnp.zeros(horizon))
 
 
-def test_additive_bias_noise_has_certainty_equivalent_gains_and_exact_traces():
+def test_additive_bias_noise_has_certainty_equivalent_gains_and_exact_traces() -> None:
     horizon = 3
     a = jnp.asarray([[[1.0]], [[0.9]], [[1.1]]])
     b = jnp.asarray([[[0.8]], [[1.0]], [[0.7]]])
@@ -205,7 +208,7 @@ def test_additive_bias_noise_has_certainty_equivalent_gains_and_exact_traces():
     )
 
 
-def test_control_noise_curvature_and_state_noise_change_the_expected_policy():
+def test_control_noise_curvature_and_state_noise_change_the_expected_policy() -> None:
     common = dict(
         dynamics_matrices=jnp.ones((2, 1, 1)),
         control_matrices=jnp.ones((2, 1, 1)),
@@ -258,7 +261,7 @@ def test_control_noise_curvature_and_state_noise_change_the_expected_policy():
     )
 
 
-def test_case_axes_jit_and_autodiff_preserve_noise_dependence():
+def test_case_axes_jit_and_autodiff_preserve_noise_dependence() -> None:
     cases = 2
     a = jnp.ones((cases, 1, 1, 1))
     b = jnp.ones((cases, 1, 1, 1))
@@ -269,7 +272,7 @@ def test_case_axes_jit_and_autodiff_preserve_noise_dependence():
     gamma = jnp.ones((cases, 1, 1, 1))
     time_grid = TimeGrid(jnp.asarray([0.0, 1.0]), time_id="multiplicative-cases")
 
-    def solve(control_scale):
+    def solve(control_scale: Any) -> Any:
         control_noise = control_scale * jnp.asarray([0.2, 0.4])[:, None, None, None, None]
         return finite_horizon_multiplicative_lq_state_feedback(
             a,
@@ -296,7 +299,7 @@ def test_case_axes_jit_and_autodiff_preserve_noise_dependence():
     assert not np.isclose(gradient, 0.0)
 
 
-def test_jitted_cases_report_covariance_curvature_and_nonfinite_failures():
+def test_jitted_cases_report_covariance_curvature_and_nonfinite_failures() -> None:
     cases = 5
     a = jnp.ones((cases, 1, 1, 1)).at[3, 0, 0, 0].set(jnp.nan)
     b = jnp.ones((cases, 1, 1, 1))
@@ -336,7 +339,7 @@ def test_jitted_cases_report_covariance_curvature_and_nonfinite_failures():
     assert not bool(jnp.any(result.valid[1:]))
 
 
-def test_structural_validation_rejects_implicit_noise_axes_and_bad_tolerances():
+def test_structural_validation_rejects_implicit_noise_axes_and_bad_tolerances() -> None:
     required = (
         jnp.ones((1, 1, 1)),
         jnp.ones((1, 1, 1)),

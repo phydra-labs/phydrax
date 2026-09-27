@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -33,7 +35,7 @@ from phydrax.operators.quantum._two_particle_green import (
 )
 
 
-def _patch_case(side: int, radial_count: int, frequency_count: int, repeats: int):
+def _patch_case(side: int, radial_count: int, frequency_count: int, repeats: int) -> Any:
     axis = 2.0 * np.pi * np.arange(side) / side
     momenta = np.asarray([(x, y) for x in axis for y in axis])
     angles = np.linspace(0.0, 2.0 * np.pi, momenta.shape[0], endpoint=False)
@@ -78,7 +80,7 @@ def _patch_case(side: int, radial_count: int, frequency_count: int, repeats: int
     }
 
 
-def _two_particle_vertex(label_count: int):
+def _two_particle_vertex(label_count: int) -> Any:
     start = -(label_count // 2)
     labels = jnp.arange(start, start + label_count, dtype=jnp.int32)
     convention = FermionicTwoParticleChannelConvention("particle-hole-direct")
@@ -98,7 +100,7 @@ def _two_particle_vertex(label_count: int):
     )
 
 
-def _parquet_case(label_count: int, repeats: int):
+def _parquet_case(label_count: int, repeats: int) -> Any:
     vertex = _two_particle_vertex(label_count)
     plan = df.LatticeParquetPlan(maximum_iterations=64, tolerance=1e-10)
     prepared, prepare_seconds = measure_host(
@@ -118,7 +120,7 @@ def _parquet_case(label_count: int, repeats: int):
     }
 
 
-def _fermion_diagram(order: int):
+def _fermion_diagram(order: int) -> Any:
     field = df.FieldSpec(f"benchmark-psi-{order}", statistics="fermion")
     propagator = df.PropagatorSpec(field, mass=1.0)
     rule = df.VertexRule(
@@ -133,7 +135,7 @@ def _fermion_diagram(order: int):
     )
 
 
-def _monte_carlo_case(steps: int, repeats: int):
+def _monte_carlo_case(steps: int, repeats: int) -> Any:
     prepared = df.LowOrderFermionDiagramMonteCarloPlan(
         steps=steps, maximum_order=3, maximum_diagrams=3
     ).prepare(
@@ -167,7 +169,7 @@ def _monte_carlo_case(steps: int, repeats: int):
     }
 
 
-def _second_born_case(time_count: int, repeats: int):
+def _second_born_case(time_count: int, repeats: int) -> Any:
     grid = nef.ClosedTimePathPlan(jnp.linspace(0.0, 0.4, time_count)).prepare()
     propagators = jnp.broadcast_to(jnp.eye(1, dtype="complex128"), (time_count, 1, 1))
     free = nef.fermionic_keldysh_from_propagators(
@@ -196,7 +198,7 @@ def _second_born_case(time_count: int, repeats: int):
     }
 
 
-def _json_default(value):
+def _json_default(value: Any) -> Any:
     if isinstance(value, (jax.Array, np.ndarray)):
         host = np.asarray(jax.device_get(value))
         return host.item() if host.shape == () else host.tolist()
@@ -205,7 +207,7 @@ def _json_default(value):
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable.")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repeats", type=int, default=2)
     parser.add_argument("--output", type=Path)

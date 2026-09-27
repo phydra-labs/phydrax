@@ -5,16 +5,18 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal, TypeAlias
+from typing import Literal, Self, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 AMRAxisEntity: TypeAlias = Literal["point", "interval"]
@@ -41,7 +43,7 @@ class AMREntityTransferReport(StrictModule, NonTrainableState):
         conservation_residual: float | None,
         declared_order: int,
         transfer_id: str,
-    ):
+    ) -> None:
         constant = float(constant_residual)
         conservation = (
             None if conservation_residual is None else float(conservation_residual)
@@ -76,14 +78,13 @@ class AMREntityTransferPlan(StrictModule, NonTrainableState):
         axis_entities: Sequence[AMRAxisEntity],
         refinement_ratio: int = 2,
         /,
-    ):
+    ) -> None:
         entities = tuple(axis_entities)
         ratio = int(refinement_ratio)
-        if (
-            not entities
-            or any(value not in ("point", "interval") for value in entities)
-            or ratio <= 1
-        ):
+        entities = tuple(
+            parse(value, AMRAxisEntity, "axis_entities") for value in entities
+        )
+        if not entities or ratio <= 1:
             raise ValueError("AMR entity axes and refinement ratio are invalid.")
         identifier = canonical_fingerprint(
             {
@@ -118,11 +119,11 @@ class AMREntityTransferPlan(StrictModule, NonTrainableState):
         self.report = report
 
     @classmethod
-    def cells(cls, dimensions: int, refinement_ratio: int = 2, /):
+    def cells(cls, dimensions: int, refinement_ratio: int = 2, /) -> Self:
         return cls(("interval",) * int(dimensions), refinement_ratio)
 
     @classmethod
-    def nodes(cls, dimensions: int, refinement_ratio: int = 2, /):
+    def nodes(cls, dimensions: int, refinement_ratio: int = 2, /) -> Self:
         return cls(("point",) * int(dimensions), refinement_ratio)
 
     @classmethod
@@ -132,7 +133,7 @@ class AMREntityTransferPlan(StrictModule, NonTrainableState):
         normal_axis: int,
         refinement_ratio: int = 2,
         /,
-    ):
+    ) -> Self:
         entities: list[AMRAxisEntity] = ["interval"] * int(dimensions)
         entities[int(normal_axis)] = "point"
         return cls(entities, refinement_ratio)
@@ -144,7 +145,7 @@ class AMREntityTransferPlan(StrictModule, NonTrainableState):
         tangent_axis: int,
         refinement_ratio: int = 2,
         /,
-    ):
+    ) -> Self:
         entities: list[AMRAxisEntity] = ["point"] * int(dimensions)
         entities[int(tangent_axis)] = "interval"
         return cls(entities, refinement_ratio)

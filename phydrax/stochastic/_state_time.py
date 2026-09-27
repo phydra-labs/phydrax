@@ -5,22 +5,30 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, TypedDict, Unpack
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
 from ..integration._targets import WeightedSampleTarget
+from ..typing import parse
 from ._integration import _trajectory_arrays
 from ._trajectory import StochasticTrajectory
 
 
 TrajectoryStateTimeMode: TypeAlias = Literal["global", "per_time"]
+
+
+class _StateTimeSampleOptions(TypedDict, total=False):
+    mode: TrajectoryStateTimeMode
+    log_weights: ArrayLike | cx.AxisArray | None
+    state_label: str
+    time_label: str
 
 
 def _independence_indices(
@@ -86,7 +94,7 @@ class TrajectoryStateTimeSamples(StrictModule):
         return self.realization_axes
 
     @property
-    def samples(self):
+    def samples(self) -> frozendict[str, cx.AxisArray]:
         return frozendict(
             {
                 self.state_label: self.states,
@@ -123,8 +131,7 @@ def trajectory_state_time_samples(
     """Adapt every valid trajectory node to a weighted state-time particle batch."""
     if not isinstance(trajectory, StochasticTrajectory):
         raise TypeError("trajectory must be a StochasticTrajectory.")
-    if mode not in ("global", "per_time"):
-        raise ValueError("mode must be 'global' or 'per_time'.")
+    mode = parse(mode, TrajectoryStateTimeMode, "mode")
     if not state_label or not time_label or state_label == time_label:
         raise ValueError("state_label and time_label must be distinct non-empty strings.")
     states, valid, leading_axes, realization_axes = _trajectory_arrays(trajectory)
@@ -196,7 +203,7 @@ def trajectory_state_time_samples(
 def trajectory_state_time_measure(
     trajectory: StochasticTrajectory,
     /,
-    **kwargs,
+    **kwargs: Unpack[_StateTimeSampleOptions],
 ) -> WeightedSampleTarget:
     """Return the generic weighted-target view of state-time trajectory nodes."""
     return trajectory_state_time_samples(trajectory, **kwargs).target()

@@ -8,6 +8,7 @@ import argparse
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 
@@ -25,7 +26,7 @@ class FLIPQualificationReport:
     successful: bool
 
 
-def run_flip_qualification(*, smoke=False):
+def run_flip_qualification(*, smoke: Any = False) -> Any:
     count = 8 if smoke else 20
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(count) for _ in range(2)),
@@ -73,7 +74,7 @@ def run_flip_qualification(*, smoke=False):
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--output", type=Path)

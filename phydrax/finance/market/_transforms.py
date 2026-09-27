@@ -10,7 +10,8 @@ from enum import Enum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -58,7 +59,7 @@ class CorporateAction(StrictModule, NonTrainableState):
         /,
         *,
         currency: Currency | None = None,
-    ):
+    ) -> None:
         if not isinstance(action_id, str) or not action_id.strip():
             raise ValueError("action_id must be a non-empty string.")
         if not isinstance(kind, CorporateActionKind):
@@ -108,7 +109,7 @@ class CorporateActionSeries(StrictModule, NonTrainableState):
     actions: tuple[CorporateAction, ...]
     series_id: str = eqx.field(static=True)
 
-    def __init__(self, actions: Sequence[CorporateAction], /):
+    def __init__(self, actions: Sequence[CorporateAction], /) -> None:
         values = tuple(actions)
         if not values or not all(isinstance(value, CorporateAction) for value in values):
             raise TypeError("actions must contain at least one CorporateAction.")

@@ -7,18 +7,19 @@ from __future__ import annotations
 from collections.abc import Callable
 from functools import partial
 from math import isfinite, sqrt
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
+from ...typing import parse, PRNGKey
 from .._keys import EvalKey, split_eval_key
 from ._recurrent import (
     _recurrent_output_from_state,
@@ -28,7 +29,7 @@ from ._recurrent import (
 )
 
 
-RNNActivation = Literal["tanh", "relu"]
+RNNActivation: TypeAlias = Literal["tanh", "relu"]
 
 
 def _validate_widths(input_size: int, hidden_size: int, /) -> tuple[int, int]:
@@ -95,8 +96,8 @@ class CfCCell(AbstractTimeAwareRecurrentCell):
         activation: Callable[[Array], Array] = jnp.tanh,
         use_bias: bool = True,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.input_size, self.hidden_size = _validate_widths(input_size, hidden_size)
         resolved_depth = int(backbone_depth)
         if resolved_depth != backbone_depth or resolved_depth < 0:
@@ -283,11 +284,10 @@ class RNNCell(AbstractRecurrentCell):
         activation: RNNActivation = "tanh",
         use_bias: bool = True,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.input_size, self.hidden_size = _validate_widths(input_size, hidden_size)
-        if activation not in ("tanh", "relu"):
-            raise ValueError("activation must be 'tanh' or 'relu'.")
+        activation = parse(activation, RNNActivation, "activation")
         self.activation = activation
         resolved_dtype = _validate_real_dtype(dtype)
         input_key, hidden_key, bias_key = jr.split(key, 3)
@@ -374,8 +374,8 @@ class GRUCell(AbstractRecurrentCell):
         *,
         use_bias: bool = True,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.input_size, self.hidden_size = _validate_widths(input_size, hidden_size)
         resolved_dtype = _validate_real_dtype(dtype)
         self.cell = eqx.nn.GRUCell(
@@ -447,8 +447,8 @@ class LSTMCell(AbstractRecurrentOutputCell):
         *,
         use_bias: bool = True,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.input_size, self.hidden_size = _validate_widths(input_size, hidden_size)
         resolved_dtype = _validate_real_dtype(dtype)
         self.cell = eqx.nn.LSTMCell(
@@ -523,7 +523,9 @@ def _artificial_spike(margin: Array, family: str, /) -> Array:
 
 
 @_artificial_spike.defjvp
-def _artificial_spike_jvp(family, primals, tangents):
+def _artificial_spike_jvp(
+    family: str, primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
     (margin,) = primals
     (tangent,) = tangents
     slope = (
@@ -593,8 +595,8 @@ class ArtificialLIFCell(AbstractTimeAwareRecurrentCell, AbstractRecurrentOutputC
         detach_reset: bool = False,
         use_bias: bool = True,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.input_size, self.hidden_size = _validate_widths(input_size, hidden_size)
         constants = tuple(
             float(value)
@@ -760,7 +762,7 @@ class StackedRecurrentCell(AbstractTimeAwareRecurrentCell, AbstractRecurrentOutp
 
     def __init__(
         self, cells: tuple[AbstractRecurrentCell, ...] | list[AbstractRecurrentCell]
-    ):
+    ) -> None:
         resolved = tuple(cells)
         if not resolved or any(
             not isinstance(cell, AbstractRecurrentCell) for cell in resolved

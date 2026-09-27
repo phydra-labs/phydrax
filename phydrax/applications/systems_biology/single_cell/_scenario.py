@@ -17,7 +17,9 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax.linalg import matrix_exponential_action, MatrixFunctionPolicy
@@ -68,7 +70,7 @@ class CellIdentity:
     cell_id: int
     label: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _identity(self.cell_id, "cell_id")
         _label(self.label, "Cell label")
 
@@ -78,7 +80,7 @@ class GeneIdentity:
     gene_id: int
     label: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _identity(self.gene_id, "gene_id")
         _label(self.label, "Gene label")
 
@@ -100,13 +102,13 @@ class PiecewiseConstantRates:
 
     def __init__(
         self,
-        boundaries: ArrayLike,
+        boundaries: npt.ArrayLike,
         rates: ArrayLike,
         /,
         *,
         rate_unit: UnitDefinition,
         time_unit: UnitDefinition = SECOND,
-    ):
+    ) -> None:
         conversion_factor(time_unit, SECOND)
         raw_boundaries = np.asarray(boundaries, dtype=np.float64)
         if raw_boundaries.ndim != 1 or raw_boundaries.size < 2:
@@ -176,7 +178,7 @@ class ScenarioSegment:
     save_times: tuple[float, ...]
     parent_id: int | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _identity(self.segment_id, "segment_id")
         if not isinstance(self.schedule, PiecewiseConstantRates):
             raise TypeError("schedule must be PiecewiseConstantRates.")
@@ -224,7 +226,7 @@ class TranscriptScenario:
         *,
         max_paths: int,
         max_events_per_interval: int,
-    ):
+    ) -> None:
         cells, genes, segments = tuple(cells), tuple(genes), tuple(segments)
         capacity = _positive_integer(max_paths, "max_paths")
         events = _positive_integer(max_events_per_interval, "max_events_per_interval")
@@ -341,7 +343,7 @@ class TranscriptPath:
 class ScenarioExecutionError(RuntimeError):
     """An incomplete native SSA interval; no descendant is executed from this state."""
 
-    def __init__(self, solution: JumpSolution):
+    def __init__(self, solution: JumpSolution) -> None:
         super().__init__(
             "Transcript SSA interval failed; inspect solution.events.status and increase capacity if exhausted."
         )

@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -29,7 +30,7 @@ class DistanceConstraintPlan(StrictModule, NonTrainableState):
         *,
         maximum_iterations: int = 32,
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         iterations = int(maximum_iterations)
         threshold = float(tolerance)
         if iterations <= 0 or not math.isfinite(threshold) or threshold <= 0.0:
@@ -65,7 +66,9 @@ class PreparedDistanceConstraints(StrictModule, NonTrainableState):
     system: PreparedAtomisticSystem
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: DistanceConstraintPlan, system: PreparedAtomisticSystem, /):
+    def __init__(
+        self, plan: DistanceConstraintPlan, system: PreparedAtomisticSystem, /
+    ) -> None:
         if not isinstance(plan, DistanceConstraintPlan):
             raise TypeError("plan must be DistanceConstraintPlan.")
         if not isinstance(system, PreparedAtomisticSystem):
@@ -116,7 +119,7 @@ class PreparedDistanceConstraints(StrictModule, NonTrainableState):
         left = indices[:, 0]
         right = indices[:, 1]
 
-        def iteration(_, carry):
+        def iteration(_: int | Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             position, multipliers = carry
             displacement = position[left] - position[right]
             squared = jnp.sum(displacement * displacement, axis=-1)
@@ -170,7 +173,7 @@ class PreparedDistanceConstraints(StrictModule, NonTrainableState):
         left = indices[:, 0]
         right = indices[:, 1]
 
-        def iteration(_, value):
+        def iteration(_: int | Array, value: Array) -> Array:
             displacement = position[left] - position[right]
             relative_velocity = (
                 value[left] * inverse_mass[left, None]

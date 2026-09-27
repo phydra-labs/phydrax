@@ -9,7 +9,8 @@ from typing import Any, ClassVar
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._differentiation import BranchDifferentiationPolicy, ComponentAuthority
 from ..._fingerprint import canonical_fingerprint
@@ -78,7 +79,7 @@ class PiecewiseConstantReconstruction(
 ):
     """First-order Godunov traces from cell averages."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.formal_order = 1
         self.ghost_width = 1
         self.differentiability = BranchDifferentiationPolicy.SMOOTH
@@ -133,7 +134,7 @@ def _same_sign_minimum(left: Array, right: Array, /) -> Array:
 class UnlimitedLimiter(AbstractSlopeLimiter, NonTrainableState):
     """Centered smooth-solution slope without nonlinear limiting."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.limiter_id = canonical_fingerprint({"kind": "unlimited-centered"})
 
     def limit(self, backward: Array, forward: Array, /) -> Array:
@@ -141,7 +142,7 @@ class UnlimitedLimiter(AbstractSlopeLimiter, NonTrainableState):
 
 
 class MinmodLimiter(AbstractSlopeLimiter, NonTrainableState):
-    def __init__(self):
+    def __init__(self) -> None:
         self.limiter_id = canonical_fingerprint({"kind": "minmod"})
 
     def limit(self, backward: Array, forward: Array, /) -> Array:
@@ -149,7 +150,7 @@ class MinmodLimiter(AbstractSlopeLimiter, NonTrainableState):
 
 
 class MCLimiter(AbstractSlopeLimiter, NonTrainableState):
-    def __init__(self):
+    def __init__(self) -> None:
         self.limiter_id = canonical_fingerprint({"kind": "monotonized-central"})
 
     def limit(self, backward: Array, forward: Array, /) -> Array:
@@ -161,7 +162,7 @@ class MCLimiter(AbstractSlopeLimiter, NonTrainableState):
 
 
 class VanLeerLimiter(AbstractSlopeLimiter, NonTrainableState):
-    def __init__(self):
+    def __init__(self) -> None:
         self.limiter_id = canonical_fingerprint({"kind": "van-leer"})
 
     def limit(self, backward: Array, forward: Array, /) -> Array:
@@ -173,7 +174,7 @@ class VanLeerLimiter(AbstractSlopeLimiter, NonTrainableState):
 
 
 class SuperbeeLimiter(AbstractSlopeLimiter, NonTrainableState):
-    def __init__(self):
+    def __init__(self) -> None:
         self.limiter_id = canonical_fingerprint({"kind": "superbee"})
 
     def limit(self, backward: Array, forward: Array, /) -> Array:
@@ -187,7 +188,7 @@ class MUSCLReconstruction(AbstractFaceReconstructionPlan):
 
     limiter: AbstractSlopeLimiter
 
-    def __init__(self, limiter: AbstractSlopeLimiter | None = None, /):
+    def __init__(self, limiter: AbstractSlopeLimiter | None = None, /) -> None:
         limiter_ = MCLimiter() if limiter is None else limiter
         if not isinstance(limiter_, AbstractSlopeLimiter):
             raise TypeError("MUSCL limiter must be an AbstractSlopeLimiter.")

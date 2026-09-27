@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -82,7 +83,7 @@ class MemberReferenceState(StrictModule, NonTrainableState):
         installation_stage: ArrayLike | None = None,
         cable_active: ArrayLike | None = None,
         reference_id: str | None = None,
-    ):
+    ) -> None:
         xyz = jnp.asarray(positions)
         expected = (structure.node_count, structure.dimension)
         if xyz.shape != expected or not jnp.issubdtype(xyz.dtype, jnp.inexact):
@@ -204,7 +205,7 @@ class MemberDOFLayout(StrictModule, NonTrainableState):
         /,
         *,
         rotation_constrained: ArrayLike | None = None,
-    ):
+    ) -> None:
         if structure.dimension not in (2, 3):
             raise ValueError("Member networks currently require dimension two or three.")
         rotation_dimension = 1 if structure.dimension == 2 else 3
@@ -315,7 +316,7 @@ class MemberNetworkDefinition(StrictModule, NonTrainableState):
         properties: MemberPropertyMap,
         dofs: MemberDOFLayout,
         /,
-    ):
+    ) -> None:
         if properties.member_count != structure.member_count:
             raise ValueError("Member properties must match the structure member count.")
         if dofs.structure.structure_id != structure.structure_id:

@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax import ein
 
@@ -22,6 +23,7 @@ from ..linalg import (
     prepare_local_block_factorization,
     solve_local_blocks,
 )
+from ..typing import PRNGKey
 from ._lie_group import AbstractLieGroup
 
 
@@ -38,7 +40,7 @@ class LieAlgebraCoordinateMetric(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     metric_id: str = eqx.field(static=True)
 
-    def __init__(self, group: AbstractLieGroup, /):
+    def __init__(self, group: AbstractLieGroup, /) -> None:
         if not isinstance(group, AbstractLieGroup):
             raise TypeError("group must implement AbstractLieGroup.")
         if len(group.algebra_shape) != 1:
@@ -96,11 +98,11 @@ class LieAlgebraCoordinateMetric(StrictModule, NonTrainableState):
 
     def sample_momentum(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         leading_shape: Sequence[int],
         /,
         *,
-        dtype: object = jnp.float64,
+        dtype: DTypeLike = jnp.float64,
     ) -> Array:
         """Sample covector momentum with covariance equal to the Gram matrix."""
         leading = tuple(leading_shape)

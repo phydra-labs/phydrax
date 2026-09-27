@@ -7,12 +7,14 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from math import isfinite
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._identity import callable_payload
@@ -26,11 +28,12 @@ from ..optim._gradient_composition import ConflictFreeGradientPolicy
 from ..optim._update_alignment import ConflictFreeUpdatePolicy
 from ..sampling.collocation import CausalTimeSlabSchedule
 from ..terms import ResidualBlockLayout, ResidualBlockRef
+from ..typing import parse
 
 
-PseudoTimeFreshness = Literal["every_update", "periodic", "experimental_fixed"]
-BalanceMethod = Literal["gradient_norm", "ntk_trace"]
-CausalGateSignal = Literal["physical", "surrogate"]
+PseudoTimeFreshness: TypeAlias = Literal["every_update", "periodic", "experimental_fixed"]
+BalanceMethod: TypeAlias = Literal["gradient_norm", "ntk_trace"]
+CausalGateSignal: TypeAlias = Literal["physical", "surrogate"]
 
 
 class ResidualRelaxationMap(StrictModule, NonTrainableState):
@@ -55,7 +58,7 @@ class ResidualRelaxationMap(StrictModule, NonTrainableState):
         blocks: ResidualBlockLayout | None = None,
         operator_semantic_id: str | None = None,
         operator_numeric_id: str | None = None,
-    ):
+    ) -> None:
         fields_ = (str(fields),) if isinstance(fields, str) else tuple(map(str, fields))
         if not fields_ or any(not field for field in fields_):
             raise ValueError("Relaxation fields must be non-empty names.")
@@ -116,7 +119,7 @@ class PseudoTransientAdaptation(StrictModule, NonTrainableState):
         maximum_inverse_step: float = 1e2,
         minimum_state_displacement: float = 1e-12,
         minimum_residual_displacement: float = 1e-12,
-    ):
+    ) -> None:
         start_ = int(start)
         every_ = int(every)
         scalars = tuple(
@@ -173,7 +176,7 @@ class PseudoTransientPolicy(StrictModule, NonTrainableState):
         inverse_step: ArrayLike = 1.0,
         adaptation: PseudoTransientAdaptation | None = None,
         freshness: PseudoTimeFreshness = "every_update",
-    ):
+    ) -> None:
         index = int(term_index)
         if index < 0:
             raise ValueError("term_index must be non-negative.")
@@ -188,8 +191,7 @@ class PseudoTransientPolicy(StrictModule, NonTrainableState):
             adaptation, PseudoTransientAdaptation
         ):
             raise TypeError("adaptation must be PseudoTransientAdaptation or None.")
-        if freshness not in ("every_update", "periodic", "experimental_fixed"):
-            raise ValueError("Unknown pseudo-time freshness policy.")
+        freshness = parse(freshness, PseudoTimeFreshness, "freshness")
         self.term_index = index
         self.relaxation = relaxation
         self.initial_inverse_step = values.reshape(()) if values.ndim == 0 else values
@@ -242,7 +244,7 @@ class CausalResidualPolicy(StrictModule, NonTrainableState):
         *,
         gate_signal: CausalGateSignal = "physical",
         per_block: bool = True,
-    ):
+    ) -> None:
         index = int(term_index)
         label = str(time_label)
         if index < 0 or not label:
@@ -253,8 +255,7 @@ class CausalResidualPolicy(StrictModule, NonTrainableState):
             raise ValueError(
                 "Causal residual loss initially requires non-overlapping slabs."
             )
-        if gate_signal not in ("physical", "surrogate"):
-            raise ValueError("Unknown causal gate signal.")
+        gate_signal = parse(gate_signal, CausalGateSignal, "gate_signal")
         self.term_index = index
         self.time_label = label
         self.schedule = schedule
@@ -299,7 +300,7 @@ class FunctionalTermBalancePolicy(StrictModule, NonTrainableState):
         maximum: float = 1e3,
         ntk_probes: int = 16,
         maximum_relative_standard_error: float = 0.25,
-    ):
+    ) -> None:
         blocks_ = tuple(blocks)
         if not blocks_ or any(
             not isinstance(block, ResidualBlockRef) for block in blocks_
@@ -308,8 +309,7 @@ class FunctionalTermBalancePolicy(StrictModule, NonTrainableState):
         keys = tuple((block.term_index, block.block_name) for block in blocks_)
         if len(set(keys)) != len(keys):
             raise ValueError("Balanced residual blocks must be unique.")
-        if method not in ("gradient_norm", "ntk_trace"):
-            raise ValueError("Unknown functional term balance method.")
+        method = parse(method, BalanceMethod, "method")
         start_ = int(start)
         every_ = int(every)
         probes = int(ntk_probes)
@@ -378,7 +378,7 @@ class FunctionalDiagnosticsPolicy(StrictModule, NonTrainableState):
         ntk: bool = False,
         ntk_probes: int = 16,
         ntk_eigenvalues: int = 8,
-    ):
+    ) -> None:
         values = tuple((every, ntk_probes, ntk_eigenvalues))
         if any(value < 1 for value in values):
             raise ValueError("Diagnostic cadence and capacities must be positive.")
@@ -405,7 +405,7 @@ class FunctionalSelectionPolicy(StrictModule, NonTrainableState):
         mode: Literal["min", "max"] = "min",
         min_delta: float = 0.0,
         patience: int | None = None,
-    ):
+    ) -> None:
         every_ = int(every)
         delta = float(min_delta)
         patience_ = None if patience is None else int(patience)
@@ -438,7 +438,7 @@ class FunctionalCheckpointPolicy(StrictModule, NonTrainableState):
         *,
         every: int = 1000,
         save_final: bool = True,
-    ):
+    ) -> None:
         path_ = str(Path(path))
         every_ = int(every)
         if not path_ or every_ < 1:
@@ -477,7 +477,7 @@ class FunctionalTrainingPlan(StrictModule, NonTrainableState):
         selection: FunctionalSelectionPolicy | None = None,
         checkpoint: FunctionalCheckpointPolicy | None = None,
         sharding: Any = None,
-    ):
+    ) -> None:
         pseudo = tuple(pseudo_transient)
         causal_ = tuple(causal)
         if any(not isinstance(value, PseudoTransientPolicy) for value in pseudo):
@@ -621,11 +621,11 @@ class FunctionalTrainingState(StrictModule):
         enforcement_state: EnforcementState | None = None,
         previous_functions: PyTree[Any] | None = None,
         pseudo_inverse_steps: Sequence[ArrayLike] = (),
-        term_multipliers: ArrayLike = (),
+        term_multipliers: ArrayLike | Sequence[ArrayLike] = (),
         previous_gradient: PyTree[Any] | None = None,
         training_seconds: float = 0.0,
         resumed_from_step: int = 0,
-    ):
+    ) -> None:
         if not isinstance(progress, TrainingProgress):
             raise TypeError("progress must be a TrainingProgress.")
         if not isinstance(kernel_state, TrainingKernelState):

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -32,7 +35,7 @@ from phydrax.ml.neighbors import (
 )
 
 
-def _cluster_data():
+def _cluster_data() -> Any:
     features = jnp.array(
         [
             [-1.3, -0.7],
@@ -49,14 +52,14 @@ def _cluster_data():
     return features, labels, targets, weights
 
 
-def _assert_finite(values):
+def _assert_finite(values: Any) -> None:
     if isinstance(values, tuple):
         assert all(jnp.all(jnp.isfinite(value)) for value in values)
     else:
         assert jnp.all(jnp.isfinite(values))
 
 
-def _assert_prediction_parameter_gradient(model, query):
+def _assert_prediction_parameter_gradient(model: Any, query: Any) -> None:
     gradient = eqx.filter_grad(
         lambda current: jnp.sum(jnp.square(jnp.real(current(query))))
     )(model)
@@ -65,7 +68,7 @@ def _assert_prediction_parameter_gradient(model, query):
     assert all(jnp.all(jnp.isfinite(leaf)) for leaf in leaves)
 
 
-def _levels(result, *surfaces):
+def _levels(result: Any, *surfaces: Any) -> Any:
     return tuple(result.derivative_contract.level(surface) for surface in surfaces)
 
 
@@ -77,7 +80,9 @@ _FIT_SURFACES = (
 )
 
 
-def test_exact_neighbors_select_unmasked_geometry_preserve_target_axes_and_freeze():
+def test_exact_neighbors_select_unmasked_geometry_preserve_target_axes_and_freeze() -> (
+    None
+):
     features = jnp.array([[0.0], [2.0], [5.0]])
     targets = jnp.array([[0.0, 10.0], [20.0, 30.0], [50.0, 60.0]])
     recipe = KNeighborsRegressorRecipe(1, metric="euclidean")
@@ -103,13 +108,14 @@ def test_exact_neighbors_select_unmasked_geometry_preserve_target_axes_and_freez
         result, DerivativeSurface.INPUT, DerivativeSurface.MODEL_PARAMETER
     ) == (GradientLevel.NONE, GradientLevel.ALMOST_EVERYWHERE)
     regularity = result.derivative_contract.regularity
+    # ty: ignore[unresolved-attribute]
     assert (regularity.continuity, regularity.degree_bound) == (-1, 0)
     assert model.model_execution_contract().regularity == regularity
     _assert_finite(jax.grad(lambda point: jnp.sum(model(point)))(jnp.array([1.7])))
     _assert_prediction_parameter_gradient(model, jnp.array([[1.7], [4.6]]))
 
 
-def test_exact_classifier_weights_labels_and_weight_policy_are_observable():
+def test_exact_classifier_weights_labels_and_weight_policy_are_observable() -> None:
     features = jnp.array([[0.0], [2.0], [5.0]])
     labels = jnp.array([0, 1, 3], dtype=jnp.int32)
     sample_weight = jnp.array([1.0, 3.0, 7.0])
@@ -126,11 +132,16 @@ def test_exact_classifier_weights_labels_and_weight_policy_are_observable():
     )
     model = result.as_trainable()
 
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.support_weight, sample_weight * measure_weight)
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(model.support_mask, jnp.array([True, True, False]))
     assert jnp.allclose(
-        model.predict_proba(jnp.array([[1.0]])), jnp.array([[4.0 / 7.0, 3.0 / 7.0]])
+        # ty: ignore[unresolved-attribute]
+        model.predict_proba(jnp.array([[1.0]])),
+        jnp.array([[4.0 / 7.0, 3.0 / 7.0]]),
     )
+    # ty: ignore[unresolved-attribute]
     assert model.predict(jnp.array([[1.0]]))[0] == 0
 
     with pytest.raises(ValueError, match="integer label"):
@@ -141,7 +152,7 @@ def test_exact_classifier_weights_labels_and_weight_policy_are_observable():
         NearestCentroidRecipe(class_count=2).fit_batch(MLBatch(features, labels))
 
 
-def test_kernel_density_normalization_capacity_and_weight_gradients():
+def test_kernel_density_normalization_capacity_and_weight_gradients() -> None:
     singleton = KernelDensityRecipe(2.0).fit_batch(
         MLBatch(jnp.array([[0.0]]), measure_weight=jnp.array([3.0]))
     )
@@ -151,7 +162,7 @@ def test_kernel_density_normalization_capacity_and_weight_gradients():
     features, _, _, weights = _cluster_data()
     query = jnp.array([0.15, -0.1])
 
-    def density_loss(x, measure_weight, bandwidth):
+    def density_loss(x: Any, measure_weight: Any, bandwidth: Any) -> Any:
         return (
             KernelDensityRecipe(bandwidth)
             .fit_batch(MLBatch(x, measure_weight=measure_weight))
@@ -183,12 +194,12 @@ def test_kernel_density_normalization_capacity_and_weight_gradients():
     assert empty.status == ML_INSUFFICIENT_DATA
 
 
-def test_smooth_neighbor_and_centroid_fit_gradients_match_contracts():
+def test_smooth_neighbor_and_centroid_fit_gradients_match_contracts() -> None:
     features, labels, targets, weights = _cluster_data()
     query = jnp.array([0.15, 0.05])
     reg_base = KernelNeighborsRegressorRecipe(temperature=0.65)
 
-    def regression_loss(x, y, sample_weight, temperature):
+    def regression_loss(x: Any, y: Any, sample_weight: Any, temperature: Any) -> Any:
         recipe = eqx.tree_at(lambda current: current.temperature, reg_base, temperature)
         return recipe.fit_batch(
             MLBatch(x, y, sample_weight=sample_weight)
@@ -204,7 +215,7 @@ def test_smooth_neighbor_and_centroid_fit_gradients_match_contracts():
 
     cls_base = KernelNeighborsClassifierRecipe(class_count=2, temperature=0.65)
 
-    def classification_loss(x, sample_weight, temperature):
+    def classification_loss(x: Any, sample_weight: Any, temperature: Any) -> Any:
         recipe = eqx.tree_at(lambda current: current.temperature, cls_base, temperature)
         probability = recipe.fit_batch(
             MLBatch(x, labels, sample_weight=sample_weight)
@@ -225,7 +236,7 @@ def test_smooth_neighbor_and_centroid_fit_gradients_match_contracts():
 
     centroid_base = NearestCentroidRecipe(class_count=2, temperature=0.6)
 
-    def centroid_loss(x, sample_weight):
+    def centroid_loss(x: Any, sample_weight: Any) -> Any:
         probability = centroid_base.fit_batch(
             MLBatch(x, labels, sample_weight=sample_weight)
         ).as_trainable()(query)
@@ -244,7 +255,7 @@ def test_smooth_neighbor_and_centroid_fit_gradients_match_contracts():
     _assert_prediction_parameter_gradient(centroid_result.as_trainable(), query[None, :])
 
 
-def test_metric_learning_exercises_declared_fit_and_parameter_gradients():
+def test_metric_learning_exercises_declared_fit_and_parameter_gradients() -> None:
     features, labels, _, weights = _cluster_data()
     query = jnp.array([[-0.2, 0.1], [0.9, 0.8]])
     nca_base = NeighborhoodComponentsAnalysisRecipe(
@@ -255,7 +266,9 @@ def test_metric_learning_exercises_declared_fit_and_parameter_gradients():
         ridge=1e-3,
     )
 
-    def nca_loss(x, sample_weight, learning_rate, temperature, ridge):
+    def nca_loss(
+        x: Any, sample_weight: Any, learning_rate: Any, temperature: Any, ridge: Any
+    ) -> Any:
         recipe = eqx.tree_at(
             lambda current: (
                 current.learning_rate,
@@ -289,7 +302,7 @@ def test_metric_learning_exercises_declared_fit_and_parameter_gradients():
 
     metric_base = MahalanobisMetricRecipe(ridge=0.05, component_count=2)
 
-    def metric_loss(x, sample_weight, ridge):
+    def metric_loss(x: Any, sample_weight: Any, ridge: Any) -> Any:
         recipe = eqx.tree_at(lambda current: current.ridge, metric_base, ridge)
         model = recipe.fit_batch(
             MLBatch(x, labels, sample_weight=sample_weight)
@@ -315,7 +328,7 @@ def test_metric_learning_exercises_declared_fit_and_parameter_gradients():
     _assert_prediction_parameter_gradient(metric_result.as_trainable(), query)
 
 
-def test_sparse_inputs_fail_closed_without_implicit_densification():
+def test_sparse_inputs_fail_closed_without_implicit_densification() -> None:
     dense = jnp.array([[-1.0, -0.5], [-0.7, -1.1], [0.8, 0.6], [1.2, 1.0]])
     sparse = SparseFeatures(
         dense,
@@ -343,7 +356,7 @@ def test_sparse_inputs_fail_closed_without_implicit_densification():
             recipe.fit_batch(MLBatch(sparse))
 
 
-def test_complex_geometry_follows_each_family_contract():
+def test_complex_geometry_follows_each_family_contract() -> None:
     dense = jnp.array([[-1.0, -0.5], [-0.7, -1.1], [0.8, 0.6], [1.2, 1.0]])
     labels = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
 
@@ -368,7 +381,7 @@ def test_complex_geometry_follows_each_family_contract():
         MahalanobisMetricRecipe().fit_batch(MLBatch(complex_features, labels))
 
 
-def test_hard_neighbor_failures_and_case_query_geometry_are_explicit():
+def test_hard_neighbor_failures_and_case_query_geometry_are_explicit() -> None:
     features, labels, targets, _ = _cluster_data()
     insufficient = KNeighborsRegressorRecipe(3).fit_batch(
         MLBatch(
@@ -416,4 +429,5 @@ def test_hard_neighbor_failures_and_case_query_geometry_are_explicit():
     with pytest.raises(ValueError, match="begin with fitted case shape"):
         case_model(features[:3])
     with pytest.raises(ValueError, match="unbatched fitted case"):
+        # ty: ignore[unresolved-attribute]
         case_model.predict_chunked(cases[:, :2], chunk_size=1)

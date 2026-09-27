@@ -16,14 +16,15 @@ import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO, Literal
+from typing import BinaryIO, Literal, TypeAlias
 
 from ._fingerprint import canonical_fingerprint
 from ._host_io import descriptor_relative_path, open_parent_descriptor
 from ._resource_set import ResourceSetLimits
+from .typing import parse
 
 
-PublicationMode = Literal["exclusive", "atomic_replace"]
+PublicationMode: TypeAlias = Literal["exclusive", "atomic_replace"]
 _HASH_CHUNK_BYTES = 1_048_576
 _DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 _FILE_FLAGS = os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -105,8 +106,7 @@ def publish_file(
         raise TypeError("writer must be callable.")
     if type(maximum_bytes) is not int or maximum_bytes <= 0:
         raise ValueError("maximum_bytes must be a positive integer.")
-    if mode not in ("exclusive", "atomic_replace"):
-        raise ValueError("Publication mode must be 'exclusive' or 'atomic_replace'.")
+    mode = parse(mode, PublicationMode, "mode")
     if validator is not None and not callable(validator):
         raise TypeError("validator must be callable or None.")
     destination = Path(os.fspath(path))
@@ -196,8 +196,7 @@ def publish_resource_set(
 
     if not isinstance(members, Mapping) or not members:
         raise ValueError("Published resource sets require a non-empty member mapping.")
-    if mode not in ("exclusive", "atomic_replace"):
-        raise ValueError("Publication mode must be 'exclusive' or 'atomic_replace'.")
+    mode = parse(mode, PublicationMode, "mode")
     destination = Path(os.fspath(path))
     parent_descriptor, destination_name = open_parent_descriptor(destination, create=True)
     temporary_name = f".{destination_name}.{secrets.token_hex(16)}.tmp"

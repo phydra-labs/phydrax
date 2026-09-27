@@ -13,7 +13,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import (
     array_tree_fingerprint,
@@ -22,6 +23,7 @@ from .._fingerprint import (
 )
 from .._strict import StrictModule
 from ..dynamics import TimeGrid
+from ..typing import parse, PRNGKey
 from ._wiener import LevyAreaKind, WienerRealization
 
 
@@ -353,7 +355,7 @@ class StochasticPathEnsemblePlan(StrictModule):
         dense: bool = False,
         throw: bool = False,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(time_grid, TimeGrid):
             raise TypeError("time_grid must be a TimeGrid.")
         count = int(path_count)
@@ -372,8 +374,7 @@ class StochasticPathEnsemblePlan(StrictModule):
             raise ValueError(
                 "rtol, atol, and wiener_tolerance must be finite and positive."
             )
-        if levy_area not in ("brownian", "space_time", "space_time_time"):
-            raise ValueError("Unknown Levy-area representation.")
+        levy_area = parse(levy_area, LevyAreaKind, "levy_area")
         solver_fingerprint = _configuration_fingerprint(solver, solver_id, owner="solver")
         controller_fingerprint = _configuration_fingerprint(
             stepsize_controller,
@@ -503,7 +504,7 @@ def prepare_stochastic_path_ensemble(
     /,
     *,
     realization: WienerRealization | None = None,
-    key: Key[Array, ""] | None = None,
+    key: PRNGKey | None = None,
     initial_states: ArrayLike | None = None,
 ) -> PreparedStochasticPathEnsemble:
     """Prepare one bounded stochastic ensemble without executing an integrator."""

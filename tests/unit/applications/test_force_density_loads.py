@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -10,7 +12,7 @@ import phydrax as phx
 fd = phx.applications.solid_mechanics
 
 
-def _edge_structure(*, all_fixed: bool = True):
+def _edge_structure(*, all_fixed: bool = True) -> Any:
     return fd.ForceDensityStructure.from_edges(
         jnp.asarray(((0, 1),), dtype=jnp.int32),
         2,
@@ -19,7 +21,7 @@ def _edge_structure(*, all_fixed: bool = True):
     )
 
 
-def test_fixed_and_reference_edge_loads_conserve_total_force():
+def test_fixed_and_reference_edge_loads_conserve_total_force() -> None:
     structure = _edge_structure()
     positions = jnp.asarray(((0.0, 0.0), (2.0, 0.0)))
     fixed = fd.FixedNodalLoadModel()
@@ -38,7 +40,7 @@ def test_fixed_and_reference_edge_loads_conserve_total_force():
     assert bool(line.valid(structure, positions, parameters))
 
 
-def test_current_edge_load_tracks_length_and_orientation_without_changing_total():
+def test_current_edge_load_tracks_length_and_orientation_without_changing_total() -> None:
     forward = _edge_structure()
     reverse = fd.ForceDensityStructure.from_edges(
         jnp.asarray(((1, 0),), dtype=jnp.int32),
@@ -55,7 +57,7 @@ def test_current_edge_load_tracks_length_and_orientation_without_changing_total(
     assert bool(model.valid(forward, positions, parameters))
 
 
-def test_surface_pressure_integrates_oriented_triangle_and_quadrilateral():
+def test_surface_pressure_integrates_oriented_triangle_and_quadrilateral() -> None:
     triangle_connectivity = phx.discretization.polygonal_connectivity(
         jnp.asarray(((0, 1, 2),), dtype=jnp.int32),
         None,
@@ -104,7 +106,7 @@ def test_surface_pressure_integrates_oriented_triangle_and_quadrilateral():
     assert jnp.allclose(quad_loads[:, 2], 0.75)
 
 
-def test_surface_pressure_orientation_reversal_flips_resultant():
+def test_surface_pressure_orientation_reversal_flips_resultant() -> None:
     forward = phx.discretization.polygonal_connectivity(
         jnp.asarray(((0, 1, 2),), dtype=jnp.int32), None, 3
     )
@@ -114,7 +116,7 @@ def test_surface_pressure_orientation_reversal_flips_resultant():
     points = jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
     model = fd.SurfacePressureLoadModel()
 
-    def resultant(connectivity):
+    def resultant(connectivity: Any) -> Any:
         structure = fd.ForceDensityStructure.from_edges(
             connectivity.edges,
             3,
@@ -127,7 +129,7 @@ def test_surface_pressure_orientation_reversal_flips_resultant():
     assert jnp.allclose(resultant(reverse), -resultant(forward))
 
 
-def _current_line_problem(line_load: float):
+def _current_line_problem(line_load: float) -> Any:
     structure = fd.ForceDensityStructure.from_edges(
         jnp.asarray(((0, 1), (1, 2)), dtype=jnp.int32),
         3,
@@ -149,7 +151,9 @@ def _current_line_problem(line_load: float):
     return problem, inputs, initial
 
 
-def test_position_dependent_edge_load_uses_nonlinear_root_and_certifies_residual():
+def test_position_dependent_edge_load_uses_nonlinear_root_and_certifies_residual() -> (
+    None
+):
     problem, inputs, initial = _current_line_problem(-0.1)
     result = fd.force_density_equilibrium(
         problem,
@@ -169,11 +173,11 @@ def test_position_dependent_edge_load_uses_nonlinear_root_and_certifies_residual
     assert result.nonlinear_result.diagnostics.residual_evaluations >= 1
 
 
-def test_position_dependent_solve_has_implicit_load_derivative():
+def test_position_dependent_solve_has_implicit_load_derivative() -> None:
     problem, sample, initial = _current_line_problem(-0.1)
     plan = fd.plan_force_density(problem, sample, initial_positions=initial)
 
-    def center_height(line_load):
+    def center_height(line_load: Any) -> Any:
         inputs = fd.ForceDensityInputs(
             sample.force_densities,
             sample.prescribed_values,
@@ -193,7 +197,7 @@ def test_position_dependent_solve_has_implicit_load_derivative():
     assert derivative == pytest.approx(finite_difference, rel=2.0e-3, abs=2.0e-5)
 
 
-def test_composite_load_model_sums_children_and_preserves_dependency():
+def test_composite_load_model_sums_children_and_preserves_dependency() -> None:
     structure = _edge_structure()
     positions = jnp.asarray(((0.0, 0.0), (2.0, 0.0)))
     model = fd.CompositeForceDensityLoadModel(

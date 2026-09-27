@@ -1,6 +1,7 @@
 import io
 import json
 import zipfile
+from typing import Any
 
 import numpy as np
 import pytest
@@ -16,7 +17,7 @@ from phydrax.export._array_archive import (
 )
 
 
-def _descriptor():
+def _descriptor() -> Any:
     return BEMArchiveDescriptor(
         ambient_dimension=3,
         pde="laplace",
@@ -33,7 +34,9 @@ def _descriptor():
     )
 
 
-def test_plan_and_result_records_round_trip_without_pickle_or_implicit_claims(tmp_path):
+def test_plan_and_result_records_round_trip_without_pickle_or_implicit_claims(
+    tmp_path: Any,
+) -> None:
     plan = BEMPlanArchiveRecord(
         "plan-tetrahedron",
         _descriptor(),
@@ -98,7 +101,9 @@ def test_plan_and_result_records_round_trip_without_pickle_or_implicit_claims(tm
             assert loaded.dtype.kind in "biufc"
 
 
-def test_archive_checksum_corruption_and_read_size_limits_fail_closed(tmp_path):
+def test_archive_checksum_corruption_and_read_size_limits_fail_closed(
+    tmp_path: Any,
+) -> None:
     record = BEMResultArchiveRecord(
         "result-corruption",
         "plan-corruption",
@@ -133,7 +138,7 @@ def test_archive_checksum_corruption_and_read_size_limits_fail_closed(tmp_path):
         read_bem_array_archive(clean, limits=BEMArchiveLimits(max_file_bytes=1))
 
 
-def test_archive_write_limits_reject_before_emitting_output(tmp_path):
+def test_archive_write_limits_reject_before_emitting_output(tmp_path: Any) -> None:
     record = BEMPlanArchiveRecord(
         "plan-too-large",
         _descriptor(),
@@ -150,7 +155,7 @@ def test_archive_write_limits_reject_before_emitting_output(tmp_path):
     assert not path.exists()
 
 
-def test_records_reject_object_nonfinite_and_continuum_claims():
+def test_records_reject_object_nonfinite_and_continuum_claims() -> None:
     with pytest.raises(TypeError, match="numeric or boolean"):
         BEMPlanArchiveRecord(
             "bad-object",

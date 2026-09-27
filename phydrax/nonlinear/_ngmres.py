@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._trainable import fixed_field
@@ -92,7 +93,7 @@ class NonlinearGMRES(AbstractNonlinearMethod):
         safeguard_factor: float = 1.0,
         linear: LinearSolvePolicy | None = None,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(update, AbstractNonlinearUpdate):
             raise TypeError("update must be AbstractNonlinearUpdate.")
         history_ = int(history)
@@ -218,7 +219,7 @@ class NonlinearGMRES(AbstractNonlinearMethod):
             ).astype(jnp.int32),
         )
 
-        def condition(current):
+        def condition(current: _NGMRESRun) -> Array:
             within_evaluations = (
                 jnp.asarray(True)
                 if termination.maximum_evaluations is None
@@ -230,7 +231,7 @@ class NonlinearGMRES(AbstractNonlinearMethod):
                 & within_evaluations
             )
 
-        def body(current):
+        def body(current: _NGMRESRun) -> _NGMRESRun:
             state_tree = source.unflatten(current.state)
             combined_prepared = eqx.combine(
                 current.prepared_update,

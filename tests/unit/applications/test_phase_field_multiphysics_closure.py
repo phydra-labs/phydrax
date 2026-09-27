@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 
@@ -18,7 +21,7 @@ import phydrax as phx
 PF = phx.applications.phase_field
 
 
-def _thermal_plan():
+def _thermal_plan() -> Any:
     solid = PF.NonisothermalGrandPotentialPhase(
         "solid",
         reference_temperature=1.0,
@@ -45,7 +48,7 @@ def _thermal_plan():
     return PF.NonisothermalSolidificationPlan(model)
 
 
-def _mechanics():
+def _mechanics() -> Any:
     identity = jnp.eye(2)
     stiffness = 2.0 * jnp.einsum("ij,kl->ijkl", identity, identity) + (
         jnp.einsum("ik,jl->ijkl", identity, identity)
@@ -60,7 +63,7 @@ def _mechanics():
     return PF.PhaseMechanicalModel((phase_a, phase_b))
 
 
-def _coupling_graph():
+def _coupling_graph() -> Any:
     return PF.PhaseFieldCouplingGraph(
         (
             PF.PhaseFieldCouplingTerm(
@@ -110,7 +113,7 @@ def _coupling_graph():
     )
 
 
-def _coupled_plan():
+def _coupled_plan() -> Any:
     clock = phx.stochastic.PoissonClockRealization(
         jax.random.key(4),
         1,
@@ -159,7 +162,7 @@ def _coupled_plan():
     )
 
 
-def _coupled_inputs():
+def _coupled_inputs() -> Any:
     return PF.CoupledMultiphysicsStepInputs(
         phase_logits=jnp.asarray((0.0, 0.0)),
         chemical_potential=jnp.asarray((0.0,)),
@@ -189,7 +192,7 @@ def _coupled_inputs():
     )
 
 
-def test_coupling_graph_rejects_duplicate_storage_owner():
+def test_coupling_graph_rejects_duplicate_storage_owner() -> None:
     first = PF.PhaseFieldCouplingTerm(
         "first", output_fields=("x",), storage_channels=("energy",)
     )
@@ -200,7 +203,7 @@ def test_coupling_graph_rejects_duplicate_storage_owner():
         PF.PhaseFieldCouplingGraph((first, second))
 
 
-def test_power_adjoint_transfer_closes_discrete_power():
+def test_power_adjoint_transfer_closes_discrete_power() -> None:
     source = phx.linalg.ArraySpace((2,), dtype=np.float64)
     target = phx.linalg.ArraySpace((2,), dtype=np.float64)
     matrix = jnp.asarray(((0.75, 0.25), (0.25, 0.75)), dtype=jnp.float64)
@@ -215,7 +218,7 @@ def test_power_adjoint_transfer_closes_discrete_power():
     np.testing.assert_allclose(evidence.constant_defect, 0.0)
 
 
-def test_nonisothermal_phase_change_closes_enthalpy_and_entropy():
+def test_nonisothermal_phase_change_closes_enthalpy_and_entropy() -> None:
     plan = _thermal_plan()
     chemical = jnp.asarray((0.0,))
     initial_logits = jnp.asarray((10.0, -10.0))
@@ -240,7 +243,7 @@ def test_nonisothermal_phase_change_closes_enthalpy_and_entropy():
     np.testing.assert_allclose(evidence.entropy.residual, 0.0, atol=1.0e-12)
 
 
-def test_anti_trapping_current_is_directional_and_zero_off_interface():
+def test_anti_trapping_current_is_directional_and_zero_off_interface() -> None:
     plan = PF.AntiTrappingCurrentPlan(
         1.0 / (2.0 * jnp.sqrt(2.0)),
         0.1,
@@ -258,7 +261,7 @@ def test_anti_trapping_current_is_directional_and_zero_off_interface():
     np.testing.assert_array_equal(evaluation.current[1], jnp.zeros((2,)))
 
 
-def test_nucleation_clock_is_prefix_stable_and_transactional():
+def test_nucleation_clock_is_prefix_stable_and_transactional() -> None:
     clock = phx.stochastic.PoissonClockRealization(
         jax.random.key(3),
         2,
@@ -325,7 +328,7 @@ def test_nucleation_clock_is_prefix_stable_and_transactional():
         )
 
 
-def test_mechanical_flow_and_electrostatic_exchange_contracts():
+def test_mechanical_flow_and_electrostatic_exchange_contracts() -> None:
     mechanics = _mechanics().evaluate(jnp.asarray((0.0, 0.0)), jnp.zeros((2, 2)))
     flow = PF.ModelHCouplingPlan(
         PF.PhaseFluidMaterial(
@@ -360,7 +363,7 @@ def test_mechanical_flow_and_electrostatic_exchange_contracts():
     assert electrostatic.field_energy[0] > 0.0
 
 
-def test_complete_multiphysics_step_closes_all_ledgers():
+def test_complete_multiphysics_step_closes_all_ledgers() -> None:
     plan = _coupled_plan()
     thermal = plan.thermal.initialize(
         jnp.asarray((0.0, 0.0)), jnp.asarray((0.0,)), jnp.asarray(1.0)
@@ -408,7 +411,7 @@ def test_complete_multiphysics_step_closes_all_ledgers():
     assert case.manifest.method_id == fixed_method.method_id
 
 
-def test_coupled_profiles_and_epoch_identity_are_exact():
+def test_coupled_profiles_and_epoch_identity_are_exact() -> None:
     candidates = PF.coupled_phase_field_candidate_profiles()
     released = PF.coupled_phase_field_released_profiles(
         "coupled-qualification-artifact",

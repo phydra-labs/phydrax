@@ -10,7 +10,8 @@ from typing import Literal, TYPE_CHECKING, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -71,7 +72,7 @@ class RodLoad(StrictModule, NonTrainableState):
         moment_frame: RodMomentFrame = "material",
         force_unit: str = "N",
         moment_unit: str = "N*m",
-    ):
+    ) -> None:
         forces_ = _real_array("forces", forces, 2)
         if forces_.shape[1] not in (2, 3) or forces_.shape[0] < 2:
             raise ValueError("Rod forces must have shape (nodes, 2|3).")
@@ -165,7 +166,7 @@ class RodLoadLedger(StrictModule, NonTrainableState):
     segment_count: int = eqx.field(static=True)
     ledger_id: str = eqx.field(static=True)
 
-    def __init__(self, loads: Sequence[RodLoad], /):
+    def __init__(self, loads: Sequence[RodLoad], /) -> None:
         loads_ = tuple(loads)
         if not loads_ or any(not isinstance(load, RodLoad) for load in loads_):
             raise TypeError("loads must contain one or more RodLoad values.")
@@ -326,7 +327,7 @@ class ReducedRodLoadBundle(StrictModule, NonTrainableState):
         /,
         *,
         effort_unit: str = "dual-to-reduced-coordinate-rate",
-    ):
+    ) -> None:
         if not isinstance(ledger, RodLoadLedger):
             raise TypeError("ledger must be a RodLoadLedger.")
         efforts = _real_array("source_efforts", source_efforts, 2)

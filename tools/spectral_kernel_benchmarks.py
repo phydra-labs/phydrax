@@ -28,7 +28,7 @@ def _cycle_graph(node_count: int) -> phx.graph.GraphIR:
     )
 
 
-def _timed_compiled(function, argument, repeats):
+def _timed_compiled(function: Any, argument: Any, repeats: Any) -> Any:
     compiled = jax.jit(function)
     started = time.perf_counter()
     output = jax.block_until_ready(compiled(argument))
@@ -133,8 +133,11 @@ def run_benchmarks(
         "repeats": repeats,
         "spectrum": {
             "constructed": True,
+            # ty: ignore[unresolved-attribute]
             "exact": eigenbasis.report.exact,
+            # ty: ignore[unresolved-attribute]
             "method_id": eigenbasis.report.method_id,
+            # ty: ignore[unresolved-attribute]
             "next_eigenvalue": eigenbasis.report.next_eigenvalue,
             "preprocessing_seconds": preprocessing_seconds,
             "basis_storage_elements": int(

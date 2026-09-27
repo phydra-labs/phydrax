@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._array_archive import (
     pack_array_tree,
@@ -23,10 +25,13 @@ from ...discretization import DiscreteFieldSpace, DiscreteMeasure, EntityDofLayo
 from ...linalg import ArraySpace
 from ...solver._partitioned_coupling_types import (
     AbstractCouplingSubsystem,
+    CouplingDirection,
     CouplingPort,
     CouplingQuantity,
+    CouplingState,
     CouplingSubsystemCapabilities,
     CouplingSubsystemResult,
+    CouplingWindow,
 )
 from ...units import derived_unit, JOULE, KELVIN, KILOGRAM, METER, SECOND
 from ..ocean._boussinesq import PreparedCartesianBoussinesqOcean
@@ -37,6 +42,10 @@ from ..ocean._hydrostatic_step import (
 )
 from ..ocean._step import OceanBoussinesqContinuationState, OceanBoussinesqSSPRK33Method
 from ._quantities import GeophysicalQuantity
+
+
+if TYPE_CHECKING:
+    from ...solver._partitioned_coupling_graph import PreparedCoupling
 
 
 _HEAT_REFERENCE = "constant-cp-relative-to-273.15K"
@@ -73,7 +82,9 @@ def geophysical_coupling_quantity(quantity: GeophysicalQuantity, /) -> CouplingQ
     )
 
 
-def coupling_surface_field(cell_area, support_id: str, /):
+def coupling_surface_field(
+    cell_area: ArrayLike, support_id: str, /
+) -> tuple[DiscreteFieldSpace, DiscreteMeasure]:
     """Flatten a physical surface into native cell-average coordinates and measure."""
     area = np.asarray(cell_area)
     if not area.size or np.any(~np.isfinite(area)) or np.any(area <= 0):
@@ -95,7 +106,15 @@ def coupling_surface_field(cell_area, support_id: str, /):
     return field, measure
 
 
-def _port(name, direction, field, measure, quantity, *, integrated=False):
+def _port(
+    name: str,
+    direction: CouplingDirection,
+    field: DiscreteFieldSpace,
+    measure: DiscreteMeasure,
+    quantity: CouplingQuantity,
+    *,
+    integrated: bool = False,
+) -> CouplingPort:
     return CouplingPort(
         name,
         direction,
@@ -109,7 +128,7 @@ def _port(name, direction, field, measure, quantity, *, integrated=False):
     )
 
 
-def _positive(value, name):
+def _positive(value: float, name: str) -> float:
     number = float(value)
     if not np.isfinite(number) or number <= 0:
         raise ValueError(f"{name} must be finite and positive.")
@@ -146,16 +165,16 @@ class SlabReservoir(AbstractCouplingSubsystem, NonTrainableState):
 
     def __init__(
         self,
-        field,
-        measure,
+        field: DiscreteFieldSpace,
+        measure: DiscreteMeasure,
         /,
         *,
-        dry_heat_capacity=1.0e6,
-        water_heat_capacity=4184.0,
-        conductance=10.0,
-        water_rate=0.0,
-        name="slab",
-    ):
+        dry_heat_capacity: float = 1.0e6,
+        water_heat_capacity: float = 4184.0,
+        conductance: float = 10.0,
+        water_rate: float = 0.0,
+        name: str = "slab",
+    ) -> None:
         capacity = _positive(dry_heat_capacity, "dry_heat_capacity")
         cp = _positive(water_heat_capacity, "water_heat_capacity")
         conductance_ = float(conductance)
@@ -196,7 +215,9 @@ class SlabReservoir(AbstractCouplingSubsystem, NonTrainableState):
             _port(f"{identity}/water", "output", field, measure, _WATER, integrated=True),
         )
 
-    def initialize(self, temperature, water_mass, /):
+    def initialize(
+        self, temperature: ArrayLike, water_mass: ArrayLike, /
+    ) -> SlabReservoirState:
         shape = (self.field.vector_space.size,)
         dtype = self.measure.weights.dtype
         temperature_ = jnp.broadcast_to(jnp.asarray(temperature, dtype=dtype), shape)
@@ -213,12 +234,19 @@ class SlabReservoir(AbstractCouplingSubsystem, NonTrainableState):
             water,
         )
 
-    def temperature(self, state, /):
+    def temperature(self, state: SlabReservoirState, /) -> Array:
         return 273.15 + state.enthalpy / (
             self.dry_heat_capacity + self.water_heat_capacity * state.water_mass
         )
 
-    def advance_window(self, window, start_state, inputs, args, /):
+    def advance_window(
+        self,
+        window: CouplingWindow,
+        start_state: SlabReservoirState,
+        inputs: tuple[Array, ...],
+        args: object,
+        /,
+    ) -> CouplingSubsystemResult:
         del args
         temperature = self.temperature(start_state)
         water = jnp.full_like(start_state.water_mass, self.water_rate) * window.size
@@ -265,10 +293,10 @@ class HydrostaticOceanCouplingSubsystem(AbstractCouplingSubsystem):
         ocean: PreparedHydrostaticOcean,
         /,
         *,
-        heat_capacity=3990.0,
-        freshwater_density=1000.0,
-        name="hydrostatic-ocean",
-    ):
+        heat_capacity: float = 3990.0,
+        freshwater_density: float = 1000.0,
+        name: str = "hydrostatic-ocean",
+    ) -> None:
         if not isinstance(ocean, PreparedHydrostaticOcean):
             raise TypeError(
                 "Hydrostatic coupling requires a native PreparedHydrostaticOcean, not a mosaic."
@@ -329,13 +357,20 @@ class HydrostaticOceanCouplingSubsystem(AbstractCouplingSubsystem):
             ),
         )
 
-    def temperature(self, state: HydrostaticContinuationState, /):
+    def temperature(self, state: HydrostaticContinuationState, /) -> Array:
         ocean = self.method.ocean
         volume = ocean.geometry.metric_epoch(state.state.eta).cell_volume[..., -1]
         inventory = state.state.tracer_inventory["conservative_temperature"][..., -1]
         return (273.15 + inventory / volume).reshape(-1)
 
-    def advance_window(self, window, start_state, inputs, args, /):
+    def advance_window(
+        self,
+        window: CouplingWindow,
+        start_state: HydrostaticContinuationState,
+        inputs: tuple[Array, ...],
+        args: object,
+        /,
+    ) -> CouplingSubsystemResult:
         ocean = self.method.ocean
         shape = ocean.geometry.horizontal_shape
         heat, water = (value.reshape(shape) for value in inputs)
@@ -409,9 +444,9 @@ class BoussinesqOceanCouplingSubsystem(AbstractCouplingSubsystem):
         ocean: PreparedCartesianBoussinesqOcean,
         /,
         *,
-        stress=False,
-        name="boussinesq-ocean",
-    ):
+        stress: bool = False,
+        name: str = "boussinesq-ocean",
+    ) -> None:
         if not isinstance(ocean, PreparedCartesianBoussinesqOcean):
             raise TypeError(
                 "Boussinesq coupling requires a native prepared rigid-lid ocean."
@@ -502,7 +537,7 @@ class BoussinesqOceanCouplingSubsystem(AbstractCouplingSubsystem):
             ),
         )
 
-    def temperature(self, state: OceanBoussinesqContinuationState, /):
+    def temperature(self, state: OceanBoussinesqContinuationState, /) -> Array:
         ocean = self.method.ocean
         _, scalars = ocean.dynamics.unpack_state(state.coordinates)
         temperature = scalars[ocean.plan.reference.temperature_name]
@@ -515,7 +550,14 @@ class BoussinesqOceanCouplingSubsystem(AbstractCouplingSubsystem):
             )
         ).reshape(-1)
 
-    def advance_window(self, window, start_state, inputs, args, /):
+    def advance_window(
+        self,
+        window: CouplingWindow,
+        start_state: OceanBoussinesqContinuationState,
+        inputs: tuple[Array, ...],
+        args: object,
+        /,
+    ) -> CouplingSubsystemResult:
         ocean = self.method.ocean
         axes = ocean.plan.axes
         vertical, side = axes.vertical_axis, 1 if axes.surface_index == -1 else 0
@@ -564,11 +606,13 @@ class BoussinesqOceanCouplingSubsystem(AbstractCouplingSubsystem):
         )
 
 
-def write_geophysical_coupling_checkpoint(path: str | Path, prepared, state, /):
+def write_geophysical_coupling_checkpoint(
+    path: str | Path, prepared: PreparedCoupling, state: CouplingState, /
+) -> Path:
     """Archive an accepted coupling boundary including every native continuation."""
     if state.graph_id != prepared.graph_id:
         raise ValueError("Coupling checkpoint state and graph identities differ.")
-    arrays = {}
+    arrays: dict[str, object] = {}
     specification = pack_array_tree("state", state, arrays)
     return write_array_archive(
         path,
@@ -582,7 +626,9 @@ def write_geophysical_coupling_checkpoint(path: str | Path, prepared, state, /):
     )
 
 
-def read_geophysical_coupling_checkpoint(path: str | Path, prepared, /):
+def read_geophysical_coupling_checkpoint(
+    path: str | Path, prepared: PreparedCoupling, /
+) -> CouplingState:
     manifest, arrays = read_array_archive(path)
     if manifest.get("kind") != "geophysical-coupling-checkpoint":
         raise ValueError("Not a geophysical coupling checkpoint.")

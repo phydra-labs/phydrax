@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 
@@ -27,7 +28,7 @@ class _BoundedVectorDomain(StrictModule):
         lower_bounds: ArrayLike,
         upper_bounds: ArrayLike,
         /,
-    ):
+    ) -> None:
         initial = np.asarray(initial_vector)
         lower = np.asarray(lower_bounds)
         upper = np.asarray(upper_bounds)

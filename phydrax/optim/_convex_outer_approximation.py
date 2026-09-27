@@ -11,7 +11,7 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from phydrax import ein
 
@@ -75,7 +75,7 @@ class ConvexMINLPCut(StrictModule, NonTrainableState):
         kind: ConvexMINLPCutKind,
         source_index: int,
         evidence_id: str,
-    ):
+    ) -> None:
         row_ = jnp.asarray(row)
         rhs_ = jnp.asarray(rhs, dtype=row_.dtype)
         if row_.ndim != 1 or rhs_.shape != ():
@@ -127,7 +127,7 @@ class ConvexMINLPOuterApproximation(StrictModule, NonTrainableState):
         duplicate_tolerance: float = 1e-9,
         absolute_gap: float = 1e-7,
         relative_gap: float = 1e-7,
-    ):
+    ) -> None:
         master_ = NativeMixedIntegerBranchAndBound() if master is None else master
         if not isinstance(master_, AbstractMixedIntegerMethod):
             raise TypeError("master must be an AbstractMixedIntegerMethod.")
@@ -348,16 +348,16 @@ def _master_program(
 
 
 def _finalize(
-    program,
-    policy,
-    status,
-    audit,
-    lower_bound,
-    global_bound_certified,
-    search_complete,
-    work,
-    last_master,
-):
+    program: ConvexMixedIntegerNonlinearProgram,
+    policy: ConvexMINLPOuterApproximation,
+    status: ConvexMINLPStatus,
+    audit: ConvexMINLPCandidateAudit | None,
+    lower_bound: float,
+    global_bound_certified: bool,
+    search_complete: bool,
+    work: ConvexMINLPWork,
+    last_master: MixedIntegerResult | None,
+) -> ConvexMINLPResult:
     objective = float("inf") if audit is None else float(np.asarray(audit.objective))
     if np.isfinite(objective) and np.isfinite(lower_bound):
         lower_bound = min(lower_bound, objective)
@@ -431,7 +431,7 @@ def solve_convex_minlp(
     candidates_audited = 0
     candidates_accepted = 0
 
-    def accept(cut):
+    def accept(cut: ConvexMINLPCut) -> bool:
         nonlocal cuts_proposed, cuts_accepted
         cuts_proposed += 1
         for existing in cuts:

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -15,7 +18,7 @@ from phydrax.control.games._lqg import (
 )
 
 
-def _two_player_scalar_game(case_shape=()):
+def _two_player_scalar_game(case_shape: Any = ()) -> Any:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     a = jnp.broadcast_to(jnp.asarray([[[1.0]]]), case_shape + (1, 1, 1))
     b = jnp.broadcast_to(jnp.asarray([[[1.0, 1.0]]]), case_shape + (1, 1, 2))
@@ -31,7 +34,7 @@ def _two_player_scalar_game(case_shape=()):
     return a, b, q, r, qf, partition
 
 
-def test_zero_noise_exactly_preserves_the_deterministic_feedback_nash_result():
+def test_zero_noise_exactly_preserves_the_deterministic_feedback_nash_result() -> None:
     a, b, q, r, qf, partition = _two_player_scalar_game()
     state_linear = jnp.asarray([[[0.2]], [[-0.3]]])
     control_linear = jnp.asarray([[[0.1, -0.2]], [[0.3, 0.4]]])
@@ -111,7 +114,7 @@ def test_zero_noise_exactly_preserves_the_deterministic_feedback_nash_result():
         )
 
 
-def test_common_noise_corrects_each_player_constant_and_initial_cost_separately():
+def test_common_noise_corrects_each_player_constant_and_initial_cost_separately() -> None:
     a, b, q, r, qf, partition = _two_player_scalar_game()
     result = finite_horizon_lqg_feedback_nash(
         a,
@@ -152,7 +155,7 @@ def test_common_noise_corrects_each_player_constant_and_initial_cost_separately(
     np.testing.assert_allclose(result.initial_expected_cost, expected)
 
 
-def test_game_case_axes_remain_distinct_from_the_player_axis():
+def test_game_case_axes_remain_distinct_from_the_player_axis() -> None:
     case_shape = (2, 3)
     a, b, q, r, qf, partition = _two_player_scalar_game(case_shape)
     factors = jnp.ones(case_shape + (1, 1, 1))
@@ -202,7 +205,7 @@ def test_game_case_axes_remain_distinct_from_the_player_axis():
         )
 
 
-def test_game_rejects_non_psd_and_nonfinite_noise_covariances_before_solving():
+def test_game_rejects_non_psd_and_nonfinite_noise_covariances_before_solving() -> None:
     a, b, q, r, qf, partition = _two_player_scalar_game()
     factors = jnp.ones((1, 1, 1))
 

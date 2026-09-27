@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def test_translation_invariant_convolution_backend_matches_causal_integral():
+def test_translation_invariant_convolution_backend_matches_causal_integral() -> None:
     times = jnp.linspace(0.0, 1.0, 101)
     problem = phx.solver.ConvolutionVolterraProblem(
         lambda time, state, args: jnp.ones_like(state),
@@ -27,10 +30,10 @@ def test_translation_invariant_convolution_backend_matches_causal_integral():
     assert solution.metadata["convolution_backend"] == "direct-causal"
 
 
-def test_convolution_backend_is_jittable_and_differentiable():
+def test_convolution_backend_is_jittable_and_differentiable() -> None:
     times = jnp.linspace(0.0, 1.0, 21)
 
-    def terminal(rate):
+    def terminal(rate: Any) -> Any:
         problem = phx.solver.ConvolutionVolterraProblem(
             lambda time, state, args: args * jnp.ones_like(state),
             jnp.asarray([1.0]),
@@ -48,7 +51,9 @@ def test_convolution_backend_is_jittable_and_differentiable():
     assert jnp.isclose(gradient, expected_gradient)
 
 
-def test_caputo_product_integration_is_exact_for_constant_forcing_nonuniform_grid():
+def test_caputo_product_integration_is_exact_for_constant_forcing_nonuniform_grid() -> (
+    None
+):
     times = jnp.asarray([0.0, 0.03, 0.11, 0.4, 1.0])
     order = 0.6
     rate = 2.0
@@ -69,7 +74,7 @@ def test_caputo_product_integration_is_exact_for_constant_forcing_nonuniform_gri
     assert solution.metadata["grid"] == "nonuniform-supported"
 
 
-def test_caputo_orders_above_one_include_initial_derivative():
+def test_caputo_orders_above_one_include_initial_derivative() -> None:
     times = jnp.asarray([0.0, 0.2, 0.7, 1.0])
     order = 1.4
     problem = phx.solver.CaputoFractionalProblem(
@@ -86,11 +91,11 @@ def test_caputo_orders_above_one_include_initial_derivative():
     assert jnp.allclose(solution.states[:, 0], expected, rtol=0.0, atol=2e-15)
 
 
-def test_caputo_backend_is_jittable_and_differentiable():
+def test_caputo_backend_is_jittable_and_differentiable() -> None:
     times = jnp.asarray([0.0, 0.03, 0.11, 0.4, 1.0])
     order = 0.6
 
-    def terminal(rate):
+    def terminal(rate: Any) -> Any:
         problem = phx.solver.CaputoFractionalProblem(
             lambda time, state, args: args * jnp.ones_like(state),
             jnp.asarray([1.0]),
@@ -109,7 +114,7 @@ def test_caputo_backend_is_jittable_and_differentiable():
 
 
 @pytest.mark.parametrize("order", [0.0, -0.2, 2.1, jnp.inf])
-def test_caputo_problem_rejects_invalid_orders(order):
+def test_caputo_problem_rejects_invalid_orders(order: Any) -> None:
     with pytest.raises(ValueError, match="order"):
         phx.solver.CaputoFractionalProblem(
             lambda time, state, args: jnp.ones_like(state),
@@ -120,7 +125,7 @@ def test_caputo_problem_rejects_invalid_orders(order):
         )
 
 
-def test_caputo_problem_requires_derivative_only_above_order_one():
+def test_caputo_problem_requires_derivative_only_above_order_one() -> None:
     with pytest.raises(ValueError, match="require initial_derivative"):
         phx.solver.CaputoFractionalProblem(
             lambda time, state, args: jnp.ones_like(state),

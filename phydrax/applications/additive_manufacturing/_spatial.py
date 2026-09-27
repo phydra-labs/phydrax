@@ -2,13 +2,14 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ...linalg import (
     ArraySpace,
     DenseLinearOperator,
     DenseLU,
     LinearSolvePolicy,
+    LinearSolveResult,
     LinearSystem,
     solve,
 )
@@ -21,7 +22,7 @@ def implicit_thermal_step(
     heat_input_w: ArrayLike,
     step_size_s: float,
     /,
-):
+) -> LinearSolveResult:
     old = jnp.asarray(temperature_k)
     capacity = jnp.asarray(capacity_j_k)
     matrix = jnp.diag(capacity / float(step_size_s)) + jnp.asarray(

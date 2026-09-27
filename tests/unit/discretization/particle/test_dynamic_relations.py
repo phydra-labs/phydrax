@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -16,7 +19,7 @@ from phydrax.discretization.particle._relations import (
 )
 
 
-def _runtime(*, relation_capacity: int = 2, event_capacity: int = 1):
+def _runtime(*, relation_capacity: int = 2, event_capacity: int = 1) -> Any:
     plan = DynamicPairRelationPlan(
         np.zeros((4,), dtype=np.int32),
         relation_capacity,
@@ -27,7 +30,15 @@ def _runtime(*, relation_capacity: int = 2, event_capacity: int = 1):
     return plan.prepare()
 
 
-def _bind(runtime, state, left, right, *, event_id, parameters=(2.0, 1.0)):
+def _bind(
+    runtime: Any,
+    state: Any,
+    left: Any,
+    right: Any,
+    *,
+    event_id: Any,
+    parameters: Any = (2.0, 1.0),
+) -> Any:
     events = make_pair_relation_events(
         runtime.event_capacity,
         runtime.parameter_width,
@@ -36,12 +47,13 @@ def _bind(runtime, state, left, right, *, event_id, parameters=(2.0, 1.0)):
         left=[left],
         right=[right],
         relation_kind=[0],
+        # ty: ignore[invalid-argument-type]
         parameters=[parameters],
     )
     return runtime.apply(state, events)
 
 
-def test_relation_ids_are_stable_and_old_incarnations_are_stale():
+def test_relation_ids_are_stable_and_old_incarnations_are_stale() -> None:
     runtime = _runtime(relation_capacity=1)
     empty = runtime.initialize()
     first = _bind(runtime, empty, 0, 1, event_id=10)
@@ -81,7 +93,7 @@ def test_relation_ids_are_stable_and_old_incarnations_are_stale():
     )
 
 
-def test_capacity_and_duplicate_fail_closed_atomically():
+def test_capacity_and_duplicate_fail_closed_atomically() -> None:
     runtime = _runtime(relation_capacity=1)
     first = _bind(runtime, runtime.initialize(), 0, 1, event_id=1)
     overflow = _bind(runtime, first.accepted_state, 2, 3, event_id=2)
@@ -99,6 +111,7 @@ def test_capacity_and_duplicate_fail_closed_atomically():
         left=[0, 1],
         right=[1, 0],
         relation_kind=[0, 0],
+        # ty: ignore[invalid-argument-type]
         parameters=[[1.0, 0.5], [1.0, 0.5]],
     )
     duplicate = pair_runtime.apply(pair_runtime.initialize(), duplicate_events)
@@ -108,7 +121,7 @@ def test_capacity_and_duplicate_fail_closed_atomically():
     assert bool(duplicate.candidate_state.occupied[0])
 
 
-def test_endpoint_compatibility_and_exclusion_have_distinct_evidence():
+def test_endpoint_compatibility_and_exclusion_have_distinct_evidence() -> None:
     compatibility = np.zeros((1, 2, 2), dtype="bool")
     compatibility[0, 0, 1] = True
     runtime = DynamicPairRelationPlan(
@@ -129,7 +142,7 @@ def test_endpoint_compatibility_and_exclusion_have_distinct_evidence():
     assert int(excluded.evidence.exclusion_count) == 1
 
 
-def test_deactivate_move_and_reactivate_preserve_identity():
+def test_deactivate_move_and_reactivate_preserve_identity() -> None:
     runtime = _runtime(relation_capacity=1)
     bound = _bind(runtime, runtime.initialize(), 0, 1, event_id=1)
     relation_id = bound.accepted_state.relation_ids[0]
@@ -175,7 +188,7 @@ def test_deactivate_move_and_reactivate_preserve_identity():
     assert int(active.accepted_state.incarnations[0]) == int(incarnation)
 
 
-def test_structural_failure_is_not_misreported_as_nonfinite():
+def test_structural_failure_is_not_misreported_as_nonfinite() -> None:
     runtime = _runtime(relation_capacity=1)
     bound = _bind(runtime, runtime.initialize(), 0, 1, event_id=1)
     empty = make_pair_relation_events(1, 2)
@@ -190,13 +203,13 @@ def test_structural_failure_is_not_misreported_as_nonfinite():
     assert int(evaluation.evidence.invalid_state_count) == 1
 
 
-def test_relation_age_requires_a_scalar_time_step():
+def test_relation_age_requires_a_scalar_time_step() -> None:
     runtime = _runtime(relation_capacity=1)
     with pytest.raises(ValueError, match="dt must be scalar"):
         runtime.advance_age(runtime.initialize(), jnp.ones((1,)))
 
 
-def test_pair_spring_force_is_negative_energy_gradient():
+def test_pair_spring_force_is_negative_energy_gradient() -> None:
     runtime = _runtime(relation_capacity=1)
     bound = _bind(runtime, runtime.initialize(), 0, 1, event_id=1, parameters=(3.0, 1.0))
     spring = PairSpringPlan().prepare(runtime, ambient_dimension=2)

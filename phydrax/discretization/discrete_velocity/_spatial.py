@@ -11,7 +11,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -72,7 +73,7 @@ class D2V17PeriodicTransportPlan(StrictModule, NonTrainableState):
         cell_spacing: tuple[float, float],
         time_step: float,
         /,
-    ):
+    ) -> None:
         if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
             raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         if (
@@ -215,7 +216,7 @@ class SmoothCompressibleD2V17SpatialPlan(StrictModule):
             | SmoothCompressibleD2VBodyForcingPlan
             | None
         ) = None,
-    ):
+    ) -> None:
         if not isinstance(method, SmoothCompressibleD2VKineticMethod):
             raise TypeError("method must be a SmoothCompressibleD2VKineticMethod.")
         if not isinstance(energy_plan, PositiveEnergyEquilibriumPlan):
@@ -320,7 +321,7 @@ class PreparedSmoothCompressibleD2V17SpatialDynamics(StrictModule):
         ) = None,
         population_floor: float = 0.0,
         conservation_tolerance: float = 1.0e-11,
-    ):
+    ) -> None:
         if not isinstance(method, SmoothCompressibleD2VKineticMethod):
             raise TypeError("method must be a SmoothCompressibleD2VKineticMethod.")
         if not isinstance(energy_plan, PositiveEnergyEquilibriumPlan):

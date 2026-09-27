@@ -9,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def test_native_gmres_uses_low_preconditioner_and_basis_with_high_residual():
+def test_native_gmres_uses_low_preconditioner_and_basis_with_high_residual() -> None:
     la = phx.linalg
     matrix = jnp.asarray([[4.0, 1.0], [1.0, 3.0]], dtype=jnp.float64)
     problem = la.LinearSystem(la.DenseLinearOperator(matrix))
@@ -33,8 +33,11 @@ def test_native_gmres_uses_low_preconditioner_and_basis_with_high_residual():
     assert result.value.dtype == jnp.float64
     assert jnp.allclose(result.value, jnp.linalg.solve(matrix, jnp.asarray([1.0, 2.0])))
     evidence = result.provenance.effective_precision
+    # ty: ignore[unresolved-attribute]
     assert evidence.preconditioner_dtype == "float32"
+    # ty: ignore[unresolved-attribute]
     assert evidence.krylov_dtype == "float32"
+    # ty: ignore[unresolved-attribute]
     assert evidence.residual_dtype == "float64"
     estimate = la.plan(problem, policy).candidates[-1]
     assert estimate.preconditioner_storage_bytes == 2 * jnp.dtype(jnp.float32).itemsize
@@ -43,7 +46,7 @@ def test_native_gmres_uses_low_preconditioner_and_basis_with_high_residual():
     assert estimate.krylov_basis_bytes_per_rhs == 88
 
 
-def test_functional_precision_is_scoped_to_standard_optax():
+def test_functional_precision_is_scoped_to_standard_optax() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="t")
     parameter = domain.Parameter(2.0)
     objective = phx.terms.IntegralFunctional.from_operator(
@@ -70,6 +73,7 @@ def test_functional_precision_is_scoped_to_standard_optax():
     )
 
     assert jnp.allclose(trained.loss(), 0.4096, rtol=1e-8, atol=1e-10)
+    # ty: ignore[unresolved-attribute]
     assert trained.precision.policy_id == precision.policy_id
     assert trained.precision_evidence is not None
     assert all(

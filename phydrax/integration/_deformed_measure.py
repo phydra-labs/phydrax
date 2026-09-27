@@ -4,19 +4,21 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
-DeformedMeasureKind = Literal["volume", "surface"]
+DeformedMeasureKind: TypeAlias = Literal["volume", "surface"]
 
 
 def _real_inexact_array(name: str, value: ArrayLike, /) -> Array:
@@ -88,9 +90,8 @@ class DeformedMeasurePlan(StrictModule, NonTrainableState):
         reference_normal: ArrayLike | None = None,
         minimum_jacobian: float = 0.0,
         plan_id: str | None = None,
-    ):
-        if kind not in ("volume", "surface"):
-            raise ValueError("Deformed measure kind must be 'volume' or 'surface'.")
+    ) -> None:
+        kind = parse(kind, DeformedMeasureKind, "kind")
         measure = _real_inexact_array("reference_measure", reference_measure)
         measure_host = np.asarray(measure)
         if not np.all(np.isfinite(measure_host)) or np.any(measure_host <= 0.0):

@@ -4,15 +4,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import prod
-from typing import Literal, TypeAlias
+from typing import get_args, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optimistix as optx
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -23,11 +24,19 @@ from ..stochastic._state_space import (
     LinearGaussianTransitionKernel,
     StateSpaceProblem,
 )
+from ..typing import parse
 from ._kalman import initialize_kalman_filter, kalman_filter_step, KalmanFilterState
 
 
 BellmanExecutionMethod: TypeAlias = Literal["auto", "analytic", "optimization"]
 BellmanCurvatureMethod: TypeAlias = Literal["observed", "score-outer-product"]
+# 29 per-case optimization outputs, ordered as consumed by the filter step.
+_CaseStepOutputs: TypeAlias = tuple[Array, ...]
+# (mode, information, covariance, value, gradient, iterations, converged, valid,
+#  minimum curvature, observation log-probability) of one measurement update.
+_UpdateOutputs: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 BellmanStatus: TypeAlias = Literal[
     "success",
     "initialization_optimizer_failure",
@@ -51,16 +60,7 @@ BELLMAN_PSEUDO_LIKELIHOOD_FAILURE = 7
 
 def bellman_filter_status_name(value: int, /) -> BellmanStatus:
     code = int(value)
-    names: tuple[BellmanStatus, ...] = (
-        "success",
-        "initialization_optimizer_failure",
-        "initialization_curvature_failure",
-        "prediction_optimizer_failure",
-        "prediction_curvature_failure",
-        "update_optimizer_failure",
-        "update_curvature_failure",
-        "pseudo_likelihood_failure",
-    )
+    names: tuple[BellmanStatus, ...] = get_args(BellmanStatus)
     if code < 0 or code >= len(names):
         raise ValueError(f"Unknown Bellman status code {code}.")
     return names[code]
@@ -93,10 +93,8 @@ def _validated_configuration(
     int,
     int,
 ]:
-    if method not in ("auto", "analytic", "optimization"):
-        raise ValueError("method must be 'auto', 'analytic', or 'optimization'.")
-    if curvature not in ("observed", "score-outer-product"):
-        raise ValueError("curvature must be 'observed' or 'score-outer-product'.")
+    method = parse(method, BellmanExecutionMethod, "method")
+    curvature = parse(curvature, BellmanCurvatureMethod, "curvature")
     damping = float(curvature_damping)
     rtol = float(optimizer_rtol)
     atol = float(optimizer_atol)
@@ -231,7 +229,7 @@ def _covariance_to_information(
 
 
 def _minimize(
-    objective,
+    objective: Callable[[Array], Array],
     initial: Array,
     /,
     *,
@@ -452,7 +450,7 @@ def _initial_optimization_state(
     statuses = []
     for case_index in range(count):
 
-        def objective(flat_state):
+        def objective(flat_state: Array) -> Array:
             complete = locations.at[case_index].set(flat_state)
             values = complete.reshape(case_shape + state_shape)
             return -jnp.asarray(prior.log_prob(values)).reshape((count,))[case_index]
@@ -758,7 +756,7 @@ def _optimization_case_step(
     observation_mask: Array,
     active: Array,
     /,
-):
+) -> _CaseStepOutputs:
     size = _state_size(problem)
     state_shape = problem.model.state_shape
     count = _case_count(problem)
@@ -775,7 +773,7 @@ def _optimization_case_step(
     observation = problem.model.observation
     identity = jnp.eye(size, dtype=previous_mode.dtype)
 
-    def inactive(_):
+    def inactive(_: None) -> _CaseStepOutputs:
         return (
             previous_mode,
             previous_mode,
@@ -812,8 +810,8 @@ def _optimization_case_step(
             previous_time,
         )
 
-    def active_step(_):
-        def prediction_objective(joint):
+    def active_step(_: None) -> _CaseStepOutputs:
+        def prediction_objective(joint: Array) -> Array:
             prior_state = joint[:size]
             next_state = joint[size:]
             displacement = prior_state - previous_mode
@@ -870,7 +868,7 @@ def _optimization_case_step(
 
         observed_count = jnp.sum(observation_mask)
 
-        def missing_update(_):
+        def missing_update(_: None) -> _UpdateOutputs:
             return (
                 predicted_mode,
                 predicted_information,
@@ -884,8 +882,8 @@ def _optimization_case_step(
                 jnp.asarray(0.0, dtype=predicted_mode.dtype),
             )
 
-        def observed_update(_):
-            def update_objective(flat_state):
+        def observed_update(_: None) -> _UpdateOutputs:
+            def update_objective(flat_state: Array) -> Array:
                 displacement = flat_state - predicted_mode
                 prediction_value_ = (
                     0.5 * displacement @ predicted_information @ displacement
@@ -1277,7 +1275,7 @@ class StateSpaceLaplaceLikelihood(StrictModule):
         optimizer_max_steps: int = 128,
         max_dimension: int = 128,
         raise_on_failure: bool = False,
-    ):
+    ) -> None:
         (
             method,
             curvature,

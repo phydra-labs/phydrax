@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -9,7 +12,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_whitened_ggn_laplace_matches_nuts_on_linear_gaussian_inverse_problem():
+def test_whitened_ggn_laplace_matches_nuts_on_linear_gaussian_inverse_problem() -> None:
     design = jnp.array(
         [
             [1.0, 2.0, -0.5],
@@ -29,7 +32,7 @@ def test_whitened_ggn_laplace_matches_nuts_on_linear_gaussian_inverse_problem():
         design.T @ target / noise_scale**2 + prior_location / prior_scale**2
     )
 
-    def residual(parameters):
+    def residual(parameters: Any) -> Any:
         return (design @ parameters - target) / noise_scale
 
     space = phx.uq.ParameterSpace(

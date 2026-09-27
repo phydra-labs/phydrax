@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -24,7 +25,7 @@ class ParabolicVelocityParameters(StrictModule):
         radius: ArrayLike,
         peak_velocity: ArrayLike,
         /,
-    ):
+    ) -> None:
         center_ = jnp.asarray(center)
         if center_.ndim != 1 or not jnp.issubdtype(center_.dtype, jnp.inexact):
             raise ValueError("Parabolic profile center must be one inexact vector.")
@@ -57,7 +58,7 @@ class ParabolicVelocityProfilePlan(StrictModule, NonTrainableState):
     flow_axis: int = eqx.field(static=True)
     profile_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, flow_axis: int, /):
+    def __init__(self, dimension: int, flow_axis: int, /) -> None:
         dimension_ = int(dimension)
         axis = int(flow_axis)
         if dimension_ not in (2, 3) or not 0 <= axis < dimension_:
@@ -139,7 +140,7 @@ class WomersleyVelocityParameters(StrictModule):
         /,
         *,
         phase: ArrayLike = 0.0,
-    ):
+    ) -> None:
         center_ = jnp.asarray(center)
         if center_.ndim != 1 or not jnp.issubdtype(center_.dtype, jnp.inexact):
             raise ValueError("Womersley profile center must be one inexact vector.")
@@ -217,7 +218,7 @@ class WomersleyVelocityProfilePlan(StrictModule, NonTrainableState):
         /,
         *,
         series_terms: int = 32,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         axis = int(flow_axis)
         terms = int(series_terms)

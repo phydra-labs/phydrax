@@ -18,7 +18,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax._strict import StrictModule
@@ -70,7 +71,13 @@ def _finite_array(value: ArrayLike, name: str) -> Array:
     return jnp.asarray(host, dtype=jnp.float64)
 
 
-def _admit(source, commercial_use, redistribution, training_use, export):
+def _admit(
+    source: object,
+    commercial_use: bool,
+    redistribution: bool,
+    training_use: bool,
+    export: bool,
+) -> str:
     if not isinstance(source, ReferenceArtifactManifest):
         raise TypeError("source must be ReferenceArtifactManifest.")
     return source.require_rights(
@@ -112,7 +119,7 @@ class RotamerGeometryPlan(StrictModule):
         redistribution: bool = False,
         training_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         if not isinstance(construct, ProteinConstruct):
             raise TypeError("construct must be ProteinConstruct.")
         if not isinstance(units, AtomisticUnitSystem):
@@ -197,7 +204,7 @@ class RotamerParameterPlan(StrictModule):
         redistribution: bool = False,
         training_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         if not isinstance(units, AtomisticUnitSystem):
             raise TypeError("units must be AtomisticUnitSystem.")
         temperature_ = float(temperature)
@@ -322,7 +329,7 @@ class RotamerFreeEnergyTerm(AbstractAtomisticEnergyTerm):
         maximum_contraction: float = 0.95,
         name: str = "rotamer-free-energy",
         force_group: int = 0,
-    ):
+    ) -> None:
         if not isinstance(geometry, RotamerGeometryPlan) or not isinstance(
             parameters, RotamerParameterPlan
         ):
@@ -425,7 +432,9 @@ class PreparedRotamerFreeEnergyTerm(AbstractPreparedAtomisticEnergyTerm):
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
-    def __init__(self, plan: RotamerFreeEnergyTerm, system: PreparedAtomisticSystem, /):
+    def __init__(
+        self, plan: RotamerFreeEnergyTerm, system: PreparedAtomisticSystem, /
+    ) -> None:
         if system.plan.units.unit_system_id != plan.parameters.units.unit_system_id:
             raise ValueError("Rotamer model and atomistic unit systems differ.")
         if system.cell is not None:

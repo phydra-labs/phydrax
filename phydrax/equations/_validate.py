@@ -138,17 +138,15 @@ def infer_expression_type(
                     "Power requires a scalar base and dimensionless constant exponent."
                 )
             exponent = node.args[1].value
-            if not args[0].dimension.is_dimensionless and not isinstance(
-                exponent, (int, Fraction)
-            ):
+            base_dimension = args[0].dimension
+            if base_dimension.is_dimensionless:
+                dimension = DIMENSIONLESS
+            elif isinstance(exponent, (int, Fraction)):
+                dimension = base_dimension**exponent
+            else:
                 raise TypeError(
                     "A dimensionful base requires an exact integer or Fraction exponent."
                 )
-            dimension = (
-                DIMENSIONLESS
-                if args[0].dimension.is_dimensionless
-                else args[0].dimension ** exponent
-            )
             return PDEValueType(args[0].representation, 1, dimension)
         if op in ("sin", "cos", "exp", "log"):
             if (

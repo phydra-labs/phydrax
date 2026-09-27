@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 
@@ -26,6 +26,7 @@ from ...qualification import (
     SupportTuple,
 )
 from ...qualification._registry import SupportValue
+from ...typing import parse
 
 
 DarkMatterClaimName = Literal[
@@ -40,7 +41,7 @@ DarkMatterClaimName = Literal[
     "sidm-fluid-spherical",
     "sidm-inelastic-2to2",
 ]
-DarkMatterQualificationLevel = Literal[
+DarkMatterQualificationLevel: TypeAlias = Literal[
     "experimental",
     "numerically-qualified",
     "scientifically-qualified",
@@ -65,7 +66,7 @@ class DarkMatterReferenceUse(StrictModule, NonTrainableState):
         redistribution: bool = False,
         training_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         values = (commercial_use, redistribution, training_use, export)
         if any(not isinstance(value, bool) for value in values):
             raise TypeError("Dark-matter requested-use values must be Boolean.")
@@ -482,7 +483,7 @@ _DEFINITIONS: dict[DarkMatterClaimName, _ClaimDefinition] = {
 SUPPORTED_DARK_MATTER_CLAIM_PROFILES = tuple(_DEFINITIONS)
 
 
-def _identifier(value: str, name: str, /) -> str:
+def _identifier(value: object, name: str, /) -> str:
     if not isinstance(value, str):
         raise TypeError(f"{name} must be a string.")
     normalized = value.strip()
@@ -682,14 +683,14 @@ def _claim_profile(
 
 
 def periodic_wave_claim_profile(
-    campaign,
-    criteria,
-    condition_domain_ids,
-    runtime_support,
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
     /,
     *,
-    reference_artifacts,
-    requested_use,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: DarkMatterReferenceUse,
 ) -> ScientificClaimProfile:
     return _claim_profile(
         "periodic-wave",
@@ -703,14 +704,14 @@ def periodic_wave_claim_profile(
 
 
 def rare_equal_sidm_claim_profile(
-    campaign,
-    criteria,
-    condition_domain_ids,
-    runtime_support,
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
     /,
     *,
-    reference_artifacts,
-    requested_use,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: DarkMatterReferenceUse,
 ) -> ScientificClaimProfile:
     return _claim_profile(
         "rare-sidm-equal",
@@ -724,14 +725,14 @@ def rare_equal_sidm_claim_profile(
 
 
 def mixed_wave_particle_claim_profile(
-    campaign,
-    criteria,
-    condition_domain_ids,
-    runtime_support,
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
     /,
     *,
-    reference_artifacts,
-    requested_use,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: DarkMatterReferenceUse,
 ) -> ScientificClaimProfile:
     return _claim_profile(
         "mixed-root-wave-particle",
@@ -745,14 +746,14 @@ def mixed_wave_particle_claim_profile(
 
 
 def mixed_wave_particle_gas_claim_profile(
-    campaign,
-    criteria,
-    condition_domain_ids,
-    runtime_support,
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
     /,
     *,
-    reference_artifacts,
-    requested_use,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: DarkMatterReferenceUse,
 ) -> ScientificClaimProfile:
     return _claim_profile(
         "mixed-root-wave-particle-gas",
@@ -766,14 +767,14 @@ def mixed_wave_particle_gas_claim_profile(
 
 
 def periodic_wave_amr_claim_profile(
-    campaign,
-    criteria,
-    condition_domain_ids,
-    runtime_support,
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
     /,
     *,
-    reference_artifacts,
-    requested_use,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: DarkMatterReferenceUse,
 ) -> ScientificClaimProfile:
     return _claim_profile(
         "wave-amr-periodic",
@@ -787,14 +788,14 @@ def periodic_wave_amr_claim_profile(
 
 
 def differential_sidm_claim_profile(
-    campaign,
-    criteria,
-    condition_domain_ids,
-    runtime_support,
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
     /,
     *,
-    reference_artifacts,
-    requested_use,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: DarkMatterReferenceUse,
 ) -> ScientificClaimProfile:
     return _claim_profile(
         "rare-sidm-differential",
@@ -808,14 +809,14 @@ def differential_sidm_claim_profile(
 
 
 def weighted_sidm_claim_profile(
-    campaign,
-    criteria,
-    condition_domain_ids,
-    runtime_support,
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
     /,
     *,
-    reference_artifacts,
-    requested_use,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: DarkMatterReferenceUse,
 ) -> ScientificClaimProfile:
     return _claim_profile(
         "rare-sidm-weighted",
@@ -829,14 +830,14 @@ def weighted_sidm_claim_profile(
 
 
 def frequent_sidm_claim_profile(
-    campaign,
-    criteria,
-    condition_domain_ids,
-    runtime_support,
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
     /,
     *,
-    reference_artifacts,
-    requested_use,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: DarkMatterReferenceUse,
 ) -> ScientificClaimProfile:
     return _claim_profile(
         "frequent-sidm-angular",
@@ -850,14 +851,14 @@ def frequent_sidm_claim_profile(
 
 
 def gravothermal_sidm_claim_profile(
-    campaign,
-    criteria,
-    condition_domain_ids,
-    runtime_support,
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
     /,
     *,
-    reference_artifacts,
-    requested_use,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: DarkMatterReferenceUse,
 ) -> ScientificClaimProfile:
     return _claim_profile(
         "sidm-fluid-spherical",
@@ -871,14 +872,14 @@ def gravothermal_sidm_claim_profile(
 
 
 def inelastic_sidm_claim_profile(
-    campaign,
-    criteria,
-    condition_domain_ids,
-    runtime_support,
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
     /,
     *,
-    reference_artifacts,
-    requested_use,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: DarkMatterReferenceUse,
 ) -> ScientificClaimProfile:
     return _claim_profile(
         "sidm-inelastic-2to2",
@@ -950,7 +951,7 @@ class PromotedDarkMatterClaim(StrictModule, NonTrainableState):
         requested_use_id: str,
         admitted: bool,
         /,
-    ):
+    ) -> None:
         if not isinstance(claim, ScientificClaimProfile):
             raise TypeError("claim must be ScientificClaimProfile.")
         if not isinstance(promotion, PromotionState):
@@ -1022,13 +1023,9 @@ def bind_dark_matter_promotion(
         raise TypeError("promotion must be a PromotionState.")
     if not isinstance(trust, QualificationRoleTrust):
         raise TypeError("trust must be QualificationRoleTrust.")
-    if qualification_level not in (
-        "experimental",
-        "numerically-qualified",
-        "scientifically-qualified",
-        "production",
-    ):
-        raise ValueError("Unknown dark-matter qualification level.")
+    qualification_level = parse(
+        qualification_level, DarkMatterQualificationLevel, "qualification_level"
+    )
     expected_channel = dark_matter_promotion_channel(claim)
     if promotion.channel != expected_channel:
         raise ValueError("Promotion channel does not bind this exact claim ID.")

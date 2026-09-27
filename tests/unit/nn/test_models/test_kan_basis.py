@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -23,7 +26,7 @@ from phydrax.nn.models import (
 
 
 @pytest.mark.parametrize("degree", (2, 3, 4))
-def test_bspline_kan_identity_and_boundary_jacobian(degree):
+def test_bspline_kan_identity_and_boundary_jacobian(degree: Any) -> None:
     basis = BSplineEdgeBasis(degree=degree, num_intervals=6)
     model = KAN(
         in_size="scalar",
@@ -47,7 +50,7 @@ def test_bspline_kan_identity_and_boundary_jacobian(degree):
     assert np.allclose(np.asarray(derivatives), 1.0, rtol=1e-10, atol=1e-10)
 
 
-def test_per_input_bspline_grids_preserve_identity_and_locality():
+def test_per_input_bspline_grids_preserve_identity_and_locality() -> None:
     grids = (
         BSplineGrid.open_uniform(3, 4),
         BSplineGrid(
@@ -83,7 +86,7 @@ def test_per_input_bspline_grids_preserve_identity_and_locality():
     )
 
 
-def test_per_input_grid_specification_preserves_scan_execution():
+def test_per_input_grid_specification_preserves_scan_execution() -> None:
     basis = BSplineEdgeBasis(degree=3, num_intervals=5, per_input=True)
     key = jr.key(21)
     loop = KAN(
@@ -107,7 +110,9 @@ def test_per_input_grid_specification_preserves_scan_execution():
     inputs = jnp.asarray([0.12, -0.34, 0.56])
 
     assert all(
-        layer.edge_basis.grid.num_grids == layer.in_size for layer in scanned.layers
+        # ty: ignore[unresolved-attribute]
+        layer.edge_basis.grid.num_grids == layer.in_size
+        for layer in scanned.layers
     )
     assert np.allclose(
         np.asarray(eqx.filter_jit(scanned)(inputs)),
@@ -116,7 +121,7 @@ def test_per_input_grid_specification_preserves_scan_execution():
     )
 
 
-def test_trainable_bspline_grid_participates_in_kan_gradients_and_scan():
+def test_trainable_bspline_grid_participates_in_kan_gradients_and_scan() -> None:
     basis = BSplineEdgeBasis(
         grid=TrainableBSplineGrid.open_uniform(3, 6),
         knot_entropy_weight=0.05,
@@ -148,7 +153,7 @@ def test_trainable_bspline_grid_participates_in_kan_gradients_and_scan():
     assert np.isfinite(np.asarray(eqx.filter_jit(model)(inputs))).all()
 
 
-def test_trainable_grid_logits_optimize_without_losing_order():
+def test_trainable_grid_logits_optimize_without_losing_order() -> None:
     initial = TrainableBSplineGrid.open_uniform(3, 6, minimum_span=0.01)
     target = eqx.tree_at(
         lambda grid: grid.raw_span_logits,
@@ -158,7 +163,7 @@ def test_trainable_grid_logits_optimize_without_losing_order():
     coefficients = jr.normal(jr.key(23), (1, 1, initial.coefficient_count))
     query = jnp.linspace(-0.95, 0.95, 96)
 
-    def evaluate(grid):
+    def evaluate(grid: Any) -> Any:
         edge_basis = BSplineEdgeBasis(grid=grid)
         return jax.vmap(
             lambda value: edge_basis.evaluate(coefficients, jnp.asarray([[value]]))[0, 0]
@@ -166,7 +171,7 @@ def test_trainable_grid_logits_optimize_without_losing_order():
 
     target_values = evaluate(target)
 
-    def loss(logits):
+    def loss(logits: Any) -> Any:
         grid = eqx.tree_at(lambda value: value.raw_span_logits, initial, logits)
         return jnp.mean((evaluate(grid) - target_values) ** 2)
 
@@ -185,7 +190,7 @@ def test_trainable_grid_logits_optimize_without_losing_order():
     assert np.all(np.diff(np.asarray(optimized.breakpoints)) >= optimized.minimum_span)
 
 
-def test_rational_bspline_identity_scan_and_parameter_gradients():
+def test_rational_bspline_identity_scan_and_parameter_gradients() -> None:
     basis = RationalBSplineEdgeBasis(degree=3, num_intervals=4)
     model = KAN(
         in_size=2,
@@ -214,7 +219,7 @@ def test_rational_bspline_identity_scan_and_parameter_gradients():
     assert np.all(np.isfinite(np.asarray(gradient.layers[0].coeffs.raw_log_weights)))
 
 
-def test_rational_bspline_wins_equal_parameter_reciprocal_fit():
+def test_rational_bspline_wins_equal_parameter_reciprocal_fit() -> None:
     nodes = jnp.linspace(-1.0, 1.0, 512)
     evaluation = jnp.linspace(-1.0, 1.0, 4096)
     target = lambda values: 1.0 / (1.0 + 0.98 * values)
@@ -268,7 +273,7 @@ def test_rational_bspline_wins_equal_parameter_reciprocal_fit():
     assert float(rational_error) < 1e-8 * float(polynomial_error)
 
 
-def test_rational_regularizer_reduces_to_polynomial_energy_at_unit_weights():
+def test_rational_regularizer_reduces_to_polynomial_energy_at_unit_weights() -> None:
     polynomial = BSplineEdgeBasis(degree=3, num_intervals=4)
     rational = RationalBSplineEdgeBasis(
         degree=3,
@@ -292,8 +297,8 @@ def test_rational_regularizer_reduces_to_polynomial_energy_at_unit_weights():
 
 @pytest.mark.parametrize("regularization_order", (1, 2, 3))
 def test_rational_grid_bank_preserves_every_regularization_order_through_degree(
-    regularization_order,
-):
+    regularization_order: Any,
+) -> None:
     grids = (
         BSplineGrid.open_uniform(3, 4),
         BSplineGrid(
@@ -330,12 +335,14 @@ def test_rational_grid_bank_preserves_every_regularization_order_through_degree(
     "family",
     ("chebyshev", "legendre", "hermite", "hermite_e", "laguerre"),
 )
-def test_orthogonal_polynomial_families_have_exact_affine_initialization(family):
+def test_orthogonal_polynomial_families_have_exact_affine_initialization(
+    family: Any,
+) -> None:
     basis = OrthogonalPolynomialEdgeBasis(degree=1, family=family)
     identity = basis.initialize_coefficients(1, 1, "identity", jr.key(30))
     default = basis.initialize_coefficients(1, 1, "default", jr.key(31))
 
-    def evaluate(coefficients, point):
+    def evaluate(coefficients: Any, point: Any) -> Any:
         return basis.evaluate(coefficients, jnp.asarray([[point]]))[0, 0]
 
     points = jnp.linspace(-1.0, 1.0, 9)
@@ -350,7 +357,7 @@ def test_orthogonal_polynomial_families_have_exact_affine_initialization(family)
     assert basis.regularization(identity) == pytest.approx(0.0, abs=1e-20)
 
 
-def test_orthogonal_kan_clipping_preserves_endpoint_derivatives():
+def test_orthogonal_kan_clipping_preserves_endpoint_derivatives() -> None:
     model = KAN(
         in_size="scalar",
         out_size="scalar",
@@ -369,7 +376,7 @@ def test_orthogonal_kan_clipping_preserves_endpoint_derivatives():
     assert float(jax.grad(model)(jnp.asarray(1.1))) == pytest.approx(0.0)
 
 
-def test_bspline_edge_coefficient_gradients_are_span_local():
+def test_bspline_edge_coefficient_gradients_are_span_local() -> None:
     basis = BSplineEdgeBasis(degree=3, num_intervals=8)
     coefficients = jnp.zeros((2, 3, basis.coefficient_count))
     inputs = jnp.full((2, 3), 0.13)
@@ -382,7 +389,7 @@ def test_bspline_edge_coefficient_gradients_are_span_local():
     assert np.array_equal(np.asarray(active_counts), np.full((2, 3), 4))
 
 
-def test_bspline_grid_is_excluded_from_trainable_partition():
+def test_bspline_grid_is_excluded_from_trainable_partition() -> None:
     model = KAN(
         in_size=2,
         out_size=3,
@@ -397,11 +404,12 @@ def test_bspline_grid_is_excluded_from_trainable_partition():
     assert fixed.layers[0].edge_basis.grid is not None
     assert np.array_equal(
         np.asarray(fixed.layers[0].edge_basis.grid.knots),
+        # ty: ignore[unresolved-attribute]
         np.asarray(model.layers[0].edge_basis.grid.knots),
     )
 
 
-def test_bspline_regularization_is_sobolev_energy():
+def test_bspline_regularization_is_sobolev_energy() -> None:
     basis = BSplineEdgeBasis(
         degree=3,
         num_intervals=6,
@@ -414,7 +422,7 @@ def test_bspline_regularization_is_sobolev_energy():
     assert float(basis.regularization(curved)) > 0.0
 
 
-def test_bspline_kan_scan_matches_loop_and_jacobian_is_finite():
+def test_bspline_kan_scan_matches_loop_and_jacobian_is_finite() -> None:
     basis = BSplineEdgeBasis(degree=3, num_intervals=6)
     key = jr.key(4)
     loop = KAN(
@@ -446,7 +454,7 @@ def test_bspline_kan_scan_matches_loop_and_jacobian_is_finite():
     assert np.all(np.isfinite(np.asarray(jacobian)))
 
 
-def test_kan_rejects_mismatched_basis_schedule():
+def test_kan_rejects_mismatched_basis_schedule() -> None:
     with pytest.raises(ValueError, match="edge_basis must have 3 entries"):
         KAN(
             in_size=2,

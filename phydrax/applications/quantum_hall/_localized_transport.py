@@ -11,7 +11,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -45,7 +46,7 @@ class LocalizedHallNetworkPlan(StrictModule, NonTrainableState):
         /,
         *,
         residual_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         rates = np.array(transition_rates, dtype=np.float64, copy=True)
         injection = np.asarray(contact_injection, dtype=np.float64)
         extraction = np.asarray(contact_extraction, dtype=np.float64)

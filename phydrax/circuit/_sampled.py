@@ -8,7 +8,8 @@ from typing import Literal, Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._interpolation import linear_interpolate
 
@@ -30,7 +31,7 @@ class ScatteringInterpolationPolicy(StrictModule):
         *,
         method: Literal["cartesian-linear"] = "cartesian-linear",
         out_of_band: Literal["error", "constant"] = "error",
-    ):
+    ) -> None:
         if method != "cartesian-linear":
             raise ValueError("Only Cartesian linear interpolation is supported.")
         if out_of_band not in ("error", "constant"):
@@ -59,7 +60,7 @@ class SampledScatteringModel(AbstractScatteringComponent):
         policy: ScatteringInterpolationPolicy | None = None,
         numeric_version: ArrayLike = 0,
         component_id: str = "sampled-scattering",
-    ):
+    ) -> None:
         frequencies = jnp.asarray(frequencies_hz, dtype=jnp.float64)
         matrix = jnp.asarray(scattering, dtype=jnp.complex128)
         port_tuple = tuple(ports)

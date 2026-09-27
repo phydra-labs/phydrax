@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -71,7 +72,9 @@ class VortexPopulationPlan(StrictModule, NonTrainableState):
     journal_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, capacity: int, dimension: int, /, *, journal_capacity: int = 256):
+    def __init__(
+        self, capacity: int, dimension: int, /, *, journal_capacity: int = 256
+    ) -> None:
         capacity_, dimension_, journal_capacity_ = (
             int(capacity),
             int(dimension),

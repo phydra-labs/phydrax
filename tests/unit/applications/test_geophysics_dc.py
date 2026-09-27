@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -20,18 +23,19 @@ from phydrax.units import MILLIMETER, MILLIVOLT
 from phydrax.uq import ParameterSpace
 
 
-def _patches(mesh, faces):
+def _patches(mesh: Any, faces: Any) -> Any:
     face_lookup = {
         tuple(sorted(face)): row
         for row, face in enumerate(np.asarray(mesh.connectivity.faces))
     }
     return tuple(
+        # ty: ignore[invalid-argument-type]
         ElectrodePatch(f"electrode-{index}", [face_lookup[tuple(sorted(face))]])
         for index, face in enumerate(faces)
     )
 
 
-def _tetrahedron(scale=1.0):
+def _tetrahedron(scale: Any = 1.0) -> Any:
     return CellMesh.from_tetrahedra(
         scale
         * jnp.asarray(
@@ -41,7 +45,7 @@ def _tetrahedron(scale=1.0):
     )
 
 
-def _survey(mesh, current_scale=1.0):
+def _survey(mesh: Any, current_scale: Any = 1.0) -> Any:
     patches = _patches(mesh, ((0, 2, 3), (0, 1, 3), (0, 1, 2), (1, 2, 3)))
     currents = current_scale * jnp.asarray(
         [[1.0, -1.0, 0.0, 0.0], [1.0, 0.0, -1.0, 0.0], [0.0, 1.0, -1.0, 0.0]]
@@ -57,7 +61,9 @@ def _survey(mesh, current_scale=1.0):
     return ElectricalSurvey(patches, currents, receivers, jnp.asarray([0, 0, 1, 2]))
 
 
-def test_patch_integrated_current_conservation_reciprocity_and_minimum_norm_gauge():
+def test_patch_integrated_current_conservation_reciprocity_and_minimum_norm_gauge() -> (
+    None
+):
     mesh = _tetrahedron()
     prepared = FinitePatchDCPlan(mesh, _survey(mesh), batch_size=2).prepare()
     bound = prepared.bind_conductivity(1.0)
@@ -90,7 +96,7 @@ def test_patch_integrated_current_conservation_reciprocity_and_minimum_norm_gaug
     assert jnp.allclose(bound.predict(), result.voltages, atol=1e-10)
 
 
-def test_conductivity_current_and_three_dimensional_length_scaling():
+def test_conductivity_current_and_three_dimensional_length_scaling() -> None:
     mesh = _tetrahedron()
     prepared = FinitePatchDCPlan(mesh, _survey(mesh), batch_size=1).prepare()
     base = prepared.predict(1.0)
@@ -113,7 +119,7 @@ def test_conductivity_current_and_three_dimensional_length_scaling():
     )
 
 
-def test_spd_tensor_current_field_and_reciprocity():
+def test_spd_tensor_current_field_and_reciprocity() -> None:
     mesh = _tetrahedron()
     prepared = FinitePatchDCPlan(mesh, _survey(mesh)).prepare()
     tensor = jnp.asarray([[2.0, 0.5, 0.0], [0.5, 1.0, 0.0], [0.0, 0.0, 3.0]])
@@ -131,7 +137,7 @@ def test_spd_tensor_current_field_and_reciprocity():
         prepared.predict(0.0)
 
 
-def test_heterogeneous_log_conductivity_implicit_jvp_vjp_and_signed_posterior():
+def test_heterogeneous_log_conductivity_implicit_jvp_vjp_and_signed_posterior() -> None:
     mesh = CellMesh.from_tetrahedra(
         jnp.asarray(
             [
@@ -206,17 +212,30 @@ def test_heterogeneous_log_conductivity_implicit_jvp_vjp_and_signed_posterior():
     )
 
 
-def test_invalid_physical_surveys_and_disconnected_bodies_are_rejected():
+def test_invalid_physical_surveys_and_disconnected_bodies_are_rejected() -> None:
     mesh = _tetrahedron()
     survey = _survey(mesh)
     with pytest.raises(ValueError, match="balanced"):
         ElectricalSurvey(
-            survey.patches, [[1.0, 0.0, 0.0, 0.0]], [[1.0, -1.0, 0.0, 0.0]], [0]
+            survey.patches,
+            # ty: ignore[invalid-argument-type]
+            [[1.0, 0.0, 0.0, 0.0]],
+            # ty: ignore[invalid-argument-type]
+            [[1.0, -1.0, 0.0, 0.0]],
+            # ty: ignore[invalid-argument-type]
+            [0],
         )
     with pytest.raises(ValueError, match="balanced"):
         ElectricalSurvey(
-            survey.patches, [[1.0, -1.0, 0.0, 0.0]], [[1.0, 0.0, 0.0, 0.0]], [0]
+            survey.patches,
+            # ty: ignore[invalid-argument-type]
+            [[1.0, -1.0, 0.0, 0.0]],
+            # ty: ignore[invalid-argument-type]
+            [[1.0, 0.0, 0.0, 0.0]],
+            # ty: ignore[invalid-argument-type]
+            [0],
         )
+    # ty: ignore[invalid-argument-type]
     invalid_patches = (ElectrodePatch("absent", [999]), *survey.patches[1:])
     with pytest.raises(ValueError, match="absent"):
         FinitePatchDCPlan(

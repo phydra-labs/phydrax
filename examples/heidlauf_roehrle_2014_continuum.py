@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -30,8 +31,8 @@ from phydrax.discretization import (
 from phydrax.nonlinear import NewtonKrylov, NonlinearTermination
 
 
-def run():
-    def source(gamma, sample):
+def run() -> Any:
+    def source(gamma: Any, sample: Any) -> Any:
         digest = hashlib.sha256(
             f"manufactured-protocol:{sample}:{gamma}".encode()
         ).digest()

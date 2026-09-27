@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -17,7 +19,7 @@ import phydrax as phx
 from benchmarks._runtime import capture_environment
 
 
-def _prepared(pair_count: int):
+def _prepared(pair_count: int) -> Any:
     species = tuple(
         name for index in range(pair_count) for name in (f"A{index}", f"B{index}")
     )
@@ -59,7 +61,7 @@ def _prepared(pair_count: int):
     return phx.equations.ChemicalConditionalAffinePlan(species).prepare(mechanism)
 
 
-def _case(pair_count: int, batch_size: int, repetitions: int):
+def _case(pair_count: int, batch_size: int, repetitions: int) -> Any:
     prepared = _prepared(pair_count)
     state = jnp.zeros((batch_size, 2 * pair_count))
     state = state.at[:, 0::2].set(1.0)
@@ -94,7 +96,7 @@ def _case(pair_count: int, batch_size: int, repetitions: int):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pair-counts", nargs="+", type=int, default=[2, 4, 8])
     parser.add_argument("--batch-sizes", nargs="+", type=int, default=[1, 128, 1024])

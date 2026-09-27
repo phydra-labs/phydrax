@@ -3,10 +3,12 @@
 #
 from __future__ import annotations
 
+from typing import cast
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from phydrax._strict import StrictModule
 
@@ -22,6 +24,7 @@ from ._problem import (
     _conic_quadratic_mv,
     ConicProgram,
 )
+from ._quadratic import ConvexProgramResult
 from ._types import ConvexWarmStart
 
 
@@ -36,7 +39,9 @@ def _maximum_abs(value: Array, /) -> Array:
     return jnp.max(jnp.abs(value), axis=-1, initial=0.0)
 
 
-def _initial_primal(program: ConicProgram, warm_start, /) -> Array:
+def _initial_primal(
+    program: ConicProgram, warm_start: ConvexWarmStart | None, /
+) -> Array:
     if warm_start is not None:
         primal = jnp.asarray(warm_start.primal, dtype=program.linear.dtype)
         if primal.shape != program.batch_shape + (program.num_variables,):
@@ -47,7 +52,7 @@ def _initial_primal(program: ConicProgram, warm_start, /) -> Array:
     return jnp.minimum(jnp.maximum(jnp.zeros_like(program.linear), lower), upper)
 
 
-def _initial_dual(program: ConicProgram, warm_start, /) -> Array:
+def _initial_dual(program: ConicProgram, warm_start: ConvexWarmStart | None, /) -> Array:
     if warm_start is None:
         return jnp.zeros(
             program.batch_shape + (program.num_constraints,), dtype=program.linear.dtype
@@ -65,14 +70,18 @@ def _initial_dual(program: ConicProgram, warm_start, /) -> Array:
     )
 
 
-def _augment_dense_bounds(program):
+def _augment_dense_bounds(
+    program: ConicProgram,
+) -> tuple[ConicProgram, Array, Array, Array]:
     fixed = jnp.asarray(program.fixed_bound_indices, dtype=jnp.int32)
     lower = jnp.asarray(program.lower_bound_indices, dtype=jnp.int32)
     upper = jnp.asarray(program.upper_bound_indices, dtype=jnp.int32)
     identity = jnp.eye(program.num_variables, dtype=program.linear.dtype)
+    # Bound lowering is only selected for dense constraint matrices.
+    dense_matrix = cast("Array", program.constraint_matrix)
     matrix = jnp.concatenate(
         (
-            program.constraint_matrix,
+            dense_matrix,
             identity[jnp.asarray(fixed)],
             -identity[jnp.asarray(lower)],
             identity[jnp.asarray(upper)],
@@ -117,7 +126,7 @@ def solve_native_conic_program(
     *,
     barrier: ConeBarrierOracle | None = None,
     warm_start: ConvexWarmStart | None = None,
-):
+) -> ConvexProgramResult:
     """Execute a fixed-capacity JAX-native primal-dual conic iteration.
 
     The independent original-coordinate audit remains authoritative for every
@@ -200,7 +209,7 @@ def solve_native_conic_program(
     )
     tolerance = policy.termination.absolute
 
-    def step(_, current):
+    def step(_: Array, current: _NativeConicState) -> _NativeConicState:
         quadratic_primal = _conic_quadratic_mv(program.quadratic, current.primal)
         gradient = (
             quadratic_primal

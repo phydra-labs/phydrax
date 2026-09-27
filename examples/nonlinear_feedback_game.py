@@ -1,5 +1,7 @@
 """Solve a nonlinear game and independently recompute its nominal residual."""
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -13,13 +15,13 @@ time_grid = phx.dynamics.TimeGrid(
 )
 
 
-def transition(context, state, control, args):
+def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
     del context, args
     return state + control
 
 
-def stage_cost(player):
-    def cost(context, state, control, args):
+def stage_cost(player: Any) -> Any:
+    def cost(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context
         error = state[player] - args["target"][player]
         effort = control[player]
@@ -28,8 +30,8 @@ def stage_cost(player):
     return cost
 
 
-def terminal_cost(player):
-    def cost(time, state, args):
+def terminal_cost(player: Any) -> Any:
+    def cost(time: Any, state: Any, args: Any) -> Any:
         del time
         error = state[player] - args["target"][player]
         return 0.5 * error**2 + 0.01 * error**4

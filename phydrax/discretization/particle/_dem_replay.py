@@ -5,13 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._admissibility import guard_derivative_validity
 from ..._fingerprint import canonical_fingerprint
@@ -22,11 +22,15 @@ from ._dem import DEMRuntimeState, PreparedSoftSphereDEMDynamics
 from ._dem_cohesion import DEMCohesionComponentHistory
 
 
+_ReplayCarry: TypeAlias = tuple[DEMRuntimeState, Array]
+_ReplayPayload: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
+
+
 class DEMCheckpointPolicy(StrictModule, NonTrainableState):
     interval: int = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, interval: int, /):
+    def __init__(self, interval: int, /) -> None:
         value = int(interval)
         if value <= 0:
             raise ValueError("checkpoint interval must be positive.")
@@ -122,7 +126,9 @@ def checkpointed_dem_rollout(
         count // checkpoint.interval, checkpoint.interval
     )
 
-    def one_step(carry, index):
+    def one_step(
+        carry: _ReplayCarry, index: Array
+    ) -> tuple[_ReplayCarry, _ReplayPayload]:
         state, prior_success = carry
         time = jnp.asarray(start, dtype=dtype) + index * dt
         detail = dynamics.step_detailed(index, time, state, dt, args)
@@ -145,7 +151,9 @@ def checkpointed_dem_rollout(
         )
         return (accepted, successful), payload
 
-    def block(carry, block_indices):
+    def block(
+        carry: _ReplayCarry, block_indices: Array
+    ) -> tuple[_ReplayCarry, _ReplayPayload]:
         return jax.lax.scan(one_step, carry, block_indices)
 
     checkpointed_block = jax.checkpoint(block)
@@ -154,7 +162,9 @@ def checkpointed_dem_rollout(
         (initial_state, jnp.asarray(True)),
         indices,
     )
-    flattened = jax.tree.map(lambda value: value.reshape((count,)), payload)
+    flattened: _ReplayPayload = jax.tree.map(
+        lambda value: value.reshape((count,)), payload
+    )
     replay = DEMReplayRecord(
         *flattened,
         canonical_fingerprint(
@@ -206,7 +216,7 @@ def checkpointed_dem_vjp(
     )
     replay_matched = dem_replay_matches(forward.replay, replayed.replay)
 
-    def terminal(state):
+    def terminal(state: DEMRuntimeState) -> Array:
         result = checkpointed_dem_rollout(
             dynamics,
             state,

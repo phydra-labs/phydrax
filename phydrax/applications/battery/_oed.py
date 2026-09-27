@@ -6,17 +6,19 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from numbers import Integral
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, ArrayLike, PyTree
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
+from ..._dtype_names import inexact_result_type
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...optim import Bounds, FiniteAxis, FiniteProductSpace, MinimizationProblem
@@ -31,13 +33,14 @@ from ...qualification import (
     SupportTuple,
     validate_qualification_causality,
 )
+from ...typing import parse
 from ...uq import experiment_design_objective, ExperimentDesignResult
 from ._calibration import PreparedBatteryCalibration
 from ._protocol import BatteryProtocolValues
+from ._results import BatteryExperimentResult
 
 
-BatteryOEDCriterion = Literal["d_optimal", "a_optimal", "e_optimal"]
-_CRITERIA = ("d_optimal", "a_optimal", "e_optimal")
+BatteryOEDCriterion: TypeAlias = Literal["d_optimal", "a_optimal", "e_optimal"]
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -96,7 +99,7 @@ class BatteryOEDModelContract(StrictModule, NonTrainableState):
         /,
         *,
         at_time: int,
-    ):
+    ) -> None:
         model = _identifier(model_id, "Battery OED model ID")
         if not isinstance(release_index, ReleaseIndex):
             raise TypeError("release_index must be a ReleaseIndex.")
@@ -300,7 +303,7 @@ class BatteryOEDSupport(StrictModule, NonTrainableState):
         temperature_k: tuple[float, float],
         stoichiometry: Mapping[str, tuple[float, float]],
         duration_s: tuple[float, float],
-    ):
+    ) -> None:
         lower_input = np.asarray(current_lower_a)
         upper_input = np.asarray(current_upper_a)
         if lower_input.ndim > 1 or upper_input.ndim > 1:
@@ -446,7 +449,7 @@ class PreparedBatteryOED(StrictModule):
         prior_information: ArrayLike | None = None,
         criterion: BatteryOEDCriterion = "d_optimal",
         regularization: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(calibration, PreparedBatteryCalibration):
             raise TypeError("calibration must be a PreparedBatteryCalibration.")
         if not isinstance(support, BatteryOEDSupport):
@@ -460,10 +463,7 @@ class PreparedBatteryOED(StrictModule):
         index = int(experiment_index)
         if index < 0 or index >= len(calibration.plan.experiments):
             raise IndexError("experiment_index is outside the calibration plan.")
-        if criterion not in _CRITERIA:
-            raise ValueError(
-                "criterion must be 'd_optimal', 'a_optimal', or 'e_optimal'."
-            )
+        criterion_name = parse(criterion, BatteryOEDCriterion, "criterion")
         regularization_ = float(regularization)
         if not np.isfinite(regularization_) or regularization_ < 0.0:
             raise ValueError("regularization must be finite and non-negative.")
@@ -576,7 +576,7 @@ class PreparedBatteryOED(StrictModule):
         self.current_lower_a = lower
         self.current_upper_a = upper
         self.experiment_index = index
-        self.criterion_name = criterion
+        self.criterion_name = criterion_name
         self.regularization = regularization_
         self.parameter_count = parameter_count
         self.current_count = protocol.current_step_count
@@ -617,7 +617,9 @@ class PreparedBatteryOED(StrictModule):
         )
         return safe, supported
 
-    def _run(self, amplitudes: Array, position: PyTree[Any], /):
+    def _run(
+        self, amplitudes: Array, position: PyTree[Any], /
+    ) -> tuple[Array, BatteryExperimentResult]:
         experiment = self.calibration.plan.experiments[self.experiment_index]
         physical = self.calibration.plan.parameter_space.constrain(position)
         branches = self.calibration.plan.projection.unpack(physical)
@@ -768,7 +770,7 @@ class BatteryOEDCandidateSet(StrictModule, NonTrainableState):
     candidate_ids: tuple[str, ...] = eqx.field(static=True)
     candidate_set_id: str = eqx.field(static=True)
 
-    def __init__(self, amplitudes_a: ArrayLike, /):
+    def __init__(self, amplitudes_a: ArrayLike, /) -> None:
         host = np.asarray(amplitudes_a)
         if host.ndim != 2 or host.shape[0] == 0 or host.shape[1] == 0:
             raise ValueError(
@@ -818,7 +820,9 @@ def _continuous_value(prepared: PreparedBatteryOED, amplitudes: Array, /) -> Arr
 
 
 @_continuous_value.def_jvp
-def _continuous_value_jvp(primals, tangents):
+def _continuous_value_jvp(
+    primals: tuple[PreparedBatteryOED, Array], tangents: tuple[object, Array | None]
+) -> tuple[Array, Array]:
     prepared, amplitudes = primals
     _, amplitude_tangent = tangents
     tangent = (
@@ -834,7 +838,9 @@ def _continuous_value_jvp(primals, tangents):
 class _BatteryOEDContinuousObjective(StrictModule):
     prepared: PreparedBatteryOED
 
-    def __call__(self, amplitudes: Array, dynamic_args: Any, /):
+    def __call__(
+        self, amplitudes: Array, dynamic_args: Any, /
+    ) -> tuple[Array, BatteryOEDResult]:
         del dynamic_args
         result = self.prepared.evaluate(jax.lax.stop_gradient(amplitudes))
         value = _continuous_value(self.prepared, amplitudes)

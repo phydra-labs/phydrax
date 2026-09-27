@@ -2,13 +2,14 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..linalg import (
     ArraySpace,
     DenseLinearOperator,
     DenseLU,
     LinearSolvePolicy,
+    LinearSolveResult,
     LinearSystem,
     solve,
 )
@@ -16,7 +17,7 @@ from ..linalg import (
 
 def solve_current_distribution(
     conductance_matrix: ArrayLike, current_source: ArrayLike, /
-):
+) -> LinearSolveResult:
     matrix = jnp.asarray(conductance_matrix)
     source = jnp.asarray(current_source)
     space = ArraySpace((source.size,), dtype=matrix.dtype)

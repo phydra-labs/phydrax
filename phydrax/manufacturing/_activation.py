@@ -1,9 +1,12 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+from __future__ import annotations
+
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -13,7 +16,7 @@ class MaterialActivationState(StrictModule, NonTrainableState):
     active: Array
     activation_time_s: Array
 
-    def __init__(self, active: ArrayLike, activation_time_s: ArrayLike, /):
+    def __init__(self, active: ArrayLike, activation_time_s: ArrayLike, /) -> None:
         a = jnp.asarray(active, dtype=jnp.bool_)
         t = jnp.asarray(activation_time_s)
         if a.shape != t.shape:
@@ -26,7 +29,9 @@ class MaterialActivationState(StrictModule, NonTrainableState):
         self.active = a
         self.activation_time_s = t
 
-    def activate(self, selection: ArrayLike, time_s: ArrayLike, /):
+    def activate(
+        self, selection: ArrayLike, time_s: ArrayLike, /
+    ) -> MaterialActivationState:
         s = jnp.asarray(selection, dtype=jnp.bool_)
         if s.shape != self.active.shape:
             raise ValueError("Activation selection must match the material topology.")
@@ -43,7 +48,7 @@ class MaterialActivationState(StrictModule, NonTrainableState):
             self.active | s, jnp.where(newly, time, self.activation_time_s)
         )
 
-    def remove(self, selection: ArrayLike, /):
+    def remove(self, selection: ArrayLike, /) -> MaterialActivationState:
         s = jnp.asarray(selection, dtype=jnp.bool_)
         if s.shape != self.active.shape:
             raise ValueError("Removal selection must match the material topology.")

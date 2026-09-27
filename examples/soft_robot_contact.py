@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -33,7 +34,7 @@ from phydrax.discretization import (
 from phydrax.dynamics import PlantStepContext
 
 
-def build_plant():
+def build_plant() -> Any:
     """Prepare one fixed-base circular-capsule/plane/self-contact plant."""
     dtype = jnp.float32
     segment_count = 5

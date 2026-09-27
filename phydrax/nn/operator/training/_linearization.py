@@ -10,7 +10,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -24,6 +24,7 @@ from ....linalg import (
     RHSLayout,
     solve,
 )
+from ....typing import PRNGKey
 from ..data import (
     function_samples_with_values,
     FunctionSamples,
@@ -55,7 +56,7 @@ def _batch_with_source(
 def _predict(
     operator: Any,
     batch: OperatorBatch,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> OperatorPrediction:
     if isinstance(operator, TrainedOperator):
@@ -175,7 +176,7 @@ class OperatorLinearization:
     batch: OperatorBatch
     source_name: str
     field_name: str
-    key: Key[Array, ""]
+    key: PRNGKey
     base_input: Array
     base_output: Array
     output_query: FunctionSamples
@@ -294,7 +295,7 @@ def linearize_operator(
     /,
     *,
     field_name: str | None = None,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> OperatorLinearization:
     """Construct a matrix-free physical/execution operator linearization."""
     if not isinstance(batch, OperatorBatch):

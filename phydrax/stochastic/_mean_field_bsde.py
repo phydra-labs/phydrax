@@ -11,12 +11,14 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from .._interpolation import apply_gather_stencil, linear_stencil_from_indices
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._bsde import BSDEPathBatch, BSDEProblem
 
 
@@ -89,7 +91,7 @@ class EmpiricalMeanField(StrictModule):
         weights: ArrayLike | None = None,
         valid: ArrayLike | None = None,
         source_path_id: str | None = None,
-    ):
+    ) -> None:
         samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
             raise ValueError("sample_shape dimensions must be positive.")
@@ -276,7 +278,7 @@ class MeanFieldBSDEControlAdapter(StrictModule):
         output_shape: Sequence[int],
         noise_shape: Sequence[int],
         adapter_id: str,
-    ):
+    ) -> None:
         for owner, value in (
             ("policy", policy),
             ("running_cost", running_cost),
@@ -370,7 +372,7 @@ class MeanFieldBSDEProblem(StrictModule):
         process_id: str,
         args: Any = None,
         control_adapter: MeanFieldBSDEControlAdapter | None = None,
-    ):
+    ) -> None:
         for owner, value in (
             ("forward_sampler", forward_sampler),
             ("drift", drift),
@@ -411,7 +413,7 @@ class MeanFieldBSDEProblem(StrictModule):
         self.problem_id = _name(problem_id, owner="problem_id")
         self.process_id = _name(process_id, owner="process_id")
 
-    def sample(self, key: Key[Array, ""], /) -> BSDEPathBatch:
+    def sample(self, key: PRNGKey, /) -> BSDEPathBatch:
         paths = self.forward_sampler(key)
         if not isinstance(paths, BSDEPathBatch):
             raise TypeError("forward_sampler must return a BSDEPathBatch.")
@@ -429,24 +431,26 @@ class MeanFieldBSDEProblem(StrictModule):
     def as_bsde_problem(self) -> BSDEProblem:
         """Freeze the empirical law into the canonical Phydrax BSDE contract."""
 
-        def forward_sampler(key):
+        def forward_sampler(key: PRNGKey) -> BSDEPathBatch:
             return self.sample(key)
 
-        def drift(time, state, args):
+        def drift(time: Array, state: Array, args: Any) -> Array:
             snapshot = self.mean_field.snapshot(time)
             value = jnp.asarray(self.drift(time, state, snapshot, args))
             if value.shape != self.state_shape:
                 raise ValueError("mean-field drift returned an incompatible shape.")
             return value
 
-        def diffusion(time, state, args):
+        def diffusion(time: Array, state: Array, args: Any) -> Array:
             snapshot = self.mean_field.snapshot(time)
             value = jnp.asarray(self.diffusion(time, state, snapshot, args))
             if value.shape != self.state_shape + self.noise_shape:
                 raise ValueError("mean-field diffusion returned an incompatible shape.")
             return value
 
-        def generator(time, state, value, control, args):
+        def generator(
+            time: Array, state: Array, value: Array, control: Array, args: Any
+        ) -> Array:
             snapshot = self.mean_field.snapshot(time)
             output = jnp.asarray(
                 self.generator(time, state, snapshot, value, control, args)
@@ -455,7 +459,7 @@ class MeanFieldBSDEProblem(StrictModule):
                 raise ValueError("mean-field generator returned an incompatible shape.")
             return output
 
-        def terminal(state, args):
+        def terminal(state: Array, args: Any) -> Array:
             snapshot = self.mean_field.snapshot(self.mean_field.times[-1])
             value = jnp.asarray(self.terminal(state, snapshot, args))
             if value.shape != self.output_shape:
@@ -495,7 +499,14 @@ def adapt_mean_field_control_bsde(
     if not isinstance(control_adapter, MeanFieldBSDEControlAdapter):
         raise TypeError("control_adapter must be a MeanFieldBSDEControlAdapter.")
 
-    def generator(time, state, snapshot, value, bsde_control, problem_args):
+    def generator(
+        time: Array,
+        state: Array,
+        snapshot: MeanFieldSnapshot,
+        value: Array,
+        bsde_control: Array,
+        problem_args: Any,
+    ) -> Array:
         return control_adapter.generator(
             time,
             state,

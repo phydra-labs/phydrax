@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -60,7 +61,7 @@ class VOFPhaseChangePlan(StrictModule, NonTrainableState):
         /,
         *,
         thermal_diffusion: UnstructuredTwoMaterialThermalDiffusionPlan | None = None,
-    ):
+    ) -> None:
         from ...equations._vof_phase_change import (
             StefanHeatFluxPhaseChangePlan,
             TwoMaterialVOFPhaseChangePlan,

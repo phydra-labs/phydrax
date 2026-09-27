@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -319,7 +320,7 @@ class MaxwellSmoluchowskiContinuumWallPlan(AbstractConservationBoundary):
         flat_value = value.reshape((-1, system.component_count))
         flat_gradient = gradient.reshape((-1, system.component_count, system.dimension))
 
-        def velocity_from_state(state):
+        def velocity_from_state(state: Array) -> Array:
             primitive_state = system.conserved_to_primitive(state)
             return system.primitive_velocity(primitive_state)
 
@@ -336,7 +337,7 @@ class MaxwellSmoluchowskiContinuumWallPlan(AbstractConservationBoundary):
         temperature = system.temperature(value)
         density = system.density(value)
         transport = system.transport_properties(value, args)
-        mean_free_path = system.mean_free_path(value, args)
+        mean_free_path: Array = system.mean_free_path(value, args)
         inward_normal = -normal
         wall_velocity = jnp.broadcast_to(
             self.material.wall_velocity.astype(value.dtype), velocity.shape
@@ -403,7 +404,13 @@ class MaxwellSmoluchowskiContinuumWallPlan(AbstractConservationBoundary):
                 temperature - gas_temperature_trace
             ) / distance
         else:
-            outward_heat = self.material.outward_heat_flux.astype(value.dtype)
+            # Materials carry exactly one of wall temperature or heat flux.
+            outward_heat_flux = self.material.outward_heat_flux
+            if not (outward_heat_flux is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: outward_heat_flux is not None."
+                )
+            outward_heat = outward_heat_flux.astype(value.dtype)
             inward_temperature_derivative = -outward_heat / transport.thermal_conductivity
             gas_temperature_trace = temperature - distance * inward_temperature_derivative
         current_inward_temperature_derivative = contract(

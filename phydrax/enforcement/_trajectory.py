@@ -7,11 +7,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from math import comb, isfinite
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 from phydrax.conditions._ir import (
@@ -39,10 +40,11 @@ from ..domain._trajectory_interpolation import (
     _broadcast_like,
     _RaggedTimeSeriesTable,
 )
+from ..typing import parse, PRNGKey
 
 
-RaggedTimeSeriesHardInterpolation = Literal["linear", "cubic_hermite"]
-RaggedTimeSeriesHardGate = Literal["sin2", "sin4"]
+RaggedTimeSeriesHardInterpolation: TypeAlias = Literal["linear", "cubic_hermite"]
+RaggedTimeSeriesHardGate: TypeAlias = Literal["sin2", "sin4"]
 
 
 class RaggedTimeSeriesObservationAction(AbstractConditionOperator):
@@ -61,7 +63,7 @@ class RaggedTimeSeriesObservationAction(AbstractConditionOperator):
         /,
         *,
         components: Sequence[int] | None = None,
-    ):
+    ) -> None:
         field_ = str(field)
         if not field_:
             raise ValueError("Trajectory observation field name must be non-empty.")
@@ -102,7 +104,14 @@ class RaggedTimeSeriesObservationAction(AbstractConditionOperator):
             time_indices=indices,
         )
 
-    def _apply(self, values: Mapping[str, Any], /, *, key=None, **kwargs: Any) -> Array:
+    def _apply(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: PRNGKey | None = None,
+        **kwargs: Any,
+    ) -> Array:
         if self.field not in values:
             raise KeyError(f"Missing trajectory field {self.field!r}.")
         value = values[self.field]
@@ -214,7 +223,7 @@ class RaggedTimeSeriesCorrectionEvidence(StrictModule):
         observation_count: int,
         interpolation: RaggedTimeSeriesHardInterpolation,
         gate: RaggedTimeSeriesHardGate,
-    ):
+    ) -> None:
         self.provider_id = str(provider_id)
         self.action_id = str(action_id)
         self.observation_count = int(observation_count)
@@ -268,6 +277,7 @@ def _trajectory_field_dims(
 class _RaggedCardinalCorrectionDerivativeRule(DerivativeRule):
     # Built on demand from the live evaluator of `function`.
     function: DomainFunction
+    evaluator: _RaggedCardinalCorrectionEvaluator
 
     def derive(
         self,
@@ -281,7 +291,7 @@ class _RaggedCardinalCorrectionDerivativeRule(DerivativeRule):
         periodic: bool,
     ) -> DomainFunction | None:
         del mode, basis, periodic
-        evaluator = self.function.func
+        evaluator = self.evaluator
         table = evaluator.table
         if backend not in ("ad", "jet"):
             return None
@@ -317,7 +327,7 @@ class _RaggedCardinalCorrectionEvaluator(
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         del key, kwargs
@@ -351,7 +361,7 @@ class _RaggedCardinalCorrectionEvaluator(
         )
 
     def derivative_rule_for(self, function: DomainFunction, /) -> DerivativeRule:
-        return _RaggedCardinalCorrectionDerivativeRule(function)
+        return _RaggedCardinalCorrectionDerivativeRule(function, self)
 
 
 class RaggedTimeSeriesCorrectionAction(StrictModule):
@@ -375,15 +385,15 @@ class RaggedTimeSeriesCorrectionAction(StrictModule):
         field_names: tuple[str, ...],
         evidence: RaggedTimeSeriesCorrectionEvidence,
         /,
-    ):
+    ) -> None:
         if not isinstance(observation, RaggedTimeSeriesObservationAction):
             raise TypeError(
                 "RaggedTimeSeriesCorrectionAction requires a trajectory observation."
             )
-        if interpolation not in ("linear", "cubic_hermite"):
-            raise ValueError("interpolation must be 'linear' or 'cubic_hermite'.")
-        if gate not in ("sin2", "sin4"):
-            raise ValueError("gate must be 'sin2' or 'sin4'.")
+        interpolation = parse(
+            interpolation, RaggedTimeSeriesHardInterpolation, "interpolation"
+        )
+        gate = parse(gate, RaggedTimeSeriesHardGate, "gate")
         snap = float(snap_tol)
         if not isfinite(snap) or snap < 0.0:
             raise ValueError("snap_tol must be finite and non-negative.")
@@ -476,15 +486,15 @@ class RaggedTimeSeriesCorrectionProvider(StrictModule):
         gate: RaggedTimeSeriesHardGate = "sin2",
         components_output_width: int | None = None,
         snap_tol: float = 1e-10,
-    ):
+    ) -> None:
         if not isinstance(observation, RaggedTimeSeriesObservationAction):
             raise TypeError(
                 "RaggedTimeSeriesCorrectionProvider requires a trajectory observation."
             )
-        if interpolation not in ("linear", "cubic_hermite"):
-            raise ValueError("interpolation must be 'linear' or 'cubic_hermite'.")
-        if gate not in ("sin2", "sin4"):
-            raise ValueError("gate must be 'sin2' or 'sin4'.")
+        interpolation = parse(
+            interpolation, RaggedTimeSeriesHardInterpolation, "interpolation"
+        )
+        gate = parse(gate, RaggedTimeSeriesHardGate, "gate")
         snap = float(snap_tol)
         if not isfinite(snap) or snap < 0.0:
             raise ValueError("snap_tol must be finite and non-negative.")
@@ -642,12 +652,12 @@ class _RaggedTimeSeriesHardAnsatz(StrictModule, BatchEvaluator, DerivativeRulePr
         u_free: DomainFunction,
         table: _RaggedTimeSeriesTable,
         components: tuple[int, ...] | None,
-    ):
+    ) -> None:
         self.u_free = u_free
         self.table = table
         self.components = components
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         del args, key, kwargs
         raise TypeError(
             "Ragged time-series hard enforcement requires PointBatch evaluation."
@@ -658,7 +668,7 @@ class _RaggedTimeSeriesHardAnsatz(StrictModule, BatchEvaluator, DerivativeRulePr
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         if not isinstance(batch, PointBatch):
@@ -697,13 +707,13 @@ class _RaggedTimeSeriesHardAnsatzDerivative(
         u_free_derivatives: tuple[DomainFunction, ...],
         table: _RaggedTimeSeriesTable,
         components: tuple[int, ...] | None,
-    ):
+    ) -> None:
         self.order = int(order)
         self.u_free_derivatives = tuple(u_free_derivatives)
         self.table = table
         self.components = components
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         del args, key, kwargs
         raise TypeError(
             "Ragged time-series hard derivative requires PointBatch evaluation."
@@ -714,7 +724,7 @@ class _RaggedTimeSeriesHardAnsatzDerivative(
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         if not isinstance(batch, PointBatch):

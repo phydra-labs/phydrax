@@ -4,14 +4,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -20,6 +22,7 @@ from ..discretization.mpm import (
     BlockSparseMPMNodalStoragePlan,
     KWayMPMContactPlan,
     MPMContactGraph,
+    MPMKWayContactResult,
 )
 from ..discretization.spatial import SparseBlockTopologyState
 from ..discretization.splatting import ParticleGridSplatState, PreparedParticleGridSplat
@@ -43,7 +46,7 @@ class MPMImplicitUnknownLayout(StrictModule, NonTrainableState):
         *,
         contact_multiplier_capacity: int = 0,
         rigid_dof_capacity: int = 0,
-    ):
+    ) -> None:
         free = np.asarray(free_mask, dtype=np.bool_)
         essential = np.asarray(essential_mask, dtype=np.bool_)
         if free.shape != essential.shape or free.ndim < 3:
@@ -73,18 +76,24 @@ class MPMImplicitUnknownLayout(StrictModule, NonTrainableState):
         )
 
     @property
-    def velocity_shape(self):
+    def velocity_shape(self) -> tuple[int, ...]:
         return self.free_mask.shape
 
     @property
-    def variable_count(self):
+    def variable_count(self) -> int:
         return (
             int(np.prod(self.velocity_shape))
             + self.contact_multiplier_capacity
             + self.rigid_dof_capacity
         )
 
-    def pack(self, velocity, contact_multipliers=None, rigid_dofs=None, /):
+    def pack(
+        self,
+        velocity: ArrayLike,
+        contact_multipliers: ArrayLike | None = None,
+        rigid_dofs: ArrayLike | None = None,
+        /,
+    ) -> Array:
         velocity_ = jnp.asarray(velocity)
         if velocity_.shape != self.velocity_shape:
             raise ValueError("Implicit MPM velocity shape changed.")
@@ -104,7 +113,7 @@ class MPMImplicitUnknownLayout(StrictModule, NonTrainableState):
             raise ValueError("Implicit multiplier/rigid DOF capacity changed.")
         return jnp.concatenate((velocity_.reshape(-1), contact, rigid))
 
-    def unpack(self, state, /):
+    def unpack(self, state: ArrayLike, /) -> tuple[Array, Array, Array]:
         value = jnp.asarray(state)
         if value.shape != (self.variable_count,):
             raise ValueError("Implicit MPM packed unknown size changed.")
@@ -135,7 +144,7 @@ class MPMImplicitTopologyPlan(StrictModule, NonTrainableState):
         contact_digest: int,
         material_branch_digest: int,
         topology_generation: int,
-    ):
+    ) -> None:
         if not isinstance(layout, MPMImplicitUnknownLayout):
             raise TypeError("layout must be MPMImplicitUnknownLayout.")
         self.layout = layout
@@ -188,7 +197,7 @@ class MPMRouteSupersetPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, prepared: PreparedParticleGridSplat, /, *, minimum_margin: float = 1.0e-8
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedParticleGridSplat):
             raise TypeError("prepared must be PreparedParticleGridSplat.")
         margin = float(minimum_margin)
@@ -204,7 +213,14 @@ class MPMRouteSupersetPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def build(self, position, assignment_input=None, /, *, topology_generation=0):
+    def build(
+        self,
+        position: ArrayLike,
+        assignment_input: object = None,
+        /,
+        *,
+        topology_generation: int = 0,
+    ) -> MPMRouteSupersetState:
         routes = self.prepared.build(position, assignment_input=assignment_input)
         margin = jnp.min(
             jnp.where(routes.stencil.valid, jnp.abs(routes.stencil.weights), jnp.inf)
@@ -227,18 +243,20 @@ class MPMRouteSupersetPlan(StrictModule, NonTrainableState):
     def linearize(
         self,
         state: MPMRouteSupersetState,
-        position,
-        deformation,
-        assignment_input,
-        position_direction,
-        deformation_direction,
-        input_direction,
-        cotangents,
+        position: Array,
+        deformation: Array,
+        assignment_input: PyTree,
+        position_direction: Array,
+        deformation_direction: Array,
+        input_direction: PyTree,
+        cotangents: tuple[Array, Array, Array],
         /,
-    ):
+    ) -> MPMMovingDomainDerivative:
         assignment = self.prepared.plan.assignment
 
-        def floating_outputs(current_position, current_deformation, current_input):
+        def floating_outputs(
+            current_position: Array, current_deformation: Array, current_input: PyTree
+        ) -> tuple[Array, Array, Array]:
             updated = assignment.update_input(
                 current_position, current_deformation, current_input
             )
@@ -298,7 +316,7 @@ class MPMCompactImplicitOperator(StrictModule, NonTrainableState):
         storage: BlockSparseMPMNodalStoragePlan,
         active: SparseBlockTopologyState,
         /,
-    ):
+    ) -> None:
         if not isinstance(storage, BlockSparseMPMNodalStoragePlan):
             raise TypeError("storage must be BlockSparseMPMNodalStoragePlan.")
         if not isinstance(active, SparseBlockTopologyState) or not bool(
@@ -322,14 +340,14 @@ class MPMCompactImplicitOperator(StrictModule, NonTrainableState):
         compact_direction: ArrayLike,
         compact_cotangent: ArrayLike,
         /,
-    ):
+    ) -> MPMCompactOperatorResult:
         if not callable(dense_operator):
             raise TypeError("dense_operator must be callable.")
         state = jnp.asarray(compact_state)
         direction = jnp.asarray(compact_direction, dtype=state.dtype)
         cotangent = jnp.asarray(compact_cotangent, dtype=state.dtype)
 
-        def compact_operator(value):
+        def compact_operator(value: Array) -> Array:
             dense = self.storage.unpack(value, self.active)
             return self.storage.pack(dense_operator(dense), self.active)
 
@@ -372,7 +390,9 @@ class MPMBlockJacobiPreconditioner(StrictModule, NonTrainableState):
     diagonal: Array
     minimum_diagonal: float = eqx.field(static=True)
 
-    def __init__(self, diagonal: ArrayLike, /, *, minimum_diagonal=1.0e-12):
+    def __init__(
+        self, diagonal: ArrayLike, /, *, minimum_diagonal: float = 1.0e-12
+    ) -> None:
         value = jnp.asarray(diagonal)
         minimum = float(minimum_diagonal)
         if value.ndim < 1 or minimum <= 0.0:
@@ -380,7 +400,7 @@ class MPMBlockJacobiPreconditioner(StrictModule, NonTrainableState):
         self.diagonal = value
         self.minimum_diagonal = minimum
 
-    def apply(self, value: ArrayLike, /):
+    def apply(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         return array / jnp.where(
             jnp.abs(self.diagonal) >= self.minimum_diagonal,
@@ -390,12 +410,19 @@ class MPMBlockJacobiPreconditioner(StrictModule, NonTrainableState):
 
 
 class MPMTwoLevelMultigrid(StrictModule, NonTrainableState):
-    restriction: Callable = eqx.field(static=True)
-    prolongation: Callable = eqx.field(static=True)
-    coarse_solve: Callable = eqx.field(static=True)
+    restriction: Callable[[Array], Array] = eqx.field(static=True)
+    prolongation: Callable[[Array], Array] = eqx.field(static=True)
+    coarse_solve: Callable[[Array], Array] = eqx.field(static=True)
     smoother: MPMBlockJacobiPreconditioner
 
-    def __init__(self, restriction, prolongation, coarse_solve, smoother, /):
+    def __init__(
+        self,
+        restriction: Callable[[Array], Array],
+        prolongation: Callable[[Array], Array],
+        coarse_solve: Callable[[Array], Array],
+        smoother: MPMBlockJacobiPreconditioner,
+        /,
+    ) -> None:
         if not all(
             callable(value) for value in (restriction, prolongation, coarse_solve)
         ):
@@ -407,7 +434,7 @@ class MPMTwoLevelMultigrid(StrictModule, NonTrainableState):
         self.coarse_solve = coarse_solve
         self.smoother = smoother
 
-    def apply(self, residual: ArrayLike, /):
+    def apply(self, residual: ArrayLike, /) -> Array:
         value = jnp.asarray(residual)
         pre = self.smoother.apply(value)
         coarse = self.restriction(value)
@@ -433,14 +460,14 @@ def linearize_kway_contact(
     /,
     *,
     epsilon: float = 1.0e-6,
-):
+) -> MPMImplicitContactLinearization:
     velocity_ = jnp.asarray(velocity)
     direction_ = jnp.asarray(direction, dtype=velocity_.dtype)
     cotangent_ = jnp.asarray(cotangent, dtype=velocity_.dtype)
     epsilon_ = jnp.asarray(epsilon, dtype=velocity_.dtype)
     size = velocity_.size
 
-    def solved(flattened):
+    def solved(flattened: Array) -> Array:
         current = flattened.reshape(velocity_.shape)
         return plan.solve(mass, current, graph, step_size).velocity.reshape((-1,))
 
@@ -471,7 +498,13 @@ class MPMSparseContactOperator(StrictModule, NonTrainableState):
     active: SparseBlockTopologyState
     contact: KWayMPMContactPlan
 
-    def __init__(self, storage, active, contact, /):
+    def __init__(
+        self,
+        storage: BlockSparseMPMNodalStoragePlan,
+        active: SparseBlockTopologyState,
+        contact: KWayMPMContactPlan,
+        /,
+    ) -> None:
         if not isinstance(storage, BlockSparseMPMNodalStoragePlan):
             raise TypeError("storage must be BlockSparseMPMNodalStoragePlan.")
         if not isinstance(active, SparseBlockTopologyState):
@@ -484,12 +517,12 @@ class MPMSparseContactOperator(StrictModule, NonTrainableState):
 
     def apply(
         self,
-        compact_mass,
-        compact_velocity,
-        compact_mass_gradient,
-        step_size,
+        compact_mass: ArrayLike,
+        compact_velocity: ArrayLike,
+        compact_mass_gradient: ArrayLike,
+        step_size: ArrayLike,
         /,
-    ):
+    ) -> tuple[Array, MPMKWayContactResult]:
         mass = jnp.asarray(compact_mass)
         velocity = jnp.asarray(compact_velocity)
         gradient = jnp.asarray(compact_mass_gradient)
@@ -504,7 +537,14 @@ class MPMSparsePhaseFieldOperator(StrictModule, NonTrainableState):
     spacing: tuple[float, ...] = eqx.field(static=True)
     periodic: tuple[bool, ...] = eqx.field(static=True)
 
-    def __init__(self, storage, active, spacing, periodic, /):
+    def __init__(
+        self,
+        storage: BlockSparseMPMNodalStoragePlan,
+        active: SparseBlockTopologyState,
+        spacing: Iterable[float],
+        periodic: Iterable[bool],
+        /,
+    ) -> None:
         if not isinstance(storage, BlockSparseMPMNodalStoragePlan):
             raise TypeError("storage must be BlockSparseMPMNodalStoragePlan.")
         self.storage = storage
@@ -514,7 +554,14 @@ class MPMSparsePhaseFieldOperator(StrictModule, NonTrainableState):
         if len(self.spacing) != len(self.storage.grid_shape):
             raise ValueError("Sparse phase-field spacing dimension changed.")
 
-    def apply(self, compact_damage, compact_history, gc, length_scale, /):
+    def apply(
+        self,
+        compact_damage: ArrayLike,
+        compact_history: ArrayLike,
+        gc: ArrayLike,
+        length_scale: ArrayLike,
+        /,
+    ) -> Array:
         damage = self.storage.unpack(compact_damage, self.active)
         history = self.storage.unpack(compact_history, self.active)
         laplacian = jnp.zeros_like(damage)

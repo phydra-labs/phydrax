@@ -8,7 +8,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
@@ -78,7 +79,7 @@ class FaithfulDensityReport(StrictModule):
         *,
         tolerance: float,
         precision: HermitianPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         value = jnp.asarray(density)
         spectrum = HermitianSpectrum(
             value,
@@ -112,7 +113,7 @@ class SLDQuantumFisherGeometry(StrictModule):
         tolerance: float = 1e-10,
         precision: HermitianPrecisionPolicy | None = None,
         geometry_precision: GeometryPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = HermitianPrecisionPolicy() if precision is None else precision
         geometry_ = (
             GeometryPrecisionPolicy()
@@ -189,7 +190,7 @@ class BuresDensityManifold(AbstractRiemannianManifold):
         tolerance: float = 1e-9,
         precision: GeometryPrecisionPolicy | None = None,
         hermitian_precision: HermitianPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         if dimension_ < 2:
             raise ValueError("Density dimension must be at least two.")
@@ -348,7 +349,7 @@ class FixedRankDensityManifold(AbstractRiemannianManifold):
     transport_is_isometric: bool = eqx.field(static=True)
     transport_is_parallel: bool = eqx.field(static=True)
 
-    def __init__(self, dimension: int, rank: int, /, *, tolerance: float = 1e-9):
+    def __init__(self, dimension: int, rank: int, /, *, tolerance: float = 1e-9) -> None:
         dimension_ = int(dimension)
         rank_ = int(rank)
         if not 1 <= rank_ <= dimension_:
@@ -492,7 +493,7 @@ class RankStratumEvidence(StrictModule):
         discarded_mass: ArrayLike,
         ambiguous: ArrayLike,
         valid: ArrayLike,
-    ):
+    ) -> None:
         self.rank = jnp.asarray(rank, dtype=jnp.int32)
         self.threshold = jnp.asarray(threshold)
         self.support_gap = jnp.asarray(support_gap)
@@ -521,7 +522,7 @@ class RankTransitionProposal(StrictModule):
         state_transfer: str,
         discarded_mass: ArrayLike,
         valid: ArrayLike,
-    ):
+    ) -> None:
         self.factor = jnp.asarray(factor)
         self.source_rank = int(source_rank)
         self.target_rank = int(target_rank)
@@ -547,7 +548,7 @@ class DensityRankStratification(StrictModule):
         absolute_threshold: float = 1e-10,
         relative_threshold: float = 1e-8,
         ambiguity_factor: float = 2.0,
-    ):
+    ) -> None:
         if int(dimension) < 2:
             raise ValueError("Density dimension must be at least two.")
         if (
@@ -670,7 +671,9 @@ class UhlmannAlignment(StrictModule):
     residual: Array
     valid: Array
 
-    def __init__(self, unitary: ArrayLike, overlap: ArrayLike, residual: ArrayLike, /):
+    def __init__(
+        self, unitary: ArrayLike, overlap: ArrayLike, residual: ArrayLike, /
+    ) -> None:
         self.unitary = jnp.asarray(unitary)
         self.overlap = jnp.asarray(overlap)
         self.residual = jnp.asarray(residual)

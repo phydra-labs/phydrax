@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -15,11 +18,11 @@ from phydrax.optics.geometric import (
 )
 
 
-def _direction(angle):
+def _direction(angle: Any) -> Any:
     return jnp.asarray((jnp.sin(angle), 0.0, jnp.cos(angle)))
 
 
-def test_matched_and_oblique_snell_fresnel_energy_conservation():
+def test_matched_and_oblique_snell_fresnel_energy_conservation() -> None:
     matched = evaluate_refractive_interface(
         jnp.asarray((0.0, 0.0, 4.0)),
         jnp.asarray((0.0, 0.0, 2.0)),
@@ -53,7 +56,7 @@ def test_matched_and_oblique_snell_fresnel_energy_conservation():
     assert float(oblique.energy_balance_error) < 2e-6
 
 
-def test_brewster_reflection_and_total_internal_reflection_phase():
+def test_brewster_reflection_and_total_internal_reflection_phase() -> None:
     brewster = evaluate_refractive_interface(
         _direction(jnp.arctan(1.5)),
         jnp.asarray((0.0, 0.0, 1.0)),
@@ -77,7 +80,7 @@ def test_brewster_reflection_and_total_internal_reflection_phase():
     np.testing.assert_allclose(tir.transmitted_directions, (0.0, 0.0, 0.0))
 
 
-def test_wrong_side_and_grazing_incidence_are_distinct():
+def test_wrong_side_and_grazing_incidence_are_distinct() -> None:
     wrong_side = evaluate_refractive_interface(
         jnp.asarray((0.0, 0.0, -1.0)),
         jnp.asarray((0.0, 0.0, 1.0)),
@@ -97,7 +100,7 @@ def test_wrong_side_and_grazing_incidence_are_distinct():
     assert not bool(grazing.reflection_valid)
 
 
-def test_zero_capacity_and_inactive_suffix_have_fixed_identity_semantics():
+def test_zero_capacity_and_inactive_suffix_have_fixed_identity_semantics() -> None:
     empty = PlanarRefractiveStack(np.empty((0, 3)), np.empty((0, 3)), np.asarray((1.2,)))
     origin = jnp.asarray(((0.0, 0.0, 0.0), (1.0, -2.0, 3.0)))
     direction = jnp.asarray(((0.0, 0.0, 2.0), (0.0, 3.0, 4.0)))
@@ -114,9 +117,13 @@ def test_zero_capacity_and_inactive_suffix_have_fixed_identity_semantics():
     assert bool(jnp.all(identity.successful))
 
     padded = PlanarRefractiveStack(
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 1.0], [0.0, 0.0, -10.0]],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 1.0], [0.0, 0.0, -1.0]],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.5, 9.0],
+        # ty: ignore[invalid-argument-type]
         interface_active=[True, False],
     )
     result = trace_planar_refractive_stack(
@@ -128,11 +135,14 @@ def test_zero_capacity_and_inactive_suffix_have_fixed_identity_semantics():
     np.testing.assert_allclose(result.rays.refractive_indices, 1.5)
 
 
-def test_two_interface_parallel_slab_recovers_angle_and_accumulates_paths():
+def test_two_interface_parallel_slab_recovers_angle_and_accumulates_paths() -> None:
     first_angle = jnp.deg2rad(30.0)
     stack = PlanarRefractiveStack(
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 1.0], [0.0, 0.0, 2.0]],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.5, 1.0],
     )
     result = trace_planar_refractive_stack(
@@ -155,10 +165,13 @@ def test_two_interface_parallel_slab_recovers_angle_and_accumulates_paths():
     np.testing.assert_allclose(result.rays.origins[2], 2.0)
 
 
-def test_first_failure_retains_last_successful_ray_and_path():
+def test_first_failure_retains_last_successful_ray_and_path() -> None:
     stack = PlanarRefractiveStack(
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 1.0], [0.0, 0.0, -1.0]],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.5, 1.0],
     )
     result = trace_planar_refractive_stack(
@@ -174,10 +187,13 @@ def test_first_failure_retains_last_successful_ray_and_path():
     np.testing.assert_allclose(result.rays.optical_path_lengths, 1.0)
 
 
-def test_planar_trace_is_jittable_vmappable_and_differentiable_away_from_boundaries():
+def test_planar_trace_is_jittable_vmappable_and_differentiable_away_from_boundaries() -> (
+    None
+):
+    # ty: ignore[invalid-argument-type]
     stack = PlanarRefractiveStack([[0.0, 0.0, 1.0]], [[0.0, 0.0, 1.0]], [1.0, 1.5])
 
-    def transmitted_x(angle):
+    def transmitted_x(angle: Any) -> Any:
         return trace_planar_refractive_stack(
             stack, jnp.zeros((3,)), _direction(angle)
         ).rays.directions[0]

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +13,7 @@ import pytest
 from phydrax._array_tree import ArrayPyTreeSchema
 
 
-def _mixed_tree():
+def _mixed_tree() -> Any:
     return {
         "flags": jnp.asarray([True, False, True], dtype="bool"),
         "indices": jnp.asarray([[1, 2], [3, 4], [5, 6]], dtype=jnp.int32),
@@ -19,7 +22,7 @@ def _mixed_tree():
     }
 
 
-def test_mixed_array_tree_schema_round_trips_and_records_intrinsic_metadata():
+def test_mixed_array_tree_schema_round_trips_and_records_intrinsic_metadata() -> None:
     tree = _mixed_tree()
     schema = ArrayPyTreeSchema.from_tree(tree, case_ndim=1)
 
@@ -52,7 +55,7 @@ def test_mixed_array_tree_schema_round_trips_and_records_intrinsic_metadata():
     )
 
 
-def test_finite_mask_and_case_selection_preserve_leaf_dtypes_and_shapes():
+def test_finite_mask_and_case_selection_preserve_leaf_dtypes_and_shapes() -> None:
     tree = _mixed_tree()
     schema = ArrayPyTreeSchema.from_tree(tree, case_ndim=1)
     zeros = schema.zeros((3,))
@@ -86,7 +89,7 @@ def test_finite_mask_and_case_selection_preserve_leaf_dtypes_and_shapes():
     assert selected["zero"].shape == (3, 0, 2)
 
 
-def test_zero_sized_case_axes_remain_fixed_shape():
+def test_zero_sized_case_axes_remain_fixed_shape() -> None:
     tree = {
         "flags": jnp.zeros((0,), dtype="bool"),
         "values": jnp.zeros((0, 2), dtype=jnp.float32),
@@ -99,7 +102,7 @@ def test_zero_sized_case_axes_remain_fixed_shape():
     assert schema.storage_bytes((0,)) == 0
 
 
-def test_array_tree_schema_rejects_structure_shape_dtype_and_case_mismatch():
+def test_array_tree_schema_rejects_structure_shape_dtype_and_case_mismatch() -> None:
     tree = _mixed_tree()
     schema = ArrayPyTreeSchema.from_tree(tree, case_ndim=1)
 

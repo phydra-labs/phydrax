@@ -8,6 +8,7 @@ import argparse
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -15,8 +16,8 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _state_solver():
-    def solve(problem, design, initial_state, args):
+def _state_solver() -> Any:
+    def solve(problem: Any, design: Any, initial_state: Any, args: Any) -> Any:
         del args
         zero = jax.tree.map(jnp.zeros_like, initial_state)
         one = jax.tree.map(jnp.ones_like, initial_state)
@@ -42,7 +43,7 @@ def _state_solver():
     )
 
 
-def _problem(cells: int):
+def _problem(cells: int) -> Any:
     centers = jnp.stack(
         (jnp.arange(cells, dtype="float64"), jnp.zeros((cells,))), axis=-1
     )
@@ -121,12 +122,15 @@ def run_case(cells: int, /) -> dict[str, object]:
         "state_and_adjoint_solves": int(result.state_design.diagnostics.linear_solves),
         "optimality": float(result.state_design.diagnostics.final_optimality_norm),
         "state_accepted": bool(result.state_design.state_acceptance.accepted),
+        # ty: ignore[unresolved-attribute]
         "adjoint_accepted": bool(result.state_design.adjoint_acceptance.accepted),
         "state_residual": float(result.state_design.state_acceptance.residual_norm),
         "state_threshold": float(result.state_design.state_acceptance.threshold),
         "adjoint_defect": float(
+            # ty: ignore[unresolved-attribute]
             result.state_design.adjoint_acceptance.transpose_defect_norm
         ),
+        # ty: ignore[unresolved-attribute]
         "adjoint_threshold": float(result.state_design.adjoint_acceptance.threshold),
         "wall_seconds": wall_seconds,
     }

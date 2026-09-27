@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.random as jr
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -36,7 +36,7 @@ class DiagnosticXRayExperimentPlan(StrictModule, NonTrainableState):
         transport: PhotonTransportPlan,
         detector: PlanarXRayDetectorPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, DiagnosticXRaySourcePlan):
             raise TypeError("source must be DiagnosticXRaySourcePlan.")
         if not isinstance(transport, PhotonTransportPlan):

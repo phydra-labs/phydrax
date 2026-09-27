@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from typing import Self
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -28,7 +31,7 @@ class NativePanelGeometry2D(StrictModule):
     geometry_id: str = eqx.field(static=True)
 
     @classmethod
-    def from_panelization(cls, panelization: BoundaryPanelization2D, /):
+    def from_panelization(cls, panelization: BoundaryPanelization2D, /) -> Self:
         if not isinstance(panelization, BoundaryPanelization2D):
             raise TypeError("panelization must be BoundaryPanelization2D.")
         chart = jnp.repeat(panelization.panel_chart_indices, 2)
@@ -81,7 +84,9 @@ class NativePanelFieldPlan2D(StrictModule):
     basis_degree: int = eqx.field(static=True)
     field_id: str = eqx.field(static=True)
 
-    def __init__(self, geometry: NativePanelGeometry2D, /, *, basis_degree: int = 0):
+    def __init__(
+        self, geometry: NativePanelGeometry2D, /, *, basis_degree: int = 0
+    ) -> None:
         if not isinstance(geometry, NativePanelGeometry2D) or int(basis_degree) not in (
             0,
             1,
@@ -138,7 +143,7 @@ class NativePanelFieldPlan2D(StrictModule):
         else:
             node_density = panel_density[self.geometry.panelization.panel_ids]
             potential_model = LaplaceLayerPotential2D(
-                self.geometry.panelization, node_density, kind="double"
+                self.geometry.panelization, kind="double", density=node_density
             )
             del target_side
             potential = jax.vmap(potential_model)(target)

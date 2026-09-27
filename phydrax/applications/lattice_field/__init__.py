@@ -5,6 +5,7 @@
 """Finite lattice-field model compositions over canonical Phydrax substrates."""
 
 from importlib import import_module
+from typing import Any
 
 from ._continuum_study import __all__ as _continuum_study_all
 from ._distributed_qcd import __all__ as _distributed_qcd_all
@@ -66,7 +67,7 @@ _FACADE_EXPORT_MODULES = (
 )
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     for module_name in reversed(_FACADE_EXPORT_MODULES):
         module = import_module(module_name, __package__)
         if name in module.__all__:

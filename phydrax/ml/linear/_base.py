@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Literal
+from collections.abc import Callable
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -86,7 +87,7 @@ class Design(StrictModule):
     features: int = eqx.field(static=True)
     sparse: bool = eqx.field(static=True)
 
-    def __init__(self, batch: MLBatch):
+    def __init__(self, batch: MLBatch) -> None:
         cases = _product(batch.case_shape)
         if isinstance(batch.features, SparseFeatures):
             sparse = batch.features
@@ -139,15 +140,11 @@ def prepare_supervised(
     if require_real and jnp.issubdtype(target.dtype, jnp.complexfloating):
         raise TypeError("This linear family requires real-valued targets.")
     design = Design(batch)
-    if require_real:
-        design_dtype = (
-            design.values.dtype if design.sparse else design.dense.dtype  # type: ignore[union-attr]
-        )
-        if jnp.issubdtype(design_dtype, jnp.complexfloating):
-            raise TypeError("This linear family requires real-valued features.")
-    feature_dtype = (
-        design.values.dtype if design.sparse else design.dense.dtype  # type: ignore[union-attr]
-    )
+    feature_values = design.values if design.sparse else design.dense
+    assert feature_values is not None
+    feature_dtype = feature_values.dtype
+    if require_real and jnp.issubdtype(feature_dtype, jnp.complexfloating):
+        raise TypeError("This linear family requires real-valued features.")
     data_dtype = jnp.result_type(feature_dtype, target.dtype, jnp.float32)
     weight_dtype = jnp.real(jnp.empty((), dtype=data_dtype)).dtype
     cases = _product(batch.case_shape)
@@ -206,7 +203,7 @@ def prepare_supervised(
     )
 
 
-def parameter_dtype(prepared: PreparedBatch, /):
+def parameter_dtype(prepared: PreparedBatch, /) -> jnp.dtype:
     """Return the lossless floating/complex dtype shared by data and weights."""
     design = prepared.design
     if design.sparse:
@@ -244,7 +241,7 @@ def design_matmul(design: Design, coefficients: Array, /) -> Array:
     assert design.indices is not None
     assert design.entry_valid is not None
 
-    def one(values, indices, valid, beta):
+    def one(values: Array, indices: Array, valid: Array, beta: Array) -> Array:
         gathered = beta[indices]
         return jnp.sum(
             jnp.where(valid[..., None], values[..., None] * gathered, 0), axis=1
@@ -262,7 +259,7 @@ def design_transpose_matmul(design: Design, values: Array, /) -> Array:
     assert design.indices is not None
     assert design.entry_valid is not None
 
-    def one(entries, indices, valid, residual):
+    def one(entries: Array, indices: Array, valid: Array, residual: Array) -> Array:
         updates = jnp.where(
             valid[..., None], jnp.conj(entries)[..., None] * residual[:, None, :], 0
         )
@@ -300,10 +297,12 @@ def weighted_feature_gram(design: Design, weights: Array, /) -> Array:
     assert design.indices is not None
     assert design.entry_valid is not None
 
-    def one_case(entries, indices, valid, case_weights):
+    def one_case(
+        entries: Array, indices: Array, valid: Array, case_weights: Array
+    ) -> Array:
         entries = jnp.where(valid, entries, 0)
 
-        def one_output(weight):
+        def one_output(weight: Array) -> Array:
             updates = (
                 jnp.conj(entries)[:, :, None]
                 * entries[:, None, :]
@@ -382,7 +381,13 @@ def linear_prediction(
         entries = jnp.where(valid, raw, 0)
         indices = x.columns.source_indices.reshape(raw.shape)
 
-        def one(case_entries, case_indices, case_valid, case_beta, case_bias):
+        def one(
+            case_entries: Array,
+            case_indices: Array,
+            case_valid: Array,
+            case_beta: Array,
+            case_bias: Array,
+        ) -> Array:
             gathered = case_beta[case_indices]
             return (
                 jnp.sum(
@@ -436,7 +441,7 @@ class AbstractLinearModel(AbstractFittedModel):
         *,
         case_shape: tuple[int, ...],
         target_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.coefficients = _reshape_coefficients(
             jnp.asarray(coefficients), case_shape, target_shape
         )
@@ -461,6 +466,9 @@ class AbstractLinearModel(AbstractFittedModel):
 class AbstractLinearRegressorModel(AbstractLinearModel):
     """Shared executable contract for affine regression models."""
 
+    if TYPE_CHECKING:
+        __init__ = AbstractLinearModel.__init__
+
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
         return self.linear_predictor(x)
@@ -468,6 +476,9 @@ class AbstractLinearRegressorModel(AbstractLinearModel):
 
 class LinearRegressorModel(AbstractLinearRegressorModel):
     """Immutable generic affine multi-output regressor."""
+
+    if TYPE_CHECKING:
+        __init__ = AbstractLinearModel.__init__
 
 
 class AbstractLinearScoreClassifierModel(AbstractLinearModel):
@@ -484,7 +495,7 @@ class AbstractLinearScoreClassifierModel(AbstractLinearModel):
         *,
         case_shape: tuple[int, ...],
         target_shape: tuple[int, ...],
-    ):
+    ) -> None:
         super().__init__(
             coefficients,
             intercept,
@@ -509,6 +520,9 @@ class AbstractLinearScoreClassifierModel(AbstractLinearModel):
 class LinearScoreClassifierModel(AbstractLinearScoreClassifierModel):
     """Binary linear classifier whose call is its differentiable decision score."""
 
+    if TYPE_CHECKING:
+        __init__ = AbstractLinearScoreClassifierModel.__init__
+
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
         return self.decision_function(x)
@@ -516,6 +530,9 @@ class LinearScoreClassifierModel(AbstractLinearScoreClassifierModel):
 
 class LogisticClassifierModel(AbstractLinearScoreClassifierModel):
     """Binary/multilabel logistic model; calls return smooth positive-class probabilities."""
+
+    if TYPE_CHECKING:
+        __init__ = AbstractLinearScoreClassifierModel.__init__
 
     def _prediction_contract(self) -> DerivativeContract:
         return _linear_contract(_SMOOTH, nondifferentiable_outputs=_HARD_LABELS)
@@ -560,7 +577,7 @@ class MultinomialLogisticModel(AbstractFittedModel):
         /,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.coefficients = jnp.asarray(coefficients).reshape(
             case_shape + coefficients.shape[-2:]
         )
@@ -612,7 +629,7 @@ class AbstractGeneralizedLinearModel(AbstractLinearModel):
         case_shape: tuple[int, ...],
         target_shape: tuple[int, ...],
         inverse_link: str,
-    ):
+    ) -> None:
         super().__init__(
             coefficients,
             intercept,
@@ -634,6 +651,9 @@ class AbstractGeneralizedLinearModel(AbstractLinearModel):
 
 class GeneralizedLinearModel(AbstractGeneralizedLinearModel):
     """Generic generalized linear model."""
+
+    if TYPE_CHECKING:
+        __init__ = AbstractGeneralizedLinearModel.__init__
 
 
 def binary_targets(
@@ -685,13 +705,17 @@ def iterative_fit(
     prepared: PreparedBatch,
     /,
     *,
-    step,
+    step: Callable[
+        [tuple[Array, Array], Array], tuple[tuple[Array, Array], Array, Array]
+    ],
     initial: tuple[Array, Array],
     max_iterations: int,
     tolerance: float,
     method: str,
-    objective,
-    model_factory,
+    objective: Callable[[Array, Array], Array],
+    model_factory: Callable[
+        [Array, Array], AbstractLinearModel | MultinomialLogisticModel
+    ],
     extra_valid: Array | bool = True,
     nonsmooth: bool = False,
     fit_targets: GradientLevel | None = None,

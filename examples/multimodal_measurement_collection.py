@@ -1,11 +1,13 @@
 """Compose selected observations with explicit clocks and frame routes."""
 
+from typing import Any
+
 import numpy as np
 
 import phydrax as phx
 
 
-def manifest():
+def manifest() -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         "multimodal-example",
         checksum_algorithm="sha256",
@@ -23,7 +25,7 @@ def manifest():
     )
 
 
-def asset(name, values):
+def asset(name: Any, values: Any) -> Any:
     support = phx.measurement.IndexSampleSupport((len(values),), ("sample",))
     field = phx.measurement.QuantityField(
         f"{name}.field",

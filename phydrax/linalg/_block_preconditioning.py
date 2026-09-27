@@ -4,14 +4,16 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
+from typing import Literal, NoReturn, TypeAlias
 
 import equinox as eqx
 import jax
-from jaxtyping import ArrayLike, PyTree
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._trainable import fixed_field
+from ..typing import parse
 from ._costs import _array_tree_storage_bytes, PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
 from ._operators import (
@@ -33,7 +35,7 @@ from ._preconditioning import (
     PreconditionerSource,
 )
 from ._properties import OperatorCapabilities, OperatorProperties
-from ._spaces import _coordinate_dtype, BlockSpace
+from ._spaces import _coordinate_dtype, AbstractVectorSpace, BlockSpace
 from ._structured_operators import SchurComplementLinearOperator
 
 
@@ -71,7 +73,7 @@ def _source_properties(
 
 def _validate_fixed_action(
     action: AbstractPreconditioner,
-    space,
+    space: AbstractVectorSpace,
     component: str,
     /,
 ) -> None:
@@ -140,7 +142,7 @@ def _is_adjoint_pair(
     )
 
 
-def _zero_operator(space, /) -> AbstractLinearOperator:
+def _zero_operator(space: AbstractVectorSpace, /) -> AbstractLinearOperator:
     return ScaledLinearOperator(IdentityLinearOperator(space), 0.0)
 
 
@@ -179,7 +181,7 @@ def _block_components(
 
 def _validate_schur_setup(
     operator: AbstractLinearOperator,
-    dual_space,
+    dual_space: AbstractVectorSpace,
     /,
 ) -> None:
     if not isinstance(operator, AbstractLinearOperator):
@@ -290,7 +292,7 @@ class _PlanningSchurLinearOperator(AbstractLinearOperator):
         *,
         properties: OperatorProperties,
         operator_id: str,
-    ):
+    ) -> None:
         self.diagonal_block = diagonal_block
         self.source = diagonal_block.source
         self.target = diagonal_block.target
@@ -314,7 +316,7 @@ class _PlanningSchurLinearOperator(AbstractLinearOperator):
         del vector
         raise ValueError("Planning Schur operator has no adjoint action.")
 
-    def _materialize(self, /):
+    def _materialize(self, /) -> NoReturn:
         raise ValueError("Planning Schur operator cannot be materialized.")
 
 
@@ -355,13 +357,12 @@ class BlockFactorizationPreconditioner(AbstractPreconditioner):
         properties: PreconditionerProperties,
         space: BlockSpace | None = None,
         preconditioner_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(schur_operator, SchurComplementLinearOperator):
             raise TypeError("schur_operator must be a SchurComplementLinearOperator.")
         if not isinstance(schur_action, AbstractPreconditioner):
             raise TypeError("schur_action must be an AbstractPreconditioner.")
-        if form not in ("diagonal", "lower", "upper", "ldu"):
-            raise ValueError("Unknown block factorization form.")
+        form = parse(form, BlockFactorizationForm, "form")
         pivot_action = schur_operator.inverse_action
         _validate_fixed_action(pivot_action, schur_operator.upper_block.target, "pivot")
         _validate_fixed_action(schur_action, schur_operator.source, "Schur")
@@ -523,11 +524,10 @@ class BlockFactorizationPreconditionerBuilder(AbstractPreconditionerBuilder):
         *,
         schur_setup_operator: AbstractLinearOperator | None = None,
         properties: PreconditionerProperties | None = None,
-    ):
+    ) -> None:
         pivot_id = _source_identifier(pivot_solver)
         schur_id = _source_identifier(schur_solver)
-        if form not in ("diagonal", "lower", "upper", "ldu"):
-            raise ValueError("form must be 'diagonal', 'lower', 'upper', or 'ldu'.")
+        form = parse(form, BlockFactorizationForm, "form")
         if schur_setup_operator is not None and not isinstance(
             schur_setup_operator, AbstractLinearOperator
         ):

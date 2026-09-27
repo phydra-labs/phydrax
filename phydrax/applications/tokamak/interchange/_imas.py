@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -61,7 +62,7 @@ class ImasEquilibriumExportResult:
     report: AdapterReport
 
 
-def _text(value, name: str):
+def _text(value: object, name: str) -> str:
     if not isinstance(value, str):
         raise TypeError(f"{name} must be a string.")
     normalized = value.strip()
@@ -71,7 +72,7 @@ def _text(value, name: str):
 
 
 def import_imas_equilibrium_slice(
-    record: Mapping[str, object],
+    record: Mapping[str, Any],
     reference: ReferenceArtifactManifest,
     machine_frame: AxisymmetricMachineFrame,
     source_convention: TokamakMagneticConvention,

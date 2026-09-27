@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._differentiation import DerivativeContract, DerivativeSurface
 from ..._fingerprint import canonical_fingerprint
@@ -46,7 +49,7 @@ class FLRWDistancePlan(StrictModule, NonTrainableState):
         light_speed: float = 1.0,
         order: int = 64,
         near_flat_threshold: float = 1.0e-6,
-    ):
+    ) -> None:
         speed = float(light_speed)
         order_ = int(order)
         threshold = float(near_flat_threshold)
@@ -71,7 +74,9 @@ class FLRWDistancePlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _integrate_redshift(self, redshift: Array, integrand) -> Array:
+    def _integrate_redshift(
+        self, redshift: Array, integrand: Callable[[Array], Array]
+    ) -> Array:
         mapped = 0.5 * redshift[..., None] * (self.nodes + 1.0)
         values = integrand(mapped)
         return 0.5 * redshift * jnp.sum(self.weights * values, axis=-1)

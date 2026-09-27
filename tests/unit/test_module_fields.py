@@ -13,6 +13,7 @@ import inspect
 import pkgutil
 import re
 import types
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -70,7 +71,7 @@ def _attribute_owner(cls: type, name: str, /) -> type | None:
     return next((k for k in cls.__mro__ if name in k.__dict__), None)
 
 
-def test_no_module_field_is_shadowed_by_a_class_attribute():
+def test_no_module_field_is_shadowed_by_a_class_attribute() -> None:
     """A field shadowed by a property or method is never stored on instances.
 
     Equinox then flattens a missing value, and unflattening cannot restore it, so
@@ -93,7 +94,7 @@ def test_no_module_field_is_shadowed_by_a_class_attribute():
     assert not phantom, "\n".join(phantom)
 
 
-def test_abstract_var_annotations_are_never_dataclass_fields():
+def test_abstract_var_annotations_are_never_dataclass_fields() -> None:
     """Stringified `eqx.AbstractVar[...]` is silently concrete under equinox."""
     stringified = []
     for cls in _modules():
@@ -103,7 +104,7 @@ def test_abstract_var_annotations_are_never_dataclass_fields():
     assert not stringified, "\n".join(stringified)
 
 
-def test_concrete_modules_implement_every_abstract_var():
+def test_concrete_modules_implement_every_abstract_var() -> None:
     unresolved = []
     for cls in _modules():
         if cls.__name__.startswith(("Abstract", "_Abstract")):
@@ -132,26 +133,30 @@ class PropertyIdentified(AbstractIdentified):
         return "property"
 
 
-def test_future_annotation_abstract_var_is_abstract_and_satisfiable():
+def test_future_annotation_abstract_var_is_abstract_and_satisfiable() -> None:
     assert dataclasses.fields(AbstractIdentified) == ()
     assert AbstractIdentified.__abstractvars__ == frozenset({"identifier"})
     with pytest.raises(TypeError):
+        # ty: ignore[missing-argument]
         AbstractIdentified()
 
     assert [field.name for field in dataclasses.fields(FieldIdentified)] == ["identifier"]
     assert FieldIdentified("field").identifier == "field"
     assert dataclasses.fields(PropertyIdentified) == ()
+    # ty: ignore[missing-argument]
     assert PropertyIdentified().identifier == "property"
 
 
-def _round_trip_modules():
+def _round_trip_modules() -> Any:
     return (
         phx.domain.Interval1d(0.0, 1.0),
+        # ty: ignore[invalid-argument-type]
         phx.domain.HyperRectangle([0.0, -1.0], [1.0, 1.0]),
         phx.domain.GeometryDomain(
             phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
         ),
         phx.optim.ReducedAdjoint(),
+        # ty: ignore[missing-argument]
         PropertyIdentified(),
     )
 
@@ -159,7 +164,7 @@ def _round_trip_modules():
 @pytest.mark.parametrize(
     "module", _round_trip_modules(), ids=lambda module: type(module).__name__
 )
-def test_flatten_unflatten_round_trip_keeps_tree_structure(module):
+def test_flatten_unflatten_round_trip_keeps_tree_structure(module: Any) -> None:
     leaves, treedef = jax.tree_util.tree_flatten(module)
     rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
     assert jax.tree_util.tree_structure(rebuilt) == treedef
@@ -171,17 +176,17 @@ def test_flatten_unflatten_round_trip_keeps_tree_structure(module):
 class ScaledCall(StrictModule):
     scale: jax.Array
 
-    def __call__(self, x):
+    def __call__(self, x: Any) -> Any:
         return self.scale * x
 
 
-def test_strict_module_callable_composes_with_filter_jit_of_filter_vmap():
+def test_strict_module_callable_composes_with_filter_jit_of_filter_vmap() -> None:
     module = ScaledCall(jnp.asarray(2.0))
     result = eqx.filter_jit(eqx.filter_vmap(module))(jnp.arange(3.0))
     assert jnp.array_equal(result, jnp.asarray([0.0, 2.0, 4.0]))
 
 
-def test_strict_module_is_immutable_after_construction():
+def test_strict_module_is_immutable_after_construction() -> None:
     module = ScaledCall(jnp.asarray(2.0))
     with pytest.raises(dataclasses.FrozenInstanceError):
         module.scale = jnp.asarray(3.0)

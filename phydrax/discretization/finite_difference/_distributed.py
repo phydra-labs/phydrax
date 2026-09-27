@@ -10,8 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -44,7 +45,7 @@ class DistributedStencilPartition(StrictModule, NonTrainableState):
         device_axis_name: str = "partitions",
         periodic: bool = False,
         precision: FDExecutionPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         shape = tuple(global_shape)
         axis = int(partition_axis)
         if (
@@ -165,7 +166,7 @@ class HaloExchangeDescriptor(StrictModule, NonTrainableState):
     codimension: int = eqx.field(static=True)
     descriptor_id: str = eqx.field(static=True)
 
-    def __init__(self, offset: Sequence[int], widths: Sequence[int], /):
+    def __init__(self, offset: Sequence[int], widths: Sequence[int], /) -> None:
         offset_ = tuple(offset)
         widths_ = tuple(widths)
         if (
@@ -217,7 +218,7 @@ class DistributedHaloSchedule(StrictModule, NonTrainableState):
         devices: Sequence[jax.Device] | None = None,
         mesh_axis_prefix: str = "fd",
         precision: FDExecutionPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         shape = tuple(global_shape)
         partitions = tuple(partition_shape)
         if (

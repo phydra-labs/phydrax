@@ -10,7 +10,7 @@ from phydrax.meshing import (
 )
 
 
-def test_failed_stage_terminates_trace_and_prevents_success():
+def test_failed_stage_terminates_trace_and_prevents_success() -> None:
     start = MeshingStageReport(
         MeshingStageKind.SOURCE_INSPECTION, MeshingStageStatus.PASSED
     )

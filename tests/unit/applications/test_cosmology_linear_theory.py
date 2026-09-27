@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -12,7 +13,7 @@ import phydrax as phx
 cosmology = phx.applications.cosmology
 
 
-def test_massive_neutrino_species_and_request_identity():
+def test_massive_neutrino_species_and_request_identity() -> None:
     scale = cosmology.CosmologyScaleContract(
         phx.units.MEGAPARSEC,
         phx.units.SOLAR_MASS,
@@ -52,7 +53,9 @@ def test_massive_neutrino_species_and_request_identity():
         cosmology.MassiveNeutrinoSpecies(-0.1)
 
 
-def test_concrete_linear_theory_backend_returns_named_constant_products(tmp_path):
+def test_concrete_linear_theory_backend_returns_named_constant_products(
+    tmp_path: Any,
+) -> None:
     root = Path(__file__).parents[2]
     worker = root / "_linear_theory_worker.py"
     scale = cosmology.CosmologyScaleContract(
@@ -86,8 +89,10 @@ def test_concrete_linear_theory_backend_returns_named_constant_products(tmp_path
     assert result.power.provenance.differentiation.supported_surfaces == ()
     assert result.power.scale.scale_id == request.scale.scale_id
     assert result.power.scale.length_unit == phx.units.MEGAPARSEC
+    # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(result.power.evaluate([1.0, 3.0], 0.75), [0.625, 1.875])
     np.testing.assert_allclose(
+        # ty: ignore[invalid-argument-type]
         result.transfer.evaluate("density/total_matter", [1.0, 3.0], 0.75),
         [1.5, 4.5],
     )

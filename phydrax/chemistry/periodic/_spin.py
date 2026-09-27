@@ -7,12 +7,13 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -27,13 +28,14 @@ from ...linalg.eigen import (
     GeneralizedEigenproblem,
 )
 from ...operators.periodic import PreparedPeriodicOrbitalPencil
+from ...typing import parse
 from ...units import UnitDefinition
 from .._result import ElectronicEnergyLedger
 from .._state import PeriodicElectronicSectorPlan
 from ._orbital_model import PeriodicHubbardMeanFieldPlan
 
 
-SpinReferenceKind = Literal["restricted", "collinear"]
+SpinReferenceKind: TypeAlias = Literal["restricted", "collinear"]
 
 
 class SpinPeriodicSCFEvidence(StrictModule, NonTrainableState):
@@ -62,7 +64,7 @@ class SpinPeriodicSCFEvidence(StrictModule, NonTrainableState):
         successful: ArrayLike,
         tolerance: float,
         /,
-    ):
+    ) -> None:
         values = jnp.asarray(
             (
                 energy_residual,
@@ -156,7 +158,7 @@ class SpinPeriodicSCFResult(StrictModule, NonTrainableState):
         sector_id: str,
         pencil_id: str,
         mean_field_id: str,
-    ):
+    ) -> None:
         orbital = jnp.asarray(orbital_energies)
         occupation = jnp.asarray(occupations, dtype=orbital.real.dtype)
         coefficient = jnp.asarray(coefficients)
@@ -180,8 +182,7 @@ class SpinPeriodicSCFResult(StrictModule, NonTrainableState):
             raise TypeError("energy_unit must be UnitDefinition.")
         if energy_ledger.energy_unit != energy_unit:
             raise ValueError("Spin SCF ledger and result energy units differ.")
-        if reference_kind not in ("restricted", "collinear"):
-            raise ValueError("Spin reference_kind must be restricted or collinear.")
+        reference_kind = parse(reference_kind, SpinReferenceKind, "reference_kind")
         iterations_ = int(iterations)
         if iterations_ <= 0:
             raise ValueError("Spin SCF result must report at least one iteration.")
@@ -347,7 +348,7 @@ class SpinPeriodicSCFPlan(StrictModule, NonTrainableState):
         convergence_tolerance: float = 1.0e-10,
         maximum_iterations: int = 256,
         damping: float = 0.25,
-    ):
+    ) -> None:
         if not isinstance(mesh, ReciprocalMeshPlan):
             raise TypeError("mesh must be ReciprocalMeshPlan.")
         if not isinstance(sector, PeriodicElectronicSectorPlan):
@@ -363,8 +364,7 @@ class SpinPeriodicSCFPlan(StrictModule, NonTrainableState):
             raise ValueError("Spin SCF pencil and mean-field energy units differ.")
         if sector.charge_per_cell != 0.0:
             raise ValueError("Spin periodic SCF requires a neutral electronic sector.")
-        if reference_kind not in ("restricted", "collinear"):
-            raise ValueError("reference_kind must be restricted or collinear.")
+        reference_kind = parse(reference_kind, SpinReferenceKind, "reference_kind")
         if reference_kind == "restricted" and sector.spin_magnetization != 0.0:
             raise ValueError("Restricted periodic SCF requires zero spin magnetization.")
         orbital_count = pencil.plan.basis.orbital_count

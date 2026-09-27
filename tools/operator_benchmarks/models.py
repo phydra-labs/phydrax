@@ -15,7 +15,7 @@ import phydrax as phx
 from .scenarios import augment_square_group_training, OperatorBenchmarkScenario
 
 
-def _apply_query_mask(output, batch: phx.nn.operator.OperatorBatch):
+def _apply_query_mask(output: Any, batch: phx.nn.operator.OperatorBatch) -> Any:
     mask = batch.require_single_query().mask_array(case_shape=batch.case_shape)
     while mask.ndim < jnp.asarray(output).ndim:
         mask = mask[..., None]
@@ -27,10 +27,10 @@ class IdentityBaseline(eqx.Module):
 
     source_key: str = eqx.field(static=True)
 
-    def __init__(self, source_key: str):
+    def __init__(self, source_key: str) -> None:
         self.source_key = str(source_key)
 
-    def __call__(self, batch: phx.nn.operator.OperatorBatch):
+    def __call__(self, batch: phx.nn.operator.OperatorBatch) -> Any:
         source = batch.input(self.source_key)
         if (
             source.values is None
@@ -46,10 +46,10 @@ class WeightedMeanBaseline(eqx.Module):
 
     source_key: str = eqx.field(static=True)
 
-    def __init__(self, source_key: str):
+    def __init__(self, source_key: str) -> None:
         self.source_key = str(source_key)
 
-    def __call__(self, batch: phx.nn.operator.OperatorBatch):
+    def __call__(self, batch: phx.nn.operator.OperatorBatch) -> Any:
         source = batch.input(self.source_key)
         if source.values is None or not source.sample_shape:
             raise ValueError(
@@ -77,10 +77,10 @@ class NearestNeighborBaseline(eqx.Module):
 
     source_key: str = eqx.field(static=True)
 
-    def __init__(self, source_key: str):
+    def __init__(self, source_key: str) -> None:
         self.source_key = str(source_key)
 
-    def __call__(self, batch: phx.nn.operator.OperatorBatch):
+    def __call__(self, batch: phx.nn.operator.OperatorBatch) -> Any:
         source = batch.input(self.source_key)
         if source.values is None or not source.sample_shape:
             raise ValueError("NearestNeighborBaseline requires sampled source values.")
@@ -125,7 +125,7 @@ class ConstantOutputBaseline(eqx.Module):
     value: tuple[float, ...] = eqx.field(static=True)
     output_shape: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, scenario: OperatorBenchmarkScenario):
+    def __init__(self, scenario: OperatorBenchmarkScenario) -> None:
         target = jnp.asarray(scenario.train_target)
         batch = scenario.train_batch
         mask = batch.require_single_query().mask_array(case_shape=batch.case_shape)
@@ -142,7 +142,7 @@ class ConstantOutputBaseline(eqx.Module):
         self.output_shape = tuple(mean.shape)
         self.value = tuple(float(value) for value in mean.reshape(-1))
 
-    def __call__(self, batch: phx.nn.operator.OperatorBatch):
+    def __call__(self, batch: phx.nn.operator.OperatorBatch) -> Any:
         value = jnp.asarray(self.value).reshape(self.output_shape)
         output = jnp.broadcast_to(
             value,
@@ -158,10 +158,10 @@ class LinearInterpolationBaseline(eqx.Module):
 
     source_key: str = eqx.field(static=True)
 
-    def __init__(self, source_key: str):
+    def __init__(self, source_key: str) -> None:
         self.source_key = str(source_key)
 
-    def __call__(self, batch: phx.nn.operator.OperatorBatch):
+    def __call__(self, batch: phx.nn.operator.OperatorBatch) -> Any:
         source = batch.input(self.source_key)
         if source.values is None or _coordinate_dimension(source) != 1:
             raise ValueError(
@@ -204,7 +204,9 @@ class LinearInterpolationBaseline(eqx.Module):
         return _apply_query_mask(output, batch)
 
 
-def _flatten_batch_inputs(batch: phx.nn.operator.OperatorBatch, names: tuple[str, ...]):
+def _flatten_batch_inputs(
+    batch: phx.nn.operator.OperatorBatch, names: tuple[str, ...]
+) -> Any:
     case_count = prod(batch.case_shape) if batch.case_shape else 1
     features = []
     for name in names:
@@ -230,7 +232,7 @@ class PODLinearROMBaseline(eqx.Module, phx.ParameterOwner):
         scenario: OperatorBenchmarkScenario,
         *,
         rank: int,
-    ):
+    ) -> None:
         self.input_names = tuple(scenario.train_batch.inputs)
         self.query_shape = scenario.train_batch.require_single_query().sample_shape
         target = jnp.asarray(scenario.train_target)
@@ -252,7 +254,7 @@ class PODLinearROMBaseline(eqx.Module, phx.ParameterOwner):
         )
         self.coefficient_map = jnp.linalg.pinv(design) @ coefficients
 
-    def __call__(self, batch: phx.nn.operator.OperatorBatch):
+    def __call__(self, batch: phx.nn.operator.OperatorBatch) -> Any:
         if batch.require_single_query().sample_shape != self.query_shape:
             raise ValueError("PODLinearROMBaseline requires its fitted query geometry.")
         features = _flatten_batch_inputs(batch, self.input_names)
@@ -274,12 +276,12 @@ class PointwiseAffineBaseline(eqx.Module, phx.ParameterOwner):
     bias: jax.Array
     source_key: str = eqx.field(static=True)
 
-    def __init__(self, source_key: str, *, key: jax.Array):
+    def __init__(self, source_key: str, *, key: jax.Array) -> None:
         self.source_key = str(source_key)
         self.weight = 0.1 * jr.normal(key, ())
         self.bias = jnp.zeros(())
 
-    def __call__(self, batch: phx.nn.operator.OperatorBatch):
+    def __call__(self, batch: phx.nn.operator.OperatorBatch) -> Any:
         source = batch.input(self.source_key)
         if (
             source.values is None
@@ -403,7 +405,7 @@ def _operator_field_specs(
         "scalar" if symmetry is None else symmetry.target_representation
     )
 
-    def field_layout(name: str, representation: str):
+    def field_layout(name: str, representation: str) -> Any:
         if not structured_tensors:
             return None
         tensor_type = phx.nn.operator.representations.TensorType(
@@ -429,6 +431,7 @@ def _operator_field_specs(
                 name,
                 role="source",
                 source_name=name,
+                # ty: ignore[invalid-argument-type]
                 representation=field_representation(
                     source_representations.get(name, "scalar")
                 ),
@@ -442,6 +445,7 @@ def _operator_field_specs(
             "solution",
             role="target",
             query_name="query",
+            # ty: ignore[invalid-argument-type]
             representation=field_representation(target_representation),
             tensor_layout=field_layout("solution", target_representation),
         ),
@@ -524,7 +528,7 @@ class OperatorArchitecture:
         seed: int = 0,
         *,
         size_scale: float = 1.0,
-    ):
+    ) -> Any:
         if float(size_scale) <= 0.0:
             raise ValueError("size_scale must be positive.")
         return self.factory(scenario, int(seed), float(size_scale))
@@ -567,8 +571,9 @@ class OperatorArchitecture:
         )
 
 
-def _primary_source(scenario: OperatorBenchmarkScenario):
+def _primary_source(scenario: OperatorBenchmarkScenario) -> Any:
     name = scenario.primary_source_key
+    # ty: ignore[invalid-argument-type]
     return name, scenario.train_batch.input(name)
 
 
@@ -619,8 +624,8 @@ def _coordinate_dimension(samples: phx.nn.operator.FunctionSamples) -> int:
     raise ValueError("Sample geometry has no coordinates.")
 
 
-def _deeponet_factory(*, pod: bool, quick: bool):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+def _deeponet_factory(*, pod: bool, quick: bool) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         batch = scenario.train_batch
         latent = (
             min(
@@ -803,8 +808,8 @@ def _function_frame_compatible(scenario: OperatorBenchmarkScenario, /) -> bool:
     )
 
 
-def _function_frame_factory(*, quick: bool):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+def _function_frame_factory(*, quick: bool) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         source_name, source = _primary_source(scenario)
         query = scenario.train_batch.require_single_query()
         rank = _function_frame_rank(
@@ -864,7 +869,7 @@ def _function_frame_factory(*, quick: bool):
     return build
 
 
-def _function_frame_configuration(*, quick: bool):
+def _function_frame_configuration(*, quick: bool) -> Any:
     def configuration(
         scenario: OperatorBenchmarkScenario,
         size_scale: float,
@@ -886,8 +891,8 @@ def _function_frame_configuration(*, quick: bool):
     return configuration
 
 
-def _fno_factory(*, factorization: str, quick: bool):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+def _fno_factory(*, factorization: str, quick: bool) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         name, source = _primary_source(scenario)
         modes = tuple(
             max(1, min(4 if quick else 12, size // 2)) for size in source.sample_shape
@@ -900,6 +905,7 @@ def _fno_factory(*, factorization: str, quick: bool):
             out_channels="scalar" if output_channels == 1 else output_channels,
             width=max(2, round((6 if quick else 32) * size_scale)),
             depth=1 if quick else 4,
+            # ty: ignore[invalid-argument-type]
             factorization=factorization,
             rank=0.5,
             source_key=name,
@@ -914,7 +920,7 @@ def _fno_configuration(
     factorization: str,
     quick: bool,
     augmentation: str | None = None,
-):
+) -> Any:
     def configuration(
         scenario: OperatorBenchmarkScenario,
         size_scale: float,
@@ -942,8 +948,8 @@ def _hofno_factory(
     interaction_order: int,
     aliasing: str,
     quick: bool,
-):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         name, source = _primary_source(scenario)
         modes = tuple(
             max(1, min(4 if quick else 12, size // 2)) for size in source.sample_shape
@@ -959,6 +965,7 @@ def _hofno_factory(
             interaction_order=interaction_order,
             factor_bias=False,
             spectral_channel_mixing="depthwise",
+            # ty: ignore[invalid-argument-type]
             aliasing=aliasing,
             ffn_expansion=2,
             coordinate_embedding=False,
@@ -974,7 +981,7 @@ def _hofno_configuration(
     interaction_order: int,
     aliasing: str,
     quick: bool,
-):
+) -> Any:
     def configuration(
         scenario: OperatorBenchmarkScenario,
         size_scale: float,
@@ -998,8 +1005,8 @@ def _hofno_configuration(
     return configuration
 
 
-def _implicit_fno_factory(*, axial: bool, quick: bool):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+def _implicit_fno_factory(*, axial: bool, quick: bool) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         name, source = _primary_source(scenario)
         modes = tuple(
             max(1, min(4 if quick else 12, size // 2)) for size in source.sample_shape
@@ -1016,10 +1023,12 @@ def _implicit_fno_factory(*, axial: bool, quick: bool):
         }
         if axial:
             return phx.nn.operator.architectures.AxialFactorizedFNO(
+                # ty: ignore[invalid-argument-type]
                 **common,
                 depth=1 if quick else 4,
             )
         return phx.nn.operator.architectures.IFNO(
+            # ty: ignore[invalid-argument-type]
             **common,
             iterations=1 if quick else 8,
         )
@@ -1027,8 +1036,8 @@ def _implicit_fno_factory(*, axial: bool, quick: bool):
     return build
 
 
-def _poseidon_factory(*, quick: bool):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+def _poseidon_factory(*, quick: bool) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         name, source = _primary_source(scenario)
         channels = _sample_channels(source, scenario.train_batch.case_shape)
         output_channels = _target_channels(scenario)
@@ -1050,8 +1059,8 @@ def _poseidon_factory(*, quick: bool):
     return build
 
 
-def _cno_factory(*, uno: bool, quick: bool):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+def _cno_factory(*, uno: bool, quick: bool) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         name, source = _primary_source(scenario)
         channels = _sample_channels(source, scenario.train_batch.case_shape)
         output_channels = _target_channels(scenario)
@@ -1066,6 +1075,7 @@ def _cno_factory(*, uno: bool, quick: bool):
                     max(2, round(width * size_scale))
                     for width in ((4, 6) if quick else (24, 48, 64))
                 ),
+                # ty: ignore[invalid-argument-type]
                 **channel_settings,
                 source_key=name,
                 key=jr.key(seed),
@@ -1074,6 +1084,7 @@ def _cno_factory(*, uno: bool, quick: bool):
             spatial_ndim=len(source.sample_shape),
             width=max(2, round((4 if quick else 32) * size_scale)),
             depth=1 if quick else 4,
+            # ty: ignore[invalid-argument-type]
             **channel_settings,
             source_key=name,
             key=jr.key(seed),
@@ -1105,8 +1116,8 @@ def _square_tensor_layout(
     )
 
 
-def _lattice_equivariant_cno_factory(*, quick: bool):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+def _lattice_equivariant_cno_factory(*, quick: bool) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         if scenario.symmetry is None or scenario.symmetry.group is None:
             raise ValueError(
                 "LatticeEquivariantCNO requires declared exact square-group symmetry."
@@ -1142,7 +1153,7 @@ def _lattice_equivariant_cno_factory(*, quick: bool):
     return build
 
 
-def _lattice_equivariant_cno_configuration(*, quick: bool):
+def _lattice_equivariant_cno_configuration(*, quick: bool) -> Any:
     def configuration(
         scenario: OperatorBenchmarkScenario,
         size_scale: float,
@@ -1192,8 +1203,8 @@ def _lattice_equivariant_cno_compatible(
     )
 
 
-def _wavelet_factory(*, quick: bool):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+def _wavelet_factory(*, quick: bool) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         name, source = _primary_source(scenario)
         channels = _sample_channels(source, scenario.train_batch.case_shape)
         output_channels = _target_channels(scenario)
@@ -1212,8 +1223,8 @@ def _wavelet_factory(*, quick: bool):
     return build
 
 
-def _multiwavelet_factory(*, quick: bool):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+def _multiwavelet_factory(*, quick: bool) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         name, source = _primary_source(scenario)
         channels = _sample_channels(source, scenario.train_batch.case_shape)
         output_channels = _target_channels(scenario)
@@ -1239,7 +1250,7 @@ def _flower_settings(
     quick: bool,
     levels: int,
     transition_mode: Literal["learned", "resolution_consistent"],
-):
+) -> Any:
     name, source = _primary_source(scenario)
     channels = _sample_channels(source, scenario.train_batch.case_shape)
     output_channels = _target_channels(scenario)
@@ -1269,8 +1280,8 @@ def _flower_factory(
     quick: bool,
     levels: int,
     transition_mode: Literal["learned", "resolution_consistent"],
-):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         return phx.nn.operator.architectures.Flower(
             **_flower_settings(
                 scenario,
@@ -1290,7 +1301,7 @@ def _flower_configuration(
     quick: bool,
     levels: int,
     transition_mode: Literal["learned", "resolution_consistent"],
-):
+) -> Any:
     def configuration(
         scenario: OperatorBenchmarkScenario,
         size_scale: float,
@@ -1309,8 +1320,8 @@ def _flower_configuration(
     return configuration
 
 
-def _local_factory(*, quick: bool):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+def _local_factory(*, quick: bool) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         name, source = _primary_source(scenario)
         coord_dim = _coordinate_dimension(source)
         kernel = phx.nn.models.MLP(
@@ -1330,12 +1341,13 @@ def _local_factory(*, quick: bool):
     return build
 
 
-def _sfno_factory(*, quick: bool):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+def _sfno_factory(*, quick: bool) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         name, _ = _primary_source(scenario)
         metadata = dict(scenario.metadata)
         space = phx.discretization.SphericalSpectralPlan(
             int(metadata["bandlimit"]),
+            # ty: ignore[invalid-argument-type]
             sampling=metadata["sampling"],
         ).prepare()
         return phx.nn.operator.architectures.SFNO(
@@ -1351,8 +1363,8 @@ def _sfno_factory(*, quick: bool):
     return build
 
 
-def _laplace_factory(*, quick: bool):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+def _laplace_factory(*, quick: bool) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         name, _ = _primary_source(scenario)
         return phx.nn.operator.architectures.LaplaceTemporalOperator(
             in_channels="scalar",
@@ -1365,8 +1377,8 @@ def _laplace_factory(*, quick: bool):
     return build
 
 
-def _linear_recurrent_factory(*, quick: bool):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+def _linear_recurrent_factory(*, quick: bool) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         name, source = _primary_source(scenario)
         channels = _sample_channels(source, scenario.train_batch.case_shape)
         output_channels = _target_channels(scenario)
@@ -1384,7 +1396,7 @@ def _linear_recurrent_factory(*, quick: bool):
     return build
 
 
-def _linear_recurrent_configuration(*, quick: bool):
+def _linear_recurrent_configuration(*, quick: bool) -> Any:
     def configuration(
         scenario: OperatorBenchmarkScenario,
         size_scale: float,
@@ -1422,8 +1434,8 @@ def _training_delta_range(
     return float(lower), float(upper)
 
 
-def _selective_state_space_factory(*, quick: bool):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+def _selective_state_space_factory(*, quick: bool) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         name, source = _primary_source(scenario)
         channels = _sample_channels(source, scenario.train_batch.case_shape)
         output_channels = _target_channels(scenario)
@@ -1443,7 +1455,7 @@ def _selective_state_space_factory(*, quick: bool):
     return build
 
 
-def _selective_state_space_configuration(*, quick: bool):
+def _selective_state_space_configuration(*, quick: bool) -> Any:
     def configuration(
         scenario: OperatorBenchmarkScenario, size_scale: float
     ) -> tuple[tuple[str, str], ...]:
@@ -1502,8 +1514,8 @@ def _minimum_valid_source_points(
     )
 
 
-def _transolver_factory(*, quick: bool):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+def _transolver_factory(*, quick: bool) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         name, source = _primary_source(scenario)
         heads = 2
         width = heads * max(
@@ -1532,8 +1544,8 @@ def _transolver_factory(*, quick: bool):
     return build
 
 
-def _gnot_factory(*, quick: bool):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+def _gnot_factory(*, quick: bool) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         batch = scenario.train_batch
         heads = 2
         width = heads * max(
@@ -1555,6 +1567,7 @@ def _gnot_factory(*, quick: bool):
             else _sample_channels(batch.require_single_query(), batch.case_shape)
         )
         return phx.nn.operator.architectures.GNOT(
+            # ty: ignore[invalid-argument-type]
             in_channels=source_channels,
             out_channels="scalar" if output_channels == 1 else output_channels,
             coord_dim=_coordinate_dimension(batch.require_single_query()),
@@ -1572,8 +1585,8 @@ def _gnot_factory(*, quick: bool):
     return build
 
 
-def _upt_factory(*, quick: bool):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+def _upt_factory(*, quick: bool) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         name, source = _primary_source(scenario)
         heads = 2
         width = heads * max(
@@ -1667,8 +1680,8 @@ def _gino_settings(
     }
 
 
-def _gino_factory(*, quick: bool):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+def _gino_factory(*, quick: bool) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         return phx.nn.operator.architectures.GINO(
             **_gino_settings(scenario, size_scale, quick=quick),
             key=jr.key(seed),
@@ -1677,7 +1690,7 @@ def _gino_factory(*, quick: bool):
     return build
 
 
-def _gino_configuration(*, quick: bool):
+def _gino_configuration(*, quick: bool) -> Any:
     def configuration(
         scenario: OperatorBenchmarkScenario,
         size_scale: float,
@@ -1760,8 +1773,8 @@ def _geometry_informed_flower_factory(
     ),
     domain_support: bool = False,
     conserve_mass: bool = False,
-):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         return phx.nn.operator.architectures.GeometryInformedFlower(
             **_geometry_informed_flower_settings(
                 scenario,
@@ -1785,7 +1798,7 @@ def _geometry_informed_flower_configuration(
     ),
     domain_support: bool = False,
     conserve_mass: bool = False,
-):
+) -> Any:
     def configuration(
         scenario: OperatorBenchmarkScenario,
         size_scale: float,
@@ -1878,8 +1891,8 @@ def _rigno_settings(
     }
 
 
-def _rigno_factory(*, quick: bool):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+def _rigno_factory(*, quick: bool) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         return phx.nn.operator.architectures.RIGNO(
             **_rigno_settings(scenario, size_scale, quick=quick),
             key=jr.key(seed),
@@ -1888,7 +1901,7 @@ def _rigno_factory(*, quick: bool):
     return build
 
 
-def _rigno_configuration(*, quick: bool):
+def _rigno_configuration(*, quick: bool) -> Any:
     def configuration(
         scenario: OperatorBenchmarkScenario,
         size_scale: float,
@@ -1979,8 +1992,8 @@ def _gaot_settings(
     }
 
 
-def _gaot_factory(*, quick: bool):
-    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+def _gaot_factory(*, quick: bool) -> Any:
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float) -> Any:
         return phx.nn.operator.architectures.GAOT(
             **_gaot_settings(scenario, size_scale, quick=quick),
             key=jr.key(seed),
@@ -1989,7 +2002,7 @@ def _gaot_factory(*, quick: bool):
     return build
 
 
-def _gaot_configuration(*, quick: bool):
+def _gaot_configuration(*, quick: bool) -> Any:
     def configuration(
         scenario: OperatorBenchmarkScenario,
         size_scale: float,
@@ -2093,7 +2106,7 @@ def _matching_coordinate_dimensions(scenario: OperatorBenchmarkScenario, /) -> b
 def _fixed_input_shapes(scenario: OperatorBenchmarkScenario, /) -> bool:
     expected_names = tuple(scenario.train_batch.inputs)
 
-    def signature(batch):
+    def signature(batch: Any) -> Any:
         if tuple(batch.inputs) != expected_names:
             return None
         shapes = []
@@ -2303,12 +2316,12 @@ def _cochain_factory(
     *,
     quick: bool,
     routes: phx.nn.operator.architectures.TopologicalRouteConfig,
-):
+) -> Any:
     def factory(
         scenario: OperatorBenchmarkScenario,
         seed: int,
         size_scale: float,
-    ):
+    ) -> Any:
         if scenario.task is None:
             raise ValueError("Cochain architectures require a benchmark OperatorTask.")
         base_width = 8 if quick else 24
@@ -2320,6 +2333,7 @@ def _cochain_factory(
             width=width,
             depth=depth,
             routes=routes,
+            # ty: ignore[invalid-argument-type]
             boundary_policy=boundary_policy,
             key=jr.key(seed),
         )
@@ -2331,7 +2345,7 @@ def _cochain_configuration(
     routes: phx.nn.operator.architectures.TopologicalRouteConfig,
     *,
     quick: bool,
-):
+) -> Any:
     def configuration(
         scenario: OperatorBenchmarkScenario,
         size_scale: float,

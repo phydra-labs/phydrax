@@ -2,13 +2,16 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
 
 
-def _measure_graph():
+def _measure_graph() -> Any:
     return phx.graph.GraphIR(
         nodes={
             "u": jnp.array([1.0, 3.0, 0.0]),
@@ -24,7 +27,7 @@ def _measure_graph():
     )
 
 
-def test_graph_neural_operator_uses_source_quadrature_measure():
+def test_graph_neural_operator_uses_source_quadrature_measure() -> None:
     graph = _measure_graph()
     operator = phx.graph.GraphNeuralOperator(
         input_key="u",
@@ -38,7 +41,7 @@ def test_graph_neural_operator_uses_source_quadrature_measure():
     assert jnp.allclose(output.nodes["integral"][2], 2.5)
 
 
-def test_graph_attention_softmax_is_continuum_measure_aware():
+def test_graph_attention_softmax_is_continuum_measure_aware() -> None:
     graph = _measure_graph()
     operator = phx.graph.GraphAttentionOperator(
         query_fn=lambda values: jnp.zeros_like(values),
@@ -52,7 +55,7 @@ def test_graph_attention_softmax_is_continuum_measure_aware():
     assert jnp.allclose(output.nodes["attention"][2, 0], 2.5)
 
 
-def test_query_graph_installs_source_measure():
+def test_query_graph_installs_source_measure() -> None:
     source = jnp.array([[0.0], [0.5], [1.0]])
     target = jnp.array([[0.25], [0.75]])
     measure = jnp.array([0.2, 0.3, 0.5])
@@ -67,7 +70,7 @@ def test_query_graph_installs_source_measure():
     assert jnp.allclose(installed[3:], 0.0)
 
 
-def test_gino_configuration_executes_encode_process_decode():
+def test_gino_configuration_executes_encode_process_decode() -> None:
     source = jnp.linspace(0.0, 1.0, 6)
     latent = jnp.linspace(0.0, 1.0, 4)
     target = jnp.linspace(0.0, 1.0, 5)

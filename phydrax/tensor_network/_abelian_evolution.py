@@ -10,7 +10,8 @@ from numbers import Integral
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -52,7 +53,7 @@ class AbelianTEBDEvidence(StrictModule):
     precision_policy_id: str = eqx.field(static=True)
 
 
-def _offsets(leg: AbelianLeg):
+def _offsets(leg: AbelianLeg) -> tuple[int, ...]:
     starts = []
     start = 0
     for capacity in leg.capacities:
@@ -61,7 +62,9 @@ def _offsets(leg: AbelianLeg):
     return tuple(starts)
 
 
-def _gate_conservation_residual(gate, left_leg, right_leg):
+def _gate_conservation_residual(
+    gate: Array, left_leg: AbelianLeg, right_leg: AbelianLeg
+) -> Array:
     left_offsets = _offsets(left_leg)
     right_offsets = _offsets(right_leg)
     residual = jnp.asarray(0.0, dtype=gate.real.dtype)
@@ -366,7 +369,9 @@ def apply_abelian_two_site_gate(
         tuple(right_legs), total_charge=right_tensor.layout.total_charge
     )
 
-    def zero_inactive(layout, blocks):
+    def zero_inactive(
+        layout: AbelianTensorLayout, blocks: Sequence[Array]
+    ) -> tuple[Array, ...]:
         output = []
         for block, shape, sector in zip(
             blocks, layout.block_shapes, layout.sectors, strict=True
@@ -423,7 +428,7 @@ class AbelianNearestNeighborHamiltonian(StrictModule):
         *,
         hamiltonian_id: str,
         conservation_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         legs = tuple(physical_legs)
         values = tuple(jnp.asarray(term) for term in terms)
         if len(values) != len(legs) - 1 or not legs:
@@ -487,7 +492,9 @@ def abelian_tebd_step(
     current = state
     records = []
 
-    def layer(value, bonds, local_step):
+    def layer(
+        value: AbelianMatrixProductState, bonds: range, local_step: Array
+    ) -> tuple[AbelianMatrixProductState, list[AbelianTensorTruncationEvidence]]:
         local_records = []
         for bond in bonds:
             value, evidence = apply_abelian_two_site_gate(

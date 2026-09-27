@@ -15,13 +15,16 @@ from phydrax.applications.superconductivity import (
 from phydrax.metrix.clifford import CliffordAlgebraSpec, FiniteMetricIsometryGroup
 
 
-def test_antiunitary_magnetic_symmetry_compiles_real_linear_invariants():
+def test_antiunitary_magnetic_symmetry_compiles_real_linear_invariants() -> None:
     algebra = CliffordAlgebraSpec((1, 1, 1))
     group = FiniteMetricIsometryGroup(algebra, np.stack((np.eye(3), -np.eye(3))))
     plan = MagneticSymmetryRepresentationPlan(
         group,
+        # ty: ignore[invalid-argument-type]
         [False, True],
+        # ty: ignore[invalid-argument-type]
         [[0, 1], [1, 0]],
+        # ty: ignore[invalid-argument-type]
         [[0], [0]],
         np.zeros((2, 1, 3), dtype="int64"),
         np.ones((2, 1, 1), dtype="complex128"),
@@ -41,14 +44,17 @@ def test_antiunitary_magnetic_symmetry_compiles_real_linear_invariants():
     assert float(certificate.composition_residual) == 0.0
 
 
-def test_symmetry_certificate_retains_admitted_composition_error():
+def test_symmetry_certificate_retains_admitted_composition_error() -> None:
     algebra = CliffordAlgebraSpec((1, 1, 1))
     group = FiniteMetricIsometryGroup(algebra, np.stack((np.eye(3), -np.eye(3))))
     representations = np.asarray(([[1.0]], [[1.0 + 1.0e-4j]]))
     plan = MagneticSymmetryRepresentationPlan(
         group,
+        # ty: ignore[invalid-argument-type]
         [False, True],
+        # ty: ignore[invalid-argument-type]
         [[0], [0]],
+        # ty: ignore[invalid-argument-type]
         [[0], [0]],
         np.zeros((2, 1, 3), dtype=np.int64),
         representations,
@@ -61,21 +67,24 @@ def test_symmetry_certificate_retains_admitted_composition_error():
     assert float(certificate.composition_residual) <= plan.tolerance
 
 
-def test_antiunitary_flags_must_form_group_homomorphism():
+def test_antiunitary_flags_must_form_group_homomorphism() -> None:
     algebra = CliffordAlgebraSpec((1, 1, 1))
     group = FiniteMetricIsometryGroup(algebra, np.stack((np.eye(3), -np.eye(3))))
     with pytest.raises(ValueError, match="Z2 homomorphism|identity"):
         MagneticSymmetryRepresentationPlan(
             group,
+            # ty: ignore[invalid-argument-type]
             [True, False],
+            # ty: ignore[invalid-argument-type]
             [[0], [0]],
+            # ty: ignore[invalid-argument-type]
             [[0], [0]],
             np.zeros((2, 1, 3), dtype="int64"),
             np.ones((2, 1, 1), dtype="complex128"),
         )
 
 
-def test_candidate_profiles_keep_maturity_out_of_support_coordinates():
+def test_candidate_profiles_keep_maturity_out_of_support_coordinates() -> None:
     support = (*magnetism_support_tuples(), *superconductivity_support_tuples())
     profiles = (
         *magnetism_candidate_profiles(),

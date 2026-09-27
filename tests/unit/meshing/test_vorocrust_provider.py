@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import sys
+from typing import Any
 
 import manifold3d
 import numpy as np
@@ -14,7 +15,7 @@ from phydrax.meshing.providers._vorocrust import _polyhedra
 _DIGEST = "a" * 64
 
 
-def _cube_surface():
+def _cube_surface() -> Any:
     arrays = manifold3d.Manifold.cube().to_mesh64()
     return phx.geometry.SurfaceModel.from_triangles(
         arrays.vert_properties[:, :3],
@@ -28,7 +29,7 @@ def _cube_surface():
     )
 
 
-def _fake_worker(tmp_path, body):
+def _fake_worker(tmp_path: Any, body: Any) -> Any:
     """A protocol-level worker script speaking the persistent worker protocol."""
     worker = tmp_path / "worker"
     worker.write_text(
@@ -39,7 +40,7 @@ def _fake_worker(tmp_path, body):
     return worker
 
 
-def _hello_worker(tmp_path, identity):
+def _hello_worker(tmp_path: Any, identity: Any) -> Any:
     return _fake_worker(
         tmp_path,
         f"identity = json.loads({json.dumps(json.dumps(identity))})\n"
@@ -55,7 +56,7 @@ def _hello_worker(tmp_path, identity):
 
 
 @pytest.mark.meshing_vorocrust
-def test_real_vorocrust_preserves_closed_cube_volume():
+def test_real_vorocrust_preserves_closed_cube_volume() -> None:
     executable = shutil.which(os.environ.get("PHYDRAX_VOROCRUST_EXECUTABLE", "vc_mesh"))
     worker = shutil.which(
         os.environ.get("PHYDRAX_VOROCRUST_WORKER", "phydrax-vorocrust-worker")
@@ -87,7 +88,7 @@ def test_real_vorocrust_preserves_closed_cube_volume():
     assert result.derivative_mode is phx.meshing.MeshingDerivativeMode.NONDIFFERENTIABLE
 
 
-def test_vorocrust_porous_qualification_certifies_consumed_geometry_not_tpfa():
+def test_vorocrust_porous_qualification_certifies_consumed_geometry_not_tpfa() -> None:
     coordinates = np.asarray(
         (
             (0, 0, 0),
@@ -112,6 +113,7 @@ def test_vorocrust_porous_qualification_certifies_consumed_geometry_not_tpfa():
         ),
     )
     base = phx.meshing.certify_cell_mesh(
+        # ty: ignore[invalid-argument-type]
         phx.discretization.CellMesh.from_polyhedra(coordinates, cells),
         phx.SpatialCoordinateContract.si(),
     )
@@ -149,6 +151,7 @@ def test_vorocrust_porous_qualification_certifies_consumed_geometry_not_tpfa():
         result.coordinate_contract,
         vertical_datum="local-survey-datum",
     )
+    # ty: ignore[unresolved-attribute]
     boundary = np.flatnonzero(np.asarray(result.mesh.connectivity.boundary_faces))
     qualified = phx.applications.porous_media.qualify_vorocrust_porous_mesh(
         result,
@@ -163,7 +166,7 @@ def test_vorocrust_porous_qualification_certifies_consumed_geometry_not_tpfa():
         qualified.require_tpfa()
 
 
-def test_vorocrust_worker_startup_exit_is_an_execution_failure(tmp_path):
+def test_vorocrust_worker_startup_exit_is_an_execution_failure(tmp_path: Any) -> None:
     worker = _fake_worker(tmp_path, "sys.exit(7)\n")
     provider = phx.meshing.VoroCrustProvider(sys.executable, worker)
 
@@ -176,7 +179,7 @@ def test_vorocrust_worker_startup_exit_is_an_execution_failure(tmp_path):
     )
 
 
-def test_vorocrust_worker_identity_is_reported_once_per_session(tmp_path):
+def test_vorocrust_worker_identity_is_reported_once_per_session(tmp_path: Any) -> None:
     identity = {
         "provider": "vorocrust",
         "revision": "r1",
@@ -194,7 +197,7 @@ def test_vorocrust_worker_identity_is_reported_once_per_session(tmp_path):
         assert provider.worker.launches == 1
 
 
-def test_vorocrust_worker_identity_requires_binary_identities(tmp_path):
+def test_vorocrust_worker_identity_requires_binary_identities(tmp_path: Any) -> None:
     identity = {
         "provider": "vorocrust",
         "revision": "r1",
@@ -214,7 +217,7 @@ def test_vorocrust_worker_identity_requires_binary_identities(tmp_path):
     )
 
 
-def test_vorocrust_worker_bounds_control_output_before_decoding(tmp_path):
+def test_vorocrust_worker_bounds_control_output_before_decoding(tmp_path: Any) -> None:
     worker = _fake_worker(
         tmp_path,
         "sys.stdout.write(PREFIX + 'x' * (4 * 1024 * 1024))\n"
@@ -229,7 +232,9 @@ def test_vorocrust_worker_bounds_control_output_before_decoding(tmp_path):
     assert failure.value.category is phx.meshing.MeshingFailureCategory.RESOURCE_EXHAUSTED
 
 
-def test_vorocrust_fails_closed_when_native_preallocation_is_required(tmp_path):
+def test_vorocrust_fails_closed_when_native_preallocation_is_required(
+    tmp_path: Any,
+) -> None:
     worker = _fake_worker(tmp_path, "sys.exit(0)\n")
 
     with pytest.raises(phx.meshing.MeshingFailure) as failure:
@@ -247,7 +252,7 @@ def test_vorocrust_fails_closed_when_native_preallocation_is_required(tmp_path):
     )
 
 
-def _two_box_extraction(extra_vertices=()):
+def _two_box_extraction(extra_vertices: Any = ()) -> Any:
     """Packed extraction output of two unit-height boxes split at x = 0.5.
 
     Vertex 12 aliases 7 and vertex 13 aliases 3 within the merge tolerance.
@@ -289,7 +294,7 @@ def _two_box_extraction(extra_vertices=()):
     }
 
 
-def test_vorocrust_extraction_normalizes_aliases_and_orients_cells_outward():
+def test_vorocrust_extraction_normalizes_aliases_and_orients_cells_outward() -> None:
     mesh, merged, collapsed = _polyhedra(
         _two_box_extraction(), phx.meshing.MeshingLimits(), 1e-12
     )
@@ -307,7 +312,7 @@ def test_vorocrust_extraction_normalizes_aliases_and_orients_cells_outward():
     assert certified.audit.passed
 
 
-def test_vorocrust_extraction_refuses_transitive_alias_chains():
+def test_vorocrust_extraction_refuses_transitive_alias_chains() -> None:
     # Consecutive chain members lie within the tolerance of each other, but
     # the chain end is farther than the tolerance from its representative.
     step = 0.6 * 1e-9 * np.sqrt(3.0)

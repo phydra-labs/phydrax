@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -7,12 +9,12 @@ import pytest
 import phydrax as phx
 
 
-def _interval_function(function):
+def _interval_function(function: Any) -> Any:
     domain = phx.domain.Interval1d(-2.0, 2.0)
     return domain.Function("x")(function)
 
 
-def _square_function(function):
+def _square_function(function: Any) -> Any:
     domain = phx.domain.GeometryDomain(
         phx.geometry.Square(
             center=(0.0, 0.0),
@@ -23,7 +25,7 @@ def _square_function(function):
     return domain.Function("x")(function)
 
 
-def test_diffusion_covariance_accepts_rectangular_diffusion_and_covariance():
+def test_diffusion_covariance_accepts_rectangular_diffusion_and_covariance() -> None:
     diffusion = _square_function(
         lambda x: jnp.asarray([[1.0, x[0], -0.5], [2.0, 0.0, x[1]]])
     )
@@ -44,7 +46,7 @@ def test_diffusion_covariance_accepts_rectangular_diffusion_and_covariance():
     assert jnp.allclose(from_covariance.func(point), jnp.trace(expected))
 
 
-def test_kolmogorov_generator_matches_quadratic_formula_and_vector_components():
+def test_kolmogorov_generator_matches_quadratic_formula_and_vector_components() -> None:
     observable = _square_function(lambda x: x[0] ** 2 + 3.0 * x[1] ** 2)
     drift = _square_function(lambda x: jnp.asarray([0.4, -0.2]))
     diffusion = _square_function(lambda x: jnp.asarray([[1.0, 0.5], [0.0, 2.0]]))
@@ -81,7 +83,7 @@ def test_kolmogorov_generator_matches_quadratic_formula_and_vector_components():
     assert jnp.allclose(vector_generator.func(vector_point), vector_expected)
 
 
-def test_fokker_planck_uses_full_state_dependent_adjoint_and_time_dependence():
+def test_fokker_planck_uses_full_state_dependent_adjoint_and_time_dependence() -> None:
     density = _interval_function(lambda x: x[0] ** 4)
     state_dependent = phx.operators.fokker_planck_operator(
         density,
@@ -108,7 +110,7 @@ def test_fokker_planck_uses_full_state_dependent_adjoint_and_time_dependence():
     )
 
 
-def test_stratonovich_correction_handles_multiplicative_and_rectangular_noise():
+def test_stratonovich_correction_handles_multiplicative_and_rectangular_noise() -> None:
     zero_drift = _interval_function(lambda x: jnp.asarray([0.0]))
     scalar_diffusion = _interval_function(lambda x: jnp.asarray([[1.5 * x[0]]]))
     point = jnp.asarray([0.4])
@@ -138,7 +140,7 @@ def test_stratonovich_correction_handles_multiplicative_and_rectangular_noise():
     assert jnp.allclose(additive.func(vector_point), vector_drift.func(vector_point))
 
 
-def test_stratonovich_generators_equal_explicit_corrected_ito_forms():
+def test_stratonovich_generators_equal_explicit_corrected_ito_forms() -> None:
     observable = _interval_function(lambda x: x[0] ** 3)
     density = _interval_function(lambda x: jnp.exp(-(x[0] ** 2)))
     drift = _interval_function(lambda x: jnp.asarray([0.2 * x[0]]))
@@ -175,13 +177,13 @@ def test_stratonovich_generators_equal_explicit_corrected_ito_forms():
     assert jnp.allclose(stratonovich_adjoint.func(point), ito_adjoint.func(point))
 
 
-def test_stochastic_operators_jit_and_differentiate_through_diffusion():
+def test_stochastic_operators_jit_and_differentiate_through_diffusion() -> None:
     domain = phx.domain.Interval1d(-2.0, 2.0)
     observable = domain.Function("x")(lambda x: x[0] ** 2)
     drift = domain.Function("x")(lambda x: jnp.asarray([0.1 * x[0]]))
     point = jnp.asarray([0.4])
 
-    def evaluate(scale):
+    def evaluate(scale: Any) -> Any:
         diffusion = domain.Function("x")(lambda x: jnp.asarray([[scale * x[0]]]))
         generated = phx.operators.kolmogorov_generator(
             observable,
@@ -198,7 +200,7 @@ def test_stochastic_operators_jit_and_differentiate_through_diffusion():
     assert jnp.allclose(gradient, 4.0 * 1.5 * point[0] ** 2)
 
 
-def test_stochastic_operator_contracts_reject_ambiguous_or_malformed_fields():
+def test_stochastic_operator_contracts_reject_ambiguous_or_malformed_fields() -> None:
     observable = _interval_function(lambda x: x[0] ** 2)
     density = _interval_function(lambda x: jnp.asarray([x[0], x[0] ** 2]))
     drift = _interval_function(lambda x: jnp.asarray([0.0]))
@@ -223,7 +225,7 @@ def test_stochastic_operator_contracts_reject_ambiguous_or_malformed_fields():
         ).func(point)
 
 
-def test_factor_hvp_generator_matches_dense_contraction_componentwise():
+def test_factor_hvp_generator_matches_dense_contraction_componentwise() -> None:
     observable = _square_function(
         lambda x: jnp.asarray(
             [
@@ -257,7 +259,7 @@ def test_factor_hvp_generator_matches_dense_contraction_componentwise():
     )
 
 
-def test_stochastic_trace_estimate_reports_replayable_probe_uncertainty():
+def test_stochastic_trace_estimate_reports_replayable_probe_uncertainty() -> None:
     matrix = jnp.asarray([[1.4, 0.3, -0.2], [0.3, 0.8, 0.1], [-0.2, 0.1, 1.1]])
     state = jnp.asarray([0.2, -0.4, 0.7])
     observable = lambda x: jnp.asarray(
@@ -291,7 +293,7 @@ def test_stochastic_trace_estimate_reports_replayable_probe_uncertainty():
     assert first.num_probes == 2048
 
 
-def test_probability_current_divergence_is_fokker_planck_operator():
+def test_probability_current_divergence_is_fokker_planck_operator() -> None:
     density = _square_function(lambda x: jnp.exp(-jnp.dot(x, x)))
     drift = _square_function(lambda x: jnp.asarray([0.3 * x[0], -0.4 * x[1]]))
     diffusion = _square_function(lambda x: jnp.asarray([[1.0, 0.2], [x[0], 0.7]]))
@@ -314,7 +316,7 @@ def test_probability_current_divergence_is_fokker_planck_operator():
     )
 
 
-def test_probability_density_products_count_all_coord_separable_axes():
+def test_probability_density_products_count_all_coord_separable_axes() -> None:
     density = _square_function(lambda x: 1.0 + x[0] ** 2 + x[1] ** 2)
     drift = _square_function(lambda x: jnp.asarray([1.0, -0.5]))
     x_axis = jnp.linspace(-0.5, 0.5, 3)

@@ -10,7 +10,8 @@ from collections.abc import Mapping, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -43,7 +44,7 @@ class ExactIntegerCOO(StrictModule, NonTrainableState):
         *,
         source_id: str,
         target_id: str,
-    ):
+    ) -> None:
         rows_count = int(row_count)
         columns_count = int(column_count)
         if rows_count < 0 or columns_count < 0:
@@ -327,7 +328,7 @@ class ExactChainComplex(StrictModule, NonTrainableState):
         /,
         *,
         complex_id: str,
-    ):
+    ) -> None:
         values = tuple(boundaries)
         if not values:
             raise ValueError("Exact chain complexes require at least degree zero.")

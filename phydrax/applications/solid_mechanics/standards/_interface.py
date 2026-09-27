@@ -10,7 +10,8 @@ from enum import IntEnum
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
@@ -36,7 +37,7 @@ class LoadCombination(StrictModule, NonTrainableState):
         *,
         category: str,
         clause_id: str,
-    ):
+    ) -> None:
         self.combination_id = str(combination_id)
         self.factors = tuple(
             sorted((str(key), float(value)) for key, value in factors.items())
@@ -115,7 +116,7 @@ class GenericLimitStateStandard(AbstractStructuralStandard):
         standard_id: str = "generic-limit-state",
         edition: str = "declared",
         jurisdiction: str = "declared",
-    ):
+    ) -> None:
         combinations_ = tuple(combinations)
         if not combinations_ or resistance_factor <= 0.0:
             raise ValueError(

@@ -7,16 +7,17 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from math import isfinite
-from typing import Any, cast, Literal
+from typing import Any, cast, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ....transport import (
     AbstractBalancedTransportSolver,
     AbstractGroundCost,
 )
+from ....typing import parse
 from ..._keys import (
     EvalKey,
     fold_in_eval_key,
@@ -26,8 +27,12 @@ from ..data import OperatorBatch
 from ..distribution import AbstractProbabilisticOperatorModel
 
 
-SemigroupReduction = Literal["mean", "sum"]
-SemigroupKeyMode = Literal["fold_in", "split"]
+if TYPE_CHECKING:
+    from ....uq._operator import OperatorPredictiveField
+
+
+SemigroupReduction: TypeAlias = Literal["mean", "sum"]
+SemigroupKeyMode: TypeAlias = Literal["fold_in", "split"]
 
 
 def _require_batch(
@@ -122,13 +127,15 @@ class ConditionedSemigroupObjective:
     weight: float = 1.0
     key_mode: SemigroupKeyMode = "fold_in"
 
-    def __post_init__(self):
-        if self.reduction not in ("mean", "sum"):
-            raise ValueError("reduction must be 'mean' or 'sum'.")
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "reduction", parse(self.reduction, SemigroupReduction, "reduction")
+        )
         if not isfinite(float(self.weight)) or float(self.weight) < 0.0:
             raise ValueError("weight must be finite and nonnegative.")
-        if self.key_mode not in ("fold_in", "split"):
-            raise ValueError("key_mode must be 'fold_in' or 'split'.")
+        object.__setattr__(
+            self, "key_mode", parse(self.key_mode, SemigroupKeyMode, "key_mode")
+        )
 
     def __call__(
         self,
@@ -194,7 +201,7 @@ class DistributionalSemigroupObjective:
     weight: float = 1.0
     key_mode: SemigroupKeyMode = "fold_in"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if int(self.num_samples) < 2:
             raise ValueError("num_samples must be at least two.")
         if self.measure not in ("quadrature", "uniform"):
@@ -203,12 +210,14 @@ class DistributionalSemigroupObjective:
             raise ValueError("beta must satisfy 0 < beta <= 2.")
         if self.chunk_size is not None and int(self.chunk_size) <= 0:
             raise ValueError("chunk_size must be positive when provided.")
-        if self.reduction not in ("mean", "sum"):
-            raise ValueError("reduction must be 'mean' or 'sum'.")
+        object.__setattr__(
+            self, "reduction", parse(self.reduction, SemigroupReduction, "reduction")
+        )
         if not isfinite(float(self.weight)) or float(self.weight) < 0.0:
             raise ValueError("weight must be finite and nonnegative.")
-        if self.key_mode not in ("fold_in", "split"):
-            raise ValueError("key_mode must be 'fold_in' or 'split'.")
+        object.__setattr__(
+            self, "key_mode", parse(self.key_mode, SemigroupKeyMode, "key_mode")
+        )
 
     def __call__(
         self,
@@ -260,7 +269,7 @@ def _distributional_predictives(
     key_mode: SemigroupKeyMode,
     key: EvalKey,
     owner: str,
-):
+) -> tuple[OperatorPredictiveField, OperatorPredictiveField]:
     if not isinstance(model, AbstractProbabilisticOperatorModel):
         raise TypeError(f"{owner} requires a probabilistic operator.")
     if key is None:
@@ -368,17 +377,19 @@ class SinkhornDistributionalSemigroupObjective:
     cost: AbstractGroundCost | None = None
     solver: AbstractBalancedTransportSolver | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if int(self.num_samples) < 2:
             raise ValueError("num_samples must be at least two.")
         if self.measure not in ("quadrature", "uniform"):
             raise ValueError("measure must be 'quadrature' or 'uniform'.")
-        if self.reduction not in ("mean", "sum"):
-            raise ValueError("reduction must be 'mean' or 'sum'.")
+        object.__setattr__(
+            self, "reduction", parse(self.reduction, SemigroupReduction, "reduction")
+        )
         if not isfinite(float(self.weight)) or float(self.weight) < 0.0:
             raise ValueError("weight must be finite and nonnegative.")
-        if self.key_mode not in ("fold_in", "split"):
-            raise ValueError("key_mode must be 'fold_in' or 'split'.")
+        object.__setattr__(
+            self, "key_mode", parse(self.key_mode, SemigroupKeyMode, "key_mode")
+        )
         if not isfinite(float(self.epsilon)) or float(self.epsilon) <= 0.0:
             raise ValueError("epsilon must be finite and positive.")
         if self.cost is not None and not isinstance(self.cost, AbstractGroundCost):

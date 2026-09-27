@@ -47,7 +47,7 @@ class CasePartitionManifest(StrictModule, NonTrainableState):
         test_ids: Sequence[str],
         policy_id: str,
         source_id: str,
-    ):
+    ) -> None:
         cases = _identifiers("case_ids", case_ids)
         groups = _identifiers("group_ids", group_ids)
         if len(cases) != len(groups):

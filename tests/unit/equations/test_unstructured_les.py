@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -26,7 +29,7 @@ from phydrax.equations._unstructured_les import (
 )
 
 
-def _tetrahedral_grid(*, scale=1.0, skew=True):
+def _tetrahedral_grid(*, scale: Any = 1.0, skew: Any = True) -> Any:
     logical = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -62,7 +65,7 @@ def _tetrahedral_grid(*, scale=1.0, skew=True):
     return scale * logical, tetrahedra
 
 
-def _operators(*, scale=1.0):
+def _operators(*, scale: Any = 1.0) -> Any:
     vertices, tetrahedra = _tetrahedral_grid(scale=scale)
     discretization = phx.discretization.UnstructuredFiniteVolumePlan(
         vertices,
@@ -76,7 +79,7 @@ def _operators(*, scale=1.0):
     )
 
 
-def _filter():
+def _filter() -> Any:
     return ResolvedLESFilter(
         "tetrahedral-control-volume",
         family="implicit-grid-volume",
@@ -89,7 +92,7 @@ def _filter():
     )
 
 
-def _prepared(*, coefficient=0.08, ksgs=False, scale=1.0):
+def _prepared(*, coefficient: Any = 0.08, ksgs: Any = False, scale: Any = 1.0) -> Any:
     operators = _operators(scale=scale)
     discretization = operators.discretization
     resolved_filter = _filter()
@@ -122,7 +125,7 @@ def _prepared(*, coefficient=0.08, ksgs=False, scale=1.0):
     return prepared
 
 
-def _case(prepared, *, constant_density=False):
+def _case(prepared: Any, *, constant_density: Any = False) -> Any:
     centers = prepared.operators.discretization.cell_centers
     density = (
         jnp.full((centers.shape[0],), 1.7)
@@ -177,7 +180,9 @@ def _case(prepared, *, constant_density=False):
     return state, arguments
 
 
-def test_control_volume_scale_is_directional_volume_equivalent_and_scales_with_mesh():
+def test_control_volume_scale_is_directional_volume_equivalent_and_scales_with_mesh() -> (
+    None
+):
     reference = _operators(scale=1.0).discretization
     dilated = _operators(scale=2.0).discretization
     widths = reference.directional_control_volume_widths()
@@ -193,7 +198,7 @@ def test_control_volume_scale_is_directional_volume_equivalent_and_scales_with_m
     assert jnp.max(jnp.ptp(widths, axis=-1)) > 0.0
 
 
-def test_constant_density_shared_flux_zero_coefficient_and_separate_ledgers():
+def test_constant_density_shared_flux_zero_coefficient_and_separate_ledgers() -> None:
     prepared = _prepared(coefficient=0.0)
     state, arguments = _case(prepared, constant_density=True)
     result = prepared.semidiscrete_rate(state, *arguments)
@@ -248,7 +253,9 @@ def test_constant_density_shared_flux_zero_coefficient_and_separate_ledgers():
     assert result.evidence.successful
 
 
-def test_skew_nonorthogonal_manufactured_low_mach_path_is_conservative_and_dissipative():
+def test_skew_nonorthogonal_manufactured_low_mach_path_is_conservative_and_dissipative() -> (
+    None
+):
     prepared = _prepared(coefficient=0.08)
     state, arguments = _case(prepared)
     result = prepared.semidiscrete_rate(state, *arguments)
@@ -293,7 +300,7 @@ def test_skew_nonorthogonal_manufactured_low_mach_path_is_conservative_and_dissi
     assert result.evidence.resource_evidence_id == discretization.preparation.report_id
 
 
-def test_static_ksgs_reuses_mass_flux_and_keeps_transport_conservative():
+def test_static_ksgs_reuses_mass_flux_and_keeps_transport_conservative() -> None:
     prepared = _prepared(ksgs=True)
     state, arguments = _case(prepared)
     centers = prepared.operators.discretization.cell_centers
@@ -331,7 +338,7 @@ def test_static_ksgs_reuses_mass_flux_and_keeps_transport_conservative():
     assert result.evidence.successful
 
 
-def test_refuses_unsupported_geometry_filter_scale_and_nonpositive_transport():
+def test_refuses_unsupported_geometry_filter_scale_and_nonpositive_transport() -> None:
     prepared = _prepared()
     state, arguments = _case(prepared)
     bad_density = UnstructuredLowMachLESState(
@@ -399,7 +406,7 @@ def test_refuses_unsupported_geometry_filter_scale_and_nonpositive_transport():
         prepared.plan.prepare(two_dimensional_operators)
 
 
-def test_semidiscrete_rate_is_jittable_and_has_finite_momentum_jvp():
+def test_semidiscrete_rate_is_jittable_and_has_finite_momentum_jvp() -> None:
     prepared = _prepared()
     state, arguments = _case(prepared)
     eager = prepared.semidiscrete_rate(state, *arguments)
@@ -409,7 +416,7 @@ def test_semidiscrete_rate_is_jittable_and_has_finite_momentum_jvp():
         compiled.momentum_density_rate, eager.momentum_density_rate
     )
 
-    def momentum_rate(momentum):
+    def momentum_rate(momentum: Any) -> Any:
         candidate = UnstructuredLowMachLESState(
             state.density,
             momentum,

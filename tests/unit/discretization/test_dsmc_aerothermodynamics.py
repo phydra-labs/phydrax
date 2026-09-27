@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -5,7 +7,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _species():
+def _species() -> Any:
     return phx.discretization.dsmc.DSMCSpeciesPlan(
         ("A",),
         jnp.asarray((4.65e-26,)),
@@ -17,7 +19,7 @@ def _species():
     )
 
 
-def _particles():
+def _particles() -> Any:
     return phx.discretization.dsmc.DSMCParticleState(
         jnp.asarray(((0.25,), (0.75,))),
         jnp.asarray(((100.0,), (-100.0,))),
@@ -31,7 +33,7 @@ def _particles():
     )
 
 
-def test_dsmc_streaming_collision_and_internal_energy_are_conservative():
+def test_dsmc_streaming_collision_and_internal_energy_are_conservative() -> None:
     species = _species()
     cells = phx.discretization.dsmc.DSMCStructuredCellPlan(
         jnp.asarray((0.0,)), jnp.asarray((1.0,)), (1,)
@@ -87,7 +89,7 @@ def test_dsmc_streaming_collision_and_internal_energy_are_conservative():
     np.testing.assert_allclose(internal.energy_defect, 0.0, atol=1.0e-30)
 
 
-def test_dsmc_surface_and_hybrid_exchange_are_action_reaction_pairs():
+def test_dsmc_surface_and_hybrid_exchange_are_action_reaction_pairs() -> None:
     interaction = phx.discretization.dsmc.DSMCSurfaceInteractionPlan(
         _species(), "specular", jnp.asarray((0.0,)), wall_temperature=300.0
     )
@@ -118,7 +120,7 @@ def test_dsmc_surface_and_hybrid_exchange_are_action_reaction_pairs():
     assert bool(jnp.any(exchange.extensive_exchange != 0.0))
 
 
-def test_dynamic_hybrid_ownership_requires_host_epoch_and_conversion_evidence():
+def test_dynamic_hybrid_ownership_requires_host_epoch_and_conversion_evidence() -> None:
     plan = phx.solver.HybridOwnershipEpochPlan(
         enter_threshold=0.05,
         leave_threshold=0.02,
@@ -169,7 +171,7 @@ def test_dynamic_hybrid_ownership_requires_host_epoch_and_conversion_evidence():
     assert state.kinetic_mask.tolist() == [False, False, False]
 
 
-def test_vss_uses_its_angular_parameter_and_preserves_pair_invariants():
+def test_vss_uses_its_angular_parameter_and_preserves_pair_invariants() -> None:
     species = _species()
     parameters = phx.discretization.dsmc.DSMCPairCollisionParameters(
         jnp.asarray(((3.7e-10,),)),

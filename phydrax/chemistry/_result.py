@@ -12,7 +12,8 @@ from typing import TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -50,7 +51,7 @@ class ElectronicEnergyLedger(StrictModule, NonTrainableState):
         reported_total: ArrayLike,
         energy_unit: UnitDefinition,
         /,
-    ):
+    ) -> None:
         names = tuple(str(value).strip() for value in component_names)
         values = jnp.asarray(components)
         total = jnp.asarray(reported_total, dtype=values.dtype).reshape(())
@@ -105,7 +106,7 @@ class ElectronicConvergenceEvidence(StrictModule, NonTrainableState):
         energy_residual: ArrayLike = jnp.nan,
         density_residual: ArrayLike = jnp.nan,
         message: str = "not-reported",
-    ):
+    ) -> None:
         converged_host = np.asarray(converged)
         iterations_host = np.asarray(iterations)
         energy_host = np.asarray(energy_residual)
@@ -184,7 +185,7 @@ class ElectronicWorkEvidence(StrictModule, NonTrainableState):
         force_evaluations: int = 0,
         hessian_evaluations: int = 0,
         property_evaluations: int = 0,
-    ):
+    ) -> None:
         values = (
             energy_evaluations,
             force_evaluations,
@@ -252,7 +253,7 @@ class ElectronicEvaluationHeader(StrictModule, NonTrainableState):
         provider_id: str,
         source_unit_ids: tuple[tuple[str, str], ...],
         artifact_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         ids = jnp.asarray(stable_particle_ids, dtype=jnp.int64)
         active = jnp.asarray(active_mask, dtype=jnp.bool_)
         if ids.ndim != 1 or active.shape != ids.shape:
@@ -341,7 +342,7 @@ class ElectronicEnergyEvaluation(StrictModule, NonTrainableState):
     energy: Array
     result_id: str = eqx.field(static=True)
 
-    def __init__(self, header: ElectronicEvaluationHeader, energy: ArrayLike, /):
+    def __init__(self, header: ElectronicEvaluationHeader, energy: ArrayLike, /) -> None:
         energy_ = jnp.asarray(energy).reshape(())
         _require_finite_if_successful(header, energy_)
         self.header = header
@@ -365,7 +366,7 @@ class ElectronicEnergyForceEvaluation(StrictModule, NonTrainableState):
         energy: ArrayLike,
         forces: ArrayLike,
         /,
-    ):
+    ) -> None:
         energy_ = jnp.asarray(energy).reshape(())
         forces_ = _particle_tensor(header, forces, rank=2, name="forces")
         _require_finite_if_successful(header, energy_, forces_)
@@ -395,7 +396,7 @@ class ElectronicEnergyForceHessianEvaluation(StrictModule, NonTrainableState):
         forces: ArrayLike,
         hessian: ArrayLike,
         /,
-    ):
+    ) -> None:
         energy_ = jnp.asarray(energy).reshape(())
         forces_ = _particle_tensor(header, forces, rank=2, name="forces")
         hessian_ = _particle_tensor(header, hessian, rank=4, name="hessian")
@@ -429,7 +430,7 @@ class ElectronicGroundStatePropertyEvaluation(StrictModule, NonTrainableState):
         forces: ArrayLike,
         dipole: ArrayLike,
         /,
-    ):
+    ) -> None:
         energy_ = jnp.asarray(energy).reshape(())
         forces_ = _particle_tensor(header, forces, rank=2, name="forces")
         dipole_ = jnp.asarray(dipole, dtype=energy_.dtype)
@@ -474,7 +475,7 @@ class ElectronicPeriodicEvaluation(StrictModule, NonTrainableState):
         band_energies: ArrayLike | None = None,
         density_matrices: ArrayLike | None = None,
         polarization: ArrayLike | None = None,
-    ):
+    ) -> None:
         energy_ = jnp.asarray(energy).reshape(())
         forces_ = (
             None

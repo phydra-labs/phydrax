@@ -9,7 +9,7 @@ class MachineFrame:
     frame_id: str
     dimension: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.frame_id or self.dimension not in (2, 3):
             raise ValueError("Machine frame requires ID and 2D/3D dimension.")
 
@@ -20,7 +20,7 @@ class MachineConfiguration:
     frame: MachineFrame
     head_count: int = 1
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.machine_id or self.head_count <= 0:
             raise ValueError("Machine configuration is invalid.")
 

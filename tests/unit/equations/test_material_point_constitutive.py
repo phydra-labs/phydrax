@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -12,17 +14,17 @@ import pytest
 import phydrax as phx
 
 
-def _parameters():
+def _parameters() -> Any:
     return phx.applications.solid_mechanics.NeoHookeanParameters.from_shear_bulk(
         3.0, 11.0
     )
 
 
-def _empty(batch_shape):
+def _empty(batch_shape: Any) -> Any:
     return jnp.empty(batch_shape + (0,), dtype=jnp.float64)
 
 
-def test_neo_hookean_physical_bulk_factory_and_identity_response():
+def test_neo_hookean_physical_bulk_factory_and_identity_response() -> None:
     parameters = _parameters()
     assert parameters.shear_modulus == pytest.approx(3.0)
     assert parameters.bulk_modulus == pytest.approx(11.0)
@@ -48,7 +50,9 @@ def test_neo_hookean_physical_bulk_factory_and_identity_response():
     assert response.trial_state.shape == (2, 0)
 
 
-def test_neo_hookean_energy_gradient_is_first_piola_and_parameters_differentiate():
+def test_neo_hookean_energy_gradient_is_first_piola_and_parameters_differentiate() -> (
+    None
+):
     parameters = _parameters()
     deformation = jnp.asarray([[1.08, 0.07, 0.0], [0.02, 0.94, 0.03], [0.0, 0.01, 1.04]])
     stress = phx.applications.solid_mechanics.neo_hookean_first_piola(
@@ -63,7 +67,7 @@ def test_neo_hookean_energy_gradient_is_first_piola_and_parameters_differentiate
 
     plan = phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(3)
 
-    def energy(material):
+    def energy(material: Any) -> Any:
         return plan.evaluate(
             deformation[None],
             _empty((1,)),
@@ -78,7 +82,7 @@ def test_neo_hookean_energy_gradient_is_first_piola_and_parameters_differentiate
     assert jnp.isfinite(material_gradient.lame_lambda)
 
 
-def test_plane_strain_matches_embedded_three_dimensional_response():
+def test_plane_strain_matches_embedded_three_dimensional_response() -> None:
     parameters = _parameters()
     deformation_2d = jnp.asarray([[[1.05, 0.08], [0.03, 0.97]]])
     embedded = jnp.asarray([[[1.05, 0.08, 0.0], [0.03, 0.97, 0.0], [0.0, 0.0, 1.0]]])
@@ -116,7 +120,9 @@ def test_plane_strain_matches_embedded_three_dimensional_response():
 
 
 @pytest.mark.parametrize("dimension", [2, 3])
-def test_finite_deformation_wave_bound_dominates_sampled_acoustic_speeds(dimension):
+def test_finite_deformation_wave_bound_dominates_sampled_acoustic_speeds(
+    dimension: Any,
+) -> None:
     parameters = _parameters()
     deformation = (
         jnp.asarray([[1.15, 0.12], [0.04, 0.88]])
@@ -155,7 +161,7 @@ def test_finite_deformation_wave_bound_dominates_sampled_acoustic_speeds(dimensi
             (radial * jnp.cos(aa), radial * jnp.sin(aa), zz), axis=-1
         ).reshape((-1, 3))
 
-    def acoustic_speed(direction):
+    def acoustic_speed(direction: Any) -> Any:
         mapped = inverse_transpose @ direction
         acoustic = parameters.shear_modulus * jnp.eye(
             dimension
@@ -167,7 +173,7 @@ def test_finite_deformation_wave_bound_dominates_sampled_acoustic_speeds(dimensi
     assert response.maximum_wave_speed[0] >= sampled_maximum - 1e-12
 
 
-def test_neo_hookean_mpm_rejects_nonpositive_jacobian():
+def test_neo_hookean_mpm_rejects_nonpositive_jacobian() -> None:
     plan = phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(2)
     response = plan.evaluate(
         jnp.asarray([[[-1.0, 0.0], [0.0, 1.0]]]),

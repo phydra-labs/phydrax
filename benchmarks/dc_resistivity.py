@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -13,7 +15,7 @@ from phydrax.applications import geophysics as geo
 from phydrax.discretization import CellMesh
 
 
-def _problem():
+def _problem() -> Any:
     mesh = CellMesh.from_tetrahedra(
         np.asarray(
             (
@@ -53,8 +55,8 @@ def main() -> None:
     direction = jnp.asarray((0.3, -0.4))
     cotangent = jnp.asarray((0.2, -0.5, 0.7))
 
-    def evaluate(log_conductivity):
-        def forward(value):
+    def evaluate(log_conductivity: Any) -> Any:
+        def forward(value: Any) -> Any:
             return prepared.predict(jnp.exp(value))
 
         prediction, tangent = jax.jvp(forward, (log_conductivity,), (direction,))

@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._model import AbstractArrayModel
+from ...typing import parse, PRNGKey
 from .._base import _AbstractBaseModel, _AbstractStructuredInputModel
 from .._contracts import (
     AFFINE,
@@ -35,7 +36,7 @@ from ..parameters import (
 from ._input_convex import InputConvexNetwork
 
 
-DissipationStructure = Literal["positive_definite", "positive_semidefinite"]
+DissipationStructure: TypeAlias = Literal["positive_definite", "positive_semidefinite"]
 _ResolvedDissipationStructure = Literal[
     "none", "positive_definite", "positive_semidefinite"
 ]
@@ -78,7 +79,7 @@ class FeatureNormPotential(_AbstractBaseModel):
         *,
         initial_quadratic: float = 1e-2,
         minimum_quadratic: float = 1e-8,
-    ):
+    ) -> None:
         if not isinstance(features, AbstractArrayModel):
             raise TypeError("features must be a Phydrax array model.")
         input_shape = _get_value_shape(features.in_size)
@@ -179,21 +180,17 @@ class PortHamiltonianVectorField(_AbstractStructuredInputModel):
         initial_damping: float = 1e-2,
         minimum_dissipation_factor: float = 1e-6,
         interconnection_scale: float = 0.1,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         dimension = int(state_size)
         if dimension <= 0:
             raise ValueError("state_size must be positive.")
         control_dimension = None if control_size is None else int(control_size)
         if control_dimension is not None and control_dimension <= 0:
             raise ValueError("control_size must be positive when supplied.")
-        if dissipation_structure not in (
-            "positive_definite",
-            "positive_semidefinite",
-        ):
-            raise ValueError(
-                "dissipation_structure must be 'positive_definite' or 'positive_semidefinite'."
-            )
+        dissipation_structure = parse(
+            dissipation_structure, DissipationStructure, "dissipation_structure"
+        )
         if not dissipative and dissipation_model is not None:
             raise ValueError(
                 "dissipation_model cannot be supplied when dissipative is False."

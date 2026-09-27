@@ -4,11 +4,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import IntFlag
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -19,7 +20,9 @@ from ..discretization.particle import (
     conversion_state_admissible,
     ParticleConversionState,
     ParticleConversionStateGeometry,
+    ParticleDiscretization,
     ParticleInternalBatchPlan,
+    ParticleInternalBatchState,
     PreparedParticleInternalBatch,
 )
 from ._particle_reaction import (
@@ -31,6 +34,7 @@ from ._particle_reaction import (
 from ._particle_thermochemistry import (
     evaluate_particle_transport,
     ParticleThermochemicalMaterialBundle,
+    ParticleTransportBoundary,
     ParticleTransportEvaluation,
 )
 
@@ -56,13 +60,13 @@ class ParticleConversionProblemIR(StrictModule, NonTrainableState):
     def __init__(
         self,
         name: str,
-        materials,
+        materials: Sequence[ParticleThermochemicalMaterialBundle],
         /,
         *,
-        reactions=None,
-        phase_changes=None,
+        reactions: Sequence[ParticleReactionProcessPlan | None] | None = None,
+        phase_changes: Sequence[EvaporationPhaseChangePlan | None] | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         material_values = tuple(materials)
         if not name_:
@@ -146,7 +150,12 @@ class PreparedParticleConversionDynamics(StrictModule, NonTrainableState):
     batches: tuple[PreparedParticleInternalBatch, ...]
     dynamics_id: str = eqx.field(static=True)
 
-    def __init__(self, problem, batches, /):
+    def __init__(
+        self,
+        problem: ParticleConversionProblemIR,
+        batches: Sequence[PreparedParticleInternalBatch],
+        /,
+    ) -> None:
         if not isinstance(problem, ParticleConversionProblemIR):
             raise TypeError("problem must be a ParticleConversionProblemIR.")
         batch_values = tuple(batches)
@@ -172,13 +181,13 @@ class PreparedParticleConversionDynamics(StrictModule, NonTrainableState):
         )
 
     @property
-    def state_geometry(self):
+    def state_geometry(self) -> ParticleConversionStateGeometry:
         return ParticleConversionStateGeometry(self.dynamics_id)
 
     def evaluate(
         self,
         state: ParticleConversionState,
-        boundaries,
+        boundaries: Sequence[ParticleTransportBoundary],
         /,
     ) -> ParticleConversionEvaluation:
         boundary_values = tuple(boundaries)
@@ -303,7 +312,13 @@ class CompiledParticleConversionProblem(StrictModule, NonTrainableState):
     discretization_bundle: DiscretizationBundle
     compilation_id: str = eqx.field(static=True)
 
-    def __init__(self, problem, dynamics, bundle, /):
+    def __init__(
+        self,
+        problem: ParticleConversionProblemIR,
+        dynamics: PreparedParticleConversionDynamics,
+        bundle: DiscretizationBundle,
+        /,
+    ) -> None:
         self.problem = problem
         self.dynamics = dynamics
         self.discretization_bundle = bundle
@@ -316,7 +331,9 @@ class CompiledParticleConversionProblem(StrictModule, NonTrainableState):
             }
         )
 
-    def initialize_state(self, batches, /):
+    def initialize_state(
+        self, batches: Sequence[ParticleInternalBatchState], /
+    ) -> ParticleConversionState:
         from ..discretization.particle import initialize_particle_conversion_state
 
         state = initialize_particle_conversion_state(
@@ -332,8 +349,8 @@ class CompiledParticleConversionProblem(StrictModule, NonTrainableState):
 
 def compile_particle_conversion_problem(
     problem: ParticleConversionProblemIR,
-    particles,
-    batch_plans,
+    particles: ParticleDiscretization,
+    batch_plans: Sequence[ParticleInternalBatchPlan],
     /,
 ) -> CompiledParticleConversionProblem:
     if not isinstance(problem, ParticleConversionProblemIR):

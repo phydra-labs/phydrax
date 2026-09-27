@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -106,7 +107,7 @@ class RigidDeformableKKTLinearization(StrictModule, NonTrainableState):
         )
         target = ArraySpace(self.body_levers.shape, dtype=dtype)
 
-        def transpose(multiplier):
+        def transpose(multiplier: ArrayLike) -> tuple[Array, Array, Array]:
             deformable, rigid = self.transpose_action(multiplier)
             return deformable, rigid.force, rigid.torque
 
@@ -189,7 +190,7 @@ class RigidDeformableAttachmentPlan(StrictModule, NonTrainableState):
         rank_tolerance: float = 1.0e-10,
         tolerance: float = 1.0e-9,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(interpolation, PreparedFiniteElementPointInterpolation):
             raise TypeError("interpolation must be prepared FE point interpolation.")
         from ..particle._rigid_body import PreparedRigidBodySet

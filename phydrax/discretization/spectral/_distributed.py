@@ -7,24 +7,40 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from math import prod
 from operator import index
-from typing import Any, Literal, TypeAlias
+from typing import Any, cast, Literal, TypeAlias, TypedDict, Unpack
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from ..._execution_runtime import ExecutionGroup
 from ..._fingerprint import canonical_fingerprint
 from ..._spectral._fourier import resize_fourier_axis
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 SpectralSchedule: TypeAlias = Literal["slab", "pencil", "channel"]
 SpectralRepresentation: TypeAlias = Literal["physical", "modal"]
+
+
+class _ForwardedPlanOptions(TypedDict, total=False):
+    padded_shape: Sequence[int] | None
+    state_shape: Sequence[int]
+    stage_count: int
+    checkpoint_count: int
+    closure_workspace_bytes: int
+    maximum_bytes: int
+    horizontal_axes: Sequence[int]
+
+
+class _FromDiscretizationOptions(_ForwardedPlanOptions, total=False):
+    schedule: SpectralSchedule
 
 
 def _positive_shape(shape: Sequence[int], owner: str, /) -> tuple[int, ...]:
@@ -77,7 +93,7 @@ class SpectralMeshTopology(StrictModule, NonTrainableState):
         devices: Sequence[jax.Device] | None = None,
         axis_names: Sequence[str] | None = None,
         execution_group_id: str | None = None,
-    ):
+    ) -> None:
         if isinstance(mesh_or_shape, Mesh):
             if devices is not None or axis_names is not None:
                 raise ValueError(
@@ -209,13 +225,12 @@ class SpectralLayout(StrictModule, NonTrainableState):
         /,
         *,
         padded: bool = False,
-    ):
+    ) -> None:
         shape = _positive_shape(global_shape, "global_shape")
         entries = tuple(_partition_entry(value) for value in partition)
         if len(entries) != len(shape):
             raise ValueError("partition must explicitly describe every array dimension.")
-        if representation not in ("physical", "modal"):
-            raise ValueError("representation must be 'physical' or 'modal'.")
+        representation = parse(representation, SpectralRepresentation, "representation")
         if not isinstance(topology, SpectralMeshTopology):
             raise TypeError("topology must be SpectralMeshTopology.")
         mesh_sizes = dict(zip(topology.mesh_axis_names, topology.mesh_shape, strict=True))
@@ -304,7 +319,7 @@ class SpectralTranspose(StrictModule, NonTrainableState):
         split_axis: int,
         concat_axis: int,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, SpectralLayout) or not isinstance(
             target, SpectralLayout
         ):
@@ -398,7 +413,7 @@ class SpectralResourceReport(StrictModule, NonTrainableState):
         closure_bytes: int = 0,
         maximum_bytes: int,
         reasons: Sequence[str] = (),
-    ):
+    ) -> None:
         values = tuple(
             index(value)
             for value in (
@@ -453,7 +468,7 @@ class SpectralResourceError(MemoryError):
 
     report: SpectralResourceReport
 
-    def __init__(self, report: SpectralResourceReport, /):
+    def __init__(self, report: SpectralResourceReport, /) -> None:
         self.report = report
         super().__init__(
             "Distributed spectral resource preflight refused: "
@@ -536,7 +551,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         closure_workspace_bytes: int = 0,
         maximum_bytes: int = 2 * 1024**3,
         horizontal_axes: Sequence[int] = (0, 2),
-    ):
+    ) -> None:
         if not isinstance(topology, SpectralMeshTopology):
             raise TypeError("topology must be SpectralMeshTopology.")
         shape = _positive_shape(spatial_shape, "spatial_shape")
@@ -552,8 +567,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             b < a for a, b in zip(shape, padded, strict=True)
         ):
             raise ValueError("padded_shape must componentwise contain spatial_shape.")
-        if schedule not in ("slab", "pencil", "channel"):
-            raise ValueError("schedule must be 'slab', 'pencil', or 'channel'.")
+        schedule = parse(schedule, SpectralSchedule, "schedule")
         dtype = np.dtype(jax.dtypes.canonicalize_dtype(np.dtype(coefficient_dtype)))
         if not jnp.issubdtype(dtype, jnp.complexfloating):
             raise TypeError(
@@ -848,7 +862,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         topology: SpectralMeshTopology,
         discretization: Any,
         /,
-        **kwargs,
+        **kwargs: Unpack[_FromDiscretizationOptions],
     ) -> "DistributedSpectralExecutionPlan":
         axes = tuple(discretization.axes)
         families = tuple(axis.family for axis in axes)
@@ -870,6 +884,8 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
                 float(jnp.sqrt(axis.length / count))
                 for axis, count in zip(axes, padded, strict=True)
             )
+        # ``schedule`` was popped above; only constructor pass-through options remain.
+        forwarded = cast(_ForwardedPlanOptions, kwargs)
         return cls(
             topology,
             discretization.modal_shape,
@@ -879,7 +895,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             accumulation_dtype=jnp.dtype(discretization.plan.precision.reduction_dtype),
             transform_scale=scale,
             padded_transform_scale=padded_scale,
-            **kwargs,
+            **forwarded,
         )
 
     def prepare(self, /) -> "DistributedSpectralExecutionPlan":
@@ -1223,8 +1239,8 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         stepper: Callable[..., ArrayLike],
         coefficients: ArrayLike,
         /,
-        *args,
-        **kwargs,
+        *args: object,
+        **kwargs: object,
     ) -> Array:
         value = self._validate(coefficients, self.modal_layout, "ETDRK modal state")
         result = stepper(value, *args, **kwargs)
@@ -1274,7 +1290,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             )
         axes = layout.used_mesh_axes
 
-        def reduce_local(local):
+        def reduce_local(local: Array) -> tuple[Array, Array, Array, Array]:
             total = jnp.sum(local.astype(sum_dtype))
             squared = jnp.sum(jnp.square(jnp.abs(local)).astype(reduction_dtype))
             maximum = jax.lax.stop_gradient(
@@ -1366,7 +1382,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             )
         axes = layout.used_mesh_axes
 
-        def inner_local(left_local, right_local):
+        def inner_local(left_local: Array, right_local: Array) -> Array:
             total = jnp.vdot(left_local.astype(sum_dtype), right_local.astype(sum_dtype))
             return jax.lax.psum(total, axes) if axes else total
 
@@ -1394,7 +1410,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         placed = jax.device_put(value, layout.sharding(self.topology))
         axes = layout.used_mesh_axes
 
-        def all_local(local):
+        def all_local(local: Array) -> Array:
             result = jnp.all(local).astype(jnp.int32)
             if axes:
                 result = jax.lax.pmin(result, axes)
@@ -1410,7 +1426,12 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         return mapped(placed)
 
     def execute_channel(
-        self, action: Callable[..., ArrayLike], state: ArrayLike, /, *args, **kwargs
+        self,
+        action: Callable[..., ArrayLike],
+        state: ArrayLike,
+        /,
+        *args: object,
+        **kwargs: object,
     ) -> Array:
         if self.schedule != "channel":
             raise ValueError("execute_channel requires a channel execution plan.")

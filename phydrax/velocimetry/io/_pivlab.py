@@ -9,7 +9,7 @@ import importlib
 import importlib.util
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import numpy as np
 import scipy.io
@@ -24,6 +24,7 @@ from ...interchange import (
     AdapterStatus,
     require_lossless,
 )
+from ...typing import parse
 from ...units import (
     conversion_factor,
     derived_unit,
@@ -37,8 +38,8 @@ from ..piv import PhysicalPIVResult2D
 from ._piv_field import field_columns, field_from_columns
 
 
-PIVlabStage = Literal["original", "filtered", "smoothed"]
-PIVlabYAxis = Literal["down", "up"]
+PIVlabStage: TypeAlias = Literal["original", "filtered", "smoothed"]
+PIVlabYAxis: TypeAlias = Literal["down", "up"]
 _HDF5_SIGNATURE = b"\x89HDF\r\n\x1a\n"
 
 
@@ -59,10 +60,8 @@ def read_pivlab(
 ]:
     """Read supported PIVlab MAT or HDF5 variable layouts without MATLAB execution."""
     source = Path(path).expanduser().absolute()
-    if y_axis not in ("down", "up"):
-        raise ValueError("y_axis must explicitly be 'down' or 'up'.")
-    if stage not in ("original", "filtered", "smoothed"):
-        raise ValueError("Unknown PIVlab stage.")
+    y_axis = parse(y_axis, PIVlabYAxis, "y_axis")
+    stage = parse(stage, PIVlabStage, "stage")
     resource = read_bounded_resource(
         source.name,
         trusted_root=source.parent,
@@ -308,8 +307,7 @@ def write_pivlab(
     maximum_file_bytes: int = 4 * 1024 * 1024 * 1024,
 ) -> AdapterReport:
     """Write the documented PIVlab field-variable layout with an explicit loss report."""
-    if y_axis not in ("down", "up"):
-        raise ValueError("y_axis must explicitly be 'down' or 'up'.")
+    y_axis = parse(y_axis, PIVlabYAxis, "y_axis")
     fields_ = (
         (fields,)
         if isinstance(fields, (DenseDisplacementField2D, PhysicalPIVResult2D))
@@ -470,7 +468,8 @@ def write_pivlab(
 
 
 def _read_mat_variables(path: Path, /) -> dict[str, Any]:
-    loaded = scipy.io.loadmat(path, squeeze_me=False, struct_as_record=True)
+    # The `spmatrix` keyword is absent from the supported scipy>=1.14 floor.
+    loaded = scipy.io.loadmat(path, squeeze_me=False, struct_as_record=True)  # ty: ignore[deprecated]
     return {name: value for name, value in loaded.items() if not name.startswith("__")}
 
 
@@ -653,11 +652,11 @@ def _unit_mode(units: str, /) -> str:
 
 
 def _physical_grid(
-    x,
-    y,
-    vector_x,
-    vector_y,
-    valid,
+    x: np.ndarray,
+    y: np.ndarray,
+    vector_x: np.ndarray,
+    vector_y: np.ndarray,
+    valid: np.ndarray,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     x_ = np.asarray(x, dtype=np.float64).reshape((-1,))
@@ -706,7 +705,7 @@ def _physical_grid(
     return positions, vectors, validity
 
 
-def _h5py():
+def _h5py() -> Any:
     if importlib.util.find_spec("h5py") is None:
         raise AdapterError(
             AdapterStatus.OPTIONAL_DEPENDENCY_UNAVAILABLE,

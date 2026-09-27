@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _space(degree=1):
+def _space(degree: Any = 1) -> Any:
     coordinates = jnp.asarray(
         (
             (0.0, 0.0),
@@ -25,6 +28,7 @@ def _space(degree=1):
     )
     mesh = phx.discretization.CellMesh.from_polygons(
         coordinates,
+        # ty: ignore[invalid-argument-type]
         (
             (0, 1, 4, 3),
             (1, 2, 5, 4),
@@ -38,14 +42,15 @@ def _space(degree=1):
     return phx.discretization.VirtualElementPlan(mesh, field).prepare()
 
 
-def _single_cell_space(factory):
+def _single_cell_space(factory: Any) -> Any:
     coordinates = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
+    # ty: ignore[invalid-argument-type]
     mesh = phx.discretization.CellMesh.from_polygons(coordinates, ((0, 1, 2, 3),))
     field = phx.discretization.VirtualElementFieldSpec("u", factory(1))
     return phx.discretization.VirtualElementPlan(mesh, field).prepare()
 
 
-def _vector_polynomial_state(space, differential_kind):
+def _vector_polynomial_state(space: Any, differential_kind: Any) -> Any:
     projection = space.default_runtime.projections[0]
     geometry = space.default_runtime.geometries[0]
     exponents = [tuple(row) for row in projection.basis.exponents]
@@ -73,7 +78,7 @@ def _vector_polynomial_state(space, differential_kind):
     return state.at[routes].set(local * orientation)
 
 
-def _l2_polynomial_state(space):
+def _l2_polynomial_state(space: Any) -> Any:
     projection = space.default_runtime.projections[0]
     geometry = space.default_runtime.geometries[0]
     exponents = [tuple(row) for row in projection.basis.exponents]
@@ -89,7 +94,7 @@ def _l2_polynomial_state(space):
     return jnp.zeros((space.dof_map.global_dof_count,)).at[routes].set(local)
 
 
-def _compiled(realization="matrix_free", degree=1):
+def _compiled(realization: Any = "matrix_free", degree: Any = 1) -> Any:
     space = _space(degree)
     constraint = phx.discretization.virtual_element_dirichlet_constraint(space, "u")
     form = phx.equations.VirtualElementForm(
@@ -111,7 +116,7 @@ def _compiled(realization="matrix_free", degree=1):
     )
 
 
-def test_matrix_free_and_sparse_vem_actions_match():
+def test_matrix_free_and_sparse_vem_actions_match() -> None:
     matrix_free = _compiled("matrix_free")
     sparse = _compiled("sparse")
     value = jnp.linspace(-0.5, 0.5, matrix_free.state_space.size)
@@ -128,7 +133,7 @@ def test_matrix_free_and_sparse_vem_actions_match():
     )
 
 
-def test_vem_linear_patch_and_constraint_lift():
+def test_vem_linear_patch_and_constraint_lift() -> None:
     compiled = _compiled("matrix_free", degree=2)
     problem, rhs = compiled.linear_system()
     solution = phx.linalg.solve(problem, rhs)
@@ -138,7 +143,7 @@ def test_vem_linear_patch_and_constraint_lift():
     assert jnp.allclose(full[4], 1.0, atol=1.0e-9)
 
 
-def test_vem_neumann_problem_declares_constant_nullspace():
+def test_vem_neumann_problem_declares_constant_nullspace() -> None:
     space = _space(1)
     form = phx.equations.VirtualElementForm(
         "neumann",
@@ -156,7 +161,7 @@ def test_vem_neumann_problem_declares_constant_nullspace():
     assert jnp.allclose(rhs, 0.0)
 
 
-def test_vem_robin_and_mass_are_symmetric():
+def test_vem_robin_and_mass_are_symmetric() -> None:
     space = _space(1)
     robin = phx.equations.VirtualElementRobinAction(
         "u", 2.0, 0.0, space.exterior_facet_domain
@@ -182,8 +187,8 @@ def test_vem_robin_and_mass_are_symmetric():
     ),
 )
 def test_vector_vem_assembles_differential_mass_source_and_trace_forms(
-    factory, differential_kind, expected_rhs_pairing
-):
+    factory: Any, differential_kind: Any, expected_rhs_pairing: Any
+) -> None:
     space = _single_cell_space(factory)
     state = _vector_polynomial_state(space, differential_kind)
     differential_form = phx.equations.VirtualElementForm(
@@ -238,7 +243,7 @@ def test_vector_vem_assembles_differential_mass_source_and_trace_forms(
     np.testing.assert_allclose(state @ rhs, expected_rhs_pairing, atol=2.0e-9)
 
 
-def test_l2_vem_assembles_only_cell_mass_and_source_forms():
+def test_l2_vem_assembles_only_cell_mass_and_source_forms() -> None:
     space = _single_cell_space(phx.discretization.discontinuous_l2_virtual_element)
     state = _l2_polynomial_state(space)
     form = phx.equations.VirtualElementForm(
@@ -257,7 +262,7 @@ def test_l2_vem_assembles_only_cell_mass_and_source_forms():
     np.testing.assert_allclose(state @ compiled.full_right_hand_side(), 3.0, atol=2.0e-9)
 
 
-def test_l2_vem_rejects_undefined_operators_before_evaluation():
+def test_l2_vem_rejects_undefined_operators_before_evaluation() -> None:
     space = _single_cell_space(phx.discretization.discontinuous_l2_virtual_element)
     diffusion = phx.equations.VirtualElementForm(
         "undefined-l2-diffusion",
@@ -276,7 +281,7 @@ def test_l2_vem_rejects_undefined_operators_before_evaluation():
         phx.equations.compile_virtual_element_problem(boundary, space)
 
 
-def test_vem_runtime_rejects_same_mesh_with_different_field_degree():
+def test_vem_runtime_rejects_same_mesh_with_different_field_degree() -> None:
     linear = _space(1)
     quadratic = _space(2)
     state = jnp.zeros((quadratic.dof_map.global_dof_count,))

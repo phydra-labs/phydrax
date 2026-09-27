@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from .._trainable import fixed_field
@@ -53,7 +54,7 @@ class ExteriorHelmholtzDirichletResult2D(StrictModule):
         discretization: object,
         coupling: float,
         boundary_residual_norm: Array,
-    ):
+    ) -> None:
         if not isinstance(potential, HelmholtzCombinedField2D):
             raise TypeError("potential must be HelmholtzCombinedField2D.")
         if not isinstance(linear_result, LinearSolveResult):

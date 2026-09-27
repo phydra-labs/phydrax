@@ -7,12 +7,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, TypeVar
+from typing import TypeAlias, TypeVar
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -106,11 +107,17 @@ class MappedRelativeBindingResult(StrictModule, NonTrainableState):
     result_id: str = eqx.field(static=True)
 
 
-_Result = TypeVar("_Result", bound=StrictModule)
-_Component = Any
+_Result = TypeVar(
+    "_Result",
+    SeparatedTopologyResult,
+    NeutralAbsoluteSolvationResult,
+    AbsoluteBindingResult,
+    MappedRelativeSolvationResult,
+    MappedRelativeBindingResult,
+)
 
 
-def _component_lineage(value, /) -> tuple | None:
+def _component_lineage(value: _Component, /) -> tuple[object, ...] | None:
     # Reduced free energies add only on one unit system and inverse-temperature
     # normalization, one sampling-bias contract, one mapping, and one orientation.
     # Legs of a thermodynamic cycle come from separate analyses of distinct
@@ -242,7 +249,7 @@ class SeparatedTopologyPlan(StrictModule, NonTrainableState):
         coupled: FreeEnergyStatePlan,
         decoupled: FreeEnergyStatePlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(coupled, FreeEnergyStatePlan) or not isinstance(
             decoupled, FreeEnergyStatePlan
         ):
@@ -324,7 +331,7 @@ class NeutralAbsoluteSolvationPlan(StrictModule, NonTrainableState):
         /,
         *,
         corrections: Sequence[FreeEnergyCorrectionPlan] = (),
-    ):
+    ) -> None:
         if not isinstance(vacuum_decoupling, FreeEnergyProtocolLegPlan) or not isinstance(
             solvent_decoupling, FreeEnergyProtocolLegPlan
         ):
@@ -389,7 +396,7 @@ class AbsoluteBindingPlan(StrictModule, NonTrainableState):
         complex_decoupling: FreeEnergyProtocolLegPlan,
         corrections: Sequence[FreeEnergyCorrectionPlan],
         /,
-    ):
+    ) -> None:
         if not isinstance(
             solvent_decoupling, FreeEnergyProtocolLegPlan
         ) or not isinstance(complex_decoupling, FreeEnergyProtocolLegPlan):
@@ -466,6 +473,14 @@ class MappedRelativeTransformationResult(StrictModule, NonTrainableState):
     result_id: str = eqx.field(static=True)
 
 
+_Component: TypeAlias = (
+    FreeEnergyStateResult
+    | FreeEnergyProtocolLegResult
+    | MappedRelativeTransformationResult
+    | FreeEnergyCorrectionResult
+)
+
+
 class MappedRelativeTransformationPlan(StrictModule, NonTrainableState):
     """One mapped neutral source-to-destination transformation leg."""
 
@@ -478,7 +493,7 @@ class MappedRelativeTransformationPlan(StrictModule, NonTrainableState):
         leg: FreeEnergyProtocolLegPlan,
         mapping_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(leg, FreeEnergyProtocolLegPlan):
             raise TypeError("Mapped transformations require a protocol leg.")
         mapping = str(mapping_id).strip()
@@ -504,8 +519,8 @@ class MappedRelativeTransformationPlan(StrictModule, NonTrainableState):
 
     def project(
         self,
-        result,
-        dataset,
+        result: object,
+        dataset: object,
         /,
     ) -> MappedRelativeTransformationResult:
         leg_result = self.leg.project(result, dataset)
@@ -546,7 +561,7 @@ class MappedRelativeSolvationPlan(StrictModule, NonTrainableState):
         solvent: MappedRelativeTransformationPlan,
         vacuum: MappedRelativeTransformationPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(solvent, MappedRelativeTransformationPlan) or not isinstance(
             vacuum, MappedRelativeTransformationPlan
         ):
@@ -603,7 +618,7 @@ class MappedRelativeBindingPlan(StrictModule, NonTrainableState):
         complex: MappedRelativeTransformationPlan,
         solvent: MappedRelativeTransformationPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(complex, MappedRelativeTransformationPlan) or not isinstance(
             solvent, MappedRelativeTransformationPlan
         ):

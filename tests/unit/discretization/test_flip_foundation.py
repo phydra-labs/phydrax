@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import math
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -11,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _mac(count=8, *, periodic=False):
+def _mac(count: Any = 8, *, periodic: Any = False) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(count, periodic=periodic)
@@ -25,7 +27,9 @@ def _mac(count=8, *, periodic=False):
     return grid, finite_volume, operators, boundaries
 
 
-def test_free_surface_projection_sets_air_pressure_and_projects_liquid_divergence():
+def test_free_surface_projection_sets_air_pressure_and_projects_liquid_divergence() -> (
+    None
+):
     _, finite_volume, operators, boundaries = _mac()
     projection = phx.solver.MACFreeSurfaceProjectionPlan(
         operators, boundaries=boundaries, tolerance=1e-7
@@ -45,7 +49,7 @@ def test_free_surface_projection_sets_air_pressure_and_projects_liquid_divergenc
     np.testing.assert_allclose(jnp.where(~liquid, result.pressure, 0.0), 0.0)
 
 
-def test_free_surface_projection_rejects_empty_liquid_mask():
+def test_free_surface_projection_rejects_empty_liquid_mask() -> None:
     _, finite_volume, operators, boundaries = _mac()
     projection = phx.solver.MACFreeSurfaceProjectionPlan(operators, boundaries=boundaries)
     velocity = tuple(jnp.zeros(layout.shape) for layout in finite_volume.face_layouts)
@@ -55,7 +59,7 @@ def test_free_surface_projection_rejects_empty_liquid_mask():
     assert not result.successful
 
 
-def test_flip_transfer_preserves_cell_volume_and_face_momentum_numerators():
+def test_flip_transfer_preserves_cell_volume_and_face_momentum_numerators() -> None:
     _, finite_volume, operators, _ = _mac(periodic=True)
     position = jnp.asarray([[0.2, 0.2], [0.4, 0.3], [0.7, 0.65]])
     velocity = jnp.asarray([[1.0, 0.2], [-0.3, 0.7], [0.5, -0.4]])
@@ -79,14 +83,14 @@ def test_flip_transfer_preserves_cell_volume_and_face_momentum_numerators():
     np.testing.assert_allclose(g2p.flip_increment, 0.0, atol=1e-14)
 
 
-def test_flip_method_validates_explicit_pic_fraction():
+def test_flip_method_validates_explicit_pic_fraction() -> None:
     with pytest.raises(ValueError, match="pic_fraction"):
         phx.discretization.flip.FLIPMethodPlan(1.1)
     assert phx.discretization.flip.FLIPMethodPlan(0.0).pic_fraction == 0.0
     assert phx.discretization.flip.FLIPMethodPlan(1.0).pic_fraction == 1.0
 
 
-def test_sparse_flip_transfer_uses_compact_cell_and_face_storage():
+def test_sparse_flip_transfer_uses_compact_cell_and_face_storage() -> None:
     grid_plan = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(8, periodic=True),
@@ -124,7 +128,7 @@ def test_sparse_flip_transfer_uses_compact_cell_and_face_storage():
     np.testing.assert_allclose(g2p.flip_increment, 0.0, atol=1.0e-14)
 
 
-def test_sparse_flip_pressure_and_particle_step_commit_atomically():
+def test_sparse_flip_pressure_and_particle_step_commit_atomically() -> None:
     grid_plan = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(8, periodic=True),

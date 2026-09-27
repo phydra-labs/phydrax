@@ -5,12 +5,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._tree_math import (
@@ -21,6 +23,7 @@ from ..linalg import (
     FunctionLinearOperator,
     LinearSolvePolicy,
     LinearSystem,
+    PreparedLinearSolve,
     PyTreeSpace,
     solve as solve_linear,
     transpose,
@@ -34,12 +37,15 @@ from ._pde_constrained import (
 )
 
 
+_Response: TypeAlias = Callable[[PyTree[Any], PyTree[Any], Any], PyTree[Any]]
+
+
 class _StateAction(StrictModule):
     action: Any
     template: PyTree[Array]
     pullback: bool = eqx.field(static=True)
 
-    def __call__(self, value):
+    def __call__(self, value: PyTree[Any]) -> PyTree[Array]:
         result = self.action(value)
         if self.pullback:
             result = result[0]
@@ -89,17 +95,17 @@ class StateDesignResponseVJP(StrictModule):
 
 
 def _linearize_state_design(
-    problem,
-    state,
-    design,
-    args,
-    linear_policy,
-    state_acceptance,
+    problem: StateDesignProblem,
+    state: PyTree[Any],
+    design: PyTree[Any],
+    args: Any,
+    linear_policy: LinearSolvePolicy,
+    state_acceptance: StateAcceptanceEvidence,
     *,
-    state_result=None,
-    operator_id=None,
-):
-    def residual_function(current_state):
+    state_result: StateEquationResult | None = None,
+    operator_id: str | None = None,
+) -> StateDesignLinearization:
+    def residual_function(current_state: PyTree[Any]) -> PyTree[Array]:
         return problem.residual(current_state, design, args)
 
     residual, state_action = jax.linearize(residual_function, state)
@@ -165,13 +171,13 @@ def prepare_state_design_linearization(
 
 
 def _response_pullback(
-    linearization,
-    response,
-    cotangent,
-    depends_on_state,
+    linearization: StateDesignLinearization,
+    response: _Response | None,
+    cotangent: PyTree[Any] | None,
+    depends_on_state: bool,
     *,
-    prepared_adjoint=None,
-):
+    prepared_adjoint: PreparedLinearSolve | None = None,
+) -> StateDesignResponseVJP:
     point = linearization
     function = (
         (lambda state, design, args: point.problem.value(state, design, args)[0])
@@ -260,8 +266,8 @@ def _response_pullback(
 def state_design_response_vjp(
     linearization: StateDesignLinearization,
     /,
-    response=None,
-    cotangent=None,
+    response: _Response | None = None,
+    cotangent: PyTree[Any] | None = None,
     *,
     depends_on_state: bool = True,
 ) -> StateDesignResponseVJP:

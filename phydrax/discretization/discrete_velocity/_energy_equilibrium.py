@@ -6,12 +6,13 @@ from __future__ import annotations
 
 from enum import IntEnum
 from math import isfinite
+from typing import TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax import lax
-from jaxtyping import Array, ArrayLike
+from jax import Array, lax
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 from phydrax.linalg import SmallLinearSolvePlan, solve_small_linear
@@ -20,6 +21,13 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._quadrature import CertifiedDiscreteVelocityQuadrature
+
+
+# dual, distribution, mean, covariance, residual, residual_norm, active,
+# converged, iterations, linear_failed, nonfinite_failed, nonpositive_failed
+_NewtonCarry: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class EnergyEquilibriumStatus(IntEnum):
@@ -164,7 +172,7 @@ class PositiveEnergyEquilibriumPlan(StrictModule, NonTrainableState):
         residual_tolerance: float = 1.0e-10,
         interior_tolerance: float = 1.0e-10,
         damping: float = 0.9,
-    ):
+    ) -> None:
         if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
             raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         if quadrature.dimension != 2:
@@ -392,7 +400,7 @@ class PositiveEnergyEquilibriumPlan(StrictModule, NonTrainableState):
         nonpositive_failed = eligible & ~state_positive
         active = active & state_finite & state_positive
 
-        def newton_step(_, carry):
+        def newton_step(_: Array, carry: _NewtonCarry) -> _NewtonCarry:
             (
                 dual_,
                 distribution_,

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -6,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def _context():
+def _context() -> Any:
     astro = phx.applications.astrodynamics
     return astro.AstrodynamicsContext(
         astro.AstrodynamicsScaleContract.si(),
@@ -15,7 +17,7 @@ def _context():
     )
 
 
-def _circular_state():
+def _circular_state() -> Any:
     astro = phx.applications.astrodynamics
     return astro.CartesianOrbitState(
         jnp.asarray([1.0, 0.0, 0.0]),
@@ -24,7 +26,7 @@ def _circular_state():
     )
 
 
-def test_universal_kepler_closes_circular_orbit_and_jvp():
+def test_universal_kepler_closes_circular_orbit_and_jvp() -> None:
     astro = phx.applications.astrodynamics
     state = _circular_state()
     result = jax.jit(lambda dt: astro.propagate_universal_kepler(state, dt, 1.0))(
@@ -44,7 +46,7 @@ def test_universal_kepler_closes_circular_orbit_and_jvp():
     np.testing.assert_allclose(tangent, expected, atol=2.0e-10)
 
 
-def test_modified_equinoctial_round_trip_covers_circular_equatorial_state():
+def test_modified_equinoctial_round_trip_covers_circular_equatorial_state() -> None:
     astro = phx.applications.astrodynamics
     state = _circular_state()
     converted = astro.cartesian_to_modified_equinoctial(state, 1.0)
@@ -63,7 +65,7 @@ def test_modified_equinoctial_round_trip_covers_circular_equatorial_state():
     assert bool(classical.equatorial)
 
 
-def test_analytic_adaptive_and_symplectic_propagation_agree():
+def test_analytic_adaptive_and_symplectic_propagation_agree() -> None:
     astro = phx.applications.astrodynamics
     state = _circular_state()
     times = jnp.linspace(0.0, 1.0, 17)
@@ -90,7 +92,7 @@ def test_analytic_adaptive_and_symplectic_propagation_agree():
     assert float(jnp.max(jnp.abs(symplectic.diagnostics.energy_drift))) < 2.0e-3
 
 
-def test_invalid_two_body_inputs_return_status_without_shape_change():
+def test_invalid_two_body_inputs_return_status_without_shape_change() -> None:
     astro = phx.applications.astrodynamics
     state = _circular_state()
     result = jax.jit(lambda mu: astro.propagate_universal_kepler(state, 1.0, mu))(
@@ -119,12 +121,13 @@ def test_invalid_two_body_inputs_return_status_without_shape_change():
     assert jnp.isnan(reverse)
 
 
-def test_astrodynamics_static_controls_and_numeric_identities_fail_closed():
+def test_astrodynamics_static_controls_and_numeric_identities_fail_closed() -> None:
     astro = phx.applications.astrodynamics
     state = _circular_state()
     with pytest.raises(TypeError, match="max_iterations"):
         astro.UniversalKeplerPolicy(max_iterations=True)
     with pytest.raises(TypeError, match="integer"):
+        # ty: ignore[invalid-argument-type]
         astro.LambertPlan(grid_size=64.5)
     with pytest.raises(ValueError, match="solver_id"):
         astro.AstrodynamicsPropagationPlan(

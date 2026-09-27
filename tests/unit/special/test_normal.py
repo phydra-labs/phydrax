@@ -17,7 +17,7 @@ from phydrax.special._normal import (
 )
 
 
-def test_normal_density_and_probability_boundaries_are_exact():
+def test_normal_density_and_probability_boundaries_are_exact() -> None:
     x = jnp.asarray([-jnp.inf, -2.0, -0.0, 0.0, 2.0, jnp.inf, jnp.nan])
     pdf = np.asarray(normal_pdf(x))
     logpdf = np.asarray(normal_logpdf(x))
@@ -40,7 +40,7 @@ def test_normal_density_and_probability_boundaries_are_exact():
     ).all()
 
 
-def test_normal_log_probabilities_and_survival_preserve_deep_tails():
+def test_normal_log_probabilities_and_survival_preserve_deep_tails() -> None:
     x = np.asarray([-38.0, -20.0, -12.0, 0.0, 12.0, 20.0, 38.0])
     np.testing.assert_allclose(
         np.asarray(normal_logcdf(jnp.asarray(x))),
@@ -63,7 +63,7 @@ def test_normal_log_probabilities_and_survival_preserve_deep_tails():
     assert 1.0 - float(normal_cdf(12.0)) == 0.0
 
 
-def test_normal_quantile_handles_deep_probabilities_endpoints_and_domain():
+def test_normal_quantile_handles_deep_probabilities_endpoints_and_domain() -> None:
     probabilities = np.asarray([1e-300, 1e-100, 1e-20, 0.5, 1.0 - 1e-12])
     quantiles = np.asarray(normal_quantile(jnp.asarray(probabilities)))
     np.testing.assert_allclose(quantiles, sc.ndtri(probabilities), rtol=3e-14, atol=3e-14)
@@ -80,7 +80,7 @@ def test_normal_quantile_handles_deep_probabilities_endpoints_and_domain():
     assert np.isnan(boundary[2:]).all()
 
 
-def test_normal_functions_promote_real_dtypes_and_reject_complex_values():
+def test_normal_functions_promote_real_dtypes_and_reject_complex_values() -> None:
     functions = (
         normal_pdf,
         normal_logpdf,
@@ -99,7 +99,7 @@ def test_normal_functions_promote_real_dtypes_and_reject_complex_values():
             function(0.5 + 0.1j)
 
 
-def test_normal_functions_compose_under_jit_vmap_and_grad():
+def test_normal_functions_compose_under_jit_vmap_and_grad() -> None:
     x = jnp.asarray([-3.0, -0.5, 0.0, 1.25, 4.0])
     compiled = jax.jit(
         lambda value: (

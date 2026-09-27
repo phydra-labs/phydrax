@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ...sparse import EdgeRelation, KeyGroupPlan
@@ -58,7 +59,7 @@ class CellListParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
         maximum_candidate_slots: int = 10_000_000,
         name: str = "cell-list-particle-neighborhood",
         plan_id: str | None = None,
-    ):
+    ) -> None:
         radius = float(search_radius)
         cell_capacity = int(maximum_particles_per_cell)
         pair_capacity = int(maximum_pairs)
@@ -137,7 +138,7 @@ class PreparedCellListParticleNeighborhood(AbstractPreparedParticleNeighborhood)
         plan: CellListParticleNeighborhoodPlan,
         particles: ParticleDiscretization,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, CellListParticleNeighborhoodPlan):
             raise TypeError("plan must be a CellListParticleNeighborhoodPlan.")
         if not isinstance(particles, ParticleDiscretization):

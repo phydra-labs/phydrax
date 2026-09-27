@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 
 import phydrax as phx
@@ -105,14 +107,14 @@ PUBLIC_HIGH_DIMENSIONAL_API = {
         for symbol in sorted(symbols)
     ],
 )
-def test_high_dimensional_symbols_are_public(namespace_name, symbol):
+def test_high_dimensional_symbols_are_public(namespace_name: Any, symbol: Any) -> None:
     namespace = getattr(phx, namespace_name)
 
     assert getattr(namespace, symbol) is not None
     assert symbol in namespace.__all__
 
 
-def test_dimension_estimators_are_public_from_differential_namespace():
+def test_dimension_estimators_are_public_from_differential_namespace() -> None:
     for symbol in PUBLIC_HIGH_DIMENSIONAL_API["operators"]:
         assert getattr(phx.operators.differential, symbol) is getattr(
             phx.operators, symbol

@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -6,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def _linear_problem(*, observation_offset=0.0):
+def _linear_problem(*, observation_offset: Any = 0.0) -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0]),
         jnp.asarray([[1.0], [2.0]]),
@@ -46,7 +48,7 @@ def _linear_problem(*, observation_offset=0.0):
     )
 
 
-def _finite_problem():
+def _finite_problem() -> Any:
     process = phx.stochastic.JumpProcess(
         lambda time, state, args: jnp.where(
             state[0] == 0, jnp.asarray([1.0]), jnp.asarray([0.0])
@@ -90,7 +92,7 @@ def _finite_problem():
     )
 
 
-def test_exact_linear_likelihood_matches_canonical_kalman_filter():
+def test_exact_linear_likelihood_matches_canonical_kalman_filter() -> None:
     problem = _linear_problem()
     expected = phx.uq.kalman_filter(problem)
     result = phx.uq.exact_state_space_log_likelihood(problem)
@@ -107,7 +109,7 @@ def test_exact_linear_likelihood_matches_canonical_kalman_filter():
     )
 
 
-def test_exact_finite_state_likelihood_matches_enumerated_mixture():
+def test_exact_finite_state_likelihood_matches_enumerated_mixture() -> None:
     problem = _finite_problem()
     result = phx.uq.exact_state_space_log_likelihood(problem)
     transition_mass = jnp.asarray([jnp.exp(-1.0), 1.0 - jnp.exp(-1.0)])
@@ -133,10 +135,10 @@ def test_exact_finite_state_likelihood_matches_enumerated_mixture():
     assert jnp.allclose(jnp.sum(result.backend.filtered_probabilities[0]), 1.0)
 
 
-def test_state_space_term_is_differentiable_and_reports_identifiability():
+def test_state_space_term_is_differentiable_and_reports_identifiability() -> None:
     template = _linear_problem()
 
-    def build_problem(parameters):
+    def build_problem(parameters: Any) -> Any:
         return eqx.tree_at(
             lambda problem: problem.model.observation.offset,
             template,
@@ -164,6 +166,6 @@ def test_state_space_term_is_differentiable_and_reports_identifiability():
     assert report.observed_information.shape == (1, 1)
 
 
-def test_exact_dispatch_rejects_incompatible_backend():
+def test_exact_dispatch_rejects_incompatible_backend() -> None:
     with pytest.raises(TypeError, match="finite-state likelihood requires"):
         phx.uq.exact_state_space_log_likelihood(_linear_problem(), method="finite-state")

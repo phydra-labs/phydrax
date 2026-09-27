@@ -10,7 +10,7 @@ from enum import IntEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 from scipy.optimize import linear_sum_assignment
 
 from ..._fingerprint import canonical_fingerprint
@@ -49,7 +49,7 @@ class GeneralEigenResolutionPolicy(StrictModule, NonTrainableState):
         residual_tolerance: float = 1e-7,
         condition_limit: float = 1e10,
         cluster_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (

@@ -6,6 +6,7 @@
 
 import json
 import time
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -14,7 +15,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _case():
+def _case() -> Any:
     coordinates = jnp.asarray(((-0.25, 0.08), (0.25, 0.08), (0.0, 0.48)))
     cells = jnp.asarray(((0, 1, 2),), dtype=jnp.int32)
     mesh = phx.discretization.CellMesh.from_triangles(coordinates, cells)
@@ -48,7 +49,9 @@ def _case():
         regions={"body": None},
     )
     moving = phx.discretization.prepare_cell_mesh_collision_surface(
-        mesh, compiled.state_space
+        mesh,
+        # ty: ignore[invalid-argument-type]
+        compiled.state_space,
     )
     static_plan = phx.discretization.CollisionSurfacePlan(
         jnp.asarray((10, 11)),
@@ -56,7 +59,9 @@ def _case():
         edges=jnp.asarray(((0, 1),)),
         pair_policy=phx.discretization.ContactPairPolicy(
             2,
+            # ty: ignore[unknown-argument]
             body_ids=jnp.ones((2,), dtype=jnp.int64),
+            # ty: ignore[unknown-argument]
             static_mask=jnp.ones((2,), dtype="bool"),
         ),
     )
@@ -95,7 +100,7 @@ def _case():
     return plan, accepted
 
 
-def main():
+def main() -> None:
     plan, accepted = _case()
     prepared = phx.applications.contact.prepare_finite_element_contact_step(
         plan, accepted, 0.02

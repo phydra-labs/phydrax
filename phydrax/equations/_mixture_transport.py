@@ -8,7 +8,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -23,6 +24,7 @@ from ._gas_transport_properties import (
 )
 from ._homogeneous_thermodynamics import (
     HomogeneousHelmholtzPlan,
+    HomogeneousThermodynamicEvaluation,
     ZeroResidualHelmholtzTerm,
 )
 
@@ -90,7 +92,7 @@ def _ideal_pressure_state(
     pressure: Array,
     mass_fractions: Array,
     /,
-):
+) -> HomogeneousThermodynamicEvaluation:
     molar_masses = thermodynamics.schema.molar_masses.astype(mass_fractions.dtype)
     reciprocal_molar_mass = jnp.sum(mass_fractions / molar_masses, axis=-1)
     mixture_molar_mass = 1.0 / reciprocal_molar_mass
@@ -114,7 +116,7 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
         /,
         *,
         conservation_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(thermodynamics, HomogeneousHelmholtzPlan):
             raise TypeError("thermodynamics must be HomogeneousHelmholtzPlan.")
         if not isinstance(thermodynamics.residual, ZeroResidualHelmholtzTerm):
@@ -311,7 +313,7 @@ class StefanMaxwellTransportPlan(StrictModule, NonTrainableState):
         maximum_species: int = 16,
         maximum_condition: float = 1.0e10,
         conservation_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         bound = int(maximum_species)
         condition = float(maximum_condition)
         species_count = thermodynamics.schema.species_count

@@ -8,7 +8,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...ein import contract
@@ -23,7 +24,9 @@ from ...nonlinear import (
 )
 
 
-def _chemical_method(method):
+def _chemical_method(
+    method: AbstractNonlinearMethod | None,
+) -> AbstractNonlinearMethod:
     return (
         NewtonKrylov(linear_policy=LinearSolvePolicy(DenseLU()))
         if method is None
@@ -31,7 +34,9 @@ def _chemical_method(method):
     )
 
 
-def _chemical_termination(termination):
+def _chemical_termination(
+    termination: NonlinearTermination | None,
+) -> NonlinearTermination:
     return (
         NonlinearTermination(
             absolute_residual=1e-10,
@@ -112,7 +117,7 @@ class MassActionSystem(StrictModule):
         davies_a: float = 0.509,
         maximum_ionic_strength: float = 0.5,
         charge_balance_component: int | None = None,
-    ):
+    ) -> None:
         primary = tuple(primary_names)
         secondary = tuple(secondary_names)
         names = primary + secondary

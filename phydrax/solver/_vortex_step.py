@@ -4,11 +4,12 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._interpolation import linear_interpolate
 from phydrax.ein import contract
@@ -25,6 +26,10 @@ from ..nonlinear import (
     NonlinearTermination,
 )
 from ._vortex_lattice import SteadyVortexLatticePlan
+
+
+# velocity, angle, lift, drag, moment coefficients, circulation target
+_PanelFields: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
 class SampledAirfoilPolar(StrictModule, NonTrainableState):
@@ -44,7 +49,7 @@ class SampledAirfoilPolar(StrictModule, NonTrainableState):
         /,
         *,
         endpoint: Literal["clamp", "error"] = "clamp",
-    ):
+    ) -> None:
         alpha = jnp.asarray(angle, dtype=jnp.float64)
         cl = jnp.asarray(lift, dtype=jnp.float64)
         cd = jnp.asarray(drag, dtype=jnp.float64)
@@ -133,7 +138,7 @@ class VortexStepPlan(StrictModule, NonTrainableState):
         nonlinear_method: AbstractNonlinearMethod | None = None,
         termination: NonlinearTermination | None = None,
         derivative_policy: ImplicitRootDerivativePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(lattice, SteadyVortexLatticePlan) or not isinstance(
             polar, SampledAirfoilPolar
         ):
@@ -173,7 +178,7 @@ class VortexStepPlan(StrictModule, NonTrainableState):
             :, None
         ]
 
-        def fields(gamma):
+        def fields(gamma: Array) -> _PanelFields:
             velocity = freestream + contract("tjc,j->tc", influence, gamma)
             chord_speed = jnp.sum(velocity * chord_direction, axis=-1)
             normal_speed = jnp.sum(velocity * surface.normal, axis=-1)
@@ -183,7 +188,7 @@ class VortexStepPlan(StrictModule, NonTrainableState):
             target = 0.5 * crossflow * surface.chord * cl
             return velocity, angle, cl, cd, cm, target
 
-        def residual(gamma, args):
+        def residual(gamma: Array, args: object) -> Array:
             del args
             return fields(gamma)[-1] - gamma
 

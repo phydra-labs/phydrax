@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -9,7 +10,7 @@ import scipy.special
 import phydrax as phx
 
 
-def test_jacobi_functions_match_scipy_on_standard_domain():
+def test_jacobi_functions_match_scipy_on_standard_domain() -> None:
     u = np.linspace(-30.0, 30.0, 161)[:, None]
     m = np.asarray([0.0, 1e-8, 0.2, 0.8, 0.99, 1.0 - 1e-6])[None, :]
     actual = [
@@ -20,7 +21,7 @@ def test_jacobi_functions_match_scipy_on_standard_domain():
         np.testing.assert_allclose(value, reference, rtol=2e-12, atol=8e-14)
 
 
-def test_jacobi_algebraic_and_amplitude_identities_include_negative_parameters():
+def test_jacobi_algebraic_and_amplitude_identities_include_negative_parameters() -> None:
     u = jnp.linspace(-12.0, 12.0, 101)[:, None]
     m = jnp.asarray([-20.0, -1.0, -0.1, 0.0, 0.3, 0.9, 1.0 - 1e-10])[None, :]
     sn, cn, dn, amplitude = phx.special.ellipj(u, m)
@@ -39,11 +40,11 @@ def test_jacobi_algebraic_and_amplitude_identities_include_negative_parameters()
     )
 
 
-def test_jacobi_argument_derivatives_match_closed_system():
+def test_jacobi_argument_derivatives_match_closed_system() -> None:
     u = jnp.asarray([-5.0, -0.2, 0.0, 1.3, 8.0])
     m = jnp.asarray([-1.0, 0.0, 0.2, 0.8, 1.0])
 
-    def evaluate(argument, parameter):
+    def evaluate(argument: Any, parameter: Any) -> Any:
         return jnp.stack(phx.special.ellipj(argument, parameter))
 
     derivatives = jax.vmap(jax.jacfwd(evaluate, argnums=0))(u, m)
@@ -54,10 +55,10 @@ def test_jacobi_argument_derivatives_match_closed_system():
     )
 
 
-def test_jacobi_parameter_derivatives_compose_across_modes():
+def test_jacobi_parameter_derivatives_compose_across_modes() -> None:
     point = jnp.asarray([1.3, 0.4])
 
-    def observable(arguments):
+    def observable(arguments: Any) -> Any:
         sn, cn, dn, amplitude = phx.special.ellipj(arguments[0], arguments[1])
         return sn + 0.2 * cn - 0.3 * dn + 0.1 * amplitude
 
@@ -74,7 +75,7 @@ def test_jacobi_parameter_derivatives_compose_across_modes():
     )
 
 
-def test_jacobi_extreme_negative_parameter_preserves_complement():
+def test_jacobi_extreme_negative_parameter_preserves_complement() -> None:
     parameter = -1e20
     argument = 10.0 / np.sqrt(1.0 - parameter)
     actual = [
@@ -97,7 +98,7 @@ def test_jacobi_extreme_negative_parameter_preserves_complement():
     np.testing.assert_allclose(actual, expected, rtol=2e-9, atol=2e-15)
 
 
-def test_jacobi_endpoint_parameter_hessians_match_high_precision():
+def test_jacobi_endpoint_parameter_hessians_match_high_precision() -> None:
     argument = 1.3
     with mp.workdps(70):
         reference = lambda parameter: mp.asin(
@@ -119,8 +120,8 @@ def test_jacobi_endpoint_parameter_hessians_match_high_precision():
     )
 
 
-def test_jacobi_near_endpoint_expansion_respects_large_argument_scale():
-    def parameter_derivative(dtype):
+def test_jacobi_near_endpoint_expansion_respects_large_argument_scale() -> None:
+    def parameter_derivative(dtype: Any) -> Any:
         argument = jnp.asarray(20.0, dtype=dtype)
         parameter = jnp.asarray(0.9995, dtype=dtype)
         function = lambda value: jnp.stack(phx.special.ellipj(argument, value))
@@ -134,7 +135,7 @@ def test_jacobi_near_endpoint_expansion_respects_large_argument_scale():
     )
 
 
-def test_jacobi_large_argument_endpoint_parameter_derivatives_are_safe():
+def test_jacobi_large_argument_endpoint_parameter_derivatives_are_safe() -> None:
     argument = jnp.asarray(100.0, dtype=jnp.float32)
     parameter = jnp.asarray(1.0, dtype=jnp.float32)
     expected = (-0.25, np.inf, -np.inf, -np.inf)
@@ -156,7 +157,7 @@ def test_jacobi_large_argument_endpoint_parameter_derivatives_are_safe():
             assert np.signbit(reverse) == np.signbit(reference)
 
 
-def test_jacobi_large_argument_endpoint_amplitude_curvature_is_nonzero():
+def test_jacobi_large_argument_endpoint_amplitude_curvature_is_nonzero() -> None:
     argument_value = 30.0
     argument = jnp.asarray(argument_value, dtype=jnp.float32)
     parameter = jnp.asarray(1.0, dtype=jnp.float32)
@@ -180,7 +181,7 @@ def test_jacobi_large_argument_endpoint_amplitude_curvature_is_nonzero():
     np.testing.assert_allclose(reverse_forward, expected, rtol=2e-6)
 
 
-def test_jacobi_endpoint_and_invalid_contracts():
+def test_jacobi_endpoint_and_invalid_contracts() -> None:
     u = jnp.asarray([-3.0, -0.2, 0.0, 1.0, 4.0])
     zero = phx.special.ellipj(u, 0.0)
     np.testing.assert_allclose(np.asarray(zero[0]), np.sin(np.asarray(u)), rtol=2e-15)

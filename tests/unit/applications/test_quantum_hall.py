@@ -1,8 +1,10 @@
 from fractions import Fraction
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import pytest
 
 from phydrax.applications import quantum_hall as qh
 from phydrax.operators.quantum import (
@@ -16,7 +18,7 @@ from phydrax.units import ANGSTROM, ELECTRONVOLT
 _ELECTRONVOLT_JOULE = 1.602_176_634e-19
 
 
-def _energy_scale():
+def _energy_scale() -> Any:
     return qh.QuantumHallEnergyScale(
         ELECTRONVOLT,
         _ELECTRONVOLT_JOULE,
@@ -24,7 +26,7 @@ def _energy_scale():
     )
 
 
-def test_haldane_model_is_hermitian_and_has_two_bands():
+def test_haldane_model_is_hermitian_and_has_two_bands() -> None:
     prepared = qh.HaldaneModelPlan(
         1.0,
         0.1,
@@ -45,7 +47,7 @@ def test_haldane_model_is_hermitian_and_has_two_bands():
     assert bool(evaluation.successful)
 
 
-def test_kane_mele_rashba_phase_has_nontrivial_time_reversal_invariant():
+def test_kane_mele_rashba_phase_has_nontrivial_time_reversal_invariant() -> None:
     result = qh.evaluate_kane_mele_topology(
         qh.KaneMeleModelPlan(
             1.0,
@@ -59,12 +61,14 @@ def test_kane_mele_rashba_phase_has_nontrivial_time_reversal_invariant():
         mesh_shape=(8, 8),
     )
 
+    # ty: ignore[unresolved-attribute]
     assert int(result.z2.invariant) == 1
+    # ty: ignore[unresolved-attribute]
     assert float(result.z2.endpoint_kramers_residual) < 1.0e-10
     assert bool(result.successful)
 
 
-def test_projected_sphere_uses_direct_lz_sector_and_matrix_free_operator():
+def test_projected_sphere_uses_direct_lz_sector_and_matrix_free_operator() -> None:
     sphere = qh.HaldaneSpherePlan(
         2,
         qh.MonopoleLandauLevel(3, 0, qh.SPIN_POLARIZED_ELECTRON),
@@ -90,7 +94,48 @@ def test_projected_sphere_uses_direct_lz_sector_and_matrix_free_operator():
     assert prepared.many_body.operator.mv(vector).shape == vector.shape
 
 
-def test_laughlin_amplitude_is_antisymmetric_for_odd_exponent():
+def _sphere_spectrum(twice_monopole_strength: Any, ground_energy: Any) -> Any:
+    sphere = qh.HaldaneSpherePlan(
+        2,
+        qh.MonopoleLandauLevel(twice_monopole_strength, 0, qh.SPIN_POLARIZED_ELECTRON),
+        "fermion",
+        _energy_scale(),
+    )
+    prepared = qh.prepare_haldane_sphere_hamiltonian(
+        qh.coulomb_haldane_pseudopotentials(sphere)
+    )
+    return qh.HaldaneSphereSpectrumResult(
+        jnp.asarray((ground_energy,)),
+        jnp.zeros((prepared.many_body.dimension, 1)),
+        jnp.zeros((1,)),
+        jnp.zeros((1,)),
+        jnp.asarray(True),
+        prepared,
+        f"sphere-spectrum-{twice_monopole_strength}",
+    )
+
+
+def test_charge_gap_combines_adjacent_flux_sector_ground_energies() -> None:
+    result = qh.charge_gap(
+        _sphere_spectrum(2, 1.0),
+        _sphere_spectrum(3, 0.5),
+        _sphere_spectrum(4, 1.5),
+    )
+
+    assert result.kind == "charge"
+    np.testing.assert_allclose(result.gap, 1.5)
+    np.testing.assert_allclose(result.component_energies, (1.0, 0.5, 1.5))
+    assert bool(result.successful)
+
+    with pytest.raises(ValueError, match="adjacent flux sectors"):
+        qh.charge_gap(
+            _sphere_spectrum(2, 1.0),
+            _sphere_spectrum(4, 0.5),
+            _sphere_spectrum(3, 1.5),
+        )
+
+
+def test_laughlin_amplitude_is_antisymmetric_for_odd_exponent() -> None:
     amplitude = qh.LaughlinSphereAmplitude(3, 3)
     configuration = jnp.asarray(((0.8, -0.2), (1.4, 0.7), (2.0, -1.1)))
     exchanged = configuration[jnp.asarray((1, 0, 2))]
@@ -102,7 +147,7 @@ def test_laughlin_amplitude_is_antisymmetric_for_odd_exponent():
     assert bool(first.valid & first.nonzero)
 
 
-def test_monopole_attention_is_antisymmetric_and_vmc_prepares():
+def test_monopole_attention_is_antisymmetric_and_vmc_prepares() -> None:
     sphere = qh.HaldaneSpherePlan(
         2,
         qh.MonopoleLandauLevel(3, 0, qh.SPIN_POLARIZED_ELECTRON),
@@ -130,7 +175,7 @@ def test_monopole_attention_is_antisymmetric_and_vmc_prepares():
     assert prepared.problem.initial_configurations.shape == (4, 2, 2)
 
 
-def test_sphere_proposal_is_supported_and_hastings_symmetric():
+def test_sphere_proposal_is_supported_and_hastings_symmetric() -> None:
     configuration = jnp.asarray(((0.8, -0.2), (1.4, 0.7)))
     move = SingleElectronSphereProposal(2, 0.3).propose(jr.key(11), configuration)
 
@@ -139,7 +184,7 @@ def test_sphere_proposal_is_supported_and_hastings_symmetric():
     assert float(move.payload.angular_displacement) <= 0.3
 
 
-def test_subband_form_factor_has_exact_zero_momentum_limit():
+def test_subband_form_factor_has_exact_zero_momentum_limit() -> None:
     positions = np.linspace(-5.0e-9, 5.0e-9, 101)
     density = np.full_like(positions, 1.0 / (positions[-1] - positions[0]))
     plan = qh.SubbandCoulombFormFactorPlan(
@@ -157,7 +202,7 @@ def test_subband_form_factor_has_exact_zero_momentum_limit():
     assert bool(result.successful)
 
 
-def test_periodic_chain_lead_is_causal_and_has_psd_broadening():
+def test_periodic_chain_lead_is_causal_and_has_psd_broadening() -> None:
     plan = PeriodicPrincipalLayerLeadPlan(
         np.asarray(((0.0,),)),
         np.asarray(((-1.0,),)),

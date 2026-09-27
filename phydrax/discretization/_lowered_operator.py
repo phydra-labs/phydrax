@@ -11,7 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -33,7 +33,7 @@ class LoweredBufferSpec(StrictModule, NonTrainableState):
         /,
         *,
         placement: str = "device",
-    ):
+    ) -> None:
         identifier = str(name)
         shape_ = tuple(shape)
         dtype_ = str(np.dtype(dtype))
@@ -80,7 +80,7 @@ class LoweredKernel(StrictModule):
         *,
         halo_widths: Sequence[int] = (),
         implementation_id: str,
-    ):
+    ) -> None:
         identifier = str(name)
         implementation = str(implementation_id)
         reads_ = tuple(str(value) for value in reads)
@@ -130,7 +130,7 @@ class LoweredOperatorProgram(StrictModule, NonTrainableState):
         buffers: Sequence[LoweredBufferSpec],
         kernels: Sequence[LoweredKernel],
         /,
-    ):
+    ) -> None:
         buffers_ = tuple(buffers)
         kernels_ = tuple(kernels)
         if not buffers_ or any(
@@ -205,7 +205,7 @@ class LoweredJAXBackend(StrictModule, NonTrainableState):
             values.update(updates)
         return {name: jnp.asarray(value) for name, value in values.items()}
 
-    def compile(self, /):
+    def compile(self, /) -> Callable[[Mapping[str, Any]], dict[str, Array]]:
         return jax.jit(self)
 
 

@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import prod
 from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._precision import PrecisionEvidenceEnvelope
@@ -34,6 +36,7 @@ from ._dynamics import (
     FiniteVolumeMethodPlan,
     reconstruct_cartesian_ghosted_axis,
 )
+from ._halo import reconstruction_ghost_width
 from ._precision import FiniteVolumePrecisionPolicy
 from ._riemann import AbstractNumericalFluxPlan
 
@@ -64,7 +67,7 @@ class _BlockAMRFaceRoute(StrictModule, NonTrainableState):
         block_id: str,
         block_kind: str,
         /,
-    ):
+    ) -> None:
         self.level = int(level)
         self.axis = int(axis)
         self.face_indices = jnp.asarray(face_indices, dtype=jnp.int32)
@@ -110,7 +113,7 @@ class BlockAMRFiniteVolumePlan(StrictModule):
         source: SourceFunction | None = None,
         source_id: str | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(hierarchy, PreparedFDAMRHierarchy):
             raise TypeError("hierarchy must be PreparedFDAMRHierarchy.")
         if not isinstance(method, FiniteVolumeMethodPlan):
@@ -137,7 +140,7 @@ class BlockAMRFiniteVolumePlan(StrictModule):
                 raise ValueError(
                     "Periodic axes use no physical pair; bounded axes require one."
                 )
-        required_halo = int(method.reconstruction.ghost_width)
+        required_halo = reconstruction_ghost_width(method.reconstruction)
         if any(
             width < required_halo
             for level in hierarchy_plan.levels
@@ -210,7 +213,7 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule):
         plan: BlockAMRFiniteVolumePlan,
         topology: BlockHierarchyTopology,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, BlockAMRFiniteVolumePlan):
             raise TypeError("plan must be BlockAMRFiniteVolumePlan.")
         hierarchy_plan = plan.hierarchy.plan.hierarchy
@@ -425,8 +428,10 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule):
                     sign: int,
                     *,
                     buckets: dict[str, dict[str, list[Any]]] = buckets,
-                    cell=cell,
-                    coordinate=coordinate,
+                    cell: Callable[[int, tuple[int, ...]], int] = cell,
+                    coordinate: Callable[
+                        [int, tuple[int, ...], int], np.ndarray
+                    ] = coordinate,
                     axis: int = axis,
                 ) -> None:
                     bucket = buckets[kind]

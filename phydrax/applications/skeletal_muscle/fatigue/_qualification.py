@@ -10,10 +10,11 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from ...._dtype_names import inexact_result_type
 from ...._fingerprint import canonical_fingerprint
-from ...._precision import inexact_result_type
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ._liu_brown_yue_2002 import PreparedLiuBrownYue2002
@@ -46,7 +47,7 @@ class LiuBrownYue2002QualificationPlan(StrictModule, NonTrainableState):
         *,
         conservation_tolerance: float = 2.0e-6,
         monotonic_tolerance: float = 2.0e-7,
-    ):
+    ) -> None:
         conservation = float(conservation_tolerance)
         monotonic = float(monotonic_tolerance)
         if not isfinite(conservation) or conservation <= 0.0:

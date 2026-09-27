@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -22,7 +24,9 @@ NATIVE_DIFFERENTIATION = phx.DerivativeContract.smooth(
 cosmology = phx.applications.cosmology
 
 
-def _prepared(*, scale_count=40, line_of_sight_quadrature_tolerance=1.0e-2):
+def _prepared(
+    *, scale_count: Any = 40, line_of_sight_quadrature_tolerance: Any = 1.0e-2
+) -> Any:
     scale_contract = cosmology.CosmologyScaleContract(
         cosmology.CODE_COSMOLOGY_SCALE.length_unit,
         cosmology.CODE_COSMOLOGY_SCALE.mass_unit,
@@ -81,7 +85,7 @@ def _prepared(*, scale_count=40, line_of_sight_quadrature_tolerance=1.0e-2):
     ).prepare()
 
 
-def test_native_scalar_solver_generates_operators_transfer_and_tt_te_ee():
+def test_native_scalar_solver_generates_operators_transfer_and_tt_te_ee() -> None:
     prepared = _prepared()
     result = prepared.solve(jnp.asarray([2.0e-9, 2.0e-9, 2.0e-9]))
     assert result.transfer.states.shape[:2] == (40, 3)
@@ -103,7 +107,7 @@ def test_native_scalar_solver_generates_operators_transfer_and_tt_te_ee():
     assert bool(result.successful)
 
 
-def test_line_of_sight_error_includes_polarization_underresolution():
+def test_line_of_sight_error_includes_polarization_underresolution() -> None:
     delta_time = jnp.asarray([1.0, 1.0])
     radial = jnp.ones((1, 1, 3))
     temperature_source = jnp.full((3, 1), 2.0)
@@ -132,7 +136,7 @@ def test_line_of_sight_error_includes_polarization_underresolution():
     assert not bool(jnp.isfinite(nonfinite_error))
 
 
-def test_native_scalar_solver_gates_success_on_line_of_sight_error():
+def test_native_scalar_solver_gates_success_on_line_of_sight_error() -> None:
     primordial = jnp.asarray([2.0e-9, 2.0e-9, 2.0e-9])
     tolerance = 5.0e-3
     resolved = _prepared(line_of_sight_quadrature_tolerance=tolerance)
@@ -168,13 +172,13 @@ def test_native_scalar_solver_gates_success_on_line_of_sight_error():
         nonfinite.solve(primordial)
 
 
-def test_native_scalar_solver_is_jittable_and_parameter_differentiable():
+def test_native_scalar_solver_is_jittable_and_parameter_differentiable() -> None:
     prepared = _prepared()
     solve = jax.jit(prepared.solve)
     result = solve(jnp.asarray([2.0e-9, 2.0e-9, 2.0e-9]))
     assert bool(result.evidence.finite)
 
-    def amplitude_response(amplitude):
+    def amplitude_response(amplitude: Any) -> Any:
         output = prepared.solve(amplitude * jnp.ones((3,)))
         return output.cmb_spectra.spectra[0, 0, 0, 0]
 

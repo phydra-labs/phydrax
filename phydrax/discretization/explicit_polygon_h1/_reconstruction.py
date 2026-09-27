@@ -4,15 +4,19 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg import inverse_small_linear, SmallLinearSolvePlan
+from .._cell_complex import PolygonalConnectivity
 from ._space import ExplicitPolygonH1Discretization, ExplicitPolygonH1RuntimeData
 
 
@@ -168,9 +172,9 @@ def evaluate_explicit_polygon_h1_trace(
     parameter = jnp.asarray(parameters)
     if edges.ndim != 1 or parameter.ndim != 1:
         raise ValueError("Trace edges and parameters must be rank-one arrays.")
-    connectivity = jnp.asarray(discretization.mesh.connectivity.edges, dtype=jnp.int32)[
-        edges
-    ]
+    # ExplicitPolygonH1Plan rejects meshes without PolygonalConnectivity.
+    polygonal = cast(PolygonalConnectivity, discretization.mesh.connectivity)
+    connectivity = jnp.asarray(polygonal.edges, dtype=jnp.int32)[edges]
     start = reconstruction.state[connectivity[:, 0]]
     stop = reconstruction.state[connectivity[:, 1]]
     value_rank = start.ndim - 1

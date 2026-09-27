@@ -4,24 +4,26 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
-CompressibleKineticModelKind = Literal[
+CompressibleKineticModelKind: TypeAlias = Literal[
     "guided-d3q39",
     "entropic-d3q343",
     "filtered-d3q33",
     "adaptive-gauge",
 ]
-KineticPopulationRole = Literal[
+KineticPopulationRole: TypeAlias = Literal[
     "particle",
     "internal-energy",
     "thermal",
@@ -44,11 +46,10 @@ class KineticPopulationFieldSpec(StrictModule, NonTrainableState):
         *,
         positive: bool = True,
         checkpoint_required: bool = True,
-    ):
+    ) -> None:
         if not name:
             raise ValueError("Population field name must be non-empty.")
-        if role not in ("particle", "internal-energy", "thermal"):
-            raise ValueError(f"Unknown kinetic population role {role!r}.")
+        role = parse(role, KineticPopulationRole, "role")
         count = int(population_count)
         if count < 1:
             raise ValueError("population_count must be positive.")
@@ -63,7 +64,7 @@ class KineticPopulationLayout(StrictModule, NonTrainableState):
     fields: tuple[KineticPopulationFieldSpec, ...]
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, fields: tuple[KineticPopulationFieldSpec, ...], /):
+    def __init__(self, fields: tuple[KineticPopulationFieldSpec, ...], /) -> None:
         items = tuple(fields)
         if not items or any(
             not isinstance(item, KineticPopulationFieldSpec) for item in items
@@ -119,7 +120,7 @@ class CompressibleKineticPopulationState(StrictModule):
         layout: KineticPopulationLayout,
         model_id: str,
         rule_id: str,
-    ):
+    ) -> None:
         if not isinstance(layout, KineticPopulationLayout):
             raise TypeError("layout must be a KineticPopulationLayout.")
         model_identifier = str(model_id).strip()
@@ -216,14 +217,8 @@ class CompressibleKineticSupportTuple(StrictModule, NonTrainableState):
         transport_id: str,
         precision_id: str,
         execution_id: str,
-    ):
-        if model_kind not in (
-            "guided-d3q39",
-            "entropic-d3q343",
-            "filtered-d3q33",
-            "adaptive-gauge",
-        ):
-            raise ValueError(f"Unknown compressible kinetic model {model_kind!r}.")
+    ) -> None:
+        model_kind = parse(model_kind, CompressibleKineticModelKind, "model_kind")
         identifiers = (rule_id, collision_id, transport_id, precision_id, execution_id)
         if any(not value for value in identifiers):
             raise ValueError("Support-tuple identifiers must be non-empty.")

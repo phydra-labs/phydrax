@@ -74,7 +74,7 @@ class ChemistryRunEnvelope(StrictModule, NonTrainableState):
         /,
         *,
         model: ModelManifest | None = None,
-    ):
+    ) -> None:
         if not isinstance(analysis, AnalysisPlan):
             raise TypeError("analysis must be AnalysisPlan.")
         if not isinstance(execution, ExecutionPlan):

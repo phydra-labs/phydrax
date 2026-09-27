@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _collocated_operators(nx=6, ny=5):
+def _collocated_operators(nx: Any = 6, ny: Any = 5) -> Any:
     logical = np.asarray([(i / nx, j / ny) for j in range(ny + 1) for i in range(nx + 1)])
     x = logical[:, 0]
     y = logical[:, 1]
@@ -34,7 +37,7 @@ def _collocated_operators(nx=6, ny=5):
     )
 
 
-def test_collocated_gradient_divergence_gauge_and_rhie_chow_contracts():
+def test_collocated_gradient_divergence_gauge_and_rhie_chow_contracts() -> None:
     operators = _collocated_operators()
     discretization = operators.discretization
     centers = discretization.cell_centers
@@ -88,7 +91,7 @@ def test_collocated_gradient_divergence_gauge_and_rhie_chow_contracts():
     assert jnp.max(jnp.abs(rhie_chow[operators.interior_faces])) > 0.0
 
 
-def test_pressure_projection_recovers_discrete_gradient_and_removes_divergence():
+def test_pressure_projection_recovers_discrete_gradient_and_removes_divergence() -> None:
     operators = _collocated_operators()
     discretization = operators.discretization
     projection = phx.solver.UnstructuredPressureProjectionPlan(
@@ -139,7 +142,7 @@ def test_pressure_projection_recovers_discrete_gradient_and_removes_divergence()
     )
 
 
-def test_pressure_projection_rejects_incompatible_boundary_flux():
+def test_pressure_projection_rejects_incompatible_boundary_flux() -> None:
     operators = _collocated_operators()
     discretization = operators.discretization
     projection = phx.solver.UnstructuredPressureProjectionPlan(
@@ -162,7 +165,7 @@ def test_pressure_projection_rejects_incompatible_boundary_flux():
     assert not bool(result.converged)
 
 
-def test_pressure_projection_refreshes_nonuniform_momentum_inverse():
+def test_pressure_projection_refreshes_nonuniform_momentum_inverse() -> None:
     operators = _collocated_operators()
     discretization = operators.discretization
     projection = phx.solver.UnstructuredPressureProjectionPlan(
@@ -201,7 +204,7 @@ def test_pressure_projection_refreshes_nonuniform_momentum_inverse():
     assert jnp.linalg.norm(result.divergence_after) < 1e-8
 
 
-def test_fixed_pressure_corrections_are_jittable_and_report_linear_status():
+def test_fixed_pressure_corrections_are_jittable_and_report_linear_status() -> None:
     operators = _collocated_operators()
     discretization = operators.discretization
     projection = phx.solver.UnstructuredPressureProjectionPlan(
@@ -213,7 +216,7 @@ def test_fixed_pressure_corrections_are_jittable_and_report_linear_status():
     pressure = jnp.zeros((discretization.cell_count,))
     boundary_velocity = jnp.zeros((discretization.face_measures.size,))
 
-    def predictor(time, current_velocity, args):
+    def predictor(time: Any, current_velocity: Any, args: Any) -> Any:
         del time, args
         return current_velocity
 
@@ -233,7 +236,7 @@ def test_fixed_pressure_corrections_are_jittable_and_report_linear_status():
     )
 
 
-def test_pressure_correction_normalizes_mixed_input_dtypes_eager_and_jit():
+def test_pressure_correction_normalizes_mixed_input_dtypes_eager_and_jit() -> None:
     operators = _collocated_operators()
     discretization = operators.discretization
     projection = phx.solver.UnstructuredPressureProjectionPlan(
@@ -248,7 +251,7 @@ def test_pressure_correction_normalizes_mixed_input_dtypes_eager_and_jit():
     inverse = jnp.full((discretization.cell_count,), 0.05, dtype=jnp.float32)
     boundary_velocity = jnp.zeros((discretization.face_measures.size,), dtype=jnp.float32)
 
-    def predictor(time, current_velocity, args):
+    def predictor(time: Any, current_velocity: Any, args: Any) -> Any:
         del time, args
         return (0.95 * current_velocity).astype(jnp.float32)
 
@@ -289,7 +292,7 @@ def test_pressure_correction_normalizes_mixed_input_dtypes_eager_and_jit():
     )
     correction32 = phx.solver.UnstructuredPressureCorrectionPlan(projection32, 2)
 
-    def predictor64(time, current_velocity, args):
+    def predictor64(time: Any, current_velocity: Any, args: Any) -> Any:
         del time, args
         return (0.95 * current_velocity).astype(jnp.float64)
 

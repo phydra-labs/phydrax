@@ -2,13 +2,16 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
 
 
-def _graph(nodes=None) -> phx.graph.GraphIR:
+def _graph(nodes: Any = None) -> phx.graph.GraphIR:
     return phx.graph.GraphIR(
         nodes=jnp.array([[0.0], [1.0], [3.0]]) if nodes is None else nodes,
         edges=jnp.array([[1.0], [1.0]]),
@@ -20,20 +23,20 @@ def _graph(nodes=None) -> phx.graph.GraphIR:
 
 
 class ConstantNodeRate:
-    def __init__(self, value):
+    def __init__(self, value: Any) -> None:
         self.value = float(value)
 
-    def __call__(self, graph):
+    def __call__(self, graph: Any) -> Any:
         return graph.replace(nodes=jnp.full_like(graph.nodes, self.value), validate=False)
 
 
 class LinearNodeRate:
-    def __call__(self, graph):
+    def __call__(self, graph: Any) -> Any:
         return graph.replace(nodes=graph.nodes, validate=False)
 
 
 class ZeroNodeRate:
-    def __call__(self, graph):
+    def __call__(self, graph: Any) -> Any:
         return graph.replace(nodes=jnp.zeros_like(graph.nodes), validate=False)
 
 
@@ -61,7 +64,7 @@ def _trajectory_domain() -> phx.domain.GraphTrajectoryDatasetDomain:
     )
 
 
-def test_euler_graph_stepper_advances_node_state():
+def test_euler_graph_stepper_advances_node_state() -> None:
     stepper = phx.graph.EulerGraphStepper(ConstantNodeRate(2.0), dt=0.25)
     out = stepper(_graph())
     assert out.senders is not None
@@ -70,7 +73,7 @@ def test_euler_graph_stepper_advances_node_state():
     assert jnp.allclose(out.senders, jnp.array([0, 1], dtype=jnp.int32))
 
 
-def test_rk4_graph_stepper_matches_exponential_for_linear_rate():
+def test_rk4_graph_stepper_matches_exponential_for_linear_rate() -> None:
     stepper = phx.graph.RK4GraphStepper(LinearNodeRate(), dt=0.1)
     out = stepper(_graph(nodes=jnp.ones((3, 1))))
     expected_scale = 1.0 + 0.1 + 0.1**2 / 2.0 + 0.1**3 / 6.0 + 0.1**4 / 24.0
@@ -78,7 +81,7 @@ def test_rk4_graph_stepper_matches_exponential_for_linear_rate():
     assert jnp.allclose(out.nodes, expected_scale * jnp.ones((3, 1)))
 
 
-def test_autoregressive_rollout_stacks_node_features():
+def test_autoregressive_rollout_stacks_node_features() -> None:
     graph = _graph(nodes=jnp.zeros((3, 1)))
     stepper = phx.graph.EulerGraphStepper(ConstantNodeRate(1.0), dt=1.0)
 
@@ -88,7 +91,7 @@ def test_autoregressive_rollout_stacks_node_features():
     assert jnp.allclose(nodes[:, 0, 0], jnp.array([0.0, 1.0, 2.0, 3.0]))
 
 
-def test_rollout_feature_loss_zero_for_matching_targets():
+def test_rollout_feature_loss_zero_for_matching_targets() -> None:
     graph = _graph(nodes=jnp.zeros((3, 1)))
     stepper = phx.graph.EulerGraphStepper(ConstantNodeRate(1.0), dt=1.0)
     target = phx.graph.rollout_features(stepper, graph, steps=3, feature="nodes")
@@ -96,7 +99,7 @@ def test_rollout_feature_loss_zero_for_matching_targets():
     assert phx.graph.rollout_feature_loss(stepper, graph, target, feature="nodes") < 1e-12
 
 
-def test_graph_rollout_model_wraps_as_domain_function():
+def test_graph_rollout_model_wraps_as_domain_function() -> None:
     domain = phx.domain.GraphDomain(_graph())
     batch = domain.sample_component(
         phx.domain.Nodes(),
@@ -113,21 +116,21 @@ def test_graph_rollout_model_wraps_as_domain_function():
     assert jnp.allclose(out.data[2, :, 0], jnp.array([3.0, 4.0, 5.0]))
 
 
-def test_graph_rollout_model_participates_in_residual_penalty():
+def test_graph_rollout_model_participates_in_residual_penalty() -> None:
     domain = phx.domain.GraphDomain(_graph())
     nodes = domain.component({"graph": phx.domain.Nodes()})
     structure = phx.domain.SampleLayout((("graph",),))
     stepper = phx.graph.EulerGraphStepper(ConstantNodeRate(1.0), dt=1.0)
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> Any:
         return node[0]
 
     @domain.Function("graph")
-    def target(node):
+    def target(node: Any) -> Any:
         return node[0] + jnp.arange(3.0)
 
-    def residual(pred):
+    def residual(pred: Any) -> Any:
         return pred - target
 
     condition = phx.conditions.Residual("pred", nodes, residual)
@@ -141,7 +144,7 @@ def test_graph_rollout_model_participates_in_residual_penalty():
     assert term.loss({"pred": rollout_fn}) < 1e-12
 
 
-def test_graph_rollout_model_respects_node_subsets():
+def test_graph_rollout_model_respects_node_subsets() -> None:
     domain = phx.domain.GraphDomain(_graph())
     subset = domain.component(
         {"graph": phx.domain.NodeSet(jnp.array([0, 2], dtype=jnp.int32))}
@@ -158,7 +161,7 @@ def test_graph_rollout_model_respects_node_subsets():
     assert jnp.allclose(out.data[:, :, 0], jnp.array([[0.0, 1.0], [3.0, 4.0]]))
 
 
-def test_process_stepper_preserves_padding_entries():
+def test_process_stepper_preserves_padding_entries() -> None:
     graph0 = _graph(nodes=jnp.zeros((3, 1)))
     graph1 = phx.graph.GraphIR(
         nodes=jnp.array([[2.0], [4.0]]),
@@ -171,6 +174,7 @@ def test_process_stepper_preserves_padding_entries():
     domain = phx.domain.GraphDatasetDomain((graph0, graph1))
     domain = domain.with_layout(domain.layout_for_batch_size(2, multiple=2))
     batch = domain.points_from_indices(
+        # ty: ignore[invalid-argument-type]
         [0, 1],
         component=phx.domain.Nodes(),
         structure=phx.domain.SampleLayout((("graph",),)),
@@ -185,7 +189,7 @@ def test_process_stepper_preserves_padding_entries():
     assert jnp.allclose(out.nodes[5, 0], 0.0)
 
 
-def test_graph_process_stepper_integrates_with_graph_trajectory_constraint():
+def test_graph_process_stepper_integrates_with_graph_trajectory_constraint() -> None:
     domain = _trajectory_domain()
     component = domain.component(
         {"graph": phx.domain.Nodes(), "t": phx.domain.FixedStart()}
@@ -194,10 +198,10 @@ def test_graph_process_stepper_integrates_with_graph_trajectory_constraint():
     stepper = phx.graph.EulerGraphStepper(ZeroNodeRate(), dt=0.5)
 
     @domain.Function("graph", "t")
-    def u(node, t):
+    def u(node: Any, t: Any) -> Any:
         return node[0] + 0.0 * t
 
-    def residual(f):
+    def residual(f: Any) -> Any:
         return domain.GraphModel(stepper, input_fn=f) - f
 
     condition = phx.conditions.Residual("u", component, residual)

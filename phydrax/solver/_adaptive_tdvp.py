@@ -13,11 +13,13 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
+from ..typing import PRNGKey
 
 
 _STAGE_ADDRESS = SampleAddress(
@@ -51,7 +53,7 @@ class AdaptiveTDVPPlan(StrictModule):
         maximum_accepted_steps: int,
         scheme: Literal["adaptive-heun", "symmetric-midpoint"] = "adaptive-heun",
         midpoint_iterations: int = 4,
-    ):
+    ) -> None:
         start, stop = map(float, time_span)
         initial = float(initial_step_size)
         lower, upper = map(float, step_size_bounds)
@@ -109,12 +111,12 @@ class AdaptiveTDVPResult(StrictModule):
 
 
 def solve_adaptive_tdvp(
-    vector_field: Callable[[Array, Array, Key[Array, ""]], tuple[Array, Array]],
+    vector_field: Callable[[Array, Array, PRNGKey], tuple[Array, Array]],
     initial_parameters: ArrayLike,
     plan: AdaptiveTDVPPlan,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> AdaptiveTDVPResult:
     """Control temporal defect separately from caller-reported sampling uncertainty.
 

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _polynomial(coefficients):
+def _polynomial(coefficients: Any) -> Any:
     values = jnp.asarray(coefficients, dtype="float64")
     potential = phx.equations.HolomorphicPolynomialPotential(
         values.shape[0],
@@ -24,7 +27,9 @@ def _polynomial(coefficients):
     )
 
 
-def test_certificate_binds_canonical_complex_algebra_and_construction_dependencies():
+def test_certificate_binds_canonical_complex_algebra_and_construction_dependencies() -> (
+    None
+):
     potential = _polynomial([[1.0, 2.0]])
     certificate = potential.holomorphic_certificate()
     assert certificate.complex_algebra_id == (
@@ -45,7 +50,7 @@ def test_certificate_binds_canonical_complex_algebra_and_construction_dependenci
         )
 
 
-def test_branch_bundle_concatenates_values_jets_and_linearity():
+def test_branch_bundle_concatenates_values_jets_and_linearity() -> None:
     first = _polynomial([[1.0, 2.0, -0.5]])
     second = _polynomial([[0.3, -1.0], [2.0, 0.25]])
     bundle = phx.equations.HolomorphicBranchBundle((first, second))
@@ -64,14 +69,14 @@ def test_branch_bundle_concatenates_values_jets_and_linearity():
     assert bundle.factorization.gauge_kind == "none"
 
 
-def test_branch_bundle_composes_with_biharmonic_physical_wrapper():
+def test_branch_bundle_composes_with_biharmonic_physical_wrapper() -> None:
     phi = _polynomial([[0.0, 1.0, 0.2]])
     psi = _polynomial([[0.1, -0.3, 0.4]])
     bundle = phx.equations.HolomorphicBranchBundle((phi, psi))
     field = phx.equations.BiharmonicPotential2D(bundle)
     point = jnp.asarray([0.2, -0.4])
 
-    def laplacian(value):
+    def laplacian(value: Any) -> Any:
         return jnp.trace(jax.hessian(field)(value))
 
     residual = jnp.trace(jax.hessian(laplacian)(point))
@@ -80,7 +85,7 @@ def test_branch_bundle_composes_with_biharmonic_physical_wrapper():
     assert field.model_metadata()["trial_space_certificate"].linear_in_coefficients
 
 
-def test_product_potential_analytic_jets_match_direct_holomorphic_ad():
+def test_product_potential_analytic_jets_match_direct_holomorphic_ad() -> None:
     first = _polynomial([[1.0, 1.0], [2.0, -1.0]])
     second = _polynomial([[3.0, 1.0], [1.0, 2.0]])
     product = phx.equations.HolomorphicProductPotential(
@@ -91,7 +96,7 @@ def test_product_potential_analytic_jets_match_direct_holomorphic_ad():
     z = jnp.asarray(0.2 + 0.1j)
     jet = product.jet(z, 4)
 
-    def scalar(value):
+    def scalar(value: Any) -> Any:
         return product(value)[0]
 
     derivative = scalar
@@ -108,7 +113,7 @@ def test_product_potential_analytic_jets_match_direct_holomorphic_ad():
     assert product.factorization.gauge_kind == "multiplicative-factor-scale"
 
 
-def test_product_potential_is_harmonic_and_reports_factor_gauge():
+def test_product_potential_is_harmonic_and_reports_factor_gauge() -> None:
     first = _polynomial([[1.0, 0.5], [0.2, -0.1]])
     second = _polynomial([[0.3, 0.8], [1.2, 0.4]])
     product = phx.equations.HolomorphicProductPotential(
@@ -143,7 +148,7 @@ def test_product_potential_is_harmonic_and_reports_factor_gauge():
     assert jnp.allclose(product(z), scaled(z))
 
 
-def test_product_and_bundle_validate_child_contracts():
+def test_product_and_bundle_validate_child_contracts() -> None:
     factor = _polynomial([[1.0, 1.0]])
     with pytest.raises(ValueError, match=r"latent_rank \* branches"):
         phx.equations.HolomorphicProductPotential(
@@ -167,4 +172,5 @@ def test_product_and_bundle_validate_child_contracts():
         keep_outputs_complex=True,
     )
     with pytest.raises(TypeError, match="HolomorphicPotentialProvider"):
+        # ty: ignore[invalid-argument-type]
         phx.equations.HarmonicPotential2D(generic)

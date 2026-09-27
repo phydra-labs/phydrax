@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -17,11 +20,11 @@ from phydrax.solver._kfac_solver import _quadratic_norm_and_clip
 
 def _linear_solver(
     *,
-    two_terms=False,
-    extra_terms=(),
-    model_loss=False,
-    collocation_policy=None,
-):
+    two_terms: Any = False,
+    extra_terms: Any = (),
+    model_loss: Any = False,
+    collocation_policy: Any = None,
+) -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = phx.nn.models.MLP(
         in_size=1,
@@ -52,7 +55,7 @@ def _linear_solver(
     )
     component = domain.component()
 
-    def residual_term(operator, label, *, policy=None):
+    def residual_term(operator: Any, label: Any, *, policy: Any = None) -> Any:
         condition = phx.conditions.Residual("u", component, operator, label=label)
         target = phx.integration.mean_over(condition.on)
         source = (
@@ -79,7 +82,7 @@ def _linear_solver(
     )
 
 
-def test_public_kfac_optimizer_decreases_frozen_functional_loss():
+def test_public_kfac_optimizer_decreases_frozen_functional_loss() -> None:
     solver = _linear_solver()
     initial = solver.loss(key=jr.key(20))
     trained = solver.solve(
@@ -98,7 +101,7 @@ def test_public_kfac_optimizer_decreases_frozen_functional_loss():
     assert trained.training_diagnostics["optimizer/kfac/num_affine_blocks"] == 1
 
 
-def test_kfac_delivers_cadenced_training_session_metrics():
+def test_kfac_delivers_cadenced_training_session_metrics() -> None:
     events = []
     session = phx.execution.IterationSession(
         "kfac-session",
@@ -133,7 +136,7 @@ def test_kfac_delivers_cadenced_training_session_metrics():
     assert trained.training_diagnostics["optimizer/kfac/factor_updates"] == 2
 
 
-def test_kfac_rejects_post_optimizer_update_alignment():
+def test_kfac_rejects_post_optimizer_update_alignment() -> None:
     with pytest.raises(ValueError, match="unsupported by KFAC"):
         _linear_solver().solve(
             num_iter=1,
@@ -146,7 +149,7 @@ def test_kfac_rejects_post_optimizer_update_alignment():
         )
 
 
-def test_native_least_squares_method_uses_functional_residual_contract():
+def test_native_least_squares_method_uses_functional_residual_contract() -> None:
     solver = _linear_solver()
     initial = solver.loss(key=jr.key(20))
     trained = solver.solve(
@@ -167,7 +170,7 @@ def test_native_least_squares_method_uses_functional_residual_contract():
     assert trained.training_diagnostics["optimizer/iterative/residual_evaluations"] > 0
 
 
-def test_kfac_keep_best_includes_initial_parameters():
+def test_kfac_keep_best_includes_initial_parameters() -> None:
     solver = _linear_solver()
     trained = solver.solve(
         num_iter=1,
@@ -188,7 +191,7 @@ def test_kfac_keep_best_includes_initial_parameters():
     assert jnp.array_equal(trained_model.layers[0].bias, initial_model.layers[0].bias)
 
 
-def test_kfac_finite_rejection_keeps_parameters_and_retains_curvature():
+def test_kfac_finite_rejection_keeps_parameters_and_retains_curvature() -> None:
     solver = _linear_solver()
     # The only Armijo candidate overflows the loss, so the attempt is a finite
     # rejection: parameters stay put while the observed curvature is committed.
@@ -221,7 +224,7 @@ def test_kfac_finite_rejection_keeps_parameters_and_retains_curvature():
     assert any(jnp.any(leaf != 0.0) for leaf in curvature)
 
 
-def test_kfac_quadratic_norm_clip_enforces_requested_bound():
+def test_kfac_quadratic_norm_clip_enforces_requested_bound() -> None:
     clipped, norm = _quadratic_norm_and_clip(
         jnp.asarray([4.0]),
         jnp.asarray([4.0]),
@@ -232,7 +235,7 @@ def test_kfac_quadratic_norm_clip_enforces_requested_bound():
     assert jnp.allclose(norm, 1.0)
 
 
-def test_kfac_factor_update_period_and_term_subsampling_are_supported():
+def test_kfac_factor_update_period_and_term_subsampling_are_supported() -> None:
     trained = _linear_solver(two_terms=True).solve(
         num_iter=3,
         optim=phx.optim.kfac(
@@ -253,17 +256,17 @@ def test_kfac_factor_update_period_and_term_subsampling_are_supported():
     assert jnp.all(jnp.isfinite(weight))
 
 
-def test_kfac_num_iter_zero_preserves_solver():
+def test_kfac_num_iter_zero_preserves_solver() -> None:
     solver = _linear_solver()
     assert solver.solve(num_iter=0, optim=phx.optim.kfac()) is solver
 
 
-def test_kfac_rejects_negative_num_iter():
+def test_kfac_rejects_negative_num_iter() -> None:
     with pytest.raises(ValueError, match="num_iter must be non-negative"):
         _linear_solver().solve(num_iter=-1, optim=phx.optim.kfac())
 
 
-def test_kfac_supports_condition_fields_and_jax_iteration_scalar():
+def test_kfac_supports_condition_fields_and_jax_iteration_scalar() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = phx.nn.models.MLP(
         in_size=1,
@@ -277,7 +280,7 @@ def test_kfac_supports_condition_fields_and_jax_iteration_scalar():
         "x",
         binding=phx.domain.FunctionBinding(pass_iter=True),
     )
-    def scheduled_weight(x, *, iter_):
+    def scheduled_weight(x: Any, *, iter_: Any) -> Any:
         return jnp.ones_like(x[0]) + 0.0 * iter_.astype("float64")
 
     condition = phx.conditions.Residual(
@@ -308,27 +311,27 @@ def test_kfac_supports_condition_fields_and_jax_iteration_scalar():
 
 
 def test_kfac_logs_train_and_evaluation_terms_to_events_and_tensorboard(
-    monkeypatch,
-    tmp_path,
-    phydrax_events,
-):
+    monkeypatch: Any,
+    tmp_path: Any,
+    phydrax_events: Any,
+) -> None:
     scalar_tags = []
 
     class RecordingTensorBoard:
-        def __init__(self, log_dir):
+        def __init__(self, log_dir: Any) -> None:
             del log_dir
 
-        def __enter__(self):
+        def __enter__(self) -> Any:
             return self
 
-        def __exit__(self, exc_type, exc, traceback):
+        def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
             del exc_type, exc, traceback
 
-        def scalar(self, tag, value, step):
+        def scalar(self, tag: Any, value: Any, step: Any) -> None:
             del value, step
             scalar_tags.append(tag)
 
-        def flush(self):
+        def flush(self) -> Any:
             return None
 
     monkeypatch.setattr(kfac_solver, "TensorBoardLogger", RecordingTensorBoard)
@@ -356,15 +359,15 @@ def test_kfac_logs_train_and_evaluation_terms_to_events_and_tensorboard(
     assert "eval/terms/000_target-one/value" in scalar_tags
 
 
-def test_kfac_honors_training_signal_stop(monkeypatch, phydrax_events):
+def test_kfac_honors_training_signal_stop(monkeypatch: Any, phydrax_events: Any) -> None:
     class StopImmediately:
         signal_name = "SIGTERM"
         stop_requested = True
 
-        def __enter__(self):
+        def __enter__(self) -> Any:
             return self
 
-        def __exit__(self, exc_type, exc, traceback):
+        def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
             del exc_type, exc, traceback
 
     monkeypatch.setattr(kfac_solver, "_TrainingSignalGuard", StopImmediately)
@@ -384,7 +387,7 @@ def test_kfac_honors_training_signal_stop(monkeypatch, phydrax_events):
     }
 
 
-def test_kfac_rejects_non_residual_training_terms_without_curvature_roots():
+def test_kfac_rejects_non_residual_training_terms_without_curvature_roots() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     signed_term = phx.terms.IntegralFunctional(
         source=phx.integration.per_step(
@@ -402,7 +405,7 @@ def test_kfac_rejects_non_residual_training_terms_without_curvature_roots():
         )
 
 
-def test_kfac_rejects_attached_model_losses_without_curvature_roots():
+def test_kfac_rejects_attached_model_losses_without_curvature_roots() -> None:
     with pytest.raises(ValueError, match="attached model losses"):
         _linear_solver(model_loss=True).solve(
             num_iter=1,
@@ -411,7 +414,7 @@ def test_kfac_rejects_attached_model_losses_without_curvature_roots():
         )
 
 
-def test_kfac_replays_seed_across_eager_and_requested_jit_modes():
+def test_kfac_replays_seed_across_eager_and_requested_jit_modes() -> None:
     solver = _linear_solver()
     eager = solver.solve(
         num_iter=2,
@@ -442,7 +445,7 @@ def test_kfac_replays_seed_across_eager_and_requested_jit_modes():
     assert requested_jit.training_diagnostics["optimizer/kfac/jit_requested"]
 
 
-def test_kfac_refreshes_adaptive_collocation_before_frozen_step():
+def test_kfac_refreshes_adaptive_collocation_before_frozen_step() -> None:
     solver = _linear_solver(
         collocation_policy=phx.sampling.collocation.PeriodicCollocation(
             refresh_every=1,
@@ -464,7 +467,7 @@ def test_kfac_refreshes_adaptive_collocation_before_frozen_step():
     assert not jnp.array_equal(initial, refreshed)
 
 
-def test_existing_optax_dispatch_remains_unchanged():
+def test_existing_optax_dispatch_remains_unchanged() -> None:
     solver = _linear_solver()
     trained = solver.solve(
         num_iter=2,
@@ -482,7 +485,7 @@ def test_existing_optax_dispatch_remains_unchanged():
     assert trained.loss(key=jr.key(20)) < solver.loss(key=jr.key(20))
 
 
-def test_upstream_optax_lbfgs_decreases_deterministic_functional_loss():
+def test_upstream_optax_lbfgs_decreases_deterministic_functional_loss() -> None:
     solver = _linear_solver()
     initial = solver.loss(key=jr.key(26))
 
@@ -498,7 +501,7 @@ def test_upstream_optax_lbfgs_decreases_deterministic_functional_loss():
     assert trained.loss(key=jr.key(26)) < initial
 
 
-def _signed_integral_term():
+def _signed_integral_term() -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     return phx.terms.IntegralFunctional(
         source=phx.integration.per_step(
@@ -509,7 +512,7 @@ def _signed_integral_term():
     )
 
 
-def test_generalized_gauss_newton_supports_residual_and_signed_integral():
+def test_generalized_gauss_newton_supports_residual_and_signed_integral() -> None:
     solver = _linear_solver(extra_terms=(_signed_integral_term(),))
     initial = solver.loss(key=jr.key(31))
     trained = solver.solve(
@@ -529,7 +532,7 @@ def test_generalized_gauss_newton_supports_residual_and_signed_integral():
     )
 
 
-def test_generalized_gauss_newton_supports_model_level_scalar_losses():
+def test_generalized_gauss_newton_supports_model_level_scalar_losses() -> None:
     solver = _linear_solver(model_loss=True)
     initial = solver.loss(key=jr.key(32))
     trained = solver.solve(
@@ -548,7 +551,7 @@ def test_generalized_gauss_newton_supports_model_level_scalar_losses():
     )
 
 
-def test_plain_least_squares_method_still_rejects_mixed_scalar_terms():
+def test_plain_least_squares_method_still_rejects_mixed_scalar_terms() -> None:
     with pytest.raises(TypeError, match="ResidualPenalty training terms only"):
         _linear_solver(extra_terms=(_signed_integral_term(),)).solve(
             num_iter=1,
@@ -557,7 +560,7 @@ def test_plain_least_squares_method_still_rejects_mixed_scalar_terms():
         )
 
 
-def test_composite_functional_replays_frozen_realizations_across_jit_request():
+def test_composite_functional_replays_frozen_realizations_across_jit_request() -> None:
     solver = _linear_solver(extra_terms=(_signed_integral_term(),))
     eager = solver.solve(
         num_iter=2,

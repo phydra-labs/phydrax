@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -20,7 +22,9 @@ from phydrax.optics.wave import (
 )
 
 
-def _periodic_space(shape=(16, 18), bounds=((-jnp.pi, -jnp.pi), (jnp.pi, jnp.pi))):
+def _periodic_space(
+    shape: Any = (16, 18), bounds: Any = ((-jnp.pi, -jnp.pi), (jnp.pi, jnp.pi))
+) -> Any:
     grid = TensorGridPlan(
         tuple(FourierAxisSpec(size) for size in shape),
         axis_names=("u", "v"),
@@ -28,7 +32,7 @@ def _periodic_space(shape=(16, 18), bounds=((-jnp.pi, -jnp.pi), (jnp.pi, jnp.pi)
     return PlaneFieldSpace(grid, RigidFrame.identity(3), "periodic-cell")
 
 
-def _finite_space(shape=(31, 32)):
+def _finite_space(shape: Any = (31, 32)) -> Any:
     grid = TensorGridPlan(
         tuple(UniformAxisSpec(size) for size in shape),
         axis_names=("u", "v"),
@@ -36,14 +40,14 @@ def _finite_space(shape=(31, 32)):
     return PlaneFieldSpace(grid, RigidFrame.identity(3), "finite-window")
 
 
-def test_topology_requires_periodic_no_pad_or_finite_explicit_pad_crop():
+def test_topology_requires_periodic_no_pad_or_finite_explicit_pad_crop() -> None:
     with pytest.raises(ValueError, match="requires padding=None"):
         AngularSpectrumPlan(2).prepare(_periodic_space())
     with pytest.raises(ValueError, match="requires explicit positive padding"):
         AngularSpectrumPlan().prepare(_finite_space())
 
 
-def test_zero_distance_is_identity_on_periodic_cell():
+def test_zero_distance_is_identity_on_periodic_cell() -> None:
     space = _periodic_space()
     coordinates = space.transverse_coordinates
     values = jnp.exp(-(coordinates[..., 0] ** 2 + coordinates[..., 1] ** 2))
@@ -59,7 +63,7 @@ def test_zero_distance_is_identity_on_periodic_cell():
     assert jnp.allclose(result.cropped_energy, 0.0)
 
 
-def test_single_fourier_mode_accumulates_exact_longitudinal_phase():
+def test_single_fourier_mode_accumulates_exact_longitudinal_phase() -> None:
     space = _periodic_space(shape=(18, 20))
     coordinates = space.transverse_coordinates
     transverse_wavevector = jnp.asarray([2.0, -3.0])
@@ -78,7 +82,7 @@ def test_single_fourier_mode_accumulates_exact_longitudinal_phase():
     assert jnp.allclose(result.field.values, expected, rtol=2e-5, atol=2e-5)
 
 
-def test_complex_medium_wavenumber_has_explicit_phase_and_attenuation():
+def test_complex_medium_wavenumber_has_explicit_phase_and_attenuation() -> None:
     space = _periodic_space(shape=(10, 12))
     field = ScalarPlaneField(space, jnp.ones(space.shape), 13.0, 0.0)
     distance = 0.7
@@ -92,7 +96,7 @@ def test_complex_medium_wavenumber_has_explicit_phase_and_attenuation():
     assert jnp.allclose(result.field.values, expected, rtol=2e-5, atol=2e-5)
 
 
-def test_outgoing_branch_decays_evanescent_mode():
+def test_outgoing_branch_decays_evanescent_mode() -> None:
     space = _periodic_space(shape=(16, 16))
     coordinates = space.transverse_coordinates
     transverse_wavenumber = 3.0
@@ -115,7 +119,7 @@ def test_outgoing_branch_decays_evanescent_mode():
     )
 
 
-def test_finite_window_odd_even_padding_crops_to_same_grid_and_spreads_gaussian():
+def test_finite_window_odd_even_padding_crops_to_same_grid_and_spreads_gaussian() -> None:
     space = _finite_space()
     coordinates = space.transverse_coordinates
     values = jnp.exp(
@@ -137,7 +141,7 @@ def test_finite_window_odd_even_padding_crops_to_same_grid_and_spreads_gaussian(
     assert propagated.successful
 
 
-def test_finite_window_leakage_is_explicit_failure():
+def test_finite_window_leakage_is_explicit_failure() -> None:
     space = _finite_space(shape=(17, 18))
     values = jnp.zeros(space.shape, dtype="complex128").at[8, 9].set(1.0)
     field = ScalarPlaneField(space, values, 5.0, 0.0)
@@ -153,7 +157,7 @@ def test_finite_window_leakage_is_explicit_failure():
     assert result.cropped_energy > 0.0
 
 
-def test_dynamic_distance_gradient_and_scalar_tangential_parity():
+def test_dynamic_distance_gradient_and_scalar_tangential_parity() -> None:
     space = _periodic_space(shape=(12, 14))
     coordinates = space.transverse_coordinates
     values = jnp.exp(2.0j * coordinates[..., 1])
@@ -176,7 +180,7 @@ def test_dynamic_distance_gradient_and_scalar_tangential_parity():
         2.0j * scalar_result.field.values,
     )
 
-    def propagated_real(distance):
+    def propagated_real(distance: Any) -> Any:
         return jnp.real(prepared.execute(scalar, distance, 7.0).field.values[0, 0])
 
     derivative = jax.grad(propagated_real)(jnp.asarray(0.2))

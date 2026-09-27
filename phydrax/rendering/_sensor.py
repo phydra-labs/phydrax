@@ -9,13 +9,15 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, PRNGKeyArray
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..imaging import ImagePlaneSupport
 from ..imaging.camera import CameraRig, project_points
+from ..typing import PRNGKey
 from ._point import GaussianRasterizer, GaussianRasterResult
 
 
@@ -61,7 +63,7 @@ class PhotometricResponse(StrictModule, NonTrainableState):
         saturation_level: float = float("inf"),
         shot_noise: bool = False,
         read_noise_std: float = 0.0,
-    ):
+    ) -> None:
         gain_ = float(gain)
         black_ = float(black_level)
         saturation_ = float(saturation_level)
@@ -113,7 +115,7 @@ class ParticleImageFormation(StrictModule, NonTrainableState):
         rasterizer: GaussianRasterizer,
         response: PhotometricResponse | None = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(rasterizer, GaussianRasterizer):
             raise TypeError("rasterizer must be GaussianRasterizer.")
         response_ = PhotometricResponse() if response is None else response
@@ -150,7 +152,7 @@ def apply_photometry(
     response: PhotometricResponse,
     irradiance: ArrayLike,
     *,
-    key: PRNGKeyArray | None = None,
+    key: PRNGKey | None = None,
     valid_mask: ArrayLike | None = None,
 ) -> PhotometryResult:
     """Apply an explicit sensor response; stochastic response requires ``key``."""
@@ -223,7 +225,7 @@ def render_camera_stack(
     sigma: ArrayLike,
     active: ArrayLike | None = None,
     *,
-    key: PRNGKeyArray | None = None,
+    key: PRNGKey | None = None,
 ) -> CameraStackRenderResult:
     """Project a fixed particle support through a rig and form camera-first images."""
     if not isinstance(formation, ParticleImageFormation):

@@ -66,7 +66,7 @@ class TrainedOperator(StrictModule, ExplicitFreeze):
         privacy_certificate: PrivacyCertificate | None = None,
         provenance: dict[str, Any] | None = None,
         calibration: dict[str, Any] | None = None,
-    ):
+    ) -> None:
         self.execution_plan = OperatorExecutionPlan(
             execution_model,
             task,

@@ -14,6 +14,7 @@ import math
 import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 import jax
 
@@ -254,7 +255,7 @@ def load_matrix(path: Path, /) -> phx.qualification.QualificationMatrix:
     return phx.qualification.QualificationMatrix.from_record(_read_json_object(path))
 
 
-def _validate_les_base_profiles(base_profiles, /) -> set[str]:
+def _validate_les_base_profiles(base_profiles: Any, /) -> set[str]:
     base_keys: set[str] = set()
     for value in base_profiles:
         base = _mapping(value, "base profile")
@@ -276,10 +277,10 @@ def _validate_les_base_profiles(base_profiles, /) -> set[str]:
 
 
 def _validate_les_cases(
-    campaign,
-    cases,
+    campaign: Any,
+    cases: Any,
     base_keys: set[str],
-    matrix_predicates,
+    matrix_predicates: Any,
     seen_cases: set[str],
     seen_predicates: set[str],
     /,
@@ -409,7 +410,9 @@ def validate_campaign(
         raise ValueError("Campaign matrix_id does not match the supplied matrix.")
     if campaign["campaign_id"] != content_address(_without(campaign, "campaign_id")):
         raise ValueError("Campaign has an invalid content address.")
+    # ty: ignore[invalid-argument-type]
     issued_at = int(campaign["issued_at"])
+    # ty: ignore[invalid-argument-type]
     expires_at = int(campaign["expires_at"])
     if issued_at < 0 or expires_at <= issued_at:
         raise ValueError("Campaign evidence window must have positive duration.")
@@ -480,9 +483,13 @@ def admit_reference(
         "Requested reference rights",
     )
     manifest.require_rights(
+        # ty: ignore[invalid-argument-type]
         commercial_use=rights["commercial_use"],
+        # ty: ignore[invalid-argument-type]
         redistribution=rights["redistribution"],
+        # ty: ignore[invalid-argument-type]
         training_use=rights["training_use"],
+        # ty: ignore[invalid-argument-type]
         export=rights["export"],
     )
     manifest.require_uncertainty()
@@ -506,17 +513,23 @@ def _resolved_filter(
     }[family]
     return phx.equations.ResolvedLESFilter(
         name,
+        # ty: ignore[invalid-argument-type]
         family=family,
         axis_names=("x", "y", "z"),
+        # ty: ignore[invalid-argument-type]
         topology=topology,
+        # ty: ignore[invalid-argument-type]
         boundary_class=boundary_class,
+        # ty: ignore[invalid-argument-type]
         scale_rule=scale_rule,
+        # ty: ignore[invalid-argument-type]
         commutation_status=commutation_status,
+        # ty: ignore[invalid-argument-type]
         repeated_filter_semantics=repeated_filter_semantics,
     )
 
 
-def _periodic_space(count: int, /):
+def _periodic_space(count: int, /) -> Any:
     return phx.discretization.TensorSpectralPlan(
         tuple(phx.discretization.FourierBasisPlan(count) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -528,7 +541,7 @@ def _periodic_space(count: int, /):
     )
 
 
-def _periodic_velocity(space):
+def _periodic_velocity(space: Any) -> Any:
     x, y, z = jnp.meshgrid(*(axis.nodes for axis in space.axes), indexing="ij")
     return jnp.stack(
         (
@@ -540,7 +553,9 @@ def _periodic_velocity(space):
     )
 
 
-def _periodic_les_plan(space, model: str, coefficient: float, oversampling: float):
+def _periodic_les_plan(
+    space: Any, model: str, coefficient: float, oversampling: float
+) -> Any:
     resolved_filter = _resolved_filter(
         "retained Fourier grid",
         family="sharp-fourier-projection",
@@ -568,15 +583,15 @@ def _periodic_les_plan(space, model: str, coefficient: float, oversampling: floa
 
 
 def _compile_periodic(
-    space,
+    space: Any,
     model: str,
     coefficient: float,
     oversampling: float,
     /,
     *,
-    forcing=None,
+    forcing: Any = None,
     forcing_id: str | None = None,
-):
+) -> Any:
     problem = phx.equations.IncompressibleFlowProblem(
         3, 0.01, forcing=forcing, forcing_id=forcing_id
     )
@@ -676,6 +691,7 @@ def _formula_measurements(model: str, coefficient: float, /) -> tuple[float, flo
 
 
 def _maximum_abs(values: Sequence[object], /) -> float:
+    # ty: ignore[invalid-argument-type]
     return max(float(jnp.max(jnp.abs(value))) for value in values)
 
 
@@ -709,14 +725,17 @@ def _tree_max_error(left: object, right: object, /) -> float:
     return max(errors, default=0.0)
 
 
-def _run_periodic_static(case: Mapping[str, object], _reference):
+def _run_periodic_static(case: Mapping[str, object], _reference: Any) -> Any:
     coefficients = _mapping(case["coefficients"], "periodic coefficients")
     grids = _mapping(case["grids"], "periodic grids")
     timesteps = _mapping(case["timesteps"], "periodic timesteps")
     parameters = _mapping(case["parameters"], "periodic parameters")
     model = str(parameters["model"])
+    # ty: ignore[invalid-argument-type]
     coefficient = float(coefficients["model"])
+    # ty: ignore[not-iterable]
     oversampling = tuple(float(value) for value in parameters["oversampling_factors"])
+    # ty: ignore[invalid-argument-type]
     count = int(grids["operator"])
     space = _periodic_space(count)
     _, dynamics = _compile_periodic(space, model, coefficient, oversampling[0])
@@ -731,6 +750,7 @@ def _run_periodic_static(case: Mapping[str, object], _reference):
     )
     guard = phx.solver.LESStabilityGuardedETDRKMethod(
         phx.solver.ETDRKMethod(2),
+        # ty: ignore[invalid-argument-type]
         safety_factor=float(parameters["guard_safety_factor"]),
     ).prepare(dynamics, coordinates=coordinates)
     guard_restriction = guard.step_restriction(0.0, state)
@@ -760,6 +780,7 @@ def _run_periodic_static(case: Mapping[str, object], _reference):
     _, zero = _compile_periodic(space, model, 0.0, oversampling[0])
     zero_state = baseline.project_state(_periodic_velocity(space))
     zero_error = float(
+        # ty: ignore[invalid-argument-type]
         jnp.max(jnp.abs(zero(0.0, zero_state, None) - baseline(0.0, zero_state, None)))
     )
 
@@ -773,8 +794,11 @@ def _run_periodic_static(case: Mapping[str, object], _reference):
     low_error = float(jnp.linalg.norm(rates[0] - rates[-1]))
     high_error = float(jnp.linalg.norm(rates[-2] - rates[-1]))
 
+    # ty: ignore[invalid-argument-type]
     step_size = float(timesteps["step_size"])
+    # ty: ignore[invalid-argument-type]
     steps = int(timesteps["steps"])
+    # ty: ignore[invalid-argument-type]
     resolutions = tuple(grids["campaign"])
     unforced_success = True
     forced_success = True
@@ -802,7 +826,7 @@ def _run_periodic_static(case: Mapping[str, object], _reference):
 
         modal_force = 0.01 * initial
 
-        def forcing(time, state_, args, force=modal_force):
+        def forcing(time: Any, state_: Any, args: Any, force: Any = modal_force) -> Any:
             del time, state_, args
             return force
 
@@ -884,11 +908,13 @@ def _run_periodic_static(case: Mapping[str, object], _reference):
     }
 
 
-def _run_periodic_exact_filter(case: Mapping[str, object], manifest):
+def _run_periodic_exact_filter(case: Mapping[str, object], manifest: Any) -> Any:
     if manifest is None:
         raise ValueError("Exact a-priori filtering requires a reference manifest.")
     grids = _mapping(case["grids"], "filter grids")
+    # ty: ignore[invalid-argument-type]
     source = _periodic_space(int(grids["source"]))
+    # ty: ignore[invalid-argument-type]
     resolved = _periodic_space(int(grids["resolved"]))
     resolved_filter = _resolved_filter(
         "matched a-priori Fourier projection",
@@ -954,7 +980,7 @@ def _run_periodic_exact_filter(case: Mapping[str, object], manifest):
     }
 
 
-def _dynamic_prepared(resolved, test, oversampling: float):
+def _dynamic_prepared(resolved: Any, test: Any, oversampling: float) -> Any:
     primary_filter = _resolved_filter(
         "resolved retained Fourier projection",
         family="sharp-fourier-projection",
@@ -978,6 +1004,7 @@ def _dynamic_prepared(resolved, test, oversampling: float):
         source_kind="user",
         evidence_ids=(),
     )
+    # ty: ignore[invalid-argument-type]
     dynamic_provenance = DynamicLESProvenance(provenance, test_filter, (2.0, 2.0, 2.0))
     dynamic_model = DynamicSmagorinskyPlan(
         GlobalDynamicLESAveraging(),
@@ -999,11 +1026,14 @@ def _dynamic_prepared(resolved, test, oversampling: float):
     )
 
 
-def _run_periodic_dynamic(case: Mapping[str, object], _reference):
+def _run_periodic_dynamic(case: Mapping[str, object], _reference: Any) -> Any:
     grids = _mapping(case["grids"], "dynamic grids")
     parameters = _mapping(case["parameters"], "dynamic parameters")
+    # ty: ignore[invalid-argument-type]
     resolved = _periodic_space(int(grids["resolved"]))
+    # ty: ignore[invalid-argument-type]
     test = _periodic_space(int(grids["test"]))
+    # ty: ignore[invalid-argument-type]
     prepared = _dynamic_prepared(resolved, test, float(parameters["oversampling_factor"]))
     state = prepared.projector.project(resolved.project(_periodic_velocity(resolved)))
     grid_filtered = prepared.grid_filter.apply(state)
@@ -1015,6 +1045,7 @@ def _run_periodic_dynamic(case: Mapping[str, object], _reference):
     )
     filter_error = float(jnp.max(jnp.abs(test_filtered - transferred)))
     inputs, _, _, _ = prepared._germano_inputs(state, accepted_update_mask=True)
+    # ty: ignore[invalid-argument-type]
     expected_coefficient = float(parameters["synthetic_coefficient"])
     synthetic = DynamicLESInputs(
         expected_coefficient * inputs.modeled_tensor + 1.7 * jnp.eye(3),
@@ -1053,7 +1084,7 @@ def _run_periodic_dynamic(case: Mapping[str, object], _reference):
     }
 
 
-def _mac_core(count: int, /):
+def _mac_core(count: int, /) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(count, periodic=True) for _ in range(3)
@@ -1069,7 +1100,7 @@ def _mac_core(count: int, /):
     return discretization, operators, momentum, projection
 
 
-def _mac_velocity(discretization):
+def _mac_velocity(discretization: Any) -> Any:
     x_faces, y_faces, z_faces = discretization.face_centers
     return (
         jnp.sin(x_faces[..., 1]),
@@ -1078,7 +1109,7 @@ def _mac_velocity(discretization):
     )
 
 
-def _mac_provenance(discretization):
+def _mac_provenance(discretization: Any) -> Any:
     resolved_filter = _resolved_filter(
         "mac-cell-volume",
         family="implicit-grid-volume",
@@ -1100,15 +1131,20 @@ def _ksgs_coefficients(
     coefficients: Mapping[str, object], /
 ) -> phx.equations.KSGSCoefficients:
     return phx.equations.KSGSCoefficients(
+        # ty: ignore[invalid-argument-type]
         float(coefficients["eddy_viscosity"]),
+        # ty: ignore[invalid-argument-type]
         float(coefficients["dissipation"]),
+        # ty: ignore[invalid-argument-type]
         float(coefficients["diffusion"]),
+        # ty: ignore[invalid-argument-type]
         float(coefficients["buoyancy"]),
+        # ty: ignore[invalid-argument-type]
         float(coefficients["production_limit"]),
     )
 
 
-def _mac_algebraic_plan(discretization, coefficient: float):
+def _mac_algebraic_plan(discretization: Any, coefficient: float) -> Any:
     return phx.equations.MACAlgebraicLESPlan(
         phx.equations.SmagorinskyLESPlan(coefficient).prepare(
             _mac_provenance(discretization)
@@ -1116,20 +1152,25 @@ def _mac_algebraic_plan(discretization, coefficient: float):
     )
 
 
-def _run_mac_coupled(case: Mapping[str, object], _reference):
+def _run_mac_coupled(case: Mapping[str, object], _reference: Any) -> Any:
     grids = _mapping(case["grids"], "MAC coupled grids")
     coefficients = _mapping(case["coefficients"], "MAC coupled coefficients")
     parameters = _mapping(case["parameters"], "MAC coupled parameters")
+    # ty: ignore[invalid-argument-type]
     discretization, operators, momentum, projection = _mac_core(int(grids["count"]))
     scalar_problem = phx.discretization.MACScalarProblem(
         (
             phx.discretization.MACScalarTransport(
                 "temperature",
+                # ty: ignore[invalid-argument-type]
                 float(coefficients["temperature_diffusivity"]),
                 advection="centered",
             ),
             phx.discretization.MACScalarTransport(
-                "tracer", float(coefficients["tracer_diffusivity"]), advection="upwind"
+                "tracer",
+                # ty: ignore[invalid-argument-type]
+                float(coefficients["tracer_diffusivity"]),
+                advection="upwind",
             ),
         )
     )
@@ -1138,26 +1179,31 @@ def _run_mac_coupled(case: Mapping[str, object], _reference):
         (
             phx.discretization.MACScalarSGSField(
                 "temperature",
+                # ty: ignore[invalid-argument-type]
                 turbulent_prandtl_number=float(coefficients["turbulent_prandtl"]),
             ),
             phx.discretization.MACScalarSGSField(
                 "tracer",
+                # ty: ignore[invalid-argument-type]
                 turbulent_schmidt_number=float(coefficients["turbulent_schmidt"]),
             ),
         )
     )
     buoyancy = phx.equations.MACBuoyancyLaw(
         jnp.asarray((0.0, 0.0, -1.0)),
+        # ty: ignore[invalid-argument-type]
         {"temperature": float(coefficients["buoyancy"])},
         references={"temperature": 0.0},
     )
     dynamics = phx.equations.compile_mac_scalar_buoyancy(
+        # ty: ignore[invalid-argument-type]
         phx.equations.IncompressibleFlowProblem(3, float(coefficients["viscosity"])),
         momentum,
         projection,
         scalar_problem,
         transport,
         buoyancy,
+        # ty: ignore[invalid-argument-type]
         algebraic_les=_mac_algebraic_plan(discretization, float(coefficients["model"])),
         scalar_sgs=scalar_sgs,
     )
@@ -1177,6 +1223,7 @@ def _run_mac_coupled(case: Mapping[str, object], _reference):
         jnp.max(
             jnp.abs(
                 stage.scalar_sgs_diffusivities["temperature"]
+                # ty: ignore[invalid-argument-type]
                 - eddy / float(coefficients["turbulent_prandtl"])
             )
         )
@@ -1185,6 +1232,7 @@ def _run_mac_coupled(case: Mapping[str, object], _reference):
         jnp.max(
             jnp.abs(
                 stage.scalar_sgs_diffusivities["tracer"]
+                # ty: ignore[invalid-argument-type]
                 - eddy / float(coefficients["turbulent_schmidt"])
             )
         )
@@ -1209,21 +1257,26 @@ def _run_mac_coupled(case: Mapping[str, object], _reference):
         else 1.0,
     }, {
         "compilation_id": dynamics.compilation_id,
+        # ty: ignore[unresolved-attribute]
         "momentum_les_id": dynamics.base_dynamics.algebraic_les.prepared_id,
+        # ty: ignore[unresolved-attribute]
         "scalar_sgs_id": dynamics.scalar_sgs.prepared_id,
         "buoyancy_id": buoyancy.law_id,
     }
 
 
-def _run_mac_ksgs(case: Mapping[str, object], _reference):
+def _run_mac_ksgs(case: Mapping[str, object], _reference: Any) -> Any:
     grids = _mapping(case["grids"], "MAC KSGS grids")
     coefficients = _mapping(case["coefficients"], "MAC KSGS coefficients")
+    # ty: ignore[invalid-argument-type]
     discretization, operators, momentum, projection = _mac_core(int(grids["count"]))
+    # ty: ignore[invalid-argument-type]
     viscosity = float(coefficients["viscosity"])
     scalar_problem = phx.discretization.MACScalarProblem(
         (
             phx.discretization.MACScalarTransport(
                 "temperature",
+                # ty: ignore[invalid-argument-type]
                 float(coefficients["temperature_diffusivity"]),
                 advection="centered",
             ),
@@ -1237,6 +1290,7 @@ def _run_mac_ksgs(case: Mapping[str, object], _reference):
         (
             phx.discretization.MACScalarSGSField(
                 "temperature",
+                # ty: ignore[invalid-argument-type]
                 turbulent_prandtl_number=float(coefficients["turbulent_prandtl"]),
             ),
         )
@@ -1247,6 +1301,7 @@ def _run_mac_ksgs(case: Mapping[str, object], _reference):
     )
     buoyancy = phx.equations.MACBuoyancyLaw(
         jnp.asarray((0.0, 0.0, -1.0)),
+        # ty: ignore[invalid-argument-type]
         {"temperature": float(coefficients["boussinesq_expansion"])},
         references={"temperature": 0.0},
     )
@@ -1267,7 +1322,9 @@ def _run_mac_ksgs(case: Mapping[str, object], _reference):
         {
             "temperature": jnp.sin(cells[..., 0]),
             "sgs_kinetic_energy": jnp.full(
-                discretization.cell_shape, float(coefficients["initial_kinetic_energy"])
+                discretization.cell_shape,
+                # ty: ignore[invalid-argument-type]
+                float(coefficients["initial_kinetic_energy"]),
             ),
         },
     )
@@ -1296,37 +1353,43 @@ def _run_mac_ksgs(case: Mapping[str, object], _reference):
     }, {
         "compilation_id": dynamics.compilation_id,
         "ksgs_plan_id": ksgs.plan_id,
+        # ty: ignore[unresolved-attribute]
         "prepared_ksgs_id": dynamics.ksgs.prepared_id,
+        # ty: ignore[unresolved-attribute]
         "scalar_sgs_id": dynamics.scalar_sgs.prepared_id,
     }
 
 
-def _compiled_mac_for_time(case: Mapping[str, object]):
+def _compiled_mac_for_time(case: Mapping[str, object]) -> Any:
     grids = _mapping(case["grids"], "frozen MAC grids")
     coefficients = _mapping(case["coefficients"], "frozen MAC coefficients")
+    # ty: ignore[invalid-argument-type]
     discretization, operators, momentum, projection = _mac_core(int(grids["count"]))
     dynamics = phx.equations.compile_mac_incompressible_flow(
+        # ty: ignore[invalid-argument-type]
         phx.equations.IncompressibleFlowProblem(3, float(coefficients["viscosity"])),
         momentum,
         projection,
+        # ty: ignore[invalid-argument-type]
         algebraic_les=_mac_algebraic_plan(discretization, float(coefficients["model"])),
     )
     state = dynamics.pack_velocity(_mac_velocity(discretization))
     return discretization, operators, dynamics, state
 
 
-def _linear_policy():
+def _linear_policy() -> Any:
     return LinearSolvePolicy(
         DenseLU(),
         tolerance=TolerancePolicy(relative=2.0e-8, absolute=2.0e-8, max_steps=40),
     )
 
 
-def _run_frozen_imex(case: Mapping[str, object], _reference):
+def _run_frozen_imex(case: Mapping[str, object], _reference: Any) -> Any:
     _, operators, dynamics, state = _compiled_mac_for_time(case)
     timesteps = _mapping(case["timesteps"], "frozen IMEX timesteps")
     method = phx.solver.MACIMEXEulerMethod(
         dynamics,
+        # ty: ignore[invalid-argument-type]
         fixed_step_size=float(timesteps["step_size"]),
         solve_method="iterative",
         tolerance=2.0e-8,
@@ -1339,6 +1402,7 @@ def _run_frozen_imex(case: Mapping[str, object], _reference):
         "projection_divergence_norm": _maximum_abs(
             (operators.divergence(result.velocity),)
         ),
+        # ty: ignore[unresolved-attribute]
         "frozen_les_action_magnitude": _maximum_abs(result.les_stage.physical_rate),
         "inverse_identity_violation": (
             0.0 if result.predictor_inverse_id == result.projection_inverse_id else 1.0
@@ -1358,11 +1422,12 @@ def _run_frozen_imex(case: Mapping[str, object], _reference):
     }
 
 
-def _run_frozen_sbdf2(case: Mapping[str, object], _reference):
+def _run_frozen_sbdf2(case: Mapping[str, object], _reference: Any) -> Any:
     _, operators, dynamics, state = _compiled_mac_for_time(case)
     timesteps = _mapping(case["timesteps"], "frozen SBDF2 timesteps")
     method = phx.solver.MACSBDF2Method(
         dynamics,
+        # ty: ignore[invalid-argument-type]
         float(timesteps["step_size"]),
         solve_method="iterative",
         tolerance=2.0e-8,
@@ -1398,10 +1463,11 @@ def _run_frozen_sbdf2(case: Mapping[str, object], _reference):
     }
 
 
-def _run_channel(case: Mapping[str, object], _reference):
+def _run_channel(case: Mapping[str, object], _reference: Any) -> Any:
     grids = _mapping(case["grids"], "channel grids")
     coefficients = _mapping(case["coefficients"], "channel coefficients")
     timesteps = _mapping(case["timesteps"], "channel timesteps")
+    # ty: ignore[invalid-argument-type]
     shape = tuple(grids["shape"])
     space = phx.discretization.TensorSpectralPlan(
         (
@@ -1418,6 +1484,7 @@ def _run_channel(case: Mapping[str, object], _reference):
             phx.discretization.AxisDomain.periodic(0.0, 2.0 * math.pi),
         )
     )
+    # ty: ignore[invalid-argument-type]
     viscosity = float(coefficients["viscosity"])
     stokes = phx.discretization.ChannelStokesPlan(space, viscosity)
     base = phx.equations.compile_channel_flow(
@@ -1437,6 +1504,7 @@ def _run_channel(case: Mapping[str, object], _reference):
     model_name = str(_mapping(case["parameters"], "channel parameters")["model"])
     dynamics = phx.equations.compile_channel_les(
         base,
+        # ty: ignore[invalid-argument-type]
         _MODEL_PLANS[model_name](float(coefficients["model"])).prepare(provenance),
     )
     x = space.axes[0].nodes[:, None, None]
@@ -1451,6 +1519,7 @@ def _run_channel(case: Mapping[str, object], _reference):
         0.01 * jnp.broadcast_to(-envelope * jnp.cos(x), space.physical_shape)
     )
     initial = dynamics.project_state(physical)
+    # ty: ignore[invalid-argument-type]
     times = jnp.asarray((0.0, float(timesteps["step_size"])))
     result = phx.solver.solve_channel_sbdf2(dynamics, initial, times)
     diagnostics = dynamics.state_diagnostics(result.velocity[-1])
@@ -1480,15 +1549,18 @@ def _run_channel(case: Mapping[str, object], _reference):
     }
 
 
-def _run_distributed(case: Mapping[str, object], _reference):
+def _run_distributed(case: Mapping[str, object], _reference: Any) -> Any:
     grids = _mapping(case["grids"], "distributed grids")
     coefficients = _mapping(case["coefficients"], "distributed coefficients")
     parameters = _mapping(case["parameters"], "distributed parameters")
+    # ty: ignore[invalid-argument-type]
     space = _periodic_space(int(grids["count"]))
     scientific = _periodic_les_plan(
         space,
         str(parameters["model"]),
+        # ty: ignore[invalid-argument-type]
         float(coefficients["model"]),
+        # ty: ignore[invalid-argument-type]
         float(parameters["oversampling_factor"]),
     ).prepare(space, phx.discretization.PeriodicLerayProjector(space))
     topology = SpectralMeshTopology(
@@ -1500,7 +1572,9 @@ def _run_distributed(case: Mapping[str, object], _reference):
     state = scientific.projector.project(space.project(_periodic_velocity(space)))
     evidence = distributed.parity_evidence(
         state,
+        # ty: ignore[invalid-argument-type]
         absolute_tolerance=float(parameters["absolute_tolerance"]),
+        # ty: ignore[invalid-argument-type]
         relative_tolerance=float(parameters["relative_tolerance"]),
     )
     stage = distributed.evaluate(state)
@@ -1538,7 +1612,7 @@ def _run_distributed(case: Mapping[str, object], _reference):
     }
 
 
-def _favre_model(case: Mapping[str, object]):
+def _favre_model(case: Mapping[str, object]) -> Any:
     coefficients = _mapping(case["coefficients"], "Favre coefficients")
     resolved_filter = _resolved_filter(
         "favre-cell-volume",
@@ -1557,21 +1631,27 @@ def _favre_model(case: Mapping[str, object]):
     )
     fields = phx.equations.FavreLESFieldContract("binary-mixture", ("fuel", "oxidizer"))
     return phx.equations.PreparedFavreLESModel(
+        # ty: ignore[invalid-argument-type]
         phx.equations.SmagorinskyLESPlan(float(coefficients["model"])).prepare(
             provenance
         ),
+        # ty: ignore[invalid-argument-type]
         phx.equations.LESFilterScale(jnp.asarray(tuple(coefficients["filter_widths"]))),
         fields,
+        # ty: ignore[invalid-argument-type]
         float(coefficients["turbulent_prandtl"]),
         (
+            # ty: ignore[invalid-argument-type]
             ("fuel", float(coefficients["fuel_schmidt"])),
+            # ty: ignore[invalid-argument-type]
             ("oxidizer", float(coefficients["oxidizer_schmidt"])),
         ),
+        # ty: ignore[invalid-argument-type]
         float(coefficients["viscosity_upper_bound"]),
     )
 
 
-def _run_favre(case: Mapping[str, object], _reference):
+def _run_favre(case: Mapping[str, object], _reference: Any) -> Any:
     model = _favre_model(case)
     fields = model.fields
     inputs = phx.equations.FavreLESInputs(
@@ -1638,7 +1718,7 @@ def _run_favre(case: Mapping[str, object], _reference):
     }
 
 
-def _unstructured_grid():
+def _unstructured_grid() -> Any:
     vertices = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -1672,7 +1752,7 @@ def _unstructured_grid():
     return discretization, operators
 
 
-def _run_unstructured(case: Mapping[str, object], _reference):
+def _run_unstructured(case: Mapping[str, object], _reference: Any) -> Any:
     coefficients = _mapping(case["coefficients"], "unstructured coefficients")
     timesteps = _mapping(case["timesteps"], "unstructured timesteps")
     parameters = _mapping(case["parameters"], "unstructured parameters")
@@ -1694,20 +1774,27 @@ def _run_unstructured(case: Mapping[str, object], _reference):
     )
     fields = phx.equations.FavreLESFieldContract("binary-mixture", ("a", "b"))
     favre = phx.equations.PreparedFavreLESModel(
+        # ty: ignore[invalid-argument-type]
         phx.equations.SmagorinskyLESPlan(float(coefficients["model"])).prepare(
             provenance
         ),
         phx.equations.LESFilterScale(discretization.directional_control_volume_widths()),
         fields,
+        # ty: ignore[invalid-argument-type]
         float(coefficients["turbulent_prandtl"]),
         (
+            # ty: ignore[invalid-argument-type]
             ("a", float(coefficients["a_schmidt"])),
+            # ty: ignore[invalid-argument-type]
             ("b", float(coefficients["b_schmidt"])),
         ),
+        # ty: ignore[invalid-argument-type]
         float(coefficients["viscosity_upper_bound"]),
     )
     prepared = phx.equations.UnstructuredLowMachLESPlan(
-        favre, conservation_tolerance=float(coefficients["conservation_tolerance"])
+        favre,
+        # ty: ignore[invalid-argument-type]
+        conservation_tolerance=float(coefficients["conservation_tolerance"]),
     ).prepare(operators)
     centers = discretization.cell_centers
     density = 1.2 + 0.15 * centers[:, 0] + 0.04 * centers[:, 2]
@@ -1754,10 +1841,13 @@ def _run_unstructured(case: Mapping[str, object], _reference):
             axis=-1,
         ),
     )
+    # ty: ignore[invalid-argument-type]
     step_size = float(timesteps["step_size"])
     method = prepared.prepare_fixed_step(
         step_size,
+        # ty: ignore[invalid-argument-type]
         pressure_tolerance=float(parameters["pressure_tolerance"]),
+        # ty: ignore[invalid-argument-type]
         pressure_iterations=int(parameters["pressure_iterations"]),
     )
     restart = method.initialize(
@@ -1815,6 +1905,7 @@ def _run_unstructured(case: Mapping[str, object], _reference):
             0.0
             if bool(
                 noncoercive_evidence.normalized_positive_sgs_work
+                # ty: ignore[invalid-argument-type]
                 > float(coefficients["conservation_tolerance"])
             )
             and not bool(noncoercive_evidence.sgs_work_dissipative)
@@ -1846,7 +1937,7 @@ def _immersed_route(
     /,
     *,
     wall_stress: bool,
-):
+) -> Any:
     discretization, operators, momentum, pressure = _mac_core(count)
     pressure = phx.solver.MACPressureProjectionPlan(
         operators,
@@ -1905,12 +1996,15 @@ def _immersed_route(
     return discretization, plan, dynamics
 
 
-def _run_immersed(case: Mapping[str, object], _reference):
+def _run_immersed(case: Mapping[str, object], _reference: Any) -> Any:
     grids = _mapping(case["grids"], "immersed grids")
     coefficients = _mapping(case["coefficients"], "immersed coefficients")
     timesteps = _mapping(case["timesteps"], "immersed timesteps")
+    # ty: ignore[invalid-argument-type]
     count = int(grids["count"])
+    # ty: ignore[invalid-argument-type]
     coefficient = float(coefficients["model"])
+    # ty: ignore[invalid-argument-type]
     viscosity = float(coefficients["viscosity"])
     discretization, baseline_plan, baseline = _immersed_route(
         count, coefficient, viscosity, wall_stress=False
@@ -1924,11 +2018,14 @@ def _run_immersed(case: Mapping[str, object], _reference):
         baseline_plan.projection,
         baseline_plan.marker_motion,
         motion_id=baseline_plan.marker_motion.motion_id,
+        # ty: ignore[invalid-argument-type]
         fixed_step_size=float(timesteps["step_size"]),
         marker_constraint_normals=wall_plan.marker_wall_normal,
     )
     wall_method = wall_plan.imex_euler_method(
-        wall, fixed_step_size=float(timesteps["step_size"])
+        wall,
+        # ty: ignore[invalid-argument-type]
+        fixed_step_size=float(timesteps["step_size"]),
     )
     baseline_step = baseline_method.step(0.0, state)
     wall_step = wall_method.step(0.0, state)
@@ -2001,15 +2098,20 @@ def _run_immersed(case: Mapping[str, object], _reference):
     }
 
 
-def _run_lbm(case: Mapping[str, object], _reference):
+def _run_lbm(case: Mapping[str, object], _reference: Any) -> Any:
     grids = _mapping(case["grids"], "LBM grids")
     timesteps = _mapping(case["timesteps"], "LBM timesteps")
     coefficients = _mapping(case["coefficients"], "LBM coefficients")
     result = lbm_smagorinsky_qualification(
+        # ty: ignore[invalid-argument-type]
         resolution=int(grids["resolution"]),
+        # ty: ignore[invalid-argument-type]
         steps=int(timesteps["steps"]),
+        # ty: ignore[invalid-argument-type]
         amplitude=float(coefficients["amplitude"]),
+        # ty: ignore[invalid-argument-type]
         base_relaxation_rate=float(coefficients["base_relaxation_rate"]),
+        # ty: ignore[invalid-argument-type]
         coefficient=float(coefficients["model"]),
     )
     molecular = _mapping(result["molecular"], "LBM molecular result")
@@ -2017,13 +2119,18 @@ def _run_lbm(case: Mapping[str, object], _reference):
     reference = _mapping(result["reference"], "LBM reference result")
     return {
         "qualification_failure": 0.0 if bool(result["passed"]) else 1.0,
+        # ty: ignore[invalid-argument-type]
         "molecular_reference_relative_error": float(reference["relative_error"]),
         "maximum_mass_drift": max(
+            # ty: ignore[invalid-argument-type]
             float(molecular["global_mass_drift"]),
+            # ty: ignore[invalid-argument-type]
             float(smagorinsky["global_mass_drift"]),
         ),
         "maximum_momentum_drift": max(
+            # ty: ignore[invalid-argument-type]
             float(molecular["global_momentum_drift"]),
+            # ty: ignore[invalid-argument-type]
             float(smagorinsky["global_momentum_drift"]),
         ),
         "additional_decay_violation": max(
@@ -2045,11 +2152,13 @@ def _run_lbm(case: Mapping[str, object], _reference):
     }
 
 
-def _run_periodic_dynamic_production(case: Mapping[str, object], _reference):
+def _run_periodic_dynamic_production(case: Mapping[str, object], _reference: Any) -> Any:
     grids = _mapping(case["grids"], "dynamic production grids")
     timesteps = _mapping(case["timesteps"], "dynamic production timesteps")
     coefficients = _mapping(case["coefficients"], "dynamic production coefficients")
+    # ty: ignore[invalid-argument-type]
     resolved = _periodic_space(int(grids["resolved"]))
+    # ty: ignore[invalid-argument-type]
     test = _periodic_space(int(grids["test"]))
     primary_filter = _resolved_filter(
         "resolved retained Fourier projection",
@@ -2076,13 +2185,16 @@ def _run_periodic_dynamic_production(case: Mapping[str, object], _reference):
     )
     dynamic_model = phx.equations.DynamicSmagorinskyPlan(
         phx.equations.LagrangianDynamicLESAveraging(
+            # ty: ignore[invalid-argument-type]
             float(coefficients["lagrangian_time_scale"])
         ),
         phx.equations.AdditiveDenominatorRegularization(
+            # ty: ignore[invalid-argument-type]
             float(coefficients["denominator_regularization"])
         ),
         phx.equations.NonnegativeBackscatterClip(),
     ).prepare(
+        # ty: ignore[invalid-argument-type]
         phx.equations.DynamicLESProvenance(provenance, test_filter, (2.0, 2.0, 2.0))
     )
     dynamic_plan = phx.equations.PeriodicDynamicLESPlan(
@@ -2095,6 +2207,7 @@ def _run_periodic_dynamic_production(case: Mapping[str, object], _reference):
         energy_tolerance=2.0e-8,
     )
     dynamics = phx.equations.compile_periodic_incompressible_flow(
+        # ty: ignore[invalid-argument-type]
         phx.equations.IncompressibleFlowProblem(3, float(coefficients["viscosity"])),
         resolved,
         phx.discretization.PseudospectralMethodPlan(
@@ -2123,6 +2236,7 @@ def _run_periodic_dynamic_production(case: Mapping[str, object], _reference):
         initial_velocity,
         case_id="periodic-dynamic-les-qualification",
     )
+    # ty: ignore[invalid-argument-type]
     step_size = float(timesteps["step_size"])
     plan = phx.applications.incompressible_flow.PeriodicSpectralProductionPlan(
         dynamics,
@@ -2189,6 +2303,7 @@ def _run_periodic_dynamic_production(case: Mapping[str, object], _reference):
         "dynamic_sgs_transfer_magnitude": abs(float(snapshot.sgs_energy_rate)),
     }, {
         "compilation_id": dynamics.compilation_id,
+        # ty: ignore[unresolved-attribute]
         "dynamic_les_id": dynamics.dynamic_les.prepared_id,
         "production_plan_id": plan.plan_id,
         "production_method_id": plan.method.method_id,
@@ -2196,9 +2311,10 @@ def _run_periodic_dynamic_production(case: Mapping[str, object], _reference):
     }
 
 
-def _run_dynamic_ksgs(case: Mapping[str, object], _reference):
+def _run_dynamic_ksgs(case: Mapping[str, object], _reference: Any) -> Any:
     grids = _mapping(case["grids"], "dynamic KSGS grids")
     coefficients = _mapping(case["coefficients"], "dynamic KSGS coefficients")
+    # ty: ignore[invalid-argument-type]
     discretization, _, momentum, _ = _mac_core(int(grids["count"]))
     resolved_filter = _resolved_filter(
         "mac-dynamic-cell-volume",
@@ -2232,10 +2348,12 @@ def _run_dynamic_ksgs(case: Mapping[str, object], _reference):
     prepared = phx.equations.PreparedMACKSGS(plan, momentum, "sgs_kinetic_energy")
     kinetic = jnp.full(
         discretization.cell_shape,
+        # ty: ignore[invalid-argument-type]
         float(coefficients["initial_kinetic_energy"]),
     )
     viscosity = jnp.full(
         discretization.cell_shape,
+        # ty: ignore[invalid-argument-type]
         float(coefficients["molecular_viscosity"]),
     )
     initial, transport = prepared.prepare_transport(kinetic, viscosity)
@@ -2300,11 +2418,12 @@ def _run_dynamic_ksgs(case: Mapping[str, object], _reference):
     }, {
         "plan_id": plan.plan_id,
         "prepared_id": prepared.prepared_id,
+        # ty: ignore[unresolved-attribute]
         "test_filter_id": prepared.test_filter.prepared_id,
     }
 
 
-def _ocean_discretization():
+def _ocean_discretization() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4, periodic=True),
@@ -2316,7 +2435,7 @@ def _ocean_discretization():
     return phx.discretization.FiniteVolumePlan(grid, component_names=("ocean",)).prepare()
 
 
-def _run_low_re_ksgs(case: Mapping[str, object], _reference):
+def _run_low_re_ksgs(case: Mapping[str, object], _reference: Any) -> Any:
     coefficients = _mapping(case["coefficients"], "low-Re KSGS coefficients")
     discretization = _ocean_discretization()
     reference = phx.applications.ocean.LinearSeawaterReference()
@@ -2337,7 +2456,9 @@ def _run_low_re_ksgs(case: Mapping[str, object], _reference):
     plan = phx.equations.LowReKSGSPlan(
         _ksgs_coefficients(coefficients),
         phx.equations.LowReKSGSCoefficients(
+            # ty: ignore[invalid-argument-type]
             float(coefficients["wall_damping"]),
+            # ty: ignore[invalid-argument-type]
             float(coefficients["low_re_dissipation"]),
         ),
         provenance,
@@ -2346,10 +2467,12 @@ def _run_low_re_ksgs(case: Mapping[str, object], _reference):
         (
             phx.discretization.MACScalarSGSField(
                 reference.temperature_name,
+                # ty: ignore[invalid-argument-type]
                 turbulent_prandtl_number=float(coefficients["turbulent_prandtl"]),
             ),
             phx.discretization.MACScalarSGSField(
                 reference.salinity_name,
+                # ty: ignore[invalid-argument-type]
                 turbulent_schmidt_number=float(coefficients["turbulent_schmidt"]),
             ),
         )
@@ -2365,6 +2488,7 @@ def _run_low_re_ksgs(case: Mapping[str, object], _reference):
     ocean = phx.applications.ocean.CartesianBoussinesqOceanPlan(
         phx.applications.ocean.OceanAxisConvention(),
         reference,
+        # ty: ignore[invalid-argument-type]
         viscosity=float(coefficients["viscosity"]),
         scalar_sgs=scalar_sgs,
         ksgs=plan,
@@ -2416,7 +2540,7 @@ def _run_low_re_ksgs(case: Mapping[str, object], _reference):
     }
 
 
-def _learned_stress_predictor(features, args):
+def _learned_stress_predictor(features: Any, args: Any) -> Any:
     gradient = features.reshape(features.shape[:-1] + (3, 3))
     strain = 0.5 * (gradient + jnp.swapaxes(gradient, -1, -2))
     trace = jnp.trace(strain, axis1=-2, axis2=-1)
@@ -2426,13 +2550,13 @@ def _learned_stress_predictor(features, args):
 
 
 def _learned_binding(
-    sample_shape,
-    dtype,
-    resolved_filter,
+    sample_shape: Any,
+    dtype: Any,
+    resolved_filter: Any,
     discretization_id: str,
     regime: str,
     artifact_id: str,
-):
+) -> Any:
     flow_schema_id = f"flow-{discretization_id}"
     schema = phx.closure_data.LearnedStressFeatureSchema(
         name=LEARNED_STRESS_FEATURE_NAME,
@@ -2491,10 +2615,12 @@ def _learned_binding(
     )
 
 
-def _run_learned_stress(case: Mapping[str, object], _reference):
+def _run_learned_stress(case: Mapping[str, object], _reference: Any) -> Any:
     backend = str(_mapping(case["parameters"], "learned parameters")["backend"])
+    # ty: ignore[invalid-argument-type]
     count = int(_mapping(case["grids"], "learned grids")["count"])
     coefficients = _mapping(case["coefficients"], "learned coefficients")
+    # ty: ignore[invalid-argument-type]
     predictor_viscosity = float(coefficients["predictor_viscosity"])
     if backend == "periodic":
         space = _periodic_space(count)
@@ -2594,7 +2720,7 @@ def _boundary_channel(
     model_coefficient: float,
     perturbation_amplitude: float,
     shape: tuple[int, int, int],
-):
+) -> Any:
     space = phx.discretization.TensorSpectralPlan(
         (
             phx.discretization.FourierBasisPlan(shape[0]),
@@ -2613,6 +2739,7 @@ def _boundary_channel(
     stokes = phx.discretization.ChannelStokesPlan(
         space,
         viscosity,
+        # ty: ignore[invalid-argument-type]
         tangential_boundary=tangential_boundary,
         mean_constraint=phx.discretization.ChannelMeanConstraint(
             "pressure_gradient", (0.0, 0.0)
@@ -2656,23 +2783,30 @@ def _boundary_channel(
     return space, dynamics, dynamics.project_state(velocity)
 
 
-def _run_channel_wall_owner(case: Mapping[str, object], _reference):
+def _run_channel_wall_owner(case: Mapping[str, object], _reference: Any) -> Any:
     timesteps = _mapping(case["timesteps"], "channel wall timesteps")
     coefficients = _mapping(case["coefficients"], "channel wall coefficients")
     parameters = _mapping(case["parameters"], "channel wall parameters")
     grids = _mapping(case["grids"], "channel wall grids")
+    # ty: ignore[invalid-argument-type]
     shape = tuple(grids["shape"])
     _, off, initial_off = _boundary_channel(
         "velocity",
+        # ty: ignore[invalid-argument-type]
         float(coefficients["viscosity"]),
+        # ty: ignore[invalid-argument-type]
         float(coefficients["model"]),
+        # ty: ignore[invalid-argument-type]
         float(parameters["perturbation_amplitude"]),
         shape,
     )
     _, on, initial_on = _boundary_channel(
         "traction",
+        # ty: ignore[invalid-argument-type]
         float(coefficients["viscosity"]),
+        # ty: ignore[invalid-argument-type]
         float(coefficients["model"]),
+        # ty: ignore[invalid-argument-type]
         float(parameters["perturbation_amplitude"]),
         shape,
     )
@@ -2680,6 +2814,7 @@ def _run_channel_wall_owner(case: Mapping[str, object], _reference):
         float(off.explicit_restriction(initial_off).maximum_step),
         float(on.explicit_restriction(initial_on).maximum_step),
     )
+    # ty: ignore[invalid-argument-type]
     requested = float(timesteps["step_size"])
     step = min(requested, 0.1 * maximum_step)
     off_solution = phx.solver.solve_channel_sbdf2(
@@ -2688,9 +2823,13 @@ def _run_channel_wall_owner(case: Mapping[str, object], _reference):
     owner = VectorEquilibriumWallStressPlan().prepare_channel(
         on,
         step,
+        # ty: ignore[invalid-argument-type]
         density=float(coefficients["density"]),
+        # ty: ignore[invalid-argument-type]
         sample_distance=(
+            # ty: ignore[invalid-argument-type]
             float(coefficients["sample_distance"]),
+            # ty: ignore[invalid-argument-type]
             float(coefficients["sample_distance"]),
         ),
     )
@@ -2730,15 +2869,19 @@ def _run_channel_wall_owner(case: Mapping[str, object], _reference):
     }
 
 
-def _run_channel_restriction(case: Mapping[str, object], _reference):
+def _run_channel_restriction(case: Mapping[str, object], _reference: Any) -> Any:
     coefficients = _mapping(case["coefficients"], "channel restriction coefficients")
     parameters = _mapping(case["parameters"], "channel restriction parameters")
     grids = _mapping(case["grids"], "channel restriction grids")
+    # ty: ignore[invalid-argument-type]
     shape = tuple(grids["shape"])
     _, dynamics, initial = _boundary_channel(
         "velocity",
+        # ty: ignore[invalid-argument-type]
         float(coefficients["viscosity"]),
+        # ty: ignore[invalid-argument-type]
         float(coefficients["model"]),
+        # ty: ignore[invalid-argument-type]
         float(parameters["perturbation_amplitude"]),
         shape,
     )
@@ -2766,7 +2909,7 @@ def _run_channel_restriction(case: Mapping[str, object], _reference):
     }
 
 
-def _run_stochastic_mac_inflow(case: Mapping[str, object], _reference):
+def _run_stochastic_mac_inflow(case: Mapping[str, object], _reference: Any) -> Any:
     coefficients = _mapping(case["coefficients"], "inflow coefficients")
     timesteps = _mapping(case["timesteps"], "inflow timesteps")
     parameters = _mapping(case["parameters"], "inflow parameters")
@@ -2778,6 +2921,7 @@ def _run_stochastic_mac_inflow(case: Mapping[str, object], _reference):
         jnp.ones((4,)),
         jnp.asarray(
             (
+                # ty: ignore[invalid-argument-type]
                 (float(coefficients["velocity_variance"]), 0.0),
                 (0.0, 0.0),
             )
@@ -2788,13 +2932,17 @@ def _run_stochastic_mac_inflow(case: Mapping[str, object], _reference):
         spectral_wavevectors=jnp.asarray(((0.0, 1.0),)),
     )
     initial = owner.initialize(
+        # ty: ignore[invalid-argument-type]
         jax.random.key(int(parameters["seed"])),
         0.0,
+        # ty: ignore[invalid-argument-type]
         mean_velocity=jnp.asarray((float(coefficients["mean_normal_velocity"]), 0.0)),
     )
     first = owner.advance(
         initial.state,
+        # ty: ignore[invalid-argument-type]
         float(timesteps["step_size"]),
+        # ty: ignore[invalid-argument-type]
         mean_velocity=jnp.asarray((float(coefficients["mean_normal_velocity"]), 0.0)),
     )
     restored = StochasticTurbulentInflowMACBoundaryState(
@@ -2807,7 +2955,9 @@ def _run_stochastic_mac_inflow(case: Mapping[str, object], _reference):
     )
     replay = owner.advance(
         restored,
+        # ty: ignore[invalid-argument-type]
         float(timesteps["step_size"]),
+        # ty: ignore[invalid-argument-type]
         mean_velocity=jnp.asarray((float(coefficients["mean_normal_velocity"]), 0.0)),
     )
     replay_error = max(
@@ -2834,7 +2984,7 @@ def _run_stochastic_mac_inflow(case: Mapping[str, object], _reference):
     }
 
 
-def _binary_species_schema():
+def _binary_species_schema() -> Any:
     return ChemicalSpeciesSchema.from_unique_species(
         ("fuel", "oxidizer"),
         (ChemicalPhaseKind.GAS, ChemicalPhaseKind.GAS),
@@ -2846,7 +2996,7 @@ def _binary_species_schema():
     )
 
 
-def _binary_thermodynamics(schema):
+def _binary_thermodynamics(schema: Any) -> Any:
     calorics = PolynomialSpeciesThermodynamicsPlan(
         schema,
         jnp.full((2, 1), 2.5 * UNIVERSAL_GAS_CONSTANT),
@@ -2862,7 +3012,7 @@ def _binary_thermodynamics(schema):
     )
 
 
-def _transported_favre_model(schema, coefficients):
+def _transported_favre_model(schema: Any, coefficients: Any) -> Any:
     resolved_filter = _resolved_filter(
         "favre-cell-volume",
         family="implicit-grid-volume",
@@ -2899,7 +3049,7 @@ def _transported_favre_model(schema, coefficients):
     )
 
 
-def _run_favre_dg_energy(case: Mapping[str, object], _reference):
+def _run_favre_dg_energy(case: Mapping[str, object], _reference: Any) -> Any:
     coefficients = _mapping(case["coefficients"], "Favre DG coefficients")
     schema = _binary_species_schema()
     closure = _transported_favre_model(schema, coefficients)
@@ -2962,8 +3112,10 @@ def _run_favre_dg_energy(case: Mapping[str, object], _reference):
         jnp.asarray((0.36, 0.84, 0.0, 0.0, 0.0, 400.0, 0.25))
     )
     state = jnp.broadcast_to(
-        point_state, discretization.field_spaces[0].vector_space.shape
+        point_state,
+        discretization.field_spaces[0].vector_space.shape,
     )
+    # ty: ignore[invalid-argument-type]
     rate = compiled(0.0, state)
     expected = system.favre_les_coupled_rate(
         point_state, jnp.zeros(point_state.shape + (3,))
@@ -2991,7 +3143,7 @@ def _run_favre_dg_energy(case: Mapping[str, object], _reference):
     }
 
 
-def _pressure_stepped_unstructured(coefficients):
+def _pressure_stepped_unstructured(coefficients: Any) -> Any:
     discretization, operators = _unstructured_grid()
     resolved_filter = _resolved_filter(
         "tetrahedral-control-volume",
@@ -3060,10 +3212,11 @@ def _pressure_stepped_unstructured(coefficients):
     return prepared, state, pressure, inputs
 
 
-def _run_unstructured_pressure(case: Mapping[str, object], _reference):
+def _run_unstructured_pressure(case: Mapping[str, object], _reference: Any) -> Any:
     timesteps = _mapping(case["timesteps"], "unstructured timesteps")
     coefficients = _mapping(case["coefficients"], "unstructured coefficients")
     prepared, state, pressure, inputs = _pressure_stepped_unstructured(coefficients)
+    # ty: ignore[invalid-argument-type]
     step = float(timesteps["step_size"])
     method = prepared.prepare_fixed_step(
         step, pressure_tolerance=2.0e-8, pressure_iterations=300
@@ -3351,18 +3504,22 @@ def _run_unstructured_pressure(case: Mapping[str, object], _reference):
     }
 
 
-def _run_immersed_sbdf2(case: Mapping[str, object], _reference):
+def _run_immersed_sbdf2(case: Mapping[str, object], _reference: Any) -> Any:
     grids = _mapping(case["grids"], "immersed SBDF2 grids")
     coefficients = _mapping(case["coefficients"], "immersed SBDF2 coefficients")
     timesteps = _mapping(case["timesteps"], "immersed SBDF2 timesteps")
     discretization, plan, dynamics = _immersed_route(
+        # ty: ignore[invalid-argument-type]
         int(grids["count"]),
+        # ty: ignore[invalid-argument-type]
         float(coefficients["model"]),
+        # ty: ignore[invalid-argument-type]
         float(coefficients["viscosity"]),
         wall_stress=False,
     )
     velocity = tuple(0.05 * value for value in _mac_velocity(discretization))
     state = dynamics.pack_velocity(velocity)
+    # ty: ignore[invalid-argument-type]
     method = plan.sbdf2_method(dynamics, float(timesteps["step_size"]))
     startup = method.initialize(0.0, state)
     startup_ledger = dynamics.algebraic_les.balance_ledger(dynamics, startup)
@@ -3376,6 +3533,7 @@ def _run_immersed_sbdf2(case: Mapping[str, object], _reference):
     )
     current_stage = dynamics.rate_components(restored.time, restored.state).les_stage
     previous_stage = dynamics.rate_components(
+        # ty: ignore[invalid-argument-type]
         restored.time - float(timesteps["step_size"]),
         restored.previous_state,
     ).les_stage
@@ -3389,6 +3547,7 @@ def _run_immersed_sbdf2(case: Mapping[str, object], _reference):
             strict=True,
         )
     )
+    # ty: ignore[invalid-argument-type]
     expected_bulk_work = float(timesteps["step_size"]) * jnp.real(
         dynamics.momentum.operators.velocity_space.inner(
             advanced.velocity, extrapolated_sgs_rate
@@ -3436,14 +3595,16 @@ def _run_immersed_sbdf2(case: Mapping[str, object], _reference):
     }
 
 
-def _run_distributed_production(case: Mapping[str, object], _reference):
+def _run_distributed_production(case: Mapping[str, object], _reference: Any) -> Any:
     grids = _mapping(case["grids"], "distributed production grids")
     timesteps = _mapping(case["timesteps"], "distributed production timesteps")
     coefficients = _mapping(case["coefficients"], "distributed production coefficients")
+    # ty: ignore[invalid-argument-type]
     space = _periodic_space(int(grids["count"]))
     scientific = _periodic_les_plan(
         space,
         "smagorinsky",
+        # ty: ignore[invalid-argument-type]
         float(coefficients["model"]),
         1.5,
     ).prepare(space, phx.discretization.PeriodicLerayProjector(space))
@@ -3458,7 +3619,9 @@ def _run_distributed_production(case: Mapping[str, object], _reference):
         schedule="slab",
         checkpoint_count=1,
     )
+    # ty: ignore[invalid-argument-type]
     step = float(timesteps["step_size"])
+    # ty: ignore[invalid-argument-type]
     problem = phx.equations.IncompressibleFlowProblem(3, float(coefficients["viscosity"]))
     dynamics = phx.applications.incompressible_flow.compile_distributed_periodic_les(
         problem,
@@ -3478,6 +3641,7 @@ def _run_distributed_production(case: Mapping[str, object], _reference):
             source,
             phx.applications.incompressible_flow.DistributedPeriodicLESMethodPlan(
                 "etdrk2",
+                # ty: ignore[invalid-argument-type]
                 safety_factor=float(coefficients["safety_factor"]),
             ),
             production_case,
@@ -3619,7 +3783,7 @@ _PRODUCERS = {
 }
 
 
-def _base_profiles(campaign: Mapping[str, object], /):
+def _base_profiles(campaign: Mapping[str, object], /) -> Any:
     result: dict[str, tuple[phx.qualification.CapabilityProfile, str]] = {}
     for value in _sequence(campaign["base_profiles"], "base_profiles"):
         record = _mapping(value, "base profile")
@@ -3643,7 +3807,7 @@ def _case_dependencies(
     case: Mapping[str, object],
     base_profiles: Mapping[str, tuple[phx.qualification.CapabilityProfile, str]],
     /,
-):
+) -> Any:
     scientific: list[phx.qualification.SupportDependency] = []
     deployment: list[phx.qualification.SupportDependency] = []
     for key in _sequence(case["dependencies"], "case dependencies"):
@@ -3661,7 +3825,7 @@ def _run_spec(
     scientific: Sequence[phx.qualification.SupportDependency],
     deployment: Sequence[phx.qualification.SupportDependency],
     /,
-):
+) -> Any:
     dependencies = tuple(scientific) + tuple(deployment)
     return phx.lifecycle.ResolvedRunSpec(
         scientific,
@@ -3669,8 +3833,11 @@ def _run_spec(
         release_index_id=str(campaign["release_index_id"]),
         profile_ids=tuple(value.profile_id for value in dependencies),
         trust_policy_id=str(campaign["trust_policy_id"]),
+        # ty: ignore[invalid-argument-type]
         valid_at=int(campaign["issued_at"]),
+        # ty: ignore[invalid-argument-type]
         valid_from=int(campaign["issued_at"]),
+        # ty: ignore[invalid-argument-type]
         valid_until=int(campaign["expires_at"]),
         prepared_configuration_id=str(case["case_id"]),
         precision_policy_id=str(campaign["precision"]),
@@ -3691,6 +3858,7 @@ def _metric_result(
         candidate = float(value)
         if math.isfinite(candidate):
             numeric = candidate
+    # ty: ignore[invalid-argument-type]
     threshold = float(metric["threshold"])
     if numeric is None:
         return None, "failed", "measurement is missing or non-finite"
@@ -3819,7 +3987,9 @@ def execute_campaign(
                     campaign_start_record_ids=(),
                     campaign_observation_record_ids=(),
                     reviewer_id=str(validated["reviewer_id"]),
+                    # ty: ignore[invalid-argument-type]
                     issued_at=int(validated["issued_at"]),
+                    # ty: ignore[invalid-argument-type]
                     expires_at=int(validated["expires_at"]),
                     reason=reason,
                     requalification_triggers=(
@@ -3837,12 +4007,14 @@ def execute_campaign(
                 "candidate",
                 (support,),
                 dependencies=dependencies,
+                # ty: ignore[not-iterable]
                 required_gates=tuple(str(value) for value in case["predicates"]),
                 release_evidence=(),
                 released=False,
             )
         )
 
+    # ty: ignore[invalid-argument-type]
     coverage = matrix.evaluate(evidence, at_time=int(validated["issued_at"]))
     candidate_core = {
         "kind": _CANDIDATE_KIND,
@@ -3923,6 +4095,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     exit_codes = {"passed": 0, "failed": 1, "inconclusive": 2}
     if outcome not in exit_codes:
         raise ValueError("Candidate has an invalid qualification_outcome.")
+    # ty: ignore[invalid-argument-type]
     return exit_codes[outcome]
 
 

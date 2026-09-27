@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -27,8 +28,16 @@ class ImagingCalibration(StrictModule, NonTrainableState):
     calibration_id: str = eqx.field(static=True)
 
     def __init__(
-        self, bias, dark_rate, flat, gain, bad_pixel_mask, saturation, provenance, /
-    ):
+        self,
+        bias: ArrayLike,
+        dark_rate: ArrayLike,
+        flat: ArrayLike,
+        gain: ArrayLike,
+        bad_pixel_mask: ArrayLike,
+        saturation: ArrayLike,
+        provenance: ObservationDataProvenance,
+        /,
+    ) -> None:
         arrays = tuple(
             jnp.asarray(value)
             for value in (bias, dark_rate, flat, gain, bad_pixel_mask, saturation)
@@ -63,7 +72,9 @@ class CalibratedImagingPlan(StrictModule, NonTrainableState):
     calibration: ImagingCalibration
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, response, calibration, /):
+    def __init__(
+        self, response: ImageResponsePlan, calibration: ImagingCalibration, /
+    ) -> None:
         self.response = response
         self.calibration = calibration
         self.plan_id = canonical_fingerprint(

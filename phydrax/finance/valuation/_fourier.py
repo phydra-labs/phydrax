@@ -10,7 +10,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..contracts._options import OptionType
@@ -50,7 +51,7 @@ class HestonFourierPlan(StrictModule):
         damping: float = 1.5,
         upper_frequency: float = 150.0,
         num_nodes: int = 4096,
-    ):
+    ) -> None:
         damping_ = float(damping)
         upper = float(upper_frequency)
         if not isfinite(damping_) or damping_ <= 0.0:
@@ -68,7 +69,7 @@ class HestonCOSPlan(StrictModule):
     num_terms: int = eqx.field(static=True)
     truncation_width: float = eqx.field(static=True)
 
-    def __init__(self, *, num_terms: int = 256, truncation_width: float = 12.0):
+    def __init__(self, *, num_terms: int = 256, truncation_width: float = 12.0) -> None:
         width = float(truncation_width)
         if not isfinite(width) or width <= 2.0:
             raise ValueError("truncation_width must be finite and greater than two.")
@@ -126,10 +127,19 @@ def heston_log_price_characteristic_function(
     )
 
 
-def _market_inputs(spot, strike, maturity, rate, dividend_yield):
-    spot_, strike_, maturity_, rate_, dividend = tuple(
-        jnp.asarray(value, dtype=jnp.float64)
-        for value in (spot, strike, maturity, rate, dividend_yield)
+def _market_inputs(
+    spot: ArrayLike,
+    strike: ArrayLike,
+    maturity: ArrayLike,
+    rate: ArrayLike,
+    dividend_yield: ArrayLike,
+) -> tuple[Array, Array, Array, Array, Array]:
+    spot_, strike_, maturity_, rate_, dividend = (
+        jnp.asarray(spot, dtype=jnp.float64),
+        jnp.asarray(strike, dtype=jnp.float64),
+        jnp.asarray(maturity, dtype=jnp.float64),
+        jnp.asarray(rate, dtype=jnp.float64),
+        jnp.asarray(dividend_yield, dtype=jnp.float64),
     )
     if any(value.shape != () for value in (spot_, strike_, maturity_, rate_, dividend)):
         raise ValueError("transform valuation currently requires scalar market inputs.")
@@ -148,7 +158,14 @@ def _market_inputs(spot, strike, maturity, rate, dividend_yield):
     return spot_, strike_, maturity_, rate_, dividend
 
 
-def _bounds(spot, strike, maturity, rate, dividend, kind):
+def _bounds(
+    spot: Array,
+    strike: Array,
+    maturity: Array,
+    rate: Array,
+    dividend: Array,
+    kind: OptionType,
+) -> tuple[Array, Array]:
     discount = jnp.exp(-rate * maturity)
     carry = jnp.exp(-dividend * maturity)
     if kind is OptionType.CALL:
@@ -233,7 +250,9 @@ def evaluate_heston_fourier(
     )
 
 
-def _cos_payoff_coefficients(frequencies, lower, upper, log_strike):
+def _cos_payoff_coefficients(
+    frequencies: Array, lower: Array, upper: Array, log_strike: Array
+) -> Array:
     omega = frequencies
     c = log_strike
     d = upper

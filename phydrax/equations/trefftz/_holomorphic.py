@@ -9,7 +9,7 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 from ..._doc import DOC_KEY0
 from ..._fingerprint import canonical_fingerprint
@@ -20,6 +20,7 @@ from ..._holomorphic import (
 )
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, ParameterOwner
+from ...typing import PRNGKey
 
 
 def _horner(coefficients: Array, coordinate: Array, /) -> Array:
@@ -62,8 +63,8 @@ class HolomorphicPolynomialPotential(StrictModule, ParameterOwner):
         *,
         normalization: ComplexAffineNormalization | None = None,
         initial_scale: float = 0.0,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         branches_ = int(branches)
         degree = int(maximum_degree)
         scale = float(initial_scale)

@@ -13,7 +13,7 @@ from phydrax.geometry.design import (
 )
 
 
-def test_recursive_csg_continuation_has_fixed_width_schema_and_exact_transfer():
+def test_recursive_csg_continuation_has_fixed_width_schema_and_exact_transfer() -> None:
     left = Circle((0.0, 0.0), 1.0, feature_id="left")
     middle = Circle((0.5, 0.0), 1.0, feature_id="middle")
     right = Circle((1.0, 0.0), 1.0, feature_id="right")
@@ -35,7 +35,7 @@ def test_recursive_csg_continuation_has_fixed_width_schema_and_exact_transfer():
     )
 
 
-def test_csg_continuation_schedule_must_be_positive_and_nonincreasing():
+def test_csg_continuation_schedule_must_be_positive_and_nonincreasing() -> None:
     with pytest.raises(ValueError, match="nonincreasing"):
         CSGContinuationPolicy((0.1, 0.2))
     with pytest.raises(ValueError, match="positive"):

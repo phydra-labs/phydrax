@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from typing import Any, TYPE_CHECKING
+from typing import Any, cast, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._geometry_precision import GeometryPrecisionPolicy
@@ -76,6 +77,7 @@ from ._mac_les import (
     _periodic_center_derivative,
     _wall_center_derivative,
     MACAlgebraicLESPlan,
+    PreparedMACAlgebraicLES,
 )
 
 
@@ -169,7 +171,7 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
         references: Mapping[str, ArrayLike] | None = None,
         enforce_exchange: bool = False,
         law_id: str | None = None,
-    ):
+    ) -> None:
         gravity_ = jnp.asarray(gravity, dtype=jnp.float64)
         if (
             gravity_.shape not in ((2,), (3,))
@@ -284,18 +286,22 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
             power = jnp.real(
                 momentum.operators.velocity_space.inner(velocity_, field_force)
             )
-            potential_rate = -sum(
-                jnp.sum(
-                    dual_measure
-                    * jnp.asarray(coefficient, dtype=transport.layout.dtype)
-                    * self.gravity[axis].astype(transport.layout.dtype)
-                    * (
-                        result.advective_fluxes[axis]
-                        - jnp.asarray(reference, dtype=transport.layout.dtype)
-                        * velocity_[axis]
+            potential_rate = -jnp.asarray(
+                sum(
+                    jnp.sum(
+                        dual_measure
+                        * jnp.asarray(coefficient, dtype=transport.layout.dtype)
+                        * self.gravity[axis].astype(transport.layout.dtype)
+                        * (
+                            result.advective_fluxes[axis]
+                            - jnp.asarray(reference, dtype=transport.layout.dtype)
+                            * velocity_[axis]
+                        )
+                    )
+                    for axis, dual_measure in enumerate(
+                        momentum.operators.face_dual_measures
                     )
                 )
-                for axis, dual_measure in enumerate(momentum.operators.face_dual_measures)
             )
             potential_factor = (
                 -jnp.asarray(coefficient, dtype=transport.layout.dtype)
@@ -342,11 +348,12 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
             )
             for component in force
         )
-        total_power = sum(power_by_field.values())
-        potential_energy_rate = sum(potential_by_field.values())
-        molecular_mixing = sum(molecular_mixing_by_field.values())
-        sgs_mixing = sum(sgs_mixing_by_field.values())
-        boundary_potential = sum(boundary_potential_by_field.values())
+        # Coefficient validation guarantees at least one buoyancy field.
+        total_power = jnp.asarray(sum(power_by_field.values()))
+        potential_energy_rate = jnp.asarray(sum(potential_by_field.values()))
+        molecular_mixing = jnp.asarray(sum(molecular_mixing_by_field.values()))
+        sgs_mixing = jnp.asarray(sum(sgs_mixing_by_field.values()))
+        boundary_potential = jnp.asarray(sum(boundary_potential_by_field.values()))
         exchange_defect = total_power + potential_energy_rate
         dtype = velocity_[0].dtype
         exchange_scale = jnp.maximum(
@@ -354,7 +361,7 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
             jnp.asarray(1.0, dtype=dtype),
         )
         normalized_exchange_defect = jnp.abs(exchange_defect) / exchange_scale
-        tolerance = 128.0 * jnp.finfo(dtype).eps
+        tolerance = jnp.asarray(128.0 * jnp.finfo(dtype).eps, dtype=dtype)
         finite = (
             jnp.all(jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in force)))
             & jnp.isfinite(total_power)
@@ -438,7 +445,7 @@ class PreparedMACKSGS(StrictModule, NonTrainableState):
         momentum: PreparedMACMomentumOperators,
         scalar_field_name: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             plan,
             (StaticKSGSPlan, BuoyancyKSGSPlan, DynamicKSGSPlan, LowReKSGSPlan),
@@ -904,7 +911,7 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
         /,
         *,
         compilation_id: str,
-    ):
+    ) -> None:
         discretization = momentum.operators.discretization
         residual_key = DiscretizationKey(
             "mac_scalar_buoyancy_form",
@@ -1436,9 +1443,11 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
             jnp.inf,
         )
         if stage.momentum_components.les_stage is not None:
-            prepared = self.base_dynamics.algebraic_les
-            if prepared is None:
+            momentum_les = self.base_dynamics.algebraic_les
+            if momentum_les is None:
                 raise ValueError("Coupled LES stage has no prepared momentum closure.")
+            # compile_mac_scalar_buoyancy prepares momentum LES from MACAlgebraicLESPlan.
+            prepared = cast(PreparedMACAlgebraicLES, momentum_les)
             sgs = prepared.viscosity_action.explicit_step_bound(
                 stage.momentum_components.les_stage.model_result.kinematic_viscosity
             )

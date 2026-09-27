@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -43,7 +44,7 @@ class HartreeFockExcitedResponsePlan(StrictModule, NonTrainableState):
         /,
         *,
         spin_sector: str = "singlet",
-    ):
+    ) -> None:
         if not isinstance(hartree_fock, MolecularHartreeFockPlan):
             raise TypeError("hartree_fock must be MolecularHartreeFockPlan.")
         if not isinstance(state, RestrictedMeanFieldState) or not bool(

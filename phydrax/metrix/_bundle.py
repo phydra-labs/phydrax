@@ -9,7 +9,8 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -33,7 +34,7 @@ class VectorBundleConnection(StrictModule):
         *,
         chart: CoordinateChart,
         fiber_dimension: int,
-    ):
+    ) -> None:
         if not callable(coefficients):
             raise TypeError("Bundle-connection coefficients must be callable.")
         if not isinstance(chart, CoordinateChart):
@@ -82,7 +83,7 @@ class _GaugeTransformedCoefficients(StrictModule):
         connection: VectorBundleConnection,
         gauge: Callable[[Array], Array],
         /,
-    ):
+    ) -> None:
         self.connection = connection
         self.gauge = gauge
 

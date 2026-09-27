@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -9,8 +11,8 @@ import phydrax as phx
 
 @pytest.mark.parametrize("input_integration", ("zoh", "linear"))
 def test_selective_mixer_serial_and_associative_execution_are_equivalent(
-    input_integration,
-):
+    input_integration: Any,
+) -> None:
     model = phx.nn.operator.architectures.SelectiveStateSpaceMixer(
         in_channels=3,
         out_channels=2,
@@ -50,7 +52,7 @@ def test_selective_mixer_serial_and_associative_execution_are_equivalent(
     assert jnp.all(model.decay_rates() > 0.0)
 
 
-def test_selective_mixer_packed_resets_and_diagnostics_are_explicit():
+def test_selective_mixer_packed_resets_and_diagnostics_are_explicit() -> None:
     model = phx.nn.operator.architectures.SelectiveStateSpaceMixer(
         in_channels=2,
         out_channels=2,
@@ -90,7 +92,7 @@ def test_selective_mixer_packed_resets_and_diagnostics_are_explicit():
     assert diagnostics.maximum_effective_step >= diagnostics.minimum_effective_step
 
 
-def test_selective_mixer_requires_resets_after_padding():
+def test_selective_mixer_requires_resets_after_padding() -> None:
     model = phx.nn.operator.architectures.SelectiveStateSpaceMixer(key=jr.key(5))
     values = jnp.ones((4,))
     times = jnp.array([0.0, jnp.nan, 0.0, 0.2])
@@ -108,7 +110,7 @@ def test_selective_mixer_requires_resets_after_padding():
         )
 
 
-def test_selective_mixer_jit_and_parameter_input_gradients_are_finite():
+def test_selective_mixer_jit_and_parameter_input_gradients_are_finite() -> None:
     model = phx.nn.operator.architectures.SelectiveStateSpaceMixer(
         in_channels=2,
         out_channels=2,
@@ -143,7 +145,7 @@ def test_selective_mixer_jit_and_parameter_input_gradients_are_finite():
     assert jnp.linalg.norm(parameter_gradient.output_gate_weight) > 0.0
 
 
-def test_selective_mixer_operator_batch_contract_preserves_masks():
+def test_selective_mixer_operator_batch_contract_preserves_masks() -> None:
     model = phx.nn.operator.architectures.SelectiveStateSpaceMixer(
         in_channels=2,
         out_channels=3,

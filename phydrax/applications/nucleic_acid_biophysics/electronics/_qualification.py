@@ -10,7 +10,8 @@ from typing import Literal
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ....qualification import (
@@ -113,7 +114,7 @@ class ChargeTransferObservationSeries:
         time_unit: UnitDefinition,
         observable_unit: UnitDefinition,
         source: ReferenceArtifactManifest,
-    ):
+    ) -> None:
         series = tuple(series_ids)
         units = tuple(independent_unit_ids)
         conditions = tuple(condition_ids)
@@ -270,7 +271,7 @@ class ElectronicModelFit:
         prediction_code: ReferenceArtifactManifest,
         fit_execution_evidence: QualificationEvidence,
         /,
-    ):
+    ) -> None:
         if not isinstance(campaign, ScientificCampaign):
             raise TypeError("campaign must be a ScientificCampaign.")
         model = _identifier(model_id, "model_id")
@@ -389,7 +390,7 @@ class ElectronicModelPrediction:
         /,
         *,
         observable_unit: UnitDefinition,
-    ):
+    ) -> None:
         if not isinstance(observations, ChargeTransferObservationSeries):
             raise TypeError("observations must be ChargeTransferObservationSeries.")
         if not isinstance(fit, ElectronicModelFit):

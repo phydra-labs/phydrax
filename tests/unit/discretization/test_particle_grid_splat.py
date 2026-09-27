@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import sys
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -15,7 +16,7 @@ import pytest
 import phydrax as phx
 
 
-def _grid(points: int = 3, *, periodic: bool = False):
+def _grid(points: int = 3, *, periodic: bool = False) -> Any:
     axis = phx.discretization.UniformAxisSpec(
         points,
         periodic=periodic,
@@ -30,9 +31,9 @@ def _particles(
     count: int = 2,
     *,
     dimension: int = 1,
-    active_mask=None,
-    particle_ids=None,
-):
+    active_mask: Any = None,
+    particle_ids: Any = None,
+) -> Any:
     ids = jnp.arange(count) if particle_ids is None else jnp.asarray(particle_ids)
     return phx.discretization.ParticleSetPlan(
         ids,
@@ -42,7 +43,7 @@ def _particles(
     ).prepare()
 
 
-def test_multilinear_deposit_distinguishes_content_and_density():
+def test_multilinear_deposit_distinguishes_content_and_density() -> None:
     prepared = phx.discretization.ParticleGridSplatPlan(_grid()).prepare(
         _particles(particle_ids=(2, 1))
     )
@@ -66,7 +67,7 @@ def test_multilinear_deposit_distinguishes_content_and_density():
     )
 
 
-def test_periodic_deposit_wraps_across_the_seam():
+def test_periodic_deposit_wraps_across_the_seam() -> None:
     prepared = phx.discretization.ParticleGridSplatPlan(_grid(4, periodic=True)).prepare(
         _particles(1)
     )
@@ -79,7 +80,7 @@ def test_periodic_deposit_wraps_across_the_seam():
     assert result.balance.closed_domain_conservation_valid
 
 
-def test_nonperiodic_boundary_rejects_or_accounts_for_dropped_content():
+def test_nonperiodic_boundary_rejects_or_accounts_for_dropped_content() -> None:
     particles = _particles(1)
     position = jnp.asarray([[-0.1]])
     rejecting = phx.discretization.ParticleGridSplatPlan(
@@ -103,7 +104,7 @@ def test_nonperiodic_boundary_rejects_or_accounts_for_dropped_content():
     assert not dropped.balance.closed_domain_conservation_valid
 
 
-def test_inactive_nonfinite_storage_is_numerically_inert():
+def test_inactive_nonfinite_storage_is_numerically_inert() -> None:
     particles = _particles(2, active_mask=jnp.asarray([True, False]))
     prepared = phx.discretization.ParticleGridSplatPlan(_grid()).prepare(particles)
     state = prepared.build(jnp.asarray([[0.5], [jnp.nan]]))
@@ -115,7 +116,7 @@ def test_inactive_nonfinite_storage_is_numerically_inert():
     assert result.balance.active_source_total == 2.0
 
 
-def test_vector_complex_payload_preserves_trailing_shape_and_balance():
+def test_vector_complex_payload_preserves_trailing_shape_and_balance() -> None:
     prepared = phx.discretization.ParticleGridSplatPlan(_grid()).prepare(_particles())
     state = prepared.build(jnp.asarray([[0.25], [0.75]]))
     payload = jnp.asarray([[1.0 + 2.0j, 3.0], [2.0 - 1.0j, -4.0]])
@@ -126,7 +127,7 @@ def test_vector_complex_payload_preserves_trailing_shape_and_balance():
     assert result.balance.maximum_absolute_balance_defect < 1e-12
 
 
-def test_reconstruction_and_gather_keep_coverage_explicit():
+def test_reconstruction_and_gather_keep_coverage_explicit() -> None:
     prepared = phx.discretization.ParticleGridSplatPlan(_grid()).prepare(_particles())
     state = prepared.build(jnp.asarray([[0.25], [0.75]]))
     reconstructed = prepared.reconstruct(
@@ -143,7 +144,7 @@ def test_reconstruction_and_gather_keep_coverage_explicit():
     assert jnp.all(gathered.support)
 
 
-def test_reconstruction_zero_coverage_and_weight_validation():
+def test_reconstruction_zero_coverage_and_weight_validation() -> None:
     prepared = phx.discretization.ParticleGridSplatPlan(_grid(5)).prepare(_particles(1))
     state = prepared.build(jnp.asarray([[0.0]]))
     result = prepared.reconstruct(state, jnp.asarray([7.0]), jnp.asarray([1.0]))
@@ -162,12 +163,12 @@ def test_reconstruction_zero_coverage_and_weight_validation():
     assert empty.denominator_tolerance > 0.0
 
 
-def test_vmap_keeps_independent_cases_and_shared_structure():
+def test_vmap_keeps_independent_cases_and_shared_structure() -> None:
     prepared = phx.discretization.ParticleGridSplatPlan(_grid()).prepare(_particles())
     positions = jnp.asarray([[[0.25], [0.75]], [[0.5], [1.0]]])
     payloads = jnp.asarray([[2.0, 4.0], [3.0, 1.0]])
 
-    def apply(position, payload):
+    def apply(position: Any, payload: Any) -> Any:
         return prepared.deposit_content(prepared.build(position), payload).content
 
     batched = jax.jit(jax.vmap(apply))(positions, payloads)
@@ -179,7 +180,7 @@ def test_vmap_keeps_independent_cases_and_shared_structure():
     assert jnp.allclose(batched, sequential)
 
 
-def test_deterministic_and_compensated_results_ignore_storage_permutation():
+def test_deterministic_and_compensated_results_ignore_storage_permutation() -> None:
     grid = _grid(5)
     ids = jnp.asarray([30, 10, 20])
     position = jnp.asarray([[0.2], [0.55], [0.8]])
@@ -208,7 +209,7 @@ def test_deterministic_and_compensated_results_ignore_storage_permutation():
         )
 
 
-def test_plan_rejects_incompatible_dimension_resources_and_state():
+def test_plan_rejects_incompatible_dimension_resources_and_state() -> None:
     grid = _grid()
     with pytest.raises(ValueError, match="dimensions"):
         phx.discretization.ParticleGridSplatPlan(grid).prepare(_particles(1, dimension=2))
@@ -226,10 +227,12 @@ def test_plan_rejects_incompatible_dimension_resources_and_state():
         second.deposit_content(state, jnp.ones((2,)))
 
 
-def test_execution_policy_validation_and_frozen_geometry():
+def test_execution_policy_validation_and_frozen_geometry() -> None:
     with pytest.raises(ValueError, match="accumulation"):
+        # ty: ignore[invalid-argument-type]
         phx.discretization.SplatExecutionPolicy(accumulation="unknown")
     with pytest.raises(ValueError, match="geometry_ad"):
+        # ty: ignore[invalid-argument-type]
         phx.discretization.SplatExecutionPolicy(geometry_ad="unknown")
 
     policy = phx.discretization.SplatExecutionPolicy(geometry_ad="frozen")
@@ -237,7 +240,7 @@ def test_execution_policy_validation_and_frozen_geometry():
         _grid(), execution=policy
     ).prepare(_particles())
 
-    def loss(position):
+    def loss(position: Any) -> Any:
         state = prepared.build(position)
         return jnp.sum(
             prepared.deposit_content(state, jnp.asarray([2.0, 4.0])).content ** 2
@@ -247,7 +250,7 @@ def test_execution_policy_validation_and_frozen_geometry():
     assert jnp.all(gradient == 0.0)
 
 
-def test_splatting_public_api_is_provider_neutral():
+def test_splatting_public_api_is_provider_neutral() -> None:
     public = vars(phx.discretization)
     expected = {
         "AbstractStructuredSplatAssignment",
@@ -267,7 +270,7 @@ def test_splatting_public_api_is_provider_neutral():
     assert "warp" not in sys.modules
 
 
-def test_mesh_splat_barycentric_and_compact_routes_are_conservative():
+def test_mesh_splat_barycentric_and_compact_routes_are_conservative() -> None:
     triangle = phx.discretization.CellMesh(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
         (

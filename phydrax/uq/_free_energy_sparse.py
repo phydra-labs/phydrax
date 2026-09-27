@@ -12,7 +12,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -91,7 +92,7 @@ class SparseReducedPotentialDataset(StrictModule, NonTrainableState):
         bias_ids: Sequence[str | None] = (),
         unit_system_id: str | None = None,
         unit_id: str,
-    ):
+    ) -> None:
         potential = _floating_array(values, "values")
         if potential.ndim != 2 or potential.shape[0] < 2 or potential.shape[1] < 1:
             raise ValueError(
@@ -183,7 +184,7 @@ class SparseReducedPotentialDataset(StrictModule, NonTrainableState):
             "reduced_convention_id": convention,
             "qualification_id": qualification,
             "sampling_exact": exact,
-            "sampling_bias_bound": bias_bound.hex(),
+            "sampling_bias_bound": float(bias_bound).hex(),
         }
         arrays = {
             "values": canonical_values,
@@ -250,7 +251,7 @@ class SparsePairwiseFreeEnergyNetworkResult(StrictModule, NonTrainableState):
         *,
         edge_state_ids: Sequence[tuple[str, str]],
         dataset_id: str,
-    ):
+    ) -> None:
         results = tuple(edge_results)
         observations = tuple(edge_observations)
         edges = tuple(

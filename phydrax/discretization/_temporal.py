@@ -9,11 +9,13 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._core import resolved_identifier
 
 
@@ -45,7 +47,7 @@ class TemporalMesh(StrictModule, NonTrainableState):
         realized: bool = False,
         source_plan_id: str | None = None,
         mesh_id: str | None = None,
-    ):
+    ) -> None:
         values = np.asarray(nodes)
         if values.ndim != 1 or values.size < 2:
             raise ValueError("Temporal meshes require at least two rank-1 nodes.")
@@ -55,8 +57,7 @@ class TemporalMesh(StrictModule, NonTrainableState):
             raise ValueError(
                 "Temporal mesh nodes must be finite and strictly increasing."
             )
-        if role not in ("internal", "collocation", "driver", "path"):
-            raise ValueError("Unknown temporal mesh role.")
+        role = parse(role, TemporalMeshRole, "role")
         if role == "path" and not np.allclose(
             np.diff(values),
             np.diff(values)[0],
@@ -199,7 +200,7 @@ class RealizedTemporalMesh(StrictModule, NonTrainableState):
         adaptive: bool,
         source_plan_id: str,
         requested_time_id: str,
-    ):
+    ) -> None:
         initial = jnp.asarray(initial_time)
         times = jnp.asarray(accepted_times)
         mask = jnp.asarray(valid, dtype=jnp.bool_)

@@ -10,7 +10,8 @@ from collections.abc import Callable, Sequence
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -119,7 +120,7 @@ class GRCallableConstantOfMotion(AbstractGRConstantOfMotion):
         name: str,
         evaluator_semantic_id: str | None = None,
         evaluator_numeric_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("Constant-of-motion evaluator must be callable.")
         if not isinstance(name, str) or not name:
@@ -167,7 +168,7 @@ class GRCoordinateMomentumConstant(AbstractGRConstantOfMotion):
         *,
         name: str,
         sign: float = 1.0,
-    ):
+    ) -> None:
         index = int(coordinate_index)
         if index < 0 or index >= 4:
             raise ValueError("coordinate_index must lie in [0, 4).")
@@ -211,7 +212,7 @@ class GRJacobiEvidence(StrictModule, NonTrainableState):
         caustic: ArrayLike,
         valid: ArrayLike,
         /,
-    ):
+    ) -> None:
         mapping = jnp.asarray(jacobi_map)
         determinant_ = jnp.asarray(determinant, dtype=mapping.dtype)
         caustic_ = jnp.asarray(caustic, dtype=jnp.bool_)
@@ -255,7 +256,7 @@ class GRRayBundleEvidence(StrictModule, NonTrainableState):
         *,
         constant_names: Sequence[str],
         bundle_id: str,
-    ):
+    ) -> None:
         values = jnp.asarray(constant_values)
         drift = jnp.asarray(constant_relative_drift, dtype=values.dtype)
         constants_valid = jnp.asarray(constant_valid, dtype=jnp.bool_)

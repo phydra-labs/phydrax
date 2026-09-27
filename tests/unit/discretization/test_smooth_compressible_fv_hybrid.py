@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -70,25 +72,25 @@ class _ZeroDualModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.weight = jnp.zeros((2, 4), dtype=jnp.float64)
         self.in_size = 4
         self.out_size = 2
 
-    def __call__(self, values, /, *, key=None):
+    def __call__(self, values: Any, /, *, key: Any = None) -> Any:
         del key
         return self.weight @ values
 
 
-def _material():
+def _material() -> Any:
     return IdealGasMaterial(1.4, 1.0)
 
 
-def _conserved():
+def _conserved() -> Any:
     return jnp.asarray((1.0, 0.03, -0.02, 1.251), dtype=jnp.float64)
 
 
-def _learned_binding(method, *, velocity_bound=0.5):
+def _learned_binding(method: Any, *, velocity_bound: Any = 0.5) -> Any:
     equilibrium_plan = PositiveEnergyEquilibriumPlan(method.quadrature)
     schema = FlowStateSchema(
         ("density", "momentum_x", "momentum_y", "total_energy"),
@@ -143,7 +145,7 @@ def _learned_binding(method, *, velocity_bound=0.5):
     )
 
 
-def _kinetic_method():
+def _kinetic_method() -> Any:
     return SmoothCompressibleD2VKineticMethod(
         d2v17_quadrature(),
         _material(),
@@ -151,7 +153,7 @@ def _kinetic_method():
     )
 
 
-def _spatial(method):
+def _spatial(method: Any) -> Any:
     energy = PositiveEnergyEquilibriumPlan(method.quadrature)
     transport = D2V17PeriodicTransportPlan(
         method.quadrature,
@@ -167,7 +169,7 @@ def _spatial(method):
     )
 
 
-def _kinetic_state(spatial, conserved=None):
+def _kinetic_state(spatial: Any, conserved: Any = None) -> Any:
     value = _conserved() if conserved is None else jnp.asarray(conserved)
     density = value[0]
     velocity = value[1:3] / density
@@ -192,7 +194,7 @@ def _kinetic_state(spatial, conserved=None):
     )
 
 
-def _finite_volume_runtime(method, *, retries=0):
+def _finite_volume_runtime(method: Any, *, retries: Any = 0) -> Any:
     grid = TensorGridPlan(
         (UniformCellAxisSpec(5), UniformCellAxisSpec(5)),
         axis_names=("x", "y"),
@@ -218,13 +220,14 @@ def _finite_volume_runtime(method, *, retries=0):
     )
     dynamics = compile_conservation_problem(problem, discretization, scheme).dynamics
     return PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         FluxPositivityPlan(),
         FiniteVolumeStepPolicy(cfl=20.0, maximum_retries=retries),
     )
 
 
-def _fixed_runtime(*, retries=0, velocity_bound=0.5):
+def _fixed_runtime(*, retries: Any = 0, velocity_bound: Any = 0.5) -> Any:
     method = _kinetic_method()
     spatial = _spatial(method)
     finite_volume = _finite_volume_runtime(method, retries=retries)
@@ -270,7 +273,7 @@ def _fixed_runtime(*, retries=0, velocity_bound=0.5):
     )
 
 
-def _fixed_state(runtime):
+def _fixed_state(runtime: Any) -> Any:
     average = jnp.broadcast_to(_conserved(), (5, 5, 4))
     finite_volume = runtime.finite_volume.initialize_state(
         average,
@@ -280,7 +283,7 @@ def _fixed_state(runtime):
     return runtime.initialize_state(finite_volume, _kinetic_state(runtime.spatial))
 
 
-def _assert_same_tree(left, right):
+def _assert_same_tree(left: Any, right: Any) -> None:
     left_leaves = jax.tree.leaves(left)
     right_leaves = jax.tree.leaves(right)
     assert len(left_leaves) == len(right_leaves)
@@ -288,7 +291,7 @@ def _assert_same_tree(left, right):
         np.testing.assert_array_equal(left_value, right_value)
 
 
-def test_fixed_runtime_uses_stage_weighted_equal_opposite_population_flux_once():
+def test_fixed_runtime_uses_stage_weighted_equal_opposite_population_flux_once() -> None:
     runtime = _fixed_runtime()
     state = _fixed_state(runtime)
 
@@ -337,7 +340,7 @@ def test_fixed_runtime_uses_stage_weighted_equal_opposite_population_flux_once()
     )
 
 
-def test_fixed_runtime_refuses_wrong_dt_and_any_fv_retry_policy():
+def test_fixed_runtime_refuses_wrong_dt_and_any_fv_retry_policy() -> None:
     with pytest.raises(ValueError, match="forbids finite-volume retries"):
         _fixed_runtime(retries=1)
     runtime = _fixed_runtime()
@@ -356,7 +359,9 @@ def test_fixed_runtime_refuses_wrong_dt_and_any_fv_retry_policy():
         )
 
 
-def test_failed_learned_support_rolls_back_both_sides_and_checkpoints_only_commit():
+def test_failed_learned_support_rolls_back_both_sides_and_checkpoints_only_commit() -> (
+    None
+):
     runtime = _fixed_runtime(velocity_bound=0.001)
     state = _fixed_state(runtime)
 
@@ -375,7 +380,7 @@ def test_failed_learned_support_rolls_back_both_sides_and_checkpoints_only_commi
         foreign.restore(checkpoint)
 
 
-def test_finite_volume_runtime_without_provider_retains_existing_ssprk_result():
+def test_finite_volume_runtime_without_provider_retains_existing_ssprk_result() -> None:
     method = _kinetic_method()
     runtime = _finite_volume_runtime(method)
     average = jnp.broadcast_to(_conserved(), (5, 5, 4))
@@ -398,7 +403,9 @@ def test_finite_volume_runtime_without_provider_retains_existing_ssprk_result():
     )
 
 
-def _dynamic_state(plan, owned, *, finite_volume=None, kinetic=None):
+def _dynamic_state(
+    plan: Any, owned: Any, *, finite_volume: Any = None, kinetic: Any = None
+) -> Any:
     ownership = plan.initialize(owned)
     fv = jnp.broadcast_to(_conserved(), plan.spatial_shape + (4,))
     if finite_volume is not None:
@@ -407,7 +414,9 @@ def _dynamic_state(plan, owned, *, finite_volume=None, kinetic=None):
     return DynamicHybridCompositeState(fv, kinetic_state, ownership)
 
 
-def test_dynamic_ownership_hysteresis_dwell_shock_and_dilation_are_deterministic():
+def test_dynamic_ownership_hysteresis_dwell_shock_and_dilation_are_deterministic() -> (
+    None
+):
     method = _kinetic_method()
     learned = _learned_binding(method)
     plan = DynamicHybridOwnershipPlan(
@@ -465,7 +474,7 @@ def test_dynamic_ownership_hysteresis_dwell_shock_and_dilation_are_deterministic
     assert bool(blocked_decision.finite_volume_owned[2, 2])
 
 
-def test_dynamic_bidirectional_migration_is_exact_and_history_checkpoints():
+def test_dynamic_bidirectional_migration_is_exact_and_history_checkpoints() -> None:
     method = _kinetic_method()
     learned = _learned_binding(method)
     plan = DynamicHybridOwnershipPlan(
@@ -519,7 +528,7 @@ def test_dynamic_bidirectional_migration_is_exact_and_history_checkpoints():
     _assert_same_tree(restored, result.runtime_state)
 
 
-def test_dynamic_failed_fv_to_kinetic_lift_rolls_back_all_fields_and_history():
+def test_dynamic_failed_fv_to_kinetic_lift_rolls_back_all_fields_and_history() -> None:
     method = _kinetic_method()
     learned = _learned_binding(method, velocity_bound=0.1)
     plan = DynamicHybridOwnershipPlan(

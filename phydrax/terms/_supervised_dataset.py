@@ -8,7 +8,8 @@ from collections.abc import Mapping
 from typing import Any, Literal
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 from phydrax.domain import (
@@ -22,6 +23,7 @@ from phydrax.domain import (
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
+from ..typing import PRNGKey
 from ._data_metrics import (
     case_sample_count,
     normalize_case_sampling,
@@ -51,7 +53,7 @@ class SupervisedDatasetBatch(StrictModule):
         indices: ArrayLike,
         sample_weight: ArrayLike | None = None,
         target_mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         target_array = jnp.asarray(target)
         indices_array = jnp.asarray(indices, dtype=jnp.int32)
         if indices_array.ndim != 1:
@@ -132,7 +134,7 @@ class SupervisedDatasetTerm(AbstractSamplingTerm):
         indices: ArrayLike | None = None,
         label: str | None = None,
         data_accuracy_eps: float = 1e-12,
-    ):
+    ) -> None:
         if not isinstance(component.domain, DatasetDomain):
             raise TypeError("SupervisedDatasetTerm requires a DatasetDomain component.")
         sampling_ = normalize_case_sampling(
@@ -178,7 +180,7 @@ class SupervisedDatasetTerm(AbstractSamplingTerm):
     def sample(
         self,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Any:
         domain = self.domain
         indices = sample_case_indices(
@@ -202,7 +204,7 @@ class SupervisedDatasetTerm(AbstractSamplingTerm):
         batch: SupervisedDatasetBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         var = self.fields[0]
@@ -218,7 +220,7 @@ class SupervisedDatasetTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: SupervisedDatasetBatch | None = None,
         **kwargs: Any,
     ) -> dict[str, Array]:
@@ -235,7 +237,7 @@ class SupervisedDatasetTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: SupervisedDatasetBatch | None = None,
         **kwargs: Any,

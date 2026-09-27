@@ -6,10 +6,12 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ....._probability import AbstractProbabilityLaw
 from ....._strict import StrictModule
+from .....typing import PRNGKey
 from ...data import FunctionSamples, OperatorBatch
 from ..conditioning._function_frame import (
     FunctionFrameEncoding,
@@ -47,7 +49,7 @@ class ConditionalFunctionFrameFlowOperator(StrictModule):
         /,
         *,
         field_space_id: str,
-    ):
+    ) -> None:
         if not isinstance(encoder, FunctionFrameReconstructor):
             raise TypeError("encoder must be FunctionFrameReconstructor.")
         if not callable(coefficient_law_factory):
@@ -80,7 +82,7 @@ class ConditionalFunctionFrameFlowOperator(StrictModule):
     def sample_coefficients(
         self,
         state: FunctionFrameCoefficientFlowState,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         return state.coefficient_law.sample(key, sample_shape)
@@ -127,7 +129,7 @@ class ConditionalFunctionFrameFlowOperator(StrictModule):
     def sample_field(
         self,
         state: FunctionFrameCoefficientFlowState,
-        key: Key[Array, ""],
+        key: PRNGKey,
         query: FunctionSamples,
         /,
         *,

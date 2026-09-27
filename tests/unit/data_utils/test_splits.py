@@ -13,7 +13,7 @@ from phydrax.data_utils import (
 )
 
 
-def test_train_test_split_indices_partition_cases():
+def test_train_test_split_indices_partition_cases() -> None:
     train, test = train_test_split_indices(10, test_fraction=0.2, key=jr.key(0))
 
     assert train.shape == (8,)
@@ -22,14 +22,14 @@ def test_train_test_split_indices_partition_cases():
     assert jnp.all(merged == jnp.arange(10, dtype=jnp.int32))
 
 
-def test_train_test_split_indices_can_skip_shuffle():
+def test_train_test_split_indices_can_skip_shuffle() -> None:
     train, test = train_test_split_indices(5, test_fraction=0.4, shuffle=False)
 
     assert jnp.all(test == jnp.asarray([0, 1], dtype=jnp.int32))
     assert jnp.all(train == jnp.asarray([2, 3, 4], dtype=jnp.int32))
 
 
-def test_kfold_indices_cover_each_case_once_as_validation():
+def test_kfold_indices_cover_each_case_once_as_validation() -> None:
     folds = kfold_indices(7, 3, key=jr.key(1))
 
     validation = jnp.concatenate([fold[1] for fold in folds])
@@ -39,7 +39,7 @@ def test_kfold_indices_cover_each_case_once_as_validation():
         assert not bool(jnp.any(jnp.isin(train, val)))
 
 
-def test_split_helpers_validate_arguments():
+def test_split_helpers_validate_arguments() -> None:
     with pytest.raises(ValueError, match="at least 2"):
         train_test_split_indices(1)
 
@@ -50,7 +50,7 @@ def test_split_helpers_validate_arguments():
         kfold_indices(3, 4)
 
 
-def test_case_partition_manifest_is_group_safe_and_content_addressed():
+def test_case_partition_manifest_is_group_safe_and_content_addressed() -> None:
     manifest = CasePartitionManifest(
         ("a", "b", "c", "d"),
         ("g0", "g0", "g1", "g2"),

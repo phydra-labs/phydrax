@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -17,7 +18,7 @@ from phydrax.applications.semiconductor._thermodynamics import (
 from phydrax.units import CENTIMETER, derived_unit, ELECTRONVOLT
 
 
-def _bands(statistics="fermi-dirac", **changes):
+def _bands(statistics: Any = "fermi-dirac", **changes: Any) -> Any:
     parameters = dict(
         conduction_band_edge=-4.05 * Q,
         valence_band_edge=-5.17 * Q,
@@ -30,10 +31,11 @@ def _bands(statistics="fermi-dirac", **changes):
         statistics=statistics,
     )
     parameters.update(changes)
+    # ty: ignore[invalid-argument-type]
     return BandThermodynamics("synthetic-parabolic-bands", **parameters)
 
 
-def _ionization():
+def _ionization() -> Any:
     return IncompleteIonization(
         donor_binding_energy=0.045 * Q,
         acceptor_binding_energy=0.057 * Q,
@@ -44,7 +46,9 @@ def _ionization():
 
 
 @pytest.mark.parametrize("statistics", ["boltzmann", "fermi-dirac"])
-def test_populations_and_inverse_are_invariant_under_electronic_gauge_shift(statistics):
+def test_populations_and_inverse_are_invariant_under_electronic_gauge_shift(
+    statistics: Any,
+) -> None:
     bands = _bands(statistics)
     temperature = jnp.asarray([150.0, 300.0, 500.0])
     potential = jnp.asarray([-0.13, 0.0, 0.27])
@@ -96,7 +100,7 @@ def test_populations_and_inverse_are_invariant_under_electronic_gauge_shift(stat
     )
 
 
-def test_boltzmann_reduction_has_mass_action_einstein_and_classical_energy():
+def test_boltzmann_reduction_has_mass_action_einstein_and_classical_energy() -> None:
     bands = _bands("boltzmann")
     temperature = jnp.asarray([150.0, 300.0, 500.0])
     potential = 0.12
@@ -128,7 +132,7 @@ def test_boltzmann_reduction_has_mass_action_einstein_and_classical_energy():
     np.testing.assert_allclose(fd.statistics_derivative(eta), jnp.exp(eta), rtol=1.2e-8)
 
 
-def test_fd_reference_degenerate_limit_and_derivative_are_one_statistics():
+def test_fd_reference_degenerate_limit_and_derivative_are_one_statistics() -> None:
     bands = _bands()
     # F_j(0)=(1-2**(-j))*zeta(j+1), in the DLMF normalized convention.
     np.testing.assert_allclose(
@@ -161,7 +165,7 @@ def test_fd_reference_degenerate_limit_and_derivative_are_one_statistics():
     )
 
 
-def test_fd_inverse_has_implicit_forward_reverse_and_density_derivatives():
+def test_fd_inverse_has_implicit_forward_reverse_and_density_derivatives() -> None:
     bands = _bands()
     eta = jnp.asarray([-50.0, -4.0, 0.0, 7.0, 60.0])
     population = bands.statistics_value(eta)
@@ -211,7 +215,9 @@ def test_fd_inverse_has_implicit_forward_reverse_and_density_derivatives():
     )
 
 
-def test_log_scaled_fd_preserves_representable_density_below_normalized_underflow():
+def test_log_scaled_fd_preserves_representable_density_below_normalized_underflow() -> (
+    None
+):
     bands = _bands()
     temperature = 300.0
     ec, _ = bands.band_edges(0.0, temperature)
@@ -228,7 +234,7 @@ def test_log_scaled_fd_preserves_representable_density_below_normalized_underflo
 
 
 @pytest.mark.parametrize("carrier", ["electron", "hole"])
-def test_fd_kinetic_energy_obeys_thermodynamic_legendre_identity(carrier):
+def test_fd_kinetic_energy_obeys_thermodynamic_legendre_identity(carrier: Any) -> None:
     bands = _bands()
     temperature = 300.0
     if carrier == "electron":
@@ -241,7 +247,7 @@ def test_fd_kinetic_energy_obeys_thermodynamic_legendre_identity(carrier):
         edge_index, sign, dos = 1, -1, bands.valence_density_of_states
     density = 4.2 * dos
 
-    def free_energy(n, T):
+    def free_energy(n: Any, T: Any) -> Any:
         edge = bands.band_edges(0.0, T)[edge_index]
         kinetic_mu = sign * (fermi_energy(0.0, n, T) - edge)
         return n * kinetic_mu - (2 / 3) * energy_density(n, T)
@@ -275,8 +281,8 @@ def test_fd_kinetic_energy_obeys_thermodynamic_legendre_identity(carrier):
 @pytest.mark.parametrize("statistics", ["boltzmann", "fermi-dirac"])
 @pytest.mark.parametrize("carrier", ["electron", "hole"])
 def test_material_energy_includes_band_entropy_but_not_electrostatic_storage(
-    statistics, carrier
-):
+    statistics: Any, carrier: Any
+) -> None:
     bands = _bands(
         statistics,
         conduction_temperature_coefficient=2e-4 * Q,
@@ -328,7 +334,9 @@ def test_material_energy_includes_band_entropy_but_not_electrostatic_storage(
     assert float(internal_energy(0.0, temperature)) == 0.0
 
 
-def test_pair_material_energy_is_reference_independent_with_varshni_heat_capacity():
+def test_pair_material_energy_is_reference_independent_with_varshni_heat_capacity() -> (
+    None
+):
     bands = _bands(
         "boltzmann",
         conduction_temperature_coefficient=3e-4 * Q,
@@ -337,7 +345,7 @@ def test_pair_material_energy_is_reference_independent_with_varshni_heat_capacit
     )
     density, temperature = 2e22, 400.0
 
-    def pair_energy(model, T):
+    def pair_energy(model: Any, T: Any) -> Any:
         return model.electron_material_internal_energy_density(
             density, T
         ) + model.hole_material_internal_energy_density(density, T)
@@ -367,7 +375,7 @@ def test_pair_material_energy_is_reference_independent_with_varshni_heat_capacit
     )
 
 
-def test_temperature_law_and_native_units_preserve_independent_dos():
+def test_temperature_law_and_native_units_preserve_independent_dos() -> None:
     per_cm3 = derived_unit("1/cm3", ((CENTIMETER, -3),))
     bands = _bands(
         "boltzmann",
@@ -400,7 +408,7 @@ def test_temperature_law_and_native_units_preserve_independent_dos():
         _bands(gap_varshni_alpha=0.1 * Q, gap_varshni_beta=10.0)
 
 
-def test_explicit_impurity_degeneracies_occupancies_and_energy_share_levels():
+def test_explicit_impurity_degeneracies_occupancies_and_energy_share_levels() -> None:
     bands, ionization = _bands(), _ionization()
     ionization.admit(bands)
     temperature, potential = 260.0, 0.17
@@ -438,7 +446,7 @@ def test_explicit_impurity_degeneracies_occupancies_and_energy_share_levels():
     )
 
 
-def test_neutral_equilibrium_includes_freeze_out_compensation_and_gauge():
+def test_neutral_equilibrium_includes_freeze_out_compensation_and_gauge() -> None:
     bands, ionization = _bands(), _ionization()
     temperature = jnp.asarray([50.0, 300.0, 300.0])
     donors = jnp.asarray([1e21, 1e21, 2e21])
@@ -469,11 +477,11 @@ def test_neutral_equilibrium_includes_freeze_out_compensation_and_gauge():
     np.testing.assert_allclose(shifted, ef - Q * 0.4, rtol=0, atol=1e-31)
 
 
-def test_neutral_equilibrium_differentiates_material_and_dopant_parameters():
+def test_neutral_equilibrium_differentiates_material_and_dopant_parameters() -> None:
     bands = _bands("boltzmann")
     donors, temperature = 3e21, 300.0
 
-    def population(log_donors):
+    def population(log_donors: Any) -> Any:
         concentration = jnp.exp(log_donors)
         ef = bands.equilibrium_fermi_energy(0.0, temperature, concentration)
         return bands.electron_density(0.0, ef, temperature)
@@ -485,7 +493,7 @@ def test_neutral_equilibrium_differentiates_material_and_dopant_parameters():
     expected = n * donors / (n + p)
     np.testing.assert_allclose(jax.grad(population)(log_donors), expected, rtol=3e-10)
 
-    def intrinsic_ef(log_nc):
+    def intrinsic_ef(log_nc: Any) -> Any:
         model = eqx.tree_at(
             lambda item: item.conduction_density_of_states, bands, jnp.exp(log_nc)
         )
@@ -495,7 +503,7 @@ def test_neutral_equilibrium_differentiates_material_and_dopant_parameters():
     np.testing.assert_allclose(derivative, -0.5 * KB * temperature, rtol=3e-11)
 
 
-def test_runtime_domain_rejections_do_not_clip_or_extrapolate():
+def test_runtime_domain_rejections_do_not_clip_or_extrapolate() -> None:
     bands = _bands()
     transformed_domain_error = (ValueError, RuntimeError, eqx.EquinoxRuntimeError)
     with pytest.raises(transformed_domain_error):

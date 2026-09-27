@@ -10,7 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from phydrax._interpolation import linear_interpolate
 
@@ -18,6 +18,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import (
+    FiniteVolumeDiscretization,
     FiniteVolumePlan,
     NonuniformCellAxisSpec,
     TensorGridPlan,
@@ -79,7 +80,7 @@ class FreeSurfaceRezonePlan(StrictModule, NonTrainableState):
         /,
         *,
         minimum_quality_improvement: float = 0.0,
-    ):
+    ) -> None:
         exponent = float(stretching_exponent)
         improvement = float(minimum_quality_improvement)
         if (
@@ -99,7 +100,9 @@ class FreeSurfaceRezonePlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _new_reference(self, hydrodynamics: PreparedOnePhaseFreeSurfaceALE):
+    def _new_reference(
+        self, hydrodynamics: PreparedOnePhaseFreeSurfaceALE
+    ) -> FiniteVolumeDiscretization:
         old = hydrodynamics.reference
         axes = old.grid.structured_axes
         bounds = jnp.stack(
@@ -268,8 +271,12 @@ class FreeSurfaceRezonePlan(StrictModule, NonTrainableState):
             - jnp.sum(old_state.scalar_content[name])
             for name in remapped_content
         }
-        old_momentum = sum(jnp.sum(component) for component in old_state.momentum)
-        new_momentum = sum(jnp.sum(component) for component in new_state.momentum)
+        old_momentum = jnp.asarray(
+            sum(jnp.sum(component) for component in old_state.momentum)
+        )
+        new_momentum = jnp.asarray(
+            sum(jnp.sum(component) for component in new_state.momentum)
+        )
         old_energy = old_view.kinetic_energy
         new_energy = new_hydrodynamics.view(
             new_state, continuation.eta_rate
@@ -346,7 +353,7 @@ class GraphShorelineEventPlan(StrictModule, NonTrainableState):
         rezone_height: float = 0.05,
         dry_height: float = 0.005,
         two_phase_slope: float = 0.8,
-    ):
+    ) -> None:
         values = tuple(float(v) for v in (rezone_height, dry_height, two_phase_slope))
         if any(not np.isfinite(v) or v <= 0.0 for v in values) or values[1] >= values[0]:
             raise ValueError("Invalid graph shoreline event thresholds.")

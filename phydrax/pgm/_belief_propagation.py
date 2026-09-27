@@ -13,7 +13,8 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -69,7 +70,7 @@ class SumProductBeliefPropagation(StrictModule):
         relaxation: float = 1.0,
         absolute_tolerance: float = 1e-8,
         relative_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         steps, relaxed, absolute, relative = _method_parameters(
             maximum_steps,
             relaxation,
@@ -99,7 +100,7 @@ class MaxProductBeliefPropagation(StrictModule):
         relaxation: float = 1.0,
         absolute_tolerance: float = 1e-8,
         relative_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         steps, relaxed, absolute, relative = _method_parameters(
             maximum_steps,
             relaxation,
@@ -127,14 +128,19 @@ class BeliefPropagationSchedulePolicy(StrictModule):
     def __init__(
         self,
         kind: Literal["synchronous", "asynchronous", "forest"] = "synchronous",
-    ):
+    ) -> None:
         if kind not in ("synchronous", "asynchronous", "forest"):
             raise ValueError("Unknown belief-propagation schedule.")
         self.kind = kind
         self.schedule_id = f"belief-propagation-{kind}"
 
 
-def _method_parameters(maximum_steps, relaxation, absolute_tolerance, relative_tolerance):
+def _method_parameters(
+    maximum_steps: int,
+    relaxation: float,
+    absolute_tolerance: float,
+    relative_tolerance: float,
+) -> tuple[int, float, float, float]:
     steps = int(maximum_steps)
     relaxed = float(relaxation)
     absolute = float(absolute_tolerance)
@@ -163,8 +169,8 @@ class BeliefPropagationState(StrictModule):
         evidence: VariableStateValues,
         /,
         *,
-        step_index: int | Array = 0,
-    ):
+        step_index: ArrayLike = 0,
+    ) -> None:
         if not isinstance(evidence, VariableStateValues):
             raise TypeError("evidence must be VariableStateValues.")
         values = jnp.asarray(messages)
@@ -197,8 +203,8 @@ class PreparedBeliefPropagation(StrictModule):
         static=True
     )
     forest_roots: tuple[int, ...] = eqx.field(static=True)
-    decode_steps: tuple[tuple[int, int, int, tuple[int, ...]], ...] = eqx.field(
-        static=True
+    decode_steps: tuple[tuple[int, int, int, int, tuple[tuple[int, int], ...]], ...] = (
+        eqx.field(static=True)
     )
     forest: bool = eqx.field(static=True)
     forest_steps: int = eqx.field(static=True)
@@ -261,17 +267,29 @@ class MaxProductBeliefPropagationResult(StrictModule):
 BeliefPropagationResult: TypeAlias = (
     SumProductBeliefPropagationResult | MaxProductBeliefPropagationResult
 )
+# Forest decode step:
+# (factor group, local factor, parent variable, parent position, (child, position)*).
+_DecodeStep: TypeAlias = tuple[int, int, int, int, tuple[tuple[int, int], ...]]
+# Loopy scan carry: messages, active, initial/last residual, support changes,
+# iterations, status.
+_LoopyCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+# Executed schedule: state, status, valid, converged, initial/final residual,
+# support-change count, iterations.
+_BeliefPropagationRun: TypeAlias = tuple[
+    BeliefPropagationState, Array, Array, Array, Array, Array, Array, Array
+]
 
 
-def _forest_metadata(graph: DiscreteFactorGraph, /):
+def _forest_metadata(
+    graph: DiscreteFactorGraph, /
+) -> tuple[bool, tuple[int, ...], tuple[_DecodeStep, ...], int]:
     variable_count = graph.num_variables
     factor_total = graph.num_factors
     node_count = variable_count + factor_total
     adjacency: list[list[int]] = [[] for _ in range(node_count)]
     factor_lookup: list[tuple[int, int]] = []
     factor_global = 0
-    for group_index, scope in enumerate(graph.factor_scopes):
-        scope_host = np.asarray(scope, dtype=np.int32)
+    for group_index, scope_host in enumerate(graph._host_topology.factor_scopes):
         for local_factor, variables in enumerate(scope_host):
             factor_node = variable_count + factor_global
             factor_lookup.append((group_index, local_factor))
@@ -282,7 +300,7 @@ def _forest_metadata(graph: DiscreteFactorGraph, /):
 
     parent = list(range(node_count))
 
-    def find(value):
+    def find(value: int) -> int:
         while parent[value] != value:
             parent[value] = parent[parent[value]]
             value = parent[value]
@@ -300,7 +318,7 @@ def _forest_metadata(graph: DiscreteFactorGraph, /):
                 parent[root_target] = root_source
 
     roots: list[int] = []
-    decode: list[tuple[int, int, int, tuple[int, ...]]] = []
+    decode: list[_DecodeStep] = []
     visited: set[int] = set()
     max_diameter = 0
     if forest:
@@ -336,9 +354,21 @@ def _forest_metadata(graph: DiscreteFactorGraph, /):
                     node for node in adjacency[factor_node] if node != parent_variable
                 )
                 group_index, local_factor = factor_lookup[factor_node - variable_count]
-                decode.append((group_index, local_factor, parent_variable, children))
+                scope = graph._host_topology.factor_scopes[group_index][local_factor]
+                positions = {
+                    int(variable): position for position, variable in enumerate(scope)
+                }
+                decode.append(
+                    (
+                        group_index,
+                        local_factor,
+                        parent_variable,
+                        positions[parent_variable],
+                        tuple((child, positions[child]) for child in children),
+                    )
+                )
 
-            def distances(start):
+            def distances(start: int) -> dict[int, int]:
                 result = {start: 0}
                 pending = deque([start])
                 while pending:
@@ -350,7 +380,8 @@ def _forest_metadata(graph: DiscreteFactorGraph, /):
                 return result
 
             if component:
-                first = max(distances(component[0]), key=distances(component[0]).get)
+                first_distances = distances(component[0])
+                first = max(first_distances, key=first_distances.__getitem__)
                 max_diameter = max(max_diameter, max(distances(first).values()))
         for factor_node in range(variable_count, node_count):
             if factor_node not in visited:
@@ -393,9 +424,9 @@ def prepare_belief_propagation(
     degrees = np.zeros((graph.num_variables,), dtype=np.int32)
     incidents: list[list[tuple[int, int, int]]] = [[] for _ in range(graph.num_variables)]
     offset = 0
-    state_offsets = np.asarray(graph.variable_state_offsets, dtype=np.int32)
+    state_offsets = graph._host_topology.state_offsets
     dense_total = 0
-    for group_index, scope in enumerate(graph.factor_scopes):
+    for group_index, scope_host in enumerate(graph._host_topology.factor_scopes):
         signature = factor_group_cardinality_signature(graph, group_index)
         group = graph.factor_groups[group_index]
         capabilities = factor_group_capabilities(group)
@@ -423,7 +454,7 @@ def prepare_belief_propagation(
         dense_elements = (
             0
             if isinstance(group, EnumeratedFactorGroup)
-            else scope.shape[0] * dense_configurations
+            else scope_host.shape[0] * dense_configurations
         )
         dense_total += dense_elements
         if dense_total > resources_.maximum_dense_elements:
@@ -437,10 +468,9 @@ def prepare_belief_propagation(
             else factor_group_dense_tables(graph, group_index)
         )
         tables.append(table)
-        scope_host = np.asarray(scope, dtype=np.int32)
         group_layout: list[tuple[int, int, int, int]] = []
         for position, cardinality in enumerate(signature):
-            count = scope.shape[0]
+            count = scope_host.shape[0]
             start = offset
             stop = start + count * cardinality
             if stop > resources_.maximum_message_entries:
@@ -485,7 +515,7 @@ def prepare_belief_propagation(
     )
     state_variable_indices = np.repeat(
         np.arange(graph.num_variables, dtype=np.int32),
-        np.asarray(graph.cardinalities, dtype=np.int32),
+        graph._host_topology.cardinalities,
     )
     forest, roots, decode, forest_steps = _forest_metadata(graph)
     plan_id = canonical_fingerprint(
@@ -895,7 +925,7 @@ def _bp_step(
     /,
     *,
     force_full: bool = False,
-):
+) -> tuple[Array, Array, Array, Array, Array]:
     variable_to_factor = _variable_to_factor(prepared, messages, evidence)
     candidate, feasible = _factor_update(prepared, variable_to_factor)
     updated = _relax_messages(
@@ -919,8 +949,8 @@ def _forest_edge_message(
     /,
 ) -> tuple[Array, Array, Array]:
     graph = prepared.graph
-    scope = np.asarray(graph.factor_scopes[group_index], dtype=np.int32)[local_factor]
-    offsets = np.asarray(graph.variable_state_offsets, dtype=np.int32)
+    scope = graph._host_topology.factor_scopes[group_index][local_factor]
+    offsets = graph._host_topology.state_offsets
     incoming = []
     for position, variable_value in enumerate(scope):
         variable = int(variable_value)
@@ -992,13 +1022,9 @@ def _set_forest_edge_message(
     evidence: Array,
     group_index: int,
     local_factor: int,
-    target_variable: int,
+    target_position: int,
     /,
 ) -> tuple[Array, Array, Array]:
-    scope = np.asarray(prepared.graph.factor_scopes[group_index], dtype=np.int32)[
-        local_factor
-    ]
-    target_position = int(np.flatnonzero(scope == target_variable)[0])
     values, feasible, finite = _forest_edge_message(
         prepared,
         messages,
@@ -1018,38 +1044,50 @@ def _set_forest_edge_message(
     )
 
 
-def _run_forest(prepared, state):
+def _run_forest(
+    prepared: PreparedBeliefPropagation, state: BeliefPropagationState
+) -> _BeliefPropagationRun:
     original = state.messages
     messages = original
     feasible = jnp.asarray(True)
     finite = jnp.asarray(True)
-    for group_index, local_factor, parent_variable, _children in reversed(
-        prepared.decode_steps
-    ):
+    for (
+        group_index,
+        local_factor,
+        _parent_variable,
+        parent_position,
+        _children,
+    ) in reversed(prepared.decode_steps):
         messages, edge_feasible, edge_finite = _set_forest_edge_message(
             prepared,
             messages,
             state.evidence.values,
             group_index,
             local_factor,
-            parent_variable,
+            parent_position,
         )
         feasible = feasible & edge_feasible
         finite = finite & edge_finite
-    for group_index, local_factor, _parent_variable, children in prepared.decode_steps:
-        for child_variable in children:
+    for (
+        group_index,
+        local_factor,
+        _parent_variable,
+        _parent_position,
+        children,
+    ) in prepared.decode_steps:
+        for _child_variable, child_position in children:
             messages, edge_feasible, edge_finite = _set_forest_edge_message(
                 prepared,
                 messages,
                 state.evidence.values,
                 group_index,
                 local_factor,
-                child_variable,
+                child_position,
             )
             feasible = feasible & edge_feasible
             finite = finite & edge_finite
 
-    offsets = np.asarray(prepared.graph.variable_state_offsets, dtype=np.int32)
+    offsets = prepared.graph._host_topology.state_offsets
     for root in prepared.forest_roots:
         values = state.evidence.values[offsets[root] : offsets[root + 1]]
         for group_index, local_factor, position in prepared.variable_incidents[root]:
@@ -1091,7 +1129,7 @@ def _asynchronous_bp_step(
     messages: Array,
     evidence: Array,
     /,
-):
+) -> tuple[Array, Array, Array, Array, Array]:
     original = messages
     feasible = jnp.asarray(True)
     finite = jnp.asarray(True)
@@ -1163,10 +1201,16 @@ def _asynchronous_bp_step(
     return messages, residual, support_changed, feasible, finite
 
 
-def _run_loopy(prepared, state, /, *, asynchronous: bool = False):
+def _run_loopy(
+    prepared: PreparedBeliefPropagation,
+    state: BeliefPropagationState,
+    /,
+    *,
+    asynchronous: bool = False,
+) -> _BeliefPropagationRun:
     maximum_steps = prepared.method.maximum_steps
 
-    def body(carry, _):
+    def body(carry: _LoopyCarry, _: None) -> tuple[_LoopyCarry, None]:
         messages, active, initial, residual, support_count, iterations, status = carry
         updated, trial_residual, support_changed, feasible, finite = (
             _asynchronous_bp_step(
@@ -1247,7 +1291,9 @@ def _run_loopy(prepared, state, /, *, asynchronous: bool = False):
     )
 
 
-def _variable_log_beliefs(prepared, state):
+def _variable_log_beliefs(
+    prepared: PreparedBeliefPropagation, state: BeliefPropagationState
+) -> Array:
     graph = prepared.graph
     messages = state.messages
     indices = prepared.message_variable_state_indices
@@ -1274,7 +1320,9 @@ def _variable_log_beliefs(prepared, state):
     )
 
 
-def _factor_joint_scores(prepared, state):
+def _factor_joint_scores(
+    prepared: PreparedBeliefPropagation, state: BeliefPropagationState
+) -> tuple[tuple[Array, ...], Array]:
     vtof = _variable_to_factor(prepared, state.messages, state.evidence.values)
     outputs: list[Array] = []
     for group_index, (table, layout) in enumerate(
@@ -1296,7 +1344,9 @@ def _factor_joint_scores(prepared, state):
     return tuple(outputs), vtof
 
 
-def _factor_probabilities(prepared, state):
+def _factor_probabilities(
+    prepared: PreparedBeliefPropagation, state: BeliefPropagationState
+) -> tuple[Array, ...]:
     joints, _ = _factor_joint_scores(prepared, state)
     outputs: list[Array] = []
     for joint in joints:
@@ -1309,8 +1359,11 @@ def _factor_probabilities(prepared, state):
 
 
 def _bethe_log_normalizer(
-    prepared, state, variable_log_probabilities, factor_probabilities
-):
+    prepared: PreparedBeliefPropagation,
+    state: BeliefPropagationState,
+    variable_log_probabilities: Array,
+    factor_probabilities: tuple[Array, ...],
+) -> Array:
     variable_log_probabilities = prepared.precision.accumulation(
         variable_log_probabilities
     )
@@ -1340,9 +1393,9 @@ def _bethe_log_normalizer(
     return factor_energy + expected_evidence + factor_entropy + variable_correction
 
 
-def _local_modes(graph, values):
+def _local_modes(graph: DiscreteFactorGraph, values: Array) -> Array:
     modes: list[Array] = []
-    offsets = np.asarray(graph.variable_state_offsets)
+    offsets = graph._host_topology.state_offsets
     for variable in range(graph.num_variables):
         modes.append(jnp.argmax(values[offsets[variable] : offsets[variable + 1]]))
     return (
@@ -1350,13 +1403,21 @@ def _local_modes(graph, values):
     )
 
 
-def _decode_forest_map(prepared, state, max_marginals):
+def _decode_forest_map(
+    prepared: PreparedBeliefPropagation,
+    state: BeliefPropagationState,
+    max_marginals: Array,
+) -> tuple[Array, Array]:
     graph = prepared.graph
     assignment = _local_modes(graph, max_marginals)
     joints, _ = _factor_joint_scores(prepared, state)
-    for group_index, local_factor, parent_variable, children in prepared.decode_steps:
-        scope = np.asarray(graph.factor_scopes[group_index][local_factor], dtype=np.int32)
-        parent_position = int(np.nonzero(scope == parent_variable)[0][0])
+    for (
+        group_index,
+        local_factor,
+        parent_variable,
+        parent_position,
+        children,
+    ) in prepared.decode_steps:
         group = graph.factor_groups[group_index]
         joint = joints[group_index][local_factor]
         parent_state = assignment[parent_variable]
@@ -1375,8 +1436,7 @@ def _decode_forest_map(prepared, state, max_marginals):
             configuration = jnp.stack(jnp.unravel_index(flat_index, signature)).astype(
                 jnp.int32
             )
-        for child in children:
-            child_position = int(np.nonzero(scope == child)[0][0])
+        for child, child_position in children:
             assignment = assignment.at[child].set(configuration[child_position])
     evidence_indices = graph.variable_state_offsets[:-1] + assignment
     score = factor_graph_log_score(graph, assignment) + jnp.sum(

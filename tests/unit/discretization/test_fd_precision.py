@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,14 +12,14 @@ import pytest
 import phydrax as phx
 
 
-def _grid(size=16):
+def _grid(size: Any = 16) -> Any:
     return phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(size, endpoint=False, periodic=True),),
         axis_names=("x",),
     ).prepare(jnp.asarray([[0.0], [1.0]]))
 
 
-def _precision():
+def _precision() -> Any:
     return phx.discretization.FDExecutionPrecisionPolicy(
         coefficient_dtype="float32",
         field_dtype="float32",
@@ -25,7 +28,7 @@ def _precision():
     )
 
 
-def test_fd_precision_controls_prepared_and_lowered_execution():
+def test_fd_precision_controls_prepared_and_lowered_execution() -> None:
     precision = _precision()
     fd = phx.discretization.periodic_finite_difference(
         _grid(),
@@ -50,7 +53,7 @@ def test_fd_precision_controls_prepared_and_lowered_execution():
     assert operator.consistency_report.maximum_condition_estimate > 0.0
 
 
-def test_fd_preflight_uses_the_bound_execution_policy():
+def test_fd_preflight_uses_the_bound_execution_policy() -> None:
     precision = _precision()
     grid = _grid(32)
     fd = phx.discretization.periodic_finite_difference(grid, precision=precision)
@@ -79,7 +82,7 @@ def test_fd_preflight_uses_the_bound_execution_policy():
         )
 
 
-def test_fd_checkpoint_preserves_execution_dtype_and_policy(tmp_path):
+def test_fd_checkpoint_preserves_execution_dtype_and_policy(tmp_path: Any) -> None:
     precision = _precision()
     plan = phx.discretization.FDCheckpointPlan(
         ("grid", "operator"),
@@ -107,7 +110,7 @@ def test_fd_checkpoint_preserves_execution_dtype_and_policy(tmp_path):
         )
 
 
-def test_distributed_fd_payload_requires_field_precision():
+def test_distributed_fd_payload_requires_field_precision() -> None:
     precision = _precision()
     fd = phx.discretization.periodic_finite_difference(_grid(), precision=precision)
     partition = phx.discretization.DistributedStencilPartition(
@@ -124,7 +127,7 @@ def test_distributed_fd_payload_requires_field_precision():
         partition.shard(jnp.arange(16, dtype=jnp.float64))
 
 
-def test_conservative_multigrid_uses_field_and_certification_precision():
+def test_conservative_multigrid_uses_field_and_certification_precision() -> None:
     precision = _precision()
     diffusion_precision = phx.discretization.FiniteVolumePrecisionPolicy(
         "float32",
@@ -159,10 +162,11 @@ def test_conservative_multigrid_uses_field_and_certification_precision():
     )
     assert result.value.dtype == jnp.float32
     assert result.residual_norms.dtype == jnp.float64
+    # ty: ignore[unresolved-attribute]
     assert result.precision_evidence.evidence_id == precision.evidence().evidence_id
 
 
-def test_fd_adjoint_identity_reduces_in_certification_precision():
+def test_fd_adjoint_identity_reduces_in_certification_precision() -> None:
     precision = _precision()
     action = phx.discretization.FDActionAdjointPlan(
         lambda value: 3.0 * value,

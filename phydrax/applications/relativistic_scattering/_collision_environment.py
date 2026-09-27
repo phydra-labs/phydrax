@@ -12,12 +12,13 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...particle_physics import ParticleEventBatch
+from ...typing import PRNGKey
 
 
 class CollisionBundleStatus(IntEnum):
@@ -52,7 +53,7 @@ class CollisionEnvironmentPlan(StrictModule, NonTrainableState):
         time_unit: str,
         pileup_profile_id: str,
         beam_background_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         mean = float(mean_pileup)
         maximum = int(maximum_pileup)
         luminosity = float(instantaneous_luminosity)
@@ -119,7 +120,7 @@ def assign_collision_pileup(
     plan: CollisionEnvironmentPlan,
     primary: ParticleEventBatch,
     pileup_pool: ParticleEventBatch,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> CollisionEventBundle:
     """Assign pileup with event-ID-folded keys, independent of batch ordering."""
@@ -140,7 +141,7 @@ def assign_collision_pileup(
         pileup_pool.event_active & pileup_pool.valid, dtype=jnp.int32
     )
 
-    def draw(event_id):
+    def draw(event_id: Array) -> tuple[Array, Array]:
         identifier = jnp.asarray(event_id, dtype=jnp.uint64)
         low = identifier.astype(jnp.uint32)
         high = (identifier >> jnp.asarray(32, dtype=jnp.uint64)).astype(jnp.uint32)

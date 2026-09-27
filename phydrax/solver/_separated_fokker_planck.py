@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import jax.numpy as jnp
 
 from .._strict import StrictModule
 from ..domain._normalized_density import normalize_density_field
+from ..domain._referenced_density import DensityReference
 from ..domain._separated_density import SeparatedLogDensityField
 from ..integration._api import IntegrationRealization, reduce
 from ._fokker_planck_approximation import DensityFokkerPlanckResult
@@ -25,7 +26,7 @@ class SeparatedFokkerPlanckPlan(StrictModule):
     validation_realization: IntegrationRealization
     solver: Any
     validation_operator: Any
-    reference: str = eqx.field(static=True)
+    reference: DensityReference = eqx.field(static=True)
     state_var: str = eqx.field(static=True)
 
     def __init__(
@@ -38,9 +39,9 @@ class SeparatedFokkerPlanckPlan(StrictModule):
         *,
         solver: Any = None,
         validation_operator: Any = None,
-        reference: str = "coordinate",
+        reference: DensityReference = "coordinate",
         state_var: str = "x",
-    ):
+    ) -> None:
         if not isinstance(field, SeparatedLogDensityField):
             raise TypeError("field must be a SeparatedLogDensityField.")
         if not isinstance(realization, IntegrationRealization) or not isinstance(
@@ -58,7 +59,8 @@ class SeparatedFokkerPlanckPlan(StrictModule):
         self.validation_realization = validation_realization
         self.solver = solver
         self.validation_operator = validation_operator
-        self.reference = str(reference)
+        # str() of a DensityReference literal returns that same literal value.
+        self.reference = cast(DensityReference, str(reference))
         self.state_var = str(state_var)
 
 

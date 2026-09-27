@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import itertools
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -29,7 +30,7 @@ def _assumptions() -> causal.AssumptionLedger:
     )
 
 
-def _binary_problem(schema: causal.CausalSchema, probabilities: np.ndarray):
+def _binary_problem(schema: causal.CausalSchema, probabilities: np.ndarray) -> Any:
     assignments = np.indices(probabilities.shape).reshape(len(probabilities.shape), -1).T
     repeats = np.maximum(np.rint(probabilities.reshape(-1) * 10_000), 1).astype("int64")
     rows = np.repeat(assignments, repeats, axis=0)
@@ -61,7 +62,7 @@ def _binary_problem(schema: causal.CausalSchema, probabilities: np.ndarray):
     return causal.CausalProblem(dataset=dataset, design=design, query=query)
 
 
-def test_bow_arc_returns_hedge_nonidentification():
+def test_bow_arc_returns_hedge_nonidentification() -> None:
     schema = causal.CausalSchema(
         (
             causal.CausalVariable(name="x", scale=causal.VariableScale.BINARY),
@@ -84,7 +85,7 @@ def test_bow_arc_returns_hedge_nonidentification():
         causal.issue_identification_certificate(result, problem)
 
 
-def test_frontdoor_general_id_matches_brute_force_intervention():
+def test_frontdoor_general_id_matches_brute_force_intervention() -> None:
     schema = causal.CausalSchema(
         tuple(
             causal.CausalVariable(name=name, scale=causal.VariableScale.BINARY)
@@ -132,7 +133,7 @@ def test_frontdoor_general_id_matches_brute_force_intervention():
     )
 
 
-def test_completed_graph_rejects_noncompleted_orientation():
+def test_completed_graph_rejects_noncompleted_orientation() -> None:
     schema = causal.CausalSchema(
         tuple(causal.CausalVariable(name=name) for name in ("a", "b", "c"))
     )
@@ -152,7 +153,7 @@ def test_completed_graph_rejects_noncompleted_orientation():
         )
 
 
-def test_g_square_and_conservative_fci_are_evidence_bounded():
+def test_g_square_and_conservative_fci_are_evidence_bounded() -> None:
     repeats = 50
     x = np.tile(np.asarray([0, 0, 1, 1]), repeats)
     y = np.tile(np.asarray([0, 1, 0, 1]), repeats)
@@ -187,7 +188,7 @@ def test_g_square_and_conservative_fci_are_evidence_bounded():
     assert discovery.graph.endpoint_edges == ()
 
 
-def test_exact_bounded_ges_returns_score_equivalence_class():
+def test_exact_bounded_ges_returns_score_equivalence_class() -> None:
     rng = np.random.default_rng(21)
     x = rng.normal(size=300)
     y = 1.5 * x + rng.normal(scale=0.4, size=300)
@@ -216,7 +217,7 @@ def test_exact_bounded_ges_returns_score_equivalence_class():
     assert result.graph.undirected_edges == (("x", "y"),)
 
 
-def test_idc_evaluates_conditional_interventional_distribution():
+def test_idc_evaluates_conditional_interventional_distribution() -> None:
     schema = causal.CausalSchema(
         tuple(
             causal.CausalVariable(name=name, scale=causal.VariableScale.BINARY)

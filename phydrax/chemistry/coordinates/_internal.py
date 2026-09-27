@@ -6,13 +6,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from math import isfinite
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -38,15 +40,15 @@ class InternalCoordinateState(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        values,
-        jacobian,
-        singular_values,
-        rank,
-        condition_estimate,
-        successful,
-        plan_id,
+        values: ArrayLike,
+        jacobian: ArrayLike,
+        singular_values: ArrayLike,
+        rank: ArrayLike,
+        condition_estimate: ArrayLike,
+        successful: ArrayLike,
+        plan_id: str,
         /,
-    ):
+    ) -> None:
         values_ = jnp.asarray(values)
         jacobian_ = jnp.asarray(jacobian, dtype=values_.dtype)
         singular = jnp.asarray(singular_values, dtype=values_.dtype)
@@ -91,15 +93,15 @@ class InternalCoordinateRetractionResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        positions,
-        achieved_values,
-        target_values,
-        residual,
-        iterations,
-        successful,
-        plan_id,
+        positions: ArrayLike,
+        achieved_values: ArrayLike,
+        target_values: ArrayLike,
+        residual: ArrayLike,
+        iterations: ArrayLike,
+        successful: ArrayLike,
+        plan_id: str,
         /,
-    ):
+    ) -> None:
         positions_ = jnp.asarray(positions)
         achieved = jnp.asarray(achieved_values, dtype=positions_.dtype)
         target = jnp.asarray(target_values, dtype=positions_.dtype)
@@ -148,12 +150,12 @@ class MolecularCoordinateSystemPlan(StrictModule, NonTrainableState):
         atom_count: int,
         /,
         *,
-        bonds=(),
-        angles=(),
-        dihedrals=(),
+        bonds: Iterable[Iterable[int]] = (),
+        angles: Iterable[Iterable[int]] = (),
+        dihedrals: Iterable[Iterable[int]] = (),
         regularization: float = 1.0e-12,
         rank_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         count = int(atom_count)
         bonds_ = tuple(tuple(item) for item in bonds)
         angles_ = tuple(tuple(item) for item in angles)
@@ -261,7 +263,7 @@ class MolecularCoordinateSystemPlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
-    def _residual(self, target, current):
+    def _residual(self, target: Array, current: Array) -> Array:
         residual = target - current
         start = len(self.bonds) + len(self.angles)
         if self.dihedrals:

@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from numbers import Integral
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -64,7 +65,7 @@ class SetPackingSpace(AbstractBoundableCombinatorialSpace):
         valid: Any | None = None,
         minimum_selected: int = 0,
         maximum_selected: int | None = None,
-    ):
+    ) -> None:
         incidence_ = jnp.asarray(incidence, dtype=jnp.bool_)
         if incidence_.ndim != 2:
             raise ValueError("incidence must be a rank-2 candidate-by-resource array.")
@@ -133,9 +134,10 @@ class SetPackingSpace(AbstractBoundableCombinatorialSpace):
     def structure_id(self) -> str:
         return self._structure_id
 
-    def decision_spec(self, /) -> SetPackingDecision:
-        return SetPackingDecision(
-            jax.ShapeDtypeStruct((self.candidate_count,), jnp.bool_)
+    def decision_spec(self, /) -> PyTree[jax.ShapeDtypeStruct]:
+        candidates = self.candidate_count
+        return jax.eval_shape(
+            lambda: SetPackingDecision(jnp.zeros((candidates,), dtype=jnp.bool_))
         )
 
     def feature_spec(self, /) -> jax.ShapeDtypeStruct:
@@ -184,6 +186,14 @@ class SetPackingSpace(AbstractBoundableCombinatorialSpace):
             capacity_residual = jnp.zeros(selected.shape[:-1], dtype=jnp.int32)
         residual = invalid_residual + lower_residual + upper_residual + capacity_residual
         return CombinatorialFeasibility(residual == 0, residual.astype("float64"))
+
+
+_PackingStack: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+_PackingIncumbent: TypeAlias = tuple[Array, Array, Array, Array]
+_PackingState: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+_GreedyState: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 def _prefer_selection(candidate: Array, incumbent: Array, /) -> Array:
@@ -258,7 +268,7 @@ def _branch_and_bound_one(
     stack_bound = (
         jnp.full((stack_capacity,), jnp.inf, dtype=costs.dtype).at[0].set(root_bound)
     )
-    initial = (
+    initial: _PackingState = (
         stack_selected,
         stack_used,
         stack_depth,
@@ -273,10 +283,10 @@ def _branch_and_bound_one(
         jnp.asarray(0, dtype=jnp.int32),
     )
 
-    def condition(state):
+    def condition(state: _PackingState) -> Array:
         return (state[6] > 0) & (state[11] < maximum_nodes)
 
-    def body(state):
+    def body(state: _PackingState) -> _PackingState:
         (
             selected_stack,
             used_stack,
@@ -302,7 +312,7 @@ def _branch_and_bound_one(
         promising = jnp.isfinite(bound) & (~has_best | (bound <= best_value))
         leaf = depth == candidates
 
-        def evaluate_leaf(values):
+        def evaluate_leaf(values: _PackingIncumbent) -> _PackingIncumbent:
             incumbent_selected, incumbent_value, incumbent_valid, has_tie = values
             feasible = (count >= minimum_selected) & (count <= maximum_selected)
             equal_alternative = (
@@ -333,7 +343,7 @@ def _branch_and_bound_one(
             (best_selected, best_value, has_best, tied),
         )
 
-        def expand(values):
+        def expand(values: _PackingStack) -> _PackingStack:
             (
                 selected_nodes,
                 used_nodes,
@@ -466,7 +476,7 @@ def _greedy_one(
         jnp.asarray(0, dtype=jnp.int32),
     )
 
-    def choose(_, state):
+    def choose(_: Array, state: _GreedyState) -> _GreedyState:
         selected, used, count, steps = state
         if resources:
             capacity_ok = jnp.all(
@@ -503,7 +513,9 @@ class BranchAndBoundSetPacking(AbstractBoundableLinearCombinatorialMethod):
     maximum_nodes: int = eqx.field(static=True)
     maximum_candidates: int = eqx.field(static=True)
 
-    def __init__(self, *, maximum_nodes: int = 1_000_000, maximum_candidates: int = 1024):
+    def __init__(
+        self, *, maximum_nodes: int = 1_000_000, maximum_candidates: int = 1024
+    ) -> None:
         if any(
             isinstance(value, bool) or not isinstance(value, Integral)
             for value in (maximum_nodes, maximum_candidates)
@@ -574,7 +586,7 @@ class BranchAndBoundSetPacking(AbstractBoundableLinearCombinatorialMethod):
         if not isinstance(space, SetPackingSpace):
             raise TypeError("BranchAndBoundSetPacking requires SetPackingSpace.")
         lower, upper = space.feature_bounds()
-        return self._solve_bounds(problem, plan, lower, upper)
+        return self._solve_bounds(problem, space, plan, lower, upper)
 
     def solve_restricted(
         self,
@@ -590,13 +602,21 @@ class BranchAndBoundSetPacking(AbstractBoundableLinearCombinatorialMethod):
             raise ValueError("Restriction does not belong to set-packing space.")
         return self._solve_bounds(
             problem,
+            space,
             plan,
             jnp.asarray(restriction.lower),
             jnp.asarray(restriction.upper),
         )
 
-    def _solve_bounds(self, problem, plan, lower, upper, /):
-        space = problem.space
+    def _solve_bounds(
+        self,
+        problem: LinearCombinatorialProblem,
+        space: SetPackingSpace,
+        plan: CombinatorialPlan,
+        lower: Array,
+        upper: Array,
+        /,
+    ) -> CombinatorialResult:
         raw_costs = jax.tree_util.tree_leaves(problem.costs)[0]
         batch_shape = problem.batch_shape
         flat_batch = problem.batch_size
@@ -724,7 +744,7 @@ class GreedySetPacking(AbstractLinearCombinatorialMethod):
 
     maximum_candidates: int = eqx.field(static=True)
 
-    def __init__(self, *, maximum_candidates: int = 1_000_000):
+    def __init__(self, *, maximum_candidates: int = 1_000_000) -> None:
         if isinstance(maximum_candidates, bool) or not isinstance(
             maximum_candidates, Integral
         ):

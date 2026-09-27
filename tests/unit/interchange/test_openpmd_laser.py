@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import h5py
 import jax.numpy as jnp
@@ -37,11 +38,11 @@ from phydrax.optics.wave._fields import PlaneFieldSpace
 from phydrax.optics.wave._pulse_time import PulseTimeSpace
 
 
-def _limits(max_bytes=2_000_000, max_nodes=100_000):
+def _limits(max_bytes: Any = 2_000_000, max_nodes: Any = 100_000) -> Any:
     return ResourceLimits(max_bytes, 12, max_nodes, 128, 0)
 
 
-def _field(*, polarization="tangential"):
+def _field(*, polarization: Any = "tangential") -> Any:
     plane_grid = TensorGridPlan(
         (UniformAxisSpec(7), UniformAxisSpec(9)), axis_names=("x", "y")
     ).prepare(jnp.asarray([[-2.0, -3.0], [2.0, 3.0]]))
@@ -74,7 +75,7 @@ def _field(*, polarization="tangential"):
     )
 
 
-def _resource(path: Path, limits=None):
+def _resource(path: Path, limits: Any = None) -> Any:
     return read_bounded_resource(
         path.name,
         trusted_root=path.parent,
@@ -82,7 +83,9 @@ def _resource(path: Path, limits=None):
     )
 
 
-def test_hdf5_roundtrip_preserves_temporal_complex_electric_envelope(tmp_path: Path):
+def test_hdf5_roundtrip_preserves_temporal_complex_electric_envelope(
+    tmp_path: Path,
+) -> None:
     profile = OpenPMDLaserEnvelopeProfile(
         record_name="driver",
         iteration=7,
@@ -120,7 +123,7 @@ def test_hdf5_roundtrip_preserves_temporal_complex_electric_envelope(tmp_path: P
     assert imported.resource.data
 
 
-def test_scalar_envelope_roundtrip_expands_declared_polarization(tmp_path: Path):
+def test_scalar_envelope_roundtrip_expands_declared_polarization(tmp_path: Path) -> None:
     profile = OpenPMDLaserEnvelopeProfile(polarization=(0.6, 0.8j))
     source = _field(polarization="scalar")
     path = tmp_path / "scalar.h5"
@@ -138,7 +141,7 @@ def test_scalar_envelope_roundtrip_expands_declared_polarization(tmp_path: Path)
 
 def test_export_rejects_tangential_field_without_constant_profile_polarization(
     tmp_path: Path,
-):
+) -> None:
     source = _field()
     wrong = OpenPMDLaserEnvelopeProfile(polarization=(1.0, 0.0))
 
@@ -163,7 +166,7 @@ def test_export_rejects_tangential_field_without_constant_profile_polarization(
         )
 
 
-def test_export_rejects_nonuniform_plane_axes(tmp_path: Path):
+def test_export_rejects_nonuniform_plane_axes(tmp_path: Path) -> None:
     source = _field(polarization="scalar")
     nonuniform_axis = AxisDiscretization(
         nodes=jnp.asarray([-2.0, -0.7, 0.0, 2.0]),
@@ -199,7 +202,7 @@ def test_export_rejects_nonuniform_plane_axes(tmp_path: Path):
 
 def test_import_rejects_vector_potential_theta_and_malformed_metadata_with_reports(
     tmp_path: Path,
-):
+) -> None:
     profile = OpenPMDLaserEnvelopeProfile()
     policy = OpenPMDLaserEnvelopeImportPolicy(profile)
     cases = (
@@ -254,7 +257,7 @@ def test_import_rejects_vector_potential_theta_and_malformed_metadata_with_repor
     assert not caught.value.report.valid
 
 
-def test_import_preflights_decoded_resources_before_payload_read(tmp_path: Path):
+def test_import_preflights_decoded_resources_before_payload_read(tmp_path: Path) -> None:
     profile = OpenPMDLaserEnvelopeProfile()
     path = tmp_path / "bounded.h5"
     write_openpmd_laser_envelope_hdf5(
@@ -289,7 +292,7 @@ def test_import_preflights_decoded_resources_before_payload_read(tmp_path: Path)
     assert nodes.value.status == AdapterStatus.INCONSISTENT_SOURCE
 
 
-def test_export_fails_closed_before_publishing_oversize_hdf5(tmp_path: Path):
+def test_export_fails_closed_before_publishing_oversize_hdf5(tmp_path: Path) -> None:
     destination = tmp_path / "too-small.h5"
     with pytest.raises(ResourceReadError):
         write_openpmd_laser_envelope_hdf5(

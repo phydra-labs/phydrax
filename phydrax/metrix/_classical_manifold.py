@@ -4,25 +4,18 @@
 
 from __future__ import annotations
 
-from math import isfinite
-
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from .._validation import positive_finite_float
 from ._manifold import (
     _array_with_trailing_shape,
     _finite_residual,
     _same_shape,
     AbstractGeodesicManifold,
 )
-
-
-def _positive_scalar(value: float, name: str, /) -> float:
-    result = float(value)
-    if not isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
 
 
 def _dimension(value: int, name: str, /, *, minimum: int = 1) -> int:
@@ -52,10 +45,10 @@ class PoincareBallManifold(AbstractGeodesicManifold):
         *,
         curvature: float = 1.0,
         tolerance: float = 1e-6,
-    ):
+    ) -> None:
         self.dimension = _dimension(dimension, "Poincare dimension")
-        self.curvature = _positive_scalar(curvature, "curvature")
-        self.tolerance = _positive_scalar(tolerance, "tolerance")
+        self.curvature = positive_finite_float(curvature, "curvature")
+        self.tolerance = positive_finite_float(tolerance, "tolerance")
         self.manifold_id = f"manifold:poincare-ball:{self.dimension}:{self.curvature}"
         self.point_shape = (self.dimension,)
         self.retraction_method = "exponential"
@@ -203,10 +196,10 @@ class HyperboloidManifold(AbstractGeodesicManifold):
         *,
         curvature: float = 1.0,
         tolerance: float = 1e-6,
-    ):
+    ) -> None:
         self.dimension = _dimension(dimension, "Hyperboloid dimension")
-        self.curvature = _positive_scalar(curvature, "curvature")
-        self.tolerance = _positive_scalar(tolerance, "tolerance")
+        self.curvature = positive_finite_float(curvature, "curvature")
+        self.tolerance = positive_finite_float(tolerance, "tolerance")
         self.manifold_id = f"manifold:hyperboloid:{self.dimension}:{self.curvature}"
         self.point_shape = (self.dimension + 1,)
         self.retraction_method = "exponential"
@@ -343,9 +336,9 @@ class ProbabilitySimplexManifold(AbstractGeodesicManifold):
     transport_is_isometric: bool = eqx.field(static=True)
     transport_is_parallel: bool = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /, *, tolerance: float = 1e-7):
+    def __init__(self, dimension: int, /, *, tolerance: float = 1e-7) -> None:
         self.dimension = _dimension(dimension, "Simplex dimension", minimum=2)
-        self.tolerance = _positive_scalar(tolerance, "tolerance")
+        self.tolerance = positive_finite_float(tolerance, "tolerance")
         self.manifold_id = f"manifold:probability-simplex:{self.dimension}"
         self.point_shape = (self.dimension,)
         self.retraction_method = "multiplicative"

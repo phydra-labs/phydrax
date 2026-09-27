@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import isfinite
 from typing import Any
 
@@ -11,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -36,7 +38,7 @@ def _skew_hermitian(value: Array, /) -> Array:
     return 0.5 * (value - _adjoint(value))
 
 
-def _matrix_map(function, value: Array, /) -> Array:
+def _matrix_map(function: Callable[[Array], Array], value: Array, /) -> Array:
     if value.ndim == 2:
         return function(value)
     leading = value.shape[:-2]
@@ -62,7 +64,7 @@ def _unitary_logarithm(value: Array, /, *, traceless: bool) -> Array:
     return _matrix_map(logarithm, value)
 
 
-def _hermitian_spectral_map(value: Array, function, /) -> Array:
+def _hermitian_spectral_map(value: Array, function: Callable[[Array], Array], /) -> Array:
     def apply(matrix: Array) -> Array:
         eigenvalues, eigenvectors = jnp.linalg.eigh(_hermitian(matrix))
         return _hermitian(
@@ -94,7 +96,7 @@ class UnitaryGroup(AbstractLieGroup):
 
     algebra_shape: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /, *, tolerance: float = 1e-7):
+    def __init__(self, dimension: int, /, *, tolerance: float = 1e-7) -> None:
         dimension_ = int(dimension)
         if dimension_ < 1:
             raise ValueError("Unitary dimension must be positive.")
@@ -186,7 +188,7 @@ class SpecialUnitaryGroup(AbstractLieGroup):
     point_shape: tuple[int, int] = eqx.field(static=True)
     algebra_shape: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /, *, tolerance: float = 1e-7):
+    def __init__(self, dimension: int, /, *, tolerance: float = 1e-7) -> None:
         if int(dimension) < 2:
             raise ValueError("Special-unitary dimension must be at least two.")
         self.unitary = UnitaryGroup(dimension, tolerance=tolerance)
@@ -278,7 +280,7 @@ class UnitaryManifold(AbstractGeodesicManifold):
     transport_is_isometric: bool = eqx.field(static=True)
     transport_is_parallel: bool = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /, *, tolerance: float = 1e-7):
+    def __init__(self, dimension: int, /, *, tolerance: float = 1e-7) -> None:
         self.group = UnitaryGroup(dimension, tolerance=tolerance)
         self.dimension = self.group.dimension
         self.manifold_id = f"manifold:unitary:{dimension}"
@@ -383,7 +385,7 @@ class SpecialUnitaryManifold(AbstractGeodesicManifold):
     transport_is_isometric: bool = eqx.field(static=True)
     transport_is_parallel: bool = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /, *, tolerance: float = 1e-7):
+    def __init__(self, dimension: int, /, *, tolerance: float = 1e-7) -> None:
         self.group = SpecialUnitaryGroup(dimension, tolerance=tolerance)
         self.dimension = self.group.dimension
         self.manifold_id = f"manifold:special-unitary:{dimension}"
@@ -486,7 +488,7 @@ class AffineInvariantHPDManifold(AbstractGeodesicManifold):
     transport_is_isometric: bool = eqx.field(static=True)
     transport_is_parallel: bool = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /, *, tolerance: float = 1e-8):
+    def __init__(self, dimension: int, /, *, tolerance: float = 1e-8) -> None:
         dimension_ = int(dimension)
         if dimension_ < 1:
             raise ValueError("HPD dimension must be positive.")
@@ -636,7 +638,7 @@ class ComplexStiefelManifold(AbstractRiemannianManifold):
     transport_is_isometric: bool = eqx.field(static=True)
     transport_is_parallel: bool = eqx.field(static=True)
 
-    def __init__(self, rows: int, columns: int, /, *, tolerance: float = 1e-8):
+    def __init__(self, rows: int, columns: int, /, *, tolerance: float = 1e-8) -> None:
         rows_ = int(rows)
         columns_ = int(columns)
         if not 1 <= columns_ <= rows_:

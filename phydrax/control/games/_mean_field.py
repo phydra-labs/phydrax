@@ -14,7 +14,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 from ..._strict import StrictModule
 from ...domain import DomainFunction
@@ -29,6 +29,7 @@ from ...stochastic import (
     MeanFieldBSDEControlAdapter,
     MeanFieldBSDEProblem,
 )
+from ...typing import PRNGKey
 
 
 FROZEN_LAW_BEST_RESPONSE = "FROZEN_LAW_BEST_RESPONSE"
@@ -76,7 +77,7 @@ class FrozenLawBestResponseProblem(StrictModule):
         *,
         supplied_law_id: str,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(base_problem, MeanFieldBSDEProblem):
             raise TypeError("base_problem must be a MeanFieldBSDEProblem.")
         if not isinstance(adapter, MeanFieldBSDEControlAdapter):
@@ -238,7 +239,7 @@ def solve_frozen_law_best_response(
     control_predictor: Any = None,
     control_mode: BSDEControlMode = "explicit",
     quadrature: BSDEQuadrature = "left",
-    key: Key[Array, ""] = jr.key(0),
+    key: PRNGKey = jr.key(0),
     minimum_effective_sample_size: float = MINIMUM_FROZEN_LAW_EFFECTIVE_SAMPLE_SIZE,
 ) -> FrozenLawBestResponseResult:
     """Evaluate a candidate response while holding the supplied law fixed.
@@ -293,7 +294,7 @@ def solve_frozen_law_best_response(
     snapshots = jax.vmap(problem.mean_field.snapshot)(paths.times)
     snapshot_validity = snapshots.valid
     effective_sample_sizes = snapshots.effective_sample_size
-    minimum_effective_sample_size = jnp.min(effective_sample_sizes)
+    observed_minimum_effective_sample_size = jnp.min(effective_sample_sizes)
     law_evidence_valid = (
         jnp.all(snapshot_validity)
         & jnp.all(problem.mean_field.valid)
@@ -301,7 +302,7 @@ def solve_frozen_law_best_response(
         & jnp.all(jnp.isfinite(effective_sample_sizes))
     )
     effective_sample_size_sufficient = (
-        minimum_effective_sample_size >= required_effective_sample_size
+        observed_minimum_effective_sample_size >= required_effective_sample_size
     )
     bsde_valid = jnp.all(evaluation.valid_paths)
     hamiltonian_finite = jnp.all(jnp.isfinite(selected_controls)) & jnp.all(
@@ -339,7 +340,7 @@ def solve_frozen_law_best_response(
         law_particle_validity=problem.mean_field.valid,
         law_weights=problem.mean_field.weights,
         law_effective_sample_sizes=effective_sample_sizes,
-        minimum_effective_sample_size=minimum_effective_sample_size,
+        minimum_effective_sample_size=observed_minimum_effective_sample_size,
         law_evidence_valid=law_evidence_valid,
         effective_sample_size_sufficient=effective_sample_size_sufficient,
         minimum_required_effective_sample_size=required_effective_sample_size,

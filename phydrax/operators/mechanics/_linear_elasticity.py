@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 import phydrax.linalg as la
@@ -15,7 +16,7 @@ import phydrax.linalg as la
 from ..._strict import StrictModule
 
 
-def _mandel_basis(dimension: int, dtype) -> Array:
+def _mandel_basis(dimension: int, dtype: DTypeLike) -> Array:
     values = []
     for row in range(dimension):
         basis = np.zeros((dimension, dimension), dtype=np.float64)
@@ -42,7 +43,7 @@ class LinearElasticityTensor(StrictModule):
     successful: Array
     dimension: int = eqx.field(static=True)
 
-    def __init__(self, stiffness: ArrayLike, /):
+    def __init__(self, stiffness: ArrayLike, /) -> None:
         value = jnp.asarray(stiffness)
         if not jnp.issubdtype(value.dtype, jnp.inexact):
             value = value.astype(jnp.float64)

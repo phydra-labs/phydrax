@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._model import AbstractArrayModel
+from ...discretization import PeriodicCell
 from ._collective_variable import (
     AbstractCollectiveVariableProgram,
     CollectiveVariableMetric,
@@ -36,7 +38,7 @@ class ModelCollectiveVariableProgram(AbstractCollectiveVariableProgram):
         model_id: str,
         names: tuple[str, ...],
         metrics: tuple[CollectiveVariableMetric, ...] | None = None,
-    ):
+    ) -> None:
         if not isinstance(source, AbstractCollectiveVariableProgram):
             raise TypeError("source must implement AbstractCollectiveVariableProgram.")
         if not isinstance(model, AbstractArrayModel):
@@ -81,8 +83,17 @@ class ModelCollectiveVariableProgram(AbstractCollectiveVariableProgram):
             }
         )
 
-    def evaluate(self, positions: ArrayLike, /, **kwargs):
-        source, source_valid = self.source.evaluate(positions, **kwargs)
+    def evaluate(
+        self,
+        positions: ArrayLike,
+        /,
+        *,
+        cell: PeriodicCell | None = None,
+        cell_vectors: ArrayLike | None = None,
+    ) -> tuple[Array, Array]:
+        source, source_valid = self.source.evaluate(
+            positions, cell=cell, cell_vectors=cell_vectors
+        )
         value = jnp.asarray(self.model(source, key=None)).reshape((self.output_size,))
         valid = source_valid & jnp.all(jnp.isfinite(value))
         return jnp.where(valid, value, 0.0), valid

@@ -12,7 +12,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
-from jaxtyping import Array, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
@@ -55,6 +56,7 @@ from ...domain import (
 )
 from ...nn.parameters import ParameterSubspace
 from ...terms import ResidualPenalty
+from ...typing import PRNGKey
 from .._functional_kernel import (
     functional_kernel_objective,
     FUNCTIONAL_ROOT_AUTHORITY,
@@ -99,7 +101,7 @@ class FunctionalDecompositionEvidence(StrictModule):
         pair_losses: tuple[tuple[str, Array], ...],
         cover_verified: bool,
         certified: bool,
-    ):
+    ) -> None:
         self.training_loss = jnp.asarray(training_loss).reshape(())
         self.evaluation_loss = jnp.asarray(evaluation_loss).reshape(())
         self.maximum_pair_loss = jnp.asarray(maximum_pair_loss).reshape(())
@@ -172,7 +174,7 @@ class FunctionalDecompositionState(StrictModule):
         completed_sweeps: int = 0,
         trace_state: SchwarzTraceState | None = None,
         strategy: str,
-    ):
+    ) -> None:
         states, identities = _patch_kernel_states(kernel_states, kernel_checkpoint_ids)
         self.functions = frozendict(functions)
         self.kernel_states = states
@@ -195,12 +197,12 @@ class FunctionalDecompositionIterationMetrics(StrictModule):
 
     def __init__(
         self,
-        completed_sweeps,
-        local_steps,
-        maximum_interface_defect,
-        training_loss,
+        completed_sweeps: ArrayLike,
+        local_steps: ArrayLike | Sequence[int],
+        maximum_interface_defect: ArrayLike,
+        training_loss: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.completed_sweeps = jnp.asarray(completed_sweeps, dtype=jnp.int32)
         self.local_steps = jnp.asarray(local_steps, dtype=jnp.int32)
         self.maximum_interface_defect = jnp.asarray(maximum_interface_defect)
@@ -208,12 +210,12 @@ class FunctionalDecompositionIterationMetrics(StrictModule):
 
 
 def _decomposition_iteration_record(
-    phase,
+    phase: IterationPhase,
     metrics: FunctionalDecompositionIterationMetrics,
     /,
     *,
-    terminal=False,
-    status=0,
+    terminal: bool = False,
+    status: int = 0,
 ) -> IterationRecord:
     return IterationRecord(
         IterationCoordinates(
@@ -253,7 +255,7 @@ class FunctionalDecompositionResult(StrictModule):
         evidence: FunctionalDecompositionEvidence,
         status: str,
         iteration_session_state: IterationSessionState | None = None,
-    ):
+    ) -> None:
         self.solver = solver
         self.family = family
         self.global_field = global_field
@@ -292,7 +294,7 @@ def _term_values(
     functions: Mapping[str, DomainFunction],
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     evaluation: bool,
 ) -> tuple[Array, tuple[tuple[str, Array], ...], tuple[tuple[str, Array], ...]]:
     scoped_terms = (
@@ -330,7 +332,7 @@ def _evidence(
     functions: Mapping[str, DomainFunction],
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> FunctionalDecompositionEvidence:
     training, training_patches, training_pairs = _term_values(
         prepared,
@@ -552,7 +554,7 @@ class _LocalPatchLoss(StrictModule, NonTrainableState):
 
     solver: FunctionalSolver
 
-    def __init__(self, solver: FunctionalSolver, /):
+    def __init__(self, solver: FunctionalSolver, /) -> None:
         self.solver = eqx.tree_at(lambda value: value.functions, solver, frozendict())
 
     def __call__(
@@ -580,7 +582,7 @@ class _FiniteCandidateOptaxRule(AbstractKernelUpdateRule):
     optax_rule: OptaxUpdateRule
     rule_id: str = eqx.field(static=True)
 
-    def __init__(self, optimizer: Optimizer, /):
+    def __init__(self, optimizer: Optimizer, /) -> None:
         self.optax_rule = OptaxUpdateRule(optimizer, rule_id=_LOCAL_RULE_ID)
         self.rule_id = _LOCAL_RULE_ID
 
@@ -893,7 +895,7 @@ def solve_functional_decomposition(
     training: FunctionalTrainingPlan | None = None,
     state: FunctionalDecompositionState | None = None,
     max_sweeps: int | None = None,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     session: IterationSession | None = None,
 ) -> FunctionalDecompositionResult:
     """Execute one prepared native functional domain-decomposition problem."""

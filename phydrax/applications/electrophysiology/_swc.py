@@ -54,7 +54,7 @@ class SWCAdapterEvidence(StrictModule, NonTrainableState):
         source_id: str,
         morphology_id: str,
         /,
-    ):
+    ) -> None:
         self.node_count = node_count
         self.segment_count = segment_count
         self.branch_count = branch_count

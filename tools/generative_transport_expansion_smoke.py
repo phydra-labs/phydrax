@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -16,12 +17,12 @@ import lineax as lx
 import phydrax as phx
 
 
-def _case(name, condition, **values):
+def _case(name: Any, condition: Any, **values: Any) -> Any:
     passed = bool(condition)
     return {"case": name, "passed": passed, **values}
 
 
-def run_smoke():
+def run_smoke() -> Any:
     cases = []
 
     array_layout = phx.stochastic.ArrayEventLayout((2, 2))
@@ -126,6 +127,7 @@ def run_smoke():
     likelihood = domain.Function("x", "t", "observation")(
         lambda x, t, observation: -0.5 * jnp.sum((x - observation) ** 2)
     )
+    # ty: ignore[possibly-missing-submodule]
     base = phx._score_field.StateTimeScoreField(
         base_field,
         state_label="x",
@@ -154,7 +156,7 @@ def run_smoke():
     noisy = schedule.corrupt(clean, noise, jnp.asarray([2, 5]))
     recovered = schedule.clean_from_epsilon(noisy, noise, jnp.asarray([2, 5]))
 
-    def zero_predictor(state, timestep, *, key=None):
+    def zero_predictor(state: Any, timestep: Any, *, key: Any = None) -> Any:
         del timestep, key
         return jnp.zeros_like(state)
 
@@ -182,7 +184,7 @@ def run_smoke():
         categories, corrupted, jnp.asarray([1, 3])
     )
 
-    def categorical_predictor(state, timestep, *, key=None):
+    def categorical_predictor(state: Any, timestep: Any, *, key: Any = None) -> Any:
         del timestep, key
         return jnp.zeros(state.shape + (3,))
 
@@ -336,7 +338,7 @@ def run_smoke():
         )
     )
 
-    def encoder(value, *, key):
+    def encoder(value: Any, *, key: Any) -> Any:
         del key
         location = jnp.asarray(value)
         return phx.nn.latent.LatentPosterior(
@@ -349,7 +351,7 @@ def run_smoke():
             "identity-encoder",
         )
 
-    def decoder(latent, *, key):
+    def decoder(latent: Any, *, key: Any) -> Any:
         del key
         return phx.nn.latent.DecodedDistribution(
             None,

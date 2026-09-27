@@ -8,11 +8,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import isfinite
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...integration._multilevel import MultilevelSampleBatch
@@ -51,7 +53,7 @@ class MonteCarloPathBatch(StrictModule):
 
     def __init__(
         self, times: ArrayLike, values: ArrayLike, valid: ArrayLike, /, *, path_id: str
-    ):
+    ) -> None:
         times_ = jnp.asarray(times, dtype=jnp.float64)
         values_ = jnp.asarray(values, dtype=jnp.float64)
         valid_ = jnp.asarray(valid, dtype=jnp.bool_)
@@ -101,7 +103,9 @@ class MonteCarloValuationPlan(StrictModule):
     minimum_paths: int = eqx.field(static=True)
     confidence_level: float = eqx.field(static=True)
 
-    def __init__(self, *, minimum_paths: int = 32, confidence_level: float = 0.95):
+    def __init__(
+        self, *, minimum_paths: int = 32, confidence_level: float = 0.95
+    ) -> None:
         if (
             isinstance(minimum_paths, bool)
             or not isinstance(minimum_paths, int)
@@ -138,7 +142,7 @@ class PreparedQMCValuation(StrictModule):
 class MLMCValuationPlan(StrictModule):
     minimum_samples_per_level: int = eqx.field(static=True)
 
-    def __init__(self, *, minimum_samples_per_level: int = 2):
+    def __init__(self, *, minimum_samples_per_level: int = 2) -> None:
         if (
             isinstance(minimum_samples_per_level, bool)
             or not isinstance(minimum_samples_per_level, int)
@@ -267,7 +271,11 @@ def evaluate_path_payoff(
         log_returns = jnp.diff(jnp.log(paths.values[:, :, 0]), axis=1)
         horizon = paths.times[-1] - paths.times[0]
         realized_variance = jnp.sum(log_returns**2, axis=1) / horizon
-        values = payoff.variance_notional * (realized_variance - payoff.variance_strike)
+        # _validate_payoff admits VarianceSwapPayoff as the only remaining type.
+        variance_payoff = cast(VarianceSwapPayoff, payoff)
+        values = variance_payoff.variance_notional * (
+            realized_variance - variance_payoff.variance_strike
+        )
     return jnp.where(path_valid, values, 0.0), path_valid & jnp.isfinite(values)
 
 
@@ -302,8 +310,16 @@ def prepare_monte_carlo(
 
 
 def _mean_evidence(
-    values, valid, discount, minimum_paths, confidence_level, route, path_id, binding, law
-):
+    values: Array,
+    valid: Array,
+    discount: Array,
+    minimum_paths: int,
+    confidence_level: float,
+    route: str,
+    path_id: str,
+    binding: FinanceEvidenceBinding | None,
+    law: PricingLaw | None,
+) -> ValuationResult:
     count = jnp.sum(valid, dtype=jnp.int32)
     safe_count = jnp.maximum(count, 1)
     mean = discount * jnp.sum(jnp.where(valid, values, 0.0)) / safe_count

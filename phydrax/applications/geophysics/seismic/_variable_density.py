@@ -8,7 +8,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._numerics._checkpointed_scan import (
@@ -46,7 +47,7 @@ class VariableDensityAcousticPlan(StrictModule, NonTrainableState):
         absorber_cells: int = 0,
         absorber_strength: float = 3.0,
         cfl_limit: float = 0.95,
-    ):
+    ) -> None:
         self.baseline = ConstantDensityAcousticPlan(
             grid,
             time_step,

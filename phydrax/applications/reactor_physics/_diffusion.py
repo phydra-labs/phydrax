@@ -12,7 +12,8 @@ from dataclasses import dataclass, field
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -199,7 +200,7 @@ class MultigroupDiffusionPlan:
         diffusion = self.material.diffusion_coefficient_m
         matrix = np.zeros((size, size), dtype=np.float64)
 
-        def index(cell, group):
+        def index(cell: int, group: int) -> int:
             return cell * groups + group
 
         for cell in range(cells):

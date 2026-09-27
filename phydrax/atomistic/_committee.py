@@ -4,13 +4,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from enum import StrEnum
+from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -45,7 +48,7 @@ class CommitteeReductionPolicy(StrictModule, NonTrainableState):
         *,
         policy: OODPolicy = OODPolicy.DIAGNOSE,
         transition_width: float = 0.1,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -103,7 +106,12 @@ class CommitteeAtomisticPotential(StrictModule):
     policy: CommitteeReductionPolicy
     committee_id: str = eqx.field(static=True)
 
-    def __init__(self, members, policy: CommitteeReductionPolicy, /):
+    def __init__(
+        self,
+        members: Iterable[PreparedAtomisticPotentialProgram],
+        policy: CommitteeReductionPolicy,
+        /,
+    ) -> None:
         values = tuple(members)
         if len(values) < 2 or any(
             not isinstance(value, PreparedAtomisticPotentialProgram) for value in values
@@ -125,7 +133,11 @@ class CommitteeAtomisticPotential(StrictModule):
         )
 
     def evaluate(
-        self, positions: ArrayLike, neighborhood: ParticleNeighborhoodState, /, **kwargs
+        self,
+        positions: ArrayLike,
+        neighborhood: ParticleNeighborhoodState,
+        /,
+        **kwargs: Any,
     ) -> CommitteeEvaluation:
         evaluations = tuple(
             member.evaluate(positions, neighborhood, **kwargs) for member in self.members
@@ -184,7 +196,7 @@ class ConservativeUncertaintyBlend(StrictModule):
         committee: CommitteeAtomisticPotential,
         baseline: PreparedAtomisticPotentialProgram,
         /,
-    ):
+    ) -> None:
         if committee.members[0].system.prepared_id != baseline.system.prepared_id:
             raise ValueError("Committee and baseline belong to different systems.")
         self.committee = committee
@@ -198,11 +210,15 @@ class ConservativeUncertaintyBlend(StrictModule):
         )
 
     def evaluate(
-        self, positions: ArrayLike, neighborhood: ParticleNeighborhoodState, /, **kwargs
-    ):
+        self,
+        positions: ArrayLike,
+        neighborhood: ParticleNeighborhoodState,
+        /,
+        **kwargs: Any,
+    ) -> tuple[Array, Array, AtomisticUncertaintyEvidence, Array]:
         position = jnp.asarray(positions)
 
-        def energy(value):
+        def energy(value: Array) -> tuple[Array, Array]:
             member_energies = jnp.stack(
                 tuple(
                     member.energy(value, neighborhood, **kwargs)[0]
@@ -243,7 +259,7 @@ class SegmentFallbackPolicy(StrictModule, NonTrainableState):
     fallback_provider_id: str = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, fallback_provider_id: str, /):
+    def __init__(self, fallback_provider_id: str, /) -> None:
         identifier = str(fallback_provider_id).strip()
         if not identifier:
             raise ValueError("fallback_provider_id must be non-empty.")
@@ -297,7 +313,7 @@ class CommitteeAcquisitionScorePolicy(StrictModule, NonTrainableState):
         /,
         *,
         aggregation: AcquisitionAggregation = AcquisitionAggregation.MAXIMUM,
-    ):
+    ) -> None:
         scales = float(energy_scale), float(force_scale), float(atom_scale)
         if any(not np.isfinite(value) or value <= 0.0 for value in scales):
             raise ValueError(
@@ -346,7 +362,7 @@ class AcquisitionPlan(StrictModule, NonTrainableState):
         /,
         *,
         minimum_score: float = 0.0,
-    ):
+    ) -> None:
         if int(maximum_frames) <= 0 or float(minimum_score) < 0.0:
             raise ValueError("Acquisition capacity or minimum score is invalid.")
         if not isinstance(scoring, CommitteeAcquisitionScorePolicy):
@@ -363,7 +379,14 @@ class AcquisitionPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def select(self, frames, uncertainty, /, *, descriptors: ArrayLike | None = None):
+    def select(
+        self,
+        frames: Iterable[AtomisticFrame],
+        uncertainty: Iterable[AtomisticUncertaintyEvidence],
+        /,
+        *,
+        descriptors: ArrayLike | None = None,
+    ) -> tuple[AcquisitionRecord, ...]:
         frame_values = tuple(frames)
         evidence = tuple(uncertainty)
         if len(frame_values) != len(evidence):

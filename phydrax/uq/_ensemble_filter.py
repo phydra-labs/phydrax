@@ -11,19 +11,21 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.axes as cx
 import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..stochastic._state_space import (
+    AbstractObservationModel,
     GaussianObservationModel,
     LinearGaussianObservationModel,
     state_space_key,
     StateSpaceProblem,
     StateSpaceStepContext,
 )
+from ..typing import PRNGKey
 from ._predictive import PredictiveField, SampleAxis
 
 
@@ -91,7 +93,7 @@ def _case_value(value: Array, case_index: int, case_shape: tuple[int, ...], /) -
 
 
 def _observation_covariance(
-    model, time: Array, context: StateSpaceStepContext, /
+    model: AbstractObservationModel, time: Array, context: StateSpaceStepContext, /
 ) -> Array:
     if isinstance(model, GaussianObservationModel):
         return model.covariance_at(time, context)
@@ -168,7 +170,7 @@ class EnsembleFilterResult(StrictModule):
 
 
 def initialize_ensemble_filter(
-    key: Key[Array, ""],
+    key: PRNGKey,
     problem: StateSpaceProblem,
     /,
     *,
@@ -185,7 +187,7 @@ def initialize_ensemble_filter(
     member_indices = jnp.arange(count, dtype=jnp.int32)
     for case_index, case_id in enumerate(problem.observations.case_ids):
 
-        def draw_member(member):
+        def draw_member(member: Array) -> Array:
             member_key = state_space_key(
                 key,
                 "ensemble-filter-prior",
@@ -242,7 +244,7 @@ def _forecast(
         context = problem.step_context(case_index, state.step_index)
         case_active = active_flat[case_index] & state_valid[case_index]
 
-        def forecast_member(member, previous_member):
+        def forecast_member(member: Array, previous_member: Array) -> tuple[Array, Array]:
             member_key = state_space_key(
                 state.root_key,
                 "ensemble-filter-transition",
@@ -251,7 +253,7 @@ def _forecast(
                 member=member,
             )
 
-            def propagate(_):
+            def propagate(_: None) -> tuple[Array, Array]:
                 sample = problem.model.transition.sample(
                     member_key,
                     previous_member,
@@ -552,7 +554,7 @@ def _stack(values: list[Array], case_rank: int, /) -> Array:
 
 
 def ensemble_transform_kalman_filter(
-    key: Key[Array, ""],
+    key: PRNGKey,
     problem: StateSpaceProblem,
     /,
     *,

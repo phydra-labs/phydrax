@@ -10,7 +10,7 @@ import pytest
 from phydrax.signal import frame, overlap_add
 
 
-def test_frame_and_overlap_add_have_explicit_adjacent_axis_layout():
+def test_frame_and_overlap_add_have_explicit_adjacent_axis_layout() -> None:
     values = jnp.arange(2 * 10 * 3, dtype="float64").reshape((2, 10, 3))
 
     framed = frame(values, 4, 2, axis=1)
@@ -22,7 +22,7 @@ def test_frame_and_overlap_add_have_explicit_adjacent_axis_layout():
     assert jnp.allclose(restored_sum, values * coverage[None, :, None])
 
 
-def test_framing_drops_only_incomplete_trailing_samples_and_supports_gaps():
+def test_framing_drops_only_incomplete_trailing_samples_and_supports_gaps() -> None:
     values = jnp.arange(11.0)
 
     framed = frame(values, 4, 3)
@@ -36,7 +36,7 @@ def test_framing_drops_only_incomplete_trailing_samples_and_supports_gaps():
     )
 
 
-def test_framing_is_jittable_vmappable_and_differentiable():
+def test_framing_is_jittable_vmappable_and_differentiable() -> None:
     framed = jax.jit(lambda x: frame(x, 3, 2))(jnp.arange(7.0))
     batched = jax.vmap(lambda x: frame(x, 3, 2))(jnp.arange(14.0).reshape(2, 7))
     gradient = jax.grad(lambda x: jnp.sum(frame(x, 3, 2)))(jnp.arange(7.0))
@@ -46,7 +46,7 @@ def test_framing_is_jittable_vmappable_and_differentiable():
     assert np.allclose(gradient, np.asarray((1, 1, 2, 1, 2, 1, 1)))
 
 
-def test_framing_validation_rejects_invalid_shapes_and_axes():
+def test_framing_validation_rejects_invalid_shapes_and_axes() -> None:
     with pytest.raises(ValueError, match="at least frame_length"):
         frame(jnp.ones((3,)), 4, 1)
     with pytest.raises(ValueError, match="distinct"):

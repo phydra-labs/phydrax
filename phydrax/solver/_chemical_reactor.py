@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -32,20 +33,25 @@ from ._rosenbrock import RosenbrockAdaptivePolicy
 from ._rosenbrock_replay import solve_rosenbrock
 
 
+_TemperatureInputs: TypeAlias = tuple[Array, Array, Array, Array, Array]
+
+
 @jax.custom_jvp
 def _implicit_reactor_temperature(
-    temperature,
-    conserved_energy,
-    species_amount,
-    molar_energy,
-    molar_heat_capacity,
-):
+    temperature: Array,
+    conserved_energy: Array,
+    species_amount: Array,
+    molar_energy: Array,
+    molar_heat_capacity: Array,
+) -> Array:
     del conserved_energy, species_amount, molar_energy, molar_heat_capacity
     return temperature
 
 
 @_implicit_reactor_temperature.defjvp
-def _implicit_reactor_temperature_jvp(primals, tangents):
+def _implicit_reactor_temperature_jvp(
+    primals: _TemperatureInputs, tangents: _TemperatureInputs
+) -> tuple[Array, Array]:
     temperature, conserved, amount, molar_energy, molar_capacity = primals
     _, conserved_tangent, amount_tangent, molar_energy_tangent, _ = tangents
     capacity = jnp.sum(amount * molar_capacity)
@@ -109,7 +115,7 @@ class ChemicalReactorPlan(StrictModule, NonTrainableState):
         minimum_temperature: float | None = None,
         maximum_temperature: float | None = None,
         inversion_iterations: int = 48,
-    ):
+    ) -> None:
         if not isinstance(mechanism, PreparedChemicalMechanism):
             raise TypeError("mechanism must be PreparedChemicalMechanism.")
         if not isinstance(kind, ChemicalReactorKind):
@@ -387,11 +393,13 @@ class ChemicalReactorPlan(StrictModule, NonTrainableState):
             self.reactor_id,
         )
 
-    def _recover_temperature(self, amount, conserved):
+    def _recover_temperature(
+        self, amount: Array, conserved: Array
+    ) -> tuple[Array, Array, Array]:
         low = jnp.asarray(self.minimum_temperature, dtype=amount.dtype)
         high = jnp.asarray(self.maximum_temperature, dtype=amount.dtype)
 
-        def extensive(temperature):
+        def extensive(temperature: Array) -> Array:
             thermo = self.mechanism.thermodynamics.evaluate(temperature)
             molar = (
                 thermo.molar_internal_energy
@@ -409,7 +417,7 @@ class ChemicalReactorPlan(StrictModule, NonTrainableState):
         )
         target = jnp.where(admissible, conserved, 0.5 * (low_energy + high_energy))
 
-        def iteration(_, bracket):
+        def iteration(_: Array, bracket: tuple[Array, Array]) -> tuple[Array, Array]:
             lower, upper = bracket
             midpoint = 0.5 * (lower + upper)
             midpoint_energy = extensive(midpoint)
@@ -460,22 +468,30 @@ class ChemicalReactorPlan(StrictModule, NonTrainableState):
 class _ChemicalReactorODEResidual(StrictModule):
     plan: ChemicalReactorPlan
 
-    def __init__(self, plan: ChemicalReactorPlan, /):
+    def __init__(self, plan: ChemicalReactorPlan, /) -> None:
         self.plan = plan
 
-    def __call__(self, time, state, state_rate, args=None):
+    def __call__(
+        self,
+        time: Array,
+        state: Array,
+        state_rate: Array,
+        args: ChemicalRateRuntime | None = None,
+    ) -> Array:
         return state_rate - self.plan.rate(time, state, args)
 
 
 class PreparedChemicalReactorDynamics(StrictModule):
     plan: ChemicalReactorPlan
 
-    def __init__(self, plan: ChemicalReactorPlan, /):
+    def __init__(self, plan: ChemicalReactorPlan, /) -> None:
         if not isinstance(plan, ChemicalReactorPlan):
             raise TypeError("plan must be ChemicalReactorPlan.")
         self.plan = plan
 
-    def __call__(self, time, state, args=None):
+    def __call__(
+        self, time: Array, state: Array, args: ChemicalRateRuntime | None = None
+    ) -> Array:
         return self.plan.rate(time, state, args)
 
 

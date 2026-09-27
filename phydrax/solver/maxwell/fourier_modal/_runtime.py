@@ -5,17 +5,18 @@
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Literal, TypeAlias
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array, core as jax_core
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import parse
 from ._boundary_cascade import (
     BoundaryCascadePolicy,
     BoundaryRelation,
@@ -28,6 +29,8 @@ from ._continuous import (
     PreparedContinuousFourierModalLayer,
 )
 from ._contracts import (
+    AbstractFourierFactorizationPlan,
+    AbstractFourierModalPort,
     ContinuousFourierModalLayer,
     FourierModalLayer,
     FourierModalMaxwellProblem,
@@ -94,7 +97,7 @@ class FourierModalResourcePolicy(StrictModule, NonTrainableState):
         max_layers: int = 256,
         preparation_bytes: int = 8 * 2**30,
         workspace_bytes: int = 4 * 2**30,
-    ):
+    ) -> None:
         values = tuple(
             (
                 max_harmonics,
@@ -136,7 +139,7 @@ class FourierModalSolvePolicy(StrictModule, NonTrainableState):
         resources: FourierModalResourcePolicy | None = None,
         retain_boundary_fields: bool = True,
         power_audit_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         boundary_ = BoundaryCascadePolicy() if boundary is None else boundary
         resources_ = FourierModalResourcePolicy() if resources is None else resources
         audit_tolerance = float(power_audit_tolerance)
@@ -178,7 +181,7 @@ class FourierModalCapabilities(StrictModule, NonTrainableState):
     internal_sources: bool = eqx.field(static=True)
     brillouin_zone: bool = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.full_tensor_layers = True
         self.bianisotropic_layers = True
         self.patterned_ports = True
@@ -248,13 +251,10 @@ class FourierModalRefreshSpec(StrictModule, NonTrainableState):
         angular_frequency_changed: bool = False,
         bloch_wavevector_changed: bool = False,
         ports_changed: bool = False,
-    ):
-        updates = tuple(layer_updates)
-        if any(
-            value not in ("unchanged", "thickness", "translation", "material")
-            for value in updates
-        ):
-            raise ValueError("Unknown Fourier-modal layer refresh kind.")
+    ) -> None:
+        updates = tuple(
+            parse(value, LayerRefreshKind, "layer_updates") for value in layer_updates
+        )
         self.layer_updates = updates
         self.angular_frequency_changed = bool(angular_frequency_changed)
         self.bloch_wavevector_changed = bool(bloch_wavevector_changed)
@@ -396,7 +396,7 @@ def plan_fourier_modal_maxwell(
 
 
 def _tree_has_tracer(value: object, /) -> bool:
-    return any(isinstance(leaf, jax.core.Tracer) for leaf in jax.tree.leaves(value))
+    return any(isinstance(leaf, jax_core.Tracer) for leaf in jax.tree.leaves(value))
 
 
 def _canonical_material_samples(
@@ -404,14 +404,11 @@ def _canonical_material_samples(
     problem: FourierModalMaxwellProblem,
     /,
 ) -> tuple[Array, Array, Array, Array]:
-    return tuple(
-        _tensor_samples(value, problem.harmonics)[0]
-        for value in (
-            material.permittivity,
-            material.permeability,
-            material.magnetoelectric_xi,
-            material.magnetoelectric_zeta,
-        )
+    return (
+        _tensor_samples(material.permittivity, problem.harmonics)[0],
+        _tensor_samples(material.permeability, problem.harmonics)[0],
+        _tensor_samples(material.magnetoelectric_xi, problem.harmonics)[0],
+        _tensor_samples(material.magnetoelectric_zeta, problem.harmonics)[0],
     )
 
 
@@ -470,10 +467,10 @@ def _checked_material_slot(
 
 
 def _checked_factorization_frame(
-    factorization,
+    factorization: AbstractFourierFactorizationPlan,
     records: dict[str, Array],
     /,
-):
+) -> AbstractFourierFactorizationPlan:
     if not isinstance(factorization, VectorFourierFactorizationPlan) or not isinstance(
         factorization.frame, AnalyticInterfaceFramePlan
     ):
@@ -516,7 +513,7 @@ def _checked_problem_slots(
     ] = {}
     frame_records: dict[str, Array] = {}
 
-    def checked_port(port):
+    def checked_port(port: AbstractFourierModalPort) -> AbstractFourierModalPort:
         material = _checked_material_slot(port.material, problem, material_records)
         port = eqx.tree_at(lambda value: value.material, port, material)
         if isinstance(port, PeriodicMaxwellPort):
@@ -792,7 +789,7 @@ def _values_proven_equal(left: object, right: object, /) -> bool:
     )
 
 
-def _port_identity(port, /) -> tuple[object, ...]:
+def _port_identity(port: AbstractFourierModalPort, /) -> tuple[object, ...]:
     return (
         type(port),
         port.port_id,
@@ -964,7 +961,8 @@ def refresh_fourier_modal_maxwell(
         new_elements.append(
             _refreshed_layer(
                 problem,
-                element,
+                # Continuous layers returned through full preparation above.
+                cast(FourierModalLayer, element),
                 old,
                 prepared.plan.policy,
                 lattice_same=lattice_same,

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -6,7 +8,7 @@ import phydrax as phx
 tn = phx.tensor_network
 
 
-def _two_site_hamiltonian():
+def _two_site_hamiltonian() -> Any:
     identity = jnp.eye(2, dtype=jnp.complex128)
     pauli_x = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128)
     pauli_z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=jnp.complex128)
@@ -16,7 +18,7 @@ def _two_site_hamiltonian():
     return tn.add_mpo(tn.add_mpo(interaction, left_field), right_field)
 
 
-def test_prepared_two_site_dmrg_reaches_dense_ground_state():
+def test_prepared_two_site_dmrg_reaches_dense_ground_state() -> None:
     hamiltonian = _two_site_hamiltonian()
     initial = tn.product_mps(jnp.asarray([[1.0, 0.0], [1.0, 0.0]], dtype=jnp.complex128))
     problem = phx.solver.FiniteDMRGProblem(initial, hamiltonian, problem_id="two-site")
@@ -41,7 +43,7 @@ def test_prepared_two_site_dmrg_reaches_dense_ground_state():
     assert jnp.allclose(result.diagnostics.hermiticity_residual, 0.0, atol=1e-10)
 
 
-def test_dmrg_refresh_preserves_plan_identity_for_numeric_updates():
+def test_dmrg_refresh_preserves_plan_identity_for_numeric_updates() -> None:
     hamiltonian = _two_site_hamiltonian()
     initial = tn.product_mps(jnp.asarray([[1.0, 0.0], [1.0, 0.0]], dtype=jnp.complex128))
     problem = phx.solver.FiniteDMRGProblem(initial, hamiltonian, problem_id="refresh")

@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -19,7 +22,7 @@ from phydrax.operators.differential import partial_t
 from phydrax.operators.integral import integral
 
 
-def test_trajectory_dataset_domain_samples_coupled_data_time_points():
+def test_trajectory_dataset_domain_samples_coupled_data_time_points() -> None:
     inputs = jnp.arange(3.0).reshape((3, 1))
     domain = TrajectoryDatasetDomain(inputs, jnp.asarray([2, 4, 3]), dt=0.25)
     component = domain.component()
@@ -38,7 +41,7 @@ def test_trajectory_dataset_domain_samples_coupled_data_time_points():
     assert jnp.all(batch["t"].data <= domain.end_times[case_indices])
 
 
-def test_trajectory_dataset_probability_integral_of_constant_is_one():
+def test_trajectory_dataset_probability_integral_of_constant_is_one() -> None:
     inputs = jnp.zeros((3, 1))
     domain = TrajectoryDatasetDomain(inputs, jnp.asarray([2, 4, 3]), dt=0.25)
     component = domain.component()
@@ -52,7 +55,7 @@ def test_trajectory_dataset_probability_integral_of_constant_is_one():
     assert jnp.allclose(jnp.asarray(out.data), 1.0)
 
 
-def test_trajectory_dataset_measure_modes():
+def test_trajectory_dataset_measure_modes() -> None:
     inputs = jnp.zeros((3, 1))
     avg = TrajectoryDatasetDomain(
         inputs,
@@ -67,7 +70,9 @@ def test_trajectory_dataset_measure_modes():
         measure="time_integral_sum",
     )
 
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(avg.component().mass.value, jnp.mean(avg.durations))
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(summed.component().mass.value, jnp.sum(summed.durations))
 
 
@@ -79,9 +84,9 @@ def test_trajectory_dataset_measure_modes():
     ),
 )
 def test_observation_uniform_quadrature_uses_inverse_proposal_weights(
-    measure,
-    expected,
-):
+    measure: Any,
+    expected: Any,
+) -> None:
     domain = TrajectoryDatasetDomain(
         jnp.zeros((3, 1)),
         jnp.asarray([2, 4, 3]),
@@ -106,7 +111,7 @@ def test_observation_uniform_quadrature_uses_inverse_proposal_weights(
     assert jnp.allclose(jnp.asarray(out.data), expected)
 
 
-def test_trajectory_dataset_fixed_end_is_row_specific():
+def test_trajectory_dataset_fixed_end_is_row_specific() -> None:
     inputs = jnp.arange(3.0).reshape((3, 1))
     domain = TrajectoryDatasetDomain(inputs, jnp.asarray([2, 4, 3]), dt=0.25)
     component = domain.component({"t": FixedEnd()})
@@ -117,7 +122,7 @@ def test_trajectory_dataset_fixed_end_is_row_specific():
     assert jnp.allclose(jnp.asarray(batch["t"].data), domain.end_times[case_indices])
 
 
-def test_trajectory_dataset_rejects_coord_separable_sampling():
+def test_trajectory_dataset_rejects_coord_separable_sampling() -> None:
     inputs = jnp.arange(3.0).reshape((3, 1))
     domain = TrajectoryDatasetDomain(inputs, jnp.asarray([2, 4, 3]), dt=0.25)
 
@@ -125,7 +130,7 @@ def test_trajectory_dataset_rejects_coord_separable_sampling():
         domain.component().sample(phx.domain.GridSampling({"t": UniformAxisSpec(8)}))
 
 
-def test_trajectory_dataset_equivalence_includes_ragged_lengths():
+def test_trajectory_dataset_equivalence_includes_ragged_lengths() -> None:
     inputs = jnp.arange(3.0).reshape((3, 1))
     first = TrajectoryDatasetDomain(inputs, jnp.asarray([2, 4, 3]), dt=0.25)
     same = TrajectoryDatasetDomain(inputs, jnp.asarray([2, 4, 3]), dt=0.25)
@@ -135,14 +140,14 @@ def test_trajectory_dataset_equivalence_includes_ragged_lengths():
     assert not first.same_support(different)
 
 
-def test_trajectory_dataset_participates_in_time_residual_terms():
+def test_trajectory_dataset_participates_in_time_residual_terms() -> None:
     inputs = jnp.arange(3.0).reshape((3, 1))
     domain = TrajectoryDatasetDomain(inputs, jnp.asarray([2, 4, 3]), dt=0.25)
     component = domain.component()
     structure = SampleLayout((("data", "t"),))
 
     @domain.Function("data", "t")
-    def exact(data, t):
+    def exact(data: Any, t: Any) -> Any:
         return data[0] + t
 
     condition = phx.conditions.Residual(

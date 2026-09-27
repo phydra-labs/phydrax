@@ -10,7 +10,8 @@ from enum import IntEnum
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -41,8 +42,8 @@ class NollZernikeOPD(StrictModule):
         pupil_radius: ArrayLike,
         /,
         *,
-        pupil_center: ArrayLike = (0.0, 0.0),
-    ):
+        pupil_center: ArrayLike | tuple[float, float] = (0.0, 0.0),
+    ) -> None:
         indices = tuple(noll_indices)
         if not indices or any(index <= 0 for index in indices):
             raise ValueError("noll_indices must contain positive one-based indices.")
@@ -150,7 +151,7 @@ def noll_zernike(
     /,
     *,
     pupil_radius: ArrayLike = 1.0,
-    pupil_center: ArrayLike = (0.0, 0.0),
+    pupil_center: ArrayLike | tuple[float, float] = (0.0, 0.0),
 ) -> Array:
     """Evaluate one continuous unit-RMS Noll mode, zero outside the pupil."""
     coordinates = jnp.asarray(transverse_coordinates)

@@ -8,19 +8,21 @@ import math
 from collections import Counter, defaultdict
 from enum import IntEnum
 from itertools import permutations
-from typing import Literal, Protocol
+from typing import Literal, Protocol, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
-FieldStatistics = Literal["boson", "fermion", "ghost"]
+FieldStatistics: TypeAlias = Literal["boson", "fermion", "ghost"]
 
 
 class DiagramStatus(IntEnum):
@@ -72,10 +74,9 @@ class FieldSpec(StrictModule, NonTrainableState):
         statistics: FieldStatistics = "boson",
         components: int = 1,
         mass_dimension: float = 1.0,
-    ):
+    ) -> None:
         name_ = _identifier(name, "name")
-        if statistics not in ("boson", "fermion", "ghost"):
-            raise ValueError("statistics must be 'boson', 'fermion', or 'ghost'.")
+        statistics = parse(statistics, FieldStatistics, "statistics")
         components_ = int(components)
         dimension_ = float(mass_dimension)
         if components_ <= 0:
@@ -105,7 +106,7 @@ class MomentumRoute(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     route_id: str = eqx.field(static=True)
 
-    def __init__(self, momentum: ArrayLike, frequency: ArrayLike = 0.0, /):
+    def __init__(self, momentum: ArrayLike, frequency: ArrayLike = 0.0, /) -> None:
         momentum_host = np.asarray(momentum, dtype=np.float64)
         frequency_host = np.asarray(frequency, dtype=np.float64)
         if momentum_host.ndim != 1 or momentum_host.size == 0:
@@ -146,7 +147,7 @@ class SmoothEuclideanRegulator(StrictModule, NonTrainableState):
     strength: Array
     regulator_id: str = eqx.field(static=True)
 
-    def __init__(self, scale: float, /, *, strength: float = 1.0):
+    def __init__(self, scale: float, /, *, strength: float = 1.0) -> None:
         scale_, strength_ = float(scale), float(strength)
         if (
             not np.isfinite(scale_)
@@ -183,7 +184,7 @@ class PropagatorSpec(StrictModule, NonTrainableState):
         *,
         mass: float = 0.0,
         residue: complex = 1.0,
-    ):
+    ) -> None:
         if not isinstance(field, FieldSpec):
             raise TypeError("field must be a FieldSpec.")
         mass_ = float(mass)
@@ -241,7 +242,7 @@ class VertexRule(StrictModule, NonTrainableState):
         *,
         perturbative_order: int = 1,
         derivative_order: int = 0,
-    ):
+    ) -> None:
         name_ = _identifier(name, "name")
         fields_ = tuple(fields)
         if len(fields_) < 2 or any(not isinstance(field, FieldSpec) for field in fields_):
@@ -286,7 +287,7 @@ class VertexInsertion(StrictModule, NonTrainableState):
     label: str = eqx.field(static=True)
     rule: VertexRule
 
-    def __init__(self, label: str, rule: VertexRule, /):
+    def __init__(self, label: str, rule: VertexRule, /) -> None:
         if not isinstance(rule, VertexRule):
             raise TypeError("rule must be a VertexRule.")
         self.label = _identifier(label, "label")
@@ -310,7 +311,7 @@ class PropagatorLine(StrictModule, NonTrainableState):
         target: str,
         route: MomentumRoute,
         /,
-    ):
+    ) -> None:
         if not isinstance(propagator, PropagatorSpec):
             raise TypeError("propagator must be a PropagatorSpec.")
         if not isinstance(route, MomentumRoute):
@@ -340,7 +341,7 @@ class ExternalState(StrictModule, NonTrainableState):
         *,
         incoming: bool,
         wavefunction: complex = 1.0,
-    ):
+    ) -> None:
         if not isinstance(field, FieldSpec) or not isinstance(route, MomentumRoute):
             raise TypeError("External states require FieldSpec and MomentumRoute values.")
         wavefunction_ = _finite_scalar(wavefunction, "wavefunction")
@@ -371,7 +372,7 @@ class ExternalLeg(StrictModule, NonTrainableState):
         *,
         incoming: bool,
         wavefunction: complex = 1.0,
-    ):
+    ) -> None:
         if not isinstance(field, FieldSpec) or not isinstance(route, MomentumRoute):
             raise TypeError("External legs require FieldSpec and MomentumRoute values.")
         wavefunction_ = _finite_scalar(wavefunction, "wavefunction")
@@ -532,7 +533,7 @@ class DiagramGraph(StrictModule, NonTrainableState):
         *,
         maximum_canonical_permutations: int = 40_320,
         conservation_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         vertices_, lines_, external_ = tuple(vertices), tuple(lines), tuple(external_legs)
         if not vertices_ or any(
             not isinstance(item, VertexInsertion) for item in vertices_

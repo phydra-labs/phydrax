@@ -11,7 +11,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -24,6 +25,7 @@ from ...continuation._bifurcation import (
 )
 from ...continuation._core import ContinuationBranch, ContinuationCurveProblem
 from ...nonlinear import AbstractNonlinearMethod, NonlinearTermination
+from ...typing import parse
 from ._equilibrium import MechanicsEquilibriumProblem
 from ._stability import DynamicStabilityProblem, PhysicalStaticStabilityProblem
 
@@ -135,7 +137,7 @@ class MechanicsBifurcationDetector(StrictModule):
         /,
         *,
         detector_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(equilibrium, MechanicsEquilibriumProblem):
             raise TypeError("equilibrium must be a MechanicsEquilibriumProblem.")
         identifier = (
@@ -341,7 +343,7 @@ class MechanicsBranch(StrictModule):
         imperfection_path_id: str | None = None,
         realization_id: str,
         provenance_id: str,
-    ):
+    ) -> None:
         if continuation is not None and not isinstance(continuation, ContinuationBranch):
             raise TypeError("continuation must be a ContinuationBranch or None.")
         if seed is not None and not isinstance(seed, CorrectedBranchSeed):
@@ -418,9 +420,8 @@ class MechanicsBranchEdge(StrictModule):
         relation: MechanicsBranchRelation = "branch-switch",
         symmetry_related: bool = False,
         edge_id: str | None = None,
-    ):
-        if relation not in ("primary", "branch-switch", "imperfection", "continued"):
-            raise ValueError("Unsupported mechanics branch relation.")
+    ) -> None:
+        relation = parse(relation, MechanicsBranchRelation, "relation")
         parent = _identifier(parent_branch_id, "parent_branch_id")
         child = _identifier(child_branch_id, "child_branch_id")
         if parent == child:
@@ -465,7 +466,7 @@ class MechanicsBranchGraph(StrictModule):
         branches: Sequence[MechanicsBranch],
         edges: Sequence[MechanicsBranchEdge] = (),
         /,
-    ):
+    ) -> None:
         branches_ = tuple(branches)
         edges_ = tuple(edges)
         if not branches_ or any(
@@ -577,7 +578,7 @@ class BranchSwitchPolicy(StrictModule):
         quotient_symmetry: bool = False,
         control_protocol: str,
         policy_id: str | None = None,
-    ):
+    ) -> None:
         amplitude_ = float(amplitude)
         offset = float(coordinate_offset)
         tolerances = tuple(
@@ -862,7 +863,7 @@ class ImperfectionFamily(StrictModule):
         discretization_id: str,
         fabrication_provenance_id: str,
         family_id: str | None = None,
-    ):
+    ) -> None:
         shape_ = jax.tree.map(jnp.asarray, shape)
         leaves = jax.tree.leaves(shape_)
         if not leaves or any(
@@ -924,7 +925,7 @@ class ImperfectionStudy(StrictModule):
         *,
         limit_resolved: Any,
         study_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(family, ImperfectionFamily):
             raise TypeError("family must be an ImperfectionFamily.")
         amplitudes_ = jnp.asarray(amplitudes)
@@ -1014,7 +1015,7 @@ class EnergyBarrierEvidence(StrictModule):
         stationary_tolerance: float = 1e-7,
         path_tolerance: float = 1e-5,
         evidence_id: str | None = None,
-    ):
+    ) -> None:
         if not potential_verified or not conservative_verified:
             raise ValueError(
                 "Energy-barrier evidence requires a verified conservative potential."
@@ -1126,15 +1127,8 @@ class PhysicalSelectionPolicy(StrictModule):
         energy_tolerance: float = 1e-8,
         user_branch_id: str | None = None,
         policy_id: str | None = None,
-    ):
-        if mode not in (
-            "stable-connected",
-            "global-energy-minimum",
-            "rate-independent-energetic",
-            "dynamic-attractor",
-            "user-declared",
-        ):
-            raise ValueError("Unsupported physical selection mode.")
+    ) -> None:
+        mode = parse(mode, MechanicsSelectionMode, "mode")
         tolerance = float(energy_tolerance)
         if not isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("energy_tolerance must be finite and non-negative.")

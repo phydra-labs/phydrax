@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -55,7 +56,7 @@ class ElectrostaticPlasmaCouplingPlan(StrictModule):
         edge_to_cell_vector: ArrayLike,
         cell_shape: tuple[int, ...],
         /,
-    ):
+    ) -> None:
         if not isinstance(
             system,
             (

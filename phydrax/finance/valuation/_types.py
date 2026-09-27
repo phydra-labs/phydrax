@@ -11,7 +11,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..core._currency import Currency
@@ -59,7 +60,7 @@ class ValuationEvidence(StrictModule):
         binding: FinanceEvidenceBinding | None = None,
         pricing_law: PricingLaw | None = None,
         status: ValuationStatus = ValuationStatus.SUCCESS,
-    ):
+    ) -> None:
         if not isinstance(route, str) or not route:
             raise ValueError("route must be a non-empty string.")
         if binding is not None and not isinstance(binding, FinanceEvidenceBinding):
@@ -114,7 +115,7 @@ class ValuationResult(StrictModule):
         standard_error: ArrayLike | None = None,
         currency: Currency | None = None,
         diagnostics: Any = None,
-    ):
+    ) -> None:
         if not isinstance(evidence, ValuationEvidence):
             raise TypeError("evidence must be ValuationEvidence.")
         if currency is not None and not isinstance(currency, Currency):
@@ -130,7 +131,7 @@ class ValuationResult(StrictModule):
         )
         if (lower is None) != (upper is None):
             raise ValueError("lower_bound and upper_bound must be supplied together.")
-        if lower is not None:
+        if lower is not None and upper is not None:
             value_ = eqx.error_if(
                 value_,
                 jnp.any(lower > upper)
@@ -181,7 +182,7 @@ class ValuationReplayEvidence(StrictModule):
         /,
         *,
         route: str,
-    ):
+    ) -> None:
         expected = jnp.asarray(expected_value)
         replayed = jnp.asarray(replayed_value, dtype=expected.dtype)
         tolerance_ = jnp.asarray(tolerance, dtype=expected.dtype)

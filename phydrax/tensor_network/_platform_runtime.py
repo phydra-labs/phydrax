@@ -42,7 +42,7 @@ class TensorNetworkRunStatus(StrEnum):
 class TensorNetworkCheckpointError(RuntimeError):
     failure: TensorNetworkFailure
 
-    def __init__(self, failure: TensorNetworkFailure, detail: str, /):
+    def __init__(self, failure: TensorNetworkFailure, detail: str, /) -> None:
         failure_ = TensorNetworkFailure(failure)
         if failure_ not in (
             TensorNetworkFailure.CHECKPOINT_NOT_ACCEPTED,
@@ -57,7 +57,7 @@ class TensorNetworkCheckpointError(RuntimeError):
 class TensorNetworkCanceledError(RuntimeError):
     failure = TensorNetworkFailure.CANCELED
 
-    def __init__(self, run_id: str, detail: str, /):
+    def __init__(self, run_id: str, detail: str, /) -> None:
         self.run_id = _identifier(run_id, "run_id")
         self.detail = _identifier(detail, "cancellation detail")
         super().__init__(f"canceled tensor-network run {self.run_id}: {self.detail}")
@@ -81,7 +81,7 @@ class TensorNetworkCheckpointRecord(StrictModule, NonTrainableState):
         accepted_step: int,
         accepted_time: float,
         artifact_name: str,
-    ):
+    ) -> None:
         identifiers = tuple(
             _identifier(value, name)
             for value, name in (
@@ -128,7 +128,7 @@ class TensorNetworkCheckpointPublication(StrictModule, NonTrainableState):
         failure: TensorNetworkFailure,
         record: TensorNetworkCheckpointRecord | None,
         execution_manifest_id: str,
-    ):
+    ) -> None:
         published_ = bool(published)
         failure_ = TensorNetworkFailure(failure)
         if published_:
@@ -168,7 +168,7 @@ class TensorNetworkAcceptedCheckpointBoundary(NonTrainableState):
         /,
         *,
         retention: int = 3,
-    ):
+    ) -> None:
         from ..solver._production_runtime import (
             CheckpointGenerationPolicy,
             DurableCheckpointStore,
@@ -317,7 +317,7 @@ class TensorNetworkReplayRecord(StrictModule, NonTrainableState):
         checkpoint_id: str,
         route_id: str,
         accepted_steps: int,
-    ):
+    ) -> None:
         if not isinstance(execution, TensorNetworkExecutionManifest):
             raise TypeError("execution must be TensorNetworkExecutionManifest.")
         checkpoint = _identifier(checkpoint_id, "checkpoint_id")
@@ -365,7 +365,7 @@ class TensorNetworkReplayRecord(StrictModule, NonTrainableState):
 class TensorNetworkReplayMismatchError(RuntimeError):
     failure = TensorNetworkFailure.REPLAY_MISMATCH
 
-    def __init__(self, mismatches: Sequence[str], /):
+    def __init__(self, mismatches: Sequence[str], /) -> None:
         mismatches_ = tuple(_identifier(value, "replay mismatch") for value in mismatches)
         if not mismatches_:
             raise ValueError("Replay mismatch errors require mismatch coordinates.")
@@ -389,7 +389,7 @@ class TensorNetworkReplayCompatibility(StrictModule, NonTrainableState):
         failure: TensorNetworkFailure,
         mismatches: Sequence[str],
         /,
-    ):
+    ) -> None:
         reference = _identifier(reference_replay_id, "reference_replay_id")
         candidate = _identifier(candidate_replay_id, "candidate_replay_id")
         compatible_ = bool(compatible)
@@ -492,7 +492,7 @@ class TensorNetworkSupervisorState(StrictModule, NonTrainableState):
         detail: str,
         last_checkpoint_id: str | None = None,
         replay_id: str | None = None,
-    ):
+    ) -> None:
         run = _identifier(run_id, "run_id")
         status_ = TensorNetworkRunStatus(status)
         index = _nonnegative_integer(transition_index, "transition_index")
@@ -544,7 +544,7 @@ class TensorNetworkSupervisorState(StrictModule, NonTrainableState):
 class TensorNetworkRunSupervisor(NonTrainableState):
     """Finite host lifecycle; numerical operations remain caller-owned and never retry."""
 
-    def __init__(self, execution: TensorNetworkExecutionManifest, /):
+    def __init__(self, execution: TensorNetworkExecutionManifest, /) -> None:
         if not isinstance(execution, TensorNetworkExecutionManifest):
             raise TypeError("execution must be TensorNetworkExecutionManifest.")
         self.execution = execution
@@ -716,7 +716,7 @@ class TensorNetworkTelemetryPolicy(StrictModule, NonTrainableState):
         redacted_fields: Sequence[str],
         maximum_fields: int = 64,
         maximum_text_characters: int = 4096,
-    ):
+    ) -> None:
         permitted = tuple(
             sorted(_identifier(v, "telemetry field") for v in permitted_fields)
         )
@@ -766,7 +766,7 @@ class TensorNetworkTelemetryRecord(StrictModule, NonTrainableState):
         redacted_fields: Sequence[str],
         policy_id: str,
         /,
-    ):
+    ) -> None:
         run = _identifier(run_id, "run_id")
         event_ = _identifier(event, "event")
         sequence_ = _nonnegative_integer(sequence, "sequence")

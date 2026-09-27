@@ -13,7 +13,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from ._availability import import_backend_module, probe_backend
@@ -313,7 +313,7 @@ class Mpi4JaxCollectiveProvider:
         )
         self._mpi = importlib.import_module("mpi4py.MPI")
 
-    def _modules(self):
+    def _modules(self) -> tuple[Any, Any]:
         return self._mpi4jax, self._mpi
 
     def sum(self, value: Array, /) -> Array:

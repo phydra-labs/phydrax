@@ -12,7 +12,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -24,9 +25,14 @@ from ._classification import (
     ordinal_log_prob_from_cumulative_logits,
     soft_ordinal_cross_entropy_from_cumulative_logits,
 )
-from ._exponential_family import AbstractExponentialFamily, CategoricalFamily
-from ._precision import inexact_result_type
+from ._dtype_names import inexact_result_type
+from ._exponential_family import (
+    AbstractExponentialFamily,
+    CategoricalFamily,
+    NaturalCoordinates,
+)
 from ._strict import StrictModule
+from .typing import PRNGKey
 
 
 def _align_observation_arrays(
@@ -96,7 +102,7 @@ class AbstractLikelihood(StrictModule):
         raise NotImplementedError
 
     @abstractmethod
-    def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
+    def sample(self, key: PRNGKey, location: ArrayLike, /, **parameters: Any) -> Array:
         raise NotImplementedError
 
     @abstractmethod
@@ -119,7 +125,7 @@ class ScalarNaturalExponentialFamilyLikelihood(_AbstractElementwiseLikelihood):
 
     family: AbstractExponentialFamily
 
-    def __init__(self, family: AbstractExponentialFamily):
+    def __init__(self, family: AbstractExponentialFamily) -> None:
         if not isinstance(family, AbstractExponentialFamily):
             raise TypeError("family must implement AbstractExponentialFamily.")
         signature = family.signature
@@ -129,7 +135,7 @@ class ScalarNaturalExponentialFamilyLikelihood(_AbstractElementwiseLikelihood):
             )
         self.family = family
 
-    def _natural(self, location: ArrayLike, /):
+    def _natural(self, location: ArrayLike, /) -> NaturalCoordinates:
         values = jnp.asarray(location)
         if jnp.issubdtype(values.dtype, jnp.complexfloating):
             raise TypeError("Natural-parameter predictions must be real-valued.")
@@ -146,7 +152,7 @@ class ScalarNaturalExponentialFamilyLikelihood(_AbstractElementwiseLikelihood):
         location_array, target_array = self.align_observations(location, target)
         return self.family.log_prob(self._natural(location_array), target_array)
 
-    def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
+    def sample(self, key: PRNGKey, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
                 f"ScalarNaturalExponentialFamilyLikelihood received unknown parameters {tuple(parameters)!r}."
@@ -165,7 +171,7 @@ class CategoricalExponentialFamilyLikelihood(AbstractLikelihood):
         family: CategoricalFamily,
         *,
         prediction_coordinates: Literal["natural", "full_logits"],
-    ):
+    ) -> None:
         if not isinstance(family, CategoricalFamily):
             raise TypeError("family must be a CategoricalFamily.")
         if prediction_coordinates not in ("natural", "full_logits"):
@@ -220,7 +226,7 @@ class CategoricalExponentialFamilyLikelihood(AbstractLikelihood):
             )
         return values
 
-    def _natural(self, location: ArrayLike, /):
+    def _natural(self, location: ArrayLike, /) -> NaturalCoordinates:
         return self.family.natural_from_logits(self._full_logits(location))
 
     def class_probabilities(self, location: ArrayLike, /) -> Array:
@@ -243,7 +249,7 @@ class CategoricalExponentialFamilyLikelihood(AbstractLikelihood):
             aligned_target,
         )
 
-    def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
+    def sample(self, key: PRNGKey, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
                 f"CategoricalExponentialFamilyLikelihood received unknown parameters {tuple(parameters)!r}."
@@ -256,7 +262,7 @@ class IndependentBernoulliLikelihood(AbstractLikelihood):
 
     label_count: int = eqx.field(static=True)
 
-    def __init__(self, label_count: int):
+    def __init__(self, label_count: int) -> None:
         count = int(label_count)
         if count <= 0:
             raise ValueError("label_count must be positive.")
@@ -302,7 +308,7 @@ class IndependentBernoulliLikelihood(AbstractLikelihood):
             target_mask=target_mask,
         )
 
-    def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
+    def sample(self, key: PRNGKey, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
                 f"IndependentBernoulliLikelihood received unknown parameters {tuple(parameters)!r}."
@@ -323,7 +329,7 @@ class OrdinalCumulativeLinkLikelihood(AbstractLikelihood):
         *,
         class_count: int | None = None,
         prediction_mode: Literal["location", "cumulative_logits"] = "location",
-    ):
+    ) -> None:
         if prediction_mode not in ("location", "cumulative_logits"):
             raise ValueError("prediction_mode must be 'location' or 'cumulative_logits'.")
         if prediction_mode == "location":
@@ -428,7 +434,7 @@ class OrdinalCumulativeLinkLikelihood(AbstractLikelihood):
             target_array,
         )
 
-    def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
+    def sample(self, key: PRNGKey, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
                 f"OrdinalCumulativeLinkLikelihood received unknown parameters {tuple(parameters)!r}."
@@ -449,7 +455,7 @@ class GaussianLikelihood(_AbstractElementwiseLikelihood):
 
     scale: Array
 
-    def __init__(self, scale: ArrayLike):
+    def __init__(self, scale: ArrayLike) -> None:
         scale_array = jnp.asarray(scale, dtype=jnp.float64)
         if bool(jnp.any(~jnp.isfinite(scale_array))) or bool(jnp.any(scale_array <= 0.0)):
             raise ValueError("Gaussian scale must be finite and strictly positive.")
@@ -470,7 +476,7 @@ class GaussianLikelihood(_AbstractElementwiseLikelihood):
         standardized = (target_array - location_array) / scale
         return -0.5 * standardized**2 - jnp.log(scale) - 0.5 * jnp.log(2.0 * jnp.pi)
 
-    def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
+    def sample(self, key: PRNGKey, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
                 f"GaussianLikelihood received unknown parameters {tuple(parameters)!r}."
@@ -488,7 +494,7 @@ class GaussianLocationScaleLikelihood(_AbstractElementwiseLikelihood):
 
     min_scale: float
 
-    def __init__(self, *, min_scale: float = 1e-6):
+    def __init__(self, *, min_scale: float = 1e-6) -> None:
         minimum = float(min_scale)
         if not jnp.isfinite(minimum) or minimum <= 0.0:
             raise ValueError("min_scale must be finite and strictly positive.")
@@ -524,7 +530,7 @@ class GaussianLocationScaleLikelihood(_AbstractElementwiseLikelihood):
 
     def sample(
         self,
-        key,
+        key: PRNGKey,
         location: ArrayLike,
         /,
         *,
@@ -554,7 +560,7 @@ class StudentTLikelihood(_AbstractElementwiseLikelihood):
     df: Array
     scale: Array
 
-    def __init__(self, df: ArrayLike, scale: ArrayLike):
+    def __init__(self, df: ArrayLike, scale: ArrayLike) -> None:
         df_array = jnp.asarray(df, dtype=jnp.float64)
         scale_array = jnp.asarray(scale, dtype=jnp.float64)
         if bool(jnp.any(~jnp.isfinite(df_array))) or bool(jnp.any(df_array <= 0.0)):
@@ -588,7 +594,7 @@ class StudentTLikelihood(_AbstractElementwiseLikelihood):
         )
         return normalizer - 0.5 * (degrees + 1.0) * jnp.log1p(standardized**2 / degrees)
 
-    def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
+    def sample(self, key: PRNGKey, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
                 f"StudentTLikelihood received unknown parameters {tuple(parameters)!r}."
@@ -615,7 +621,7 @@ class CircularComplexGaussianLikelihood(AbstractLikelihood):
 
     scale: Array
 
-    def __init__(self, scale: ArrayLike):
+    def __init__(self, scale: ArrayLike) -> None:
         scale_array = jnp.asarray(scale)
         if not jnp.issubdtype(scale_array.dtype, jnp.floating):
             raise TypeError("Circular complex Gaussian scale must be real floating.")
@@ -653,7 +659,7 @@ class CircularComplexGaussianLikelihood(AbstractLikelihood):
         variance = self.scale**2
         return -squared_residual / variance - jnp.log(jnp.pi * variance)
 
-    def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
+    def sample(self, key: PRNGKey, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
                 f"CircularComplexGaussianLikelihood received unknown parameters {tuple(parameters)!r}."
@@ -701,7 +707,7 @@ class ComplexGaussianLikelihood(AbstractLikelihood):
         regularization: ArrayLike = 0.0,
         hermitian_tolerance: float = 0.0,
         symmetry_tolerance: float = 0.0,
-    ):
+    ) -> None:
         covariance_array = jnp.asarray(covariance)
         if (
             covariance_array.ndim != 2
@@ -823,7 +829,7 @@ class ComplexGaussianLikelihood(AbstractLikelihood):
         )
         return jnp.real(self.log_normalizer - 0.5 * quadratic)
 
-    def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
+    def sample(self, key: PRNGKey, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
                 f"ComplexGaussianLikelihood received unknown parameters {tuple(parameters)!r}."
@@ -858,7 +864,7 @@ class ContaminatedGaussianLikelihood(_AbstractElementwiseLikelihood):
         *,
         outlier_scale_factor: ArrayLike = 10.0,
         outlier_probability: ArrayLike = 0.01,
-    ):
+    ) -> None:
         scale = jnp.asarray(scale, dtype=jnp.float64)
         factor = jnp.asarray(outlier_scale_factor, dtype=jnp.float64)
         probability = jnp.asarray(outlier_probability, dtype=jnp.float64)
@@ -914,7 +920,7 @@ class ContaminatedGaussianLikelihood(_AbstractElementwiseLikelihood):
         )
         return jnp.logaddexp(nominal, outlier)
 
-    def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
+    def sample(self, key: PRNGKey, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
                 f"ContaminatedGaussianLikelihood received unknown parameters {tuple(parameters)!r}."
@@ -948,7 +954,7 @@ class CensoredGaussianLikelihood(_AbstractElementwiseLikelihood):
     lower: Array
     upper: Array
 
-    def __init__(self, scale: ArrayLike, lower: ArrayLike, upper: ArrayLike):
+    def __init__(self, scale: ArrayLike, lower: ArrayLike, upper: ArrayLike) -> None:
         scale = jnp.asarray(scale, dtype=jnp.float64)
         lower = jnp.asarray(lower, dtype=jnp.float64)
         upper = jnp.asarray(upper, dtype=jnp.float64)
@@ -1006,7 +1012,7 @@ class CensoredGaussianLikelihood(_AbstractElementwiseLikelihood):
         right = jsp.special.log_ndtr((location_array - upper) / scale)
         return jnp.where(codes < 0, left, jnp.where(codes > 0, right, density))
 
-    def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
+    def sample(self, key: PRNGKey, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
                 f"CensoredGaussianLikelihood received unknown parameters {tuple(parameters)!r}."
@@ -1032,7 +1038,7 @@ class HuberObjective(StrictModule):
 
     transition: Array
 
-    def __init__(self, transition: ArrayLike):
+    def __init__(self, transition: ArrayLike) -> None:
         value = jnp.asarray(transition, dtype=jnp.float64)
         if bool(jnp.any(~jnp.isfinite(value))) or bool(jnp.any(value <= 0)):
             raise ValueError("Huber transition must be finite and strictly positive.")

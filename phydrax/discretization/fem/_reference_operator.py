@@ -4,18 +4,20 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypeAlias
+from typing import Any, get_args, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from .._reference_cell import reference_cell_topology
 from ._high_order import ReferenceNodalFamily, TensorProductTabulation
 from ._precision import FiniteElementPrecisionPolicy
@@ -34,14 +36,6 @@ ReferenceAction: TypeAlias = Literal[
     "trace",
     "trace_transpose",
 ]
-_ACTION_ORDER: tuple[ReferenceAction, ...] = (
-    "interpolate",
-    "interpolate_transpose",
-    "gradient",
-    "gradient_transpose",
-    "trace",
-    "trace_transpose",
-)
 
 
 def _canonical_actions(
@@ -49,10 +43,8 @@ def _canonical_actions(
 ) -> tuple[ReferenceAction, ...]:
     if not isinstance(actions, tuple) or not actions:
         raise ValueError("Reference actions must be a nonempty tuple.")
-    unknown = tuple(action for action in actions if action not in _ACTION_ORDER)
-    if unknown:
-        raise ValueError(f"Unknown reference action {unknown[0]!r}.")
-    return tuple(action for action in _ACTION_ORDER if action in actions)
+    parsed = tuple(parse(action, ReferenceAction, "action") for action in actions)
+    return tuple(action for action in get_args(ReferenceAction) if action in parsed)
 
 
 def _rule_id(rule: ReferenceRule, data: ReferenceCellData, /) -> str:
@@ -219,7 +211,7 @@ class FiniteElementFacetReference(StrictModule, NonTrainableState):
         basis_values: ArrayLike,
         basis_gradients: ArrayLike,
         /,
-    ):
+    ) -> None:
         index = int(facet_index)
         points_ = jnp.asarray(points)
         weights_ = jnp.asarray(weights)
@@ -297,7 +289,7 @@ class FiniteElementReferenceReport(StrictModule, NonTrainableState):
         point_count: int,
         facet_point_counts: tuple[int, ...],
         tensor_factorized: bool,
-    ):
+    ) -> None:
         content = {
             "kind": "finite-element-reference-report",
             "element_id": element_id,
@@ -351,7 +343,7 @@ class PreparedFiniteElementReference(StrictModule, NonTrainableState):
         /,
         *,
         tensor_family: ReferenceNodalFamily | None = None,
-    ):
+    ) -> None:
         from ...integration._rules import (
             interval_rule_data,
             reference_rule_data,

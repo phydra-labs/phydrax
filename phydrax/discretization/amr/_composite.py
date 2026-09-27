@@ -14,7 +14,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array, core as jax_core
+from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -24,7 +25,7 @@ from ._core import BlockHierarchyState, BlockHierarchyTopology
 
 
 def _checked(value: Array, invalid: Array, message: str, /) -> Array:
-    if isinstance(invalid, jax.core.Tracer):
+    if isinstance(invalid, jax_core.Tracer):
         return eqx.error_if(value, invalid, message)
     if bool(invalid):
         raise ValueError(message)
@@ -64,7 +65,7 @@ class CompositeAMRCellLayout(StrictModule, NonTrainableState):
         component_shape: Sequence[int] = (),
         dtype: Any = np.float64,
         dummy_weight: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(topology, BlockHierarchyTopology):
             raise TypeError("Composite AMR layout requires BlockHierarchyTopology.")
         components = tuple(component_shape)

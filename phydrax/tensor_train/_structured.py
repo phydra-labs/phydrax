@@ -5,19 +5,21 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._core import TensorTrain, TensorTrainOperator
 
 
-BoundaryKind = Literal["periodic", "dirichlet", "neumann"]
+BoundaryKind: TypeAlias = Literal["periodic", "dirichlet", "neumann"]
 
 
 class BoundaryPolicy(StrictModule):
@@ -26,9 +28,8 @@ class BoundaryPolicy(StrictModule):
     kind: BoundaryKind = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: BoundaryKind, /):
-        if kind not in ("periodic", "dirichlet", "neumann"):
-            raise ValueError("Boundary kind must be periodic, dirichlet, or neumann.")
+    def __init__(self, kind: BoundaryKind, /) -> None:
+        kind = parse(kind, BoundaryKind, "kind")
         self.kind = kind
         self.policy_id = canonical_fingerprint(
             {"kind": "tensor-train-boundary-policy", "boundary": kind}
@@ -47,7 +48,7 @@ def kronecker_operator(factors: Sequence[ArrayLike], /) -> TensorTrainOperator:
 
 
 def identity_operator(
-    mode_sizes: Sequence[int], /, *, dtype=jnp.float32
+    mode_sizes: Sequence[int], /, *, dtype: DTypeLike = jnp.float32
 ) -> TensorTrainOperator:
     modes = tuple(mode_sizes)
     if not modes or any(size <= 0 for size in modes):
@@ -56,7 +57,7 @@ def identity_operator(
 
 
 def cartesian_identity(
-    mode_sizes: Sequence[int], /, *, dtype=jnp.float32
+    mode_sizes: Sequence[int], /, *, dtype: DTypeLike = jnp.float32
 ) -> TensorTrainOperator:
     return identity_operator(mode_sizes, dtype=dtype)
 
@@ -65,7 +66,7 @@ def _shift_matrix(
     size: int,
     offset: int,
     boundary: BoundaryPolicy,
-    dtype,
+    dtype: DTypeLike,
     /,
 ) -> Array:
     if boundary.kind == "periodic":
@@ -91,7 +92,7 @@ def shift_operator(
     *,
     offset: int,
     boundary: BoundaryPolicy,
-    dtype=jnp.float32,
+    dtype: DTypeLike = jnp.float32,
 ) -> TensorTrainOperator:
     modes = tuple(mode_sizes)
     position = int(axis)
@@ -108,7 +109,7 @@ def _negative_laplacian_factor(
     size: int,
     spacing: float,
     boundary: BoundaryPolicy,
-    dtype,
+    dtype: DTypeLike,
     /,
 ) -> Array:
     if size < 2:
@@ -135,7 +136,7 @@ def laplacian_operator(
     *,
     spacing: float | Sequence[float],
     boundary: BoundaryPolicy | Sequence[BoundaryPolicy],
-    dtype=jnp.float32,
+    dtype: DTypeLike = jnp.float32,
 ) -> TensorTrainOperator:
     """Exact Kronecker-sum negative Cartesian Laplacian."""
     modes = tuple(mode_sizes)

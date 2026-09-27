@@ -4,8 +4,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 
-def _compositions(total: int, dimension: int, /):
+
+def _compositions(total: int, dimension: int, /) -> Iterator[tuple[int, ...]]:
     if dimension == 1:
         yield (total,)
         return

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..geometric._interface import OpticalRayState
 from ..geometric._paraxial import _COORDINATE_CONVENTION

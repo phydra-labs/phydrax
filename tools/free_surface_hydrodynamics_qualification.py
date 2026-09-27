@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import argparse
 import json
+from typing import Any
 
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _model(case):
+def _model(case: Any) -> Any:
     shape = (4, 4, 3)
     grid = phx.discretization.TensorGridPlan(
         (
@@ -54,7 +55,7 @@ def _model(case):
     return hydro, state
 
 
-def run_case(case, dt):
+def run_case(case: Any, dt: Any) -> Any:
     hydro, state = _model(case)
     if case == "gcl":
         rate = jnp.full_like(state.eta, 1.0e-4)
@@ -108,7 +109,7 @@ def run_case(case, dt):
     return report
 
 
-def main():
+def main() -> Any:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--case", choices=("rest", "wave", "gcl", "scalar"), default="rest"

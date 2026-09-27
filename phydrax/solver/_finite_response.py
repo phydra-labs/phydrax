@@ -10,7 +10,8 @@ from math import isfinite, pi
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -30,6 +31,7 @@ from ..tensor_network._mpo import (
     compress_mps,
     scale_mpo,
 )
+from ..typing import parse
 from ._dmrg import (
     FiniteDMRGPolicy,
     FiniteDMRGProblem,
@@ -37,6 +39,7 @@ from ._dmrg import (
     solve_finite_dmrg,
 )
 from ._matrix_product_tdvp import (
+    FiniteTDVPAlgorithm,
     FiniteTDVPPolicy,
     FiniteTDVPProblem,
     solve_finite_tdvp,
@@ -150,7 +153,7 @@ class FiniteResponseProblem(StrictModule):
         /,
         *,
         problem_id: str = "finite-time-domain-response",
-    ):
+    ) -> None:
         values = jnp.asarray(frequencies)
         if not isinstance(ground_state, MatrixProductState):
             raise TypeError("ground_state must be MatrixProductState.")
@@ -181,7 +184,7 @@ class FiniteResponsePolicy(StrictModule):
     step_size: float = eqx.field(static=True)
     steps: int = eqx.field(static=True)
     maximum_bond_dimension: int = eqx.field(static=True)
-    tdvp_algorithm: str = eqx.field(static=True)
+    tdvp_algorithm: FiniteTDVPAlgorithm = eqx.field(static=True)
     damping: float = eqx.field(static=True)
     hermiticity_tolerance: float = eqx.field(static=True)
     maximum_history_elements: int = eqx.field(static=True)
@@ -196,13 +199,13 @@ class FiniteResponsePolicy(StrictModule):
         step_size: float,
         steps: int,
         maximum_bond_dimension: int,
-        tdvp_algorithm: str = "two-site",
+        tdvp_algorithm: FiniteTDVPAlgorithm = "two-site",
         damping: float = 0.0,
         hermiticity_tolerance: float = 1e-9,
         maximum_history_elements: int = 10_000_000,
         maximum_state_elements: int = 10_000_000,
         integrator: MatrixFunctionPolicy | None = None,
-    ):
+    ) -> None:
         step = float(step_size)
         count = int(steps)
         bond = int(maximum_bond_dimension)
@@ -212,8 +215,7 @@ class FiniteResponsePolicy(StrictModule):
         state_elements = int(maximum_state_elements)
         if not isfinite(step) or step <= 0.0 or count < 1 or bond < 1:
             raise ValueError("Response step, count, and bond capacity are invalid.")
-        if tdvp_algorithm not in ("one-site", "two-site"):
-            raise ValueError("tdvp_algorithm must be one-site or two-site.")
+        tdvp_algorithm = parse(tdvp_algorithm, FiniteTDVPAlgorithm, "tdvp_algorithm")
         if (
             not isfinite(damping_)
             or damping_ < 0.0

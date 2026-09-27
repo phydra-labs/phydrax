@@ -11,7 +11,8 @@ from math import prod
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -40,7 +41,7 @@ class AbelianFusionBasis(StrictModule):
         left_boundary_charge: int = 0,
         right_boundary_charge: int = 0,
         maximum_configurations: int = 1 << 20,
-    ):
+    ) -> None:
         charges = tuple(tuple(site) for site in local_charges)
         if not charges or any(not site for site in charges):
             raise ValueError(
@@ -163,7 +164,7 @@ class SU2FusionBasis(StrictModule):
         /,
         *,
         maximum_paths: int = 1 << 20,
-    ):
+    ) -> None:
         spins = tuple(site_twice_spins)
         total = int(total_twice_spin)
         if len(spins) < 2 or any(value < 0 for value in spins) or total < 0:

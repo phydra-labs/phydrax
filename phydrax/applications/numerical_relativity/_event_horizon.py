@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 from enum import IntFlag
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 from phydrax.metrix._adm_exchange import ADMGridGeometry
@@ -19,6 +21,12 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._surfaces import SphericalSpectralSurface
+
+
+_GeneratorCarry: TypeAlias = tuple[Array, Array, Array]
+_GeneratorRecord: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class EventHorizonStatus(IntFlag):
@@ -76,7 +84,7 @@ class CompletedSpacetimeHistory(StrictModule, NonTrainableState):
         completed: bool,
         completion_id: str,
         history_name: str = "completed-spacetime-history",
-    ):
+    ) -> None:
         if completed is not True:
             raise ValueError(
                 "Event-horizon tracing requires an explicitly completed spacetime history."
@@ -107,7 +115,7 @@ class CompletedSpacetimeHistory(StrictModule, NonTrainableState):
             for axis in axes
         ):
             raise ValueError("Cartesian history axes must be finite and increasing.")
-        grid_shape = tuple(axis.size for axis in axes)
+        grid_shape = (axes[0].size, axes[1].size, axes[2].size)
         leading_shape = (times_host.size,) + grid_shape
         if geometry.leading_shape != leading_shape:
             raise ValueError(
@@ -351,7 +359,9 @@ def _rk4_step(
     null_tolerance: float,
     /,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
-    def sample(time, points, momenta):
+    def sample(
+        time: Array, points: Array, momenta: Array
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
         return _sample_hamilton_flow(
             history,
             support_field,
@@ -439,7 +449,7 @@ class OfflineEventHorizonTracingPlan(StrictModule, NonTrainableState):
         null_tolerance: float = 1.0e-6,
         caustic_distance: float = 1.0e-6,
         plan_name: str = "offline-event-horizon-generator-trace",
-    ):
+    ) -> None:
         if not isinstance(terminal_surface, SphericalSpectralSurface):
             raise TypeError("terminal_surface must be a SphericalSpectralSurface.")
         positions = np.asarray(terminal_positions, dtype=np.float64)
@@ -479,10 +489,11 @@ class OfflineEventHorizonTracingPlan(StrictModule, NonTrainableState):
         time_count = _integer_capacity(time_capacity, "time_capacity", minimum=2)
         if len(grid_shape) != 3:
             raise ValueError("grid_shape must contain three Cartesian capacities.")
-        grid_shape_ = tuple(
+        grid_x, grid_y, grid_z = (
             _integer_capacity(value, "grid_shape entry", minimum=2)
             for value in grid_shape
         )
+        grid_shape_ = (grid_x, grid_y, grid_z)
         absolute = float(absolute_tolerance)
         covector_absolute = float(covector_absolute_tolerance)
         relative = float(relative_tolerance)
@@ -610,7 +621,9 @@ class OfflineEventHorizonTracingPlan(StrictModule, NonTrainableState):
         terminal_covectors = self.terminal_covectors / terminal_norm[:, None]
         reverse_indices = jnp.arange(self.time_capacity - 1, 0, -1)
 
-        def step(carry, upper_index):
+        def step(
+            carry: _GeneratorCarry, upper_index: Array
+        ) -> tuple[_GeneratorCarry, _GeneratorRecord]:
             positions, covectors, active = carry
             upper_time = history.times[upper_index]
             lower_time = history.times[upper_index - 1]

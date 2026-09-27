@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.kernels import AbstractPositiveDefiniteKernel
 
@@ -40,7 +41,7 @@ class AutoregressiveFidelityKernel(AbstractMultiOutputKernel):
         /,
         *,
         transfer_coefficients: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(path, FidelityPath):
             raise TypeError("path must be a FidelityPath.")
         kernels = tuple(spatial_kernels)
@@ -161,7 +162,7 @@ class FidelityGaussianProcess(StrictModule):
         path: FidelityPath,
         dataset: FidelityDataset,
         /,
-    ):
+    ) -> None:
         if not isinstance(path, FidelityPath):
             raise TypeError("path must be a FidelityPath.")
         if not isinstance(dataset, FidelityDataset):

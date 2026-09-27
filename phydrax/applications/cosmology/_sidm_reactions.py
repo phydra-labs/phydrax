@@ -9,13 +9,16 @@ from __future__ import annotations
 from collections.abc import Sequence
 from enum import IntEnum
 from pathlib import Path
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 
@@ -45,6 +48,10 @@ from ._sidm_weighted import WeightedSIDMPacketState
 
 _CHECKPOINT_FORMAT = "phydrax-inelastic-sidm-checkpoint"
 
+_ReactionTotals: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+
 
 def _segment_samples(nodes: Array, /, *, periodic: bool = False) -> np.ndarray:
     values = np.asarray(nodes, dtype=np.float64)
@@ -62,7 +69,9 @@ def _reciprocity_angle_grid(
     reverse: TwoBodyDifferentialKernelPlan,
     /,
 ) -> tuple[Array, Array, Array, Array]:
-    def native_grid(kernel):
+    def native_grid(
+        kernel: TwoBodyDifferentialKernelPlan,
+    ) -> tuple[np.ndarray, np.ndarray]:
         cosines = _segment_samples(kernel.cosines)
         azimuths = (
             np.asarray((0.0,))
@@ -92,14 +101,19 @@ def _reciprocity_angle_grid(
     mapped_forward_mu, mapped_forward_phi = angles_from_direction(
         -reverse_direction, -reverse_relative
     )
-    return tuple(
-        jax.lax.stop_gradient(value)
-        for value in (
-            jnp.concatenate((jnp.asarray(forward_mu), mapped_forward_mu)),
-            jnp.concatenate((jnp.asarray(forward_phi), mapped_forward_phi)),
-            jnp.concatenate((mapped_reverse_mu, jnp.asarray(reverse_mu))),
-            jnp.concatenate((mapped_reverse_phi, jnp.asarray(reverse_phi))),
-        )
+    return (
+        jax.lax.stop_gradient(
+            jnp.concatenate((jnp.asarray(forward_mu), mapped_forward_mu))
+        ),
+        jax.lax.stop_gradient(
+            jnp.concatenate((jnp.asarray(forward_phi), mapped_forward_phi))
+        ),
+        jax.lax.stop_gradient(
+            jnp.concatenate((mapped_reverse_mu, jnp.asarray(reverse_mu)))
+        ),
+        jax.lax.stop_gradient(
+            jnp.concatenate((mapped_reverse_phi, jnp.asarray(reverse_phi)))
+        ),
     )
 
 
@@ -203,7 +217,7 @@ class DarkTwoBodyReactionPlan(StrictModule, NonTrainableState):
         maximum_speed_fraction: float = 0.1,
         charge_tolerance: float = 0.0,
         detailed_balance_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if (
             not isinstance(incoming_species, tuple)
             or len(incoming_species) != 2
@@ -261,7 +275,9 @@ class DarkTwoBodyReactionPlan(StrictModule, NonTrainableState):
         forward_outgoing_identical = outgoing_ids[0] == outgoing_ids[1]
         reverse_outgoing_identical = incoming_ids[0] == incoming_ids[1]
 
-        def outgoing_convention(value, identical, direction):
+        def outgoing_convention(
+            value: str | None, identical: bool, direction: str
+        ) -> str:
             if value is None:
                 if identical:
                     raise ValueError(
@@ -626,7 +642,7 @@ class InelasticSIDMPlan(StrictModule, NonTrainableState):
         channels: tuple[DarkTwoBodyReactionPlan, ...],
         radiation: DarkRadiationLedgerPlan,
         /,
-    ):
+    ) -> None:
         if (
             not isinstance(channels, tuple)
             or not channels
@@ -1807,7 +1823,9 @@ class InelasticSIDMPlan(StrictModule, NonTrainableState):
             bound_packet, candidate, accepted, evidence, successful
         )
 
-    def _totals(self, state: InelasticSIDMState, packet_mask: Array | None = None, /):
+    def _totals(
+        self, state: InelasticSIDMState, packet_mask: Array | None = None, /
+    ) -> _ReactionTotals:
         packets = state.packets
         active = packets.active_mask
         if packet_mask is not None:
@@ -1968,7 +1986,7 @@ def _select_state(
     )
 
 
-def _tree_equal_arrays(left, right, /) -> Array:
+def _tree_equal_arrays(left: PyTree, right: PyTree, /) -> Array:
     comparisons = tuple(
         jnp.array_equal(first, second)
         for first, second in zip(

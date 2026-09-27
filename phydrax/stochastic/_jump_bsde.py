@@ -10,11 +10,12 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 from .._frozendict import frozendict
 from .._sampling._addressing import derive_key, SampleAddress
 from .._strict import StrictModule
+from ..typing import parse, PRNGKey
 from ._bsde import (
     BSDEControlMode,
     BSDEEvaluation,
@@ -45,7 +46,7 @@ class JumpBSDEProblem(StrictModule):
         /,
         *,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(base, BSDEProblem):
             raise TypeError("base must be a BSDEProblem.")
         if not callable(compensator_rate):
@@ -150,7 +151,7 @@ def _jump_values(
     problem: JumpBSDEProblem,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> Array:
     pre_states = events.pre_states
     if pre_states is None:
@@ -174,8 +175,20 @@ def _jump_values(
         role="event",
     )
 
-    def one_path(path_index, times, states, channels, marks):
-        def one_event(event_index, time, state, channel, mark):
+    def one_path(
+        path_index: Array,
+        times: Array,
+        states: Array,
+        channels: Array,
+        marks: Array,
+    ) -> Array:
+        def one_event(
+            event_index: Array,
+            time: Array,
+            state: Array,
+            channel: Array,
+            mark: Array,
+        ) -> Array:
             event_key = derive_key(key, address, path_index, event_index)
             value = jnp.asarray(
                 jump_control(
@@ -242,7 +255,7 @@ def _compensator_rates(
     sample_size = paths.num_paths
     flat_states = eval_states.reshape((sample_size, paths.num_steps) + paths.state_shape)
 
-    def one_path(path_states):
+    def one_path(path_states: Array) -> Array:
         return jax.vmap(
             lambda time, state: jnp.asarray(
                 problem.compensator_rate(
@@ -274,7 +287,7 @@ def _node_compensator_rates(
         (sample_size, paths.times.shape[0]) + paths.state_shape
     )
 
-    def one_path(path_states):
+    def one_path(path_states: Array) -> Array:
         return jax.vmap(
             lambda time, state: jnp.asarray(
                 problem.compensator_rate(
@@ -304,7 +317,7 @@ def evaluate_jump_bsde(
     control_predictor: Callable | None = None,
     control_mode: BSDEControlMode = "explicit",
     quadrature: BSDEQuadrature = "left",
-    key: Key[Array, ""] = jax.random.key(0),
+    key: PRNGKey = jax.random.key(0),
     raise_on_failure: bool = False,
 ) -> JumpBSDEEvaluation:
     """Evaluate a finite-activity BSDE using compensated jump increments."""
@@ -392,8 +405,7 @@ def jump_bsde_objective_loss(
     """Masked mean-square objective for a compensated jump BSDE evaluation."""
     if not isinstance(evaluation, JumpBSDEEvaluation):
         raise TypeError("evaluation must be a JumpBSDEEvaluation.")
-    if mode not in ("terminal", "local", "global", "joint"):
-        raise ValueError("mode must be 'terminal', 'local', 'global', or 'joint'.")
+    mode = parse(mode, BSDEObjectiveMode, "mode")
     weights = (float(terminal_weight), float(local_weight), float(global_weight))
     if any(not jnp.isfinite(weight) or weight < 0.0 for weight in weights):
         raise ValueError("BSDE objective weights must be finite and nonnegative.")

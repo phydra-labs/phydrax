@@ -24,7 +24,7 @@ from benchmarks._runtime import (
 )
 
 
-def _timings(function, argument, *, repetitions: int):
+def _timings(function: Any, argument: Any, *, repetitions: int) -> Any:
     jitted = jax.jit(function)
     compiled, compilation = measure_lower_and_compile(
         lambda: jitted.lower(argument),
@@ -44,7 +44,7 @@ def _timings(function, argument, *, repetitions: int):
     }
 
 
-def _cell(kind: str, width: int, key):
+def _cell(kind: str, width: int, key: Any) -> Any:
     if kind == "rnn":
         return phx.nn.layers.RNNCell(width, width, key=key)
     if kind == "gru":
@@ -82,10 +82,10 @@ def benchmark_case(
         termination=termination,
     )
 
-    def serial_function(current):
+    def serial_function(current: Any) -> Any:
         return phx.nn.layers.run_recurrent(current, batch).outputs
 
-    def causal_function(current):
+    def causal_function(current: Any) -> Any:
         return phx.nn.layers.run_causal_recurrent(
             current,
             batch,

@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from importlib import import_module
 from importlib.util import find_spec
-from typing import Any
+from types import ModuleType
+from typing import Any, assert_never, TypedDict
 
 import numpy as np
-from jaxtyping import ArrayLike
+import numpy.typing as npt
 
 from ...discretization import PeriodicCell
 from ...units import (
@@ -42,10 +44,12 @@ from .._force_field import (
     AtomisticNonbondedPolicy,
     ForceFieldTermKind,
     GeneralForceFieldTerm,
+    NonbondedDispersion,
+    NonbondedElectrostatics,
     PeriodicTorsionSeriesPotential,
     ReactionFieldPotential,
 )
-from .._potential_program import AtomisticPotentialProgram
+from .._potential_program import AbstractAtomisticEnergyTerm, AtomisticPotentialProgram
 from .._system import AtomisticSystemPlan
 from .._topology import MolecularTopologyPlan
 from .._units import AtomisticUnitSystem, molar_energy_to_single_system_factor
@@ -61,7 +65,24 @@ from ._core import (
 _NANOMETER = UnitDefinition("nm", LENGTH, SI_REFERENCE_SYSTEM_ID, "1e-9")
 
 
-def _openmm_unit_factors(units: AtomisticUnitSystem, /) -> dict[str, float | str]:
+class _OpenMMUnitFactors(TypedDict):
+    length_from_angstrom: float
+    energy_from_kilojoule: float
+    mass_from_dalton: float
+    charge_from_elementary: float
+    length_to_nanometer: float
+    energy_to_kilojoule: float
+    mass_to_dalton: float
+    charge_to_elementary: float
+    avogadro_constant_set_id: str
+
+
+class _TermIdentity(TypedDict):
+    name: str
+    force_group: int
+
+
+def _openmm_unit_factors(units: AtomisticUnitSystem, /) -> _OpenMMUnitFactors:
     if not isinstance(units, AtomisticUnitSystem):
         raise TypeError("OpenMM interchange requires an AtomisticUnitSystem.")
     try:
@@ -96,7 +117,7 @@ def _openmm_unit_factors(units: AtomisticUnitSystem, /) -> dict[str, float | str
     }
 
 
-def _potential_term_to_mapping(term, /) -> dict[str, Any]:
+def _potential_term_to_mapping(term: AbstractAtomisticEnergyTerm, /) -> dict[str, Any]:
     common = {"name": term.name, "force_group": term.force_group}
     if isinstance(term, HarmonicBondPotential):
         return {
@@ -172,9 +193,11 @@ def _potential_term_to_mapping(term, /) -> dict[str, Any]:
     raise ValueError(f"Potential term {term.name!r} has no interchange mapping.")
 
 
-def _potential_term_from_mapping(value: dict[str, Any], /):
+def _potential_term_from_mapping(
+    value: Mapping[str, Any], /
+) -> AbstractAtomisticEnergyTerm:
     kind = value["kind"]
-    common = {
+    common: _TermIdentity = {
         "name": value["name"],
         "force_group": int(value["force_group"]),
     }
@@ -350,32 +373,35 @@ def force_field_from_mapping(value: dict[str, Any], /) -> AtomisticInterchangeBu
             )
         )
     if legacy_mapping and np.any(np.asarray(value["charges"]) != 0.0):
-        if policy.electrostatics == "direct":
-            terms.append(DirectCoulombPotential())
-        elif policy.electrostatics == "reaction-field":
-            terms.append(
-                ReactionFieldPotential(
-                    nonbonded.get("reaction_field_dielectric", 78.5), policy.cutoff
+        match policy.electrostatics:
+            case "direct":
+                terms.append(DirectCoulombPotential())
+            case "reaction-field":
+                terms.append(
+                    ReactionFieldPotential(
+                        nonbonded.get("reaction_field_dielectric", 78.5), policy.cutoff
+                    )
                 )
-            )
-        elif policy.electrostatics == "ewald":
-            terms.append(
-                EwaldReferencePotential(
-                    nonbonded["ewald_alpha"],
-                    policy.cutoff,
-                    nonbonded["reciprocal_extent"],
-                    neutrality=policy.charge_neutrality,
+            case "ewald":
+                terms.append(
+                    EwaldReferencePotential(
+                        nonbonded["ewald_alpha"],
+                        policy.cutoff,
+                        nonbonded["reciprocal_extent"],
+                        neutrality=policy.charge_neutrality,
+                    )
                 )
-            )
-        else:
-            terms.append(
-                ParticleMeshEwaldPotential(
-                    nonbonded["ewald_alpha"],
-                    policy.cutoff,
-                    tuple(nonbonded["grid_shape"]),
-                    neutrality=policy.charge_neutrality,
+            case "pme":
+                terms.append(
+                    ParticleMeshEwaldPotential(
+                        nonbonded["ewald_alpha"],
+                        policy.cutoff,
+                        tuple(nonbonded["grid_shape"]),
+                        neutrality=policy.charge_neutrality,
+                    )
                 )
-            )
+            case unsupported:
+                assert_never(unsupported)
     if not terms:
         raise ValueError("Interchange mapping contains no supported potential terms.")
     source_digest = canonical_source_digest(value)
@@ -481,7 +507,7 @@ def force_field_to_mapping(bundle: AtomisticInterchangeBundle, /) -> dict[str, A
     }
 
 
-def _require_optional(module: str):
+def _require_optional(module: str) -> ModuleType:
     root = module.split(".", maxsplit=1)[0]
     if find_spec(root) is None or (module != root and find_spec(module) is None):
         raise ImportError(f"Atomistic interchange requires optional package {module!r}.")
@@ -489,7 +515,7 @@ def _require_optional(module: str):
 
 
 def from_openff_interchange(
-    interchange, units: AtomisticUnitSystem, /
+    interchange: Any, units: AtomisticUnitSystem, /
 ) -> AtomisticInterchangeBundle:
     _require_optional("openff.interchange")
     openmm_system = interchange.to_openmm(combine_nonbonded_forces=True)
@@ -524,7 +550,9 @@ def from_openff_interchange(
     )
 
 
-def to_openmm_system(bundle: AtomisticInterchangeBundle, /):
+def to_openmm_system(
+    bundle: AtomisticInterchangeBundle, /
+) -> tuple[Any, Any, AtomisticInterchangeReport]:
     if not isinstance(bundle, AtomisticInterchangeBundle):
         raise TypeError("bundle must be AtomisticInterchangeBundle.")
     openmm = _require_optional("openmm")
@@ -842,8 +870,8 @@ def to_openff_interchange(
     bundle: AtomisticInterchangeBundle,
     /,
     *,
-    positions: ArrayLike | None = None,
-):
+    positions: npt.ArrayLike | None = None,
+) -> Any:
     interchange_module = _require_optional("openff.interchange")
     ensure_quantity = _require_optional("openff.units.openmm").ensure_quantity
     openmm = _require_optional("openmm")
@@ -874,8 +902,8 @@ def to_openff_interchange(
 
 @dataclass(frozen=True, slots=True)
 class _OpenMMForceData:
-    electrostatics: bool
-    dispersion: bool
+    electrostatics: NonbondedElectrostatics
+    dispersion: NonbondedDispersion
     cutoff: float | None
     switch_distance: float | None
     reaction_field_dielectric: float | None
@@ -888,7 +916,7 @@ class _OpenMMForceData:
 def _adapt_openmm_forces(
     system: Any,
     openmm: Any,
-    factors: Any,
+    factors: _OpenMMUnitFactors,
     count: int,
     length_factor: float,
     energy_factor: float,
@@ -911,8 +939,8 @@ def _adapt_openmm_forces(
     warnings: list[str],
     /,
 ) -> _OpenMMForceData:
-    electrostatics = "direct"
-    dispersion = "cutoff"
+    electrostatics: NonbondedElectrostatics = "direct"
+    dispersion: NonbondedDispersion = "cutoff"
     cutoff_value = float(cutoff)
     switch_distance = None
     reaction_field_dielectric = 78.5
@@ -969,7 +997,10 @@ def _adapt_openmm_forces(
                     warnings.append("OpenMM automatic Ewald alpha was reconstructed.")
                 if electrostatics == "pme":
                     requested = (int(nx), int(ny), int(nz))
-                    grid_shape = tuple(value if value >= 4 else 32 for value in requested)
+                    grid_x, grid_y, grid_z = (
+                        value if value >= 4 else 32 for value in requested
+                    )
+                    grid_shape = (grid_x, grid_y, grid_z)
                     if any(value < 4 for value in requested):
                         warnings.append("OpenMM automatic PME grid was reconstructed.")
                 else:
@@ -1067,7 +1098,7 @@ def _adapt_openmm_forces(
 
 def _finalize_parmed_bundle(
     structure: Any,
-    atoms: list[Any],
+    atoms: Sequence[Any],
     particle_ids: np.ndarray,
     molecule_ids: np.ndarray,
     masses: np.ndarray,
@@ -1075,21 +1106,21 @@ def _finalize_parmed_bundle(
     atom_type_ids: np.ndarray,
     sigma: np.ndarray,
     epsilon: np.ndarray,
-    bond_routes: np.ndarray,
-    bond_stiffness: np.ndarray,
-    bond_length: np.ndarray,
-    angle_routes: np.ndarray,
-    angle_stiffness: np.ndarray,
-    angle_values: np.ndarray,
-    proper_records: list[Any],
-    improper_records: list[Any],
-    exceptions: dict[Any, Any],
+    bond_routes: list[tuple[Any, Any]],
+    bond_stiffness: list[Any],
+    bond_length: list[Any],
+    angle_routes: list[tuple[Any, Any, Any]],
+    angle_stiffness: list[Any],
+    angle_values: list[Any],
+    proper_records: Mapping[tuple[int, int, int, int], list[Any]],
+    improper_records: Mapping[tuple[int, int, int, int], list[Any]],
+    exceptions: Mapping[tuple[int, int], tuple[float, float]],
     periodic: bool,
-    cell: Any,
+    cell: PeriodicCell | None,
     length_factor: float,
     energy_factor: float,
-    cutoff: Any,
-    units: Any,
+    cutoff: float,
+    units: AtomisticUnitSystem,
     supported: list[str],
     unsupported: list[str],
     /,
@@ -1117,16 +1148,28 @@ def _finalize_parmed_bundle(
         cell=cell,
         name=str(structure.title or "parmed-structure"),
     )
-    terms = []
+    terms: list[AbstractAtomisticEnergyTerm] = []
     if bond_routes:
-        terms.append(HarmonicBondPotential(bond_stiffness, bond_length))
+        terms.append(
+            HarmonicBondPotential(
+                np.asarray(bond_stiffness, dtype=np.float64),
+                np.asarray(bond_length, dtype=np.float64),
+            )
+        )
     if angle_routes:
-        terms.append(HarmonicAnglePotential(angle_stiffness, angle_values))
+        terms.append(
+            HarmonicAnglePotential(
+                np.asarray(angle_stiffness, dtype=np.float64),
+                np.asarray(angle_values, dtype=np.float64),
+            )
+        )
     cutoff_value = float(cutoff) * length_factor
     if np.any(epsilon > 0.0):
         terms.append(LennardJonesPotential(epsilon, sigma, cutoff_value))
 
-    def torsion_term(records, name):
+    def torsion_term(
+        records: Mapping[tuple[int, int, int, int], list[Any]], name: str
+    ) -> GeneralForceFieldTerm | None:
         if not records:
             return None
         maximum = max(len(values) for values in records.values())
@@ -1155,7 +1198,7 @@ def _finalize_parmed_bundle(
     ):
         if term is not None:
             terms.append(term)
-    electrostatics = "pme" if periodic else "direct"
+    electrostatics: NonbondedElectrostatics = "pme" if periodic else "direct"
     if np.any(charges != 0.0):
         if periodic:
             alpha = np.sqrt(-np.log(1.0e-4)) / cutoff_value
@@ -1214,13 +1257,13 @@ def _finalize_parmed_bundle(
 
 
 def from_openmm_system(
-    system,
+    system: Any,
     units: AtomisticUnitSystem,
     /,
     *,
-    atomic_numbers: ArrayLike,
-    positions: ArrayLike | None = None,
-    cell_vectors: ArrayLike | None = None,
+    atomic_numbers: npt.ArrayLike,
+    positions: npt.ArrayLike | None = None,
+    cell_vectors: npt.ArrayLike | None = None,
     cutoff: float = 10.0,
     source_id: str = "openmm-system",
 ) -> AtomisticInterchangeBundle:
@@ -1403,8 +1446,12 @@ def from_openmm_system(
     return AtomisticInterchangeBundle(bundle.force_field, report)
 
 
+def _ordered_pair(left: int, right: int, /) -> tuple[int, int]:
+    return (right, left) if right < left else (left, right)
+
+
 def from_parmed_structure(
-    structure, units: AtomisticUnitSystem, /, *, cutoff: float = 10.0
+    structure: Any, units: AtomisticUnitSystem, /, *, cutoff: float = 10.0
 ) -> AtomisticInterchangeBundle:
     parmed = _require_optional("parmed")
     openmm = _require_optional("openmm")
@@ -1489,9 +1536,9 @@ def from_parmed_structure(
 
     exceptions: dict[tuple[int, int], tuple[float, float]] = {}
     for left, right in bond_routes:
-        exceptions[tuple(sorted((left, right)))] = (0.0, 0.0)
+        exceptions[_ordered_pair(left, right)] = (0.0, 0.0)
     for left, _, right in angle_routes:
-        exceptions[tuple(sorted((left, right)))] = (0.0, 0.0)
+        exceptions[_ordered_pair(left, right)] = (0.0, 0.0)
     for route, values in proper_records.items():
         scales = tuple(
             (
@@ -1502,7 +1549,7 @@ def from_parmed_structure(
         )
         if any(scale != scales[0] for scale in scales[1:]):
             unsupported.append("inconsistent multi-term 1-4 scales")
-        exceptions[tuple(sorted((route[0], route[3])))] = scales[0]
+        exceptions[_ordered_pair(route[0], route[3])] = scales[0]
     for adjustment in structure.adjusts:
         left, right = adjustment.atom1.idx, adjustment.atom2.idx
         left_type, right_type = atom_type_ids[left], atom_type_ids[right]
@@ -1516,7 +1563,7 @@ def from_parmed_structure(
             if base_epsilon == 0.0
             else adjustment.type.epsilon * energy_factor / base_epsilon
         )
-        exceptions[tuple(sorted((left, right)))] = (
+        exceptions[_ordered_pair(left, right)] = (
             lj_scale,
             float(adjustment.type.chgscale),
         )

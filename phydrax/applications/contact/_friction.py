@@ -8,7 +8,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -53,7 +55,7 @@ class LaggedCoulombFrictionPlan(StrictModule, NonTrainableState):
         *,
         maximum_lag_iterations: int = 4,
         lag_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         coefficient_ = jnp.asarray(coefficient)
         threshold = float(velocity_threshold)
         iterations = int(maximum_lag_iterations)
@@ -132,7 +134,7 @@ class PreparedLaggedCoulombFriction(StrictModule, NonTrainableState):
         scene: PreparedCollisionScene,
         contact: PreparedConvergentContactPotential,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, LaggedCoulombFrictionPlan):
             raise TypeError("plan must be LaggedCoulombFrictionPlan.")
         if not isinstance(scene, PreparedCollisionScene):

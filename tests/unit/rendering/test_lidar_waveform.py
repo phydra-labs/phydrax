@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.random as jr
 import numpy as np
@@ -6,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def _surface_and_rays():
+def _surface_and_rays() -> Any:
     vertices = np.asarray(
         ((-1, -1, 2), (1, -1, 2), (0, 1, 2), (0, 0, 4)), dtype="float64"
     )
@@ -42,14 +44,14 @@ def _surface_and_rays():
     return vertices, rays, prepared
 
 
-def _waveform_support(rays):
+def _waveform_support(rays: Any) -> Any:
     axis = phx.measurement.SampleTimeAxis(
         "delay", np.linspace(0.0, 6.0, 121), phx.units.SECOND
     )
     return phx.measurement.WaveformSupport(rays, axis)
 
 
-def _pulse():
+def _pulse() -> Any:
     return phx.measurement.PulseResponse(
         np.asarray((-0.1, 0.0, 0.1)),
         np.asarray((0.0, 1.0, 0.0)),
@@ -57,11 +59,11 @@ def _pulse():
     )
 
 
-def _speed_unit():
+def _speed_unit() -> Any:
     return phx.units.derived_unit("m/s", ((phx.units.METER, 1), (phx.units.SECOND, -1)))
 
 
-def test_hard_surface_waveform_and_return_extraction_recover_delay():
+def test_hard_surface_waveform_and_return_extraction_recover_delay() -> None:
     vertices, rays, surface = _surface_and_rays()
     support = _waveform_support(rays)
     pulse = _pulse()
@@ -83,7 +85,7 @@ def test_hard_surface_waveform_and_return_extraction_recover_delay():
     np.testing.assert_allclose(returns.delays[0, 0], 2.0, atol=0.05)
 
 
-def test_atmosphere_multipath_and_multiple_scattering_are_time_resolved():
+def test_atmosphere_multipath_and_multiple_scattering_are_time_resolved() -> None:
     _, rays, _ = _surface_and_rays()
     support = _waveform_support(rays)
     pulse = _pulse()
@@ -127,7 +129,7 @@ def test_atmosphere_multipath_and_multiple_scattering_are_time_resolved():
     assert np.sum(np.asarray(scattered.values)) > 0.0
 
 
-def test_waveform_plans_refuse_incompatible_units_and_invalid_capacities():
+def test_waveform_plans_refuse_incompatible_units_and_invalid_capacities() -> None:
     _, rays, _ = _surface_and_rays()
     support = _waveform_support(rays)
     pulse = _pulse()
@@ -146,3 +148,32 @@ def test_waveform_plans_refuse_incompatible_units_and_invalid_capacities():
             wave_speed_unit=_speed_unit(),
             path_capacity=0,
         )
+
+
+def test_lossless_waveform_plans_report_dropped_energy_as_array() -> None:
+    _, rays, _ = _surface_and_rays()
+    support = _waveform_support(rays)
+    atmosphere = phx.rendering.AtmosphericLidarPlan(
+        support,
+        _pulse(),
+        np.asarray(((1.0, 2.0, 3.0),)),
+        np.ones((1, 3)),
+        wave_speed=2.0,
+        range_unit=phx.units.METER,
+        wave_speed_unit=_speed_unit(),
+    ).evaluate(np.zeros((1, 3)), np.ones((1, 3)))
+    scattered = phx.rendering.TimeResolvedMultipleScatteringPlan(
+        support,
+        packet_count=16,
+        event_count=2,
+        extinction=1.0,
+        scattering_albedo=0.8,
+        wave_speed=2.0,
+        distance_unit=phx.units.METER,
+        wave_speed_unit=_speed_unit(),
+    ).evaluate(jr.key(0))
+
+    for evidence in (atmosphere.evidence, scattered.evidence):
+        assert evidence.dropped_energy.shape == ()
+        assert evidence.dropped_energy.dtype == evidence.received_energy.dtype
+        assert float(evidence.dropped_energy) == 0.0

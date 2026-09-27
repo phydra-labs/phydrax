@@ -8,15 +8,17 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ...dynamics import TimeGrid
 from ...linalg import (
@@ -35,6 +37,51 @@ from ...linalg import (
     TolerancePolicy,
 )
 from .._lqr import AffineFeedbackPolicy, QuadraticValueFunction
+
+
+_BackwardCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+_BackwardStage: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+_BackwardOutput: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 
 class MultiplicativeLQStateFeedbackStatus(IntEnum):
@@ -164,14 +211,14 @@ def _normalized_combined_residual(
     return jnp.sqrt(residual_square) / (1.0 + jnp.sqrt(reference_square))
 
 
-def _nanmax(value: Array, axis, /) -> Array:
+def _nanmax(value: Array, axis: int | tuple[int, ...], /) -> Array:
     available = ~jnp.isnan(value)
     replaced = jnp.where(available, value, -jnp.inf)
     maximum = jnp.max(replaced, axis=axis)
     return jnp.where(jnp.any(available, axis=axis), maximum, jnp.nan)
 
 
-def _nanmin(value: Array, axis, /) -> Array:
+def _nanmin(value: Array, axis: int | tuple[int, ...], /) -> Array:
     available = ~jnp.isnan(value)
     replaced = jnp.where(available, value, jnp.inf)
     minimum = jnp.min(replaced, axis=axis)
@@ -196,7 +243,7 @@ def _finite_inputs(
     terminal_linear: ArrayLike | None,
     terminal_constant: ArrayLike,
     /,
-):
+) -> tuple[tuple[Array, ...], tuple[int, ...], int, int, int, int]:
     a = _real_array(dynamics_matrices, "dynamics_matrices")
     if a.ndim < 3 or a.shape[-1] != a.shape[-2]:
         raise ValueError(
@@ -559,7 +606,9 @@ def finite_horizon_multiplicative_lq_state_feedback(
         to_time_major(covariance_minimum, 0),
     )
 
-    def step(carry, stage):
+    def step(
+        carry: _BackwardCarry, stage: _BackwardStage
+    ) -> tuple[_BackwardCarry, _BackwardOutput]:
         (
             p_next,
             linear_next,

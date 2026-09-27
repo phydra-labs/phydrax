@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 import abc
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -41,7 +42,7 @@ class ReferencePhysicalRepresentation(StrictModule, NonTrainableState):
         geometry_id: str,
         topology_id: str,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(physical_to_reference, FieldTransfer) or not isinstance(
             reference_to_physical, FieldTransfer
         ):
@@ -111,7 +112,7 @@ class ReducedBasisAtlasArtifact(StrictModule, NonTrainableState):
         *,
         parameter_contract_id: str,
         maximum_cycle_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         charts = tuple(bases)
         if not charts:
             raise ValueError("A basis atlas requires at least one chart.")
@@ -229,7 +230,7 @@ class QuadraticStateChart(AbstractReferenceStateChart):
         *,
         support_id: str,
         geometry_id: str,
-    ):
+    ) -> None:
         if not isinstance(latent_space, AbstractVectorSpace) or not isinstance(
             reference_space, AbstractVectorSpace
         ):
@@ -302,7 +303,7 @@ class QuadraticStateChart(AbstractReferenceStateChart):
 class CoordinateConditionedStateChart(AbstractReferenceStateChart):
     """Fixed decoder queried on one declared reference support."""
 
-    decoder: object = eqx.field(static=True)
+    decoder: Callable[[Array, Array], ArrayLike] = eqx.field(static=True)
     query_points: Array
     latent_space: AbstractVectorSpace
     reference_space: AbstractVectorSpace
@@ -313,7 +314,7 @@ class CoordinateConditionedStateChart(AbstractReferenceStateChart):
 
     def __init__(
         self,
-        decoder,
+        decoder: Callable[[Array, Array], ArrayLike],
         query_points: ArrayLike,
         latent_space: AbstractVectorSpace,
         reference_space: AbstractVectorSpace,
@@ -322,7 +323,7 @@ class CoordinateConditionedStateChart(AbstractReferenceStateChart):
         decoder_id: str,
         support_id: str,
         geometry_id: str,
-    ):
+    ) -> None:
         if not callable(decoder):
             raise TypeError("decoder must be callable.")
         if not isinstance(latent_space, AbstractVectorSpace) or not isinstance(

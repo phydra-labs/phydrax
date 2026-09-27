@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
+from typing import Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax.ein import contract
 
@@ -17,8 +18,13 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import inverse_small_linear, SmallLinearSolvePlan
+from ...typing import parse
 from .._periodic_cell import PeriodicCell
 from ._pairwise import particle_pair_geometry
+
+
+if TYPE_CHECKING:
+    from ._dem import DEMEvaluation, DEMRuntimeState, PreparedSoftSphereDEMDynamics
 
 
 class DEMPeriodicCellState(StrictModule):
@@ -55,7 +61,7 @@ class PeriodicNeighborhoodEnvelope(StrictModule, NonTrainableState):
         minimum_singular_value: float,
         minimum_lattice_height: float,
         maximum_deformation_norm: float,
-    ):
+    ) -> None:
         vectors = np.asarray(reference_vectors, dtype=np.float64)
         if (
             vectors.ndim != 2
@@ -161,14 +167,13 @@ class DEMBulkStressPlan(StrictModule, NonTrainableState):
         include_barrier_virial: bool = False,
         include_body_force_moment: bool = False,
         frame: DEMBulkStressFrame = "cell_comoving",
-    ):
+    ) -> None:
         origin_ = np.asarray(origin, dtype=np.float64)
         if origin_.ndim != 1 or origin_.size not in (2, 3):
             raise ValueError("DEMBulkStressPlan origin must be a 2-D or 3-D vector.")
         if np.any(~np.isfinite(origin_)):
             raise ValueError("DEMBulkStressPlan origin must be finite.")
-        if frame not in ("cell_comoving", "laboratory"):
-            raise ValueError("frame must be 'cell_comoving' or 'laboratory'.")
+        frame = parse(frame, DEMBulkStressFrame, "frame")
         if not any(
             (
                 include_contact,
@@ -340,7 +345,7 @@ class DEMPeriodicCellControlPlan(StrictModule, NonTrainableState):
         maximum_strain_increment: float = 0.02,
         maximum_condition_number: float = 1.5,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         rate = np.asarray(prescribed_strain_rate, dtype=np.float64)
         if (
             rate.ndim != 2
@@ -424,7 +429,7 @@ class DEMPeriodicCellControlPlan(StrictModule, NonTrainableState):
     def ambient_dimension(self) -> int:
         return self.prescribed_strain_rate.shape[0]
 
-    def initialize(self, cell: PeriodicCell, dtype, /) -> DEMPeriodicCellState:
+    def initialize(self, cell: PeriodicCell, dtype: DTypeLike, /) -> DEMPeriodicCellState:
         if not isinstance(cell, PeriodicCell) or not cell.fully_periodic:
             raise ValueError(
                 "Periodic DEM cell control requires a fully periodic PeriodicCell."
@@ -544,7 +549,12 @@ class DEMPeriodicCellControlPlan(StrictModule, NonTrainableState):
         )
 
 
-def dem_bulk_stress(dynamics, state, evaluation, /) -> DEMBulkStress:
+def dem_bulk_stress(
+    dynamics: PreparedSoftSphereDEMDynamics,
+    state: DEMRuntimeState,
+    evaluation: DEMEvaluation,
+    /,
+) -> DEMBulkStress:
     cell_state = state.periodic_cell
     if cell_state is None:
         raise ValueError("DEM state has no deforming periodic cell.")

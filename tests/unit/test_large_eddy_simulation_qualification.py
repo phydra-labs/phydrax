@@ -8,6 +8,7 @@ import copy
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 import pytest
@@ -42,18 +43,18 @@ _CAMPAIGN = _ROOT / "benchmarks" / "large_eddy_simulation_qualification_campaign
 _MATRIX = _ROOT / "benchmarks" / "large_eddy_simulation_qualification_matrix.json"
 
 
-def _loaded():
+def _loaded() -> Any:
     matrix = load_matrix(_MATRIX)
     return load_campaign(_CAMPAIGN, matrix), matrix
 
 
-def _readdress_campaign(campaign):
+def _readdress_campaign(campaign: Any) -> None:
     campaign["campaign_id"] = content_address(
         {name: value for name, value in campaign.items() if name != "campaign_id"}
     )
 
 
-def test_campaign_and_matrix_ids_are_deterministic_content_addresses():
+def test_campaign_and_matrix_ids_are_deterministic_content_addresses() -> None:
     campaign, matrix = _loaded()
     second_campaign, second_matrix = _loaded()
     reordered = dict(reversed(tuple(campaign.items())))
@@ -68,7 +69,7 @@ def test_campaign_and_matrix_ids_are_deterministic_content_addresses():
     assert "schema_version" not in canonical_json(matrix.to_record())
 
 
-def test_every_route_and_static_formula_has_an_exact_separate_support_tuple():
+def test_every_route_and_static_formula_has_an_exact_separate_support_tuple() -> None:
     campaign, _ = _loaded()
     cases = tuple(campaign["cases"])
     supports = tuple(
@@ -131,7 +132,7 @@ def test_every_route_and_static_formula_has_an_exact_separate_support_tuple():
     assert len(set(final_routes.values())) == len(final_routes)
 
 
-def test_restart_tree_comparison_handles_bool_integer_and_numeric_leaves():
+def test_restart_tree_comparison_handles_bool_integer_and_numeric_leaves() -> None:
     state = {
         "accepted": jnp.asarray((True, False)),
         "steps": jnp.asarray(2, dtype=jnp.int32),
@@ -150,7 +151,7 @@ def test_restart_tree_comparison_handles_bool_integer_and_numeric_leaves():
     ) == pytest.approx(0.25)
 
 
-def test_ksgs_campaign_fields_bind_the_exact_coefficient_constructor():
+def test_ksgs_campaign_fields_bind_the_exact_coefficient_constructor() -> None:
     campaign, _ = _loaded()
     cases = {
         case["name"]: case
@@ -186,7 +187,7 @@ def test_ksgs_campaign_fields_bind_the_exact_coefficient_constructor():
     )
 
 
-def test_periodic_guard_and_unstructured_energy_gates_are_preregistered():
+def test_periodic_guard_and_unstructured_energy_gates_are_preregistered() -> None:
     campaign, _ = _loaded()
     static_cases = [
         case for case in campaign["cases"] if case["producer"] == "periodic-static"
@@ -238,7 +239,7 @@ def test_periodic_guard_and_unstructured_energy_gates_are_preregistered():
     } <= {metric["name"] for metric in unstructured["metrics"]}
 
 
-def test_unstructured_pressure_measures_energy_and_viscosity_owner():
+def test_unstructured_pressure_measures_energy_and_viscosity_owner() -> None:
     campaign, _ = _loaded()
     case = next(
         value
@@ -276,8 +277,8 @@ def test_unstructured_pressure_measures_energy_and_viscosity_owner():
     (("passed", 0), ("failed", 1), ("inconclusive", 2)),
 )
 def test_cli_exit_code_tracks_coverage_after_artifact_emission(
-    outcome, expected_code, monkeypatch, tmp_path, capsys
-):
+    outcome: Any, expected_code: Any, monkeypatch: Any, tmp_path: Any, capsys: Any
+) -> None:
     matrix = object()
     campaign = {"campaign_id": "mock-campaign"}
     candidate = {
@@ -295,7 +296,7 @@ def test_cli_exit_code_tracks_coverage_after_artifact_emission(
         lambda _path, supplied: campaign if supplied is matrix else None,
     )
 
-    def execute(supplied_campaign, supplied_matrix, destination):
+    def execute(supplied_campaign: Any, supplied_matrix: Any, destination: Any) -> Any:
         assert supplied_campaign is campaign
         assert supplied_matrix is matrix
         destination.mkdir()
@@ -319,7 +320,7 @@ def test_cli_exit_code_tracks_coverage_after_artifact_emission(
     assert json.loads(capsys.readouterr().out) == candidate
 
 
-def test_active_dynamic_and_learned_backends_measure_nonzero_actions():
+def test_active_dynamic_and_learned_backends_measure_nonzero_actions() -> None:
     campaign, _ = _loaded()
     cases = {case["name"]: case for case in campaign["cases"]}
 
@@ -334,7 +335,7 @@ def test_active_dynamic_and_learned_backends_measure_nonzero_actions():
         assert measurements["energy_policy_failure"] == 0.0
 
 
-def test_channel_and_frozen_routes_use_deliberately_active_states():
+def test_channel_and_frozen_routes_use_deliberately_active_states() -> None:
     campaign, _ = _loaded()
     cases = {case["name"]: case for case in campaign["cases"]}
 
@@ -349,7 +350,7 @@ def test_channel_and_frozen_routes_use_deliberately_active_states():
     assert sbdf2["frozen_les_action_magnitude"] >= 1.0e-12
 
 
-def test_every_nonzero_active_route_preregisters_an_activity_predicate():
+def test_every_nonzero_active_route_preregisters_an_activity_predicate() -> None:
     campaign, _ = _loaded()
     by_name = {case["name"]: case for case in campaign["cases"]}
     activity = {
@@ -384,7 +385,7 @@ def test_every_nonzero_active_route_preregisters_an_activity_predicate():
         assert metric_name in {metric["name"] for metric in by_name[case_name]["metrics"]}
 
 
-def test_threshold_changes_cannot_reuse_a_preregistered_criterion():
+def test_threshold_changes_cannot_reuse_a_preregistered_criterion() -> None:
     campaign, matrix = _loaded()
     changed = copy.deepcopy(campaign)
     case = changed["cases"][0]
@@ -398,7 +399,7 @@ def test_threshold_changes_cannot_reuse_a_preregistered_criterion():
         validate_campaign(changed, matrix)
 
 
-def test_missing_and_rightless_references_are_refused_before_execution():
+def test_missing_and_rightless_references_are_refused_before_execution() -> None:
     with pytest.raises(ValueError, match="requires a reference manifest"):
         admit_reference(None, required=True)
 
@@ -433,7 +434,7 @@ def test_missing_and_rightless_references_are_refused_before_execution():
         admit_reference(rightless, required=True)
 
 
-def test_matrix_refuses_post_hoc_predicates_not_owned_by_a_case():
+def test_matrix_refuses_post_hoc_predicates_not_owned_by_a_case() -> None:
     campaign, matrix = _loaded()
     predicates = {name: dict(requirements) for name, requirements in matrix.predicates}
     predicates["posthoc.unassigned"] = dict(next(iter(predicates.values())))
@@ -446,7 +447,7 @@ def test_matrix_refuses_post_hoc_predicates_not_owned_by_a_case():
         validate_campaign(changed_campaign, changed_matrix)
 
 
-def test_unstructured_vector_residuals_are_reduced_to_preregistered_scalars():
+def test_unstructured_vector_residuals_are_reduced_to_preregistered_scalars() -> None:
     campaign, _ = _loaded()
     case = next(
         value
@@ -466,7 +467,7 @@ def test_unstructured_vector_residuals_are_reduced_to_preregistered_scalars():
     assert measurements["algebraic_energy_status_failure"] == 0.0
 
 
-def test_immersed_wall_traction_and_normal_only_trajectory_are_measured():
+def test_immersed_wall_traction_and_normal_only_trajectory_are_measured() -> None:
     campaign, _ = _loaded()
     case = next(value for value in campaign["cases"] if value["producer"] == "immersed")
 
@@ -481,7 +482,7 @@ def test_immersed_wall_traction_and_normal_only_trajectory_are_measured():
     assert execution["sbdf2_evidence"] == "not-claimed"
 
 
-def test_immersed_sbdf2_measures_extrapolated_nonzero_sgs_action():
+def test_immersed_sbdf2_measures_extrapolated_nonzero_sgs_action() -> None:
     campaign, _ = _loaded()
     case = next(
         value for value in campaign["cases"] if value["producer"] == "immersed-sbdf2"
@@ -498,7 +499,7 @@ def test_immersed_sbdf2_measures_extrapolated_nonzero_sgs_action():
     assert execution["constraint_mode"] == "full-vector"
 
 
-def test_executed_candidate_remains_unsigned_and_unreleased(tmp_path):
+def test_executed_candidate_remains_unsigned_and_unreleased(tmp_path: Any) -> None:
     campaign, matrix = _loaded()
     focused = copy.deepcopy(campaign)
     focused["cases"] = [case for case in focused["cases"] if case["producer"] == "favre"]

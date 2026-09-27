@@ -2,12 +2,14 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import itertools
 import os
 import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -80,17 +82,51 @@ def _kuhn_grid(size: int) -> CellMesh:
     return CellMesh.from_tetrahedra(points, cells)
 
 
-def _certified(mesh: CellMesh):
+def _certified(mesh: CellMesh) -> Any:
     return phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
 
-def _policy(route, **options):
+def test_masked_simplex_structural_contract_refuses_transformed_layout() -> None:
+    prepared = prepare_adaptive_simplex(
+        _certified(_triangle_grid(1, 1)),
+        policy=_policy(MeshAdaptationRoute.DEVICE_BISECTION),
+    )
+    mesh = prepared.state.mesh
+    phx.typing.validate(mesh)
+
+    widened = eqx.tree_at(
+        lambda value: value.coordinates,
+        mesh,
+        jnp.concatenate((mesh.coordinates, mesh.coordinates[:1]), axis=0),
+    )
+    with pytest.raises(ValueError, match="coordinates"):
+        phx.typing.validate(widened)
+
+    wrong_dtype = eqx.tree_at(
+        lambda value: value.cells,
+        mesh,
+        mesh.cells.astype(jnp.float64),
+    )
+    with pytest.raises(TypeError, match="cells"):
+        phx.typing.validate(wrong_dtype)
+
+
+def _policy(route: Any, **options: Any) -> Any:
     if route is MeshAdaptationRoute.DEVICE_BISECTION:
         options.setdefault("device_policy", AdaptiveSimplexPolicy())
     return MeshAdaptationPolicy(route, **options)
 
 
-def _adapt(route, source, refine=(), coarsen=(), /, *, hierarchy=None, **options):
+def _adapt(
+    route: Any,
+    source: Any,
+    refine: Any = (),
+    coarsen: Any = (),
+    /,
+    *,
+    hierarchy: Any = None,
+    **options: Any,
+) -> Any:
     request = MarkedMeshAdaptation(
         np.asarray(refine, dtype=np.int64),
         np.asarray(coarsen, dtype=np.int64),
@@ -109,7 +145,7 @@ def _cell_ids(mesh: CellMesh) -> np.ndarray:
     return np.concatenate(tuple(np.asarray(block.global_ids) for block in mesh.blocks))
 
 
-def _assert_same_target(host, device) -> None:
+def _assert_same_target(host: Any, device: Any) -> None:
     first, second = host.target.mesh, device.target.mesh
     assert host.status is device.status
     assert first.topology_id == second.topology_id
@@ -155,7 +191,7 @@ def _corner_cells(mesh: CellMesh) -> np.ndarray:
     return np.sort(_cell_ids(mesh)[np.any(_cells(mesh) == corner, axis=1)])
 
 
-def _guarded_diagonal(source):
+def _guarded_diagonal(source: Any) -> Any:
     """Protected-scope of one interior diagonal and the cells holding it."""
 
     mesh = source.mesh
@@ -182,7 +218,7 @@ def _guarded_diagonal(source):
     return scope, through
 
 
-def _moved_vertex(state, old, new):
+def _moved_vertex(state: Any, old: Any, new: Any) -> Any:
     coordinates = np.asarray(state.mesh.coordinates).copy()
     coordinates[np.all(coordinates == np.asarray(old), axis=1)] = new
     return eqx.tree_at(
@@ -190,7 +226,7 @@ def _moved_vertex(state, old, new):
     )
 
 
-def _assert_same_arrays(first, second) -> None:
+def _assert_same_arrays(first: Any, second: Any) -> None:
     before, after = jax.tree_util.tree_leaves(first), jax.tree_util.tree_leaves(second)
     assert all(
         np.array_equal(left, right) for left, right in zip(before, after, strict=True)
@@ -200,7 +236,7 @@ def _assert_same_arrays(first, second) -> None:
 @pytest.mark.parametrize(
     "mesh", [_triangle_grid(4, 4), _kuhn_grid(2)], ids=["triangles", "tetrahedra"]
 )
-def test_device_bisection_commits_the_host_meshes(mesh):
+def test_device_bisection_commits_the_host_meshes(mesh: Any) -> None:
     host_route = MeshAdaptationRoute.NATIVE_BISECTION
     device_route = MeshAdaptationRoute.DEVICE_BISECTION
     source = _certified(mesh)
@@ -232,7 +268,7 @@ def test_device_bisection_commits_the_host_meshes(mesh):
     assert device.evidence.coarsened_vertices == host.evidence.coarsened_vertices > 0
 
 
-def test_protected_marks_are_rejected_like_the_host_route():
+def test_protected_marks_are_rejected_like_the_host_route() -> None:
     source = _certified(_triangle_grid(4, 4))
     scope, through = _guarded_diagonal(source)
     marks = np.union1d(through, np.setdiff1d(_cell_ids(source.mesh), through)[[0, -1]])
@@ -261,7 +297,7 @@ def test_protected_marks_are_rejected_like_the_host_route():
         )
 
 
-def test_uniform_refinement_start_matches_the_host_route():
+def test_uniform_refinement_start_matches_the_host_route() -> None:
     points = np.asarray([(0.0, 0.0), (2.0, 0.0), (1.0, 0.5), (1.0, -3.0)])
     source = _certified(
         CellMesh.from_triangles(points, np.asarray([(0, 1, 2), (0, 3, 1)]))
@@ -274,7 +310,7 @@ def test_uniform_refinement_start_matches_the_host_route():
     _assert_conforming(device.target.mesh, 3.5)
 
 
-def test_recreated_cells_inside_one_epoch_commit_the_host_target():
+def test_recreated_cells_inside_one_epoch_commit_the_host_target() -> None:
     """Refine, coarsen back, and refine again before one commit."""
 
     source = _certified(_triangle_grid(3, 3))
@@ -305,16 +341,21 @@ def test_recreated_cells_inside_one_epoch_commit_the_host_target():
         np.asarray(device.target.mesh.coordinates),
         np.asarray(host.target.mesh.coordinates),
     )
+    # ty: ignore[unresolved-attribute]
     assert device.hierarchy.hierarchy_id == host.hierarchy.hierarchy_id
     slope = np.asarray((0.75, -1.25))
     before = np.asarray(source.mesh.coordinates) @ slope + 0.5
     after = np.asarray(device.target.mesh.coordinates) @ slope + 0.5
     np.testing.assert_allclose(
-        np.asarray(device.transfer.apply(before)), after, rtol=0.0, atol=1e-13
+        # ty: ignore[unresolved-attribute]
+        np.asarray(device.transfer.apply(before)),
+        after,
+        rtol=0.0,
+        atol=1e-13,
     )
 
 
-def test_repeated_device_refinement_stays_conforming():
+def test_repeated_device_refinement_stays_conforming() -> None:
     source = _certified(_kuhn_grid(1))
     prepared = prepare_adaptive_simplex(
         source, policy=_policy(MeshAdaptationRoute.DEVICE_BISECTION)
@@ -341,6 +382,7 @@ def test_repeated_device_refinement_stays_conforming():
         neighbors[partner // width, partner % width], owner * width + local
     )
     result = commit_adaptive_simplex(prepared, state)
+    # ty: ignore[unresolved-attribute]
     assert result.evidence.maximum_generation >= 4
     _assert_conforming(result.target.mesh, 1.0)
     cells = _cells(result.target.mesh)
@@ -352,7 +394,7 @@ def test_repeated_device_refinement_stays_conforming():
     assert boundary == np.count_nonzero(counts == 1)
 
 
-def _capacity_failure(source):
+def _capacity_failure(source: Any) -> Any:
     policy = _policy(
         MeshAdaptationRoute.DEVICE_BISECTION,
         device_policy=AdaptiveSimplexPolicy(vertex_capacity=10, cell_capacity=12),
@@ -361,14 +403,14 @@ def _capacity_failure(source):
     return prepared, prepared.state, prepared.state.mesh.cell_active
 
 
-def _closure_failure(source):
+def _closure_failure(source: Any) -> Any:
     policy = _policy(MeshAdaptationRoute.DEVICE_BISECTION, maximum_closure_iterations=1)
     prepared = prepare_adaptive_simplex(source, policy=policy)
     marks = prepared.cell_marks(np.sort(_cell_ids(source.mesh))[:1])
     return prepared, prepared.state, marks
 
 
-def _geometry_failure(source):
+def _geometry_failure(source: Any) -> Any:
     prepared = prepare_adaptive_simplex(
         source, policy=_policy(MeshAdaptationRoute.DEVICE_BISECTION)
     )
@@ -399,8 +441,8 @@ def _geometry_failure(source):
     ids=["capacity", "closure", "geometry"],
 )
 def test_terminal_failure_is_recorded_refuses_later_calls_and_rejects_commit(
-    failure, flag, category
-):
+    failure: Any, flag: Any, category: Any
+) -> None:
     source = _certified(_triangle_grid(2, 2))
     prepared, state, marks = failure(source)
     layout = prepared.layout
@@ -425,7 +467,7 @@ def test_terminal_failure_is_recorded_refuses_later_calls_and_rejects_commit(
     assert rejection.value.category is category
 
 
-def test_protected_conflict_on_parts_rejects_the_epoch():
+def test_protected_conflict_on_parts_rejects_the_epoch() -> None:
     source = _certified(_triangle_grid(4, 4))
     scope, _ = _guarded_diagonal(source)
     partition = MeshPartitionPolicy(MeshPartitionKind.MORTON, 1)
@@ -471,7 +513,9 @@ def test_protected_conflict_on_parts_rejects_the_epoch():
     ],
     ids=["positive", "collinear"],
 )
-def test_uncertain_device_orientation_is_resolved_exactly_at_commit(offset, certified):
+def test_uncertain_device_orientation_is_resolved_exactly_at_commit(
+    offset: Any, certified: Any
+) -> None:
     source = _certified(_triangle_grid(2, 2))
     prepared = prepare_adaptive_simplex(
         source, policy=_policy(MeshAdaptationRoute.DEVICE_BISECTION)
@@ -498,7 +542,7 @@ def test_uncertain_device_orientation_is_resolved_exactly_at_commit(offset, cert
     assert rejection.value.category is MeshingFailureCategory.QUALITY_REJECTED
 
 
-def test_pass_limited_coarsening_commits_an_unconverged_pass_limit():
+def test_pass_limited_coarsening_commits_an_unconverged_pass_limit() -> None:
     source = _certified(_triangle_grid(2, 2))
     policy = _policy(
         MeshAdaptationRoute.DEVICE_BISECTION,
@@ -519,11 +563,12 @@ def test_pass_limited_coarsening_commits_an_unconverged_pass_limit():
     result = commit_adaptive_simplex(prepared, coarsened.state)
     assert result.status is MeshAdaptationStatus.PASS_LIMIT
     assert result.status.converged is False
+    # ty: ignore[unresolved-attribute]
     assert 0 < result.evidence.coarsened_vertices < result.evidence.created_vertices
     _assert_conforming(result.target.mesh, 1.0)
 
 
-def _compact_poisson(mesh: CellMesh, source_term):
+def _compact_poisson(mesh: CellMesh, source_term: Any) -> Any:
     kind = mesh.blocks[0].cell_kind
     field = phx.discretization.FiniteElementFieldSpec(
         "u", phx.discretization.lagrange_element(kind, 1)
@@ -552,8 +597,8 @@ def _compact_poisson(mesh: CellMesh, source_term):
     return compiled.expand(phx.linalg.solve(system, rhs).value)
 
 
-def test_masked_poisson_on_the_device_state_equals_the_committed_solve():
-    def source_term(points):
+def test_masked_poisson_on_the_device_state_equals_the_committed_solve() -> None:
+    def source_term(points: Any) -> Any:
         return 1.0 + points[..., 0] + 2.0 * points[..., 1]
 
     source = _certified(_triangle_grid(3, 3))
@@ -593,7 +638,7 @@ def test_masked_poisson_on_the_device_state_equals_the_committed_solve():
 @pytest.mark.parametrize(
     "mesh", [_triangle_grid(3, 3), _kuhn_grid(1)], ids=["triangles", "tetrahedra"]
 )
-def test_masked_finite_volume_conserves_on_the_device_state(mesh):
+def test_masked_finite_volume_conserves_on_the_device_state(mesh: Any) -> None:
     source = _certified(mesh)
     prepared = prepare_adaptive_simplex(
         source, policy=_policy(MeshAdaptationRoute.DEVICE_BISECTION)
@@ -773,7 +818,7 @@ _PARTS_SCRIPT = textwrap.dedent(
 )
 
 
-def test_partitioned_epochs_commit_the_host_mesh_and_fail_collectively():
+def test_partitioned_epochs_commit_the_host_mesh_and_fail_collectively() -> None:
     environment = dict(os.environ)
     environment["XLA_FLAGS"] = "--xla_force_host_platform_device_count=4"
     environment["PYTHONPATH"] = str(Path(phx.__file__).resolve().parents[1])

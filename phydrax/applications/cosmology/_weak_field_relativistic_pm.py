@@ -12,7 +12,7 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -33,6 +33,7 @@ from ...discretization.spectral._incompressible import PeriodicLerayProjector
 from ...discretization.spectral._space import TensorSpectralDiscretization
 from ...linalg import HermitianSpectrum
 from ...metrix import StressEnergyProjection
+from ...typing import parse
 
 
 WeakFieldDifferentiation: TypeAlias = Literal["piecewise-fixed-route", "none"]
@@ -88,7 +89,7 @@ class WeakFieldRelativisticPMPolicy(StrictModule, NonTrainableState):
         maximum_grid_points: int = 16_777_216,
         maximum_workspace_bytes: int = 8 * 1024**3,
         differentiation: WeakFieldDifferentiation = "piecewise-fixed-route",
-    ):
+    ) -> None:
         values = (
             float(maximum_scalar_metric_fraction),
             float(maximum_vector_metric_fraction),
@@ -114,8 +115,9 @@ class WeakFieldRelativisticPMPolicy(StrictModule, NonTrainableState):
         workspace = int(maximum_workspace_bytes)
         if points <= 0 or workspace <= 0:
             raise ValueError("Weak-field resource limits must be positive integers.")
-        if differentiation not in ("piecewise-fixed-route", "none"):
-            raise ValueError("Unknown weak-field differentiation contract.")
+        differentiation = parse(
+            differentiation, WeakFieldDifferentiation, "differentiation"
+        )
         (
             self.maximum_scalar_metric_fraction,
             self.maximum_vector_metric_fraction,
@@ -284,7 +286,7 @@ class WeakFieldRelativisticPMPlan(StrictModule, NonTrainableState):
         gravitational_constant: float | None = None,
         scalar_only: bool = False,
         policy: WeakFieldRelativisticPMPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(stress_transfer, RelativisticStressDepositPlan):
             raise TypeError("stress_transfer must be RelativisticStressDepositPlan.")
         if not isinstance(spectral, TensorSpectralDiscretization):

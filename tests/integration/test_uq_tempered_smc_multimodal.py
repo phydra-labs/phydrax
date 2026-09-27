@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def test_tempered_smc_preserves_both_modes_of_symmetric_inverse_posterior():
+def test_tempered_smc_preserves_both_modes_of_symmetric_inverse_posterior() -> None:
     prior_scale = 3.0
     likelihood_scale = 0.3
     mode_location = 2.0
@@ -18,7 +21,7 @@ def test_tempered_smc_preserves_both_modes_of_symmetric_inverse_posterior():
     component_mean = component_variance * mode_location / likelihood_scale**2
     expected_variance = component_variance + component_mean**2
 
-    def log_likelihood(value):
+    def log_likelihood(value: Any) -> Any:
         return jsp.special.logsumexp(
             jnp.stack(
                 [

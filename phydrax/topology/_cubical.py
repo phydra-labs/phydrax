@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -14,7 +14,7 @@ from .._trainable import NonTrainableState
 from ..discretization import StructuredCochainBridge
 from ._coefficients import PrimeField
 from ._complex import CellSubcomplex
-from ._filtration import cell_vertex_support, lower_star_filtration
+from ._filtration import cell_vertex_support, CellVertexSupport, lower_star_filtration
 from ._persistence import compute_persistence, PersistenceResult
 from ._resources import TopologyResourcePolicy
 
@@ -26,7 +26,7 @@ class CubicalPersistenceResult(StrictModule, NonTrainableState):
     persistence: PersistenceResult
     result_id: str = eqx.field(static=True)
 
-    def __init__(self, bridge_id: str, persistence: PersistenceResult, /):
+    def __init__(self, bridge_id: str, persistence: PersistenceResult, /) -> None:
         self.bridge_id = str(bridge_id)
         self.persistence = persistence
         self.result_id = canonical_fingerprint(
@@ -38,7 +38,7 @@ class CubicalPersistenceResult(StrictModule, NonTrainableState):
         )
 
 
-def _regular_vertex_support(bridge: StructuredCochainBridge, /):
+def _regular_vertex_support(bridge: StructuredCochainBridge, /) -> CellVertexSupport:
     topology = bridge.cochain.topology
     supports: list[list[set[int]]] = [
         [{index} for index in range(topology.entity_sets[0].count)]

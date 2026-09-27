@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -28,19 +31,19 @@ def _weighted_line_graph() -> phx.graph.GraphIR:
     )
 
 
-def _node_batch(domain):
+def _node_batch(domain: Any) -> Any:
     component = domain.component({"graph": phx.domain.Nodes()})
     structure = phx.domain.SampleLayout((("graph",),))
     return component, component.sample(phx.domain.PointSampling(3, layout=structure))
 
 
-def _edge_batch(domain):
+def _edge_batch(domain: Any) -> Any:
     component = domain.component({"graph": phx.domain.Edges()})
     structure = phx.domain.SampleLayout((("graph",),))
     return component, component.sample(phx.domain.PointSampling(2, layout=structure))
 
 
-def test_graph_degree_operator():
+def test_graph_degree_operator() -> None:
     domain = phx.domain.GraphDomain(_line_graph())
     _component, batch = _node_batch(domain)
 
@@ -51,8 +54,9 @@ def test_graph_degree_operator():
     assert jnp.allclose(jnp.asarray(deg_out(batch).data), jnp.array([1.0, 1.0, 0.0]))
 
 
-def test_graph_degree_operator_restricts_to_node_set():
+def test_graph_degree_operator_restricts_to_node_set() -> None:
     domain = phx.domain.GraphDomain(_line_graph())
+    # ty: ignore[invalid-argument-type]
     component = domain.component({"graph": phx.domain.BoundaryNodes([0, 2])})
     batch = component.sample(
         phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),)))
@@ -65,106 +69,108 @@ def test_graph_degree_operator_restricts_to_node_set():
     assert jnp.allclose(jnp.asarray(deg_out(batch).data), jnp.array([1.0, 0.0]))
 
 
-def test_neighbor_aggregate_operator():
+def test_neighbor_aggregate_operator() -> None:
     domain = phx.domain.GraphDomain(_line_graph())
     _component, batch = _node_batch(domain)
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> Any:
         return node[0]
 
     agg = phx.operators.neighbor_aggregate(u)
     assert jnp.allclose(jnp.asarray(agg(batch).data), jnp.array([0.0, 0.0, 1.0]))
 
 
-def test_graph_laplacian_operator():
+def test_graph_laplacian_operator() -> None:
     domain = phx.domain.GraphDomain(_line_graph())
     _component, batch = _node_batch(domain)
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> Any:
         return node[0]
 
     lap = phx.operators.graph_laplacian(u)
     assert jnp.allclose(jnp.asarray(lap(batch).data), jnp.array([0.0, 1.0, 2.0]))
 
 
-def test_graph_gradient_operator_on_edges():
+def test_graph_gradient_operator_on_edges() -> None:
     domain = phx.domain.GraphDomain(_line_graph())
     _component, batch = _edge_batch(domain)
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> Any:
         return node[0]
 
     grad = phx.operators.graph_gradient(u)
     assert jnp.allclose(jnp.asarray(grad(batch).data), jnp.array([1.0, 2.0]))
 
 
-def test_graph_gradient_operator_restricts_to_edge_set():
+def test_graph_gradient_operator_restricts_to_edge_set() -> None:
     domain = phx.domain.GraphDomain(_line_graph())
+    # ty: ignore[invalid-argument-type]
     component = domain.component({"graph": phx.domain.InterfaceEdges([1])})
     batch = component.sample(
         phx.domain.PointSampling(1, layout=phx.domain.SampleLayout((("graph",),)))
     )
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> Any:
         return node[0]
 
     grad = phx.operators.graph_gradient(u)
     assert jnp.allclose(jnp.asarray(grad(batch).data), jnp.array([2.0]))
 
 
-def test_graph_gradient_supports_edge_weights():
+def test_graph_gradient_supports_edge_weights() -> None:
     domain = phx.domain.GraphDomain(_weighted_line_graph())
     _component, batch = _edge_batch(domain)
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> Any:
         return node[0]
 
     @domain.Function("graph")
-    def weight(edge):
+    def weight(edge: Any) -> Any:
         return edge[0]
 
     grad = phx.operators.graph_gradient(u, weight=weight)
     assert jnp.allclose(jnp.asarray(grad(batch).data), jnp.array([2.0, 6.0]))
 
 
-def test_graph_divergence_operator_on_nodes():
+def test_graph_divergence_operator_on_nodes() -> None:
     domain = phx.domain.GraphDomain(_weighted_line_graph())
     _component, batch = _node_batch(domain)
 
     @domain.Function("graph")
-    def flux(edge):
+    def flux(edge: Any) -> Any:
         return edge[0]
 
     div = phx.operators.graph_divergence(flux)
     assert jnp.allclose(jnp.asarray(div(batch).data), jnp.array([-2.0, -1.0, 3.0]))
 
 
-def test_graph_divergence_operator_restricts_to_node_set():
+def test_graph_divergence_operator_restricts_to_node_set() -> None:
     domain = phx.domain.GraphDomain(_weighted_line_graph())
+    # ty: ignore[invalid-argument-type]
     component = domain.component({"graph": phx.domain.BoundaryNodes([0, 2])})
     batch = component.sample(
         phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),)))
     )
 
     @domain.Function("graph")
-    def flux(edge):
+    def flux(edge: Any) -> Any:
         return edge[0]
 
     div = phx.operators.graph_divergence(flux)
     assert jnp.allclose(jnp.asarray(div(batch).data), jnp.array([-2.0, 3.0]))
 
 
-def test_graph_incidence_laplacian_is_divergence_of_gradient():
+def test_graph_incidence_laplacian_is_divergence_of_gradient() -> None:
     domain = phx.domain.GraphDomain(_line_graph())
     _component, batch = _node_batch(domain)
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> Any:
         return node[0]
 
     lap = phx.operators.graph_incidence_laplacian(u)
@@ -175,13 +181,14 @@ def test_graph_incidence_laplacian_is_divergence_of_gradient():
     assert jnp.allclose(jnp.asarray(div_grad(batch).data), expected)
 
 
-def test_graph_incidence_laplacian_constraint_on_boundary_nodes():
+def test_graph_incidence_laplacian_constraint_on_boundary_nodes() -> None:
     domain = phx.domain.GraphDomain(_line_graph())
+    # ty: ignore[invalid-argument-type]
     component = domain.component({"graph": phx.domain.BoundaryNodes([0, 2])})
     structure = phx.domain.SampleLayout((("graph",),))
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> float:
         del node
         return 2.0
 
@@ -197,13 +204,13 @@ def test_graph_incidence_laplacian_constraint_on_boundary_nodes():
     assert term.loss({"u": u}) < 1e-12
 
 
-def test_graph_laplacian_constraint_zero_for_constant_field():
+def test_graph_laplacian_constraint_zero_for_constant_field() -> None:
     domain = phx.domain.GraphDomain(_line_graph())
     component = domain.component({"graph": phx.domain.Nodes()})
     structure = phx.domain.SampleLayout((("graph",),))
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> float:
         del node
         return 2.0
 
@@ -217,13 +224,13 @@ def test_graph_laplacian_constraint_zero_for_constant_field():
     assert term.loss({"u": u}) < 1e-12
 
 
-def test_graph_gradient_constraint_zero_for_constant_field_on_edges():
+def test_graph_gradient_constraint_zero_for_constant_field_on_edges() -> None:
     domain = phx.domain.GraphDomain(_line_graph())
     component = domain.component({"graph": phx.domain.Edges()})
     structure = phx.domain.SampleLayout((("graph",),))
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> float:
         del node
         return 2.0
 

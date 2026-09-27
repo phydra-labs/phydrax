@@ -1,3 +1,5 @@
+from typing import Any
+
 import diffrax as dfx
 import jax
 import jax.numpy as jnp
@@ -7,7 +9,7 @@ import phydrax as phx
 from phydrax.solver._multirate import multirate_amr_schedule_plan
 
 
-def _decay_problem(rate=1.0, *, t1=1.0):
+def _decay_problem(rate: Any = 1.0, *, t1: Any = 1.0) -> Any:
     return phx.solver.DifferentialProblem(
         lambda time, state, value: -value * state,
         jnp.asarray([1.0]),
@@ -18,7 +20,7 @@ def _decay_problem(rate=1.0, *, t1=1.0):
     )
 
 
-def _decay_dae(rate=1.0):
+def _decay_dae(rate: Any = 1.0) -> Any:
     system = phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, value: state_rate + value * state,
         state_shape=(1,),
@@ -33,7 +35,7 @@ def _decay_dae(rate=1.0):
     )
 
 
-def test_diffrax_preflight_resolves_fixed_solver_and_records_configuration():
+def test_diffrax_preflight_resolves_fixed_solver_and_records_configuration() -> None:
     solution = phx.solver.solve_diffrax(
         _decay_problem(),
         save_times=jnp.asarray([0.0, 1.0]),
@@ -65,7 +67,7 @@ def test_diffrax_preflight_resolves_fixed_solver_and_records_configuration():
         )
 
 
-def test_split_differential_problem_unlocks_kencarp_and_gradients():
+def test_split_differential_problem_unlocks_kencarp_and_gradients() -> None:
     problem = phx.solver.SplitDifferentialProblem(
         lambda time, state, args: args[0] * state,
         lambda time, state, args: args[1] * state,
@@ -85,10 +87,11 @@ def test_split_differential_problem_unlocks_kencarp_and_gradients():
 
     assert solution.successful
     assert solution.solver_name == "KenCarp4"
+    # ty: ignore[unresolved-attribute]
     assert solution.temporal_evidence.equation_form == "additive-ode"
     assert jnp.allclose(solution.states[-1, 0], jnp.exp(-9.0), rtol=2e-4)
 
-    def terminal(explicit_rate):
+    def terminal(explicit_rate: Any) -> Any:
         candidate = phx.solver.SplitDifferentialProblem(
             lambda time, state, args: args * state,
             lambda time, state, args: -10.0 * state,
@@ -109,8 +112,8 @@ def test_split_differential_problem_unlocks_kencarp_and_gradients():
     assert jnp.allclose(gradient, 0.2 * jnp.exp(-1.8), rtol=2e-3)
 
 
-def test_ssprk_methods_have_expected_smooth_accuracy_and_shared_fv_kernel():
-    def integrate(step, method):
+def test_ssprk_methods_have_expected_smooth_accuracy_and_shared_fv_kernel() -> None:
+    def integrate(step: Any, method: Any) -> Any:
         state = jnp.asarray([1.0])
         time = jnp.asarray(0.0)
         count = int(round(1.0 / step))
@@ -154,6 +157,7 @@ def test_ssprk_methods_have_expected_smooth_accuracy_and_shared_fv_kernel():
         problem, discretization, method
     ).dynamics
     constant = jnp.ones((16, 1))
+    # ty: ignore[invalid-argument-type]
     stepper = phx.solver.UnsplitFiniteVolumeSSPRK3Plan(dynamics)
     result = stepper.advance(jnp.asarray(0.0), constant, 0.01)
     direct = phx.solver.ssprk33_step(
@@ -164,7 +168,7 @@ def test_ssprk_methods_have_expected_smooth_accuracy_and_shared_fv_kernel():
     assert result.temporal_method_id == "temporal:ssprk:3:3"
 
 
-def test_theta_endpoint_and_higher_bdf_follow_expected_decay():
+def test_theta_endpoint_and_higher_bdf_follow_expected_decay() -> None:
     grid = phx.dynamics.TimeGrid(jnp.linspace(0.0, 1.0, 21), time_id="theta")
     theta = phx.solver.solve_dae(
         _decay_dae(),
@@ -188,11 +192,11 @@ def test_theta_endpoint_and_higher_bdf_follow_expected_decay():
     assert jnp.allclose(bdf5.states[-1, 0], jnp.exp(-1.0), rtol=2e-3)
 
 
-def test_matrix_free_rosenbrock_w_is_stable_and_differentiable():
+def test_matrix_free_rosenbrock_w_is_stable_and_differentiable() -> None:
     grid = phx.dynamics.TimeGrid(jnp.linspace(0.0, 1.0, 33), time_id="rosenbrock")
     prepared = phx.solver.prepare_rosenbrock(_decay_problem(10.0), grid)
 
-    def terminal(rate):
+    def terminal(rate: Any) -> Any:
         return phx.solver.solve_rosenbrock(prepared, args=rate).states[-1, 0]
 
     value, gradient = jax.jit(jax.value_and_grad(terminal))(jnp.asarray(10.0))
@@ -201,7 +205,7 @@ def test_matrix_free_rosenbrock_w_is_stable_and_differentiable():
     assert jnp.allclose(gradient, -jnp.exp(-10.0), rtol=5e-2, atol=2e-7)
 
 
-def test_generalized_alpha_tracks_undamped_oscillator():
+def test_generalized_alpha_tracks_undamped_oscillator() -> None:
     system = phx.dynamics.SecondOrderDifferentialSystem(
         lambda time, configuration, velocity, acceleration, omega: (
             acceleration + omega**2 * configuration
@@ -225,7 +229,7 @@ def test_generalized_alpha_tracks_undamped_oscillator():
     assert jnp.allclose(solution.velocities[-1, 0], -jnp.sin(1.0), atol=2e-4)
 
 
-def test_variable_step_bdf_coefficients_satisfy_order_conditions_through_five():
+def test_variable_step_bdf_coefficients_satisfy_order_conditions_through_five() -> None:
     from phydrax.solver._bdf_method import bdf_coefficients
 
     target = jnp.asarray(0.37)
@@ -241,7 +245,7 @@ def test_variable_step_bdf_coefficients_satisfy_order_conditions_through_five():
             assert jnp.allclose(observed, expected, rtol=1e-10, atol=1e-10)
 
 
-def test_rosenbrock_and_gauss_collocation_reach_declared_orders():
+def test_rosenbrock_and_gauss_collocation_reach_declared_orders() -> None:
     problem = _decay_problem()
     exact = jnp.exp(-1.0)
     rosenbrock_errors = []
@@ -267,7 +271,7 @@ def test_rosenbrock_and_gauss_collocation_reach_declared_orders():
     assert gauss_errors[0] / gauss_errors[1] > 15.0
 
 
-def test_partitioned_multirate_and_gauss_irk_preserve_declared_contracts():
+def test_partitioned_multirate_and_gauss_irk_preserve_declared_contracts() -> None:
     partition = phx.solver.StatePartition(
         {
             "slow": jnp.asarray([True, False]),

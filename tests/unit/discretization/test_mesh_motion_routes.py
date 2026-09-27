@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -20,7 +23,7 @@ _POSITIVE = D.MotionValidityPolicy(
 )
 
 
-def _square(count):
+def _square(count: Any) -> Any:
     axis = np.linspace(0.0, 1.0, count + 1)
     x, y = np.meshgrid(axis, axis, indexing="ij")
     points = np.stack((x.ravel(), y.ravel()), axis=1)
@@ -34,7 +37,7 @@ def _square(count):
     return points, triangles, boundary
 
 
-def _annulus(inner, outer, rings, sectors):
+def _annulus(inner: Any, outer: Any, rings: Any, sectors: Any) -> Any:
     """Graded polar triangulation: the smallest cells hug the inclusion."""
 
     radii = inner + (outer - inner) * np.linspace(0.0, 1.0, rings + 1) ** 2
@@ -56,7 +59,9 @@ def _annulus(inner, outer, rings, sectors):
     return points, triangles, index[0], index[-1]
 
 
-def _extension(points, triangles, boundary, route, **controls):
+def _extension(
+    points: Any, triangles: Any, boundary: Any, route: Any, **controls: Any
+) -> Any:
     return D.FiniteElementMotionExtension(
         points,
         (("triangle", triangles),),
@@ -65,17 +70,17 @@ def _extension(points, triangles, boundary, route, **controls):
     )
 
 
-def _orientation_preserved(points, triangles, displacement):
+def _orientation_preserved(points: Any, triangles: Any, displacement: Any) -> Any:
     validity = D.MotionValidityPlan(points, (("triangle", triangles),), policy=_POSITIVE)
     return validity.evaluate(points + np.asarray(displacement))
 
 
-def _certified(points, triangles, displacement):
+def _certified(points: Any, triangles: Any, displacement: Any) -> Any:
     mesh = D.CellMesh.from_triangles(points + np.asarray(displacement), triangles)
     return D.certify_cell_geometry_validity(mesh).all_certified
 
 
-def test_harmonic_route_keeps_a_convex_planar_image_valid():
+def test_harmonic_route_keeps_a_convex_planar_image_valid() -> None:
     points, triangles, boundary = _square(6)
     edge = points[boundary]
     # Straight edges of the square map to a convex quadrilateral.
@@ -93,7 +98,7 @@ def test_harmonic_route_keeps_a_convex_planar_image_valid():
     assert _certified(points, triangles, result.displacement)
 
 
-def test_stiffened_elasticity_carries_a_rotating_inclusion_without_inversion():
+def test_stiffened_elasticity_carries_a_rotating_inclusion_without_inversion() -> None:
     points, triangles, inner, outer = _annulus(0.25, 1.0, 6, 24)
     boundary = np.sort(np.concatenate((inner, outer)))
     angle = np.deg2rad(40.0)
@@ -125,7 +130,7 @@ def test_stiffened_elasticity_carries_a_rotating_inclusion_without_inversion():
     assert minima[1.0] > minima[0.0]
 
 
-def test_winslow_keeps_a_distorted_convex_image_valid():
+def test_winslow_keeps_a_distorted_convex_image_valid() -> None:
     points, triangles, boundary = _square(8)
     edge = points[boundary]
     # Convex trapezoid image with boundary vertices crowded toward one corner.
@@ -145,12 +150,12 @@ def test_winslow_keeps_a_distorted_convex_image_valid():
 class _GaussianMonitor(eqx.Module):
     amplitude: jax.Array
 
-    def __call__(self, points):
+    def __call__(self, points: Any) -> Any:
         distance = jnp.sum((points - jnp.asarray((0.3, 0.3))) ** 2, axis=-1)
         return 1.0 + self.amplitude * jnp.exp(-distance / 0.02)
 
 
-def test_mmpde_concentrates_vertices_toward_the_monitor_peak():
+def test_mmpde_concentrates_vertices_toward_the_monitor_peak() -> None:
     points, triangles, boundary = _square(6)
     extension = _extension(points, triangles, boundary, Route.MMPDE)
     fixed = np.zeros_like(points[boundary])
@@ -168,7 +173,7 @@ def test_mmpde_concentrates_vertices_toward_the_monitor_peak():
     assert np.mean(after) < np.mean(before) - 0.01
     assert bool(_orientation_preserved(points, triangles, result.displacement).valid)
 
-    def spread(amplitude):
+    def spread(amplitude: Any) -> Any:
         displacement = extension.extend(
             fixed, monitor=_GaussianMonitor(amplitude)
         ).displacement
@@ -182,13 +187,13 @@ def test_mmpde_concentrates_vertices_toward_the_monitor_peak():
     np.testing.assert_allclose(gradient, finite_difference, rtol=1.0e-4)
 
 
-def test_winslow_boundary_derivative_matches_finite_differences():
+def test_winslow_boundary_derivative_matches_finite_differences() -> None:
     points, triangles, boundary = _square(4)
     edge = points[boundary]
     direction = np.stack((0.2 * edge[:, 1], 0.1 * np.sin(np.pi * edge[:, 0])), 1)
     extension = _extension(points, triangles, boundary, Route.WINSLOW)
 
-    def interior_energy(scale):
+    def interior_energy(scale: Any) -> Any:
         return jnp.sum(extension.extend(scale * direction).displacement ** 3)
 
     gradient = jax.grad(interior_energy)(jnp.asarray(1.0))
@@ -200,12 +205,13 @@ def test_winslow_boundary_derivative_matches_finite_differences():
     np.testing.assert_allclose(gradient, finite_difference, rtol=1.0e-5)
 
 
-def test_route_selection_is_explicit_and_complete():
+def test_route_selection_is_explicit_and_complete() -> None:
     points, triangles, boundary = _square(2)
     with pytest.raises(ValueError, match="PRESCRIBED"):
         _extension(points, triangles, boundary, Route.PRESCRIBED)
     harmonic = _extension(points, triangles, boundary, Route.HARMONIC)
     with pytest.raises(ValueError, match="monitor"):
+        # ty: ignore[invalid-argument-type]
         harmonic.extend(np.zeros_like(points[boundary]), monitor=_GaussianMonitor(1.0))
     mmpde = _extension(points, triangles, boundary, Route.MMPDE)
     with pytest.raises(ValueError, match="monitor"):
@@ -217,7 +223,7 @@ def test_route_selection_is_explicit_and_complete():
     np.testing.assert_array_equal(prescribed.extend(shift).displacement, shift)
 
 
-def test_motion_validity_rejects_inversion_and_small_relative_jacobians():
+def test_motion_validity_rejects_inversion_and_small_relative_jacobians() -> None:
     points, triangles, _ = _square(2)
     validity = D.MotionValidityPlan(points, (("triangle", triangles),))
     center = 4

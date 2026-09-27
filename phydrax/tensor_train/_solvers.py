@@ -7,23 +7,25 @@ from __future__ import annotations
 from collections.abc import Sequence
 from math import prod
 from numbers import Integral
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._core import TensorTrain, TensorTrainOperator, tt_svd
 from ._local import regularized_least_squares
 
 
-TensorTrainSolveMethod = Literal["als", "amen"]
+TensorTrainSolveMethod: TypeAlias = Literal["als", "amen"]
 
 
 class TensorTrainSolvePlan(StrictModule, NonTrainableState):
@@ -53,7 +55,7 @@ class TensorTrainSolvePlan(StrictModule, NonTrainableState):
         local_regularization: float,
         max_dense_entries: int,
         max_local_unknowns: int,
-    ):
+    ) -> None:
         raw_modes = tuple(mode_sizes)
         integer_fields = raw_modes + (
             max_rank,
@@ -77,8 +79,7 @@ class TensorTrainSolvePlan(StrictModule, NonTrainableState):
         ridge = float(local_regularization)
         dense_limit = int(max_dense_entries)
         local_limit = int(max_local_unknowns)
-        if method not in ("als", "amen"):
-            raise ValueError("TensorTrain solve method must be 'als' or 'amen'.")
+        method = parse(method, TensorTrainSolveMethod, "method")
         if not modes or any(size <= 0 for size in modes):
             raise ValueError("TensorTrain solve modes must be nonempty and positive.")
         if (
@@ -141,7 +142,7 @@ class PreparedTensorTrainSolve(StrictModule, NonTrainableState):
         /,
         *,
         numeric_version: ArrayLike = 0,
-    ):
+    ) -> None:
         if (
             operator.input_mode_sizes != plan.mode_sizes
             or operator.output_mode_sizes != plan.mode_sizes
@@ -180,7 +181,7 @@ class TensorTrainSolveEvidence(StrictModule):
         *,
         local_solve_count: int,
         sweep_count: int,
-    ):
+    ) -> None:
         residuals = jnp.asarray(true_global_residual_norms)
         relative = jnp.asarray(relative_global_residual_norms)
         bounds = jnp.asarray(enrichment_frobenius_bounds)
@@ -209,7 +210,7 @@ class TensorTrainSolveResult(StrictModule):
         evidence: TensorTrainSolveEvidence,
         converged: bool,
         /,
-    ):
+    ) -> None:
         self.solution = solution
         self.evidence = evidence
         self.converged = bool(converged)
@@ -247,17 +248,51 @@ def plan_tensor_train_solve(
 def plan_als(
     operator: TensorTrainOperator,
     /,
-    **resources,
+    *,
+    max_rank: int,
+    enrichment_rank: int,
+    sweeps: int,
+    relative_tolerance: float,
+    local_regularization: float,
+    max_dense_entries: int,
+    max_local_unknowns: int,
 ) -> TensorTrainSolvePlan:
-    return plan_tensor_train_solve(operator, method="als", **resources)
+    return plan_tensor_train_solve(
+        operator,
+        method="als",
+        max_rank=max_rank,
+        enrichment_rank=enrichment_rank,
+        sweeps=sweeps,
+        relative_tolerance=relative_tolerance,
+        local_regularization=local_regularization,
+        max_dense_entries=max_dense_entries,
+        max_local_unknowns=max_local_unknowns,
+    )
 
 
 def plan_amen(
     operator: TensorTrainOperator,
     /,
-    **resources,
+    *,
+    max_rank: int,
+    enrichment_rank: int,
+    sweeps: int,
+    relative_tolerance: float,
+    local_regularization: float,
+    max_dense_entries: int,
+    max_local_unknowns: int,
 ) -> TensorTrainSolvePlan:
-    return plan_tensor_train_solve(operator, method="amen", **resources)
+    return plan_tensor_train_solve(
+        operator,
+        method="amen",
+        max_rank=max_rank,
+        enrichment_rank=enrichment_rank,
+        sweeps=sweeps,
+        relative_tolerance=relative_tolerance,
+        local_regularization=local_regularization,
+        max_dense_entries=max_dense_entries,
+        max_local_unknowns=max_local_unknowns,
+    )
 
 
 def prepare_tensor_train_solve(

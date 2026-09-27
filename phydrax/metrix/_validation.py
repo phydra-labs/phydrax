@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
@@ -33,7 +34,7 @@ class MetricValidationReport(StrictModule):
         minimum_eigenvalue: Array,
         maximum_condition_number: Array,
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
-    ):
+    ) -> None:
         evidence = (
             GeometryPrecisionPolicy().evidence_for(minimum_eigenvalue)
             if precision_evidence is None

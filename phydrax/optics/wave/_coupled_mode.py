@@ -19,7 +19,8 @@ from math import prod
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -127,7 +128,7 @@ class BidirectionalCoupledModePlan(StrictModule, NonTrainableState):
         maximum_sections: int = 100_000,
         maximum_workspace_bytes: int = 1 << 30,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         z_host = np.asarray(z_grid)
         detuning_host = np.asarray(detuning)
         coupling_host = np.asarray(coupling)
@@ -269,7 +270,7 @@ class PreparedBidirectionalCoupledMode(StrictModule, NonTrainableState):
         )
 
 
-def _identity_scattering(dtype) -> Array:
+def _identity_scattering(dtype: DTypeLike) -> Array:
     return jnp.asarray(((0.0, 1.0), (1.0, 0.0)), dtype=dtype)
 
 

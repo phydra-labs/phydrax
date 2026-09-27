@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -41,7 +44,7 @@ from phydrax.linalg import ArraySpace, DenseLinearOperator
 from phydrax.solver import coupling
 
 
-def _field(name, count):
+def _field(name: Any, count: Any) -> Any:
     vector = ArraySpace((count,), dtype=jnp.float64, space_id=f"{name}-vector")
     return DiscreteFieldSpace(
         name,
@@ -53,7 +56,7 @@ def _field(name, count):
     )
 
 
-def _transfer(source, target, matrix, name):
+def _transfer(source: Any, target: Any, matrix: Any, name: Any) -> Any:
     operator = DenseLinearOperator(
         jnp.asarray(matrix, dtype=jnp.float64),
         source=source.vector_space,
@@ -73,7 +76,7 @@ def _transfer(source, target, matrix, name):
     )
 
 
-def _reaction(calcium, model_id="ord-2011"):
+def _reaction(calcium: Any, model_id: Any = "ord-2011") -> Any:
     calcium = jnp.asarray(calcium, dtype=jnp.float64)
     batch = calcium.shape
     return CardiacReactionEvaluation(
@@ -93,7 +96,7 @@ def _reaction(calcium, model_id="ord-2011"):
     )
 
 
-def test_all_contraction_fidelities_are_named_and_transactional():
+def test_all_contraction_fidelities_are_named_and_transactional() -> None:
     state = ContractionState.resting((2,), dtype=jnp.float64)
     prescribed = prepare_contraction(PrescribedTensionContractionPlan(), state)
     prescribed_candidate = prescribed.candidate(
@@ -124,7 +127,7 @@ def test_all_contraction_fidelities_are_named_and_transactional():
     assert land.fidelity_id == "land-length-velocity-calcium"
 
 
-def test_land_consumes_live_compatible_reaction_calcium_and_length_velocity():
+def test_land_consumes_live_compatible_reaction_calcium_and_length_velocity() -> None:
     state = ContractionState.resting((2,), dtype=jnp.float64)
     prepared = prepare_contraction(
         LandLengthVelocityContractionPlan(
@@ -153,7 +156,7 @@ def test_land_consumes_live_compatible_reaction_calcium_and_length_velocity():
     assert not bool(rejected.successful)
 
 
-def test_active_stress_and_active_strain_are_separate_active_mechanics_routes():
+def test_active_stress_and_active_strain_are_separate_active_mechanics_routes() -> None:
     state = ContractionState.resting((1,), dtype=jnp.float64)
     contraction = prepare_contraction(
         ActivationDrivenContractionPlan(50.0, activation_time=1.0), state
@@ -180,7 +183,7 @@ def test_active_stress_and_active_strain_are_separate_active_mechanics_routes():
     assert strain_candidate.evidence.reconstruction_residual < 1.0e-6
 
 
-def test_one_way_multimesh_transfer_cadence_and_rollback():
+def test_one_way_multimesh_transfer_cadence_and_rollback() -> None:
     ep_field = _field("ep", 2)
     mechanics_field = _field("mechanics", 3)
     interpolation = _transfer(
@@ -195,7 +198,9 @@ def test_one_way_multimesh_transfer_cadence_and_rollback():
         port, ActivationDrivenContractionPlan(60.0), cadence
     )
 
-    def ep_advance(window, state, stretch, substeps, args):
+    def ep_advance(
+        window: Any, state: Any, stretch: Any, substeps: Any, args: Any
+    ) -> Any:
         del window, stretch, args
         next_state = state + 1.0
         return ElectricalWindowCandidate(
@@ -206,7 +211,9 @@ def test_one_way_multimesh_transfer_cadence_and_rollback():
             completed_substeps=substeps,
         )
 
-    def mechanics_advance(window, state, drive, substeps, args):
+    def mechanics_advance(
+        window: Any, state: Any, drive: Any, substeps: Any, args: Any
+    ) -> Any:
         del window, state, args
         return MechanicalWindowCandidate(
             drive,
@@ -233,7 +240,9 @@ def test_one_way_multimesh_transfer_cadence_and_rollback():
     assert jnp.allclose(run.solution.final_state.participant_states[1], jnp.ones(3) * 2.0)
     assert jnp.all(run.evidence.participant_evaluations > 0)
 
-    def failing_mechanics(window, state, drive, substeps, args):
+    def failing_mechanics(
+        window: Any, state: Any, drive: Any, substeps: Any, args: Any
+    ) -> Any:
         del window, drive, args
         return MechanicalWindowCandidate(
             state + 10.0,
@@ -258,7 +267,7 @@ def test_one_way_multimesh_transfer_cadence_and_rollback():
     assert jnp.allclose(failed.solution.final_state.participant_states[1], 0.0)
 
 
-def _bidirectional(cadence):
+def _bidirectional(cadence: Any) -> Any:
     ep_field = _field(f"ep-{cadence.electrophysiology_substeps}", 2)
     mechanics_field = _field(f"mechanics-{cadence.electrophysiology_substeps}", 3)
     forward_transfer = _transfer(
@@ -290,7 +299,7 @@ def _bidirectional(cadence):
     )
 
 
-def _ep_feedback(window, state, stretch, substeps, args):
+def _ep_feedback(window: Any, state: Any, stretch: Any, substeps: Any, args: Any) -> Any:
     del window, state, args
     drive = 0.5 + 0.2 * stretch
     return ElectricalWindowCandidate(
@@ -302,7 +311,9 @@ def _ep_feedback(window, state, stretch, substeps, args):
     )
 
 
-def _mechanics_feedback(window, state, drive, substeps, args):
+def _mechanics_feedback(
+    window: Any, state: Any, drive: Any, substeps: Any, args: Any
+) -> Any:
     del window, state, args
     stretch = 1.0 - 0.1 * drive
     return MechanicalWindowCandidate(
@@ -314,7 +325,7 @@ def _mechanics_feedback(window, state, drive, substeps, args):
     )
 
 
-def test_bidirectional_cube_cadence_refinement_and_restart():
+def test_bidirectional_cube_cadence_refinement_and_restart() -> None:
     coarse = _bidirectional(ElectromechanicsCadence(2)).prepare(
         _ep_feedback,
         _mechanics_feedback,

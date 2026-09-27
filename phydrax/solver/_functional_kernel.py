@@ -18,7 +18,7 @@ from typing import Any, final
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._strict import StrictModule
@@ -33,6 +33,7 @@ from .._training_kernel import (
     TrainingKernelState,
 )
 from .._training_objective import _ObjectiveContribution
+from ..typing import PRNGKey
 
 
 FUNCTIONAL_OBJECTIVE_ID = "functional-objective"
@@ -97,8 +98,8 @@ def functional_parameter_lane(tree: Any, /) -> Any:
 
 
 def _site_keys(
-    root: Key[Array, ""], attempt: Array, microstep: Array, sites: tuple[str, ...], /
-) -> tuple[Key[Array, ""], ...]:
+    root: PRNGKey, attempt: Array, microstep: Array, sites: tuple[str, ...], /
+) -> tuple[PRNGKey, ...]:
     return tuple(
         training_site_key(
             root,
@@ -117,7 +118,7 @@ _compiled_site_keys = eqx.filter_jit(_site_keys)
 
 def functional_site_keys(
     state: TrainingKernelState, /, *sites: str
-) -> tuple[Key[Array, ""], ...]:
+) -> tuple[PRNGKey, ...]:
     """Attempt-addressed keys of host-side FunctionalSolver sites.
 
     Refresh, sampling, term selection, NTK probes, selection, and reporting
@@ -129,7 +130,7 @@ def functional_site_keys(
     )
 
 
-def functional_site_key(state: TrainingKernelState, site: str, /) -> Key[Array, ""]:
+def functional_site_key(state: TrainingKernelState, site: str, /) -> PRNGKey:
     """Attempt-addressed key of one host-side FunctionalSolver site."""
     return functional_site_keys(state, site)[0]
 

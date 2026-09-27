@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -14,7 +16,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _measure(function, argument, repeats):
+def _measure(function: Any, argument: Any, repeats: Any) -> Any:
     start = time.perf_counter()
     first = function(argument)
     jax.block_until_ready(first)
@@ -28,7 +30,7 @@ def _measure(function, argument, repeats):
     return first_seconds, steady_seconds
 
 
-def _layered_dag(layers, width):
+def _layered_dag(layers: Any, width: Any) -> Any:
     source = 0
     target = 1 + layers * width
     senders: list[int] = []
@@ -56,7 +58,7 @@ def _layered_dag(layers, width):
     return phx.combinatorial.ShortestPathSpace(relation, source, target)
 
 
-def run(*, cardinality_size, assignment_size, dag_layers, dag_width, repeats):
+def run(*, cardinality_size: Any, assignment_size: Any, dag_layers: Any, dag_width: Any, repeats: Any) -> Any:
     key = jax.random.key(17)
     cardinality_key, assignment_key, dag_key = jax.random.split(key, 3)
 
@@ -126,7 +128,7 @@ def run(*, cardinality_size, assignment_size, dag_layers, dag_width, repeats):
     interpolation = phx.combinatorial.BlackboxInterpolation(1.0)
     target = jnp.zeros((dag_space.edge_count,), dtype=dag_costs.dtype)
 
-    def loss(costs):
+    def loss(costs: Any) -> Any:
         problem = phx.combinatorial.LinearCombinatorialProblem(dag_space, costs)
         features = phx.combinatorial.blackbox_solution(
             problem,
@@ -168,7 +170,7 @@ def run(*, cardinality_size, assignment_size, dag_layers, dag_width, repeats):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Benchmark native combinatorial methods."
     )

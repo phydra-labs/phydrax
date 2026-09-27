@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -8,7 +10,7 @@ import phydrax as phx
 cosmology = phx.applications.cosmology
 
 
-def test_desi_release_window_covariance_and_likelihood():
+def test_desi_release_window_covariance_and_likelihood() -> None:
     source = cosmology.CoordinateLayout(("P0:k0", "P2:k0", "P4:k0"))
     observed = cosmology.CoordinateLayout(("d0", "d1"))
     artifact = cosmology.ScientificArtifactEnvelope(
@@ -44,7 +46,7 @@ def test_desi_release_window_covariance_and_likelihood():
     )
     likelihood = cosmology.DesiFullShapeLikelihoodPlan(release)
 
-    def value(amplitude):
+    def value(amplitude: Any) -> Any:
         theory = cosmology.TheoryVector(
             amplitude * jnp.asarray([1.0, 2.0, 0.5]),
             source,

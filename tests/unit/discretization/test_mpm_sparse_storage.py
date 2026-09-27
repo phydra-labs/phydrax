@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _routes(position):
+def _routes(position: Any) -> Any:
     grid_plan = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformAxisSpec(16, periodic=True, endpoint=False)
@@ -32,7 +34,7 @@ def _routes(position):
     return splat.build(position), index_space
 
 
-def _storage(index_space, capacity):
+def _storage(index_space: Any, capacity: Any) -> Any:
     topology = phx.discretization.SparseBlockTopologyPlan(
         index_space,
         (4, 4),
@@ -42,7 +44,7 @@ def _storage(index_space, capacity):
     return phx.discretization.BlockSparseMPMNodalStoragePlan(topology)
 
 
-def test_sparse_blocks_follow_routes_and_transition_by_logical_key():
+def test_sparse_blocks_follow_routes_and_transition_by_logical_key() -> None:
     first_routes, index_space = _routes(jnp.asarray([[0.15, 0.15], [0.2, 0.2]]))
     second_routes, _ = _routes(jnp.asarray([[0.75, 0.75], [0.8, 0.8]]))
     storage = _storage(index_space, 16)
@@ -57,7 +59,7 @@ def test_sparse_blocks_follow_routes_and_transition_by_logical_key():
     assert not jnp.array_equal(first.groups.group_keys, second.groups.group_keys)
 
 
-def test_compact_pack_unpack_and_route_mapping_match_supported_dense_values():
+def test_compact_pack_unpack_and_route_mapping_match_supported_dense_values() -> None:
     routes, index_space = _routes(jnp.asarray([[0.15, 0.15], [0.2, 0.2]]))
     storage = _storage(index_space, 8)
     topology = storage.build(routes)
@@ -76,7 +78,7 @@ def test_compact_pack_unpack_and_route_mapping_match_supported_dense_values():
     assert compact.shape == (8 * 16, 2)
 
 
-def test_sparse_block_overflow_rejects_before_storage_use():
+def test_sparse_block_overflow_rejects_before_storage_use() -> None:
     routes, index_space = _routes(
         jnp.asarray([[0.1, 0.1], [0.4, 0.4], [0.7, 0.7], [0.9, 0.9]])
     )
@@ -87,7 +89,7 @@ def test_sparse_block_overflow_rejects_before_storage_use():
     assert not jnp.any(topology.node_valid)
 
 
-def test_dense_storage_adapter_is_identity_for_field_payloads():
+def test_dense_storage_adapter_is_identity_for_field_payloads() -> None:
     dense = jnp.ones((16, 16, 2, 3))
     storage = phx.discretization.DenseMPMNodalStoragePlan((16, 16))
     np.testing.assert_array_equal(storage.unpack(storage.pack(dense, None), None), dense)

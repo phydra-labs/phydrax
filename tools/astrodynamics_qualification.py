@@ -1,6 +1,7 @@
 """Qualification evidence for two-body, Lambert, N-body, and CR3BP contracts."""
 
 import json
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -8,7 +9,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def main():
+def main() -> Any:
     astro = phx.applications.astrodynamics
     context = astro.AstrodynamicsContext(
         astro.AstrodynamicsScaleContract.si(),

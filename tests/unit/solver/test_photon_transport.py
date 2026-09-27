@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -13,7 +16,9 @@ import phydrax as phx
 _DEFAULT_MU = np.log(2.0)
 
 
-def _manifest(name="cross-sections", *, commercial_use_permitted=True):
+def _manifest(
+    name: Any = "cross-sections", *, commercial_use_permitted: Any = True
+) -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         name,
         checksum_algorithm="sha256",
@@ -32,13 +37,13 @@ def _manifest(name="cross-sections", *, commercial_use_permitted=True):
 
 
 def _photon_table(
-    name,
-    energy_grid,
-    values,
+    name: Any,
+    energy_grid: Any,
+    values: Any,
     *,
-    commercial_use_permitted=True,
-    interpolation=phx.equations.DiagnosticPhotonInterpolationPolicy.LINEAR,
-):
+    commercial_use_permitted: Any = True,
+    interpolation: Any = phx.equations.DiagnosticPhotonInterpolationPolicy.LINEAR,
+) -> Any:
     provenance = phx.nuclear.NuclearDataProvenance(
         _manifest(name, commercial_use_permitted=commercial_use_permitted),
         f"https://example.invalid/{name}",
@@ -60,7 +65,7 @@ def _photon_table(
     )
 
 
-def _transport(mu=_DEFAULT_MU):
+def _transport(mu: Any = _DEFAULT_MU) -> Any:
     energy_grid = phx.equations.PhotonEnergyGrid(
         jnp.asarray((500.0, 1500.0))
         * float(phx.units.conversion_factor(phx.units.ELECTRONVOLT, phx.units.JOULE))
@@ -82,7 +87,7 @@ def _transport(mu=_DEFAULT_MU):
     )
 
 
-def test_prepared_cross_sections_retain_sources_and_enforce_requested_rights():
+def test_prepared_cross_sections_retain_sources_and_enforce_requested_rights() -> None:
     plan = _transport()
     assert len(set(plan.cross_sections.source_table_ids)) == 3
     assert len(plan.cross_sections.source_provenance_ids) == 3
@@ -102,11 +107,14 @@ def test_prepared_cross_sections_retain_sources_and_enforce_requested_rights():
     )
     with pytest.raises(PermissionError, match="commercial-use-not-permitted"):
         phx.equations.RadiationCrossSectionLibrary(
-            *denied, jnp.asarray((1.0,)), commercial_use=True
+            *denied,
+            # ty: ignore[too-many-positional-arguments]
+            jnp.asarray((1.0,)),
+            commercial_use=True,
         )
 
 
-def test_prepared_cross_sections_preserve_each_source_interpolation_policy():
+def test_prepared_cross_sections_preserve_each_source_interpolation_policy() -> None:
     energy_grid = phx.equations.PhotonEnergyGrid(
         jnp.asarray((500.0, 2000.0))
         * float(phx.units.conversion_factor(phx.units.ELECTRONVOLT, phx.units.JOULE))
@@ -129,7 +137,7 @@ def test_prepared_cross_sections_preserve_each_source_interpolation_policy():
     np.testing.assert_allclose(evaluated.coefficients, (4.0, 0.0, 0.0))
 
 
-def test_delta_tracking_matches_beer_lambert_and_closes_kerma_ledger():
+def test_delta_tracking_matches_beer_lambert_and_closes_kerma_ledger() -> None:
     count = 8192
     plan = _transport()
     result = plan.simulate(
@@ -148,7 +156,7 @@ def test_delta_tracking_matches_beer_lambert_and_closes_kerma_ledger():
     )
 
 
-def test_semantic_history_ids_are_invariant_to_batch_placement():
+def test_semantic_history_ids_are_invariant_to_batch_placement() -> None:
     plan = _transport(mu=0.5)
     origins = jnp.broadcast_to(jnp.asarray((0.5, 0.5, 0.0)), (4, 3))
     directions = jnp.broadcast_to(jnp.asarray((0.0, 0.0, 1.0)), (4, 3))

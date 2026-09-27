@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -23,6 +24,7 @@ from ..discretization import (
 )
 from ..discretization.pic import (
     PICEnergyLedger,
+    PICFieldGatherResult,
     PICParticleState,
     PICRejectionReason,
     PICRunStatus,
@@ -85,7 +87,7 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
         pusher: RelativisticBorisPlan | None = None,
         background_charge: ArrayLike | None = None,
         maximum_displacement_fraction: float = 0.5,
-    ):
+    ) -> None:
         if not isinstance(field, CochainElectrostaticPlan):
             raise TypeError("field must be CochainElectrostaticPlan.")
         values = tuple(transfers)
@@ -172,7 +174,12 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _proper_velocity(self, velocity: ArrayLike, transfer, /) -> Array:
+    def _proper_velocity(
+        self,
+        velocity: ArrayLike,
+        transfer: PreparedPICParticleCochainTransfer,
+        /,
+    ) -> Array:
         value = jnp.asarray(velocity, dtype=transfer.species.particles.safe_masses.dtype)
         capacity = transfer.species.capacity
         dimension = transfer.species.spatial_dimension
@@ -201,7 +208,13 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
         /,
         *,
         initial_potential: ArrayLike | None = None,
-    ):
+    ) -> tuple[
+        Array,
+        CochainElectrostaticResult,
+        tuple[PICFieldGatherResult, ...],
+        Array,
+        Array,
+    ]:
         route_states = tuple(
             transfer.build(state.position)
             for transfer, state in zip(self.transfers, particles, strict=True)
@@ -456,7 +469,7 @@ class ElectrostaticPICFixedStepMethod(AbstractFixedStepMethod, NonTrainableState
     plan: ElectrostaticPICPlan
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ElectrostaticPICPlan, /):
+    def __init__(self, plan: ElectrostaticPICPlan, /) -> None:
         if not isinstance(plan, ElectrostaticPICPlan):
             raise TypeError("plan must be ElectrostaticPICPlan.")
         self.plan = plan

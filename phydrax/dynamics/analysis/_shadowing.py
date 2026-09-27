@@ -10,9 +10,11 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import parse
 from .._evolution import AbstractDifferentiableEvolution, EvolutionTrajectory
 from .._grid import IterationGrid, TimeGrid
 from .._linearization import EvolutionArgumentJacobianAction
@@ -51,7 +53,7 @@ class ShadowingSensitivityProblem(StrictModule):
         observable_state_gradient: Callable[[Array, Array, Any], Array] | None = None,
         neutral_direction: Callable[[Array, Array, Any], Array] | None = None,
         time_dilation: ShadowingTimeDilation = "none",
-    ):
+    ) -> None:
         if not isinstance(evolution, AbstractDifferentiableEvolution):
             raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
         callbacks = (
@@ -61,8 +63,7 @@ class ShadowingSensitivityProblem(StrictModule):
         )
         if any(value is not None and not callable(value) for value in callbacks):
             raise TypeError("Shadowing callbacks must be callable or None.")
-        if time_dilation not in ("none", "flow"):
-            raise ValueError("Unsupported time_dilation semantics.")
+        time_dilation = parse(time_dilation, ShadowingTimeDilation, "time_dilation")
         if time_dilation == "flow" and neutral_direction is None:
             raise ValueError("Flow time dilation requires neutral_direction.")
         identifiers = (
@@ -161,8 +162,7 @@ def evaluate_shadowing_candidate(
         raise ValueError("Shadowing initially requires Euclidean state geometry.")
     if jax.tree.structure(parameter_direction) != jax.tree.structure(args):
         raise ValueError("Parameter direction must match the argument PyTree.")
-    if boundary not in ("free", "zero", "periodic"):
-        raise ValueError("Unsupported shadowing boundary condition.")
+    boundary = parse(boundary, ShadowingBoundary, "boundary")
     tangent = jnp.asarray(tangent_path)
     expected = trajectory.states.shape
     if tangent.shape != expected:

@@ -58,7 +58,7 @@ class DerivativeEvidence(StrictModule, NonTrainableState):
         stopped_events: Sequence[str] = (),
         support_id: str,
         evidence_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(contract, DerivativeContract):
             raise TypeError("contract must be DerivativeContract.")
         if not isinstance(estimator, DerivativeEstimatorKind):
@@ -148,7 +148,7 @@ class ScientificArtifactEnvelope(StrictModule, NonTrainableState):
         failure_reason: str = "none",
         parent_artifact_ids: tuple[str, ...] = (),
         binding: ArtifactBindingIdentity | None = None,
-    ):
+    ) -> None:
         if binding is not None and not isinstance(binding, ArtifactBindingIdentity):
             raise TypeError("binding must be an ArtifactBindingIdentity or None.")
         values = tuple(
@@ -221,7 +221,7 @@ class ArtifactManifest(StrictModule, NonTrainableState):
         license_id: str,
         model: str,
         coverage: str,
-    ):
+    ) -> None:
         values = tuple(
             str(value).strip()
             for value in (

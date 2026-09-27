@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -40,17 +43,18 @@ from phydrax.uq import (
 )
 
 
-def _tetra_mesh():
+def _tetra_mesh() -> Any:
     return phx.discretization.CellMesh.from_tetrahedra(
         np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype="float64"),
         np.asarray(((0, 1, 2, 3),)),
     )
 
 
-def test_time_borehole_and_planetary_coordinate_contracts_are_explicit():
+def test_time_borehole_and_planetary_coordinate_contracts_are_explicit() -> None:
     resource = bounded_resource_from_bytes(
         b"pinned leap table", limits=ResourceLimits(1024, 2, 4, 4, 0)
     ).manifest
+    # ty: ignore[invalid-argument-type]
     leaps = LeapSecondTable([100.0], [11.0], 10.0, resource)
     utc = TimeReferenceContract(
         "utc",
@@ -70,14 +74,18 @@ def test_time_borehole_and_planetary_coordinate_contracts_are_explicit():
     )
     trajectory = BoreholeTrajectory(
         "well-a",
+        # ty: ignore[invalid-argument-type]
         [0.0, 10.0, 20.0],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0], [0.0, 0.0, -8.0], [6.0, 0.0, -16.0]],
         coordinates,
     )
     np.testing.assert_allclose(
+        # ty: ignore[invalid-argument-type]
         trajectory.sample_positions([5.0, 15.0]),
         [[0.0, 0.0, -4.0], [3.0, 0.0, -12.0]],
     )
+    # ty: ignore[invalid-argument-type]
     sample = trajectory.prepare_sampling([5.0, 15.0])
     station = jnp.asarray((2.0, 4.0, 8.0))
     query = sample.apply(station)
@@ -119,7 +127,7 @@ def test_time_borehole_and_planetary_coordinate_contracts_are_explicit():
     )
 
 
-def test_tetrahedral_hcurl_exact_sequence_and_positive_actions():
+def test_tetrahedral_hcurl_exact_sequence_and_positive_actions() -> None:
     space = phx.discretization.TetrahedralNedelecSpace(_tetra_mesh())
     vertex = jnp.asarray((0.3, -0.2, 1.1, 0.7))
     edge_gradient = space.gradient(vertex)
@@ -134,8 +142,11 @@ def test_tetrahedral_hcurl_exact_sequence_and_positive_actions():
     assert float(jnp.vdot(edge, curl)) >= 0
 
 
-def test_covariance_actions_variable_projection_and_priors_match_dense_references():
+def test_covariance_actions_variable_projection_and_priors_match_dense_references() -> (
+    None
+):
     layout = CoordinateLayout(("a", "b", "c", "d"))
+    # ty: ignore[invalid-argument-type]
     diagonal = DiagonalCovarianceAction([1.0, 2.0, 3.0, 4.0], layout)
     residual = jnp.asarray((0.2, -0.4, 0.5, 0.1))
     np.testing.assert_allclose(
@@ -158,6 +169,7 @@ def test_covariance_actions_variable_projection_and_priors_match_dense_reference
         residual @ np.linalg.solve(covariance, residual),
         rtol=1e-12,
     )
+    # ty: ignore[invalid-argument-type]
     circulant = CirculantCovarianceAction([1.0, 2.0, 1.5], layout)
     assert jnp.isfinite(circulant.quadratic(residual))
     precision_values = jnp.asarray([2.0, 3.0, 4.0, 5.0])
@@ -197,23 +209,33 @@ def test_covariance_actions_variable_projection_and_priors_match_dense_reference
     np.testing.assert_allclose(result.parameters, truth, atol=1e-12)
     assert result.successful
 
+    # ty: ignore[invalid-argument-type]
     graph = GraphMetricPrior([1.0, 1.0], [0], [1], [2.0], gradient_precision=1.0)
+    # ty: ignore[invalid-argument-type]
     assert graph.log_prob([1.0, 1.0]) == 0
+    # ty: ignore[invalid-argument-type]
     temporal = TemporalDifferencePrior([0.0, 1.0, 3.0], 2.0)
     np.testing.assert_allclose(
-        temporal.standardized_difference([[0.0], [2.0], [6.0]]), 1.0
+        # ty: ignore[invalid-argument-type]
+        temporal.standardized_difference([[0.0], [2.0], [6.0]]),
+        1.0,
     )
     cross = CrossGradientPrior(
-        np.asarray([[[1, 0], [0, 1]]], dtype="float64"), [1.0], 2, 1.0
+        np.asarray([[[1, 0], [0, 1]]], dtype="float64"),
+        # ty: ignore[invalid-argument-type]
+        [1.0],
+        2,
+        1.0,
     )
+    # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(cross.log_prob([1.0, 0.0], [2.0, 0.0]), 0.0)
 
 
-def test_stochastic_design_never_materializes_identity_and_is_differentiable():
+def test_stochastic_design_never_materializes_identity_and_is_differentiable() -> None:
     dimension = 4
     space = phx.linalg.ArraySpace((dimension,))
 
-    def factory(design):
+    def factory(design: Any) -> Any:
         diagonal = 1.0 + jnp.exp(design) * jnp.arange(1, dimension + 1)
         return phx.linalg.DiagonalLinearOperator(
             diagonal,
@@ -247,7 +269,7 @@ def test_stochastic_design_never_materializes_identity_and_is_differentiable():
     assert result.successful
     assert jnp.isfinite(jax.grad(design.objective)(jnp.asarray(0.1)))
 
-    def identity_factory(_design):
+    def identity_factory(_design: Any) -> Any:
         return phx.linalg.DiagonalLinearOperator(
             jnp.ones(dimension),
             space=space,
@@ -288,7 +310,7 @@ def test_stochastic_design_never_materializes_identity_and_is_differentiable():
     np.testing.assert_allclose(e_optimal.estimate, 1.0, atol=1e-12)
 
 
-def test_robust_and_censored_likelihoods_are_normalized_and_finite():
+def test_robust_and_censored_likelihoods_are_normalized_and_finite() -> None:
     contaminated = ContaminatedGaussianLikelihood(
         1.0, outlier_scale_factor=10.0, outlier_probability=0.05
     )
@@ -300,7 +322,7 @@ def test_robust_and_censored_likelihoods_are_normalized_and_finite():
     assert jnp.all(jnp.isfinite(values))
 
 
-def test_resource_evidence_and_checkpoint_round_trip(tmp_path):
+def test_resource_evidence_and_checkpoint_round_trip(tmp_path: Any) -> None:
     grid = geo.AcousticGrid((7, 7), (1.0, 1.0))
     plan = geo.ConstantDensityAcousticPlan(grid, 0.1, 4, 2.0)
     evidence = plan.capability_evidence

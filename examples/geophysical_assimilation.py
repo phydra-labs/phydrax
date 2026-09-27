@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -44,14 +45,14 @@ from phydrax.uq import (
 )
 
 
-def temperature_propagator(state, duration):
+def temperature_propagator(state: Any, duration: Any) -> Any:
     """Exact reservoir solution; radiative rate 0.03/day, exchange 0.12/day."""
     common = 0.5 * (state[0] + state[1]) * jnp.exp(-0.03 * duration)
     contrast = 0.5 * (state[0] - state[1]) * jnp.exp(-0.27 * duration)
     return jnp.stack((common + contrast, common - contrast))
 
 
-def temperature_transition(key, state, t0, t1, context):
+def temperature_transition(key: Any, state: Any, t0: Any, t1: Any, context: Any) -> Any:
     del context
     duration = t1 - t0
     # Unresolved independent heat forcing, temperature scale 0.025 K/sqrt(day).
@@ -63,7 +64,7 @@ def temperature_transition(key, state, t0, t1, context):
     return temperature_propagator(state, duration) + noise
 
 
-def make_twin_problem(*, steps=8):
+def make_twin_problem(*, steps: Any = 8) -> Any:
     quantity = GeophysicalQuantity(
         "temperature_anomaly",
         "temperature_anomaly",
@@ -85,7 +86,9 @@ def make_twin_problem(*, steps=8):
     )
     operator = prepare_tensor_observation_operator(
         space,
+        # ty: ignore[invalid-argument-type]
         {"column": [0.0, 1.0]},
+        # ty: ignore[invalid-argument-type]
         {"column": [0.0, 1.0]},
         quantity,
         source_support_id=space.support_id,
@@ -153,7 +156,7 @@ def make_twin_problem(*, steps=8):
     return problem, truth, inventory, lineage
 
 
-def run_twin(*, ensemble_size=24):
+def run_twin(*, ensemble_size: Any = 24) -> Any:
     problem, truth, inventory, lineage = make_twin_problem()
     root = jax.random.key(17)
     result = ensemble_transform_kalman_filter(

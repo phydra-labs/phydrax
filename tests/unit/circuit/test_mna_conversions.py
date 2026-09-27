@@ -22,7 +22,7 @@ from phydrax.circuit import (
 )
 
 
-def test_exp_minus_iwt_component_signs_are_observable():
+def test_exp_minus_iwt_component_signs_are_observable() -> None:
     omega = jnp.asarray(7.0)
     capacitor = Capacitor(3.0).evaluate(omega)
     assert jnp.allclose(capacitor.y[0, 0], -21.0j)
@@ -30,7 +30,7 @@ def test_exp_minus_iwt_component_signs_are_observable():
     assert jnp.allclose(inductor.d[0, 0], 35.0j)
 
 
-def test_grounded_resistor_port_and_floating_rejection():
+def test_grounded_resistor_port_and_floating_rejection() -> None:
     reference = ElectricalWaveReference(50.0)
     circuit = NodalCircuit(
         (CircuitInstance("load", Resistor(100.0), ("n", "0")),),
@@ -53,7 +53,7 @@ def test_grounded_resistor_port_and_floating_rejection():
         prepare_mna(floating, jnp.asarray(1.0))
 
 
-def test_complex_reference_s_z_round_trip_and_scattering_mna_parity():
+def test_complex_reference_s_z_round_trip_and_scattering_mna_parity() -> None:
     references = (
         ElectricalWaveReference(25.0 + 4.0j),
         ElectricalWaveReference(80.0 - 3.0j),
@@ -79,7 +79,7 @@ def test_complex_reference_s_z_round_trip_and_scattering_mna_parity():
     assert jnp.allclose(matrix, leaf.evaluate(jnp.asarray(2.0)).matrix, atol=1e-10)
 
 
-def test_sparse_mna_assembles_and_solves_without_dense_materialization():
+def test_sparse_mna_assembles_and_solves_without_dense_materialization() -> None:
     reference = ElectricalWaveReference(50.0)
     circuit = NodalCircuit(
         (CircuitInstance("load", Resistor(100.0), ("n", "0")),),

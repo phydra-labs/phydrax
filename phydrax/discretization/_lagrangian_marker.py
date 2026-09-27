@@ -10,10 +10,12 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from .._dtype_names import real_precision_dtype_name
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._precision import PrecisionEvidenceEnvelope, real_precision_dtype_name
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ..linalg import ArraySpace, DiagonalPairing
 from ._core import (
@@ -70,7 +72,7 @@ class LagrangianMarkerSetPlan(AbstractDiscretizationPlan):
         name: str = "lagrangian-markers",
         coordinate_dtype: Any = "float64",
         plan_id: str | None = None,
-    ):
+    ) -> None:
         ids = np.asarray(marker_ids)
         if ids.ndim != 1 or ids.size == 0:
             raise ValueError("marker_ids must be a nonempty rank-1 integer array.")
@@ -192,7 +194,9 @@ class LagrangianMarkerDiscretization(AbstractPreparedDiscretization):
     numeric_version: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: LagrangianMarkerSetPlan, /, *, numeric_version: str = "0"):
+    def __init__(
+        self, plan: LagrangianMarkerSetPlan, /, *, numeric_version: str = "0"
+    ) -> None:
         if not isinstance(plan, LagrangianMarkerSetPlan):
             raise TypeError("plan must be a LagrangianMarkerSetPlan.")
         version = str(numeric_version)

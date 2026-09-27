@@ -11,7 +11,9 @@ from phydrax.geometry import (
 )
 
 
-def test_linear_isoparametric_triangle_preserves_authoritative_geometry_and_frame():
+def test_linear_isoparametric_triangle_preserves_authoritative_geometry_and_frame() -> (
+    None
+):
     metadata = SurfaceMetadata(
         source_id="unit-triangle",
         source_revision="1",

@@ -5,19 +5,22 @@
 from __future__ import annotations
 
 import math
-from typing import Literal, TypeAlias
+from collections.abc import Callable
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._transform_line import PreparedTransformLineSolve, TransformLineSolveResult
 
 
@@ -130,7 +133,7 @@ class LinePartitionMetadata(StrictModule, NonTrainableState):
     uneven: bool = eqx.field(static=True)
     metadata_id: str = eqx.field(static=True)
 
-    def __init__(self, global_size: int, partition_count: int, /):
+    def __init__(self, global_size: int, partition_count: int, /) -> None:
         size = int(global_size)
         count = int(partition_count)
         if size < 1 or count < 1 or count > size:
@@ -206,7 +209,7 @@ class StructuredLineNullspacePolicy(StrictModule, NonTrainableState):
         right_null: ArrayLike | None = None,
         pin_row: int = 0,
         policy_id: str | None = None,
-    ):
+    ) -> None:
         weights = jnp.asarray(line_weights)
         if (
             weights.ndim != 1
@@ -280,12 +283,11 @@ class StructuredSolveTopologyPlan(StrictModule, NonTrainableState):
         maximum_resource_bytes: int = 512 * 1024**2,
         tolerance: float = 1.0e-10,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         line_size_ = int(line_size)
         count = int(partition_count)
         transverse_count = int(transverse_line_count)
-        if distribution not in ("transverse-batch", "split-line"):
-            raise ValueError("distribution must be 'transverse-batch' or 'split-line'.")
+        distribution = parse(distribution, StructuredDistribution, "distribution")
         algorithm_ = (
             "local"
             if algorithm is None and distribution == "transverse-batch"
@@ -293,8 +295,7 @@ class StructuredSolveTopologyPlan(StrictModule, NonTrainableState):
             if algorithm is None
             else algorithm
         )
-        if algorithm_ not in ("local", "partitioned-thomas", "spike", "pcr"):
-            raise ValueError("Unknown structured line algorithm.")
+        algorithm_ = parse(algorithm_, StructuredAlgorithm, "algorithm")
         if line_size_ < 2 or transverse_count < 1:
             raise ValueError(
                 "line_size must be at least two and transverse_line_count positive."
@@ -377,7 +378,7 @@ class DistributedLineSolvePlan(StrictModule, NonTrainableState):
         line_axis: int = -1,
         nullspace: StructuredLineNullspacePolicy | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(topology, StructuredSolveTopologyPlan):
             raise TypeError("topology must be StructuredSolveTopologyPlan.")
         if topology.distribution != "split-line":
@@ -479,7 +480,7 @@ class PreparedDistributedLineSolve(StrictModule, NonTrainableState):
     evidence: StructuredSolvePreparationEvidence
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: DistributedLineSolvePlan, /):
+    def __init__(self, plan: DistributedLineSolvePlan, /) -> None:
         if not isinstance(plan, DistributedLineSolvePlan):
             raise TypeError("plan must be DistributedLineSolvePlan.")
         topology = plan.topology
@@ -603,7 +604,8 @@ class PreparedDistributedLineSolve(StrictModule, NonTrainableState):
             reduced_lower,
             reduced_diagonal,
             reduced_upper,
-            topology.algorithm,
+            # The plan requires split-line topology, which rejects "local".
+            cast(SplitLineAlgorithm, topology.algorithm),
             topology.tolerance,
         )
         schur_residual = jnp.asarray(0.0, dtype=jnp.real(diagonal).dtype)
@@ -1084,7 +1086,7 @@ class PreparedTransverseBatchLineSolve(StrictModule, NonTrainableState):
 
     def __init__(
         self, topology: StructuredSolveTopologyPlan, local: PreparedTransformLineSolve, /
-    ):
+    ) -> None:
         if (
             not isinstance(topology, StructuredSolveTopologyPlan)
             or topology.distribution != "transverse-batch"
@@ -1137,7 +1139,7 @@ class ExtrudedAxisInvarianceCertificate(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-12,
         certificate_id: str | None = None,
-    ):
+    ) -> None:
         tolerance_ = float(tolerance)
         if not math.isfinite(tolerance_) or tolerance_ <= 0.0:
             raise ValueError("tolerance must be finite and positive.")
@@ -1203,7 +1205,7 @@ class MultiblockExtrudedReductionPlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 100,
         maximum_resource_bytes: int = 512 * 1024**2,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(certificate, ExtrudedAxisInvarianceCertificate):
             raise TypeError("certificate must be ExtrudedAxisInvarianceCertificate.")
         if not bool(np.asarray(certificate.certified)):
@@ -1301,7 +1303,7 @@ class PreparedMultiblockExtrudedReduction(StrictModule, NonTrainableState):
     resources: StructuredSolveResourceEstimate
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MultiblockExtrudedReductionPlan, /):
+    def __init__(self, plan: MultiblockExtrudedReductionPlan, /) -> None:
         if not isinstance(plan, MultiblockExtrudedReductionPlan):
             raise TypeError("plan must be MultiblockExtrudedReductionPlan.")
         blocks, size = plan.local_diagonal.shape
@@ -1457,7 +1459,11 @@ def _tree_inner(left: Array, right: Array) -> Array:
 
 
 def _preconditioned_conjugate_gradient(
-    apply, precondition, rhs: Array, iterations: int, tolerance: float
+    apply: Callable[[Array], Array],
+    precondition: Callable[[Array], Array],
+    rhs: Array,
+    iterations: int,
+    tolerance: float,
 ) -> tuple[Array, Array]:
     value = jnp.zeros_like(rhs)
     residual = rhs - apply(value)

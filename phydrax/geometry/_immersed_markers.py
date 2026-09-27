@@ -5,11 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -62,7 +64,7 @@ class ImmersedMarkerQuadraturePlan(StrictModule, NonTrainableState):
         /,
         *,
         active_mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         ids = np.asarray(marker_ids)
         charts = np.asarray(chart_indices)
         reference = np.asarray(reference_coordinates)
@@ -126,7 +128,9 @@ class ImmersedMarkerQuadraturePlan(StrictModule, NonTrainableState):
         if velocity is None:
             velocities = jnp.zeros_like(positions)
         elif callable(velocity):
-            velocities = velocity(jnp.asarray(time), positions)
+            # ArrayLike values are not callable, so callable() selects the provider.
+            provider = cast(MarkerVelocityProvider, velocity)
+            velocities = provider(jnp.asarray(time), positions)
         else:
             velocities = jnp.asarray(velocity, dtype=positions.dtype)
         if velocities.shape != positions.shape:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 
@@ -38,7 +39,7 @@ from phydrax.applications.cardiovascular.electrophysiology._pacing import (
 )
 
 
-def _prepared_heart_only():
+def _prepared_heart_only() -> Any:
     return BidomainFEMPlan(
         HeartOnlyBidomainRoute(),
         jnp.asarray((10, 20, 30)),
@@ -55,7 +56,7 @@ def _prepared_heart_only():
     ).prepare()
 
 
-def qualification():
+def qualification() -> Any:
     graph = GraphEikonalRoute(
         jnp.asarray((10, 20, 30)),
         jnp.asarray((100, 101)),
@@ -103,6 +104,7 @@ def qualification():
     collision = propagate_purkinje(
         network,
         initialize_purkinje_state(network),
+        # ty: ignore[invalid-argument-type]
         make_purkinje_stimulus_batch(network, (1, 2), (0, 1), (0.0, 0.0)),
     )
     collision_mask = collision.events.active & (
@@ -266,7 +268,7 @@ def qualification():
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--output",

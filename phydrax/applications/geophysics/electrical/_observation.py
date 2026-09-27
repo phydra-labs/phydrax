@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
@@ -45,7 +46,7 @@ class LogConductivity(StrictModule, NonTrainableState):
         *,
         cell_parameter_indices: ArrayLike | None = None,
         unit: UnitDefinition = DC_CONDUCTIVITY_UNIT,
-    ):
+    ) -> None:
         raw = jnp.asarray(reference_cell_conductivity)
         if jnp.issubdtype(raw.dtype, jnp.complexfloating):
             raise TypeError("Reference conductivity must be real.")
@@ -98,7 +99,7 @@ class LogConductivity(StrictModule, NonTrainableState):
         )
 
 
-def _voltage_identity(voltages, args):
+def _voltage_identity(voltages: Array, args: object) -> Array:
     del args
     return voltages
 
@@ -126,7 +127,7 @@ class DCElectricalObservationPlan(StrictModule, NonTrainableState):
         *,
         observation_id: str = "dc-voltage-observations",
         voltage_unit: UnitDefinition = VOLT,
-    ):
+    ) -> None:
         if not isinstance(dc, PreparedDC) or not isinstance(
             parameterization, LogConductivity
         ):
@@ -164,7 +165,7 @@ class DCElectricalObservationPlan(StrictModule, NonTrainableState):
             _voltage_identity, values, covariance, observation_id=observation_id
         )
 
-    def predict(self, parameters: ArrayLike, args=None, /) -> Array:
+    def predict(self, parameters: ArrayLike, args: object = None, /) -> Array:
         del args
         return self.dc.predict(self.parameterization(parameters))
 
@@ -194,10 +195,10 @@ class DCElectricalObservationPlan(StrictModule, NonTrainableState):
         parameterization = self.parameterization
         field_observation = self.field_observation
 
-        def predict(parameters):
+        def predict(parameters: ArrayLike) -> Array:
             return dc.predict(parameterization(parameters))
 
-        def log_likelihood(parameters):
+        def log_likelihood(parameters: ArrayLike) -> Array:
             return field_observation.log_likelihood(predict(parameters))
 
         covariance = field_observation.covariance
@@ -205,7 +206,7 @@ class DCElectricalObservationPlan(StrictModule, NonTrainableState):
         if isinstance(covariance, CholeskyCovarianceAction):
             observed = field_observation.observed
 
-            def residual(parameters):
+            def residual(parameters: ArrayLike) -> Array:
                 return covariance.whiten(predict(parameters) - observed)
 
         return PosteriorProblem(

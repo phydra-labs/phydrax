@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -13,7 +16,7 @@ from phydrax._integration_guardrails import (
 )
 
 
-def _grid(shape=(3, 3, 3), *, periodic=False):
+def _grid(shape: Any = (3, 3, 3), *, periodic: Any = False) -> Any:
     return phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(count, periodic=periodic)
@@ -23,7 +26,7 @@ def _grid(shape=(3, 3, 3), *, periodic=False):
     ).prepare(jnp.asarray([[0.0] * len(shape), [1.0] * len(shape)]))
 
 
-def test_maxwell_db_state_boundaries_observers_and_cpml_are_composable():
+def test_maxwell_db_state_boundaries_observers_and_cpml_are_composable() -> None:
     bridge = phx.discretization.StructuredCochainBridge(_grid())
     n0, n1, n2, _ = bridge.cochain.cell_counts
     constitutive = phx.solver.maxwell.DiagonalMaxwellConstitutivePlan(
@@ -68,7 +71,7 @@ def test_maxwell_db_state_boundaries_observers_and_cpml_are_composable():
     assert report.pml_dissipation >= 0.0
 
 
-def test_periodic_and_bloch_cochain_derivatives_preserve_chain_identity():
+def test_periodic_and_bloch_cochain_derivatives_preserve_chain_identity() -> None:
     bridge = phx.discretization.StructuredCochainBridge(_grid(periodic=True))
     values = jnp.sin(jnp.arange(bridge.cochain.cell_counts[0], dtype="float64"))
     np.testing.assert_allclose(
@@ -82,7 +85,7 @@ def test_periodic_and_bloch_cochain_derivatives_preserve_chain_identity():
     np.testing.assert_allclose(jnp.abs(bloch.phases), 1.0, atol=2e-12)
 
 
-def test_material_families_are_fail_closed_and_differentiable():
+def test_material_families_are_fail_closed_and_differentiable() -> None:
     bridge = phx.discretization.StructuredCochainBridge(_grid((2, 2, 2)))
     layout = phx.solver.maxwell.MaxwellCochainLayout(bridge)
     n1 = bridge.cochain.cell_counts[1]
@@ -144,7 +147,7 @@ def test_material_families_are_fail_closed_and_differentiable():
     )
 
 
-def test_frequency_modes_adjoints_and_reversible_execution():
+def test_frequency_modes_adjoints_and_reversible_execution() -> None:
     bridge = phx.discretization.StructuredCochainBridge(_grid((2, 2, 2)))
     runtime = phx.solver.CompatibleMaxwellPlan(bridge).prepare()
     state = runtime.initialize()
@@ -191,7 +194,7 @@ def test_frequency_modes_adjoints_and_reversible_execution():
     assert report.passed
 
 
-def test_tetrahedral_whitney_hodge_is_positive_and_oriented():
+def test_tetrahedral_whitney_hodge_is_positive_and_oriented() -> None:
     vertices = jnp.asarray(
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
     )
@@ -240,7 +243,7 @@ def test_tetrahedral_whitney_hodge_is_positive_and_oriented():
     )
 
 
-def test_point_cloud_calculus_reproduces_polynomials_and_diffuses_energy():
+def test_point_cloud_calculus_reproduces_polynomials_and_diffuses_energy() -> None:
     axis = jnp.linspace(-1.0, 1.0, 5)
     x, y = jnp.meshgrid(axis, axis, indexing="ij")
     points = jnp.stack((x.reshape(-1), y.reshape(-1)), axis=1)
@@ -279,17 +282,18 @@ def test_point_cloud_calculus_reproduces_polynomials_and_diffuses_energy():
     assert diffusion.energy_rate(values) <= 1e-10
 
 
-def test_high_order_teno_filter_lowering_and_neutral_guardrails():
+def test_high_order_teno_filter_lowering_and_neutral_guardrails() -> None:
     values = jnp.linspace(-1.0, 1.0, 32) ** 5
     for order in (6, 8):
         teno = phx.discretization.HighResolutionReconstructionPlan("teno", order=order)
         left, right = teno.reconstruct(values)
         assert left.shape == values.shape
         assert right.shape == values.shape
+        # ty: ignore[unresolved-attribute]
         assert teno.qualification.passed
     vector_values = jnp.stack((values, values**2), axis=1)
 
-    def identity_eigensystem(left, right, args):
+    def identity_eigensystem(left: Any, right: Any, args: Any) -> Any:
         del right, args
         identity = jnp.broadcast_to(
             jnp.eye(left.shape[1], dtype=left.dtype),

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -57,7 +59,7 @@ _FACTORIES = (
 )
 
 
-def _units(*, spin="average-initial-sum-final"):
+def _units(*, spin: Any = "average-initial-sum-final") -> Any:
     return RelativisticUnitContract(
         RelativityScaleContract(DimensionalScaleContract.si(), 1, 3, 2, 1),
         RelativityConvention(metric_signature="mostly_minus"),
@@ -65,7 +67,7 @@ def _units(*, spin="average-initial-sum-final"):
     )
 
 
-def _frame(units, *, snapshot_token=4):
+def _frame(units: Any, *, snapshot_token: Any = 4) -> Any:
     geometry = ADMGridGeometry(
         jnp.asarray(1.0),
         jnp.zeros((3,)),
@@ -102,7 +104,9 @@ def _frame(units, *, snapshot_token=4):
     )
 
 
-def _reference(*, commercial=True, artifact_name="full-dark-sector-reference"):
+def _reference(
+    *, commercial: Any = True, artifact_name: Any = "full-dark-sector-reference"
+) -> Any:
     return ReferenceArtifactManifest(
         artifact_name,
         checksum_algorithm="sha256",
@@ -120,7 +124,7 @@ def _reference(*, commercial=True, artifact_name="full-dark-sector-reference"):
     )
 
 
-def _campaign(criteria):
+def _campaign(criteria: Any) -> Any:
     calibration = ScientificCase(
         "calibration-case",
         "calibration-unit",
@@ -149,7 +153,14 @@ def _campaign(criteria):
     )
 
 
-def _profile(profile_name, factory, *, units=None, frame=None, runtime_support=None):
+def _profile(
+    profile_name: Any,
+    factory: Any,
+    *,
+    units: Any = None,
+    frame: Any = None,
+    runtime_support: Any = None,
+) -> Any:
     units_ = _units() if units is None else units
     frame_ = _frame(units_) if frame is None else frame
     metric_ids = claims.full_dark_sector_claim_metric_ids(profile_name)
@@ -177,9 +188,9 @@ def _profile(profile_name, factory, *, units=None, frame=None, runtime_support=N
 
 @pytest.mark.parametrize(("profile_name", "factory"), _FACTORIES)
 def test_all_full_closure_profiles_bind_independent_complete_support(
-    profile_name,
-    factory,
-):
+    profile_name: Any,
+    factory: Any,
+) -> None:
     claim = _profile(profile_name, factory)
     support = dict(claim.support.attributes)
     differentiation = claims.full_dark_sector_differentiation_contract(profile_name)
@@ -203,7 +214,7 @@ def test_all_full_closure_profiles_bind_independent_complete_support(
     )
 
 
-def test_claim_content_identity_changes_with_runtime_units_and_frame_snapshot():
+def test_claim_content_identity_changes_with_runtime_units_and_frame_snapshot() -> None:
     name, factory = _FACTORIES[0]
     baseline_units = _units()
     baseline_frame = _frame(baseline_units)
@@ -237,7 +248,7 @@ def test_claim_content_identity_changes_with_runtime_units_and_frame_snapshot():
     assert claims.full_dark_sector_promotion_channel(baseline).endswith(baseline.claim_id)
 
 
-def test_exact_criteria_reserved_support_and_source_rights_are_enforced():
+def test_exact_criteria_reserved_support_and_source_rights_are_enforced() -> None:
     name, factory = _FACTORIES[3]
     units = _units()
     frame = _frame(units)
@@ -277,7 +288,7 @@ def test_exact_criteria_reserved_support_and_source_rights_are_enforced():
         )
 
 
-def _promotion_trust():
+def _promotion_trust() -> Any:
     pytest.importorskip("cryptography")
     role_keys = {
         "criterion-approver": ("criterion-key",),
@@ -300,7 +311,7 @@ def _promotion_trust():
     return QualificationRoleTrust(store, role_keys), signers["promoter-key"]
 
 
-def _signed_promotion(claim, *, channel=None):
+def _signed_promotion(claim: Any, *, channel: Any = None) -> Any:
     trust, signer = _promotion_trust()
     content = {
         "kind": "promotion-state",
@@ -325,13 +336,14 @@ def _signed_promotion(claim, *, channel=None):
         expires_at=90,
     )
     promotion = PromotionState(
+        # ty: ignore[invalid-argument-type]
         **{name: value for name, value in content.items() if name != "kind"},
         signature=signature,
     )
     return promotion, trust
 
 
-def test_signed_promotion_binds_exact_claim_derivative_gate_and_source_rights():
+def test_signed_promotion_binds_exact_claim_derivative_gate_and_source_rights() -> None:
     name, factory = _FACTORIES[6]
     claim = _profile(name, factory)
     promotion, trust = _signed_promotion(claim)

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -18,14 +21,14 @@ jax.config.update("jax_enable_x64", True)
 D = phx.discretization
 
 
-def _space(*pairs):
+def _space(*pairs: Any) -> Any:
     plans = tuple(plan for plan, _ in pairs)
     domains = tuple(domain for _, domain in pairs)
     names = ("x", "y", "z")[: len(plans)]
     return D.TensorSpectralPlan(plans, axis_names=names, field_name="u").prepare(domains)
 
 
-def _view(reconstruction, coefficients):
+def _view(reconstruction: Any, coefficients: Any) -> Any:
     domain = phx.domain.GeometryDomain(reconstruction.support_geometry, label="x")
     return DiscreteFieldFunctionView(reconstruction, coefficients, domain, variable="x")
 
@@ -40,7 +43,7 @@ _FAMILIES = {
 
 
 @pytest.mark.parametrize("family", sorted(_FAMILIES))
-def test_point_synthesis_equals_grid_reconstruction_and_derivatives(family):
+def test_point_synthesis_equals_grid_reconstruction_and_derivatives(family: Any) -> None:
     space = _space(_FAMILIES[family])
     rng = np.random.default_rng(3)
     # A generic (non-Hermitian) modal state exercises every mode, including
@@ -67,7 +70,7 @@ def test_point_synthesis_equals_grid_reconstruction_and_derivatives(family):
         )
 
 
-def test_analytic_fields_and_derivatives_at_arbitrary_points():
+def test_analytic_fields_and_derivatives_at_arbitrary_points() -> None:
     rng = np.random.default_rng(0)
     fourier = _space((D.FourierBasisPlan(16), D.AxisDomain.periodic(0.0, 1.0)))
     x = fourier.axes[0].nodes
@@ -134,7 +137,7 @@ def test_analytic_fields_and_derivatives_at_arbitrary_points():
     )
 
 
-def _mixed():
+def _mixed() -> Any:
     # u(x, y) = sin(2 pi x) (y^2 + y) on the periodic x cell [0, 1) and y in [-1, 1].
     space = _space(
         (D.FourierBasisPlan(12), D.AxisDomain.periodic(0.0, 1.0)),
@@ -148,7 +151,7 @@ def _mixed():
 _POINTS = jnp.asarray(((0.1, -0.3), (0.45, 0.8), (0.9, 0.05), (0.7, -0.95)))
 
 
-def test_view_domain_function_gradient_and_laplacian_are_exact():
+def test_view_domain_function_gradient_and_laplacian_are_exact() -> None:
     space, coefficients = _mixed()
     reconstruction = prepare_spectral_field_reconstruction(space)
     field = _view(reconstruction, coefficients).as_domain_function()
@@ -187,7 +190,7 @@ def test_view_domain_function_gradient_and_laplacian_are_exact():
     )
 
 
-def test_derivatives_beyond_the_prepared_order_are_refused():
+def test_derivatives_beyond_the_prepared_order_are_refused() -> None:
     space, coefficients = _mixed()
     reconstruction = prepare_spectral_field_reconstruction(
         space, maximum_derivative_order=1
@@ -200,7 +203,7 @@ def test_derivatives_beyond_the_prepared_order_are_refused():
         phx.operators.partial_n(field, var="x", axis=1, order=2)
 
 
-def test_queries_outside_the_axis_box_fail_closed_with_evidence():
+def test_queries_outside_the_axis_box_fail_closed_with_evidence() -> None:
     space, coefficients = _mixed()
     reconstruction = prepare_spectral_field_reconstruction(space)
     view = _view(reconstruction, coefficients)
@@ -222,7 +225,7 @@ def test_queries_outside_the_axis_box_fail_closed_with_evidence():
         eqx.filter_jit(view.as_domain_function().func)(points[:2]).block_until_ready()
 
 
-def test_coefficient_transpose_is_the_exact_adjoint_of_the_synthesis():
+def test_coefficient_transpose_is_the_exact_adjoint_of_the_synthesis() -> None:
     space, coefficients = _mixed()
     reconstruction = prepare_spectral_field_reconstruction(space)
     cotangent = jnp.asarray((1.0, -2.0, 0.5, 3.0))
@@ -246,7 +249,7 @@ def test_coefficient_transpose_is_the_exact_adjoint_of_the_synthesis():
     )
 
 
-def test_invalid_query_routes_have_no_transpose():
+def test_invalid_query_routes_have_no_transpose() -> None:
     space, coefficients = _mixed()
     reconstruction = prepare_spectral_field_reconstruction(space)
     # One valid point and one outside the bounded y axis.
@@ -261,7 +264,7 @@ def test_invalid_query_routes_have_no_transpose():
         eqx.filter_jit(reconstruction.transpose)(points, cotangent).block_until_ready()
 
 
-def test_vector_components_follow_the_declared_value_port():
+def test_vector_components_follow_the_declared_value_port() -> None:
     space, coefficients = _mixed()
     port = phx.ValuePort(
         "velocity",
@@ -280,7 +283,7 @@ def test_vector_components_follow_the_declared_value_port():
     )
 
 
-def test_support_geometry_must_be_the_axis_box():
+def test_support_geometry_must_be_the_axis_box() -> None:
     space, coefficients = _mixed()
     box = phx.geometry.Orthotope((0.5, 0.0), (1.0, 2.0), feature_id="user-box").compile()
     reconstruction = prepare_spectral_field_reconstruction(space, support_geometry=box)
@@ -294,7 +297,7 @@ def test_support_geometry_must_be_the_axis_box():
         prepare_spectral_field_reconstruction(space, support_geometry=shrunk)
 
 
-def test_axes_without_point_synthesis_or_box_support_are_refused():
+def test_axes_without_point_synthesis_or_box_support_are_refused() -> None:
     constrained = _space(
         (
             D.ConstrainedBasisPlan(
@@ -313,3 +316,23 @@ def test_axes_without_point_synthesis_or_box_support_are_refused():
     rational = _space((D.RationalChebyshevLineBasisPlan(8), D.AxisDomain.real_line()))
     with pytest.raises(ValueError, match="unbounded"):
         prepare_spectral_field_reconstruction(rational)
+
+
+@pytest.mark.parametrize(
+    "axis",
+    [
+        (D.RationalChebyshevLineBasisPlan(8), D.AxisDomain.real_line()),
+        (D.RationalChebyshevHalfLineBasisPlan(8), D.AxisDomain.half_line(0.0)),
+    ],
+    ids=["real-line", "half-line"],
+)
+def test_rational_axes_refuse_arbitrary_point_synthesis(axis: Any) -> None:
+    rational = _space(axis)
+    coefficients = jnp.zeros(rational.modal_shape, dtype=jnp.complex128)
+    points = jnp.ones((1, 1))
+    with pytest.raises(ValueError, match="arbitrary-point synthesis"):
+        rational.evaluate(coefficients, points)
+    with pytest.raises(ValueError, match="arbitrary-point synthesis"):
+        rational.derivative_at(coefficients, points, (1,))
+    with pytest.raises(ValueError, match="arbitrary-point synthesis"):
+        rational.axes[0].evaluate_basis(points[:, 0])

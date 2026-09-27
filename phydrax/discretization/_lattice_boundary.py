@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -50,7 +51,7 @@ class LatticeBoundaryPhasePlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_displacement: int = 1,
-    ):
+    ) -> None:
         if not isinstance(topology, TensorTopology):
             raise TypeError("topology must be TensorTopology.")
         values = np.asarray(phases)
@@ -154,7 +155,7 @@ class CheckerboardEntityLayout(StrictModule, NonTrainableState):
     site_count: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, topology: TensorTopology, /, *, origin_parity: int = 0):
+    def __init__(self, topology: TensorTopology, /, *, origin_parity: int = 0) -> None:
         if not isinstance(topology, TensorTopology):
             raise TypeError("topology must be TensorTopology.")
         origin = int(origin_parity)

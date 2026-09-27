@@ -1,15 +1,16 @@
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 from phydrax.qualification import builtin_omniphysics_qualification_evidence
 
 
-def run():
+def run() -> Any:
     return builtin_omniphysics_qualification_evidence().to_record()
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()

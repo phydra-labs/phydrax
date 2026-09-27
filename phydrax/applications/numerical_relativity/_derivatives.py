@@ -9,11 +9,13 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 DerivativeBoundary: TypeAlias = Literal["periodic", "one_sided"]
@@ -37,8 +39,8 @@ def _shift(value: Array, offset: int, axis: int, /) -> Array:
     return jnp.roll(value, shift=-offset, axis=axis)
 
 
-def _set_index(value: Array, axis: int, index: int, update: Array, /) -> Array:
-    selection = [slice(None)] * value.ndim
+def _set_index(value: Array, axis: int, index: int, update: ArrayLike, /) -> Array:
+    selection: list[slice | int] = [slice(None)] * value.ndim
     selection[axis] = index
     return value.at[tuple(selection)].set(update)
 
@@ -248,7 +250,7 @@ class FourthOrderDerivatives(StrictModule, NonTrainableState):
         *,
         boundary: DerivativeBoundary = "periodic",
         dissipation_strength: float = 0.0,
-    ):
+    ) -> None:
         shape = tuple(grid_shape)
         steps = tuple(float(value) for value in spacing)
         strength = float(dissipation_strength)
@@ -257,8 +259,7 @@ class FourthOrderDerivatives(StrictModule, NonTrainableState):
             raise ValueError(f"Every grid extent must be at least {minimum}.")
         if len(steps) != 3 or any(not isfinite(value) or value <= 0.0 for value in steps):
             raise ValueError("spacing must contain three finite positive values.")
-        if boundary not in ("periodic", "one_sided"):
-            raise ValueError("boundary must be 'periodic' or 'one_sided'.")
+        boundary = parse(boundary, DerivativeBoundary, "boundary")
         if not isfinite(strength) or strength < 0.0:
             raise ValueError("dissipation_strength must be finite and non-negative.")
         self.grid_shape = shape
@@ -330,7 +331,8 @@ class FourthOrderDerivatives(StrictModule, NonTrainableState):
         speed = jnp.asarray(velocity)
         if speed.shape != (3,) + self.grid_shape:
             raise ValueError(f"velocity must have shape {(3,) + self.grid_shape}.")
-        return sum(speed[i] * self.upwind(value, speed[i], i) for i in range(3))
+        terms = tuple(speed[i] * self.upwind(value, speed[i], i) for i in range(3))
+        return sum(terms[1:], start=terms[0])
 
     def dissipation(self, field: ArrayLike, /) -> Array:
         value = self._validate(field)

@@ -40,7 +40,7 @@ class IGADynamicsPlan(StrictModule, NonTrainableState):
         *,
         lifecycle_plan_id: str,
         lifecycle_state_id: str,
-    ):
+    ) -> None:
         if not isinstance(
             formulation,
             (

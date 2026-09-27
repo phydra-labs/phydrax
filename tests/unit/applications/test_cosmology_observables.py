@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -17,7 +19,7 @@ NATIVE_DIFFERENTIATION = phx.DerivativeContract.smooth(
 cosmology = phx.applications.cosmology
 
 
-def _context():
+def _context() -> Any:
     scale = cosmology.CosmologyScaleContract(
         cosmology.CODE_COSMOLOGY_SCALE.length_unit,
         cosmology.CODE_COSMOLOGY_SCALE.mass_unit,
@@ -38,6 +40,7 @@ def _context():
     )
     k = jnp.geomspace(0.05, 2000.0, 512)
     power = cosmology.MatterPowerTable(
+        # ty: ignore[invalid-argument-type]
         [0.5, 1.0],
         k,
         jnp.ones((2, k.size)),
@@ -49,7 +52,7 @@ def _context():
     return background, growth, power
 
 
-def test_limber_density_bias_scaling_and_lensing_finiteness():
+def test_limber_density_bias_scaling_and_lensing_finiteness() -> None:
     background, _, power = _context()
     distance = cosmology.FLRWDistancePlan(light_speed=1.0, order=64)
     grid = cosmology.RadialGrid(jnp.linspace(0.1, 0.9, 48))
@@ -58,6 +61,7 @@ def test_limber_density_bias_scaling_and_lensing_finiteness():
     )
     first = cosmology.LinearDensityTracer(distribution, 1.0)
     second = cosmology.LinearDensityTracer(distribution, 2.0)
+    # ty: ignore[invalid-argument-type]
     plan = cosmology.LimberAngularPowerPlan([10, 20, 50], 2)
     prediction = plan.predict(background, distance, power, (first, second))
     assert bool(prediction.successful)
@@ -65,13 +69,14 @@ def test_limber_density_bias_scaling_and_lensing_finiteness():
     np.testing.assert_allclose(prediction.values[1], 2.0 * prediction.values[0])
 
     lensing = cosmology.LensingConvergenceTracer(distribution)
+    # ty: ignore[invalid-argument-type]
     lensing_plan = cosmology.LimberAngularPowerPlan([20, 50], 1)
     lensing_prediction = lensing_plan.predict(background, distance, power, (lensing,))
     assert bool(lensing_prediction.successful)
     assert jnp.all(lensing_prediction.values >= 0.0)
 
 
-def test_linear_kaiser_multipoles_and_ap_identity():
+def test_linear_kaiser_multipoles_and_ap_identity() -> None:
     background, growth, power = _context()
     distance = cosmology.FLRWDistancePlan(light_speed=1.0, order=64)
     plan = cosmology.LinearRSDMultipolePlan(jnp.asarray([0.1, 0.2, 0.5]), mu_order=64)

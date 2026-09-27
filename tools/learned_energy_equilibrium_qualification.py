@@ -185,6 +185,7 @@ def _prepare_dataset(
         closure_data.PartitionAssignment(
             sample_id=sample.sample_id,
             group_key=sample.key.group_key("case"),
+            # ty: ignore[invalid-argument-type]
             split=record[2],
         )
         for sample, record in zip(conserved_samples, metadata, strict=True)
@@ -807,6 +808,7 @@ def _qualification() -> tuple[
         lower = float(jnp.min(values))
         upper = float(jnp.max(values))
         scale = max(abs(lower), abs(upper), 1.0)
+        # ty: ignore[invalid-return-type]
         return lower - support_padding * scale, upper + support_padding * scale
 
     support = closure_data.EnergyEquilibriumSupportEnvelope(
@@ -814,6 +816,7 @@ def _qualification() -> tuple[
         u_x_bounds=padded_bounds(primitive[:, 1]),
         u_y_bounds=padded_bounds(primitive[:, 2]),
         temperature_bounds=padded_bounds(primitive[:, 3]),
+        # ty: ignore[invalid-argument-type]
         maximum_mach=float(jnp.max(mach)) + support_padding,
         minimum_hull_margin=THRESHOLDS["oracle_minimum_hull_margin"],
         minimum_particle_equilibrium_margin=0.5 * minimum_particle_equilibrium,

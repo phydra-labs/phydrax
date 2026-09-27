@@ -8,7 +8,8 @@ from typing import TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -51,7 +52,7 @@ class MACDiagonalStageInverseMomentum(StrictModule, NonTrainableState):
         /,
         *,
         stage_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         if isinstance(inverse_diagonal, (tuple, list)):
@@ -68,7 +69,7 @@ class MACDiagonalStageInverseMomentum(StrictModule, NonTrainableState):
                     for layout in operators.discretization.face_layouts
                 )
                 if array.shape == ()
-                else operators.validate_velocity(inverse_diagonal)
+                else operators.validate_velocity(tuple(array))
             )
         values = tuple(
             eqx.error_if(
@@ -175,7 +176,7 @@ class MACHelmholtzStageInverseMomentum(StrictModule, NonTrainableState):
         diffusion_coefficient: ArrayLike | None = None,
         rhs_scale: ArrayLike = 1.0,
         stage_id: str,
-    ):
+    ) -> None:
         if not isinstance(plan, MACHelmholtzSolvePlan):
             raise TypeError("plan must be MACHelmholtzSolvePlan.")
         identifier = str(stage_id)

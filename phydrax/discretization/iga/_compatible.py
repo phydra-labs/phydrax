@@ -12,7 +12,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._identity import NumericRevision, SemanticProvenance
@@ -20,6 +21,7 @@ from ..._interpolation._bspline_grid import BSplineGrid
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...diagnostics import Diagnostic
+from ...typing import parse
 
 
 BoundarySide: TypeAlias = Literal["lower", "upper"]
@@ -116,7 +118,7 @@ class SplineFormComponent(StrictModule, NonTrainableState):
         component_axes: Sequence[int],
         grids: Sequence[BSplineGrid],
         /,
-    ):
+    ) -> None:
         degree = int(form_degree)
         axes = tuple(component_axes)
         grids_ = tuple(grids)
@@ -164,7 +166,7 @@ class SplineDifferentialSpace(StrictModule, NonTrainableState):
         dimension: int,
         components: Sequence[SplineFormComponent],
         /,
-    ):
+    ) -> None:
         degree = int(form_degree)
         dimension_ = int(dimension)
         components_ = tuple(components)
@@ -228,21 +230,19 @@ class SignedSplineTrace(StrictModule, NonTrainableState):
         target_component_axes: Sequence[Sequence[int]],
         matrix: ArrayLike,
         /,
-    ):
+    ) -> None:
         degree = int(form_degree)
         axis = int(normal_axis)
-        side_ = str(side)
         count = int(source_dof_count)
         target_axes = tuple(tuple(axes) for axes in target_component_axes)
         matrix_ = jnp.asarray(matrix)
-        if side_ not in ("lower", "upper"):
-            raise ValueError("Spline trace side must be lower or upper.")
+        side_ = parse(side, BoundarySide, "side")
         if matrix_.ndim != 2 or matrix_.shape[1] != count:
             raise ValueError("Spline trace matrix has an invalid source dimension.")
         orientation = ((-1) ** axis) * (1 if side_ == "upper" else -1)
         self.form_degree = degree
         self.normal_axis = axis
-        self.side = side_  # type: ignore[assignment]
+        self.side = side_
         self.orientation = orientation
         self.source_dof_count = count
         self.target_component_axes = target_axes
@@ -321,7 +321,7 @@ class SplineDeRhamComplex(AbstractSplineDeRhamComplex):
     base_grids: tuple[BSplineGrid, ...]
     spaces: tuple[SplineDifferentialSpace, ...]
 
-    def __init__(self, grids: Sequence[BSplineGrid], /):
+    def __init__(self, grids: Sequence[BSplineGrid], /) -> None:
         grids_ = tuple(grids)
         dimension = len(grids_)
         if dimension not in (2, 3):
@@ -394,7 +394,7 @@ class SplineDeRhamComplex(AbstractSplineDeRhamComplex):
                         block = _face_restriction(
                             component.coefficient_shape,
                             axis,
-                            side,  # type: ignore[arg-type]
+                            side,
                             orientation,
                         )
                         matrix[row_offset : row_offset + block.shape[0], source_slice] = (
@@ -413,7 +413,7 @@ class SplineDeRhamComplex(AbstractSplineDeRhamComplex):
                         SignedSplineTrace(
                             form_degree,
                             axis,
-                            side,  # type: ignore[arg-type]
+                            side,
                             space.dof_count,
                             target_axes,
                             matrix,
@@ -462,7 +462,7 @@ class AssembledSplineDeRhamComplex(AbstractSplineDeRhamComplex):
         /,
         *,
         boundary_traces: Sequence[SignedSplineTrace] = (),
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         counts = tuple(dof_counts)
         derivatives = tuple(jnp.asarray(value) for value in exterior_derivatives)
@@ -507,15 +507,13 @@ class SplinePiolaMap(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     kind: PiolaKind = eqx.field(static=True)
 
-    def __init__(self, dimension: int, kind: PiolaKind, /):
+    def __init__(self, dimension: int, kind: PiolaKind, /) -> None:
         dimension_ = int(dimension)
-        kind_ = str(kind)
         if dimension_ not in (2, 3):
             raise ValueError("Spline Piola maps require dimension two or three.")
-        if kind_ not in ("h1", "hcurl", "hdiv", "l2"):
-            raise ValueError("Unknown spline Piola map kind.")
+        kind_ = parse(kind, PiolaKind, "kind")
         self.dimension = dimension_
-        self.kind = kind_  # type: ignore[assignment]
+        self.kind = kind_
 
     def push_forward(self, jacobian: ArrayLike, values: ArrayLike, /) -> Array:
         matrix = jnp.asarray(jacobian)
@@ -588,7 +586,7 @@ class CommutingProjectorContract(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str,
-    ):
+    ) -> None:
         if not isinstance(target, AbstractSplineDeRhamComplex):
             raise TypeError(
                 "Commuting projector target must be a spline de Rham complex."
@@ -719,24 +717,26 @@ class RelativeCohomologyEvidence(StrictModule, NonTrainableState):
         /,
         *,
         tolerance: float = 1e-12,
-    ):
+    ) -> None:
         if not isinstance(complex_, AbstractSplineDeRhamComplex):
             raise TypeError("Relative evidence requires a spline de Rham complex.")
-        faces = tuple((int(axis), str(side)) for axis, side in boundary_faces)
+        faces = tuple((int(axis), side) for axis, side in boundary_faces)
         tolerance_ = float(tolerance)
         if tolerance_ <= 0.0 or not np.isfinite(tolerance_):
             raise ValueError("Relative cohomology tolerance must be positive and finite.")
         if len(set(faces)) != len(faces):
             raise ValueError("Relative boundary faces must be unique.")
+        validated_faces: list[tuple[int, BoundarySide]] = []
         for axis, side in faces:
-            if axis < 0 or axis >= complex_.dimension or side not in ("lower", "upper"):
+            if axis < 0 or axis >= complex_.dimension:
                 raise ValueError("Relative boundary face is invalid.")
+            validated_faces.append((axis, parse(side, BoundarySide, "side")))
 
         restrictions: list[np.ndarray] = []
         for degree in range(complex_.dimension + 1):
             matrices = [
                 np.asarray(complex_.trace(degree, axis, side).matrix)
-                for axis, side in faces
+                for axis, side in validated_faces
             ]
             trace_matrix = (
                 np.concatenate(matrices, axis=0)
@@ -794,10 +794,7 @@ class RelativeCohomologyEvidence(StrictModule, NonTrainableState):
             betti.append(nullity - (derivative_ranks[degree - 1] if degree > 0 else 0))
 
         self.complex_id = complex_.complex_id
-        self.boundary_faces = tuple(
-            (axis, side)
-            for axis, side in faces  # type: ignore[misc]
-        )
+        self.boundary_faces = tuple(validated_faces)
         self.restriction_bases = tuple(jnp.asarray(value) for value in restrictions)
         self.restricted_derivatives = tuple(
             jnp.asarray(value) for value in restricted_derivatives
@@ -861,7 +858,7 @@ class CompatibleQualificationPolicy(StrictModule, NonTrainableState):
         maximum_friedrichs_constant: float = 1e8,
         maximum_projector_norm: float = 1e4,
         maximum_discrete_compactness_bound: float = 1e10,
-    ):
+    ) -> None:
         betti = tuple(expected_relative_betti)
         tolerance = float(algebra_tolerance)
         friedrichs = float(maximum_friedrichs_constant)
@@ -937,7 +934,7 @@ class CompatibleQualificationEvidence(StrictModule, NonTrainableState):
         finite_level_discrete_compactness_bounds: ArrayLike,
         diagnostics: Sequence[Diagnostic],
         qualified: bool,
-    ):
+    ) -> None:
         if not isinstance(numeric_revision, NumericRevision):
             raise TypeError("Compatible evidence requires a NumericRevision.")
         diagnostics_ = tuple(diagnostics)
@@ -1031,9 +1028,7 @@ def _complex_numeric_revision(
         ),
         {
             "exterior_derivatives": complex_.exterior_derivatives,
-            "boundary_traces": tuple(
-                trace.matrix for trace in complex_.boundary_traces
-            ),
+            "boundary_traces": tuple(trace.matrix for trace in complex_.boundary_traces),
         },
     )
 
@@ -1190,10 +1185,10 @@ def qualify_compatible_complex(
         relative_closure_defects=relative_closure,
         relative_betti_numbers=relative.betti_numbers,
         complement_dimensions=complement_dimensions,
-        minimum_complement_singular_values=minimum_singular_values,
-        friedrichs_constants=friedrichs_constants,
-        projector_operator_norms=projector_norms,
-        finite_level_discrete_compactness_bounds=compactness_bounds,
+        minimum_complement_singular_values=jnp.asarray(minimum_singular_values),
+        friedrichs_constants=jnp.asarray(friedrichs_constants),
+        projector_operator_norms=jnp.asarray(projector_norms),
+        finite_level_discrete_compactness_bounds=jnp.asarray(compactness_bounds),
         diagnostics=diagnostics,
         qualified=qualified,
     )

@@ -2,8 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
 from math import prod
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -19,7 +21,7 @@ from phydrax.discretization.amr._distributed import (
 )
 
 
-def _hierarchy(*, cells=8, periodic=True, fine_capacity=8):
+def _hierarchy(*, cells: Any = 8, periodic: Any = True, fine_capacity: Any = 8) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(cells, periodic=periodic),),
         axis_names=("x",),
@@ -33,7 +35,7 @@ def _hierarchy(*, cells=8, periodic=True, fine_capacity=8):
     )
 
 
-def _compiled(hierarchy, *, coarse_slot=1, coarse_cell=2):
+def _compiled(hierarchy: Any, *, coarse_slot: Any = 1, coarse_cell: Any = 2) -> Any:
     compiler = phx.discretization.BlockTopologyCompiler(hierarchy)
     initial = compiler.initialize()
     tags = (
@@ -50,7 +52,7 @@ def _compiled(hierarchy, *, coarse_slot=1, coarse_cell=2):
     return compiler, compiler.compile(initial.topology, (tags,))
 
 
-def _state(topology, fd_hierarchy, *, inactive_nonfinite=True):
+def _state(topology: Any, fd_hierarchy: Any, *, inactive_nonfinite: Any = True) -> Any:
     dtype = fd_hierarchy.plan.precision.field_dtype
     levels = []
     for level, (plan, metadata) in enumerate(
@@ -70,7 +72,14 @@ def _state(topology, fd_hierarchy, *, inactive_nonfinite=True):
     return phx.discretization.BlockHierarchyState(topology, tuple(levels))
 
 
-def _prepare(hierarchy, compiled, part_count, *, costs=None, group=None):
+def _prepare(
+    hierarchy: Any,
+    compiled: Any,
+    part_count: Any,
+    *,
+    costs: Any = None,
+    group: Any = None,
+) -> Any:
     fd = phx.discretization.FDAMRHierarchyPlan(hierarchy).prepare()
     distributed = BlockAMRPartitionPlan(hierarchy, part_count).prepare(
         compiled,
@@ -81,7 +90,7 @@ def _prepare(hierarchy, compiled, part_count, *, costs=None, group=None):
     return fd, distributed
 
 
-def _execution_group(devices, axis_name="block_parts"):
+def _execution_group(devices: Any, axis_name: Any = "block_parts") -> Any:
     devices = tuple(devices)
     processes = tuple(sorted({device.process_index for device in devices}))
     specification = ExecutionGroupSpec(
@@ -93,7 +102,7 @@ def _execution_group(devices, axis_name="block_parts"):
     return ExecutionGroup(specification, devices)
 
 
-def test_partition_ownership_is_local_and_independent_of_compilation_history():
+def test_partition_ownership_is_local_and_independent_of_compilation_history() -> None:
     hierarchy = _hierarchy()
     compiler, direct = _compiled(hierarchy)
     initial = compiler.initialize().topology
@@ -116,7 +125,9 @@ def test_partition_ownership_is_local_and_independent_of_compilation_history():
         assert np.all(active_owners[:-1] <= active_owners[1:])
 
 
-def test_canonical_pack_unpack_masks_inactive_nonfinite_payloads_and_allows_empty_parts():
+def test_canonical_pack_unpack_masks_inactive_nonfinite_payloads_and_allows_empty_parts() -> (
+    None
+):
     hierarchy = _hierarchy()
     _, compiled = _compiled(hierarchy)
     fd, prepared = _prepare(hierarchy, compiled, 3)
@@ -143,7 +154,7 @@ def test_canonical_pack_unpack_masks_inactive_nonfinite_payloads_and_allows_empt
     assert np.count_nonzero(fine_valid_by_part == 0) == 2
 
 
-def test_route_phases_are_symmetric_include_zero_payload_and_have_exact_reverse():
+def test_route_phases_are_symmetric_include_zero_payload_and_have_exact_reverse() -> None:
     hierarchy = _hierarchy()
     _, compiled = _compiled(hierarchy)
     fd, prepared = _prepare(hierarchy, compiled, 3)
@@ -190,7 +201,7 @@ def test_route_phases_are_symmetric_include_zero_payload_and_have_exact_reverse(
     )
 
 
-def test_repartition_migrates_packed_values_by_stable_block_id():
+def test_repartition_migrates_packed_values_by_stable_block_id() -> None:
     hierarchy = _hierarchy(cells=16, fine_capacity=16)
     _, compiled = _compiled(hierarchy, coarse_slot=3, coarse_cell=1)
     fd, source = _prepare(hierarchy, compiled, 2)
@@ -212,7 +223,9 @@ def test_repartition_migrates_packed_values_by_stable_block_id():
         np.testing.assert_allclose(actual.values, expected.safe_values())
 
 
-def test_resource_evidence_counts_the_real_allocations_exactly_and_manifest_is_canonical():
+def test_resource_evidence_counts_the_real_allocations_exactly_and_manifest_is_canonical() -> (
+    None
+):
     hierarchy = _hierarchy()
     _, compiled = _compiled(hierarchy)
     _, prepared = _prepare(hierarchy, compiled, 3)
@@ -253,7 +266,7 @@ def test_resource_evidence_counts_the_real_allocations_exactly_and_manifest_is_c
     assert "shard_payload" not in manifest
 
 
-def test_serial_packed_fill_patch_and_reverse_match_canonical_foundation():
+def test_serial_packed_fill_patch_and_reverse_match_canonical_foundation() -> None:
     hierarchy = _hierarchy()
     _, compiled = _compiled(hierarchy)
     fd, prepared = _prepare(hierarchy, compiled, 3)
@@ -273,7 +286,7 @@ def test_serial_packed_fill_patch_and_reverse_match_canonical_foundation():
     cotangents = tuple(jnp.ones_like(value.values) for value in reference.workspaces)
     packed_reverse = prepared.serial_fill_patch_reverse(cotangents, state)
 
-    def canonical_values(values):
+    def canonical_values(values: Any) -> Any:
         hierarchy_state = phx.discretization.BlockHierarchyState(
             compiled.topology,
             tuple(
@@ -313,10 +326,10 @@ def test_serial_packed_fill_patch_and_reverse_match_canonical_foundation():
     ),
 )
 def test_serial_fill_patch_rejects_nonfinite_or_reversed_time_intervals(
-    old_time,
-    new_time,
-    fill_time,
-):
+    old_time: Any,
+    new_time: Any,
+    fill_time: Any,
+) -> None:
     hierarchy = _hierarchy()
     _, compiled = _compiled(hierarchy)
     fd, prepared = _prepare(hierarchy, compiled, 3)
@@ -336,7 +349,7 @@ def test_serial_fill_patch_rejects_nonfinite_or_reversed_time_intervals(
     len(jax.devices()) < 2,
     reason="requires at least two JAX devices",
 )
-def test_real_two_device_fill_patch_and_reverse_match_serial_routes():
+def test_real_two_device_fill_patch_and_reverse_match_serial_routes() -> None:
     hierarchy = _hierarchy()
     _, compiled = _compiled(hierarchy)
     group = _execution_group(jax.devices()[:2])

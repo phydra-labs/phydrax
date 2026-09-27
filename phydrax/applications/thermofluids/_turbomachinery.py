@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._interpolation import apply_gather_stencil, rectilinear_stencil
@@ -16,6 +17,7 @@ from ..._strict import StrictModule
 from ...equations._chemical_thermodynamics import UNIVERSAL_GAS_CONSTANT
 from ...equations._homogeneous_thermodynamics import (
     HomogeneousHelmholtzPlan,
+    HomogeneousThermodynamicEvaluation,
     ZeroResidualHelmholtzTerm,
 )
 from ...equations._peng_robinson import (
@@ -263,8 +265,8 @@ class CompressorPlan(StrictModule):
                 "kind": "compressor-design",
                 "compressor": self.compressor_id,
                 "map": self.performance_map.map_id,
-                "corrected_speed": float(corrected_speed),
-                "operating_line": float(operating_line),
+                "corrected_speed": float(np.asarray(corrected_speed)),
+                "operating_line": float(np.asarray(operating_line)),
                 "targets": list(targets),
             }
         )
@@ -357,7 +359,12 @@ class CompressorPlan(StrictModule):
         )
 
 
-def _gas_state_tp(thermodynamics, temperature, pressure, composition):
+def _gas_state_tp(
+    thermodynamics: HomogeneousHelmholtzPlan,
+    temperature: Array,
+    pressure: Array,
+    composition: Array,
+) -> HomogeneousThermodynamicEvaluation:
     if isinstance(thermodynamics.residual, ZeroResidualHelmholtzTerm):
         density = pressure / (UNIVERSAL_GAS_CONSTANT * temperature)
     elif isinstance(thermodynamics.residual, PengRobinsonResidualHelmholtzTerm):
@@ -370,13 +377,13 @@ def _gas_state_tp(thermodynamics, temperature, pressure, composition):
 
 
 def _solve_temperature_for_property(
-    thermodynamics,
-    pressure,
-    composition,
-    target,
+    thermodynamics: HomogeneousHelmholtzPlan,
+    pressure: Array,
+    composition: Array,
+    target: Array,
     *,
     property_name: str,
-):
+) -> HomogeneousThermodynamicEvaluation:
     lower = jnp.asarray(
         thermodynamics.thermodynamics.minimum_temperature,
         dtype=jnp.result_type(pressure, composition, target),
@@ -386,7 +393,7 @@ def _solve_temperature_for_property(
         dtype=lower.dtype,
     )
 
-    def property_value(temperature):
+    def property_value(temperature: Array) -> Array:
         state = _gas_state_tp(thermodynamics, temperature, pressure, composition)
         if property_name == "entropy":
             return state.molar_entropy / state.molar_mass
@@ -394,7 +401,7 @@ def _solve_temperature_for_property(
             return state.molar_enthalpy / state.molar_mass
         raise ValueError("Unknown compressor property solve.")
 
-    def body(_, bounds):
+    def body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
         low, high = bounds
         midpoint = 0.5 * (low + high)
         value = property_value(midpoint)

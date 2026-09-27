@@ -18,7 +18,8 @@ from math import prod
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -44,7 +45,7 @@ class VariablePatchLevelPlan(StrictModule, NonTrainableState):
         /,
         *,
         refinement_ratio: int = 2,
-    ):
+    ) -> None:
         level_ = int(level)
         buckets_ = tuple(buckets)
         ratio = int(refinement_ratio)
@@ -106,7 +107,7 @@ class VariablePatchHierarchyPlan(StrictModule, NonTrainableState):
         levels: Sequence[VariablePatchLevelPlan],
         base_boxes: Sequence[LogicalPatchBox],
         /,
-    ):
+    ) -> None:
         levels_ = tuple(levels)
         boxes = tuple(base_boxes)
         if not isinstance(grid, PreparedTensorGrid):
@@ -203,7 +204,7 @@ class VariablePatchLevelMetadata(StrictModule, NonTrainableState):
         plan: VariablePatchLevelPlan,
         boxes_by_bucket: Sequence[Sequence[LogicalPatchBox]],
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, VariablePatchLevelPlan):
             raise TypeError("Variable patch metadata requires VariablePatchLevelPlan.")
         groups = tuple(tuple(group) for group in boxes_by_bucket)
@@ -307,7 +308,7 @@ class VariablePatchHierarchyTopology(StrictModule, NonTrainableState):
         /,
         *,
         epoch: TopologyEpoch | None = None,
-    ):
+    ) -> None:
         levels_ = tuple(levels)
         if (
             not isinstance(plan, VariablePatchHierarchyPlan)
@@ -470,7 +471,7 @@ class PatchClusteringPolicy(StrictModule, NonTrainableState):
         *,
         minimum_fill_ratio: float = 0.7,
         maximum_aspect_ratio: float = 8.0,
-    ):
+    ) -> None:
         fill = float(minimum_fill_ratio)
         aspect = float(maximum_aspect_ratio)
         if (
@@ -503,7 +504,9 @@ class VariablePatchCompileStatus(StrictModule, NonTrainableState):
     message: str = eqx.field(static=True)
     status_id: str = eqx.field(static=True)
 
-    def __init__(self, code: str, successful: bool, changed: bool, message: str, /):
+    def __init__(
+        self, code: str, successful: bool, changed: bool, message: str, /
+    ) -> None:
         if code not in {
             "initialized",
             "success",
@@ -549,7 +552,7 @@ class VariablePatchCompileEvidence(StrictModule, NonTrainableState):
         padding_cells: Sequence[int],
         route_capacity_required: Sequence[int],
         /,
-    ):
+    ) -> None:
         tags = tuple(tag_counts)
         counts = tuple(tuple(row) for row in patch_counts)
         capacities = tuple(tuple(row) for row in bucket_capacities)
@@ -595,7 +598,7 @@ class VariablePatchCompileResult(StrictModule, NonTrainableState):
         status: VariablePatchCompileStatus,
         evidence: VariablePatchCompileEvidence,
         /,
-    ):
+    ) -> None:
         if not isinstance(topology, VariablePatchHierarchyTopology):
             raise TypeError("Variable patch compile result requires topology.")
         self.topology = topology
@@ -804,7 +807,7 @@ class VariablePatchTopologyCompiler(StrictModule, NonTrainableState):
         tag_buffer: int = 0,
         proper_nesting: int = 0,
         clustering: PatchClusteringPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, VariablePatchHierarchyPlan):
             raise TypeError(
                 "Variable patch compiler requires VariablePatchHierarchyPlan."
@@ -1154,7 +1157,7 @@ class VariablePatchFieldState(StrictModule):
         metadata: VariablePatchLevelMetadata,
         values: Sequence[ArrayLike],
         /,
-    ):
+    ) -> None:
         arrays = tuple(jnp.asarray(value) for value in values)
         if not isinstance(metadata, VariablePatchLevelMetadata) or len(arrays) != len(
             metadata.plan.buckets

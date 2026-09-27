@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -10,7 +13,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _gaussian_problem():
+def _gaussian_problem() -> Any:
     likelihood_precision = jnp.asarray(
         [
             [5.0, 1.0, 0.0, 0.0, 0.0, 0.0],
@@ -31,7 +34,7 @@ def _gaussian_problem():
     return problem, likelihood_precision
 
 
-def test_dense_laplace_recovers_correlated_gaussian_and_predicts_named_fields():
+def test_dense_laplace_recovers_correlated_gaussian_and_predicts_named_fields() -> None:
     problem, likelihood_precision = _gaussian_problem()
     expected_covariance = jnp.linalg.inv(likelihood_precision + jnp.eye(6))
 
@@ -61,7 +64,7 @@ def test_dense_laplace_recovers_correlated_gaussian_and_predicts_named_fields():
     assert jnp.all(jnp.asarray(prediction.valid.data))
 
 
-def test_structured_laplax_curvatures_match_their_declared_approximations():
+def test_structured_laplax_curvatures_match_their_declared_approximations() -> None:
     problem, likelihood_precision = _gaussian_problem()
     probe = jnp.arange(1.0, 7.0)
     exact_covariance = jnp.linalg.inv(likelihood_precision + jnp.eye(6))
@@ -112,7 +115,7 @@ def test_structured_laplax_curvatures_match_their_declared_approximations():
         assert jnp.all(jnp.isfinite(result.covariance_vector_product(probe)))
 
 
-def test_laplace_rejects_nonstationary_centers_and_implicit_regularization():
+def test_laplace_rejects_nonstationary_centers_and_implicit_regularization() -> None:
     problem, _ = _gaussian_problem()
 
     with pytest.raises(phx.uq.LaplaceCurvatureError, match="not stationary"):
@@ -154,7 +157,7 @@ def test_laplace_rejects_nonstationary_centers_and_implicit_regularization():
         )
 
 
-def test_dense_laplace_linearized_prediction_matches_covariance_and_draws():
+def test_dense_laplace_linearized_prediction_matches_covariance_and_draws() -> None:
     problem, likelihood_precision = _gaussian_problem()
     result = phx.uq.fit_laplace(problem, jnp.zeros(6))
     assert isinstance(result, phx.uq.LaplaceResult)
@@ -183,7 +186,7 @@ def test_dense_laplace_linearized_prediction_matches_covariance_and_draws():
     )
 
 
-def test_dense_laplace_transports_covariance_through_parameter_bijectors():
+def test_dense_laplace_transports_covariance_through_parameter_bijectors() -> None:
     center = jnp.log(jnp.asarray(2.0))
     precision = 999.0
     space = phx.uq.ParameterSpace(
@@ -211,7 +214,7 @@ def test_dense_laplace_transports_covariance_through_parameter_bijectors():
     )
 
 
-def test_structured_laplace_linearized_prediction_stays_matrix_free():
+def test_structured_laplace_linearized_prediction_stays_matrix_free() -> None:
     problem, likelihood_precision = _gaussian_problem()
     result = phx.uq.fit_laplace(
         problem,

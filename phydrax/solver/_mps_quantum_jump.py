@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -20,12 +22,16 @@ from ..nonlinear import scalar_root, ScalarRootProblem, TOMS748
 from ..tensor_network import MatrixProductState, NearestNeighborHamiltonian, tebd_step
 
 
+if TYPE_CHECKING:
+    from ..tensor_network._tebd import TEBDEvidence
+
+
 class LocalMPSJump(StrictModule):
     operator: Array
     site: int = eqx.field(static=True)
     jump_id: str = eqx.field(static=True)
 
-    def __init__(self, site: int, operator: ArrayLike, /, *, jump_id: str):
+    def __init__(self, site: int, operator: ArrayLike, /, *, jump_id: str) -> None:
         value = jnp.asarray(operator)
         if value.ndim != 2 or value.shape[0] != value.shape[1]:
             raise ValueError("Local jump operator must be square.")
@@ -71,7 +77,7 @@ class MPSQuantumJumpProblem(StrictModule):
         /,
         *,
         problem_id: str = "mps-quantum-jump",
-    ):
+    ) -> None:
         jumps_ = tuple(jumps)
         if not jumps_:
             raise ValueError("At least one MPS jump operator is required.")
@@ -110,7 +116,7 @@ class MPSQuantumTrajectoryResult(StrictModule):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         self.final_state = final_state
         self.jump_times = jnp.asarray(jump_times)
         self.jump_channels = jnp.asarray(jump_channels, dtype=jnp.int32)
@@ -145,13 +151,13 @@ def _nonhermitian_mps_step(
     state: MatrixProductState,
     duration: Array,
     maximum_bond_dimension: int,
-):
+) -> tuple[MatrixProductState, TEBDEvidence]:
     normals: dict[int, Array] = {}
     for jump in problem.jumps:
         normal = jnp.conj(jump.operator.T) @ jump.operator
         normals[jump.site] = normals.get(jump.site, jnp.zeros_like(normal)) + normal
 
-    def damp(current, scale):
+    def damp(current: MatrixProductState, scale: Array) -> MatrixProductState:
         result = current
         for site, normal in sorted(normals.items()):
             gate = jsp.linalg.expm(-scale * normal)
@@ -245,7 +251,7 @@ def solve_mps_quantum_jump(
                 remaining = 0.0
                 break
 
-            def survival_residual(event_duration, args):
+            def survival_residual(event_duration: Array, args: object) -> Array:
                 del args
                 probe, _ = _nonhermitian_mps_step(
                     problem,

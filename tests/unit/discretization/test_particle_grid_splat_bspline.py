@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -11,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _particles(count: int, dimension: int):
+def _particles(count: int, dimension: int) -> Any:
     return phx.discretization.ParticleSetPlan(
         jnp.arange(count),
         jnp.ones((count,)),
@@ -19,7 +21,9 @@ def _particles(count: int, dimension: int):
     ).prepare()
 
 
-def _periodic_grid(dimension: int, points: int = 16, *, cell_primary: bool = False):
+def _periodic_grid(
+    dimension: int, points: int = 16, *, cell_primary: bool = False
+) -> Any:
     spec = (
         phx.discretization.UniformCellAxisSpec
         if cell_primary
@@ -36,7 +40,9 @@ def _periodic_grid(dimension: int, points: int = 16, *, cell_primary: bool = Fal
 
 @pytest.mark.parametrize("degree", [1, 2, 3])
 @pytest.mark.parametrize("dimension", [1, 2, 3])
-def test_periodic_bspline_partition_moments_and_balance(degree: int, dimension: int):
+def test_periodic_bspline_partition_moments_and_balance(
+    degree: int, dimension: int
+) -> None:
     grid = _periodic_grid(dimension)
     particles = _particles(4, dimension)
     base = jnp.asarray(
@@ -59,7 +65,7 @@ def test_periodic_bspline_partition_moments_and_balance(degree: int, dimension: 
     assert result.balance.closed_domain_conservation_valid
 
 
-def test_degree_one_bspline_matches_multilinear_on_uniform_nodal_grid():
+def test_degree_one_bspline_matches_multilinear_on_uniform_nodal_grid() -> None:
     grid = _periodic_grid(2)
     particles = _particles(3, 2)
     position = jnp.asarray([[0.12, 0.27], [0.61, 0.83], [0.91, 0.06]])
@@ -79,7 +85,7 @@ def test_degree_one_bspline_matches_multilinear_on_uniform_nodal_grid():
     assert jnp.allclose(result.balance.balance_defect, reference.balance.balance_defect)
 
 
-def test_uniform_cell_face_and_edge_layouts_are_supported():
+def test_uniform_cell_face_and_edge_layouts_are_supported() -> None:
     grid = _periodic_grid(2, points=8, cell_primary=True)
     particles = _particles(2, 2)
     position = jnp.asarray([[0.11, 0.23], [0.71, 0.82]])
@@ -99,7 +105,7 @@ def test_uniform_cell_face_and_edge_layouts_are_supported():
         assert result.balance.closed_domain_conservation_valid
 
 
-def test_bounded_bspline_rejects_or_accounts_for_partial_support():
+def test_bounded_bspline_rejects_or_accounts_for_partial_support() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8),), axis_names=("x",)
     ).prepare(jnp.asarray([[0.0], [1.0]]))
@@ -132,7 +138,7 @@ def test_bounded_bspline_rejects_or_accounts_for_partial_support():
     assert not result.balance.closed_domain_conservation_valid
 
 
-def test_route_weight_gradients_match_jax_jacobian():
+def test_route_weight_gradients_match_jax_jacobian() -> None:
     grid = _periodic_grid(1)
     particles = _particles(1, 1)
     prepared = phx.discretization.ParticleGridSplatPlan(
@@ -147,7 +153,7 @@ def test_route_weight_gradients_match_jax_jacobian():
     assert jnp.max(jnp.abs(state.gradient_sums)) < 1e-12
 
 
-def test_bspline_rejects_invalid_degree_nonuniform_axes_and_budget():
+def test_bspline_rejects_invalid_degree_nonuniform_axes_and_budget() -> None:
     with pytest.raises(ValueError, match="degrees"):
         phx.discretization.TensorBSplineSplatAssignment(4)
     axis = phx.discretization.AxisDiscretization(

@@ -24,6 +24,7 @@ polygons = (
     (3, 4, 7, 6),
     (4, 5, 8, 7),
 )
+# ty: ignore[invalid-argument-type]
 mesh = phx.discretization.CellMesh.from_polygons(coordinates, polygons)
 field = phx.discretization.VirtualElementFieldSpec(
     "temperature",
@@ -43,6 +44,7 @@ compiled = phx.equations.compile_virtual_element_problem(
     dirichlet_values=0.0,
 )
 system = compiled.as_dae_system()
+# ty: ignore[unresolved-attribute]
 state = jnp.zeros(compiled.state_space.shape)
 state_rate = jnp.zeros_like(state)
 residual = system.evaluate(0.0, state, state_rate)

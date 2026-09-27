@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -31,7 +32,7 @@ class ActiveStrainState(StrictModule):
         fiber_shortening: ArrayLike,
         active_deformation_gradient: ArrayLike,
         /,
-    ):
+    ) -> None:
         shortening = jnp.asarray(fiber_shortening)
         active = jnp.asarray(active_deformation_gradient, dtype=shortening.dtype)
         if active.shape != (*shortening.shape, 3, 3):
@@ -77,7 +78,7 @@ class ActiveStrainPlan(StrictModule, NonTrainableState):
         /,
         *,
         minimum_fiber_stretch: float = 0.2,
-    ):
+    ) -> None:
         maximum = float(maximum_fiber_shortening)
         minimum = float(minimum_fiber_stretch)
         if (
@@ -125,7 +126,7 @@ class PreparedActiveStrain(StrictModule, NonTrainableState):
         reference_fiber: ArrayLike,
         reference_sheet: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, ActiveStrainPlan):
             raise TypeError("Active strain preparation requires ActiveStrainPlan.")
         fiber = jnp.asarray(reference_fiber)

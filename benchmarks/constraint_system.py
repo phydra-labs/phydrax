@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -28,7 +30,7 @@ from phydrax.enforcement import (
 )
 
 
-def _ready(value):
+def _ready(value: Any) -> Any:
     return jax.block_until_ready(value)
 
 

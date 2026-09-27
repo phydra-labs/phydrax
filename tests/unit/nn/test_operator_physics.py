@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import equinox as eqx
 import jax
@@ -14,7 +14,7 @@ import phydrax as phx
 from phydrax.nn.operator import AbstractOperatorModel
 
 
-def _axis(size=5):
+def _axis(size: Any = 5) -> Any:
     return phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, size),
@@ -22,7 +22,9 @@ def _axis(size=5):
     )
 
 
-def _prediction(values, query, *, name="output", channels="scalar"):
+def _prediction(
+    values: Any, query: Any, *, name: Any = "output", channels: Any = "scalar"
+) -> Any:
     return phx.nn.operator.OperatorPrediction.from_field(
         name,
         values,
@@ -34,7 +36,7 @@ def _prediction(values, query, *, name="output", channels="scalar"):
     )
 
 
-def test_hilbert_metrics_are_complex_measure_and_mask_aware():
+def test_hilbert_metrics_are_complex_measure_and_mask_aware() -> None:
     axis = _axis()
     query = phx.nn.operator.FunctionSamples(
         values=None,
@@ -69,7 +71,7 @@ def test_hilbert_metrics_are_complex_measure_and_mask_aware():
     )
 
 
-def test_physical_quadrature_predicate_accepts_tensor_and_case_shaped_measures():
+def test_physical_quadrature_predicate_accepts_tensor_and_case_shaped_measures() -> None:
     tensor = phx.nn.operator.FunctionSamples(values=None, axes=(_axis(),))
     coordinates = jnp.broadcast_to(
         jnp.linspace(0.0, 1.0, 5)[None, :, None],
@@ -96,7 +98,7 @@ def test_physical_quadrature_predicate_accepts_tensor_and_case_shaped_measures()
     assert explicit_grid.has_physical_quadrature
 
 
-def test_conservation_projection_is_exact_and_differentiable():
+def test_conservation_projection_is_exact_and_differentiable() -> None:
     axis = _axis()
     query = phx.nn.operator.FunctionSamples(
         values=None,
@@ -118,7 +120,7 @@ def test_conservation_projection_is_exact_and_differentiable():
     )
     assert jnp.all(projected[:, -1] == 0.0)
 
-    def objective(raw):
+    def objective(raw: Any) -> Any:
         constrained = phx.nn.operator.training.project_operator_conservation(
             raw,
             query,
@@ -132,7 +134,7 @@ def test_conservation_projection_is_exact_and_differentiable():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_output_pipeline_enforces_lift_and_boundary_envelope():
+def test_output_pipeline_enforces_lift_and_boundary_envelope() -> None:
     axis = _axis()
     query = phx.nn.operator.FunctionSamples(values=None, axes=(axis,))
     batch = phx.nn.operator.OperatorBatch(
@@ -176,7 +178,7 @@ def test_output_pipeline_enforces_lift_and_boundary_envelope():
     assert transformed.field("output").query_name == "query"
 
 
-def test_weak_form_loss_detects_and_normalizes_test_moments():
+def test_weak_form_loss_detects_and_normalizes_test_moments() -> None:
     axis = _axis()
     query = phx.nn.operator.FunctionSamples(values=None, axes=(axis,))
     x = axis.nodes
@@ -208,7 +210,7 @@ def test_weak_form_loss_detects_and_normalizes_test_moments():
     )
 
 
-def test_dynamic_weak_loss_selects_physical_integration_measure():
+def test_dynamic_weak_loss_selects_physical_integration_measure() -> None:
     execution_axis = _axis()
     physical_axis = phx.nn.operator.OperatorAxis(
         "x",
@@ -294,21 +296,21 @@ class _NonlinearPointwiseOperator(AbstractOperatorModel):
     in_size: str = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.in_size = "scalar"
         self.out_size = "scalar"
 
-    def __call_operator_batch__(self, batch, *, key=None):
+    def __call_operator_batch__(self, batch: Any, *, key: Any = None) -> Any:
         del key
         values = batch.input("source").values
         assert values is not None
         return values**2 + 2.0 * values
 
-    def __call__(self, batch, *, key=None):
+    def __call__(self, batch: Any, *, key: Any = None) -> Any:
         return self.__call_operator_batch__(batch, key=key)
 
     @property
-    def operator_contract(self):
+    def operator_contract(self) -> Any:
         return phx.nn.operator.operator_architecture_contract("DeepONet")
 
 
@@ -316,21 +318,21 @@ class _ComplexPointwiseOperator(AbstractOperatorModel):
     in_size: str = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.in_size = "scalar"
         self.out_size = "scalar"
 
-    def __call_operator_batch__(self, batch, *, key=None):
+    def __call_operator_batch__(self, batch: Any, *, key: Any = None) -> Any:
         del key
         values = batch.input("source").values
         assert values is not None
         return (1.0 + 2.0j) * values
 
-    def __call__(self, batch, *, key=None):
+    def __call__(self, batch: Any, *, key: Any = None) -> Any:
         return self.__call_operator_batch__(batch, key=key)
 
 
-def test_trained_operator_applies_conservation_inside_physical_prediction():
+def test_trained_operator_applies_conservation_inside_physical_prediction() -> None:
     axis = _axis()
     source = jnp.linspace(0.2, 1.1, 10).reshape((2, 5))
     batch = phx.nn.operator.OperatorBatch(
@@ -393,7 +395,7 @@ def test_trained_operator_applies_conservation_inside_physical_prediction():
     )
 
 
-def test_matrix_free_linearization_satisfies_weighted_adjoint_identity():
+def test_matrix_free_linearization_satisfies_weighted_adjoint_identity() -> None:
     axis = _axis()
     source = jnp.linspace(-0.4, 0.8, 10).reshape((2, 5))
     batch = phx.nn.operator.OperatorBatch(
@@ -414,7 +416,7 @@ def test_matrix_free_linearization_satisfies_weighted_adjoint_identity():
     assert jnp.max(linearization.adjoint_identity_error(tangent, cotangent)) < 1e-12
 
 
-def test_complex_operator_adjoint_is_hermitian():
+def test_complex_operator_adjoint_is_hermitian() -> None:
     axis = _axis()
     source = (jnp.linspace(0.1, 1.0, 10) + 1.0j * jnp.linspace(-0.5, 0.4, 10)).reshape(
         (2, 5)
@@ -439,7 +441,7 @@ def test_complex_operator_adjoint_is_hermitian():
     )
 
 
-def test_trained_operator_linearization_uses_physical_units():
+def test_trained_operator_linearization_uses_physical_units() -> None:
     axis = _axis()
     source = jnp.linspace(1.0, 3.0, 10).reshape((2, 5))
     batch = phx.nn.operator.OperatorBatch(
@@ -510,7 +512,7 @@ def test_trained_operator_linearization_uses_physical_units():
     assert jnp.max(linearization.adjoint_identity_error(tangent, cotangent)) < tolerance
 
 
-def _predict_two_fields(model, batch, key):
+def _predict_two_fields(model: Any, batch: Any, key: Any) -> Any:
     del model, key
     query = batch.query("points")
     coordinates = query.coordinates_array(case_shape=batch.case_shape)
@@ -540,23 +542,23 @@ class _TwoFieldPointOperator(AbstractOperatorModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.in_size = 1
         self.out_size = 1
 
     @property
-    def operator_output_specs(self):
+    def operator_output_specs(self) -> Any:
         spec = phx.nn.operator.OperatorOutputSpec("scalar")
         return {"radius_squared": spec, "product": spec}
 
-    def __call_operator_batch__(self, batch, *, key=None):
+    def __call_operator_batch__(self, batch: Any, *, key: Any = None) -> Any:
         return _predict_two_fields(self, batch, key).field("radius_squared").values
 
-    def __call__(self, batch, *, key=None):
+    def __call__(self, batch: Any, *, key: Any = None) -> Any:
         return self.__call_operator_batch__(batch, key=key)
 
 
-def test_operator_context_supports_multiple_coordinates_queries_and_outputs():
+def test_operator_context_supports_multiple_coordinates_queries_and_outputs() -> None:
     query = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=jnp.asarray([[0.0, 0.0]]),
@@ -594,7 +596,7 @@ def test_operator_context_supports_multiple_coordinates_queries_and_outputs():
     assert jnp.allclose(laplacian.func(point), jnp.full((2,), 4.0))
 
 
-def _predict_split_fields(model, batch, key):
+def _predict_split_fields(model: Any, batch: Any, key: Any) -> Any:
     del model, key
     coordinates = batch.query("query").coordinates_array(case_shape=batch.case_shape)
     x = coordinates[..., 0]
@@ -619,27 +621,27 @@ class _SplitQueryOperator(AbstractOperatorModel):
     in_size: str = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.in_size = "scalar"
         self.out_size = "scalar"
 
     @property
-    def operator_output_specs(self):
+    def operator_output_specs(self) -> Any:
         spec = phx.nn.operator.OperatorOutputSpec("scalar")
         return {"first": spec, "second": spec}
 
     @property
-    def operator_contract(self):
+    def operator_contract(self) -> Any:
         return phx.nn.operator.operator_architecture_contract("DeepONet")
 
-    def __call_operator_batch__(self, batch, *, key=None):
+    def __call_operator_batch__(self, batch: Any, *, key: Any = None) -> Any:
         return _predict_split_fields(self, batch, key).field("first").values
 
-    def __call__(self, batch, *, key=None):
+    def __call__(self, batch: Any, *, key: Any = None) -> Any:
         return self.__call_operator_batch__(batch, key=key)
 
 
-def _split_task():
+def _split_task() -> Any:
     value = phx.units.DimensionSignature({"value": 1})
     return phx.nn.operator.OperatorTask(
         "split-query-map",
@@ -674,7 +676,7 @@ def _split_task():
     )
 
 
-def _split_batch():
+def _split_batch() -> Any:
     axis = _axis()
     return phx.nn.operator.OperatorBatch(
         inputs={
@@ -688,7 +690,7 @@ def _split_batch():
     )
 
 
-def _split_trained(first_port, second_port, mapping):
+def _split_trained(first_port: Any, second_port: Any, mapping: Any) -> Any:
     return phx.nn.operator.training.TrainedOperator(
         _SplitQueryOperator(),
         _split_task(),
@@ -698,14 +700,14 @@ def _split_trained(first_port, second_port, mapping):
     )
 
 
-def _split_ports():
+def _split_ports() -> Any:
     task = _split_task()
     return task.field_by_name["left"].value_port(), task.field_by_name[
         "right"
     ].value_port()
 
 
-def test_trained_operator_routes_model_outputs_by_bound_port_ids():
+def test_trained_operator_routes_model_outputs_by_bound_port_ids() -> None:
     left, right = _split_ports()
     # Model output names never match task fields: only the port binding routes.
     trained = _split_trained(
@@ -730,7 +732,7 @@ def test_trained_operator_routes_model_outputs_by_bound_port_ids():
     )
 
 
-def test_trained_operator_binding_requires_explicit_compatible_ports():
+def test_trained_operator_binding_requires_explicit_compatible_ports() -> None:
     left, right = _split_ports()
     task = _split_task()
     batch = _split_batch()
@@ -796,7 +798,7 @@ def test_trained_operator_binding_requires_explicit_compatible_ports():
         )
 
 
-def test_port_binding_records_aspects_a_side_leaves_undeclared():
+def test_port_binding_records_aspects_a_side_leaves_undeclared() -> None:
     left, right = _split_ports()
     bare = phx.ValuePort(
         "right", event_shape=(), component_ids=("right",), representation="scalar"
@@ -817,7 +819,7 @@ def test_port_binding_records_aspects_a_side_leaves_undeclared():
     assert relaxed.contract_fingerprint != exact.contract_fingerprint
 
 
-def test_trained_operator_context_selects_query_and_field_through_ports():
+def test_trained_operator_context_selects_query_and_field_through_ports() -> None:
     left, right = _split_ports()
     trained = _split_trained(
         right, left, ((right.port_id, right.port_id), (left.port_id, left.port_id))
@@ -834,7 +836,9 @@ def test_trained_operator_context_selects_query_and_field_through_ports():
     points = jnp.asarray([[0.3], [0.6]])
 
     assert jnp.allclose(context(points), 10.0 * points[:, 0] ** 2)
+    # ty: ignore[unresolved-attribute]
     assert context.port_binding.outputs == ((right.port_id, right.port_id),)
+    # ty: ignore[unresolved-attribute]
     assert context.port_binding.inputs == ((query.port_id, query.port_id),)
     with pytest.raises(ValueError, match="explicit port_mapping"):
         phx.nn.operator.adapters.bind_operator_context(trained, _split_batch())

@@ -8,7 +8,8 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -30,7 +31,7 @@ class CoherentAmplitudePlan(StrictModule, NonTrainableState):
         *,
         phase_convention_id: str,
         normalization_evidence_id: str,
-    ):
+    ) -> None:
         names = tuple(str(value).strip() for value in component_names)
         phase = str(phase_convention_id).strip()
         evidence = str(normalization_evidence_id).strip()

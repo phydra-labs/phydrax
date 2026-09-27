@@ -7,8 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax import lax
-from jaxtyping import Array, ArrayLike
+from jax import Array, lax
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -39,7 +39,7 @@ class SemiclassicalEinsteinPlan(StrictModule):
         cosmological_constant: float = 0.0,
         residual_tolerance: float = 1e-6,
         maximum_time_steps: int = 100_000,
-    ):
+    ) -> None:
         times = np.asarray(cosmic_times, dtype=np.float64)
         scale = float(initial_scale_factor)
         hubble = float(initial_hubble)
@@ -146,7 +146,9 @@ def semiclassical_einstein_backreaction(
     initial_hubble = jnp.asarray(plan.initial_hubble, dtype=energy.dtype)
     interval_source = 0.5 * (energy[:-1] + pressure[:-1] + energy[1:] + pressure[1:])
 
-    def backreaction_step(carry, interval_data):
+    def backreaction_step(
+        carry: tuple[Array, Array], interval_data: tuple[Array, Array]
+    ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
         current_scale, current_hubble = carry
         width, average_source = interval_data
         next_hubble = current_hubble - (

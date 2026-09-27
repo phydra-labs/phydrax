@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from .._trainable import fixed_field
@@ -50,7 +51,7 @@ class ExteriorHelmholtzDirichletResult3D(StrictModule):
         linear_result: LinearSolveResult,
         assembly_report: BoundaryOperatorAssemblyReport,
         boundary_residual_norm: Array,
-    ):
+    ) -> None:
         if not isinstance(potential, HelmholtzCombinedField3D):
             raise TypeError("potential must be HelmholtzCombinedField3D.")
         if not isinstance(linear_result, LinearSolveResult):
@@ -114,7 +115,9 @@ def _trace_matrices_3d(
         for target_index in range(start, stop):
             source_indices = jnp.arange(start, stop, dtype=jnp.int32)
 
-            def evaluate_source(source_index):
+            def evaluate_source(
+                source_index: Array,
+            ) -> tuple[Array, Array, Array, Array, Array]:
                 density = jnp.zeros_like(zero_density).at[source_index].set(1.0 + 0.0j)
                 single_estimate = evaluate_single_layer_self_triangle_3d(
                     single_base.with_density(density),

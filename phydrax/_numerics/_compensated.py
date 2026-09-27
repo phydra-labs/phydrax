@@ -8,7 +8,8 @@ from math import prod
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 Axis = int | tuple[int, ...] | None
@@ -38,7 +39,9 @@ def _flat_leading(value: Array, output_ndim: int, /) -> Array:
 
 
 def _accumulate(flat: Array, carry: tuple[Array, Array], /) -> tuple[Array, Array]:
-    def step(current, term):
+    def step(
+        current: tuple[Array, Array], term: Array
+    ) -> tuple[tuple[Array, Array], None]:
         high, correction = current
         next_high, error = two_sum(high, term)
         return (next_high, correction + error), None

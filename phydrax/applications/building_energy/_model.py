@@ -11,9 +11,10 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ...dynamics import (
     affine_exponential_step,
@@ -68,7 +69,7 @@ class Zone(StrictModule):
         *,
         volume: ArrayLike = 1.0,
         massless: bool = False,
-    ):
+    ) -> None:
         self.zone_id = _text(zone_id, "zone_id")
         self.capacity = _scalar(capacity, "capacity", positive=not massless)
         self.capacity = eqx.error_if(
@@ -101,7 +102,7 @@ class Construction(StrictModule):
         *,
         massive: bool = False,
         provenance: Sequence[str] = (),
-    ):
+    ) -> None:
         self.construction_id = _text(construction_id, "construction_id")
         self.resistance = _scalar(resistance, "resistance", positive=True)
         self.areal_capacity = _scalar(areal_capacity, "areal_capacity", positive=massive)
@@ -126,7 +127,7 @@ class Aperture(StrictModule):
         area: ArrayLike,
         u_value: ArrayLike,
         solar_transmittance: ArrayLike = 0.0,
-    ):
+    ) -> None:
         self.aperture_id = _text(aperture_id, "aperture_id")
         self.area = _scalar(area, "aperture area", positive=True)
         self.u_value = _scalar(u_value, "aperture U-value", positive=True)
@@ -142,7 +143,7 @@ class BuildingBoundary(StrictModule):
     boundary_id: str = eqx.field(static=True)
     kind: str = eqx.field(static=True)
 
-    def __init__(self, boundary_id: str, *, kind: str = "ambient"):
+    def __init__(self, boundary_id: str, *, kind: str = "ambient") -> None:
         if kind not in ("ambient", "ground", "fixed"):
             raise ValueError("Boundary kind must be ambient, ground, or fixed.")
         self.boundary_id, self.kind = _text(boundary_id, "boundary_id"), kind
@@ -173,7 +174,7 @@ class Surface(StrictModule):
         geometry_binding: str = "",
         boundary_id: str | None = None,
         adiabatic: bool = False,
-    ):
+    ) -> None:
         self.surface_id = _text(surface_id, "surface_id")
         self.zone_id = _text(zone_id, "zone_id")
         if adjacent_zone == zone_id:
@@ -224,7 +225,7 @@ class Adjacency(StrictModule):
         conductance: ArrayLike,
         *,
         boundary_id: str | None = None,
-    ):
+    ) -> None:
         if left == right:
             raise ValueError("Adjacency needs distinct nodes.")
         self.edge_id = _text(edge_id, "edge_id")
@@ -264,7 +265,7 @@ class VentilationExchange(StrictModule):
         *,
         boundary_id: str = "outdoor",
         kind: str = "ventilation",
-    ):
+    ) -> None:
         if kind not in ("ventilation", "infiltration"):
             raise ValueError("Air exchange kind must be ventilation or infiltration.")
         self.exchange_id, self.zone_id = (
@@ -294,7 +295,7 @@ class BuildingSource(StrictModule):
         provenance: Sequence[str] = (),
         boundaries: Sequence[BuildingBoundary] | None = None,
         ventilation: Sequence[VentilationExchange] = (),
-    ):
+    ) -> None:
         self.zones, self.surfaces, self.adjacencies = (
             tuple(zones),
             tuple(surfaces),
@@ -355,7 +356,9 @@ class _RCField(StrictModule):
     matrix: Array
     boundary: Array
 
-    def __call__(self, time, temperature, inputs, args):
+    def __call__(
+        self, time: Array, temperature: Array, inputs: Array, args: object
+    ) -> Array:
         del time, args
         count = self.boundary.shape[1]
         return (
@@ -370,7 +373,9 @@ class _RCResidual(StrictModule):
     matrix: Array
     boundary: Array
 
-    def __call__(self, time, temperature, rate, inputs, args):
+    def __call__(
+        self, time: Array, temperature: Array, rate: Array, inputs: Array, args: object
+    ) -> Array:
         del time, args
         count = self.boundary.shape[1]
         return (
@@ -441,7 +446,7 @@ class BuildingCompilation(StrictModule):
             + q
         )
 
-    def reduced_affine(self, forcing: Array):
+    def reduced_affine(self, forcing: Array) -> tuple[Array, Array]:
         d, a = (
             jnp.asarray(self.dynamic_indices),
             jnp.asarray(self.algebraic_indices, dtype=jnp.int64),

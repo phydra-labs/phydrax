@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import copy
+from typing import Any
 
 import numpy as np
 import pytest
@@ -25,7 +27,7 @@ _PROVIDER_ID = "provider-identity"
 _ENVIRONMENT_ID = "environment-identity"
 
 
-def _wire(value):
+def _wire(value: Any) -> Any:
     array = np.asarray(value)
     pairs = np.stack((array.real, array.imag), axis=-1)
     return {
@@ -34,7 +36,7 @@ def _wire(value):
     }
 
 
-def _parabola_system():
+def _parabola_system() -> Any:
     return SparsePolynomialSystem.from_coo(
         ("x", "y"),
         ("parabola",),
@@ -44,7 +46,7 @@ def _parabola_system():
     )
 
 
-def _parabola_witness(system):
+def _parabola_witness(system: Any) -> Any:
     return WitnessSet(
         system.system_id,
         1,
@@ -55,7 +57,9 @@ def _parabola_witness(system):
     )
 
 
-def _path_records(request, *, failed=(), unattempted=(), targets=None):
+def _path_records(
+    request: Any, *, failed: Any = (), unattempted: Any = (), targets: Any = None
+) -> Any:
     failed = set(failed)
     unattempted = set(unattempted)
     records = []
@@ -89,7 +93,9 @@ def _path_records(request, *, failed=(), unattempted=(), targets=None):
     return records
 
 
-def _response(request, result, paths, status, *, budget_exhausted=False):
+def _response(
+    request: Any, result: Any, paths: Any, status: Any, *, budget_exhausted: Any = False
+) -> Any:
     return {
         "protocol": HOMOTOPY_GEOMETRY_PROTOCOL,
         "request_id": request.request_id,
@@ -107,7 +113,7 @@ def _response(request, result, paths, status, *, budget_exhausted=False):
     }
 
 
-def _witness_result(points):
+def _witness_result(points: Any) -> Any:
     return {
         "dimension": 1,
         "slice_matrix": _wire([[0.0, 1.0]]),
@@ -117,7 +123,7 @@ def _witness_result(points):
     }
 
 
-def _decode(request, policy, response):
+def _decode(request: Any, policy: Any, response: Any) -> Any:
     return decode_homotopy_geometry_result(
         request,
         policy,
@@ -127,7 +133,9 @@ def _decode(request, policy, response):
     )
 
 
-def test_generic_slice_decodes_isolated_numerical_witness_data_without_execution():
+def test_generic_slice_decodes_isolated_numerical_witness_data_without_execution() -> (
+    None
+):
     system = _parabola_system()
     request = HomotopyGeometryRequest.generic_slice(
         system,
@@ -153,7 +161,7 @@ def test_generic_slice_decodes_isolated_numerical_witness_data_without_execution
     assert decoded.run is None
 
 
-def test_request_and_result_reject_malformed_slices():
+def test_request_and_result_reject_malformed_slices() -> None:
     system = _parabola_system()
     with pytest.raises(ValueError, match="codimension"):
         HomotopyGeometryRequest.generic_slice(
@@ -183,7 +191,7 @@ def test_request_and_result_reject_malformed_slices():
         _decode(request, HomotopyGeometryPolicy(path_capacity=2), response)
 
 
-def test_monodromy_decode_rejects_malformed_permutation():
+def test_monodromy_decode_rejects_malformed_permutation() -> None:
     system = _parabola_system()
     witness = _parabola_witness(system)
     request = HomotopyGeometryRequest.monodromy(
@@ -208,7 +216,7 @@ def test_monodromy_decode_rejects_malformed_permutation():
         _decode(request, HomotopyGeometryPolicy(path_capacity=2), response)
 
 
-def test_partial_path_failure_is_retained_instead_of_promoted_to_success():
+def test_partial_path_failure_is_retained_instead_of_promoted_to_success() -> None:
     system = _parabola_system()
     request = HomotopyGeometryRequest.generic_slice(
         system,
@@ -232,7 +240,7 @@ def test_partial_path_failure_is_retained_instead_of_promoted_to_success():
     assert not decoded.successful
 
 
-def test_budget_exhaustion_retains_unattempted_path_inventory():
+def test_budget_exhaustion_retains_unattempted_path_inventory() -> None:
     system = _parabola_system()
     request = HomotopyGeometryRequest.generic_slice(
         system,
@@ -256,7 +264,7 @@ def test_budget_exhaustion_retains_unattempted_path_inventory():
     assert decoded.paths.records[1].status.value == "not-attempted"
 
 
-def test_trace_test_failure_is_an_explicit_non_success_outcome():
+def test_trace_test_failure_is_an_explicit_non_success_outcome() -> None:
     system = _parabola_system()
     witness = _parabola_witness(system)
     request = HomotopyGeometryRequest.trace_test(
@@ -290,7 +298,7 @@ def test_trace_test_failure_is_an_explicit_non_success_outcome():
     assert not decoded.successful
 
 
-def test_provider_identity_mismatch_is_retained_as_identity_failure():
+def test_provider_identity_mismatch_is_retained_as_identity_failure() -> None:
     system = _parabola_system()
     request = HomotopyGeometryRequest.generic_slice(
         system,
@@ -315,7 +323,7 @@ def test_provider_identity_mismatch_is_retained_as_identity_failure():
     assert "provider_id" in decoded.error
 
 
-def test_image_degree_decodes_a_pseudo_witness_without_certification_claim():
+def test_image_degree_decodes_a_pseudo_witness_without_certification_claim() -> None:
     system = _parabola_system()
     map_system = SparsePolynomialSystem.from_coo(
         ("x", "y"),
@@ -360,7 +368,7 @@ def test_image_degree_decodes_a_pseudo_witness_without_certification_claim():
         _ = decoded.output.certified
 
 
-def test_membership_output_uses_qualified_witness_transport_evidence():
+def test_membership_output_uses_qualified_witness_transport_evidence() -> None:
     system = _parabola_system()
     witness = _parabola_witness(system)
     request = HomotopyGeometryRequest.membership(
@@ -386,7 +394,7 @@ def test_membership_output_uses_qualified_witness_transport_evidence():
     assert "not-exact-ideal-membership" in decoded.output.claim
 
 
-def test_response_status_cannot_falsely_claim_success_over_failed_paths():
+def test_response_status_cannot_falsely_claim_success_over_failed_paths() -> None:
     system = _parabola_system()
     request = HomotopyGeometryRequest.generic_slice(
         system,
@@ -411,7 +419,7 @@ def test_response_status_cannot_falsely_claim_success_over_failed_paths():
         _decode(request, HomotopyGeometryPolicy(path_capacity=2), extra_field)
 
 
-def test_response_requires_boolean_budget_and_trace_flags():
+def test_response_requires_boolean_budget_and_trace_flags() -> None:
     system = _parabola_system()
     request = HomotopyGeometryRequest.generic_slice(
         system,
@@ -463,7 +471,7 @@ def test_response_requires_boolean_budget_and_trace_flags():
         )
 
 
-def test_seed_echo_and_endpoint_bijection_are_enforced():
+def test_seed_echo_and_endpoint_bijection_are_enforced() -> None:
     system = _parabola_system()
     request = HomotopyGeometryRequest.generic_slice(
         system,
@@ -493,7 +501,9 @@ def test_seed_echo_and_endpoint_bijection_are_enforced():
     assert "seed" in decoded.error
 
 
-def test_path_factories_refuse_oversized_products_before_record_allocation(monkeypatch):
+def test_path_factories_refuse_oversized_products_before_record_allocation(
+    monkeypatch: Any,
+) -> None:
     system = _parabola_system()
     map_system = SparsePolynomialSystem.from_coo(
         ("x", "y"),
@@ -514,7 +524,7 @@ def test_path_factories_refuse_oversized_products_before_record_allocation(monke
         np.zeros(1001),
     )
 
-    def reject_record_allocation(*args, **kwargs):
+    def reject_record_allocation(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("path records must not be allocated")
 
     monkeypatch.setattr(

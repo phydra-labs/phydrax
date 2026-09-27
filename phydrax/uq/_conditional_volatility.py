@@ -9,12 +9,14 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
+from .._dtype_names import inexact_result_type
 from .._numerics import solve_weighted_least_squares
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ..optim import minimize, NewtonTrustRegion, OptimizationTermination
+from ..typing import parse
 
 
 ConditionalVolatilityKind: TypeAlias = Literal["garch", "gjr-garch", "egarch"]
@@ -68,9 +70,8 @@ class GARCHModel(StrictModule):
         *,
         gamma: ArrayLike = 0.0,
         kind: ConditionalVolatilityKind = "garch",
-    ):
-        if kind not in ("garch", "gjr-garch", "egarch"):
-            raise ValueError("kind must be 'garch', 'gjr-garch', or 'egarch'.")
+    ) -> None:
+        kind = parse(kind, ConditionalVolatilityKind, "kind")
         dtype = inexact_result_type(omega, alpha, beta, gamma)
         omega_ = jnp.asarray(omega, dtype=dtype)
         alpha_ = jnp.asarray(alpha, dtype=dtype)
@@ -135,7 +136,9 @@ class GARCHModel(StrictModule):
             "initial_variance must be finite and positive.",
         )
 
-        def step(previous_variance, inputs):
+        def step(
+            previous_variance: Array, inputs: tuple[Array, Array]
+        ) -> tuple[Array, Array]:
             previous_residual, previous_valid = inputs
             if self.kind == "egarch":
                 scale = jnp.sqrt(
@@ -192,7 +195,9 @@ def _softplus_inverse(value: Array) -> Array:
     return jnp.log(jnp.expm1(jnp.maximum(value, jnp.finfo(value.dtype).eps)))
 
 
-def _decode_garch(raw: Array, kind: ConditionalVolatilityKind, dtype) -> GARCHModel:
+def _decode_garch(
+    raw: Array, kind: ConditionalVolatilityKind, dtype: DTypeLike
+) -> GARCHModel:
     epsilon = 64.0 * jnp.finfo(dtype).eps
     if kind == "egarch":
         return GARCHModel(
@@ -254,7 +259,7 @@ def fit_garch(
         omega_initial = empirical * jnp.maximum(1.0 - jnp.sum(persistence_weights), 0.01)
         initial = jnp.concatenate((_softplus_inverse(omega_initial)[None], logits))
 
-    def objective(raw, arguments):
+    def objective(raw: Array, arguments: tuple[Array, Array, Array]) -> Array:
         observations, observation_mask, initial_variance = arguments
         model = _decode_garch(raw, kind, observations.dtype)
         variance = model.conditional_variance(

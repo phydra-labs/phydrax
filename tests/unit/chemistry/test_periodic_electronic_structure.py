@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -15,14 +17,20 @@ from phydrax.operators.periodic import (
 )
 
 
-def _cell():
+def _cell() -> Any:
     return phx.discretization.PeriodicCell(
         5.0 * np.eye(3),
         periodic_axes=(True, True, True),
     )
 
 
-def _model(translations, hamiltonian_blocks, overlap_blocks, hubbard, reference):
+def _model(
+    translations: Any,
+    hamiltonian_blocks: Any,
+    overlap_blocks: Any,
+    hubbard: Any,
+    reference: Any,
+) -> Any:
     cell = _cell()
     orbitals = len(hubbard)
     basis = PeriodicOrbitalBasisPlan(
@@ -49,12 +57,13 @@ def _model(translations, hamiltonian_blocks, overlap_blocks, hubbard, reference)
     return cell, pencil, mean_field
 
 
-def test_orbital_contract_rejects_unit_and_fourier_mismatches():
+def test_orbital_contract_rejects_unit_and_fourier_mismatches() -> None:
     cell = _cell()
     with pytest.raises(ValueError, match="length dimension"):
         PeriodicOrbitalBasisPlan(
             cell,
             ("ao",),
+            # ty: ignore[invalid-argument-type]
             [[0.0, 0.0, 0.0]],
             phx.units.ELECTRONVOLT,
             PeriodicBlochGauge("lattice"),
@@ -63,17 +72,20 @@ def test_orbital_contract_rejects_unit_and_fourier_mismatches():
     basis = PeriodicOrbitalBasisPlan(
         cell,
         ("ao",),
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0]],
         phx.units.ANGSTROM,
         PeriodicBlochGauge("lattice"),
     )
     block = np.ones((1, 1, 1, 1, 1))
     hamiltonian = periodic_translation_family_from_dense_blocks(
+        # ty: ignore[invalid-argument-type]
         [[0, 0, 0]],
         block,
         convention=PeriodicFourierConvention(1),
     )
     overlap = periodic_translation_family_from_dense_blocks(
+        # ty: ignore[invalid-argument-type]
         [[0, 0, 0]],
         block,
         convention=PeriodicFourierConvention(-1),
@@ -98,14 +110,16 @@ def test_orbital_contract_rejects_unit_and_fourier_mismatches():
     with pytest.raises(ValueError, match="energy dimension"):
         PeriodicHubbardMeanFieldPlan(
             basis,
+            # ty: ignore[invalid-argument-type]
             [0.0],
+            # ty: ignore[invalid-argument-type]
             [0.0],
             0.0,
             phx.units.ANGSTROM,
         )
 
 
-def test_gamma_point_native_periodic_scf_closes_population_and_energy():
+def test_gamma_point_native_periodic_scf_closes_population_and_energy() -> None:
     cell, pencil, mean_field = _model([[0, 0, 0]], [[[-1.0]]], [[[1.0]]], [0.0], [2.0])
     mesh = ReciprocalMeshPlan.monkhorst_pack(cell, (1, 1, 1))
     result = NativePeriodicSCFPlan(
@@ -119,7 +133,7 @@ def test_gamma_point_native_periodic_scf_closes_population_and_energy():
     np.testing.assert_allclose(result.free_energy, result.energy)
 
 
-def test_k_point_smearing_preserves_fractional_electron_count():
+def test_k_point_smearing_preserves_fractional_electron_count() -> None:
     cell, pencil, mean_field = _model(
         [[-1, 0, 0], [0, 0, 0], [1, 0, 0]],
         [[[-0.2]], [[-1.0]], [[-0.2]]],
@@ -146,7 +160,7 @@ def test_k_point_smearing_preserves_fractional_electron_count():
     assert float(result.free_energy) < float(result.energy)
 
 
-def test_zero_smearing_rejects_overlapping_periodic_bands():
+def test_zero_smearing_rejects_overlapping_periodic_bands() -> None:
     cell, pencil, mean_field = _model(
         [[-1, 0, 0], [0, 0, 0], [1, 0, 0]],
         [
@@ -164,7 +178,9 @@ def test_zero_smearing_rejects_overlapping_periodic_bands():
     )
     mesh = ReciprocalMeshPlan(
         cell,
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [0.5, 0.5],
         mesh_shape=(2, 1, 1),
         shift=(0.0, 0.0, 0.0),
@@ -177,7 +193,9 @@ def test_zero_smearing_rejects_overlapping_periodic_bands():
         plan.evaluate()
 
 
-def test_periodic_result_payload_roundtrips_through_production_archive(tmp_path):
+def test_periodic_result_payload_roundtrips_through_production_archive(
+    tmp_path: Any,
+) -> None:
     cell, pencil, mean_field = _model([[0, 0, 0]], [[[-1.0]]], [[[1.0]]], [0.0], [2.0])
     mesh = ReciprocalMeshPlan.monkhorst_pack(cell, (1, 1, 1))
     result = NativePeriodicSCFPlan(

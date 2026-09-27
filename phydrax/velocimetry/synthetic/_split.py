@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -42,7 +43,7 @@ class ScenarioSplitPolicy(StrictModule, NonTrainableState):
         validation_fraction: float = 0.2,
         test_fraction: float = 0.2,
         seed: int = 0,
-    ):
+    ) -> None:
         fractions = np.asarray(
             (train_fraction, validation_fraction, test_fraction), dtype=np.float64
         )
@@ -89,7 +90,7 @@ class SyntheticScenarioSplit(StrictModule, NonTrainableState):
         test_families: Sequence[str],
         scenario_ids: Sequence[str],
         policy_id: str,
-    ):
+    ) -> None:
         indices = tuple(
             jnp.asarray(value, dtype=jnp.int32)
             for value in (train_indices, validation_indices, test_indices)

@@ -10,7 +10,7 @@ import pytest
 import phydrax as phx
 
 
-def test_exact_disk_trace_matches_entire_finite_fourier_boundary():
+def test_exact_disk_trace_matches_entire_finite_fourier_boundary() -> None:
     plan = phx.equations.DiskHolomorphicTracePlan(
         3,
         center=0.2 - 0.1j,
@@ -32,7 +32,7 @@ def test_exact_disk_trace_matches_entire_finite_fourier_boundary():
     assert certificate.residual_bound == 0.0
 
 
-def test_contour_period_and_fixed_meromorphic_domain_evidence():
+def test_contour_period_and_fixed_meromorphic_domain_evidence() -> None:
     frame = phx.equations.HolomorphicPolynomialFrame.one_variable(3)
     angles = jnp.linspace(0.0, 2.0 * jnp.pi, 128, endpoint=False)
     nodes = jnp.exp(1j * angles)
@@ -47,6 +47,7 @@ def test_contour_period_and_fixed_meromorphic_domain_evidence():
         phx.equations.HolomorphicPointFunctional.value(0.5),
     )
     operator = phx.equations.HolomorphicConstraintOperatorPlan(
+        # ty: ignore[invalid-argument-type]
         meromorphic_frame,
         functionals,
     ).prepare()
@@ -65,7 +66,7 @@ def test_contour_period_and_fixed_meromorphic_domain_evidence():
     )
 
 
-def test_meromorphic_variable_projection_recovers_linear_coefficients():
+def test_meromorphic_variable_projection_recovers_linear_coefficients() -> None:
     coordinates = jnp.linspace(-0.8, 0.8, 21).astype(jnp.complex128) + 0.1j
     pole = 1.7 + 0.4j
     observations = (
@@ -88,7 +89,7 @@ def test_meromorphic_variable_projection_recovers_linear_coefficients():
     assert jnp.linalg.norm(stationarity) < 2e-9
 
 
-def test_multi_index_resource_guard_fails_before_expansion():
+def test_multi_index_resource_guard_fails_before_expansion() -> None:
     with pytest.raises(ValueError, match="exceeds"):
         phx.equations.HolomorphicMultiIndexSet.total_degree(
             4,
@@ -97,7 +98,7 @@ def test_multi_index_resource_guard_fails_before_expansion():
         )
 
 
-def test_holomorphic_mlp_multijets_match_complex_ad():
+def test_holomorphic_mlp_multijets_match_complex_ad() -> None:
     model = phx.nn.models.HolomorphicMLP(
         in_size=2,
         out_size=2,
@@ -118,7 +119,7 @@ def test_holomorphic_mlp_multijets_match_complex_ad():
     assert jnp.allclose(jet.derivative((1, 1)), hessian[:, 0, 1], atol=3e-11)
 
 
-def test_product_multijets_match_complex_ad():
+def test_product_multijets_match_complex_ad() -> None:
     first = phx.nn.models.HolomorphicMLP(
         in_size=2,
         out_size=2,
@@ -147,13 +148,14 @@ def test_product_multijets_match_complex_ad():
     assert jnp.allclose(jet.derivative((1, 1)), hessian[:, 0, 1], atol=4e-11)
 
 
-def test_pluriharmonic_derivatives_and_kahler_gauge_are_invariant():
+def test_pluriharmonic_derivatives_and_kahler_gauge_are_invariant() -> None:
     provider = phx.nn.models.HolomorphicMLP(
         in_size=2,
         out_size=1,
         hidden_sizes=(4,),
         key=jr.key(3),
     )
+    # ty: ignore[invalid-argument-type]
     potential = phx.equations.PluriharmonicPotential(provider)
     point = jnp.asarray([0.2, -0.3, 0.1, 0.25])
     assert jnp.allclose(potential.gradient(point), jax.grad(potential)(point), atol=3e-11)
@@ -169,6 +171,7 @@ def test_pluriharmonic_derivatives_and_kahler_gauge_are_invariant():
         convention,
         lambda coordinates: jnp.asarray(0.0),
     )
+    # ty: ignore[invalid-argument-type]
     gauge = phx.metrix.KahlerHolomorphicGauge(base, provider)
     report = gauge.invariance_report(jnp.stack((point, -0.5 * point)), tolerance=1e-9)
     assert report.valid

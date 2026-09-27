@@ -8,7 +8,8 @@ from typing import Any, Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._execution_pool import PoolExecutionSignature
 from .._strict import StrictModule

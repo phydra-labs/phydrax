@@ -8,11 +8,11 @@ import math
 
 import equinox as eqx
 import jax.random as jr
-from jaxtyping import Array, Key
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from .._structure import PointSampling
 from ._cover import (
     PairedSupportEvidence,
@@ -36,7 +36,7 @@ class MappedCoverValidationPlan(StrictModule, NonTrainableState):
         pairing_points: int = 256,
         tolerance: float = 1.0e-8,
         sampler: str = "latin_hypercube",
-    ):
+    ) -> None:
         ambient = int(ambient_points)
         pairing = int(pairing_points)
         tolerance_ = float(tolerance)
@@ -64,7 +64,7 @@ class MappedCoverEvidence(StrictModule, NonTrainableState):
         coverage: SubdomainCoverEvidence,
         pairings: tuple[PairedSupportEvidence, ...],
         /,
-    ):
+    ) -> None:
         self.coverage = coverage
         self.pairings = tuple(pairings)
         self.verified = coverage.verified and all(value.verified for value in pairings)
@@ -75,7 +75,7 @@ def validate_mapped_cover(
     plan: MappedCoverValidationPlan | None = None,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     raise_on_error: bool = True,
 ) -> MappedCoverEvidence:
     """Sample cover support and every paired physical-coordinate realization."""

@@ -5,13 +5,15 @@
 from typing import Any
 
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
+
+from ..typing import PRNGKey
 
 
-EvalKey = Key[Array, ""] | None
+EvalKey = PRNGKey | None
 
 
-def require_eval_key(key: EvalKey, /, *, owner: str) -> Key[Array, ""]:
+def require_eval_key(key: EvalKey, /, *, owner: str) -> PRNGKey:
     """Return an evaluation key or reject active stochastic evaluation."""
     if key is None:
         raise ValueError(f"{owner} requires an explicit evaluation key.")

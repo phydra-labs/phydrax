@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _inputs(gradient, widths=(1.0, 1.0, 1.0)):
+def _inputs(gradient: Any, widths: Any = (1.0, 1.0, 1.0)) -> Any:
     return phx.equations.AlgebraicLESInputs(
         jnp.asarray(gradient),
         phx.equations.LESFilterScale(jnp.asarray(widths)),
@@ -18,16 +21,16 @@ def _inputs(gradient, widths=(1.0, 1.0, 1.0)):
 
 
 def _resolved_filter(
-    name="cell-average",
+    name: Any = "cell-average",
     *,
-    family="implicit-grid-volume",
-    axis_names=("x", "y", "z"),
-    topology="tensor-product",
-    boundary_class="periodic",
-    scale_rule="volume-equivalent",
-    commutation_status="unmodeled",
-    repeated_filter_semantics="unmodeled",
-):
+    family: Any = "implicit-grid-volume",
+    axis_names: Any = ("x", "y", "z"),
+    topology: Any = "tensor-product",
+    boundary_class: Any = "periodic",
+    scale_rule: Any = "volume-equivalent",
+    commutation_status: Any = "unmodeled",
+    repeated_filter_semantics: Any = "unmodeled",
+) -> Any:
     return phx.equations.ResolvedLESFilter(
         name,
         family=family,
@@ -41,13 +44,13 @@ def _resolved_filter(
 
 
 def _provenance(
-    filter_name="cell-average",
-    discretization_id="grid-a",
-    regime="wall-resolved",
+    filter_name: Any = "cell-average",
+    discretization_id: Any = "grid-a",
+    regime: Any = "wall-resolved",
     *,
-    source_kind="user",
-    evidence_ids=(),
-):
+    source_kind: Any = "user",
+    evidence_ids: Any = (),
+) -> Any:
     return phx.equations.LESParameterProvenance(
         _resolved_filter(filter_name),
         discretization_id,
@@ -57,7 +60,7 @@ def _provenance(
     )
 
 
-def test_les_filter_scale_and_provenance_validate_physical_semantics():
+def test_les_filter_scale_and_provenance_validate_physical_semantics() -> None:
     widths = jnp.asarray(((1.0, 2.0, 4.0), (3.0, 6.0, 12.0)))
     scale = phx.equations.LESFilterScale(widths)
     np.testing.assert_allclose(scale.directional_widths, widths)
@@ -130,6 +133,7 @@ def test_les_filter_scale_and_provenance_validate_physical_semantics():
         _provenance(source_kind="a-priori")
     with pytest.raises(TypeError):
         phx.equations.LESParameterProvenance(
+            # ty: ignore[invalid-argument-type]
             object(),
             "grid-a",
             "resolved",
@@ -138,7 +142,7 @@ def test_les_filter_scale_and_provenance_validate_physical_semantics():
         )
 
 
-def test_model_and_prepared_identities_separate_formula_from_binding():
+def test_model_and_prepared_identities_separate_formula_from_binding() -> None:
     model = phx.equations.SmagorinskyLESPlan(jnp.asarray(0.17))
     changed = phx.equations.SmagorinskyLESPlan(jnp.asarray(0.23))
     assert model.model_id == changed.model_id
@@ -164,6 +168,7 @@ def test_model_and_prepared_identities_separate_formula_from_binding():
         phx.equations.AMDLESPlan,
     ):
         with pytest.raises(TypeError):
+            # ty: ignore[missing-argument]
             model_type()
         with pytest.raises(ValueError):
             model_type(-0.1)
@@ -171,7 +176,7 @@ def test_model_and_prepared_identities_separate_formula_from_binding():
             model_type(jnp.asarray((0.1, 0.2)))
 
 
-def test_smagorinsky_formula_uses_full_strain_and_volume_equivalent_width():
+def test_smagorinsky_formula_uses_full_strain_and_volume_equivalent_width() -> None:
     gradient = np.diag((1.0, -0.5, 0.25))
     widths = np.asarray((2.0, 3.0, 4.0))
     coefficient = 0.2
@@ -193,7 +198,7 @@ def test_smagorinsky_formula_uses_full_strain_and_volume_equivalent_width():
     )
 
 
-def test_wale_formula_value_uses_full_strain_denominator():
+def test_wale_formula_value_uses_full_strain_denominator() -> None:
     gradient = np.asarray(((0.4, -0.2, 0.1), (0.3, -0.1, 0.2), (-0.2, 0.5, -0.3)))
     coefficient = 0.31
     width = 0.12
@@ -215,7 +220,7 @@ def test_wale_formula_value_uses_full_strain_denominator():
     np.testing.assert_allclose(result.kinematic_viscosity, expected, rtol=3e-6)
 
 
-def test_vreman_directional_metric_and_amd_positive_branch_values():
+def test_vreman_directional_metric_and_amd_positive_branch_values() -> None:
     gradient = np.diag((1.0, 2.0, 0.0))
     widths = np.asarray((1.5, 0.75, 4.0))
     coefficient = 0.08
@@ -235,7 +240,7 @@ def test_vreman_directional_metric_and_amd_positive_branch_values():
     np.testing.assert_allclose(amd.kinematic_viscosity, expected_amd, rtol=2e-6)
 
 
-def test_exact_zero_branches_have_finite_zero_jvps():
+def test_exact_zero_branches_have_finite_zero_jvps() -> None:
     zero = jnp.zeros((3, 3))
     direction = jnp.asarray(((0.2, -0.1, 0.3), (0.4, -0.2, 0.1), (-0.3, 0.2, 0.5)))
     scale = phx.equations.LESFilterScale(jnp.asarray((0.2, 0.3, 0.4)))
@@ -248,7 +253,7 @@ def test_exact_zero_branches_have_finite_zero_jvps():
     for model_type in model_types:
         model = model_type(0.2)
 
-        def viscosity(gradient):
+        def viscosity(gradient: Any) -> Any:
             inputs = phx.equations.AlgebraicLESInputs(gradient, scale)
             return model.evaluate(inputs).kinematic_viscosity
 
@@ -300,7 +305,7 @@ def test_exact_zero_branches_have_finite_zero_jvps():
     )
 
 
-def test_stress_is_symmetric_trace_free_and_has_the_declared_sign():
+def test_stress_is_symmetric_trace_free_and_has_the_declared_sign() -> None:
     gradient = jnp.asarray(((-1.0, 0.2, 0.0), (0.1, -0.5, 0.3), (0.0, -0.1, 0.2)))
     inputs = _inputs(gradient, (0.2, 0.35, 0.5))
     for model in (
@@ -320,7 +325,7 @@ def test_stress_is_symmetric_trace_free_and_has_the_declared_sign():
         assert result.energy_transfer >= -2e-7
 
 
-def test_coordinate_permutation_preserves_scalar_results_and_permutes_stress():
+def test_coordinate_permutation_preserves_scalar_results_and_permutes_stress() -> None:
     gradient = jnp.asarray(((-0.7, 0.4, 0.1), (-0.2, -0.3, 0.5), (0.2, -0.1, -0.6)))
     widths = jnp.asarray((0.12, 0.25, 0.4))
     permutation = np.asarray((2, 0, 1))
@@ -356,7 +361,7 @@ def test_coordinate_permutation_preserves_scalar_results_and_permutes_stress():
         )
 
 
-def test_coefficient_and_width_scaling_match_each_formula():
+def test_coefficient_and_width_scaling_match_each_formula() -> None:
     gradient = jnp.asarray(((-0.6, 0.3, 0.2), (0.1, -0.4, 0.5), (-0.2, 0.1, 0.3)))
     widths = jnp.asarray((0.13, 0.21, 0.34))
     coefficient = 0.17
@@ -391,7 +396,7 @@ def test_coefficient_and_width_scaling_match_each_formula():
         )
 
 
-def test_jit_and_jvp_cover_dynamic_coefficients_and_widths():
+def test_jit_and_jvp_cover_dynamic_coefficients_and_widths() -> None:
     gradient = jnp.asarray(((-0.6, 0.3, 0.2), (0.1, -0.4, 0.5), (-0.2, 0.1, 0.3)))
     scale = phx.equations.LESFilterScale(jnp.asarray((0.13, 0.21, 0.34)))
     prepared = phx.equations.VremanLESPlan(0.07).prepare(_provenance())
@@ -413,7 +418,7 @@ def test_jit_and_jvp_cover_dynamic_coefficients_and_widths():
 
     inputs = phx.equations.AlgebraicLESInputs(gradient, scale)
 
-    def coefficient_response(coefficient):
+    def coefficient_response(coefficient: Any) -> Any:
         return (
             phx.equations.SmagorinskyLESPlan(coefficient)
             .evaluate(inputs)
@@ -425,7 +430,7 @@ def test_jit_and_jvp_cover_dynamic_coefficients_and_widths():
     )
     np.testing.assert_allclose(tangent, 2.0 * primal / 0.2, rtol=3e-6)
 
-    def width_response(widths):
+    def width_response(widths: Any) -> Any:
         local = phx.equations.AlgebraicLESInputs(
             gradient, phx.equations.LESFilterScale(widths)
         )

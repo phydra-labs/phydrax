@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -22,6 +23,7 @@ from ..discretization.pic import (
     PICParticleState,
     PICRejectionReason,
     PICRunStatus,
+    PICTransferState,
     PreparedPICParticleCochainTransfer,
     RelativisticBorisPlan,
 )
@@ -84,7 +86,7 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
         *,
         pusher: RelativisticBorisPlan | None = None,
         maximum_displacement_fraction: float = 0.5,
-    ):
+    ) -> None:
         if not isinstance(maxwell, PreparedCompatibleMaxwell):
             raise TypeError("maxwell must be PreparedCompatibleMaxwell.")
         if not isinstance(electrostatic, CochainElectrostaticPlan):
@@ -160,7 +162,9 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _proper_velocity(self, velocity, transfer):
+    def _proper_velocity(
+        self, velocity: ArrayLike, transfer: PreparedPICParticleCochainTransfer
+    ) -> Array:
         value = jnp.asarray(velocity, dtype=transfer.species.particles.safe_masses.dtype)
         expected = (transfer.species.capacity, 3)
         if value.shape != expected:
@@ -180,7 +184,9 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             transfer.species.particles.active_mask[:, None], gamma[:, None] * value, 0.0
         )
 
-    def _charge(self, particles):
+    def _charge(
+        self, particles: tuple[PICParticleState, ...]
+    ) -> tuple[Array, tuple[PICTransferState, ...], Array]:
         routes = tuple(
             transfer.build(state.position)
             for transfer, state in zip(self.transfers, particles, strict=True)
@@ -293,7 +299,7 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             state,
         )
 
-    def _kinetic(self, particles):
+    def _kinetic(self, particles: tuple[PICParticleState, ...]) -> Array:
         total = jnp.asarray(0.0, dtype=particles[0].position.dtype)
         c2 = self.pusher.speed_of_light**2
         for transfer, particle in zip(self.transfers, particles, strict=True):
@@ -475,7 +481,7 @@ class ElectromagneticPICFixedStepMethod(AbstractFixedStepMethod, NonTrainableSta
     plan: ElectromagneticPICPlan
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ElectromagneticPICPlan, /):
+    def __init__(self, plan: ElectromagneticPICPlan, /) -> None:
         self.plan = plan
         self.method_id = canonical_fingerprint(
             {"kind": "electromagnetic-pic-fixed-step", "plan": plan.plan_id}

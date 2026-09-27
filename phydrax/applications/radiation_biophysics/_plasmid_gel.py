@@ -11,7 +11,8 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -47,7 +48,7 @@ class PlasmidGelAssay:
         /,
         *,
         calibration_covariance: ArrayLike | None = None,
-    ):
+    ) -> None:
         response = np.asarray(response_matrix, dtype=np.float64)
         offset = np.asarray(background, dtype=np.float64)
         if (
@@ -163,7 +164,7 @@ class PlasmidGelAssay:
             )
         parameters = jnp.concatenate((self.response_matrix.reshape(-1), self.background))
 
-        def calibrated_mean(parameter_vector):
+        def calibrated_mean(parameter_vector: Array) -> Array:
             response = parameter_vector[:9].reshape((3, 3))
             background = parameter_vector[9:]
             return background + gain[..., None] * (fractions @ response.T)
@@ -214,7 +215,7 @@ class PlasmidGelObservations:
         source: ReferenceArtifactManifest,
         lane_gain_standard_errors: ArrayLike | None = None,
         observation_covariance: ArrayLike | None = None,
-    ):
+    ) -> None:
         identifiers = tuple(observation_ids)
         preparations = tuple(preparation_ids)
         days = tuple(irradiation_day_ids)
@@ -368,7 +369,7 @@ class PlasmidFormPrediction:
         fit_independent_unit_ids: tuple[str, ...],
         fit_preparation_ids: tuple[str, ...],
         form_fraction_covariance: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(history_profile, TimedRadiationHistoryProfile):
             raise TypeError("history_profile must be TimedRadiationHistoryProfile.")
         for value, name in (

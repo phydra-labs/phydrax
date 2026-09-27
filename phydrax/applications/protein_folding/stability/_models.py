@@ -9,18 +9,21 @@ import abc
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._numerics import solve_weighted_least_squares
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ...._validation import positive_finite_float
 from ....qualification import ScientificCampaign
+from ....typing import parse
 from ....uq import DenseCovariance, fit_laplace, ParameterSpace, PosteriorProblem
 from ....uq._linearized import propagate_linearized
 from ..interchange._megascale import (
@@ -37,20 +40,13 @@ from ._features import (
 
 
 PredictionValidity = Literal["valid", "abstained"]
-UncertaintyKind = Literal["aleatoric", "epistemic"]
+UncertaintyKind: TypeAlias = Literal["aleatoric", "epistemic"]
 
 
 def _identifier(value: str, name: str, /) -> str:
     if not isinstance(value, str) or not value or value != value.strip():
         raise ValueError(f"{name} must be a non-empty canonical identifier.")
     return value
-
-
-def _positive(value: float, name: str, /) -> float:
-    result = float(value)
-    if not math.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
 
 
 def _role_case_ids(campaign: ScientificCampaign, role_name: str, /) -> tuple[str, ...]:
@@ -78,12 +74,11 @@ class UncertaintyComponent(StrictModule, NonTrainableState):
         label: str,
         kind: UncertaintyKind,
         conditionally_independent: bool,
-    ):
+    ) -> None:
         values = np.asarray(variance, dtype=np.float64)
         if values.ndim != 1 or not np.all(np.isfinite(values)) or np.any(values < 0.0):
             raise ValueError("Uncertainty variances must be finite non-negative vectors.")
-        if kind not in ("aleatoric", "epistemic"):
-            raise ValueError("Uncertainty kind must be aleatoric or epistemic.")
+        kind = parse(kind, UncertaintyKind, "kind")
         if not isinstance(conditionally_independent, bool):
             raise TypeError("conditionally_independent must be boolean.")
         self.variance = jnp.asarray(values)
@@ -118,7 +113,7 @@ class StabilityPrediction(StrictModule, NonTrainableState):
         observable: str,
         sign_convention: str,
         model_id: str,
-    ):
+    ) -> None:
         means = np.asarray(mean, dtype=np.float64)
         validity = np.asarray(valid, dtype=np.bool_)
         ids = tuple(_identifier(value, "prediction case ID") for value in case_ids)
@@ -196,6 +191,7 @@ class StabilityPrediction(StrictModule, NonTrainableState):
 class AbstractProteinStabilityPredictor(StrictModule):
     """Scientific predictor interface; implementations retain immutable fit lineage."""
 
+    transform: eqx.AbstractVar[ProteinFeatureTransform]
     model_id: str
     training_case_ids: tuple[str, ...]
     training_family_ids: tuple[str, ...]
@@ -353,7 +349,7 @@ class GlobalSubstitutionBaseline(AbstractProteinStabilityPredictor):
         assay_channel: str,
         condition_id: str,
         ridge: float,
-    ):
+    ) -> None:
         coefficient_array = jnp.asarray(coefficients, dtype=jnp.float64)
         covariance = jnp.asarray(parameter_covariance, dtype=jnp.float64)
         residual = jnp.asarray(residual_variance, dtype=jnp.float64).reshape(())
@@ -410,7 +406,7 @@ class GlobalSubstitutionBaseline(AbstractProteinStabilityPredictor):
         self.assay_channel = _identifier(assay_channel, "assay channel")
         self.condition_id = _identifier(condition_id, "condition ID")
         self.sign_convention = _identifier(sign_convention, "sign convention")
-        self.ridge = _positive(ridge, "ridge")
+        self.ridge = positive_finite_float(ridge, "ridge")
         self.model_id = canonical_fingerprint(
             {
                 "kind": "global-substitution-baseline",
@@ -434,7 +430,7 @@ class GlobalSubstitutionBaseline(AbstractProteinStabilityPredictor):
                 "assay_channel": self.assay_channel,
                 "condition_id": self.condition_id,
                 "sign_convention": self.sign_convention,
-                "ridge": self.ridge.hex(),
+                "ridge": float(self.ridge).hex(),
             }
         )
 
@@ -555,7 +551,7 @@ class RegularizedEnvironmentModel(AbstractProteinStabilityPredictor):
         sign_convention: str,
         family_effect_scale: float,
         ridge: float,
-    ):
+    ) -> None:
         coefficients_ = jnp.asarray(coefficients, dtype=jnp.float64)
         covariance = jnp.asarray(parameter_covariance, dtype=jnp.float64)
         residual = jnp.asarray(residual_variance, dtype=jnp.float64).reshape(())
@@ -604,8 +600,10 @@ class RegularizedEnvironmentModel(AbstractProteinStabilityPredictor):
         self.assay_channel = _identifier(assay_channel, "assay channel")
         self.condition_id = _identifier(condition_id, "condition ID")
         self.sign_convention = _identifier(sign_convention, "sign convention")
-        self.family_effect_scale = _positive(family_effect_scale, "family_effect_scale")
-        self.ridge = _positive(ridge, "ridge")
+        self.family_effect_scale = positive_finite_float(
+            family_effect_scale, "family_effect_scale"
+        )
+        self.ridge = positive_finite_float(ridge, "ridge")
         self.model_id = canonical_fingerprint(
             {
                 "kind": "regularized-environment-model",
@@ -629,8 +627,8 @@ class RegularizedEnvironmentModel(AbstractProteinStabilityPredictor):
                 "assay_channel": self.assay_channel,
                 "condition_id": self.condition_id,
                 "sign_convention": self.sign_convention,
-                "family_effect_scale": self.family_effect_scale.hex(),
-                "ridge": self.ridge.hex(),
+                "family_effect_scale": float(self.family_effect_scale).hex(),
+                "ridge": float(self.ridge).hex(),
             }
         )
 
@@ -869,7 +867,7 @@ class RegularizedPairInteractionModel(StrictModule):
         assay_channel: str,
         condition_id: str,
         sign_convention: str,
-    ):
+    ) -> None:
         coefficients_ = jnp.asarray(coefficients, dtype=jnp.float64)
         covariance = jnp.asarray(parameter_covariance, dtype=jnp.float64)
         residual = jnp.asarray(residual_variance, dtype=jnp.float64).reshape(())
@@ -932,7 +930,7 @@ class RegularizedPairInteractionModel(StrictModule):
             }
         )
         self.single_model_id = _identifier(single_model_id, "single_model_id")
-        self.ridge = _positive(ridge, "ridge")
+        self.ridge = positive_finite_float(ridge, "ridge")
         self.assay_channel = _identifier(assay_channel, "assay channel")
         self.condition_id = _identifier(condition_id, "condition ID")
         self.sign_convention = _identifier(sign_convention, "sign convention")
@@ -956,7 +954,7 @@ class RegularizedPairInteractionModel(StrictModule):
                 "transform_id": self.transform_id,
                 "training_source_manifest_ids": list(self.training_source_manifest_ids),
                 "single_model_id": self.single_model_id,
-                "ridge": self.ridge.hex(),
+                "ridge": float(self.ridge).hex(),
                 "assay_channel": self.assay_channel,
                 "condition_id": self.condition_id,
                 "sign_convention": self.sign_convention,
@@ -1200,7 +1198,7 @@ class ProteinStabilityModelSelectionRecord:
         *,
         candidate_hyperparameters: Mapping[str, Mapping[str, float]],
         score_name: str = "family-macro-mae-kcal-per-mol",
-    ):
+    ) -> None:
         if not isinstance(cohort, ProteinStabilityCohort):
             raise TypeError("cohort must be a ProteinStabilityCohort.")
         values = tuple(features)
@@ -1285,7 +1283,9 @@ class ProteinStabilityModelSelectionRecord:
         )
         scores = []
         for model_fit in ordered:
-            prediction = model_fit.predictor.predict(selection_features)
+            # Lineage validation admitted only successful single-mutant predictors.
+            predictor = cast(AbstractProteinStabilityPredictor, model_fit.predictor)
+            prediction = predictor.predict(selection_features)
             validity = np.asarray(prediction.valid)
             means = np.asarray(prediction.mean)
             if (
@@ -1346,7 +1346,7 @@ class ProteinStabilityModelSelectionRecord:
                 "candidate_hyperparameters": [
                     (
                         fit_id,
-                        [(name, value.hex()) for name, value in hyperparameters],
+                        [(name, float(value).hex()) for name, value in hyperparameters],
                     )
                     for fit_id, hyperparameters in normalized_hyperparameters
                 ],
@@ -1356,7 +1356,7 @@ class ProteinStabilityModelSelectionRecord:
                 "model_selection_feature_ids": list(feature_ids),
                 "selection_source_manifest_ids": list(source_ids),
                 "candidate_scores": [
-                    (fit_id, score.hex()) for fit_id, score in candidate_scores
+                    (fit_id, float(score).hex()) for fit_id, score in candidate_scores
                 ],
                 "chosen_fit_id": chosen_fit_id,
                 "chosen_baseline_fit_id": chosen_baseline_fit_id,
@@ -1459,7 +1459,7 @@ def _transformed_rows(
 
 def _linear_prediction(
     design: Array,
-    valid: Array,
+    valid: ArrayLike,
     reasons: Sequence[str | None],
     /,
     *,
@@ -1512,12 +1512,12 @@ def _linear_prediction(
 def _measurement_weights(
     measurements: Sequence[ProteinStabilityMeasurement], /
 ) -> tuple[Array | None, tuple[str, ...]]:
-    if any(
-        item.standard_error_kcal_per_mol is None
-        or item.uncertainty_source_manifest_id is None
-        for item in measurements
-    ):
-        return None, ("calibration-measurement-uncertainty-unquantified",)
+    standard_errors: list[float] = []
+    for item in measurements:
+        standard_error = item.standard_error_kcal_per_mol
+        if standard_error is None or item.uncertainty_source_manifest_id is None:
+            return None, ("calibration-measurement-uncertainty-unquantified",)
+        standard_errors.append(standard_error)
     shared_wt_blocks: dict[tuple[str, str], int] = {}
     for item in measurements:
         block = (item.shared_wt_id, item.assay_channel)
@@ -1526,7 +1526,7 @@ def _measurement_weights(
         return None, ("shared-wt-block-covariance-unquantified",)
     return (
         jnp.asarray(
-            [1.0 / float(item.standard_error_kcal_per_mol) ** 2 for item in measurements]
+            [1.0 / float(standard_error) ** 2 for standard_error in standard_errors]
         ),
         (),
     )
@@ -1540,7 +1540,7 @@ def _fit_linear(
     *,
     ridge: float,
 ) -> tuple[Array | None, Array | None, Array | None, int, tuple[str, ...]]:
-    ridge_ = _positive(ridge, "ridge")
+    ridge_ = positive_finite_float(ridge, "ridge")
     if (
         design.ndim != 2
         or target.shape != design.shape[:1]
@@ -1680,6 +1680,12 @@ def fit_global_substitution_baseline(
     coefficients, covariance, residual, status, reasons = result
     if reasons:
         return _failed_fit(None, reasons, selected_measurements, status, **metadata)
+    if not (
+        coefficients is not None and covariance is not None and (residual is not None)
+    ):
+        raise RuntimeError(
+            "Internal invariant failed: coefficients is not None and covariance is not None and (residual is not None)."
+        )
     predictor = GlobalSubstitutionBaseline(
         coefficients,
         covariance,
@@ -1751,7 +1757,7 @@ def fit_regularized_environment_model(
             -1,
             **metadata,
         )
-    family_scale = _positive(family_effect_scale, "family_effect_scale")
+    family_scale = positive_finite_float(family_effect_scale, "family_effect_scale")
     families = tuple(sorted({item.domain_family_id for item in selected_features}))
     rows = jnp.stack(tuple(transform.transform(item) for item in selected_features))
     family_rows = jnp.asarray(
@@ -1779,6 +1785,12 @@ def fit_regularized_environment_model(
     )
     if reasons:
         return _failed_fit(None, reasons, selected_measurements, status, **metadata)
+    if not (
+        coefficients is not None and covariance is not None and (residual is not None)
+    ):
+        raise RuntimeError(
+            "Internal invariant failed: coefficients is not None and covariance is not None and (residual is not None)."
+        )
     family_start = 1 + rows.shape[1]
     family_effects = coefficients[family_start:] * family_scale
     unseen_family_variance = (
@@ -1974,6 +1986,12 @@ def fit_regularized_pair_interaction_model(
     )
     if reasons:
         return _failed_fit(None, reasons, measurements, status, **metadata)
+    if not (
+        coefficients is not None and covariance is not None and (residual is not None)
+    ):
+        raise RuntimeError(
+            "Internal invariant failed: coefficients is not None and covariance is not None and (residual is not None)."
+        )
     predictor = RegularizedPairInteractionModel(
         coefficients,
         covariance,
@@ -1999,7 +2017,7 @@ def fit_regularized_pair_interaction_model(
 
 
 def _failed_fit(
-    predictor,
+    predictor: None,
     reasons: Sequence[str],
     measurements: Sequence[ProteinStabilityMeasurement],
     numerical_status: int,

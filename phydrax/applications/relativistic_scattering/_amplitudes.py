@@ -12,7 +12,8 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -46,7 +47,7 @@ class ScatteringProcess(StrictModule, NonTrainableState):
         *,
         symmetry_factor: float = 1.0,
         perturbative_order: str = "tree",
-    ):
+    ) -> None:
         incoming_ = tuple(incoming)
         outgoing_ = tuple(outgoing)
         factor = float(symmetry_factor)

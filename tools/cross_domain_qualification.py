@@ -21,12 +21,19 @@ def main() -> None:
     hierarchical = astro.BarnesHutGravityPlan3D(tree, masses).evaluate(positions)
 
     binned = astrophysics.BinnedResponsePlan(
-        [[1.0, 2.0], [0.5, 0.5]], response_id="fixture"
+        # ty: ignore[invalid-argument-type]
+        [[1.0, 2.0], [0.5, 0.5]],
+        response_id="fixture",
+        # ty: ignore[invalid-argument-type]
     ).evaluate([2.0, 3.0])
     source = phx.observation.CoordinateLayout(("s0", "s1"))
     target = phx.observation.CoordinateLayout(("d0", "d1"))
     core_response = phx.observation.LinearObservationPlan(
-        [[1.0, 2.0], [0.5, 0.5]], source, target
+        # ty: ignore[invalid-argument-type]
+        [[1.0, 2.0], [0.5, 0.5]],
+        source,
+        target,
+        # ty: ignore[invalid-argument-type]
     ).apply(phx.observation.TheoryVector([2.0, 3.0], source, "fixture"))
 
     report = {

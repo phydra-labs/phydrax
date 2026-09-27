@@ -183,7 +183,7 @@ class LatticeBoltzmannDeploymentRecord(StrictModule, NonTrainableState):
         restart_topology_id: str,
         topology_restart_relation_id: str | None = None,
         parity_evidence_ids: Sequence[str],
-    ):
+    ) -> None:
         execution = _identifier(execution_mode, "execution_mode")
         output = _identifier(output_mode, "output_mode")
         checkpoint = _identifier(checkpoint_mode, "checkpoint_mode")
@@ -282,7 +282,7 @@ class LatticeBoltzmannDeploymentCompatibility(StrictModule, NonTrainableState):
         deployment_id: str,
         failed_checks: Sequence[str],
         /,
-    ):
+    ) -> None:
         profile = _identifier(profile_id, "profile_id")
         deployment = _identifier(deployment_id, "deployment_id")
         failed = tuple(
@@ -342,7 +342,7 @@ class LatticeBoltzmannQualificationProfile(StrictModule, NonTrainableState):
         dependencies: Sequence[SupportDependency] = (),
         dynamic_wetting: ConstitutiveDynamicWettingPlan | None = None,
         conjugate_thermal: ConjugateThermalPlan | None = None,
-    ):
+    ) -> None:
         name_ = _identifier(name, "profile name")
         if not isinstance(tier, LatticeBoltzmannCommercialTier):
             raise TypeError("tier must be a LatticeBoltzmannCommercialTier.")
@@ -590,7 +590,7 @@ class LatticeBoltzmannCommercialEvidence(StrictModule, NonTrainableState):
         evidence: Sequence[QualificationEvidence],
         satisfied_dependencies: Sequence[SupportDependency],
         /,
-    ):
+    ) -> None:
         if not isinstance(profile, LatticeBoltzmannQualificationProfile):
             raise TypeError("profile must be LatticeBoltzmannQualificationProfile.")
         if not isinstance(coverage, QualificationCoverageReport):

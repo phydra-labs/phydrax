@@ -5,11 +5,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import TypeVar
 
 import equinox as eqx
 import jax
 import numpy as np
+from jax import Array
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import ArrayRole, NonTrainableState, resolve_array_roles
@@ -30,7 +33,7 @@ class FunctionalDecompositionShardingPlan(StrictModule, NonTrainableState):
         *,
         devices: Sequence[jax.Device] | None = None,
         assignments: Mapping[str, int] | None = None,
-    ):
+    ) -> None:
         if not isinstance(cover, SubdomainCover):
             raise TypeError("cover must be a SubdomainCover.")
         devices_ = tuple(jax.devices() if devices is None else devices)
@@ -78,7 +81,7 @@ class DecompositionShardingEvidence(StrictModule, NonTrainableState):
         cross_device_pairings: int,
         communicated_bytes: int,
         verified: bool,
-    ):
+    ) -> None:
         self.patch_counts = tuple(patch_counts)
         self.cross_device_pairings = int(cross_device_pairings)
         self.communicated_bytes = int(communicated_bytes)
@@ -96,13 +99,16 @@ class ShardedLocalFieldFamily(StrictModule):
         plan: FunctionalDecompositionShardingPlan,
         evidence: DecompositionShardingEvidence,
         /,
-    ):
+    ) -> None:
         self.family = family
         self.plan = plan
         self.evidence = evidence
 
 
-def _place_evolving_arrays(tree, device: jax.Device, /):
+_Tree = TypeVar("_Tree")
+
+
+def _place_evolving_arrays(tree: _Tree, device: jax.Device, /) -> _Tree:
     """Place PARAMETER, MODEL_STATE and unclassified arrays; keep FIXED in place.
 
     Placement never raises on undeclared trees; FIXED leaves (including every leaf
@@ -219,7 +225,7 @@ class DistributedCollectiveEvidence(StrictModule, NonTrainableState):
         device_count: int,
         communicated_bytes: int,
         verified: bool,
-    ):
+    ) -> None:
         self.mode = str(mode)
         self.device_count = int(device_count)
         self.communicated_bytes = int(communicated_bytes)
@@ -235,14 +241,14 @@ class DistributedCollectiveResult(StrictModule):
         value: jax.Array,
         evidence: DistributedCollectiveEvidence,
         /,
-    ):
+    ) -> None:
         self.value = value
         self.evidence = evidence
 
 
 def distributed_pou_collective(
-    local_values,
-    local_weights,
+    local_values: ArrayLike,
+    local_weights: ArrayLike,
     /,
     *,
     devices: Sequence[jax.Device] | None = None,
@@ -266,7 +272,7 @@ def distributed_pou_collective(
     values = jax.device_put(values, NamedSharding(mesh, value_spec))
     weights = jax.device_put(weights, NamedSharding(mesh, weight_spec))
 
-    def assemble(value, weight):
+    def assemble(value: Array, weight: Array) -> Array:
         local_value = value[0]
         expanded = weight[0]
         while expanded.ndim < local_value.ndim:
@@ -298,8 +304,8 @@ def distributed_pou_collective(
 
 
 def distributed_schwarz_exchange(
-    outgoing,
-    source_indices,
+    outgoing: ArrayLike,
+    source_indices: ArrayLike,
     /,
     *,
     devices: Sequence[jax.Device] | None = None,
@@ -322,7 +328,7 @@ def distributed_schwarz_exchange(
     values = jax.device_put(values, NamedSharding(mesh, value_spec))
     sources = jax.device_put(sources, NamedSharding(mesh, source_spec))
 
-    def exchange(value, source):
+    def exchange(value: Array, source: Array) -> Array:
         gathered = jax.lax.all_gather(value[0], "patch", tiled=False)
         return gathered[source[0]][None, ...]
 

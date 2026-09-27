@@ -4,15 +4,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import PRNGKey
 from ._coulomb import _isotropic_directions
 from ._types import PICCollisionResult
 
@@ -31,8 +34,8 @@ class BackgroundMCCPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_probability: float = 0.25,
-        background_velocity=(0.0, 0.0, 0.0),
-    ):
+        background_velocity: Sequence[float] = (0.0, 0.0, 0.0),
+    ) -> None:
         frequency = float(collision_frequency)
         maximum = float(maximum_probability)
         background = tuple(float(value) for value in background_velocity)
@@ -59,7 +62,7 @@ class BackgroundMCCPlan(StrictModule, NonTrainableState):
         velocity: ArrayLike,
         mass: ArrayLike,
         active_mask: ArrayLike,
-        key,
+        key: PRNGKey,
         step_size: ArrayLike,
         /,
     ) -> PICCollisionResult:

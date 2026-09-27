@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -29,7 +30,7 @@ class MaxwellViscoelasticRelaxation(StrictModule):
     shear_modulus_Pa: Array
     viscosity_Pa_s: Array
 
-    def __init__(self, shear_modulus_Pa: ArrayLike, viscosity_Pa_s: ArrayLike, /):
+    def __init__(self, shear_modulus_Pa: ArrayLike, viscosity_Pa_s: ArrayLike, /) -> None:
         shear, viscosity = jnp.broadcast_arrays(
             jnp.asarray(shear_modulus_Pa), jnp.asarray(viscosity_Pa_s)
         )
@@ -102,7 +103,7 @@ class EarthquakeCyclePlan(StrictModule, NonTrainableState):
         /,
         *,
         termination: NonlinearTermination | None = None,
-    ):
+    ) -> None:
         stiffness = np.asarray(stiffness_Pa_m, dtype=np.float64)
         count = stiffness.shape[0] if stiffness.ndim == 2 else 0
         loading = np.broadcast_to(
@@ -216,7 +217,7 @@ class EarthquakeCyclePlan(StrictModule, NonTrainableState):
             "Earthquake-cycle timestep must be positive.",
         )
 
-        def residual(velocity, args):
+        def residual(velocity: Array, args: tuple[EarthquakeCycleState, Array]) -> Array:
             old, step = args
             slip_increment = step * velocity
             stress = (

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -16,7 +18,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _timed(callable_, repeats):
+def _timed(callable_: Any, repeats: Any) -> Any:
     started = time.perf_counter()
     value = None
     for _ in range(repeats):

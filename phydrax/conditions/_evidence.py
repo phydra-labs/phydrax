@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._ir import ConditionQuantifier
@@ -46,7 +47,7 @@ class ConditionRealizationStamp(StrictModule):
         *,
         quantifier: ConditionQuantifier,
         exact: bool,
-    ):
+    ) -> None:
         self.condition_id = _identifier(condition_id, "condition_id")
         self.source_id = _identifier(source_id, "source_id")
         self.realization_id = _identifier(realization_id, "realization_id")
@@ -71,7 +72,7 @@ class ConditionEvidence(StrictModule):
         /,
         *,
         evidence_id: str,
-    ):
+    ) -> None:
         if not isinstance(stamp, ConditionRealizationStamp):
             raise TypeError(
                 "ConditionEvidence.stamp must be a ConditionRealizationStamp."
@@ -107,16 +108,16 @@ class AffineProjectionCertificate(ConditionCertificate):
 
     def __init__(
         self,
-        stamp,
-        residual_norm,
-        tolerance,
-        verified,
+        stamp: ConditionRealizationStamp,
+        residual_norm: ArrayLike,
+        tolerance: ArrayLike,
+        verified: ArrayLike,
         /,
         *,
-        certificate_id,
-        rank,
-        nullity,
-    ):
+        certificate_id: str,
+        rank: int,
+        nullity: int,
+    ) -> None:
         rank_ = int(rank)
         nullity_ = int(nullity)
         if rank_ < 0 or nullity_ < 0:
@@ -139,8 +140,16 @@ class NonlinearRetractionCertificate(ConditionCertificate):
     iterations: int = eqx.field(static=True)
 
     def __init__(
-        self, stamp, residual_norm, tolerance, verified, /, *, certificate_id, iterations
-    ):
+        self,
+        stamp: ConditionRealizationStamp,
+        residual_norm: ArrayLike,
+        tolerance: ArrayLike,
+        verified: ArrayLike,
+        /,
+        *,
+        certificate_id: str,
+        iterations: int,
+    ) -> None:
         iterations_ = int(iterations)
         if iterations_ < 0:
             raise ValueError("Nonlinear retraction iterations must be nonnegative.")
@@ -162,15 +171,15 @@ class FeasibilityCertificate(ConditionCertificate):
 
     def __init__(
         self,
-        stamp,
-        residual_norm,
-        tolerance,
-        verified,
-        maximum_violation,
+        stamp: ConditionRealizationStamp,
+        residual_norm: ArrayLike,
+        tolerance: ArrayLike,
+        verified: ArrayLike,
+        maximum_violation: ArrayLike,
         /,
         *,
-        certificate_id,
-    ):
+        certificate_id: str,
+    ) -> None:
         self.stamp = stamp
         self.certificate_id = _identifier(certificate_id, "certificate_id")
         self.residual_norm = _scalar(residual_norm, "residual_norm")
@@ -197,7 +206,7 @@ class ProbabilisticConditioningEvidence(StrictModule):
         /,
         *,
         evidence_id: str,
-    ):
+    ) -> None:
         if not isinstance(stamp, ConditionRealizationStamp):
             raise TypeError(
                 "Probabilistic evidence requires a ConditionRealizationStamp."

@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -18,7 +19,7 @@ import phydrax as phx
 cpl = phx.solver.coupling
 
 
-def _graph(alpha: float, *, parameterized: bool = False):
+def _graph(alpha: float, *, parameterized: bool = False) -> Any:
     space = phx.linalg.ArraySpace(
         (1,), dtype=jnp.float64, space_id=f"qualification-interface-{alpha}"
     )
@@ -33,14 +34,14 @@ def _graph(alpha: float, *, parameterized: bool = False):
         fixed_topology=True,
     )
 
-    def advance_a(window, state, inputs, forcing):
+    def advance_a(window: Any, state: Any, inputs: Any, forcing: Any) -> Any:
         del window, state, forcing
         value = alpha * inputs[0]
         return cpl.CouplingSubsystemResult(
             value, (value,), successful=True, status=0, work=1
         )
 
-    def advance_b(window, state, inputs, forcing):
+    def advance_b(window: Any, state: Any, inputs: Any, forcing: Any) -> Any:
         del window, state
         amplitude = forcing if parameterized else jnp.asarray(1.0)
         value = alpha * inputs[0] + (1.0 - alpha) * amplitude
@@ -75,7 +76,7 @@ def _graph(alpha: float, *, parameterized: bool = False):
     )
 
 
-def _fixed_point_policy(accelerated: bool):
+def _fixed_point_policy(accelerated: bool) -> Any:
     acceleration = phx.nonlinear.AndersonAcceleration(history=5) if accelerated else None
     return cpl.ImplicitCouplingPolicy(
         phx.nonlinear.FixedPointIteration(acceleration=acceleration),
@@ -92,7 +93,7 @@ def _fixed_point_policy(accelerated: bool):
     )
 
 
-def _run_fixed_point(alpha: float, *, accelerated: bool):
+def _run_fixed_point(alpha: float, *, accelerated: bool) -> Any:
     graph, states, values = _graph(alpha)
     prepared = cpl.prepare_coupling(
         graph,
@@ -149,7 +150,7 @@ def _derivative_error(alpha: float) -> float:
         problem_id="qualification-derivative",
     )
 
-    def observable(forcing):
+    def observable(forcing: Any) -> Any:
         result = cpl.advance_coupling_window(
             prepared, prepared.reference_state, 1.0, forcing
         )

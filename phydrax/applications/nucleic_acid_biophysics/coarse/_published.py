@@ -10,18 +10,22 @@ No upstream software or parameter table is incorporated.
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
+from jax import Array
 
 
 @jax.custom_jvp
-def _acos(value):
+def _acos(value: Array) -> Array:
     return jnp.arccos(jnp.clip(value, -1.0, 1.0))
 
 
 @_acos.defjvp
-def _acos_jvp(primals, tangents):
+def _acos_jvp(primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:
     (value,), (tangent,) = primals, tangents
     interior = jnp.abs(value) < 1.0
     denominator = jnp.sqrt(jnp.where(interior, 1 - value * value, 1.0))
@@ -30,15 +34,15 @@ def _acos_jvp(primals, tangents):
     return _acos(value), jnp.where(interior, -tangent / denominator, 0.0)
 
 
-def _dot(a, b):
+def _dot(a: Array, b: Array) -> Array:
     return jnp.sum(a * b, axis=-1)
 
 
-def _unit(vector):
+def _unit(vector: Array) -> Array:
     return vector / jnp.sqrt(jnp.sum(vector * vector, axis=-1, keepdims=True))
 
 
-def radial_value(r, parameters, kind):
+def radial_value(r: Array, parameters: Array, kind: str) -> Array:
     """f1/f2: central shifted well joined C1 to compact quadratic tails.
 
     Parameters are [amplitude,r0,reference_cut,low,high,width]. Width is used
@@ -46,7 +50,7 @@ def radial_value(r, parameters, kind):
     """
     amplitude, r0, rc, low, high, width = parameters
 
-    def center(x):
+    def center(x: Array) -> tuple[Array, Array]:
         if kind == "morse":
             exponential = jnp.exp(-width * (x - r0))
             reference = jnp.exp(-width * (rc - r0))
@@ -69,11 +73,11 @@ def radial_value(r, parameters, kind):
     return amplitude * jnp.where((r >= cutlo) & (r <= cuthi), value, 0.0)
 
 
-def radial_support(parameters, kind):
+def radial_support(parameters: npt.ArrayLike, kind: str) -> tuple[float, float]:
     p = np.asarray(parameters, dtype=np.float64)
     _, r0, rc, low, high, width = p
 
-    def center(x):
+    def center(x: np.float64) -> tuple[np.float64, np.float64]:
         if kind == "morse":
             e, ec = np.exp(-width * (x - r0)), np.exp(-width * (rc - r0))
             return (1 - e) ** 2 - (1 - ec) ** 2, 2 * width * e * (1 - e)
@@ -91,7 +95,7 @@ def radial_support(parameters, kind):
     return cutlo, cuthi
 
 
-def excluded_value(r, parameters):
+def excluded_value(r: Array, parameters: Array) -> Array:
     """f3: repulsive LJ continued quadratically to zero, not WCA."""
     epsilon, sigma, join = parameters
     ratio = sigma / join
@@ -107,7 +111,7 @@ def excluded_value(r, parameters):
     )
 
 
-def angular_value(theta, parameters):
+def angular_value(theta: Array, parameters: Array) -> Array:
     """f4, with [curvature, preferred angle, matching half-width]."""
     a, theta0, join = parameters
     delta = jnp.abs(theta - theta0)
@@ -120,7 +124,7 @@ def angular_value(theta, parameters):
     )
 
 
-def helicity_value(x, parameters):
+def helicity_value(x: Array, parameters: Array) -> Array:
     """f5 one-sided helicity window, parameters [curvature,negative join]."""
     a, join = parameters
     cutoff = 1 / (a * join)
@@ -136,7 +140,7 @@ def helicity_value(x, parameters):
     )
 
 
-def screened_value(r, parameters):
+def screened_value(r: Array, parameters: Array) -> Array:
     """DNA2 Eq.13--16; [energy*length prefactor, screening length]."""
     prefactor, screening_length = parameters
     join = 3 * screening_length
@@ -151,8 +155,16 @@ def screened_value(r, parameters):
 
 
 def interaction_energy(
-    positions, pairs, profile, *, bonded, model, strengths, charge_scale, image_shift
-):
+    positions: Array,
+    pairs: Array,
+    profile: dict[str, Any],
+    *,
+    bonded: bool,
+    model: str,
+    strengths: Array,
+    charge_scale: Array,
+    image_shift: Array,
+) -> Array:
     """Full published pair decomposition for one chemistry and neighbor class.
 
     Site slots: backbone, base/HB, stack3, stack5, coax, frame-origin,
@@ -166,7 +178,7 @@ def interaction_energy(
     b1, b3 = _unit(b[:, 6] - b[:, 5]), _unit(b[:, 7] - b[:, 5])
     a2, b2 = jnp.cross(a3, a1), jnp.cross(b3, b1)
 
-    def displacement(i, j):
+    def displacement(i: int, j: int) -> tuple[Array, Array]:
         d = b[:, j] - a[:, i]
         squared = _dot(d, d)
         positive = squared > 0
@@ -187,10 +199,10 @@ def interaction_energy(
     theta4 = _acos(_dot(a3, b3))
     theta7, theta8 = _acos(-_dot(b3, dh)), _acos(_dot(a3, dh))
 
-    def f(theta, kind, name):
+    def f(theta: Array, kind: str, name: str) -> Array:
         return angular_value(theta, profile[kind]["angles"][name])
 
-    def symmetric(theta, kind, name, period=jnp.pi):
+    def symmetric(theta: Array, kind: str, name: str, period: float = jnp.pi) -> Array:
         return f(theta, kind, name) + f(period - theta, kind, name)
 
     ev = profile["excluded"]

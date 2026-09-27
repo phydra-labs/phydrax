@@ -8,7 +8,8 @@ from collections.abc import Callable
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -38,7 +39,7 @@ class RachfordRiceFlashPlan(StrictModule, NonTrainableState):
         *,
         maximum_iterations: int = 80,
         tolerance: float = 1e-12,
-    ):
+    ) -> None:
         names = tuple(str(value).strip() for value in component_names)
         steps, tolerance_ = int(maximum_iterations), float(tolerance)
         if (
@@ -76,7 +77,7 @@ class RachfordRiceFlashPlan(StrictModule, NonTrainableState):
             "Flash composition must be normalized and K values positive finite.",
         )
 
-        def residual(fraction):
+        def residual(fraction: Array) -> Array:
             return jnp.sum(
                 composition * (ratios - 1.0) / (1.0 + fraction * (ratios - 1.0))
             )
@@ -140,7 +141,7 @@ class CompositionalFlashPlan(StrictModule, NonTrainableState):
         /,
         *,
         model_id: str,
-    ):
+    ) -> None:
         if not isinstance(flash, RachfordRiceFlashPlan) or not callable(
             equilibrium_ratio_model
         ):

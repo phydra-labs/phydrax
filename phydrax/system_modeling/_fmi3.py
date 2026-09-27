@@ -11,7 +11,7 @@ class FMI3Contract:
     mode: Literal["model-exchange", "co-simulation", "scheduled-execution"]
     clock_ids: tuple[str, ...] = ()
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.model_identifier, str) or not self.model_identifier:
             raise ValueError("FMI model identifier is required.")
         if self.mode not in ("model-exchange", "co-simulation", "scheduled-execution"):

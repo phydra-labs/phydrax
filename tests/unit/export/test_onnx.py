@@ -17,11 +17,11 @@ class _FakeJax2Onnx:
     to_onnx_calls: list[dict[str, Any]]
     allclose_calls: list[dict[str, Any]]
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.to_onnx_calls = []
         self.allclose_calls = []
 
-    def to_onnx(self, fn, **kwargs):
+    def to_onnx(self, fn: Any, **kwargs: Any) -> Any:
         width = int(kwargs["inputs"][0][-1])
         sample = jnp.arange(1, 1 + 2 * width, dtype="float64").reshape((2, width))
         self.to_onnx_calls.append(
@@ -33,7 +33,16 @@ class _FakeJax2Onnx:
         Path(kwargs["output_path"]).write_bytes(b"fake-onnx-model")
         return kwargs["output_path"]
 
-    def allclose(self, fn, path, *, inputs, rtol, atol, enable_double_precision):
+    def allclose(
+        self,
+        fn: Any,
+        path: Any,
+        *,
+        inputs: Any,
+        rtol: Any,
+        atol: Any,
+        enable_double_precision: Any,
+    ) -> Any:
         self.allclose_calls.append(
             {
                 "path": path,
@@ -46,7 +55,7 @@ class _FakeJax2Onnx:
         return True, "ok"
 
 
-def _install_fake_jax2onnx(monkeypatch):
+def _install_fake_jax2onnx(monkeypatch: Any) -> Any:
     fake = _FakeJax2Onnx()
     module = types.ModuleType("jax2onnx")
     module.__dict__["to_onnx"] = fake.to_onnx
@@ -55,10 +64,12 @@ def _install_fake_jax2onnx(monkeypatch):
     return fake
 
 
-def test_save_onnx_vectorizes_preprocesses_and_postprocesses(monkeypatch, tmp_path):
+def test_save_onnx_vectorizes_preprocesses_and_postprocesses(
+    monkeypatch: Any, tmp_path: Any
+) -> None:
     fake = _install_fake_jax2onnx(monkeypatch)
 
-    def model(row, *, key=None):
+    def model(row: Any, *, key: Any = None) -> Any:
         assert key is None
         return jnp.sum(row)
 
@@ -83,10 +94,12 @@ def test_save_onnx_vectorizes_preprocesses_and_postprocesses(monkeypatch, tmp_pa
     assert jnp.allclose(call["value"], jnp.asarray([10.0, 18.0]))
 
 
-def test_save_onnx_validates_with_supplied_inputs(monkeypatch, tmp_path):
+def test_save_onnx_validates_with_supplied_inputs(
+    monkeypatch: Any, tmp_path: Any
+) -> None:
     fake = _install_fake_jax2onnx(monkeypatch)
 
-    def model(x, *, key=None):
+    def model(x: Any, *, key: Any = None) -> Any:
         del key
         return x + 1.0
 
@@ -107,8 +120,8 @@ def test_save_onnx_validates_with_supplied_inputs(monkeypatch, tmp_path):
     assert jnp.allclose(fake.allclose_calls[0]["value"], jnp.asarray([[1.0, 2.0]]))
 
 
-def test_save_onnx_validate_requires_validation_inputs(tmp_path):
-    def model(x, *, key=None):
+def test_save_onnx_validate_requires_validation_inputs(tmp_path: Any) -> None:
+    def model(x: Any, *, key: Any = None) -> Any:
         del key
         return x
 
@@ -121,12 +134,14 @@ def test_save_onnx_validate_requires_validation_inputs(tmp_path):
         )
 
 
-def test_solver_save_onnx_exports_named_ansatz_function(monkeypatch, tmp_path):
+def test_solver_save_onnx_exports_named_ansatz_function(
+    monkeypatch: Any, tmp_path: Any
+) -> None:
     fake = _install_fake_jax2onnx(monkeypatch)
     geom = phx.domain.Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x + 1.0
 
     solver = phx.solver.FunctionalSolver(functions={"u": u}, terms=())

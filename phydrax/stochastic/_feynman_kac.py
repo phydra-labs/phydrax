@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 from phydrax.domain import DomainFunction
@@ -22,6 +23,7 @@ from .._frozendict import frozendict
 from .._probability import _event_axes, _leading_shape
 from .._sampling._addressing import derive_key, SampleAddress
 from .._strict import StrictModule
+from ..typing import parse, PRNGKey
 from ._bsde import (
     _event_finite,
     _predictor_value,
@@ -110,23 +112,22 @@ class FeynmanKacSamplingPlan(StrictModule):
         time_weighting: FeynmanKacTimeWeighting = "uniform",
         refresh_mode: FeynmanKacRefreshMode = "resample",
         plan_id: str | None = None,
-    ):
+    ) -> None:
         t0 = float(initial_time)
         t1 = float(terminal_time)
         if not jnp.isfinite(t0) or not jnp.isfinite(t1) or t1 <= t0:
             raise ValueError(
                 "initial_time and terminal_time must be finite with t1 > t0."
             )
-        if sampling_mode not in ("trajectory_nodes", "queries"):
-            raise ValueError("Unknown Feynman-Kac sampling_mode.")
+        sampling_mode = parse(sampling_mode, FeynmanKacSamplingMode, "sampling_mode")
         paths = int(num_paths_per_query)
         steps = int(num_time_steps)
         if paths < 1 or steps < 1:
             raise ValueError("num_paths_per_query and num_time_steps must be positive.")
-        if quadrature not in ("left", "trapezoid"):
-            raise ValueError("quadrature must be 'left' or 'trapezoid'.")
-        if control_target_mode not in ("none", "martingale", "malliavin"):
-            raise ValueError("Unknown Feynman-Kac control_target_mode.")
+        quadrature = parse(quadrature, BSDEQuadrature, "quadrature")
+        control_target_mode = parse(
+            control_target_mode, FeynmanKacControlTargetMode, "control_target_mode"
+        )
         use_antithetic = bool(antithetic)
         if use_antithetic and paths % 2:
             raise ValueError("Antithetic sampling requires an even path count.")
@@ -135,10 +136,8 @@ class FeynmanKacSamplingPlan(StrictModule):
             raise ValueError("path_chunk_size must lie in [1, num_paths_per_query].")
         if use_antithetic and chunk is not None and chunk % 2:
             raise ValueError("Antithetic path chunks must contain an even path count.")
-        if time_weighting not in ("uniform", "trapezoid"):
-            raise ValueError("time_weighting must be 'uniform' or 'trapezoid'.")
-        if refresh_mode not in ("fixed", "resample"):
-            raise ValueError("refresh_mode must be 'fixed' or 'resample'.")
+        time_weighting = parse(time_weighting, FeynmanKacTimeWeighting, "time_weighting")
+        refresh_mode = parse(refresh_mode, FeynmanKacRefreshMode, "refresh_mode")
         identity_parts = (
             t0,
             t1,
@@ -204,7 +203,7 @@ class FeynmanKacPathBatch(StrictModule):
         query_weights: ArrayLike | None = None,
         dependence_ids: ArrayLike | None = None,
         antithetic: bool = False,
-    ):
+    ) -> None:
         state_event = _positive_shape(state_shape, owner="state_shape")
         noise_event = _positive_shape(noise_shape, owner="noise_shape")
         q_times = jnp.asarray(query_times, dtype=jnp.float64).reshape((-1,))
@@ -314,7 +313,7 @@ class FeynmanKacLabelBatch(StrictModule):
         cluster_ids: ArrayLike | None = None,
         source_path_count: int = 1,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         state_event = _positive_shape(state_shape, owner="state_shape")
         noise_event = _positive_shape(noise_shape, owner="noise_shape")
         output_event = _positive_shape(output_shape, owner="output_shape")
@@ -483,7 +482,7 @@ def feynman_kac_label_diagnostics(
 
 
 def _query_point_keys(
-    key: Key[Array, ""],
+    key: PRNGKey,
     address: SampleAddress,
     leading_shape: tuple[int, int, int],
     path_offset: int,
@@ -519,7 +518,7 @@ def _point_values(
     problem: BSDEProblem,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     output_shape: tuple[int, ...],
     point_keys: Array | None = None,
 ) -> Array:
@@ -559,7 +558,7 @@ def _point_controls(
     problem: BSDEProblem,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     point_keys: Array | None = None,
 ) -> Array:
     leading_shape = _leading_shape(
@@ -594,7 +593,7 @@ def _source_generator_nodes(
     *,
     source_value: Predictor | None,
     source_control: Predictor | None,
-    key: Key[Array, ""],
+    key: PRNGKey,
     path_offset: int | None = None,
 ) -> Array:
     leading_shape = _leading_shape(
@@ -677,7 +676,7 @@ def _source_generator_nodes(
     flat_values = values.reshape((-1,) + problem.output_shape)
     flat_controls = controls.reshape((-1,) + problem.output_shape + problem.noise_shape)
 
-    def evaluate(time, state, value, control):
+    def evaluate(time: Array, state: Array, value: Array, control: Array) -> Array:
         result = jnp.asarray(problem.generator(time, state, value, control, problem.args))
         if result.shape != problem.output_shape:
             raise ValueError("BSDE generator returned an incompatible output shape.")
@@ -772,7 +771,7 @@ def trajectory_node_feynman_kac_labels(
     *,
     source_value: Predictor | None = None,
     source_control: Predictor | None = None,
-    key: Key[Array, ""] = jr.key(0),
+    key: PRNGKey = jr.key(0),
 ) -> FeynmanKacLabelBatch:
     """Construct one correlated global-time label at every valid trajectory node."""
     if not isinstance(problem, BSDEProblem) or not isinstance(paths, BSDEPathBatch):
@@ -903,11 +902,11 @@ def _resolve_queries(
     plan: FeynmanKacSamplingPlan,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     query_times: ArrayLike | None,
     query_states: ArrayLike | None,
     query_weights: ArrayLike | None,
-    query_sampler: Callable[[Key[Array, ""]], Any] | None,
+    query_sampler: Callable[[PRNGKey], Any] | None,
 ) -> tuple[Array, Array, Array]:
     if query_sampler is not None:
         if (
@@ -961,7 +960,7 @@ def _resolve_queries(
 
 
 def _normal_draws(
-    key: Key[Array, ""],
+    key: PRNGKey,
     shape: tuple[int, ...],
     /,
     *,
@@ -985,7 +984,7 @@ def _normal_draws(
             dtype=jnp.uint32,
         )
 
-    def one_query(query_index):
+    def one_query(query_index: Array) -> Array:
         return jax.vmap(
             lambda path_index: jr.normal(
                 derive_key(key, _PATH_ADDRESS, query_index, path_index),
@@ -1010,7 +1009,7 @@ def sample_feynman_kac_paths(
     plan: FeynmanKacSamplingPlan,
     /,
     *,
-    key: Key[Array, ""] = jr.key(0),
+    key: PRNGKey = jr.key(0),
     query_weights: ArrayLike | None = None,
     num_paths: int | None = None,
     _path_offset: int = 0,
@@ -1062,14 +1061,14 @@ def sample_feynman_kac_paths(
     state_size = prod(problem.state_shape)
     noise_size = prod(problem.noise_shape)
 
-    def step(current, inputs):
+    def step(current: Array, inputs: tuple[Array, Array, Array]) -> tuple[Array, Array]:
         time, step_dt, noise_increment = inputs
         point_times = jnp.broadcast_to(time[:, None], (query_count, path_count)).reshape(
             (-1,)
         )
         flat_states = current.reshape((-1,) + problem.state_shape)
 
-        def coefficients(point_time, point_state):
+        def coefficients(point_time: Array, point_state: Array) -> tuple[Array, Array]:
             drift = jnp.asarray(problem.drift(point_time, point_state, problem.args))
             diffusion = jnp.asarray(
                 problem.diffusion(point_time, point_state, problem.args)
@@ -1168,7 +1167,7 @@ def _query_path_targets(
     *,
     source_value: Predictor | None,
     source_control: Predictor | None,
-    key: Key[Array, ""],
+    key: PRNGKey,
     path_offset: int,
 ) -> tuple[Array, Array, Array]:
     generator = _source_generator_nodes(
@@ -1203,7 +1202,7 @@ def _query_chunk_samples(
     source_value: Predictor | None,
     source_control: Predictor | None,
     malliavin_weight: MalliavinWeight | None,
-    key: Key[Array, ""],
+    key: PRNGKey,
     path_count: int,
     path_offset: int,
 ) -> tuple[FeynmanKacPathBatch, Array, Array, Array | None, Array | None]:
@@ -1331,11 +1330,11 @@ def query_feynman_kac_labels(
     query_times: ArrayLike | None = None,
     query_states: ArrayLike | None = None,
     query_weights: ArrayLike | None = None,
-    query_sampler: Callable[[Key[Array, ""]], Any] | None = None,
+    query_sampler: Callable[[PRNGKey], Any] | None = None,
     source_value: Predictor | None = None,
     source_control: Predictor | None = None,
     malliavin_weight: MalliavinWeight | None = None,
-    key: Key[Array, ""] = jr.key(0),
+    key: PRNGKey = jr.key(0),
     return_paths: bool = False,
 ) -> FeynmanKacLabelBatch | tuple[FeynmanKacLabelBatch, FeynmanKacPathBatch]:
     """Estimate conditional Feynman--Kac labels in bounded path chunks."""

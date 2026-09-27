@@ -11,7 +11,8 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 
@@ -57,7 +58,7 @@ class SpatialSinkhornDivergenceTerm(AbstractEvaluatedScalarTerm):
         objective_vars: Sequence[str] | None = None,
         weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not callable(measure_builder):
             raise TypeError("measure_builder must be callable.")
         if not isinstance(reference, PreparedSinkhornReference):
@@ -132,7 +133,7 @@ class EmpiricalSinkhornDivergenceTerm(AbstractEvaluatedScalarTerm):
         objective_vars: Sequence[str] | None = None,
         weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(reference, PreparedSinkhornReference):
             raise TypeError("reference must be a PreparedSinkhornReference.")
         if encoder is not None and not callable(encoder):
@@ -217,7 +218,7 @@ class BarycenterObjectiveTerm(AbstractEvaluatedScalarTerm):
         objective_vars: Sequence[str] | None = None,
         weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not callable(problem_builder):
             raise TypeError("problem_builder must be callable.")
         if not isinstance(solver, SinkhornBarycenter):
@@ -289,7 +290,7 @@ class SlicedWassersteinTerm(AbstractEvaluatedScalarTerm):
         objective_vars: Sequence[str] | None = None,
         weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         self.objective_vars = () if objective_vars is None else tuple(objective_vars)
         self.samples = samples
         self.target_samples = target_samples
@@ -370,7 +371,7 @@ class SoftQuantileFunctional(AbstractEvaluatedScalarTerm):
         objective_vars: Sequence[str] | None = None,
         weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         mode = str(discrepancy).lower()
         if mode not in ("squared", "absolute"):
             raise ValueError("discrepancy must be 'squared' or 'absolute'.")
@@ -442,7 +443,7 @@ class SoftQuantileFunctional(AbstractEvaluatedScalarTerm):
         return self.term_evaluation(functions, key=key, **kwargs).value
 
 
-def _resolve(value: Provider | None, functions: Mapping[str, DomainFunction], /):
+def _resolve(value: Provider | None, functions: Mapping[str, DomainFunction], /) -> Any:
     return value(functions) if callable(value) else value
 
 

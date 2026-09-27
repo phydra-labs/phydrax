@@ -30,7 +30,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -862,7 +863,7 @@ class ShortenPulseProtocol(StrictModule, NonTrainableState):
         period_ms: ArrayLike = 50.0,
         amplitude_uA_per_cm2: ArrayLike = 150.0,
         pulse_count: int = 9,
-    ):
+    ) -> None:
         if not isinstance(pulse_count, int) or isinstance(pulse_count, bool):
             raise TypeError("pulse_count must be an integer.")
         if pulse_count <= 0:
@@ -975,7 +976,7 @@ class ShortenFastTwitchModel(StrictModule):
         "sodium_potassium_pump",
     )
 
-    def __init__(self, parameters: ArrayLike | None = None):
+    def __init__(self, parameters: ArrayLike | None = None) -> None:
         values = _DEFAULT_PARAMETERS if parameters is None else jnp.asarray(parameters)
         values = PARAMETER_LAYOUT.require(values)
         if values.shape != (PARAMETER_LAYOUT.count,):
@@ -1821,7 +1822,7 @@ class ShortenCellState(StrictModule):
     time_ms: Array
     values: Array
 
-    def __init__(self, time_ms: ArrayLike, values: ArrayLike, /):
+    def __init__(self, time_ms: ArrayLike, values: ArrayLike, /) -> None:
         time = jnp.asarray(time_ms)
         state = STATE_LAYOUT.require(values)
         if time.shape != ():
@@ -1842,7 +1843,7 @@ class _ShortenIntegrationSchedule(StrictModule, NonTrainableState):
         time_grid_ms: ArrayLike,
         protocol: ShortenPulseProtocol,
         /,
-    ):
+    ) -> None:
         if not isinstance(protocol, ShortenPulseProtocol):
             raise TypeError("protocol must be a ShortenPulseProtocol.")
         grid = np.asarray(time_grid_ms)
@@ -1895,7 +1896,7 @@ class ShortenIntegrationPlan(StrictModule):
         absolute_tolerance: float = 1.0e-8,
         initial_step_ms: float = 1.0e-5,
         maximum_steps: int = 131072,
-    ):
+    ) -> None:
         if not isinstance(model, ShortenFastTwitchModel):
             raise TypeError("model must be a ShortenFastTwitchModel.")
         selected_protocol = _DEFAULT_PULSE_PROTOCOL if protocol is None else protocol
@@ -1986,7 +1987,7 @@ class PreparedShortenIntegrator(StrictModule):
     method_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ShortenIntegrationPlan, /):
+    def __init__(self, plan: ShortenIntegrationPlan, /) -> None:
         if not isinstance(plan, ShortenIntegrationPlan):
             raise TypeError("plan must be a ShortenIntegrationPlan.")
         self.plan = plan
@@ -2067,7 +2068,9 @@ class PreparedShortenIntegrator(StrictModule):
             raise TypeError("initial must be a ShortenCellState or None.")
         indices = jnp.arange(self.plan.time_grid_ms.shape[0] - 1, dtype=jnp.int32)
 
-        def advance(current: ShortenCellState, index: Array):
+        def advance(
+            current: ShortenCellState, index: Array
+        ) -> tuple[ShortenCellState, tuple[Array, Array, Array, Array]]:
             candidate = self.candidate(current, index)
             committed = candidate.commit()
             return committed, (

@@ -44,7 +44,7 @@ class GCNConv(StrictModule):
         normalize: bool = True,
         improved: bool = False,
         use_bias: bool = True,
-    ):
+    ) -> None:
         self.linear = eqx.nn.Linear(
             in_features,
             out_features,
@@ -135,7 +135,7 @@ class SAGEConv(StrictModule):
         root_weight: bool = True,
         normalize_output: bool = False,
         use_bias: bool = True,
-    ):
+    ) -> None:
         _route_reduction(aggr)
         k1, k2 = jax.random.split(key)
         if isinstance(in_features, tuple):
@@ -199,7 +199,7 @@ class GINConv(StrictModule):
         mlp: Callable[[jnp.ndarray], jnp.ndarray],
         *,
         eps: float = 0.0,
-    ):
+    ) -> None:
         self.mlp = mlp
         self.eps = jnp.asarray(eps)
         self.message_passing = MessagePassing(aggr="add")

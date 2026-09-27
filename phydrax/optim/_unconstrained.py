@@ -4,14 +4,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import isfinite
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from .._iteration import IterationPlan
 from .._linear_refresh import LinearRefreshState
@@ -36,6 +38,7 @@ from ..linalg import (
     PyTreeSpace,
     solve as solve_linear,
 )
+from ..typing import parse
 from ._iterative._base import AbstractScalarIterativeMethod
 from ._iterative._globalization import (
     strong_wolfe_line_search,
@@ -55,6 +58,10 @@ from ._trust_region import (
     SteihaugToint,
     TrustRegionQuadraticProblem,
 )
+
+
+# (next parameters, dynamic state partition, objective value)
+_BranchResult: TypeAlias = tuple[PyTree[Any], PyTree[Any], Array]
 
 
 class _AbstractScalarExtensionState(StrictModule):
@@ -92,7 +99,7 @@ class _AbstractScalarExtensionState(StrictModule):
         linear_refresh_state: LinearRefreshState | None = None,
         direction_fallbacks: Any = 0,
         metrics: IterativeStepMetrics | None = None,
-    ):
+    ) -> None:
         self.iteration = jnp.asarray(iteration, dtype=jnp.int32)
         self.initial_optimality_norm = jnp.asarray(initial_optimality_norm)
         self.accepted_steps = jnp.asarray(accepted_steps, dtype=jnp.int32)
@@ -113,7 +120,7 @@ class _AbstractScalarExtensionState(StrictModule):
         self.metrics = IterativeStepMetrics() if metrics is None else metrics
 
 
-BetaMethod = Literal[
+BetaMethod: TypeAlias = Literal[
     "fletcher-reeves",
     "polak-ribiere+",
     "hestenes-stiefel+",
@@ -135,7 +142,7 @@ class NonlinearConjugateGradientState(_AbstractScalarExtensionState):
         gradient: PyTree[Any],
         direction: PyTree[Any],
         **kwargs: Any,
-    ):
+    ) -> None:
         super().__init__(**kwargs)
         self.value = jnp.asarray(value)
         self.gradient = gradient
@@ -146,7 +153,7 @@ class NonlinearConjugateGradient(AbstractScalarIterativeMethod):
     """Strong-Wolfe nonlinear CG with safeguarded beta and explicit restarts."""
 
     line_search: StrongWolfeLineSearch
-    beta_method: str = eqx.field(static=True)
+    beta_method: BetaMethod = eqx.field(static=True)
     restart_interval: int | None = eqx.field(static=True)
     orthogonality_restart: float = eqx.field(static=True)
     descent_safeguard: float = eqx.field(static=True)
@@ -159,16 +166,8 @@ class NonlinearConjugateGradient(AbstractScalarIterativeMethod):
         restart_interval: int | None = None,
         orthogonality_restart: float = 0.1,
         descent_safeguard: float = 1e-3,
-    ):
-        beta = str(beta_method)
-        supported = {
-            "fletcher-reeves",
-            "polak-ribiere+",
-            "hestenes-stiefel+",
-            "dai-yuan",
-        }
-        if beta not in supported:
-            raise ValueError(f"beta_method must be one of {sorted(supported)}.")
+    ) -> None:
+        beta = parse(str(beta_method), BetaMethod, "beta_method")
         search = StrongWolfeLineSearch() if line_search is None else line_search
         if not isinstance(search, StrongWolfeLineSearch):
             raise TypeError("line_search must be a StrongWolfeLineSearch or None.")
@@ -219,7 +218,7 @@ class NonlinearConjugateGradient(AbstractScalarIterativeMethod):
 
     def prepare_state(
         self,
-        value_function,
+        value_function: Callable[[PyTree[Any]], Any],
         parameters: PyTree[Any],
         /,
     ) -> NonlinearConjugateGradientState:
@@ -281,7 +280,7 @@ class NonlinearConjugateGradient(AbstractScalarIterativeMethod):
 
     def step(
         self,
-        value_function,
+        value_function: Callable[[PyTree[Any]], Any],
         parameters: PyTree[Any],
         state: _AbstractScalarExtensionState,
         /,
@@ -306,7 +305,7 @@ class NonlinearConjugateGradient(AbstractScalarIterativeMethod):
             <= termination.optimality_threshold(state.initial_optimality_norm)
         )
 
-        def terminal_step(_):
+        def terminal_step(_: None) -> _BranchResult:
             status = jnp.where(
                 finite,
                 int(OptimizationStatus.SUCCESS),
@@ -339,7 +338,7 @@ class NonlinearConjugateGradient(AbstractScalarIterativeMethod):
             dynamic, _ = eqx.partition(updated, eqx.is_array)
             return parameters, dynamic, state.value
 
-        def conjugate_gradient_step(_):
+        def conjugate_gradient_step(_: None) -> _BranchResult:
             proposed_directional = _tree_inner(state.gradient, state.direction)
             valid_stored_direction = (
                 _tree_allfinite(state.direction)
@@ -521,7 +520,7 @@ class DenseNewtonDoglegState(_AbstractScalarExtensionState):
 
     trust_radius: Array
 
-    def __init__(self, *, trust_radius: Any, **kwargs: Any):
+    def __init__(self, *, trust_radius: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.trust_radius = jnp.asarray(trust_radius)
 
@@ -553,7 +552,7 @@ class DenseNewtonDogleg(AbstractScalarIterativeMethod):
         expansion_factor: float = 2.0,
         minimum_curvature: float = 1e-10,
         max_dense_dimension: int = 512,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -629,7 +628,7 @@ class DenseNewtonDogleg(AbstractScalarIterativeMethod):
 
     def prepare_state(
         self,
-        value_function,
+        value_function: Callable[[PyTree[Any]], Any],
         parameters: PyTree[Any],
         /,
     ) -> DenseNewtonDoglegState:
@@ -639,7 +638,7 @@ class DenseNewtonDogleg(AbstractScalarIterativeMethod):
 
     def step(
         self,
-        value_function,
+        value_function: Callable[[PyTree[Any]], Any],
         parameters: PyTree[Any],
         state: _AbstractScalarExtensionState,
         /,
@@ -657,7 +656,7 @@ class DenseNewtonDogleg(AbstractScalarIterativeMethod):
                 f"max_dense_dimension={self.max_dense_dimension}."
             )
 
-        def flat_objective(candidate):
+        def flat_objective(candidate: Array) -> Array:
             return value_function(unravel(candidate))
 
         value, flat_gradient = jax.value_and_grad(flat_objective)(flat_parameters)
@@ -685,7 +684,7 @@ class DenseNewtonDogleg(AbstractScalarIterativeMethod):
         )
         _, static_state = eqx.partition(state, eqx.is_array)
 
-        def terminal_step(_):
+        def terminal_step(_: None) -> _BranchResult:
             status = jnp.where(
                 ~finite,
                 int(OptimizationStatus.NONFINITE_EVALUATION),
@@ -725,7 +724,7 @@ class DenseNewtonDogleg(AbstractScalarIterativeMethod):
             dynamic, _ = eqx.partition(updated, eqx.is_array)
             return parameters, dynamic, value
 
-        def trust_region_step(_):
+        def trust_region_step(_: None) -> _BranchResult:
             hessian = jax.hessian(flat_objective)(flat_parameters)
             hessian = 0.5 * (hessian + hessian.T)
             spectrum = HermitianSpectrum(hessian)
@@ -932,7 +931,7 @@ class NewtonTrustRegionState(_AbstractScalarExtensionState):
 
     trust_radius: Array
 
-    def __init__(self, *, trust_radius: Any, **kwargs: Any):
+    def __init__(self, *, trust_radius: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.trust_radius = jnp.asarray(trust_radius)
 
@@ -962,7 +961,7 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
         expansion_ratio: float = 0.75,
         shrink_factor: float = 0.25,
         expansion_factor: float = 2.0,
-    ):
+    ) -> None:
         subproblem_ = SteihaugToint() if subproblem is None else subproblem
         if not isinstance(subproblem_, SteihaugToint):
             raise TypeError("subproblem must be SteihaugToint or None.")
@@ -1033,7 +1032,7 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
 
     def prepare_state(
         self,
-        value_function,
+        value_function: Callable[[PyTree[Any]], Any],
         parameters: PyTree[Any],
         /,
     ) -> NewtonTrustRegionState:
@@ -1043,7 +1042,7 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
 
     def step(
         self,
-        value_function,
+        value_function: Callable[[PyTree[Any]], Any],
         parameters: PyTree[Any],
         state: _AbstractScalarExtensionState,
         /,
@@ -1080,7 +1079,7 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
         )
         _, static_state = eqx.partition(state, eqx.is_array)
 
-        def terminal_step(_):
+        def terminal_step(_: None) -> _BranchResult:
             status = jnp.where(
                 ~finite,
                 int(OptimizationStatus.NONFINITE_EVALUATION),
@@ -1120,7 +1119,7 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
             dynamic, _ = eqx.partition(updated, eqx.is_array)
             return parameters_, dynamic, value
 
-        def trust_region_step(_):
+        def trust_region_step(_: None) -> _BranchResult:
             linearized_gradient, hessian_action = jax.linearize(
                 jax.grad(value_function),
                 parameters_,

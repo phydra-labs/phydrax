@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -32,11 +35,11 @@ from phydrax.operators.quantum.lattice import (
 )
 
 
-def _basis_resources():
+def _basis_resources() -> Any:
     return SectorBasisResourcePolicy(maximum_dimension=128, maximum_table_bytes=100_000)
 
 
-def _orbit_resources():
+def _orbit_resources() -> Any:
     return OrbitSectorResourcePolicy(
         maximum_group_order=32,
         maximum_orbit_dimension=128,
@@ -44,14 +47,14 @@ def _orbit_resources():
     )
 
 
-def _operator_resources():
+def _operator_resources() -> Any:
     return OrbitOperatorResourcePolicy(
         maximum_routes=1_024,
         maximum_workspace_bytes=1_000_000,
     )
 
 
-def _compiler_resources():
+def _compiler_resources() -> Any:
     return QuantumLatticeResourcePolicy(
         maximum_terms=32,
         maximum_factors_per_term=4,
@@ -61,7 +64,7 @@ def _compiler_resources():
     )
 
 
-def _translation_generator(site_ids, dimensions):
+def _translation_generator(site_ids: Any, dimensions: Any) -> Any:
     count = len(site_ids)
     return MonomialConfigurationGenerator(
         "translation",
@@ -72,7 +75,7 @@ def _translation_generator(site_ids, dimensions):
     )
 
 
-def _prepare_character_basis(base, generator, character):
+def _prepare_character_basis(base: Any, generator: Any, character: Any) -> Any:
     action = prepare_finite_group_action(
         FiniteGroupActionPlan(base, (generator,), _orbit_resources()),
         CharacterSectorPlan("momentum", {generator.label: character}),
@@ -80,7 +83,7 @@ def _prepare_character_basis(base, generator, character):
     return prepare_orbit_sector_basis(action)
 
 
-def _ring_exchange(site_count):
+def _ring_exchange(site_count: Any) -> Any:
     spaces = tuple(LocalSpacePlan.spin(f"s{index}", 1) for index in range(site_count))
     raising = np.asarray(((0.0, 0.0), (1.0, 0.0)))
     lowering = raising.T
@@ -110,12 +113,12 @@ def _ring_exchange(site_count):
     return prepared, basis
 
 
-def _matrix(operator):
+def _matrix(operator: Any) -> Any:
     identity = jnp.eye(operator.source.size, dtype=jnp.complex128)
     return jnp.stack(tuple(operator.mv(column) for column in identity), axis=1)
 
 
-def test_translation_character_sectors_project_three_site_ring_exactly():
+def test_translation_character_sectors_project_three_site_ring_exactly() -> None:
     prepared, direct = _ring_exchange(3)
     generator = _translation_generator(direct.site_ids, direct.site_dimensions)
     eigenvalues = []
@@ -138,7 +141,7 @@ def test_translation_character_sectors_project_three_site_ring_exactly():
     np.testing.assert_allclose(np.imag(eigenvalues), 0.0, atol=1e-12)
 
 
-def test_two_site_exchange_even_and_odd_sectors_match_full_projection():
+def test_two_site_exchange_even_and_odd_sectors_match_full_projection() -> None:
     prepared, direct = _ring_exchange(2)
     generator = _translation_generator(direct.site_ids, direct.site_dimensions)
     even = _prepare_character_basis(direct, generator, 1.0)
@@ -154,7 +157,7 @@ def test_two_site_exchange_even_and_odd_sectors_match_full_projection():
     assert not bool(even.contains((1, 0)))
 
 
-def test_stabilizer_incompatible_character_is_rejected_as_empty():
+def test_stabilizer_incompatible_character_is_rejected_as_empty() -> None:
     direct = FixedSpinProjectionBasis(
         ("a", "b", "c"),
         (1, 1, 1),
@@ -170,7 +173,7 @@ def test_stabilizer_incompatible_character_is_rejected_as_empty():
         prepare_orbit_sector_basis(action)
 
 
-def test_fermion_site_permutation_retains_car_parity():
+def test_fermion_site_permutation_retains_car_parity() -> None:
     order = FermionModeOrder(("a", "b"))
     direct = FixedCardinalityFermionBasis(order, 2, resources=_basis_resources())
     swap = MonomialConfigurationGenerator(
@@ -181,6 +184,7 @@ def test_fermion_site_permutation_retains_car_parity():
         order=2,
         fermionic_sites=(0, 1),
     )
+    # ty: ignore[invalid-argument-type]
     coordinate, phase = swap.apply((1, 1))
     np.testing.assert_array_equal(coordinate, (1, 1))
     np.testing.assert_allclose(phase, -1.0)
@@ -190,7 +194,7 @@ def test_fermion_site_permutation_retains_car_parity():
         _prepare_character_basis(direct, swap, 1.0)
 
 
-def test_noninvariant_action_is_rejected_before_reduced_execution():
+def test_noninvariant_action_is_rejected_before_reduced_execution() -> None:
     spaces = (LocalSpacePlan.spin("a", 1), LocalSpacePlan.spin("b", 1))
     sz = np.diag((-1.0, 1.0))
     prepared = prepare_quantum_lattice(
@@ -213,7 +217,7 @@ def test_noninvariant_action_is_rejected_before_reduced_execution():
         prepare_quantum_orbit_sector_operator(prepared, basis, _operator_resources())
 
 
-def test_orbit_basis_archive_round_trip_preserves_projection(tmp_path):
+def test_orbit_basis_archive_round_trip_preserves_projection(tmp_path: Any) -> None:
     direct = FixedSpinProjectionBasis(("a", "b"), (1, 1), 0, resources=_basis_resources())
     swap = _translation_generator(direct.site_ids, direct.site_dimensions)
     basis = _prepare_character_basis(direct, swap, -1.0)
@@ -227,8 +231,12 @@ def test_orbit_basis_archive_round_trip_preserves_projection(tmp_path):
     written = write_quantum_lattice_artifact_archive(path, basis, provenance)
     restored, reopened = read_quantum_lattice_artifact_archive(path, basis, provenance)
     assert reopened.artifact_id == written.artifact_id
+    # ty: ignore[unresolved-attribute]
     assert restored.basis_id == basis.basis_id
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(restored.raw_to_orbit, basis.raw_to_orbit)
     np.testing.assert_allclose(
-        restored.embedding_coefficients, basis.embedding_coefficients
+        # ty: ignore[unresolved-attribute]
+        restored.embedding_coefficients,
+        basis.embedding_coefficients,
     )

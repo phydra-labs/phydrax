@@ -8,7 +8,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ....atomistic._potential import (
@@ -49,12 +50,12 @@ class RibosomeBoundaryPotential(AbstractAtomisticEnergyTerm):
         self,
         *,
         tether_particle_id: int | None,
-        anchor: ArrayLike,
+        anchor: npt.ArrayLike,
         tether_stiffness: float,
-        sphere_centers: ArrayLike = (),
-        sphere_radii: ArrayLike = (),
+        sphere_centers: npt.ArrayLike = (),
+        sphere_radii: npt.ArrayLike = (),
         exclusion_stiffness: float = 0.0,
-    ):
+    ) -> None:
         anchor_ = np.asarray(anchor, dtype=np.float64)
         centers = np.asarray(sphere_centers, dtype=np.float64).reshape((-1, 3))
         radii = np.asarray(sphere_radii, dtype=np.float64)
@@ -130,7 +131,13 @@ class PreparedRibosomeBoundaryPotential(AbstractPreparedAtomisticEnergyTerm):
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
-    def __init__(self, plan, system, tether_slot, /):
+    def __init__(
+        self,
+        plan: RibosomeBoundaryPotential,
+        system: PreparedAtomisticSystem,
+        tether_slot: int,
+        /,
+    ) -> None:
         self.plan, self.system, self.tether_slot = plan, system, tether_slot
         self.active_slots = jnp.asarray(
             np.flatnonzero(np.asarray(system.active_mask)), dtype=jnp.int32

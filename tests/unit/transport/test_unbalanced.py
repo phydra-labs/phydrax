@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +14,9 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _measure(points, weights, *, mask=None, provenance="unbalanced-test"):
+def _measure(
+    points: Any, weights: Any, *, mask: Any = None, provenance: Any = "unbalanced-test"
+) -> Any:
     weight_field = cx.AxisArray(jnp.asarray(weights, dtype="float64"), dims=("atom",))
     mask_field = (
         None
@@ -29,13 +34,13 @@ def _measure(points, weights, *, mask=None, provenance="unbalanced-test"):
 
 
 def _problem(
-    source,
-    target,
+    source: Any,
+    target: Any,
     *,
-    source_penalty=1.3,
-    target_penalty=2.1,
-    cost=None,
-):
+    source_penalty: Any = 1.3,
+    target_penalty: Any = 2.1,
+    cost: Any = None,
+) -> Any:
     return phx.transport.unbalanced_problem(
         source,
         target,
@@ -46,8 +51,13 @@ def _problem(
 
 
 def _solver(
-    *, epsilon=0.7, block_size=None, max_iterations=800, tolerance=1e-11, **kwargs
-):
+    *,
+    epsilon: Any = 0.7,
+    block_size: Any = None,
+    max_iterations: Any = 800,
+    tolerance: Any = 1e-11,
+    **kwargs: Any,
+) -> Any:
     return phx.transport.UnbalancedSinkhorn(
         epsilon,
         block_size=block_size,
@@ -60,7 +70,7 @@ def _solver(
     )
 
 
-def test_one_atom_unequal_mass_matches_generalized_kl_analytic_solution():
+def test_one_atom_unequal_mass_matches_generalized_kl_analytic_solution() -> None:
     source_mass = 2.0
     target_mass = 5.0
     cost = 3.0
@@ -72,6 +82,7 @@ def test_one_atom_unequal_mass_matches_generalized_kl_analytic_solution():
         _measure([[1.0]], [target_mass]),
         source_penalty=source_penalty,
         target_penalty=target_penalty,
+        # ty: ignore[invalid-argument-type]
         cost=phx.transport.PrecomputedCost([[cost]]),
     )
     result = _solver(epsilon=epsilon)(problem)
@@ -98,7 +109,7 @@ def test_one_atom_unequal_mass_matches_generalized_kl_analytic_solution():
     assert jnp.allclose(result.regularized_cost, result.dual_cost, atol=1e-9)
 
 
-def test_asymmetric_penalties_have_oriented_physical_semantics():
+def test_asymmetric_penalties_have_oriented_physical_semantics() -> None:
     source = _measure([[0.0]], [2.0])
     target = _measure([[1.0]], [5.0])
     source_relaxed = _solver()(
@@ -117,7 +128,7 @@ def test_asymmetric_penalties_have_oriented_physical_semantics():
     assert source_relaxed.problem.target_marginal_penalty == 4.0
 
 
-def test_large_marginal_penalties_recover_balanced_sinkhorn_for_unit_mass():
+def test_large_marginal_penalties_recover_balanced_sinkhorn_for_unit_mass() -> None:
     source = phx.integration.discrete(
         jnp.asarray([[0.0], [1.0], [2.0]]),
         cx.AxisArray(jnp.asarray([0.2, 0.5, 0.3]), dims=("atom",)),
@@ -155,7 +166,9 @@ def test_large_marginal_penalties_recover_balanced_sinkhorn_for_unit_mass():
 
 
 @pytest.mark.parametrize("block_size", [1, 2, 4, 8])
-def test_dense_and_blockwise_unbalanced_solutions_and_actions_agree(block_size):
+def test_dense_and_blockwise_unbalanced_solutions_and_actions_agree(
+    block_size: Any,
+) -> None:
     source = _measure(
         jnp.linspace(-1.0, 1.0, 5)[:, None],
         [1.0, 2.0, 0.5, 3.0, 1.5],
@@ -188,7 +201,7 @@ def test_dense_and_blockwise_unbalanced_solutions_and_actions_agree(block_size):
     assert jnp.allclose(blockwise.regularized_cost, dense.regularized_cost, rtol=1e-9)
 
 
-def test_masked_atoms_remain_zero_without_changing_static_plan_shape():
+def test_masked_atoms_remain_zero_without_changing_static_plan_shape() -> None:
     source = _measure(
         [[0.0], [jnp.nan], [2.0]],
         [1.0, jnp.nan, 3.0],
@@ -209,7 +222,7 @@ def test_masked_atoms_remain_zero_without_changing_static_plan_shape():
     assert result.problem.source.event_shape == (1,)
 
 
-def test_joint_mass_scaling_follows_declared_product_reference_kl_convention():
+def test_joint_mass_scaling_follows_declared_product_reference_kl_convention() -> None:
     epsilon = 0.7
     source_penalty = 1.3
     target_penalty = 2.1
@@ -241,12 +254,12 @@ def test_joint_mass_scaling_follows_declared_product_reference_kl_convention():
     )
 
 
-def test_unbalanced_solver_is_jittable_vmappable_and_differentiable():
+def test_unbalanced_solver_is_jittable_vmappable_and_differentiable() -> None:
     source = _measure([[0.0], [1.0]], [1.0, 2.0])
     target = _measure([[0.2], [1.5]], [0.5, 1.0])
     solver = _solver(max_iterations=100)
 
-    def objective(cost_scale):
+    def objective(cost_scale: Any) -> Any:
         problem = _problem(
             source,
             target,
@@ -265,7 +278,7 @@ def test_unbalanced_solver_is_jittable_vmappable_and_differentiable():
     assert jnp.all(jnp.isfinite(mapped))
 
 
-def test_nonconvergence_and_transport_mass_collapse_have_distinct_statuses():
+def test_nonconvergence_and_transport_mass_collapse_have_distinct_statuses() -> None:
     problem = _problem(
         _measure([[0.0], [1.0]], [1.0, 2.0]),
         _measure([[10.0], [12.0]], [2.0, 1.0]),
@@ -274,6 +287,7 @@ def test_nonconvergence_and_transport_mass_collapse_have_distinct_statuses():
     collapsed_problem = _problem(
         _measure([[0.0]], [1.0]),
         _measure([[1.0]], [1.0]),
+        # ty: ignore[invalid-argument-type]
         cost=phx.transport.PrecomputedCost([[1e6]]),
     )
     collapsed = _solver(
@@ -292,7 +306,9 @@ def test_nonconvergence_and_transport_mass_collapse_have_distinct_statuses():
     )
 
 
-def test_unbalanced_divergence_keeps_three_solves_mass_correction_and_prepared_target():
+def test_unbalanced_divergence_keeps_three_solves_mass_correction_and_prepared_target() -> (
+    None
+):
     source = _measure([[0.0], [1.0]], [1.0, 2.0])
     target = _measure([[0.5], [1.5]], [2.0, 3.0])
     solver = _solver()
@@ -319,7 +335,7 @@ def test_unbalanced_divergence_keeps_three_solves_mass_correction_and_prepared_t
     assert prepared.target_self is reference.target_self
 
 
-def test_density_and_materialized_realization_inputs_preserve_physical_mass():
+def test_density_and_materialized_realization_inputs_preserve_physical_mass() -> None:
     base = _measure([[0.0], [1.0]], [1.0, 2.0], provenance="base-intensity")
     density = phx.integration.density(base, jnp.log(jnp.asarray([2.0, 3.0])))
     realization = phx.integration.materialize(base)
@@ -332,7 +348,9 @@ def test_density_and_materialized_realization_inputs_preserve_physical_mass():
     assert density_problem.source.event_shape == realization_problem.source.event_shape
 
 
-def test_uq_and_training_term_use_unbalanced_transport_only_for_physical_measures():
+def test_uq_and_training_term_use_unbalanced_transport_only_for_physical_measures() -> (
+    None
+):
     source = _measure([[0.0], [1.0]], [1.0, 2.0])
     target = _measure([[0.5], [1.5]], [2.0, 3.0])
     solver = _solver()
@@ -364,7 +382,7 @@ def test_uq_and_training_term_use_unbalanced_transport_only_for_physical_measure
     assert evaluation.diagnostics.cross.problem.target_mass == 5.0
 
 
-def test_unbalanced_training_term_rejects_nonconverged_scientific_solve():
+def test_unbalanced_training_term_rejects_nonconverged_scientific_solve() -> None:
     source = _measure([[0.0], [1.0]], [1.0, 2.0])
     target = _measure([[10.0], [12.0]], [2.0, 3.0])
     reference = phx.transport.prepare_unbalanced_sinkhorn_reference(
@@ -388,7 +406,7 @@ def test_unbalanced_training_term_rejects_nonconverged_scientific_solve():
         jax.block_until_ready(term.term_evaluation({}).value)
 
 
-def test_unbalanced_public_catalogs_are_explicit():
+def test_unbalanced_public_catalogs_are_explicit() -> None:
     transport_symbols = {
         "PreparedUnbalancedSinkhornReference",
         "UnbalancedSinkhorn",

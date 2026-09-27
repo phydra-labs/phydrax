@@ -9,13 +9,13 @@ from collections.abc import Sequence
 from itertools import product
 from math import prod
 from string import ascii_lowercase
-from typing import cast, Literal
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity
@@ -38,11 +38,12 @@ from phydrax.nn.operator.data import OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 from phydrax.signal import fourier_resample as _fourier_resample
 
-from ....._precision import inexact_result_type
+from ....._dtype_names import inexact_result_type
+from .....typing import parse, PRNGKey
 
 
-Factorization = Literal["dense", "cp", "tucker"]
-Activation = Literal["gelu", "silu", "tanh"]
+Factorization: TypeAlias = Literal["dense", "cp", "tucker"]
+Activation: TypeAlias = Literal["gelu", "silu", "tanh"]
 _ACTIVATIONS = {"gelu": jax.nn.gelu, "silu": jax.nn.silu, "tanh": jnp.tanh}
 
 
@@ -70,7 +71,7 @@ def _mode_tuple(modes: int | Sequence[int], ndim: int | None = None) -> tuple[in
     return result
 
 
-def _complex_normal(key: Key[Array, ""], shape: tuple[int, ...], scale: float) -> Array:
+def _complex_normal(key: PRNGKey, shape: tuple[int, ...], scale: float) -> Array:
     real_key, imag_key = jr.split(key)
     return scale * (
         jr.normal(real_key, shape=shape) + 1j * jr.normal(imag_key, shape=shape)
@@ -105,7 +106,7 @@ class SpectralConvolutionResourcePolicy(StrictModule):
         *,
         maximum_signed_blocks: int = 4096,
         maximum_parameter_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         if maximum_signed_blocks <= 0 or maximum_parameter_bytes <= 0:
             raise ValueError("Spectral-convolution resource limits must be positive.")
         self.maximum_signed_blocks = maximum_signed_blocks
@@ -142,9 +143,9 @@ class SpectralConvND(StrictModule):
         n_modes: int | Sequence[int],
         factorization: Factorization = "dense",
         rank: int | float = 0.5,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         resources: SpectralConvolutionResourcePolicy | None = None,
-    ):
+    ) -> None:
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
         self.n_modes = _mode_tuple(n_modes)
@@ -152,8 +153,7 @@ class SpectralConvND(StrictModule):
         self.factorization = factorization
         if self.in_channels <= 0 or self.out_channels <= 0:
             raise ValueError("in_channels and out_channels must be positive.")
-        if factorization not in ("dense", "cp", "tucker"):
-            raise ValueError("factorization must be 'dense', 'cp', or 'tucker'.")
+        factorization = parse(factorization, Factorization, "factorization")
 
         resource_policy = (
             SpectralConvolutionResourcePolicy() if resources is None else resources
@@ -368,8 +368,8 @@ class MultiScaleSpectralConvND(StrictModule):
         scales: Sequence[float] = (1.0, 0.5),
         factorization: Factorization = "dense",
         rank: int | float = 0.5,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
         self.n_modes = _mode_tuple(n_modes)
@@ -430,7 +430,7 @@ class _ChannelNorm(StrictModule):
     bias: Array
     eps: float
 
-    def __init__(self, channels: int, *, eps: float = 1e-5):
+    def __init__(self, channels: int, *, eps: float = 1e-5) -> None:
         self.scale = jnp.ones((int(channels),), dtype=jnp.float64)
         self.bias = jnp.zeros((int(channels),), dtype=jnp.float64)
         self.eps = float(eps)
@@ -464,8 +464,8 @@ class _AxialSpectralConvND(StrictModule):
         n_modes: int | Sequence[int],
         factorization: Factorization = "dense",
         rank: int | float = 0.5,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
         self.n_modes = _mode_tuple(n_modes)
@@ -550,7 +550,7 @@ class _FNOResidualStep(StrictModule):
         *,
         activation: Activation,
         residual: bool,
-    ):
+    ) -> None:
         self.spectral = spectral
         self.pointwise = pointwise
         self.normalization = normalization
@@ -573,7 +573,7 @@ class _FNOResidualStep(StrictModule):
         return sum_regularity((AFFINE, hidden)) if self.residual else hidden
 
 
-def _fno_contract_configuration(model):
+def _fno_contract_configuration(model: _AbstractFNO) -> tuple[tuple[str, object], ...]:
     return (
         ("n_modes", model.n_modes),
         ("width", model.width),
@@ -626,7 +626,7 @@ class _AbstractFNO(AbstractOperatorModel):
         dropout: float | Sequence[float],
         source_key: str | None,
         scan: bool,
-        key: Key[Array, ""],
+        key: PRNGKey,
         axial: bool = False,
     ) -> None:
         self.in_size = in_channels
@@ -656,8 +656,7 @@ class _AbstractFNO(AbstractOperatorModel):
         self.domain_padding = padding
         if self.width <= 0 or int(depth) <= 0:
             raise ValueError("width and depth must be positive.")
-        if activation not in ("gelu", "silu", "tanh"):
-            raise ValueError("activation must be 'gelu', 'silu', or 'tanh'.")
+        activation = parse(activation, Activation, "activation")
 
         in_count = _get_size(in_channels)
         out_count = _get_size(out_channels)
@@ -1029,8 +1028,8 @@ class FNO(_AbstractFNO):
         dropout: float | Sequence[float] = 0.0,
         source_key: str | None = None,
         scan: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self._init_fno(
             in_channels=in_channels,
             out_channels=out_channels,
@@ -1100,8 +1099,8 @@ class IFNO(_AbstractFNO):
         rank: int | float = 0.5,
         dropout: float = 0.0,
         source_key: str | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.iterations = int(iterations)
         self.tolerance = float(tolerance)
         if self.iterations <= 0:
@@ -1247,8 +1246,8 @@ class AxialFactorizedFNO(_AbstractFNO):
         dropout: float | Sequence[float] = 0.0,
         source_key: str | None = None,
         scan: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self._init_fno(
             in_channels=in_channels,
             out_channels=out_channels,
@@ -1284,7 +1283,7 @@ def SpectralConv1d(
     in_channels: int,
     out_channels: int,
     modes: int,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> SpectralConvND:
     return SpectralConvND(
         in_channels=in_channels,
@@ -1300,7 +1299,7 @@ def SpectralConv2d(
     out_channels: int,
     modes_x: int,
     modes_y: int,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> SpectralConvND:
     return SpectralConvND(
         in_channels=in_channels,

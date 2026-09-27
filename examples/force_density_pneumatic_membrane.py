@@ -46,4 +46,5 @@ print("status", int(result.status), result.message)
 print("volume", fd.enclosed_surface_volume(structure, result.state.positions))
 print("top", result.state.positions[3])
 print("load components", result.state.load_state.component_ids)
+# ty: ignore[unresolved-attribute]
 print("nonlinear iterations", result.nonlinear_result.diagnostics.iterations)

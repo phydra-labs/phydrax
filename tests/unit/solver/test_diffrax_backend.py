@@ -12,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _geometric_problem(rate=0.7):
+def _geometric_problem(rate: Any = 0.7) -> Any:
     return phx.solver.DifferentialProblem(
         lambda t, state, value: value * state,
         jnp.asarray([2.0]),
@@ -24,12 +24,12 @@ def _geometric_problem(rate=0.7):
 
 def _brownian_problem(
     *,
-    interpretation="ito",
-    structure="general",
-    t0=0.0,
-    t1=1.0,
-    initial_state=0.0,
-):
+    interpretation: Any = "ito",
+    structure: Any = "general",
+    t0: Any = 0.0,
+    t1: Any = 1.0,
+    initial_state: Any = 0.0,
+) -> Any:
     return phx.solver.DifferentialProblem(
         lambda t, state, args: jnp.zeros_like(state),
         jnp.asarray([initial_state]),
@@ -48,14 +48,14 @@ def _brownian_problem(
 
 
 def _realization(
-    seed,
+    seed: Any,
     *,
-    sample_shape=(),
-    support=(0.0, 1.0),
-    tolerance=1e-3,
-    levy_area="brownian",
-    label=None,
-):
+    sample_shape: Any = (),
+    support: Any = (0.0, 1.0),
+    tolerance: Any = 1e-3,
+    levy_area: Any = "brownian",
+    label: Any = None,
+) -> Any:
     return phx.stochastic.WienerRealization(
         jr.key(seed),
         (1,),
@@ -67,12 +67,12 @@ def _realization(
     )
 
 
-def test_solve_diffrax_ode_is_accurate_differentiable_and_jittable():
+def test_solve_diffrax_ode_is_accurate_differentiable_and_jittable() -> None:
     times = jnp.linspace(0.0, 1.0, 11)
     solution = phx.solver.solve_diffrax(_geometric_problem(), save_times=times)
     expected = 2.0 * jnp.exp(0.7 * times)
 
-    def terminal(rate):
+    def terminal(rate: Any) -> Any:
         solved = phx.solver.solve_diffrax(
             _geometric_problem(rate),
             save_times=jnp.asarray([1.0]),
@@ -92,7 +92,7 @@ def test_solve_diffrax_ode_is_accurate_differentiable_and_jittable():
     assert jnp.allclose(derivative, 2.0 * jnp.exp(0.7), rtol=3e-5)
 
 
-def test_diffrax_exposes_saved_outputs_without_claiming_internal_steps():
+def test_diffrax_exposes_saved_outputs_without_claiming_internal_steps() -> None:
     times = jnp.asarray([0.0, 0.25, 0.5, 1.0])
     solution = phx.solver.solve_diffrax(
         _geometric_problem(),
@@ -111,7 +111,7 @@ def test_diffrax_exposes_saved_outputs_without_claiming_internal_steps():
     assert int(trace.terminal.coordinates.ordinal) == times.size
 
 
-def test_dense_ode_evaluates_vector_times_and_remains_differentiable():
+def test_dense_ode_evaluates_vector_times_and_remains_differentiable() -> None:
     query_times = jnp.asarray([[0.0, 0.25], [0.5, 1.0]])
     solution = phx.solver.solve_diffrax(
         _geometric_problem(),
@@ -123,7 +123,7 @@ def test_dense_ode_evaluates_vector_times_and_remains_differentiable():
         solution, query_times
     )
 
-    def interpolated_terminal(rate):
+    def interpolated_terminal(rate: Any) -> Any:
         solved = phx.solver.solve_diffrax(
             _geometric_problem(rate),
             save_times=jnp.asarray([0.0]),
@@ -141,7 +141,7 @@ def test_dense_ode_evaluates_vector_times_and_remains_differentiable():
     assert jnp.allclose(derivative, 2.0 * jnp.exp(0.7), rtol=3e-5)
 
 
-def test_dense_interpolation_is_opt_in_and_rejects_out_of_range_times():
+def test_dense_interpolation_is_opt_in_and_rejects_out_of_range_times() -> None:
     plain = phx.solver.solve_diffrax(
         _geometric_problem(),
         save_times=jnp.asarray([0.0, 1.0]),
@@ -162,7 +162,7 @@ def test_dense_interpolation_is_opt_in_and_rejects_out_of_range_times():
         dense.evaluate(jnp.asarray(1.1))
 
 
-def test_solve_diffrax_sde_replays_realization_and_changes_with_key():
+def test_solve_diffrax_sde_replays_realization_and_changes_with_key() -> None:
     problem = _brownian_problem()
     times = jnp.asarray([0.25, 0.5, 1.0])
     first_realization = _realization(3, label="first")
@@ -206,7 +206,7 @@ def test_solve_diffrax_sde_replays_realization_and_changes_with_key():
     )
 
 
-def test_solve_diffrax_ensemble_has_process_axis_and_brownian_moments():
+def test_solve_diffrax_ensemble_has_process_axis_and_brownian_moments() -> None:
     realization = _realization(8, sample_shape=(256,))
     solution = phx.solver.solve_diffrax_ensemble(
         _brownian_problem(),
@@ -227,7 +227,7 @@ def test_solve_diffrax_ensemble_has_process_axis_and_brownian_moments():
     assert jnp.allclose(jnp.var(terminal), 1.0, rtol=0.2, atol=0.1)
 
 
-def test_dense_sde_ensemble_preserves_sample_query_and_state_axes():
+def test_dense_sde_ensemble_preserves_sample_query_and_state_axes() -> None:
     saved_times = jnp.asarray([0.0, 0.5, 1.0])
     solution = phx.solver.solve_diffrax_ensemble(
         _brownian_problem(),
@@ -246,7 +246,7 @@ def test_dense_sde_ensemble_preserves_sample_query_and_state_axes():
     assert jnp.array_equal(solution.evaluate(saved_times), solution.states)
 
 
-def test_ensemble_preserves_multidimensional_sample_shape():
+def test_ensemble_preserves_multidimensional_sample_shape() -> None:
     solution = phx.solver.solve_diffrax_ensemble(
         _brownian_problem(t1=0.1),
         save_times=jnp.asarray([0.1]),
@@ -260,7 +260,7 @@ def test_ensemble_preserves_multidimensional_sample_shape():
     assert solution.stats["num_steps"].shape == (2, 3)
 
 
-def test_stratonovich_defaults_to_euler_heun_and_accepts_explicit_solver():
+def test_stratonovich_defaults_to_euler_heun_and_accepts_explicit_solver() -> None:
     problem = _brownian_problem(interpretation="stratonovich")
     realization = _realization(5)
     default = phx.solver.solve_diffrax(
@@ -281,7 +281,7 @@ def test_stratonovich_defaults_to_euler_heun_and_accepts_explicit_solver():
     assert jnp.array_equal(default.states, explicit.states)
 
 
-def test_global_realization_matches_direct_and_split_solves():
+def test_global_realization_matches_direct_and_split_solves() -> None:
     realization = _realization(31, tolerance=1e-4)
     direct = phx.solver.solve_diffrax(
         _brownian_problem(),
@@ -306,7 +306,7 @@ def test_global_realization_matches_direct_and_split_solves():
     assert jnp.allclose(direct.states, split, rtol=0.0, atol=2e-12)
 
 
-def test_realization_paths_are_prefix_stable_when_batch_grows():
+def test_realization_paths_are_prefix_stable_when_batch_grows() -> None:
     problem = _brownian_problem(t1=0.1)
     small = phx.solver.solve_diffrax_ensemble(
         problem,
@@ -330,7 +330,7 @@ def test_realization_paths_are_prefix_stable_when_batch_grows():
     )
 
 
-def test_antithetic_realization_pairs_terminal_values():
+def test_antithetic_realization_pairs_terminal_values() -> None:
     realization = phx.stochastic.WienerRealization.antithetic(
         jr.key(33),
         (1,),
@@ -353,7 +353,7 @@ def test_antithetic_realization_pairs_terminal_values():
     )
 
 
-def test_multiple_wiener_terms_match_one_concatenated_term():
+def test_multiple_wiener_terms_match_one_concatenated_term() -> None:
     drift = lambda t, state, args: jnp.zeros_like(state)
     split_problem = phx.solver.DifferentialProblem(
         drift,
@@ -413,7 +413,7 @@ def test_multiple_wiener_terms_match_one_concatenated_term():
     assert split.wiener_term_slices == {"left": (0, 1), "right": (1, 2)}
 
 
-def test_solver_interpretation_and_levy_contracts_are_enforced():
+def test_solver_interpretation_and_levy_contracts_are_enforced() -> None:
     ito = _brownian_problem(interpretation="ito")
     stratonovich = _brownian_problem(interpretation="stratonovich")
     realization = _realization(35)
@@ -460,7 +460,7 @@ def test_solver_interpretation_and_levy_contracts_are_enforced():
     assert jnp.all(jnp.isfinite(higher_order.states))
 
 
-def test_additive_noise_can_use_either_interpretation_solver():
+def test_additive_noise_can_use_either_interpretation_solver() -> None:
     problem = _brownian_problem(interpretation="ito", structure="additive")
     realization = _realization(36)
     ito = phx.solver.solve_diffrax(
@@ -481,7 +481,9 @@ def test_additive_noise_can_use_either_interpretation_solver():
     assert jnp.array_equal(ito.states, stratonovich.states)
 
 
-def test_diffrax_contract_rejects_invalid_problem_realization_and_save_configuration():
+def test_diffrax_contract_rejects_invalid_problem_realization_and_save_configuration() -> (
+    None
+):
     deterministic = _geometric_problem()
     stochastic = _brownian_problem()
     scalar_realization = _realization(0)
@@ -578,7 +580,7 @@ def test_diffrax_contract_rejects_invalid_problem_realization_and_save_configura
         )
 
 
-def test_wiener_term_validates_names_shapes_and_uniqueness():
+def test_wiener_term_validates_names_shapes_and_uniqueness() -> None:
     coefficient = lambda t, state, args: jnp.ones((1, 1))
     first = phx.solver.WienerTerm("same", coefficient, (1,))
 
@@ -608,11 +610,11 @@ def test_wiener_term_validates_names_shapes_and_uniqueness():
         )
 
 
-def test_complex_ode_packing_matches_explicit_real_system_dense_and_gradient():
+def test_complex_ode_packing_matches_explicit_real_system_dense_and_gradient() -> None:
     initial = jnp.asarray([1.0 + 0.25j], dtype=jnp.complex128)
     save_times = jnp.linspace(0.0, 0.6, 7)
 
-    def solve_complex(real_rate):
+    def solve_complex(real_rate: Any) -> Any:
         rate = real_rate + 0.7j
         problem = phx.solver.DifferentialProblem(
             lambda t, state, args: args["rate"] * state + 0.2 * jnp.conj(state),
@@ -629,8 +631,8 @@ def test_complex_ode_packing_matches_explicit_real_system_dense_and_gradient():
             atol=1e-11,
         )
 
-    def solve_real(real_rate):
-        def drift(time, state, args):
+    def solve_real(real_rate: Any) -> Any:
+        def drift(time: Any, state: Any, args: Any) -> Any:
             del time, args
             real, imag = state
             return jnp.stack(
@@ -696,7 +698,7 @@ def test_complex_ode_packing_matches_explicit_real_system_dense_and_gradient():
     assert jnp.allclose(gradient, reference_gradient, rtol=2e-7, atol=2e-8)
 
 
-def test_complex_sde_packing_matches_real_system_pathwise_and_in_ensemble():
+def test_complex_sde_packing_matches_real_system_pathwise_and_in_ensemble() -> None:
     complex_term = phx.solver.WienerTerm(
         "imaginary",
         lambda t, state, args: 1j * jnp.ones(state.shape + (1,)),
@@ -789,13 +791,15 @@ def test_complex_sde_packing_matches_real_system_pathwise_and_in_ensemble():
     assert complex_ensemble.states.shape == (2, 3, 3, 1)
     assert jnp.array_equal(complex_ensemble.states, expected_ensemble)
     assert jnp.array_equal(complex_ensemble.evaluate(queries), expected_dense)
+    # ty: ignore[unresolved-attribute]
     assert complex_ensemble.temporal_evidence.state_coordinates is not None
     assert (
+        # ty: ignore[unresolved-attribute]
         complex_ensemble.temporal_evidence.state_coordinates.norm_relation == "isometry"
     )
 
 
-def test_complex_packing_wraps_events_and_split_dynamics():
+def test_complex_packing_wraps_events_and_split_dynamics() -> None:
     event = dfx.Event(
         lambda t, state, args, **kwargs: jnp.real(state[0]) - 0.5,
         root_finder=optx.Newton(rtol=1e-9, atol=1e-9),
@@ -829,7 +833,9 @@ def test_complex_packing_wraps_events_and_split_dynamics():
     assert event_solution.event_terminated
     assert jnp.isfinite(event_solution.states[:2]).all()
     assert jnp.isinf(event_solution.states[-1]).all()
+    # ty: ignore[unresolved-attribute]
     assert split_solution.temporal_evidence.state_coordinates is not None
+    # ty: ignore[unresolved-attribute]
     assert split_solution.temporal_evidence.equation_form == "additive-ode"
     assert jnp.allclose(
         split_solution.states[-1, 0],
@@ -839,7 +845,7 @@ def test_complex_packing_wraps_events_and_split_dynamics():
     )
 
 
-def test_complex_state_policy_precision_and_real_bypass_are_explicit():
+def test_complex_state_policy_precision_and_real_bypass_are_explicit() -> None:
     complex_problem = phx.solver.DifferentialProblem(
         lambda t, state, args: 1j * state,
         jnp.asarray([1.0 + 0.0j]),
@@ -847,6 +853,7 @@ def test_complex_state_policy_precision_and_real_bypass_are_explicit():
         t1=0.1,
     )
     with pytest.raises(ValueError, match="strategy"):
+        # ty: ignore[invalid-argument-type]
         phx.solver.DiffraxComplexStatePolicy("typo")
     with pytest.raises(ValueError, match="rejected"):
         phx.solver.solve_diffrax(
@@ -884,6 +891,7 @@ def test_complex_state_policy_precision_and_real_bypass_are_explicit():
             save_times=jnp.asarray([0.1]),
             complex_state_policy=phx.solver.DiffraxComplexStatePolicy("native"),
         )
+    # ty: ignore[unresolved-attribute]
     assert native.temporal_evidence.state_coordinates is None
 
     real_problem = _geometric_problem()
@@ -896,15 +904,19 @@ def test_complex_state_policy_precision_and_real_bypass_are_explicit():
         save_times=jnp.asarray([1.0]),
         complex_state_policy=phx.solver.DiffraxComplexStatePolicy(),
     )
+    # ty: ignore[unresolved-attribute]
     assert implicit_default.temporal_evidence.state_coordinates is None
+    # ty: ignore[unresolved-attribute]
     assert explicit_default.temporal_evidence.state_coordinates is None
     assert (
+        # ty: ignore[unresolved-attribute]
         implicit_default.temporal_evidence.configuration_id
+        # ty: ignore[unresolved-attribute]
         == explicit_default.temporal_evidence.configuration_id
     )
 
 
-def test_diagonal_wiener_ensemble_preserves_distinct_initial_states():
+def test_diagonal_wiener_ensemble_preserves_distinct_initial_states() -> None:
     dimension = 2
     dense = phx.solver.DifferentialProblem(
         lambda t, state, args: jnp.zeros_like(state),
@@ -976,7 +988,9 @@ def test_diagonal_wiener_ensemble_preserves_distinct_initial_states():
         )
 
 
-def test_geometric_structured_wiener_accepts_only_explicit_full_isometric_coordinates():
+def test_geometric_structured_wiener_accepts_only_explicit_full_isometric_coordinates() -> (
+    None
+):
     from phydrax.atomistic._spin_dynamics import ProductSphereStateGeometry
 
     initial = jnp.asarray([[0.0, 0.0, 1.0], [1.0, 0.0, 0.0]], dtype=jnp.float64)
@@ -1014,8 +1028,11 @@ def test_geometric_structured_wiener_accepts_only_explicit_full_isometric_coordi
         dt0=0.01,
         state_coordinates=coordinates,
     )
+    # ty: ignore[unresolved-attribute]
     coordinate_evidence = solution.temporal_evidence.state_coordinates
+    # ty: ignore[unresolved-attribute]
     assert coordinate_evidence.domain_kind == "full"
+    # ty: ignore[unresolved-attribute]
     assert coordinate_evidence.norm_relation == "isometry"
     assert jnp.allclose(
         jnp.linalg.norm(solution.states, axis=-1),
@@ -1023,7 +1040,9 @@ def test_geometric_structured_wiener_accepts_only_explicit_full_isometric_coordi
     )
 
 
-def test_prepared_real_coordinate_tree_keeps_pytree_callbacks_public_and_backend_real():
+def test_prepared_real_coordinate_tree_keeps_pytree_callbacks_public_and_backend_real() -> (
+    None
+):
     initial = {
         "z": jnp.asarray([1.0 + 0.5j], dtype=jnp.complex128),
         "x": jnp.asarray([2.0], dtype=jnp.float64),
@@ -1055,12 +1074,13 @@ def test_prepared_real_coordinate_tree_keeps_pytree_callbacks_public_and_backend
     assert solution.states["z"].dtype == jnp.complex128
     assert solution.states["x"].dtype == jnp.float64
     assert dense["z"].shape == (1, 1)
+    # ty: ignore[unresolved-attribute]
     assert solution.temporal_evidence.state_coordinates.evidence_id == (
         coordinates.evidence.evidence_id
     )
 
 
-def test_real_coordinate_tree_preserves_noncomplex_argument_leaves():
+def test_real_coordinate_tree_preserves_noncomplex_argument_leaves() -> None:
     initial = {"x": jnp.asarray([0.0], dtype=jnp.float64)}
     coordinates = phx.linalg.prepare_real_coordinate_tree(initial, {"x": None})
     problem = phx.solver.DifferentialProblem(

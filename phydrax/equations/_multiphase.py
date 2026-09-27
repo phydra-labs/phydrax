@@ -15,12 +15,13 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
+from .._dtype_names import inexact_result_type
 from .._fingerprint import canonical_fingerprint
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._hyperbolic_systems import AbstractAdmissibleSystem
@@ -37,7 +38,7 @@ class TwoMaterialVOFStateLayout(StrictModule, NonTrainableState):
     energy_index: int = eqx.field(static=True)
     alpha_index: int = eqx.field(static=True)
 
-    def __init__(self, dimension: int = 1, /):
+    def __init__(self, dimension: int = 1, /) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (1, 2, 3):
             raise ValueError("Two-material VOF dimension must be one, two, or three.")
@@ -74,7 +75,7 @@ class TwoMaterialVOFDiagnostics(StrictModule, NonTrainableState):
     layout: TwoMaterialVOFStateLayout
     diagnostics_id: str = eqx.field(static=True)
 
-    def __init__(self, eos: TwoMaterialEOSClosure, dimension: int = 1, /):
+    def __init__(self, eos: TwoMaterialEOSClosure, dimension: int = 1, /) -> None:
         if not isinstance(eos, TwoMaterialEOSClosure):
             raise TypeError("eos must be a TwoMaterialEOSClosure.")
         self.eos = eos
@@ -151,7 +152,7 @@ class TwoMaterialVOFSystem(AbstractAdmissibleSystem, NonTrainableState):
     layout: TwoMaterialVOFStateLayout
     diagnostics: TwoMaterialVOFDiagnostics
 
-    def __init__(self, dimension: int = 1, /, *, eos: TwoMaterialEOSClosure):
+    def __init__(self, dimension: int = 1, /, *, eos: TwoMaterialEOSClosure) -> None:
         if not isinstance(eos, TwoMaterialEOSClosure):
             raise TypeError("eos must be a TwoMaterialEOSClosure.")
         self.layout = TwoMaterialVOFStateLayout(dimension)

@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _problem():
+def _problem() -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0]),
         jnp.asarray([[0.4], [0.8]]),
@@ -22,7 +25,7 @@ def _problem():
         prior_id="prior",
     )
 
-    def offset(t0, t1, context):
+    def offset(t0: Any, t1: Any, context: Any) -> Any:
         del t0, t1
         return jnp.asarray([context.args["drift"]])
 
@@ -53,7 +56,7 @@ def _problem():
     )
 
 
-def test_parameterized_state_space_binds_physical_parameters_into_context():
+def test_parameterized_state_space_binds_physical_parameters_into_context() -> None:
     problem = _problem()
     parameterized = phx.uq.ParameterizedStateSpaceProblem(
         problem,
@@ -73,12 +76,13 @@ def test_parameterized_state_space_binds_physical_parameters_into_context():
     assert jnp.allclose(bound.args["fixed"], 2.0)
     context = bound.step_context(0, 0)
     assert jnp.allclose(
+        # ty: ignore[unresolved-attribute]
         bound.model.transition.parameters(0.0, 0.5, context).offset,
         jnp.asarray([0.3]),
     )
 
 
-def test_parameterized_path_density_has_finite_parameter_gradient():
+def test_parameterized_path_density_has_finite_parameter_gradient() -> None:
     parameterized = phx.uq.ParameterizedStateSpaceProblem(
         _problem(),
         phx.uq.ParameterSpace(
@@ -89,7 +93,7 @@ def test_parameterized_path_density_has_finite_parameter_gradient():
     )
     states = jnp.asarray([[0.0], [0.3], [0.7]])
 
-    def log_density(drift):
+    def log_density(drift: Any) -> Any:
         return parameterized.path_log_density(
             {"drift": drift},
             states,

@@ -10,7 +10,8 @@ from typing import Literal
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -116,7 +117,7 @@ class ProteinNucleicMechanicalObservations:
         standard_errors: ArrayLike,
         unit: UnitDefinition,
         source: ReferenceArtifactManifest,
-    ):
+    ) -> None:
         if not isinstance(protein, ProteinConstruct) or not isinstance(
             nucleic_acid, NucleicAcidConstruct
         ):
@@ -233,7 +234,7 @@ class ProteinNucleicModelFit:
         prediction_code: ReferenceArtifactManifest,
         fit_execution_evidence: QualificationEvidence,
         /,
-    ):
+    ) -> None:
         if not isinstance(campaign, ScientificCampaign):
             raise TypeError("campaign must be a ScientificCampaign.")
         model = _identifier(model_id, "model_id")
@@ -391,7 +392,7 @@ class ProteinNucleicAffinityInputs:
         unbound_sampling_reference: ReferenceArtifactManifest | None,
         binding_measurement_reference: ReferenceArtifactManifest | None,
         shared_sampling_lineage_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         conditions = tuple(condition_ids)
         independent = tuple(independent_unit_ids)
         standard_states = tuple(standard_state_ids)
@@ -818,7 +819,7 @@ class ProteinNucleicMechanicsPrediction:
         /,
         *,
         unit: UnitDefinition,
-    ):
+    ) -> None:
         if not isinstance(observations, ProteinNucleicMechanicalObservations):
             raise TypeError("observations must be ProteinNucleicMechanicalObservations.")
         if not isinstance(fit, ProteinNucleicModelFit):

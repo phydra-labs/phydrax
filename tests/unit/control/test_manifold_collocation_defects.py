@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -19,7 +21,7 @@ _CONFIGURATION = "retraction"
 _TANGENT = "shared-local"
 
 
-def test_euclidean_manifold_defects_agree_with_existing_radau_evaluator():
+def test_euclidean_manifold_defects_agree_with_existing_radau_evaluator() -> None:
     method = RadauIIAMethod(3)
     geometry = EuclideanStateGeometry()
     times = jnp.asarray([0.0, 0.4, 1.0])
@@ -32,7 +34,7 @@ def test_euclidean_manifold_defects_agree_with_existing_radau_evaluator():
     )
     controls = jnp.asarray([[0.25], [-0.5]])
 
-    def dynamics(time, state, control, args):
+    def dynamics(time: Any, state: Any, control: Any, args: Any) -> Any:
         del args
         return (1.0 + time) * state + control[0]
 
@@ -58,14 +60,14 @@ def test_euclidean_manifold_defects_agree_with_existing_radau_evaluator():
     assert actual.tangent_convention == _TANGENT
 
 
-def test_euclidean_implicit_dae_residual_uses_stage_rates():
+def test_euclidean_implicit_dae_residual_uses_stage_rates() -> None:
     method = RadauIIAMethod(2)
     times = jnp.asarray([0.0, 1.0])
     states = jnp.asarray([[0.0], [1.0]])
     rates = jnp.ones((1, method.stage_count, 1))
     controls = jnp.zeros((1, 1))
 
-    def dae(time, state, state_rate, control, args):
+    def dae(time: Any, state: Any, state_rate: Any, control: Any, args: Any) -> Any:
         del time, control, args
         return state_rate - jnp.ones_like(state)
 
@@ -93,7 +95,9 @@ def test_euclidean_implicit_dae_residual_uses_stage_rates():
 
 
 @pytest.mark.parametrize("dimension", [2, 3])
-def test_constant_lie_algebra_velocity_preserves_so_stages_and_endpoint(dimension):
+def test_constant_lie_algebra_velocity_preserves_so_stages_and_endpoint(
+    dimension: Any,
+) -> None:
     method = RadauIIAMethod(3)
     geometry = SpecialOrthogonalStateGeometry(dimension, tolerance=2.0e-5)
     generator = jnp.zeros((dimension, dimension))
@@ -130,7 +134,9 @@ def test_constant_lie_algebra_velocity_preserves_so_stages_and_endpoint(dimensio
 
 
 @pytest.mark.parametrize("implicit", [False, True])
-def test_noncommuting_so3_chart_trajectory_uses_anchored_differential(implicit):
+def test_noncommuting_so3_chart_trajectory_uses_anchored_differential(
+    implicit: Any,
+) -> None:
     method = RadauIIAMethod(2)
     geometry = SpecialOrthogonalStateGeometry(3, tolerance=2.0e-5)
     anchor = jnp.eye(3)
@@ -158,7 +164,7 @@ def test_noncommuting_so3_chart_trajectory_uses_anchored_differential(implicit):
     endpoint = geometry.retract(anchor, first + second)
     states = jnp.stack((anchor, endpoint))
 
-    def physical_rate(time):
+    def physical_rate(time: Any) -> Any:
         coordinates = time * first + time**2 * second
         coordinate_rate = first + 2.0 * time * second
         rate = geometry.retraction_jvp(anchor, coordinates, coordinate_rate)
@@ -179,13 +185,15 @@ def test_noncommuting_so3_chart_trajectory_uses_anchored_differential(implicit):
 
     if implicit:
 
-        def dynamics(time, state, state_rate, control, args):
+        def dynamics(
+            time: Any, state: Any, state_rate: Any, control: Any, args: Any
+        ) -> Any:
             del state, control, args
             return state_rate - physical_rate(time)
 
     else:
 
-        def dynamics(time, state, control, args):
+        def dynamics(time: Any, state: Any, control: Any, args: Any) -> Any:
             del state, control, args
             return physical_rate(time)
 
@@ -215,7 +223,7 @@ def test_noncommuting_so3_chart_trajectory_uses_anchored_differential(implicit):
     assert result.valid
 
 
-def test_quaternion_pose_uses_six_local_coordinates_and_ignores_sign():
+def test_quaternion_pose_uses_six_local_coordinates_and_ignores_sign() -> None:
     method = RadauIIAMethod(2)
     geometry = QuaternionPoseStateGeometry()
     pose = jnp.asarray([1.0, 0.0, 0.0, 0.0, 0.2, -0.4, 0.7])
@@ -244,9 +252,9 @@ def test_quaternion_pose_uses_six_local_coordinates_and_ignores_sign():
 
 def _additive_embedded_geometry(
     *,
-    exact_differential,
-    inverse_jvp_scale=1.0,
-):
+    exact_differential: Any,
+    inverse_jvp_scale: Any = 1.0,
+) -> Any:
     differential_actions = (
         {
             "retraction_jvp_action": (lambda state, local, velocity: velocity),
@@ -273,16 +281,17 @@ def _additive_embedded_geometry(
     )
 
 
-def test_unavailable_exact_differential_returns_typed_invalid_evidence():
+def test_unavailable_exact_differential_returns_typed_invalid_evidence() -> None:
     method = RadauIIAMethod(2)
 
-    def unavailable_dynamics(time, state, control, args):
+    def unavailable_dynamics(time: Any, state: Any, control: Any, args: Any) -> None:
         del time, state, control, args
         raise AssertionError("dynamics must not run without an exact differential")
 
     result = manifold_radau_collocation_defects(
         method,
         _additive_embedded_geometry(exact_differential=False),
+        # ty: ignore[invalid-argument-type]
         unavailable_dynamics,
         jnp.asarray([0.0, 1.0]),
         jnp.asarray([[0.0], [1.0]]),
@@ -301,7 +310,7 @@ def test_unavailable_exact_differential_returns_typed_invalid_evidence():
     assert not result.valid
 
 
-def test_inconsistent_exact_differential_fails_chart_and_equation_evidence():
+def test_inconsistent_exact_differential_fails_chart_and_equation_evidence() -> None:
     method = RadauIIAMethod(2)
     result = manifold_radau_collocation_defects(
         method,
@@ -324,7 +333,7 @@ def test_inconsistent_exact_differential_fails_chart_and_equation_evidence():
     assert not result.valid
 
 
-def test_nonfinite_local_stage_rate_fails_typed_evidence():
+def test_nonfinite_local_stage_rate_fails_typed_evidence() -> None:
     method = RadauIIAMethod(2)
     rates = jnp.zeros((1, method.stage_count, 1)).at[0, 0, 0].set(jnp.nan)
     result = manifold_radau_collocation_defects(

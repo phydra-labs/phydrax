@@ -1,4 +1,5 @@
 import hashlib
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -21,15 +22,15 @@ from phydrax.qualification import ReferenceArtifactManifest
 
 
 def _kernel(
-    first,
-    second,
-    speeds,
-    total_cross_section,
+    first: Any,
+    second: Any,
+    speeds: Any,
+    total_cross_section: Any,
     *,
-    cosines=(-1.0, 0.0, 1.0),
-    azimuths=None,
-    differential=None,
-):
+    cosines: Any = (-1.0, 0.0, 1.0),
+    azimuths: Any = None,
+    differential: Any = None,
+) -> Any:
     cosines = np.asarray(cosines)
     if differential is None:
         differential = np.full(
@@ -82,11 +83,15 @@ def _kernel(
     )
 
 
-def _plan(*, radiation_capacity=2):
+def _plan(*, radiation_capacity: Any = 2) -> Any:
     common = dict(charge_names=("dark",), charges=(0.0,))
+    # ty: ignore[invalid-argument-type]
     a = DarkSectorSpeciesPlan("a", 1.0, **common)
+    # ty: ignore[invalid-argument-type]
     b = DarkSectorSpeciesPlan("b", 1.0, **common)
+    # ty: ignore[invalid-argument-type]
     c = DarkSectorSpeciesPlan("c", 0.9, internal_energy=10.25, **common)
+    # ty: ignore[invalid-argument-type]
     d = DarkSectorSpeciesPlan("d", 0.9, internal_energy=10.25, **common)
     outgoing_speed = np.sqrt(1.0 / 0.45)
     speeds = np.asarray((0.0, outgoing_speed, 2.0, 5.0))
@@ -108,7 +113,14 @@ def _plan(*, radiation_capacity=2):
     )
 
 
-def _state(plan, left_velocity, right_velocity, *, weights=(1.0, 1.0), capacity=3):
+def _state(
+    plan: Any,
+    left_velocity: Any,
+    right_velocity: Any,
+    *,
+    weights: Any = (1.0, 1.0),
+    capacity: Any = 3,
+) -> Any:
     positions = jnp.zeros((capacity, 3), dtype=jnp.float64)
     active = jnp.arange(capacity) < 2
     microscopic = jnp.where(active, 1.0, 0.0)
@@ -135,7 +147,7 @@ def _state(plan, left_velocity, right_velocity, *, weights=(1.0, 1.0), capacity=
     )
 
 
-def test_endothermic_threshold_is_closed_and_transaction_rolls_back():
+def test_endothermic_threshold_is_closed_and_transaction_rolls_back() -> None:
     plan = _plan()
     state = _state(plan, 0.25, -0.25)
 
@@ -148,7 +160,7 @@ def test_endothermic_threshold_is_closed_and_transaction_rolls_back():
     assert bool(eqx.tree_equal(result.accepted_state, state))
 
 
-def test_forward_then_reverse_has_recoil_detailed_balance_and_full_closure():
+def test_forward_then_reverse_has_recoil_detailed_balance_and_full_closure() -> None:
     plan = _plan()
     initial = _state(plan, 1.0, -1.0)
 
@@ -192,11 +204,13 @@ def test_forward_then_reverse_has_recoil_detailed_balance_and_full_closure():
     np.testing.assert_array_equal(reverse.accepted_state.species_indices[:2], (0, 1))
 
 
-def test_partial_rates_select_only_matching_open_channel_with_rate_weights():
+def test_partial_rates_select_only_matching_open_channel_with_rate_weights() -> None:
     base = _plan()
     first = base.channels[0]
     common = dict(charge_names=("dark",), charges=(0.0,))
+    # ty: ignore[invalid-argument-type]
     e = DarkSectorSpeciesPlan("e", 0.9, internal_energy=10.25, **common)
+    # ty: ignore[invalid-argument-type]
     f = DarkSectorSpeciesPlan("f", 0.9, internal_energy=10.25, **common)
     recoil_speed = np.sqrt(1.0 / 0.45)
     speeds = np.asarray((0.0, recoil_speed, 2.0, 5.0))
@@ -231,7 +245,7 @@ def test_partial_rates_select_only_matching_open_channel_with_rate_weights():
     )
 
 
-def test_thermal_equilibrium_ratio_includes_mass_degeneracy_and_energy_gap():
+def test_thermal_equilibrium_ratio_includes_mass_degeneracy_and_energy_gap() -> None:
     plan = _plan()
     channel = plan.channels[0]
     thermal_energy = 2.0
@@ -242,7 +256,7 @@ def test_thermal_equilibrium_ratio_includes_mass_degeneracy_and_energy_gap():
     )
 
 
-def test_weight_split_preserves_ids_and_records_child_lineage():
+def test_weight_split_preserves_ids_and_records_child_lineage() -> None:
     plan = _plan()
     state = _state(plan, 1.0, -1.0, weights=(2.0, 1.0), capacity=3)
 
@@ -264,7 +278,7 @@ def test_weight_split_preserves_ids_and_records_child_lineage():
     np.testing.assert_allclose(result.evidence.total_energy_defect, 0.0, atol=2.0e-12)
 
 
-def test_full_capacity_split_and_relativistic_input_refuse_without_mutation():
+def test_full_capacity_split_and_relativistic_input_refuse_without_mutation() -> None:
     plan = _plan()
     full = _state(plan, 1.0, -1.0, weights=(2.0, 1.0), capacity=2)
     exhausted = plan.react(full, 0, 1, jr.key(15))
@@ -280,7 +294,7 @@ def test_full_capacity_split_and_relativistic_input_refuse_without_mutation():
     assert bool(eqx.tree_equal(refused.accepted_state, relativistic))
 
 
-def test_full_angular_law_not_one_random_angle_controls_microreversibility():
+def test_full_angular_law_not_one_random_angle_controls_microreversibility() -> None:
     base = _plan()
     first = base.channels[0]
     speeds = np.asarray((0.0, np.sqrt(1.0 / 0.45), 2.0, 5.0))
@@ -298,6 +312,7 @@ def test_full_angular_law_not_one_random_angle_controls_microreversibility():
         first.outgoing_species,
         _kernel(
             *first.incoming_species,
+            # ty: ignore[too-many-positional-arguments]
             speeds,
             1.0,
             azimuths=azimuths,
@@ -305,6 +320,7 @@ def test_full_angular_law_not_one_random_angle_controls_microreversibility():
         ),
         _kernel(
             *first.outgoing_species,
+            # ty: ignore[too-many-positional-arguments]
             speeds,
             1.0 / 0.45,
             azimuths=azimuths,
@@ -328,7 +344,7 @@ def test_full_angular_law_not_one_random_angle_controls_microreversibility():
     assert bool(eqx.tree_equal(result.accepted_state, state))
 
 
-def test_large_capacity_lineage_is_depth_ordered_and_cycle_safe(tmp_path):
+def test_large_capacity_lineage_is_depth_ordered_and_cycle_safe(tmp_path: Any) -> None:
     plan = _plan()
     large = _state(plan, 1.0, -1.0, capacity=8192)
     assert bool(plan.state_valid(large))
@@ -375,11 +391,15 @@ def test_large_capacity_lineage_is_depth_ordered_and_cycle_safe(tmp_path):
     assert not bool(plan.state_valid(inactive_parent))
 
 
-def test_tiny_unit_mass_redistribution_requires_dynamic_pm_refresh():
+def test_tiny_unit_mass_redistribution_requires_dynamic_pm_refresh() -> None:
     common = dict(charge_names=("dark",), charges=(0.0,))
+    # ty: ignore[invalid-argument-type]
     a = DarkSectorSpeciesPlan("tiny-a", 1.0e-30, **common)
+    # ty: ignore[invalid-argument-type]
     b = DarkSectorSpeciesPlan("tiny-b", 1.0e-30, **common)
+    # ty: ignore[invalid-argument-type]
     c = DarkSectorSpeciesPlan("tiny-c", 1.5e-30, **common)
+    # ty: ignore[invalid-argument-type]
     d = DarkSectorSpeciesPlan("tiny-d", 0.5e-30, **common)
     outgoing_speed = np.sqrt(2.0e-30 / 0.375e-30)
     speeds = np.asarray((0.0, 2.0, outgoing_speed, 5.0))
@@ -429,7 +449,7 @@ def test_tiny_unit_mass_redistribution_requires_dynamic_pm_refresh():
     assert bool(result.evidence.dynamic_pm_mass_required)
 
 
-def test_units_and_identical_final_state_normalization_are_explicit():
+def test_units_and_identical_final_state_normalization_are_explicit() -> None:
     plan = _plan()
     channel = plan.channels[0]
     with pytest.raises(ValueError, match="energy/momentum/position units"):

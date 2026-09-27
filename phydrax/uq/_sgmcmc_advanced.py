@@ -11,8 +11,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, ArrayLike, PyTree
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
@@ -36,7 +38,7 @@ class SGMCMCStepSchedule(StrictModule):
         *,
         offset: float = 0.0,
         exponent: float = 0.0,
-    ):
+    ) -> None:
         rate = float(initial)
         offset_ = float(offset)
         exponent_ = float(exponent)
@@ -98,7 +100,7 @@ class SGMCMCAdaptationConfig(StrictModule):
         *,
         num_pilot_steps: int,
         target_normalized_update_rms: float,
-    ):
+    ) -> None:
         steps = int(num_pilot_steps)
         target = float(target_normalized_update_rms)
         if steps <= 0 or not math.isfinite(target) or target <= 0.0:
@@ -121,7 +123,7 @@ class GradientNoiseCovarianceConfig(StrictModule):
         *,
         phase: Literal["pilot", "all"] = "pilot",
         rank: int = 0,
-    ):
+    ) -> None:
         if kind != "diagonal":
             raise ValueError(
                 "Advanced SGHMC currently supports diagonal gradient-noise covariance only."
@@ -203,7 +205,7 @@ class RMSPropGeometryConfig(StrictModule):
         decay: float = 0.99,
         regularization: float = 1e-8,
         correction: Literal["frozen", "smooth_position"] = "frozen",
-    ):
+    ) -> None:
         decay_ = float(decay)
         regularization_ = float(regularization)
         if not 0.0 <= decay_ < 1.0:
@@ -429,7 +431,9 @@ def _sample_advanced(
             chain_indices
         )
 
-        def advance_chain(state, transition_key):
+        def advance_chain(
+            state: SGHMCState | PSGLDState, transition_key: Array
+        ) -> SGHMCState | PSGLDState:
             position_tree = unravel(state.position)
             gradient_tree = gradient_fn(position_tree, batch)
             gradient, _ = ravel_pytree(gradient_tree)

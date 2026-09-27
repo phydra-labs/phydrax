@@ -1,5 +1,6 @@
 import hashlib
 from dataclasses import replace
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -36,7 +37,7 @@ from phydrax.discretization import DenseParticleNeighborhoodPlan
 from phydrax.qualification import ReferenceArtifactManifest
 
 
-def _source(label="analytical-fixture", *, commercial=True):
+def _source(label: Any = "analytical-fixture", *, commercial: Any = True) -> Any:
     content = label.encode()
     return ReferenceArtifactManifest(
         label,
@@ -55,7 +56,9 @@ def _source(label="analytical-fixture", *, commercial=True):
     )
 
 
-def _fixture(*, constrained=False, work_bound=None, thermal=False):
+def _fixture(
+    *, constrained: Any = False, work_bound: Any = None, thermal: Any = False
+) -> Any:
     ids = (101, 205, 309)
     topology = MolecularTopologyPlan(
         bonds=[[101, 205], [205, 309]],
@@ -66,12 +69,18 @@ def _fixture(*, constrained=False, work_bound=None, thermal=False):
         constraint_distances=[1.0] if constrained else None,
     )
     material = AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         ids,
+        # ty: ignore[invalid-argument-type]
         [0, 0, 0],
+        # ty: ignore[invalid-argument-type]
         [1.0, 2.0, 3.0],
         AtomisticUnitSystem.reduced(),
+        # ty: ignore[invalid-argument-type]
         element_mask=[False, False, False],
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0, 0],
+        # ty: ignore[invalid-argument-type]
         molecule_ids=[0, 0, 0],
         topology=topology,
     ).prepare()
@@ -89,7 +98,9 @@ def _fixture(*, constrained=False, work_bound=None, thermal=False):
         )
         potential = AtomisticPotentialProgram(
             [
+                # ty: ignore[invalid-argument-type]
                 HarmonicBondPotential([2.0], [1.0]),
+                # ty: ignore[invalid-argument-type]
                 LennardJonesPotential([0.02], [0.5], 3.0, switch_distance=2.5),
                 boundary,
             ]
@@ -129,13 +140,13 @@ def _fixture(*, constrained=False, work_bound=None, thermal=False):
     return material, protocol
 
 
-def _initial(protocol):
+def _initial(protocol: Any) -> Any:
     return protocol.initialize(
         jnp.zeros((3, 3)), jnp.zeros((3, 3)), key=jax.random.key(8)
     )
 
 
-def test_dormant_material_has_no_topology_or_preactivation_force():
+def test_dormant_material_has_no_topology_or_preactivation_force() -> None:
     material, protocol = _fixture()
     runtime = protocol.stages[0].runtime
     state = _initial(protocol).state
@@ -151,6 +162,7 @@ def test_dormant_material_has_no_topology_or_preactivation_force():
     np.testing.assert_array_equal(evaluation.forces, state.force.forces)
     np.testing.assert_array_equal(evaluation.energy, state.energy.potential_energy)
     transition = protocol.transition(1)
+    # ty: ignore[invalid-argument-type]
     activation = activate_topology_epoch(transition, state, [[1.2, 0, 0]], [[0.03, 0, 0]])
     assert activation.successful
     assert activation.runtime.system.prepared_id != runtime.system.prepared_id
@@ -169,24 +181,36 @@ def test_dormant_material_has_no_topology_or_preactivation_force():
     assert material.topology.bond_indices.shape[0] == 2
 
 
-def test_insertion_sources_close_energy_mass_and_momentum_balance():
+def test_insertion_sources_close_energy_mass_and_momentum_balance() -> None:
     _, protocol = _fixture()
     initial = _initial(protocol).state
     activation = activate_topology_epoch(
-        protocol.transition(1), initial, [[1.2, 0, 0]], [[0.03, 0, 0]]
+        protocol.transition(1),
+        initial,
+        # ty: ignore[invalid-argument-type]
+        [[1.2, 0, 0]],
+        # ty: ignore[invalid-argument-type]
+        [[0.03, 0, 0]],
     )
     assert activation.successful
     ledger = activation.ledger
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(ledger.mass_source, 2.0)
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(ledger.momentum_source, [0.03, 0, 0], atol=1e-14)
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(ledger.boundary_impulse, 0.0, atol=1e-14)
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(ledger.carried_kinetic_energy, 0.5 * 0.03**2 / 2.0)
     np.testing.assert_allclose(
         activation.state.energy.total_energy - initial.energy.total_energy,
+        # ty: ignore[unresolved-attribute]
         ledger.external_work,
     )
     np.testing.assert_allclose(
-        activation.state.energy.external_work, ledger.external_work
+        activation.state.energy.external_work,
+        # ty: ignore[unresolved-attribute]
+        ledger.external_work,
     )
     step = eqx.filter_jit(activation.runtime.step_detailed)(
         activation.state,
@@ -206,12 +230,17 @@ def test_insertion_sources_close_energy_mass_and_momentum_balance():
     )
 
 
-def test_activation_rebuilds_constraint_executor_and_projects_inserted_geometry():
+def test_activation_rebuilds_constraint_executor_and_projects_inserted_geometry() -> None:
     _, protocol = _fixture(constrained=True)
     first = protocol.run(_initial(protocol), stop_after_stage=1)
     assert first.successful
     activation = activate_topology_epoch(
-        protocol.transition(2), first.cursor.state, [[2.4, 0, 0]], [[0.03, 0, 0]]
+        protocol.transition(2),
+        first.cursor.state,
+        # ty: ignore[invalid-argument-type]
+        [[2.4, 0, 0]],
+        # ty: ignore[invalid-argument-type]
+        [[0.03, 0, 0]],
     )
     assert activation.successful
     assert activation.runtime.system.topology.constraint_count == 1
@@ -223,31 +252,43 @@ def test_activation_rebuilds_constraint_executor_and_projects_inserted_geometry(
         activation.state.constraint_velocity_residual, 0.0, atol=1e-10
     )
     assert (
+        # ty: ignore[unresolved-attribute]
         activation.runtime.constraints.system.prepared_id
         == activation.runtime.system.prepared_id
     )
 
 
-def test_failed_work_admission_and_singular_insertion_rollback_without_mutation():
+def test_failed_work_admission_and_singular_insertion_rollback_without_mutation() -> None:
     _, protocol = _fixture()
     initial = _initial(protocol).state
     transition = replace(protocol.transition(1), maximum_absolute_work=0.0)
+    # ty: ignore[invalid-argument-type]
     rejected = activate_topology_epoch(transition, initial, [[1.2, 0, 0]], [[0.03, 0, 0]])
     assert not rejected.successful
     assert rejected.state is initial and rejected.runtime is transition.before
     assert rejected.ledger is None
     singular = activate_topology_epoch(
-        protocol.transition(1), initial, [[0, 0, 0]], [[0, 0, 0]]
+        protocol.transition(1),
+        initial,
+        # ty: ignore[invalid-argument-type]
+        [[0, 0, 0]],
+        # ty: ignore[invalid-argument-type]
+        [[0, 0, 0]],
     )
     assert not singular.successful and singular.state is initial
     good = activate_topology_epoch(
-        protocol.transition(1), initial, [[1.2, 0, 0]], [[0.03, 0, 0]]
+        protocol.transition(1),
+        initial,
+        # ty: ignore[invalid-argument-type]
+        [[1.2, 0, 0]],
+        # ty: ignore[invalid-argument-type]
+        [[0.03, 0, 0]],
     )
     assert good.successful
     np.testing.assert_array_equal(good.state.random_key, initial.random_key)
 
 
-def test_complete_protocol_checkpoint_replay_and_schedule_scope(tmp_path):
+def test_complete_protocol_checkpoint_replay_and_schedule_scope(tmp_path: Any) -> None:
     _, protocol = _fixture(thermal=True)
     initial = _initial(protocol)
     before = protocol.run(initial, stop_after_stage=0)
@@ -278,7 +319,7 @@ def test_complete_protocol_checkpoint_replay_and_schedule_scope(tmp_path):
         changed.read_checkpoint(path, _initial(changed))
 
 
-def test_protocol_refuses_biological_and_identity_shortcuts():
+def test_protocol_refuses_biological_and_identity_shortcuts() -> None:
     _, protocol = _fixture()
     with pytest.raises(ValueError):
         replace(protocol, residue_particle_ids=(0, 1, 2))
@@ -303,7 +344,7 @@ def test_protocol_refuses_biological_and_identity_shortcuts():
         replace(protocol, parameter_source=_source(commercial=False), commercial_use=True)
 
 
-def test_contact_observation_preserves_future_coverage():
+def test_contact_observation_preserves_future_coverage() -> None:
     _, protocol = _fixture()
     observer = NascentChainObservations(
         protocol.stages[1].runtime.system,
@@ -321,10 +362,18 @@ def test_contact_observation_preserves_future_coverage():
     )
 
 
-def test_gauss_entanglement_orientation_rigid_invariance_and_crossing_refusal():
+def test_gauss_entanglement_orientation_rigid_invariance_and_crossing_refusal() -> None:
     ids = (11, 22, 33, 44)
     system = AtomisticSystemPlan(
-        ids, [0] * 4, [1.0] * 4, AtomisticUnitSystem.reduced(), element_mask=[False] * 4
+        # ty: ignore[invalid-argument-type]
+        ids,
+        # ty: ignore[invalid-argument-type]
+        [0] * 4,
+        # ty: ignore[invalid-argument-type]
+        [1.0] * 4,
+        AtomisticUnitSystem.reduced(),
+        # ty: ignore[invalid-argument-type]
+        element_mask=[False] * 4,
     ).prepare()
     kwargs = dict(
         contact_particle_pairs=(),
@@ -334,6 +383,7 @@ def test_gauss_entanglement_orientation_rigid_invariance_and_crossing_refusal():
         right_curve_ids=(33, 44),
         quadrature_order=8,
     )
+    # ty: ignore[invalid-argument-type]
     observer = NascentChainObservations(system, **kwargs)
     positions = jnp.array([[-1.0, 0, 0], [1.0, 0, 0], [0, -1.0, 1.0], [0, 1.0, 1.0]])
     observed = eqx.filter_jit(observer.evaluate)(positions)
@@ -344,7 +394,9 @@ def test_gauss_entanglement_orientation_rigid_invariance_and_crossing_refusal():
         moved.gauss_entanglement, observed.gauss_entanglement, atol=1e-12
     )
     reversed_observer = NascentChainObservations(
-        system, **{**kwargs, "left_curve_ids": (22, 11)}
+        system,
+        # ty: ignore[invalid-argument-type]
+        **{**kwargs, "left_curve_ids": (22, 11)},
     )
     np.testing.assert_allclose(
         reversed_observer.evaluate(positions).gauss_entanglement,
@@ -356,7 +408,7 @@ def test_gauss_entanglement_orientation_rigid_invariance_and_crossing_refusal():
     np.testing.assert_allclose(crossing.curve_separation, 0.0)
 
 
-def test_ribosome_exclusion_and_tether_produce_conservative_nonzero_forces():
+def test_ribosome_exclusion_and_tether_produce_conservative_nonzero_forces() -> None:
     _, protocol = _fixture()
     runtime = protocol.stages[0].runtime
     positions = jnp.array([[-1.5, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])

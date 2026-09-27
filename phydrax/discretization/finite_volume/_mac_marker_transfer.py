@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from itertools import product
 from typing import Literal, TypeAlias
 
@@ -11,14 +12,17 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import FunctionLinearOperator, OperatorProperties
 from ...sparse import canonical_row_route_ids, EdgeRelation, RelationExecutionPlan
+from ...typing import parse
 from .._lagrangian_marker import LagrangianMarkerDiscretization
+from .._tensor_entities import StructuredAxis, TensorEntityLayout
 from ._incompressible import FaceVelocity, PreparedMACOperators
 
 
@@ -32,6 +36,13 @@ MACMarkerAccumulation: TypeAlias = Literal[
     "deterministic",
     "compensated",
 ]
+# (indices, weights, derivatives, offsets, valid, source_in_domain) on one axis.
+_AxisStencil: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+# (indices, weights, gradients, offsets, valid, source_in_domain, captured,
+#  full_support, first_moment, gradient_sum) for one tensor face layout.
+_TensorRoute: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class MACMarkerKernelPlan(StrictModule, NonTrainableState):
@@ -42,13 +53,8 @@ class MACMarkerKernelPlan(StrictModule, NonTrainableState):
     regularity: int = eqx.field(static=True)
     kernel_id: str = eqx.field(static=True)
 
-    def __init__(self, name: MACMarkerKernelName = "cubic-bspline", /):
-        if name not in (
-            "cubic-bspline",
-            "peskin-four-point",
-            "roma-three-point",
-        ):
-            raise ValueError("Unknown MAC marker kernel.")
+    def __init__(self, name: MACMarkerKernelName = "cubic-bspline", /) -> None:
+        name = parse(name, MACMarkerKernelName, "name")
         width = 3 if name == "roma-three-point" else 4
         regularity = 1 if name != "cubic-bspline" else 2
         self.name = name
@@ -157,7 +163,9 @@ def _kernel_basis(name: MACMarkerKernelName, coordinate: Array, /) -> tuple[Arra
     return value, derivative
 
 
-def _uniform_spacing(coordinates, bounds, periodic, /) -> float | None:
+def _uniform_spacing(
+    coordinates: ArrayLike, bounds: tuple[float, float], periodic: bool, /
+) -> float | None:
     values = np.asarray(coordinates, dtype=np.float64)
     if values.ndim != 1 or values.size < 4 or np.any(~np.isfinite(values)):
         raise ValueError("Marker assignment requires four finite axis entities.")
@@ -193,7 +201,15 @@ def _nonuniform_affine_weights(
     return weights / jnp.sum(weights)
 
 
-def _axis_stencil(coordinates, bounds, periodic, position, active, kernel, /):
+def _axis_stencil(
+    coordinates: Array,
+    bounds: tuple[float, float],
+    periodic: bool,
+    position: Array,
+    active: Array,
+    kernel: MACMarkerKernelPlan,
+    /,
+) -> _AxisStencil:
     count = coordinates.size
     width = kernel.width
     if count < width:
@@ -250,7 +266,15 @@ def _axis_stencil(coordinates, bounds, periodic, position, active, kernel, /):
     return indices, weights, derivative, offsets, valid, source_in_domain
 
 
-def _tensor_routes(layout, axes, bounds, position, active, kernel, /):
+def _tensor_routes(
+    layout: TensorEntityLayout,
+    axes: Sequence[StructuredAxis],
+    bounds: Sequence[tuple[float, float]],
+    position: Array,
+    active: Array,
+    kernel: MACMarkerKernelPlan,
+    /,
+) -> _TensorRoute:
     axis_stencils = tuple(
         _axis_stencil(
             coordinates,
@@ -394,7 +418,7 @@ class MACMarkerTransferPlan(StrictModule, NonTrainableState):
         kernel: MACMarkerKernelPlan | None = None,
         accumulation: MACMarkerAccumulation = "deterministic",
         maximum_resource_bytes: int = 1024**3,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         if not isinstance(markers, LagrangianMarkerDiscretization):
@@ -403,8 +427,7 @@ class MACMarkerTransferPlan(StrictModule, NonTrainableState):
         if markers.ambient_dimension != dimension:
             raise ValueError("Marker and MAC dimensions differ.")
         kernel_ = MACMarkerKernelPlan() if kernel is None else kernel
-        if accumulation not in ("fast", "deterministic", "compensated"):
-            raise ValueError("Unknown MAC marker accumulation policy.")
+        accumulation = parse(accumulation, MACMarkerAccumulation, "accumulation")
         if not isinstance(kernel_, MACMarkerKernelPlan):
             raise TypeError("kernel must be MACMarkerKernelPlan or None.")
         axes = operators.discretization.grid.structured_axes
@@ -465,7 +488,7 @@ class PreparedMACMarkerTransfer(StrictModule, NonTrainableState):
     prepared_id: str = eqx.field(static=True)
     accumulation: MACMarkerAccumulation = eqx.field(static=True)
 
-    def __init__(self, plan: MACMarkerTransferPlan, /):
+    def __init__(self, plan: MACMarkerTransferPlan, /) -> None:
         if not isinstance(plan, MACMarkerTransferPlan):
             raise TypeError("plan must be MACMarkerTransferPlan.")
         dimension = len(plan.operators.discretization.cell_shape)
@@ -692,7 +715,9 @@ class PreparedMACMarkerTransfer(StrictModule, NonTrainableState):
             )
         return jnp.stack(tuple(components), axis=-1)
 
-    def _raw_transpose(self, relation: MACMarkerRelation, values: ArrayLike, /):
+    def _raw_transpose(
+        self, relation: MACMarkerRelation, values: ArrayLike, /
+    ) -> FaceVelocity:
         active_values = self.markers.active_velocity_space.validate(jnp.asarray(values))
         output = []
         order = self.markers.stable_active_order
@@ -724,7 +749,9 @@ class PreparedMACMarkerTransfer(StrictModule, NonTrainableState):
             output.append(flat.reshape(layout.shape))
         return tuple(output)
 
-    def interpolation_operator(self, relation: MACMarkerRelation, /):
+    def interpolation_operator(
+        self, relation: MACMarkerRelation, /
+    ) -> FunctionLinearOperator:
         self._validate_relation(relation)
         return FunctionLinearOperator(
             lambda velocity: self.gather(relation, velocity),
@@ -735,7 +762,9 @@ class PreparedMACMarkerTransfer(StrictModule, NonTrainableState):
             operator_id=f"mac-marker-interpolation/{relation.relation_id}",
         )
 
-    def spread(self, relation: MACMarkerRelation, marker_force_density: ArrayLike, /):
+    def spread(
+        self, relation: MACMarkerRelation, marker_force_density: ArrayLike, /
+    ) -> FaceVelocity:
         values = self.markers.active_velocity_space.validate(
             jnp.asarray(marker_force_density)
         )

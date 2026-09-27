@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -84,7 +85,7 @@ class CrackFrontGeometry(StrictModule, NonTrainableState):
         orientation: int = 1,
         crack_id: str = "crack",
         intersection_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         points = np.asarray(vertices, dtype=np.float64)
         connectivity = np.asarray(segments, dtype=np.int32)
         orientation_ = int(orientation)
@@ -454,7 +455,7 @@ class SharpCrackTopology(StrictModule, NonTrainableState):
         mesh_id: str,
         classification_margin: ArrayLike,
         topology_version: int = 0,
-    ):
+    ) -> None:
         if not isinstance(geometry, CrackFrontGeometry):
             raise TypeError("geometry must be CrackFrontGeometry.")
         cut = np.asarray(cut_cell_ids, dtype=np.int64)

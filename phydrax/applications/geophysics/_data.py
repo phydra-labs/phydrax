@@ -12,8 +12,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from types import MappingProxyType
-from typing import Any
+from types import MappingProxyType, ModuleType
+from typing import Any, NoReturn
 
 import numpy as np
 
@@ -144,11 +144,11 @@ _REQUIRED = frozenset(
 
 def _fail(
     message: str, status: AdapterStatus = AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
-):
+) -> NoReturn:
     raise AdapterError(status, message)
 
 
-def _require(module: str):
+def _require(module: str) -> ModuleType:
     if importlib.util.find_spec(module) is None:
         _fail(
             f"Geophysical interchange requires optional dependency '{module}'.",
@@ -273,7 +273,7 @@ class GeophysicalData:
     arrays: Mapping[str, np.ndarray]
     data_id: str
 
-    def __init__(self, descriptor: Mapping[str, Any], arrays: Mapping[str, Any]):
+    def __init__(self, descriptor: Mapping[str, Any], arrays: Mapping[str, Any]) -> None:
         text = _json(descriptor)
         desc = json.loads(text)
         if desc.get("kind") != "geophysical-data" or desc.get("purpose") not in {
@@ -630,7 +630,7 @@ def _decode_cf_variables(
     bindings: Mapping[str, Any],
     selected: set[str],
     /,
-):
+) -> tuple[dict[str, dict[str, Any]], dict[str, np.ndarray], list[AdapterLoss]]:
     variables, arrays, losses = {}, {}, []
     for name in sorted(selected):
         var = dataset[name]

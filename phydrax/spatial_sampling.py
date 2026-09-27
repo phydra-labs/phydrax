@@ -14,7 +14,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ._interpolation import apply_gather_stencil, GatherStencil, MaskMode
@@ -143,7 +144,7 @@ class ObservationSamplingPlan(StrictModule, NonTrainableState):
         valid: ArrayLike | None = None,
         support: ArrayLike | None = None,
         require_complete_coverage: bool = False,
-    ):
+    ) -> None:
         shape = _shape(source_shape, "source_shape")
         indices_ = jax.lax.stop_gradient(jnp.asarray(indices))
         if not jnp.issubdtype(indices_.dtype, jnp.integer):
@@ -251,7 +252,7 @@ class PreparedObservationOperator(StrictModule, NonTrainableState):
         require_complete_coverage: bool,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(stencil, GatherStencil):
             raise TypeError("stencil must be a GatherStencil.")
         shape = _shape(source_shape, "source_shape")

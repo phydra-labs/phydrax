@@ -12,7 +12,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._array_archive import read_array_archive, write_array_archive
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -62,7 +63,7 @@ class ForwardContinuationResult(StrictModule):
         equilibrium_residual_norm: ArrayLike,
         stage_successful: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.coordinates = jnp.asarray(coordinates)
         self.equilibrium_residual_norm = jnp.asarray(equilibrium_residual_norm)
         self.stage_successful = jnp.asarray(stage_successful, dtype=jnp.bool_)
@@ -95,7 +96,7 @@ class UnloadedReferenceRecoveryPlan(StrictModule, NonTrainableState):
         equilibrium_tolerance: float = 1.0e-8,
         maximum_steps: int = 64,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         factors = np.asarray(load_factors, dtype=np.float64)
         residual_limit = float(residual_tolerance)
         equilibrium_limit = float(equilibrium_tolerance)
@@ -230,7 +231,7 @@ class PreparedUnloadedReferenceRecovery(StrictModule, NonTrainableState):
         loaded_coordinates: Array,
         forward_continuation_path: ForwardContinuationPath,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, UnloadedReferenceRecoveryPlan):
             raise TypeError("plan must be UnloadedReferenceRecoveryPlan.")
         loaded = _coordinate_array(loaded_coordinates, "loaded_coordinates")

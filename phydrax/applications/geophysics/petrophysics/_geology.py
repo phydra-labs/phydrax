@@ -10,7 +10,8 @@ import equinox as eqx
 import jax.nn as jnn
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -31,7 +32,7 @@ class LevelSetInterfacePlan(StrictModule, NonTrainableState):
         /,
         *,
         smoothing_width: float = 0.0,
-    ):
+    ) -> None:
         matrix = jnp.asarray(basis)
         width = float(smoothing_width)
         if matrix.ndim != 2 or matrix.shape[0] == 0 or matrix.shape[1] == 0:
@@ -82,7 +83,7 @@ class StratigraphicLayerPlan(StrictModule, NonTrainableState):
         interfaces: tuple[LevelSetInterfacePlan, ...],
         layer_names: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         if not interfaces or any(
             not isinstance(value, LevelSetInterfacePlan) for value in interfaces
         ):
@@ -146,7 +147,7 @@ class GeologicalBodyPlan(StrictModule, NonTrainableState):
         /,
         *,
         smoothing_width: float = 0.0,
-    ):
+    ) -> None:
         positions = jnp.asarray(sample_positions)
         width = float(smoothing_width)
         if (
@@ -203,7 +204,9 @@ class FaciesProbabilityPlan(StrictModule, NonTrainableState):
     property_values: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, facies_names: tuple[str, ...], property_values: ArrayLike, /):
+    def __init__(
+        self, facies_names: tuple[str, ...], property_values: ArrayLike, /
+    ) -> None:
         names = tuple(str(value).strip() for value in facies_names)
         properties = jnp.asarray(property_values)
         if (

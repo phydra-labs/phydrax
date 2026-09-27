@@ -7,20 +7,23 @@ from __future__ import annotations
 import math
 from abc import abstractmethod
 from collections.abc import Callable, Mapping
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import parse
 from .._photometry import ObservationDataProvenance
 from ._status import GravitationalWaveStatus
 
 
-DerivativeLevel = Literal["none", "first", "higher"]
+DerivativeLevel: TypeAlias = Literal["none", "first", "higher"]
 
 
 class WaveformCapabilities(StrictModule, NonTrainableState):
@@ -50,14 +53,15 @@ class WaveformCapabilities(StrictModule, NonTrainableState):
         phase_harmonic: int | None = None,
         distance_parameter: str | None = None,
         reference_distance: float | None = None,
-    ):
+    ) -> None:
         polarizations = tuple(str(value).strip() for value in polarization_ids)
         parameterization = str(parameterization_id).strip()
         if not polarizations or any(not value for value in polarizations):
             raise ValueError("Waveform polarization IDs must be non-empty.")
         if len(set(polarizations)) != len(polarizations):
             raise ValueError("Waveform polarization IDs must be unique.")
-        if derivative_level not in ("none", "first", "higher") or not parameterization:
+        derivative_level = parse(derivative_level, DerivativeLevel, "derivative_level")
+        if not parameterization:
             raise ValueError("Waveform derivative level or parameterization is invalid.")
         if (phase_parameter is None) != (phase_harmonic is None):
             raise ValueError("Phase parameter and harmonic must be declared together.")
@@ -131,7 +135,7 @@ class FrequencyDomainPolarizations(StrictModule):
         invalid_status: ArrayLike | GravitationalWaveStatus = (
             GravitationalWaveStatus.NONFINITE_WAVEFORM
         ),
-    ):
+    ) -> None:
         frequencies = jnp.asarray(frequency)
         waveforms = jnp.asarray(values)
         polarizations = tuple(polarization_ids)
@@ -195,7 +199,7 @@ class CallableFrequencyDomainWaveform(AbstractFrequencyDomainWaveform):
         *,
         waveform_id: str,
         parameter_map: Callable[[PyTree[Any]], PyTree[Any]] | None = None,
-    ):
+    ) -> None:
         if not callable(function) or (
             parameter_map is not None and not callable(parameter_map)
         ):
@@ -261,7 +265,7 @@ class SineGaussianWaveformPlan(AbstractFrequencyDomainWaveform, NonTrainableStat
         *,
         parameterization_id: str = "sine-gaussian",
         waveform_id: str = "native-sine-gaussian",
-    ):
+    ) -> None:
         if not isinstance(provenance, ObservationDataProvenance):
             raise TypeError("provenance must be ObservationDataProvenance.")
         self.capabilities = WaveformCapabilities(

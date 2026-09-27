@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -37,7 +39,7 @@ _COORDINATE_UNIT = _SCALE.dimensional_scale.length_unit
 _AFFINE_PARAMETER_UNIT = _SCALE.dimensional_scale.length_unit
 
 
-def _ray_context():
+def _ray_context() -> Any:
     return {
         "scale": _SCALE,
         "convention": _CONVENTION,
@@ -49,40 +51,40 @@ def _ray_context():
 class _StatefulMargin(StrictModule):
     threshold: jax.Array
 
-    def __init__(self, threshold):
+    def __init__(self, threshold: Any) -> None:
         self.threshold = jnp.asarray(threshold)
 
-    def __call__(self, affine, point, tangent):
+    def __call__(self, affine: Any, point: Any, tangent: Any) -> Any:
         del affine, tangent
         return self.threshold - point[1]
 
 
-def _capture_below_negative_half(affine, point, tangent):
+def _capture_below_negative_half(affine: Any, point: Any, tangent: Any) -> Any:
     return point[1] + 0.5
 
 
-def _escape_above_half(affine, point, tangent):
+def _escape_above_half(affine: Any, point: Any, tangent: Any) -> Any:
     return 0.5 - point[1]
 
 
-def _domain_below_half(affine, point, tangent):
+def _domain_below_half(affine: Any, point: Any, tangent: Any) -> Any:
     return 0.5 - point[3]
 
 
-def _escape_above_053(affine, point, tangent):
+def _escape_above_053(affine: Any, point: Any, tangent: Any) -> Any:
     return 0.53 - point[1]
 
 
-def _domain_affine_budget(affine, point, tangent):
+def _domain_affine_budget(affine: Any, point: Any, tangent: Any) -> Any:
     return 2.0 - affine
 
 
-def _cartesian_metric():
+def _cartesian_metric() -> Any:
     chart = CoordinateChart("cartesian-spacetime", ("t", "x", "y", "z"))
     return minkowski_metric(chart)
 
 
-def _spherical_screen(metric, radius=10.0):
+def _spherical_screen(metric: Any, radius: Any = 10.0) -> Any:
     return GRObserverScreenPlan(
         metric,
         jnp.asarray([0.0, radius, jnp.pi / 2.0, 0.0]),
@@ -95,7 +97,7 @@ def _spherical_screen(metric, radius=10.0):
     ).initialize()
 
 
-def test_observer_screen_initialization_is_metric_orthonormal_and_generic():
+def test_observer_screen_initialization_is_metric_orthonormal_and_generic() -> None:
     flat = _cartesian_metric()
     flat_screen = GRObserverScreenPlan(
         flat,
@@ -124,13 +126,18 @@ def test_observer_screen_initialization_is_metric_orthonormal_and_generic():
         assert float(np.max(screen.null_residual)) < 1.0e-12
 
 
-def test_observer_screen_promotes_integer_inputs_to_floating_geometry():
+def test_observer_screen_promotes_integer_inputs_to_floating_geometry() -> None:
     screen = GRObserverScreenPlan(
         _cartesian_metric(),
+        # ty: ignore[invalid-argument-type]
         [0, 0, 0, 0],
+        # ty: ignore[invalid-argument-type]
         [1, 0, 0, 0],
+        # ty: ignore[invalid-argument-type]
         [0, 0, 0, 1],
+        # ty: ignore[invalid-argument-type]
         [0, 0, 1, 0],
+        # ty: ignore[invalid-argument-type]
         [[0, 0], [1, 0]],
         **_ray_context(),
     ).initialize()
@@ -139,7 +146,7 @@ def test_observer_screen_promotes_integer_inputs_to_floating_geometry():
     assert np.all(screen.valid)
 
 
-def test_mixed_batch_resolves_ordered_events_and_retains_work_exhaustion():
+def test_mixed_batch_resolves_ordered_events_and_retains_work_exhaustion() -> None:
     metric = _cartesian_metric()
     coordinates = jnp.zeros((5, 4))
     tangents = jnp.asarray(
@@ -198,7 +205,7 @@ def test_mixed_batch_resolves_ordered_events_and_retains_work_exhaustion():
     )
 
 
-def test_event_ledger_retains_backend_root_state_between_history_nodes():
+def test_event_ledger_retains_backend_root_state_between_history_nodes() -> None:
     metric = _cartesian_metric()
     plan = GRRayPlan(
         metric,
@@ -227,7 +234,7 @@ def test_event_ledger_retains_backend_root_state_between_history_nodes():
     assert int(result.event_ledger.history_index[0]) == 2
 
 
-def test_affine_dependent_domain_evidence_uses_each_history_time():
+def test_affine_dependent_domain_evidence_uses_each_history_time() -> None:
     metric = _cartesian_metric()
     affine = jnp.asarray([0.0, 0.25, 0.75, 1.0])
     plan = GRRayPlan(
@@ -247,7 +254,7 @@ def test_affine_dependent_domain_evidence_uses_each_history_time():
     assert np.all(result.domain_evidence.qualified)
 
 
-def test_ray_plan_rejects_each_nonfinite_tolerance():
+def test_ray_plan_rejects_each_nonfinite_tolerance() -> None:
     metric = _cartesian_metric()
     state = GRRayState(
         jnp.zeros((1, 4)),
@@ -264,18 +271,19 @@ def test_ray_plan_rejects_each_nonfinite_tolerance():
                 metric,
                 state,
                 jnp.asarray([0.0, 1.0]),
+                # ty: ignore[invalid-argument-type]
                 **{name: float("inf")},
                 **_ray_context(),
             )
 
 
-def test_stateful_event_margin_identity_includes_numeric_callable_content():
+def test_stateful_event_margin_identity_includes_numeric_callable_content() -> None:
     first = GRRayEventSurfaces(capture_margin=_StatefulMargin(1.0))
     second = GRRayEventSurfaces(capture_margin=_StatefulMargin(2.0))
     assert first.event_id != second.event_id
 
 
-def test_opaque_event_margins_require_declared_identity():
+def test_opaque_event_margins_require_declared_identity() -> None:
     near = lambda affine, point, tangent: 1.0 - point[1]
     far = lambda affine, point, tangent: 2.0 - point[1]
     for margin in (near, far):
@@ -311,8 +319,8 @@ def test_opaque_event_margins_require_declared_identity():
     )
 
 
-def test_callable_constant_revisions_change_constant_and_plan_identity():
-    def make(offset):
+def test_callable_constant_revisions_change_constant_and_plan_identity() -> None:
+    def make(offset: Any) -> Any:
         return lambda metric, coordinates, tangent: tangent[0] + offset
 
     first = GRCallableConstantOfMotion(
@@ -351,7 +359,7 @@ def test_callable_constant_revisions_change_constant_and_plan_identity():
     assert first_plan.plan_id != second_plan.plan_id
 
 
-def test_parallel_transport_constants_and_jacobi_map_have_fixed_evidence():
+def test_parallel_transport_constants_and_jacobi_map_have_fixed_evidence() -> None:
     metric = _cartesian_metric()
     screen = GRObserverScreenPlan(
         metric,
@@ -397,7 +405,7 @@ def test_parallel_transport_constants_and_jacobi_map_have_fixed_evidence():
     assert np.all(result.derivative_valid)
 
 
-def test_timelike_trace_is_filter_jittable_and_has_branch_local_gradient():
+def test_timelike_trace_is_filter_jittable_and_has_branch_local_gradient() -> None:
     metric = _cartesian_metric()
     plan = GRRayPlan(
         metric,
@@ -418,7 +426,7 @@ def test_timelike_trace_is_filter_jittable_and_has_branch_local_gradient():
     np.testing.assert_allclose(result.coordinates[0, :, 0], plan.affine_parameter)
     np.testing.assert_allclose(result.null_residual, 0.0, atol=1.0e-12)
 
-    def final_x(candidate):
+    def final_x(candidate: Any) -> Any:
         return trace_gr_rays(candidate).coordinates[0, -1, 1]
 
     gradient = eqx.filter_grad(final_x)(plan)

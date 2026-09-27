@@ -20,6 +20,7 @@ def test_conic_filter_has_positive_normalized_rows_and_preserves_box() -> None:
     prepared = plan.prepare()
 
     coefficients = np.asarray(prepared.operator.coefficients)
+    # ty: ignore[unresolved-attribute]
     targets = np.asarray(prepared.operator.relation.target_indices)
     row_sums = np.bincount(targets, weights=coefficients, minlength=4)
     assert np.all(coefficients > 0.0)

@@ -9,7 +9,7 @@ from __future__ import annotations
 import abc
 
 import equinox as eqx
-from jaxtyping import Array
+from jax import Array
 
 from ...._strict import StrictModule
 from ..cellular import ShortenFastTwitchModel
@@ -71,7 +71,7 @@ class Shorten2007FiberReaction(AbstractFiberReaction):
     model: ShortenFastTwitchModel
     kinematic_policy: str = eqx.field(static=True)
 
-    def __init__(self, model: ShortenFastTwitchModel, /):
+    def __init__(self, model: ShortenFastTwitchModel, /) -> None:
         if not isinstance(model, ShortenFastTwitchModel):
             raise TypeError("model must be ShortenFastTwitchModel.")
         self.model = model
@@ -84,7 +84,13 @@ class Shorten2007FiberReaction(AbstractFiberReaction):
         return self.model.initialize(batch_shape)
 
     def rhs(
-        self, time_ms, values, current_uA_per_cm2, stretch, stretch_rate_per_ms, /
+        self,
+        time_ms: Array,
+        values: Array,
+        current_uA_per_cm2: Array,
+        stretch: Array,
+        stretch_rate_per_ms: Array,
+        /,
     ) -> Array:
         del stretch, stretch_rate_per_ms
         return self.model.rhs(
@@ -92,7 +98,13 @@ class Shorten2007FiberReaction(AbstractFiberReaction):
         )
 
     def admissible(
-        self, time_ms, values, current_uA_per_cm2, stretch, stretch_rate_per_ms, /
+        self,
+        time_ms: Array,
+        values: Array,
+        current_uA_per_cm2: Array,
+        stretch: Array,
+        stretch_rate_per_ms: Array,
+        /,
     ) -> Array:
         rates = self.rhs(
             time_ms, values, current_uA_per_cm2, stretch, stretch_rate_per_ms

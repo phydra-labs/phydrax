@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -26,16 +29,18 @@ material = mn.LinearElasticMaterial(
     compression_allowable=20.0,
 )
 section = mn.BeamSection(1.0, 1.0, 1.0, 0.5, 1.0, 1.0)
+# ty: ignore[invalid-argument-type]
 properties = mn.MemberPropertyMap((material,), (section,), (0,), (0,))
 reference = mn.MemberReferenceState(structure, positions)
 dofs = mn.MemberDOFLayout(structure, rotation_constrained=jnp.ones((2, 1), dtype="bool"))
 definition = mn.MemberNetworkDefinition(structure, reference, properties, dofs)
+# ty: ignore[invalid-argument-type]
 assembly = mn.MemberNetworkAssembly((mn.AxialMemberBlock((0,)),))
 problem = mn.MemberNetworkProblem(definition, assembly)
 initial = mn.MemberKinematics(positions, jnp.zeros((2, 1)))
 
 
-def inputs(load):
+def inputs(load: Any) -> Any:
     return mn.MemberNetworkInputs(
         structure.prescribed_values(positions),
         dofs.prescribed_rotations(initial.rotation_vectors),
@@ -48,12 +53,14 @@ def inputs(load):
 install = mn.ConstructionStage(
     problem,
     inputs(0.0),
+    # ty: ignore[invalid-argument-type]
     (mn.InstallationRule.STRESS_FREE_AT_CURRENT_GEOMETRY,),
     stage_id="install",
 )
 load = mn.ConstructionStage(
     problem,
     inputs(5.0),
+    # ty: ignore[invalid-argument-type]
     (mn.InstallationRule.DECLARED_STRESS_FREE_LENGTH,),
     load_operation=mn.LoadOperation.ADD,
     stage_id="service-load",

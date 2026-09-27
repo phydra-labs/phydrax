@@ -6,7 +6,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ...._numerics._quadrature_rules import gauss_legendre_data
 from ...._strict import StrictModule
@@ -21,11 +21,11 @@ from ....atomistic.sampling._collective_variable import (
 class NascentObservation(StrictModule):
     contact_similarity: Array
     contact_count: Array
-    contact_available: Array
+    contact_available: bool
     gauss_entanglement: Array
     quadrature_difference: Array
     curve_separation: Array
-    entanglement_available: Array
+    entanglement_available: bool
     successful: Array
 
 
@@ -65,7 +65,7 @@ class NascentChainObservations(StrictModule):
         right_curve_ids: tuple[int, ...] = (),
         quadrature_order: int = 4,
         minimum_separation: float = 1e-8,
-    ):
+    ) -> None:
         if system.cell is not None:
             raise ValueError(
                 "Nascent observations require explicitly unwrapped nonperiodic coordinates."
@@ -173,7 +173,7 @@ class NascentChainObservations(StrictModule):
             endpoint_squares.append(jnp.sum((edge_r + projected[..., None] * u) ** 2, -1))
         separation = jnp.sqrt(jnp.min(jnp.stack([interior_sq, *endpoint_squares])))
 
-        def integral(nodes, weights):
+        def integral(nodes: Array, weights: Array) -> Array:
             delta = (
                 r[:, :, None, None, :]
                 + nodes[None, None, :, None, None] * u[:, :, None, None, :]

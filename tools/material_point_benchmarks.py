@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from importlib.metadata import version
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -62,14 +63,14 @@ class MPMBenchmarkReport:
 
 
 def _case(
-    dimension,
-    particle_count,
-    grid_points,
-    accumulation,
-    replay_mode,
+    dimension: Any,
+    particle_count: Any,
+    grid_points: Any,
+    accumulation: Any,
+    replay_mode: Any,
     *,
-    measure_gradient=False,
-):
+    measure_gradient: Any = False,
+) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformAxisSpec(grid_points, periodic=True, endpoint=False)
@@ -139,7 +140,7 @@ def _case(
     jax.block_until_ready(result.final_state.particles.position)
     rollout_ms = (perf_counter() - started) * 1e3
 
-    def objective(scale):
+    def objective(scale: Any) -> Any:
         particles_ = phx.discretization.MPMParticleState(
             initial.particles.position,
             initial.particles.velocity * scale,
@@ -203,7 +204,7 @@ def _case(
     )
 
 
-def run_material_point_benchmark(*, smoke=False):
+def run_material_point_benchmark(*, smoke: Any = False) -> Any:
     configurations = ((2, 64, 16), (3, 27, 8)) if smoke else ((2, 576, 48), (3, 216, 18))
     cases = []
     for dimension, particles, grid in configurations:
@@ -236,7 +237,7 @@ def run_material_point_benchmark(*, smoke=False):
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Benchmark explicit APIC MPM.")
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument(

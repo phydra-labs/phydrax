@@ -1,4 +1,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
+
+from typing import Any
+
 import equinox as eqx
 import numpy as np
 import pytest
@@ -8,12 +11,12 @@ from phydrax.applications import energy_planning as ep
 
 def _single(
     *,
-    durations=(1.0, 1.0),
-    load=(0.0, 1.0),
-    prices=(1.0, 10.0),
-    store=None,
-    chronology=None,
-):
+    durations: Any = (1.0, 1.0),
+    load: Any = (0.0, 1.0),
+    prices: Any = (1.0, 10.0),
+    store: Any = None,
+    chronology: Any = None,
+) -> Any:
     return ep.EnergySystem(
         ep.Chronology((ep.Horizon("day", durations),))
         if chronology is None
@@ -26,7 +29,7 @@ def _single(
     )
 
 
-def test_unrelated_energy_basis_cannot_authorize_converter_energy_creation():
+def test_unrelated_energy_basis_cannot_authorize_converter_energy_creation() -> None:
     from phydrax.units import KILOGRAM
 
     with pytest.raises(ValueError):
@@ -56,14 +59,14 @@ def test_unrelated_energy_basis_cannot_authorize_converter_energy_creation():
         )
 
 
-def _solve(spec, **kwargs):
+def _solve(spec: Any, **kwargs: Any) -> Any:
     compiled = ep.compile_energy_system(spec, **kwargs)
     solution = ep.solve_energy_system(compiled)
     assert solution.successful, (solution.native_result.status, solution.replay.failures)
     return compiled, solution
 
 
-def test_energy_charge_and_discharge_capacities_are_independent():
+def test_energy_charge_and_discharge_capacities_are_independent() -> None:
     results = []
     # Each case activates a different physical limit, without imposing E = P * dt.
     for energy, charge, discharge in ((0.5, 3.0, 3.0), (3.0, 0.2, 3.0), (3.0, 3.0, 0.3)):
@@ -84,7 +87,7 @@ def test_energy_charge_and_discharge_capacities_are_independent():
     np.testing.assert_allclose(results, (0.5, 0.4, 0.3), atol=2e-5)
 
 
-def test_exact_storage_does_not_create_negative_price_loss_cycles():
+def test_exact_storage_does_not_create_negative_price_loss_cycles() -> None:
     store = ep.Inventory(
         "battery",
         "bus",
@@ -106,7 +109,7 @@ def test_exact_storage_does_not_create_negative_price_loss_cycles():
         ep.compile_energy_system(compiled.spec)
 
 
-def test_physical_retention_and_irregular_duration_ignore_accounting_weights():
+def test_physical_retention_and_irregular_duration_ignore_accounting_weights() -> None:
     chronology = ep.Chronology(
         (ep.Horizon("day", (0.5, 2.0), multiplicity=200, probability=0.25, year=3),),
         discount_rate=0.1,
@@ -131,7 +134,7 @@ def test_physical_retention_and_irregular_duration_ignore_accounting_weights():
     )
 
 
-def test_fixed_free_periodic_and_linked_terminal_inventory():
+def test_fixed_free_periodic_and_linked_terminal_inventory() -> None:
     fixed = ep.Inventory(
         "battery", "bus", 2.0, 2.0, 2.0, (ep.InventoryBoundary("day", target=1.0),)
     )
@@ -183,7 +186,7 @@ def test_fixed_free_periodic_and_linked_terminal_inventory():
     )
 
 
-def test_scenario_tree_blocks_anticipation_but_allows_recourse():
+def test_scenario_tree_blocks_anticipation_but_allows_recourse() -> None:
     tree = ep.ScenarioTree(
         (
             ep.ScenarioNode("root", None, 0),
@@ -240,7 +243,7 @@ def test_scenario_tree_blocks_anticipation_but_allows_recourse():
     )
 
 
-def test_vintage_retirement_is_distinct_from_financial_lifetime():
+def test_vintage_retirement_is_distinct_from_financial_lifetime() -> None:
     chronology = ep.Chronology(
         (
             ep.Horizon("build-year", (1,), year=0),
@@ -267,7 +270,7 @@ def test_vintage_retirement_is_distinct_from_financial_lifetime():
     np.testing.assert_allclose(solution.replay.cost, 190, atol=2e-4)
 
 
-def test_build_and_commitment_use_exact_native_integer_decisions():
+def test_build_and_commitment_use_exact_native_integer_decisions() -> None:
     spec = ep.EnergySystem(
         ep.Chronology((ep.Horizon("day", (1, 1)),)),
         (ep.Carrier("electricity"),),
@@ -306,7 +309,7 @@ def test_build_and_commitment_use_exact_native_integer_decisions():
     np.testing.assert_allclose(solution.replay.cost, 6, atol=2e-4)
 
 
-def test_replay_detects_corrupted_inventory_balance_and_reported_cost():
+def test_replay_detects_corrupted_inventory_balance_and_reported_cost() -> None:
     compiled, solution = _solve(ep.electricity_heat_storage_example())
     damaged = tuple(
         ep.EnergyDispatch(entry.name, entry.values + 0.2)
@@ -334,7 +337,7 @@ def test_replay_detects_corrupted_inventory_balance_and_reported_cost():
     )
 
 
-def test_marginal_prices_remove_duration_weights_discount_and_solver_scaling():
+def test_marginal_prices_remove_duration_weights_discount_and_solver_scaling() -> None:
     chronology = ep.Chronology(
         (ep.Horizon("day", (0.5, 2), multiplicity=7, probability=0.2, year=2),),
         discount_rate=0.1,
@@ -355,7 +358,7 @@ def test_marginal_prices_remove_duration_weights_discount_and_solver_scaling():
     assert not solution.prices.unique
 
 
-def test_multioutput_hydrogen_and_explicit_heat_pump_energy_closure():
+def test_multioutput_hydrogen_and_explicit_heat_pump_energy_closure() -> None:
     _, solution = _solve(ep.electricity_hydrogen_example())
     np.testing.assert_allclose(
         solution.plan.values("converter/fuel-cell")[1], 1, atol=2e-5
@@ -373,7 +376,7 @@ def test_multioutput_hydrogen_and_explicit_heat_pump_energy_closure():
         ep.EnergySystem(spec.chronology, spec.carriers, spec.points, converters=(bad,))
 
 
-def test_strict_balance_requires_explicit_unserved_or_spill():
+def test_strict_balance_requires_explicit_unserved_or_spill() -> None:
     spec = ep.EnergySystem(
         ep.Chronology((ep.Horizon("day", (1,)),)),
         (ep.Carrier("electricity"),),
@@ -386,7 +389,7 @@ def test_strict_balance_requires_explicit_unserved_or_spill():
     np.testing.assert_allclose(solution.replay.cost, 102, atol=2e-4)
 
 
-def test_quadratic_dispatch_has_physical_cost_and_continuous_prices():
+def test_quadratic_dispatch_has_physical_cost_and_continuous_prices() -> None:
     spec = ep.EnergySystem(
         ep.Chronology((ep.Horizon("day", (1,)),)),
         (ep.Carrier("electricity"),),
@@ -405,7 +408,7 @@ def test_quadratic_dispatch_has_physical_cost_and_continuous_prices():
     np.testing.assert_allclose(solution.prices.marginal_cost[0].values, (3,), atol=2e-5)
 
 
-def test_shared_scenario_balance_price_uses_combined_probability():
+def test_shared_scenario_balance_price_uses_combined_probability() -> None:
     tree = ep.ScenarioTree(
         (
             ep.ScenarioNode("root", None, 0),
@@ -428,7 +431,7 @@ def test_shared_scenario_balance_price_uses_combined_probability():
     )
 
 
-def test_scenario_investments_cannot_operate_before_revelation():
+def test_scenario_investments_cannot_operate_before_revelation() -> None:
     tree = ep.ScenarioTree(
         (
             ep.ScenarioNode("root", None, 0),
@@ -470,7 +473,7 @@ def test_scenario_investments_cannot_operate_before_revelation():
     )
 
 
-def test_scenario_information_and_vintages_persist_across_years():
+def test_scenario_information_and_vintages_persist_across_years() -> None:
     tree = ep.ScenarioTree(
         (
             ep.ScenarioNode("root", None, 0),

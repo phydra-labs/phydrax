@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _compiled_collision(*, restitution=1.0):
+def _compiled_collision(*, restitution: Any = 1.0) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([10, 20]),
         jnp.asarray([1.0, 1.0]),
@@ -43,7 +46,7 @@ def _compiled_collision(*, restitution=1.0):
     )
 
 
-def _solve(compiled, initial, t0, t1):
+def _solve(compiled: Any, initial: Any, t0: Any, t1: Any) -> Any:
     problem = phx.solver.FixedStepProblem(
         phx.solver.DEMFixedStepMethod(compiled.dynamics),
         initial,
@@ -56,7 +59,7 @@ def _solve(compiled, initial, t0, t1):
     return phx.solver.solve_fixed_step(problem)
 
 
-def test_dem_fixed_step_rollout_is_finite_conservative_and_restart_equivalent():
+def test_dem_fixed_step_rollout_is_finite_conservative_and_restart_equivalent() -> None:
     compiled = _compiled_collision()
     initial = compiled.initialize_state(
         0.0,
@@ -91,7 +94,7 @@ def test_dem_fixed_step_rollout_is_finite_conservative_and_restart_equivalent():
     assert jnp.allclose(final_momentum, initial_momentum, atol=1.0e-10)
 
 
-def test_damped_head_on_collision_recovers_requested_restitution():
+def test_damped_head_on_collision_recovers_requested_restitution() -> None:
     target_restitution = 0.8
     compiled = _compiled_collision(restitution=target_restitution)
     initial = compiled.initialize_state(

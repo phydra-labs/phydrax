@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PRNGKeyArray
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._admissibility import AdmissibilityHeader, AdmissibilityReason
 from .._fingerprint import canonical_fingerprint
@@ -27,7 +28,11 @@ from ..discretization.dsmc._collisions import (
     DSMCVHSCollisionPlan,
     DSMCVSSCollisionPlan,
 )
-from ..discretization.dsmc._core import DSMCParticleState, DSMCStreamingPlan
+from ..discretization.dsmc._core import (
+    DSMCParticleState,
+    DSMCStreamingPlan,
+    DSMCStreamingResult,
+)
 from ..discretization.dsmc._moments import (
     DSMCMomentAccumulatorState,
     DSMCMomentEvaluation,
@@ -40,6 +45,7 @@ from ..discretization.dsmc._ntc import (
     DSMCNTCSchedulePlan,
     DSMCNTCState,
 )
+from ..typing import PRNGKey
 
 
 class DSMCBoundaryExchangeLedger(StrictModule):
@@ -207,7 +213,7 @@ class DSMCProductionPlan(StrictModule, NonTrainableState):
     def initialize(
         self,
         particles: DSMCParticleState,
-        key: PRNGKeyArray,
+        key: PRNGKey,
         /,
         *,
         majorant_sigma_speed: ArrayLike,
@@ -322,9 +328,9 @@ class DSMCProductionPlan(StrictModule, NonTrainableState):
     def _apply_surfaces(
         self,
         incoming: DSMCParticleState,
-        streamed,
+        streamed: DSMCStreamingResult,
         step: Array,
-        key: PRNGKeyArray,
+        key: PRNGKey,
         /,
     ) -> tuple[DSMCParticleState, Array, Array, Array, Array, Array]:
         dimension = incoming.velocity.shape[-1]
@@ -534,7 +540,10 @@ class DSMCProductionPlan(StrictModule, NonTrainableState):
         event_keys = jax.random.split(collision_key, self.ntc.event_capacity)
         event_majorant = state.ntc.majorant_sigma_speed[schedule.event_cells]
 
-        def event_body(current, event):
+        def event_body(
+            current: DSMCParticleState,
+            event: tuple[Array, Array, Array, Array, Array, Array],
+        ) -> tuple[DSMCParticleState, tuple[Array, ...]]:
             first, second, valid, event_cell, majorant, key = event
             collision_uniforms = jax.random.uniform(
                 jax.random.fold_in(key, 0),

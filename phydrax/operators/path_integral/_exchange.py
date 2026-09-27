@@ -12,7 +12,8 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 
@@ -37,7 +38,7 @@ class ExchangePathPlan(StrictModule):
         statistics: Literal["boson", "fermion"],
         active: ArrayLike | None = None,
         require_full_enumeration: bool = False,
-    ):
+    ) -> None:
         table = np.asarray(permutations)
         if (
             table.ndim != 2

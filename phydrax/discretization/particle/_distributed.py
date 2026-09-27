@@ -8,11 +8,13 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._pairwise import ParticleBox
 from ._precision import ParticlePrecisionPolicy
 
@@ -32,11 +34,9 @@ class ParticleBackendPolicy(StrictModule, NonTrainableState):
         /,
         *,
         determinism: ParticleDeterminism = "deterministic",
-    ):
-        if backend not in ("pure-jax", "pallas", "triton"):
-            raise ValueError("Unknown particle backend.")
-        if determinism not in ("fast", "deterministic", "compensated"):
-            raise ValueError("Unknown particle determinism mode.")
+    ) -> None:
+        backend = parse(backend, ParticleBackendKind, "backend")
+        determinism = parse(determinism, ParticleDeterminism, "determinism")
         self.backend = backend
         self.determinism = determinism
         self.policy_id = canonical_fingerprint(
@@ -66,7 +66,7 @@ class ParticleKernelRequestPlan(StrictModule, NonTrainableState):
         kernel_gradient: bool = True,
         smoothing_derivative: bool = False,
         materialize: bool = False,
-    ):
+    ) -> None:
         self.distance = bool(distance)
         self.direction = bool(direction)
         self.kernel_value = bool(kernel_value)
@@ -127,7 +127,7 @@ class ParticleDomainDecompositionPlan(StrictModule, NonTrainableState):
     box: ParticleBox
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, partitions: int, halo_radius: float, box: ParticleBox, /):
+    def __init__(self, partitions: int, halo_radius: float, box: ParticleBox, /) -> None:
         if partitions <= 0 or halo_radius <= 0.0:
             raise ValueError("Particle decomposition parameters are invalid.")
         self.partitions = int(partitions)

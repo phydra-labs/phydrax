@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Protocol
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax.ein import contract
 
@@ -26,10 +27,10 @@ from ._graph import (
 )
 from ._potential import (
     AbstractAtomisticPotential,
+    atomistic_potential_revision,
     AtomisticPotentialCapabilities,
     AtomisticPotentialRequirements,
     AtomisticSpeciesKind,
-    atomistic_potential_revision,
 )
 from ._sites import AtomisticInteractionSiteState
 from ._system import PreparedAtomisticSystem
@@ -53,7 +54,7 @@ class AtomisticInteractionScaleState(StrictModule):
         cls,
         system: PreparedAtomisticSystem,
         pair_count: int,
-        dtype,
+        dtype: DTypeLike,
         /,
     ) -> "AtomisticInteractionScaleState":
         one = lambda size: jnp.ones((size,), dtype=dtype)
@@ -157,7 +158,7 @@ class LearnedGraphPotentialTerm(AbstractAtomisticEnergyTerm):
         name: str = "learned",
         force_group: int = 0,
         allow_periodic: bool = False,
-    ):
+    ) -> None:
         if not isinstance(potential, AbstractAtomisticPotential):
             raise TypeError("potential must implement AbstractAtomisticPotential.")
         identifier = str(name).strip()
@@ -228,7 +229,7 @@ class PreparedLearnedGraphPotentialTerm(AbstractPreparedAtomisticEnergyTerm):
 
     def __init__(
         self, plan: LearnedGraphPotentialTerm, system: PreparedAtomisticSystem, /
-    ):
+    ) -> None:
         self.plan = plan
         self.system = system
         self.name = plan.name
@@ -283,7 +284,7 @@ class AtomisticPotentialProgram(StrictModule):
         /,
         *,
         coefficients: ArrayLike | None = None,
-    ):
+    ) -> None:
         values = tuple(terms)
         if not values or any(
             not isinstance(value, AbstractAtomisticEnergyTerm) for value in values
@@ -382,6 +383,37 @@ class AtomisticPotentialEvaluation(StrictModule):
     program_id: str = eqx.field(static=True)
 
 
+class AtomisticHamiltonianEvaluation(Protocol):
+    """Evaluation record shared by fixed and controlled prepared Hamiltonians."""
+
+    @property
+    def energy(self) -> Array: ...
+
+    @property
+    def term_energies(self) -> Array: ...
+
+    @property
+    def atom_energy(self) -> Array: ...
+
+    @property
+    def forces(self) -> Array: ...
+
+    @property
+    def virial(self) -> Array: ...
+
+    @property
+    def successful(self) -> Array: ...
+
+    @property
+    def neighborhood_successful(self) -> Array: ...
+
+    @property
+    def graph_overflow(self) -> Array: ...
+
+    @property
+    def program_id(self) -> str: ...
+
+
 class AbstractPreparedAtomisticHamiltonian(StrictModule):
     """Prepared scalar Hamiltonian boundary shared by fixed and controlled programs."""
 
@@ -399,7 +431,12 @@ class AbstractPreparedAtomisticHamiltonian(StrictModule):
         positions: ArrayLike,
         neighborhood: ParticleNeighborhoodState,
         /,
-        **kwargs: Any,
+        *,
+        unwrapped_positions: ArrayLike | None = None,
+        species: ArrayLike | None = None,
+        cell: PeriodicCell | None = None,
+        fractional_positions: ArrayLike | None = None,
+        cell_vectors: ArrayLike | None = None,
     ) -> AtomisticPotentialContext:
         raise NotImplementedError
 
@@ -420,7 +457,7 @@ class AbstractPreparedAtomisticHamiltonian(StrictModule):
         neighborhood: ParticleNeighborhoodState,
         /,
         **kwargs: Any,
-    ) -> AtomisticPotentialEvaluation:
+    ) -> AtomisticHamiltonianEvaluation:
         raise NotImplementedError
 
 
@@ -441,7 +478,7 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
         /,
         *,
         graph_execution: AtomisticGraphExecutionPlan | None,
-    ):
+    ) -> None:
         if not isinstance(plan, AtomisticPotentialProgram):
             raise TypeError("plan must be an AtomisticPotentialProgram.")
         if not isinstance(system, PreparedAtomisticSystem):
@@ -454,6 +491,8 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
                 raise ValueError(
                     "A particle AtomisticGraphExecutionPlan is required by learned terms."
                 )
+            if plan.requirements.cutoff is None:
+                raise ValueError("Directed atomistic graph terms require a cutoff.")
         elif graph_execution is not None:
             raise ValueError("graph_execution was supplied but no term requires a graph.")
         cutoff = plan.requirements.cutoff
@@ -623,7 +662,7 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
         site_displacement = (
             site_state.positions[site_left] - site_state.positions[site_right]
         )
-        if cell_vectors is not None:
+        if cell_vectors is not None and selected_cell is not None:
             vectors = jnp.asarray(cell_vectors, dtype=position.dtype)
             determinant = jnp.sum(vectors[0] * jnp.cross(vectors[1], vectors[2]))
             inverse = (
@@ -665,7 +704,7 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
         right = pairs.right_indices
         pair_valid = pairs.valid
         displacement = position[left] - position[right]
-        if cell_vectors is not None:
+        if cell_vectors is not None and selected_cell is not None:
             fractional = jnp.asarray(fractional_positions, dtype=position.dtype)
             if fractional.shape != expected:
                 raise ValueError(f"fractional_positions must have shape {expected}.")
@@ -707,12 +746,15 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
                 raise ValueError(
                     "Dynamic cell graph geometry is not supported by this graph potential."
                 )
+            graph_cutoff = self.plan.requirements.cutoff
+            if graph_cutoff is None:
+                raise RuntimeError("Validated graph cutoff unexpectedly absent.")
             graph = realize_particle_atomistic_graph(
                 self.system,
                 neighborhood,
                 execution,
                 position,
-                cutoff=float(self.plan.requirements.cutoff),
+                cutoff=graph_cutoff,
                 cell=selected_cell,
             )
             graph_overflow = jnp.any(graph.overflow)
@@ -890,11 +932,16 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
                 - selected_cell.fractional_with_vectors(position, vectors)
             )
 
-        def closure(value: Array):
+        def closure(value: Array) -> tuple[Array, tuple[Array, Array, Array, Array]]:
             kwargs = dict(context_kwargs)
             if unwrapped_offset is not None:
                 kwargs["unwrapped_positions"] = value + unwrapped_offset
             if fractional_offset is not None:
+                # fractional_offset is only bound together with a cell and cell vectors.
+                if not (selected_cell is not None and vectors is not None):
+                    raise RuntimeError(
+                        "Internal invariant failed: selected_cell is not None and vectors is not None."
+                    )
                 kwargs["fractional_positions"] = (
                     selected_cell.fractional_with_vectors(value, vectors)
                     + fractional_offset
@@ -938,6 +985,7 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
 
 __all__ = [
     "AbstractPreparedAtomisticHamiltonian",
+    "AtomisticHamiltonianEvaluation",
     "AtomisticInteractionScaleState",
     "AbstractAtomisticEnergyTerm",
     "AbstractPreparedAtomisticEnergyTerm",

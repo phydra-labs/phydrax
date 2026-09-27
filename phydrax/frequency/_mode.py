@@ -4,7 +4,8 @@
 from dataclasses import dataclass
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 @dataclass(frozen=True, slots=True)
@@ -13,12 +14,12 @@ class ComplexMode:
     right: Array
     left: Array
 
-    def biorthogonal_normalize(self):
+    def biorthogonal_normalize(self) -> "ComplexMode":
         scale = jnp.vdot(self.left, self.right)
         return ComplexMode(self.eigenvalue, self.right / scale, self.left)
 
 
-def modal_overlap(left_modes: ArrayLike, right_modes: ArrayLike):
+def modal_overlap(left_modes: ArrayLike, right_modes: ArrayLike) -> Array:
     left = jnp.asarray(left_modes)
     right = jnp.asarray(right_modes)
     return jnp.abs(jnp.conj(left).T @ right) ** 2 / (

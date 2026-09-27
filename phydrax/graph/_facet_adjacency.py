@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -65,7 +66,7 @@ class FacetAdjacency(StrictModule, NonTrainableState):
         cell_entity_set_id: str,
         facet_entity_set_id: str,
         active_mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         facets = _integer_routes("facet_ids", facet_ids)
         owners = _integer_routes("owner_cells", owner_cells)
         neighbors = _integer_routes("neighbor_cells", neighbor_cells)

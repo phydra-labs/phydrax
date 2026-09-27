@@ -9,12 +9,14 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.finite_volume._hydrostatic_grid import PreparedHydrostaticGrid
+from ...typing import parse
 
 
 ExternalModeSubcycleKind: TypeAlias = Literal["fixed-count", "adaptive-cfl"]
@@ -50,9 +52,8 @@ class ExternalModeSubcyclePolicy(StrictModule, NonTrainableState):
         maximum_substeps: int | None = None,
         target_courant: float = 0.8,
         minimum_spacing: float = 0.0,
-    ):
-        if kind not in ("fixed-count", "adaptive-cfl"):
-            raise ValueError("Unknown external-mode subcycle policy.")
+    ) -> None:
+        kind = parse(kind, ExternalModeSubcycleKind, "kind")
         fixed = int(fixed_count)
         maximum = fixed if maximum_substeps is None else int(maximum_substeps)
         courant = float(target_courant)
@@ -105,7 +106,7 @@ class ExternalModeSubcyclePolicy(StrictModule, NonTrainableState):
             minimum_spacing=minimum_spacing,
         )
 
-    def empty(self, dtype, /) -> ExternalModeSubcycleSchedule:
+    def empty(self, dtype: DTypeLike, /) -> ExternalModeSubcycleSchedule:
         return ExternalModeSubcycleSchedule(
             substep_sizes=jnp.zeros((self.maximum_substeps,), dtype=dtype),
             active_mask=jnp.zeros((self.maximum_substeps,), dtype=jnp.bool_),

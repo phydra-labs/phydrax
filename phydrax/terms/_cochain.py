@@ -10,7 +10,8 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 from phydrax.domain import BatchEvaluator, DomainComponent, DomainFunction, PointSampling
@@ -30,6 +31,7 @@ from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..domain.graph._model import _full_node_batch
 from ..graph import cochain_metric_reduce, CochainMetricReduction, CochainResidualProgram
+from ..typing import PRNGKey
 
 
 def _component_degree(component: DomainComponent, /) -> int:
@@ -106,7 +108,7 @@ class _ProgramDomainOutput(StrictModule, BatchEvaluator):
         fields: Mapping[str, DomainFunction],
         output_name: str,
         /,
-    ):
+    ) -> None:
         self.program = program
         self.fields = frozendict(fields)
         self.output_name = str(output_name)
@@ -116,7 +118,7 @@ class _ProgramDomainOutput(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         if not isinstance(batch, GraphBatch) or batch.component_kind != "nodes":
@@ -237,8 +239,8 @@ class CochainResidualTerm(AbstractSamplingTerm):
         reduction: CochainMetricReduction = "graph_mean",
         sampling_mode: str = "resample",
         fixed_batch: GraphBatch | None = None,
-        fixed_batch_key: Key[Array, ""] = DOC_KEY0,
-    ):
+        fixed_batch_key: PRNGKey = DOC_KEY0,
+    ) -> None:
         if not isinstance(component, DomainComponent):
             raise TypeError("CochainResidualTerm requires one DomainComponent.")
         if (
@@ -291,7 +293,7 @@ class CochainResidualTerm(AbstractSamplingTerm):
         reduction: CochainMetricReduction = "graph_mean",
         sampling_mode: str = "resample",
         fixed_batch: GraphBatch | None = None,
-        fixed_batch_key: Key[Array, ""] = DOC_KEY0,
+        fixed_batch_key: PRNGKey = DOC_KEY0,
     ) -> "CochainResidualTerm":
         names = (fields,) if isinstance(fields, str) else tuple(fields)
 
@@ -325,7 +327,7 @@ class CochainResidualTerm(AbstractSamplingTerm):
         reduction: CochainMetricReduction = "graph_mean",
         sampling_mode: str = "resample",
         fixed_batch: GraphBatch | None = None,
-        fixed_batch_key: Key[Array, ""] = DOC_KEY0,
+        fixed_batch_key: PRNGKey = DOC_KEY0,
     ) -> "CochainResidualTerm":
         if frozenset(field_map) != frozenset(program.input_specs):
             raise ValueError(
@@ -360,13 +362,13 @@ class CochainResidualTerm(AbstractSamplingTerm):
             fixed_batch_key=fixed_batch_key,
         )
 
-    def _sample_once(self, *, key: Key[Array, ""] = DOC_KEY0) -> GraphBatch:
+    def _sample_once(self, *, key: PRNGKey = DOC_KEY0) -> GraphBatch:
         batch = self.component.sample(self.sampling, key=key)
         if not isinstance(batch, GraphBatch):
             raise TypeError("CochainResidualTerm sampling must return a GraphBatch.")
         return batch
 
-    def sample(self, *, key: Key[Array, ""] = DOC_KEY0) -> GraphBatch:
+    def sample(self, *, key: PRNGKey = DOC_KEY0) -> GraphBatch:
         if self.sampling_mode == "fixed":
             if self.fixed_batch is None:
                 raise ValueError("sampling_mode='fixed' requires a fixed GraphBatch.")
@@ -378,7 +380,7 @@ class CochainResidualTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: GraphBatch | None = None,
         **kwargs: Any,
     ) -> Array:

@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -60,7 +61,7 @@ class PICChargeModelPlan(StrictModule, NonTrainableState):
         minimum_charge_number: int,
         maximum_charge_number: int,
         initial_charge_number: int,
-    ):
+    ) -> None:
         base = float(base_specific_charge)
         minimum = int(minimum_charge_number)
         maximum = int(maximum_charge_number)

@@ -6,11 +6,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 from phydrax.linalg import (
@@ -72,7 +75,7 @@ class TwistedKahlerDiracOperator(AbstractPseudofermionDiracOperator):
         layout: TwistedSYMCoordinateLayout,
         links: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(theory, TwistedN2SYMPlan):
             raise TypeError("theory must be TwistedN2SYMPlan.")
         if not isinstance(layout, TwistedSYMCoordinateLayout):
@@ -162,7 +165,9 @@ class TwistedKahlerDiracOperator(AbstractPseudofermionDiracOperator):
         ) / self.theory.bosonic_plan.lattice_spacing
 
     @staticmethod
-    def _transpose_action(function, template: Array, cotangent: Array, /) -> Array:
+    def _transpose_action(
+        function: Callable[[Array], Array], template: Array, cotangent: Array, /
+    ) -> Array:
         return jax.linear_transpose(function, template)(cotangent)[0]
 
     def _apply(self, vector: Array, /) -> Array:
@@ -215,7 +220,7 @@ class RegulatedTwistedDiracOperator(AbstractPseudofermionDiracOperator):
         kahler_dirac: TwistedKahlerDiracOperator,
         regulator_mass: float,
         /,
-    ):
+    ) -> None:
         if not isinstance(kahler_dirac, TwistedKahlerDiracOperator):
             raise TypeError("kahler_dirac must be TwistedKahlerDiracOperator.")
         mass = float(regulator_mass)

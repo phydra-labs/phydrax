@@ -1,4 +1,5 @@
 import hashlib
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -15,13 +16,13 @@ from phydrax.qualification import ReferenceArtifactManifest
 
 
 def _calibration_records(
-    faces,
-    calibration,
+    faces: Any,
+    calibration: Any,
     *,
-    calibration_id="fixed-reference-calibration",
-    license_id="test-calibration-license",
-    commercial_use_permitted=True,
-):
+    calibration_id: Any = "fixed-reference-calibration",
+    license_id: Any = "test-calibration-license",
+    commercial_use_permitted: Any = True,
+) -> Any:
     payload = gravothermal_calibration_payload(
         faces,
         1.0,
@@ -59,7 +60,9 @@ def _calibration_records(
     return manifest, artifact
 
 
-def _plan(*, shells=32, calibration=0.75, maximum_change=0.1, **kwargs):
+def _plan(
+    *, shells: Any = 32, calibration: Any = 0.75, maximum_change: Any = 0.1, **kwargs: Any
+) -> Any:
     faces = jnp.linspace(0.0, 8.0, shells + 1)
     calibration_id = kwargs.pop("calibration_id", "fixed-reference-calibration")
     manifest = kwargs.pop("calibration_manifest", None)
@@ -85,7 +88,7 @@ def _plan(*, shells=32, calibration=0.75, maximum_change=0.1, **kwargs):
     )
 
 
-def test_plummer_sphere_has_discretely_small_spherical_equilibrium_residual():
+def test_plummer_sphere_has_discretely_small_spherical_equilibrium_residual() -> None:
     plan = _plan(shells=256)
     radius = plan.radial_centers
     total_mass = 1.0
@@ -109,7 +112,7 @@ def test_plummer_sphere_has_discretely_small_spherical_equilibrium_residual():
     assert float(jnp.max(relative[4:-4])) < 0.03
 
 
-def test_underflow_zero_conductive_increment_preserves_dispersion_bit_exactly():
+def test_underflow_zero_conductive_increment_preserves_dispersion_bit_exactly() -> None:
     plan = _plan()
     radius = plan.radial_centers
     density = 3.0 / (4.0 * jnp.pi) * (1.0 + radius**2) ** (-2.5)
@@ -131,7 +134,7 @@ def test_underflow_zero_conductive_increment_preserves_dispersion_bit_exactly():
     )
 
 
-def test_conduction_moves_energy_outward_and_closes_global_energy_ledger():
+def test_conduction_moves_energy_outward_and_closes_global_energy_ledger() -> None:
     plan = _plan(shells=24)
     density = jnp.exp(-plan.radial_centers / 3.0) + 0.1
     dispersion = 1.0 + 2.0 * jnp.exp(-((plan.radial_centers / 1.5) ** 2))
@@ -160,7 +163,7 @@ def test_conduction_moves_energy_outward_and_closes_global_energy_ledger():
     )
 
 
-def test_fixed_calibration_scales_conductivity_and_preserves_boundary_contract():
+def test_fixed_calibration_scales_conductivity_and_preserves_boundary_contract() -> None:
     first = _plan(calibration=0.5)
     second = _plan(calibration=1.0)
     density = jnp.exp(-first.radial_centers / 2.0) + 0.2
@@ -178,7 +181,7 @@ def test_fixed_calibration_scales_conductivity_and_preserves_boundary_contract()
     assert float(first_result.diagnostics.boundary_energy_transfer) == 0.0
 
 
-def test_large_conduction_step_rolls_back_atomically():
+def test_large_conduction_step_rolls_back_atomically() -> None:
     plan = _plan(maximum_change=0.01)
     density = jnp.ones((plan.shell_count,))
     dispersion = jnp.linspace(3.0, 1.0, plan.shell_count)
@@ -195,7 +198,9 @@ def test_large_conduction_step_rolls_back_atomically():
         np.testing.assert_array_equal(actual, expected)
 
 
-def test_nonuniform_radial_geometry_uses_resistance_weighting_and_exact_quadratic_gradient():
+def test_nonuniform_radial_geometry_uses_resistance_weighting_and_exact_quadratic_gradient() -> (
+    None
+):
     faces = jnp.asarray((0.0, 0.1, 0.4, 1.0, 2.0))
     manifest, artifact = _calibration_records(
         faces, 0.75, calibration_id="nonuniform-calibration"
@@ -249,7 +254,7 @@ def test_nonuniform_radial_geometry_uses_resistance_weighting_and_exact_quadrati
     )
 
 
-def test_nonhydrostatic_input_is_rejected_and_rolled_back():
+def test_nonhydrostatic_input_is_rejected_and_rolled_back() -> None:
     plan = _plan()
     radius = plan.radial_centers
     density = 3.0 / (4.0 * jnp.pi) * (1.0 + radius**2) ** (-2.5)
@@ -273,7 +278,7 @@ def test_nonhydrostatic_input_is_rejected_and_rolled_back():
         np.testing.assert_array_equal(actual, expected)
 
 
-def test_structural_nonconvergence_rolls_back_conductive_update():
+def test_structural_nonconvergence_rolls_back_conductive_update() -> None:
     plan = _plan()
     radius = plan.radial_centers
     density = 3.0 / (4.0 * jnp.pi) * (1.0 + radius**2) ** (-2.5)
@@ -295,7 +300,7 @@ def test_structural_nonconvergence_rolls_back_conductive_update():
         np.testing.assert_array_equal(actual, expected)
 
 
-def test_reflecting_center_contract_rejects_nonzero_inner_radius():
+def test_reflecting_center_contract_rejects_nonzero_inner_radius() -> None:
     with pytest.raises(ValueError, match="payload inputs are invalid"):
         gravothermal_calibration_payload(
             jnp.asarray((0.1, 0.2, 0.4, 0.8)),
@@ -315,12 +320,14 @@ def test_reflecting_center_contract_rejects_nonzero_inner_radius():
         ("boundary_condition", "open", "reflecting-center-zero-flux-outer"),
     ),
 )
-def test_gravothermal_profile_refuses_out_of_regime_claims(keyword, value, message):
+def test_gravothermal_profile_refuses_out_of_regime_claims(
+    keyword: Any, value: Any, message: Any
+) -> None:
     with pytest.raises(ValueError, match=message):
         _plan(**{keyword: value})
 
 
-def test_calibration_requested_use_denial_is_fail_closed():
+def test_calibration_requested_use_denial_is_fail_closed() -> None:
     faces = jnp.linspace(0.0, 8.0, 33)
     manifest, artifact = _calibration_records(faces, 0.75, commercial_use_permitted=False)
     with pytest.raises(PermissionError, match="commercial-use-not-permitted"):
@@ -331,7 +338,7 @@ def test_calibration_requested_use_denial_is_fail_closed():
         )
 
 
-def test_calibration_value_substitution_fails_exact_digest_and_size_contract():
+def test_calibration_value_substitution_fails_exact_digest_and_size_contract() -> None:
     faces = jnp.linspace(0.0, 8.0, 33)
     manifest, artifact = _calibration_records(faces, 0.75)
     with pytest.raises(ValueError, match="mismatch"):
@@ -342,7 +349,7 @@ def test_calibration_value_substitution_fails_exact_digest_and_size_contract():
         )
 
 
-def test_calibration_envelope_license_and_lineage_must_match_manifest():
+def test_calibration_envelope_license_and_lineage_must_match_manifest() -> None:
     faces = jnp.linspace(0.0, 8.0, 33)
     manifest, artifact = _calibration_records(faces, 0.75)
     substituted = ScientificArtifactEnvelope(

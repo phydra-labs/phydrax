@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from numbers import Real
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 from phydrax.domain import DomainFunction
@@ -21,6 +22,10 @@ from ._validation import (
     validate_matrix_value,
     validate_vector_value,
 )
+
+
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
 
 
 def _coerce_entropy_base(base: ArrayLike, /) -> Array:
@@ -65,10 +70,10 @@ def _density_eigh(value: Any, /, *, role: str) -> tuple[Array, Array]:
 class _PurityCallable(StrictModule):
     density: DomainFunction
 
-    def __init__(self, density: DomainFunction):
+    def __init__(self, density: DomainFunction) -> None:
         self.density = density
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         density = validate_matrix_value(
             self.density.func(*args, key=key, **kwargs),
             role="density operator",
@@ -80,11 +85,11 @@ class _EntropyCallable(StrictModule):
     density: DomainFunction
     base: Array
 
-    def __init__(self, density: DomainFunction, base: Array):
+    def __init__(self, density: DomainFunction, base: Array) -> None:
         self.density = density
         self.base = base
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         eigenvalues, _ = _density_eigh(
             self.density.func(*args, key=key, **kwargs),
             role="density operator",
@@ -111,13 +116,13 @@ class _StateFidelityCallable(StrictModule):
         right: DomainFunction,
         left_positions: tuple[int, ...],
         right_positions: tuple[int, ...],
-    ):
+    ) -> None:
         self.left = left
         self.right = right
         self.left_positions = left_positions
         self.right_positions = right_positions
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         left_args = tuple(args[index] for index in self.left_positions)
         right_args = tuple(args[index] for index in self.right_positions)
         left = validate_vector_value(
@@ -147,13 +152,13 @@ class _DensityFidelityCallable(StrictModule):
         right: DomainFunction,
         left_positions: tuple[int, ...],
         right_positions: tuple[int, ...],
-    ):
+    ) -> None:
         self.left = left
         self.right = right
         self.left_positions = left_positions
         self.right_positions = right_positions
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         left_args = tuple(args[index] for index in self.left_positions)
         right_args = tuple(args[index] for index in self.right_positions)
         left_eigenvalues, left_eigenvectors = _density_eigh(
@@ -194,13 +199,13 @@ class _TraceDistanceCallable(StrictModule):
         right: DomainFunction,
         left_positions: tuple[int, ...],
         right_positions: tuple[int, ...],
-    ):
+    ) -> None:
         self.left = left
         self.right = right
         self.left_positions = left_positions
         self.right_positions = right_positions
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         left_args = tuple(args[index] for index in self.left_positions)
         right_args = tuple(args[index] for index in self.right_positions)
         left = validate_matrix_value(

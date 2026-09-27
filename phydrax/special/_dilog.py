@@ -108,7 +108,7 @@ def _dilog_array(z: Array, /) -> Array:
 
 
 @_dilog_array.defjvp
-def _dilog_jvp(primals, tangents):
+def _dilog_jvp(primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:
     (z,) = primals
     (z_tangent,) = tangents
     value, derivative = _dilog_value_derivative(z)

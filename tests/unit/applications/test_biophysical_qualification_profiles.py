@@ -10,7 +10,7 @@ from phydrax.applications._biophysical_qualification import (
 )
 
 
-def test_biophysical_profiles_are_narrow_unreleased_and_evidence_free():
+def test_biophysical_profiles_are_narrow_unreleased_and_evidence_free() -> None:
     profiles = biophysical_candidate_profiles()
 
     assert {
@@ -28,7 +28,7 @@ def test_biophysical_profiles_are_narrow_unreleased_and_evidence_free():
     assert all(len(profile.support_tuples) == 1 for profile in profiles)
 
 
-def test_coordinate_profile_refuses_an_equilibrium_claim():
+def test_coordinate_profile_refuses_an_equilibrium_claim() -> None:
     profile = biophysical_candidate_profile(
         "protein.coordinate-proposal.fixed-construct-standard-chemistry.canonical"
     )
@@ -43,6 +43,6 @@ def test_coordinate_profile_refuses_an_equilibrium_claim():
     }
 
 
-def test_unknown_biophysical_profile_is_rejected():
+def test_unknown_biophysical_profile_is_rejected() -> None:
     with pytest.raises(ValueError, match="Unknown biophysical capability profile"):
         biophysical_candidate_profile("protein-folding-qualified")

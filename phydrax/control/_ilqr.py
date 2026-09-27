@@ -15,14 +15,17 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..dynamics import DiscreteStepContext, StateLayout, TimeGrid
+from ._constraints import SampledControlFeasibility
+from ._cost import SampledControlLoss
 from ._dynamics import DifferentialControlDynamics, DiscreteControlDynamics
 from ._parameterization import AbstractControlParameterization
 from ._problem import _identifier, ControlProblem
@@ -54,7 +57,7 @@ class DifferentialControlFlow(StrictModule):
     step: DifferentialFlowStep
     flow_id: str = eqx.field(static=True)
 
-    def __init__(self, step: DifferentialFlowStep, /, *, flow_id: str):
+    def __init__(self, step: DifferentialFlowStep, /, *, flow_id: str) -> None:
         if not callable(step):
             raise TypeError("DifferentialControlFlow step must be callable.")
         self.step = step
@@ -100,7 +103,7 @@ class ILQRPolicy(AbstractControlParameterization, NonTrainableState):
         state_layout: StateLayout,
         control_shape: tuple[int, ...],
         policy_id: str,
-    ):
+    ) -> None:
         if not isinstance(time_grid, TimeGrid):
             raise TypeError("ILQRPolicy time_grid must be a TimeGrid.")
         states = jnp.asarray(nominal_states)
@@ -293,11 +296,11 @@ class ILQRResult(StrictModule):
         return self.control_result.trajectory
 
     @property
-    def sampled_loss(self):
+    def sampled_loss(self) -> SampledControlLoss:
         return self.control_result.sampled_loss
 
     @property
-    def feasibility(self):
+    def feasibility(self) -> SampledControlFeasibility:
         return self.control_result.feasibility
 
     @property
@@ -416,7 +419,7 @@ def _trajectory_cost(
     controls: Array,
     /,
 ) -> tuple[Array, Array]:
-    def running_term(time: Array, duration: Array, state: Array, control: Array):
+    def running_term(time: Array, duration: Array, state: Array, control: Array) -> Array:
         if problem.running_cost is None:
             value = jnp.asarray(0.0, dtype=states.dtype)
         else:
@@ -503,7 +506,7 @@ def _local_model(
         anchor: Array,
         nominal_next: Array,
         nominal_control: Array,
-    ):
+    ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
         nominal = jnp.concatenate((basis_state, nominal_control.reshape((control_size,))))
 
         def flattened_flow(joint: Array) -> Array:
@@ -606,7 +609,9 @@ def _local_model(
     )
     terminal_hessian = 0.5 * (terminal_hessian + terminal_hessian.T)
 
-    def adjoint_step(costate: Array, inputs: tuple[Array, Array, Array, Array]):
+    def adjoint_step(
+        costate: Array, inputs: tuple[Array, Array, Array, Array]
+    ) -> tuple[Array, Array]:
         dynamics_state_step, dynamics_control_step, state_gradient, control_gradient = (
             inputs
         )

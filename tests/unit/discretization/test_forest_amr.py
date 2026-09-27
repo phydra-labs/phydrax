@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import itertools
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -11,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _grid(shape, *, periodic=None, upper=None):
+def _grid(shape: Any, *, periodic: Any = None, upper: Any = None) -> Any:
     periodic_ = (False,) * len(shape) if periodic is None else periodic
     upper_ = tuple(float(value) for value in shape) if upper is None else upper
     return phx.discretization.TensorGridPlan(
@@ -23,7 +25,14 @@ def _grid(shape, *, periodic=None, upper=None):
     ).prepare(jnp.asarray([[0.0] * len(shape), list(upper_)]))
 
 
-def _plan(shape, *, maximum_level, periodic=None, balance="face", maps=None):
+def _plan(
+    shape: Any,
+    *,
+    maximum_level: Any,
+    periodic: Any = None,
+    balance: Any = "face",
+    maps: Any = None,
+) -> Any:
     return phx.discretization.ForestPlan(
         _grid(shape, periodic=periodic),
         maximum_level=maximum_level,
@@ -33,19 +42,19 @@ def _plan(shape, *, maximum_level, periodic=None, balance="face", maps=None):
     )
 
 
-def _marks(topology, values):
+def _marks(topology: Any, values: Any) -> Any:
     marks = np.zeros((topology.signature.leaf_capacity,), dtype=np.int8)
     marks[: topology.leaf_count] = values
     return marks
 
 
-def _refine_slots(compiler, topology, slots):
+def _refine_slots(compiler: Any, topology: Any, slots: Any) -> Any:
     values = np.zeros((topology.leaf_count,), dtype=np.int8)
     values[list(slots)] = 1
     return compiler.adapt(topology, _marks(topology, values))
 
 
-def _finest_boxes(topology):
+def _finest_boxes(topology: Any) -> Any:
     plan = topology.plan
     levels = topology.leaf_levels()
     shift = plan.maximum_level - levels
@@ -55,7 +64,7 @@ def _finest_boxes(topology):
     return levels, lower, upper, extent
 
 
-def _contact_dimension(topology, first, second):
+def _contact_dimension(topology: Any, first: Any, second: Any) -> Any:
     """Largest contact dimension of two leaves over periodic images (-1: apart)."""
     levels, lower, upper, extent = _finest_boxes(topology)
     best = -1
@@ -80,7 +89,9 @@ def _contact_dimension(topology, first, second):
         ((1, 1, 2), (True, False, False), "edge"),
     ],
 )
-def test_adversarial_refinement_closes_to_two_to_one_balance(shape, periodic, stencil):
+def test_adversarial_refinement_closes_to_two_to_one_balance(
+    shape: Any, periodic: Any, stencil: Any
+) -> None:
     plan = _plan(
         shape,
         maximum_level=5 if len(shape) == 2 else 4,
@@ -93,6 +104,7 @@ def test_adversarial_refinement_closes_to_two_to_one_balance(shape, periodic, st
     point = (target // 2)[None, :]
     closures = 0
     for _ in range(plan.maximum_level):
+        # ty: ignore[invalid-argument-type]
         slot = topology.locate_cells([plan.maximum_level], point)
         result = _refine_slots(compiler, topology, slot)
         assert result.status.successful
@@ -111,7 +123,7 @@ def test_adversarial_refinement_closes_to_two_to_one_balance(shape, periodic, st
             )
 
 
-def test_face_routes_list_each_shared_face_once_and_mark_hanging_faces():
+def test_face_routes_list_each_shared_face_once_and_mark_hanging_faces() -> None:
     plan = _plan((2, 1), maximum_level=3, periodic=(True, False))
     compiler = phx.discretization.ForestTopologyCompiler(plan)
     topology = compiler.initialize(1).topology
@@ -153,7 +165,7 @@ def test_face_routes_list_each_shared_face_once_and_mark_hanging_faces():
     )
 
 
-def test_parent_child_transfer_conserves_content_and_constants():
+def test_parent_child_transfer_conserves_content_and_constants() -> None:
     plan = _plan((2, 2), maximum_level=4, periodic=(True, True))
     compiler = phx.discretization.ForestTopologyCompiler(plan)
     source = compiler.initialize(2).topology
@@ -191,7 +203,7 @@ def test_parent_child_transfer_conserves_content_and_constants():
     )
 
 
-def test_refine_then_coarsen_round_trip_restores_leaves_and_averages():
+def test_refine_then_coarsen_round_trip_restores_leaves_and_averages() -> None:
     plan = _plan((2, 1), maximum_level=3)
     compiler = phx.discretization.ForestTopologyCompiler(plan)
     source = compiler.initialize(1).topology
@@ -219,7 +231,7 @@ def test_refine_then_coarsen_round_trip_restores_leaves_and_averages():
     np.testing.assert_allclose(down.values, values, rtol=0.0, atol=1e-15)
 
 
-def test_adaptation_refuses_leaf_capacity_overflow_atomically():
+def test_adaptation_refuses_leaf_capacity_overflow_atomically() -> None:
     plan = phx.discretization.ForestPlan(
         _grid((2, 2)),
         maximum_level=3,
@@ -237,7 +249,7 @@ def test_adaptation_refuses_leaf_capacity_overflow_atomically():
         compiler.adapt(source, _marks(source, [2, 0, 0, 0]))
 
 
-def test_subcycled_reflux_restores_exact_conservation():
+def test_subcycled_reflux_restores_exact_conservation() -> None:
     plan = _plan((2, 2), maximum_level=3, periodic=(True, True))
     compiler = phx.discretization.ForestTopologyCompiler(plan)
     topology = _refine_slots(compiler, compiler.initialize(1).topology, (0, 1)).topology
@@ -247,16 +259,16 @@ def test_subcycled_reflux_restores_exact_conservation():
     minus = jnp.where(workset.face_valid, workset.face_minus, 0)
     plus = jnp.where(workset.face_valid, workset.face_plus, 0)
 
-    def flux(state):
+    def flux(state: Any) -> Any:
         speed = velocity[jnp.where(workset.face_valid, workset.face_axes, 0)]
         upwind = jnp.where(speed > 0.0, state[minus], state[plus])
         return jnp.where(workset.face_valid, speed * upwind * geometry.face_measures, 0.0)
 
-    def rate(face_flux):
+    def rate(face_flux: Any) -> Any:
         change = jnp.zeros_like(geometry.volumes).at[minus].add(-face_flux)
         return change.at[plus].add(face_flux) / geometry.volumes
 
-    def content(state):
+    def content(state: Any) -> Any:
         return jnp.sum(jnp.where(workset.leaf_valid, state * geometry.volumes, 0.0))
 
     fine = workset.leaf_valid & (workset.leaf_levels == topology.leaf_levels().max())
@@ -282,8 +294,8 @@ def test_subcycled_reflux_restores_exact_conservation():
     np.testing.assert_allclose(content(corrected), content(state), rtol=0.0, atol=1e-15)
 
 
-def test_mapped_roots_transfer_conserves_chart_volumes():
-    def shear(points, time, args):
+def test_mapped_roots_transfer_conserves_chart_volumes() -> None:
+    def shear(points: Any, time: Any, args: Any) -> Any:
         del time, args
         values = jnp.asarray(points)
         return jnp.stack(
@@ -309,7 +321,7 @@ def test_mapped_roots_transfer_conserves_chart_volumes():
     assert bool(transferred.successful)
 
 
-def test_cochain_prolongation_commutes_and_restriction_is_its_left_inverse():
+def test_cochain_prolongation_commutes_and_restriction_is_its_left_inverse() -> None:
     plan = _plan((2, 1), maximum_level=3, periodic=(False, True))
     compiler = phx.discretization.ForestTopologyCompiler(plan)
     coarse = _refine_slots(compiler, compiler.initialize(1).topology, (0, 3)).topology
@@ -346,7 +358,7 @@ def test_cochain_prolongation_commutes_and_restriction_is_its_left_inverse():
         phx.discretization.ForestCochainTransfer(fine_complex, coarse_complex)
 
 
-def test_vertex_interpolation_reproduces_linear_fields_across_hanging_vertices():
+def test_vertex_interpolation_reproduces_linear_fields_across_hanging_vertices() -> None:
     plan = _plan((2, 1), maximum_level=3)
     compiler = phx.discretization.ForestTopologyCompiler(plan)
     source = _refine_slots(compiler, compiler.initialize(1).topology, (0, 3)).topology
@@ -367,7 +379,7 @@ def test_vertex_interpolation_reproduces_linear_fields_across_hanging_vertices()
     )
     assert transfer.preserves_constants and transfer.preserves_linear
 
-    def linear(points):
+    def linear(points: Any) -> Any:
         return 0.5 + 2.0 * points[:, 0] - 3.0 * points[:, 1]
 
     source_points = source_layout.reference_coordinates()
@@ -387,7 +399,7 @@ def test_vertex_interpolation_reproduces_linear_fields_across_hanging_vertices()
     )
 
 
-def test_cut_embedding_assigns_components_to_containing_leaves():
+def test_cut_embedding_assigns_components_to_containing_leaves() -> None:
     plan = phx.discretization.ForestPlan(
         _grid((2, 2), upper=(1.0, 1.0)),
         maximum_level=2,

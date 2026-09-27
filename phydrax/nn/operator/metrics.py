@@ -5,15 +5,23 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, TypedDict, Unpack
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .data import FunctionSamples
 
 
 OperatorReduction = Literal["none", "mean", "sum"]
+
+
+class _SobolevLossOptions(TypedDict, total=False):
+    derivative_weights: Sequence[float] | None
+    relative: bool
+    squared: bool
+    eps: float
+    reduction: OperatorReduction
 
 
 def _sample_layout(values: Array, query: FunctionSamples, /) -> tuple[int, bool]:
@@ -211,7 +219,7 @@ def operator_h1_loss(
     target: Array,
     query: FunctionSamples,
     /,
-    **kwargs,
+    **kwargs: Unpack[_SobolevLossOptions],
 ) -> Array:
     """Convenience wrapper for first-order Sobolev error."""
     return operator_sobolev_loss(

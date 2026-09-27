@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -18,7 +21,7 @@ def _attention_graph() -> phx.graph.GraphIR:
     )
 
 
-def test_graph_attention_operator_uses_edge_bias_softmax():
+def test_graph_attention_operator_uses_edge_bias_softmax() -> None:
     graph = _attention_graph()
     model = phx.graph.GraphAttentionOperator(
         logit_fn=lambda edges, sent, recv, globals_: jnp.zeros((sent.shape[0],)),
@@ -32,7 +35,7 @@ def test_graph_attention_operator_uses_edge_bias_softmax():
     assert jnp.allclose(out.nodes["attn"][:, 0], jnp.array([0.0, 0.0, 2.5]))
 
 
-def test_graph_attention_operator_masks_padding_edges():
+def test_graph_attention_operator_masks_padding_edges() -> None:
     graph = _attention_graph().replace(
         edge_mask=jnp.array([True, False]),
         validate=False,
@@ -49,10 +52,10 @@ def test_graph_attention_operator_masks_padding_edges():
     assert jnp.allclose(out.nodes["attn"][:, 0], jnp.array([0.0, 0.0, 1.0]))
 
 
-def test_graph_attention_operator_supports_multihead_logits():
+def test_graph_attention_operator_supports_multihead_logits() -> None:
     graph = _attention_graph()
 
-    def logits(edges, sent, recv, globals_):
+    def logits(edges: Any, sent: Any, recv: Any, globals_: Any) -> Any:
         del edges, recv, globals_
         zeros = jnp.zeros((sent.shape[0],))
         return jnp.stack([zeros, zeros + 1.0], axis=1)
@@ -68,7 +71,7 @@ def test_graph_attention_operator_supports_multihead_logits():
     assert jnp.allclose(out.nodes["attn"][2], jnp.array([2.0, 2.0]))
 
 
-def test_graph_attention_operator_can_mask_to_query_targets():
+def test_graph_attention_operator_can_mask_to_query_targets() -> None:
     bundle = phx.graph.radius_query_graph(
         jnp.array([[0.0], [1.0]]),
         jnp.array([[0.5]]),
@@ -87,7 +90,7 @@ def test_graph_attention_operator_can_mask_to_query_targets():
     assert jnp.allclose(out.nodes["attn"][:, 0], jnp.array([0.0, 0.0, 2.0]))
 
 
-def test_graph_attention_operator_wraps_as_graph_model():
+def test_graph_attention_operator_wraps_as_graph_model() -> None:
     bundle = phx.graph.radius_query_graph(
         jnp.array([[0.0], [1.0]]),
         jnp.array([[0.5]]),
@@ -102,7 +105,7 @@ def test_graph_attention_operator_wraps_as_graph_model():
     )
 
     @domain.Function("graph")
-    def u(point):
+    def u(point: Any) -> Any:
         return point.get("features")[0]
 
     model = domain.GraphModel(

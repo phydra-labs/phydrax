@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -17,11 +20,11 @@ from phydrax.domain import (
 from phydrax.operators.differential import dt_n, partial_t
 
 
-def test_partial_t_time_only_scalar():
+def test_partial_t_time_only_scalar() -> None:
     dom = TimeInterval(0.0, 1.0)
 
     @dom.Function("t")
-    def f(t):
+    def f(t: Any) -> Any:
         return t**2
 
     t = jnp.linspace(0.0, 1.0, 7)
@@ -30,11 +33,11 @@ def test_partial_t_time_only_scalar():
     assert jnp.allclose(out, 2.0 * t)
 
 
-def test_partial_t_time_only_vector():
+def test_partial_t_time_only_vector() -> None:
     dom = TimeInterval(0.0, 1.0)
 
     @dom.Function("t")
-    def f(t):
+    def f(t: Any) -> Any:
         return jnp.stack([t**2, t**3], axis=-1)
 
     t = jnp.linspace(0.0, 1.0, 5)
@@ -44,13 +47,13 @@ def test_partial_t_time_only_vector():
     assert jnp.allclose(out, expected)
 
 
-def test_partial_t_spacetime_broadcasts_over_space(sample_batch):
+def test_partial_t_spacetime_broadcasts_over_space(sample_batch: Any) -> None:
     dom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     ) @ TimeInterval(0.0, 1.0)
 
     @dom.Function("t")
-    def u(t):
+    def u(t: Any) -> Any:
         return jnp.sin(t)
 
     component = dom.component()
@@ -62,21 +65,21 @@ def test_partial_t_spacetime_broadcasts_over_space(sample_batch):
     assert jnp.allclose(out, jnp.cos(t)[None, :])
 
 
-def test_partial_t_preserves_metadata():
+def test_partial_t_preserves_metadata() -> None:
     dom = TimeInterval(0.0, 1.0)
     u = dom.Function("t")(lambda t: t**2).with_metadata(**{"scale": 3})
     assert partial_t(u).metadata == u.metadata
 
 
-def test_partial_t_product_skips_space_only_factor():
+def test_partial_t_product_skips_space_only_factor() -> None:
     dom = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x")
-    def fx(x):
+    def fx(x: Any) -> Any:
         return x[0] + 2.0
 
     @dom.Function("t")
-    def gt(t):
+    def gt(t: Any) -> Any:
         return t**3
 
     u = fx * gt
@@ -92,15 +95,15 @@ def test_partial_t_product_skips_space_only_factor():
     assert jnp.allclose(out, expected, atol=1e-6)
 
 
-def test_dt_n_quotient_with_time_independent_denominator():
+def test_dt_n_quotient_with_time_independent_denominator() -> None:
     dom = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x")
-    def fx(x):
+    def fx(x: Any) -> Any:
         return x[0] + 2.0
 
     @dom.Function("t")
-    def gt(t):
+    def gt(t: Any) -> Any:
         return t**3
 
     u = gt / fx
@@ -116,15 +119,15 @@ def test_dt_n_quotient_with_time_independent_denominator():
     assert jnp.allclose(out, expected, atol=1e-6)
 
 
-def test_partial_t_quotient_with_time_independent_numerator():
+def test_partial_t_quotient_with_time_independent_numerator() -> None:
     dom = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x")
-    def fx(x):
+    def fx(x: Any) -> Any:
         return x[0] + 2.0
 
     @dom.Function("t")
-    def gt(t):
+    def gt(t: Any) -> Any:
         return 1.0 + t
 
     u = fx / gt
@@ -140,11 +143,11 @@ def test_partial_t_quotient_with_time_independent_numerator():
     assert jnp.allclose(out, expected, atol=1e-6)
 
 
-def test_partial_t_ad_engine_jvp_matches_default():
+def test_partial_t_ad_engine_jvp_matches_default() -> None:
     dom = TimeInterval(0.0, 1.0)
 
     @dom.Function("t")
-    def f(t):
+    def f(t: Any) -> Any:
         return jnp.sin(t) + t**3
 
     t = jnp.linspace(0.0, 1.0, 11)
@@ -154,11 +157,11 @@ def test_partial_t_ad_engine_jvp_matches_default():
     assert jnp.allclose(out_jvp, out_ref, atol=1e-6)
 
 
-def test_dt_n_ad_engine_jvp_matches_default():
+def test_dt_n_ad_engine_jvp_matches_default() -> None:
     dom = TimeInterval(0.0, 1.0)
 
     @dom.Function("t")
-    def f(t):
+    def f(t: Any) -> Any:
         return t**4 + 2.0 * t
 
     t = jnp.linspace(0.0, 1.0, 9)
@@ -168,11 +171,11 @@ def test_dt_n_ad_engine_jvp_matches_default():
     assert jnp.allclose(out_jvp, out_ref, atol=1e-6)
 
 
-def test_dt_n_ad_engine_requires_ad_backend():
+def test_dt_n_ad_engine_requires_ad_backend() -> None:
     dom = TimeInterval(0.0, 1.0)
 
     @dom.Function("t")
-    def f(t):
+    def f(t: Any) -> Any:
         return t**3
 
     with pytest.raises(ValueError, match="backend='ad'"):

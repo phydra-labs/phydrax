@@ -11,7 +11,9 @@ Only evaluate_dfn_entry_gate consumes release trust and purpose-signed records.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any, cast, Self, TYPE_CHECKING
 
 from ..._fingerprint import canonical_fingerprint
 from ...qualification import ReferenceArtifactManifest
@@ -26,16 +28,26 @@ from ...qualification._trust import SignedQualificationRecord
 from ._rights import ReferenceRightsAttestation
 
 
+if TYPE_CHECKING:
+    from ...qualification._registry import CapabilityProfile, ReleaseIndex, SupportTuple
+    from ...qualification._trust import (
+        AsymmetricReleaseTrustPolicy,
+        QualificationRoleTrust,
+    )
+    from ._qualification import BatteryExpansionGateDecision
+    from ._release import BatteryReleaseRecord
+
+
 _MATCH_AXES = ("parameters", "geometry", "initialization", "hold", "output")
 
 
-def _identifier(value):
+def _identifier(value: object) -> str:
     if type(value) is not str or not value or value != value.strip():
         raise ValueError("Entry identities must be nonempty canonical strings.")
     return value
 
 
-def _numbers(values, name, *, nonnegative=False):
+def _numbers(values: tuple[float, ...], name: str, *, nonnegative: bool = False) -> None:
     if (
         type(values) is not tuple
         or not values
@@ -66,7 +78,7 @@ class DfnEntryPolicy:
     issued_at: int
     expires_at: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _identifier(self.support_tuple_id)
         _identifier(self.source_build_id)
         _numbers(self.scales, "Observable SI scales")
@@ -114,7 +126,7 @@ class DfnEntryPolicy:
         ):
             raise ValueError("Policy validity interval is invalid.")
 
-    def to_record(self):
+    def to_record(self) -> dict[str, object]:
         return {
             "kind": "battery-dfn-two-reference-entry-policy",
             "support_tuple_id": self.support_tuple_id,
@@ -130,7 +142,7 @@ class DfnEntryPolicy:
         }
 
     @property
-    def policy_id(self):
+    def policy_id(self) -> str:
         return canonical_fingerprint(self.to_record())
 
 
@@ -150,7 +162,7 @@ class DfnReferenceComparison:
     rights: ReferenceRightsAttestation
     rights_signature: SignedQualificationRecord
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _identifier(self.engine_id)
         _identifier(self.runtime_family)
         if not isinstance(self.manifest, ReferenceArtifactManifest):
@@ -193,7 +205,7 @@ class DfnReferenceComparison:
         for value in self.discretization_ids:
             _identifier(value)
 
-    def to_record(self):
+    def to_record(self) -> dict[str, object]:
         return {
             "engine_id": self.engine_id,
             "runtime_family": self.runtime_family,
@@ -222,7 +234,7 @@ class DfnEntryAudit:
     observation_signature: SignedQualificationRecord
     evidence_signature: SignedQualificationRecord
 
-    def to_record(self):
+    def to_record(self) -> dict[str, object]:
         return {
             "name": self.name,
             "criterion": self.criterion.to_record(),
@@ -236,7 +248,7 @@ class DfnEntryAudit:
         }
 
     @classmethod
-    def from_record(cls, record):
+    def from_record(cls, record: Mapping[str, Any]) -> Self:
         return cls(
             record["name"],
             QualificationCriterion.from_record(record["criterion"]),
@@ -266,7 +278,7 @@ class DfnEntryAssessment:
     decision_signature: SignedQualificationRecord | None = None
     audits: tuple[DfnEntryAudit, ...] = ()
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.policy, DfnEntryPolicy):
             raise TypeError("Entry policy must be typed and precommitted.")
         if (
@@ -314,7 +326,7 @@ class DfnEntryAssessment:
         for raw in self.raw_artifact_ids:
             _identifier(raw)
 
-    def observation_record(self):
+    def observation_record(self) -> dict[str, object]:
         return {
             "kind": "battery-dfn-two-reference-assessment",
             "policy_id": self.policy.policy_id,
@@ -328,17 +340,17 @@ class DfnEntryAssessment:
         }
 
     @property
-    def observation_id(self):
+    def observation_id(self) -> str:
         return canonical_fingerprint(self.observation_record())
 
-    def to_record(self):
+    def to_record(self) -> dict[str, object]:
         return {
             **self.observation_record(),
             "audits": [audit.to_record() for audit in self.audits],
         }
 
     @property
-    def assessment_id(self):
+    def assessment_id(self) -> str:
         return canonical_fingerprint(self.to_record())
 
 
@@ -355,7 +367,7 @@ class DfnReferenceConsensus:
     cross_reference_error: float | None
     robust_lower_bound: float | None
 
-    def to_record(self):
+    def to_record(self) -> dict[str, object]:
         return {
             "kind": "battery-dfn-reference-consensus",
             "assessment_id": self.assessment_id,
@@ -378,7 +390,12 @@ def evaluate_reference_consensus(
     policy, refs = assessment.policy, assessment.references
     intervals, self_errors = [], []
 
-    def result(reason, eligible=False, conclusive=False, cross=None):
+    def result(
+        reason: str,
+        eligible: bool = False,
+        conclusive: bool = False,
+        cross: float | None = None,
+    ) -> DfnReferenceConsensus:
         return DfnReferenceConsensus(
             assessment.assessment_id,
             eligible,
@@ -423,7 +440,10 @@ def evaluate_reference_consensus(
             or fine_gap > policy.contraction_limit * coarse_gap
         ):
             return result("reference-self-convergence-inconclusive")
-        declared = dict(reference.manifest.uncertainty)
+        manifest_uncertainty = reference.manifest.uncertainty
+        if manifest_uncertainty is None:
+            return result("reference-uncertainty-coverage-incomplete")
+        declared = dict(manifest_uncertainty)
         if any(observable not in declared for _, observable, _ in policy.samples):
             return result("reference-uncertainty-coverage-incomplete")
         for (_, observable, _), mid, fine, uncertainty in zip(
@@ -468,13 +488,13 @@ def evaluate_reference_consensus(
 
 def evaluate_dfn_entry_gate(
     *,
-    release_index,
-    trust_policy,
-    marquis_profile_id,
-    marquis_support,
+    release_index: ReleaseIndex | None,
+    trust_policy: AsymmetricReleaseTrustPolicy | None,
+    marquis_profile_id: str,
+    marquis_support: SupportTuple,
     assessment: DfnEntryAssessment | None,
     at_time: int,
-):
+) -> BatteryExpansionGateDecision:
     """Authenticate policy, execution, review, rights and decision against live SPMe.
 
     No existing DFN-entry profile is required: this decision is its prerequisite,
@@ -486,7 +506,7 @@ def evaluate_dfn_entry_gate(
     from ._release import BatteryReleaseRecord
     from ._validity import MARQUIS_2019_SPME_ENVELOPE
 
-    def refusal(reason):
+    def refusal(reason: str) -> BatteryExpansionGateDecision:
         return BatteryExpansionGateDecision(False, False, reason, ())
 
     if type(at_time) is not int or not 0 <= at_time <= 2**63 - 1:
@@ -499,6 +519,8 @@ def evaluate_dfn_entry_gate(
     if not isinstance(assessment, DfnEntryAssessment):
         return refusal("two-reference-assessment-missing")
     try:
+        if release_index is None:
+            return refusal("dfn-authentication-or-rights-inconclusive")
         profile = require_profile(
             release_index,
             marquis_profile_id,
@@ -534,7 +556,9 @@ def evaluate_dfn_entry_gate(
             role="criterion-approver",
             at_time=at_time,
         )
-        if assessment.criterion_approval.issued_at >= assessment.started_at:
+        # roles.verify rejects every attestation that is not a signed record.
+        approval = cast(SignedQualificationRecord, assessment.criterion_approval)
+        if approval.issued_at >= assessment.started_at:
             return refusal("dfn-policy-not-precommitted")
         roles.verify(
             assessment, assessment.executor_signature, role="executor", at_time=at_time
@@ -545,13 +569,9 @@ def evaluate_dfn_entry_gate(
             role="scientific-reviewer",
             at_time=at_time,
         )
-        if (
-            min(
-                assessment.executor_signature.issued_at,
-                assessment.reviewer_signature.issued_at,
-            )
-            < assessment.observed_at
-        ):
+        executor = cast(SignedQualificationRecord, assessment.executor_signature)
+        reviewer = cast(SignedQualificationRecord, assessment.reviewer_signature)
+        if min(executor.issued_at, reviewer.issued_at) < assessment.observed_at:
             return refusal("dfn-signature-precedes-observation")
         for reference in assessment.references:
             reference.rights.verify(
@@ -567,10 +587,8 @@ def evaluate_dfn_entry_gate(
             role="entry-decision-authority",
             at_time=at_time,
         )
-        if (
-            assessment.decision_signature.issued_at
-            < assessment.reviewer_signature.issued_at
-        ):
+        decision = cast(SignedQualificationRecord, assessment.decision_signature)
+        if decision.issued_at < reviewer.issued_at:
             return refusal("dfn-decision-precedes-review")
     except (AttributeError, KeyError, TypeError, ValueError):
         return refusal("dfn-authentication-or-rights-inconclusive")
@@ -592,7 +610,18 @@ def evaluate_dfn_entry_gate(
     )
 
 
-def _verify_audits(assessment, consensus, roles, source_profile_id, at_time):
+def _verify_audits(
+    assessment: DfnEntryAssessment,
+    consensus: DfnReferenceConsensus,
+    roles: QualificationRoleTrust,
+    source_profile_id: str,
+    at_time: int,
+) -> None:
+    # The gate verifies the reviewer signature before auditing.
+    reviewer = cast(SignedQualificationRecord, assessment.reviewer_signature)
+    # Only conclusive consensus is audited; it carries both cross error and bound.
+    cross_error = cast(float, consensus.cross_reference_error)
+    robust_bound = cast(float, consensus.robust_lower_bound)
     expected = {f"mapping:{axis}": (0.0, 0.0, "equal") for axis in _MATCH_AXES}
     expected.update(
         {
@@ -607,12 +636,12 @@ def _verify_audits(assessment, consensus, roles, source_profile_id, at_time):
                 "less-than-or-equal",
             ),
             "cross-reference-agreement": (
-                consensus.cross_reference_error,
+                cross_error,
                 assessment.policy.cross_reference_limit,
                 "less-than-or-equal",
             ),
             "robust-discrepancy": (
-                consensus.robust_lower_bound,
+                robust_bound,
                 assessment.policy.discrepancy_threshold,
                 "greater-than-or-equal",
             ),
@@ -694,15 +723,29 @@ def _verify_audits(assessment, consensus, roles, source_profile_id, at_time):
             or audit.start_signature.issued_at != start.started_at
             or audit.observation_signature.issued_at < observation.observed_at
             or audit.evidence_signature.issued_at < evidence.issued_at
-            or audit.evidence_signature.issued_at
-            > assessment.reviewer_signature.issued_at
+            or audit.evidence_signature.issued_at > reviewer.issued_at
         ):
             raise ValueError(
                 "DFN entry audit signatures violate approval/start/observation/review causality."
             )
 
 
-def _assessment_archive(assessment):
+def _assessment_archive(assessment: DfnEntryAssessment) -> dict[str, object]:
+    # Only gate-verified, fully signed assessments are archived in release records.
+    signatures = cast(
+        tuple[
+            SignedQualificationRecord,
+            SignedQualificationRecord,
+            SignedQualificationRecord,
+            SignedQualificationRecord,
+        ],
+        (
+            assessment.criterion_approval,
+            assessment.executor_signature,
+            assessment.reviewer_signature,
+            assessment.decision_signature,
+        ),
+    )
     return {
         "assessment": assessment.to_record(),
         "policy": assessment.policy.to_record(),
@@ -710,14 +753,14 @@ def _assessment_archive(assessment):
         "rights_signatures": [
             reference.rights_signature.to_record() for reference in assessment.references
         ],
-        "criterion_approval": assessment.criterion_approval.to_record(),
-        "executor_signature": assessment.executor_signature.to_record(),
-        "reviewer_signature": assessment.reviewer_signature.to_record(),
-        "decision_signature": assessment.decision_signature.to_record(),
+        "criterion_approval": signatures[0].to_record(),
+        "executor_signature": signatures[1].to_record(),
+        "reviewer_signature": signatures[2].to_record(),
+        "decision_signature": signatures[3].to_record(),
     }
 
 
-def _assessment_from_archive(record):
+def _assessment_from_archive(record: Mapping[str, Any]) -> DfnEntryAssessment:
     raw_policy = dict(record["policy"])
     if raw_policy.pop("kind") != "battery-dfn-two-reference-entry-policy":
         raise ValueError("Wrong entry policy record kind.")
@@ -754,7 +797,8 @@ def _assessment_from_archive(record):
         )
     assessment = DfnEntryAssessment(
         policy,
-        tuple(references),
+        # DfnEntryAssessment.__post_init__ rejects anything but exactly two references.
+        cast(tuple[DfnReferenceComparison, DfnReferenceComparison], tuple(references)),
         tuple(raw["candidate_values"]),
         tuple(raw["candidate_uncertainty"]),
         tuple((axis, raw["candidate_mapping_ids"][axis]) for axis in _MATCH_AXES),
@@ -772,13 +816,20 @@ def _assessment_from_archive(record):
     return assessment
 
 
-def _entry_profile(assessment, source_profile_id, issued_at, expires_at):
+def _entry_profile(
+    assessment: DfnEntryAssessment,
+    source_profile_id: str,
+    issued_at: int,
+    expires_at: int,
+) -> CapabilityProfile:
     from ...qualification import CapabilityProfile, ReleaseGateEvidence, SupportDependency
     from ._qualification import DFN_ENTRY_SUPPORT
 
     consensus = evaluate_reference_consensus(assessment)
     if not consensus.eligible:
         raise ValueError("Only an eligible consensus can construct a DFN-entry profile.")
+    # Eligible entries are gate-verified, so the reviewer signature is present.
+    reviewer = cast(SignedQualificationRecord, assessment.reviewer_signature)
     gate = ReleaseGateEvidence(
         "battery.dfn-entry.scientific",
         passed=True,
@@ -787,7 +838,7 @@ def _entry_profile(assessment, source_profile_id, issued_at, expires_at):
             assessment.policy.policy_id,
             canonical_fingerprint(consensus.to_record()),
         ),
-        reviewer_id=assessment.reviewer_signature.signature.key_id,
+        reviewer_id=reviewer.signature.key_id,
         issued_at=issued_at,
         expires_at=expires_at,
     )
@@ -805,19 +856,27 @@ def _entry_profile(assessment, source_profile_id, issued_at, expires_at):
     )
 
 
-def _entry_expiry(assessment, source_proof, roles):
+def _entry_expiry(
+    assessment: DfnEntryAssessment,
+    source_proof: BatteryReleaseRecord,
+    roles: QualificationRoleTrust,
+) -> int:
     limits = [
         assessment.policy.expires_at,
         source_proof.expires_at,
         *(reference.rights.expires_at for reference in assessment.references),
     ]
-    signatures = [
-        assessment.criterion_approval,
-        assessment.executor_signature,
-        assessment.reviewer_signature,
-        assessment.decision_signature,
-        *(reference.rights_signature for reference in assessment.references),
-    ]
+    # Expiry is computed only for gate-verified, fully signed assessments.
+    signatures = cast(
+        list[SignedQualificationRecord],
+        [
+            assessment.criterion_approval,
+            assessment.executor_signature,
+            assessment.reviewer_signature,
+            assessment.decision_signature,
+            *(reference.rights_signature for reference in assessment.references),
+        ],
+    )
     for audit in assessment.audits:
         if audit.criterion.valid_until is not None:
             limits.append(audit.criterion.valid_until)
@@ -839,26 +898,26 @@ class DfnEntryReleaseRecord:
 
     assessment: DfnEntryAssessment
     source_profile_id: str
-    source_index: object
-    profile: object
+    source_index: ReleaseIndex
+    profile: CapabilityProfile
     issued_at: int
     expires_at: int
 
     @property
-    def gate_id(self):
+    def gate_id(self) -> str:
         return self.profile.release_evidence[0].evidence_id
 
     @property
-    def distribution_id(self):
+    def distribution_id(self) -> str:
         return self.assessment.policy.source_build_id
 
     @property
-    def envelope_id(self):
+    def envelope_id(self) -> str:
         from ._validity import MARQUIS_2019_SPME_ENVELOPE
 
         return MARQUIS_2019_SPME_ENVELOPE.envelope_id
 
-    def verify(self, policy, /, *, at_time):
+    def verify(self, policy: AsymmetricReleaseTrustPolicy, /, *, at_time: int) -> None:
         from ._qualification import MARQUIS_2019_SPME_SUPPORT
         from ._release import BatteryReleaseRecord
 
@@ -895,7 +954,7 @@ class DfnEntryReleaseRecord:
                 "DFN entry profile, dependency or citations were substituted."
             )
 
-    def to_record(self):
+    def to_record(self) -> dict[str, object]:
         return {
             "kind": "battery-dfn-entry-release",
             "assessment_archive": _assessment_archive(self.assessment),
@@ -907,7 +966,7 @@ class DfnEntryReleaseRecord:
         }
 
     @classmethod
-    def from_record(cls, record):
+    def from_record(cls, record: Mapping[str, Any]) -> Self:
         from ...qualification import CapabilityProfile, ReleaseIndex
 
         if record["kind"] != "battery-dfn-entry-release":
@@ -923,8 +982,15 @@ class DfnEntryReleaseRecord:
 
 
 def build_dfn_entry_release(
-    assessment, /, *, source_index, source_profile_id, trust_policy, at_time, expires_at
-):
+    assessment: DfnEntryAssessment,
+    /,
+    *,
+    source_index: ReleaseIndex,
+    source_profile_id: str,
+    trust_policy: AsymmetricReleaseTrustPolicy,
+    at_time: int,
+    expires_at: int,
+) -> DfnEntryReleaseRecord:
     from ._qualification import MARQUIS_2019_SPME_SUPPORT
     from ._release import BatteryReleaseRecord
 

@@ -14,7 +14,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -51,7 +52,7 @@ class IsogeometricPartition(StrictModule, NonTrainableState):
         *,
         rank: int,
         rank_count: int,
-    ):
+    ) -> None:
         ids = _integer_vector(canonical_ids, "canonical_ids")
         owners = _integer_vector(owner_ranks, "owner_ranks")
         rank_ = int(rank)
@@ -120,7 +121,7 @@ class IsogeometricHaloPlan(StrictModule, NonTrainableState):
         target_size: int,
         source_ranks: ArrayLike | None = None,
         target_ranks: ArrayLike | None = None,
-    ):
+    ) -> None:
         ids = _integer_vector(canonical_ids, "canonical_ids")
         source = _integer_vector(source_indices, "source_indices")
         target = _integer_vector(target_indices, "target_indices")
@@ -216,7 +217,7 @@ class IsogeometricRepartitionRecord(StrictModule, NonTrainableState):
         previous_owners: ArrayLike,
         next_owners: ArrayLike,
         /,
-    ):
+    ) -> None:
         ids = _integer_vector(canonical_ids, "canonical_ids")
         before = _integer_vector(previous_owners, "previous_owners")
         after = _integer_vector(next_owners, "next_owners")

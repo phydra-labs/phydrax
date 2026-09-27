@@ -13,10 +13,12 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
+from ..._dtype_names import inexact_result_type
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState
 from ...control import (
@@ -113,7 +115,7 @@ class BatteryCurrentControlBounds(StrictModule, NonTrainableState):
             "stoichiometry:positive",
         ),
         temperature_name: str = "temperature_k",
-    ):
+    ) -> None:
         current = _ordered_bounds(*current_a, "Current")
         voltage = _ordered_bounds(*voltage_v, "Voltage")
         stoichiometry_ = _ordered_bounds(*stoichiometry, "Stoichiometry")
@@ -188,7 +190,7 @@ class BatteryCurrentControlTerminalTarget(StrictModule, NonTrainableState):
         *,
         state_index: int,
         name: str,
-    ):
+    ) -> None:
         value_array = _real_scalar(value, "Terminal target")
         value_ = float(np.asarray(value_array))
         if not isfinite(value_):
@@ -231,7 +233,7 @@ class BatteryCurrentControlObjective(StrictModule, NonTrainableState):
         *,
         current_squared_weight: float,
         terminal_target_squared_weight: float = 0.0,
-    ):
+    ) -> None:
         current_weight = float(current_squared_weight)
         terminal_weight = float(terminal_target_squared_weight)
         if any(
@@ -277,7 +279,7 @@ class BatteryPiecewiseCurrent(StrictModule):
         *,
         knot_times_s: tuple[float, ...],
         lowering_id: str,
-    ):
+    ) -> None:
         amplitudes = jnp.asarray(amplitudes_a)
         if jnp.issubdtype(amplitudes.dtype, jnp.complexfloating):
             raise TypeError("Battery current amplitudes must be real-valued.")
@@ -538,7 +540,7 @@ class BatteryCurrentControlPlan(StrictModule, NonTrainableState):
         ledger_success: Callable[[Any], ArrayLike],
         ledger_criterion_id: str,
         replay_constraint_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         if not isinstance(experiment, PreparedBatteryExperiment):
             raise TypeError("experiment must be a PreparedBatteryExperiment.")
         if not isinstance(bounds, BatteryCurrentControlBounds):

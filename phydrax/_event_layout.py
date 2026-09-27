@@ -5,20 +5,22 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import Iterable
 from math import prod
 from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
 from .domain._measure import MeasureKind
 
 
-def _shape(value, /, *, owner: str) -> tuple[int, ...]:
+def _shape(value: Iterable[int], /, *, owner: str) -> tuple[int, ...]:
     shape = tuple(value)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError(f"{owner} must contain positive dimensions.")
@@ -58,7 +60,9 @@ class ArrayEventLayout(AbstractEventLayout):
     measure_kind: MeasureKind = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, event_shape, /, *, layout_id: str | None = None):
+    def __init__(
+        self, event_shape: Iterable[int], /, *, layout_id: str | None = None
+    ) -> None:
         shape = _shape(event_shape, owner="event_shape")
         size = prod(shape)
         resolved = layout_id or canonical_fingerprint(
@@ -98,7 +102,9 @@ class ComplexEventLayout(AbstractEventLayout):
     measure_kind: MeasureKind = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, event_shape, /, *, layout_id: str | None = None):
+    def __init__(
+        self, event_shape: Iterable[int], /, *, layout_id: str | None = None
+    ) -> None:
         shape = _shape(event_shape, owner="event_shape")
         size = prod(shape)
         resolved = layout_id or canonical_fingerprint(
@@ -148,7 +154,7 @@ class PyTreeEventLayout(AbstractEventLayout):
     measure_kind: MeasureKind = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, template: Any, /, *, layout_id: str | None = None):
+    def __init__(self, template: Any, /, *, layout_id: str | None = None) -> None:
         path_leaves, treedef = jax.tree_util.tree_flatten_with_path(template)
         if not path_leaves:
             raise ValueError("PyTree event template must contain array leaves.")

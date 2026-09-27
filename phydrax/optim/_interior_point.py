@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypeAlias
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._nonlinear_precision import NonlinearPrecisionPolicy
 from ..linalg import (
@@ -18,6 +19,7 @@ from ..linalg import (
     sparse_provider_capabilities,
     SparseLDLT,
 )
+from ..typing import parse
 from ._filter_ipm import (
     FilterInteriorPoint as _DenseFilterInteriorPoint,
     FilterInteriorPointEvidence,
@@ -245,66 +247,68 @@ class PrimalDualInteriorPoint(AbstractStructuredNonlinearMethod):
         maximum_restoration_steps: int = 20,
         max_dense_dimension: int = 512,
         require_feasible_start: bool = True,
-    ):
-        if mode == "dense-filter":
-            implementation: AbstractMinimizationMethod = _DenseFilterInteriorPoint(
-                fraction_to_boundary=fraction_to_boundary,
-                minimum_barrier=minimum_barrier,
-                filter_margin=filter_margin,
-                maximum_line_search_steps=maximum_line_search_steps,
-                maximum_restoration_steps=maximum_restoration_steps,
-                max_dense_dimension=max_dense_dimension,
-                linear=linear_policy,
-                precision=precision,
-            )
-        elif mode == "matrix-free-centered":
-            implementation = _MatrixFreeCenteredInteriorPoint(
-                linear_policy=linear_policy,
-                linear_tolerance=linear_tolerance,
-                linear_maximum_steps=linear_maximum_steps,
-                initial_barrier=initial_barrier,
-                barrier_reduction=barrier_reduction,
-                centering=centering,
-                minimum_slack=minimum_slack,
-                fraction_to_boundary=fraction_to_boundary,
-                kkt_regularization=kkt_regularization,
-                active_tolerance=active_tolerance,
-                sufficient_decrease=sufficient_decrease,
-                line_search_contraction=line_search_contraction,
-                maximum_line_search_steps=maximum_line_search_steps,
-                maximum_restoration_steps=maximum_restoration_steps,
-            )
-        elif mode == "matrix-free-predictor-corrector":
-            implementation = _MatrixFreePredictorCorrector(
-                centering_power=centering_power,
-                require_feasible_start=require_feasible_start,
-                linear_policy=linear_policy,
-                linear_tolerance=linear_tolerance,
-                linear_maximum_steps=linear_maximum_steps,
-                initial_barrier=initial_barrier,
-                barrier_reduction=barrier_reduction,
-                centering=centering,
-                minimum_slack=minimum_slack,
-                fraction_to_boundary=fraction_to_boundary,
-                kkt_regularization=kkt_regularization,
-                active_tolerance=active_tolerance,
-                sufficient_decrease=sufficient_decrease,
-                line_search_contraction=line_search_contraction,
-                maximum_line_search_steps=maximum_line_search_steps,
-                maximum_restoration_steps=maximum_restoration_steps,
-            )
-        elif mode == "sparse-augmented":
-            implementation = _DenseFilterInteriorPoint(
-                fraction_to_boundary=fraction_to_boundary,
-                minimum_barrier=minimum_barrier,
-                filter_margin=filter_margin,
-                maximum_line_search_steps=maximum_line_search_steps,
-                maximum_restoration_steps=maximum_restoration_steps,
-                max_dense_dimension=max_dense_dimension,
-                precision=precision,
-            )
-        else:
-            raise ValueError(f"Unknown interior-point mode {mode!r}.")
+    ) -> None:
+        mode = parse(mode, InteriorPointMode, "mode")
+        match mode:
+            case "dense-filter":
+                implementation: AbstractMinimizationMethod = _DenseFilterInteriorPoint(
+                    fraction_to_boundary=fraction_to_boundary,
+                    minimum_barrier=minimum_barrier,
+                    filter_margin=filter_margin,
+                    maximum_line_search_steps=maximum_line_search_steps,
+                    maximum_restoration_steps=maximum_restoration_steps,
+                    max_dense_dimension=max_dense_dimension,
+                    linear=linear_policy,
+                    precision=precision,
+                )
+            case "matrix-free-centered":
+                implementation = _MatrixFreeCenteredInteriorPoint(
+                    linear_policy=linear_policy,
+                    linear_tolerance=linear_tolerance,
+                    linear_maximum_steps=linear_maximum_steps,
+                    initial_barrier=initial_barrier,
+                    barrier_reduction=barrier_reduction,
+                    centering=centering,
+                    minimum_slack=minimum_slack,
+                    fraction_to_boundary=fraction_to_boundary,
+                    kkt_regularization=kkt_regularization,
+                    active_tolerance=active_tolerance,
+                    sufficient_decrease=sufficient_decrease,
+                    line_search_contraction=line_search_contraction,
+                    maximum_line_search_steps=maximum_line_search_steps,
+                    maximum_restoration_steps=maximum_restoration_steps,
+                )
+            case "matrix-free-predictor-corrector":
+                implementation = _MatrixFreePredictorCorrector(
+                    centering_power=centering_power,
+                    require_feasible_start=require_feasible_start,
+                    linear_policy=linear_policy,
+                    linear_tolerance=linear_tolerance,
+                    linear_maximum_steps=linear_maximum_steps,
+                    initial_barrier=initial_barrier,
+                    barrier_reduction=barrier_reduction,
+                    centering=centering,
+                    minimum_slack=minimum_slack,
+                    fraction_to_boundary=fraction_to_boundary,
+                    kkt_regularization=kkt_regularization,
+                    active_tolerance=active_tolerance,
+                    sufficient_decrease=sufficient_decrease,
+                    line_search_contraction=line_search_contraction,
+                    maximum_line_search_steps=maximum_line_search_steps,
+                    maximum_restoration_steps=maximum_restoration_steps,
+                )
+            case "sparse-augmented":
+                implementation = _DenseFilterInteriorPoint(
+                    fraction_to_boundary=fraction_to_boundary,
+                    minimum_barrier=minimum_barrier,
+                    filter_margin=filter_margin,
+                    maximum_line_search_steps=maximum_line_search_steps,
+                    maximum_restoration_steps=maximum_restoration_steps,
+                    max_dense_dimension=max_dense_dimension,
+                    precision=precision,
+                )
+            case _:
+                assert_never(mode)
         self.mode = mode
         self.implementation = implementation
         self.structured_linear_policy = (

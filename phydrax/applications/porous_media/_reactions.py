@@ -8,7 +8,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...ein import contract
@@ -91,7 +92,7 @@ class MineralKinetics(StrictModule):
         rate_constants: ArrayLike,
         *,
         allow_nucleation: tuple[bool, ...] | None = None,
-    ):
+    ) -> None:
         if not isinstance(chemistry, MassActionSystem):
             raise TypeError("MineralKinetics requires a declared MassActionSystem.")
         if chemistry.charge_balance_component is not None:
@@ -183,13 +184,13 @@ class MineralKinetics(StrictModule):
 
     def residual(
         self,
-        state,
+        state: tuple[Array, Array],
         previous_component_inventory: ArrayLike,
         previous_mineral_inventory: ArrayLike,
         water_volume: ArrayLike,
         dt: ArrayLike,
         reactive_area: ArrayLike,
-    ):
+    ) -> tuple[Array, Array]:
         """Native-root-ready (aqueous equations, bounded kinetic equations).
 
         ``state=(log(c/reference_concentration), dissolution_extents)``. This

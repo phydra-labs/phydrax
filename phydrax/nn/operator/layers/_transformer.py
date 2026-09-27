@@ -12,12 +12,13 @@ import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax._strict import StrictModule
 
 from ...._doc import DOC_KEY0
+from ....typing import PRNGKey
 from ..._keys import EvalKey, split_eval_key
 from ...layers._dropout import Dropout
 from ...layers._linear import Linear
@@ -123,8 +124,8 @@ class _SelfAttention(StrictModule):
         /,
         *,
         dropout: float,
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         if int(width) % int(heads) != 0:
             raise ValueError("Transformer width must be divisible by heads.")
         keys = jr.split(key, 4)
@@ -223,8 +224,8 @@ class _SwiGLU(StrictModule):
         /,
         *,
         dropout: float,
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         keys = jr.split(key, 3)
         self.gate = Linear(
             in_size=width,
@@ -272,8 +273,8 @@ class _TransformerBlock(StrictModule):
         feed_forward_dropout: float,
         skip_connection: bool,
         norm_eps: float,
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         attention_key, feed_forward_key, skip_key = jr.split(key, 3)
         self.attention = _SelfAttention(
             width,
@@ -376,8 +377,8 @@ class OperatorTransformerProcessor(StrictModule):
         feed_forward_dropout: float = 0.0,
         long_range_skip: bool = True,
         norm_eps: float = 1e-6,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         shape = tuple(latent_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("latent_shape must contain positive dimensions.")

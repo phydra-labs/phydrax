@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from typing import Any
 
 import phydrax as phx
 
@@ -7,7 +8,7 @@ import phydrax as phx
 cosmology = phx.applications.cosmology
 
 
-def test_concrete_precision_backends_cache_and_cross_compare(tmp_path):
+def test_concrete_precision_backends_cache_and_cross_compare(tmp_path: Any) -> None:
     worker = Path(__file__).parents[2] / "_linear_theory_worker.py"
     scale = cosmology.CosmologyScaleContract(
         phx.units.MEGAPARSEC,

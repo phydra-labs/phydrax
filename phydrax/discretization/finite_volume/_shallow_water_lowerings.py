@@ -9,7 +9,8 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -105,20 +106,48 @@ def _lower(
     )
 
 
-def lower_triangle_unstructured_shallow_water(*args, **kwargs):
-    return _lower("triangle-unstructured", *args, **kwargs)
+def lower_triangle_unstructured_shallow_water(
+    bathymetry: PreparedShallowWaterBathymetry,
+    derivative: ScalarDerivative,
+    dimension: int,
+    gravity: float,
+    geometry_id: str,
+) -> PreparedBalancedShallowWaterLowering:
+    return _lower(
+        "triangle-unstructured", bathymetry, derivative, dimension, gravity, geometry_id
+    )
 
 
-def lower_sbp_shallow_water(*args, **kwargs):
-    return _lower("sbp", *args, **kwargs)
+def lower_sbp_shallow_water(
+    bathymetry: PreparedShallowWaterBathymetry,
+    derivative: ScalarDerivative,
+    dimension: int,
+    gravity: float,
+    geometry_id: str,
+) -> PreparedBalancedShallowWaterLowering:
+    return _lower("sbp", bathymetry, derivative, dimension, gravity, geometry_id)
 
 
-def lower_global_spectral_shallow_water(*args, **kwargs):
-    return _lower("global-spectral", *args, **kwargs)
+def lower_global_spectral_shallow_water(
+    bathymetry: PreparedShallowWaterBathymetry,
+    derivative: ScalarDerivative,
+    dimension: int,
+    gravity: float,
+    geometry_id: str,
+) -> PreparedBalancedShallowWaterLowering:
+    return _lower(
+        "global-spectral", bathymetry, derivative, dimension, gravity, geometry_id
+    )
 
 
-def lower_dgsem_shallow_water(*args, **kwargs):
-    return _lower("dgsem", *args, **kwargs)
+def lower_dgsem_shallow_water(
+    bathymetry: PreparedShallowWaterBathymetry,
+    derivative: ScalarDerivative,
+    dimension: int,
+    gravity: float,
+    geometry_id: str,
+) -> PreparedBalancedShallowWaterLowering:
+    return _lower("dgsem", bathymetry, derivative, dimension, gravity, geometry_id)
 
 
 __all__ = [

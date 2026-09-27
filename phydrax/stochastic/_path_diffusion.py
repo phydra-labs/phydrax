@@ -4,16 +4,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from math import prod
-from typing import Literal, TypeAlias
+from typing import Literal, Self, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field
+from ..typing import parse, PRNGKey
 from ._gaussian_diffusion import AbstractGaussianDiffusion
 from ._subspace_diffusion import AffineSubspaceLayout, SubspaceGaussianDiffusion
 
@@ -35,14 +38,14 @@ class TrajectoryEventLayout(StrictModule):
     def __init__(
         self,
         times: ArrayLike,
-        state_shape,
+        state_shape: Sequence[int],
         basis: ArrayLike,
         /,
         *,
         origin: ArrayLike | None = None,
         valid_time: ArrayLike | None = None,
         layout_id: str | None = None,
-    ):
+    ) -> None:
         grid = jnp.asarray(times, dtype=jnp.float64)
         shape = tuple(state_shape)
         if grid.ndim != 1 or grid.size < 2 or bool(jnp.any(jnp.diff(grid) <= 0.0)):
@@ -108,7 +111,7 @@ class TrajectoryEventLayout(StrictModule):
         self.layout_id = identifier
 
     @classmethod
-    def from_increments(cls, times: ArrayLike, state_shape, /):
+    def from_increments(cls, times: ArrayLike, state_shape: Sequence[int], /) -> Self:
         grid = jnp.asarray(times, dtype=jnp.float64)
         if grid.ndim != 1 or grid.size < 2 or bool(jnp.any(jnp.diff(grid) <= 0.0)):
             raise ValueError("Trajectory times must be a strictly increasing vector.")
@@ -120,10 +123,10 @@ class TrajectoryEventLayout(StrictModule):
         basis = jnp.kron(temporal, jnp.eye(size))
         return cls(grid, state_shape, basis)
 
-    def coefficients(self, trajectory: ArrayLike, /):
+    def coefficients(self, trajectory: ArrayLike, /) -> tuple[Array, Array]:
         return self.coefficient_layout.project(trajectory)
 
-    def synthesize(self, coefficients: ArrayLike, /):
+    def synthesize(self, coefficients: ArrayLike, /) -> Array:
         return self.coefficient_layout.synthesize(coefficients)
 
 
@@ -153,15 +156,16 @@ class PathCoefficientDiffusion(StrictModule):
         /,
         *,
         score_dependency: PathScoreDependency = "global",
-    ):
+    ) -> None:
         if not isinstance(layout, TrajectoryEventLayout):
             raise TypeError("layout must be a TrajectoryEventLayout.")
         if coefficient_process.state_shape != (layout.coefficient_layout.rank,):
             raise ValueError(
                 "Coefficient process dimension must equal trajectory basis rank."
             )
-        if score_dependency not in ("global", "causal"):
-            raise ValueError("score_dependency must be 'global' or 'causal'.")
+        score_dependency = parse(
+            score_dependency, PathScoreDependency, "score_dependency"
+        )
         identifier = canonical_fingerprint(
             {
                 "kind": "path-coefficient-diffusion",
@@ -180,10 +184,14 @@ class PathCoefficientDiffusion(StrictModule):
         self.score_dependency = score_dependency
         self.process_id = identifier
 
-    def perturb(self, key: Key[Array, ""], trajectory: ArrayLike, /, *, time):
+    def perturb(
+        self, key: PRNGKey, trajectory: ArrayLike, /, *, time: ArrayLike
+    ) -> Array:
         return self.subspace_process.perturb(key, trajectory, time=time)
 
-    def conditional_coefficient_score(self, perturbed, clean, /, *, time):
+    def conditional_coefficient_score(
+        self, perturbed: ArrayLike, clean: ArrayLike, /, *, time: ArrayLike
+    ) -> Array:
         return self.subspace_process.conditional_coefficient_score(
             perturbed,
             clean,

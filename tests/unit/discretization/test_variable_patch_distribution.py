@@ -1,12 +1,15 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _state():
+def _state() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8),),
         axis_names=("x",),
@@ -34,7 +37,7 @@ def _state():
     return topology, phx.discretization.VariablePatchHierarchyState(topology, (field,))
 
 
-def test_variable_patch_partition_roundtrip_is_canonical_and_explicit():
+def test_variable_patch_partition_roundtrip_is_canonical_and_explicit() -> None:
     topology, state = _state()
     partition = phx.discretization.VariablePatchPartitionPlan(2, ((1,),)).prepare(
         topology
@@ -50,7 +53,7 @@ def test_variable_patch_partition_roundtrip_is_canonical_and_explicit():
     assert successor.partition_id == partition.partition_id
 
 
-def test_variable_patch_partition_is_deterministic_under_positive_costs():
+def test_variable_patch_partition_is_deterministic_under_positive_costs() -> None:
     topology, _ = _state()
     plan = phx.discretization.VariablePatchPartitionPlan(2, ((1,),))
     first = plan.prepare(topology, costs=((jnp.asarray([2.0, 1.0]),),))

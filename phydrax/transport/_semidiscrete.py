@@ -5,19 +5,26 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Callable
+from typing import Any, Callable, cast, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import optax
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 
 from .._strict import StrictModule
-from ..domain import ComponentSum, DomainFunction, PointwiseEvaluator
+from ..domain import (
+    ComponentSum,
+    Domain,
+    DomainFunction,
+    PointwiseEvaluator,
+    ProbabilityDomain,
+)
 from ..integration._api import IntegrationRealization, reduce
 from ..integration._estimates import IntegrationEstimate, IntegrationProvenance
 from ..integration._status import IntegrationStatus
@@ -31,6 +38,11 @@ from ..integration._targets import (
 from ._costs import AbstractGroundCost
 from ._measure import _FiniteTransportMeasure, EventEncoder, lower_transport_measure
 from ._status import TransportStatus
+
+
+# (potential, marginal_residual, dual_residual, first_converged, converged,
+#  failed, integration_status)
+_SemidiscreteCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 
 class SemidiscreteProblemProvenance(StrictModule):
@@ -50,7 +62,7 @@ class SemidiscreteProblemProvenance(StrictModule):
         cost: str,
         integration: IntegrationProvenance,
         /,
-    ):
+    ) -> None:
         self.source = str(source)
         self.target = str(target)
         self.cost = str(cost)
@@ -86,7 +98,7 @@ class SemidiscreteTransportProblem(StrictModule):
         source_encoder: EventEncoder | None = None,
         target_encoder: EventEncoder | None = None,
         mass_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         if not isinstance(source, DensityTarget):
             raise TypeError("source must be a DensityTarget.")
         if not isinstance(realization, IntegrationRealization):
@@ -281,7 +293,7 @@ class SemidiscreteTransportProvenance(StrictModule):
     common_random_numbers: bool = eqx.field(static=True)
     deterministic_replay: bool = eqx.field(static=True)
 
-    def __init__(self, problem: SemidiscreteTransportProblem, /):
+    def __init__(self, problem: SemidiscreteTransportProblem, /) -> None:
         self.method = "semidiscrete-entropic-dual"
         self.ground_cost = problem.provenance.cost
         self.source = problem.provenance.source
@@ -393,7 +405,7 @@ class SemidiscreteSinkhorn(StrictModule):
         check_every: int = 1,
         early_stop: bool = False,
         store_history: bool = False,
-    ):
+    ) -> None:
         maximum = int(max_iterations)
         minimum = int(min_iterations)
         interval = int(check_every)
@@ -465,7 +477,9 @@ class SemidiscreteSinkhorn(StrictModule):
             jnp.asarray(mass_status, dtype=jnp.int32),
         )
 
-        def step(carry, index):
+        def step(
+            carry: _SemidiscreteCarry, index: Array
+        ) -> tuple[_SemidiscreteCarry, Array]:
             (
                 potential,
                 marginal_residual,
@@ -477,7 +491,7 @@ class SemidiscreteSinkhorn(StrictModule):
             ) = carry
             frozen = failed | (converged if self.early_stop else False)
 
-            def update(_):
+            def update(_: None) -> tuple[Array, Array, Array, Array, Array]:
                 estimate = _marginal_estimate(problem, potential, epsilon)
                 marginal = _estimate_array(estimate) / source_mass
                 active_log_target = jnp.log(
@@ -517,7 +531,7 @@ class SemidiscreteSinkhorn(StrictModule):
                     estimate.status,
                 )
 
-            def keep(_):
+            def keep(_: None) -> tuple[Array, Array, Array, Array, Array]:
                 return (
                     potential,
                     marginal_residual,
@@ -760,7 +774,7 @@ class SemidiscreteQuantizer(StrictModule):
         *,
         num_steps: int,
         support_transform: Callable[[Array], Array] | None = None,
-    ):
+    ) -> None:
         if not isinstance(solver, SemidiscreteSinkhorn):
             raise TypeError("solver must be a SemidiscreteSinkhorn.")
         if not isinstance(optimizer, optax.GradientTransformation):
@@ -815,13 +829,16 @@ class SemidiscreteQuantizer(StrictModule):
         ).target_support
         optimizer_state = self.optimizer.init(parameters)
 
-        def step(carry, _):
+        def step(
+            carry: tuple[Array, optax.OptState], _: Array
+        ) -> tuple[tuple[Array, optax.OptState], tuple[Array, Array]]:
             current, state = carry
             value, gradient = jax.value_and_grad(
                 lambda candidate: self.objective(problem, candidate)
             )(current)
             updates, next_state = self.optimizer.update(gradient, state, current)
-            next_parameters = optax.apply_updates(current, updates)
+            # apply_updates preserves the single-array parameter structure.
+            next_parameters = cast(Array, optax.apply_updates(current, updates))
             gradient_norm = jnp.linalg.norm(gradient)
             return (next_parameters, next_state), (value, gradient_norm)
 
@@ -929,7 +946,7 @@ class _StatisticsIntegrand(StrictModule):
         )
 
 
-def _density_domain(source: DensityTarget, /):
+def _density_domain(source: DensityTarget, /) -> Domain | ProbabilityDomain:
     base = source.base
     if isinstance(base, ComponentTarget):
         if isinstance(base.component, ComponentSum):

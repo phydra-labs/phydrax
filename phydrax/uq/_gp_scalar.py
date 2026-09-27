@@ -8,7 +8,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 from phydrax.kernels import kernel_feature_rank, kernel_features
@@ -41,7 +42,7 @@ class ExactGaussianProcessFactor(StrictModule):
         /,
         *,
         state: GaussianProcessLikelihoodState,
-    ):
+    ) -> None:
         points = _validated_factor_points(observation_points)
         _require_state(state)
         self.observation_points = points
@@ -115,7 +116,7 @@ class FiniteFeatureGaussianProcessFactor(StrictModule):
         /,
         *,
         state: GaussianProcessLikelihoodState,
-    ):
+    ) -> None:
         points = _validated_factor_points(observation_points)
         _require_state(state)
         if kernel_feature_rank(state.kernel) is None:
@@ -209,7 +210,7 @@ class SparseGaussianProcessFactor(StrictModule):
         /,
         *,
         state: GaussianProcessLikelihoodState,
-    ):
+    ) -> None:
         points = _validated_factor_points(observation_points)
         inducing = _validated_factor_points(inducing_points)
         _validate_inducing_design(points, inducing)
@@ -301,7 +302,7 @@ class ExactGaussianProcessDiscrepancy(StrictModule):
         observation_points: ArrayLike | cx.AxisArray,
         observations: ArrayLike | cx.AxisArray,
         /,
-    ):
+    ) -> None:
         points, values = _validated_observations(
             observation_points,
             observations,
@@ -374,7 +375,7 @@ class SparseGaussianProcessDiscrepancy(StrictModule):
         observations: ArrayLike | cx.AxisArray,
         inducing_points: ArrayLike | cx.AxisArray,
         /,
-    ):
+    ) -> None:
         points, values = _validated_observations(
             observation_points,
             observations,

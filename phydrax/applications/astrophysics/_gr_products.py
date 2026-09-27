@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -72,7 +73,7 @@ class GRImageScreen(StrictModule, NonTrainableState):
         *,
         angular_unit: UnitDefinition = RADIAN,
         solid_angle_unit: UnitDefinition = _STERADIAN,
-    ):
+    ) -> None:
         if not isinstance(angular_unit, UnitDefinition) or not isinstance(
             solid_angle_unit, UnitDefinition
         ):
@@ -159,7 +160,7 @@ class StokesImage(StrictModule, NonTrainableState):
         intensity_unit: UnitDefinition,
         flux_density_unit: UnitDefinition,
         frequency_unit: UnitDefinition = HERTZ,
-    ):
+    ) -> None:
         if not isinstance(screen, GRImageScreen):
             raise TypeError("screen must be a GRImageScreen.")
         if not isinstance(provenance, ObservationDataProvenance):

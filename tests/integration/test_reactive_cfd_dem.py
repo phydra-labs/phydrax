@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,10 +13,12 @@ import phydrax as phx
 from tests._reactive_systems import reactive_fluid_sample, reactive_problem
 
 
-def test_reactive_macro_window_commits_heat_species_and_mechanics_atomically():
+def test_reactive_macro_window_commits_heat_species_and_mechanics_atomically() -> None:
     plan, state, boundary, schedule = reactive_problem()
 
-    def update(fluid, momentum, energy, species, step_size):
+    def update(
+        fluid: Any, momentum: Any, energy: Any, species: Any, step_size: Any
+    ) -> Any:
         del momentum, step_size
         return fluid[0] + energy, fluid[1] + species
 
@@ -38,7 +43,9 @@ def test_reactive_macro_window_commits_heat_species_and_mechanics_atomically():
     assert result.evaluation.conversion_successful
     assert result.evaluation.dem_successful
 
-    def invalid_update(fluid, momentum, energy, species, step_size):
+    def invalid_update(
+        fluid: Any, momentum: Any, energy: Any, species: Any, step_size: Any
+    ) -> Any:
         del momentum, energy, species, step_size
         return jnp.full_like(fluid[0], jnp.nan), fluid[1]
 
@@ -62,16 +69,20 @@ def test_reactive_macro_window_commits_heat_species_and_mechanics_atomically():
     )
 
 
-def test_checkpointed_reactive_vjp_guards_cotangent_on_replay_mismatch(monkeypatch):
+def test_checkpointed_reactive_vjp_guards_cotangent_on_replay_mismatch(
+    monkeypatch: Any,
+) -> None:
     from phydrax.solver import _reactive_replay
 
     plan, state, boundary, schedule = reactive_problem()
 
-    def update(fluid, momentum, energy, species, step_size):
+    def update(
+        fluid: Any, momentum: Any, energy: Any, species: Any, step_size: Any
+    ) -> Any:
         del momentum, step_size
         return fluid[0] + energy, fluid[1] + species
 
-    def step(coupling_state, index):
+    def step(coupling_state: Any, index: Any) -> Any:
         return phx.solver.advance_reactive_cfd_dem_window(
             plan,
             schedule,
@@ -85,7 +96,7 @@ def test_checkpointed_reactive_vjp_guards_cotangent_on_replay_mismatch(monkeypat
             jnp.asarray(1.0e-5),
         )
 
-    def vjp():
+    def vjp() -> Any:
         return phx.solver.checkpointed_reactive_vjp(
             lambda final_state: jnp.sum(final_state.fluid_state[0]),
             step,

@@ -11,7 +11,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -75,7 +76,7 @@ class PeriodicSCFResult(StrictModule, NonTrainableState):
         sector_id: str,
         pencil_id: str,
         mean_field_id: str,
-    ):
+    ) -> None:
         orbital = jnp.asarray(orbital_energies)
         occupation = jnp.asarray(occupations, dtype=orbital.real.dtype)
         coefficient = jnp.asarray(coefficients)
@@ -163,7 +164,7 @@ class NativePeriodicSCFPlan(StrictModule, NonTrainableState):
         convergence_tolerance: float = 1.0e-10,
         maximum_iterations: int = 256,
         damping: float = 0.25,
-    ):
+    ) -> None:
         if not isinstance(cell, PeriodicCell) or not isinstance(mesh, ReciprocalMeshPlan):
             raise TypeError(
                 "Native periodic SCF requires typed cell and reciprocal mesh."

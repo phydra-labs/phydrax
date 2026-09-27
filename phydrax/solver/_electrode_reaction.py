@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -72,7 +73,7 @@ class ReactiveElectrodePlan(StrictModule, NonTrainableState):
         electron_transfer: ArrayLike,
         capacitance_per_area: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(mechanism, PreparedChemicalMechanism):
             raise TypeError("mechanism must be PreparedChemicalMechanism.")
         indices = np.asarray(boundary_node_indices)

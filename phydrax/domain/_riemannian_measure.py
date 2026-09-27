@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 import jax.numpy as jnp
+from jax import Array
 
 from .._strict import StrictModule
 from ..metrix import (
@@ -15,6 +16,7 @@ from ..metrix import (
     VolumeDensity,
     WeightedRiemannianMeasure,
 )
+from ..typing import PRNGKey
 from ._base import AbstractGeometry
 from ._components import DomainComponent
 from ._function import DomainFunction
@@ -24,10 +26,17 @@ from ._selection import Interior
 class _VolumeDensityCallable(StrictModule):
     density: VolumeDensity
 
-    def __init__(self, density: VolumeDensity, /):
+    def __init__(self, density: VolumeDensity, /) -> None:
         self.density = density
 
-    def __call__(self, coordinates: Any, /, *, key=None, **kwargs: Any):
+    def __call__(
+        self,
+        coordinates: Any,
+        /,
+        *,
+        key: PRNGKey | None = None,
+        **kwargs: Any,
+    ) -> Array:
         del key, kwargs
         if isinstance(coordinates, tuple):
             axes = tuple(jnp.asarray(axis).reshape((-1,)) for axis in coordinates)

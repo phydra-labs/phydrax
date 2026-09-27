@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -14,7 +17,7 @@ from phydrax.graph import gauge_transform_links, MatrixGaugeLinkSpace
 from phydrax.metrix import SpecialUnitaryGroup
 
 
-def _pure_gauge_links():
+def _pure_gauge_links() -> Any:
     topology = polygonal_cell_complex(jnp.asarray([[0, 1, 2]]), None, 3)
     space = MatrixGaugeLinkSpace(topology, SpecialUnitaryGroup(2))
     coordinates = jnp.asarray(
@@ -26,7 +29,7 @@ def _pure_gauge_links():
     return space, gauge_transform_links(space, space.identity(), vertices)
 
 
-def test_landau_fixing_reduces_residual_and_retains_transformation_evidence():
+def test_landau_fixing_reduces_residual_and_retains_transformation_evidence() -> None:
     space, links = _pure_gauge_links()
     plan = LandauGaugeFixingPlan(
         space,
@@ -43,6 +46,7 @@ def test_landau_fixing_reduces_residual_and_retains_transformation_evidence():
     assert result.evidence.transformation.reconstruction_residual < 2e-6
     assert space.contains(result.links)
     assert space.group.contains(result.transformation)
+    # ty: ignore[unresolved-attribute]
     direction = jnp.ones(result.faddeev_popov.source.shape)
     image = jax.jit(lambda value: result.faddeev_popov.mv(value))(direction)
     assert image.shape == direction.shape
@@ -50,7 +54,9 @@ def test_landau_fixing_reduces_residual_and_retains_transformation_evidence():
     assert jnp.allclose(image[plan.anchor_vertex], 0.0)
 
 
-def test_coulomb_fixing_uses_only_explicit_spatial_edges_and_reports_gribov_copies():
+def test_coulomb_fixing_uses_only_explicit_spatial_edges_and_reports_gribov_copies() -> (
+    None
+):
     space, links = _pure_gauge_links()
     spatial = jnp.asarray([True, True, False])
     plan = CoulombGaugeFixingPlan(

@@ -9,7 +9,8 @@ from numbers import Integral
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -17,17 +18,9 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._polynomial._total_degree import TotalDegreePolynomialFeatures
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_integer
 from ._geometry_protocol import FiniteVolumeStageMetrics
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
-
-
-def _positive_integer(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
-    result = int(value)
-    if result < 1:
-        raise ValueError(f"{name} must be positive.")
-    return result
 
 
 def _monomials(values: np.ndarray, exponents: np.ndarray, /) -> np.ndarray:
@@ -38,8 +31,10 @@ def _jax_monomials(values: Array, exponents: Array, /) -> Array:
     return jnp.prod(values[..., None, :] ** exponents, axis=-1)
 
 
-def _adjacency(discretization: UnstructuredFiniteVolumeDiscretization, /):
-    adjacency = [set() for _ in range(discretization.cell_count)]
+def _adjacency(
+    discretization: UnstructuredFiniteVolumeDiscretization, /
+) -> list[set[int]]:
+    adjacency: list[set[int]] = [set() for _ in range(discretization.cell_count)]
     owner = np.asarray(discretization.owner_cells, dtype=np.int32)
     neighbor = np.asarray(discretization.neighbor_cells, dtype=np.int32)
     for left, right in zip(owner, neighbor, strict=True):
@@ -49,13 +44,13 @@ def _adjacency(discretization: UnstructuredFiniteVolumeDiscretization, /):
     return adjacency
 
 
-def _bfs_order(adjacency, cell: int, /):
+def _bfs_order(adjacency: list[set[int]], cell: int, /) -> list[tuple[int, int]]:
     visited = {cell}
     frontier = sorted(adjacency[cell])
-    ordered = []
+    ordered: list[tuple[int, int]] = []
     depth = 1
     while frontier:
-        next_frontier = []
+        next_frontier: list[int] = []
         for candidate in frontier:
             if candidate in visited:
                 continue
@@ -71,7 +66,7 @@ def _cell_moments(
     discretization: UnstructuredFiniteVolumeDiscretization,
     basis: "CellPolynomialBasis",
     /,
-):
+) -> tuple[np.ndarray, np.ndarray]:
     centers = np.asarray(discretization.cell_centers)
     volumes = np.asarray(discretization.cell_volumes)
     lengths = volumes ** (1.0 / discretization.cell_dimension)
@@ -91,7 +86,7 @@ def _design_rows(
     cell: int,
     stencil: list[int],
     /,
-):
+) -> np.ndarray:
     centers = np.asarray(discretization.cell_centers)
     volumes = np.asarray(discretization.cell_volumes)
     points = np.asarray(discretization.cell_quadrature_points)[stencil]
@@ -110,7 +105,7 @@ def _selected_stencils(
     oversampling: int,
     direction: np.ndarray | None,
     /,
-):
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     adjacency = _adjacency(discretization)
     centers = np.asarray(discretization.cell_centers)
     stencils: list[tuple[int, ...]] = []
@@ -175,7 +170,7 @@ def _smoothness_gram(
     basis: "CellPolynomialBasis",
     lengths: np.ndarray,
     /,
-):
+) -> np.ndarray:
     centers = np.asarray(discretization.cell_centers)
     volumes = np.asarray(discretization.cell_volumes)
     points = np.asarray(discretization.cell_quadrature_points)
@@ -209,7 +204,7 @@ class CellPolynomialBasis(StrictModule, NonTrainableState):
     feature_count: int = eqx.field(static=True)
     basis_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, degree: int, /):
+    def __init__(self, dimension: int, degree: int, /) -> None:
         features = TotalDegreePolynomialFeatures(dimension, degree)
         if features.feature_count == 0:
             raise ValueError("Cell polynomial degree must be positive.")
@@ -257,8 +252,8 @@ class CellPolynomialReconstructionPlan(StrictModule, NonTrainableState):
         oversampling: int = 2,
         rcond: float = 1e-12,
         condition_limit: float = 1e8,
-    ):
-        degree_ = _positive_integer(degree, "degree")
+    ) -> None:
+        degree_ = positive_integer(degree, "degree")
         oversampling_ = int(oversampling)
         if oversampling_ < 0:
             raise ValueError("oversampling must be nonnegative.")
@@ -320,7 +315,7 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
         /,
         *,
         stencil_direction: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, CellPolynomialReconstructionPlan):
             raise TypeError("plan must be CellPolynomialReconstructionPlan.")
         if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):

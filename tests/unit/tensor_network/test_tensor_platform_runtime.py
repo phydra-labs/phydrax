@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -114,7 +116,7 @@ def _execution(
     )
 
 
-def test_pickle_free_archive_round_trips_explicit_supported_kinds(tmp_path) -> None:
+def test_pickle_free_archive_round_trips_explicit_supported_kinds(tmp_path: Any) -> None:
     mps = _mps()
     mpo = MatrixProductOperator(
         (
@@ -178,7 +180,7 @@ def test_pickle_free_archive_round_trips_explicit_supported_kinds(tmp_path) -> N
         )
 
 
-def test_archive_rejects_zero_payload_before_publication(tmp_path) -> None:
+def test_archive_rejects_zero_payload_before_publication(tmp_path: Any) -> None:
     path = tmp_path / "empty.phx"
     with pytest.raises(ValueError, match="nonzero payload"):
         write_tensor_network_archive(
@@ -240,7 +242,7 @@ def test_telemetry_redacts_before_persisting_or_fingerprinting() -> None:
     assert record.redacted_fields == ("access_token",)
 
 
-def test_accepted_checkpoint_and_replay_compatibility_are_exact(tmp_path) -> None:
+def test_accepted_checkpoint_and_replay_compatibility_are_exact(tmp_path: Any) -> None:
     state = _mps()
     execution, _ = _execution(state)
     boundary = TensorNetworkAcceptedCheckpointBoundary(

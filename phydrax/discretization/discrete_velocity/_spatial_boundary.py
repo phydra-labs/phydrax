@@ -12,7 +12,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -100,7 +101,7 @@ class CompiledD2V17BoundaryTopology(StrictModule, NonTrainableState):
         *,
         periodic_axes: tuple[bool, bool],
         physical_owner: SmoothCompressibleD2VLinkOwner,
-    ):
+    ) -> None:
         if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
             raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         if (
@@ -314,7 +315,7 @@ class SmoothCompressibleD2VReservoirParameters(StrictModule):
         corner_particle_populations: ArrayLike | None = None,
         corner_total_energy_populations: ArrayLike | None = None,
         corner_data_present: ArrayLike | None = None,
-    ):
+    ) -> None:
         particles = jnp.asarray(face_particle_populations)
         energy = jnp.asarray(face_total_energy_populations)
         if particles.shape == (17,):
@@ -594,7 +595,7 @@ class PeriodicD2VBoundaryPlan(AbstractSmoothCompressibleD2VBoundaryPlan):
         /,
         *,
         retain_history: bool = False,
-    ):
+    ) -> None:
         history = _validate_retain_history(retain_history)
         topology = CompiledD2V17BoundaryTopology(
             quadrature,
@@ -647,7 +648,7 @@ class SpecularAdiabaticD2VBoundaryPlan(AbstractSmoothCompressibleD2VBoundaryPlan
         *,
         periodic_axes: tuple[bool, bool] = (False, False),
         retain_history: bool = False,
-    ):
+    ) -> None:
         history = _validate_retain_history(retain_history)
         topology = CompiledD2V17BoundaryTopology(
             quadrature,
@@ -708,7 +709,7 @@ class EquilibriumReservoirD2VBoundaryPlan(AbstractSmoothCompressibleD2VBoundaryP
         corner_total_energy_populations: ArrayLike | None = None,
         corner_data_present: ArrayLike | None = None,
         retain_history: bool = False,
-    ):
+    ) -> None:
         history = _validate_retain_history(retain_history)
         topology = CompiledD2V17BoundaryTopology(
             quadrature,
@@ -724,7 +725,10 @@ class EquilibriumReservoirD2VBoundaryPlan(AbstractSmoothCompressibleD2VBoundaryP
             incoming_total_energy_populations is None
         ):
             raise ValueError("A default reservoir requires both incoming f and g values.")
-        if incoming_particle_populations is None:
+        if (
+            incoming_particle_populations is None
+            or incoming_total_energy_populations is None
+        ):
             if (
                 corner_particle_populations is not None
                 or corner_total_energy_populations is not None
@@ -922,7 +926,7 @@ class OutwardExtrapolationD2VBoundaryPlan(AbstractSmoothCompressibleD2VBoundaryP
         *,
         periodic_axes: tuple[bool, bool] = (False, False),
         retain_history: bool = False,
-    ):
+    ) -> None:
         history = _validate_retain_history(retain_history)
         topology = CompiledD2V17BoundaryTopology(
             quadrature,
@@ -1036,7 +1040,7 @@ class MaxwellThermalD2VBoundaryPlan(AbstractSmoothCompressibleD2VBoundaryPlan):
         wall_velocity: ArrayLike,
         periodic_axes: tuple[bool, bool] = (False, False),
         retain_history: bool = False,
-    ):
+    ) -> None:
         history = _validate_retain_history(retain_history)
         topology = CompiledD2V17BoundaryTopology(
             quadrature,
@@ -1097,7 +1101,12 @@ class MaxwellThermalD2VBoundaryPlan(AbstractSmoothCompressibleD2VBoundaryPlan):
         self.diffuse_particle_populations = jnp.asarray(diffuse_particles)
         self.diffuse_total_energy_populations = jnp.asarray(diffuse_energy)
         self.wall_velocity = jnp.asarray(velocity)
-        self.accommodation = tuple(float(value) for value in accommodation_values)
+        self.accommodation = (
+            float(accommodation_values[0]),
+            float(accommodation_values[1]),
+            float(accommodation_values[2]),
+            float(accommodation_values[3]),
+        )
         self.retain_history = history
         self.plan_id = canonical_fingerprint(
             {

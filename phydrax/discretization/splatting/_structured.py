@@ -11,12 +11,14 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint
 from ..._interpolation import apply_gather_stencil, GatherStencil, InterpolationResult
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from .._core import DiscretizationCapability, PreparationReport, resolved_identifier
 from .._measure import DiscreteMeasure
 from .._tensor_entities import TensorEntityLayout
@@ -92,7 +94,7 @@ class ParticleGridSplatState(StrictModule):
         invalid_geometry_count: ArrayLike,
         successful: ArrayLike,
         prepared_id: str,
-    ):
+    ) -> None:
         if not isinstance(stencil, GatherStencil):
             raise TypeError("stencil must be GatherStencil.")
         if not isinstance(assignment_state, SplatAssignmentState):
@@ -159,7 +161,7 @@ class ParticleGridSplatState(StrictModule):
     def require_success(self, value: ArrayLike, /) -> Array:
         """Return ``value`` or fail unless geometry and boundary checks passed."""
         failed = ~self.successful
-        if not isinstance(failed, jax.core.Tracer):
+        if not isinstance(failed, jax_core.Tracer):
             failed = bool(failed)
         return eqx.error_if(
             jnp.asarray(value),
@@ -192,7 +194,7 @@ class ParticleGridSplatPlan(StrictModule, NonTrainableState):
         precision: ParticlePrecisionPolicy | None = None,
         budget: ParticleGridSplatBudget | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(target, (PreparedTensorGrid, PreparedTensorIndexSpace)):
             raise TypeError(
                 "target must be PreparedTensorGrid or PreparedTensorIndexSpace."
@@ -209,8 +211,7 @@ class ParticleGridSplatPlan(StrictModule, NonTrainableState):
         budget_ = ParticleGridSplatBudget() if budget is None else budget
         if not isinstance(assignment_, AbstractStructuredSplatAssignment):
             raise TypeError("assignment must be AbstractStructuredSplatAssignment.")
-        if boundary not in ("reject", "drop"):
-            raise ValueError("boundary must be 'reject' or 'drop'.")
+        boundary = parse(boundary, SplatBoundaryPolicy, "boundary")
         if not isinstance(execution_, SplatExecutionPolicy):
             raise TypeError("execution must be SplatExecutionPolicy.")
         if not isinstance(precision_, ParticlePrecisionPolicy):
@@ -269,17 +270,28 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         plan: ParticleGridSplatPlan,
         particles: ParticleDiscretization,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, ParticleGridSplatPlan):
             raise TypeError("plan must be ParticleGridSplatPlan.")
         if not isinstance(particles, ParticleDiscretization):
             raise TypeError("particles must be ParticleDiscretization.")
         if particles.ambient_dimension != len(plan.target.axis_names):
             raise ValueError("Particle and target-grid dimensions must match.")
-        layout = plan.target.layout_at(plan.location)
-        axes = plan.target.structured_axes
-        plan.assignment.validate(layout, axes)
-        target_measure = plan.target.measure_for(layout)
+        target = plan.target
+        layout: TensorEntityLayout | TensorIndexLayout
+        target_measure: DiscreteMeasure | TensorIndexMeasure
+        if isinstance(target, PreparedTensorGrid):
+            entity_layout = target.layout_at(plan.location)
+            axes = target.structured_axes
+            plan.assignment.validate(entity_layout, axes)
+            target_measure = target.measure_for(entity_layout)
+            layout = entity_layout
+        else:
+            index_layout = target.layout_at(plan.location)
+            axes = target.structured_axes
+            plan.assignment.validate(index_layout, axes)
+            target_measure = target.measure_for(index_layout)
+            layout = index_layout
         if isinstance(target_measure, DiscreteMeasure):
             target_weights = np.asarray(target_measure.weights)
             finite_positive_measure = bool(

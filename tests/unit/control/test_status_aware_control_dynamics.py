@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -23,7 +26,7 @@ from phydrax.dynamics import (
 from phydrax.dynamics._system import DiscreteTransitionResult
 
 
-def _grid_and_parameterization():
+def _grid_and_parameterization() -> Any:
     grid = TimeGrid(jnp.asarray([0.0, 1.0, 2.0]), time_id="status-aware-grid")
     parameterization = PiecewiseConstantControlParameterization(
         grid,
@@ -33,7 +36,7 @@ def _grid_and_parameterization():
     return grid, parameterization
 
 
-def _dynamics(transition, *, system_id):
+def _dynamics(transition: Any, *, system_id: Any) -> Any:
     return DiscreteControlDynamics(
         DiscreteSystem(
             transition,
@@ -47,7 +50,7 @@ def _dynamics(transition, *, system_id):
 class _ScaledTransition(eqx.Module):
     scale: jax.Array
 
-    def __call__(self, context, state, control, args):
+    def __call__(self, context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, args
         following = state + self.scale * control
         return DiscreteTransitionResult(
@@ -58,7 +61,7 @@ class _ScaledTransition(eqx.Module):
         )
 
 
-def test_discrete_system_preserves_legacy_array_evaluation():
+def test_discrete_system_preserves_legacy_array_evaluation() -> None:
     system = DiscreteSystem(
         lambda context, state, control, args: state + context.duration * control,
         state_layout=StateLayout((1,)),
@@ -91,7 +94,9 @@ def test_discrete_system_preserves_legacy_array_evaluation():
     )
 
 
-def test_filtered_jit_keeps_transition_parameters_differentiable_and_refreshable():
+def test_filtered_jit_keeps_transition_parameters_differentiable_and_refreshable() -> (
+    None
+):
     grid, parameterization = _grid_and_parameterization()
     system = DiscreteSystem(
         _ScaledTransition(jnp.asarray(1.5)),
@@ -101,7 +106,7 @@ def test_filtered_jit_keeps_transition_parameters_differentiable_and_refreshable
     )
     coefficients = jnp.asarray([[1.0], [2.0]])
 
-    def objective(candidate):
+    def objective(candidate: Any) -> Any:
         trajectory = DiscreteControlDynamics(candidate).rollout(
             grid,
             jnp.asarray([2.0]),
@@ -126,10 +131,10 @@ def test_filtered_jit_keeps_transition_parameters_differentiable_and_refreshable
     np.testing.assert_allclose(refreshed_gradient.transition.scale, 3.0)
 
 
-def test_failed_finite_rollback_remains_invalid_and_preserves_backend_status():
+def test_failed_finite_rollback_remains_invalid_and_preserves_backend_status() -> None:
     failure_status = 37
 
-    def transition(context, state, control, args):
+    def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
         del args
         failed = context.step_index == 0
         candidate = state + control + 100.0
@@ -175,7 +180,7 @@ def test_failed_finite_rollback_remains_invalid_and_preserves_backend_status():
     assert int(evidence.first_failure_status) == failure_status
 
 
-def test_invalid_control_and_post_failure_steps_are_unattempted():
+def test_invalid_control_and_post_failure_steps_are_unattempted() -> None:
     grid, parameterization = _grid_and_parameterization()
     dynamics = _dynamics(
         lambda context, state, control, args: state + control,
@@ -202,12 +207,12 @@ def test_invalid_control_and_post_failure_steps_are_unattempted():
     assert int(evidence.first_failure_status) == 0
 
 
-def test_successful_result_and_legacy_rollouts_agree_under_batching_and_jit():
-    def legacy_transition(context, state, control, args):
+def test_successful_result_and_legacy_rollouts_agree_under_batching_and_jit() -> None:
+    def legacy_transition(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, args
         return state + control
 
-    def result_transition(context, state, control, args):
+    def result_transition(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, args
         accepted = state + control
         return DiscreteTransitionResult(
@@ -273,10 +278,10 @@ def test_successful_result_and_legacy_rollouts_agree_under_batching_and_jit():
     np.testing.assert_array_equal(legacy_evidence.status, result_evidence.status)
 
 
-def test_batched_result_failures_preserve_per_case_validity_and_status():
+def test_batched_result_failures_preserve_per_case_validity_and_status() -> None:
     failure_status = 53
 
-    def transition(context, state, control, args):
+    def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, args
         successful = control[0] >= 0.0
         candidate = state + control + 100.0

@@ -9,13 +9,14 @@ from typing import cast
 
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.ein as ein
 
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
 from ....discretization._spectral import BasisTransformPlan, ModalTransformKind
+from ....typing import parse, PRNGKey
 from ..data import OperatorAxis
 
 
@@ -40,8 +41,8 @@ class BasisSpectralConvND(StrictModule):
         out_channels: int,
         n_modes: int | Sequence[int],
         bases: ModalTransformKind | Sequence[ModalTransformKind],
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
         modes = (int(n_modes),) if isinstance(n_modes, int) else tuple(n_modes)
@@ -57,8 +58,7 @@ class BasisSpectralConvND(StrictModule):
         if self.in_channels <= 0 or self.out_channels <= 0:
             raise ValueError("in_channels and out_channels must be positive.")
         for basis in bases_value:
-            if basis not in ("fourier", "sine", "cosine", "legendre"):
-                raise ValueError(f"Unsupported spectral basis {basis!r}.")
+            basis = parse(basis, ModalTransformKind, "basis")
         self.n_modes = modes
         self.bases = bases_value
         scale = 1.0 / float(self.in_channels * self.out_channels)

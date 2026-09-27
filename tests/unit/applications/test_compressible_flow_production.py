@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -47,7 +49,7 @@ from phydrax.solver._conservation_temporal import (
 from phydrax.solver._phase_equilibrium import FixedTwoPhaseTPFlashPlan
 
 
-def _schema(species_count=2):
+def _schema(species_count: Any = 2) -> Any:
     names = tuple(chr(ord("A") + index) for index in range(species_count))
     return ChemicalSpeciesSchema.from_unique_species(
         names,
@@ -60,7 +62,7 @@ def _schema(species_count=2):
     )
 
 
-def _ideal_model(species_count=2):
+def _ideal_model(species_count: Any = 2) -> Any:
     schema = _schema(species_count)
     calorics = PolynomialSpeciesThermodynamicsPlan(
         schema,
@@ -75,7 +77,7 @@ def _ideal_model(species_count=2):
     return HomogeneousHelmholtzPlan(ideal, ZeroResidualHelmholtzTerm(schema))
 
 
-def _peng_robinson_model():
+def _peng_robinson_model() -> Any:
     schema = ChemicalSpeciesSchema.from_unique_species(
         ("methane", "ethane"),
         (ChemicalPhaseKind.GAS,) * 2,
@@ -110,7 +112,7 @@ def _peng_robinson_model():
     )
 
 
-def test_one_and_multi_species_ideal_and_pr_density_energy_round_trips():
+def test_one_and_multi_species_ideal_and_pr_density_energy_round_trips() -> None:
     cases = (
         (_ideal_model(1), jnp.asarray((1.0, 0.2, 500.0))),
         (_ideal_model(2), jnp.asarray((0.35, 0.65, 0.2, 500.0))),
@@ -137,7 +139,9 @@ def test_one_and_multi_species_ideal_and_pr_density_energy_round_trips():
         np.testing.assert_allclose(variables, entropy_gradient, rtol=2.0e-4, atol=2.0e-4)
 
 
-def test_entropy_requires_positive_chemical_evidence_and_flash_stays_solver_owned():
+def test_entropy_requires_positive_chemical_evidence_and_flash_stays_solver_owned() -> (
+    None
+):
     model = _ideal_model(2)
     system = HomogeneousMixtureEulerSystem(model, 1)
     zero_species = system.primitive_to_conserved(jnp.asarray((1.0, 0.0, 0.2, 500.0)))
@@ -146,12 +150,13 @@ def test_entropy_requires_positive_chemical_evidence_and_flash_stays_solver_owne
     with pytest.raises(ValueError, match="case specification"):
         CompressibleFlowCaseSpec(
             "unsupported-equilibrium-coupling",
+            # ty: ignore[invalid-argument-type]
             flash,
             "structured-fv",
         )
 
 
-def test_canonical_ns_frozen_and_mass_closed_species_enthalpy_flux():
+def test_canonical_ns_frozen_and_mass_closed_species_enthalpy_flux() -> None:
     model = _ideal_model(2)
     primitive = jnp.asarray((0.35, 0.65, 0.2, -0.1, 500.0))
     frozen = HomogeneousMixtureCompressibleNavierStokesSystem(
@@ -167,6 +172,7 @@ def test_canonical_ns_frozen_and_mass_closed_species_enthalpy_flux():
         model,
         ConstantTransport(0.02, 0.03),
         2,
+        # ty: ignore[invalid-argument-type]
         species_diffusivities=(1.0e-5, 2.0e-5),
     )
     flux = diffusive.viscous_flux(state, gradient)
@@ -185,7 +191,7 @@ def test_canonical_ns_frozen_and_mass_closed_species_enthalpy_flux():
     assert bool(jnp.all(jnp.isfinite(mechanical_and_fourier)))
 
 
-def test_low_mach_scaling_and_generic_hll_fallback_ledger_are_explicit():
+def test_low_mach_scaling_and_generic_hll_fallback_ledger_are_explicit() -> None:
     all_speed = AllSpeedCompressiblePolicy(reference_mach=1.0)
     mach = jnp.asarray((1.0e-3, 2.0e-3, 4.0e-3))
     np.testing.assert_allclose(all_speed.pressure_dissipation_scale(mach), mach)
@@ -199,7 +205,7 @@ def test_low_mach_scaling_and_generic_hll_fallback_ledger_are_explicit():
     assert int(ledger.fallback_count) == 2
 
 
-def test_structured_fv_real_shock_aware_all_speed_and_ale_fallback():
+def test_structured_fv_real_shock_aware_all_speed_and_ale_fallback() -> None:
     system = HomogeneousMixtureEulerSystem(_ideal_model(2), 1)
     low_dissipation = StructuredFVCompressibleProductionPlan(
         shock=ShockResolvingPolicy(
@@ -215,6 +221,7 @@ def test_structured_fv_real_shock_aware_all_speed_and_ale_fallback():
     left = system.primitive_to_conserved(jnp.asarray((0.35, 0.65, 1.0e-3, 500.0)))
     right = system.primitive_to_conserved(jnp.asarray((0.36, 0.65, 1.0e-3, 500.0)))
     low_flux = low_dissipation.method.interface_solver.face_flux(system, left, right, 0)
+    # ty: ignore[unresolved-attribute]
     high_flux = higher_dissipation.method.interface_solver.face_flux(
         system, left, right, 0
     )
@@ -233,8 +240,9 @@ def test_structured_fv_real_shock_aware_all_speed_and_ale_fallback():
     assert "generic-hll" in low_dissipation.route_label
 
 
-def test_smooth_route_refuses_absent_entropy_evidence_and_fv_never_claims_dns():
+def test_smooth_route_refuses_absent_entropy_evidence_and_fv_never_claims_dns() -> None:
     with pytest.raises(TypeError, match="entropy evidence"):
+        # ty: ignore[invalid-argument-type]
         SmoothCompressibleProductionPlan(HLLFluxPlan(), HLLFluxPlan())
     model = _ideal_model(2)
     case = CompressibleFlowCaseSpec(
@@ -253,11 +261,12 @@ def test_smooth_route_refuses_absent_entropy_evidence_and_fv_never_claims_dns():
     assert fv.positivity.fallback_flux.flux_id == fv.shock.fallback_flux.flux_id
 
 
-def test_explicit_and_additive_imex_adapters_restart_without_partition_loss():
+def test_explicit_and_additive_imex_adapters_restart_without_partition_loss() -> None:
     explicit = ExplicitCompressibleFixedStepAdapter(
         lambda time, state, args: -state, "linear-decay"
     )
     initial = jnp.asarray((1.0, 2.0))
+    # ty: ignore[invalid-argument-type]
     first = explicit.step(0, jnp.asarray(0.0), initial, jnp.asarray(0.1), None)
     assert bool(first.successful)
     prepared = PreparedCompressibleProduction(explicit, "test-route", "linear-decay")
@@ -277,7 +286,7 @@ def test_explicit_and_additive_imex_adapters_restart_without_partition_loss():
         jnp.asarray((1.0,)),
     )
 
-    def implicit_solver(provisional, time, coefficient, args):
+    def implicit_solver(provisional: Any, time: Any, coefficient: Any, args: Any) -> Any:
         del time, args
         state = provisional / (1.0 + coefficient)
         return ImplicitConservationStageResult(
@@ -299,17 +308,18 @@ def test_explicit_and_additive_imex_adapters_restart_without_partition_loss():
         explicit_operator_id="transport",
         implicit_operator_id="viscous",
     )
+    # ty: ignore[invalid-argument-type]
     result = imex.step(0, jnp.asarray(0.0), jnp.asarray(1.0), jnp.asarray(0.1), None)
     assert bool(result.successful)
     assert int(result.iterations) == 1
 
 
-def test_manufactured_canonical_mixture_navier_stokes_source_identity():
+def test_manufactured_canonical_mixture_navier_stokes_source_identity() -> None:
     system = HomogeneousMixtureCompressibleNavierStokesSystem(
         _ideal_model(2), ConstantTransport(0.02, 0.03), 1
     )
 
-    def exact_state(time, point, args):
+    def exact_state(time: Any, point: Any, args: Any) -> Any:
         del args
         phase = point[0] - time
         primitive = jnp.stack(
@@ -330,7 +340,7 @@ def test_manufactured_canonical_mixture_navier_stokes_source_identity():
     assert bool(jnp.all(system.admissible(evidence.state)))
 
 
-def test_case_identity_binds_exact_transport_system():
+def test_case_identity_binds_exact_transport_system() -> None:
     model = _ideal_model(1)
     first = HomogeneousMixtureCompressibleNavierStokesSystem(
         model, ConstantTransport(0.02, 0.03), 1
@@ -343,11 +353,23 @@ def test_case_identity_binds_exact_transport_system():
     assert first_case.case_id != second_case.case_id
 
 
-def test_canonical_mixture_wall_and_fv_diffusion_preserve_species_contracts():
+def test_navier_stokes_case_reports_its_thermal_iteration_budget() -> None:
     system = HomogeneousMixtureCompressibleNavierStokesSystem(
         _ideal_model(2),
         ConstantTransport(0.02, 0.03),
         1,
+        maximum_thermal_iterations=37,
+    )
+    case = CompressibleFlowCaseSpec("thermal-budget", system, "structured-fv")
+    assert case.maximum_thermal_iterations == 37
+
+
+def test_canonical_mixture_wall_and_fv_diffusion_preserve_species_contracts() -> None:
+    system = HomogeneousMixtureCompressibleNavierStokesSystem(
+        _ideal_model(2),
+        ConstantTransport(0.02, 0.03),
+        1,
+        # ty: ignore[invalid-argument-type]
         species_diffusivities=(0.1, 0.2),
     )
     wall = phx.discretization.NoSlipIsothermalWallBoundary(jnp.asarray((0.0,)), 350.0)

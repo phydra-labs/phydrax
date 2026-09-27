@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,18 +14,20 @@ sm = phx.applications.solid_mechanics
 mn = sm.member_network
 
 
-def _beam_properties(member_count: int):
+def _beam_properties(member_count: int) -> Any:
     material = mn.LinearElasticMaterial(2_000.0, 800.0, 1.0)
     section = mn.BeamSection(0.1, 0.002, 0.002, 0.001, 0.08, 0.08)
     return mn.MemberPropertyMap(
         (material,),
         (section,),
+        # ty: ignore[invalid-argument-type]
         (0,) * member_count,
+        # ty: ignore[invalid-argument-type]
         (0,) * member_count,
     )
 
 
-def _ligament_comparison_definition():
+def _ligament_comparison_definition() -> Any:
     edges = jnp.asarray(((0, 1), (1, 2)), dtype=jnp.int32)
     positions = jnp.asarray(
         (
@@ -52,11 +56,16 @@ def _ligament_comparison_definition():
         dofs,
     )
     blocks = (
+        # ty: ignore[invalid-argument-type]
         mn.CorotationalFrameBlock((0, 1), block_id="ligament-frame"),
+        # ty: ignore[invalid-argument-type]
         mn.DiscreteRodBlock((0, 1, 2), (0, 1), block_id="ligament-rod"),
         mn.HingeBendingBlock(
+            # ty: ignore[invalid-argument-type]
             ((0, 1, 3, 4),),
+            # ty: ignore[invalid-argument-type]
             (5.0,),
+            # ty: ignore[invalid-argument-type]
             (0.0,),
             block_id="ligament-hinge",
         ),
@@ -66,8 +75,8 @@ def _ligament_comparison_definition():
 
 @pytest.mark.parametrize("block_index", (0, 1, 2))
 def test_existing_ligament_blocks_supply_energy_force_tangent_and_geometry_derivatives(
-    block_index,
-):
+    block_index: Any,
+) -> None:
     definition, positions, blocks = _ligament_comparison_definition()
     block = blocks[block_index]
     rotations = jnp.asarray(
@@ -81,7 +90,7 @@ def test_existing_ligament_blocks_supply_energy_force_tangent_and_geometry_deriv
     )
     displaced = positions.at[1, 1].set(0.04).at[4, 2].set(0.08)
 
-    def energy(flat_positions):
+    def energy(flat_positions: Any) -> Any:
         kinematics = mn.MemberKinematics(
             flat_positions.reshape(positions.shape), rotations
         )
@@ -112,7 +121,9 @@ def test_existing_ligament_blocks_supply_energy_force_tangent_and_geometry_deriv
     assert jnp.isfinite(mode_quantity)
 
 
-def test_existing_ligament_blocks_are_objective_and_frame_route_needs_no_new_block():
+def test_existing_ligament_blocks_are_objective_and_frame_route_needs_no_new_block() -> (
+    None
+):
     definition, positions, blocks = _ligament_comparison_definition()
     rotation_vector = jnp.asarray((0.35, -0.2, 0.15))
     rotation = mn.rotation_vector_matrix(rotation_vector)
@@ -130,7 +141,7 @@ def test_existing_ligament_blocks_are_objective_and_frame_route_needs_no_new_blo
     assert jnp.unique(selected_members).size == selected_members.size
 
 
-def _rigid_unit_base():
+def _rigid_unit_base() -> Any:
     edges = jnp.asarray(((0, 1), (2, 3), (0, 2), (1, 3)), dtype=jnp.int32)
     positions = jnp.asarray(((0.0, 0.0), (0.0, 1.0), (1.0, 0.1), (1.0, 1.1)))
     constraints = jnp.asarray(
@@ -148,8 +159,11 @@ def _rigid_unit_base():
     properties = mn.MemberPropertyMap(
         (material,),
         (rigid, ligament),
+        # ty: ignore[invalid-argument-type]
         (0, 0, 0, 0),
+        # ty: ignore[invalid-argument-type]
         (0, 0, 1, 1),
+        # ty: ignore[invalid-argument-type]
         fabrication_group=(0, 1, 2, 2),
     )
     reference = mn.MemberReferenceState(structure, positions)
@@ -158,11 +172,12 @@ def _rigid_unit_base():
         rotation_constrained=jnp.asarray(((True,), (True,), (False,), (False,))),
     )
     definition = mn.MemberNetworkDefinition(structure, reference, properties, dofs)
+    # ty: ignore[invalid-argument-type]
     assembly = mn.MemberNetworkAssembly((mn.CorotationalFrameBlock((0, 1, 2, 3)),))
     return mn.MemberNetworkProblem(definition, assembly), positions
 
 
-def _designed_geometry(design):
+def _designed_geometry(design: Any) -> Any:
     gap, offset = design
     positions = jnp.asarray(((0.0, 0.0), (0.0, 1.0), (gap, offset), (gap, 1.0 + offset)))
     edges = jnp.asarray(((0, 1), (2, 3), (0, 2), (1, 3)), dtype=jnp.int32)
@@ -171,7 +186,7 @@ def _designed_geometry(design):
     return positions, lengths
 
 
-def _realized_problem(base_problem, design):
+def _realized_problem(base_problem: Any, design: Any) -> Any:
     positions, lengths = _designed_geometry(design)
     reference = eqx.tree_at(
         lambda value: (value.positions, value.rest_lengths),
@@ -186,13 +201,13 @@ def _realized_problem(base_problem, design):
     return eqx.tree_at(lambda value: value.definition, base_problem, definition)
 
 
-def _nodal_loads(node_count: int):
+def _nodal_loads(node_count: int) -> Any:
     vertical = jnp.zeros((node_count, 2)).at[2, 1].set(-0.005).at[3, 1].set(-0.005)
     horizontal = jnp.zeros((node_count, 2)).at[2, 0].set(-0.005).at[3, 0].set(-0.005)
     return vertical, horizontal
 
 
-def _member_inputs(problem, design, nodal_forces):
+def _member_inputs(problem: Any, design: Any, nodal_forces: Any) -> Any:
     positions, lengths = _designed_geometry(design)
     rotations = jnp.zeros((problem.definition.structure.node_count, 1))
     return mn.MemberNetworkInputs(
@@ -204,14 +219,16 @@ def _member_inputs(problem, design, nodal_forces):
     )
 
 
-def _state_design_components(base_problem, load_cases, aggregation, target=None):
+def _state_design_components(
+    base_problem: Any, load_cases: Any, aggregation: Any, target: Any = None
+) -> Any:
     dofs = base_problem.definition.dofs
 
-    def reference_state(design):
+    def reference_state(design: Any) -> Any:
         positions, _ = _designed_geometry(design)
         return dofs.reduce(positions, jnp.zeros((4, 1)))
 
-    def residual(states, design, _args):
+    def residual(states: Any, design: Any, _args: Any) -> Any:
         realized = _realized_problem(base_problem, design)
         positions, _ = _designed_geometry(design)
         prescribed = realized.definition.structure.prescribed_values(positions)
@@ -220,7 +237,7 @@ def _state_design_components(base_problem, load_cases, aggregation, target=None)
         )
         undeformed = reference_state(design)
 
-        def energy(current):
+        def energy(current: Any) -> Any:
             kinematics = realized.definition.dofs.expand(
                 current,
                 prescribed,
@@ -236,7 +253,7 @@ def _state_design_components(base_problem, load_cases, aggregation, target=None)
             )
         )
 
-    def responses(states, design):
+    def responses(states: Any, design: Any) -> Any:
         reference = reference_state(design)
         return jnp.stack(
             tuple(
@@ -245,7 +262,7 @@ def _state_design_components(base_problem, load_cases, aggregation, target=None)
             )
         )
 
-    def objective(states, design, _args):
+    def objective(states: Any, design: Any, _args: Any) -> Any:
         values = responses(states, design)
         weights = jnp.asarray(tuple(case.weight for case in load_cases))
         if target is None:
@@ -299,7 +316,7 @@ def _state_design_components(base_problem, load_cases, aggregation, target=None)
     return problem, reference_state, responses
 
 
-def _refined_reanalysis(design, nodal_load):
+def _refined_reanalysis(design: Any, nodal_load: Any) -> Any:
     gap, offset = design
     positions = jnp.asarray(
         (
@@ -337,7 +354,9 @@ def _refined_reanalysis(design, nodal_load):
     properties = mn.MemberPropertyMap(
         (material,),
         (rigid, ligament),
+        # ty: ignore[invalid-argument-type]
         (0,) * 6,
+        # ty: ignore[invalid-argument-type]
         (0, 0, 1, 1, 1, 1),
     )
     reference = mn.MemberReferenceState(structure, positions)
@@ -364,7 +383,7 @@ def _refined_reanalysis(design, nodal_load):
     return solved, jnp.sum(loads * displacement)
 
 
-def test_rigid_unit_static_multicase_state_design_mma_and_refined_reanalysis():
+def test_rigid_unit_static_multicase_state_design_mma_and_refined_reanalysis() -> None:
     base_problem, _ = _rigid_unit_base()
     design = jnp.asarray((1.0, 0.1))
     nodal_loads = _nodal_loads(4)
@@ -420,7 +439,7 @@ def test_rigid_unit_static_multicase_state_design_mma_and_refined_reanalysis():
         assert solved.successful
         if not direct_states:
 
-            def position_energy(current_positions):
+            def position_energy(current_positions: Any) -> Any:
                 kinematics = mn.MemberKinematics(
                     current_positions,
                     solved.state.kinematics.rotation_vectors,
@@ -440,7 +459,7 @@ def test_rigid_unit_static_multicase_state_design_mma_and_refined_reanalysis():
                 rtol=1.0e-8,
             )
 
-            def reduced_energy(current):
+            def reduced_energy(current: Any) -> Any:
                 kinematics = realized.definition.dofs.expand(
                     current,
                     inputs.prescribed_positions,

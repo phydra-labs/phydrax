@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import blackjax
 import jax
 import jax.numpy as jnp
@@ -11,12 +14,12 @@ import pytest
 from phydrax.uq._interleaved_nuts import build_interleaved_nuts_advancer
 
 
-def _logdensity(position):
+def _logdensity(position: Any) -> Any:
     precision = jnp.asarray([[2.0, 0.35], [0.35, 1.25]])
     return -0.5 * position @ precision @ position
 
 
-def _draw_keys(seed, *, num_chains, num_draws, start=0):
+def _draw_keys(seed: Any, *, num_chains: Any, num_draws: Any, start: Any = 0) -> Any:
     sample_keys = jr.split(jr.key(seed), num_chains)
     indices = jnp.arange(start, start + num_draws, dtype=jnp.uint32)
     return jax.vmap(
@@ -25,18 +28,18 @@ def _draw_keys(seed, *, num_chains, num_draws, start=0):
 
 
 def _run_blackjax(
-    logdensity_fn,
-    states,
-    draw_keys,
-    step_sizes,
-    inverse_mass_matrices,
+    logdensity_fn: Any,
+    states: Any,
+    draw_keys: Any,
+    step_sizes: Any,
+    inverse_mass_matrices: Any,
     *,
-    max_num_doublings,
-):
+    max_num_doublings: Any,
+) -> Any:
     kernel = blackjax.nuts.build_kernel()
 
-    def run_chain(state, keys, step_size, inverse_mass_matrix):
-        def one_step(current, draw_key):
+    def run_chain(state: Any, keys: Any, step_size: Any, inverse_mass_matrix: Any) -> Any:
+        def one_step(current: Any, draw_key: Any) -> Any:
             next_state, info = kernel(
                 draw_key,
                 current,
@@ -57,7 +60,7 @@ def _run_blackjax(
     )
 
 
-def _assert_tree_close(left, right, *, atol=1e-12):
+def _assert_tree_close(left: Any, right: Any, *, atol: Any = 1e-12) -> None:
     comparisons = jax.tree_util.tree_map(
         lambda x, y: jnp.allclose(x, y, rtol=0.0, atol=atol),
         left,
@@ -67,7 +70,7 @@ def _assert_tree_close(left, right, *, atol=1e-12):
 
 
 @pytest.mark.parametrize("dense", [False, True])
-def test_interleaved_nuts_matches_blackjax_for_unequal_chain_work(dense):
+def test_interleaved_nuts_matches_blackjax_for_unequal_chain_work(dense: Any) -> None:
     positions = jnp.asarray([[0.2, -0.7], [1.3, 0.1], [-0.5, 2.0]])
     states = jax.vmap(lambda position: blackjax.nuts.init(position, _logdensity))(
         positions
@@ -145,8 +148,8 @@ def test_interleaved_nuts_matches_blackjax_for_unequal_chain_work(dense):
         assert interleaved_steps < lockstep_steps
 
 
-def test_interleaved_nuts_preserves_pytree_positions_and_nonzero_draw_indices():
-    def tree_logdensity(position):
+def test_interleaved_nuts_preserves_pytree_positions_and_nonzero_draw_indices() -> None:
+    def tree_logdensity(position: Any) -> Any:
         return -0.5 * (
             jnp.sum(position["coefficient"] ** 2) + jnp.sum(position["noise"] ** 2)
         )
@@ -193,10 +196,10 @@ def test_interleaved_nuts_preserves_pytree_positions_and_nonzero_draw_indices():
     [(0.01, 1, False), (20.0, 3, True)],
 )
 def test_interleaved_nuts_matches_depth_and_divergence_termination(
-    step_size,
-    max_num_doublings,
-    expect_all_divergent,
-):
+    step_size: Any,
+    max_num_doublings: Any,
+    expect_all_divergent: Any,
+) -> None:
     positions = jnp.asarray([[1.0, 1.0], [-1.0, 0.5]])
     states = jax.vmap(lambda position: blackjax.nuts.init(position, _logdensity))(
         positions

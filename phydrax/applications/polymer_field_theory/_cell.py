@@ -9,7 +9,8 @@ import math
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -39,7 +40,7 @@ class IsotropicSCFTCellPlan(StrictModule, NonTrainableState):
         target_log_scale_derivative: float = 0.0,
         absolute_tolerance: float = 1.0e-8,
         maximum_iterations: int = 32,
-    ):
+    ) -> None:
         lower = float(minimum_scale)
         upper = float(maximum_scale)
         target = float(target_log_scale_derivative)
@@ -99,12 +100,12 @@ def solve_isotropic_cell_scft(
     fields = prepared.project_initial_fields(initial_fields)
     initial = (fields, jnp.asarray(math.log(scale), dtype=fields.dtype))
 
-    def residual(state, _):
+    def residual(state: tuple[Array, Array], _: object) -> tuple[Array, Array]:
         current_fields, log_scale = state
         current_scale = jnp.exp(log_scale)
         evaluation = prepared.evaluate(current_fields, cell_scale=current_scale)
 
-        def free_energy_at(value):
+        def free_energy_at(value: Array) -> Array:
             return prepared.evaluate(
                 current_fields, cell_scale=jnp.exp(value)
             ).free_energy

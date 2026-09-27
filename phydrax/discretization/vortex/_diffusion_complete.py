@@ -8,7 +8,8 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -40,7 +41,7 @@ class GaussianCoreSpreadingPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     capabilities: VortexDiffusionCapabilities
 
-    def __init__(self, dimension: int, /, *, overlap_limit: float = 2.0):
+    def __init__(self, dimension: int, /, *, overlap_limit: float = 2.0) -> None:
         dimension_ = int(dimension)
         overlap = float(overlap_limit)
         if dimension_ not in (2, 3) or not math.isfinite(overlap) or overlap <= 0.0:
@@ -129,7 +130,7 @@ class GaussianPSENeighborhoodPlan(StrictModule, NonTrainableState):
         *,
         cutoff_factor: float = 4.0,
         box: ParticleBox | None = None,
-    ):
+    ) -> None:
         if not isinstance(relation, ParticlePairRelation):
             raise TypeError("relation must be ParticlePairRelation.")
         dimension_, epsilon, cutoff = (
@@ -152,7 +153,7 @@ class GaussianPSENeighborhoodPlan(StrictModule, NonTrainableState):
             dimension_,
             required_source_fields=("positions", "strength", "active_mask", "volume"),
             domain="periodic"
-            if box is not None and bool(jnp.any(box.periodic))
+            if box is not None and bool(jnp.any(box.periodic_mask))
             else "free-space",
             derivatives=("source-position", "source-strength", "source-volume"),
             acceleration="direct",
@@ -270,7 +271,7 @@ class GaussianRBFReinitializationPlan(StrictModule, NonTrainableState):
         *,
         regularization: float = 1.0e-10,
         policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         regularization_ = float(regularization)
         if not math.isfinite(regularization_) or regularization_ < 0.0:
             raise ValueError("RBF regularization must be finite and nonnegative.")
@@ -347,7 +348,9 @@ class VortexRedistributionPlan(StrictModule, NonTrainableState):
     policy: LinearSolvePolicy
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /, *, policy: LinearSolvePolicy | None = None):
+    def __init__(
+        self, dimension: int, /, *, policy: LinearSolvePolicy | None = None
+    ) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (2, 3):
             raise ValueError("VRM dimension must be 2 or 3.")

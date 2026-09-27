@@ -9,7 +9,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -39,7 +40,7 @@ class PlanarConductorParameters(StrictModule):
         skin_thickness_m: ArrayLike,
         source_depth_m: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (
@@ -114,7 +115,7 @@ class PetersenRostalski2019PlanarConductorPlan(StrictModule):
         /,
         *,
         zero_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         fx = jnp.asarray(frequency_x_rad_per_m)
         fz = jnp.asarray(frequency_z_rad_per_m)
         transfer = jnp.asarray(electrode_transfer)
@@ -188,7 +189,7 @@ class PetersenRostalski2019PlanarConductorPlan(StrictModule):
         plus = omega_y * (p.fat_thickness_m + p.skin_thickness_m)
         minus = omega_y * (p.fat_thickness_m - p.skin_thickness_m)
 
-        def nu(value):
+        def nu(value: Array) -> Array:
             return omega_ya + value * fat_muscle_ratio * jnp.tanh(value)
 
         denominator = (1.0 + skin_fat_ratio) * jnp.cosh(plus) * nu(plus) + (

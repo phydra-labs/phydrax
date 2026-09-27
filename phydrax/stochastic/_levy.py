@@ -15,9 +15,11 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._wiener import WienerRealization
 
 
@@ -39,7 +41,7 @@ def _hash_parts(prefix: bytes, *parts: Any) -> str:
     return digest.hexdigest()
 
 
-def _scalar_key(value: Key[Array, ""], /, *, owner: str) -> Array:
+def _scalar_key(value: PRNGKey, /, *, owner: str) -> Array:
     if jr.key_data(value).shape != (2,):
         raise ValueError(f"{owner} requires one scalar JAX PRNG key.")
     return value
@@ -129,7 +131,7 @@ class SymmetricStableLevyProcess(AbstractLevyProcess):
         dimension: int | None = None,
         drift: ArrayLike = 0.0,
         process_id: str | None = None,
-    ):
+    ) -> None:
         stability = float(alpha)
         if not isfinite(stability) or not 0.0 < stability < 2.0:
             raise ValueError("alpha must be finite and lie strictly between 0 and 2.")
@@ -288,7 +290,7 @@ class LevyJumpSeries(StrictModule):
         process_id: str,
         realization_id: str,
         coupling_id: str,
-    ):
+    ) -> None:
         samples = _sample_shape(sample_shape)
         dimension_value = int(dimension)
         time_values = jnp.asarray(times, dtype=jnp.float64)
@@ -424,7 +426,7 @@ class LevyProcessRealization(StrictModule):
 
     def __init__(
         self,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         dimension: int,
         /,
         *,
@@ -436,7 +438,7 @@ class LevyProcessRealization(StrictModule):
         label: str | None = None,
         coupling_id: str | None = None,
         _path_indices: Array | None = None,
-    ):
+    ) -> None:
         key = _scalar_key(root_key, owner="LevyProcessRealization")
         dimension_value = int(dimension)
         capacity = int(max_terms)
@@ -497,7 +499,7 @@ class LevyProcessRealization(StrictModule):
     def from_process(
         cls,
         process: AbstractLevyProcess,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         /,
         *,
         support: tuple[float, float],
@@ -535,7 +537,7 @@ class LevyProcessRealization(StrictModule):
         terms = jnp.arange(self.max_terms, dtype=jnp.uint32)
         flat_paths = self.path_keys.reshape((-1,) + tuple(self.root_key.shape))
 
-        def one_path(path_key):
+        def one_path(path_key: Array) -> Array:
             namespaced = jr.fold_in(path_key, namespace)
             return jax.vmap(lambda term: jr.fold_in(namespaced, term))(terms)
 

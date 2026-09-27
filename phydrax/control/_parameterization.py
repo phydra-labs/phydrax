@@ -12,9 +12,11 @@ from typing import Any, ClassVar
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._differentiation import ComponentAuthority
+from .._dtype_names import inexact_result_type
 from .._interpolation import (
     bspline_evaluate,
     BSplineGrid,
@@ -31,7 +33,6 @@ from .._model import (
 )
 from .._model._component import bind_positional_component
 from .._model._ports import require_port_shapes
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import fixed_field
 from ..dynamics import TimeGrid
@@ -154,7 +155,7 @@ class PiecewiseConstantControlParameterization(AbstractControlParameterization):
         /,
         *,
         parameterization_id: str,
-    ):
+    ) -> None:
         if not isinstance(time_grid, TimeGrid):
             raise TypeError("time_grid must be a TimeGrid.")
         shape = _shape(control_shape, "control_shape")
@@ -211,7 +212,7 @@ class PiecewiseLinearControlParameterization(AbstractControlParameterization):
         /,
         *,
         parameterization_id: str,
-    ):
+    ) -> None:
         if not isinstance(time_grid, TimeGrid):
             raise TypeError("time_grid must be a TimeGrid.")
         shape = _shape(control_shape, "control_shape")
@@ -287,7 +288,7 @@ class BSplineControlBoundCertificate(StrictModule):
         coefficient_maximum: ArrayLike,
         certified: ArrayLike,
         parameterization_id: str,
-    ):
+    ) -> None:
         self.lower_bound = jnp.asarray(lower_bound)
         self.upper_bound = jnp.asarray(upper_bound)
         self.coefficient_minimum = jnp.asarray(coefficient_minimum)
@@ -316,7 +317,7 @@ class BSplineControlRefinement(StrictModule):
         coefficients: ArrayLike,
         transfer: BSplineGridTransfer,
         source_parameterization_id: str,
-    ):
+    ) -> None:
         self.parameterization = parameterization
         self.coefficients = jnp.asarray(coefficients)
         self.transfer = transfer
@@ -339,7 +340,7 @@ class BSplineControlParameterization(AbstractControlParameterization):
         /,
         *,
         parameterization_id: str,
-    ):
+    ) -> None:
         if not isinstance(grid, BSplineGrid):
             raise TypeError("grid must be a BSplineGrid.")
         shape = _shape(control_shape, "control_shape")
@@ -513,7 +514,7 @@ class NeuralFeedbackPolicy(AbstractControlParameterization):
         time_input: bool = False,
         ports: ModelPorts | None = None,
         port_mapping: PortMapping | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("model must be an AbstractArrayModel.")
         if not isinstance(time_input, bool):

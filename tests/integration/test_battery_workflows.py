@@ -3,6 +3,8 @@
 #
 
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -74,7 +76,9 @@ from phydrax.applications.battery._tspme_brosa_planella import (
 )
 
 
-def _law(value, support, *, quantity, unit, coordinate="temperature"):
+def _law(
+    value: Any, support: Any, *, quantity: Any, unit: Any, coordinate: Any = "temperature"
+) -> Any:
     return ConstantPropertyLaw(
         jnp.asarray(value),
         jnp.asarray(support),
@@ -89,7 +93,7 @@ def _law(value, support, *, quantity, unit, coordinate="temperature"):
     )
 
 
-def _ecm_parameters():
+def _ecm_parameters() -> Any:
     return ThermalEquivalentCircuitParameters(
         0.05,
         jnp.asarray((0.1,)),
@@ -116,7 +120,7 @@ def _ecm_parameters():
     )
 
 
-def _spm_parameters():
+def _spm_parameters() -> Any:
     return SpmParameters(
         electrode_area_m2=0.1,
         negative_electrode_thickness_m=1.0e-4,
@@ -174,7 +178,7 @@ def _spm_parameters():
     )
 
 
-def _electrolyte_law(value, *, quantity, unit):
+def _electrolyte_law(value: Any, *, quantity: Any, unit: Any) -> Any:
     return ConcentrationTemperaturePropertyLaw(
         jnp.asarray((500.0, 1500.0)),
         jnp.asarray((273.15, 323.15)),
@@ -186,7 +190,7 @@ def _electrolyte_law(value, *, quantity, unit):
     )
 
 
-def _spme_parameters():
+def _spme_parameters() -> Any:
     return Marquis2019SpmeParameters(
         _spm_parameters(),
         separator_thickness_m=5.0e-5,
@@ -215,7 +219,7 @@ def _spme_parameters():
     )
 
 
-def _runtime(parameters, current):
+def _runtime(parameters: Any, current: Any) -> Any:
     protocol = BatteryProtocolPlan((CurrentStepPlan(1.0),))
     values = BatteryProtocolValues(protocol, jnp.asarray((current,)))
     return BatteryRuntimeInputs(
@@ -227,11 +231,12 @@ def _runtime(parameters, current):
     )
 
 
-def test_ecm_run_identity_and_native_transition_states_bind_concrete_execution():
+def test_ecm_run_identity_and_native_transition_states_bind_concrete_execution() -> None:
     parameters = _ecm_parameters()
     model = ThermalEquivalentCircuitAdapter(ThermalEquivalentCircuitPlan(1))
     protocol = BatteryProtocolPlan((CurrentStepPlan(1.0), RestStepPlan(1.0)))
     prepared = BatteryExperimentPlan(
+        # ty: ignore[invalid-argument-type]
         model,
         protocol,
         BatteryOutputPlan(("voltage_v", "current_a")),
@@ -283,7 +288,7 @@ def test_ecm_run_identity_and_native_transition_states_bind_concrete_execution()
     np.testing.assert_allclose(first.outputs.times_s, np.asarray((0.0, 2.0)))
 
 
-def test_private_model_candidates_execute_their_native_physics_boundaries():
+def test_private_model_candidates_execute_their_native_physics_boundaries() -> None:
     ecm_parameters = _ecm_parameters()
     ecm = ThermalEquivalentCircuitAdapter(ThermalEquivalentCircuitPlan(1))
     prepared_ecm = ecm.prepare()
@@ -341,11 +346,15 @@ def test_private_model_candidates_execute_their_native_physics_boundaries():
     assert bool(evaluation.domain_valid)
 
 
-def test_private_workflow_contracts_retain_real_content_boundaries():
+def test_private_workflow_contracts_retain_real_content_boundaries() -> None:
     aging_support = EmpiricalAgingSupport(
+        # ty: ignore[invalid-argument-type]
         (273.15, 333.15),
+        # ty: ignore[invalid-argument-type]
         (0.0, 1.0),
+        # ty: ignore[invalid-argument-type]
         (0.0, 20.0),
+        # ty: ignore[invalid-argument-type]
         (0.0, 1.0e9),
         maximum_time_gap_s=60.0,
         maximum_macrostep_s=3600.0,
@@ -400,7 +409,7 @@ def test_private_workflow_contracts_retain_real_content_boundaries():
     assert BrosaPlanellaSpmeSeiAdapter.__module__.endswith("._spme_side_reactions")
 
 
-def test_unsigned_expansion_requests_cannot_authorize_implementation():
+def test_unsigned_expansion_requests_cannot_authorize_implementation() -> None:
     dfn = evaluate_dfn_entry_gate(
         release_index=None,
         trust_policy=None,
@@ -421,8 +430,13 @@ def test_unsigned_expansion_requests_cannot_authorize_implementation():
     assert dfn.reason and pack.reason
 
 
-def test_public_release_builder_rejects_opaque_evidence_ids():
+def test_public_release_builder_rejects_opaque_evidence_ids() -> None:
     with pytest.raises(TypeError):
         battery.build_thermal_ecm_release_profile(
-            "opaque:qualification-evidence", trust_policy=None, at_time=10, expires_at=20
+            # ty: ignore[invalid-argument-type]
+            "opaque:qualification-evidence",
+            # ty: ignore[invalid-argument-type]
+            trust_policy=None,
+            at_time=10,
+            expires_at=20,
         )

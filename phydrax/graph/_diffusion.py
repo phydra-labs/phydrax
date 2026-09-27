@@ -4,16 +4,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse, PRNGKey
 from ._ir import GraphIR
 
 
@@ -68,15 +70,16 @@ class FixedTopologyGraphDiffusion(StrictModule):
         payload_kind: GraphPayloadKind,
         payload_key: str,
         process_id: str | None = None,
-    ):
+    ) -> None:
         from ..stochastic._gaussian_diffusion import AbstractGaussianDiffusion
 
         if not isinstance(template, GraphIR):
             raise TypeError("template must be a GraphIR.")
         if not isinstance(process, AbstractGaussianDiffusion):
             raise TypeError("process must implement AbstractGaussianDiffusion.")
-        if payload_kind not in ("nodes", "edges") or not payload_key:
-            raise ValueError("payload_kind/key are invalid.")
+        payload_kind = parse(payload_kind, GraphPayloadKind, "payload_kind")
+        if not payload_key:
+            raise ValueError("payload_key must be non-empty.")
         value = _payload(template, payload_kind, payload_key)
         if process.state_shape != (value.size,):
             raise ValueError(
@@ -115,7 +118,7 @@ class FixedTopologyGraphDiffusion(StrictModule):
             raise ValueError("Graph payload shape differs from the template.")
         return value
 
-    def perturb(self, graph: GraphIR, key: Key[Array, ""], /, *, time) -> GraphIR:
+    def perturb(self, graph: GraphIR, key: PRNGKey, /, *, time: ArrayLike) -> GraphIR:
         value = self._require_topology(graph)
         perturbed = self.process.perturb(key, value.reshape((-1,)), t1=time)
         result = perturbed.reshape(self.payload_shape)
@@ -127,7 +130,9 @@ class FixedTopologyGraphDiffusion(StrictModule):
             result = jnp.where(expanded, result, value)
         return _replace(graph, self.payload_kind, self.payload_key, result)
 
-    def conditional_score(self, perturbed: GraphIR, clean: GraphIR, /, *, time) -> Array:
+    def conditional_score(
+        self, perturbed: GraphIR, clean: GraphIR, /, *, time: ArrayLike
+    ) -> Array:
         noisy = self._require_topology(perturbed).reshape((-1,))
         source = self._require_topology(clean).reshape((-1,))
         score = self.process.conditional_score(noisy, source, t1=time).reshape(
@@ -144,12 +149,12 @@ class FixedTopologyGraphDiffusion(StrictModule):
 
 def graph_denoising_loss(
     diffusion: FixedTopologyGraphDiffusion,
-    score_model: Any,
+    score_model: Callable[..., ArrayLike],
     clean: GraphIR,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
-    time,
+    time: ArrayLike,
 ) -> Array:
     noise_key, model_key = jr.split(key)
     perturbed = diffusion.perturb(clean, noise_key, time=time)

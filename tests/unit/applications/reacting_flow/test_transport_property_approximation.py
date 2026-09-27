@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -15,7 +18,7 @@ from phydrax.equations._gas_transport_properties import (
 )
 
 
-def _reference():
+def _reference() -> Any:
     return ReferencePowerLawGasTransportPlan(
         jnp.asarray(((0.0, 1.0e-5), (1.0e-5, 0.0))),
         jnp.asarray((1.0e-5, 2.0e-5)),
@@ -23,7 +26,7 @@ def _reference():
     )
 
 
-def test_log_polynomial_properties_enforce_support_and_error_certificate():
+def test_log_polynomial_properties_enforce_support_and_error_certificate() -> None:
     viscosity = np.log(np.asarray((1.0e-5, 2.0e-5)))[:, None]
     conductivity = np.log(np.asarray((0.02, 0.03)))[:, None]
     diffusion = np.zeros((2, 2, 1))
@@ -47,11 +50,15 @@ def test_log_polynomial_properties_enforce_support_and_error_certificate():
     assert not bool(plan.evaluate(250.0, 101325.0).supported)
 
 
-def test_kinetic_theory_route_returns_positive_symmetric_properties():
+def test_kinetic_theory_route_returns_positive_symmetric_properties() -> None:
     plan = KineticTheoryGasTransportPlan(
+        # ty: ignore[invalid-argument-type]
         (2.016, 31.998),
+        # ty: ignore[invalid-argument-type]
         (2.92, 3.46),
+        # ty: ignore[invalid-argument-type]
         (38.0, 107.4),
+        # ty: ignore[invalid-argument-type]
         (2.5, 2.5),
         (200.0, 3000.0),
     )
@@ -66,7 +73,7 @@ def test_kinetic_theory_route_returns_positive_symmetric_properties():
     )
 
 
-def test_reuse_state_commits_atomically_and_refreshes_after_bound():
+def test_reuse_state_commits_atomically_and_refreshes_after_bound() -> None:
     plan = TransportPropertyReusePlan(
         _reference(),
         temperature_bounds=(200.0, 3000.0),

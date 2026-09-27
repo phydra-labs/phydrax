@@ -4,7 +4,8 @@
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -15,7 +16,7 @@ class FrequencyAxis(StrictModule, NonTrainableState):
     frequency_hz: Array
     axis_id: str = eqx.field(static=True)
 
-    def __init__(self, frequency_hz: ArrayLike, /):
+    def __init__(self, frequency_hz: ArrayLike, /) -> None:
         f = np.asarray(frequency_hz, float)
         if (
             f.ndim != 1
@@ -31,7 +32,7 @@ class FrequencyAxis(StrictModule, NonTrainableState):
         )
 
     @property
-    def angular_frequency_rad_s(self):
+    def angular_frequency_rad_s(self) -> Array:
         return 2 * jnp.pi * self.frequency_hz
 
 

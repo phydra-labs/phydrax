@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -77,28 +78,28 @@ class _AffineReactionModel:
     membrane_capacitance_uF_per_mm2 = 1.0
     membrane_surface_to_volume_per_mm = 1.0
 
-    def __init__(self, forcing: float, model_id: str):
+    def __init__(self, forcing: float, model_id: str) -> None:
         self.default_parameters = jnp.asarray((forcing, 2.0, 0.5), dtype=jnp.float32)
         self.model_id = model_id
 
-    def initialize(self, batch_shape=(), *, dtype=None):
+    def initialize(self, batch_shape: Any = (), *, dtype: Any = None) -> Any:
         resolved_dtype = jnp.float32 if dtype is None else dtype
         voltage = jnp.zeros(batch_shape, dtype=resolved_dtype)
         gate = jnp.ones(batch_shape, dtype=resolved_dtype)
         pool = jnp.ones(batch_shape, dtype=resolved_dtype)
         return jnp.stack((voltage, gate, pool), axis=-1)
 
-    def _parameters(self, state, parameters):
+    def _parameters(self, state: Any, parameters: Any) -> Any:
         values = self.default_parameters if parameters is None else parameters
         return jnp.asarray(values, dtype=state.dtype)
 
     def evaluate(
         self,
-        state,
-        parameters=None,
+        state: Any,
+        parameters: Any = None,
         *,
-        stimulus_current_uA_per_mm2=0.0,
-    ):
+        stimulus_current_uA_per_mm2: Any = 0.0,
+    ) -> Any:
         values = self._parameters(state, parameters)
         forcing, gate_rate, pool_rate = values
         gate = state[..., 1]
@@ -131,33 +132,33 @@ class _AffineReactionModel:
 
     def rates(
         self,
-        state,
-        parameters=None,
+        state: Any,
+        parameters: Any = None,
         *,
-        stimulus_current_uA_per_mm2=0.0,
-    ):
+        stimulus_current_uA_per_mm2: Any = 0.0,
+    ) -> Any:
         return self.evaluate(
             state,
             parameters,
             stimulus_current_uA_per_mm2=stimulus_current_uA_per_mm2,
         ).state_rate
 
-    def exact_gate_update(self, state, dt_ms, parameters=None):
+    def exact_gate_update(self, state: Any, dt_ms: Any, parameters: Any = None) -> Any:
         values = self._parameters(state, parameters)
         gate = state[..., 1] * jnp.exp(-values[1] * dt_ms)
         return state.at[..., 1].set(gate)
 
-    def currents(self, state, parameters=None):
+    def currents(self, state: Any, parameters: Any = None) -> Any:
         return self.evaluate(state, parameters).current_density_uA_per_mm2
 
-    def admissible(self, state, parameters=None):
+    def admissible(self, state: Any, parameters: Any = None) -> Any:
         return self.evaluate(state, parameters).valid
 
-    def validate_state(self, state, parameters=None):
+    def validate_state(self, state: Any, parameters: Any = None) -> None:
         self.state_layout.require_shape(state)
 
 
-def _operator(matrix: np.ndarray, operator_id: str = "test-diffusion"):
+def _operator(matrix: np.ndarray, operator_id: str = "test-diffusion") -> Any:
     return DenseLinearOperator(
         jnp.asarray(matrix, dtype=jnp.float32),
         properties=OperatorProperties(
@@ -172,7 +173,7 @@ def _operator(matrix: np.ndarray, operator_id: str = "test-diffusion"):
     )
 
 
-def _two_workset_assignment(*, second_effect=None):
+def _two_workset_assignment(*, second_effect: Any = None) -> Any:
     effect = RegionalHeterogeneity(1) if second_effect is None else second_effect
     plan = RegionalElectrophysiologyPlan(
         2,
@@ -195,12 +196,12 @@ def _runtime(
     *,
     macro_dt_ms: float,
     macro_step_count: int,
-    splitting,
-    assignment=None,
-    matrix=None,
-    event_ticks=(0,),
-    checkpoint_stride=1,
-):
+    splitting: Any,
+    assignment: Any = None,
+    matrix: Any = None,
+    event_ticks: Any = (0,),
+    checkpoint_stride: Any = 1,
+) -> Any:
     regional = _two_workset_assignment() if assignment is None else assignment
     diffusion_matrix = (
         np.asarray(((1.0, -1.0), (-1.0, 1.0))) if matrix is None else np.asarray(matrix)
@@ -232,16 +233,18 @@ def _runtime(
     )
     reactions = (
         prepare_reaction(
+            # ty: ignore[invalid-argument-type]
             plan_reaction(_AffineReactionModel(1.0, "affine-left"), 1, dtype=np.float32)
         ),
         prepare_reaction(
+            # ty: ignore[invalid-argument-type]
             plan_reaction(_AffineReactionModel(-0.5, "affine-right"), 1, dtype=np.float32)
         ),
     )
     return integration_plan.prepare(spatial, regional, reactions)
 
 
-def test_regional_effect_types_are_distinct_and_assignment_is_complete():
+def test_regional_effect_types_are_distinct_and_assignment_is_complete() -> None:
     effects = (
         ScarCore(0),
         ScarBorderZone(0),
@@ -279,7 +282,7 @@ def test_regional_effect_types_are_distinct_and_assignment_is_complete():
     assert type(effects[1]) is not type(effects[2])
 
 
-def test_homogeneous_worksets_route_reaction_and_exact_gate_lanes():
+def test_homogeneous_worksets_route_reaction_and_exact_gate_lanes() -> None:
     second_effect = ScarBorderZone(
         1,
         capacitance_scale=2.0,
@@ -325,8 +328,8 @@ def test_homogeneous_worksets_route_reaction_and_exact_gate_lanes():
     )
 
 
-def test_strang_split_converges_faster_than_lie_for_affine_monodomain():
-    def error(macro_dt_ms, splitting):
+def test_strang_split_converges_faster_than_lie_for_affine_monodomain() -> None:
+    def error(macro_dt_ms: Any, splitting: Any) -> Any:
         step_count = int(round(1.0 / macro_dt_ms))
         runtime = _runtime(
             macro_dt_ms=macro_dt_ms,
@@ -356,7 +359,7 @@ def test_strang_split_converges_faster_than_lie_for_affine_monodomain():
     assert strang_fine < 0.2 * lie_fine
 
 
-def test_event_misalignment_rolls_back_and_retains_original_evidence():
+def test_event_misalignment_rolls_back_and_retains_original_evidence() -> None:
     runtime = _runtime(
         macro_dt_ms=0.2,
         macro_step_count=2,
@@ -377,7 +380,7 @@ def test_event_misalignment_rolls_back_and_retains_original_evidence():
     np.testing.assert_array_equal(result.state.tick, state.tick)
 
 
-def test_checkpoint_restores_complete_accepted_state():
+def test_checkpoint_restores_complete_accepted_state() -> None:
     runtime = _runtime(
         macro_dt_ms=0.1,
         macro_step_count=2,
@@ -420,7 +423,7 @@ def test_checkpoint_restores_complete_accepted_state():
     assert int(fallback.state.tick) == int(state.tick)
 
 
-def test_explicit_reference_has_no_implicit_method_fallback():
+def test_explicit_reference_has_no_implicit_method_fallback() -> None:
     assignment = _two_workset_assignment()
     operator = _operator(np.zeros((2, 2)), "zero-reference-diffusion")
     spatial = PhysicalMonodomainSpatialBinding(
@@ -440,6 +443,7 @@ def test_explicit_reference_has_no_implicit_method_fallback():
     )
     reactions = tuple(
         prepare_reaction(
+            # ty: ignore[invalid-argument-type]
             plan_reaction(_AffineReactionModel(forcing, model_id), 1, dtype=np.float32)
         )
         for forcing, model_id in ((1.0, "explicit-left"), (-0.5, "explicit-right"))
@@ -452,7 +456,7 @@ def test_explicit_reference_has_no_implicit_method_fallback():
         ImplicitThetaDiffusion(0.5, LinearSolvePolicy())
 
 
-def test_generic_tensor_diffusion_action_is_bound_without_local_assembly():
+def test_generic_tensor_diffusion_action_is_bound_without_local_assembly() -> None:
     assignment = _two_workset_assignment()
     operator = _operator(np.zeros((2, 2)), "tensor-action-discretization")
     action = TensorDiffusionAction(
@@ -473,7 +477,7 @@ def test_generic_tensor_diffusion_action_is_bound_without_local_assembly():
     assert bound.regional_assignment_id == assignment.runtime_id
 
 
-def test_spatial_binding_identity_changes_with_physical_content():
+def test_spatial_binding_identity_changes_with_physical_content() -> None:
     assignment = _two_workset_assignment()
     first_operator = _operator(np.zeros((2, 2)), "shared-operator-label")
     second_operator = _operator(
@@ -481,7 +485,7 @@ def test_spatial_binding_identity_changes_with_physical_content():
         "shared-operator-label",
     )
 
-    def bind(volumes, operator):
+    def bind(volumes: Any, operator: Any) -> Any:
         return PhysicalMonodomainSpatialBinding(
             jnp.asarray(volumes, dtype=jnp.float32),
             PublicDiffusionOperatorInput(
@@ -518,7 +522,7 @@ def test_spatial_binding_identity_changes_with_physical_content():
     assert baseline_state.checkpoints.runtime_id != changed_state.checkpoints.runtime_id
 
 
-def test_candidate_commit_rejects_a_different_complete_source_state():
+def test_candidate_commit_rejects_a_different_complete_source_state() -> None:
     runtime = _runtime(
         macro_dt_ms=0.1,
         macro_step_count=2,
@@ -545,7 +549,7 @@ def test_candidate_commit_rejects_a_different_complete_source_state():
         commit_physical_monodomain_candidate(runtime, different_checkpoint, candidate)
 
 
-def test_cadence_and_horizon_are_enforced():
+def test_cadence_and_horizon_are_enforced() -> None:
     runtime = _runtime(
         macro_dt_ms=0.1,
         macro_step_count=1,
@@ -573,7 +577,7 @@ def test_cadence_and_horizon_are_enforced():
         )
 
 
-def test_tp06_prepared_reaction_advances_through_physical_monodomain():
+def test_tp06_prepared_reaction_advances_through_physical_monodomain() -> None:
     assignment = RegionalElectrophysiologyPlan(
         1, (RegionalPhenotype("tp06-epicardium", 0),)
     ).prepare(
@@ -591,6 +595,7 @@ def test_tp06_prepared_reaction_advances_through_physical_monodomain():
         binding_id="tp06-production-spatial",
     )
     reaction = prepare_reaction(
+        # ty: ignore[invalid-argument-type]
         plan_reaction(TenTusscherPanfilov2006Model(), 1, dtype=np.float32)
     )
     plan = PhysicalMonodomainPlan(

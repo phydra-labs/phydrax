@@ -14,6 +14,7 @@ import jax.random as jr
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._realization import (
     ConditionEvaluationContext,
     FieldRealizationResult,
@@ -68,7 +69,7 @@ class RealizationFailure(StrictModule):
         accepted_step: int,
         attempt: int,
         evidence: Any = None,
-    ):
+    ) -> None:
         if status.successful:
             raise ValueError("A realization failure requires a failure status.")
         message_ = str(message)
@@ -101,7 +102,7 @@ class RealizationSourceStamp(StrictModule):
         accepted_step: int,
         parameter_revision: int,
         generation: int,
-    ):
+    ) -> None:
         name_ = str(name)
         step = int(accepted_step)
         parameter_revision_ = int(parameter_revision)
@@ -122,7 +123,7 @@ class _SourceResolution(StrictModule):
     value: Any
     message: str = eqx.field(static=True)
 
-    def __init__(self, available: bool, value: Any = None, message: str = ""):
+    def __init__(self, available: bool, value: Any = None, message: str = "") -> None:
         available_ = bool(available)
         message_ = str(message)
         if not available_ and not message_:
@@ -179,16 +180,26 @@ class FixedRealizationSource(AbstractRealizationSource):
     value: Any
     kind: RealizationSourceKind = eqx.field(static=True)
 
-    def __init__(self, name: str, value: Any, /):
+    def __init__(self, name: str, value: Any, /) -> None:
         self.name = _source_name(name)
         self.value = value
         self.kind = RealizationSourceKind.FIXED
 
-    def needs_refresh(self, state, context, /) -> bool:
+    def needs_refresh(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> bool:
         del context
         return self.name not in state.values
 
-    def resolve(self, state, context, /) -> _SourceResolution:
+    def resolve(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> _SourceResolution:
         del state, context
         return _SourceResolution(True, self.value)
 
@@ -208,7 +219,7 @@ class CallerRealizationSource(AbstractRealizationSource):
         required: bool = True,
         default: Any = None,
         has_default: bool = False,
-    ):
+    ) -> None:
         required_ = bool(required)
         has_default_ = bool(has_default)
         if required_ and has_default_:
@@ -219,10 +230,20 @@ class CallerRealizationSource(AbstractRealizationSource):
         self.default = default
         self.kind = RealizationSourceKind.CALLER
 
-    def needs_refresh(self, state, context, /) -> bool:
+    def needs_refresh(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> bool:
         return self.name in context.caller_sources or self.name not in state.values
 
-    def resolve(self, state, context, /) -> _SourceResolution:
+    def resolve(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> _SourceResolution:
         if self.name in context.caller_sources:
             return _SourceResolution(True, context.caller_sources[self.name])
         if self.name in state.values:
@@ -242,17 +263,27 @@ class PerStepRealizationSource(AbstractRealizationSource):
     provider: SourceProvider = eqx.field(static=True)
     kind: RealizationSourceKind = eqx.field(static=True)
 
-    def __init__(self, name: str, provider: SourceProvider, /):
+    def __init__(self, name: str, provider: SourceProvider, /) -> None:
         if not callable(provider):
             raise TypeError("A per-step realization source provider must be callable.")
         self.name = _source_name(name)
         self.provider = provider
         self.kind = RealizationSourceKind.PER_STEP
 
-    def needs_refresh(self, state, context, /) -> bool:
+    def needs_refresh(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> bool:
         return _step_changed(self.name, state, context)
 
-    def resolve(self, state, context, /) -> _SourceResolution:
+    def resolve(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> _SourceResolution:
         del state
         return _SourceResolution(True, self.provider(context))
 
@@ -262,17 +293,27 @@ class AdaptiveRealizationSource(AbstractRealizationSource):
     provider: SourceProvider = eqx.field(static=True)
     kind: RealizationSourceKind = eqx.field(static=True)
 
-    def __init__(self, name: str, provider: SourceProvider, /):
+    def __init__(self, name: str, provider: SourceProvider, /) -> None:
         if not callable(provider):
             raise TypeError("An adaptive realization source provider must be callable.")
         self.name = _source_name(name)
         self.provider = provider
         self.kind = RealizationSourceKind.ADAPTIVE
 
-    def needs_refresh(self, state, context, /) -> bool:
+    def needs_refresh(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> bool:
         return self.name not in state.values or self.name in context.adaptive_sources
 
-    def resolve(self, state, context, /) -> _SourceResolution:
+    def resolve(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> _SourceResolution:
         previous = state.values.get(self.name)
         return _SourceResolution(True, self.provider(previous, context))
 
@@ -282,7 +323,7 @@ class ParameterizedRealizationSource(AbstractRealizationSource):
     provider: SourceProvider = eqx.field(static=True)
     kind: RealizationSourceKind = eqx.field(static=True)
 
-    def __init__(self, name: str, provider: SourceProvider, /):
+    def __init__(self, name: str, provider: SourceProvider, /) -> None:
         if not callable(provider):
             raise TypeError(
                 "A parameterized realization source provider must be callable."
@@ -291,16 +332,28 @@ class ParameterizedRealizationSource(AbstractRealizationSource):
         self.provider = provider
         self.kind = RealizationSourceKind.PARAMETERIZED
 
-    def needs_refresh(self, state, context, /) -> bool:
+    def needs_refresh(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> bool:
         stamp = state.source_stamps.get(self.name)
         return stamp is None or stamp.parameter_revision != context.parameter_revision
 
-    def resolve(self, state, context, /) -> _SourceResolution:
+    def resolve(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> _SourceResolution:
         del state
         return _SourceResolution(True, self.provider(context.parameters, context))
 
 
-def address_accepted_step_key(key: Any, accepted_step: int, stream: int = 0, /):
+def address_accepted_step_key(
+    key: PRNGKey, accepted_step: int, stream: int = 0, /
+) -> PRNGKey:
     """Derive a stable PRNG address without consuming state or counting retries."""
 
     step = int(accepted_step)
@@ -318,7 +371,9 @@ class RandomizedRealizationSource(AbstractRealizationSource):
     stream: int = eqx.field(static=True)
     kind: RealizationSourceKind = eqx.field(static=True)
 
-    def __init__(self, name: str, provider: SourceProvider, /, *, stream: int = 0):
+    def __init__(
+        self, name: str, provider: SourceProvider, /, *, stream: int = 0
+    ) -> None:
         stream_ = int(stream)
         if not callable(provider):
             raise TypeError("A randomized realization source provider must be callable.")
@@ -331,10 +386,20 @@ class RandomizedRealizationSource(AbstractRealizationSource):
         self.stream = stream_
         self.kind = RealizationSourceKind.RANDOMIZED
 
-    def needs_refresh(self, state, context, /) -> bool:
+    def needs_refresh(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> bool:
         return _step_changed(self.name, state, context)
 
-    def resolve(self, state, context, /) -> _SourceResolution:
+    def resolve(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> _SourceResolution:
         del state
         if context.prng_key is None:
             return _SourceResolution(
@@ -380,7 +445,7 @@ class RealizationLifecycleState(StrictModule):
         source_stamps: Mapping[str, RealizationSourceStamp] = frozendict(),
         realization_stamp: ConditionRealizationStamp | None = None,
         last_failure: RealizationFailure | None = None,
-    ):
+    ) -> None:
         generation_ = int(generation)
         step = int(accepted_step)
         revision = int(parameter_revision)
@@ -434,7 +499,7 @@ class RefreshProposal(StrictModule):
         source_stamps: Mapping[str, RealizationSourceStamp] | None,
         refreshed: Sequence[str] = (),
         message: str = "",
-    ):
+    ) -> None:
         successful = status is not RefreshProposalStatus.FAILED
         if successful and (values is None or source_stamps is None):
             raise ValueError(
@@ -477,7 +542,7 @@ class RefreshValidation(StrictModule):
         *,
         message: str = "",
         evidence: Any = None,
-    ):
+    ) -> None:
         message_ = str(message)
         if not status.successful and not message_:
             raise ValueError("A rejected refresh requires a message.")
@@ -515,7 +580,7 @@ class RefreshValidation(StrictModule):
 
 
 def propose_refresh(
-    declarations: Sequence[RealizationSource],
+    declarations: Sequence[AbstractRealizationSource],
     state: RealizationLifecycleState | None,
     /,
     *,
@@ -725,7 +790,7 @@ class EnforcementState(StrictModule):
         accepted_step: int = 0,
         generation: int = 0,
         last_failure: RealizationFailure | None = None,
-    ):
+    ) -> None:
         step = int(accepted_step)
         generation_ = int(generation)
         if step < 0 or generation_ < 0:
@@ -765,7 +830,7 @@ class PreparedEnforcementStep(StrictModule):
         realizations: Mapping[str, RealizationLifecycleState] | None,
         results: Mapping[str, FieldRealizationResult] = frozendict(),
         message: str = "",
-    ):
+    ) -> None:
         successful = status.successful
         base_generation_ = int(base_generation)
         accepted_step_ = int(accepted_step)

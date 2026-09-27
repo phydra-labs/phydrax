@@ -22,7 +22,7 @@ class FLIPResourcePolicy(StrictModule, NonTrainableState):
         *,
         maximum_state_bytes: int = 1024**3,
         maximum_workspace_bytes: int = 2 * 1024**3,
-    ):
+    ) -> None:
         state = int(maximum_state_bytes)
         workspace = int(maximum_workspace_bytes)
         if state <= 0 or workspace <= 0:
@@ -51,7 +51,7 @@ class FLIPMethodPlan(StrictModule, NonTrainableState):
         liquid_fraction_threshold: float = 0.05,
         extrapolation_layers: int = 3,
         cfl_fraction: float = 0.5,
-    ):
+    ) -> None:
         pic = float(pic_fraction)
         threshold = float(liquid_fraction_threshold)
         layers = int(extrapolation_layers)

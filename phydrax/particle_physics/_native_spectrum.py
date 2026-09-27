@@ -16,10 +16,12 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 
 
 NativeSpectrumModel: TypeAlias = Literal["sm-one-loop", "mssm-third-family-one-loop"]
@@ -90,9 +92,8 @@ class NativeSpectrumModelPlan(StrictModule):
         minimum_log_step: float = 1e-6,
         maximum_log_step: float = 0.1,
         maximum_steps: int = 100_000,
-    ):
-        if model not in ("sm-one-loop", "mssm-third-family-one-loop"):
-            raise ValueError("Unknown native particle-spectrum model.")
+    ) -> None:
+        model = parse(model, NativeSpectrumModel, "model")
         scheme_ = str(scheme).strip()
         order = int(loop_order)
         perturbative = float(perturbativity_limit)
@@ -164,7 +165,7 @@ class SpectrumThreshold:
         offset: ArrayLike,
         source_id: str,
         /,
-    ):
+    ) -> None:
         scale_ = float(scale)
         matrix_ = np.array(matrix, dtype=np.float64, copy=True)
         offset_ = np.array(offset, dtype=np.float64, copy=True)
@@ -405,7 +406,9 @@ def native_beta_function(
     return jnp.asarray(beta)
 
 
-def _rk45_step(plan: NativeSpectrumModelPlan, values: np.ndarray, step: float, /):
+def _rk45_step(
+    plan: NativeSpectrumModelPlan, values: np.ndarray, step: float, /
+) -> tuple[np.ndarray, np.ndarray]:
     beta = _sm_beta if plan.model == "sm-one-loop" else _mssm_beta
     k1 = beta(values)
     k2 = beta(values + step * (1.0 / 5.0) * k1)
@@ -842,7 +845,7 @@ class NativeSpectrumBVPPlan(StrictModule):
         maximum_iterations: int = 20,
         finite_difference_step: float = 1e-5,
         trust_radius: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(model, NativeSpectrumModelPlan):
             raise TypeError("model must be NativeSpectrumModelPlan.")
         unknown_raw = tuple(unknown_indices)
@@ -939,7 +942,9 @@ class NativeSpectrumBVPRoots(StrictModule):
     result_id: str = eqx.field(static=True)
 
 
-def _native_bvp_residual(plan: NativeSpectrumBVPPlan, parameters: np.ndarray, /):
+def _native_bvp_residual(
+    plan: NativeSpectrumBVPPlan, parameters: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, int]:
     history = integrate_native_rge(
         plan.model,
         parameters,
@@ -1222,7 +1227,7 @@ class SpectrumCalculatorAdapter:
         required_blocks: Sequence[str],
         approximation_id: str,
         /,
-    ):
+    ) -> None:
         provider = str(provider_id).strip()
         blocks = tuple(sorted(str(value).upper() for value in required_blocks))
         approximation = str(approximation_id).strip()

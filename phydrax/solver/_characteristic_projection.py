@@ -13,7 +13,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 from phydrax.conditions import Residual
@@ -26,6 +27,7 @@ from phydrax.domain import (
 )
 
 from .._fingerprint import canonical_fingerprint
+from .._frozendict import frozendict
 from .._strict import StrictModule
 from ..dynamics import TimeGrid
 from ..integration import fixed, from_samples, IntegrationRealization, mean_over
@@ -35,6 +37,7 @@ from ..stochastic import (
     StochasticPathEnsembleResult,
 )
 from ..terms import ResidualPenalty
+from ..typing import parse
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._diffrax_backend import solve_diffrax
 from ._functional_solver import FunctionalSolver
@@ -74,11 +77,10 @@ class CharacteristicBoundaryPolicy(StrictModule):
         *,
         reset_map: Callable[[Array], ArrayLike] | None = None,
         priority: int = 0,
-    ):
+    ) -> None:
         if not isinstance(schedule, PreparedHybridSchedule):
             raise TypeError("schedule must be PreparedHybridSchedule.")
-        if action not in ("stop", "reflect", "absorb", "reset", "periodic"):
-            raise ValueError("Unknown characteristic boundary action.")
+        action = parse(action, CharacteristicBoundaryAction, "action")
         if action in ("reflect", "reset", "periodic") and reset_map is None:
             raise ValueError(f"{action} boundary action requires reset_map.")
         intervals = jnp.asarray(brackets, dtype=jnp.float64)
@@ -126,7 +128,7 @@ class DiffusiveCharacteristicPlan(StrictModule):
         /,
         *,
         interpretation: Literal["ito", "stratonovich"] = "ito",
-    ):
+    ) -> None:
         if not isinstance(ensemble, PreparedStochasticPathEnsemble):
             raise TypeError("ensemble must be PreparedStochasticPathEnsemble.")
         if not isinstance(integration, IntegrationRealization):
@@ -311,7 +313,8 @@ def trace_characteristics(
             raise ValueError(
                 "Prepared boundary schedule state shape must match one point."
             )
-        if solution.interpolation is None:
+        interpolation = solution.interpolation
+        if interpolation is None:
             raise RuntimeError(
                 "Eventful characteristic solve requires dense interpolation."
             )
@@ -323,11 +326,9 @@ def trace_characteristics(
             schedule_results.append(
                 execute_hybrid_schedule(
                     boundary_policy.schedule,
-                    lambda pseudo_time, _args, index=point_index: (
-                        solution.interpolation.evaluate(pseudo_time).reshape(
-                            (flat_count,) + points.shape[-1:]
-                        )[index]
-                    ),
+                    lambda pseudo_time, _args, index=point_index: interpolation.evaluate(
+                        pseudo_time
+                    ).reshape((flat_count,) + points.shape[-1:])[index],
                     scaled_brackets,
                 )
             )
@@ -414,7 +415,7 @@ class CharacteristicProjectionProblem(StrictModule):
         boundary_policy: CharacteristicBoundaryPolicy | None = None,
         args: Any = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         name = str(field)
         coordinate = str(coordinate_label)
         if not name or not coordinate:
@@ -465,11 +466,13 @@ class CharacteristicProjectionProblem(StrictModule):
 class _StoredBatchTarget(StrictModule, BatchEvaluator):
     values: cx.AxisArray
 
-    def __call_batch__(self, batch: Any, /, *, key: Any = None, **kwargs: Any):
+    def __call_batch__(
+        self, batch: Any, /, *, key: Any = None, **kwargs: Any
+    ) -> cx.AxisArray:
         del batch, key, kwargs
         return self.values
 
-    def __call__(self, *args: Any, key: Any = None, **kwargs: Any):
+    def __call__(self, *args: Any, key: Any = None, **kwargs: Any) -> Array:
         del args, key, kwargs
         return self.values.data
 
@@ -508,7 +511,7 @@ def _replace_coordinate_batch(
     replacement = cx.AxisArray(jnp.asarray(coordinates), dims=old.dims)
     points = dict(batch.points)
     points[label] = replacement
-    return PointBatch(points, batch.structure, metadata=batch.metadata)
+    return PointBatch(frozendict(points), batch.structure, metadata=batch.metadata)
 
 
 def solve_characteristic_projection(

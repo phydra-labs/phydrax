@@ -6,30 +6,29 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import prod
-from typing import Literal, TypeAlias
+from typing import Any, Literal, overload, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
+from ..._dtype_names import inexact_result_type
 from ..._interpolation import (
     apply_gather_stencil,
     InterpolationResourcePolicy,
     rectilinear_stencil,
 )
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...linalg import inverse as matrix_inverse
 from ...metrix import DENSITY_TENSOR, SCALAR_TENSOR, TensorType
+from ...typing import parse
 
 
 WarpBoundaryMode: TypeAlias = Literal["periodic", "reflect", "clamp", "constant"]
 WarpMaskMode: TypeAlias = Literal["reject", "renormalize", "strict"]
-
-_VALID_MASK_MODES = frozenset(("reject", "renormalize", "strict"))
 
 
 class RectilinearWarpDiagnostics(StrictModule):
@@ -51,7 +50,7 @@ class RectilinearWarpDiagnostics(StrictModule):
         determinant: Array,
         interpolation_support: Array,
         route_scale: Array | None = None,
-    ):
+    ) -> None:
         self.displacement = jnp.asarray(displacement)
         self.coordinates = jnp.asarray(coordinates)
         self.jacobian = jnp.asarray(jacobian)
@@ -74,7 +73,7 @@ class GaussianWarpRoute(StrictModule):
     mean: Array
     scale: Array
 
-    def __init__(self, mean: Array, scale: Array, /):
+    def __init__(self, mean: Array, scale: Array, /) -> None:
         mean_ = jnp.asarray(mean)
         scale_ = jnp.asarray(scale)
         if mean_.shape != scale_.shape:
@@ -215,6 +214,57 @@ def _broadcast_source_mask(
     return mask
 
 
+@overload
+def sample_rectilinear_grid(
+    values: Array,
+    coordinates: Array,
+    /,
+    *,
+    spatial_ndim: int,
+    boundary: Sequence[WarpBoundaryMode],
+    axis_nodes: Sequence[Array] | None = None,
+    source_mask: Array | None = None,
+    mask_mode: WarpMaskMode = "renormalize",
+    fill_value: float = 0.0,
+    return_support: Literal[False] = False,
+    resources: InterpolationResourcePolicy | None = None,
+) -> Array: ...
+
+
+@overload
+def sample_rectilinear_grid(
+    values: Array,
+    coordinates: Array,
+    /,
+    *,
+    spatial_ndim: int,
+    boundary: Sequence[WarpBoundaryMode],
+    axis_nodes: Sequence[Array] | None = None,
+    source_mask: Array | None = None,
+    mask_mode: WarpMaskMode = "renormalize",
+    fill_value: float = 0.0,
+    return_support: Literal[True],
+    resources: InterpolationResourcePolicy | None = None,
+) -> tuple[Array, Array]: ...
+
+
+@overload
+def sample_rectilinear_grid(
+    values: Array,
+    coordinates: Array,
+    /,
+    *,
+    spatial_ndim: int,
+    boundary: Sequence[WarpBoundaryMode],
+    axis_nodes: Sequence[Array] | None = None,
+    source_mask: Array | None = None,
+    mask_mode: WarpMaskMode = "renormalize",
+    fill_value: float = 0.0,
+    return_support: bool,
+    resources: InterpolationResourcePolicy | None = None,
+) -> Array | tuple[Array, Array]: ...
+
+
 def sample_rectilinear_grid(
     values: Array,
     coordinates: Array,
@@ -245,8 +295,7 @@ def sample_rectilinear_grid(
         raise ValueError(
             "Rectilinear sampling requires one boundary mode per positive-dimensional axis."
         )
-    if mask_mode not in _VALID_MASK_MODES:
-        raise ValueError("mask_mode must be 'reject', 'renormalize', or 'strict'.")
+    mask_mode = parse(mask_mode, WarpMaskMode, "mask_mode")
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError("Rectilinear warping supports real-valued arrays only.")
     if array.ndim < dimensions + 1:
@@ -492,7 +541,7 @@ def conservative_remap(
     density: Array,
     displacement: Array,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> Array | tuple[Array, RectilinearWarpDiagnostics]:
     """Conservatively pull back a density using the warp-map determinant."""
 

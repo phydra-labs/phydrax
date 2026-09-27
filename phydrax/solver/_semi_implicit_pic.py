@@ -7,18 +7,21 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization import CochainDiscretization
 from ..discretization.particle import ParticlePopulationState
 from ..discretization.pic import (
     PICChargeModelPlan,
     PICChargeState,
     PICParticleResponsePlan,
+    PICParticleResponseState,
     PICParticleState,
     PreparedPICParticleCochainTransfer,
 )
@@ -41,8 +44,8 @@ from ._maxwell import (
 
 class _SemiImplicitFieldAction(StrictModule):
     response: PICParticleResponsePlan
-    response_state: object
-    cochain: object
+    response_state: PICParticleResponseState
+    cochain: CochainDiscretization
     theta_dt: Array
 
     def __call__(self, electric: Array, /) -> Array:
@@ -101,7 +104,7 @@ class SemiImplicitPICPlan(StrictModule, NonTrainableState):
         theta: float = 0.5,
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 200,
-    ):
+    ) -> None:
         if not isinstance(maxwell, PreparedCompatibleMaxwell):
             raise TypeError("maxwell must be PreparedCompatibleMaxwell.")
         if not isinstance(transfer, PreparedPICParticleCochainTransfer):
@@ -307,7 +310,7 @@ class PICGaussCorrectionPlan(StrictModule, NonTrainableState):
         iterations: int = 4,
         learning_rate: float = 1.0e-3,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         self.transfer = transfer
         self.iterations = int(iterations)
         self.learning_rate = float(learning_rate)
@@ -325,7 +328,7 @@ class PICGaussCorrectionPlan(StrictModule, NonTrainableState):
         target = jnp.asarray(target_charge)
         active = jnp.asarray(active_mask, dtype=jnp.bool_)
 
-        def objective(value):
+        def objective(value: Array) -> Array:
             routes = self.transfer.build(value, active_mask=active)
             deposited = self.transfer.deposit_macrocharge(routes, macrocharge)
             residual = deposited.cochain - target

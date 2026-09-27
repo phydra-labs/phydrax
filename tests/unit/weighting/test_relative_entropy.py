@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -17,7 +20,7 @@ TIGHT_TERMINATION = phx.optim.OptimizationTermination(
 )
 
 
-def _problem(features, target, prior, *, mask=None):
+def _problem(features: Any, target: Any, prior: Any, *, mask: Any = None) -> Any:
     return phx.weighting.MomentCalibrationProblem(
         features,
         target,
@@ -26,7 +29,7 @@ def _problem(features, target, prior, *, mask=None):
     )
 
 
-def test_binary_exact_calibration_has_analytic_weights_dual_and_kl():
+def test_binary_exact_calibration_has_analytic_weights_dual_and_kl() -> None:
     features = jnp.array([[0.0], [1.0]])
     prior = jnp.array([0.25, 0.75])
     problem = _problem(
@@ -50,7 +53,7 @@ def test_binary_exact_calibration_has_analytic_weights_dual_and_kl():
     assert result.diagnostics.maximum_scaled_residual < 1e-9
 
 
-def test_prior_solution_mask_and_extreme_logits_remain_exact_and_finite():
+def test_prior_solution_mask_and_extreme_logits_remain_exact_and_finite() -> None:
     features = jnp.array([[0.0], [1.0], [2.0], [3.0]])
     mask = jnp.array([True, True, False, True])
     logits = jnp.array([1000.0, 999.0, -jnp.inf, 998.0])
@@ -77,7 +80,9 @@ def test_prior_solution_mask_and_extreme_logits_remain_exact_and_finite():
     assert jnp.isclose(jnp.sum(result.weights), 1.0)
 
 
-def test_exact_calibration_recovers_known_exponential_tilt_and_is_permutation_invariant():
+def test_exact_calibration_recovers_known_exponential_tilt_and_is_permutation_invariant() -> (
+    None
+):
     features = jnp.array(
         [
             [-1.0, 1.0],
@@ -119,7 +124,9 @@ def test_exact_calibration_recovers_known_exponential_tilt_and_is_permutation_in
     )
 
 
-def test_redundant_and_constant_moments_are_rank_reduced_without_changing_solution():
+def test_redundant_and_constant_moments_are_rank_reduced_without_changing_solution() -> (
+    None
+):
     x = jnp.linspace(-1.0, 1.0, 9)
     features = jnp.stack((x, 2.0 * x, jnp.ones_like(x)), axis=1)
     prior = jnp.ones((9,)) / 9.0
@@ -138,7 +145,7 @@ def test_redundant_and_constant_moments_are_rank_reduced_without_changing_soluti
     assert result.diagnostics.minimum_final_eigenvalue > 0.0
 
 
-def test_affine_inconsistency_and_boundary_targets_never_report_success():
+def test_affine_inconsistency_and_boundary_targets_never_report_success() -> None:
     x = jnp.array([0.0, 1.0, 2.0])
     features = jnp.stack((x, 2.0 * x, jnp.ones_like(x)), axis=1)
     prior = jnp.ones((3,)) / 3.0
@@ -175,7 +182,7 @@ def test_affine_inconsistency_and_boundary_targets_never_report_success():
     )
 
 
-def test_quadratic_calibration_recovers_known_soft_stationary_point():
+def test_quadratic_calibration_recovers_known_soft_stationary_point() -> None:
     features = jnp.array([[-1.0, 0.5], [0.0, -0.2], [0.7, 0.4], [1.5, 1.2]])
     prior = jnp.array([0.15, 0.25, 0.4, 0.2])
     scale = jnp.array([0.3, 0.5])
@@ -200,11 +207,11 @@ def test_quadratic_calibration_recovers_known_soft_stationary_point():
     assert result.diagnostics.dual_gradient_norm < 1e-8
 
 
-def test_quadratic_scale_controls_target_fit_and_prior_shrinkage():
+def test_quadratic_scale_controls_target_fit_and_prior_shrinkage() -> None:
     features = jnp.array([[0.0], [1.0], [2.0]])
     prior = jnp.array([0.2, 0.5, 0.3])
 
-    def solve(scale):
+    def solve(scale: Any) -> Any:
         problem = _problem(
             features,
             phx.weighting.QuadraticMoments(
@@ -228,7 +235,7 @@ def test_quadratic_scale_controls_target_fit_and_prior_shrinkage():
     assert jnp.linalg.norm(loose.weights - prior) < jnp.linalg.norm(tight.weights - prior)
 
 
-def test_dense_sparse_and_function_operator_calibrations_agree():
+def test_dense_sparse_and_function_operator_calibrations_agree() -> None:
     features = jnp.array([[1.0, 0.0], [0.0, 1.0], [1.0, 2.0], [2.0, 1.0]])
     prior = jnp.array([0.1, 0.2, 0.3, 0.4])
     target = jnp.array([1.1, 1.05])
@@ -285,7 +292,7 @@ def test_dense_sparse_and_function_operator_calibrations_agree():
     assert function_result.provenance.execution == "operator"
 
 
-def test_calibration_is_filter_jittable_and_warm_start_reuses_dual():
+def test_calibration_is_filter_jittable_and_warm_start_reuses_dual() -> None:
     x = jnp.linspace(-2.0, 2.0, 31)
     features = jnp.stack((x, x**2), axis=1)
     prior = jax.nn.softmax(-0.3 * x**2)
@@ -321,16 +328,20 @@ def test_calibration_is_filter_jittable_and_warm_start_reuses_dual():
     assert first.successful and eager_nearby.successful and warm_nearby.successful
     assert compiled_nearby.successful
     assert jnp.allclose(compiled_nearby.weights, eager_nearby.weights, atol=1e-9)
+    # ty: ignore[unresolved-attribute]
     assert warm_nearby.diagnostics.optimization.iterations <= (
+        # ty: ignore[unresolved-attribute]
         eager_nearby.diagnostics.optimization.iterations
     )
 
 
-def test_implicit_exact_derivatives_match_analytic_and_finite_difference_results():
+def test_implicit_exact_derivatives_match_analytic_and_finite_difference_results() -> (
+    None
+):
     features = jnp.array([[0.0], [1.0]])
     prior_logits = jnp.log(jnp.array([0.25, 0.75]))
 
-    def solve_target(target):
+    def solve_target(target: Any) -> Any:
         problem = phx.weighting.MomentCalibrationProblem(
             features,
             phx.weighting.ExactMoments(jnp.reshape(target, (1,))),
@@ -350,7 +361,7 @@ def test_implicit_exact_derivatives_match_analytic_and_finite_difference_results
     three_features = jnp.array([[0.0], [1.0], [2.0]])
     direction = jnp.array([0.3, -0.2, 0.1])
 
-    def solve_prior(logits):
+    def solve_prior(logits: Any) -> Any:
         problem = phx.weighting.MomentCalibrationProblem(
             three_features,
             phx.weighting.ExactMoments(jnp.array([0.8])),
@@ -374,7 +385,7 @@ def test_implicit_exact_derivatives_match_analytic_and_finite_difference_results
     assert jnp.allclose(tangent, finite_difference, atol=2e-6, rtol=2e-5)
 
 
-def test_problem_validation_precision_and_convergence_guard_contracts():
+def test_problem_validation_precision_and_convergence_guard_contracts() -> None:
     with pytest.raises(ValueError, match="Target moments"):
         phx.weighting.MomentCalibrationProblem(
             jnp.ones((3, 2)),
@@ -414,7 +425,7 @@ def test_problem_validation_precision_and_convergence_guard_contracts():
         jax.block_until_ready(compiled_guard(failed).weights)
 
 
-def test_full_covariance_and_group_contracts_are_explicit():
+def test_full_covariance_and_group_contracts_are_explicit() -> None:
     values = jnp.asarray([0.2, -0.1])
     covariance = jnp.asarray([[0.4, 0.1], [0.1, 0.3]])
     target = phx.weighting.QuadraticMoments(values, covariance=covariance)
@@ -434,7 +445,7 @@ def test_full_covariance_and_group_contracts_are_explicit():
     assert jnp.all(interval.lower <= interval.upper)
 
 
-def test_certified_boundary_face_and_equal_subset_routes():
+def test_certified_boundary_face_and_equal_subset_routes() -> None:
     pytest.importorskip("clarabel")
     boundary_problem = phx.weighting.MomentCalibrationProblem(
         jnp.asarray([[0.0], [1.0]]),

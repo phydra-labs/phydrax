@@ -10,7 +10,8 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -42,7 +43,7 @@ class DSMCSpeciesPlan(StrictModule, NonTrainableState):
         *,
         element_names: Sequence[str] = (),
         elemental_composition: ArrayLike | None = None,
-    ):
+    ) -> None:
         names_ = tuple(str(value) for value in names)
         elements = tuple(str(value) for value in element_names)
         arrays = tuple(
@@ -194,7 +195,7 @@ class DSMCStructuredCellPlan(StrictModule, NonTrainableState):
         upper: ArrayLike,
         cell_counts: Sequence[int],
         /,
-    ):
+    ) -> None:
         lower_ = np.asarray(lower, dtype=np.float64)
         upper_ = np.asarray(upper, dtype=np.float64)
         counts = tuple(cell_counts)
@@ -277,7 +278,7 @@ class DSMCStreamingPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_crossings: int = 8,
-    ):
+    ) -> None:
         boundaries = tuple((str(pair[0]), str(pair[1])) for pair in boundary_kinds)
         capacity = int(maximum_crossings)
         allowed = {"periodic", "specular", "surface", "open", "reservoir"}

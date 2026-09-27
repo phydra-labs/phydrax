@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -55,7 +56,7 @@ class SemilinearDrift(StrictModule):
         spectral_representation: TransformDiagonalRepresentation | None = None,
         compatible_noise_eigenvalues: ArrayLike | None = None,
         compatible_noise_basis_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(linear_operator):
             raise TypeError(
                 "linear_operator must be an AbstractLinearOperator or callable."

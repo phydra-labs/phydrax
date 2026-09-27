@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -27,6 +28,9 @@ from ...discretization.particle import (
 )
 from ._context import AstrodynamicsContext
 from ._status import AstrodynamicsStatus
+
+
+_RolloutCarry: TypeAlias = tuple[RigidBodyKinematics, RigidBodyLoad, Array]
 
 
 class SpacecraftDynamicsResult(StrictModule):
@@ -59,7 +63,7 @@ class SpacecraftDynamicsPlan(StrictModule, NonTrainableState):
         /,
         *,
         load_id: str,
-    ):
+    ) -> None:
         if not isinstance(bodies, PreparedRigidBodySet):
             raise TypeError("bodies must be a PreparedRigidBodySet.")
         if bodies.ambient_dimension != 3:
@@ -139,11 +143,13 @@ class SpacecraftDynamicsPlan(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(initial_load.torque))
         )
 
-        def step(carry, interval):
+        def step(
+            carry: _RolloutCarry, interval: Array
+        ) -> tuple[_RolloutCarry, _RolloutCarry]:
             kinematics, load, active = carry
             start, end = interval
 
-            def advance(_):
+            def advance(_: None) -> _RolloutCarry:
                 result = rigid_body_kick_drift_kick(
                     self.bodies,
                     kinematics,
@@ -233,7 +239,7 @@ class FiniteBurnPlan(StrictModule, NonTrainableState):
         lever_arm_body: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
         standard_gravity: ArrayLike = 9.80665,
         burn_id: str,
-    ):
+    ) -> None:
         direction = np.asarray(direction_body, dtype=np.float64)
         lever = np.asarray(lever_arm_body, dtype=np.float64)
         if direction.shape != (3,) or lever.shape != (3,):
@@ -295,7 +301,9 @@ class VariableMassSpacecraftState(StrictModule):
     kinematics: RigidBodyKinematics
     propellant_mass: Array
 
-    def __init__(self, kinematics: RigidBodyKinematics, propellant_mass: ArrayLike, /):
+    def __init__(
+        self, kinematics: RigidBodyKinematics, propellant_mass: ArrayLike, /
+    ) -> None:
         if not isinstance(kinematics, RigidBodyKinematics):
             raise TypeError("kinematics must be RigidBodyKinematics.")
         mass = jnp.asarray(propellant_mass)
@@ -342,7 +350,7 @@ class ReactionWheelSet(StrictModule, NonTrainableState):
         /,
         *,
         wheel_id: str,
-    ):
+    ) -> None:
         axes = np.asarray(axes_body, dtype=np.float64)
         inertias_ = np.asarray(inertias, dtype=np.float64)
         torque = np.asarray(maximum_torque, dtype=np.float64)

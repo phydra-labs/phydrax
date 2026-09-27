@@ -7,7 +7,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -34,7 +35,7 @@ class PortHamiltonianResidualClosure(StrictModule, ParameterOwner):
 
     def __init__(
         self, base: PortHamiltonianVectorField, residual: PortHamiltonianVectorField, /
-    ):
+    ) -> None:
         if not isinstance(base, PortHamiltonianVectorField) or not isinstance(
             residual, PortHamiltonianVectorField
         ):
@@ -158,7 +159,7 @@ class FixedOnsagerSubspace(StrictModule, NonTrainableState):
         metric: Array,
         report: FixedSubspaceProjectionReport,
         /,
-    ):
+    ) -> None:
         self.mean = mean
         self.basis = basis
         self.metric = metric
@@ -183,7 +184,7 @@ class FixedSubspaceOnsagerModel(StrictModule, ParameterOwner):
         *,
         report: FixedSubspaceProjectionReport | None = None,
         orthogonality_tolerance: float = 1.0e-5,
-    ):
+    ) -> None:
         mean_array = jnp.asarray(mean)
         basis_array = jnp.asarray(basis)
         metric_array = jnp.asarray(metric)
@@ -323,7 +324,7 @@ class AutoencodedOnsagerModel(StrictModule, ParameterOwner):
         *,
         reconstruction_tolerance: float,
         pullback_metric_validated: bool = False,
-    ):
+    ) -> None:
         tolerance = float(reconstruction_tolerance)
         if not jnp.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("reconstruction_tolerance must be finite and nonnegative.")

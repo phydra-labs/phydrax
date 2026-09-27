@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -13,11 +16,13 @@ import phydrax as phx
 class _TrainableHarmonic(eqx.Module):
     stiffness: jax.Array = phx.parameter_field()
 
-    def __call__(self, q, t):
+    def __call__(self, q: Any, t: Any) -> Any:
         return 0.5 * self.stiffness * q[0] ** 2
 
 
-def _harmonic_kernel(x0, x1, *, duration, mass, hbar, omega):
+def _harmonic_kernel(
+    x0: Any, x1: Any, *, duration: Any, mass: Any, hbar: Any, omega: Any
+) -> Any:
     sinh = jnp.sinh(omega * duration)
     cosh = jnp.cosh(omega * duration)
     normalization = jnp.sqrt(mass * omega / (2.0 * jnp.pi * hbar * sinh))
@@ -27,7 +32,7 @@ def _harmonic_kernel(x0, x1, *, duration, mass, hbar, omega):
     return normalization * jnp.exp(exponent)
 
 
-def test_free_kernel_normalization_and_semigroup_composition():
+def test_free_kernel_normalization_and_semigroup_composition() -> None:
     x0 = jnp.array([-0.3])
     x2 = jnp.array([0.4])
     duration_1 = 0.35
@@ -60,7 +65,7 @@ def test_free_kernel_normalization_and_semigroup_composition():
     assert jnp.allclose(composed, exact, atol=2e-8, rtol=0.0)
 
 
-def test_harmonic_bridge_estimate_matches_analytic_kernel():
+def test_harmonic_bridge_estimate_matches_analytic_kernel() -> None:
     duration = 1.0
     omega = 0.8
     x0 = jnp.array([0.0])
@@ -99,16 +104,19 @@ def test_harmonic_bridge_estimate_matches_analytic_kernel():
     assert jnp.abs(estimate.value - exact) < 0.2 * jnp.abs(coarse.value - exact)
 
 
-def test_domain_potential_and_kernel_function_compose_with_sampled_fields():
+def test_domain_potential_and_kernel_function_compose_with_sampled_fields() -> None:
+    # ty: ignore[invalid-argument-type]
     q = phx.domain.HyperRectangle([-2.0], [2.0], label="q")
     time = phx.domain.TimeInterval(0.0, 0.5)
     potential_domain = q @ time
 
     @potential_domain.Function("q", "t")
-    def potential(position, t):
+    def potential(position: Any, t: Any) -> Any:
         return 0.4 * position[0] ** 2 + 0.1 * t
 
+    # ty: ignore[invalid-argument-type]
     q0 = phx.domain.HyperRectangle([-0.5], [0.5], label="q0")
+    # ty: ignore[invalid-argument-type]
     q1 = phx.domain.HyperRectangle([-0.5], [0.5], label="q1")
     endpoint_domain = q0 @ q1
     slicing = phx.discretization.TemporalMesh.uniform(0.0, 0.5, 12, role="path")
@@ -134,16 +142,19 @@ def test_domain_potential_and_kernel_function_compose_with_sampled_fields():
     assert jnp.all(jnp.asarray(values.data) > 0.0)
 
 
-def test_kernel_function_preserves_trainable_domain_potential_gradients():
+def test_kernel_function_preserves_trainable_domain_potential_gradients() -> None:
+    # ty: ignore[invalid-argument-type]
     q = phx.domain.HyperRectangle([-2.0], [2.0], label="q")
     time = phx.domain.TimeInterval(0.0, 0.5)
     potential_domain = q @ time
+    # ty: ignore[invalid-argument-type]
     q0 = phx.domain.HyperRectangle([-0.5], [0.5], label="q0")
+    # ty: ignore[invalid-argument-type]
     q1 = phx.domain.HyperRectangle([-0.5], [0.5], label="q1")
     endpoint_domain = q0 @ q1
     slicing = phx.discretization.TemporalMesh.uniform(0.0, 0.5, 8, role="path")
 
-    def value(stiffness):
+    def value(stiffness: Any) -> Any:
         potential = potential_domain.Function("q", "t")(_TrainableHarmonic(stiffness))
         kernel = phx.operators.euclidean_kernel_function(
             endpoint_domain,
@@ -165,8 +176,10 @@ def test_kernel_function_preserves_trainable_domain_potential_gradients():
     assert gradient < 0.0
 
 
-def test_kernel_function_runs_through_operator_constraint_solver():
+def test_kernel_function_runs_through_operator_constraint_solver() -> None:
+    # ty: ignore[invalid-argument-type]
     q0 = phx.domain.HyperRectangle([-0.5], [0.5], label="q0")
+    # ty: ignore[invalid-argument-type]
     q1 = phx.domain.HyperRectangle([-0.5], [0.5], label="q1")
     endpoint_domain = q0 @ q1
     kernel = phx.operators.euclidean_kernel_function(

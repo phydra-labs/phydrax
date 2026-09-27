@@ -10,7 +10,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -20,6 +21,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...metrix._metric import LorentzianMetric
 from ...metrix._spacetime_conventions import RelativityConvention
+from ...typing import parse
 from ...units import UnitDefinition
 from ._gr_bundles import gr_chart_identity, gr_metric_identity
 
@@ -118,7 +120,7 @@ class GRObserverScreenPlan(StrictModule):
         temporal_direction: GRTemporalDirection = "past",
         orthonormal_tolerance: float = 1.0e-6,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(metric, LorentzianMetric) or metric.chart.dimension != 4:
             raise TypeError(
                 "GR observer screens require a four-dimensional LorentzianMetric."
@@ -159,8 +161,9 @@ class GRObserverScreenPlan(StrictModule):
         if energy.shape not in ((), (pixels.shape[0],)):
             raise ValueError("ray_energy must be scalar or have shape (num_rays,).")
         energy = jnp.broadcast_to(energy, (pixels.shape[0],))
-        if temporal_direction not in ("future", "past"):
-            raise ValueError("temporal_direction must be 'future' or 'past'.")
+        temporal_direction = parse(
+            temporal_direction, GRTemporalDirection, "temporal_direction"
+        )
         tolerance = float(orthonormal_tolerance)
         if not isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("orthonormal_tolerance must be finite and positive.")
@@ -264,7 +267,7 @@ class GRObserverScreenResult(StrictModule, NonTrainableState):
         scale_id: str,
         coordinate_unit_id: str,
         affine_parameter_unit_id: str,
-    ):
+    ) -> None:
         observer = jnp.asarray(observer_coordinates)
         tetrad_ = jnp.asarray(tetrad, dtype=observer.dtype)
         pixels = jnp.asarray(pixel_coordinates, dtype=observer.dtype)

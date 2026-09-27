@@ -4,19 +4,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Literal
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
 from phydrax.nn._keys import EvalKey
-from phydrax.nn.operator.data import OperatorAxis, OperatorBatch
+from phydrax.nn.operator.data import FunctionSamples, OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 from phydrax.nn.operator.layers import (
     InvariantFilterBasis,
@@ -31,11 +31,13 @@ from phydrax.nn.operator.representations import (
     TensorType,
 )
 
+from .....typing import PRNGKey
+
 
 LatticeActivation = Literal["gelu", "silu", "tanh"]
 
 
-def _activation(name: LatticeActivation, /):
+def _activation(name: LatticeActivation, /) -> Callable[[Array], Array]:
     if name == "gelu":
         return jax.nn.gelu
     if name == "silu":
@@ -45,7 +47,7 @@ def _activation(name: LatticeActivation, /):
     raise ValueError("activation must be 'gelu', 'silu', or 'tanh'.")
 
 
-def _operator_source(batch: OperatorBatch, source_key: str | None, /):
+def _operator_source(batch: OperatorBatch, source_key: str | None, /) -> FunctionSamples:
     if source_key is not None:
         return batch.input(source_key)
     if len(batch.inputs) != 1:
@@ -105,8 +107,8 @@ class _LatticeEquivariantBlock(StrictModule):
         *,
         activation: LatticeActivation,
         use_bias: bool,
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         first_key, second_key = jr.split(key)
         self.first = LatticeEquivariantConvND(
             basis,
@@ -186,8 +188,8 @@ class LatticeEquivariantCNO(AbstractOperatorModel):
         source_key: str | None = None,
         squeeze_scalar_output: bool = False,
         max_basis_construction_bytes: int = 256 * 1024**2,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         if not isinstance(group, FiniteOrthogonalGroup):
             raise TypeError("group must be a FiniteOrthogonalGroup.")
         if not isinstance(input_layout, TensorFieldLayout) or not isinstance(

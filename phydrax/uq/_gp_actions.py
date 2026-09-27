@@ -6,13 +6,15 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from numbers import Integral, Real
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..linalg import (
@@ -24,6 +26,8 @@ from ..linalg import (
     OperatorProperties,
     SparseStorage,
 )
+from ..linalg._spaces import _coordinate_dtype
+from ..typing import parse, PRNGKey
 from ._gp_likelihood import GaussianProcessLikelihoodState
 
 
@@ -64,17 +68,8 @@ class _ResolvedGaussianProcessActions(StrictModule):
         convergence_mask: ArrayLike | None = None,
         selected_indices: ArrayLike | None = None,
         requires_residual: bool = False,
-    ):
-        kinds = (
-            "fixed",
-            "block-sparse",
-            "pseudo-input",
-            "lanczos",
-            "conjugate-gradient",
-            "gauss-seidel",
-        )
-        if kind not in kinds:
-            raise ValueError("Unknown Gaussian-process action kind.")
+    ) -> None:
+        kind = parse(kind, GaussianProcessActionKind, "kind")
         _validate_action_operator(operator)
         action_count = operator.source.size
         mask = (
@@ -84,10 +79,11 @@ class _ResolvedGaussianProcessActions(StrictModule):
         )
         if mask.shape != (action_count,):
             raise ValueError("active_mask must align with action capacity.")
+        history_dtype = _coordinate_dtype(operator.source)
         history = (
-            jnp.empty((0,), dtype=operator.source.dtype)
+            jnp.empty((0,), dtype=history_dtype)
             if residual_history is None
-            else jnp.asarray(residual_history, dtype=operator.source.dtype)
+            else jnp.asarray(residual_history, dtype=history_dtype)
         )
         if history.ndim != 1:
             raise ValueError("residual_history must be a vector.")
@@ -140,7 +136,7 @@ class _BlockSparseGaussianProcessOperator(AbstractSparseLinearOperator):
     values: Array
     source_indices: Array
 
-    def __init__(self, values: Array, num_actions: int, /):
+    def __init__(self, values: Array, num_actions: int, /) -> None:
         observation_count = values.shape[0]
         action_count = int(num_actions)
         source = ArraySpace((action_count,), dtype=values.dtype)
@@ -165,11 +161,11 @@ class _BlockSparseGaussianProcessOperator(AbstractSparseLinearOperator):
         self.batch_shape = ()
         self.operator_id = f"gp-block-sparse:{observation_count}:{action_count}"
 
-    def mv(self, vector, /):
+    def mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
         value = self.source.validate(vector)
         return self.target.validate(self.values * value[self.source_indices])
 
-    def transpose_mv(self, vector, /):
+    def transpose_mv(self, vector: PyTree[Any], /) -> Array:
         value = self.target.validate(vector)
         return (
             jnp.zeros(
@@ -180,7 +176,7 @@ class _BlockSparseGaussianProcessOperator(AbstractSparseLinearOperator):
             .add(self.values * value)
         )
 
-    def adjoint_mv(self, vector, /):
+    def adjoint_mv(self, vector: PyTree[Any], /) -> Array:
         return self.transpose_mv(vector)
 
     def _materialize(self, /) -> Array:
@@ -236,7 +232,7 @@ class FixedGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy):
 
     operator: AbstractLinearOperator
 
-    def __init__(self, actions: ArrayLike | AbstractLinearOperator, /):
+    def __init__(self, actions: ArrayLike | AbstractLinearOperator, /) -> None:
         if isinstance(actions, AbstractLinearOperator):
             operator = actions
         else:
@@ -280,7 +276,7 @@ class BlockSparseGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy
     values: Array
     num_actions: int = eqx.field(static=True)
 
-    def __init__(self, values: ArrayLike, num_actions: int, /):
+    def __init__(self, values: ArrayLike, num_actions: int, /) -> None:
         raw_values = jnp.asarray(values)
         if jnp.issubdtype(raw_values.dtype, jnp.complexfloating):
             raise TypeError("GP actions must be real-valued.")
@@ -298,12 +294,12 @@ class BlockSparseGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy
     @classmethod
     def from_random(
         cls,
-        key: Key[Array, ""],
+        key: PRNGKey,
         num_observations: int,
         num_actions: int,
         /,
         *,
-        dtype=None,
+        dtype: DTypeLike | None = None,
     ) -> BlockSparseGaussianProcessActionPolicy:
         observation_count = int(num_observations)
         action_count = int(num_actions)
@@ -363,7 +359,9 @@ class PseudoInputGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy
     pseudo_inputs: Array
     orthogonalize: bool = eqx.field(static=True)
 
-    def __init__(self, pseudo_inputs: ArrayLike, /, *, orthogonalize: bool = True):
+    def __init__(
+        self, pseudo_inputs: ArrayLike, /, *, orthogonalize: bool = True
+    ) -> None:
         raw_points = jnp.asarray(pseudo_inputs)
         if jnp.issubdtype(raw_points.dtype, jnp.complexfloating):
             raise TypeError("GP pseudo-inputs must be real-valued.")
@@ -444,7 +442,7 @@ class LanczosGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy):
         *,
         max_actions: int,
         breakdown_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         vector = _action_vector(start_vector, name="start_vector")
         count = _action_count(max_actions, observation_count=vector.shape[0])
         self.start_vector = vector
@@ -521,7 +519,7 @@ class ConjugateGradientGaussianProcessActionPolicy(AbstractGaussianProcessAction
         /,
         *,
         residual_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         if not isinstance(max_actions, Integral) or isinstance(max_actions, bool):
             raise TypeError("max_actions must be an integer.")
         if int(max_actions) <= 0:
@@ -608,7 +606,7 @@ class GaussSeidelGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy
         ordering: Literal["cyclic", "fixed", "largest-residual"] = "cyclic",
         fixed_order: ArrayLike | None = None,
         residual_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         if not isinstance(max_actions, Integral) or isinstance(max_actions, bool):
             raise TypeError("max_actions must be an integer.")
         count = int(max_actions)
@@ -774,7 +772,7 @@ def _action_count(value: int, /, *, observation_count: int) -> int:
     return count
 
 
-def _positive_tolerance(value: Real, /, *, name: str) -> float:
+def _positive_tolerance(value: float, /, *, name: str) -> float:
     if not isinstance(value, Real) or isinstance(value, bool):
         raise TypeError(f"{name} must be a real scalar.")
     tolerance = float(value)

@@ -10,11 +10,13 @@ from typing import Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..graph import batch_graphs, GraphIR
+from ..typing import PRNGKey
 from ._belief_propagation import (
     BeliefPropagationResult,
     BeliefPropagationState,
@@ -49,7 +51,7 @@ class BatchedBeliefPropagationState(StrictModule):
         *,
         structure_id: str,
         step_index: ArrayLike | int = 0,
-    ):
+    ) -> None:
         message_values = jnp.asarray(messages)
         evidence_values = jnp.asarray(evidence)
         if message_values.ndim != 2 or evidence_values.ndim != 2:
@@ -105,7 +107,7 @@ class FactorGraphShardingPolicy(StrictModule):
         /,
         *,
         device_count: int = 1,
-    ):
+    ) -> None:
         if axis not in ("case", "chain", "graph", "replicated"):
             raise ValueError("Unknown factor-graph sharding axis.")
         count = int(device_count)
@@ -135,7 +137,7 @@ def batch_belief_propagation(
     if state.evidence.shape[1:] != (prepared.state_variable_indices.shape[0],):
         raise ValueError("Batched evidence width does not match the prepared graph.")
 
-    def one(messages, evidence, step):
+    def one(messages: Array, evidence: Array, step: Array) -> BeliefPropagationResult:
         return run_belief_propagation(
             prepared,
             BeliefPropagationState(
@@ -213,7 +215,7 @@ def sample_gibbs_per_chain_clamps(
     state: GibbsState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     schedule: GibbsSchedule,
     clamped: ArrayLike,
 ) -> tuple[GibbsSampleResult, ...]:

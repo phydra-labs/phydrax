@@ -14,20 +14,22 @@ from __future__ import annotations
 
 from enum import IntFlag
 from math import isfinite, pi
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import parse
 
 
-VascularPortSide = Literal["inlet", "outlet"]
+VascularPortSide: TypeAlias = Literal["inlet", "outlet"]
 
 
 class VascularStepStatus(IntFlag):
@@ -65,7 +67,7 @@ class SquareRootTubeLaw(StrictModule, NonTrainableState):
         reference_pressure_kPa: float = 0.0,
         minimum_area_ratio: float = 0.2,
         maximum_area_ratio: float = 5.0,
-    ):
+    ) -> None:
         area = float(reference_area_mm2)
         stiffness = float(stiffness_kPa)
         pressure = float(reference_pressure_kPa)
@@ -194,7 +196,7 @@ class Vascular1DPlan(StrictModule, NonTrainableState):
         density_mg_per_mm3: float = 1.06,
         dynamic_viscosity_mg_per_mm_ms: float = 3.5e-3,
         maximum_courant: float = 0.9,
-    ):
+    ) -> None:
         identifier = str(vessel_id)
         count = int(cell_count)
         length = float(length_mm)
@@ -524,7 +526,7 @@ class CharacteristicTerminal(StrictModule, NonTrainableState):
         reference_pressure_kPa: float,
         load_impedance_kPa_ms_per_mm3: float,
         /,
-    ):
+    ) -> None:
         identifier = str(terminal_id)
         pressure = float(reference_pressure_kPa)
         impedance = float(load_impedance_kPa_ms_per_mm3)
@@ -593,7 +595,7 @@ class VascularJunctionPlan(StrictModule, NonTrainableState):
     branch_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, junction_id: str, branch_ids: tuple[str, ...], /):
+    def __init__(self, junction_id: str, branch_ids: tuple[str, ...], /) -> None:
         identifier = str(junction_id)
         branches = tuple(str(value) for value in branch_ids)
         if not identifier or len(branches) < 2:
@@ -670,10 +672,11 @@ class Vascular0DPort(StrictModule, NonTrainableState):
     side: VascularPortSide = eqx.field(static=True)
     port_id: str = eqx.field(static=True)
 
-    def __init__(self, vessel_id: str, side: VascularPortSide, /):
+    def __init__(self, vessel_id: str, side: VascularPortSide, /) -> None:
         identifier = str(vessel_id)
-        if not identifier or side not in ("inlet", "outlet"):
-            raise ValueError("A vascular port needs a vessel ID and inlet/outlet side.")
+        if not identifier:
+            raise ValueError("A vascular port needs a non-empty vessel ID.")
+        side = parse(side, VascularPortSide, "side")
         self.vessel_id = identifier
         self.side = side
         self.port_id = f"{identifier}.{side}"

@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -17,6 +18,10 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._gas_dynamics import HomogeneousMixtureCompressibleNavierStokesSystem
+from ._homogeneous_thermodynamics import (
+    DensityEnergyStateResult,
+    HomogeneousHelmholtzPlan,
+)
 from ._hyperbolic_systems import (
     AbstractAdmissibleSystem,
     AbstractEntropyDiffusionSystem,
@@ -36,7 +41,7 @@ class SpalartAllmarasArguments(StrictModule):
     wall_distance: Array
     transport_args: Any
 
-    def __init__(self, wall_distance: ArrayLike, transport_args: Any = None, /):
+    def __init__(self, wall_distance: ArrayLike, transport_args: Any = None, /) -> None:
         self.wall_distance = jnp.asarray(wall_distance)
         self.transport_args = transport_args
 
@@ -90,7 +95,7 @@ class SpalartAllmarasNegativePlan(StrictModule, NonTrainableState):
         cn1: float = 16.0,
         turbulent_prandtl: float = 0.9,
         minimum_working_ratio: float = -0.9,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -285,7 +290,7 @@ class SpalartAllmarasCompressibleSystem(
         base: HomogeneousMixtureCompressibleNavierStokesSystem,
         model: SpalartAllmarasNegativePlan | None = None,
         /,
-    ):
+    ) -> None:
         model_ = SpalartAllmarasNegativePlan() if model is None else model
         if not isinstance(base, HomogeneousMixtureCompressibleNavierStokesSystem):
             raise TypeError("SA-neg requires canonical mixture Navier-Stokes.")
@@ -306,7 +311,7 @@ class SpalartAllmarasCompressibleSystem(
         )
 
     @property
-    def thermodynamics(self):
+    def thermodynamics(self) -> HomogeneousHelmholtzPlan:
         return self.base.thermodynamics
 
     @property
@@ -359,7 +364,7 @@ class SpalartAllmarasCompressibleSystem(
     def temperature(self, state: ArrayLike, /) -> Array:
         return self.base.temperature(self.gas_state(state))
 
-    def recover_thermodynamics(self, state: ArrayLike, /):
+    def recover_thermodynamics(self, state: ArrayLike, /) -> DensityEnergyStateResult:
         return self.base.recover_thermodynamics(self.gas_state(state))
 
     def working_variable(self, state: ArrayLike, /) -> Array:

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -15,7 +17,7 @@ from phydrax.geometry.simplicial import (
 )
 
 
-def _sphere(longitudes: int = 16, latitudes: int = 10):
+def _sphere(longitudes: int = 16, latitudes: int = 10) -> Any:
     vertices = [(0.0, 0.0, 1.0)]
     for row in range(1, latitudes):
         polar = np.pi * row / latitudes
@@ -46,7 +48,7 @@ def _sphere(longitudes: int = 16, latitudes: int = 10):
     return np.asarray(vertices), np.asarray(faces)
 
 
-def _solid_angle_winding(vertices, faces, points):
+def _solid_angle_winding(vertices: Any, faces: Any, points: Any) -> Any:
     a, b, c = (vertices[faces[:, corner]][None] - points[:, None] for corner in range(3))
     length_a, length_b, length_c = (np.linalg.norm(value, axis=-1) for value in (a, b, c))
     numerator = np.sum(a * np.cross(b, c), axis=-1)
@@ -59,12 +61,12 @@ def _solid_angle_winding(vertices, faces, points):
     return np.sum(2.0 * np.arctan2(numerator, denominator), axis=-1) / (4.0 * np.pi)
 
 
-def _queries(seed: int, count: int = 60):
+def _queries(seed: int, count: int = 60) -> Any:
     return np.random.default_rng(seed).uniform(-1.4, 1.4, (count, 3))
 
 
 @pytest.mark.parametrize("kind", tuple(BVHBuildKind))
-def test_exact_winding_matches_brute_force_on_closed_and_open_meshes(kind) -> None:
+def test_exact_winding_matches_brute_force_on_closed_and_open_meshes(kind: Any) -> None:
     vertices, faces = _sphere()
     points = _queries(1)
     policy = BVHBuildPolicy(kind, leaf_size=4)

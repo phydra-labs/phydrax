@@ -5,13 +5,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Literal, TypeAlias
+from typing import Any, assert_never, Literal, Protocol, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -42,6 +44,7 @@ from ..linalg import (
     solve,
     TolerancePolicy,
 )
+from ..typing import parse
 
 
 MACPressureRouteRequest: TypeAlias = Literal[
@@ -51,6 +54,26 @@ MACPressureRouteKind: TypeAlias = Literal["transform", "hybrid", "pcg", "fgmres"
 MACPressureCoefficientKind: TypeAlias = Literal["constant", "line", "general"]
 MACPressurePreconditionerKind: TypeAlias = Literal["constant", "line", "none"]
 MACPressureSideName: TypeAlias = Literal["lower", "upper"]
+
+
+_PressurePCGCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+
+
+class WeightedPressureGeometry(Protocol):
+    """Geometry surface consumed by the shared mapped/ALE pressure PCG."""
+
+    @property
+    def cell_volumes(self) -> Array: ...
+
+    def validate_velocity(self, velocity: FaceVelocity, /) -> FaceVelocity: ...
+
+    def compatibility_project(self, value: ArrayLike, /) -> Array: ...
+
+    def gauge_project(self, pressure: ArrayLike, /) -> Array: ...
+
+    def pressure_action(
+        self, pressure: ArrayLike, face_inverse_momentum: FaceVelocity, /
+    ) -> Array: ...
 
 
 def _set_axis_boundary(values: Array, axis: int, index: int, data: Array, /) -> Array:
@@ -92,11 +115,12 @@ class MACPressureRobinSide(StrictModule, NonTrainableState):
         beta: float,
         value: ArrayLike = 0.0,
         /,
-    ):
+    ) -> None:
         axis_ = int(axis)
         alpha_ = float(alpha)
         beta_ = float(beta)
-        if axis_ < 0 or side not in ("lower", "upper"):
+        side = parse(side, MACPressureSideName, "side")
+        if axis_ < 0:
             raise ValueError("Robin axis and side are invalid.")
         if (
             not np.isfinite(alpha_)
@@ -187,7 +211,7 @@ class MACPressureSolveResult(StrictModule):
 class _ScaledIdentityPressurePreconditioner(AbstractPreconditioner, NonTrainableState):
     inverse_scale: Array
 
-    def __init__(self, operators: PreparedMACOperators, scale: ArrayLike, /):
+    def __init__(self, operators: PreparedMACOperators, scale: ArrayLike, /) -> None:
         scale_ = jnp.asarray(scale, dtype=operators.pressure_space.dtype).reshape(())
         if not bool(np.isfinite(np.asarray(scale_))) or bool(np.asarray(scale_) <= 0.0):
             raise ValueError("Pressure preconditioner scale must be finite and positive.")
@@ -213,7 +237,9 @@ class _ScaledIdentityPressurePreconditioner(AbstractPreconditioner, NonTrainable
         )
         self.inverse_scale = 1.0 / scale_
 
-    def apply(self, residual, /, *, iteration=None):
+    def apply(
+        self, residual: PyTree[Any], /, *, iteration: ArrayLike | None = None
+    ) -> Array:
         del iteration
         return self.space.validate(residual) * self.inverse_scale
 
@@ -240,7 +266,7 @@ class MACWeightedPressureAction(StrictModule, NonTrainableState):
         gauge: bool,
         nonsymmetric_traction: bool = False,
         action_id: str,
-    ):
+    ) -> None:
         sides = tuple(robin_sides)
         dimension = len(operators.discretization.cell_shape)
         if not all(
@@ -260,7 +286,7 @@ class MACWeightedPressureAction(StrictModule, NonTrainableState):
 
     def _robin_gradient(
         self, pressure: Array, gradient: FaceVelocity, /, *, homogeneous: bool
-    ):
+    ) -> FaceVelocity:
         output = list(gradient)
         for condition in self.robin_sides:
             axis = condition.axis
@@ -368,7 +394,7 @@ class MACPressureOperatorSpec(StrictModule, NonTrainableState):
         maximum_iterations: int = 500,
         maximum_resource_bytes: int = 512 * 1024**2,
         geometry_epoch: int = 0,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         boundaries_ = (
@@ -400,8 +426,7 @@ class MACPressureOperatorSpec(StrictModule, NonTrainableState):
             raise ValueError(
                 "Pressure tolerance, iterations, resources, or epoch are invalid."
             )
-        if solve_method not in ("auto", "direct", "transform", "hybrid", "iterative"):
-            raise ValueError("Unknown MAC pressure route request.")
+        solve_method = parse(solve_method, MACPressureRouteRequest, "solve_method")
         axis = None if line_axis is None else int(line_axis)
         dimension = len(operators.discretization.cell_shape)
         if axis is not None and (axis < 0 or axis >= dimension):
@@ -448,52 +473,59 @@ class MACPressureOperatorSpec(StrictModule, NonTrainableState):
             and symmetric
             and not operators.discretization.grid.structured_axes[axis].periodic
         )
-        if solve_method == "transform":
-            if not transform_eligible:
-                raise ValueError(
-                    "Explicit transform pressure solve is unsupported for this coefficient/action."
-                )
-            route: MACPressureRouteKind = "transform"
-            reason = "explicit certified constant-coefficient tensor transform"
-        elif solve_method == "hybrid":
-            if not hybrid_eligible:
-                raise ValueError(
-                    "Explicit hybrid pressure solve is unsupported for this coefficient/action."
-                )
-            route = "hybrid"
-            reason = "explicit certified transform-line coefficient action"
-        elif solve_method == "direct":
-            if transform_eligible:
+        route: MACPressureRouteKind
+        match solve_method:
+            case "transform":
+                if not transform_eligible:
+                    raise ValueError(
+                        "Explicit transform pressure solve is unsupported for this coefficient/action."
+                    )
                 route = "transform"
-                reason = "explicit direct request accepted by exact tensor action"
-            elif hybrid_eligible:
+                reason = "explicit certified constant-coefficient tensor transform"
+            case "hybrid":
+                if not hybrid_eligible:
+                    raise ValueError(
+                        "Explicit hybrid pressure solve is unsupported for this coefficient/action."
+                    )
                 route = "hybrid"
-                reason = "explicit direct request accepted by exact transform-line action"
-            else:
-                raise ValueError(
-                    "Explicit direct pressure solve has no certified exact representation."
+                reason = "explicit certified transform-line coefficient action"
+            case "direct":
+                if transform_eligible:
+                    route = "transform"
+                    reason = "explicit direct request accepted by exact tensor action"
+                elif hybrid_eligible:
+                    route = "hybrid"
+                    reason = (
+                        "explicit direct request accepted by exact transform-line action"
+                    )
+                else:
+                    raise ValueError(
+                        "Explicit direct pressure solve has no certified exact representation."
+                    )
+            case "iterative":
+                route = "fgmres" if not symmetric else "pcg"
+                reason = (
+                    "explicit flexible iteration for stabilized nonsymmetric traction"
+                    if not symmetric
+                    else "explicit PCG with certified constant preconditioner"
                 )
-        elif solve_method == "iterative":
-            route = "fgmres" if not symmetric else "pcg"
-            reason = (
-                "explicit flexible iteration for stabilized nonsymmetric traction"
-                if not symmetric
-                else "explicit PCG with certified constant preconditioner"
-            )
-        elif transform_eligible:
-            route = "transform"
-            reason = "auto selected exact constant-coefficient tensor action"
-        elif hybrid_eligible:
-            route = "hybrid"
-            reason = "auto selected exact coefficient-along-line action"
-        else:
-            route = "fgmres" if not symmetric else "pcg"
-            reason = (
-                "auto selected FGMRES because stabilized traction is nonsymmetric"
-                if not symmetric
-                else "auto selected PCG because beta is not exactly separable"
-            )
-        coefficient_id = array_tree_fingerprint(face)
+            case "auto":
+                if transform_eligible:
+                    route = "transform"
+                    reason = "auto selected exact constant-coefficient tensor action"
+                elif hybrid_eligible:
+                    route = "hybrid"
+                    reason = "auto selected exact coefficient-along-line action"
+                else:
+                    route = "fgmres" if not symmetric else "pcg"
+                    reason = (
+                        "auto selected FGMRES because stabilized traction is nonsymmetric"
+                        if not symmetric
+                        else "auto selected PCG because beta is not exactly separable"
+                    )
+            case _:
+                assert_never(solve_method)
+        coefficient_id = canonical_fingerprint(array_tree_fingerprint(face))
         operator_id = canonical_fingerprint(
             {
                 "kind": "mac-weighted-pressure-operator",
@@ -552,7 +584,7 @@ class PreparedMACPressureOperator(StrictModule, NonTrainableState):
     preparation: MACPressurePreparationEvidence
     preparation_id: str = eqx.field(static=True)
 
-    def __init__(self, spec: MACPressureOperatorSpec, /):
+    def __init__(self, spec: MACPressureOperatorSpec, /) -> None:
         if not isinstance(spec, MACPressureOperatorSpec):
             raise TypeError("spec must be MACPressureOperatorSpec.")
         action = MACWeightedPressureAction(
@@ -742,7 +774,10 @@ class PreparedMACPressureOperator(StrictModule, NonTrainableState):
             else self.spec.operators.validate_pressure(value)
         )
         face = self.spec.operators.interpolate_inverse_momentum(cell)
-        if array_tree_fingerprint(face) != self.spec.coefficient_id:
+        if (
+            canonical_fingerprint(array_tree_fingerprint(face))
+            != self.spec.coefficient_id
+        ):
             raise ValueError(
                 "Pressure coefficient differs from the frozen prepared coefficient; prepare again."
             )
@@ -881,7 +916,7 @@ class MACWeightedPressureIterationResult(StrictModule):
 
 
 def execute_weighted_pressure_iteration(
-    geometry,
+    geometry: WeightedPressureGeometry,
     right_hand_side: ArrayLike,
     face_coefficient: FaceVelocity,
     initial_guess: ArrayLike,
@@ -935,7 +970,7 @@ def execute_weighted_pressure_iteration(
     pressure = geometry.gauge_project(initial_guess)
     volumes = geometry.cell_volumes.astype(pressure.dtype)
 
-    def action(value):
+    def action(value: Array) -> Array:
         return geometry.pressure_action(value, coefficient)
 
     residual = rhs - action(pressure)
@@ -948,7 +983,7 @@ def execute_weighted_pressure_iteration(
     active = jnp.sum(volumes * residual * residual) > threshold
     failed = jnp.asarray(False)
 
-    def body(_, state):
+    def body(_: int | Array, state: _PressurePCGCarry) -> _PressurePCGCarry:
         value, residual_, direction_, pairing_, active_, failed_ = state
         image = action(direction_)
         denominator = jnp.sum(volumes * direction_ * image)

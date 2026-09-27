@@ -7,7 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from phydrax.ein import contract
 
@@ -50,7 +50,7 @@ class AtomisticProvenance(StrictModule, NonTrainableState):
         batch: AtomisticBatch,
         execution: AtomisticGraphExecutionPlan,
         /,
-    ):
+    ) -> None:
         revision = atomistic_potential_revision(potential)
         self.architecture_id = potential.architecture_id
         self.potential_revision_id = revision.revision_id

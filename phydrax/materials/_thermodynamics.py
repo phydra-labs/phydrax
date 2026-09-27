@@ -1,12 +1,14 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from typing import Self
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,7 +20,14 @@ class EquilibriumProblem:
     composition: Array
 
     @classmethod
-    def create(cls, components, phases, temperature_k, pressure_pa, composition):
+    def create(
+        cls,
+        components: Iterable[str],
+        phases: Iterable[str],
+        temperature_k: ArrayLike,
+        pressure_pa: ArrayLike,
+        composition: ArrayLike,
+    ) -> Self:
         component_values = tuple(components)
         phase_values = tuple(phases)
         if (
@@ -68,7 +77,7 @@ class CallableEquilibriumProvider:
     provider_id: str
     evaluate: Callable[[EquilibriumProblem], EquilibriumResult]
 
-    def __call__(self, problem: EquilibriumProblem):
+    def __call__(self, problem: EquilibriumProblem) -> EquilibriumResult:
         result = self.evaluate(problem)
         if (
             not isinstance(result, EquilibriumResult)

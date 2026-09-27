@@ -9,7 +9,8 @@ from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 def _as_inexact_array(values: ArrayLike, /) -> Array:

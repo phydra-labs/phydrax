@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -13,11 +16,11 @@ from phydrax.domain import GridBatch, Interval1d, PointBatch
 from phydrax.terms import ResidualPenalty
 
 
-def _batch(realization):
+def _batch(realization: Any) -> Any:
     return realization.batch.points
 
 
-def test_residual_penalty_mean_and_integral_reductions():
+def test_residual_penalty_mean_and_integral_reductions() -> None:
     geom = Interval1d(0.0, 2.0)
     component = geom.component()
     u = geom.Function()(0.0)
@@ -41,13 +44,13 @@ def test_residual_penalty_mean_and_integral_reductions():
     assert jnp.allclose(loss_int, 6.0)
 
 
-def test_residual_penalty_domainfunction_weight():
+def test_residual_penalty_domainfunction_weight() -> None:
     geom = Interval1d(0.0, 2.0)
     component = geom.component()
     u = geom.Function()(0.0)
 
     @geom.Function("x")
-    def density(x):
+    def density(x: Any) -> Any:
         return x[0] + 1.0
 
     condition = Residual("u", component, lambda u_fn: u_fn - 1.0)
@@ -71,12 +74,12 @@ def test_residual_penalty_domainfunction_weight():
     assert jnp.allclose(loss_int, 4.0, rtol=5e-2, atol=5e-2)
 
 
-def test_residual_penalty_resample_sampling_changes_points():
+def test_residual_penalty_resample_sampling_changes_points() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
 
     @geom.Function("x")
-    def x_fn(x):
+    def x_fn(x: Any) -> Any:
         return x[0]
 
     condition = Residual("u", component, lambda _u: x_fn)
@@ -99,13 +102,13 @@ def test_residual_penalty_resample_sampling_changes_points():
     assert not jnp.allclose(x0, x1)
 
 
-def test_residual_penalty_fixed_sampling_reuses_batch_and_honors_override():
+def test_residual_penalty_fixed_sampling_reuses_batch_and_honors_override() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
     u = geom.Function()(0.0)
 
     @geom.Function("x")
-    def x_fn(x):
+    def x_fn(x: Any) -> Any:
         return x[0]
 
     condition = Residual("u", component, lambda _u: x_fn)
@@ -118,6 +121,7 @@ def test_residual_penalty_fixed_sampling_reuses_batch_and_honors_override():
     fixed_term = ResidualPenalty(condition, phx.integration.fixed(realization))
 
     batch0 = _batch(realization)
+    # ty: ignore[unresolved-attribute]
     batch1 = _batch(fixed_term.source.realization)
     assert isinstance(batch0, PointBatch)
     assert isinstance(batch1, PointBatch)
@@ -139,7 +143,7 @@ def test_residual_penalty_fixed_sampling_reuses_batch_and_honors_override():
     assert not jnp.allclose(override_loss, loss0)
 
 
-def test_residual_penalty_fixed_sampling_coord_separable():
+def test_residual_penalty_fixed_sampling_coord_separable() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -147,7 +151,7 @@ def test_residual_penalty_fixed_sampling_coord_separable():
     u = geom.Function()(0.0)
 
     @geom.Function("x")
-    def x0_fn(x):
+    def x0_fn(x: Any) -> Any:
         x0, _ = x
         return x0
 
@@ -161,6 +165,7 @@ def test_residual_penalty_fixed_sampling_coord_separable():
     term = ResidualPenalty(condition, phx.integration.fixed(realization))
 
     batch0 = _batch(realization)
+    # ty: ignore[unresolved-attribute]
     batch1 = _batch(term.source.realization)
     assert isinstance(batch0, GridBatch)
     assert isinstance(batch1, GridBatch)
@@ -181,7 +186,7 @@ def test_residual_penalty_fixed_sampling_coord_separable():
     assert jnp.allclose(loss0, loss1)
 
 
-def test_residual_penalty_accepts_domainfunction_density():
+def test_residual_penalty_accepts_domainfunction_density() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -205,7 +210,7 @@ def test_residual_penalty_accepts_domainfunction_density():
     assert jnp.allclose(loss, 2.0)
 
 
-def test_residual_penalty_rejects_untyped_density():
+def test_residual_penalty_rejects_untyped_density() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
     condition = Residual("u", component, lambda _u: geom.Function()(1.0))
@@ -214,21 +219,23 @@ def test_residual_penalty_rejects_untyped_density():
         phx.integration.MonteCarloPlan(8),
     )
     with pytest.raises(TypeError, match="DomainFunction"):
+        # ty: ignore[invalid-argument-type]
         ResidualPenalty(condition, source, density=jnp.ones((4,)))
 
 
-def test_residual_penalty_source_validation():
+def test_residual_penalty_source_validation() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
 
     @geom.Function("x")
-    def x_fn(x):
+    def x_fn(x: Any) -> Any:
         return x[0]
 
     condition = Residual("u", component, lambda _u: x_fn)
     target = phx.integration.mean_over(condition.on)
     plan = phx.integration.MonteCarloPlan(8)
     with pytest.raises(TypeError, match="typed IntegrationSource"):
+        # ty: ignore[invalid-argument-type]
         ResidualPenalty(condition, plan)
 
     realization = phx.integration.materialize(target, plan, key=jr.key(9))
@@ -241,17 +248,17 @@ def test_residual_penalty_source_validation():
 
 
 @pytest.mark.parametrize("reduction", ["mean", "integral"])
-def test_quadratic_residual_data_reconstructs_weighted_loss(reduction):
+def test_quadratic_residual_data_reconstructs_weighted_loss(reduction: Any) -> None:
     geom = Interval1d(0.0, 2.0)
     component = geom.component()
     structure = phx.domain.SampleLayout((("x",),))
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] - 0.25
 
     @geom.Function("x")
-    def density(x):
+    def density(x: Any) -> Any:
         return 1.0 + x[0]
 
     condition = Residual("u", component, lambda field: field + 0.5)
@@ -284,7 +291,7 @@ def test_quadratic_residual_data_reconstructs_weighted_loss(reduction):
     assert jnp.allclose(data.loss, expected, rtol=1e-12, atol=1e-12)
 
 
-def test_quadratic_residual_data_reconstructs_component_sum_loss():
+def test_quadratic_residual_data_reconstructs_component_sum_loss() -> None:
     geom = Interval1d(0.0, 1.0)
     left = geom.component(where={"x": lambda point: point[0] < 0.5})
     right = geom.component(where={"x": lambda point: point[0] >= 0.5})
@@ -292,7 +299,7 @@ def test_quadratic_residual_data_reconstructs_component_sum_loss():
     structure = phx.domain.SampleLayout((("x",),))
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return 1.0 + x[0]
 
     condition = Residual("u", component, lambda field: field)
@@ -314,7 +321,7 @@ def test_quadratic_residual_data_reconstructs_component_sum_loss():
     assert jnp.allclose(data.loss, expected, rtol=1e-12, atol=1e-12)
 
 
-def test_quadratic_residual_data_includes_adaptive_batch_weights():
+def test_quadratic_residual_data_includes_adaptive_batch_weights() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )

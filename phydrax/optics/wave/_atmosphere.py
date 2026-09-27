@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -45,7 +46,7 @@ class VonKarmanPhaseScreenPlan(StrictModule, NonTrainableState):
         *,
         inner_scale: ArrayLike = 0.0,
         remove_piston: bool = True,
-    ):
+    ) -> None:
         if not isinstance(space, PlaneFieldSpace):
             raise TypeError("space must be a PlaneFieldSpace.")
         if space.topology != "periodic-cell":
@@ -85,9 +86,9 @@ class VonKarmanPhaseScreenPlan(StrictModule, NonTrainableState):
         )
         shape_array = jnp.asarray(self.space.shape, dtype=lengths.dtype)
         spacings = lengths / shape_array
-        frequency_axes = tuple(
-            jnp.fft.fftfreq(count, d=spacing)
-            for count, spacing in zip(self.space.shape, spacings, strict=True)
+        frequency_axes = (
+            jnp.fft.fftfreq(self.space.shape[0], d=spacings[0]),
+            jnp.fft.fftfreq(self.space.shape[1], d=spacings[1]),
         )
         frequency_mesh = jnp.meshgrid(*frequency_axes, indexing="ij")
         spatial_frequencies = jnp.stack(frequency_mesh, axis=-1)
@@ -196,7 +197,7 @@ class AtmosphericLayer(StrictModule, NonTrainableState):
         /,
         *,
         layer_id: str,
-    ):
+    ) -> None:
         if not isinstance(screen, VonKarmanPhaseScreenPlan):
             raise TypeError("screen must be a VonKarmanPhaseScreenPlan.")
         altitude_ = jnp.asarray(altitude, dtype=jnp.float64)
@@ -234,7 +235,7 @@ class AtmosphericLayer(StrictModule, NonTrainableState):
 class LayeredAtmosphere(StrictModule, NonTrainableState):
     layers: tuple[AtmosphericLayer, ...]
 
-    def __init__(self, layers: Sequence[AtmosphericLayer], /):
+    def __init__(self, layers: Sequence[AtmosphericLayer], /) -> None:
         layers_ = tuple(layers)
         if not layers_ or not all(
             isinstance(layer, AtmosphericLayer) for layer in layers_

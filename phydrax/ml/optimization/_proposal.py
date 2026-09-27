@@ -9,7 +9,8 @@ from typing import Any, Callable
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -32,7 +33,7 @@ class AdjacentLatticeMaterializer(StrictModule, NonTrainableState):
 
     tie_up: bool = eqx.field(static=True)
 
-    def __init__(self, *, tie_up: bool = True):
+    def __init__(self, *, tie_up: bool = True) -> None:
         self.tie_up = bool(tie_up)
 
     def materialize(
@@ -84,7 +85,7 @@ class MixedIntegerProposalManifest(StrictModule, NonTrainableState):
         /,
         *,
         support_id: str = "unqualified-support",
-    ):
+    ) -> None:
         structure = str(structure_id)
         model = str(model_id)
         support = str(support_id)
@@ -127,7 +128,7 @@ class ParametricMixedIntegerProposal(StrictModule):
         /,
         *,
         materializer: AdjacentLatticeMaterializer | None = None,
-    ):
+    ) -> None:
         if not callable(model):
             raise TypeError("model must be callable.")
         if not isinstance(manifest, MixedIntegerProposalManifest):

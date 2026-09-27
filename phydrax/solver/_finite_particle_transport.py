@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PRNGKeyArray
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -42,6 +43,7 @@ from ..discretization.particle._population import (
     ParticleSlotReusePolicy,
 )
 from ..geometry._eroded_domain import AbstractFiniteRadiusWallPlan
+from ..typing import PRNGKey
 
 
 class FiniteParticleTransportReason(IntFlag):
@@ -195,7 +197,7 @@ class FiniteParticleTransportPlan(StrictModule, NonTrainableState):
         population: ParticlePopulationState,
         position: ArrayLike,
         velocity: ArrayLike,
-        key: PRNGKeyArray,
+        key: PRNGKey,
         /,
     ) -> FiniteParticleTransportState:
         position_ = jnp.asarray(position)
@@ -231,7 +233,7 @@ class FiniteParticleTransportPlan(StrictModule, NonTrainableState):
         self,
         state: FiniteParticleTransportState,
         step: Array,
-        key: PRNGKeyArray,
+        key: PRNGKey,
         args: Any,
         /,
     ) -> tuple[Array, Array, Array]:
@@ -298,7 +300,9 @@ class FiniteParticleTransportPlan(StrictModule, NonTrainableState):
         segment = free_position - state.position
         regular = jnp.ones_like(active)
 
-        def bisect(_, carry):
+        def bisect(
+            _: Array, carry: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array, Array]:
             lower, upper, regular_ = carry
             middle = 0.5 * (lower + upper)
             point = state.position + middle[:, None] * segment

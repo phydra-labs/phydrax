@@ -11,7 +11,8 @@ from enum import IntEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -58,7 +59,7 @@ class PolynomialEigenproblem(StrictModule):
         /,
         *,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         values = tuple(coefficients)
         if len(values) < 2 or not all(
             isinstance(value, AbstractLinearOperator) for value in values
@@ -117,7 +118,7 @@ class PolynomialEigenSolvePolicy(StrictModule, NonTrainableState):
         eigenvalue_scale: float = 1.0,
         relative_residual_tolerance: float = 1e-8,
         absolute_residual_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         general_ = GeneralEigenSolvePolicy() if general is None else general
         scale = float(eigenvalue_scale)
         relative = float(relative_residual_tolerance)
@@ -571,11 +572,11 @@ def _coordinate_norm(space: AbstractVectorSpace, coordinates: Array, /) -> Array
     dtype = np.dtype(_coordinate_dtype(space))
     if np.issubdtype(dtype, np.complexfloating):
         vector = space.unflatten(coordinates.astype(dtype))
-        return jnp.sqrt(jnp.maximum(jnp.real(space.pairing.inner(vector, vector)), 0.0))
+        return jnp.sqrt(jnp.maximum(jnp.real(space.inner(vector, vector)), 0.0))
     real = space.unflatten(jnp.real(coordinates).astype(dtype))
     imaginary = space.unflatten(jnp.imag(coordinates).astype(dtype))
-    square = jnp.real(space.pairing.inner(real, real)) + jnp.real(
-        space.pairing.inner(imaginary, imaginary)
+    square = jnp.real(space.inner(real, real)) + jnp.real(
+        space.inner(imaginary, imaginary)
     )
     return jnp.sqrt(jnp.maximum(square, 0.0))
 

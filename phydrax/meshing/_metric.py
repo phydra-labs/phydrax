@@ -17,14 +17,15 @@ import heapq
 import math
 from enum import StrEnum
 from functools import partial
-from typing import final, NamedTuple
+from typing import Any, final, NamedTuple
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.scipy.special import logsumexp
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -40,6 +41,7 @@ from ..linalg import (
     verify_dense_properties,
 )
 from ..nonlinear import Brent, NonlinearTermination, scalar_root, ScalarRootProblem
+from ..typing import Dim, Float64, Identifier
 from ._scope import MeshingScope
 
 
@@ -54,6 +56,14 @@ _COMPLEXITY_TERMINATION = NonlinearTermination(
     relative_step=0.0,
     maximum_steps=200,
 )
+
+
+class _MetricEntityDim(Dim):
+    """Entities carrying one metric tensor row."""
+
+
+class _MetricAxisDim(Dim, minimum=1):
+    """Coordinate axes of one square metric tensor."""
 
 
 def _positive(value: object, name: str, /) -> float:
@@ -182,12 +192,14 @@ class MeshMetricField(StrictModule, NonTrainableState):
     by `MetricGradationEvidence`.
     """
 
+    __strict_contract__ = True
+
     scope: MeshingScope
-    values: Array
+    values: Float64[_MetricEntityDim, _MetricAxisDim, _MetricAxisDim]
     minimum_size: float = eqx.field(static=True)
     maximum_size: float = eqx.field(static=True)
     maximum_anisotropy: float = eqx.field(static=True)
-    metric_id: str = eqx.field(static=True)
+    metric_id: Identifier = eqx.field(static=True)
 
     def __init__(
         self,
@@ -198,7 +210,7 @@ class MeshMetricField(StrictModule, NonTrainableState):
         minimum_size: float,
         maximum_size: float,
         maximum_anisotropy: float = 100.0,
-    ):
+    ) -> None:
         if not isinstance(scope, MeshingScope):
             raise TypeError("scope must be MeshingScope.")
         minimum = _positive(minimum_size, "minimum_size")
@@ -239,11 +251,13 @@ class MeshMetricSamples(StrictModule, NonTrainableState):
     :class:`MetricNormalizationPolicy` may repair them, and the repair is reported.
     """
 
-    scope: MeshingScope
-    values: Array
-    samples_id: str = eqx.field(static=True)
+    __strict_contract__ = True
 
-    def __init__(self, scope: MeshingScope, values: ArrayLike, /):
+    scope: MeshingScope
+    values: Float64[_MetricEntityDim, _MetricAxisDim, _MetricAxisDim]
+    samples_id: Identifier = eqx.field(static=True)
+
+    def __init__(self, scope: MeshingScope, values: ArrayLike, /) -> None:
         if not isinstance(scope, MeshingScope):
             raise TypeError("scope must be MeshingScope.")
         tensors = _tensor_array(values, scope.entity_ids.shape[0])
@@ -311,7 +325,7 @@ class MetricGradationPolicy(StrictModule, NonTrainableState):
         anisotropic: bool = False,
         relative_tolerance: float = 1.0e-10,
         maximum_sweeps: int = 1024,
-    ):
+    ) -> None:
         gradation = _at_least_one(maximum_gradation, "maximum_gradation")
         if not isinstance(kind, MetricGradationKind):
             raise TypeError("kind must be MetricGradationKind.")
@@ -369,7 +383,7 @@ class MetricGradationEvidence(StrictModule, NonTrainableState):
         updates: int,
         modified_count: int,
         maximum_violation: float,
-    ):
+    ) -> None:
         if not isinstance(policy, MetricGradationPolicy):
             raise TypeError("policy must be MetricGradationPolicy.")
         if not isinstance(status, MetricGradationStatus):
@@ -400,7 +414,7 @@ class MetricGradationEvidence(StrictModule, NonTrainableState):
 class MetricGradationError(ValueError):
     """A metric-gradation request could not satisfy its scientific contract."""
 
-    def __init__(self, evidence: MetricGradationEvidence, /):
+    def __init__(self, evidence: MetricGradationEvidence, /) -> None:
         if not isinstance(evidence, MetricGradationEvidence):
             raise TypeError("evidence must be MetricGradationEvidence.")
         self.evidence = evidence
@@ -453,7 +467,7 @@ class MetricNormalizationPolicy(StrictModule, NonTrainableState):
         gradation: MetricGradationPolicy | None = None,
         symmetrize: bool = False,
         project_indefinite: bool = False,
-    ):
+    ) -> None:
         minimum = _positive(minimum_size, "minimum_size")
         maximum = _positive(maximum_size, "maximum_size")
         if minimum > maximum:
@@ -529,7 +543,7 @@ class MetricNormalizationEvidence(StrictModule, NonTrainableState):
         scaled_complexity: float | None,
         final_complexity: float | None,
         gradation: MetricGradationEvidence | None,
-    ):
+    ) -> None:
         if not isinstance(policy, MetricNormalizationPolicy):
             raise TypeError("policy must be MetricNormalizationPolicy.")
         if not isinstance(complexity_status, MetricComplexityStatus):
@@ -888,7 +902,7 @@ def _realize_mean_sizes(
     return np.exp(np.minimum(logarithms + shift[:, None], caps))
 
 
-def _metric_sqrt_factors(eigenvalues: Array, eigenvectors: Array, /):
+def _metric_sqrt_factors(eigenvalues: Array, eigenvectors: Array, /) -> Any:
     transpose = jnp.swapaxes(eigenvectors, -1, -2)
     root = (eigenvectors * jnp.sqrt(eigenvalues)[..., None, :]) @ transpose
     inverse_root = (eigenvectors / jnp.sqrt(eigenvalues)[..., None, :]) @ transpose
@@ -929,7 +943,7 @@ def _canonical_intersection(candidates: Array, valid: Array, /) -> Array:
     ordered = jnp.take_along_axis(candidates, order[..., None, None], axis=1)
     ordered_valid = jnp.take_along_axis(valid, order, axis=1)
 
-    def fold(accumulated, slot):
+    def fold(accumulated: Any, slot: Any) -> Any:
         tensor, active = slot
         combined = _intersect(accumulated, tensor)
         return jnp.where(active[:, None, None], combined, accumulated), None
@@ -1011,7 +1025,7 @@ def _anisotropic_gradation_kernel(
     always = jnp.ones((rows, 1), dtype=jnp.bool_)
     candidate_valid = jnp.concatenate((always, slot_valid), axis=1)
 
-    def body(state):
+    def body(state: Any) -> Any:
         current, sweeps, updates, _ = state
         spectrum = HermitianSpectrum(current)
         grown = _grow_metrics(
@@ -1039,7 +1053,7 @@ def _anisotropic_gradation_kernel(
             jnp.any(accept),
         )
 
-    def condition(state):
+    def condition(state: Any) -> Any:
         return state[3] & (state[1] < maximum_sweeps)
 
     final, sweeps, updates, changed = jax.lax.while_loop(
@@ -1326,7 +1340,7 @@ class MetricCombinationEvidence(StrictModule, NonTrainableState):
         maximum_size: float,
         maximum_anisotropy: float,
         size_interval_conflict: bool = False,
-    ):
+    ) -> None:
         masks = tuple(
             np.asarray(value, dtype=np.bool_)
             for value in (
@@ -1388,7 +1402,7 @@ class MetricCombinationResult(StrictModule, NonTrainableState):
         field: MeshMetricField | None,
         evidence: MetricCombinationEvidence,
         /,
-    ):
+    ) -> None:
         if field is not None and not isinstance(field, MeshMetricField):
             raise TypeError("field must be MeshMetricField or None.")
         if not isinstance(evidence, MetricCombinationEvidence):
@@ -1582,7 +1596,7 @@ class HessianMetricEvidence(StrictModule, NonTrainableState):
         indefinite_tensor_count: int,
         zero_tensor_count: int,
         floored_eigenvalue_count: int,
-    ):
+    ) -> None:
         if not isinstance(normalization, MetricNormalizationEvidence):
             raise TypeError("normalization must be MetricNormalizationEvidence.")
         self.p = float(p)

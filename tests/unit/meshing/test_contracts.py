@@ -1,10 +1,14 @@
+from typing import Any
+
 import numpy as np
 import pytest
 
 import phydrax as phx
 
 
-def _scope(dimension=2, ids=(10, 20), *, revision="revision-1"):
+def _scope(
+    dimension: Any = 2, ids: Any = (10, 20), *, revision: Any = "revision-1"
+) -> Any:
     return phx.meshing.MeshingScope(
         "shape",
         revision,
@@ -15,7 +19,7 @@ def _scope(dimension=2, ids=(10, 20), *, revision="revision-1"):
     )
 
 
-def test_surface_and_volume_specs_share_generic_semantic_and_sizing_controls():
+def test_surface_and_volume_specs_share_generic_semantic_and_sizing_controls() -> None:
     surface_scope = _scope()
     surface_target = phx.meshing.CellMeshingTarget(
         2,
@@ -121,7 +125,9 @@ def test_surface_and_volume_specs_share_generic_semantic_and_sizing_controls():
     assert surface.specification_id != volume.specification_id
 
 
-def test_generic_semantic_controls_reject_wrong_scope_overlap_and_unknown_region():
+def test_generic_semantic_controls_reject_wrong_scope_overlap_and_unknown_region() -> (
+    None
+):
     scope = _scope(3)
     target = phx.meshing.CellMeshingTarget(
         3,
@@ -214,7 +220,7 @@ def test_generic_semantic_controls_reject_wrong_scope_overlap_and_unknown_region
         )
 
 
-def test_provider_support_report_fails_before_execution():
+def test_provider_support_report_fails_before_execution() -> None:
     scope = _scope()
     target = phx.meshing.CellMeshingTarget(
         2,
@@ -260,7 +266,8 @@ def test_provider_support_report_fails_before_execution():
     )
 
 
-def test_layer_schedule_geometric_constructor_has_explicit_schedule_identity():
+def test_layer_schedule_geometric_constructor_has_explicit_schedule_identity() -> None:
+    # ty: ignore[invalid-argument-type]
     explicit = phx.meshing.LayerSchedule((0.125, 0.25, 0.5))
     geometric = phx.meshing.LayerSchedule.geometric(
         3,
@@ -292,14 +299,17 @@ def test_layer_schedule_geometric_constructor_has_explicit_schedule_identity():
     ),
 )
 def test_layer_schedule_rejects_non_positive_non_finite_or_non_numeric_values(
-    thicknesses,
-):
+    thicknesses: Any,
+) -> None:
     with pytest.raises((TypeError, ValueError)):
         phx.meshing.LayerSchedule(thicknesses)
 
 
-def test_geometric_layer_schedule_rejects_non_integral_count_and_invalid_parameters():
+def test_geometric_layer_schedule_rejects_non_integral_count_and_invalid_parameters() -> (
+    None
+):
     with pytest.raises(TypeError, match="integer"):
+        # ty: ignore[invalid-argument-type]
         phx.meshing.LayerSchedule.geometric(2.5, 0.1)
     with pytest.raises(ValueError, match="positive"):
         phx.meshing.LayerSchedule.geometric(0, 0.1)
@@ -309,7 +319,9 @@ def test_geometric_layer_schedule_rejects_non_integral_count_and_invalid_paramet
         phx.meshing.LayerSchedule.geometric(2, 0.1, growth_rate=0.0)
 
 
-def _exact_sweep(wall, cap, volume_scope, schedule, **options):
+def _exact_sweep(
+    wall: Any, cap: Any, volume_scope: Any, schedule: Any, **options: Any
+) -> Any:
     return phx.meshing.BoundaryLayerControl(
         wall,
         schedule,
@@ -320,14 +332,19 @@ def _exact_sweep(wall, cap, volume_scope, schedule, **options):
     )
 
 
-def test_exact_sweep_boundary_layer_is_wall_to_cap_and_volume_bound():
+def test_exact_sweep_boundary_layer_is_wall_to_cap_and_volume_bound() -> None:
     wall = _scope(2, (10,))
     cap = _scope(2, (20,))
     volume_scope = _scope(3, (30,))
+    # ty: ignore[invalid-argument-type]
     schedule = phx.meshing.LayerSchedule((0.1, 0.15, 0.2))
     control = _exact_sweep(wall, cap, volume_scope, schedule)
     equivalent = _exact_sweep(
-        wall, cap, volume_scope, phx.meshing.LayerSchedule((0.1, 0.15, 0.2))
+        wall,
+        cap,
+        volume_scope,
+        # ty: ignore[invalid-argument-type]
+        phx.meshing.LayerSchedule((0.1, 0.15, 0.2)),
     )
     target_spec = phx.meshing.CellMeshingTarget(
         3,
@@ -355,10 +372,11 @@ def test_exact_sweep_boundary_layer_is_wall_to_cap_and_volume_bound():
     assert specification.layer_controls == (control,)
 
 
-def test_boundary_layer_control_rejects_route_scopes_bindings_and_policies():
+def test_boundary_layer_control_rejects_route_scopes_bindings_and_policies() -> None:
     wall = _scope(2, (10,))
     cap = _scope(2, (20,))
     volume_scope = _scope(3, (30,))
+    # ty: ignore[invalid-argument-type]
     schedule = phx.meshing.LayerSchedule((0.1, 0.2))
 
     with pytest.raises(ValueError, match="EXACT_SWEEP requires"):
@@ -391,7 +409,7 @@ def test_boundary_layer_control_rejects_route_scopes_bindings_and_policies():
         _exact_sweep(wall, cap, volume_scope, schedule, maximum_corner_stretch=0.5)
 
 
-def test_volume_spec_rejects_boundary_layer_outside_top_level_volume_scope():
+def test_volume_spec_rejects_boundary_layer_outside_top_level_volume_scope() -> None:
     boundary_scope = _scope(3, (30,))
     target_spec = phx.meshing.CellMeshingTarget(
         3,
@@ -405,6 +423,7 @@ def test_volume_spec_rejects_boundary_layer_outside_top_level_volume_scope():
         _scope(2, (10,)),
         _scope(2, (20,)),
         _scope(3, (40,)),
+        # ty: ignore[invalid-argument-type]
         phx.meshing.LayerSchedule((0.1,)),
     )
 

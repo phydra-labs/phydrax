@@ -12,9 +12,11 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..qualification import CapabilityProfile, SupportTuple
+from ..typing import parse
 
 
 GeneralizedNewtonianKind: TypeAlias = Literal[
@@ -43,7 +45,10 @@ class GeneralizedNewtonianLaw:
     yield_stress_pa: float = 0.0
     regularization_s: float = 1.0e3
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "kind", parse(self.kind, GeneralizedNewtonianKind, "kind")
+        )
         values = (
             self.zero_shear_viscosity_pa_s,
             self.infinite_shear_viscosity_pa_s,
@@ -55,9 +60,7 @@ class GeneralizedNewtonianLaw:
             self.regularization_s,
         )
         if (
-            self.kind
-            not in ("power-law", "carreau-yasuda", "bingham", "herschel-bulkley")
-            or not all(isfinite(value) for value in values)
+            not all(isfinite(value) for value in values)
             or self.zero_shear_viscosity_pa_s < 0
             or self.infinite_shear_viscosity_pa_s < 0
             or self.consistency_pa_s_n <= 0
@@ -105,19 +108,10 @@ class ViscoelasticLaw:
     mobility_factor: float = 0.0
     ptt_epsilon: float = 0.0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "kind", parse(self.kind, ViscoelasticKind, "kind"))
         if (
-            self.kind
-            not in (
-                "oldroyd-b",
-                "giesekus",
-                "fene-p",
-                "fene-cr",
-                "linear-ptt",
-                "exponential-ptt",
-                "rolie-poly",
-            )
-            or not isfinite(self.polymer_viscosity_pa_s)
+            not isfinite(self.polymer_viscosity_pa_s)
             or self.polymer_viscosity_pa_s <= 0
             or not isfinite(self.relaxation_time_s)
             or self.relaxation_time_s <= 0
@@ -236,7 +230,7 @@ class ThixotropicLaw:
     breakdown_coefficient: float
     exponent: float = 1.0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             not isfinite(self.build_rate_s_inv)
             or self.build_rate_s_inv < 0

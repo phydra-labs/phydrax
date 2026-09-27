@@ -9,7 +9,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -93,7 +94,7 @@ class BosonicJastrowAmplitude(StrictModule, ParameterOwner):
         pair_range: ArrayLike | float = 0.0,
         sector_log_weights: ArrayLike | None = None,
         amplitude_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(space, VariableSectorSpace):
             raise TypeError("space must be VariableSectorSpace.")
         center = (
@@ -244,7 +245,7 @@ class FermionicDeterminantJastrowAmplitude(StrictModule, ParameterOwner):
         pair_range: ArrayLike | float = 0.0,
         sector_log_weights: ArrayLike | None = None,
         amplitude_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(space, VariableSectorSpace):
             raise TypeError("space must be VariableSectorSpace.")
         bias = np.asarray(orbital_bias)

@@ -63,7 +63,7 @@ class ElectronicNumericalPlan(StrictModule, NonTrainableState):
         derivative_route: ElectronicDerivativeRoute = ElectronicDerivativeRoute.PROVIDER_NATIVE,
         response_solver: ElectronicStationarySolverKind = ElectronicStationarySolverKind.PROVIDER_NATIVE,
         component_plan_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(integrals, IntegralRepresentationKind):
             raise TypeError("integrals must be IntegralRepresentationKind.")
         if not isinstance(stationary_solver, ElectronicStationarySolverKind):

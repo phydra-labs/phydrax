@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -48,7 +49,7 @@ class _VariableCoefficientMACPressureAction(StrictModule, NonTrainableState):
         operators: PreparedMACOperators,
         face_coefficient: FaceVelocity,
         /,
-    ):
+    ) -> None:
         self.operators = operators
         self.face_coefficient = operators.validate_velocity(face_coefficient)
 
@@ -139,7 +140,7 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 500,
         solve_method: str = "auto",
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         tolerance_ = float(tolerance)

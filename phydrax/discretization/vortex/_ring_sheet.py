@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -38,7 +39,7 @@ class VortexRingSheetTopology(StrictModule, NonTrainableState):
         *,
         edge_active: ArrayLike | None = None,
         ring_active: ArrayLike | None = None,
-    ):
+    ) -> None:
         vertices = int(vertex_capacity)
         start, end = np.asarray(edge_start), np.asarray(edge_end)
         rings, signs = np.asarray(ring_edges), np.asarray(ring_signs)
@@ -139,7 +140,7 @@ class VortexRingSheetState(StrictModule):
         edge_core_radius: ArrayLike,
         edge_age: ArrayLike | None = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(topology, VortexRingSheetTopology):
             raise TypeError("topology must be VortexRingSheetTopology.")
         vertex = jnp.asarray(vertices)

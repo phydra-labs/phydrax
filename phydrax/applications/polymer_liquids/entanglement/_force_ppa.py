@@ -10,7 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -48,7 +48,7 @@ class ForcePrimitivePathPlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 4096,
         backtracking_steps: int = 12,
         maximum_contacts: int = 100_000,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -151,7 +151,7 @@ class PreparedForcePrimitivePath(StrictModule, NonTrainableState):
         plan: ForcePrimitivePathPlan,
         snapshot: PreparedPrimitivePathSnapshot,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, ForcePrimitivePathPlan):
             raise TypeError("plan must be ForcePrimitivePathPlan.")
         if not isinstance(snapshot, PreparedPrimitivePathSnapshot):

@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.scipy.special import logsumexp
-from jaxtyping import Array
 
 from ._costs import GroundCost, PrecomputedCost
 
@@ -59,12 +59,12 @@ def row_logsumexp(
     target_blocks = block_count(target_count, size)
     output = jnp.full((source_blocks * size,), -jnp.inf, dtype=values.dtype)
 
-    def source_body(source_block, result):
+    def source_body(source_block: Array, result: Array) -> Array:
         source_start = source_block * size
         source_indices, source_valid = indices(source_start, size, source_count)
         accumulator = jnp.full((size,), -jnp.inf, dtype=values.dtype)
 
-        def target_body(target_block, current):
+        def target_body(target_block: Array, current: Array) -> Array:
             target_start = target_block * size
             target_indices, target_valid = indices(target_start, size, target_count)
             costs = cost_block(
@@ -115,12 +115,12 @@ def column_logsumexp(
     target_blocks = block_count(target_count, size)
     output = jnp.full((target_blocks * size,), -jnp.inf, dtype=values.dtype)
 
-    def target_body(target_block, result):
+    def target_body(target_block: Array, result: Array) -> Array:
         target_start = target_block * size
         target_indices, target_valid = indices(target_start, size, target_count)
         accumulator = jnp.full((size,), -jnp.inf, dtype=values.dtype)
 
-        def source_body(source_block, current):
+        def source_body(source_block: Array, current: Array) -> Array:
             source_start = source_block * size
             source_indices, source_valid = indices(source_start, size, source_count)
             costs = cost_block(

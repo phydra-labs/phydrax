@@ -10,17 +10,23 @@ import hashlib
 import json
 import platform
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Self, TYPE_CHECKING
 
 from .._fingerprint import canonical_fingerprint
 from ._trust import QualificationRoleTrust, SignedQualificationRecord
 
 
+if TYPE_CHECKING:
+    from ..service._security import AsymmetricSigner
+
+
 def parse_distribution_manifest(content: str, /) -> dict[str, object]:
     """Validate the retained source → artifact content-addressed mapping, not execution."""
 
-    def unique_object(pairs):
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         result = dict(pairs)
         if len(result) != len(pairs):
             raise ValueError("Distribution records cannot contain duplicate JSON fields.")
@@ -151,7 +157,7 @@ class RuntimeDistributionAttestation:
         return {**self.content_record(), "signature": self.signature.to_record()}
 
     @classmethod
-    def from_record(cls, record, /):
+    def from_record(cls, record: Mapping[str, Any], /) -> Self:
         if (
             set(record)
             != {
@@ -175,8 +181,14 @@ class RuntimeDistributionAttestation:
 
     @classmethod
     def attest_verified_install(
-        cls, distribution_id, signer, /, *, issued_at: int, expires_at: int
-    ):
+        cls,
+        distribution_id: str,
+        signer: AsymmetricSigner,
+        /,
+        *,
+        issued_at: int,
+        expires_at: int,
+    ) -> Self:
         """Executor signs only after independently verifying the wheel/install manifest.
 
         This captures actual imported bytes; it does not itself certify that a
@@ -190,7 +202,7 @@ class RuntimeDistributionAttestation:
         ):
             raise ValueError("Runtime attestation requires an exact distribution ID.")
         files = _runtime_package_files()
-        content = {
+        content: dict[str, Any] = {
             "kind": "installed-runtime-distribution",
             "distribution_id": distribution_id,
             "package_files": [list(row) for row in files],

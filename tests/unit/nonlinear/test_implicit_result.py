@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -8,7 +10,7 @@ import phydrax.linalg as la
 import phydrax.nonlinear as nl
 
 
-def _termination(*, maximum_steps=20):
+def _termination(*, maximum_steps: Any = 20) -> Any:
     return nl.NonlinearTermination(
         absolute_residual=1e-11,
         relative_residual=0.0,
@@ -18,13 +20,13 @@ def _termination(*, maximum_steps=20):
     )
 
 
-def test_implicit_root_result_retains_native_evidence_and_analytic_derivatives():
+def test_implicit_root_result_retains_native_evidence_and_analytic_derivatives() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state**2 - target,
         problem_id="implicit-square",
     )
 
-    def root(target):
+    def root(target: Any) -> Any:
         result = nl.implicit_root_result(
             problem,
             jnp.asarray([1.0, 1.0]),
@@ -51,14 +53,14 @@ def test_implicit_root_result_retains_native_evidence_and_analytic_derivatives()
     assert jnp.allclose(gradient, tangent, rtol=1e-8, atol=1e-10)
 
 
-def test_implicit_root_result_recomputes_differentiable_auxiliary_at_root():
+def test_implicit_root_result_recomputes_differentiable_auxiliary_at_root() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, target: (state**2 - target, target * state),
         has_aux=True,
         problem_id="implicit-auxiliary",
     )
 
-    def observable(target):
+    def observable(target: Any) -> Any:
         result = nl.implicit_root_result(
             problem,
             jnp.asarray(1.0),
@@ -73,7 +75,7 @@ def test_implicit_root_result_recomputes_differentiable_auxiliary_at_root():
     assert jnp.allclose(gradient, 3.0, rtol=1e-8, atol=1e-10)
 
 
-def test_prepared_implicit_root_refresh_preserves_symbolic_linear_identity():
+def test_prepared_implicit_root_refresh_preserves_symbolic_linear_identity() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state**2 - target,
         problem_id="prepared-implicit-square",
@@ -100,7 +102,7 @@ def test_prepared_implicit_root_refresh_preserves_symbolic_linear_identity():
     assert result.provenance.linear_plan_id == prepared.linear_plan_id
 
 
-def test_failed_implicit_root_remains_inspectable_and_checked_root_raises():
+def test_failed_implicit_root_remains_inspectable_and_checked_root_raises() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, _: state**2 - 2.0,
         problem_id="failed-implicit-root",
@@ -121,7 +123,7 @@ def test_failed_implicit_root_remains_inspectable_and_checked_root_raises():
         nl.implicit_root(problem, jnp.asarray(10.0), termination=termination)
 
 
-def _nonnormal_root():
+def _nonnormal_root() -> Any:
     matrix = jnp.asarray(
         [
             [1.0, 4.0, 0.0, 0.0],
@@ -138,7 +140,7 @@ def _nonnormal_root():
     return matrix, problem, method
 
 
-def _underresolved_gmres():
+def _underresolved_gmres() -> Any:
     return la.LinearSolvePolicy(
         la.GMRES(restart=1),
         tolerance=la.TolerancePolicy(
@@ -149,13 +151,13 @@ def _underresolved_gmres():
     )
 
 
-def test_implicit_root_uses_distinct_tangent_and_adjoint_policies():
+def test_implicit_root_uses_distinct_tangent_and_adjoint_policies() -> None:
     matrix, problem, method = _nonnormal_root()
     dense = la.LinearSolvePolicy(la.DenseLU())
     target = jnp.asarray([1.0, -0.5, 0.25, 2.0])
     direction = jnp.asarray([0.2, -0.1, 0.4, 0.3])
 
-    def root(argument, policy):
+    def root(argument: Any, policy: Any) -> Any:
         return nl.implicit_root(
             problem,
             jnp.zeros_like(argument),
@@ -201,7 +203,7 @@ def test_implicit_root_uses_distinct_tangent_and_adjoint_policies():
         failed_tangent(target)
 
 
-def test_implicit_root_derivative_policy_defaults_adjoint_to_tangent():
+def test_implicit_root_derivative_policy_defaults_adjoint_to_tangent() -> None:
     matrix, problem, method = _nonnormal_root()
     policy = nl.ImplicitRootDerivativePolicy(
         tangent_linear_policy=la.LinearSolvePolicy(la.DenseLU())
@@ -229,7 +231,7 @@ def test_implicit_root_derivative_policy_defaults_adjoint_to_tangent():
     )
 
 
-def test_implicit_root_requires_tangent_policy_for_non_newton_method():
+def test_implicit_root_requires_tangent_policy_for_non_newton_method() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state**2 - target,
         problem_id="implicit-quasi-newton-policy",
@@ -256,7 +258,7 @@ def test_implicit_root_requires_tangent_policy_for_non_newton_method():
         ),
     ),
 )
-def test_implicit_root_refuses_method_without_implicit_capability(method):
+def test_implicit_root_refuses_method_without_implicit_capability(method: Any) -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state**2 - target,
         problem_id="implicit-unsupported-method",
@@ -287,21 +289,23 @@ def test_implicit_root_refuses_method_without_implicit_capability(method):
         )
 
 
-def test_implicit_root_derivative_policy_validates_linear_policies():
+def test_implicit_root_derivative_policy_validates_linear_policies() -> None:
     with pytest.raises(TypeError, match="tangent_linear_policy"):
+        # ty: ignore[invalid-argument-type]
         nl.ImplicitRootDerivativePolicy(tangent_linear_policy=object())
     with pytest.raises(TypeError, match="adjoint_linear_policy"):
+        # ty: ignore[invalid-argument-type]
         nl.ImplicitRootDerivativePolicy(adjoint_linear_policy=object())
 
 
-def test_state_dependent_derivative_setups_use_converged_native_coordinates():
+def test_state_dependent_derivative_setups_use_converged_native_coordinates() -> None:
     source = la.ArraySpace((2,), dtype=jnp.float64, space_id="domain-root-state")
     target = la.ArraySpace((2,), dtype=jnp.float64, space_id="domain-root-residual")
 
-    def setup(state, _):
+    def setup(state: Any, _: Any) -> Any:
         return la.DenseLinearOperator(jnp.diag(2.0 * state), source=source, target=target)
 
-    def transpose_setup(state, _):
+    def transpose_setup(state: Any, _: Any) -> Any:
         return la.DenseLinearOperator(jnp.diag(2.0 * state), source=target, target=source)
 
     problem = nl.NonlinearSystemProblem(
@@ -324,7 +328,7 @@ def test_state_dependent_derivative_setups_use_converged_native_coordinates():
     )
     method = nl.NewtonKrylov(linear_policy=policy)
 
-    def root(rhs):
+    def root(rhs: Any) -> Any:
         return nl.implicit_root_result(
             problem,
             jnp.ones(2),
@@ -341,20 +345,20 @@ def test_state_dependent_derivative_setups_use_converged_native_coordinates():
     assert jnp.allclose(gradient, tangent, atol=1e-9)
 
 
-def _structured_setup_root(target):
+def _structured_setup_root(target: Any) -> Any:
     initial = (jnp.asarray([[4.0], [5.0]]), jnp.asarray(6.0))
     space = la.PyTreeSpace(initial)
 
-    def mixing(history):
+    def mixing(history: Any) -> Any:
         return jnp.asarray(
             [[2.0, 1.0, 0.0], [0.0, 3.0, 1.0], [1.0, 0.0, 4.0]]
         ) + history * jnp.diag(jnp.asarray([1.0, 2.0, 3.0]))
 
-    def residual(state, history):
+    def residual(state: Any, history: Any) -> Any:
         coordinates = space.flatten(state)
         return space.unflatten(mixing(history) @ (coordinates**2 - target - history))
 
-    def setup(state, history):
+    def setup(state: Any, history: Any) -> Any:
         matrix = mixing(history) * (2 * space.flatten(state))[None, :]
         return la.DenseLinearOperator(matrix, source=space, target=space)
 
@@ -368,7 +372,7 @@ def _structured_setup_root(target):
     return problem, initial, space
 
 
-def _one_step_preconditioned_policy(builder):
+def _one_step_preconditioned_policy(builder: Any) -> Any:
     # One Krylov direction resolves this nonnormal system only with exact,
     # correctly oriented setup at the current root, not at a Newton iterate.
     return la.LinearSolvePolicy(
@@ -378,11 +382,13 @@ def _one_step_preconditioned_policy(builder):
     )
 
 
-def test_implicit_setup_tracks_structured_root_history_and_single_primal(monkeypatch):
+def test_implicit_setup_tracks_structured_root_history_and_single_primal(
+    monkeypatch: Any,
+) -> None:
     executions = []
     original_solve = nl.NewtonKrylov.solve
 
-    def counted_solve(self, *arguments, **keywords):
+    def counted_solve(self: Any, *arguments: Any, **keywords: Any) -> Any:
         jax.debug.callback(lambda: executions.append(None), ordered=True)
         return original_solve(self, *arguments, **keywords)
 
@@ -393,7 +399,7 @@ def test_implicit_setup_tracks_structured_root_history_and_single_primal(monkeyp
         )
     )
 
-    def observe(target, history):
+    def observe(target: Any, history: Any) -> Any:
         problem, initial, space = _structured_setup_root(target)
         result = nl.implicit_root_result(
             problem, initial, method=method, termination=_termination(), args=history
@@ -417,7 +423,7 @@ def test_implicit_setup_tracks_structured_root_history_and_single_primal(monkeyp
     )
 
     @jax.jit
-    def reverse(target, history):
+    def reverse(target: Any, history: Any) -> Any:
         value, pullback = jax.vjp(observe, target, history)
         first = pullback((weights, jnp.zeros(3)))
         second = pullback((2 * weights, jnp.zeros(3)))
@@ -455,7 +461,7 @@ def test_implicit_setup_tracks_structured_root_history_and_single_primal(monkeyp
         assert jnp.allclose(second[1], 2 * first[1], rtol=1e-9, atol=1e-11)
 
 
-def test_implicit_setup_binds_independent_forward_and_transpose_builders():
+def test_implicit_setup_binds_independent_forward_and_transpose_builders() -> None:
     exact = _one_step_preconditioned_policy(la.DenseInversePreconditionerBuilder())
     unresolved = _one_step_preconditioned_policy(la.JacobiPreconditionerBuilder())
     method = nl.NewtonKrylov(linear_policy=exact)
@@ -463,7 +469,7 @@ def test_implicit_setup_binds_independent_forward_and_transpose_builders():
     history = jnp.asarray(0.25)
     direction = jnp.asarray([0.2, -0.4, 0.3])
 
-    def root(argument, policy):
+    def root(argument: Any, policy: Any) -> Any:
         problem, initial, space = _structured_setup_root(argument)
         result = nl.implicit_root_result(
             problem,
@@ -502,7 +508,7 @@ def test_implicit_setup_binds_independent_forward_and_transpose_builders():
         failed_reverse(target)
 
 
-def test_failed_implicit_setup_root_preserves_accepted_state_and_status():
+def test_failed_implicit_setup_root_preserves_accepted_state_and_status() -> None:
     target = jnp.asarray([1.0, 4.0, 9.0])
     history = jnp.asarray(0.25)
     problem, initial, space = _structured_setup_root(target)
@@ -531,11 +537,12 @@ def test_failed_implicit_setup_root_preserves_accepted_state_and_status():
 class _NetworkResidual(eqx.Module):
     network: eqx.Module
 
-    def __call__(self, state, target):
+    def __call__(self, state: Any, target: Any) -> Any:
+        # ty: ignore[call-non-callable]
         return state + 0.1 * self.network(state, key=jax.random.key(3)) - target
 
 
-def _network(activation, *, dropout=0.0):
+def _network(activation: Any, *, dropout: Any = 0.0) -> Any:
     return phx.nn.models.MLP(
         in_size=2,
         out_size=2,
@@ -547,7 +554,7 @@ def _network(activation, *, dropout=0.0):
     )
 
 
-def _implicit(residual):
+def _implicit(residual: Any) -> Any:
     return nl.implicit_root_result(
         nl.NonlinearSystemProblem(residual),
         jnp.zeros(2),
@@ -556,7 +563,7 @@ def _implicit(residual):
     )
 
 
-def test_implicit_root_refuses_components_without_classical_c1_regularity():
+def test_implicit_root_refuses_components_without_classical_c1_regularity() -> None:
     with pytest.raises(ValueError, match="implicit-requires-c1"):
         _implicit(_NetworkResidual(_network(jax.nn.relu)))
 
@@ -565,7 +572,7 @@ def test_implicit_root_refuses_components_without_classical_c1_regularity():
     assert result.component_evidence == ("residual.network:deterministic",)
 
 
-def test_implicit_root_requires_the_inference_state_of_dropout_components():
+def test_implicit_root_requires_the_inference_state_of_dropout_components() -> None:
     residual = _NetworkResidual(_network(jnp.tanh, dropout=0.25))
     with pytest.raises(ValueError, match="inference-state-unbound"):
         _implicit(residual)
@@ -574,7 +581,7 @@ def test_implicit_root_requires_the_inference_state_of_dropout_components():
     assert bool(result.successful)
 
 
-def test_opaque_residual_closures_record_undeclared_determinism():
+def test_opaque_residual_closures_record_undeclared_determinism() -> None:
     result = _implicit(lambda state, target: state + state**3 - target)
 
     assert result.component_evidence == (

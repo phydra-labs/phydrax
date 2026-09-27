@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
+from typing import Any
 
 import pytest
 
@@ -17,7 +19,7 @@ from phydrax.axes import AxisKey
 from phydrax.units import LENGTH, TIME, VELOCITY
 
 
-def _velocity(**overrides):
+def _velocity(**overrides: Any) -> Any:
     fields = dict(
         event_shape=(2,),
         component_ids=("u", "v"),
@@ -30,10 +32,11 @@ def _velocity(**overrides):
         variance="contravariant",
     )
     fields.update(overrides)
+    # ty: ignore[invalid-argument-type]
     return ValuePort("fluid.velocity", **fields)
 
 
-def _position(**overrides):
+def _position(**overrides: Any) -> Any:
     fields = dict(
         event_shape=(2,),
         component_ids=("x", "y"),
@@ -42,16 +45,23 @@ def _position(**overrides):
         frame_id="lab",
     )
     fields.update(overrides)
+    # ty: ignore[invalid-argument-type]
     return ValuePort("space.position", **fields)
 
 
-def _time():
+def _time() -> Any:
     return ValuePort(
         "time", event_shape=(), component_ids=("t",), representation="physical"
     )
 
 
-def _bind(model_inputs, owner_inputs, model_outputs, owner_outputs, **mapping):
+def _bind(
+    model_inputs: Any,
+    owner_inputs: Any,
+    model_outputs: Any,
+    owner_outputs: Any,
+    **mapping: Any,
+) -> Any:
     model = ModelPorts(inputs=model_inputs, outputs=model_outputs)
     owner = ModelPorts(inputs=owner_inputs, outputs=owner_outputs)
     if not mapping:
@@ -68,7 +78,7 @@ def _bind(model_inputs, owner_inputs, model_outputs, owner_outputs, **mapping):
     return resolve_port_mapping(model, owner, PortMapping(**mapping))
 
 
-def test_explicit_mapping_binds_fully_declared_ports():
+def test_explicit_mapping_binds_fully_declared_ports() -> None:
     position, time, velocity = _position(), _time(), _velocity()
     evidence = _bind((position, time), (position, time), (velocity,), (velocity,))
 
@@ -91,7 +101,7 @@ def test_explicit_mapping_binds_fully_declared_ports():
     assert velocity_only.spaces_verified
 
 
-def test_owner_may_offer_unused_ports_but_model_ports_must_all_bind():
+def test_owner_may_offer_unused_ports_but_model_ports_must_all_bind() -> None:
     position, time, velocity = _position(), _time(), _velocity()
     evidence = _bind(
         (time,),
@@ -140,7 +150,7 @@ def test_owner_may_offer_unused_ports_but_model_ports_must_all_bind():
         )
 
 
-def test_mappings_reject_duplicate_bindings():
+def test_mappings_reject_duplicate_bindings() -> None:
     position, time = _position(), _time()
     with pytest.raises(ValueError, match="model port more than once"):
         PortMapping(
@@ -151,6 +161,7 @@ def test_mappings_reject_duplicate_bindings():
             inputs=[(time.port_id, time.port_id), (position.port_id, time.port_id)]
         )
     with pytest.raises(TypeError):
+        # ty: ignore[invalid-argument-type]
         PortMapping(inputs=[[time.port_id, time.port_id]])
     assert PortMapping(
         inputs=[(time.port_id, time.port_id), (position.port_id, position.port_id)]
@@ -183,13 +194,13 @@ def test_mappings_reject_duplicate_bindings():
         ("space", _velocity(space_id="inlet")),
     ],
 )
-def test_declared_mismatches_name_the_port_pair(aspect, owner):
+def test_declared_mismatches_name_the_port_pair(aspect: Any, owner: Any) -> None:
     time, velocity = _time(), _velocity()
     with pytest.raises(ValueError, match=rf"output port pair 'fluid.velocity'.*{aspect}"):
         _bind((time,), (time,), (velocity,), (owner,))
 
 
-def test_dimensions_are_strict_only_when_both_sides_declare_them():
+def test_dimensions_are_strict_only_when_both_sides_declare_them() -> None:
     time, velocity = _time(), _velocity()
     undeclared_owner = _velocity(dimensions=None)
     evidence = _bind((time,), (time,), (velocity,), (undeclared_owner,))
@@ -202,7 +213,7 @@ def test_dimensions_are_strict_only_when_both_sides_declare_them():
         _bind((time,), (time,), (velocity,), (_velocity(dimensions=(LENGTH, LENGTH)),))
 
 
-def test_port_and_binding_identities_are_deterministic():
+def test_port_and_binding_identities_are_deterministic() -> None:
     assert _velocity().port_id == _velocity().port_id
     assert _velocity().port_id != _velocity(frame_id="body").port_id
     assert _velocity().port_id != _velocity(dimensions=None).port_id
@@ -218,7 +229,7 @@ def test_port_and_binding_identities_are_deterministic():
     assert ports.ports_id != swapped.ports_id
 
 
-def test_port_records_round_trip_and_fail_closed():
+def test_port_records_round_trip_and_fail_closed() -> None:
     for port in (_velocity(), _time()):
         record = json.loads(json.dumps(port.to_dict()))
         restored = ValuePort.from_dict(record)
@@ -235,7 +246,7 @@ def test_port_records_round_trip_and_fail_closed():
         ValuePort.from_dict(record | {"schema_version": 1})
 
 
-def test_port_declarations_are_validated():
+def test_port_declarations_are_validated() -> None:
     with pytest.raises(ValueError, match="component IDs"):
         _velocity(component_ids=("u",))
     with pytest.raises(ValueError, match="one value per component"):
@@ -256,12 +267,13 @@ def test_port_declarations_are_validated():
     with pytest.raises(ValueError, match="repeat a port"):
         ModelPorts(inputs=(_time(), _time()), outputs=())
     with pytest.raises(TypeError):
+        # ty: ignore[invalid-argument-type]
         resolve_port_mapping(ModelPorts(inputs=(), outputs=()), object(), PortMapping())
 
 
-def test_port_providers_are_structural():
+def test_port_providers_are_structural() -> None:
     class _Provider:
-        def model_ports(self):
+        def model_ports(self) -> Any:
             return ModelPorts(inputs=(_time(),), outputs=(_velocity(),))
 
     assert isinstance(_Provider(), PortProvider)

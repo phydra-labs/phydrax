@@ -9,7 +9,8 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -45,7 +46,7 @@ class LinearSystem(AbstractLinearProblem):
         *,
         nullspace_policy: NullspacePolicy | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.source.size != operator.target.size:
@@ -81,7 +82,7 @@ class LeastSquaresProblem(AbstractLinearProblem):
         regularizer: AbstractLinearOperator | None = None,
         nullspace_policy: NullspacePolicy | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if weights is None:
@@ -145,7 +146,7 @@ class MinimumNormProblem(AbstractLinearProblem):
         *,
         problem_id: str | None = None,
         nullspace_policy: NullspacePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.source.size < operator.target.size:

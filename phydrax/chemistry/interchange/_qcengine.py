@@ -14,7 +14,7 @@ from types import MappingProxyType
 from typing import Any
 
 import equinox as eqx
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint, canonical_mapping
 from .._calculation import ElectronicCalculationPlan
@@ -38,7 +38,7 @@ def is_qcengine_available() -> bool:
     )
 
 
-def require_qcengine():
+def require_qcengine() -> Any:
     if not is_qcengine_available():
         raise ImportError(
             "QCEngine execution requires optional dependencies 'qcengine' and 'qcelemental'."
@@ -64,7 +64,7 @@ class PreparedQCEngineCalculation(AbstractPreparedElectronicCalculation):
         local_options: Mapping[str, Any],
         provider_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(capabilities, ElectronicProviderCapabilities):
             raise TypeError("capabilities must be ElectronicProviderCapabilities.")
         self.calculation = calculation
@@ -133,7 +133,7 @@ class QCEngineProvider(AbstractElectronicProvider):
         keywords: Mapping[str, Any] | None = None,
         model_chemistry_id: str,
         local_options: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         program_ = str(program).strip()
         if not program_:
             raise ValueError("QCEngine program must be non-empty.")

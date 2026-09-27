@@ -20,7 +20,7 @@ from phydrax.applications.cellular_mechanics._chromatin_atomistic import (
 )
 
 
-def test_chromatin_joint_occupancy_and_extrusion_collision_evidence():
+def test_chromatin_joint_occupancy_and_extrusion_collision_evidence() -> None:
     positions = np.arange(8, dtype="float64")[:, None]
     runtime = ChromatinDynamicsPlan(
         8,
@@ -55,7 +55,7 @@ def test_chromatin_joint_occupancy_and_extrusion_collision_evidence():
     )
 
 
-def test_chromatin_direct_capture_canonicalizes_reversed_feet():
+def test_chromatin_direct_capture_canonicalizes_reversed_feet() -> None:
     positions = np.arange(8, dtype="float64")[:, None]
     runtime = ChromatinDynamicsPlan(
         8,
@@ -70,7 +70,7 @@ def test_chromatin_direct_capture_canonicalizes_reversed_feet():
     assert int(captured.accepted_state.right[0]) == 6
 
 
-def test_chromatin_addressed_step_replays_identically():
+def test_chromatin_addressed_step_replays_identically() -> None:
     positions = np.arange(12, dtype="float64")[:, None]
     runtime = ChromatinDynamicsPlan(
         12,
@@ -99,7 +99,7 @@ def test_chromatin_addressed_step_replays_identically():
     )
 
 
-def test_actin_growth_turnover_and_severing_conserve_mass_and_lineage():
+def test_actin_growth_turnover_and_severing_conserve_mass_and_lineage() -> None:
     runtime = ActinNetworkPlan(
         6,
         6,
@@ -144,7 +144,7 @@ def test_actin_growth_turnover_and_severing_conserve_mass_and_lineage():
     np.testing.assert_allclose(depolymerized.evidence.mass_residual, 0.0, atol=1.0e-6)
 
 
-def test_motor_endpoint_step_preserves_left_foot_and_moves_right_foot():
+def test_motor_endpoint_step_preserves_left_foot_and_moves_right_foot() -> None:
     runtime = MotorCrosslinkerPlan(
         4,
         1,
@@ -190,7 +190,7 @@ def test_motor_endpoint_step_preserves_left_foot_and_moves_right_foot():
         )
 
 
-def test_focal_adhesion_traction_is_energy_derived_and_balanced():
+def test_focal_adhesion_traction_is_energy_derived_and_balanced() -> None:
     runtime = FocalAdhesionPlan(
         2,
         2,
@@ -227,19 +227,24 @@ def test_focal_adhesion_traction_is_energy_derived_and_balanced():
         )
 
 
-def test_chromatin_atomistic_checkpoint_binds_complete_state_content():
+def test_chromatin_atomistic_checkpoint_binds_complete_state_content() -> None:
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     system = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [10, 20],
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         units,
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0],
     ).prepare()
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
         system.particles
     )
     potential = phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.LennardJonesPotential([1.0], [1.0], 2.5)]
     ).prepare(system)
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
@@ -261,6 +266,7 @@ def test_chromatin_atomistic_checkpoint_binds_complete_state_content():
     )
     chromatin = ChromatinDynamicsPlan(2, 1, ambient_dimension=3).prepare()
     prepared = ChromatinAtomisticCouplingPlan(
+        # ty: ignore[invalid-argument-type]
         [10, 20],
         maximum_spring_energy=100.0,
     ).prepare(dynamics, chromatin)

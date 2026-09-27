@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -6,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def _ising_chain(length=4, coupling=0.35):
+def _ising_chain(length: Any = 4, coupling: Any = 0.35) -> Any:
     edges = jnp.stack([jnp.arange(length - 1), jnp.arange(1, length)], axis=-1)
     return phx.pgm.ising_factor_graph(
         jnp.zeros((length,)),
@@ -15,7 +17,7 @@ def _ising_chain(length=4, coupling=0.35):
     )
 
 
-def test_gibbs_coloring_is_deterministic_and_rejects_invalid_parallel_stage():
+def test_gibbs_coloring_is_deterministic_and_rejects_invalid_parallel_stage() -> None:
     graph = _ising_chain()
     first = phx.pgm.prepare_chromatic_gibbs(graph)
     second = phx.pgm.prepare_chromatic_gibbs(graph)
@@ -30,7 +32,7 @@ def test_gibbs_coloring_is_deterministic_and_rejects_invalid_parallel_stage():
         )
 
 
-def test_gibbs_is_jittable_persistent_and_chain_prefix_stable():
+def test_gibbs_is_jittable_persistent_and_chain_prefix_stable() -> None:
     graph = _ising_chain()
     prepared = phx.pgm.prepare_chromatic_gibbs(graph)
     state_two = phx.pgm.initialize_gibbs(
@@ -43,7 +45,7 @@ def test_gibbs_is_jittable_persistent_and_chain_prefix_stable():
     )
     schedule = phx.pgm.GibbsSchedule(warmup_sweeps=2, num_draws=6, sweeps_per_draw=2)
 
-    def run(state):
+    def run(state: Any) -> Any:
         return phx.pgm.sample_gibbs(
             prepared,
             state,
@@ -64,7 +66,7 @@ def test_gibbs_is_jittable_persistent_and_chain_prefix_stable():
     assert eager.diagnostics.mixing_available
 
 
-def test_gibbs_clamping_preserves_sites_and_chain_measure_preserves_correlation():
+def test_gibbs_clamping_preserves_sites_and_chain_measure_preserves_correlation() -> None:
     graph = _ising_chain(3)
     prepared = phx.pgm.prepare_chromatic_gibbs(graph)
     initial = jnp.asarray([[1, 0, 0], [1, 1, 1]])
@@ -87,7 +89,7 @@ def test_gibbs_clamping_preserves_sites_and_chain_measure_preserves_correlation(
     assert target.provenance.startswith("markov:chromatic-gibbs")
 
 
-def test_impossible_conditional_preserves_state_and_reports_failure():
+def test_impossible_conditional_preserves_state_and_reports_failure() -> None:
     variables = phx.pgm.DiscreteVariableGroup("x", shape=(1,), num_states=2)
     factor = phx.pgm.DenseTableFactorGroup(
         (phx.pgm.VariableSelection.all(variables),),
@@ -110,7 +112,7 @@ def test_impossible_conditional_preserves_state_and_reports_failure():
     assert info.status[0] == int(phx.pgm.GibbsTransitionStatus.INVALID_STATE)
 
 
-def test_gibbs_empirical_distribution_matches_exact_two_spin_law():
+def test_gibbs_empirical_distribution_matches_exact_two_spin_law() -> None:
     graph = _ising_chain(2, coupling=0.4)
     exact = phx.pgm.enumerate_factor_graph(graph)
     prepared = phx.pgm.prepare_chromatic_gibbs(graph)

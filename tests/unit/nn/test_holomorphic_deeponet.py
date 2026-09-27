@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _batch(source, points):
+def _batch(source: Any, points: Any) -> Any:
     return phx.nn.operator.OperatorBatch(
         inputs={"input": phx.nn.operator.FunctionSamples(values=source)},
         queries={
@@ -22,7 +25,7 @@ def _batch(source, points):
     )
 
 
-def _constraint_operator():
+def _constraint_operator() -> Any:
     frame = phx.equations.HolomorphicPolynomialFrame.one_variable(3)
     functionals = (
         phx.equations.HolomorphicPointFunctional.value(-1.0),
@@ -34,7 +37,7 @@ def _constraint_operator():
     ).prepare()
 
 
-def test_fixed_target_holomorphic_deeponet_preserves_query_constraints_and_jets():
+def test_fixed_target_holomorphic_deeponet_preserves_query_constraints_and_jets() -> None:
     frame, operator = _constraint_operator()
     coefficient_map = operator.affine_map(jnp.zeros((2,)))
     trunk = phx.nn.operator.architectures.HolomorphicBasisTrunk(
@@ -70,7 +73,7 @@ def test_fixed_target_holomorphic_deeponet_preserves_query_constraints_and_jets(
     coordinate = 0.2 - 0.15j
     jet = model.query_jet(batch, coordinate, 2)
 
-    def evaluate(real_coordinates):
+    def evaluate(real_coordinates: Any) -> Any:
         query = jnp.asarray([[real_coordinates[0], real_coordinates[1]]])
         return model((source, query))[0]
 
@@ -79,7 +82,7 @@ def test_fixed_target_holomorphic_deeponet_preserves_query_constraints_and_jets(
     assert jnp.allclose(jacobian[0] + 1j * jacobian[1], 0.0, atol=2e-11)
 
 
-def test_variable_target_encoder_preserves_supplied_boundary_values():
+def test_variable_target_encoder_preserves_supplied_boundary_values() -> None:
     frame, operator = _constraint_operator()
     trunk = phx.nn.operator.architectures.HolomorphicBasisTrunk(
         frame,
@@ -117,7 +120,7 @@ def test_variable_target_encoder_preserves_supplied_boundary_values():
     assert certificate.coefficient_layout == "target-plus-nullspace"
 
 
-def test_constrained_holomorphic_deeponet_rejects_free_decoder_bias():
+def test_constrained_holomorphic_deeponet_rejects_free_decoder_bias() -> None:
     frame, operator = _constraint_operator()
     coefficient_map = operator.affine_map(jnp.zeros((2,)))
     trunk = phx.nn.operator.architectures.HolomorphicBasisTrunk(

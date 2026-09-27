@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_native_sequential_and_fuzzy_jets_preserve_constituents():
+def test_native_sequential_and_fuzzy_jets_preserve_constituents() -> None:
     analysis = phx.applications.collider_analysis
     inputs = analysis.JetInputBatch(
         jnp.asarray([1]),
@@ -38,7 +38,7 @@ def test_native_sequential_and_fuzzy_jets_preserve_constituents():
     assert jnp.isfinite(fuzzy.log_likelihood[0])
 
 
-def test_trigger_menu_buffer_and_fragment_replay_are_fail_closed():
+def test_trigger_menu_buffer_and_fragment_replay_are_fail_closed() -> None:
     trigger = phx.applications.trigger_replay
     fragments = (
         trigger.RawFragmentRecord(
@@ -91,7 +91,7 @@ def test_trigger_menu_buffer_and_fragment_replay_are_fail_closed():
     assert bool(buffer.valid)
 
 
-def test_collider_corrections_backgrounds_histograms_and_eft():
+def test_collider_corrections_backgrounds_histograms_and_eft() -> None:
     analysis = phx.applications.collider_analysis
     correction = analysis.CorrectionMap(
         jnp.asarray([0.0, 1.0, 2.0]),

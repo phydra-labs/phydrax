@@ -10,13 +10,15 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field
 from ..optim import DifferentialEvolutionSearch
 from ..optim._differential_evolution import _bounded_differential_evolution
+from ..typing import PRNGKey
 from ._multiple_shooting import _evaluate_held_control
 from ._parameterization import (
     AbstractControlParameterization,
@@ -57,7 +59,7 @@ class _ControlObjective(StrictModule):
         parameterization: AbstractControlParameterization,
         solver_options: dict[str, Any],
         /,
-    ):
+    ) -> None:
         self.problem = problem
         self.parameterization = parameterization
         self.solver_options = solver_options
@@ -85,6 +87,8 @@ class _ControlObjective(StrictModule):
 class ControlSearchResult(StrictModule):
     """Best control candidate found by a bounded differential-evolution search."""
 
+    __strict_contract__ = True
+
     problem: ControlProblem
     parameterization: AbstractControlParameterization
     evaluation: ControlResult
@@ -95,7 +99,7 @@ class ControlSearchResult(StrictModule):
     best_objective_history: Array = fixed_field()
     lower_bounds: Array = fixed_field()
     upper_bounds: Array = fixed_field()
-    key: Key[Array, ""] = fixed_field()
+    key: PRNGKey = fixed_field()
     search: DifferentialEvolutionSearch
     population_converged: bool = eqx.field(static=True)
     termination_reason: str = eqx.field(static=True)
@@ -131,7 +135,7 @@ class ControlSearchResult(StrictModule):
         best_objective_history: Array,
         lower_bounds: Array,
         upper_bounds: Array,
-        key: Key[Array, ""],
+        key: PRNGKey,
         search: DifferentialEvolutionSearch,
         population_converged: bool,
         termination_reason: str,
@@ -139,7 +143,7 @@ class ControlSearchResult(StrictModule):
         objective_evaluations: int,
         invalid_candidates: int,
         design_signature: str,
-    ):
+    ) -> None:
         invalid = int(invalid_candidates)
         evaluations = int(objective_evaluations)
         self.problem = problem
@@ -292,7 +296,7 @@ def search_control(
     search: DifferentialEvolutionSearch,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     coefficient_bounds: CoefficientBounds,
     initial_coefficients: ArrayLike | None = None,
     **solver_options: Any,

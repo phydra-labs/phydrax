@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Literal
+from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
@@ -29,14 +29,14 @@ SquareFieldRepresentation = Literal["scalar", "pseudoscalar"]
 
 
 def _apply_square_group_action(
-    values,
+    values: Any,
     element: int,
     /,
     *,
     group: SquareSymmetryGroup,
     representation: SquareFieldRepresentation = "scalar",
     spatial_axes: tuple[int, int] = (-2, -1),
-):
+) -> Any:
     """Apply a discrete square-group action for benchmark augmentation and audits."""
 
     if group not in ("p4", "p4m"):
@@ -73,7 +73,7 @@ class OperatorParameterRange:
     unit: str
     scale: Literal["linear", "log"] = "linear"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not (np.isfinite(float(self.minimum)) and np.isfinite(float(self.maximum))):
             raise ValueError("Parameter range bounds must be finite.")
         if not self.name:
@@ -96,7 +96,7 @@ class OperatorDatasetProvenance:
     license_id: str
     citation: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         values = (
             self.source_uri,
             self.generator,
@@ -118,7 +118,7 @@ class ReferenceSolverEvidence:
     relative_error: float
     tolerance: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not (
             np.isfinite(float(self.relative_error)) and np.isfinite(float(self.tolerance))
         ):
@@ -155,7 +155,7 @@ class OperatorSymmetrySpec:
     reference_defects: tuple[tuple[int, float], ...] = ()
     intentionally_violated: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.group is not None and self.group not in ("p4", "p4m"):
             raise ValueError("Square symmetry group must be 'p4', 'p4m', or None.")
         if self.audit_group not in ("p4", "p4m"):
@@ -275,7 +275,7 @@ class OperatorBenchmarkScenario:
     # are canonically ordered mappings, so multi-input scenarios must name it.
     primary_source_key: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("Scenario name must be non-empty.")
         if not self.evaluations:
@@ -405,7 +405,9 @@ def _interval_axis(name: str, size: int) -> OperatorAxis:
     return OperatorAxis(name, nodes, quadrature_weights=weights)
 
 
-def _grid_batch(inputs, query_axes, *, case_axis="case") -> OperatorBatch:
+def _grid_batch(
+    inputs: Any, query_axes: Any, *, case_axis: Any = "case"
+) -> OperatorBatch:
     return OperatorBatch(
         inputs=inputs,
         queries={"query": FunctionSamples(values=None, axes=query_axes)},
@@ -413,7 +415,7 @@ def _grid_batch(inputs, query_axes, *, case_axis="case") -> OperatorBatch:
     )
 
 
-def _burgers_step(values, viscosity, dt):
+def _burgers_step(values: Any, viscosity: Any, dt: Any) -> Any:
     values_array = np.asarray(jax.device_get(values))
     size = values_array.shape[-1]
     frequencies = 2.0 * np.pi * np.fft.fftfreq(size, d=1.0 / size)
@@ -429,7 +431,7 @@ def _burgers_step(values, viscosity, dt):
     )
 
 
-def _burgers_step_residual(values, target, viscosity, dt) -> float:
+def _burgers_step_residual(values: Any, target: Any, viscosity: Any, dt: Any) -> float:
     values_array = np.asarray(jax.device_get(values))
     target_array = np.asarray(jax.device_get(target))
     size = values_array.shape[-1]
@@ -445,7 +447,9 @@ def _burgers_step_residual(values, target, viscosity, dt) -> float:
     return float(np.linalg.norm(left - right) / denominator)
 
 
-def _periodic_population_coefficients(key, num_cases, resolved_frequency):
+def _periodic_population_coefficients(
+    key: Any, num_cases: Any, resolved_frequency: Any
+) -> Any:
     frequencies = jnp.arange(1, int(resolved_frequency) + 1, dtype="float64")
     coefficients = jr.normal(
         key,
@@ -457,13 +461,17 @@ def _periodic_population_coefficients(key, num_cases, resolved_frequency):
     return frequencies, coefficients
 
 
-def _evaluate_periodic_population(coefficients, frequencies, phase_coordinate):
+def _evaluate_periodic_population(
+    coefficients: Any, frequencies: Any, phase_coordinate: Any
+) -> Any:
     phase = frequencies[:, None] * phase_coordinate[None, :]
     basis = jnp.stack((jnp.sin(phase), jnp.cos(phase)), axis=-1)
     return ein.contract("cmk,mpk->cp", coefficients, basis)
 
 
-def _planar_population_coefficients(key, num_cases, resolved_frequency):
+def _planar_population_coefficients(
+    key: Any, num_cases: Any, resolved_frequency: Any
+) -> Any:
     mode_x, mode_y = jnp.meshgrid(
         jnp.arange(int(resolved_frequency) + 1),
         jnp.arange(int(resolved_frequency) + 1),
@@ -484,7 +492,9 @@ def _planar_population_coefficients(key, num_cases, resolved_frequency):
     return mode_x, mode_y, coefficients
 
 
-def _evaluate_planar_population(coefficients, mode_x, mode_y, coordinates):
+def _evaluate_planar_population(
+    coefficients: Any, mode_x: Any, mode_y: Any, coordinates: Any
+) -> Any:
     flattened = coordinates.reshape((-1, 2))
     phase = (
         2.0
@@ -500,8 +510,8 @@ def _evaluate_planar_population(coefficients, mode_x, mode_y, coordinates):
 
 
 def _square_symmetry_reference_defects(
-    values,
-    operator,
+    values: Any,
+    operator: Any,
     /,
     *,
     group: Literal["p4", "p4m"],
@@ -555,11 +565,13 @@ def augment_square_group_training(
     element_count = 4 if group == "p4" else 8
     source_representations = dict(symmetry.source_representations)
 
-    def augment_values(values, *, representation: SquareFieldRepresentation | None):
+    def augment_values(
+        values: Any, *, representation: SquareFieldRepresentation | None
+    ) -> Any:
         if values is None:
             return None
 
-        def augment_leaf(leaf):
+        def augment_leaf(leaf: Any) -> Any:
             array = jnp.asarray(leaf)
             if array.shape[0] != case_count:
                 raise ValueError(
@@ -632,11 +644,11 @@ def augment_square_group_training(
 
 
 def _characteristic_translation_error(
-    initial,
-    target,
+    initial: Any,
+    target: Any,
     *,
-    phase_coordinate,
-    density_jacobian,
+    phase_coordinate: Any,
+    density_jacobian: Any,
     resolved_frequency: int,
     translation: float,
 ) -> float:
@@ -647,7 +659,7 @@ def _characteristic_translation_error(
     jacobian = np.asarray(jax.device_get(density_jacobian), dtype=np.float64)
     frequencies = np.arange(1, int(resolved_frequency) + 1, dtype=np.float64)
 
-    def design(current_phase):
+    def design(current_phase: Any) -> Any:
         mode_phase = current_phase[:, None] * frequencies[None, :]
         return np.concatenate(
             (
@@ -729,7 +741,7 @@ def periodic_advection_scenario(
     horizon = float(dt) * int(target_steps)
     translation = float(speed) * horizon
 
-    def build(resolution, elapsed_time):
+    def build(resolution: Any, elapsed_time: Any) -> Any:
         axis = _periodic_axis("x", resolution)
         spatial_phase = 2.0 * jnp.pi * axis.nodes
         phase_coordinate = spatial_phase + resolved_variation * jnp.sin(spatial_phase)
@@ -958,7 +970,7 @@ def periodic_acoustic_wave_scenario(
     translation = float(sound_speed) * horizon
     impedance = float(density) * float(sound_speed)
 
-    def build(resolution, elapsed_time):
+    def build(resolution: Any, elapsed_time: Any) -> Any:
         axis = _periodic_axis("x", resolution)
         phase_coordinate = 2.0 * jnp.pi * axis.nodes
         right_initial = _evaluate_periodic_population(
@@ -983,7 +995,7 @@ def periodic_acoustic_wave_scenario(
             phase_coordinate + displacement,
         )
 
-        def physical_state(right, left):
+        def physical_state(right: Any, left: Any) -> Any:
             pressure = 0.5 * (right + left)
             velocity = 0.5 * (right - left) / impedance
             return jnp.stack((pressure, velocity), axis=-1)
@@ -1227,7 +1239,7 @@ def periodic_burgers_scenario(
     )
     case_ids = _case_ids(scenario_name, num_cases)
 
-    def build(resolution):
+    def build(resolution: Any) -> Any:
         axis = _periodic_axis("x", resolution)
         smooth_values = _evaluate_periodic_population(
             coefficients,
@@ -1391,7 +1403,7 @@ def _darcy_system(coefficient: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     matrix = np.zeros((interior, interior), dtype=np.float64)
     forcing = np.ones((interior,), dtype=np.float64)
 
-    def index(i, j):
+    def index(i: Any, j: Any) -> Any:
         return (i - 1) * (ny - 2) + (j - 1)
 
     hx2 = float((nx - 1) ** 2)
@@ -1576,7 +1588,7 @@ def square_diffusion_symmetry_scenario(
         coordinates,
     )
 
-    def solution_operator(values):
+    def solution_operator(values: Any) -> Any:
         values_array = jnp.asarray(values)
         size_x, size_y = values_array.shape[-2:]
         wave_x = 2.0 * jnp.pi * jnp.fft.fftfreq(int(size_x), d=1.0 / int(size_x))
@@ -1783,7 +1795,7 @@ def square_diffusion_symmetry_scenario(
     )
 
 
-def _vorticity_step(vorticity, viscosity, dt):
+def _vorticity_step(vorticity: Any, viscosity: Any, dt: Any) -> Any:
     vorticity_array = np.asarray(jax.device_get(vorticity))
     size_x, size_y = vorticity_array.shape[-2:]
     kx = 2.0 * np.pi * np.fft.fftfreq(size_x, d=1.0 / size_x)
@@ -1819,7 +1831,9 @@ def _vorticity_step(vorticity, viscosity, dt):
     )
 
 
-def _vorticity_step_residual(vorticity, target, viscosity, dt) -> float:
+def _vorticity_step_residual(
+    vorticity: Any, target: Any, viscosity: Any, dt: Any
+) -> float:
     vorticity_array = np.asarray(jax.device_get(vorticity))
     target_array = np.asarray(jax.device_get(target))
     size_x, size_y = vorticity_array.shape[-2:]
@@ -1916,7 +1930,7 @@ def navier_stokes_scenario(
         )
         target = next_target
 
-    def solution_operator(values):
+    def solution_operator(values: Any) -> Any:
         output = values
         for _ in range(int(target_steps)):
             output = _vorticity_step(output, viscosity, dt)
@@ -2180,7 +2194,7 @@ def multi_input_diffusion_scenario(
         2.0 * jnp.pi * jnp.fft.rfftfreq(int(resolution), d=1.0 / int(resolution))
     ) ** 2
 
-    def build(current_diffusivity):
+    def build(current_diffusivity: Any) -> Any:
         decay_rate = current_diffusivity * squared_wave_number[None, :]
         attenuation = jnp.exp(-decay_rate * float(dt))
         safe_rate = jnp.where(decay_rate > 0.0, decay_rate, 1.0)
@@ -2346,7 +2360,7 @@ def causal_relaxation_scenario(
     coefficients = coefficients * response_balancing[None, :, None]
     initial_values = jnp.zeros((int(num_cases),))
 
-    def time_axis(size: int):
+    def time_axis(size: int) -> Any:
         nodes = jnp.linspace(0.0, float(final_time), int(size))
         weights = (
             jnp.ones((int(size),))
@@ -2357,12 +2371,12 @@ def causal_relaxation_scenario(
         )
         return OperatorAxis("t", nodes, quadrature_weights=weights)
 
-    def forcing(times):
+    def forcing(times: Any) -> Any:
         phase = 2.0 * jnp.pi * frequencies[:, None] * times[None, :]
         basis = jnp.stack((jnp.sin(phase), jnp.cos(phase)), axis=-1)
         return ein.contract("cmk,mtk->ct", coefficients, basis)
 
-    def response(times):
+    def response(times: Any) -> Any:
         omega = 2.0 * jnp.pi * frequencies[:, None]
         time = times[None, :]
         transient = jnp.exp(-float(decay_rate) * time)
@@ -2511,19 +2525,19 @@ def irregular_causal_relaxation_scenario(
         coefficients * (response_balancing / response_balancing[0])[None, :, None]
     )
 
-    def schedule(key, horizon, dispersion):
+    def schedule(key: Any, horizon: Any, dispersion: Any) -> Any:
         gaps = jnp.exp(float(dispersion) * jr.normal(key, (case_count, point_count - 1)))
         cumulative = jnp.concatenate(
             (jnp.zeros((case_count, 1)), jnp.cumsum(gaps, axis=-1)), axis=-1
         )
         return float(horizon) * cumulative / cumulative[:, -1:]
 
-    def forcing(times):
+    def forcing(times: Any) -> Any:
         phase = 2.0 * jnp.pi * frequencies[None, :, None] * times[:, None, :]
         basis = jnp.stack((jnp.sin(phase), jnp.cos(phase)), axis=-1)
         return ein.contract("cmk,cmtk->ct", coefficients, basis)
 
-    def response(times):
+    def response(times: Any) -> Any:
         omega = 2.0 * jnp.pi * frequencies[None, :, None]
         time = times[:, None, :]
         transient = jnp.exp(-float(decay_rate) * time)
@@ -2534,7 +2548,7 @@ def irregular_causal_relaxation_scenario(
             "cm,cmt->ct", coefficients[..., 0], jnp.imag(kernel)
         ) + ein.contract("cm,cmt->ct", coefficients[..., 1], jnp.real(kernel))
 
-    def batch(times, *, mask=None):
+    def batch(times: Any, *, mask: Any = None) -> Any:
         valid = (
             jnp.ones(times.shape, dtype="bool")
             if mask is None
@@ -2713,7 +2727,7 @@ def beam_transient_scenario(
     )
 
 
-def _deformed_elliptic_map(point, deformation):
+def _deformed_elliptic_map(point: Any, deformation: Any) -> Any:
     xi, eta = point
     displacement = jnp.stack(
         (
@@ -2724,7 +2738,9 @@ def _deformed_elliptic_map(point, deformation):
     return point + deformation * displacement
 
 
-def _deformed_elliptic_solution(point, coefficients, boundary_value):
+def _deformed_elliptic_solution(
+    point: Any, coefficients: Any, boundary_value: Any
+) -> Any:
     xi, eta = point
     interior = (
         coefficients[0] * jnp.sin(jnp.pi * xi) * jnp.sin(jnp.pi * eta)
@@ -2734,25 +2750,25 @@ def _deformed_elliptic_solution(point, coefficients, boundary_value):
     return interior + boundary_value * (1.0 - xi)
 
 
-def _deformed_elliptic_diffusivity(point, material):
+def _deformed_elliptic_diffusivity(point: Any, material: Any) -> Any:
     xi, eta = point
     variation = 0.5 + 0.25 * jnp.sin(2.0 * jnp.pi * xi) * jnp.cos(2.0 * jnp.pi * eta)
     return 1.0 + material * variation
 
 
 def _deformed_elliptic_forcing(
-    point,
-    deformation,
-    coefficients,
-    material,
-    boundary_value,
-):
+    point: Any,
+    deformation: Any,
+    coefficients: Any,
+    material: Any,
+    boundary_value: Any,
+) -> Any:
     map_fn = lambda coordinate: _deformed_elliptic_map(coordinate, deformation)
     solution_fn = lambda coordinate: _deformed_elliptic_solution(
         coordinate, coefficients, boundary_value
     )
 
-    def reference_flux(coordinate):
+    def reference_flux(coordinate: Any) -> Any:
         jacobian = jax.jacfwd(map_fn)(coordinate)
         reference_gradient = jax.grad(solution_fn)(coordinate)
         physical_gradient = jnp.linalg.solve(jacobian.T, reference_gradient)
@@ -2772,7 +2788,7 @@ def _deformed_elliptic_point_cloud(
     *,
     seed: int,
     boundary_fraction: float,
-):
+) -> Any:
     if int(count) < 8:
         raise ValueError("Deformed elliptic point clouds require at least eight points.")
     boundary_count = max(
@@ -2879,14 +2895,14 @@ def deformed_elliptic_scenario(
 
     def build(
         *,
-        source_count,
-        target_count,
-        current_deformation,
-        current_boundary,
-        source_seed,
-        query_seed,
-        source_mask=None,
-    ):
+        source_count: Any,
+        target_count: Any,
+        current_deformation: Any,
+        current_boundary: Any,
+        source_seed: Any,
+        query_seed: Any,
+        source_mask: Any = None,
+    ) -> Any:
         source_reference, source_boundary = _deformed_elliptic_point_cloud(
             case_count,
             int(source_count),
@@ -2939,7 +2955,7 @@ def deformed_elliptic_scenario(
             )(points_)
         )(query_reference, coefficients, current_boundary)
 
-        def transformed_jacobians(reference):
+        def transformed_jacobians(reference: Any) -> Any:
             return jax.vmap(
                 lambda points_, deformation_: jax.vmap(
                     lambda point: jnp.linalg.det(
@@ -3284,14 +3300,16 @@ def conservative_ring_transport_scenario(
         (2.0 * support_extent) ** 2 / support_count,
     )
 
-    def density(angles, displacement):
+    def density(angles: Any, displacement: Any) -> Any:
         shifted = angles[None, :] - displacement[:, None]
         phase = frequencies[None, :, None] * shifted[:, None, :]
         basis = jnp.stack((jnp.sin(phase), jnp.cos(phase)), axis=-1)
         variation = ein.contract("cmk,cmpk->cp", coefficients, basis)
         return 1.0 + density_scale[:, None] * variation
 
-    def ring_geometry(current_centers, current_radii, count, offset):
+    def ring_geometry(
+        current_centers: Any, current_radii: Any, count: Any, offset: Any
+    ) -> Any:
         angles = (
             2.0
             * jnp.pi
@@ -3310,15 +3328,15 @@ def conservative_ring_transport_scenario(
 
     def build(
         *,
-        current_source_count,
-        current_query_count,
-        current_centers,
-        current_radii,
-        current_speeds,
-        current_band_width,
-        source_offset,
-        query_offset,
-    ):
+        current_source_count: Any,
+        current_query_count: Any,
+        current_centers: Any,
+        current_radii: Any,
+        current_speeds: Any,
+        current_band_width: Any,
+        source_offset: Any,
+        query_offset: Any,
+    ) -> Any:
         source_angles, source_coordinates, source_weights = ring_geometry(
             current_centers,
             current_radii,
@@ -3707,7 +3725,7 @@ def polynomial_poisson_scenario(
         population_amplitude: float,
         population_seed: int,
         label: str,
-    ):
+    ) -> Any:
         mode_x, mode_y, coefficients = _planar_population_coefficients(
             jr.key(population_seed),
             population_cases,
@@ -3964,7 +3982,7 @@ def irregular_poisson_scenario(
     )
     weights = jnp.ones((points,)) / points
 
-    def build(current_source):
+    def build(current_source: Any) -> Any:
         current_query = current_source[::-1]
         forcing = _evaluate_planar_population(
             population_coefficients,
@@ -4096,7 +4114,7 @@ def graph_diffusion_scenario(
         resolved_frequency,
     )
 
-    def build(count, *, deformed=False):
+    def build(count: Any, *, deformed: Any = False) -> Any:
         angle = 2.0 * jnp.pi * jnp.arange(count) / count
         radius = jnp.ones_like(angle)
         if deformed:
@@ -4229,6 +4247,7 @@ def spherical_diffusion_scenario(
         raise ValueError("target_steps must be positive.")
     if int(maximum_degree) <= 0:
         raise ValueError("maximum_degree must be positive.")
+    # ty: ignore[invalid-argument-type]
     plan = SphericalHarmonicPlan(int(bandlimit), sampling=sampling)
     resolved_degree = min(int(maximum_degree), plan.bandlimit - 1)
     theta = plan.theta
@@ -4250,7 +4269,7 @@ def spherical_diffusion_scenario(
     cosine_theta = jnp.cos(theta_grid)
     sine_theta = jnp.sqrt(jnp.maximum(0.0, 1.0 - cosine_theta**2))
 
-    def associated_legendre(degree: int, order: int):
+    def associated_legendre(degree: int, order: int) -> Any:
         polynomial = jnp.ones_like(cosine_theta)
         for factor in range(1, 2 * order, 2):
             polynomial = -factor * sine_theta * polynomial
@@ -4371,7 +4390,7 @@ def spherical_diffusion_scenario(
     )
 
 
-def _square_triangle_complex(points: int, /, *, warp: float = 0.0):
+def _square_triangle_complex(points: int, /, *, warp: float = 0.0) -> Any:
     """Build a consistently oriented triangular square mesh with physical metrics."""
     resolved_points = int(points)
     if resolved_points < 3:
@@ -4402,7 +4421,7 @@ def _square_triangle_complex(points: int, /, *, warp: float = 0.0):
     )
 
 
-def _annulus_triangle_complex(radial_layers: int, angular_points: int, /):
+def _annulus_triangle_complex(radial_layers: int, angular_points: int, /) -> Any:
     """Build an oriented periodic annulus triangulation."""
     resolved_layers = int(radial_layers)
     resolved_angles = int(angular_points)
@@ -4543,7 +4562,7 @@ def cochain_mixed_darcy_scenario(
         dtype="float64",
     )
 
-    def build(points: int):
+    def build(points: int) -> Any:
         complex_ir = _square_triangle_complex(points, warp=mesh_warp)
         vertices = np.asarray(complex_ir.coordinates[0], dtype="float64")
         x = vertices[:, 0]
@@ -4662,7 +4681,7 @@ def cochain_mixed_darcy_scenario(
     )
 
 
-def _annulus_harmonic_template(complex_ir, /) -> np.ndarray:
+def _annulus_harmonic_template(complex_ir: Any, /) -> np.ndarray:
     subspace = complex_ir.harmonic_subspace
     if subspace is None or subspace.ranks[1] < 1:
         raise ValueError("Annulus benchmark requires a nontrivial degree-one nullspace.")
@@ -4734,7 +4753,7 @@ def cochain_annulus_harmonic_scenario(
     face_coefficients = rng.normal(size=(int(num_cases), 4))
     harmonic_amplitudes = rng.uniform(0.5, 1.5, size=(int(num_cases), 1))
 
-    def build(radial_layers: int, angular_points: int):
+    def build(radial_layers: int, angular_points: int) -> Any:
         bare = _annulus_triangle_complex(radial_layers, angular_points)
         harmonic = compute_harmonic_subspace(
             bare,
@@ -4776,7 +4795,7 @@ def cochain_annulus_harmonic_scenario(
             hodge_one[None, :]
         )
 
-        def normalized(values):
+        def normalized(values: Any) -> Any:
             norms = np.sqrt(
                 np.sum(hodge_one[None, :] * values * values, axis=1, keepdims=True)
             )
@@ -4903,12 +4922,12 @@ def split_operator_scenario(
     validation_indices = permutation[train_count : train_count + validation_count]
     test_indices = permutation[train_count + validation_count :]
 
-    def take_target(target, indices):
+    def take_target(target: Any, indices: Any) -> Any:
         if isinstance(target, OperatorTargetBatch):
             return target.take(indices)
         return jnp.take(target, indices, axis=0)
 
-    def select_ids(values, indices):
+    def select_ids(values: Any, indices: Any) -> Any:
         selected = np.asarray(jax.device_get(indices), dtype=np.int64).tolist()
         return tuple(values[int(index)] for index in selected)
 
@@ -4976,10 +4995,10 @@ def split_operator_scenario(
 
 def _replace_sample_values(
     samples: FunctionSamples,
-    values,
+    values: Any,
     /,
     *,
-    mask=None,
+    mask: Any = None,
 ) -> FunctionSamples:
     return FunctionSamples(
         values=values,

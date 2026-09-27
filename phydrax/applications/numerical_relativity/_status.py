@@ -7,7 +7,8 @@ from __future__ import annotations
 from enum import IntFlag
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 
@@ -88,7 +89,7 @@ class ScientificStatus(StrictModule):
         qualified: ArrayLike,
         derivative_valid: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.status = jnp.asarray(status, dtype=jnp.int32).reshape(())
         self.finite = jnp.asarray(finite, dtype=jnp.bool_).reshape(())
         self.converged = jnp.asarray(converged, dtype=jnp.bool_).reshape(())

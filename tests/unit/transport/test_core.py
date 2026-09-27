@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,13 +15,13 @@ import phydrax.axes as cx
 
 
 def _target(
-    points,
-    weights,
+    points: Any,
+    weights: Any,
     *,
-    normalized=True,
-    mask=None,
-    provenance="test-measure",
-):
+    normalized: Any = True,
+    mask: Any = None,
+    provenance: Any = "test-measure",
+) -> Any:
     weight_field = cx.AxisArray(jnp.asarray(weights, dtype="float64"), dims=("atom",))
     mask_field = (
         None
@@ -37,14 +40,14 @@ def _target(
 
 
 def _problem(
-    source_points,
-    target_points,
+    source_points: Any,
+    target_points: Any,
     *,
-    source_weights=None,
-    target_weights=None,
-    normalized=True,
-    cost=None,
-):
+    source_weights: Any = None,
+    target_weights: Any = None,
+    normalized: Any = True,
+    cost: Any = None,
+) -> Any:
     source_count = jnp.asarray(source_points).shape[0]
     target_count = jnp.asarray(target_points).shape[0]
     if source_weights is None:
@@ -60,7 +63,9 @@ def _problem(
     )
 
 
-def _solver(*, block_size=None, max_iterations=1000, tolerance=1e-10):
+def _solver(
+    *, block_size: Any = None, max_iterations: Any = 1000, tolerance: Any = 1e-10
+) -> Any:
     return phx.transport.Sinkhorn(
         0.5,
         max_iterations=max_iterations,
@@ -72,7 +77,7 @@ def _solver(*, block_size=None, max_iterations=1000, tolerance=1e-10):
     )
 
 
-def test_named_measure_lowering_preserves_mass_masks_events_and_provenance():
+def test_named_measure_lowering_preserves_mass_masks_events_and_provenance() -> None:
     points = cx.AxisArray(
         jnp.asarray(
             [
@@ -111,16 +116,18 @@ def test_named_measure_lowering_preserves_mass_masks_events_and_provenance():
     assert problem.provenance.target == "target-grid"
 
 
-def test_ground_costs_have_explicit_component_and_periodic_semantics():
+def test_ground_costs_have_explicit_component_and_periodic_semantics() -> None:
     left = jnp.asarray([0.9, 2.0])
     right = jnp.asarray([0.1, 4.0])
 
     assert jnp.allclose(phx.transport.SquaredEuclideanCost().pairwise(left, right), 4.64)
     assert jnp.allclose(
+        # ty: ignore[invalid-argument-type]
         phx.transport.WeightedSquaredEuclideanCost([0.2, 2.0]).pairwise(left, right),
         17.0,
     )
     assert jnp.allclose(
+        # ty: ignore[invalid-argument-type]
         phx.transport.PeriodicSquaredEuclideanCost([1.0, 10.0]).pairwise(left, right),
         4.04,
     )
@@ -131,10 +138,11 @@ def test_ground_costs_have_explicit_component_and_periodic_semantics():
     assert jnp.array_equal(matrix, jnp.asarray([[1.0, 9.0], [1.0, 1.0]]))
 
 
-def test_symmetric_two_atom_problem_matches_analytic_entropic_plan():
+def test_symmetric_two_atom_problem_matches_analytic_entropic_plan() -> None:
     problem = _problem(
         [[0.0], [1.0]],
         [[0.0], [1.0]],
+        # ty: ignore[invalid-argument-type]
         cost=phx.transport.PrecomputedCost([[0.0, 1.0], [1.0, 0.0]]),
     )
     result = _solver()(problem)
@@ -154,7 +162,7 @@ def test_symmetric_two_atom_problem_matches_analytic_entropic_plan():
     assert result.diagnostics.residual_history.ndim == 1
 
 
-def test_physical_mass_and_matrix_free_plan_actions_are_not_silently_normalized():
+def test_physical_mass_and_matrix_free_plan_actions_are_not_silently_normalized() -> None:
     problem = _problem(
         [[0.0], [1.0], [2.0]],
         [[0.5], [1.5]],
@@ -195,7 +203,9 @@ def test_physical_mass_and_matrix_free_plan_actions_are_not_silently_normalized(
 
 
 @pytest.mark.parametrize("block_size", [1, 2, 4, 7])
-def test_blockwise_solver_matches_dense_on_nondivisible_rectangular_problems(block_size):
+def test_blockwise_solver_matches_dense_on_nondivisible_rectangular_problems(
+    block_size: Any,
+) -> None:
     problem = _problem(
         jnp.linspace(-1.0, 1.0, 5)[:, None],
         jnp.linspace(-0.7, 1.4, 7)[:, None],
@@ -226,7 +236,7 @@ def test_blockwise_solver_matches_dense_on_nondivisible_rectangular_problems(blo
     )
 
 
-def test_solver_is_permutation_invariant_jittable_and_differentiable():
+def test_solver_is_permutation_invariant_jittable_and_differentiable() -> None:
     target_points = jnp.asarray([[-0.5], [0.7], [1.8]])
     source_weights = jnp.asarray([0.2, 0.3, 0.5])
     target_weights = jnp.asarray([0.4, 0.1, 0.5])
@@ -238,7 +248,7 @@ def test_solver_is_permutation_invariant_jittable_and_differentiable():
         early_stop=False,
     )
 
-    def objective(source_points):
+    def objective(source_points: Any) -> Any:
         problem = _problem(
             source_points,
             target_points,
@@ -274,7 +284,7 @@ def test_solver_is_permutation_invariant_jittable_and_differentiable():
     assert jnp.allclose(permuted_value, compiled, rtol=1e-10, atol=1e-10)
 
 
-def test_sinkhorn_divergence_and_prepared_reference_agree_without_clipping():
+def test_sinkhorn_divergence_and_prepared_reference_agree_without_clipping() -> None:
     source = _target(jnp.asarray([[0.0], [1.0], [2.0]]), [0.2, 0.3, 0.5])
     target = _target(jnp.asarray([[0.3], [1.4], [2.4]]), [0.4, 0.2, 0.4])
     problem = phx.transport.discrete_problem(
@@ -303,7 +313,7 @@ def test_sinkhorn_divergence_and_prepared_reference_agree_without_clipping():
     assert prepared.target_self is reference.target_self
 
 
-def test_nonconvergence_and_invalid_measures_remain_explicit():
+def test_nonconvergence_and_invalid_measures_remain_explicit() -> None:
     problem = _problem([[0.0], [1.0]], [[10.0], [11.0]])
     result = phx.transport.Sinkhorn(
         0.01,

@@ -1,3 +1,5 @@
+from typing import Any
+
 import diffrax as dfx
 import equinox as eqx
 import jax
@@ -8,13 +10,13 @@ import pytest
 import phydrax as phx
 
 
-def test_recursive_lift_uses_davie_bracket_orientation_and_explicit_fields():
+def test_recursive_lift_uses_davie_bracket_orientation_and_explicit_fields() -> None:
     left = jnp.asarray([[0.0, 1.0], [0.0, 0.0]])
     right = jnp.asarray([[0.0, 0.0], [1.0, 0.0]])
     state = jnp.asarray([0.7, -0.4])
     basis = phx.stochastic.PrimitiveBasis(2, 2)
 
-    def vector_fields(time, value, args):
+    def vector_fields(time: Any, value: Any, args: Any) -> Any:
         del time, args
         return jnp.stack((left @ value, right @ value), axis=-1)
 
@@ -36,7 +38,7 @@ def test_recursive_lift_uses_davie_bracket_orientation_and_explicit_fields():
     assert jnp.allclose(explicit, lifted)
 
 
-def test_rough_solver_ids_are_stable_and_resolve_numerical_configuration():
+def test_rough_solver_ids_are_stable_and_resolve_numerical_configuration() -> None:
     default = phx.solver.LogODE()
     repeated = phx.solver.LogODE()
     loose = phx.solver.LogODE(stepsize_controller=dfx.PIDController(rtol=1e-4, atol=1e-6))
@@ -76,7 +78,7 @@ def test_rough_solver_ids_are_stable_and_resolve_numerical_configuration():
     )
 
 
-def test_general_and_linear_logode_agree_for_noncommuting_linear_system():
+def test_general_and_linear_logode_agree_for_noncommuting_linear_system() -> None:
     left = jnp.asarray([[0.0, 1.0], [0.0, 0.0]])
     right = jnp.asarray([[0.0, 0.0], [1.0, 0.0]])
     times = jnp.asarray([0.0, 0.4, 1.0])
@@ -85,7 +87,7 @@ def test_general_and_linear_logode_agree_for_noncommuting_linear_system():
         times, values, depth=3, coarse_indices=(0, 2)
     )
 
-    def vector_fields(time, state, args):
+    def vector_fields(time: Any, state: Any, args: Any) -> Any:
         del time, args
         return jnp.stack((left @ state, right @ state), axis=-1)
 
@@ -102,7 +104,7 @@ def test_general_and_linear_logode_agree_for_noncommuting_linear_system():
                 - lifted_matrices[left_index] @ lifted_matrices[right_index]
             )
 
-    def explicit_fields(time, state, args):
+    def explicit_fields(time: Any, state: Any, args: Any) -> Any:
         del time, args
         return jnp.stack(tuple(matrix @ state for matrix in lifted_matrices), axis=-1)
 
@@ -145,7 +147,7 @@ def test_general_and_linear_logode_agree_for_noncommuting_linear_system():
     assert int(general.statistics["num_accepted_steps"][0]) > 0
 
 
-def test_joint_time_channel_integrates_drift_and_time_dependent_fields():
+def test_joint_time_channel_integrates_drift_and_time_dependent_fields() -> None:
     times = jnp.linspace(0.0, 1.0, 5)
     control = phx.stochastic.LogSignatureControl.from_values(
         times,
@@ -172,7 +174,7 @@ def test_joint_time_channel_integrates_drift_and_time_dependent_fields():
     assert solution.successful
 
 
-def test_joint_time_logode_batches_sample_paths():
+def test_joint_time_logode_batches_sample_paths() -> None:
     times = jnp.asarray([0.0, 0.5, 1.0])
     values = jnp.stack((times, -times), axis=0)[..., None]
     control = phx.stochastic.LogSignatureControl.from_values(
@@ -202,7 +204,7 @@ def test_joint_time_logode_batches_sample_paths():
     assert jnp.allclose(solution.states[:, 0, 0], jnp.asarray([2.0, 0.0]))
 
 
-def test_linear_logode_rejects_time_dependent_problem():
+def test_linear_logode_rejects_time_dependent_problem() -> None:
     times = jnp.asarray([0.0, 1.0])
     control = phx.stochastic.LogSignatureControl.from_values(
         times,
@@ -226,7 +228,7 @@ def test_linear_logode_rejects_time_dependent_problem():
         )
 
 
-def test_logode_exposes_failed_inner_diffrax_status():
+def test_logode_exposes_failed_inner_diffrax_status() -> None:
     control = phx.stochastic.LogSignatureControl.from_values(
         jnp.asarray([0.0, 1.0]),
         jnp.asarray([[0.0], [1.0]]),
@@ -249,7 +251,7 @@ def test_logode_exposes_failed_inner_diffrax_status():
     assert int(solution.statistics["num_steps"][0]) == 1
 
 
-def test_logode_local_retraction_preserves_special_orthogonal_state():
+def test_logode_local_retraction_preserves_special_orthogonal_state() -> None:
     times = jnp.linspace(0.0, 1.0, 5)
     angle = 0.7
     control = phx.stochastic.LogSignatureControl.from_values(
@@ -281,7 +283,7 @@ def test_logode_local_retraction_preserves_special_orthogonal_state():
     )
 
 
-def test_logode_preserves_quaternion_point_local_and_tangent_spaces():
+def test_logode_preserves_quaternion_point_local_and_tangent_spaces() -> None:
     times = jnp.linspace(0.0, 1.0, 5)
     total_increment = 0.4
     control = phx.stochastic.LogSignatureControl.from_values(
@@ -315,7 +317,7 @@ def test_logode_preserves_quaternion_point_local_and_tangent_spaces():
     assert bool(geometry.contains(solution.states[-1]))
 
 
-def test_linear_logode_rejects_unequal_quaternion_spaces():
+def test_linear_logode_rejects_unequal_quaternion_spaces() -> None:
     times = jnp.asarray([0.0, 1.0])
     control = phx.stochastic.LogSignatureControl.from_values(
         times,
@@ -338,7 +340,7 @@ def test_linear_logode_rejects_unequal_quaternion_spaces():
         )
 
 
-def test_logode_local_retraction_preserves_spd_state_and_refines():
+def test_logode_local_retraction_preserves_spd_state_and_refines() -> None:
     times = jnp.linspace(0.0, 1.0, 9)
     total_increment = 0.7
     values = (total_increment * times)[:, None]
@@ -378,7 +380,7 @@ def test_logode_local_retraction_preserves_spd_state_and_refines():
     )
 
 
-def test_depth_three_accepts_hurst_point_three_while_depth_two_rejects():
+def test_depth_three_accepts_hurst_point_three_while_depth_two_rejects() -> None:
     process = phx.stochastic.FractionalGaussianProcess(0.3, 0.2)
     realization = phx.stochastic.FractionalGaussianRealization(
         process,
@@ -409,7 +411,7 @@ def test_depth_three_accepts_hurst_point_three_while_depth_two_rejects():
     assert jnp.all(jnp.isfinite(solution.states))
 
 
-def test_logode_is_jittable_batched_and_differentiable():
+def test_logode_is_jittable_batched_and_differentiable() -> None:
     times = jnp.linspace(0.0, 1.0, 5)
     values = jnp.stack((times, -times, 2.0 * times), axis=0)[..., None]
     control = phx.stochastic.LogSignatureControl.from_values(
@@ -427,7 +429,7 @@ def test_logode_is_jittable_batched_and_differentiable():
     )
     solver = phx.solver.LogODE()
 
-    def terminals(rate):
+    def terminals(rate: Any) -> Any:
         parameterized = eqx.tree_at(lambda value: value.args, problem, rate)
         return phx.solver.solve_rough_differential(
             parameterized,
@@ -450,7 +452,7 @@ def test_logode_is_jittable_batched_and_differentiable():
     )
 
 
-def test_linear_logode_rejects_unconverged_matrix_function_intervals():
+def test_linear_logode_rejects_unconverged_matrix_function_intervals() -> None:
     control = phx.stochastic.LogSignatureControl.from_values(
         jnp.asarray([0.0, 1.0]),
         jnp.asarray([[0.0], [1.0]]),

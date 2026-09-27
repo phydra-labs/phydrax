@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -34,7 +37,7 @@ from phydrax.equations._mac_les import MACAlgebraicLESPlan
 from phydrax.equations._mac_scalar_buoyancy import PreparedMACKSGS
 
 
-def _discretization(*, periodic_vertical=False):
+def _discretization(*, periodic_vertical: Any = False) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4, periodic=True),
@@ -46,7 +49,7 @@ def _discretization(*, periodic_vertical=False):
     return phx.discretization.FiniteVolumePlan(grid, component_names=("ocean",)).prepare()
 
 
-def _filter(discretization, *, name="mac-cell-volume"):
+def _filter(discretization: Any, *, name: Any = "mac-cell-volume") -> Any:
     return ResolvedLESFilter(
         name,
         family="implicit-grid-volume",
@@ -63,7 +66,7 @@ def _filter(discretization, *, name="mac-cell-volume"):
     )
 
 
-def _provenance(discretization, *, resolved_filter=None):
+def _provenance(discretization: Any, *, resolved_filter: Any = None) -> Any:
     return LESParameterProvenance(
         _filter(discretization) if resolved_filter is None else resolved_filter,
         discretization.prepared_id,
@@ -73,13 +76,13 @@ def _provenance(discretization, *, resolved_filter=None):
     )
 
 
-def _algebraic_les(discretization, coefficient=0.18):
+def _algebraic_les(discretization: Any, coefficient: Any = 0.18) -> Any:
     return MACAlgebraicLESPlan(
         SmagorinskyLESPlan(coefficient).prepare(_provenance(discretization))
     )
 
 
-def _scalar_sgs(reference, *, temperature=0.7, salinity=1.4):
+def _scalar_sgs(reference: Any, *, temperature: Any = 0.7, salinity: Any = 1.4) -> Any:
     return MACScalarSGSPlan(
         (
             MACScalarSGSField(
@@ -94,7 +97,7 @@ def _scalar_sgs(reference, *, temperature=0.7, salinity=1.4):
     )
 
 
-def _free_slip_boundaries(discretization):
+def _free_slip_boundaries(discretization: Any) -> Any:
     operators = phx.discretization.MACOperatorPlan(discretization).prepare()
     return phx.discretization.MACBoundaryPlan(
         operators,
@@ -105,7 +108,7 @@ def _free_slip_boundaries(discretization):
     )
 
 
-def _no_slip_boundaries(discretization):
+def _no_slip_boundaries(discretization: Any) -> Any:
     operators = phx.discretization.MACOperatorPlan(discretization).prepare()
     return phx.discretization.MACBoundaryPlan(
         operators,
@@ -116,7 +119,7 @@ def _no_slip_boundaries(discretization):
     )
 
 
-def _velocity(ocean):
+def _velocity(ocean: Any) -> Any:
     discretization = ocean.operators.discretization
     return (
         jnp.sin(2.0 * jnp.pi * discretization.face_centers[0][..., 2]),
@@ -125,20 +128,22 @@ def _velocity(ocean):
     )
 
 
-def _temperature_profile(ocean, *, stable):
+def _temperature_profile(ocean: Any, *, stable: Any) -> Any:
     z = ocean.operators.discretization.cell_centers[..., 2]
     sign = 1.0 if stable else -1.0
     return ocean.plan.reference.reference_temperature + sign * z
 
 
-def _salinity(ocean):
+def _salinity(ocean: Any) -> Any:
     return jnp.full(
         ocean.operators.discretization.cell_shape,
         ocean.plan.reference.reference_salinity,
     )
 
 
-def _ocean_with_algebraic_les(*, coefficient=0.18, temperature_flux=None):
+def _ocean_with_algebraic_les(
+    *, coefficient: Any = 0.18, temperature_flux: Any = None
+) -> Any:
     discretization = _discretization()
     reference = phx.applications.ocean.LinearSeawaterReference()
     ocean = phx.applications.ocean.CartesianBoussinesqOceanPlan(
@@ -154,11 +159,11 @@ def _ocean_with_algebraic_les(*, coefficient=0.18, temperature_flux=None):
     return discretization, ocean
 
 
-def _ksgs_coefficients():
+def _ksgs_coefficients() -> Any:
     return KSGSCoefficients(0.12, 1.0, 1.3, 0.8, 10.0)
 
 
-def _ocean_with_ksgs(plan_type=StaticKSGSPlan):
+def _ocean_with_ksgs(plan_type: Any = StaticKSGSPlan) -> Any:
     discretization = _discretization()
     reference = phx.applications.ocean.LinearSeawaterReference()
     ksgs = plan_type(_ksgs_coefficients(), _provenance(discretization))
@@ -175,7 +180,7 @@ def _ocean_with_ksgs(plan_type=StaticKSGSPlan):
     return discretization, ocean
 
 
-def _dynamic_mac():
+def _dynamic_mac() -> Any:
     discretization = _discretization(periodic_vertical=True)
     operators = phx.discretization.MACOperatorPlan(discretization).prepare()
     momentum = phx.discretization.MACMomentumPlan(operators).prepare()
@@ -208,7 +213,7 @@ def _dynamic_mac():
     return discretization, PreparedMACKSGS(plan, momentum, "sgs_kinetic_energy")
 
 
-def _dynamic_velocity(prepared):
+def _dynamic_velocity(prepared: Any) -> Any:
     centers = prepared.momentum.operators.discretization.face_centers
     return (
         jnp.sin(2.0 * jnp.pi * centers[0][..., 1]),
@@ -217,7 +222,7 @@ def _dynamic_velocity(prepared):
     )
 
 
-def test_ocean_les_requires_explicit_complete_named_scalar_declarations():
+def test_ocean_les_requires_explicit_complete_named_scalar_declarations() -> None:
     discretization = _discretization()
     reference = phx.applications.ocean.LinearSeawaterReference()
     with pytest.raises(ValueError, match="explicit named scalar SGS"):
@@ -243,7 +248,7 @@ def test_ocean_les_requires_explicit_complete_named_scalar_declarations():
         )
 
 
-def test_named_runtime_scalar_sgs_flux_and_ledgers_are_separated():
+def test_named_runtime_scalar_sgs_flux_and_ledgers_are_separated() -> None:
     discretization = _discretization(periodic_vertical=True)
     operators = phx.discretization.MACOperatorPlan(discretization).prepare()
     layout = MACScalarLayout(operators, ("salinity", "temperature"))
@@ -302,13 +307,13 @@ def test_named_runtime_scalar_sgs_flux_and_ledgers_are_separated():
 
 
 def test_ocean_les_uses_one_momentum_stage_for_scalar_ratios_and_energy_ledgers(
-    monkeypatch,
-):
+    monkeypatch: Any,
+) -> None:
     _, ocean = _ocean_with_algebraic_les()
     evaluations = 0
     original_evaluate = PreparedAlgebraicLESModel.evaluate
 
-    def counted_evaluate(model, inputs):
+    def counted_evaluate(model: Any, inputs: Any) -> Any:
         nonlocal evaluations
         evaluations += 1
         return original_evaluate(model, inputs)
@@ -350,7 +355,7 @@ def test_ocean_les_uses_one_momentum_stage_for_scalar_ratios_and_energy_ledgers(
     assert not bool(restriction.success)
 
 
-def test_ocean_les_prescribed_surface_flux_is_total_and_not_duplicated():
+def test_ocean_les_prescribed_surface_flux_is_total_and_not_duplicated() -> None:
     imposed = phx.discretization.MACScalarBoundaryCondition("flux", 3.0e-5)
     _, ocean = _ocean_with_algebraic_les(temperature_flux=imposed)
     state = ocean.initial_state(
@@ -379,7 +384,7 @@ def test_ocean_les_prescribed_surface_flux_is_total_and_not_duplicated():
     )
 
 
-def test_stable_and_unstable_ocean_mixing_have_opposite_potential_energy_signs():
+def test_stable_and_unstable_ocean_mixing_have_opposite_potential_energy_signs() -> None:
     _, ocean = _ocean_with_algebraic_les()
     stable = ocean.initial_state(
         _velocity(ocean),
@@ -399,7 +404,7 @@ def test_stable_and_unstable_ocean_mixing_have_opposite_potential_energy_signs()
     assert unstable_stage.buoyancy.molecular_potential_energy_mixing < 0.0
 
 
-def test_zero_coefficient_les_has_no_les_parity():
+def test_zero_coefficient_les_has_no_les_parity() -> None:
     discretization, les_ocean = _ocean_with_algebraic_les(coefficient=0.0)
     reference = les_ocean.plan.reference
     baseline = phx.applications.ocean.CartesianBoussinesqOceanPlan(
@@ -428,7 +433,9 @@ def test_zero_coefficient_les_has_no_les_parity():
         )
 
 
-def test_static_and_buoyant_ksgs_are_prognostic_positive_and_restart_complete(tmp_path):
+def test_static_and_buoyant_ksgs_are_prognostic_positive_and_restart_complete(
+    tmp_path: Any,
+) -> None:
     for plan_type in (StaticKSGSPlan, BuoyancyKSGSPlan):
         _, ocean = _ocean_with_ksgs(plan_type)
         initial_k = jnp.full(ocean.operators.discretization.cell_shape, 2.0e-4)
@@ -487,7 +494,7 @@ def test_static_and_buoyant_ksgs_are_prognostic_positive_and_restart_complete(tm
         )
 
 
-def test_ocean_ksgs_step_rejects_a_negative_candidate_without_flooring():
+def test_ocean_ksgs_step_rejects_a_negative_candidate_without_flooring() -> None:
     _, ocean = _ocean_with_ksgs(StaticKSGSPlan)
     velocity = tuple(
         jnp.zeros(layout.shape) for layout in ocean.operators.discretization.face_layouts
@@ -520,7 +527,7 @@ def test_ocean_ksgs_step_rejects_a_negative_candidate_without_flooring():
     )
 
 
-def test_dynamic_ksgs_uses_exact_periodic_uniform_filter_and_updates_history():
+def test_dynamic_ksgs_uses_exact_periodic_uniform_filter_and_updates_history() -> None:
     discretization, prepared = _dynamic_mac()
     assert prepared.test_filter is not None
     assert prepared.test_filter.plan.test_filter.filter_id == (
@@ -570,7 +577,7 @@ def test_dynamic_ksgs_uses_exact_periodic_uniform_filter_and_updates_history():
     assert bool(updated.success)
 
 
-def test_dynamic_ksgs_rejected_update_retains_committed_history_exactly():
+def test_dynamic_ksgs_rejected_update_retains_committed_history_exactly() -> None:
     discretization, prepared = _dynamic_mac()
     kinetic = jnp.full(discretization.cell_shape, 2.0e-4)
     viscosity = jnp.full(discretization.cell_shape, 1.0e-4)
@@ -612,7 +619,7 @@ def test_dynamic_ksgs_rejected_update_retains_committed_history_exactly():
         np.testing.assert_array_equal(left, right)
 
 
-def test_low_re_ksgs_resolves_wall_distance_damping_and_sqrt_k_gradient():
+def test_low_re_ksgs_resolves_wall_distance_damping_and_sqrt_k_gradient() -> None:
     discretization = _discretization()
     reference = phx.applications.ocean.LinearSeawaterReference()
     plan = LowReKSGSPlan(
@@ -654,10 +661,12 @@ def test_low_re_ksgs_resolves_wall_distance_damping_and_sqrt_k_gradient():
         ksgs_state=stage.ksgs.result.state,
     )
     diagnostic = phx.applications.ocean.ocean_diagnostic_view(ocean, 0.0, continuation)
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         diagnostic.ksgs_wall_distance,
         wall_distance,
     )
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         diagnostic.ksgs_low_re_dissipation,
         stage.ksgs.result.contributions.low_re_dissipation,
@@ -665,7 +674,7 @@ def test_low_re_ksgs_resolves_wall_distance_damping_and_sqrt_k_gradient():
     assert bool(stage.success)
 
 
-def test_low_re_ksgs_refuses_free_slip_only_wall_distance():
+def test_low_re_ksgs_refuses_free_slip_only_wall_distance() -> None:
     discretization = _discretization()
     operators = phx.discretization.MACOperatorPlan(discretization).prepare()
     momentum = phx.discretization.MACMomentumPlan(

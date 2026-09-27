@@ -9,10 +9,11 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy.special as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from ...._dtype_names import inexact_result_type
 from ...._fingerprint import canonical_fingerprint
-from ...._precision import inexact_result_type
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 
@@ -51,7 +52,7 @@ class GaussianErfVortexKernel3D(StrictModule, NonTrainableState):
     strength_semantics: str = eqx.field(static=True)
     kernel_id: str = eqx.field(static=True)
 
-    def __init__(self, *, series_threshold: float = 0.25):
+    def __init__(self, *, series_threshold: float = 0.25) -> None:
         threshold = float(series_threshold)
         if not math.isfinite(threshold) or not 0.0 < threshold <= 1.0:
             raise ValueError("series_threshold must be finite and lie in (0, 1].")

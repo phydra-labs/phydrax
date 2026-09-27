@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _hertz_problem():
+def _hertz_problem() -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0, 1]),
         jnp.asarray([1.0, 1.0]),
@@ -42,10 +45,10 @@ def _hertz_problem():
     )
 
 
-def test_hertz_force_matches_negative_distance_derivative_of_elastic_energy():
+def test_hertz_force_matches_negative_distance_derivative_of_elastic_energy() -> None:
     compiled = _hertz_problem()
 
-    def energy(distance):
+    def energy(distance: Any) -> Any:
         state = compiled.initialize_state(
             0.0,
             jnp.asarray([[0.0, 0.0, 0.0], [distance, 0.0, 0.0]]),
@@ -66,7 +69,7 @@ def test_hertz_force_matches_negative_distance_derivative_of_elastic_energy():
     assert jnp.allclose(force_on_right, -energy_gradient, rtol=2.0e-6)
 
 
-def test_mindlin_tangential_force_respects_friction_cone():
+def test_mindlin_tangential_force_respects_friction_cone() -> None:
     compiled = _hertz_problem()
     state = compiled.initialize_state(
         0.0,

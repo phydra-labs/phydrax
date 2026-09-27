@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -17,7 +19,7 @@ NATIVE_DIFFERENTIATION = phx.DerivativeContract.smooth(
 cosmology = phx.applications.cosmology
 
 
-def _context():
+def _context() -> Any:
     background = cosmology.FLRWBackground(1.0, 1.0)
     growth = cosmology.FLRWGrowthPlan(jnp.geomspace(1.0e-2, 1.0, 32)).solve(background)
     provenance = cosmology.CosmologyProductProvenance(
@@ -34,6 +36,7 @@ def _context():
     k = jnp.geomspace(1.0e-2, 100.0, 512)
     values = 1.0e-2 * k / (1.0 + k**3)
     power = cosmology.MatterPowerTable(
+        # ty: ignore[invalid-argument-type]
         [0.5, 1.0],
         k,
         jnp.stack((0.25 * values, values)),
@@ -45,7 +48,7 @@ def _context():
     return background, growth, power
 
 
-def test_smooth_collapse_and_calibrated_halo_triplet():
+def test_smooth_collapse_and_calibrated_halo_triplet() -> None:
     background, growth, power = _context()
     collapse = cosmology.SmoothComponentSphericalCollapsePlan(
         steps=256, bisection_iterations=32
@@ -66,7 +69,7 @@ def test_smooth_collapse_and_calibrated_halo_triplet():
     assert jnp.all(triplet.concentration > 0.0)
 
 
-def test_halo_model_catalog_and_zheng_expectation():
+def test_halo_model_catalog_and_zheng_expectation() -> None:
     background, _, power = _context()
     variance = cosmology.LinearVariancePlan(1.0)
     triplet = cosmology.TinkerDuffy200mPlan(
@@ -98,10 +101,15 @@ def test_halo_model_catalog_and_zheng_expectation():
         status="complete",
     )
     catalog = cosmology.HaloCatalog(
+        # ty: ignore[invalid-argument-type]
         [1, 2],
+        # ty: ignore[invalid-argument-type]
         [[0.1, 0.2, 0.3], [0.5, 0.6, 0.7]],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [0.1, 0.2],
+        # ty: ignore[invalid-argument-type]
         [True, True],
         definition,
         1.0,

@@ -6,13 +6,15 @@ from __future__ import annotations
 
 from math import isfinite
 from time import perf_counter
+from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
-from jaxtyping import Array
+from jax import Array
+from jaxtyping import PyTree
 
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._fingerprint import canonical_fingerprint
@@ -25,6 +27,7 @@ from .._training_kernel import (
     prepare_training_kernel,
     run_training_attempt,
     TrainingKernelSpec,
+    TrainingKeys,
     TrainingRejectionBudgetError,
 )
 from .._training_objective import _ObjectiveContribution
@@ -71,7 +74,7 @@ class StateSpaceWindowPlan(StrictModule):
         target_length: int,
         left_buffer: int = 0,
         right_buffer: int = 0,
-    ):
+    ) -> None:
         steps = int(num_steps)
         target = int(target_length)
         left = int(left_buffer)
@@ -139,7 +142,7 @@ class BufferedStateSpaceVariationalConfig(StrictModule):
         hidden_size: int = 64,
         scale_floor: float = 1e-6,
         optimization: VariationalConfig | None = None,
-    ):
+    ) -> None:
         optimization_ = VariationalConfig() if optimization is None else optimization
         if not isinstance(optimization_, VariationalConfig):
             raise TypeError("optimization must be VariationalConfig or None.")
@@ -205,7 +208,14 @@ class _BufferedPathObjective(StrictModule):
     plan: StateSpaceWindowPlan
     samples_per_step: int = eqx.field(static=True)
 
-    def __call__(self, parameters, model_state, fixed, problem, keys):
+    def __call__(
+        self,
+        parameters: PyTree[Any],
+        model_state: PyTree[Any],
+        fixed: PyTree[Any],
+        problem: StateSpaceProblem,
+        keys: TrainingKeys,
+    ) -> tuple[_ObjectiveContribution, PyTree[Any], tuple[Array, Array, Array, Array]]:
         plan = self.plan
         window = plan.sample(keys.accepted_key("window"))
         case_shape = problem.observations.case_shape
@@ -308,8 +318,8 @@ def fit_buffered_state_space_variational(
                 rule_id=canonical_fingerprint(
                     {
                         "kind": "buffered-path-elbo-clipped-adam",
-                        "gradient_clip": optimization.gradient_clip.hex(),
-                        "learning_rate": optimization.learning_rate.hex(),
+                        "gradient_clip": float(optimization.gradient_clip).hex(),
+                        "learning_rate": float(optimization.learning_rate).hex(),
                     }
                 ),
             ),

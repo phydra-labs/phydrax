@@ -16,7 +16,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.axes as cx
 
@@ -77,6 +77,7 @@ from ..operators.quantum import (
     LogAmplitude,
     sampling_log_weight,
 )
+from ..typing import parse, PRNGKey
 
 
 if TYPE_CHECKING:
@@ -132,8 +133,8 @@ def _amplitude(model: Any, configuration: Array, /) -> LogAmplitude:
     return value
 
 
-def _model_log_target(model: Any):
-    def log_target(configuration):
+def _model_log_target(model: Any) -> Callable[[Array], Array]:
+    def log_target(configuration: Array) -> Array:
         return sampling_log_weight(_amplitude(model, configuration))
 
     return log_target
@@ -231,7 +232,7 @@ class VariationalMonteCarloProblem(StrictModule):
         problem_id: str | None = None,
         target_factory: Callable[[Any], Any] | None = None,
         target_factory_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(model):
             raise TypeError("model must be callable.")
         if not isinstance(operator, AbstractLocalQuantumOperator):
@@ -333,7 +334,9 @@ class VariationalMonteCarloProblem(StrictModule):
         )
         return self.parameter_subspace.reconstruct_vector(vector)
 
-    def target_for_model(self, model: Any, /):
+    def target_for_model(
+        self, model: Any, /
+    ) -> FullMarkovTarget | IncrementalMarkovTarget:
         """Bind the problem's declared sampling target to one frozen model."""
         if self.target_factory is None:
             return FullMarkovTarget(
@@ -347,9 +350,7 @@ class VariationalMonteCarloProblem(StrictModule):
             )
         return target
 
-    def initial_state(
-        self, *, key: Key[Array, ""] = jr.key(0)
-    ) -> VariationalMonteCarloState:
+    def initial_state(self, *, key: PRNGKey = jr.key(0)) -> VariationalMonteCarloState:
         markov = self.kernel.initialize(
             self.target_for_model(self.model),
             self.initial_configurations,
@@ -396,7 +397,7 @@ class VariationalMonteCarloPolicy(StrictModule):
         final_chain_diagnostics: bool = True,
         linear_policy: LinearSolvePolicy | None = None,
         nullspace_policy: NullspacePolicy | None = None,
-    ):
+    ) -> None:
         iterations = int(num_iterations)
         draws = int(draws_per_iteration)
         transitions = int(steps_per_draw)
@@ -427,8 +428,7 @@ class VariationalMonteCarloPolicy(StrictModule):
             update_limit = float(max_update_norm)
             if not isfinite(update_limit) or update_limit <= 0.0:
                 raise ValueError("max_update_norm must be finite and positive.")
-        if failure_mode not in ("raise", "record"):
-            raise ValueError("failure_mode must be 'raise' or 'record'.")
+        failure_mode = parse(failure_mode, FailureMode, "failure_mode")
         if linear_policy is not None and not isinstance(linear_policy, LinearSolvePolicy):
             raise TypeError("linear_policy must be a LinearSolvePolicy or None.")
         if nullspace_policy is not None and not isinstance(
@@ -473,9 +473,9 @@ class VariationalMonteCarloState(StrictModule):
         parameter_coordinates: Array,
         markov_state: MarkovState,
         iteration: int | Array,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         attempt_cursor: int | Array | None = None,
-    ):
+    ) -> None:
         if not isinstance(markov_state, MarkovState):
             raise TypeError("markov_state must be a MarkovState.")
         iteration_ = jnp.asarray(iteration, dtype=jnp.int32)
@@ -613,7 +613,7 @@ def _sample_frozen_model(
     markov_state: MarkovState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_draws: int,
     steps_per_draw: int,
     warmup_steps: int,
@@ -637,7 +637,7 @@ def evaluate_variational_monte_carlo(
     markov_state: MarkovState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_draws: int,
     steps_per_draw: int = 1,
     warmup_steps: int = 0,
@@ -678,7 +678,7 @@ def _score_geometry(
     flat = jnp.asarray(configurations).reshape((-1,) + shape)
     mode = problem.complex_parameter_mode
 
-    def features(parameter_coordinates):
+    def features(parameter_coordinates: Array) -> Array:
         model = problem.model_from_coordinates(parameter_coordinates)
         amplitudes = jax.vmap(model)(flat)
         if not isinstance(amplitudes, LogAmplitude):
@@ -792,7 +792,7 @@ class _StochasticReconfigurationRule(AbstractKernelUpdateRule):
     max_update_norm: float | None = eqx.field(static=True)
     rule_id: str = eqx.field(static=True)
 
-    def __init__(self, policy: VariationalMonteCarloPolicy, /):
+    def __init__(self, policy: VariationalMonteCarloPolicy, /) -> None:
         self.learning_rate = policy.learning_rate
         self.max_update_norm = policy.max_update_norm
         self.rule_id = canonical_fingerprint(
@@ -838,7 +838,7 @@ def _prepare_sr_kernel(
     /,
     *,
     objective_id: str,
-    root_key: Key[Array, ""],
+    root_key: PRNGKey,
     iteration: Array,
     attempt_cursor: Array,
 ) -> tuple[PreparedTrainingKernel, TrainingKernelState]:
@@ -1238,7 +1238,7 @@ def solve_variational_monte_carlo(
     policy: VariationalMonteCarloPolicy,
     /,
     *,
-    key: Key[Array, ""] | None = None,
+    key: PRNGKey | None = None,
     state: VariationalMonteCarloState | None = None,
 ) -> VariationalMonteCarloResult:
     """Optimize a local-operator amplitude model with persistent-chain SR updates.

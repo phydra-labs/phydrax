@@ -5,7 +5,8 @@ from dataclasses import dataclass
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -19,7 +20,7 @@ class Port:
     orientation: tuple[float, ...]
     frame_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             not self.port_id
             or not self.frame_id
@@ -34,7 +35,7 @@ class ScatteringMatrix(StrictModule, NonTrainableState):
     reference_impedances_ohm: Array
     network_id: str = eqx.field(static=True)
 
-    def __init__(self, values: ArrayLike, reference_impedances_ohm: ArrayLike, /):
+    def __init__(self, values: ArrayLike, reference_impedances_ohm: ArrayLike, /) -> None:
         s = jnp.asarray(values)
         z = jnp.asarray(reference_impedances_ohm)
         if s.ndim != 3 or s.shape[-1] != s.shape[-2] or z.shape != (s.shape[-1],):
@@ -50,15 +51,15 @@ class ScatteringMatrix(StrictModule, NonTrainableState):
         )
 
     @property
-    def reciprocal_error(self):
+    def reciprocal_error(self) -> Array:
         return jnp.max(jnp.abs(self.values - jnp.swapaxes(self.values, -1, -2)))
 
     @property
-    def maximum_power_gain(self):
+    def maximum_power_gain(self) -> Array:
         return jnp.max(jnp.linalg.svd(self.values, compute_uv=False) ** 2)
 
     @property
-    def passive(self):
+    def passive(self) -> Array:
         return self.maximum_power_gain <= 1 + 1e-10
 
 

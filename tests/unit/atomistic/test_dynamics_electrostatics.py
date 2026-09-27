@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -5,20 +7,25 @@ import numpy as np
 import phydrax as phx
 
 
-def _system(*, cell=None):
+def _system(*, cell: Any = None) -> Any:
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     return phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [0, 1],
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         units,
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0],
+        # ty: ignore[invalid-argument-type]
         charges=[1.0, -1.0],
         cell=cell,
     ).prepare()
 
 
-def test_direct_coulomb_matches_two_charge_reference():
+def test_direct_coulomb_matches_two_charge_reference() -> None:
     system = _system()
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
         system.particles
@@ -33,7 +40,7 @@ def test_direct_coulomb_matches_two_charge_reference():
     np.testing.assert_allclose(jnp.sum(evaluation.forces, axis=0), 0.0, atol=1.0e-12)
 
 
-def test_pme_is_finite_and_tracks_direct_ewald_reference():
+def test_pme_is_finite_and_tracks_direct_ewald_reference() -> None:
     cell = phx.discretization.PeriodicCell(6.0 * jnp.eye(3))
     system = _system(cell=cell)
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=cell).prepare(
@@ -55,13 +62,14 @@ def test_pme_is_finite_and_tracks_direct_ewald_reference():
     np.testing.assert_allclose(jnp.sum(observed.forces, axis=0), 0.0, atol=1.0e-3)
 
 
-def test_isotropic_barostat_produces_typed_detailed_balance_move():
+def test_isotropic_barostat_produces_typed_detailed_balance_move() -> None:
     cell = phx.discretization.PeriodicCell(5.0 * jnp.eye(3))
     system = _system(cell=cell)
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=cell).prepare(
         system.particles
     )
     potential = phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.LennardJonesPotential([0.2], [1.0], 2.0)]
     ).prepare(system)
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
@@ -103,7 +111,7 @@ def test_isotropic_barostat_produces_typed_detailed_balance_move():
     assert move.accepted_state.cell_vectors.shape == (3, 3)
 
 
-def test_pme_supports_isotropic_npt_energy_re_evaluation():
+def test_pme_supports_isotropic_npt_energy_re_evaluation() -> None:
     cell = phx.discretization.PeriodicCell(6.0 * jnp.eye(3))
     system = _system(cell=cell)
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=cell).prepare(

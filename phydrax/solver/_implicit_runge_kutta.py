@@ -5,13 +5,13 @@
 from __future__ import annotations
 
 from math import sqrt
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax import lax
-from jaxtyping import Array, ArrayLike
+from jax import Array, lax
+from jax.typing import ArrayLike
 
 from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._strict import StrictModule
@@ -39,8 +39,14 @@ from ._temporal_precision import TemporalPrecisionPolicy
 
 _DEFAULT_ARGS = object()
 
+_Tableau: TypeAlias = tuple[
+    tuple[tuple[float, ...], ...], tuple[float, ...], tuple[float, ...]
+]
+_IRKCarry: TypeAlias = tuple[Array, Array, Array]
+_IRKStepOutput: TypeAlias = tuple[Array, Array, Array, Array]
 
-def _gauss_tableau(stages: int):
+
+def _gauss_tableau(stages: int) -> _Tableau:
     if stages == 1:
         return ((0.5,),), (1.0,), (0.5,)
     if stages == 2:
@@ -99,7 +105,7 @@ class GaussLegendreIRK(StrictModule, NonTrainableState):
     stages: int = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, stages: int = 2, /):
+    def __init__(self, stages: int = 2, /) -> None:
         count = int(stages)
         if count not in (1, 2, 3):
             raise ValueError("GaussLegendreIRK stages must be one, two, or three.")
@@ -293,12 +299,14 @@ def solve_implicit_runge_kutta(
     )
     weights = jnp.asarray(selected.weights, dtype=problem.initial_state.real.dtype)
 
-    def advance(carry, values):
+    def advance(
+        carry: _IRKCarry, values: tuple[Array, Array]
+    ) -> tuple[_IRKCarry, _IRKStepOutput]:
         state, previous_stages, prior_valid = carry
         time, step_size = values
         arguments = _IRKArguments(time, step_size, state, runtime_args)
 
-        def solve_step(_):
+        def solve_step(_: None) -> _IRKStepOutput:
             refreshed = refresh_nonlinear(
                 prepared,
                 stage_problem,
@@ -319,7 +327,7 @@ def solve_implicit_runge_kutta(
             valid = (result.status == int(NonlinearStatus.SUCCESS)) & finite
             return next_state, stages, valid, result.diagnostics.iterations
 
-        def skip_step(_):
+        def skip_step(_: None) -> _IRKStepOutput:
             return (
                 jnp.full_like(state, jnp.nan),
                 jnp.full_like(previous_stages, jnp.nan),

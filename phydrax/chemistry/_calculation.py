@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -83,7 +83,7 @@ class ElectronicCalculationPlan(StrictModule, NonTrainableState):
         *,
         numerical: ElectronicNumericalPlan | None = None,
         precision: AtomisticPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         if isinstance(

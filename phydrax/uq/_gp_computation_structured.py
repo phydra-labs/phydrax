@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -20,7 +21,12 @@ from ._gp_actions import (
     BlockSparseGaussianProcessActionPolicy,
     FixedGaussianProcessActionPolicy,
 )
-from ._gp_computation_backend import _factorize_positive, _solve_columns, _solve_vector
+from ._gp_computation_backend import (
+    _factorize_positive,
+    _PositiveFactor,
+    _solve_columns,
+    _solve_vector,
+)
 from ._gp_likelihood import GaussianProcessLikelihoodState
 
 
@@ -30,7 +36,7 @@ class StructuredComputationAwareGaussianProcessFactor(StrictModule):
     action_matrix: Array
     active_mask: Array
     projected_covariance: Array
-    covariance_factor: object
+    covariance_factor: _PositiveFactor
     observation_count: int = eqx.field(static=True)
     action_count: int = eqx.field(static=True)
 
@@ -44,7 +50,7 @@ class StructuredComputationAwareGaussianProcessFactor(StrictModule):
         *,
         residual: ArrayLike | None = None,
         max_factorization_bytes: int = 64 * 1024 * 1024,
-    ):
+    ) -> None:
         matrix = jnp.asarray(covariance)
         if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1] or matrix.shape[0] <= 0:
             raise ValueError("Structured GP covariance must be nonempty and square.")

@@ -11,9 +11,10 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
-from .._execution_plan import ExecutionRequirements, LogicalAxis
+from .._execution_plan import ExecutionRequirements, LogicalAxis, LogicalAxisKind
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -70,7 +71,7 @@ class ROMResourcePolicy(StrictModule, NonTrainableState):
         maximum_batch_size: int = 65_536,
         maximum_workspace_bytes: int = 8 * 1024**3,
         maximum_archive_bytes: int = 16 * 1024**3,
-    ):
+    ) -> None:
         values = {
             "maximum_full_dimension": int(maximum_full_dimension),
             "maximum_reduced_dimension": int(maximum_reduced_dimension),
@@ -134,7 +135,7 @@ class ROMCostEstimate(StrictModule, NonTrainableState):
         reconstruction_operations: int = 0,
         local_memory_bytes: int = 0,
         communication_bytes: int = 0,
-    ):
+    ) -> None:
         values = tuple(
             (
                 truth_operations,
@@ -180,14 +181,14 @@ class ROMAdmissionEvidence(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        admitted,
-        status,
-        score,
+        admitted: ArrayLike,
+        status: ArrayLike,
+        score: ArrayLike,
         /,
         *,
         support_id: str,
         evidence_ids: Sequence[str],
-    ):
+    ) -> None:
         support = str(support_id)
         evidence = tuple(str(value) for value in evidence_ids)
         if not support or any(not value for value in evidence):
@@ -254,7 +255,7 @@ class ROMPromotionEvidence:
         exact_resume_passed: bool,
         evidence_ids: Sequence[str],
         thresholds: ROMPromotionThresholds | None = None,
-    ):
+    ) -> None:
         capability_ = str(capability)
         support_ = str(support_id)
         identifiers = tuple(sorted(str(value) for value in evidence_ids))
@@ -332,7 +333,7 @@ class ROMCapabilityDeclaration(StrictModule, NonTrainableState):
         /,
         *,
         required_gates: Sequence[str],
-    ):
+    ) -> None:
         capability_ = str(capability)
         gates = tuple(str(value) for value in required_gates)
         values = tuple(sorted((str(name), value) for name, value in attributes.items()))
@@ -463,8 +464,8 @@ def rom_execution_requirements(
     return ExecutionRequirements(
         owner_id,
         logical_axes=(
-            LogicalAxis("rom-batch", int(batch_axis), splittable=True),
-            LogicalAxis("rom-reduced", int(reduced_axis), splittable=False),
+            LogicalAxis("rom-batch", int(batch_axis), LogicalAxisKind.INDEPENDENT),
+            LogicalAxis("rom-reduced", int(reduced_axis), LogicalAxisKind.MODEL),
         ),
         operations=("rom-admission", "rom-assembly", "rom-solve"),
         dtypes=(str(dtype),),

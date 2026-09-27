@@ -2,9 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import hashlib
 import importlib
 import json
+from typing import Any
 
 import numpy as np
 import pytest
@@ -20,7 +22,7 @@ from phydrax.interchange._report import AdapterStatus
 from phydrax.units import METER
 
 
-def _asymmetric_grid(*, registration="pixel"):
+def _asymmetric_grid(*, registration: Any = "pixel") -> Any:
     contract = GeospatialContract.local_cartesian(
         SpatialCoordinateContract(METER, reference_frame="synthetic-survey"),
         vertical_datum="synthetic-benchmark",
@@ -38,7 +40,7 @@ def _asymmetric_grid(*, registration="pixel"):
     )
 
 
-def test_xarray_export_preserves_sample_locations_masked_payload_and_metadata():
+def test_xarray_export_preserves_sample_locations_masked_payload_and_metadata() -> None:
     pytest.importorskip("xarray")
     grid = _asymmetric_grid()
     exported = export_geospatial_grid(grid)
@@ -60,10 +62,12 @@ def test_xarray_export_preserves_sample_locations_masked_payload_and_metadata():
     assert grid.values[1, 2] == 31.0
 
 
-def test_missing_optional_package_fails_without_creating_a_map(tmp_path, monkeypatch):
+def test_missing_optional_package_fails_without_creating_a_map(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     original = importlib.import_module
 
-    def missing_xarray(name, package=None):
+    def missing_xarray(name: Any, package: Any = None) -> Any:
         if name == "xarray":
             raise ModuleNotFoundError("xarray is unavailable", name="xarray")
         return original(name, package)
@@ -78,8 +82,8 @@ def test_missing_optional_package_fails_without_creating_a_map(tmp_path, monkeyp
 
 
 def test_rendering_boundary_rejects_remote_inputs_and_cartesian_map_reprojection(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     grid = _asymmetric_grid()
     with pytest.raises(ValueError, match="not a local or remote resource"):
         render_geospatial_grid(grid, tmp_path / "remote.png", cmap="@remote_palette")
@@ -89,7 +93,9 @@ def test_rendering_boundary_rejects_remote_inputs_and_cartesian_map_reprojection
     assert not (tmp_path / "reprojected.png").exists()
 
 
-def test_real_gmt_observes_registration_orientation_and_rendered_resource(tmp_path):
+def test_real_gmt_observes_registration_orientation_and_rendered_resource(
+    tmp_path: Any,
+) -> None:
     pygmt = pytest.importorskip("pygmt")
     for registration, expected_bounds, expected_registration in (
         ("pixel", [9.0, 15.0, 3.5, 9.5], 1),

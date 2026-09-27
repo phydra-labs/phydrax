@@ -9,12 +9,13 @@ from numbers import Integral
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
+from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...combinatorial import (
@@ -57,7 +58,7 @@ class TwoViewAssociationPlan(StrictModule, NonTrainableState):
         intensity_weight: float = 0.0,
         unmatched_cost: float = 4.0,
         ambiguity_margin: float = 0.25,
-    ):
+    ) -> None:
         values = jnp.asarray(
             (
                 maximum_ray_distance,
@@ -142,7 +143,7 @@ class MultiViewAssociationPlan(StrictModule, NonTrainableState):
         view_reward: float = 2.0,
         exact_candidate_limit: int = 32,
         maximum_nodes: int = 1_000_000,
-    ):
+    ) -> None:
         for name, value in (
             ("camera_capacity", camera_capacity),
             ("candidate_capacity", candidate_capacity),
@@ -407,8 +408,11 @@ def _camera_rays(
         directions.append(result.directions)
         valid.append(ray_valid)
         weights.append(jnp.where(ray_valid, precision, 0.0))
-    return tuple(
-        jnp.stack(values, axis=0) for values in (origins, directions, valid, weights)
+    return (
+        jnp.stack(origins, axis=0),
+        jnp.stack(directions, axis=0),
+        jnp.stack(valid, axis=0),
+        jnp.stack(weights, axis=0),
     )
 
 

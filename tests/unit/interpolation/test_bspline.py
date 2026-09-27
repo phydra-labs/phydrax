@@ -35,13 +35,13 @@ def _open_knots(degree: int, control_count: int) -> np.ndarray:
 
 
 def _dense_basis(
-    knots,
-    query,
+    knots: Any,
+    query: Any,
     *,
     degree: int,
     derivative_order: int = 0,
     bounds: BoundsMode = "error",
-):
+) -> Any:
     control_count = len(knots) - degree - 1
     stencil = bspline_stencil(
         knots,
@@ -54,7 +54,7 @@ def _dense_basis(
 
 
 @pytest.mark.parametrize("degree", range(6))
-def test_local_spline_basis_and_derivatives_match_scipy(degree):
+def test_local_spline_basis_and_derivatives_match_scipy(degree: Any) -> None:
     control_count = degree + 5
     knots = _open_knots(degree, control_count)
     query = np.asarray([0.0, 0.07, 0.31, 0.5, 0.83, 1.0 - 1e-8, 1.0])
@@ -79,7 +79,7 @@ def test_local_spline_basis_and_derivatives_match_scipy(degree):
         )
 
 
-def test_bspline_jet_uses_explicit_spans_and_zeroes_orders_above_degree():
+def test_bspline_jet_uses_explicit_spans_and_zeroes_orders_above_degree() -> None:
     degree = 2
     control_count = 6
     knots = _open_knots(degree, control_count)
@@ -117,7 +117,7 @@ def test_bspline_jet_uses_explicit_spans_and_zeroes_orders_above_degree():
     )
 
 
-def test_tensor_bspline_complete_hessian_multi_indices_have_exact_transposes():
+def test_tensor_bspline_complete_hessian_multi_indices_have_exact_transposes() -> None:
     degree = 2
     knots = jnp.asarray(_open_knots(degree, 5))
     u_stencil = bspline_jet_stencil(
@@ -159,7 +159,7 @@ def test_tensor_bspline_complete_hessian_multi_indices_have_exact_transposes():
         )
 
 
-def test_degree_one_rational_tensor_has_complete_nonuniform_weight_hessian():
+def test_degree_one_rational_tensor_has_complete_nonuniform_weight_hessian() -> None:
     knots = jnp.asarray([0.0, 0.0, 1.0, 1.0])
     point = jnp.asarray([0.37, 0.58])
     stencils = tuple(
@@ -176,7 +176,7 @@ def test_degree_one_rational_tensor_has_complete_nonuniform_weight_hessian():
     controls = jnp.asarray([[0.2, 1.3], [2.1, 4.7]])
     rational = RationalSplineJet(plan, weights)
 
-    def dense(parameters):
+    def dense(parameters: Any) -> Any:
         u_basis = jnp.asarray([1.0 - parameters[0], parameters[0]])
         v_basis = jnp.asarray([1.0 - parameters[1], parameters[1]])
         weighted_basis = u_basis[:, None] * v_basis[None, :] * weights
@@ -203,7 +203,7 @@ def test_degree_one_rational_tensor_has_complete_nonuniform_weight_hessian():
     )
 
 
-def test_rational_tensor_plan_topologically_orders_custom_derivative_jet():
+def test_rational_tensor_plan_topologically_orders_custom_derivative_jet() -> None:
     knots = jnp.asarray([0.0, 0.0, 1.0, 1.0])
     stencils = tuple(
         bspline_jet_stencil(
@@ -222,7 +222,7 @@ def test_rational_tensor_plan_topologically_orders_custom_derivative_jet():
     assert rational.derivative((1, 1)).shape == (4,)
 
 
-def test_tensor_derivative_multi_indices_require_exact_integers():
+def test_tensor_derivative_multi_indices_require_exact_integers() -> None:
     knots = jnp.asarray([0.0, 0.0, 1.0, 1.0])
     stencil = bspline_jet_stencil(
         knots,
@@ -234,11 +234,12 @@ def test_tensor_derivative_multi_indices_require_exact_integers():
     with pytest.raises(TypeError, match="components must be integers"):
         TensorBSplineJetPlan(
             (stencil,),
+            # ty: ignore[invalid-argument-type]
             multi_indices=((0,), (0.5,)),
         )
 
 
-def test_bspline_repeated_and_unclamped_knots_match_scipy():
+def test_bspline_repeated_and_unclamped_knots_match_scipy() -> None:
     cases = (
         (
             np.asarray(
@@ -292,12 +293,12 @@ def test_bspline_repeated_and_unclamped_knots_match_scipy():
             )
 
 
-def test_bspline_explicit_derivatives_match_autodiff_at_endpoints():
+def test_bspline_explicit_derivatives_match_autodiff_at_endpoints() -> None:
     degree = 3
     knots = jnp.asarray(_open_knots(degree, 7))
     controls = jnp.asarray([0.1, -0.7, 0.4, 1.2, -0.2, 0.9, 1.4])
 
-    def evaluate(query):
+    def evaluate(query: Any) -> Any:
         return bspline_evaluate(knots, controls, query, degree=degree).values
 
     first = jax.jacfwd(evaluate)
@@ -337,7 +338,7 @@ def test_bspline_explicit_derivatives_match_autodiff_at_endpoints():
         assert np.isfinite(np.asarray(jax.jit(evaluate)(query)))
 
 
-def test_bspline_custom_jvp_combines_query_and_coefficient_tangents():
+def test_bspline_custom_jvp_combines_query_and_coefficient_tangents() -> None:
     degree = 3
     knots = jnp.asarray(_open_knots(degree, 7))
     coefficients = jnp.arange(14, dtype="float64").reshape((7, 2)) / 9.0
@@ -345,7 +346,7 @@ def test_bspline_custom_jvp_combines_query_and_coefficient_tangents():
     query = jnp.asarray(0.43)
     query_tangent = jnp.asarray(-0.7)
 
-    def evaluate(coefficients_, query_):
+    def evaluate(coefficients_: Any, query_: Any) -> Any:
         return bspline_evaluate(
             knots,
             coefficients_,
@@ -383,7 +384,7 @@ def test_bspline_custom_jvp_combines_query_and_coefficient_tangents():
     assert np.all(np.diff(active_rows) == 1)
 
 
-def test_bspline_case_shape_and_complex_payloads_are_preserved():
+def test_bspline_case_shape_and_complex_payloads_are_preserved() -> None:
     degree = 2
     knots = np.asarray(_open_knots(degree, 6))
     query = jnp.asarray([[0.0, 0.4, 1.0], [0.1, 0.7, 0.9]])
@@ -411,7 +412,7 @@ def test_bspline_case_shape_and_complex_payloads_are_preserved():
     assert np.allclose(np.asarray(actual), expected)
 
 
-def test_bspline_bounds_modes_are_explicit():
+def test_bspline_bounds_modes_are_explicit() -> None:
     degree = 2
     knots = np.asarray(_open_knots(degree, 6))
     controls = jnp.arange(6, dtype="float64")
@@ -424,7 +425,7 @@ def test_bspline_bounds_modes_are_explicit():
     assert np.all(clipped.support)
     assert np.allclose(np.asarray(clipped.values), clipped_expected)
 
-    def clipped_value(value):
+    def clipped_value(value: Any) -> Any:
         return apply_gather_stencil(
             controls,
             bspline_stencil(knots, value, degree=degree, bounds="clip"),
@@ -456,7 +457,7 @@ def test_bspline_bounds_modes_are_explicit():
         jax.block_until_ready(stencil.weights)
 
 
-def test_bspline_validation_is_transformation_safe():
+def test_bspline_validation_is_transformation_safe() -> None:
     knots = jnp.asarray(_open_knots(2, 5))
     invalid_degree: Any = 2.0
 

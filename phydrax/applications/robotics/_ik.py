@@ -14,7 +14,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -173,7 +174,7 @@ class FramePositionTask(StrictModule, NonTrainableState):
         bounds: Bounds | None = None,
         tolerance: float = 1.0e-6,
         task_id: str,
-    ):
+    ) -> None:
         target = _floating_vector(target_position, 3, "target_position")
         transform = jnp.eye(4, dtype=target.dtype).at[:3, 3].set(target)
         self.body_id = _body_identifier(body_id)
@@ -210,7 +211,7 @@ class FrameOrientationTask(StrictModule, NonTrainableState):
         bounds: Bounds | None = None,
         tolerance: float = 1.0e-6,
         task_id: str,
-    ):
+    ) -> None:
         orientation = _floating_vector(target_orientation, 4, "target_orientation")
         position = jnp.zeros((3,), dtype=orientation.dtype)
         self.body_id = _body_identifier(body_id)
@@ -249,7 +250,7 @@ class FramePoseTask(StrictModule, NonTrainableState):
         bounds: Bounds | None = None,
         tolerance: float = 1.0e-6,
         task_id: str,
-    ):
+    ) -> None:
         position = _floating_vector(target_position, 3, "target_position")
         orientation = _floating_vector(target_orientation, 4, "target_orientation")
         self.body_id = _body_identifier(body_id)
@@ -280,7 +281,9 @@ def _so3_log_coordinates(rotation: Array, /) -> Array:
 
 
 @_so3_log_coordinates.defjvp
-def _so3_log_coordinates_jvp(primals, tangents):
+def _so3_log_coordinates_jvp(
+    primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
     (rotation,), (rotation_tangent,) = primals, tangents
     coordinates = _so3_log_coordinates(rotation)
     body_tangent_matrix = jnp.swapaxes(rotation, -1, -2) @ rotation_tangent
@@ -385,7 +388,7 @@ class _LocalFrameIKResidual(StrictModule):
     plan: "FrameInverseKinematicsPlan"
     reference_configuration: Array
 
-    def __call__(self, candidate: Array, args=None, /) -> Array:
+    def __call__(self, candidate: Array, args: object = None, /) -> Array:
         del args
         configuration = self.plan.canonical_configuration(
             self.reference_configuration, candidate
@@ -416,7 +419,7 @@ class FrameInverseKinematicsPlan(StrictModule, NonTrainableState):
         rotation_chart_tolerance: float = 1.0e-6,
         configuration_chart_tolerance: float = 1.0e-6,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(articulation, PreparedReducedArticulation):
             raise TypeError("articulation must be PreparedReducedArticulation.")
         tasks_ = tuple(tasks)
@@ -588,7 +591,7 @@ class FrameInverseKinematicsPlan(StrictModule, NonTrainableState):
             jnp.concatenate(residual_parts),
         )
 
-    def residual(self, configuration: ArrayLike, args=None, /) -> Array:
+    def residual(self, configuration: ArrayLike, args: object = None, /) -> Array:
         """Evaluate the fixed-capacity weighted IK residual; compatible with JIT/AD."""
 
         del args

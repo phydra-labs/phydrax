@@ -9,7 +9,8 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..core import FinancialScenarioSet
@@ -31,7 +32,7 @@ class ScenarioEvaluationAdapter(StrictModule):
         intercept: ArrayLike = 0.0,
         aggregation: Literal["node", "terminal", "sum"] = "terminal",
         adapter_id: str = "affine-scenario-evaluation",
-    ):
+    ) -> None:
         loading = jnp.asarray(factor_loading)
         if loading.ndim != 1 or loading.shape[0] == 0:
             raise ValueError("factor_loading must be a non-empty vector.")

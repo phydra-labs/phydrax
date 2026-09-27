@@ -1,4 +1,5 @@
 import hashlib
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -17,7 +18,7 @@ from phydrax.artifacts import ScientificArtifactEnvelope
 from phydrax.qualification import ReferenceArtifactManifest
 
 
-def _species():
+def _species() -> Any:
     return DarkSectorSpeciesPlan(
         "chi",
         2.0,
@@ -29,14 +30,14 @@ def _species():
 
 
 def _source_kwargs(
-    speeds,
-    cosines,
-    differential,
+    speeds: Any,
+    cosines: Any,
+    differential: Any,
     *,
-    azimuths=None,
-    permit_commercial=True,
-    request_commercial=True,
-):
+    azimuths: Any = None,
+    permit_commercial: Any = True,
+    request_commercial: Any = True,
+) -> Any:
     payload = TwoBodyDifferentialKernelPlan.canonical_table_bytes(
         speeds, cosines, differential, azimuths=azimuths
     )
@@ -78,7 +79,15 @@ def _source_kwargs(
     }
 
 
-def _kernel(species, speeds, cosines, differential, *, azimuths=None, **kwargs):
+def _kernel(
+    species: Any,
+    speeds: Any,
+    cosines: Any,
+    differential: Any,
+    *,
+    azimuths: Any = None,
+    **kwargs: Any,
+) -> Any:
     return TwoBodyDifferentialKernelPlan(
         species,
         species,
@@ -91,7 +100,7 @@ def _kernel(species, speeds, cosines, differential, *, azimuths=None, **kwargs):
     )
 
 
-def test_species_and_isotropic_analytic_moments_are_explicit():
+def test_species_and_isotropic_analytic_moments_are_explicit() -> None:
     species = _species()
     kernel = TwoBodyDifferentialKernelPlan.constant_isotropic(species, 6.0)
     moments = kernel.moments(jnp.asarray((0.0, 2.0, 100.0)))
@@ -111,7 +120,7 @@ def test_species_and_isotropic_analytic_moments_are_explicit():
         DarkSectorSpeciesPlan("bad", 1.0, charge_names=("q",), charges=())
 
 
-def test_full_sphere_and_exchange_quotient_have_one_physical_normalization():
+def test_full_sphere_and_exchange_quotient_have_one_physical_normalization() -> None:
     species = _species()
     speeds = jnp.asarray((0.0, 2.0))
     full = _kernel(
@@ -142,7 +151,7 @@ def test_full_sphere_and_exchange_quotient_have_one_physical_normalization():
     )
 
 
-def test_screening_azimuth_and_speed_table_support_fail_closed():
+def test_screening_azimuth_and_speed_table_support_fail_closed() -> None:
     species = _species()
     cutoff = 0.2
     cosines = jnp.asarray((-1.0, 0.0, np.cos(cutoff)))
@@ -172,7 +181,7 @@ def test_screening_azimuth_and_speed_table_support_fail_closed():
     assert not bool(kernel.evaluate(2.0, 0.0, -0.1).supported)
 
 
-def test_inverse_cdf_sampling_reproduces_angular_moments():
+def test_inverse_cdf_sampling_reproduces_angular_moments() -> None:
     species = _species()
     cosines = jnp.linspace(-1.0, 1.0, 65)
     # p(mu) is proportional to 1 + mu on the full sphere.
@@ -193,7 +202,7 @@ def test_inverse_cdf_sampling_reproduces_angular_moments():
     assert float(jnp.max(samples.normalization_residual)) < 1.0e-14
 
 
-def test_small_angle_split_has_no_gap_or_overlap_and_reconstructs_every_moment():
+def test_small_angle_split_has_no_gap_or_overlap_and_reconstructs_every_moment() -> None:
     species = _species()
     cosines = jnp.linspace(-1.0, 1.0, 33)
     differential = jnp.stack(
@@ -240,7 +249,7 @@ def test_small_angle_split_has_no_gap_or_overlap_and_reconstructs_every_moment()
     assert float(rare_sample.cosine) <= float(interpolated_split)
 
 
-def test_reference_rights_denial_and_table_substitution_fail_closed():
+def test_reference_rights_denial_and_table_substitution_fail_closed() -> None:
     species = _species()
     speeds = jnp.asarray((0.0, 2.0))
     cosines = jnp.asarray((-1.0, 0.0, 1.0))
@@ -291,7 +300,9 @@ def test_reference_rights_denial_and_table_substitution_fail_closed():
         **_source_kwargs(speeds, cosines, differential, request_commercial=False),
         identical_particle_convention="labeled-full-sphere",
     )
+    # ty: ignore[unresolved-attribute]
     assert commercial.reference_manifest.manifest_id == (
+        # ty: ignore[unresolved-attribute]
         noncommercial.reference_manifest.manifest_id
     )
     assert commercial.requested_use_id != noncommercial.requested_use_id
@@ -308,7 +319,7 @@ def test_reference_rights_denial_and_table_substitution_fail_closed():
         )
 
 
-def test_inverse_cdf_is_scale_invariant_and_rejects_bounds_outside_support():
+def test_inverse_cdf_is_scale_invariant_and_rejects_bounds_outside_support() -> None:
     species = _species()
     speeds = jnp.asarray((0.0, 2.0))
     cosines = jnp.linspace(-1.0, 1.0, 33)
@@ -352,7 +363,7 @@ def test_inverse_cdf_is_scale_invariant_and_rejects_bounds_outside_support():
         )
 
 
-def test_canonical_recoil_frame_round_trips_and_split_is_speed_independent():
+def test_canonical_recoil_frame_round_trips_and_split_is_speed_independent() -> None:
     relative = jnp.asarray(((1.0, 2.0, 3.0), (-2.0, 1.0, 0.5)))
     cosine = jnp.asarray((0.25, -0.6))
     azimuth = jnp.asarray((0.7, 5.1))

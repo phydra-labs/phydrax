@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -20,8 +23,9 @@ from phydrax.metrix import (
 from tools.metrix_benchmarks import run_state_geometry_benchmarks
 
 
-def test_abstract_state_geometry_contract_is_exported_and_abstract():
+def test_abstract_state_geometry_contract_is_exported_and_abstract() -> None:
     with pytest.raises(TypeError):
+        # ty: ignore[call-non-callable, missing-argument]
         AbstractStateGeometry()
 
     geometry = EuclideanStateGeometry()
@@ -31,7 +35,7 @@ def test_abstract_state_geometry_contract_is_exported_and_abstract():
     assert geometry.trivial
 
 
-def test_euclidean_local_retraction_preserves_state_shaped_contract():
+def test_euclidean_local_retraction_preserves_state_shaped_contract() -> None:
     geometry = EuclideanStateGeometry(geometry_id="geometry:test-euclidean")
     base = jnp.array([[1.0, -2.0], [0.5, 3.0]])
     increment = jnp.array([[0.25, 1.0], [-0.5, 2.0]])
@@ -62,12 +66,12 @@ def test_euclidean_local_retraction_preserves_state_shaped_contract():
     )
 
 
-def test_euclidean_geometry_is_jittable_and_differentiable():
+def test_euclidean_geometry_is_jittable_and_differentiable() -> None:
     geometry = EuclideanStateGeometry()
     base = jnp.array([0.5, -1.0])
 
     @jax.jit
-    def objective(increment):
+    def objective(increment: Any) -> Any:
         point = geometry.local_retraction(base).evaluate(increment)
         return jnp.sum(point**2)
 
@@ -76,14 +80,14 @@ def test_euclidean_geometry_is_jittable_and_differentiable():
     assert jnp.allclose(jax.grad(objective)(increment), 2.0 * (base + increment))
 
 
-def test_local_retraction_rejects_shape_changes():
+def test_local_retraction_rejects_shape_changes() -> None:
     retraction = EuclideanStateGeometry().local_retraction(jnp.zeros((2, 2)))
     with pytest.raises(ValueError, match="preserve state shape"):
         retraction.evaluate(jnp.zeros((4,)))
 
 
 @pytest.mark.parametrize("method", ["exponential", "cayley"])
-def test_special_orthogonal_retractions_preserve_group(method):
+def test_special_orthogonal_retractions_preserve_group(method: Any) -> None:
     geometry = SpecialOrthogonalStateGeometry(3, retraction=method)
     base = jnp.eye(3)
     local = jnp.array([[0.0, -0.3, 0.2], [0.3, 0.0, -0.1], [-0.2, 0.1, 0.0]])
@@ -103,7 +107,7 @@ def test_special_orthogonal_retractions_preserve_group(method):
 
 
 @pytest.mark.parametrize("method", ["exponential", "cayley"])
-def test_so_inverse_jvp_inverts_noncommuting_retraction_jvp(method):
+def test_so_inverse_jvp_inverts_noncommuting_retraction_jvp(method: Any) -> None:
     geometry = SpecialOrthogonalStateGeometry(3, retraction=method)
     base = jnp.eye(3)
     local = jnp.array([[0.0, -0.4, 0.2], [0.4, 0.0, -0.3], [-0.2, 0.3, 0.0]])
@@ -122,7 +126,7 @@ def test_so_inverse_jvp_inverts_noncommuting_retraction_jvp(method):
     assert jnp.allclose(recovered, direction, atol=2e-9)
 
 
-def test_so_exponential_inverse_jvp_preserves_tiny_float32_velocity():
+def test_so_exponential_inverse_jvp_preserves_tiny_float32_velocity() -> None:
     geometry = SpecialOrthogonalStateGeometry(3)
     base = jnp.eye(3, dtype=jnp.float32)
     local = jnp.asarray(
@@ -141,7 +145,7 @@ def test_so_exponential_inverse_jvp_preserves_tiny_float32_velocity():
     assert jnp.allclose(recovered, direction, rtol=5e-4, atol=1e-11)
 
 
-def test_so_exponential_inverse_jvp_solves_heterogeneous_batches_independently():
+def test_so_exponential_inverse_jvp_solves_heterogeneous_batches_independently() -> None:
     geometry = SpecialOrthogonalStateGeometry(3)
     bases = jnp.broadcast_to(jnp.eye(3), (3, 3, 3))
     locals = jnp.array(
@@ -176,7 +180,9 @@ def test_so_exponential_inverse_jvp_solves_heterogeneous_batches_independently()
     assert jnp.all(relative_errors < 3e-9)
 
 
-def test_so_exponential_inverse_jvp_does_not_materialize_full_jacobian(monkeypatch):
+def test_so_exponential_inverse_jvp_does_not_materialize_full_jacobian(
+    monkeypatch: Any,
+) -> None:
     geometry = SpecialOrthogonalStateGeometry(5)
     local = jnp.diag(jnp.ones(4), 1) - jnp.diag(jnp.ones(4), -1)
     direction = 0.1 * (jnp.diag(jnp.ones(3), 2) - jnp.diag(jnp.ones(3), -2))
@@ -186,7 +192,7 @@ def test_so_exponential_inverse_jvp_does_not_materialize_full_jacobian(monkeypat
         (direction,),
     )
 
-    def reject_full_jacobian(*args, **kwargs):
+    def reject_full_jacobian(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("SO inverse JVP must remain matrix-free")
 
     monkeypatch.setattr(jax, "jacfwd", reject_full_jacobian)
@@ -202,7 +208,9 @@ def test_so_exponential_inverse_jvp_does_not_materialize_full_jacobian(monkeypat
     assert jnp.linalg.norm(reconstructed - tangent) / jnp.linalg.norm(tangent) < 2e-8
 
 
-def test_so_exponential_inverse_supports_principal_rotations_and_rejects_cut_locus():
+def test_so_exponential_inverse_supports_principal_rotations_and_rejects_cut_locus() -> (
+    None
+):
     geometry = SpecialOrthogonalStateGeometry(2)
     radius = jnp.asarray(0.499)
     angle = 2.0 * jnp.arctan(radius)
@@ -234,7 +242,7 @@ def test_so_exponential_inverse_supports_principal_rotations_and_rejects_cut_loc
         geometry.inverse_retract(jnp.eye(2), cut_locus)
 
 
-def test_spd_congruence_retraction_and_inverse_are_positive_definite():
+def test_spd_congruence_retraction_and_inverse_are_positive_definite() -> None:
     geometry = SymmetricPositiveDefiniteStateGeometry(2)
     base = jnp.array([[2.0, 0.25], [0.25, 1.5]])
     local = jnp.array([[0.2, -0.1], [-0.1, -0.15]])
@@ -250,7 +258,7 @@ def test_spd_congruence_retraction_and_inverse_are_positive_definite():
     assert jnp.isfinite(gradient)
 
 
-def test_spd_inverse_jvp_inverts_retraction_differential():
+def test_spd_inverse_jvp_inverts_retraction_differential() -> None:
     geometry = SymmetricPositiveDefiniteStateGeometry(2)
     base = jnp.array([[2.0, 0.35], [0.35, 1.2]])
     local = jnp.array([[0.25, -0.12], [-0.12, -0.08]])
@@ -265,14 +273,14 @@ def test_spd_inverse_jvp_inverts_retraction_differential():
     assert jnp.allclose(recovered, direction, rtol=2e-7, atol=2e-8)
 
 
-def test_spd_retraction_gradient_is_finite_at_repeated_eigenvalues():
+def test_spd_retraction_gradient_is_finite_at_repeated_eigenvalues() -> None:
     geometry = SymmetricPositiveDefiniteStateGeometry(2)
     local = jnp.array([[0.15, -0.05], [-0.05, -0.1]])
     gradient = jax.grad(lambda base: jnp.sum(geometry.retract(base, local)))(jnp.eye(2))
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_spd_inverse_retraction_gradients_are_finite_at_relative_identity():
+def test_spd_inverse_retraction_gradients_are_finite_at_relative_identity() -> None:
     geometry = SymmetricPositiveDefiniteStateGeometry(2)
     identity = jnp.eye(2)
     direction = jnp.array([[0.1, -0.02], [-0.02, 0.05]])
@@ -293,7 +301,7 @@ def test_spd_inverse_retraction_gradients_are_finite_at_relative_identity():
     assert jnp.allclose(point_jvp, direction)
 
 
-def test_spd_logarithm_jvp_is_stable_for_tiny_separated_spectrum():
+def test_spd_logarithm_jvp_is_stable_for_tiny_separated_spectrum() -> None:
     geometry = SymmetricPositiveDefiniteStateGeometry(2)
     identity = jnp.eye(2)
     point = jnp.diag(jnp.array([1e-6, 1e-4]))
@@ -315,7 +323,7 @@ def test_spd_logarithm_jvp_is_stable_for_tiny_separated_spectrum():
     )
 
 
-def test_embedded_and_pointwise_adapters_preserve_explicit_contracts():
+def test_embedded_and_pointwise_adapters_preserve_explicit_contracts() -> None:
     sphere = EmbeddedStateGeometry(
         membership=lambda state: jnp.isclose(jnp.linalg.norm(state), 1.0),
         tangent_projection=lambda state, vector: vector - jnp.vdot(state, vector) * state,
@@ -352,7 +360,7 @@ def test_embedded_and_pointwise_adapters_preserve_explicit_contracts():
     assert points.shape == states.shape
 
 
-def test_unequal_embedded_spaces_preserve_exact_differential_roles():
+def test_unequal_embedded_spaces_preserve_exact_differential_roles() -> None:
     scale = jnp.array([2.0, 3.0])
     geometry = EmbeddedStateGeometry(
         membership=lambda state: jnp.all(jnp.isfinite(state)),
@@ -398,7 +406,7 @@ def test_unequal_embedded_spaces_preserve_exact_differential_roles():
     )
 
 
-def test_pointwise_geometry_routes_unequal_role_shapes_over_leading_axes():
+def test_pointwise_geometry_routes_unequal_role_shapes_over_leading_axes() -> None:
     scale = jnp.array([2.0, 3.0])
     geometry = EmbeddedStateGeometry(
         membership=lambda state: jnp.all(jnp.isfinite(state)),
@@ -460,12 +468,12 @@ def test_pointwise_geometry_routes_unequal_role_shapes_over_leading_axes():
     ],
 )
 def test_matrix_geometry_vjp_and_transport_certify_algebraic_duality(
-    geometry,
-    base,
-    local,
-    direction,
-    cotangent,
-):
+    geometry: Any,
+    base: Any,
+    local: Any,
+    direction: Any,
+    cotangent: Any,
+) -> None:
     point = geometry.retract(base, local)
     tangent = geometry.retraction_jvp(base, local, direction)
     local_covector = geometry.retraction_vjp(base, local, cotangent)
@@ -484,7 +492,7 @@ def test_matrix_geometry_vjp_and_transport_certify_algebraic_duality(
     assert bool(evidence.valid)
 
 
-def test_state_geometry_benchmark_records_manifold_residuals():
+def test_state_geometry_benchmark_records_manifold_residuals() -> None:
     report = run_state_geometry_benchmarks((2,), repeats=1)
     record = report["records"][0]
     assert record["so_exponential"]["orthogonality_error"] < 1e-10
@@ -493,7 +501,7 @@ def test_state_geometry_benchmark_records_manifold_residuals():
     assert record["so_exponential"]["geometry_id"].startswith("state-geometry:so")
 
 
-def test_geodesic_state_transport_uses_the_manifold_metric_for_isometry():
+def test_geodesic_state_transport_uses_the_manifold_metric_for_isometry() -> None:
     manifold = AffineInvariantSPDManifold(2)
     geometry = GeodesicManifoldStateGeometry(manifold)
     source = jnp.asarray([[2.0, 0.4], [0.4, 1.1]])

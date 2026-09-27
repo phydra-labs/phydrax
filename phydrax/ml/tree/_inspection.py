@@ -9,7 +9,8 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ._hard import TreeFitDiagnostics
@@ -40,7 +41,7 @@ class FeatureImportance(StrictModule):
         gain: Any,
         cover: Any,
         frequency: Any,
-    ):
+    ) -> None:
         gain_ = jnp.asarray(gain)
         cover_ = jnp.asarray(cover)
         frequency_ = jnp.asarray(frequency)
@@ -76,7 +77,7 @@ class TreeConvergenceDiagnostics(StrictModule):
         iterations: Any,
         converged: Any,
         capacity_exhausted: Any,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.objective = jnp.asarray(objective)
@@ -100,7 +101,7 @@ class PartialDependenceResult(StrictModule):
         average: Any,
         individual: Any | None,
         feature_index: int,
-    ):
+    ) -> None:
         self.grid = jnp.asarray(grid)
         self.average = jnp.asarray(average)
         self.individual = None if individual is None else jnp.asarray(individual)
@@ -114,7 +115,7 @@ class TreeSHAPExplanation(StrictModule):
     base_values: Array
     predictions: Array
 
-    def __init__(self, *, values: Any, base_values: Any, predictions: Any):
+    def __init__(self, *, values: Any, base_values: Any, predictions: Any) -> None:
         self.values = jnp.asarray(values)
         self.base_values = jnp.asarray(base_values)
         self.predictions = jnp.asarray(predictions)
@@ -127,7 +128,9 @@ class GradientAttribution(StrictModule):
     attributions: Array
     baseline: Array | None
 
-    def __init__(self, *, gradients: Any, attributions: Any, baseline: Any | None):
+    def __init__(
+        self, *, gradients: Any, attributions: Any, baseline: Any | None
+    ) -> None:
         self.gradients = jnp.asarray(gradients)
         self.attributions = jnp.asarray(attributions)
         self.baseline = None if baseline is None else jnp.asarray(baseline)
@@ -150,7 +153,14 @@ class TreeExport(StrictModule):
     gain: Array
     cover: Array
 
-    def __init__(self, model: TreeEnsemble, tree_index: int, /, *, case_index=()):
+    def __init__(
+        self,
+        model: TreeEnsemble,
+        tree_index: int,
+        /,
+        *,
+        case_index: int | tuple[int, ...] = (),
+    ) -> None:
         tree = int(tree_index)
         if tree < 0 or tree >= model.tree_capacity:
             raise IndexError("tree_index is outside the fixed tree capacity.")
@@ -257,7 +267,7 @@ def partial_dependence(
         raise ValueError("sample_weight must have positive mass in every case.")
     denominator = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
 
-    def one_grid(value):
+    def one_grid(value: Array) -> tuple[Array, Array]:
         prediction = model(values.at[..., feature].set(value))
         output_ndim = prediction.ndim - weights.ndim
         weighted = prediction * weights.reshape(weights.shape + (1,) * output_ndim)

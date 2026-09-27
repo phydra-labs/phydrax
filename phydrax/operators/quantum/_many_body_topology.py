@@ -11,7 +11,8 @@ from math import isfinite, pi
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -68,7 +69,8 @@ def many_body_twist_chern(
         )
     ):
         raise ValueError("Many-body twist states, gaps, or tolerances are invalid.")
-    gram = contract("xyda,xydb->xyab", np.conj(values), values, backend="numpy")
+    # opt_einsum's BackendType Literal omits "numpy", which contract supports at runtime.
+    gram = contract("xyda,xydb->xyab", np.conj(values), values, backend="numpy")  # ty: ignore[no-matching-overload]
     normalization = float(np.max(np.abs(gram - np.eye(values.shape[-1]))))
     links = np.empty(values.shape[:2] + (2,), dtype=np.complex128)
     minimum = np.inf

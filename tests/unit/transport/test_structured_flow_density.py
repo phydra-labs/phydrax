@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -13,7 +15,7 @@ from phydrax.transport.continuous._field_density import (
 from phydrax.transport.continuous._injective_density import InjectiveContinuousFlowLaw
 
 
-def test_rectangular_assignment_is_exact_and_lexicographic():
+def test_rectangular_assignment_is_exact_and_lexicographic() -> None:
     costs = jnp.asarray([[0.0, 2.0, 2.0], [2.0, 0.0, 1.0]])
     result = solve_multidimensional_assignment(
         jnp.asarray([[0.0], [1.0]]),
@@ -29,7 +31,7 @@ def test_rectangular_assignment_is_exact_and_lexicographic():
     assert jnp.allclose(result.total_cost, 1.0)
 
 
-def test_injective_flow_uses_hausdorff_gram_jacobian():
+def test_injective_flow_uses_hausdorff_gram_jacobian() -> None:
     latent = DiagonalNormalLaw(jnp.zeros((1,)), jnp.ones((1,)), event_shape=(1,))
     law = InjectiveContinuousFlowLaw(
         latent,
@@ -49,7 +51,7 @@ def test_injective_flow_uses_hausdorff_gram_jacobian():
     assert law.log_prob(jnp.asarray([0.3, 0.5])) == -jnp.inf
 
 
-def test_hybrid_flow_combines_counting_mass_and_conditional_density():
+def test_hybrid_flow_combines_counting_mass_and_conditional_density() -> None:
     left = DiagonalNormalLaw(jnp.asarray([-1.0]), jnp.asarray([0.5]), event_shape=(1,))
     right = DiagonalNormalLaw(jnp.asarray([1.0]), jnp.asarray([0.5]), event_shape=(1,))
     law = HybridFlowLaw(jnp.asarray([0.25, 0.75]), (left, right), mode_id="two-mode")
@@ -63,7 +65,7 @@ def test_hybrid_flow_combines_counting_mass_and_conditional_density():
     assert sample.value.shape == (16, 1)
 
 
-def test_trajectory_flow_is_a_finite_coefficient_density():
+def test_trajectory_flow_is_a_finite_coefficient_density() -> None:
     layout = TrajectoryEventLayout.from_increments(jnp.asarray([0.0, 0.5, 1.0]), (1,))
     rank = layout.coefficient_layout.rank
     coefficients = DiagonalNormalLaw(
@@ -83,14 +85,14 @@ def test_trajectory_flow_is_a_finite_coefficient_density():
     )
 
 
-def test_field_coefficient_log_prob_is_query_independent():
+def test_field_coefficient_log_prob_is_query_independent() -> None:
     coefficients = DiagonalNormalLaw(
         jnp.zeros((2,)),
         jnp.ones((2,)),
         event_shape=(2,),
     )
 
-    def decoder(values, points):
+    def decoder(values: Any, points: Any) -> Any:
         return values[..., 0, None] + values[..., 1, None] * points[:, 0]
 
     law = FiniteFieldFlowLaw(

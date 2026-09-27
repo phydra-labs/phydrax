@@ -9,11 +9,13 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._probability import AbstractProbabilityLaw
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from ._density import ContinuousFlowDensityResult, ContinuousFlowLaw
 from ._transport import ContinuousTransport
 
@@ -48,7 +50,7 @@ class RiemannianContinuousFlowLaw(AbstractProbabilityLaw):
         chart_plan: Any = None,
         max_exact_dimension: int = 32,
         flow_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(manifold.local_geometry):
             raise TypeError("manifold must expose local_geometry(point) evidence.")
         coordinate_law = ContinuousFlowLaw(
@@ -57,7 +59,7 @@ class RiemannianContinuousFlowLaw(AbstractProbabilityLaw):
             flow_id=flow_id,
         )
         initial_evidence = manifold.local_geometry(
-            transport.source_law.sample(jax.random.PRNGKey(0))
+            transport.source_law.sample(jax.random.key(0))
         )
         if not bool(initial_evidence.valid):
             raise ValueError("Initial manifold tangent/measure evidence is invalid.")
@@ -86,7 +88,7 @@ class RiemannianContinuousFlowLaw(AbstractProbabilityLaw):
     def density_measure_kind(self) -> str:
         return "riemannian"
 
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         return self.coordinate_law.sample(key, sample_shape)
 
     def log_prob_with_diagnostics(
@@ -95,7 +97,7 @@ class RiemannianContinuousFlowLaw(AbstractProbabilityLaw):
         coordinate = self.coordinate_law.log_prob_with_diagnostics(value)
         flat = coordinate.data_state.reshape((-1,) + self.event_shape)
 
-        def one(state):
+        def one(state: Array) -> tuple[Array, Array, Array, Array]:
             evidence = self.manifold.local_geometry(state)
             projected = evidence.tangent_projector @ state.reshape((-1,))
             tangent_residual = jnp.sqrt(jnp.sum((projected - state.reshape((-1,))) ** 2))

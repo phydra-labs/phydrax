@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 from phydrax.domain import DomainFunction, ReferencedDensityField
@@ -25,6 +26,10 @@ from ._riemannian_ops import (
     riemannian_div,
     riemannian_grad,
 )
+
+
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
 
 
 class _WeightedLaplacianCallable(StrictModule):
@@ -44,7 +49,7 @@ class _WeightedLaplacianCallable(StrictModule):
         differential_positions: tuple[int, ...],
         coordinate_position: int,
         /,
-    ):
+    ) -> None:
         self.base = base
         self.differential = differential
         self.measure = measure
@@ -52,7 +57,7 @@ class _WeightedLaplacianCallable(StrictModule):
         self.differential_positions = differential_positions
         self.coordinate_position = int(coordinate_position)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         base = self.base.func(
             *[args[position] for position in self.base_positions], key=key, **kwargs
         )
@@ -91,7 +96,7 @@ class _WeightedDivergenceCallable(StrictModule):
         field_positions: tuple[int, ...],
         coordinate_position: int,
         /,
-    ):
+    ) -> None:
         self.base = base
         self.field = field
         self.measure = measure
@@ -99,7 +104,7 @@ class _WeightedDivergenceCallable(StrictModule):
         self.field_positions = field_positions
         self.coordinate_position = int(coordinate_position)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         base = self.base.func(
             *[args[position] for position in self.base_positions], key=key, **kwargs
         )

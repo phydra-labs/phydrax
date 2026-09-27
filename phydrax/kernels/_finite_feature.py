@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._base import _as_inputs, _as_point, _as_points, AbstractPositiveDefiniteKernel
 
@@ -47,7 +48,7 @@ class FiniteFeatureKernel(AbstractFiniteFeatureKernel):
         *,
         feature_map_id: str,
         max_derivative_order: int | None = 0,
-    ):
+    ) -> None:
         if not callable(feature_map):
             raise TypeError("feature_map must be callable.")
         if not isinstance(feature_map_id, str) or not feature_map_id:

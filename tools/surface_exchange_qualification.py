@@ -11,6 +11,7 @@ universal turbulent-flux qualification or a momentum-dynamics experiment.
 
 import argparse
 import json
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -26,7 +27,7 @@ from phydrax.applications.atmosphere import (
 )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--steps", type=int, default=120)
     parser.add_argument("--time-step", type=float, default=10.0)
@@ -53,8 +54,8 @@ def main():
             thermo, air_t, density, vapor, pressure, surface_t, wind, height
         )
 
-        def rollout(initial):
-            def step(carry, _):
+        def rollout(initial: Any) -> Any:
+            def step(carry: Any, _: Any) -> Any:
                 surface, water, energy = carry
                 air_mass = dry_mass + water
                 air = thermo.adjust(
@@ -126,7 +127,7 @@ def main():
             "closed_energy_residual_J_m2": energy_residual,
         }
 
-    def observable(parameters):
+    def observable(parameters: Any) -> Any:
         temperature, vapor, speed, water, heat_scale, moisture_scale, capacity_scale = (
             parameters
         )

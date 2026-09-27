@@ -12,7 +12,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,7 +28,7 @@ class SNCurve:
     fatigue_strength_coefficient_pa: float
     fatigue_strength_exponent: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             not isfinite(self.fatigue_strength_coefficient_pa)
             or self.fatigue_strength_coefficient_pa <= 0
@@ -119,7 +120,7 @@ class FatigueAssessment:
     sn_curve: SNCurve
     ultimate_strength_pa: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isfinite(self.ultimate_strength_pa) or self.ultimate_strength_pa <= 0:
             raise ValueError("Fatigue ultimate strength must be finite and positive.")
 

@@ -7,7 +7,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -34,7 +36,7 @@ class ProteinEnsembleComposition:
     components: tuple[tuple[str, int], ...]
     parameter_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for value in (self.construct_id, self.chemical_state_id, self.parameter_id):
             _identifier(value, "composition identity")
         if not self.components or len({name for name, _ in self.components}) != len(
@@ -49,7 +51,7 @@ class ProteinEnsembleComposition:
                 raise ValueError("Composition counts must be positive integers.")
         object.__setattr__(self, "components", tuple(sorted(self.components)))
 
-    def fingerprint(self):
+    def fingerprint(self) -> str:
         return canonical_fingerprint(
             {
                 "kind": "protein-ensemble-composition",
@@ -87,7 +89,7 @@ class EnthalpyReplica:
     equilibration_evidence_id: str
     pressure_condition_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for value in (
             self.basin_id,
             self.replica_id,
@@ -158,7 +160,7 @@ class EnthalpyReplica:
                 "Blocks must span at least five declared correlation-time bounds."
             )
 
-    def mean_and_variance(self, energy_unit):
+    def mean_and_variance(self, energy_unit: UnitDefinition) -> tuple[Array, Array]:
         factor = float(conversion_factor(self.energy_unit, energy_unit))
         estimate = block_mean_uncertainty(self.series.values, block_size=self.block_size)
         return estimate.mean * factor, (estimate.standard_error * factor) ** 2
@@ -345,14 +347,14 @@ class ExperimentallyClosedFreeEnergy(StrictModule):
 
 def close_free_energy_at_reference(
     fit: HeatCapacitySlopeEstimate,
-    temperatures,
+    temperatures: ArrayLike,
     *,
     reference_temperature: float,
     reference_delta_g: float,
-    experimental_covariance,
+    experimental_covariance: npt.ArrayLike,
     reference: ReferenceArtifactManifest,
     closure_kind: str,
-    commercial_use=False,
+    commercial_use: bool = False,
 ) -> ExperimentallyClosedFreeEnergy:
     """Close ΔG using measured (T_ref, ΔG_ref), with their 2×2 covariance.
 
@@ -408,7 +410,7 @@ def close_free_energy_at_reference(
         .set(covariance)
     )
 
-    def evaluate(p):
+    def evaluate(p: Array) -> Array:
         h_ref, cp, t_ref, g_ref = p
         h_at_closure = h_ref + cp * (t_ref - fit.reference_temperature)
         return thermal_unfolding_free_energy(

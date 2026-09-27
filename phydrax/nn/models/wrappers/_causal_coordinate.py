@@ -7,7 +7,8 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState, ParameterOwner
@@ -37,7 +38,7 @@ class CausalCoordinatePlan(StrictModule, NonTrainableState):
         *,
         reset: ArrayLike | None = None,
         duplicate_rule: Literal["error", "zero_step"] = "error",
-    ):
+    ) -> None:
         values = np.asarray(coordinates, dtype=np.float64)
         if values.ndim != 1 or values.size == 0 or not np.all(np.isfinite(values)):
             raise ValueError("Causal coordinates must be one finite nonempty schedule.")
@@ -83,7 +84,7 @@ class CausalCoordinateResult(StrictModule):
 class CausalCoordinateNetwork(StrictModule, ParameterOwner):
     cell: AbstractRecurrentCell
 
-    def __init__(self, cell: AbstractRecurrentCell, /):
+    def __init__(self, cell: AbstractRecurrentCell, /) -> None:
         if not isinstance(cell, AbstractRecurrentCell):
             raise TypeError("cell must be AbstractRecurrentCell.")
         self.cell = cell

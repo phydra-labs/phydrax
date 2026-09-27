@@ -9,12 +9,14 @@ from __future__ import annotations
 from abc import abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._bvh import BVHBuildPolicy, PackedBVH, point_select_leaf_items, prepare_bvh
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -23,6 +25,9 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
 from ...geometry.simplicial import AffineSimplexMap
+
+
+_GradedRayCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 
 class AbstractRefractiveIndexField(StrictModule):
@@ -47,7 +52,7 @@ class AnalyticRefractiveIndexField(AbstractRefractiveIndexField):
         /,
         *,
         field_id: str,
-    ):
+    ) -> None:
         if not callable(index_function):
             raise TypeError("index_function must be callable.")
         if not isinstance(coordinate_contract, SpatialCoordinateContract):
@@ -99,7 +104,7 @@ class StructuredRefractiveIndexField(AbstractRefractiveIndexField, NonTrainableS
         /,
         *,
         field_id: str,
-    ):
+    ) -> None:
         values_host = np.asarray(values)
         origin_host = np.asarray(origin, dtype=np.float64)
         spacing_host = np.asarray(spacing, dtype=np.float64)
@@ -206,7 +211,7 @@ class TetrahedralRefractiveIndexField(AbstractRefractiveIndexField, NonTrainable
         *,
         field_id: str,
         maximum_candidates: int = 64,
-    ):
+    ) -> None:
         vertices_host = np.asarray(vertices, dtype=np.float64)
         tetrahedra_host = np.asarray(tetrahedra, dtype=np.int32)
         values_host = np.asarray(vertex_values, dtype=np.float64)
@@ -410,7 +415,7 @@ class PreparedGradedIndexRay(StrictModule):
         valid = direction_valid & field_valid & (n0 > 0.0)
         step = jnp.asarray(self.step_size, dtype=positions_.dtype)
 
-        def one_step(vector):
+        def one_step(vector: Array) -> Array:
             x, p = vector[:3], vector[3:]
             n, gradient, _, _ = self.field.sample(x[None, :])
             p_half = p + 0.5 * step * n[0] * gradient[0]
@@ -419,7 +424,9 @@ class PreparedGradedIndexRay(StrictModule):
             p_new = p_half + 0.5 * step * n_new[0] * gradient_new[0]
             return jnp.concatenate((x_new, p_new))
 
-        def advance(carry, _):
+        def advance(
+            carry: _GradedRayCarry, _x: None
+        ) -> tuple[_GradedRayCarry, tuple[Array, Array, Array]]:
             x, p, mapping, length, optical_path, active, maximum_h = carry
             vector = jnp.concatenate((x, p), axis=-1)
             next_vector = jax.vmap(one_step)(vector)

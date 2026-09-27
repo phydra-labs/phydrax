@@ -10,12 +10,14 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._spectral._spherical import SphericalHarmonicPlan
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._spherical import SphericalSpectralDiscretization
 from ._spherical_layout import SphericalModeLayout
 
@@ -38,9 +40,8 @@ class SphericalSpinOperatorPlan(StrictModule, NonTrainableState):
         /,
         *,
         physical_units: bool = True,
-    ):
-        if kind not in ("raise", "lower"):
-            raise ValueError("Spherical spin operator kind must be 'raise' or 'lower'.")
+    ) -> None:
+        kind = parse(kind, SphericalSpinOperatorKind, "kind")
         self.kind = kind
         self.physical_units = bool(physical_units)
         self.plan_id = canonical_fingerprint(
@@ -72,7 +73,7 @@ class PreparedSphericalSpinOperator(StrictModule, NonTrainableState):
         plan: SphericalSpinOperatorPlan,
         discretization: SphericalSpectralDiscretization,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, SphericalSpinOperatorPlan):
             raise TypeError("plan must be a SphericalSpinOperatorPlan.")
         if not isinstance(discretization, SphericalSpectralDiscretization):
@@ -164,10 +165,10 @@ def spherical_coordinate_derivative(
     """
     if not isinstance(discretization, SphericalSpectralDiscretization):
         raise TypeError("discretization must be spherical spectral.")
-    if coordinate not in ("theta", "phi"):
-        raise ValueError("coordinate must be 'theta' or 'phi'.")
-    if representation not in ("modal", "physical"):
-        raise ValueError("representation must be 'modal' or 'physical'.")
+    coordinate = parse(coordinate, SphericalCoordinate, "coordinate")
+    representation = parse(
+        representation, SphericalDerivativeRepresentation, "representation"
+    )
     tolerance = (
         64.0 * np.finfo(np.asarray(discretization.points).dtype).eps
         if polar_tolerance is None

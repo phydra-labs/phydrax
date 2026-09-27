@@ -16,7 +16,7 @@ import functools
 from abc import abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from enum import IntEnum
-from typing import Any, ClassVar, final, NamedTuple
+from typing import Any, cast, ClassVar, final, NamedTuple
 
 import equinox as eqx
 import jax
@@ -24,7 +24,8 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import optax
-from jaxtyping import Array, Key, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ._differentiation import (
     authority_admits,
@@ -67,6 +68,7 @@ from ._training_objective import (
     _ObjectiveContribution,
 )
 from ._tree_math import tree_inner, tree_norm, tree_where
+from .typing import PRNGKey
 
 
 TargetPolicy = DelayedTargetPolicy | ExponentialMovingAverageTargetPolicy
@@ -131,7 +133,7 @@ class TrainingRejectionBudgetError(RuntimeError):
         outcome: TrainingAttemptOutcome,
         state: Any = None,
         evidence: Any = None,
-    ):
+    ) -> None:
         super().__init__(message)
         self.consecutive_rejections = consecutive_rejections
         self.attempt_cursor = attempt_cursor
@@ -154,7 +156,7 @@ def _index(value: Any, /) -> Array:
 
 
 def _site_key(
-    root: Key[Array, ""],
+    root: PRNGKey,
     objective_id: str,
     site: str,
     cursor_kind: str,
@@ -162,7 +164,7 @@ def _site_key(
     microstep: int | Array,
     lane: int | Array | None,
     /,
-) -> Key[Array, ""]:
+) -> PRNGKey:
     role = cursor_kind if lane is None else f"{cursor_kind}-lane"
     address = SampleAddress(
         _TRAINING_NAMESPACE,
@@ -175,7 +177,7 @@ def _site_key(
 
 
 def training_site_key(
-    root: Key[Array, ""],
+    root: PRNGKey,
     /,
     *,
     objective_id: str,
@@ -183,7 +185,7 @@ def training_site_key(
     attempt: int | Array,
     microstep: int | Array,
     lane: int | Array | None = None,
-) -> Key[Array, ""]:
+) -> PRNGKey:
     """Key of one attempt-addressed training site.
 
     Attempt-addressed randomness (dropout, stochastic estimators) is fresh on
@@ -195,7 +197,7 @@ def training_site_key(
 
 
 def training_accepted_site_key(
-    root: Key[Array, ""],
+    root: PRNGKey,
     /,
     *,
     objective_id: str,
@@ -203,7 +205,7 @@ def training_accepted_site_key(
     accepted: int | Array,
     microstep: int | Array,
     lane: int | Array | None = None,
-) -> Key[Array, ""]:
+) -> PRNGKey:
     """Key of one accepted-update-addressed training site.
 
     Accepted-addressed randomness (batch and sample selection) repeats across
@@ -222,7 +224,9 @@ class TrainingKeys(StrictModule):
     maps lanes internally passes its own `lane` instead.
     """
 
-    root: Key[Array, ""]
+    __strict_contract__ = True
+
+    root: PRNGKey
     attempt_cursor: Array
     accepted_cursor: Array
     microstep: Array
@@ -234,9 +238,7 @@ class TrainingKeys(StrictModule):
             raise ValueError("The kernel already addresses this evaluation's lane.")
         return self.lane if lane is None else lane
 
-    def attempt_key(
-        self, site: str, /, *, lane: int | Array | None = None
-    ) -> Key[Array, ""]:
+    def attempt_key(self, site: str, /, *, lane: int | Array | None = None) -> PRNGKey:
         """Key of an attempt-addressed site (fresh on every attempt)."""
         return training_site_key(
             self.root,
@@ -247,9 +249,7 @@ class TrainingKeys(StrictModule):
             lane=self._lane(lane),
         )
 
-    def accepted_key(
-        self, site: str, /, *, lane: int | Array | None = None
-    ) -> Key[Array, ""]:
+    def accepted_key(self, site: str, /, *, lane: int | Array | None = None) -> PRNGKey:
         """Key of an accepted-update-addressed site (stable across rejections)."""
         return training_accepted_site_key(
             self.root,
@@ -300,7 +300,7 @@ class KernelObjective(StrictModule):
         route: DerivativeRoute,
         fn: ObjectiveFunction,
         weight: float = 1.0,
-    ):
+    ) -> None:
         identifier = _identifier(objective_id, "objective_id")
         if not isinstance(kind, ObjectiveKind):
             raise TypeError("kind must be an ObjectiveKind.")
@@ -462,7 +462,7 @@ class OptaxUpdateRule(AbstractKernelUpdateRule):
         rule_id: str,
         reevaluates_objective: bool = False,
         evaluation_parameters: EvaluationParametersFn | None = None,
-    ):
+    ) -> None:
         if not isinstance(optimizer, optax.GradientTransformation):
             raise TypeError("optimizer must be an optax.GradientTransformation.")
         if not isinstance(reevaluates_objective, bool):
@@ -502,7 +502,13 @@ class OptaxUpdateRule(AbstractKernelUpdateRule):
         /,
     ) -> tuple[PyTree[Any], PyTree[Any], PyTree[Any], Array]:
         if self.reevaluates_objective:
-            updates, next_state = self.optimizer.update(
+            optimizer = self.optimizer
+            # The constructor admits reevaluation only for extra-args transformations.
+            if not (isinstance(optimizer, optax.GradientTransformationExtraArgs)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(optimizer, optax.GradientTransformationExtraArgs)."
+                )
+            updates, next_state = optimizer.update(
                 gradients,
                 rule_state,
                 parameters,
@@ -580,7 +586,7 @@ class BacktrackingLineSearchRule(AbstractKernelUpdateRule):
         growth: float = 2.0,
         sufficient_decrease: float = 1e-4,
         max_trials: int = 20,
-    ):
+    ) -> None:
         values = (initial_step, shrink, growth, sufficient_decrease)
         if any(
             isinstance(value, (bool, np.bool_)) or not np.isfinite(float(value))
@@ -802,13 +808,15 @@ class TrainingKernelState(StrictModule):
     leaf carries the lane axis first.
     """
 
+    __strict_contract__ = True
+
     parameters: Any
     model_state: Any
     rule_state: Any
     targets: TargetParameterState | None
     accumulation: tuple[ObjectiveAccumulation, ...]
     pending_model_state: Any
-    root_key: Key[Array, ""]
+    root_key: PRNGKey
     attempt_cursor: Array
     accepted_cursor: Array
     microstep: Array
@@ -870,7 +878,7 @@ class TrainingKernelSpec(StrictModule):
         target_policy: TargetPolicy | None = None,
         lane_layout: LaneLayout | None = None,
         accumulation_dtype: Any = jnp.float64,
-    ):
+    ) -> None:
         if not isinstance(rule, AbstractKernelUpdateRule):
             raise TypeError("rule must be an AbstractKernelUpdateRule.")
         context_ = _identifier(context, "context")
@@ -1061,7 +1069,11 @@ def _parameter_authorities(
             f"{context}: parameters at {unowned!r} have no owning component slot or "
             "ComponentBinding and the frontend declared no root authority."
         )
-    return tuple(authorities[path] or root_authority for path in parameter_paths)
+    # Unowned paths fall back to root_authority, which the check above made non-None.
+    return cast(
+        "tuple[ComponentAuthority, ...]",
+        tuple(authorities[path] or root_authority for path in parameter_paths),
+    )
 
 
 def _objective_admission(
@@ -1306,7 +1318,7 @@ class PreparedTrainingKernel(StrictModule):
         )
 
     def _initial_state(
-        self, parameters: Any, model_state: Any, key: Key[Array, ""], /
+        self, parameters: Any, model_state: Any, key: PRNGKey, /
     ) -> TrainingKernelState:
         rule_state = self.rule.init(parameters)
         _require_rejection_fields(self.rule, rule_state)
@@ -1338,7 +1350,7 @@ class PreparedTrainingKernel(StrictModule):
         )
 
     def _states(
-        self, parameters: Any, model_state: Any, key: Key[Array, ""], /
+        self, parameters: Any, model_state: Any, key: PRNGKey, /
     ) -> TrainingKernelState:
         if not self.lane_parameters:
             return self._initial_state(parameters, model_state, key)
@@ -1346,7 +1358,7 @@ class PreparedTrainingKernel(StrictModule):
             self._initial_state, in_axes=(eqx.if_array(0), eqx.if_array(0), None)
         )(parameters, model_state, key)
 
-    def init(self, tree: PyTree[Any], key: Key[Array, ""], /) -> TrainingKernelState:
+    def init(self, tree: PyTree[Any], key: PRNGKey, /) -> TrainingKernelState:
         """Start a run from the prepared tree and a typed root key."""
         key_ = jnp.asarray(key)
         if not jax.dtypes.issubdtype(key_.dtype, jax.dtypes.prng_key) or key_.shape:
@@ -1559,7 +1571,12 @@ class PreparedTrainingKernel(StrictModule):
             leaf if axis == 0 else None for leaf, axis in zip(leaves, axes, strict=True)
         ]
 
-        def lane_function(lane_state, lane_fixed, lane_payload, lane):
+        def lane_function(
+            lane_state: TrainingKernelState,
+            lane_fixed: list[Any],
+            lane_payload: Any,
+            lane: Array,
+        ) -> Any:
             fixed = jax.tree_util.tree_unflatten(
                 treedef,
                 [
@@ -1869,7 +1886,9 @@ def prepare_training_kernel(
         raise TypeError("root_authority must be a ComponentAuthority or None.")
 
     resolution = require_parameter_roles(tree, context=context)
-    paths, roles = resolution.paths, resolution.roles
+    paths = resolution.paths
+    # require_parameter_roles rejects unclassified (None-role) leaves.
+    roles = cast("tuple[ArrayRole, ...]", resolution.roles)
     parameter_paths = tuple(
         path
         for path, role in zip(paths, roles, strict=True)
@@ -2101,11 +2120,13 @@ def _content_digest(arrays: Mapping[str, Any], /) -> str:
 
 def training_role_schema_id(resolution: RoleResolution, /) -> str:
     """Fingerprint the path and array role of every leaf of one resolved tree."""
+    # Callers pass resolutions already checked by `_declared_roles` (no None roles).
+    roles = cast("tuple[ArrayRole, ...]", resolution.roles)
     return canonical_fingerprint(
         {
             "kind": "training-role-schema",
             "paths": list(resolution.paths),
-            "roles": [role.value for role in resolution.roles],
+            "roles": [role.value for role in roles],
         }
     )
 

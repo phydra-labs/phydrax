@@ -8,7 +8,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from phydrax._callable import _ensure_special_kwonly_args
 from phydrax._doc import DOC_KEY0
@@ -38,7 +38,7 @@ class GroupAveragedOperator(StrictModule):
         /,
         *,
         spatial_axes: Sequence[int] | None = None,
-    ):
+    ) -> None:
         if not callable(model):
             raise TypeError("model must be callable.")
         if not isinstance(group, FiniteOrthogonalGroup):

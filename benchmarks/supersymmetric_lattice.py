@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 
@@ -27,7 +29,7 @@ from phydrax.applications.supersymmetric_lattice import (
 from phydrax.sampling import RHMCResourcePolicy
 
 
-def benchmark_case(extent: int, repeats: int):
+def benchmark_case(extent: int, repeats: int) -> Any:
     theory = TwistedN2SYMPlan(
         (extent, extent),
         matrix_rank=1,

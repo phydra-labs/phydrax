@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -6,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _manifest():
+def _manifest() -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         "synthetic-schlieren",
         checksum_algorithm="sha256",
@@ -24,7 +26,7 @@ def _manifest():
     )
 
 
-def _background(support):
+def _background(support: Any) -> Any:
     quantity = phx.measurement.QuantitySpec(
         "imaging", "detector-signal", "detector-signal", phx.units.ONE, "sensor.signal"
     )
@@ -51,7 +53,7 @@ def _background(support):
     return phx.imaging.ImageAsset(asset)
 
 
-def test_schlieren_deflection_and_image_formation_keep_quantities_distinct():
+def test_schlieren_deflection_and_image_formation_keep_quantities_distinct() -> None:
     spatial = phx.SpatialCoordinateContract(
         phx.units.METER,
         coordinate_system="cartesian-world",
@@ -143,11 +145,17 @@ def test_schlieren_deflection_and_image_formation_keep_quantities_distinct():
     )
     assert pair.reference.image_id == pair.observed.image_id
     knife = phx.imaging.KnifeEdgeSchlierenPlan(
-        background, (1.0, 0.0), contrast_gain_per_radian=2.0
+        background,
+        # ty: ignore[invalid-argument-type]
+        (1.0, 0.0),
+        contrast_gain_per_radian=2.0,
     ).evaluate(result)
     compiled_knife = eqx.filter_jit(
         phx.imaging.KnifeEdgeSchlierenPlan(
-            background, (1.0, 0.0), contrast_gain_per_radian=2.0
+            background,
+            # ty: ignore[invalid-argument-type]
+            (1.0, 0.0),
+            contrast_gain_per_radian=2.0,
         ).evaluate
     )(result)
     np.testing.assert_allclose(compiled_knife.prediction.values, knife.prediction.values)

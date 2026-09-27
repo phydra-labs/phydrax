@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -61,7 +62,7 @@ def linearize_circuit(
         raise ValueError("Linearization time must be scalar.")
     zero_rate = jnp.zeros_like(value)
 
-    def residual(current_state, current_rate):
+    def residual(current_state: Array, current_rate: Array) -> Array:
         inputs = (
             None
             if input_policy is None

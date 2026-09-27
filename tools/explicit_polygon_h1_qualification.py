@@ -8,6 +8,7 @@ import argparse
 import json
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -15,7 +16,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _mesh(count: int):
+def _mesh(count: int) -> Any:
     coordinates = jnp.asarray(
         tuple((i / count, j / count) for j in range(count + 1) for i in range(count + 1))
     )
@@ -29,10 +30,11 @@ def _mesh(count: int):
         for j in range(count)
         for i in range(count)
     )
+    # ty: ignore[invalid-argument-type]
     return phx.discretization.CellMesh.from_polygons(coordinates, cells)
 
 
-def _timed(action):
+def _timed(action: Any) -> Any:
     start = perf_counter()
     value = action()
     jax.block_until_ready(value)

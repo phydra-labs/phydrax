@@ -8,15 +8,15 @@ import abc
 from typing import Literal
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
+from .._dtype_names import inexact_result_type
 from .._fingerprint import canonical_fingerprint
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._les_closures import (
@@ -50,7 +50,7 @@ class DynamicLESProvenance(StrictModule, NonTrainableState):
         test_filter: ResolvedLESFilter,
         test_filter_ratio: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(parameter_provenance, LESParameterProvenance):
             raise TypeError("parameter_provenance must be LESParameterProvenance.")
         if not isinstance(test_filter, ResolvedLESFilter):
@@ -70,7 +70,7 @@ class DynamicLESProvenance(StrictModule, NonTrainableState):
             raise ValueError("Resolved and test LES commutation semantics must match.")
 
         ratio_array = jnp.asarray(test_filter_ratio)
-        if isinstance(ratio_array, jax.core.Tracer):
+        if isinstance(ratio_array, jax_core.Tracer):
             raise TypeError("The test-filter ratio must be concrete provenance metadata.")
         ratio = np.asarray(ratio_array, dtype=np.float64)
         if ratio.shape == ():
@@ -81,7 +81,7 @@ class DynamicLESProvenance(StrictModule, NonTrainableState):
             raise ValueError(
                 "Every directional test-filter ratio must be finite and > 1."
             )
-        ratio_tuple = tuple(float(value) for value in ratio)
+        ratio_tuple = (float(ratio[0]), float(ratio[1]), float(ratio[2]))
 
         self.parameter_provenance = parameter_provenance
         self.test_filter = test_filter
@@ -128,7 +128,7 @@ class DynamicLESInputs(StrictModule):
         /,
         *,
         accepted_update_mask: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(algebraic_inputs, AlgebraicLESInputs):
             raise TypeError("algebraic_inputs must be AlgebraicLESInputs.")
         if not isinstance(provenance, DynamicLESProvenance):
@@ -192,7 +192,7 @@ class LagrangianDynamicLESState(StrictModule, NonTrainableState):
         rejected_updates: ArrayLike,
         continuation_id: str,
         /,
-    ):
+    ) -> None:
         numerator = _inexact_array(averaged_numerator)
         denominator = _inexact_array(averaged_denominator)
         initialized = jnp.asarray(initialized_mask)
@@ -298,7 +298,7 @@ class GlobalDynamicLESAveraging(AbstractDynamicLESAveraging, NonTrainableState):
     differentiation: _Differentiation = eqx.field(static=True)
     averaging_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.name = "global"
         self.differentiation = "smooth"
         self.averaging_id = _policy_id("dynamic-les-averaging", {"name": self.name})
@@ -330,7 +330,7 @@ class HomogeneousPlaneDynamicLESAveraging(AbstractDynamicLESAveraging, NonTraina
     differentiation: _Differentiation = eqx.field(static=True)
     averaging_id: str = eqx.field(static=True)
 
-    def __init__(self, axis_names: tuple[str, ...], /):
+    def __init__(self, axis_names: tuple[str, ...], /) -> None:
         if not isinstance(axis_names, tuple) or not axis_names:
             raise TypeError("Homogeneous averaging axis_names must be a non-empty tuple.")
         if any(not isinstance(axis, str) or not axis.strip() for axis in axis_names):
@@ -381,9 +381,9 @@ class LocalKernelDynamicLESAveraging(AbstractDynamicLESAveraging, NonTrainableSt
     differentiation: _Differentiation = eqx.field(static=True)
     averaging_id: str = eqx.field(static=True)
 
-    def __init__(self, kernel_weights: ArrayLike, /):
+    def __init__(self, kernel_weights: ArrayLike, /) -> None:
         array = jnp.asarray(kernel_weights)
-        if isinstance(array, jax.core.Tracer):
+        if isinstance(array, jax_core.Tracer):
             raise TypeError("Local averaging kernel weights must be concrete.")
         weights = np.asarray(array, dtype=np.float64)
         if weights.ndim != 3:
@@ -456,7 +456,7 @@ class LagrangianDynamicLESAveraging(AbstractDynamicLESAveraging, NonTrainableSta
     differentiation: _Differentiation = eqx.field(static=True)
     averaging_id: str = eqx.field(static=True)
 
-    def __init__(self, relaxation: float, /):
+    def __init__(self, relaxation: float, /) -> None:
         if not isinstance(relaxation, (int, float)):
             raise TypeError("Lagrangian relaxation must be a real scalar.")
         value = float(relaxation)
@@ -547,7 +547,7 @@ class ExactDenominatorRegularization(
     differentiation: _Differentiation = eqx.field(static=True)
     regularization_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.name = "exact-zero-branch"
         self.differentiation = "branchwise"
         self.regularization_id = _policy_id(
@@ -582,7 +582,7 @@ class AdditiveDenominatorRegularization(
     differentiation: _Differentiation = eqx.field(static=True)
     regularization_id: str = eqx.field(static=True)
 
-    def __init__(self, shift: float, /):
+    def __init__(self, shift: float, /) -> None:
         if not isinstance(shift, (int, float)):
             raise TypeError("Denominator regularization shift must be a real scalar.")
         value = float(shift)
@@ -624,7 +624,7 @@ class AllowSignedBackscatter(AbstractBackscatterPolicy, NonTrainableState):
     differentiation: _Differentiation = eqx.field(static=True)
     backscatter_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.name = "allow-signed"
         self.differentiation = "smooth"
         self.backscatter_id = _policy_id("dynamic-les-backscatter", {"name": self.name})
@@ -641,7 +641,7 @@ class NonnegativeBackscatterClip(AbstractBackscatterPolicy, NonTrainableState):
     differentiation: _Differentiation = eqx.field(static=True)
     backscatter_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.name = "nonnegative-clip"
         self.differentiation = "branchwise"
         self.backscatter_id = _policy_id("dynamic-les-backscatter", {"name": self.name})
@@ -663,7 +663,7 @@ class BoundedFractionBackscatter(AbstractBackscatterPolicy, NonTrainableState):
     differentiation: _Differentiation = eqx.field(static=True)
     backscatter_id: str = eqx.field(static=True)
 
-    def __init__(self, maximum_fraction: float, reference_coefficient: float, /):
+    def __init__(self, maximum_fraction: float, reference_coefficient: float, /) -> None:
         if not isinstance(maximum_fraction, (int, float)) or not isinstance(
             reference_coefficient, (int, float)
         ):
@@ -714,7 +714,7 @@ class DynamicSmagorinskyPlan(StrictModule, NonTrainableState):
         regularization: AbstractDenominatorRegularization,
         backscatter: AbstractBackscatterPolicy,
         /,
-    ):
+    ) -> None:
         if not isinstance(averaging, AbstractDynamicLESAveraging):
             raise TypeError("averaging must be a dynamic LES averaging policy.")
         if not isinstance(regularization, AbstractDenominatorRegularization):
@@ -758,7 +758,7 @@ class PreparedDynamicSmagorinskyPlan(StrictModule, NonTrainableState):
         plan: DynamicSmagorinskyPlan,
         provenance: DynamicLESProvenance,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, DynamicSmagorinskyPlan):
             raise TypeError("plan must be DynamicSmagorinskyPlan.")
         if not isinstance(provenance, DynamicLESProvenance):
@@ -906,7 +906,7 @@ def _inexact_array(value: ArrayLike, /) -> Array:
 
 
 def _is_concrete(value: Array, /) -> bool:
-    return not isinstance(value, jax.core.Tracer)
+    return not isinstance(value, jax_core.Tracer)
 
 
 def _require_finite(value: Array, name: str, /) -> None:

@@ -10,7 +10,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from phydrax.units import DIMENSIONLESS, DimensionSignature
 

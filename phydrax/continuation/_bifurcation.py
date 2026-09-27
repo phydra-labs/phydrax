@@ -8,12 +8,13 @@ import abc
 from collections.abc import Callable
 from enum import IntEnum
 from math import isfinite
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._tree_math import tree_add_scaled, tree_norm
@@ -24,11 +25,12 @@ from ..nonlinear import (
     NonlinearSystemProblem,
     NonlinearTermination,
 )
+from ..typing import parse
 from ._core import _execution_residual, BranchSeed, ContinuationCurveProblem
 from ._geometry import ContinuationGeometry
 
 
-BifurcationKind = Literal[
+BifurcationKind: TypeAlias = Literal[
     "fold",
     "hopf",
     "branch-point",
@@ -93,7 +95,7 @@ class BifurcationTolerances(StrictModule):
         nondegeneracy: float = 1e-6,
         symmetry: float = 1e-7,
         maximum_condition: float = 1e8,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -140,7 +142,7 @@ class FoldAssumptions(StrictModule):
         smoothness_order: int,
         scalar_parameter_verified: bool,
         local_fredholm_index_zero_verified: bool,
-    ):
+    ) -> None:
         order = int(smoothness_order)
         if order < 0:
             raise ValueError("smoothness_order must be non-negative.")
@@ -172,7 +174,7 @@ class BranchPointAssumptions(StrictModule):
         scalar_parameter_verified: bool,
         reference_branch_verified: bool,
         local_fredholm_index_zero_verified: bool,
-    ):
+    ) -> None:
         order = int(smoothness_order)
         if order < 0:
             raise ValueError("smoothness_order must be non-negative.")
@@ -204,7 +206,7 @@ class HopfAssumptions(StrictModule):
         smoothness_order: int,
         autonomous_flow_verified: bool,
         scalar_parameter_verified: bool,
-    ):
+    ) -> None:
         order = int(smoothness_order)
         if order < 0:
             raise ValueError("smoothness_order must be non-negative.")
@@ -240,7 +242,7 @@ class PitchforkAssumptions(StrictModule):
         equation_equivariance_verified: bool,
         reference_branch_symmetric: bool,
         critical_mode_is_odd: bool,
-    ):
+    ) -> None:
         order = int(smoothness_order)
         if order < 0:
             raise ValueError("smoothness_order must be non-negative.")
@@ -278,7 +280,7 @@ class TranscriticalAssumptions(StrictModule):
         reference_branch_verified: bool,
         intersecting_branch_verified: bool,
         distinct_tangents_verified: bool,
-    ):
+    ) -> None:
         order = int(smoothness_order)
         if order < 0:
             raise ValueError("smoothness_order must be non-negative.")
@@ -303,7 +305,7 @@ class BranchCorrectionState(StrictModule):
     state: PyTree[Array]
     coordinate: Array
 
-    def __init__(self, state: PyTree[Any], coordinate: Any, /):
+    def __init__(self, state: PyTree[Any], coordinate: Any, /) -> None:
         coordinate_ = _validate_scalar(coordinate, "branch correction coordinate")
         self.state = state
         self.coordinate = coordinate_
@@ -330,7 +332,7 @@ class CorrectedBranchSeed(StrictModule):
         constraint_residual: Any,
         successful: Any,
         correction_id: str,
-    ):
+    ) -> None:
         if not isinstance(seed, BranchSeed):
             raise TypeError("seed must be a BranchSeed.")
         if not isinstance(correction_state, BranchCorrectionState):
@@ -362,7 +364,7 @@ class FoldState(StrictModule):
         parameter: Any,
         nullvector: PyTree[Any],
         /,
-    ):
+    ) -> None:
         self.physical_state = physical_state
         self.parameter = jnp.asarray(parameter)
         self.nullvector = nullvector
@@ -381,7 +383,7 @@ class FoldResidualBlocks(StrictModule):
         equilibrium: PyTree[Any],
         kernel: PyTree[Any],
         normalization: Any,
-    ):
+    ) -> None:
         self.equilibrium = equilibrium
         self.kernel = kernel
         self.normalization = jnp.asarray(normalization)
@@ -404,7 +406,7 @@ class HopfState(StrictModule):
         mode_imaginary: PyTree[Any],
         frequency: Any,
         /,
-    ):
+    ) -> None:
         self.physical_state = physical_state
         self.parameter = jnp.asarray(parameter)
         self.mode_real = mode_real
@@ -429,7 +431,7 @@ class HopfResidualBlocks(StrictModule):
         eigen_imaginary: PyTree[Any],
         normalization: Any,
         phase: Any,
-    ):
+    ) -> None:
         self.equilibrium = equilibrium
         self.eigen_real = eigen_real
         self.eigen_imaginary = eigen_imaginary
@@ -460,7 +462,7 @@ class ExtendedSystemCertificate(StrictModule):
         frequency_valid: Any = True,
         finite: Any,
         status: Any,
-    ):
+    ) -> None:
         norms = jnp.asarray(block_norms)
         if norms.ndim != 1 or not norms.size:
             raise ValueError("block_norms must be a nonempty rank-one array.")
@@ -493,7 +495,7 @@ class ExtendedSystemProvenance(StrictModule):
         method_id: str,
         nonlinear_method_id: str,
         derivative_id: str = "jax-jvp",
-    ):
+    ) -> None:
         values = tuple(
             str(value)
             for value in (
@@ -530,7 +532,7 @@ class FoldResult(StrictModule):
         convergence: ExtendedSystemCertificate,
         nonlinear_result: NonlinearResult,
         provenance: ExtendedSystemProvenance,
-    ):
+    ) -> None:
         if not isinstance(state, FoldState):
             raise TypeError("state must be a FoldState.")
         if not isinstance(residual_blocks, FoldResidualBlocks):
@@ -569,7 +571,7 @@ class HopfResult(StrictModule):
         convergence: ExtendedSystemCertificate,
         nonlinear_result: NonlinearResult,
         provenance: ExtendedSystemProvenance,
-    ):
+    ) -> None:
         if not isinstance(state, HopfState):
             raise TypeError("state must be a HopfState.")
         if not isinstance(residual_blocks, HopfResidualBlocks):
@@ -628,7 +630,7 @@ class FoldProblem(StrictModule):
         /,
         *,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(problem, ContinuationCurveProblem):
             raise TypeError("problem must be a ContinuationCurveProblem.")
         if not isinstance(state_space, AbstractVectorSpace):
@@ -709,7 +711,7 @@ class HopfProblem(StrictModule):
         *,
         minimum_frequency: float = 1e-7,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(problem, ContinuationCurveProblem):
             raise TypeError("problem must be a ContinuationCurveProblem.")
         if not isinstance(state_space, AbstractVectorSpace):
@@ -876,7 +878,7 @@ class FoldMethod(StrictModule):
         termination: NonlinearTermination | None = None,
         residual_tolerance: float = 1e-7,
         method_id: str = "fold-extended-system",
-    ):
+    ) -> None:
         if not isinstance(root_method, AbstractNonlinearMethod):
             raise TypeError("root_method must be an AbstractNonlinearMethod.")
         tolerance = float(residual_tolerance)
@@ -957,7 +959,7 @@ class HopfMethod(StrictModule):
         termination: NonlinearTermination | None = None,
         residual_tolerance: float = 1e-7,
         method_id: str = "hopf-extended-system",
-    ):
+    ) -> None:
         if not isinstance(root_method, AbstractNonlinearMethod):
             raise TypeError("root_method must be an AbstractNonlinearMethod.")
         tolerance = float(residual_tolerance)
@@ -1056,7 +1058,7 @@ class NullspaceEvidence(StrictModule):
         source_success: Any,
         analyzer_id: str,
         full_spectrum: bool,
-    ):
+    ) -> None:
         values = jnp.asarray(singular_values)
         if values.ndim != 1 or not values.size:
             raise ValueError("singular_values must be a nonempty rank-one array.")
@@ -1114,7 +1116,7 @@ class CallableNullspaceAnalyzer(AbstractNullspaceAnalyzer):
         /,
         *,
         analyzer_id: str,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         identifier = str(analyzer_id)
@@ -1164,7 +1166,7 @@ def evaluate_nullspace(
     right = geometry.state_tangent_to_execution(state, right_nullvector)
     left = geometry.residual_to_execution(left_nullvector)
 
-    def residual_function(value):
+    def residual_function(value: PyTree[Array]) -> PyTree[Array]:
         return _execution_residual(
             problem,
             geometry,
@@ -1233,7 +1235,7 @@ class HopfEigenEvidence(StrictModule):
         source_success: Any,
         analyzer_id: str,
         full_spectrum: bool,
-    ):
+    ) -> None:
         values = jnp.asarray(eigenvalues)
         if values.ndim != 1 or not values.size:
             raise ValueError("eigenvalues must be a nonempty rank-one array.")
@@ -1286,7 +1288,7 @@ class CallableHopfAnalyzer(AbstractHopfAnalyzer):
         /,
         *,
         analyzer_id: str,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         identifier = str(analyzer_id)
@@ -1383,15 +1385,8 @@ class BifurcationCertificate(StrictModule):
         assumptions_verified: bool,
         certificate_id: str,
         geometry: ContinuationGeometry | None = None,
-    ):
-        if kind not in (
-            "fold",
-            "hopf",
-            "branch-point",
-            "pitchfork",
-            "transcritical",
-        ):
-            raise ValueError("Unsupported bifurcation kind.")
+    ) -> None:
+        kind = parse(kind, BifurcationKind, "kind")
         identifier = str(certificate_id)
         if not identifier:
             raise ValueError("certificate_id must be non-empty.")
@@ -1458,7 +1453,7 @@ def _second_state_derivative(
     args: Any,
     /,
 ) -> PyTree[Array]:
-    def first(value):
+    def first(value: PyTree[Array]) -> PyTree[Array]:
         return jax.jvp(
             lambda inner: problem.residual(inner, parameter, args),
             (value,),
@@ -1476,7 +1471,7 @@ def _mixed_derivative(
     args: Any,
     /,
 ) -> PyTree[Array]:
-    def state_action(parameter_value):
+    def state_action(parameter_value: Array) -> PyTree[Array]:
         return jax.jvp(
             lambda value: problem.residual(value, parameter_value, args),
             (state,),
@@ -2198,7 +2193,9 @@ def correct_branch_seed(
         certificate.parameter + offset,
     )
 
-    def augmented_residual(candidate, solve_args):
+    def augmented_residual(
+        candidate: BranchCorrectionState, solve_args: Any
+    ) -> BranchCorrectionState:
         state_coordinates = geometry.state_to_execution(candidate.state)
         increment = tree_add_scaled(
             state_coordinates,

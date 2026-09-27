@@ -5,22 +5,24 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any, TypeAlias
+from typing import Any, cast, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._doc import DOC_KEY0
 from .._term import AbstractSamplingTerm, AbstractScalarTerm
 from ..domain import DomainFunction
 from ..nn.models.wrappers._implicit_modal import ImplicitModalField
+from ..typing import PRNGKey
 
 
-ModalTimeProvider: TypeAlias = Callable[[Key[Array, ""]], Array]
+ModalTimeProvider: TypeAlias = Callable[[PRNGKey], Array]
 
 
 def _weight(value: ArrayLike, /, *, name: str) -> Array:
@@ -78,7 +80,7 @@ class CompiledModalResidualTerm(AbstractSamplingTerm):
         args: Any = None,
         scalar_weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         from ..equations._spectral_compile import CompiledSpectralDynamics
 
         if not isinstance(compiled, CompiledSpectralDynamics):
@@ -88,7 +90,8 @@ class CompiledModalResidualTerm(AbstractSamplingTerm):
             raise ValueError("function_name must be non-empty.")
         if callable(times):
             fixed_times = None
-            provider = times
+            # ArrayLike time batches are never callable, so this is the provider.
+            provider = cast(ModalTimeProvider, times)
         else:
             fixed_times = _time_batch(times)
             provider = None
@@ -100,7 +103,7 @@ class CompiledModalResidualTerm(AbstractSamplingTerm):
         self.function_name = name
         self.label = label
 
-    def sample(self, *, key: Key[Array, ""] = DOC_KEY0) -> Array:
+    def sample(self, *, key: PRNGKey = DOC_KEY0) -> Array:
         if self.fixed_times is not None:
             return self.fixed_times
         if self.time_provider is None:
@@ -112,7 +115,7 @@ class CompiledModalResidualTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: ArrayLike | None = None,
         **kwargs: Any,
@@ -164,7 +167,7 @@ class ModalObservationTerm(AbstractScalarTerm):
         weights: ArrayLike = 1.0,
         scalar_weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         times_ = np.asarray(_time_batch(times))
         targets_ = np.asarray(targets)
         name = str(function_name)
@@ -203,7 +206,7 @@ class ModalObservationTerm(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:

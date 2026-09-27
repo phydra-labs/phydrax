@@ -1,3 +1,6 @@
+from typing import Any
+
+import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -5,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def _problem():
+def _problem() -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0]),
         jnp.asarray([[1.0], [2.0]]),
@@ -38,7 +41,7 @@ def _problem():
     )
 
 
-def _zero_duration_problem():
+def _zero_duration_problem() -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.0, 0.5]),
         jnp.asarray([[0.0], [0.5]]),
@@ -80,7 +83,7 @@ def _zero_duration_problem():
     )
 
 
-def _three_step_problem():
+def _three_step_problem() -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0, 1.5]),
         jnp.asarray([[1.0], [2.0], [1.5]]),
@@ -113,7 +116,7 @@ def _three_step_problem():
     )
 
 
-def test_resampling_utilities_are_fixed_size_bounded_and_weighted():
+def test_resampling_utilities_are_fixed_size_bounded_and_weighted() -> None:
     log_weights = jnp.log(jnp.asarray([0.8, 0.15, 0.05]))
     for method in ("systematic", "stratified", "multinomial", "residual"):
         indices = phx.uq.resample_indices(jr.key(2), log_weights, method=method)
@@ -135,7 +138,7 @@ def test_resampling_utilities_are_fixed_size_bounded_and_weighted():
         phx.uq.resample_indices(jr.key(0), jnp.full((3,), -jnp.inf))
 
 
-def test_bootstrap_filter_matches_linear_gaussian_marginals():
+def test_bootstrap_filter_matches_linear_gaussian_marginals() -> None:
     problem = _problem()
     kalman = phx.uq.kalman_filter(problem)
     particles = phx.uq.bootstrap_particle_filter(
@@ -156,7 +159,7 @@ def test_bootstrap_filter_matches_linear_gaussian_marginals():
     assert phx.uq.particle_filter_diagnostics(particles).passed
 
 
-def test_particle_and_ensemble_filters_skip_zero_duration_transition():
+def test_particle_and_ensemble_filters_skip_zero_duration_transition() -> None:
     problem = _zero_duration_problem()
     particle = phx.uq.bootstrap_particle_filter(
         jr.key(11),
@@ -186,7 +189,9 @@ def test_particle_and_ensemble_filters_skip_zero_duration_transition():
     )
 
 
-def test_bootstrap_filter_propagates_sampled_inputs_without_changing_noise_stream():
+def test_bootstrap_filter_propagates_sampled_inputs_without_changing_noise_stream() -> (
+    None
+):
     base = _problem()
     input_signal = phx.stochastic.SampledStateSpaceInput(
         jnp.asarray([0.0, 0.5, 1.0]),
@@ -195,7 +200,7 @@ def test_bootstrap_filter_propagates_sampled_inputs_without_changing_noise_strea
         input_id="particle-input",
     )
 
-    def input_driven_sample(key, state, t0, t1, context):
+    def input_driven_sample(key: Any, state: Any, t0: Any, t1: Any, context: Any) -> Any:
         sample = base.model.transition.sample(key, state, t0, t1, context)
         return sample.values + context.transition_end_input
 
@@ -231,7 +236,7 @@ def test_bootstrap_filter_propagates_sampled_inputs_without_changing_noise_strea
     )
 
 
-def test_genealogy_backward_smoothing_and_predictive_conversion():
+def test_genealogy_backward_smoothing_and_predictive_conversion() -> None:
     result = phx.uq.bootstrap_particle_filter(
         jr.key(11),
         _problem(),
@@ -254,7 +259,7 @@ def test_genealogy_backward_smoothing_and_predictive_conversion():
     assert predictive.sample_axes[0].source == "process"
 
 
-def test_replay_is_exact_and_schedule_extension_preserves_prefix():
+def test_replay_is_exact_and_schedule_extension_preserves_prefix() -> None:
     short = phx.uq.bootstrap_particle_filter(
         jr.key(15), _problem(), num_particles=32, resampling_policy="always"
     )
@@ -274,7 +279,9 @@ def test_replay_is_exact_and_schedule_extension_preserves_prefix():
     assert jnp.array_equal(short.ancestor_indices, extended.ancestor_indices[:2])
 
 
-def test_particle_checkpoint_resumes_exactly_and_rejects_wrong_settings(tmp_path):
+def test_particle_checkpoint_resumes_exactly_and_rejects_wrong_settings(
+    tmp_path: Any,
+) -> None:
     problem = _problem()
     state = phx.uq.initialize_particle_filter(
         jr.key(16), problem, num_particles=32, resampling_policy="always"
@@ -296,7 +303,25 @@ def test_particle_checkpoint_resumes_exactly_and_rejects_wrong_settings(tmp_path
         )
 
 
-def test_particle_filter_reports_all_invalid_likelihoods():
+def test_particle_checkpoint_restores_state_identical_to_saved_state(
+    tmp_path: Any,
+) -> None:
+    problem = _problem()
+    state = phx.uq.initialize_particle_filter(
+        jr.key(17), problem, num_particles=16, resampling_policy="always"
+    )
+    state, _ = phx.uq.particle_filter_step(problem, state)
+    path = tmp_path / "particle-filter.zip"
+    phx.uq.write_particle_filter_checkpoint(path, problem, state)
+    restored = phx.uq.read_particle_filter_checkpoint(
+        path, problem, num_particles=16, resampling_policy="always"
+    )
+
+    assert eqx.tree_equal(state, restored)
+    assert restored.step_index.dtype == state.step_index.dtype
+
+
+def test_particle_filter_reports_all_invalid_likelihoods() -> None:
     base = _problem()
     invalid_observation = phx.stochastic.CallableObservationModel(
         lambda state, time, context: jnp.zeros((1,)),
@@ -328,7 +353,7 @@ def test_particle_filter_reports_all_invalid_likelihoods():
         )
 
 
-def test_particle_posterior_measure_matches_weighted_filtering_marginals():
+def test_particle_posterior_measure_matches_weighted_filtering_marginals() -> None:
     result = phx.uq.bootstrap_particle_filter(
         jr.key(18),
         _problem(),
@@ -356,7 +381,7 @@ def test_particle_posterior_measure_matches_weighted_filtering_marginals():
     )
 
 
-def test_particle_posterior_measure_masks_failed_filtering_steps():
+def test_particle_posterior_measure_masks_failed_filtering_steps() -> None:
     base = _problem()
     invalid_observation = phx.stochastic.CallableObservationModel(
         lambda state, time, context: jnp.zeros((1,)),

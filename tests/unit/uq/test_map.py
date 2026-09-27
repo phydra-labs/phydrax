@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def test_find_map_recovers_correlated_gaussian_mode():
+def test_find_map_recovers_correlated_gaussian_mode() -> None:
     precision = jnp.asarray([[5.0, 1.0], [1.0, 3.0]])
     target = jnp.asarray([0.4, -0.7])
     initial = jnp.asarray([2.0, 1.0])
@@ -56,7 +59,7 @@ def test_find_map_recovers_correlated_gaussian_mode():
     )
 
 
-def test_find_map_optimizes_unconstrained_coordinates_with_jacobian():
+def test_find_map_optimizes_unconstrained_coordinates_with_jacobian() -> None:
     log_location = jnp.log(jnp.asarray(2.5))
     space = phx.uq.ParameterSpace(
         jnp.asarray(-1.0),
@@ -71,7 +74,7 @@ def test_find_map_optimizes_unconstrained_coordinates_with_jacobian():
     assert jnp.allclose(result.parameters, 2.5, atol=1e-8)
 
 
-def test_find_map_returns_or_raises_with_complete_failure_evidence():
+def test_find_map_returns_or_raises_with_complete_failure_evidence() -> None:
     space = phx.uq.ParameterSpace(
         jnp.asarray([-1.2, 1.0]),
         priors=phx.uq.Normal(0.0, 100.0),
@@ -102,13 +105,13 @@ def test_find_map_returns_or_raises_with_complete_failure_evidence():
     assert error.value.result.termination_reason == "max_steps"
 
 
-def test_structured_gp_problems_reuse_compiled_map_executable():
+def test_structured_gp_problems_reuse_compiled_map_executable() -> None:
     points = jnp.linspace(0.0, 1.0, 16)
 
-    def physical_mean(parameters):
+    def physical_mean(parameters: Any) -> Any:
         return parameters["coefficient"] * points
 
-    def state(parameters):
+    def state(parameters: Any) -> Any:
         return phx.uq.GaussianProcessLikelihoodState(
             kernel=phx.kernels.AmplitudeKernel(
                 phx.kernels.Matern32Kernel(
@@ -119,7 +122,7 @@ def test_structured_gp_problems_reuse_compiled_map_executable():
             noise_scale=parameters["noise_scale"],
         )
 
-    def problem(observations):
+    def problem(observations: Any) -> Any:
         discrepancy = phx.uq.ExactGaussianProcessDiscrepancy(
             points,
             observations,
@@ -165,7 +168,7 @@ def test_structured_gp_problems_reuse_compiled_map_executable():
     assert warm.execution_seconds > 0.0
 
 
-def test_find_map_rejects_nonfinite_initial_density():
+def test_find_map_rejects_nonfinite_initial_density() -> None:
     space = phx.uq.ParameterSpace(jnp.asarray(0.0), priors=phx.uq.Normal(0.0, 1.0))
     problem = phx.uq.PosteriorProblem(space, lambda _: jnp.asarray(jnp.nan))
 
@@ -173,7 +176,7 @@ def test_find_map_rejects_nonfinite_initial_density():
         phx.uq.find_map(problem)
 
 
-def test_find_map_rejects_nonfinite_initial_gradient():
+def test_find_map_rejects_nonfinite_initial_gradient() -> None:
     space = phx.uq.ParameterSpace(jnp.asarray(0.0), priors=phx.uq.Normal(0.0, 1.0))
     problem = phx.uq.PosteriorProblem(space, lambda value: -jnp.sqrt(value))
 

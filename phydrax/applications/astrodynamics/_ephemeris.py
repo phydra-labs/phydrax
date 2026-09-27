@@ -10,11 +10,13 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._bodies import CelestialBodyCatalog
 from ._data import AstrodynamicsDataProvenance
 from ._state import CartesianOrbitState
@@ -52,13 +54,12 @@ class TabulatedEphemeris(StrictModule, NonTrainableState):
         /,
         *,
         bounds_policy: EphemerisBoundsPolicy = "error",
-    ):
+    ) -> None:
         if not isinstance(catalog, CelestialBodyCatalog):
             raise TypeError("catalog must be a CelestialBodyCatalog.")
         if not isinstance(provenance, AstrodynamicsDataProvenance):
             raise TypeError("provenance must be AstrodynamicsDataProvenance.")
-        if bounds_policy not in ("error", "clip"):
-            raise ValueError("Unknown ephemeris bounds policy.")
+        bounds_policy = parse(bounds_policy, EphemerisBoundsPolicy, "bounds_policy")
         times_host = np.asarray(relative_times, dtype=np.float64)
         states_host = np.asarray(states, dtype=np.float64)
         expected = (times_host.size, catalog.capacity, 6)

@@ -10,7 +10,9 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..metrix import LegendreGeometry
@@ -39,7 +41,7 @@ class ParameterMirrorGeometry(StrictModule):
         /,
         *,
         weights: Mapping[str, ArrayLike] | None = None,
-    ):
+    ) -> None:
         if not isinstance(geometries, Mapping):
             raise TypeError("ParameterMirrorGeometry geometries must be a path mapping.")
         if not geometries:

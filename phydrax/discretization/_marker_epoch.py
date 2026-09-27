@@ -4,21 +4,23 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
-MarkerTopologyDifferentiationPolicy = Literal["frozen-schedule", "event-map"]
+MarkerTopologyDifferentiationPolicy: TypeAlias = Literal["frozen-schedule", "event-map"]
 
 
 class MarkerEpochPlan(StrictModule, NonTrainableState):
@@ -35,7 +37,7 @@ class MarkerEpochPlan(StrictModule, NonTrainableState):
         *,
         active_mask: ArrayLike | None = None,
         epoch_id: str | None = None,
-    ):
+    ) -> None:
         ids = np.asarray(marker_ids)
         weights = np.asarray(quadrature_weight)
         active = (
@@ -116,14 +118,17 @@ class MarkerEpochTransferPlan(StrictModule, NonTrainableState):
         *,
         differentiation_policy: MarkerTopologyDifferentiationPolicy = "frozen-schedule",
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         matrix = np.asarray(primal)
         expected = (target.capacity, source.capacity)
         tolerance_ = float(tolerance)
         if matrix.shape != expected or np.any(~np.isfinite(matrix)):
             raise ValueError(f"primal must be finite with shape {expected}.")
-        if differentiation_policy not in ("frozen-schedule", "event-map"):
-            raise ValueError("Unknown marker topology differentiation policy.")
+        differentiation_policy = parse(
+            differentiation_policy,
+            MarkerTopologyDifferentiationPolicy,
+            "differentiation_policy",
+        )
         if tolerance_ <= 0.0 or not np.isfinite(tolerance_):
             raise ValueError("Marker epoch tolerance must be positive and finite.")
         source_weight = np.asarray(source.quadrature_weight)
@@ -265,7 +270,7 @@ class MarkerMechanicsMigrationPlan(StrictModule, NonTrainableState):
         /,
         *,
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(transfer, MarkerEpochTransferPlan):
             raise TypeError("transfer must be MarkerEpochTransferPlan.")
         dimension = int(ambient_dimension)

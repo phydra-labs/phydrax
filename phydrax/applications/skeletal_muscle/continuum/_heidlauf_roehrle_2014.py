@@ -18,7 +18,8 @@ from math import isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 
@@ -36,7 +37,11 @@ from ....discretization import (
     PreparedMixedFiniteElementConstraint,
 )
 from ....ein import contract
-from ....equations import CellResidualAction, FiniteElementForm
+from ....equations import (
+    CellResidualAction,
+    FiniteElementExecutionContext,
+    FiniteElementForm,
+)
 from ....units import convert_value, KILOPASCAL, ONE, PASCAL
 from ._fiber import PreparedUniformFiberArchitecture
 
@@ -84,7 +89,15 @@ class HeidlaufRoehrle2014Parameters(StrictModule):
     d1: Array
     maximum_active_nominal_stress_pa: Array
 
-    def __init__(self, c10_pa, c01_pa, b1_pa, d1, maximum_active_nominal_stress_pa, /):
+    def __init__(
+        self,
+        c10_pa: ArrayLike,
+        c01_pa: ArrayLike,
+        b1_pa: ArrayLike,
+        d1: ArrayLike,
+        maximum_active_nominal_stress_pa: ArrayLike,
+        /,
+    ) -> None:
         values = tuple(
             _scalar(value, name)
             for name, value in (
@@ -143,13 +156,13 @@ class HeidlaufRoehrle2014StressInput(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        normalized_active_stress,
-        source_state_token,
-        source_id,
+        normalized_active_stress: ArrayLike,
+        source_state_token: ArrayLike,
+        source_id: str,
         /,
         *,
-        source_successful=True,
-    ):
+        source_successful: ArrayLike = True,
+    ) -> None:
         gamma = _scalar(normalized_active_stress, "normalized_active_stress")
         token = jnp.asarray(source_state_token)
         if token.shape != (8,) or token.dtype != jnp.uint32:
@@ -259,7 +272,7 @@ class HeidlaufRoehrle2014ActiveStressField(StrictModule, NonTrainableState):
     No clipping or second force-length/velocity factor is applied by the owner.
     """
 
-    evaluate: Callable
+    evaluate: Callable[[Array, FiniteElementExecutionContext], ArrayLike]
     provenance: SemanticProvenance
     revision: NumericRevision
     field_id: str = eqx.field(static=True)
@@ -267,13 +280,13 @@ class HeidlaufRoehrle2014ActiveStressField(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        evaluate: Callable,
+        evaluate: Callable[[Array, FiniteElementExecutionContext], ArrayLike],
         provenance: SemanticProvenance,
         revision: NumericRevision,
         /,
         *,
         source_id: str,
-    ):
+    ) -> None:
         if not callable(evaluate) or not isinstance(provenance, SemanticProvenance):
             raise TypeError(
                 "An active stress field requires a callable and semantic provenance."
@@ -324,7 +337,7 @@ class HeidlaufRoehrle2014Plan(StrictModule, NonTrainableState):
         /,
         *,
         minimum_jacobian: float = 1.0e-8,
-    ):
+    ) -> None:
         self.material_id = _identifier(material_id, "material_id")
         self.active_stress_source_id = _identifier(
             active_stress_source_id, "active_stress_source_id"
@@ -404,7 +417,9 @@ class HeidlaufRoehrle2014Plan(StrictModule, NonTrainableState):
         )
 
 
-def _input_evidence(value, source_id, /):
+def _input_evidence(
+    value: HeidlaufRoehrle2014StressInput, source_id: str, /
+) -> HeidlaufRoehrle2014InputEvidence:
     if not isinstance(value, HeidlaufRoehrle2014StressInput):
         raise TypeError("active_stress must be HeidlaufRoehrle2014StressInput.")
     finite = jnp.isfinite(value.normalized_active_stress)
@@ -506,7 +521,9 @@ class PreparedHeidlaufRoehrle2014Material(StrictModule):
             + anisotropic
         )
 
-    def _stress_parts(self, deformation, pressure, gamma, /):
+    def _stress_parts(
+        self, deformation: Array, pressure: Array, gamma: Array, /
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
         c = deformation.T @ deformation
         direction = self.architecture.reference_direction
         current_fiber = deformation @ direction
@@ -545,7 +562,11 @@ class PreparedHeidlaufRoehrle2014Material(StrictModule):
         )
 
     def first_piola(
-        self, deformation_gradient, pressure_pa, normalized_active_stress=None, /
+        self,
+        deformation_gradient: ArrayLike,
+        pressure_pa: ArrayLike,
+        normalized_active_stress: ArrayLike | None = None,
+        /,
     ) -> Array:
         """Return P(F,p;gamma), with gamma held independent in mechanical tangents."""
         deformation = _deformation(deformation_gradient)
@@ -578,7 +599,11 @@ class PreparedHeidlaufRoehrle2014Material(StrictModule):
         return -jnp.log(jacobian) * jnp.where(valid, 1.0, jnp.nan)
 
     def evaluate(
-        self, deformation_gradient, pressure_pa, normalized_active_stress=None, /
+        self,
+        deformation_gradient: ArrayLike,
+        pressure_pa: ArrayLike,
+        normalized_active_stress: ArrayLike | None = None,
+        /,
     ) -> HeidlaufRoehrle2014PointResponse:
         deformation = _deformation(deformation_gradient)
         pressure = _scalar(pressure_pa, "pressure_pa")
@@ -623,7 +648,11 @@ class PreparedHeidlaufRoehrle2014Material(StrictModule):
         )
 
     def block_tangent(
-        self, deformation_gradient, pressure_pa, normalized_active_stress=None, /
+        self,
+        deformation_gradient: ArrayLike,
+        pressure_pa: ArrayLike,
+        normalized_active_stress: ArrayLike | None = None,
+        /,
     ) -> HeidlaufRoehrle2014BlockTangent:
         deformation = _deformation(deformation_gradient)
         pressure = _scalar(pressure_pa, "pressure_pa")
@@ -644,7 +673,11 @@ class PreparedHeidlaufRoehrle2014Material(StrictModule):
         )
 
     def first_piola_points(
-        self, deformation, pressure, normalized_active_stress, /
+        self,
+        deformation: ArrayLike,
+        pressure: ArrayLike,
+        normalized_active_stress: ArrayLike,
+        /,
     ) -> Array:
         """Batched FE/coupling input axes (...,3,3), (...), (...), respectively."""
         deformation = _real(deformation, "deformation")
@@ -665,8 +698,8 @@ class PreparedHeidlaufRoehrle2014Material(StrictModule):
 
     def form(
         self,
-        displacement_field="u",
-        pressure_field="p",
+        displacement_field: str = "u",
+        pressure_field: str = "p",
         /,
         *,
         active_stress_field: HeidlaufRoehrle2014ActiveStressField | None = None,
@@ -714,8 +747,14 @@ class PreparedHeidlaufRoehrle2014Material(StrictModule):
         )
 
         def displacement_kernel(
-            values, gradients, points, weights, basis_values, basis_gradients, context
-        ):
+            values: tuple[Array, ...],
+            gradients: tuple[Array, ...],
+            points: Array,
+            weights: Array,
+            basis_values: Array,
+            basis_gradients: Array,
+            context: FiniteElementExecutionContext,
+        ) -> Array:
             del basis_values
             deformation = jnp.swapaxes(jnp.asarray(gradients[0]), -1, -2) + jnp.eye(3)
             pressure = jnp.asarray(values[1]) + origin
@@ -728,8 +767,14 @@ class PreparedHeidlaufRoehrle2014Material(StrictModule):
             return contract("cq,cqad,cqid->cia", weights, stress, basis_gradients)
 
         def pressure_kernel(
-            values, gradients, points, weights, basis_values, basis_gradients, context
-        ):
+            values: tuple[Array, ...],
+            gradients: tuple[Array, ...],
+            points: Array,
+            weights: Array,
+            basis_values: Array,
+            basis_gradients: Array,
+            context: FiniteElementExecutionContext,
+        ) -> Array:
             del values, points, basis_gradients, context
             deformation = jnp.swapaxes(jnp.asarray(gradients[0]), -1, -2) + jnp.eye(3)
             residual = jax.vmap(self.constraint)(deformation.reshape((-1, 3, 3))).reshape(
@@ -761,8 +806,8 @@ class PreparedHeidlaufRoehrle2014Material(StrictModule):
         finite_element_plan: MixedFiniteElementConstraintPlan,
         /,
         *,
-        initial_state=None,
-        args=None,
+        initial_state: tuple[ArrayLike, ArrayLike] | None = None,
+        args: object = None,
         active_stress_field: HeidlaufRoehrle2014ActiveStressField | None = None,
         pressure_origin_pa: ArrayLike = 0.0,
     ) -> PreparedMixedFiniteElementConstraint:

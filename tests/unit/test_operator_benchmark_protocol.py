@@ -1,7 +1,7 @@
 import json
 from dataclasses import replace
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import jax
 import jax.numpy as jnp
@@ -88,12 +88,12 @@ def _target_batch(value: object, /) -> OperatorTargetBatch:
 
 
 @pytest.fixture(scope="module")
-def quick_ladders():
+def quick_ladders() -> Any:
     return standard_operator_benchmark_ladders(quick=True)
 
 
 @pytest.fixture(scope="module")
-def conservative_geometry_scenario():
+def conservative_geometry_scenario() -> Any:
     return conservative_ring_transport_scenario(
         source_points=16,
         query_points=19,
@@ -103,11 +103,11 @@ def conservative_geometry_scenario():
     )
 
 
-def _ladder(ladders, name):
+def _ladder(ladders: Any, name: Any) -> Any:
     return next(ladder for ladder in ladders if ladder.name == name)
 
 
-def _assert_no_duplicate_cases(values):
+def _assert_no_duplicate_cases(values: Any) -> None:
     flattened = jnp.asarray(values).reshape(values.shape[0], -1)
     exact_matches = jnp.all(
         flattened[:, None, :] == flattened[None, :, :],
@@ -116,12 +116,12 @@ def _assert_no_duplicate_cases(values):
     assert int(jnp.count_nonzero(exact_matches)) == flattened.shape[0]
 
 
-def _assert_population_rank(values, minimum_rank=6):
+def _assert_population_rank(values: Any, minimum_rank: Any = 6) -> None:
     flattened = jnp.asarray(values).reshape(values.shape[0], -1)
     assert int(jnp.linalg.matrix_rank(flattened)) >= int(minimum_rank)
 
 
-def test_seeded_scenario_populations_are_deterministic_and_diverse():
+def test_seeded_scenario_populations_are_deterministic_and_diverse() -> None:
     populations = (
         (
             lambda seed: navier_stokes_scenario(num_cases=6, seed=seed),
@@ -158,7 +158,7 @@ def test_seeded_scenario_populations_are_deterministic_and_diverse():
     assert int(jnp.count_nonzero(green_spectrum > 1e-8 * green_spectrum.max())) > 2
 
 
-def test_remaining_seeded_physical_populations_have_rank_without_case_aliases():
+def test_remaining_seeded_physical_populations_have_rank_without_case_aliases() -> None:
     populations = (
         (
             lambda seed: periodic_burgers_scenario(
@@ -263,7 +263,7 @@ def test_remaining_seeded_physical_populations_have_rank_without_case_aliases():
         assert first.reference_evidence.passed
 
 
-def test_deformed_elliptic_geometry_and_shift_audits_pass():
+def test_deformed_elliptic_geometry_and_shift_audits_pass() -> None:
     scenario = split_operator_scenario(
         deformed_elliptic_scenario(
             points=12,
@@ -362,8 +362,8 @@ def test_deformed_elliptic_geometry_and_shift_audits_pass():
 
 
 def test_conservative_ring_transport_has_physical_support_and_exact_mass(
-    conservative_geometry_scenario,
-):
+    conservative_geometry_scenario: Any,
+) -> None:
     scenario = conservative_geometry_scenario
     assert scenario.domain_support_key == "domain_sdf"
     assert scenario.domain_support_kind == "sdf"
@@ -406,8 +406,8 @@ def test_conservative_ring_transport_has_physical_support_and_exact_mass(
 
 
 def test_geometry_informed_flower_ablation_factories_are_controlled_and_finite(
-    conservative_geometry_scenario,
-):
+    conservative_geometry_scenario: Any,
+) -> None:
     scenario = conservative_geometry_scenario
     architectures = {
         architecture.name: architecture
@@ -478,15 +478,15 @@ def test_geometry_informed_flower_ablation_factories_are_controlled_and_finite(
 
 
 def test_sourcewise_normalization_preserves_support_and_physical_mass(
-    conservative_geometry_scenario,
-):
+    conservative_geometry_scenario: Any,
+) -> None:
     scenario = conservative_geometry_scenario
     statistics, target_location, target_scale = (
         benchmark_protocol._normalization_statistics(scenario, "sourcewise")
     )
 
     class ConservativeProjector:
-        def __call__(self, batch):
+        def __call__(self, batch: Any) -> Any:
             source = batch.input("density")
             source_mass = jnp.sum(
                 source.values * source.weights(case_shape=batch.case_shape),
@@ -526,7 +526,7 @@ def test_sourcewise_normalization_preserves_support_and_physical_mass(
     assert jnp.allclose(source_mass, prediction_mass, rtol=1e-12, atol=1e-12)
 
     class SupportProjection:
-        def __call__(self, batch):
+        def __call__(self, batch: Any) -> Any:
             count = batch.require_single_query().sample_shape[0]
             return batch.input("domain_sdf").values[:, :count]
 
@@ -545,7 +545,7 @@ def test_sourcewise_normalization_preserves_support_and_physical_mass(
     assert jnp.array_equal(support_passthrough(scenario.train_batch), expected)
 
 
-def test_roadmap_factories_are_geometry_gated_and_finite():
+def test_roadmap_factories_are_geometry_gated_and_finite() -> None:
     scenario = darcy_scenario(resolution=4, num_cases=2, seed=91)
     architectures = {
         architecture.name: architecture
@@ -600,7 +600,7 @@ def test_roadmap_factories_are_geometry_gated_and_finite():
     assert set(expected).isdisjoint(metadata_names)
 
 
-def test_burgers_reuses_multimode_realizations_and_preserves_sharp_residuals():
+def test_burgers_reuses_multimode_realizations_and_preserves_sharp_residuals() -> None:
     scenarios = (
         periodic_burgers_scenario(
             train_resolution=32,
@@ -646,7 +646,7 @@ def test_burgers_reuses_multimode_realizations_and_preserves_sharp_residuals():
     assert float(periodic_jump) > 1.0
 
 
-def test_darcy_population_is_positive_bounded_heterogeneous_and_direct_solved():
+def test_darcy_population_is_positive_bounded_heterogeneous_and_direct_solved() -> None:
     contrast = 0.35
     scenario = darcy_scenario(
         resolution=10,
@@ -668,7 +668,7 @@ def test_darcy_population_is_positive_bounded_heterogeneous_and_direct_solved():
     assert scenario.reference_evidence.passed
 
 
-def test_multi_input_diffusion_components_and_shifted_targets_are_independent():
+def test_multi_input_diffusion_components_and_shifted_targets_are_independent() -> None:
     dt = 0.05
     shift_factor = 1.7
     scenario = multi_input_diffusion_scenario(
@@ -735,7 +735,7 @@ def test_multi_input_diffusion_components_and_shifted_targets_are_independent():
     assert scenario.reference_evidence.passed
 
 
-def test_irregular_and_graph_shifts_reuse_the_same_physical_realizations():
+def test_irregular_and_graph_shifts_reuse_the_same_physical_realizations() -> None:
     maximum_frequency = 2
     irregular = irregular_poisson_scenario(
         points=40,
@@ -759,7 +759,7 @@ def test_irregular_and_graph_shifts_reuse_the_same_physical_realizations():
     mode_x = mode_x.reshape(-1)[1:]
     mode_y = mode_y.reshape(-1)[1:]
 
-    def planar_basis(coordinates):
+    def planar_basis(coordinates: Any) -> Any:
         phase = (
             2.0
             * jnp.pi
@@ -839,7 +839,7 @@ def test_irregular_and_graph_shifts_reuse_the_same_physical_realizations():
     assert graph.reference_evidence.passed
 
 
-def test_multistep_targets_are_nonidentity_and_spherical_degrees_attenuate():
+def test_multistep_targets_are_nonidentity_and_spherical_degrees_attenuate() -> None:
     navier = navier_stokes_scenario(
         viscosity=0.05,
         dt=0.03,
@@ -906,7 +906,7 @@ def test_multistep_targets_are_nonidentity_and_spherical_degrees_attenuate():
     assert spherical.reference_evidence.passed
 
 
-def test_decision_long_horizon_rollout_remains_finite():
+def test_decision_long_horizon_rollout_remains_finite() -> None:
     ladders = standard_operator_benchmark_ladders(profile="decision")
     scenario = _ladder(ladders, "long_horizon").levels[1]
     targets = (scenario.train_target,) + tuple(
@@ -916,7 +916,7 @@ def test_decision_long_horizon_rollout_remains_finite():
     assert all(bool(jnp.all(jnp.isfinite(target))) for target in targets)
 
 
-def test_sensor_corruption_and_dropout_have_distinct_mask_semantics():
+def test_sensor_corruption_and_dropout_have_distinct_mask_semantics() -> None:
     scenario = green_function_scenario(num_cases=8, seed=11)
     corrupted = add_sensor_corruption_shift(
         scenario,
@@ -971,7 +971,7 @@ def test_sensor_corruption_and_dropout_have_distinct_mask_semantics():
     assert jnp.array_equal(_array(dropped.target), _array(scenario.evaluations[0].target))
 
 
-def test_training_sensor_dropout_is_deterministic_and_training_only():
+def test_training_sensor_dropout_is_deterministic_and_training_only() -> None:
     scenario = split_operator_scenario(
         green_function_scenario(num_cases=10, seed=17),
         seed=19,
@@ -1002,7 +1002,7 @@ def test_training_sensor_dropout_is_deterministic_and_training_only():
     assert dict(augmented.metadata)["training_augmentation"] == "sensor_dropout"
 
 
-def test_ladders_have_audited_physical_splits(quick_ladders):
+def test_ladders_have_audited_physical_splits(quick_ladders: Any) -> None:
     required = {
         "smooth_periodic",
         "polynomial_nonlinearity",
@@ -1066,8 +1066,8 @@ def test_ladders_have_audited_physical_splits(quick_ladders):
 
 
 def test_cochain_benchmarks_preserve_typed_fields_and_matched_architectures(
-    quick_ladders,
-):
+    quick_ladders: Any,
+) -> None:
     mixed_ladder = _ladder(quick_ladders, "cochain_mixed_darcy")
     harmonic_ladder = _ladder(quick_ladders, "cochain_annulus_harmonic")
     mixed = split_operator_scenario(mixed_ladder.levels[0], seed=1729)
@@ -1108,7 +1108,7 @@ def test_cochain_benchmarks_preserve_typed_fields_and_matched_architectures(
         )
 
 
-def test_named_multi_field_benchmark_reports_each_physical_field():
+def test_named_multi_field_benchmark_reports_each_physical_field() -> None:
     scenario = split_operator_scenario(
         cochain_mixed_darcy_scenario(
             train_points=4,
@@ -1147,7 +1147,7 @@ def test_named_multi_field_benchmark_reports_each_physical_field():
     }
 
 
-def test_scenario_audit_rejects_nonfinite_numerical_data(quick_ladders):
+def test_scenario_audit_rejects_nonfinite_numerical_data(quick_ladders: Any) -> None:
     scenario = split_operator_scenario(
         _ladder(quick_ladders, "independent_query").levels[0],
         seed=1729,
@@ -1162,7 +1162,9 @@ def test_scenario_audit_rejects_nonfinite_numerical_data(quick_ladders):
     assert "scenario contains non-finite numerical data" in audit.reasons
 
 
-def test_registry_includes_specialized_families_and_fixed_pod_basis(quick_ladders):
+def test_registry_includes_specialized_families_and_fixed_pod_basis(
+    quick_ladders: Any,
+) -> None:
     causal = split_operator_scenario(
         _ladder(quick_ladders, "causal_transient").levels[0], seed=1729
     )
@@ -1204,7 +1206,7 @@ def test_registry_includes_specialized_families_and_fixed_pod_basis(quick_ladder
     )
 
 
-def test_wavelet_benchmarks_reuse_models_across_resolutions():
+def test_wavelet_benchmarks_reuse_models_across_resolutions() -> None:
     scenario = split_operator_scenario(
         periodic_burgers_scenario(
             train_resolution=17,
@@ -1240,12 +1242,12 @@ def test_wavelet_benchmarks_reuse_models_across_resolutions():
 
 @pytest.mark.parametrize("comparison", ["capacity", "compute"])
 def test_runs_matched_search_and_persists_artifacts(
-    quick_ladders, tmp_path, comparison, monkeypatch
-):
+    quick_ladders: Any, tmp_path: Any, comparison: Any, monkeypatch: Any
+) -> None:
     evaluation_calls = 0
     evaluate_operator = benchmark_protocol.evaluate_operator
 
-    def count_evaluation(*args, **kwargs):
+    def count_evaluation(*args: Any, **kwargs: Any) -> Any:
         nonlocal evaluation_calls
         evaluation_calls += 1
         return evaluate_operator(*args, **kwargs)
@@ -1321,8 +1323,8 @@ def test_runs_matched_search_and_persists_artifacts(
 
 
 def test_pareto_mode_sweeps_sizes_without_fabricating_missing_metrics(
-    quick_ladders,
-):
+    quick_ladders: Any,
+) -> None:
     ladder = _ladder(quick_ladders, "independent_query")
     protocol = OperatorBenchmarkProtocol(
         seeds=(0,),
@@ -1356,7 +1358,9 @@ def test_pareto_mode_sweeps_sizes_without_fabricating_missing_metrics(
     )
 
 
-def test_capacity_target_must_lie_in_architecture_feasible_range(quick_ladders):
+def test_capacity_target_must_lie_in_architecture_feasible_range(
+    quick_ladders: Any,
+) -> None:
     scenario = split_operator_scenario(
         _ladder(quick_ladders, "independent_query").levels[0],
         seed=1729,
@@ -1386,8 +1390,8 @@ def test_capacity_target_must_lie_in_architecture_feasible_range(quick_ladders):
 
 
 def test_run_rejects_requested_architecture_missing_from_all_scenarios(
-    quick_ladders,
-):
+    quick_ladders: Any,
+) -> None:
     protocol = OperatorBenchmarkProtocol(
         seeds=(0,),
         comparison="pareto",
@@ -1407,7 +1411,7 @@ def test_run_rejects_requested_architecture_missing_from_all_scenarios(
         )
 
 
-def _aggregate(evaluation, shift, relative_l2):
+def _aggregate(evaluation: Any, shift: Any, relative_l2: Any) -> Any:
     return OperatorBenchmarkAggregate(
         scenario="scenario",
         architecture="operator",
@@ -1436,7 +1440,7 @@ def _aggregate(evaluation, shift, relative_l2):
     )
 
 
-def test_native_kernel_parity_checks_pass():
+def test_native_kernel_parity_checks_pass() -> None:
     checks = native_kernel_parity_checks()
     assert {check.family for check in checks} == {
         "branch_trunk",
@@ -1450,7 +1454,7 @@ def test_native_kernel_parity_checks_pass():
     assert all(check.passed for check in checks)
 
 
-def test_pinned_family_parity_evidence_is_loadable():
+def test_pinned_family_parity_evidence_is_loadable() -> None:
     path = (
         Path(__file__).parents[2]
         / "tools"
@@ -1481,7 +1485,7 @@ def test_pinned_family_parity_evidence_is_loadable():
     )
 
 
-def test_promotion_requires_all_gates_and_pinned_family_parity():
+def test_promotion_requires_all_gates_and_pinned_family_parity() -> None:
     aggregates = (
         _aggregate("base", "in_distribution", 0.1),
         _aggregate("noise", "input_noise", 0.15),
@@ -1662,7 +1666,7 @@ def test_promotion_requires_all_gates_and_pinned_family_parity():
     assert external_with_audit[0].tier == "external"
 
 
-def test_difficulty_audit_detects_persistence_shortcut():
+def test_difficulty_audit_detects_persistence_shortcut() -> None:
     scenario = split_operator_scenario(
         spherical_diffusion_scenario(
             num_cases=32,
@@ -1688,7 +1692,7 @@ def test_difficulty_audit_detects_persistence_shortcut():
     assert "identity baseline" in " ".join(shortcut_audit.reasons)
 
 
-def test_shortlist_physical_ladders_pass_hardness_contracts():
+def test_shortlist_physical_ladders_pass_hardness_contracts() -> None:
     criteria = PromotionCriteria()
     audits = tuple(
         audit_scenario_difficulty(
@@ -1714,7 +1718,7 @@ def test_shortlist_physical_ladders_pass_hardness_contracts():
     )
 
 
-def test_pareto_front_reports_dominance_and_missing_metrics():
+def test_pareto_front_reports_dominance_and_missing_metrics() -> None:
     first_rows = (
         replace(
             _aggregate("base", "in_distribution", 0.1),
@@ -1808,7 +1812,7 @@ def test_pareto_front_reports_dominance_and_missing_metrics():
     assert all(point.nondominated is None for point in incomplete.points)
 
 
-def test_square_symmetry_contracts_preserve_fno_baselines_and_augmentation():
+def test_square_symmetry_contracts_preserve_fno_baselines_and_augmentation() -> None:
     d4 = square_diffusion_symmetry_scenario(
         resolution=9,
         num_cases=3,
@@ -1897,7 +1901,7 @@ def test_square_symmetry_contracts_preserve_fno_baselines_and_augmentation():
     assert jnp.all(jnp.isfinite(equivariant_output))
 
 
-def test_scenario_checksum_includes_structured_symmetry_contract():
+def test_scenario_checksum_includes_structured_symmetry_contract() -> None:
     scenario = square_diffusion_symmetry_scenario(
         resolution=9,
         num_cases=2,
@@ -1939,7 +1943,9 @@ def test_scenario_checksum_includes_structured_symmetry_contract():
     assert scenario_checksum(first) != scenario_checksum(failed)
 
 
-def test_symmetry_benchmark_records_fno_defects_and_durable_artifact(tmp_path):
+def test_symmetry_benchmark_records_fno_defects_and_durable_artifact(
+    tmp_path: Any,
+) -> None:
     easy = benchmark_protocol._tag_level(
         square_diffusion_symmetry_scenario(
             resolution=9,
@@ -2021,13 +2027,13 @@ def test_symmetry_benchmark_records_fno_defects_and_durable_artifact(tmp_path):
     assert "symmetry_decisions" not in payload
 
 
-def test_scenario_checksum_covers_provenance_and_metadata(quick_ladders):
+def test_scenario_checksum_covers_provenance_and_metadata(quick_ladders: Any) -> None:
     scenario = _ladder(quick_ladders, "independent_query").levels[0]
     changed = replace(scenario, metadata=scenario.metadata + (("revision", "changed"),))
     assert scenario_checksum(scenario) != scenario_checksum(changed)
 
 
-def test_scenario_checksum_uses_reference_verdict_not_roundoff():
+def test_scenario_checksum_uses_reference_verdict_not_roundoff() -> None:
     scenario = navier_stokes_scenario(
         resolution=8,
         num_cases=4,
@@ -2062,7 +2068,7 @@ def test_scenario_checksum_uses_reference_verdict_not_roundoff():
     assert scenario_checksum(first) != scenario_checksum(failed)
 
 
-def test_external_candidate_must_win_robustness_and_complexity():
+def test_external_candidate_must_win_robustness_and_complexity() -> None:
     candidate = ExternalOperatorCandidate(
         name="external",
         source_uri="https://example.test/source",

@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -28,7 +29,7 @@ class EnergyChannelBalance(StrictModule):
         *,
         dissipation: ArrayLike = 0.0,
         external_work: ArrayLike = 0.0,
-    ):
+    ) -> None:
         name = str(channel)
         values = tuple(
             jnp.asarray(value) for value in (before, after, dissipation, external_work)
@@ -58,7 +59,7 @@ class InternalEnergyExchange(StrictModule):
         source_amount: ArrayLike,
         target_amount: ArrayLike,
         /,
-    ):
+    ) -> None:
         identifier = str(exchange_id)
         source = str(source_channel)
         target = str(target_channel)
@@ -102,7 +103,7 @@ class ConservationChannelBalance(StrictModule):
         volume_source: ArrayLike = 0.0,
         boundary_source: ArrayLike = 0.0,
         event_source: ArrayLike = 0.0,
-    ):
+    ) -> None:
         name = str(channel)
         values = tuple(
             jnp.asarray(value)
@@ -156,7 +157,7 @@ class EntropyProductionBalance(StrictModule):
         entropy_flux: ArrayLike,
         external_entropy: ArrayLike = 0.0,
         production: ArrayLike,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (
@@ -211,7 +212,7 @@ class CoupledPhaseFieldLedger(StrictModule):
         conservation_tolerance: ArrayLike,
         entropy_tolerance: ArrayLike,
         ledger_id: str,
-    ):
+    ) -> None:
         if not energy_channels:
             raise ValueError("Coupled ledger requires energy channels.")
         energy_names = tuple(channel.channel for channel in energy_channels)

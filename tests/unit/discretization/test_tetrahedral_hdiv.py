@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import numpy as np
 import pytest
@@ -16,12 +18,12 @@ _NORMALS /= np.linalg.norm(_NORMALS, axis=1)[:, None]
 _AREAS = np.asarray((0.5, 0.5, np.sqrt(3.0) / 2.0, 0.5))
 
 
-def _unit_gauss(order):
+def _unit_gauss(order: Any) -> Any:
     points, weights = np.polynomial.legendre.leggauss(order)
     return 0.5 * (points + 1.0), 0.5 * weights
 
 
-def _face_quadrature(face, order=5):
+def _face_quadrature(face: Any, order: Any = 5) -> Any:
     nodes, weights = _unit_gauss(order)
     vertices = _VERTICES[list(face)]
     surface_jacobian = np.linalg.norm(
@@ -47,7 +49,7 @@ def _face_quadrature(face, order=5):
     return np.asarray(points), np.asarray(physical_weights), np.asarray(barycentric)
 
 
-def _tetrahedron_quadrature(order=6):
+def _tetrahedron_quadrature(order: Any = 6) -> Any:
     nodes, weights = _unit_gauss(order)
     points = []
     physical_weights = []
@@ -71,7 +73,9 @@ def _tetrahedron_quadrature(order=6):
     return np.asarray(points), np.asarray(physical_weights)
 
 
-def _physical_values(element, cell_points, physical_points, orientation):
+def _physical_values(
+    element: Any, cell_points: Any, physical_points: Any, orientation: Any
+) -> Any:
     jacobian = (cell_points[1:] - cell_points[0]).T
     reference_points = (physical_points - cell_points[0]) @ np.linalg.inv(jacobian).T
     reference_values, _ = element.tabulate(reference_points)
@@ -82,7 +86,7 @@ def _physical_values(element, cell_points, physical_points, orientation):
     )
 
 
-def test_tetrahedral_rt0_has_unit_oriented_face_fluxes():
+def test_tetrahedral_rt0_has_unit_oriented_face_fluxes() -> None:
     element = phx.discretization.tetrahedral_rt_element()
     centers = np.asarray([np.mean(_VERTICES[list(face)], axis=0) for face in _FACES])
     values, gradients = element.tabulate(centers)
@@ -100,7 +104,7 @@ def test_tetrahedral_rt0_has_unit_oriented_face_fluxes():
     np.testing.assert_allclose(divergence, 6.0)
 
 
-def test_tetrahedral_bdm1_is_dual_to_linear_face_flux_moments():
+def test_tetrahedral_bdm1_is_dual_to_linear_face_flux_moments() -> None:
     element = phx.discretization.tetrahedral_bdm_element()
     rows = []
     for face_index, face in enumerate(_FACES):
@@ -120,7 +124,7 @@ def test_tetrahedral_bdm1_is_dual_to_linear_face_flux_moments():
     np.testing.assert_allclose(np.asarray(rows), np.eye(12), atol=2e-12)
 
 
-def test_tetrahedral_bdm2_is_dual_to_face_and_interior_moments():
+def test_tetrahedral_bdm2_is_dual_to_face_and_interior_moments() -> None:
     element = phx.discretization.tetrahedral_bdm_element(2)
     rows = []
     for face_index, face in enumerate(_FACES):
@@ -165,7 +169,7 @@ def test_tetrahedral_bdm2_is_dual_to_face_and_interior_moments():
     np.testing.assert_allclose(np.asarray(rows), np.eye(30), atol=2e-11)
 
 
-def test_hdiv_stokes_prepares_bdm_dg_pair_with_explicit_gauge():
+def test_hdiv_stokes_prepares_bdm_dg_pair_with_explicit_gauge() -> None:
     mesh = phx.discretization.CellMesh.from_tetrahedra(
         _VERTICES, np.asarray(((0, 1, 2, 3),))
     )
@@ -188,7 +192,7 @@ def test_hdiv_stokes_prepares_bdm_dg_pair_with_explicit_gauge():
     np.testing.assert_allclose(np.mean(pressure), 0.0, atol=1e-12)
 
 
-def test_hdiv_nitsche_couples_shared_tetrahedral_face_symmetrically():
+def test_hdiv_nitsche_couples_shared_tetrahedral_face_symmetrically() -> None:
     coordinates = np.concatenate((_VERTICES, np.asarray(((0.0, 0.0, -1.0),))))
     mesh = phx.discretization.CellMesh.from_tetrahedra(
         coordinates, np.asarray(((0, 1, 2, 3), (0, 2, 1, 4)))
@@ -207,7 +211,7 @@ def test_hdiv_nitsche_couples_shared_tetrahedral_face_symmetrically():
     np.testing.assert_allclose(residual[1], 0.0, atol=1e-12)
 
 
-def test_bdm2_normal_trace_is_continuous_across_a_shared_face():
+def test_bdm2_normal_trace_is_continuous_across_a_shared_face() -> None:
     coordinates = np.concatenate((_VERTICES, np.asarray(((0.0, 0.0, -1.0),))))
     cells = np.asarray(((0, 1, 2, 3), (0, 2, 1, 4)))
     mesh = phx.discretization.CellMesh.from_tetrahedra(coordinates, cells)
@@ -215,9 +219,13 @@ def test_bdm2_normal_trace_is_continuous_across_a_shared_face():
         mesh, phx.discretization.PressureGaugePolicy("mean-zero")
     ).prepare()
     discretization = prepared.problem.discretization
+    # ty: ignore[unresolved-attribute]
     dof_map = discretization.dof_maps[0]
+    # ty: ignore[unresolved-attribute]
     element = discretization.elements[0][0]
+    # ty: ignore[unresolved-attribute]
     shared_face = int(np.flatnonzero(~np.asarray(mesh.connectivity.boundary_faces))[0])
+    # ty: ignore[unresolved-attribute]
     face_vertices = np.asarray(mesh.connectivity.faces)[shared_face]
     face_points = coordinates[face_vertices]
     barycentric = np.asarray(((0.2, 0.3, 0.5), (0.6, 0.1, 0.3)))
@@ -256,7 +264,7 @@ def test_bdm2_normal_trace_is_continuous_across_a_shared_face():
         np.testing.assert_allclose(traces[0] + traces[1], 0.0, atol=2e-11)
 
 
-def test_hdiv_normal_flow_constraint_and_resistance_use_global_face_identity():
+def test_hdiv_normal_flow_constraint_and_resistance_use_global_face_identity() -> None:
     mesh = phx.discretization.CellMesh(
         _VERTICES,
         (
@@ -292,13 +300,14 @@ def test_hdiv_normal_flow_constraint_and_resistance_use_global_face_identity():
     np.testing.assert_allclose(constrained[2], 0.0, atol=1e-12)
 
 
-def test_hdiv_normal_flow_rejects_an_interior_face():
+def test_hdiv_normal_flow_rejects_an_interior_face() -> None:
     coordinates = np.concatenate((_VERTICES, np.asarray(((0.0, 0.0, -1.0),))))
     mesh = phx.discretization.CellMesh.from_tetrahedra(
         coordinates, np.asarray(((0, 1, 2, 3), (0, 2, 1, 4)))
     )
     interior = int(
         np.asarray(mesh.entity_set(2).entity_ids)[
+            # ty: ignore[unresolved-attribute]
             np.flatnonzero(~np.asarray(mesh.connectivity.boundary_faces))[0]
         ]
     )

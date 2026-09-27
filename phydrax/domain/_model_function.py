@@ -10,7 +10,6 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key
 
 import phydrax.axes as cx
 
@@ -18,6 +17,7 @@ from .._doc import DOC_KEY0
 from .._model import AxisModelEvaluator, ModelBinding
 from .._strict import StrictModule
 from ..logging import emit
+from ..typing import PRNGKey
 from ._evaluation import (
     BatchEvaluator,
     complete_batch_axes,
@@ -34,13 +34,13 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
 
     def __init__(
         self,
-        model: Callable,
+        model: Callable[..., Any],
         /,
         *,
         domain_labels: tuple[str, ...],
         deps: tuple[str, ...],
         binding: ModelBinding,
-    ):
+    ) -> None:
 
         if not callable(model):
             raise TypeError("Domain models must be callable.")
@@ -73,7 +73,15 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
                 "dependency blocks, so pointwise evaluation is undefined: " + reason
             )
 
-    def _call_model(self, x: Any, /, *, key=None, iter_=None, **kwargs: Any):
+    def _call_model(
+        self,
+        x: Any,
+        /,
+        *,
+        key: PRNGKey | None = None,
+        iter_: Any = None,
+        **kwargs: Any,
+    ) -> Any:
         return self.binding.call(
             self.raw_model,
             x,
@@ -85,8 +93,8 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
     def _call_blockwise(
         self,
         *args: Any,
-        key=None,
-        iter_=None,
+        key: PRNGKey | None = None,
+        iter_: Any = None,
         **kwargs: Any,
     ) -> Any:
         return self._call_model(
@@ -101,8 +109,8 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
-        iter_=None,
+        key: PRNGKey | None = DOC_KEY0,
+        iter_: Any = None,
         **kwargs: Any,
     ) -> cx.AxisArray:
         if self.binding.batch_mode == "axis":
@@ -151,17 +159,23 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
         deps: tuple[str, ...],
         /,
         *,
-        key=None,
-        iter_=None,
+        key: PRNGKey | None = None,
+        iter_: Any = None,
         **kwargs: Any,
-    ):
+    ) -> object:
         if isinstance(self.raw_model, AxisModelEvaluator):
             return self.raw_model.__call_axis_batch__(
                 batch, deps, key=key, iter_=iter_, **kwargs
             )
         raise TypeError("Model callable does not support axis-batch execution.")
 
-    def __call__(self, *args: Any, key=None, iter_=None, **kwargs: Any):
+    def __call__(
+        self,
+        *args: Any,
+        key: PRNGKey | None = None,
+        iter_: Any = None,
+        **kwargs: Any,
+    ) -> Any:
         self._require_pointwise_semantics("the model was called on coordinate points.")
         if not args:
             raise ValueError("Model callable requires at least one positional input.")

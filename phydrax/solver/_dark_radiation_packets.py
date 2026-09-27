@@ -14,7 +14,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
@@ -249,7 +250,7 @@ class DarkRadiationPacketPlan(StrictModule, NonTrainableState):
         *,
         epoch_plan: DarkSectorEpochPlan,
         owner_count: int = 1,
-    ):
+    ) -> None:
         packets = int(capacity)
         events = int(event_capacity)
         owners = int(owner_count)
@@ -318,7 +319,7 @@ class DarkRadiationPacketPlan(StrictModule, NonTrainableState):
         *,
         epoch_sequence: int = 0,
         epoch_manifest_id: str,
-        dtype=jnp.float64,
+        dtype: DTypeLike = jnp.float64,
     ) -> DarkRadiationPacketState:
         self._check_frame(frame)
         dtype_ = jnp.dtype(dtype)
@@ -544,8 +545,8 @@ class DarkRadiationPacketPlan(StrictModule, NonTrainableState):
         source_valid = self.valid(state)
         successful = source_valid & identities_unique & capacity_available & packet_valid
 
-        def assign(array, values):
-            def assign_one(index, current):
+        def assign(array: Array, values: Array) -> Array:
+            def assign_one(index: Array, current: Array) -> Array:
                 return jax.lax.cond(
                     mask[index],
                     lambda operand: operand.at[slots[index]].set(values[index]),

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -11,7 +13,7 @@ from phydrax.transport._gaussian_mixture import (
 from phydrax.transport._gromov import gromov_wasserstein_problem, GromovWasserstein
 
 
-def _weighted(points, probabilities, name):
+def _weighted(points: Any, probabilities: Any, name: Any) -> Any:
     return phx.integration.weighted(
         jnp.asarray(points, dtype="float64"),
         jnp.log(jnp.asarray(probabilities, dtype="float64")),
@@ -22,7 +24,7 @@ def _weighted(points, probabilities, name):
     )
 
 
-def test_gromov_wasserstein_is_small_for_isometric_relabeling():
+def test_gromov_wasserstein_is_small_for_isometric_relabeling() -> None:
     source = _weighted([[0.0], [1.0]], [0.5, 0.5], "gw-source")
     target = _weighted([[1.0], [0.0]], [0.5, 0.5], "gw-target")
     relation = jnp.asarray([[0.0, 1.0], [1.0, 0.0]])
@@ -44,7 +46,7 @@ def test_gromov_wasserstein_is_small_for_isometric_relabeling():
     assert jnp.all(jnp.isfinite(result.objective_history))
 
 
-def test_fused_gromov_alpha_zero_uses_declared_feature_cost():
+def test_fused_gromov_alpha_zero_uses_declared_feature_cost() -> None:
     source = _weighted([[0.0], [1.0]], [0.5, 0.5], "fgw-source")
     target = _weighted([[0.0], [2.0]], [0.5, 0.5], "fgw-target")
     relation = jnp.asarray([[0.0, 1.0], [1.0, 0.0]])
@@ -66,7 +68,7 @@ def test_fused_gromov_alpha_zero_uses_declared_feature_cost():
     )
 
 
-def test_gromov_rejects_non_symmetric_relational_costs():
+def test_gromov_rejects_non_symmetric_relational_costs() -> None:
     target = _weighted([[0.0], [1.0]], [0.5, 0.5], "invalid-gw")
     with pytest.raises(ValueError, match="symmetric"):
         gromov_wasserstein_problem(
@@ -77,7 +79,7 @@ def test_gromov_rejects_non_symmetric_relational_costs():
         )
 
 
-def _single_gaussian(mean, variance):
+def _single_gaussian(mean: Any, variance: Any) -> Any:
     covariance = jnp.asarray([[[variance]]])
     return phx.ml.mixture.GaussianMixtureModel(
         jnp.asarray([1.0]),
@@ -89,7 +91,7 @@ def _single_gaussian(mean, variance):
     )
 
 
-def test_single_gaussian_mixture_transport_matches_analytic_w2():
+def test_single_gaussian_mixture_transport_matches_analytic_w2() -> None:
     problem = gaussian_mixture_transport_problem(
         _single_gaussian(0.0, 1.0),
         _single_gaussian(2.0, 4.0),
@@ -104,7 +106,7 @@ def test_single_gaussian_mixture_transport_matches_analytic_w2():
     assert jnp.allclose(result.coupling, jnp.ones((1, 1)))
 
 
-def test_learned_transport_audit_has_jit_and_gradient_contract():
+def test_learned_transport_audit_has_jit_and_gradient_contract() -> None:
     represented_cost = lambda value: (
         audit_transport_map(
             value,

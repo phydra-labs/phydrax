@@ -8,7 +8,7 @@ from phydrax.enforcement import (
 )
 
 
-def test_closed_feasibility_projections_certify_their_results():
+def test_closed_feasibility_projections_certify_their_results() -> None:
     box = BoxProjection(0.0, 1.0)
     box_value, box_evidence = box.project(jnp.asarray([-2.0, 0.25, 4.0]))
     assert jnp.allclose(box_value, jnp.asarray([0.0, 0.25, 1.0]))
@@ -23,7 +23,7 @@ def test_closed_feasibility_projections_certify_their_results():
     assert not simplex_evidence.derivative_certified
 
 
-def test_cone_and_psd_projections_report_independent_feasibility():
+def test_cone_and_psd_projections_report_independent_feasibility() -> None:
     cone = SecondOrderConeProjection(3)
     cone_value, cone_evidence = cone.project(jnp.asarray([-1.0, 2.0, 0.0]))
     assert cone_value[0] >= jnp.linalg.norm(cone_value[1:]) - 1e-6

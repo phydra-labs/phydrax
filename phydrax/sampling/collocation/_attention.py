@@ -11,12 +11,13 @@ from typing import TYPE_CHECKING
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.axes as cx
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from ._adaptive import (
     _normalized_importance,
     _set_batch_rows,
@@ -36,7 +37,7 @@ def _take_batch_rows(batch: PointBatch, indices: Array, /) -> PointBatch:
 
     axis, _ = _single_axis_and_size(batch)
 
-    def take(value):
+    def take(value: object) -> object:
         if not isinstance(value, cx.AxisArray) or axis not in value.named_dims:
             return value
         position = value.dims.index(axis)
@@ -100,7 +101,7 @@ class ResidualAttentionPopulation(StrictModule):
         anchor_mask: Array | None = None,
         replacement_count: int | Array = 0,
         candidate_evaluations: int | Array = 0,
-    ):
+    ) -> None:
         axis, size = _single_axis_and_size(batch)
         _validate_axis_field(probability, axis=axis, size=size, name="probability")
         _validate_axis_field(weight, axis=axis, size=size, name="weight")
@@ -191,7 +192,7 @@ class ResidualAttentionCollocation(AbstractCollocationPolicy):
         candidate_sampler: Callable[..., PointBatch] | None = None,
         anchor_fraction: float = 0.0,
         anchor_probability_floor: float = 1.0e-6,
-    ):
+    ) -> None:
         refresh = int(refresh_every)
         decay_ = float(decay)
         exponent = float(score_exponent)
@@ -241,7 +242,7 @@ class ResidualAttentionCollocation(AbstractCollocationPolicy):
         term: PointwiseSamplingTerm,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> ResidualAttentionPopulation:
         batch = term.sample(key=key)
         from phydrax.domain import PointBatch
@@ -342,7 +343,7 @@ class ResidualAttentionCollocation(AbstractCollocationPolicy):
         population: ResidualAttentionPopulation,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array,
     ) -> ResidualAttentionPopulation:
         score_key, candidate_key, candidate_score_key = jax.random.split(key, 3)

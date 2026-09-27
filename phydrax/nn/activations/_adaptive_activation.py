@@ -5,11 +5,12 @@
 from collections.abc import Callable, Sequence
 
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...typing import PRNGKey
 
 
 class AdaptiveActivation(StrictModule, ParameterOwner):
@@ -33,8 +34,8 @@ class AdaptiveActivation(StrictModule, ParameterOwner):
         /,
         *,
         shape: int | Sequence[int] | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         r"""**Arguments:**
 
         - `fn`: Base activation function $\sigma$.

@@ -12,7 +12,8 @@ from math import prod
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -31,7 +32,7 @@ class SU2SectorResourcePolicy(StrictModule):
         maximum_product_dimension: int,
         maximum_sector_dimension: int,
         maximum_matrix_elements: int,
-    ):
+    ) -> None:
         values = tuple(
             (
                 maximum_product_dimension,
@@ -74,7 +75,7 @@ class SU2CouplingTreePlan(StrictModule):
         total_twice_spin: int,
         resources: SU2SectorResourcePolicy,
         /,
-    ):
+    ) -> None:
         labels = tuple(str(value) for value in site_labels)
         spins = tuple(local_twice_spins)
         total = int(total_twice_spin)

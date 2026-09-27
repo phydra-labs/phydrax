@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import Callable
 from math import isfinite
 from typing import Any
 
@@ -12,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -65,7 +67,7 @@ class AbstractItoScoreDiffusion(StrictModule):
     def covariance_divergence(self, time: ArrayLike, state: ArrayLike, /) -> Array:
         value = _vector(state, self.dimension, owner="state")
 
-        def covariance_at(current):
+        def covariance_at(current: Array) -> Array:
             return self.covariance(time, current)
 
         derivative = jax.jacfwd(covariance_at)(value)
@@ -114,7 +116,7 @@ class MatrixGaussianDiffusion(AbstractItoScoreDiffusion):
         offset: ArrayLike = 0.0,
         terminal_time: float = 1.0,
         process_id: str | None = None,
-    ):
+    ) -> None:
         matrix = jnp.asarray(drift_matrix)
         factor = jnp.asarray(dispersion)
         if jnp.iscomplexobj(matrix) or jnp.iscomplexobj(factor):
@@ -214,15 +216,15 @@ class StateDependentItoDiffusion(AbstractItoScoreDiffusion):
 
     def __init__(
         self,
-        drift,
-        diffusion_factor,
+        drift: Callable[[Array, Array], ArrayLike],
+        diffusion_factor: Callable[[Array, Array], ArrayLike],
         /,
         *,
         dimension: int,
         noise_dimension: int,
         terminal_time: float = 1.0,
         process_id: str,
-    ):
+    ) -> None:
         if not callable(drift) or not callable(diffusion_factor):
             raise TypeError("drift and diffusion_factor must be callable.")
         size = int(dimension)

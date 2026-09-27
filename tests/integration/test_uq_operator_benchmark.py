@@ -2,12 +2,14 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
 import math
 import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 
@@ -15,7 +17,7 @@ import polars as pl
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_operator_uq_cli_runs_end_to_end_and_writes_artifacts(tmp_path):
+def test_operator_uq_cli_runs_end_to_end_and_writes_artifacts(tmp_path: Any) -> None:
     environment = os.environ.copy()
     environment.setdefault("JAX_PLATFORM_NAME", "cpu")
     environment.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")

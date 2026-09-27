@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import importlib
 from math import prod
+from types import ModuleType
 from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
 from .._plans import LinearSolvePlan
@@ -44,7 +45,7 @@ class SpineaxBackendOutput(StrictModule):
     singular_values: Array | None
 
 
-def _cudss():
+def _cudss() -> ModuleType:
     return importlib.import_module("spineax.cudss")
 
 
@@ -89,7 +90,7 @@ def _factor_values(storage: SparseStorage, /) -> Array:
     return storage.values.reshape((prod(storage.batch_shape), storage.nnz))
 
 
-def _inertia(token: Any, batch_shape: tuple[int, ...], /):
+def _inertia(token: Any, batch_shape: tuple[int, ...], /) -> tuple[Array, Array, Array]:
     cudss = _cudss()
     batch_size = prod(batch_shape) if batch_shape else 1
     counts = cudss.inertia(cudss.query(token), batch_size=batch_size)

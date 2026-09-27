@@ -9,7 +9,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -49,7 +50,7 @@ class FLIPSolidBoundaryPlan(StrictModule, NonTrainableState):
         no_slip: bool,
         bisection_steps: int = 12,
         field_id: str,
-    ):
+    ) -> None:
         if not callable(signed_distance) or not callable(wall_velocity):
             raise TypeError("Solid boundary providers must be callable.")
         steps = int(bisection_steps)

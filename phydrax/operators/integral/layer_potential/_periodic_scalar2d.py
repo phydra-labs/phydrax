@@ -5,22 +5,26 @@
 from __future__ import annotations
 
 from itertools import product
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....discretization import PeriodicCell
+from ....typing import parse
 from ._core import BoundaryPanelization2D
 
 
-PeriodicScalarEquation2D = Literal["laplace", "helmholtz", "modified_helmholtz"]
+PeriodicScalarEquation2D: TypeAlias = Literal[
+    "laplace", "helmholtz", "modified_helmholtz"
+]
 
 
 class PeriodicScalarSpectralEvidence2D(StrictModule):
@@ -54,13 +58,12 @@ class PeriodicScalarSpectralKernel2D(StrictModule, NonTrainableState):
         cutoff: int = 16,
         maximum_modes: int = 100_000,
         resonance_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         if not isinstance(cell, PeriodicCell):
             raise TypeError("cell must be a PeriodicCell.")
         if cell.rank != 2 or cell.ambient_dimension != 2:
             raise ValueError("Periodic scalar 2D kernels require a full-rank 2D cell.")
-        if equation not in ("laplace", "helmholtz", "modified_helmholtz"):
-            raise ValueError("Unknown periodic scalar equation.")
+        equation = parse(equation, PeriodicScalarEquation2D, "equation")
         parameter_ = float(parameter)
         cutoff_ = int(cutoff)
         maximum = int(maximum_modes)
@@ -168,7 +171,7 @@ class PeriodicScalarLayerPotential2D(StrictModule, NonTrainableState):
         /,
         *,
         kind: Literal["single", "double"] = "single",
-    ):
+    ) -> None:
         if not isinstance(panelization, BoundaryPanelization2D):
             raise TypeError("panelization must be BoundaryPanelization2D.")
         if not isinstance(kernel, PeriodicScalarSpectralKernel2D):

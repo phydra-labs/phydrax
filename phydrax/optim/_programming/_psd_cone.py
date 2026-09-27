@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ...linalg import HermitianSpectrum
@@ -37,7 +38,9 @@ def _positive_semidefinite_part(matrix: Array, /) -> Array:
 
 
 @_positive_semidefinite_part.defjvp
-def _positive_semidefinite_part_jvp(primals, tangents):
+def _positive_semidefinite_part_jvp(
+    primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
     (matrix,) = primals
     (tangent,) = tangents
     working_dtype = jnp.result_type(matrix.dtype, jnp.float32)
@@ -89,7 +92,7 @@ class PositiveSemidefiniteCone(AbstractConvexCone):
     _column_indices: tuple[int, ...] = eqx.field(static=True)
     _scales: tuple[float, ...] = eqx.field(static=True)
 
-    def __init__(self, matrix_size: int, /):
+    def __init__(self, matrix_size: int, /) -> None:
         if isinstance(matrix_size, bool):
             raise TypeError("PositiveSemidefiniteCone matrix_size must be an integer.")
         size = index(matrix_size)

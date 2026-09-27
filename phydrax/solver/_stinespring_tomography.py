@@ -8,7 +8,8 @@ from collections.abc import Sequence
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..metrix import (
@@ -35,7 +36,7 @@ class StinespringTomographyProblem(StrictModule):
         /,
         *,
         problem_id: str = "stinespring-process-tomography",
-    ):
+    ) -> None:
         values = tuple(experiments)
         if not values:
             raise ValueError("At least one tomography experiment is required.")
@@ -69,7 +70,7 @@ class StinespringTomographyResult(StrictModule):
         physical_parameter_count: ArrayLike,
         coordinate_count: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.model = model
         self.loss_history = jnp.asarray(loss_history)
         self.held_out_loss = jnp.asarray(held_out_loss)
@@ -165,7 +166,7 @@ def fit_stinespring_process(
     isometries = problem.model.isometries
     factor_manifold = ComplexEuclideanManifold(factor.shape)
 
-    def loss(factor_value, isometry_values):
+    def loss(factor_value: Array, isometry_values: tuple[Array, ...]) -> Array:
         return _nll(
             _materialize(problem.model, factor_value, isometry_values),
             problem.experiments,
@@ -214,7 +215,7 @@ def fit_stinespring_process(
     coordinate_count = 2 * sum(sizes)
     coordinates = jnp.zeros((coordinate_count,), dtype=jnp.real(factor).dtype)
 
-    def probabilities(parameters):
+    def probabilities(parameters: Array) -> Array:
         candidates = []
         cursor = 0
         for index, (base, size, shape) in enumerate(
@@ -282,7 +283,7 @@ class ProcessMemoryRefitResult(StrictModule):
         /,
         *,
         probability_tolerance: float,
-    ):
+    ) -> None:
         process = tomography.model.materialize()
         training_observed = jnp.asarray(training_observed_probabilities)
         training_fitted = jnp.asarray(training_fitted_probabilities)

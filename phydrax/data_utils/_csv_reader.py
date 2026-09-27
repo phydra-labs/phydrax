@@ -10,7 +10,7 @@ from typing import Any, overload
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -39,7 +39,7 @@ class CSVReadPolicy(StrictModule, NonTrainableState):
         has_header: bool = True,
         column_names: tuple[str, ...] | None = None,
         encoding: str = "utf-8",
-    ):
+    ) -> None:
         if not isinstance(delimiter, str) or len(delimiter) != 1:
             raise ValueError("delimiter must be one character.")
         if not isinstance(quote_character, str) or len(quote_character) != 1:
@@ -94,7 +94,7 @@ class CSVReader(StrictModule, NonTrainableState):
         /,
         *,
         policy: CSVReadPolicy | None = None,
-    ):
+    ) -> None:
         policy_ = CSVReadPolicy() if policy is None else policy
         if not isinstance(policy_, CSVReadPolicy):
             raise TypeError("policy must be a CSVReadPolicy or None.")

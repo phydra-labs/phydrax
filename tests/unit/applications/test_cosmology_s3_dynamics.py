@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -7,7 +9,7 @@ import phydrax as phx
 cosmology = phx.applications.cosmology
 
 
-def _artifact():
+def _artifact() -> Any:
     return cosmology.ScientificArtifactEnvelope(
         artifact_kind="s3-basis",
         content_digest="fixture",
@@ -20,7 +22,7 @@ def _artifact():
     )
 
 
-def test_s3_geometry_geodesic_kdk_and_parallel_transport():
+def test_s3_geometry_geodesic_kdk_and_parallel_transport() -> None:
     manifold = cosmology.S3ManifoldPlan(2.0)
     q = jnp.asarray([[2.0, 0.0, 0.0, 0.0]])
     tangent = jnp.asarray([[0.0, 0.1, 0.0, 0.0]])
@@ -32,6 +34,7 @@ def test_s3_geometry_geodesic_kdk_and_parallel_transport():
     np.testing.assert_allclose(jnp.sum(target * transported, axis=-1), 0.0, atol=1e-12)
 
     plan = cosmology.S3GeodesicKDKPlan(manifold)
+    # ty: ignore[invalid-argument-type]
     state = plan.initialize(q, tangent, [1.0], 0.5)
     result = plan.advance(
         state,
@@ -47,7 +50,7 @@ def test_s3_geometry_geodesic_kdk_and_parallel_transport():
     assert result.tangent_defect < 1e-12
 
 
-def test_s3_harmonic_poisson_and_particle_transfer():
+def test_s3_harmonic_poisson_and_particle_transfer() -> None:
     evaluation = jnp.asarray([[1.0, 1.0], [1.0, -1.0], [1.0, 1.0], [1.0, -1.0]])
     gradient = jnp.zeros((4, 2, 4)).at[:, 1, 1].set(jnp.asarray([1.0, -1.0, 1.0, -1.0]))
     basis = cosmology.S3HarmonicBasisPlan(
@@ -66,6 +69,7 @@ def test_s3_harmonic_poisson_and_particle_transfer():
     deposit = jnp.asarray([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0], [0.0, 0.0]])
     gather = deposit.T
     transfer = cosmology.S3ParticleMeshPlan(poisson, deposit, gather)
+    # ty: ignore[invalid-argument-type]
     result = transfer.evaluate([0.5, 0.5], 1.0, 1.0)
     assert bool(result.successful)
     np.testing.assert_allclose(result.mass_defect, 0.0)

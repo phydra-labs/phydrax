@@ -8,12 +8,14 @@ from collections.abc import Callable, Sequence
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import AbstractLinearOperator
+from ...typing import parse
 from ._stencil import StencilFootprint
 
 
@@ -51,22 +53,12 @@ class AxisBoundaryPair(StrictModule, NonTrainableState):
         lower: BoundaryConditionKind,
         upper: BoundaryConditionKind,
         /,
-    ):
+    ) -> None:
         axis_ = str(axis)
-        allowed = (
-            "periodic",
-            "dirichlet",
-            "neumann",
-            "robin",
-            "ghost",
-            "one_sided",
-            "sbp_sat",
-            "absorbing",
-        )
-        if not axis_ or lower not in allowed or upper not in allowed:
-            raise ValueError(
-                "Axis boundary values must be recognized and axis non-empty."
-            )
+        if not axis_:
+            raise ValueError("Axis boundary axis must be non-empty.")
+        lower = parse(lower, BoundaryConditionKind, "lower")
+        upper = parse(upper, BoundaryConditionKind, "upper")
         if (lower == "periodic") != (upper == "periodic"):
             raise ValueError("Periodicity must be declared on both sides of an axis.")
         self.axis = axis_
@@ -99,18 +91,10 @@ class BoundaryRealizationPlan(StrictModule, NonTrainableState):
         *,
         lower_width: int = 0,
         upper_width: int = 0,
-    ):
+    ) -> None:
         if not isinstance(boundary, AxisBoundaryPair):
             raise TypeError("boundary must be an AxisBoundaryPair.")
-        if realization not in (
-            "periodic",
-            "ghost",
-            "closure",
-            "sat",
-            "basis",
-            "absorbing",
-        ):
-            raise ValueError("Unknown boundary realization.")
+        realization = parse(realization, BoundaryRealizationKind, "realization")
         lower = int(lower_width)
         upper = int(upper_width)
         if lower < 0 or upper < 0:
@@ -157,7 +141,7 @@ class HaloPlan(StrictModule, NonTrainableState):
         same_level_neighbors: bool = False,
         coarse_fine_neighbors: bool = False,
         distributed_neighbors: bool = False,
-    ):
+    ) -> None:
         if not isinstance(footprint, StencilFootprint):
             raise TypeError("footprint must be a StencilFootprint.")
         boundaries = tuple(physical_boundaries)
@@ -209,7 +193,7 @@ class BoundaryAffineMap(StrictModule, NonTrainableState):
         lift_operator: AbstractLinearOperator,
         boundary_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(rhs_operator, AbstractLinearOperator) or not isinstance(
             lift_operator, AbstractLinearOperator
         ):

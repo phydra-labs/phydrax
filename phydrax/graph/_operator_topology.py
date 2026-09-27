@@ -9,17 +9,19 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Sequence
 from math import prod
-from typing import Any, Literal, TypeAlias
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.core as jcore
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._ir import batch_graphs, GraphIR, unbatch_graph
 
 
@@ -34,6 +36,7 @@ OperatorTopologySite: TypeAlias = Literal[
     "point",
     "global",
 ]
+SimplicialSampleSite: TypeAlias = Literal["vertex", "edge", "face"]
 
 
 def _contains_tracer(tree: Any, /) -> bool:
@@ -143,22 +146,15 @@ class OperatorTopology(StrictModule, NonTrainableState):
         validate: bool = True,
         _graph_fingerprint: str | None = None,
         _support_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(graph, GraphIR):
             raise TypeError("OperatorTopology graph must be a GraphIR.")
         cases = tuple(case_shape)
         if any(size <= 0 for size in cases):
             raise ValueError("OperatorTopology case dimensions must be positive.")
-        if kind not in ("graph", "simplicial", "cell_complex"):
-            raise ValueError(
-                "OperatorTopology kind must be 'graph', 'simplicial', or 'cell_complex'."
-            )
-        if site not in ("node", "edge", "face", "cell", "vertex", "point", "global"):
-            raise ValueError("Unknown OperatorTopology site.")
-        if entity not in ("node", "edge", "global"):
-            raise ValueError(
-                "OperatorTopology entity must be 'node', 'edge', or 'global'."
-            )
+        kind = parse(kind, OperatorTopologyKind, "kind")
+        site = parse(site, OperatorTopologySite, "site")
+        entity = parse(entity, OperatorTopologyEntity, "entity")
         mapping = jnp.asarray(sample_entities)
         if not jnp.issubdtype(mapping.dtype, jnp.integer):
             raise TypeError("OperatorTopology sample_entities must have integer dtype.")
@@ -260,7 +256,7 @@ class OperatorTopology(StrictModule, NonTrainableState):
         complex_graph: Any,
         /,
         *,
-        site: Literal["vertex", "edge", "face"] = "vertex",
+        site: SimplicialSampleSite = "vertex",
         validate: bool = True,
     ) -> "OperatorTopology":
         """Bind a sample set to cells of a canonical simplicial-complex graph."""
@@ -269,16 +265,16 @@ class OperatorTopology(StrictModule, NonTrainableState):
 
         if not isinstance(complex_graph, SimplicialComplexGraph):
             raise TypeError("from_simplicial requires a SimplicialComplexGraph.")
-        if site == "vertex":
-            sample_nodes = complex_graph.vertex_cells
-        elif site == "edge":
-            sample_nodes = complex_graph.edge_cells
-        elif site == "face":
-            sample_nodes = complex_graph.face_cells
-        else:
-            raise ValueError(
-                "Simplicial sample site must be 'vertex', 'edge', or 'face'."
-            )
+        site = parse(site, SimplicialSampleSite, "site")
+        match site:
+            case "vertex":
+                sample_nodes = complex_graph.vertex_cells
+            case "edge":
+                sample_nodes = complex_graph.edge_cells
+            case "face":
+                sample_nodes = complex_graph.face_cells
+            case _:
+                assert_never(site)
         return cls(
             complex_graph.graph,
             sample_nodes,

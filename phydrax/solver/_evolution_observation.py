@@ -6,13 +6,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from operator import index
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -20,6 +21,10 @@ from ..dynamics import AbstractEvolution
 
 
 OBSERVATION_NONFINITE = -1
+
+_ObservationCarry: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class BoundedEvolutionObservationPlan(StrictModule, NonTrainableState):
@@ -42,7 +47,7 @@ class BoundedEvolutionObservationPlan(StrictModule, NonTrainableState):
         sample_stride: int = 1,
         include_initial: bool = True,
         observer_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(observable):
             raise TypeError("observable must be callable.")
         if any(isinstance(size, bool) for size in observable_shape):
@@ -141,7 +146,9 @@ def observe_evolution_bounded(
         value_buffer = value_buffer.at[0].set(initial_value)
         valid_buffer = valid_buffer.at[0].set(initial_finite)
 
-    def advance(carry, data):
+    def advance(
+        carry: _ObservationCarry, data: tuple[Array, Array, Array]
+    ) -> tuple[_ObservationCarry, None]:
         (
             state,
             cumulative_valid,

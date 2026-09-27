@@ -6,17 +6,22 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._tree_math import validate_inexact_tree, validate_real_inexact_tree
 from ._geometry import ContinuationRepresentationPolicy
+
+
+if TYPE_CHECKING:
+    from ..linalg import AbstractVectorSpace
 
 
 def _parameter_paths(tree: PyTree[Any], /) -> tuple[str, ...]:
@@ -53,7 +58,7 @@ class ParameterRealization(StrictModule):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         identifier = str(problem_id)
         if not identifier:
             raise ValueError("Parameter realization problem_id must be non-empty.")
@@ -144,7 +149,7 @@ class ContinuationCandidate(StrictModule):
         parent_point_id: str = "",
         attempt_index: int,
         retry_index: int,
-    ):
+    ) -> None:
         if not isinstance(realization, ParameterRealization):
             raise TypeError("realization must be a ParameterRealization.")
         state_ = validate_inexact_tree(state, name="continuation candidate state")
@@ -261,7 +266,7 @@ class ParameterTransferEvidence(StrictModule):
         target_realization_id: str,
         parameter_paths: tuple[str, ...],
         message: str = "",
-    ):
+    ) -> None:
         target = str(target_realization_id)
         paths = tuple(str(path) for path in parameter_paths)
         if not target or not paths or any(not path for path in paths):
@@ -373,7 +378,7 @@ class ContinuationAcceptedState(StrictModule):
         application_state_id: str,
         decision_id: str,
         accepted_index: int,
-    ):
+    ) -> None:
         if not isinstance(candidate, ContinuationCandidate):
             raise TypeError("candidate must be a ContinuationCandidate.")
         if not bool(candidate.numerical_accepted):
@@ -464,7 +469,7 @@ class ContinuationStepResult(StrictModule):
         source_application_state_id: str,
         restored_application_state_id: str,
         message: str = "",
-    ):
+    ) -> None:
         if not isinstance(candidate, ContinuationCandidate):
             raise TypeError("candidate must be a ContinuationCandidate.")
         if not isinstance(transfer, ParameterTransferEvidence):
@@ -614,7 +619,9 @@ class AbstractContinuationAdapter(StrictModule):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def declared_spaces(self, /):
+    def declared_spaces(
+        self, /
+    ) -> tuple[AbstractVectorSpace | None, AbstractVectorSpace | None]:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -622,11 +629,13 @@ class AbstractContinuationAdapter(StrictModule):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def residual(self, state: PyTree[Any], coordinate: Any, args: Any = None, /):
+    def residual(
+        self, state: PyTree[Any], coordinate: Any, args: Any = None, /
+    ) -> PyTree[Array]:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def parameters(self, coordinate: Any, args: Any = None, /):
+    def parameters(self, coordinate: Any, args: Any = None, /) -> PyTree[Array]:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -637,7 +646,7 @@ class AbstractContinuationAdapter(StrictModule):
         tangent: PyTree[Any],
         args: Any = None,
         /,
-    ):
+    ) -> PyTree[Array]:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -647,7 +656,7 @@ class AbstractContinuationAdapter(StrictModule):
         coordinate: Any,
         args: Any = None,
         /,
-    ):
+    ) -> PyTree[Array]:
         raise NotImplementedError
 
 
@@ -681,7 +690,7 @@ class CallableContinuationAdapter(AbstractContinuationAdapter):
         state_identity: Callable[[Any, Any], str] | None = None,
         checkpoint: Callable[[Any, Any], Any] | None = None,
         restore: Callable[[Any, Any], Any] | None = None,
-    ):
+    ) -> None:
         from ._core import ContinuationCurveProblem
 
         if not isinstance(problem, ContinuationCurveProblem):
@@ -821,16 +830,20 @@ class CallableContinuationAdapter(AbstractContinuationAdapter):
             return None
         return self.restore_function(data, args)
 
-    def declared_spaces(self, /):
+    def declared_spaces(
+        self, /
+    ) -> tuple[AbstractVectorSpace | None, AbstractVectorSpace | None]:
         return self.continuation_problem.declared_spaces()
 
     def representation_policy(self, /) -> ContinuationRepresentationPolicy:
         return self.continuation_problem.representation_policy()
 
-    def residual(self, state: PyTree[Any], coordinate: Any, args: Any = None, /):
+    def residual(
+        self, state: PyTree[Any], coordinate: Any, args: Any = None, /
+    ) -> PyTree[Array]:
         return self.continuation_problem.residual(state, coordinate, args)
 
-    def parameters(self, coordinate: Any, args: Any = None, /):
+    def parameters(self, coordinate: Any, args: Any = None, /) -> PyTree[Array]:
         return self.continuation_problem.parameters(coordinate, args)
 
     def state_jacobian_action(
@@ -840,7 +853,7 @@ class CallableContinuationAdapter(AbstractContinuationAdapter):
         tangent: PyTree[Any],
         args: Any = None,
         /,
-    ):
+    ) -> PyTree[Array]:
         return self.continuation_problem.state_jacobian_action(
             state, coordinate, tangent, args
         )
@@ -851,7 +864,7 @@ class CallableContinuationAdapter(AbstractContinuationAdapter):
         coordinate: Any,
         args: Any = None,
         /,
-    ):
+    ) -> PyTree[Array]:
         return self.continuation_problem.coordinate_derivative(state, coordinate, args)
 
 
@@ -875,7 +888,7 @@ class ContinuationAdapterAudit(StrictModule):
         coordinate_interval_matches: Any,
         spaces_match: Any,
         representation_matches: Any,
-    ):
+    ) -> None:
         flags = tuple(
             jnp.asarray(value, dtype=jnp.bool_)
             for value in (

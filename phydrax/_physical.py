@@ -12,10 +12,13 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
+from .typing import parse
 from .units import (
     derived_unit,
     KILOGRAM,
@@ -29,7 +32,7 @@ from .units import (
 )
 
 
-LengthCoordinateKind = Literal["physical", "comoving", "code"]
+LengthCoordinateKind: TypeAlias = Literal["physical", "comoving", "code"]
 
 
 class SpatialCoordinateContract(StrictModule, NonTrainableState):
@@ -49,14 +52,13 @@ class SpatialCoordinateContract(StrictModule, NonTrainableState):
         length_coordinate_kind: LengthCoordinateKind = "physical",
         coordinate_system: str = "cartesian",
         reference_frame: str = "world",
-    ):
+    ) -> None:
         if not isinstance(length_unit, UnitDefinition):
             raise TypeError("length_unit must be a UnitDefinition.")
         if length_unit.dimension != LENGTH:
             raise ValueError("Spatial coordinate length_unit must have length dimension.")
         kind = str(length_coordinate_kind).strip()
-        if kind not in ("physical", "comoving", "code"):
-            raise ValueError("Spatial coordinate kind is invalid.")
+        kind = parse(kind, LengthCoordinateKind, "length_coordinate_kind")
         system = str(coordinate_system).strip()
         frame = str(reference_frame).strip()
         if not system or not frame:
@@ -154,7 +156,7 @@ class DimensionalScaleContract(StrictModule, NonTrainableState):
         /,
         *,
         length_coordinate_kind: LengthCoordinateKind = "physical",
-    ):
+    ) -> None:
         if not all(
             isinstance(unit, UnitDefinition)
             for unit in (length_unit, mass_unit, time_unit)
@@ -182,8 +184,7 @@ class DimensionalScaleContract(StrictModule, NonTrainableState):
                 "Dimensional scale units must share one explicit reference system."
             )
         kind = str(length_coordinate_kind).strip()
-        if kind not in ("physical", "comoving", "code"):
-            raise ValueError("Dimensional scale coordinate kind is invalid.")
+        kind = parse(kind, LengthCoordinateKind, "length_coordinate_kind")
 
         length_symbol = length_unit.symbol
         mass_symbol = mass_unit.symbol
@@ -328,7 +329,7 @@ def _fraction_from_payload(payload: object, name: str, /) -> Fraction:
     )
 
 
-def _apply_exact_factor(value: Any, factor: Fraction, /):
+def _apply_exact_factor(value: ArrayLike, factor: Fraction, /) -> Array:
     array = jnp.asarray(value)
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError("Relativity scale conversions require real-valued inputs.")
@@ -372,7 +373,7 @@ class RelativityScaleContract(StrictModule, NonTrainableState):
         reduced_planck_constant: PhysicalConstant,
         boltzmann_constant: PhysicalConstant,
         quantum_constants_explicit: bool = True,
-    ):
+    ) -> None:
         if not isinstance(dimensional_scale, DimensionalScaleContract):
             raise TypeError("dimensional_scale must be a DimensionalScaleContract.")
         if not isinstance(quantum_constants_explicit, bool):
@@ -536,28 +537,28 @@ class RelativityScaleContract(StrictModule, NonTrainableState):
             )
         )
 
-    def mass_to_geometric_length(self, mass: Any, /):
+    def mass_to_geometric_length(self, mass: ArrayLike, /) -> Array:
         """Convert mass to ``G M / c^2`` in the contract length unit."""
         return _apply_exact_factor(
             mass,
             self.gravitational_constant / self.speed_of_light**2,
         )
 
-    def geometric_length_to_mass(self, length: Any, /):
+    def geometric_length_to_mass(self, length: ArrayLike, /) -> Array:
         """Invert :meth:`mass_to_geometric_length` without a repair branch."""
         return _apply_exact_factor(
             length,
             self.speed_of_light**2 / self.gravitational_constant,
         )
 
-    def mass_to_geometric_time(self, mass: Any, /):
+    def mass_to_geometric_time(self, mass: ArrayLike, /) -> Array:
         """Convert mass to ``G M / c^3`` in the contract time unit."""
         return _apply_exact_factor(
             mass,
             self.gravitational_constant / self.speed_of_light**3,
         )
 
-    def geometric_time_to_mass(self, time: Any, /):
+    def geometric_time_to_mass(self, time: ArrayLike, /) -> Array:
         """Invert :meth:`mass_to_geometric_time` without a repair branch."""
         return _apply_exact_factor(
             time,
@@ -570,7 +571,7 @@ class RelativityScaleContract(StrictModule, NonTrainableState):
                 "Quantum conversion requires explicitly declared hbar and k_B."
             )
 
-    def surface_gravity_to_temperature(self, surface_gravity: Any, /):
+    def surface_gravity_to_temperature(self, surface_gravity: ArrayLike, /) -> Array:
         """Convert physical surface gravity to Hawking temperature."""
         self._require_quantum_constants()
         factor = self.reduced_planck_constant / (
@@ -578,7 +579,7 @@ class RelativityScaleContract(StrictModule, NonTrainableState):
         )
         return _apply_exact_factor(surface_gravity, factor)
 
-    def temperature_to_surface_gravity(self, temperature: Any, /):
+    def temperature_to_surface_gravity(self, temperature: ArrayLike, /) -> Array:
         """Invert :meth:`surface_gravity_to_temperature`."""
         self._require_quantum_constants()
         factor = (
@@ -590,7 +591,7 @@ class RelativityScaleContract(StrictModule, NonTrainableState):
         )
         return _apply_exact_factor(temperature, factor)
 
-    def area_to_entropy(self, area: Any, /):
+    def area_to_entropy(self, area: ArrayLike, /) -> Array:
         """Convert horizon area to Bekenstein--Hawking entropy."""
         self._require_quantum_constants()
         factor = (
@@ -600,7 +601,7 @@ class RelativityScaleContract(StrictModule, NonTrainableState):
         )
         return _apply_exact_factor(area, factor)
 
-    def entropy_to_area(self, entropy: Any, /):
+    def entropy_to_area(self, entropy: ArrayLike, /) -> Array:
         """Invert :meth:`area_to_entropy`."""
         self._require_quantum_constants()
         factor = (

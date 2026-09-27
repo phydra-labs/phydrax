@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -72,7 +73,9 @@ from phydrax.solver._runtime_lifecycle import ExactTimeSchedule
 from phydrax.units import KILOGRAM
 
 
-def _identity_step(step_index, time, state, step_size, args):
+def _identity_step(
+    step_index: Any, time: Any, state: Any, step_size: Any, args: Any
+) -> Any:
     del step_index, time, step_size, args
     dtype = jax.tree.leaves(state)[0].dtype
     return FixedStepResult(
@@ -87,11 +90,12 @@ def _identity_step(step_index, time, state, step_size, args):
     )
 
 
-def _neutral_artifact(tmp_path: Path, name: str, *, kind: str = "field"):
+def _neutral_artifact(tmp_path: Path, name: str, *, kind: str = "field") -> Any:
     payload = f"bounded-{name}".encode()
     path = tmp_path / name
     path.write_bytes(payload)
     rights = BlackHoleArtifactRights(
+        # ty: ignore[invalid-argument-type]
         kind,
         f"source:{name}",
         hashlib.sha256(payload).hexdigest(),
@@ -130,6 +134,7 @@ def _neutral_artifact(tmp_path: Path, name: str, *, kind: str = "field"):
             quantity_id="quantity:z4c-state",
             topology_id="topology:grid-8",
             unit_id="units:geometric",
+            # ty: ignore[invalid-argument-type]
             **common,
         )
     return map_image_artifact(
@@ -138,13 +143,18 @@ def _neutral_artifact(tmp_path: Path, name: str, *, kind: str = "field"):
         observable_id="observable:constraint-norm",
         screen_frame_id="frame:grid-slice",
         unit_id="units:dimensionless",
+        # ty: ignore[invalid-argument-type]
         **common,
     )
 
 
 def _execution_policy_and_plan(
-    resources, *, precision_id, solver_policy_id, dtype_name="float32"
-):
+    resources: Any,
+    *,
+    precision_id: Any,
+    solver_policy_id: Any,
+    dtype_name: Any = "float32",
+) -> Any:
     policy = ExecutionPolicy(resources=resources)
     requirements = ExecutionRequirements(
         "owner:numerical-relativity-test",
@@ -202,7 +212,9 @@ def _execution_policy_and_plan(
     return policy, plan
 
 
-def _compiled(tmp_path: Path, *, artifacts=(), end_time=0.1, output_artifacts=1):
+def _compiled(
+    tmp_path: Path, *, artifacts: Any = (), end_time: Any = 0.1, output_artifacts: Any = 1
+) -> Any:
     grid = FixedGridGeometry(
         (5, 5, 5),
         (0.0, 0.0, 0.0),
@@ -328,7 +340,7 @@ def _compiled(tmp_path: Path, *, artifacts=(), end_time=0.1, output_artifacts=1)
     return production, production.prepare(store), initial
 
 
-def _replace_status(state, status, checkpoint):
+def _replace_status(state: Any, status: Any, checkpoint: Any) -> Any:
     return ProductionRunState(
         state.step_index,
         state.time,
@@ -344,7 +356,7 @@ def _replace_status(state, status, checkpoint):
     )
 
 
-def _compiled_z4c_output(tmp_path: Path, artifact):
+def _compiled_z4c_output(tmp_path: Path, artifact: Any) -> Any:
     grid = FixedGridGeometry(
         (5, 5, 5),
         (0.0, 0.0, 0.0),
@@ -412,6 +424,7 @@ def _compiled_z4c_output(tmp_path: Path, artifact):
         maximum_steps=1,
         checkpoint_interval=1,
         segment_steps=1,
+        # ty: ignore[invalid-argument-type]
         output_schedule=ExactTimeSchedule((0.01,)),
     )
     case = ProductionCaseManifest(
@@ -469,7 +482,7 @@ def _compiled_z4c_output(tmp_path: Path, artifact):
         tmp_path / "z4c-output-checkpoints", case, checkpoint_policy
     )
 
-    def writer(event_id, state):
+    def writer(event_id: Any, state: Any) -> Any:
         assert event_id
         assert state.runtime_state.step_index == 1
         return (artifact,)
@@ -480,7 +493,7 @@ def _compiled_z4c_output(tmp_path: Path, artifact):
     return production, prepared, committer, initial
 
 
-def test_fixed_grid_adapter_preserves_runtime_acceptance_and_time_grid():
+def test_fixed_grid_adapter_preserves_runtime_acceptance_and_time_grid() -> None:
     grid = FixedGridGeometry(
         (5, 5, 5),
         (0.0, 0.0, 0.0),
@@ -509,17 +522,21 @@ def test_fixed_grid_adapter_preserves_runtime_acceptance_and_time_grid():
         )
     )
 
+    # ty: ignore[invalid-argument-type]
     accepted = method.step(0, 0.0, state, 0.01, None)
     assert bool(accepted.successful)
     assert int(accepted.accepted_state.runtime_state.step_index) == 1
     assert accepted.work == 3
 
+    # ty: ignore[invalid-argument-type]
     mismatched = method.step(1, 0.0, state, 0.01, None)
     assert not bool(mismatched.successful)
     assert int(mismatched.accepted_state.runtime_state.step_index) == 0
 
 
-def test_compilation_binds_support_execution_resolved_run_and_artifacts(tmp_path: Path):
+def test_compilation_binds_support_execution_resolved_run_and_artifacts(
+    tmp_path: Path,
+) -> None:
     initial_data = _neutral_artifact(tmp_path, "initial-data.bin")
     production, prepared, _initial = _compiled(tmp_path, artifacts=(initial_data,))
 
@@ -562,7 +579,7 @@ def test_compilation_binds_support_execution_resolved_run_and_artifacts(tmp_path
 
 def test_production_rejects_callable_methods_and_unresolved_execution_plans(
     tmp_path: Path,
-):
+) -> None:
     production, _prepared, _initial = _compiled(tmp_path)
     direct = ExecutionPlan(
         "execution:direct-bypass",
@@ -645,7 +662,7 @@ def test_production_rejects_callable_methods_and_unresolved_execution_plans(
         )
 
 
-def test_restart_admission_rejects_another_exact_runtime_plan(tmp_path: Path):
+def test_restart_admission_rejects_another_exact_runtime_plan(tmp_path: Path) -> None:
     production, prepared, initial = _compiled(tmp_path)
     state = prepared.initial_state(initial)
     checkpointed = prepared.checkpoint(state)
@@ -660,7 +677,7 @@ def test_restart_admission_rejects_another_exact_runtime_plan(tmp_path: Path):
 
 def test_output_manifest_derives_from_acknowledged_writer_receipt_and_run_lineage(
     tmp_path: Path,
-):
+) -> None:
     output = _neutral_artifact(tmp_path, "constraint-image.bin", kind="image")
     production, prepared, committer, initial = _compiled_z4c_output(tmp_path, output)
     result = prepared.run(prepared.initial_state(initial))
@@ -690,7 +707,7 @@ def test_output_manifest_derives_from_acknowledged_writer_receipt_and_run_lineag
 
 def test_bounded_terminal_manifests_preserve_checkpoint_and_distinct_statuses(
     tmp_path: Path,
-):
+) -> None:
     production, prepared, initial = _compiled(tmp_path, output_artifacts=1)
     state = prepared.initial_state(initial)
 

@@ -1083,6 +1083,7 @@ def verify_campaign_preflight(
             raise PermissionError(
                 "Reference binding omits a required campaign use right."
             )
+        # ty: ignore[unresolved-attribute]
         reference.manifest.require_rights(
             **{right: True for right in entry.required_rights}
         )
@@ -1331,6 +1332,7 @@ def run_qualification(
     for criterion, start, observation in zip(
         criteria_set.criteria, starts, observations, strict=True
     ):
+        # ty: ignore[not-subscriptable]
         measurement = payload["metrics"][
             metric_key(criterion.applicability, criterion.metric)
         ]
@@ -1512,6 +1514,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             distribution_manifest=arguments.distribution_manifest,
         )
     write_json_immutable(arguments.output, result)
+    # ty: ignore[invalid-argument-type]
     return {"passed": 0, "failed": 1, "preflight-refused": 2, "inconclusive": 3}[
         result["outcome"]
     ]

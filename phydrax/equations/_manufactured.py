@@ -11,13 +11,15 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._tensor_support import PreparedTensorGrid
 from ..linalg import AbstractLinearOperator, ArraySpace
+from ..typing import parse
 
 
 ManufacturedNorm: TypeAlias = Literal["l2", "linf"]
@@ -39,7 +41,7 @@ class ManufacturedPDECase(StrictModule):
         /,
         *,
         case_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(exact_solution) or not callable(exact_spatial_action):
             raise TypeError(
                 "Manufactured exact solution and spatial action must be callable."
@@ -127,7 +129,7 @@ class ManufacturedSpatialOperator(StrictModule):
         *,
         boundary_mask: ArrayLike | None = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid) or not isinstance(
             operator, AbstractLinearOperator
         ):
@@ -216,7 +218,7 @@ class ManufacturedConvergenceResult(StrictModule, NonTrainableState):
         expected_boundary_order: float | None,
         rate_tolerance: float,
         plan_id: str,
-    ):
+    ) -> None:
         spacing_ = jnp.asarray(spacings)
         total_ = jnp.asarray(total_errors)
         interior_ = jnp.asarray(interior_errors)
@@ -280,7 +282,7 @@ class ManufacturedConvergencePlan(StrictModule):
         expected_boundary_order: float | None = None,
         rate_tolerance: float = 0.25,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         values = tuple(resolutions)
         if len(values) < 2 or any(value <= 0 for value in values):
             raise ValueError(
@@ -288,8 +290,9 @@ class ManufacturedConvergencePlan(StrictModule):
             )
         if any(right <= left for left, right in zip(values, values[1:])):
             raise ValueError("Convergence resolutions must be strictly increasing.")
-        if not callable(prepare_operator) or norm not in ("l2", "linf"):
+        if not callable(prepare_operator):
             raise ValueError("Convergence operator factory/norm is invalid.")
+        norm = parse(norm, ManufacturedNorm, "norm")
         tolerance = float(rate_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("rate_tolerance must be finite and non-negative.")

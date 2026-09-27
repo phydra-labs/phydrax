@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -58,7 +59,7 @@ class KineticAerothermodynamicPlan(StrictModule, NonTrainableState):
         *,
         species_transport: KineticSpeciesTransportPlan | None = None,
         radiation_ablation: KineticRadiationAblationPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(runtime, CompressibleKineticRuntimePlan):
             raise TypeError("runtime must be CompressibleKineticRuntimePlan.")
         if species_transport is not None and not isinstance(
@@ -114,14 +115,13 @@ class KineticAerothermodynamicPlan(StrictModule, NonTrainableState):
             )
         radiation_evidence = None
         if self.radiation_ablation is not None:
-            values = (
-                radiation_energy_exchange,
-                ablated_species,
-                wall_momentum,
-                wall_energy,
-                species_charges,
-            )
-            if any(value is None for value in values):
+            if (
+                radiation_energy_exchange is None
+                or ablated_species is None
+                or wall_momentum is None
+                or wall_energy is None
+                or species_charges is None
+            ):
                 raise ValueError(
                     "Radiation/ablation coupling requires every exchange input."
                 )

@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import abc
 from enum import IntEnum
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -18,6 +19,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry import RigidFrame
+from ...typing import parse
 from ._fields import (
     _angular_frequency,
     _complex_field_values,
@@ -27,7 +29,7 @@ from ._fields import (
 from ._pulse_time import PulseTimeSpace
 
 
-AnalyticPulsePolarization = Literal["scalar", "tangential"]
+AnalyticPulsePolarization: TypeAlias = Literal["scalar", "tangential"]
 CarrierResolvedFieldKind = Literal["scalar", "lab-vector"]
 
 # CODATA 2018. Susceptibilities below are electric SI susceptibilities, so the
@@ -272,7 +274,7 @@ class InstantaneousScalarSusceptibility(AbstractCarrierResolvedResponse):
         second_order: ArrayLike = 0.0,
         third_order: ArrayLike = 0.0,
         /,
-    ):
+    ) -> None:
         self.second_order = _real_finite_array("second_order", second_order, ())
         self.third_order = _real_finite_array("third_order", third_order, ())
 
@@ -335,7 +337,7 @@ class OrientedTensorSusceptibility(AbstractCarrierResolvedResponse):
         third_order: ArrayLike,
         crystal_frame: RigidFrame,
         /,
-    ):
+    ) -> None:
         if not isinstance(crystal_frame, RigidFrame) or crystal_frame.dimension != 3:
             raise ValueError("crystal_frame must be a three-dimensional RigidFrame.")
         self.second_order = _real_finite_array("second_order", second_order, (3, 3, 3))
@@ -437,15 +439,14 @@ class AnalyticPulseField(StrictModule):
         /,
         *,
         polarization: AnalyticPulsePolarization = "scalar",
-    ):
+    ) -> None:
         if not isinstance(space, PlaneFieldSpace):
             raise TypeError("space must be a PlaneFieldSpace.")
         if not isinstance(time_space, PulseTimeSpace):
             raise TypeError("time_space must be a PulseTimeSpace.")
         if time_space.topology != "periodic-cell":
             raise ValueError("An analytic pulse requires periodic-cell pulse time.")
-        if polarization not in ("scalar", "tangential"):
-            raise ValueError("polarization must be 'scalar' or 'tangential'.")
+        polarization = parse(polarization, AnalyticPulsePolarization, "polarization")
         expected_shape = (
             space.shape + time_space.shape
             if polarization == "scalar"
@@ -667,7 +668,7 @@ class _PreparedInstantaneousResponse(PreparedCarrierResolvedResponse):
         /,
         *,
         temporal_axis: int,
-    ):
+    ) -> None:
         mask, shape, axis = _prepared_geometry(
             time_space, positive_frequency_mask, field_shape, temporal_axis
         )

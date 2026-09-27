@@ -8,15 +8,19 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax import Array
+from jax.typing import ArrayLike
 
-from .._precision import (
+from .._dtype_names import (
     complex_precision_dtype,
     precision_dtype_name,
+    real_precision_dtype_name,
+)
+from .._precision import (
     precision_itemsize,
     PrecisionEvidenceEnvelope,
     PrecisionRequest,
     PrecisionResolution,
-    real_precision_dtype_name,
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -38,7 +42,7 @@ class IntegrationPrecisionPolicy(StrictModule, NonTrainableState):
         accumulation_dtype: Any | None = None,
         decision_dtype: Any | None = None,
         output_dtype: Any | None = None,
-    ):
+    ) -> None:
         evaluation = (
             None
             if evaluation_dtype is None
@@ -96,7 +100,7 @@ class IntegrationPrecisionPolicy(StrictModule, NonTrainableState):
             },
         )
 
-    def evaluation(self, value: Any, /):
+    def evaluation(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         if self.evaluation_dtype is None:
             return array
@@ -107,7 +111,7 @@ class IntegrationPrecisionPolicy(StrictModule, NonTrainableState):
         )
         return array.astype(target)
 
-    def accumulation(self, value: Any, /):
+    def accumulation(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         if self.accumulation_dtype is None:
             return array
@@ -118,11 +122,11 @@ class IntegrationPrecisionPolicy(StrictModule, NonTrainableState):
         )
         return array.astype(target)
 
-    def decision(self, value: Any, /):
+    def decision(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         return array if self.decision_dtype is None else array.astype(self.decision_dtype)
 
-    def output(self, value: Any, /):
+    def output(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         if self.output_dtype is None:
             return array

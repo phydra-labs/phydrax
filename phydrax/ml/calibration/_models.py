@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 
@@ -24,6 +26,7 @@ from ..._differentiation import (
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
+from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     _protocol_model,
@@ -37,9 +40,13 @@ from .._contracts import (
     ML_SUCCESS,
     prediction_fit_contract,
 )
-from .._numerics import effective_sample_size, run_fixed_iterations
+from .._numerics import effective_sample_size, IterationResult, run_fixed_iterations
 from .._schema import AbstractFittedModel, FeatureSchema, TargetSchema
 from ..discriminant._models import _labels_for, _reshape_for_samples
+
+
+# (block levels, block masses, block upper scores, block count)
+_PavState: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class CalibrationDiagnostics(StrictModule):
@@ -68,7 +75,7 @@ class CalibrationDiagnostics(StrictModule):
         effective_samples: Any,
         class_mass: Any,
         method: str,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.objective = jnp.asarray(objective)
@@ -103,8 +110,7 @@ def _validate_optimization(
         raise ValueError(
             "Optimization requires scalar positive learning_rate/max_iterations and nonnegative tolerance/l2."
         )
-    if policy not in {"none", "statistical", "measure", "product"}:
-        raise ValueError("Unsupported weight policy.")
+    policy = parse(policy, WeightPolicy, "policy")
     return rate, iterations, tolerance_, penalty, policy
 
 
@@ -147,17 +153,19 @@ def _prepare(
 
 
 def _optimize(
-    initial: Any,
-    loss,
+    initial: PyTree[Array],
+    loss: Callable[[PyTree[Array]], Array],
     *,
     learning_rate: Array,
     max_iterations: int,
     tolerance: float,
     method: str,
-):
+) -> IterationResult:
     value_and_grad = jax.value_and_grad(loss)
 
-    def step(parameters, iteration):
+    def step(
+        parameters: PyTree[Array], iteration: Array
+    ) -> tuple[PyTree[Array], Array, Array]:
         del iteration
         objective, gradient = value_and_grad(parameters)
         residual = jnp.max(
@@ -180,7 +188,7 @@ def _optimize(
 
 
 def _diagnostics(
-    optimization, weight: Array, mass: Array, *, method: str
+    optimization: IterationResult, weight: Array, mass: Array, *, method: str
 ) -> CalibrationDiagnostics:
     absent = jnp.any(mass <= 0.0, axis=-1)
     finite = optimization.finite & jnp.all(jnp.isfinite(mass), axis=-1)
@@ -293,7 +301,7 @@ class PlattCalibrationModel(AbstractFittedModel):
         target_schema: TargetSchema,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.slope = jnp.asarray(slope)
         self.intercept = jnp.asarray(intercept)
         self.labels = jnp.asarray(labels)
@@ -350,7 +358,7 @@ class TemperatureCalibrationModel(AbstractFittedModel):
         target_schema: TargetSchema,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.temperature = jnp.asarray(temperature)
         self.labels = jnp.asarray(labels)
         self.target_schema = target_schema
@@ -405,7 +413,7 @@ class VectorCalibrationModel(AbstractFittedModel):
         target_schema: TargetSchema,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.scale = jnp.asarray(scale)
         self.bias = jnp.asarray(bias)
         self.labels = jnp.asarray(labels)
@@ -462,7 +470,7 @@ class MatrixCalibrationModel(AbstractFittedModel):
         target_schema: TargetSchema,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.matrix = jnp.asarray(matrix)
         self.bias = jnp.asarray(bias)
         self.labels = jnp.asarray(labels)
@@ -519,7 +527,7 @@ class MulticlassCalibrationModel(AbstractFittedModel):
         target_schema: TargetSchema,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.slope = jnp.asarray(slope)
         self.intercept = jnp.asarray(intercept)
         self.labels = jnp.asarray(labels)
@@ -581,7 +589,7 @@ def _fit_smooth(recipe: Any, batch: MLBatch, *, kind: str) -> FitResult:
             jnp.zeros(case_shape, dtype=logits.dtype),
         )
 
-        def loss(parameters):
+        def loss(parameters: tuple[Array, Array]) -> Array:
             slope, intercept = parameters
             calibrated = slope[..., None] * scores + intercept[..., None]
             objective = (
@@ -603,7 +611,7 @@ def _fit_smooth(recipe: Any, batch: MLBatch, *, kind: str) -> FitResult:
         raw_initial = jnp.log(jnp.expm1(initial_temperature))
         initial = (jnp.broadcast_to(raw_initial, case_shape),)
 
-        def loss(parameters):
+        def loss(parameters: tuple[Array]) -> Array:
             (raw_temperature,) = parameters
             temperature = jax.nn.softplus(raw_temperature) + recipe.minimum_temperature
             calibrated = logits / temperature[..., None, None]
@@ -623,7 +631,7 @@ def _fit_smooth(recipe: Any, batch: MLBatch, *, kind: str) -> FitResult:
             jnp.zeros(case_shape + (classes,), dtype=logits.dtype),
         )
 
-        def loss(parameters):
+        def loss(parameters: tuple[Array, Array]) -> Array:
             scale, bias = parameters
             calibrated = logits * scale[..., None, :] + bias[..., None, :]
             if kind == "multiclass":
@@ -651,7 +659,7 @@ def _fit_smooth(recipe: Any, batch: MLBatch, *, kind: str) -> FitResult:
         )
         initial = (identity, jnp.zeros(case_shape + (classes,), dtype=logits.dtype))
 
-        def loss(parameters):
+        def loss(parameters: tuple[Array, Array]) -> Array:
             matrix, bias = parameters
             calibrated = (
                 ein.contract("...nf,...cf->...nc", logits, matrix) + bias[..., None, :]
@@ -678,8 +686,9 @@ def _fit_smooth(recipe: Any, batch: MLBatch, *, kind: str) -> FitResult:
         method=kind,
     )
     if kind == "platt":
+        slope, intercept = optimization.value
         model: AbstractArrayModel = PlattCalibrationModel(
-            *optimization.value, labels, schema, case_shape=case_shape
+            slope, intercept, labels, schema, case_shape=case_shape
         )
     elif kind == "temperature":
         temperature = jax.nn.softplus(optimization.value[0]) + recipe.minimum_temperature
@@ -687,16 +696,17 @@ def _fit_smooth(recipe: Any, batch: MLBatch, *, kind: str) -> FitResult:
             temperature, labels, schema, case_shape=case_shape
         )
     elif kind == "vector":
-        model = VectorCalibrationModel(
-            *optimization.value, labels, schema, case_shape=case_shape
-        )
+        scale, bias = optimization.value
+        model = VectorCalibrationModel(scale, bias, labels, schema, case_shape=case_shape)
     elif kind == "matrix":
+        matrix, bias = optimization.value
         model = MatrixCalibrationModel(
-            *optimization.value, labels, schema, case_shape=case_shape
+            matrix, bias, labels, schema, case_shape=case_shape
         )
     else:
+        slope, intercept = optimization.value
         model = MulticlassCalibrationModel(
-            *optimization.value, labels, schema, case_shape=case_shape
+            slope, intercept, labels, schema, case_shape=case_shape
         )
     diagnostics = _diagnostics(optimization, weight, mass, method=kind)
     return FitResult(
@@ -724,7 +734,7 @@ class PlattCalibrationRecipe(AbstractRecipe):
         tolerance: float = 1e-6,
         l2: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         (
             self.learning_rate,
             self.max_iterations,
@@ -758,7 +768,7 @@ class TemperatureCalibrationRecipe(AbstractRecipe):
         max_iterations: int = 256,
         tolerance: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.num_classes = None if num_classes is None else int(num_classes)
         self.minimum_temperature = jnp.asarray(minimum_temperature, dtype=jnp.float64)
         (
@@ -795,7 +805,7 @@ class VectorCalibrationRecipe(AbstractRecipe):
         tolerance: float = 1e-6,
         l2: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.num_classes = None if num_classes is None else int(num_classes)
         (
             self.learning_rate,
@@ -829,7 +839,7 @@ class MatrixCalibrationRecipe(AbstractRecipe):
         tolerance: float = 1e-6,
         l2: float = 1e-5,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.num_classes = None if num_classes is None else int(num_classes)
         (
             self.learning_rate,
@@ -863,7 +873,7 @@ class MulticlassCalibrationRecipe(AbstractRecipe):
         tolerance: float = 1e-6,
         l2: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.num_classes = None if num_classes is None else int(num_classes)
         (
             self.learning_rate,
@@ -893,10 +903,10 @@ def _pav_one(scores: Array, targets: Array, weights: Array) -> tuple[Array, Arra
         jnp.asarray(0, dtype=jnp.int32),
     )
 
-    def push(index, state):
+    def push(index: Array, state: _PavState) -> _PavState:
         levels, masses, uppers, top = state
 
-        def add(current):
+        def add(current: _PavState) -> _PavState:
             levels_, masses_, uppers_, top_ = current
             levels_ = levels_.at[top_].set(ordered_targets[index])
             masses_ = masses_.at[top_].set(ordered_weights[index])
@@ -910,7 +920,7 @@ def _pav_one(scores: Array, targets: Array, weights: Array) -> tuple[Array, Arra
             (levels, masses, uppers, top),
         )
 
-        def condition(current):
+        def condition(current: _PavState) -> Array:
             levels_, masses_, uppers_, top_ = current
             left = jnp.maximum(top_ - 2, 0)
             right = jnp.maximum(top_ - 1, 0)
@@ -919,7 +929,7 @@ def _pav_one(scores: Array, targets: Array, weights: Array) -> tuple[Array, Arra
             )
             return (top_ >= 2) & violation
 
-        def merge(current):
+        def merge(current: _PavState) -> _PavState:
             levels_, masses_, uppers_, top_ = current
             left = top_ - 2
             right = top_ - 1
@@ -962,7 +972,7 @@ class IsotonicCalibrationModel(AbstractFittedModel):
         target_schema: TargetSchema,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.thresholds = jnp.asarray(thresholds)
         self.values = jnp.asarray(values)
         self.block_count = jnp.asarray(block_count, dtype=jnp.int32)
@@ -1038,7 +1048,7 @@ class SmoothIsotonicCalibrationModel(AbstractFittedModel):
         *,
         bandwidth: float,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.thresholds = jnp.asarray(thresholds)
         self.values = jnp.asarray(values)
         self.block_count = jnp.asarray(block_count, dtype=jnp.int32)
@@ -1167,9 +1177,8 @@ def _fit_isotonic(recipe: Any, batch: MLBatch, *, smooth: bool) -> FitResult:
 class IsotonicCalibrationRecipe(AbstractRecipe):
     weight_policy: WeightPolicy = eqx.field(static=True)
 
-    def __init__(self, *, weight_policy: WeightPolicy = "statistical"):
-        if weight_policy not in {"none", "statistical", "measure", "product"}:
-            raise ValueError("Unsupported weight policy.")
+    def __init__(self, *, weight_policy: WeightPolicy = "statistical") -> None:
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.weight_policy = weight_policy
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
@@ -1183,7 +1192,7 @@ class SmoothIsotonicCalibrationRecipe(AbstractRecipe):
 
     def __init__(
         self, *, bandwidth: float = 0.1, weight_policy: WeightPolicy = "statistical"
-    ):
+    ) -> None:
         bandwidth_ = jnp.asarray(bandwidth, dtype=jnp.float64)
         if (
             bandwidth_.ndim != 0
@@ -1192,8 +1201,7 @@ class SmoothIsotonicCalibrationRecipe(AbstractRecipe):
         ):
             raise ValueError("bandwidth must be a finite positive scalar.")
         self.bandwidth = bandwidth_
-        if weight_policy not in {"none", "statistical", "measure", "product"}:
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.weight_policy = weight_policy
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
@@ -1249,7 +1257,7 @@ class CalibratedClassifierModel(AbstractFittedModel):
         calibration_model: AbstractArrayModel,
         labels: Array,
         target_schema: TargetSchema,
-    ):
+    ) -> None:
         self.base_model = base_model
         self.calibration_model = calibration_model
         self.labels = jnp.asarray(labels)
@@ -1323,7 +1331,7 @@ class CalibratedClassifierRecipe(AbstractRecipe):
         /,
         *,
         num_classes: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(base_recipe, AbstractRecipe) or not isinstance(
             calibration_recipe, AbstractRecipe
         ):
@@ -1406,7 +1414,7 @@ class StrictCalibrationCompositionDiagnostics(StrictModule):
         base_status: Any,
         calibration_valid: Any,
         calibration_status: Any,
-    ):
+    ) -> None:
         self.base_valid = jnp.asarray(base_valid, dtype=jnp.bool_)
         self.base_status = jnp.asarray(base_status, dtype=jnp.int32)
         self.calibration_valid = jnp.asarray(calibration_valid, dtype=jnp.bool_)

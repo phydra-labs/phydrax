@@ -10,7 +10,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._differentiation import (
     DerivativeContract,
@@ -23,6 +24,7 @@ from ..._differentiation import (
 from ..._model import ModelBinding, ValuePort
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
+from ...typing import parse
 from .._schema import AbstractFittedModel, FeatureSchema, TargetSchema
 
 
@@ -32,6 +34,23 @@ ObjectiveTransform: TypeAlias = Literal[
 
 EnsembleAggregation: TypeAlias = Literal["sum", "weighted_median"]
 TreeInputDType: TypeAlias = Literal["preserve", "float32", "float64"]
+_TraversalState: TypeAlias = tuple[Array, Array, Array]
+_FlatCaseArrays: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 # Every represented ensemble is piecewise constant between split thresholds, so
 # its prediction is a discontinuous piecewise polynomial of degree zero.
@@ -97,7 +116,7 @@ def _traverse_one_tree(
     node_capacity = feature_index.shape[0]
     path0 = jnp.zeros((node_capacity,), dtype=jnp.bool_).at[0].set(node_mask[0])
 
-    def step(_, state):
+    def step(_: Array, state: _TraversalState) -> _TraversalState:
         node, done, path = state
         safe_node = jnp.clip(node, 0, node_capacity - 1)
         valid = node_mask[safe_node]
@@ -240,7 +259,7 @@ def _predict_case(
     base_score: Array,
     max_steps: int,
 ) -> tuple[Array, Array, Array, Array]:
-    def point_prediction(point):
+    def point_prediction(point: Array) -> tuple[Array, Array, Array, Array]:
         values, leaves, paths = jax.vmap(
             lambda fi, th, lc, rc, dl, sk, cv, cm, lv, nm, lm, active: (
                 _traverse_masked_tree(
@@ -293,7 +312,7 @@ def _weighted_median_case(
     broadcast_weight = jnp.broadcast_to(effective[None, :, None], values.shape)
     ordered_weight = jnp.take_along_axis(broadcast_weight, order, axis=1)
 
-    def accumulate(total, item):
+    def accumulate(total: Array, item: Array) -> tuple[Array, Array]:
         updated = total + item
         return updated, updated
 
@@ -334,7 +353,7 @@ class TreeStructureDiagnostics(StrictModule):
         used_leaves: Any,
         maximum_depth_bound: Any,
         capacity_exhausted: Any,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.used_trees = jnp.asarray(used_trees, dtype=jnp.int32)
         self.tree_capacity = jnp.asarray(tree_capacity, dtype=jnp.int32)
@@ -419,7 +438,7 @@ class TreeEnsemble(AbstractFittedModel):
         out_size: int | tuple[int, ...] | Literal["scalar"] | None = None,
         max_steps: int | None = None,
         capacity_exhausted: ArrayLike = False,
-    ):
+    ) -> None:
         case_shape_ = tuple(case_shape)
         prefix = case_shape_
         feature_index_ = jnp.asarray(feature_index, dtype=jnp.int32)
@@ -528,22 +547,15 @@ class TreeEnsemble(AbstractFittedModel):
             raise ValueError("base_score must have shape case_shape + (output,).")
         if len(feature_schema.names) <= 0:
             raise ValueError("feature_schema must be non-empty.")
-        if aggregation not in {"sum", "weighted_median"}:
-            raise ValueError(f"Unsupported ensemble aggregation {aggregation!r}.")
-        if input_dtype not in {"preserve", "float32", "float64"}:
-            raise ValueError(f"Unsupported tree input dtype policy {input_dtype!r}.")
+        aggregation = parse(aggregation, EnsembleAggregation, "aggregation")
+        input_dtype = parse(input_dtype, TreeInputDType, "input_dtype")
         if aggregation == "weighted_median" and jnp.issubdtype(
             leaf_value_.dtype, jnp.complexfloating
         ):
             raise TypeError("Weighted-median tree aggregation requires real leaf values.")
-        if objective_transform not in {
-            "identity",
-            "sigmoid",
-            "softmax",
-            "exponential",
-            "positive",
-        }:
-            raise ValueError(f"Unsupported objective transform {objective_transform!r}.")
+        objective_transform = parse(
+            objective_transform, ObjectiveTransform, "objective_transform"
+        )
         if objective_transform == "sigmoid" and output_count != 1:
             raise ValueError("A sigmoid tree objective requires one raw output.")
         if objective_transform == "softmax" and output_count < 2:
@@ -605,7 +617,7 @@ class TreeEnsemble(AbstractFittedModel):
     def output_count(self) -> int:
         return self.leaf_value.shape[-1]
 
-    def _flat_case_arrays(self):
+    def _flat_case_arrays(self) -> _FlatCaseArrays:
         count = math.prod(self.case_shape) if self.case_shape else 1
         return (
             self.feature_index.reshape((count,) + self.feature_index.shape[-2:]),

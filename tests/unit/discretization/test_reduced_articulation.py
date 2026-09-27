@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -16,7 +19,7 @@ from phydrax.discretization.particle._reduced_articulation import (
 )
 
 
-def _prepared_bodies(count, *, dimension=3):
+def _prepared_bodies(count: Any, *, dimension: Any = 3) -> Any:
     body_ids = jnp.arange(100, 100 + count, dtype=jnp.int64)
     particles = phx.discretization.ParticleSetPlan(
         body_ids,
@@ -52,7 +55,7 @@ def _prepared_bodies(count, *, dimension=3):
     return body_ids, bodies, reference
 
 
-def _chain():
+def _chain() -> Any:
     body_ids, bodies, reference = _prepared_bodies(4)
     graph = phx.discretization.RigidJointGraphPlan(
         fixed=phx.discretization.FixedJointSetPlan(
@@ -82,7 +85,7 @@ def _chain():
     return body_ids, reference, plan.prepare(graph, reference)
 
 
-def _quaternion_multiply(left, right):
+def _quaternion_multiply(left: Any, right: Any) -> Any:
     return jnp.concatenate(
         (
             left[:1] * right[:1] - jnp.sum(left[1:] * right[1:], keepdims=True),
@@ -91,11 +94,11 @@ def _quaternion_multiply(left, right):
     )
 
 
-def _quaternion_conjugate(value):
+def _quaternion_conjugate(value: Any) -> Any:
     return jnp.concatenate((value[:1], -value[1:]))
 
 
-def test_preparation_derives_stable_topology_layouts_and_reference_pose():
+def test_preparation_derives_stable_topology_layouts_and_reference_pose() -> None:
     body_ids, reference, articulation = _chain()
 
     assert isinstance(articulation, PreparedReducedArticulation)
@@ -163,7 +166,7 @@ def test_preparation_derives_stable_topology_layouts_and_reference_pose():
     assert articulation.state_layout.geometry.contains(packed)
 
 
-def test_reduced_articulation_geometry_certifies_four_space_duality():
+def test_reduced_articulation_geometry_certifies_four_space_duality() -> None:
     _, _, articulation = _chain()
     layout = articulation.state_layout
     geometry = layout.geometry
@@ -203,7 +206,7 @@ def test_reduced_articulation_geometry_certifies_four_space_duality():
         geometry.retract(state, local.at[0].set(jnp.pi))
 
 
-def test_hinge_and_prismatic_forward_geometry_is_parent_frame_exact():
+def test_hinge_and_prismatic_forward_geometry_is_parent_frame_exact() -> None:
     body_ids, _, articulation = _chain()
     angle = 0.5 * jnp.pi
     extension = 0.25
@@ -239,7 +242,7 @@ def test_hinge_and_prismatic_forward_geometry_is_parent_frame_exact():
     )
 
 
-def test_configuration_retraction_difference_and_body_jvp_are_consistent():
+def test_configuration_retraction_difference_and_body_jvp_are_consistent() -> None:
     body_ids, _, articulation = _chain()
     configuration = jnp.asarray([0.3, 0.1])
     velocity = jnp.asarray([0.4, -0.2])
@@ -286,7 +289,7 @@ def test_configuration_retraction_difference_and_body_jvp_are_consistent():
     assert jnp.allclose(frame_jacobian.mv(velocity)[:3], frame_position_jvp, atol=1.0e-12)
 
 
-def test_body_load_pullback_reports_finite_power_duality():
+def test_body_load_pullback_reports_finite_power_duality() -> None:
     _, _, articulation = _chain()
     configuration = jnp.asarray([0.4, -0.15])
     velocity = jnp.asarray([0.7, -0.3])
@@ -324,7 +327,7 @@ def test_body_load_pullback_reports_finite_power_duality():
     assert jnp.abs(evidence.residual) < 1.0e-12
 
 
-def test_malformed_disconnected_reversed_and_missing_tree_inputs_reject():
+def test_malformed_disconnected_reversed_and_missing_tree_inputs_reject() -> None:
     body_ids, reference, articulation = _chain()
     graph = articulation.graph
 
@@ -394,7 +397,7 @@ def test_malformed_disconnected_reversed_and_missing_tree_inputs_reject():
         ).prepare(duplicate_graph, duplicate_reference)
 
 
-def test_cyclic_ball_distance_and_non_3d_tree_inputs_reject():
+def test_cyclic_ball_distance_and_non_3d_tree_inputs_reject() -> None:
     cycle_ids, cycle_bodies, cycle_reference = _prepared_bodies(6)
     cycle_graph = phx.discretization.RigidJointGraphPlan(
         prismatic=phx.discretization.PrismaticJointSetPlan(
@@ -462,7 +465,7 @@ def test_cyclic_ball_distance_and_non_3d_tree_inputs_reject():
     ("extra_kind", "body_count"),
     (("ball", 4), ("distance", 2), ("prismatic", 6)),
 )
-def test_unconsumed_graph_joints_reject(extra_kind, body_count):
+def test_unconsumed_graph_joints_reject(extra_kind: Any, body_count: Any) -> None:
     body_ids, bodies, reference = _prepared_bodies(body_count)
     edge_count = body_count - 1
     tree_ids = jnp.arange(70, 70 + edge_count)

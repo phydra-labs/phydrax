@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -41,7 +42,9 @@ from phydrax.solver._variable_sector_vmc import (
 )
 
 
-def _configuration(coordinates, active, species) -> VariableParticleConfiguration:
+def _configuration(
+    coordinates: Any, active: Any, species: Any
+) -> VariableParticleConfiguration:
     return VariableParticleConfiguration(
         jnp.asarray(coordinates, dtype="float64"),
         jnp.asarray(active),
@@ -161,7 +164,7 @@ def test_free_and_quadratic_continuum_local_energy_references() -> None:
     configuration = _configuration([[0.31], [9.0]], [1, 0], [0, 0])
     wave_number = 1.7
 
-    def plane_wave(value):
+    def plane_wave(value: Any) -> Any:
         phase = jnp.exp(
             1j * wave_number * jnp.sum(value.coordinates * value.active_mask[:, None])
         )

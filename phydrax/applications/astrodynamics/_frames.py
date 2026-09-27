@@ -6,11 +6,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from itertools import pairwise
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -18,6 +19,11 @@ from ..._trainable import NonTrainableState
 from ._context import AstrodynamicsContext, FrameDefinition
 from ._state import CartesianOrbitState
 from ._status import AstrodynamicsStatus
+
+
+_KinematicEvaluator: TypeAlias = Callable[
+    [Array, Any], tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]
+]
 
 
 class KinematicTransformEvaluation(StrictModule):
@@ -33,22 +39,20 @@ class KinematicTransformEvaluation(StrictModule):
 class KinematicFrameTransform(StrictModule, NonTrainableState):
     """Pure source-to-target rotation and moving-origin transform."""
 
-    evaluator: Callable
+    evaluator: _KinematicEvaluator
     source_frame: FrameDefinition
     target_frame: FrameDefinition
     transform_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        evaluator: Callable[
-            [Array, Any], tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]
-        ],
+        evaluator: _KinematicEvaluator,
         source_frame: FrameDefinition,
         target_frame: FrameDefinition,
         /,
         *,
         transform_id: str,
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         if not isinstance(source_frame, FrameDefinition) or not isinstance(
@@ -180,7 +184,7 @@ class ConstantKinematicEvaluator(StrictModule):
             0.0,
             0.0,
         ),
-    ):
+    ) -> None:
         rotation_ = jnp.asarray(rotation)
         self.rotation = rotation_
         self.rotation_rate = (
@@ -193,7 +197,7 @@ class ConstantKinematicEvaluator(StrictModule):
             translation_velocity, dtype=rotation_.dtype
         )
 
-    def __call__(self, time: Array, args: Any, /):
+    def __call__(self, time: Array, args: Any, /) -> tuple[Array, Array, Array, Array]:
         del time, args
         return (
             self.rotation,
@@ -207,7 +211,7 @@ class PreparedFramePath(StrictModule, NonTrainableState):
     transforms: tuple[KinematicFrameTransform, ...]
     path_id: str = eqx.field(static=True)
 
-    def __init__(self, transforms: tuple[KinematicFrameTransform, ...], /):
+    def __init__(self, transforms: tuple[KinematicFrameTransform, ...], /) -> None:
         items = tuple(transforms)
         if not items:
             raise ValueError("Prepared frame path requires at least one transform.")

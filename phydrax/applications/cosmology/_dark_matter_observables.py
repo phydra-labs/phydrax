@@ -21,7 +21,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -33,6 +34,7 @@ from ...discretization.particle import ParticleDiscretization
 from ...discretization.spectral import PeriodicFourierShellPlan
 from ...discretization.splatting import PreparedParticleGridSplat
 from ...observation import LinearObservationPlan, TheoryVector
+from ...typing import parse
 from ._halo_finder import FoFFinderResult, PeriodicFoFFinderPlan
 from ._mixed_matter import MixedCosmologyDiagnostics
 from ._nonlinear_closure import LensingPlanePlan, LightConePlan, LightConeResult
@@ -245,7 +247,7 @@ class WaveDarkMatterObservablePlan(StrictModule, NonTrainableState):
         /,
         *,
         relative_phase_amplitude_floor: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(wave, PreparedPeriodicWaveDarkMatter):
             raise TypeError("wave must be PreparedPeriodicWaveDarkMatter.")
         if not isinstance(shells, PeriodicFourierShellPlan):
@@ -807,7 +809,7 @@ class ParticleDarkMatterObservablePlan(StrictModule, NonTrainableState):
         center: ArrayLike,
         radial_edges: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(transfer, PreparedParticleGridSplat):
             raise TypeError("transfer must be PreparedParticleGridSplat.")
         dimension = transfer.particles.ambient_dimension
@@ -1489,14 +1491,13 @@ class MixedComponentSpectrumPlan(StrictModule, NonTrainableState):
         closure_absolute_tolerance: float = 1.0e-10,
         closure_relative_tolerance: float = 1.0e-8,
         imaginary_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(shells, PeriodicFourierShellPlan):
             raise TypeError("shells must be PeriodicFourierShellPlan.")
         names = tuple(_identifier(value, "component name") for value in component_names)
         if len(names) < 2 or len(set(names)) != len(names):
             raise ValueError("Mixed spectra require at least two unique components.")
-        if normalization not in ("additive-field", "total-density-contrast"):
-            raise ValueError("Unknown mixed-spectrum normalization.")
+        normalization = parse(normalization, DarkMatterDensityConvention, "normalization")
         absolute = float(closure_absolute_tolerance)
         relative = float(closure_relative_tolerance)
         imaginary = float(imaginary_tolerance)
@@ -1690,7 +1691,7 @@ class ComponentForceWorkLedgerPlan(StrictModule, NonTrainableState):
         work_unit: str,
         absolute_tolerance: float = 1.0e-10,
         relative_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         names = tuple(_identifier(value, "component name") for value in component_names)
         if len(names) < 2 or len(set(names)) != len(names):
             raise ValueError("A mixed force/work ledger requires unique components.")
@@ -1923,7 +1924,7 @@ class DarkMatterSpatialContract(StrictModule, NonTrainableState):
         coordinate_time_level: str,
         length_unit_id: str,
         length_coordinate_kind: Literal["comoving", "physical"],
-    ):
+    ) -> None:
         lengths = tuple(float(value) for value in box_lengths)
         if len(lengths) not in (2, 3) or any(
             not math.isfinite(value) or value <= 0.0 for value in lengths
@@ -2014,7 +2015,7 @@ class DarkMatterSurfaceDensityProduct(StrictModule, NonTrainableState):
         density_unit_id: str,
         density_coordinate_kind: Literal["comoving", "physical"],
         source_product_id: str,
-    ):
+    ) -> None:
         if not isinstance(spatial, DarkMatterSpatialContract):
             raise TypeError("spatial must be DarkMatterSpatialContract.")
         if len(spatial.box_lengths) != 2:

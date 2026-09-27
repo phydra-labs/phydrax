@@ -6,12 +6,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from math import isfinite
-from typing import Any, cast, Literal
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
+from typing_extensions import assert_never
 
 import phydrax.axes as cx
 
@@ -29,7 +32,13 @@ from ..linalg import (
     inverse,
     OperatorProperties,
 )
+from ..typing import parse, PRNGKey
 from ._distributions import AbstractDistribution
+
+
+_DesignCriterion: TypeAlias = Literal[
+    "d_optimal", "a_optimal", "e_optimal", "mutual_information"
+]
 
 
 class SobolResult(StrictModule):
@@ -51,7 +60,7 @@ class SobolResult(StrictModule):
         output_variance: cx.AxisArray,
         num_samples: int,
         parameter_dim: str,
-    ):
+    ) -> None:
         expected = len(parameter_names)
         if (
             first_order.dims != total_order.dims
@@ -73,12 +82,12 @@ class SobolResult(StrictModule):
 
 
 def sobol_indices(
-    function,
+    function: Callable[..., object],
     distributions: Mapping[str, AbstractDistribution],
     /,
     *,
     num_samples: int,
-    key,
+    key: PRNGKey | None,
     sampler: str = "sobol_scrambled",
     batch_size: int | None = None,
     parameter_dim: str = "__phydra_uq_parameter",
@@ -204,21 +213,21 @@ def sobol_indices(
 
 
 def _evaluate_design(
-    function,
+    function: Callable[..., object],
     names: tuple[str, ...],
-    design,
+    design: Array,
     /,
     *,
     batch_size: int | None,
     call_style: Literal["keywords", "mapping"],
     **kwargs: Any,
-):
+) -> tuple[Array, tuple[str | None, ...]]:
     count = design.shape[0]
     chunk = count if batch_size is None else int(batch_size)
     if chunk <= 0:
         raise ValueError("batch_size must be positive.")
 
-    def evaluate(row):
+    def evaluate(row: Array) -> object:
         arguments = {name: row[index] for index, name in enumerate(names)}
         if call_style == "keywords":
             return function(**arguments, **kwargs)
@@ -239,7 +248,7 @@ def _evaluate_design(
         output_dims = (None,) * template_data.ndim
         returns_field = False
 
-    def evaluate_data(row):
+    def evaluate_data(row: Array) -> Array:
         value = evaluate(row)
         if returns_field:
             if not isinstance(value, cx.AxisArray):
@@ -262,13 +271,13 @@ def _evaluate_design(
 
 
 def _reduce_sample_outputs(
-    values,
+    values: Array,
     /,
     *,
     reduction: Literal["mean", "sum"],
     mask: ArrayLike | None,
     weights: ArrayLike | None,
-):
+) -> Array:
     output_shape = values.shape[1:]
     effective = jnp.ones(output_shape, dtype=values.dtype)
     if mask is not None:
@@ -328,7 +337,7 @@ class SensitivityGradientResult(StrictModule):
         resampling_id: str | None,
         approximation: str,
         num_samples: int,
-    ):
+    ) -> None:
         if not estimator_id or not method_id or not approximation:
             raise ValueError("Sensitivity provenance IDs must be non-empty.")
         if noise_id is not None and not noise_id:
@@ -381,7 +390,7 @@ class ResamplingScoreResult(StrictModule):
         status: ArrayLike,
         noise_id: str | None,
         resampling_id: str,
-    ):
+    ) -> None:
         weights = jnp.asarray(normalized_weights)
         ancestors = jnp.asarray(ancestor_indices, dtype=jnp.int32)
         if weights.ndim != 1:
@@ -431,7 +440,7 @@ class SensitivityActionResult(StrictModule):
         approximation: str,
         regularization: float,
         num_samples: int | None,
-    ):
+    ) -> None:
         if not operator_id or not method_id or not approximation:
             raise ValueError("Sensitivity action provenance IDs must be non-empty.")
         self.action = action
@@ -469,7 +478,7 @@ class EmpiricalDirectionsResult(StrictModule):
         quantity: str,
         regularization: float,
         ambient_shape: tuple[int, ...],
-    ):
+    ) -> None:
         vectors = jnp.asarray(directions)
         values = jnp.asarray(strengths)
         if vectors.ndim != 2 or values.shape != (vectors.shape[1],):
@@ -513,7 +522,7 @@ class ExperimentDesignResult(StrictModule):
         method_id: str,
         approximation: str,
         regularization: float,
-    ):
+    ) -> None:
         spectrum = jnp.asarray(eigenvalues)
         if spectrum.ndim != 1 or spectrum.size == 0:
             raise ValueError("eigenvalues must be a non-empty rank-1 array.")
@@ -611,7 +620,7 @@ def fixed_noise_pathwise_gradient(
     if not noise_id:
         raise ValueError("noise_id must be non-empty.")
 
-    def evaluate(value):
+    def evaluate(value: PyTree[Array]) -> tuple[ArrayLike, ArrayLike]:
         response = function(value, noise)
         return response, response
 
@@ -677,7 +686,7 @@ def resampling_score_gradient(
         raise ValueError("Every log-weight score must share the particle axis.")
     weights = jax.nn.softmax(logits)
 
-    def score_mean(score):
+    def score_mean(score: ArrayLike) -> Array:
         return jnp.tensordot(weights, jnp.asarray(score), axes=((0,), (0,)))
 
     centered_scores = jax.tree_util.tree_map(
@@ -867,7 +876,7 @@ def exponential_family_parameter_fisher_action(
         raise ValueError("method_id must be non-empty.")
     penalty = _validate_regularization(regularization)
 
-    def natural_values_fn(values):
+    def natural_values_fn(values: PyTree[Array]) -> Array:
         coordinates = natural_fn(values)
         if isinstance(coordinates, NaturalCoordinates):
             family.natural_domain(coordinates)
@@ -983,7 +992,7 @@ def empirical_observability_directions(
     )
     pullback = jax.linear_transpose(pushforward, center)
 
-    def action(flat_vector):
+    def action(flat_vector: Array) -> Array:
         vector = flat_vector.reshape(shape)
         value = pullback(pushforward(vector))[0]
         return value.reshape(-1) + penalty * flat_vector
@@ -1019,7 +1028,7 @@ def empirical_controllability_directions(
     penalty = _validate_regularization(regularization)
     pullback = jax.linear_transpose(pushforward, control)
 
-    def action(flat_vector):
+    def action(flat_vector: Array) -> Array:
         vector = flat_vector.reshape(response_shape)
         input_covector = pullback(vector)[0]
         value = pushforward(input_covector)
@@ -1040,7 +1049,7 @@ def experiment_design_objective(
     information: ArrayLike | Callable[[Array], ArrayLike],
     /,
     *,
-    criterion: Literal["d_optimal", "a_optimal", "e_optimal", "mutual_information"],
+    criterion: _DesignCriterion,
     dimension: int | None = None,
     regularization: float = 0.0,
     noise_variance: float = 1.0,
@@ -1086,41 +1095,41 @@ def experiment_design_objective(
     positive_semidefinite = jnp.all(eigenvalues >= -tolerance)
     finite = jnp.all(jnp.isfinite(effective)) & jnp.all(jnp.isfinite(eigenvalues))
     base_valid = finite & symmetric & positive_semidefinite
-    if criterion == "d_optimal":
-        _, log_determinant = jnp.linalg.slogdet(effective)
-        raw_value = log_determinant
-        criterion_valid = base_valid & positive
-    elif criterion == "a_optimal":
-        inverse_result = inverse(
-            effective,
-            FactorizationPolicy("cholesky"),
-            properties=OperatorProperties(
-                self_adjoint=True,
-                positive_definite=True,
-                evidence={
-                    "self_adjoint": "asserted",
-                    "positive_definite": "asserted",
-                },
-            ),
-        )
-        raw_value = -jnp.trace(inverse_result.value)
-        criterion_valid = base_valid & positive & inverse_result.successful
-    elif criterion == "e_optimal":
-        raw_value = eigenvalues[0]
-        criterion_valid = base_valid
-    elif criterion == "mutual_information":
-        variance = float(noise_variance)
-        if not isfinite(variance) or variance <= 0.0:
-            raise ValueError("noise_variance must be finite and positive.")
-        _, log_determinant = jnp.linalg.slogdet(
-            jnp.eye(size, dtype=matrix.dtype) + effective / variance
-        )
-        raw_value = 0.5 * log_determinant
-        criterion_valid = base_valid
-    else:
-        raise ValueError(
-            "criterion must be 'd_optimal', 'a_optimal', 'e_optimal', or 'mutual_information'."
-        )
+    design_criterion = parse(criterion, _DesignCriterion, "criterion")
+    match design_criterion:
+        case "d_optimal":
+            _, log_determinant = jnp.linalg.slogdet(effective)
+            raw_value = log_determinant
+            criterion_valid = base_valid & positive
+        case "a_optimal":
+            inverse_result = inverse(
+                effective,
+                FactorizationPolicy("cholesky"),
+                properties=OperatorProperties(
+                    self_adjoint=True,
+                    positive_definite=True,
+                    evidence={
+                        "self_adjoint": "asserted",
+                        "positive_definite": "asserted",
+                    },
+                ),
+            )
+            raw_value = -jnp.trace(inverse_result.value)
+            criterion_valid = base_valid & positive & inverse_result.successful
+        case "e_optimal":
+            raw_value = eigenvalues[0]
+            criterion_valid = base_valid
+        case "mutual_information":
+            variance = float(noise_variance)
+            if not isfinite(variance) or variance <= 0.0:
+                raise ValueError("noise_variance must be finite and positive.")
+            _, log_determinant = jnp.linalg.slogdet(
+                jnp.eye(size, dtype=matrix.dtype) + effective / variance
+            )
+            raw_value = 0.5 * log_determinant
+            criterion_valid = base_valid
+        case unsupported:
+            assert_never(unsupported)
     reported_valid = criterion_valid & jnp.isfinite(raw_value)
     value = jnp.where(reported_valid, raw_value, jnp.nan)
     status = jnp.where(
@@ -1133,7 +1142,7 @@ def experiment_design_objective(
         eigenvalues=eigenvalues,
         valid=reported_valid,
         status=status,
-        criterion=criterion,
+        criterion=design_criterion,
         method_id=method_id,
         approximation=approximation,
         regularization=penalty,

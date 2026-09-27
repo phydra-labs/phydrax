@@ -35,7 +35,7 @@ class PeriodicProvenanceManifest(StrictModule, NonTrainableState):
         /,
         *,
         parent_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         source = str(source_id).strip()
         digest = str(sha256).strip().lower()
         rights = str(rights_id).strip()
@@ -116,7 +116,7 @@ class PeriodicSourceContext(StrictModule, NonTrainableState):
         energy_unit: UnitDefinition,
         provenance: PeriodicProvenanceManifest,
         /,
-    ):
+    ) -> None:
         if not isinstance(basis, PeriodicOrbitalBasisPlan):
             raise TypeError("Periodic source context requires PeriodicOrbitalBasisPlan.")
         if not isinstance(energy_unit, UnitDefinition):

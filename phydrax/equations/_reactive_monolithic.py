@@ -7,16 +7,23 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_allfinite
 from ..discretization.particle import ParticleConversionState
-from ._particle_conversion import PreparedParticleConversionDynamics
+from ._particle_conversion import (
+    ParticleConversionEvaluation,
+    PreparedParticleConversionDynamics,
+)
 from ._particle_thermochemistry import ParticleTransportBoundary
-from ._reactive_cfd_dem import ParticleContinuumExchangePlan
+from ._reactive_cfd_dem import (
+    ParticleContinuumExchangeEvaluation,
+    ParticleContinuumExchangePlan,
+)
 
 
 class ReactiveFluidImplicitState(StrictModule):
@@ -37,7 +44,7 @@ class CellwiseReactiveFluidImplicitPlan(StrictModule, NonTrainableState):
         cell_heat_capacity: ArrayLike,
         species_storage: ArrayLike,
         /,
-    ):
+    ) -> None:
         mass = np.asarray(cell_mass, dtype=np.float64)
         heat = np.asarray(cell_heat_capacity, dtype=np.float64)
         species = np.asarray(species_storage, dtype=np.float64)
@@ -135,8 +142,8 @@ class ReactiveMonolithicStage(StrictModule):
 class ReactiveMonolithicResidualEvaluation(StrictModule):
     residual: ReactiveMonolithicUnknown
     conversion_state: ParticleConversionState
-    exchange: object
-    conversion: object
+    exchange: ParticleContinuumExchangeEvaluation
+    conversion: ParticleConversionEvaluation
     particle_force: Array
     fluid_momentum_source: Array
     route: ReactiveMonolithicRouteCertificate
@@ -161,7 +168,7 @@ class ReactiveMonolithicCouplingPlan(StrictModule, NonTrainableState):
         continuum_exchange: ParticleContinuumExchangePlan,
         drag_coefficient: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(fluid, CellwiseReactiveFluidImplicitPlan):
             raise TypeError("fluid must be CellwiseReactiveFluidImplicitPlan.")
         if not isinstance(conversion, PreparedParticleConversionDynamics):
@@ -190,7 +197,9 @@ class ReactiveMonolithicCouplingPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def initial_unknown(self, stage: ReactiveMonolithicStage, /):
+    def initial_unknown(
+        self, stage: ReactiveMonolithicStage, /
+    ) -> ReactiveMonolithicUnknown:
         return ReactiveMonolithicUnknown(
             stage.previous_fluid.velocity,
             stage.previous_fluid.temperature,

@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
@@ -171,7 +172,7 @@ class LinearRepresentationCertificate(StrictModule, NonTrainableState):
         proof: str = "construction",
         zero_preserving: bool = True,
         round_trip_exact: bool = True,
-    ):
+    ) -> None:
         field_names_ = _identifiers(field_names, "field_names")
         if not field_names_ or len(set(field_names_)) != len(field_names_):
             raise ValueError("field_names must be nonempty and unique.")
@@ -286,7 +287,7 @@ class LinearAssemblyEvidence(StrictModule, NonTrainableState):
         error_bound: Any = 0.0,
         tolerance: Any = 0.0,
         zero_preserving: bool = True,
-    ):
+    ) -> None:
         identifiers = {
             "bound_condition_id": _identifier(bound_condition_id, "bound_condition_id"),
             "operator_id": _identifier(operator_id, "operator_id"),
@@ -382,7 +383,7 @@ class LinearConditionAssembly(StrictModule, NonTrainableState):
         *,
         codomain_coordinates: Callable[[Any], PyTree[Any]] | None = None,
         numeric_version: int = 0,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if not isinstance(evidence, LinearAssemblyEvidence):
@@ -473,6 +474,9 @@ class AbstractLinearRepresentation(StrictModule):
 
 
 class _ProductRealCoordinateMap(AbstractRealCoordinateMap, NonTrainableState):
+    # Sole constructor call site passes BlockSpace instances (see __init__ types).
+    source_space: BlockSpace
+    coordinate_space: BlockSpace
     maps: tuple[AbstractRealCoordinateMap | None, ...]
 
     def __init__(
@@ -481,7 +485,7 @@ class _ProductRealCoordinateMap(AbstractRealCoordinateMap, NonTrainableState):
         coordinate_space: BlockSpace,
         maps: Sequence[AbstractRealCoordinateMap | None],
         /,
-    ):
+    ) -> None:
         maps_ = tuple(maps)
         if len(maps_) != len(source_space.spaces):
             raise ValueError("A product coordinate map requires one map per block.")
@@ -549,13 +553,13 @@ class _ProductRealCoordinateMap(AbstractRealCoordinateMap, NonTrainableState):
         self.coordinate_id = identifier
         self.maps = maps_
 
-    def validate_state(self, state: Any, /):
+    def validate_state(self, state: Any, /) -> PyTree[Array]:
         return self.source_space.validate(state)
 
-    def validate_coordinates(self, coordinates: Any, /):
+    def validate_coordinates(self, coordinates: Any, /) -> PyTree[Array]:
         return self.coordinate_space.validate(coordinates)
 
-    def to_real_coordinates(self, state: Any, /):
+    def to_real_coordinates(self, state: Any, /) -> PyTree[Array]:
         values = self.validate_state(state)
         return self.coordinate_space.validate(
             tuple(
@@ -571,7 +575,7 @@ class _ProductRealCoordinateMap(AbstractRealCoordinateMap, NonTrainableState):
             )
         )
 
-    def from_real_coordinates(self, coordinates: Any, /):
+    def from_real_coordinates(self, coordinates: Any, /) -> PyTree[Array]:
         values = self.validate_coordinates(coordinates)
         return self.source_space.validate(
             tuple(
@@ -587,7 +591,7 @@ class _ProductRealCoordinateMap(AbstractRealCoordinateMap, NonTrainableState):
             )
         )
 
-    def project(self, state: Any, /):
+    def project(self, state: Any, /) -> PyTree[Array]:
         values = self.validate_state(state)
         return self.source_space.validate(
             tuple(
@@ -642,7 +646,7 @@ class CallableLinearRepresentation(AbstractLinearRepresentation, NonTrainableSta
         real_coordinates: AbstractRealCoordinateMap | None = None,
         numeric_version: int = 0,
         prepared_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(field_spec, ProductFieldSpec):
             raise TypeError("field_spec must be ProductFieldSpec.")
         if not isinstance(
@@ -770,7 +774,9 @@ class ProductLinearRepresentation(AbstractLinearRepresentation, NonTrainableStat
     numeric_version: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, representations: Sequence[AbstractLinearRepresentation], /):
+    def __init__(
+        self, representations: Sequence[AbstractLinearRepresentation], /
+    ) -> None:
         children = tuple(representations)
         if not children or any(
             not isinstance(child, AbstractLinearRepresentation) for child in children
@@ -906,13 +912,15 @@ class ProductLinearRepresentation(AbstractLinearRepresentation, NonTrainableStat
             }
         )
 
-    def extract(self, values: Mapping[str, Any], /):
+    def extract(self, values: Mapping[str, Any], /) -> PyTree[Array]:
         checked = _mapping(values, "values")
         return self.coefficient_space.validate(
             tuple(child.extract(checked) for child in self.representations)
         )
 
-    def replace(self, values: Mapping[str, Any], coefficients: Any, /):
+    def replace(
+        self, values: Mapping[str, Any], coefficients: Any, /
+    ) -> frozendict[str, Any]:
         result: Mapping[str, Any] = _mapping(values, "values")
         blocks = self.coefficient_space.validate(coefficients)
         for child, block in zip(self.representations, blocks, strict=True):
@@ -921,7 +929,7 @@ class ProductLinearRepresentation(AbstractLinearRepresentation, NonTrainableStat
             raise ValueError("Replacement must preserve the input mapping keys.")
         return frozendict(result)
 
-    def synthesize(self, coefficients: Any, /):
+    def synthesize(self, coefficients: Any, /) -> frozendict[str, Any]:
         blocks = self.coefficient_space.validate(coefficients)
         result: dict[str, Any] = {}
         for child, block in zip(self.representations, blocks, strict=True):
@@ -1091,7 +1099,7 @@ class CoefficientElimination(AbstractFieldRealization, NonTrainableState):
         /,
         *,
         prepared_operator: PreparedConstraintOperator | None = None,
-    ):
+    ) -> None:
         if not isinstance(representation, AbstractLinearRepresentation):
             raise TypeError("representation must be AbstractLinearRepresentation.")
         if not isinstance(assembly, LinearConditionAssembly):
@@ -1152,7 +1160,7 @@ class CoefficientElimination(AbstractFieldRealization, NonTrainableState):
             }
         )
 
-    def lift(self, target: Any, /):
+    def lift(self, target: Any, /) -> PyTree[Array]:
         """Return the minimum-norm coefficient lift of a raw relation target."""
         return self.prepared_operator.strict_right_inverse(
             self.assembly.coordinates(target)

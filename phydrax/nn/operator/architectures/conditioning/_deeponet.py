@@ -8,12 +8,12 @@ from abc import abstractmethod
 from collections.abc import Mapping
 from dataclasses import replace
 from math import prod
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._frozendict import frozendict
@@ -29,11 +29,14 @@ from phydrax.nn._contracts import (
 )
 from phydrax.nn._keys import EvalKey, split_eval_key
 from phydrax.nn._utils import _get_size
+from phydrax.nn.operator.capabilities import ConfiguredOperatorContract
 from phydrax.nn.operator.data import FunctionSamples, OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
+from .....typing import parse
 
-BranchFusion = Literal["sum", "product", "concat"]
+
+BranchFusion: TypeAlias = Literal["sum", "product", "concat"]
 
 
 def _query_coordinates(
@@ -87,7 +90,7 @@ class FixedBranchEncoder(AbstractBranchEncoder):
     model: AbstractArrayModel
     latent_size: int
 
-    def __init__(self, model: AbstractArrayModel, latent_size: int, /):
+    def __init__(self, model: AbstractArrayModel, latent_size: int, /) -> None:
         self.model = model
         self.latent_size = int(latent_size)
         if _get_size(model.out_size) != self.latent_size:
@@ -136,7 +139,7 @@ class IntegralBranchEncoder(AbstractBranchEncoder):
         coord_dim: int,
         mixer: AbstractArrayModel | None = None,
         normalize: bool = False,
-    ):
+    ) -> None:
         self.feature_model = feature_model
         self.mixer = mixer
         self.latent_size = int(latent_size)
@@ -289,7 +292,7 @@ class PODBasis(AbstractBasisTrunk, NonTrainableState):
         offset: Array | None = None,
         query_layout: FunctionSamples | None = None,
         geometry_fingerprint: str | None = None,
-    ):
+    ) -> None:
         basis = jnp.asarray(values)
         self.latent_size = int(latent_size)
         self.out_size = out_size
@@ -486,7 +489,7 @@ def _fused_branch_regularity(
     return compose_regularity(sum_regularity(encoded), model_regularity(branch_mixer))
 
 
-def _deeponet_contract(model):
+def _deeponet_contract(model: DeepONet) -> ConfiguredOperatorContract:
     from phydrax.nn.operator.catalog import operator_architecture_contract
 
     contract = operator_architecture_contract(model.operator_architecture)
@@ -544,12 +547,11 @@ class DeepONet(AbstractOperatorModel):
         source_key: str | None = None,
         query_chunk_size: int | None = None,
         use_bias: bool = True,
-    ):
+    ) -> None:
         self.coord_dim = int(coord_dim)
         self.latent_size = int(latent_size)
         self.out_size = out_size
         self.in_size = in_size
-        self.fusion = fusion
         self.branch_mixer = branch_mixer
         self.source_key = source_key
         self.query_chunk_size = (
@@ -566,8 +568,8 @@ class DeepONet(AbstractOperatorModel):
             raise ValueError("coord_dim and latent_size must be positive.")
         if self.query_chunk_size is not None and self.query_chunk_size <= 0:
             raise ValueError("query_chunk_size must be positive.")
-        if fusion not in ("sum", "product", "concat"):
-            raise ValueError("fusion must be 'sum', 'product', or 'concat'.")
+        fusion = parse(fusion, BranchFusion, "fusion")
+        self.fusion = fusion
 
         if isinstance(branch, Mapping):
             branch_items = tuple((str(name), encoder) for name, encoder in branch.items())

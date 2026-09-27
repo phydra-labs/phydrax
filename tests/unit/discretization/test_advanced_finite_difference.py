@@ -2,20 +2,23 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _bounded_grid(points=33):
+def _bounded_grid(points: Any = 33) -> Any:
     return phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(points),),
         axis_names=("xi",),
     ).prepare(jnp.asarray([[0.0], [1.0]]))
 
 
-def _periodic_grid(points=64):
+def _periodic_grid(points: Any = 64) -> Any:
     return phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformAxisSpec(
@@ -28,7 +31,7 @@ def _periodic_grid(points=64):
     ).prepare(jnp.asarray([[0.0], [1.0]]))
 
 
-def test_diagonal_norm_sbp_identity_and_boundary_order():
+def test_diagonal_norm_sbp_identity_and_boundary_order() -> None:
     sbp = phx.discretization.SBPDerivativePlan(_bounded_grid(), "xi").prepare()
 
     residual = sbp.identity_residual()
@@ -38,7 +41,7 @@ def test_diagonal_norm_sbp_identity_and_boundary_order():
     assert sbp.operator.stencil_set.interior_accuracy_order == 2
 
 
-def test_mapped_derivative_preserves_free_stream_and_physical_polynomial():
+def test_mapped_derivative_preserves_free_stream_and_physical_polynomial() -> None:
     grid = _bounded_grid(65)
     mapped = phx.discretization.MappedTensorGridPlan(
         grid,
@@ -56,10 +59,10 @@ def test_mapped_derivative_preserves_free_stream_and_physical_polynomial():
     assert jnp.max(jnp.abs(polynomial - 2.0 * coordinates)) < 3e-2
 
 
-def test_mapped_metric_evaluation_is_differentiable_at_fixed_topology():
+def test_mapped_metric_evaluation_is_differentiable_at_fixed_topology() -> None:
     grid = _bounded_grid(17)
 
-    def total_jacobian(amplitude):
+    def total_jacobian(amplitude: Any) -> Any:
         _, _, _, jacobian = phx.discretization.evaluate_mapped_metrics(
             grid,
             lambda reference: jnp.asarray(
@@ -78,7 +81,7 @@ def test_mapped_metric_evaluation_is_differentiable_at_fixed_topology():
     assert jnp.isfinite(tangent)
 
 
-def test_distributed_partition_uses_named_sharding_and_explicit_halo_exchange():
+def test_distributed_partition_uses_named_sharding_and_explicit_halo_exchange() -> None:
     grid = _periodic_grid(8)
     request = phx.discretization.DerivativeRequest("dx", grid, "x")
     finite_difference = phx.discretization.FiniteDifferencePlan(

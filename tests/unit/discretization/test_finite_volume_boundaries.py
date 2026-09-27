@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import math
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -11,13 +13,13 @@ import pytest
 import phydrax as phx
 
 
-def _bounded_grid(count=8):
+def _bounded_grid(count: Any = 8) -> Any:
     return phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(count),), axis_names=("x",)
     ).prepare(jnp.asarray([[0.0], [1.0]]))
 
 
-def _scalar_system():
+def _scalar_system() -> Any:
     return phx.equations.ScalarConservationSystem(
         1,
         lambda state, axis, args: state,
@@ -26,7 +28,7 @@ def _scalar_system():
     )
 
 
-def test_piecewise_constant_reconstruction_uses_explicit_exterior_states():
+def test_piecewise_constant_reconstruction_uses_explicit_exterior_states() -> None:
     state = jnp.arange(4.0)[:, None]
     left, right = phx.discretization.PiecewiseConstantReconstruction().reconstruct_axis(
         state,
@@ -40,7 +42,7 @@ def test_piecewise_constant_reconstruction_uses_explicit_exterior_states():
     np.testing.assert_allclose(right[:, 0], [0.0, 1.0, 2.0, 3.0, 7.0])
 
 
-def test_muscl_reconstructs_linear_cell_average_at_interior_faces():
+def test_muscl_reconstructs_linear_cell_average_at_interior_faces() -> None:
     grid = _bounded_grid(12)
     centers = grid.structured_axes[0].interval_centers
     state = (1.5 + 2.0 * centers)[:, None]
@@ -62,7 +64,7 @@ def test_muscl_reconstructs_linear_cell_average_at_interior_faces():
     np.testing.assert_allclose(right[1:-1, 0], exact[1:-1], rtol=1e-12, atol=1e-12)
 
 
-def test_rusanov_flux_is_consistent_and_orientation_reversing():
+def test_rusanov_flux_is_consistent_and_orientation_reversing() -> None:
     system = _scalar_system()
     solver = phx.discretization.RusanovFluxPlan()
     state = jnp.asarray([[0.2], [0.7], [-0.3]])
@@ -76,7 +78,7 @@ def test_rusanov_flux_is_consistent_and_orientation_reversing():
     assert jnp.all(equal.max_speed >= 0.0)
 
 
-def test_hllc_preserves_stationary_euler_contact_flux():
+def test_hllc_preserves_stationary_euler_contact_flux() -> None:
     system = phx.equations.EulerSystem()
     primitive_left = jnp.asarray([[1.0, 0.0, 1.0]])
     primitive_right = jnp.asarray([[0.3, 0.0, 1.0]])
@@ -90,7 +92,7 @@ def test_hllc_preserves_stationary_euler_contact_flux():
     np.testing.assert_allclose(result.normal_flux, [[0.0, 1.0, 0.0]], atol=1e-12)
 
 
-def test_bounded_compilation_requires_complete_boundary_pairs():
+def test_bounded_compilation_requires_complete_boundary_pairs() -> None:
     grid = _bounded_grid()
     discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
     system = _scalar_system()
@@ -107,7 +109,7 @@ def test_bounded_compilation_requires_complete_boundary_pairs():
         phx.equations.compile_conservation_problem(problem, discretization, method)
 
 
-def test_prescribed_outward_flux_controls_global_balance():
+def test_prescribed_outward_flux_controls_global_balance() -> None:
     grid = _bounded_grid(10)
     discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
     system = _scalar_system()
@@ -131,7 +133,9 @@ def test_prescribed_outward_flux_controls_global_balance():
     )
     compiled = phx.equations.compile_conservation_problem(problem, discretization, method)
     residual, diagnostics = compiled.residual_with_diagnostics(
-        0.0, jnp.ones(discretization.state_shape)
+        # ty: ignore[invalid-argument-type]
+        0.0,
+        jnp.ones(discretization.state_shape),
     )
     balance_terms = np.asarray(discretization.cell_volumes[..., None] * residual)
     expected_defect = np.asarray(
@@ -139,13 +143,16 @@ def test_prescribed_outward_flux_controls_global_balance():
             math.fsum(
                 balance_terms[:, index].tolist()
                 + [
+                    # ty: ignore[unresolved-attribute]
                     float(diagnostics.boundary_outward_flux[index]),
+                    # ty: ignore[unresolved-attribute]
                     -float(diagnostics.source_integral[index]),
                 ]
             )
             for index in range(balance_terms.shape[1])
         ]
     )
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(diagnostics.conservation_defect, expected_defect)
 
     np.testing.assert_allclose(
@@ -153,10 +160,11 @@ def test_prescribed_outward_flux_controls_global_balance():
         [-7.0],
         atol=1e-12,
     )
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(diagnostics.conservation_defect, [0.0], atol=1e-12)
 
 
-def test_typed_boundary_trace_distinguishes_state_and_direct_flux():
+def test_typed_boundary_trace_distinguishes_state_and_direct_flux() -> None:
     system = _scalar_system()
     interior = jnp.asarray(((0.2,), (0.7,)))
     points = jnp.asarray(((0.0,), (1.0,)))
@@ -171,6 +179,7 @@ def test_typed_boundary_trace_distinguishes_state_and_direct_flux():
         0,
         None,
     )
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(state_trace.exterior_state, interior)
     assert state_trace.direct_normal_flux is None
     assert jnp.all(state_trace.admissible)
@@ -189,4 +198,5 @@ def test_typed_boundary_trace_distinguishes_state_and_direct_flux():
         None,
     )
     assert direct.exterior_state is None
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(direct.direct_normal_flux, 2.0 * interior)

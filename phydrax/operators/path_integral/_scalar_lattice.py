@@ -10,7 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._sampling import SingleCoordinateProposalPayload
@@ -55,7 +57,7 @@ class Phi4LatticeAction(AbstractLatticeEuclideanAction):
         kinetic_scale: float = 1.0,
         mass_squared: float = 1.0,
         quartic_coupling: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(discretization, CochainDiscretization):
             raise TypeError("discretization must be CochainDiscretization.")
         if discretization.max_degree < 1:
@@ -161,7 +163,7 @@ class LocalPhi4LatticeAction(AbstractIncrementalLatticeAction):
         incident_signs: ArrayLike,
         incident_valid: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(base, Phi4LatticeAction):
             raise TypeError("base must be Phi4LatticeAction.")
         edges = jnp.asarray(incident_edges, dtype=jnp.int32)

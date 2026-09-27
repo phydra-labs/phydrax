@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -40,8 +42,8 @@ def _density_transform(
     *,
     radius: float = 0.0,
     beta: float = 1.0,
-    design_mask=None,
-    fixed_density=None,
+    design_mask: Any = None,
+    fixed_density: Any = None,
 ) -> DensityTransform:
     mask = (
         jnp.ones((count,), dtype="bool")
@@ -62,7 +64,7 @@ def _density_transform(
 
 
 def _diagonal_fe_solver() -> FiniteElementStateSolver:
-    def solve(problem, design, initial_state, args):
+    def solve(problem: Any, design: Any, initial_state: Any, args: Any) -> Any:
         del args
         zero = jax.tree.map(jnp.zeros_like, initial_state)
         one = jax.tree.map(jnp.ones_like, initial_state)
@@ -86,12 +88,12 @@ def _diagonal_fe_solver() -> FiniteElementStateSolver:
 
 
 def _mechanics_problem(
-    solver,
+    solver: Any,
     /,
     *,
-    loads=(1.0,),
-    aggregation=None,
-    branch_evaluator=None,
+    loads: Any = (1.0,),
+    aggregation: Any = None,
+    branch_evaluator: Any = None,
     count: int = 2,
 ) -> TopologyMechanicsProblem:
     transform = _density_transform(count)
@@ -128,7 +130,16 @@ class _WarmRollbackMethod(optim.AbstractStateDesignMethod):
     def method_id(self) -> str:
         return "test-warm-rollback"
 
-    def solve(self, problem, initial_state, initial_design, /, *, termination, args):
+    def solve(
+        self,
+        problem: Any,
+        initial_state: Any,
+        initial_design: Any,
+        /,
+        *,
+        termination: Any,
+        args: Any,
+    ) -> Any:
         del termination
         first_stage = float(initial_design[0]) < 0.5
         design = jnp.full_like(initial_design, 0.6 if first_stage else 0.9)
@@ -301,7 +312,7 @@ def test_fe_and_neural_variational_roots_give_the_same_reduced_gradient() -> Non
     neural_problem = _mechanics_problem(neural_solver)
     initial = (jnp.zeros((2,)),)
 
-    def reduced(problem, density):
+    def reduced(problem: Any, density: Any) -> Any:
         state_problem = problem.as_state_design_problem()
         state = state_problem.solve_state(density, initial).state
         return state_problem.value(state, density)[0]
@@ -340,7 +351,7 @@ def test_neural_proposal_rolls_back_exactly_before_mandatory_fe_root() -> None:
 
 
 def test_out_of_support_neural_operator_is_not_evaluated() -> None:
-    def forbidden_proposal(problem, design, initial, args):
+    def forbidden_proposal(problem: Any, design: Any, initial: Any, args: Any) -> None:
         raise AssertionError("An out-of-support learned operator was evaluated.")
 
     fe_solver = _diagonal_fe_solver()
@@ -378,6 +389,7 @@ def test_continuation_failure_rolls_back_to_last_accepted_design() -> None:
         (jnp.zeros((1,)),),
         jnp.asarray((0.4,)),
         schedule=schedule,
+        # ty: ignore[missing-argument]
         method=_WarmRollbackMethod(),
         termination=optim.OptimizationTermination(maximum_steps=1),
     )
@@ -423,12 +435,15 @@ def test_reference_reanalysis_requires_transfer_primal_and_adjoint_evidence() ->
         source_problem,
         (jnp.zeros((1,)),),
         jnp.asarray((0.4,)),
+        # ty: ignore[missing-argument]
         method=_WarmRollbackMethod(),
         termination=optim.OptimizationTermination(maximum_steps=1),
     )
     reference_problem = _mechanics_problem(_diagonal_fe_solver(), count=1)
 
-    def fe_reanalysis(state_problem, design, initial_state, args):
+    def fe_reanalysis(
+        state_problem: Any, design: Any, initial_state: Any, args: Any
+    ) -> Any:
         root = state_problem.solve_state(design, initial_state, args=args)
         return FiniteElementReanalysisCandidate(
             root.state,

@@ -11,7 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array
+from jax import Array
 
 from phydrax._strict import StrictModule
 
@@ -48,7 +48,7 @@ class _RegionalMessage(StrictModule):
         *,
         activation: Callable[[Array], Array],
         key: Array,
-    ):
+    ) -> None:
         self.model = MLP(
             in_size=2 * int(channels) + int(coord_dim) + 1,
             out_size=int(channels),
@@ -99,7 +99,7 @@ class _RegionalUpdate(StrictModule):
         activation: Callable[[Array], Array],
         residual_scale: float,
         key: Array,
-    ):
+    ) -> None:
         if float(residual_scale) <= 0.0:
             raise ValueError("residual_scale must be positive.")
         self.model = MLP(
@@ -212,7 +212,7 @@ class RegionalGraphProcessor(StrictModule):
         residual_scale: float = 1.0,
         activation: Callable[[Array], Array] = jnp.tanh,
         key: Array,
-    ):
+    ) -> None:
         if int(channels) <= 0 or int(coord_dim) <= 0:
             raise ValueError("channels and coord_dim must be positive.")
         if int(neighbors) <= 0:

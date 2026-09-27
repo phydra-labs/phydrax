@@ -13,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _functional_problem():
+def _functional_problem() -> Any:
     lags = jnp.linspace(0.2, 0.5, 5)
     weights = jnp.asarray([1.0, 2.0, 2.0, 2.0, 1.0])
     normalization = jnp.sum(weights * jnp.exp(-lags))
@@ -40,7 +40,7 @@ def _functional_problem():
     )
 
 
-def test_functional_delay_replays_full_rolling_and_segmented_history():
+def test_functional_delay_replays_full_rolling_and_segmented_history() -> None:
     problem = _functional_problem()
     common: dict[str, Any] = {
         "save_times": jnp.linspace(0.0, 1.0, 6),
@@ -77,7 +77,7 @@ def test_functional_delay_replays_full_rolling_and_segmented_history():
     assert rolling.stats["history_capacity"] > rolling.stats["history_max_occupancy"]
 
 
-def test_functional_delay_enforces_declared_query_window_at_initialization():
+def test_functional_delay_enforces_declared_query_window_at_initialization() -> None:
     term = phx.solver.FunctionalDelay(
         "invalid-window",
         lambda time, state, history, args: history(0.1),
@@ -97,7 +97,9 @@ def test_functional_delay_enforces_declared_query_window_at_initialization():
         )
 
 
-def test_functional_delay_routes_through_stochastic_whole_and_segmented_backends():
+def test_functional_delay_routes_through_stochastic_whole_and_segmented_backends() -> (
+    None
+):
     lags = jnp.asarray([0.1, 0.15, 0.2])
     functional = phx.solver.FunctionalDelay(
         "window",

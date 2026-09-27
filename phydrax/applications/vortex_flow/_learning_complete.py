@@ -4,12 +4,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -53,7 +56,7 @@ class NativeVorticityLearningPlan(StrictModule, NonTrainableState):
         termination: OptimizationTermination | None = None,
         circulation_weight: float = 1.0,
         dissipation_weight: float = 1.0,
-    ):
+    ) -> None:
         if (
             not isinstance(method, AbstractMinimizationMethod)
             or circulation_weight < 0.0
@@ -104,10 +107,10 @@ class NativeVorticityLearningPlan(StrictModule, NonTrainableState):
             else jnp.asarray(previous_prediction, dtype=position.dtype)
         )
 
-        def predict(parameters):
+        def predict(parameters: Callable[[Array], Array]) -> Array:
             return jax.vmap(parameters)(position)
 
-        def objective(parameters, args):
+        def objective(parameters: Callable[[Array], Array], args: object) -> Array:
             del args
             prediction = predict(parameters)
             residual = prediction - target
@@ -182,7 +185,7 @@ class PeriodicVorticityReconstructionPlan(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, shape: tuple[int, ...], periods: ArrayLike, /):
+    def __init__(self, shape: tuple[int, ...], periods: ArrayLike, /) -> None:
         shape_ = tuple(shape)
         periods_ = jnp.asarray(periods, dtype=jnp.float64)
         if (
@@ -281,7 +284,7 @@ class ConstrainedLearnedClosure(StrictModule, NonTrainableState):
         /,
         *,
         closure_id: str,
-    ):
+    ) -> None:
         center, scale = jnp.asarray(distribution_center), jnp.asarray(distribution_scale)
         if center.shape != scale.shape or jnp.any(scale <= 0.0) or not str(closure_id):
             raise ValueError("Learned closure distribution controls are invalid.")

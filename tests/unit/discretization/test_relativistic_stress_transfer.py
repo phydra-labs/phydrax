@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -23,7 +25,9 @@ from phydrax.metrix import (
 )
 
 
-def _case(*, count=4, particle_count=1, momenta=None, weights=None):
+def _case(
+    *, count: Any = 4, particle_count: Any = 1, momenta: Any = None, weights: Any = None
+) -> Any:
     convention = RelativityConvention.canonical()
     scale = RelativityScaleContract(CODE_COSMOLOGY_SCALE, 1, 1, 1, 1)
     units = RelativisticUnitContract(scale, convention)
@@ -101,7 +105,7 @@ def _case(*, count=4, particle_count=1, momenta=None, weights=None):
     return plan, frame, state, spectral
 
 
-def test_boosted_single_particle_has_analytic_stress_energy_and_units():
+def test_boosted_single_particle_has_analytic_stress_energy_and_units() -> None:
     plan, frame, state, _ = _case(weights=jnp.asarray([2.5]))
     result = plan.deposit(state, frame)
 
@@ -133,7 +137,7 @@ def test_boosted_single_particle_has_analytic_stress_energy_and_units():
     assert result.volume_measure_id == plan.volume_measure_id
 
 
-def test_proper_measure_and_anisotropic_trace_use_the_spatial_metric():
+def test_proper_measure_and_anisotropic_trace_use_the_spatial_metric() -> None:
     plan, _, original, spectral = _case(momenta=jnp.asarray([[2.0, 0.0, 0.0]]))
     shape = spectral.physical_shape
     identity = jnp.broadcast_to(jnp.eye(3), shape + (3, 3))
@@ -192,7 +196,7 @@ def test_proper_measure_and_anisotropic_trace_use_the_spatial_metric():
     np.testing.assert_allclose(anisotropic_trace, 0.0, atol=2e-6)
 
 
-def test_zero_energy_massless_slot_is_rejected_without_nonfinite_stress():
+def test_zero_energy_massless_slot_is_rejected_without_nonfinite_stress() -> None:
     base, frame, _, _ = _case(momenta=jnp.zeros((1, 3)))
     plan = RelativisticStressDepositPlan(
         base.transfer,
@@ -215,7 +219,7 @@ def test_zero_energy_massless_slot_is_rejected_without_nonfinite_stress():
     np.testing.assert_allclose(result.projection.energy_density, 0.0, atol=0.0)
 
 
-def test_matched_deposit_gather_is_adjoint_and_state_identity_is_stable():
+def test_matched_deposit_gather_is_adjoint_and_state_identity_is_stable() -> None:
     momenta = jnp.asarray([[0.3, -0.2, 0.1], [0.5, 0.4, -0.1], [-0.2, 0.3, 0.6]])
     plan, frame, state, spectral = _case(
         particle_count=3,
@@ -242,7 +246,7 @@ def test_matched_deposit_gather_is_adjoint_and_state_identity_is_stable():
     assert state.frame_id == frame.frame_id
 
 
-def test_inactive_capacity_is_masked_without_changing_stable_slots():
+def test_inactive_capacity_is_masked_without_changing_stable_slots() -> None:
     plan, frame, state, _ = _case(particle_count=2, momenta=jnp.zeros((2, 3)))
     masked = RelativisticParticleState(
         state.particle_ids,

@@ -8,7 +8,8 @@ from typing import Literal
 
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array
+from jax import Array
+from jax.typing import DTypeLike
 
 from ._model import (
     BinaryCardinalityFactorGroup,
@@ -17,7 +18,7 @@ from ._model import (
 )
 
 
-def _reduce(values: Array, mode: Literal["sum", "max"], /, *, axis=-1) -> Array:
+def _reduce(values: Array, mode: Literal["sum", "max"], /, *, axis: int = -1) -> Array:
     return (
         jsp.special.logsumexp(values, axis=axis)
         if mode == "sum"
@@ -34,8 +35,8 @@ def _parity_distribution(
     messages: list[Array],
     count: int,
     mode: Literal["sum", "max"],
-    dtype,
-):
+    dtype: DTypeLike,
+) -> Array:
     negative = jnp.full((count,), -jnp.inf, dtype=dtype)
     positive = jnp.zeros((count,), dtype=dtype)
     for values in messages:
@@ -188,7 +189,7 @@ def logical_factor_messages(
     return tuple(outputs)
 
 
-def _count_convolution(left: Array, right: Array, mode: Literal["sum", "max"]):
+def _count_convolution(left: Array, right: Array, mode: Literal["sum", "max"]) -> Array:
     output = []
     for count in range(left.shape[-1] + right.shape[-1] - 1):
         terms = []

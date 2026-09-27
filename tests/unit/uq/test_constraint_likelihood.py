@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 from phydrax.uq._constraint_conditioning import ConstraintLikelihoodTerm
 
 
-def _normal_log_density(residual, covariance):
+def _normal_log_density(residual: Any, covariance: Any) -> Any:
     sign, log_determinant = jnp.linalg.slogdet(covariance)
     assert sign > 0.0
     return -0.5 * (
@@ -17,7 +20,7 @@ def _normal_log_density(residual, covariance):
     )
 
 
-def test_diagonal_constraint_likelihood_is_normalized():
+def test_diagonal_constraint_likelihood_is_normalized() -> None:
     observed = jnp.asarray([1.5, -0.25])
     prediction = jnp.asarray([0.9, 0.5])
     scales = jnp.asarray([0.4, 0.7])
@@ -30,7 +33,7 @@ def test_diagonal_constraint_likelihood_is_normalized():
     assert int(likelihood.physical_noise_rank) == 2
 
 
-def test_correlated_constraint_likelihood_matches_dense_normal_density():
+def test_correlated_constraint_likelihood_matches_dense_normal_density() -> None:
     observed = jnp.asarray([0.5, -1.0])
     prediction = jnp.asarray([-0.1, -0.4])
     covariance = jnp.asarray([[0.8, 0.3], [0.3, 0.5]])
@@ -47,7 +50,7 @@ def test_correlated_constraint_likelihood_matches_dense_normal_density():
     assert jnp.allclose(likelihood.physical_noise.covariance, covariance)
 
 
-def test_singular_constraint_likelihood_uses_its_intrinsic_support_density():
+def test_singular_constraint_likelihood_uses_its_intrinsic_support_density() -> None:
     covariance = jnp.asarray([[1.0, 1.0], [1.0, 1.0]])
     likelihood = ConstraintLikelihoodTerm(
         jnp.asarray([1.0, 1.0]),
@@ -62,7 +65,7 @@ def test_singular_constraint_likelihood_uses_its_intrinsic_support_density():
     assert jnp.isneginf(likelihood.log_likelihood(jnp.asarray([0.0, 2.0])))
 
 
-def test_zero_noise_constraint_likelihood_is_an_exact_support_measure():
+def test_zero_noise_constraint_likelihood_is_an_exact_support_measure() -> None:
     observed = jnp.asarray([1.25, -0.5])
     likelihood = ConstraintLikelihoodTerm(observed)
 

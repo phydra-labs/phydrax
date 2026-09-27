@@ -4,14 +4,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.core as jax_core
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
 from .._local_blocks import (
@@ -40,6 +40,9 @@ from .._structured_operators import (
 )
 from .._transform_operators import TransformDiagonalLinearOperator
 from .._tree import _prepare_tree, _solve_tree, TreeLinearOperator
+
+
+_TridiagonalCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 class _LUState(StrictModule):
@@ -181,7 +184,7 @@ def _prepare_banded_lu(operator: BandedLinearOperator, /) -> _BandedLUState:
     factor_width = 2 * lower + upper + 1
     flattened_bands = operator.bands.reshape((-1, lower + upper + 1, size))
 
-    def factor_one(bands):
+    def factor_one(bands: Array) -> tuple[Array, Array, Array, Array]:
         factor = jnp.zeros((factor_width, size), dtype=bands.dtype)
         factor = factor.at[lower : lower + lower + upper + 1].set(bands)
         scale = jnp.maximum(jnp.max(jnp.abs(bands)), 1.0)
@@ -270,7 +273,7 @@ def _solve_banded_lu(
     pivots = state.pivots.reshape((-1, size))
     flattened_rhs = rhs.reshape((-1, size, rhs.shape[-1]))
 
-    def solve_one(factor, pivot_rows, value):
+    def solve_one(factor: Array, pivot_rows: Array, value: Array) -> Array:
         for row in range(size):
             pivot_row = pivot_rows[row]
             first = value[row]
@@ -296,7 +299,7 @@ def _solve_banded_lu(
     return value, failed
 
 
-def _prepare_woodbury(operator: DiagonalPlusLowRankLinearOperator, /):
+def _prepare_woodbury(operator: DiagonalPlusLowRankLinearOperator, /) -> _WoodburyState:
     singular_diagonal = (
         jnp.asarray(False)
         if operator.nonsingular_diagonal
@@ -539,7 +542,7 @@ def _solve_operator(
     if isinstance(operator, DiagonalPlusLowRankLinearOperator):
         state: _WoodburyState = prepared
 
-        def woodbury_solve(_):
+        def woodbury_solve(_: None) -> tuple[Array, Array]:
             inverse_rhs = state.inverse_diagonal[:, None] * rhs
             if state.core is None:
                 value = inverse_rhs
@@ -608,7 +611,7 @@ def _prepare_tridiagonal(
     cosines = jnp.zeros((max(n - 1, 0),), dtype=diagonal.real.dtype)
     sines = jnp.zeros((max(n - 1, 0),), dtype=diagonal.dtype)
 
-    def eliminate(index, state):
+    def eliminate(index: Array, state: _TridiagonalCarry) -> _TridiagonalCarry:
         diagonal_state, upper_state, second_state, cosine_state, sine_state = state
         pivot = diagonal_state[index]
         subdiagonal = operator.lower[index]
@@ -632,7 +635,7 @@ def _prepare_tridiagonal(
             -jnp.conj(sine) * current_upper + cosine * next_diagonal
         )
 
-        def update_fill(values):
+        def update_fill(values: tuple[Array, Array]) -> tuple[Array, Array]:
             upper_value, second_value = values
             next_upper = upper_value[index + 1]
             second_value = second_value.at[index].set(sine * next_upper)
@@ -689,7 +692,7 @@ def _solve_tridiagonal(
 ) -> tuple[Array, Array]:
     n = state.diagonal.size
 
-    def rotate_rhs(index, rhs_state):
+    def rotate_rhs(index: Array, rhs_state: Array) -> Array:
         current_rhs = rhs_state[index]
         next_rhs = rhs_state[index + 1]
         cosine = state.cosines[index]
@@ -708,7 +711,7 @@ def _solve_tridiagonal(
             (transformed_rhs[-2] - state.upper[-1] * value[-1]) / safe_diagonal[-2]
         )
 
-    def substitute(reverse_index, result):
+    def substitute(reverse_index: Array, result: Array) -> Array:
         index = n - 3 - reverse_index
         numerator = (
             transformed_rhs[index]

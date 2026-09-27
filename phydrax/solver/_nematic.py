@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -17,6 +18,7 @@ from ..discretization.finite_difference import (
     diagonalize_fd_laplacian,
     FDLaplacianSolvePlan,
     PreparedFiniteDifferenceDiscretization,
+    PreparedStencilOperator,
 )
 from ..discretization.finite_volume import FaceVelocity, PreparedMACOperators
 from ..equations._nematic import (
@@ -69,7 +71,7 @@ class PreparedNematicDynamics(StrictModule, NonTrainableState):
         *,
         anchoring: NematicAnchoringPlan | None = None,
         energy_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(finite_difference, PreparedFiniteDifferenceDiscretization):
             raise TypeError(
                 "finite_difference must be PreparedFiniteDifferenceDiscretization."
@@ -127,7 +129,7 @@ class PreparedNematicDynamics(StrictModule, NonTrainableState):
                 _apply_components(self.finite_difference.operator(f"d_{axis}_2"), compact)
             )
         gradient = jnp.stack(gradients, axis=-2)
-        laplacian = sum(second)
+        laplacian = jnp.asarray(sum(second))
         thermodynamics = self.closure.evaluate(
             compact,
             gradient,
@@ -258,7 +260,7 @@ class PreparedNematicSemiImplicitStepPlan(StrictModule, NonTrainableState):
         dynamics: PreparedNematicDynamics,
         time_step: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedNematicDynamics):
             raise TypeError("dynamics must be PreparedNematicDynamics.")
         step = jnp.asarray(time_step)
@@ -400,7 +402,7 @@ class MACNematicCouplingPlan(StrictModule, NonTrainableState):
         density: float = 1.0,
         work_tolerance: float = 1.0e-10,
         maximum_cells: int = 1_000_000,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedNematicDynamics):
             raise TypeError("dynamics must be PreparedNematicDynamics.")
         if not isinstance(operators, PreparedMACOperators):
@@ -487,7 +489,7 @@ class MACNematicCouplingPlan(StrictModule, NonTrainableState):
             for layout in self.operators.discretization.face_layouts
         )
 
-        def gradient_action(velocity):
+        def gradient_action(velocity: FaceVelocity) -> Array:
             return self._velocity_gradient(velocity)
 
         _, pullback = jax.vjp(gradient_action, zero)
@@ -522,13 +524,15 @@ class MACNematicCouplingPlan(StrictModule, NonTrainableState):
         stress = constitutive.passive_stress
         face_force = self._dual_stress_force(stress)
         cell_force = self._cell_velocity(face_force)
-        fluid_work = sum(
-            jnp.sum(measure.astype(stress.dtype) * speed * force)
-            for measure, speed, force in zip(
-                self.operators.face_dual_measures,
-                velocity,
-                face_force,
-                strict=True,
+        fluid_work = jnp.asarray(
+            sum(
+                jnp.sum(measure.astype(stress.dtype) * speed * force)
+                for measure, speed, force in zip(
+                    self.operators.face_dual_measures,
+                    velocity,
+                    face_force,
+                    strict=True,
+                )
             )
         )
         volumes = self.operators.discretization.cell_volumes.astype(stress.dtype)
@@ -568,10 +572,12 @@ class MACNematicCouplingPlan(StrictModule, NonTrainableState):
         return (
             0.5
             * self.density
-            * sum(
-                jnp.sum(measure.astype(value.dtype) * value * value)
-                for measure, value in zip(
-                    self.operators.face_dual_measures, values, strict=True
+            * jnp.asarray(
+                sum(
+                    jnp.sum(measure.astype(value.dtype) * value * value)
+                    for measure, value in zip(
+                        self.operators.face_dual_measures, values, strict=True
+                    )
                 )
             )
         )
@@ -671,7 +677,7 @@ class MACNematicCouplingPlan(StrictModule, NonTrainableState):
         )
 
 
-def _apply_components(operator, field):
+def _apply_components(operator: PreparedStencilOperator, field: Array) -> Array:
     return jnp.stack(
         [operator(field[..., component]) for component in range(field.shape[-1])],
         axis=-1,

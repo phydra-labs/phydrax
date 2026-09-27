@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -14,16 +17,16 @@ class _ParentProductModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.in_size = 2
         self.out_size = "scalar"
 
-    def __call__(self, values, /, *, key=None):
+    def __call__(self, values: Any, /, *, key: Any = None) -> Any:
         del key
         return values[0] * values[1]
 
 
-def _path():
+def _path() -> Any:
     low = phx.fidelity.FidelityLevelSpec(
         "low",
         problem_id="poisson",
@@ -47,7 +50,7 @@ def _path():
     ).linear_path()
 
 
-def _fixed_observation(geometry, target):
+def _fixed_observation(geometry: Any, target: Any) -> Any:
     component = geometry.component()
     batch = component.points({"x": jnp.asarray([-0.5, 0.0, 0.5])})
     condition = phx.conditions.Observation(
@@ -66,7 +69,7 @@ def _fixed_observation(geometry, target):
     )
 
 
-def test_fidelity_pinn_stage_freezes_parent_and_binds_stage_identity():
+def test_fidelity_pinn_stage_freezes_parent_and_binds_stage_identity() -> None:
     geometry = phx.domain.Interval1d(-1.0, 1.0)
     parent_solver = phx.solver.FunctionalSolver(
         functions={"u": geometry.Parameter(1.0)},
@@ -103,7 +106,7 @@ def test_fidelity_pinn_stage_freezes_parent_and_binds_stage_identity():
         stage.finalize(parent_solver)
 
 
-def test_parent_conditioned_correction_propagates_coordinate_derivatives():
+def test_parent_conditioned_correction_propagates_coordinate_derivatives() -> None:
     geometry = phx.domain.Interval1d(-3.0, 3.0)
     parent = geometry.Function("x")(lambda x: x)
     correction = phx.solver.condition_fidelity_correction(

@@ -13,7 +13,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -261,7 +263,7 @@ def _materialize_by_basis(operator: "AbstractLinearOperator", /) -> Array:
     structure = operator.source.structure()
     dtype = jnp.result_type(*[spec.dtype for spec in jax.tree.leaves(structure)])
 
-    def column(index):
+    def column(index: Array) -> Array:
         coordinates = jax.nn.one_hot(index, operator.source.size, dtype=dtype)
         vector = operator.source.unflatten(coordinates)
         return operator.target.flatten(operator.mv(vector))
@@ -457,7 +459,7 @@ class DenseLinearOperator(AbstractLinearOperator):
         target: AbstractVectorSpace | None = None,
         properties: OperatorProperties | None = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         matrix_ = jnp.asarray(matrix)
         if matrix_.ndim < 2:
             raise ValueError("matrix must have at least two dimensions.")
@@ -575,7 +577,7 @@ class DiagonalLinearOperator(AbstractLinearOperator):
         space: AbstractVectorSpace | None = None,
         properties: OperatorProperties | None = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         diagonal_ = jnp.asarray(diagonal)
         if diagonal_.ndim < 1:
             raise ValueError("diagonal must have at least one dimension.")
@@ -673,7 +675,9 @@ class DiagonalLinearOperator(AbstractLinearOperator):
 class IdentityLinearOperator(AbstractLinearOperator):
     """Identity map on one declared vector space."""
 
-    def __init__(self, space: AbstractVectorSpace, /, *, operator_id: str | None = None):
+    def __init__(
+        self, space: AbstractVectorSpace, /, *, operator_id: str | None = None
+    ) -> None:
         if not isinstance(space, AbstractVectorSpace):
             raise TypeError("space must be an AbstractVectorSpace.")
         self.source = space
@@ -741,7 +745,7 @@ class FunctionLinearOperator(AbstractLinearOperator):
         properties: OperatorProperties | None = None,
         operator_id: str | None = None,
         closure_convert: bool = True,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         if transpose_action is not None and not callable(transpose_action):
@@ -821,7 +825,7 @@ class JacobianLinearOperator(AbstractLinearOperator):
         *,
         properties: OperatorProperties | None = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(linearization, PreparedLinearization):
             raise TypeError("linearization must be a PreparedLinearization.")
         self.source = linearization.source
@@ -867,7 +871,7 @@ class ScaledLinearOperator(AbstractLinearOperator):
     operator: AbstractLinearOperator
     scalar: Array
 
-    def __init__(self, operator: AbstractLinearOperator, scalar: Any, /):
+    def __init__(self, operator: AbstractLinearOperator, scalar: Any, /) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         scalar_ = jnp.asarray(scalar)
@@ -922,7 +926,7 @@ class SumLinearOperator(AbstractLinearOperator):
         left: AbstractLinearOperator,
         right: AbstractLinearOperator,
         /,
-    ):
+    ) -> None:
         if not isinstance(left, AbstractLinearOperator) or not isinstance(
             right, AbstractLinearOperator
         ):
@@ -996,7 +1000,7 @@ class ComposedLinearOperator(AbstractLinearOperator):
         left: AbstractLinearOperator,
         right: AbstractLinearOperator,
         /,
-    ):
+    ) -> None:
         if not isinstance(left, AbstractLinearOperator) or not isinstance(
             right, AbstractLinearOperator
         ):
@@ -1042,7 +1046,7 @@ class TransposeLinearOperator(AbstractLinearOperator):
 
     operator: AbstractLinearOperator
 
-    def __init__(self, operator: AbstractLinearOperator, /):
+    def __init__(self, operator: AbstractLinearOperator, /) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         self.source = operator.target
@@ -1085,7 +1089,7 @@ class DualTransposeLinearOperator(AbstractLinearOperator):
 
     operator: AbstractLinearOperator
 
-    def __init__(self, operator: AbstractLinearOperator, /):
+    def __init__(self, operator: AbstractLinearOperator, /) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         self.source = DualSpace(operator.target)
@@ -1133,7 +1137,7 @@ class AdjointLinearOperator(AbstractLinearOperator):
 
     operator: AbstractLinearOperator
 
-    def __init__(self, operator: AbstractLinearOperator, /):
+    def __init__(self, operator: AbstractLinearOperator, /) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         self.source = operator.target
@@ -1256,7 +1260,7 @@ class BlockLinearOperator(AbstractLinearOperator):
         target: BlockSpace,
         properties: OperatorProperties | None = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(source, BlockSpace) or not isinstance(target, BlockSpace):
             raise TypeError("source and target must be BlockSpace values.")
         blocks_ = tuple(tuple(row) for row in blocks)

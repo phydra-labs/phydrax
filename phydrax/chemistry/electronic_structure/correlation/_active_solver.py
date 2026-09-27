@@ -12,7 +12,8 @@ from collections.abc import Callable
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -47,7 +48,7 @@ class ActiveSpaceSolverResult(StrictModule, NonTrainableState):
         plan_id: str,
         store_id: str,
         /,
-    ):
+    ) -> None:
         energy = jnp.asarray(energies)
         one = jnp.asarray(one_particle_density, dtype=energy.dtype)
         two = jnp.asarray(two_particle_density, dtype=energy.dtype)
@@ -135,7 +136,7 @@ class CallableActiveSpaceSolver(AbstractActiveSpaceSolver):
         provider_id: str,
         solver_kind: str,
         /,
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         provider = str(provider_id).strip()

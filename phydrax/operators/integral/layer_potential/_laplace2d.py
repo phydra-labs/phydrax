@@ -10,7 +10,8 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -18,6 +19,7 @@ from ...._fingerprint import canonical_fingerprint
 from ...._model import TRIAL_SPACE_CERTIFICATE_KEY
 from ....equations.trefftz._core import _AbstractTrialSpaceField, TrialSpaceCertificate
 from ....operators.differential._jet import jet_terms
+from ....typing import PRNGKey
 from ._core import (
     AbstractLayerKernel,
     BoundaryPanelization2D,
@@ -31,7 +33,7 @@ class LaplaceLayerKernel2D(AbstractLayerKernel):
 
     _kernel_id: str
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._kernel_id = canonical_fingerprint(
             {
                 "kind": "laplace-layer-kernel-2d",
@@ -99,7 +101,7 @@ class LaplaceLayerPotential2D(_AbstractTrialSpaceField):
         *,
         kind: Literal["single", "double"] = "double",
         density: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(panelization, BoundaryPanelization2D):
             raise TypeError("panelization must be BoundaryPanelization2D.")
         if kind not in ("single", "double"):
@@ -179,7 +181,7 @@ class LaplaceLayerPotential2D(_AbstractTrialSpaceField):
             self.panelization.normals,
         )
 
-    def __call__(self, target: Array, /, *, key=None) -> Array:
+    def __call__(self, target: Array, /, *, key: PRNGKey | None = None) -> Array:
         del key
         value = jnp.asarray(target, dtype=jnp.float64)
         if value.shape != (2,):

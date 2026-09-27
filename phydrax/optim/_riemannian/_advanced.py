@@ -12,7 +12,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from phydrax._strict import StrictModule
 
@@ -37,7 +38,7 @@ class AbstractRiemannianLineSearchOptimizer(AbstractRiemannianOptimizer):
         *,
         value: Array | None = None,
         value_fn: Callable[[PyTree[Any]], Array] | None = None,
-    ):
+    ) -> tuple[PyTree[Array], Any]:
         raise NotImplementedError
 
 
@@ -67,7 +68,7 @@ class RiemannianConjugateGradient(AbstractRiemannianLineSearchOptimizer):
         *,
         line_search: ArmijoLineSearch | None = None,
         descent_tolerance: float = 1e-12,
-    ):
+    ) -> None:
         if not isinstance(parameter_geometry, ParameterGeometry):
             raise TypeError("parameter_geometry must be a ParameterGeometry.")
         tolerance = float(descent_tolerance)
@@ -280,7 +281,7 @@ class RiemannianLBFGS(AbstractRiemannianLineSearchOptimizer):
         line_search: ArmijoLineSearch | None = None,
         curvature_tolerance: float = 1e-10,
         descent_tolerance: float = 1e-12,
-    ):
+    ) -> None:
         if not isinstance(parameter_geometry, ParameterGeometry):
             raise TypeError("parameter_geometry must be a ParameterGeometry.")
         size = int(history_size)

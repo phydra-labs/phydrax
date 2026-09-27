@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -21,12 +23,12 @@ from phydrax.solver import FixedStepRolloutPlan
 
 
 @pytest.fixture(autouse=True)
-def _double_precision():
+def _double_precision() -> Any:
     with jax.enable_x64(True):
         yield
 
 
-def _runtime(plan=None, steps=4, duration=1.0):
+def _runtime(plan: Any = None, steps: Any = 4, duration: Any = 1.0) -> Any:
     plan = ReducedClimatePlan() if plan is None else plan
     return plan.prepare(
         TimeGrid(np.arange(steps + 1) * duration, time_id="climate-test-grid"),
@@ -34,7 +36,7 @@ def _runtime(plan=None, steps=4, duration=1.0):
     )
 
 
-def _drivers(runtime, emission=(10.0, 20.0, 3.0)):
+def _drivers(runtime: Any, emission: Any = (10.0, 20.0, 3.0)) -> Any:
     count = runtime.step_count
     return ClimateDrivers(
         jnp.broadcast_to(jnp.asarray(emission), (count, 3)),
@@ -44,7 +46,7 @@ def _drivers(runtime, emission=(10.0, 20.0, 3.0)):
     )
 
 
-def test_reservoir_zero_near_zero_and_equilibrium_limits():
+def test_reservoir_zero_near_zero_and_equilibrium_limits() -> None:
     model = GasBoxModel(((1.0,), (1.0,), (1.0,)), ((0.0,), (1.0e-14,), (0.2,)))
     boxes = jnp.asarray([[2.0], [3.0], [10.0]])
     rates = jnp.asarray((1.0, 2.0, 2.0))
@@ -72,12 +74,12 @@ def test_reservoir_zero_near_zero_and_equilibrium_limits():
     )
 
 
-def test_inactive_nan_drivers_do_not_poison_reservoir_parameter_gradients():
+def test_inactive_nan_drivers_do_not_poison_reservoir_parameter_gradients() -> None:
     model = GasBoxModel(((1.0,), (1.0,), (1.0,)), ((0.2,), (0.3,), (0.4,)))
     boxes = jnp.zeros_like(model.fractions)
     unused = jnp.full((3,), jnp.nan)
 
-    def forward(rate):
+    def forward(rate: Any) -> Any:
         varied = eqx.tree_at(
             lambda gas: gas.decay_rates, model, model.decay_rates.at[0, 0].set(rate)
         )
@@ -97,7 +99,7 @@ def test_inactive_nan_drivers_do_not_poison_reservoir_parameter_gradients():
     np.testing.assert_allclose(value, expected_value, atol=1.0e-13)
     np.testing.assert_allclose(derivative, expected_derivative, atol=1.0e-13)
 
-    def inverse(rate):
+    def inverse(rate: Any) -> Any:
         varied = eqx.tree_at(
             lambda gas: gas.decay_rates, model, model.decay_rates.at[0, 0].set(rate)
         )
@@ -119,7 +121,7 @@ def test_inactive_nan_drivers_do_not_poison_reservoir_parameter_gradients():
     )
 
 
-def test_concentration_inverse_roundtrip_uses_same_frozen_lifetime():
+def test_concentration_inverse_roundtrip_uses_same_frozen_lifetime() -> None:
     model = GasBoxModel(
         response_coefficients=((0.02, 0.4, 0.01), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
     )
@@ -152,14 +154,14 @@ def test_concentration_inverse_roundtrip_uses_same_frozen_lifetime():
     )
 
 
-def test_lifetime_root_is_certified_and_has_implicit_sensitivity():
+def test_lifetime_root_is_certified_and_has_implicit_sensitivity() -> None:
     model = GasBoxModel(
         response_coefficients=((0.0, 0.5, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
         solve_tolerance=1.0e-11,
     )
     boxes = jnp.zeros_like(model.fractions)
 
-    def response(temperature):
+    def response(temperature: Any) -> Any:
         return model.lifetime(boxes, jnp.zeros(3), temperature).multiplier[0]
 
     result = model.lifetime(boxes, jnp.zeros(3), jnp.asarray(2.0))
@@ -172,7 +174,7 @@ def test_lifetime_root_is_certified_and_has_implicit_sensitivity():
     )
 
 
-def test_infeasible_lifetime_and_exhausted_solve_commit_nothing():
+def test_infeasible_lifetime_and_exhausted_solve_commit_nothing() -> None:
     for coefficients, iterations in (
         (((0.0, 1.0e5, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)), 64),
         (((0.0, 0.5, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)), 1),
@@ -193,7 +195,7 @@ def test_infeasible_lifetime_and_exhausted_solve_commit_nothing():
             np.testing.assert_array_equal(accepted, old)
 
 
-def test_multilayer_exchange_budget_equilibrium_and_singular_heating():
+def test_multilayer_exchange_budget_equilibrium_and_singular_heating() -> None:
     model = MultilayerEnergyBalance((8.0, 40.0, 120.0), (0.8, 0.3), feedback=1.25)
     result = model.advance(
         jnp.asarray((0.1, -0.3, 0.7)), jnp.asarray(17.0), jnp.asarray(3.0)
@@ -211,7 +213,7 @@ def test_multilayer_exchange_budget_equilibrium_and_singular_heating():
     assert abs(float(singular.energy_residual)) < 1.0e-13
 
 
-def test_named_forcing_overlap_background_and_driver_replacement():
+def test_named_forcing_overlap_background_and_driver_replacement() -> None:
     forcing = Myhre1998Forcing(("solar", "volcanic"))
     background = jnp.asarray((278.0, 730.0, 270.0))
     baseline = forcing.evaluate(
@@ -245,7 +247,7 @@ def test_named_forcing_overlap_background_and_driver_replacement():
     np.testing.assert_array_equal(replaced.components[jnp.asarray((2, 4))], 0.0)
 
 
-def test_forcing_driven_gases_neither_decay_nor_solve_inactive_lifetimes():
+def test_forcing_driven_gases_neither_decay_nor_solve_inactive_lifetimes() -> None:
     gas = GasBoxModel(
         response_coefficients=((0.0, 1.0e5, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
     )
@@ -268,15 +270,15 @@ def test_forcing_driven_gases_neither_decay_nor_solve_inactive_lifetimes():
     np.testing.assert_allclose(result.state.cumulative_forcing_energy, 6.0, atol=1.0e-13)
 
 
-def test_state_dependent_reservoir_timestep_refinement():
+def test_state_dependent_reservoir_timestep_refinement() -> None:
     model = GasBoxModel(
         response_coefficients=((0.02, 0.0, 0.04), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
     )
 
-    def integrate(count):
+    def integrate(count: Any) -> Any:
         duration = jnp.asarray(20.0 / count)
 
-        def step(state, _):
+        def step(state: Any, _: Any) -> Any:
             boxes, sink = state
             result = model.advance(
                 boxes,
@@ -301,7 +303,7 @@ def test_state_dependent_reservoir_timestep_refinement():
     assert errors[2] < 0.65 * errors[1]
 
 
-def test_rollout_budgets_and_native_restart_parity(tmp_path):
+def test_rollout_budgets_and_native_restart_parity(tmp_path: Any) -> None:
     runtime = _runtime(steps=6)
     drivers = _drivers(runtime)
     initial = runtime.initial_state()
@@ -343,7 +345,7 @@ def test_rollout_budgets_and_native_restart_parity(tmp_path):
         read_reduced_climate_checkpoint(path, changed_runtime, initial, drivers)
 
 
-def test_failed_native_rollout_freezes_at_last_accepted_boundary():
+def test_failed_native_rollout_freezes_at_last_accepted_boundary() -> None:
     runtime = _runtime(steps=4)
     initial = runtime.initial_state()
     drivers = _drivers(runtime)
@@ -358,10 +360,11 @@ def test_failed_native_rollout_freezes_at_last_accepted_boundary():
     np.testing.assert_array_equal(result.valid, (True, True, False, False, False))
 
 
-def test_geophysical_clock_and_explicit_duration_give_same_physics():
+def test_geophysical_clock_and_explicit_duration_give_same_physics() -> None:
     plan = ReducedClimatePlan()
     years = _runtime(plan, steps=1)
     clock = GeophysicalTimeSpec(unit="d")
+    # ty: ignore[invalid-argument-type]
     days = plan.prepare(TimeGrid((0.0, 365.25), time_id=clock.time_id), time_spec=clock)
     year_result = years.step(
         years.initial_state(), jax.tree.map(lambda x: x[0], _drivers(years))

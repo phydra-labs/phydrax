@@ -7,6 +7,7 @@ import json
 import platform
 import time
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -25,14 +26,14 @@ from phydrax.optics.wave import BidirectionalCoupledModePlan
 jax.config.update("jax_enable_x64", True)
 
 
-def _timed(function, ready):
+def _timed(function: Any, ready: Any) -> Any:
     start = time.perf_counter()
     value = function()
     jax.block_until_ready(ready(value))
     return value, time.perf_counter() - start
 
 
-def _response_plan():
+def _response_plan() -> Any:
     return LinearizedCarrierOpticalResponsePlan(
         1.0e24,
         5.0e-21,
@@ -40,8 +41,11 @@ def _response_plan():
         reference_temperature=300.0,
         background_internal_loss=1.0e3,
         carrier_internal_loss_cross_section=1.0e-22,
+        # ty: ignore[invalid-argument-type]
         density_range=(0.5e24, 4.0e24),
+        # ty: ignore[invalid-argument-type]
         temperature_range=(290.0, 310.0),
+        # ty: ignore[invalid-argument-type]
         angular_frequency_range=(0.9e15, 1.1e15),
         active_volume=6.4e-15,
         confinement_factor=0.4,
@@ -99,6 +103,7 @@ def benchmark() -> dict[str, object]:
         recombination_c=0.0,
         left_facet_amplitude_reflection=reflection + 0.0j,
         right_facet_amplitude_reflection=-reflection + 0.0j,
+        # ty: ignore[invalid-argument-type]
         carrier_density_bounds=(0.5e24, 3.5e24),
         step_count=laser_steps,
         gain_compression=0.01,

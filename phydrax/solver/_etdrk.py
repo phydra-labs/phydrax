@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, Literal, Protocol, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -29,9 +30,13 @@ if TYPE_CHECKING:
     from ..equations._periodic_les import PeriodicLESStepRestriction
 
 
+class _NonlinearDrift(Protocol):
+    def nonlinear(self, time: Array, state: Array, args: Any, /) -> Array: ...
+
+
 def _etdrk_update(
     order: Literal[2, 4],
-    drift: SemilinearDrift,
+    drift: _NonlinearDrift,
     diagonal: Array,
     time: Array,
     state: Array,
@@ -94,7 +99,7 @@ class ETDRKMethod(StrictModule, NonTrainableState):
     capabilities: TemporalMethodCapabilities
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, order: Literal[2, 4] = 4):
+    def __init__(self, order: Literal[2, 4] = 4) -> None:
         order_ = int(order)
         if order_ not in (2, 4):
             raise ValueError("ETDRK order must be two or four.")
@@ -189,7 +194,7 @@ class PreparedETDRKMethod(AbstractFixedStepMethod, NonTrainableState):
         diagonal: Array,
         coordinates: HermitianSpectralCoordinates | None,
         /,
-    ):
+    ) -> None:
         self.drift = drift
         self.diagonal = jnp.asarray(diagonal)
         self.coordinates = coordinates
@@ -321,7 +326,7 @@ class LESStabilityGuardedETDRKMethod(StrictModule, NonTrainableState):
         /,
         *,
         safety_factor: float,
-    ):
+    ) -> None:
         if not isinstance(base_method, ETDRKMethod):
             raise TypeError("base_method must be an ETDRKMethod.")
         safety = float(safety_factor)
@@ -415,7 +420,7 @@ class PreparedLESStabilityGuardedETDRKMethod(
         base_method: PreparedETDRKMethod,
         dynamics: Any,
         /,
-    ):
+    ) -> None:
         from ..equations._incompressible import (
             CompiledIncompressibleSpectralDynamics,
         )
@@ -559,7 +564,7 @@ def solve_etdrk(
     def advance(
         carry: tuple[Array, Array],
         data: tuple[Array, Array, Array],
-    ):
+    ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
         state, cumulative_valid = carry
         step_index, time, duration = data
         result = prepared.step(step_index, time, state, duration, args)

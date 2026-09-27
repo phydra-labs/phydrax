@@ -7,7 +7,8 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..linalg import HermitianSpectrum
@@ -34,7 +35,7 @@ class LocalKrausPreparationEvidence(StrictModule):
         completeness_residual: ArrayLike,
         reconstruction_residual: ArrayLike,
         tolerance: float,
-    ):
+    ) -> None:
         self.choi_hermiticity_residual = jnp.asarray(choi_hermiticity_residual)
         self.raw_minimum_choi_eigenvalue = jnp.asarray(raw_minimum_choi_eigenvalue)
         self.numerical_cleanup_norm = jnp.asarray(numerical_cleanup_norm)
@@ -62,7 +63,7 @@ class PreparedLocalKrausChannel(StrictModule):
         evidence: LocalKrausPreparationEvidence,
         step_size: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = jnp.asarray(kraus)
         self.kraus = values
         self.superoperator = jnp.asarray(superoperator)
@@ -99,7 +100,7 @@ def prepare_local_lindblad_channel(
     ):
         raise ValueError("Local Hamiltonian must be finite and Hermitian; jumps finite.")
 
-    def generator(density):
+    def generator(density: Array) -> Array:
         result = -1j * (hamiltonian_ @ density - density @ hamiltonian_)
         for jump in jumps:
             product = _adjoint(jump) @ jump

@@ -5,20 +5,21 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from math import isfinite
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float
 from ...linalg import (
     AbstractLinearOperator,
     ConjugateGradient,
@@ -56,13 +57,6 @@ ReducedRodMaterial: TypeAlias = (
 ReducedRodMassSolver: TypeAlias = Literal["dense_cholesky", "matrix_free_cg"]
 
 
-def _positive_finite(value: float, name: str, /) -> float:
-    result = float(value)
-    if not isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
-
-
 class ReducedRodDenseCholeskyPlan(StrictModule, NonTrainableState):
     """Fixed dense reduced-mass Cholesky policy and fail-closed tolerances."""
 
@@ -80,11 +74,11 @@ class ReducedRodDenseCholeskyPlan(StrictModule, NonTrainableState):
         pivot_tolerance: float = 1.0e-9,
         condition_limit: float = 1.0e8,
         roundtrip_tolerance: float = 1.0e-6,
-    ):
-        symmetry = _positive_finite(symmetry_tolerance, "symmetry_tolerance")
-        pivot = _positive_finite(pivot_tolerance, "pivot_tolerance")
-        condition = _positive_finite(condition_limit, "condition_limit")
-        roundtrip = _positive_finite(roundtrip_tolerance, "roundtrip_tolerance")
+    ) -> None:
+        symmetry = positive_finite_float(symmetry_tolerance, "symmetry_tolerance")
+        pivot = positive_finite_float(pivot_tolerance, "pivot_tolerance")
+        condition = positive_finite_float(condition_limit, "condition_limit")
+        roundtrip = positive_finite_float(roundtrip_tolerance, "roundtrip_tolerance")
         if condition <= 1.0:
             raise ValueError("condition_limit must be greater than one.")
         self.symmetry_tolerance = symmetry
@@ -128,13 +122,13 @@ class ReducedRodMatrixFreeCGPlan(StrictModule, NonTrainableState):
         positivity_tolerance: float = 1.0e-9,
         condition_limit: float = 1.0e8,
         roundtrip_tolerance: float = 1.0e-5,
-    ):
-        relative = _positive_finite(relative_tolerance, "relative_tolerance")
-        absolute = _positive_finite(absolute_tolerance, "absolute_tolerance")
-        symmetry = _positive_finite(symmetry_tolerance, "symmetry_tolerance")
-        positivity = _positive_finite(positivity_tolerance, "positivity_tolerance")
-        condition = _positive_finite(condition_limit, "condition_limit")
-        roundtrip = _positive_finite(roundtrip_tolerance, "roundtrip_tolerance")
+    ) -> None:
+        relative = positive_finite_float(relative_tolerance, "relative_tolerance")
+        absolute = positive_finite_float(absolute_tolerance, "absolute_tolerance")
+        symmetry = positive_finite_float(symmetry_tolerance, "symmetry_tolerance")
+        positivity = positive_finite_float(positivity_tolerance, "positivity_tolerance")
+        condition = positive_finite_float(condition_limit, "condition_limit")
+        roundtrip = positive_finite_float(roundtrip_tolerance, "roundtrip_tolerance")
         iterations = int(maximum_iterations)
         spectral = None if spectral_iterations is None else int(spectral_iterations)
         if iterations < 1 or (spectral is not None and spectral < 1):
@@ -191,7 +185,9 @@ class ReducedRodDirectLoad(StrictModule):
     source_id: str = eqx.field(static=True)
     power_channel: str = eqx.field(static=True)
 
-    def __init__(self, effort: ArrayLike, /, *, source_id: str, power_channel: str):
+    def __init__(
+        self, effort: ArrayLike, /, *, source_id: str, power_channel: str
+    ) -> None:
         value = jnp.asarray(effort)
         if (
             value.ndim != 1
@@ -403,7 +399,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
         stretch_shear_material: ReducedRodMaterial | None = None,
         bend_twist_material: ReducedRodMaterial | None = None,
         gravity: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(reduction, PreparedReducedRod):
             raise TypeError("reduction must be a PreparedReducedRod.")
         plan_ = ReducedRodDenseCholeskyPlan() if plan is None else plan
@@ -540,7 +536,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
         velocity_operator = lift_velocity_operator(self.reduction, point)
         effort_pullback = lift_effort_pullback_operator(self.reduction, point)
 
-        def action(tangent):
+        def action(tangent: Array) -> Array:
             velocity = velocity_operator.mv(tangent)
             native_effort = self._native_inertia_action(velocity)
             return effort_pullback.mv(native_effort)
@@ -602,7 +598,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
                 ),
             )
 
-        def action(tangent):
+        def action(tangent: Array) -> Array:
             return self._mass_endomorphism_action(operator, tangent)
 
         return FunctionLinearOperator(
@@ -629,7 +625,9 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
         alpha = jnp.zeros((steps,), dtype=dtype)
         beta = jnp.zeros((steps,), dtype=dtype)
 
-        def body(index, carry):
+        def body(
+            index: Array, carry: tuple[Array, Array, Array, Array, Array]
+        ) -> tuple[Array, Array, Array, Array, Array]:
             prior, current, prior_beta, diagonal, off_diagonal = carry
             image = operator.mv(current) - prior_beta * prior
             coefficient = jnp.real(self.reduction.coefficient_space.inner(current, image))
@@ -797,7 +795,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
             self.dynamics_id,
         )
 
-        def inverse_action(value):
+        def inverse_action(value: Array) -> Array:
             tangent_rhs = self.reduction.coefficient_space.inverse_riesz(value)
             return solve(problem, tangent_rhs, policy=self.solve_policy).value
 
@@ -828,7 +826,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
         )
         native_velocity = lift_reduced_rod_velocity(self.reduction, point, velocity)
 
-        def lifted_at(values):
+        def lifted_at(values: Array) -> tuple[Array, Array]:
             return lift_reduced_rod_velocity(self.reduction, values, velocity)
 
         _, lift_acceleration = jax.jvp(lifted_at, (point,), (velocity,))
@@ -946,7 +944,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
         bend_elastic = bend_result.elastic_resultants
         bend_viscous = bend_result.viscous_resultants
 
-        def pull_resultants(stretch_values, bend_values):
+        def pull_resultants(stretch_values: Array, bend_values: Array) -> Array:
             return -ein.contract(
                 "sdk,sd,s->k",
                 self.reduction.stretch_shear_basis,
@@ -1185,7 +1183,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
         )
 
     def forward_dynamics(
-        self, state: ReducedRodState, /, **kwargs
+        self, state: ReducedRodState, /, **kwargs: Any
     ) -> ReducedRodForwardDynamicsResult:
         evaluation = self.evaluate(state, **kwargs)
         rhs = self.reduction.reduced_effort_space.validate(
@@ -1209,7 +1207,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
         state: ReducedRodState,
         acceleration: ArrayLike,
         /,
-        **kwargs,
+        **kwargs: Any,
     ) -> ReducedRodInverseDynamicsResult:
         evaluation = self.evaluate(state, **kwargs)
         acceleration_ = self.reduction.coefficient_space.validate(
@@ -1252,7 +1250,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
         q = state.coefficients
         v = state.coefficient_velocities
 
-        def kinetic(configuration, velocity):
+        def kinetic(configuration: Array, velocity: Array) -> Array:
             native = lift_reduced_rod_velocity(self.reduction, configuration, velocity)
             momentum = self._native_inertia_action(native)
             return 0.5 * self.reduction.native_effort_space.pair(momentum, native)
@@ -1267,7 +1265,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
             lambda configuration: kinetic(configuration, v)
         )(q)
 
-        def stored(configuration):
+        def stored(configuration: Array) -> Array:
             candidate = ReducedRodState(configuration, v)
             stretch, bend = self._material_results(
                 candidate,
@@ -1311,7 +1309,7 @@ def prepare_reduced_rod_dynamics(
     reduction: PreparedReducedRod,
     plan: ReducedRodDynamicsPlan | None = None,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> PreparedReducedRodDynamics:
     return PreparedReducedRodDynamics(reduction, plan, **kwargs)
 
@@ -1344,7 +1342,7 @@ def reduced_rod_energy(
     prepared: PreparedReducedRodDynamics,
     state: ReducedRodState,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> ReducedRodEnergyResult:
     return prepared.energy(state, **kwargs)
 
@@ -1353,19 +1351,19 @@ def reduced_rod_dense_reference(
     prepared: PreparedReducedRodDynamics,
     state: ReducedRodState,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> ReducedRodDenseReferenceResult:
     return prepared.dense_reference(state, **kwargs)
 
 
 def evaluate_reduced_rod_dynamics(
-    prepared: PreparedReducedRodDynamics, state: ReducedRodState, /, **kwargs
+    prepared: PreparedReducedRodDynamics, state: ReducedRodState, /, **kwargs: Any
 ) -> ReducedRodDynamicsEvaluation:
     return prepared.evaluate(state, **kwargs)
 
 
 def reduced_rod_forward_dynamics(
-    prepared: PreparedReducedRodDynamics, state: ReducedRodState, /, **kwargs
+    prepared: PreparedReducedRodDynamics, state: ReducedRodState, /, **kwargs: Any
 ) -> ReducedRodForwardDynamicsResult:
     return prepared.forward_dynamics(state, **kwargs)
 
@@ -1375,7 +1373,7 @@ def reduced_rod_inverse_dynamics(
     state: ReducedRodState,
     acceleration: ArrayLike,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> ReducedRodInverseDynamicsResult:
     return prepared.inverse_dynamics(state, acceleration, **kwargs)
 

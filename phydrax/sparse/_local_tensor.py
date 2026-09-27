@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -20,7 +21,12 @@ from ..linalg import (
     LocalEliminationResult,
     OperatorProperties,
 )
-from ._execution import RelationExecutionPlan, RelationExecutionState
+from ..typing import parse
+from ._execution import (
+    RelationAccumulation,
+    RelationExecutionPlan,
+    RelationExecutionState,
+)
 from ._linear import _properties_payload, SparseCoordinateOperator
 from ._relation import EdgeRelation
 
@@ -29,7 +35,7 @@ def scatter_local(
     residual: Array,
     dofs: Array,
     local: Array,
-    accumulation: str = "fast",
+    accumulation: RelationAccumulation = "fast",
     /,
 ) -> Array:
     """Scatter local rows with an explicit reduction-order policy."""
@@ -66,7 +72,7 @@ class ElementTensorOperator(StrictModule, NonTrainableState):
     output_execution: RelationExecutionState
     source_size: int = eqx.field(static=True)
     target_size: int = eqx.field(static=True)
-    accumulation: str = eqx.field(static=True)
+    accumulation: RelationAccumulation = eqx.field(static=True)
     properties: OperatorProperties
     operator_id: str = eqx.field(static=True)
 
@@ -80,9 +86,9 @@ class ElementTensorOperator(StrictModule, NonTrainableState):
         /,
         *,
         valid: ArrayLike | None = None,
-        accumulation: str = "fast",
+        accumulation: RelationAccumulation = "fast",
         properties: OperatorProperties | None = None,
-    ):
+    ) -> None:
         matrices = jnp.asarray(local_matrices)
         inputs = jnp.asarray(input_gathers, dtype=jnp.int32)
         outputs = jnp.asarray(output_gathers, dtype=jnp.int32)
@@ -101,8 +107,7 @@ class ElementTensorOperator(StrictModule, NonTrainableState):
             raise ValueError("Element tensor input gathers are out of bounds.")
         if bool(jnp.any((outputs < 0) | (outputs >= target))):
             raise ValueError("Element tensor output gathers are out of bounds.")
-        if accumulation_ not in ("fast", "deterministic", "compensated"):
-            raise ValueError("Unknown local accumulation policy.")
+        accumulation_ = parse(accumulation_, RelationAccumulation, "accumulation_")
         valid_ = (
             jnp.ones((matrices.shape[0],), dtype=jnp.bool_)
             if valid is None

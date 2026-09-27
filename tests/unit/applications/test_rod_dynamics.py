@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -18,7 +20,7 @@ from phydrax.applications.solid_mechanics._rod_dynamics import (
 )
 
 
-def _planar_rod(*, inextensible: bool = False):
+def _planar_rod(*, inextensible: bool = False) -> Any:
     plan = RodPlan(
         jnp.asarray(((0, 1), (1, 2)), dtype=jnp.int32),
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (2.0, 0.0))),
@@ -32,7 +34,7 @@ def _planar_rod(*, inextensible: bool = False):
     return prepare_rod(plan)
 
 
-def _spatial_rod():
+def _spatial_rod() -> Any:
     plan = RodPlan(
         jnp.asarray(((0, 1), (1, 2)), dtype=jnp.int32),
         jnp.asarray(((0.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, 0.0, 2.0))),
@@ -45,7 +47,7 @@ def _spatial_rod():
     return prepare_rod(plan)
 
 
-def _one_segment_inextensible_rod():
+def _one_segment_inextensible_rod() -> Any:
     return prepare_rod(
         RodPlan(
             jnp.asarray(((0, 1),), dtype=jnp.int32),
@@ -60,7 +62,7 @@ def _one_segment_inextensible_rod():
     )
 
 
-def test_rod_exposes_shared_collision_surface_map():
+def test_rod_exposes_shared_collision_surface_map() -> None:
     rod = _planar_rod()
     surface = rod.collision_surface(physical_radius=0.01)
     scene = phx.discretization.PreparedCollisionScene((surface,))
@@ -78,7 +80,7 @@ def test_rod_exposes_shared_collision_surface_map():
     assert bool(epoch.successful)
 
 
-def test_rest_state_has_zero_energy_and_planar_rigid_motion_is_objective():
+def test_rest_state_has_zero_energy_and_planar_rigid_motion_is_objective() -> None:
     rod = _planar_rod()
     rest = rod.initialize_state()
     rest_evaluation = evaluate_rod(rod, rest)
@@ -104,7 +106,7 @@ def test_rest_state_has_zero_energy_and_planar_rigid_motion_is_objective():
     assert jnp.allclose(moved_evaluation.bend_twist_strain, 0.0, atol=2.0e-6)
 
 
-def test_spatial_rest_state_has_zero_energy_and_stable_preparation_identity():
+def test_spatial_rest_state_has_zero_energy_and_stable_preparation_identity() -> None:
     first = _spatial_rod()
     second = _spatial_rod()
     rest = first.initialize_state()
@@ -136,7 +138,7 @@ def test_spatial_rest_state_has_zero_energy_and_stable_preparation_identity():
     assert jnp.allclose(evaluation.internal_moments, 0.0, atol=2.0e-6)
 
 
-def test_energy_gradient_is_dual_to_reported_force_and_moment():
+def test_energy_gradient_is_dual_to_reported_force_and_moment() -> None:
     rod = _planar_rod()
     rest = rod.initialize_state()
     state = RodState(
@@ -165,7 +167,7 @@ def test_energy_gradient_is_dual_to_reported_force_and_moment():
     assert evaluation.resultant_force_residual == pytest.approx(0.0, abs=2.0e-5)
 
 
-def test_planar_elastica_bend_produces_equal_opposite_restoring_moments():
+def test_planar_elastica_bend_produces_equal_opposite_restoring_moments() -> None:
     rod = _planar_rod()
     rest = rod.initialize_state()
     angle = jnp.asarray(0.2)
@@ -189,7 +191,7 @@ def test_planar_elastica_bend_produces_equal_opposite_restoring_moments():
     assert evaluation.potential_energy > 0.0
 
 
-def test_spatial_twist_is_pure_torsion_with_restoring_material_moment():
+def test_spatial_twist_is_pure_torsion_with_restoring_material_moment() -> None:
     rod = _spatial_rod()
     rest = rod.initialize_state()
     twist = jnp.asarray(0.25)
@@ -212,7 +214,7 @@ def test_spatial_twist_is_pure_torsion_with_restoring_material_moment():
     assert evaluation.internal_moments[1, 2] < 0.0
 
 
-def test_inextensible_symplectic_step_projects_length_and_axial_velocity():
+def test_inextensible_symplectic_step_projects_length_and_axial_velocity() -> None:
     rod = _one_segment_inextensible_rod()
     rest = rod.initialize_state()
     state = RodState(
@@ -243,7 +245,7 @@ def test_inextensible_symplectic_step_projects_length_and_axial_velocity():
     assert result.accepted_evaluation.inextensibility_valid
 
 
-def test_endpoint_attachment_reports_action_reaction_about_body_center():
+def test_endpoint_attachment_reports_action_reaction_about_body_center() -> None:
     rod = _planar_rod()
     rest = rod.initialize_state()
     angle = jnp.asarray(0.18)
@@ -268,7 +270,9 @@ def test_endpoint_attachment_reports_action_reaction_about_body_center():
     assert jnp.allclose(response.moment_balance, 0.0, atol=2.0e-6)
 
 
-def test_plan_rejects_invalid_ids_rest_lengths_frames_mass_inertia_and_stiffness():
+def test_plan_rejects_invalid_ids_rest_lengths_frames_mass_inertia_and_stiffness() -> (
+    None
+):
     segments = jnp.asarray(((0, 1), (1, 2)), dtype=jnp.int32)
     positions = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (2.0, 0.0)))
     frames = jnp.broadcast_to(jnp.eye(2), (2, 2, 2))
@@ -340,7 +344,7 @@ def test_plan_rejects_invalid_ids_rest_lengths_frames_mass_inertia_and_stiffness
         )
 
 
-def test_chart_and_current_zero_length_fail_with_finite_evidence():
+def test_chart_and_current_zero_length_fail_with_finite_evidence() -> None:
     rod = _planar_rod()
     rest = rod.initialize_state()
     collapsed = RodState(
@@ -377,7 +381,7 @@ def test_chart_and_current_zero_length_fail_with_finite_evidence():
         )
 
 
-def test_evaluation_and_step_are_jittable_and_rejected_candidate_rolls_back():
+def test_evaluation_and_step_are_jittable_and_rejected_candidate_rolls_back() -> None:
     rod = _spatial_rod()
     state = rod.initialize_state()
     compiled_evaluate = jax.jit(lambda current: evaluate_rod(rod, current))

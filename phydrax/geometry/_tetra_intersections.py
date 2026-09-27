@@ -497,9 +497,9 @@ def _compensated_volume(
     signed = total + correction
     volume = abs(float(signed))
     # The accumulated correction is an evidence bound, not a volume adjustment.
-    error = abs(float(correction)) + np.finfo(np.float64).eps * max(1.0, scale**3) * max(
-        1, len(terms)
-    )
+    error = abs(float(correction)) + float(np.finfo(np.float64).eps) * max(
+        1.0, scale**3
+    ) * max(1, len(terms))
     return volume, error
 
 

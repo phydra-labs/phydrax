@@ -4,17 +4,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
+from jax import Array
 
 import phydrax.axes as cx
 
 from .._frozendict import frozendict
 from .._sampling import materialize_design
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._distributions import AbstractDistribution
 from ._predictive import PredictiveField, SampleAxis
 
@@ -33,7 +35,7 @@ class RandomSampleBatch(StrictModule):
         *,
         sample_dim: str,
         distributions: Mapping[str, AbstractDistribution],
-    ):
+    ) -> None:
         names = tuple(values)
         if not names:
             raise ValueError("RandomSampleBatch values must be non-empty.")
@@ -65,7 +67,7 @@ def sample_joint(
     /,
     *,
     num_samples: int,
-    key,
+    key: PRNGKey | None,
     sampler: str = "sobol_scrambled",
     sample_dim: str = "__phydra_uq_input",
 ) -> RandomSampleBatch:
@@ -99,7 +101,7 @@ def sample_joint(
 
 
 def propagate(
-    function,
+    function: Callable[..., object],
     samples: RandomSampleBatch,
     /,
     *,
@@ -124,7 +126,7 @@ def propagate(
     names = tuple(samples.values)
     data_parts = []
 
-    def evaluate(*values):
+    def evaluate(*values: Array) -> object:
         arguments = {name: value for name, value in zip(names, values, strict=True)}
         if call_style == "keywords":
             return function(**arguments, **kwargs)
@@ -146,7 +148,7 @@ def propagate(
         template_dims = (None,) * template_data.ndim
         returns_field = False
 
-    def evaluate_data(*values):
+    def evaluate_data(*values: Array) -> Array:
         result = evaluate(*values)
         if returns_field:
             if not isinstance(result, cx.AxisArray):

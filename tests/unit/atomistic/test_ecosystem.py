@@ -1,20 +1,27 @@
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
 
-def _system(*, coordinate_map=None, cell=None):
+def _system(*, coordinate_map: Any = None, cell: Any = None) -> Any:
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     plan = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [10, 20, 30],
+        # ty: ignore[invalid-argument-type]
         [1, 1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0, 1.0],
         units,
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0, 0],
+        # ty: ignore[invalid-argument-type]
         charges=[0.4, -0.2, -0.2],
         coordinate_map=coordinate_map,
         cell=cell,
@@ -22,12 +29,13 @@ def _system(*, coordinate_map=None, cell=None):
     return plan.prepare(), units
 
 
-def _runtime():
+def _runtime() -> Any:
     system, _ = _system()
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(3).prepare(
         system.particles
     )
     potential = phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.LennardJonesPotential([0.2], [1.0], 2.5)]
     ).prepare(system)
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
@@ -59,23 +67,33 @@ def _runtime():
     return system, neighborhood, potential, dynamics, thermodynamic, state
 
 
-def test_identity_and_virtual_site_force_pullback():
+def test_identity_and_virtual_site_force_pullback() -> None:
     physical_ids = np.asarray([10, 20, 30])
     sites = phx.atomistic.AtomisticInteractionSitePlan(
+        # ty: ignore[invalid-argument-type]
         [10, 20, 30, 40],
+        # ty: ignore[invalid-argument-type]
         [1, 1, 1, 0],
+        # ty: ignore[invalid-argument-type]
         [0, 0, 0, 1],
+        # ty: ignore[invalid-argument-type]
         [0.4, -0.2, -0.2, 0.1],
+        # ty: ignore[invalid-argument-type]
         physical_mask=[True, True, True, False],
     )
     rule = phx.atomistic.VirtualSiteRule(
         phx.atomistic.VirtualSiteKind.LOCAL_FRAME,
         40,
         physical_ids,
+        # ty: ignore[invalid-argument-type]
         [0.2, 0.1, 0.0],
     )
     mapping = phx.atomistic.AtomisticCoordinateMapPlan(
-        physical_ids, sites, [0, 1, 2, -1], virtual_rules=(rule,)
+        physical_ids,
+        sites,
+        # ty: ignore[invalid-argument-type]
+        [0, 1, 2, -1],
+        virtual_rules=(rule,),
     )
     system, _ = _system(coordinate_map=mapping)
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
@@ -90,14 +108,16 @@ def test_identity_and_virtual_site_force_pullback():
     np.testing.assert_allclose(pulled, gradient, atol=1e-12)
 
 
-def test_force_field_bundle_and_new_terms_are_energy_derived():
+def test_force_field_bundle_and_new_terms_are_energy_derived() -> None:
     system, units = _system()
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(3).prepare(
         system.particles
     )
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0], [0.0, 1.2, 0.0]])
     terms = [
+        # ty: ignore[invalid-argument-type]
         phx.atomistic.MorsePotential([[0.2]], [[2.0]], [[1.0]], 2.5),
+        # ty: ignore[invalid-argument-type]
         phx.atomistic.BuckinghamPotential([[1.0]], [[2.0]], [[0.1]], 2.5),
     ]
     program = phx.atomistic.AtomisticPotentialProgram(terms).prepare(system)
@@ -119,7 +139,7 @@ def test_force_field_bundle_and_new_terms_are_energy_derived():
     assert bundle.system.plan.units.unit_system_id == units.unit_system_id
 
 
-def test_frame_xyz_h5md_and_rerun_roundtrip(tmp_path: Path):
+def test_frame_xyz_h5md_and_rerun_roundtrip(tmp_path: Path) -> None:
     system, neighborhood, potential, dynamics, _, state = _runtime()
     reporter = phx.atomistic.AtomisticReporterPlan(
         phx.atomistic.interchange.ExtendedXYZTrajectoryPlan(tmp_path / "trajectory.xyz")
@@ -127,7 +147,9 @@ def test_frame_xyz_h5md_and_rerun_roundtrip(tmp_path: Path):
     frame = reporter.frame(dynamics, state)
     with reporter.sink.open(append=False) as writer:
         writer.write(frame)
+    # ty: ignore[missing-argument]
     with reporter.sink.open() as reader:
+        # ty: ignore[invalid-argument-type]
         observed = tuple(reader)
     assert len(observed) == 1
     np.testing.assert_allclose(observed[0].positions, frame.positions)
@@ -145,7 +167,7 @@ def test_frame_xyz_h5md_and_rerun_roundtrip(tmp_path: Path):
     )
 
 
-def test_collective_variables_bias_and_replica_exchange():
+def test_collective_variables_bias_and_replica_exchange() -> None:
     system, _, _, dynamics, thermodynamic, state = _runtime()
     cv = phx.atomistic.sampling.CollectiveVariablePlan(
         phx.atomistic.sampling.CollectiveVariableKind.DISTANCE, [0, 1]
@@ -158,7 +180,9 @@ def test_collective_variables_bias_and_replica_exchange():
         phx.atomistic.sampling.AtomisticBiasPlan(
             phx.atomistic.sampling.BiasKind.HARMONIC,
             program,
+            # ty: ignore[invalid-argument-type]
             center=[1.0],
+            # ty: ignore[invalid-argument-type]
             stiffness=[2.0],
         ),
         dynamics,
@@ -169,6 +193,7 @@ def test_collective_variables_bias_and_replica_exchange():
     np.testing.assert_allclose(bias_value.energy, 0.04, atol=1e-12)
     replica_plan = phx.atomistic.sampling.AtomisticMultistatePlan(
         thermodynamic,
+        # ty: ignore[invalid-argument-type]
         [10, 20],
         qualification=phx.atomistic.sampling.AtomisticCanonicalSamplingQualification(
             dynamics,
@@ -191,6 +216,7 @@ def test_collective_variables_bias_and_replica_exchange():
                 key=jax.random.key(3),
             ),
         ),
+        # ty: ignore[invalid-argument-type]
         [0, 1],
         jax.random.key(4),
     )
@@ -198,9 +224,10 @@ def test_collective_variables_bias_and_replica_exchange():
     assert bool(exchanged.successful)
 
 
-def test_committee_advanced_physics_and_distributed_contracts():
+def test_committee_advanced_physics_and_distributed_contracts() -> None:
     system, neighborhood, potential, _, _, state = _runtime()
     other = phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.LennardJonesPotential([0.21], [1.0], 2.5)]
     ).prepare(system)
     committee = phx.atomistic.CommitteeAtomisticPotential(
@@ -210,10 +237,13 @@ def test_committee_advanced_physics_and_distributed_contracts():
     evidence = committee.evaluate(state.kinematics.positions, state.neighborhood)
     assert bool(evidence.successful)
     multipoles = phx.atomistic.PermanentMultipoleSiteData(
+        # ty: ignore[invalid-argument-type]
         [0.4, -0.2, -0.2],
         jnp.zeros((3, 3)),
         jnp.zeros((3, 3, 3)),
+        # ty: ignore[invalid-argument-type]
         [0.1, 0.1, 0.1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0, 1.0],
     )
     polarization = phx.atomistic.evaluate_polarization(
@@ -228,6 +258,7 @@ def test_committee_advanced_physics_and_distributed_contracts():
     propagated_q, propagated_p = normal.propagate(q, p, system.plan.masses, 0.01)
     assert propagated_q.shape == q.shape
     assert propagated_p.shape == p.shape
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0, 0.0, 0.0], [4.0, 4.0, 4.0])
     distributed = phx.atomistic.DistributedAtomisticPlan(
         system,
@@ -247,3 +278,45 @@ def test_committee_advanced_physics_and_distributed_contracts():
     np.testing.assert_allclose(
         jnp.sum(local_energy), state.force.potential_energy, atol=1.0e-12
     )
+
+
+def test_interaction_site_cv_rejects_cell_vectors_without_cell() -> None:
+    physical_ids = np.asarray([10, 20, 30])
+    sites = phx.atomistic.AtomisticInteractionSitePlan(
+        # ty: ignore[invalid-argument-type]
+        [10, 20, 30, 40],
+        # ty: ignore[invalid-argument-type]
+        [1, 1, 1, 0],
+        # ty: ignore[invalid-argument-type]
+        [0, 0, 0, 1],
+        # ty: ignore[invalid-argument-type]
+        [0.4, -0.2, -0.2, 0.1],
+        # ty: ignore[invalid-argument-type]
+        physical_mask=[True, True, True, False],
+    )
+    rule = phx.atomistic.VirtualSiteRule(
+        phx.atomistic.VirtualSiteKind.LOCAL_FRAME,
+        40,
+        physical_ids,
+        # ty: ignore[invalid-argument-type]
+        [0.2, 0.1, 0.0],
+    )
+    mapping = phx.atomistic.AtomisticCoordinateMapPlan(
+        physical_ids,
+        sites,
+        # ty: ignore[invalid-argument-type]
+        [0, 1, 2, -1],
+        virtual_rules=(rule,),
+    )
+    system, _ = _system(coordinate_map=mapping)
+    cv = phx.atomistic.sampling.CollectiveVariablePlan(
+        phx.atomistic.sampling.CollectiveVariableKind.DISTANCE,
+        [0, 3],
+        domain=phx.atomistic.AtomisticSiteDomain.INTERACTION_SITES,
+    ).prepare(system)
+    positions = jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    np.testing.assert_allclose(
+        cv.evaluate(positions).value, np.hypot(0.2, 0.1), atol=1e-12
+    )
+    with pytest.raises(ValueError, match="fractions and cell vectors"):
+        cv.evaluate(positions, cell_vectors=10.0 * jnp.eye(3))

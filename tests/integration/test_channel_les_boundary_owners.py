@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -17,7 +20,7 @@ from phydrax.equations._channel_les import channel_les_filter, compile_channel_l
 from phydrax.solver._channel_flow import CHANNEL_FLOW_EXPLICIT_RESTRICTION
 
 
-def _space():
+def _space() -> Any:
     return phx.discretization.TensorSpectralPlan(
         (
             phx.discretization.FourierBasisPlan(2),
@@ -37,10 +40,10 @@ def _space():
 
 def _channel_les(
     *,
-    tangential_boundary="velocity",
-    pressure_gradient=(0.0, 0.0),
-    route="ultraspherical_banded",
-):
+    tangential_boundary: Any = "velocity",
+    pressure_gradient: Any = (0.0, 0.0),
+    route: Any = "ultraspherical_banded",
+) -> Any:
     space = _space()
     stokes = phx.discretization.ChannelStokesPlan(
         space,
@@ -69,7 +72,7 @@ def _channel_les(
     return space, compile_channel_les(base, model)
 
 
-def _parabolic_state(space, dynamics):
+def _parabolic_state(space: Any, dynamics: Any) -> Any:
     wall_coordinate = space.axes[1].nodes[None, :, None]
     velocity = jnp.zeros(space.physical_shape + (3,))
     velocity = velocity.at[..., 0].set(
@@ -79,7 +82,9 @@ def _parabolic_state(space, dynamics):
 
 
 @pytest.mark.parametrize("route", ("ultraspherical_banded", "dense_reference"))
-def test_mixed_channel_stokes_enforces_traction_without_tangential_no_slip(route):
+def test_mixed_channel_stokes_enforces_traction_without_tangential_no_slip(
+    route: Any,
+) -> None:
     space = _space()
     solver = phx.discretization.ChannelStokesPlan(
         space,
@@ -104,7 +109,7 @@ def test_mixed_channel_stokes_enforces_traction_without_tangential_no_slip(route
     assert float(jnp.max(jnp.abs(physical[:, (0, -1), :, 0]))) > 0.0
 
 
-def test_wall_owned_channel_changes_trajectory_and_closes_boundary_work():
+def test_wall_owned_channel_changes_trajectory_and_closes_boundary_work() -> None:
     space_off, off = _channel_les()
     space_on, on = _channel_les(tangential_boundary="traction")
     initial_off = _parabolic_state(space_off, off)
@@ -122,6 +127,7 @@ def test_wall_owned_channel_changes_trajectory_and_closes_boundary_work():
         on,
         step,
         density=1.0,
+        # ty: ignore[invalid-argument-type]
         sample_distance=(0.1, 0.1),
     )
     state = wall_owner.initialize(initial_on, 0.0, None)
@@ -186,7 +192,7 @@ def test_wall_owned_channel_changes_trajectory_and_closes_boundary_work():
     assert bool(second.evidence.dissipative)
 
 
-def _spectral_mac_owner(variance):
+def _spectral_mac_owner(variance: Any) -> Any:
     angles = 0.5 * jnp.pi * jnp.arange(4)
     coordinates = jnp.stack((jnp.zeros_like(angles), angles), axis=-1)
     return StochasticTurbulentInflowPlan("spectral").prepare_mac_boundary(
@@ -201,7 +207,7 @@ def _spectral_mac_owner(variance):
     )
 
 
-def test_mac_inflow_owner_commits_covariance_and_restarts_exactly():
+def test_mac_inflow_owner_commits_covariance_and_restarts_exactly() -> None:
     owner = _spectral_mac_owner(0.7)
     initial = owner.initialize(
         jax.random.key(19),
@@ -255,7 +261,7 @@ def test_mac_inflow_owner_commits_covariance_and_restarts_exactly():
     assert bool(first.evidence.successful)
 
 
-def test_complete_channel_restriction_refuses_unsafe_step():
+def test_complete_channel_restriction_refuses_unsafe_step() -> None:
     space, dynamics = _channel_les()
     initial = _parabolic_state(space, dynamics)
     restriction = dynamics.explicit_restriction(initial)
@@ -276,7 +282,7 @@ def test_complete_channel_restriction_refuses_unsafe_step():
     assert not bool(solution.successful)
 
 
-def test_unsupported_wall_pressure_gradient_and_open_inflow_refuse():
+def test_unsupported_wall_pressure_gradient_and_open_inflow_refuse() -> None:
     _, velocity_owned = _channel_les()
     with pytest.raises(ValueError, match="traction-owned"):
         VectorEquilibriumWallStressPlan().prepare_channel(

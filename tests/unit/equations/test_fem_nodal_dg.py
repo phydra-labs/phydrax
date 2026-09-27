@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import opt_einsum as oe
@@ -42,7 +45,7 @@ from phydrax.equations.fem._nodal_conservation import (
 from phydrax.equations.fem._viscous_conservation import ViscousDGPlan
 
 
-def _triangle_problem(order=2):
+def _triangle_problem(order: Any = 2) -> Any:
     vertices = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
     mesh = CellMesh.from_triangles(
         vertices,
@@ -71,7 +74,7 @@ def _triangle_problem(order=2):
     return compiled, system, discretization
 
 
-def test_triangle_nodal_dg_preserves_free_stream_and_conservation():
+def test_triangle_nodal_dg_preserves_free_stream_and_conservation() -> None:
     compiled, system, discretization = _triangle_problem()
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.2, -0.1, 1.0))),
@@ -84,7 +87,7 @@ def test_triangle_nodal_dg_preserves_free_stream_and_conservation():
     assert not compiled.dynamics.report.volume_quadrature.exact
 
 
-def test_triangle_nodal_dg_interface_is_conservative_and_linearizable():
+def test_triangle_nodal_dg_interface_is_conservative_and_linearizable() -> None:
     compiled, system, discretization = _triangle_problem(order=1)
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.0, 0.0, 1.0))),
@@ -116,7 +119,7 @@ def test_triangle_nodal_dg_interface_is_conservative_and_linearizable():
     assert evidence.valid
 
 
-def test_discontinuous_mass_strategies_share_affine_semantics():
+def test_discontinuous_mass_strategies_share_affine_semantics() -> None:
     from phydrax.equations.fem._mass_inverse import (
         PreparedDiscontinuousMassInverse,
     )
@@ -145,7 +148,7 @@ def test_discontinuous_mass_strategies_share_affine_semantics():
     assert auto.evidence.resident_factor_bytes < exact.evidence.resident_factor_bytes
 
 
-def test_tetrahedron_nodal_dg_preserves_free_stream():
+def test_tetrahedron_nodal_dg_preserves_free_stream() -> None:
     vertices = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -187,10 +190,11 @@ def test_tetrahedron_nodal_dg_preserves_free_stream():
         system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 0.02, 1.0))),
         discretization.field_spaces[0].vector_space.shape,
     )
+    # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=3.0e-10)
 
 
-def test_mixed_triangle_quadrilateral_nodal_dg_uses_conservative_mortar():
+def test_mixed_triangle_quadrilateral_nodal_dg_uses_conservative_mortar() -> None:
     vertices = np.asarray(
         (
             (0.0, 0.0),
@@ -243,16 +247,22 @@ def test_mixed_triangle_quadrilateral_nodal_dg_uses_conservative_mortar():
         system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 1.0))),
         discretization.field_spaces[0].vector_space.shape,
     )
+    # ty: ignore[invalid-argument-type]
     rate, diagnostics = compiled.residual_with_diagnostics(0.0, state)
     np.testing.assert_allclose(rate, 0.0, atol=5.0e-10)
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(diagnostics.conservation_rate, 0.0, atol=5.0e-10)
+    # ty: ignore[unresolved-attribute]
     assert len(compiled.dynamics.mortar_routes) == 1
+    # ty: ignore[unresolved-attribute]
     mortar = compiled.dynamics.mortar_routes[0].mortar
+    # ty: ignore[unresolved-attribute]
     flux = jnp.ones((mortar.physical_weights.shape[0], system.component_count))
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(mortar.conservation_residual(flux), 0.0, atol=3.0e-12)
 
 
-def test_prism_and_pyramid_nodal_dg_preserve_free_stream():
+def test_prism_and_pyramid_nodal_dg_preserve_free_stream() -> None:
     cells = {
         "prism": np.asarray(
             (
@@ -308,6 +318,7 @@ def test_prism_and_pyramid_nodal_dg_preserve_free_stream():
             system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 0.02, 1.0))),
             discretization.field_spaces[0].vector_space.shape,
         )
+        # ty: ignore[invalid-argument-type]
         np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=2.0e-9)
         entropy_pair = phx.equations.ideal_gas_euler_entropy_pair(system)
         entropy_compiled = compile_conservation_problem(
@@ -328,11 +339,13 @@ def test_prism_and_pyramid_nodal_dg_preserve_free_stream():
             ),
             entropy_pair=entropy_pair,
         )
+        # ty: ignore[unresolved-attribute]
         assert entropy_compiled.dynamics.entropy_operators[0] is not None
+        # ty: ignore[invalid-argument-type]
         np.testing.assert_allclose(entropy_compiled(0.0, state), 0.0, atol=8.0e-8)
 
 
-def test_tetrahedron_nodal_ldg_preserves_stationary_rest_state():
+def test_tetrahedron_nodal_ldg_preserves_stationary_rest_state() -> None:
     points = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -388,10 +401,11 @@ def test_tetrahedron_nodal_ldg_preserves_stationary_rest_state():
         system.primitive_to_conserved(jnp.asarray((1.0, 0.0, 0.0, 0.0, 1.0))),
         discretization.field_spaces[0].vector_space.shape,
     )
+    # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=3.0e-9)
 
 
-def test_polyhedral_three_dimensional_interface_is_conservative():
+def test_polyhedral_three_dimensional_interface_is_conservative() -> None:
     points = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -445,13 +459,16 @@ def test_polyhedral_three_dimensional_interface_is_conservative():
         system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 0.02, 1.0))),
         discretization.field_spaces[0].vector_space.shape,
     )
+    # ty: ignore[invalid-argument-type]
     rate, diagnostics = compiled.residual_with_diagnostics(0.0, state)
     np.testing.assert_allclose(rate, 0.0, atol=3.0e-9)
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(diagnostics.conservation_rate, 0.0, atol=3.0e-9)
+    # ty: ignore[unresolved-attribute]
     assert len(compiled.dynamics.three_dimensional_interface_routes) == 1
 
 
-def test_interval_p_zero_nodal_dg_preserves_constant_state():
+def test_interval_p_zero_nodal_dg_preserves_constant_state() -> None:
     mesh = CellMesh(
         np.asarray(((0.0,), (1.0,))),
         (
@@ -487,10 +504,11 @@ def test_interval_p_zero_nodal_dg_preserves_constant_state():
         NodalDGConservationMethodPlan(RusanovFluxPlan()),
     )
     state = jnp.ones(discretization.field_spaces[0].vector_space.shape)
+    # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=2.0e-12)
 
 
-def test_hexahedron_general_nodal_dg_preserves_free_stream():
+def test_hexahedron_general_nodal_dg_preserves_free_stream() -> None:
     points = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -536,10 +554,11 @@ def test_hexahedron_general_nodal_dg_preserves_free_stream():
         system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 0.02, 1.0))),
         discretization.field_spaces[0].vector_space.shape,
     )
+    # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=3.0e-10)
 
 
-def test_nodal_dg_transformed_periodicity_is_conservative():
+def test_nodal_dg_transformed_periodicity_is_conservative() -> None:
     points = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
     mesh = CellMesh(
         points,
@@ -603,19 +622,25 @@ def test_nodal_dg_transformed_periodicity_is_conservative():
         system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 1.0))),
         discretization.field_spaces[0].vector_space.shape,
     )
+    # ty: ignore[invalid-argument-type, unresolved-attribute]
     faces = compiled.dynamics.face_fluxes(0.0, state)
+    # ty: ignore[unresolved-attribute]
     assert faces.route_kinds == ("periodic", "periodic")
+    # ty: ignore[unresolved-attribute]
     assert compiled.dynamics.stable_step_evidence(state).positive
+    # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=3.0e-10)
     coordinates = discretization.dof_maps[0].dof_coordinates
     perturbed = state.at[:, 0].multiply(
         1.0 + 0.05 * jnp.sin(2.0 * jnp.pi * coordinates[:, 0])
     )
+    # ty: ignore[invalid-argument-type]
     _rate, diagnostics = compiled.residual_with_diagnostics(0.0, perturbed)
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(diagnostics.conservation_rate, 0.0, atol=5.0e-9)
 
 
-def test_nodal_entropy_plan_prepares_formal_simplex_sbp_operator():
+def test_nodal_entropy_plan_prepares_formal_simplex_sbp_operator() -> None:
     _compiled, system, discretization = _triangle_problem(order=2)
     entropy_pair = phx.equations.ideal_gas_euler_entropy_pair(system)
     entropy_plan = phx.equations.fem.EntropyStableDGPlan(
@@ -640,32 +665,39 @@ def test_nodal_entropy_plan_prepares_formal_simplex_sbp_operator():
         NodalDGConservationMethodPlan(RusanovFluxPlan(), entropy_stability=entropy_plan),
         entropy_pair=entropy_pair,
     )
+    # ty: ignore[unresolved-attribute]
     assert len(compiled.dynamics.entropy_operators) == 1
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 1.0))),
         discretization.field_spaces[0].vector_space.shape,
     )
+    # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=5.0e-9)
+    # ty: ignore[unresolved-attribute]
     assert compiled.dynamics.entropy_operators[0].formal_sbp
     filter_ = phx.equations.fem.EntropyFilterPlan(
         density_floor=1.0e-6,
         pressure_floor=1.0e-6,
+        # ty: ignore[invalid-argument-type]
     ).prepare(compiled.dynamics)
     troubled = state.at[0, 0].set(1.0e-5).at[0, -1].set(1.0e-5)
+    # ty: ignore[invalid-argument-type]
     filtered, filter_evidence = filter_.filter(0.0, troubled)
     assert filter_evidence.successful
     assert filter_evidence.applied
+    # ty: ignore[unresolved-attribute]
     weights = jnp.sum(compiled.dynamics.mass_inverse.mass_matrices[0], axis=1)
+    # ty: ignore[unresolved-attribute]
     routes = compiled.dynamics.mass_inverse.routes[0]
     before = oe.contract("ci,civ->v", weights, troubled[routes])
     after = oe.contract("ci,civ->v", weights, filtered[routes])
     np.testing.assert_allclose(after, before, atol=3.0e-9)
 
 
-def test_executable_equilibrium_family_cancels_discrete_source_imbalance():
+def test_executable_equilibrium_family_cancels_discrete_source_imbalance() -> None:
     _compiled, system, discretization = _triangle_problem(order=2)
 
-    def equilibrium_state(time, coordinates, args):
+    def equilibrium_state(time: Any, coordinates: Any, args: Any) -> Any:
         del time, args
         density = 1.0 + 0.1 * coordinates[:, 0]
         primitive = jnp.stack(
@@ -696,12 +728,14 @@ def test_executable_equilibrium_family_cancels_discrete_source_imbalance():
     state = equilibrium_state(
         jnp.asarray(0.0), discretization.dof_maps[0].dof_coordinates, None
     )
+    # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=3.0e-10)
     perturbed = state.at[0, 0].multiply(1.01)
+    # ty: ignore[invalid-argument-type]
     assert jnp.linalg.norm(compiled(0.0, perturbed)) > 0.0
 
 
-def test_mixed_triangle_viscous_dg_preserves_stationary_rest_state():
+def test_mixed_triangle_viscous_dg_preserves_stationary_rest_state() -> None:
     _euler_compiled, _euler, discretization = _triangle_problem(order=2)
     system = CompressibleNavierStokesSystem(ConstantTransport(0.1, 0.2), 2)
     exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
@@ -733,8 +767,11 @@ def test_mixed_triangle_viscous_dg_preserves_stationary_rest_state():
         system.primitive_to_conserved(jnp.asarray((1.0, 0.0, 0.0, 1.0))),
         discretization.field_spaces[0].vector_space.shape,
     )
+    # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=5.0e-9)
+    # ty: ignore[unresolved-attribute]
     assert compiled.dynamics.stable_step_evidence(state).maximum_diffusive_rate > 0.0
+    # ty: ignore[invalid-argument-type, unresolved-attribute]
     residual, pushforward, pullback = compiled.dynamics.viscous_linearize(0.0, state)
     direction = jnp.linspace(-0.02, 0.02, state.size).reshape(state.shape)
     cotangent = jnp.linspace(0.03, -0.01, state.size).reshape(state.shape)

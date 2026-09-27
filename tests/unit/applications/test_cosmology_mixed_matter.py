@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -28,12 +30,12 @@ from phydrax.applications.cosmology._wave_dark_matter import (
 
 def _case(
     *,
-    count=8,
-    dimension=1,
-    gas=False,
-    schedule=(1.0, 1.0002),
-    policy=None,
-):
+    count: Any = 8,
+    dimension: Any = 1,
+    gas: Any = False,
+    schedule: Any = (1.0, 1.0002),
+    policy: Any = None,
+) -> Any:
     axes = tuple(
         phx.discretization.UniformCellAxisSpec(count, periodic=True)
         for _ in range(dimension)
@@ -61,6 +63,7 @@ def _case(
         ),
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.3, maximum_retries=0),
@@ -131,6 +134,7 @@ def _case(
     }
     if gas:
         gas_plan = ComovingEulerPlan(
+            # ty: ignore[invalid-argument-type]
             dynamics,
             adiabatic_index=5.0 / 3.0,
             expansion_dimension=3,
@@ -144,7 +148,7 @@ def _case(
     return result
 
 
-def test_uniform_mixed_density_has_one_mean_removal_and_zero_force():
+def test_uniform_mixed_density_has_one_mean_removal_and_zero_force() -> None:
     case = _case()
     prepared = WaveParticleCosmologyPlan(
         case["wave"], case["kdk"], case["particle_gravity"]
@@ -166,7 +170,7 @@ def test_uniform_mixed_density_has_one_mean_removal_and_zero_force():
     assert shared.particle_force_adjoint_defect < 1e-12
 
 
-def test_uniform_component_limits_reproduce_wave_and_particle_owners():
+def test_uniform_component_limits_reproduce_wave_and_particle_owners() -> None:
     case = _case(schedule=(1.0, 1.0001, 1.0002))
     prepared = WaveParticleCosmologyPlan(
         case["wave"], case["kdk"], case["particle_gravity"]
@@ -194,7 +198,7 @@ def test_uniform_component_limits_reproduce_wave_and_particle_owners():
     np.testing.assert_allclose(mixed.diagnostics.total_gravity_work, 0.0, atol=1e-12)
 
 
-def test_uniform_wave_particle_gas_limit_reproduces_gas_particle_owner():
+def test_uniform_wave_particle_gas_limit_reproduces_gas_particle_owner() -> None:
     case = _case(gas=True)
     prepared = WaveParticleGasCosmologyPlan(
         case["wave"], case["kdk"], case["gas"], case["particle_gravity"]
@@ -231,7 +235,7 @@ def test_uniform_wave_particle_gas_limit_reproduces_gas_particle_owner():
     np.testing.assert_allclose(mixed.diagnostics.component_gravity_work, 0.0, atol=1e-11)
 
 
-def test_rejected_mixed_interval_rolls_back_the_whole_state():
+def test_rejected_mixed_interval_rolls_back_the_whole_state() -> None:
     policy = WaveDarkMatterStepPolicy(
         maximum_phase_radians=1.0e-12,
         minimum_de_broglie_cells=2.0,
@@ -268,7 +272,7 @@ def test_rejected_mixed_interval_rolls_back_the_whole_state():
     assert result.state.gas.scale_factor == initial.gas.scale_factor
 
 
-def test_mixed_plan_rejects_a_second_gravitational_constant_owner():
+def test_mixed_plan_rejects_a_second_gravitational_constant_owner() -> None:
     case = _case()
     mismatched_owner = phx.solver.NewtonianSelfGravityPlan(0.051).prepare(
         case["particle_gravity"].gravity.transport
@@ -282,7 +286,9 @@ def test_mixed_plan_rejects_a_second_gravitational_constant_owner():
         WaveParticleCosmologyPlan(case["wave"], case["kdk"], mismatched_gravity)
 
 
-def test_mixed_rollout_rejects_nan_component_time_levels_before_canonicalization():
+def test_mixed_rollout_rejects_nan_component_time_levels_before_canonicalization() -> (
+    None
+):
     case = _case(gas=True)
     prepared = WaveParticleGasCosmologyPlan(
         case["wave"], case["kdk"], case["gas"], case["particle_gravity"]

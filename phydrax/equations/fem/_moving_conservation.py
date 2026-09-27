@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -54,7 +55,7 @@ class FiniteElementGeometrySnapshot(StrictModule, NonTrainableState):
         *,
         topology_id: str,
         geometry_layout_id: str,
-    ):
+    ) -> None:
         values = jnp.asarray(coordinates)
         velocity = jnp.asarray(coordinate_velocity)
         time_ = jnp.asarray(time)
@@ -154,8 +155,11 @@ def finite_element_ale_metric_evidence(
     for block_index, block in enumerate(discretization.mesh.blocks):
         coordinate_element = discretization.coordinate_elements[block_index]
         points, _weights = _degree_aware_reference_rule(
-            block.cell_kind, max(2, coordinate_element.degree + 2)
+            block.cell_kind,
+            # ty: ignore[unresolved-attribute]
+            max(2, coordinate_element.degree + 2),
         )
+        # ty: ignore[unresolved-attribute]
         _basis, gradients = coordinate_element.tabulate(points)
         routes = discretization.coordinate_dofs[block_index]
         current_coordinates = current.coordinates[routes]
@@ -260,7 +264,9 @@ class MovingTraceRoute(StrictModule, NonTrainableState):
     next: PreparedDGTraceRoute
     route_id: str = eqx.field(static=True)
 
-    def __init__(self, current: PreparedDGTraceRoute, next: PreparedDGTraceRoute, /):
+    def __init__(
+        self, current: PreparedDGTraceRoute, next: PreparedDGTraceRoute, /
+    ) -> None:
         if (
             current.route_kind != next.route_kind
             or current.owner_dofs.shape != next.owner_dofs.shape
@@ -325,7 +331,7 @@ class ConservativeRemapPlan(StrictModule):
         target_mass: ArrayLike,
         cross_mass: ArrayLike,
         /,
-    ):
+    ) -> None:
         source = jnp.asarray(source_mass)
         target = jnp.asarray(target_mass)
         cross = jnp.asarray(cross_mass)

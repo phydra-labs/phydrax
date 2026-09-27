@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -19,7 +21,7 @@ from phydrax.applications.skeletal_muscle.personalization import (
 )
 
 
-def _case(sample_count: int, nuisance_count: int, repetitions: int):
+def _case(sample_count: int, nuisance_count: int, repetitions: int) -> Any:
     relative = jnp.linspace(0.0, 1.0, sample_count)
     columns = [jnp.ones_like(relative)]
     for power in range(1, nuisance_count):

@@ -4,16 +4,19 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..nonlinear import (
     implicit_root_result,
+    NonlinearResult,
     NonlinearStatus,
     refresh_nonlinear,
 )
@@ -38,6 +41,7 @@ from ._differential_algebraic import (
     _initial_regularity,
     _linear_failure,
     _regularity_status,
+    DAEAdaptivePolicy,
     DAEAttemptHistory,
     DAEAttemptStatus,
     DAEContinuation,
@@ -47,12 +51,24 @@ from ._differential_algebraic import (
     DAEStatus,
     DAEStepHistory,
     DAETerminationStatus,
+    DifferentialAlgebraicProblem,
     DifferentialAlgebraicSolution,
     PreparedDAESolve,
 )
+from ._implicit_stage import ImplicitStageArguments
 
 
 _RUNNING = -1
+
+_AdaptiveDAEInputs: TypeAlias = tuple[
+    PreparedDAESolve,
+    Any,
+    ArrayLike | None,
+    ArrayLike | None,
+    DAEContinuation | None,
+]
+_ReplaySchedule: TypeAlias = tuple[Array, Array, Array, Array, Array]
+_RegularityOutcome: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class _NodeArchive(StrictModule):
@@ -154,7 +170,7 @@ def _initial_step_size(
     differential_variables: Array,
     relative_tolerance: Array,
     absolute_tolerance: Array,
-    policy,
+    policy: DAEAdaptivePolicy,
     /,
 ) -> Array:
     if policy.initial_step is not None:
@@ -182,7 +198,7 @@ def _initial_step_size(
     return jnp.clip(estimate, minimum, maximum)
 
 
-def _minimum_step(time: Array, policy, /) -> Array:
+def _minimum_step(time: Array, policy: DAEAdaptivePolicy, /) -> Array:
     if policy.minimum_step is not None:
         return jnp.asarray(policy.minimum_step, dtype=time.dtype)
     return (
@@ -196,7 +212,7 @@ def _accepted_factor(
     error_ratio: Array,
     previous_error_ratio: Array,
     order: Array,
-    policy,
+    policy: DAEAdaptivePolicy,
     /,
 ) -> Array:
     exponent = 1.0 / (order.astype(error_ratio.dtype) + 1.0)
@@ -209,7 +225,9 @@ def _accepted_factor(
     )
 
 
-def _rejected_factor(error_ratio: Array, order: Array, policy, /) -> Array:
+def _rejected_factor(
+    error_ratio: Array, order: Array, policy: DAEAdaptivePolicy, /
+) -> Array:
     exponent = 1.0 / (order.astype(error_ratio.dtype) + 1.0)
     proposed = policy.safety * jnp.maximum(error_ratio, 1e-12) ** (-exponent)
     return jnp.clip(
@@ -219,7 +237,14 @@ def _rejected_factor(error_ratio: Array, order: Array, policy, /) -> Array:
     )
 
 
-def _scaled_problem_residual(problem, time, state, state_rate, args, /):
+def _scaled_problem_residual(
+    problem: DifferentialAlgebraicProblem,
+    time: Array,
+    state: Array,
+    state_rate: Array,
+    args: Any,
+    /,
+) -> Array:
     inputs = (
         None
         if problem.input_policy is None
@@ -300,21 +325,21 @@ def _continuation_initialization(
 
 
 def _stage_regularity(
-    prepared,
-    state,
-    state_rate,
-    arguments,
-    nonlinear_result,
-    accepted_count,
-    candidate_solved,
+    prepared: PreparedDAESolve,
+    state: Array,
+    state_rate: Array,
+    arguments: ImplicitStageArguments,
+    nonlinear_result: NonlinearResult,
+    accepted_count: Array,
+    candidate_solved: Array,
     /,
-):
+) -> _RegularityOutcome:
     policy = prepared.plan.policy.regularity
     dimension = prepared.problem.initial_state.size
     if policy.mode == "periodic":
         requested = candidate_solved & ((accepted_count % policy.interval) == 0)
 
-        def probe(_):
+        def probe(_: object) -> _RegularityOutcome:
             rank, condition, finite = _dense_stage_regularity(
                 prepared, state, state_rate, arguments
             )
@@ -327,7 +352,7 @@ def _stage_regularity(
             )
             return status, rank, condition, jnp.asarray(True)
 
-        def skip(_):
+        def skip(_: object) -> _RegularityOutcome:
             return (
                 jnp.asarray(int(DAERegularityStatus.NOT_RUN), dtype=jnp.int32),
                 jnp.asarray(-1, dtype=jnp.int32),
@@ -387,9 +412,12 @@ def _validate_continuation(
         raise ValueError("Adaptive continuation is missing retained nonlinear state.")
 
 
-def _initialize_archives(prepared, initialization, /):
+def _initialize_archives(
+    prepared: PreparedDAESolve, initialization: DAEInitializationResult, /
+) -> tuple[_NodeArchive, _StepArchive, _AttemptArchive, _RegularityArchive]:
     problem = prepared.problem
-    adaptive = prepared.plan.policy.adaptive
+    # _adaptive_primal rejects non-adaptive policies before allocating archives.
+    adaptive = cast(DAEAdaptivePolicy, prepared.plan.policy.adaptive)
     dtype = problem.initial_state.real.dtype
     node_count = prepared.time_grid.num_points
     accepted_capacity = adaptive.maximum_accepted_steps
@@ -480,7 +508,7 @@ def _set_attempt(
     order: Array,
     status: Array,
     error_ratio: Array,
-    nonlinear_result,
+    nonlinear_result: NonlinearResult,
     stale_retry: Array,
     residual_certified: Array,
 ) -> _AttemptArchive:
@@ -700,7 +728,7 @@ def _adaptive_primal(
         events=initial_events,
     )
 
-    def condition(current):
+    def condition(current: _AdaptiveCarry) -> Array:
         return (
             (current.terminal_status == _RUNNING)
             & (current.save_index < save_times.size)
@@ -709,7 +737,7 @@ def _adaptive_primal(
             & (current.consecutive_rejections <= adaptive.maximum_consecutive_rejections)
         )
 
-    def body(current):
+    def body(current: _AdaptiveCarry) -> _AdaptiveCarry:
         target_time = save_times[current.save_index]
         remaining = target_time - current.time
         maximum_step = (
@@ -1063,7 +1091,7 @@ def _adaptive_primal(
             )
         )
 
-        def accept(_):
+        def accept(_: object) -> _AdaptiveCarry:
             accepted_index = current.accepted_count
             steps_ = _StepArchive(
                 times=current.steps.times.at[accepted_index].set(accepted_time),
@@ -1216,7 +1244,7 @@ def _adaptive_primal(
                 events=events_,
             )
 
-        def reject(_):
+        def reject(_: object) -> _AdaptiveCarry:
             nonlinear_failure = (~nonlinear_success | ~finite) & (~event_failure)
             factor = jnp.where(
                 event_failure,
@@ -1424,14 +1452,16 @@ def _adaptive_primal(
 
 
 def _replay_initial(
-    prepared,
-    args,
-    initial_state,
-    initial_state_rate,
-    continuation,
+    prepared: PreparedDAESolve,
+    args: Any,
+    initial_state: ArrayLike | None,
+    initial_state_rate: ArrayLike | None,
+    continuation: DAEContinuation | None,
     /,
-):
+) -> tuple[DAEInitializationResult, Array, Array, Array, Array]:
     policy = prepared.plan.policy
+    # Replay differentiates only solutions produced by the adaptive primal.
+    adaptive = cast(DAEAdaptivePolicy, policy.adaptive)
     times = jax.lax.stop_gradient(prepared.time_grid.times)
     if continuation is None:
         state = prepared.problem.initial_state if initial_state is None else initial_state
@@ -1467,14 +1497,14 @@ def _replay_initial(
                         prepared.problem.system.state_shape
                     ),
                     jnp.broadcast_to(
-                        policy.adaptive.relative_tolerance,
+                        adaptive.relative_tolerance,
                         prepared.problem.system.state_shape,
                     ),
                     jnp.broadcast_to(
-                        policy.adaptive.absolute_tolerance,
+                        adaptive.absolute_tolerance,
                         prepared.problem.system.state_shape,
                     ),
-                    policy.adaptive,
+                    adaptive,
                 )
             ),
             dtype=times.dtype,
@@ -1499,14 +1529,14 @@ class _ReplayCarry(StrictModule):
 
 
 def _replay_solution(
-    prepared,
-    args,
-    initial_state,
-    initial_state_rate,
-    continuation,
-    frozen,
+    prepared: PreparedDAESolve,
+    args: Any,
+    initial_state: ArrayLike | None,
+    initial_state_rate: ArrayLike | None,
+    continuation: DAEContinuation | None,
+    frozen: DifferentialAlgebraicSolution,
     /,
-):
+) -> DifferentialAlgebraicSolution:
     initialization, states, rates, history_times, previous_steps = _replay_initial(
         prepared,
         args,
@@ -1533,7 +1563,9 @@ def _replay_solution(
     save_indices = jax.lax.stop_gradient(frozen.step_history.save_step_indices)
     indices = jnp.arange(schedule_steps.size, dtype=jnp.int32)
 
-    def replay_step(current, values):
+    def replay_step(
+        current: _ReplayCarry, values: _ReplaySchedule
+    ) -> tuple[_ReplayCarry, None]:
         index, time, step_size, order, valid = values
         safe_step_size = jnp.where(valid, step_size, 1.0)
         safe_order = jnp.where(valid, order, 1).astype(jnp.int32)
@@ -1543,7 +1575,7 @@ def _replay_solution(
             current.times[0] + safe_step_size,
         )
 
-        def execute(carry):
+        def execute(carry: _ReplayCarry) -> _ReplayCarry:
             if prepared.events is None:
                 event_step = jnp.asarray(False)
                 event_slot = jnp.asarray(0, dtype=jnp.int32)
@@ -1726,7 +1758,7 @@ def _replay_solution(
         padded_capacity = ((capacity + chunk_size - 1) // chunk_size) * chunk_size
         padding = padded_capacity - capacity
 
-        def pad(value, fill):
+        def pad(value: Array, fill: float) -> Array:
             return jnp.pad(value, ((0, padding),), constant_values=fill)
 
         padded = (
@@ -1738,10 +1770,12 @@ def _replay_solution(
         )
 
         @jax.checkpoint
-        def replay_chunk(current, chunk):
+        def replay_chunk(current: _ReplayCarry, chunk: _ReplaySchedule) -> _ReplayCarry:
             return jax.lax.scan(replay_step, current, chunk)[0]
 
-        def chunk_step(current, chunk):
+        def chunk_step(
+            current: _ReplayCarry, chunk: _ReplaySchedule
+        ) -> tuple[_ReplayCarry, None]:
             return replay_chunk(current, chunk), None
 
         replayed, _ = jax.lax.scan(chunk_step, initial, padded)
@@ -1752,7 +1786,7 @@ def _replay_solution(
     )
     algebraic_equations = system.structure.algebraic_equation_mask(system.state_shape)
 
-    def certify(time, state, rate):
+    def certify(time: Array, state: Array, rate: Array) -> tuple[Array, Array, Array]:
         scaled = _scaled_problem_residual(
             prepared.problem,
             time,
@@ -1834,7 +1868,9 @@ def solve_adaptive_dae(
 
 
 @solve_adaptive_dae.def_jvp
-def _solve_adaptive_dae_jvp(primals, tangents):
+def _solve_adaptive_dae_jvp(
+    primals: _AdaptiveDAEInputs, tangents: tuple[PyTree, ...]
+) -> tuple[DifferentialAlgebraicSolution, DifferentialAlgebraicSolution]:
     prepared, args, initial_state, initial_state_rate, continuation = primals
     primal = _adaptive_primal(
         prepared,
@@ -1844,7 +1880,13 @@ def _solve_adaptive_dae_jvp(primals, tangents):
         continuation,
     )
 
-    def replay(prepared_, args_, initial_state_, initial_state_rate_, continuation_):
+    def replay(
+        prepared_: PreparedDAESolve,
+        args_: Any,
+        initial_state_: ArrayLike | None,
+        initial_state_rate_: ArrayLike | None,
+        continuation_: DAEContinuation | None,
+    ) -> DifferentialAlgebraicSolution:
         return _replay_solution(
             prepared_,
             args_,

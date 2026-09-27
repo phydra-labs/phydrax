@@ -4,29 +4,21 @@
 
 from __future__ import annotations
 
-from numbers import Integral
 from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import nonnegative_integer
 from ._axis import _normalize_axis, _positive_int
 from ._framing import frame
 from ._windows import hann_window, tukey_window
-
-
-def _nonnegative_int(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
-    resolved = int(value)
-    if resolved < 0:
-        raise ValueError(f"{name} must be nonnegative.")
-    return resolved
 
 
 class WelchSpectrumResult(StrictModule):
@@ -36,7 +28,7 @@ class WelchSpectrumResult(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
-def _median_bias(count: int, dtype, /) -> Array:
+def _median_bias(count: int, dtype: DTypeLike, /) -> Array:
     pairs = 2.0 * np.arange(1, (int(count) - 1) // 2 + 1, dtype=np.float64)
     bias = 1.0 + np.sum(1.0 / (pairs + 1.0) - 1.0 / pairs)
     return jnp.asarray(bias, dtype=dtype)
@@ -65,11 +57,11 @@ class WelchSpectrumPlan(StrictModule, NonTrainableState):
         window: Literal["hann", "tukey"] = "hann",
         average: Literal["mean", "median"] = "mean",
         tukey_alpha: float = 0.5,
-    ):
+    ) -> None:
         interval = float(sample_interval)
         length = _positive_int(segment_length, "segment_length")
         overlap_ = (
-            length // 2 if overlap is None else _nonnegative_int(overlap, "overlap")
+            length // 2 if overlap is None else nonnegative_integer(overlap, "overlap")
         )
         alpha = float(tukey_alpha)
         if (

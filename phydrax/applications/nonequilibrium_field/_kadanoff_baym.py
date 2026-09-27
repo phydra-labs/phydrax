@@ -4,18 +4,20 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._keldysh import (
     ClosedTimePathGrid,
     KeldyshTwoPointFunctions,
@@ -23,7 +25,7 @@ from ._keldysh import (
 )
 
 
-TwoPITruncation = Literal["free", "hartree", "basketball"]
+TwoPITruncation: TypeAlias = Literal["free", "hartree", "basketball"]
 
 
 class TwoPISelfEnergy(StrictModule):
@@ -90,7 +92,7 @@ class KadanoffBaym2PIPlan(StrictModule, NonTrainableState):
         maximum_modes: int = 1024,
         maximum_work_elements: int = 20_000_000,
         energy_tolerance: float = 5.0e-3,
-    ):
+    ) -> None:
         if not isinstance(grid, ClosedTimePathGrid):
             raise TypeError("grid must be ClosedTimePathGrid.")
         coupling_ = float(coupling)
@@ -100,12 +102,12 @@ class KadanoffBaym2PIPlan(StrictModule, NonTrainableState):
         tolerance = float(energy_tolerance)
         times = np.asarray(grid.plan.time_nodes)
         steps = np.diff(times)
+        truncation = parse(truncation, TwoPITruncation, "truncation")
         if (
             not np.isfinite(coupling_)
             or coupling_ < 0.0
             or memory < 1
             or memory >= times.size
-            or truncation not in ("free", "hartree", "basketball")
             or mode_capacity <= 0
             or work_capacity <= 0
             or not np.isfinite(tolerance)
@@ -152,7 +154,7 @@ class PreparedKadanoffBaym2PI(StrictModule, NonTrainableState):
     retarded_support_mask: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: KadanoffBaym2PIPlan, frequencies: ArrayLike, /):
+    def __init__(self, plan: KadanoffBaym2PIPlan, frequencies: ArrayLike, /) -> None:
         if not isinstance(plan, KadanoffBaym2PIPlan):
             raise TypeError("plan must be KadanoffBaym2PIPlan.")
         frequency = np.asarray(frequencies, dtype=np.float64)

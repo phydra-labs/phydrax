@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from math import prod
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -24,13 +25,13 @@ class _ViscosityStressModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, coefficient, physical_shape, dtype):
+    def __init__(self, coefficient: Any, physical_shape: Any, dtype: Any) -> None:
         self.coefficient = jnp.asarray(coefficient, dtype=dtype)
         self.physical_shape = tuple(physical_shape)
         self.in_size = prod(self.physical_shape + (9,))
         self.out_size = prod(self.physical_shape + (3, 3))
 
-    def __call__(self, values, /, *, key=None):
+    def __call__(self, values: Any, /, *, key: Any = None) -> Any:
         del key
         gradient = jnp.asarray(values).reshape(self.physical_shape + (3, 3))
         strain = 0.5 * (gradient + jnp.swapaxes(gradient, -1, -2))
@@ -47,20 +48,20 @@ class _PortedStressModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, stress, ports):
+    def __init__(self, stress: Any, ports: Any) -> None:
         self.stress = stress
         self.ports = ports
         self.in_size = stress.in_size
         self.out_size = stress.out_size
 
-    def __call__(self, values, /, *, key=None):
+    def __call__(self, values: Any, /, *, key: Any = None) -> Any:
         return self.stress(values, key=key)
 
-    def model_ports(self):
+    def model_ports(self) -> Any:
         return self.ports
 
 
-def _periodic_prepared():
+def _periodic_prepared() -> Any:
     space = phx.discretization.TensorSpectralPlan(
         tuple(phx.discretization.FourierBasisPlan(3) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -125,7 +126,7 @@ def _periodic_prepared():
         normalizer_id=normalizer.normalizer_id,
     )
 
-    def dummy_predictor(features, args):
+    def dummy_predictor(features: Any, args: Any) -> Any:
         del args
         return jnp.zeros(features.shape[:-1] + (3, 3), dtype=features.dtype)
 
@@ -148,7 +149,7 @@ def _periodic_prepared():
     return space, prepared, coordinates
 
 
-def _initial_state(space, prepared, coordinates):
+def _initial_state(space: Any, prepared: Any, coordinates: Any) -> Any:
     x, y, z = jnp.meshgrid(
         space.axes[0].nodes,
         space.axes[1].nodes,
@@ -167,12 +168,12 @@ def _initial_state(space, prepared, coordinates):
     return coordinates.to_real_coordinates(modal)
 
 
-def test_periodic_learned_stress_is_evaluated_inside_every_ssprk_stage():
+def test_periodic_learned_stress_is_evaluated_inside_every_ssprk_stage() -> None:
     space, prepared, coordinates = _periodic_prepared()
     state = _initial_state(space, prepared, coordinates)
     layout = phx.dynamics.StateLayout((coordinates.coordinate_size,))
 
-    def zero_base_rate(time, modal, inputs):
+    def zero_base_rate(time: Any, modal: Any, inputs: Any) -> Any:
         del time, inputs
         return jnp.zeros_like(modal)
 
@@ -216,7 +217,7 @@ def test_periodic_learned_stress_is_evaluated_inside_every_ssprk_stage():
         jnp.dtype(space.plan.precision.physical_dtype),
     )
 
-    def displacement(candidate):
+    def displacement(candidate: Any) -> Any:
         result = transition.evaluate(
             candidate,
             context,
@@ -247,7 +248,7 @@ def test_periodic_learned_stress_is_evaluated_inside_every_ssprk_stage():
     )
 
 
-def _periodic_transition(base_rate):
+def _periodic_transition(base_rate: Any) -> Any:
     space, prepared, coordinates = _periodic_prepared()
     transition = (
         phx.applications.incompressible_flow.PeriodicLearnedStressRolloutTransition(
@@ -272,7 +273,7 @@ def _periodic_transition(base_rate):
         jnp.asarray(0, dtype=jnp.int32),
     )
 
-    def evaluate(candidate):
+    def evaluate(candidate: Any) -> Any:
         return transition.evaluate(
             candidate,
             context,
@@ -285,12 +286,12 @@ def _periodic_transition(base_rate):
     return transition, model, evaluate
 
 
-def test_periodic_transition_header_and_derivative_poisoning_on_failure():
-    def zero_rate(time, modal, inputs):
+def test_periodic_transition_header_and_derivative_poisoning_on_failure() -> None:
+    def zero_rate(time: Any, modal: Any, inputs: Any) -> Any:
         del time, inputs
         return jnp.zeros_like(modal)
 
-    def nonfinite_rate(time, modal, inputs):
+    def nonfinite_rate(time: Any, modal: Any, inputs: Any) -> Any:
         del time, inputs
         return jnp.full_like(modal, jnp.nan)
 
@@ -321,7 +322,7 @@ def test_periodic_transition_header_and_derivative_poisoning_on_failure():
     assert bool(jnp.isnan(gradient.coefficient))
 
 
-def test_periodic_transition_binds_port_declaring_stress_models_to_plan_ports():
+def test_periodic_transition_binds_port_declaring_stress_models_to_plan_ports() -> None:
     space, prepared, coordinates = _periodic_prepared()
     plan = prepared.binding.plan
     ports = phx.ModelPorts(
@@ -335,7 +336,10 @@ def test_periodic_transition_binds_port_declaring_stress_models_to_plan_ports():
         ports,
     )
     mapping = phx.PortMapping(
-        inputs=[(ports.inputs[0].port_id,) * 2], outputs=[(ports.outputs[0].port_id,) * 2]
+        # ty: ignore[invalid-argument-type]
+        inputs=[(ports.inputs[0].port_id,) * 2],
+        # ty: ignore[invalid-argument-type]
+        outputs=[(ports.outputs[0].port_id,) * 2],
     )
     arguments = dict(
         base_rate_id="zero-periodic-base-rate",
@@ -343,7 +347,7 @@ def test_periodic_transition_binds_port_declaring_stress_models_to_plan_ports():
         step_size=0.01,
     )
 
-    def zero_rate(time, modal, inputs):
+    def zero_rate(time: Any, modal: Any, inputs: Any) -> Any:
         del time, inputs
         return jnp.zeros_like(modal)
 
@@ -351,15 +355,23 @@ def test_periodic_transition_binds_port_declaring_stress_models_to_plan_ports():
         phx.applications.incompressible_flow.PeriodicLearnedStressRolloutTransition
     )
     with pytest.raises(ValueError, match="explicit PortMapping"):
+        # ty: ignore[invalid-argument-type]
         Transition(prepared, coordinates, zero_rate, **arguments).validate_model(model)
 
     transition = Transition(
-        prepared, coordinates, zero_rate, **arguments, port_mapping=mapping
+        prepared,
+        coordinates,
+        zero_rate,
+        # ty: ignore[invalid-argument-type]
+        **arguments,
+        port_mapping=mapping,
     )
     transition.validate_model(model)
     assert transition.owner_ports() == ports
     evidence = transition.component_binding(model).contract().port_binding
+    # ty: ignore[unresolved-attribute]
     assert evidence.inputs == ((ports.inputs[0].port_id,) * 2,)
+    # ty: ignore[unresolved-attribute]
     assert evidence.outputs == ((ports.outputs[0].port_id,) * 2,)
     result = transition.evaluate(
         model,

@@ -11,12 +11,13 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import DenseLinearOperator, LinearSystem, solve
+from ..typing import parse
 
 
 ShadowingMemoryMode: TypeAlias = Literal["store", "recompute"]
@@ -78,7 +79,8 @@ def validate_shadowing_plan(
     maximum_retained_bytes: int,
     maximum_workspace_bytes: int,
     /,
-) -> tuple[int, int, int, int, int, float, float, int, int]:
+) -> tuple[tuple[int, int, int, int, int, float, float, int, int], ShadowingMemoryMode]:
+    """Validate one shadowing plan; return its canonical values and memory mode."""
     dimension = int(state_dimension)
     unstable = int(unstable_dimension)
     basis = int(basis_dimension)
@@ -88,6 +90,7 @@ def validate_shadowing_plan(
     rank = float(rank_tolerance)
     retained = int(maximum_retained_bytes)
     workspace = int(maximum_workspace_bytes)
+    memory = parse(memory_mode, ShadowingMemoryMode, "memory_mode")
     if (
         not method
         or dimension < 1
@@ -100,12 +103,14 @@ def validate_shadowing_plan(
         or penalty < 0.0
         or not isfinite(rank)
         or rank <= 0.0
-        or memory_mode not in ("store", "recompute")
         or retained <= 0
         or workspace <= 0
     ):
         raise ValueError("Shadowing dimensions, tolerances, or resources are invalid.")
-    return dimension, unstable, basis, length, count, penalty, rank, retained, workspace
+    return (
+        (dimension, unstable, basis, length, count, penalty, rank, retained, workspace),
+        memory,
+    )
 
 
 def shadowing_plan_id(

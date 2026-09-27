@@ -7,9 +7,11 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ...linalg import ArraySpace, BlockSpace
 from .._cell_complex import PolygonalConnectivity
@@ -38,6 +40,8 @@ from .._polygon_geometry import (
     prepare_polygon_triangulation,
 )
 from .._spaces import DiscreteFieldSpace, EntityDofLayout
+from .._support import DiscreteSupport
+from .._topology import EntitySelection
 from ._basis import ExplicitPolygonH1BlockData, prepare_explicit_polygon_h1_basis
 from ._dofs import ExplicitPolygonH1DofMap
 from ._precision import ExplicitPolygonH1PrecisionPolicy
@@ -140,7 +144,7 @@ class ExplicitPolygonH1Plan(AbstractDiscretizationPlan):
         qualification_policy: ExplicitPolygonH1QualificationPolicy | None = None,
         admissibility_policy: PolygonAdmissibilityPolicy | None = None,
         resource_budget: ExplicitPolygonH1ResourceBudget | None = None,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be a CellMesh.")
         if mesh.topological_dimension != 2 or mesh.ambient_dimension != 2:
@@ -219,7 +223,9 @@ class ExplicitPolygonH1Plan(AbstractDiscretizationPlan):
             }
         )
 
-    def prepare(self, /, *, numeric_version: str = "0"):
+    def prepare(
+        self, /, *, numeric_version: str = "0"
+    ) -> ExplicitPolygonH1Discretization:
         return ExplicitPolygonH1Discretization(self, numeric_version=numeric_version)
 
 
@@ -235,7 +241,7 @@ class ExplicitPolygonH1Discretization(AbstractPreparedLocalDiscretization):
     exterior_facet_domain: IntegrationDomain
     interior_facet_domain: IntegrationDomain
     key: DiscretizationKey
-    support: object
+    support: DiscreteSupport
     field_spaces: tuple[DiscreteFieldSpace, ...]
     block_space: BlockSpace
     measures: tuple[DiscreteMeasure, ...]
@@ -251,7 +257,9 @@ class ExplicitPolygonH1Discretization(AbstractPreparedLocalDiscretization):
     numeric_version: str = eqx.field(static=True)
     preparation: PreparationReport
 
-    def __init__(self, plan: ExplicitPolygonH1Plan, /, *, numeric_version: str = "0"):
+    def __init__(
+        self, plan: ExplicitPolygonH1Plan, /, *, numeric_version: str = "0"
+    ) -> None:
         if not isinstance(plan, ExplicitPolygonH1Plan):
             raise TypeError("plan must be ExplicitPolygonH1Plan.")
         version = str(numeric_version)
@@ -459,7 +467,9 @@ class ExplicitPolygonH1Discretization(AbstractPreparedLocalDiscretization):
 
         return ExplicitPolygonH1LocalProvider(self).local_variational_capabilities()
 
-    def integration_domain(self, kind: str, selection=None, /) -> IntegrationDomain:
+    def integration_domain(
+        self, kind: str, selection: EntitySelection | None = None, /
+    ) -> IntegrationDomain:
         kind_ = str(kind)
         if kind_ == "cell":
             base = self.cell_domain
@@ -508,7 +518,7 @@ class ExplicitPolygonH1Discretization(AbstractPreparedLocalDiscretization):
             raise ValueError("Explicit polygon runtime does not match prepared layout.")
 
     @property
-    def precision_evidence(self):
+    def precision_evidence(self) -> PrecisionEvidenceEnvelope:
         return self.precision_policy.evidence()
 
     @property

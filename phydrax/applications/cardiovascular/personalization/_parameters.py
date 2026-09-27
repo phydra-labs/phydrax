@@ -13,7 +13,8 @@ from math import prod
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._probability import AbstractProbabilityLaw
@@ -78,7 +79,7 @@ class CardiacParameterSupport(StrictModule, NonTrainableState):
         /,
         *,
         shape: Sequence[int] = (),
-    ):
+    ) -> None:
         shape_ = _shape(shape)
         lower_ = jax.lax.stop_gradient(
             jnp.broadcast_to(jnp.asarray(lower, dtype=jnp.float64), shape_)
@@ -155,7 +156,7 @@ class CardiacParameterSpec(StrictModule):
         /,
         *,
         identifiability: ParameterIdentifiability = ParameterIdentifiability.PRIMARY,
-    ):
+    ) -> None:
         name_ = _identifier(name, "parameter name")
         if not isinstance(quantity, CardiovascularQuantitySpec):
             raise TypeError("quantity must be a CardiovascularQuantitySpec.")
@@ -253,7 +254,7 @@ class CardiacParameterSchema(StrictModule, NonTrainableState):
         /,
         *,
         schema_id: str | None = None,
-    ):
+    ) -> None:
         resolved = tuple(fields)
         if not resolved:
             raise ValueError("CardiacParameterSchema requires at least one field.")

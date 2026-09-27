@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
@@ -35,6 +37,10 @@ from ...optim import (
 )
 from ...uq import FunctionalConformal
 from ._model import BuildingCompilation, BuildingSource, compile_building
+
+
+if TYPE_CHECKING:
+    from ..thermofluids import HeatConversionLaw
 
 
 class BuildingReplay(StrictModule):
@@ -82,7 +88,9 @@ def replay_building(
         initial_temperature, environments[0], gains[0]
     )
 
-    def advance(value, forcing):
+    def advance(
+        value: Array, forcing: tuple[Array, Array, Array]
+    ) -> tuple[Array, tuple[Array, Array, Array]]:
         tout, q, dt = forcing
         result = compilation.step(value, tout, q, dt)
         return result.temperature, (
@@ -111,28 +119,30 @@ class HVACControlResult(StrictModule):
 
 
 def _linear_hvac_problem(
-    compilation,
-    reference,
-    time,
-    environments,
-    base,
-    target,
-    distribution,
-    factors,
-    lower,
-    upper,
-    power_scale,
-    temperature_weight,
-    electricity_weight,
-    price,
-):
+    compilation: BuildingCompilation,
+    reference: Array,
+    time: Array,
+    environments: Array,
+    base: Array,
+    target: Array,
+    distribution: Array,
+    factors: Array,
+    lower: ArrayLike,
+    upper: ArrayLike,
+    power_scale: float,
+    temperature_weight: float,
+    electricity_weight: float,
+    price: Array,
+) -> LinearQuadraticControlProblem:
     """Lower exact frozen physical transitions and costs; the native control compiler owns the QP."""
     count, n = time.size - 1, len(compilation.node_ids)
     devices = distribution.shape[1]
     zero_state, zero_boundary = jnp.zeros(n), jnp.zeros(len(compilation.boundary_ids))
     dt = jnp.diff(time)
 
-    def checked_step(state, boundary, heat, duration):
+    def checked_step(
+        state: Array, boundary: Array, heat: Array, duration: Array
+    ) -> Array:
         result = compilation.step(state, boundary, heat, duration)
         return eqx.error_if(
             result.temperature,
@@ -140,7 +150,9 @@ def _linear_hvac_problem(
             "Affine HVAC transition preparation failed.",
         )
 
-    def matrices(duration, boundary, gains, factor):
+    def matrices(
+        duration: Array, boundary: Array, gains: Array, factor: Array
+    ) -> tuple[Array, Array, Array]:
         a = jax.vmap(
             lambda column: checked_step(column, zero_boundary, zero_state, duration)
         )(jnp.eye(n)).T
@@ -204,7 +216,7 @@ def optimize_hvac(
     target_temperature: ArrayLike,
     *,
     heat_distribution: ArrayLike,
-    conversion_law,
+    conversion_law: HeatConversionLaw,
     supply_temperature: ArrayLike,
     power_lower: ArrayLike = 0.0,
     power_upper: ArrayLike,
@@ -281,7 +293,7 @@ def optimize_hvac(
     dt = jnp.diff(time_)
     price = jnp.broadcast_to(jnp.asarray(electricity_price), initial.shape)
 
-    def evaluate(power):
+    def evaluate(power: Array) -> tuple[Array, BuildingReplay, Array]:
         conversion = conversion_law.evaluate(
             power, source_temperature[:, None], jnp.asarray(supply_temperature)
         )
@@ -301,7 +313,7 @@ def optimize_hvac(
         )
         return objective, rollout, delivered
 
-    def objective(normalized, args):
+    def objective(normalized: Array, args: object) -> Array:
         del args
         return evaluate(normalized * power_scale)[0]
 
@@ -395,7 +407,7 @@ class BuildingExperiment(StrictModule):
         observed_temperature: ArrayLike,
         *,
         experiment_id: str,
-    ):
+    ) -> None:
         (
             self.initial_temperature,
             self.time,
@@ -465,7 +477,7 @@ def calibrate_building(
     if identifiability_relative_tolerance <= 0:
         raise ValueError("Identifiability tolerance must be positive.")
 
-    def predict(p, experiment):
+    def predict(p: Array, experiment: BuildingExperiment) -> Array:
         model = compile_building(make_source(p))
         if any(i < 0 or i >= len(model.node_ids) for i in observation_nodes):
             raise ValueError("Unknown observation node.")
@@ -483,7 +495,7 @@ def calibrate_building(
             values, ~trajectory.successful, "Calibration thermal trajectory failed."
         )
 
-    def residual(p, args):
+    def residual(p: Array, args: object) -> Array:
         del args
         return ((predict(p, training) - training.observed_temperature) / scale).reshape(
             -1

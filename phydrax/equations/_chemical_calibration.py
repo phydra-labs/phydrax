@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from enum import StrEnum
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -49,7 +51,7 @@ class ChemicalCalibrationParameter(StrictModule, NonTrainableState):
         direction: str = "forward",
         lower: ArrayLike = -jnp.inf,
         upper: ArrayLike = jnp.inf,
-    ):
+    ) -> None:
         name_ = str(name)
         index = int(reaction_index)
         field = str(field_name)
@@ -117,7 +119,12 @@ class ChemicalCalibrationPlan(StrictModule, NonTrainableState):
     parameters: tuple[ChemicalCalibrationParameter, ...]
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, mechanism: PreparedChemicalMechanism, parameters, /):
+    def __init__(
+        self,
+        mechanism: PreparedChemicalMechanism,
+        parameters: Iterable[ChemicalCalibrationParameter],
+        /,
+    ) -> None:
         if not isinstance(mechanism, PreparedChemicalMechanism):
             raise TypeError("mechanism must be PreparedChemicalMechanism.")
         values = tuple(parameters)

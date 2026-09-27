@@ -11,7 +11,9 @@ from math import prod
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+import numpy as np
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -38,7 +40,7 @@ class VariablePatchEntityFieldState(StrictModule):
         /,
         *,
         component_shape: Sequence[int] = (),
-    ):
+    ) -> None:
         degree_ = int(degree)
         components = tuple(component_shape)
         if (
@@ -82,9 +84,9 @@ class VariablePatchEntityRoute(StrictModule, NonTrainableState):
         self,
         complex: VariablePatchEntityComplex,
         view: VariablePatchEntityBucketView,
-        dtype,
+        dtype: DTypeLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(complex, VariablePatchEntityComplex) or not isinstance(
             view, VariablePatchEntityBucketView
         ):
@@ -133,7 +135,7 @@ class VariablePatchEntityExecutionPlan(StrictModule, NonTrainableState):
     complex: VariablePatchEntityComplex
     degree: int = eqx.field(static=True)
     component_shape: tuple[int, ...] = eqx.field(static=True)
-    dtype: object = eqx.field(static=True)
+    dtype: np.dtype = eqx.field(static=True)
     routes: tuple[VariablePatchEntityRoute, ...]
     plan_id: str = eqx.field(static=True)
 
@@ -144,8 +146,8 @@ class VariablePatchEntityExecutionPlan(StrictModule, NonTrainableState):
         /,
         *,
         component_shape: Sequence[int] = (),
-        dtype=jnp.float64,
-    ):
+        dtype: DTypeLike = jnp.float64,
+    ) -> None:
         degree_ = int(degree)
         components = tuple(component_shape)
         dtype_ = jnp.dtype(dtype)

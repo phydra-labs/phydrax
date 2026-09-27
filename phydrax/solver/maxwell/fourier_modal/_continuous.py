@@ -10,7 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ...._strict import StrictModule
 from ._boundary_cascade import (
@@ -20,7 +20,11 @@ from ._boundary_cascade import (
     identity_boundary_relation,
     prepare_layer_boundary,
 )
-from ._contracts import ContinuousFourierModalLayer, FrequencyMaxwellMaterial
+from ._contracts import (
+    ContinuousFourierModalLayer,
+    FourierModalMaxwellProblem,
+    FrequencyMaxwellMaterial,
+)
 from ._factorization import prepare_fourier_material
 from ._layer import prepare_layer_operator, PreparedLayerOperator
 
@@ -68,9 +72,9 @@ def _boundary_difference(left: BoundaryRelation, right: BoundaryRelation, /) -> 
 
 
 def _operator_at(
-    problem,
+    problem: FourierModalMaxwellProblem,
     layer: ContinuousFourierModalLayer,
-    coordinate: float,
+    coordinate: Array | float,
     /,
 ) -> PreparedLayerOperator:
     material = layer.material_profile(
@@ -96,7 +100,7 @@ def _with_matrix(
 
 
 def _fourth_order_boundary(
-    problem,
+    problem: FourierModalMaxwellProblem,
     layer: ContinuousFourierModalLayer,
     cascade: BoundaryCascadePolicy,
     left: Array | float,
@@ -126,7 +130,7 @@ def _fourth_order_boundary(
 
 
 def _segment_boundary(
-    problem,
+    problem: FourierModalMaxwellProblem,
     layer: ContinuousFourierModalLayer,
     cascade: BoundaryCascadePolicy,
     left: float,
@@ -164,7 +168,7 @@ def _stack_boundary_relations(
 
 def continuous_boundary_at(
     prepared: PreparedContinuousFourierModalLayer,
-    problem,
+    problem: FourierModalMaxwellProblem,
     longitudinal_offset: Array,
     cascade: BoundaryCascadePolicy,
     /,
@@ -201,7 +205,7 @@ def continuous_boundary_at(
 
 
 def prepare_continuous_fourier_modal_layer(
-    problem,
+    problem: FourierModalMaxwellProblem,
     layer: ContinuousFourierModalLayer,
     cascade: BoundaryCascadePolicy,
     /,

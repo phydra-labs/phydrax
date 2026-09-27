@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -12,7 +15,7 @@ import phydrax as phx
 opt = phx.optim
 
 
-def _termination(maximum_steps=100):
+def _termination(maximum_steps: Any = 100) -> Any:
     return opt.OptimizationTermination(
         absolute_optimality=1e-6,
         relative_optimality=0.0,
@@ -21,7 +24,7 @@ def _termination(maximum_steps=100):
     )
 
 
-def test_residual_graph_robust_losses_and_certificate():
+def test_residual_graph_robust_losses_and_certificate() -> None:
     parameter = opt.ParameterBlock(
         lambda value: value["x"],
         lambda value, replacement: {"x": replacement},
@@ -60,7 +63,7 @@ def test_residual_graph_robust_losses_and_certificate():
     assert opt.TukeyLoss().evaluate(4.0).first == 0.0
 
 
-def test_route_and_schur_planning_solve_declared_partition():
+def test_route_and_schur_planning_solve_declared_partition() -> None:
     eliminated = opt.ParameterBlock(
         lambda value: value[:1],
         lambda value, replacement: value.at[:1].set(replacement),
@@ -97,7 +100,7 @@ def test_route_and_schur_planning_solve_declared_partition():
     assert jnp.allclose(step, jnp.asarray([0.2, 0.6]))
 
 
-def test_graph_route_executes_schur_and_clips_nonconvex_robust_curvature():
+def test_graph_route_executes_schur_and_clips_nonconvex_robust_curvature() -> None:
     eliminated = opt.ParameterBlock(
         lambda value: value[:1],
         lambda value, replacement: value.at[:1].set(replacement),
@@ -175,7 +178,7 @@ def test_graph_route_executes_schur_and_clips_nonconvex_robust_curvature():
         opt.DoglegLeastSquares("dogbox"),
     ],
 )
-def test_least_squares_trust_family(method):
+def test_least_squares_trust_family(method: Any) -> None:
     problem = opt.NonlinearLeastSquaresProblem(
         lambda parameters, target: parameters - target,
         bounds=(opt.Bounds(0.0, 1.0) if method.mode == "dogbox" else None),
@@ -195,7 +198,7 @@ def test_least_squares_trust_family(method):
     assert jnp.allclose(result.parameters, expected, atol=1e-6)
 
 
-def test_variable_projection_recovers_linear_and_nonlinear_blocks():
+def test_variable_projection_recovers_linear_and_nonlinear_blocks() -> None:
     time = jnp.linspace(0.0, 1.0, 20)
     observations = 3.0 * jnp.exp(-2.0 * time)
     problem = opt.VariableProjectionProblem(
@@ -212,7 +215,7 @@ def test_variable_projection_recovers_linear_and_nonlinear_blocks():
     assert jnp.allclose(result.linear_parameters, jnp.asarray([3.0]), atol=1e-5)
 
 
-def test_pounders_solves_bound_constrained_black_box_residual():
+def test_pounders_solves_bound_constrained_black_box_residual() -> None:
     problem = opt.NonlinearLeastSquaresProblem(
         lambda parameters, target: jnp.asarray(
             [parameters[0] ** 2 - target[0], parameters[1] - target[1]]
@@ -230,7 +233,7 @@ def test_pounders_solves_bound_constrained_black_box_residual():
     assert jnp.allclose(result.parameters, jnp.asarray([2.0, 3.0]), atol=1e-4)
 
 
-def test_pounders_demotes_model_success_when_physical_stationarity_fails():
+def test_pounders_demotes_model_success_when_physical_stationarity_fails() -> None:
     problem = opt.NonlinearLeastSquaresProblem(
         lambda parameters, args: jnp.asarray(
             [
@@ -253,18 +256,50 @@ def test_pounders_demotes_model_success_when_physical_stationarity_fails():
     )
 
     assert result.status == int(opt.OptimizationStatus.CERTIFICATION_FAILED)
+    # ty: ignore[unresolved-attribute]
     assert result.status_evidence.internal_status == int(opt.OptimizationStatus.SUCCESS)
+    # ty: ignore[unresolved-attribute]
     assert bool(result.status_evidence.demoted)
+    # ty: ignore[unresolved-attribute]
     assert not bool(result.optimality_certificate.certified)
+    # ty: ignore[unresolved-attribute]
     assert float(result.optimality_certificate.optimality_norm) > 1e-6
+    # ty: ignore[unresolved-attribute]
     assert result.optimality_certificate.kind == "derivative-free-stationarity"
     assert int(result.method_evidence.interpolation_rank) < 6
 
 
-def test_physical_stationarity_certificate_never_steps_outside_narrow_bounds():
+@pytest.mark.parametrize(
+    "method",
+    [opt.DoglegLeastSquares(), opt.POUNDERS(initial_radius=0.5)],
+    ids=["dogleg", "pounders"],
+)
+def test_least_squares_step_without_termination_uses_default_policy(method: Any) -> None:
+    target = jnp.asarray([1.0, 0.5])
+
+    def residual(parameters: Any) -> Any:
+        return parameters - target
+
+    parameters = jnp.asarray([0.2, 0.2])
+    state = method.prepare_state(residual, parameters)
+    next_parameters, next_state, objective = method.step(
+        residual,
+        parameters,
+        state,
+        termination=None,
+    )
+
+    assert int(next_state.iteration) == 1
+    assert bool(jnp.isfinite(objective))
+    assert float(jnp.linalg.norm(residual(next_parameters))) < float(
+        jnp.linalg.norm(residual(parameters))
+    )
+
+
+def test_physical_stationarity_certificate_never_steps_outside_narrow_bounds() -> None:
     evaluated = []
 
-    def residual(parameters, args):
+    def residual(parameters: Any, args: Any) -> Any:
         evaluated.append(float(parameters[0]))
         return parameters - 0.5e-6
 
@@ -287,7 +322,7 @@ def test_physical_stationarity_certificate_never_steps_outside_narrow_bounds():
     assert max(evaluated) <= 1e-6
 
 
-def test_manifold_and_incremental_factor_graph_lifecycle():
+def test_manifold_and_incremental_factor_graph_lifecycle() -> None:
     point = jnp.asarray([1.0, 0.0, 0.0])
     geometry = opt.ParameterGeometry(
         point,
@@ -325,7 +360,7 @@ def test_manifold_and_incremental_factor_graph_lifecycle():
     assert int(updated.update_count) == 1
 
 
-def _constrained_problem():
+def _constrained_problem() -> Any:
     constraint = opt.NonlinearConstraint(
         lambda parameters, args: jnp.asarray([jnp.sum(parameters)]),
         lower=1.0,
@@ -340,7 +375,7 @@ def _constrained_problem():
     )
 
 
-def test_scaled_constrained_model_sqp_ipm_and_kkt_inertia():
+def test_scaled_constrained_model_sqp_ipm_and_kkt_inertia() -> None:
     problem = _constrained_problem()
     target = jnp.asarray([0.2, 0.8])
     prepared = opt.prepare_constrained_model(
@@ -381,11 +416,15 @@ def test_scaled_constrained_model_sqp_ipm_and_kkt_inertia():
         termination=_termination(),
     )
     assert interior_point.status == int(opt.OptimizationStatus.CERTIFICATION_FAILED)
+    # ty: ignore[unresolved-attribute]
     assert interior_point.status_evidence.internal_status == int(
         opt.OptimizationStatus.SUCCESS
     )
+    # ty: ignore[unresolved-attribute]
     assert bool(interior_point.status_evidence.demoted)
+    # ty: ignore[unresolved-attribute]
     assert interior_point.optimality_certificate.kind == "active-kkt"
+    # ty: ignore[unresolved-attribute]
     assert not bool(interior_point.optimality_certificate.certified)
     assert jnp.allclose(interior_point.parameters, target, atol=2e-5)
     assert int(interior_point.method_evidence.kkt_rhs_solves) == 2 * int(
@@ -419,7 +458,7 @@ def test_scaled_constrained_model_sqp_ipm_and_kkt_inertia():
     assert float(reused.residual_norm) <= 1e-12
 
 
-def test_constrained_forward_reverse_solution_maps():
+def test_constrained_forward_reverse_solution_maps() -> None:
     problem = _constrained_problem()
     parameters = jnp.asarray([0.2, 0.8])
     args = jnp.asarray([0.2, 0.8])
@@ -442,7 +481,7 @@ def test_constrained_forward_reverse_solution_maps():
     assert jnp.allclose(reverse.value, jnp.asarray([0.5, -0.5]))
 
 
-def test_model_based_multistart_and_external_recertification():
+def test_model_based_multistart_and_external_recertification() -> None:
     bounds_problem = opt.MinimizationProblem(
         lambda parameters, target: jnp.sum((parameters - target) ** 2),
         bounds=opt.Bounds(-2.0, 2.0),
@@ -488,7 +527,7 @@ def test_model_based_multistart_and_external_recertification():
     assert bool(ceres.successful)
 
 
-def test_implicit_least_squares_rejects_bounded_problem():
+def test_implicit_least_squares_rejects_bounded_problem() -> None:
     problem = opt.NonlinearLeastSquaresProblem(
         lambda value, _: value - 2.0,
         bounds=opt.Bounds(0.0, 1.0),
@@ -497,7 +536,7 @@ def test_implicit_least_squares_rejects_bounded_problem():
         opt.implicit_least_squares(problem, jnp.asarray([0.5]))
 
 
-def test_ceres_recertification_rejects_out_of_bounds_zero_residual():
+def test_ceres_recertification_rejects_out_of_bounds_zero_residual() -> None:
     problem = opt.NonlinearLeastSquaresProblem(
         lambda value, _: value - 2.0,
         bounds=opt.Bounds(0.0, 1.0),
@@ -516,7 +555,7 @@ def test_ceres_recertification_rejects_out_of_bounds_zero_residual():
     assert result.diagnostics.primal_feasibility > 0.0
 
 
-def test_constrained_vjp_rejects_mismatched_parameter_cotangent():
+def test_constrained_vjp_rejects_mismatched_parameter_cotangent() -> None:
     problem = _constrained_problem()
     with pytest.raises(ValueError, match="parameter PyTree"):
         opt.constrained_solution_vjp(
@@ -527,7 +566,7 @@ def test_constrained_vjp_rejects_mismatched_parameter_cotangent():
         )
 
 
-def test_multistart_rejects_budget_smaller_than_start_count():
+def test_multistart_rejects_budget_smaller_than_start_count() -> None:
     problem = opt.MinimizationProblem(lambda value, _: jnp.sum(value**2))
     with pytest.raises(ValueError, match="one local step"):
         opt.multistart_minimize(
@@ -545,7 +584,7 @@ def test_multistart_rejects_budget_smaller_than_start_count():
         opt.BoundedNewtonTrustRegion(),
     ),
 )
-def test_trust_region_methods_report_evaluation_exhaustion(method):
+def test_trust_region_methods_report_evaluation_exhaustion(method: Any) -> None:
     if isinstance(method, opt.DoglegLeastSquares):
         result = opt.least_squares(
             opt.NonlinearLeastSquaresProblem(lambda value, _: value - 3.0),
@@ -577,7 +616,7 @@ def test_trust_region_methods_report_evaluation_exhaustion(method):
     assert int(result.status) == int(opt.OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED)
 
 
-def test_external_kkt_recertification_rejects_negative_inequality_multiplier():
+def test_external_kkt_recertification_rejects_negative_inequality_multiplier() -> None:
     from phydrax.optim._external_backends import _certify_minimization
 
     problem = opt.MinimizationProblem(
@@ -604,7 +643,7 @@ def test_external_kkt_recertification_rejects_negative_inequality_multiplier():
     assert not bool(certified)
 
 
-def test_filter_ipm_stops_when_initial_evaluation_consumes_budget():
+def test_filter_ipm_stops_when_initial_evaluation_consumes_budget() -> None:
     result = opt.minimize(
         _constrained_problem(),
         jnp.asarray([0.5, 0.5]),
@@ -627,7 +666,9 @@ def test_filter_ipm_stops_when_initial_evaluation_consumes_budget():
     assert int(result.diagnostics.globalization_evaluations) == 0
 
 
-def test_filter_ipm_refuses_indivisible_trial_batch_larger_than_remaining_budget():
+def test_filter_ipm_refuses_indivisible_trial_batch_larger_than_remaining_budget() -> (
+    None
+):
     result = opt.minimize(
         _constrained_problem(),
         jnp.asarray([0.5, 0.5]),
@@ -649,7 +690,7 @@ def test_filter_ipm_refuses_indivisible_trial_batch_larger_than_remaining_budget
     assert int(result.diagnostics.globalization_evaluations) == 0
 
 
-def test_multistart_prefers_certified_result_over_failed_nan_objective():
+def test_multistart_prefers_certified_result_over_failed_nan_objective() -> None:
     problem = opt.MinimizationProblem(
         lambda value, _: jnp.where(
             value[0] == 0.0,
@@ -677,7 +718,7 @@ def test_multistart_prefers_certified_result_over_failed_nan_objective():
     assert int(result.best_index) == 0
 
 
-def test_bounded_least_squares_step_advances_supplied_adaptive_state():
+def test_bounded_least_squares_step_advances_supplied_adaptive_state() -> None:
     method = opt.BoundedLevenbergMarquardt()
     residual = opt.BoundedResidualFunction(
         lambda value: value - 2.0,
@@ -720,12 +761,14 @@ def test_bounded_least_squares_step_advances_supplied_adaptive_state():
     assert not jnp.allclose(small_parameters, large_parameters)
 
 
-def test_constrained_sensitivity_rejects_nonconverged_linear_result(monkeypatch):
+def test_constrained_sensitivity_rejects_nonconverged_linear_result(
+    monkeypatch: Any,
+) -> None:
     import phydrax.optim._constrained_sensitivity as sensitivity_module
 
     original = sensitivity_module.solve_linear
 
-    def failed_solve(*args, **kwargs):
+    def failed_solve(*args: Any, **kwargs: Any) -> Any:
         result = original(*args, **kwargs)
         return eqx.tree_at(
             lambda value: (value.status, value.diagnostics.converged),
@@ -751,7 +794,7 @@ def test_constrained_sensitivity_rejects_nonconverged_linear_result(monkeypatch)
     assert jnp.all(jnp.isnan(result.value))
 
 
-def test_filter_ipm_counts_entire_vectorized_line_search_batch():
+def test_filter_ipm_counts_entire_vectorized_line_search_batch() -> None:
     result = opt.minimize(
         _constrained_problem(),
         jnp.asarray([0.5, 0.5]),
@@ -771,7 +814,7 @@ def test_filter_ipm_counts_entire_vectorized_line_search_batch():
     assert int(result.diagnostics.globalization_evaluations) == 4
 
 
-def test_barrier_sensitivity_initializes_at_combined_primal_dual_root():
+def test_barrier_sensitivity_initializes_at_combined_primal_dual_root() -> None:
     from phydrax._nonlinear_precision import NonlinearPrecisionPolicy
     from phydrax.optim._constrained_sensitivity import _sensitivity_system
 

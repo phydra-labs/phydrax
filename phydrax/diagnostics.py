@@ -10,11 +10,13 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
+from .typing import parse
 
 
 DiagnosticSeverity: TypeAlias = Literal["info", "warning", "error", "fatal"]
@@ -55,7 +57,7 @@ class Diagnostic(StrictModule, NonTrainableState):
         remediation: str | None = None,
         parent_code: str | None = None,
         run_id: str | None = None,
-    ):
+    ) -> None:
         code_ = str(code).strip()
         severity_ = str(severity).strip()
         phase_ = str(phase).strip()
@@ -71,10 +73,7 @@ class Diagnostic(StrictModule, NonTrainableState):
         run_ = _optional_identifier(run_id, "run_id")
         if not code_ or not phase_ or not message_:
             raise ValueError("Diagnostic code, phase, and message must be non-empty.")
-        if severity_ not in ("info", "warning", "error", "fatal"):
-            raise ValueError(
-                "Diagnostic severity must be info, warning, error, or fatal."
-            )
+        severity_ = parse(severity_, DiagnosticSeverity, "severity")
         if any(not entity_id for entity_id in entities) or len(set(entities)) != len(
             entities
         ):
@@ -92,7 +91,7 @@ class Diagnostic(StrictModule, NonTrainableState):
             raise ValueError("Diagnostic tolerance must be nonnegative.")
 
         self.code = code_
-        self.severity = severity_  # type: ignore[assignment]
+        self.severity = severity_
         self.phase = phase_
         self.message = message_
         self.entity_ids = entities
@@ -127,7 +126,7 @@ class DiagnosticError(RuntimeError):
 
     diagnostics: tuple[Diagnostic, ...]
 
-    def __init__(self, diagnostics: Sequence[Diagnostic], /):
+    def __init__(self, diagnostics: Sequence[Diagnostic], /) -> None:
         values = tuple(diagnostics)
         if not values or not all(isinstance(value, Diagnostic) for value in values):
             raise TypeError("DiagnosticError requires one or more Diagnostic values.")

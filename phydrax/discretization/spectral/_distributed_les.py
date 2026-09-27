@@ -11,11 +11,13 @@ from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._distributed import (
     DistributedSpectralExecutionPlan,
     SpectralMeshTopology,
@@ -80,7 +82,7 @@ class PreparedDistributedPeriodicFourierFilter(StrictModule, NonTrainableState):
         scientific: PreparedPeriodicFourierGridFilter,
         execution: DistributedSpectralExecutionPlan,
         /,
-    ):
+    ) -> None:
         from ...equations._periodic_les import PreparedPeriodicFourierGridFilter
 
         if not isinstance(scientific, PreparedPeriodicFourierGridFilter):
@@ -207,17 +209,14 @@ class DistributedPeriodicLESPlan(StrictModule, NonTrainableState):
         schedule: DistributedPeriodicLESSchedule = "slab",
         checkpoint_count: int = 0,
         maximum_bytes: int = 2 * 1024**3,
-    ):
+    ) -> None:
         from ...equations._periodic_les import PreparedPeriodicAlgebraicLES
 
         if not isinstance(scientific, PreparedPeriodicAlgebraicLES):
             raise TypeError("scientific must be a PreparedPeriodicAlgebraicLES.")
         if not isinstance(topology, SpectralMeshTopology):
             raise TypeError("topology must be a SpectralMeshTopology.")
-        if schedule not in ("slab", "pencil"):
-            raise ValueError(
-                "Distributed periodic LES supports only slab and pencil layouts."
-            )
+        schedule = parse(schedule, DistributedPeriodicLESSchedule, "schedule")
         checkpoints = index(checkpoint_count)
         maximum = index(maximum_bytes)
         if checkpoints < 0 or maximum <= 0:
@@ -269,7 +268,7 @@ class PreparedDistributedPeriodicLES(StrictModule, NonTrainableState):
     preparation: DistributedPeriodicLESPreparationEvidence
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: DistributedPeriodicLESPlan, /):
+    def __init__(self, plan: DistributedPeriodicLESPlan, /) -> None:
         if not isinstance(plan, DistributedPeriodicLESPlan):
             raise TypeError("plan must be a DistributedPeriodicLESPlan.")
         plan.topology.require_available()
@@ -309,9 +308,12 @@ class PreparedDistributedPeriodicLES(StrictModule, NonTrainableState):
             representation="physical",
             padded=True,
         )
-        wavenumbers = tuple(
-            execution.place_batched(values, representation="modal")
-            for values in scientific.projector.wavenumbers
+        # The plan validated a three-dimensional grid: one wavenumber array per axis.
+        wave_x, wave_y, wave_z = scientific.projector.wavenumbers
+        wavenumbers = (
+            execution.place_batched(wave_x, representation="modal"),
+            execution.place_batched(wave_y, representation="modal"),
+            execution.place_batched(wave_z, representation="modal"),
         )
         wavenumber_squared = execution.place_batched(
             scientific.projector.wavenumber_squared,

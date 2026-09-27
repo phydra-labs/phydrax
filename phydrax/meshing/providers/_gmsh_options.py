@@ -122,7 +122,7 @@ class GmshOptions(StrictModule, NonTrainableState):
         ),
         terminal_output: bool = False,
         association_tolerance_factor: float = 4.0,
-    ):
+    ) -> None:
         if not isinstance(algorithm_2d, GmshSurfaceAlgorithm):
             raise TypeError("algorithm_2d must be GmshSurfaceAlgorithm.")
         if not isinstance(algorithm_3d, GmshVolumeAlgorithm):

@@ -7,13 +7,18 @@ import phydrax as phx
 
 
 system = phx.atomistic.AtomisticSystemPlan(
+    # ty: ignore[invalid-argument-type]
     [10, 20],
+    # ty: ignore[invalid-argument-type]
     [1, 1],
+    # ty: ignore[invalid-argument-type]
     [1.0, 1.0],
     phx.atomistic.AtomisticUnitSystem.reduced(),
+    # ty: ignore[invalid-argument-type]
     atom_type_ids=[0, 0],
 ).prepare()
 potential = phx.atomistic.AtomisticPotentialProgram(
+    # ty: ignore[invalid-argument-type]
     [phx.atomistic.LennardJonesPotential([0.2], [1.0], 2.5)]
 ).prepare(system)
 neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(2).prepare(

@@ -3,6 +3,7 @@
 
 from pathlib import Path
 from shutil import copyfile
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -25,21 +26,21 @@ INPUTS = Path(__file__).resolve().parents[2] / "fixtures/flexodeal_0698e3d"
 
 
 @pytest.fixture(scope="module")
-def model():
+def model() -> Any:
     with jax.enable_x64(True):
         plan, parameters, _, _, _ = almonacid_2024_repository_case(INPUTS, refinement=0)
         yield plan.prepare(parameters)
 
 
 @pytest.fixture(scope="module")
-def candidate(model):
+def candidate(model: Any) -> Any:
     control = Almonacid2024Control(0.01, 0.0, 0.0, source_id=model.plan.control_source_id)
     result = eqx.filter_jit(lambda p, c: p.propose(c))(model, control)
     assert bool(result.successful)
     return result
 
 
-def test_total_degree_one_weak_constraint_is_cell_local(model):
+def test_total_degree_one_weak_constraint_is_cell_local(model: Any) -> None:
     # A slope in one cell must not leak into its neighbor, and the exact four
     # test moments are those of 1,x,y,z, not tensor Q1's eight nodal modes.
     state = model.state
@@ -54,7 +55,7 @@ def test_total_degree_one_weak_constraint_is_cell_local(model):
     np.testing.assert_allclose(residual[1], expected, atol=2e-18, rtol=3e-12)
 
 
-def test_uniform_translation_has_source_backward_euler_total_inertia(model):
+def test_uniform_translation_has_source_backward_euler_total_inertia(model: Any) -> None:
     state = model.state
     translation = jnp.array((0.0002, -0.0001, 0.0003))
     u = jnp.broadcast_to(translation, state.displacement_m.shape)
@@ -82,7 +83,7 @@ def test_uniform_translation_has_source_backward_euler_total_inertia(model):
     np.testing.assert_allclose(np.sum(residual[0], axis=0), np.zeros(3), atol=1e-10)
 
 
-def test_history_rejects_undefined_pre_start_and_holds_last_value():
+def test_history_rejects_undefined_pre_start_and_holds_last_value() -> None:
     with jax.enable_x64(True):
         history = Almonacid2024InputHistory(
             ((0.1, 0.0), (0.3, 1.0)), ((0.1, 0.0), (0.2, 0.02)), source_id="history"
@@ -92,7 +93,7 @@ def test_history_rejects_undefined_pre_start_and_holds_last_value():
         np.testing.assert_allclose(history.sample(0.4).engineering_strain, 0.02)
 
 
-def test_repository_control_preserves_finite_source_overshoot(model):
+def test_repository_control_preserves_finite_source_overshoot(model: Any) -> None:
     _, _, history, _, _ = almonacid_2024_repository_case(INPUTS, refinement=0)
     control = history.sample(0.85)
     assert float(control.activation) > 1.0
@@ -108,8 +109,8 @@ def test_repository_control_preserves_finite_source_overshoot(model):
 
 
 def test_commit_rolls_back_the_whole_preparation_and_rejects_stale_state(
-    model, candidate
-):
+    model: Any, candidate: Any
+) -> None:
     rejected = eqx.filter_jit(lambda c, p: c.commit(p, accept=False))(candidate, model)
     assert bool(eqx.tree_equal(rejected, model, typematch=True))
     advanced = candidate.commit(model)
@@ -143,14 +144,18 @@ def test_commit_rolls_back_the_whole_preparation_and_rejects_stale_state(
         "dof-topology",
     ],
 )
-def test_commit_rejects_changed_numeric_origin(model, candidate, field):
+def test_commit_rejects_changed_numeric_origin(
+    model: Any, candidate: Any, field: Any
+) -> None:
     previous = field(model)
     changed = eqx.tree_at(field, model, previous.at[...].add(jnp.ones_like(previous)))
     with pytest.raises(eqx.EquinoxRuntimeError):
         eqx.filter_jit(lambda c, p: c.commit(p))(candidate, changed)
 
 
-def test_candidate_rejects_changed_nested_solver_policy(model, candidate):
+def test_candidate_rejects_changed_nested_solver_policy(
+    model: Any, candidate: Any
+) -> None:
     method = eqx.tree_at(
         lambda m: m.linear_policy.tolerance,
         model.plan.method,
@@ -171,7 +176,7 @@ def test_candidate_rejects_changed_nested_solver_policy(model, candidate):
         candidate.commit(foreign)
 
 
-def test_failed_plan_policy_cannot_advance_even_when_accept_requested(model):
+def test_failed_plan_policy_cannot_advance_even_when_accept_requested(model: Any) -> None:
     plan = Almonacid2024MuscleAponeurosisPlan(
         model.plan.geometry,
         control_source_id=model.plan.control_source_id,
@@ -192,7 +197,7 @@ def test_failed_plan_policy_cannot_advance_even_when_accept_requested(model):
     )
 
 
-def test_repository_loader_rejects_same_shape_input_tampering(tmp_path):
+def test_repository_loader_rejects_same_shape_input_tampering(tmp_path: Any) -> None:
     for name in (
         "manifest.json",
         "parameters.prm",
@@ -207,7 +212,7 @@ def test_repository_loader_rejects_same_shape_input_tampering(tmp_path):
         almonacid_2024_repository_case(tmp_path, refinement=0)
 
 
-def test_content_bound_foreign_history_is_rejected_before_solving(model):
+def test_content_bound_foreign_history_is_rejected_before_solving(model: Any) -> None:
     _, _, history, _, _ = almonacid_2024_repository_case(INPUTS, refinement=0)
     activation = np.column_stack((history.activation_time_s, history.activation))
     strain = np.column_stack((history.strain_time_s, history.engineering_strain))
@@ -227,7 +232,9 @@ def test_content_bound_foreign_history_is_rejected_before_solving(model):
     ],
     ids=["density", "material-law"],
 )
-def test_accepted_trajectory_rejects_parameter_changes(model, candidate, field):
+def test_accepted_trajectory_rejects_parameter_changes(
+    model: Any, candidate: Any, field: Any
+) -> None:
     advanced = candidate.commit(model)
     changed = eqx.tree_at(field, advanced, field(advanced) * 1.01)
     control = Almonacid2024Control(0.02, 0.0, 0.0, source_id=model.plan.control_source_id)
@@ -237,7 +244,7 @@ def test_accepted_trajectory_rejects_parameter_changes(model, candidate, field):
         eqx.filter_jit(lambda p: p.quadrature_fields(0.01))(changed)
 
 
-def test_first_step_energy_uses_the_trainable_law_not_an_old_cache(model):
+def test_first_step_energy_uses_the_trainable_law_not_an_old_cache(model: Any) -> None:
     # A prestrained initial state makes law ownership observable even before the
     # first accepted step (the default stress-free reference has zero energy).
     s = model.state
@@ -287,7 +294,9 @@ def test_first_step_energy_uses_the_trainable_law_not_an_old_cache(model):
 @pytest.mark.parametrize(
     "history_values", [False, True], ids=["control", "interpolated-history"]
 )
-def test_optimizer_changes_control_response_but_not_the_clock(model, history_values):
+def test_optimizer_changes_control_response_but_not_the_clock(
+    model: Any, history_values: Any
+) -> None:
     if history_values:
         inputs = Almonacid2024InputHistory(
             ((0.1, 0.0), (0.3, 0.0)), ((0.1, 0.0), (0.3, 0.0)), source_id="optimization"
@@ -302,7 +311,7 @@ def test_optimizer_changes_control_response_but_not_the_clock(model, history_val
         learning_rate = 0.5
     trainable, model_state, fixed = partition_parameters(inputs)
 
-    def objective(values):
+    def objective(values: Any) -> Any:
         control = sample(combine_parameters(values, model_state, fixed))
         return (control.activation - 0.2) ** 2 + (
             control.engineering_strain - 0.0002
@@ -318,11 +327,14 @@ def test_optimizer_changes_control_response_but_not_the_clock(model, history_val
     if history_values:
         updated_history = combine_parameters(updated, model_state, fixed)
         np.testing.assert_array_equal(
-            updated_history.activation_time_s, inputs.activation_time_s
+            updated_history.activation_time_s,
+            # ty: ignore[unresolved-attribute]
+            inputs.activation_time_s,
         )
+        # ty: ignore[unresolved-attribute]
         np.testing.assert_array_equal(updated_history.strain_time_s, inputs.strain_time_s)
 
-    def stress(control):
+    def stress(control: Any) -> Any:
         s = model.state
         u = model._displacement(
             jnp.zeros_like(s.displacement_m[model.geometry.free_dofs]),
@@ -342,8 +354,8 @@ def test_optimizer_changes_control_response_but_not_the_clock(model, history_val
     np.testing.assert_allclose(stress(optimized), stress(target), rtol=1e-12, atol=1e-9)
 
 
-def test_fixed_parameter_rollout_retains_implicit_sensitivity(model):
-    def reaction(log_density):
+def test_fixed_parameter_rollout_retains_implicit_sensitivity(model: Any) -> None:
+    def reaction(log_density: Any) -> Any:
         prepared = eqx.tree_at(
             lambda p: p.parameters.density_kg_per_m3,
             model,

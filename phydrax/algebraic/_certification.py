@@ -13,7 +13,9 @@ from math import factorial, sqrt
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from ..linalg import (
@@ -121,7 +123,9 @@ def _power_interval(lower: float, upper: float, exponent: int, /) -> tuple[float
     return min(values), max(values)
 
 
-def _multiply_interval(left, right, /):
+def _multiply_interval(
+    left: tuple[float, float], right: tuple[float, float], /
+) -> tuple[float, float]:
     products = (
         left[0] * right[0],
         left[0] * right[1],
@@ -131,7 +135,12 @@ def _multiply_interval(left, right, /):
     return min(products), max(products)
 
 
-def _monomial_interval(lower, upper, exponents, /):
+def _monomial_interval(
+    lower: npt.NDArray[np.float64],
+    upper: npt.NDArray[np.float64],
+    exponents: npt.NDArray[np.integer],
+    /,
+) -> tuple[float, float]:
     result = (1.0, 1.0)
     for low, high, exponent in zip(lower, upper, exponents, strict=True):
         result = _multiply_interval(
@@ -140,7 +149,12 @@ def _monomial_interval(lower, upper, exponents, /):
     return result
 
 
-def _jacobian_interval(system, lower, upper, /):
+def _jacobian_interval(
+    system: SparsePolynomialSystem,
+    lower: npt.NDArray[np.float64],
+    upper: npt.NDArray[np.float64],
+    /,
+) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
     support = system.support
     coefficients = np.asarray(system.coefficients)
     if np.iscomplexobj(coefficients):

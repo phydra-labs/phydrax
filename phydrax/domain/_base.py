@@ -11,11 +11,12 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Bool, Float, Key
+from jax import Array
 
 from .._doc import DOC_KEY0
 from .._mass import ExactMass, Mass, UnknownMass
 from .._strict import StrictModule
+from ..typing import AnyShape, Bool, Dim, Float, Int32, parse, PRNGKey, Scalar
 from ._coordinate import CoordinateSpec
 from ._domain import JointFactor
 from ._factor_component import FactorComponent
@@ -174,14 +175,24 @@ def _make_global_boundary_ansatz_factor(
     return jax.jit(factor)
 
 
+class _PointDim(Dim):
+    """Number of points in one geometry query."""
+
+
+class _SpatialDim(Dim, minimum=1):
+    """Number of spatial coordinates."""
+
+
 class GeometryTransitionResult(StrictModule):
     """Fixed-shape result of a geometry-constrained coordinate transition."""
 
-    points: Array
-    valid: Bool[Array, " num_points"]
-    displacement_norm: Float[Array, " num_points"]
-    projection_distance: Float[Array, " num_points"]
-    reflection_count: Array
+    __strict_contract__ = True
+
+    points: Float[_PointDim, _SpatialDim]
+    valid: Bool[_PointDim]
+    displacement_norm: Float[_PointDim]
+    projection_distance: Float[_PointDim]
+    reflection_count: Int32[_PointDim]
 
     def __init__(
         self,
@@ -191,7 +202,7 @@ class GeometryTransitionResult(StrictModule):
         displacement_norm: Array,
         projection_distance: Array,
         reflection_count: Array,
-    ):
+    ) -> None:
         pts = jnp.asarray(points, dtype=jnp.float64)
         if pts.ndim != 2:
             raise ValueError(
@@ -355,10 +366,7 @@ class AbstractGeometry(JointFactor):
         saturation, linear = _validate_enforcement_gate_fractions(
             saturation_fraction, linear_fraction
         )
-        if method not in ("auto", "global_r_equivalence", "compact"):
-            raise ValueError(
-                f"method must be 'auto', 'global_r_equivalence', or 'compact', got {method!r}."
-            )
+        method = parse(method, EnforcementGateMethod, "method")
         builder = self._enforcement_gate_builder
         if builder is not None:
             return builder(
@@ -387,7 +395,7 @@ class AbstractGeometry(JointFactor):
 
     @property
     @abstractmethod
-    def bounds(self) -> Float[Array, "2 spatial_dim"]:
+    def bounds(self) -> Float[Literal[2], _SpatialDim]:
         raise NotImplementedError
 
     @property
@@ -395,7 +403,7 @@ class AbstractGeometry(JointFactor):
         return False
 
     @ft.cached_property
-    def mesh_bounds(self) -> Float[Array, "2 spatial_dim"]:
+    def mesh_bounds(self) -> Float[Literal[2], _SpatialDim]:
         """Axis-aligned bounding box as `[[mins...], [maxs...]]` (raw values)."""
         bounds = jnp.asarray(self.bounds, dtype=jnp.float64)
         sd = int(self.spatial_dim)
@@ -406,7 +414,7 @@ class AbstractGeometry(JointFactor):
         return bounds
 
     @ft.cached_property
-    def volume_proportion(self) -> Float[Array, ""]:
+    def volume_proportion(self) -> Float[Scalar]:
         """Fraction of the AABB volume occupied by the geometry (defaults to 1.0)."""
         return jnp.array(1.0, dtype=jnp.float64)
 
@@ -443,7 +451,7 @@ class AbstractGeometry(JointFactor):
         displacement: Array,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> GeometryTransitionResult:
         """Move interior points while preserving geometry membership."""
         del key
@@ -489,10 +497,10 @@ class AbstractGeometry(JointFactor):
         remaining = delta
         reflection_count = jnp.zeros((pts.shape[0],), dtype=jnp.int32)
 
-        def adf_batch(x):
+        def adf_batch(x: Array) -> Array:
             return jax.vmap(self.adf)(x)
 
-        def normal_batch(x):
+        def normal_batch(x: Array) -> Array:
             gradient = jax.vmap(jax.grad(self.adf))(x)
             norm = jnp.linalg.norm(gradient, axis=1, keepdims=True)
             return gradient / jnp.maximum(norm, jnp.finfo(x.dtype).eps)
@@ -544,7 +552,7 @@ class AbstractGeometry(JointFactor):
         displacement: Array,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> GeometryTransitionResult:
         """Move boundary points tangentially and retract them to the boundary."""
         del key
@@ -555,10 +563,10 @@ class AbstractGeometry(JointFactor):
         pts = jnp.asarray(points, dtype=jnp.float64).reshape((-1, self.spatial_dim))
         delta = jnp.asarray(displacement, dtype=pts.dtype).reshape(pts.shape)
 
-        def values(x):
+        def values(x: Array) -> Array:
             return jax.vmap(self.adf)(x)
 
-        def gradients(x):
+        def gradients(x: Array) -> Array:
             return jax.vmap(jax.grad(self.adf))(x)
 
         gradient = gradients(pts)
@@ -607,10 +615,10 @@ class AbstractGeometry(JointFactor):
     @abstractmethod
     def estimate_boundary_subset_measure(
         self,
-        where: Callable[[Array], Bool[Array, ""]],
+        where: Callable[[Array], Bool[Scalar]],
         *,
         num_samples: int = 4096,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         """Estimate boundary subset measure of {x: where(x)=True}."""
         raise NotImplementedError
@@ -629,7 +637,7 @@ class AbstractGeometry(JointFactor):
         *,
         where: Callable | None = None,
         sampler: str = "latin_hypercube",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         raise NotImplementedError
 
@@ -640,7 +648,7 @@ class AbstractGeometry(JointFactor):
         *,
         where: Callable | None = None,
         sampler: str = "latin_hypercube",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         raise NotImplementedError
 
@@ -651,19 +659,19 @@ class AbstractGeometry(JointFactor):
         *,
         sampler: str = "latin_hypercube",
         where: Callable | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
-    ) -> tuple[tuple[Array, ...], Bool[Array, "..."]]:
+        key: PRNGKey = DOC_KEY0,
+    ) -> tuple[tuple[Array, ...], Bool[AnyShape]]:
         """Internal helper for separable interior sampling."""
         raise NotImplementedError
 
     @abstractmethod
-    def _contains(self, points: Array) -> Bool[Array, " num_points"]:
+    def _contains(self, points: Array) -> Bool[_PointDim]:
         raise NotImplementedError
 
     @abstractmethod
-    def _on_boundary(self, points: Array) -> Bool[Array, " num_points"]:
+    def _on_boundary(self, points: Array) -> Bool[_PointDim]:
         raise NotImplementedError
 
     @abstractmethod
-    def _boundary_normals(self, points: Array) -> Float[Array, "num_points spatial_dim"]:
+    def _boundary_normals(self, points: Array) -> Float[_PointDim, _SpatialDim]:
         raise NotImplementedError

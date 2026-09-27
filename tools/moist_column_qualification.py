@@ -22,7 +22,7 @@ import numpy as np
 from phydrax.applications.atmosphere import MoistColumnPlan, MoistThermodynamicPlan
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--layers", type=int, default=8)
     parser.add_argument("--steps", type=int, default=120)

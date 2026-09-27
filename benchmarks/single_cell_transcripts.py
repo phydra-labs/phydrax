@@ -11,6 +11,8 @@ lowering/compilation is measured directly, not inferred by subtracting timings.
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import hashlib
 import json
@@ -52,7 +54,7 @@ from phydrax.qualification import ReferenceArtifactManifest
 from phydrax.units import derived_unit, SECOND
 
 
-def _calibration():
+def _calibration() -> Any:
     content = (
         b"Synthetic benchmark: exact independently specified telegraph rates "
         b"and binomial/Poisson observation coefficients."
@@ -74,7 +76,7 @@ def _calibration():
     )
 
 
-def _split(counts, start, stop):
+def _split(counts: Any, start: Any, stop: Any) -> Any:
     return TranscriptCounts(
         counts.gene,
         counts.cell_ids[start:stop],
@@ -89,7 +91,7 @@ def _split(counts, start, stop):
     )
 
 
-def _target(counts):
+def _target(counts: Any) -> Any:
     # Delta-method standard errors of empirical moments, using only measured cells.
     values = np.asarray(counts.counts)
     centered = values - values.mean(axis=0)
@@ -113,7 +115,7 @@ def _target(counts):
     )
 
 
-def run(cells, genes, repeats, capacity):
+def run(cells: Any, genes: Any, repeats: Any, capacity: Any) -> Any:
     calibration = _calibration()
     assay = TranscriptCountAssay.from_plans(
         CountMeasurementPlan(0.7, 0.15, observation_capacity=1024),
@@ -234,7 +236,7 @@ def run(cells, genes, repeats, capacity):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cells", type=int, default=64)
     parser.add_argument("--genes", type=int, default=2)

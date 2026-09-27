@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -31,11 +34,18 @@ class SimulatedCrash(RuntimeError):
     pass
 
 
-def _digest(name):
+def _digest(name: Any) -> Any:
     return canonical_fingerprint({"test": name})
 
 
-def _plan(*, work=1, frontier=2, shards=1, species="species", topology="topology"):
+def _plan(
+    *,
+    work: Any = 1,
+    frontier: Any = 2,
+    shards: Any = 1,
+    species: Any = "species",
+    topology: Any = "topology",
+) -> Any:
     return DarkSectorEpochPlan(
         packet_capacity=1,
         event_capacity=1,
@@ -55,7 +65,7 @@ def _plan(*, work=1, frontier=2, shards=1, species="species", topology="topology
     )
 
 
-def _repository(path, *, fail=None):
+def _repository(path: Any, *, fail: Any = None) -> Any:
     profile = HPCFilesystemProfile(
         "dark-sector-runtime-posix",
         "local-posix",
@@ -80,7 +90,7 @@ def _repository(path, *, fail=None):
     )
 
 
-def _work(index, parent=None):
+def _work(index: Any, parent: Any = None) -> Any:
     return GlobalWorkItem(
         "cascade-step",
         (),
@@ -91,7 +101,7 @@ def _work(index, parent=None):
     )
 
 
-def test_compile_signature_changes_with_species_topology_capacity_and_sharding():
+def test_compile_signature_changes_with_species_topology_capacity_and_sharding() -> None:
     base = _plan()
     revisions = (
         _plan(species="revised-species"),
@@ -105,7 +115,7 @@ def test_compile_signature_changes_with_species_topology_capacity_and_sharding()
     )
 
 
-def test_fixed_epoch_spills_without_clipping_and_rolls_back_conservation():
+def test_fixed_epoch_spills_without_clipping_and_rolls_back_conservation() -> None:
     plan = _plan(work=1, frontier=2)
     initial = empty_dark_sector_epoch_state(plan, epoch_sequence=0)
     work = tuple(_work(index) for index in range(3))
@@ -141,12 +151,12 @@ def test_fixed_epoch_spills_without_clipping_and_rolls_back_conservation():
     np.testing.assert_array_equal(rolled.state.work_mask, initial.work_mask)
 
 
-def test_finalize_is_jax_safe_for_fixed_compiled_segments():
+def test_finalize_is_jax_safe_for_fixed_compiled_segments() -> None:
     plan = _plan()
     state = empty_dark_sector_epoch_state(plan, epoch_sequence=0)
 
     @jax.jit
-    def finish(previous, proposed):
+    def finish(previous: Any, proposed: Any) -> Any:
         return finalize_dark_sector_epoch(
             previous, proposed, complete=True, backpressured=False
         )
@@ -157,10 +167,12 @@ def test_finalize_is_jax_safe_for_fixed_compiled_segments():
     assert result.state.work_ids.shape == (plan.work_capacity, 8)
 
 
-def test_coordinator_recovers_after_tip_and_repartitions_changed_plan(tmp_path):
+def test_coordinator_recovers_after_tip_and_repartitions_changed_plan(
+    tmp_path: Any,
+) -> None:
     crashed = False
 
-    def fail(point):
+    def fail(point: Any) -> None:
         nonlocal crashed
         if point == "after_tip" and not crashed:
             crashed = True
@@ -215,10 +227,10 @@ def test_coordinator_recovers_after_tip_and_repartitions_changed_plan(tmp_path):
     assert not changed.exact_compile_replay
 
 
-def test_expired_owner_can_recover_staged_slot_before_tip(tmp_path):
+def test_expired_owner_can_recover_staged_slot_before_tip(tmp_path: Any) -> None:
     crashed = False
 
-    def fail(point):
+    def fail(point: Any) -> None:
         nonlocal crashed
         if point == "after_epoch_manifest" and not crashed:
             crashed = True

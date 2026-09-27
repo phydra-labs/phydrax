@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _mesh():
+def _mesh() -> Any:
     vertices = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [0.5, 0.5]])
     cells = jnp.asarray([[0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4]], dtype=jnp.int32)
     return phx.discretization.CellMesh.from_triangles(
@@ -20,7 +23,9 @@ def _mesh():
     )
 
 
-def _bisect(source, refine=(), coarsen=(), hierarchy=None):
+def _bisect(
+    source: Any, refine: Any = (), coarsen: Any = (), hierarchy: Any = None
+) -> Any:
     return phx.meshing.execute_mesh_adaptation(
         phx.meshing.prepare_mesh_adaptation(
             source,
@@ -36,7 +41,7 @@ def _bisect(source, refine=(), coarsen=(), hierarchy=None):
     )
 
 
-def test_dorfler_local_bisection_transfer_and_sibling_coarsen():
+def test_dorfler_local_bisection_transfer_and_sibling_coarsen() -> None:
     mesh = _mesh()
     source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
     marked = phx.discretization.dorfler_mark(
@@ -66,7 +71,7 @@ def test_dorfler_local_bisection_transfer_and_sibling_coarsen():
     assert restored.target.mesh.topology_id == mesh.topology_id
 
 
-def test_transfer_dual_pairing_and_local_dwr_indicators():
+def test_transfer_dual_pairing_and_local_dwr_indicators() -> None:
     mesh = _mesh()
     source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
     refined = _bisect(source, (10,))
@@ -89,7 +94,7 @@ def test_transfer_dual_pairing_and_local_dwr_indicators():
     assert jnp.allclose(dwr.absolute, jnp.asarray([1.5, 2.0]))
 
 
-def test_rejected_topology_candidate_preserves_accepted_state_bitwise():
+def test_rejected_topology_candidate_preserves_accepted_state_bitwise() -> None:
     mesh = _mesh()
     source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
     accepted = phx.solver.FiniteElementAcceptedState(
@@ -112,7 +117,7 @@ def test_rejected_topology_candidate_preserves_accepted_state_bitwise():
     assert jnp.array_equal(result.state.fields[0], accepted.fields[0])
 
 
-def test_vertex_interpolation_transfer_certifies_its_invariant_claims():
+def test_vertex_interpolation_transfer_certifies_its_invariant_claims() -> None:
     source = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 2.0)))
     rows = np.asarray(((0, 0), (1, 0), (0, 1), (1, 2)), dtype=np.int32)
     weights = np.asarray(((1.0, 0.0), (1.0, 0.0), (0.5, 0.5), (0.5, 0.5)))

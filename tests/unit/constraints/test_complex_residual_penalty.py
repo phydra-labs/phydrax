@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -9,7 +12,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def _constant_residual_term(value):
+def _constant_residual_term(value: Any) -> Any:
     time = phx.domain.TimeInterval(0.0, 1.0)
     residual = time.Function()(jnp.asarray(value))
     condition = phx.conditions.Residual("u", time.component(), lambda _field: residual)
@@ -21,7 +24,7 @@ def _constant_residual_term(value):
     return time, term
 
 
-def test_complex_scalar_residual_uses_absolute_square():
+def test_complex_scalar_residual_uses_absolute_square() -> None:
     time, term = _constant_residual_term(1.0 + 2.0j)
     solver = phx.solver.FunctionalSolver(
         functions={"u": time.Function()(0.0)}, terms=[term]
@@ -37,7 +40,7 @@ def test_complex_scalar_residual_uses_absolute_square():
     assert jnp.allclose(loss, 5.0, atol=1e-12)
 
 
-def test_complex_vector_residual_uses_frobenius_norm():
+def test_complex_vector_residual_uses_frobenius_norm() -> None:
     time, term = _constant_residual_term(jnp.asarray([1.0 + 2.0j, 3.0 - 4.0j]))
     solver = phx.solver.FunctionalSolver(
         functions={"u": time.Function()(0.0)}, terms=[term]
@@ -48,7 +51,7 @@ def test_complex_vector_residual_uses_frobenius_norm():
     assert jnp.allclose(loss, 30.0, atol=1e-12)
 
 
-def test_real_residual_behavior_is_unchanged():
+def test_real_residual_behavior_is_unchanged() -> None:
     time, term = _constant_residual_term(jnp.asarray([3.0, 4.0]))
     solver = phx.solver.FunctionalSolver(
         functions={"u": time.Function()(0.0)}, terms=[term]

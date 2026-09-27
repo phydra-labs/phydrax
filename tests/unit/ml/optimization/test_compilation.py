@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -12,7 +15,7 @@ from phydrax.ml.linear import LinearRegressorModel
 from phydrax.ml.tree import TreeEnsemble
 
 
-def _stump(split_kind):
+def _stump(split_kind: Any) -> Any:
     return TreeEnsemble(
         feature_index=jnp.asarray([[0, -1, -1]]),
         threshold=jnp.asarray([[2.0, 0.0, 0.0]]),
@@ -32,7 +35,7 @@ def _stump(split_kind):
     )
 
 
-def test_affine_predictor_constraint_changes_observable_milp_optimum():
+def test_affine_predictor_constraint_changes_observable_milp_optimum() -> None:
     base = phx.optim.MixedIntegerProgram(
         phx.optim.LinearProgram(
             jnp.asarray([-1.0]),
@@ -70,9 +73,9 @@ def test_affine_predictor_constraint_changes_observable_milp_optimum():
 
 @pytest.mark.parametrize(("split_kind", "expected"), [(0, 3.0), (2, 2.0)])
 def test_tree_compilation_preserves_strict_and_nonstrict_integer_ties(
-    split_kind,
-    expected,
-):
+    split_kind: Any,
+    expected: Any,
+) -> None:
     model = _stump(split_kind)
     base = phx.optim.MixedIntegerProgram(
         phx.optim.LinearProgram(
@@ -107,7 +110,7 @@ def test_tree_compilation_preserves_strict_and_nonstrict_integer_ties(
     assert model(jnp.asarray([[result.primal[0]]]))[0] >= 15.0
 
 
-def test_tree_compilation_refuses_continuous_strict_split():
+def test_tree_compilation_refuses_continuous_strict_split() -> None:
     model = _stump(0)
     base = phx.optim.LinearProgram(
         jnp.asarray([0.0]),
@@ -128,7 +131,7 @@ def test_tree_compilation_refuses_continuous_strict_split():
         )
 
 
-def test_convex_hull_support_returns_witness_and_blocks_extrapolation():
+def test_convex_hull_support_returns_witness_and_blocks_extrapolation() -> None:
     base = phx.optim.LinearProgram(
         jnp.asarray([-1.0]),
         bounds=phx.optim.Bounds(0.0, 2.0),

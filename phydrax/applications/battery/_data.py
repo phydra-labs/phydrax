@@ -8,20 +8,21 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import canonical_identifier
 from ...artifacts import ArtifactManifest
 from ._observations import (
     _host_vector,
-    _identifier,
     _identifiers,
     _local_manifest,
     BatteryCurrentSign,
@@ -99,7 +100,7 @@ class BatteryRawTimeSeries:
             "protocol_role",
         )
         resolved = tuple(
-            _identifier(value, name)
+            canonical_identifier(value, name)
             for value, name in zip(
                 (
                     self.record_id,
@@ -180,7 +181,8 @@ class BatteryRawTimeSeries:
 
     @property
     def source_current_sign(self) -> BatteryCurrentSign:
-        return self.source_units.current_sign
+        # BatterySourceUnits.__post_init__ normalizes current_sign to the enum.
+        return cast(BatteryCurrentSign, self.source_units.current_sign)
 
 
 @dataclass(frozen=True, slots=True)
@@ -448,7 +450,7 @@ def preprocess_battery_time_series(
 
 
 def _digest(value: str, name: str, /) -> str:
-    digest = _identifier(value, name)
+    digest = canonical_identifier(value, name)
     if len(digest) != 64 or any(
         character not in "0123456789abcdef" for character in digest
     ):
@@ -539,8 +541,10 @@ class BatteryRecordBinding:
     raw_digest: str
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "record_id", _identifier(self.record_id, "record_id"))
-        object.__setattr__(self, "cell_id", _identifier(self.cell_id, "cell_id"))
+        object.__setattr__(
+            self, "record_id", canonical_identifier(self.record_id, "record_id")
+        )
+        object.__setattr__(self, "cell_id", canonical_identifier(self.cell_id, "cell_id"))
         object.__setattr__(
             self,
             "content_fingerprint",
@@ -590,7 +594,7 @@ class BatteryGroupSplit:
         calibration_cell_ids: Sequence[str],
         test_cell_ids: Sequence[str],
         pipeline_ids: BatteryPipelineIDs,
-    ):
+    ) -> None:
         observations = tuple(records)
         if not observations:
             raise ValueError("Battery group splits require observation records.")
@@ -767,7 +771,7 @@ class TransformedBatteryTimeSeries(StrictModule):
         *,
         record_id: str,
         transformation_id: str,
-    ):
+    ) -> None:
         self.time_s = time_s
         self.values = values
         self.valid_mask = valid_mask
@@ -797,7 +801,7 @@ class BatteryChannelTransformation(StrictModule, NonTrainableState):
         preprocessing_id: str,
         normalization_id: str,
         training_record_ids: tuple[str, ...],
-    ):
+    ) -> None:
         location_array = _host_vector(location, "location")
         scale_array = _host_vector(scale, "scale")
         if location_array.shape != (3,) or scale_array.shape != (3,):

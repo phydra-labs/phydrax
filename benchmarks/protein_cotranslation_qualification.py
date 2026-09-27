@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 """Exercise a frozen measured-time FRET prediction; no folding clock is inferred."""
 
+
+from typing import Any
 import hashlib
 import json
 
@@ -46,7 +48,7 @@ def _reference(label: str) -> ReferenceArtifactManifest:
     )
 
 
-def _fit(model, campaign, source):
+def _fit(model: Any, campaign: Any, source: Any) -> Any:
     parameters = np.asarray([0.25, -0.5])
     parameter_id = canonical_fingerprint(
         {

@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..integration import (
     DensityTarget,

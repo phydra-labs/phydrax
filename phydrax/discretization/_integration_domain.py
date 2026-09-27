@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -46,7 +47,7 @@ class IntegrationDomain(StrictModule, NonTrainableState):
         neighbor_trace_permutations: ArrayLike | None = None,
         periodic_face_mask: ArrayLike | None = None,
         selection_id: str | None = None,
-    ):
+    ) -> None:
         kind_ = str(kind)
         if kind_ not in ("cell", "exterior_facet", "interior_facet"):
             raise ValueError("Unsupported integration-domain kind.")

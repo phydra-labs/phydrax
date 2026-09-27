@@ -11,8 +11,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..series import SampledSeries, SampledSeriesReconstruction, SeriesSupport
@@ -52,7 +52,7 @@ class DiscreteTransitionResult(StrictModule):
         accepted_state: ArrayLike,
         successful: ArrayLike,
         status: ArrayLike,
-    ):
+    ) -> None:
         candidate = _inexact(candidate_state)
         accepted = _inexact(accepted_state)
         successful_array = jnp.asarray(successful, dtype=jnp.bool_)
@@ -95,7 +95,7 @@ class DiscreteTransitionEvidence(StrictModule):
         successful: ArrayLike,
         status: ArrayLike,
         /,
-    ):
+    ) -> None:
         candidates = _inexact(candidate_states)
         accepted = _inexact(accepted_states)
         attempted_array = jnp.asarray(attempted, dtype=jnp.bool_)
@@ -180,7 +180,7 @@ class DiscreteStepContext(StrictModule):
         target: ArrayLike,
         step_index: ArrayLike,
         /,
-    ):
+    ) -> None:
         source_array = jnp.asarray(source)
         target_array = jnp.asarray(target)
         index_array = jnp.asarray(step_index, dtype=jnp.int32)
@@ -215,7 +215,7 @@ class ContinuousSystem(StrictModule):
         state_layout: StateLayout,
         input_layout: InputLayout | None = None,
         system_id: str,
-    ):
+    ) -> None:
         if not callable(vector_field):
             raise TypeError("ContinuousSystem vector_field must be callable.")
         if not isinstance(state_layout, StateLayout):
@@ -302,7 +302,7 @@ class DiscreteSystem(StrictModule):
         step_atol: float = 1e-12,
         minimum_step_size: float | None = None,
         maximum_step_size: float | None = None,
-    ):
+    ) -> None:
         if not callable(transition):
             raise TypeError("DiscreteSystem transition must be callable.")
         if not isinstance(state_layout, StateLayout):
@@ -511,7 +511,7 @@ class CallableInputPolicy(AbstractInputPolicy):
         *,
         input_layout: InputLayout,
         policy_id: str,
-    ):
+    ) -> None:
         if not callable(policy):
             raise TypeError("CallableInputPolicy policy must be callable.")
         if not isinstance(input_layout, InputLayout):
@@ -566,7 +566,7 @@ class HeldInputPolicy(AbstractInputPolicy):
         input_layout: InputLayout,
         node_side: Literal["left", "right"] = "left",
         policy_id: str,
-    ):
+    ) -> None:
         if not isinstance(input_layout, InputLayout):
             raise TypeError("input_layout must be an InputLayout.")
         if node_side not in ("left", "right"):

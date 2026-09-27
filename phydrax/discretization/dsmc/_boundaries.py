@@ -5,20 +5,26 @@
 from __future__ import annotations
 
 from enum import IntFlag
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PRNGKeyArray
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._admissibility import AdmissibilityHeader, AdmissibilityReason
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from ._core import DSMCParticleState, DSMCSpeciesPlan, DSMCStructuredCellPlan
 from ._surface import DSMCSurfaceInteractionPlan
+
+
+# particles, injected mass, injected momentum, injected energy
+_ReservoirInjectionCarry: TypeAlias = tuple[DSMCParticleState, Array, Array, Array]
 
 
 class DSMCBoundaryReason(IntFlag):
@@ -207,7 +213,7 @@ class DSMCReservoirFacePlan(StrictModule, NonTrainableState):
     def request_capacity(self) -> int:
         return self.species.species_count * self.maximum_injections_per_species
 
-    def initialize(self, dtype=jnp.float64, /) -> DSMCReservoirState:
+    def initialize(self, dtype: DTypeLike = jnp.float64, /) -> DSMCReservoirState:
         return DSMCReservoirState(
             jnp.zeros((self.species.species_count,), dtype=dtype),
             jnp.asarray(0, dtype=jnp.int32),
@@ -219,7 +225,7 @@ class DSMCReservoirFacePlan(StrictModule, NonTrainableState):
         particles: DSMCParticleState,
         state: DSMCReservoirState,
         step_size: ArrayLike,
-        key: PRNGKeyArray,
+        key: PRNGKey,
         /,
     ) -> DSMCReservoirResult:
         if not isinstance(state, DSMCReservoirState) or state.plan_id != self.plan_id:
@@ -307,7 +313,9 @@ class DSMCReservoirFacePlan(StrictModule, NonTrainableState):
         normal = self.face.outward_normal.astype(dtype)
         epsilon = 8.0 * jnp.finfo(dtype).eps * jnp.max(upper - lower)
 
-        def body(index, carry):
+        def body(
+            index: Array, carry: _ReservoirInjectionCarry
+        ) -> _ReservoirInjectionCarry:
             current, mass_total, momentum_total, energy_total = carry
             species_index = request_species[index]
             slot = jnp.clip(request_slot[index], 0, particles.capacity - 1)

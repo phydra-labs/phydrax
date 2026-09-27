@@ -7,7 +7,8 @@ from __future__ import annotations
 from typing import Literal, TypeAlias
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 
@@ -30,7 +31,7 @@ class LogAmplitude(StrictModule):
         /,
         *,
         valid: ArrayLike | None = None,
-    ):
+    ) -> None:
         magnitude = jnp.asarray(log_abs)
         if jnp.iscomplexobj(magnitude):
             raise TypeError("log_abs must be real-valued.")

@@ -8,7 +8,7 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -23,7 +23,9 @@ class PrimaryVertexPlan(StrictModule, NonTrainableState):
     maximum_variance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, *, minimum_tracks: int = 2, maximum_variance: float = 1.0e6):
+    def __init__(
+        self, *, minimum_tracks: int = 2, maximum_variance: float = 1.0e6
+    ) -> None:
         minimum = int(minimum_tracks)
         variance = float(maximum_variance)
         if minimum < 1 or not math.isfinite(variance) or variance <= 0.0:
@@ -112,7 +114,7 @@ class ParticleFlowPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, maximum_association_distance: float, /, *, neutral_pdg_id: int = 22
-    ):
+    ) -> None:
         distance = float(maximum_association_distance)
         if not math.isfinite(distance) or distance <= 0.0:
             raise ValueError("maximum_association_distance must be finite and positive.")

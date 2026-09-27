@@ -4,22 +4,32 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...discretization._tensor_entities import TensorEntityLayout
 from ...discretization.particle import ParticleDiscretization
 from ...discretization.splatting import (
     ParticleGridSplatPlan,
+    ParticleGridSplatState,
+    PreparedParticleGridSplat,
     TensorBSplineSplatAssignment,
 )
 from ...equations._mac_incompressible import CompiledMACIncompressibleDynamics
 from ...operators.integral.vortex._gaussian2d import gaussian_vortex_velocity_2d
 from ...operators.integral.vortex._gaussian3d import GaussianErfVortexKernel3D
 from ._source import VortexSourceState
+
+
+def _axis_gradient(values: Array, spacing: float, axis: int, /) -> Array:
+    # jnp.gradient returns one array for a single integer axis; its stub widens to a list.
+    return cast(Array, jnp.gradient(values, spacing, axis=axis))
 
 
 class MACVortexTransferEvidence(StrictModule):
@@ -43,7 +53,7 @@ class MACVortexParticleTransferPlan(StrictModule, NonTrainableState):
     particles: ParticleDiscretization
     dynamics: CompiledMACIncompressibleDynamics
     degree: int = eqx.field(static=True)
-    transfer: object
+    transfer: PreparedParticleGridSplat
     dimension: int = eqx.field(static=True)
     transfer_id: str = eqx.field(static=True)
 
@@ -54,7 +64,7 @@ class MACVortexParticleTransferPlan(StrictModule, NonTrainableState):
         /,
         *,
         degree: int = 2,
-    ):
+    ) -> None:
         if (
             not isinstance(particles, ParticleDiscretization)
             or not isinstance(dynamics, CompiledMACIncompressibleDynamics)
@@ -91,7 +101,9 @@ class MACVortexParticleTransferPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def deposit(self, source: VortexSourceState, /) -> tuple[Array, object]:
+    def deposit(
+        self, source: VortexSourceState, /
+    ) -> tuple[Array, ParticleGridSplatState]:
         if (
             source.capacity != self.particles.capacity
             or source.dimension != self.dimension
@@ -101,7 +113,7 @@ class MACVortexParticleTransferPlan(StrictModule, NonTrainableState):
         deposition = self.transfer.deposit_content(state, source.safe_strength())
         return deposition.density, state
 
-    def _layout_points(self, layout) -> Array:
+    def _layout_points(self, layout: TensorEntityLayout) -> Array:
         mesh = jnp.meshgrid(*layout.coordinates_by_axis, indexing="ij")
         return jnp.stack(tuple(component.reshape(-1) for component in mesh), axis=-1)
 
@@ -159,12 +171,12 @@ class MACVortexParticleTransferPlan(StrictModule, NonTrainableState):
                 centered.append(0.5 * (component[tuple(lower)] + component[tuple(upper)]))
         spacing = tuple(float(jnp.mean(axis.interval_widths)) for axis in axes)
         if self.dimension == 2:
-            du_dy = jnp.gradient(centered[0], spacing[1], axis=1)
-            dv_dx = jnp.gradient(centered[1], spacing[0], axis=0)
+            du_dy = _axis_gradient(centered[0], spacing[1], 1)
+            dv_dx = _axis_gradient(centered[1], spacing[0], 0)
             return dv_dx - du_dy
         derivatives = tuple(
             tuple(
-                jnp.gradient(centered[component], spacing[axis], axis=axis)
+                _axis_gradient(centered[component], spacing[axis], axis)
                 for axis in range(3)
             )
             for component in range(3)
@@ -179,7 +191,11 @@ class MACVortexParticleTransferPlan(StrictModule, NonTrainableState):
         )
 
     def gather(
-        self, transfer_state, vorticity: Array, source: VortexSourceState, /
+        self,
+        transfer_state: ParticleGridSplatState,
+        vorticity: Array,
+        source: VortexSourceState,
+        /,
     ) -> VortexSourceState:
         gathered = self.transfer.gather(transfer_state, vorticity).values
         if source.volume is None:

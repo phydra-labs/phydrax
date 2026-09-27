@@ -8,7 +8,8 @@ from typing import Any, Literal
 
 import equinox as eqx
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._model import AbstractArrayModel
 from .._model._ports import (
@@ -110,7 +111,7 @@ class ContinuousModelVectorField(StrictModule):
         state_layout: StateLayout,
         input_layout: InputLayout | None = None,
         port_mapping: PortMapping | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("model must be an AbstractArrayModel.")
         if not isinstance(state_layout, StateLayout):
@@ -190,7 +191,7 @@ class DiscreteModelTransition(StrictModule):
     model: AbstractArrayModel
     has_input: bool = eqx.field(static=True)
     port_binding: PortBindingEvidence | None = eqx.field(static=True)
-    step_size: float = eqx.field(static=True)
+    step_size: float | None = eqx.field(static=True)
     step_rtol: float = eqx.field(static=True)
     step_atol: float = eqx.field(static=True)
     input_mode: Literal["fixed", "duration", "interval"] = eqx.field(static=True)
@@ -207,7 +208,7 @@ class DiscreteModelTransition(StrictModule):
         step_atol: float = 1e-12,
         input_mode: Literal["fixed", "duration", "interval"] = "fixed",
         port_mapping: PortMapping | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("model must be an AbstractArrayModel.")
         if not isinstance(state_layout, StateLayout):

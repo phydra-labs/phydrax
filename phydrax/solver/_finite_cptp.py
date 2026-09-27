@@ -7,13 +7,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Literal
+from typing import cast, Literal
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy.linalg as jspla
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..discretization import TemporalMesh
@@ -50,7 +51,7 @@ class FiniteLindbladChannelPlan(StrictModule):
         evaluation: Literal["left", "midpoint"] = "midpoint",
         tolerance: float = 1e-8,
         plan_id: str,
-    ):
+    ) -> None:
         operators = jnp.asarray(jumps)
         rate_values = jnp.asarray(rates)
         if (
@@ -76,7 +77,8 @@ class FiniteLindbladChannelPlan(StrictModule):
         if not isinstance(plan_id, str) or not plan_id:
             raise ValueError("plan_id must be nonempty.")
         if callable(hamiltonian):
-            function = hamiltonian
+            # No ArrayLike member is callable, so callable() selects the callback.
+            function = cast(Callable[[Array], Array], hamiltonian)
         else:
             matrix = jnp.asarray(hamiltonian)
             if matrix.shape != (dimension, dimension):

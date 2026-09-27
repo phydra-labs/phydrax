@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -37,7 +39,7 @@ def _configuration(
     warmup: int,
     repeats: int,
 ) -> dict[str, object]:
-    def prepare():
+    def prepare() -> Any:
         radial = RadialLaguerrePlan(radial_bandlimit, tau=0.8)
         angular = SphericalHarmonicPlan(bandlimit, reality=False)
         fourier = FourierLaguerrePlan(radial, angular)

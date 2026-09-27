@@ -10,7 +10,9 @@ from enum import IntEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -73,7 +75,7 @@ class SBSSharedDomainMap(StrictModule, NonTrainableState):
         jump_convention: str,
         normal_tolerance: float = 1e-8,
         map_id: str | None = None,
-    ):
+    ) -> None:
         volume = np.asarray(volume_weights)
         pump_volume = np.asarray(pump_to_volume)
         stokes_volume = np.asarray(stokes_to_volume)
@@ -223,7 +225,7 @@ class SBSInteractionCoefficients(StrictModule, NonTrainableState):
         acoustic_group_velocity: float,
         interaction_length: float,
         coefficient_id: str | None = None,
-    ):
+    ) -> None:
         frequencies = tuple(
             float(value)
             for value in (
@@ -332,7 +334,7 @@ class SBSOverlapPlan(StrictModule):
         pump_power: ArrayLike,
         stokes_power: ArrayLike,
         acoustic_energy_per_length: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(domain_map, SBSSharedDomainMap):
             raise TypeError("domain_map must be an SBSSharedDomainMap.")
         dimension = domain_map.spatial_dimension
@@ -739,7 +741,7 @@ def solve_sbs(
     )
 
 
-def _validate_interpolation_map(value, target_count, name):
+def _validate_interpolation_map(value: np.ndarray, target_count: int, name: str) -> None:
     if value.ndim != 2 or value.shape[0] != target_count or value.shape[1] < 1:
         raise ValueError(f"{name} must have shape (shared point, native sample).")
     if np.iscomplexobj(value) or np.any(~np.isfinite(value)):
@@ -749,14 +751,16 @@ def _validate_interpolation_map(value, target_count, name):
         raise ValueError(f"{name} rows must preserve constants exactly.")
 
 
-def _map_samples(matrix, values, name):
+def _map_samples(matrix: Array, values: ArrayLike, name: str) -> Array:
     value = jnp.asarray(values)
     if value.ndim < 1 or value.shape[0] != matrix.shape[1]:
         raise ValueError(f"{name} samples do not match the native map axis.")
     return ein.contract("qn,n...->q...", matrix, value, backend="jax")
 
 
-def _native_vector_field(value, sample_count, dimension, name):
+def _native_vector_field(
+    value: npt.ArrayLike, sample_count: int, dimension: int, name: str
+) -> np.ndarray:
     field = np.asarray(value)
     if field.shape != (sample_count, dimension):
         raise ValueError(f"{name} must have shape (native sample, dimension).")
@@ -765,7 +769,9 @@ def _native_vector_field(value, sample_count, dimension, name):
     return field
 
 
-def _point_values(value, count, name, *, real=False):
+def _point_values(
+    value: npt.ArrayLike, count: int, name: str, *, real: bool = False
+) -> np.ndarray:
     points = np.asarray(value)
     if points.ndim == 0:
         points = np.broadcast_to(points, (count,))

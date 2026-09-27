@@ -19,7 +19,7 @@ from typing import Any, final
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._differentiation import DerivativeRegularity
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -78,7 +78,7 @@ class SpectralFieldReconstructionKernel(
         /,
         *,
         field_space_id: str,
-    ):
+    ) -> None:
         if not isinstance(discretization, TensorSpectralDiscretization):
             raise TypeError("discretization must be a TensorSpectralDiscretization.")
         precision = discretization.plan.precision

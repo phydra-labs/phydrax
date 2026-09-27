@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -24,7 +27,7 @@ from phydrax.applications.curved_spacetime_qft import (
 jax.config.update("jax_enable_x64", True)
 
 
-def _minkowski_preparation():
+def _minkowski_preparation() -> Any:
     times = jnp.linspace(0.0, 1.0, 41)
     plan = FLRWModePlan(
         times,
@@ -38,7 +41,7 @@ def _minkowski_preparation():
     return prepare_flrw_modes(plan)
 
 
-def test_frontier_bogoliubov_normalization_is_preserved_by_mode_evolution():
+def test_frontier_bogoliubov_normalization_is_preserved_by_mode_evolution() -> None:
     prepared = _minkowski_preparation()
     initial = adiabatic_initial_state(prepared)
     evolution = jax.jit(evolve_flrw_modes)(prepared, initial)
@@ -53,7 +56,7 @@ def test_frontier_bogoliubov_normalization_is_preserved_by_mode_evolution():
     assert "finite-mode" in evidence.claim
 
 
-def test_frontier_hadamard_subtraction_conserves_minkowski_vacuum_stress():
+def test_frontier_hadamard_subtraction_conserves_minkowski_vacuum_stress() -> None:
     prepared = _minkowski_preparation()
     times = prepared.plan.conformal_times[:, None]
     frequency = prepared.frequencies

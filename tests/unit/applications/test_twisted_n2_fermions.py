@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -15,7 +18,7 @@ from phydrax.applications.supersymmetric_lattice import (
 from phydrax.operators.path_integral import dirac_normal_operator
 
 
-def _fixture():
+def _fixture() -> Any:
     theory = TwistedN2SYMPlan(
         (1, 1),
         matrix_rank=1,
@@ -33,7 +36,7 @@ def _fixture():
     return theory, layout, coordinates
 
 
-def test_real_coordinate_layout_preserves_independent_complex_links():
+def test_real_coordinate_layout_preserves_independent_complex_links() -> None:
     _, layout, coordinates = _fixture()
     configuration = layout.unpack(coordinates)
     recovered = layout.pack(configuration)
@@ -47,7 +50,7 @@ def test_real_coordinate_layout_preserves_independent_complex_links():
     assert bool(evidence.finite)
 
 
-def test_twisted_kahler_dirac_is_antisymmetric_and_has_exact_adjoint():
+def test_twisted_kahler_dirac_is_antisymmetric_and_has_exact_adjoint() -> None:
     theory, layout, coordinates = _fixture()
     operator = TwistedKahlerDiracOperator(theory, layout, coordinates)
     evidence = assess_twisted_fermion_algebra(
@@ -64,11 +67,12 @@ def test_twisted_kahler_dirac_is_antisymmetric_and_has_exact_adjoint():
     assert bool(evidence.interval_contains_spectrum)
 
 
-def test_regulated_operator_normal_is_kahler_normal_plus_mass_shift():
+def test_regulated_operator_normal_is_kahler_normal_plus_mass_shift() -> None:
     theory, layout, coordinates = _fixture()
     kahler = TwistedKahlerDiracOperator(theory, layout, coordinates)
     regulated = RegulatedTwistedDiracOperator(kahler, theory.fermion_mass)
     vector = (
+        # ty: ignore[unresolved-attribute]
         jnp.arange(kahler.source.size, dtype=jnp.float64).reshape(kahler.source.shape)
         + 1.0j
     )

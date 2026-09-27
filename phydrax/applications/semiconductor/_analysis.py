@@ -4,14 +4,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Callable, Sequence
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...dynamics import DAEStructure, DifferentialAlgebraicSystem, TimeGrid
@@ -29,6 +30,7 @@ from ...linalg import (
     MaterializationPolicy,
     PreconditioningPolicy,
     prepare as prepare_linear,
+    PreparedLinearSolve,
     solve as solve_linear,
     TolerancePolicy,
 )
@@ -44,11 +46,17 @@ from ...solver._dae_initialization import _scaled_space
 from ...solver._implicit_stage import ImplicitStageArguments, ImplicitStageResidual
 from ...sparse import (
     compile_sparse_jacobian,
+    EdgeRelation,
+    SparseColoring,
     SparseCoordinateOperator,
     SparseDerivativePlan,
 )
 from ._continuum import PreparedSemiconductorDevice, SemiconductorOperatingPoint
 from ._materials import SemiconductorMaterial
+
+
+# (successful, status, defect, threshold, unscaled defect) for one linear solve.
+_LinearRecord: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 class SemiconductorLinearEvidence(StrictModule):
@@ -125,7 +133,9 @@ def _linear_policy(
     return policy
 
 
-def _stiffness_setup(prepared, flat):
+def _stiffness_setup(
+    prepared: PreparedSemiconductorDevice, flat: Array
+) -> SparseCoordinateOperator:
     """Reuse native graph coloring; never probe an all-state basis."""
     operator = prepared._derivative(flat).operator(flat)
     space = ArraySpace(flat.shape, dtype=flat.dtype)
@@ -134,9 +144,17 @@ def _stiffness_setup(prepared, flat):
     )
 
 
-def _equilibrate_setup(operator):
+def _equilibrate_setup(
+    operator: SparseCoordinateOperator,
+) -> tuple[SparseCoordinateOperator, Array]:
     """Bound each equation's coefficient sum before iterative error control."""
-    rows = operator.relation.target_indices
+    relation = operator.relation
+    # Setup operators reuse a SparseDerivativePlan pattern, which is edge-form.
+    if not (isinstance(relation, EdgeRelation)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(relation, EdgeRelation)."
+        )
+    rows = relation.target_indices
     row_norm = (
         jnp.zeros((operator.target.size,), dtype=jnp.real(operator.coefficients).dtype)
         .at[rows]
@@ -150,12 +168,21 @@ def _equilibrate_setup(operator):
     ), inverse
 
 
-def _operator(action: Callable[[Array], Array], template: Array):
+def _operator(
+    action: Callable[[Array], Array], template: Array
+) -> FunctionLinearOperator:
     space = ArraySpace(template.shape, dtype=template.dtype)
     return FunctionLinearOperator(action, source=space, target=space)
 
 
-def _solve_action(action, rhs, policy, prepared=None, *, row_scale=1):
+def _solve_action(
+    action: Callable[[Array], Array],
+    rhs: Array,
+    policy: LinearSolvePolicy,
+    prepared: PreparedLinearSolve | None = None,
+    *,
+    row_scale: Array | int = 1,
+) -> tuple[Array, Array, Array, Array, Array, Array]:
     scaled_rhs = row_scale * rhs
     if prepared is None:
         operator = _operator(lambda x: row_scale * action(x), rhs)
@@ -177,13 +204,17 @@ def _solve_action(action, rhs, policy, prepared=None, *, row_scale=1):
     return result.value, valid, result.status, defect, threshold, unscaled_defect
 
 
-def _complex_action(real_action, value):
+def _complex_action(real_action: Callable[[Array], Array], value: Array) -> Array:
     # JAX linearizations at real primals require real tangents. Extend linearly,
     # not through a complex perturbation of the semiconductor constitutive laws.
     return real_action(jnp.real(value)) + 1j * real_action(jnp.imag(value))
 
 
-def _point_valid(prepared, point, tolerance):
+def _point_valid(
+    prepared: PreparedSemiconductorDevice,
+    point: SemiconductorOperatingPoint,
+    tolerance: float,
+) -> Array:
     residual = prepared.time_scale * prepared.residual(point.coordinates, point.voltages)
     return (
         jnp.all(point.successful)
@@ -193,7 +224,9 @@ def _point_valid(prepared, point, tolerance):
     )
 
 
-def _evidence(records, point_valid, shape):
+def _evidence(
+    records: Sequence[_LinearRecord], point_valid: Array, shape: tuple[int, ...]
+) -> SemiconductorLinearEvidence:
     valid, status, defects, thresholds, unscaled = (
         jnp.stack(items).reshape(shape) for items in zip(*records, strict=True)
     )
@@ -207,7 +240,7 @@ def _evidence(records, point_valid, shape):
     )
 
 
-def _require_dynamic_charge_storage(prepared):
+def _require_dynamic_charge_storage(prepared: PreparedSemiconductorDevice) -> None:
     if any(
         isinstance(model, SemiconductorMaterial)
         and model.incomplete_ionization is not None
@@ -287,7 +320,7 @@ def semiconductor_small_signal(
     for omega in frequencies:
         columns = []
 
-        def action(x, omega=omega):
+        def action(x: Array, omega: Array = omega) -> Array:
             return _complex_action(stiffness, x) + 1j * omega * _complex_action(
                 storage, x
             )
@@ -418,13 +451,13 @@ def semiconductor_sensitivity(
         LinearSystem(_operator(lambda x: row_scale * stiffness(x), flat)), policy
     )
 
-    def parameter_residual(value):
+    def parameter_residual(value: Array) -> Array:
         device, voltage = builder(value)
         return residual(flat, device, voltage)
 
     _, parameter_action = jax.linearize(parameter_residual, theta)
 
-    def observable_parameters(value):
+    def observable_parameters(value: Array) -> Array:
         device, voltage = builder(value)
         return jnp.asarray(observe(device, u, voltage))
 
@@ -461,7 +494,9 @@ def semiconductor_sensitivity(
     )
 
 
-def _same_topology(left, right):
+def _same_topology(
+    left: PreparedSemiconductorDevice, right: PreparedSemiconductorDevice
+) -> None:
     a, b = left.plan, right.plan
     if (
         a.support.source_topology_id != b.support.source_topology_id
@@ -490,19 +525,19 @@ def _same_topology(left, right):
             )
 
 
-def _storage_coordinates(prepared, u):
+def _storage_coordinates(prepared: PreparedSemiconductorDevice, u: Array) -> Array:
     return prepared.storage_coordinates(u)
 
 
-def _coordinates_from_storage(prepared, z):
+def _coordinates_from_storage(prepared: PreparedSemiconductorDevice, z: Array) -> Array:
     return prepared.coordinates_from_storage(z)
 
 
-def _differential_mask(prepared):
+def _differential_mask(prepared: PreparedSemiconductorDevice) -> Array:
     return prepared.differential_mask.reshape(-1)
 
 
-def _dae_policy(policy, size):
+def _dae_policy(policy: DAESolvePolicy | None, size: int) -> DAESolvePolicy:
     if policy is not None:
         return policy
     method = NewtonKrylov(linear_policy=_linear_policy(None, size))
@@ -526,11 +561,15 @@ def _dae_policy(policy, size):
 class _StageJacobian(StrictModule):
     derivative: SparseDerivativePlan
 
-    def __call__(self, state, args):
+    def __call__(
+        self, state: Array, args: ImplicitStageArguments
+    ) -> SparseCoordinateOperator:
         return self.derivative.operator(state, args)
 
 
-def _dae_stage_method(problem, structure, time):
+def _dae_stage_method(
+    problem: DifferentialAlgebraicProblem, structure: SparseColoring, time: Array
+) -> NewtonKrylov:
     system, initial = problem.system, problem.initial_state
     # Stage unknowns are increments about the reference state; the sparse
     # derivative spaces must be the solver's increment/residual spaces.
@@ -581,7 +620,11 @@ def _dae_stage_method(problem, structure, time):
     )
 
 
-def _dae_problem(prepared, coordinates, voltage_function):
+def _dae_problem(
+    prepared: PreparedSemiconductorDevice,
+    coordinates: Array,
+    voltage_function: Callable[[Array], Array],
+) -> DifferentialAlgebraicProblem:
     shape = coordinates.shape
     mask = _differential_mask(prepared)
     roles = tuple("differential" if value else "algebraic" for value in np.asarray(mask))
@@ -592,7 +635,7 @@ def _dae_problem(prepared, coordinates, voltage_function):
     # roundoff beyond an absolute ni-normalized residual tolerance.
     residual_scale = jnp.where(mask, state_scale, 1)
 
-    def residual(time, state, state_rate, args):
+    def residual(time: Array, state: Array, state_rate: Array, args: object) -> Array:
         del args
         u = _coordinates_from_storage(prepared, state.reshape(shape))
         stored_rate = jnp.where(mask, state_rate, 0).reshape(shape)
@@ -617,7 +660,13 @@ def _dae_problem(prepared, coordinates, voltage_function):
     )
 
 
-def _consistent_rate(prepared, u, volts, voltage_rate, policy):
+def _consistent_rate(
+    prepared: PreparedSemiconductorDevice,
+    u: Array,
+    volts: Array,
+    voltage_rate: Array,
+    policy: LinearSolvePolicy,
+) -> tuple[Array, _LinearRecord]:
     """Recover algebraic rates by differentiating constraints, not setting zero."""
     shape = u.shape
     state = _storage_coordinates(prepared, u).reshape(-1)
@@ -666,7 +715,7 @@ def _consistent_rate(prepared, u, volts, voltage_rate, policy):
     if free_indices.size:
         rhs = -constrained[free_indices]
 
-        def free_direction(direction):
+        def free_direction(direction: Array) -> Array:
             return jnp.zeros_like(rate).at[free_indices].set(direction)
 
         action = lambda direction: stiffness(free_direction(direction))[free_indices]

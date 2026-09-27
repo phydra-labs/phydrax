@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ._regional import _parameter
 
@@ -35,7 +36,7 @@ class NeuralBOLDDrive(StrictModule):
         /,
         *,
         gain: ArrayLike = 1.0,
-    ):
+    ) -> None:
         weights = jnp.asarray(component_weights)
         reference = jnp.asarray(baseline)
         for value in (weights, reference):
@@ -100,7 +101,7 @@ class BalloonWindkessel(StrictModule):
         k1: ArrayLike | None = None,
         k2: ArrayLike = 2.0,
         k3: ArrayLike | None = None,
-    ):
+    ) -> None:
         self.kappa_per_s = _parameter(kappa_per_s, "kappa_per_s", positive=True)
         self.gamma_per_s2 = _parameter(gamma_per_s2, "gamma_per_s2", positive=True)
         self.transit_s = _parameter(transit_s, "transit_s", positive=True)
@@ -164,7 +165,7 @@ class BalloonWindkessel(StrictModule):
         )
 
 
-def balloon_equilibrium(region_count: int, /, *, dtype=None) -> Array:
+def balloon_equilibrium(region_count: int, /, *, dtype: DTypeLike | None = None) -> Array:
     """Resting state s=0, f=v=q=1, exact zero fractional BOLD."""
     if (
         isinstance(region_count, bool)

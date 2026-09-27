@@ -10,13 +10,15 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._context import AstrodynamicsContext
 from ._scalable_gravity import EncounterEvaluation
 from ._status import AstrodynamicsStatus
@@ -123,7 +125,7 @@ class CloseEncounterRegularizationPlan(StrictModule, NonTrainableState):
         maximum_perturbation_ratio: float = 1.0e-2,
         gravitational_constant: float = 1.0,
         gauge_policy: KSGaugePolicy = "largest-component",
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -148,9 +150,9 @@ class CloseEncounterRegularizationPlan(StrictModule, NonTrainableState):
             or values[3] < 0.0
             or values[4] <= 0.0
             or capacity <= 0
-            or gauge_policy not in ("positive-first", "largest-component")
         ):
             raise ValueError("Close-encounter regularization policy is invalid.")
+        gauge_policy = parse(gauge_policy, KSGaugePolicy, "gauge_policy")
         self.encounter_radius = values[0]
         self.collision_radius = values[1]
         self.maximum_fictitious_steps = capacity
@@ -206,7 +208,7 @@ class PreparedCloseEncounterSegment(StrictModule, NonTrainableState):
         encounter: EncounterEvaluation,
         context: AstrodynamicsContext,
         /,
-    ):
+    ) -> None:
         if not isinstance(encounter, EncounterEvaluation):
             raise TypeError("encounter must be an EncounterEvaluation.")
         if not isinstance(context, AstrodynamicsContext):
@@ -228,7 +230,8 @@ class PreparedCloseEncounterSegment(StrictModule, NonTrainableState):
         pair_values = np.asarray(encounter.pair, dtype=np.int64)
         if pair_values.shape != (2,):
             raise ValueError("Encounter pair must contain two particle indices.")
-        pair = tuple(sorted((int(pair_values[0]), int(pair_values[1]))))
+        low, high = sorted((int(pair_values[0]), int(pair_values[1])))
+        pair = (low, high)
         if pair[0] < 0 or pair[1] >= mass.size or pair[0] == pair[1]:
             raise ValueError("Encounter pair is outside particle capacity.")
         displacement = position[:, None, :] - position[None, :, :]
@@ -299,7 +302,9 @@ class PreparedCloseEncounterSegment(StrictModule, NonTrainableState):
             root_mu * duration / radius0,
         )
 
-        def newton_step(carry, _):
+        def newton_step(
+            carry: tuple[Array, Array], _: None
+        ) -> tuple[tuple[Array, Array], Array]:
             chi, converged = carry
             z = alpha * chi * chi
             c, s = _stumpff(z)

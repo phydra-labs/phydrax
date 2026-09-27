@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 from time import perf_counter
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -23,8 +24,10 @@ from phydrax.optim._anchored_target import (
 )
 
 
-def _measure(problem, initial, method, repeats, *, execution="native"):
-    def action(design):
+def _measure(
+    problem: Any, initial: Any, method: Any, repeats: Any, *, execution: Any = "native"
+) -> Any:
+    def action(design: Any) -> Any:
         return solve_anchored_target(problem, design, method=method, execution=execution)
 
     run = eqx.filter_jit(action) if execution == "native" else action
@@ -53,14 +56,14 @@ def _measure(problem, initial, method, repeats, *, execution="native"):
     }
 
 
-def exact_scale(repeats):
+def exact_scale(repeats: Any) -> Any:
     scales = jnp.asarray([1.0e3, 1.0e-3])
 
-    def predictor(design, args):
+    def predictor(design: Any, args: Any) -> Any:
         del args
         return design, jnp.asarray(True), {"response": design}
 
-    def fine(design, args):
+    def fine(design: Any, args: Any) -> Any:
         values, valid, evidence = predictor(design, args)
         return scales * values, valid, evidence
 
@@ -87,12 +90,12 @@ def exact_scale(repeats):
     return report
 
 
-def wrong_model(repeats):
-    def fine(design, args):
+def wrong_model(repeats: Any) -> Any:
+    def fine(design: Any, args: Any) -> Any:
         del args
         return design, jnp.asarray(True), {"design": design}
 
-    def predictor(design, args):
+    def predictor(design: Any, args: Any) -> Any:
         del args
         return -design, jnp.asarray(True), {"design": design}
 
@@ -120,10 +123,10 @@ def wrong_model(repeats):
     return report
 
 
-def coupled_implicit(repeats):
+def coupled_implicit(repeats: Any) -> Any:
     # Both state equations depend on both unknowns; the approximate model is
     # solved, not an independent algebraic response fit.
-    def residual(state, design):
+    def residual(state: Any, design: Any) -> Any:
         return jnp.asarray(
             [
                 state[0] ** 2 + 0.2 * state[1] - design[0],
@@ -131,7 +134,7 @@ def coupled_implicit(repeats):
             ]
         )
 
-    def predictor(design, args):
+    def predictor(design: Any, args: Any) -> Any:
         del args
         state = phx.optim.implicit_least_squares(
             residual,
@@ -146,7 +149,7 @@ def coupled_implicit(repeats):
         defect = jnp.max(jnp.abs(residual(state, design)))
         return state, defect <= 1e-8, {"state": state, "defect": defect}
 
-    def fine(design, args):
+    def fine(design: Any, args: Any) -> Any:
         state, valid, evidence = predictor(design, args)
         return 1.4 * state, valid, evidence
 
@@ -176,7 +179,7 @@ def coupled_implicit(repeats):
     return report
 
 
-def _finite_element_response(cells):
+def _finite_element_response(cells: Any) -> Any:
     """Native P1 FE diffusion-reaction compliance with natural boundaries."""
     coordinates = jnp.linspace(0.0, 1.0, cells + 1)
     vertices = jnp.asarray([(x, y) for y in coordinates for x in coordinates])
@@ -226,7 +229,7 @@ def _finite_element_response(cells):
     load = mass.full_residual(source)
     policy = phx.linalg.LinearSolvePolicy(phx.linalg.DenseLU())
 
-    def evaluate(design, args):
+    def evaluate(design: Any, args: Any) -> Any:
         del args
         matrix = design[0] * stiffness + 0.1 * mass_matrix
         operator = phx.linalg.DenseLinearOperator(matrix)
@@ -248,7 +251,7 @@ def _finite_element_response(cells):
     return evaluate, source.size
 
 
-def fine_fe(repeats, fine_cells, coarse_cells):
+def fine_fe(repeats: Any, fine_cells: Any, coarse_cells: Any) -> Any:
     start = perf_counter()
     fine, fine_dofs = _finite_element_response(fine_cells)
     approximate, approximate_dofs = _finite_element_response(coarse_cells)
@@ -292,11 +295,11 @@ def fine_fe(repeats, fine_cells, coarse_cells):
     return report
 
 
-def host_beam(repeats):
+def host_beam(repeats: Any) -> Any:
     calls = []
     force, length, modulus, width = 100.0, 1.0, 70.0e9, 0.05
 
-    def evaluate(design, args):
+    def evaluate(design: Any, args: Any) -> Any:
         del args
         # Real host-only physical evaluation: float conversion deliberately
         # forbids tracing through this evaluator (as with an external solver).
@@ -310,7 +313,7 @@ def host_beam(repeats):
             {"height": jnp.asarray(height)},
         )
 
-    def approximate(design, args):
+    def approximate(design: Any, args: Any) -> Any:
         del args
         inertia = width * design[0] ** 3 / 12.0
         displacement = force * length**3 / (3.0 * (0.8 * modulus) * inertia)
@@ -348,7 +351,7 @@ def host_beam(repeats):
     return report
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--case",

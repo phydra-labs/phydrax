@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -17,7 +20,9 @@ from phydrax.discretization.spectral._spherical_vector import (
 @pytest.mark.parametrize(
     ("sampling", "execution"), [("mwss", "recursive"), ("gl", "precomputed")]
 )
-def test_tangent_gradient_and_hodge_identities_including_poles(sampling, execution):
+def test_tangent_gradient_and_hodge_identities_including_poles(
+    sampling: Any, execution: Any
+) -> None:
     radius = 2.3
     space = SphericalSpectralPlan(5, sampling=sampling, execution=execution).prepare(
         radius=radius
@@ -52,7 +57,7 @@ def test_tangent_gradient_and_hodge_identities_including_poles(sampling, executi
         np.testing.assert_allclose(cartesian_z[jnp.array([0, -1])], 0.0, atol=2e-11)
 
 
-def test_oblique_solid_rotation_curl_and_helmholtz_inversion():
+def test_oblique_solid_rotation_curl_and_helmholtz_inversion() -> None:
     radius, omega = 1.7, 0.23
     space = SphericalSpectralPlan(5, sampling="mwss").prepare(radius=radius)
     vector = PreparedSphericalVectorOperators(space)
@@ -71,7 +76,7 @@ def test_oblique_solid_rotation_curl_and_helmholtz_inversion():
     np.testing.assert_allclose(reconstructed[1], north, atol=2e-11)
 
 
-def test_batched_channel_last_helmholtz_roundtrip_is_jittable():
+def test_batched_channel_last_helmholtz_roundtrip_is_jittable() -> None:
     space = SphericalSpectralPlan(5).prepare(radius=3.0)
     vector = PreparedSphericalVectorOperators(space)
     theta, phi = jnp.meshgrid(space.transform.theta, space.transform.phi, indexing="ij")
@@ -91,7 +96,7 @@ def test_batched_channel_last_helmholtz_roundtrip_is_jittable():
     np.testing.assert_allclose(vector.curl(*wind), vorticity, atol=2e-11)
 
 
-def test_constant_gradient_and_explicit_wind_null_mode_policy_under_jit():
+def test_constant_gradient_and_explicit_wind_null_mode_policy_under_jit() -> None:
     space = SphericalSpectralPlan(4).prepare()
     vector = PreparedSphericalVectorOperators(space)
     project = PreparedSphericalVectorOperators(space, mean_policy="project")
@@ -108,7 +113,7 @@ def test_constant_gradient_and_explicit_wind_null_mode_policy_under_jit():
     assert project.operator_id != vector.operator_id
 
 
-def test_reality_conjugacy_and_layout_are_enforced_not_silently_repaired():
+def test_reality_conjugacy_and_layout_are_enforced_not_silently_repaired() -> None:
     space = SphericalSpectralPlan(4).prepare()
     vector = PreparedSphericalVectorOperators(space)
     zero = jnp.zeros(space.coefficient_shape, dtype="complex128")
@@ -134,7 +139,7 @@ def test_reality_conjugacy_and_layout_are_enforced_not_silently_repaired():
             PreparedSphericalVectorOperators(incompatible)
 
 
-def test_invalid_padded_capacity_is_inert_for_vector_calculus():
+def test_invalid_padded_capacity_is_inert_for_vector_calculus() -> None:
     space = SphericalSpectralPlan(4).prepare()
     vector = PreparedSphericalVectorOperators(space)
     coefficients = (

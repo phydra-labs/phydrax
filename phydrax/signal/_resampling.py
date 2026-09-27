@@ -10,7 +10,8 @@ from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
@@ -268,7 +269,7 @@ class RationalResamplingPlan(StrictModule, NonTrainableState):
         /,
         *,
         axis: int = -1,
-    ):
+    ) -> None:
         up_factor = _positive_int(up, "up")
         down_factor = _positive_int(down, "down")
         common = gcd(up_factor, down_factor)

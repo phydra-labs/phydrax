@@ -40,7 +40,7 @@ class KernelBinding(StrictModule, NonTrainableState):
         coefficient_layout_ids: Sequence[str],
         precision_id: str,
         ir_semantics_id: str,
-    ):
+    ) -> None:
         identifier = str(kernel_id)
         kind = str(kernel_kind)
         strategy = str(local_kernel)
@@ -100,7 +100,7 @@ class KernelTable(StrictModule, NonTrainableState):
     bindings: tuple[KernelBinding, ...]
     table_id: str = eqx.field(static=True)
 
-    def __init__(self, bindings: Sequence[KernelBinding], /):
+    def __init__(self, bindings: Sequence[KernelBinding], /) -> None:
         bindings_ = tuple(bindings)
         if not bindings_ or not all(
             isinstance(value, KernelBinding) for value in bindings_

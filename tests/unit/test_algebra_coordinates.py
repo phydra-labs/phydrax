@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_complex_and_quaternion_coordinate_maps_preserve_public_values():
+def test_complex_and_quaternion_coordinate_maps_preserve_public_values() -> None:
     complex_algebra = phx.metrix.algebra.ComplexAlgebraSpec()
     complex_coordinates = phx.linalg.AlgebraCoordinatePlan(
         complex_algebra,
@@ -37,7 +37,7 @@ def test_complex_and_quaternion_coordinate_maps_preserve_public_values():
     assert quaternion_coordinates.defect(quaternion_value) == 0.0
 
 
-def test_hermitian_spectral_coordinates_implement_shared_map_without_id_change():
+def test_hermitian_spectral_coordinates_implement_shared_map_without_id_change() -> None:
     space = phx.discretization.TensorSpectralPlan(
         (phx.discretization.FourierBasisPlan(8),),
         axis_names=("x",),
@@ -56,7 +56,9 @@ def test_hermitian_spectral_coordinates_implement_shared_map_without_id_change()
     assert jnp.allclose(coordinates.from_real_coordinates(real), state, atol=1e-12)
 
 
-def test_real_operator_lifts_componentwise_and_complexifies_without_materialization():
+def test_real_operator_lifts_componentwise_and_complexifies_without_materialization() -> (
+    None
+):
     source = phx.linalg.ArraySpace((2,), dtype=jnp.float64)
     matrix = jnp.asarray([[2.0, -1.0], [0.5, 3.0]])
     operator = phx.linalg.DenseLinearOperator(matrix, source=source, target=source)
@@ -74,7 +76,7 @@ def test_real_operator_lifts_componentwise_and_complexifies_without_materializat
     assert jnp.allclose(complexified(complex_value), matrix @ complex_value)
 
 
-def test_cochain_hodge_uses_shared_complexified_real_action():
+def test_cochain_hodge_uses_shared_complexified_real_action() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(2),),
         axis_names=("x",),

@@ -3,16 +3,19 @@
 #
 
 from collections.abc import Callable, Sequence
+from typing import Literal
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Bool, Float, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._doc import DOC_KEY0
 from ..._sampling import host_design_factory, seed_from_key
-from .._base import EnforcementGateMethod
+from ...typing import AnyShape, Bool, Float, PRNGKey, Scalar
+from .._base import _PointDim, EnforcementGateMethod
 from ._base import _AbstractGeometry1D
 
 
@@ -42,7 +45,7 @@ class Interval1d(_AbstractGeometry1D):
         end: ArrayLike,
         *,
         label: str = "x",
-    ):
+    ) -> None:
         start_arr = jnp.asarray(start, dtype=jnp.float64).reshape(())
         end_arr = jnp.asarray(end, dtype=jnp.float64).reshape(())
         if bool(start_arr >= end_arr):
@@ -89,7 +92,7 @@ class Interval1d(_AbstractGeometry1D):
         return self.end - self.start
 
     @property
-    def bounds(self) -> Float[Array, "2 1"]:
+    def bounds(self) -> Float[Literal[2], Literal[1]]:
         return jnp.array([[self.start], [self.end]], dtype=jnp.float64)
 
     def _same_factor_support(self, other: object, /) -> bool:
@@ -115,11 +118,16 @@ class Interval1d(_AbstractGeometry1D):
         *,
         where: Callable | None = None,
         sampler: str = "latin_hypercube",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         where = where or (lambda _: True)
 
-        def _sample_interior_host(num_points, sampler, where, key):
+        def _sample_interior_host(
+            num_points: int,
+            sampler: str,
+            where: Callable[[Array], ArrayLike],
+            key: ArrayLike,
+        ) -> np.ndarray:
             rng = np.random.default_rng(seed_from_key(key))
             sampler_fn = host_design_factory(sampler, dimension=1, seed=rng)
             sampled_points = np.empty((0, 1), dtype=np.float64)
@@ -129,11 +137,10 @@ class Interval1d(_AbstractGeometry1D):
 
                 samples = jnp.asarray(sampler_fn(remaining_points), dtype=jnp.float64)
 
-                if where:
-                    # Map samples in [0,1] to [start,end] before applying `where`.
-                    pts = samples * (self.end - self.start) + self.start
-                    inside = jax.vmap(where)(pts)
-                    samples = samples[inside]
+                # Map samples in [0,1] to [start,end] before applying `where`.
+                pts = samples * (self.end - self.start) + self.start
+                inside = jax.vmap(where)(pts)
+                samples = samples[inside]
 
                 sampled_points = np.vstack((sampled_points, np.asarray(samples)))
 
@@ -160,8 +167,8 @@ class Interval1d(_AbstractGeometry1D):
         *,
         sampler: str = "latin_hypercube",
         where: Callable | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
-    ) -> tuple[tuple[Array, ...], Bool[Array, "..."]]:
+        key: PRNGKey = DOC_KEY0,
+    ) -> tuple[tuple[Array, ...], Bool[AnyShape]]:
         if isinstance(num_points, int):
             num_points_ = num_points
         else:
@@ -189,11 +196,16 @@ class Interval1d(_AbstractGeometry1D):
         *,
         where: Callable | None = None,
         sampler: str = "latin_hypercube",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         where = where or (lambda _: True)
 
-        def _sample_boundary_host(num_points, sampler, where, key):
+        def _sample_boundary_host(
+            num_points: int,
+            sampler: str,
+            where: Callable[[Array], ArrayLike],
+            key: ArrayLike,
+        ) -> np.ndarray:
             rng = np.random.default_rng(seed_from_key(key))
             sampled_points = np.empty((0, 1), dtype=np.float64)
 
@@ -204,11 +216,10 @@ class Interval1d(_AbstractGeometry1D):
 
                 sampled_points_batch = rng.choice(choices, size=(remaining_points, 1))
 
-                if where:
-                    pts = jnp.asarray(sampled_points_batch, dtype=jnp.float64)
-                    inside = jax.vmap(where)(pts)
-                    pts = pts[inside]
-                    sampled_points_batch = np.asarray(pts, dtype=np.float64)
+                pts = jnp.asarray(sampled_points_batch, dtype=jnp.float64)
+                inside = jax.vmap(where)(pts)
+                pts = pts[inside]
+                sampled_points_batch = np.asarray(pts, dtype=np.float64)
 
                 sampled_points = np.vstack((sampled_points, sampled_points_batch))
 
@@ -228,7 +239,7 @@ class Interval1d(_AbstractGeometry1D):
         )
         return sampled_points
 
-    def _contains(self, points: Array) -> Bool[Array, " num_points"]:
+    def _contains(self, points: Array) -> Bool[_PointDim]:
         pts = jnp.asarray(points, dtype=jnp.float64)
         a = self.start
         b = self.end
@@ -237,14 +248,14 @@ class Interval1d(_AbstractGeometry1D):
         on_boundary = jnp.isclose(pts_, a) | jnp.isclose(pts_, b)
         return inside | on_boundary
 
-    def _on_boundary(self, points: Array) -> Bool[Array, " num_points"]:
+    def _on_boundary(self, points: Array) -> Bool[_PointDim]:
         pts = jnp.asarray(points, dtype=jnp.float64)
         a = self.start
         b = self.end
         pts_ = pts[:, 0] if (pts.ndim == 2 and pts.shape[1] == 1) else jnp.squeeze(pts)
         return jnp.isclose(pts_, a) | jnp.isclose(pts_, b)
 
-    def _boundary_normals(self, points: Array) -> Float[Array, "num_points 1"]:
+    def _boundary_normals(self, points: Array) -> Float[_PointDim, Literal[1]]:
         pts = jnp.asarray(points, dtype=jnp.float64)
         a = self.start
         b = self.end
@@ -281,10 +292,10 @@ class Interval1d(_AbstractGeometry1D):
 
     def estimate_boundary_subset_measure(
         self,
-        where: Callable[[Array], Bool[Array, ""]],
+        where: Callable[[Array], Bool[Scalar]],
         *,
         num_samples: int = 4096,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         """Estimate subset measure of the 1D boundary endpoints.
 

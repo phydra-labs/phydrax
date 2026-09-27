@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -20,12 +23,12 @@ from phydrax._interpolation import (
 )
 
 
-def _open_grid(degree, interior):
+def _open_grid(degree: Any, interior: Any) -> Any:
     knots = jnp.asarray([*([-1.0] * (degree + 1)), *interior, *([1.0] * (degree + 1))])
     return BSplineGrid(knots, degree)
 
 
-def _span_quadrature(*grids, order=8):
+def _span_quadrature(*grids: Any, order: Any = 8) -> Any:
     reference_points, reference_weights = np.polynomial.legendre.leggauss(order)
     breakpoints = np.unique(
         np.concatenate(tuple(np.asarray(grid.breakpoints) for grid in grids))
@@ -40,7 +43,7 @@ def _span_quadrature(*grids, order=8):
     return np.asarray(points), np.asarray(weights)
 
 
-def test_mass_and_cross_gram_match_scipy_basis_matrices():
+def test_mass_and_cross_gram_match_scipy_basis_matrices() -> None:
     old_grid = _open_grid(3, [-0.72, -0.1, -0.1, 0.63])
     new_grid = _open_grid(2, [-0.85, -0.25, 0.4, 0.78])
     points, weights = _span_quadrature(old_grid, new_grid)
@@ -65,7 +68,7 @@ def test_mass_and_cross_gram_match_scipy_basis_matrices():
 
 
 @pytest.mark.parametrize("degree", range(1, 6))
-def test_exact_nested_knot_insertion_preserves_functions(degree):
+def test_exact_nested_knot_insertion_preserves_functions(degree: Any) -> None:
     old_grid = BSplineGrid.open_uniform(degree, 4)
     inserted = jnp.asarray([-0.73, -0.25, -0.25, 0.41])
     new_grid = BSplineGrid(jnp.sort(jnp.concatenate((old_grid.knots, inserted))), degree)
@@ -107,7 +110,7 @@ def test_exact_nested_knot_insertion_preserves_functions(degree):
     )
 
 
-def test_l2_projection_preserves_global_affine_functions():
+def test_l2_projection_preserves_global_affine_functions() -> None:
     old_grid = _open_grid(3, [-0.75, -0.22, 0.48])
     new_grid = _open_grid(3, [-0.88, -0.41, 0.05, 0.67])
     transfer = BSplineGridTransfer(old_grid, new_grid)
@@ -124,7 +127,7 @@ def test_l2_projection_preserves_global_affine_functions():
     )
 
 
-def test_l2_projection_error_bound_controls_observed_l2_error():
+def test_l2_projection_error_bound_controls_observed_l2_error() -> None:
     old_grid = _open_grid(3, [-0.76, -0.28, 0.46])
     new_grid = _open_grid(3, [-0.9, -0.52, 0.14, 0.72])
     transfer = BSplineGridTransfer(old_grid, new_grid)
@@ -143,7 +146,7 @@ def test_l2_projection_error_bound_controls_observed_l2_error():
     assert float(observed_error) <= float(certified_error) + 2e-11
 
 
-def test_transfer_is_jittable_and_has_the_expected_linear_gradient():
+def test_transfer_is_jittable_and_has_the_expected_linear_gradient() -> None:
     old_grid = BSplineGrid.open_uniform(3, 5)
     new_grid = _open_grid(3, [-0.81, -0.3, 0.19, 0.58])
     transfer = BSplineGridTransfer(old_grid, new_grid)
@@ -157,7 +160,7 @@ def test_transfer_is_jittable_and_has_the_expected_linear_gradient():
     assert np.allclose(np.asarray(gradient), np.asarray(expected_gradient), atol=2e-12)
 
 
-def test_projection_failures_are_explicit():
+def test_projection_failures_are_explicit() -> None:
     old_grid = BSplineGrid.open_uniform(3, 4)
     shifted_grid = BSplineGrid.open_uniform(3, 4, interval=(0.0, 2.0))
     nonnested_grid = _open_grid(3, [-0.8, -0.1, 0.55])

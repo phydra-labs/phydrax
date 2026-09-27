@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 
 from phydrax.atomistic.interchange._structure_records import (
@@ -7,14 +9,22 @@ from phydrax.atomistic.interchange._structure_records import (
 from phydrax.units import ANGSTROM
 
 
-def _atom(serial, *, name="CA", alt="", occupancy=1.0, insertion="A", x=1.0):
+def _atom(
+    serial: Any,
+    *,
+    name: Any = "CA",
+    alt: Any = "",
+    occupancy: Any = 1.0,
+    insertion: Any = "A",
+    x: Any = 1.0,
+) -> Any:
     return (
         f"ATOM  {serial:5d} {name:>4s}{alt:1s}ALA B{17:4d}{insertion:1s}   "
         f"{x:8.3f}{2.0:8.3f}{3.0:8.3f}{occupancy:6.2f}{15.0:6.2f}          {'C':>2s}  "
     )
 
 
-def test_models_author_insertions_and_alternate_coordinates_are_retained():
+def test_models_author_insertions_and_alternate_coordinates_are_retained() -> None:
     lines = [
         "MODEL        1",
         _atom(1, alt="A", occupancy=0.6),
@@ -41,7 +51,7 @@ def test_models_author_insertions_and_alternate_coordinates_are_retained():
     assert second[0].position == (4.0, 2.0, 3.0)
 
 
-def test_incomplete_elements_zero_occupancy_and_duplicate_serials_refuse():
+def test_incomplete_elements_zero_occupancy_and_duplicate_serials_refuse() -> None:
     with pytest.raises(ValueError, match="element"):
         read_pdb_atom_records(_atom(1)[:76], source_id="bad-source")
     with pytest.raises(ValueError, match="repeated atom serial"):

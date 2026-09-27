@@ -45,7 +45,7 @@ class PreparedMolecularElectronicSector(StrictModule, NonTrainableState):
         plan: MolecularElectronicSectorPlan,
         system: AtomisticSystemPlan,
         /,
-    ):
+    ) -> None:
         active = np.asarray(system.active_mask, dtype=np.bool_)
         elements = np.asarray(system.element_mask, dtype=np.bool_)
         numbers = np.asarray(system.atomic_numbers, dtype=np.int64)
@@ -101,7 +101,7 @@ class MolecularElectronicSectorPlan(StrictModule, NonTrainableState):
         total_charge: int,
         spin_multiplicity: int,
         /,
-    ):
+    ) -> None:
         charge = _integer(total_charge, "total_charge")
         multiplicity = _integer(spin_multiplicity, "spin_multiplicity", minimum=1)
         self.total_charge = charge
@@ -129,7 +129,7 @@ class PreparedPeriodicElectronicSector(StrictModule, NonTrainableState):
     """Periodic electron/spin population sector bound to one atomistic system."""
 
     total_charge: float = eqx.field(static=True)
-    spin_multiplicity: float | None = eqx.field(static=True)
+    spin_multiplicity: float = eqx.field(static=True)
     electron_count: float = eqx.field(static=True)
     alpha_electron_count: float = eqx.field(static=True)
     beta_electron_count: float = eqx.field(static=True)
@@ -145,7 +145,7 @@ class PreparedPeriodicElectronicSector(StrictModule, NonTrainableState):
         plan: "PeriodicElectronicSectorPlan",
         system: AtomisticSystemPlan,
         /,
-    ):
+    ) -> None:
         if system.cell is None or not any(system.cell.periodic_axes):
             raise ValueError(
                 "PeriodicElectronicSectorPlan requires a periodic atomistic system."
@@ -196,7 +196,7 @@ class PeriodicElectronicSectorPlan(StrictModule, NonTrainableState):
         spin_magnetization: float = 0.0,
         charge_per_cell: float = 0.0,
         background_policy: str = "forbid-charged-cell",
-    ):
+    ) -> None:
         electrons = float(electron_count)
         magnetization = float(spin_magnetization)
         charge = float(charge_per_cell)

@@ -13,7 +13,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -39,8 +40,14 @@ class AlchemicalSwitchingLineage(StrictModule, NonTrainableState):
     lineage_id: str = eqx.field(static=True)
 
     def __init__(
-        self, origin_ids, chain_ids, draw_indices, repeat_ids, dependence_ids, /
-    ):
+        self,
+        origin_ids: ArrayLike,
+        chain_ids: ArrayLike,
+        draw_indices: ArrayLike,
+        repeat_ids: ArrayLike,
+        dependence_ids: ArrayLike,
+        /,
+    ) -> None:
         arrays = tuple(
             np.asarray(value)
             for value in (
@@ -149,7 +156,7 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
         protocol_time: float,
         sample_count: int,
         /,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedAtomisticDynamics):
             raise TypeError("dynamics must be PreparedAtomisticDynamics.")
         if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
@@ -411,7 +418,7 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
             "run": run,
             "qualification": self.qualification.qualification_id,
             "sampling_exact": self.qualification.sampling_exact,
-            "inverse_temperature": self.inverse_temperature.hex(),
+            "inverse_temperature": float(self.inverse_temperature).hex(),
             "sampling_bias_bound": self.qualification.sampling_bias_bound,
         }
         successful = bool(

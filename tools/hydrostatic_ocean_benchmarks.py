@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -16,7 +17,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _model(shape, *, mode, partial, nonlinear, closure):
+def _model(shape: Any, *, mode: Any, partial: Any, nonlinear: Any, closure: Any) -> Any:
     nx, ny, nz = shape
     grid = phx.discretization.TensorGridPlan(
         (
@@ -51,7 +52,9 @@ def _model(shape, *, mode, partial, nonlinear, closure):
     return ocean, method, continuation
 
 
-def _measure(shape, repeats, *, mode, partial, nonlinear, closure):
+def _measure(
+    shape: Any, repeats: Any, *, mode: Any, partial: Any, nonlinear: Any, closure: Any
+) -> Any:
     ocean, method, state = _model(
         shape,
         mode=mode,
@@ -98,7 +101,7 @@ def _measure(shape, repeats, *, mode, partial, nonlinear, closure):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--shape", default="8,8,4")
     parser.add_argument("--repeats", type=int, default=3)

@@ -10,7 +10,8 @@ from typing import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -134,7 +135,7 @@ class RationalSplineJet(StrictModule):
     jets: Array
     denominator_jets: Array
 
-    def __init__(self, plan: TensorBSplineJetPlan, weights: ArrayLike, /):
+    def __init__(self, plan: TensorBSplineJetPlan, weights: ArrayLike, /) -> None:
         if not isinstance(plan, TensorBSplineJetPlan):
             raise TypeError("RationalSplineJet requires a TensorBSplineJetPlan.")
         weights_ = jnp.asarray(weights)

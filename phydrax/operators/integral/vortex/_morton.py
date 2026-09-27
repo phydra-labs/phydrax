@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -50,7 +51,7 @@ class VortexMortonHierarchyPlan(StrictModule, NonTrainableState):
         *,
         bits_per_axis: int = 10,
         maximum_cell_occupancy: int = 64,
-    ):
+    ) -> None:
         lower_, upper_ = (
             jnp.asarray(lower, dtype=jnp.float64),
             jnp.asarray(upper, dtype=jnp.float64),

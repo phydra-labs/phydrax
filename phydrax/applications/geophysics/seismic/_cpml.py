@@ -9,7 +9,8 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -42,7 +43,7 @@ class CartesianCPML(StrictModule, NonTrainableState):
         polynomial_order: int = 3,
         maximum_kappa: float = 5.0,
         alpha_maximum_Hz: float = 0.0,
-    ):
+    ) -> None:
         if len(widths) != grid.dimensions or any(
             len(value) != 2
             or value[0] < 0
@@ -157,7 +158,7 @@ class TractionFreeBoundary(StrictModule, NonTrainableState):
         normal_axis: int,
         side: Literal["lower", "upper"],
         /,
-    ):
+    ) -> None:
         dimension_, axis = int(dimension), int(normal_axis)
         if (
             dimension_ not in (2, 3)
@@ -201,7 +202,7 @@ class CPMLVariableDensityAcousticPlan(StrictModule, NonTrainableState):
         *,
         free_surface_axis: int | None = None,
         free_surface_side: Literal["lower", "upper"] | None = None,
-    ):
+    ) -> None:
         if not isinstance(acoustic, VariableDensityAcousticPlan) or not isinstance(
             cpml, CartesianCPML
         ):

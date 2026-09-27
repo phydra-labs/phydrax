@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -13,17 +16,17 @@ import phydrax.axes as cx
 from tools import polynomial_chaos_benchmarks as pce_benchmarks
 
 
-def _factors():
+def _factors() -> Any:
     uniform = phx.domain.ProbabilityDomain(phx.uq.Uniform(2.0, 6.0), label="conductivity")
     normal = phx.domain.ProbabilityDomain(phx.uq.Normal(-1.5, 2.5), label="forcing")
     return uniform, normal
 
 
-def _basis(degree=3):
+def _basis(degree: Any = 3) -> Any:
     return phx.uq.PolynomialChaosBasis(_factors(), degree)
 
 
-def _projection_plan(basis, order=5, **kwargs):
+def _projection_plan(basis: Any, order: Any = 5, **kwargs: Any) -> Any:
     return phx.uq.PolynomialChaosProjectionPlan(
         basis,
         phx.integration.ProductIntegrationPlan(
@@ -40,7 +43,9 @@ def _projection_plan(basis, order=5, **kwargs):
     )
 
 
-def test_total_degree_multiindices_are_graded_deterministic_and_content_addressed():
+def test_total_degree_multiindices_are_graded_deterministic_and_content_addressed() -> (
+    None
+):
     indices = phx.uq.PolynomialMultiIndexSet(2, 3)
     repeated = phx.uq.PolynomialMultiIndexSet(2, 3)
 
@@ -66,7 +71,7 @@ def test_total_degree_multiindices_are_graded_deterministic_and_content_addresse
     assert indices.storage_bytes == indices.indices.size * indices.indices.dtype.itemsize
 
 
-def test_degree_zero_is_a_valid_constant_basis_and_regression():
+def test_degree_zero_is_a_valid_constant_basis_and_regression() -> None:
     factor = phx.domain.ProbabilityDomain(phx.uq.Uniform(-4.0, 8.0), label="x")
     basis = phx.uq.PolynomialChaosBasis(factor, 0)
     values = basis.evaluate(jnp.asarray([[-4.0], [2.0], [8.0]]))
@@ -82,7 +87,7 @@ def test_degree_zero_is_a_valid_constant_basis_and_regression():
     assert jnp.allclose(fit.expansion.total_order_sobol["x"], 0.0)
 
 
-def test_basis_identity_and_modes_preserve_factor_labels_and_order():
+def test_basis_identity_and_modes_preserve_factor_labels_and_order() -> None:
     factors = _factors()
     forward = phx.uq.PolynomialChaosBasis(factors, 1)
     reversed_basis = phx.uq.PolynomialChaosBasis(tuple(reversed(factors)), 1)
@@ -100,7 +105,7 @@ def test_basis_identity_and_modes_preserve_factor_labels_and_order():
     )
 
 
-def test_basis_is_orthonormal_for_nonstandard_uniform_and_normal_laws():
+def test_basis_is_orthonormal_for_nonstandard_uniform_and_normal_laws() -> None:
     basis = _basis(3)
     legendre = phx.integration.GaussLegendreRule(8).data()
     hermite = phx.integration.GaussHermiteRule(8).data()
@@ -123,7 +128,7 @@ def test_basis_is_orthonormal_for_nonstandard_uniform_and_normal_laws():
     assert jnp.allclose(point[:3], jnp.asarray([1.0, 0.0, 0.0]))
 
 
-def test_high_degree_normalized_hermite_modes_do_not_form_factorials():
+def test_high_degree_normalized_hermite_modes_do_not_form_factorials() -> None:
     factor = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="x")
     basis = phx.uq.PolynomialChaosBasis(factor, 171)
     values = basis.evaluate({"x": jnp.asarray([0.0, 0.5])})
@@ -132,7 +137,7 @@ def test_high_degree_normalized_hermite_modes_do_not_form_factorials():
     assert jnp.all(jnp.isfinite(values))
 
 
-def test_sparse_gauss_hermite_product_honors_reference_measure_and_level():
+def test_sparse_gauss_hermite_product_honors_reference_measure_and_level() -> None:
     factor = phx.domain.ProbabilityDomain(phx.uq.Normal(2.0, 3.0), label="x")
     basis = phx.uq.PolynomialChaosBasis(factor, 2)
     plan = phx.uq.PolynomialChaosProjectionPlan(
@@ -156,8 +161,8 @@ def test_sparse_gauss_hermite_product_honors_reference_measure_and_level():
 
 
 def test_sparse_gauss_hermite_rejects_uniform_before_rule_materialization(
-    monkeypatch,
-):
+    monkeypatch: Any,
+) -> None:
     factor = phx.domain.ProbabilityDomain(phx.uq.Uniform(-1.0, 1.0), label="x")
     basis = phx.uq.PolynomialChaosBasis(factor, 0)
     integration_plan = phx.integration.ProductIntegrationPlan(
@@ -171,7 +176,7 @@ def test_sparse_gauss_hermite_rejects_uniform_before_rule_materialization(
     )
     materialized = False
 
-    def forbidden_rule(*args, **kwargs):
+    def forbidden_rule(*args: Any, **kwargs: Any) -> None:
         del args, kwargs
         nonlocal materialized
         materialized = True
@@ -189,7 +194,7 @@ def test_sparse_gauss_hermite_rejects_uniform_before_rule_materialization(
     assert not materialized
 
 
-def test_regression_recovers_exact_span_and_reports_out_of_span_residual():
+def test_regression_recovers_exact_span_and_reports_out_of_span_residual() -> None:
     basis = _basis(2)
     uniform = jnp.linspace(2.1, 5.9, 5)
     normal = jnp.asarray([-4.0, -2.5, -1.0, 0.5, 2.0])
@@ -212,7 +217,7 @@ def test_regression_recovers_exact_span_and_reports_out_of_span_residual():
     assert float(misspecified.residual_norm) > 1e-4
 
 
-def test_weighted_square_regression_uses_least_squares_and_honors_rank():
+def test_weighted_square_regression_uses_least_squares_and_honors_rank() -> None:
     factor = phx.domain.ProbabilityDomain(phx.uq.Uniform(-1.0, 1.0), label="x")
     basis = phx.uq.PolynomialChaosBasis(factor, 2)
     points = jnp.asarray([[-1.0], [0.0], [1.0]])
@@ -232,10 +237,10 @@ def test_weighted_square_regression_uses_least_squares_and_honors_rank():
         )
 
 
-def test_projection_and_regression_match_for_an_exact_mixed_span():
+def test_projection_and_regression_match_for_an_exact_mixed_span() -> None:
     basis = _basis(3)
 
-    def model(conductivity, forcing):
+    def model(conductivity: Any, forcing: Any) -> Any:
         x = (conductivity - 4.0) / 2.0
         z = (forcing + 1.5) / 2.5
         return 2.0 + x - 0.5 * z + 0.75 * x * z + 0.2 * z**3
@@ -259,7 +264,7 @@ def test_projection_and_regression_match_for_an_exact_mixed_span():
     )
 
 
-def test_pytree_and_field_outputs_preserve_structure_and_physical_axes():
+def test_pytree_and_field_outputs_preserve_structure_and_physical_axes() -> None:
     basis = _basis(2)
     first, second = jnp.meshgrid(
         jnp.asarray([2.0, 4.0, 6.0]),
@@ -292,10 +297,10 @@ def test_pytree_and_field_outputs_preserve_structure_and_physical_axes():
     assert aligned["field"].dims == ("draw", "channel")
 
 
-def test_projection_supports_pytree_and_field_model_outputs():
+def test_projection_supports_pytree_and_field_model_outputs() -> None:
     basis = _basis(1)
 
-    def model(conductivity, forcing):
+    def model(conductivity: Any, forcing: Any) -> Any:
         value = conductivity + forcing
         return {
             "scalar": value,
@@ -315,7 +320,7 @@ def test_projection_supports_pytree_and_field_model_outputs():
     assert jnp.allclose(evaluated["field"].data, jnp.asarray([2.5, 5.5]))
 
 
-def test_coefficient_moments_and_sobol_effects_are_analytic_and_axis_preserving():
+def test_coefficient_moments_and_sobol_effects_are_analytic_and_axis_preserving() -> None:
     basis = _basis(2)
     coefficients = jnp.zeros((basis.feature_count, 2))
     coefficients = coefficients.at[0].set(jnp.asarray([3.0, -2.0]))
@@ -351,7 +356,7 @@ def test_coefficient_moments_and_sobol_effects_are_analytic_and_axis_preserving(
     )
 
 
-def test_rank_deficiency_and_nonfinite_inputs_fail_without_repair():
+def test_rank_deficiency_and_nonfinite_inputs_fail_without_repair() -> None:
     factor = phx.domain.ProbabilityDomain(phx.uq.Uniform(-1.0, 1.0), label="x")
     basis = phx.uq.PolynomialChaosBasis(factor, 2)
     plan = phx.uq.PolynomialChaosRegressionPlan(basis)
@@ -370,7 +375,7 @@ def test_rank_deficiency_and_nonfinite_inputs_fail_without_repair():
         )
 
 
-def test_explicit_native_svd_policy_can_select_rank_deficient_pseudoinverse():
+def test_explicit_native_svd_policy_can_select_rank_deficient_pseudoinverse() -> None:
     factor = phx.domain.ProbabilityDomain(phx.uq.Uniform(-1.0, 1.0), label="x")
     basis = phx.uq.PolynomialChaosBasis(factor, 2)
     selected_policy = phx.linalg.LinearSolvePolicy(
@@ -386,17 +391,20 @@ def test_explicit_native_svd_policy_can_select_rank_deficient_pseudoinverse():
     assert result.provenance["linear_methods"] == ("dense-svd",)
 
 
-def test_unsupported_or_nonindependent_laws_are_rejected_during_basis_construction():
+def test_unsupported_or_nonindependent_laws_are_rejected_during_basis_construction() -> (
+    None
+):
     lognormal = phx.domain.ProbabilityDomain(phx.uq.LogNormal(0.0, 0.5), label="positive")
     first, second = _factors()
 
     with pytest.raises(TypeError, match="Uniform.*Normal"):
         phx.uq.PolynomialChaosBasis(lognormal, 2)
     with pytest.raises(TypeError, match="independent scalar"):
+        # ty: ignore[invalid-argument-type]
         phx.uq.PolynomialChaosBasis((first, phx.domain.ProductDomain(first, second)), 2)
 
 
-def test_plan_identities_include_full_quadrature_and_solver_policies():
+def test_plan_identities_include_full_quadrature_and_solver_policies() -> None:
     basis = _basis(2)
     low_order = _projection_plan(basis, order=3)
     high_order = _projection_plan(basis, order=5)
@@ -414,8 +422,8 @@ def test_plan_identities_include_full_quadrature_and_solver_policies():
 
 
 def test_huge_sparse_plan_preflight_saturates_before_lower_set_materialization(
-    monkeypatch,
-):
+    monkeypatch: Any,
+) -> None:
     factor = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="x")
     basis = phx.uq.PolynomialChaosBasis(factor, 0)
     integration_plan = phx.integration.ProductIntegrationPlan(
@@ -429,7 +437,7 @@ def test_huge_sparse_plan_preflight_saturates_before_lower_set_materialization(
     )
     materialized = False
 
-    def forbidden_materialization(*args, **kwargs):
+    def forbidden_materialization(*args: Any, **kwargs: Any) -> None:
         del args, kwargs
         nonlocal materialized
         materialized = True
@@ -449,8 +457,8 @@ def test_huge_sparse_plan_preflight_saturates_before_lower_set_materialization(
 
 
 def test_feature_storage_evaluation_and_design_capacity_guards_fail_closed(
-    monkeypatch,
-):
+    monkeypatch: Any,
+) -> None:
     with pytest.raises(ValueError, match="maximum_features"):
         phx.uq.PolynomialMultiIndexSet(8, 8, maximum_features=100)
     with pytest.raises(ValueError, match="maximum_storage_bytes"):
@@ -458,7 +466,7 @@ def test_feature_storage_evaluation_and_design_capacity_guards_fail_closed(
 
     materialized = False
 
-    def forbidden_materialization(*args, **kwargs):
+    def forbidden_materialization(*args: Any, **kwargs: Any) -> None:
         del args, kwargs
         nonlocal materialized
         materialized = True
@@ -490,7 +498,7 @@ def test_feature_storage_evaluation_and_design_capacity_guards_fail_closed(
         )
 
 
-def test_projection_honors_evaluation_accumulation_and_output_precision():
+def test_projection_honors_evaluation_accumulation_and_output_precision() -> None:
     basis = _basis(0)
     precision = phx.integration.IntegrationPrecisionPolicy(
         evaluation_dtype=jnp.float32,
@@ -528,7 +536,7 @@ def test_projection_honors_evaluation_accumulation_and_output_precision():
         phx.uq.PolynomialChaosExpansion(basis, jnp.asarray([jnp.inf]))
 
 
-def test_projection_rejects_nonfinite_accumulation_contractions(monkeypatch):
+def test_projection_rejects_nonfinite_accumulation_contractions(monkeypatch: Any) -> None:
     factor = phx.domain.ProbabilityDomain(phx.uq.Uniform(-1.0, 1.0), label="x")
     basis = phx.uq.PolynomialChaosBasis(factor, 1)
     plan = phx.uq.PolynomialChaosProjectionPlan(
@@ -542,7 +550,7 @@ def test_projection_rejects_nonfinite_accumulation_contractions(monkeypatch):
         ),
     )
 
-    def nonfinite_contraction(weights, basis_values, values):
+    def nonfinite_contraction(weights: Any, basis_values: Any, values: Any) -> Any:
         del weights
         return jnp.full(
             (basis_values.shape[1],) + values.shape[1:],
@@ -557,7 +565,9 @@ def test_projection_rejects_nonfinite_accumulation_contractions(monkeypatch):
         plan.fit(lambda value: value)
 
 
-def test_expansion_is_jittable_differentiable_and_preserves_coefficient_precision():
+def test_expansion_is_jittable_differentiable_and_preserves_coefficient_precision() -> (
+    None
+):
     factor = phx.domain.ProbabilityDomain(phx.uq.Normal(1.0, 2.0), label="x")
     basis = phx.uq.PolynomialChaosBasis(factor, 2)
     coefficients = jnp.asarray([1.0, -0.5, 0.25], dtype=jnp.float64)
@@ -574,8 +584,8 @@ def test_expansion_is_jittable_differentiable_and_preserves_coefficient_precisio
 
 
 def test_benchmark_times_and_blocks_design_materialization_symmetrically(
-    monkeypatch,
-):
+    monkeypatch: Any,
+) -> None:
     factor = phx.domain.ProbabilityDomain(phx.uq.Uniform(-1.0, 1.0), label="x")
     scenario = pce_benchmarks._Scenario(
         "timing-contract",
@@ -594,20 +604,20 @@ def test_benchmark_times_and_blocks_design_materialization_symmetrically(
     block_clocks = []
     original_block = pce_benchmarks.jax.block_until_ready
 
-    def checked_block(value):
+    def checked_block(value: Any) -> Any:
         block_clocks.append(clock_calls)
         return original_block(value)
 
-    def clock():
+    def clock() -> Any:
         nonlocal clock_calls
         clock_calls += 1
         return float(clock_calls)
 
-    def checked_projection_plan(*args, **kwargs):
+    def checked_projection_plan(*args: Any, **kwargs: Any) -> Any:
         assert clock_calls == 1
         return original_projection_plan(*args, **kwargs)
 
-    def checked_samples(*args, **kwargs):
+    def checked_samples(*args: Any, **kwargs: Any) -> Any:
         assert clock_calls in (3, 5, 7)
         return original_samples(*args, **kwargs)
 
@@ -628,7 +638,7 @@ def test_benchmark_times_and_blocks_design_materialization_symmetrically(
     assert set(block_clocks) == {1, 3, 5, 7}
 
 
-def test_polynomial_chaos_fit_result_is_portably_exported(tmp_path):
+def test_polynomial_chaos_fit_result_is_portably_exported(tmp_path: Any) -> None:
     basis = _basis(1)
     points = jnp.asarray([[2.0, -2.0], [3.0, -1.0], [5.0, 0.0], [6.0, 1.0]])
     result = phx.uq.PolynomialChaosRegressionPlan(basis).fit(

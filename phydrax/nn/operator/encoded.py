@@ -7,7 +7,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import Any
 
-from jaxtyping import Array
+from jax import Array
 
 from ..._doc import DOC_KEY0
 from .._keys import EvalKey

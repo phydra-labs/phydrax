@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias, TypeVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import (
     array_tree_fingerprint,
@@ -22,6 +23,12 @@ from .._fingerprint import (
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
+
+
+if TYPE_CHECKING:
+    from ..nn.layers._complex_linear import ComplexLinear
+    from ..nn.layers._low_rank_complex_linear import LowRankComplexLinear
 
 
 ComplexInterchangeSemantics: TypeAlias = Literal[
@@ -32,15 +39,9 @@ ComplexInterchangeSemantics: TypeAlias = Literal[
     "pole-locations",
 ]
 
-_SEMANTICS = frozenset(
-    {
-        "trainable-parameters",
-        "frame-coefficients",
-        "constrained-frame-coefficients",
-        "meromorphic-coefficients",
-        "pole-locations",
-    }
-)
+_ProviderT = TypeVar("_ProviderT")
+_ComplexLinearT = TypeVar("_ComplexLinearT", bound="ComplexLinear")
+_LowRankT = TypeVar("_LowRankT", bound="LowRankComplexLinear")
 _COMPONENT_DTYPES = frozenset({"float16", "bfloat16", "float32", "float64"})
 
 
@@ -124,7 +125,7 @@ class ComplexInterchangeEntry(StrictModule, NonTrainableState):
         role: str,
         component_dtype: str | None = None,
         trainable: bool,
-    ):
+    ) -> None:
         name_ = _entry_name(name)
         role_ = str(role)
         if not role_:
@@ -171,9 +172,8 @@ class ComplexInterchangeState(StrictModule, NonTrainableState):
         /,
         *,
         metadata: Mapping[str, Any] | None = None,
-    ):
-        if semantics not in _SEMANTICS:
-            raise ValueError("Unknown complex interchange semantics.")
+    ) -> None:
+        semantics = parse(semantics, ComplexInterchangeSemantics, "semantics")
         provider = str(provider_kind)
         architecture = str(architecture_id)
         if not provider or not architecture:
@@ -290,7 +290,7 @@ class ComplexImportPolicy(StrictModule, NonTrainableState):
         *,
         allow_precision_loss: bool = False,
         preserve_sharding: bool = True,
-    ):
+    ) -> None:
         self.allow_precision_loss = bool(allow_precision_loss)
         self.preserve_sharding = bool(preserve_sharding)
 
@@ -460,13 +460,13 @@ def _import_pair(
 
 
 def _import_complex_linear(
-    layer: Any,
+    layer: _ComplexLinearT,
     entries: Mapping[str, ComplexInterchangeEntry],
     policy: ComplexImportPolicy,
     /,
     *,
     prefix: str = "",
-):
+) -> _ComplexLinearT:
     weight_real, weight_imag = _import_pair(
         entries[f"{prefix}weight"],
         layer.weight_real,
@@ -478,11 +478,16 @@ def _import_complex_linear(
         layer,
         (weight_real, weight_imag),
     )
-    if layer.bias_real is not None:
+    layer_bias_real = layer.bias_real
+    if layer_bias_real is not None:
+        layer_bias_imag = layer.bias_imag
+        # Construction sets both bias components or neither.
+        if not (layer_bias_imag is not None):
+            raise RuntimeError("Internal invariant failed: layer_bias_imag is not None.")
         bias_real, bias_imag = _import_pair(
             entries[f"{prefix}bias"],
-            layer.bias_real,
-            layer.bias_imag,
+            layer_bias_real,
+            layer_bias_imag,
             policy,
         )
         result = eqx.tree_at(
@@ -494,13 +499,13 @@ def _import_complex_linear(
 
 
 def _import_low_rank(
-    layer: Any,
+    layer: _LowRankT,
     entries: Mapping[str, ComplexInterchangeEntry],
     policy: ComplexImportPolicy,
     /,
     *,
     prefix: str = "",
-):
+) -> _LowRankT:
     input_real, input_imag = _import_pair(
         entries[f"{prefix}input_factor"],
         layer.input_factor_real,
@@ -523,11 +528,16 @@ def _import_low_rank(
         layer,
         (input_real, input_imag, output_real, output_imag),
     )
-    if layer.bias_real is not None:
+    layer_bias_real = layer.bias_real
+    if layer_bias_real is not None:
+        layer_bias_imag = layer.bias_imag
+        # Construction sets both bias components or neither.
+        if not (layer_bias_imag is not None):
+            raise RuntimeError("Internal invariant failed: layer_bias_imag is not None.")
         bias_real, bias_imag = _import_pair(
             entries[f"{prefix}bias"],
-            layer.bias_real,
-            layer.bias_imag,
+            layer_bias_real,
+            layer_bias_imag,
             policy,
         )
         result = eqx.tree_at(
@@ -789,12 +799,12 @@ def export_complex_parameters(value: Any, /) -> ComplexInterchangeState:
 
 
 def import_complex_parameters(
-    value: Any,
+    value: _ProviderT,
     state: ComplexInterchangeState,
     /,
     *,
     policy: ComplexImportPolicy | None = None,
-):
+) -> _ProviderT:
     """Import mathematical complex state into an existing real-Cartesian provider."""
     from ..equations.trefftz._holomorphic import HolomorphicPolynomialPotential
     from ..equations.trefftz._holomorphic_constraints import (

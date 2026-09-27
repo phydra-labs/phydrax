@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -21,7 +24,7 @@ from phydrax.applications.skeletal_muscle.musculotendon import (
 )
 
 
-def _parameters(count=2):
+def _parameters(count: Any = 2) -> Any:
     return DeGrooteFregly2016Parameters(
         jnp.linspace(1200.0, 1800.0, count),
         jnp.linspace(0.09, 0.11, count),
@@ -31,7 +34,7 @@ def _parameters(count=2):
     )
 
 
-def _equilibrium(parameters, activation=None):
+def _equilibrium(parameters: Any, activation: Any = None) -> Any:
     activation = (
         jnp.linspace(0.35, 0.55, parameters.muscle_capacity)
         if activation is None
@@ -62,7 +65,7 @@ def _equilibrium(parameters, activation=None):
     return state, musculotendon_length, jnp.zeros_like(activation)
 
 
-def test_supplement_table_1_curves_match_independent_equations_and_inverses():
+def test_supplement_table_1_curves_match_independent_equations_and_inverses() -> None:
     parameters = _parameters(2)
     tendon_length = jnp.asarray([1.0, 1.04])
     fiber_length = jnp.asarray([0.8, 1.2])
@@ -115,7 +118,7 @@ def test_supplement_table_1_curves_match_independent_equations_and_inverses():
     )
 
 
-def test_explicit_formulation_equilibrium_force_energy_and_power_evidence():
+def test_explicit_formulation_equilibrium_force_energy_and_power_evidence() -> None:
     parameters = _parameters(2)
     prepared = DeGrooteFregly2016Plan(parameters, ("soleus", "gastrocnemius")).prepare()
     state, length, velocity = _equilibrium(parameters)
@@ -176,7 +179,7 @@ def test_explicit_formulation_equilibrium_force_energy_and_power_evidence():
     )
 
 
-def test_explicit_model_jit_vmap_jvp_trainable_leaves_and_atomic_rollback():
+def test_explicit_model_jit_vmap_jvp_trainable_leaves_and_atomic_rollback() -> None:
     parameters = _parameters(2)
     prepared = DeGrooteFregly2016Plan(parameters, ("a", "b")).prepare()
     state, length, velocity = _equilibrium(parameters)
@@ -193,7 +196,7 @@ def test_explicit_model_jit_vmap_jvp_trainable_leaves_and_atomic_rollback():
     )(excitations)
     assert batched_force.shape == (2, 2)
 
-    def force_for_strength(strength):
+    def force_for_strength(strength: Any) -> Any:
         changed_parameters = eqx.tree_at(
             lambda value: value.maximum_isometric_force_N,
             parameters,
@@ -231,7 +234,9 @@ def test_explicit_model_jit_vmap_jvp_trainable_leaves_and_atomic_rollback():
     )
 
 
-def test_implicit_formulation_uses_root_owned_sensitivity_and_rolls_back_failures():
+def test_implicit_formulation_uses_root_owned_sensitivity_and_rolls_back_failures() -> (
+    None
+):
     parameters = _parameters(1)
     state, length, velocity = _equilibrium(parameters, jnp.asarray([0.45]))
     prepared = DeGrooteFregly2016ImplicitTendonForcePlan(parameters, ("soleus",)).prepare(

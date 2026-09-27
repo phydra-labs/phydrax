@@ -1,16 +1,22 @@
 """Compute lower and upper bounded-grid HJBI references with Isaacs evidence."""
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def zero_coefficient(time, state, minimizer, maximizer, args):
+def zero_coefficient(
+    time: Any, state: Any, minimizer: Any, maximizer: Any, args: Any
+) -> float:
     del time, state, minimizer, maximizer, args
     return 0.0
 
 
-def zero_sum_running_cost(time, state, minimizer, maximizer, args):
+def zero_sum_running_cost(
+    time: Any, state: Any, minimizer: Any, maximizer: Any, args: Any
+) -> Any:
     del time, state, args
     return minimizer**2 - maximizer**2
 

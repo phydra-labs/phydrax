@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax import lax
-from jaxtyping import Array, ArrayLike
+from jax import Array, lax
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._numerics._ssp_runge_kutta import ssprk33_step
@@ -57,7 +58,7 @@ class PartitionedDifferentialProblem(StrictModule):
         args: Any = None,
         discretization_bundle: DiscretizationBundle | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(slow_drift) or not callable(fast_drift):
             raise TypeError("Partitioned drifts must be callable.")
         if not isinstance(partition, StatePartition) or len(partition.names) != 2:
@@ -136,7 +137,7 @@ class MultiratePartitionedRK(StrictModule, NonTrainableState):
     refinement_ratio: int = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, order: int = 3, /, *, refinement_ratio: int = 2):
+    def __init__(self, order: int = 3, /, *, refinement_ratio: int = 2) -> None:
         order_ = int(order)
         ratio = int(refinement_ratio)
         if order_ not in (2, 3):
@@ -159,7 +160,14 @@ class MultiratePartitionedRK(StrictModule, NonTrainableState):
         )
 
 
-def _rk2_step(function, time, state, step_size, args, precision):
+def _rk2_step(
+    function: Callable[[Array, Array, Any], ArrayLike],
+    time: Array,
+    state: Array,
+    step_size: Array,
+    args: Any,
+    precision: TemporalPrecisionPolicy,
+) -> Array:
     staged_state = precision.stage(state)
     step = precision.coefficient(jnp.asarray(step_size, dtype=staged_state.real.dtype))
     first = precision.stage(function(time, staged_state, args))
@@ -202,11 +210,11 @@ def solve_multirate(
     precision_.validate_state(problem.initial_state)
     runtime_args = problem.args if args is None else args
 
-    def macro_step(state, values):
+    def macro_step(state: Array, values: tuple[Array, Array]) -> tuple[Array, Array]:
         time, width = values
         micro_width = width / selected.refinement_ratio
 
-        def micro_step(index, current):
+        def micro_step(index: Array, current: Array) -> Array:
             micro_time = time + index * micro_width
             if selected.order == 2:
                 return _rk2_step(

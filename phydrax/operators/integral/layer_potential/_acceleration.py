@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 import abc
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
@@ -17,6 +19,11 @@ from ._quadrature2d import (
     _panel_direct,
     classify_panel_interactions_2d,
 )
+
+
+if TYPE_CHECKING:
+    from ._helmholtz2d import HelmholtzLayerPotential2D
+    from ._laplace2d import LaplaceLayerPotential2D
 
 
 class LayerBackendEvaluation2D(StrictModule, NonTrainableState):
@@ -42,7 +49,7 @@ class AbstractLayerBackend(StrictModule, NonTrainableState):
     @abc.abstractmethod
     def evaluate(
         self,
-        potential: object,
+        potential: LaplaceLayerPotential2D | HelmholtzLayerPotential2D,
         targets: ArrayLike,
         /,
         *,
@@ -60,7 +67,7 @@ class DirectNearFarReferenceBackend2D(AbstractLayerBackend):
 
     def evaluate(
         self,
-        potential: object,
+        potential: LaplaceLayerPotential2D | HelmholtzLayerPotential2D,
         targets: ArrayLike,
         /,
         *,

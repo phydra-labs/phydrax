@@ -53,6 +53,7 @@ def run_advanced_potential_benchmarks(
     boundary_ms = 1e3 * (time.perf_counter() - started)
     center_error = jnp.abs(center_value - 1.0)
     harmonic_certificate = phx.equations.trial_space_certificate(
+        # ty: ignore[invalid-argument-type]
         phx.domain.HyperRectangle((-1.0, -1.0), (1.0, 1.0)).Model("x")(harmonic)
     )
     layer_certificate = phx.equations.trial_space_certificate(

@@ -9,12 +9,14 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from itertools import product
 from operator import index
+from typing import SupportsIndex, TypeVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -24,6 +26,8 @@ _COMMON_INFORMATION_METHOD_ID = "finite-pure-common-information-backward-inducti
 _COMMON_INFORMATION_RESULT_LABEL = "COMMON_INFORMATION_MARKOV_PERFECT_CANDIDATE"
 _DEFAULT_MAXIMUM_PRESCRIPTION_PROFILES = 65_536
 
+_T = TypeVar("_T")
+
 
 def _name(value: str, *, owner: str) -> str:
     if not isinstance(value, str) or not value:
@@ -31,7 +35,7 @@ def _name(value: str, *, owner: str) -> str:
     return value
 
 
-def _count(value, *, owner: str) -> int:
+def _count(value: SupportsIndex, *, owner: str) -> int:
     if isinstance(value, bool):
         raise TypeError(f"{owner} must be a positive integer, not a boolean.")
     result = index(value)
@@ -40,7 +44,7 @@ def _count(value, *, owner: str) -> int:
     return result
 
 
-def _tolerance(value, *, owner: str) -> float:
+def _tolerance(value: float, *, owner: str) -> float:
     result = float(value)
     if not np.isfinite(result) or result < 0.0:
         raise ValueError(f"{owner} must be finite and nonnegative.")
@@ -89,11 +93,11 @@ class FullStateInformation(StrictModule):
         *,
         information_id: str = "full-state",
         timing: str = "pre-action",
-    ):
+    ) -> None:
         self.information_id = _name(information_id, owner="information_id")
         self.timing = _name(timing, owner="timing")
 
-    def policy_input(self, state, /):
+    def policy_input(self, state: _T, /) -> _T:
         """Return the declared full state without copying or transforming it."""
         return state
 
@@ -109,11 +113,11 @@ class CentralizedObservationInformation(StrictModule):
         *,
         information_id: str = "centralized-observation",
         timing: str = "pre-action",
-    ):
+    ) -> None:
         self.information_id = _name(information_id, owner="information_id")
         self.timing = _name(timing, owner="timing")
 
-    def policy_input(self, observation, /):
+    def policy_input(self, observation: _T, /) -> _T:
         """Return only the observation explicitly supplied to the policy."""
         return observation
 
@@ -134,7 +138,7 @@ class GaussianBelief(StrictModule):
         *,
         belief_id: str = "gaussian-belief",
         validation_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         tolerance = _tolerance(validation_tolerance, owner="validation_tolerance")
         mean_array = _real_array(mean, owner="mean")
         if mean_array.ndim != 1 or mean_array.shape[0] < 1:
@@ -212,7 +216,7 @@ class FiniteStateCommonInformationGame(StrictModule):
         *,
         game_id: str = "finite-state-common-information-game",
         probability_tolerance: float = 1.0e-7,
-    ):
+    ) -> None:
         if isinstance(player_ids, str):
             raise TypeError("player_ids must be a sequence of identifiers.")
         players = tuple(player_ids)
@@ -350,7 +354,7 @@ class CommonInformationEquilibriumSelector(StrictModule):
         /,
         *,
         selector_id: str,
-    ):
+    ) -> None:
         if not callable(selection):
             raise TypeError("selection must be callable.")
         self.selection = selection
@@ -391,7 +395,7 @@ class CommonInformationPolicy(StrictModule):
         horizon: int,
         num_common_states: int,
         /,
-    ):
+    ) -> None:
         if len(prescriptions) != len(player_ids):
             raise ValueError("prescriptions must provide one table per player.")
         tables = tuple(jnp.asarray(table, dtype=jnp.int32) for table in prescriptions)
@@ -455,7 +459,7 @@ class CommonInformationPolicy(StrictModule):
         return self.player_ids.index(player_id)
 
     @staticmethod
-    def _bounded_index(value, bound: int, *, owner: str) -> int:
+    def _bounded_index(value: SupportsIndex, bound: int, *, owner: str) -> int:
         if isinstance(value, bool):
             raise TypeError(f"{owner} must be an integer, not a boolean.")
         result = index(value)

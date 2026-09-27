@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -33,7 +34,7 @@ class BoundaryCascadePolicy(StrictModule, NonTrainableState):
         paired_error: bool = True,
         relative_tolerance: float = 1e-8,
         absolute_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         doublings_ = int(doublings)
         order = int(initializer_order)
         relative = float(relative_tolerance)

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -6,11 +8,11 @@ from phydrax.metrix._chart import CoordinateChart
 from phydrax.metrix._metric_domain import MetricDomainEvidence, MetricDomainStatus
 
 
-def test_signed_margin_classifies_each_domain_lane_without_clipping():
+def test_signed_margin_classifies_each_domain_lane_without_clipping() -> None:
     chart = CoordinateChart("radial", ("t", "r"))
     margins = jnp.asarray([-1.0, 0.0, 0.01, 0.2, jnp.nan])
 
-    def classify(value):
+    def classify(value: Any) -> Any:
         return MetricDomainEvidence.from_margin(
             value,
             chart=chart,
@@ -42,7 +44,7 @@ def test_signed_margin_classifies_each_domain_lane_without_clipping():
     )
 
 
-def test_provider_status_remains_distinct_from_numeric_membership():
+def test_provider_status_remains_distinct_from_numeric_membership() -> None:
     chart = CoordinateChart("ingoing", ("v", "r", "theta", "phi"))
     evidence = MetricDomainEvidence(
         jnp.asarray([True, False]),
@@ -59,7 +61,7 @@ def test_provider_status_remains_distinct_from_numeric_membership():
     assert not jnp.any(evidence.qualified)
 
 
-def test_domain_evidence_validates_static_identity_and_aligned_shapes():
+def test_domain_evidence_validates_static_identity_and_aligned_shapes() -> None:
     chart = CoordinateChart("radial", ("t", "r"))
     with pytest.raises(ValueError, match="domain_id"):
         MetricDomainEvidence.from_margin(jnp.ones(2), chart=chart, domain_id="")
@@ -83,7 +85,7 @@ def test_domain_evidence_validates_static_identity_and_aligned_shapes():
         )
 
 
-def test_invalid_tolerance_is_reported_per_lane_instead_of_repairing_margin():
+def test_invalid_tolerance_is_reported_per_lane_instead_of_repairing_margin() -> None:
     chart = CoordinateChart("radial", ("t", "r"))
     evidence = MetricDomainEvidence.from_margin(
         jnp.asarray([0.25, 0.5]),

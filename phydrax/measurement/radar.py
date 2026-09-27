@@ -12,11 +12,13 @@ from importlib import import_module, util
 from numbers import Integral
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._physical import SpatialCoordinateContract
@@ -207,7 +209,7 @@ class FMCWTransformPlan(StrictModule, NonTrainableState):
         *,
         propagation_speed: float,
         propagation_speed_unit: UnitDefinition,
-    ):
+    ) -> None:
         if not isinstance(acquisition, FMCWAcquisition):
             raise TypeError("acquisition must be FMCWAcquisition.")
         for name, value in (("fast_samples", fast_samples), ("chirps", chirps)):
@@ -387,7 +389,7 @@ _CF_UNIT_ALIASES = {
 }
 
 
-def _require_cf_unit(variable, expected: UnitDefinition, name: str, /) -> None:
+def _require_cf_unit(variable: Any, expected: UnitDefinition, name: str, /) -> None:
     raw = variable.attrs.get("units")
     if not isinstance(raw, str):
         raise ValueError(f"CF/Radial variable {name!r} lacks a units attribute.")

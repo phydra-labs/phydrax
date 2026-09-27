@@ -13,7 +13,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.domain import Domain, DomainFunction
 
@@ -22,9 +23,11 @@ from ..stochastic._bsde import _predictor_value, BSDEPathBatch, BSDEProblem
 from ..terms._deep_splitting import (
     deep_splitting_labels,
     DeepSplittingLabelBatch,
+    DeepSplittingPredictor,
     DeepSplittingRegressionDiagnostics,
     DeepSplittingRegressionTerm,
 )
+from ..typing import parse, PRNGKey
 from ._functional_solver import FunctionalSolver
 
 
@@ -61,7 +64,7 @@ class DeepSplittingSolution(StrictModule):
         /,
         *,
         interpolation: DeepSplittingInterpolation = "linear",
-    ):
+    ) -> None:
         if not isinstance(problem, BSDEProblem):
             raise TypeError("problem must be a BSDEProblem.")
         time_values = jnp.asarray(times, dtype=jnp.float64)
@@ -76,8 +79,7 @@ class DeepSplittingSolution(StrictModule):
             raise ValueError("Deep splitting requires one learned slice per interval.")
         if any(not isinstance(value, DomainFunction) for value in slice_values):
             raise TypeError("Deep splitting slices must be DomainFunction objects.")
-        if interpolation not in ("linear", "nearest"):
-            raise ValueError("interpolation must be 'linear' or 'nearest'.")
+        interpolation = parse(interpolation, DeepSplittingInterpolation, "interpolation")
         self.problem = problem
         self.times = time_values
         self.slices = slice_values
@@ -93,7 +95,7 @@ class DeepSplittingSolution(StrictModule):
         state: ArrayLike,
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
     ) -> Array:
         """Evaluate one learned node, or the exact terminal condition at the last node."""
         node = int(index)
@@ -120,8 +122,10 @@ class DeepSplittingSolution(StrictModule):
     def _node_value(self, index: Array, state: Array, key: Array, /) -> Array:
         branches: list[Callable[[tuple[Array, Array]], Array]] = []
 
-        def learned_branch(predictor: DomainFunction, node_time: Array):
-            def branch(operand):
+        def learned_branch(
+            predictor: DomainFunction, node_time: Array
+        ) -> Callable[[tuple[Array, Array]], Array]:
+            def branch(operand: tuple[Array, Array]) -> Array:
                 state_value, branch_key = operand
                 value = _predictor_value(
                     predictor,
@@ -141,7 +145,7 @@ class DeepSplittingSolution(StrictModule):
         for node, predictor in enumerate(self.slices):
             branches.append(learned_branch(predictor, self.times[node]))
 
-        def terminal_branch(operand):
+        def terminal_branch(operand: tuple[Array, Array]) -> Array:
             state_value, branch_key = operand
             del branch_key
             return _TerminalPredictor(self.problem)(self.times[-1], state_value)
@@ -155,7 +159,7 @@ class DeepSplittingSolution(StrictModule):
         state: ArrayLike,
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
     ) -> Array:
         """Evaluate the nearest or linearly interpolated learned time-slice field."""
         time_value = jnp.asarray(time, dtype=self.times.dtype)
@@ -192,7 +196,7 @@ class DeepSplittingSolution(StrictModule):
         state: ArrayLike,
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
     ) -> Array:
         """Differentiate the interpolated value and contract it with the diffusion."""
         time_value = jnp.asarray(time)
@@ -258,12 +262,12 @@ def _require_time_grid(paths: BSDEPathBatch, times: Array, /) -> None:
 
 def _label_provider(
     problem: BSDEProblem,
-    next_predictor: Callable | DomainFunction,
+    next_predictor: DeepSplittingPredictor,
     slice_index: int,
     times: Array,
     /,
-):
-    def provider(key):
+) -> Callable[[PRNGKey], DeepSplittingLabelBatch]:
+    def provider(key: PRNGKey) -> DeepSplittingLabelBatch:
         paths = problem.sample(key)
         _require_time_grid(paths, times)
         return deep_splitting_labels(
@@ -307,12 +311,10 @@ def solve_deep_splitting(
         raise ValueError("value_name must be a non-empty string.")
     if value_name not in solver.ansatz_functions():
         raise KeyError(f"Missing deep splitting value function {value_name!r}.")
-    if sampling_mode not in ("resample", "fixed"):
-        raise ValueError("sampling_mode must be 'resample' or 'fixed'.")
+    sampling_mode = parse(sampling_mode, DeepSplittingSamplingMode, "sampling_mode")
     if sampling_mode == "resample" and fixed_paths is not None:
         raise ValueError("fixed_paths is valid only for fixed sampling.")
-    if interpolation not in ("linear", "nearest"):
-        raise ValueError("interpolation must be 'linear' or 'nearest'.")
+    interpolation = parse(interpolation, DeepSplittingInterpolation, "interpolation")
     if optim is None:
         optim = optax.adam(1e-3)
     root_key = jr.key(int(seed))

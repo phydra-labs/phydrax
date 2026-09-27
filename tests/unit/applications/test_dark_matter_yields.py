@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -24,7 +26,7 @@ from phydrax.applications.dark_matter._yields import (
 from phydrax.qualification import ReferenceArtifactManifest
 
 
-def _manifest(*, checksum="0" * 64, commercial=True):
+def _manifest(*, checksum: Any = "0" * 64, commercial: Any = True) -> Any:
     return ReferenceArtifactManifest(
         "provider-yield.npz",
         checksum_algorithm="sha256",
@@ -43,15 +45,16 @@ def _manifest(*, checksum="0" * 64, commercial=True):
 
 
 def _spectrum(
-    value=1.0,
+    value: Any = 1.0,
     *,
-    continuum_sigma=0.1,
-    line_multiplicity=0.5,
-    line_sigma=0.2,
-    provenance=None,
-):
+    continuum_sigma: Any = 0.1,
+    line_multiplicity: Any = 0.5,
+    line_sigma: Any = 0.2,
+    provenance: Any = None,
+) -> Any:
     provenance = provenance or ObservationDataProvenance.native("test-yield")
     continuum = SpectralField(
+        # ty: ignore[invalid-argument-type]
         [1.0, 2.0, 3.0],
         jnp.full((3,), value),
         provenance,
@@ -61,6 +64,7 @@ def _spectrum(
     )
     return ParticleYieldSpectrum(
         continuum,
+        # ty: ignore[invalid-argument-type]
         ExactLineTable([2.0], [line_multiplicity]),
         YieldUncertainty(
             jnp.full((3,), continuum_sigma),
@@ -70,7 +74,7 @@ def _spectrum(
     )
 
 
-def test_continuum_and_exact_lines_preserve_multiplicity_energy_and_uncertainty():
+def test_continuum_and_exact_lines_preserve_multiplicity_energy_and_uncertainty() -> None:
     evidence = _spectrum().integrate()
 
     np.testing.assert_allclose(evidence.continuum_multiplicity, 2.0)
@@ -90,7 +94,7 @@ def test_continuum_and_exact_lines_preserve_multiplicity_energy_and_uncertainty(
     assert bool(evidence.valid)
 
 
-def test_branching_mixture_is_weighted_and_rejects_incomplete_branching():
+def test_branching_mixture_is_weighted_and_rejects_incomplete_branching() -> None:
     first = _spectrum(
         value=1.0, continuum_sigma=0.1, line_multiplicity=1.0, line_sigma=0.2
     )
@@ -113,7 +117,9 @@ def test_branching_mixture_is_weighted_and_rejects_incomplete_branching():
         mix_particle_yields(((0.2, first), (0.7, second)), mixture_id="invalid")
 
 
-def test_annihilation_and_decay_use_distinct_normalizations_and_propagate_uncertainty():
+def test_annihilation_and_decay_use_distinct_normalizations_and_propagate_uncertainty() -> (
+    None
+):
     spectrum = _spectrum(value=2.0, continuum_sigma=0.25)
     annihilation = annihilation_flux(
         AnnihilationProcessDescriptor(2.0, 1.0),
@@ -137,13 +143,14 @@ def test_annihilation_and_decay_use_distinct_normalizations_and_propagate_uncert
     )
 
 
-def test_exact_lines_and_continuum_compose_with_identity_binned_response():
+def test_exact_lines_and_continuum_compose_with_identity_binned_response() -> None:
     spectrum = _spectrum(
         value=1.0, continuum_sigma=0.0, line_multiplicity=0.5, line_sigma=0.0
     )
     process = AnnihilationProcessDescriptor(2.0, 32.0 * np.pi)
     flux = annihilation_flux(process, spectrum, JFactor(1.0, 0.0, target_id="target"))
     response = BinnedResponsePlan(np.eye(2), response_id="identity-two-bin")
+    # ty: ignore[invalid-argument-type]
     plan = BinnedIndirectDetectionPlan([1.0, 2.0, 3.0], response, exposure_cm2_s=2.0)
 
     result = plan.evaluate(flux)
@@ -155,7 +162,9 @@ def test_exact_lines_and_continuum_compose_with_identity_binned_response():
     assert bool(result.valid)
 
 
-def test_external_yield_provider_requires_manifest_identity_rights_and_constant_data():
+def test_external_yield_provider_requires_manifest_identity_rights_and_constant_data() -> (
+    None
+):
     manifest = _manifest()
     provenance = ObservationDataProvenance(
         producer="external-yield-code",

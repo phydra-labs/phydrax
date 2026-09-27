@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -135,7 +136,7 @@ class CrackVolumeQuadrature(StrictModule, NonTrainableState):
         /,
         *,
         side: int,
-    ):
+    ) -> None:
         points_ = np.asarray(points)
         reference = np.asarray(reference_points)
         weights_ = np.asarray(weights)
@@ -183,7 +184,7 @@ class CrackFaceQuadrature(StrictModule, NonTrainableState):
         segment_ids: ArrayLike,
         side: ArrayLike,
         /,
-    ):
+    ) -> None:
         points_ = np.asarray(points)
         weights_ = np.asarray(weights)
         parameters_ = np.asarray(parameters)
@@ -237,7 +238,7 @@ class CrackTipQuadrature(StrictModule, NonTrainableState):
         cell_ids: ArrayLike,
         tip_ids: ArrayLike,
         /,
-    ):
+    ) -> None:
         points_ = np.asarray(points)
         reference = np.asarray(reference_points)
         weights_ = np.asarray(weights)
@@ -310,7 +311,7 @@ class SharpCrackQuadrature(StrictModule, NonTrainableState):
         *,
         topology_id: str,
         geometry_id: str,
-    ):
+    ) -> None:
         if not isinstance(plus, CrackVolumeQuadrature) or plus.side != 1:
             raise TypeError("plus must be a positive CrackVolumeQuadrature.")
         if not isinstance(minus, CrackVolumeQuadrature) or minus.side != -1:

@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -11,11 +14,11 @@ from phydrax.domain import Interval1d, TimeInterval
 from phydrax.operators.delay import delay
 
 
-def test_delay_time_only_scalar_point():
+def test_delay_time_only_scalar_point() -> None:
     dom = TimeInterval(0.0, 2.0)
 
     @dom.Function("t")
-    def u(t):
+    def u(t: Any) -> Any:
         return t
 
     u_delay = delay(u, 0.1)
@@ -25,11 +28,11 @@ def test_delay_time_only_scalar_point():
     assert jnp.isclose(y, 0.9)
 
 
-def test_delay_time_only_vectorized_points():
+def test_delay_time_only_vectorized_points() -> None:
     dom = TimeInterval(0.0, 2.0)
 
     @dom.Function("t")
-    def u(t):
+    def u(t: Any) -> Any:
         return t
 
     u_delay = delay(u, 0.25)
@@ -38,11 +41,11 @@ def test_delay_time_only_vectorized_points():
     assert jnp.allclose(y, jnp.array([0.25, 0.75, 1.25]))
 
 
-def test_delay_spacetime_time_only_tau_broadcasts(sample_batch):
+def test_delay_spacetime_time_only_tau_broadcasts(sample_batch: Any) -> None:
     dom = Interval1d(-1.0, 1.0) @ TimeInterval(0.0, 1.0)
 
     @dom.Function("t")
-    def u(t):
+    def u(t: Any) -> Any:
         return t
 
     u_delay = delay(u, 0.1)
@@ -56,15 +59,15 @@ def test_delay_spacetime_time_only_tau_broadcasts(sample_batch):
     assert jnp.allclose(y, (t - 0.1)[None, :])
 
 
-def test_delay_spacetime_space_dependent_tau(sample_batch):
+def test_delay_spacetime_space_dependent_tau(sample_batch: Any) -> None:
     dom = Interval1d(-1.0, 1.0) @ TimeInterval(0.0, 1.0)
 
     @dom.Function("t")
-    def u(t):
+    def u(t: Any) -> Any:
         return t
 
     @dom.Function("x")
-    def tau(x):
+    def tau(x: Any) -> Any:
         return 0.1 * (1.0 + x[..., 0])
 
     u_delay = delay(u, tau)
@@ -79,11 +82,11 @@ def test_delay_spacetime_space_dependent_tau(sample_batch):
     assert jnp.allclose(y, t[None, :] - 0.1 * (1.0 + x[..., 0:1]))
 
 
-def test_delay_clip_time_min():
+def test_delay_clip_time_min() -> None:
     dom = TimeInterval(0.0, 2.0)
 
     @dom.Function("t")
-    def u(t):
+    def u(t: Any) -> Any:
         return t
 
     u_delay = delay(u, 0.2, clip_time_min=0.0)
@@ -93,11 +96,11 @@ def test_delay_clip_time_min():
     assert jnp.isclose(y, 0.0)
 
 
-def test_delay_vector_valued_time_only_point():
+def test_delay_vector_valued_time_only_point() -> None:
     dom = TimeInterval(0.0, 2.0)
 
     @dom.Function("t")
-    def u(t):
+    def u(t: Any) -> Any:
         return jnp.stack([t, 2.0 * t], axis=-1)
 
     u_delay = delay(u, 0.25)
@@ -108,7 +111,7 @@ def test_delay_vector_valued_time_only_point():
     assert jnp.allclose(y, jnp.array([0.75, 1.5]))
 
 
-def test_spatially_varying_delay_preserves_coord_separable_axes():
+def test_spatially_varying_delay_preserves_coord_separable_axes() -> None:
     spatial = phx.domain.GeometryDomain(
         phx.geometry.Square(
             center=(0.0, 0.0),

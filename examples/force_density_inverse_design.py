@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from math import sqrt
+from typing import Any
 
 import jax.numpy as jnp
 
@@ -45,7 +47,7 @@ equilibrium = fd.ForceDensityProblem(
 plan = fd.plan_force_density(equilibrium, sample)
 
 
-def decode(magnitude, _):
+def decode(magnitude: Any, _: Any) -> Any:
     return fd.ForceDensityInputs(
         jnp.full((num_nodes - 1,), -magnitude.reshape(())),
         prescribed,

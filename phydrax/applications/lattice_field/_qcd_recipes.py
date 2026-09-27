@@ -12,11 +12,12 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float
 from ...discretization._lattice_boundary import LatticeBoundaryPhasePlan
 from ...discretization._lattice_distribution import LatticeDecompositionPlan
 from ...discretization._oriented_path import CellBoundaryPathPlan
@@ -65,6 +66,7 @@ from ...sampling._rhmc import (
     SeparableActionRegistry,
     SeparableActionTerm,
 )
+from ...typing import parse
 from ._distributed_qcd import (
     DistributedGaugeTheoryPlan,
     DistributedHMCPlan,
@@ -93,25 +95,17 @@ def _identifier(value: str, name: str, /) -> str:
     return identifier
 
 
-def _finite_positive(value: float, name: str, /) -> float:
-    resolved = float(value)
-    if not isfinite(resolved) or resolved <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return resolved
-
-
 def _spectral_bounds(
     lower: float,
     upper: float,
     evidence: SpectralEvidence,
     /,
 ) -> tuple[float, float, SpectralEvidence]:
-    lower_ = _finite_positive(lower, "spectral_lower")
-    upper_ = _finite_positive(upper, "spectral_upper")
+    lower_ = positive_finite_float(lower, "spectral_lower")
+    upper_ = positive_finite_float(upper, "spectral_upper")
     if upper_ <= lower_:
         raise ValueError("spectral_upper must exceed spectral_lower.")
-    if evidence not in ("verified", "asserted"):
-        raise ValueError("spectral_evidence must be 'verified' or 'asserted'.")
+    evidence = parse(evidence, SpectralEvidence, "spectral_evidence")
     return lower_, upper_, evidence
 
 
@@ -164,7 +158,7 @@ class SU3GaugeGeometry(StrictModule, NonTrainableState):
         /,
         *,
         decomposition: LatticeDecompositionPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(link_space, MatrixGaugeLinkSpace):
             raise TypeError("link_space must be MatrixGaugeLinkSpace.")
         if not isinstance(link_space.group, SpecialUnitaryGroup) or (
@@ -313,14 +307,14 @@ class QuenchedSU3Recipe(StrictModule, NonTrainableState):
         step_size: float,
         leapfrog_steps: int,
         divergence_threshold: float = 1000.0,
-    ):
+    ) -> None:
         if not isinstance(geometry, SU3GaugeGeometry):
             raise TypeError("geometry must be SU3GaugeGeometry.")
         if not isinstance(measurements, MeasurementSchedule):
             raise TypeError("measurements must be MeasurementSchedule.")
-        beta_ = _finite_positive(beta, "beta")
-        step = _finite_positive(step_size, "step_size")
-        threshold = _finite_positive(divergence_threshold, "divergence_threshold")
+        beta_ = positive_finite_float(beta, "beta")
+        step = positive_finite_float(step_size, "step_size")
+        threshold = positive_finite_float(divergence_threshold, "divergence_threshold")
         leapfrog = int(leapfrog_steps)
         if leapfrog <= 0:
             raise ValueError("leapfrog_steps must be positive.")
@@ -471,14 +465,13 @@ class WilsonCloverNf2Recipe(StrictModule, NonTrainableState):
         fermion_resources: LatticeFermionResourcePolicy | None = None,
         rhmc_resources: RHMCResourcePolicy | None = None,
         solves: PseudofermionSolveRoles | None = None,
-    ):
+    ) -> None:
         if not isinstance(geometry, SU3GaugeGeometry):
             raise TypeError("geometry must be SU3GaugeGeometry.")
         if not isinstance(measurements, MeasurementSchedule):
             raise TypeError("measurements must be MeasurementSchedule.")
-        if variant not in ("wilson", "clover"):
-            raise ValueError("variant must be 'wilson' or 'clover'.")
-        beta_ = _finite_positive(beta, "beta")
+        variant = parse(variant, FermionVariant, "variant")
+        beta_ = positive_finite_float(beta, "beta")
         mass_ = float(mass)
         clover = float(clover_coefficient)
         if not isfinite(mass_) or not isfinite(clover) or clover < 0.0:
@@ -491,16 +484,16 @@ class WilsonCloverNf2Recipe(StrictModule, NonTrainableState):
             raise ValueError(
                 "Wilson requires zero clover_coefficient; clover requires a positive value."
             )
-        wilson = _finite_positive(wilson_parameter, "wilson_parameter")
-        spacing = _finite_positive(lattice_spacing, "lattice_spacing")
+        wilson = positive_finite_float(wilson_parameter, "wilson_parameter")
+        spacing = positive_finite_float(lattice_spacing, "lattice_spacing")
         lower, upper, evidence = _spectral_bounds(
             spectral_lower, spectral_upper, spectral_evidence
         )
-        step = _finite_positive(step_size, "step_size")
+        step = positive_finite_float(step_size, "step_size")
         steps = int(trajectory_steps)
         fermion_substeps = int(fermion_force_substeps)
         gauge_substeps = int(gauge_force_substeps)
-        threshold = _finite_positive(divergence_threshold, "divergence_threshold")
+        threshold = positive_finite_float(divergence_threshold, "divergence_threshold")
         if min(steps, fermion_substeps, gauge_substeps) <= 0:
             raise ValueError("RHMC trajectory and force substeps must be positive.")
         fermion_policy = (
@@ -760,14 +753,14 @@ class StaggeredHisqStyleRHMCRecipe(StrictModule, NonTrainableState):
         fermion_resources: LatticeFermionResourcePolicy | None = None,
         rhmc_resources: RHMCResourcePolicy | None = None,
         solves: PseudofermionSolveRoles | None = None,
-    ):
+    ) -> None:
         if not isinstance(geometry, SU3GaugeGeometry):
             raise TypeError("geometry must be SU3GaugeGeometry.")
         if not isinstance(measurements, MeasurementSchedule):
             raise TypeError("measurements must be MeasurementSchedule.")
-        beta_ = _finite_positive(beta, "beta")
+        beta_ = positive_finite_float(beta, "beta")
         mass_ = float(mass)
-        spacing = _finite_positive(lattice_spacing, "lattice_spacing")
+        spacing = positive_finite_float(lattice_spacing, "lattice_spacing")
         first = float(one_link_coefficient)
         third = float(three_link_coefficient)
         flavors = int(flavor_count)
@@ -782,12 +775,12 @@ class StaggeredHisqStyleRHMCRecipe(StrictModule, NonTrainableState):
         )
         poles = int(num_poles)
         points = int(verification_points)
-        tolerance = _finite_positive(rational_tolerance, "rational_tolerance")
-        step = _finite_positive(step_size, "step_size")
+        tolerance = positive_finite_float(rational_tolerance, "rational_tolerance")
+        step = positive_finite_float(step_size, "step_size")
         steps = int(trajectory_steps)
         fermion_substeps = int(fermion_force_substeps)
         gauge_substeps = int(gauge_force_substeps)
-        threshold = _finite_positive(divergence_threshold, "divergence_threshold")
+        threshold = positive_finite_float(divergence_threshold, "divergence_threshold")
         if poles <= 0 or points < max(129, 16 * (poles + 2)):
             raise ValueError("Rational pole/verification resources are insufficient.")
         if min(steps, fermion_substeps, gauge_substeps) <= 0:

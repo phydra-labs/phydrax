@@ -10,11 +10,13 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
 NeutralSchemaKind: TypeAlias = Literal["geometry", "material", "field", "point_cloud"]
@@ -64,7 +66,7 @@ class NeutralGeometrySchema(StrictModule, NonTrainableState):
         *,
         cells: ArrayLike | None = None,
         units: str = "dimensionless",
-    ):
+    ) -> None:
         coordinates_ = _array("coordinates", coordinates, rank=2)
         if jnp.iscomplexobj(coordinates_):
             raise TypeError("Geometry coordinates must be real-valued.")
@@ -111,7 +113,7 @@ class NeutralMaterialSchema(StrictModule, NonTrainableState):
         /,
         *,
         units: Mapping[str, str] | None = None,
-    ):
+    ) -> None:
         if not fields:
             raise ValueError("Neutral material schema requires fields.")
         arrays = tuple(
@@ -169,7 +171,7 @@ class NeutralFieldSchema(StrictModule, NonTrainableState):
         time: float | None = None,
         angular_frequency: float | None = None,
         units: str = "dimensionless",
-    ):
+    ) -> None:
         name_ = str(name)
         values_ = _array("field values", values)
         degree = None if cochain_degree is None else int(cochain_degree)
@@ -229,7 +231,7 @@ class NeutralPointCloudSchema(StrictModule, NonTrainableState):
         /,
         *,
         neighborhoods: ArrayLike | None = None,
-    ):
+    ) -> None:
         points_ = _array("point cloud", points, rank=2)
         if jnp.iscomplexobj(points_):
             raise TypeError("Point-cloud coordinates must be real-valued.")
@@ -294,13 +296,13 @@ class NeutralAdapterBoundary(StrictModule, NonTrainableState):
             "field",
             "point_cloud",
         ),
-    ):
-        if not allowed_kinds or any(
-            value not in ("geometry", "material", "field", "point_cloud")
-            for value in allowed_kinds
-        ):
+    ) -> None:
+        kinds = tuple(
+            parse(value, NeutralSchemaKind, "allowed_kinds") for value in allowed_kinds
+        )
+        if not kinds:
             raise ValueError("Neutral adapter allowed_kinds are invalid.")
-        self.allowed_kinds = tuple(allowed_kinds)
+        self.allowed_kinds = kinds
 
     def export(self, value: Any, /) -> dict[str, Any]:
         if not isinstance(

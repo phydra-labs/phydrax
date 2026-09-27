@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -13,7 +16,7 @@ from jax.scipy.special import sph_harm_y
 import phydrax as phx
 
 
-def _identity_basis_layer(basis, modes, axis):
+def _identity_basis_layer(basis: Any, modes: Any, axis: Any) -> Any:
     layer = phx.nn.operator.layers.BasisSpectralConvND(
         in_channels=1,
         out_channels=1,
@@ -29,11 +32,11 @@ class _ValueFeature(eqx.Module):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.in_size = 2
         self.out_size = 1
 
-    def __call__(self, value, *, key=None):
+    def __call__(self, value: Any, *, key: Any = None) -> Any:
         del key
         return value[:1]
 
@@ -42,11 +45,11 @@ class _ConstantTrunk(eqx.Module):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.in_size = 1
         self.out_size = 1
 
-    def __call__(self, value, *, key=None):
+    def __call__(self, value: Any, *, key: Any = None) -> Any:
         del value, key
         return jnp.ones((1,))
 
@@ -55,11 +58,11 @@ class _SourceValueKernel(eqx.Module):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.in_size = 4
         self.out_size = 1
 
-    def __call__(self, value, *, key=None):
+    def __call__(self, value: Any, *, key: Any = None) -> Any:
         del key
         return value[:1]
 
@@ -68,16 +71,16 @@ class _ConstantDifferentialKernel(eqx.Module):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.in_size = 2
         self.out_size = 1
 
-    def __call__(self, value, *, key=None):
+    def __call__(self, value: Any, *, key: Any = None) -> Any:
         del value, key
         return jnp.ones((1,))
 
 
-def test_fourier_spectral_conv_exactly_preserves_retained_mode():
+def test_fourier_spectral_conv_exactly_preserves_retained_mode() -> None:
     count = 32
     x = jnp.arange(count, dtype="float64")
     signal = jnp.cos(2.0 * jnp.pi * 2.0 * x / count)[:, None]
@@ -87,13 +90,14 @@ def test_fourier_spectral_conv_exactly_preserves_retained_mode():
         n_modes=4,
         key=jr.key(0),
     )
+    # ty: ignore[invalid-argument-type]
     layer = eqx.tree_at(lambda item: item.weight, layer, jnp.ones_like(layer.weight))
 
     output = layer(signal)
     assert jnp.allclose(output, signal, rtol=1e-11, atol=1e-11)
 
 
-def test_fourier_spectral_conv_exactly_learns_negative_signed_block():
+def test_fourier_spectral_conv_exactly_learns_negative_signed_block() -> None:
     nx, ny = 18, 20
     x = jnp.arange(nx, dtype="float64")[:, None]
     y = jnp.arange(ny, dtype="float64")[None, :]
@@ -104,6 +108,7 @@ def test_fourier_spectral_conv_exactly_learns_negative_signed_block():
         n_modes=(3, 3),
         key=jr.key(0),
     )
+    # ty: ignore[invalid-argument-type]
     weight = jnp.zeros_like(layer.weight)
     weight = weight.at[1, 0, 0, 2, 1].set(1.0 + 0.0j)
     layer = eqx.tree_at(lambda item: item.weight, layer, weight)
@@ -113,7 +118,7 @@ def test_fourier_spectral_conv_exactly_learns_negative_signed_block():
 
 
 @pytest.mark.parametrize("basis", ("fourier", "sine", "cosine", "legendre"))
-def test_basis_projection_reconstructs_representable_functions(basis):
+def test_basis_projection_reconstructs_representable_functions(basis: Any) -> None:
     if basis == "fourier":
         nodes = jnp.linspace(0.0, 1.0, 40, endpoint=False)
         axis = phx.nn.operator.OperatorAxis(
@@ -152,7 +157,7 @@ def test_basis_projection_reconstructs_representable_functions(basis):
 
 
 @pytest.mark.parametrize("basis", ("fourier", "sine", "cosine", "legendre"))
-def test_basis_projection_error_decreases_with_modes(basis):
+def test_basis_projection_error_decreases_with_modes(basis: Any) -> None:
     if basis == "fourier":
         nodes = jnp.linspace(0.0, 1.0, 80, endpoint=False)
         axis = phx.nn.operator.OperatorAxis(
@@ -183,7 +188,7 @@ def test_basis_projection_error_decreases_with_modes(basis):
     assert high_error < 0.25 * low_error
 
 
-def test_basis_projection_is_jittable_and_differentiable():
+def test_basis_projection_is_jittable_and_differentiable() -> None:
     nodes = jnp.linspace(0.0, 1.0, 32) ** 1.2
     axis = phx.nn.operator.OperatorAxis("x", nodes, basis="legendre")
     layer, _ = _identity_basis_layer("legendre", 8, axis)
@@ -196,15 +201,16 @@ def test_basis_projection_is_jittable_and_differentiable():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def _integral_encoder():
+def _integral_encoder() -> Any:
     return phx.nn.operator.architectures.IntegralBranchEncoder(
+        # ty: ignore[invalid-argument-type]
         feature_model=_ValueFeature(),
         latent_size=1,
         coord_dim=1,
     )
 
 
-def test_integral_branch_padding_and_permutation_are_exact_invariances():
+def test_integral_branch_padding_and_permutation_are_exact_invariances() -> None:
     coordinates = jnp.array([[0.1], [0.3], [0.6], [0.9]])
     values = jnp.array([1.0, 2.0, 4.0, 8.0])
     weights = jnp.array([0.1, 0.2, 0.3, 0.4])
@@ -232,10 +238,10 @@ def test_integral_branch_padding_and_permutation_are_exact_invariances():
     assert jnp.allclose(encoder(padded, case_ndim=0), reference)
 
 
-def test_integral_branch_has_midpoint_quadrature_convergence():
+def test_integral_branch_has_midpoint_quadrature_convergence() -> None:
     encoder = _integral_encoder()
 
-    def error(count):
+    def error(count: Any) -> Any:
         coordinates = (jnp.arange(count, dtype="float64") + 0.5) / count
         samples = phx.nn.operator.FunctionSamples(
             values=coordinates**2,
@@ -248,16 +254,17 @@ def test_integral_branch_has_midpoint_quadrature_convergence():
     assert error(64) < 0.02 * error(8)
 
 
-def test_ragged_batched_deeponet_matches_individual_evaluations():
+def test_ragged_batched_deeponet_matches_individual_evaluations() -> None:
     encoder = _integral_encoder()
     model = phx.nn.operator.architectures.DeepONet(
         branch=encoder,
+        # ty: ignore[invalid-argument-type]
         trunk=_ConstantTrunk(),
         coord_dim=1,
         latent_size=1,
     )
 
-    def make_batch(source_count, query_count):
+    def make_batch(source_count: Any, query_count: Any) -> Any:
         source_x = (jnp.arange(source_count, dtype="float64") + 0.5) / source_count
         query_x = jnp.linspace(0.0, 1.0, query_count)
         return phx.nn.operator.OperatorBatch(
@@ -291,7 +298,7 @@ def test_ragged_batched_deeponet_matches_individual_evaluations():
     assert jnp.allclose(actual[1, 3:], 0.0)
 
 
-def _local_integral_estimate(count):
+def _local_integral_estimate(count: Any) -> Any:
     coordinates = (jnp.arange(count, dtype="float64") + 0.5) / count
     batch = phx.nn.operator.OperatorBatch(
         inputs={
@@ -309,13 +316,14 @@ def _local_integral_estimate(count):
         },
     )
     operator = phx.nn.operator.architectures.LocalIntegralOperator(
+        # ty: ignore[invalid-argument-type]
         kernel_model=_SourceValueKernel(),
         coord_dim=1,
     )
     return operator(batch)[0]
 
 
-def _graph_integral_estimate(count):
+def _graph_integral_estimate(count: Any) -> Any:
     coordinates = (jnp.arange(count, dtype="float64") + 0.5) / count
     target = count
     graph = phx.graph.GraphIR(
@@ -353,18 +361,20 @@ def _graph_integral_estimate(count):
     "estimate",
     (_local_integral_estimate, _graph_integral_estimate),
 )
-def test_local_and_graph_integrals_have_midpoint_continuum_convergence(estimate):
+def test_local_and_graph_integrals_have_midpoint_continuum_convergence(
+    estimate: Any,
+) -> None:
     coarse = jnp.abs(estimate(8) - 1.0 / 3.0)
     fine = jnp.abs(estimate(64) - 1.0 / 3.0)
     assert fine < 0.02 * coarse
 
 
-def test_graph_integral_is_invariant_to_source_permutation():
+def test_graph_integral_is_invariant_to_source_permutation() -> None:
     count = 11
     coordinates = (jnp.arange(count, dtype="float64") + 0.5) / count
     permutation = jnp.array([7, 1, 9, 0, 5, 10, 2, 6, 3, 8, 4])
 
-    def evaluate(order):
+    def evaluate(order: Any) -> Any:
         target = count
         graph = phx.graph.GraphIR(
             nodes={
@@ -399,7 +409,7 @@ def test_graph_integral_is_invariant_to_source_permutation():
     assert jnp.allclose(evaluate(jnp.arange(count)), evaluate(permutation))
 
 
-def _known_exponential_laplace_operator(decay=1.3):
+def _known_exponential_laplace_operator(decay: Any = 1.3) -> Any:
     model = phx.nn.operator.architectures.LaplaceTemporalOperator(
         num_poles=1,
         max_initial_frequency=0.0,
@@ -426,7 +436,7 @@ def _known_exponential_laplace_operator(decay=1.3):
     return model
 
 
-def _aligned_temporal_batch(count, values=None):
+def _aligned_temporal_batch(count: Any, values: Any = None) -> Any:
     time = jnp.linspace(0.0, 2.0, count)
     if values is None:
         values = jnp.ones((count,))
@@ -437,7 +447,7 @@ def _aligned_temporal_batch(count, values=None):
     )
 
 
-def test_laplace_recurrence_agrees_with_direct_aligned_evaluation():
+def test_laplace_recurrence_agrees_with_direct_aligned_evaluation() -> None:
     model = _known_exponential_laplace_operator()
     batch = _aligned_temporal_batch(37)
     assert jnp.allclose(
@@ -448,11 +458,11 @@ def test_laplace_recurrence_agrees_with_direct_aligned_evaluation():
     )
 
 
-def test_laplace_quadrature_converges_to_known_exponential_convolution():
+def test_laplace_quadrature_converges_to_known_exponential_convolution() -> None:
     decay = 1.3
     model = _known_exponential_laplace_operator(decay)
 
-    def error(count):
+    def error(count: Any) -> Any:
         batch = _aligned_temporal_batch(count)
         time = batch.require_single_query().axes[0].nodes
         exact = (1.0 - jnp.exp(-decay * time)) / decay
@@ -461,7 +471,7 @@ def test_laplace_quadrature_converges_to_known_exponential_convolution():
     assert error(129) < 0.08 * error(17)
 
 
-def test_laplace_recurrence_is_stable_and_differentiable_for_long_sequences():
+def test_laplace_recurrence_is_stable_and_differentiable_for_long_sequences() -> None:
     count = 1025
     model = _known_exponential_laplace_operator()
     values = jnp.sin(jnp.linspace(0.0, 20.0, count))
@@ -478,7 +488,9 @@ def test_laplace_recurrence_is_stable_and_differentiable_for_long_sequences():
     assert jnp.max(jnp.abs(output)) < 2.0
 
 
-def _degree_filter(gains, *, sampling="mw", execution="recursive"):
+def _degree_filter(
+    gains: Any, *, sampling: Any = "mw", execution: Any = "recursive"
+) -> Any:
     plan = phx.discretization.SphericalHarmonicPlan(
         len(gains),
         sampling=sampling,
@@ -494,7 +506,7 @@ def _degree_filter(gains, *, sampling="mw", execution="recursive"):
     return eqx.tree_at(lambda item: item.weight, layer, weight), plan
 
 
-def _harmonic(degree, order, plan):
+def _harmonic(degree: Any, order: Any, plan: Any) -> Any:
     theta, phi = jnp.meshgrid(plan.theta, plan.phi, indexing="ij")
     degrees = jnp.array([degree], dtype=jnp.int32)
     orders = jnp.array([order], dtype=jnp.int32)
@@ -511,14 +523,14 @@ def _harmonic(degree, order, plan):
 
 
 @pytest.mark.parametrize("sampling", ("mw", "mwss", "dh", "gl"))
-def test_spherical_constant_mode_is_exact_on_sampling_theorems(sampling):
+def test_spherical_constant_mode_is_exact_on_sampling_theorems(sampling: Any) -> None:
     layer, plan = _degree_filter((1.0, 0.0, 0.0, 0.0), sampling=sampling)
     values = jnp.ones((*plan.sample_shape, 1))
     error = jnp.linalg.norm(layer(values, plan)[..., 0] - 1.0) / jnp.sqrt(values.size)
     assert error < 1e-11
 
 
-def test_spherical_filter_applies_one_gain_per_harmonic_degree():
+def test_spherical_filter_applies_one_gain_per_harmonic_degree() -> None:
     layer, plan = _degree_filter((0.0, 0.0, 1.7, 0.0))
     mode = jnp.real(_harmonic(2, 1, plan))
     output = layer(mode[..., None], plan)[..., 0]
@@ -526,7 +538,7 @@ def test_spherical_filter_applies_one_gain_per_harmonic_degree():
     assert relative_error < 1e-11
 
 
-def test_spherical_operator_is_equivariant_to_longitude_rotations():
+def test_spherical_operator_is_equivariant_to_longitude_rotations() -> None:
     layer, plan = _degree_filter((0.8, -0.3, 1.2, 0.4))
     values = (jnp.real(_harmonic(1, 1, plan)) + 0.3 * jnp.real(_harmonic(3, -2, plan)))[
         ..., None
@@ -537,7 +549,7 @@ def test_spherical_operator_is_equivariant_to_longitude_rotations():
     assert jnp.allclose(actual, expected, rtol=1e-11, atol=1e-11)
 
 
-def test_spherical_degree_filter_is_equivariant_to_arbitrary_rotation():
+def test_spherical_degree_filter_is_equivariant_to_arbitrary_rotation() -> None:
     layer, plan = _degree_filter((0.0, 0.0, 1.7, 0.0))
     theta, phi = jnp.meshgrid(plan.theta, plan.phi, indexing="ij")
     points = jnp.stack(
@@ -573,7 +585,7 @@ def test_spherical_degree_filter_is_equivariant_to_arbitrary_rotation():
     assert relative_error < 1e-11
 
 
-def _attention_samples(weights, mask=None):
+def _attention_samples(weights: Any, mask: Any = None) -> Any:
     count = len(weights)
     return phx.nn.operator.FunctionSamples(
         values=None,
@@ -583,7 +595,7 @@ def _attention_samples(weights, mask=None):
     )
 
 
-def test_operator_attention_is_permutation_equivariant():
+def test_operator_attention_is_permutation_equivariant() -> None:
     values = jr.normal(jr.key(20), (7, 3))
     weights = jnp.array([0.05, 0.1, 0.15, 0.2, 0.1, 0.25, 0.15])
     samples = _attention_samples(weights)
@@ -605,7 +617,7 @@ def test_operator_attention_is_permutation_equivariant():
 
 
 @pytest.mark.parametrize("kind", ("operator", "slice"))
-def test_operator_attention_is_invariant_to_masked_padding(kind):
+def test_operator_attention_is_invariant_to_masked_padding(kind: Any) -> None:
     values = jr.normal(jr.key(22), (5, 3))
     samples = _attention_samples(jnp.full((5,), 0.2))
     padded_values = jnp.concatenate((values, jnp.full((3, 3), 1e10)), axis=0)
@@ -636,7 +648,7 @@ def test_operator_attention_is_invariant_to_masked_padding(kind):
     assert jnp.allclose(actual[5:], 0.0)
 
 
-def test_cross_attention_is_continuum_consistent_under_measure_splitting():
+def test_cross_attention_is_continuum_consistent_under_measure_splitting() -> None:
     attention = phx.nn.operator.layers.OperatorAttention(
         source_channels=2,
         query_channels=2,
@@ -657,7 +669,7 @@ def test_cross_attention_is_continuum_consistent_under_measure_splitting():
 
 
 @pytest.mark.parametrize("kind", ("deeponet", "local"))
-def test_quadrature_operator_value_gradients_equal_analytic_weights(kind):
+def test_quadrature_operator_value_gradients_equal_analytic_weights(kind: Any) -> None:
     coordinates = jnp.array([[0.05], [0.2], [0.55], [0.9]])
     weights = jnp.array([0.1, 0.2, 0.3, 0.4])
     values = jnp.array([0.7, -0.2, 1.3, 2.0])
@@ -668,17 +680,19 @@ def test_quadrature_operator_value_gradients_equal_analytic_weights(kind):
     if kind == "deeponet":
         model = phx.nn.operator.architectures.DeepONet(
             branch=_integral_encoder(),
+            # ty: ignore[invalid-argument-type]
             trunk=_ConstantTrunk(),
             coord_dim=1,
             latent_size=1,
         )
     else:
         model = phx.nn.operator.architectures.LocalIntegralOperator(
+            # ty: ignore[invalid-argument-type]
             kernel_model=_SourceValueKernel(),
             coord_dim=1,
         )
 
-    def evaluate(source_values):
+    def evaluate(source_values: Any) -> Any:
         batch = phx.nn.operator.OperatorBatch(
             inputs={
                 "u": phx.nn.operator.FunctionSamples(
@@ -695,7 +709,7 @@ def test_quadrature_operator_value_gradients_equal_analytic_weights(kind):
     assert jnp.allclose(gradient, weights, rtol=1e-11, atol=1e-11)
 
 
-def test_laplace_terminal_gradient_matches_trapezoidal_convolution_weights():
+def test_laplace_terminal_gradient_matches_trapezoidal_convolution_weights() -> None:
     decay = 1.3
     count = 9
     model = _known_exponential_laplace_operator(decay)
@@ -717,7 +731,7 @@ def test_laplace_terminal_gradient_matches_trapezoidal_convolution_weights():
     assert jnp.allclose(gradient, expected, rtol=1e-11, atol=1e-11)
 
 
-def test_retained_fourier_mode_has_identity_energy_gradient():
+def test_retained_fourier_mode_has_identity_energy_gradient() -> None:
     count = 32
     x = jnp.arange(count, dtype="float64")
     signal = (
@@ -730,13 +744,14 @@ def test_retained_fourier_mode_has_identity_energy_gradient():
         n_modes=5,
         key=jr.key(31),
     )
+    # ty: ignore[invalid-argument-type]
     layer = eqx.tree_at(lambda item: item.weight, layer, jnp.ones_like(layer.weight))
     gradient = jax.grad(lambda values: 0.5 * jnp.sum(layer(values) ** 2))(signal)
     assert jnp.allclose(gradient, signal, rtol=1e-11, atol=1e-11)
 
 
 @pytest.mark.parametrize("kind", ("integral", "differential"))
-def test_sparse_neighbor_execution_matches_dense_radius_operator(kind):
+def test_sparse_neighbor_execution_matches_dense_radius_operator(kind: Any) -> None:
     source_x = jnp.linspace(0.0, 1.0, 64)
     query_x = jnp.linspace(0.03, 0.97, 31)
     batch = phx.nn.operator.OperatorBatch(
@@ -756,11 +771,13 @@ def test_sparse_neighbor_execution_matches_dense_radius_operator(kind):
     )
     if kind == "integral":
         dense = phx.nn.operator.architectures.LocalIntegralOperator(
+            # ty: ignore[invalid-argument-type]
             kernel_model=_SourceValueKernel(),
             coord_dim=1,
             radius=0.08,
         )
         sparse = phx.nn.operator.architectures.LocalIntegralOperator(
+            # ty: ignore[invalid-argument-type]
             kernel_model=_SourceValueKernel(),
             coord_dim=1,
             radius=0.08,
@@ -768,11 +785,13 @@ def test_sparse_neighbor_execution_matches_dense_radius_operator(kind):
         )
     else:
         dense = phx.nn.operator.architectures.LocalDifferentialOperator(
+            # ty: ignore[invalid-argument-type]
             kernel_model=_ConstantDifferentialKernel(),
             coord_dim=1,
             radius=0.08,
         )
         sparse = phx.nn.operator.architectures.LocalDifferentialOperator(
+            # ty: ignore[invalid-argument-type]
             kernel_model=_ConstantDifferentialKernel(),
             coord_dim=1,
             radius=0.08,
@@ -781,7 +800,7 @@ def test_sparse_neighbor_execution_matches_dense_radius_operator(kind):
     assert jnp.allclose(sparse(batch), dense(batch), rtol=1e-11, atol=1e-11)
 
 
-def test_basis_transform_plan_reuses_exact_projection_matrices():
+def test_basis_transform_plan_reuses_exact_projection_matrices() -> None:
     nodes = jnp.linspace(0.0, 1.0, 41) ** 1.3
     axis = phx.nn.operator.OperatorAxis("x", nodes, basis="legendre")
     layer, _ = _identity_basis_layer("legendre", 8, axis)
@@ -793,7 +812,7 @@ def test_basis_transform_plan_reuses_exact_projection_matrices():
     assert jnp.allclose(actual, expected, rtol=1e-12, atol=1e-12)
 
 
-def test_spherical_execution_plans_are_interchangeable_and_jittable():
+def test_spherical_execution_plans_are_interchangeable_and_jittable() -> None:
     layer, recursive = _degree_filter((0.8, -0.3, 1.2, 0.4))
     precomputed = phx.discretization.SphericalHarmonicPlan(4, execution="precomputed")
     values = jr.normal(jr.key(40), (*recursive.sample_shape, 1))

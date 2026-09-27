@@ -1,10 +1,12 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
 
 
-def _domains():
+def _domains() -> Any:
     state = phx.domain.HyperRectangle(
         jnp.full((2,), -10.0), jnp.full((2,), 10.0), label="x"
     )
@@ -14,12 +16,13 @@ def _domains():
     return state @ phx.domain.TimeInterval(0.0, 1.0) @ observation
 
 
-def test_time_conditioned_likelihood_guidance_adds_exact_score_gradient():
+def test_time_conditioned_likelihood_guidance_adds_exact_score_gradient() -> None:
     domain = _domains()
     base_function = domain.Function("x", "t")(lambda state, time: -state)
     likelihood = domain.Function("x", "t", "observation")(
         lambda state, time, observation: -0.5 * jnp.sum((state - observation) ** 2)
     )
+    # ty: ignore[possibly-missing-submodule]
     base = phx._score_field.StateTimeScoreField(
         base_function,
         state_label="x",
@@ -40,13 +43,15 @@ def test_time_conditioned_likelihood_guidance_adds_exact_score_gradient():
     assert jnp.allclose(score, expected)
 
 
-def test_classifier_free_guidance_marks_tempered_weights_heuristic():
+def test_classifier_free_guidance_marks_tempered_weights_heuristic() -> None:
     domain = _domains()
+    # ty: ignore[possibly-missing-submodule]
     unconditional = phx._score_field.StateTimeScoreField(
         domain.Function("x", "t")(lambda state, time: -state),
         state_label="x",
         time_label="t",
     )
+    # ty: ignore[possibly-missing-submodule]
     conditional = phx._score_field.StateTimeScoreField(
         domain.Function("x", "t", "observation")(
             lambda state, time, observation: -state + observation
@@ -75,7 +80,7 @@ def test_classifier_free_guidance_marks_tempered_weights_heuristic():
     assert jnp.allclose(score, jnp.asarray([0.5, -0.5]))
 
 
-def test_general_reverse_problem_uses_operator_noise_and_covariance_divergence():
+def test_general_reverse_problem_uses_operator_noise_and_covariance_divergence() -> None:
     process = phx.stochastic.StateDependentItoDiffusion(
         lambda time, state: -0.1 * state,
         lambda time, state: jnp.diag(0.5 + 0.1 * state**2),
@@ -87,6 +92,7 @@ def test_general_reverse_problem_uses_operator_noise_and_covariance_divergence()
         jnp.full((2,), -10.0), jnp.full((2,), 10.0), label="x"
     )
     domain = state_domain @ phx.domain.TimeInterval(0.0, 1.0)
+    # ty: ignore[possibly-missing-submodule]
     score = phx._score_field.StateTimeScoreField(
         domain.Function("x", "t")(lambda state, time: -state),
         state_label="x",

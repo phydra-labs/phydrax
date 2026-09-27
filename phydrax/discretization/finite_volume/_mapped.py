@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -276,7 +277,7 @@ class MappedPeriodicSeamPlan(StrictModule, NonTrainableState):
         /,
         *,
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         axis_ = int(axis)
         rotation_ = np.asarray(rotation, dtype=np.float64)
         translation_ = np.asarray(translation, dtype=np.float64)
@@ -397,7 +398,7 @@ class MappedFiniteVolumePlan(AbstractDiscretizationPlan):
         *,
         mapping_id: str,
         periodic_seams: tuple[MappedPeriodicSeamPlan, ...] = (),
-    ):
+    ) -> None:
         if not isinstance(reference, FiniteVolumeDiscretization) or not callable(
             coordinate_map
         ):
@@ -474,7 +475,7 @@ class MappedFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         /,
         *,
         numeric_version: str = "0",
-    ):
+    ) -> None:
         if not isinstance(plan, MappedFiniteVolumePlan):
             raise TypeError("plan must be a MappedFiniteVolumePlan.")
         reference = plan.reference

@@ -9,9 +9,11 @@ from __future__ import annotations
 from typing import Literal, TypeAlias
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._geometry_precision import GeometryPrecisionPolicy
+from ..typing import parse
 
 
 CochainMetricReduction: TypeAlias = Literal[
@@ -41,10 +43,7 @@ def cochain_metric_reduce(
     padding or other cells without changing static shapes. ``segment_weight`` may
     supply one constant measure factor per segment, repeated over its cells.
     """
-    if reduction not in ("graph_mean", "metric_mean", "metric_sum"):
-        raise ValueError(
-            "reduction must be 'graph_mean', 'metric_mean', or 'metric_sum'."
-        )
+    reduction = parse(reduction, CochainMetricReduction, "reduction")
     count = int(n_graph)
     if count <= 0:
         raise ValueError("n_graph must be positive.")

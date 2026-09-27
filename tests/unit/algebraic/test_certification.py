@@ -2,14 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from fractions import Fraction
+from typing import Any
 
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _square_root_system():
+def _square_root_system() -> Any:
     return phx.algebraic.SparsePolynomialSystem.from_coo(
         ("x",),
         ("equation",),

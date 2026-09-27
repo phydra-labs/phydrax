@@ -4,16 +4,23 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._dfn import DFNParameters, DFNState, IsothermalDFNPlan
+
+
+# Candidate electrolyte, negative, positive, time, voltage, residual, accepted.
+_LaneValues: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 
 class SpatialBatteryCellState(StrictModule):
@@ -59,7 +66,7 @@ class SpatialBatteryCellPlan(StrictModule, NonTrainableState):
         /,
         *,
         current_weights: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(local_plan, IsothermalDFNPlan):
             raise TypeError("local_plan must be an IsothermalDFNPlan.")
         if not isinstance(parameters, DFNParameters):
@@ -151,7 +158,13 @@ class SpatialBatteryCellPlan(StrictModule, NonTrainableState):
         step_size = jnp.asarray(step_size_s).reshape(())
         local_currents = total_current * self.site_count * self.current_weights
 
-        def lane(electrolyte, negative, positive, time, current):
+        def lane(
+            electrolyte: Array,
+            negative: Array,
+            positive: Array,
+            time: Array,
+            current: Array,
+        ) -> _LaneValues:
             result = self.local_plan.step(
                 DFNState(electrolyte, negative, positive, time),
                 self.parameters,

@@ -8,7 +8,8 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 
@@ -29,7 +30,7 @@ class MultiresolutionCoefficients(StrictModule):
         *,
         reconstruction_shapes: Sequence[Sequence[int]],
         transform_fingerprint: str,
-    ):
+    ) -> None:
         scaling_array = jnp.asarray(scaling)
         detail_arrays = tuple(
             tuple(jnp.asarray(band) for band in level) for level in details

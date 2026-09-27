@@ -7,12 +7,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import jax.numpy as jnp
+from jax import Array
 
 from .._layout import StateLayout
 from .._trajectory import TrajectoryData
 
 
-def _delay_valid(data: TrajectoryData, delay: int, /):
+def _delay_valid(data: TrajectoryData, delay: int, /) -> tuple[Array, Array]:
     indices = jnp.maximum(jnp.arange(data.capacity) - delay, 0)
     valid = jnp.take(data.sample_valid, indices, axis=-1)
     valid = valid & (jnp.arange(data.capacity) >= delay)

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _material_model():
+def _material_model() -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("gas",),
         (phx.equations.ChemicalPhaseKind.GAS,),
@@ -33,7 +36,7 @@ def _material_model():
     )
 
 
-def test_role_specific_coefficients_produce_constant_planck_and_rosseland_means():
+def test_role_specific_coefficients_produce_constant_planck_and_rosseland_means() -> None:
     grid = phx.equations.SpectralFrequencyGrid(
         jnp.asarray((1.0e12, 2.0e12, 3.0e12)),
         jnp.asarray((0.5e12, 1.0e12, 0.5e12)),
@@ -65,7 +68,7 @@ def test_role_specific_coefficients_produce_constant_planck_and_rosseland_means(
     assert bool(means.successful)
 
 
-def test_radiation_matter_exchange_is_exactly_conservative():
+def test_radiation_matter_exchange_is_exactly_conservative() -> None:
     model = _material_model()
     species_density = jnp.asarray((1.0,))
     thermal = model.evaluate_density_temperature(species_density, jnp.asarray(700.0))
@@ -100,9 +103,9 @@ def test_radiation_matter_exchange_is_exactly_conservative():
     ),
 )
 def test_radiation_coefficient_table_rejects_nonfinite_axes(
-    temperature_axis,
-    pressure_axis,
-):
+    temperature_axis: Any,
+    pressure_axis: Any,
+) -> None:
     grid = phx.equations.SpectralFrequencyGrid(
         jnp.asarray((1.0e12, 2.0e12)),
         jnp.asarray((0.5e12, 0.5e12)),

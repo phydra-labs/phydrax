@@ -11,7 +11,9 @@ from typing import Any, final, TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._polynomial._cubature import cubature_rule_data
@@ -117,7 +119,7 @@ class FiniteElementTopologyTransfer(StrictModule, NonTrainableState):
         target_coordinates: ArrayLike | None = None,
         source_measures: ArrayLike | None = None,
         target_measures: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(primal, AbstractLinearOperator):
             raise TypeError("primal must be a SparseLinearMap or linear operator.")
         if (
@@ -259,6 +261,7 @@ def _certify_claims(
     source_measures: ArrayLike | None,
     target_measures: ArrayLike | None,
 ) -> None:
+    # ty: ignore[unresolved-attribute]
     dtype = np.dtype(primal.source.dtype)
     row_scale, absolute_scale = _row_scales(primal, positivity_preserving, dtype)
 
@@ -445,7 +448,7 @@ class PreparedL2ProjectionTarget(StrictModule, NonTrainableState):
         *,
         field_name: str,
         _construction_token: object | None = None,
-    ):
+    ) -> None:
         if _construction_token is not _L2_ARTIFACT_TOKEN:
             raise TypeError(
                 "PreparedL2ProjectionTarget is constructed by "
@@ -540,7 +543,7 @@ class FiniteElementL2Projection(AbstractLinearOperator):
         *,
         operator_id: str,
         _construction_token: object | None = None,
-    ):
+    ) -> None:
         if _construction_token is not _L2_ARTIFACT_TOKEN:
             raise TypeError(
                 "FiniteElementL2Projection is constructed by "
@@ -746,6 +749,7 @@ def _oriented_basis(
         (1 << max(flat.shape[0] - 1, 0).bit_length(), flat.shape[1]), dtype=np.float64
     )
     padded[: flat.shape[0]] = flat
+    # ty: ignore[invalid-argument-type]
     values = np.asarray(_tabulate_values(element, padded), dtype=np.float64)
     basis = values[: flat.shape[0]].reshape(
         points.shape[:-1] + (element.local_dof_count,)
@@ -759,6 +763,7 @@ def _overlap_quadrature(
     """Physical points ``(S, Q, d)`` and weights ``(S, Q)`` exact to ``degree``."""
 
     dimension = simplices.shape[-1]
+    # ty: ignore[invalid-argument-type]
     rule = cubature_rule_data(_SIMPLEX_KINDS[dimension], degree)
     frames = np.swapaxes(simplices[:, 1:, :] - simplices[:, :1, :], -1, -2)
     # Overlap simplices are fanned and positively oriented up to rounding; the
@@ -834,6 +839,7 @@ def _cell_integrals(
     for block_index, element in enumerate(discretization.elements[field_index]):
         routes = np.asarray(dof_map.cell_dofs[block_index])
         stop = start + routes.shape[0]
+        # ty: ignore[invalid-argument-type]
         rule = cubature_rule_data(element.cell_kind, (2 if mass else 1) * element.degree)
         basis = _oriented_basis(
             element,
@@ -909,6 +915,7 @@ def _target_mass(
     measures, triples = _cell_integrals(target, field_index, mass=True)
     dof_map = target.dof_maps[field_index]
     mass = _coalesced_map(
+        # ty: ignore[not-iterable]
         *triples,
         target_size=dof_map.global_dof_count,
         source_size=dof_map.global_dof_count,
@@ -1169,6 +1176,7 @@ def prepare_l2_projection_transfer(
         preserves_constants=target_covered,
         preserves_linear=linear,
         conservative=source_covered,
+        # ty: ignore[invalid-argument-type]
         action_condition=max(condition, 1.0) * max(lebesgue, 1.0) * (1.0 + coverage),
         source_coordinates=source_dofs.dof_coordinates if linear else None,
         target_coordinates=target_dofs.dof_coordinates if linear else None,

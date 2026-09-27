@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -17,7 +20,7 @@ from phydrax.operators.integral import (
 )
 
 
-def _interval_rule(count):
+def _interval_rule(count: Any) -> Any:
     points = (jnp.arange(count, dtype="float64") + 0.5) / count
     return {
         "points": points[:, None],
@@ -25,7 +28,7 @@ def _interval_rule(count):
     }
 
 
-def _square_rule(order):
+def _square_rule(order: Any) -> Any:
     axis = -0.5 + (jnp.arange(order, dtype="float64") + 0.5) / order
     first, second = jnp.meshgrid(axis, axis, indexing="ij")
     points = jnp.stack((first, second), axis=-1).reshape((-1, 2))
@@ -35,14 +38,14 @@ def _square_rule(order):
     }
 
 
-def test_fixed_integral_grad_has_finite_parameter_shape():
+def test_fixed_integral_grad_has_finite_parameter_shape() -> None:
     geometry = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
     )
     target = phx.integration.over(geometry.component())
     plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(16))
 
-    def loss(parameter):
+    def loss(parameter: Any) -> Any:
         function = geometry.Function("x")(lambda x: jnp.dot(parameter, x) ** 2)
         return integral(function, target, plan).data
 
@@ -53,7 +56,9 @@ def test_fixed_integral_grad_has_finite_parameter_shape():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_sampled_boundary_integral_grad_has_finite_parameter_shape(sample_batch):
+def test_sampled_boundary_integral_grad_has_finite_parameter_shape(
+    sample_batch: Any,
+) -> None:
     geometry = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
     )
@@ -61,7 +66,7 @@ def test_sampled_boundary_integral_grad_has_finite_parameter_shape(sample_batch)
     points = sample_batch(component, blocks=(("x",),), num_points=2048, key=1)
     realization = phx.integration.from_samples(phx.integration.over(component), points)
 
-    def loss(parameter):
+    def loss(parameter: Any) -> Any:
         function = geometry.Function("x")(lambda x: jnp.dot(parameter, x) ** 2)
         return integral(function, realization).data
 
@@ -72,13 +77,13 @@ def test_sampled_boundary_integral_grad_has_finite_parameter_shape(sample_batch)
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_spatial_integral_grad_has_finite_parameter_shape():
+def test_spatial_integral_grad_has_finite_parameter_shape() -> None:
     geometry = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
     )
     quadrature = _square_rule(48)
 
-    def loss(parameter):
+    def loss(parameter: Any) -> Any:
         function = geometry.Function("x")(lambda x: jnp.dot(parameter, x))
         operator = spatial_integral(function, quad=quadrature)
         point = frozendict({"x": cx.AxisArray(jnp.array([0.0, 0.0]), dims=(None,))})
@@ -91,11 +96,11 @@ def test_spatial_integral_grad_has_finite_parameter_shape():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_nonlocal_integral_grad_matches_analytic():
+def test_nonlocal_integral_grad_matches_analytic() -> None:
     geometry = Interval1d(0.0, 1.0)
     quadrature = _interval_rule(4096)
 
-    def loss(parameter):
+    def loss(parameter: Any) -> Any:
         function = geometry.Function("x")(lambda x: parameter * x[0])
         operator = nonlocal_integral(
             function,
@@ -111,10 +116,10 @@ def test_nonlocal_integral_grad_matches_analytic():
     assert jnp.allclose(gradient, parameter / 6.0, rtol=1e-3, atol=1e-5)
 
 
-def test_time_convolution_grad_matches_closed_form():
+def test_time_convolution_grad_matches_closed_form() -> None:
     domain = TimeInterval(0.0, 2.0)
 
-    def loss(parameter):
+    def loss(parameter: Any) -> Any:
         function = domain.Function("t")(lambda time: parameter * jnp.sin(time))
         convolution = time_convolution(
             lambda lag: jnp.exp(-lag),

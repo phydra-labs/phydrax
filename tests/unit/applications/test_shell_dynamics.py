@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -22,7 +24,7 @@ def _material() -> ShellMaterialParameters:
     return ShellMaterialParameters.isotropic(young_modulus=20.0, poisson_ratio=0.25)
 
 
-def _prepared_square(*, thickness: float = 0.1, fixed_mask=None):
+def _prepared_square(*, thickness: float = 0.1, fixed_mask: Any = None) -> Any:
     plan = TriangularShellPlan(
         TRIANGLES,
         _material(),
@@ -33,7 +35,7 @@ def _prepared_square(*, thickness: float = 0.1, fixed_mask=None):
     return plan.prepare(SQUARE)
 
 
-def _folded_square(angle: float = 0.45):
+def _folded_square(angle: float = 0.45) -> Any:
     axis = (SQUARE[2] - SQUARE[0]) / jnp.linalg.norm(SQUARE[2] - SQUARE[0])
     relative = SQUARE[3] - SQUARE[0]
     rotated = (
@@ -44,7 +46,7 @@ def _folded_square(angle: float = 0.45):
     return SQUARE.at[3].set(SQUARE[0] + rotated)
 
 
-def test_flat_reference_has_zero_energy_and_finite_geometry_evidence():
+def test_flat_reference_has_zero_energy_and_finite_geometry_evidence() -> None:
     prepared = _prepared_square()
     evaluation = prepared.evaluate(SQUARE)
 
@@ -58,7 +60,7 @@ def test_flat_reference_has_zero_energy_and_finite_geometry_evidence():
     assert bool(evaluation.finite)
 
 
-def test_membrane_energy_matches_constant_green_strain():
+def test_membrane_energy_matches_constant_green_strain() -> None:
     material = _material()
     reference = jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
     plan = TriangularShellPlan(
@@ -77,7 +79,7 @@ def test_membrane_energy_matches_constant_green_strain():
     assert evaluation.bending_energy == pytest.approx(0.0, abs=1.0e-12)
 
 
-def test_energy_and_force_are_invariant_under_proper_rigid_motion():
+def test_energy_and_force_are_invariant_under_proper_rigid_motion() -> None:
     prepared = _prepared_square()
     positions = _folded_square()
     original = prepared.evaluate(positions)
@@ -113,7 +115,7 @@ def test_energy_and_force_are_invariant_under_proper_rigid_motion():
     assert bool(transformed.valid)
 
 
-def test_isometric_cylindrical_fold_has_only_hinge_bending_response():
+def test_isometric_cylindrical_fold_has_only_hinge_bending_response() -> None:
     prepared = _prepared_square()
     folded = _folded_square()
     evaluation = prepared.evaluate(folded)
@@ -124,7 +126,7 @@ def test_isometric_cylindrical_fold_has_only_hinge_bending_response():
     assert bool(evaluation.valid)
 
 
-def test_membrane_and_bending_have_linear_and_cubic_thickness_scaling():
+def test_membrane_and_bending_have_linear_and_cubic_thickness_scaling() -> None:
     thin = _prepared_square(thickness=0.1)
     thick = _prepared_square(thickness=0.2)
 
@@ -139,7 +141,7 @@ def test_membrane_and_bending_have_linear_and_cubic_thickness_scaling():
     assert thick_bending / thin_bending == pytest.approx(8.0, rel=1.0e-10)
 
 
-def test_fixed_nodes_remain_at_reference_during_damped_explicit_step():
+def test_fixed_nodes_remain_at_reference_during_damped_explicit_step() -> None:
     fixed = jnp.asarray((True, True, False, False))
     shell_plan = TriangularShellPlan(
         TRIANGLES,
@@ -166,7 +168,7 @@ def test_fixed_nodes_remain_at_reference_during_damped_explicit_step():
     assert result.evaluation.kinetic_energy > 0.0
 
 
-def test_degenerate_reference_and_inconsistent_orientation_are_rejected():
+def test_degenerate_reference_and_inconsistent_orientation_are_rejected() -> None:
     material = _material()
     one_triangle = jnp.asarray(((0, 1, 2),), dtype=jnp.int32)
     collinear = jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0)))
@@ -179,7 +181,7 @@ def test_degenerate_reference_and_inconsistent_orientation_are_rejected():
         TriangularShellPlan(same_edge_direction, material, thickness=0.1, density=1.0)
 
 
-def test_inverted_triangle_is_reported_and_rolls_back_dynamics():
+def test_inverted_triangle_is_reported_and_rolls_back_dynamics() -> None:
     shell_plan = TriangularShellPlan(TRIANGLES, _material(), thickness=0.1, density=2.0)
     prepared = shell_plan.prepare(SQUARE)
     inverted = SQUARE.at[3].set(jnp.asarray((1.0, 0.0, 0.0)))
@@ -196,7 +198,7 @@ def test_inverted_triangle_is_reported_and_rolls_back_dynamics():
     assert jnp.array_equal(result.accepted_state.velocities, state.velocities)
 
 
-def test_fixed_capacity_self_contact_payload_matches_hard_contact_geometry():
+def test_fixed_capacity_self_contact_payload_matches_hard_contact_geometry() -> None:
     triangles = jnp.asarray(((0, 1, 2), (3, 4, 5)), dtype=jnp.int32)
     positions = jnp.asarray(
         (
@@ -241,7 +243,7 @@ def test_fixed_capacity_self_contact_payload_matches_hard_contact_geometry():
     assert epoch.candidate_count > 0
 
 
-def test_evaluation_and_step_are_jittable_and_unstable_step_rolls_back():
+def test_evaluation_and_step_are_jittable_and_unstable_step_rolls_back() -> None:
     shell_plan = TriangularShellPlan(TRIANGLES, _material(), thickness=0.1, density=2.0)
     prepared = shell_plan.prepare(SQUARE)
     compiled_evaluation = eqx.filter_jit(prepared.evaluate)(

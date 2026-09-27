@@ -6,10 +6,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -44,7 +47,7 @@ class GaussianIntegralDerivativePlan(StrictModule, NonTrainableState):
         /,
         *,
         include_electron_repulsion: bool = False,
-    ):
+    ) -> None:
         order = int(derivative_order)
         if order not in (1, 2):
             raise ValueError("Gaussian integral derivative order must be one or two.")
@@ -68,7 +71,7 @@ class GaussianIntegralDerivativePlan(StrictModule, NonTrainableState):
         coordinate = jnp.asarray(positions)
         charges = jnp.asarray(nuclear_charges, dtype=coordinate.dtype)
 
-        def differentiate(function):
+        def differentiate(function: Callable[[Array], Array]) -> Array:
             derivative = jax.jacfwd(function)
             return (
                 derivative(coordinate)

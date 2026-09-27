@@ -1,11 +1,13 @@
 """Full-line harmonic oscillator with rational Chebyshev resolution evidence."""
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def solve(mode_count: int):
+def solve(mode_count: int) -> Any:
     domain = phx.discretization.AxisDomain.real_line()
     boundary = phx.discretization.SpectralBoundaryConditionPlan.decay()
     basis = phx.discretization.ConstrainedBasisPlan(

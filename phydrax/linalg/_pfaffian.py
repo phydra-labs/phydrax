@@ -6,22 +6,27 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 
 
-SkewMode = Literal["require", "project"]
+SkewMode: TypeAlias = Literal["require", "project"]
+
+
+_PfaffianCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 
 class PfaffianStatus(IntEnum):
@@ -60,9 +65,8 @@ class PfaffianPolicy(StrictModule):
         max_batch_size: int = 65536,
         max_storage_bytes: int = 512 * 1024 * 1024,
         max_workspace_bytes: int = 512 * 1024 * 1024,
-    ):
-        if skew_mode not in ("require", "project"):
-            raise ValueError("skew_mode must be 'require' or 'project'.")
+    ) -> None:
+        skew_mode = parse(skew_mode, SkewMode, "skew_mode")
         antisymmetry = float(antisymmetry_tolerance)
         pivot = float(pivot_tolerance)
         if any(
@@ -131,7 +135,7 @@ class PfaffianPlan(StrictModule):
         dtype: Any,
         storage_bytes: int,
         workspace_bytes: int,
-    ):
+    ) -> None:
         dtype_ = np.dtype(dtype)
         batch = tuple(batch_shape)
         dimension_ = int(dimension)
@@ -193,7 +197,7 @@ class PreparedPfaffian(StrictModule):
         antisymmetry_residual: Array,
         antisymmetric: Array,
         numeric_version: Any,
-    ):
+    ) -> None:
         version = jnp.asarray(numeric_version, dtype=jnp.int32)
         if version.shape != ():
             raise ValueError("numeric_version must be scalar.")
@@ -262,7 +266,7 @@ class PfaffianResult(StrictModule):
         numeric_version: Array,
         plan_id: str,
         prepared_id: str,
-    ):
+    ) -> None:
         self.value = jnp.asarray(value)
         self.value_finite = jnp.asarray(value_finite, dtype=jnp.bool_)
         self.sign = jnp.asarray(sign)
@@ -631,7 +635,7 @@ def _factor_one(
     minimum_pivot = jnp.asarray(jnp.inf, dtype=matrix.real.dtype)
     coordinates = jnp.arange(dimension)
 
-    def body(pair, state):
+    def body(pair: Array, state: _PfaffianCarry) -> _PfaffianCarry:
         work, factors, block_pivots, order, parity, failed, minimum = state
         first_index = 2 * pair
         second_index = first_index + 1
@@ -777,7 +781,10 @@ def _prepared_pfaffian_outputs(
 
 
 @_prepared_pfaffian_outputs.defjvp
-def _prepared_pfaffian_outputs_jvp(primals, tangents):
+def _prepared_pfaffian_outputs_jvp(
+    primals: tuple[Array, Array, Array, Array, Array, Array, Array],
+    tangents: tuple[Array, object, object, object, object, object, object],
+) -> tuple[tuple[Array, Array, Array], tuple[Array, Array, Array]]:
     matrix, lower, factor_scale, pivots, permutation, swap_sign, singular = primals
     matrix_tangent, _, _, _, _, _, _ = tangents
     sign, log_abs = _signed_log(pivots, swap_sign, singular, factor_scale)

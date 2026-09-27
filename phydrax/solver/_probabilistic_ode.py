@@ -4,14 +4,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import factorial, isfinite, prod
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -19,6 +21,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._frozendict import frozendict
 from .._identity import callable_payload
 from .._strict import StrictModule
+from ..typing import parse
 from ..uq._gaussian_factor import gaussian_factor_from_covariance, GaussianFactor
 from ._differential import DifferentialProblem
 from ._save_schedule import validate_save_times
@@ -51,6 +54,26 @@ _INITIAL_CONDITION = 3
 
 
 _PARAMETER = 4
+
+_DerivativeFunction: TypeAlias = Callable[[Array, Array, Any], Array]
+_FilterCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+_FilterRecord: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+_MarginalMoments: TypeAlias = tuple[Array, Array, Array]
+_SmoothInputs: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
 
 
 def probabilistic_ode_status_name(value: int, /) -> ProbabilisticODEStatus:
@@ -112,23 +135,25 @@ class ProbabilisticODEMethod(StrictModule):
         stiffness_threshold: float = 50.0,
         max_dense_dimension: int = 512,
         method_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(order, int) or isinstance(order, bool) or order < 1:
             raise ValueError("order must be a positive integer.")
         if order > 4:
             raise ValueError("Integrated-Wiener orders above four are unsupported.")
-        if update not in ("ek0", "ek1"):
-            raise ValueError("update must be 'ek0' or 'ek1'.")
+        update = parse(update, ProbabilisticODEUpdate, "update")
         if not isinstance(num_steps, int) or isinstance(num_steps, bool) or num_steps < 1:
             raise ValueError("num_steps must be a positive integer.")
         if not isinstance(adaptive, bool) or not isinstance(smoothing, bool):
             raise TypeError("adaptive and smoothing must be bool values.")
-        if factorization not in ("dense", "block_diagonal"):
-            raise ValueError("factorization must be 'dense' or 'block_diagonal'.")
-        if covariance_output not in ("dense", "matrix_free"):
-            raise ValueError("covariance_output must be 'dense' or 'matrix_free'.")
-        if diffusion_calibration not in ("none", "quasi_mle"):
-            raise ValueError("diffusion_calibration must be 'none' or 'quasi_mle'.")
+        factorization = parse(
+            factorization, ProbabilisticODEFactorization, "factorization"
+        )
+        covariance_output = parse(
+            covariance_output, ProbabilisticODECovarianceOutput, "covariance_output"
+        )
+        diffusion_calibration = parse(
+            diffusion_calibration, ProbabilisticODECalibration, "diffusion_calibration"
+        )
         scalar_values = {
             "base_diffusion": base_diffusion,
             "relative_tolerance": relative_tolerance,
@@ -380,16 +405,21 @@ def _startup_mean(
     state = problem.initial_state
     derivatives = [state]
 
-    def first_derivative(t, y, parameters):
+    def first_derivative(t: Array, y: Array, parameters: Any) -> Array:
         return jnp.asarray(problem.drift(t, y, parameters))
 
-    derivative_function = first_derivative
+    derivative_function: _DerivativeFunction = first_derivative
     for _ in range(order):
         value = derivative_function(time, state, args)
         derivatives.append(value)
         previous = derivative_function
 
-        def total_derivative(t, y, parameters, previous=previous):
+        def total_derivative(
+            t: Array,
+            y: Array,
+            parameters: Any,
+            previous: _DerivativeFunction = previous,
+        ) -> Array:
             tangent = jnp.asarray(problem.drift(t, y, parameters))
             return jax.jvp(
                 lambda query_time, query_state: previous(
@@ -406,7 +436,7 @@ def _startup_mean(
 def _parameter_jacobian(
     problem: DifferentialProblem,
     flat_args: Array,
-    unravel_args: Any,
+    unravel_args: Callable[[Array], Any],
     time: Array,
     state: Array,
     /,
@@ -431,12 +461,12 @@ def _dense_filter(
     observation_covariance: Array,
     process_covariance: Array,
     flat_args: Array,
-    unravel_args: Any,
+    unravel_args: Callable[[Array], Any],
     initial_quasi_sum: Array,
     initial_quasi_count: Array,
     initial_quasi_log_sum: Array,
     /,
-):
+) -> tuple[_FilterCarry, _FilterRecord]:
     order = method.order
     derivative_count, state_size = initial_mean.shape
     augmented_size = derivative_count * state_size
@@ -444,11 +474,11 @@ def _dense_filter(
     eye_augmented = jnp.eye(augmented_size, dtype=initial_mean.dtype)
     eye_state = jnp.eye(state_size, dtype=initial_mean.dtype)
 
-    def one_step(carry, step):
+    def one_step(carry: _FilterCarry, step: Array) -> tuple[_FilterCarry, _FilterRecord]:
         mean, sources, sensitivity, time, quasi_sum, quasi_count, quasi_log_sum = carry
         active = step > 0.0
 
-        def advance(values):
+        def advance(values: _FilterCarry) -> tuple[_FilterCarry, _FilterRecord]:
             (
                 mean,
                 sources,
@@ -582,7 +612,7 @@ def _dense_filter(
             )
             return next_carry, record
 
-        def inactive(values):
+        def inactive(values: _FilterCarry) -> tuple[_FilterCarry, _FilterRecord]:
             mean, sources, sensitivity, time, _, _, _ = values
             transition = jnp.eye(augmented_size, dtype=mean.dtype)
             zero_state = jnp.zeros((state_size,), dtype=mean.dtype)
@@ -628,23 +658,23 @@ def _block_filter(
     observation_covariance: Array,
     process_covariance: Array,
     flat_args: Array,
-    unravel_args: Any,
+    unravel_args: Callable[[Array], Any],
     initial_quasi_sum: Array,
     initial_quasi_count: Array,
     initial_quasi_log_sum: Array,
     /,
-):
+) -> tuple[_FilterCarry, _FilterRecord]:
     order = method.order
     derivative_count, state_size = initial_mean.shape
     eye_derivative = jnp.eye(derivative_count, dtype=initial_mean.dtype)
     observation_diagonal = jnp.diag(observation_covariance)
     process_diagonal = jnp.diag(process_covariance)
 
-    def one_step(carry, step):
+    def one_step(carry: _FilterCarry, step: Array) -> tuple[_FilterCarry, _FilterRecord]:
         mean, sources, sensitivity, time, quasi_sum, quasi_count, quasi_log_sum = carry
         active = step > 0.0
 
-        def advance(values):
+        def advance(values: _FilterCarry) -> tuple[_FilterCarry, _FilterRecord]:
             (
                 mean,
                 sources,
@@ -675,7 +705,7 @@ def _block_filter(
             ).reshape(-1)
             residual = predicted_mean[1] - drift
 
-            def flattened_drift(flat_state):
+            def flattened_drift(flat_state: Array) -> Array:
                 return jnp.asarray(
                     problem.drift(
                         next_time,
@@ -783,7 +813,7 @@ def _block_filter(
             )
             return next_carry, record
 
-        def inactive(values):
+        def inactive(values: _FilterCarry) -> tuple[_FilterCarry, _FilterRecord]:
             mean, sources, sensitivity, time, _, _, _ = values
             zero_state = jnp.zeros((state_size,), dtype=mean.dtype)
             record = (
@@ -818,12 +848,12 @@ def _block_filter(
 
 
 def _dense_smooth(
-    initial_mean,
-    initial_sources,
-    initial_sensitivity,
-    records,
+    initial_mean: Array,
+    initial_sources: Array,
+    initial_sensitivity: Array,
+    records: _FilterRecord,
     /,
-):
+) -> _MarginalMoments:
     (
         predicted_means,
         predicted_sources,
@@ -847,7 +877,9 @@ def _dense_smooth(
         (initial_sensitivity[None], filtered_sensitivities), axis=0
     )
 
-    def step(carry, values):
+    def step(
+        carry: _MarginalMoments, values: _SmoothInputs
+    ) -> tuple[_MarginalMoments, _MarginalMoments]:
         next_mean, next_sources, next_sensitivity = carry
         (
             filtered_mean,
@@ -860,7 +892,7 @@ def _dense_smooth(
             enabled,
         ) = values
 
-        def smooth(_):
+        def smooth(_: None) -> _MarginalMoments:
             filtered_covariance = jnp.sum(filtered_source, axis=0)
             predicted_covariance = jnp.sum(predicted_source, axis=0)
             cross = filtered_covariance @ transition.T
@@ -930,12 +962,12 @@ def _dense_smooth(
 
 
 def _block_smooth(
-    initial_mean,
-    initial_sources,
-    initial_sensitivity,
-    records,
+    initial_mean: Array,
+    initial_sources: Array,
+    initial_sensitivity: Array,
+    records: _FilterRecord,
     /,
-):
+) -> _MarginalMoments:
     (
         predicted_means,
         predicted_sources,
@@ -959,7 +991,9 @@ def _block_smooth(
         (initial_sensitivity[None], filtered_sensitivities), axis=0
     )
 
-    def step(carry, values):
+    def step(
+        carry: _MarginalMoments, values: _SmoothInputs
+    ) -> tuple[_MarginalMoments, _MarginalMoments]:
         next_mean, next_sources, next_sensitivity = carry
         (
             filtered_mean,
@@ -972,7 +1006,7 @@ def _block_smooth(
             enabled,
         ) = values
 
-        def smooth(_):
+        def smooth(_: None) -> _MarginalMoments:
             filtered_covariance = jnp.sum(filtered_source, axis=0)
             predicted_covariance = jnp.sum(predicted_source, axis=0)
             cross = ein.contract("dij,kj->dik", filtered_covariance, transition)
@@ -1070,23 +1104,23 @@ def _fixed_steps(
 
 
 def _saved_dense_marginals(
-    times,
-    grid,
-    smoothed_means,
-    smoothed_sources,
-    smoothed_sensitivities,
-    filtered_means,
-    filtered_sources,
-    filtered_sensitivities,
-    predicted_means,
-    predicted_sources,
-    predicted_sensitivities,
-    order,
-    smoothing,
-    base_diffusion,
-    process_covariance,
+    times: Array,
+    grid: Array,
+    smoothed_means: Array,
+    smoothed_sources: Array,
+    smoothed_sensitivities: Array,
+    filtered_means: Array,
+    filtered_sources: Array,
+    filtered_sensitivities: Array,
+    predicted_means: Array,
+    predicted_sources: Array,
+    predicted_sensitivities: Array,
+    order: int,
+    smoothing: bool,
+    base_diffusion: float,
+    process_covariance: Array,
     /,
-):
+) -> _MarginalMoments:
     indices = jnp.searchsorted(grid, times, side="right") - 1
     indices = jnp.where(times == grid[-1], grid.shape[0] - 1, indices)
     record_indices = jnp.minimum(indices, predicted_means.shape[0] - 1)
@@ -1094,17 +1128,19 @@ def _saved_dense_marginals(
     state_size = filtered_means.shape[-1]
     eye_state = jnp.eye(state_size, dtype=filtered_means.dtype)
 
-    def evaluate(time, index, record_index, right_index):
+    def evaluate(
+        time: Array, index: Array, record_index: Array, right_index: Array
+    ) -> _MarginalMoments:
         exact = time == grid[index]
 
-        def exact_knot(_):
+        def exact_knot(_: None) -> _MarginalMoments:
             return (
                 smoothed_means[index, 0],
                 smoothed_sources[index, :, :state_size, :state_size],
                 smoothed_sensitivities[index, 0],
             )
 
-        def off_grid(_):
+        def off_grid(_: None) -> _MarginalMoments:
             delta = time - grid[index]
             transition_small = _transition(order, delta, filtered_means.dtype)
             transition = jnp.kron(transition_small, eye_state)
@@ -1130,7 +1166,7 @@ def _saved_dense_marginals(
             sources = sources.at[_PROCESS].add(jnp.kron(iwp, process_covariance))
             if smoothing:
 
-                def bridge(values):
+                def bridge(values: _MarginalMoments) -> _MarginalMoments:
                     mean, sources, sensitivity = values
                     remaining = grid[right_index] - time
                     remaining_transition = jnp.kron(
@@ -1195,40 +1231,42 @@ def _saved_dense_marginals(
 
 
 def _saved_block_marginals(
-    times,
-    grid,
-    smoothed_means,
-    smoothed_sources,
-    smoothed_sensitivities,
-    filtered_means,
-    filtered_sources,
-    filtered_sensitivities,
-    predicted_means,
-    predicted_sources,
-    predicted_sensitivities,
-    order,
-    smoothing,
-    base_diffusion,
-    process_covariance,
+    times: Array,
+    grid: Array,
+    smoothed_means: Array,
+    smoothed_sources: Array,
+    smoothed_sensitivities: Array,
+    filtered_means: Array,
+    filtered_sources: Array,
+    filtered_sensitivities: Array,
+    predicted_means: Array,
+    predicted_sources: Array,
+    predicted_sensitivities: Array,
+    order: int,
+    smoothing: bool,
+    base_diffusion: float,
+    process_covariance: Array,
     /,
-):
+) -> _MarginalMoments:
     indices = jnp.searchsorted(grid, times, side="right") - 1
     indices = jnp.where(times == grid[-1], grid.shape[0] - 1, indices)
     record_indices = jnp.minimum(indices, predicted_means.shape[0] - 1)
     right_indices = jnp.minimum(indices + 1, grid.shape[0] - 1)
     process_diagonal = jnp.diag(process_covariance)
 
-    def evaluate(time, index, record_index, right_index):
+    def evaluate(
+        time: Array, index: Array, record_index: Array, right_index: Array
+    ) -> _MarginalMoments:
         exact = time == grid[index]
 
-        def exact_knot(_):
+        def exact_knot(_: None) -> _MarginalMoments:
             return (
                 smoothed_means[index, 0],
                 smoothed_sources[index, :, :, 0, 0],
                 smoothed_sensitivities[index, 0],
             )
 
-        def off_grid(_):
+        def off_grid(_: None) -> _MarginalMoments:
             delta = time - grid[index]
             transition = _transition(order, delta, filtered_means.dtype)
             mean = transition @ filtered_means[index]
@@ -1250,7 +1288,7 @@ def _saved_block_marginals(
             )
             if smoothing:
 
-                def bridge(values):
+                def bridge(values: _MarginalMoments) -> _MarginalMoments:
                     mean, sources, sensitivity = values
                     remaining_transition = _transition(
                         order,

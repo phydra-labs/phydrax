@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -48,7 +49,7 @@ class PhysicalPODPlan(StrictModule, NonTrainableState):
         retained_energy: float = 1.0,
         centered: bool = True,
         minimum_singular_value: float = 0.0,
-    ):
+    ) -> None:
         rank = int(maximum_rank)
         energy = float(retained_energy)
         threshold = float(minimum_singular_value)

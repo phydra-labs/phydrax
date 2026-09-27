@@ -12,7 +12,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -121,7 +122,7 @@ class RigidConstraintSolverPlan(StrictModule, NonTrainableState):
         hinge_alignment_margin: float = 1.0e-6,
         rotation_chart_margin: float = 1.0e-4,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         default_linear = LinearSolvePolicy(
             GMRES(restart=32, stagnation_iterations=32),
             tolerance=TolerancePolicy(relative=1.0e-9, absolute=1.0e-11, max_steps=256),
@@ -222,7 +223,7 @@ class RigidConstraintDynamicsPlan(StrictModule, NonTrainableState):
         *,
         solver: RigidConstraintSolverPlan | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(joints, RigidJointGraphPlan):
             raise TypeError("joints must be a RigidJointGraphPlan.")
         solver_ = RigidConstraintSolverPlan() if solver is None else solver
@@ -423,11 +424,11 @@ class _PositionProjectionFunction(StrictModule, NonTrainableState):
         state: _PositionProjectionUnknown,
         args: _PositionProjectionArguments,
         /,
-    ):
+    ) -> tuple[_PositionProjectionResidual, _PositionProjectionAuxiliary]:
         graph = self.graph
         masses = graph.bodies.particles.safe_masses[graph.mobile_indices]
 
-        def lagrangian(increment):
+        def lagrangian(increment: _RigidMobileIncrement) -> Array:
             candidate = graph.retract(args.predicted, increment)
             physical = graph.residuals(candidate)
             scaled = _scaled_residuals(physical, self.characteristic_length)
@@ -467,7 +468,14 @@ class _PositionProjectionValidity(StrictModule, NonTrainableState):
     solver: RigidConstraintSolverPlan
     dimension: int = eqx.field(static=True)
 
-    def __call__(self, state, residual, auxiliary, args, /):
+    def __call__(
+        self,
+        state: _PositionProjectionUnknown,
+        residual: _PositionProjectionResidual,
+        auxiliary: _PositionProjectionAuxiliary,
+        args: _PositionProjectionArguments,
+        /,
+    ) -> Array:
         del residual, args
         if self.dimension == 3:
             orientation_valid = jnp.all(
@@ -508,7 +516,7 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
         external_load_id: str | None,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         if joints.bodies.prepared_id != bodies.prepared_id:
             raise ValueError("Rigid joint graph and body set do not match.")
         if joints.constraint_count == 0:
@@ -570,7 +578,9 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
         multipliers = self.joints.empty_multipliers(kinematics.position.dtype)
         return RigidConstraintState(kinematics, multipliers, multipliers)
 
-    def _load(self, time: Array, kinematics: RigidBodyKinematics, args: Any, /):
+    def _load(
+        self, time: Array, kinematics: RigidBodyKinematics, args: Any, /
+    ) -> RigidBodyLoad:
         if self.external_load is None:
             return RigidBodyLoad(
                 jnp.zeros_like(kinematics.position),
@@ -632,7 +642,15 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
         kinematics: RigidBodyKinematics,
         multiplier_guess: RigidJointMultipliers,
         /,
-    ):
+    ) -> tuple[
+        LinearSolveResult,
+        RigidBodyKinematics,
+        RigidJointMultipliers,
+        RigidJointResiduals,
+        Array,
+        Array,
+        Array,
+    ]:
         graph = self.joints
         zero = graph.empty_increment(kinematics.position.dtype)
         constraint_template = _scaled_residuals(
@@ -736,15 +754,15 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
 
     def _empty_evaluation(
         self,
-        initial_load,
-        closing_load,
-        candidate,
-        successful,
-        reasons,
-        kinetic_before,
-        kinetic_after,
+        initial_load: RigidBodyLoad,
+        closing_load: RigidBodyLoad,
+        candidate: RigidConstraintState,
+        successful: Array,
+        reasons: Array,
+        kinetic_before: Array,
+        kinetic_after: Array,
         /,
-    ):
+    ) -> RigidConstraintEvaluation:
         residuals = self.joints.residuals(candidate.kinematics)
         multipliers = self.joints.empty_multipliers(candidate.kinematics.position.dtype)
         quaternion_defect = _orientation_defect(

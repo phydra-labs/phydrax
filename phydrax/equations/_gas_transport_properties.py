@@ -10,7 +10,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -137,7 +138,7 @@ class ReferencePowerLawGasTransportPlan(AbstractGasTransportPropertyPlan):
         diffusion_temperature_exponent: float = 1.75,
         viscosity_temperature_exponent: float = 0.7,
         conductivity_temperature_exponent: float = 0.7,
-    ):
+    ) -> None:
         viscosity = np.asarray(species_viscosities, dtype=np.float64)
         count = viscosity.size if viscosity.ndim == 1 else 0
         if count < 2:
@@ -189,7 +190,9 @@ class ReferencePowerLawGasTransportPlan(AbstractGasTransportPropertyPlan):
             }
         )
 
-    def evaluate(self, temperature, pressure, /):
+    def evaluate(
+        self, temperature: ArrayLike, pressure: ArrayLike, /
+    ) -> GasTransportPropertyEvaluation:
         temperature_, pressure_ = jnp.broadcast_arrays(
             jnp.asarray(temperature), jnp.asarray(pressure)
         )
@@ -253,7 +256,7 @@ class LogPolynomialGasTransportPlan(AbstractGasTransportPropertyPlan):
         reference_pressure: float,
         relative_error_bounds: tuple[float, float, float],
         reference_id: str,
-    ):
+    ) -> None:
         viscosity = np.asarray(viscosity_coefficients, dtype=np.float64)
         conductivity = np.asarray(conductivity_coefficients, dtype=np.float64)
         diffusion = np.asarray(diffusion_coefficients, dtype=np.float64)
@@ -317,7 +320,9 @@ class LogPolynomialGasTransportPlan(AbstractGasTransportPropertyPlan):
             }
         )
 
-    def evaluate(self, temperature, pressure, /):
+    def evaluate(
+        self, temperature: ArrayLike, pressure: ArrayLike, /
+    ) -> GasTransportPropertyEvaluation:
         temperature_, pressure_ = jnp.broadcast_arrays(
             jnp.asarray(temperature), jnp.asarray(pressure)
         )
@@ -372,7 +377,7 @@ class KineticTheoryGasTransportPlan(AbstractGasTransportPropertyPlan):
         eucken_factors: ArrayLike,
         temperature_bounds: tuple[float, float],
         /,
-    ):
+    ) -> None:
         masses = np.asarray(molar_masses_g_mol, dtype=np.float64)
         count = masses.size if masses.ndim == 1 else 0
         if count < 2:
@@ -409,7 +414,7 @@ class KineticTheoryGasTransportPlan(AbstractGasTransportPropertyPlan):
         )
 
     @staticmethod
-    def _omega_viscosity(reduced_temperature):
+    def _omega_viscosity(reduced_temperature: Array) -> Array:
         return (
             1.16145 * reduced_temperature**-0.14874
             + 0.52487 * jnp.exp(-0.7732 * reduced_temperature)
@@ -417,7 +422,7 @@ class KineticTheoryGasTransportPlan(AbstractGasTransportPropertyPlan):
         )
 
     @staticmethod
-    def _omega_diffusion(reduced_temperature):
+    def _omega_diffusion(reduced_temperature: Array) -> Array:
         return (
             1.06036 * reduced_temperature**-0.15610
             + 0.19300 * jnp.exp(-0.47635 * reduced_temperature)
@@ -425,7 +430,9 @@ class KineticTheoryGasTransportPlan(AbstractGasTransportPropertyPlan):
             + 1.76474 * jnp.exp(-3.89411 * reduced_temperature)
         )
 
-    def evaluate(self, temperature, pressure, /):
+    def evaluate(
+        self, temperature: ArrayLike, pressure: ArrayLike, /
+    ) -> GasTransportPropertyEvaluation:
         temperature_, pressure_ = jnp.broadcast_arrays(
             jnp.asarray(temperature), jnp.asarray(pressure)
         )

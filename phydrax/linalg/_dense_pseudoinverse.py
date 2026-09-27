@@ -7,7 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from ._policies import RankPolicy
@@ -163,7 +163,9 @@ def _fixed_rank_pseudoinverse(matrix: Array, value: Array, /) -> Array:
 
 
 @_fixed_rank_pseudoinverse.defjvp
-def _fixed_rank_pseudoinverse_jvp(primals, tangents):
+def _fixed_rank_pseudoinverse_jvp(
+    primals: tuple[Array, Array], tangents: tuple[Array, Array]
+) -> tuple[Array, Array]:
     matrix, value = primals
     matrix_tangent, _ = tangents
     return value, _pseudoinverse_tangent(matrix, value, matrix_tangent)
@@ -180,7 +182,9 @@ def _fixed_rank_hermitian_pseudoinverse(
 
 
 @_fixed_rank_hermitian_pseudoinverse.defjvp
-def _fixed_rank_hermitian_pseudoinverse_jvp(primals, tangents):
+def _fixed_rank_hermitian_pseudoinverse_jvp(
+    primals: tuple[Array, Array], tangents: tuple[Array, Array]
+) -> tuple[Array, Array]:
     matrix, value = primals
     matrix_tangent, _ = tangents
     matrix_tangent = 0.5 * (matrix_tangent + _adjoint(matrix_tangent))

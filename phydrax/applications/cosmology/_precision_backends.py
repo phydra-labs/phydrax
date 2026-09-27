@@ -56,7 +56,7 @@ class LinearTheoryPhysicsPolicy(StrictModule, NonTrainableState):
         dark_energy_perturbations: str = "ppf",
         recombination: str = "backend-default-qualified",
         reionization: str = "tanh-optical-depth",
-    ):
+    ) -> None:
         values = tuple(
             str(value).strip()
             for value in (
@@ -104,7 +104,7 @@ class LinearTheoryOutputPolicy(StrictModule, NonTrainableState):
         gauge: str,
         power_field: str,
         include_thermodynamics: bool = False,
-    ):
+    ) -> None:
         fields = tuple(str(value).strip() for value in transfer_fields)
         gauge_ = str(gauge).strip()
         power_ = str(power_field).strip()
@@ -144,7 +144,7 @@ class BackendBuildManifest(StrictModule, NonTrainableState):
         build_options: tuple[str, ...] = (),
         arguments: tuple[str, ...] = ("{request}", "{output}"),
         license_id: str,
-    ):
+    ) -> None:
         values = tuple(
             str(value).strip() for value in (backend, release, application, license_id)
         )
@@ -193,7 +193,7 @@ class LinearTheoryResourcePolicy(StrictModule, NonTrainableState):
         timeout_seconds: float = 600.0,
         backend_threads: int = 1,
         output_byte_cap: int = 1_000_000_000,
-    ):
+    ) -> None:
         timeout = float(timeout_seconds)
         threads = int(backend_threads)
         cap = int(output_byte_cap)
@@ -289,14 +289,11 @@ def _load_products(
     power_values = jnp.asarray(arrays["power_values"])
     has_thermodynamics = bool(np.asarray(arrays["has_thermodynamics"]).item())
     thermo_values = (
-        tuple(
-            jnp.asarray(arrays[name])
-            for name in (
-                "ionization_fraction",
-                "baryon_temperature",
-                "opacity_derivative",
-                "visibility",
-            )
+        (
+            jnp.asarray(arrays["ionization_fraction"]),
+            jnp.asarray(arrays["baryon_temperature"]),
+            jnp.asarray(arrays["opacity_derivative"]),
+            jnp.asarray(arrays["visibility"]),
         )
         if has_thermodynamics
         else None
@@ -417,7 +414,7 @@ class ClassLinearTheoryBackend(StrictModule, NonTrainableState):
         resources: LinearTheoryResourcePolicy,
         cache_directory: str,
         /,
-    ):
+    ) -> None:
         if build.backend.lower() != "class":
             raise ValueError("ClassLinearTheoryBackend requires a CLASS build manifest.")
         self.build = build
@@ -445,7 +442,7 @@ class CambLinearTheoryBackend(StrictModule, NonTrainableState):
         resources: LinearTheoryResourcePolicy,
         cache_directory: str,
         /,
-    ):
+    ) -> None:
         if build.backend.lower() != "camb":
             raise ValueError("CambLinearTheoryBackend requires a CAMB build manifest.")
         self.build = build

@@ -23,7 +23,7 @@ from phydrax.metrix._quaternion_state_geometry import (
 from phydrax.metrix._state_geometry import EuclideanStateGeometry
 
 
-def test_scalar_first_quaternion_is_antipodal_invariant_inside_one_chart():
+def test_scalar_first_quaternion_is_antipodal_invariant_inside_one_chart() -> None:
     geometry = ScalarFirstQuaternionStateGeometry(convention="body")
     anchor = jnp.asarray([1.0, 0.0, 0.0, 0.0])
     local = jnp.asarray([0.3, -0.2, 0.1])
@@ -40,7 +40,7 @@ def test_scalar_first_quaternion_is_antipodal_invariant_inside_one_chart():
         geometry.inverse_retract(anchor, pi_target)
 
 
-def test_quaternion_four_space_maps_are_finite_and_exact_at_chart_origin():
+def test_quaternion_four_space_maps_are_finite_and_exact_at_chart_origin() -> None:
     quaternion = ScalarFirstQuaternionStateGeometry(convention="body")
     quaternion_source = jnp.asarray([1.0, 0.0, 0.0, 0.0])
     quaternion_direction = jnp.asarray([0.2, -0.1, 0.3])
@@ -85,7 +85,7 @@ def test_quaternion_four_space_maps_are_finite_and_exact_at_chart_origin():
     )
 
 
-def test_quaternion_pose_body_and_spatial_conventions_are_distinct_and_exact():
+def test_quaternion_pose_body_and_spatial_conventions_are_distinct_and_exact() -> None:
     body = QuaternionPoseStateGeometry(convention="body")
     spatial = QuaternionPoseStateGeometry(convention="spatial")
     anchor = jnp.asarray([jnp.sqrt(0.5), jnp.sqrt(0.5), 0.0, 0.0, 1.0, -0.5, 0.25])
@@ -106,7 +106,7 @@ def test_quaternion_pose_body_and_spatial_conventions_are_distinct_and_exact():
     assert jnp.vdot(cotangent, pushed) == pytest.approx(jnp.vdot(pulled, direction))
 
 
-def test_matrix_so3_and_se3_lie_geometries_use_hat_vee_coordinates():
+def test_matrix_so3_and_se3_lie_geometries_use_hat_vee_coordinates() -> None:
     rotation_group = SpecialOrthogonalGroup(3)
     rotation_geometry = LieGroupStateGeometry(rotation_group)
     rotation_state = rotation_group.identity()
@@ -131,7 +131,7 @@ def test_matrix_so3_and_se3_lie_geometries_use_hat_vee_coordinates():
     assert not jnp.allclose(body.retract(state, local), spatial.retract(state, local))
 
 
-def test_product_keeps_role_offsets_and_certifies_vjp_and_transport_duality():
+def test_product_keeps_role_offsets_and_certifies_vjp_and_transport_duality() -> None:
     pose_geometry = QuaternionPoseStateGeometry(convention="body")
     product = ProductStateGeometry(
         (

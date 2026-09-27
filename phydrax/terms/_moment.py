@@ -7,7 +7,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.domain import DomainFunction
 
@@ -24,6 +25,7 @@ from ..integration import (
     reduce,
 )
 from ..integration._api import _requires_random_key
+from ..typing import PRNGKey
 from ._integrated import (
     checked_estimate_field,
     resolve_term_realization,
@@ -56,7 +58,7 @@ class MomentPenalty(AbstractEvaluatedScalarTerm):
         *,
         scale: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(condition, AbstractMomentCondition):
             raise TypeError("MomentPenalty requires an AbstractMomentCondition.")
         if isinstance(source, AdaptiveIntegration):
@@ -90,7 +92,7 @@ class MomentPenalty(AbstractEvaluatedScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         realization: IntegrationRealization | None = None,
         **kwargs: Any,
@@ -131,7 +133,7 @@ class MomentPenalty(AbstractEvaluatedScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         realization: IntegrationRealization | None = None,
         **kwargs: Any,

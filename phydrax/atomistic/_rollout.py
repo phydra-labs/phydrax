@@ -9,13 +9,14 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._numerics._checkpointed_scan import checkpointed_scan
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
+from ..typing import parse
 from ._barostat import (
     apply_isotropic_monte_carlo_barostat,
     IsotropicMonteCarloBarostatPlan,
@@ -28,6 +29,24 @@ from ._units import AtomisticUnitSystem
 
 AtomisticReplayMode: TypeAlias = Literal["full", "step", "block"]
 AtomisticRetention: TypeAlias = Literal["final", "trajectory"]
+_RolloutCarry: TypeAlias = tuple[
+    AtomisticDynamicsState,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    tuple[Any, ...],
+]
 
 
 class AtomisticReplayPolicy(StrictModule, NonTrainableState):
@@ -41,9 +60,8 @@ class AtomisticReplayPolicy(StrictModule, NonTrainableState):
         /,
         *,
         block_size: int | None = None,
-    ):
-        if mode not in ("full", "step", "block"):
-            raise ValueError("Unknown atomistic replay mode.")
+    ) -> None:
+        mode = parse(mode, AtomisticReplayMode, "mode")
         size = None if block_size is None else int(block_size)
         if mode == "block":
             if size is None or size <= 0:
@@ -73,13 +91,12 @@ class AtomisticTrajectoryPlan(StrictModule, NonTrainableState):
         sample_stride: int = 1,
         include_initial: bool = True,
         retention: AtomisticRetention = "trajectory",
-    ):
+    ) -> None:
         steps = int(step_count)
         stride = int(sample_stride)
         if steps <= 0 or stride <= 0:
             raise ValueError("step_count and sample_stride must be positive.")
-        if retention not in ("final", "trajectory"):
-            raise ValueError("retention must be 'final' or 'trajectory'.")
+        retention = parse(retention, AtomisticRetention, "retention")
         scheduled = steps // stride
         if steps % stride:
             scheduled += 1
@@ -159,7 +176,7 @@ class AtomisticRolloutPlan(StrictModule):
         observers: tuple[AbstractAtomisticObserverPlan, ...] = (),
         barostat: IsotropicMonteCarloBarostatPlan | None = None,
         barostat_interval: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedAtomisticDynamics):
             raise TypeError("dynamics must be PreparedAtomisticDynamics.")
         if not isinstance(trajectory, AtomisticTrajectoryPlan):
@@ -277,7 +294,7 @@ class AtomisticRolloutPlan(StrictModule):
             )
             valid = valid.at[0].set(initial_success)
 
-        initial_carry = (
+        initial_carry: _RolloutCarry = (
             state,
             initial_success,
             times,
@@ -300,7 +317,7 @@ class AtomisticRolloutPlan(StrictModule):
             observer_states,
         )
 
-        def advance(carry, index):
+        def advance(carry: _RolloutCarry, index: Array) -> tuple[_RolloutCarry, None]:
             (
                 current,
                 cumulative_success,
@@ -322,21 +339,22 @@ class AtomisticRolloutPlan(StrictModule):
             result = self.dynamics.step_detailed(current, self.thermodynamic)
             propagated = result.accepted_state
             iteration_successful = result.successful
-            if self.barostat is not None:
-                scheduled = (index + 1) % self.barostat_interval == 0
+            barostat, interval = self.barostat, self.barostat_interval
+            if barostat is not None and interval is not None:
+                scheduled = (index + 1) % interval == 0
                 move_counter = current.barostat_state[0]
 
-                def apply_move(_):
+                def apply_move(_: None) -> tuple[AtomisticDynamicsState, Array]:
                     evaluation = apply_isotropic_monte_carlo_barostat(
                         self.dynamics,
                         propagated,
                         self.thermodynamic,
-                        self.barostat,
+                        barostat,
                         move_counter,
                     )
                     return evaluation.accepted_state, evaluation.successful
 
-                def skip_move(_):
+                def skip_move(_: None) -> tuple[AtomisticDynamicsState, Array]:
                     return propagated, jnp.asarray(True)
 
                 proposed, barostat_successful = jax.lax.cond(

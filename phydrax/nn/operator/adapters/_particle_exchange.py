@@ -9,7 +9,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -21,6 +22,7 @@ from ....discretization.particle._pairwise import (
     scatter_pair_exchange,
 )
 from ....discretization.particle._precision import ParticleAccumulation
+from ....typing import parse
 from ..data import FunctionSamples, OperatorBatch
 from ..training._trained_operator import TrainedOperator
 
@@ -45,7 +47,7 @@ class PairwiseExchangeFeatureSchema(StrictModule, NonTrainableState):
         *,
         dtype: Any,
         relation_schema_id: str,
-    ):
+    ) -> None:
         names_ = tuple(str(value).strip() for value in names)
         units_ = tuple(str(value).strip() for value in units)
         dtype_ = np.dtype(dtype)
@@ -150,7 +152,7 @@ class PairwiseExchangeBindingPlan(StrictModule, NonTrainableState):
         query_name: str = "pairs",
         accumulation: ParticleAccumulation = "deterministic",
         conservation_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         if not isinstance(feature_schema, PairwiseExchangeFeatureSchema):
             raise TypeError("feature_schema must be PairwiseExchangeFeatureSchema.")
         kind = str(exchange_kind)
@@ -159,12 +161,10 @@ class PairwiseExchangeBindingPlan(StrictModule, NonTrainableState):
         target = str(target_name).strip()
         query = str(query_name).strip()
         tolerance = float(conservation_tolerance)
-        if kind not in ("vector", "central_force", "scalar_flux"):
-            raise ValueError("Unknown pairwise exchange kind.")
+        kind = parse(kind, PairwiseExchangeKind, "exchange_kind")
         if not artifact or not source or not target or not query:
             raise ValueError("Pairwise exchange binding identities must be non-empty.")
-        if accumulation not in ("fast", "deterministic", "compensated"):
-            raise ValueError("Unknown particle accumulation policy.")
+        accumulation = parse(accumulation, ParticleAccumulation, "accumulation")
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("conservation_tolerance must be finite and nonnegative.")
         self.feature_schema = feature_schema
@@ -250,7 +250,7 @@ class PreparedPairwiseExchangeBinding(StrictModule, NonTrainableState):
         geometry: ParticlePairGeometry,
         plan: PairwiseExchangeBindingPlan,
         /,
-    ):
+    ) -> None:
         self.trained = trained
         self.template = template
         self.pairs = pairs

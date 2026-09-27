@@ -4,11 +4,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -29,7 +33,7 @@ class AdditiveIMEXTableau(StrictModule, NonTrainableState):
         weights: ArrayLike,
         nodes: ArrayLike,
         /,
-    ):
+    ) -> None:
         explicit = np.asarray(explicit_matrix, dtype=np.float64)
         implicit = np.asarray(implicit_matrix, dtype=np.float64)
         weights_ = np.asarray(weights, dtype=np.float64)
@@ -73,12 +77,12 @@ class AdditiveIMEXTableau(StrictModule, NonTrainableState):
         state: Array,
         time: Array,
         step_size: Array,
-        explicit_rhs,
-        implicit_solve,
-        args=None,
+        explicit_rhs: Callable[[Array, Array, Any], ArrayLike],
+        implicit_solve: Callable[[Array, Array, Array, Any], ArrayLike],
+        args: Any = None,
         /,
         *,
-        implicit_rhs,
+        implicit_rhs: Callable[[Array, Array, Any], ArrayLike],
     ) -> Array:
         """Apply the tableau; RHS callbacks take ``(state, time, args)``.
 
@@ -158,7 +162,7 @@ class BalanceLawCompositionPlan(StrictModule, NonTrainableState):
         self,
         process_subcycles: tuple[int, ...],
         /,
-    ):
+    ) -> None:
         subcycles = tuple(process_subcycles)
         if not subcycles or any(value <= 0 for value in subcycles):
             raise ValueError("Balance-law multirate composition is invalid.")

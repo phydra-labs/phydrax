@@ -14,7 +14,8 @@ import jax
 import jax.lax as lax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..discretization import (
@@ -37,6 +38,7 @@ from ..nonlinear import (
     PreparedNonlinearSolve,
     refresh_nonlinear,
 )
+from ..typing import parse
 from ._bdf_method import (
     bdf_predict as _general_bdf_predict,
     bdf_shift_offset as _general_bdf_shift_offset,
@@ -228,7 +230,7 @@ class DAEAdaptivePolicy(StrictModule):
         maximum_accepted_steps: int = 4096,
         maximum_attempts: int = 8192,
         maximum_consecutive_rejections: int = 12,
-    ):
+    ) -> None:
         relative = _inexact(relative_tolerance)
         absolute = _inexact(absolute_tolerance)
         relative_host = np.asarray(relative, dtype=np.float64)
@@ -335,7 +337,7 @@ class DAETemporalReusePolicy(StrictModule):
         maximum_jacobian_age: int = 2,
         maximum_alpha_ratio: float = 1.25,
         refresh_after_iterations: int | None = 3,
-    ):
+    ) -> None:
         age = int(maximum_jacobian_age)
         ratio = float(maximum_alpha_ratio)
         iterations = (
@@ -367,9 +369,8 @@ class DAEReplayPolicy(StrictModule):
         *,
         chunk_size: int | None = None,
         memory_budget_bytes: int | None = None,
-    ):
-        if checkpointing not in ("full", "chunked"):
-            raise ValueError("checkpointing must be 'full' or 'chunked'.")
+    ) -> None:
+        checkpointing = parse(checkpointing, DAEReplayMode, "checkpointing")
         chunk = None if chunk_size is None else int(chunk_size)
         budget = None if memory_budget_bytes is None else int(memory_budget_bytes)
         if chunk is not None and chunk < 1:
@@ -403,17 +404,15 @@ class DAERegularityPolicy(StrictModule):
         interval: int = 1,
         condition_limit: float | None = None,
         failure: DAERegularityFailureMode = "record",
-    ):
-        if mode not in ("solver-evidence", "periodic"):
-            raise ValueError("mode must be 'solver-evidence' or 'periodic'.")
+    ) -> None:
+        mode = parse(mode, DAERegularityMode, "mode")
         interval_ = int(interval)
         limit = None if condition_limit is None else float(condition_limit)
         if interval_ < 1:
             raise ValueError("interval must be positive.")
         if limit is not None and (not math.isfinite(limit) or limit <= 1.0):
             raise ValueError("condition_limit must be finite and exceed one.")
-        if failure not in ("record", "status"):
-            raise ValueError("failure must be 'record' or 'status'.")
+        failure = parse(failure, DAERegularityFailureMode, "failure")
         self.mode = mode
         self.interval = interval_
         self.condition_limit = limit
@@ -449,7 +448,7 @@ class DAESolvePolicy(StrictModule):
         regularity: DAERegularityPolicy | None = None,
         max_step_ratio: float = 2.0,
         failure: DAEFailureMode = "status",
-    ):
+    ) -> None:
         temporal_method = BDFMethod() if method is None else method
         if not isinstance(temporal_method, (BDFMethod, ThetaMethod)):
             raise TypeError("method must be BDFMethod, ThetaMethod, or None.")
@@ -507,8 +506,7 @@ class DAESolvePolicy(StrictModule):
         ratio = float(max_step_ratio)
         if not math.isfinite(ratio) or ratio < 1.0:
             raise ValueError("max_step_ratio must be finite and at least one.")
-        if failure not in ("status", "error"):
-            raise ValueError("failure must be 'status' or 'error'.")
+        failure = parse(failure, DAEFailureMode, "failure")
         self.nonlinear_method = stage_method
         self.nonlinear_termination = stage_termination
         self.initialization_method = initial_method
@@ -547,7 +545,7 @@ class DifferentialAlgebraicProblem(StrictModule):
         initialization: DAEInitializationSpec | Literal["structural"] | None = None,
         discretization_bundle: DiscretizationBundle | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         from ..dynamics._dae_structural import ReducedDAECompilation
 
         structural = system if isinstance(system, ReducedDAECompilation) else None
@@ -700,7 +698,7 @@ class DAESolvePlan(StrictModule):
         /,
         *,
         event_plan: Any = None,
-    ):
+    ) -> None:
         if not isinstance(problem, DifferentialAlgebraicProblem):
             raise TypeError("problem must be a DifferentialAlgebraicProblem.")
         if not isinstance(time_grid, TimeGrid):
@@ -859,11 +857,11 @@ def _bdf_affine_rate(
     order: Array,
     /,
 ) -> tuple[Array, Array]:
-    def first_order(_):
+    def first_order(_: None) -> tuple[Array, Array]:
         shift = 1.0 / step_size
         return shift, -shift * previous
 
-    def second_order(_):
+    def second_order(_: None) -> tuple[Array, Array]:
         ratio = step_size / previous_step_size
         shift = ((1.0 + 2.0 * ratio) / (1.0 + ratio)) / step_size
         offset = (
@@ -973,7 +971,7 @@ class PreparedDAESolve(StrictModule):
         stage_solve: PreparedNonlinearSolve,
         events: Any,
         /,
-    ):
+    ) -> None:
         if (
             plan.problem_id != problem.problem_id
             or plan.system_id != problem.system.system_id
@@ -1032,7 +1030,7 @@ class DAEStepHistory(StrictModule):
         valid: Array,
         count: Array,
         save_step_indices: Array,
-    ):
+    ) -> None:
         capacity = jnp.asarray(step_sizes).size
         shape = (capacity,)
         for values, name in (
@@ -1101,7 +1099,7 @@ class DAEAttemptHistory(StrictModule):
         residual_certifications: Array,
         valid: Array,
         count: Array,
-    ):
+    ) -> None:
         shape = jnp.asarray(proposed_step_sizes).shape
         if len(shape) != 1:
             raise ValueError("DAE attempt history must be one-dimensional.")
@@ -1178,7 +1176,7 @@ class DAERegularityEvidence(StrictModule):
         stage_valid: Array,
         consistency_operator: str,
         stage_operator: str,
-    ):
+    ) -> None:
         shape = jnp.asarray(stage_status).shape
         if (
             jnp.asarray(stage_rank).shape != shape
@@ -1212,7 +1210,7 @@ class DAEReplayEvidence(StrictModule):
         selected_chunk_size: int,
         estimated_memory_bytes: int,
         checkpointing: DAEReplayMode,
-    ):
+    ) -> None:
         self.accepted_steps = jnp.asarray(accepted_steps, dtype=jnp.int32)
         self.selected_chunk_size = int(selected_chunk_size)
         self.estimated_memory_bytes = int(estimated_memory_bytes)
@@ -1266,7 +1264,7 @@ class DAEContinuation(StrictModule):
         initialization_id: str,
         nonlinear_method_id: str,
         stage_linear_plan_id: str,
-    ):
+    ) -> None:
         states_ = jnp.asarray(states)
         rates_ = jnp.asarray(state_rates)
         if states_.shape != rates_.shape or states_.shape[0] != 6:
@@ -1382,7 +1380,7 @@ class DifferentialAlgebraicSolution(StrictModule):
         initialization_linear_plan_id: str,
         method_id: str,
         adaptive: bool,
-    ):
+    ) -> None:
         validated = validate_solution_arrays(
             times,
             states,
@@ -1741,7 +1739,7 @@ def _regularity_status(
     ).astype(jnp.int32)
 
 
-def _matrix_regularity(matrix: Array, /):
+def _matrix_regularity(matrix: Array, /) -> tuple[Array, Array, Array]:
     singular_values = jnp.linalg.svd(matrix, compute_uv=False)
     largest = singular_values[0]
     smallest = singular_values[-1]
@@ -1756,14 +1754,14 @@ def _matrix_regularity(matrix: Array, /):
 
 
 def _dense_prepared_initialization_regularity(
-    prepared_initialization,
-    initialization,
-    time,
-    args,
-    dimension,
-    condition_limit,
+    prepared_initialization: _PreparedDAEInitialization,
+    initialization: DAEInitializationResult,
+    time: Array,
+    args: Any,
+    dimension: int,
+    condition_limit: float | None,
     /,
-):
+) -> tuple[Array, Array, Array]:
     nonlinear_problem = prepared_initialization.nonlinear_problem
     if nonlinear_problem is None:
         return (
@@ -1787,8 +1785,13 @@ def _dense_prepared_initialization_regularity(
     )
     source = nonlinear_problem.state_space
     target = nonlinear_problem.residual_space
+    # The DAE initialization root is always constructed with bound scaled spaces.
+    if not (source is not None and target is not None):
+        raise RuntimeError(
+            "Internal invariant failed: source is not None and target is not None."
+        )
 
-    def residual(current):
+    def residual(current: Array) -> Array:
         return target.flatten(
             nonlinear_problem.residual(source.unflatten(current), arguments)
         )
@@ -1806,12 +1809,12 @@ def _dense_prepared_initialization_regularity(
 
 
 def _dense_initial_regularity(
-    prepared,
-    initialization,
-    time,
-    args,
+    prepared: PreparedDAESolve,
+    initialization: DAEInitializationResult,
+    time: Array,
+    args: Any,
     /,
-):
+) -> tuple[Array, Array, Array]:
     return _dense_prepared_initialization_regularity(
         prepared.initialization,
         initialization,
@@ -1822,7 +1825,12 @@ def _dense_initial_regularity(
     )
 
 
-def _initial_regularity(initialization, dimension: int, condition_limit, /):
+def _initial_regularity(
+    initialization: DAEInitializationResult,
+    dimension: int,
+    condition_limit: float | None,
+    /,
+) -> tuple[Array, Array, Array]:
     nonlinear_result = initialization.nonlinear_result
     if nonlinear_result is None:
         rank = jnp.asarray(-1, dtype=jnp.int32)
@@ -1843,9 +1851,20 @@ def _initial_regularity(initialization, dimension: int, condition_limit, /):
     return status, rank, condition
 
 
-def _dense_stage_regularity(prepared, state, state_rate, arguments, /):
+def _dense_stage_regularity(
+    prepared: PreparedDAESolve,
+    state: Array,
+    state_rate: Array,
+    arguments: ImplicitStageArguments,
+    /,
+) -> tuple[Array, Array, Array]:
     source = prepared.stage_problem.state_space
     target = prepared.stage_problem.residual_space
+    # The DAE stage root is always constructed with bound scaled spaces.
+    if not (source is not None and target is not None):
+        raise RuntimeError(
+            "Internal invariant failed: source is not None and target is not None."
+        )
     # Probe the solved physical state/rate without recovering a rounded increment.
     centered_arguments = eqx.tree_at(
         lambda value: (value.rate_reference, value.rate_offset, value.fallback_state),
@@ -1854,7 +1873,7 @@ def _dense_stage_regularity(prepared, state, state_rate, arguments, /):
     )
     coordinates = source.flatten(jnp.zeros_like(state))
 
-    def residual(current):
+    def residual(current: Array) -> Array:
         return target.flatten(
             prepared.stage_problem.residual(source.unflatten(current), centered_arguments)
         )
@@ -1917,6 +1936,36 @@ class _FixedDAEEventCarry(StrictModule):
     terminal_status: Array
 
 
+_FixedDAECarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
+_FixedDAEStepOutput: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+_StageRegularityProbe: TypeAlias = tuple[Array, Array, Array, Array]
+
+
 def _solve_prepared(
     prepared: PreparedDAESolve,
     /,
@@ -1955,7 +2004,9 @@ def _solve_prepared(
     indices = jnp.arange(prepared.time_grid.num_steps, dtype=jnp.int32)
     step_sizes = jnp.diff(times)
 
-    def scan_step(carry, inputs):
+    def scan_step(
+        carry: _FixedDAECarry, inputs: tuple[Array, Array, Array]
+    ) -> tuple[_FixedDAECarry, _FixedDAEStepOutput]:
         (
             previous,
             previous_previous,
@@ -1984,7 +2035,7 @@ def _solve_prepared(
                 index + 1,
             )
 
-        def solve_step(_):
+        def solve_step(_: None) -> _FixedDAEStepOutput:
             if isinstance(policy.method, ThetaMethod):
                 arguments = endpoint_theta_stage_arguments(
                     policy.method,
@@ -2087,7 +2138,7 @@ def _solve_prepared(
                 diagnostics.final_linear_converged,
             )
 
-        def skip_step(_):
+        def skip_step(_: None) -> _FixedDAEStepOutput:
             nan_state = jnp.full_like(previous, jnp.nan)
             zero = jnp.asarray(0, dtype=jnp.int32)
             infinity = jnp.asarray(jnp.inf, dtype=previous.real.dtype)
@@ -2311,7 +2362,7 @@ def _solve_prepared(
             args,
         )
 
-        def probe_regularity(index, state):
+        def probe_regularity(index: Array, state: Array) -> _StageRegularityProbe:
             requested = step_valid[index] & ((index % policy.regularity.interval) == 0)
             if isinstance(policy.method, ThetaMethod):
                 arguments = endpoint_theta_stage_arguments(
@@ -2332,7 +2383,7 @@ def _solve_prepared(
                     model_args=args,
                 )
 
-            def probe(_):
+            def probe(_: None) -> _StageRegularityProbe:
                 rank, condition, finite = _dense_stage_regularity(
                     prepared,
                     state,
@@ -2348,7 +2399,7 @@ def _solve_prepared(
                 )
                 return status, rank, condition, jnp.asarray(True)
 
-            def skip(_):
+            def skip(_: None) -> _StageRegularityProbe:
                 return (
                     jnp.asarray(
                         int(DAERegularityStatus.NOT_RUN),
@@ -2547,6 +2598,7 @@ def _solve_prepared_events_primal(
     system = problem.system
     policy = prepared.plan.policy
     assert isinstance(policy.method, BDFMethod)
+    bdf_method = policy.method
     assert prepared.events is not None
     times = lax.stop_gradient(prepared.time_grid.times)
     state_guess = problem.initial_state if initial_state is None else initial_state
@@ -2682,7 +2734,9 @@ def _solve_prepared_events_primal(
     differential_equations = system.structure.differential_equation_mask(state_shape)
     algebraic_equations = system.structure.algebraic_equation_mask(state_shape)
 
-    def scan_step(current, scan_index):
+    def scan_step(
+        current: _FixedDAEEventCarry, scan_index: Array
+    ) -> tuple[_FixedDAEEventCarry, None]:
         active = (
             (current.terminal_status == -1)
             & (current.save_index < node_count)
@@ -2690,10 +2744,10 @@ def _solve_prepared_events_primal(
             & (current.attempt_count < capacity)
         )
 
-        def execute(value):
+        def execute(value: _FixedDAEEventCarry) -> _FixedDAEEventCarry:
             target_time = times[value.save_index]
             order = jnp.minimum(
-                jnp.asarray(policy.method.maximum_order, dtype=jnp.int32),
+                jnp.asarray(bdf_method.maximum_order, dtype=jnp.int32),
                 jnp.maximum(value.history_depth, 1),
             )
             predictor = _general_bdf_predict(
@@ -2981,7 +3035,7 @@ def _solve_prepared_events_primal(
                     (value.accepted_count % policy.regularity.interval) == 0
                 )
 
-                def probe_regularity(_):
+                def probe_regularity(_: None) -> _StageRegularityProbe:
                     rank, condition, finite_operator = _dense_stage_regularity(
                         prepared,
                         regularity_state,
@@ -2997,7 +3051,7 @@ def _solve_prepared_events_primal(
                     )
                     return status, rank, condition, jnp.asarray(True)
 
-                def skip_regularity(_):
+                def skip_regularity(_: None) -> _StageRegularityProbe:
                     return (
                         jnp.asarray(
                             int(DAERegularityStatus.NOT_RUN),
@@ -3334,7 +3388,10 @@ def _solve_prepared_events(
 
 
 @_solve_prepared_events.def_jvp
-def _solve_prepared_events_jvp(primals, tangents):
+def _solve_prepared_events_jvp(
+    primals: tuple[PreparedDAESolve, Any, ArrayLike | None, ArrayLike | None],
+    tangents: tuple[PreparedDAESolve, Any, Array | None, Array | None],
+) -> tuple[DifferentialAlgebraicSolution, DifferentialAlgebraicSolution]:
     prepared, args, initial_state, initial_state_rate = primals
     primal = _solve_prepared_events_primal(
         prepared,
@@ -3343,7 +3400,12 @@ def _solve_prepared_events_jvp(primals, tangents):
         initial_state_rate=initial_state_rate,
     )
 
-    def replay(prepared_, args_, initial_state_, initial_state_rate_):
+    def replay(
+        prepared_: PreparedDAESolve,
+        args_: Any,
+        initial_state_: ArrayLike | None,
+        initial_state_rate_: ArrayLike | None,
+    ) -> DifferentialAlgebraicSolution:
         return _solve_prepared_events_primal(
             prepared_,
             args=args_,

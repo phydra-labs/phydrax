@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -15,7 +18,7 @@ from phydrax.equations import (
 )
 
 
-def _materials():
+def _materials() -> Any:
     ideal = IdealGasMaterial(1.4, 287.0, density_floor=1.0e-10)
     stiff = StiffenedGasMaterial(
         4.4,
@@ -36,12 +39,14 @@ def _materials():
         (1.0, jnp.nan),
     ),
 )
-def test_thermodynamic_materials_reject_nonfinite_states(density, pressure):
+def test_thermodynamic_materials_reject_nonfinite_states(
+    density: Any, pressure: Any
+) -> None:
     for material in _materials():
         assert not bool(material.admissible(jnp.asarray(density), jnp.asarray(pressure)))
 
 
-def test_ideal_ideal_round_trip_and_report_coefficients():
+def test_ideal_ideal_round_trip_and_report_coefficients() -> None:
     ideal, _ = _materials()
     closure = TwoMaterialEOSClosure(
         ideal,
@@ -64,7 +69,7 @@ def test_ideal_ideal_round_trip_and_report_coefficients():
         report.pressure = jnp.zeros_like(report.pressure)
 
 
-def test_ideal_stiffened_common_pressure_and_primitive_state():
+def test_ideal_stiffened_common_pressure_and_primitive_state() -> None:
     ideal, stiff = _materials()
     closure = TwoMaterialEOSClosure(ideal, stiff)
     state = TwoMaterialPrimitiveState(
@@ -83,7 +88,7 @@ def test_ideal_stiffened_common_pressure_and_primitive_state():
     assert jnp.all(closure.sound_speed(conserved) > 0.0)
 
 
-def test_pure_phase_limits_are_exact_and_finite():
+def test_pure_phase_limits_are_exact_and_finite() -> None:
     ideal, stiff = _materials()
     closure = TwoMaterialEOSClosure(ideal, stiff)
     for alpha in (0.0, 1.0):
@@ -101,7 +106,9 @@ def test_pure_phase_limits_are_exact_and_finite():
     ("alpha", "floor_mass_index"),
     ((1.0e-4, 0), (1.0 - 1.0e-4, 1)),
 )
-def test_alpha_floor_boundaries_round_trip_and_are_active(alpha, floor_mass_index):
+def test_alpha_floor_boundaries_round_trip_and_are_active(
+    alpha: Any, floor_mass_index: Any
+) -> None:
     ideal, stiff = _materials()
     closure = TwoMaterialEOSClosure(
         ideal,
@@ -127,7 +134,9 @@ def test_alpha_floor_boundaries_round_trip_and_are_active(alpha, floor_mass_inde
     ("alpha", "inactive_mass_index"),
     ((0.0, 0), (1.0, 1)),
 )
-def test_exact_zero_phase_rejects_nonzero_partial_mass(alpha, inactive_mass_index):
+def test_exact_zero_phase_rejects_nonzero_partial_mass(
+    alpha: Any, inactive_mass_index: Any
+) -> None:
     ideal, stiff = _materials()
     closure = TwoMaterialEOSClosure(ideal, stiff, alpha_floor=1.0e-4)
     primitive = jnp.asarray([[2.0, 950.0, 0.25, 1.0e5, alpha]], dtype=jnp.float64)
@@ -139,7 +148,7 @@ def test_exact_zero_phase_rejects_nonzero_partial_mass(alpha, inactive_mass_inde
     assert not bool(jax.jit(closure.admissible)(invalid))
 
 
-def test_alpha_mass_energy_and_finite_admissibility_checks_fail_closed():
+def test_alpha_mass_energy_and_finite_admissibility_checks_fail_closed() -> None:
     ideal, stiff = _materials()
     closure = TwoMaterialEOSClosure(
         ideal, stiff, alpha_floor=1.0e-4, mass_floor=1.0e-3, energy_floor=1.0e-3
@@ -158,7 +167,7 @@ def test_alpha_mass_energy_and_finite_admissibility_checks_fail_closed():
     assert not bool(jnp.any(closure.admissible(nonfinite)))
 
 
-def test_jit_grad_and_dtype_are_preserved():
+def test_jit_grad_and_dtype_are_preserved() -> None:
     ideal, stiff = _materials()
     closure = TwoMaterialEOSClosure(ideal, stiff)
     primitive = jnp.asarray([[1.2, 950.0, 0.2, 1.0e5, 0.4]], dtype=jnp.float32)
@@ -175,7 +184,7 @@ def test_jit_grad_and_dtype_are_preserved():
     assert derivative > 0.0
 
 
-def test_material_parameter_changes_change_closure_identity():
+def test_material_parameter_changes_change_closure_identity() -> None:
     ideal, stiff = _materials()
     first = TwoMaterialEOSClosure(ideal, stiff)
     second = TwoMaterialEOSClosure(IdealGasMaterial(1.41, 287.0), stiff)

@@ -4,14 +4,22 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ._dem_contact import AbstractDEMRotationalContactPlan, DEMRotationalResponse
-from ._dem_contact_state import DEMRotationalHistory
+from ._dem_contact import (
+    AbstractDEMRotationalContactPlan,
+    DEMContactBatch,
+    DEMNormalResponse,
+    DEMRotationalResponse,
+)
+from ._dem_contact_state import DEMContactEvaluationContext, DEMRotationalHistory
 
 
 class ElasticRollingTorsionalResistancePlan(AbstractDEMRotationalContactPlan):
@@ -34,7 +42,7 @@ class ElasticRollingTorsionalResistancePlan(AbstractDEMRotationalContactPlan):
         torsional_damping: ArrayLike = 0.0,
         torsional_friction: ArrayLike = 0.0,
         rotational_law_id: str | None = None,
-    ):
+    ) -> None:
         values = tuple(
             np.asarray(value)
             for value in (
@@ -95,14 +103,14 @@ class ElasticRollingTorsionalResistancePlan(AbstractDEMRotationalContactPlan):
 
     def evaluate(
         self,
-        batch,
-        normal,
-        history,
-        context,
-        materials,
-        ambient_dimension,
+        batch: DEMContactBatch,
+        normal: DEMNormalResponse,
+        history: DEMRotationalHistory,
+        context: DEMContactEvaluationContext,
+        materials: Any,
+        ambient_dimension: int,
         /,
-    ):
+    ) -> DEMRotationalResponse:
         if not isinstance(history, DEMRotationalHistory):
             raise TypeError("history must be a DEMRotationalHistory.")
         rolling_stiffness = _pair_value(
@@ -271,7 +279,9 @@ class ElasticRollingTorsionalResistancePlan(AbstractDEMRotationalContactPlan):
         )
 
 
-def _transport_tangent(values, old_normal, new_normal, continued):
+def _transport_tangent(
+    values: Array, old_normal: Array, new_normal: Array, continued: Array
+) -> tuple[Array, Array, Array]:
     cross = jnp.cross(old_normal, new_normal)
     dot = jnp.sum(old_normal * new_normal, axis=-1)
     denominator = 1.0 + dot
@@ -288,7 +298,9 @@ def _transport_tangent(values, old_normal, new_normal, continued):
     return result, valid, margin
 
 
-def _bounded_vector(trial, limit, active):
+def _bounded_vector(
+    trial: Array, limit: Array, active: Array
+) -> tuple[Array, Array, Array]:
     magnitude = _norm(trial)
     safe = jnp.where(magnitude > 0.0, magnitude, 1.0)
     yielded = active & (magnitude > limit)
@@ -298,12 +310,14 @@ def _bounded_vector(trial, limit, active):
     return bounded, yielded, margin
 
 
-def _norm(value):
+def _norm(value: Array) -> Array:
     squared = jnp.sum(value * value, axis=-1)
     return jnp.where(squared > 0.0, jnp.sqrt(squared), 0.0)
 
 
-def _pair_value(parameter, left, right, material_count):
+def _pair_value(
+    parameter: Array, left: Array, right: Array, material_count: int
+) -> Array:
     if parameter.ndim == 0:
         return jnp.broadcast_to(parameter, left.shape)
     if parameter.shape != (material_count, material_count):

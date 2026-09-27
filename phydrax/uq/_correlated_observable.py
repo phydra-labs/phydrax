@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import get_args, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -20,7 +21,7 @@ CORRELATED_OBSERVABLE_INSUFFICIENT_DRAWS = 1
 CORRELATED_OBSERVABLE_NONFINITE = 2
 CORRELATED_OBSERVABLE_ZERO_VARIANCE = 3
 
-CorrelatedObservableStatus = Literal[
+CorrelatedObservableStatus: TypeAlias = Literal[
     "success",
     "insufficient_draws",
     "nonfinite",
@@ -30,12 +31,7 @@ CorrelatedObservableStatus = Literal[
 
 def correlated_observable_status_name(value: int, /) -> CorrelatedObservableStatus:
     """Return the stable name of a correlated-observable status code."""
-    names: tuple[CorrelatedObservableStatus, ...] = (
-        "success",
-        "insufficient_draws",
-        "nonfinite",
-        "zero_variance",
-    )
+    names: tuple[CorrelatedObservableStatus, ...] = get_args(CorrelatedObservableStatus)
     code = int(value)
     if code < 0 or code >= len(names):
         raise ValueError(f"Unknown correlated-observable status code {code}.")
@@ -54,7 +50,7 @@ class CorrelatedObservablePolicy(StrictModule):
         *,
         max_lag: int | None = None,
         minimum_draws: int = 8,
-    ):
+    ) -> None:
         if max_lag is not None and int(max_lag) < 1:
             raise ValueError("max_lag must be positive when provided.")
         minimum = int(minimum_draws)

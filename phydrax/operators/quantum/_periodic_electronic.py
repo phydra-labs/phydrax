@@ -9,13 +9,15 @@ from __future__ import annotations
 import itertools
 import math
 from abc import abstractmethod
+from collections.abc import Callable
 from math import isfinite
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -75,7 +77,7 @@ class PeriodicElectronicEwaldPolicy(StrictModule, NonTrainableState):
         maximum_real_pair_terms: int,
         maximum_reciprocal_structure_terms: int,
         uniform_background: bool = False,
-    ):
+    ) -> None:
         real_radius = int(real_image_radius)
         reciprocal_radius_ = int(reciprocal_radius)
         alpha = float(screening)
@@ -163,7 +165,7 @@ class PeriodicElectronicResourceEvidence(StrictModule, NonTrainableState):
         kinetic: ElectronicKineticPolicy,
         ewald: PeriodicElectronicEwaldPolicy,
         /,
-    ):
+    ) -> None:
         electrons = int(electron_count)
         nuclei = int(nucleus_count)
         particles = electrons + nuclei
@@ -278,7 +280,7 @@ class PeriodicElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
         kinetic: ElectronicKineticPolicy | None = None,
         resource_plan: ElectronicVMCResourcePlan | None = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(nuclei, AtomicStructure):
             raise TypeError("nuclei must be an AtomicStructure.")
         if not isinstance(cell, PeriodicCell):
@@ -612,10 +614,12 @@ class PeriodicElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
 
     def estimate(
         self,
-        model: AbstractPeriodicElectronicAmplitude,
+        model: Callable[[Array], LogAmplitude],
         configurations: Array,
         /,
     ) -> LocalOperatorEstimate:
+        if not isinstance(model, AbstractPeriodicElectronicAmplitude):
+            raise TypeError("model must implement AbstractPeriodicElectronicAmplitude.")
         local = self.local_energy(model, configurations)
         work = jnp.full(
             local.value.shape,

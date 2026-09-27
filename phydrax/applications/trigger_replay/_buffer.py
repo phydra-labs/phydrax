@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -19,7 +20,7 @@ class TriggerBufferPlan(StrictModule, NonTrainableState):
     service_per_tick: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, capacity: int, service_per_tick: int, /):
+    def __init__(self, capacity: int, service_per_tick: int, /) -> None:
         capacity_ = int(capacity)
         service = int(service_per_tick)
         if capacity_ < 1 or service < 0:
@@ -57,7 +58,9 @@ def replay_trigger_buffer(
     if arrivals_.ndim != 1:
         raise ValueError("arrivals must be a one-dimensional tick series.")
 
-    def step(occupancy, arrival):
+    def step(
+        occupancy: Array, arrival: Array
+    ) -> tuple[Array, tuple[Array, Array, Array, Array]]:
         after_service = jnp.maximum(occupancy - plan.service_per_tick, 0)
         available = plan.capacity - after_service
         accepted = jnp.minimum(jnp.maximum(arrival, 0), available)

@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax.ein import contract
 
@@ -25,6 +26,7 @@ from ...linalg import (
     FunctionLinearOperator,
 )
 from ...metrix import QuaternionPoseStateGeometry
+from ...typing import parse
 from ._rod_reduction import (
     PreparedReducedRod,
     ReducedRodEvaluation,
@@ -55,12 +57,6 @@ def _positive_finite(name: str, value: float, /) -> float:
     if not isfinite(resolved) or resolved <= 0.0:
         raise ValueError(f"{name} must be finite and positive.")
     return resolved
-
-
-def _method(value: RodReconstructionMethod, /) -> RodReconstructionMethod:
-    if value not in ("auto", "pcs", "gvs"):
-        raise ValueError("method must be 'auto', 'pcs', or 'gvs'.")
-    return value
 
 
 def _unit_quaternion(value: ArrayLike, name: str, /) -> Array:
@@ -127,7 +123,7 @@ def _maximum_norm(value: Array, /) -> Array:
     return jnp.max(jnp.linalg.norm(value, axis=-1))
 
 
-def _maximum_absolute(value: Array, dtype, /) -> Array:
+def _maximum_absolute(value: Array, dtype: DTypeLike, /) -> Array:
     if value.size == 0:
         return jnp.asarray(0.0, dtype=dtype)
     return jnp.max(jnp.abs(value))
@@ -154,7 +150,7 @@ class RodFrameQueryPlan(StrictModule, NonTrainableState):
     query_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, arc_lengths: ArrayLike, /):
+    def __init__(self, arc_lengths: ArrayLike, /) -> None:
         points = _real_vector("arc_lengths", arc_lengths)
         if points.size < 1:
             raise ValueError("arc_lengths must contain at least one physical query.")
@@ -187,10 +183,10 @@ class RodReconstructionPlan(StrictModule, NonTrainableState):
         refinement: int = 1,
         quadrature_tolerance: float = 1.0e-6,
         chart_margin: float = 1.0e-5,
-    ):
+    ) -> None:
         if not isinstance(queries, RodFrameQueryPlan):
             raise TypeError("queries must be a RodFrameQueryPlan.")
-        method_ = _method(method)
+        method_ = parse(method, RodReconstructionMethod, "method")
         refinement_ = int(refinement)
         if refinement_ < 1 or refinement_ != refinement:
             raise ValueError("refinement must be a positive integer.")
@@ -377,7 +373,7 @@ class PreparedRodReconstruction(StrictModule, NonTrainableState):
         reduced: PreparedReducedRod,
         plan: RodReconstructionPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(reduced, PreparedReducedRod):
             raise TypeError("reduced must be a PreparedReducedRod.")
         if not isinstance(plan, RodReconstructionPlan):
@@ -560,12 +556,12 @@ class PreparedRodReconstruction(StrictModule, NonTrainableState):
     ) -> AbstractLinearOperator:
         values = self.reduced.coefficient_space.validate(coefficients)
 
-        def action(rates):
+        def action(rates: Array) -> Array:
             poses, body_twists = _pose_body_jvp(self, values, rates)
             _, frame = _world_and_frame_velocities(poses, body_twists)
             return frame[self.query_union_indices]
 
-        def transpose_action(efforts):
+        def transpose_action(efforts: Array) -> Array:
             return jax.linear_transpose(action, jnp.zeros_like(values))(efforts)[0]
 
         return FunctionLinearOperator(
@@ -707,7 +703,9 @@ def _integrate(
 
     if prepared.method == "pcs":
 
-        def panel_step(pose, panel):
+        def panel_step(
+            pose: Array, panel: tuple[Array, Array]
+        ) -> tuple[Array, tuple[Array, Array, Array]]:
             start, length = panel
             next_pose, angle = _pcs_step(prepared, coefficients, pose, start, length)
             return next_pose, (
@@ -718,7 +716,9 @@ def _integrate(
 
     else:
 
-        def panel_step(pose, panel):
+        def panel_step(
+            pose: Array, panel: tuple[Array, Array]
+        ) -> tuple[Array, tuple[Array, Array, Array]]:
             start, length = panel
             next_pose, full_angle = _cf4_step(prepared, coefficients, pose, start, length)
             half_length = 0.5 * length
@@ -764,7 +764,7 @@ def _pose_body_jvp(
     rates: Array,
     /,
 ) -> tuple[Array, Array]:
-    def pose_function(values):
+    def pose_function(values: Array) -> Array:
         poses, _, _, valid = _integrate(prepared, values)
         return eqx.error_if(
             poses,
@@ -862,7 +862,7 @@ def _native_discrepancy(
     all_poses: Array,
     all_body_twists: Array,
     all_frame_velocities: Array,
-    native_evaluation,
+    native_evaluation: ReducedRodEvaluation,
     /,
 ) -> RodNativeDiscretizationDiscrepancy:
     native_state = native_evaluation.native_state
@@ -1117,7 +1117,7 @@ def _observed_order(
     )
 
 
-def _nan_order(dtype, /) -> RodObservedOrder:
+def _nan_order(dtype: DTypeLike, /) -> RodObservedOrder:
     value = jnp.asarray(jnp.nan, dtype=dtype)
     return RodObservedOrder(value, value, value, value, value)
 

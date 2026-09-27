@@ -8,15 +8,16 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax import Array
+from jax.typing import ArrayLike
 
+from ..._dtype_names import precision_dtype_name, real_precision_dtype_name
 from ..._precision import (
-    precision_dtype_name,
     precision_itemsize,
     PrecisionEvidenceEnvelope,
     PrecisionRequest,
     PrecisionResolution,
     PrecisionResourceAssumptions,
-    real_precision_dtype_name,
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -73,7 +74,7 @@ class SpectralPrecisionPolicy(StrictModule, NonTrainableState):
         certification_dtype: Any | None = None,
         output_dtype: Any | None = None,
         checkpoint_dtype: Any | None = None,
-    ):
+    ) -> None:
         physical = _dtype(physical_dtype)
         coefficient = _dtype(
             _complex_dtype(physical) if coefficient_dtype is None else coefficient_dtype
@@ -164,19 +165,19 @@ class SpectralPrecisionPolicy(StrictModule, NonTrainableState):
             },
         )
 
-    def physical(self, value: Any, /):
+    def physical(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.physical_dtype))
 
-    def coefficients(self, value: Any, /):
+    def coefficients(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.coefficient_dtype))
 
-    def transform(self, value: Any, /):
+    def transform(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.transform_dtype))
 
-    def nonlinear(self, value: Any, /):
+    def nonlinear(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.nonlinear_dtype))
 
-    def reduction(self, value: Any, /):
+    def reduction(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         if not jnp.issubdtype(array.dtype, jnp.inexact):
             return array
@@ -189,13 +190,13 @@ class SpectralPrecisionPolicy(StrictModule, NonTrainableState):
         )
         return array.astype(dtype)
 
-    def certification(self, value: Any, /):
+    def certification(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.certification_dtype))
 
-    def output(self, value: Any, /):
+    def output(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.output_dtype))
 
-    def checkpoint(self, value: Any, /):
+    def checkpoint(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.checkpoint_dtype))
 
     def evidence(self) -> PrecisionEvidenceEnvelope:

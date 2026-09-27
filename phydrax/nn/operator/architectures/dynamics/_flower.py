@@ -6,13 +6,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from math import prod, sqrt
-from typing import Literal
+from typing import Literal, TypeAlias, TypedDict
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
@@ -34,11 +34,25 @@ from phydrax.nn.layers._warp_geometry import (
 from phydrax.nn.operator.data import FunctionSamples, OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
-from ....._precision import inexact_result_type
+from ....._dtype_names import inexact_result_type
+from .....typing import parse, PRNGKey
 
 
-FlowerTransitionMode = Literal["learned", "resolution_consistent"]
-FlowerQueryMode = Literal["coincident", "interpolate"]
+FlowerTransitionMode: TypeAlias = Literal["learned", "resolution_consistent"]
+FlowerQueryMode: TypeAlias = Literal["coincident", "interpolate"]
+
+
+class _WarpKwargs(TypedDict):
+    spatial_ndim: int
+    in_channels: int
+    out_channels: int
+    num_heads: int
+    boundary: tuple[WarpBoundaryMode, ...]
+    conditioning_size: int
+    mask_mode: WarpMaskMode
+    displacement_width: int
+    fill_value: float
+    key: PRNGKey
 
 
 class _ChannelLastGroupNorm(StrictModule):
@@ -57,7 +71,7 @@ class _ChannelLastGroupNorm(StrictModule):
         /,
         *,
         eps: float = 1e-5,
-    ):
+    ) -> None:
         self.channels = int(channels)
         self.groups = int(groups)
         self.spatial_ndim = int(spatial_ndim)
@@ -186,10 +200,10 @@ class _FlowerBlock(StrictModule):
         probabilistic_routing: bool,
         minimum_route_scale: float,
         route_scale_factor: float,
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         warp_key, identity_key, modulation_key = jr.split(key, 3)
-        warp_kwargs = dict(
+        warp_kwargs = _WarpKwargs(
             spatial_ndim=spatial_ndim,
             in_channels=in_channels,
             out_channels=out_channels,
@@ -302,8 +316,8 @@ class _StrideTwoConvND(StrictModule):
         in_channels: int,
         out_channels: int,
         transpose: bool,
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         self.spatial_ndim = int(spatial_ndim)
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
@@ -372,8 +386,8 @@ class _ResolutionConsistentTransitionND(StrictModule):
         transpose: bool,
         boundary: tuple[WarpBoundaryMode, ...],
         mask_mode: WarpMaskMode,
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         self.spatial_ndim = int(spatial_ndim)
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
@@ -532,7 +546,7 @@ class FlowerDiagnostics(StrictModule):
         blocks: Sequence[RectilinearWarpDiagnostics],
         level_shapes: Sequence[Sequence[int]],
         transition_mode: FlowerTransitionMode,
-    ):
+    ) -> None:
         self.blocks = tuple(blocks)
         self.level_shapes = tuple(tuple(shape) for shape in level_shapes)
         self.transition_mode = transition_mode
@@ -603,8 +617,8 @@ class Flower(AbstractOperatorModel):
         minimum_route_scale: float = 1e-6,
         route_scale_factor: float = 1e-3,
         conserve_mass: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.in_size = in_channels
         self.out_size = out_channels
         self.spatial_ndim = int(spatial_ndim)
@@ -633,16 +647,13 @@ class Flower(AbstractOperatorModel):
             raise ValueError("width and levels must be positive.")
         if self.num_heads <= 0 or self.groups <= 0:
             raise ValueError("num_heads and groups must be positive.")
-        if self.transition_mode not in ("learned", "resolution_consistent"):
-            raise ValueError(
-                "transition_mode must be 'learned' or 'resolution_consistent'."
-            )
-        if self.query_mode not in ("coincident", "interpolate"):
-            raise ValueError("query_mode must be 'coincident' or 'interpolate'.")
-        if self.source_mask_mode not in ("reject", "renormalize", "strict"):
-            raise ValueError(
-                "source_mask_mode must be 'reject', 'renormalize', or 'strict'."
-            )
+        self.transition_mode = parse(
+            self.transition_mode, FlowerTransitionMode, "transition_mode"
+        )
+        self.query_mode = parse(self.query_mode, FlowerQueryMode, "query_mode")
+        self.source_mask_mode = parse(
+            self.source_mask_mode, WarpMaskMode, "source_mask_mode"
+        )
         if (
             self.levels > 1
             and self.source_mask_mode != "reject"

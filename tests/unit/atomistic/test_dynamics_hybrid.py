@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -5,27 +7,38 @@ import numpy as np
 import phydrax as phx
 
 
-def _program():
+def _program() -> Any:
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     system = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [10, 20],
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 2.0],
         units,
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 1],
+        # ty: ignore[invalid-argument-type]
         region_ids=[1, 0],
     ).prepare()
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
         system.particles
     )
     lj = phx.atomistic.LennardJonesPotential(
-        [0.5, 1.0], [1.0, 1.2], 2.5, name="lj", force_group=0
+        # ty: ignore[invalid-argument-type]
+        [0.5, 1.0],
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.2],
+        2.5,
+        name="lj",
+        force_group=0,
     )
     program = phx.atomistic.AtomisticPotentialProgram([lj]).prepare(system)
     return system, neighborhood, lj, program
 
 
-def test_region_masked_composition_is_energy_derived():
+def test_region_masked_composition_is_energy_derived() -> None:
     system, neighborhood, lj, program = _program()
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.3, 0.0, 0.0]])
     relation = neighborhood.build(positions)
@@ -37,7 +50,7 @@ def test_region_masked_composition_is_energy_derived():
     assert bool(jnp.isfinite(masked_value.energy))
 
 
-def test_force_group_and_semigrand_transition_are_typed():
+def test_force_group_and_semigrand_transition_are_typed() -> None:
     system, neighborhood, _, program = _program()
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.3, 0.0, 0.0]])
     relation = neighborhood.build(positions)
@@ -56,13 +69,14 @@ def test_force_group_and_semigrand_transition_are_typed():
         system.plan.atom_type_ids,
         jax.random.key_data(jax.random.key(12)),
         0,
+        # ty: ignore[invalid-argument-type]
         phx.atomistic.VarianceConstrainedSemiGrandPlan(1.0, [0.0, 0.0], [0.5, 0.5], 1.0),
     )
     assert bool(transition.successful)
     assert transition.species.shape == (2,)
 
 
-def test_one_bead_ring_polymer_has_zero_spring_and_finite_step():
+def test_one_bead_ring_polymer_has_zero_spring_and_finite_step() -> None:
     system, neighborhood, _, program = _program()
     ring = phx.atomistic.PreparedRingPolymerDynamics(
         phx.atomistic.RingPolymerPlan(1, 1.0, 1.0e-4),
@@ -80,10 +94,10 @@ def test_one_bead_ring_polymer_has_zero_spring_and_finite_step():
     assert float(step.estimators.radius_of_gyration) == 0.0
 
 
-def test_born_oppenheimer_provider_boundary_advances_conservative_state():
+def test_born_oppenheimer_provider_boundary_advances_conservative_state() -> None:
     system, _, _, _ = _program()
 
-    def evaluator(prepared, positions, cell_vectors):
+    def evaluator(prepared: Any, positions: Any, cell_vectors: Any) -> Any:
         del prepared, cell_vectors
         energy = 0.5 * jnp.sum(positions * positions)
         return phx.atomistic.ExternalAtomisticEvaluation(

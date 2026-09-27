@@ -7,17 +7,23 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Sequence
 from math import isfinite, prod
-from typing import Literal, TypeAlias
+from typing import Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from .._interpolation import linear_interpolate
 from .._strict import StrictModule
+from ..typing import parse, PRNGKey
+
+
+if TYPE_CHECKING:
+    from ._trajectory import StochasticTrajectory
 
 
 FractionalGaussianInterpolation: TypeAlias = Literal["grid", "linear"]
@@ -33,7 +39,7 @@ def _digest_array(digest: hashlib._Hash, value: ArrayLike, /) -> None:
     digest.update(array.tobytes())
 
 
-def _digest(prefix: bytes, *parts) -> str:
+def _digest(prefix: bytes, *parts: object) -> str:
     digest = hashlib.sha256(prefix)
     for part in parts:
         if isinstance(part, (jax.Array, np.ndarray)):
@@ -44,7 +50,7 @@ def _digest(prefix: bytes, *parts) -> str:
     return digest.hexdigest()
 
 
-def _scalar_key(value: Key[Array, ""], /) -> Array:
+def _scalar_key(value: PRNGKey, /) -> Array:
     if jr.key_data(value).shape != (2,):
         raise ValueError("FractionalGaussianRealization requires one scalar PRNG key.")
     return value
@@ -61,7 +67,7 @@ class _DenseFractionalGaussianSampler(StrictModule):
     covariance_factor: Array
     num_times: int = eqx.field(static=True)
 
-    def __init__(self, covariance_factor: Array, num_times: int, /):
+    def __init__(self, covariance_factor: Array, num_times: int, /) -> None:
         self.covariance_factor = covariance_factor
         self.num_times = int(num_times)
 
@@ -71,7 +77,7 @@ class _DenseFractionalGaussianSampler(StrictModule):
         /,
         *,
         dimension: int,
-        dtype,
+        dtype: DTypeLike,
     ) -> Array:
         return jax.vmap(
             lambda key: (
@@ -91,7 +97,7 @@ class _DaviesHarteFractionalGaussianSampler(StrictModule):
     num_increments: int = eqx.field(static=True)
     embedding_size: int = eqx.field(static=True)
 
-    def __init__(self, spectrum_factor: Array, num_times: int, /):
+    def __init__(self, spectrum_factor: Array, num_times: int, /) -> None:
         self.spectrum_factor = spectrum_factor
         self.num_times = int(num_times)
         self.num_increments = self.num_times - 1
@@ -103,7 +109,7 @@ class _DaviesHarteFractionalGaussianSampler(StrictModule):
         /,
         *,
         dimension: int,
-        dtype,
+        dtype: DTypeLike,
     ) -> Array:
         normals = jax.vmap(
             lambda key: jr.normal(
@@ -224,8 +230,7 @@ def _sampling_strategy(
     _ResolvedFractionalGaussianSamplingMethod,
     str,
 ]:
-    if method not in ("dense", "davies-harte", "auto"):
-        raise ValueError("method must be 'dense', 'davies-harte', or 'auto'.")
+    method = parse(method, FractionalGaussianSamplingMethod, "method")
     if method == "dense":
         return _dense_sampler(process, nodes), "dense", "explicit:dense"
 
@@ -290,7 +295,7 @@ class FractionalGaussianProcess(StrictModule):
         drift: ArrayLike = 0.0,
         reference_time: float = 0.0,
         process_id: str | None = None,
-    ):
+    ) -> None:
         exponent = float(hurst)
         if not isfinite(exponent) or not 0.0 < exponent < 1.0:
             raise ValueError("hurst must be finite and lie strictly between 0 and 1.")
@@ -397,7 +402,7 @@ class FractionalGaussianRealization(StrictModule):
     def __init__(
         self,
         process: FractionalGaussianProcess,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         grid: ArrayLike,
         /,
         *,
@@ -406,7 +411,7 @@ class FractionalGaussianRealization(StrictModule):
         label: str | None = None,
         coupling_id: str | None = None,
         _path_indices: Array | None = None,
-    ):
+    ) -> None:
         if not isinstance(process, FractionalGaussianProcess):
             raise TypeError("process must be a FractionalGaussianProcess.")
         key = _scalar_key(root_key)
@@ -535,8 +540,9 @@ class FractionalGaussianRealization(StrictModule):
             raise ValueError("query times must be non-empty and finite.")
         if bool(jnp.any(query < self.support[0]) | jnp.any(query > self.support[1])):
             raise ValueError("query times must lie inside realization support.")
-        if interpolation not in ("grid", "linear"):
-            raise ValueError("interpolation must be 'grid' or 'linear'.")
+        interpolation = parse(
+            interpolation, FractionalGaussianInterpolation, "interpolation"
+        )
         if interpolation == "grid":
             indices = jnp.searchsorted(self.grid, query)
             indices = jnp.clip(indices, 0, self.grid.size - 1)
@@ -589,7 +595,7 @@ class FractionalGaussianRealization(StrictModule):
         *,
         realization_axes: Sequence[str] | None = None,
         state_axis: str = "component",
-    ):
+    ) -> StochasticTrajectory:
         from ._trajectory import _TrajectoryRecord
 
         axes = (

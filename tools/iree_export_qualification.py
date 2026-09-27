@@ -9,6 +9,7 @@ import json
 import tempfile
 import time
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -24,7 +25,7 @@ def main() -> None:
     args = parser.parse_args()
     matrix = jnp.asarray(((1.0, -0.5), (0.25, 2.0)), dtype=jnp.float32)
 
-    def model(value, *, key=None):
+    def model(value: Any, *, key: Any = None) -> Any:
         del key
         return jnp.tanh(value @ matrix)
 
@@ -59,6 +60,7 @@ def main() -> None:
             "compile_seconds": compile_seconds,
             "warm_seconds": warm_seconds,
             "maximum_absolute_error": float(np.max(np.abs(native - deployed))),
+            # ty: ignore[invalid-argument-type]
             "maximum_relative_error": max(exported.manifest.maximum_relative_errors),
             "validation_ok": exported.manifest.validation_ok,
         }

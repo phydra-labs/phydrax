@@ -10,8 +10,8 @@ from math import prod
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax.typing import DTypeLike
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -19,7 +19,12 @@ from .._trainable import NonTrainableState
 from ..linalg import ArraySpace, DiagonalPairing
 from ._axis import AxisDiscretization, broadcasted_grid, TensorGridPlan
 from ._measure import DiscreteMeasure
-from ._spaces import DiscreteFieldSpace, TensorDofLayout
+from ._spaces import (
+    DiscreteFieldSpace,
+    FieldConformity,
+    FieldRepresentation,
+    TensorDofLayout,
+)
 from ._support import DiscreteSupport
 from ._tensor_entities import (
     all_tensor_entity_layouts,
@@ -54,7 +59,7 @@ class GridLocation(StrictModule, NonTrainableState):
         /,
         *,
         location_id: str | None = None,
-    ):
+    ) -> None:
         names = tuple(str(name) for name in axis_names)
         values = tuple(_fraction(value) for value in offsets)
         if not names or any(not name for name in names) or len(set(names)) != len(names):
@@ -128,7 +133,7 @@ class PreparedTensorGrid(StrictModule, NonTrainableState):
         plan_id: str | None = None,
         embedding_id: str | None = None,
         prepared_id: str | None = None,
-    ):
+    ) -> None:
         axes_ = tuple(axes)
         if not axes_ or not all(isinstance(axis, AxisDiscretization) for axis in axes_):
             raise TypeError("axes must contain one or more AxisDiscretization values.")
@@ -330,8 +335,8 @@ class PreparedTensorGrid(StrictModule, NonTrainableState):
         entity_layout: TensorEntityLayout | None = None,
         component_shape: Sequence[int] = (),
         dtype: DTypeLike = jnp.float64,
-        representation: str = "point_value",
-        conformity: str = "unrestricted",
+        representation: FieldRepresentation = "point_value",
+        conformity: FieldConformity = "unrestricted",
     ) -> DiscreteFieldSpace:
         if location is not None and entity_layout is not None:
             resolved = self.layout_at(location)

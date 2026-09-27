@@ -4,8 +4,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Callable, Sequence
+from typing import Any, TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -14,7 +14,19 @@ from jax.experimental.jet import jet
 from ..._utils import _get_size
 
 
-def jet_nth(fun, x: jax.Array, direction: jax.Array, /, *, order: int) -> jax.Array:
+_LatentContractor: TypeAlias = Callable[
+    [Any, Sequence[jax.Array], Sequence[tuple[int, ...]]], jax.Array
+]
+
+
+def jet_nth(
+    fun: Callable[[jax.Array], jax.Array],
+    x: jax.Array,
+    direction: jax.Array,
+    /,
+    *,
+    order: int,
+) -> jax.Array:
     order_i = int(order)
     if order_i < 1:
         raise ValueError("order must be positive.")
@@ -49,7 +61,7 @@ def _contract_flat(
     return model._contract_latents(latents, batch_shapes, topology="flat")
 
 
-def _contraction_plan(model: Any, /):
+def _contraction_plan(model: Any, /) -> tuple[_LatentContractor, str | None]:
     plan = model._plan_topology(supports_flat=True)
     executor = _contract_grouped if plan.effective == "grouped" else _contract_flat
     return executor, plan.fallback_message
@@ -89,7 +101,7 @@ def factor_nth_latents(
                 f"factor {name!r} requires 1D coord arrays for tuple inputs.",
             )
 
-        def latents_at_coordinate(coordinate):
+        def latents_at_coordinate(coordinate: jax.Array) -> jax.Array:
             new_points = coordinates[:axis] + (coordinate,) + coordinates[axis + 1 :]
             latents, _ = model._eval_factor(
                 factor_model,
@@ -110,7 +122,7 @@ def factor_nth_latents(
 
     array = jnp.asarray(points)
 
-    def latents_from_input(value):
+    def latents_from_input(value: jax.Array) -> jax.Array:
         latents, _ = model._eval_factor_array(
             factor_model,
             value,
@@ -161,7 +173,7 @@ def factor_nth_latents(
 
     if array.ndim == 2 and array.shape[1] == int(input_size):
 
-        def nth_single(row):
+        def nth_single(row: jax.Array) -> jax.Array:
             direction = (
                 jnp.ones_like(row)
                 if int(input_size) == 1

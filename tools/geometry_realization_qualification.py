@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -16,7 +17,7 @@ import phydrax as phx
 from benchmarks._io import write_json_atomic
 
 
-def _motion_setup():
+def _motion_setup() -> Any:
     coordinates = jnp.asarray(
         [
             [1.0, 0.0],
@@ -55,7 +56,7 @@ def _motion_setup():
     return geometry, discretization, motion, radius_index
 
 
-def _surface_setup():
+def _surface_setup() -> Any:
     geometry = phx.geometry.Sphere(
         (0.0, 0.0, 0.0),
         0.75,
@@ -75,7 +76,7 @@ def _surface_setup():
     return geometry, plan, radius_index
 
 
-def _case(case_id, passed, **metrics):
+def _case(case_id: Any, passed: Any, **metrics: Any) -> Any:
     return {
         "case_id": case_id,
         "passed": bool(passed),
@@ -90,7 +91,7 @@ def _case(case_id, passed, **metrics):
     }
 
 
-def run():
+def run() -> Any:
     cases = []
     extrusion = (
         phx.geometry.Circle((0.0, 0.0), 2.0, feature_id="profile")
@@ -149,7 +150,7 @@ def run():
 
     geometry, discretization, motion, radius_index = _motion_setup()
 
-    def projected(radius):
+    def projected(radius: Any) -> Any:
         design = geometry.state.replace_at(radius_index, radius)
         return motion.boundary_provider.realize(design).proposed_points
 
@@ -195,7 +196,7 @@ def run():
         )
     )
 
-    def coordinates(radius):
+    def coordinates(radius: Any) -> Any:
         design = geometry.state.replace_at(radius_index, radius)
         return motion.realize(design).proposed_coordinates
 
@@ -214,7 +215,7 @@ def run():
         )
     )
 
-    def area(radius_value):
+    def area(radius_value: Any) -> Any:
         design = geometry.state.replace_at(radius_index, radius_value)
         realization = motion.realize(design)
         blocks = discretization.evaluate_geometry("u", realization.runtime.coordinates)
@@ -279,13 +280,14 @@ def run():
     sharp_finite_volume = phx.discretization.FiniteVolumePlan(sharp_grid).prepare()
     sharp_mac = phx.discretization.MACOperatorPlan(sharp_finite_volume).prepare()
 
-    def plane_signed_distance(points, time, args):
+    def plane_signed_distance(points: Any, time: Any, args: Any) -> Any:
         del time, args
         return points[..., 0] - 0.3125
 
     sharp = phx.discretization.MACExactSDFMeasurePlan(
         sharp_mac,
         plane_signed_distance,
+        # ty: ignore[invalid-argument-type]
         phx.geometry.ExactSDFEnclosureCertificate(
             phx.geometry.exact_signed_distance_certificate(smooth=True)
         ),
@@ -315,7 +317,7 @@ def run():
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--output",

@@ -8,16 +8,17 @@ from __future__ import annotations
 
 from enum import IntEnum
 from math import prod
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import (
@@ -47,6 +48,10 @@ from ._nonlinear import (
 _MODEL_METHOD = "exact-cost-hessian-first-order-discrete-dynamics"
 _SUGGESTION_METHOD = "one-step-local-quadratic-game-suggestion"
 _SUGGESTION_SCOPE = "LOCAL_QUADRATIC_SUGGESTION"
+
+_StepDerivatives: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class LocalAffineGameSuggestionStatus(IntEnum):
@@ -165,7 +170,7 @@ class LocalAffineGamePolicy(AbstractInputPolicy, NonTrainableState):
         dynamics_id: str,
         case_shape: tuple[int, ...] = (),
         policy_id: str,
-    ):
+    ) -> None:
         if not isinstance(time_grid, TimeGrid):
             raise TypeError("time_grid must be a TimeGrid.")
         if not isinstance(input_layout, InputLayout):
@@ -451,14 +456,16 @@ def suggest_local_affine_game_policy(
     controls_flat = evaluation.trajectory.controls.reshape((count, horizon, control_size))
     step_indices = jnp.arange(horizon, dtype=jnp.int32)
 
-    def derivatives_at_step(step_index, state, control, next_state):
+    def derivatives_at_step(
+        step_index: Array, state: Array, control: Array, next_state: Array
+    ) -> _StepDerivatives:
         context = DiscreteStepContext(
             problem.time_grid.times[step_index],
             problem.time_grid.times[step_index + 1],
             step_index,
         )
 
-        def transition(current_state, joint_control):
+        def transition(current_state: Array, joint_control: Array) -> Array:
             result = problem.dynamics.system.evaluate_result(
                 context,
                 current_state,
@@ -471,7 +478,7 @@ def suggest_local_affine_game_policy(
                 jnp.full_like(result.accepted_state, jnp.nan),
             )
 
-        def player_costs(current_state, joint_control):
+        def player_costs(current_state: Array, joint_control: Array) -> Array:
             return _stage_cost_vector(
                 problem,
                 context,
@@ -493,7 +500,9 @@ def suggest_local_affine_game_policy(
         defect = next_state - nominal_dynamics
         return nominal_dynamics, defect, A, B, q, r, Q, R, N, constants
 
-    def derivatives_for_case(case_states, case_controls):
+    def derivatives_for_case(
+        case_states: Array, case_controls: Array
+    ) -> _StepDerivatives:
         return jax.vmap(derivatives_at_step)(
             step_indices,
             case_states[:-1],
@@ -514,8 +523,8 @@ def suggest_local_affine_game_policy(
         stage_constants_time_flat,
     ) = jax.vmap(derivatives_for_case)(states_flat, controls_flat)
 
-    def terminal_derivatives(state):
-        def player_costs(terminal_state):
+    def terminal_derivatives(state: Array) -> tuple[Array, Array, Array]:
+        def player_costs(terminal_state: Array) -> Array:
             return _terminal_cost_vector(problem, terminal_state)
 
         terminal_q = jax.jacrev(player_costs)(state)

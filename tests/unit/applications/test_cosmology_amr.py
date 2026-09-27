@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -8,7 +10,7 @@ import phydrax as phx
 cosmology = phx.applications.cosmology
 
 
-def _hierarchy():
+def _hierarchy() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(16, periodic=True),),
         axis_names=("x",),
@@ -36,7 +38,7 @@ def _hierarchy():
     return prepared, compiled.topology
 
 
-def _runtime(prepared, topology):
+def _runtime(prepared: Any, topology: Any) -> Any:
     system = phx.equations.ScalarConservationSystem(
         1,
         lambda state, axis, args: jnp.zeros_like(state),
@@ -55,7 +57,7 @@ def _runtime(prepared, topology):
     return phx.solver.BlockAMRRuntimePlan(finite_volume).prepare(topology)
 
 
-def _runtime_state(runtime, scale_factor=0.5):
+def _runtime_state(runtime: Any, scale_factor: Any = 0.5) -> Any:
     topology = runtime.dynamics.topology
     levels = tuple(
         phx.discretization.BlockLevelState(
@@ -73,13 +75,13 @@ def _runtime_state(runtime, scale_factor=0.5):
     return runtime.initial_state(hierarchy, time=scale_factor)
 
 
-def _gravity(topology):
+def _gravity(topology: Any) -> Any:
     routing = cosmology.BlockAMRParticleRoutingPlan(topology)
     operator = phx.discretization.CompositeAMRDiffusionPlan(routing.layout).prepare(1.0)
     return routing, cosmology.BlockAMRGravityPlan(operator, routing)
 
 
-def test_n_level_particle_routing_uses_canonical_topology_and_conserves_deposit():
+def test_n_level_particle_routing_uses_canonical_topology_and_conserves_deposit() -> None:
     _, topology = _hierarchy()
     routing, _ = _gravity(topology)
     positions = jnp.asarray([[0.49], [0.40], [0.05]])
@@ -115,7 +117,9 @@ def test_n_level_particle_routing_uses_canonical_topology_and_conserves_deposit(
     np.testing.assert_allclose(gathered.values[:, 0], [3.0, 2.0, 1.0])
 
 
-def test_composite_gravity_uses_one_linalg_solve_and_conservative_interface_routes():
+def test_composite_gravity_uses_one_linalg_solve_and_conservative_interface_routes() -> (
+    None
+):
     _, topology = _hierarchy()
     routing, gravity = _gravity(topology)
     positions = jnp.asarray([[0.49], [0.40], [0.05]])
@@ -149,7 +153,7 @@ def test_composite_gravity_uses_one_linalg_solve_and_conservative_interface_rout
     )
 
 
-def test_block_amr_epoch_commit_is_atomic_for_flux_gravity_and_routing_failure():
+def test_block_amr_epoch_commit_is_atomic_for_flux_gravity_and_routing_failure() -> None:
     prepared, topology = _hierarchy()
     runtime = _runtime(prepared, topology)
     previous_state = _runtime_state(runtime)

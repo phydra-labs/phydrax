@@ -9,7 +9,8 @@ from enum import IntEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -73,7 +74,7 @@ class RadiationCrossSectionLibrary(StrictModule, NonTrainableState):
         commercial_use: bool = False,
         redistribution: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         tables = (photoelectric, compton, rayleigh)
         if not all(
             isinstance(table, DiagnosticPhotonCoefficientTable) for table in tables
@@ -133,8 +134,12 @@ class RadiationCrossSectionLibrary(StrictModule, NonTrainableState):
             raise ValueError(
                 "Every material/energy point requires positive total attenuation."
             )
-        source_table_ids = tuple(table.table_id for table in tables)
-        source_provenance_ids = tuple(table.provenance.provenance_id for table in tables)
+        source_table_ids = (photoelectric.table_id, compton.table_id, rayleigh.table_id)
+        source_provenance_ids = (
+            photoelectric.provenance.provenance_id,
+            compton.provenance.provenance_id,
+            rayleigh.provenance.provenance_id,
+        )
         log_interpolation = np.asarray(
             tuple(
                 table.interpolation is DiagnosticPhotonInterpolationPolicy.LOG_LOG

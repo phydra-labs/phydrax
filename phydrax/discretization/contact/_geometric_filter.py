@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -84,7 +85,7 @@ class GeometricContactFilterPlan(StrictModule, NonTrainableState):
         normal_alignment: float = 0.0,
         feature_tolerance: float = 1.0e-10,
         require_closed_surface: bool = True,
-    ):
+    ) -> None:
         alignment = float(normal_alignment)
         tolerance = float(feature_tolerance)
         if not -1.0 <= alignment <= 1.0 or tolerance < 0.0:
@@ -119,7 +120,7 @@ class GeometricContactFilterResult(StrictModule):
     evidence: GeometricContactFilterEvidence
 
 
-def _safe_normal(value):
+def _safe_normal(value: Array) -> Array:
     norm = jnp.sqrt(jnp.sum(value * value, axis=-1, keepdims=True))
     return value / jnp.maximum(norm, jnp.finfo(value.dtype).eps)
 

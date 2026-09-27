@@ -13,12 +13,15 @@ sparse route from source to target packed layouts.
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from ..._execution_runtime import ExecutionGroup
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -81,12 +84,12 @@ class ForestPartitionEvidence(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        part_leaf_counts,
-        part_costs,
-        ghost_counts,
+        part_leaf_counts: Any,
+        part_costs: Any,
+        ghost_counts: Any,
         cut_faces: int,
         /,
-    ):
+    ) -> None:
         counts = tuple(int(value) for value in part_leaf_counts)
         costs = tuple(float(value) for value in part_costs)
         ghosts = tuple(int(value) for value in ghost_counts)
@@ -132,7 +135,7 @@ class ForestPartitionPlan(StrictModule, NonTrainableState):
         *,
         ghost_stencil: AMRBalanceStencil = AMRBalanceStencil.FACE,
         axis_name: str = "forest_parts",
-    ):
+    ) -> None:
         parts = int(part_count)
         name = str(axis_name).strip()
         if parts <= 0 or not name:
@@ -190,7 +193,7 @@ class PreparedForestPartition(StrictModule, NonTrainableState):
         /,
         *,
         weights: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, ForestPartitionPlan) or not isinstance(
             topology, ForestHierarchyTopology
         ):
@@ -330,7 +333,7 @@ class PreparedForestPartition(StrictModule, NonTrainableState):
         )
         halo = self.halo
 
-        def exchange(local, part):
+        def exchange(local: Any, part: Any) -> Any:
             return halo.exchange(local[0], part[0], axis_name=axis_name)[None, ...]
 
         return jax.shard_map(
@@ -374,7 +377,7 @@ class ForestMigrationPlan(StrictModule, NonTrainableState):
         /,
         *,
         transition: ForestFieldTransition | None = None,
-    ):
+    ) -> None:
         if not isinstance(source, PreparedForestPartition) or not isinstance(
             target, PreparedForestPartition
         ):

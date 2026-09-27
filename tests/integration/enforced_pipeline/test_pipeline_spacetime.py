@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 
@@ -19,7 +22,7 @@ from phydrax.domain import (
 from phydrax.enforcement import EnforcementProgram, EnforcementSpec, InteriorAnchors
 
 
-def _paired_batch(domain, xs, ts):
+def _paired_batch(domain: Any, xs: Any, ts: Any) -> Any:
     structure = SampleLayout((("x", "t"),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
@@ -37,13 +40,13 @@ def _paired_batch(domain, xs, ts):
     return PointBatch(points=points, structure=structure)
 
 
-def test_enforced_pipeline_boundary_initial_interior_spacetime():
+def test_enforced_pipeline_boundary_initial_interior_spacetime() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return x[0] + t
 
     boundary_component = domain.component({"x": Boundary()})

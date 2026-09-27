@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,12 +13,12 @@ import pytest
 import phydrax as phx
 
 
-def _velocity(time, position, args):
+def _velocity(time: Any, position: Any, args: Any) -> Any:
     del time, args
     return jnp.broadcast_to(jnp.asarray((1.0, 0.0)), position.shape)
 
 
-def _geometry():
+def _geometry() -> Any:
     mf = phx.applications.microfluidics
     topology = mf.DLDTopology(
         row_count=4,
@@ -39,7 +42,7 @@ def _geometry():
     return mf.DLDGeometryPlan(topology, design)
 
 
-def _workflow():
+def _workflow() -> Any:
     mf = phx.applications.microfluidics
     geometry = _geometry()
     particles = phx.discretization.ParticleSetPlan(
@@ -110,7 +113,7 @@ def _workflow():
     return workflow, state, flow
 
 
-def test_dld_workflow_rejects_classifier_on_another_outlet_plane():
+def test_dld_workflow_rejects_classifier_on_another_outlet_plane() -> None:
     workflow, _, _ = _workflow()
     misplaced = phx.applications.microfluidics.DLDOutletPlan(
         4.5, workflow.outlets.transverse_edges
@@ -129,7 +132,7 @@ def test_dld_workflow_rejects_classifier_on_another_outlet_plane():
         )
 
 
-def test_dld_geometry_has_exact_post_wall_clearance_and_periodic_shift():
+def test_dld_geometry_has_exact_post_wall_clearance_and_periodic_shift() -> None:
     geometry = _geometry()
     np.testing.assert_allclose(
         geometry.post_centers,
@@ -143,7 +146,7 @@ def test_dld_geometry_has_exact_post_wall_clearance_and_periodic_shift():
     assert bool(evaluation.header.globally_eligible)
 
 
-def test_dld_workflow_runs_particles_to_disjoint_outlets_and_reports_metrics():
+def test_dld_workflow_runs_particles_to_disjoint_outlets_and_reports_metrics() -> None:
     workflow, state, flow = _workflow()
     result = workflow.run(
         state, flow, volume_flow=jnp.asarray(2.0), pressure_drop=jnp.asarray(4.0)
@@ -160,7 +163,7 @@ def test_dld_workflow_runs_particles_to_disjoint_outlets_and_reports_metrics():
     assert result.screening.critical_diameter > 0.0
 
 
-def test_dld_robustness_retains_invalid_samples_and_refuses_claim():
+def test_dld_robustness_retains_invalid_samples_and_refuses_claim() -> None:
     plan = phx.applications.microfluidics.DLDRobustnessPlan(
         tail_fraction=0.5, required_value=0.8, maximize=True
     )
@@ -174,7 +177,7 @@ def test_dld_robustness_retains_invalid_samples_and_refuses_claim():
     assert result.nominal == 0.9
 
 
-def test_dld_lbm_adapter_runs_bound_flow_and_checks_operating_envelope():
+def test_dld_lbm_adapter_runs_bound_flow_and_checks_operating_envelope() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4, periodic=True),

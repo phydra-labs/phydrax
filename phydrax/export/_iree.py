@@ -198,8 +198,12 @@ class IREEArtifactManifest:
             semantic,
             NumericRevision(semantic, {"module_sha256": self.module_sha256}),
             ExecutableSignature(
-                shapes=zip(names, self.input_shapes + self.output_shapes, strict=True),
-                dtypes=zip(names, self.input_dtypes + self.output_dtypes, strict=True),
+                shapes=tuple(
+                    zip(names, self.input_shapes + self.output_shapes, strict=True)
+                ),
+                dtypes=tuple(
+                    zip(names, self.input_dtypes + self.output_dtypes, strict=True)
+                ),
                 backend_facts={
                     "compiler_version": self.compiler_version,
                     "runtime_version": self.runtime_version,
@@ -248,7 +252,7 @@ class IREEExecutable:
         manifest: IREEArtifactManifest,
         module_bytes: bytes,
         /,
-    ):
+    ) -> None:
         compiler, runtime = import_iree()
         del compiler
         config = runtime.Config(manifest.runtime_driver)

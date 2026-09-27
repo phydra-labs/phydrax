@@ -14,6 +14,7 @@ import jax
 import numpy as np
 from jax import core as jax_core
 
+from ...typing import parse
 from .data import FunctionSamples, OperatorBatch
 
 
@@ -143,7 +144,7 @@ class OperatorCapabilitySpec:
     autoregressive_rollout: bool = False
     requires_structured_tensors: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.source_geometries or not self.query_geometries:
             raise ValueError(
                 "Operator capabilities must declare source and query geometries."
@@ -162,14 +163,11 @@ class OperatorCapabilitySpec:
             raise ValueError("axis_size_divisor must be positive.")
         if len(set(self.global_condition_sources)) != len(self.global_condition_sources):
             raise ValueError("global_condition_sources must be unique.")
-        if self.coarsened_cochain_policy_invalid:
-            raise ValueError("Invalid cochain capability policy.")
-
-    @property
-    def coarsened_cochain_policy_invalid(self) -> bool:
-        return self.cochains not in ("unsupported", "optional", "required") or any(
-            side not in ("primal", "dual") for side in self.cochain_sides
+        object.__setattr__(
+            self, "cochains", parse(self.cochains, OperatorCochainPolicy, "cochains")
         )
+        if any(side not in ("primal", "dual") for side in self.cochain_sides):
+            raise ValueError("Invalid cochain capability policy.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,7 +179,7 @@ class OperatorTrainingRequirement:
     corpus_description: str = ""
     claim_scope: str = "task-specific operator learning"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.regime == "pretrained_system" and not self.pretrained_weights_required:
             raise ValueError("pretrained_system regimes require pretrained weights.")
         if self.regime == "task_distribution" and not self.corpus_description.strip():
@@ -210,7 +208,7 @@ class OperatorProblemSpec:
     requires_encode_once_decode_many: bool = False
     rollout_steps: int = 1
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.source_query_relation not in (
             None,
             "coincident",

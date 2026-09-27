@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 from phydrax.discretization.particle._core import ParticleSetPlan
@@ -34,7 +37,7 @@ from phydrax.discretization.particle._rigid_parameters import (
 )
 
 
-def _single_axis_articulation(kind: str):
+def _single_axis_articulation(kind: str) -> Any:
     body_ids = jnp.asarray([10, 11], dtype=jnp.int64)
     particles = ParticleSetPlan(
         body_ids,
@@ -90,7 +93,7 @@ def _single_axis_articulation(kind: str):
     return articulation
 
 
-def test_single_hinge_has_analytic_mass_gravity_and_acceleration():
+def test_single_hinge_has_analytic_mass_gravity_and_acceleration() -> None:
     articulation = _single_axis_articulation("hinge")
     q = jnp.asarray([0.0])
     v = jnp.asarray([0.0])
@@ -112,7 +115,7 @@ def test_single_hinge_has_analytic_mass_gravity_and_acceleration():
     assert jnp.allclose(forward.acceleration, jnp.asarray([-19.62 / 5.0]), rtol=2.0e-5)
 
 
-def test_single_prismatic_has_analytic_mass_gravity_and_acceleration():
+def test_single_prismatic_has_analytic_mass_gravity_and_acceleration() -> None:
     articulation = _single_axis_articulation("prismatic")
     q = jnp.asarray([0.0])
     v = jnp.asarray([0.0])
@@ -129,7 +132,7 @@ def test_single_prismatic_has_analytic_mass_gravity_and_acceleration():
     assert jnp.allclose(forward.acceleration, jnp.asarray([-9.81]), rtol=2.0e-5)
 
 
-def test_inverse_then_forward_dynamics_round_trips_with_residual_evidence():
+def test_inverse_then_forward_dynamics_round_trips_with_residual_evidence() -> None:
     articulation = _single_axis_articulation("hinge")
     q = jnp.asarray([0.31])
     v = jnp.asarray([0.47])
@@ -147,7 +150,7 @@ def test_inverse_then_forward_dynamics_round_trips_with_residual_evidence():
     assert forward.relative_inverse_forward_residual <= 1.0e-6
 
 
-def test_external_body_load_pullback_preserves_power():
+def test_external_body_load_pullback_preserves_power() -> None:
     articulation = _single_axis_articulation("hinge")
     q = jnp.asarray([0.0])
     v = jnp.asarray([0.5])
@@ -171,7 +174,7 @@ def test_external_body_load_pullback_preserves_power():
     assert jnp.abs(inverse.external_power_residual) <= 1.0e-7
 
 
-def test_zero_force_velocity_euler_step_reports_and_respects_energy_bound():
+def test_zero_force_velocity_euler_step_reports_and_respects_energy_bound() -> None:
     articulation = _single_axis_articulation("hinge")
     state = ReducedArticulationState(jnp.asarray([0.2]), jnp.asarray([0.3]))
     zero_gravity = jnp.zeros((3,))
@@ -202,7 +205,7 @@ def test_zero_force_velocity_euler_step_reports_and_respects_energy_bound():
     )
 
 
-def test_failed_step_rolls_back_candidate_state():
+def test_failed_step_rolls_back_candidate_state() -> None:
     articulation = _single_axis_articulation("prismatic")
     state = ReducedArticulationState(jnp.asarray([0.2]), jnp.asarray([0.3]))
     result = reduced_semi_implicit_velocity_euler_step(
@@ -233,7 +236,7 @@ def test_failed_step_rolls_back_candidate_state():
     assert jnp.allclose(nonfinite.accepted_state.velocity, state.velocity)
 
 
-def test_rebased_nonzero_com_energy_matches_maximal_com_evaluation():
+def test_rebased_nonzero_com_energy_matches_maximal_com_evaluation() -> None:
     source_articulation = _single_axis_articulation("hinge")
     baseline = source_articulation.graph.bodies
     source = RigidBodySetPlan(

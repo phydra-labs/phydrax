@@ -8,7 +8,8 @@ from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -47,7 +48,7 @@ class PreparedSphericalVectorOperators(StrictModule, NonTrainableState):
         /,
         *,
         mean_policy: Literal["reject", "project"] = "reject",
-    ):
+    ) -> None:
         if not isinstance(space, SphericalSpectralDiscretization):
             raise TypeError("space must be a prepared spherical spectral discretization.")
         if space.layout.spin != 0 or not space.layout.reality:

@@ -6,13 +6,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from math import isfinite
-from typing import Any, Literal, NamedTuple
+from typing import Any, Literal, NamedTuple, TypeVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax import core
-from jaxtyping import Array
+from jax import Array, core
 
 from .._bounds import Bounds
 from .._strict import StrictModule
@@ -33,6 +32,7 @@ from ._nonlinear_constraints import _canonical_constraints, _constraint_layout
 
 # Evidence is a fixed-structure JAX PyTree, not a host execution record.
 _Response = Callable[[Array, Any], tuple[Array, Array, Any]]
+_T = TypeVar("_T")
 
 
 def _positive(value: Any, name: str) -> Array:
@@ -46,7 +46,9 @@ def _positive(value: Any, name: str) -> Array:
     )
 
 
-def _evaluate(callback: _Response, design: Array, args: Any, shape: tuple[int, ...]):
+def _evaluate(
+    callback: _Response, design: Array, args: Any, shape: tuple[int, ...]
+) -> tuple[Array, Array, Any]:
     output = callback(design, args)
     if not isinstance(output, tuple) or len(output) != 3:
         raise TypeError("Response callbacks must return (values, valid, evidence).")
@@ -87,7 +89,7 @@ class AnchoredResponseModel(StrictModule):
         *,
         correction: Literal["additive", "multiplicative"] = "additive",
         minimum_denominator: Any = None,
-    ):
+    ) -> None:
         if not callable(predict):
             raise TypeError("predict must be callable.")
         if correction not in ("additive", "multiplicative"):
@@ -179,7 +181,7 @@ class AnchoredTargetProblem(StrictModule):
         constraint_scales: Any = 1.0,
         realization: Literal["deterministic", "frozen"] = "deterministic",
         problem_id: str = "anchored-target",
-    ):
+    ) -> None:
         if not callable(evaluate):
             raise TypeError("evaluate must be callable.")
         if not isinstance(model, AnchoredResponseModel):
@@ -264,7 +266,7 @@ class AnchoredTargetMethod(StrictModule):
         step_tolerance: float = 1e-10,
         maximum_steps: int = 64,
         maximum_evaluations: int = 32,
-    ):
+    ) -> None:
         inner = BoundedGaussNewton() if inner_method is None else inner_method
         termination = (
             OptimizationTermination(
@@ -449,7 +451,9 @@ def solve_anchored_target(
         jnp.broadcast_to(problem.constraint_scales, (n_equal + n_inequal,))
     )
 
-    def physical(candidate, responses):
+    def physical(
+        candidate: Array, responses: Array
+    ) -> tuple[Array, Array, Array, Array, Array]:
         equality, inequality = _canonical_constraints(
             constraints, layout, (candidate, responses), args
         )
@@ -474,11 +478,11 @@ def solve_anchored_target(
         finite = jnp.all(jnp.isfinite(equality)) & jnp.all(jnp.isfinite(inequality))
         return residual, equality, inequality, violation, finite
 
-    def merit(candidate, responses):
+    def merit(candidate: Array, responses: Array) -> Array:
         residual, _, _, _, _ = physical(candidate, responses)
         return 0.5 * jnp.sum(jnp.square(residual))
 
-    def target_met(candidate, responses):
+    def target_met(candidate: Array, responses: Array) -> Array:
         _, _, _, violation, finite = physical(candidate, responses)
         return (
             finite
@@ -535,28 +539,35 @@ def solve_anchored_target(
         history,
     )
 
-    def branch(predicate, true, false, operand=None):
+    def branch(
+        predicate: Array,
+        true: Callable[[None], _T],
+        false: Callable[[None], _T],
+        operand: None = None,
+    ) -> _T:
         if execution == "host":
             return true(operand) if bool(predicate) else false(operand)
         return jax.lax.cond(predicate, true, false, operand)
 
-    def condition(current):
+    def condition(current: _Run) -> Array:
         return (
             (current.status == int(OptimizationStatus.ITERATING))
             & (current.iterations < method_.maximum_steps)
             & (current.evaluations < method_.maximum_evaluations)
         )
 
-    def body(current):
+    def body(current: _Run) -> _Run:
         anchor_safe = current.predictor_valid & problem.model.anchor_valid(
             current.prediction
         )
 
-        def attempt(_):
+        def attempt(_: None) -> _Run:
             anchor_prediction = jax.lax.stop_gradient(current.prediction)
             anchor_values = jax.lax.stop_gradient(current.values)
 
-            def residual(candidate, unused):
+            def residual(
+                candidate: Array, unused: object
+            ) -> tuple[Array, tuple[Array, Array, Any]]:
                 raw, model_valid, model_aux = _evaluate(
                     problem.model.predict, candidate, args, targets.shape
                 )

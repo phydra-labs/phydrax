@@ -17,7 +17,8 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -120,7 +121,7 @@ class AtomicManifold(StrictModule, NonTrainableState):
         twice_total_f: int,
         parity: int,
         angular_frequency: float,
-    ):
+    ) -> None:
         label_ = str(label)
         if not label_:
             raise ValueError("Atomic manifold labels must be nonempty.")
@@ -197,7 +198,7 @@ def electric_dipole_allowed(
     supplied = (twice_m_bra is not None, twice_m_ket is not None, q is not None)
     if any(supplied) and not all(supplied):
         raise ValueError("Magnetic selection requires twice_m_bra, twice_m_ket, and q.")
-    if all(supplied):
+    if twice_m_bra is not None and twice_m_ket is not None and q is not None:
         magnetic_bra = bra.validate_projection(twice_m_bra)
         magnetic_ket = ket.validate_projection(twice_m_ket)
         if (

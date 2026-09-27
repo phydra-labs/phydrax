@@ -12,7 +12,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -27,12 +28,14 @@ from ..discretization import (
     PeriodicCell,
     PreparedVerletParticleNeighborhood,
 )
+from ..typing import PRNGKey
 from ._constraints import PreparedDistanceConstraints
 from ._ensemble_advanced import AtomisticSplittingPlan, SplittingOperatorKind
 from ._potential_program import (
     AbstractPreparedAtomisticHamiltonian,
-    AtomisticPotentialEvaluation,
+    AtomisticHamiltonianEvaluation,
 )
+from ._sites import AtomisticInteractionSiteState
 from ._system import PreparedAtomisticSystem
 from ._thermal import apply_baoab_ornstein_uhlenbeck, BAOABLangevinPlan
 from ._thermodynamic import PreparedThermodynamicStateTable
@@ -143,7 +146,7 @@ class AtomisticDynamicsDiagnostics(StrictModule):
 class AtomisticStepEvaluation(StrictModule):
     candidate_state: AtomisticDynamicsState
     accepted_state: AtomisticDynamicsState
-    potential: AtomisticPotentialEvaluation
+    potential: AtomisticHamiltonianEvaluation
     diagnostics: AtomisticDynamicsDiagnostics
     successful: Array
     residual: Array
@@ -167,7 +170,7 @@ class VelocityVerletPlan(StrictModule, NonTrainableState):
     step_size: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, step_size: float, /):
+    def __init__(self, step_size: float, /) -> None:
         step = float(step_size)
         if not np.isfinite(step) or step <= 0.0:
             raise ValueError("step_size must be finite and positive.")
@@ -198,7 +201,7 @@ class AtomisticDynamicsPlan(StrictModule, NonTrainableState):
         /,
         *,
         constraints: PreparedDistanceConstraints | None = None,
-    ):
+    ) -> None:
         if not isinstance(system, PreparedAtomisticSystem):
             raise TypeError("system must be a PreparedAtomisticSystem.")
         if not isinstance(potential, AbstractPreparedAtomisticHamiltonian):
@@ -279,7 +282,7 @@ class PreparedAtomisticDynamics(StrictModule):
     constraints: PreparedDistanceConstraints | None
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: AtomisticDynamicsPlan, /):
+    def __init__(self, plan: AtomisticDynamicsPlan, /) -> None:
         if not isinstance(plan, AtomisticDynamicsPlan):
             raise TypeError("plan must be an AtomisticDynamicsPlan.")
         self.plan = plan
@@ -316,7 +319,9 @@ class PreparedAtomisticDynamics(StrictModule):
     def velocity(self, state: AtomisticDynamicsState, /) -> Array:
         return state.kinematics.momenta * self.system.inverse_masses[:, None]
 
-    def interaction_sites(self, state: AtomisticDynamicsState, /):
+    def interaction_sites(
+        self, state: AtomisticDynamicsState, /
+    ) -> AtomisticInteractionSiteState:
         if state.prepared_dynamics_id != self.prepared_id:
             raise ValueError("State belongs to another atomistic dynamics runtime.")
         if self.system.cell is None or state.cell_vectors.size == 0:
@@ -360,7 +365,7 @@ class PreparedAtomisticDynamics(StrictModule):
 
     def _force_state(
         self,
-        evaluation: AtomisticPotentialEvaluation,
+        evaluation: AtomisticHamiltonianEvaluation,
         neighborhood_cache: ParticleVerletState | None,
         position_epoch: Array,
         /,
@@ -391,7 +396,7 @@ class PreparedAtomisticDynamics(StrictModule):
         neighborhood: ParticleNeighborhoodState,
         controls: Array,
         /,
-    ) -> AtomisticPotentialEvaluation:
+    ) -> AtomisticHamiltonianEvaluation:
         potential_kwargs: dict[str, Any] = {
             "unwrapped_positions": unwrapped_positions,
             "species": species,
@@ -449,7 +454,7 @@ class PreparedAtomisticDynamics(StrictModule):
         /,
         *,
         state_index: ArrayLike | None = None,
-    ) -> AtomisticPotentialEvaluation:
+    ) -> AtomisticHamiltonianEvaluation:
         if not isinstance(state, AtomisticDynamicsState):
             raise TypeError("state must be an AtomisticDynamicsState.")
         if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
@@ -526,7 +531,7 @@ class PreparedAtomisticDynamics(StrictModule):
         momentum: ArrayLike | None = None,
         time: ArrayLike = 0.0,
         species: ArrayLike | None = None,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> AtomisticDynamicsState:
         if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
             raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
@@ -712,7 +717,7 @@ class PreparedAtomisticDynamics(StrictModule):
             state.kinematics.image_counts,
         )
 
-        def refresh_force(_):
+        def refresh_force(_: None) -> tuple[AtomisticForceState, Array, Array]:
             evaluation = self._evaluate_configuration(
                 kinematics.positions,
                 self._unwrapped(kinematics, state.cell_vectors),
@@ -727,7 +732,7 @@ class PreparedAtomisticDynamics(StrictModule):
                 evaluation.successful,
             )
 
-        def retain_force(_):
+        def retain_force(_: None) -> tuple[AtomisticForceState, Array, Array]:
             return (
                 state.force,
                 state.force.potential_energy,
@@ -798,7 +803,7 @@ class PreparedAtomisticDynamics(StrictModule):
         self,
         state: AtomisticDynamicsState,
         neighborhood: ParticleNeighborhoodState,
-        potential: AtomisticPotentialEvaluation,
+        potential: AtomisticHamiltonianEvaluation,
         candidate_finite: Array,
         constraint_successful: Array,
         thermostat_successful: Array,

@@ -14,10 +14,12 @@ from typing import Any, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
+from ..._validation import positive_finite_float
 from ...dynamics import DiscreteStepContext
 from ...linalg import (
     DenseLinearOperator,
@@ -78,13 +80,6 @@ def _nonnegative(value: float, owner: str, /) -> float:
     resolved = float(value)
     if not isfinite(resolved) or resolved < 0.0:
         raise ValueError(f"{owner} must be finite and nonnegative.")
-    return resolved
-
-
-def _positive(value: float, owner: str, /) -> float:
-    resolved = float(value)
-    if not isfinite(resolved) or resolved <= 0.0:
-        raise ValueError(f"{owner} must be finite and positive.")
     return resolved
 
 
@@ -167,7 +162,7 @@ class FittedBellmanProblem(StrictModule):
         training_weights: ArrayLike | None = None,
         holdout_weights: ArrayLike | None = None,
         args: Any = None,
-    ):
+    ) -> None:
         if not isinstance(training_paths, ControlledPathBatch):
             raise TypeError("training_paths must be a ControlledPathBatch.")
         if not isinstance(holdout_paths, ControlledPathBatch):
@@ -233,7 +228,7 @@ class FittedBellmanPlan(StrictModule):
         solve_tolerance: float = 1e-8,
         maximum_condition: float | None = None,
         minimum_training_paths: int = 1,
-    ):
+    ) -> None:
         minimum = int(minimum_training_paths)
         if minimum < 1:
             raise ValueError("minimum_training_paths must be positive.")
@@ -247,7 +242,7 @@ class FittedBellmanPlan(StrictModule):
         self.rank_absolute_tolerance = _nonnegative(
             rank_absolute_tolerance, "rank_absolute_tolerance"
         )
-        self.solve_tolerance = _positive(solve_tolerance, "solve_tolerance")
+        self.solve_tolerance = positive_finite_float(solve_tolerance, "solve_tolerance")
         self.maximum_condition = condition
         self.minimum_training_paths = minimum
         self.plan_id = _identifier(plan_id, "plan_id")
@@ -280,7 +275,7 @@ def _feature_table(
     flat_states = paths.states.reshape((-1,) + paths.state_shape)
     flat_times = jnp.broadcast_to(paths.time_grid.times, (count, nodes)).reshape((-1,))
 
-    def evaluate(time, state):
+    def evaluate(time: Array, state: Array) -> Array:
         return jnp.asarray(problem.feature_map(time, state, problem.args))
 
     features = jax.vmap(evaluate)(flat_times, flat_states)
@@ -910,7 +905,7 @@ def bridge_fitted_bellman_to_bsde(
     ):
         raise ValueError("Selected, fitted, and controlled time grids must match.")
 
-    def action_at(time, state):
+    def action_at(time: Array, state: Array) -> Array:
         context = _policy_context(selected, time)
         value = jnp.asarray(frozen_policy(context, state, controlled_problem.args))
         if value.shape != controlled_problem.action_shape:
@@ -965,7 +960,7 @@ def bridge_fitted_bellman_to_bsde(
         },
     )
 
-    def closed_drift(time, state, args):
+    def closed_drift(time: Array, state: Array, args: object) -> Array:
         del args
         action = action_at(time, state)
         value = jnp.asarray(
@@ -975,7 +970,7 @@ def bridge_fitted_bellman_to_bsde(
             raise ValueError("controlled_drift returned an incompatible state shape.")
         return value
 
-    def closed_diffusion(time, state, args):
+    def closed_diffusion(time: Array, state: Array, args: object) -> Array:
         del args
         action = action_at(time, state)
         value = jnp.asarray(
@@ -993,7 +988,9 @@ def bridge_fitted_bellman_to_bsde(
     closed_drift(probe_time, probe_state, None)
     closed_diffusion(probe_time, probe_state, None)
 
-    def generator(time, state, value, z, args):
+    def generator(
+        time: Array, state: Array, value: Array, z: Array, args: object
+    ) -> Array:
         del value, z, args
         context = _policy_context(selected, time)
         action = action_at(time, state)
@@ -1004,7 +1001,7 @@ def bridge_fitted_bellman_to_bsde(
             raise ValueError("controlled stage_cost must return a scalar.")
         return (cost / (context.target - context.source))[None]
 
-    def terminal(state, args):
+    def terminal(state: Array, args: object) -> Array:
         del args
         value = jnp.asarray(
             controlled_problem.terminal_cost(
@@ -1031,7 +1028,7 @@ def bridge_fitted_bellman_to_bsde(
         state_label="x",
     )
 
-    def value_predictor(time, state):
+    def value_predictor(time: Array, state: Array) -> Array:
         return result.predict(time, state)[None]
 
     control_mode = "autodiff" if z_predictor is None else "explicit"

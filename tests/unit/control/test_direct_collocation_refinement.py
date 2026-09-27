@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -6,7 +8,7 @@ import phydrax as phx
 from phydrax.control._direct_collocation_refinement import _maximum_state_error
 
 
-def test_refinement_state_error_ignores_quaternion_pose_sign():
+def test_refinement_state_error_ignores_quaternion_pose_sign() -> None:
     geometry = phx.metrix.QuaternionPoseStateGeometry()
     local_space = phx.linalg.ArraySpace((6,), dtype=jnp.float32)
     state_layout = phx.dynamics.StateLayout(
@@ -26,7 +28,7 @@ def test_refinement_state_error_ignores_quaternion_pose_sign():
     )
 
 
-def _source_result(*, bounds=None):
+def _source_result(*, bounds: Any = None) -> Any:
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, control, args: jnp.asarray((time,)),
         state_layout=phx.dynamics.StateLayout((1,)),
@@ -70,7 +72,7 @@ def _source_result(*, bounds=None):
     )
 
 
-def _policy(**overrides):
+def _policy(**overrides: Any) -> Any:
     values = {
         "mode": "uniform",
         "maximum_levels": 2,
@@ -82,10 +84,11 @@ def _policy(**overrides):
         "minimum_defect_reduction": 0.1,
     }
     values.update(overrides)
+    # ty: ignore[invalid-argument-type]
     return phx.control.DirectCollocationRefinementPolicy(**values)
 
 
-def test_off_grid_audit_retains_per_interval_defects():
+def test_off_grid_audit_retains_per_interval_defects() -> None:
     result = _source_result()
     audit = result.diagnostics.off_grid
     assert bool(result.successful)
@@ -99,7 +102,7 @@ def test_off_grid_audit_retains_per_interval_defects():
     assert not audit.certified
 
 
-def test_uniform_refinement_transfers_only_primal_decisions():
+def test_uniform_refinement_transfers_only_primal_decisions() -> None:
     source = _source_result()
     selection = phx.control.select_direct_collocation_intervals(source, _policy())
     assert selection.selected_indices.tolist() == [0, 1, 2, 3]
@@ -119,7 +122,7 @@ def test_uniform_refinement_transfers_only_primal_decisions():
     assert not transfer.dual_transferred
 
 
-def test_bulk_refinement_selects_smallest_defect_mass_prefix():
+def test_bulk_refinement_selects_smallest_defect_mass_prefix() -> None:
     source = _source_result()
     policy = _policy(mode="bulk-defect", bulk_fraction=0.5)
     selection = phx.control.select_direct_collocation_intervals(source, policy)
@@ -128,7 +131,7 @@ def test_bulk_refinement_selects_smallest_defect_mass_prefix():
     assert not selection.capacity_exceeded
 
 
-def test_refinement_requires_provider_for_mesh_shaped_bounds():
+def test_refinement_requires_provider_for_mesh_shaped_bounds() -> None:
     state_guess = 0.5 * jnp.linspace(0.0, 1.0, 5)[:, None] ** 2
     source = _source_result(
         bounds=phx.control.DirectCollocationBounds(
@@ -150,7 +153,7 @@ def test_refinement_requires_provider_for_mesh_shaped_bounds():
     assert transfer.bounds.states is not None
 
 
-def test_refinement_study_reduces_sampled_defect_and_converges():
+def test_refinement_study_reduces_sampled_defect_and_converges() -> None:
     source = _source_result()
     study = phx.control.solve_refined_direct_collocation(
         source,
@@ -175,7 +178,7 @@ def test_refinement_study_reduces_sampled_defect_and_converges():
     assert study.levels[0].defect_reduction >= 0.4
 
 
-def test_refinement_capacity_and_failed_source_are_explicit():
+def test_refinement_capacity_and_failed_source_are_explicit() -> None:
     source = _source_result()
     selection = phx.control.select_direct_collocation_intervals(
         source,

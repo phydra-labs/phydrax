@@ -8,14 +8,15 @@ import math
 from collections.abc import Mapping, Sequence
 from math import prod
 from operator import index
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -29,11 +30,12 @@ from ....discretization.spectral import (
 )
 from ....discretization.spectral._modal_discovery import PreparedModalSupport
 from ....domain import Domain, DomainFunction
+from ....typing import parse
 from ..._keys import EvalKey
 from ...parameters import PositiveTransform, TransformedParameter
 
 
-DecayAggregation = Literal["sum", "mean"]
+DecayAggregation: TypeAlias = Literal["sum", "mean"]
 
 
 def _component_shape(value: Sequence[int], /) -> tuple[int, ...]:
@@ -76,7 +78,7 @@ class _ModalCoordinateGrid(StrictModule, NonTrainableState):
         *,
         mode_scales: ArrayLike | None,
         maximum_query_points: int,
-    ):
+    ) -> None:
         if not isinstance(discretization, TensorSpectralDiscretization):
             raise TypeError("discretization must be a TensorSpectralDiscretization.")
         maximum = index(maximum_query_points)
@@ -131,7 +133,7 @@ class _ModalCoordinateGrid(StrictModule, NonTrainableState):
 class _FixedRates(StrictModule, NonTrainableState):
     values: Array
 
-    def __init__(self, values: ArrayLike, /):
+    def __init__(self, values: ArrayLike, /) -> None:
         self.values = jnp.asarray(values, dtype=jnp.float64)
 
     def __call__(self) -> Array:
@@ -160,7 +162,7 @@ class ExponentialSpectralEnvelope(StrictModule, ParameterOwner):
         trainable: bool = True,
         minimum_rate: float = 0.0,
         aggregation: DecayAggregation = "sum",
-    ):
+    ) -> None:
         rates = np.asarray(initial_rates, dtype=np.float64).reshape((-1,))
         minimum = float(minimum_rate)
         if rates.size == 0 or np.any(~np.isfinite(rates)):
@@ -170,8 +172,7 @@ class ExponentialSpectralEnvelope(StrictModule, ParameterOwner):
         if np.any(rates < minimum) or (trainable and np.any(rates <= minimum)):
             relation = "exceed" if trainable else "be at least"
             raise ValueError(f"initial_rates must {relation} minimum_rate.")
-        if aggregation not in ("sum", "mean"):
-            raise ValueError("aggregation must be 'sum' or 'mean'.")
+        aggregation = parse(aggregation, DecayAggregation, "aggregation")
         parameter: TransformedParameter | _FixedRates
         if trainable:
             raw = _inverse_softplus(rates - minimum)
@@ -220,7 +221,7 @@ class _ModalFeatureTable(StrictModule, NonTrainableState):
         /,
         *,
         maximum_feature_bytes: int,
-    ):
+    ) -> None:
         counts = tuple(index(value) for value in coarse_counts)
         if len(counts) != len(discretization.axes):
             raise ValueError("coarse_counts must provide one count per spectral axis.")
@@ -288,7 +289,7 @@ class SpectralBasisModulation(StrictModule, ParameterOwner):
         coarse_counts: Sequence[int],
         component_shape: Sequence[int] = (),
         maximum_feature_bytes: int = 256 * 1024**2,
-    ):
+    ) -> None:
         if not callable(model):
             raise TypeError("model must be callable.")
         components = _component_shape(component_shape)
@@ -355,7 +356,7 @@ class ImplicitModalField(StrictModule, ParameterOwner):
         real_field: bool = False,
         reality_tolerance: float = 1e-10,
         maximum_query_points: int = 1_000_000,
-    ):
+    ) -> None:
         if not callable(model):
             raise TypeError("model must be callable.")
         if not isinstance(discretization, TensorSpectralDiscretization):
@@ -552,7 +553,7 @@ class SparseImplicitModalField(StrictModule, ParameterOwner):
         support: PreparedModalSupport,
         modal_shape: Sequence[int],
         /,
-    ):
+    ) -> None:
         if not isinstance(support, PreparedModalSupport):
             raise TypeError("support must be PreparedModalSupport.")
         shape = tuple(modal_shape)

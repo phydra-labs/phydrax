@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -55,7 +56,7 @@ class TwoPhaseCapabilityEventPlan(StrictModule, NonTrainableState):
         contact_angle_tolerance: float = 5.0e-3,
         minimum_overturning_normal: float = 0.1,
         maximum_topology_changes: int = 0,
-    ):
+    ) -> None:
         threshold = float(phase_threshold)
         angle = float(contact_angle_tolerance)
         normal = float(minimum_overturning_normal)
@@ -90,8 +91,8 @@ class TwoPhaseCapabilityEventPlan(StrictModule, NonTrainableState):
         ):
             if grid_axis.periodic:
                 continue
-            lower = [slice(None)] * len(shape)
-            upper = [slice(None)] * len(shape)
+            lower: list[slice | int] = [slice(None)] * len(shape)
+            upper: list[slice | int] = [slice(None)] * len(shape)
             lower[axis] = 0
             upper[axis] = -1
             mask = mask.at[tuple(lower)].set(True)
@@ -166,7 +167,7 @@ class TwoPhaseCapabilityEventPlan(StrictModule, NonTrainableState):
                 continue
             on_axis_boundary = jnp.zeros_like(boundary)
             for index in (0, -1):
-                location = [slice(None)] * alpha.ndim
+                location: list[slice | int] = [slice(None)] * alpha.ndim
                 location[axis] = index
                 on_axis_boundary = on_axis_boundary.at[tuple(location)].set(True)
             local = jnp.where(
@@ -279,7 +280,7 @@ class ConservativeTwoPhaseRemeshPlan(StrictModule, NonTrainableState):
         /,
         *,
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(source, PreparedIncompressibleTwoPhaseVOF) or not isinstance(
             target, PreparedIncompressibleTwoPhaseVOF
         ):

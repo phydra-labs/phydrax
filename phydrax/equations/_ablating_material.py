@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -92,7 +93,7 @@ class PorousAblatingMaterialPlan(StrictModule, NonTrainableState):
         reference_temperature: float = 300.0,
         minimum_temperature: float = 50.0,
         maximum_temperature: float = 5000.0,
-    ):
+    ) -> None:
         cp = np.asarray(component_heat_capacities, dtype=np.float64)
         conductivity = np.asarray(component_conductivities, dtype=np.float64)
         reference_energy = np.asarray(component_reference_energies, dtype=np.float64)
@@ -319,7 +320,7 @@ class PorousAblatingMaterialPlan(StrictModule, NonTrainableState):
             raise ValueError("Material step and subcycles are invalid.")
         initial = state
 
-        def body(_, current):
+        def body(_: Array, current: AblatingMaterialState) -> AblatingMaterialState:
             evaluation = self.evaluate(current)
             fraction = step / count
             return AblatingMaterialState(

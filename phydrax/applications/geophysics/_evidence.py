@@ -39,7 +39,7 @@ class GeophysicalCapabilityEvidence(StrictModule, NonTrainableState):
         material_models: tuple[str, ...],
         limitations: tuple[str, ...],
         differentiation: DerivativeContract,
-    ):
+    ) -> None:
         values = (
             str(model).strip(),
             tuple(dimensions),
@@ -109,7 +109,7 @@ class GeophysicalResourceEstimate(StrictModule, NonTrainableState):
         observation_bytes: int,
         source_batch_size: int,
         maximum_bytes: int | None = None,
-    ):
+    ) -> None:
         components = tuple(
             (
                 retained_bytes,

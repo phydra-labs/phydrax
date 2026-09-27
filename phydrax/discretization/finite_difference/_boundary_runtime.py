@@ -9,11 +9,13 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 GhostConditionKind: TypeAlias = Literal[
@@ -45,7 +47,7 @@ class BoundaryStageContext(StrictModule):
         /,
         *,
         stage_id: str,
-    ):
+    ) -> None:
         names = tuple(str(value) for value in axis_names)
         coordinate_values = tuple(jnp.asarray(value) for value in coordinates)
         identifier = str(stage_id)
@@ -119,11 +121,12 @@ class CellGhostBoundary(StrictModule, NonTrainableState):
         lower_beta: float = 1.0,
         upper_alpha: float = 1.0,
         upper_beta: float = 1.0,
-    ):
+    ) -> None:
         axis_ = int(axis)
-        allowed = ("periodic", "dirichlet", "neumann", "robin")
-        if axis_ < 0 or lower_kind not in allowed or upper_kind not in allowed:
-            raise ValueError("Invalid ghost boundary axis or condition kind.")
+        if axis_ < 0:
+            raise ValueError("Invalid ghost boundary axis.")
+        lower_kind = parse(lower_kind, GhostConditionKind, "lower_kind")
+        upper_kind = parse(upper_kind, GhostConditionKind, "upper_kind")
         if (lower_kind == "periodic") != (upper_kind == "periodic"):
             raise ValueError("Periodicity must be declared on both boundary sides.")
         spacing_ = float(spacing)
@@ -291,7 +294,7 @@ class NodalBoundaryRuntime(StrictModule, NonTrainableState):
         lower_beta: float = 1.0,
         upper_alpha: float = 1.0,
         upper_beta: float = 1.0,
-    ):
+    ) -> None:
         axis_ = int(axis)
         kinds = (lower_kind, upper_kind)
         coefficients = tuple(
@@ -455,7 +458,7 @@ class BoundaryWorkspace(StrictModule):
         runtime_ids: tuple[str, ...],
         stage_id: str,
         /,
-    ):
+    ) -> None:
         original = jnp.asarray(original_values)
         names = tuple(str(value) for value in axis_names)
         values = tuple(jnp.asarray(value) for value in axis_values)
@@ -515,7 +518,7 @@ class ConformingInterfaceRuntime(StrictModule, NonTrainableState):
     axis: str = eqx.field(static=True)
     runtime_id: str = eqx.field(static=True)
 
-    def __init__(self, field_name: str, axis: str, /):
+    def __init__(self, field_name: str, axis: str, /) -> None:
         field = str(field_name)
         axis_ = str(axis)
         if not field or not axis_:

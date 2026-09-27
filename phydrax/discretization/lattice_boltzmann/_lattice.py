@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -34,7 +35,7 @@ class LatticeBoltzmannCapabilityEvidence(StrictModule, NonTrainableState):
         hydrodynamic_isotropy_order: int,
         tensor_product: bool,
         capabilities: Sequence[str],
-    ):
+    ) -> None:
         capability_tuple = tuple(sorted(str(value) for value in capabilities))
         if len(set(capability_tuple)) != len(capability_tuple):
             raise ValueError("Lattice capabilities must be unique.")
@@ -84,13 +85,13 @@ class LatticeBoltzmannVelocitySet(StrictModule, NonTrainableState):
     def __init__(
         self,
         name: str,
-        velocities: ArrayLike,
-        weights: ArrayLike,
-        opposite: Sequence[int] | ArrayLike,
+        velocities: npt.ArrayLike,
+        weights: npt.ArrayLike,
+        opposite: npt.ArrayLike,
         /,
         *,
         sound_speed_squared: float = 1.0 / 3.0,
-    ):
+    ) -> None:
         name_ = str(name)
         if not name_:
             raise ValueError("Velocity-set name must be non-empty.")
@@ -245,9 +246,9 @@ class LatticeBoltzmannVelocitySet(StrictModule, NonTrainableState):
 
 def certified_nearest_neighbor_velocity_set(
     name: str,
-    velocities: ArrayLike,
-    weights: ArrayLike,
-    opposite: Sequence[int] | ArrayLike,
+    velocities: npt.ArrayLike,
+    weights: npt.ArrayLike,
+    opposite: npt.ArrayLike,
     /,
     *,
     sound_speed_squared: float = 1.0 / 3.0,

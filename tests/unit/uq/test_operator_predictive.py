@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -58,7 +61,7 @@ def _point_batch(*, shifted: float = 0.0) -> phx.nn.operator.OperatorBatch:
     )
 
 
-def _multi_output_prediction():
+def _multi_output_prediction() -> Any:
     spatial = phx.nn.operator.FunctionSamples(
         values=None,
         axes=(phx.nn.operator.OperatorAxis("x", jnp.linspace(0.0, 1.0, 3)),),
@@ -100,7 +103,7 @@ def _multi_output_prediction():
     return batch, prediction
 
 
-def test_multi_output_prediction_selection_propagates_through_uq():
+def test_multi_output_prediction_selection_propagates_through_uq() -> None:
     batch, target = _multi_output_prediction()
     with pytest.raises(KeyError, match="Unknown operator output field"):
         phx.uq.operator_prediction_field(target, field_name="missing")
@@ -136,7 +139,7 @@ def test_multi_output_prediction_selection_propagates_through_uq():
     assert tuple(input_predictive.mean().fields) == ("flux",)
 
 
-def test_operator_predictive_tensor_geometry_and_statistics():
+def test_operator_predictive_tensor_geometry_and_statistics() -> None:
     batch = _tensor_batch()
     values = jnp.arange(24.0).reshape(4, 2, 3)
     prediction = phx.uq.operator_predictive_from_samples(
@@ -186,7 +189,7 @@ def test_operator_predictive_tensor_geometry_and_statistics():
     assert not interval.calibrated
 
 
-def test_operator_predictive_preserves_precision_through_wrappers():
+def test_operator_predictive_preserves_precision_through_wrappers() -> None:
     batch = _tensor_batch()
     spec = phx.nn.operator.OperatorOutputSpec("scalar")
     precision = phx.uq.PredictivePrecisionPolicy(
@@ -221,7 +224,7 @@ def test_operator_predictive_preserves_precision_through_wrappers():
     assert retained.predictive.samples.data.dtype == jnp.float32
 
 
-def test_operator_predictive_masks_padding_and_records_valid_draws():
+def test_operator_predictive_masks_padding_and_records_valid_draws() -> None:
     batch = _point_batch()
     spec = phx.nn.operator.OperatorOutputSpec(2, component_names=("u", "v"))
     values = jnp.ones((3, 2, 3, 2))
@@ -266,7 +269,7 @@ def test_operator_predictive_masks_padding_and_records_valid_draws():
         )
 
 
-def test_operator_input_predictive_collapses_common_query_geometry():
+def test_operator_input_predictive_collapses_common_query_geometry() -> None:
     first = _point_batch()
     second = _point_batch()
     stacked = phx.nn.operator.stack_operator_batches(
@@ -309,7 +312,7 @@ def test_operator_input_predictive_collapses_common_query_geometry():
     assert jnp.all(variance[~prediction.output_mask()] == 0.0)
 
 
-def test_operator_input_predictive_rejects_varying_output_queries():
+def test_operator_input_predictive_rejects_varying_output_queries() -> None:
     stacked = phx.nn.operator.stack_operator_batches(
         (_point_batch(), _point_batch(shifted=0.1)),
         case_axis="input_draw",
@@ -332,7 +335,7 @@ def test_operator_input_predictive_rejects_varying_output_queries():
         )
 
 
-def test_operator_prediction_field_rejects_dimension_collisions():
+def test_operator_prediction_field_rejects_dimension_collisions() -> None:
     axis = phx.nn.operator.OperatorAxis("case", jnp.linspace(0.0, 1.0, 3))
     query = phx.nn.operator.FunctionSamples(values=None, axes=(axis,))
     prediction = phx.nn.operator.OperatorPrediction.from_field(
@@ -349,7 +352,7 @@ def test_operator_prediction_field_rejects_dimension_collisions():
         phx.uq.operator_prediction_field(prediction, field_name="output")
 
 
-def test_operator_predictive_rejects_complex_physical_outputs():
+def test_operator_predictive_rejects_complex_physical_outputs() -> None:
     batch = _tensor_batch()
     with pytest.raises(TypeError, match="real physical outputs"):
         phx.uq.operator_predictive_from_samples(

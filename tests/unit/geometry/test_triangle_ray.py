@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -14,7 +17,7 @@ from phydrax.geometry._triangle_ray import (
 )
 
 
-def _cube_mesh():
+def _cube_mesh() -> Any:
     vertices = jnp.asarray(
         [
             [-1.0, -1.0, -1.0],
@@ -47,14 +50,16 @@ def _cube_mesh():
     return vertices, triangles
 
 
-def test_bvh_matches_exhaustive_for_ten_thousand_deterministic_rays():
+def test_bvh_matches_exhaustive_for_ten_thousand_deterministic_rays() -> None:
     vertices, triangles = _cube_mesh()
     entity_ids = jnp.repeat(jnp.arange(6, dtype=jnp.int32), 2)
     common = dict(entity_ids=entity_ids, leaf_size=2, traversal_stack_capacity=16)
     bvh = prepare_triangle_ray_query(
+        # ty: ignore[invalid-argument-type]
         TriangleRayQueryPlan(vertices, triangles, acceleration="bvh", **common)
     )
     exhaustive = prepare_triangle_ray_query(
+        # ty: ignore[invalid-argument-type]
         TriangleRayQueryPlan(vertices, triangles, acceleration="exhaustive", **common)
     )
     keys = jax.random.split(jax.random.PRNGKey(3419), 2)
@@ -78,7 +83,7 @@ def test_bvh_matches_exhaustive_for_ten_thousand_deterministic_rays():
     assert bool(jnp.all(accelerated.triangle_tests <= triangles.shape[0]))
 
 
-def test_shared_edge_ties_require_one_physical_entity():
+def test_shared_edge_ties_require_one_physical_entity() -> None:
     vertices = jnp.asarray(
         [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [1.0, 1.0, 0.0], [-1.0, 1.0, 0.0]]
     )
@@ -101,7 +106,7 @@ def test_shared_edge_ties_require_one_physical_entity():
     assert not bool(distinct_hit.intersection.valid[0])
 
 
-def test_vertex_hit_orientation_and_rigid_transform_covariance():
+def test_vertex_hit_orientation_and_rigid_transform_covariance() -> None:
     vertices = jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
     triangles = jnp.asarray([[0, 1, 2]], dtype=jnp.int32)
     origin = jnp.asarray([[0.0, 0.0, 2.0]])
@@ -142,7 +147,7 @@ def test_vertex_hit_orientation_and_rigid_transform_covariance():
     )
 
 
-def test_origin_on_surface_is_not_positionally_nudged_and_capacity_is_explicit():
+def test_origin_on_surface_is_not_positionally_nudged_and_capacity_is_explicit() -> None:
     vertices, triangles = _cube_mesh()
     exact = prepare_triangle_ray_query(
         TriangleRayQueryPlan(vertices, triangles, entity_ids=jnp.repeat(jnp.arange(6), 2))

@@ -6,17 +6,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 
 
 PATH_PROPAGATION_SUCCESS = 0
@@ -45,12 +47,12 @@ class StateRegionPlan(StrictModule, NonTrainableState):
         self,
         *,
         kind: str,
-        lower: ArrayLike = (),
-        upper: ArrayLike = (),
+        lower: ArrayLike | Sequence[float] = (),
+        upper: ArrayLike | Sequence[float] = (),
         children: tuple[StateRegionPlan, ...] = (),
         predicate: Callable[[Array], Array] | None = None,
         region_id: str,
-    ):
+    ) -> None:
         if kind not in ("half-open", "predicate", "and", "or", "xor", "not"):
             raise ValueError("Unknown state-region kind.")
         if any(not isinstance(child, StateRegionPlan) for child in children):
@@ -127,7 +129,11 @@ class StateRegionPlan(StrictModule, NonTrainableState):
             axes = tuple(range(value.ndim - self.lower.ndim, value.ndim))
             return jnp.all((value >= self.lower) & (value < self.upper), axis=axes)
         if self.kind == "predicate":
-            result = jnp.asarray(self.predicate(value))
+            predicate = self.predicate
+            # The constructor requires a callable predicate for predicate regions.
+            if not (predicate is not None):
+                raise RuntimeError("Internal invariant failed: predicate is not None.")
+            result = jnp.asarray(predicate(value))
             if result.dtype != jnp.bool_:
                 raise TypeError("Region predicates must return Boolean masks.")
             if result.ndim >= value.ndim:
@@ -198,7 +204,7 @@ class PathBuffer(StrictModule, NonTrainableState):
         direction: ArrayLike,
         lineage: ArrayLike,
         /,
-    ):
+    ) -> None:
         positions_ = jnp.asarray(positions)
         times_ = jnp.asarray(times)
         if not jnp.issubdtype(times_.dtype, jnp.floating):
@@ -376,7 +382,7 @@ class PathLineageLog(StrictModule, NonTrainableState):
         count: ArrayLike,
         overflowed: ArrayLike,
         /,
-    ):
+    ) -> None:
         parent_ = jnp.asarray(parent, dtype=jnp.uint32)
         candidate_ = jnp.asarray(candidate, dtype=jnp.uint32)
         committed_ = jnp.asarray(committed, dtype=jnp.uint32)
@@ -502,7 +508,7 @@ class DynamicsKernelCapabilities(StrictModule, NonTrainableState):
         supports_backward: bool,
         normalized_transition_density: bool,
         fixed_step: bool = True,
-    ):
+    ) -> None:
         values = (
             stochastic,
             reversible,
@@ -537,9 +543,7 @@ class DynamicsStep(StrictModule):
 class FunctionalDynamicsKernel(StrictModule):
     """Explicit functional path dynamics with no runtime capability discovery."""
 
-    step_fn: Callable[[Key[Array, ""], Array, Array], DynamicsStep] = eqx.field(
-        static=True
-    )
+    step_fn: Callable[[PRNGKey, Array, Array], DynamicsStep] = eqx.field(static=True)
     transition_log_density_fn: Callable[[Array, Array, Array], Array] = eqx.field(
         static=True
     )
@@ -549,14 +553,14 @@ class FunctionalDynamicsKernel(StrictModule):
 
     def __init__(
         self,
-        step: Callable[[Key[Array, ""], Array, Array], DynamicsStep],
+        step: Callable[[PRNGKey, Array, Array], DynamicsStep],
         transition_log_density: Callable[[Array, Array, Array], Array],
         capabilities: DynamicsKernelCapabilities,
         /,
         *,
         time_step: float,
         kernel_id: str,
-    ):
+    ) -> None:
         if not callable(step) or not callable(transition_log_density):
             raise TypeError("step and transition_log_density must be callable.")
         if not isinstance(capabilities, DynamicsKernelCapabilities):
@@ -570,9 +574,7 @@ class FunctionalDynamicsKernel(StrictModule):
         self.time_step = interval
         self.kernel_id = _nonempty_identity(kernel_id, "kernel_id")
 
-    def step(
-        self, key: Key[Array, ""], state: Array, direction: Array, /
-    ) -> DynamicsStep:
+    def step(self, key: PRNGKey, state: Array, direction: Array, /) -> DynamicsStep:
         result = self.step_fn(key, state, direction)
         if not isinstance(result, DynamicsStep):
             raise TypeError("A dynamics step must return DynamicsStep.")

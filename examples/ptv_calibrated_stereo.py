@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -38,13 +41,13 @@ association_plan = phx.velocimetry.tracking.MultiViewAssociationPlan(
 )
 
 
-def gaussian_image(position_rc):
+def gaussian_image(position_rc: Any) -> Any:
     row, column = jnp.meshgrid(jnp.arange(33.0), jnp.arange(33.0), indexing="ij")
     delta = jnp.stack((row - position_rc[0], column - position_rc[1]), axis=-1)
     return 10.0 * jnp.exp(-0.5 * jnp.sum(delta * delta, axis=-1) / 0.7**2)
 
 
-def reconstruct(point_xyz, frame_index):
+def reconstruct(point_xyz: Any, frame_index: Any) -> Any:
     pixels = tuple(
         phx.imaging.camera.project_points(camera, point_xyz[None]).pixels[0]
         for camera in rig.cameras

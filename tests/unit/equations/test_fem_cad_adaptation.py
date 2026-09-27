@@ -8,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_cad_projection_curvature_order_and_geometry_recovery_are_atomic():
+def test_cad_projection_curvature_order_and_geometry_recovery_are_atomic() -> None:
     points = np.asarray(((0.9, 0.0), (0.0, 0.9), (-0.9, 0.0), (0.0, -0.9)))
     mesh = phx.discretization.CellMesh(
         points,

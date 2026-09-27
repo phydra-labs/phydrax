@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -11,7 +14,7 @@ from phydrax.operators.differential import partial_t
 from phydrax.terms import RaggedTimeSeriesDataTerm, TrajectorySignal
 
 
-def _make_domain_and_values(*, sampling="observation_uniform"):
+def _make_domain_and_values(*, sampling: Any = "observation_uniform") -> Any:
     inputs = jnp.asarray([[0.0], [1.0], [2.0]])
     times = jnp.asarray(
         [
@@ -32,11 +35,11 @@ def _make_domain_and_values(*, sampling="observation_uniform"):
     return domain, values
 
 
-def test_irregular_ragged_time_series_matches_exact_observations():
+def test_irregular_ragged_time_series_matches_exact_observations() -> None:
     domain, values = _make_domain_and_values(sampling="observation_uniform")
 
     @domain.Function("data", "t")
-    def exact(data, t):
+    def exact(data: Any, t: Any) -> Any:
         y = data[0] + t
         return jnp.asarray([y, 2.0 * y])
 
@@ -57,11 +60,11 @@ def test_irregular_ragged_time_series_matches_exact_observations():
     assert jnp.allclose(metrics["data_accuracy"], 1.0)
 
 
-def test_irregular_ragged_time_series_linear_interpolation():
+def test_irregular_ragged_time_series_linear_interpolation() -> None:
     domain, values = _make_domain_and_values(sampling="case_time_uniform")
 
     @domain.Function("data", "t")
-    def exact(data, t):
+    def exact(data: Any, t: Any) -> Any:
         y = data[0] + t
         return jnp.asarray([y, 2.0 * y])
 
@@ -80,7 +83,7 @@ def test_irregular_ragged_time_series_linear_interpolation():
     assert jnp.allclose(loss, 0.0, atol=1e-12)
 
 
-def test_irregular_trajectory_signal_linear_value_and_time_derivative():
+def test_irregular_trajectory_signal_linear_value_and_time_derivative() -> None:
     domain, values = _make_domain_and_values(sampling="case_time_uniform")
     signal = TrajectorySignal(domain, values, interpolation="linear")
     batch = domain.component().sample(

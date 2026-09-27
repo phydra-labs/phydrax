@@ -20,8 +20,9 @@ from typing import Any
 import numpy as np
 
 from ..._external_resource import read_bounded_resource, ResourceLimits
-from .._schema import FeatureSchema, TargetSchema
+from .._schema import FeatureKind, FeatureSchema, TargetKind, TargetSchema
 from ..tree import TreeEnsemble
+from ..tree._representation import ObjectiveTransform
 from ._contracts import (
     ConversionError,
     ConversionProvenance,
@@ -80,7 +81,7 @@ class _UBJArray(list[Any]):
 
     __slots__ = ("marker",)
 
-    def __init__(self, values: list[Any], marker: str | None = None):
+    def __init__(self, values: list[Any], marker: str | None = None) -> None:
         super().__init__(values)
         self.marker = marker
 
@@ -98,7 +99,7 @@ class _UBJSONDecoder:
         "L": (">q", 8),
     }
 
-    def __init__(self, data: bytes):
+    def __init__(self, data: bytes) -> None:
         self.data = data
         self.position = 0
 
@@ -583,25 +584,37 @@ def _finite_float_parameter(
 
 def _objective(
     value: Any, num_class: int, output_width: int
-) -> tuple[str, str, str, str]:
+) -> tuple[str, ObjectiveTransform, str, TargetKind]:
     objective = _object(value, "learner.objective")
     if "name" not in objective:
         raise ConversionError("learner.objective is missing required field 'name'.")
     name = _string(objective["name"], "learner.objective.name")
 
-    reg_loss = {
+    reg_loss: dict[str, tuple[ObjectiveTransform, str, TargetKind]] = {
         "reg:squarederror": ("identity", "identity", "continuous"),
         "reg:logistic": ("sigmoid", "logit", "continuous"),
         "binary:logistic": ("sigmoid", "logit", "binary"),
         "binary:logitraw": ("identity", "identity", "binary"),
         "reg:gamma": ("exponential", "log", "continuous"),
     }
-    name_only = {
+    name_only: dict[str, tuple[ObjectiveTransform, str, TargetKind]] = {
         "reg:squaredlogerror": ("identity", "identity", "continuous"),
         "reg:absoluteerror": ("identity", "identity", "continuous"),
         "survival:cox": ("exponential", "log", "continuous"),
     }
-    parameterized = {
+    parameterized: dict[
+        str,
+        tuple[
+            ObjectiveTransform,
+            str,
+            TargetKind,
+            str,
+            str,
+            float | None,
+            float | None,
+            bool,
+        ],
+    ] = {
         "reg:pseudohubererror": (
             "identity",
             "identity",
@@ -824,7 +837,7 @@ class _TreeData:
         threshold: np.ndarray,
         cover: np.ndarray,
         vector_leaf: bool,
-    ):
+    ) -> None:
         self.categories = categories
         self.categorical_features = categorical_features
         self.default_left = default_left
@@ -1227,7 +1240,7 @@ def from_xgboost_artifact(source: Any, /) -> ConversionResult:
     )
     if feature_types and len(feature_types) != num_feature:
         raise ConversionError("feature_types must be empty or have length num_feature.")
-    feature_kind_map = {
+    feature_kind_map: dict[str, FeatureKind] = {
         "c": "categorical",
         "float": "continuous",
         "i": "ordinal",

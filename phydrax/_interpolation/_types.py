@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Literal, NamedTuple, TypeAlias
 
 import equinox as eqx
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 
@@ -30,7 +30,7 @@ class InterpolationResourcePolicy(StrictModule):
         maximum_routes: int = 20_000_000,
         maximum_index_bytes: int = 1 << 30,
         maximum_weight_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         values = (maximum_routes, maximum_index_bytes, maximum_weight_bytes)
         if any(value <= 0 for value in values):
             raise ValueError("Interpolation resource limits must be positive.")

@@ -10,7 +10,8 @@ from typing import Any, Generic, TypeVar
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -37,7 +38,7 @@ class FixedCapacitySegmentPolicy(StrictModule, NonTrainableState):
         /,
         *,
         failure: int = -1,
-    ):
+    ) -> None:
         capacities = (
             maximum_segments,
             maximum_steps_per_segment,
@@ -89,7 +90,7 @@ class FixedCapacitySegmentStep(StrictModule, Generic[Carry]):
         terminal: ArrayLike = False,
         status: ArrayLike = 0,
         /,
-    ):
+    ) -> None:
         start = jnp.asarray(segment_start)
         end = jnp.asarray(segment_end)
         steps = jnp.asarray(step_count, dtype=jnp.int32)

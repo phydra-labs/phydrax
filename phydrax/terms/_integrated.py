@@ -2,6 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax.numpy as jnp
 
@@ -19,7 +23,12 @@ from ..integration import (
     IntegrationStatus,
     PerStepIntegration,
 )
-from ..integration._execution import resolve_integration
+from ..integration._execution import IntegrationSource, resolve_integration
+from ..typing import PRNGKey
+
+
+if TYPE_CHECKING:
+    from ..conditions._base import ConditionSupport
 
 
 class _PreparedIntegrationRealization(StrictModule):
@@ -27,7 +36,7 @@ class _PreparedIntegrationRealization(StrictModule):
 
     realization: IntegrationRealization
 
-    def __init__(self, realization: IntegrationRealization, /):
+    def __init__(self, realization: IntegrationRealization, /) -> None:
         self.realization = realization
 
 
@@ -41,10 +50,10 @@ def prepare_term_realization(
 
 
 def resolve_term_realization(
-    source,
+    source: IntegrationSource,
     /,
     *,
-    key,
+    key: PRNGKey,
     realization: IntegrationRealization | _PreparedIntegrationRealization | None,
 ) -> IntegrationRealization:
     """Resolve public source semantics plus solver-prepared realizations."""
@@ -70,7 +79,7 @@ def checked_estimate_field(estimate: IntegrationEstimate, /) -> cx.AxisArray:
     return cx.AxisArray(data, dims=estimate.value.dims)
 
 
-def validate_condition_source(on, source, /) -> None:
+def validate_condition_source(on: ConditionSupport, source: IntegrationSource, /) -> None:
     """Reject a physical integration source that targets another component."""
     if isinstance(source, PerStepIntegration):
         target = source.target

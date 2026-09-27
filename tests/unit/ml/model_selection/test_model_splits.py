@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -18,21 +21,21 @@ from phydrax.ml.model_selection import (
 )
 
 
-def _batch(num_samples=12, *, targets=None, groups=None):
+def _batch(num_samples: Any = 12, *, targets: Any = None, groups: Any = None) -> Any:
     features = jnp.arange(float(num_samples)).reshape(num_samples, 1)
     if targets is None:
         targets = jnp.arange(float(num_samples))
     return MLBatch(features, targets, groups=groups)
 
 
-def _assert_disjoint(folds):
+def _assert_disjoint(folds: Any) -> None:
     for fold in folds:
         assert fold.train_indices.ndim == 1
         assert fold.validation_indices.ndim == 1
         assert not bool(jnp.any(jnp.isin(fold.train_indices, fold.validation_indices)))
 
 
-def test_kfold_is_keyed_deterministic_and_partitions_the_sample_axis():
+def test_kfold_is_keyed_deterministic_and_partitions_the_sample_axis() -> None:
     batch = _batch(12)
     plan = KFoldPlan(4, shuffle=True)
 
@@ -55,7 +58,7 @@ def test_kfold_is_keyed_deterministic_and_partitions_the_sample_axis():
         plan.split(batch, key=None)
 
 
-def test_stratified_folds_balance_classes_without_overlap():
+def test_stratified_folds_balance_classes_without_overlap() -> None:
     labels = jnp.asarray([0, 1] * 6, dtype=jnp.int32)
     split = StratifiedKFoldPlan(3, shuffle=True).split(
         _batch(12, targets=labels), key=jr.key(11)
@@ -68,7 +71,7 @@ def test_stratified_folds_balance_classes_without_overlap():
         assert int(jnp.sum(held_labels == 1)) == 2
 
 
-def test_group_folds_never_split_one_group_between_train_and_validation():
+def test_group_folds_never_split_one_group_between_train_and_validation() -> None:
     groups = jnp.repeat(jnp.arange(6, dtype=jnp.int32), 2)
     split = GroupKFoldPlan(3, shuffle=True).split(
         _batch(12, groups=groups), key=jr.key(12)
@@ -84,7 +87,7 @@ def test_group_folds_never_split_one_group_between_train_and_validation():
     assert jnp.array_equal(jnp.sort(jnp.concatenate(tuple(held_groups))), jnp.arange(6))
 
 
-def test_time_block_and_rolling_windows_respect_order_and_purged_gaps():
+def test_time_block_and_rolling_windows_respect_order_and_purged_gaps() -> None:
     batch = _batch(15)
     time_split = TimeSeriesSplitPlan(3, validation_size=2, min_train_size=6, gap=1).split(
         batch, key=jr.key(1)
@@ -124,7 +127,7 @@ def test_time_block_and_rolling_windows_respect_order_and_purged_gaps():
     )
 
 
-def test_nested_inner_folds_are_confined_to_each_outer_training_partition():
+def test_nested_inner_folds_are_confined_to_each_outer_training_partition() -> None:
     batch = _batch(12)
     nested = NestedSplitPlan(
         KFoldPlan(3, shuffle=True), KFoldPlan(2, shuffle=True)

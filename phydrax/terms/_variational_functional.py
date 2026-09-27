@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Literal
+from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
+from jax import Array
 
-from ..domain import Boundary, DomainFunction
+from ..domain import Boundary, DomainComponent, DomainFunction
 from ..integration import (
     AdaptiveIntegration,
     CallerIntegration,
@@ -18,19 +19,22 @@ from ..integration import (
     DensityTarget,
     FixedIntegration,
     IntegrationSource,
+    IntegrationTarget,
     PerStepIntegration,
 )
 from ..operators.differential._domain_ops import grad
+from ..typing import PRNGKey
 from ..variational import (
     Functional,
     FunctionalContext,
     LocalFieldJet,
     LocalGeometry,
+    LocalIntegralTerm,
 )
 from ._integral_functional import IntegralFunctional
 
 
-def _source_target(source: IntegrationSource, /):
+def _source_target(source: IntegrationSource, /) -> IntegrationTarget:
     if isinstance(source, (PerStepIntegration, CallerIntegration, AdaptiveIntegration)):
         return source.target
     if isinstance(source, FixedIntegration):
@@ -40,14 +44,14 @@ def _source_target(source: IntegrationSource, /):
     )
 
 
-def _base_target(target, /):
+def _base_target(target: IntegrationTarget, /) -> IntegrationTarget:
     while isinstance(target, DensityTarget):
         target = target.base
     return target
 
 
 def _stop_parameter_gradient(function: DomainFunction, /) -> DomainFunction:
-    def _stopped(*args, key=None, **kwargs):
+    def _stopped(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Any:
         return jax.lax.stop_gradient(function.func(*args, key=key, **kwargs))
 
     return DomainFunction(
@@ -59,7 +63,7 @@ def _stop_parameter_gradient(function: DomainFunction, /) -> DomainFunction:
 
 
 def _term_integrand(
-    term,
+    term: LocalIntegralTerm,
     fields: Mapping[str, DomainFunction],
     /,
     *,
@@ -98,13 +102,14 @@ def _term_integrand(
     normal_index = None
     target = _base_target(_source_target(source))
     if term.normal:
-        if not isinstance(target, ComponentTarget) or not isinstance(
-            target.component.spec.selection_for(geometry_variable),
+        component = target.component if isinstance(target, ComponentTarget) else None
+        if not isinstance(component, DomainComponent) or not isinstance(
+            component.spec.selection_for(geometry_variable),
             Boundary,
         ):
             raise ValueError("A functional normal requires a boundary ComponentTarget.")
         normal_index = len(operands)
-        operands.append(target.component.normal(var=geometry_variable))
+        operands.append(component.normal(var=geometry_variable))
 
     joined = operands[0].domain
     for operand in operands[1:]:
@@ -120,7 +125,7 @@ def _term_integrand(
         tuple(positions[label] for label in operand.deps) for operand in promoted
     )
 
-    def _density(*args, key=None, **kwargs):
+    def _density(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         arrays = tuple(
             operand.func(
                 *(args[index] for index in selected),
@@ -209,9 +214,9 @@ def bind_functional(
             current_fields: Mapping[str, DomainFunction],
             /,
             *,
-            _term=term,
-            _source=source,
-            _geometry_variable=geometry_variable,
+            _term: LocalIntegralTerm = term,
+            _source: IntegrationSource = source,
+            _geometry_variable: str = geometry_variable,
         ) -> DomainFunction:
             return _term_integrand(
                 _term,

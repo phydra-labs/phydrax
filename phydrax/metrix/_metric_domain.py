@@ -8,7 +8,8 @@ from enum import IntEnum
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -51,7 +52,7 @@ class MetricDomainEvidence(StrictModule, NonTrainableState):
         *,
         chart: CoordinateChart,
         domain_id: str,
-    ):
+    ) -> None:
         if not isinstance(chart, CoordinateChart):
             raise TypeError("chart must be a CoordinateChart.")
         if (

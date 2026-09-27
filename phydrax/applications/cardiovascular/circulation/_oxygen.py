@@ -13,7 +13,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -59,7 +61,7 @@ class BloodOxygenModel(StrictModule, NonTrainableState):
         maximum_partial_pressure_kPa: float = 80.0,
         inversion_steps: int = 64,
         inversion_tolerance_mL_per_dL: float = 1.0e-8,
-    ):
+    ) -> None:
         hemoglobin = float(hemoglobin_g_per_dL)
         capacity = float(binding_capacity_mL_per_g)
         solubility = float(solubility_mL_per_dL_kPa)
@@ -251,7 +253,7 @@ def invert_oxygen_content(
     valid = jnp.isfinite(target) & (target >= 0.0) & (target <= maximum)
     safe_target = jnp.where(valid, target, 0.0)
 
-    def bisect(_, bracket):
+    def bisect(_: Array, bracket: tuple[Array, Array]) -> tuple[Array, Array]:
         lower, upper = bracket
         middle = 0.5 * (lower + upper)
         middle_total = (
@@ -383,9 +385,9 @@ class OxygenTransportPlan(StrictModule, NonTrainableState):
         step_size_ms: float,
         /,
         *,
-        inflow_cell_index: ArrayLike = (),
-        outflow_cell_index: ArrayLike = (),
-    ):
+        inflow_cell_index: npt.ArrayLike = (),
+        outflow_cell_index: npt.ArrayLike = (),
+    ) -> None:
         volumes_host = np.asarray(cell_volume_mm3, dtype=np.float64)
         source_host = np.asarray(source_index, dtype=np.int32)
         destination_host = np.asarray(destination_index, dtype=np.int32)
@@ -616,7 +618,7 @@ class MembraneOxygenatorModel(StrictModule, NonTrainableState):
         *,
         minimum_flow_mm3_per_ms: float,
         maximum_flow_mm3_per_ms: float,
-    ):
+    ) -> None:
         if not isinstance(blood_model, BloodOxygenModel):
             raise TypeError("blood_model must be a BloodOxygenModel.")
         pressure = float(gas_partial_pressure_kPa)

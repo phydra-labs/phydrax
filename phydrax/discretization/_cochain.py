@@ -10,7 +10,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -29,6 +30,7 @@ from ..linalg import (
     OperatorProperties,
     prepare,
 )
+from ..typing import parse
 from ._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -69,18 +71,15 @@ class CochainFieldSpec(StrictModule, NonTrainableState):
         complex_side: CochainSide = "primal",
         cell_orientation: CochainCellOrientation,
         sampling: CochainSampling,
-    ):
+    ) -> None:
         resolved_degree = int(degree)
         if resolved_degree < 0:
             raise ValueError("Cochain degree must be non-negative.")
-        if complex_side not in ("primal", "dual"):
-            raise ValueError("complex_side must be 'primal' or 'dual'.")
-        if cell_orientation not in ("invariant", "signed"):
-            raise ValueError("cell_orientation must be 'invariant' or 'signed'.")
-        if sampling not in ("point_value", "cell_average", "cell_integral"):
-            raise ValueError(
-                "sampling must be 'point_value', 'cell_average', or 'cell_integral'."
-            )
+        complex_side = parse(complex_side, CochainSide, "complex_side")
+        cell_orientation = parse(
+            cell_orientation, CochainCellOrientation, "cell_orientation"
+        )
+        sampling = parse(sampling, CochainSampling, "sampling")
         self.degree = resolved_degree
         self.complex_side = complex_side
         self.cell_orientation = cell_orientation
@@ -109,9 +108,8 @@ class CochainBoundaryPolicy(StrictModule, NonTrainableState):
 
     kind: CochainBoundaryKind = eqx.field(static=True)
 
-    def __init__(self, kind: CochainBoundaryKind = "absolute"):
-        if kind not in ("absolute", "relative"):
-            raise ValueError("Cochain boundary policy must be 'absolute' or 'relative'.")
+    def __init__(self, kind: CochainBoundaryKind = "absolute") -> None:
+        kind = parse(kind, CochainBoundaryKind, "kind")
         self.kind = kind
 
     @property
@@ -153,7 +151,7 @@ class CochainDiscretization(AbstractPreparedDiscretization):
         key: DiscretizationKey | None = None,
         plan_id: str | None = None,
         numeric_version: str = "0",
-    ):
+    ) -> None:
         if not isinstance(topology, CellComplexTopology):
             raise TypeError("topology must be a CellComplexTopology.")
         counts = tuple(entity_set.count for entity_set in topology.entity_sets)

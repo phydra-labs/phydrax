@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _finite_element_contact_case(*, friction=False):
+def _finite_element_contact_case(*, friction: Any = False) -> Any:
     coordinates = jnp.asarray(
         ((-0.25, 0.08), (0.25, 0.08), (0.0, 0.48)), dtype=jnp.float64
     )
@@ -24,7 +27,7 @@ def _finite_element_contact_case(*, friction=False):
         ),
     ).prepare()
 
-    def density(fields, geometry, context):
+    def density(fields: Any, geometry: Any, context: Any) -> Any:
         del geometry, context
         gradient = fields["u"].gradient
         return 0.5 * 20.0 * jnp.sum(gradient * gradient, axis=(-1, -2))
@@ -49,7 +52,10 @@ def _finite_element_contact_case(*, friction=False):
         regions={"body": None},
     )
     moving = phx.discretization.prepare_cell_mesh_collision_surface(
-        mesh, compiled.state_space, body_id=0
+        mesh,
+        # ty: ignore[invalid-argument-type]
+        compiled.state_space,
+        body_id=0,
     )
     static_plan = phx.discretization.CollisionSurfacePlan(
         jnp.asarray((10, 11), dtype=jnp.int64),
@@ -106,7 +112,7 @@ def _finite_element_contact_case(*, friction=False):
     return coordinates, cells, compiled, scene, search, contact, accepted, dynamics
 
 
-def test_declared_finite_element_potential_generates_existing_residual():
+def test_declared_finite_element_potential_generates_existing_residual() -> None:
     _, _, compiled, _, _, _, accepted, _ = _finite_element_contact_case()
     displacement = accepted.mechanics.displacement.at[2, 0].set(0.1)
     gradient = compiled.residual(displacement)
@@ -120,7 +126,7 @@ def test_declared_finite_element_potential_generates_existing_residual():
     )
 
 
-def test_contact_potential_is_finite_balanced_and_positive():
+def test_contact_potential_is_finite_balanced_and_positive() -> None:
     _, _, _, scene, search, contact, accepted, _ = _finite_element_contact_case()
     positions = scene.positions(accepted.mechanics.displacement)
     epoch = search.build(scene, positions)
@@ -134,7 +140,7 @@ def test_contact_potential_is_finite_balanced_and_positive():
     np.testing.assert_allclose(evaluation.moment_residual, 0.0, atol=2.0e-10)
 
 
-def test_lagged_friction_is_finite_and_dissipative():
+def test_lagged_friction_is_finite_and_dissipative() -> None:
     _, _, _, scene, search, contact, accepted, dynamics = _finite_element_contact_case(
         friction=True
     )
@@ -151,7 +157,7 @@ def test_lagged_friction_is_finite_and_dissipative():
     assert evaluation.dissipation_rate >= 0.0
 
 
-def test_lagged_friction_contact_step_converges_without_fallback():
+def test_lagged_friction_contact_step_converges_without_fallback() -> None:
     _, _, _, _, _, _, accepted, dynamics = _finite_element_contact_case(friction=True)
     result = phx.applications.contact.solve_finite_element_contact_step(
         phx.applications.contact.prepare_finite_element_contact_step(
@@ -166,7 +172,7 @@ def test_lagged_friction_contact_step_converges_without_fallback():
     assert result.diagnostics.lag_residual <= dynamics.friction.plan.lag_tolerance
 
 
-def test_contact_newmark_step_is_transactional_and_safe():
+def test_contact_newmark_step_is_transactional_and_safe() -> None:
     _, _, _, _, _, _, accepted, dynamics = _finite_element_contact_case()
     result = phx.applications.contact.solve_finite_element_contact_step(
         phx.applications.contact.prepare_finite_element_contact_step(
@@ -182,7 +188,7 @@ def test_contact_newmark_step_is_transactional_and_safe():
     assert result.accepted_state.state_version == accepted.state_version + 1
 
 
-def test_contact_capacity_failure_rolls_back_complete_dynamic_state():
+def test_contact_capacity_failure_rolls_back_complete_dynamic_state() -> None:
     coordinates, cells, compiled, scene, _, contact, accepted, _ = (
         _finite_element_contact_case()
     )
@@ -218,7 +224,7 @@ def test_contact_capacity_failure_rolls_back_complete_dynamic_state():
     )
 
 
-def test_fixed_route_contact_sensitivity_is_qualified():
+def test_fixed_route_contact_sensitivity_is_qualified() -> None:
     _, _, _, scene, _, contact, accepted, dynamics = _finite_element_contact_case()
     result = phx.applications.contact.solve_finite_element_contact_step(
         phx.applications.contact.prepare_finite_element_contact_step(

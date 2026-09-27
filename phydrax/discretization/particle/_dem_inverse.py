@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -39,7 +40,7 @@ class DEMInverseProblem(StrictModule, NonTrainableState):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         if not callable(forward_case):
             raise TypeError("forward_case must be callable.")
         observation = jnp.asarray(observations)
@@ -94,7 +95,7 @@ def _batched_forward(
     parameters: PyTree[Any],
     cases: PyTree[Any],
     /,
-):
+) -> tuple[Array, DEMDiagnostics]:
     return jax.vmap(lambda case: problem.forward_case(parameters, case))(cases)
 
 
@@ -114,7 +115,7 @@ def evaluate_dem_inverse(
     count = jnp.maximum(jnp.sum(mask), 1)
     loss = 0.5 * jnp.sum(residual**2) / count
 
-    def loss_function(value):
+    def loss_function(value: PyTree[Any]) -> Array:
         prediction, _ = _batched_forward(problem, value, cases)
         error = jnp.where(mask, prediction - problem.observations, 0.0)
         return 0.5 * jnp.sum(error**2) / count

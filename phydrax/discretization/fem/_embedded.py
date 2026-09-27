@@ -9,7 +9,8 @@ from collections.abc import Callable
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -37,7 +38,7 @@ class EmbeddedQuadrature(StrictModule, NonTrainableState):
         /,
         *,
         classification_version: str,
-    ):
+    ) -> None:
         if not isinstance(domain, IntegrationDomain) or domain.kind != "cell":
             raise ValueError("Embedded quadrature requires a cell IntegrationDomain.")
         points = np.asarray(reference_points, dtype=np.float64)
@@ -97,7 +98,7 @@ class FiniteElementEnrichment(StrictModule, NonTrainableState):
         /,
         *,
         enrichment_id: str,
-    ):
+    ) -> None:
         active = np.asarray(active_cells, dtype=np.bool_)
         count = int(local_enrichment_count)
         identifier = str(enrichment_id)
@@ -127,7 +128,7 @@ class MultiscaleFiniteElementBasis(StrictModule, NonTrainableState):
         prolongation: AbstractLinearOperator,
         coefficient_version: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(prolongation, AbstractLinearOperator):
             raise TypeError("prolongation must be AbstractLinearOperator.")
         version = str(coefficient_version)

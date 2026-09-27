@@ -22,17 +22,21 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from .._validation import positive_finite_float
 from ..integration import GaussLegendreRule
 from ..linalg import (
     DenseLinearOperator,
     FactorizationPolicy,
     factorize,
+    PreparedFactorization,
     RankPolicy,
 )
+from ..typing import parse
 
 
 ThermalStatistics: TypeAlias = Literal["fermionic", "bosonic"]
@@ -64,7 +68,7 @@ class DLRBasisPolicy(StrictModule):
         candidate_count: int = 192,
         maximum_bytes: int = 256 * 1024**2,
         condition_limit: float = 1e14,
-    ):
+    ) -> None:
         tolerance_ = float(tolerance)
         condition_ = float(condition_limit)
         if not isfinite(tolerance_) or tolerance_ <= 0.0 or tolerance_ >= 1.0:
@@ -209,19 +213,6 @@ class DLRTransformResult(StrictModule):
     evidence: DLRTransformEvidence
 
 
-def _statistics(value: str, /) -> ThermalStatistics:
-    if value not in ("fermionic", "bosonic"):
-        raise ValueError("statistics must be 'fermionic' or 'bosonic'.")
-    return value
-
-
-def _positive_finite(value: float, name: str, /) -> float:
-    result = float(value)
-    if not isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
-
-
 def thermal_tau_kernel(
     tau: ArrayLike,
     frequencies: ArrayLike,
@@ -238,8 +229,8 @@ def thermal_tau_kernel(
     at zero frequency.
     """
 
-    beta_ = _positive_finite(beta, "beta")
-    statistics_ = _statistics(statistics)
+    beta_ = positive_finite_float(beta, "beta")
+    statistics_ = parse(statistics, ThermalStatistics, "statistics")
     tau_ = jnp.asarray(tau)
     omega = jnp.asarray(frequencies)
     if not jnp.issubdtype(tau_.dtype, jnp.inexact):
@@ -273,8 +264,8 @@ def matsubara_frequencies(
 ) -> Array:
     """Map integer labels to physical Matsubara angular frequencies."""
 
-    beta_ = _positive_finite(beta, "beta")
-    statistics_ = _statistics(statistics)
+    beta_ = positive_finite_float(beta, "beta")
+    statistics_ = parse(statistics, ThermalStatistics, "statistics")
     labels = jnp.asarray(indices)
     shift = 1 if statistics_ == "fermionic" else 0
     return (2 * labels + shift) * jnp.pi / beta_
@@ -290,7 +281,7 @@ def thermal_matsubara_kernel(
 ) -> Array:
     """Evaluate the Matsubara transform of :func:`thermal_tau_kernel`."""
 
-    statistics_ = _statistics(statistics)
+    statistics_ = parse(statistics, ThermalStatistics, "statistics")
     nu = matsubara_frequencies(indices, beta=beta, statistics=statistics_)
     omega = jnp.asarray(frequencies)
     dtype = jnp.result_type(nu, omega, 1j)
@@ -322,9 +313,9 @@ def plan_dlr_basis(
 ) -> DLRBasisPlan:
     """Plan bounded generation without allocating a candidate kernel."""
 
-    beta_ = _positive_finite(beta, "beta")
-    cutoff_ = _positive_finite(cutoff, "cutoff")
-    statistics_ = _statistics(statistics)
+    beta_ = positive_finite_float(beta, "beta")
+    cutoff_ = positive_finite_float(cutoff, "cutoff")
+    statistics_ = parse(statistics, ThermalStatistics, "statistics")
     if policy is not None and any(
         value is not None
         for value in (tolerance, maximum_rank, candidate_count, maximum_bytes)
@@ -375,7 +366,9 @@ def plan_dlr_basis(
     return DLRBasisPlan(beta_, cutoff_, statistics_, policy_, cost, plan_id)
 
 
-def _greedy_columns(matrix: np.ndarray, capacity: int, tolerance: float) -> list[int]:
+def _greedy_columns(
+    matrix: np.ndarray, capacity: int, tolerance: float | np.floating
+) -> list[int]:
     residual = np.array(matrix, copy=True)
     selected: list[int] = []
     initial = 0.0
@@ -398,8 +391,10 @@ def _greedy_columns(matrix: np.ndarray, capacity: int, tolerance: float) -> list
     return selected
 
 
-def _native_factor(matrix: Array, tolerance: float, /):
-    cutoff = max(64.0 * np.finfo(np.dtype(matrix.real.dtype)).eps, tolerance * 1e-4)
+def _native_factor(matrix: Array, tolerance: float, /) -> PreparedFactorization:
+    cutoff = float(
+        max(64.0 * np.finfo(np.dtype(matrix.real.dtype)).eps, tolerance * 1e-4)
+    )
     return factorize(
         DenseLinearOperator(matrix),
         FactorizationPolicy("svd", rank=RankPolicy(relative_cutoff=cutoff)),

@@ -6,9 +6,11 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from phydrax.ein import contract
 
@@ -17,6 +19,10 @@ from ..linalg._dense_pseudoinverse import (
     materialize_pseudoinverse,
 )
 from ..linalg._policies import RankPolicy
+
+
+# (estimate, residual, iteration count) for fixed-point solver loops.
+_FixedPointCarry: TypeAlias = tuple[Array, Array, Array]
 
 
 def masked_logsumexp_kernel(value: Array, mask: Array, axis: int, /) -> Array:
@@ -96,7 +102,7 @@ def bar_kernel(
     log_ratio = jnp.log(safe_forward / safe_reverse)
     tolerance_ = jnp.asarray(tolerance, dtype=values.dtype)
 
-    def body(_, carry):
+    def body(_: int | Array, carry: _FixedPointCarry) -> _FixedPointCarry:
         estimate, residual, iterations = carry
         forward_probability = jax.nn.sigmoid(-(values - estimate + log_ratio))
         reverse_probability = jax.nn.sigmoid(-(values + estimate - log_ratio))
@@ -202,7 +208,7 @@ def mbar_kernel(
     )
     tolerance_ = jnp.asarray(tolerance, dtype=values.dtype)
 
-    def body(_, carry):
+    def body(_: int | Array, carry: _FixedPointCarry) -> _FixedPointCarry:
         free, residual, iterations = carry
         denominator = masked_logsumexp_kernel(
             log_counts[:, None] + free[:, None] - values,

@@ -3,7 +3,8 @@
 #
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 def concentration_polarization_bulk_to_wall(
@@ -11,7 +12,7 @@ def concentration_polarization_bulk_to_wall(
     solvent_flux_m_s: ArrayLike,
     mass_transfer_m_s: ArrayLike,
     /,
-):
+) -> Array:
     bulk = jnp.asarray(bulk_concentration)
     flux = jnp.asarray(solvent_flux_m_s)
     transfer = jnp.asarray(mass_transfer_m_s)
@@ -30,7 +31,7 @@ def concentration_polarization_bulk_to_wall(
     return bulk * jnp.exp(flux / transfer)
 
 
-def membrane_module_recovery(permeate_flow: ArrayLike, feed_flow: ArrayLike, /):
+def membrane_module_recovery(permeate_flow: ArrayLike, feed_flow: ArrayLike, /) -> Array:
     permeate = jnp.asarray(permeate_flow)
     feed = jnp.asarray(feed_flow)
     permeate, feed = jnp.broadcast_arrays(permeate, feed)

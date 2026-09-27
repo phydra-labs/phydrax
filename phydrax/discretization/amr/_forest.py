@@ -28,7 +28,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -128,7 +129,7 @@ class ForestPlan(StrictModule, NonTrainableState):
         minimum_leaf_capacity: int = 8,
         maximum_leaf_capacity: int,
         maps: PatchCoordinateMapSet | None = None,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("Forest roots require a PreparedTensorGrid.")
         if maps is not None and not isinstance(maps, PatchCoordinateMapSet):
@@ -244,13 +245,13 @@ def _point_keys(plan: ForestPlan, points: np.ndarray, /) -> np.ndarray:
     return (roots << (plan.dimension * depth)) | morton
 
 
-def _node_keys(plan: ForestPlan, levels: np.ndarray, coordinates: np.ndarray, /):
+def _node_keys(plan: ForestPlan, levels: np.ndarray, coordinates: np.ndarray, /) -> Any:
     """Morton order keys of node anchors on the finest lattice."""
     shift = (plan.maximum_level - np.asarray(levels, dtype=np.int64))[:, None]
     return _point_keys(plan, np.asarray(coordinates, dtype=np.int64) << shift)
 
 
-def _path_ids(plan: ForestPlan, levels: np.ndarray, coordinates: np.ndarray, /):
+def _path_ids(plan: ForestPlan, levels: np.ndarray, coordinates: np.ndarray, /) -> Any:
     """Stable tree-path identifiers ``root << (d*L + 1) | 1 << (d*l) | morton``.
 
     The leading bit marks the depth, so every node at every admitted level has one
@@ -546,7 +547,7 @@ def _face_routes(
     )
 
 
-def _padded(values: np.ndarray, capacity: int, fill, dtype, /) -> np.ndarray:
+def _padded(values: np.ndarray, capacity: int, fill: Any, dtype: Any, /) -> np.ndarray:
     array = np.asarray(values, dtype=dtype)
     result = np.full((capacity,) + array.shape[1:], fill, dtype=dtype)
     result[: array.shape[0]] = array
@@ -577,7 +578,7 @@ class ForestWorksetSignature(StrictModule, NonTrainableState):
         boundary_capacity: int,
         level_capacities: Sequence[int],
         /,
-    ):
+    ) -> None:
         values = (
             int(dimension),
             int(maximum_level),
@@ -797,7 +798,7 @@ class ForestHierarchyTopology(StrictModule, NonTrainableState):
         /,
         *,
         epoch: TopologyEpoch | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, ForestPlan):
             raise TypeError("Forest topology requires a ForestPlan.")
         levels_, coordinates_, keys = _canonical_leaves(plan, levels, coordinates)
@@ -929,7 +930,9 @@ class ForestAdaptStatus(StrictModule, NonTrainableState):
     message: str = eqx.field(static=True)
     status_id: str = eqx.field(static=True)
 
-    def __init__(self, code: str, successful: bool, changed: bool, message: str, /):
+    def __init__(
+        self, code: str, successful: bool, changed: bool, message: str, /
+    ) -> None:
         code_ = str(code)
         message_ = str(message)
         if code_ not in ("initialized", "success", "unchanged", "capacity_exceeded"):
@@ -979,7 +982,7 @@ class ForestAdaptEvidence(StrictModule, NonTrainableState):
         target_leaf_count: int,
         source_signature_id: str,
         target_signature_id: str,
-    ):
+    ) -> None:
         counts = (
             int(requested_refinements),
             int(depth_limited_refinements),
@@ -1034,7 +1037,7 @@ class ForestAdaptResult(StrictModule, NonTrainableState):
         status: ForestAdaptStatus,
         evidence: ForestAdaptEvidence,
         /,
-    ):
+    ) -> None:
         if not isinstance(topology, ForestHierarchyTopology):
             raise TypeError("Forest adaptation results require a forest topology.")
         if not isinstance(status, ForestAdaptStatus) or not isinstance(
@@ -1060,7 +1063,7 @@ class ForestTopologyCompiler(StrictModule, NonTrainableState):
     plan: ForestPlan
     compiler_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ForestPlan, /):
+    def __init__(self, plan: ForestPlan, /) -> None:
         if not isinstance(plan, ForestPlan):
             raise TypeError("Forest topology compiler requires a ForestPlan.")
         self.plan = plan
@@ -1216,7 +1219,7 @@ class ForestTopologyCompiler(StrictModule, NonTrainableState):
         )
 
 
-def _reference_identity(points, time, args):
+def _reference_identity(points: Any, time: Any, args: Any) -> Any:
     """Identity chart from global reference coordinates to physical space."""
     del time, args
     return points
@@ -1238,7 +1241,7 @@ class ForestBlockLowering(StrictModule, NonTrainableState):
     forest_topology_id: str = eqx.field(static=True)
     lowering_id: str = eqx.field(static=True)
 
-    def __init__(self, forest: ForestHierarchyTopology, /):
+    def __init__(self, forest: ForestHierarchyTopology, /) -> None:
         if not isinstance(forest, ForestHierarchyTopology):
             raise TypeError("Block lowering requires a ForestHierarchyTopology.")
         plan = forest.plan
@@ -1271,6 +1274,7 @@ class ForestBlockLowering(StrictModule, NonTrainableState):
         block_topology = BlockHierarchyTopology(
             hierarchy,
             tuple(
+                # ty: ignore[invalid-argument-type]
                 canonical_block_metadata(hierarchy, level, level_rows)
                 for level, level_rows in enumerate(rows)
             ),
@@ -1350,6 +1354,7 @@ class ForestBlockLowering(StrictModule, NonTrainableState):
             + jnp.where(valid, self.leaf_local_cells, 0)
         )
         gathered = stacked[index]
+        # ty: ignore[invalid-argument-type]
         mask = valid.reshape(valid.shape + (1,) * len(trailing))
         return jnp.where(mask, gathered, jnp.zeros((), dtype=gathered.dtype))
 
@@ -1386,7 +1391,7 @@ def _affine_leaf_geometry(topology: ForestHierarchyTopology, /) -> ForestLeafGeo
     )
     volumes = jnp.where(leaf_valid, jnp.prod(widths, axis=1), 1.0)
 
-    def oriented_areas(axes, levels, valid):
+    def oriented_areas(axes: Any, levels: Any, valid: Any) -> Any:
         safe_axes = jnp.where(valid, axes, 0)
         face_scale = jnp.exp2(-jnp.where(valid, levels, 0).astype(jnp.float64))
         full = jnp.prod(spacing) / spacing[safe_axes]
@@ -1426,7 +1431,10 @@ def _mapped_leaf_geometry(
     workset = topology.workset
     lowering = ForestBlockLowering(topology)
     state = CanonicalMappedGeometryPlan(
-        lowering.topology, plan.maps, quadrature_order=quadrature_order
+        lowering.topology,
+        # ty: ignore[invalid-argument-type]
+        plan.maps,
+        quadrature_order=quadrature_order,
     ).evaluate(time, args)
     # Every lowered level has exactly one canonical bucket.
     volumes = lowering.leaf_values(

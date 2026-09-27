@@ -9,7 +9,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -85,7 +86,7 @@ class MartingaleSchrodingerBridgeProblem(StrictModule):
         *,
         martingale_coordinates: ArrayLike | None = None,
         constraint_tolerance: float = 1e-7,
-    ):
+    ) -> None:
         if not isinstance(bridge, SchrodingerBridgeProblem):
             raise TypeError("bridge must be a SchrodingerBridgeProblem.")
         tolerance = float(constraint_tolerance)
@@ -196,7 +197,7 @@ class MartingaleSchrodingerBridgeSolver(StrictModule):
         moment_iterations: int = 64,
         tolerance: float = 1e-8,
         max_path_entries: int = 1_000_000,
-    ):
+    ) -> None:
         iterations = int(max_iterations)
         moments = int(moment_iterations)
         tolerance_ = float(tolerance)
@@ -309,7 +310,7 @@ def _scalar_moment_projection(
     mass = jnp.sum(jnp.where(active, probability, 0.0))
     feasible = (mass <= 0.0) | ((minimum <= tolerance) & (maximum >= -tolerance))
 
-    def mean(theta):
+    def mean(theta: Array) -> Array:
         score = jnp.where(active, theta * delta, -jnp.inf)
         maximum_score = jnp.max(score)
         weights = jnp.where(

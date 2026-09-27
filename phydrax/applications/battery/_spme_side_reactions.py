@@ -10,23 +10,31 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...solver import DifferentialProblem
+from ...solver import DifferentialProblem, DifferentialSolution
 from ._experiment import BatteryRuntimeInputs
+from ._particle import BatteryParticleEvaluation
 from ._properties import (
     ConcentrationTemperaturePropertyLaw,
     ConstantPropertyLaw,
     TabulatedPropertyLaw,
 )
 from ._results import BatteryModelOutput
-from ._spm import _profile, _stable_asinh_ratio
+from ._spm import (
+    _profile,
+    _stable_asinh_ratio,
+    PreparedPrescribedCurrentSpm,
+    PrescribedCurrentSpmPlan,
+)
 from ._spme_marquis2019 import (
     _evaluate as _evaluate_marquis,
+    _Marquis2019SpmeEvaluation,
     _OBSERVABLE_NAMES as _MARQUIS_OBSERVABLE_NAMES,
     _OBSERVABLE_UNITS as _MARQUIS_OBSERVABLE_UNITS,
     _region_mean,
@@ -36,6 +44,11 @@ from ._spme_marquis2019 import (
     Marquis2019SpmePlan,
     Marquis2019SpmeState,
     PreparedMarquis2019Spme,
+)
+from ._through_cell import (
+    _ThroughCellEvaluation,
+    PreparedThroughCellMesh,
+    ThroughCellRegionPlan,
 )
 
 
@@ -93,7 +106,7 @@ def _electrolyte_potential_primitive(
     safe_span = jnp.where(span > 0.0, span, 1.0)
     middle = 0.5 * (left + right)
 
-    def integrand(coordinate):
+    def integrand(coordinate: Array) -> Array:
         transfer = transference_number.evaluate(coordinate, temperature_k).values
         chi = thermodynamic_factor.evaluate(coordinate).values
         return (1.0 - transfer) * chi
@@ -160,7 +173,7 @@ class BrosaPlanellaSpmeSeiParameters(StrictModule):
         sei_conductivity_s_m: ArrayLike,
         electrolyte_thermodynamic_factor: _PropertyLaw | None = None,
         initial_sei_film_thickness_m: ArrayLike = 0.0,
-    ):
+    ) -> None:
         if not isinstance(spme_parameters, Marquis2019SpmeParameters):
             raise TypeError("spme_parameters must be Marquis2019SpmeParameters.")
         thermodynamic_factor = (
@@ -273,7 +286,7 @@ class BrosaPlanellaSpmeSeiInitialCondition(StrictModule):
         negative_stoichiometry: ArrayLike,
         positive_stoichiometry: ArrayLike,
         /,
-    ):
+    ) -> None:
         initial = Marquis2019SpmeInitialCondition(
             negative_stoichiometry, positive_stoichiometry
         )
@@ -296,7 +309,7 @@ class BrosaPlanellaSpmeSeiState(StrictModule):
         electrolyte_amount_mol: ArrayLike,
         negative_porosity: ArrayLike,
         /,
-    ):
+    ) -> None:
         base = Marquis2019SpmeState(
             negative_amount_mol,
             positive_amount_mol,
@@ -409,7 +422,7 @@ class BrosaPlanellaSpmeSeiPlan(StrictModule, NonTrainableState):
         ledger_film_mass_absolute_tolerance_kg: float = 1.0e-12,
         ledger_porosity_absolute_tolerance: float = 1.0e-10,
         ledger_relative_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         weak = float(weak_side_reaction_threshold)
         overpotential = float(small_overpotential_threshold_v)
         film_mass_atol = float(ledger_film_mass_absolute_tolerance_kg)
@@ -469,19 +482,19 @@ class BrosaPlanellaSpmeSeiPlan(StrictModule, NonTrainableState):
         )
 
     @property
-    def spm_plan(self):
+    def spm_plan(self) -> PrescribedCurrentSpmPlan:
         return self.marquis_plan.spm_plan
 
     @property
-    def negative_region(self):
+    def negative_region(self) -> ThroughCellRegionPlan:
         return self.marquis_plan.negative_region
 
     @property
-    def separator_region(self):
+    def separator_region(self) -> ThroughCellRegionPlan:
         return self.marquis_plan.separator_region
 
     @property
-    def positive_region(self):
+    def positive_region(self) -> ThroughCellRegionPlan:
         return self.marquis_plan.positive_region
 
     def prepare(self, /) -> "PreparedBrosaPlanellaSpmeSei":
@@ -495,7 +508,7 @@ class PreparedBrosaPlanellaSpmeSei(StrictModule, NonTrainableState):
     marquis: PreparedMarquis2019Spme
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: BrosaPlanellaSpmeSeiPlan, /):
+    def __init__(self, plan: BrosaPlanellaSpmeSeiPlan, /) -> None:
         if not isinstance(plan, BrosaPlanellaSpmeSeiPlan):
             raise TypeError("plan must be BrosaPlanellaSpmeSeiPlan.")
         marquis = plan.marquis_plan.prepare()
@@ -510,11 +523,11 @@ class PreparedBrosaPlanellaSpmeSei(StrictModule, NonTrainableState):
         )
 
     @property
-    def spm(self):
+    def spm(self) -> PreparedPrescribedCurrentSpm:
         return self.marquis.spm
 
     @property
-    def through_cell(self):
+    def through_cell(self) -> PreparedThroughCellMesh:
         return self.marquis.through_cell
 
     def evaluate(
@@ -593,10 +606,10 @@ class _BrosaPlanellaSpmeSeiEvaluation(StrictModule):
     asymptotic_conditions_satisfied: Array
     zero_sei_reduction: Array
     domain_valid: Array
-    negative_particle_transport: object
-    positive_particle_transport: object
+    negative_particle_transport: BatteryParticleEvaluation
+    positive_particle_transport: BatteryParticleEvaluation
     electrolyte_transport: _LocalPorosityElectrolyteEvaluation
-    marquis_evaluation: object
+    marquis_evaluation: _Marquis2019SpmeEvaluation
 
 
 def _check_prepared(
@@ -618,7 +631,7 @@ def _local_electrolyte_transport(
     prepared: PreparedBrosaPlanellaSpmeSei,
     state: BrosaPlanellaSpmeSeiState,
     parameters: BrosaPlanellaSpmeSeiParameters,
-    base_transport,
+    base_transport: _ThroughCellEvaluation,
     zero_sei_reduction: Array,
     /,
 ) -> _LocalPorosityElectrolyteEvaluation:
@@ -812,7 +825,7 @@ def _local_electrolyte_transport(
         & positive
     )
 
-    def choose(base_value, local_value):
+    def choose(base_value: Array, local_value: Array) -> Array:
         condition = zero_sei_reduction
         while condition.ndim < local_value.ndim:
             condition = condition[..., None]
@@ -1272,7 +1285,7 @@ def _evaluate(
         + film_voltage_correction
     )
 
-    def choose_base(base_value, specialized_value):
+    def choose_base(base_value: Array, specialized_value: Array) -> Array:
         return jnp.where(zero_sei_reduction, base_value, specialized_value)
 
     particle_ocp = choose_base(base.particle_ocp_v, particle_ocp)
@@ -1505,7 +1518,7 @@ class BrosaPlanellaSpmeSeiAdapter(StrictModule, NonTrainableState):
     observable_names: tuple[str, ...] = eqx.field(static=True)
     observable_units: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self, plan: BrosaPlanellaSpmeSeiPlan, /):
+    def __init__(self, plan: BrosaPlanellaSpmeSeiPlan, /) -> None:
         if not isinstance(plan, BrosaPlanellaSpmeSeiPlan):
             raise TypeError("plan must be BrosaPlanellaSpmeSeiPlan.")
         self.plan = plan
@@ -1761,7 +1774,7 @@ class BrosaPlanellaSpmeSeiAdapter(StrictModule, NonTrainableState):
     def ledger(
         self,
         prepared_model: PreparedBrosaPlanellaSpmeSei,
-        native_solution,
+        native_solution: DifferentialSolution,
         runtime_inputs: BatteryRuntimeInputs,
         /,
     ) -> BrosaPlanellaSpmeSeiLedger:
@@ -1833,7 +1846,7 @@ class BrosaPlanellaSpmeSeiAdapter(StrictModule, NonTrainableState):
         evaluation = _evaluate(prepared_model, states, parameters, currents)
         electrolyte = evaluation.electrolyte_transport
 
-        def valid_max(values):
+        def valid_max(values: Array) -> Array:
             return jnp.max(jnp.where(valid, jnp.abs(values), 0.0))
 
         maximum_collector_flux = valid_max(electrolyte.collector_flux_residual_mol_m2_s)

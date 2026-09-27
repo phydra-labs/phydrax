@@ -11,7 +11,9 @@ from ..._cell_mesh import CellMesh
 from ._common import SmoothingPatchLayout
 
 
-def _cell_incidence(connectivity: PolygonalConnectivity):
+def _cell_incidence(
+    connectivity: PolygonalConnectivity,
+) -> tuple[np.ndarray, np.ndarray]:
     face_count = connectivity.edges.shape[0]
     owner = np.full((face_count,), -1, dtype=np.int32)
     neighbor = np.full((face_count,), -1, dtype=np.int32)
@@ -77,14 +79,18 @@ def edge_smoothing_layout(mesh: CellMesh, /) -> SmoothingPatchLayout:
         dof_valid[edge, : len(stencil)] = True
         local_index = {vertex: index for index, vertex in enumerate(stencil)}
 
-        def endpoint(vertex):
+        def endpoint(
+            vertex: np.int32,
+        ) -> tuple[list[np.int32], list[float], np.ndarray]:
             sources = [vertex]
             coefficients = [1.0]
             shapes = np.zeros((max_dofs,))
             shapes[local_index[vertex]] = 1.0
             return sources, coefficients, shapes
 
-        def centroid(cell):
+        def centroid(
+            cell: np.int32,
+        ) -> tuple[list[np.int32], list[float], np.ndarray]:
             sources = list(cells[cell])
             coefficients = [1.0 / 3.0] * 3
             shapes = np.zeros((max_dofs,))

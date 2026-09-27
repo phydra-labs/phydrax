@@ -8,7 +8,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._iteration import IterationPlan
 from .._linear_refresh import LinearRefreshState
@@ -19,6 +20,8 @@ from ..linalg import (
     LinearSolvePlan,
     LinearSolveTemplate,
     LinearSystem,
+    PreparedLinearSolve,
+    RecyclingState,
     refresh_recycling,
 )
 from ._components import admit_residual_components
@@ -72,7 +75,7 @@ class PreparedNonlinearSolve(StrictModule):
         /,
         *,
         numeric_version: Any,
-    ):
+    ) -> None:
         if not isinstance(problem, NonlinearSystemProblem):
             raise TypeError("problem must be a NonlinearSystemProblem.")
         if problem.state_space is None or problem.residual_space is None:
@@ -192,7 +195,7 @@ def _refreshed_run(
     jacobian: PreparedJacobian,
     refresh_state: LinearRefreshState,
     args: Any,
-    recycling,
+    recycling: RecyclingState | None,
     /,
 ) -> _RootState:
     residual = jacobian.residual
@@ -375,7 +378,7 @@ def refresh_nonlinear(
     if linear_operator.source.size != linear_operator.target.size:
         raise ValueError("Newton methods require a square Jacobian coordinate map.")
 
-    def refresh_linear():
+    def refresh_linear() -> tuple[PreparedLinearSolve, LinearRefreshState]:
         return prepared.linear_refresh_state.refresh(
             LinearSystem(linear_operator, problem_id=prepared.linear_plan.problem_id),
             setup_operator=problem_.linear_setup(state, args),

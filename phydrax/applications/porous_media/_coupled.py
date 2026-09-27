@@ -9,15 +9,19 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...discretization.finite_volume._diffusion_boundary import HybridDiffusionBoundary
+from ...discretization.finite_volume._unstructured import (
+    UnstructuredFiniteVolumeDiscretization,
+)
 from ...ein import contract
 from ...nonlinear import implicit_root_result, NonlinearSystemProblem
 from ._materials import _finite
 from ._richards import _cell_array, _finish_root, RichardsPlan
-from ._state import PorousStepResult, WaterHeatState
+from ._state import PorousFluxes, PorousStepResult, WaterHeatState
 from ._thermal import PorousHeatFluxes, PorousThermalMaterial
 
 
@@ -43,15 +47,15 @@ class CoupledWaterHeatPlan(StrictModule):
 
     def __init__(
         self,
-        water,
-        thermal,
-        thermal_boundaries,
+        water: RichardsPlan,
+        thermal: PorousThermalMaterial,
+        thermal_boundaries: HybridDiffusionBoundary,
         /,
         *,
-        inflow_temperature_K=None,
-        temperature_scale_K=300.0,
-        energy_rate_scale_W=1000.0,
-    ):
+        inflow_temperature_K: ArrayLike | None = None,
+        temperature_scale_K: float = 300.0,
+        energy_rate_scale_W: float = 1000.0,
+    ) -> None:
         if not isinstance(water, RichardsPlan) or not isinstance(
             thermal, PorousThermalMaterial
         ):
@@ -102,11 +106,11 @@ class CoupledWaterHeatPlan(StrictModule):
         )
 
     @property
-    def discretization(self):
+    def discretization(self) -> UnstructuredFiniteVolumeDiscretization:
         return self.water.discretization
 
     @property
-    def unknown_scale(self):
+    def unknown_scale(self) -> Array:
         size = self.water.diffusion.cell_count + self.water.diffusion.face_count
         return jnp.concatenate(
             (
@@ -115,7 +119,7 @@ class CoupledWaterHeatPlan(StrictModule):
             )
         )
 
-    def residual_scales(self):
+    def residual_scales(self) -> Array:
         diffusion = self.water.diffusion
         face = jnp.where(
             self.thermal_boundaries.kind == 1,
@@ -130,7 +134,9 @@ class CoupledWaterHeatPlan(StrictModule):
             )
         )
 
-    def state_from_unknown(self, unknown, *, time_s=0.0):
+    def state_from_unknown(
+        self, unknown: ArrayLike, *, time_s: ArrayLike = 0.0
+    ) -> WaterHeatState:
         count, faces = self.water.diffusion.cell_count, self.water.diffusion.face_count
         size = count + faces
         unknown = jnp.asarray(unknown)
@@ -150,13 +156,13 @@ class CoupledWaterHeatPlan(StrictModule):
 
     def initialize(
         self,
-        pressure_Pa,
-        temperature_K,
+        pressure_Pa: ArrayLike,
+        temperature_K: ArrayLike,
         *,
-        face_pressure_Pa=None,
-        face_temperature_K=None,
-        time_s=0.0,
-    ):
+        face_pressure_Pa: ArrayLike | None = None,
+        face_temperature_K: ArrayLike | None = None,
+        time_s: ArrayLike = 0.0,
+    ) -> WaterHeatState:
         temperature = _cell_array(
             _finite(temperature_K, "temperature", positive=True),
             self.water.diffusion.cell_count,
@@ -177,7 +183,9 @@ class CoupledWaterHeatPlan(StrictModule):
             water, self.thermal.energy(water, self.discretization, self.water.material)
         )
 
-    def heat_fluxes(self, state: WaterHeatState, water_fluxes=None):
+    def heat_fluxes(
+        self, state: WaterHeatState, water_fluxes: PorousFluxes | None = None
+    ) -> PorousHeatFluxes:
         diffusion = self.water.diffusion
         if water_fluxes is None:
             water_fluxes = self.water.fluxes(
@@ -221,7 +229,7 @@ class CoupledWaterHeatPlan(StrictModule):
             local_advection,
         )
 
-    def fluxes(self, unknown):
+    def fluxes(self, unknown: ArrayLike) -> tuple[PorousFluxes, PorousHeatFluxes]:
         state = self.state_from_unknown(unknown)
         water = self.water.fluxes(
             state.pressure_Pa,
@@ -232,8 +240,13 @@ class CoupledWaterHeatPlan(StrictModule):
         return water, self.heat_fluxes(state, water)
 
     def residual(
-        self, unknown, previous: WaterHeatState, dt_s, source_kg_s=0.0, source_W=0.0
-    ):
+        self,
+        unknown: ArrayLike,
+        previous: WaterHeatState,
+        dt_s: ArrayLike,
+        source_kg_s: ArrayLike = 0.0,
+        source_W: ArrayLike = 0.0,
+    ) -> Array:
         state = self.state_from_unknown(unknown)
         diffusion = self.water.diffusion
         water_flux = self.water.fluxes(
@@ -266,7 +279,7 @@ class CoupledWaterHeatPlan(StrictModule):
         )
         return jnp.concatenate((mass_cells, mass_faces, heat_cells, heat_faces))
 
-    def admissible(self, unknown):
+    def admissible(self, unknown: ArrayLike) -> Array:
         state = self.state_from_unknown(unknown)
         water_flux = self.water.fluxes(
             state.pressure_Pa,
@@ -290,12 +303,12 @@ class CoupledWaterHeatPlan(StrictModule):
     def step(
         self,
         previous: WaterHeatState,
-        dt_s,
+        dt_s: ArrayLike,
         *,
-        source_kg_s=0.0,
-        source_W=0.0,
-        initial_unknown=None,
-    ):
+        source_kg_s: ArrayLike = 0.0,
+        source_W: ArrayLike = 0.0,
+        initial_unknown: ArrayLike | None = None,
+    ) -> PorousStepResult:
         """Advance all water/heat unknowns in one implicitly differentiated root.
 
         ``source_W`` is total supplied sensible heat, including the enthalpy of
@@ -314,7 +327,7 @@ class CoupledWaterHeatPlan(StrictModule):
         )
         unknown_scale, residual_scale = self.unknown_scale, self.residual_scales()
 
-        def residual(scaled, args):
+        def residual(scaled: Array, args: object) -> Array:
             return (
                 self.residual(
                     scaled * unknown_scale, previous, dt, mass_source, heat_source
@@ -322,7 +335,9 @@ class CoupledWaterHeatPlan(StrictModule):
                 / residual_scale
             )
 
-        def valid(scaled, residual_value, auxiliary, args):
+        def valid(
+            scaled: Array, residual_value: Array, auxiliary: object, args: object
+        ) -> Array:
             return self.admissible(scaled * unknown_scale)
 
         root = implicit_root_result(

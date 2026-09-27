@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -46,7 +47,7 @@ class MACOperatorPlan(StrictModule, NonTrainableState):
     discretization: FiniteVolumeDiscretization
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, discretization: FiniteVolumeDiscretization, /):
+    def __init__(self, discretization: FiniteVolumeDiscretization, /) -> None:
         if not isinstance(discretization, FiniteVolumeDiscretization):
             raise TypeError("discretization must be a FiniteVolumeDiscretization.")
         self.discretization = discretization
@@ -71,7 +72,7 @@ class PreparedMACOperators(StrictModule, NonTrainableState):
     report: MACOperatorReport
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MACOperatorPlan, /):
+    def __init__(self, plan: MACOperatorPlan, /) -> None:
         if not isinstance(plan, MACOperatorPlan):
             raise TypeError("plan must be a MACOperatorPlan.")
         discretization = plan.discretization
@@ -145,8 +146,8 @@ class PreparedMACOperators(StrictModule, NonTrainableState):
                 jnp.arange(int(np.prod(layout.shape)), dtype=volumes.dtype)
             ).reshape(layout.shape)
             if not discretization.grid.structured_axes[axis].periodic:
-                lower = [slice(None)] * component.ndim
-                upper = [slice(None)] * component.ndim
+                lower: list[slice | int] = [slice(None)] * component.ndim
+                upper: list[slice | int] = [slice(None)] * component.ndim
                 lower[axis] = 0
                 upper[axis] = component.shape[axis] - 1
                 component = component.at[tuple(lower)].set(0.0)

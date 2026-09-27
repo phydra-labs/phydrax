@@ -5,13 +5,15 @@
 from __future__ import annotations
 
 from math import isfinite
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -20,6 +22,9 @@ from .._trainable import NonTrainableState
 
 _RADIATION_CONSTANT = 7.565733250033928e-16
 _LIGHT_SPEED = 299792458.0
+
+_PacketInputs: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+_PacketOutputs: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 
 class IMCDDMCState(StrictModule):
@@ -80,7 +85,7 @@ class HybridIMCDDMCPlan(StrictModule, NonTrainableState):
         ddmc_optical_depth: float = 3.0,
         transport_light_speed: float = _LIGHT_SPEED,
         maximum_packet_energy: float,
-    ):
+    ) -> None:
         widths = np.asarray(cell_widths, dtype=np.float64)
         absorption_ = np.asarray(absorption, dtype=np.float64)
         scattering_ = np.asarray(scattering, dtype=np.float64)
@@ -218,7 +223,7 @@ class HybridIMCDDMCPlan(StrictModule, NonTrainableState):
         initial_packet_energy = jnp.sum(state.packet_energy)
         initial_material_energy = jnp.sum(state.material_energy)
 
-        def one(inputs):
+        def one(inputs: _PacketInputs) -> _PacketOutputs:
             index, cell, group, direction, energy, live = inputs
             safe_cell = jnp.clip(cell, 0, self.cell_count - 1)
             safe_group = jnp.clip(group, 0, self.group_count - 1)

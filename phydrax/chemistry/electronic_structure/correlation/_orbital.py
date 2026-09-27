@@ -11,7 +11,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -46,7 +47,7 @@ class CorrelatedOrbitalPartition(StrictModule, NonTrainableState):
         frozen_occupied: Sequence[int] = (),
         active: Sequence[int] = (),
         frozen_virtual: Sequence[int] = (),
-    ):
+    ) -> None:
         count = int(orbital_count)
         occupied = tuple(sorted(int(value) for value in occupied_indices))
         frozen_occ = tuple(sorted(int(value) for value in frozen_occupied))
@@ -145,7 +146,7 @@ class MolecularOrbitalIntegralStore(StrictModule, NonTrainableState):
         *,
         two_body: ArrayLike | None = None,
         factorized: FactorizedERITensor | None = None,
-    ):
+    ) -> None:
         one = jnp.asarray(one_body)
         energies = jnp.asarray(orbital_energies, dtype=one.real.dtype)
         coefficients_ = jnp.asarray(coefficients, dtype=one.dtype)
@@ -213,7 +214,7 @@ class MolecularIntegralTransformationPlan(StrictModule, NonTrainableState):
     maximum_dense_orbitals: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, maximum_dense_orbitals: int = 32, /):
+    def __init__(self, maximum_dense_orbitals: int = 32, /) -> None:
         maximum = int(maximum_dense_orbitals)
         if maximum <= 0:
             raise ValueError("maximum_dense_orbitals must be positive.")

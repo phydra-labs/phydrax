@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -7,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def _gaussian_process():
+def _gaussian_process() -> Any:
     return phx.stochastic.LatentGaussianCoefficientProcess(
         jnp.asarray([0.2, -0.1]),
         jnp.asarray([[0.4, 0.1], [0.0, 0.3]]),
@@ -15,7 +17,7 @@ def _gaussian_process():
     )
 
 
-def test_gaussian_coefficient_realization_replays_across_query_schedules():
+def test_gaussian_coefficient_realization_replays_across_query_schedules() -> None:
     process = _gaussian_process()
     initial = jnp.asarray([1.0, -1.0])
     realization = process.realize(
@@ -47,7 +49,7 @@ def test_gaussian_coefficient_realization_replays_across_query_schedules():
     assert consistency.max_absolute_error == 0.0
 
 
-def test_gaussian_pathwise_cocycle_and_marginal_semigroup_contracts():
+def test_gaussian_pathwise_cocycle_and_marginal_semigroup_contracts() -> None:
     process = _gaussian_process()
     state = jnp.asarray([1.0, -1.0])
     first = jnp.asarray([0.2, -0.1])
@@ -81,7 +83,7 @@ def test_gaussian_pathwise_cocycle_and_marginal_semigroup_contracts():
     assert jnp.isfinite(marginal.log_prob(marginal.mean))
 
 
-def test_scalar_gaussian_process_distribution_preserves_batch_axes():
+def test_scalar_gaussian_process_distribution_preserves_batch_axes() -> None:
     distribution = phx.stochastic.GaussianProcessDistribution(
         jnp.asarray([1.0, -2.0, 0.5]),
         jnp.asarray([[[2.0]], [[3.0]], [[4.0]]]),
@@ -94,7 +96,7 @@ def test_scalar_gaussian_process_distribution_preserves_batch_axes():
     assert distribution.log_prob(distribution.mean).shape == (3,)
 
 
-def test_gaussian_process_diagnostics_match_marginal_moments():
+def test_gaussian_process_diagnostics_match_marginal_moments() -> None:
     process = _gaussian_process()
     realization = process.realize(
         jr.key(2),
@@ -118,7 +120,7 @@ def test_gaussian_process_diagnostics_match_marginal_moments():
     assert diagnostics.replay_exact
 
 
-def test_process_realization_keeps_input_and_process_uncertainty_separate():
+def test_process_realization_keeps_input_and_process_uncertainty_separate() -> None:
     process = _gaussian_process()
     with pytest.raises(ValueError, match="separate input-uncertainty axis"):
         process.realize(
@@ -151,7 +153,7 @@ def test_process_realization_keeps_input_and_process_uncertainty_separate():
     assert first.realization_id != changed.realization_id
 
 
-def test_native_flow_coefficient_process_is_a_marginal_law_not_a_path_claim():
+def test_native_flow_coefficient_process_is_a_marginal_law_not_a_path_claim() -> None:
     process = phx.nn.models.conditional_coupling_flow_process(
         jr.key(6),
         state_shape=(2,),
@@ -179,7 +181,9 @@ def test_native_flow_coefficient_process_is_a_marginal_law_not_a_path_claim():
     assert jnp.isfinite(statistics.average_log_prob)
 
 
-def test_native_flow_semigroup_objective_is_differentiable_but_not_assumed_satisfied():
+def test_native_flow_semigroup_objective_is_differentiable_but_not_assumed_satisfied() -> (
+    None
+):
     process = phx.nn.models.conditional_coupling_flow_process(
         jr.key(8),
         state_shape=(2,),
@@ -187,7 +191,7 @@ def test_native_flow_semigroup_objective_is_differentiable_but_not_assumed_satis
         nn_width=8,
     )
 
-    def objective(model):
+    def objective(model: Any) -> Any:
         return phx.stochastic.semigroup_objective(
             model,
             jnp.asarray([0.2, -0.1]),
@@ -205,7 +209,7 @@ def test_native_flow_semigroup_objective_is_differentiable_but_not_assumed_satis
     assert any(jnp.all(jnp.isfinite(leaf)) for leaf in leaves if leaf is not None)
 
 
-def test_process_query_consistency_rejects_unmatched_schedules():
+def test_process_query_consistency_rejects_unmatched_schedules() -> None:
     process = _gaussian_process()
     realization = process.realize(
         jr.key(10),

@@ -14,7 +14,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -24,6 +25,7 @@ from .._numerics import (
 )
 from .._strict import StrictModule
 from ..stochastic._bsde import BSDEPathBatch, BSDEProblem
+from ..typing import parse, PRNGKey
 
 
 BSDERegressionScheme: TypeAlias = Literal["explicit", "implicit"]
@@ -67,7 +69,7 @@ class CallableBSDERegressionBasis(AbstractBSDERegressionBasis):
         state_shape: Sequence[int],
         num_features: int,
         basis_id: str,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         shape = _shape(state_shape, owner="state_shape")
@@ -105,7 +107,7 @@ class PolynomialBSDERegressionBasis(AbstractBSDERegressionBasis):
         /,
         *,
         basis_id: str | None = None,
-    ):
+    ) -> None:
         shape = _shape(state_shape, owner="state_shape")
         resolved_degree = int(degree)
         if resolved_degree < 0:
@@ -283,7 +285,7 @@ def _generator_batch(
     controls: Array,
     /,
 ) -> Array:
-    def evaluate(state, value, control):
+    def evaluate(state: Array, value: Array, control: Array) -> Array:
         result = jnp.asarray(problem.generator(time, state, value, control, problem.args))
         if result.shape != problem.output_shape:
             raise ValueError("BSDE generator returned an incompatible output shape.")
@@ -293,7 +295,7 @@ def _generator_batch(
 
 
 def _terminal_batch(problem: BSDEProblem, states: Array, /) -> Array:
-    def evaluate(state):
+    def evaluate(state: Array) -> Array:
         result = jnp.asarray(problem.terminal(state, problem.args))
         if result.shape != problem.output_shape:
             raise ValueError(
@@ -325,7 +327,7 @@ def solve_bsde_least_squares(
     /,
     *,
     paths: BSDEPathBatch | None = None,
-    key: Key[Array, ""] | None = None,
+    key: PRNGKey | None = None,
     scheme: BSDERegressionScheme = "explicit",
     ridge: float = 1e-8,
     standardize: bool = True,
@@ -349,8 +351,7 @@ def solve_bsde_least_squares(
         raise TypeError("basis must implement AbstractBSDERegressionBasis.")
     if basis.state_shape != problem.state_shape:
         raise ValueError("basis state_shape must match the BSDE problem.")
-    if scheme not in ("explicit", "implicit"):
-        raise ValueError("scheme must be 'explicit' or 'implicit'.")
+    scheme = parse(scheme, BSDERegressionScheme, "scheme")
     ridge_value = float(ridge)
     rcond_value = float(rcond)
     tolerance = float(picard_tolerance)

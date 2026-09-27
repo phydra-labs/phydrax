@@ -7,12 +7,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from itertools import product
 from math import prod
-from typing import Literal, TYPE_CHECKING
+from typing import Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -23,13 +24,14 @@ from ...sparse import (
     KeyGroupState,
     KeyGroupTransition,
 )
+from ...typing import parse
 from ._morton import morton_decode_integer, morton_encode_integer
 
 
 if TYPE_CHECKING:
     from .._tensor_index import PreparedTensorIndexSpace, TensorIndexLayout
 
-BlockKeyOrdering = Literal["row-major", "morton"]
+BlockKeyOrdering: TypeAlias = Literal["row-major", "morton"]
 
 
 class SparseBlockBuildEvidence(NonTrainableState, StrictModule):
@@ -108,8 +110,7 @@ class SparseBlockTopologyPlan(StrictModule, NonTrainableState):
         )
         if capacity > prod(block_grid):
             raise ValueError("block_capacity cannot exceed the logical block count.")
-        if key_ordering not in ("row-major", "morton"):
-            raise ValueError("key_ordering must be 'row-major' or 'morton'.")
+        key_ordering = parse(key_ordering, BlockKeyOrdering, "key_ordering")
         morton_depth: int | None = None
         if key_ordering == "morton":
             if len(block_grid) not in (1, 2, 3) or len(set(block_grid)) != 1:

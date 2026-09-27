@@ -11,9 +11,10 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
-from .._sampling import sample_markov
+from .._sampling import MarkovSampleResult, sample_markov
 from .._strict import StrictModule
 from ..linalg import (
     LinearSolvePolicy,
@@ -26,6 +27,7 @@ from ..operators.quantum import (
     AbstractDiscreteQuantumOperator,
     evaluate_local_operator,
 )
+from ..typing import PRNGKey
 from ._variational_monte_carlo import (
     _score_geometry,
     _validate_model_coordinates,
@@ -50,7 +52,7 @@ class NeuralRateEvidence(StrictModule):
         /,
         *,
         relative_error_tolerance: float,
-    ):
+    ) -> None:
         rates_ = jnp.asarray(rates)
         errors = jnp.asarray(standard_errors)
         if rates_.shape != errors.shape:
@@ -90,7 +92,7 @@ class ConnectedVMCNeuralTrajectoryProblem(StrictModule):
         /,
         *,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(vmc_problem, VariationalMonteCarloProblem):
             raise TypeError("vmc_problem must be a VariationalMonteCarloProblem.")
         operators = tuple(collapse_operators)
@@ -136,7 +138,7 @@ class ConnectedVMCJumpProjectionAudit(StrictModule):
         /,
         *,
         tolerance: float,
-    ):
+    ) -> None:
         self.channel = int(channel)
         self.projected_coordinates = jnp.asarray(projected_coordinates)
         self.residual = jnp.asarray(residual).reshape(())
@@ -214,7 +216,7 @@ class ConnectedVMCNeuralTrajectoryPolicy(StrictModule):
         require_projected_jump: bool = False,
         linear_policy: LinearSolvePolicy | None = None,
         nullspace_policy: NullspacePolicy | None = None,
-    ):
+    ) -> None:
         size = float(step_size)
         step_count = int(steps)
         draws = int(draws_per_step)
@@ -317,7 +319,7 @@ class ConnectedVMCNeuralTrajectoryResult(StrictModule):
         planned_steps: int,
         require_projected_jump: bool,
         problem_id: str,
-    ):
+    ) -> None:
         self.final_state = final_state
         self.parameter_history = jnp.asarray(parameter_history)
         self.rate_history = jnp.asarray(rate_history)
@@ -356,7 +358,7 @@ class ConnectedVMCNeuralTrajectoryResult(StrictModule):
 def _connected_rate_statistics(
     problem: ConnectedVMCNeuralTrajectoryProblem,
     model: Any,
-    samples,
+    samples: MarkovSampleResult,
     /,
 ) -> tuple[Array, Array, Array, Array]:
     local_rates = []
@@ -393,7 +395,7 @@ def _connected_rate_statistics(
 def solve_connected_vmc_neural_trajectory(
     problem: ConnectedVMCNeuralTrajectoryProblem,
     policy: ConnectedVMCNeuralTrajectoryPolicy,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     state: VariationalMonteCarloState | None = None,

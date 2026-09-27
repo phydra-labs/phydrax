@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -24,7 +27,9 @@ FAMILY_COORDINATES = (
 
 
 @pytest.mark.parametrize(("family", "natural_values"), FAMILY_COORDINATES)
-def test_family_duality_round_trip_kl_and_fisher_identities(family, natural_values):
+def test_family_duality_round_trip_kl_and_fisher_identities(
+    family: Any, natural_values: Any
+) -> None:
     natural = family.natural(natural_values)
     mean = family.mean_from_natural(natural)
     gradient = jax.grad(lambda values: family.log_normalizer(family.natural(values)))(
@@ -57,7 +62,7 @@ def test_family_duality_round_trip_kl_and_fisher_identities(family, natural_valu
     assert int(conversion.status) == phx.uq.EXPONENTIAL_FAMILY_SUCCESS
 
 
-def test_normalized_log_probabilities_match_independent_formulas():
+def test_normalized_log_probabilities_match_independent_formulas() -> None:
     probability = 0.3
     bernoulli = phx.uq.BernoulliFamily().law(
         jnp.asarray([jnp.log(probability) - jnp.log1p(-probability)])
@@ -105,7 +110,7 @@ def test_normalized_log_probabilities_match_independent_formulas():
     )
 
 
-def test_mean_and_natural_domains_distinguish_boundaries_and_exteriors():
+def test_mean_and_natural_domains_distinguish_boundaries_and_exteriors() -> None:
     bernoulli = phx.uq.BernoulliFamily()
     bernoulli_boundary = bernoulli.mean_domain(
         bernoulli.mean(jnp.asarray([[0.0], [1.0]]))
@@ -154,7 +159,7 @@ def test_mean_and_natural_domains_distinguish_boundaries_and_exteriors():
     assert jnp.isneginf(bernoulli.log_prob(bernoulli.natural(jnp.asarray([0.0])), 2.0))
 
 
-def test_family_signatures_prevent_cross_family_coordinate_use():
+def test_family_signatures_prevent_cross_family_coordinate_use() -> None:
     bernoulli = phx.uq.BernoulliFamily()
     poisson = phx.uq.PoissonFamily()
     with pytest.raises(ValueError, match="signature"):
@@ -168,7 +173,7 @@ def test_family_signatures_prevent_cross_family_coordinate_use():
         phx.uq.exponential_family_status_name(99)
 
 
-def test_batched_laws_preserve_sample_batch_and_intrinsic_axes_under_transforms():
+def test_batched_laws_preserve_sample_batch_and_intrinsic_axes_under_transforms() -> None:
     family = phx.uq.BernoulliFamily()
     natural_values = jnp.asarray([[-1.0], [0.0], [1.0]], dtype=jnp.float32)
     observations = jnp.asarray([[0.0, 1.0, 0.0], [1.0, 0.0, 1.0]], dtype=jnp.float32)
@@ -215,14 +220,16 @@ def test_batched_laws_preserve_sample_batch_and_intrinsic_axes_under_transforms(
         ),
     ),
 )
-def test_family_sampling_matches_declared_moments(law, expected_mean, expected_variance):
+def test_family_sampling_matches_declared_moments(
+    law: Any, expected_mean: Any, expected_variance: Any
+) -> None:
     samples = law.sample(jr.key(17), sample_shape=(12_000,))
     np.testing.assert_allclose(jnp.mean(samples), expected_mean, atol=0.04, rtol=0.04)
     np.testing.assert_allclose(jnp.var(samples), expected_variance, atol=0.06, rtol=0.08)
     assert isinstance(law, phx.uq.AbstractProbabilityLaw)
 
 
-def test_log_weighted_projection_is_mergeable_and_retains_batch_axes():
+def test_log_weighted_projection_is_mergeable_and_retains_batch_axes() -> None:
     family = phx.uq.BernoulliFamily()
     observations = jnp.asarray([0.0, 1.0, 1.0, 0.0, 1.0, 1.0])
     log_weights = jnp.asarray([-0.7, 0.2, 1.1, -1.3, 0.6, -0.2])
@@ -265,7 +272,7 @@ def test_log_weighted_projection_is_mergeable_and_retains_batch_axes():
     assert jnp.all(batched.valid)
 
 
-def test_projection_reports_invalid_inputs_zero_weight_and_boundary_mles():
+def test_projection_reports_invalid_inputs_zero_weight_and_boundary_mles() -> None:
     family = phx.uq.BernoulliFamily()
     masked = phx.uq.project_exponential_family(
         family,
@@ -312,7 +319,7 @@ def test_projection_reports_invalid_inputs_zero_weight_and_boundary_mles():
     assert not bool(no_weight.valid)
 
 
-def test_scalar_family_likelihood_delegates_normalized_density_and_sampling():
+def test_scalar_family_likelihood_delegates_normalized_density_and_sampling() -> None:
     family = phx.uq.PoissonFamily()
     likelihood = phx.uq.ScalarNaturalExponentialFamilyLikelihood(family)
     location = jnp.asarray([jnp.log(1.2), jnp.log(2.5)])
@@ -327,7 +334,9 @@ def test_scalar_family_likelihood_delegates_normalized_density_and_sampling():
         phx.uq.ScalarNaturalExponentialFamilyLikelihood(phx.uq.NormalFamily())
 
 
-def test_exponential_family_laws_are_posterior_prior_leaves_with_shape_semantics():
+def test_exponential_family_laws_are_posterior_prior_leaves_with_shape_semantics() -> (
+    None
+):
     scalar_prior = phx.uq.BernoulliFamily().law(jnp.asarray([0.3]))
     scalar_space = phx.uq.ParameterSpace(
         jnp.zeros((3,)),
@@ -360,7 +369,7 @@ def test_exponential_family_laws_are_posterior_prior_leaves_with_shape_semantics
         phx.uq.GaussianPriorWhitening.from_parameter_space(scalar_space)
 
 
-def test_existing_scalar_distributions_implement_common_probability_law():
+def test_existing_scalar_distributions_implement_common_probability_law() -> None:
     laws = (
         phx.uq.Uniform(-1.0, 2.0),
         phx.uq.Normal(0.0, 1.0),

@@ -1,5 +1,6 @@
 from dataclasses import FrozenInstanceError
 from fractions import Fraction
+from typing import Any
 
 import numpy as np
 import pytest
@@ -53,7 +54,7 @@ EXPECTED_SI_FACTORS = {
 }
 
 
-def _manifest(**overrides):
+def _manifest(**overrides: Any) -> Any:
     values = {
         "case_id": "case-demo-001",
         "anatomy_id": "anatomy:sha256:001",
@@ -75,7 +76,7 @@ def _manifest(**overrides):
     return CardiovascularCaseManifest(**values)
 
 
-def test_all_kernel_quantities_have_exact_si_scales_and_round_trip():
+def test_all_kernel_quantities_have_exact_si_scales_and_round_trip() -> None:
     assert {
         name: spec.si_factor for name, spec in CARDIOVASCULAR_QUANTITIES.items()
     } == EXPECTED_SI_FACTORS
@@ -96,7 +97,7 @@ def test_all_kernel_quantities_have_exact_si_scales_and_round_trip():
         assert cardiovascular_quantity(name) is spec
 
 
-def test_quantity_array_conversion_and_physical_metadata():
+def test_quantity_array_conversion_and_physical_metadata() -> None:
     pressure = cardiovascular_quantity("pressure")
     values = np.asarray([-2.5, 0.0, 13.25])
     np.testing.assert_array_equal(pressure.to_si(values), [-2500.0, 0.0, 13250.0])
@@ -110,7 +111,7 @@ def test_quantity_array_conversion_and_physical_metadata():
     assert conductivity.si_unit == "S/m"
 
 
-def test_quantity_identity_is_deterministic_and_metadata_sensitive():
+def test_quantity_identity_is_deterministic_and_metadata_sensitive() -> None:
     first = CardiovascularQuantitySpec(
         "paced_voltage",
         "electric_potential",
@@ -145,6 +146,7 @@ def test_quantity_identity_is_deterministic_and_metadata_sensitive():
     assert first.quantity_id != changed.quantity_id
     assert first.quantity_id != changed_unit.quantity_id
     with pytest.raises(FrozenInstanceError):
+        # ty: ignore[invalid-assignment]
         first.name = "changed"
 
 
@@ -165,13 +167,13 @@ def test_quantity_identity_is_deterministic_and_metadata_sensitive():
     ],
 )
 def test_quantity_specs_refuse_textual_ambiguous_or_reference_shifted_units(
-    arguments, error
-):
+    arguments: Any, error: Any
+) -> None:
     with pytest.raises(error):
         CardiovascularQuantitySpec(*arguments)
 
 
-def test_case_manifest_is_immutable_deterministic_and_order_canonical():
+def test_case_manifest_is_immutable_deterministic_and_order_canonical() -> None:
     first = _manifest()
     second = _manifest(
         observation_ids=tuple(reversed(first.observation_ids)),
@@ -188,7 +190,7 @@ def test_case_manifest_is_immutable_deterministic_and_order_canonical():
         first.case_id = "changed"
 
 
-def test_case_manifest_binds_every_declared_identity():
+def test_case_manifest_binds_every_declared_identity() -> None:
     baseline = _manifest()
     changes = {
         "case_id": "case-demo-002",
@@ -208,7 +210,7 @@ def test_case_manifest_binds_every_declared_identity():
         assert _manifest(**{field_name: replacement}).manifest_id != baseline.manifest_id
 
 
-def test_case_manifest_refuses_duplicate_or_malformed_identities():
+def test_case_manifest_refuses_duplicate_or_malformed_identities() -> None:
     with pytest.raises(ValueError, match="duplicate"):
         _manifest(observation_ids=("observation:one", "observation:one"))
     with pytest.raises(ValueError, match="Every identity"):
@@ -231,12 +233,14 @@ def test_case_manifest_refuses_duplicate_or_malformed_identities():
         {"metadata": {"unreviewed_note": "research"}},
     ],
 )
-def test_case_manifest_refuses_phi_linkable_or_non_allowlisted_metadata(overrides):
+def test_case_manifest_refuses_phi_linkable_or_non_allowlisted_metadata(
+    overrides: Any,
+) -> None:
     with pytest.raises(ValueError):
         _manifest(**overrides)
 
 
-def test_case_manifest_is_host_only_and_has_no_solver_or_schema_surface():
+def test_case_manifest_is_host_only_and_has_no_solver_or_schema_surface() -> None:
     manifest = _manifest(observation_ids=(), license_ids=(), data_rights_ids=())
     surface = set(dir(manifest))
     assert "solve" not in surface

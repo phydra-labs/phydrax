@@ -12,7 +12,8 @@ from dataclasses import dataclass, field
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -137,7 +138,7 @@ class FixedBoundaryGradShafranovPlan:
         boundary_r = []
         boundary_coefficients = []
 
-        def interior_index(j, i):
+        def interior_index(j: int, i: int) -> int:
             return (j - 1) * interior_nr + (i - 1)
 
         for j in range(1, nz - 1):

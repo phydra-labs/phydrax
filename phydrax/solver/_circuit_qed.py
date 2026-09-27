@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -26,6 +27,7 @@ from ..operators.quantum import (
     HarmonicModeParameters,
     HilbertRegisterLayout,
     ModeReductionPolicy,
+    ModeReductionProblem,
     OscillatorBasis,
     prepare_mode_reduction,
     PreparedModeReduction,
@@ -33,7 +35,12 @@ from ..operators.quantum import (
     transmon_mode_problem,
     TransmonParameters,
 )
-from ._local_hamiltonian import LocalHamiltonian, LocalHamiltonianTerm
+from ..typing import parse
+from ._local_hamiltonian import (
+    FixedGridLocalHamiltonian,
+    LocalHamiltonian,
+    LocalHamiltonianTerm,
+)
 from ._quantum_control import (
     assemble_fixed_grid_local_hamiltonian,
     QuantumControlScheduleResult,
@@ -97,12 +104,11 @@ class CircuitModePlacement(StrictModule):
         /,
         *,
         placement_id: str | None = None,
-    ):
+    ) -> None:
         wire = str(wire_id)
         if not wire:
             raise ValueError("wire_id must be nonempty.")
-        if kind not in ("transmon", "fluxonium", "harmonic"):
-            raise ValueError("Unknown circuit mode kind.")
+        kind = parse(kind, CircuitModeKind, "kind")
         if kind == "transmon" and not isinstance(basis, ChargeBasis):
             raise TypeError("Transmon placements require ChargeBasis.")
         if kind in ("fluxonium", "harmonic") and not isinstance(basis, OscillatorBasis):
@@ -156,7 +162,7 @@ class CircuitInteraction(StrictModule):
         /,
         *,
         interaction_id: str | None = None,
-    ):
+    ) -> None:
         targets = tuple(target_indices)
         names = tuple(str(name) for name in operator_names)
         if (
@@ -208,7 +214,7 @@ class CircuitDrivePort(StrictModule):
         /,
         *,
         port_id: str | None = None,
-    ):
+    ) -> None:
         for name, value in (("mode_index", mode_index), ("scale_index", scale_index)):
             if isinstance(value, bool) or not isinstance(value, Integral):
                 raise TypeError(f"{name} must be a non-negative integer.")
@@ -260,7 +266,7 @@ class CircuitQEDDeviceSpec(StrictModule):
         drive_ports: Sequence[CircuitDrivePort] = (),
         hbar: ArrayLike = 1.0,
         spec_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(topology, GraphIR):
             raise TypeError("topology must be a GraphIR.")
         topology.validate()
@@ -369,9 +375,9 @@ class CircuitQEDDeviceParameters(StrictModule):
         mode_parameters: Sequence[CircuitParameters],
         /,
         *,
-        interaction_strengths: ArrayLike = (),
-        drive_scales: ArrayLike = (),
-    ):
+        interaction_strengths: ArrayLike | Sequence[float] = (),
+        drive_scales: ArrayLike | Sequence[float] = (),
+    ) -> None:
         modes = tuple(mode_parameters)
         if not modes or not all(
             isinstance(
@@ -413,7 +419,7 @@ class CircuitQEDDevicePolicy(StrictModule):
         maximum_hilbert_dimension: int = 1 << 28,
         maximum_dense_entries: int = 1 << 26,
         maximum_prepared_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         self.maximum_hilbert_dimension = _positive_integer(
             maximum_hilbert_dimension, "maximum_hilbert_dimension"
         )
@@ -569,7 +575,7 @@ def _mode_problem(
     parameters: CircuitParameters,
     hbar: Array,
     /,
-):
+) -> ModeReductionProblem:
     problem_id = canonical_fingerprint(
         {
             "kind": "placed-circuit-mode-problem",
@@ -831,7 +837,7 @@ def assemble_circuit_qed_hamiltonian(
     prepared: PreparedCircuitQEDDevice,
     controls: QuantumControlScheduleResult,
     /,
-):
+) -> FixedGridLocalHamiltonian:
     """Bind sampled control coefficients to prepared circuit-QED drive ports."""
 
     if not isinstance(prepared, PreparedCircuitQEDDevice):

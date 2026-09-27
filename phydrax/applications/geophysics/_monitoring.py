@@ -10,12 +10,14 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PRNGKeyArray
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...observation import DiagonalCovarianceAction
+from ...typing import PRNGKey
 from ...uq import TemporalDifferencePrior
 from ._workflows import EnsembleInversionResult, EnsembleKalmanInversionPlan
 
@@ -36,7 +38,7 @@ class MonitoringEpoch(StrictModule, NonTrainableState):
         geometry_id: str,
         acquisition_id: str,
         /,
-    ):
+    ) -> None:
         time = float(time_s)
         values = jnp.asarray(observation)
         geometry, acquisition = str(geometry_id).strip(), str(acquisition_id).strip()
@@ -76,7 +78,7 @@ class TimeLapseParameterization(StrictModule, NonTrainableState):
         parameter_count: int,
         temporal_prior: TemporalDifferencePrior,
         /,
-    ):
+    ) -> None:
         epochs, parameters = int(epoch_count), int(parameter_count)
         if (
             epochs < 2
@@ -145,7 +147,7 @@ class SequentialMonitoringPlan(StrictModule, NonTrainableState):
         *,
         dynamics_id: str,
         prediction_ids: Sequence[str],
-    ):
+    ) -> None:
         epochs_ = tuple(epochs)
         predictors = tuple(predictions)
         dynamics_identity = str(dynamics_id).strip()
@@ -193,7 +195,7 @@ class SequentialMonitoringPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def initialize(self, ensemble: ArrayLike, key: PRNGKeyArray, /) -> MonitoringState:
+    def initialize(self, ensemble: ArrayLike, key: PRNGKey, /) -> MonitoringState:
         members = jnp.asarray(ensemble)
         if members.ndim != 2 or members.shape[0] < 2:
             raise ValueError("Monitoring ensemble requires at least two members.")
@@ -239,7 +241,7 @@ class SequentialMonitoringPlan(StrictModule, NonTrainableState):
         )
         predictor = self.predictions[index]
 
-        def predict(augmented):
+        def predict(augmented: Array) -> Array:
             parameter_count = forecast.shape[1]
             return (
                 predictor(augmented[:parameter_count], jnp.asarray(epoch.time_s))

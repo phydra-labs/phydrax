@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._frozendict import frozendict
 from .._sampling._addressing import derive_key, SampleAddress
@@ -127,7 +128,7 @@ class NestedSamplingResult(StrictModule):
         num_delete: int,
         method: str,
         duration_seconds: float,
-    ):
+    ) -> None:
         self.problem = problem
         self.samples = samples
         self.unconstrained_samples = unconstrained_samples

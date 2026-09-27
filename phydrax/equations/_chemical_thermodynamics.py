@@ -10,7 +10,8 @@ from enum import StrEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -68,7 +69,7 @@ class PolynomialSpeciesThermodynamicsPlan(AbstractSpeciesThermodynamicsPlan):
         minimum_temperature: float = 1.0,
         maximum_temperature: float = 5000.0,
         thermodynamics_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(schema, ChemicalSpeciesSchema):
             raise TypeError("schema must be a ChemicalSpeciesSchema.")
         coefficients = np.asarray(heat_capacity_volume, dtype=np.float64)
@@ -215,7 +216,7 @@ class NASASpeciesThermodynamicsPlan(AbstractSpeciesThermodynamicsPlan):
         /,
         *,
         thermodynamics_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(schema, ChemicalSpeciesSchema):
             raise TypeError("schema must be a ChemicalSpeciesSchema.")
         if not isinstance(polynomial_kind, NASAPolynomialKind):
@@ -345,7 +346,7 @@ def _positive_polynomial_on_interval(
     return bool(np.all(np.isfinite(values)) and np.all(values > 0.0))
 
 
-def _nasa7(coefficients, temperature):
+def _nasa7(coefficients: Array, temperature: Array) -> tuple[Array, Array, Array]:
     a1, a2, a3, a4, a5, a6, a7 = jnp.moveaxis(coefficients, -1, 0)
     cp_r = a1 + temperature * (
         a2 + temperature * (a3 + temperature * (a4 + temperature * a5))
@@ -369,7 +370,7 @@ def _nasa7(coefficients, temperature):
     return cp_r, h_rt, s_r
 
 
-def _nasa9(coefficients, temperature):
+def _nasa9(coefficients: Array, temperature: Array) -> tuple[Array, Array, Array]:
     a1, a2, a3, a4, a5, a6, a7, a8, a9 = jnp.moveaxis(coefficients, -1, 0)
     cp_r = (
         a1 / temperature**2

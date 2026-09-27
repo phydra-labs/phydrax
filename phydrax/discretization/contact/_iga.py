@@ -11,7 +11,8 @@ from typing import cast
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -59,7 +60,7 @@ class IGATraceProjection(StrictModule, NonTrainableState):
         require_constant_reproduction: bool = True,
         constant_tolerance: float = 1.0e-12,
         projection_id: str | None = None,
-    ):
+    ) -> None:
         values = np.asarray(matrix, dtype=np.float64)
         tolerance = float(constant_tolerance)
         if values.ndim != 2 or 0 in values.shape:
@@ -183,7 +184,7 @@ class CertifiedSplinePatchProxyPlan(StrictModule, NonTrainableState):
         *,
         convex_hull_certified: bool,
         geometry_certificate_id: str,
-    ):
+    ) -> None:
         if not isinstance(atlas, PatchAtlas):
             raise TypeError("atlas must be PatchAtlas.")
         if not isinstance(topology, CollisionSurfacePlan):
@@ -289,10 +290,10 @@ class CertifiedSplinePatchProxyPlan(StrictModule, NonTrainableState):
         )
         matrix = self.projection.matrix
 
-        def map_controls(value):
+        def map_controls(value: Array) -> Array:
             return ein.contract("vc,cd->vd", matrix.astype(value.dtype), value)
 
-        def pull_proxy(value):
+        def pull_proxy(value: Array) -> Array:
             return ein.contract("vc,vd->cd", matrix.astype(value.dtype), value)
 
         operator = FunctionLinearOperator(
@@ -588,7 +589,7 @@ class IGACommonRefinementMortarPlan(StrictModule, NonTrainableState):
         plus_participant: str,
         minus_participant: str,
         coverage_certified: bool,
-    ):
+    ) -> None:
         if not isinstance(overlay, IntegrationOverlay):
             raise TypeError("overlay must be IntegrationOverlay.")
         if not isinstance(plus_projection, IGATraceProjection) or not isinstance(

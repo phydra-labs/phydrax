@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import ast
 import builtins
 import copy
@@ -9,6 +10,7 @@ import importlib
 import json
 import math
 import struct
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -42,15 +44,15 @@ _TYPED_FORMATS = {"d": ">f", "l": ">i", "L": ">q", "U": ">B"}
 
 
 def _scalar_tree(
-    identifier,
+    identifier: Any,
     *,
-    threshold=None,
-    left_value=0.0,
-    right_value=0.0,
-    leaf_value=0.0,
-    default_left=True,
-    categories=(),
-):
+    threshold: Any = None,
+    left_value: Any = 0.0,
+    right_value: Any = 0.0,
+    leaf_value: Any = 0.0,
+    default_left: Any = True,
+    categories: Any = (),
+) -> Any:
     if threshold is None and not categories:
         node_count = 1
         left = [-1]
@@ -107,7 +109,7 @@ def _scalar_tree(
     }
 
 
-def _vector_tree(identifier=0):
+def _vector_tree(identifier: Any = 0) -> Any:
     return {
         "base_weights": [0.0] * 6,
         "categories": [],
@@ -134,7 +136,7 @@ def _vector_tree(identifier=0):
     }
 
 
-def _objective(name, num_class):
+def _objective(name: Any, num_class: Any) -> Any:
     if name in {
         "binary:logistic",
         "binary:logitraw",
@@ -152,18 +154,18 @@ def _objective(name, num_class):
 
 
 def _saved_model(
-    trees,
+    trees: Any,
     *,
-    tree_info=None,
-    iteration_indptr=None,
-    objective="reg:squarederror",
-    num_class=0,
-    num_target=1,
-    base_score="0E0",
-    feature_type="q",
-    num_parallel_tree=1,
-    weight_drop=None,
-):
+    tree_info: Any = None,
+    iteration_indptr: Any = None,
+    objective: Any = "reg:squarederror",
+    num_class: Any = 0,
+    num_target: Any = 1,
+    base_score: Any = "0E0",
+    feature_type: Any = "q",
+    num_parallel_tree: Any = 1,
+    weight_drop: Any = None,
+) -> Any:
     tree_info = [0] * len(trees) if tree_info is None else list(tree_info)
     iteration_indptr = (
         list(range(len(trees) + 1))
@@ -200,12 +202,12 @@ def _saved_model(
     }
 
 
-def _ubjson_key(value):
+def _ubjson_key(value: Any) -> Any:
     encoded = value.encode("utf-8")
     return b"L" + struct.pack(">q", len(encoded)) + encoded
 
 
-def _ubjson_integer(value):
+def _ubjson_integer(value: Any) -> Any:
     if -128 < value < 127:
         return b"i" + struct.pack(">b", value)
     if -32768 < value < 32767:
@@ -215,7 +217,7 @@ def _ubjson_integer(value):
     return b"L" + struct.pack(">q", value)
 
 
-def _ubjson(value, field=None):
+def _ubjson(value: Any, field: Any = None) -> Any:
     if type(value) is dict:
         return (
             b"{"
@@ -256,16 +258,22 @@ def _ubjson(value, field=None):
     raise TypeError(type(value).__name__)
 
 
-def _configuration(result):
+def _configuration(result: Any) -> Any:
     return {
         key: ast.literal_eval(value) for key, value in result.provenance.configuration
     }
 
 
-def _guard_xgboost_import(monkeypatch):
+def _guard_xgboost_import(monkeypatch: Any) -> None:
     original_import = builtins.__import__
 
-    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+    def guarded_import(
+        name: Any,
+        globals: Any = None,
+        locals: Any = None,
+        fromlist: Any = (),
+        level: Any = 0,
+    ) -> Any:
         if name == "xgboost" or name.startswith("xgboost."):
             raise AssertionError("Conversion must not import XGBoost.")
         return original_import(name, globals, locals, fromlist, level)
@@ -273,7 +281,7 @@ def _guard_xgboost_import(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", guarded_import)
 
 
-def test_converter_module_import_never_requests_xgboost(monkeypatch):
+def test_converter_module_import_never_requests_xgboost(monkeypatch: Any) -> None:
     _guard_xgboost_import(monkeypatch)
     from phydrax.ml.interop import _xgboost
 
@@ -281,8 +289,8 @@ def test_converter_module_import_never_requests_xgboost(monkeypatch):
 
 
 def test_scalar_regression_converts_all_json_containers_and_canonical_ubjson(
-    tmp_path, monkeypatch
-):
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     document = _saved_model(
         [
             _scalar_tree(
@@ -343,7 +351,9 @@ def test_scalar_regression_converts_all_json_containers_and_canonical_ubjson(
     assert len(array_checksums) == 1
 
 
-def test_binary_sigmoid_preserves_base_score_link_strict_tie_and_missing_direction():
+def test_binary_sigmoid_preserves_base_score_link_strict_tie_and_missing_direction() -> (
+    None
+):
     document = _saved_model(
         [
             _scalar_tree(
@@ -368,7 +378,7 @@ def test_binary_sigmoid_preserves_base_score_link_strict_tie_and_missing_directi
     assert _configuration(result)["base_score_margin"] == (0.0,)
 
 
-def test_multiclass_tree_info_groups_margins_before_softprob():
+def test_multiclass_tree_info_groups_margins_before_softprob() -> None:
     document = _saved_model(
         [
             _scalar_tree(0, leaf_value=1.0),
@@ -393,7 +403,9 @@ def test_multiclass_tree_info_groups_margins_before_softprob():
     assert _configuration(result)["tree_info"] == (0, 1, 2)
 
 
-def test_categorical_selected_set_routes_right_and_missing_uses_persisted_default():
+def test_categorical_selected_set_routes_right_and_missing_uses_persisted_default() -> (
+    None
+):
     document = _saved_model(
         [
             _scalar_tree(
@@ -421,7 +433,7 @@ def test_categorical_selected_set_routes_right_and_missing_uses_persisted_defaul
     assert _configuration(result)["categorical_features"] == (0,)
 
 
-def test_vector_leaf_layout_maps_leaf_indices_to_complete_output_vectors():
+def test_vector_leaf_layout_maps_leaf_indices_to_complete_output_vectors() -> None:
     document = _saved_model(
         [_vector_tree()],
         num_target=2,
@@ -437,7 +449,7 @@ def test_vector_leaf_layout_maps_leaf_indices_to_complete_output_vectors():
     assert _configuration(result)["vector_leaf"] is True
 
 
-def test_dart_weight_drop_scales_each_tree_before_sum():
+def test_dart_weight_drop_scales_each_tree_before_sum() -> None:
     document = _saved_model(
         [_scalar_tree(0, leaf_value=2.0), _scalar_tree(1, leaf_value=4.0)],
         weight_drop=[0.25, 0.5],
@@ -464,7 +476,9 @@ def test_dart_weight_drop_scales_each_tree_before_sum():
         ("malformed-parent-links", ConversionError),
     ],
 )
-def test_malformed_and_unsupported_saved_models_fail_closed(mutation, error):
+def test_malformed_and_unsupported_saved_models_fail_closed(
+    mutation: Any, error: Any
+) -> None:
     document = _saved_model(
         [
             _scalar_tree(
@@ -503,7 +517,7 @@ def test_malformed_and_unsupported_saved_models_fail_closed(mutation, error):
         from_xgboost_artifact(document)
 
 
-def test_bad_ubjson_and_duplicate_json_keys_fail_as_conversion_errors():
+def test_bad_ubjson_and_duplicate_json_keys_fail_as_conversion_errors() -> None:
     document = _saved_model([_scalar_tree(0, leaf_value=1.0)])
     with pytest.raises(ConversionError, match="trailing bytes"):
         from_xgboost_artifact(_ubjson(document) + b"x")
@@ -511,7 +525,7 @@ def test_bad_ubjson_and_duplicate_json_keys_fail_as_conversion_errors():
         from_xgboost_artifact('{"learner":{},"learner":{},"version":[3,0,0]}')
 
 
-def test_source_mapping_is_copied_and_not_mutated():
+def test_source_mapping_is_copied_and_not_mutated() -> None:
     document = _saved_model([_scalar_tree(0, leaf_value=1.0)])
     original = copy.deepcopy(document)
 

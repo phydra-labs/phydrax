@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _scalar_oracle_mixer(input_integration, *, rate=0.7):
+def _scalar_oracle_mixer(input_integration: Any, *, rate: Any = 0.7) -> Any:
     model = phx.nn.operator.architectures.DiagonalStateSpaceMixer(
         state_size=1,
         input_integration=input_integration,
@@ -45,7 +48,9 @@ def _scalar_oracle_mixer(input_integration, *, rate=0.7):
 
 
 @pytest.mark.parametrize("input_integration", ("zoh", "linear"))
-def test_recurrent_matches_direct_variable_step_convolution(input_integration):
+def test_recurrent_matches_direct_variable_step_convolution(
+    input_integration: Any,
+) -> None:
     model = phx.nn.operator.architectures.DiagonalStateSpaceMixer(
         in_channels=2,
         out_channels=3,
@@ -69,7 +74,7 @@ def test_recurrent_matches_direct_variable_step_convolution(input_integration):
     assert jnp.allclose(recurrent, direct, rtol=2e-5, atol=2e-6)
 
 
-def test_irregular_zoh_matches_continuous_time_analytic_oracle():
+def test_irregular_zoh_matches_continuous_time_analytic_oracle() -> None:
     rate = 0.7
     model = _scalar_oracle_mixer("zoh", rate=rate)
     times = jnp.array([0.0, 0.02, 0.31, 0.9, 0.91, 2.4])
@@ -85,7 +90,9 @@ def test_irregular_zoh_matches_continuous_time_analytic_oracle():
     assert result.dtype == model.raw_decay.dtype
 
 
-def test_zoh_and_linear_input_semantics_are_distinct_and_linear_is_exact_for_ramp():
+def test_zoh_and_linear_input_semantics_are_distinct_and_linear_is_exact_for_ramp() -> (
+    None
+):
     rate = 0.4
     times = jnp.array([0.0, 0.13, 0.6, 1.7])
     values = times
@@ -99,7 +106,7 @@ def test_zoh_and_linear_input_semantics_are_distinct_and_linear_is_exact_for_ram
     assert linear[1] > 0.0
 
 
-def test_ragged_prefix_masks_ignore_padded_times_and_inputs():
+def test_ragged_prefix_masks_ignore_padded_times_and_inputs() -> None:
     model = phx.nn.operator.architectures.DiagonalStateSpaceMixer(
         in_channels=2,
         out_channels=2,
@@ -129,7 +136,7 @@ def test_ragged_prefix_masks_ignore_padded_times_and_inputs():
     assert jnp.all(jnp.isfinite(result))
 
 
-def test_strictly_stable_conjugate_poles_preserve_long_memory():
+def test_strictly_stable_conjugate_poles_preserve_long_memory() -> None:
     model = _scalar_oracle_mixer("zoh", rate=1e-5)
     model = eqx.tree_at(
         lambda current: current.frequencies,
@@ -151,7 +158,7 @@ def test_strictly_stable_conjugate_poles_preserve_long_memory():
     assert jnp.abs(result[-1]) > 0.5 * jnp.abs(result[0])
 
 
-def test_compile_and_parameter_and_input_gradients_are_finite():
+def test_compile_and_parameter_and_input_gradients_are_finite() -> None:
     model = phx.nn.operator.architectures.DiagonalStateSpaceMixer(
         in_channels=2,
         out_channels=2,
@@ -184,7 +191,9 @@ def test_compile_and_parameter_and_input_gradients_are_finite():
 
 
 @pytest.mark.parametrize("input_integration", ("zoh", "linear"))
-def test_associative_execution_matches_recurrent_with_ragged_cases(input_integration):
+def test_associative_execution_matches_recurrent_with_ragged_cases(
+    input_integration: Any,
+) -> None:
     model = phx.nn.operator.architectures.DiagonalStateSpaceMixer(
         in_channels=2,
         out_channels=2,
@@ -214,7 +223,7 @@ def test_associative_execution_matches_recurrent_with_ragged_cases(input_integra
     assert jnp.array_equal(associative[0, 6:], jnp.zeros((4, 2)))
 
 
-def test_operator_batch_preserves_case_times_masks_and_prediction_contract():
+def test_operator_batch_preserves_case_times_masks_and_prediction_contract() -> None:
     model = phx.nn.operator.architectures.DiagonalStateSpaceMixer(
         in_channels=2,
         out_channels=3,
@@ -264,7 +273,7 @@ def test_operator_batch_preserves_case_times_masks_and_prediction_contract():
     assert configuration["method_id"] == model.method_id
 
 
-def test_dense_reference_rejects_lengths_above_configured_bound():
+def test_dense_reference_rejects_lengths_above_configured_bound() -> None:
     model = phx.nn.operator.architectures.DiagonalStateSpaceMixer(
         state_size=2,
         max_direct_length=3,
@@ -274,7 +283,7 @@ def test_dense_reference_rejects_lengths_above_configured_bound():
         model.direct_convolution(jnp.ones((4,)), jnp.arange(4.0))
 
 
-def test_stiff_decay_initialization_and_repeated_nodes_remain_finite():
+def test_stiff_decay_initialization_and_repeated_nodes_remain_finite() -> None:
     model = phx.nn.operator.architectures.DiagonalStateSpaceMixer(
         state_size=2,
         initial_decay=1_000.0,
@@ -299,12 +308,14 @@ def test_stiff_decay_initialization_and_repeated_nodes_remain_finite():
         {"initial_decay": 2e-50, "min_decay": 1e-50, "dtype": jnp.float32},
     ),
 )
-def test_nonfinite_or_unrepresentable_stability_parameters_are_rejected(parameters):
+def test_nonfinite_or_unrepresentable_stability_parameters_are_rejected(
+    parameters: Any,
+) -> None:
     with pytest.raises(ValueError):
         phx.nn.operator.architectures.DiagonalStateSpaceMixer(**parameters)
 
 
-def test_linear_input_coefficient_does_not_overflow_for_large_finite_decay():
+def test_linear_input_coefficient_does_not_overflow_for_large_finite_decay() -> None:
     model = _scalar_oracle_mixer("linear")
     model = eqx.tree_at(
         lambda current: current.raw_decay,
@@ -318,7 +329,7 @@ def test_linear_input_coefficient_does_not_overflow_for_large_finite_decay():
     assert jnp.allclose(result[-1], jnp.asarray(1e-20), rtol=2e-5, atol=0.0)
 
 
-def test_scalar_length_one_operator_batch_preserves_singleton_case_axis():
+def test_scalar_length_one_operator_batch_preserves_singleton_case_axis() -> None:
     model = phx.nn.operator.architectures.DiagonalStateSpaceMixer(
         state_size=2,
         source_key="signal",

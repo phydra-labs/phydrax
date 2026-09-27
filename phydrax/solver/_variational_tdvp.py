@@ -10,7 +10,7 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 from .._strict import StrictModule
 from ..linalg import (
@@ -22,6 +22,7 @@ from ..linalg import (
     solve,
 )
 from ..operators.quantum import ComplexParameterMode
+from ..typing import parse, PRNGKey
 from ._variational_monte_carlo import (
     _score_geometry,
     _validate_model_coordinates,
@@ -75,9 +76,8 @@ class VariationalTDVPPolicy(StrictModule):
         final_chain_diagnostics: bool = True,
         linear_policy: LinearSolvePolicy | None = None,
         nullspace_policy: NullspacePolicy | None = None,
-    ):
-        if mode not in ("real-time", "imaginary-time"):
-            raise ValueError("mode must be 'real-time' or 'imaginary-time'.")
+    ) -> None:
+        mode = parse(mode, TDVPMode, "mode")
         steps = int(num_steps)
         draws = int(draws_per_step)
         transitions = int(transitions_per_draw)
@@ -186,7 +186,7 @@ def solve_variational_tdvp(
     policy: VariationalTDVPPolicy,
     /,
     *,
-    key: Key[Array, ""] | None = None,
+    key: PRNGKey | None = None,
     state: VariationalMonteCarloState | None = None,
 ) -> VariationalTDVPResult:
     """Evolve amplitude parameters by fixed-step real- or imaginary-time TDVP."""

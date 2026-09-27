@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 
 from phydrax.finance.arbitrage import (
@@ -9,7 +11,7 @@ from phydrax.finance.arbitrage import (
 from phydrax.finance.core import PricingLaw
 
 
-def _law():
+def _law() -> Any:
     return PricingLaw(
         "usd-q",
         "synthetic option marginal",
@@ -21,7 +23,7 @@ def _law():
     )
 
 
-def _marginal(values, probabilities, maturity):
+def _marginal(values: Any, probabilities: Any, maturity: Any) -> Any:
     return NumeraireOptionMarginal(
         jnp.asarray(values),
         jnp.asarray(probabilities),
@@ -36,7 +38,7 @@ def _marginal(values, probabilities, maturity):
     )
 
 
-def test_option_marginals_are_checked_in_declared_numeraire_units():
+def test_option_marginals_are_checked_in_declared_numeraire_units() -> None:
     feasible = option_marginal_convex_order(
         _marginal([-1.0, 1.0], [0.5, 0.5], 1.0),
         _marginal([-2.0, 2.0], [0.5, 0.5], 2.0),
@@ -50,9 +52,11 @@ def test_option_marginals_are_checked_in_declared_numeraire_units():
     assert not bool(reversed_order.feasible)
 
 
-def test_static_option_grid_reports_butterfly_violation_without_global_claim():
+def test_static_option_grid_reports_butterfly_violation_without_global_claim() -> None:
     valid = OptionCallSlice(
+        # ty: ignore[invalid-argument-type]
         [80.0, 100.0, 120.0],
+        # ty: ignore[invalid-argument-type]
         [22.0, 10.0, 4.0],
         100.0,
         1.0,
@@ -63,7 +67,9 @@ def test_static_option_grid_reports_butterfly_violation_without_global_claim():
         market_snapshot_id="snapshot",
     )
     invalid = OptionCallSlice(
+        # ty: ignore[invalid-argument-type]
         [80.0, 100.0, 120.0],
+        # ty: ignore[invalid-argument-type]
         [22.0, 10.0, -4.0],
         100.0,
         1.0,

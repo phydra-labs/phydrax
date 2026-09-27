@@ -4,12 +4,15 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._iteration import (
     bind_iteration_scope,
@@ -42,6 +45,12 @@ from ._iterative._types import (
     OptimizationStatus,
     OptimizationTermination,
 )
+
+
+_ScalarCarry: TypeAlias = tuple[PyTree[Array], PyTree[Any], Array]
+_ObservedScalarCarry: TypeAlias = tuple[
+    PyTree[Array], PyTree[Any], Array, IterationRuntimeState
+]
 
 
 class ScalarIterativeState(StrictModule):
@@ -79,7 +88,7 @@ class ScalarIterativeState(StrictModule):
         linear_refresh_state: LinearRefreshState | None = None,
         direction_fallbacks: Any = 0,
         metrics: IterativeStepMetrics | None = None,
-    ):
+    ) -> None:
         self.iteration = jnp.asarray(iteration, dtype=jnp.int32)
         self.initial_optimality_norm = jnp.asarray(initial_optimality_norm)
         self.accepted_steps = jnp.asarray(accepted_steps, dtype=jnp.int32)
@@ -111,7 +120,7 @@ class _ScalarRun(StrictModule):
         state: ScalarIterativeState,
         status: Any,
         /,
-    ):
+    ) -> None:
         self.parameters = parameters
         self.state = state
         self.status = jnp.asarray(status, dtype=jnp.int32)
@@ -119,13 +128,13 @@ class _ScalarRun(StrictModule):
 
 def _scalar_iteration_record(
     state: ScalarIterativeState,
-    status,
-    phase,
+    status: ArrayLike,
+    phase: IterationPhase | ArrayLike,
     /,
     *,
-    active=True,
-    committed=False,
-    terminal=False,
+    active: ArrayLike = True,
+    committed: ArrayLike = False,
+    terminal: ArrayLike = False,
 ) -> IterationRecord:
     return IterationRecord(
         IterationCoordinates(
@@ -145,7 +154,7 @@ def _scalar_iteration_record(
 
 def _run_scalar_iterations(
     method: AbstractScalarIterativeMethod,
-    value_function,
+    value_function: Callable[[PyTree[Any]], Any],
     initial_parameters: PyTree[Any],
     termination: OptimizationTermination,
     iteration: IterationPlan | None = None,
@@ -188,7 +197,7 @@ def _run_scalar_iterations(
             ),
         )
 
-    def condition(carry):
+    def condition(carry: _ScalarCarry) -> Array:
         _, current_state, status = carry
         within_evaluations = (
             jnp.asarray(True)
@@ -201,7 +210,7 @@ def _run_scalar_iterations(
             & within_evaluations
         )
 
-    def body(carry):
+    def body(carry: _ScalarCarry) -> _ScalarCarry:
         current_parameters, dynamic_state, _ = carry
         current_state = eqx.combine(dynamic_state, static_state)
         next_parameters, next_state, _ = method.step(
@@ -232,10 +241,10 @@ def _run_scalar_iterations(
     else:
         assert iteration_state is not None
 
-        def observed_condition(carry):
+        def observed_condition(carry: _ObservedScalarCarry) -> Array:
             return condition(carry[:3]) & ~carry[3].stop_requested
 
-        def observed_body(carry):
+        def observed_body(carry: _ObservedScalarCarry) -> _ObservedScalarCarry:
             previous_state = eqx.combine(carry[1], static_state)
             next_carry = body(carry[:3])
             next_state = eqx.combine(next_carry[1], static_state)

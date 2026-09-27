@@ -9,7 +9,8 @@ from collections import Counter
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -37,7 +38,7 @@ class CrackSurfaceGeometry3D(StrictModule, NonTrainableState):
         /,
         *,
         surface_id: str | None = None,
-    ):
+    ) -> None:
         points = np.asarray(vertices, dtype=np.float64)
         cells = np.asarray(triangles, dtype=np.int32)
         if points.ndim != 2 or points.shape[1] != 3 or points.shape[0] < 3:

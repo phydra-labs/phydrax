@@ -11,7 +11,8 @@ from enum import IntEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .. import ein
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -52,7 +53,7 @@ class ComplexWeightMeasure(StrictModule, NonTrainableState):
         *,
         mask: ArrayLike | None = None,
         source_id: str,
-    ):
+    ) -> None:
         samples_host = np.asarray(samples)
         logs_host = np.asarray(log_magnitudes)
         phases_host = np.asarray(phases)
@@ -156,7 +157,7 @@ class PhaseQuenchedReweightingPlan(StrictModule, NonTrainableState):
         minimum_average_phase: float = 1e-3,
         minimum_effective_sample_size: float = 2.0,
         maximum_samples: int = 1_000_000,
-    ):
+    ) -> None:
         overlap = float(minimum_average_phase)
         effective = float(minimum_effective_sample_size)
         maximum = int(maximum_samples)

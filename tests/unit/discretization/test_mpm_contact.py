@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -15,15 +17,15 @@ class _ZeroNormalGeometry:
     state = jnp.asarray(0.0)
 
     @staticmethod
-    def signed_distance(coordinates):
+    def signed_distance(coordinates: Any) -> Any:
         return jnp.zeros(coordinates.shape[:-1], dtype=coordinates.dtype)
 
     @staticmethod
-    def boundary_normal(coordinates):
+    def boundary_normal(coordinates: Any) -> Any:
         return jnp.zeros_like(coordinates)
 
 
-def test_rigid_contact_rejects_required_zero_normals():
+def test_rigid_contact_rejects_required_zero_normals() -> None:
     plan = phx.discretization.RigidMPMContactPlan(
         _ZeroNormalGeometry(),
         phx.discretization.SharpCoulombMPMFrictionPlan(0.0),
@@ -40,7 +42,7 @@ def test_rigid_contact_rejects_required_zero_normals():
     assert not bool(result.active_mask[0])
 
 
-def test_sharp_rigid_contact_projects_normal_and_coulomb_impulse():
+def test_sharp_rigid_contact_projects_normal_and_coulomb_impulse() -> None:
     geometry = phx.geometry.Circle((0.0, 0.0), 0.5).compile()
     plan = phx.discretization.RigidMPMContactPlan(
         geometry,
@@ -63,7 +65,7 @@ def test_sharp_rigid_contact_projects_normal_and_coulomb_impulse():
     assert result.work <= 0.0
 
 
-def test_smooth_rigid_contact_has_finite_geometry_velocity_derivative():
+def test_smooth_rigid_contact_has_finite_geometry_velocity_derivative() -> None:
     geometry = phx.geometry.Circle((0.0, 0.0), 0.5).compile()
     plan = phx.discretization.RigidMPMContactPlan(
         geometry,
@@ -74,14 +76,14 @@ def test_smooth_rigid_contact_has_finite_geometry_velocity_derivative():
     point = jnp.asarray([[0.495, 0.0]])
     mass = jnp.asarray((1.0,))
 
-    def objective(velocity):
+    def objective(velocity: Any) -> Any:
         return jnp.sum(plan.apply(point, velocity, mass, 0.0, 0.01).velocity ** 2)
 
     gradient = jax.grad(objective)(jnp.asarray([[-0.2, 0.1]]))
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_contact_and_prescribed_velocity_overlap_rejects_compilation():
+def test_contact_and_prescribed_velocity_overlap_rejects_compilation() -> None:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformAxisSpec(9) for _ in range(2)),
         axis_names=("x", "y"),

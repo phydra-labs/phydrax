@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -14,7 +14,9 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import optax
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._doc import DOC_KEY0
@@ -34,9 +36,11 @@ from ..._training_kernel import (
     run_training_attempt,
     TrainingAttemptOutcome,
     TrainingKernelSpec,
+    TrainingKeys,
 )
 from ..._training_objective import _ObjectiveContribution
 from ...imaging import ImagePlaneSupport
+from ...typing import parse, PRNGKey
 from ._learned_model import AbstractDensePIVModel
 from ._learned_primitives import (
     MultiScaleRobustPIVLoss,
@@ -46,7 +50,7 @@ from ._learned_primitives import (
 )
 
 
-DatasetPartition = Literal["training", "validation", "held-out"]
+DatasetPartition: TypeAlias = Literal["training", "validation", "held-out"]
 
 
 class LearnedPIVDataset(StrictModule, NonTrainableState):
@@ -79,7 +83,7 @@ class LearnedPIVDataset(StrictModule, NonTrainableState):
         scenario_ids: Sequence[str] = (),
         partition: DatasetPartition = "training",
         dataset_id: str | None = None,
-    ):
+    ) -> None:
         first = jnp.asarray(first_images)
         second = jnp.asarray(second_images)
         if first.ndim != 4 or second.shape != first.shape:
@@ -163,8 +167,7 @@ class LearnedPIVDataset(StrictModule, NonTrainableState):
                 raise TypeError("geometry must be an ImagePlaneSupport or None.")
             if geometry.image_shape != (rows, columns):
                 raise ValueError("Dataset geometry must match the image spatial shape.")
-        if partition not in ("training", "validation", "held-out"):
-            raise ValueError("partition must be 'training', 'validation', or 'held-out'.")
+        partition = parse(partition, DatasetPartition, "partition")
         identifiers = (
             tuple(f"case-{index}" for index in range(batch_size))
             if not scenario_ids
@@ -260,7 +263,7 @@ class LearnedPIVTrainingConfig(StrictModule, NonTrainableState):
         maximum_gradient_norm: float = 1.0,
         loss: MultiScaleRobustPIVLoss | None = None,
         jit: bool = True,
-    ):
+    ) -> None:
         steps = int(maximum_steps)
         batch = int(batch_size)
         rate = float(learning_rate)
@@ -392,7 +395,12 @@ def _dataset_loss(
     )
     target_valid = None if dataset.target_valid is None else dataset.target_valid[indices]
 
-    def case_without_targets(first_case, second_case, first_mask, second_mask):
+    def case_without_targets(
+        first_case: Array,
+        second_case: Array,
+        first_mask: Array,
+        second_mask: Array,
+    ) -> PIVLossResult:
         return _per_case_loss(
             model,
             loss,
@@ -479,7 +487,14 @@ def evaluate_learned_piv(
     return _dataset_loss(model, dataset, loss, jnp.arange(dataset.case_count))
 
 
-def _batch_objective(parameters, model_state, fixed, payload, keys, /):
+def _batch_objective(
+    parameters: PyTree[Any],
+    model_state: PyTree[Any],
+    fixed: PyTree[Any],
+    payload: tuple[LearnedPIVDataset, MultiScaleRobustPIVLoss, int],
+    keys: TrainingKeys,
+    /,
+) -> tuple[_ObjectiveContribution, PyTree[Any], PIVLossResult]:
     """Kernel objective: masked PIV loss of one semantically sampled case batch.
 
     The batch is drawn from the accepted-update key, so a rejected attempt
@@ -507,7 +522,7 @@ def fit_learned_piv(
     config: LearnedPIVTrainingConfig,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     optimizer: optax.GradientTransformation | None = None,
     session: IterationSession | None = None,
 ) -> LearnedPIVFitResult:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -15,7 +17,7 @@ from phydrax.discretization.finite_volume._contact_angle import (
 )
 
 
-def test_condition_validates_angle_tolerance_and_body_tag():
+def test_condition_validates_angle_tolerance_and_body_tag() -> None:
     condition = ContactAngleCondition(7, np.pi / 2.0, 1.0e-5, "wall-7")
     assert condition.body_tag == 7
     assert condition.condition_id == "wall-7"
@@ -32,7 +34,7 @@ def test_condition_validates_angle_tolerance_and_body_tag():
         ContactAngleCondition(True, np.pi / 2.0, 1.0e-5, "wall-7")
 
 
-def test_oblique_wall_preserves_norm_and_declared_cosine():
+def test_oblique_wall_preserves_norm_and_declared_cosine() -> None:
     wall = np.asarray((1.0, 2.0))
     plic = np.asarray((-2.0, 1.0))
     condition = ContactAngleCondition(3, np.pi / 3.0, 1.0e-5, "oblique")
@@ -54,7 +56,7 @@ def test_oblique_wall_preserves_norm_and_declared_cosine():
     "angle",
     (1.0e-6, np.pi / 2.0, np.pi - 1.0e-6),
 )
-def test_limiting_contact_angles(angle):
+def test_limiting_contact_angles(angle: Any) -> None:
     condition = ContactAngleCondition(7, angle, 1.0e-5, f"limit-{angle}")
     result = reconstruct_wall_interface_normal(
         np.asarray((1.0, 0.2)),
@@ -72,7 +74,7 @@ def test_limiting_contact_angles(angle):
     assert int(np.asarray(result.status)) == int(ContactAngleStatus.SUCCESS)
 
 
-def test_contact_angle_set_requires_exact_coverage_and_fresh_ids():
+def test_contact_angle_set_requires_exact_coverage_and_fresh_ids() -> None:
     first = ContactAngleCondition(3, np.pi / 2.0, 1.0e-5, "first")
     second = ContactAngleCondition(8, np.pi / 4.0, 1.0e-5, "second")
     policies = EmbeddedBoundaryContactAngleSet(
@@ -92,7 +94,7 @@ def test_contact_angle_set_requires_exact_coverage_and_fresh_ids():
     assert result.plic_id == "plic-1"
 
 
-def test_contact_angle_set_rejects_mismatched_or_duplicate_policies():
+def test_contact_angle_set_rejects_mismatched_or_duplicate_policies() -> None:
     with pytest.raises(ValueError, match="key"):
         EmbeddedBoundaryContactAngleSet(
             {4: ContactAngleCondition(3, np.pi / 2.0, 1.0e-5, "wrong")},
@@ -106,18 +108,19 @@ def test_contact_angle_set_rejects_mismatched_or_duplicate_policies():
         )
 
 
-def test_degenerate_tangent_projection_fails():
+def test_degenerate_tangent_projection_fails() -> None:
     condition = ContactAngleCondition(3, np.pi / 2.0, 1.0e-5, "degenerate")
     with pytest.raises(Exception, match="degenerate projection"):
+        # ty: ignore[invalid-argument-type]
         reconstruct_wall_interface_normal((1.0, 0.0), (2.0, 0.0), condition)
 
 
-def test_valid_path_is_jittable_and_differentiable():
+def test_valid_path_is_jittable_and_differentiable() -> None:
     condition = ContactAngleCondition(3, np.pi / 3.0, 1.0e-4, "smooth")
     wall = jnp.asarray((0.4, 0.9))
 
     @jax.jit
-    def normal_from_plic(plic):
+    def normal_from_plic(plic: Any) -> Any:
         return reconstruct_wall_interface_normal(plic, wall, condition).normal
 
     plic = jnp.asarray((-0.8, 0.6))
@@ -126,19 +129,19 @@ def test_valid_path_is_jittable_and_differentiable():
     jacobian = jax.jacfwd(normal_from_plic)(plic)
     assert bool(jnp.all(jnp.isfinite(jacobian)))
 
-    def scalar_path(plic):
+    def scalar_path(plic: Any) -> Any:
         return jnp.sum(normal_from_plic(plic) * jnp.asarray((0.7, -0.2)))
 
     gradient = jax.grad(scalar_path)(plic)
     assert bool(jnp.all(jnp.isfinite(gradient)))
 
 
-def test_rotated_wall_zero_tolerance_records_failed_evidence_eager_and_jit():
+def test_rotated_wall_zero_tolerance_records_failed_evidence_eager_and_jit() -> None:
     condition = ContactAngleCondition(7, np.pi / 3.0, 0.0, "strict-rotated-wall")
     plic = jnp.asarray((-0.8, 0.2), dtype=jnp.float32)
     wall = jnp.asarray((0.3, 0.7), dtype=jnp.float32)
 
-    def reconstruct(plic_normal, wall_normal):
+    def reconstruct(plic_normal: Any, wall_normal: Any) -> Any:
         return reconstruct_wall_interface_normal(
             plic_normal,
             wall_normal,

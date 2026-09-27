@@ -21,7 +21,7 @@ def _make_solver(seed: int = 0) -> FunctionalSolver:
     points = jnp.linspace(0.0, 1.0, 5).reshape((-1, 1))
 
     @domain.Function("x")
-    def target(x):
+    def target(x: Any) -> Any:
         return 1.0 + 2.0 * x[0]
 
     model = MLP(
@@ -41,7 +41,7 @@ def _make_solver(seed: int = 0) -> FunctionalSolver:
     return FunctionalSolver(functions={"u": u}, terms=[data])
 
 
-def test_training_signal_guard_records_sigint_and_restores_handler():
+def test_training_signal_guard_records_sigint_and_restores_handler() -> None:
     previous = signal.getsignal(signal.SIGINT)
     with functional_gradient._TrainingSignalGuard() as guard:
         signal.raise_signal(signal.SIGINT)
@@ -51,21 +51,23 @@ def test_training_signal_guard_records_sigint_and_restores_handler():
     assert signal.getsignal(signal.SIGINT) == previous
 
 
-def test_optax_solve_returns_after_signal_stop_request(monkeypatch, phydrax_events):
+def test_optax_solve_returns_after_signal_stop_request(
+    monkeypatch: Any, phydrax_events: Any
+) -> None:
     class StopAfterFirstStep:
         signal_name = "SIGTERM"
 
-        def __init__(self):
+        def __init__(self) -> None:
             self.calls = 0
 
-        def __enter__(self):
+        def __enter__(self) -> Any:
             return self
 
-        def __exit__(self, exc_type, exc, tb):
+        def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> Any:
             return None
 
         @property
-        def stop_requested(self):
+        def stop_requested(self) -> Any:
             self.calls += 1
             return self.calls >= 2
 
@@ -87,12 +89,12 @@ def test_optax_solve_returns_after_signal_stop_request(monkeypatch, phydrax_even
 
 
 def test_optax_solve_returns_after_keyboard_interrupt_from_step(
-    monkeypatch, phydrax_events
-):
-    def init(_params):
+    monkeypatch: Any, phydrax_events: Any
+) -> None:
+    def init(_params: Any) -> Any:
         return ()
 
-    def update(_grads, state, _params=None):
+    def update(_grads: Any, state: Any, _params: Any = None) -> None:
         raise KeyboardInterrupt
 
     init_fn: Any = init

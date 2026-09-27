@@ -9,14 +9,15 @@ from typing import Any
 
 import equinox as eqx
 import numpy as np
-from jaxtyping import Array, Key
 
+from phydrax.conditions._ir import Condition
 from phydrax.domain import DomainFunction
 
 from .._doc import DOC_KEY0
 from .._model import TRIAL_SPACE_CERTIFICATE_KEY
 from .._strict import StrictModule
 from ..domain._base import EnforcementGateMethod
+from ..typing import parse, PRNGKey
 from ._compile import EnforcementProgram, InteriorAnchors
 from ._spec import EnforcementSpec
 
@@ -42,9 +43,8 @@ class EnforcementOptions(StrictModule):
         gate_linear_fraction: float = 0.5,
         num_reference: int = 3_000_000,
         sampler: str = "latin_hypercube",
-    ):
-        if gate_method not in ("auto", "global_r_equivalence", "compact"):
-            raise ValueError("Unsupported enforcement gate method.")
+    ) -> None:
+        gate_method = parse(gate_method, EnforcementGateMethod, "gate_method")
         saturation = float(gate_saturation_fraction)
         linear = float(gate_linear_fraction)
         if not 0.0 < saturation <= 1.0:
@@ -70,7 +70,7 @@ def compile(
     *,
     interior: Sequence[InteriorAnchors] = (),
     options: EnforcementOptions | None = None,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> EnforcementProgram:
     """Validate and compile hard specifications into one staged program."""
     resolved_functions = dict(functions)
@@ -117,7 +117,13 @@ def compile(
         raise KeyError(f"Unknown enforcement dependencies {missing_dependencies!r}.")
     for spec in resolved_specs:
         if spec.realization is not None:
-            declared_sources = spec.condition.fields.sources
+            condition = spec.condition
+            # EnforcementSpec admits a realization only for typed Condition values.
+            if not (isinstance(condition, Condition)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(condition, Condition)."
+                )
+            declared_sources = condition.fields.sources
             missing = tuple(
                 source for source in declared_sources if source not in resolved_functions
             )

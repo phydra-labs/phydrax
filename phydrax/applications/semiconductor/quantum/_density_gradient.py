@@ -6,7 +6,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from ....units import ONE
@@ -45,14 +47,14 @@ class DensityGradient1D(StrictModule):
 
     def __init__(
         self,
-        positions,
-        effective_mass,
+        positions: npt.ArrayLike,
+        effective_mass: npt.ArrayLike,
         *,
-        area,
-        coefficient=1.0,
-        energy_reference,
-        provenance,
-    ):
+        area: npt.ArrayLike,
+        coefficient: ArrayLike = 1.0,
+        energy_reference: str,
+        provenance: str,
+    ) -> None:
         x = _array(positions, "density-gradient cell centers")
         if x.ndim != 1 or x.size < 2:
             raise ValueError("DensityGradient1D requires at least two cells.")
@@ -86,7 +88,7 @@ class DensityGradient1D(StrictModule):
         )
         self.provenance = _text(provenance, "density-gradient provenance")
 
-    def evaluate(self, electron_density):
+    def evaluate(self, electron_density: ArrayLike) -> DensityGradientResult:
         density = jnp.asarray(electron_density)
         if density.shape != self.diagonal.shape:
             raise ValueError("Electron density must have one value per closure cell.")

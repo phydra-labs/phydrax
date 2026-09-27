@@ -8,7 +8,8 @@ import abc
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -75,7 +76,7 @@ class LinearContactTrajectory(AbstractContactTrajectory):
     end: Array
     _trajectory_id: str = eqx.field(static=True)
 
-    def __init__(self, start: ArrayLike, end: ArrayLike, /):
+    def __init__(self, start: ArrayLike, end: ArrayLike, /) -> None:
         start_ = jnp.asarray(start)
         end_ = jnp.asarray(end, dtype=start_.dtype)
         if start_.shape != end_.shape or start_.ndim != 2:
@@ -127,7 +128,7 @@ class CubicHermiteContactTrajectory(AbstractContactTrajectory):
         end: ArrayLike,
         end_tangent: ArrayLike,
         /,
-    ):
+    ) -> None:
         start_ = jnp.asarray(start)
         start_tangent_ = jnp.asarray(start_tangent, dtype=start_.dtype)
         end_ = jnp.asarray(end, dtype=start_.dtype)
@@ -218,7 +219,7 @@ class RigidSweepContactTrajectory(AbstractContactTrajectory):
         start_rotation: ArrayLike,
         end_rotation: ArrayLike,
         /,
-    ):
+    ) -> None:
         vertices = jnp.asarray(local_vertices)
         start_center_ = jnp.asarray(start_center, dtype=vertices.dtype)
         end_center_ = jnp.asarray(end_center, dtype=vertices.dtype)

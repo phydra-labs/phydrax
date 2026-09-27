@@ -29,6 +29,7 @@ Run with the native meshing core available (``phydrax[meshcore]`` or
 """
 
 import json
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -71,7 +72,7 @@ class RotatingObstacle(phx.StrictModule):
     inner: jax.Array
     mapping_id: str = eqx.field(static=True)
 
-    def __init__(self, points: np.ndarray, /):
+    def __init__(self, points: np.ndarray, /) -> None:
         radius = np.linalg.norm(points, axis=1)
         self.reference_points = jnp.asarray(points, dtype=jnp.float64)
         self.inner = jnp.asarray(radius < 0.5 * (INNER_RADIUS + OUTER_RADIUS))
@@ -126,7 +127,9 @@ def dg0(mesh: D.CellMesh, /) -> D.FiniteElementDiscretization:
     ).prepare()
 
 
-def remap(source_mesh: D.CellMesh, target_mesh: D.CellMesh, density, label, /):
+def remap(
+    source_mesh: D.CellMesh, target_mesh: D.CellMesh, density: Any, label: Any, /
+) -> Any:
     """Limited P1 remap of ``density`` with P0 and L2-projection comparisons."""
     source, target = finite_volume(source_mesh), finite_volume(target_mesh)
     prepared = D.prepare_unstructured_conservative_remap(
@@ -138,8 +141,12 @@ def remap(source_mesh: D.CellMesh, target_mesh: D.CellMesh, density, label, /):
     if not prepared.succeeded:
         raise RuntimeError(f"{label}: common refinement failed: {prepared.reason}.")
     limited = D.UnstructuredSecondOrderRemapPlan(
-        prepared.plan, prepared.refinement, source
+        # ty: ignore[invalid-argument-type]
+        prepared.plan,
+        prepared.refinement,
+        source,
     ).apply(density)
+    # ty: ignore[unresolved-attribute]
     first_order = prepared.plan.apply(density)
     projection = D.prepare_l2_projection_transfer(
         dg0(source.mesh),
@@ -227,12 +234,14 @@ for step in range(STEPS):
         np.max(
             np.abs(
                 coordinates[boundary]
+                # ty: ignore[unresolved-attribute]
                 - np.asarray(plan.boundary_provider.rotated(jnp.asarray(angle)))
             )
         )
     )
     advance = phx.meshing.advance_mesh_motion(
         monitor,
+        # ty: ignore[invalid-argument-type]
         reference,
         coordinates,
         boundary_residual=boundary_residual,
@@ -263,32 +272,46 @@ for step in range(STEPS):
             phx.meshing.MeshMotionDecision.RELOCATE
             | phx.meshing.MeshMotionDecision.REMESH
         ):
+            # ty: ignore[unresolved-attribute]
             record["relocation"] = advance.relocation.status.value
             if advance.adaptation is not None:
                 evidence = advance.adaptation.evidence
                 record["adaptation"] = {
                     "status": advance.adaptation.status.value,
+                    # ty: ignore[unresolved-attribute]
                     "passes": evidence.passes,
+                    # ty: ignore[unresolved-attribute]
                     "splits": evidence.splits,
+                    # ty: ignore[unresolved-attribute]
                     "collapses": evidence.collapses,
+                    # ty: ignore[unresolved-attribute]
                     "flips": evidence.flips,
+                    # ty: ignore[unresolved-attribute]
                     "unit_fraction": evidence.unit_fraction,
                 }
             # Relocated and remeshed meshes cover the moved domain exactly.
             density, record["remap"] = remap(
-                moved, advance.result.mesh, lagrangian, f"{advance.decision}-{step}"
+                moved,
+                # ty: ignore[unresolved-attribute]
+                advance.result.mesh,
+                lagrangian,
+                f"{advance.decision}-{step}",
             )
             carried = np.asarray(
+                # ty: ignore[unresolved-attribute]
                 phx.meshing.evaluate_cell_quality(advance.result.mesh).measures
             )
         case decision:
             raise RuntimeError(f"Step {step}: unexpected decision {decision!r}.")
     result = advance.result
+    # ty: ignore[unresolved-attribute]
     quality = result.quality
     record["mesh"] = {
+        # ty: ignore[unresolved-attribute]
         "cells": result.mesh.blocks[0].cell_count,
         "minimum_scaled_jacobian": quality.minimum_scaled_jacobian,
         "minimum_mean_ratio": quality.minimum_mean_ratio,
+        # ty: ignore[unresolved-attribute]
         "certified": result.audit.passed,
     }
     masses = carried * np.asarray(density)
@@ -300,7 +323,9 @@ for step in range(STEPS):
     steps.append(record)
     if advance.decision is not phx.meshing.MeshMotionDecision.ACCEPT_MOTION:
         reference = result
+        # ty: ignore[unresolved-attribute]
         monitor = phx.meshing.MeshMotionMonitor(reference.mesh, policy=monitor_policy)
+        # ty: ignore[unresolved-attribute]
         plan = motion_plan(reference.mesh)
         angle = 0.0
 remeshes = sum(record["decision"] == "remesh" for record in steps)
@@ -312,6 +337,7 @@ print(
             "route": "linear_elasticity",
             "steps": steps,
             "remeshes": remeshes,
+            # ty: ignore[unresolved-attribute]
             "final_cells": reference.mesh.blocks[0].cell_count,
             "total_mass": total_mass,
         },

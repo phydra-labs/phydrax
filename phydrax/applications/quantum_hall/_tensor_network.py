@@ -49,7 +49,7 @@ class HallCylinderDMRGPlan(StrictModule, NonTrainableState):
         descent_step: float = 0.05,
         residual_tolerance: float = 1.0e-8,
         maximum_mpo_tensor_elements: int = 100_000_000,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedHallCylinderHamiltonian):
             raise TypeError("prepared must be PreparedHallCylinderHamiltonian.")
         occupations = tuple(int(value) for value in initial_occupations)

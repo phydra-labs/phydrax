@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from scipy.integrate import quad
 from scipy.special import gammaln
 
@@ -20,6 +21,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..ein import contract
+from ..typing import parse
 from ._fourier_laguerre import FourierLaguerrePlan
 from ._laguerre import RadialLaguerrePlan
 from ._spherical import SphericalExecution
@@ -169,7 +171,7 @@ class BallWaveletCoefficients(StrictModule):
         *,
         scale_pairs: Sequence[tuple[int, int]],
         transform_id: str,
-    ):
+    ) -> None:
         scaling_array = jnp.asarray(scaling)
         detail_arrays = tuple(jnp.asarray(detail) for detail in details)
         pairs = tuple((int(radial), int(angular)) for radial, angular in scale_pairs)
@@ -239,7 +241,7 @@ class DirectionalBallWaveletPlan(StrictModule, NonTrainableState):
         max_scale_pairs: int = 128,
         max_precompute_bytes: int = _DEFAULT_RESOURCE_BYTES,
         max_runtime_bytes: int = _DEFAULT_RESOURCE_BYTES,
-    ):
+    ) -> None:
         if not isinstance(fourier_laguerre, FourierLaguerrePlan):
             raise TypeError("fourier_laguerre must be a FourierLaguerrePlan.")
         angular = fourier_laguerre.angular
@@ -267,8 +269,9 @@ class DirectionalBallWaveletPlan(StrictModule, NonTrainableState):
             or selected_radial_dilation <= 1.0
         ):
             raise ValueError("wavelet dilation factors must be finite and exceed one.")
-        if selected_execution not in ("recursive", "precomputed"):
-            raise ValueError("wigner_execution must be 'recursive' or 'precomputed'.")
+        selected_execution = parse(
+            selected_execution, SphericalExecution, "selected_execution"
+        )
         if selected_scale_limit <= 0:
             raise ValueError("max_scale_pairs must be positive.")
         if selected_precompute_limit <= 0 or selected_runtime_limit <= 0:

@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -73,7 +74,7 @@ class StageSecondOrderConstraint(StrictModule):
         /,
         *,
         label: str = "stage-soc",
-    ):
+    ) -> None:
         identifier = str(label)
         if not identifier:
             raise ValueError("label must be non-empty.")
@@ -104,7 +105,7 @@ class TerminalSecondOrderConstraint(StrictModule):
         /,
         *,
         label: str = "terminal-soc",
-    ):
+    ) -> None:
         identifier = str(label)
         if not identifier:
             raise ValueError("label must be non-empty.")
@@ -262,6 +263,11 @@ def compile_linear_conic_control(
     base_rows = base.constraint_matrix.target.size
     total_soc_rows = problem.horizon * sum(stage_dimensions) + sum(terminal_dimensions)
     relation = base.constraint_matrix.relation
+    # The sparse control compiler always routes constraints through an EdgeRelation.
+    if not (isinstance(relation, EdgeRelation)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(relation, EdgeRelation)."
+        )
     relation_valid = np.asarray(relation.valid)
     row_routes = [np.asarray(relation.target_indices, dtype=np.int32)[relation_valid]]
     column_routes = [np.asarray(relation.source_indices, dtype=np.int32)[relation_valid]]

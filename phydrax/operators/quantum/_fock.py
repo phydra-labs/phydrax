@@ -9,7 +9,8 @@ from typing import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._geometry_precision import GeometryPrecisionPolicy
 from ..._strict import StrictModule
@@ -37,7 +38,7 @@ class FockCutoffEvidence(StrictModule):
         top_probability_tolerance: float = 1e-6,
         precision: GeometryPrecisionPolicy | None = None,
         coordinates: ArrayLike | None = None,
-    ):
+    ) -> None:
         precision_ = GeometryPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, GeometryPrecisionPolicy):
             raise TypeError("precision must be GeometryPrecisionPolicy or None.")
@@ -97,7 +98,7 @@ class BosonicFockSpace(StrictModule):
         /,
         *,
         precision: GeometryPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         cutoffs_ = tuple(cutoffs)
         if not cutoffs_ or any(value < 2 for value in cutoffs_):
             raise ValueError("Every Fock cutoff must be at least two.")

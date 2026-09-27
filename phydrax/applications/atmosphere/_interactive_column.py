@@ -15,12 +15,14 @@ are reported explicitly, never restored as unrecorded heat.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TypeVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._array_archive import read_array_archive, write_array_archive
 from ..._fingerprint import canonical_fingerprint
@@ -65,6 +67,8 @@ _PARAMETER_FIELDS = (
     "mixing_length",
     "critical_richardson",
 )
+
+_Module = TypeVar("_Module")
 
 
 class InteractiveMoistColumnState(StrictModule):
@@ -147,12 +151,14 @@ class InteractiveColumnStepResult(StrictModule):
     mixing_temperature_variance_dissipation: Array
 
 
-def _divergence(flux, template):
+def _divergence(flux: Array, template: Array) -> Array:
     zero = jnp.zeros_like(template[:1])
     return jnp.concatenate((zero, flux)) - jnp.concatenate((flux, zero))
 
 
-def _temperature(thermo, masses, energy):
+def _temperature(
+    thermo: MoistThermodynamicPlan, masses: tuple[Array, ...], energy: Array
+) -> tuple[Array, Array]:
     """Invert native linear calorics at CURRENT composition, including precipitation."""
     dry, vapor, liquid, ice, rain, snow = masses
     capacity = (
@@ -166,7 +172,9 @@ def _temperature(thermo, masses, energy):
     return thermo.reference_temperature + (energy - reference) / capacity, capacity
 
 
-def _masses(state):
+def _masses(
+    state: InteractiveMoistColumnState,
+) -> tuple[Array, Array, Array, Array, Array, Array]:
     return (
         state.dry_mass,
         state.vapor_mass,
@@ -177,7 +185,7 @@ def _masses(state):
     )
 
 
-def _temperature_interior(temperature, minimum, maximum):
+def _temperature_interior(temperature: Array, minimum: float, maximum: float) -> Array:
     """Strict derivative domain, distinct from inclusive physical admission."""
     margin = (
         64 * jnp.finfo(temperature.dtype).eps * jnp.maximum(jnp.abs(temperature), 1.0)
@@ -185,7 +193,7 @@ def _temperature_interior(temperature, minimum, maximum):
     return (temperature - minimum > margin) & (maximum - temperature > margin)
 
 
-def _at_state_dtype(module, dtype):
+def _at_state_dtype(module: _Module, dtype: DTypeLike) -> _Module:
     """Bind numeric physics to its state owner's precision without detaching AD."""
     return jax.tree.map(
         lambda leaf: leaf.astype(dtype) if eqx.is_inexact_array(leaf) else leaf,
@@ -235,7 +243,7 @@ class InteractiveMoistColumnPlan(StrictModule):
         background_diffusivity: ArrayLike = 0.0,
         mixing_length: ArrayLike = 50.0,
         critical_richardson: ArrayLike = 0.25,
-    ):
+    ) -> None:
         self.thermodynamics = (
             MoistThermodynamicPlan() if thermodynamics is None else thermodynamics
         )
@@ -285,7 +293,7 @@ class InteractiveMoistColumnPlan(StrictModule):
             }
         )
 
-    def _parameters_valid(self):
+    def _parameters_valid(self) -> Array:
         positive = (
             self.condensation_timescale,
             self.autoconversion_timescale,
@@ -449,7 +457,13 @@ class InteractiveMoistColumnPlan(StrictModule):
             temperature, density, pressure, humidity, surface_temperature, valid, regular
         )
 
-    def _mixing(self, state, diagnosed, ventilation, shear):
+    def _mixing(
+        self,
+        state: InteractiveMoistColumnState,
+        diagnosed: InteractiveColumnDiagnostics,
+        ventilation: Array,
+        shear: Array,
+    ) -> tuple[tuple[Array, ...], Array, Array, Array, Array, Array, Array]:
         thickness = state.layer_volume
         distance = 0.5 * (thickness[:-1] + thickness[1:])
         # Virtual potential temperature includes condensate loading. Gravity and
@@ -529,7 +543,9 @@ class InteractiveMoistColumnPlan(StrictModule):
         regular = ((length == 0) | jnp.all(jnp.abs(n2) > margin)) & floor_regular
         return rates, energy_rate, diffusivity, n2, stable, variance_loss, regular
 
-    def _microphysics(self, masses, energy, volume, dt):
+    def _microphysics(
+        self, masses: tuple[Array, ...], energy: Array, volume: Array, dt: Array
+    ) -> tuple[tuple[Array, Array, Array, Array, Array, Array], Array, Array, Array]:
         thermo = self.thermodynamics
         dry, vapor, liquid, ice, rain, snow = masses
         temperature, capacity = _temperature(thermo, masses, energy)
@@ -1013,13 +1029,19 @@ class InteractiveMoistColumnPlan(StrictModule):
         return InteractiveColumnFixedStepMethod(self)
 
     def advance(
-        self, state: InteractiveMoistColumnState, dt: ArrayLike, steps: int, **forcing
-    ):
+        self,
+        state: InteractiveMoistColumnState,
+        dt: ArrayLike,
+        steps: int,
+        **forcing: ArrayLike,
+    ) -> tuple[InteractiveMoistColumnState, Array]:
         """Convenience scan; after the first rejection the continuation is frozen."""
         if int(steps) != steps or steps < 1:
             raise ValueError("steps must be a positive integer.")
 
-        def body(carry, _):
+        def body(
+            carry: tuple[InteractiveMoistColumnState, Array], _: None
+        ) -> tuple[tuple[InteractiveMoistColumnState, Array], Array]:
             current, valid = carry
             result = self.step(current, dt, **forcing)
             selected = jax.tree.map(
@@ -1116,13 +1138,21 @@ class InteractiveColumnFixedStepMethod(AbstractFixedStepMethod, NonTrainableStat
     plan: InteractiveMoistColumnPlan
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: InteractiveMoistColumnPlan):
+    def __init__(self, plan: InteractiveMoistColumnPlan) -> None:
         self.plan = plan
         self.method_id = canonical_fingerprint(
             {"kind": "interactive-column-fixed-step", "plan": plan.plan_id}
         )
 
-    def step(self, step_index, time, state, step_size, args, /) -> FixedStepResult:
+    def step(
+        self,
+        step_index: Array,
+        time: Array,
+        state: InteractiveMoistColumnState,
+        step_size: Array,
+        args: dict[str, ArrayLike] | None,
+        /,
+    ) -> FixedStepResult:
         del step_index
         size = jnp.asarray(step_size, state.internal_energy.dtype)
         scheduled_time = jnp.asarray(time, state.time.dtype)

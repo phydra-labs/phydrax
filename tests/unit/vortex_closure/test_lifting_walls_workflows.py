@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +14,7 @@ from jax.sharding import Mesh
 import phydrax as phx
 
 
-def test_shared_ring_sheet_and_midpoint_wake_preserve_circulation():
+def test_shared_ring_sheet_and_midpoint_wake_preserve_circulation() -> None:
     topology = phx.discretization.VortexRingSheetTopology(
         4,
         (0, 1, 2, 3),
@@ -53,7 +56,7 @@ def test_shared_ring_sheet_and_midpoint_wake_preserve_circulation():
     assert bool(step.successful)
 
 
-def _component(name, y_offset):
+def _component(name: Any, y_offset: Any) -> Any:
     span = jnp.linspace(-1.0, 1.0, 4)
     leading = jnp.stack((jnp.zeros_like(span), span, jnp.zeros_like(span)), axis=-1)
     surface = phx.discretization.LiftingSurfacePlan(
@@ -67,7 +70,7 @@ def _component(name, y_offset):
     return phx.discretization.LiftingComponentPlan(name, surface, frame)
 
 
-def test_multi_surface_lifting_has_explicit_kelvin_and_load_evidence():
+def test_multi_surface_lifting_has_explicit_kelvin_and_load_evidence() -> None:
     surface = phx.discretization.MultiLiftingSurfacePlan(
         (_component("left", -1.5), _component("right", 1.5))
     ).prepare()
@@ -87,7 +90,7 @@ def test_multi_surface_lifting_has_explicit_kelvin_and_load_evidence():
     assert bool(result.successful)
 
 
-def test_multiaxis_polar_dynamic_stall_and_compressibility_are_explicit():
+def test_multiaxis_polar_dynamic_stall_and_compressibility_are_explicit() -> None:
     angle = jnp.deg2rad(jnp.asarray((-10.0, 0.0, 10.0)))
     reynolds = jnp.asarray((1.0e5, 1.0e6))
     mach = jnp.asarray((0.0, 0.5))
@@ -124,7 +127,7 @@ def test_multiaxis_polar_dynamic_stall_and_compressibility_are_explicit():
     assert corrected[2]
 
 
-def test_native_boundary_panel_adapter_and_wall_flux_close_slip():
+def test_native_boundary_panel_adapter_and_wall_flux_close_slip() -> None:
     geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
     panelization = phx.operators.BoundaryPanelization2D(
         geometry.boundary_atlas,
@@ -147,7 +150,36 @@ def test_native_boundary_panel_adapter_and_wall_flux_close_slip():
     assert flux.evidence.slip_norm < 1e-5
 
 
-def test_wall_corrected_pse_reports_flux_ledger():
+def test_native_panel_doublet_field_matches_double_layer_potential() -> None:
+    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
+    panelization = phx.operators.BoundaryPanelization2D(
+        geometry.boundary_atlas,
+        panels_per_chart=12,
+        quadrature_order=4,
+        geometry=geometry,
+    )
+    native = phx.operators.NativePanelGeometry2D.from_panelization(panelization)
+    panel_density = jnp.linspace(0.5, 1.5, native.straight.length.size)
+    targets = jnp.asarray(((3.0, 0.5), (0.0, -2.5)))
+
+    evaluation = phx.operators.NativePanelFieldPlan2D(native).evaluate(
+        targets, panel_density, kind="doublet"
+    )
+    reference = phx.operators.LaplaceLayerPotential2D(
+        panelization,
+        kind="double",
+        density=panel_density[panelization.panel_ids],
+    )
+
+    assert evaluation.potential is not None
+    np.testing.assert_allclose(evaluation.potential, jax.vmap(reference)(targets))
+    np.testing.assert_allclose(
+        evaluation.velocity, jax.vmap(jax.grad(reference))(targets)
+    )
+    assert bool(evaluation.finite)
+
+
+def test_wall_corrected_pse_reports_flux_ledger() -> None:
     source = phx.discretization.VortexSourceState(
         jnp.asarray(((0.0, 0.1), (0.3, 0.2))),
         jnp.asarray((1.0, -1.0)),
@@ -168,7 +200,7 @@ def test_wall_corrected_pse_reports_flux_ledger():
     assert bool(evaluation.successful)
 
 
-def test_random_vortex_antithetic_noise_has_zero_weak_mean():
+def test_random_vortex_antithetic_noise_has_zero_weak_mean() -> None:
     direct = phx.operators.GaussianDirectVortexPlan2D(
         maximum_sources=2,
     ).prepare(source_capacity=2, target_capacity=2)
@@ -178,6 +210,7 @@ def test_random_vortex_antithetic_noise_has_zero_weak_mean():
         core_radius=jnp.full((2,), 0.1),
         volume=jnp.ones((2,)),
     )
+    # ty: ignore[call-non-callable]
     plan = phx.applications.vortex_flow.RandomVortexSolverPlan(
         direct,
         0.01,
@@ -190,22 +223,25 @@ def test_random_vortex_antithetic_noise_has_zero_weak_mean():
     assert bool(result.successful)
 
 
-def test_assimilation_and_constrained_closure_enforce_contracts():
+def test_assimilation_and_constrained_closure_enforce_contracts() -> None:
+    # ty: ignore[call-non-callable]
     observation = phx.applications.vortex_flow.VortexObservationSet(
         jnp.eye(2),
         jnp.asarray((1.0, -1.0)),
         jnp.ones((2,)),
         kind="vorticity",
     )
+    # ty: ignore[call-non-callable]
     assimilation = phx.applications.vortex_flow.VortexDataAssimilationPlan(
         (observation,),
         jnp.ones((2,)),
     ).assimilate(jnp.zeros((2,)))
 
     class ZeroModel(eqx.Module):
-        def __call__(self, value):
+        def __call__(self, value: Any) -> Any:
             return jnp.zeros_like(value[:1])
 
+    # ty: ignore[call-non-callable]
     closure = phx.applications.vortex_flow.ConstrainedLearnedClosure(
         ZeroModel(),
         jnp.zeros((2,)),
@@ -218,7 +254,7 @@ def test_assimilation_and_constrained_closure_enforce_contracts():
     assert closure.dissipation <= 0.0
 
 
-def test_sharding_preflight_is_real_on_available_devices():
+def test_sharding_preflight_is_real_on_available_devices() -> None:
     mesh = Mesh(np.asarray(jax.devices()), ("vortex",))
     policy = phx.operators.VortexShardingPolicy(
         mesh,
@@ -236,7 +272,7 @@ def test_sharding_preflight_is_real_on_available_devices():
     assert bool(evidence.supported)
 
 
-def test_native_three_dimensional_panel_field_is_finite_off_surface():
+def test_native_three_dimensional_panel_field_is_finite_off_surface() -> None:
     geometry = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile()
     panelization = phx.operators.SurfacePanelization3D(
         geometry.boundary_atlas,
@@ -255,7 +291,7 @@ def test_native_three_dimensional_panel_field_is_finite_off_surface():
     assert bool(result.successful)
 
 
-def test_native_rigid_vortex_coupling_uses_prepared_body_dynamics():
+def test_native_rigid_vortex_coupling_uses_prepared_body_dynamics() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray((0,)),
         jnp.asarray((1.0,)),
@@ -276,10 +312,11 @@ def test_native_rigid_vortex_coupling_uses_prepared_body_dynamics():
         jnp.zeros((1, 1)),
     )
 
-    def coupler(time, fluid, body_state, args):
+    def coupler(time: Any, fluid: Any, body_state: Any, args: Any) -> Any:
         del time, body_state, args
         return fluid, load, jnp.asarray(0.0)
 
+    # ty: ignore[call-non-callable]
     result = phx.applications.vortex_flow.VortexRigidCouplingPlan(
         bodies,
         "loose",
@@ -296,7 +333,7 @@ def test_native_rigid_vortex_coupling_uses_prepared_body_dynamics():
     np.testing.assert_allclose(result.kinematics.position, 0.0)
 
 
-def test_mac_immersed_vortex_hybrid_preserves_zero_total_strength():
+def test_mac_immersed_vortex_hybrid_preserves_zero_total_strength() -> None:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(6, periodic=True) for _ in range(2)),
         axis_names=("x", "y"),

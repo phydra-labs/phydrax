@@ -10,7 +10,8 @@ from numbers import Integral
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -74,7 +75,7 @@ class SpheroidalAngularPlan(StrictModule, NonTrainableState):
         isolation_tolerance: float = 1.0e-8,
         minimum_target_overlap: float = 1.0e-6,
         maximum_condition: float = 1.0e10,
-    ):
+    ) -> None:
         if not isinstance(mode, SeparatedMode):
             raise TypeError("mode must be a SeparatedMode.")
         if isinstance(maximum_ell, bool) or not isinstance(maximum_ell, Integral):

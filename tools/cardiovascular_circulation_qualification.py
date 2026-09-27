@@ -45,12 +45,12 @@ from phydrax.solver import (
 )
 
 
-def _trajectory(compilation, states, variable_name: str):
+def _trajectory(compilation: Any, states: Any, variable_name: str) -> Any:
     index = compilation.analysis.variable_names.index(variable_name)
     return states[:, index]
 
 
-def _passive_dissipation(model: Any, compilation, states):
+def _passive_dissipation(model: Any, compilation: Any, states: Any) -> Any:
     total = jnp.zeros((states.shape[0],), dtype=states.dtype)
     for component in model.network.components:
         if isinstance(component, Resistance):
@@ -211,9 +211,13 @@ def main() -> None:
         and metrics["initialization_success"]
         and metrics["runtime_success"]
         and metrics["runtime_finite"]
+        # ty: ignore[unsupported-operator]
         and metrics["assembled_residual_norm"] < 1.0e-8
+        # ty: ignore[unsupported-operator]
         and metrics["runtime_max_residual_norm"] <= 2.0e-2
+        # ty: ignore[unsupported-operator]
         and metrics["total_volume_relative_residual"] < 1.0e-8
+        # ty: ignore[unsupported-operator]
         and metrics["minimum_passive_dissipation_kPa_mm3_per_ms"] >= -1.0e-9
         for metrics in loop_metrics.values()
     )

@@ -5,15 +5,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from .._tensor_entities import TensorEntityLayout
 from ._incompressible import PreparedMACOperators
 
 
@@ -57,7 +59,7 @@ class MACDiffuseSDFGeometryPlan(StrictModule, NonTrainableState):
         field_id: str,
         interface_width: float,
         small_cell_fraction: float = 1.0e-2,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         if not callable(signed_distance) or not callable(wall_velocity):
@@ -66,7 +68,7 @@ class MACDiffuseSDFGeometryPlan(StrictModule, NonTrainableState):
         if width <= 0.0 or not 0.0 < small < 1.0:
             raise ValueError("Cut-cell interface/small-cell policy is invalid.")
 
-        def points(layout):
+        def points(layout: TensorEntityLayout) -> Array:
             mesh = jnp.meshgrid(*layout.coordinates_by_axis, indexing="ij")
             return jnp.stack(tuple(value for value in mesh), axis=-1)
 
@@ -139,8 +141,9 @@ class MACDiffuseSDFGeometryPlan(StrictModule, NonTrainableState):
                     "Wall velocity provider must return one vector per face point."
                 )
             wall_velocity.append(velocity[..., axis])
+        # jnp.gradient returns a single Array for a scalar axis.
         gradients = tuple(
-            jnp.gradient(phi, axis=axis)
+            cast(Array, jnp.gradient(phi, axis=axis))
             for axis in range(len(self.operators.discretization.cell_shape))
         )
         normal = jnp.stack(gradients, axis=-1)

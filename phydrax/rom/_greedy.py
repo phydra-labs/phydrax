@@ -10,7 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._bounds import Bounds
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -25,7 +27,7 @@ class EstimatorGreedyPlan(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, maximum_rank: int, /, *, tolerance: float):
+    def __init__(self, maximum_rank: int, /, *, tolerance: float) -> None:
         rank = int(maximum_rank)
         tolerance_ = float(tolerance)
         if rank <= 0 or not np.isfinite(tolerance_) or tolerance_ < 0.0:
@@ -162,7 +164,7 @@ class SuccessiveConstraintArtifact(StrictModule, NonTrainableState):
         *,
         family_id: str,
         support_id: str,
-    ):
+    ) -> None:
         lower = jnp.asarray(component_lower)
         upper = jnp.asarray(component_upper)
         samples = jnp.asarray(sample_coefficients)
@@ -234,7 +236,7 @@ class PrimalDualOutputBound(StrictModule, NonTrainableState):
         *,
         output_id: str,
         evidence_ids: Sequence[str],
-    ):
+    ) -> None:
         output = jnp.asarray(primal_output)
         correction = jnp.asarray(primal_residual_on_dual)
         primal = jnp.asarray(primal_residual_norm)

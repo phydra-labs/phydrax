@@ -2,28 +2,33 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def test_hamiltonian_vector_field_and_trajectory_residual():
+def test_hamiltonian_vector_field_and_trajectory_residual() -> None:
+    # ty: ignore[invalid-argument-type]
     q_space = phx.domain.HyperRectangle([-2.0], [2.0], label="q")
+    # ty: ignore[invalid-argument-type]
     p_space = phx.domain.HyperRectangle([-2.0], [2.0], label="p")
     phase = phx.domain.ProductDomain(q_space, p_space)
     time = phx.domain.TimeInterval(0.0, 2.0)
 
     @phase.Function("q", "p")
-    def hamiltonian(q, p):
+    def hamiltonian(q: Any, p: Any) -> Any:
         return 0.5 * jnp.dot(p, p) + 0.5 * jnp.dot(q, q)
 
     @time.Function("t")
-    def q(t):
+    def q(t: Any) -> Any:
         return jnp.asarray([jnp.cos(t)])
 
     @time.Function("t")
-    def p(t):
+    def p(t: Any) -> Any:
         return jnp.asarray([-jnp.sin(t)])
 
     vector_field = phx.operators.canonical_hamiltonian_vector_field(hamiltonian)
@@ -37,25 +42,27 @@ def test_hamiltonian_vector_field_and_trajectory_residual():
     assert jnp.allclose(residual.func(0.73), jnp.zeros((2,)), atol=1e-10)
 
 
-def test_canonical_poisson_brackets():
+def test_canonical_poisson_brackets() -> None:
+    # ty: ignore[invalid-argument-type]
     q_space = phx.domain.HyperRectangle([-1.0, -1.0], [1.0, 1.0], label="q")
+    # ty: ignore[invalid-argument-type]
     p_space = phx.domain.HyperRectangle([-1.0, -1.0], [1.0, 1.0], label="p")
     phase = phx.domain.ProductDomain(q_space, p_space)
 
     @phase.Function("q")
-    def q0(q):
+    def q0(q: Any) -> Any:
         return q[0]
 
     @phase.Function("q")
-    def q1(q):
+    def q1(q: Any) -> Any:
         return q[1]
 
     @phase.Function("p")
-    def p0(p):
+    def p0(p: Any) -> Any:
         return p[0]
 
     @phase.Function("p")
-    def p1(p):
+    def p1(p: Any) -> Any:
         return p[1]
 
     point_q = jnp.asarray([0.2, -0.4])
@@ -74,13 +81,15 @@ def test_canonical_poisson_brackets():
     )
 
 
-def test_hamiltonian_self_bracket_is_zero():
+def test_hamiltonian_self_bracket_is_zero() -> None:
+    # ty: ignore[invalid-argument-type]
     q_space = phx.domain.HyperRectangle([-1.0], [1.0], label="q")
+    # ty: ignore[invalid-argument-type]
     p_space = phx.domain.HyperRectangle([-1.0], [1.0], label="p")
     phase = phx.domain.ProductDomain(q_space, p_space)
 
     @phase.Function("q", "p")
-    def hamiltonian(q, p):
+    def hamiltonian(q: Any, p: Any) -> Any:
         return jnp.exp(q[0]) + p[0] ** 4
 
     bracket = phx.operators.canonical_poisson_bracket(hamiltonian, hamiltonian)
@@ -91,19 +100,21 @@ def test_hamiltonian_self_bracket_is_zero():
     )
 
 
-def test_hamilton_jacobi_free_particle_solution():
+def test_hamilton_jacobi_free_particle_solution() -> None:
+    # ty: ignore[invalid-argument-type]
     x_space = phx.domain.HyperRectangle([-1.0], [1.0], label="x")
+    # ty: ignore[invalid-argument-type]
     p_space = phx.domain.HyperRectangle([-2.0], [2.0], label="p")
     time = phx.domain.TimeInterval(0.5, 2.0)
     spacetime = phx.domain.ProductDomain(x_space, time)
     extended_phase = phx.domain.ProductDomain(x_space, p_space, time)
 
     @spacetime.Function("x", "t")
-    def action(x, t):
+    def action(x: Any, t: Any) -> Any:
         return 0.5 * x[0] ** 2 / t
 
     @extended_phase.Function("p")
-    def hamiltonian(p):
+    def hamiltonian(p: Any) -> Any:
         return 0.5 * p[0] ** 2
 
     residual = phx.operators.hamilton_jacobi_residual(action, hamiltonian)
@@ -114,13 +125,15 @@ def test_hamilton_jacobi_free_particle_solution():
     )
 
 
-def test_hamiltonian_operator_rejects_mismatched_canonical_dimensions():
+def test_hamiltonian_operator_rejects_mismatched_canonical_dimensions() -> None:
+    # ty: ignore[invalid-argument-type]
     q_space = phx.domain.HyperRectangle([-1.0], [1.0], label="q")
+    # ty: ignore[invalid-argument-type]
     p_space = phx.domain.HyperRectangle([-1.0, -1.0], [1.0, 1.0], label="p")
     phase = phx.domain.ProductDomain(q_space, p_space)
 
     @phase.Function("q", "p")
-    def hamiltonian(q, p):
+    def hamiltonian(q: Any, p: Any) -> Any:
         return jnp.sum(q) + jnp.sum(p)
 
     with pytest.raises(ValueError, match="phase-space dimensions must match"):

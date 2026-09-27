@@ -10,7 +10,8 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -44,7 +45,7 @@ class CallableReducedPotential(AbstractReducedPotential):
         event_shape: tuple[int, ...],
         potential_id: str,
         /,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         shape = tuple(event_shape)
@@ -80,7 +81,7 @@ class TargetedMapPlan(StrictModule):
         /,
         *,
         architecture_id: str,
-    ):
+    ) -> None:
         if not isinstance(bijector, AbstractBijector):
             raise TypeError("bijector must implement AbstractBijector.")
         shape = tuple(event_shape)
@@ -148,7 +149,7 @@ class TargetedFreeEnergyProblem(StrictModule, NonTrainableState):
         target: AbstractReducedPotential,
         mapping: TargetedMapPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, AbstractReducedPotential) or not isinstance(
             target, AbstractReducedPotential
         ):
@@ -188,7 +189,9 @@ class TargetedWorkEvaluation(StrictModule):
     problem_id: str = eqx.field(static=True)
 
 
-def _evaluate_forward(problem: TargetedFreeEnergyProblem, value: Array, /):
+def _evaluate_forward(
+    problem: TargetedFreeEnergyProblem, value: Array, /
+) -> tuple[Array, Array, Array, Array, Array]:
     mapped, logdet = problem.mapping.forward(value)
     source = problem.source.evaluate(value)
     target = problem.target.evaluate(mapped)
@@ -205,7 +208,9 @@ def _evaluate_forward(problem: TargetedFreeEnergyProblem, value: Array, /):
     return mapped, work, logdet, residual, valid
 
 
-def _evaluate_reverse(problem: TargetedFreeEnergyProblem, value: Array, /):
+def _evaluate_reverse(
+    problem: TargetedFreeEnergyProblem, value: Array, /
+) -> tuple[Array, Array, Array, Array, Array]:
     mapped, logdet = problem.mapping.inverse(value)
     target = problem.target.evaluate(value)
     source = problem.source.evaluate(mapped)

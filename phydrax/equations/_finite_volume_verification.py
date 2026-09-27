@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -41,7 +42,7 @@ class FiniteVolumeVerificationCase(StrictModule):
         /,
         *,
         exact_state: VerificationField | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         final = float(final_time)
         if not name_ or not isinstance(system, AbstractConservationSystem):

@@ -9,7 +9,8 @@ from enum import StrEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._physical import SpatialCoordinateContract
@@ -91,7 +92,7 @@ class ProtectedFeature(StrictModule, NonTrainableState):
         *,
         maximum_deviation: float = 0.0,
         hard: bool = True,
-    ):
+    ) -> None:
         if not isinstance(scope, MeshingScope):
             raise TypeError("scope must be MeshingScope.")
         if not isinstance(feature_kind, FeatureKind):
@@ -128,7 +129,7 @@ class RegionSeed(StrictModule, NonTrainableState):
         material_id: str,
         role: _organization.RegionRole,
         /,
-    ):
+    ) -> None:
         coordinates = np.asarray(point, dtype=np.float64)
         region = str(region_name).strip()
         material = str(material_id).strip()
@@ -162,7 +163,7 @@ class HoleSeed(StrictModule, NonTrainableState):
     scope: MeshingScope
     seed_id: str = eqx.field(static=True)
 
-    def __init__(self, point: ArrayLike, scope: MeshingScope, /):
+    def __init__(self, point: ArrayLike, scope: MeshingScope, /) -> None:
         coordinates = np.asarray(point, dtype=np.float64)
         if (
             coordinates.ndim != 1
@@ -200,7 +201,7 @@ class RegionControl(StrictModule, NonTrainableState):
         /,
         *,
         meshing_enabled: bool = True,
-    ):
+    ) -> None:
         if not isinstance(scope, MeshingScope):
             raise TypeError("scope must be MeshingScope.")
         region = str(region_name).strip()
@@ -243,7 +244,7 @@ class PatchControl(StrictModule, NonTrainableState):
         /,
         *,
         required: bool = True,
-    ):
+    ) -> None:
         value = str(name).strip()
         if not value:
             raise ValueError("Patch control name must be non-empty.")
@@ -279,7 +280,7 @@ class LayerSchedule(StrictModule, NonTrainableState):
     thicknesses: tuple[float, ...] = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self, thicknesses: ArrayLike, /):
+    def __init__(self, thicknesses: ArrayLike, /) -> None:
         values = np.asarray(thicknesses)
         if values.ndim != 1 or values.size == 0:
             raise ValueError("thicknesses must be one non-empty vector.")
@@ -339,6 +340,7 @@ class LayerSchedule(StrictModule, NonTrainableState):
             raise ValueError("first_layer_thickness must be positive and finite.")
         if not np.isfinite(growth) or growth <= 0.0:
             raise ValueError("growth_rate must be positive and finite.")
+        # ty: ignore[invalid-argument-type]
         return cls(tuple(first * growth**index for index in range(count)))
 
     @property
@@ -452,7 +454,7 @@ class BoundaryLayerControl(StrictModule, NonTrainableState):
         maximum_corner_stretch: float = 2.0,
         smoothing_iterations: int = 8,
         core_maximum_size: float | None = None,
-    ):
+    ) -> None:
         scopes = tuple(
             scope for scope in (wall_scope, volume_scope, cap_scope) if scope is not None
         )
@@ -567,7 +569,7 @@ class PeriodicConstraint(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-10,
         conforming_required: bool = True,
-    ):
+    ) -> None:
         if not isinstance(source_scope, MeshingScope) or not isinstance(
             target_scope, MeshingScope
         ):
@@ -636,7 +638,7 @@ class BackgroundMetricControl(StrictModule, NonTrainableState):
         *,
         mode: BackgroundMetricMode = BackgroundMetricMode.ANISOTROPIC,
         maximum_metric_edge_length: float | None = None,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be CellMesh.")
         if not isinstance(metric, MeshMetricField):
@@ -727,7 +729,7 @@ class SurfaceReconstructionControl(StrictModule, NonTrainableState):
         *,
         curve_angle: float = np.pi,
         force_parametrizable_patches: bool = True,
-    ):
+    ) -> None:
         feature = float(feature_angle)
         curve = float(curve_angle)
         deviation = float(maximum_deviation)

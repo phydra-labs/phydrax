@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -24,12 +26,12 @@ from phydrax.linalg import (
 
 
 @pytest.fixture(autouse=True)
-def _double_precision():
+def _double_precision() -> Any:
     with jax.enable_x64():
         yield
 
 
-def _dense(diagonal, lower, upper, parents):
+def _dense(diagonal: Any, lower: Any, upper: Any, parents: Any) -> Any:
     matrix = np.diag(np.asarray(diagonal))
     for child, parent in enumerate(parents):
         if parent >= 0:
@@ -38,7 +40,7 @@ def _dense(diagonal, lower, upper, parents):
     return matrix
 
 
-def _branched(scheme, mechanisms=None):
+def _branched(scheme: Any, mechanisms: Any = None) -> Any:
     # Deliberately non-topological numbering; root and junction can both clamp.
     morphology = ep.CellMorphologyPlan(
         "tree-test",
@@ -55,7 +57,7 @@ def _branched(scheme, mechanisms=None):
     )
 
 
-def test_nonsymmetric_tree_block_solve_and_implicit_actions():
+def test_nonsymmetric_tree_block_solve_and_implicit_actions() -> None:
     parents = (2, 2, -1, 0, 0)
     topology = TreeTopology(parents)
     diagonal = jnp.asarray([4.0, 3.0, 6.0, 2.0, 2.5])
@@ -65,7 +67,7 @@ def test_nonsymmetric_tree_block_solve_and_implicit_actions():
     weights = jnp.asarray([[0.1, 0.4], [0.3, -0.2], [-0.4, 0.7], [0.8, 0.2], [0.2, -0.5]])
     policy = LinearSolvePolicy(StructuredDirect())
 
-    def solution(d, lo, up, b):
+    def solution(d: Any, lo: Any, up: Any, b: Any) -> Any:
         return solve(
             LinearSystem(TreeLinearOperator(d, lo, up, topology)), b, policy=policy
         ).value
@@ -88,7 +90,7 @@ def test_nonsymmetric_tree_block_solve_and_implicit_actions():
         atol=1e-12,
     )
 
-    def objective(d, lo, up, b):
+    def objective(d: Any, lo: Any, up: Any, b: Any) -> Any:
         return jnp.sum(weights * solution(d, lo, up, b))
 
     primals = (diagonal, lower, upper, right)
@@ -121,7 +123,9 @@ def test_nonsymmetric_tree_block_solve_and_implicit_actions():
 @pytest.mark.parametrize(
     "mask", [(True, False, False, True), (False, False, True, False)]
 )
-def test_branched_theta_clamps_preserve_physical_currents(scheme, theta, mask):
+def test_branched_theta_clamps_preserve_physical_currents(
+    scheme: Any, theta: Any, mask: Any
+) -> None:
     runtime = _branched(scheme)
     state = ep.initialize_cable_state(runtime, jnp.asarray([-64.0, -63.0, -65.0, -62.0]))
     inputs = ep.CableStepInputs(
@@ -174,7 +178,7 @@ def test_branched_theta_clamps_preserve_physical_currents(scheme, theta, mask):
     np.testing.assert_allclose(result.state.time_ms, elapsed)
 
 
-def test_dynamic_elapsed_and_clamp_target_derivatives_include_gates_and_current():
+def test_dynamic_elapsed_and_clamp_target_derivatives_include_gates_and_current() -> None:
     runtime = _branched(
         "crank-nicolson", (ep.PassiveLeak(0.1, -65.0), ep.HodgkinHuxleyNaK())
     )
@@ -184,7 +188,7 @@ def test_dynamic_elapsed_and_clamp_target_derivatives_include_gates_and_current(
     )
     neutral = ep.zero_cable_inputs(runtime)
 
-    def objective(parameters):
+    def objective(parameters: Any) -> Any:
         inputs = eqx.tree_at(
             lambda value: (
                 value.injected_current_nA,
@@ -227,8 +231,8 @@ def test_dynamic_elapsed_and_clamp_target_derivatives_include_gates_and_current(
     ],
 )
 def test_invalid_leaf_or_root_pivot_fails_closed_even_for_zero_rhs(
-    diagonal, lower, upper, parents
-):
+    diagonal: Any, lower: Any, upper: Any, parents: Any
+) -> None:
     operator = TreeLinearOperator(diagonal, lower, upper, TreeTopology(parents))
     result = solve(
         LinearSystem(operator),
@@ -244,10 +248,18 @@ class _SixGateCurrent(eqx.Module):
     gate_count: int = eqx.field(static=True, default=6)
     nonlinear: bool = eqx.field(static=True, default=False)
 
-    def initial_gates(self, voltage_mV, /):
+    def initial_gates(self, voltage_mV: Any, /) -> Any:
         return jnp.ones(voltage_mV.shape + (self.gate_count,))
 
-    def affine_current(self, voltage_mV, gates, area, intracellular, extracellular, /):
+    def affine_current(
+        self,
+        voltage_mV: Any,
+        gates: Any,
+        area: Any,
+        intracellular: Any,
+        extracellular: Any,
+        /,
+    ) -> Any:
         del intracellular, extracellular
         conductance = 1e-5 * area * jnp.mean(gates, axis=-1)
         return (
@@ -257,14 +269,14 @@ class _SixGateCurrent(eqx.Module):
             jnp.zeros_like(voltage_mV, dtype=jnp.int32),
         )
 
-    def update_gates(self, voltage_mV, gates, dt_ms, /):
+    def update_gates(self, voltage_mV: Any, gates: Any, dt_ms: Any, /) -> Any:
         del voltage_mV
         return ep.exact_affine_gate_update(
             gates, jnp.ones_like(gates), jnp.arange(1.0, self.gate_count + 1), dt_ms
         )
 
 
-def test_actual_gate_counts_dynamic_update_and_atomic_failure():
+def test_actual_gate_counts_dynamic_update_and_atomic_failure() -> None:
     runtime = _branched("backward-euler", (ep.PassiveLeak(0.1, -65.0), _SixGateCurrent()))
     state = ep.initialize_cable_state(runtime, jnp.full((4,), -65.0))
     state = eqx.tree_at(
@@ -289,7 +301,7 @@ def test_actual_gate_counts_dynamic_update_and_atomic_failure():
             np.testing.assert_array_equal(retained, prior)
 
 
-def test_singular_cable_retains_all_prior_state():
+def test_singular_cable_retains_all_prior_state() -> None:
     morphology = ep.CellMorphologyPlan(
         "singular", (ep.CompartmentSpec("soma", None, 10.0, 10.0),)
     ).prepare()

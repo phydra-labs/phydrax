@@ -11,7 +11,8 @@ from math import prod
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 from phydrax.linalg import inverse
@@ -39,7 +40,7 @@ class PFormLatticePlan(StrictModule):
         /,
         *,
         maximum_field_elements: int = 10_000_000,
-    ):
+    ) -> None:
         shape = tuple(lattice_shape)
         degree_ = int(degree)
         maximum = int(maximum_field_elements)
@@ -99,7 +100,7 @@ class ComplexifiedPFormField(StrictModule):
         /,
         *,
         orientation: str = "forward",
-    ):
+    ) -> None:
         if not isinstance(plan, PFormLatticePlan):
             raise TypeError("plan must be PFormLatticePlan.")
         if orientation not in ("forward", "reverse"):

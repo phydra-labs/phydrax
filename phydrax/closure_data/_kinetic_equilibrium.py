@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .. import ein
 from .._fingerprint import canonical_fingerprint
@@ -76,7 +77,7 @@ class EnergyEquilibriumTrainingPair(StrictModule, NonTrainableState):
         quadrature_id: str,
         material_id: str,
         oracle_plan_id: str,
-    ):
+    ) -> None:
         if not isinstance(conserved, ClosureSample):
             raise TypeError("conserved must be a ClosureSample.")
         if not isinstance(oracle_dual, ClosureSample):
@@ -147,7 +148,7 @@ class PreparedEnergyEquilibriumDataset(StrictModule, NonTrainableState):
         partition: LeakageSafePartition,
         normalizer: TrainOnlyNormalizer,
         /,
-    ):
+    ) -> None:
         values = tuple(pairs)
         if not values or any(
             not isinstance(value, EnergyEquilibriumTrainingPair) for value in values
@@ -336,7 +337,7 @@ class EnergyEquilibriumSupportEnvelope(StrictModule, NonTrainableState):
         quadrature_id: str,
         equilibrium_plan_id: str,
         training_preparation_id: str,
-    ):
+    ) -> None:
         bounds = tuple(
             tuple(float(endpoint) for endpoint in value)
             for value in (
@@ -380,10 +381,10 @@ class EnergyEquilibriumSupportEnvelope(StrictModule, NonTrainableState):
         )
         if any(not value for value in identifiers):
             raise ValueError("Energy-equilibrium support identities must be non-empty.")
-        self.rho_bounds = bounds[0]
-        self.u_x_bounds = bounds[1]
-        self.u_y_bounds = bounds[2]
-        self.temperature_bounds = bounds[3]
+        self.rho_bounds = (bounds[0][0], bounds[0][1])
+        self.u_x_bounds = (bounds[1][0], bounds[1][1])
+        self.u_y_bounds = (bounds[2][0], bounds[2][1])
+        self.temperature_bounds = (bounds[3][0], bounds[3][1])
         self.maximum_mach = mach
         self.minimum_hull_margin = hull
         self.minimum_particle_equilibrium_margin = particle
@@ -484,7 +485,7 @@ class LearnedEnergyEquilibriumBindingPlan(StrictModule, NonTrainableState):
         semantic_id: str,
         training_preparation_id: str,
         parent_artifact_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(equilibrium_plan, PositiveEnergyEquilibriumPlan):
             raise TypeError("equilibrium_plan must be a PositiveEnergyEquilibriumPlan.")
         if not isinstance(schema, FlowStateSchema):
@@ -856,7 +857,7 @@ class PreparedLearnedEnergyEquilibriumBinding(StrictModule, NonTrainableState):
         numeric_revision: NumericRevision,
         plan: LearnedEnergyEquilibriumBindingPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(model, FrozenModel):
             raise TypeError("model must be a FrozenModel.")
         if not isinstance(numeric_revision, NumericRevision):

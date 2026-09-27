@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -51,6 +52,9 @@ _MAHALANOBIS_CONTRACT = prediction_fit_contract(
     route=DerivativeRoute.DIRECT,
     nondifferentiable_outputs=("predict",),
 )
+
+# location, precision, rank, condition, update size
+_RobustCovarianceState: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 def _regularize_covariance(
@@ -112,7 +116,7 @@ class CovarianceOutlierModel(AbstractFittedModel):
         log_determinant: ArrayLike,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         location_ = jnp.asarray(location)
         self.location = location_
         self.precision = jnp.asarray(precision)
@@ -167,7 +171,7 @@ class CovarianceOutlierRecipe(AbstractRecipe):
         contamination: float = 0.1,
         shrinkage: float = 0.0,
         ridge: float = 1e-6,
-    ):
+    ) -> None:
         if not 0.0 < float(contamination) < 0.5:
             raise ValueError("contamination must lie in (0, 0.5).")
         if not 0.0 <= float(shrinkage) <= 1.0 or float(ridge) <= 0.0:
@@ -282,7 +286,7 @@ class EllipticEnvelopeModel(AbstractFittedModel):
         threshold: ArrayLike,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         location_ = jnp.asarray(location)
         self.location = location_
         self.precision = jnp.asarray(precision)
@@ -337,7 +341,7 @@ def _robust_covariance_one(
         covariance, shrinkage=shrinkage, ridge=ridge
     )
 
-    def step(_iteration, state):
+    def step(_iteration: Array, state: _RobustCovarianceState) -> _RobustCovarianceState:
         current_location, current_precision, _rank, _condition, _delta = state
         scores = _mahalanobis_one(x, current_location, current_precision)
         robust_weight = 1.0 / (1.0 + scores / (tuning * tuning))
@@ -383,7 +387,7 @@ class EllipticEnvelopeRecipe(AbstractRecipe):
         shrinkage: float = 0.05,
         ridge: float = 1e-6,
         tolerance: float = 1e-5,
-    ):
+    ) -> None:
         if not 0.0 < float(contamination) < 0.5:
             raise ValueError("contamination must lie in (0, 0.5).")
         if int(iterations) <= 0 or float(tuning) <= 0.0:

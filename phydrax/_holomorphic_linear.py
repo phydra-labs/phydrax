@@ -7,16 +7,21 @@ from __future__ import annotations
 from collections.abc import Sequence
 from itertools import product
 from operator import index
-from typing import ClassVar, Protocol, runtime_checkable
+from typing import ClassVar, Protocol, runtime_checkable, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._differentiation import AbstractConstructionCertificate
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
+
+
+if TYPE_CHECKING:
+    from ._holomorphic import HolomorphicMapCertificate
 
 
 MultiIndex = tuple[int, ...]
@@ -49,7 +54,7 @@ class HolomorphicMultiIndexSet(StrictModule, NonTrainableState):
         *,
         require_downward_closed: bool = False,
         maximum_count: int = 10_000,
-    ):
+    ) -> None:
         dimension = int(complex_dimension)
         if isinstance(maximum_count, bool):
             raise TypeError("maximum_count must be an integer.")
@@ -155,7 +160,7 @@ class HolomorphicMultiJet(StrictModule):
         derivatives: Sequence[ArrayLike],
         index_set: HolomorphicMultiIndexSet,
         /,
-    ):
+    ) -> None:
         if not isinstance(index_set, HolomorphicMultiIndexSet):
             raise TypeError("index_set must be HolomorphicMultiIndexSet.")
         value_ = jnp.asarray(value)
@@ -212,7 +217,7 @@ class HolomorphicLinearFrameCertificate(AbstractConstructionCertificate):
         basis_construction: str,
         construction_dependencies: Sequence[str] = (),
         coefficient_mode: str = "real-cartesian-linear-frame",
-    ):
+    ) -> None:
         input_size = int(complex_input_size)
         output_size = int(complex_output_size)
         coefficient_count = int(real_coefficient_count)
@@ -270,7 +275,7 @@ class HolomorphicLinearFrame(Protocol):
 class MultivariableHolomorphicPotentialProvider(Protocol):
     def __call__(self, coordinates: ArrayLike, /) -> Array: ...
 
-    def holomorphic_certificate(self): ...
+    def holomorphic_certificate(self) -> HolomorphicMapCertificate: ...
 
     def multi_jet(
         self,

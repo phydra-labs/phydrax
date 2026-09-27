@@ -6,11 +6,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ...._doc import DOC_KEY0
 from ...._fingerprint import canonical_fingerprint
@@ -28,6 +28,7 @@ from ....nn.operator.training._risk import (
     MechanicsCaseReductionResult,
 )
 from ....nn.operator.training._trained_operator import TrainedOperator
+from ....typing import parse
 from ._cases import MechanicsCaseBuilder, MechanicsOperatorCase
 from ._parameters import (
     MechanicsParameterDistribution,
@@ -36,7 +37,7 @@ from ._parameters import (
 )
 
 
-MechanicsSupportStatus = Literal["supported", "out_of_support", "invalid_case"]
+MechanicsSupportStatus: TypeAlias = Literal["supported", "out_of_support", "invalid_case"]
 
 
 @dataclass(frozen=True)
@@ -50,9 +51,10 @@ class MechanicsSupportEvidence:
     realization_fingerprint: str
     geometry_fingerprint: str
 
-    def __post_init__(self):
-        if self.status not in ("supported", "out_of_support", "invalid_case"):
-            raise ValueError("Unknown mechanics support status.")
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "status", parse(self.status, MechanicsSupportStatus, "status")
+        )
         if not self.reason or not self.case_id or not self.parameter_spec_fingerprint:
             raise ValueError("Mechanics support evidence identities must be non-empty.")
 
@@ -82,7 +84,7 @@ class MechanicsQualificationMetric(StrictModule, NonTrainableState):
         unit: str,
         metric_id: str,
         expected_measure_id: str | None = None,
-    ):
+    ) -> None:
         resolved_name = str(name)
         resolved_query = str(query_name)
         resolved_unit = str(unit)
@@ -185,7 +187,7 @@ class MechanicsOperatorQualification(StrictModule, NonTrainableState):
         required_metadata: Mapping[str, str],
         qualification_id: str,
         support_spec: MechanicsParameterSpec | None = None,
-    ):
+    ) -> None:
         if not isinstance(training_distribution, MechanicsParameterDistribution):
             raise TypeError(
                 "training_distribution must be a MechanicsParameterDistribution."

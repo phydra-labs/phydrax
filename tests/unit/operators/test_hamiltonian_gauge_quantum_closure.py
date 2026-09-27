@@ -26,7 +26,7 @@ from phydrax.operators.quantum._gauge_link_hilbert import (
 )
 
 
-def test_canonical_car_and_mode_permutation_signs():
+def test_canonical_car_and_mode_permutation_signs() -> None:
     order = FermionModeOrder(("a", "b", "c"))
     basis = FermionicFockBasis(order)
     annihilation = tuple(
@@ -51,7 +51,7 @@ def test_canonical_car_and_mode_permutation_signs():
     assert jnp.allclose(jnp.conj(permutation.T) @ permutation, identity)
 
 
-def test_car_polynomial_obeys_declared_operator_order():
+def test_car_polynomial_obeys_declared_operator_order() -> None:
     order = FermionModeOrder(("left", "right"))
     basis = FermionicFockBasis(order)
     hopping = CARMonomial(order, (("left", "create"), ("right", "annihilate")))
@@ -63,7 +63,7 @@ def test_car_polynomial_obeys_declared_operator_order():
     assert jnp.allclose(polynomial.dense_matrix(), expected)
 
 
-def test_finite_and_truncated_link_algebras_have_explicit_cutoff_defects():
+def test_finite_and_truncated_link_algebras_have_explicit_cutoff_defects() -> None:
     z3 = cyclic_group_link_hilbert(3)
     assert z3.evidence.valid
     assert jnp.allclose(
@@ -93,7 +93,7 @@ def test_finite_and_truncated_link_algebras_have_explicit_cutoff_defects():
     assert su2.cutoff_evidence(doublet).boundary_probability == 1.0
 
 
-def test_exact_and_sparse_gauss_sectors_have_the_same_dimension():
+def test_exact_and_sparse_gauss_sectors_have_the_same_dimension() -> None:
     u1 = TruncatedU1LinkHilbertSpace(1)
     electric = u1.electric_field[None]
     network = GaussConstraintNetwork(jnp.asarray([[1], [-1]]), (electric,), (electric,))

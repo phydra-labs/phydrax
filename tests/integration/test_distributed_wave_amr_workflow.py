@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -27,7 +29,7 @@ from phydrax.solver._distributed_wave_amr import (
 )
 
 
-def _execution_group(devices):
+def _execution_group(devices: Any) -> Any:
     values = tuple(devices)
     return ExecutionGroup(
         ExecutionGroupSpec(
@@ -40,7 +42,7 @@ def _execution_group(devices):
     )
 
 
-def _problem(*, refinement_ratio: int = 2, coarsen: bool = False):
+def _problem(*, refinement_ratio: int = 2, coarsen: bool = False) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(16, periodic=True),),
         axis_names=("x",),
@@ -118,7 +120,7 @@ def _problem(*, refinement_ratio: int = 2, coarsen: bool = False):
     return hierarchy, prepared, prepared.initialize(tuple(values), 1.0)
 
 
-def _repository(tmp_path):
+def _repository(tmp_path: Any) -> Any:
     profile = HPCFilesystemProfile(
         "posix.distributed-wave-amr",
         "local-posix",
@@ -140,9 +142,9 @@ def _repository(tmp_path):
 
 @pytest.mark.skipif(len(jax.devices()) < 2, reason="requires at least two JAX devices")
 def test_two_part_wave_amr_step_checkpoint_and_changed_partition_restart(
-    tmp_path,
-    monkeypatch,
-):
+    tmp_path: Any,
+    monkeypatch: Any,
+) -> None:
     hierarchy, prepared, state = _problem()
     group = _execution_group(jax.devices()[:2])
     partition = phx.discretization.BlockAMRPartitionPlan(hierarchy, 2)
@@ -298,7 +300,7 @@ def test_two_part_wave_amr_step_checkpoint_and_changed_partition_restart(
             atol=2.0e-13,
         )
 
-    def forbidden_transition_routes(*args, **kwargs):
+    def forbidden_transition_routes(*args: Any, **kwargs: Any) -> None:
         del args, kwargs
         raise AssertionError("topology routes constructed before resource preflight")
 
@@ -383,8 +385,8 @@ def test_two_part_wave_amr_step_checkpoint_and_changed_partition_restart(
 
 @pytest.mark.skipif(len(jax.devices()) < 2, reason="requires at least two JAX devices")
 def test_high_ratio_topology_preflight_rejects_before_padded_route_allocation(
-    monkeypatch,
-):
+    monkeypatch: Any,
+) -> None:
     hierarchy, prepared, state = _problem(refinement_ratio=4, coarsen=True)
     group = _execution_group(jax.devices()[:2])
     partition = phx.discretization.BlockAMRPartitionPlan(hierarchy, 2)
@@ -457,7 +459,7 @@ def test_high_ratio_topology_preflight_rejects_before_padded_route_allocation(
         state.scale_factor,
     )
 
-    def forbidden_owner(*args, **kwargs):
+    def forbidden_owner(*args: Any, **kwargs: Any) -> None:
         del args, kwargs
         raise AssertionError("padded topology packets allocated before preflight")
 
@@ -489,8 +491,8 @@ def test_high_ratio_topology_preflight_rejects_before_padded_route_allocation(
     reason="requires a real multi-process JAX runtime",
 )
 def test_multiprocess_checkpoint_local_publications_form_exact_global_inventory(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     hierarchy, prepared, state = _problem()
     devices_by_process = {}
     for device in sorted(

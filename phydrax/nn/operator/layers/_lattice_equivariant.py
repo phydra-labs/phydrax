@@ -15,7 +15,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
@@ -26,6 +27,8 @@ from phydrax.nn.operator.representations import (
     FiniteOrthogonalGroup,
     TensorFieldLayout,
 )
+
+from ....typing import PRNGKey
 
 
 def _kernel_shape(value: int | Sequence[int], dimension: int, /) -> tuple[int, ...]:
@@ -119,7 +122,7 @@ class InvariantFilterBasis(StrictModule, NonTrainableState):
         rank_tolerance: float = 1e-10,
         equivariance_tolerance: float = 1e-10,
         max_construction_bytes: int = 256 * 1024**2,
-    ):
+    ) -> None:
         if not isinstance(group, FiniteOrthogonalGroup):
             raise TypeError("group must be a FiniteOrthogonalGroup.")
         if not isinstance(input_layout, TensorFieldLayout) or not isinstance(
@@ -274,8 +277,8 @@ class LatticeEquivariantConvND(StrictModule):
         use_bias: bool = True,
         epsilon: float = 1e-12,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         if not isinstance(invariant_basis, InvariantFilterBasis):
             raise TypeError("invariant_basis must be an InvariantFilterBasis.")
         resolved_dtype = jnp.dtype(dtype)
@@ -424,8 +427,8 @@ class TensorPointwiseLinear(StrictModule):
         *,
         use_bias: bool = True,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         basis = InvariantFilterBasis(
             group,
             input_layout,
@@ -481,7 +484,7 @@ class TensorNormActivation(StrictModule):
         /,
         *,
         epsilon: float = 1e-12,
-    ):
+    ) -> None:
         if not isinstance(layout, TensorFieldLayout):
             raise TypeError("layout must be a TensorFieldLayout.")
         if not callable(activation):
@@ -527,7 +530,7 @@ class TensorRMSNorm(StrictModule):
         *,
         epsilon: float = 1e-6,
         dtype: Any = jnp.float32,
-    ):
+    ) -> None:
         if not isinstance(layout, TensorFieldLayout):
             raise TypeError("layout must be a TensorFieldLayout.")
         epsilon_value = float(epsilon)

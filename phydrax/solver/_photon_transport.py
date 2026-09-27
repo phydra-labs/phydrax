@@ -6,12 +6,14 @@ from __future__ import annotations
 
 from enum import IntEnum
 from math import isfinite
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -25,6 +27,50 @@ from ..units import conversion_factor, ELECTRONVOLT
 
 
 _ELECTRON_REST_ENERGY_EV = 510998.95
+
+# Position, direction, energy, live flag, material kerma, escaped and truncated
+# energy, event/Compton/Rayleigh/virtual counts, status, and five event buffers.
+_PhotonCarry: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+# Per-history outputs in PhotonTransportPlan.simulate unpacking order.
+_PhotonHistory: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 
 class PhotonTransportStatus(IntEnum):
@@ -65,11 +111,19 @@ class PhotonTransportResult(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
 
-def _history_key(key: Array, history_id: Array, event: int, stream: int, /) -> Array:
+def _history_key(
+    key: Array, history_id: Array, event: ArrayLike, stream: int, /
+) -> Array:
     return jr.fold_in(jr.fold_in(jr.fold_in(key, history_id), event), stream)
 
 
-def _uniform(key: Array, history_id: Array, event: int, stream: int, shape=()):
+def _uniform(
+    key: Array,
+    history_id: Array,
+    event: ArrayLike,
+    stream: int,
+    shape: tuple[int, ...] = (),
+) -> Array:
     return jr.uniform(_history_key(key, history_id, event, stream), shape)
 
 
@@ -88,8 +142,14 @@ def _rotate(direction: Array, cosine: Array, azimuth: Array, /) -> Array:
 
 
 def _sample_compton(
-    key, history_id, event, energy, direction, attempts, electron_rest_energy
-):
+    key: Array,
+    history_id: Array,
+    event: ArrayLike,
+    energy: Array,
+    direction: Array,
+    attempts: int,
+    electron_rest_energy: float,
+) -> tuple[Array, Array, Array]:
     cosine = 2.0 * _uniform(key, history_id, event, 20, (attempts,)) - 1.0
     accept_draw = _uniform(key, history_id, event, 21, (attempts,))
     alpha = energy / electron_rest_energy
@@ -108,7 +168,9 @@ def _sample_compton(
     )
 
 
-def _sample_rayleigh(key, history_id, event, direction, attempts):
+def _sample_rayleigh(
+    key: Array, history_id: Array, event: ArrayLike, direction: Array, attempts: int
+) -> tuple[Array, Array]:
     cosine = 2.0 * _uniform(key, history_id, event, 30, (attempts,)) - 1.0
     accepted = _uniform(key, history_id, event, 31, (attempts,)) <= 0.5 * (
         1.0 + cosine**2
@@ -147,7 +209,7 @@ class PhotonTransportPlan(StrictModule, NonTrainableState):
         maximum_events: int,
         cutoff_energy: float,
         angular_sampling_attempts: int = 16,
-    ):
+    ) -> None:
         if not isinstance(geometry, VoxelRadiationGeometryPlan):
             raise TypeError("geometry must be VoxelRadiationGeometryPlan.")
         if not isinstance(cross_sections, RadiationCrossSectionLibrary):
@@ -189,7 +251,15 @@ class PhotonTransportPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _one(self, key, history_id, origin, direction, energy, weight):
+    def _one(
+        self,
+        key: Array,
+        history_id: Array,
+        origin: Array,
+        direction: Array,
+        energy: Array,
+        weight: Array,
+    ) -> _PhotonHistory:
         norm = jnp.linalg.norm(direction)
         initial_valid = (
             jnp.all(jnp.isfinite(origin))
@@ -227,7 +297,7 @@ class PhotonTransportPlan(StrictModule, NonTrainableState):
             jnp.zeros((self.maximum_events,), dtype=jnp.bool_),
         )
 
-        def event_step(event, carry):
+        def event_step(event: Array, carry: _PhotonCarry) -> _PhotonCarry:
             (
                 position,
                 ray,

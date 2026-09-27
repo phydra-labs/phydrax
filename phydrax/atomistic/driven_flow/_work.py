@@ -8,7 +8,8 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -24,7 +25,7 @@ class DrivenWorkLedgerPlan(StrictModule):
         *,
         absolute_tolerance: float = 1.0e-10,
         relative_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         absolute = float(absolute_tolerance)
         relative = float(relative_tolerance)
         if (

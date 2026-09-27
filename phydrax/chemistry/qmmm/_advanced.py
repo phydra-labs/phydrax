@@ -14,7 +14,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -93,7 +94,7 @@ class PolarizableEmbeddedRegionEvaluation(StrictModule, NonTrainableState):
         successful: ArrayLike,
         provider_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(embedded, EmbeddedRegionEvaluation):
             raise TypeError("embedded must be EmbeddedRegionEvaluation.")
         field = jnp.asarray(
@@ -164,7 +165,7 @@ class CallablePolarizableEmbeddedRegionProvider(
         /,
         *,
         conservative: bool = True,
-    ):
+    ) -> None:
         if not callable(evaluator) or not isinstance(units, AtomisticUnitSystem):
             raise TypeError("Polarizable provider requires callable evaluator and units.")
         declared = str(provider_id).strip()
@@ -216,8 +217,14 @@ class MutualPolarizationResult(StrictModule, NonTrainableState):
     result_id: str = eqx.field(static=True)
 
     def __init__(
-        self, qmmm, polarizable_embedding, mutual_residual, iterations, successful, /
-    ):
+        self,
+        qmmm: QMMMEvaluation,
+        polarizable_embedding: PolarizableEmbeddingState,
+        mutual_residual: ArrayLike,
+        iterations: ArrayLike,
+        successful: ArrayLike,
+        /,
+    ) -> None:
         if not isinstance(qmmm, QMMMEvaluation) or not isinstance(
             polarizable_embedding, PolarizableEmbeddingState
         ):
@@ -270,7 +277,7 @@ class MutualPolarizableQMMMSurface(AbstractPreparedPotentialEnergySurface):
         damping: float = 0.5,
         residual_tolerance: float = 1.0e-8,
         maximum_iterations: int = 100,
-    ):
+    ) -> None:
         if (
             not isinstance(region, PreparedQuantumRegion)
             or not isinstance(classical_partition, AbstractPreparedPotentialEnergySurface)
@@ -420,7 +427,7 @@ class MutualPolarizableQMMMSurface(AbstractPreparedPotentialEnergySurface):
         if converged and iteration_successful and bool(classical.successful):
             frozen_induced = jax.lax.stop_gradient(induced)
 
-            def polarization_function(mm_coordinate):
+            def polarization_function(mm_coordinate: Array) -> Array:
                 operator = self.polarization_operator.apply(
                     mm_coordinate,
                     frozen_induced,
@@ -518,7 +525,7 @@ class AdaptivePartitionedQMMMSurface(AbstractPreparedPotentialEnergySurface):
         weight_function: AdaptiveWeightFunction,
         partition_ids: Sequence[str],
         /,
-    ):
+    ) -> None:
         surfaces = tuple(partitions)
         ids = tuple(str(value).strip() for value in partition_ids)
         if (
@@ -672,7 +679,7 @@ class PeriodicMultilevelQMMMSurface(AbstractPreparedPotentialEnergySurface):
         coefficients: Sequence[float],
         state_id: str,
         /,
-    ):
+    ) -> None:
         surfaces = tuple(levels)
         coefficients_ = tuple(float(value) for value in coefficients)
         state = str(state_id).strip()

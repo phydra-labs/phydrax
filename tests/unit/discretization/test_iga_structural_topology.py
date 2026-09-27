@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -24,12 +26,12 @@ from phydrax.discretization.iga._realization import (
 from phydrax.discretization.iga._topology import PatchAtlas, SplineSpanTopology
 
 
-def _basis():
+def _basis() -> Any:
     grid = BSplineGrid.open_uniform(1, 2)
     return TensorSplineBasisSpec((grid,), axis_names=("xi",))
 
 
-def test_positive_span_topology_is_not_control_topology():
+def test_positive_span_topology_is_not_control_topology() -> None:
     basis = _basis()
     topology = SplineSpanTopology(basis, patch_id="p")
 
@@ -38,7 +40,7 @@ def test_positive_span_topology_is_not_control_topology():
     assert topology.span_id(0) == BaseSpanId("p", (0,))
 
 
-def test_direct_and_bernstein_realization_use_exact_transposes():
+def test_direct_and_bernstein_realization_use_exact_transposes() -> None:
     basis = _basis()
     direct = DirectTensorRealization(basis, SplineSpanTopology(basis))
     coefficients = jnp.arange(
@@ -89,14 +91,14 @@ def test_direct_and_bernstein_realization_use_exact_transposes():
     )
 
 
-def test_overlay_fails_closed_when_a_patch_is_not_covered():
+def test_overlay_fails_closed_when_a_patch_is_not_covered() -> None:
     basis = _basis()
     topology = SplineSpanTopology(basis, patch_id="p")
     with pytest.raises(ValueError, match="does not cover"):
         IntegrationOverlay(PatchAtlas((topology,)), ((topology.span_id(0),),))
 
 
-def test_contact_mortar_uses_atlas_participants_and_knot_common_refinement():
+def test_contact_mortar_uses_atlas_participants_and_knot_common_refinement() -> None:
     basis = _basis()
     plus = SplineSpanTopology(basis, patch_id="plus")
     minus = SplineSpanTopology(basis, patch_id="minus")

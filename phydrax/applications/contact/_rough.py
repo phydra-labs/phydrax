@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -27,7 +28,7 @@ class HomogenizedRoughContactPlan(StrictModule, NonTrainableState):
         pressure_scale: float,
         separation_scale: float,
         rms_roughness: float,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -98,7 +99,7 @@ class PeriodicRoughContactPlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 1000,
         tolerance: float = 1.0e-10,
         relaxation: float = 0.9,
-    ):
+    ) -> None:
         spectrum = np.asarray(compliance_spectrum, dtype=np.float64)
         if spectrum.ndim != 2 or np.any(~np.isfinite(spectrum)) or np.any(spectrum < 0.0):
             raise ValueError(
@@ -125,7 +126,8 @@ class PeriodicRoughContactPlan(StrictModule, NonTrainableState):
 
     @property
     def shape(self) -> tuple[int, int]:
-        return tuple(self.compliance_spectrum.shape)
+        rows, columns = self.compliance_spectrum.shape
+        return rows, columns
 
     def displacement(self, pressure: ArrayLike, /) -> Array:
         pressure_ = jnp.asarray(pressure, dtype=self.compliance_spectrum.dtype)
@@ -183,7 +185,9 @@ def solve_periodic_rough_contact(
     scale = jnp.maximum(1.0, jnp.sqrt(jnp.sum(gap0 * gap0)))
     tolerance = plan.tolerance * scale
 
-    def body(index, state):
+    def body(
+        index: Array, state: tuple[Array, Array, Array, Array]
+    ) -> tuple[Array, Array, Array, Array]:
         value, converged, first_converged, residual_norm = state
         displacement = plan.displacement(value)
         gap = gap0 + displacement

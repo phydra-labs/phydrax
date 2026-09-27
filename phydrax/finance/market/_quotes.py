@@ -11,11 +11,13 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import normalized_identifier
 from ..core import Currency, FinancialTimestamp, FXPair
 from ._lineage import DataLineage
 from ._status import MarketStatus
@@ -27,15 +29,6 @@ class QuoteTiePolicy(str, Enum):
     REJECT = "reject"
     EARLIEST_VINTAGE = "earliest_vintage"
     LATEST_VINTAGE = "latest_vintage"
-
-
-def _nonempty(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    result = value.strip()
-    if not result:
-        raise ValueError(f"{name} must be non-empty.")
-    return result
 
 
 def _optional_text(value: str, name: str, /) -> str:
@@ -77,9 +70,9 @@ class QuoteKey(StrictModule, NonTrainableState):
         venue: str = "",
         currency: Currency | None = None,
         fx_pair: FXPair | None = None,
-    ):
-        reference = _nonempty(reference_id, "reference_id")
-        field_ = _nonempty(field, "field").lower()
+    ) -> None:
+        reference = normalized_identifier(reference_id, "reference_id")
+        field_ = normalized_identifier(field, "field").lower()
         venue_ = _optional_text(venue, "venue")
         if currency is not None and not isinstance(currency, Currency):
             raise TypeError("currency must be a Currency or None.")
@@ -150,7 +143,7 @@ class QuoteObservation(StrictModule, NonTrainableState):
         timestamp: FinancialTimestamp,
         lineage: DataLineage,
         /,
-    ):
+    ) -> None:
         if not isinstance(key, QuoteKey):
             raise TypeError("key must be a QuoteKey.")
         scalar = np.asarray(value)
@@ -243,7 +236,9 @@ class FixingSeries(StrictModule, NonTrainableState):
     observations: tuple[QuoteObservation, ...]
     series_id: str = eqx.field(static=True)
 
-    def __init__(self, key: QuoteKey, observations: Sequence[QuoteObservation], /):
+    def __init__(
+        self, key: QuoteKey, observations: Sequence[QuoteObservation], /
+    ) -> None:
         if not isinstance(key, QuoteKey):
             raise TypeError("key must be a QuoteKey.")
         values = tuple(observations)

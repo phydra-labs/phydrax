@@ -10,7 +10,8 @@ from enum import StrEnum
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -42,7 +43,7 @@ class NeutrinoOscillationParameters(StrictModule, NonTrainableState):
         delta_m21_squared: float,
         delta_m31_squared: float,
         ordering: NeutrinoMassOrdering,
-    ):
+    ) -> None:
         angles = tuple(map(float, (theta12, theta13, theta23, delta_cp)))
         splittings = tuple(map(float, (delta_m21_squared, delta_m31_squared)))
         if (
@@ -76,7 +77,7 @@ class NeutrinoOscillationParameters(StrictModule, NonTrainableState):
         )
 
 
-def _pmns(parameters: NeutrinoOscillationParameters, antineutrino: bool):
+def _pmns(parameters: NeutrinoOscillationParameters, antineutrino: bool) -> Array:
     s12, c12 = jnp.sin(parameters.theta12), jnp.cos(parameters.theta12)
     s13, c13 = jnp.sin(parameters.theta13), jnp.cos(parameters.theta13)
     s23, c23 = jnp.sin(parameters.theta23), jnp.cos(parameters.theta23)
@@ -133,7 +134,7 @@ def oscillation_probabilities(
         [0.0, parameters.delta_m21_squared, parameters.delta_m31_squared]
     )
 
-    def one(energy, distance, matter_density):
+    def one(energy: Array, distance: Array, matter_density: Array) -> Array:
         vacuum_mass = mixing @ jnp.diag(masses_squared) @ jnp.conj(mixing.T)
         matter_potential = 7.56e-5 * matter_density * float(electron_fraction) * energy
         matter_sign = -1.0 if antineutrino else 1.0

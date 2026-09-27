@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -17,25 +20,25 @@ class _IdentityMechanicsOperator(phx.nn.operator.AbstractOperatorModel):
     in_size: str = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.in_size = "scalar"
         self.out_size = "scalar"
 
-    def __call_operator_batch__(self, batch, *, key=None):
+    def __call_operator_batch__(self, batch: Any, *, key: Any = None) -> Any:
         del key
         values = batch.input("source").values
         assert values is not None
         return values
 
-    def __call__(self, batch, *, key=None):
+    def __call__(self, batch: Any, *, key: Any = None) -> Any:
         return self.__call_operator_batch__(batch, key=key)
 
     @property
-    def operator_contract(self):
+    def operator_contract(self) -> Any:
         return phx.nn.operator.operator_architecture_contract("DeepONet")
 
 
-def _spec(*, upper=4.0):
+def _spec(*, upper: Any = 4.0) -> Any:
     return mop.MechanicsParameterSpec(
         (
             mop.MechanicsParameterField(
@@ -62,7 +65,14 @@ def _spec(*, upper=4.0):
     )
 
 
-def _realization(spec, length, family="base", *, weight=None, case_id=None):
+def _realization(
+    spec: Any,
+    length: Any,
+    family: Any = "base",
+    *,
+    weight: Any = None,
+    case_id: Any = None,
+) -> Any:
     values = {"length": length, "family": family}
     if family == "reinforced":
         values["reinforcement"] = 0.25
@@ -74,7 +84,7 @@ def _realization(spec, length, family="base", *, weight=None, case_id=None):
     )
 
 
-def _distribution(lengths, weights, *, distribution_id):
+def _distribution(lengths: Any, weights: Any, *, distribution_id: Any) -> Any:
     spec = _spec()
     realizations = tuple(
         _realization(
@@ -92,7 +102,7 @@ def _distribution(lengths, weights, *, distribution_id):
     )
 
 
-def _geometry(realization):
+def _geometry(realization: Any) -> Any:
     length = realization.values["length"]
     return mop.MechanicsGeometryMap(
         lambda xi, parameters: parameters.values["length"] * xi,
@@ -107,7 +117,7 @@ def _geometry(realization):
     )
 
 
-def _operator_case(realization, geometry):
+def _operator_case(realization: Any, geometry: Any) -> Any:
     reference = jnp.asarray([[0.0], [1.0]])
     coordinates = geometry.map_coordinates(reference, realization)
     weights = geometry.volume_weights(
@@ -135,7 +145,7 @@ def _operator_case(realization, geometry):
     )
 
 
-def _builder(distribution, reduction, *, split):
+def _builder(distribution: Any, reduction: Any, *, split: Any) -> Any:
     return mop.MechanicsCaseBuilder(
         distribution,
         _geometry,
@@ -151,7 +161,7 @@ def _builder(distribution, reduction, *, split):
     )
 
 
-def _adapter():
+def _adapter() -> Any:
     return mop.OperatorTrialFieldAdapter(
         ("output",),
         adapter_id="bar-displacement",
@@ -159,7 +169,7 @@ def _adapter():
     )
 
 
-def _energy_term():
+def _energy_term() -> Any:
     return mop.MechanicsCaseFunctional(
         "internal_energy",
         lambda fields, prediction, batch, case: jnp.sum(
@@ -171,7 +181,7 @@ def _energy_term():
     )
 
 
-def _problem(distribution, reduction, *, split="train"):
+def _problem(distribution: Any, reduction: Any, *, split: Any = "train") -> Any:
     return mop.ConservativeMechanicsOperatorProblem(
         _builder(distribution, reduction, split=split),
         _adapter(),
@@ -180,7 +190,7 @@ def _problem(distribution, reduction, *, split="train"):
     )
 
 
-def _prediction(problem, values):
+def _prediction(problem: Any, values: Any) -> Any:
     batch = problem.batch()
     return phx.nn.operator.OperatorPrediction.from_field(
         "output",
@@ -193,7 +203,7 @@ def _prediction(problem, values):
     )
 
 
-def _task():
+def _task() -> Any:
     return phx.nn.operator.OperatorTask(
         "mechanics-conditional-bar",
         dimension_basis=("length",),
@@ -224,7 +234,7 @@ def _task():
     )
 
 
-def _trained(problem):
+def _trained(problem: Any) -> Any:
     task = _task()
     output_port = task.field_by_name["output"].value_port()
     return phx.nn.operator.training.TrainedOperator(
@@ -240,7 +250,7 @@ def _trained(problem):
     )
 
 
-def test_parameter_law_preserves_hierarchy_correlations_and_split_identity():
+def test_parameter_law_preserves_hierarchy_correlations_and_split_identity() -> None:
     spec = _spec()
     assert spec.contains({"length": 1.0, "family": "base"})
     assert not spec.contains({"length": 1.0, "family": "base", "reinforcement": 0.2})
@@ -261,7 +271,7 @@ def test_parameter_law_preserves_hierarchy_correlations_and_split_identity():
         distribution.assert_disjoint(leaked)
 
 
-def test_case_risk_reduces_complete_cases_and_reports_batch_max_semantics():
+def test_case_risk_reduces_complete_cases_and_reports_batch_max_semantics() -> None:
     values = jnp.asarray([1.0, 4.0, 4.0])
     weights = jnp.asarray([0.5, 0.25, 0.25])
     weighted = phx.nn.operator.training.MechanicsCaseReduction("weighted_mean")
@@ -274,11 +284,12 @@ def test_case_risk_reduces_complete_cases_and_reports_batch_max_semantics():
     assert maximum.value == pytest.approx(4.0)
     assert maximum.batch_dependent
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="cannot be dropped"):
+        # ty: ignore[invalid-argument-type]
         invalid = weighted(values, probability_weights=weights, valid=(True, False, True))
         jax.block_until_ready(invalid)
 
 
-def test_geometry_and_trial_adapter_keep_physical_measure_and_domain_explicit():
+def test_geometry_and_trial_adapter_keep_physical_measure_and_domain_explicit() -> None:
     realization = _realization(_spec(), 2.0, weight=1.0, case_id="geometry")
     geometry = _geometry(realization)
     reference = jnp.asarray([[0.0], [0.5], [1.0]])
@@ -304,7 +315,7 @@ def test_geometry_and_trial_adapter_keep_physical_measure_and_domain_explicit():
         jax.block_until_ready(jacobian)
 
 
-def test_energy_loss_integrates_each_geometry_before_parameter_risk():
+def test_energy_loss_integrates_each_geometry_before_parameter_risk() -> None:
     reduction = phx.nn.operator.training.MechanicsCaseReduction("weighted_mean")
     distribution = _distribution((1.0, 2.0), (0.25, 0.75), distribution_id="train")
     problem = _problem(distribution, reduction)
@@ -325,7 +336,7 @@ def test_energy_loss_integrates_each_geometry_before_parameter_risk():
     )
 
 
-def test_residual_and_mixed_problems_retain_named_nonpotential_blocks():
+def test_residual_and_mixed_problems_retain_named_nonpotential_blocks() -> None:
     reduction = phx.nn.operator.training.MechanicsCaseReduction("weighted_mean")
     distribution = _distribution((1.0,), (1.0,), distribution_id="blocks")
     builder = _builder(distribution, reduction, split="train")
@@ -405,7 +416,7 @@ def test_residual_and_mixed_problems_retain_named_nonpotential_blocks():
     assert mixed_result.cases.formulation == "mixed"
 
 
-def test_support_qualification_and_adaptation_are_explicitly_separate():
+def test_support_qualification_and_adaptation_are_explicitly_separate() -> None:
     reduction = phx.nn.operator.training.MechanicsCaseReduction("weighted_mean")
     training = _distribution((1.0, 2.0), (0.5, 0.5), distribution_id="training")
     held_out = _distribution((1.5, 3.0), (0.5, 0.5), distribution_id="held-out")

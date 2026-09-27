@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from math import factorial
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -12,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _feature_gram(paths, depth):
+def _feature_gram(paths: Any, depth: Any) -> Any:
     features = phx.stochastic.SignatureFeatures(
         paths.shape[-1], depth, include_scalar=True
     )
@@ -20,7 +22,7 @@ def _feature_gram(paths, depth):
     return values @ values.T
 
 
-def test_one_segment_signature_kernel_has_analytic_picard_series():
+def test_one_segment_signature_kernel_has_analytic_picard_series() -> None:
     left = jnp.asarray([[0.0, 0.0], [2.0, -1.0]])
     right = jnp.asarray([[1.0, 3.0], [0.5, 5.0]])
     increment_inner_product = jnp.dot(left[1] - left[0], right[1] - right[0])
@@ -40,7 +42,9 @@ def test_one_segment_signature_kernel_has_analytic_picard_series():
     ("dtype", "tolerance"),
     ((jnp.float32, 3e-5), (jnp.float64, 2e-11)),
 )
-def test_signature_pde_matches_explicit_truncated_signature_features(dtype, tolerance):
+def test_signature_pde_matches_explicit_truncated_signature_features(
+    dtype: Any, tolerance: Any
+) -> None:
     key = jax.random.key(18)
     paths = jnp.cumsum(jax.random.normal(key, (5, 5, 2), dtype=dtype), axis=1)
 
@@ -63,7 +67,7 @@ def test_signature_pde_matches_explicit_truncated_signature_features(dtype, tole
         assert jnp.allclose(actual, actual.T, rtol=tolerance, atol=tolerance)
 
 
-def test_signature_pde_supports_rectangular_paths_and_block_sizes():
+def test_signature_pde_supports_rectangular_paths_and_block_sizes() -> None:
     left = jnp.asarray([[0.0, 0.0], [1.0, -0.5], [0.5, 1.0], [1.5, 0.5]])
     right = jnp.asarray([[1.0, 0.0], [0.5, 0.0], [0.5, 1.0], [1.0, 1.5], [2.0, 1.0]])
     left_paths = jnp.stack((left, -left, 0.5 * left))
@@ -87,7 +91,7 @@ def test_signature_pde_supports_rectangular_paths_and_block_sizes():
         assert jnp.allclose(kernel.pairwise(left, right), expected[0, 0])
 
 
-def test_signature_pde_is_positive_semidefinite_for_linear_and_rbf_lifts():
+def test_signature_pde_is_positive_semidefinite_for_linear_and_rbf_lifts() -> None:
     paths = jnp.cumsum(
         jax.random.normal(jax.random.key(93), (9, 6, 3), dtype=jnp.float64),
         axis=1,
@@ -110,7 +114,7 @@ def test_signature_pde_is_positive_semidefinite_for_linear_and_rbf_lifts():
         assert eigenvalues.min() >= -tolerance
 
 
-def test_signature_pde_is_positive_semidefinite_on_fractional_gaussian_paths():
+def test_signature_pde_is_positive_semidefinite_on_fractional_gaussian_paths() -> None:
     process = phx.stochastic.FractionalGaussianProcess(
         0.35,
         jnp.asarray([0.4, 0.7]),
@@ -134,7 +138,7 @@ def test_signature_pde_is_positive_semidefinite_on_fractional_gaussian_paths():
     assert eigenvalues.min() >= -tolerance
 
 
-def test_signature_pde_handles_degenerate_segments_and_one_knot_paths():
+def test_signature_pde_handles_degenerate_segments_and_one_knot_paths() -> None:
     path = jnp.asarray([[0.0, 0.0], [1.0, -1.0], [2.0, 0.5]])
     repeated = jnp.concatenate((path, jnp.broadcast_to(path[-1], (3, 2))), axis=0)
     constant = jnp.broadcast_to(jnp.asarray([2.0, -3.0]), (4, 2))
@@ -148,7 +152,7 @@ def test_signature_pde_handles_degenerate_segments_and_one_knot_paths():
     assert jnp.allclose(kernel.pairwise(path[:1], path[:1]), 1.0)
 
 
-def test_signature_pde_jit_and_gradients_are_finite_and_correct():
+def test_signature_pde_jit_and_gradients_are_finite_and_correct() -> None:
     left = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]])
     right = jnp.asarray([[0.0, 0.0], [-0.5, 1.0], [0.25, 1.5]])
     kernel = phx.kernels.SignaturePDEKernel(
@@ -164,7 +168,7 @@ def test_signature_pde_jit_and_gradients_are_finite_and_correct():
         - kernel.pairwise(left - epsilon * direction, right)
     ) / (2.0 * epsilon)
 
-    def scaled_value(scale):
+    def scaled_value(scale: Any) -> Any:
         scaled_kernel = phx.kernels.SignaturePDEKernel(
             phx.kernels.ScaleKernel(phx.kernels.LinearKernel(), scale),
             polynomial_order=4,
@@ -177,7 +181,7 @@ def test_signature_pde_jit_and_gradients_are_finite_and_correct():
     assert jnp.isfinite(jax.grad(scaled_value)(jnp.asarray(0.8)))
 
 
-def test_signature_pde_converges_by_exact_nonnegative_self_levels():
+def test_signature_pde_converges_by_exact_nonnegative_self_levels() -> None:
     path = jnp.cumsum(
         jax.random.normal(jax.random.key(7), (5, 2), dtype=jnp.float64) * 0.4,
         axis=0,
@@ -199,7 +203,7 @@ def test_signature_pde_converges_by_exact_nonnegative_self_levels():
     assert jnp.all(errors[1:] < errors[:-1])
 
 
-def test_signature_pde_rejects_invalid_contracts():
+def test_signature_pde_rejects_invalid_contracts() -> None:
     with pytest.raises(ValueError, match="input_ndim must be 1"):
         phx.kernels.SignaturePDEKernel(
             phx.kernels.InputTransformedKernel(

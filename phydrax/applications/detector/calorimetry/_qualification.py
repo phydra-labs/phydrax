@@ -8,7 +8,7 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -32,7 +32,7 @@ class CalorimeterQualificationPlan(StrictModule, NonTrainableState):
         maximum_occupancy_error: float,
         maximum_tail_quantile_error: float,
         upper_quantile: float = 0.99,
-    ):
+    ) -> None:
         tolerances = tuple(
             map(
                 float,

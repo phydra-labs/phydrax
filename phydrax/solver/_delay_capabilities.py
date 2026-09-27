@@ -6,19 +6,21 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import PRNGKey
 
 
 class StochasticDelayInterpolationCapabilities(StrictModule, NonTrainableState):
@@ -70,8 +72,14 @@ class _TwoHalfStepInterpolation(AbstractStochasticDelayInterpolation, NonTrainab
     __strict_abstract__ = True
 
     def accepted_step(
-        self, start_time, end_time, start_state, midpoint_state, end_state, /
-    ):
+        self,
+        start_time: Array,
+        end_time: Array,
+        start_state: Array,
+        midpoint_state: Array,
+        end_state: Array,
+        /,
+    ) -> AcceptedStochasticDelayInterpolation:
         return AcceptedStochasticDelayInterpolation(
             jnp.asarray(start_time),
             jnp.asarray(end_time),
@@ -83,7 +91,7 @@ class _TwoHalfStepInterpolation(AbstractStochasticDelayInterpolation, NonTrainab
 
 
 class ItoEulerDelayInterpolation(_TwoHalfStepInterpolation):
-    def __init__(self):
+    def __init__(self) -> None:
         self.capabilities = StochasticDelayInterpolationCapabilities(
             "ito",
             0.5,
@@ -97,7 +105,7 @@ class ItoEulerDelayInterpolation(_TwoHalfStepInterpolation):
 
 
 class StratonovichEulerHeunDelayInterpolation(_TwoHalfStepInterpolation):
-    def __init__(self):
+    def __init__(self) -> None:
         self.capabilities = StochasticDelayInterpolationCapabilities(
             "stratonovich",
             0.5,
@@ -111,7 +119,7 @@ class StratonovichEulerHeunDelayInterpolation(_TwoHalfStepInterpolation):
 
 
 class SRKMKDelayInterpolation(_TwoHalfStepInterpolation):
-    def __init__(self, *, requires_levy_area: bool = False):
+    def __init__(self, *, requires_levy_area: bool = False) -> None:
         self.capabilities = StochasticDelayInterpolationCapabilities(
             "stratonovich",
             0.5,
@@ -145,7 +153,7 @@ class AdaptiveStochasticDelayPolicy(StrictModule, NonTrainableState):
         /,
         *,
         failure: int = -1,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -206,6 +214,26 @@ class StochasticDelayControllerEvidence(StrictModule, NonTrainableState):
     policy_id: str = eqx.field(static=True)
 
 
+# fori_loop carry: time, state, step, accepted count, finished, failed, then the
+# per-attempt and per-accepted-step record buffers.
+_StepDoublingCarry: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+
+
 def adaptive_stochastic_delay_step_doubling(
     policy: AdaptiveStochasticDelayPolicy,
     interpolation: AbstractStochasticDelayInterpolation,
@@ -213,9 +241,9 @@ def adaptive_stochastic_delay_step_doubling(
     terminal_time: ArrayLike,
     initial_state: ArrayLike,
     initial_step: ArrayLike,
-    increment: Callable[[Array, Array, Key], Array],
+    increment: Callable[[Array, Array, PRNGKey], Array],
     step: Callable[[Array, Array, Array, Array, Any], Array],
-    key: Key,
+    key: PRNGKey,
     /,
     *,
     args: Any = None,
@@ -263,7 +291,7 @@ def adaptive_stochastic_delay_step_doubling(
     )
     accepted_active = jnp.zeros((m + 1,), dtype=jnp.bool_).at[0].set(True)
 
-    def body(index, carry):
+    def body(index: Array, carry: _StepDoublingCarry) -> _StepDoublingCarry:
         (
             time,
             state,
@@ -407,7 +435,7 @@ class ExponentialConvolutionDelay(StrictModule, NonTrainableState):
         /,
         *,
         reducer: Callable[[Array, Any], Array] | None = None,
-    ):
+    ) -> None:
         rates_ = jnp.asarray(rates)
         weights_ = jnp.asarray(weights)
         moments = jnp.asarray(initial_moments)
@@ -475,7 +503,7 @@ class CertifiedTruncatedFunctionalDelay(StrictModule, NonTrainableState):
         tail_bound: Callable[[Array, Any], Array],
         tolerance: float,
         /,
-    ):
+    ) -> None:
         window, tolerance_ = float(retained_window), float(tolerance)
         if not callable(functional) or not callable(tail_bound):
             raise TypeError("functional and tail_bound must be callable.")
@@ -558,7 +586,7 @@ class BacksolveDelayAdjoint(StrictModule, NonTrainableState):
 
     def __init__(
         self, maximum_backward_steps: int, checkpoints: int, /, *, failure: int = -1
-    ):
+    ) -> None:
         if any(
             not isinstance(value, int) or isinstance(value, bool) or value <= 0
             for value in (maximum_backward_steps, checkpoints)
@@ -592,14 +620,14 @@ class DelayPrimalTape(StrictModule, NonTrainableState):
         times: ArrayLike,
         states: ArrayLike,
         active: ArrayLike,
-        discontinuities: ArrayLike = (),
+        discontinuities: ArrayLike | Sequence[float] = (),
         /,
         *,
         solve_start_time: ArrayLike,
         problem_id: str,
         path_id: str = "deterministic",
         interpolation_id: str = "piecewise-linear",
-    ):
+    ) -> None:
         times_ = jnp.asarray(times)
         states_ = jnp.asarray(states)
         active_ = jnp.asarray(active, dtype=jnp.bool_)
@@ -683,6 +711,11 @@ class DelayBacksolveEvidence(StrictModule, NonTrainableState):
     status: Array
     tape_id: str = eqx.field(static=True)
     adjoint_id: str = eqx.field(static=True)
+
+
+# fori_loop carry: adjoints, residuals, active and covered masks, and the args
+# gradient PyTree (None when the drift has no args).
+_BacksolveCarry: TypeAlias = tuple[Array, Array, Array, Array, Any]
 
 
 def backsolve_delay_adjoint(
@@ -773,13 +806,13 @@ def backsolve_delay_adjoint(
     active = jnp.zeros((capacity - 1,), dtype=jnp.bool_)
     covered = jnp.zeros((capacity - 1,), dtype=jnp.bool_)
 
-    def body(reverse_index, carry):
+    def body(reverse_index: Array, carry: _BacksolveCarry) -> _BacksolveCarry:
         index = capacity - 2 - reverse_index
         interval_active = (
             execution_valid & (index >= solve_start_index) & (index < active_count - 1)
         )
 
-        def active_body(active_carry):
+        def active_body(active_carry: _BacksolveCarry) -> _BacksolveCarry:
             lambdas_, residuals_, active_, covered_, args_gradient_ = active_carry
             time = tape.times[index]
             dt = tape.times[index + 1] - time

@@ -4,11 +4,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeVar
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -24,6 +25,9 @@ from ._maxwell_reduced import (
     CompatibleMaxwell2DPlan,
     ReducedMaxwellDiagnostics,
 )
+
+
+_Tree = TypeVar("_Tree")
 
 
 class ReducedElectromagneticPICState(StrictModule):
@@ -62,7 +66,7 @@ class ReducedElectromagneticPICPlan(StrictModule, NonTrainableState):
         *,
         pusher: RelativisticBorisPlan | None = None,
         maximum_displacement_fraction: float = 0.5,
-    ):
+    ) -> None:
         if not isinstance(field, (CompatibleMaxwell1DPlan, CompatibleMaxwell2DPlan)):
             raise TypeError("field must be a compatible reduced Maxwell plan.")
         if not isinstance(transfer, ReducedPICTransferPlan):
@@ -183,7 +187,7 @@ class ReducedElectromagneticPICPlan(StrictModule, NonTrainableState):
         )
 
 
-def jax_tree_where(predicate: Array, candidate: Any, current: Any, /):
+def jax_tree_where(predicate: Array, candidate: _Tree, current: _Tree, /) -> _Tree:
     import jax
 
     return jax.tree.map(

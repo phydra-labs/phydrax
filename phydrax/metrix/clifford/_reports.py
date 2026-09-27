@@ -40,7 +40,7 @@ class CliffordProductEvidence(StrictModule, NonTrainableState):
         structural_zero_count: int,
         exact_closure: bool,
         resource_evidence: CliffordResourceEvidence,
-    ):
+    ) -> None:
         identifiers = tuple(
             str(value)
             for value in (

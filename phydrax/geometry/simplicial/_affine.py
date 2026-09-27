@@ -8,7 +8,8 @@ from math import factorial
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 from phydrax import ein
@@ -42,7 +43,7 @@ class AffineSimplexMap(StrictModule, NonTrainableState):
     intrinsic_dimension: int = eqx.field(static=True)
     ambient_dimension: int = eqx.field(static=True)
 
-    def __init__(self, vertices: ArrayLike, /):
+    def __init__(self, vertices: ArrayLike, /) -> None:
         points = jnp.asarray(vertices)
         if not jnp.issubdtype(points.dtype, jnp.inexact):
             points = points.astype("float64")

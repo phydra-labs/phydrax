@@ -9,7 +9,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -19,6 +19,7 @@ from ..._differentiation import (
     GradientLevel,
     SurfaceDerivative,
 )
+from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -52,7 +53,7 @@ def _deterministic_embedding_kmeans(
     indices = order[..., :cluster_count]
     centers = jnp.take_along_axis(embedding, indices[..., :, None], axis=-2)
 
-    def step(_, centers):
+    def step(_: Array, centers: Array) -> Array:
         distances = distances_to_centers(
             embedding, centers, "squared-euclidean", embedding.shape[:-2]
         )
@@ -95,7 +96,7 @@ class SpectralClustering(AbstractRecipe):
         kmeans_iterations: int = 32,
         eigenvalue_tolerance: float = 1e-7,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if cluster_count <= 0 or kmeans_iterations <= 0:
             raise ValueError("cluster_count and kmeans_iterations must be positive.")
         self.cluster_count = int(cluster_count)
@@ -236,7 +237,9 @@ def _agglomerate_one(
     active = w > 0.0
     roots = jnp.arange(n, dtype=jnp.int32)
 
-    def merge_step(_, state):
+    def merge_step(
+        _: Array, state: tuple[Array, Array, Array, Array]
+    ) -> tuple[Array, Array, Array, Array]:
         centers, mass, active, roots = state
         difference = centers[:, None, :] - centers[None, :, :]
         distance = jnp.real(jnp.sum(jnp.conj(difference) * difference, axis=-1))
@@ -308,9 +311,10 @@ class AgglomerativeClustering(AbstractRecipe):
         *,
         linkage: AgglomerativeLinkage = "ward",
         weight_policy: WeightPolicy = "statistical",
-    ):
-        if cluster_count <= 0 or linkage not in ("ward", "centroid"):
+    ) -> None:
+        if cluster_count <= 0:
             raise ValueError("invalid agglomerative clustering configuration.")
+        linkage = parse(linkage, AgglomerativeLinkage, "linkage")
         self.cluster_count = int(cluster_count)
         self.linkage = linkage
         self.weight_policy = weight_policy

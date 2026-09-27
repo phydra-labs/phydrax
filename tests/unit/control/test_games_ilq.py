@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -32,7 +35,9 @@ from phydrax.control.games._nonlinear import (
 )
 
 
-def _affine_policy(problem, controls, *, policy_id="initial-affine"):
+def _affine_policy(
+    problem: Any, controls: Any, *, policy_id: Any = "initial-affine"
+) -> Any:
     values = jnp.asarray(controls)
     horizon = problem.time_grid.num_steps
     cases = problem.case_shape
@@ -49,13 +54,13 @@ def _affine_policy(problem, controls, *, policy_id="initial-affine"):
 
 
 def _static_game(
-    stage_costs,
+    stage_costs: Any,
     *,
-    initial_controls=None,
-    initial_state=0.0,
-    case_shape=(),
-    problem_id="static-ilq-game",
-):
+    initial_controls: Any = None,
+    initial_state: Any = 0.0,
+    case_shape: Any = (),
+    problem_id: Any = "static-ilq-game",
+) -> Any:
     players = len(stage_costs)
     input_layout = phx.dynamics.InputLayout((players,), roles="control")
     system = phx.dynamics.DiscreteSystem(
@@ -84,26 +89,26 @@ def _static_game(
     return problem, policy, scaling
 
 
-def _separable_affine_lq_game(*, case_shape=()):
+def _separable_affine_lq_game(*, case_shape: Any = ()) -> Any:
     horizon = 2
     state_size = 2
     control_size = 2
     target = jnp.asarray([0.75, -1.25])
     input_layout = phx.dynamics.InputLayout((control_size,), roles="control")
 
-    def transition(context, state, control, args):
+    def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, args
         return state + control
 
-    def stage(player):
-        def cost(context, state, control, args):
+    def stage(player: Any) -> Any:
+        def cost(context: Any, state: Any, control: Any, args: Any) -> Any:
             del context, state, args
             return 0.5 * control[player] ** 2
 
         return cost
 
-    def terminal(player):
-        def cost(time, state, args):
+    def terminal(player: Any) -> Any:
+        def cost(time: Any, state: Any, args: Any) -> Any:
             del time, args
             return 0.5 * (state[player] - target[player]) ** 2
 
@@ -131,7 +136,7 @@ def _separable_affine_lq_game(*, case_shape=()):
     return problem, policy, scaling, target
 
 
-def test_exact_affine_lq_converges_to_the_exact_feedback_law():
+def test_exact_affine_lq_converges_to_the_exact_feedback_law() -> None:
     problem, policy, scaling, target = _separable_affine_lq_game()
     result = solve_ilq_feedback_game(
         problem,
@@ -182,7 +187,7 @@ def test_exact_affine_lq_converges_to_the_exact_feedback_law():
     assert result.diagnostics.accepted_iterations >= 1
 
 
-def test_compatible_local_affine_initial_profile_is_preserved_by_preparation():
+def test_compatible_local_affine_initial_profile_is_preserved_by_preparation() -> None:
     problem, _, scaling, _ = _separable_affine_lq_game()
     states = jnp.broadcast_to(
         problem.initial_state, (problem.time_grid.num_times, problem.state_size)
@@ -214,12 +219,12 @@ def test_compatible_local_affine_initial_profile_is_preserved_by_preparation():
     assert bool(result.successful)
 
 
-def test_cubic_cross_terms_keep_independent_whole_control_owned_gradients():
-    def player_zero(context, state, control, args):
+def test_cubic_cross_terms_keep_independent_whole_control_owned_gradients() -> None:
+    def player_zero(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, state, args
         return 0.5 * (control[0] - 1.0) ** 2 + control[1] ** 3
 
-    def player_one(context, state, control, args):
+    def player_one(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, state, args
         return 0.5 * (control[1] + 2.0) ** 2 + control[0] ** 3
 
@@ -242,12 +247,12 @@ def test_cubic_cross_terms_keep_independent_whole_control_owned_gradients():
     np.testing.assert_allclose(result.residual.raw_owned_stationarity, 0.0, atol=2e-6)
 
 
-def test_residual_armijo_accepts_when_one_players_cost_increases():
-    def player_zero(context, state, control, args):
+def test_residual_armijo_accepts_when_one_players_cost_increases() -> None:
+    def player_zero(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, state, args
         return 0.5 * (control[0] - 1.0) ** 2 + 10.0 * control[1]
 
-    def player_one(context, state, control, args):
+    def player_one(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, state, args
         return 0.5 * (control[1] - 1.0) ** 2
 
@@ -279,8 +284,10 @@ def test_residual_armijo_accepts_when_one_players_cost_increases():
     assert not diagnostics.player_costs_used_for_acceptance
 
 
-def test_all_cost_decrease_cannot_override_residual_armijo_and_incumbent_is_preserved():
-    def cubic(context, state, control, args):
+def test_all_cost_decrease_cannot_override_residual_armijo_and_incumbent_is_preserved() -> (
+    None
+):
+    def cubic(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, state, args
         value = control[0]
         return 0.5 * value**2 + (2.0 / 3.0) * value**3 + value
@@ -311,8 +318,8 @@ def test_all_cost_decrease_cannot_override_residual_armijo_and_incumbent_is_pres
     assert int(diagnostics.accepted_iterations) == 0
 
 
-def test_zero_state_motion_is_not_a_convergence_test():
-    def shifted_control(context, state, control, args):
+def test_zero_state_motion_is_not_a_convergence_test() -> None:
+    def shifted_control(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, state, args
         return 0.5 * (control[0] - 1.0) ** 2
 
@@ -337,8 +344,10 @@ def test_zero_state_motion_is_not_a_convergence_test():
     assert result.diagnostics.trial_control_step_infinity_history[0, 0] > 0.5
 
 
-def test_regularized_stationary_direction_never_substitutes_for_unregularized_model():
-    def concave(context, state, control, args):
+def test_regularized_stationary_direction_never_substitutes_for_unregularized_model() -> (
+    None
+):
+    def concave(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, state, args
         return -0.5 * control[0] ** 2
 
@@ -366,12 +375,12 @@ def test_regularized_stationary_direction_never_substitutes_for_unregularized_mo
     assert not bool(result.diagnostics.certificate_valid)
 
 
-def test_coupled_rank_failure_is_retained_without_pseudoinverse_or_fallback():
-    def player_zero(context, state, control, args):
+def test_coupled_rank_failure_is_retained_without_pseudoinverse_or_fallback() -> None:
+    def player_zero(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, state, args
         return 0.5 * control[0] ** 2 + control[0] * control[1]
 
-    def player_one(context, state, control, args):
+    def player_one(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, state, args
         return 0.5 * control[1] ** 2 + control[0] * control[1]
 
@@ -387,22 +396,22 @@ def test_coupled_rank_failure_is_retained_without_pseudoinverse_or_fallback():
     assert int(result.local_suggestion.lq_diagnostics.coupled_ranks[0]) < 2
 
 
-def test_physical_scaling_transforms_leave_dimensionless_result_equivalent():
-    def make_problem(*, transformed):
+def test_physical_scaling_transforms_leave_dimensionless_result_equivalent() -> None:
+    def make_problem(*, transformed: Any) -> Any:
         state_factor = 2.0 if transformed else 1.0
         control_factor = 4.0 if transformed else 1.0
         cost_factor = 5.0 if transformed else 1.0
         input_layout = phx.dynamics.InputLayout((1,), roles="control")
 
-        def transition(context, state, control, args):
+        def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
             del context, args
             return state + (control_factor / state_factor) * control
 
-        def stage(context, state, control, args):
+        def stage(context: Any, state: Any, control: Any, args: Any) -> Any:
             del context, state, args
             return 0.5 * (control_factor * control[0]) ** 2 / cost_factor
 
-        def terminal(time, state, args):
+        def terminal(time: Any, state: Any, args: Any) -> Any:
             del time, args
             return 0.5 * (state_factor * state[0]) ** 2 / cost_factor
 
@@ -461,7 +470,7 @@ def test_physical_scaling_transforms_leave_dimensionless_result_equivalent():
     )
 
 
-def test_case_axes_filter_jit_and_fixed_histories_are_preserved():
+def test_case_axes_filter_jit_and_fixed_histories_are_preserved() -> None:
     case_shape = (2, 2)
     problem, policy, scaling, _ = _separable_affine_lq_game(case_shape=case_shape)
     plan = plan_ilq_feedback_game(
@@ -487,7 +496,7 @@ def test_case_axes_filter_jit_and_fixed_histories_are_preserved():
     assert np.all(np.isnan(np.asarray(diagnostics.residual_merit_history)[padding]))
 
 
-def test_refresh_updates_materialization_ids_but_preserves_plan_topology():
+def test_refresh_updates_materialization_ids_but_preserves_plan_topology() -> None:
     problem, first_policy, scaling = _static_game(
         (lambda context, state, control, args: 0.5 * (control[0] - 1.0) ** 2,),
         problem_id="refresh-ilq",
@@ -519,7 +528,7 @@ def test_refresh_updates_materialization_ids_but_preserves_plan_topology():
         refresh_ilq_feedback_game(prepared, initial_policy=incompatible)
 
 
-def test_certificate_wording_and_claim_boundaries_are_exact():
+def test_certificate_wording_and_claim_boundaries_are_exact() -> None:
     problem, policy, scaling = _static_game(
         (lambda context, state, control, args: 0.5 * control[0] ** 2,),
         problem_id="certificate-wording",

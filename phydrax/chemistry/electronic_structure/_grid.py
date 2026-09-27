@@ -12,7 +12,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._polynomial._cubature import lebedev_rule_data
@@ -39,7 +40,7 @@ class AtomicRadialGridPlan(StrictModule, NonTrainableState):
         *,
         kind: AtomicRadialGridKind = AtomicRadialGridKind.MURA_KNOWLES,
         radial_scale: float = 1.0,
-    ):
+    ) -> None:
         count = int(point_count)
         scale = float(radial_scale)
         if not isinstance(kind, AtomicRadialGridKind):
@@ -58,7 +59,7 @@ class AtomicRadialGridPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def rule(self, dtype=np.float64, /) -> tuple[np.ndarray, np.ndarray]:
+    def rule(self, dtype: DTypeLike = np.float64, /) -> tuple[np.ndarray, np.ndarray]:
         x = (np.arange(self.point_count, dtype=dtype) + 0.5) / self.point_count
         if self.kind is AtomicRadialGridKind.MURA_KNOWLES:
             denominator = np.maximum(1.0 - x**3, np.finfo(dtype).tiny)
@@ -99,7 +100,7 @@ class MolecularDFTGridPlan(StrictModule, NonTrainableState):
         angular_degree: int = 17,
         becke_iterations: int = 3,
         maximum_points: int = 2_000_000,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         radial_ = AtomicRadialGridPlan() if radial is None else radial
@@ -148,7 +149,7 @@ class PreparedMolecularDFTGrid(StrictModule, NonTrainableState):
     angular_source_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MolecularDFTGridPlan, /):
+    def __init__(self, plan: MolecularDFTGridPlan, /) -> None:
         if not isinstance(plan, MolecularDFTGridPlan):
             raise TypeError("plan must be MolecularDFTGridPlan.")
         angular = lebedev_rule_data(plan.angular_degree)

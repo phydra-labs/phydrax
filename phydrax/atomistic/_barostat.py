@@ -10,7 +10,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -36,7 +37,7 @@ class IsotropicMonteCarloBarostatPlan(StrictModule, NonTrainableState):
         /,
         *,
         realization_id: int = 0,
-    ):
+    ) -> None:
         maximum = float(maximum_log_volume_change)
         realization = int(realization_id)
         if not math.isfinite(maximum) or maximum <= 0.0 or realization < 0:

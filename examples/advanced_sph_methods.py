@@ -12,6 +12,7 @@ spacing = 1.0 / count
 particles = phx.discretization.ParticleSetPlan(
     jnp.arange(count), jnp.full((count,), spacing), ambient_dimension=1
 ).prepare()
+# ty: ignore[invalid-argument-type]
 box = phx.discretization.ParticleBox([0.0], [1.0])
 kernel = phx.discretization.WendlandC2SPHKernel(1)
 neighborhood_plan = phx.discretization.DenseParticleNeighborhoodPlan(
@@ -63,7 +64,11 @@ iisph = phx.discretization.PreparedIISPH(
     phx.discretization.IISPHMethodPlan(1.0, maximum_iterations=3, tolerance=1.0),
 )
 iisph_result = iisph.step_detailed(
-    0.0, iisph.initialize_state(position, jnp.zeros_like(position)), 0.001
+    # ty: ignore[invalid-argument-type]
+    0.0,
+    iisph.initialize_state(position, jnp.zeros_like(position)),
+    # ty: ignore[invalid-argument-type]
+    0.001,
 )
 dfsph = phx.discretization.PreparedDFSPH(
     particles,
@@ -79,7 +84,11 @@ dfsph = phx.discretization.PreparedDFSPH(
     ),
 )
 dfsph_result = dfsph.step_detailed(
-    0.0, dfsph.initialize_state(position, jnp.zeros_like(position)), 0.001
+    # ty: ignore[invalid-argument-type]
+    0.0,
+    dfsph.initialize_state(position, jnp.zeros_like(position)),
+    # ty: ignore[invalid-argument-type]
+    0.001,
 )
 if not bool(solution.successful & iisph_result.successful & dfsph_result.successful):
     raise RuntimeError("WCSPH, IISPH, or DFSPH example step failed")

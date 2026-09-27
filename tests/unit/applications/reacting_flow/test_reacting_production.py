@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _mechanism():
+def _mechanism() -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (phx.equations.ChemicalPhaseKind.GAS,) * 2,
@@ -42,7 +45,7 @@ def _mechanism():
     return species, mechanism
 
 
-def test_energy_deposition_has_exact_spatial_power_and_cumulative_work():
+def test_energy_deposition_has_exact_spatial_power_and_cumulative_work() -> None:
     plan = phx.applications.reacting_flow.EnergyDepositionSourcePlan(
         jnp.asarray((1.0, 2.0)),
         jnp.asarray((2.0, 1.0)),
@@ -63,7 +66,7 @@ def test_energy_deposition_has_exact_spatial_power_and_cumulative_work():
     assert bool(midpoint.successful)
 
 
-def test_fixed_connectivity_ale_remap_preserves_species_and_enthalpy_extensives():
+def test_fixed_connectivity_ale_remap_preserves_species_and_enthalpy_extensives() -> None:
     plan = phx.applications.reacting_flow.FixedConnectivityReactingALERemapPlan(
         jnp.asarray((1.0, 2.0)), jnp.asarray((2.0, 1.0))
     )
@@ -77,7 +80,7 @@ def test_fixed_connectivity_ale_remap_preserves_species_and_enthalpy_extensives(
     np.testing.assert_allclose(result.evidence.enthalpy_extensive_defect, 0.0)
 
 
-def test_measured_chemistry_work_schedule_is_atomic_and_deterministic():
+def test_measured_chemistry_work_schedule_is_atomic_and_deterministic() -> None:
     plan = phx.applications.reacting_flow.ChemistryWorkSchedulePlan(4, 2)
     accepted = plan.initialize()
     candidate = plan.propose(accepted, jnp.asarray((10.0, 1.0, 8.0, 1.0)))
@@ -90,7 +93,7 @@ def test_measured_chemistry_work_schedule_is_atomic_and_deterministic():
     assert int(committed.accepted_epoch) == 1
 
 
-def test_amr_specialist_updates_active_cells_and_preserves_enthalpy():
+def test_amr_specialist_updates_active_cells_and_preserves_enthalpy() -> None:
     species, mechanism = _mechanism()
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=True),),

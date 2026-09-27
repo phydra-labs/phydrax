@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -20,7 +23,7 @@ from phydrax.velocimetry.piv import (
 )
 
 
-def _translated_pair():
+def _translated_pair() -> Any:
     first = jr.normal(jr.key(12), (48, 48))
     second = jnp.zeros_like(first)
     second = second.at[2:, :-1].set(first[:-2, 1:])
@@ -28,7 +31,9 @@ def _translated_pair():
     return first, second, geometry, ImagePair2D(first, second, geometry, delta_t=0.01)
 
 
-def _plan(*, retain_correlation=True, resource_limit_bytes=64 * 1024 * 1024):
+def _plan(
+    *, retain_correlation: Any = True, resource_limit_bytes: Any = 64 * 1024 * 1024
+) -> Any:
     return PIVPlan(
         (PIVPassPlan(16, 8, 4),),
         correlation_mode="extended",
@@ -43,7 +48,7 @@ def _plan(*, retain_correlation=True, resource_limit_bytes=64 * 1024 * 1024):
     )
 
 
-def test_plan_prepare_run_and_one_shot_preserve_result_stages_and_provenance():
+def test_plan_prepare_run_and_one_shot_preserve_result_stages_and_provenance() -> None:
     first, second, geometry, pair = _translated_pair()
     plan = _plan()
     prepared = plan.prepare(geometry)
@@ -73,7 +78,7 @@ def test_plan_prepare_run_and_one_shot_preserve_result_stages_and_provenance():
     assert result.raw.provenance[:2] == (pair.pair_id, prepared.prepared_id)
 
 
-def test_symmetric_multipass_deformation_adds_residual_to_previous_prediction():
+def test_symmetric_multipass_deformation_adds_residual_to_previous_prediction() -> None:
     _, _, geometry, pair = _translated_pair()
     plan = PIVPlan(
         (
@@ -99,7 +104,7 @@ def test_symmetric_multipass_deformation_adds_residual_to_previous_prediction():
     assert result.raw.provenance[-1] == "symmetric"
 
 
-def test_ensemble_accumulates_observed_lags_and_disparity_retains_support():
+def test_ensemble_accumulates_observed_lags_and_disparity_retains_support() -> None:
     _, _, geometry, pair = _translated_pair()
     prepared = _plan().prepare(geometry)
     result = prepared.run(pair)
@@ -119,7 +124,7 @@ def test_ensemble_accumulates_observed_lags_and_disparity_retains_support():
     assert diagnostics.source_field_id == result.replaced.field_id
 
 
-def test_prepare_rejects_a_plan_that_exceeds_its_declared_resource_limit():
+def test_prepare_rejects_a_plan_that_exceeds_its_declared_resource_limit() -> None:
     geometry = ImagePlaneSupport((48, 48))
     with pytest.raises(MemoryError, match="resource_limit_bytes"):
         _plan(resource_limit_bytes=1).prepare(geometry)

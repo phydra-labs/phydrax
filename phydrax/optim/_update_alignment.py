@@ -7,13 +7,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 from enum import IntEnum
 from itertools import combinations
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._bounds import Bounds
 from .._fingerprint import canonical_fingerprint
@@ -29,6 +30,7 @@ from .._tree_math import (
 )
 from ..ein import contract
 from ..linalg import FailurePolicy, SmallLinearSolvePlan, solve_small_linear
+from ..typing import parse
 from ._programming import (
     ConvexSolvePolicy,
     ConvexTermination,
@@ -37,7 +39,7 @@ from ._programming import (
 )
 
 
-ConflictFreeUpdateFailureMode = Literal["status", "error"]
+ConflictFreeUpdateFailureMode: TypeAlias = Literal["status", "error"]
 
 
 class ConflictFreeUpdateStatus(IntEnum):
@@ -71,7 +73,7 @@ class ConflictFreeUpdatePolicy(StrictModule, NonTrainableState):
         feasibility_tolerance: float = 1e-10,
         maximum_condition: float = 1e12,
         failure: ConflictFreeUpdateFailureMode = "status",
-    ):
+    ) -> None:
         norm = float(minimum_norm)
         tolerance = float(feasibility_tolerance)
         condition = float(maximum_condition)
@@ -81,8 +83,7 @@ class ConflictFreeUpdatePolicy(StrictModule, NonTrainableState):
             raise ValueError("feasibility_tolerance must be finite and nonnegative.")
         if not np.isfinite(condition) or condition <= 1.0:
             raise ValueError("maximum_condition must be finite and greater than one.")
-        if failure not in ("status", "error"):
-            raise ValueError("failure must be 'status' or 'error'.")
+        failure = parse(failure, ConflictFreeUpdateFailureMode, "failure")
         if dual_solve_policy is None:
             solver_tolerance = max(tolerance, 1e-10)
             dual = ConvexSolvePolicy(
@@ -562,12 +563,12 @@ def project_conflict_free_direction(
     dual_linear = jnp.where(effective, raw_cosines, 0.0)
 
     def solve_dual(_: None) -> tuple[Array, Array]:
-        multipliers_, successful_, _ = _dual_solution(
+        multipliers_, successful_ = _dual_solution(
             gram,
             dual_linear,
             tolerance=effective_tolerance,
             policy=resolved,
-        )
+        )[:2]
         return multipliers_, successful_
 
     def skip_dual(_: None) -> tuple[Array, Array]:

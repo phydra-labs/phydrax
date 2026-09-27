@@ -7,7 +7,8 @@ from __future__ import annotations
 from enum import IntEnum
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 
@@ -64,7 +65,7 @@ class GRRayStatusEvidence(StrictModule):
         qualified: ArrayLike,
         derivative_valid: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value, dtype=jnp.bool_)
             for value in (

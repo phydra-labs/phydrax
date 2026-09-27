@@ -2,8 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
 import platform
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -12,7 +14,7 @@ import phydrax as phx
 from benchmarks._runtime import measure_repeated, measure_synchronized
 
 
-def _ladder(size: int):
+def _ladder(size: int) -> Any:
     instances = []
     for index in range(size):
         instances.append(
@@ -42,7 +44,7 @@ def _ladder(size: int):
     )
 
 
-def main():
+def main() -> None:
     rows = []
     for assembly in ("dense", "sparse"):
         for size in (8, 32, 128):

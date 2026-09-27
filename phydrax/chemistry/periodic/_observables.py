@@ -12,7 +12,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -64,7 +65,7 @@ class PeriodicDensityOfStatesPlan(StrictModule, NonTrainableState):
         *,
         states_per_band: float = 1.0,
         maximum_kernel_entries: int = 8_000_000,
-    ):
+    ) -> None:
         if not isinstance(spectrum, PeriodicSpectrumResult):
             raise TypeError("spectrum must be PeriodicSpectrumResult.")
         if not bool(spectrum.successful):
@@ -156,7 +157,7 @@ class PeriodicProjectorGroups(StrictModule, NonTrainableState):
         orbital_group_indices: ArrayLike,
         basis_id: str,
         /,
-    ):
+    ) -> None:
         names_ = tuple(str(value).strip() for value in names)
         indices = np.asarray(orbital_group_indices)
         basis = str(basis_id).strip()
@@ -220,7 +221,7 @@ class PeriodicProjectedDOSPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_kernel_entries: int = 8_000_000,
-    ):
+    ) -> None:
         if (
             not isinstance(pencil, PreparedPeriodicOrbitalPencil)
             or not isinstance(spectrum, PeriodicSpectrumResult)
@@ -346,7 +347,7 @@ class PeriodicVelocityPlan(StrictModule, NonTrainableState):
         *,
         degeneracy_tolerance: float = 1.0e-8,
         maximum_matrix_entries: int = 8_000_000,
-    ):
+    ) -> None:
         if not isinstance(pencil, PreparedPeriodicOrbitalPencil) or not isinstance(
             spectrum, PeriodicSpectrumResult
         ):

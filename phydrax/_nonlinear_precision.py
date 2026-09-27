@@ -7,24 +7,28 @@ from __future__ import annotations
 from collections.abc import Iterable
 from math import isfinite
 from numbers import Real
-from typing import Any
+from typing import Any, TypeVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._differentiation import ComponentAuthority
-from ._fingerprint import canonical_fingerprint
-from ._model._component import ComponentContract
-from ._precision import (
+from ._dtype_names import (
     complex_precision_dtype,
     precision_dtype_name,
+    real_precision_dtype_name,
+    ScalarPrecisionDType,
+)
+from ._fingerprint import canonical_fingerprint
+from ._model._component import ComponentContract, ComponentPrecisionContract
+from ._precision import (
     precision_itemsize,
     PrecisionEvidenceEnvelope,
     PrecisionRequest,
     PrecisionResolution,
-    real_precision_dtype_name,
-    ScalarPrecisionDType,
 )
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
@@ -37,6 +41,8 @@ from .linalg import (
     PyTreeSpace,
 )
 
+
+_TreeT = TypeVar("_TreeT")
 
 _SUPPORTED_NONLINEAR_DTYPES = frozenset(("float32", "float64", "complex64", "complex128"))
 
@@ -112,6 +118,14 @@ def _residual_components(
     return values
 
 
+def _residual_precision(component: ComponentContract, /) -> ComponentPrecisionContract:
+    precision = component.model_contract.precision
+    # `_residual_components` rejects residual-defining components without one.
+    if not (precision is not None):
+        raise RuntimeError("Internal invariant failed: precision is not None.")
+    return precision
+
+
 def _coarser_than(compute: str, reference: str, /) -> bool:
     compute_dtype = jnp.dtype(compute)
     if not jnp.issubdtype(compute_dtype, jnp.inexact):
@@ -177,7 +191,7 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
         linear: MixedPrecisionPolicy | None = None,
         components: Iterable[ComponentContract] = (),
         residual_scale: float | None = None,
-    ):
+    ) -> None:
         components_ = _residual_components(components)
         scale = _residual_scale(residual_scale)
         model = None if model_dtype is None else precision_dtype_name(model_dtype)
@@ -201,8 +215,8 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
             )
             and not any(
                 _defines_residual(component)
-                and component.model_contract.precision.compute_dtype == model
-                and component.model_contract.precision.cast_boundary_evidence
+                and _residual_precision(component).compute_dtype == model
+                and _residual_precision(component).cast_boundary_evidence
                 for component in components_
             )
         ):
@@ -349,13 +363,13 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
             )
         return state_dtype, residual_dtype
 
-    def state(self, value: Any, /):
+    def state(self, value: _TreeT, /) -> _TreeT:
         return self._cast_tree(value, self.state_dtype)
 
-    def residual(self, value: Any, /):
+    def residual(self, value: _TreeT, /) -> _TreeT:
         return self._cast_tree(value, self.residual_dtype)
 
-    def _cast_tree(self, value: Any, dtype: str | None, /):
+    def _cast_tree(self, value: _TreeT, dtype: str | None, /) -> _TreeT:
         if dtype is None:
             return value
         return jax.tree.map(
@@ -367,13 +381,13 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
             value,
         )
 
-    def model(self, value: Any, /):
+    def model(self, value: _TreeT, /) -> _TreeT:
         return self._cast_tree(value, self.model_dtype)
 
-    def direction(self, value: Any, /):
+    def direction(self, value: _TreeT, /) -> _TreeT:
         return self._cast_tree(value, self.direction_dtype)
 
-    def certificate(self, value: Any, /):
+    def certificate(self, value: _TreeT, /) -> _TreeT:
         return self._cast_tree(value, self.certificate_dtype)
 
     def bind_linear(self, policy: LinearSolvePolicy, /) -> LinearSolvePolicy:
@@ -397,7 +411,7 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
         machine epsilon is never substituted for an undeclared floor.
         """
         precisions = tuple(
-            component.model_contract.precision
+            _residual_precision(component)
             for component in self.components
             if _defines_residual(component)
         )
@@ -450,10 +464,11 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
         )
         if reference is not None:
             for component in self.components:
-                precision = component.model_contract.precision
+                if not _defines_residual(component):
+                    continue
+                precision = _residual_precision(component)
                 if (
-                    _defines_residual(component)
-                    and _coarser_than(precision.compute_dtype, reference)
+                    _coarser_than(precision.compute_dtype, reference)
                     and precision.absolute_error_floor is None
                     and precision.relative_error_floor is None
                 ):
@@ -478,7 +493,7 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
                 "Requested tolerance is below certificate precision epsilon."
             )
 
-    def accumulation(self, value: Any, /):
+    def accumulation(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         if self.accumulation_dtype is None or not jnp.issubdtype(
             array.dtype, jnp.inexact
@@ -487,11 +502,11 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
         observed = precision_dtype_name(array.dtype)
         return array.astype(_effective_dtype(self.accumulation_dtype, observed))
 
-    def decision(self, value: Any, /):
+    def decision(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         return array if self.decision_dtype is None else array.astype(self.decision_dtype)
 
-    def output(self, value: Any, /):
+    def output(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         if self.output_dtype is None or not jnp.issubdtype(array.dtype, jnp.inexact):
             return array
@@ -513,7 +528,7 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
                 "Euclidean or diagonal pairing, or a Euclidean PyTreeSpace."
             )
 
-    def inner(self, space: Any, left: Any, right: Any, /):
+    def inner(self, space: Any, left: Any, right: Any, /) -> Array:
         if self.accumulation_dtype is None:
             return space.inner(left, right)
         self.validate_accumulation_space(space)
@@ -552,7 +567,7 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
             return jnp.sum(jnp.conj(left_array) * weights * right_array)
         return jnp.sum(jnp.conj(left_array) * right_array)
 
-    def norm(self, space: Any, value: Any, /):
+    def norm(self, space: Any, value: Any, /) -> Array:
         squared = jnp.real(self.inner(space, value, value))
         return self.decision(jnp.sqrt(jnp.maximum(squared, 0.0)))
 

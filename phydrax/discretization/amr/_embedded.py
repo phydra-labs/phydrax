@@ -10,10 +10,10 @@ from collections.abc import Callable
 from typing import Any, Literal
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -51,7 +51,7 @@ class VariablePatchEmbeddedBoundaryEvidence(StrictModule, NonTrainableState):
         maximum_volume_closure_defect: float,
         maximum_face_closure_defect: float,
         /,
-    ):
+    ) -> None:
         volume_defect = float(maximum_volume_closure_defect)
         face_defect = float(maximum_face_closure_defect)
         if (
@@ -135,7 +135,7 @@ class VariablePatchEmbeddedBoundaryPlan(StrictModule, NonTrainableState):
         fluid_sign: Literal["positive", "negative"] = "positive",
         minimum_volume_fraction: float = 0.1,
         closure_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         identifier = str(geometry_plan_id)
         body = str(body_id)
         threshold = float(minimum_volume_fraction)
@@ -184,7 +184,7 @@ class VariablePatchEmbeddedBoundaryPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Embedded-boundary plan is bound to another patch geometry plan."
             )
-        if isinstance(geometry.valid, jax.core.Tracer) or not bool(geometry.valid):
+        if isinstance(geometry.valid, jax_core.Tracer) or not bool(geometry.valid):
             raise ValueError(
                 "Embedded boundaries require an accepted host geometry state."
             )

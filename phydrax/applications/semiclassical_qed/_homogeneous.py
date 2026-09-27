@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -67,7 +68,7 @@ class ZeroExternalCurrent(StrictModule, NonTrainableState):
 
     source_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.source_id = canonical_fingerprint({"kind": "zero-external-current"})
 
     def __call__(self, time: ArrayLike, /) -> Array:
@@ -81,7 +82,7 @@ class TabulatedExternalCurrent(StrictModule, NonTrainableState):
     values: Array
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, times: ArrayLike, values: ArrayLike, /):
+    def __init__(self, times: ArrayLike, values: ArrayLike, /) -> None:
         time = np.asarray(times, dtype=np.float64)
         current = np.asarray(values, dtype=np.float64)
         if (
@@ -122,7 +123,7 @@ class HomogeneousSpinorQEDState(StrictModule):
         electric_field: ArrayLike,
         mode_spinors: ArrayLike,
         /,
-    ):
+    ) -> None:
         potential = jnp.asarray(vector_potential)
         field = jnp.asarray(electric_field)
         modes = jnp.asarray(mode_spinors)
@@ -210,7 +211,7 @@ class HomogeneousSpinorQEDPlan(StrictModule, NonTrainableState):
         energy_tolerance: float = 1e-7,
         ward_tolerance: float = 1e-8,
         maximum_modes: int = 2**18,
-    ):
+    ) -> None:
         momentum = np.asarray(momenta, dtype=np.float64)
         weights = np.asarray(quadrature_weights, dtype=np.float64)
         q = np.asarray(charge, dtype=np.float64)
@@ -386,7 +387,7 @@ class PreparedHomogeneousSpinorQED(StrictModule, NonTrainableState):
         vector_potential: ArrayLike,
         electric_field: ArrayLike,
         mode_spinors: ArrayLike | None,
-    ):
+    ) -> None:
         if not isinstance(plan, HomogeneousSpinorQEDPlan):
             raise TypeError("plan must be a HomogeneousSpinorQEDPlan.")
         modes = (
@@ -443,7 +444,7 @@ def _trajectory_evidence(
     plan = prepared.plan
     modes = states.mode_spinors
     potential = states.vector_potential
-    field = states.electric_field
+    field: Array = states.electric_field
     hamiltonian = plan.hamiltonians(potential)
     raw_current = plan.raw_current(modes)
     adiabatic_current = plan.adiabatic_current(potential)

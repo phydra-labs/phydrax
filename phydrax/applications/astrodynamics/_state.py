@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -28,7 +29,7 @@ class CartesianOrbitState(StrictModule):
         velocity: ArrayLike,
         context: AstrodynamicsContext,
         /,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         position_ = jnp.asarray(position)
@@ -75,7 +76,7 @@ class CartesianOrbitTrajectory(StrictModule, NonTrainableState):
         *,
         trajectory_id: str | None = None,
         provider_status: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         times_ = jnp.asarray(times)

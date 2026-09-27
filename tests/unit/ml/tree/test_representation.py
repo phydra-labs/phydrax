@@ -14,16 +14,16 @@ from phydrax.ml.tree import apply_objective, TreeEnsemble
 
 def _stump(
     *,
-    split_kind=0,
-    threshold=0.0,
-    categories=(0.0,),
-    default_left=True,
-    left_value=-1.0,
-    right_value=1.0,
-    tree_weight=1.0,
-    base_score=0.0,
-    objective_transform="identity",
-):
+    split_kind: Any = 0,
+    threshold: Any = 0.0,
+    categories: Any = (0.0,),
+    default_left: Any = True,
+    left_value: Any = -1.0,
+    right_value: Any = 1.0,
+    tree_weight: Any = 1.0,
+    base_score: Any = 0.0,
+    objective_transform: Any = "identity",
+) -> Any:
     category_values = (
         jnp.zeros((1, 3, len(categories))).at[0, 0].set(jnp.asarray(categories))
     )
@@ -51,7 +51,7 @@ def _stump(
     )
 
 
-def test_numeric_traversal_has_stable_threshold_tie_paths_and_tree_outputs():
+def test_numeric_traversal_has_stable_threshold_tie_paths_and_tree_outputs() -> None:
     model = _stump(threshold=2.0, left_value=10.0, right_value=20.0, base_score=3.0)
     points = jnp.array([[1.0], [2.0], [3.0]])
 
@@ -73,7 +73,7 @@ def test_numeric_traversal_has_stable_threshold_tie_paths_and_tree_outputs():
     )
 
 
-def test_categorical_membership_and_missing_default_direction_are_distinct():
+def test_categorical_membership_and_missing_default_direction_are_distinct() -> None:
     left_default = _stump(
         split_kind=1,
         categories=(2.0, 4.0),
@@ -94,7 +94,7 @@ def test_categorical_membership_and_missing_default_direction_are_distinct():
     assert jnp.array_equal(right_default(points), jnp.array([7.0, -3.0, 7.0, -3.0, -3.0]))
 
 
-def test_tree_objectives_labels_weighted_aggregation_and_inactive_trees():
+def test_tree_objectives_labels_weighted_aggregation_and_inactive_trees() -> None:
     binary = _stump(
         threshold=0.0,
         left_value=-2.0,
@@ -159,7 +159,7 @@ def test_tree_objectives_labels_weighted_aggregation_and_inactive_trees():
     )
 
 
-def test_case_dependent_trees_preserve_case_and_point_axes_under_jit():
+def test_case_dependent_trees_preserve_case_and_point_axes_under_jit() -> None:
     common = dict(
         feature_index=jnp.full((2, 1, 1), -1),
         threshold=jnp.zeros((2, 1, 1)),
@@ -175,6 +175,7 @@ def test_case_dependent_trees_preserve_case_and_point_axes_under_jit():
         case_shape=(2,),
         max_steps=1,
     )
+    # ty: ignore[invalid-argument-type]
     model = TreeEnsemble(**common)
     points = jnp.zeros((2, 3, 1))
 
@@ -184,7 +185,7 @@ def test_case_dependent_trees_preserve_case_and_point_axes_under_jit():
         model(jnp.zeros((3, 1)))
 
 
-def test_case_independent_tree_is_vmappable_and_has_declared_hard_gradients():
+def test_case_independent_tree_is_vmappable_and_has_declared_hard_gradients() -> None:
     model = _stump(threshold=0.0, left_value=-2.0, right_value=3.0)
     points = jnp.array([[-2.0], [2.0]])
     assert jnp.array_equal(jax.vmap(model)(points), jnp.array([-2.0, 3.0]))
@@ -192,7 +193,7 @@ def test_case_independent_tree_is_vmappable_and_has_declared_hard_gradients():
         jax.grad(lambda values: jnp.sum(model(values)))(points), jnp.zeros_like(points)
     )
 
-    def prediction_from_leaves(leaves):
+    def prediction_from_leaves(leaves: Any) -> Any:
         parameterized = _stump(left_value=leaves[0], right_value=leaves[1])
         return jnp.sum(parameterized(points))
 
@@ -200,7 +201,9 @@ def test_case_independent_tree_is_vmappable_and_has_declared_hard_gradients():
     assert jnp.array_equal(leaf_gradient, jnp.ones((2,)))
 
 
-def test_invalid_structure_complex_inputs_and_bounded_nonconvergence_fail_closed():
+def test_invalid_structure_complex_inputs_and_bounded_nonconvergence_fail_closed() -> (
+    None
+):
     with pytest.raises(TypeError, match="complex"):
         _stump()(jnp.array([[1.0 + 2.0j]]))
     with pytest.raises(ValueError, match="final feature axis"):

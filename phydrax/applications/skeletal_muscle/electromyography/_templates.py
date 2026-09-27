@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -59,7 +60,7 @@ class MotorUnitActionPotentialTemplatePlan(StrictModule, NonTrainableState):
         /,
         *,
         template_source_id: str,
-    ):
+    ) -> None:
         template = jnp.asarray(template_V)
         if template.ndim != 3:
             raise ValueError("template_V must have shape (motor_unit, channel, sample).")
@@ -136,7 +137,9 @@ class PreparedMotorUnitActionPotentialTemplates(StrictModule):
         sample_count = template.shape[-1]
         active_event_times = jnp.where(topology_mask, topology_events, 0.0)
 
-        def one_template(values, unit_event_times, unit_mask):
+        def one_template(
+            values: Array, unit_event_times: Array, unit_mask: Array
+        ) -> Array:
             coordinate = (times[None, :] - unit_event_times[:, None]) / period + origin
             lower = jax.lax.stop_gradient(jnp.floor(coordinate).astype(jnp.int32))
             fraction = coordinate - lower
@@ -150,8 +153,8 @@ class PreparedMotorUnitActionPotentialTemplates(StrictModule):
             ]
             return jnp.sum(jnp.where(valid, interpolated, 0.0), axis=0)
 
-        def one_unit(unit_index):
-            def one_channel(channel_index):
+        def one_unit(unit_index: Array) -> Array:
+            def one_channel(channel_index: Array) -> Array:
                 return one_template(
                     template[unit_index, channel_index],
                     active_event_times[unit_index],

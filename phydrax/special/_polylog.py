@@ -13,7 +13,7 @@ import jax
 import jax.numpy as jnp
 from jax import Array, lax
 from jax.custom_derivatives import SymbolicZero
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from ._continuation import promote_principal
 
@@ -21,7 +21,7 @@ from ._continuation import promote_principal
 _TERM_AXIS_MAX_ELEMENTS = 1_048_576
 
 
-def _term_count(dtype, /) -> int:
+def _term_count(dtype: DTypeLike, /) -> int:
     return 224 if jnp.dtype(dtype) == jnp.float64 else 96
 
 
@@ -34,7 +34,7 @@ def _polylog_series_value_streaming(s: Array, z: Array, /) -> Array:
     terms = _term_count(jnp.real(s).dtype)
     real_dtype = jnp.real(s).dtype
 
-    def body(index, state):
+    def body(index: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
         power, value = state
         next_power = power * z
         logarithm = jnp.log(jnp.asarray(index, dtype=real_dtype)).astype(s.dtype)
@@ -64,7 +64,7 @@ def _polylog_series_order_derivative_streaming(s: Array, z: Array, /) -> Array:
     terms = _term_count(jnp.real(s).dtype)
     real_dtype = jnp.real(s).dtype
 
-    def body(index, state):
+    def body(index: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
         power, derivative = state
         next_power = power * z
         logarithm = jnp.log(jnp.asarray(index, dtype=real_dtype)).astype(s.dtype)
@@ -94,7 +94,7 @@ def _polylog_series_argument_derivative_streaming(s: Array, z: Array, /) -> Arra
     terms = _term_count(jnp.real(s).dtype)
     real_dtype = jnp.real(s).dtype
 
-    def body(index, state):
+    def body(index: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
         power, derivative = state
         logarithm = jnp.log(jnp.asarray(index, dtype=real_dtype)).astype(s.dtype)
         weight = jnp.exp(-s * logarithm)
@@ -171,7 +171,10 @@ def _polylog_array(s: Array, z: Array, /) -> Array:
 
 
 @partial(_polylog_array.defjvp, symbolic_zeros=True)
-def _polylog_jvp(primals, tangents):
+def _polylog_jvp(
+    primals: tuple[Array, Array],
+    tangents: tuple[Array | SymbolicZero, Array | SymbolicZero],
+) -> tuple[Array, Array]:
     s, z = primals
     s_tangent, z_tangent = tangents
     value = _polylog_value(s, z)

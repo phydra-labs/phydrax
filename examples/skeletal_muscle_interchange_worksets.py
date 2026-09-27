@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -30,7 +32,7 @@ from phydrax.execution import (
 )
 
 
-def verified_external_model():
+def verified_external_model() -> Any:
     asset = "1" * 64
     compiled = "2" * 64
     descriptor = ExternalModelDescriptor(
@@ -151,7 +153,7 @@ def main() -> None:
         [[provider_force_by_id[item]] for item in worksets.plan.semantic_ids]
     )
 
-    def map_force(signature_, value, key, semantic_index):
+    def map_force(signature_: Any, value: Any, key: Any, semantic_index: Any) -> Any:
         del signature_, key, semantic_index
         return external.sensor_to_phydrax(value)
 

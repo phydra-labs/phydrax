@@ -10,15 +10,17 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from .._kinetic_entropy import (
     KineticEntropyRootPlan,
+    KineticEntropyRootStrategy,
     solve_kinetic_entropy_root,
 )
 from ._lattice import LatticeBoltzmannVelocitySet
@@ -35,6 +37,9 @@ from ._moments import (
     RelaxationSpectrumPlan,
 )
 from ._precision import LatticeBoltzmannPrecisionPolicy
+
+
+_KBCRootCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 class LatticeBoltzmannCollisionDiagnostics(StrictModule):
@@ -94,7 +99,7 @@ class TRTCollisionPlan(StrictModule, NonTrainableState):
     collision_id: str = eqx.field(static=True)
     family: str = "trt"
 
-    def __init__(self, magic_parameter: float = 3.0 / 16.0, /):
+    def __init__(self, magic_parameter: float = 3.0 / 16.0, /) -> None:
         value = float(magic_parameter)
         if not np.isfinite(value) or value <= 0.0:
             raise ValueError("TRT magic_parameter must be finite and positive.")
@@ -124,7 +129,9 @@ class MRTCollisionPlan(StrictModule, NonTrainableState):
     collision_id: str = eqx.field(static=True)
     family: str = "mrt"
 
-    def __init__(self, basis: MomentBasisPlan, spectrum: RelaxationSpectrumPlan, /):
+    def __init__(
+        self, basis: MomentBasisPlan, spectrum: RelaxationSpectrumPlan, /
+    ) -> None:
         if not isinstance(basis, MomentBasisPlan) or not isinstance(
             spectrum, RelaxationSpectrumPlan
         ):
@@ -150,7 +157,7 @@ class SmagorinskyCollisionPlan(StrictModule, NonTrainableState):
     collision_id: str = eqx.field(static=True)
     family: str = "smagorinsky"
 
-    def __init__(self, coefficient: float = 0.16, /):
+    def __init__(self, coefficient: float = 0.16, /) -> None:
         value = float(coefficient)
         if not np.isfinite(value) or value < 0.0:
             raise ValueError("Smagorinsky coefficient must be finite and nonnegative.")
@@ -166,7 +173,9 @@ class CentralMomentCollisionPlan(StrictModule, NonTrainableState):
     collision_id: str = eqx.field(static=True)
     family: str = "central-moment"
 
-    def __init__(self, basis: MomentBasisPlan, spectrum: RelaxationSpectrumPlan, /):
+    def __init__(
+        self, basis: MomentBasisPlan, spectrum: RelaxationSpectrumPlan, /
+    ) -> None:
         self.basis = basis
         self.spectrum = spectrum
         self.collision_id = canonical_fingerprint(
@@ -184,7 +193,9 @@ class CumulantCollisionPlan(StrictModule, NonTrainableState):
     collision_id: str = eqx.field(static=True)
     family: str = "cumulant"
 
-    def __init__(self, basis: MomentBasisPlan, spectrum: RelaxationSpectrumPlan, /):
+    def __init__(
+        self, basis: MomentBasisPlan, spectrum: RelaxationSpectrumPlan, /
+    ) -> None:
         self.basis = basis
         self.spectrum = spectrum
         self.collision_id = canonical_fingerprint(
@@ -196,8 +207,8 @@ class CumulantCollisionPlan(StrictModule, NonTrainableState):
         )
 
 
-KBCVariant = Literal["a", "b", "c", "d"]
-KBCStabilizerKind = Literal["quadratic", "exact", "hybrid"]
+KBCVariant: TypeAlias = Literal["a", "b", "c", "d"]
+KBCStabilizerKind: TypeAlias = Literal["quadratic", "exact", "hybrid"]
 
 
 class KBCCollisionPlan(StrictModule, NonTrainableState):
@@ -216,11 +227,9 @@ class KBCCollisionPlan(StrictModule, NonTrainableState):
         variant: KBCVariant = "b",
         stabilizer: KBCStabilizerKind = "quadratic",
         root: KineticEntropyRootPlan | None = None,
-    ):
-        if variant not in ("a", "b", "c", "d"):
-            raise ValueError(f"Unknown KBC variant {variant!r}.")
-        if stabilizer not in ("quadratic", "exact", "hybrid"):
-            raise ValueError(f"Unknown KBC stabilizer {stabilizer!r}.")
+    ) -> None:
+        variant = parse(variant, KBCVariant, "variant")
+        stabilizer = parse(stabilizer, KBCStabilizerKind, "stabilizer")
         selected_basis = MomentBasisPlan() if basis is None else basis
         selected_root = KineticEntropyRootPlan() if root is None else root
         if not isinstance(selected_basis, MomentBasisPlan):
@@ -254,8 +263,8 @@ class EntropicCollisionPlan(StrictModule, NonTrainableState):
         *,
         iterations: int = 24,
         tolerance: float = 1.0e-11,
-        strategy: str = "exact",
-    ):
+        strategy: KineticEntropyRootStrategy = "exact",
+    ) -> None:
         selected = (
             KineticEntropyRootPlan(
                 strategy=strategy,
@@ -664,7 +673,7 @@ def _kbc_candidate(
         current = jnp.minimum(jnp.maximum(quadratic_gamma, lower), upper)
         counts = jnp.zeros(current.shape, dtype=jnp.int32)
 
-        def iteration(_, state):
+        def iteration(_: int, state: _KBCRootCarry) -> _KBCRootCarry:
             value, lo, hi, current_active, step_counts = state
             function = derivative_at(value)
             candidate_populations = base + value[..., None] * direction
@@ -858,6 +867,7 @@ def collide_detailed(
             stress_norm,
             coefficient_active,
             support_satisfied,
+            plan.coefficient,
         )
     elif isinstance(plan, CentralMomentCollisionPlan):
         basis = prepared.basis
@@ -985,6 +995,7 @@ def collide_detailed(
             stress_norm,
             coefficient_active,
             support_satisfied,
+            smagorinsky_coefficient,
         ) = smagorinsky_values
         evidence_finite = finite & jnp.all(
             jnp.isfinite(tau_eff)
@@ -1006,7 +1017,7 @@ def collide_detailed(
             finite=evidence_finite,
             successful=successful,
             support_satisfied=support_satisfied,
-            coefficient=plan.coefficient,
+            coefficient=smagorinsky_coefficient,
             coefficient_lower_bound=0.0,
             coefficient_requires_finite=True,
             base_relaxation_rate_bounds=(0.0, 2.0),

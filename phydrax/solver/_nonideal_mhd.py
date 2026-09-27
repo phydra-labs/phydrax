@@ -4,15 +4,22 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._constrained_mhd import ConstrainedMHDState
+
+
+if TYPE_CHECKING:
+    from ..discretization.finite_volume import UpwindConstrainedTransportPlan
 
 
 class AnisotropicThermalTransportDiagnostics(StrictModule):
@@ -35,7 +42,7 @@ class AnisotropicThermalTransportPlan(StrictModule, NonTrainableState):
         *,
         perpendicular_conductivity: float = 0.0,
         cfl: float = 0.25,
-    ):
+    ) -> None:
         parallel = float(parallel_conductivity)
         perpendicular = float(perpendicular_conductivity)
         cfl_ = float(cfl)
@@ -139,7 +146,7 @@ class NonIdealMHDDiagnostics(StrictModule):
 class NonIdealMHDPlan(StrictModule, NonTrainableState):
     """Compatible explicit resistive, Hall, and ambipolar magnetic update."""
 
-    spatial: object
+    spatial: UpwindConstrainedTransportPlan
     resistivity: float = eqx.field(static=True)
     hall_coefficient: float = eqx.field(static=True)
     ambipolar_coefficient: float = eqx.field(static=True)
@@ -148,14 +155,14 @@ class NonIdealMHDPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        spatial,
+        spatial: UpwindConstrainedTransportPlan,
         /,
         *,
         resistivity: float = 0.0,
         hall_coefficient: float = 0.0,
         ambipolar_coefficient: float = 0.0,
         cfl: float = 0.25,
-    ):
+    ) -> None:
         from ..discretization.finite_volume import UpwindConstrainedTransportPlan
 
         if not isinstance(spatial, UpwindConstrainedTransportPlan):
@@ -226,7 +233,7 @@ class NonIdealMHDPlan(StrictModule, NonTrainableState):
             jnp.cross(current, magnetic_cell), magnetic_cell
         )
         electric_cell = resistive + hall - ambipolar
-        edge_components = tuple(
+        edge_x, edge_y, edge_z = tuple(
             0.25
             * (
                 electric_cell[..., axis]
@@ -240,7 +247,9 @@ class NonIdealMHDPlan(StrictModule, NonTrainableState):
             )
             for axis in range(3)
         )
-        edge_electromotive = self.spatial.bridge.pack_edge_circulation(edge_components)
+        edge_electromotive = self.spatial.bridge.pack_edge_circulation(
+            (edge_x, edge_y, edge_z)
+        )
         magnetic_rate = -self.spatial.bridge.exterior_derivative(1, edge_electromotive)
         maximum = max(
             self.resistivity,

@@ -12,6 +12,8 @@ never timed as a successful result. No schema or external-reference claim.
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -48,7 +50,7 @@ def run_quantum_case(nodes: int, warmup: int, repeats: int) -> dict:
         resources=resources,
     )
 
-    def lead(chemical_potential):
+    def lead(chemical_potential: Any) -> Any:
         return quantum.SemiInfiniteLead(
             2 * charge,
             -charge,
@@ -66,7 +68,7 @@ def run_quantum_case(nodes: int, warmup: int, repeats: int) -> dict:
     )
     preparation = time.perf_counter() - start
 
-    def solve():
+    def solve() -> Any:
         result = quantum.integrate_coherent(
             device,
             tolerance=2e-4,
@@ -136,7 +138,7 @@ def run_case(case: str, nodes: int, warmup: int, repeats: int) -> dict:
     if not bool(equilibrium.successful):
         raise RuntimeError(f"{case}: equilibrium did not converge")
 
-    def biased_solve():
+    def biased_solve() -> Any:
         sweep = prepared.sweep(
             jnp.stack((jnp.zeros_like(voltage), voltage)), initial=equilibrium.coordinates
         )
@@ -152,7 +154,7 @@ def run_case(case: str, nodes: int, warmup: int, repeats: int) -> dict:
     if not bool(point.successful):
         raise RuntimeError(f"{case}: biased operating point did not converge")
 
-    def residual_and_jvp(u, v, direction):
+    def residual_and_jvp(u: Any, v: Any, direction: Any) -> Any:
         return jax.jvp(lambda state: prepared.residual(state, v), (u,), (direction,))
 
     direction = jnp.ones_like(point.coordinates)

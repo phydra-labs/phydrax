@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -36,7 +38,7 @@ from phydrax.artifacts import ScientificArtifactEnvelope
 jax.config.update("jax_enable_x64", True)
 
 
-def _wave_observable_plan(shape=(8, 8)):
+def _wave_observable_plan(shape: Any = (8, 8)) -> Any:
     space = phx.discretization.TensorSpectralPlan(
         tuple(phx.discretization.FourierBasisPlan(count) for count in shape),
         axis_names=("x", "y"),
@@ -63,7 +65,7 @@ def _wave_observable_plan(shape=(8, 8)):
     return space, wave, plan
 
 
-def test_wave_known_density_current_and_spectra_are_exact():
+def test_wave_known_density_current_and_spectra_are_exact() -> None:
     space, wave, plan = _wave_observable_plan()
     x, _ = jnp.meshgrid(*(axis.nodes for axis in space.axes), indexing="ij")
     psi = jnp.exp(2.0j * jnp.pi * x)
@@ -89,7 +91,9 @@ def test_wave_known_density_current_and_spectra_are_exact():
     assert not bool(product.vortices.topology_present)
 
 
-def test_wave_soliton_profile_and_vortex_winding_carry_nondifferentiable_evidence():
+def test_wave_soliton_profile_and_vortex_winding_carry_nondifferentiable_evidence() -> (
+    None
+):
     space, wave, plan = _wave_observable_plan()
     x, y = jnp.meshgrid(*(axis.nodes for axis in space.axes), indexing="ij")
     dx = jnp.minimum(jnp.abs(x - 0.5), 1.0 - jnp.abs(x - 0.5))
@@ -125,7 +129,9 @@ def test_wave_soliton_profile_and_vortex_winding_carry_nondifferentiable_evidenc
     )
 
 
-def test_weighted_particle_and_scattering_statistics_have_exact_effective_samples():
+def test_weighted_particle_and_scattering_statistics_have_exact_effective_samples() -> (
+    None
+):
     result = weighted_particle_statistics(
         jnp.asarray(((0.0, 2.0), (2.0, 4.0), (jnp.nan, jnp.nan))),
         jnp.asarray((1.0, 3.0, jnp.nan)),
@@ -155,7 +161,7 @@ def test_weighted_particle_and_scattering_statistics_have_exact_effective_sample
     assert bool(angular.successful)
 
 
-def test_zero_rate_sidm_diagnostics_report_explicit_collisionless_evidence():
+def test_zero_rate_sidm_diagnostics_report_explicit_collisionless_evidence() -> None:
     zero = jnp.zeros((2,))
     false = jnp.zeros((2,), dtype="bool")
     true = jnp.asarray(True)
@@ -253,7 +259,9 @@ def test_zero_rate_sidm_diagnostics_report_explicit_collisionless_evidence():
     assert bool(weighted_product.successful)
 
 
-def test_weighted_sidm_packets_keep_multiplicity_and_gravitational_mass_evidence():
+def test_weighted_sidm_packets_keep_multiplicity_and_gravitational_mass_evidence() -> (
+    None
+):
     positions = jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 0.0)))
     microscopic_mass = jnp.asarray((2.0, 2.0, 0.0))
     multiplicity = jnp.asarray((1.0, 3.0, 0.0))
@@ -287,7 +295,7 @@ def test_weighted_sidm_packets_keep_multiplicity_and_gravitational_mass_evidence
     assert bool(product.successful)
 
 
-def test_particle_density_bulk_velocity_and_dispersion_use_native_mass_transfer():
+def test_particle_density_bulk_velocity_and_dispersion_use_native_mass_transfer() -> None:
     positions = jnp.asarray(((0.25, 0.25, 0.25), (0.75, 0.75, 0.75)))
     masses = jnp.asarray((0.25, 0.75))
     particles = phx.discretization.ParticleSetPlan(
@@ -349,7 +357,7 @@ def test_particle_density_bulk_velocity_and_dispersion_use_native_mass_transfer(
     )
 
 
-def test_mixed_component_cross_power_reconstructs_direct_total_power():
+def test_mixed_component_cross_power_reconstructs_direct_total_power() -> None:
     shape = (8, 8)
     shells = phx.discretization.PeriodicFourierShellPlan(
         shape,
@@ -377,18 +385,21 @@ def test_mixed_component_cross_power_reconstructs_direct_total_power():
     resolved_power = float(product.auto_power[0, resolved_shell])
     assert resolved_power > 0.0
     roundoff = 64.0 * np.finfo(np.float64).eps * resolved_power
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         product.auto_power[1, resolved_shell],
         4.0 * product.auto_power[0, resolved_shell],
         rtol=2e-13,
         atol=roundoff,
     )
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         product.cross_power[0, resolved_shell],
         2.0 * product.auto_power[0, resolved_shell],
         rtol=2e-13,
         atol=roundoff,
     )
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         product.direct_total_power[resolved_shell],
         9.0 * product.auto_power[0, resolved_shell],
@@ -405,7 +416,7 @@ def test_mixed_component_cross_power_reconstructs_direct_total_power():
     assert bool(product.successful)
 
 
-def test_component_force_and_work_ledger_closes_against_independent_totals():
+def test_component_force_and_work_ledger_closes_against_independent_totals() -> None:
     plan = ComponentForceWorkLedgerPlan(
         ("wave", "particles"),
         force_time_level="interval-midpoint",
@@ -444,7 +455,7 @@ def test_component_force_and_work_ledger_closes_against_independent_totals():
     assert bool(ledger.successful)
 
 
-def test_lensing_composition_binds_spatial_units_and_source_artifact():
+def test_lensing_composition_binds_spatial_units_and_source_artifact() -> None:
     artifact = ScientificArtifactEnvelope(
         artifact_kind="dark-matter-surface-density",
         content_digest="surface-density-digest",
@@ -504,7 +515,7 @@ def test_lensing_composition_binds_spatial_units_and_source_artifact():
         )
 
 
-def test_halo_and_periodic_shell_composition_bind_geometry_and_active_padding():
+def test_halo_and_periodic_shell_composition_bind_geometry_and_active_padding() -> None:
     ids = jnp.asarray((10, 11, 12))
     active = jnp.asarray((True, False, False))
     masses = jnp.asarray((1.0, 0.0, 0.0))
@@ -547,6 +558,7 @@ def test_halo_and_periodic_shell_composition_bind_geometry_and_active_padding():
         ),
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.3, maximum_retries=0),
@@ -560,6 +572,7 @@ def test_halo_and_periodic_shell_composition_bind_geometry_and_active_padding():
     producer_plan = phx.applications.cosmology.CosmologicalParticleMeshPlan(
         kinematics,
         gravity,
+        # ty: ignore[invalid-argument-type]
         (0.5, 0.5001),
     )
     producer_result = producer_plan.rollout(
@@ -583,7 +596,7 @@ def test_halo_and_periodic_shell_composition_bind_geometry_and_active_padding():
         status="complete",
     )
 
-    def snapshot(snapshot_masses):
+    def snapshot(snapshot_masses: Any) -> Any:
         return ParticleSimulationSnapshot(
             ids,
             producer_state.positions,

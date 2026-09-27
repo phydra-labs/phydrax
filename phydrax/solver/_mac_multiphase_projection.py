@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import equinox as eqx
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -28,7 +28,7 @@ class MACMultiphaseProjectionPlan(StrictModule, NonTrainableState):
     projection: MACVariableDensityProjectionPlan
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, projection: MACVariableDensityProjectionPlan, /):
+    def __init__(self, projection: MACVariableDensityProjectionPlan, /) -> None:
         if not isinstance(projection, MACVariableDensityProjectionPlan):
             raise TypeError("projection must be MACVariableDensityProjectionPlan.")
         self.projection = projection

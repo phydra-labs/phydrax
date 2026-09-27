@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -39,7 +40,7 @@ def _prepared(
     count: int = 4,
     send_capacity: int | None = None,
     maximum_phase_radians: float = 2.0,
-):
+) -> Any:
     particle_count = count**2
     devices = tuple(jax.devices()[:parts])
     if len(devices) != parts:
@@ -69,6 +70,7 @@ def _prepared(
         ),
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.3, maximum_retries=0),
@@ -184,7 +186,7 @@ def _prepared(
     return mixed, state, preparation.executable
 
 
-def test_single_part_density_poisson_force_and_mass_match_local_authority():
+def test_single_part_density_poisson_force_and_mass_match_local_authority() -> None:
     mixed, state, distributed = _prepared()
     local_density = mixed.density.assemble(state)
     local_gravity = mixed.gravity.solve(local_density)
@@ -211,7 +213,7 @@ def test_single_part_density_poisson_force_and_mass_match_local_authority():
     assert bool(gravity.successful)
 
 
-def test_phase_gate_matches_local_authority_and_rolls_back_atomically():
+def test_phase_gate_matches_local_authority_and_rolls_back_atomically() -> None:
     mixed, state, distributed = _prepared(maximum_phase_radians=1.0e-20)
     local = mixed.rollout(state)
     sharded = distributed.initialize(state)
@@ -236,8 +238,8 @@ def test_phase_gate_matches_local_authority_and_rolls_back_atomically():
     ),
 )
 def test_initialize_rejects_nonfinite_misaligned_or_noninitial_scales(
-    wave_scale, particle_scale
-):
+    wave_scale: Any, particle_scale: Any
+) -> None:
     _, state, distributed = _prepared()
     invalid = WaveParticleCosmologyState(
         type(state.wave)(state.wave.psi, jnp.asarray(wave_scale)),
@@ -253,7 +255,7 @@ def test_initialize_rejects_nonfinite_misaligned_or_noninitial_scales(
         jax.block_until_ready(initialized.wave.scale_factor)
 
 
-def test_initialize_rejects_runtime_component_precision_substitution():
+def test_initialize_rejects_runtime_component_precision_substitution() -> None:
     _, state, distributed = _prepared()
     particles = type(state.particles)(
         state.particles.positions.astype(jnp.float32),
@@ -266,7 +268,7 @@ def test_initialize_rejects_runtime_component_precision_substitution():
         distributed.initialize(substituted)
 
 
-def test_spectral_state_and_precision_abi_mismatch_refuses_preparation():
+def test_spectral_state_and_precision_abi_mismatch_refuses_preparation() -> None:
     _, _, distributed = _prepared()
     admitted = distributed.plan
     wave = admitted.mixed.plan.wave
@@ -306,7 +308,7 @@ def test_spectral_state_and_precision_abi_mismatch_refuses_preparation():
         assert "spectral-abi" in result.evidence.collective.missing_primitives
 
 
-def test_particle_migration_preserves_stable_ids_and_rng_at_periodic_boundary():
+def test_particle_migration_preserves_stable_ids_and_rng_at_periodic_boundary() -> None:
     _, state, distributed = _prepared(parts=2)
     sharded = distributed.initialize(state, rng_counters=jnp.arange(16, dtype=jnp.uint64))
     logical = distributed.particle_runtime.logical_arrays(sharded.particles)
@@ -331,7 +333,7 @@ def test_particle_migration_preserves_stable_ids_and_rng_at_periodic_boundary():
     np.testing.assert_allclose(restored["positions"], proposed)
 
 
-def test_particle_migration_detects_duplicate_stable_ids_across_owners():
+def test_particle_migration_detects_duplicate_stable_ids_across_owners() -> None:
     _, state, distributed = _prepared(parts=2)
     sharded = distributed.initialize(state)
     particles = sharded.particles
@@ -355,7 +357,7 @@ def test_particle_migration_detects_duplicate_stable_ids_across_owners():
     assert not bool(attempted.evidence.ids_unique)
 
 
-def test_periodic_particle_ghost_exchange_is_bounded_and_owner_identified():
+def test_periodic_particle_ghost_exchange_is_bounded_and_owner_identified() -> None:
     _, state, distributed = _prepared(parts=2)
     sharded = distributed.initialize(state)
     ghosts = distributed.particle_runtime.exchange_ghosts(sharded.particles)
@@ -373,7 +375,7 @@ def test_periodic_particle_ghost_exchange_is_bounded_and_owner_identified():
     np.testing.assert_array_equal(ghosts.right_count, jnp.sum(valid[:, 1], axis=1))
 
 
-def test_receive_capacity_failure_rolls_back_every_particle_field():
+def test_receive_capacity_failure_rolls_back_every_particle_field() -> None:
     _, state, distributed = _prepared(parts=2)
     sharded = distributed.initialize(state, rng_counters=jnp.arange(16, dtype=jnp.uint64))
     proposed = jnp.full_like(sharded.particles.positions, 0.25)
@@ -394,7 +396,7 @@ def test_receive_capacity_failure_rolls_back_every_particle_field():
             np.testing.assert_array_equal(incoming, retained)
 
 
-def test_multi_part_deposit_has_unique_ownership_and_additive_mass():
+def test_multi_part_deposit_has_unique_ownership_and_additive_mass() -> None:
     mixed, state, distributed = _prepared(parts=2)
     sharded = distributed.initialize(state)
     density = distributed.assemble_density(sharded)
@@ -425,7 +427,9 @@ def test_multi_part_deposit_has_unique_ownership_and_additive_mass():
     np.testing.assert_array_equal(jnp.sort(logical["stable_ids"]), jnp.arange(16))
 
 
-def test_checkpoint_evidence_binds_complete_coverage_and_changed_sharding_restore():
+def test_checkpoint_evidence_binds_complete_coverage_and_changed_sharding_restore() -> (
+    None
+):
     _, _, distributed = _prepared()
     checkpoint = distributed.evidence.checkpoint
 
@@ -452,7 +456,7 @@ def test_checkpoint_evidence_binds_complete_coverage_and_changed_sharding_restor
     assert not collective.host_gather_fallback
 
 
-def test_checkpoint_resource_preflight_refuses_before_execution():
+def test_checkpoint_resource_preflight_refuses_before_execution() -> None:
     _, _, distributed = _prepared()
     admitted = distributed.plan
     refused = DistributedMixedExecutionPlan(
@@ -474,7 +478,7 @@ def test_checkpoint_resource_preflight_refuses_before_execution():
     assert not refused.evidence.checkpoint.capacity_sufficient
 
 
-def test_ghost_capacity_cannot_exceed_local_particle_capacity():
+def test_ghost_capacity_cannot_exceed_local_particle_capacity() -> None:
     _, _, distributed = _prepared()
     admitted = distributed.plan
     with pytest.raises(ValueError, match="exchange capacities"):
@@ -489,7 +493,7 @@ def test_ghost_capacity_cannot_exceed_local_particle_capacity():
         )
 
 
-def test_checkpoint_payload_padding_is_mesh_divisible_and_schema_unpadded():
+def test_checkpoint_payload_padding_is_mesh_divisible_and_schema_unpadded() -> None:
     _, state, distributed = _prepared(parts=3, count=6)
     payload = distributed.checkpoint_tree(distributed.initialize(state))["payload"]
     expected_padding = (
@@ -513,7 +517,7 @@ def test_checkpoint_payload_padding_is_mesh_divisible_and_schema_unpadded():
 )
 def test_checkpoint_restore_changes_particle_and_field_sharding(
     tmp_path: Path, source_parts: int, destination_parts: int, count: int
-):
+) -> None:
     _, state, source = _prepared(parts=source_parts, count=count)
     _, _, destination = _prepared(parts=destination_parts, count=count)
     source_state = source.initialize(

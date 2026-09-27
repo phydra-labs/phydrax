@@ -9,7 +9,7 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -17,6 +17,7 @@ from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 WaveLimiterKind: TypeAlias = Literal["minmod", "mc", "superbee", "van_leer"]
@@ -37,7 +38,7 @@ class WaveDecomposition(StrictModule):
         left_fluctuation: Array,
         right_fluctuation: Array,
         /,
-    ):
+    ) -> None:
         waves_ = jnp.asarray(waves)
         speeds_ = jnp.asarray(speeds)
         left_ = jnp.asarray(left_fluctuation)
@@ -84,7 +85,7 @@ class RoeWavePropagationPlan(AbstractWavePropagationPlan):
 
     entropy_fix: float = eqx.field(static=True)
 
-    def __init__(self, *, entropy_fix: float = 0.0):
+    def __init__(self, *, entropy_fix: float = 0.0) -> None:
         fix = float(entropy_fix)
         if fix < 0.0:
             raise ValueError("entropy_fix must be non-negative.")
@@ -138,9 +139,8 @@ class WaveFamilyLimiterPlan(StrictModule, NonTrainableState):
     kind: WaveLimiterKind = eqx.field(static=True)
     limiter_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: WaveLimiterKind = "mc", /):
-        if kind not in ("minmod", "mc", "superbee", "van_leer"):
-            raise ValueError("Unknown wave-family limiter.")
+    def __init__(self, kind: WaveLimiterKind = "mc", /) -> None:
+        kind = parse(kind, WaveLimiterKind, "kind")
         self.kind = kind
         self.limiter_id = canonical_fingerprint(
             {"kind": "wave-family-limiter", "method": kind}
@@ -188,7 +188,7 @@ class TransverseWaveSolverPlan(StrictModule, NonTrainableState):
 
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.plan_id = canonical_fingerprint({"kind": "transverse-wave-solver"})
 
     def split(

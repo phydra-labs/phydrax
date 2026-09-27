@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -23,7 +23,7 @@ class LaughlinSphereAmplitude(StrictModule):
     twice_monopole_flux: int = eqx.field(static=True)
     amplitude_id: str = eqx.field(static=True)
 
-    def __init__(self, particle_count: int, exponent: int, /):
+    def __init__(self, particle_count: int, exponent: int, /) -> None:
         particles = int(particle_count)
         power = int(exponent)
         if particles < 2 or power < 1:

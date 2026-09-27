@@ -6,9 +6,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
-from phydrax.domain import DomainFunction
+from phydrax.domain import DomainFunction, JointFactor
 
 from .._composition import pullback
 from ..differential._domain_ops import dt, grad
@@ -17,7 +17,7 @@ from ..differential._domain_ops import dt, grad
 _ADEngine = Literal["auto", "reverse", "forward", "jvp"]
 
 
-def _require_factor(function: DomainFunction, label: str, /, *, role: str):
+def _require_factor(function: DomainFunction, label: str, /, *, role: str) -> JointFactor:
     if label not in function.domain.labels:
         raise ValueError(
             f"{role} label {label!r} is absent from domain {function.domain.labels!r}."

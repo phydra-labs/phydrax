@@ -2,15 +2,18 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
-from jaxtyping import Array
+from jax import Array
 
 import phydrax as phx
 
 
-def _scale_operator_contract(model):
+def _scale_operator_contract(model: Any) -> Any:
     return phx.nn.operator.ConfiguredOperatorContract(
         architecture="test-scale-operator",
         configuration=(),
@@ -29,7 +32,9 @@ class _ScaleOperator(phx.nn.operator.AbstractOperatorModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, scale, *, capability=None, training=None):
+    def __init__(
+        self, scale: Any, *, capability: Any = None, training: Any = None
+    ) -> None:
         self.scale = jnp.asarray(scale)
         self.capability = (
             phx.nn.operator.OperatorCapabilitySpec(
@@ -47,17 +52,17 @@ class _ScaleOperator(phx.nn.operator.AbstractOperatorModel):
         self.in_size = 1
         self.out_size = 1
 
-    def __call_operator_batch__(self, batch, /, *, key=None):
+    def __call_operator_batch__(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         values = batch.input("state").values
         assert values is not None
         return self.scale * values
 
-    def __call__(self, batch, /, *, key=None):
+    def __call__(self, batch: Any, /, *, key: Any = None) -> Any:
         return self.__call_operator_batch__(batch, key=key)
 
 
-def _path():
+def _path() -> Any:
     low = phx.fidelity.FidelityLevelSpec(
         "low",
         problem_id="operator-problem",
@@ -81,7 +86,7 @@ def _path():
     ).linear_path()
 
 
-def _dataset(case_ids, *, scale):
+def _dataset(case_ids: Any, *, scale: Any) -> Any:
     axis = phx.nn.operator.OperatorAxis("x", jnp.linspace(0.0, 1.0, 4))
     values = jnp.stack(
         tuple(jnp.linspace(float(index), float(index) + 1.0, 4) for index in case_ids)
@@ -102,7 +107,7 @@ def _dataset(case_ids, *, scale):
     )
 
 
-def test_fidelity_correction_operator_adds_baseline_and_correction():
+def test_fidelity_correction_operator_adds_baseline_and_correction() -> None:
     dataset = _dataset((0, 1, 2), scale=3.0)
     model = phx.nn.operator.architectures.FidelityCorrectionOperator(
         _ScaleOperator(1.0),
@@ -115,7 +120,7 @@ def test_fidelity_correction_operator_adds_baseline_and_correction():
     assert jnp.allclose(values, 3.0 * source)
 
 
-def test_fidelity_contract_intersects_both_child_capabilities():
+def test_fidelity_contract_intersects_both_child_capabilities() -> None:
     baseline_capability = phx.nn.operator.OperatorCapabilitySpec(
         source_geometries=("tensor_grid",),
         query_geometries=("tensor_grid",),
@@ -152,7 +157,7 @@ def test_fidelity_contract_intersects_both_child_capabilities():
     assert not capability.multiple_queries
 
 
-def test_fidelity_contract_rejects_unrepresentable_training_requirements():
+def test_fidelity_contract_rejects_unrepresentable_training_requirements() -> None:
     baseline = _ScaleOperator(
         1.0,
         training=phx.nn.operator.OperatorTrainingRequirement(),
@@ -172,7 +177,7 @@ def test_fidelity_contract_rejects_unrepresentable_training_requirements():
         )
 
 
-def test_fidelity_operator_preparation_pairs_physical_cases_explicitly():
+def test_fidelity_operator_preparation_pairs_physical_cases_explicitly() -> None:
     low = _dataset((0, 1, 2, 3), scale=1.0)
     target = _dataset((0, 1, 2), scale=3.0)
     prepared = phx.nn.operator.training.prepare_fidelity_operator_dataset(
@@ -188,6 +193,7 @@ def test_fidelity_operator_preparation_pairs_physical_cases_explicitly():
     assert not prepared.target_only_case_ids
     assert all(
         record.identities["target_fidelity_id"] == "high"
+        # ty: ignore[not-iterable]
         for record in prepared.dataset.provenance
     )
 

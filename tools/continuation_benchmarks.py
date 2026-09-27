@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -15,7 +16,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _run(function):
+def _run(function: Any) -> Any:
     started = time.perf_counter()
     result = function()
     jax.block_until_ready(result.points[-1].state)
@@ -23,7 +24,7 @@ def _run(function):
     return result, elapsed
 
 
-def _report(result, elapsed):
+def _report(result: Any, elapsed: Any) -> Any:
     diagnostics = result.diagnostics
     return {
         "seconds": elapsed,
@@ -44,7 +45,7 @@ def _report(result, elapsed):
     }
 
 
-def _affine_case(predictor):
+def _affine_case(predictor: Any) -> Any:
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, args: state - 2.0 * coordinate,
         problem_id=f"benchmark-affine-{predictor}",
@@ -62,7 +63,7 @@ def _affine_case(predictor):
     )
 
 
-def _fold_case(tangent_update, minimum_alignment):
+def _fold_case(tangent_update: Any, minimum_alignment: Any) -> Any:
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, args: state**3 - state + coordinate,
         problem_id=f"benchmark-fold-{tangent_update}",
@@ -81,7 +82,7 @@ def _fold_case(tangent_update, minimum_alignment):
     )
 
 
-def _complex_case():
+def _complex_case() -> Any:
     public_space = phx.linalg.ArraySpace((1,), dtype=jnp.complex128)
     coordinates = phx.linalg.ComplexCartesianCoordinates(public_space)
     representation = phx.continuation.ContinuationRepresentationPolicy(
@@ -108,7 +109,7 @@ def _complex_case():
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repeats", type=int, default=1)
     arguments = parser.parse_args()

@@ -5,7 +5,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 def packed_bed_pressure_gradient(
@@ -15,7 +16,7 @@ def packed_bed_pressure_gradient(
     particle_diameter_m: float,
     porosity: float,
     /,
-):
+) -> Array:
     if (
         not isfinite(viscosity_pa_s)
         or viscosity_pa_s <= 0
@@ -53,7 +54,7 @@ def catalyst_pellet_rate(
     intrinsic_rate_s_inv: float,
     effectiveness_factor: ArrayLike,
     /,
-):
+) -> Array:
     if not isfinite(intrinsic_rate_s_inv) or intrinsic_rate_s_inv < 0:
         raise ValueError("Intrinsic catalyst rate must be finite and nonnegative.")
     concentration = jnp.asarray(bulk_concentration)

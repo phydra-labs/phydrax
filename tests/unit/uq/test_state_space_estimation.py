@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -9,16 +11,16 @@ import phydrax as phx
 
 def _linear_problem(
     *,
-    problem_id,
-    sequence_id,
-    case_axes,
-    case_shape,
-    case_ids,
-    values,
-    times,
-    step_valid=None,
-    observation_mask=None,
-):
+    problem_id: Any,
+    sequence_id: Any,
+    case_axes: Any,
+    case_shape: Any,
+    case_ids: Any,
+    values: Any,
+    times: Any,
+    step_valid: Any = None,
+    observation_mask: Any = None,
+) -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray(times),
         jnp.asarray(values),
@@ -65,7 +67,7 @@ def _linear_problem(
     )
 
 
-def _templates():
+def _templates() -> Any:
     replicated = _linear_problem(
         problem_id="replicated-problem",
         sequence_id="replicated-sequence",
@@ -99,17 +101,17 @@ def _templates():
     return replicated, independent
 
 
-def _experiments():
+def _experiments() -> Any:
     replicated, independent = _templates()
 
-    def replicated_problem(parameters):
+    def replicated_problem(parameters: Any) -> Any:
         return eqx.tree_at(
             lambda problem: problem.model.observation.offset,
             replicated,
             parameters["offset"],
         )
 
-    def independent_problem(parameters):
+    def independent_problem(parameters: Any) -> Any:
         return eqx.tree_at(
             lambda problem: problem.model.observation.offset,
             independent,
@@ -134,7 +136,7 @@ def _experiments():
     )
 
 
-def _estimation(initial=-0.5):
+def _estimation(initial: Any = -0.5) -> Any:
     parameter_space = phx.uq.ParameterSpace(
         {"offset": jnp.asarray(initial)},
         log_prior=lambda parameters: -0.5 * (parameters["offset"] / 3.0) ** 2,
@@ -142,17 +144,17 @@ def _estimation(initial=-0.5):
     return phx.uq.StateSpaceEstimation(parameter_space, _experiments())
 
 
-def _particle_experiment():
+def _particle_experiment() -> Any:
     template, _ = _templates()
 
-    def problem(parameters):
+    def problem(parameters: Any) -> Any:
         return eqx.tree_at(
             lambda value: value.model.observation.offset,
             template,
             parameters["offset"],
         )
 
-    def particle_likelihood(state_space_problem):
+    def particle_likelihood(state_space_problem: Any) -> Any:
         return phx.uq.bootstrap_particle_filter(
             jr.key(17),
             state_space_problem,
@@ -171,11 +173,11 @@ def _particle_experiment():
     )
 
 
-def _reference_sampler(problem, *, position):
+def _reference_sampler(problem: Any, *, position: Any) -> Any:
     return problem.log_density(position)
 
 
-def test_multi_experiment_likelihood_and_gradient_equal_separate_exact_terms():
+def test_multi_experiment_likelihood_and_gradient_equal_separate_exact_terms() -> None:
     experiments = _experiments()
     likelihood = phx.uq.MultiExperimentStateSpaceLikelihood(experiments)
     parameters = {"offset": jnp.asarray(0.2)}
@@ -202,7 +204,7 @@ def test_multi_experiment_likelihood_and_gradient_equal_separate_exact_terms():
     assert jnp.isfinite(gradient["offset"])
 
 
-def test_experiment_diagnostics_preserve_cases_masks_status_and_backend():
+def test_experiment_diagnostics_preserve_cases_masks_status_and_backend() -> None:
     result = _estimation().evaluate_likelihood({"offset": jnp.asarray(0.0)})
     replicated = result.experiment("replicated")
     independent = result.experiment("independent")
@@ -241,7 +243,9 @@ def test_experiment_diagnostics_preserve_cases_masks_status_and_backend():
         result.experiment("missing")
 
 
-def test_approximate_experiment_composes_without_discarding_particle_diagnostics():
+def test_approximate_experiment_composes_without_discarding_particle_diagnostics() -> (
+    None
+):
     experiment = _particle_experiment()
     result = phx.uq.MultiExperimentStateSpaceLikelihood((experiment,)).evaluate(
         {"offset": jnp.asarray(0.0)}
@@ -262,7 +266,7 @@ def test_approximate_experiment_composes_without_discarding_particle_diagnostics
     )
 
 
-def test_bellman_and_rao_blackwellized_likelihood_backends_retain_diagnostics():
+def test_bellman_and_rao_blackwellized_likelihood_backends_retain_diagnostics() -> None:
     _, template = _templates()
     bellman_experiment = phx.uq.StateSpaceExperiment(
         lambda parameters: eqx.tree_at(
@@ -274,6 +278,7 @@ def test_bellman_and_rao_blackwellized_likelihood_backends_retain_diagnostics():
         case_axes=(),
         case_shape=(),
         case_ids=("single",),
+        # ty: ignore[invalid-argument-type]
         likelihood=phx.uq.StateSpaceLaplaceLikelihood(),
         likelihood_id="bellman-pseudo",
     )
@@ -306,7 +311,7 @@ def test_bellman_and_rao_blackwellized_likelihood_backends_retain_diagnostics():
         model_id="estimation-rb-model",
     )
 
-    def rb_problem(parameters):
+    def rb_problem(parameters: Any) -> Any:
         return phx.uq.RaoBlackwellizedStateSpaceProblem(
             rb_model,
             template.observations,
@@ -321,6 +326,7 @@ def test_bellman_and_rao_blackwellized_likelihood_backends_retain_diagnostics():
         case_axes=(),
         case_shape=(),
         case_ids=("single",),
+        # ty: ignore[invalid-argument-type]
         likelihood=phx.uq.RaoBlackwellizedFilterLikelihood(
             jr.key(18),
             num_particles=4,
@@ -362,7 +368,9 @@ def test_bellman_and_rao_blackwellized_likelihood_backends_retain_diagnostics():
     "workflow",
     ("local_map", "global_then_local_map", "laplace"),
 )
-def test_gradient_workflows_reject_custom_approximate_backend_before_tracing(workflow):
+def test_gradient_workflows_reject_custom_approximate_backend_before_tracing(
+    workflow: Any,
+) -> None:
     parameter_space = phx.uq.ParameterSpace(
         {"offset": jnp.asarray(0.0)},
         log_prior=lambda parameters: -0.5 * parameters["offset"] ** 2,
@@ -395,10 +403,10 @@ def test_gradient_workflows_reject_custom_approximate_backend_before_tracing(wor
             estimation.laplace(stationarity_tolerance=None)
 
 
-def test_declared_transform_safe_custom_likelihood_supports_local_map():
+def test_declared_transform_safe_custom_likelihood_supports_local_map() -> None:
     template, _ = _templates()
 
-    def problem(parameters):
+    def problem(parameters: Any) -> Any:
         return eqx.tree_at(
             lambda value: value.model.observation.offset,
             template,
@@ -411,6 +419,7 @@ def test_declared_transform_safe_custom_likelihood_supports_local_map():
         case_axes=("replicate",),
         case_shape=(2,),
         case_ids=("replicate-a", "replicate-b"),
+        # ty: ignore[invalid-argument-type]
         likelihood=phx.uq.exact_state_space_log_likelihood,
         likelihood_id="custom-exact",
         transform_safe=True,
@@ -429,10 +438,10 @@ def test_declared_transform_safe_custom_likelihood_supports_local_map():
     assert result.likelihood.experiment_ids == ("custom-exact",)
 
 
-def test_custom_likelihood_rejects_cached_backend_with_matching_user_ids():
+def test_custom_likelihood_rejects_cached_backend_with_matching_user_ids() -> None:
     template, _ = _templates()
 
-    def problem(parameters):
+    def problem(parameters: Any) -> Any:
         return eqx.tree_at(
             lambda value: value.model.observation.offset,
             template,
@@ -458,7 +467,7 @@ def test_custom_likelihood_rejects_cached_backend_with_matching_user_ids():
         experiment.evaluate({"offset": jnp.asarray(0.5)})
 
 
-def test_local_global_map_laplace_and_sampler_composition_preserve_diagnostics():
+def test_local_global_map_laplace_and_sampler_composition_preserve_diagnostics() -> None:
     estimation = _estimation(initial=-0.75)
     local = estimation.local_map(max_steps=50, raise_on_failure=False)
     search = phx.optim.DifferentialEvolutionSearch(
@@ -510,7 +519,7 @@ def test_local_global_map_laplace_and_sampler_composition_preserve_diagnostics()
     )
 
 
-def test_state_space_global_then_local_map_accepts_gp_initializer():
+def test_state_space_global_then_local_map_accepts_gp_initializer() -> None:
     estimation = _estimation(initial=-0.75)
     search = phx.uq.GaussianProcessBayesianOptimization(
         8,
@@ -540,7 +549,7 @@ def test_state_space_global_then_local_map_accepts_gp_initializer():
     assert result.local_map.objective <= result.global_search.objective + 1e-8
 
 
-def test_experiment_rejects_changed_case_semantics():
+def test_experiment_rejects_changed_case_semantics() -> None:
     template, _ = _templates()
     experiment = phx.uq.StateSpaceExperiment(
         lambda parameters: template,

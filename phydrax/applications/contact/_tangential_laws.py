@@ -8,6 +8,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ...discretization.contact._kinematics import ContactKinematicsBatch
@@ -21,13 +22,13 @@ from ._materials import ContactPairParameters
 from ._route_state import ContactRouteState
 
 
-def _regularized_speed(value, regularization, /):
+def _regularized_speed(value: Array, regularization: Array, /) -> tuple[Array, Array]:
     squared = jnp.sum(value * value, axis=-1)
     speed = jnp.sqrt(squared + regularization * regularization)
     return speed, squared
 
 
-def _smooth_slip_potential(speed, epsilon, /):
+def _smooth_slip_potential(speed: Array, epsilon: Array, /) -> Array:
     interior = (
         epsilon / 3.0
         + speed * speed / epsilon
@@ -36,7 +37,7 @@ def _smooth_slip_potential(speed, epsilon, /):
     return jnp.where(speed < epsilon, interior, speed)
 
 
-def _smooth_slip_first_derivative(speed, epsilon, /):
+def _smooth_slip_first_derivative(speed: Array, epsilon: Array, /) -> Array:
     interior = 2.0 * speed / epsilon - speed * speed / (epsilon * epsilon)
     return jnp.where(speed < epsilon, interior, 1.0)
 
@@ -52,7 +53,7 @@ class RegularizedCoulombContactLaw(AbstractTangentialContactLaw):
         /,
         *,
         stribeck_velocity: float | None = None,
-    ):
+    ) -> None:
         epsilon = float(velocity_threshold)
         stribeck = (
             10.0 * epsilon if stribeck_velocity is None else float(stribeck_velocity)
@@ -67,7 +68,7 @@ class RegularizedCoulombContactLaw(AbstractTangentialContactLaw):
             {
                 "kind": "regularized-coulomb-contact-law",
                 "velocity_threshold": epsilon.hex(),
-                "stribeck_velocity": stribeck.hex(),
+                "stribeck_velocity": float(stribeck).hex(),
             }
         )
 
@@ -146,7 +147,7 @@ class AnisotropicCoulombContactLaw(AbstractTangentialContactLaw):
         velocity_threshold: float,
         tangent_scale: tuple[float, ...],
         /,
-    ):
+    ) -> None:
         epsilon = float(velocity_threshold)
         scales = tuple(float(value) for value in tangent_scale)
         if not np.isfinite(epsilon) or epsilon <= 0.0:
@@ -253,7 +254,7 @@ class RateStateFrictionContactLaw(AbstractTangentialContactLaw):
         reference_velocity: float,
         critical_slip_distance: float,
         velocity_threshold: float,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (

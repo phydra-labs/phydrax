@@ -10,11 +10,13 @@ from typing import Any, TYPE_CHECKING
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._euler_maruyama import (
     _euler_maruyama_log_prob,
     _euler_maruyama_mean,
@@ -53,7 +55,7 @@ class IsothermalPortHamiltonianDynamics(StrictModule):
         *,
         temperature: float,
         process_id: str,
-    ):
+    ) -> None:
         from ..nn.models import PortHamiltonianVectorField
 
         if not isinstance(field, PortHamiltonianVectorField):
@@ -90,7 +92,7 @@ class IsothermalPortHamiltonianDynamics(StrictModule):
         basis = jnp.eye(self.state_size, dtype=state.dtype)
         indices = jnp.arange(self.state_size, dtype=jnp.int32)
 
-        def accumulate(total, item):
+        def accumulate(total: Array, item: tuple[Array, Array]) -> tuple[Array, None]:
             direction, index = item
             _, tangent = jax.jvp(
                 self._structure_matrix,
@@ -164,7 +166,7 @@ class IsothermalPortHamiltonianDynamics(StrictModule):
         """Return the Gibbs-density-normalized stationary Fokker--Planck residual."""
         state_array = jnp.asarray(state)
 
-        def normalized_current(value):
+        def normalized_current(value: Array) -> Array:
             gradient = self.field.energy_gradient(value)
             score = -gradient / self.temperature
             dissipation = self.field.dissipation_matrix(value)
@@ -187,7 +189,7 @@ class IsothermalPortHamiltonianDynamics(StrictModule):
         basis = jnp.eye(self.state_size, dtype=state.dtype)
         indices = jnp.arange(self.state_size, dtype=jnp.int32)
 
-        def accumulate(total, item):
+        def accumulate(total: Array, item: tuple[Array, Array]) -> tuple[Array, None]:
             direction, index = item
             _, tangent = jax.jvp(
                 self.field.dissipation_matrix,
@@ -268,7 +270,7 @@ class IsothermalPortHamiltonianTransitionKernel(AbstractTransitionKernel):
         /,
         *,
         approximation_id: str = "euler-maruyama",
-    ):
+    ) -> None:
         if not isinstance(dynamics, IsothermalPortHamiltonianDynamics):
             raise TypeError("dynamics must be IsothermalPortHamiltonianDynamics.")
         self.dynamics = dynamics
@@ -306,7 +308,14 @@ class IsothermalPortHamiltonianTransitionKernel(AbstractTransitionKernel):
             valid=context.input_valid,
         )
 
-    def mean(self, state, t0, t1, context, /) -> Array:
+    def mean(
+        self,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
         state_array = jnp.asarray(state)
         return _euler_maruyama_mean(
             state_array,
@@ -315,10 +324,25 @@ class IsothermalPortHamiltonianTransitionKernel(AbstractTransitionKernel):
             state_size=self.state_size,
         )
 
-    def covariance(self, state, t0, t1, context, /) -> Array:
+    def covariance(
+        self,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
         return self.parameters(state, t0, t1, context).covariance
 
-    def sample(self, key, state, t0, t1, context, /) -> TransitionSample:
+    def sample(
+        self,
+        key: PRNGKey,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> TransitionSample:
         state_array = jnp.asarray(state)
         values, valid = _euler_maruyama_sample(
             key,
@@ -336,7 +360,15 @@ class IsothermalPortHamiltonianTransitionKernel(AbstractTransitionKernel):
             approximation_id=self.approximation_id,
         )
 
-    def log_prob(self, next_state, state, t0, t1, context, /) -> Array:
+    def log_prob(
+        self,
+        next_state: ArrayLike,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
         next_array = jnp.asarray(next_state)
         if tuple(next_array.shape) != self.state_shape:
             raise ValueError(

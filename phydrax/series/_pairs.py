@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._sampled import SampledSeries
@@ -28,7 +29,7 @@ class SeriesPairView(StrictModule):
         source_indices: ArrayLike,
         target_indices: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(series, SampledSeries):
             raise TypeError("series must be a SampledSeries.")
         if series.alignment != "node":

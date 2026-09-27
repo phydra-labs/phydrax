@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import numpy as np
+from jax import Array
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -31,7 +32,7 @@ class AffineLinearROMFidelityEvaluator(StrictModule, NonTrainableState):
         cost: float,
         observable: str = "state",
         evaluator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, PreparedAffineLinearROM):
             raise TypeError("model must be a PreparedAffineLinearROM.")
         if not isinstance(level, FidelityLevelSpec):
@@ -82,7 +83,7 @@ class AffineLinearROMFidelityEvaluator(StrictModule, NonTrainableState):
     def __call__(
         self,
         case: FidelityCaseSpec,
-        key=None,
+        key: Array | None = None,
         /,
     ) -> FidelityEvaluation:
         del key

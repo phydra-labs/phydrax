@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -7,12 +9,12 @@ import phydrax.linalg as la
 import phydrax.nonlinear as nl
 
 
-def _positive_log(state, _):
+def _positive_log(state: Any, _: Any) -> Any:
     checked = eqx.error_if(state, jnp.any(state <= 0.0), "invalid residual evaluated")
     return jnp.log(checked)
 
 
-def _problem():
+def _problem() -> Any:
     return nl.NonlinearSystemProblem(
         _positive_log,
         trial_validity=lambda state, _: jnp.all(state > 0.0),
@@ -21,7 +23,7 @@ def _problem():
 
 
 @pytest.mark.parametrize("method", (nl.NewtonKrylov(), nl.NewtonTrustRegion()))
-def test_invalid_initial_root_never_evaluates_residual_or_jacobian(method):
+def test_invalid_initial_root_never_evaluates_residual_or_jacobian(method: Any) -> None:
     result = jax.jit(
         lambda state: method.solve(
             _problem(),
@@ -36,7 +38,7 @@ def test_invalid_initial_root_never_evaluates_residual_or_jacobian(method):
     assert jnp.array_equal(result.state, jnp.asarray([-1.0]))
 
 
-def test_newton_shortens_out_of_domain_trials_without_evaluating_them():
+def test_newton_shortens_out_of_domain_trials_without_evaluating_them() -> None:
     result = jax.jit(
         lambda initial: nl.NewtonKrylov().solve(
             _problem(),
@@ -54,10 +56,10 @@ def test_newton_shortens_out_of_domain_trials_without_evaluating_them():
     assert jnp.allclose(result.state, jnp.ones(1), atol=1e-9)
 
 
-def test_explicit_jacobian_is_not_called_on_rejected_initial_state():
+def test_explicit_jacobian_is_not_called_on_rejected_initial_state() -> None:
     space = la.ArraySpace((1,), dtype=jnp.float64)
 
-    def jacobian(state, _):
+    def jacobian(state: Any, _: Any) -> Any:
         checked = eqx.error_if(state, jnp.any(state <= 0.0), "invalid Jacobian evaluated")
         return la.DenseLinearOperator(jnp.diag(1.0 / checked), source=space, target=space)
 
@@ -82,7 +84,7 @@ def test_explicit_jacobian_is_not_called_on_rejected_initial_state():
     assert result.diagnostics.domain_failures == 1
 
 
-def test_prepared_refresh_refuses_a_changed_domain_contract():
+def test_prepared_refresh_refuses_a_changed_domain_contract() -> None:
     problem = _problem()
     prepared = nl.prepare_nonlinear(problem, jnp.asarray([1.0]))
     changed = nl.NonlinearSystemProblem(
@@ -96,10 +98,12 @@ def test_prepared_refresh_refuses_a_changed_domain_contract():
 
 
 @pytest.mark.parametrize("explicit", (False, True))
-def test_mapped_newton_never_evaluates_invalid_residual_or_jacobian_lane(explicit):
+def test_mapped_newton_never_evaluates_invalid_residual_or_jacobian_lane(
+    explicit: Any,
+) -> None:
     space = la.ArraySpace((1,), dtype=jnp.float64)
 
-    def jacobian(state, _):
+    def jacobian(state: Any, _: Any) -> Any:
         state = eqx.error_if(
             state, jnp.any(state <= 0.0), "invalid mapped Jacobian evaluated"
         )
@@ -148,7 +152,9 @@ def test_mapped_newton_never_evaluates_invalid_residual_or_jacobian_lane(explici
     assert jnp.allclose(result.state[:, 0], jnp.asarray([-1.0, 1.0]), atol=1e-9)
 
 
-def test_mapped_domain_guard_preserves_jvp_and_transpose_in_both_transform_orders():
+def test_mapped_domain_guard_preserves_jvp_and_transpose_in_both_transform_orders() -> (
+    None
+):
     problem = _problem()
     states = jnp.asarray([[-1.0], [4.0]])
     mapped = jax.vmap(problem.residual)
@@ -179,7 +185,7 @@ def test_mapped_domain_guard_preserves_jvp_and_transpose_in_both_transform_order
         nl.NewtonTrustRegion(trust_region=nl.RootTrustRegion(initial_radius=100.0)),
     ),
 )
-def test_guarded_trials_consume_only_actual_residual_budget(method):
+def test_guarded_trials_consume_only_actual_residual_budget(method: Any) -> None:
     result = method.solve(
         _problem(),
         jnp.asarray([10.0]),

@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -22,10 +23,11 @@ from ...discretization.fem._reference import FiniteElementSpec
 from ...discretization.finite_volume._riemann import (
     AbstractSymmetricTwoPointFluxPlan,
 )
+from ...typing import parse
 from .._entropy_pair import ConvexEntropyPair
 
 
-EntropyDGFormulation = Literal[
+EntropyDGFormulation: TypeAlias = Literal[
     "tensor_sbp",
     "generalized_sbp",
     "skew_modal",
@@ -37,7 +39,7 @@ class PhysicalBoundaryEntropyContract(StrictModule, NonTrainableState):
     supply: Any = eqx.field(static=True)
     contract_id: str = eqx.field(static=True)
 
-    def __init__(self, boundary_id: str, supply: Any, /):
+    def __init__(self, boundary_id: str, supply: Any, /) -> None:
         identifier = str(boundary_id)
         if not identifier or not callable(supply):
             raise ValueError("Boundary entropy contracts require ID and supply callable.")
@@ -112,12 +114,11 @@ class EntropyStableDGPlan(StrictModule, NonTrainableState):
         formulation: EntropyDGFormulation = "generalized_sbp",
         tolerance: float = 1.0e-10,
         boundary_contracts: Sequence[PhysicalBoundaryEntropyContract] = (),
-    ):
-        formulation_ = str(formulation)
+    ) -> None:
         tolerance_ = float(tolerance)
+        formulation_ = parse(formulation, EntropyDGFormulation, "formulation")
         if (
-            formulation_ not in ("tensor_sbp", "generalized_sbp", "skew_modal")
-            or not isinstance(entropy_pair, ConvexEntropyPair)
+            not isinstance(entropy_pair, ConvexEntropyPair)
             or not isinstance(volume_flux, AbstractSymmetricTwoPointFluxPlan)
             or not math.isfinite(tolerance_)
             or tolerance_ <= 0.0

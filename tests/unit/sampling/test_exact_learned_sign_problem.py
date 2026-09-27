@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -22,7 +25,7 @@ from phydrax.sampling._exact_learned import (
 )
 
 
-def _support():
+def _support() -> Any:
     return LearnedSupportTuple(
         target_id="standard-normal",
         geometry_id="euclidean-r1",
@@ -34,7 +37,7 @@ def _support():
     )
 
 
-def test_exact_delayed_acceptance_invariance_survives_bad_surrogate():
+def test_exact_delayed_acceptance_invariance_survives_bad_surrogate() -> None:
     support = _support()
     metric = freeze_learned_metric(jnp.eye(1, dtype=jnp.float32), support)
     plan = DelayedAcceptanceHMCPlan(support, step_size=0.35, leapfrog_steps=4)
@@ -63,7 +66,7 @@ def test_exact_delayed_acceptance_invariance_survives_bad_surrogate():
     assert result.claim == "exact-target-delayed-acceptance-with-frozen-surrogate"
 
 
-def test_learned_artifacts_are_frozen_and_out_of_domain_is_refused():
+def test_learned_artifacts_are_frozen_and_out_of_domain_is_refused() -> None:
     support = _support()
     metric = freeze_learned_metric(jnp.eye(1, dtype=jnp.float32), support)
     coarse = freeze_learned_coarse_space(jnp.ones((1, 1), dtype=jnp.float32), support)
@@ -88,7 +91,7 @@ def test_learned_artifacts_are_frozen_and_out_of_domain_is_refused():
         )
 
 
-def test_nontrivial_gauge_flow_reports_jacobian_and_uses_exact_mh_ratio():
+def test_nontrivial_gauge_flow_reports_jacobian_and_uses_exact_mh_ratio() -> None:
     support = _support()
     scale = 1.7
     flow = ScalarGaugeEquivariantFlow(support, scale=scale)
@@ -134,12 +137,12 @@ def test_nontrivial_gauge_flow_reports_jacobian_and_uses_exact_mh_ratio():
     assert jnp.all(result.proposal_valid)
 
 
-def test_learned_sampler_states_reject_different_prepared_owners():
+def test_learned_sampler_states_reject_different_prepared_owners() -> None:
     support = _support()
     metric = freeze_learned_metric(jnp.eye(1, dtype=jnp.float32), support)
     hmc_plan = DelayedAcceptanceHMCPlan(support, step_size=0.1, leapfrog_steps=2)
 
-    def hmc(surrogate_id):
+    def hmc(surrogate_id: Any) -> Any:
         return prepare_delayed_acceptance_hmc(
             hmc_plan,
             lambda x: -0.5 * jnp.sum(x**2),
@@ -168,7 +171,7 @@ def test_learned_sampler_states_reject_different_prepared_owners():
     flow = ScalarGaugeEquivariantFlow(support, scale=1.1)
     flow_plan = GaugeFlowProposalPlan(support, equivariance_tolerance=1e-6)
 
-    def proposal(base_id):
+    def proposal(base_id: Any) -> Any:
         return prepare_gauge_flow_proposal(
             flow_plan,
             flow,

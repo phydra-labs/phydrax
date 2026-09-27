@@ -12,11 +12,13 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ...stochastic._jump import JumpProcess
+from ...typing import parse
 
 
 HawkesHistorySide: TypeAlias = Literal["left", "ordered"]
@@ -73,7 +75,7 @@ class QueueReactiveModel(StrictModule):
         /,
         *,
         model_id: str,
-    ):
+    ) -> None:
         baseline = _finite_vector(baseline_intensity, "baseline_intensity")
         queue_coefficients = _finite_matrix(queue_loading, "queue_loading")
         action_coefficients = _finite_matrix(action_loading, "action_loading")
@@ -194,12 +196,19 @@ def queue_reactive_jump_process(
     if not isinstance(model, QueueReactiveModel):
         raise TypeError("model must be a QueueReactiveModel.")
 
-    def intensity(time, state, controlled_args):
+    def intensity(
+        time: ArrayLike, state: ArrayLike, controlled_args: tuple[Array, object]
+    ) -> Array:
         del time
         action, _ = controlled_args
         return model.intensities(state, action)
 
-    def jump(state, channel, mark, controlled_args):
+    def jump(
+        state: ArrayLike,
+        channel: ArrayLike,
+        mark: ArrayLike,
+        controlled_args: tuple[Array, object],
+    ) -> Array:
         del mark, controlled_args
         return model.apply_channel(state, channel)
 
@@ -229,7 +238,7 @@ class HawkesOrderFlowModel(StrictModule):
         /,
         *,
         model_id: str,
-    ):
+    ) -> None:
         baseline = _finite_vector(baseline_intensity, "baseline_intensity")
         excitation_matrix = _finite_matrix(excitation, "excitation")
         decay = _finite_vector(decay_rates, "decay_rates")
@@ -357,8 +366,7 @@ def hawkes_intensity_path(
 
     if not isinstance(model, HawkesOrderFlowModel):
         raise TypeError("model must be a HawkesOrderFlowModel.")
-    if side not in ("left", "ordered"):
-        raise ValueError("side must be 'left' or 'ordered'.")
+    side = parse(side, HawkesHistorySide, "side")
     times = jnp.asarray(event_times)
     if times.ndim != 1 or jnp.issubdtype(times.dtype, jnp.complexfloating):
         raise TypeError("event_times must be a real rank-one vector.")

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -28,7 +30,7 @@ from phydrax.enforcement import (
 from phydrax.kernels import ProductFieldKernelMetric, SquaredExponentialKernel
 
 
-def _condition(field_names, matrices, target):
+def _condition(field_names: Any, matrices: Any, target: Any) -> Any:
     shape = tuple(jnp.asarray(target).shape)
     source = ProductFieldSpec(
         tuple(
@@ -51,7 +53,7 @@ def _condition(field_names, matrices, target):
     )
 
 
-def test_exact_affine_projector_is_idempotent_and_fixes_feasible_values():
+def test_exact_affine_projector_is_idempotent_and_fixes_feasible_values() -> None:
     condition = _condition(
         ("u",),
         (jnp.eye(2),),
@@ -80,7 +82,7 @@ def test_exact_affine_projector_is_idempotent_and_fixes_feasible_values():
     assert jnp.allclose(program_projected["u"], jnp.asarray([1.0, -2.0]))
 
 
-def test_joint_projector_resolves_cyclic_coupled_fields_without_a_pivot():
+def test_joint_projector_resolves_cyclic_coupled_fields_without_a_pivot() -> None:
     condition = _condition(
         ("u", "v"),
         (jnp.eye(2), jnp.eye(2)),
@@ -102,7 +104,7 @@ def test_joint_projector_resolves_cyclic_coupled_fields_without_a_pivot():
     assert prepared.correction.evidence.identity_defect < 1e-6
 
 
-def test_generalized_affine_projection_is_not_stamped_exact():
+def test_generalized_affine_projection_is_not_stamped_exact() -> None:
     condition = _condition(
         ("u",),
         (jnp.eye(2),),
@@ -126,13 +128,14 @@ def test_generalized_affine_projection_is_not_stamped_exact():
     )
 
     assert approximate.successful
+    # ty: ignore[unresolved-attribute]
     assert not approximate.stamp.exact
     assert required.status is RealizationStatus.UNSUPPORTED
     with pytest.raises(ValueError, match="certifies exact semantics"):
         ExactAffineProjector(prepared)
 
 
-def test_matrix_free_kernel_projection_retains_its_prepared_solve():
+def test_matrix_free_kernel_projection_retains_its_prepared_solve() -> None:
     domain = Interval1d(-1.0, 1.0)
     support = domain.component()
     field_codomain = FieldCodomain(support)

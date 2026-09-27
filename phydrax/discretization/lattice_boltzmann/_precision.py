@@ -8,14 +8,16 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax import Array
+from jax.typing import ArrayLike
 
+from ..._dtype_names import real_precision_dtype_name
 from ..._precision import (
     precision_itemsize,
     PrecisionEvidenceEnvelope,
     PrecisionRequest,
     PrecisionResolution,
     PrecisionResourceAssumptions,
-    real_precision_dtype_name,
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -47,7 +49,7 @@ class LatticeBoltzmannPrecisionPolicy(StrictModule, NonTrainableState):
         accumulation_dtype: Any | None = None,
         certification_dtype: Any | None = None,
         mixed_storage: bool = False,
-    ):
+    ) -> None:
         population = real_precision_dtype_name(population_dtype)
         compute = (
             population
@@ -121,19 +123,19 @@ class LatticeBoltzmannPrecisionPolicy(StrictModule, NonTrainableState):
         self.mixed_storage = mixed
         self.policy_id = resolution.resolution_id
 
-    def coefficient(self, value: Any, /):
+    def coefficient(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.compute_dtype))
 
-    def population(self, value: Any, /):
+    def population(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.population_dtype))
 
-    def compute(self, value: Any, /):
+    def compute(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.compute_dtype))
 
-    def accumulation(self, value: Any, /):
+    def accumulation(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.accumulation_dtype))
 
-    def certification(self, value: Any, /):
+    def certification(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.certification_dtype))
 
     @property

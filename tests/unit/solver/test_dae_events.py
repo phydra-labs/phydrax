@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -6,7 +8,7 @@ import phydrax as phx
 from phydrax.solver._dae_adaptive import _replay_solution
 
 
-def _problem(*, problem_id="dae-events"):
+def _problem(*, problem_id: Any = "dae-events") -> Any:
     system = phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, args: state_rate - args[0],
         state_shape=(1,),
@@ -22,7 +24,7 @@ def _problem(*, problem_id="dae-events"):
     )
 
 
-def _termination():
+def _termination() -> Any:
     return phx.nonlinear.NonlinearTermination(
         absolute_residual=1e-10,
         relative_residual=0.0,
@@ -32,7 +34,7 @@ def _termination():
     )
 
 
-def _policy(*, adaptive=False):
+def _policy(*, adaptive: Any = False) -> Any:
     controller = (
         phx.solver.DAEAdaptivePolicy(
             relative_tolerance=1e-7,
@@ -55,13 +57,13 @@ def _policy(*, adaptive=False):
 
 def _event_plan(
     *,
-    terminal=False,
-    maximum_events=4,
-    reset=None,
-    consistency=None,
-    guard=None,
-    name="threshold",
-):
+    terminal: Any = False,
+    maximum_events: Any = 4,
+    reset: Any = None,
+    consistency: Any = None,
+    guard: Any = None,
+    name: Any = "threshold",
+) -> Any:
     guard_function = (
         (lambda time, state, args: state[0] - args[1]) if guard is None else guard
     )
@@ -97,11 +99,11 @@ def _event_plan(
     )
 
 
-def _grid(name):
+def _grid(name: Any) -> Any:
     return phx.dynamics.TimeGrid(jnp.asarray((0.0, 0.5, 1.0)), time_id=name)
 
 
-def test_fixed_terminal_and_nonterminal_events_restart_and_terminate():
+def test_fixed_terminal_and_nonterminal_events_restart_and_terminate() -> None:
     terminal = phx.solver.solve_dae(
         _problem(problem_id="fixed-terminal-event"),
         _grid("fixed-terminal-event"),
@@ -133,7 +135,7 @@ def test_fixed_terminal_and_nonterminal_events_restart_and_terminate():
     assert jnp.all(continued.attempt_history.residual_evaluations[:count] > 0)
 
 
-def test_adaptive_terminal_and_nonterminal_events_use_accepted_brackets():
+def test_adaptive_terminal_and_nonterminal_events_use_accepted_brackets() -> None:
     terminal = phx.solver.solve_dae(
         _problem(problem_id="adaptive-terminal-event"),
         _grid("adaptive-terminal-event"),
@@ -157,7 +159,7 @@ def test_adaptive_terminal_and_nonterminal_events_use_accepted_brackets():
     assert jnp.isclose(continued.states[-1, 0], 1.35, atol=2e-7)
 
 
-def test_priority_resolves_simultaneous_guards_with_invalid_derivative():
+def test_priority_resolves_simultaneous_guards_with_invalid_derivative() -> None:
     low = phx.solver.HybridGuardPlan(
         lambda time, state, args: state[0] - args[1],
         direction=1,
@@ -215,7 +217,7 @@ def test_priority_resolves_simultaneous_guards_with_invalid_derivative():
     assert jnp.isnan(invalid_tangent)
 
 
-def test_simultaneity_uses_crossing_times_not_shallow_guard_magnitude():
+def test_simultaneity_uses_crossing_times_not_shallow_guard_magnitude() -> None:
     early = phx.solver.HybridGuardPlan(
         lambda time, state, args: state[0] - 0.35,
         direction=1,
@@ -261,7 +263,7 @@ def test_simultaneity_uses_crossing_times_not_shallow_guard_magnitude():
     assert solution.events.derivative_valid[0]
 
 
-def test_large_absolute_time_narrow_bracket_has_representable_lower_bound():
+def test_large_absolute_time_narrow_bracket_has_representable_lower_bound() -> None:
     start = jnp.asarray(1.0e12)
     grid = phx.dynamics.TimeGrid(
         jnp.asarray((start, start + 1.0e-3, start + 2.0e-3)),
@@ -284,7 +286,7 @@ def test_large_absolute_time_narrow_bracket_has_representable_lower_bound():
     assert solution.events.event_times[0] < grid.times[1]
 
 
-def test_fixed_event_path_runs_periodic_regularity_and_promotes_failure():
+def test_fixed_event_path_runs_periodic_regularity_and_promotes_failure() -> None:
     system = phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, args: state_rate - 10.0 * state,
         state_shape=(1,),
@@ -345,7 +347,7 @@ def test_fixed_event_path_runs_periodic_regularity_and_promotes_failure():
     )
 
 
-def test_terminal_reset_singular_consistency_root_fails_regularity_status():
+def test_terminal_reset_singular_consistency_root_fails_regularity_status() -> None:
     system = phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, args: state * state_rate,
         state_shape=(1,),
@@ -410,7 +412,9 @@ def test_terminal_reset_singular_consistency_root_fails_regularity_status():
     assert not solution.successful
 
 
-def test_adaptive_terminal_reset_singular_consistency_root_fails_regularity_status():
+def test_adaptive_terminal_reset_singular_consistency_root_fails_regularity_status() -> (
+    None
+):
     system = phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, args: state * state_rate,
         state_shape=(1,),
@@ -482,7 +486,7 @@ def test_adaptive_terminal_reset_singular_consistency_root_fails_regularity_stat
     assert not solution.successful
 
 
-def test_grazing_nonfinite_capacity_and_consistency_fail_closed():
+def test_grazing_nonfinite_capacity_and_consistency_fail_closed() -> None:
     grazing = phx.solver.solve_dae(
         _problem(problem_id="grazing-event"),
         _grid("grazing-event"),
@@ -570,7 +574,7 @@ def test_grazing_nonfinite_capacity_and_consistency_fail_closed():
     )
 
 
-def test_adaptive_replay_recomputes_dynamic_root_reset_jvp_and_vjp():
+def test_adaptive_replay_recomputes_dynamic_root_reset_jvp_and_vjp() -> None:
     problem = _problem(problem_id="adaptive-event-derivative")
     prepared = phx.solver.prepare_dae(
         problem,
@@ -579,7 +583,7 @@ def test_adaptive_replay_recomputes_dynamic_root_reset_jvp_and_vjp():
         event_plan=_event_plan(name="adaptive-derivative"),
     )
 
-    def terminal(args):
+    def terminal(args: Any) -> Any:
         return phx.solver.solve_dae(prepared, args=args).states[-1, 0]
 
     args = jnp.asarray((1.0, 0.35, 2.0))
@@ -598,7 +602,7 @@ def test_adaptive_replay_recomputes_dynamic_root_reset_jvp_and_vjp():
     assert jnp.isclose(cotangent * jvp, jnp.vdot(vjp, tangent), atol=2e-6)
 
 
-def test_recorded_audit_values_are_not_replayed_and_continuation_survives_reset():
+def test_recorded_audit_values_are_not_replayed_and_continuation_survives_reset() -> None:
     problem = _problem(problem_id="event-audit-replay")
     prepared = phx.solver.prepare_dae(
         problem,
@@ -638,7 +642,7 @@ def test_recorded_audit_values_are_not_replayed_and_continuation_survives_reset(
     assert jnp.isclose(continued.states[-1, 0], 2.35, atol=2e-7)
 
 
-def test_no_event_plan_preserves_existing_fixed_and_adaptive_paths():
+def test_no_event_plan_preserves_existing_fixed_and_adaptive_paths() -> None:
     problem = _problem(problem_id="no-event-parity")
     grid = _grid("no-event-parity")
     fixed = phx.solver.solve_dae(problem, grid, policy=_policy())

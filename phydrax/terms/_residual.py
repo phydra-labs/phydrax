@@ -8,7 +8,8 @@ from typing import Any, NamedTuple
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 from phydrax.domain import (
@@ -49,6 +50,7 @@ from ..operators.differential._requests import (
 )
 from ..operators.differential._runtime import derivative_execution_context
 from ..sampling.collocation._adaptive import AbstractCollocationPolicy
+from ..typing import PRNGKey
 from ._data_metrics import supervised_data_metrics
 from ._integrated import (
     checked_estimate_field,
@@ -206,7 +208,7 @@ def _checked_quadratic_coefficient(coefficient: cx.AxisArray, /) -> cx.AxisArray
 class _SquaredFrobeniusResidual(StrictModule, BatchEvaluator):
     residual: DomainFunction
 
-    def __init__(self, residual: DomainFunction, /):
+    def __init__(self, residual: DomainFunction, /) -> None:
         self.residual = residual
 
     def __call_batch__(
@@ -214,7 +216,7 @@ class _SquaredFrobeniusResidual(StrictModule, BatchEvaluator):
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         value = self.residual(batch, key=key, **kwargs)
@@ -222,16 +224,25 @@ class _SquaredFrobeniusResidual(StrictModule, BatchEvaluator):
             raise TypeError("Residual evaluation must return a phydrax.axes.AxisArray.")
         return _squared_frobenius_field(value)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         value = jnp.asarray(self.residual.func(*args, key=key, **kwargs))
         return jnp.sum(jnp.real(jnp.conj(value) * value))
+
+
+def _squared_frobenius_function(residual: DomainFunction, /) -> DomainFunction:
+    return DomainFunction(
+        domain=residual.domain,
+        deps=residual.deps,
+        func=_SquaredFrobeniusResidual(residual),
+        metadata=residual.metadata,
+    )
 
 
 class _DensityWeightedResidual(StrictModule, BatchEvaluator):
     score: DomainFunction
     density: DomainFunction
 
-    def __init__(self, score: DomainFunction, density: DomainFunction, /):
+    def __init__(self, score: DomainFunction, density: DomainFunction, /) -> None:
         self.score = score
         self.density = density
 
@@ -240,7 +251,7 @@ class _DensityWeightedResidual(StrictModule, BatchEvaluator):
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         score = self.score(batch, key=key, **kwargs)
@@ -260,7 +271,7 @@ class _DensityWeightedResidual(StrictModule, BatchEvaluator):
         checked_density = cx.AxisArray(density_data, dims=density.dims)
         return score * checked_density
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         density = jnp.asarray(self.density.func(*args, key=key, **kwargs))
         if jnp.iscomplexobj(density):
             raise TypeError("Penalty density must be real.")
@@ -333,7 +344,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         blocks: ResidualBlockLayout | None = None,
         label: str | None = None,
         data_accuracy_eps: float = 1e-12,
-    ):
+    ) -> None:
         if not isinstance(condition, AbstractResidualCondition):
             raise TypeError("ResidualPenalty requires an AbstractResidualCondition.")
         if not isinstance(source, _SOURCE_TYPES):
@@ -396,7 +407,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
     def sample(
         self,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> PointBatch | GridBatch:
         """Sample one structured batch from the adaptive source."""
         batch = self.component.sample(self.sampling, key=key)
@@ -412,7 +423,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         local_weight: cx.AxisArray | None,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> IntegrationRealization:
         """Materialize one policy batch against the adaptive source target."""
         if not isinstance(self.source, AdaptiveIntegration):
@@ -430,12 +441,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         /,
     ) -> DomainFunction:
         residual = _planned_residual(self.condition, functions)
-        score = DomainFunction(
-            domain=residual.domain,
-            deps=residual.deps,
-            func=_SquaredFrobeniusResidual(residual),
-            metadata=residual.metadata,
-        )
+        score = _squared_frobenius_function(residual)
         if self.density is None:
             return score
         density = self.density
@@ -454,7 +460,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         """Evaluate the unreduced scalar residual score on one structured batch."""
@@ -482,6 +488,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
             raise TypeError("realization must be an IntegrationRealization.")
         resolved = resolve_term_realization(
             self.source,
+            key=DOC_KEY0,
             realization=prepare_term_realization(realization),
         )
         target = resolved.target
@@ -507,6 +514,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
             target,
             batch,
             key=evaluation_key,
+            kwargs={},
         )
         base = target.base if isinstance(target, DensityTarget) else target
         if not isinstance(base, ComponentTarget):
@@ -532,7 +540,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         realization: IntegrationRealization | None = None,
         **kwargs: Any,
@@ -560,7 +568,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         residual_override: DomainFunction | None = None,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         realization: IntegrationRealization | None = None,
         **kwargs: Any,
@@ -687,7 +695,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         realization: IntegrationRealization | None = None,
         **kwargs: Any,
     ) -> dict[str, Array]:
@@ -723,7 +731,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         realization: IntegrationRealization | None = None,
         **kwargs: Any,

@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _mechanism(reference_energy=(0.0, 0.0)):
+def _mechanism(reference_energy: Any = (0.0, 0.0)) -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (
@@ -44,7 +47,7 @@ def _mechanism(reference_energy=(0.0, 0.0)):
     ).prepare()
 
 
-def test_isothermal_constant_volume_reactor_matches_analytic_decay():
+def test_isothermal_constant_volume_reactor_matches_analytic_decay() -> None:
     plan = phx.solver.ChemicalReactorPlan(
         _mechanism(),
         phx.solver.ChemicalReactorKind.ISOTHERMAL_CONSTANT_VOLUME,
@@ -78,7 +81,7 @@ def test_isothermal_constant_volume_reactor_matches_analytic_decay():
     np.testing.assert_allclose(bdf.states[-1, 0], np.exp(-1.0), rtol=5e-3)
 
 
-def test_adiabatic_constant_volume_reactor_conserves_extensive_energy():
+def test_adiabatic_constant_volume_reactor_conserves_extensive_energy() -> None:
     plan = phx.solver.ChemicalReactorPlan(
         _mechanism((0.0, -100.0)),
         phx.solver.ChemicalReactorKind.ADIABATIC_CONSTANT_VOLUME,

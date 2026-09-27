@@ -8,6 +8,7 @@ import argparse
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import diffrax as dfx
 import jax
@@ -16,11 +17,11 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _rotation_velocity(_time, points, _args):
+def _rotation_velocity(_time: Any, points: Any, _args: Any) -> Any:
     return jnp.stack((-points[..., 1], points[..., 0]), axis=-1)
 
 
-def _exact_foot(points, duration):
+def _exact_foot(points: Any, duration: Any) -> Any:
     cosine = jnp.cos(duration)
     sine = jnp.sin(duration)
     x = cosine * points[..., 0] + sine * points[..., 1]

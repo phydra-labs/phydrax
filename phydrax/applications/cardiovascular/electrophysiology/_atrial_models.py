@@ -22,7 +22,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import DTypeLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -70,7 +71,7 @@ def _nonnegative(value: float, name: str, /) -> float:
     return resolved
 
 
-def _exp(value: Array, /) -> Array:
+def _exp(value: ArrayLike, /) -> Array:
     return jnp.exp(jnp.clip(value, -80.0, 80.0))
 
 
@@ -163,7 +164,7 @@ class CourtemancheAtrialParameters(StrictModule, NonTrainableState):
         sr_release_rate: float = 0.30,
         sr_volume_ratio: float = 13.0,
         cytosolic_buffer_factor: float = 0.10,
-    ):
+    ) -> None:
         values = {
             "rtf_mV": _positive(rtf_mV, "rtf_mV"),
             "faraday_C_per_mmol": _positive(faraday_C_per_mmol, "faraday_C_per_mmol"),
@@ -258,7 +259,7 @@ class AtrialStateLayout(StrictModule, NonTrainableState):
     state_size: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         names = (
             "voltage_mV",
             "m",
@@ -380,7 +381,7 @@ class CourtemancheAtrialModel(StrictModule, NonTrainableState):
     layout: AtrialStateLayout
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, parameters: CourtemancheAtrialParameters, /):
+    def __init__(self, parameters: CourtemancheAtrialParameters, /) -> None:
         if not isinstance(parameters, CourtemancheAtrialParameters):
             raise TypeError("parameters must be CourtemancheAtrialParameters.")
         layout = AtrialStateLayout()
@@ -395,7 +396,7 @@ class CourtemancheAtrialModel(StrictModule, NonTrainableState):
         )
 
     def initialize(
-        self, batch_shape: Sequence[int] = (), *, dtype: jnp.dtype | None = None
+        self, batch_shape: Sequence[int] = (), *, dtype: DTypeLike | None = None
     ) -> AtrialState:
         """Broadcast the published CRN resting fixture to a fixed batch shape."""
         shape = _batch_shape(batch_shape)
@@ -943,7 +944,7 @@ class CourtemancheAtrialReactionAdapter:
     def membrane_surface_to_volume_per_mm(self) -> float:
         return self.scaling.membrane_surface_to_volume_per_mm
 
-    def _parameters(self, parameters: Array | None, dtype: object) -> Array:
+    def _parameters(self, parameters: Array | None, dtype: DTypeLike) -> Array:
         if parameters is None:
             return jnp.asarray(self.default_parameters, dtype=dtype)
         return self.parameter_layout.require_shape(parameters).astype(dtype)
@@ -956,7 +957,7 @@ class CourtemancheAtrialReactionAdapter:
         self,
         batch_shape: tuple[int, ...] = (),
         *,
-        dtype: object | None = None,
+        dtype: DTypeLike | None = None,
     ) -> Array:
         return _atrial_reaction_state(
             self.cell_model.initialize(batch_shape, dtype=dtype)

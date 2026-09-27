@@ -8,7 +8,8 @@ from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._strict import StrictModule
@@ -22,7 +23,7 @@ from ._validation import MetricValidationReport, validate_metric
 class _HessianMetricMap(StrictModule):
     geometry: HessianGeometry
 
-    def __init__(self, geometry: HessianGeometry, /):
+    def __init__(self, geometry: HessianGeometry, /) -> None:
         self.geometry = geometry
 
     def __call__(self, coordinates: Array, /) -> Array:
@@ -41,7 +42,7 @@ class HessianGeometry(StrictModule):
         /,
         *,
         chart: CoordinateChart,
-    ):
+    ) -> None:
         if not callable(potential):
             raise TypeError("Hessian potential must be callable.")
         if not isinstance(chart, CoordinateChart):

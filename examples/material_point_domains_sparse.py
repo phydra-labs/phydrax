@@ -4,12 +4,14 @@
 
 """Build uGIMP/CPDI routes and compact active-block storage."""
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def run():
+def run() -> Any:
     grid_plan = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformAxisSpec(16, periodic=True, endpoint=False)

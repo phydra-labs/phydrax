@@ -10,6 +10,7 @@ import os
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 
@@ -24,18 +25,11 @@ from .._external_resource import (
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import canonical_identifier
 
 
 _CHECKSUM_LENGTHS = {"sha256": 64, "sha384": 96, "sha512": 128}
 _HEX_DIGITS = frozenset("0123456789abcdef")
-
-
-def _identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    if not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty canonical identifier.")
-    return value
 
 
 def _strict_bool(value: bool, name: str, /) -> bool:
@@ -47,7 +41,7 @@ def _strict_bool(value: bool, name: str, /) -> bool:
 def _identifiers(values: Sequence[str], name: str, /) -> tuple[str, ...]:
     if not isinstance(values, Sequence) or isinstance(values, str):
         raise TypeError(f"{name} must be a sequence of identifiers.")
-    normalized = tuple(_identifier(value, name) for value in values)
+    normalized = tuple(canonical_identifier(value, name) for value in values)
     if not normalized:
         raise ValueError(f"{name} must not be empty.")
     if len(set(normalized)) != len(normalized):
@@ -66,7 +60,7 @@ def _finite_mapping(
         raise TypeError(f"{name} must be a non-empty mapping.")
     normalized: list[tuple[str, float]] = []
     for coordinate, value in values.items():
-        coordinate_ = _identifier(coordinate, f"{name} coordinate")
+        coordinate_ = canonical_identifier(coordinate, f"{name} coordinate")
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise TypeError(f"{name} values must be real numbers.")
         value_ = float(value)
@@ -116,11 +110,11 @@ class ReferenceArtifactManifest(StrictModule, NonTrainableState):
         nondimensionalization: Mapping[str, int | float],
         uncertainty: Mapping[str, int | float] | None,
         lineage_ids: Sequence[str],
-    ):
-        algorithm = _identifier(checksum_algorithm, "checksum algorithm").lower()
+    ) -> None:
+        algorithm = canonical_identifier(checksum_algorithm, "checksum algorithm").lower()
         if algorithm not in _CHECKSUM_LENGTHS:
             raise ValueError("Checksum algorithm must be sha256, sha384, or sha512.")
-        digest = _identifier(checksum, "checksum").lower()
+        digest = canonical_identifier(checksum, "checksum").lower()
         if len(digest) != _CHECKSUM_LENGTHS[algorithm] or any(
             character not in _HEX_DIGITS for character in digest
         ):
@@ -131,11 +125,15 @@ class ReferenceArtifactManifest(StrictModule, NonTrainableState):
             raise TypeError("size_bytes must be an integer.")
         if size_bytes <= 0:
             raise ValueError("Reference artifact size must be positive.")
-        self.artifact_name = _identifier(artifact_name, "reference artifact name")
+        self.artifact_name = canonical_identifier(
+            artifact_name, "reference artifact name"
+        )
         self.checksum_algorithm = algorithm
         self.checksum = digest
         self.size_bytes = size_bytes
-        self.license_id = _identifier(license_id, "reference artifact license ID")
+        self.license_id = canonical_identifier(
+            license_id, "reference artifact license ID"
+        )
         self.commercial_use_permitted = _strict_bool(
             commercial_use_permitted, "commercial_use_permitted"
         )
@@ -146,7 +144,7 @@ class ReferenceArtifactManifest(StrictModule, NonTrainableState):
             training_use_permitted, "training_use_permitted"
         )
         self.export_permitted = _strict_bool(export_permitted, "export_permitted")
-        self.export_classification = _identifier(
+        self.export_classification = canonical_identifier(
             export_classification, "export classification"
         )
         self.nondimensionalization = _finite_mapping(
@@ -203,7 +201,7 @@ class ReferenceArtifactManifest(StrictModule, NonTrainableState):
         return self.manifest_id
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> ReferenceArtifactManifest:
+    def from_record(cls, record: Mapping[str, Any], /) -> ReferenceArtifactManifest:
         """Reconstruct and content-verify an offline reference manifest."""
         if not isinstance(record, Mapping):
             raise TypeError("Reference-artifact manifest record must be a mapping.")

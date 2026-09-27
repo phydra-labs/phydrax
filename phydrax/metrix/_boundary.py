@@ -8,11 +8,13 @@ from collections.abc import Callable
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from ._chart import CoordinateChart
 from ._density import metric_volume_density, VolumeDensity
 from ._map import Immersion
 from ._metric import pullback_metric, RiemannianMetric
@@ -30,7 +32,7 @@ class RiemannianHypersurface(StrictModule):
         metric: RiemannianMetric,
         conormal: Callable[[Array], Array],
         /,
-    ):
+    ) -> None:
         if not isinstance(metric, RiemannianMetric):
             raise TypeError("RiemannianHypersurface requires a RiemannianMetric.")
         if not callable(conormal):
@@ -39,7 +41,7 @@ class RiemannianHypersurface(StrictModule):
         self.conormal_function = conormal
 
     @property
-    def chart(self):
+    def chart(self) -> CoordinateChart:
         return self.metric.chart
 
     def _conormal_point(self, coordinates: Array, /) -> Array:

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -50,12 +53,12 @@ projected = ghost.project(
 
 
 # Deterministic moving-solid/cut-cell geometry.
-def solid_sdf(points, time, args):
+def solid_sdf(points: Any, time: Any, args: Any) -> Any:
     del time, args
     return jnp.sqrt(jnp.sum((points - jnp.asarray([0.15, 0.5])) ** 2, axis=-1)) - 0.08
 
 
-def wall_velocity(points, time, args):
+def wall_velocity(points: Any, time: Any, args: Any) -> Any:
     del time, args
     return jnp.zeros_like(points)
 
@@ -69,7 +72,9 @@ solid_plan = phx.discretization.finite_volume.MACDiffuseSDFGeometryPlan(
 )
 solid = solid_plan.evaluate(0.0)
 measures = phx.discretization.finite_volume.MACFreeSurfaceViscousMeasurePlan(
-    mac, 1.0
+    mac,
+    1.0,
+    # ty: ignore[invalid-argument-type]
 ).evaluate(interface, 0.1, solid=solid)
 viscous = phx.solver.MACVariationalViscosityPlan(mac, tolerance=1.0e-7).solve(
     projected.velocity, measures, 1.0e-3

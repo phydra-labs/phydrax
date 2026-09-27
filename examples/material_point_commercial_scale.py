@@ -4,12 +4,14 @@
 
 """Distributed ownership, AMR transfer, and evidence-tagged derivatives."""
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def run():
+def run() -> Any:
     distributed = phx.discretization.MPMDistributedPlan(
         (8, 8),
         (4, 4),

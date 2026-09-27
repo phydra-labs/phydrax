@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 
@@ -12,11 +15,11 @@ from phydrax.domain import Interval1d
 from phydrax.operators.differential import grad
 
 
-def test_residual_penalty_mean_jit():
+def test_residual_penalty_mean_jit() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 2
 
     component = geom.component()

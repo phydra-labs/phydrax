@@ -9,7 +9,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ...._strict import StrictModule
 from ....optim import (
@@ -26,6 +27,7 @@ from ._buckling import LocalMemberBucklingResult
 from ._construction import ConstructionSequenceResult
 from ._equilibrium import MemberNetworkResult
 from ._prestress import PrestressRealizabilityResult, StructuralEvidenceVerdict
+from ._reference import MemberNetworkDefinition
 
 
 class MemberSizingEvaluation(StrictModule):
@@ -58,7 +60,7 @@ class MemberSizingConstraint(StrictModule):
         lower: Any = -jnp.inf,
         upper: Any = jnp.inf,
         constraint_id: str,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         self.function = function
@@ -85,7 +87,7 @@ class ContinuousMemberSizingProblem(StrictModule):
         bounds: Bounds | None = None,
         constraints: Sequence[MemberSizingConstraint] = (),
         problem_id: str = "continuous-member-sizing",
-    ):
+    ) -> None:
         if not callable(evaluate_design):
             raise TypeError("evaluate_design must be callable.")
         objective_ = (
@@ -143,7 +145,7 @@ class StructuralVerificationResult(StrictModule):
 
 
 def evaluate_member_sizing(
-    definition,
+    definition: MemberNetworkDefinition,
     result: MemberNetworkResult,
     /,
     *,
@@ -208,7 +210,7 @@ def solve_continuous_member_sizing(
 ) -> ContinuousMemberSizingResult:
     """Solve one continuous sizing problem through ordinary PhydraX optimization."""
 
-    def objective(design, arguments):
+    def objective(design: PyTree[Any], arguments: Any) -> Array:
         evaluation = problem.evaluate_design(design, arguments)
         if not isinstance(evaluation, MemberSizingEvaluation):
             raise TypeError("evaluate_design must return MemberSizingEvaluation.")
@@ -217,7 +219,11 @@ def solve_continuous_member_sizing(
     constraints = []
     for constraint in problem.constraints:
 
-        def value(design, arguments, constraint=constraint):
+        def value(
+            design: PyTree[Any],
+            arguments: Any,
+            constraint: MemberSizingConstraint = constraint,
+        ) -> PyTree[Any]:
             evaluation = problem.evaluate_design(design, arguments)
             return constraint.function(evaluation, design, arguments)
 

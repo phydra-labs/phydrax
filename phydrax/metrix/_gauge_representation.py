@@ -8,7 +8,8 @@ from abc import abstractmethod
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -101,7 +102,7 @@ class U1ChargeRepresentation(AbstractGaugeRepresentation):
         /,
         *,
         color_axis: int = -1,
-    ):
+    ) -> None:
         if not isinstance(group, UnitaryGroup) or group.dimension != 1:
             raise TypeError("U1ChargeRepresentation requires UnitaryGroup(1).")
         charge_ = int(charge)
@@ -149,7 +150,7 @@ class FundamentalGaugeRepresentation(AbstractGaugeRepresentation):
         /,
         *,
         color_axis: int = -1,
-    ):
+    ) -> None:
         if not isinstance(group, (UnitaryGroup, SpecialUnitaryGroup)):
             raise TypeError("Fundamental representation requires U(N) or SU(N).")
         axis = _color_axis(color_axis)
@@ -192,7 +193,7 @@ class AdjointGaugeRepresentation(AbstractGaugeRepresentation):
         /,
         *,
         color_axis: int = -1,
-    ):
+    ) -> None:
         if not isinstance(group, SpecialUnitaryGroup):
             raise TypeError("AdjointGaugeRepresentation requires SU(N).")
         axis = _color_axis(color_axis)

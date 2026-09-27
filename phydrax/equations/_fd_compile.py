@@ -10,7 +10,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -31,6 +31,7 @@ from ..discretization import (
     PreparedConservativeAdvection,
     PreparedConservativeDiffusion,
     PreparedFiniteDifferenceDiscretization,
+    PreparedStencilOperator,
     PreparedTensorGrid,
 )
 from ._fd_boundary_lowering import (
@@ -60,7 +61,7 @@ class FiniteDifferenceCompilationPolicy(StrictModule):
         accuracy_order: int = 2,
         laplacian: str = "direct_second_derivative",
         corner_policy: CornerPolicy = "axis_separable",
-    ):
+    ) -> None:
         accuracy = int(accuracy_order)
         if accuracy <= 0 or laplacian not in (
             "direct_second_derivative",
@@ -191,7 +192,7 @@ class _GhostDerivativeRule(StrictModule, NonTrainableState):
         accuracy_order: int,
         spacing: float,
         /,
-    ):
+    ) -> None:
         derivative = int(derivative_order)
         accuracy = int(accuracy_order)
         width = derivative + accuracy - 1
@@ -302,7 +303,9 @@ class _FiniteDifferenceExpressionEvaluator(StrictModule):
     discretization: PreparedFiniteDifferenceDiscretization
     layout: StencilStateLayout
     equations: tuple[tuple[str, PDEExpression], ...] = eqx.field(static=True)
-    parameter_defaults: tuple[tuple[str, float | None], ...] = eqx.field(static=True)
+    parameter_defaults: tuple[tuple[str, float | tuple[float, ...] | None], ...] = (
+        eqx.field(static=True)
+    )
     boundary_program: PreparedFDBoundaryProgram
     ghost_rules: tuple[_GhostDerivativeRule, ...]
     interfaces: tuple[PreparedFDInterface, ...]
@@ -318,7 +321,7 @@ class _FiniteDifferenceExpressionEvaluator(StrictModule):
         discretization: PreparedFiniteDifferenceDiscretization,
         layout: StencilStateLayout,
         equations: tuple[tuple[str, PDEExpression], ...],
-        parameter_defaults: tuple[tuple[str, float | None], ...],
+        parameter_defaults: tuple[tuple[str, float | tuple[float, ...] | None], ...],
         boundary_program: PreparedFDBoundaryProgram,
         ghost_rules: tuple[_GhostDerivativeRule, ...],
         interfaces: tuple[PreparedFDInterface, ...],
@@ -328,7 +331,7 @@ class _FiniteDifferenceExpressionEvaluator(StrictModule):
         coordinate_axes: tuple[tuple[str, tuple[str, ...]], ...],
         policy: FiniteDifferenceCompilationPolicy,
         /,
-    ):
+    ) -> None:
         self.problem = problem
         self.discretization = discretization
         self.layout = layout
@@ -368,7 +371,7 @@ class _FiniteDifferenceExpressionEvaluator(StrictModule):
             )
         return components[0] if len(components) == 1 else jnp.stack(components, axis=-1)
 
-    def _operator(self, axis: str, order: int):
+    def _operator(self, axis: str, order: int) -> PreparedStencilOperator:
         return self.discretization.operator(f"d_{axis}_{order}")
 
     def _diffusion_template(
@@ -484,6 +487,11 @@ class _FiniteDifferenceExpressionEvaluator(StrictModule):
         if op == "coordinate":
             return self._coordinate(str(expression.symbol))
         if op == "constant":
+            # validate_pde_ir admits constant nodes only with a numeric value.
+            if not (expression.value is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: expression.value is not None."
+                )
             return jnp.asarray(float(expression.value))
         if op == "divergence" and set(
             _expression_axes(expression, self.coordinate_axes)
@@ -730,7 +738,7 @@ class CompiledFiniteDifferenceDynamics(StrictModule):
         self,
         evaluator: _FiniteDifferenceExpressionEvaluator,
         /,
-    ):
+    ) -> None:
         discretization = evaluator.discretization
         compilation_id = canonical_fingerprint(
             {

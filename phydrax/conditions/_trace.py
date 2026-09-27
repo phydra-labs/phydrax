@@ -22,19 +22,19 @@ class AbstractJetDeclaration(StrictModule):
     def identity(self) -> tuple[Any, ...]:
         raise NotImplementedError
 
-    def __mul__(self, coefficient: Any):
+    def __mul__(self: JetDeclaration, coefficient: Any) -> LinearTraceExpression:
         return LinearTraceExpression(((coefficient, self),))
 
-    def __rmul__(self, coefficient: Any):
+    def __rmul__(self: JetDeclaration, coefficient: Any) -> LinearTraceExpression:
         return self * coefficient
 
-    def __add__(self, other: Any):
+    def __add__(self: JetDeclaration, other: Any) -> LinearTraceExpression:
         return LinearTraceExpression(((1.0, self),)) + other
 
-    def __radd__(self, other: Any):
+    def __radd__(self: JetDeclaration, other: Any) -> LinearTraceExpression:
         return self + other
 
-    def __sub__(self, other: Any):
+    def __sub__(self: JetDeclaration, other: Any) -> LinearTraceExpression:
         return LinearTraceExpression(((1.0, self),)) - other
 
 
@@ -46,7 +46,9 @@ class FieldJet(AbstractJetDeclaration):
     order: int = eqx.field(static=True)
     normal: bool = eqx.field(static=True)
 
-    def __init__(self, field: str, variable: str, order: int = 0, normal: bool = False):
+    def __init__(
+        self, field: str, variable: str, order: int = 0, normal: bool = False
+    ) -> None:
         field_ = str(field)
         variable_ = str(variable)
         order_ = int(order)
@@ -93,7 +95,7 @@ class PointJet(AbstractJetDeclaration):
         /,
         *,
         derivatives: Mapping[str, int] | Sequence[tuple[str, int]] = (),
-    ):
+    ) -> None:
         field_ = str(field)
         point_ = str(point_id)
         if not field_ or not point_:
@@ -127,7 +129,7 @@ class TraceJet(AbstractJetDeclaration):
         derivatives: Mapping[str, int] | Sequence[tuple[str, int]] = (),
         normal_order: int = 0,
         side: Literal["interior", "exterior", "average", "jump"] = "interior",
-    ):
+    ) -> None:
         field_ = str(field)
         trace_ = str(trace_id)
         normal_ = int(normal_order)
@@ -162,7 +164,7 @@ JetDeclaration: TypeAlias = FieldJet | PointJet | TraceJet
 class LinearTraceExpression(StrictModule):
     terms: tuple[tuple[Any, JetDeclaration], ...]
 
-    def __init__(self, terms: Sequence[tuple[Any, JetDeclaration]]):
+    def __init__(self, terms: Sequence[tuple[Any, JetDeclaration]]) -> None:
         values = tuple(terms)
         if not values or any(
             not isinstance(jet, AbstractJetDeclaration) for _, jet in values
@@ -170,25 +172,25 @@ class LinearTraceExpression(StrictModule):
             raise TypeError("Linear trace expressions require declared jet terms.")
         self.terms = values
 
-    def __add__(self, other: Any):
+    def __add__(self, other: Any) -> LinearTraceExpression:
         expression = _trace_expression(other)
         return LinearTraceExpression((*self.terms, *expression.terms))
 
-    def __radd__(self, other: Any):
+    def __radd__(self, other: Any) -> LinearTraceExpression:
         return self + other
 
-    def __sub__(self, other: Any):
+    def __sub__(self, other: Any) -> LinearTraceExpression:
         expression = _trace_expression(other)
         return LinearTraceExpression(
             (*self.terms, *((-coefficient, jet) for coefficient, jet in expression.terms))
         )
 
-    def __mul__(self, coefficient: Any):
+    def __mul__(self, coefficient: Any) -> LinearTraceExpression:
         return LinearTraceExpression(
             tuple((coefficient * value, jet) for value, jet in self.terms)
         )
 
-    def __rmul__(self, coefficient: Any):
+    def __rmul__(self, coefficient: Any) -> LinearTraceExpression:
         return self * coefficient
 
 
@@ -204,7 +206,7 @@ class LinearTraceEquation(StrictModule):
     lhs: LinearTraceExpression
     rhs: Any
 
-    def __init__(self, lhs: JetDeclaration | LinearTraceExpression, rhs: Any):
+    def __init__(self, lhs: JetDeclaration | LinearTraceExpression, rhs: Any) -> None:
         expression = _trace_expression(lhs)
         identities = tuple(jet.identity for _, jet in expression.terms)
         if len(set(identities)) != len(identities):

@@ -6,13 +6,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from math import prod, sqrt
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax._strict import StrictModule
@@ -25,13 +25,14 @@ from ....graph._query_batch import (
     query_neighbors,
     QueryNeighborhood,
 )
+from ....typing import parse, PRNGKey
 from ..._keys import EvalKey, split_eval_key
 from ...layers._linear import Linear
 from ...models._mlp import MLP
 
 
-TransferReduction = Literal["integral", "normalized"]
-MultiscaleFusion = Literal["concat", "gated"]
+TransferReduction: TypeAlias = Literal["integral", "normalized"]
+MultiscaleFusion: TypeAlias = Literal["concat", "gated"]
 
 
 def _feature_array(
@@ -104,7 +105,9 @@ def _apply_rows(model: Any, values: Array, key: EvalKey, /) -> Array:
 class _EdgeKernel(StrictModule):
     model: MLP
 
-    def __call__(self, edges, sent_nodes, received_nodes, globals_):
+    def __call__(
+        self, edges: object, sent_nodes: object, received_nodes: Array, globals_: object
+    ) -> Array:
         del sent_nodes, globals_
         if not isinstance(edges, Mapping):
             raise TypeError("Graph transfer edge kernels require mapping-valued edges.")
@@ -144,8 +147,8 @@ class GraphKernelTransfer(StrictModule):
         depth: int = 2,
         coordinate_scale: float = 1.0,
         target_chunk_size: int | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         if int(in_channels) <= 0 or int(out_channels) <= 0 or int(coord_dim) <= 0:
             raise ValueError("Transfer channel counts and coord_dim must be positive.")
         if int(target_channels) < 0:
@@ -154,8 +157,7 @@ class GraphKernelTransfer(StrictModule):
             raise ValueError("neighbors must be positive.")
         if radius is not None and float(radius) <= 0.0:
             raise ValueError("radius must be positive when supplied.")
-        if reduction not in ("integral", "normalized"):
-            raise ValueError("reduction must be 'integral' or 'normalized'.")
+        reduction = parse(reduction, TransferReduction, "reduction")
         if float(coordinate_scale) <= 0.0:
             raise ValueError("coordinate_scale must be positive.")
         if target_chunk_size is not None and int(target_chunk_size) <= 0:
@@ -270,7 +272,9 @@ class _MultiheadLogits(StrictModule):
     heads: int = eqx.field(static=True)
     head_dim: int = eqx.field(static=True)
 
-    def __call__(self, edges, keys, queries, globals_):
+    def __call__(
+        self, edges: object, keys: Array, queries: Array, globals_: object
+    ) -> Array:
         del globals_
         if not isinstance(edges, Mapping):
             raise TypeError("Graph attention transfer requires mapping-valued edges.")
@@ -290,7 +294,7 @@ class _MultiheadLogits(StrictModule):
 class _AttentionOutput(StrictModule):
     projection: Linear
 
-    def __call__(self, nodes, aggregated, globals_):
+    def __call__(self, nodes: object, aggregated: Array, globals_: object) -> Array:
         del nodes, globals_
         return self.projection(aggregated)
 
@@ -334,8 +338,8 @@ class GraphAttentionTransfer(StrictModule):
         coordinate_scale: float = 1.0,
         require_measure: bool = True,
         target_chunk_size: int | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         if (
             min(
                 int(in_channels),
@@ -499,7 +503,7 @@ class GeometryMomentEmbedding(StrictModule):
         /,
         *,
         reference_measure: float = 1.0,
-    ):
+    ) -> None:
         if int(coord_dim) <= 0 or float(radius) <= 0.0:
             raise ValueError("coord_dim and radius must be positive.")
         if float(reference_measure) <= 0.0:
@@ -582,8 +586,8 @@ class MultiscaleGraphTransfer(StrictModule):
         reference_measure: float = 1.0,
         width: int = 64,
         depth: int = 2,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         transfers_ = tuple(transfers)
         if not transfers_:
             raise ValueError("MultiscaleGraphTransfer requires at least one scale.")
@@ -606,8 +610,7 @@ class MultiscaleGraphTransfer(StrictModule):
             if transfer.radius is None:
                 raise ValueError("Every multiscale transfer requires an explicit radius.")
             radii.append(float(transfer.radius))
-        if fusion not in ("concat", "gated"):
-            raise ValueError("fusion must be 'concat' or 'gated'.")
+        fusion = parse(fusion, MultiscaleFusion, "fusion")
         embeddings = tuple(
             GeometryMomentEmbedding(
                 coord_dim,

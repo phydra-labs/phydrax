@@ -15,13 +15,14 @@ the attempt; they never contribute a plausible value or derivative.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, ClassVar, final, Literal
+from typing import Any, ClassVar, final, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._differentiation import (
     admit_regularity,
@@ -53,10 +54,10 @@ from .._training_kernel import (
 )
 from .._training_objective import _ObjectiveContribution
 from .._tree_math import tree_inner
+from ..typing import parse
 
 
-AcceptedResultPolicy = Literal["reduce-support", "reject-attempt"]
-_ACCEPTED_RESULT_POLICIES = ("reduce-support", "reject-attempt")
+AcceptedResultPolicy: TypeAlias = Literal["reduce-support", "reject-attempt"]
 _DERIVATIVE_FREE_ALTERNATIVES = (
     "derivative-free consumers remain available: train_components with a "
     "distribution-evolution optimizer, or posterior_problem_from_solver_objective "
@@ -147,7 +148,7 @@ class SolverCaseResult(StrictModule):
         value: Any = None,
         residual: PyTree[Any] | None = None,
         aux: PyTree[Any] = (),
-    ):
+    ) -> None:
         if (value is None) == (residual is None):
             raise ValueError("Give exactly one of value and residual.")
         value_ = None if value is None else _scalar(value, "value", kind="real")
@@ -192,7 +193,7 @@ class AlgorithmicWorkResult(StrictModule):
         iterations: Any,
         accepted: Any,
         aux: PyTree[Any] = (),
-    ):
+    ) -> None:
         initial = _inexact_tree(initial_residual, "initial_residual")
         final = _inexact_tree(final_residual, "final_residual")
         iterations_ = _scalar(iterations, "iterations", kind="integer")
@@ -451,15 +452,20 @@ class AbstractSolverObjective(StrictModule):
                 "slot or ComponentBinding; solver objectives take authority only from "
                 "slots and bindings."
             )
-        trained = tuple(
-            (path, authorities[path].value)
+        owned = tuple(
+            (path, authority)
             for path in parameters
-            if authority_admits(authorities[path], self.route, self.kind)
+            if (authority := authorities[path]) is not None
+        )
+        trained = tuple(
+            (path, authority.value)
+            for path, authority in owned
+            if authority_admits(authority, self.route, self.kind)
         )
         stopped = tuple(
-            (path, authorities[path].value)
-            for path in parameters
-            if not authority_admits(authorities[path], self.route, self.kind)
+            (path, authority.value)
+            for path, authority in owned
+            if not authority_admits(authority, self.route, self.kind)
         )
         if not trained:
             groups = sorted({authority for _, authority in stopped})
@@ -778,10 +784,7 @@ def _objective_fields(
     if component is not None and not callable(component):
         raise TypeError("component must be a callable selector or None.")
     identifier = _identifier(objective_id, "objective_id")
-    if accepted_results not in _ACCEPTED_RESULT_POLICIES:
-        raise ValueError(
-            f"accepted_results must be one of {_ACCEPTED_RESULT_POLICIES!r}."
-        )
+    accepted_results_ = parse(accepted_results, AcceptedResultPolicy, "accepted_results")
     if isinstance(weight, (bool, np.bool_)) or not isinstance(
         weight, (int, float, np.integer, np.floating)
     ):
@@ -813,7 +816,7 @@ def _objective_fields(
     objective.regularity_policy = policy
     objective.objective_id = identifier
     objective.weight = weight_
-    objective.accepted_results = accepted_results
+    objective.accepted_results = accepted_results_
     objective.case_batch_size = case_batch_size
 
 
@@ -845,7 +848,7 @@ class SolverObjective(AbstractSolverObjective):
         weight: float = 1.0,
         case_batch_size: int | None = None,
         regularity_policy: RegularityPolicy | None = None,
-    ):
+    ) -> None:
         _objective_fields(
             self,
             solve,
@@ -892,7 +895,7 @@ class RolloutObjective(AbstractSolverObjective):
         case_batch_size: int | None = None,
         regularity_policy: RegularityPolicy | None = None,
         checkpointed: bool = False,
-    ):
+    ) -> None:
         if not isinstance(checkpointed, bool):
             raise TypeError("checkpointed must be a bool.")
         _objective_fields(
@@ -950,7 +953,7 @@ class AlgorithmicWorkObjective(AbstractSolverObjective):
         weight: float = 1.0,
         case_batch_size: int | None = None,
         regularity_policy: RegularityPolicy | None = None,
-    ):
+    ) -> None:
         if isinstance(work, bool) or not isinstance(work, int) or work <= 0:
             raise ValueError("work must be a positive integer.")
         _objective_fields(

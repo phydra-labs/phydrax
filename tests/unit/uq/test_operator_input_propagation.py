@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -15,15 +18,15 @@ class _MaskedSourceMeanOperator(AbstractOperatorModel):
     in_size: str = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.in_size = "scalar"
         self.out_size = "scalar"
 
     @property
-    def operator_contract(self):
+    def operator_contract(self) -> Any:
         return phx.nn.operator.operator_architecture_contract("DeepONet")
 
-    def __call_operator_batch__(self, batch, /, *, key=None):
+    def __call_operator_batch__(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         source = batch.input("forcing")
         values = jnp.asarray(source.values)
@@ -37,7 +40,7 @@ class _MaskedSourceMeanOperator(AbstractOperatorModel):
             batch.case_shape + batch.require_single_query().sample_shape,
         )
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         if not isinstance(x, phx.nn.operator.OperatorBatch):
             raise TypeError("_MaskedSourceMeanOperator requires an OperatorBatch.")
         return self.__call_operator_batch__(x, key=key)
@@ -71,7 +74,7 @@ def _batch(value: float, *, source_points: int) -> phx.nn.operator.OperatorBatch
     )
 
 
-def test_input_function_prediction_matches_explicit_ragged_draw_loop():
+def test_input_function_prediction_matches_explicit_ragged_draw_loop() -> None:
     model = _MaskedSourceMeanOperator()
     batches = (_batch(1.0, source_points=2), _batch(3.0, source_points=4))
     stacked = phx.nn.operator.stack_operator_batches(batches, case_axis="input_draw")
@@ -133,7 +136,7 @@ def _weighted_batch(value: float, *, source_points: int) -> phx.nn.operator.Oper
     )
 
 
-def test_operator_linearized_covariance_preserves_geometry_and_masks():
+def test_operator_linearized_covariance_preserves_geometry_and_masks() -> None:
     batch = _batch(2.0, source_points=4)
     linearization = phx.nn.operator.training.linearize_operator(
         _MaskedSourceMeanOperator(),
@@ -163,7 +166,7 @@ def test_operator_linearized_covariance_preserves_geometry_and_masks():
     )
 
 
-def test_operator_hilbert_covariance_requires_measure_and_stays_operator_valued():
+def test_operator_hilbert_covariance_requires_measure_and_stays_operator_valued() -> None:
     unweighted = phx.nn.operator.training.linearize_operator(
         _MaskedSourceMeanOperator(),
         _batch(1.0, source_points=4),

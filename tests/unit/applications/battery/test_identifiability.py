@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import diffrax as dfx
 import equinox as eqx
 import jax
@@ -49,7 +52,7 @@ class _SyntheticLedger(StrictModule):
     successful: jax.Array
 
 
-def _candidate():
+def _candidate() -> Any:
     support = SupportTuple(
         "battery.simulation",
         {
@@ -68,7 +71,7 @@ def _candidate():
 
 
 @pytest.fixture(autouse=True)
-def _synthetic_candidate_registry(monkeypatch):
+def _synthetic_candidate_registry(monkeypatch: Any) -> None:
     profile, _ = _candidate()
     monkeypatch.setattr(
         _qualification,
@@ -83,24 +86,28 @@ class CurrentAffineAdapter(StrictModule, NonTrainableState):
     observable_names: tuple[str, ...] = eqx.field(static=True)
     observable_units: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.model_id = "test:current-affine-voltage"
         self.equation_form = "ode"
         self.observable_names = ("voltage_v",)
         self.observable_units = ("V",)
 
-    def prepare(self, /):
+    def prepare(self, /) -> Any:
         return self.model_id
 
-    def initial_state(self, prepared_model, parameters, initial_condition, /):
+    def initial_state(
+        self, prepared_model: Any, parameters: Any, initial_condition: Any, /
+    ) -> Any:
         assert prepared_model == self.model_id
         del parameters
         return jnp.asarray(initial_condition)
 
-    def problem(self, prepared_model, initial_state, runtime_inputs, /):
+    def problem(
+        self, prepared_model: Any, initial_state: Any, runtime_inputs: Any, /
+    ) -> Any:
         assert prepared_model == self.model_id
 
-        def drift(time_s, state, runtime):
+        def drift(time_s: Any, state: Any, runtime: Any) -> Any:
             del state
             parameters = runtime.parameters
             return parameters["intercept_v_s"] + parameters[
@@ -116,7 +123,9 @@ class CurrentAffineAdapter(StrictModule, NonTrainableState):
             problem_id="test:current-affine-voltage:ode",
         )
 
-    def observe(self, prepared_model, times_s, states, runtime_inputs, /):
+    def observe(
+        self, prepared_model: Any, times_s: Any, states: Any, runtime_inputs: Any, /
+    ) -> Any:
         assert prepared_model == self.model_id
         del runtime_inputs
         voltage = jnp.asarray(states)
@@ -124,21 +133,23 @@ class CurrentAffineAdapter(StrictModule, NonTrainableState):
             voltage[:, None], jnp.isfinite(times_s) & jnp.isfinite(voltage)
         )
 
-    def ledger(self, prepared_model, native_solution, runtime_inputs, /):
+    def ledger(
+        self, prepared_model: Any, native_solution: Any, runtime_inputs: Any, /
+    ) -> Any:
         assert prepared_model == self.model_id
         del native_solution, runtime_inputs
         return _SyntheticLedger(jnp.asarray(True))
 
 
 def _record(
-    name,
-    current_a,
-    initial_v,
-    intercept_v_s,
-    current_gain_v_a_s,
+    name: Any,
+    current_a: Any,
+    initial_v: Any,
+    intercept_v_s: Any,
+    current_gain_v_a_s: Any,
     *,
-    cell_id="identifiability-cell",
-):
+    cell_id: Any = "identifiability-cell",
+) -> Any:
     times = np.asarray((0.0, 1.0, 2.0))
     rate = intercept_v_s + current_gain_v_a_s * current_a
     raw = BatteryRawTimeSeries(
@@ -175,7 +186,7 @@ def _record(
     )
 
 
-def _split(records):
+def _split(records: Any) -> Any:
     calibration_record = _record(
         "split-calibration",
         0.0,
@@ -208,14 +219,15 @@ def _split(records):
     )
 
 
-def _ledger_bool(ledger):
+def _ledger_bool(ledger: Any) -> Any:
     return ledger.successful
 
 
-def _prepared(record):
+def _prepared(record: Any) -> Any:
     protocol = BatteryProtocolPlan((CurrentStepPlan(2.0),))
     profile, support = _candidate()
     return BatteryExperimentPlan(
+        # ty: ignore[invalid-argument-type]
         CurrentAffineAdapter(),
         protocol,
         BatteryOutputPlan(("voltage_v",)),
@@ -232,14 +244,14 @@ def _prepared(record):
     ).prepare()
 
 
-def _log_prior(branches):
+def _log_prior(branches: Any) -> Any:
     leaves = jnp.asarray(
         tuple(jnp.asarray(value) for value in branches.shared_physical.values())
     )
     return -0.5 * jnp.sum(leaves * leaves)
 
 
-def _calibration(currents):
+def _calibration(currents: Any) -> Any:
     records = tuple(
         _record(
             "one" if index == 0 else "two",
@@ -292,7 +304,7 @@ def _calibration(currents):
     )
 
 
-def test_rank_deficiency_weak_direction_and_deterministic_provenance():
+def test_rank_deficiency_weak_direction_and_deterministic_provenance() -> None:
     calibration = _calibration((1.0,))
     rank_policy = RankPolicy(relative_cutoff=1.0e-5)
     plan = BatteryIdentifiabilityPlan(calibration, rank_policy=rank_policy)
@@ -332,7 +344,7 @@ def test_rank_deficiency_weak_direction_and_deterministic_provenance():
     assert len(report.parameter_ids) == 3
 
 
-def test_distinct_current_experiments_restore_rank_and_report_compiles():
+def test_distinct_current_experiments_restore_rank_and_report_compiles() -> None:
     calibration = _calibration((1.0, 2.0))
     plan = BatteryIdentifiabilityPlan(
         calibration,
@@ -358,7 +370,7 @@ def test_distinct_current_experiments_restore_rank_and_report_compiles():
     assert compiled.whitened_jacobian.shape == report.whitened_jacobian.shape
 
 
-def test_full_rank_policy_marks_confounding_unsuccessful_without_hiding_report():
+def test_full_rank_policy_marks_confounding_unsuccessful_without_hiding_report() -> None:
     calibration = _calibration((1.0,))
     plan = BatteryIdentifiabilityPlan(
         calibration,

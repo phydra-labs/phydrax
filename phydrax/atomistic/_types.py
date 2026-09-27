@@ -11,10 +11,11 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from .._dtype_names import real_precision_dtype_name
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._precision import real_precision_dtype_name
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import ParticleDiscretization, ParticleSetPlan
@@ -49,7 +50,7 @@ class AtomisticScaleContract(StrictModule, NonTrainableState):
         length_unit: UnitDefinition,
         energy_unit: UnitDefinition,
         /,
-    ):
+    ) -> None:
         if not isinstance(length_unit, UnitDefinition) or not isinstance(
             energy_unit, UnitDefinition
         ):
@@ -137,7 +138,7 @@ class AtomisticPrecisionPolicy(StrictModule, NonTrainableState):
         compute_dtype: Any = "float64",
         reduction_dtype: Any = "float64",
         output_dtype: Any = "float64",
-    ):
+    ) -> None:
         coordinate = real_precision_dtype_name(coordinate_dtype)
         compute = real_precision_dtype_name(compute_dtype)
         reduction = real_precision_dtype_name(reduction_dtype)
@@ -189,7 +190,7 @@ class AtomicStructure(StrictModule, NonTrainableState):
         name: str = "molecule",
         coordinate_dtype: Any | None = None,
         numeric_version: str = "0",
-    ):
+    ) -> None:
         if not isinstance(scale, AtomisticScaleContract):
             raise TypeError("scale must be an AtomisticScaleContract.")
         numbers = np.asarray(atomic_numbers)
@@ -386,7 +387,7 @@ class AtomisticBatch(StrictModule, NonTrainableState):
         structure_ids: Sequence[str] | None = None,
         coordinate_dtype: Any | None = None,
         numeric_version: str = "0",
-    ):
+    ) -> None:
         if not isinstance(scale, AtomisticScaleContract):
             raise TypeError("scale must be an AtomisticScaleContract.")
         numbers = np.asarray(atomic_numbers)

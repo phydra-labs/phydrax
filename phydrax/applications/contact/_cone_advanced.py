@@ -4,9 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -21,6 +26,9 @@ from ._cone import (
 )
 
 
+_CGCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
+
+
 class SAPContactSolverPlan(StrictModule, NonTrainableState):
     maximum_iterations: int = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
@@ -33,7 +41,7 @@ class SAPContactSolverPlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 300,
         tolerance: float = 1.0e-10,
         acceleration: bool = True,
-    ):
+    ) -> None:
         iterations = int(maximum_iterations)
         tolerance_ = float(tolerance)
         if iterations <= 0 or tolerance_ <= 0.0:
@@ -77,7 +85,7 @@ class SemismoothContactSolverPlan(StrictModule, NonTrainableState):
         maximum_linear_iterations: int = 200,
         tolerance: float = 1.0e-10,
         regularization: float = 1.0e-10,
-    ):
+    ) -> None:
         nonlinear = int(maximum_iterations)
         linear = int(maximum_linear_iterations)
         tolerance_ = float(tolerance)
@@ -131,7 +139,7 @@ class PrimalDualContactSolverPlan(StrictModule, NonTrainableState):
         barrier_reduction: float = 0.2,
         tolerance: float = 1.0e-10,
         regularization: float = 1.0e-10,
-    ):
+    ) -> None:
         outer = int(outer_iterations)
         inner = int(inner_iterations)
         linear = int(maximum_linear_iterations)
@@ -186,11 +194,11 @@ class PrimalDualContactSolverPlan(StrictModule, NonTrainableState):
         return 1.0
 
 
-def _matrix(program):
+def _matrix(program: ContactConeProgram) -> Array:
     return program.effective_mass + jnp.diag(program.compliance)
 
 
-def _natural_residual(program, impulse):
+def _natural_residual(program: ContactConeProgram, impulse: Array) -> Array:
     gradient = (
         _matrix(program) @ impulse.reshape((-1,)) + program.free_velocity.reshape((-1,))
     ).reshape(impulse.shape)
@@ -199,13 +207,18 @@ def _natural_residual(program, impulse):
     return impulse - projected
 
 
-def _cg_normal(matrix, right, maximum_iterations, tolerance):
+def _cg_normal(
+    matrix: Callable[[Array], Array],
+    right: Array,
+    maximum_iterations: int,
+    tolerance: float,
+) -> Array:
     value = jnp.zeros_like(right)
     residual = right - matrix(value)
     direction = residual
     residual_squared = jnp.sum(residual * residual)
 
-    def body(_, state):
+    def body(_: Array, state: _CGCarry) -> _CGCarry:
         value_, residual_, direction_, squared_, converged_ = state
         action = matrix(direction_)
         denominator = jnp.sum(direction_ * action)
@@ -240,13 +253,15 @@ def _cg_normal(matrix, right, maximum_iterations, tolerance):
 
 
 def _certified_result(
-    program,
-    candidate,
-    residual_norm,
-    iterations,
-    tolerance,
-    solver,
-):
+    program: ContactConeProgram,
+    candidate: Array,
+    residual_norm: Array,
+    iterations: int,
+    tolerance: float,
+    solver: SAPContactSolverPlan
+    | SemismoothContactSolverPlan
+    | PrimalDualContactSolverPlan,
+) -> ContactConeResult:
     (
         candidate_law_velocity,
         complementarity,
@@ -327,7 +342,7 @@ def solve_contact_sap(
     /,
     *,
     solver: SAPContactSolverPlan | None = None,
-    initial_impulse=None,
+    initial_impulse: ArrayLike | None = None,
 ) -> ContactConeResult:
     if not isinstance(program, ContactConeProgram):
         raise TypeError("program must be ContactConeProgram.")
@@ -349,7 +364,7 @@ def solve_contact_sap(
     previous = impulse
     momentum = jnp.asarray(1.0, dtype=matrix.dtype)
 
-    def body(_, state):
+    def body(_: Array, state: tuple[Array, Array, Array]) -> tuple[Array, Array, Array]:
         value, previous_, momentum_ = state
         extrapolated = value + jnp.where(
             solver_.acceleration,
@@ -387,7 +402,7 @@ def solve_contact_semismooth(
     /,
     *,
     solver: SemismoothContactSolverPlan | None = None,
-    initial_impulse=None,
+    initial_impulse: ArrayLike | None = None,
 ) -> ContactConeResult:
     if not isinstance(program, ContactConeProgram):
         raise TypeError("program must be ContactConeProgram.")
@@ -419,7 +434,7 @@ def solve_contact_semismooth(
             break
         flat = impulse.reshape((-1,))
 
-        def residual_flat(value):
+        def residual_flat(value: Array) -> Array:
             return _natural_residual(program, value.reshape(impulse.shape)).reshape((-1,))
 
         jacobian = jax.jacfwd(residual_flat)(flat)
@@ -502,7 +517,7 @@ def solve_contact_primal_dual(
     iterations = 0
     matrix = _matrix(program)
 
-    def objective(value, barrier_value):
+    def objective(value: Array, barrier_value: float) -> Array:
         flat = value.reshape((-1,))
         quadratic = (
             0.5 * flat @ matrix @ flat + program.free_velocity.reshape((-1,)) @ flat

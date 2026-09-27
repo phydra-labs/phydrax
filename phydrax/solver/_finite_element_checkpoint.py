@@ -10,7 +10,8 @@ from pathlib import Path
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._array_archive import (
     array_collection_digest,
@@ -51,7 +52,7 @@ class FiniteElementCheckpoint(StrictModule, NonTrainableState):
         /,
         *,
         materials: MaterialTransaction | None = None,
-    ):
+    ) -> None:
         prepared = str(prepared_id)
         compiled = str(compilation_id)
         time_ = jnp.asarray(time)

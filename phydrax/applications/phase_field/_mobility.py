@@ -10,7 +10,8 @@ from collections.abc import Callable
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -73,7 +74,7 @@ class ScalarPhaseFieldMobility(AbstractPhaseFieldMobility):
     mobility_id: str = eqx.field(static=True)
     scalar_kinetics: bool = eqx.field(static=True)
 
-    def __init__(self, value: ArrayLike, /):
+    def __init__(self, value: ArrayLike, /) -> None:
         mobility = np.asarray(value)
         if mobility.shape != () or not np.isfinite(mobility) or mobility <= 0.0:
             raise ValueError("Scalar phase-field mobility must be positive and finite.")
@@ -114,7 +115,7 @@ class TensorPhaseFieldMobility(AbstractPhaseFieldMobility):
     mobility_id: str = eqx.field(static=True)
     scalar_kinetics: bool = eqx.field(static=True)
 
-    def __init__(self, tensor: ArrayLike, /, *, tolerance: float = 1.0e-12):
+    def __init__(self, tensor: ArrayLike, /, *, tolerance: float = 1.0e-12) -> None:
         values = np.asarray(tensor)
         tolerance_ = float(tolerance)
         if (
@@ -184,7 +185,7 @@ class CallableTensorPhaseFieldMobility(AbstractPhaseFieldMobility):
     mobility_id: str = eqx.field(static=True)
     scalar_kinetics: bool = eqx.field(static=True)
 
-    def __init__(self, evaluator: Callable, /, *, mobility_id: str):
+    def __init__(self, evaluator: Callable, /, *, mobility_id: str) -> None:
         if not callable(evaluator):
             raise TypeError("Callable mobility requires an evaluator.")
         identifier = str(mobility_id)

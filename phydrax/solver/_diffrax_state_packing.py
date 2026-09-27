@@ -11,10 +11,12 @@ import diffrax as dfx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
+from .._dtype_names import precision_dtype_name
 from .._fingerprint import canonical_fingerprint
-from .._precision import precision_dtype_name
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import (
@@ -23,6 +25,7 @@ from ..linalg import (
     ComplexCartesianCoordinates,
     RealCoordinateEvidence,
 )
+from ..typing import parse
 
 
 DiffraxComplexStateStrategy: TypeAlias = Literal["real_coordinates", "native", "reject"]
@@ -35,11 +38,10 @@ class DiffraxComplexStatePolicy(StrictModule, NonTrainableState):
     strategy: DiffraxComplexStateStrategy = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, strategy: DiffraxComplexStateStrategy = "real_coordinates", /):
-        if strategy not in ("real_coordinates", "native", "reject"):
-            raise ValueError(
-                "Diffrax complex-state strategy must be 'real_coordinates', 'native', or 'reject'."
-            )
+    def __init__(
+        self, strategy: DiffraxComplexStateStrategy = "real_coordinates", /
+    ) -> None:
+        strategy = parse(strategy, DiffraxComplexStateStrategy, "strategy")
         self.strategy = strategy
         self.policy_id = canonical_fingerprint(
             {
@@ -53,7 +55,7 @@ class _PackedComplexLeaf(StrictModule):
     real: Array
     imag: Array
 
-    def __init__(self, value: ArrayLike, /):
+    def __init__(self, value: ArrayLike, /) -> None:
         array = jnp.asarray(value)
         if not jnp.iscomplexobj(array):
             raise TypeError("Packed argument leaves must be complex-valued.")
@@ -91,7 +93,9 @@ class _PackedEventCondition(StrictModule):
     condition: Any
     state_adapter: "_PreparedDiffraxStateAdapter"
 
-    def __call__(self, t, y, args, **kwargs):
+    def __call__(
+        self, t: ArrayLike, y: PyTree, args: PyTree, **kwargs: object
+    ) -> ArrayLike:
         return self.condition(
             t,
             self.state_adapter.unpack_state(y),
@@ -121,12 +125,11 @@ class _PreparedDiffraxStateAdapter(StrictModule, NonTrainableState):
         backend_dtype: str,
         evidence: RealCoordinateEvidence | None,
         coordinates: AbstractRealCoordinateMap | None = None,
-    ):
+    ) -> None:
         shape = tuple(state_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("Diffrax state shape must contain positive dimensions.")
-        if mode not in ("real_coordinates", "native"):
-            raise ValueError("Unknown prepared Diffrax state mode.")
+        mode = parse(mode, RealizedDiffraxStateStrategy, "mode")
         if mode == "real_coordinates":
             if not isinstance(coordinates, AbstractRealCoordinateMap):
                 raise TypeError(

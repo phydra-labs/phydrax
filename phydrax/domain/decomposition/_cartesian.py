@@ -5,17 +5,22 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Iterable, Sequence
 from itertools import pairwise, product
 from numbers import Real
+from typing import Any, TypeVar
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from .._domain import Domain, JointFactor
 from .._function import DomainFunction
 from .._hyperrectangle import HyperRectangle
@@ -25,16 +30,24 @@ from ..geometry1d import Interval1d
 from ._cover import PairedSupport, SubdomainCover, SubdomainPatch
 
 
+_CastT = TypeVar("_CastT")
+_ValueT = TypeVar("_ValueT")
+
+
 class _IdentityCoordinate(StrictModule, NonTrainableState):
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
-    def __call__(self, value, /, *, key=None, **kwargs):
+    def __call__(
+        self, value: _ValueT, /, *, key: PRNGKey | None = None, **kwargs: object
+    ) -> _ValueT:
         del key, kwargs
         return value
 
 
-def _periodic_image(value, center, lower, upper, periodic):
+def _periodic_image(
+    value: Array, center: Array, lower: Array, upper: Array, periodic: Array
+) -> Array:
     period = upper - lower
     wrapped = center + jnp.mod(value - center + 0.5 * period, period) - 0.5 * period
     return jnp.where(periodic, wrapped, value)
@@ -50,14 +63,14 @@ class _PeriodicCoordinate(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        lower: Sequence[float],
-        upper: Sequence[float],
-        center: Sequence[float],
-        periodic: Sequence[bool],
+        lower: Iterable[float],
+        upper: Iterable[float],
+        center: Iterable[float],
+        periodic: Iterable[bool],
         *,
         vector_coordinate: bool,
         direction: str,
-    ):
+    ) -> None:
         if direction not in ("to-local", "to-ambient"):
             raise ValueError("Unknown periodic coordinate direction.")
         self.lower = tuple(float(value) for value in lower)
@@ -67,7 +80,14 @@ class _PeriodicCoordinate(StrictModule, NonTrainableState):
         self.vector_coordinate = bool(vector_coordinate)
         self.direction = direction
 
-    def __call__(self, coordinate, /, *, key=None, **kwargs):
+    def __call__(
+        self,
+        coordinate: ArrayLike,
+        /,
+        *,
+        key: PRNGKey | None = None,
+        **kwargs: object,
+    ) -> Array:
         del key, kwargs
         value = jnp.asarray(coordinate)
         if not self.vector_coordinate:
@@ -96,15 +116,15 @@ class _BoxSupport(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        lower: Sequence[float],
-        upper: Sequence[float],
+        lower: Iterable[float],
+        upper: Iterable[float],
         *,
-        ambient_lower: Sequence[float],
-        ambient_upper: Sequence[float],
-        center: Sequence[float],
-        periodic: Sequence[bool],
+        ambient_lower: Iterable[float],
+        ambient_upper: Iterable[float],
+        center: Iterable[float],
+        periodic: Iterable[bool],
         vector_coordinate: bool,
-    ):
+    ) -> None:
         self.lower = tuple(float(value) for value in lower)
         self.upper = tuple(float(value) for value in upper)
         self.ambient_lower = tuple(float(value) for value in ambient_lower)
@@ -113,7 +133,14 @@ class _BoxSupport(StrictModule, NonTrainableState):
         self.periodic = tuple(bool(value) for value in periodic)
         self.vector_coordinate = bool(vector_coordinate)
 
-    def __call__(self, coordinate, /, *, key=None, **kwargs):
+    def __call__(
+        self,
+        coordinate: ArrayLike,
+        /,
+        *,
+        key: PRNGKey | None = None,
+        **kwargs: object,
+    ) -> Array:
         del key, kwargs
         value = jnp.asarray(coordinate)
         if not self.vector_coordinate:
@@ -142,16 +169,16 @@ class _BoxWindow(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        support_lower: Sequence[float],
-        core_lower: Sequence[float],
-        core_upper: Sequence[float],
-        support_upper: Sequence[float],
+        support_lower: Iterable[float],
+        core_lower: Iterable[float],
+        core_upper: Iterable[float],
+        support_upper: Iterable[float],
         *,
-        ambient_lower: Sequence[float],
-        ambient_upper: Sequence[float],
-        periodic: Sequence[bool],
+        ambient_lower: Iterable[float],
+        ambient_upper: Iterable[float],
+        periodic: Iterable[bool],
         vector_coordinate: bool,
-    ):
+    ) -> None:
         self.support_lower = tuple(float(value) for value in support_lower)
         self.core_lower = tuple(float(value) for value in core_lower)
         self.core_upper = tuple(float(value) for value in core_upper)
@@ -162,10 +189,17 @@ class _BoxWindow(StrictModule, NonTrainableState):
         self.vector_coordinate = bool(vector_coordinate)
 
     @staticmethod
-    def _smootherstep(value):
+    def _smootherstep(value: Array) -> Array:
         return value**3 * (value * (value * 6.0 - 15.0) + 10.0)
 
-    def __call__(self, coordinate, /, *, key=None, **kwargs):
+    def __call__(
+        self,
+        coordinate: ArrayLike,
+        /,
+        *,
+        key: PRNGKey | None = None,
+        **kwargs: object,
+    ) -> Array:
         del key, kwargs
         value = jnp.asarray(coordinate)
         if not self.vector_coordinate:
@@ -212,18 +246,25 @@ class _AffineCoordinate(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        lower: Sequence[float],
-        upper: Sequence[float],
+        lower: npt.ArrayLike,
+        upper: npt.ArrayLike,
         *,
         vector_coordinate: bool,
-    ):
+    ) -> None:
         lower_ = np.asarray(lower, dtype=np.float64)
         upper_ = np.asarray(upper, dtype=np.float64)
         self.center = tuple(float(value) for value in 0.5 * (lower_ + upper_))
         self.half_width = tuple(float(value) for value in 0.5 * (upper_ - lower_))
         self.vector_coordinate = bool(vector_coordinate)
 
-    def __call__(self, coordinate, /, *, key=None, **kwargs):
+    def __call__(
+        self,
+        coordinate: ArrayLike,
+        /,
+        *,
+        key: PRNGKey | None = None,
+        **kwargs: object,
+    ) -> Array:
         del key, kwargs
         value = jnp.asarray(coordinate)
         center = jnp.asarray(self.center, dtype=value.dtype)
@@ -237,12 +278,19 @@ class _FaceEmbedding(StrictModule, NonTrainableState):
     boundary: float = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
 
-    def __init__(self, axis: int, boundary: float, dimension: int):
+    def __init__(self, axis: int, boundary: float, dimension: int) -> None:
         self.axis = int(axis)
         self.boundary = float(boundary)
         self.dimension = int(dimension)
 
-    def __call__(self, tangent, /, *, key=None, **kwargs):
+    def __call__(
+        self,
+        tangent: ArrayLike,
+        /,
+        *,
+        key: PRNGKey | None = None,
+        **kwargs: object,
+    ) -> Array:
         del key, kwargs
         tangent_ = jnp.asarray(tangent)
         boundary = jnp.asarray([self.boundary], dtype=tangent_.dtype)
@@ -261,12 +309,12 @@ class AxisPartition(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        boundaries: Sequence[float],
+        boundaries: Iterable[float],
         /,
         *,
         overlap_fraction: float = 0.0,
         periodic: bool = False,
-    ):
+    ) -> None:
         boundaries_ = tuple(float(value) for value in boundaries)
         if len(boundaries_) < 2:
             raise ValueError("AxisPartition requires at least two boundaries.")
@@ -311,7 +359,7 @@ class BoxPartition(StrictModule, NonTrainableState):
 
     axes: tuple[AxisPartition, ...]
 
-    def __init__(self, axes: Sequence[AxisPartition], /):
+    def __init__(self, axes: Sequence[AxisPartition], /) -> None:
         axes_ = tuple(axes)
         if not axes_ or any(not isinstance(axis, AxisPartition) for axis in axes_):
             raise TypeError("axes must be a non-empty sequence of AxisPartition objects.")
@@ -351,8 +399,8 @@ def _factor_bounds(
 
 def _factor_like(
     prototype: JointFactor,
-    lower: Sequence[float],
-    upper: Sequence[float],
+    lower: npt.ArrayLike,
+    upper: npt.ArrayLike,
     /,
 ) -> JointFactor:
     label = prototype.labels[0]
@@ -385,15 +433,18 @@ def _identity_coordinates(domain: Domain, /) -> dict[str, DomainFunction]:
     }
 
 
-def _constant_coordinate(domain: Domain, value, /) -> DomainFunction:
+def _constant_coordinate(domain: Domain, value: ArrayLike, /) -> DomainFunction:
     return DomainFunction(
         domain=domain, deps=(), func=jnp.asarray(value, dtype=jnp.float64)
     )
 
 
-def _sequence_or_scalar(value, dimension: int, name: str, cast):
-    if isinstance(value, (Real, bool)):
-        return tuple(cast(value) for _ in range(dimension))
+def _sequence_or_scalar(
+    value: Sequence[float],
+    dimension: int,
+    name: str,
+    cast: Callable[[float], _CastT],
+) -> tuple[_CastT, ...]:
     values = tuple(cast(entry) for entry in value)
     if len(values) == 1 and dimension > 1:
         return values * dimension
@@ -402,7 +453,9 @@ def _sequence_or_scalar(value, dimension: int, name: str, cast):
     return values
 
 
-def _normalize_boundary_input(boundaries, dimension: int):
+def _normalize_boundary_input(
+    boundaries: Sequence[Any], dimension: int
+) -> tuple[tuple[float, ...], ...]:
     values = tuple(boundaries)
     if dimension == 1 and values and isinstance(values[0], Real):
         return (tuple(float(value) for value in values),)
@@ -472,7 +525,9 @@ class CartesianCoverPlan(StrictModule, NonTrainableState):
 
     label: str = eqx.field(static=True)
     counts: tuple[int, ...] | None = eqx.field(static=True)
-    boundaries: tuple[tuple[float, ...], ...] | None = eqx.field(static=True)
+    boundaries: tuple[float, ...] | tuple[Sequence[float], ...] | None = eqx.field(
+        static=True
+    )
     axis_partitions: tuple[AxisPartition, ...] | None
     overlap_fraction: tuple[float, ...] = eqx.field(static=True)
     periodic: tuple[bool, ...] = eqx.field(static=True)
@@ -489,7 +544,7 @@ class CartesianCoverPlan(StrictModule, NonTrainableState):
         overlap_fraction: float | Sequence[float] = 0.0,
         periodic: bool | Sequence[bool] = False,
         cover_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(label, str) or not label:
             raise ValueError("label must be a non-empty string.")
         provided = sum(
@@ -519,7 +574,8 @@ class CartesianCoverPlan(StrictModule, NonTrainableState):
         overlap_values = (
             (float(overlap_fraction),)
             if isinstance(overlap_fraction, Real)
-            else tuple(float(value) for value in overlap_fraction)
+            # ty does not model the numbers.Real registration of int and float.
+            else tuple(float(value) for value in overlap_fraction)  # ty: ignore[not-iterable]
         )
         periodic_values = (
             (bool(periodic),)

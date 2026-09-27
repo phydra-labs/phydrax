@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -22,7 +25,7 @@ from phydrax.sampling._gauge_updates import (
 )
 
 
-def _prepared(group, kind="heatbath", attempts=128):
+def _prepared(group: Any, kind: Any = "heatbath", attempts: Any = 128) -> Any:
     topology = polygonal_cell_complex(jnp.asarray([[0, 1, 2]]), None, 3)
     boundaries = prepare_cell_boundary_paths(topology)
     space = MatrixGaugeLinkSpace(topology, group)
@@ -31,6 +34,7 @@ def _prepared(group, kind="heatbath", attempts=128):
     conflicts = ~jnp.eye(space.num_edges, dtype="bool")
     name = "u1" if group.dimension == 1 else f"su{group.dimension}"
     plan = GaugeUpdatePlan(
+        # ty: ignore[invalid-argument-type]
         name,
         coupling=0.8,
         update=kind,
@@ -39,7 +43,7 @@ def _prepared(group, kind="heatbath", attempts=128):
     return space, prepare_gauge_update(plan, staples, colors, conflicts)
 
 
-def test_u1_exact_conditional_preserves_haar_support_and_detailed_balance():
+def test_u1_exact_conditional_preserves_haar_support_and_detailed_balance() -> None:
     space, prepared = _prepared(UnitaryGroup(1), attempts=256)
     state = initialize_gauge_update_state(prepared, space.identity())
     result = gauge_update_sweeps(prepared, state, key=jax.random.key(11))
@@ -57,7 +61,7 @@ def test_u1_exact_conditional_preserves_haar_support_and_detailed_balance():
     assert result.reference_measure == "product-haar"
 
 
-def test_su2_heatbath_and_overrelaxation_preserve_measure_support():
+def test_su2_heatbath_and_overrelaxation_preserve_measure_support() -> None:
     space, heatbath = _prepared(SpecialUnitaryGroup(2), attempts=256)
     initial = initialize_gauge_update_state(heatbath, space.identity())
     sampled = gauge_update_sweeps(heatbath, initial, key=jax.random.key(12))
@@ -72,12 +76,12 @@ def test_su2_heatbath_and_overrelaxation_preserve_measure_support():
     assert jnp.all(reflected.evidence.exact_target_correction)
 
 
-def test_failed_overrelaxation_correction_rolls_back_every_link(monkeypatch):
+def test_failed_overrelaxation_correction_rolls_back_every_link(monkeypatch: Any) -> None:
     space, prepared = _prepared(SpecialUnitaryGroup(2), kind="overrelaxation")
     initial = initialize_gauge_update_state(prepared, space.identity())
     calls = 0
 
-    def non_microcanonical_weight(*_args):
+    def non_microcanonical_weight(*_args: Any) -> Any:
         nonlocal calls
         value = jnp.asarray(float(calls % 2))
         calls += 1
@@ -94,7 +98,7 @@ def test_failed_overrelaxation_correction_rolls_back_every_link(monkeypatch):
     assert jnp.array_equal(result.state.links, initial.links)
 
 
-def test_su3_cabibbo_marinari_subgroups_remain_special_unitary():
+def test_su3_cabibbo_marinari_subgroups_remain_special_unitary() -> None:
     space, prepared = _prepared(SpecialUnitaryGroup(3), attempts=256)
     state = initialize_gauge_update_state(prepared, space.identity())
     result = gauge_update_sweeps(prepared, state, key=jax.random.key(14))
@@ -109,7 +113,7 @@ def test_su3_cabibbo_marinari_subgroups_remain_special_unitary():
     )
 
 
-def test_invalid_coloring_and_group_combination_fail_during_prepare():
+def test_invalid_coloring_and_group_combination_fail_during_prepare() -> None:
     topology = polygonal_cell_complex(jnp.asarray([[0, 1, 2]]), None, 3)
     boundaries = prepare_cell_boundary_paths(topology)
     space = MatrixGaugeLinkSpace(topology, SpecialUnitaryGroup(2))
@@ -132,7 +136,7 @@ def test_invalid_coloring_and_group_combination_fail_during_prepare():
         )
 
 
-def test_replica_exchange_reports_exact_balance_ratio_and_alternates_pairs():
+def test_replica_exchange_reports_exact_balance_ratio_and_alternates_pairs() -> None:
     plan = GaugeReplicaExchangePlan(jnp.asarray([1.0, 0.7, 0.4]))
     configurations = jnp.arange(6.0).reshape((3, 2))
     reduced = jnp.asarray(

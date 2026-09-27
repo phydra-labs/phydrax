@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -10,7 +13,7 @@ from phydrax.nn.models import SeparableFeynmaNN
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_separable_feynmann_vector_input_shape(scan):
+def test_separable_feynmann_vector_input_shape(scan: Any) -> None:
     model = SeparableFeynmaNN(
         in_size=2,
         out_size=3,
@@ -28,7 +31,7 @@ def test_separable_feynmann_vector_input_shape(scan):
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_separable_feynmann_coord_separable_shape(scan):
+def test_separable_feynmann_coord_separable_shape(scan: Any) -> None:
     model = SeparableFeynmaNN(
         in_size=2,
         out_size="scalar",
@@ -47,7 +50,7 @@ def test_separable_feynmann_coord_separable_shape(scan):
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_separable_feynmann_scalar_requires_split_input(scan):
+def test_separable_feynmann_scalar_requires_split_input(scan: Any) -> None:
     with pytest.raises(ValueError, match="requires in_size >= 2"):
         _ = SeparableFeynmaNN(
             in_size="scalar",
@@ -60,7 +63,7 @@ def test_separable_feynmann_scalar_requires_split_input(scan):
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_separable_feynmann_scalar_with_split_input(scan):
+def test_separable_feynmann_scalar_with_split_input(scan: Any) -> None:
     model = SeparableFeynmaNN(
         in_size="scalar",
         out_size="scalar",

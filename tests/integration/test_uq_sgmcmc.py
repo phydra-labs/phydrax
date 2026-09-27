@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
 
 
-def _conjugate_normal_problem():
+def _conjugate_normal_problem() -> Any:
     observations = 1.2 + jnp.linspace(-0.3, 0.3, 64)
     prior_scale = 2.0
     source = phx.uq.ArrayMinibatchSource(
@@ -21,10 +24,10 @@ def _conjugate_normal_problem():
         priors=phx.uq.Normal(0.0, prior_scale),
     )
 
-    def factors(parameter, batch):
+    def factors(parameter: Any, batch: Any) -> Any:
         return -0.5 * (batch.data - parameter) ** 2
 
-    def full_likelihood(parameter):
+    def full_likelihood(parameter: Any) -> Any:
         return jnp.sum(-0.5 * (observations - parameter) ** 2)
 
     minibatch_problem = phx.uq.MinibatchPosteriorProblem(
@@ -46,7 +49,7 @@ def _conjugate_normal_problem():
     )
 
 
-def test_sgld_recovers_conjugate_posterior_and_step_refinement_reduces_bias():
+def test_sgld_recovers_conjugate_posterior_and_step_refinement_reduces_bias() -> None:
     problem, exact_problem, source, expected_mean, expected_variance = (
         _conjugate_normal_problem()
     )
@@ -97,7 +100,7 @@ def test_sgld_recovers_conjugate_posterior_and_step_refinement_reduces_bias():
     assert jnp.allclose(laplace.covariance[0, 0], expected_variance, rtol=1.0e-10)
 
 
-def test_sgnht_recovers_conjugate_posterior_with_thermostat_diagnostics():
+def test_sgnht_recovers_conjugate_posterior_with_thermostat_diagnostics() -> None:
     problem, _, source, expected_mean, expected_variance = _conjugate_normal_problem()
     control = phx.uq.build_sgmcmc_control_variate(
         problem,

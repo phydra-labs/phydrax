@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
@@ -32,7 +33,7 @@ class FrechetMeanResult(StrictModule):
         *,
         iterations: int,
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
-    ):
+    ) -> None:
         point_ = jnp.asarray(point)
         evidence = (
             GeometryPrecisionPolicy().evidence_for(point_)
@@ -165,7 +166,7 @@ def frechet_mean(
         )
         return precision_.sum(weighted, axis=0)
 
-    def update(_, candidate: Array) -> Array:
+    def update(_: Array, candidate: Array) -> Array:
         next_candidate = geometry.exp(
             precision_.compute(candidate),
             step * average_log(candidate),

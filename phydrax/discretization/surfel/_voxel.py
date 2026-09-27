@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -275,7 +276,7 @@ class PreparedSurfelVoxelProjection(StrictModule):
             attributes=(
                 None
                 if attribute_result is None
-                else attribute_result.reshape(output_shape + attribute_value.shape[1:])
+                else attribute_result.reshape(output_shape + attribute_result.shape[1:])
             ),
             supported=supported.reshape(output_shape),
             conflicting=conflicting.reshape(output_shape),

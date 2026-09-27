@@ -6,14 +6,31 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Literal
+from collections.abc import Iterable, Sequence
+from typing import Literal, TYPE_CHECKING, TypeAlias, TypeVar
 
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from ._free_energy import ReducedPotentialDataset, ReducedWorkDataset
+
+
+if TYPE_CHECKING:
+    from ..atomistic._alchemical import AlchemicalReducedPotentialEvaluation
+    from ..atomistic.free_energy._switching import (
+        AlchemicalSwitchingLineage,
+        AlchemicalSwitchingRecord,
+    )
+    from ..atomistic.sampling._multistate import AtomisticMultistateSegmentResult
+
+_T = TypeVar("_T")
+# (work, coverage, active, source, destination, chain, draw, repeat, dependence).
+_OrientedWork: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 def _exact(value: str, expected: str, name: str, /) -> None:
@@ -21,7 +38,9 @@ def _exact(value: str, expected: str, name: str, /) -> None:
         raise ValueError(f"{name} does not match the atomistic record.")
 
 
-def _exact_tuple(values, expected, name: str, /) -> tuple:
+def _exact_tuple(
+    values: Iterable[object], expected: Iterable[_T], name: str, /
+) -> tuple[_T, ...]:
     resolved = tuple(expected)
     if tuple(values) != resolved:
         raise ValueError(f"{name} do not match the atomistic record.")
@@ -29,20 +48,20 @@ def _exact_tuple(values, expected, name: str, /) -> tuple:
 
 
 def reduced_potential_dataset_from_alchemical_evaluation(
-    evaluation,
-    sample_active,
-    origin_state,
-    chain_index,
-    draw_index,
-    repeat_index,
-    dependence_group_index,
+    evaluation: AlchemicalReducedPotentialEvaluation,
+    sample_active: ArrayLike,
+    origin_state: ArrayLike,
+    chain_index: ArrayLike,
+    draw_index: ArrayLike,
+    repeat_index: ArrayLike,
+    dependence_group_index: ArrayLike,
     /,
     *,
     state_ids: Sequence[str],
     potential_ids: Sequence[str],
     bias_ids: Sequence[str | None],
     control_ids: Sequence[str],
-    inverse_temperatures,
+    inverse_temperatures: ArrayLike,
     reduced_convention_id: str,
     qualification_id: str,
     sampling_exact: bool,
@@ -127,7 +146,9 @@ def reduced_potential_dataset_from_alchemical_evaluation(
     )
 
 
-def reduced_potential_dataset_from_multistate(result) -> ReducedPotentialDataset:
+def reduced_potential_dataset_from_multistate(
+    result: AtomisticMultistateSegmentResult,
+) -> ReducedPotentialDataset:
     """Flatten one committed multistate segment in canonical draw-major order."""
 
     from ..atomistic.sampling._multistate import AtomisticMultistateSegmentResult
@@ -202,7 +223,7 @@ def reduced_potential_dataset_from_multistate(result) -> ReducedPotentialDataset
 
 
 def reduced_work_dataset_from_alchemical_switching(
-    record,
+    record: AlchemicalSwitchingRecord,
     /,
     *,
     direction: Literal["forward", "reverse", "both"],
@@ -288,7 +309,13 @@ def reduced_work_dataset_from_alchemical_switching(
     if not np.all(np.asarray(record.reverse_lineage.origin_ids) == destination_origin):
         raise ValueError("Reverse switching lineage has the wrong origin identity.")
 
-    def oriented(work, coverage, lineage, source, destination):
+    def oriented(
+        work: ArrayLike,
+        coverage: ArrayLike,
+        lineage: AlchemicalSwitchingLineage,
+        source: int,
+        destination: int,
+    ) -> _OrientedWork:
         covered = jnp.asarray(coverage, dtype=jnp.bool_)
         active = jnp.ones(covered.shape, dtype=jnp.bool_)
         return (

@@ -12,7 +12,8 @@ from dataclasses import dataclass, field
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -195,7 +196,7 @@ class NuclideInventory(StrictModule):
         nuclide_ids: tuple[str, ...],
         network_id: str,
         /,
-    ):
+    ) -> None:
         amounts = jnp.asarray(amounts_mol, dtype=jnp.float64)
         time = jnp.asarray(time_s, dtype=amounts.dtype)
         identifiers = tuple(_text(value, "nuclide_id") for value in nuclide_ids)

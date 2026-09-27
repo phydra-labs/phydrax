@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -119,7 +120,7 @@ class LayeredTerrestrialProfile(StrictModule, NonTrainableState):
         redistribution: bool = False,
         training_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         radii = np.asarray(outer_radii_m, dtype=np.float64)
         densities = np.asarray(mass_densities_kg_m3, dtype=np.float64)
         number = np.asarray(target_number_densities_m3, dtype=np.float64)
@@ -297,7 +298,7 @@ class SmoothStellarRadialProfile(StrictModule, NonTrainableState):
         redistribution: bool = False,
         training_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         radii = np.asarray(radii_m, dtype=np.float64)
         densities = np.asarray(mass_densities_kg_m3, dtype=np.float64)
         number = np.asarray(target_number_densities_m3, dtype=np.float64)

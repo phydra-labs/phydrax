@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -31,7 +32,7 @@ class LatticeBoltzmannScaling(StrictModule, NonTrainableState):
         /,
         *,
         sound_speed_squared: float = 1.0 / 3.0,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (

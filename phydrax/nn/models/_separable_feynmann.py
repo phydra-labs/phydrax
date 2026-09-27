@@ -6,11 +6,12 @@ from collections.abc import Callable
 from typing import ClassVar, Literal
 
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._model import ModelBinding
+from ...typing import PRNGKey
 from .._base import _AbstractStructuredInputModel
 from .._keys import EvalKey
 from .._utils import _get_size
@@ -61,8 +62,8 @@ class SeparableFeynmaNN(_AbstractStructuredInputModel):
         rwf: bool | tuple[float, float] = False,
         keep_output_complex: bool = False,
         scan: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         r"""Create a separable FeynmaNN.
 
         `SeparableFeynmaNN` forwards FeynmaNN hyperparameters to each internal

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -22,7 +25,9 @@ from phydrax.rendering import KineticVolumeRenderPlan
 from phydrax.solver import write_compressible_kinetic_vti
 
 
-def test_runtime_checkpoint_continuation_preserves_dual_and_stabilizer(tmp_path):
+def test_runtime_checkpoint_continuation_preserves_dual_and_stabilizer(
+    tmp_path: Any,
+) -> None:
     shape = (8, 8, 8)
     model = guided_d3q39_plan()
     runtime = CompressibleKineticRuntimePlan(
@@ -58,7 +63,7 @@ def test_runtime_checkpoint_continuation_preserves_dual_and_stabilizer(tmp_path)
     )
 
 
-def test_case_ir_boundary_import_render_and_vtk_output(tmp_path):
+def test_case_ir_boundary_import_render_and_vtk_output(tmp_path: Any) -> None:
     case = CompressibleKineticCaseIR(
         grid_shape=(8, 8, 8),
         model="guided-d3q39",

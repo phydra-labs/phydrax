@@ -8,12 +8,14 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._numerics._ssp_runge_kutta import ssprk33_step
 from .._trainable import NonTrainableState
+from ..discretization.flip import FLIPRuntimeState
 from ..discretization.particle import (
+    DEMRuntimeState,
     PreparedDFSPH,
     PreparedIISPH,
     PreparedSoftSphereDEMDynamics,
@@ -27,7 +29,7 @@ class TransportVelocityFixedStepMethod(AbstractFixedStepMethod, NonTrainableStat
     dynamics: PreparedTransportVelocityDynamics
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, dynamics: PreparedTransportVelocityDynamics, /):
+    def __init__(self, dynamics: PreparedTransportVelocityDynamics, /) -> None:
         self.dynamics = dynamics
         self.method_id = canonical_fingerprint(
             {
@@ -70,7 +72,7 @@ class IISPHFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
     dynamics: PreparedIISPH
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, dynamics: PreparedIISPH, /):
+    def __init__(self, dynamics: PreparedIISPH, /) -> None:
         self.dynamics = dynamics
         self.method_id = canonical_fingerprint(
             {"kind": "iisph-fixed-step", "dynamics": dynamics.prepared_id}
@@ -103,7 +105,7 @@ class DFSPHFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
     dynamics: PreparedDFSPH
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, dynamics: PreparedDFSPH, /):
+    def __init__(self, dynamics: PreparedDFSPH, /) -> None:
         self.dynamics = dynamics
         self.method_id = canonical_fingerprint(
             {"kind": "dfsph-fixed-step", "dynamics": dynamics.prepared_id}
@@ -140,7 +142,7 @@ class DEMFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
     dynamics: PreparedSoftSphereDEMDynamics
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, dynamics: PreparedSoftSphereDEMDynamics, /):
+    def __init__(self, dynamics: PreparedSoftSphereDEMDynamics, /) -> None:
         if not isinstance(dynamics, PreparedSoftSphereDEMDynamics):
             raise TypeError("dynamics must be PreparedSoftSphereDEMDynamics.")
         self.dynamics = dynamics
@@ -156,7 +158,7 @@ class DEMFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
         self,
         step_index: Array,
         time: Array,
-        state,
+        state: DEMRuntimeState,
         step_size: Array,
         args: Any,
         /,
@@ -178,7 +180,7 @@ class FLIPFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
     dynamics: CompiledFLIPProblem
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, dynamics: CompiledFLIPProblem, /):
+    def __init__(self, dynamics: CompiledFLIPProblem, /) -> None:
         if not isinstance(dynamics, CompiledFLIPProblem):
             raise TypeError("dynamics must be CompiledFLIPProblem.")
         self.dynamics = dynamics
@@ -190,7 +192,7 @@ class FLIPFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
         self,
         step_index: Array,
         time: Array,
-        state,
+        state: FLIPRuntimeState,
         step_size: Array,
         args: Any,
         /,

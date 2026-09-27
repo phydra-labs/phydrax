@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 
 from phydrax.applications.compressible_flow import (
@@ -8,7 +10,7 @@ from phydrax.nn.operator.training import split_operator_dataset
 from phydrax.qualification import ReferenceArtifactManifest
 
 
-def _manifest():
+def _manifest() -> Any:
     return ReferenceArtifactManifest(
         "native-cfd-artifact",
         checksum_algorithm="sha256",
@@ -26,7 +28,7 @@ def _manifest():
     )
 
 
-def test_compressible_operator_adapter_builds_group_safe_dataset():
+def test_compressible_operator_adapter_builds_group_safe_dataset() -> None:
     manifest = _manifest()
     cases = tuple(
         CompressibleOperatorCase(
@@ -63,11 +65,13 @@ def test_compressible_operator_adapter_builds_group_safe_dataset():
     )
 
     assert dataset.size == 6
+    # ty: ignore[unresolved-attribute]
     assert dataset.batch.input("geometry").values.shape == (6, 4, 2)
     assert dataset.targets.fields["pressure_coefficient"].values.shape == (6, 5)
     groups = []
     for partition in (split.train, split.validation, split.test):
         groups.append(
+            # ty: ignore[not-iterable]
             {record.identities["geometry_id"] for record in partition.provenance}
         )
     assert groups[0].isdisjoint(groups[1])

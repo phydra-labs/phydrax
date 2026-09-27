@@ -7,7 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -33,7 +35,7 @@ class FiniteElementImmersedMarkerMapPlan(StrictModule, NonTrainableState):
         configuration_space: AbstractVectorSpace,
         interpolation_matrix: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(markers, LagrangianMarkerDiscretization):
             raise TypeError("markers must be LagrangianMarkerDiscretization.")
         if not isinstance(configuration_space, AbstractVectorSpace):
@@ -73,7 +75,7 @@ class PreparedFiniteElementImmersedMarkerMap(StrictModule, NonTrainableState):
     interpolation: DenseLinearOperator
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: FiniteElementImmersedMarkerMapPlan, /):
+    def __init__(self, plan: FiniteElementImmersedMarkerMapPlan, /) -> None:
         if not isinstance(plan, FiniteElementImmersedMarkerMapPlan):
             raise TypeError("plan must be FiniteElementImmersedMarkerMapPlan.")
         interpolation = DenseLinearOperator(
@@ -93,10 +95,10 @@ class PreparedFiniteElementImmersedMarkerMap(StrictModule, NonTrainableState):
             }
         )
 
-    def active_position(self, configuration: PyTree, /):
+    def active_position(self, configuration: PyTree, /) -> PyTree[Array]:
         return self.interpolation.mv(configuration)
 
-    def active_velocity(self, velocity: PyTree, /):
+    def active_velocity(self, velocity: PyTree, /) -> PyTree[Array]:
         return self.interpolation.mv(velocity)
 
     def kinematics(
@@ -109,7 +111,7 @@ class PreparedFiniteElementImmersedMarkerMap(StrictModule, NonTrainableState):
             self.markers.expand_active(active_velocity),
         )
 
-    def structural_load(self, marker_force_density: ArrayLike, /):
+    def structural_load(self, marker_force_density: ArrayLike, /) -> PyTree[Array]:
         values = self.markers.active_velocity_space.validate(
             jnp.asarray(marker_force_density)
         )

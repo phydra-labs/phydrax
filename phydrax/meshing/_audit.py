@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections import Counter
 from enum import StrEnum
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -125,7 +126,7 @@ class CellMeshAuditPolicy(StrictModule, NonTrainableState):
         invalid_geometry: CellMeshAuditDisposition = CellMeshAuditDisposition.REJECT,
         unresolved: CellMeshAuditDisposition = CellMeshAuditDisposition.REJECT,
         validity_policy: CellValidityPolicy | None = None,
-    ):
+    ) -> None:
         measure = float(minimum_measure)
         ratio = float(minimum_mean_ratio)
         aspect = float(maximum_aspect_ratio)
@@ -284,7 +285,9 @@ def _geometry_id(geometry: CellGeometrySpec, /) -> str:
     )
 
 
-def _evidence_id(patches, zones, labels, attributes, associations, /) -> str:
+def _evidence_id(
+    patches: Any, zones: Any, labels: Any, attributes: Any, associations: Any, /
+) -> str:
     return canonical_fingerprint(
         {
             "patches": [value.patch_id for value in patches],
@@ -486,8 +489,15 @@ def _patch_zone_adjacency_issues(
 
 
 def _mesh_evidence_issues(
-    mesh, boundary, patches, zones, labels, attributes, associations, /
-):
+    mesh: Any,
+    boundary: Any,
+    patches: Any,
+    zones: Any,
+    labels: Any,
+    attributes: Any,
+    associations: Any,
+    /,
+) -> Any:
     issues = list(_boundary_issues(mesh, boundary))
     issues.extend(_patch_zone_adjacency_issues(mesh, patches, zones))
     meshes = (mesh,) if boundary is None else (mesh, boundary.mesh)
@@ -556,7 +566,9 @@ def _mesh_evidence_issues(
     return tuple(dict.fromkeys(issues))
 
 
-def _complete_association_coverage(mesh, boundary, patches, associations, /) -> bool:
+def _complete_association_coverage(
+    mesh: Any, boundary: Any, patches: Any, associations: Any, /
+) -> bool:
     if not associations or any(not value.complete for value in associations):
         return False
     meshes = (mesh,) if boundary is None else (mesh, boundary.mesh)

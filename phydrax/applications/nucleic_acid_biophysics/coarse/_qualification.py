@@ -9,7 +9,8 @@ from dataclasses import dataclass
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -73,7 +74,7 @@ class NucleotideMechanicalResponseData:
         twist_unit: UnitDefinition,
         source: ReferenceArtifactManifest,
         model: PreparedNucleotideModel,
-    ):
+    ) -> None:
         cases = tuple(case_ids)
         units = tuple(independent_unit_ids)
         conditions = tuple(condition_ids)

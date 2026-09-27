@@ -4,11 +4,14 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._admissibility import AdmissibilityHeader, AdmissibilityReason
 from ..._fingerprint import canonical_fingerprint
@@ -20,6 +23,10 @@ from ...discretization.lattice_boltzmann import (
     LatticeBoltzmannRuntimeParameters,
     PreparedLatticeBoltzmannDynamics,
 )
+
+
+# (populations, velocity, residual, cumulative success, mass drift)
+_FlowCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 class DLDFlowResult(StrictModule):
@@ -128,7 +135,7 @@ class DLDLatticeBoltzmannFlowPlan(StrictModule, NonTrainableState):
         mass_drift = jnp.asarray(0.0, dtype=populations.dtype)
         time_step = jnp.asarray(self.dynamics.scaling.time_step, dtype=populations.dtype)
 
-        def body(index, carry):
+        def body(index: Array, carry: _FlowCarry) -> _FlowCarry:
             current, previous_velocity, _residual, cumulative_, drift_ = carry
             time = index.astype(populations.dtype) * time_step
             result = self.dynamics.step_detailed(

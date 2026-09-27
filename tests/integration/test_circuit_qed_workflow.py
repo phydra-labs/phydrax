@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -11,7 +14,9 @@ q = phx.operators.quantum
 s = phx.solver
 
 
-def test_circuit_spectrum_fit_composes_mode_tracking_observations_and_optimization():
+def test_circuit_spectrum_fit_composes_mode_tracking_observations_and_optimization() -> (
+    None
+):
     basis = q.ChargeBasis(4)
     policy = q.ModeReductionPolicy(3)
     phases = (-0.4, 0.0, 0.35)
@@ -20,7 +25,7 @@ def test_circuit_spectrum_fit_composes_mode_tracking_observations_and_optimizati
         tuple(f"transition:{index}" for index in range(len(phases)))
     )
 
-    def mode_problem(charging_rate, phase):
+    def mode_problem(charging_rate: Any, phase: Any) -> Any:
         return q.transmon_mode_problem(
             q.TransmonParameters(
                 charging_rate,
@@ -32,7 +37,7 @@ def test_circuit_spectrum_fit_composes_mode_tracking_observations_and_optimizati
             problem_id=f"spectrum:{phase}",
         )
 
-    def transition(reduced):
+    def transition(reduced: Any) -> Any:
         return reduced.energies[1] - reduced.energies[0]
 
     target = jnp.stack(
@@ -54,7 +59,7 @@ def test_circuit_spectrum_fit_composes_mode_tracking_observations_and_optimizati
         for phase in phases
     )
 
-    def theory(log_charging_rate):
+    def theory(log_charging_rate: Any) -> Any:
         charging_rate = jnp.exp(log_charging_rate)
         values = jnp.stack(
             tuple(
@@ -69,7 +74,7 @@ def test_circuit_spectrum_fit_composes_mode_tracking_observations_and_optimizati
         )
         return phx.observation.TheoryVector(values, layout, "circuit-spectrum")
 
-    def objective(log_charging_rate, args):
+    def objective(log_charging_rate: Any, args: Any) -> Any:
         del args
         residual = theory(log_charging_rate).values - target
         return 0.5 * jnp.sum(residual * residual)
@@ -97,7 +102,9 @@ def test_circuit_spectrum_fit_composes_mode_tracking_observations_and_optimizati
     )
 
 
-def test_circuit_gate_control_composes_device_controls_evolution_and_gate_metrics():
+def test_circuit_gate_control_composes_device_controls_evolution_and_gate_metrics() -> (
+    None
+):
     topology = phx.graph.GraphIR(
         n_node=jnp.asarray([1]),
         n_edge=jnp.asarray([0]),
@@ -135,7 +142,7 @@ def test_circuit_gate_control_composes_device_controls_evolution_and_gate_metric
     subspace = q.BasisStateSubspace(2, (0, 1))
     initial_unitary_columns = jnp.eye(2, dtype=jnp.complex128)
 
-    def schedule(amplitude):
+    def schedule(amplitude: Any) -> Any:
         line = s.QuantumControlLine(
             parameterization,
             jnp.full((4,), amplitude),
@@ -161,7 +168,7 @@ def test_circuit_gate_control_composes_device_controls_evolution_and_gate_metric
         schedule(jnp.asarray(0.1))
     )
 
-    def objective(amplitude, args):
+    def objective(amplitude: Any, args: Any) -> Any:
         del args
         evolved = s.solve_local_hamiltonian_evolution(
             s.refresh_local_hamiltonian_evolution(

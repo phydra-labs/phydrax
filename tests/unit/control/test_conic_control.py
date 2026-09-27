@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _problem():
+def _problem() -> Any:
     return phx.control.LinearQuadraticControlProblem(
         jnp.ones((1, 1, 1)),
         jnp.ones((1, 1, 1)),
@@ -20,7 +23,7 @@ def _problem():
     )
 
 
-def _control_norm_constraint(limit=0.5):
+def _control_norm_constraint(limit: Any = 0.5) -> Any:
     return phx.control.StageSecondOrderConstraint(
         jnp.zeros((1, 1, 1)),
         jnp.ones((1, 1, 1)),
@@ -32,7 +35,7 @@ def _control_norm_constraint(limit=0.5):
     )
 
 
-def test_linear_conic_compiler_preserves_soc_block_and_decision_layout():
+def test_linear_conic_compiler_preserves_soc_block_and_decision_layout() -> None:
     compilation = phx.control.compile_linear_conic_control(
         _problem(),
         stage_constraints=(_control_norm_constraint(),),
@@ -41,15 +44,17 @@ def test_linear_conic_compiler_preserves_soc_block_and_decision_layout():
     decision = compilation.decision_layout
     rows = compilation.stage_soc_slices[0][0]
     candidate = decision.encode(jnp.asarray([[1.0], [0.75]]), jnp.asarray([[-0.25]]))
+    # ty: ignore[unresolved-attribute]
     matrix = conic.constraint_matrix.as_dense()
     slack = conic.constraint_rhs[rows] - matrix[rows] @ candidate
 
+    # ty: ignore[unresolved-attribute]
     assert conic.cone.cones[-1].contains(slack, tolerance=1e-12)
     np.testing.assert_allclose(slack, [0.5, -0.25], atol=1e-12)
     assert compilation.quadratic_compilation.constraint_layout.num_inequalities == 0
 
 
-def test_stage_soc_constraint_shape_mismatch_is_rejected():
+def test_stage_soc_constraint_shape_mismatch_is_rejected() -> None:
     invalid = phx.control.StageSecondOrderConstraint(
         jnp.zeros((2, 1, 1)),
         jnp.zeros((2, 1, 1)),
@@ -65,7 +70,7 @@ def test_stage_soc_constraint_shape_mismatch_is_rejected():
         )
 
 
-def test_clarabel_solves_control_socp_when_installed():
+def test_clarabel_solves_control_socp_when_installed() -> None:
     pytest.importorskip("clarabel")
     policy = phx.optim.ConvexSolvePolicy(
         phx.optim.ClarabelInteriorPoint(presolve=False),
@@ -82,7 +87,7 @@ def test_clarabel_solves_control_socp_when_installed():
     assert result.conic_result.kkt_residual_norm < 1e-7
 
 
-def test_active_soc_control_limit_is_solved_on_sparse_program():
+def test_active_soc_control_limit_is_solved_on_sparse_program() -> None:
     pytest.importorskip("clarabel")
     policy = phx.optim.ConvexSolvePolicy(
         phx.optim.ClarabelInteriorPoint(presolve=False),

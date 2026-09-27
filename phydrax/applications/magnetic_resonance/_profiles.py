@@ -23,7 +23,7 @@ class ExactSingleCrystalNMRProfile(StrictModule):
     system: MagneticResonanceSpinSystem
     profile_id: str = eqx.field(static=True)
 
-    def __init__(self, system: MagneticResonanceSpinSystem, /):
+    def __init__(self, system: MagneticResonanceSpinSystem, /) -> None:
         if not isinstance(system, MagneticResonanceSpinSystem):
             raise TypeError("system must be a MagneticResonanceSpinSystem.")
         if any(site.isotope.particle_kind != "nucleus" for site in system.sites):
@@ -41,7 +41,7 @@ class ExactSingleCrystalEPRProfile(StrictModule):
     system: MagneticResonanceSpinSystem
     profile_id: str = eqx.field(static=True)
 
-    def __init__(self, system: MagneticResonanceSpinSystem, /):
+    def __init__(self, system: MagneticResonanceSpinSystem, /) -> None:
         if not isinstance(system, MagneticResonanceSpinSystem):
             raise TypeError("system must be a MagneticResonanceSpinSystem.")
         electron_count = sum(
@@ -79,7 +79,7 @@ class ExactStaticSiteMuonSpinRotationProfile(StrictModule):
     system: MagneticResonanceSpinSystem
     profile_id: str = eqx.field(static=True)
 
-    def __init__(self, system: MagneticResonanceSpinSystem, /):
+    def __init__(self, system: MagneticResonanceSpinSystem, /) -> None:
         if not isinstance(system, MagneticResonanceSpinSystem):
             raise TypeError("system must be a MagneticResonanceSpinSystem.")
         muon_count = sum(

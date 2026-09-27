@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 
 import phydrax as phx
@@ -91,6 +93,6 @@ PUBLIC_STAGE10 = {
         for symbol in symbols
     ],
 )
-def test_stage10_symbols_are_public_and_declared(namespace, symbol):
+def test_stage10_symbols_are_public_and_declared(namespace: Any, symbol: Any) -> None:
     assert symbol in namespace.__all__
     assert getattr(namespace, symbol) is not None

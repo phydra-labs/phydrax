@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 
@@ -34,7 +35,7 @@ class RayTransferPlan(StrictModule, NonTrainableState):
     squeeze_ray_axis: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, segment_lengths: ArrayLike, /, *, ray_id: str):
+    def __init__(self, segment_lengths: ArrayLike, /, *, ray_id: str) -> None:
         lengths = np.asarray(segment_lengths, dtype=np.float64)
         squeeze = lengths.ndim == 1
         if squeeze:
@@ -80,8 +81,12 @@ class RayTransferPlan(StrictModule, NonTrainableState):
             jnp.asarray(incident, dtype=source.dtype), (self.ray_count,)
         )
 
-        def one_ray(lengths, emission, absorption, initial):
-            def step(intensity, sample):
+        def one_ray(
+            lengths: Array, emission: Array, absorption: Array, initial: Array
+        ) -> Array:
+            def step(
+                intensity: Array, sample: tuple[Array, Array, Array]
+            ) -> tuple[Array, None]:
                 ds, emissivity_value, extinction_value = sample
                 optical_depth = extinction_value * ds
                 small = jnp.abs(optical_depth) < 1.0e-7
@@ -140,7 +145,13 @@ class PolarizedRadiativeTransferPlan(StrictModule, NonTrainableState):
     segment_lengths: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, segment_lengths, /, *, plan_id="polarized-radiative-transfer"):
+    def __init__(
+        self,
+        segment_lengths: ArrayLike,
+        /,
+        *,
+        plan_id: str = "polarized-radiative-transfer",
+    ) -> None:
         lengths = np.asarray(segment_lengths, dtype=np.float64)
         identifier = str(plan_id)
         if (
@@ -175,7 +186,9 @@ class PolarizedRadiativeTransferPlan(StrictModule, NonTrainableState):
         if incident_value.shape != (4,):
             raise ValueError("Polarized incident Stokes vector must have shape (4,).")
 
-        def step(carry, values):
+        def step(
+            carry: tuple[Array, Array], values: tuple[Array, Array, Array]
+        ) -> tuple[tuple[Array, Array], Array]:
             stokes, prior_converged = carry
             ds, source, operator = values
             augmented = jnp.zeros((5, 5), dtype=stokes.dtype)

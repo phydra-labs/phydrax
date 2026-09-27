@@ -12,7 +12,7 @@ from phydrax.domain import FixedStart, Interval1d, TimeInterval
 from phydrax.terms import ResidualPenalty
 
 
-def test_continuous_initial_constraint_zero_when_satisfied():
+def test_continuous_initial_constraint_zero_when_satisfied() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     dom = geom @ time
@@ -30,7 +30,7 @@ def test_continuous_initial_constraint_zero_when_satisfied():
     assert jnp.allclose(loss, 0.0)
 
 
-def test_callable_initial_target_ignores_unbound_iteration_context():
+def test_callable_initial_target_ignores_unbound_iteration_context() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
@@ -48,7 +48,7 @@ def test_callable_initial_target_ignores_unbound_iteration_context():
     assert jnp.allclose(loss, 0.0)
 
 
-def test_continuous_initial_constraint_requires_fixed_start():
+def test_continuous_initial_constraint_requires_fixed_start() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     dom = geom @ time

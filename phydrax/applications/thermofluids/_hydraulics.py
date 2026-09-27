@@ -10,7 +10,8 @@ from enum import IntFlag
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._admissibility import AdmissibilityHeader, AdmissibilityReason
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -21,13 +22,14 @@ from ...dynamics import (
     DAEComponent,
     DAEDerivativeIncidence,
     DAEEquationBlock,
+    DAEJet,
     DAEPort,
     DAEVariableBlock,
 )
 from ._process import HydraulicPortSpec, ThermofluidComponent
 
 
-def _residual_numeric_id(semantic_id: str, parameters, /) -> str:
+def _residual_numeric_id(semantic_id: str, parameters: object, /) -> str:
     return canonical_fingerprint(
         {
             "kind": "thermofluid-residual-binding",
@@ -586,7 +588,7 @@ def hydraulic_pressure_boundary_component(
         DAEVariableBlock("volume_flow", (), 0, state_scale=1.0, rate_scale=1.0),
     )
 
-    def residual(time, jet, args):
+    def residual(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         return jet.value("pressure") - target
 
@@ -623,7 +625,7 @@ def hydraulic_flow_boundary_component(
         DAEVariableBlock("volume_flow", (), 0, state_scale=max(abs(target), 1.0)),
     )
 
-    def residual(time, jet, args):
+    def residual(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         return jet.value("volume_flow") - target
 
@@ -675,7 +677,7 @@ def hydraulic_channel_component(
         )
     )
 
-    def pressure_drop_residual(time, jet, args):
+    def pressure_drop_residual(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         left = jet.value("left_pressure")
         right = jet.value("right_pressure")
@@ -683,7 +685,7 @@ def hydraulic_channel_component(
         evaluation = law.evaluate(flow, left, right)
         return left - right - evaluation.pressure_drop
 
-    def conservation_residual(time, jet, args):
+    def conservation_residual(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         return jet.value("left_volume_flow") + jet.value("right_volume_flow")
 
@@ -757,11 +759,11 @@ def hydraulic_compliance_component(
         DAEVariableBlock("volume", (), 0, state_scale=max(volume_, 1.0)),
     )
 
-    def storage_residual(time, jet, args):
+    def storage_residual(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         return compliance_ * jet.value("pressure", 1) - jet.value("volume_flow")
 
-    def constitutive_residual(time, jet, args):
+    def constitutive_residual(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         return (
             jet.value("volume")
@@ -830,7 +832,7 @@ def hydraulic_inertance_component(
         DAEVariableBlock("right_volume_flow", (), 0, state_scale=1.0, rate_scale=1.0),
     )
 
-    def momentum_residual(time, jet, args):
+    def momentum_residual(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         return (
             jet.value("left_pressure")
@@ -838,7 +840,7 @@ def hydraulic_inertance_component(
             - inertance_ * jet.value("left_volume_flow", 1)
         )
 
-    def conservation_residual(time, jet, args):
+    def conservation_residual(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         return jet.value("left_volume_flow") + jet.value("right_volume_flow")
 
@@ -911,8 +913,8 @@ def hydraulic_junction_component(
         )
         typed.append(_hydraulic_port(prefix, fluid))
 
-    def pressure_residual(index):
-        def residual(time, jet, args):
+    def pressure_residual(index: int) -> Callable[[Array, DAEJet, object], Array]:
+        def residual(time: Array, jet: DAEJet, args: object) -> Array:
             del time, args
             return jet.value(f"port_{index}_pressure") - jet.value("port_0_pressure")
 
@@ -935,9 +937,10 @@ def hydraulic_junction_component(
         for index in range(1, count)
     ]
 
-    def flow_residual(time, jet, args):
+    def flow_residual(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
-        return sum(jet.value(f"port_{index}_volume_flow") for index in range(count))
+        flows = tuple(jet.value(f"port_{index}_volume_flow") for index in range(count))
+        return sum(flows[1:], start=flows[0])
 
     equations.append(
         DAEEquationBlock(

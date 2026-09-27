@@ -6,14 +6,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from math import prod
-from typing import Any, ClassVar, Literal, overload
+from typing import Any, ClassVar, Literal, overload, TypedDict
 
 import equinox as eqx
 import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
@@ -53,6 +53,23 @@ from phydrax.nn.operator.data import (
 )
 from phydrax.nn.operator.encoded import AbstractEncodedOperatorModel
 from phydrax.nn.operator.layers._attention import _measure_attention_regularity
+
+from .....typing import PRNGKey
+
+
+class _AttentionOptions(TypedDict):
+    num_heads: int
+    head_dim: int
+    kernel: AttentionKernel
+    execution: AttentionExecution
+    block_size: int
+    accumulation_dtype: str
+
+
+class _ChanneledAttentionOptions(_AttentionOptions):
+    source_channels: int
+    query_channels: int
+    out_channels: int
 
 
 def _feature_norm(norm: eqx.nn.RMSNorm, values: Array, /) -> Array:
@@ -163,8 +180,8 @@ class LatentTokenBlock(StrictModule):
         block_size: int = 256,
         accumulation_dtype: str = "input",
         norm_eps: float = 1e-6,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.width = int(width)
         hidden = round(float(feed_forward_multiplier) * self.width)
         resolved_head_dim = (
@@ -290,8 +307,8 @@ class LatentTokenProcessor(StrictModule):
         block_size: int = 256,
         accumulation_dtype: str = "input",
         norm_eps: float = 1e-6,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.width = int(width)
         self.depth = int(depth)
         if self.depth <= 0:
@@ -395,8 +412,8 @@ class UPT(AbstractEncodedOperatorModel):
         attention_execution: AttentionExecution = "auto",
         attention_block_size: int = 256,
         accumulation_dtype: str = "input",
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.in_channels = _get_size(in_channels)
         self.out_channels = _get_size(out_channels)
         self.coord_dim = int(coord_dim)
@@ -433,14 +450,14 @@ class UPT(AbstractEncodedOperatorModel):
         self.latent_tokens = jr.normal(keys[1], (self.num_tokens, self.width)) / jnp.sqrt(
             float(self.width)
         )
-        attention_kwargs = dict(
-            num_heads=int(num_heads),
-            head_dim=resolved_head_dim,
-            kernel=attention_kernel,
-            execution=attention_execution,
-            block_size=attention_block_size,
-            accumulation_dtype=accumulation_dtype,
-        )
+        attention_kwargs: _AttentionOptions = {
+            "num_heads": int(num_heads),
+            "head_dim": resolved_head_dim,
+            "kernel": attention_kernel,
+            "execution": attention_execution,
+            "block_size": attention_block_size,
+            "accumulation_dtype": accumulation_dtype,
+        }
         self.encoder_attention = MeasureAwareAttention(
             source_channels=self.width,
             query_channels=self.width,
@@ -682,8 +699,8 @@ class ABUPT(AbstractEncodedOperatorModel):
         attention_execution: AttentionExecution = "auto",
         attention_block_size: int = 256,
         accumulation_dtype: str = "input",
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.graph = graph
         self.conditioning_names = graph.conditioning_names
         self.prediction_names = graph.prediction_names
@@ -792,17 +809,17 @@ class ABUPT(AbstractEncodedOperatorModel):
             )
             for _ in range(self.depth)
         )
-        attention_kwargs = dict(
-            source_channels=self.width,
-            query_channels=self.width,
-            out_channels=self.width,
-            num_heads=int(num_heads),
-            head_dim=resolved_head_dim,
-            kernel=attention_kernel,
-            execution=attention_execution,
-            block_size=attention_block_size,
-            accumulation_dtype=accumulation_dtype,
-        )
+        attention_kwargs: _ChanneledAttentionOptions = {
+            "source_channels": self.width,
+            "query_channels": self.width,
+            "out_channels": self.width,
+            "num_heads": int(num_heads),
+            "head_dim": resolved_head_dim,
+            "kernel": attention_kernel,
+            "execution": attention_execution,
+            "block_size": attention_block_size,
+            "accumulation_dtype": accumulation_dtype,
+        }
         self.interaction_attention = tuple(
             MeasureAwareAttention(key=next(keys), **attention_kwargs) for _ in groups
         )

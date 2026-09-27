@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -39,7 +40,7 @@ class FDAMRPhysicalBoundaryRequest(StrictModule, NonTrainableState):
     mask: Array
     request_id: str = eqx.field(static=True)
 
-    def __init__(self, level: int, mask: ArrayLike, plan_id: str, /):
+    def __init__(self, level: int, mask: ArrayLike, plan_id: str, /) -> None:
         mask_ = jnp.asarray(mask, dtype=jnp.bool_)
         self.level = int(level)
         self.mask = mask_
@@ -71,7 +72,7 @@ class FDAMRFillPatchWorkspace(StrictModule):
         source_class: ArrayLike,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         values_ = jnp.asarray(values)
         valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         sources = jnp.asarray(source_class, dtype=jnp.int8)
@@ -128,7 +129,7 @@ class FDAMRFillPatchPlan(StrictModule, NonTrainableState):
         level: int,
         transfer: AMREntityTransferPlan | None = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(topology, BlockHierarchyTopology):
             raise TypeError("FillPatch preparation requires BlockHierarchyTopology.")
         level_ = int(level)

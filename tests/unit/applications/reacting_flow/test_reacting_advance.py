@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -31,7 +34,7 @@ from phydrax.equations._transport_closures import ConstantTransport
 from phydrax.solver._finite_volume_runtime import PreparedFiniteVolumeRuntime
 
 
-def _problem(rate=1.0, *, viscous=False):
+def _problem(rate: Any = 1.0, *, viscous: Any = False) -> Any:
     schema = ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (ChemicalPhaseKind.GAS, ChemicalPhaseKind.GAS),
@@ -103,7 +106,14 @@ def _problem(rate=1.0, *, viscous=False):
     return system, mechanism, runtime, conserved
 
 
-def _balance(runtime, mechanism, *, integration, subcycles=8, iterations=20):
+def _balance(
+    runtime: Any,
+    mechanism: Any,
+    *,
+    integration: Any,
+    subcycles: Any = 8,
+    iterations: Any = 20,
+) -> Any:
     transport = phx.solver.prepare_balance_law_transport(runtime)
     process = phx.solver.ThermochemistryProcessPlan(
         mechanism,
@@ -115,17 +125,17 @@ def _balance(runtime, mechanism, *, integration, subcycles=8, iterations=20):
     return phx.solver.PreparedBalanceLawRuntime(transport, (process,))
 
 
-def _advance(balance, runtime, conserved, step):
+def _advance(balance: Any, runtime: Any, conserved: Any, step: Any) -> Any:
     transport_state = runtime.initialize_state(conserved, 0.0, step)
     state = balance.initialize_state(transport_state)
     return balance.advance_prescribed(state, 0.0, step)
 
 
-def _average(result, shape):
+def _average(result: Any, shape: Any) -> Any:
     return result.runtime_state.transport_state.cell_average().reshape(shape)
 
 
-def _invariants(system, state):
+def _invariants(system: Any, state: Any) -> Any:
     species = state[..., : system.species_count]
     amount = species / system.thermodynamics.schema.molar_masses
     schema = system.thermodynamics.schema
@@ -137,7 +147,7 @@ def _invariants(system, state):
     )
 
 
-def test_balance_law_thermochemistry_advances_and_preserves_invariants():
+def test_balance_law_thermochemistry_advances_and_preserves_invariants() -> None:
     system, mechanism, runtime, conserved = _problem()
     balance = _balance(runtime, mechanism, integration="explicit-subcycled", subcycles=16)
     result = _advance(balance, runtime, conserved, 0.05)
@@ -151,7 +161,7 @@ def test_balance_law_thermochemistry_advances_and_preserves_invariants():
         np.testing.assert_allclose(advanced, before, rtol=2.0e-6, atol=2.0e-6)
 
 
-def test_fixed_iterative_trapezoidal_chemistry_accepts_stiff_positive_update():
+def test_fixed_iterative_trapezoidal_chemistry_accepts_stiff_positive_update() -> None:
     system, mechanism, runtime, conserved = _problem(rate=20.0)
     balance = _balance(
         runtime,
@@ -174,7 +184,7 @@ def test_fixed_iterative_trapezoidal_chemistry_accepts_stiff_positive_update():
     )
 
 
-def test_failed_explicit_chemistry_rolls_back_complete_balance_state():
+def test_failed_explicit_chemistry_rolls_back_complete_balance_state() -> None:
     _, mechanism, runtime, conserved = _problem(rate=1.0e6)
     balance = _balance(runtime, mechanism, integration="explicit-subcycled", subcycles=1)
     result = _advance(balance, runtime, conserved, 0.01)
@@ -184,7 +194,7 @@ def test_failed_explicit_chemistry_rolls_back_complete_balance_state():
     np.testing.assert_array_equal(after, conserved)
 
 
-def test_thermochemistry_process_composes_with_viscous_mixture_transport():
+def test_thermochemistry_process_composes_with_viscous_mixture_transport() -> None:
     system, mechanism, runtime, conserved = _problem(viscous=True)
     balance = _balance(runtime, mechanism, integration="explicit-subcycled", subcycles=16)
     result = _advance(balance, runtime, conserved, 0.02)

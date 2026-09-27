@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -28,7 +31,7 @@ from phydrax.metrix import (
 )
 
 
-def _support():
+def _support() -> Any:
     scale = RelativityScaleContract(DimensionalScaleContract.si(), 1, 3, 2, 1)
     units = RelativisticUnitContract(
         scale, RelativityConvention(metric_signature="mostly_minus")
@@ -90,7 +93,7 @@ def _support():
     )
 
 
-def _plan():
+def _plan() -> Any:
     nodes = np.linspace(-18.0, 22.0, 4001)
     spacing = nodes[1] - nodes[0]
     weights = np.full(nodes.shape, spacing)
@@ -109,7 +112,7 @@ def _plan():
     )
 
 
-def test_breit_wigner_moments_sum_rule_dyson_and_kms_evidence():
+def test_breit_wigner_moments_sum_rule_dyson_and_kms_evidence() -> None:
     plan = _plan()
     state = breit_wigner_off_shell_state(
         plan,
@@ -142,7 +145,7 @@ def test_breit_wigner_moments_sum_rule_dyson_and_kms_evidence():
     assert state.frame_realization_id == plan.frame.realization_id()
 
 
-def test_narrow_width_limit_converges_to_on_shell_fermi_occupation():
+def test_narrow_width_limit_converges_to_on_shell_fermi_occupation() -> None:
     plan = _plan()
     pole = jnp.asarray([[2.0]])
     beta = 0.4
@@ -170,7 +173,7 @@ def test_narrow_width_limit_converges_to_on_shell_fermi_occupation():
     np.testing.assert_allclose(narrow_number, on_shell, atol=2.0e-3)
 
 
-def test_negative_width_is_refused_instead_of_clipped():
+def test_negative_width_is_refused_instead_of_clipped() -> None:
     plan = _plan()
     shape = plan.spectral_shape
     zeros = jnp.zeros(shape)

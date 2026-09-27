@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -41,7 +43,7 @@ _TETRA_FACES = jnp.asarray(((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)), dtype=j
 
 
 @pytest.fixture(scope="module")
-def tetra_coupling():
+def tetra_coupling() -> Any:
     mesh = CellMesh.from_tetrahedra(
         _TETRA_VERTICES,
         jnp.asarray(((0, 1, 2, 3),), dtype=jnp.int32),
@@ -85,13 +87,13 @@ def tetra_coupling():
     return fem, surface, calderon, prepared
 
 
-def _pair(values, covectors):
+def _pair(values: Any, covectors: Any) -> Any:
     return sum(jnp.vdot(value, covector) for value, covector in zip(values, covectors))
 
 
 def test_matching_interface_has_exact_trace_orientation_and_conormal_flux(
-    tetra_coupling,
-):
+    tetra_coupling: Any,
+) -> None:
     fem, surface, _, prepared = tetra_coupling
     interface = prepared.interface
     gradient = jnp.asarray((0.75, -0.5, 0.25), dtype=fem.stiffness.source.dtype)
@@ -115,7 +117,7 @@ def test_matching_interface_has_exact_trace_orientation_and_conormal_flux(
     assert abs(float(interface.integrated_flux(expected_conormal))) < 2.0e-12
 
 
-def test_interface_and_coupled_block_have_exact_transposes(tetra_coupling):
+def test_interface_and_coupled_block_have_exact_transposes(tetra_coupling: Any) -> None:
     _, _, _, prepared = tetra_coupling
     interface = prepared.interface
     fem_vector = jnp.asarray((0.2, -0.4, 0.7, 1.1))
@@ -145,7 +147,9 @@ def test_interface_and_coupled_block_have_exact_transposes(tetra_coupling):
     )
 
 
-def test_manufactured_tetrahedron_volume_source_solves_end_to_end(tetra_coupling):
+def test_manufactured_tetrahedron_volume_source_solves_end_to_end(
+    tetra_coupling: Any,
+) -> None:
     _, _, calderon, prepared = tetra_coupling
     manufactured_interior = jnp.asarray((0.3, -0.15, 0.4, 0.8))
     boundary_right = -prepared.exterior_trace_relation.mv(
@@ -202,7 +206,7 @@ def test_manufactured_tetrahedron_volume_source_solves_end_to_end(tetra_coupling
     assert all(bool(report.pde_membership_valid) for report in reports)
 
 
-def test_mismatched_interface_is_rejected(tetra_coupling):
+def test_mismatched_interface_is_rejected(tetra_coupling: Any) -> None:
     fem, surface, calderon, _ = tetra_coupling
     mismatched_vertices = _TETRA_VERTICES.at[0, 0].add(1.0e-3)
     mismatched = MeshRegion(

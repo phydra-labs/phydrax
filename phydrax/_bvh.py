@@ -15,13 +15,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
@@ -65,7 +66,7 @@ class BVHBuildPolicy(StrictModule):
         sah_bins: int = 16,
         *,
         morton_code_bits: int = 63,
-    ):
+    ) -> None:
         if not isinstance(kind, BVHBuildKind):
             raise TypeError("kind must be a BVHBuildKind.")
         for name, value in (
@@ -188,8 +189,8 @@ def _build_split_levels(
     return order, starts, stops, lefts, rights
 
 
-def _median_split(lower: np.ndarray, upper: np.ndarray, centers: np.ndarray, /):
-    def split(order, segment_start, segment_stop):
+def _median_split(lower: np.ndarray, upper: np.ndarray, centers: np.ndarray, /) -> Any:
+    def split(order: Any, segment_start: Any, segment_stop: Any) -> Any:
         positions, segment, offsets = _segment_positions(segment_start, segment_stop)
         items = order[positions]
         box_min = np.minimum.reduceat(lower[items], offsets, axis=0)
@@ -214,8 +215,10 @@ def _half_area(extent: np.ndarray, /) -> np.ndarray:
     return area
 
 
-def _sah_split(lower: np.ndarray, upper: np.ndarray, centers: np.ndarray, bins: int, /):
-    def split(order, segment_start, segment_stop):
+def _sah_split(
+    lower: np.ndarray, upper: np.ndarray, centers: np.ndarray, bins: int, /
+) -> Any:
+    def split(order: Any, segment_start: Any, segment_stop: Any) -> Any:
         positions, segment, offsets = _segment_positions(segment_start, segment_stop)
         items = order[positions]
         counts = segment_stop - segment_start
@@ -501,7 +504,7 @@ def prepare_bvh(
     /,
     *,
     policy: BVHBuildPolicy = BVHBuildPolicy(),
-    dtype: jnp.dtype = jnp.float32,
+    dtype: DTypeLike = jnp.float32,
 ) -> PackedBVH:
     """Build a level-ordered packed BVH over item bounding boxes (host NumPy).
 
@@ -672,7 +675,7 @@ def beam_select_nodes(
     nodes = jnp.full((pts.shape[0], B), jnp.int32(-1))
     nodes = nodes.at[:, 0].set(jnp.int32(0))
 
-    def _step(_, nodes):
+    def _step(_: Any, nodes: Any) -> Any:
         valid = nodes >= 0
         safe = jnp.where(valid, nodes, jnp.int32(0))
         is_leaf = valid & (leaf_id[safe] >= 0)
@@ -732,7 +735,7 @@ def beam_select_leaf_items(
 
 
 def _bounded_leaf_candidates(
-    overlaps,
+    overlaps: Any,
     bvh: PackedBVH,
     maximum_candidates: int,
     /,
@@ -745,10 +748,10 @@ def _bounded_leaf_candidates(
     stack = jnp.full((stack_capacity,), -1, dtype=jnp.int32).at[0].set(0)
     candidates = jnp.full((capacity,), -1, dtype=jnp.int32)
 
-    def visit_leaf(leaf_items, state):
+    def visit_leaf(leaf_items: Any, state: Any) -> Any:
         values, count = state
 
-        def append_item(slot, carry):
+        def append_item(slot: Any, carry: Any) -> Any:
             current, current_count = carry
             item = leaf_items[slot]
             item_valid = item >= 0
@@ -766,11 +769,11 @@ def _bounded_leaf_candidates(
             (values, count),
         )
 
-    def continue_traversal(state):
+    def continue_traversal(state: Any) -> Any:
         _, top, _, _, visits, stack_overflow = state
         return (top > 0) & (visits < node_count) & ~stack_overflow
 
-    def traverse(state):
+    def traverse(state: Any) -> Any:
         current_stack, top, values, count, visits, stack_overflow = state
         popped_top = top - 1
         node = current_stack[popped_top]
@@ -827,7 +830,7 @@ def _bounded_leaf_candidates(
     return jnp.maximum(candidates, 0), valid, complete
 
 
-def _map_bounded_queries(query, arguments, query_batch_capacity: int, /):
+def _map_bounded_queries(query: Any, arguments: Any, query_batch_capacity: int, /) -> Any:
     count = arguments[0].shape[0]
     capacity = int(query_batch_capacity)
     if capacity <= 0:
@@ -876,7 +879,7 @@ def point_select_leaf_items(
     if isinstance(tolerance, (int, float)) and tolerance < 0.0:
         raise ValueError("tolerance must be non-negative.")
 
-    def query(point):
+    def query(point: Any) -> Any:
         return _bounded_leaf_candidates(
             lambda lower, upper: jnp.all(
                 (point >= lower - padding) & (point <= upper + padding)
@@ -930,8 +933,10 @@ def ray_select_leaf_items(
         parameter_shape,
     )
 
-    def query(origin, direction, parameter_lower, parameter_upper):
-        def overlaps(lower, upper):
+    def query(
+        origin: Any, direction: Any, parameter_lower: Any, parameter_upper: Any
+    ) -> Any:
+        def overlaps(lower: Any, upper: Any) -> Any:
             parallel = jnp.abs(direction) <= jnp.finfo(direction.dtype).tiny
             outside = parallel & ((origin < lower) | (origin > upper))
             inverse = jnp.where(parallel, 1.0, 1.0 / direction)
@@ -975,21 +980,21 @@ class BVHNearestResult(StrictModule):
     distance_squared: Array
 
 
-def _item_box_distance(bvh: PackedBVH, /):
+def _item_box_distance(bvh: PackedBVH, /) -> Any:
     def distance(point: Array, items: Array) -> Array:
         return aabb_dist2(point, bvh.item_bbox_min[items], bvh.item_bbox_max[items])
 
     return distance
 
 
-def _nearest_items_one(bvh: PackedBVH, point: Array, k: int, distance, /):
+def _nearest_items_one(bvh: PackedBVH, point: Array, k: int, distance: Any, /) -> Any:
     infinity = jnp.asarray(jnp.inf, dtype=point.dtype)
     sentinel = jnp.asarray(jnp.iinfo(jnp.int32).max, dtype=jnp.int32)
     # Depth-first order keeps at most one pending sibling per depth, so
     # `max_depth + 2` slots bound the stack exactly.
     stack = jnp.zeros((bvh.max_depth + 2,), dtype=jnp.int32)
 
-    def visit_leaf(node, state):
+    def visit_leaf(node: Any, state: Any) -> Any:
         stack_, top, best_distance, best_key = state
         items = bvh.leaf_items[jnp.maximum(bvh.leaf_id[node], 0)]
         candidate = distance(point, jnp.maximum(items, 0)).astype(point.dtype)
@@ -1001,7 +1006,7 @@ def _nearest_items_one(bvh: PackedBVH, point: Array, k: int, distance, /):
         order = jnp.lexsort((merged_key, merged_distance))[:k]
         return stack_, top, merged_distance[order], merged_key[order]
 
-    def visit_internal(node, state):
+    def visit_internal(node: Any, state: Any) -> Any:
         stack_, top, best_distance, best_key = state
         left = bvh.left[node]
         right = bvh.right[node]
@@ -1012,7 +1017,7 @@ def _nearest_items_one(bvh: PackedBVH, point: Array, k: int, distance, /):
         stack_ = stack_.at[top + 1].set(jnp.where(near_left, left, right))
         return stack_, top + 2, best_distance, best_key
 
-    def body(state):
+    def body(state: Any) -> Any:
         stack_, top, best_distance, best_key = state
         top = top - 1
         node = stack_[top]
@@ -1021,7 +1026,7 @@ def _nearest_items_one(bvh: PackedBVH, point: Array, k: int, distance, /):
         # item index.
         visit = bound <= best_distance[k - 1]
 
-        def active(carry):
+        def active(carry: Any) -> Any:
             return jax.lax.cond(
                 bvh.leaf_id[node] >= 0,
                 lambda value: visit_leaf(node, value),
@@ -1080,7 +1085,7 @@ def bvh_nearest_items(
         else item_distance_squared
     )
 
-    def query(point):
+    def query(point: Any) -> Any:
         return _nearest_items_one(bvh, point, k, distance)
 
     if single:
@@ -1120,22 +1125,22 @@ def bvh_hierarchical_sum(
     if values.ndim != 2 or values.shape[1] != bvh.dimension:
         raise ValueError("points must have shape (queries, dimension) or (dimension,).")
 
-    def query(point):
-        def far(state):
+    def query(point: Any) -> Any:
+        def far(state: Any) -> Any:
             stack, top, total, node = state
             return stack, top, total + far_value(point, node).astype(total.dtype), node
 
-        def leaf(state):
+        def leaf(state: Any) -> Any:
             stack, top, total, node = state
             contribution = leaf_value(point, bvh.leaf_id[node]).astype(total.dtype)
             return stack, top, total + contribution, node
 
-        def internal(state):
+        def internal(state: Any) -> Any:
             stack, top, total, node = state
             stack = stack.at[top].set(bvh.right[node]).at[top + 1].set(bvh.left[node])
             return stack, top + 2, total, node
 
-        def body(state):
+        def body(state: Any) -> Any:
             stack, top, total = state
             top = top - 1
             node = stack[top]
@@ -1180,8 +1185,14 @@ class BVHPairResult(StrictModule):
 
 
 def _boxes_overlap(
-    first_min, first_max, second_min, second_max, padding, include_touching: bool, /
-):
+    first_min: Any,
+    first_max: Any,
+    second_min: Any,
+    second_max: Any,
+    padding: Any,
+    include_touching: bool,
+    /,
+) -> Any:
     extent = (
         jnp.minimum(first_max, second_max) - jnp.maximum(first_min, second_min) + padding
     )
@@ -1235,7 +1246,7 @@ def bvh_overlap_pairs(
 
     pair_shape = (width, first.leaf_size, second.leaf_size)
 
-    def node_overlap(first_nodes, second_nodes):
+    def node_overlap(first_nodes: Any, second_nodes: Any) -> Any:
         return _boxes_overlap(
             first.bbox_min[first_nodes],
             first.bbox_max[first_nodes],
@@ -1245,7 +1256,7 @@ def bvh_overlap_pairs(
             include_touching,
         )
 
-    def emit(state, first_nodes, second_nodes, both_leaf):
+    def emit(state: Any, first_nodes: Any, second_nodes: Any, both_leaf: Any) -> Any:
         first_out, second_out, count = state
         first_items = first.leaf_items[jnp.maximum(first.leaf_id[first_nodes], 0)]
         second_items = second.leaf_items[jnp.maximum(second.leaf_id[second_nodes], 0)]
@@ -1274,7 +1285,7 @@ def bvh_overlap_pairs(
         )
         return first_out, second_out, count + jnp.sum(hit, dtype=jnp.int64)
 
-    def body(state):
+    def body(state: Any) -> Any:
         first_stack, second_stack, top, first_out, second_out, count, exhausted = state
         start = jnp.maximum(top - width, 0)
         first_nodes = jax.lax.dynamic_slice(first_stack, (start,), (width,))
@@ -1498,7 +1509,7 @@ def _validate_host_pair_arguments(
         raise ValueError("tolerances apply only when include_touching is True.")
     atol, rtol = (float(value) for value in tolerances)
 
-    def test(first_min, first_max, second_min, second_max):
+    def test(first_min: Any, first_max: Any, second_min: Any, second_max: Any) -> Any:
         return _host_boxes_overlap(
             first_min, first_max, second_min, second_max, include_touching, atol, rtol
         )

@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -23,6 +24,11 @@ from ....integration import (
 from ....operators.differential._jet import jet_terms
 from ._qbx2d import _bounded_expansion_tail
 from ._surface3d import interpolate_surface_panel_density
+
+
+if TYPE_CHECKING:
+    from ._helmholtz3d import HelmholtzLayerPotential3D
+    from ._laplace3d import LaplaceLayerPotential3D
 
 
 class QBXEvaluation3D(StrictModule):
@@ -41,7 +47,7 @@ class QBXEvaluation3D(StrictModule):
 
 
 def _directional_terms(
-    potential,
+    potential: LaplaceLayerPotential3D | HelmholtzLayerPotential3D,
     center: Array,
     source: Array,
     normal: Array,
@@ -74,7 +80,7 @@ def _expand(coefficients: Array, displacement: Array, order: int) -> Array:
 
 
 def evaluate_qbx_3d(
-    potential,
+    potential: LaplaceLayerPotential3D | HelmholtzLayerPotential3D,
     targets: ArrayLike,
     /,
     *,
@@ -191,7 +197,12 @@ def evaluate_qbx_3d(
                     frame = panelization.atlas.frame(chart_indices, reference)
                     densities = density_at(reference)
 
-                    def one(source, source_normal, jacobian, density):
+                    def one(
+                        source: Array,
+                        source_normal: Array,
+                        jacobian: Array,
+                        density: Array,
+                    ) -> Array:
                         return (
                             _directional_terms(
                                 potential,

@@ -10,7 +10,8 @@ from numbers import Integral
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -64,7 +65,7 @@ class DirectFresnelPlan(StrictModule, NonTrainableState):
         maximum_sampling_phase_step: float = np.pi,
         maximum_paraxial_angle: float = 0.3,
         maximum_power_error: float = 5.0e-2,
-    ):
+    ) -> None:
         if not isinstance(input_space, PlaneFieldSpace) or not isinstance(
             output_space, PlaneFieldSpace
         ):
@@ -116,8 +117,8 @@ class DirectFresnelPlan(StrictModule, NonTrainableState):
                 "output_space": output_space.space_id,
                 "maximum_kernel_elements": kernel_limit,
                 "maximum_workspace_bytes": byte_limit,
-                "maximum_sampling_phase_step": sampling.hex(),
-                "maximum_paraxial_angle": paraxial.hex(),
+                "maximum_sampling_phase_step": float(sampling).hex(),
+                "maximum_paraxial_angle": float(paraxial).hex(),
                 "maximum_power_error": power.hex(),
             }
         )
@@ -204,6 +205,13 @@ def _uniform_finite_axis(space: PlaneFieldSpace, index: int, /) -> tuple[Array, 
     ):
         raise ValueError("Direct Fresnel axes must be finite and uniformly increasing.")
     measures = axis.quad_weights
+    if measures is None:
+        # Match the tensor-grid point measure used for axes without quadrature weights.
+        geometric = np.empty_like(nodes)
+        geometric[0] = 0.5 * differences[0]
+        geometric[-1] = 0.5 * differences[-1]
+        geometric[1:-1] = 0.5 * (differences[:-1] + differences[1:])
+        measures = jnp.asarray(geometric)
     return axis.nodes, measures
 
 
@@ -262,7 +270,7 @@ def prepare_direct_fresnel(plan: DirectFresnelPlan, /) -> PreparedDirectFresnel:
                 abs(float(target_host[-1] - source_host[0])),
             )
         )
-    maximum_separation = float(np.hypot(*separations))
+    maximum_separation = float(np.hypot(separations[0], separations[1]))
     identical = plan.input_space.space_id == plan.output_space.space_id
     prepared_id = canonical_fingerprint(
         {

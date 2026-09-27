@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from .._binding import PreparedNucleotideBinding
@@ -17,7 +18,7 @@ class BaseFrameEvaluation(StrictModule):
 
 
 def base_frames(
-    positions,
+    positions: ArrayLike,
     binding: PreparedNucleotideBinding,
     *,
     image_policy: str,

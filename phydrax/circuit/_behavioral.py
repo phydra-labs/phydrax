@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Mapping, Sequence
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from ._elements import (
@@ -46,7 +47,7 @@ def _instructions(node: ast.AST, /) -> tuple[Instruction, ...]:
     if isinstance(node, ast.BinOp) and isinstance(
         node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow)
     ):
-        operations = {
+        operations: dict[type[ast.operator], str] = {
             ast.Add: "add",
             ast.Sub: "subtract",
             ast.Mult: "multiply",
@@ -83,7 +84,7 @@ class BehavioralCurrentLaw(AbstractImplicitCircuitLaw):
         /,
         *,
         law_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(expression, str) or not expression.strip():
             raise ValueError("Behavioral expression must be nonempty.")
         instructions = _instructions(ast.parse(expression, mode="eval"))
@@ -173,13 +174,13 @@ class BehavioralCurrentLaw(AbstractImplicitCircuitLaw):
 
     def evaluate(
         self,
-        time,
-        terminal_voltages,
-        terminal_voltage_rates,
-        state,
-        state_rate,
-        inputs,
-        args,
+        time: Array,
+        terminal_voltages: Array,
+        terminal_voltage_rates: Array,
+        state: Array,
+        state_rate: Array,
+        inputs: Array,
+        args: Any,
         /,
     ) -> CircuitElementEvaluation:
         del terminal_voltage_rates, state, state_rate, args

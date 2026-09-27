@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -87,7 +88,7 @@ class DeterministicInitialCondition(StrictModule):
         weight: ArrayLike,
         semantic_label: str,
         /,
-    ):
+    ) -> None:
         state = (
             jnp.asarray(initial_state)
             if eqx.is_array_like(initial_state) or isinstance(initial_state, list)
@@ -133,7 +134,7 @@ class WeightedEnsembleReducer(StrictModule):
     effective_sample_size: Array
     successful: Array
 
-    def __init__(self, weights: ArrayLike, valid: ArrayLike | None = None, /):
+    def __init__(self, weights: ArrayLike, valid: ArrayLike | None = None, /) -> None:
         raw = jnp.asarray(weights)
         if raw.ndim != 1 or jnp.issubdtype(raw.dtype, jnp.complexfloating):
             raise ValueError("weights must be one real rank-one array.")
@@ -227,7 +228,7 @@ class DeterministicEnsemblePlan(StrictModule, NonTrainableState):
         maximum_paths: int = 4096,
         maximum_state_elements: int = 2**24,
         maximum_output_bytes: int = 2**31,
-    ):
+    ) -> None:
         if not isinstance(problem, DifferentialProblem):
             raise TypeError("problem must be a DifferentialProblem.")
         if problem.stochastic:
@@ -312,7 +313,7 @@ class PreparedDeterministicEnsemble(StrictModule, NonTrainableState):
     estimated_output_bytes: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: DeterministicEnsemblePlan, save_times: ArrayLike, /):
+    def __init__(self, plan: DeterministicEnsemblePlan, save_times: ArrayLike, /) -> None:
         if not isinstance(plan, DeterministicEnsemblePlan):
             raise TypeError("plan must be a DeterministicEnsemblePlan.")
         times = np.asarray(save_times, dtype=np.float64)
@@ -522,7 +523,7 @@ class ClassicalStatisticalScalarRecipe(StrictModule, NonTrainableState):
         mean_momentum: ArrayLike = 0.0,
         maximum_paths: int = 4096,
         maximum_modes: int = 2**18,
-    ):
+    ) -> None:
         omega = np.asarray(frequencies, dtype=np.float64)
         nodes = np.asarray(coordinates, dtype=np.float64)
         path_weights = np.asarray(weights, dtype=np.float64)
@@ -625,7 +626,7 @@ class MMSTInitialConditionRecipe(StrictModule, NonTrainableState):
         *,
         zero_point_parameter: float = 1.0,
         maximum_states: int = 4096,
-    ):
+    ) -> None:
         probability = np.asarray(populations, dtype=np.float64)
         positions = np.asarray(nuclear_positions, dtype=np.float64)
         momenta = np.asarray(nuclear_momenta, dtype=np.float64)

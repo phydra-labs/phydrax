@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -45,7 +48,7 @@ def _typed_graphs() -> tuple[phx.graph.GraphIR, phx.graph.GraphIR]:
     return graph0, graph1
 
 
-def test_graph_domain_samples_node_and_edge_type_components():
+def test_graph_domain_samples_node_and_edge_type_components() -> None:
     domain = phx.domain.GraphDomain(_typed_graph(), measure="count")
     structure = phx.domain.SampleLayout((("graph",),))
 
@@ -54,20 +57,24 @@ def test_graph_domain_samples_node_and_edge_type_components():
     edge_component = domain.component({"graph": phx.domain.EdgeType(0)})
     edge_batch = edge_component.sample(phx.domain.PointSampling(2, layout=structure))
 
+    # ty: ignore[unresolved-attribute]
     assert node_batch.component_kind == "nodes"
     assert jnp.allclose(node_batch["graph"]["features"].data[:, 0], jnp.array([2.0]))
     assert jnp.allclose(
         jnp.asarray(node_batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data),
         jnp.array([1], dtype=jnp.int32),
     )
+    # ty: ignore[unresolved-attribute]
     assert edge_batch.component_kind == "edges"
     assert jnp.allclose(edge_batch["graph"]["features"].data[:, 0], jnp.array([0.5, 2.5]))
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(edge_component.mass.value, 2.0)
 
 
-def test_graph_dataset_domain_resolves_node_types_per_case():
+def test_graph_dataset_domain_resolves_node_types_per_case() -> None:
     domain = phx.domain.GraphDatasetDomain(_typed_graphs(), measure="count")
     batch = domain.points_from_indices(
+        # ty: ignore[invalid-argument-type]
         [0, 1],
         component=phx.domain.NodeType(1),
         structure=phx.domain.SampleLayout((("graph",),)),
@@ -83,11 +90,13 @@ def test_graph_dataset_domain_resolves_node_types_per_case():
         jnp.array([0, 1], dtype=jnp.int32),
     )
     assert jnp.allclose(
-        domain.component({"graph": phx.domain.NodeType(1)}).mass.value, 2.0
+        # ty: ignore[unresolved-attribute]
+        domain.component({"graph": phx.domain.NodeType(1)}).mass.value,
+        2.0,
     )
 
 
-def test_typed_graph_helpers_return_indices_and_components():
+def test_typed_graph_helpers_return_indices_and_components() -> None:
     graph = _typed_graph()
 
     assert jnp.allclose(phx.graph.node_type_indices(graph, 0), jnp.array([0, 2]))
@@ -96,7 +105,7 @@ def test_typed_graph_helpers_return_indices_and_components():
     assert isinstance(phx.graph.typed_edges_component(0), phx.domain.EdgeType)
 
 
-def test_relational_graph_convolution_aggregates_by_edge_type():
+def test_relational_graph_convolution_aggregates_by_edge_type() -> None:
     graph = _typed_graph()
     conv = phx.graph.RelationalGraphConvolution(
         jnp.array([10.0, 100.0]),
@@ -111,7 +120,7 @@ def test_relational_graph_convolution_aggregates_by_edge_type():
     assert "type" in out.nodes
 
 
-def test_relational_graph_convolution_normalizes_per_receiver_relation():
+def test_relational_graph_convolution_normalizes_per_receiver_relation() -> None:
     graph = phx.graph.GraphIR(
         nodes={
             "features": jnp.array([[1.0], [3.0], [5.0]]),
@@ -134,14 +143,14 @@ def test_relational_graph_convolution_normalizes_per_receiver_relation():
     assert jnp.allclose(out.nodes[:, 0], jnp.array([0.0, 0.0, 2.0]))
 
 
-def test_relational_graph_convolution_wraps_as_graph_model_with_input_key():
+def test_relational_graph_convolution_wraps_as_graph_model_with_input_key() -> None:
     domain = phx.domain.GraphDomain(_typed_graph())
     batch = domain.component({"graph": phx.domain.Nodes()}).sample(
         phx.domain.PointSampling(3, layout=phx.domain.SampleLayout((("graph",),)))
     )
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> Any:
         return node["features"][0]
 
     model = domain.GraphModel(

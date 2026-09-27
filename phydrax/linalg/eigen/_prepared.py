@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from .._preconditioning import PreparedPreconditioner
@@ -33,7 +34,7 @@ class DenseEigenState(StrictModule):
         *,
         operator_matvec_count: int,
         metric_matvec_count: int,
-    ):
+    ) -> None:
         reduced = jnp.asarray(reduced_operator)
         factor = jnp.asarray(metric_factor)
         if (
@@ -81,7 +82,7 @@ class PreparedEigenSolve(StrictModule):
         initial_rank: ArrayLike | None = None,
         symbolic_version: int = 1,
         numeric_version: int = 0,
-    ):
+    ) -> None:
         if not isinstance(problem, (Eigenproblem, GeneralizedEigenproblem)):
             raise TypeError("problem must be an Eigenproblem or GeneralizedEigenproblem.")
         if not isinstance(plan, EigenSolvePlan):

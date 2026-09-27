@@ -1,10 +1,12 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
 
 
-def _linear_gaussian_problem():
+def _linear_gaussian_problem() -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.2, 0.4, 0.6, 0.8, 1.0]),
         jnp.asarray([[0.1], [0.35], [0.55], [0.8], [1.0]]),
@@ -40,7 +42,7 @@ def _linear_gaussian_problem():
     )
 
 
-def test_particle_and_ensemble_filters_recover_analytic_kalman_moments():
+def test_particle_and_ensemble_filters_recover_analytic_kalman_moments() -> None:
     problem = _linear_gaussian_problem()
     exact = phx.uq.kalman_filter(problem)
     particles = phx.uq.bootstrap_particle_filter(
@@ -74,7 +76,7 @@ def test_particle_and_ensemble_filters_recover_analytic_kalman_moments():
     assert jnp.abs(ensemble_variance - exact_variance) < 0.03
 
 
-def _heat_bsde_evaluation(realization, num_steps):
+def _heat_bsde_evaluation(realization: Any, num_steps: Any) -> Any:
     times = jnp.linspace(0.0, 1.0, num_steps + 1)
     increments = realization.increments(times[:-1], times[1:])
     states = jnp.concatenate(
@@ -120,7 +122,7 @@ def _heat_bsde_evaluation(realization, num_steps):
     )
 
 
-def test_heat_bsde_discrete_residual_refines_at_analytic_rate():
+def test_heat_bsde_discrete_residual_refines_at_analytic_rate() -> None:
     realization = phx.stochastic.WienerRealization(
         jr.key(82),
         (1,),

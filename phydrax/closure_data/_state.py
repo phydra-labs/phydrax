@@ -4,21 +4,23 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._model import ValuePort
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ..units import DimensionSignature, parse_unit
 
 
-StateRepresentation = Literal["nondimensional", "dimensional"]
+StateRepresentation: TypeAlias = Literal["nondimensional", "dimensional"]
 
 
 def _declared_dimension(unit: str, owner: str, /) -> DimensionSignature:
@@ -59,7 +61,7 @@ class FlowStateSchema(StrictModule, NonTrainableState):
         total_energy_name: str | None = None,
         enthalpy_name: str | None = None,
         component_axis: int = -1,
-    ):
+    ) -> None:
         names = tuple(str(value).strip() for value in component_names)
         units = tuple(str(value).strip() for value in component_units)
         scales = tuple(float(value) for value in reference_scales)
@@ -228,7 +230,7 @@ class ClosureSnapshot(StrictModule, NonTrainableState):
         mesh_id: str,
         representation: StateRepresentation = "nondimensional",
         parent_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         if not isinstance(schema, FlowStateSchema):
             raise TypeError("schema must be a FlowStateSchema.")
         array = schema.validate(values, owner="Closure snapshot")
@@ -245,12 +247,11 @@ class ClosureSnapshot(StrictModule, NonTrainableState):
         )
         parents = tuple(str(value).strip() for value in parent_ids)
         representation_ = str(representation).strip()
-        if (
-            not np.isfinite(time_value)
-            or any(not value for value in (*identifiers, *parents))
-            or representation_ not in ("nondimensional", "dimensional")
+        if not np.isfinite(time_value) or any(
+            not value for value in (*identifiers, *parents)
         ):
             raise ValueError("Closure snapshot metadata is invalid.")
+        representation_ = parse(representation_, StateRepresentation, "representation")
         content = array_tree_fingerprint(array)
         self.values = array
         self.schema = schema
@@ -320,7 +321,7 @@ class ClosureSeries(StrictModule, NonTrainableState):
     mesh_id: str = eqx.field(static=True)
     series_id: str = eqx.field(static=True)
 
-    def __init__(self, snapshots: tuple[ClosureSnapshot, ...], /):
+    def __init__(self, snapshots: tuple[ClosureSnapshot, ...], /) -> None:
         values = tuple(snapshots)
         if not values or any(not isinstance(item, ClosureSnapshot) for item in values):
             raise ValueError("ClosureSeries requires at least one closure snapshot.")

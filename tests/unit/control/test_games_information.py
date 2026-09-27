@@ -3,6 +3,8 @@
 #
 
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -17,21 +19,21 @@ from phydrax.control.games._information import (
 )
 
 
-def _first_selector():
+def _first_selector() -> Any:
     return CommonInformationEquilibriumSelector(
         lambda equilibria: int(equilibria.equilibrium_indices[0]),
         selector_id="lexicographic-first",
     )
 
 
-def _last_selector():
+def _last_selector() -> Any:
     return CommonInformationEquilibriumSelector(
         lambda equilibria: int(equilibria.equilibrium_indices[-1]),
         selector_id="lexicographic-last",
     )
 
 
-def _coordination_game():
+def _coordination_game() -> Any:
     horizon = 1
     common_states = 1
     joint_types = 2
@@ -66,7 +68,7 @@ def _coordination_game():
     )
 
 
-def _bayes_game(*, zero_probability_observation=False):
+def _bayes_game(*, zero_probability_observation: Any = False) -> Any:
     beliefs = jnp.asarray(
         [
             [[0.25, 0.75], [0.25, 0.75]],
@@ -102,7 +104,7 @@ def _bayes_game(*, zero_probability_observation=False):
     )
 
 
-def _two_stage_dominance_game():
+def _two_stage_dominance_game() -> Any:
     stage_costs = jnp.zeros((2, 1, 1, 4, 2))
     for action_index, (first_action, second_action) in enumerate(
         ((0, 0), (0, 1), (1, 0), (1, 1))
@@ -126,7 +128,7 @@ def _two_stage_dominance_game():
     )
 
 
-def test_information_values_preserve_only_the_declared_identity():
+def test_information_values_preserve_only_the_declared_identity() -> None:
     state = object()
     observation = object()
     full_state = FullStateInformation(information_id="plant-state")
@@ -141,10 +143,13 @@ def test_information_values_preserve_only_the_declared_identity():
     assert full_state.timing == "pre-action"
     assert centralized.timing == "pre-action"
     with pytest.raises(TypeError):
+        # ty: ignore[unknown-argument]
         centralized.policy_input(observation, latent_private_state=object())
 
 
-def test_gaussian_belief_validates_shape_finiteness_symmetry_and_semidefiniteness():
+def test_gaussian_belief_validates_shape_finiteness_symmetry_and_semidefiniteness() -> (
+    None
+):
     belief = GaussianBelief(
         jnp.asarray([1.0, -2.0]),
         jnp.asarray([[2.0, 0.0], [0.0, 0.0]]),
@@ -164,7 +169,9 @@ def test_gaussian_belief_validates_shape_finiteness_symmetry_and_semidefinitenes
         GaussianBelief(jnp.zeros(2), jnp.asarray([[1.0, 0.0], [0.0, -1.0]]))
 
 
-def test_common_information_policy_cannot_receive_other_latent_types_or_raw_keys():
+def test_common_information_policy_cannot_receive_other_latent_types_or_raw_keys() -> (
+    None
+):
     result = solve_common_information_game(_coordination_game(), _first_selector())
 
     assert int(result.policy.action("row", 0, 0, 0)) == 0
@@ -172,12 +179,14 @@ def test_common_information_policy_cannot_receive_other_latent_types_or_raw_keys
     assert int(result.policy.action("column", 0, 0, 0)) == 0
     np.testing.assert_array_equal(result.policy.player_prescription("column", 0, 0), [0])
     with pytest.raises(TypeError):
+        # ty: ignore[unknown-argument]
         result.policy.action("column", 0, 0, 0, latent_private_state=1)
     with pytest.raises(TypeError):
+        # ty: ignore[unknown-argument]
         result.policy.action("column", 0, 0, 0, key=jnp.asarray([0, 1]))
 
 
-def test_bayes_evidence_is_normalized_on_positive_probability_support():
+def test_bayes_evidence_is_normalized_on_positive_probability_support() -> None:
     result = solve_common_information_game(_bayes_game(), _first_selector())
 
     np.testing.assert_allclose(result.bayes_normalizers[0, 0], [0.5, 0.5])
@@ -194,7 +203,7 @@ def test_bayes_evidence_is_normalized_on_positive_probability_support():
     assert bool(jnp.all(result.bayes_evidence.common_belief_consistent))
 
 
-def test_zero_probability_observation_has_explicit_unsupported_zero_posterior():
+def test_zero_probability_observation_has_explicit_unsupported_zero_posterior() -> None:
     result = solve_common_information_game(
         _bayes_game(zero_probability_observation=True), _first_selector()
     )
@@ -211,7 +220,7 @@ def test_zero_probability_observation_has_explicit_unsupported_zero_posterior():
     )
 
 
-def test_selector_identity_and_branch_change_the_selected_equilibrium():
+def test_selector_identity_and_branch_change_the_selected_equilibrium() -> None:
     first = solve_common_information_game(_coordination_game(), _first_selector())
     last = solve_common_information_game(_coordination_game(), _last_selector())
 
@@ -226,7 +235,7 @@ def test_selector_identity_and_branch_change_the_selected_equilibrium():
     assert int(last.equilibrium_candidate_counts[0, 0]) == 2
 
 
-def test_tiny_common_information_game_has_analytic_backward_values():
+def test_tiny_common_information_game_has_analytic_backward_values() -> None:
     result = solve_common_information_game(_two_stage_dominance_game(), _last_selector())
 
     assert bool(result.valid)
@@ -241,7 +250,7 @@ def test_tiny_common_information_game_has_analytic_backward_values():
     assert int(result.policy.action("second", 1, 0, 0)) == 0
 
 
-def test_prescription_enumeration_rejects_capacity_above_the_declared_bound():
+def test_prescription_enumeration_rejects_capacity_above_the_declared_bound() -> None:
     with pytest.raises(ValueError, match="capacity 8 exceeds"):
         solve_common_information_game(
             _coordination_game(),

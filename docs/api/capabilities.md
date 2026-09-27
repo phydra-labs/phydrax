@@ -4,7 +4,7 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `5952379b4ccdc26e0950ad3beede095fb1c148f6169d87faada49052462fe921`
+Catalog ID: `4e7b4d58b536a779833d79baac55b5b55fc4430ad8ad186b029cac3f1c4d6655`
 
 ## Dispositions
 
@@ -335,16 +335,16 @@ Catalog ID: `5952379b4ccdc26e0950ad3beede095fb1c148f6169d87faada49052462fe921`
 | `reactor.point-kinetics` | `phydrax.applications.reactor_physics` | candidate | candidate | 1 |
 | `rheology.spatial-conformation` | `phydrax.rheology` | candidate | implementation-qualified-candidate | 1 |
 | `rna-conditional-ensemble-inference` | `phydrax.applications` | candidate | candidate | 1 |
-| `rom.affine-steady` | `phydrax.rom` | candidate | 2 | 1 |
-| `rom.affine-transient` | `phydrax.rom` | candidate | 1 | 1 |
-| `rom.control-reduction` | `phydrax.rom` | candidate | 1 | 1 |
-| `rom.geometry-atlas` | `phydrax.rom` | internal | 0 | 0 |
-| `rom.hyperreduction` | `phydrax.rom` | candidate | 1 | 1 |
-| `rom.identified-dynamics` | `phydrax.rom` | candidate | 2 | 1 |
-| `rom.nonlinear-chart` | `phydrax.rom` | internal | 0 | 0 |
-| `rom.sensor-estimation` | `phydrax.rom` | internal | 0 | 0 |
-| `rom.spectral-submanifold` | `phydrax.rom` | internal | 0 | 0 |
-| `rom.structure-preserving` | `phydrax.rom` | internal | 0 | 0 |
+| `rom.affine-steady` | `phydrax.rom` | candidate | candidate | 1 |
+| `rom.affine-transient` | `phydrax.rom` | candidate | experimental | 1 |
+| `rom.control-reduction` | `phydrax.rom` | candidate | experimental | 1 |
+| `rom.geometry-atlas` | `phydrax.rom` | internal | internal | 0 |
+| `rom.hyperreduction` | `phydrax.rom` | candidate | experimental | 1 |
+| `rom.identified-dynamics` | `phydrax.rom` | candidate | candidate | 1 |
+| `rom.nonlinear-chart` | `phydrax.rom` | internal | internal | 0 |
+| `rom.sensor-estimation` | `phydrax.rom` | internal | internal | 0 |
+| `rom.spectral-submanifold` | `phydrax.rom` | internal | internal | 0 |
+| `rom.structure-preserving` | `phydrax.rom` | internal | internal | 0 |
 | `semiconductor.detector.electrostatics` | `phydrax.applications.semiconductor` | candidate | candidate | 1 |
 | `semiconductor.detector.response` | `phydrax.applications.semiconductor` | candidate | candidate | 1 |
 | `semiconductor.device.electrothermal` | `phydrax.applications.semiconductor` | candidate | candidate | 1 |

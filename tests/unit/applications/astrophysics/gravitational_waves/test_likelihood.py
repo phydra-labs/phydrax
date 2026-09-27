@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -6,7 +8,9 @@ import pytest
 import phydrax as phx
 
 
-def test_exact_network_likelihood_preserves_absolute_and_ratio_semantics(wave_problem):
+def test_exact_network_likelihood_preserves_absolute_and_ratio_semantics(
+    wave_problem: Any,
+) -> None:
     _, _, _, _, injected, likelihood = wave_problem()
     evaluation = likelihood.evaluate(injected)
     residual = likelihood.network.strain - evaluation.detector_signal
@@ -34,7 +38,9 @@ def test_exact_network_likelihood_preserves_absolute_and_ratio_semantics(wave_pr
     assert bool(jnp.all(evaluation.optimal_snr_squared > 0.0))
 
 
-def test_geocentric_time_applies_common_frequency_domain_translation(wave_problem):
+def test_geocentric_time_applies_common_frequency_domain_translation(
+    wave_problem: Any,
+) -> None:
     _, _, _, _, injected, likelihood = wave_problem()
     reference = likelihood.detector_signal(injected)[0]
     shift = jnp.asarray(0.007)
@@ -48,7 +54,9 @@ def test_geocentric_time_applies_common_frequency_domain_translation(wave_proble
     np.testing.assert_allclose(translated, expected, atol=1e-12)
 
 
-def test_exact_likelihood_is_jittable_and_detector_order_invariant(wave_problem):
+def test_exact_likelihood_is_jittable_and_detector_order_invariant(
+    wave_problem: Any,
+) -> None:
     gw, provenance, psd, geometries, injected, likelihood = wave_problem()
     eager = likelihood.log_probability(injected)
     compiled = eqx.filter_jit(likelihood.log_probability)(injected)
@@ -84,7 +92,7 @@ def test_exact_likelihood_is_jittable_and_detector_order_invariant(wave_problem)
     )
 
 
-def test_invalid_waveform_support_returns_negative_infinity(wave_problem):
+def test_invalid_waveform_support_returns_negative_infinity(wave_problem: Any) -> None:
     gw, _, _, _, injected, likelihood = wave_problem()
     invalid = {**injected, "amplitude": jnp.asarray(-0.1)}
     evaluation = likelihood.evaluate(invalid)
@@ -97,7 +105,7 @@ def test_invalid_waveform_support_returns_negative_infinity(wave_problem):
     assert jnp.isneginf(eqx.filter_jit(likelihood.log_probability)(invalid))
 
 
-def test_likelihood_rejects_undeclared_parameter_mapping(wave_problem):
+def test_likelihood_rejects_undeclared_parameter_mapping(wave_problem: Any) -> None:
     gw, _, _, _, _, likelihood = wave_problem()
     with pytest.raises(ValueError, match="parameterization identities"):
         gw.GravitationalWaveLikelihoodPlan(
@@ -110,7 +118,7 @@ def test_likelihood_rejects_undeclared_parameter_mapping(wave_problem):
         )
 
 
-def test_callable_waveform_uses_declared_polarization_order(wave_problem):
+def test_callable_waveform_uses_declared_polarization_order(wave_problem: Any) -> None:
     gw, provenance, _, _, _, likelihood = wave_problem()
     capabilities = gw.WaveformCapabilities(
         ("plus", "cross"),
@@ -135,7 +143,7 @@ def test_callable_waveform_uses_declared_polarization_order(wave_problem):
     np.testing.assert_allclose(result.values[1], 2.0j)
 
 
-def test_time_series_data_plan_prepares_psd_band_and_window(wave_problem):
+def test_time_series_data_plan_prepares_psd_band_and_window(wave_problem: Any) -> None:
     gw, provenance, _, _, _, _ = wave_problem()
     plan = gw.GravitationalWaveDataPlan(
         64,
@@ -159,7 +167,7 @@ def test_time_series_data_plan_prepares_psd_band_and_window(wave_problem):
     assert 0.0 < float(data.window_power) < 1.0
 
 
-def test_detector_tensor_has_known_overhead_plus_response(wave_problem):
+def test_detector_tensor_has_known_overhead_plus_response(wave_problem: Any) -> None:
     _, _, _, _, _, likelihood = wave_problem()
     response = likelihood.response.evaluate(0.0, 0.5 * jnp.pi, 0.0, 0.0)
 
@@ -168,7 +176,9 @@ def test_detector_tensor_has_known_overhead_plus_response(wave_problem):
     assert bool(response.valid)
 
 
-def test_data_contract_rejects_active_endpoints_and_mismatched_grids(wave_problem):
+def test_data_contract_rejects_active_endpoints_and_mismatched_grids(
+    wave_problem: Any,
+) -> None:
     gw, provenance, _, _, _, _ = wave_problem(sample_count=32)
     frequency = jnp.fft.rfftfreq(32, 1.0 / 32.0)
     with pytest.raises(ValueError, match="DC and Nyquist"):
@@ -190,7 +200,7 @@ def test_data_contract_rejects_active_endpoints_and_mismatched_grids(wave_proble
         )
 
 
-def test_old_frequency_response_exports_are_removed():
+def test_old_frequency_response_exports_are_removed() -> None:
     astrophysics = phx.applications.astrophysics
     assert "FrequencyDomainSignal" not in astrophysics.__all__
     assert "FrequencyResponsePlan" not in astrophysics.__all__

@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -19,6 +20,7 @@ from .._strict import StrictModule
 from .._term import AbstractScalarTerm
 from .._trainable import NonTrainableState
 from ..domain import DomainFunction, LocalFieldRef, PairedSupport
+from ..typing import PRNGKey
 
 
 FieldBinding = str | LocalFieldRef
@@ -47,7 +49,7 @@ class MortarInterfaceEvidence(StrictModule, NonTrainableState):
         minimum_gram_eigenvalue: float,
         gram_condition: float,
         verified: bool,
-    ):
+    ) -> None:
         self.minimum_gram_eigenvalue = float(minimum_gram_eigenvalue)
         self.gram_condition = float(gram_condition)
         self.verified = bool(verified)
@@ -81,7 +83,7 @@ class MortarInterfacePenalty(AbstractScalarTerm):
         scale: float = 1.0,
         label: str | None = None,
         gram_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         basis = np.asarray(basis_values, dtype=np.float64)
         if basis.ndim != 2 or basis.shape[0] <= 0 or basis.shape[1] <= 0:
             raise ValueError("basis_values must have shape (points, modes).")
@@ -125,7 +127,7 @@ class MortarInterfacePenalty(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -171,7 +173,7 @@ class NitscheInterfaceFunctional(AbstractScalarTerm):
         *,
         penalty: float,
         label: str | None = None,
-    ):
+    ) -> None:
         if pairing.normal is None:
             raise ValueError("Nitsche coupling requires an oriented interface normal.")
         penalty_ = jnp.asarray(penalty, dtype=jnp.float64).reshape(())
@@ -190,7 +192,7 @@ class NitscheInterfaceFunctional(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -232,7 +234,7 @@ class AugmentedInterfaceEvidence(StrictModule):
         /,
         *,
         iteration: int,
-    ):
+    ) -> None:
         self.primal_residual = jnp.asarray(primal_residual).reshape(())
         self.dual_residual = jnp.asarray(dual_residual).reshape(())
         self.iteration = int(iteration)
@@ -265,7 +267,7 @@ class AugmentedValueConstraint(AbstractScalarTerm):
         penalty: float = 1.0,
         iteration: int = 0,
         label: str | None = None,
-    ):
+    ) -> None:
         multiplier_ = jnp.asarray(multiplier)
         target_ = jnp.asarray(target)
         previous = (
@@ -293,7 +295,7 @@ class AugmentedValueConstraint(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         left = self.pairing.trace(functions[self.fields[0]], side="left")(
             self.points, key=key
@@ -311,7 +313,7 @@ class AugmentedValueConstraint(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -326,7 +328,7 @@ class AugmentedValueConstraint(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> tuple[AugmentedValueConstraint, AugmentedInterfaceEvidence]:
         residual = self.residual(functions, key=key)
         multiplier = self.multiplier + self.penalty * residual

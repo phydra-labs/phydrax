@@ -9,7 +9,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -34,7 +35,7 @@ class ClassicalSpinState(StrictModule):
         /,
         *,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         values = jnp.asarray(directions)
         active = jnp.asarray(active_mask, dtype=jnp.bool_)
         identifier = str(hamiltonian_id)
@@ -92,7 +93,7 @@ class ClassicalSpinHamiltonianPlan(StrictModule, NonTrainableState):
         field_unit: str,
         moment_unit: str,
         validation_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(system, PreparedAtomisticSystem):
             raise TypeError("system must be PreparedAtomisticSystem.")
         if not isinstance(graph, AtomisticGraph):
@@ -329,17 +330,14 @@ def _numeric_coefficients(
         raise ValueError("Inactive spin sites cannot carry onsite spin coefficients.")
     safe_moments = np.where(active, moments_host, 1.0)
     safe_axes = np.where(active[:, None], axes_host, 0.0)
-    return tuple(
-        jnp.asarray(value)
-        for value in (
-            exchange_host,
-            gamma_host,
-            dmi_host,
-            anisotropy_host,
-            safe_axes,
-            safe_moments,
-            field_host,
-        )
+    return (
+        jnp.asarray(exchange_host),
+        jnp.asarray(gamma_host),
+        jnp.asarray(dmi_host),
+        jnp.asarray(anisotropy_host),
+        jnp.asarray(safe_axes),
+        jnp.asarray(safe_moments),
+        jnp.asarray(field_host),
     )
 
 

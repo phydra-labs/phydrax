@@ -7,7 +7,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._callable import _ensure_special_kwonly_args
 from ..._strict import StrictModule
@@ -36,7 +37,7 @@ class AdaptiveResidual(StrictModule, ParameterOwner):
         *,
         channel_size: int | None = None,
         initial_alpha: ArrayLike = 0.0,
-    ):
+    ) -> None:
         if not callable(branch):
             raise TypeError("branch must be callable.")
         if channel_size is not None and int(channel_size) <= 0:

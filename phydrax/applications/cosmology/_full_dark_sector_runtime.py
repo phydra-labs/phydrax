@@ -19,8 +19,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.sharding import SingleDeviceSharding
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -129,14 +130,16 @@ def _identifiers(
     return result
 
 
-def _scalar(value: ArrayLike, name: str, /, *, dtype=None) -> Array:
+def _scalar(value: ArrayLike, name: str, /, *, dtype: DTypeLike | None = None) -> Array:
     result = jnp.asarray(value, dtype=dtype)
     if result.shape != ():
         raise ValueError(f"{name} must be scalar.")
     return result
 
 
-def _real_scalar(value: ArrayLike, name: str, /, *, dtype=None) -> Array:
+def _real_scalar(
+    value: ArrayLike, name: str, /, *, dtype: DTypeLike | None = None
+) -> Array:
     result = _scalar(value, name, dtype=dtype)
     if jnp.issubdtype(result.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real.")
@@ -184,7 +187,7 @@ class FullDarkSectorStageToken(StrictModule, NonTrainableState):
         epoch_state: DarkSectorEpochState,
         matrix_element_revision: MatrixElementRevision,
         /,
-    ):
+    ) -> None:
         if not isinstance(frame, LocalRelativisticFramePlan):
             raise TypeError("frame must be LocalRelativisticFramePlan.")
         if not isinstance(epoch_state, DarkSectorEpochState):
@@ -263,7 +266,7 @@ class NamedStressEnergyComponent(StrictModule):
         unitarity_defect: ArrayLike,
         evidence_valid: ArrayLike,
         evidence_id: str,
-    ):
+    ) -> None:
         if not isinstance(projection, StressEnergyProjection):
             raise TypeError("projection must be StressEnergyProjection.")
         dtype = projection.energy_density.dtype
@@ -589,7 +592,7 @@ class FullDarkSectorRuntimePlan(StrictModule, NonTrainableState):
         gauge_tolerance: float = 1.0e-8,
         unitarity_tolerance: float = 1.0e-8,
         entropy_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         expected = (
             (units, RelativisticUnitContract, "units"),
             (epoch, DarkSectorEpochPlan, "epoch"),
@@ -717,7 +720,11 @@ class FullDarkSectorRuntimePlan(StrictModule, NonTrainableState):
             hadronization.frame.frame_id,
             bound_states.frame.frame_id,
             decay_cascade.frame.frame_id,
-            radiation.frame_id,
+            (
+                radiation.frame_id
+                if isinstance(radiation, DarkRadiationBoltzmannHierarchyPlan)
+                else quantum.frame.frame_id
+            ),
         )
         frame_realizations = (
             quantum.frame_realization_id,
@@ -947,7 +954,7 @@ class FullDarkSectorCompositeState(StrictModule):
         radiation: RadiationState,
         stage: FullDarkSectorStageToken,
         /,
-    ):
+    ) -> None:
         expected = (
             (epoch, DarkSectorEpochState, "epoch"),
             (quantum, QuantumKineticState, "quantum"),
@@ -1320,7 +1327,7 @@ class FullDarkSectorOutputBundle(StrictModule):
         plan: FullDarkSectorRuntimePlan,
         commit: FullDarkSectorStageCommit,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, FullDarkSectorRuntimePlan):
             raise TypeError("plan must be FullDarkSectorRuntimePlan.")
         if not isinstance(commit, FullDarkSectorStageCommit) or not commit.committed:
@@ -1461,7 +1468,7 @@ class FullDarkSectorCheckpointPlan(StrictModule, NonTrainableState):
         /,
         *,
         epoch_manifest_id: str,
-    ):
+    ) -> None:
         if not isinstance(runtime, FullDarkSectorRuntimePlan):
             raise TypeError("runtime must be FullDarkSectorRuntimePlan.")
         if not isinstance(stage, FullDarkSectorStageToken):

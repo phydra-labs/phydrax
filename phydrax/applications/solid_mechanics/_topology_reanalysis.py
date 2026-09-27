@@ -11,7 +11,9 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -26,7 +28,7 @@ class DensityTransferCandidate(StrictModule):
 
     raw_density: Array
 
-    def __init__(self, raw_density: ArrayLike, /):
+    def __init__(self, raw_density: ArrayLike, /) -> None:
         density = jnp.asarray(raw_density)
         if density.ndim != 1 or not jnp.issubdtype(density.dtype, jnp.floating):
             raise TypeError("Transferred raw density must be one real inexact vector.")
@@ -64,7 +66,7 @@ class FiniteElementReanalysisCandidate(StrictModule):
         state_status: Any = OptimizationStatus.SUCCESS,
         adjoint_status: Any = LinearSolveStatus.SUCCESS,
         solver_id: str,
-    ):
+    ) -> None:
         state_ = jax.tree.map(jnp.asarray, state)
         adjoint_ = jax.tree.map(jnp.asarray, adjoint)
         if not jax.tree.leaves(state_) or not jax.tree.leaves(adjoint_):
@@ -118,7 +120,7 @@ class TopologyReanalysisPlan(StrictModule, NonTrainableState):
         uniform_source_objective: ArrayLike | None = None,
         uniform_reference_objective: ArrayLike | None = None,
         plan_id: str = "topology-fe-reanalysis",
-    ):
+    ) -> None:
         if not isinstance(reference_problem, TopologyMechanicsProblem):
             raise TypeError("reference_problem must be TopologyMechanicsProblem.")
         if not callable(transfer) or not callable(finite_element_solve):
@@ -168,18 +170,26 @@ class TopologyReanalysisPlan(StrictModule, NonTrainableState):
         )
         if (source_uniform is None) != (reference_uniform is None):
             raise ValueError("Uniform discretization controls must be supplied together.")
-        if source_uniform is not None and (
-            source_uniform.shape != ()
-            or reference_uniform.shape != ()
-            or not jnp.issubdtype(source_uniform.dtype, jnp.floating)
-            or not jnp.issubdtype(reference_uniform.dtype, jnp.floating)
+        if (
+            source_uniform is not None
+            and reference_uniform is not None
+            and (
+                source_uniform.shape != ()
+                or reference_uniform.shape != ()
+                or not jnp.issubdtype(source_uniform.dtype, jnp.floating)
+                or not jnp.issubdtype(reference_uniform.dtype, jnp.floating)
+            )
         ):
             raise TypeError("Uniform discretization controls must be real scalar arrays.")
-        if source_uniform is not None and (
-            not isfinite(float(source_uniform))
-            or float(source_uniform) <= 0.0
-            or not isfinite(float(reference_uniform))
-            or float(reference_uniform) <= 0.0
+        if (
+            source_uniform is not None
+            and reference_uniform is not None
+            and (
+                not isfinite(float(source_uniform))
+                or float(source_uniform) <= 0.0
+                or not isfinite(float(reference_uniform))
+                or float(reference_uniform) <= 0.0
+            )
         ):
             raise ValueError(
                 "Uniform discretization controls must be finite and strictly positive."
@@ -328,7 +338,7 @@ def reanalyze_topology_design(
     )
     optimized = jnp.asarray(result.state_design.objective)
     objective_ratio = reference_objective / optimized
-    if plan.uniform_source_objective is None:
+    if plan.uniform_source_objective is None or plan.uniform_reference_objective is None:
         discretization_ratio = None
         excess = None
     else:

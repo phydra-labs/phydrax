@@ -9,11 +9,16 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from ..discretization.splatting import PreparedParticleGridSplat, SplatDepositResult
+from ..discretization.splatting import (
+    ParticleGridSplatState,
+    PreparedParticleGridSplat,
+    SplatDepositResult,
+)
 from ._self_gravity import PreparedNewtonianSelfGravity
 
 
@@ -62,7 +67,7 @@ class ParticleMeshGravityPlan(StrictModule):
         gravity: PreparedNewtonianSelfGravity,
         transfer: PreparedParticleGridSplat,
         /,
-    ):
+    ) -> None:
         if not isinstance(gravity, PreparedNewtonianSelfGravity):
             raise TypeError("gravity must be PreparedNewtonianSelfGravity.")
         if not isinstance(transfer, PreparedParticleGridSplat):
@@ -118,7 +123,9 @@ class ParticleMeshGravityPlan(StrictModule):
             momentum=jnp.where(active, momentum_, 0.0),
         )
 
-    def density(self, position: ArrayLike, /):
+    def density(
+        self, position: ArrayLike, /
+    ) -> tuple[SplatDepositResult, ParticleGridSplatState]:
         routes = self.transfer.build(position)
         deposited = self.transfer.deposit_content(routes, self.transfer.particles.masses)
         return deposited, routes

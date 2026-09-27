@@ -76,7 +76,7 @@ class VoroCrustOptions:
     relative_merge_tolerance: float = 1e-9
     require_native_output_preallocation: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not np.isfinite(self.maximum_radius) or self.maximum_radius <= 0:
             raise ValueError("maximum_radius must be positive and finite.")
         if (
@@ -221,6 +221,7 @@ def _provider_info(
             "revision and source/configuration/library SHA-256 identities.",
             stage="startup",
         )
+    # ty: ignore[invalid-return-type]
     return (
         MeshingProviderInfo(
             "vorocrust",
@@ -469,6 +470,7 @@ def _polyhedra(
         raise _conversion(f"VoroCrust cells are not closed polytopes: {error}") from error
     if mesh.entity_set(1).count > limits.maximum_edges:
         raise _resource("VoroCrust edges exceed the entity budget.")
+    # ty: ignore[invalid-return-type]
     return mesh, points.shape[0] - np.unique(aliases).size, collapsed_faces
 
 
@@ -504,7 +506,7 @@ class VoroCrustProvider:
         self,
         executable: str | Path = "vc_mesh",
         worker: str | os.PathLike[str] | None = None,
-    ):
+    ) -> None:
         self.executable = _executable(executable)
         self.worker = ProviderWorker(
             "vorocrust",
@@ -623,7 +625,10 @@ class VoroCrustProvider:
                 )
             seed_points, seed_radii, seed_regions = _read_seeds(seeds, limits)
         _preflight_native_output(
-            seed_regions.size, np.count_nonzero(seed_regions), limits
+            seed_regions.size,
+            # ty: ignore[invalid-argument-type]
+            np.count_nonzero(seed_regions),
+            limits,
         )
         call = self.worker.call(
             "extract",

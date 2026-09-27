@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 
@@ -25,6 +26,7 @@ from ....observation import (
     KroneckerCholeskyCovarianceAction,
     LinearNuisancePlan,
 )
+from ....typing import parse
 from ._acquisition import SeismicAcquisition
 from ._constant_density import ConstantDensityAcousticPlan
 
@@ -46,7 +48,7 @@ class AcousticShot(StrictModule, NonTrainableState):
         /,
         *,
         trace_weights: ArrayLike = 1.0,
-    ):
+    ) -> None:
         if not isinstance(acquisition, SeismicAcquisition):
             raise TypeError("Acoustic shot requires SeismicAcquisition.")
         source = jnp.asarray(source_rates)
@@ -118,7 +120,7 @@ class AcousticWaveformInversionPlan(StrictModule, NonTrainableState):
         *,
         replay: CheckpointedScanMode = "block",
         block_size: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(forward, ConstantDensityAcousticPlan):
             raise TypeError("Waveform inversion requires ConstantDensityAcousticPlan.")
         shots_ = tuple(shots)
@@ -132,8 +134,7 @@ class AcousticWaveformInversionPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Waveform inversion shots must share the prepared forward grid/clock."
             )
-        if replay not in ("full", "step", "block", "scheduled"):
-            raise ValueError("Unsupported waveform replay mode.")
+        replay = parse(replay, CheckpointedScanMode, "replay")
         if replay == "scheduled":
             raise ValueError(
                 "Scheduled waveform inversion needs an explicit per-call replay schedule."
@@ -197,7 +198,7 @@ class AcousticWaveformInversionPlan(StrictModule, NonTrainableState):
     ) -> Array:
         speed, tangent = jnp.asarray(wavespeed_m_s), jnp.asarray(direction)
 
-        def whitened(value):
+        def whitened(value: Array) -> Array:
             residuals = self.residuals(value)
             outputs = []
             whitening_types = (
@@ -222,7 +223,7 @@ class AcousticWaveformInversionPlan(StrictModule, NonTrainableState):
         speed = jnp.asarray(background_wavespeed_m_s)
         slowness_squared = 1.0 / speed**2
 
-        def objective(slowness):
+        def objective(slowness: Array) -> Array:
             return self.objective(1.0 / jnp.sqrt(slowness))
 
         value, gradient = jax.value_and_grad(objective)(slowness_squared)
@@ -246,7 +247,7 @@ class AcousticSourceProjectionPlan(StrictModule, NonTrainableState):
         basis_source_rates: ArrayLike,
         reference_wavespeed_m_s: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(inversion, AcousticWaveformInversionPlan):
             raise TypeError("Source projection requires waveform inversion plan.")
         index = int(shot_index)

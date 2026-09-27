@@ -1,6 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -38,12 +40,14 @@ from phydrax.uq import (
 
 
 @pytest.fixture(autouse=True)
-def _double_precision():
+def _double_precision() -> Any:
     with jax.enable_x64(True):
         yield
 
 
-def _space(axes=("column",), shape=(2,), support="physical-columns"):
+def _space(
+    axes: Any = ("column",), shape: Any = (2,), support: Any = "physical-columns"
+) -> Any:
     return DiscreteFieldSpace(
         "temperature",
         support,
@@ -53,7 +57,9 @@ def _space(axes=("column",), shape=(2,), support="physical-columns"):
     )
 
 
-def _lineage(*, internal="heat-noise", initial="initial-prior", reverse=False):
+def _lineage(
+    *, internal: Any = "heat-noise", initial: Any = "initial-prior", reverse: Any = False
+) -> Any:
     coordinates = {
         "initial_condition": initial,
         "scenario": "unforced",
@@ -70,7 +76,7 @@ def _lineage(*, internal="heat-noise", initial="initial-prior", reverse=False):
     return GeophysicalEnsembleLineage(axes[::-1] if reverse else axes, coordinates)
 
 
-def _operator(quantity=None):
+def _operator(quantity: Any = None) -> Any:
     quantity = (
         GeophysicalQuantity("temperature", "temperature_anomaly", KELVIN)
         if quantity is None
@@ -80,7 +86,9 @@ def _operator(quantity=None):
     clock = GeophysicalTimeSpec(unit="d")
     return prepare_tensor_observation_operator(
         space,
+        # ty: ignore[invalid-argument-type]
         {"column": [0.0, 1.0]},
+        # ty: ignore[invalid-argument-type]
         {"column": [0.0, 1.0]},
         quantity,
         source_support_id=space.support_id,
@@ -89,7 +97,7 @@ def _operator(quantity=None):
     )
 
 
-def _prepare(operator, values, **kwargs):
+def _prepare(operator: Any, values: Any, **kwargs: Any) -> Any:
     defaults = dict(
         quantity=operator.quantity,
         time=operator.time,
@@ -101,13 +109,13 @@ def _prepare(operator, values, **kwargs):
     )
 
 
-def _flow(state, duration):
+def _flow(state: Any, duration: Any) -> Any:
     common = 0.5 * (state[0] + state[1]) * jnp.exp(-0.1 * duration)
     contrast = 0.5 * (state[0] - state[1]) * jnp.exp(-0.3 * duration)
     return jnp.stack((common + contrast, common - contrast))
 
 
-def _case(*, stochastic=False, lineage=None, mask=None):
+def _case(*, stochastic: Any = False, lineage: Any = None, mask: Any = None) -> Any:
     operator = _operator()
     truth = jnp.stack(
         (_flow(jnp.array([2.0, -0.5]), 0.0), _flow(jnp.array([2.0, -0.5]), 1.0))
@@ -115,7 +123,7 @@ def _case(*, stochastic=False, lineage=None, mask=None):
     prepared = _prepare(operator, truth, availability=mask)
     layout = StateLayout((2,), component_names=("west_temperature", "east_temperature"))
 
-    def transition(key, state, t0, t1, context):
+    def transition(key: Any, state: Any, t0: Any, t1: Any, context: Any) -> Any:
         del context
         out = _flow(state, t1 - t0)
         return (
@@ -143,15 +151,17 @@ def _case(*, stochastic=False, lineage=None, mask=None):
     return problem, truth, layout
 
 
-def test_station_vertical_interpolation_and_periodic_transpose():
+def test_station_vertical_interpolation_and_periodic_transpose() -> None:
     source = _space(("longitude", "pressure"), (4, 3), "longitude-pressure-grid")
     quantity = GeophysicalQuantity("temperature", "temperature", KELVIN)
     operator = prepare_tensor_observation_operator(
         source,
+        # ty: ignore[invalid-argument-type]
         {
             "longitude": [0.0, 90.0, 180.0, 270.0],
             "pressure": [10000.0, 50000.0, 100000.0],
         },
+        # ty: ignore[invalid-argument-type]
         {"longitude": [-45.0, 315.0, 90.0], "pressure": [30000.0, 30000.0, 75000.0]},
         quantity,
         source_support_id=source.support_id,
@@ -174,10 +184,12 @@ def test_station_vertical_interpolation_and_periodic_transpose():
     with pytest.raises(ValueError, match="extrapolate"):
         prepare_tensor_observation_operator(
             source,
+            # ty: ignore[invalid-argument-type]
             {
                 "longitude": [0.0, 90.0, 180.0, 270.0],
                 "pressure": [10000.0, 50000.0, 100000.0],
             },
+            # ty: ignore[invalid-argument-type]
             {"longitude": [45.0], "pressure": [110000.0]},
             quantity,
             source_support_id=source.support_id,
@@ -186,10 +198,12 @@ def test_station_vertical_interpolation_and_periodic_transpose():
     with pytest.raises(ValueError, match="support"):
         prepare_tensor_observation_operator(
             source,
+            # ty: ignore[invalid-argument-type]
             {
                 "longitude": [0.0, 90.0, 180.0, 270.0],
                 "pressure": [10000.0, 50000.0, 100000.0],
             },
+            # ty: ignore[invalid-argument-type]
             {"longitude": [45.0], "pressure": [50000.0]},
             quantity,
             source_support_id="different-grid",
@@ -197,12 +211,15 @@ def test_station_vertical_interpolation_and_periodic_transpose():
         )
 
 
-def test_missing_qc_representativeness_and_physical_unit_conversion():
+def test_missing_qc_representativeness_and_physical_unit_conversion() -> None:
     operator = _operator(GeophysicalQuantity("pressure", "pressure", PASCAL))
     prepared = prepare_geophysical_observations(
         operator,
+        # ty: ignore[invalid-argument-type]
         [0.0, 1.0],
+        # ty: ignore[invalid-argument-type]
         [[100.0, np.nan], [999.0, 101.0]],
+        # ty: ignore[invalid-argument-type]
         [[0.1, np.nan], [np.nan, 0.2]],
         quantity=GeophysicalQuantity("barometer", "pressure", KILOPASCAL),
         time=operator.time,
@@ -232,7 +249,9 @@ def test_missing_qc_representativeness_and_physical_unit_conversion():
     with pytest.raises(ValueError, match="positive"):
         prepare_geophysical_observations(
             operator,
+            # ty: ignore[invalid-argument-type]
             [0.0],
+            # ty: ignore[invalid-argument-type]
             [[100000.0, 100000.0]],
             0.0,
             quantity=operator.quantity,
@@ -244,7 +263,7 @@ def test_missing_qc_representativeness_and_physical_unit_conversion():
 @pytest.mark.parametrize(
     "mismatch", ["shape", "mask", "quantity", "time", "support", "temporal"]
 )
-def test_shape_support_quantity_and_time_semantics_rejected(mismatch):
+def test_shape_support_quantity_and_time_semantics_rejected(mismatch: Any) -> None:
     operator = _operator()
     values = [[1.0, 2.0]]
     kwargs = {}
@@ -268,11 +287,12 @@ def test_shape_support_quantity_and_time_semantics_rejected(mismatch):
                 operator.transfer,
                 operator.quantity,
                 time=operator.time,
+                # ty: ignore[invalid-argument-type]
                 temporal=kwargs["temporal"],
             )
 
 
-def test_linear_gaussian_limit_with_partial_missing_observations():
+def test_linear_gaussian_limit_with_partial_missing_observations() -> None:
     mask = np.array([[True, False], [True, True]])
     problem, truth, _ = _case(mask=mask)
     state = initialize_ensemble_filter(jax.random.key(5), problem, ensemble_size=12)
@@ -310,7 +330,7 @@ def test_linear_gaussian_limit_with_partial_missing_observations():
     assert np.trace(covariance) < 0.03
 
 
-def test_all_missing_keeps_mean_and_native_inflation_scales_covariance():
+def test_all_missing_keeps_mean_and_native_inflation_scales_covariance() -> None:
     problem, _, _ = _case(mask=np.zeros((2, 2), dtype="bool"))
     state = initialize_ensemble_filter(
         jax.random.key(8), problem, ensemble_size=10, inflation=1.2
@@ -328,7 +348,7 @@ def test_all_missing_keeps_mean_and_native_inflation_scales_covariance():
     assert int(step.observed_count) == 0
 
 
-def test_restart_preserves_internal_noise_and_axis_lineage(tmp_path):
+def test_restart_preserves_internal_noise_and_axis_lineage(tmp_path: Any) -> None:
     lineage = _lineage()
     key = jax.random.key(27)
     np.testing.assert_array_equal(
@@ -364,7 +384,7 @@ def test_restart_preserves_internal_noise_and_axis_lineage(tmp_path):
         read_ensemble_filter_checkpoint(path, altered, ensemble_size=10)
 
 
-def test_analysis_heat_inventory_and_native_smoothing():
+def test_analysis_heat_inventory_and_native_smoothing() -> None:
     problem, truth, layout = _case()
     result = ensemble_transform_kalman_filter(
         jax.random.key(9),
@@ -374,6 +394,7 @@ def test_analysis_heat_inventory_and_native_smoothing():
         raise_on_failure=True,
     )
     quantity = GeophysicalQuantity("heat", "energy", JOULE)
+    # ty: ignore[invalid-argument-type]
     inventory = GeophysicalAnalysisInventory("heat", quantity, [2.0e8, 3.0e8], layout)
     report = geophysical_analysis_increments(result, (inventory,))["heat"]
     expected = np.sum(
@@ -398,13 +419,17 @@ def test_analysis_heat_inventory_and_native_smoothing():
             result,
             (
                 GeophysicalAnalysisInventory(
-                    "heat", quantity, [2.0e8, 3.0e8], wrong_layout
+                    "heat",
+                    quantity,
+                    # ty: ignore[invalid-argument-type]
+                    [2.0e8, 3.0e8],
+                    wrong_layout,
                 ),
             ),
         )
 
 
-def test_native_model_adapter_rejects_wrong_support_clock_and_changing_shape():
+def test_native_model_adapter_rejects_wrong_support_clock_and_changing_shape() -> None:
     operator = _operator()
     observations = _prepare(operator, [[1.0, 2.0]])
     layout = StateLayout((2,))
@@ -423,17 +448,20 @@ def test_native_model_adapter_rejects_wrong_support_clock_and_changing_shape():
         prepare_geophysical_assimilation(
             layout,
             observations,
+            # ty: ignore[invalid-argument-type]
             **{**options, "source_field": _space(support="other-grid")},
         )
     with pytest.raises(ValueError, match="calendar"):
         prepare_geophysical_assimilation(
             layout,
             observations,
+            # ty: ignore[invalid-argument-type]
             **{**options, "model_time": GeophysicalTimeSpec(unit="s")},
         )
     problem = prepare_geophysical_assimilation(
         layout,
         observations,
+        # ty: ignore[invalid-argument-type]
         **{**options, "transition": lambda key, state, t0, t1, context: jnp.zeros((3,))},
     )
     state = initialize_ensemble_filter(jax.random.key(10), problem, ensemble_size=4)

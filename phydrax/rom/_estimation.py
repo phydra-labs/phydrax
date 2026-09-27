@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -37,7 +38,7 @@ class SensorConfiguration(StrictModule, NonTrainableState):
         frame_id: str,
         geometry_id: str,
         cadence_id: str,
-    ):
+    ) -> None:
         points = jnp.asarray(coordinates)
         covariance = jnp.asarray(noise_covariance)
         channels = tuple(str(value) for value in channel_names)
@@ -95,7 +96,7 @@ class ObservationHistory(StrictModule, NonTrainableState):
         reset: ArrayLike,
         configuration: SensorConfiguration,
         /,
-    ):
+    ) -> None:
         if not isinstance(configuration, SensorConfiguration):
             raise TypeError("configuration must be SensorConfiguration.")
         observations = jnp.asarray(values)
@@ -156,7 +157,7 @@ class LinearSensorHistoryEstimator(StrictModule, NonTrainableState):
         history_length: int,
         configuration_id: str,
         partition_id: str,
-    ):
+    ) -> None:
         matrix = jnp.asarray(coefficient_matrix)
         offset_ = jnp.asarray(offset)
         covariance_ = jnp.asarray(covariance)
@@ -243,7 +244,7 @@ class ReducedKalmanAssimilator(StrictModule, NonTrainableState):
         observation_matrix: ArrayLike,
         measurement_covariance: ArrayLike,
         /,
-    ):
+    ) -> None:
         transition = jnp.asarray(transition_matrix)
         process = jnp.asarray(process_covariance)
         observation = jnp.asarray(observation_matrix)

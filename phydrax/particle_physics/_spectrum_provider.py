@@ -12,7 +12,7 @@ from typing import Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from .._external_runtime import (
     EnergyRunResult,

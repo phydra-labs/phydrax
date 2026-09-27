@@ -8,7 +8,8 @@ from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
@@ -30,7 +31,7 @@ class NeuralJumpProjectionProblem(StrictModule):
         /,
         *,
         problem_id: str = "neural-jump-projection",
-    ):
+    ) -> None:
         if not callable(state_function):
             raise TypeError("state_function must be callable.")
         parameters_ = jnp.asarray(parameters)
@@ -61,7 +62,7 @@ class NeuralJumpProjectionResult(StrictModule):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         self.parameters = jnp.asarray(parameters)
         self.projected_state = jnp.asarray(projected_state)
         self.target_state = jnp.asarray(target_state)
@@ -87,7 +88,7 @@ def solve_neural_jump_projection(
     target = problem.jump_operator(source)
     target = target / jnp.linalg.norm(target)
 
-    def loss(parameters):
+    def loss(parameters: Array) -> Array:
         state = jnp.asarray(problem.state_function(parameters))
         state = state / jnp.linalg.norm(state)
         overlap = jnp.vdot(target, state)
@@ -135,7 +136,7 @@ class NeuralNoJumpTDVPProblem(StrictModule):
         /,
         *,
         problem_id: str = "neural-no-jump-tdvp",
-    ):
+    ) -> None:
         for value in (qgt_action, force, channel_rates, jump_projection):
             if not callable(value):
                 raise TypeError("Neural trajectory actions must be callable.")
@@ -174,7 +175,7 @@ class NeuralNoJumpTDVPResult(StrictModule):
         problem_id: str,
         saturated: bool = False,
         successful: bool = True,
-    ):
+    ) -> None:
         self.parameters = jnp.asarray(parameters)
         self.parameter_history = jnp.asarray(parameter_history)
         self.rate_history = jnp.asarray(rate_history)

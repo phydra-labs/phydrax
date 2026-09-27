@@ -9,7 +9,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_slab_sweep_matches_upwind_absorber_and_global_balance():
+def test_slab_sweep_matches_upwind_absorber_and_global_balance() -> None:
     quadrature = phx.discretization.CertifiedSlabAngularQuadrature.gauss_legendre(4)
     cells = 80
     edges = jnp.linspace(0.0, 1.0, cells + 1)
@@ -44,7 +44,7 @@ def test_slab_sweep_matches_upwind_absorber_and_global_balance():
     np.testing.assert_allclose(result.evidence.global_balance_residual, 0.0, atol=1e-10)
 
 
-def test_multigroup_groupsets_transport_downscatter_source():
+def test_multigroup_groupsets_transport_downscatter_source() -> None:
     quadrature = phx.discretization.CertifiedSlabAngularQuadrature.gauss_legendre(4)
     cells = 16
     total = jnp.ones((cells, 2))
@@ -70,7 +70,7 @@ def test_multigroup_groupsets_transport_downscatter_source():
     assert jnp.max(jnp.abs(result.current)) < jnp.max(result.scalar_flux)
 
 
-def test_discrete_ordinates_solve_is_jittable_and_rejects_invalid_initial_flux():
+def test_discrete_ordinates_solve_is_jittable_and_rejects_invalid_initial_flux() -> None:
     quadrature = phx.discretization.CertifiedSlabAngularQuadrature.gauss_legendre(2)
     problem = phx.equations.MultigroupSlabTransportProblem(
         jnp.asarray((0.0, 0.5, 1.0)),

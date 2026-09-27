@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -13,7 +16,7 @@ import phydrax as phx
 pytest.importorskip("mpax")
 
 
-def test_mpax_rapdhg_solves_bounded_lp_and_qp_with_independent_audit():
+def test_mpax_rapdhg_solves_bounded_lp_and_qp_with_independent_audit() -> None:
     policy = phx.optim.ConvexSolvePolicy(
         phx.optim.MPAXraPDHG(iteration_limit=2_000),
         termination=phx.optim.ConvexTermination(
@@ -43,7 +46,7 @@ def test_mpax_rapdhg_solves_bounded_lp_and_qp_with_independent_audit():
     assert qp_result.provenance.backend == "mpax"
 
 
-def test_mpax_rapdhg_preserves_batch_axes():
+def test_mpax_rapdhg_preserves_batch_axes() -> None:
     problem = phx.optim.QuadraticProgram(
         jnp.broadcast_to(jnp.eye(1), (2, 1, 1)),
         jnp.asarray([[-1.0], [-2.0]]),
@@ -64,7 +67,7 @@ def test_mpax_rapdhg_preserves_batch_axes():
     assert jnp.all(result.status == int(phx.optim.ConvexProgramStatus.OPTIMAL))
 
 
-def test_mpax_algorithmic_differentiation_requires_explicit_unrolling():
+def test_mpax_algorithmic_differentiation_requires_explicit_unrolling() -> None:
     problem = phx.optim.QuadraticProgram(
         jnp.eye(1),
         jnp.asarray([-1.0]),
@@ -88,7 +91,7 @@ def test_mpax_algorithmic_differentiation_requires_explicit_unrolling():
         ),
     )
 
-    def solution(target):
+    def solution(target: Any) -> Any:
         candidate = phx.optim.QuadraticProgram(
             jnp.eye(1),
             -jnp.asarray([target]),

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -22,7 +24,7 @@ from phydrax.applications.skeletal_muscle.musculotendon import (
 )
 
 
-def _case(capacity: int):
+def _case(capacity: int) -> Any:
     parameters = DeGrooteFregly2016Parameters(
         jnp.linspace(400.0, 5000.0, capacity),
         jnp.linspace(0.04, 0.16, capacity),
@@ -64,7 +66,7 @@ def benchmark(
     jax.block_until_ready(output.tendon_force_N)
     elapsed = time.perf_counter() - start
 
-    def total_force(musculotendon_length):
+    def total_force(musculotendon_length: Any) -> Any:
         return jnp.sum(
             prepared.evaluate(
                 state, state.activation, musculotendon_length, velocity

@@ -9,7 +9,8 @@ from math import prod
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ...metrix import AbstractGeodesicManifold
@@ -33,7 +34,7 @@ class GeodesicEndpointInterpolant(AbstractEndpointInterpolant):
         source_coordinate: ArrayLike = 0.0,
         target_coordinate: ArrayLike = 1.0,
         interpolant_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(geometry, AbstractGeodesicManifold):
             raise TypeError("geometry must be an AbstractGeodesicManifold.")
         source = jnp.asarray(source_coordinate, dtype=jnp.float64).reshape(())
@@ -98,7 +99,9 @@ class GeodesicEndpointInterpolant(AbstractEndpointInterpolant):
         flat_time = time_array.reshape((count,))
         duration = self.target_coordinate - self.source_coordinate
 
-        def evaluate_one(start: Array, end: Array, coordinate: Array):
+        def evaluate_one(
+            start: Array, end: Array, coordinate: Array
+        ) -> tuple[Array, Array, Array]:
             logarithm = self.geometry.log(start, end)
             weight = (coordinate - self.source_coordinate) / duration
 

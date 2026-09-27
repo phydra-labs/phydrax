@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 
@@ -48,7 +49,7 @@ class SGMCMCDiagnostics(StrictModule):
         min_active_factors: int,
         max_active_factors: int,
         nonfinite_update_count: int,
-    ):
+    ) -> None:
         gradient_values = jnp.asarray(gradient_norm, dtype=jnp.float64)
         self.rhat = rhat
         self.bulk_ess = bulk_ess
@@ -83,7 +84,7 @@ class SGMCMCMixingThresholds(StrictModule):
         min_bulk_ess: float = 400.0,
         min_tail_ess: float = 400.0,
         allow_nonfinite_updates: bool = False,
-    ):
+    ) -> None:
         maximum = float(max_rhat)
         minimum_bulk = float(min_bulk_ess)
         minimum_tail = float(min_tail_ess)
@@ -136,7 +137,7 @@ class SGMCMCMixingReport(StrictModule):
         sample_memory_bytes: int,
         duration_seconds: float,
         samples_per_second: float,
-    ):
+    ) -> None:
         rhat_failures = _failing_locations(
             diagnostics.rhat,
             lambda value: ~jnp.isfinite(value) | (value > thresholds.max_rhat),
@@ -210,7 +211,7 @@ class SGMCMCMixingError(RuntimeError):
 
     report: SGMCMCMixingReport
 
-    def __init__(self, report: SGMCMCMixingReport):
+    def __init__(self, report: SGMCMCMixingReport) -> None:
         self.report = report
         super().__init__(
             "SG-MCMC mixing gates failed: " + ", ".join(report.failures) + "."

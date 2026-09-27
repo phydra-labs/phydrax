@@ -11,7 +11,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 from phydrax.linalg import inverse
@@ -41,7 +42,7 @@ class ConformalEinsteinState(StrictModule):
         /,
         *,
         state_id: str,
-    ):
+    ) -> None:
         omega = jnp.asarray(conformal_factor)
         shape = tuple(omega.shape)
         metric_value = jnp.asarray(metric, dtype=omega.dtype)
@@ -91,7 +92,7 @@ class ConformalEinsteinDerivativeData(StrictModule):
         weyl_divergence: ArrayLike,
         riemann: ArrayLike,
         derivative_source_id: str,
-    ):
+    ) -> None:
         if not isinstance(state, ConformalEinsteinState):
             raise TypeError("state must be ConformalEinsteinState.")
         shape = state.spatial_shape
@@ -139,7 +140,7 @@ class ConformalEinsteinSystem(StrictModule):
         *,
         scalar_curvature_gauge: float,
         residual_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         cosmological = float(cosmological_constant)
         scalar_curvature = float(scalar_curvature_gauge)
         tolerance = float(residual_tolerance)

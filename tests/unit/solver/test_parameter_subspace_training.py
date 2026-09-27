@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,12 +15,12 @@ import pytest
 import phydrax as phx
 
 
-def _output_target(model, *, key=None, iter_=None):
+def _output_target(model: Any, *, key: Any = None, iter_: Any = None) -> Any:
     del key, iter_
     return (model(jnp.asarray([1.0])) - 2.0) ** 2
 
 
-def _solver():
+def _solver() -> Any:
     base = phx.nn.models.MLP(
         in_size=1,
         out_size="scalar",
@@ -38,7 +41,7 @@ def _solver():
     )
 
 
-def test_functional_solver_optimizes_only_explicit_low_rank_factors():
+def test_functional_solver_optimizes_only_explicit_low_rank_factors() -> None:
     solver = _solver()
     subspace = phx.nn.parameters.low_rank_parameter_subspace(solver.functions)
     initial_loss = solver.loss(key=jr.key(2))
@@ -64,7 +67,7 @@ def test_functional_solver_optimizes_only_explicit_low_rank_factors():
     assert bool(frozen_equal)
 
 
-def test_functional_solver_requires_matching_low_rank_subspace():
+def test_functional_solver_requires_matching_low_rank_subspace() -> None:
     solver = _solver()
     with pytest.raises(ValueError, match="requires an explicit"):
         solver.solve(num_iter=1, optim=optax.sgd(1e-2), log_every=0)
@@ -82,7 +85,7 @@ def test_functional_solver_requires_matching_low_rank_subspace():
         )
 
 
-def test_functional_solver_rejects_non_optax_subspace_backend():
+def test_functional_solver_rejects_non_optax_subspace_backend() -> None:
     solver = _solver()
     subspace = phx.nn.parameters.low_rank_parameter_subspace(solver.functions)
     with pytest.raises(ValueError, match="unsupported by KFAC"):

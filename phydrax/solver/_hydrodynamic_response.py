@@ -10,7 +10,8 @@ from enum import IntEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -190,7 +191,7 @@ class WetSurfaceModalGeneralizedForceMap3D(StrictModule):
         reference_point_id: str,
         provider_id: str = "caller-supplied-checked-wet-force-map",
         precision_id: str = "complex128",
-    ):
+    ) -> None:
         source_names = tuple(str(value) for value in source_mode_names)
         target_names = tuple(str(value) for value in modal_names)
         if not source_names or any(not value for value in source_names):
@@ -494,7 +495,12 @@ def solve_hydrodynamic_response_3d(
             )
         )
 
-    if modal_enabled:
+    if (
+        structural_modal_mass is not None
+        and structural_modal_stiffness is not None
+        and structural_modal_damping is not None
+        and modal_force_map is not None
+    ):
         if not isinstance(modal_force_map, WetSurfaceModalGeneralizedForceMap3D):
             raise TypeError(
                 "modal_force_map must be WetSurfaceModalGeneralizedForceMap3D."

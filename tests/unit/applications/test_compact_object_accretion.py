@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -19,14 +22,14 @@ from phydrax.metrix._spacetime_conventions import RelativityConvention
 from phydrax.units import KILOGRAM, METER, SECOND
 
 
-def _eos():
+def _eos() -> Any:
     scale = RelativityScaleContract(
         DimensionalScaleContract(METER, KILOGRAM, SECOND), 1, 1, 1, 1
     )
     return GammaLawEOS(scale, 4.0 / 3.0, minimum_density=0.0)
 
 
-def test_michel_bondi_solution_satisfies_both_relativistic_integrals():
+def test_michel_bondi_solution_satisfies_both_relativistic_integrals() -> None:
     plan = MichelBondiAccretionPlan(
         _eos(),
         1.0,
@@ -58,7 +61,7 @@ def test_michel_bondi_solution_satisfies_both_relativistic_integrals():
     assert float(solution.radial_four_velocity[2]) > -plan.critical_radial_speed
 
 
-def test_fishbone_moncrief_torus_has_constant_first_integral_and_magnetic_seed():
+def test_fishbone_moncrief_torus_has_constant_first_integral_and_magnetic_seed() -> None:
     plan = FishboneMoncriefTorusPlan(
         _eos(),
         1.0,
@@ -97,7 +100,7 @@ def test_fishbone_moncrief_torus_has_constant_first_integral_and_magnetic_seed()
     assert float(data.primitive[0, 4]) > plan.atmosphere_pressure
 
 
-def test_ingoing_kerr_grid_lowers_consistent_cell_and_face_adm_stages():
+def test_ingoing_kerr_grid_lowers_consistent_cell_and_face_adm_stages() -> None:
     eos = _eos()
     grid = phx.discretization.TensorGridPlan(
         (

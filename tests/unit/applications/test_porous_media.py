@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -23,7 +26,7 @@ from phydrax.linalg import DenseLU, LinearSolvePolicy
 from phydrax.nonlinear import NewtonKrylov, NonlinearTermination
 
 
-def _geometry():
+def _geometry() -> Any:
     return UnstructuredFiniteVolumePlan(
         np.asarray(
             (
@@ -38,11 +41,11 @@ def _geometry():
     ).prepare()
 
 
-def _nonlinear_method():
+def _nonlinear_method() -> Any:
     return NewtonKrylov(linear_policy=LinearSolvePolicy(DenseLU()))
 
 
-def _termination():
+def _termination() -> Any:
     return NonlinearTermination(
         absolute_residual=1.0e-11,
         relative_residual=0.0,
@@ -52,11 +55,11 @@ def _termination():
     )
 
 
-def _exterior(discretization):
+def _exterior(discretization: Any) -> Any:
     return np.flatnonzero(np.asarray(discretization.neighbor_cells) < 0)
 
 
-def test_hybrid_mimetic_rotated_tensor_is_affine_exact_and_conservative():
+def test_hybrid_mimetic_rotated_tensor_is_affine_exact_and_conservative() -> None:
     discretization = _geometry()
     diffusion = HybridMimeticDiffusion(discretization)
     gradient = jnp.asarray([1.0, -2.0, 0.5])
@@ -75,7 +78,7 @@ def test_hybrid_mimetic_rotated_tensor_is_affine_exact_and_conservative():
     np.testing.assert_allclose(jnp.sum(local, axis=1), 0.0, atol=2.0e-14)
 
 
-def test_hybrid_global_solve_recovers_affine_dirichlet_field():
+def test_hybrid_global_solve_recovers_affine_dirichlet_field() -> None:
     discretization = _geometry()
     diffusion = HybridMimeticDiffusion(discretization)
     gradient = jnp.asarray([0.3, -0.5, 0.9])
@@ -97,7 +100,7 @@ def test_hybrid_global_solve_recovers_affine_dirichlet_field():
     )
 
 
-def _hydrostatic_plan(*, anchored=True, thermal_feedback=False):
+def _hydrostatic_plan(*, anchored: Any = True, thermal_feedback: Any = False) -> Any:
     discretization = _geometry()
     density = 1000.0
     gravity = -9.80665
@@ -129,7 +132,7 @@ def _hydrostatic_plan(*, anchored=True, thermal_feedback=False):
     return plan, pressure, jnp.asarray(face_pressure)
 
 
-def test_richards_hydrostatic_state_has_zero_flux_and_is_preserved():
+def test_richards_hydrostatic_state_has_zero_flux_and_is_preserved() -> None:
     plan, pressure, face_pressure = _hydrostatic_plan()
     previous = plan.initialize(pressure, face_pressure)
     flux = plan.fluxes(previous.pressure_Pa, previous.face_pressure_Pa)
@@ -142,7 +145,9 @@ def test_richards_hydrostatic_state_has_zero_flux_and_is_preserved():
     np.testing.assert_allclose(result.residual, 0.0, atol=1.0e-10)
 
 
-def test_saturated_closed_incompressible_richards_problem_fails_without_storage_floor():
+def test_saturated_closed_incompressible_richards_problem_fails_without_storage_floor() -> (
+    None
+):
     plan, pressure, face_pressure = _hydrostatic_plan(anchored=False)
     previous = plan.initialize(pressure, face_pressure)
     assert not plan.well_posed(previous.pressure_Pa)
@@ -151,7 +156,7 @@ def test_saturated_closed_incompressible_richards_problem_fails_without_storage_
     np.testing.assert_allclose(result.state.pressure_Pa, previous.pressure_Pa)
 
 
-def test_unsaturated_richards_step_has_implicit_forward_and_reverse_derivatives():
+def test_unsaturated_richards_step_has_implicit_forward_and_reverse_derivatives() -> None:
     discretization = _geometry()
     boundary = PorousBoundaryConditions(
         discretization,
@@ -168,7 +173,7 @@ def test_unsaturated_richards_step_has_implicit_forward_and_reverse_derivatives(
     )
     previous = plan.initialize(-2.0e4)
 
-    def total_mass(source):
+    def total_mass(source: Any) -> Any:
         result = plan.step(previous, 5.0, source_kg_s=jnp.asarray((source, 0.0)))
         return jnp.sum(result.state.water_mass_kg)
 
@@ -182,7 +187,7 @@ def test_unsaturated_richards_step_has_implicit_forward_and_reverse_derivatives(
     np.testing.assert_allclose(gradient, tangent, rtol=2.0e-8)
 
 
-def test_monolithic_water_heat_preserves_hydrostatic_isothermal_state():
+def test_monolithic_water_heat_preserves_hydrostatic_isothermal_state() -> None:
     water, pressure, face_pressure = _hydrostatic_plan(thermal_feedback=True)
     thermal_boundary = HybridDiffusionBoundary(
         water.discretization,

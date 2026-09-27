@@ -21,7 +21,7 @@ from phydrax.finance.execution._order_flow import (
 )
 
 
-def test_almgren_chriss_zero_risk_schedule_is_analytic_linear_liquidation():
+def test_almgren_chriss_zero_risk_schedule_is_analytic_linear_liquidation() -> None:
     grid = TimeGrid(jnp.linspace(0.0, 1.0, 5), time_id="ac-grid")
     model = AlmgrenChrissModel(
         volatility=0.2,
@@ -41,7 +41,7 @@ def test_almgren_chriss_zero_risk_schedule_is_analytic_linear_liquidation():
     assert zero.objective == 0.0
 
 
-def test_transient_exponential_state_uses_only_past_flow_and_decays():
+def test_transient_exponential_state_uses_only_past_flow_and_decays() -> None:
     grid = TimeGrid(jnp.asarray([0.0, 1.0, 2.0]), time_id="transient-grid")
     model = TransientPropagatorModel(
         jnp.asarray([2.0]),
@@ -59,7 +59,7 @@ def test_transient_exponential_state_uses_only_past_flow_and_decays():
     assert not bool(diagnose_transient_manipulation(adversarial, grid).passed)
 
 
-def test_queue_intensity_probes_and_hawkes_spectral_stability_are_explicit():
+def test_queue_intensity_probes_and_hawkes_spectral_stability_are_explicit() -> None:
     queue = QueueReactiveModel(
         jnp.asarray([1.0, 2.0]),
         jnp.asarray([[0.5, -0.5], [-0.25, 0.25]]),

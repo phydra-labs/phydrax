@@ -10,24 +10,29 @@ from typing import Any, cast, Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+import numpy as np
+from jax import Array
+from jax.typing import DTypeLike
 
-from ...._precision import (
+from ...._dtype_names import (
     complex_precision_dtype,
     ComplexPrecisionDType,
-    PrecisionEvidenceEnvelope,
-    PrecisionRequest,
-    PrecisionResolution,
     real_precision_dtype_name,
     RealPrecisionDType,
 )
+from ...._precision import (
+    PrecisionEvidenceEnvelope,
+    PrecisionRequest,
+    PrecisionResolution,
+)
 from ...._trainable import combine_parameters, partition_parameters
+from ....typing import parse
 from ..data import FunctionSamples, OperatorBatch, OperatorTargetBatch
 
 
 DTypeName: TypeAlias = RealPrecisionDType
 ComplexDTypeName: TypeAlias = ComplexPrecisionDType
-MatmulPrecisionName = Literal[
+MatmulPrecisionName: TypeAlias = Literal[
     "default",
     "high",
     "highest",
@@ -37,15 +42,6 @@ MatmulPrecisionName = Literal[
     "F32_F32_F32",
 ]
 
-_MATMUL_PRECISIONS = (
-    "default",
-    "high",
-    "highest",
-    "F16_F16_F32",
-    "BF16_BF16_F32",
-    "TF32_TF32_F32",
-    "F32_F32_F32",
-)
 _ALGORITHM_COMPUTE_DTYPES = {
     "F16_F16_F32": "float16",
     "BF16_BF16_F32": "bfloat16",
@@ -54,7 +50,7 @@ _ALGORITHM_COMPUTE_DTYPES = {
 }
 
 
-def _dtype(name: DTypeName):
+def _dtype(name: DTypeName) -> np.dtype:
     return jnp.dtype(real_precision_dtype_name(name))
 
 
@@ -62,7 +58,7 @@ def _complex_dtype_name(name: DTypeName, /) -> ComplexDTypeName:
     return complex_precision_dtype(name)
 
 
-def _cast_inexact(value: Any, dtype, /):
+def _cast_inexact(value: Any, dtype: DTypeLike, /) -> Array:
     array = jnp.asarray(value)
     if not jnp.issubdtype(array.dtype, jnp.inexact):
         return array
@@ -72,7 +68,7 @@ def _cast_inexact(value: Any, dtype, /):
     return array.astype(dtype)
 
 
-def _cast_parameter_tree(tree: Any, dtype, /) -> Any:
+def _cast_parameter_tree(tree: Any, dtype: DTypeLike, /) -> Any:
     return jax.tree_util.tree_map(
         lambda leaf: None if leaf is None else _cast_inexact(leaf, dtype),
         tree,
@@ -91,7 +87,7 @@ class OperatorPrecisionEvidence:
     matmul_precision: MatmulPrecisionName | None
     geometry_mode: Literal["preserve"] = "preserve"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         parameter = real_precision_dtype_name(self.parameter_dtype)
         compute = real_precision_dtype_name(self.compute_dtype)
         real_precision_dtype_name(self.reduction_dtype)
@@ -101,11 +97,11 @@ class OperatorPrecisionEvidence:
             raise ValueError(
                 "Operator complex precision must match its effective real companion."
             )
-        if (
-            self.matmul_precision is not None
-            and self.matmul_precision not in _MATMUL_PRECISIONS
-        ):
-            raise ValueError(f"Unsupported matmul precision {self.matmul_precision!r}.")
+        object.__setattr__(
+            self,
+            "matmul_precision",
+            parse(self.matmul_precision, MatmulPrecisionName | None, "matmul_precision"),
+        )
 
     def to_dict(self) -> dict[str, str | None]:
         return {
@@ -187,16 +183,17 @@ class OperatorDTypePolicy:
     reduction_dtype: DTypeName = "float32"
     matmul_precision: MatmulPrecisionName | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for value in (
             self.parameter_dtype,
             self.compute_dtype,
             self.reduction_dtype,
         ):
             _dtype(value)
-        precision = self.matmul_precision
-        if precision is not None and precision not in _MATMUL_PRECISIONS:
-            raise ValueError(f"Unsupported matmul precision {precision!r}.")
+        precision = parse(
+            self.matmul_precision, MatmulPrecisionName | None, "matmul_precision"
+        )
+        object.__setattr__(self, "matmul_precision", precision)
         required = _ALGORITHM_COMPUTE_DTYPES.get(precision)
         if required is not None and self.compute_dtype != required:
             raise ValueError(

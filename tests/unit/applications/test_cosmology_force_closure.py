@@ -8,7 +8,7 @@ import phydrax as phx
 cosmology = phx.applications.cosmology
 
 
-def test_local_curvature_validity_is_flat_exact_and_quadratic():
+def test_local_curvature_validity_is_flat_exact_and_quadratic() -> None:
     plan = cosmology.LocalCurvatureValidityPlan(
         light_speed=1.0,
         geometry_error_budget=1.0e-3,
@@ -25,7 +25,7 @@ def test_local_curvature_validity_is_flat_exact_and_quadratic():
     assert bool(curved.successful)
 
 
-def test_periodic_ewald_is_symmetric_and_near_field_gate_is_fail_closed():
+def test_periodic_ewald_is_symmetric_and_near_field_gate_is_fail_closed() -> None:
     ewald = cosmology.PeriodicEwaldForcePlan(
         (1.0, 1.0, 1.0),
         1.0,
@@ -54,7 +54,7 @@ def test_periodic_ewald_is_symmetric_and_near_field_gate_is_fail_closed():
     assert not bool(rejected["approved"])
 
 
-def test_screened_ewald_radius_route_matches_zero_shell_and_fails_closed():
+def test_screened_ewald_radius_route_matches_zero_shell_and_fails_closed() -> None:
     positions = jnp.asarray([[0.20, 0.30, 0.40], [0.70, 0.60, 0.50], [0.40, 0.80, 0.20]])
     masses = jnp.asarray([1.0, 0.8, 1.2])
     common = {
@@ -66,6 +66,7 @@ def test_screened_ewald_radius_route_matches_zero_shell_and_fails_closed():
     direct = cosmology.PeriodicEwaldForcePlan(
         (1.0, 1.0, 1.0),
         1.0,
+        # ty: ignore[invalid-argument-type]
         **common,
     ).evaluate(positions, masses)
     radius = cosmology.PeriodicEwaldForcePlan(
@@ -94,7 +95,7 @@ def test_screened_ewald_radius_route_matches_zero_shell_and_fails_closed():
     np.testing.assert_array_equal(exhausted.acceleration, 0.0)
 
 
-def test_screened_ewald_radius_route_is_filter_jittable():
+def test_screened_ewald_radius_route_is_filter_jittable() -> None:
     plan = cosmology.PeriodicEwaldForcePlan(
         (1.0, 1.0, 1.0),
         1.0,
@@ -112,7 +113,7 @@ def test_screened_ewald_radius_route_is_filter_jittable():
     assert int(result.evidence.required_real_pairs) == 6
 
 
-def test_screened_ewald_radius_route_resolves_periodic_image_seam():
+def test_screened_ewald_radius_route_resolves_periodic_image_seam() -> None:
     positions = jnp.asarray([[0.05, 0.5, 0.5], [0.95, 0.5, 0.5]])
     masses = jnp.asarray([1.0, 0.8])
     plan = cosmology.PeriodicEwaldForcePlan(
@@ -139,6 +140,7 @@ def test_screened_ewald_radius_route_resolves_periodic_image_seam():
     self_pair = (
         jnp.eye(positions.shape[0], dtype="bool")[:, :, None] & zero_offset[None, None, :]
     )
+    # ty: ignore[unsupported-operator]
     valid = ~self_pair & (geometric_radius <= plan.real_cutoff)
     expected = jnp.sum(
         jnp.where(
@@ -154,7 +156,7 @@ def test_screened_ewald_radius_route_resolves_periodic_image_seam():
     np.testing.assert_allclose(result.evidence.real_space_acceleration, expected)
 
 
-def test_snapshot_and_distributed_feasibility_contracts():
+def test_snapshot_and_distributed_feasibility_contracts() -> None:
     artifact = cosmology.ScientificArtifactEnvelope(
         artifact_kind="snapshot",
         content_digest="snapshot-fixture",
@@ -166,9 +168,13 @@ def test_snapshot_and_distributed_feasibility_contracts():
         status="complete",
     )
     snapshot = cosmology.CosmologySnapshotProduct(
+        # ty: ignore[invalid-argument-type]
         [1, 2],
+        # ty: ignore[invalid-argument-type]
         [[0.1, 0.2, 0.3], [0.5, 0.6, 0.7]],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         0.5,
         (1.0, 1.0, 1.0),

@@ -24,6 +24,7 @@ polygons = (
     (3, 4, 7, 6),
     (4, 5, 8, 7),
 )
+# ty: ignore[invalid-argument-type]
 mesh = phx.discretization.CellMesh.from_polygons(coordinates, polygons)
 element = phx.discretization.conforming_h1_virtual_element(2)
 field = phx.discretization.VirtualElementFieldSpec("u", element)

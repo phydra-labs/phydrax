@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _rigid_pair():
+def _rigid_pair() -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([1, 2]), jnp.ones((2,)), ambient_dimension=3
     ).prepare()
@@ -25,7 +28,7 @@ def _rigid_pair():
     return particles, bodies, kinematics
 
 
-def test_rigid_body_lie_step_and_clump_owner_component_contracts():
+def test_rigid_body_lie_step_and_clump_owner_component_contracts() -> None:
     particles, bodies, kinematics = _rigid_pair()
     load = phx.discretization.RigidBodyLoad(
         jnp.zeros((2, 3)), jnp.asarray([[0.0, 0.0, 1.0], [0.0, 0.0, -1.0]])
@@ -67,7 +70,7 @@ def test_rigid_body_lie_step_and_clump_owner_component_contracts():
     assert jnp.unique(expanded.component_pair_keys, axis=0).shape[0] == 4
 
 
-def test_triangle_and_shape_agnostic_sphere_contact_geometry():
+def test_triangle_and_shape_agnostic_sphere_contact_geometry() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([3]), jnp.asarray([1.0]), ambient_dimension=3
     ).prepare()
@@ -89,7 +92,7 @@ def test_triangle_and_shape_agnostic_sphere_contact_geometry():
     assert batch.normal.shape == (1, 3)
 
 
-def test_fixed_bond_elasticity_damage_and_irreversibility():
+def test_fixed_bond_elasticity_damage_and_irreversibility() -> None:
     particles, bodies, kinematics = _rigid_pair()
     plan = phx.discretization.FixedBondGraphPlan(
         jnp.asarray([1]),
@@ -118,7 +121,7 @@ def test_fixed_bond_elasticity_damage_and_irreversibility():
     assert updated.cumulative_fracture_energy[0] >= 0.0
 
 
-def test_fixed_pool_topology_split_conserves_mass_and_momentum():
+def test_fixed_pool_topology_split_conserves_mass_and_momentum() -> None:
     plan = phx.discretization.TopologyEventPlan(3, 2, 2, 3)
     state = phx.discretization.TopologyPoolState(
         jnp.asarray([10, 11, 12], dtype=jnp.int64),
@@ -169,7 +172,7 @@ def test_fixed_pool_topology_split_conserves_mass_and_momentum():
     np.testing.assert_array_equal(invalid.accepted_state.mass, state.mass)
 
 
-def _tetrahedron(shift):
+def _tetrahedron(shift: Any) -> Any:
     vertices = jnp.asarray(
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
     ) + jnp.asarray(shift)
@@ -177,7 +180,7 @@ def _tetrahedron(shift):
     return phx.discretization.ConvexShapePlan(vertices, triangles, 0).prepare()
 
 
-def test_convex_and_implicit_contact_oracles_report_certified_geometry():
+def test_convex_and_implicit_contact_oracles_report_certified_geometry() -> None:
     left = _tetrahedron((0.0, 0.0, 0.0))
     right = _tetrahedron((0.0, 0.0, 0.0))
     contact = phx.discretization.convex_sat_contact(

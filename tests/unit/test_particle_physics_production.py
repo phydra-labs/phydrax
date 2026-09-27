@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _catalog():
+def _catalog() -> Any:
     return phx.particle_physics.ParticleCatalogReference(
         source_id="test-pdg",
         provider_release="test",
@@ -16,7 +19,7 @@ def _catalog():
     )
 
 
-def _event_plan(event_capacity=2, particle_capacity=4):
+def _event_plan(event_capacity: Any = 2, particle_capacity: Any = 4) -> Any:
     return phx.particle_physics.ParticleEventPlan(
         catalog=_catalog(),
         momentum_unit=phx.units.GIGAELECTRONVOLT,
@@ -29,7 +32,7 @@ def _event_plan(event_capacity=2, particle_capacity=4):
     )
 
 
-def test_event_weight_accounting_preserves_signed_statistics_and_overflow():
+def test_event_weight_accounting_preserves_signed_statistics_and_overflow() -> None:
     weights = phx.particle_physics.EventWeightSet(
         jnp.asarray([[1.0], [-0.5], [0.0]]),
         names=("nominal",),
@@ -58,7 +61,7 @@ def test_event_weight_accounting_preserves_signed_statistics_and_overflow():
     assert int(overflow.overflow_count) == 1
 
 
-def test_lhef_roundtrip_preserves_supported_event_semantics():
+def test_lhef_roundtrip_preserves_supported_event_semantics() -> None:
     text = """<LesHouchesEvents version=\"3.0\">
 <init>0 0 0 0 0 0 0 0 3 1\n0 0 0 0</init>
 <event>
@@ -88,7 +91,7 @@ def test_lhef_roundtrip_preserves_supported_event_semantics():
     assert "\nU GEV MM\n" in hepmc.payload
 
 
-def test_duplicate_event_identity_invalidates_every_duplicate():
+def test_duplicate_event_identity_invalidates_every_duplicate() -> None:
     plan = _event_plan().prepare()
     weights = phx.particle_physics.EventWeightSet(
         jnp.ones((2, 1)),
@@ -121,7 +124,9 @@ def test_duplicate_event_identity_invalidates_every_duplicate():
     )
 
 
-def test_native_two_body_production_has_correct_constant_matrix_element_normalization():
+def test_native_two_body_production_has_correct_constant_matrix_element_normalization() -> (
+    None
+):
     scattering = phx.applications.relativistic_scattering
     incoming = (
         scattering.Particle(

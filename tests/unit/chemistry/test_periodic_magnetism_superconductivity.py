@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -37,7 +39,7 @@ from phydrax.sparse import EdgeRelation
 from phydrax.units import ANGSTROM, ELECTRONVOLT
 
 
-def _orbital_basis(labels, *, rank=2):
+def _orbital_basis(labels: Any, *, rank: Any = 2) -> Any:
     cell = PeriodicCell(np.eye(rank))
     return PeriodicOrbitalBasisPlan(
         cell,
@@ -48,7 +50,7 @@ def _orbital_basis(labels, *, rank=2):
     )
 
 
-def _matrix_family(matrix, rank, *, hermitian):
+def _matrix_family(matrix: Any, rank: Any, *, hermitian: Any) -> Any:
     matrix = np.asarray(matrix, dtype="complex128")
     count = matrix.shape[0]
     target = np.repeat(np.arange(count), count)
@@ -68,14 +70,14 @@ def _matrix_family(matrix, rank, *, hermitian):
     return prepare_periodic_translation_family(plan, state)
 
 
-def _onsite_pencil(basis, matrix):
+def _onsite_pencil(basis: Any, matrix: Any) -> Any:
     family = _matrix_family(matrix, basis.cell.rank, hermitian=True)
     return PeriodicOrbitalPencilPlan.orthonormal(
         basis, family.plan, family.state, ELECTRONVOLT
     ).prepare()
 
 
-def test_supplied_p_orbital_l_dot_s_splitting_and_spin_projection():
+def test_supplied_p_orbital_l_dot_s_splitting_and_spin_projection() -> None:
     basis = _orbital_basis(("px", "py", "pz"))
     convention = SpinorBasisConvention(basis)
     angular = np.asarray(
@@ -114,7 +116,7 @@ def test_supplied_p_orbital_l_dot_s_splitting_and_spin_projection():
     assert observable.spin_bound_residual < 1.0e-12
 
 
-def test_finite_channel_gap_closure_and_trivial_class_d_chern_composition():
+def test_finite_channel_gap_closure_and_trivial_class_d_chern_composition() -> None:
     basis = _orbital_basis(("up", "down"))
     pencil = _onsite_pencil(basis, np.zeros((2, 2)))
     mesh = ReciprocalMeshPlan.monkhorst_pack(basis.cell, (2, 2))
@@ -126,6 +128,7 @@ def test_finite_channel_gap_closure_and_trivial_class_d_chern_composition():
         mesh,
         minus,
         (pairing_family,),
+        # ty: ignore[invalid-argument-type]
         [[2.0]],
         ("onsite-singlet",),
     )
@@ -145,6 +148,7 @@ def test_finite_channel_gap_closure_and_trivial_class_d_chern_composition():
             minimum_gap=1.0e-4,
             maximum_mode_count=4,
         ),
+        # ty: ignore[invalid-argument-type]
         [0.9 + 0.0j],
     )
     assert bool(mean_field.successful)

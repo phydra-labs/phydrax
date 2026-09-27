@@ -13,7 +13,8 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jax.typing import DTypeLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -27,12 +28,13 @@ from ..operators.quantum._propagation import (
     unitarity_residual,
 )
 from ..operators.quantum._register import HilbertRegisterLayout
+from ..typing import parse
 
 
 RouteStrategy: TypeAlias = Literal["swap", "interval"]
 
 
-def _swap_matrix(dtype) -> Array:
+def _swap_matrix(dtype: DTypeLike) -> Array:
     return jnp.asarray(
         [
             [1, 0, 0, 0],
@@ -58,7 +60,7 @@ class HardwareTopology(StrictModule):
         couplings: Sequence[tuple[str, str]],
         native_gate_set: Sequence[str],
         /,
-    ):
+    ) -> None:
         wires = tuple(str(value) for value in physical_wire_ids)
         if (
             not wires
@@ -138,11 +140,10 @@ class QuantumCompilationPolicy(StrictModule):
         route_strategy: RouteStrategy,
         maximum_swaps: int,
         gate_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         swaps = int(maximum_swaps)
         tolerance = float(gate_tolerance)
-        if route_strategy not in ("swap", "interval"):
-            raise ValueError("route_strategy must be 'swap' or 'interval'.")
+        route_strategy = parse(route_strategy, RouteStrategy, "route_strategy")
         if swaps < 0 or not isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("Compilation swap/tolerance policy is invalid.")
         self.route_strategy = route_strategy

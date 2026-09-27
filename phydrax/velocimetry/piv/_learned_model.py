@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -21,6 +22,7 @@ from ..._model import register_artifact_value
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, ParameterOwner
 from ...imaging import image_coordinates
+from ...typing import PRNGKey
 from ..imaging._types import DenseDisplacementField2D, ImagePair2D
 from ._learned_primitives import (
     backward_warp_2d,
@@ -49,7 +51,7 @@ class LearnedDensePIVPlan(StrictModule, NonTrainableState):
         level_count: int = 3,
         search_radius: int = 2,
         cost_volume_chunk_size: int = 16,
-    ):
+    ) -> None:
         rows, columns = (int(image_shape[0]), int(image_shape[1]))
         channels = int(input_channels)
         levels = int(level_count)
@@ -278,9 +280,9 @@ class _ChannelLastConv2D(StrictModule):
         kernel_size: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         final_scale: float = 1.0,
-    ):
+    ) -> None:
         input_count = int(in_channels)
         output_count = int(out_channels)
         kernel = int(kernel_size)
@@ -328,8 +330,8 @@ class _SharedFeaturePyramid(StrictModule):
         feature_channels: int,
         /,
         *,
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         keys = jr.split(key, 3)
         self.input_projection = _ChannelLastConv2D(
             input_channels, feature_channels, 3, key=keys[0]
@@ -369,8 +371,8 @@ class _SharedResidualRefinement(StrictModule):
         radius: int,
         /,
         *,
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         keys = jr.split(key, 3)
         self.input_projection = _ChannelLastConv2D(
             input_channels, hidden_channels, 3, key=keys[0]
@@ -413,8 +415,8 @@ class CorrelationPyramidPIV(AbstractDensePIVModel):
         *,
         feature_channels: int = 16,
         refinement_channels: int = 32,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         if not isinstance(plan, LearnedDensePIVPlan):
             raise TypeError("plan must be a LearnedDensePIVPlan.")
         features = int(feature_channels)

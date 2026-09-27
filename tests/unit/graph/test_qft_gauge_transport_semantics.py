@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -19,7 +22,7 @@ from phydrax.metrix import SpecialUnitaryGroup
 from phydrax.metrix._gauge_representation import FundamentalGaugeRepresentation
 
 
-def _cycle_shift_plan():
+def _cycle_shift_plan() -> Any:
     topology = polygonal_cell_complex(None, jnp.asarray([[0, 1, 2, 3]]), 4)
     space = MatrixGaugeLinkSpace(topology, SpecialUnitaryGroup(2))
     tails, heads = (np.asarray(value) for value in oriented_edge_endpoints(topology))
@@ -40,6 +43,7 @@ def _cycle_shift_plan():
         TensorTopology(("x",), (4,), periodic=(True,)),
         jnp.asarray([-1.0 + 0.0j]),
     )
+    # ty: ignore[invalid-argument-type]
     representation = FundamentalGaugeRepresentation(space.group)
     return GaugeCovariantShiftPlan(
         space,
@@ -51,7 +55,7 @@ def _cycle_shift_plan():
     )
 
 
-def test_covariant_forward_and_backward_shifts_transform_at_destination_site():
+def test_covariant_forward_and_backward_shifts_transform_at_destination_site() -> None:
     plan = _cycle_shift_plan()
     group = plan.link_space.group
     link_coordinates = 0.05 * jnp.arange(12.0).reshape((4, 3))
@@ -82,7 +86,7 @@ def test_covariant_forward_and_backward_shifts_transform_at_destination_site():
     )
 
 
-def test_staple_is_the_ordered_complement_of_each_triangle_link():
+def test_staple_is_the_ordered_complement_of_each_triangle_link() -> None:
     topology = polygonal_cell_complex(jnp.asarray([[0, 1, 2]]), None, 3)
     boundaries = prepare_cell_boundary_paths(topology)
     space = MatrixGaugeLinkSpace(topology, SpecialUnitaryGroup(2))

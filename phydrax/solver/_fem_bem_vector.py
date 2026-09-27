@@ -6,13 +6,15 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import (
     AbstractLinearOperator,
+    AbstractVectorSpace,
     BlockLinearOperator,
     BlockSpace,
     DifferentiationPolicy,
@@ -112,7 +114,7 @@ class ElasticityFEMBEMInterfaceQualification3D(StrictModule, NonTrainableState):
         matching: bool = True,
         spatial_dimension: int = 3,
         continuum_certified: bool = False,
-    ):
+    ) -> None:
         identifiers = tuple(
             str(value)
             for value in (
@@ -297,7 +299,9 @@ def _default_linear_policy() -> LinearSolvePolicy:
     )
 
 
-def _require_same_space(actual, expected_id: str, role: str, /) -> None:
+def _require_same_space(
+    actual: AbstractVectorSpace, expected_id: str, role: str, /
+) -> None:
     if actual.space_id != expected_id:
         raise ValueError(
             f"{role} space {actual.space_id!r} does not match qualified space {expected_id!r}."

@@ -13,14 +13,16 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from .._uncertainty import UNCERTAINTY_SOURCES, UncertaintySource
+from .._uncertainty import UncertaintySource, validate_uncertainty_source
 from ..stochastic._process import AbstractMarginalTransitionLaw, semigroup_objective
+from ..typing import PRNGKey
 from ._metrics import energy_score, ensemble_crps
 from ._predictive import _broadcast_field_data, PredictiveField
 
@@ -429,7 +431,7 @@ def observable_rank_diagnostics(
     /,
     *,
     sample_axis: int = 0,
-    key: Key[Array, ""] | None = None,
+    key: PRNGKey | None = None,
     confidence: float = 0.95,
 ) -> UniformRankDiagnostics:
     """Compute tie-randomized ranks for declared scalar observables.
@@ -528,7 +530,7 @@ def semigroup_mc_diagnostics(
     t0: ArrayLike,
     tmid: ArrayLike,
     t1: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_samples: int = 256,
     num_replicates: int = 16,
     observable: Callable[[Array], Array] | None = None,
@@ -814,11 +816,10 @@ def predictive_variance_decomposition(
         resolved_order = tuple(str(source) for source in order)
         if len(set(resolved_order)) != len(resolved_order):
             raise ValueError("order must not contain duplicate uncertainty sources.")
-        invalid = tuple(
-            source for source in resolved_order if source not in UNCERTAINTY_SOURCES
+        resolved_order = tuple(
+            validate_uncertainty_source(source, owner="order")
+            for source in resolved_order
         )
-        if invalid:
-            raise ValueError(f"Unknown uncertainty sources: {invalid!r}.")
         if "numerical" in resolved_order:
             raise ValueError(
                 "order covers explicit predictive sample sources only; numerical "

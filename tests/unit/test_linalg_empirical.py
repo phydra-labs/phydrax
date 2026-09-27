@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -6,7 +8,9 @@ import pytest
 import phydrax as phx
 
 
-def _dense_weighted_gram(matrix, weights, *, centered, damping):
+def _dense_weighted_gram(
+    matrix: Any, weights: Any, *, centered: Any, damping: Any
+) -> Any:
     normalized = weights / jnp.sum(weights)
     values = matrix
     if centered:
@@ -16,7 +20,7 @@ def _dense_weighted_gram(matrix, weights, *, centered, damping):
     )
 
 
-def test_empirical_gram_matches_weighted_centered_dense_reference():
+def test_empirical_gram_matches_weighted_centered_dense_reference() -> None:
     matrix = jnp.asarray(
         [[1.0, 2.0, -1.0], [2.0, -1.0, 0.5], [4.0, 0.0, 3.0], [3.0, 1.0, 2.0]]
     )
@@ -39,7 +43,7 @@ def test_empirical_gram_matches_weighted_centered_dense_reference():
     assert operator.properties.certifies("positive_definite")
 
 
-def test_zero_weight_rows_mask_nonfinite_features_before_differentiation():
+def test_zero_weight_rows_mask_nonfinite_features_before_differentiation() -> None:
     matrix = jnp.asarray([[1.0, 2.0], [jnp.nan, jnp.nan], [3.0, -1.0]])
     operator = phx.linalg.EmpiricalGramLinearOperator(
         phx.linalg.DenseLinearOperator(matrix),
@@ -61,7 +65,7 @@ def test_zero_weight_rows_mask_nonfinite_features_before_differentiation():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_empirical_gram_complex_adjoint_and_transpose_are_distinct_and_correct():
+def test_empirical_gram_complex_adjoint_and_transpose_are_distinct_and_correct() -> None:
     matrix = jnp.asarray([[1.0 + 1.0j, 2.0], [0.5j, -1.0 + 2.0j], [3.0, 0.25 - 0.5j]])
     weights = jnp.asarray([1.0, 3.0, 2.0])
     direction = jnp.asarray([0.2 + 0.1j, -0.3 + 0.4j])
@@ -77,7 +81,7 @@ def test_empirical_gram_complex_adjoint_and_transpose_are_distinct_and_correct()
     assert jnp.allclose(operator.transpose_mv(direction), dense.T @ direction)
 
 
-def test_empirical_gram_solves_through_existing_linear_runtime():
+def test_empirical_gram_solves_through_existing_linear_runtime() -> None:
     features = jnp.asarray([[1.0, 0.0], [0.0, 2.0], [1.0, 1.0]])
     operator = phx.linalg.EmpiricalGramLinearOperator(
         phx.linalg.DenseLinearOperator(features),
@@ -93,7 +97,7 @@ def test_empirical_gram_solves_through_existing_linear_runtime():
     assert jnp.allclose(result.value, jnp.linalg.solve(dense, rhs), atol=1e-10)
 
 
-def test_empirical_gram_rejects_invalid_weights_and_shapes():
+def test_empirical_gram_rejects_invalid_weights_and_shapes() -> None:
     features = phx.linalg.DenseLinearOperator(jnp.ones((3, 2)))
     with pytest.raises(ValueError, match="shape"):
         phx.linalg.EmpiricalGramLinearOperator(features, jnp.ones((2,)))
@@ -103,7 +107,7 @@ def test_empirical_gram_rejects_invalid_weights_and_shapes():
         phx.linalg.EmpiricalGramLinearOperator(features, jnp.zeros((3,)))
 
 
-def test_public_fisher_action_uses_uncentered_empirical_geometry():
+def test_public_fisher_action_uses_uncentered_empirical_geometry() -> None:
     scores = jnp.asarray([[1.0, 2.0], [3.0, -1.0], [0.5, 4.0]])
     vector = jnp.asarray([0.2, -0.4])
     weights = jnp.asarray([1.0, 2.0, 3.0])

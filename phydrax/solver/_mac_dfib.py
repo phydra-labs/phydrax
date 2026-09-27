@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -75,7 +76,7 @@ class MACDivergenceFreeMarkerTransfer(StrictModule, NonTrainableState):
         *,
         require_periodic: bool = True,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if transfer.operators.prepared_id != projection.operators.prepared_id:
             raise ValueError("DFIB transfer and pressure projection operators differ.")
         periodic = all(
@@ -243,7 +244,7 @@ class MACDFIBProjectionPlan(StrictModule, NonTrainableState):
         *,
         linear_policy: LinearSolvePolicy | None = None,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(transfer, MACDivergenceFreeMarkerTransfer):
             raise TypeError("transfer must be MACDivergenceFreeMarkerTransfer.")
         tolerance_ = float(tolerance)
@@ -319,7 +320,7 @@ class MACDFIBProjectionPlan(StrictModule, NonTrainableState):
         target = regular.markers.active_values(marker_state.velocity)
         marker_space = regular.markers.active_velocity_space
 
-        def mobility_action(multiplier):
+        def mobility_action(multiplier: Array) -> Array:
             spread = self.transfer.spread(relation, multiplier, boundary_stage=stage)
             inverse = stage_inverse.apply_inverse(spread)
             return self.transfer.gather(relation, inverse, boundary_stage=stage)

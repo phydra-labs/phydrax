@@ -1,9 +1,11 @@
+from typing import Any
+
 import numpy as np
 
 import phydrax as phx
 
 
-def test_tda_tracking_preserves_parent_root_identity_across_reordering():
+def test_tda_tracking_preserves_parent_root_identity_across_reordering() -> None:
     dipole_unit = phx.units.derived_unit(
         "e*bohr", ((phx.units.ELEMENTARY_CHARGE, 1), (phx.units.BOHR, 1))
     )
@@ -13,7 +15,9 @@ def test_tda_tracking_preserves_parent_root_identity_across_reordering():
     )
     parent = phx.chemistry.TammDancoffPlan(
         manifold_plan,
+        # ty: ignore[invalid-argument-type]
         [[0.2, 0.0], [0.0, 0.3]],
+        # ty: ignore[invalid-argument-type]
         [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
         -1.0,
         phx.units.HARTREE,
@@ -21,7 +25,9 @@ def test_tda_tracking_preserves_parent_root_identity_across_reordering():
     ).solve()
     candidate_plan = phx.chemistry.TammDancoffPlan(
         manifold_plan,
+        # ty: ignore[invalid-argument-type]
         [[0.31, 0.0], [0.0, 0.19]],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0]],
         -1.0,
         phx.units.HARTREE,
@@ -37,7 +43,7 @@ def test_tda_tracking_preserves_parent_root_identity_across_reordering():
     np.testing.assert_array_equal(tracking.permutation, [1, 0])
 
 
-def test_tracked_manifolds_produce_antisymmetric_nonadiabatic_coupling():
+def test_tracked_manifolds_produce_antisymmetric_nonadiabatic_coupling() -> None:
     dipole_unit = phx.units.derived_unit(
         "e*bohr", ((phx.units.ELEMENTARY_CHARGE, 1), (phx.units.BOHR, 1))
     )
@@ -45,7 +51,9 @@ def test_tracked_manifolds_produce_antisymmetric_nonadiabatic_coupling():
     transition = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
     reference = phx.chemistry.TammDancoffPlan(
         plan,
+        # ty: ignore[invalid-argument-type]
         [[0.2, 0.0], [0.0, 0.4]],
+        # ty: ignore[invalid-argument-type]
         transition,
         -1.0,
         phx.units.HARTREE,
@@ -59,6 +67,7 @@ def test_tracked_manifolds_produce_antisymmetric_nonadiabatic_coupling():
     plus = phx.chemistry.TammDancoffPlan(
         plan,
         rotation @ diagonal @ rotation.T,
+        # ty: ignore[invalid-argument-type]
         transition,
         -1.0,
         phx.units.HARTREE,
@@ -67,6 +76,7 @@ def test_tracked_manifolds_produce_antisymmetric_nonadiabatic_coupling():
     minus = phx.chemistry.TammDancoffPlan(
         plan,
         rotation.T @ diagonal @ rotation,
+        # ty: ignore[invalid-argument-type]
         transition,
         -1.0,
         phx.units.HARTREE,
@@ -91,13 +101,15 @@ def test_tracked_manifolds_produce_antisymmetric_nonadiabatic_coupling():
     )
 
 
-def test_uv_visible_broadening_preserves_strength_on_each_supported_axis():
+def test_uv_visible_broadening_preserves_strength_on_each_supported_axis() -> None:
     dipole_unit = phx.units.derived_unit(
         "e*bohr", ((phx.units.ELEMENTARY_CHARGE, 1), (phx.units.BOHR, 1))
     )
     manifold = phx.chemistry.TammDancoffPlan(
         phx.chemistry.ExcitedStateManifoldPlan(1),
+        # ty: ignore[invalid-argument-type]
         [[0.2]],
+        # ty: ignore[invalid-argument-type]
         [[1.0, 0.0, 0.0]],
         -1.0,
         phx.units.HARTREE,
@@ -138,13 +150,17 @@ def test_uv_visible_broadening_preserves_strength_on_each_supported_axis():
         )
 
 
-def test_nonresonant_raman_reports_activity_and_depolarization_separately():
+def test_nonresonant_raman_reports_activity_and_depolarization_separately() -> None:
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     structure = phx.atomistic.AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [[-0.35, 0.0, 0.0], [0.35, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         units.scale,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[1, 2],
     )
     system = phx.atomistic.AtomisticSystemPlan.from_structure(
@@ -154,11 +170,16 @@ def test_nonresonant_raman_reports_activity_and_depolarization_separately():
     modes[0, 0, 0] = -1.0 / np.sqrt(2.0)
     modes[1, 0, 0] = 1.0 / np.sqrt(2.0)
     vibration = phx.chemistry.VibrationalAnalysisResult(
+        # ty: ignore[invalid-argument-type]
         [1.0],
+        # ty: ignore[invalid-argument-type]
         [0.1],
+        # ty: ignore[invalid-argument-type]
         [1000.0],
+        # ty: ignore[invalid-argument-type]
         [False],
         modes,
+        # ty: ignore[invalid-argument-type]
         [0.5],
         external_mode_count=5,
         external_projection_residual=0.0,
@@ -178,7 +199,7 @@ def test_nonresonant_raman_reports_activity_and_depolarization_separately():
         ),
     )
 
-    def polarizability(positions):
+    def polarizability(positions: Any) -> Any:
         coordinate = np.asarray(positions)
         bond = coordinate[1, 0] - coordinate[0, 0]
         tensor = np.diag([2.0 * bond, bond, 0.5 * bond])

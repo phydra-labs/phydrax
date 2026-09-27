@@ -8,7 +8,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -75,7 +76,7 @@ class LowMachReactingFormulation(StrictModule, NonTrainableState):
         *,
         mechanism: PreparedChemicalMechanism | None = None,
         constraint_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(thermodynamics, HomogeneousHelmholtzPlan):
             raise TypeError("thermodynamics must be HomogeneousHelmholtzPlan.")
         if not isinstance(thermodynamics.residual, ZeroResidualHelmholtzTerm):

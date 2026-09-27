@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 from uuid import uuid4
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -59,7 +60,9 @@ class SegmentQueryResult(StrictModule):
     segment_index: Array
     normal: Array
 
-    def __init__(self, *, closest_point, distance, segment_index, normal):
+    def __init__(
+        self, *, closest_point: Any, distance: Any, segment_index: Any, normal: Any
+    ) -> None:
         self.closest_point = jnp.asarray(closest_point, dtype=jnp.float64)
         self.distance = jnp.asarray(distance, dtype=jnp.float64)
         self.segment_index = jnp.asarray(segment_index, dtype=jnp.int32)
@@ -73,7 +76,9 @@ class SegmentMesh(StrictModule):
     topology: SegmentTopology
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, vertices: Array, edges: Array, *, source_id: str | None = None):
+    def __init__(
+        self, vertices: Array, edges: Array, *, source_id: str | None = None
+    ) -> None:
         vertices_host = np.asarray(vertices, dtype=np.float64)
         if (
             vertices_host.ndim != 2
@@ -148,26 +153,26 @@ class _LoopBoundaryMap(AbstractBoundaryMap):
     vertices: Array
     edges: Array
 
-    def __init__(self, vertices: Array, edges: Array):
+    def __init__(self, vertices: Array, edges: Array) -> None:
         self.vertices, self.edges = vertices, edges
 
     @property
-    def num_charts(self):
+    def num_charts(self) -> Any:
         return self.edges.shape[0]
 
     @property
-    def reference_dimension(self):
+    def reference_dimension(self) -> int:
         return 1
 
     @property
-    def ambient_dimension(self):
+    def ambient_dimension(self) -> int:
         return 2
 
-    def map(self, chart_indices, reference, /):
+    def map(self, chart_indices: Any, reference: Any, /) -> Any:
         segment = self.vertices[self.edges[chart_indices]]
         return segment[..., 0, :] + reference * (segment[..., 1, :] - segment[..., 0, :])
 
-    def jacobian(self, chart_indices, reference, /):
+    def jacobian(self, chart_indices: Any, reference: Any, /) -> Any:
         del reference
         segment = self.vertices[self.edges[chart_indices]]
         return jnp.linalg.norm(segment[..., 1, :] - segment[..., 0, :], axis=-1)
@@ -187,7 +192,7 @@ class PlanarMeshRegion(GeometrySource):
         loops: Sequence[Sequence[int]],
         *,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         vertices_host = np.asarray(vertices, dtype=np.float64)
         if vertices_host.ndim != 2 or vertices_host.shape[1] != 2:
             raise ValueError("vertices must have shape (num_vertices, 2).")
@@ -204,6 +209,7 @@ class PlanarMeshRegion(GeometrySource):
         edges = np.concatenate(
             [np.stack((loop, np.roll(loop, -1)), axis=1) for loop in loops_host], axis=0
         )
+        # ty: ignore[invalid-argument-type]
         SegmentTopology(edges, num_vertices=vertices_host.shape[0])
         signed_areas = []
         for loop in loops_host:
@@ -247,7 +253,9 @@ class _PlanarMeshRegionKernel(GeometryKernel):
     loop_offsets: Array
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, vertices, edges, loop_offsets, *, source_id):
+    def __init__(
+        self, vertices: Any, edges: Any, loop_offsets: Any, *, source_id: Any
+    ) -> None:
         self.vertices, self.edges, self.loop_offsets, self.source_id = (
             vertices,
             edges,
@@ -256,19 +264,19 @@ class _PlanarMeshRegionKernel(GeometryKernel):
         )
 
     @property
-    def ambient_dimension(self):
+    def ambient_dimension(self) -> int:
         return 2
 
     @property
-    def intrinsic_dimension(self):
+    def intrinsic_dimension(self) -> int:
         return 2
 
     @property
-    def kind(self):
+    def kind(self) -> Any:
         return GeometryKind.REGION
 
     @property
-    def capabilities(self):
+    def capabilities(self) -> Any:
         return frozenset(
             {
                 GeometryCapability.REGION_QUERY,
@@ -284,13 +292,13 @@ class _PlanarMeshRegionKernel(GeometryKernel):
         )
 
     @property
-    def field_certificate(self):
+    def field_certificate(self) -> Any:
         return exact_signed_distance_certificate(smooth=False)
 
-    def _vertices(self, state):
+    def _vertices(self, state: Any) -> Any:
         return self.vertices.read(state)
 
-    def _query(self, state, points):
+    def _query(self, state: Any, points: Any) -> Any:
         vertices = self._vertices(state)
         points_ = jnp.asarray(points, dtype=vertices.dtype)
         leading = points_.shape[:-1]
@@ -323,7 +331,7 @@ class _PlanarMeshRegionKernel(GeometryKernel):
             normal=normal.reshape((*leading, 2)),
         )
 
-    def contains(self, state, points, /):
+    def contains(self, state: Any, points: Any, /) -> Any:
         vertices = self._vertices(state)
         points_ = jnp.asarray(points, dtype=vertices.dtype)
         start = vertices[self.edges[:, 0]]
@@ -336,7 +344,7 @@ class _PlanarMeshRegionKernel(GeometryKernel):
         ) + start[:, 0]
         return jnp.sum(crossing & (x < intersection), axis=-1) % 2 == 1
 
-    def boundary_field(self, state, points, /):
+    def boundary_field(self, state: Any, points: Any, /) -> Any:
         query = self._query(state, points)
         points_ = jnp.asarray(points, dtype=query.closest_point.dtype)
         difference = points_ - query.closest_point
@@ -355,10 +363,10 @@ class _PlanarMeshRegionKernel(GeometryKernel):
             boundary_linearization,
         )
 
-    def boundary_normal(self, state, points, /):
+    def boundary_normal(self, state: Any, points: Any, /) -> Any:
         return self._query(state, points).normal
 
-    def closest_point(self, state, points, /):
+    def closest_point(self, state: Any, points: Any, /) -> Any:
         vertices = self._vertices(state)
         points_ = jnp.asarray(points, dtype=vertices.dtype)
         leading = points_.shape[:-1]
@@ -396,17 +404,17 @@ class _PlanarMeshRegionKernel(GeometryKernel):
             exact_to_physical=True,
         )
 
-    def bounds(self, state, /):
+    def bounds(self, state: Any, /) -> Any:
         vertices = self._vertices(state)
         return jnp.stack((jnp.min(vertices, axis=0), jnp.max(vertices, axis=0)))
 
-    def measure(self, state, /):
+    def measure(self, state: Any, /) -> Any:
         vertices = self._vertices(state)
         start = vertices[self.edges[:, 0]]
         end = vertices[self.edges[:, 1]]
         return 0.5 * jnp.sum(start[:, 0] * end[:, 1] - end[:, 0] * start[:, 1])
 
-    def boundary_measure(self, state, /):
+    def boundary_measure(self, state: Any, /) -> Any:
         vertices = self._vertices(state)
         return jnp.sum(
             jnp.linalg.norm(
@@ -414,7 +422,9 @@ class _PlanarMeshRegionKernel(GeometryKernel):
             )
         )
 
-    def sample_interior(self, state, num_points, /, *, key, plan=None):
+    def sample_interior(
+        self, state: Any, num_points: Any, /, *, key: Any, plan: Any = None
+    ) -> Any:
         bounds = self.bounds(state)
         plan_ = RejectionSamplingPlan() if plan is None else plan
         return bounded_rejection_sample(
@@ -433,7 +443,7 @@ class _PlanarMeshRegionKernel(GeometryKernel):
             dtype=bounds.dtype,
         )
 
-    def sample_boundary(self, state, num_points, /, *, key):
+    def sample_boundary(self, state: Any, num_points: Any, /, *, key: Any) -> Any:
         vertices = self._vertices(state)
         segments = vertices[self.edges]
         length = jnp.linalg.norm(segments[:, 1] - segments[:, 0], axis=-1)
@@ -448,7 +458,7 @@ class _PlanarMeshRegionKernel(GeometryKernel):
             + coordinate * (segments[indices, 1] - segments[indices, 0])
         )
 
-    def boundary_atlas(self, state, /):
+    def boundary_atlas(self, state: Any, /) -> Any:
         return BoundaryAtlas(
             _LoopBoundaryMap(self._vertices(state), self.edges),
             source_entity_ids=jnp.arange(self.edges.shape[0], dtype=jnp.int32),
@@ -477,7 +487,9 @@ class MeshRegion(GeometrySource):
     faces: Array
     feature_id: str = eqx.field(static=True)
 
-    def __init__(self, vertices: Array, faces: Array, *, feature_id: str | None = None):
+    def __init__(
+        self, vertices: Array, faces: Array, *, feature_id: str | None = None
+    ) -> None:
         mesh = TriangleMesh(vertices, faces)
         if not mesh.topology.watertight:
             raise ValueError("MeshRegion requires a watertight triangle topology.")
@@ -517,7 +529,7 @@ class MeshRegion(GeometrySource):
             source_id=self.feature_id,
         )
 
-    def _compile(self, context):
+    def _compile(self, context: Any) -> Any:
         vertices = context.bind(
             ParameterId(self.feature_id, "vertices"),
             self.vertices,
@@ -538,7 +550,7 @@ class _MeshRegionKernel(GeometryKernel):
     index: TriangleBVH
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, vertices, faces, index, *, source_id):
+    def __init__(self, vertices: Any, faces: Any, index: Any, *, source_id: Any) -> None:
         self.vertices, self.faces, self.index, self.source_id = (
             vertices,
             faces,
@@ -547,19 +559,19 @@ class _MeshRegionKernel(GeometryKernel):
         )
 
     @property
-    def ambient_dimension(self):
+    def ambient_dimension(self) -> int:
         return 3
 
     @property
-    def intrinsic_dimension(self):
+    def intrinsic_dimension(self) -> int:
         return 3
 
     @property
-    def kind(self):
+    def kind(self) -> Any:
         return GeometryKind.REGION
 
     @property
-    def capabilities(self):
+    def capabilities(self) -> Any:
         return frozenset(
             {
                 GeometryCapability.REGION_QUERY,
@@ -576,29 +588,29 @@ class _MeshRegionKernel(GeometryKernel):
         )
 
     @property
-    def field_certificate(self):
+    def field_certificate(self) -> Any:
         return _MESH_CERTIFICATE
 
-    def _vertices(self, state):
+    def _vertices(self, state: Any) -> Any:
         return self.vertices.read(state)
 
-    def _triangles(self, state):
+    def _triangles(self, state: Any) -> Any:
         return self._vertices(state)[self.faces]
 
-    def _index(self, state) -> TriangleBVH:
+    def _index(self, state: Any) -> TriangleBVH:
         """The prepared hierarchy refitted to the current differentiable vertices."""
         return self.index.refit(self._vertices(state))
 
-    def _query(self, state, points):
+    def _query(self, state: Any, points: Any) -> Any:
         return self._index(state).query(jnp.asarray(points, dtype=jnp.float64))
 
-    def contains(self, state, points, /):
+    def contains(self, state: Any, points: Any, /) -> Any:
         winding = self._index(state).winding_number(
             jnp.asarray(points, dtype=jnp.float64)
         )
         return jnp.abs(winding.values) > 0.5
 
-    def boundary_field(self, state, points, /):
+    def boundary_field(self, state: Any, points: Any, /) -> Any:
         query = self._query(state, points)
         points_ = jnp.asarray(points, dtype=query.closest_point.dtype)
         difference = points_ - query.closest_point
@@ -617,10 +629,10 @@ class _MeshRegionKernel(GeometryKernel):
             boundary_linearization,
         )
 
-    def boundary_normal(self, state, points, /):
+    def boundary_normal(self, state: Any, points: Any, /) -> Any:
         return self._query(state, points).normal
 
-    def closest_point(self, state, points, /):
+    def closest_point(self, state: Any, points: Any, /) -> Any:
         points_ = jnp.asarray(points, dtype=jnp.float64)
         leading = points_.shape[:-1]
         flat = points_.reshape((-1, 3))
@@ -647,11 +659,11 @@ class _MeshRegionKernel(GeometryKernel):
             exact_to_physical=True,
         )
 
-    def bounds(self, state, /):
+    def bounds(self, state: Any, /) -> Any:
         vertices = self._vertices(state)
         return jnp.stack((jnp.min(vertices, axis=0), jnp.max(vertices, axis=0)))
 
-    def measure(self, state, /):
+    def measure(self, state: Any, /) -> Any:
         triangles = self._triangles(state)
         return (
             jnp.sum(
@@ -662,7 +674,7 @@ class _MeshRegionKernel(GeometryKernel):
             / 6.0
         )
 
-    def boundary_measure(self, state, /):
+    def boundary_measure(self, state: Any, /) -> Any:
         triangles = self._triangles(state)
         return jnp.sum(
             0.5
@@ -674,7 +686,9 @@ class _MeshRegionKernel(GeometryKernel):
             )
         )
 
-    def sample_interior(self, state, num_points, /, *, key, plan=None):
+    def sample_interior(
+        self, state: Any, num_points: Any, /, *, key: Any, plan: Any = None
+    ) -> Any:
         bounds = self.bounds(state)
         plan_ = RejectionSamplingPlan() if plan is None else plan
         return bounded_rejection_sample(
@@ -693,7 +707,7 @@ class _MeshRegionKernel(GeometryKernel):
             dtype=bounds.dtype,
         )
 
-    def sample_boundary(self, state, num_points, /, *, key):
+    def sample_boundary(self, state: Any, num_points: Any, /, *, key: Any) -> Any:
         triangles = self._triangles(state)
         area = 0.5 * jnp.linalg.norm(
             jnp.cross(
@@ -714,14 +728,16 @@ class _MeshRegionKernel(GeometryKernel):
             jnp.sum(barycentric[..., None] * triangles[faces], axis=-2)
         )
 
-    def boundary_atlas(self, state, /):
+    def boundary_atlas(self, state: Any, /) -> Any:
         return BoundaryAtlas(
             _TriangleSurfaceMap(self._vertices(state), self.faces),
             source_entity_ids=jnp.arange(self.faces.shape[0], dtype=jnp.int32),
             source_id=self.source_id,
         )
 
-    def cubature_atlas(self, state, component: CubatureComponent, /) -> CubatureAtlas:
+    def cubature_atlas(
+        self, state: Any, component: CubatureComponent, /
+    ) -> CubatureAtlas:
         if component != "boundary":
             raise NotImplementedError(
                 "MeshRegion has no tetrahedral interior cubature realization."
@@ -739,7 +755,9 @@ class TriangleSurface(StrictModule):
 
     mesh: TriangleMesh
 
-    def __init__(self, vertices: Array, faces: Array, *, source_id: str | None = None):
+    def __init__(
+        self, vertices: Array, faces: Array, *, source_id: str | None = None
+    ) -> None:
         self.mesh = TriangleMesh(vertices, faces, source_id=source_id)
 
     @property

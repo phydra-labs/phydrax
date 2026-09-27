@@ -14,17 +14,23 @@ from __future__ import annotations
 
 from enum import IntEnum
 from math import isfinite
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._physical import RelativityScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+
+
+_KerrQuantities: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
+_TangentValues: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class KerrBranchCode(IntEnum):
@@ -49,7 +55,7 @@ class KerrInput(StrictModule, NonTrainableState):
     angular_momentum: Array
     input_id: str = eqx.field(static=True)
 
-    def __init__(self, mass: ArrayLike, angular_momentum: ArrayLike, /):
+    def __init__(self, mass: ArrayLike, angular_momentum: ArrayLike, /) -> None:
         dtype = jnp.result_type(mass, angular_momentum, 0.0)
         mass_ = jnp.asarray(mass, dtype=dtype)
         angular_momentum_ = jnp.asarray(angular_momentum, dtype=dtype)
@@ -259,7 +265,7 @@ def _kerr_spin_and_root(mass: Array, angular_momentum: Array, /) -> tuple[Array,
     return dimensionless_spin, extremality_root
 
 
-def _kerr_quantities(mass: Array, angular_momentum: Array, /) -> tuple[Array, ...]:
+def _kerr_quantities(mass: Array, angular_momentum: Array, /) -> _KerrQuantities:
     mass_squared = mass * mass
     dimensionless_spin, extremality_root = _kerr_spin_and_root(mass, angular_momentum)
     one_plus_root = 1.0 + extremality_root
@@ -293,6 +299,15 @@ def evaluate_stationary_kerr_horizon(
     physical = branch.subextremal | branch.extremal
     invalid = jnp.asarray(jnp.nan, dtype=parameters.mass.dtype)
     values = tuple(jnp.where(physical, value, invalid) for value in raw[:-1])
+    (
+        spin_parameter,
+        outer_radius,
+        inner_radius,
+        area,
+        irreducible_mass,
+        surface_gravity,
+        angular_velocity,
+    ) = values
     finite = branch.finite & jnp.all(
         jnp.stack(tuple(jnp.isfinite(value) for value in values))
     )
@@ -303,7 +318,13 @@ def evaluate_stationary_kerr_horizon(
     return StationaryKillingHorizonResult(
         parameters,
         branch,
-        *values,
+        spin_parameter,
+        outer_radius,
+        inner_radius,
+        area,
+        irreducible_mass,
+        surface_gravity,
+        angular_velocity,
         finite,
         converged,
         physically_valid,
@@ -350,7 +371,7 @@ def evaluate_kerr_entropy_temperature(
     )
 
 
-def _invalid_tangent_values(dtype) -> tuple[Array, ...]:
+def _invalid_tangent_values(dtype: DTypeLike) -> _TangentValues:
     invalid = jnp.asarray(jnp.nan, dtype=dtype)
     return invalid, invalid, invalid, invalid
 
@@ -374,8 +395,8 @@ def evaluate_kerr_first_law(
         raise ValueError("Kerr first-law tangents must be scalars.")
     tangent_finite = jnp.isfinite(mass_tangent_) & jnp.isfinite(angular_momentum_tangent_)
 
-    def valid_jvp(_):
-        def quantities(mass, angular_momentum):
+    def valid_jvp(_: None) -> _TangentValues:
+        def quantities(mass: Array, angular_momentum: Array) -> _TangentValues:
             values = _kerr_quantities(mass, angular_momentum)
             return values[3], values[4], values[5], values[6]
 
@@ -600,6 +621,16 @@ def evaluate_fixed_angular_velocity_response(
             response_residual_raw,
         )
     )
+    (
+        angular_momentum_mass_slope,
+        temperature_mass_slope,
+        mass_temperature_response,
+        angular_momentum_temperature_response,
+        entropy_temperature_response,
+        thermal_mass_response,
+        rotational_mass_response,
+        first_law_response_residual,
+    ) = response_values
     condition_number = jnp.where(
         conditioning_margin > 0,
         1.0 / conditioning_margin,
@@ -612,14 +643,14 @@ def evaluate_fixed_angular_velocity_response(
     derivative_valid = horizon.derivative_valid & regular & response_finite
     tolerance_array = jnp.asarray(128.0 * jnp.finfo(mass.dtype).eps, dtype=mass.dtype)
     response_scale = (
-        jnp.abs(response_values[2])
-        + jnp.abs(response_values[5])
-        + jnp.abs(response_values[6])
+        jnp.abs(mass_temperature_response)
+        + jnp.abs(thermal_mass_response)
+        + jnp.abs(rotational_mass_response)
     )
     normalized_response_residual = jnp.where(
         response_scale > 0,
-        jnp.abs(response_values[7]) / response_scale,
-        jnp.abs(response_values[7]),
+        jnp.abs(first_law_response_residual) / response_scale,
+        jnp.abs(first_law_response_residual),
     )
     qualified = (
         finite
@@ -631,7 +662,14 @@ def evaluate_fixed_angular_velocity_response(
     return FixedAngularVelocityResponse(
         horizon,
         geometric_temperature,
-        *response_values,
+        angular_momentum_mass_slope,
+        temperature_mass_slope,
+        mass_temperature_response,
+        angular_momentum_temperature_response,
+        entropy_temperature_response,
+        thermal_mass_response,
+        rotational_mass_response,
+        first_law_response_residual,
         conditioning_margin,
         condition_number,
         singular,

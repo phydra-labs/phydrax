@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -23,20 +26,23 @@ from phydrax.applications.semiconductor._traveling_wave import (
 
 
 @pytest.fixture(autouse=True)
-def _double_precision():
+def _double_precision() -> Any:
     with jax.enable_x64(True):
         yield
 
 
-def test_projected_semiconductor_state_drives_replayable_reduced_laser_workflow():
+def test_projected_semiconductor_state_drives_replayable_reduced_laser_workflow() -> None:
     response = LinearizedCarrierOpticalResponsePlan(
         1.0e24,
         1.0e-20,
         1.0e15,
         reference_temperature=300.0,
         background_internal_loss=400.0,
+        # ty: ignore[invalid-argument-type]
         density_range=(0.5e24, 4.0e24),
+        # ty: ignore[invalid-argument-type]
         temperature_range=(290.0, 310.0),
+        # ty: ignore[invalid-argument-type]
         angular_frequency_range=(0.9e15, 1.1e15),
         active_volume=2.0e-16,
         confinement_factor=0.5,
@@ -72,6 +78,7 @@ def test_projected_semiconductor_state_drives_replayable_reduced_laser_workflow(
         recombination_c=0.0,
         left_facet_amplitude_reflection=np.sqrt(0.5) + 0.0j,
         right_facet_amplitude_reflection=-np.sqrt(0.4) + 0.0j,
+        # ty: ignore[invalid-argument-type]
         carrier_density_bounds=(0.5e24, 3.5e24),
         step_count=8,
         gain_compression=0.02,

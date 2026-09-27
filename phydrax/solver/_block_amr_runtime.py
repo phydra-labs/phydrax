@@ -12,7 +12,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope
@@ -33,6 +34,7 @@ from ..discretization.amr._reflux import FluxRegister
 from ..discretization.finite_volume._amr import BlockAMRConservationPlan
 from ..discretization.finite_volume._block_amr import (
     BlockAMRFiniteVolumePlan,
+    BlockAMRFiniteVolumeStageResult,
     PreparedBlockAMRFiniteVolumeDynamics,
 )
 from ._finite_volume_topology_events import (
@@ -82,7 +84,7 @@ class AMRTimeSchedulePlan(StrictModule, NonTrainableState):
         subcycling: bool = True,
         temporal_method_id: str = "temporal:ssprk33",
         edge_substeps: Sequence[int] | None = None,
-    ):
+    ) -> None:
         if not isinstance(hierarchy, PreparedFDAMRHierarchy):
             raise TypeError("hierarchy must be PreparedFDAMRHierarchy.")
         if not isinstance(subcycling, bool):
@@ -138,7 +140,7 @@ class BlockAMRRuntimeState(StrictModule):
         accepted_step: ArrayLike = 0,
         level_accepted_steps: ArrayLike | None = None,
         last_status: ArrayLike = BlockAMRAdvancePhase.SUCCESS,
-    ):
+    ) -> None:
         if not isinstance(hierarchy_state, BlockHierarchyState):
             raise TypeError("hierarchy_state must be BlockHierarchyState.")
         if not isinstance(topology_journal, FiniteVolumeTopologyEventJournal):
@@ -225,7 +227,7 @@ class _BlockAMREdgeRoute(StrictModule, NonTrainableState):
         fine: Any,
         coarse_spacing: Sequence[float],
         /,
-    ):
+    ) -> None:
         if coarse.level + 1 != fine.level or coarse.axis != fine.axis:
             raise ValueError(
                 "Coarse/fine face routes must describe one adjacent edge/axis."
@@ -333,7 +335,7 @@ class BlockAMRRuntimePlan(StrictModule):
         indicator_id: str | None = None,
         topology_transaction: Callable[..., Any] | None = None,
         topology_transaction_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(finite_volume, BlockAMRFiniteVolumePlan):
             raise TypeError("finite_volume must be BlockAMRFiniteVolumePlan.")
         if subcycling is not None and not isinstance(subcycling, bool):
@@ -422,7 +424,9 @@ class PreparedBlockAMRRuntime(StrictModule):
     topology_artifacts: FiniteVolumeTopologyArtifacts
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: BlockAMRRuntimePlan, topology: BlockHierarchyTopology, /):
+    def __init__(
+        self, plan: BlockAMRRuntimePlan, topology: BlockHierarchyTopology, /
+    ) -> None:
         if not isinstance(plan, BlockAMRRuntimePlan):
             raise TypeError("plan must be BlockAMRRuntimePlan.")
         if not isinstance(topology, BlockHierarchyTopology) or (
@@ -904,9 +908,14 @@ class PreparedBlockAMRRuntime(StrictModule):
             def stage(
                 stage_time: Array,
                 stage_state: BlockHierarchyState,
-            ):
+            ) -> BlockAMRFiniteVolumeStageResult:
                 nonlocal local_ok, maximum_rate
-                if parent_old is None or parent_new is None:
+                if (
+                    parent_old is None
+                    or parent_new is None
+                    or parent_start is None
+                    or parent_end is None
+                ):
                     coarse_old = stage_state
                     coarse_new = stage_state
                     coarse_start = stage_time

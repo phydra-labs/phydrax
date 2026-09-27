@@ -4,12 +4,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import IntEnum, StrEnum
-from typing import Any
 
 import equinox as eqx
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -20,12 +20,13 @@ from ...dynamics import (
     DAEConnection,
     DAEDerivativeIncidence,
     DAEEquationBlock,
+    DAEJet,
     DAEPort,
     DAEVariableBlock,
 )
 
 
-def _residual_numeric_id(semantic_id: str, parameters, /) -> str:
+def _residual_numeric_id(semantic_id: str, parameters: object, /) -> str:
     return canonical_fingerprint(
         {
             "kind": "thermofluid-residual-binding",
@@ -299,11 +300,28 @@ class ThermofluidProcessPlan(StrictModule):
                 )
             connected_ports.update(endpoints)
             if left.kind is ThermofluidPortKind.HEAT:
+                # Hydraulic specs are always HYDRAULIC and endpoint kinds match.
+                if not (isinstance(left, ThermofluidPortSpec)):
+                    raise RuntimeError(
+                        "Internal invariant failed: isinstance(left, ThermofluidPortSpec)."
+                    )
+                if not (isinstance(right, ThermofluidPortSpec)):
+                    raise RuntimeError(
+                        "Internal invariant failed: isinstance(right, ThermofluidPortSpec)."
+                    )
                 orientations = (
                     int(left.heat_flow_orientation),
                     int(right.heat_flow_orientation),
                 )
             elif left.kind is ThermofluidPortKind.MATERIAL:
+                if not (isinstance(left, ThermofluidPortSpec)):
+                    raise RuntimeError(
+                        "Internal invariant failed: isinstance(left, ThermofluidPortSpec)."
+                    )
+                if not (isinstance(right, ThermofluidPortSpec)):
+                    raise RuntimeError(
+                        "Internal invariant failed: isinstance(right, ThermofluidPortSpec)."
+                    )
                 orientations = (left.mass_flow_orientation, right.mass_flow_orientation)
             elif left.kind is ThermofluidPortKind.HYDRAULIC:
                 orientations = (1, 1)
@@ -361,8 +379,10 @@ def fixed_material_boundary_component(
         )
     )
 
-    def prescribed(variable, target):
-        def residual(time: Array, jet, args: Any):
+    def prescribed(
+        variable: str, target: float
+    ) -> Callable[[Array, DAEJet, object], Array]:
+        def residual(time: Array, jet: DAEJet, args: object) -> Array:
             del time, args
             return jet.value(variable) - target
 
@@ -431,15 +451,15 @@ def isenthalpic_valve_component(
         for value in variable_names
     )
 
-    def pressure_residual(time, jet, args):
+    def pressure_residual(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         return jet.value("outlet_pressure") - ratio * jet.value("inlet_pressure")
 
-    def enthalpy_residual(time, jet, args):
+    def enthalpy_residual(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         return jet.value("outlet_enthalpy") - jet.value("inlet_enthalpy")
 
-    def mass_residual(time, jet, args):
+    def mass_residual(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         return jet.value("inlet_mass_flow") + jet.value("outlet_mass_flow")
 
@@ -526,6 +546,15 @@ def _validate_connection(
     if left.kind is not right.kind:
         raise ValueError("Connected thermofluid ports must have the same kind.")
     if left.kind is ThermofluidPortKind.MATERIAL:
+        # Hydraulic specs are always HYDRAULIC, so both endpoints are material specs.
+        if not (isinstance(left, ThermofluidPortSpec)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(left, ThermofluidPortSpec)."
+            )
+        if not (isinstance(right, ThermofluidPortSpec)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(right, ThermofluidPortSpec)."
+            )
         if (
             left.catalog_id != right.catalog_id
             or left.thermodynamics_id != right.thermodynamics_id

@@ -16,7 +16,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_real_two_federate_typed_delivery_and_time_grants():
+def test_real_two_federate_typed_delivery_and_time_grants() -> None:
     key = "phydrax-" + uuid.uuid4().hex
     with HelicsValueSession(
         key + "-source",
@@ -56,13 +56,14 @@ def test_real_two_federate_typed_delivery_and_time_grants():
             assert values["enabled"].has_value and values["enabled"].value is True
             assert values["power"].granted_time == values["enabled"].granted_time == 1
             assert values["power"].last_update_time == values["enabled"].last_update_time
+            # ty: ignore[unsupported-operator]
             assert values["power"].last_update_time <= 1
             assert sink.artifact.status == "complete"
         assert sink.closed
     assert source.closed
 
 
-def test_real_helics_does_not_coerce_types_or_advance_backwards():
+def test_real_helics_does_not_coerce_types_or_advance_backwards() -> None:
     key = "phydrax-" + uuid.uuid4().hex
     with HelicsValueSession(
         key,

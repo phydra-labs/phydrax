@@ -9,11 +9,13 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from ._core import DiagramGraph
 
 
@@ -73,7 +75,7 @@ class DiagramMonteCarloPlan(StrictModule, NonTrainableState):
         maximum_diagrams: int = 4_096,
         maximum_neighbors: int = 256,
         maximum_order: int = 32,
-    ):
+    ) -> None:
         probabilities = np.asarray(
             (insertion_probability, removal_probability, worm_probability),
             dtype=np.float64,
@@ -266,7 +268,7 @@ class PreparedDiagramMonteCarlo(StrictModule, NonTrainableState):
         plan_id: str,
         prepared_id: str,
         /,
-    ):
+    ) -> None:
         self.orders = orders
         self.vertex_counts = vertex_counts
         self.complex_weights = complex_weights
@@ -303,7 +305,7 @@ class PreparedDiagramMonteCarlo(StrictModule, NonTrainableState):
         )
 
     def transition(
-        self, state: DiagramMonteCarloState, key: Key[Array, ""], /
+        self, state: DiagramMonteCarloState, key: PRNGKey, /
     ) -> DiagramMonteCarloState:
         move_key, choice_key, endpoint_key, acceptance_key = jr.split(key, 4)
         move = jr.categorical(move_key, jnp.log(self.move_probabilities)).astype(
@@ -397,7 +399,7 @@ class PreparedDiagramMonteCarlo(StrictModule, NonTrainableState):
 
     def run(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
         *,
         initial_index: int = 0,
@@ -405,7 +407,9 @@ class PreparedDiagramMonteCarlo(StrictModule, NonTrainableState):
         initial = self.initialize(initial_index)
         keys = jr.split(key, self.steps)
 
-        def advance(state, step_key):
+        def advance(
+            state: DiagramMonteCarloState, step_key: PRNGKey
+        ) -> tuple[DiagramMonteCarloState, None]:
             return self.transition(state, step_key), None
 
         state, _ = jax.lax.scan(advance, initial, keys)

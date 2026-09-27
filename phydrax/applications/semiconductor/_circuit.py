@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -36,6 +38,7 @@ from ...nonlinear import (
     FunctionRightNonlinearPreconditioner,
     JacobianPolicy,
     NewtonKrylov,
+    NonlinearSystemProblem,
     NonlinearTermination,
     RightPreconditionedSystem,
     root,
@@ -72,7 +75,7 @@ class SemiconductorCircuitLaw(AbstractImplicitCircuitLaw):
 
     prepared: PreparedSemiconductorDevice
 
-    def __init__(self, prepared: PreparedSemiconductorDevice, /):
+    def __init__(self, prepared: PreparedSemiconductorDevice, /) -> None:
         self.prepared = prepared
         roles = tuple(
             "differential" if value else "algebraic"
@@ -132,13 +135,13 @@ class SemiconductorCircuitLaw(AbstractImplicitCircuitLaw):
 
     def evaluate(
         self,
-        time,
-        terminal_voltages,
-        terminal_voltage_rates,
-        state,
-        state_rate,
-        inputs,
-        args,
+        time: Array,
+        terminal_voltages: Array,
+        terminal_voltage_rates: Array,
+        state: Array,
+        state_rate: Array,
+        inputs: Array,
+        args: Any,
         /,
     ) -> CircuitElementEvaluation:
         del time, inputs, args
@@ -218,19 +221,27 @@ class _CircuitJacobian(StrictModule):
     internal: SparseDerivativePlan
     template: SparseCoordinateOperator
 
-    def __call__(self, state, args):
+    def __call__(self, state: Array, args: Any) -> SparseCoordinateOperator:
         coefficients = jnp.concatenate(
             (self.kcl.coefficients(state, args), self.internal.coefficients(state, args))
         )
         return eqx.tree_at(lambda value: value.coefficients, self.template, coefficients)
 
 
-def _circuit_jacobian(prepared, problem, initial, args):
+def _circuit_jacobian(
+    prepared: PreparedCircuitDAE,
+    problem: NonlinearSystemProblem,
+    initial: Array,
+    args: Any,
+) -> _CircuitJacobian:
     layout = prepared.plan.layout
     size, node_count = layout.size, len(layout.node_ids)
     rows, cols = [np.arange(size)], [np.arange(size)]
 
-    def block(row_indices, column_indices):
+    def block(
+        row_indices: Sequence[int] | np.ndarray,
+        column_indices: Sequence[int] | np.ndarray,
+    ) -> None:
         shape = (len(row_indices), len(column_indices))
         rows.append(np.broadcast_to(np.asarray(row_indices)[:, None], shape).reshape(-1))
         cols.append(
@@ -275,19 +286,25 @@ def _circuit_jacobian(prepared, problem, initial, args):
             block(nodes, auxiliary)
             block(auxiliary, nodes)
             block(auxiliary, auxiliary)
-    rows, cols = (
+    row_ids, col_ids = (
         np.concatenate(rows).astype(np.int32),
         np.concatenate(cols).astype(np.int32),
     )
-    kcl = rows < node_count
-    kcl_pattern = SparsePattern.from_coo(rows[kcl], cols[kcl], (node_count, size))
+    kcl = row_ids < node_count
+    kcl_pattern = SparsePattern.from_coo(row_ids[kcl], col_ids[kcl], (node_count, size))
     internal_pattern = SparsePattern.from_coo(
-        rows[~kcl] - node_count, cols[~kcl], (size - node_count, size)
+        row_ids[~kcl] - node_count, col_ids[~kcl], (size - node_count, size)
     )
+    state_space, residual_space = problem.state_space, problem.residual_space
+    # The right-preconditioned operating-point problem declares both spaces.
+    if not (state_space is not None and residual_space is not None):
+        raise RuntimeError(
+            "Internal invariant failed: state_space is not None and residual_space is not None."
+        )
     kcl_derivative = compile_sparse_jacobian(
         lambda state, parameters: problem.evaluate(state, parameters)[0][:node_count],
         initial,
-        source=problem.state_space,
+        source=state_space,
         target=ArraySpace((node_count,), dtype=initial.dtype),
         sample_args=args,
         structure=kcl_pattern,
@@ -297,7 +314,7 @@ def _circuit_jacobian(prepared, problem, initial, args):
     internal_derivative = compile_sparse_jacobian(
         lambda state, parameters: problem.evaluate(state, parameters)[0][node_count:],
         initial,
-        source=problem.state_space,
+        source=state_space,
         target=ArraySpace((size - node_count,), dtype=initial.dtype),
         sample_args=args,
         structure=internal_pattern,
@@ -313,8 +330,8 @@ def _circuit_jacobian(prepared, problem, initial, args):
     template = SparseCoordinateOperator(
         relation,
         jnp.zeros(relation.route_shape, dtype=initial.dtype),
-        source=problem.state_space,
-        target=problem.residual_space,
+        source=state_space,
+        target=residual_space,
     )
     return _CircuitJacobian(kcl_derivative, internal_derivative, template)
 
@@ -373,7 +390,7 @@ def semiconductor_circuit_operating_point(
                 law.coordinates(initial[start:stop]).reshape(-1)
             )
 
-    def reconstruct(value, parameters):
+    def reconstruct(value: Array, parameters: Any) -> Array:
         del parameters
         state = value
         for law, (start, stop) in zip(
@@ -389,12 +406,16 @@ def semiconductor_circuit_operating_point(
                 state = state.at[start:stop].set(stored.reshape(-1))
         return state
 
+    state_space = plan.problem.state_space
+    # plan_circuit_operating_point always declares the ArraySpace state space.
+    if not (state_space is not None):
+        raise RuntimeError("Internal invariant failed: state_space is not None.")
     transformed = RightPreconditionedSystem(
         plan.problem,
         FunctionRightNonlinearPreconditioner(
             reconstruct,
-            source=plan.problem.state_space,
-            target=plan.problem.state_space,
+            source=state_space,
+            target=state_space,
             preconditioner_id=f"{plan.plan_id}/quasi-fermi",
         ),
     )

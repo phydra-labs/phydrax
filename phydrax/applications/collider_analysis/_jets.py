@@ -6,11 +6,13 @@ from __future__ import annotations
 
 import math
 from enum import StrEnum
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -18,6 +20,11 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...particle_physics import HEPProviderBinding
+
+
+_FuzzyEvent: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class JetAlgorithm(StrEnum):
@@ -53,7 +60,7 @@ class JetDefinition(StrictModule, NonTrainableState):
         *,
         recombination_scheme: JetRecombinationScheme = JetRecombinationScheme.E_SCHEME,
         minimum_transverse_momentum: float = 0.0,
-    ):
+    ) -> None:
         radius_ = float(radius)
         minimum = float(minimum_transverse_momentum)
         if not isinstance(algorithm, JetAlgorithm) or not isinstance(
@@ -102,7 +109,7 @@ class JetInputBatch(StrictModule, NonTrainableState):
         *,
         source_collection_id: str,
         momentum_unit_id: str,
-    ):
+    ) -> None:
         event_ids_ = jnp.asarray(event_ids)
         momenta_ = jnp.asarray(momenta)
         active_ = jnp.asarray(active, dtype=jnp.bool_)
@@ -150,7 +157,9 @@ class JetProviderPlan(StrictModule, NonTrainableState):
     provider: HEPProviderBinding
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, definition: JetDefinition, provider: HEPProviderBinding, /):
+    def __init__(
+        self, definition: JetDefinition, provider: HEPProviderBinding, /
+    ) -> None:
         if not isinstance(definition, JetDefinition) or not isinstance(
             provider, HEPProviderBinding
         ):
@@ -170,7 +179,7 @@ class JetProviderPlan(StrictModule, NonTrainableState):
         )
 
 
-def _rapidity_phi(momentum):
+def _rapidity_phi(momentum: Array) -> tuple[Array, Array, Array]:
     energy = momentum[..., 0]
     px = momentum[..., 1]
     py = momentum[..., 2]
@@ -184,17 +193,21 @@ def _rapidity_phi(momentum):
     return rapidity, phi, transverse_momentum
 
 
-def _delta_phi(first, second):
+def _delta_phi(first: Array, second: Array) -> Array:
     return jnp.arctan2(jnp.sin(first - second), jnp.cos(first - second))
 
 
-def _cluster_one(definition: JetDefinition, momenta, active):
+def _cluster_one(
+    definition: JetDefinition, momenta: Array, active: Array
+) -> tuple[Array, Array, Array]:
     capacity = momenta.shape[0]
     constituents = jnp.eye(capacity, dtype=momenta.dtype)
     jets = jnp.zeros_like(momenta)
     jet_constituents = jnp.zeros((capacity, capacity), dtype=momenta.dtype)
 
-    def iteration(state, _):
+    def iteration(
+        state: tuple[Array, Array, Array, Array, Array, Array], _: None
+    ) -> tuple[tuple[Array, Array, Array, Array, Array, Array], None]:
         (
             work,
             work_constituents,
@@ -328,7 +341,7 @@ class FuzzyJetPlan(StrictModule, NonTrainableState):
         iteration_count: int = 32,
         pileup_density: float = 1.0e-6,
         minimum_component_weight: float = 1.0e-6,
-    ):
+    ) -> None:
         count = int(component_count)
         radius = float(radius_scale)
         iterations = int(iteration_count)
@@ -376,7 +389,7 @@ class FuzzyJetResult(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
 
-def _fuzzy_one(plan: FuzzyJetPlan, momenta, active):
+def _fuzzy_one(plan: FuzzyJetPlan, momenta: Array, active: Array) -> _FuzzyEvent:
     rapidity, phi, transverse_momentum = _rapidity_phi(momenta)
     capacity = momenta.shape[0]
     order = jnp.argsort(jnp.where(active, transverse_momentum, -jnp.inf))[::-1]
@@ -388,7 +401,9 @@ def _fuzzy_one(plan: FuzzyJetPlan, momenta, active):
     responsibilities = jnp.zeros((capacity, plan.component_count), dtype=momenta.dtype)
     likelihood = jnp.asarray(-jnp.inf, dtype=momenta.dtype)
 
-    def iteration(state, _):
+    def iteration(
+        state: tuple[Array, Array, Array, Array], _: None
+    ) -> tuple[tuple[Array, Array, Array, Array], None]:
         means_, weights_, _previous_responsibilities, _previous_likelihood = state
         delta_y = rapidity[:, None] - means_[None, :, 0]
         delta_phi = _delta_phi(phi[:, None], means_[None, :, 1])

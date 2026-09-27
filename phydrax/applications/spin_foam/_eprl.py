@@ -11,7 +11,7 @@ from math import prod
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -60,7 +60,7 @@ class EPRLVertexPlan(StrictModule):
         quadrature_id: str,
         precision_bits: int,
         maximum_support_tuples: int,
-    ):
+    ) -> None:
         spins = tuple(boundary_twice_spins)
         intertwiners = tuple(boundary_twice_intertwiners)
         gamma = float(immirzi_parameter)

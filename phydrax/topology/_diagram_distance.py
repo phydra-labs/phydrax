@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+import numpy.typing as npt
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -42,7 +43,7 @@ class DiagramDistanceResult(StrictModule, NonTrainableState):
         method: str,
         source_diagram_id: str,
         target_diagram_id: str,
-    ):
+    ) -> None:
         self.distance = jnp.asarray(distance)
         self.assignment = jnp.asarray(assignment, dtype=jnp.int32)
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
@@ -59,7 +60,13 @@ class DiagramDistanceResult(StrictModule, NonTrainableState):
         )
 
 
-def _point_cost(left_birth, left_death, right_birth, right_death, order):
+def _point_cost(
+    left_birth: float,
+    left_death: float,
+    right_birth: float,
+    right_death: float,
+    order: float,
+) -> float:
     difference = np.asarray(
         [abs(left_birth - right_birth), abs(left_death - right_death)]
     )
@@ -68,7 +75,7 @@ def _point_cost(left_birth, left_death, right_birth, right_death, order):
     )
 
 
-def _diagonal_cost(birth, death, order):
+def _diagonal_cost(birth: float, death: float, order: float) -> float:
     persistence = abs(death - birth)
     return float(
         persistence / 2.0 if np.isinf(order) else persistence / (2.0 ** (1.0 / order))
@@ -82,7 +89,7 @@ def _augmented_cost(
     *,
     ground_order: float,
     power: float,
-):
+) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.bool_]]:
     source_degrees = np.asarray(source.degrees)
     target_degrees = np.asarray(target.degrees)
     source_births = np.asarray(source.birth_values)
@@ -187,11 +194,11 @@ def diagram_wasserstein_distance(
     )
 
 
-def _perfect_matching(valid: np.ndarray):
+def _perfect_matching(valid: np.ndarray) -> npt.NDArray[np.int32] | None:
     row_count, column_count = valid.shape
     assigned = np.full((column_count,), -1, dtype=np.int32)
 
-    def augment(row, seen):
+    def augment(row: int, seen: npt.NDArray[np.bool_]) -> bool:
         for column in np.flatnonzero(valid[row]):
             if seen[column]:
                 continue
@@ -271,7 +278,7 @@ def diagram_sliced_wasserstein_distance(
     if directions <= 0 or order_ <= 0.0:
         raise ValueError("Sliced diagram directions and order must be positive.")
 
-    def points(diagram):
+    def points(diagram: PersistenceDiagram) -> Array:
         selected = np.asarray(diagram.degrees) == int(degree)
         if np.any(selected & ~np.asarray(diagram.has_finite_death)):
             raise ValueError("Sliced diagram distance requires finite bars.")

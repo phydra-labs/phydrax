@@ -13,7 +13,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._model import AbstractArrayModel
 from ...kernels import SquaredExponentialKernel
@@ -33,7 +33,7 @@ from ..linear._base import (
 from ..linear._glm import GammaModel, PoissonModel, TweedieModel
 from ..linear._least_squares import OLSModel, RidgeModel
 from ..linear._sparse import ElasticNetModel, LassoModel
-from ..mixture._gaussian import GaussianMixtureModel
+from ..mixture._gaussian import CovarianceType, GaussianMixtureModel
 from ..multiclass._models import OneVsOneModel
 from ..preprocessing._categorical import (
     FittedOneHotEncoder,
@@ -46,7 +46,11 @@ from ..preprocessing._scalers import (
     FittedRobustScaler,
     FittedStandardScaler,
 )
-from ..tree._representation import TreeEnsemble
+from ..tree._representation import (
+    EnsembleAggregation,
+    ObjectiveTransform,
+    TreeEnsemble,
+)
 from ._contracts import (
     ConversionError,
     ConversionProvenance,
@@ -1223,7 +1227,7 @@ def _expand_gaussian_geometry(
     precision_cholesky: np.ndarray,
     components: int,
     features: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, str]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, CovarianceType]:
     if covariance_type == "full":
         if (
             covariance.shape != (components, features, features)
@@ -1795,8 +1799,8 @@ def _assemble_tree_ensemble(
     base_score: np.ndarray,
     feature_schema: FeatureSchema,
     target_schema: TargetSchema,
-    objective_transform: str,
-    aggregation: str = "sum",
+    objective_transform: ObjectiveTransform,
+    aggregation: EnsembleAggregation = "sum",
 ) -> TreeEnsemble:
     if not estimators:
         raise ConversionError("Tree ensemble must contain at least one fitted estimator.")

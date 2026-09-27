@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -14,7 +16,7 @@ TARGETS = jnp.asarray([[0.05, 0.1, 0.2], [0.2, -0.1, -0.15], [-0.1, 0.2, -0.2]])
 STRENGTHS = jnp.asarray([0.8, -0.4, 0.3, 1.1])
 
 
-def _clustered_cloud():
+def _clustered_cloud() -> Any:
     rng = np.random.default_rng(17)
     sources = np.concatenate(
         (
@@ -33,7 +35,9 @@ def _clustered_cloud():
     return jnp.asarray(sources), jnp.asarray(targets), jnp.asarray(strengths)
 
 
-def _direct(kernel, sources, strengths, targets, parameter=0.0):
+def _direct(
+    kernel: Any, sources: Any, strengths: Any, targets: Any, parameter: Any = 0.0
+) -> Any:
     radii = jnp.linalg.norm(targets[:, None, :] - sources[None, :, :], axis=-1)
     if kernel == "laplace":
         numerator = jnp.ones_like(radii)
@@ -57,8 +61,8 @@ def _direct(kernel, sources, strengths, targets, parameter=0.0):
     ],
 )
 def test_complete_multipole_pipelines_match_direct_on_clustered_points(
-    plan_type, keyword, kernel
-):
+    plan_type: Any, keyword: Any, kernel: Any
+) -> None:
     sources, targets, strengths = _clustered_cloud()
     prepared = plan_type(
         sources,
@@ -92,7 +96,7 @@ def test_complete_multipole_pipelines_match_direct_on_clustered_points(
     assert bool(result.truncation.well_separated)
 
 
-def test_level_octree_accepts_source_motion_within_padding():
+def test_level_octree_accepts_source_motion_within_padding() -> None:
     sources, _, strengths = _clustered_cloud()
     prepared = phx.operators.LaplaceMultipolePlan3D(
         sources,
@@ -120,7 +124,7 @@ def test_level_octree_accepts_source_motion_within_padding():
         prepared.evaluate(far, strengths)
 
 
-def test_laplace_elementary_translations_compose():
+def test_laplace_elementary_translations_compose() -> None:
     prepared = phx.operators.LaplaceMultipolePlan3D(
         SOURCES,
         [-2.0, -2.0, -2.0],
@@ -170,7 +174,7 @@ def test_laplace_elementary_translations_compose():
     )
 
 
-def test_plane_dual_laplace_matches_level_octree_and_direct_completion():
+def test_plane_dual_laplace_matches_level_octree_and_direct_completion() -> None:
     source = jnp.asarray(
         [
             [-0.80, -0.75, -0.70],
@@ -237,7 +241,7 @@ def test_plane_dual_laplace_matches_level_octree_and_direct_completion():
     assert bool(plane_result.capacity.successful)
 
 
-def test_plane_laplace_accepts_fixed_envelope_motion_and_jits():
+def test_plane_laplace_accepts_fixed_envelope_motion_and_jits() -> None:
     reference_sources = jnp.asarray(
         [[-0.70, -0.70, -0.70], [-0.65, -0.68, -0.66], [0.70, 0.70, 0.70]]
     )
@@ -295,10 +299,10 @@ def test_plane_laplace_accepts_fixed_envelope_motion_and_jits():
     ],
 )
 def test_radial_plane_execution_is_wave_resolved_and_differentiable(
-    plan_type,
-    keyword,
-    direct_factor,
-):
+    plan_type: Any,
+    keyword: Any,
+    direct_factor: Any,
+) -> None:
     source = jnp.asarray(
         [
             [-0.75, -0.70, -0.68],
@@ -355,7 +359,7 @@ def test_radial_plane_execution_is_wave_resolved_and_differentiable(
 
     weights = jnp.asarray([0.4, -0.2, 0.7])
 
-    def loss(position):
+    def loss(position: Any) -> Any:
         value = plane.evaluate(position, strengths, target).values
         return jnp.real(jnp.vdot(weights, value))
 
@@ -364,7 +368,7 @@ def test_radial_plane_execution_is_wave_resolved_and_differentiable(
     assert bool(jnp.all(jnp.isfinite(gradient)))
 
 
-def test_plane_laplace_position_and_strength_gradients_match_level_route():
+def test_plane_laplace_position_and_strength_gradients_match_level_route() -> None:
     source = jnp.asarray(
         [[-0.72, -0.68, -0.66], [-0.64, -0.70, -0.65], [0.70, 0.68, 0.72]]
     )
@@ -394,12 +398,12 @@ def test_plane_laplace_position_and_strength_gradients_match_level_route():
         **common,
     ).prepare()
 
-    def level_loss(position, weight):
+    def level_loss(position: Any, weight: Any) -> Any:
         return jnp.real(
             jnp.sum(weights * level.evaluate(position, weight, target).values)
         )
 
-    def plane_loss(position, weight):
+    def plane_loss(position: Any, weight: Any) -> Any:
         return jnp.real(
             jnp.sum(weights * plane.evaluate(position, weight, target).values)
         )

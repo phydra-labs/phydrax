@@ -4,10 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Protocol, TypeAlias
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -25,7 +29,7 @@ class DegreeAwareEntityOwnership(StrictModule, NonTrainableState):
         cochain: CochainDiscretization,
         shard_count: int,
         /,
-    ):
+    ) -> None:
         shards = int(shard_count)
         if not isinstance(cochain, CochainDiscretization) or shards <= 0:
             raise ValueError("Distributed cochain ownership is invalid.")
@@ -67,6 +71,16 @@ class DegreeAwareEntityOwnership(StrictModule, NonTrainableState):
         return jnp.take_along_axis(values, indices, axis=0)[0]
 
 
+class _GravitySolveDiagnostics(Protocol):
+    @property
+    def finite(self) -> Array: ...
+
+
+GlobalGravitySolve: TypeAlias = Callable[
+    [Array], tuple[Array, Array, _GravitySolveDiagnostics]
+]
+
+
 class DistributedGravitySolveResult(StrictModule):
     potential_shards: Array
     acceleration_shards: Array
@@ -75,11 +89,18 @@ class DistributedGravitySolveResult(StrictModule):
 
 
 class DistributedGravitySolvePlan(StrictModule, NonTrainableState):
-    global_solve: object = eqx.field(static=True)
+    global_solve: GlobalGravitySolve = eqx.field(static=True)
     shard_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, global_solve, shard_count: int, /, *, solve_id: str):
+    def __init__(
+        self,
+        global_solve: GlobalGravitySolve,
+        shard_count: int,
+        /,
+        *,
+        solve_id: str,
+    ) -> None:
         count = int(shard_count)
         if not callable(global_solve) or count <= 0 or not solve_id:
             raise ValueError("Distributed gravity solve plan is invalid.")
@@ -126,7 +147,7 @@ class DistributedMultiphysicsSynchronizationPlan(StrictModule, NonTrainableState
     shard_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, shard_count: int, /):
+    def __init__(self, shard_count: int, /) -> None:
         count = int(shard_count)
         if count <= 0:
             raise ValueError("Distributed synchronization requires positive shard count.")

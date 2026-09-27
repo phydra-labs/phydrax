@@ -1,10 +1,12 @@
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _problem(*, problem_id="adaptive-continuation"):
+def _problem(*, problem_id: Any = "adaptive-continuation") -> Any:
     system = phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, parameter: state_rate + parameter * state,
         state_shape=(1,),
@@ -19,7 +21,7 @@ def _problem(*, problem_id="adaptive-continuation"):
     )
 
 
-def _policy():
+def _policy() -> Any:
     return phx.solver.DAESolvePolicy(
         method=phx.solver.BDFMethod(2),
         adaptive=phx.solver.DAEAdaptivePolicy(
@@ -32,7 +34,7 @@ def _policy():
     )
 
 
-def test_segmented_continuation_matches_monolithic_accepted_history():
+def test_segmented_continuation_matches_monolithic_accepted_history() -> None:
     problem = _problem()
     policy = _policy()
     full_grid = phx.dynamics.TimeGrid(
@@ -90,7 +92,7 @@ def test_segmented_continuation_matches_monolithic_accepted_history():
     assert jnp.array_equal(segmented_orders, full.step_history.orders[:full_count])
 
 
-def test_continuation_recertifies_changed_arguments_and_reports_inconsistency():
+def test_continuation_recertifies_changed_arguments_and_reports_inconsistency() -> None:
     problem = _problem()
     policy = _policy()
     first_grid = phx.dynamics.TimeGrid(
@@ -117,7 +119,7 @@ def test_continuation_recertifies_changed_arguments_and_reports_inconsistency():
     )
 
 
-def test_explicit_restart_resets_bdf_history_and_continuation_is_exclusive():
+def test_explicit_restart_resets_bdf_history_and_continuation_is_exclusive() -> None:
     problem = _problem()
     policy = _policy()
     first_grid = phx.dynamics.TimeGrid(
@@ -146,7 +148,7 @@ def test_explicit_restart_resets_bdf_history_and_continuation_is_exclusive():
         )
 
 
-def test_continuation_rejects_incompatible_problem_identity():
+def test_continuation_rejects_incompatible_problem_identity() -> None:
     policy = _policy()
     first_problem = _problem(problem_id="continuation-source")
     second_problem = _problem(problem_id="continuation-target")

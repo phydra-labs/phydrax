@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -14,7 +17,7 @@ SIGMA_Y = jnp.asarray([[0.0, -1.0j], [1.0j, 0.0]], dtype="complex128")
 SIGMA_Z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype="complex128")
 
 
-def _bell_fields():
+def _bell_fields() -> Any:
     time = phx.domain.TimeInterval(0.0, 1.0)
     zero = time.Function()(jnp.asarray([1.0, 0.0], dtype="complex128"))
     one = time.Function()(jnp.asarray([0.0, 1.0], dtype="complex128"))
@@ -23,14 +26,14 @@ def _bell_fields():
     ) / jnp.sqrt(2.0)
 
     @time.Function()
-    def bell_factor():
+    def bell_factor() -> Any:
         return bell_state.func()[:, None]
 
     density = phx.operators.density_from_factor(bell_factor)
     return time, bell_state, density
 
 
-def test_bell_state_reduces_to_maximally_mixed_subsystems():
+def test_bell_state_reduces_to_maximally_mixed_subsystems() -> None:
     _time, _state, density = _bell_fields()
     reduced_a = phx.operators.partial_trace(
         density,
@@ -54,7 +57,7 @@ def test_bell_state_reduces_to_maximally_mixed_subsystems():
     assert jnp.all(jnp.linalg.eigvalsh(value_b) >= -1e-12)
 
 
-def test_bell_state_local_expectations_vanish_and_correlations_are_unit():
+def test_bell_state_local_expectations_vanish_and_correlations_are_unit() -> None:
     time, _state, density = _bell_fields()
     sigma_x = time.Function()(SIGMA_X)
     sigma_y = time.Function()(SIGMA_Y)
@@ -80,10 +83,10 @@ def test_bell_state_local_expectations_vanish_and_correlations_are_unit():
     assert jnp.allclose(phx.operators.density_expectation(density, zz).func(), 1.0)
 
 
-def test_partial_trace_is_jittable_and_parameter_differentiable():
+def test_partial_trace_is_jittable_and_parameter_differentiable() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
 
-    def reduced_ground_population(theta):
+    def reduced_ground_population(theta: Any) -> Any:
         state = jnp.asarray(
             [jnp.cos(theta), 0.0, 0.0, jnp.sin(theta)],
             dtype="complex128",

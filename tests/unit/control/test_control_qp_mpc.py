@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def test_compiler_matches_finite_lqr_and_preserves_exact_primal_policy():
+def test_compiler_matches_finite_lqr_and_preserves_exact_primal_policy() -> None:
     horizon = 3
     dynamics = jnp.array([[[1.0]], [[0.9]], [[1.1]]])
     controls = jnp.ones((horizon, 1, 1))
@@ -91,7 +94,7 @@ def test_compiler_matches_finite_lqr_and_preserves_exact_primal_policy():
     )
 
 
-def test_control_qp_decoder_rejects_foreign_numeric_binding():
+def test_control_qp_decoder_rejects_foreign_numeric_binding() -> None:
     first_specification = phx.control.LinearQuadraticControlProblem(
         jnp.ones((1, 1, 1)),
         jnp.ones((1, 1, 1)),
@@ -117,7 +120,7 @@ def test_control_qp_decoder_rejects_foreign_numeric_binding():
         phx.control.decode_linear_control_solution(prepared, foreign.qp_result)
 
 
-def test_decision_and_constraint_layouts_identify_every_compiled_block():
+def test_decision_and_constraint_layouts_identify_every_compiled_block() -> None:
     dynamics = jnp.array(
         [
             [[1.0, 0.2], [0.0, 1.0]],
@@ -179,18 +182,27 @@ def test_decision_and_constraint_layouts_identify_every_compiled_block():
         slice(2, 4),
     )
     assert constraints_layout.terminal_inequality_slice == slice(4, 5)
+    # ty: ignore[unresolved-attribute]
     assert qp.num_equalities == 9
+    # ty: ignore[unresolved-attribute]
     assert qp.num_user_equalities == 9
+    # ty: ignore[unresolved-attribute]
     assert qp.num_user_inequalities == 5
+    # ty: ignore[unresolved-attribute]
     assert qp.num_inequalities == 21
 
     np.testing.assert_array_equal(
-        qp.quadratic[decision.state_slice(0), decision.control_slice(0)], cross[0]
+        # ty: ignore[not-subscriptable]
+        qp.quadratic[decision.state_slice(0), decision.control_slice(0)],
+        cross[0],
     )
     np.testing.assert_array_equal(
-        qp.quadratic[decision.control_slice(0), decision.state_slice(0)], cross[0].T
+        # ty: ignore[not-subscriptable]
+        qp.quadratic[decision.control_slice(0), decision.state_slice(0)],
+        cross[0].T,
     )
     np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
         qp.equality_matrix[
             constraints_layout.initial_condition_slice,
             decision.initial_state_slice,
@@ -199,24 +211,34 @@ def test_decision_and_constraint_layouts_identify_every_compiled_block():
     )
     first_dynamics = constraints_layout.dynamics_slices[0]
     np.testing.assert_array_equal(
-        qp.equality_matrix[first_dynamics, decision.state_slice(0)], -dynamics[0]
+        # ty: ignore[unresolved-attribute]
+        qp.equality_matrix[first_dynamics, decision.state_slice(0)],
+        -dynamics[0],
     )
     np.testing.assert_array_equal(
-        qp.equality_matrix[first_dynamics, decision.control_slice(0)], -controls[0]
+        # ty: ignore[unresolved-attribute]
+        qp.equality_matrix[first_dynamics, decision.control_slice(0)],
+        -controls[0],
     )
     np.testing.assert_array_equal(
-        qp.equality_matrix[first_dynamics, decision.state_slice(1)], jnp.eye(2)
+        # ty: ignore[unresolved-attribute]
+        qp.equality_matrix[first_dynamics, decision.state_slice(1)],
+        jnp.eye(2),
     )
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(qp.equality_rhs[first_dynamics], [0.5, -0.5])
     np.testing.assert_array_equal(
+        # ty: ignore[not-subscriptable]
         qp.quadratic[decision.state_slice(1), decision.state_slice(1)],
         2.0 * jnp.eye(2),
     )
     np.testing.assert_array_equal(
+        # ty: ignore[not-subscriptable]
         qp.quadratic[decision.control_slice(1), decision.control_slice(1)],
         jnp.array([[4.0]]),
     )
     np.testing.assert_array_equal(
+        # ty: ignore[not-subscriptable]
         qp.quadratic[decision.state_slice(2), decision.state_slice(2)],
         5.0 * jnp.eye(2),
     )
@@ -226,15 +248,19 @@ def test_decision_and_constraint_layouts_identify_every_compiled_block():
     np.testing.assert_array_equal(qp.linear[decision.control_slice(1)], jnp.array([6.0]))
     first_stage_equality = constraints_layout.stage_equality_slices[0]
     np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
         qp.equality_matrix[first_stage_equality, decision.state_slice(0)],
         jnp.ones((1, 2)),
     )
     np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
         qp.equality_matrix[first_stage_equality, decision.control_slice(0)],
         jnp.zeros((1, 1)),
     )
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(qp.equality_rhs[first_stage_equality], [0.0])
     np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
         qp.equality_matrix[
             constraints_layout.terminal_equality_slice,
             decision.state_slice(2),
@@ -255,15 +281,19 @@ def test_decision_and_constraint_layouts_identify_every_compiled_block():
     np.testing.assert_array_equal(qp.upper_bounds[first_control], [2.0])
     first_stage_inequality = constraints_layout.stage_inequality_slices[0]
     np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
         qp.inequality_matrix[first_stage_inequality, decision.state_slice(0)],
         jnp.ones((2, 2)),
     )
     np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
         qp.inequality_matrix[first_stage_inequality, decision.control_slice(0)],
         jnp.ones((2, 1)),
     )
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(qp.inequality_rhs[first_stage_inequality], [20.0, 20.0])
     np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
         qp.inequality_matrix[
             constraints_layout.terminal_inequality_slice,
             decision.state_slice(2),
@@ -272,7 +302,7 @@ def test_decision_and_constraint_layouts_identify_every_compiled_block():
     )
 
 
-def test_box_polyhedral_and_terminal_constraints_are_enforced_without_repair():
+def test_box_polyhedral_and_terminal_constraints_are_enforced_without_repair() -> None:
     specification = phx.control.LinearQuadraticControlProblem(
         jnp.ones((2, 1, 1)),
         jnp.ones((2, 1, 1)),
@@ -306,7 +336,9 @@ def test_box_polyhedral_and_terminal_constraints_are_enforced_without_repair():
     np.testing.assert_allclose(solution.states[:, 0], [1.0, 0.5, 0.25], atol=2e-6)
     assert jnp.max(solution.qp_result.inequality_violation) <= 2e-8
     assert jnp.max(jnp.abs(solution.qp_result.equality_residual)) <= 2e-8
+    # ty: ignore[unsupported-operator]
     assert jnp.all(solution.controls >= specification.control_lower_bounds - 2e-8)
+    # ty: ignore[unsupported-operator]
     assert jnp.all(solution.controls <= specification.control_upper_bounds + 2e-8)
 
 
@@ -317,7 +349,9 @@ def test_box_polyhedral_and_terminal_constraints_are_enforced_without_repair():
         (jnp.zeros((1, 1, 1)), jnp.ones((1, 1, 1))),
     ],
 )
-def test_compiler_rejects_indefinite_joint_stage_costs(control_cost, cross):
+def test_compiler_rejects_indefinite_joint_stage_costs(
+    control_cost: Any, cross: Any
+) -> None:
     specification = phx.control.LinearQuadraticControlProblem(
         jnp.ones((1, 1, 1)),
         jnp.zeros((1, 1, 1)),
@@ -335,7 +369,7 @@ def test_compiler_rejects_indefinite_joint_stage_costs(control_cost, cross):
         phx.control.solve_linear_quadratic_control(specification)
 
 
-def test_mpc_rejects_complex_initial_state_before_real_dtype_conversion():
+def test_mpc_rejects_complex_initial_state_before_real_dtype_conversion() -> None:
     specification = phx.control.LinearQuadraticControlProblem(
         jnp.ones((1, 1, 1)),
         jnp.ones((1, 1, 1)),
@@ -354,7 +388,7 @@ def test_mpc_rejects_complex_initial_state_before_real_dtype_conversion():
         )
 
 
-def test_batched_cases_and_failure_statuses_remain_case_explicit():
+def test_batched_cases_and_failure_statuses_remain_case_explicit() -> None:
     horizon = 2
     specification = phx.control.LinearQuadraticControlProblem(
         jnp.ones((2, horizon, 1, 1)),
@@ -400,7 +434,7 @@ def test_batched_cases_and_failure_statuses_remain_case_explicit():
     assert jnp.isnan(nonfinite_solution.qp_result.primal).any()
 
 
-def test_receding_horizon_state_handoff_and_terminal_policy_are_explicit():
+def test_receding_horizon_state_handoff_and_terminal_policy_are_explicit() -> None:
     horizon = 3
     specification = phx.control.LinearQuadraticControlProblem(
         jnp.ones((horizon, 1, 1)),
@@ -453,11 +487,12 @@ def test_receding_horizon_state_handoff_and_terminal_policy_are_explicit():
             specification,
             prediction_horizon=1,
             terminal_policy="global",
+            # ty: ignore[invalid-argument-type]
             warm_start=jnp.zeros((horizon, 1)),
         )
 
 
-def test_mpc_propagates_infeasible_qp_and_nonfinite_rollout_failures():
+def test_mpc_propagates_infeasible_qp_and_nonfinite_rollout_failures() -> None:
     infeasible = phx.control.LinearQuadraticControlProblem(
         jnp.ones((1, 1, 1)),
         jnp.zeros((1, 1, 1)),
@@ -509,8 +544,8 @@ _TIGHT = phx.optim.ConvexSolvePolicy(
 )
 
 
-def _shifted(problem, tangent, step):
-    def at(name):
+def _shifted(problem: Any, tangent: Any, step: Any) -> Any:
+    def at(name: Any) -> Any:
         return getattr(problem, name) + step * getattr(tangent, name)
 
     return phx.control.LinearQuadraticControlProblem(
@@ -528,7 +563,9 @@ def _shifted(problem, tangent, step):
     )
 
 
-def test_mpc_sensitivity_matches_finite_differences_away_from_active_set_changes():
+def test_mpc_sensitivity_matches_finite_differences_away_from_active_set_changes() -> (
+    None
+):
     horizon = 4
     dynamics = jnp.stack(
         (
@@ -569,7 +606,7 @@ def test_mpc_sensitivity_matches_finite_differences_away_from_active_set_changes
 
     keys = jax.random.split(jax.random.PRNGKey(7), 9)
 
-    def symmetric(key, shape):
+    def symmetric(key: Any, shape: Any) -> Any:
         value = jax.random.normal(key, shape)
         return 0.5 * (value + jnp.swapaxes(value, -1, -2))
 
@@ -639,7 +676,7 @@ def test_mpc_sensitivity_matches_finite_differences_away_from_active_set_changes
     np.testing.assert_array_equal(cotangent.time_grid.times, 0.0)
 
 
-def test_mpc_sensitivity_refuses_the_complete_derivative_for_one_weak_window():
+def test_mpc_sensitivity_refuses_the_complete_derivative_for_one_weak_window() -> None:
     specification = phx.control.LinearQuadraticControlProblem(
         jnp.ones((2, 1, 1)),
         jnp.ones((2, 1, 1)),
@@ -689,10 +726,11 @@ def test_mpc_sensitivity_refuses_the_complete_derivative_for_one_weak_window():
         )
     )
     assert refused.linearization is None
+    # ty: ignore[unsupported-operator]
     assert "windows [0] are not valid and OPTIMAL" in refused.refusal
 
 
-def test_batched_mpc_sensitivity_refusal_names_the_weak_case_and_window():
+def test_batched_mpc_sensitivity_refusal_names_the_weak_case_and_window() -> None:
     specification = phx.control.LinearQuadraticControlProblem(
         jnp.ones((2, 2, 1, 1)),
         jnp.ones((2, 2, 1, 1)),
@@ -725,7 +763,7 @@ def test_batched_mpc_sensitivity_refusal_names_the_weak_case_and_window():
         sensitivity.jvp(jax.tree.map(jnp.zeros_like, specification))
 
 
-def test_mpc_sensitivity_admits_only_dense_cold_unregularized_qp_sensitivities():
+def test_mpc_sensitivity_admits_only_dense_cold_unregularized_qp_sensitivities() -> None:
     specification = phx.control.LinearQuadraticControlProblem(
         jnp.ones((2, 1, 1)),
         jnp.ones((2, 1, 1)),
@@ -735,7 +773,9 @@ def test_mpc_sensitivity_admits_only_dense_cold_unregularized_qp_sensitivities()
         jnp.ones((1, 1)),
     )
 
-    def refused(match, error=ValueError, differentiation=None, **options):
+    def refused(
+        match: Any, error: Any = ValueError, differentiation: Any = None, **options: Any
+    ) -> None:
         controller = phx.control.RecedingHorizonMPC(
             specification,
             prediction_horizon=1,
@@ -771,4 +811,5 @@ def test_mpc_sensitivity_admits_only_dense_cold_unregularized_qp_sensitivities()
         differentiation=phx.optim.ConvexDifferentiationPolicy("algorithmic"),
     )
     with pytest.raises(TypeError, match="RecedingHorizonMPC"):
+        # ty: ignore[invalid-argument-type]
         phx.control.prepare_receding_horizon_mpc_sensitivity(specification)

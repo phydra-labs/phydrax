@@ -2,7 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import warnings
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -30,7 +32,7 @@ from phydrax.operators.differential._hooks import get_derivative_rule
 from phydrax.solver import FunctionalSolver
 
 
-def _paired_batch(domain, xs, ts):
+def _paired_batch(domain: Any, xs: Any, ts: Any) -> Any:
     structure = SampleLayout((("x", "t"),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
@@ -48,13 +50,13 @@ def _paired_batch(domain, xs, ts):
     return PointBatch(points=points, structure=structure)
 
 
-def test_functional_solver_builds_enforced_pipeline_terms():
+def test_functional_solver_builds_enforced_pipeline_terms() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return x[0] + t
 
     boundary_component = domain.component({"x": Boundary()})
@@ -111,13 +113,13 @@ def test_functional_solver_builds_enforced_pipeline_terms():
     assert jnp.allclose(out.reshape((-1,)), anchor_values, atol=1e-3)
 
 
-def test_initial_constraint_coord_separable_spatial():
+def test_initial_constraint_coord_separable_spatial() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> float:
         return 0.0
 
     initial_component = domain.component({"t": FixedStart()})
@@ -149,7 +151,7 @@ def test_initial_constraint_coord_separable_spatial():
     assert jnp.allclose(loss, 0.0, atol=1e-6)
 
 
-def _as_scalar(x):
+def _as_scalar(x: Any) -> Any:
     arr = jnp.asarray(x)
     if arr.ndim == 0:
         return arr
@@ -166,12 +168,12 @@ class _ScalarLatentModel(_AbstractBaseModel):
         self.in_size = "scalar"
         self.out_size = 2
 
-    def __call__(self, x, /, *, key=jr.key(0)):
+    def __call__(self, x: Any, /, *, key: Any = jr.key(0)) -> Any:
         x = _as_scalar(x)
         return jnp.stack([x, jnp.array(1.0)], axis=-1)
 
 
-def test_enforced_conditions_respected_with_latent_contraction_model():
+def test_enforced_conditions_respected_with_latent_contraction_model() -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=2,
@@ -185,11 +187,11 @@ def test_enforced_conditions_respected_with_latent_contraction_model():
     initial = domain.component({"t": FixedStart()})
 
     @domain.Function("x")
-    def u0_target(x):
+    def u0_target(x: Any) -> Any:
         return jnp.sin(jnp.pi * x[0])
 
     @domain.Function("x")
-    def ut0_target(x):
+    def ut0_target(x: Any) -> float:
         del x
         return 0.0
 
@@ -227,7 +229,7 @@ def test_enforced_conditions_respected_with_latent_contraction_model():
     assert jnp.abs(corner) < 1e-6
 
 
-def test_enforced_initial_overlay_boundary_compatible_preserves_all_orders():
+def test_enforced_initial_overlay_boundary_compatible_preserves_all_orders() -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=2,
@@ -241,15 +243,15 @@ def test_enforced_initial_overlay_boundary_compatible_preserves_all_orders():
     initial = domain.component({"t": FixedStart()})
 
     @domain.Function("x")
-    def u0_target(x):
+    def u0_target(x: Any) -> Any:
         return jnp.sin(jnp.pi * x[0])
 
     @domain.Function("x")
-    def ut0_target(x):
+    def ut0_target(x: Any) -> Any:
         return jnp.sin(jnp.pi * x[0])
 
     @domain.Function("x")
-    def utt0_target(x):
+    def utt0_target(x: Any) -> Any:
         return -jnp.sin(jnp.pi * x[0])
 
     specs = [
@@ -295,7 +297,7 @@ def test_enforced_initial_overlay_boundary_compatible_preserves_all_orders():
     assert jnp.max(jnp.abs(utt_init + expected)) < 1e-6
 
 
-def test_enforced_initial_overlay_incompatible_keeps_boundary_gate():
+def test_enforced_initial_overlay_incompatible_keeps_boundary_gate() -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=2,
@@ -309,11 +311,11 @@ def test_enforced_initial_overlay_incompatible_keeps_boundary_gate():
     initial = domain.component({"t": FixedStart()})
 
     @domain.Function("x")
-    def u0_target(x):
+    def u0_target(x: Any) -> Any:
         return x[0]
 
     @domain.Function("x")
-    def ut0_target(x):
+    def ut0_target(x: Any) -> Any:
         return 1.0 + x[0]
 
     specs = [
@@ -350,7 +352,7 @@ def test_enforced_initial_overlay_incompatible_keeps_boundary_gate():
     assert jnp.abs(ut_corner - target_ut_corner) > 1e-2
 
 
-def test_wave_like_loss_with_coord_separable_enforced_terms_runs():
+def test_wave_like_loss_with_coord_separable_enforced_terms_runs() -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=2,
@@ -364,11 +366,11 @@ def test_wave_like_loss_with_coord_separable_enforced_terms_runs():
     initial = domain.component({"t": FixedStart()})
 
     @domain.Function("x")
-    def u0_target(x):
+    def u0_target(x: Any) -> Any:
         return x[0]
 
     @domain.Function("x")
-    def ut0_target(x):
+    def ut0_target(x: Any) -> Any:
         return 0.0 * x[0]
 
     specs = [
@@ -383,6 +385,7 @@ def test_wave_like_loss_with_coord_separable_enforced_terms_runs():
         lambda f: dt_n(f, var="t", order=2) - laplacian(f, var="x"),
     )
     batch = pde_condition.on.sample(
+        # ty: ignore[invalid-argument-type]
         phx.domain.GridSampling({"x": 16, "t": 8}),
         key=jr.key(9),
     )
@@ -412,7 +415,7 @@ def test_wave_like_loss_with_coord_separable_enforced_terms_runs():
     assert jnp.isfinite(loss)
 
 
-def test_enforced_pipeline_stacked_overlays_keep_derivative_hooks_and_fast_path():
+def test_enforced_pipeline_stacked_overlays_keep_derivative_hooks_and_fast_path() -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=2,
@@ -426,11 +429,11 @@ def test_enforced_pipeline_stacked_overlays_keep_derivative_hooks_and_fast_path(
     initial = domain.component({"t": FixedStart()})
 
     @domain.Function("x")
-    def u0_target(x):
+    def u0_target(x: Any) -> Any:
         return x[0]
 
     @domain.Function("x")
-    def ut0_target(x):
+    def ut0_target(x: Any) -> Any:
         return 0.0 * x[0]
 
     specs = [

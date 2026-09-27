@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -37,7 +38,7 @@ from phydrax.applications.cardiovascular.hemodynamics._rheology import (
 )
 
 
-def _grid(shape, periodic):
+def _grid(shape: Any, periodic: Any) -> Any:
     return phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(count, periodic=periodic[axis])
@@ -54,7 +55,7 @@ def _grid(shape, periodic):
     )
 
 
-def _workflow(shape=(6, 8, 4)):
+def _workflow(shape: Any = (6, 8, 4)) -> Any:
     # Nonperiodic transverse faces let the production plan install explicit
     # terminal-over-stationary-wall ownership at every D3Q19 edge link.
     grid = _grid(shape, (False, False, False))
@@ -95,7 +96,7 @@ def _workflow(shape=(6, 8, 4)):
     return plan.prepare()
 
 
-def _scaling_case():
+def _scaling_case() -> Any:
     scaling = HemodynamicsScaling(
         0.25,
         0.01,
@@ -142,7 +143,7 @@ def _scaling_case():
     }
 
 
-def _rheology_case():
+def _rheology_case() -> Any:
     shear = jnp.asarray((0.0, 1.0e-3, 1.0e-2, 1.0))
     newtonian = NewtonianRheology(0.004)
     limit = CarreauYasudaRheology(0.004, 0.004, 10.0, 0.5, 2.0)
@@ -160,7 +161,7 @@ def _rheology_case():
     }
 
 
-def _reference_case():
+def _reference_case() -> Any:
     pipe = PoiseuillePipeReference(1.5, 20.0, 0.8, 0.004)
     radius = np.linspace(0.0, 1.5, 4001)
     velocity = np.asarray(pipe.axial_velocity(radius))
@@ -188,7 +189,7 @@ def _reference_case():
     }
 
 
-def _terminal_and_candidate_case():
+def _terminal_and_candidate_case() -> Any:
     prepared = _workflow()
     shape = prepared.discretization.grid.shape
     velocity = jnp.zeros(shape + (3,)).at[..., 0].set(0.01)
@@ -231,7 +232,7 @@ def _terminal_and_candidate_case():
     }
 
 
-def _lbm_mac_case():
+def _lbm_mac_case() -> Any:
     """Evolve native D3Q19 and MAC states under the same body acceleration."""
 
     shape = (8, 8, 4)
@@ -303,7 +304,7 @@ def _lbm_mac_case():
         operators, boundaries=boundaries
     ).prepare()
 
-    def mac_forcing(time, velocity, parameters):
+    def mac_forcing(time: Any, velocity: Any, parameters: Any) -> Any:
         del time
         return tuple(
             jnp.ones_like(component) * parameters[axis]
@@ -379,7 +380,7 @@ def _lbm_mac_case():
     }
 
 
-def qualification_report():
+def qualification_report() -> Any:
     cases = {
         "scaling": _scaling_case(),
         "rheology": _rheology_case(),

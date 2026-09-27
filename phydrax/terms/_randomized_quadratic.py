@@ -8,7 +8,7 @@ from math import prod
 from typing import Literal, TypeAlias
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..integration import IntegrationPrecisionPolicy
 

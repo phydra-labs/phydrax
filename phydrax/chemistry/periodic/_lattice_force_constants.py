@@ -7,11 +7,13 @@
 from __future__ import annotations
 
 from math import isfinite
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -90,7 +92,7 @@ def _ifc2_reverse_indices(relation: EdgeRelation, translations: np.ndarray) -> n
 def _ifc3_permutation_indices(
     atom_triplets: np.ndarray, translations: np.ndarray, valid: np.ndarray
 ) -> np.ndarray:
-    keys: dict[tuple[int, int, int, tuple[int, ...], tuple[int, ...]], int] = {}
+    keys: dict[tuple[int | tuple[int, ...], ...], int] = {}
     for route in np.flatnonzero(valid):
         key = (
             *(int(value) for value in atom_triplets[route]),
@@ -150,7 +152,7 @@ class IFCConstraintPolicy(StrictModule, NonTrainableState):
         residual_tolerance: float = 1.0e-8,
         maximum_relative_correction: float = 5.0e-2,
         maximum_condition_number: float = 1.0e12,
-    ):
+    ) -> None:
         tolerance = float(residual_tolerance)
         correction = float(maximum_relative_correction)
         condition = float(maximum_condition_number)
@@ -199,14 +201,14 @@ class IFCConstraintEvidence(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        raw_residuals,
-        corrected_residuals,
-        relative_correction,
-        rank,
-        condition,
-        successful,
+        raw_residuals: ArrayLike,
+        corrected_residuals: ArrayLike,
+        relative_correction: ArrayLike,
+        rank: int,
+        condition: float,
+        successful: ArrayLike,
         /,
-    ):
+    ) -> None:
         raw = jnp.asarray(raw_residuals).reshape((3,))
         corrected = jnp.asarray(corrected_residuals, dtype=raw.dtype).reshape((3,))
         (
@@ -417,7 +419,7 @@ class SecondOrderForceConstants(StrictModule, NonTrainableState):
         source_kind: str,
         source_id: str,
         convention_id: str = "ifc-real-space-source-at-zero-target-at-R",
-    ):
+    ) -> None:
         if (
             not isinstance(relation, EdgeRelation)
             or relation.source_size != relation.target_size
@@ -532,7 +534,7 @@ class ThirdOrderForceConstants(StrictModule, NonTrainableState):
         source_id: str,
         valid: ArrayLike | None = None,
         residual_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         triplets = np.asarray(atom_triplets)
         translation = np.asarray(translations)
         raw = np.asarray(raw_values)
@@ -659,7 +661,7 @@ class PrimitiveSupercellImageMap(StrictModule, NonTrainableState):
         /,
         *,
         primitive_system_id: str,
-    ):
+    ) -> None:
         primitive_ids = np.asarray(primitive_particle_ids)
         supercell_ids = np.asarray(supercell_particle_ids)
         mapping = np.asarray(supercell_to_primitive)
@@ -770,14 +772,14 @@ class FiniteDisplacementIFC2Result(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        force_constants,
-        equilibrium,
-        antisymmetry,
-        refinement,
-        force_evaluations,
-        successful,
+        force_constants: SecondOrderForceConstants,
+        equilibrium: ArrayLike,
+        antisymmetry: ArrayLike,
+        refinement: ArrayLike,
+        force_evaluations: int,
+        successful: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.force_constants = force_constants
         dtype = force_constants.values.dtype
         self.equilibrium_force_residual = jnp.asarray(equilibrium, dtype=dtype).reshape(
@@ -837,7 +839,7 @@ class FiniteDisplacementIFC2Plan(StrictModule, NonTrainableState):
         equilibrium_force_tolerance: float = 1.0e-7,
         refinement_tolerance: float = 1.0e-5,
         maximum_force_evaluations: int = 100_000,
-    ):
+    ) -> None:
         if not isinstance(potential, PreparedAtomisticPotentialProgram):
             raise TypeError("potential must be PreparedAtomisticPotentialProgram.")
         if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
@@ -930,7 +932,7 @@ class PreparedFiniteDisplacementIFC2(StrictModule, NonTrainableState):
     plan: FiniteDisplacementIFC2Plan
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: FiniteDisplacementIFC2Plan, /):
+    def __init__(self, plan: FiniteDisplacementIFC2Plan, /) -> None:
         if not isinstance(plan, FiniteDisplacementIFC2Plan):
             raise TypeError("plan must be FiniteDisplacementIFC2Plan.")
         self.plan = plan
@@ -1090,7 +1092,9 @@ def normalize_second_order_force_constants(
     )
 
 
-def normalize_third_order_force_constants(*args, **kwargs) -> ThirdOrderForceConstants:
+def normalize_third_order_force_constants(
+    *args: Any, **kwargs: Any
+) -> ThirdOrderForceConstants:
     """Construct a provider-normalized canonical IFC3 after full closure checks."""
 
     return ThirdOrderForceConstants(*args, **kwargs)

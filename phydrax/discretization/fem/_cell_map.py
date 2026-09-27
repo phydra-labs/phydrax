@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -50,7 +51,7 @@ class PreparedFiniteElementCellMap(StrictModule, NonTrainableState):
         discretization: FiniteElementDiscretization,
         block_index: int,
         /,
-    ):
+    ) -> None:
         if not isinstance(discretization, FiniteElementDiscretization):
             raise TypeError("discretization must be FiniteElementDiscretization.")
         index = int(block_index)
@@ -61,6 +62,7 @@ class PreparedFiniteElementCellMap(StrictModule, NonTrainableState):
         coordinate_dofs = discretization.coordinate_dofs[index]
         if coordinate_element.cell_kind != block.cell_kind:
             raise ValueError("Coordinate element and cell block kinds differ.")
+        # ty: ignore[invalid-assignment]
         self.coordinate_element = coordinate_element
         self.coordinate_dofs = jnp.asarray(coordinate_dofs)
         self.precision_policy = discretization.precision_policy

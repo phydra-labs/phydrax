@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -12,13 +15,13 @@ from phydrax.domain import TimeInterval
 from phydrax.operators.differential import laplacian
 
 
-def test_laplacian_scalar_function_point():
+def test_laplacian_scalar_function_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2
 
     L = laplacian(f)
@@ -27,13 +30,13 @@ def test_laplacian_scalar_function_point():
     assert jnp.allclose(out, 4.0)
 
 
-def test_laplacian_vector_function_point():
+def test_laplacian_vector_function_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return jnp.array([x[0] ** 2, x[1] ** 2])
 
     L = laplacian(f)
@@ -43,13 +46,13 @@ def test_laplacian_vector_function_point():
     assert jnp.allclose(out, jnp.array([2.0, 2.0]))
 
 
-def test_laplacian_spacetime_var_x_ignores_t(sample_batch):
+def test_laplacian_spacetime_var_x_ignores_t(sample_batch: Any) -> None:
     dom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     ) @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x", "t")
-    def f(x, t):
+    def f(x: Any, t: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2 + t
 
     L = laplacian(f, var="x")
@@ -60,7 +63,7 @@ def test_laplacian_spacetime_var_x_ignores_t(sample_batch):
     assert jnp.allclose(out, 4.0)
 
 
-def test_laplacian_coord_separable_constant(sample_grid):
+def test_laplacian_coord_separable_constant(sample_grid: Any) -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -68,7 +71,7 @@ def test_laplacian_coord_separable_constant(sample_grid):
     batch = sample_grid(component, {"x": (6, 5)}, dense_blocks=(), key=0)
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         x, y = x
         return x**2 + y**2
 
@@ -77,13 +80,13 @@ def test_laplacian_coord_separable_constant(sample_grid):
     assert jnp.allclose(out, 4.0, atol=1e-6)
 
 
-def test_laplacian_complex_output_point():
+def test_laplacian_complex_output_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] ** 2 + 1j * x[1] ** 2
 
     L = laplacian(f)
@@ -92,7 +95,7 @@ def test_laplacian_complex_output_point():
     assert jnp.allclose(out, 2.0 + 2.0j)
 
 
-def test_laplacian_preserves_metadata():
+def test_laplacian_preserves_metadata() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -101,13 +104,13 @@ def test_laplacian_preserves_metadata():
     assert out.metadata == u.metadata
 
 
-def test_laplacian_ad_engine_jvp_matches_default_point():
+def test_laplacian_ad_engine_jvp_matches_default_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2 + x[0] * x[1]
 
     pts = frozendict({"x": cx.AxisArray(jnp.array([0.7, -0.2]), dims=(None,))})
@@ -116,7 +119,9 @@ def test_laplacian_ad_engine_jvp_matches_default_point():
     assert jnp.allclose(out_jvp, out_ref, atol=1e-6)
 
 
-def test_laplacian_ad_engine_jvp_matches_default_coord_separable(sample_grid):
+def test_laplacian_ad_engine_jvp_matches_default_coord_separable(
+    sample_grid: Any,
+) -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -124,7 +129,7 @@ def test_laplacian_ad_engine_jvp_matches_default_coord_separable(sample_grid):
     batch = sample_grid(component, {"x": (7, 6)}, dense_blocks=(), key=3)
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         x0, x1 = x
         return x0**2 + 3.0 * x1**2
 
@@ -133,13 +138,13 @@ def test_laplacian_ad_engine_jvp_matches_default_coord_separable(sample_grid):
     assert jnp.allclose(out_jvp, out_ref, atol=1e-6)
 
 
-def test_laplacian_ad_engine_requires_ad_backend():
+def test_laplacian_ad_engine_requires_ad_backend() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2
 
     with pytest.raises(ValueError, match="backend='ad'"):

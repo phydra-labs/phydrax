@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -56,7 +57,7 @@ class Trade(StrictModule, NonTrainableState):
         *,
         settlement: SettlementTerms,
         transaction_price: CurrencyAmount | None = None,
-    ):
+    ) -> None:
         identifier = _identifier(trade_id, "trade_id")
         if not isinstance(contract, AbstractContract):
             raise TypeError("contract must be an unresolved AbstractContract definition.")
@@ -145,7 +146,7 @@ class Position(StrictModule, NonTrainableState):
         /,
         *,
         account_id: str,
-    ):
+    ) -> None:
         identifier = _identifier(position_id, "position_id")
         account = _identifier(account_id, "account_id")
         if not isinstance(contract, AbstractResolvedContract):

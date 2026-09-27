@@ -5,13 +5,13 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
-from typing import Any
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
@@ -29,8 +29,19 @@ from ...linalg import (
     solve,
 )
 from ...nn.parameters import ParameterSubspace
+from ...typing import PRNGKey
 from .._functional_residual import prepare_functional_residual
 from .._functional_solver import FunctionalSolver
+
+
+if TYPE_CHECKING:
+    import optax
+
+    from ...optim._evolution_strategy import AbstractDistributionEvolutionMethod
+    from ...optim._kfac._config import KFAC
+    from ...optim._mirror_descent import AbstractMirrorOptimizer
+    from ...optim._riemannian import AbstractRiemannianOptimizer
+    from ._prepare import PreparedFunctionalDecomposition
 
 
 class LocalCurvaturePlan(StrictModule):
@@ -44,7 +55,7 @@ class LocalCurvaturePlan(StrictModule):
         *,
         damping: float = 1.0e-4,
         max_parameters: int = 2048,
-    ):
+    ) -> None:
         damping_ = float(damping)
         maximum = int(max_parameters)
         if not math.isfinite(damping_) or damping_ <= 0.0:
@@ -72,7 +83,7 @@ class LocalCurvatureResult(StrictModule):
         gradient_norm: Array,
         step_norm: Array,
         accepted: bool,
-    ):
+    ) -> None:
         self.functions = frozendict(functions)
         self.loss = jnp.asarray(loss).reshape(())
         self.gradient_norm = jnp.asarray(gradient_norm).reshape(())
@@ -87,7 +98,7 @@ def dense_local_curvature_step(
     plan: LocalCurvaturePlan | None = None,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> LocalCurvatureResult:
     """Take one damped exact local Newton step through Phydrax linear algebra."""
     if not isinstance(solver, FunctionalSolver):
@@ -104,7 +115,7 @@ def dense_local_curvature_step(
         )
     position = subspace.pack()
 
-    def objective(vector):
+    def objective(vector: Array) -> Array:
         functions = subspace.reconstruct_vector(vector)
         bound = eqx.tree_at(lambda value: value.functions, solver, functions)
         return bound.loss(key=key)
@@ -164,7 +175,7 @@ class DecompositionKFACResult(StrictModule):
         patch_ids: tuple[str, ...],
         diagnostics: Any,
         /,
-    ):
+    ) -> None:
         self.functions = frozendict(functions)
         self.patch_ids = tuple(patch_ids)
         self.approximation = (
@@ -174,12 +185,18 @@ class DecompositionKFACResult(StrictModule):
 
 
 def solve_decomposition_kfac(
-    prepared,
-    patch_ids,
+    prepared: PreparedFunctionalDecomposition,
+    patch_ids: Iterable[str],
     /,
     *,
     num_iter: int,
-    optimizer=None,
+    optimizer: optax.GradientTransformation
+    | optax.GradientTransformationExtraArgs
+    | AbstractDistributionEvolutionMethod
+    | KFAC
+    | AbstractMirrorOptimizer
+    | AbstractRiemannianOptimizer
+    | None = None,
     seed: int = 0,
     jit: bool = False,
 ) -> DecompositionKFACResult:
@@ -240,15 +257,17 @@ def solve_decomposition_kfac(
     )
 
 
-def solve_local_kfac(prepared, patch_id: str, /, **kwargs) -> DecompositionKFACResult:
+def solve_local_kfac(
+    prepared: PreparedFunctionalDecomposition, patch_id: str, /, **kwargs: Any
+) -> DecompositionKFACResult:
     return solve_decomposition_kfac(prepared, (patch_id,), **kwargs)
 
 
 def solve_overlap_kfac(
-    prepared,
+    prepared: PreparedFunctionalDecomposition,
     patch_ids: Sequence[str],
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> DecompositionKFACResult:
     if len(tuple(patch_ids)) < 2:
         raise ValueError("Overlap KFAC requires at least two patch IDs.")
@@ -258,7 +277,7 @@ def solve_overlap_kfac(
 class MatrixFreeGaussNewtonPlan(StrictModule):
     damping: float = eqx.field(static=True)
 
-    def __init__(self, *, damping: float = 1.0e-4):
+    def __init__(self, *, damping: float = 1.0e-4) -> None:
         damping_ = float(damping)
         if not math.isfinite(damping_) or damping_ <= 0.0:
             raise ValueError("damping must be finite and positive.")
@@ -282,7 +301,7 @@ class MatrixFreeGaussNewtonResult(StrictModule):
         final_loss: Array,
         accepted: bool,
         linear_result: Any,
-    ):
+    ) -> None:
         self.functions = frozendict(functions)
         self.initial_loss = jnp.asarray(initial_loss).reshape(())
         self.final_loss = jnp.asarray(final_loss).reshape(())
@@ -297,7 +316,7 @@ def matrix_free_gauss_newton_step(
     plan: MatrixFreeGaussNewtonPlan | None = None,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> MatrixFreeGaussNewtonResult:
     """Take one damped Gauss-Newton step without assembling a Jacobian or Hessian."""
     if not isinstance(solver, FunctionalSolver):
@@ -328,13 +347,13 @@ def matrix_free_gauss_newton_step(
     )
     position = subspace.pack()
 
-    def roots(vector):
+    def roots(vector: Array) -> Array:
         return residual.roots(subspace.reconstruct_vector(vector))
 
     residual_value, transpose = jax.vjp(roots, position)
     right_hand_side = -transpose(residual_value)[0]
 
-    def normal_action(direction):
+    def normal_action(direction: Array) -> Array:
         _, tangent = jax.jvp(roots, (position,), (direction,))
         _, pullback = jax.vjp(roots, position)
         return pullback(tangent)[0] + plan_.damping * direction

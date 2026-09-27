@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -16,7 +18,7 @@ from phydrax.stochastic._feynman_kac import FeynmanKacSamplingPlan
 class _TimeCoefficient(eqx.Module):
     coefficient: jnp.ndarray = phx.parameter_field()
 
-    def __call__(self, time, state, *, key=None):
+    def __call__(self, time: Any, state: Any, *, key: Any = None) -> Any:
         del state, key
         return jnp.asarray([self.coefficient * (1.0 - time)])
 
@@ -24,7 +26,7 @@ class _TimeCoefficient(eqx.Module):
 class _QuadraticTimeCoefficient(eqx.Module):
     coefficient: jnp.ndarray = phx.parameter_field()
 
-    def __call__(self, time, state, *, key=None):
+    def __call__(self, time: Any, state: Any, *, key: Any = None) -> Any:
         del key
         return jnp.asarray([state[0] ** 2 + self.coefficient * (1.0 - time)])
 
@@ -32,12 +34,12 @@ class _QuadraticTimeCoefficient(eqx.Module):
 class _ConstantControl(eqx.Module):
     coefficient: jnp.ndarray = phx.parameter_field()
 
-    def __call__(self, time, state, *, key=None):
+    def __call__(self, time: Any, state: Any, *, key: Any = None) -> Any:
         del time, state, key
         return jnp.asarray([[self.coefficient]])
 
 
-def _placeholder(process_id="picard"):
+def _placeholder(process_id: Any = "picard") -> Any:
     return BSDEPathBatch(
         jnp.asarray([0.0, 1.0]),
         jnp.zeros((1, 2, 1)),
@@ -50,7 +52,13 @@ def _placeholder(process_id="picard"):
     )
 
 
-def _problem(*, generator, terminal, problem_id="picard", process_id="picard"):
+def _problem(
+    *,
+    generator: Any,
+    terminal: Any,
+    problem_id: Any = "picard",
+    process_id: Any = "picard",
+) -> Any:
     paths = _placeholder(process_id)
     return BSDEProblem(
         lambda key: paths,
@@ -66,19 +74,21 @@ def _problem(*, generator, terminal, problem_id="picard", process_id="picard"):
     )
 
 
-def _domain():
+def _domain() -> Any:
     return phx.domain.Interval1d(-4.0, 4.0) @ phx.domain.TimeInterval(0.0, 1.0)
 
 
-def _function(model):
+def _function(model: Any) -> Any:
     return _domain().Function("t", "x")(model)
 
 
-def _coefficient(function):
+def _coefficient(function: Any) -> Any:
     return float(function.func.function.coefficient)
 
 
-def test_semilinear_deep_picard_trains_global_time_field_and_removes_temporary_state():
+def test_semilinear_deep_picard_trains_global_time_field_and_removes_temporary_state() -> (
+    None
+):
     problem = _problem(
         generator=lambda time, state, value, control, args: jnp.asarray([1.0]),
         terminal=lambda state, args: jnp.asarray([0.0]),
@@ -120,7 +130,7 @@ def test_semilinear_deep_picard_trains_global_time_field_and_removes_temporary_s
     assert _coefficient(solver["value"]) == 0.0
 
 
-def test_structured_source_context_uses_factor_hvps_and_trains_quadratic_case():
+def test_structured_source_context_uses_factor_hvps_and_trains_quadratic_case() -> None:
     problem = _problem(
         generator=lambda time, state, value, control, args: jnp.zeros_like(value),
         terminal=lambda state, args: jnp.asarray([state[0] ** 2]),
@@ -129,12 +139,14 @@ def test_structured_source_context_uses_factor_hvps_and_trains_quadratic_case():
     source_model = _function(_QuadraticTimeCoefficient(jnp.asarray(0.0)))
     context = PicardSourceContext(source_model, problem, jr.key(0))
     assert jnp.allclose(
+        # ty: ignore[invalid-argument-type]
         context.directional_hessian(0.2, jnp.asarray([0.3]), jnp.ones((1,))),
         2.0,
     )
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(context.covariance_trace(0.2, jnp.asarray([0.3])), 2.0)
 
-    def source_builder(_context):
+    def source_builder(_context: Any) -> Any:
         return StructuredPicardSource(
             lambda time, state, current, args: (
                 0.5 * current.covariance_trace(time, state)
@@ -178,7 +190,7 @@ def test_structured_source_context_uses_factor_hvps_and_trains_quadratic_case():
     assert result.diagnostics.finite[-1]
 
 
-def test_deep_picard_martingale_targets_train_explicit_control():
+def test_deep_picard_martingale_targets_train_explicit_control() -> None:
     problem = _problem(
         generator=lambda time, state, value, control, args: jnp.zeros_like(value),
         terminal=lambda state, args: jnp.asarray([state[0]]),

@@ -19,7 +19,9 @@ from numbers import Integral
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -39,7 +41,7 @@ class PeriodicFourierConvention(StrictModule, NonTrainableState):
     phase_scale: float = eqx.field(static=True)
     convention_id: str = eqx.field(static=True)
 
-    def __init__(self, sign: int = 1, phase_scale: float = 2.0 * np.pi, /):
+    def __init__(self, sign: int = 1, phase_scale: float = 2.0 * np.pi, /) -> None:
         sign_ = int(sign)
         scale = float(phase_scale)
         if sign_ not in (-1, 1) or not isfinite(scale) or scale <= 0.0:
@@ -67,15 +69,15 @@ class PeriodicTranslationFamilyPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         relation: EdgeRelation,
-        translations: ArrayLike,
-        reverse_indices: ArrayLike,
+        translations: npt.ArrayLike,
+        reverse_indices: npt.ArrayLike,
         /,
         *,
         convention: PeriodicFourierConvention | None = None,
         hermitian: bool = True,
         maximum_dense_entries: int = 4_000_000,
         maximum_finite_entries: int = 8_000_000,
-    ):
+    ) -> None:
         if not isinstance(relation, EdgeRelation):
             raise TypeError("relation must be phydrax.sparse.EdgeRelation.")
         translations_ = np.asarray(translations)
@@ -174,7 +176,7 @@ class PeriodicTranslationFamilyState(StrictModule, NonTrainableState):
         /,
         *,
         hermiticity_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(plan, PeriodicTranslationFamilyPlan):
             raise TypeError("plan must be PeriodicTranslationFamilyPlan.")
         value = np.asarray(values)
@@ -246,7 +248,7 @@ class PreparedPeriodicTranslationFamily(StrictModule, NonTrainableState):
         plan: PeriodicTranslationFamilyPlan,
         state: PeriodicTranslationFamilyState,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, PeriodicTranslationFamilyPlan) or not isinstance(
             state, PeriodicTranslationFamilyState
         ):
@@ -304,9 +306,9 @@ class PeriodicFiniteRealization(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        row_indices: ArrayLike,
-        column_indices: ArrayLike,
-        values: ArrayLike,
+        row_indices: npt.ArrayLike,
+        column_indices: npt.ArrayLike,
+        values: npt.ArrayLike,
         /,
         *,
         supercell_shape: tuple[int, ...],
@@ -316,7 +318,7 @@ class PeriodicFiniteRealization(StrictModule, NonTrainableState):
         input_size: int,
         maximum_dense_entries: int,
         source_prepared_id: str,
-    ):
+    ) -> None:
         row = np.asarray(row_indices, dtype=np.int64)
         column = np.asarray(column_indices, dtype=np.int64)
         value = np.asarray(values)
@@ -650,8 +652,8 @@ def coalesce_periodic_translation_family(
             raise ValueError("Periodic edges are missing an explicit reverse partner.")
         reverse.append(key_to_index[reverse_key])
     relation = EdgeRelation(
-        [key[1] for key in ordered],
-        [key[2] for key in ordered],
+        np.asarray([key[1] for key in ordered]),
+        np.asarray([key[2] for key in ordered]),
         source_size=int(node_count),
         target_size=int(node_count),
     )

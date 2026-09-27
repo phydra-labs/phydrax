@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -24,7 +26,7 @@ from phydrax.discretization import (
 )
 
 
-def _prepare():
+def _prepare() -> Any:
     mesh = CellMesh.from_tetrahedra(
         jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))),
         jnp.asarray(((0, 1, 2, 3),), dtype=jnp.int32),
@@ -49,7 +51,7 @@ def _prepare():
         }
     )
 
-    def field(points, context):
+    def field(points: Any, context: Any) -> Any:
         intercept, slope = context.user_args
         return intercept + slope * points[..., 0]
 
@@ -69,7 +71,7 @@ def _prepare():
     return material, prepared
 
 
-def test_native_mixed_rest_and_spatial_active_virtual_work_are_exact():
+def test_native_mixed_rest_and_spatial_active_virtual_work_are_exact() -> None:
     material, prepared = _prepare()
     state = prepared.problem.state_space.zeros()
     rest = prepared.problem.residual(state, jnp.zeros(2))
@@ -89,13 +91,13 @@ def test_native_mixed_rest_and_spatial_active_virtual_work_are_exact():
     np.testing.assert_allclose(residual[1], 0.0, atol=2e-7)
 
 
-def test_compiled_native_active_source_jvp_and_mixed_constraint_derivative():
+def test_compiled_native_active_source_jvp_and_mixed_constraint_derivative() -> None:
     material, prepared = _prepare()
     state = prepared.problem.state_space.zeros()
     coordinates = prepared.discretization.dof_maps[0].dof_coordinates
     direction = jnp.zeros_like(state[0]).at[:, 0].set(coordinates[:, 0])
 
-    def work(active_coefficients):
+    def work(active_coefficients: Any) -> Any:
         residual = prepared.problem.residual(state, active_coefficients)
         return jnp.sum(residual[0] * direction)
 
@@ -114,7 +116,7 @@ def test_compiled_native_active_source_jvp_and_mixed_constraint_derivative():
     np.testing.assert_allclose(jnp.sum(constraint_jvp), -1 / 6, rtol=3e-5, atol=1e-6)
 
 
-def test_preparation_rejects_a_field_from_another_source():
+def test_preparation_rejects_a_field_from_another_source() -> None:
     material, _ = _prepare()
     provenance = SemanticProvenance({"kind": "foreign-prescribed-field"})
     field = HeidlaufRoehrle2014ActiveStressField(

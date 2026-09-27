@@ -5,14 +5,14 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, Key
 
 from .._doc import DOC_KEY0
 from .._sampling import derive_key, SampleAddress
@@ -34,11 +34,16 @@ from ..linalg import (
     solve as solve_linear,
 )
 from ..terms import ResidualPenalty
+from ..typing import PRNGKey
 from ._functional_residual import (
     materialize_prepared_residual_terms,
     prepared_term_residual_vector,
 )
 from ._functional_run import require_empty_model_state
+
+
+if TYPE_CHECKING:
+    from ._functional_solver import FunctionalSolver
 
 
 _EVALUATION_ADDRESS = SampleAddress(
@@ -73,7 +78,7 @@ class LinearTrialSpaceResult(StrictModule):
         affine_audit_tolerance: Array,
         coefficient_count: int,
         residual_count: int,
-    ):
+    ) -> None:
         if not isinstance(linear_result, LinearSolveResult):
             raise TypeError("linear_result must be a LinearSolveResult.")
         affine_residual = jnp.asarray(affine_audit_residual)
@@ -94,7 +99,7 @@ class LinearTrialSpaceResult(StrictModule):
         )
 
 
-def _validate_solver(solver) -> None:
+def _validate_solver(solver: FunctionalSolver) -> None:
     from ._functional_solver import FunctionalSolver
 
     if not isinstance(solver, FunctionalSolver):
@@ -123,11 +128,11 @@ def _validate_solver(solver) -> None:
 
 
 def solve_linear_trial_space(
-    solver,
+    solver: FunctionalSolver,
     /,
     *,
     linear: LinearSolvePolicy | None = None,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     affine_tolerance: float | None = None,
 ) -> LinearTrialSpaceResult:
     """Assemble and solve one fixed affine boundary-residual problem."""
@@ -161,7 +166,7 @@ def solve_linear_trial_space(
             "Failed to materialize every linear trial-space residual term."
         )
 
-    def residual_vector(flat):
+    def residual_vector(flat: Array) -> Array:
         current = unravel(flat)
         pieces = tuple(
             prepared_term_residual_vector(

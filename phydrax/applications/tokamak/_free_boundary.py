@@ -13,7 +13,8 @@ from numbers import Integral
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from scipy.special import ellipe, ellipk
 
 from phydrax.ein import contract
@@ -247,7 +248,9 @@ class FreeBoundaryTokamakState(StrictModule):
     time_s: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, winding_current_a: ArrayLike, time_s: ArrayLike, plan_id: str, /):
+    def __init__(
+        self, winding_current_a: ArrayLike, time_s: ArrayLike, plan_id: str, /
+    ) -> None:
         current = jnp.asarray(winding_current_a)
         time = jnp.asarray(time_s, dtype=current.dtype)
         if current.ndim != 1 or time.shape != ():

@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -22,7 +23,7 @@ class FermionicEnergyShellRegulator(StrictModule, NonTrainableState):
 
     regulator_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.regulator_id = canonical_fingerprint(
             {
                 "kind": "fermionic-additive-energy-shell-regulator",
@@ -109,7 +110,7 @@ class FermiSurfacePatchRGPlan(StrictModule, NonTrainableState):
         regulator: FermionicEnergyShellRegulator | None = None,
         routing_tolerance: float = 1.0e-8,
         maximum_work_elements: int = 8_000_000,
-    ):
+    ) -> None:
         momenta = np.asarray(patch_momenta, dtype=np.float64)
         reciprocal = np.asarray(reciprocal_vectors, dtype=np.float64)
         velocities = np.asarray(fermi_velocities, dtype=np.float64)
@@ -227,7 +228,14 @@ class PreparedFermiSurfacePatchRG(StrictModule, NonTrainableState):
     routing_residuals: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, outgoing_patch, reciprocal_wraps, routing_residuals, /):
+    def __init__(
+        self,
+        plan: FermiSurfacePatchRGPlan,
+        outgoing_patch: ArrayLike,
+        reciprocal_wraps: ArrayLike,
+        routing_residuals: ArrayLike,
+        /,
+    ) -> None:
         self.plan = plan
         self.outgoing_patch = jnp.asarray(outgoing_patch)
         self.reciprocal_wraps = jnp.asarray(reciprocal_wraps)
@@ -350,15 +358,15 @@ class PreparedFermiSurfacePatchRG(StrictModule, NonTrainableState):
         ph_kernel = ph_loop[None, None, :, :]
 
         def gamma(
-            spin_a,
-            patch_a,
-            spin_b,
-            patch_b,
-            spin_c,
-            patch_c,
-            spin_d,
-            patch_d,
-        ):
+            spin_a: Array,
+            patch_a: Array,
+            spin_b: Array,
+            patch_b: Array,
+            spin_c: Array,
+            patch_c: Array,
+            spin_d: Array,
+            patch_d: Array,
+        ) -> Array:
             routed = patch_d == self.outgoing_patch[patch_a, patch_b, patch_c]
             spin_factor = ((spin_a == spin_c) & (spin_b == spin_d)).astype(
                 values.dtype
@@ -369,7 +377,7 @@ class PreparedFermiSurfacePatchRG(StrictModule, NonTrainableState):
                 0.0,
             )
 
-        def beta_element(triple):
+        def beta_element(triple: Array) -> tuple[Array, Array, Array]:
             first, second, third = triple
             fourth = self.outgoing_patch[first, second, third]
             up = jnp.asarray(0, dtype=jnp.int32)

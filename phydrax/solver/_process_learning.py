@@ -11,7 +11,8 @@ from math import isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -47,7 +48,7 @@ class ProcessExperimentPlan(StrictModule):
         /,
         *,
         tolerance: float = 1e-8,
-    ):
+    ) -> None:
         inputs = jnp.asarray(input_densities)
         measurements = jnp.asarray(effects)
         counts = jnp.asarray(observed_counts)
@@ -151,7 +152,7 @@ class StinespringProcessModel(StrictModule):
         dimension: int,
         environment_dimension: int,
         tolerance: float = 1e-8,
-    ):
+    ) -> None:
         matrix = jnp.asarray(isometry)
         dimension_ = int(dimension)
         environment = int(environment_dimension)
@@ -390,7 +391,7 @@ class QuantumDigitalTwinState(StrictModule, NonTrainableState):
     fit_valid: Array
     checkpoint_id: str = eqx.field(static=True)
 
-    def __init__(self, result: ProcessFitResult, /, *, prior_iterations: int = 0):
+    def __init__(self, result: ProcessFitResult, /, *, prior_iterations: int = 0) -> None:
         if not isinstance(result, ProcessFitResult):
             raise TypeError("result must be ProcessFitResult.")
         completed = int(prior_iterations) + result.iterations

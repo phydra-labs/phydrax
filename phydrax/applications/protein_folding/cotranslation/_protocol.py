@@ -9,7 +9,7 @@ from pathlib import Path
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ....atomistic._checkpoint import (
@@ -18,7 +18,11 @@ from ....atomistic._checkpoint import (
     read_atomistic_checkpoint,
     write_atomistic_checkpoint,
 )
-from ....atomistic._dynamics import AtomisticDynamicsState, PreparedAtomisticDynamics
+from ....atomistic._dynamics import (
+    AtomisticDynamicsState,
+    AtomisticStepEvaluation,
+    PreparedAtomisticDynamics,
+)
 from ....atomistic._thermodynamic import PreparedThermodynamicStateTable
 from ....atomistic._topology_epoch import (
     activate_topology_epoch,
@@ -27,6 +31,7 @@ from ....atomistic._topology_epoch import (
 )
 from ....qualification._reference import ReferenceArtifactManifest
 from ....series import SampledSeries, SeriesSupport
+from ....typing import PRNGKey
 from .._construct import ProteinConstruct
 
 
@@ -125,7 +130,7 @@ def _step(
     runtime: PreparedAtomisticDynamics,
     state: AtomisticDynamicsState,
     thermodynamic_states: PreparedThermodynamicStateTable,
-):
+) -> AtomisticStepEvaluation:
     return runtime.step_detailed(state, thermodynamic_states)
 
 
@@ -312,7 +317,7 @@ class CotranslationProtocol:
         )
 
     def initialize(
-        self, positions: ArrayLike, momenta: ArrayLike, /, *, key: Key[Array, ""]
+        self, positions: ArrayLike, momenta: ArrayLike, /, *, key: PRNGKey
     ) -> CotranslationCursor:
         stage = self.stages[0]
         runtime = stage.runtime

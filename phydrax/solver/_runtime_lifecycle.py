@@ -11,14 +11,15 @@ from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextvars import copy_context
 from pathlib import Path
-from types import MappingProxyType
-from typing import Any, Literal
+from types import MappingProxyType, TracebackType
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from .._array_archive import (
     array_collection_digest,
@@ -33,9 +34,10 @@ from .._trainable import NonTrainableState
 from ..discretization.spectral._coordinates import HermitianSpectralCoordinates
 from ..linalg._real_coordinates import RealCoordinateEvidence
 from ..logging import emit
+from ..typing import parse
 
 
-ReplayClassification = Literal["bitwise", "tolerance", "unsupported"]
+ReplayClassification: TypeAlias = Literal["bitwise", "tolerance", "unsupported"]
 
 
 class UnsupportedReplayError(ValueError):
@@ -85,7 +87,7 @@ class RuntimeCheckpointLeafBinding(StrictModule, NonTrainableState):
         coordinates: HermitianSpectralCoordinates,
         evidence: RealCoordinateEvidence,
         /,
-    ):
+    ) -> None:
         index = int(leaf_index)
         if index < 0:
             raise ValueError("Checkpoint encoding leaf_index must be nonnegative.")
@@ -116,7 +118,7 @@ class RuntimeCheckpointEncodingPlan(StrictModule, NonTrainableState):
     bindings: tuple[RuntimeCheckpointLeafBinding, ...]
     encoding_id: str = eqx.field(static=True)
 
-    def __init__(self, bindings: Sequence[RuntimeCheckpointLeafBinding] = (), /):
+    def __init__(self, bindings: Sequence[RuntimeCheckpointLeafBinding] = (), /) -> None:
         bindings_ = tuple(bindings)
         if any(
             not isinstance(value, RuntimeCheckpointLeafBinding) for value in bindings_
@@ -163,13 +165,12 @@ class RuntimeRestartRelation(StrictModule, NonTrainableState):
         tolerance: float | None = None,
         support_tuple_ids: Sequence[str] = (),
         restorer: Callable | None = None,
-    ):
+    ) -> None:
         source = str(source_topology_id)
         target = str(target_topology_id)
         if not source or not target:
             raise ValueError("Restart relation topology identities must be nonempty.")
-        if classification not in ("bitwise", "tolerance", "unsupported"):
-            raise ValueError("Restart replay classification is unsupported.")
+        classification = parse(classification, ReplayClassification, "classification")
         tolerance_ = None if tolerance is None else float(tolerance)
         if classification == "tolerance":
             if tolerance_ is None or not math.isfinite(tolerance_) or tolerance_ < 0.0:
@@ -504,7 +505,7 @@ class RuntimeCheckpointEnvelope(StrictModule):
         partition_id: str | None = None,
         runtime_id: str | None = None,
         encoding_plan: RuntimeCheckpointEncodingPlan | None = None,
-    ):
+    ) -> None:
         time_ = np.asarray(time)
         step = np.asarray(step_index)
         cursor = np.asarray(schedule_cursor)
@@ -893,7 +894,7 @@ class ExactTimeSchedule(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self, targets: ArrayLike, /, *, tolerance: float = 1.0e-12):
+    def __init__(self, targets: ArrayLike, /, *, tolerance: float = 1.0e-12) -> None:
         values = np.asarray(targets)
         tolerance_ = float(tolerance)
         if (
@@ -939,7 +940,7 @@ class ExactTimeSchedule(StrictModule, NonTrainableState):
         return self.advance_cursor(time, jnp.asarray(0, dtype=jnp.int32))
 
 
-ObservableReduction = Literal["sum", "mean", "maximum", "minimum", "last"]
+ObservableReduction: TypeAlias = Literal["sum", "mean", "maximum", "minimum", "last"]
 
 
 class StreamingObservableState(StrictModule):
@@ -957,15 +958,13 @@ class StreamingObservablePlan(StrictModule, NonTrainableState):
     reduction: ObservableReduction = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, name: str, evaluator: Callable, reduction: ObservableReduction, /):
+    def __init__(
+        self, name: str, evaluator: Callable, reduction: ObservableReduction, /
+    ) -> None:
         name_ = str(name)
-        reduction_ = str(reduction)
-        if (
-            not name_
-            or not callable(evaluator)
-            or reduction_ not in ("sum", "mean", "maximum", "minimum", "last")
-        ):
+        if not name_ or not callable(evaluator):
             raise ValueError("Streaming observable definition is invalid.")
+        reduction_ = parse(reduction, ObservableReduction, "reduction")
         self.name = name_
         self.evaluator = evaluator
         self.reduction = reduction_
@@ -974,7 +973,7 @@ class StreamingObservablePlan(StrictModule, NonTrainableState):
         )
 
     def initial_state(
-        self, shape: tuple[int, ...], dtype=jnp.float64, /
+        self, shape: tuple[int, ...], dtype: DTypeLike = jnp.float64, /
     ) -> StreamingObservableState:
         zeros = jnp.zeros(shape, dtype=dtype)
         return StreamingObservableState(
@@ -1052,7 +1051,7 @@ class AcceptedStepTrigger(StrictModule, NonTrainableState):
         *,
         direction: Literal["above", "below"] = "above",
         hysteresis: float = 0.0,
-    ):
+    ) -> None:
         threshold_ = float(threshold)
         hysteresis_ = float(hysteresis)
         if (
@@ -1074,7 +1073,9 @@ class AcceptedStepTrigger(StrictModule, NonTrainableState):
             }
         )
 
-    def initial_state(self, dtype=jnp.float64, /) -> AcceptedStepTriggerState:
+    def initial_state(
+        self, dtype: DTypeLike = jnp.float64, /
+    ) -> AcceptedStepTriggerState:
         return AcceptedStepTriggerState(
             jnp.asarray(False),
             jnp.asarray(0, dtype=jnp.int64),
@@ -1141,7 +1142,9 @@ def _array_tree_byte_count(value: Any, maximum_bytes: int, /) -> int:
 class BoundedAsyncPublisher:
     """One-worker immutable snapshot publisher with bounded backpressure."""
 
-    def __init__(self, writer: Callable[[Any], Any], /, *, maximum_pending: int = 2):
+    def __init__(
+        self, writer: Callable[[Any], Any], /, *, maximum_pending: int = 2
+    ) -> None:
         if not callable(writer) or int(maximum_pending) <= 0:
             raise ValueError("Async publisher requires a writer and positive capacity.")
         self._writer = writer
@@ -1209,7 +1212,12 @@ class BoundedAsyncPublisher:
     def __enter__(self) -> BoundedAsyncPublisher:
         return self
 
-    def __exit__(self, exception_type, exception, traceback) -> None:
+    def __exit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         del exception_type, exception, traceback
         self.close()
 
@@ -1224,7 +1232,7 @@ class ByteBoundedAsyncPublisher:
         *,
         maximum_pending: int = 2,
         maximum_pending_bytes: int,
-    ):
+    ) -> None:
         if (
             not callable(writer)
             or int(maximum_pending) <= 0
@@ -1332,12 +1340,17 @@ class ByteBoundedAsyncPublisher:
     def __enter__(self) -> ByteBoundedAsyncPublisher:
         return self
 
-    def __exit__(self, exception_type, exception, traceback) -> None:
+    def __exit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         del exception_type, exception, traceback
         self.close()
 
 
-MomentWeighting = Literal["sample", "time"]
+MomentWeighting: TypeAlias = Literal["sample", "time"]
 
 
 class StreamingMomentState(StrictModule):
@@ -1376,7 +1389,7 @@ class StreamingMomentPlan(StrictModule, NonTrainableState):
         batch_duration: float | None = None,
         maximum_batches: int = 0,
         plan_id: str,
-    ):
+    ) -> None:
         edges = np.asarray(histogram_edges)
         shape = tuple(value_shape)
         start = None if window_start is None else float(window_start)
@@ -1388,7 +1401,6 @@ class StreamingMomentPlan(StrictModule, NonTrainableState):
             or any(value <= 0 for value in shape)
             or edges.ndim != 1
             or (edges.size not in (0, 1) and np.any(np.diff(edges) <= 0.0))
-            or weighting not in ("sample", "time")
             or (start is not None and not math.isfinite(start))
             or (end is not None and not math.isfinite(end))
             or (start is not None and end is not None and end <= start)
@@ -1399,6 +1411,7 @@ class StreamingMomentPlan(StrictModule, NonTrainableState):
             or not str(plan_id)
         ):
             raise ValueError("Streaming moment plan is invalid.")
+        weighting = parse(weighting, MomentWeighting, "weighting")
         self.evaluator = evaluator
         self.value_shape = shape
         self.histogram_edges = jnp.asarray(edges)
@@ -1421,7 +1434,7 @@ class StreamingMomentPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def initial_state(self, dtype=jnp.float64, /) -> StreamingMomentState:
+    def initial_state(self, dtype: DTypeLike = jnp.float64, /) -> StreamingMomentState:
         return StreamingMomentState(
             jnp.asarray(0.0, dtype=dtype),
             jnp.zeros(self.value_shape, dtype=dtype),
@@ -1607,7 +1620,7 @@ class AcceptedStepTriggerGraph(StrictModule, NonTrainableState):
         *,
         operation: Literal["all", "any"] = "all",
         debounce_steps: int = 0,
-    ):
+    ) -> None:
         if (
             not triggers
             or any(not isinstance(value, AcceptedStepTrigger) for value in triggers)
@@ -1627,7 +1640,9 @@ class AcceptedStepTriggerGraph(StrictModule, NonTrainableState):
             }
         )
 
-    def initial_state(self, dtype=jnp.float64, /) -> AcceptedStepTriggerGraphState:
+    def initial_state(
+        self, dtype: DTypeLike = jnp.float64, /
+    ) -> AcceptedStepTriggerGraphState:
         return AcceptedStepTriggerGraphState(
             tuple(value.initial_state(dtype) for value in self.triggers),
             jnp.asarray(0, dtype=jnp.int32),

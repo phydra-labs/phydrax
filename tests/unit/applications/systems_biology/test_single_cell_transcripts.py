@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -44,7 +45,7 @@ RATE_UNIT = derived_unit("per-second", ((SECOND, -1),))
 RATES = np.asarray([2.0, 3.0, 12.0, 4.0, 1.5])
 
 
-def _source(*, quantified=True, training=True):
+def _source(*, quantified: Any = True, training: Any = True) -> Any:
     content = b"Independently specified synthetic telegraph/count law; exact input coefficients, not experimental data."
     return ReferenceArtifactManifest(
         "synthetic-transcript-law",
@@ -63,7 +64,7 @@ def _source(*, quantified=True, training=True):
     )
 
 
-def _assay(capture=0.6, background=0.2):
+def _assay(capture: Any = 0.6, background: Any = 0.2) -> Any:
     return TranscriptCountAssay.from_plans(
         CountMeasurementPlan(capture, background, observation_capacity=1024),
         CountMeasurementPlan(capture, background, observation_capacity=1024),
@@ -71,7 +72,13 @@ def _assay(capture=0.6, background=0.2):
     )
 
 
-def _scenario(*, cells=(7, 91), genes=(23,), branches=False, event_capacity=256):
+def _scenario(
+    *,
+    cells: Any = (7, 91),
+    genes: Any = (23,),
+    branches: Any = False,
+    event_capacity: Any = 256,
+) -> Any:
     rates = np.broadcast_to(RATES, (2, len(genes), 5)).copy()
     rates[1, :, 2] = 20.0
     schedule = PiecewiseConstantRates((0.0, 0.125, 0.5), rates, rate_unit=RATE_UNIT)
@@ -96,7 +103,7 @@ def _scenario(*, cells=(7, 91), genes=(23,), branches=False, event_capacity=256)
     )
 
 
-def _reference_mean(rates, initial, time):
+def _reference_mean(rates: Any, initial: Any, time: Any) -> Any:
     a, b, alpha, beta, gamma = rates
     matrix = np.asarray(
         [
@@ -109,7 +116,7 @@ def _reference_mean(rates, initial, time):
     return (expm(time * matrix) @ np.r_[initial, 1.0])[:3]
 
 
-def test_exact_moment_law_schedule_boundary_and_physical_units():
+def test_exact_moment_law_schedule_boundary_and_physical_units() -> None:
     model = TelegraphGeneExpressionPlan(*RATES).prepare()
     stationary = model.stationary_moments()
     expected = np.asarray([0.4, 1.2, 3.2])
@@ -146,7 +153,7 @@ def test_exact_moment_law_schedule_boundary_and_physical_units():
         PiecewiseConstantRates((0.0, 1.0), np.zeros((1, 1, 5)), rate_unit=RATE_UNIT)
 
 
-def test_exact_event_ledger_invariants_boundary_drift_and_workset_replay():
+def test_exact_event_ledger_invariants_boundary_drift_and_workset_replay() -> None:
     scenario = _scenario(genes=(23, 24))
     full = generate_transcripts(scenario, jax.random.key(19))
     subset = generate_transcripts(
@@ -182,7 +189,7 @@ def test_exact_event_ledger_invariants_boundary_drift_and_workset_replay():
         np.testing.assert_array_equal(first.events.channels, replay.events.channels)
 
 
-def test_scenario_forks_are_resets_not_division_or_lag_pairs():
+def test_scenario_forks_are_resets_not_division_or_lag_pairs() -> None:
     scenario = _scenario(cells=(7,), branches=True)
     experiment = generate_transcripts(scenario, jax.random.key(20))
     parent, first, second = experiment.paths
@@ -199,7 +206,7 @@ def test_scenario_forks_are_resets_not_division_or_lag_pairs():
     assert np.all(np.diff(np.asarray(joined.support.coordinates))[edges] > 0)
 
 
-def test_exhausted_event_capacity_cannot_seed_descendants():
+def test_exhausted_event_capacity_cannot_seed_descendants() -> None:
     rates = RATES.copy()
     rates[2] = 1e6
     schedule = PiecewiseConstantRates(
@@ -218,7 +225,7 @@ def test_exhausted_event_capacity_cannot_seed_descendants():
     assert not bool(caught.value.solution.successful)
 
 
-def test_observation_is_separate_and_identity_capture_is_exact():
+def test_observation_is_separate_and_identity_capture_is_exact() -> None:
     scenario = _scenario()
     experiment = generate_transcripts(scenario, jax.random.key(51))
     identity = _assay(1.0, 0.0)
@@ -248,7 +255,7 @@ def test_observation_is_separate_and_identity_capture_is_exact():
         )
 
 
-def _measured_target(assay, offset=0):
+def _measured_target(assay: Any, offset: Any = 0) -> Any:
     # Fixed independently measured synthetic snapshots; no latent promoter or
     # privileged true velocity is available to the fitting API.
     observations = TranscriptCounts(
@@ -282,7 +289,7 @@ def _measured_target(assay, offset=0):
     )
 
 
-def test_measured_count_fit_predict_and_unidentifiable_clock():
+def test_measured_count_fit_predict_and_unidentifiable_clock() -> None:
     assay = _assay(1.0, 0.0)
     target = _measured_target(assay)
     initial = RATES.copy()
@@ -324,9 +331,11 @@ def test_measured_count_fit_predict_and_unidentifiable_clock():
     assert np.all(np.isfinite(gradient))
 
 
-def test_import_preserves_missingness_pseudotime_estimator_and_rights():
+def test_import_preserves_missingness_pseudotime_estimator_and_rights() -> None:
     imported = import_transcript_arrays(
+        # ty: ignore[invalid-argument-type]
         [1.0, np.nan],
+        # ty: ignore[invalid-argument-type]
         [2.0, 3.0],
         gene=GeneIdentity(1, "reporter"),
         cell_ids=(9, 10),
@@ -334,6 +343,7 @@ def test_import_preserves_missingness_pseudotime_estimator_and_rights():
         assay_id="external-calibration",
         preprocessing_id="raw-layers",
         coordinate_semantics="pseudotime",
+        # ty: ignore[invalid-argument-type]
         coordinates=(0.8, 0.2),
         valid=np.asarray([[True, True], [False, True]]),
     )
@@ -341,6 +351,7 @@ def test_import_preserves_missingness_pseudotime_estimator_and_rights():
     assert not bool(imported.counts.valid[1, 0])
     assert not np.any(imported.counts.to_series().support.edge_valid)
     external = import_velocity_field(
+        # ty: ignore[invalid-argument-type]
         [[1.0, 2.0], [-1.0, 4.0]],
         imported.counts,
         source=_source(quantified=False),
@@ -355,8 +366,10 @@ def test_import_preserves_missingness_pseudotime_estimator_and_rights():
         TranscriptCounts(
             GeneIdentity(1, "reporter"),
             (9,),
+            # ty: ignore[invalid-argument-type]
             [[1, 2]],
             coordinate_semantics="pseudotime",
+            # ty: ignore[invalid-argument-type]
             coordinates=[0.5],
             time_unit=SECOND,
             assay_id="a",
@@ -365,7 +378,9 @@ def test_import_preserves_missingness_pseudotime_estimator_and_rights():
         )
     with pytest.raises(ValueError):
         import_transcript_arrays(
+            # ty: ignore[invalid-argument-type]
             [1.5],
+            # ty: ignore[invalid-argument-type]
             [2],
             gene=GeneIdentity(1, "reporter"),
             cell_ids=(9,),
@@ -376,7 +391,9 @@ def test_import_preserves_missingness_pseudotime_estimator_and_rights():
         )
     with pytest.raises(PermissionError):
         import_transcript_arrays(
+            # ty: ignore[invalid-argument-type]
             [1],
+            # ty: ignore[invalid-argument-type]
             [2],
             gene=GeneIdentity(1, "reporter"),
             cell_ids=(9,),

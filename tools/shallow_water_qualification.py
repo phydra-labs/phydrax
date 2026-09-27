@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import argparse
 import json
+from typing import Any
 
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _compiled(count, bed, reconstruction, *, source=None):
+def _compiled(count: Any, bed: Any, reconstruction: Any, *, source: Any = None) -> Any:
     dimension = bed.ndim
     shape = bed.shape
     names = tuple("xy"[:dimension])
@@ -44,7 +45,7 @@ def _compiled(count, bed, reconstruction, *, source=None):
     )
 
 
-def _lake(count):
+def _lake(count: Any) -> Any:
     x = (jnp.arange(count) + 0.5) / count
     bed = 0.1 + 1.2 * jnp.exp(-100.0 * (x - 0.5) ** 2)
     compiled = _compiled(count, bed, phx.discretization.MUSCLReconstruction())
@@ -61,7 +62,7 @@ def _lake(count):
     }
 
 
-def _dam_break(count, steps, cfl):
+def _dam_break(count: Any, steps: Any, cfl: Any) -> Any:
     bed = jnp.zeros((count,))
     compiled = _compiled(count, bed, phx.discretization.MUSCLReconstruction())
     depth = jnp.where(jnp.arange(count) < count // 2, 1.0, 0.0)
@@ -105,7 +106,7 @@ def _dam_break(count, steps, cfl):
     }
 
 
-def _convergence(resolutions):
+def _convergence(resolutions: Any) -> Any:
     errors = []
     for count in resolutions:
         bed = jnp.zeros((count,))
@@ -140,7 +141,7 @@ def _convergence(resolutions):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--case", choices=("lake", "dam-break", "convergence"), default="lake"

@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -41,7 +42,7 @@ class PeriodicFourierGridFilterPlan(StrictModule, NonTrainableState):
     resolved_filter: ResolvedLESFilter
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, resolved_filter: ResolvedLESFilter, /):
+    def __init__(self, resolved_filter: ResolvedLESFilter, /) -> None:
         if not isinstance(resolved_filter, ResolvedLESFilter):
             raise TypeError("resolved_filter must be a ResolvedLESFilter.")
         if (
@@ -88,7 +89,7 @@ class PreparedPeriodicFourierGridFilter(StrictModule, NonTrainableState):
         plan: PeriodicFourierGridFilterPlan,
         discretization: TensorSpectralDiscretization,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, PeriodicFourierGridFilterPlan):
             raise TypeError("plan must be a PeriodicFourierGridFilterPlan.")
         if not isinstance(discretization, TensorSpectralDiscretization):
@@ -167,7 +168,7 @@ class PeriodicAlgebraicLESPlan(StrictModule, NonTrainableState):
         /,
         *,
         energy_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         if not isinstance(prepared_model, PreparedAlgebraicLESModel):
             raise TypeError("prepared_model must be a PreparedAlgebraicLESModel.")
         if not isinstance(grid_filter, PeriodicFourierGridFilterPlan):
@@ -296,7 +297,7 @@ class PreparedPeriodicAlgebraicLES(StrictModule, NonTrainableState):
         discretization: TensorSpectralDiscretization,
         projector: PeriodicLerayProjector,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, PeriodicAlgebraicLESPlan):
             raise TypeError("plan must be a PeriodicAlgebraicLESPlan.")
         if not isinstance(discretization, TensorSpectralDiscretization):
@@ -347,6 +348,11 @@ class PreparedPeriodicAlgebraicLES(StrictModule, NonTrainableState):
         live = self.grid_filter.apply(retained)
         dealiasing = self.closure_method.dealiasing
         evaluation = dealiasing.evaluation
+        # Dealiasing keeps the tensor family of the periodic discretization.
+        if not (isinstance(evaluation, TensorSpectralDiscretization)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(evaluation, TensorSpectralDiscretization)."
+            )
         embedded = dealiasing.embed(live)
         gradient_modal = jnp.stack(
             tuple(evaluation.modal_derivative(embedded, axis=axis) for axis in range(3)),

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -13,11 +16,11 @@ from phydrax.linalg._transform_line import TransformLineNullspacePolicy
 
 def _operators(
     *,
-    uniform_line=False,
-    dimension=3,
-    periodic_line=False,
-    nonuniform_transverse=False,
-):
+    uniform_line: Any = False,
+    dimension: Any = 3,
+    periodic_line: Any = False,
+    nonuniform_transverse: Any = False,
+) -> Any:
     x = (
         phx.discretization.NonuniformCellAxisSpec(
             jnp.asarray([0.0, 0.12, 0.36, 0.68, 1.0]), periodic=True
@@ -49,7 +52,7 @@ def _operators(
     return grid, operators
 
 
-def _pressure_probe(operators):
+def _pressure_probe(operators: Any) -> Any:
     shape = operators.discretization.cell_shape
     pressure = jnp.sin(
         0.23 * jnp.arange(int(np.prod(shape)), dtype=operators.pressure_space.dtype)
@@ -57,7 +60,7 @@ def _pressure_probe(operators):
     return operators.gauge_project(pressure)
 
 
-def _assert_projection_evidence(result, operators, tolerance):
+def _assert_projection_evidence(result: Any, operators: Any, tolerance: Any) -> None:
     volumes = operators.discretization.cell_volumes
     assert result.converged
     assert result.closure.successful
@@ -70,7 +73,7 @@ def _assert_projection_evidence(result, operators, tolerance):
     assert jnp.sqrt(jnp.sum(volumes * result.pressure_residual**2)) < tolerance
 
 
-def test_pressure_hybrid_stretched_periodic_channel_and_global_mode_evidence():
+def test_pressure_hybrid_stretched_periodic_channel_and_global_mode_evidence() -> None:
     _, operators = _operators()
     plan = phx.solver.MACPressureProjectionPlan(
         operators,
@@ -80,7 +83,9 @@ def test_pressure_hybrid_stretched_periodic_channel_and_global_mode_evidence():
         maximum_resource_bytes=2_000_000,
     )
     prepared = plan.hybrid_plan
+    # ty: ignore[unresolved-attribute]
     factors = prepared.factors
+    # ty: ignore[unresolved-attribute]
     global_mode = prepared.solve(jnp.ones(operators.discretization.cell_shape))
 
     assert plan.constant_route == "hybrid"
@@ -88,6 +93,7 @@ def test_pressure_hybrid_stretched_periodic_channel_and_global_mode_evidence():
     assert factors.pin_row == 0
     assert factors.right_null is not None
     assert factors.left_null is not None
+    # ty: ignore[unresolved-attribute]
     assert factors.nullspace_policy_id == prepared.plan.nullspace.policy_id
     assert global_mode.converged
     np.testing.assert_allclose(global_mode.compatible_rhs, 0.0, atol=1e-12)
@@ -97,7 +103,7 @@ def test_pressure_hybrid_stretched_periodic_channel_and_global_mode_evidence():
     assert global_mode.resources.total_bytes <= 2_000_000
 
 
-def test_uniform_pressure_hybrid_matches_full_transform_and_auto_prefers_full():
+def test_uniform_pressure_hybrid_matches_full_transform_and_auto_prefers_full() -> None:
     _, operators = _operators(uniform_line=True)
     pressure = _pressure_probe(operators)
     velocity = operators.gradient(pressure)
@@ -129,7 +135,7 @@ def test_uniform_pressure_hybrid_matches_full_transform_and_auto_prefers_full():
         )
 
 
-def test_stretched_pressure_hybrid_matches_iterative_projection_and_rate():
+def test_stretched_pressure_hybrid_matches_iterative_projection_and_rate() -> None:
     _, operators = _operators()
     pressure = _pressure_probe(operators)
     velocity = operators.gradient(pressure)
@@ -165,7 +171,7 @@ def test_stretched_pressure_hybrid_matches_iterative_projection_and_rate():
         )
 
 
-def test_pressure_hybrid_rhs_jvp_and_vjp_obey_the_adjoint_identity():
+def test_pressure_hybrid_rhs_jvp_and_vjp_obey_the_adjoint_identity() -> None:
     _, operators = _operators()
     prepared = phx.solver.MACPressureProjectionPlan(
         operators,
@@ -179,12 +185,14 @@ def test_pressure_hybrid_rhs_jvp_and_vjp_obey_the_adjoint_identity():
     tangent = jnp.cos(0.11 * jnp.arange(count)).reshape(shape)
     cotangent = jnp.sin(0.07 * jnp.arange(count) + 0.3).reshape(shape)
 
-    def solve_value(value):
+    def solve_value(value: Any) -> Any:
+        # ty: ignore[unresolved-attribute]
         return prepared.solve(value).value
 
     value, jvp = jax.jvp(solve_value, (rhs,), (tangent,))
     _, pullback = jax.vjp(solve_value, rhs)
     vjp = pullback(cotangent)[0]
+    # ty: ignore[unresolved-attribute]
     solved = prepared.solve(rhs)
 
     assert jnp.all(jnp.isfinite(value))
@@ -192,6 +200,7 @@ def test_pressure_hybrid_rhs_jvp_and_vjp_obey_the_adjoint_identity():
     assert jnp.all(jnp.isfinite(vjp))
     np.testing.assert_allclose(
         solved.residual,
+        # ty: ignore[unresolved-attribute]
         prepared.plan.representation.apply(solved.candidate) - solved.compatible_rhs,
         rtol=2e-11,
         atol=2e-11,
@@ -204,7 +213,7 @@ def test_pressure_hybrid_rhs_jvp_and_vjp_obey_the_adjoint_identity():
     )
 
 
-def test_execution_supplied_line_coefficient_retains_certified_hybrid_route():
+def test_execution_supplied_line_coefficient_retains_certified_hybrid_route() -> None:
     _, operators = _operators()
     plan = phx.solver.MACPressureProjectionPlan(
         operators,
@@ -238,7 +247,7 @@ def test_execution_supplied_line_coefficient_retains_certified_hybrid_route():
     assert result.converged
 
 
-def test_pressure_hybrid_rejects_every_uncertified_preparation_predicate():
+def test_pressure_hybrid_rejects_every_uncertified_preparation_predicate() -> None:
     _, operators = _operators()
     with pytest.raises(ValueError, match="explicit hybrid_line_axis"):
         phx.solver.MACPressureProjectionPlan(operators, solve_method="hybrid")
@@ -285,7 +294,7 @@ def test_pressure_hybrid_rejects_every_uncertified_preparation_predicate():
         )
 
 
-def test_transform_line_nullspace_preparation_rejects_ambiguous_or_false_data():
+def test_transform_line_nullspace_preparation_rejects_ambiguous_or_false_data() -> None:
     line_lower = -jnp.ones(2)
     line_diagonal = jnp.asarray([1.0, 2.0, 1.0])
     line_upper = -jnp.ones(2)

@@ -7,7 +7,8 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._ir import FiniteElementActionIR
 from ._operators import (

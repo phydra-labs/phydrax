@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from phydrax.execution import ExecutionPlan, ResourceRequest
 from phydrax.lifecycle import AnalysisPlan
 from phydrax.service import (
@@ -31,7 +33,7 @@ class _Validator:
         )
 
 
-def test_provider_failure_telemetry_never_copies_untrusted_exception_text():
+def test_provider_failure_telemetry_never_copies_untrusted_exception_text() -> None:
     service = InProcessReferenceService(
         _Validator(),
         ScopeTenantAuthorizer(),
@@ -46,12 +48,13 @@ def test_provider_failure_telemetry_never_copies_untrusted_exception_text():
         },
     )
 
-    def fail_with_sensitive_text(submission, context):
+    def fail_with_sensitive_text(submission: Any, context: Any) -> None:
         del submission, context
         raise RuntimeError(
             "api-secret-value /private/patient/path patient-identifier-123"
         )
 
+    # ty: ignore[invalid-argument-type]
     service.register_provider("secure-provider", fail_with_sensitive_text)
     queued = service.submit(
         "token",

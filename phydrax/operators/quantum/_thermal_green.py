@@ -14,12 +14,14 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ..._validation import positive_finite_float
 from ...discretization.dlr import (
     DLRTransformEvidence,
     fit_dlr_from_matsubara,
@@ -34,8 +36,10 @@ from ...linalg import (
     FactorizationPolicy,
     factorize,
     HermitianSpectrum,
+    PreparedFactorization,
     RankPolicy,
 )
+from ...typing import parse
 
 
 class GreenFunctionStatus(IntEnum):
@@ -96,8 +100,8 @@ class ImaginaryTimeGreenFunction(StrictModule):
         moments: GreenFunctionMoments | None = None,
         evidence: GreenRepresentationEvidence | None = None,
         representation_id: str | None = None,
-    ):
-        beta_ = _positive(beta, "beta")
+    ) -> None:
+        beta_ = positive_finite_float(beta, "beta")
         statistics_ = _statistics(statistics)
         tau_ = jnp.asarray(tau)
         values_ = jnp.asarray(values)
@@ -168,8 +172,8 @@ class MatsubaraGreenFunction(StrictModule):
         moments: GreenFunctionMoments | None = None,
         evidence: GreenRepresentationEvidence | None = None,
         representation_id: str | None = None,
-    ):
-        beta_ = _positive(beta, "beta")
+    ) -> None:
+        beta_ = positive_finite_float(beta, "beta")
         statistics_ = _statistics(statistics)
         indices_ = jnp.asarray(indices)
         values_ = jnp.asarray(values)
@@ -240,7 +244,7 @@ class SelfEnergyMoments(StrictModule):
         /,
         *,
         active: ArrayLike | None = None,
-    ):
+    ) -> None:
         static = jnp.asarray(static_limit)
         tail = jnp.asarray(tail_values)
         if tail.ndim < 1:
@@ -300,8 +304,8 @@ class MatsubaraSelfEnergy(StrictModule):
         frequency_unit: str = "native-energy",
         mode_axis: tuple[str, ...] = ("local-orbital",),
         representation_id: str | None = None,
-    ):
-        beta_ = _positive(beta, "beta")
+    ) -> None:
+        beta_ = positive_finite_float(beta, "beta")
         indices_ = jnp.asarray(indices)
         values_ = jnp.asarray(values)
         if indices_.ndim != 1 or not jnp.issubdtype(indices_.dtype, jnp.integer):
@@ -446,7 +450,7 @@ class RetardedGreenFunction(StrictModule):
         frequency_unit: str = "native-energy",
         mode_axis: tuple[str, ...] = ("local-orbital",),
         representation_id: str | None = None,
-    ):
+    ) -> None:
         frequency = jnp.asarray(frequencies)
         values_ = jnp.asarray(values)
         broadening_ = jnp.asarray(broadening)
@@ -626,7 +630,7 @@ class DLRGreenFunction(StrictModule):
         moment_count: int = 4,
         evidence: GreenRepresentationEvidence | DLRTransformEvidence | None = None,
         representation_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(basis, PreparedDLRBasis):
             raise TypeError("basis must be a PreparedDLRBasis.")
         values = jnp.asarray(coefficients)
@@ -708,7 +712,7 @@ class ThermalLehmannPolicy(StrictModule):
         maximum_bytes: int = 512 * 1024**2,
         weight_tolerance: float = 0.0,
         hamiltonian_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         for name, value in (
             ("maximum_states", maximum_states),
             ("maximum_channels", maximum_channels),
@@ -823,15 +827,15 @@ class DysonPolicy(StrictModule):
         maximum_bytes: int = 512 * 1024**2,
         rank_tolerance: float = 1e-12,
         residual_tolerance: float = 1e-9,
-    ):
+    ) -> None:
         for name, value in (
             ("maximum_samples", maximum_samples),
             ("maximum_matrix_dimension", maximum_matrix_dimension),
             ("maximum_bytes", maximum_bytes),
         ):
             _positive_int(value, name)
-        rank_ = _positive(rank_tolerance, "rank_tolerance")
-        residual_ = _positive(residual_tolerance, "residual_tolerance")
+        rank_ = positive_finite_float(rank_tolerance, "rank_tolerance")
+        residual_ = positive_finite_float(residual_tolerance, "residual_tolerance")
         self.maximum_samples = int(maximum_samples)
         self.maximum_matrix_dimension = int(maximum_matrix_dimension)
         self.maximum_bytes = int(maximum_bytes)
@@ -887,16 +891,8 @@ class SelfEnergyExtractionResult(StrictModule):
 
 
 def _statistics(value: str, /) -> ThermalStatistics:
-    if value not in ("fermionic", "bosonic"):
-        raise ValueError("statistics must be 'fermionic' or 'bosonic'.")
+    value = parse(value, ThermalStatistics, "value")
     return value
-
-
-def _positive(value: float, name: str, /) -> float:
-    result = float(value)
-    if not isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
 
 
 def _positive_int(value: int, name: str, /) -> int:
@@ -1361,7 +1357,7 @@ def fermionic_thermal_sector_channel(
 ) -> FermionicThermalSectorChannel:
     """Prepare one fermionic source-to-target channel with global thermal weights."""
 
-    beta_ = _positive(beta, "beta")
+    beta_ = positive_finite_float(beta, "beta")
     source = jnp.asarray(source_energies)
     target = jnp.asarray(target_energies)
     operator = jnp.asarray(annihilation)
@@ -1473,7 +1469,7 @@ def plan_thermal_lehmann(
 ) -> ThermalLehmannPlan:
     """Validate eigensystem shapes and reject oversized transition banks."""
 
-    beta_ = _positive(beta, "beta")
+    beta_ = positive_finite_float(beta, "beta")
     statistics_ = _statistics(statistics)
     policy_ = ThermalLehmannPolicy() if policy is None else policy
     if not isinstance(policy_, ThermalLehmannPolicy):
@@ -1850,7 +1846,7 @@ def _aligned_green_self_energy(
         raise ValueError("Dyson Green and self-energy values must have matching shapes.")
 
 
-def _native_factor(matrix: Array, tolerance: float, /):
+def _native_factor(matrix: Array, tolerance: float, /) -> PreparedFactorization:
     return factorize(
         DenseLinearOperator(matrix),
         FactorizationPolicy("svd", rank=RankPolicy(relative_cutoff=float(tolerance))),

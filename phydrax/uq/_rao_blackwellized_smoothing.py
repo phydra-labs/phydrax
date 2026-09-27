@@ -11,10 +11,11 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, Key
+from jax import Array
 
 from .._strict import StrictModule
 from ..stochastic._state_space import state_space_key
+from ..typing import PRNGKey
 from ._covariance import _solve_covariance_system
 from ._particle import normalize_log_weights
 from ._rao_blackwellized import (
@@ -87,7 +88,7 @@ def _sample_shape(value: tuple[int, ...], /) -> tuple[tuple[int, ...], int]:
 
 
 def rao_blackwellized_backward_simulation(
-    key: Key[Array, ""],
+    key: PRNGKey,
     result: RaoBlackwellizedFilterResult,
     /,
     *,
@@ -174,7 +175,9 @@ def rao_blackwellized_backward_simulation(
         case_times = times[case_index]
         case_initial_time = initial_times[case_index]
 
-        def draw_path(terminal_key, path_keys, initial_key):
+        def draw_path(
+            terminal_key: Array, path_keys: Array, initial_key: Array
+        ) -> tuple[Array, Array, Array, Array]:
             particle_index = jr.categorical(terminal_key, terminal_weights).astype(
                 jnp.int32
             )
@@ -274,7 +277,7 @@ def rao_blackwellized_backward_simulation(
 
 
 def sample_rao_blackwellized_backward_paths(
-    key: Key[Array, ""],
+    key: PRNGKey,
     result: RaoBlackwellizedFilterResult,
     /,
     *,
@@ -287,7 +290,7 @@ def sample_rao_blackwellized_backward_paths(
 
 
 def rao_blackwellized_particle_smoother(
-    key: Key[Array, ""],
+    key: PRNGKey,
     result: RaoBlackwellizedFilterResult,
     /,
     *,
@@ -346,7 +349,9 @@ def rao_blackwellized_particle_smoother(
         case_values = values[case_index]
         case_masks = masks[case_index]
 
-        def smooth_path(nonlinear_path, initial_nonlinear, supplied_valid):
+        def smooth_path(
+            nonlinear_path: Array, initial_nonlinear: Array, supplied_valid: Array
+        ) -> tuple[Array, Array, Array, Array, Array, Array]:
             mean, covariance = model.initial_linear_gaussian(
                 initial_nonlinear.reshape(nonlinear_shape), result.problem.args
             )

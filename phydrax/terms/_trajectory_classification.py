@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, cast, Literal, SupportsFloat, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 from phydrax.domain import (
@@ -24,12 +25,13 @@ from phydrax.domain import (
     TrajectoryDatasetDomain,
 )
 
-from .._classification import pointwise_classification_loss
+from .._classification import ClassificationKind, pointwise_classification_loss
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..ml._classification import ClassificationObjective
 from ..ml._schema import TargetSchema
+from ..typing import parse, PRNGKey
 from ._data_metrics import (
     case_sample_count,
     normalize_case_sampling,
@@ -52,7 +54,7 @@ from ._ragged_time_series import (
 from ._trajectory_data import TrajectoryCaseTime
 
 
-TrajectoryClassificationMeasure = Literal["statistical", "physical"]
+TrajectoryClassificationMeasure: TypeAlias = Literal["statistical", "physical"]
 TrajectoryDomain = TrajectoryDatasetDomain | IrregularTrajectoryDatasetDomain
 
 
@@ -77,7 +79,7 @@ class TrajectoryCaseClassificationBatch(StrictModule):
         geometry_weight: ArrayLike,
         case_indices: ArrayLike,
         times: ArrayLike,
-    ):
+    ) -> None:
         self.points = points
         self.target = jnp.asarray(target)
         self.target_mask = (
@@ -112,7 +114,7 @@ class RaggedTimeSeriesClassificationBatch(StrictModule):
         case_indices: ArrayLike,
         time_indices: ArrayLike,
         times: ArrayLike,
-    ):
+    ) -> None:
         self.points = points
         self.target = jnp.asarray(target)
         self.target_mask = (
@@ -221,17 +223,13 @@ def _normalize_reduction_measure(
     if reduction not in ("mean", "sum"):
         raise ValueError("reduction must be either 'mean' or 'sum'.")
     reduction_: Literal["mean", "sum"] = "mean" if reduction == "mean" else "sum"
-    if measure not in ("statistical", "physical"):
-        raise ValueError("measure must be either 'statistical' or 'physical'.")
-    measure_: TrajectoryClassificationMeasure = (
-        "statistical" if measure == "statistical" else "physical"
-    )
+    measure_ = parse(measure, TrajectoryClassificationMeasure, "measure")
     if measure_ == "physical" and reduction_ != "sum":
         raise ValueError("Physical trajectory measure requires reduction='sum'.")
     return reduction_, measure_
 
 
-def _validate_term_weight(weight: ArrayLike, /) -> float:
+def _validate_term_weight(weight: SupportsFloat, /) -> float:
     result = float(weight)
     if not math.isfinite(result):
         raise ValueError("weight must be a finite scalar.")
@@ -524,7 +522,7 @@ def _configured_cases_at_time(
 def _sample_cases_at_time(
     domain: TrajectoryDomain,
     num_samples: int,
-    key: Key[Array, ""],
+    key: PRNGKey,
     case_time: TrajectoryCaseTime,
     /,
     *,
@@ -771,7 +769,8 @@ def _classification_loss(
     scores = pointwise_classification_loss(
         logits,
         batch.target,
-        kind=target_schema.kind,
+        # _classification_size admitted only classification schema kinds at construction.
+        kind=cast(ClassificationKind, target_schema.kind),
         objective=objective.kind,
         class_count=class_count,
         target_mask=loss_mask,
@@ -824,12 +823,12 @@ class TrajectoryCaseClassificationTerm(AbstractSamplingTerm):
         target_mask: ArrayLike | None = None,
         sample_weight: ArrayLike | None = None,
         case_time: TrajectoryCaseTime = "start",
-        weight: ArrayLike = 1.0,
+        weight: SupportsFloat = 1.0,
         reduction: Literal["mean", "sum"] = "mean",
         measure: TrajectoryClassificationMeasure = "statistical",
         case_indices: ArrayLike | None = None,
         label: str | None = None,
-    ):
+    ) -> None:
         domain = component.domain
         if not isinstance(
             domain, (TrajectoryDatasetDomain, IrregularTrajectoryDatasetDomain)
@@ -897,9 +896,7 @@ class TrajectoryCaseClassificationTerm(AbstractSamplingTerm):
             raise TypeError("Trajectory case classification domain is not a trajectory.")
         return domain
 
-    def sample(
-        self, *, key: Key[Array, ""] = DOC_KEY0
-    ) -> TrajectoryCaseClassificationBatch:
+    def sample(self, *, key: PRNGKey = DOC_KEY0) -> TrajectoryCaseClassificationBatch:
         """Draw cases and retain their integer or Boolean labels without encoding."""
         domain = self.domain
         case_indices = _sample_cases_at_time(
@@ -935,7 +932,7 @@ class TrajectoryCaseClassificationTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: TrajectoryCaseClassificationBatch | None = None,
         **kwargs: Any,
@@ -999,12 +996,12 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
         sample_weight: ArrayLike | None = None,
         selection: RaggedTimeSeriesSampling = "observation_uniform",
         interpolation: RaggedTimeSeriesInterpolation = "nearest",
-        weight: ArrayLike = 1.0,
+        weight: SupportsFloat = 1.0,
         reduction: Literal["mean", "sum"] = "mean",
         measure: TrajectoryClassificationMeasure = "statistical",
         case_indices: ArrayLike | None = None,
         label: str | None = None,
-    ):
+    ) -> None:
         domain = component.domain
         if not isinstance(
             domain, (TrajectoryDatasetDomain, IrregularTrajectoryDatasetDomain)
@@ -1012,16 +1009,10 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
             raise TypeError(
                 "RaggedTimeSeriesClassificationTerm requires a trajectory dataset domain."
             )
-        if selection not in (
-            "observation_uniform",
-            "case_uniform",
-            "case_time_uniform",
-        ):
-            raise ValueError(
-                "selection must be 'observation_uniform', 'case_uniform', or 'case_time_uniform'."
-            )
-        if interpolation not in ("nearest", "linear"):
-            raise ValueError("interpolation must be either 'nearest' or 'linear'.")
+        selection = parse(selection, RaggedTimeSeriesSampling, "selection")
+        interpolation = parse(
+            interpolation, RaggedTimeSeriesInterpolation, "interpolation"
+        )
 
         objective_ = _normalize_objective(objective)
         class_count = _classification_size(target_schema)
@@ -1099,9 +1090,7 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
         assert layout is not None
         return layout
 
-    def sample(
-        self, *, key: Key[Array, ""] = DOC_KEY0
-    ) -> RaggedTimeSeriesClassificationBatch:
+    def sample(self, *, key: PRNGKey = DOC_KEY0) -> RaggedTimeSeriesClassificationBatch:
         """Draw only valid ragged sites and gather their targets without one-hotting."""
         count = self.sampling.count
         if isinstance(count, tuple):
@@ -1113,7 +1102,7 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
         count: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> RaggedTimeSeriesClassificationBatch:
         domain = self.domain
         key_case, key_time = jr.split(key)
@@ -1175,7 +1164,7 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
         return self._batch(case_indices, time_indices, times, target)
 
     def _sample_case_time_grid(
-        self, *, key: Key[Array, ""]
+        self, *, key: PRNGKey
     ) -> RaggedTimeSeriesClassificationBatch:
         domain = self.domain
         count = self.sampling.count
@@ -1302,7 +1291,7 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: RaggedTimeSeriesClassificationBatch | None = None,
         **kwargs: Any,

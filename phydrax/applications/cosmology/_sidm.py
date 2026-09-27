@@ -11,7 +11,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
@@ -34,6 +35,7 @@ from ._dark_sector_species import DarkSectorSpeciesPlan
 from ._distances import FLRWDistancePlan
 from ._particle_mesh import (
     _advance_particle_mesh_interval,
+    _ParticleMeshCarry,
     CosmologicalParticleMeshDiagnostics,
     CosmologicalParticleMeshPlan,
 )
@@ -53,7 +55,7 @@ class SIDMCrossSectionPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     kernel: TwoBodyDifferentialKernelPlan
 
-    def __init__(self, cross_section_per_mass: float, /):
+    def __init__(self, cross_section_per_mass: float, /) -> None:
         value = float(cross_section_per_mass)
         if not np.isfinite(value) or value < 0.0:
             raise ValueError(
@@ -94,7 +96,7 @@ class SIDMCollisionPolicy(StrictModule, NonTrainableState):
         maximum_particle_probability: float = 0.25,
         minimum_knudsen_number: float = 1.0,
         maximum_events_per_half_step: int,
-    ):
+    ) -> None:
         maximum = float(maximum_pair_probability)
         maximum_particle = float(maximum_particle_probability)
         minimum_knudsen = float(minimum_knudsen_number)
@@ -210,7 +212,7 @@ def _pair_keys(key: Array, pairs: ParticlePairRelation, epoch: ArrayLike, /) -> 
     )
 
 
-def _isotropic_directions(keys: Array, dtype, /) -> Array:
+def _isotropic_directions(keys: Array, dtype: DTypeLike, /) -> Array:
     samples = jax.vmap(lambda key: jr.normal(key, (3,), dtype=dtype))(keys)
     norms = jnp.sqrt(ein.contract("...i,...i->...", samples, samples))
     fallback = jnp.asarray((1.0, 0.0, 0.0), dtype=dtype)
@@ -233,7 +235,7 @@ def _select_endpoint_disjoint(
     selected = jnp.zeros(proposed.shape, dtype=jnp.bool_)
     used = jnp.zeros((particle_capacity,), dtype=jnp.bool_)
 
-    def body(index, carry):
+    def body(index: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
         accepted, occupied = carry
         route = order[index]
         left = pairs.left_indices[route]
@@ -273,7 +275,7 @@ class CosmologicalSIDMPlan(StrictModule):
         *,
         execution: ParticleExecutionPolicy | None = None,
         time: FLRWDistancePlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(particle_mesh, CosmologicalParticleMeshPlan):
             raise TypeError("particle_mesh must be CosmologicalParticleMeshPlan.")
         if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
@@ -745,7 +747,17 @@ class CosmologicalSIDMPlan(StrictModule):
         )
         end_scales = self.particle_mesh.scale_factors[1:].astype(state.scale_factor.dtype)
 
-        def step(carry, schedule):
+        def step(
+            carry: _ParticleMeshCarry, schedule: tuple[Array, Array]
+        ) -> tuple[
+            _ParticleMeshCarry,
+            tuple[
+                tuple[Array, Array, Array, Array, Array, Array],
+                SIDMCollisionDiagnostics,
+                SIDMCollisionDiagnostics,
+                Array,
+            ],
+        ]:
             (
                 current,
                 acceleration_start,

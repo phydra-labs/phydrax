@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -6,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def _compiled_channel():
+def _compiled_channel() -> Any:
     space = phx.discretization.TensorSpectralPlan(
         (
             phx.discretization.FourierBasisPlan(4),
@@ -35,7 +37,7 @@ def _compiled_channel():
     return space, phx.equations.compile_channel_flow(problem, plan, method)
 
 
-def test_channel_sbdf2_preserves_steady_couette_profile():
+def test_channel_sbdf2_preserves_steady_couette_profile() -> None:
     space, dynamics = _compiled_channel()
     y = space.axes[1].nodes
     couette = jnp.zeros(space.physical_shape + (3,)).at[..., 0].set(y[None, :, None])
@@ -54,7 +56,7 @@ def test_channel_sbdf2_preserves_steady_couette_profile():
     assert jnp.nanmax(solution.diagnostics.pressure_gauge_residual) < 1e-10
 
 
-def test_channel_compiler_rejects_mismatched_problem_viscosity():
+def test_channel_compiler_rejects_mismatched_problem_viscosity() -> None:
     space, dynamics = _compiled_channel()
     with pytest.raises(ValueError, match="viscosities"):
         phx.equations.compile_channel_flow(
@@ -67,7 +69,9 @@ def test_channel_compiler_rejects_mismatched_problem_viscosity():
     assert space.prepared_id == dynamics.discretization.prepared_id
 
 
-def test_channel_sbdf2_rejects_constraint_invalid_initial_state_without_advancing():
+def test_channel_sbdf2_rejects_constraint_invalid_initial_state_without_advancing() -> (
+    None
+):
     _, dynamics = _compiled_channel()
     initial = jnp.zeros(dynamics.state_shape, dtype="complex128")
     solution = phx.solver.solve_channel_sbdf2(
@@ -84,7 +88,7 @@ def test_channel_sbdf2_rejects_constraint_invalid_initial_state_without_advancin
     np.testing.assert_allclose(solution.velocity, 0.0, atol=0.0)
 
 
-def _perturbed_channel_state(space, dynamics):
+def _perturbed_channel_state(space: Any, dynamics: Any) -> Any:
     y = space.axes[1].nodes
     z = space.axes[2].nodes
     streamwise = y[None, :, None] + 0.05 * (1.0 - y[None, :, None] ** 2) * jnp.cos(
@@ -98,22 +102,28 @@ def _perturbed_channel_state(space, dynamics):
     return dynamics.project_state(physical)
 
 
-def test_channel_prepared_restart_matches_uninterrupted_history():
+def test_channel_prepared_restart_matches_uninterrupted_history() -> None:
     space, dynamics = _compiled_channel()
     initial = _perturbed_channel_state(space, dynamics)
     step = 0.01
     method = phx.solver.ChannelSBDF2Method()
     prepared = method.prepare(dynamics, step)
     state0 = prepared.initialize(initial, 0.0, None)
+    # ty: ignore[invalid-argument-type]
     first = prepared.step(0, 0.0, state0, step, None).accepted_state
+    # ty: ignore[invalid-argument-type]
     second = prepared.step(1, step, first, step, None).accepted_state
+    # ty: ignore[invalid-argument-type]
     third = prepared.step(2, 2.0 * step, second, step, None).accepted_state
     restarted_after_startup = (
         method.prepare(dynamics, step)
         .step(
+            # ty: ignore[invalid-argument-type]
             1,
+            # ty: ignore[invalid-argument-type]
             step,
             first,
+            # ty: ignore[invalid-argument-type]
             step,
             None,
         )
@@ -122,9 +132,12 @@ def test_channel_prepared_restart_matches_uninterrupted_history():
     restarted_later = (
         method.prepare(dynamics, step)
         .step(
+            # ty: ignore[invalid-argument-type]
             2,
+            # ty: ignore[invalid-argument-type]
             2.0 * step,
             second,
+            # ty: ignore[invalid-argument-type]
             step,
             None,
         )
@@ -166,14 +179,17 @@ def test_channel_prepared_restart_matches_uninterrupted_history():
     )
 
 
-def test_channel_prepared_failure_preserves_history_and_rejects_changed_step():
+def test_channel_prepared_failure_preserves_history_and_rejects_changed_step() -> None:
     space, dynamics = _compiled_channel()
     step = 0.01
     prepared = phx.solver.ChannelSBDF2Method().prepare(dynamics, step)
     state = prepared.step(
+        # ty: ignore[invalid-argument-type]
         0,
+        # ty: ignore[invalid-argument-type]
         0.0,
         prepared.initialize(_perturbed_channel_state(space, dynamics), 0.0, None),
+        # ty: ignore[invalid-argument-type]
         step,
         None,
     ).accepted_state
@@ -186,6 +202,7 @@ def test_channel_prepared_failure_preserves_history_and_rejects_changed_step():
         state.pressure_gradient,
         state.history_count,
     )
+    # ty: ignore[invalid-argument-type]
     failed = prepared.step(1, step, invalid, step, None)
 
     assert not bool(failed.successful)
@@ -196,10 +213,11 @@ def test_channel_prepared_failure_preserves_history_and_rejects_changed_step():
     ):
         assert jnp.array_equal(incoming, accepted)
     with pytest.raises(Exception, match="exactly equal"):
+        # ty: ignore[invalid-argument-type]
         prepared.step(1, step, state, 0.5 * step, None)
 
 
-def test_bounded_observer_reports_overflow_without_growing_state():
+def test_bounded_observer_reports_overflow_without_growing_state() -> None:
     layout = phx.dynamics.StateLayout((1,))
     system = phx.dynamics.DiscreteSystem(
         lambda step, state, args: 0.5 * state,
@@ -226,7 +244,7 @@ def test_bounded_observer_reports_overflow_without_growing_state():
     np.testing.assert_allclose(np.asarray(result.final_state), [0.03125])
 
 
-def test_bounded_observer_latches_nonfinite_observable_status():
+def test_bounded_observer_latches_nonfinite_observable_status() -> None:
     layout = phx.dynamics.StateLayout((1,))
     system = phx.dynamics.DiscreteSystem(
         lambda step, state, args: state,
@@ -250,7 +268,7 @@ def test_bounded_observer_latches_nonfinite_observable_status():
     assert int(result.final_status) == phx.solver.OBSERVATION_NONFINITE
 
 
-def test_spectral_seed_and_fixed_step_checkpoint_roundtrip(tmp_path):
+def test_spectral_seed_and_fixed_step_checkpoint_roundtrip(tmp_path: Any) -> None:
     state = jnp.asarray([1.0 + 0.5j, 2.0 - 0.25j])
     artifact = phx.solver.SpectralStateArtifact(
         state,
@@ -294,7 +312,7 @@ def test_spectral_seed_and_fixed_step_checkpoint_roundtrip(tmp_path):
     np.testing.assert_allclose(np.asarray(restored.step_size), 0.1)
 
 
-def test_hermitian_spectral_artifact_uses_minimal_real_storage(tmp_path):
+def test_hermitian_spectral_artifact_uses_minimal_real_storage(tmp_path: Any) -> None:
     space = phx.discretization.TensorSpectralPlan(
         (phx.discretization.FourierBasisPlan(8),)
     ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
@@ -321,6 +339,7 @@ def test_hermitian_spectral_artifact_uses_minimal_real_storage(tmp_path):
     )
 
     np.testing.assert_allclose(restored.state, state)
+    # ty: ignore[unresolved-attribute]
     assert restored.coordinate_evidence.evidence_id == coordinates.evidence.evidence_id
     assert restored.stored_state_bytes < restored.full_state_bytes
     assert restored.fixed_coordinate_count == coordinates.fixed_mode_count

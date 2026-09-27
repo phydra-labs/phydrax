@@ -13,13 +13,15 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from enum import IntEnum
 from numbers import Integral
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._frozendict import frozendict
@@ -43,6 +45,14 @@ class FiniteDesignStatus(IntEnum):
     NO_VALID_DESIGNS = 3
     STALE_IDENTITY = 4
     IMPOSSIBLE_OBSERVATION = 5
+
+
+# (parameters, designs, outcomes, context) -> log p(outcome | parameter, design).
+FiniteLogConditionalProbability: TypeAlias = Callable[
+    [PyTree[Array], PyTree[Array], PyTree[Array], frozendict[str, Array]], ArrayLike
+]
+# (information gain, per-row log totals, rows valid, observed log likelihoods).
+_GainCarry: TypeAlias = tuple[Array, Array, Array, Array | None]
 
 
 def _identifier(value: str, name: str) -> str:
@@ -79,7 +89,7 @@ class FiniteExperimentalDesignProblem(StrictModule):
     parameters: FiniteProductSpace
     designs: FiniteProductSpace
     outcomes: FiniteProductSpace
-    log_conditional_probability: Callable
+    log_conditional_probability: FiniteLogConditionalProbability
     context: frozendict[str, Array]
     design_mask: Array | None
     likelihood_id: str = eqx.field(static=True)
@@ -90,13 +100,13 @@ class FiniteExperimentalDesignProblem(StrictModule):
         parameters: FiniteProductSpace,
         designs: FiniteProductSpace,
         outcomes: FiniteProductSpace,
-        log_conditional_probability: Callable,
+        log_conditional_probability: FiniteLogConditionalProbability,
         /,
         *,
         likelihood_id: str,
         context: Mapping[str, ArrayLike] | None = None,
         design_mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         if any(
             not isinstance(space, FiniteProductSpace)
             for space in (parameters, designs, outcomes)
@@ -157,7 +167,7 @@ class FiniteDesignBelief(StrictModule):
         *,
         parameter_mask: ArrayLike | None = None,
         history: tuple[Experiment, ...] = (),
-    ):
+    ) -> None:
         if not isinstance(parameters, FiniteProductSpace):
             raise TypeError("parameters must be a FiniteProductSpace.")
         values = jnp.asarray(log_masses)
@@ -247,7 +257,7 @@ class ExpectedInformationGain(StrictModule):
         maximum_bytes: int = 64 * 1024 * 1024,
         normalization_tolerance: float = 1e-6,
         likelihood_workspace_bytes_per_candidate: int = 0,
-    ):
+    ) -> None:
         self.candidate_batch_size = _positive_integer(
             candidate_batch_size, "candidate_batch_size"
         )
@@ -290,7 +300,7 @@ class ExpectedInformationGain(StrictModule):
         c = min(o, self.outcome_batch_size)
         itemsize = np.dtype(belief.log_masses.dtype).itemsize
 
-        def point_bytes(space):
+        def point_bytes(space: FiniteProductSpace) -> int:
             return sum(
                 int(np.prod(leaf.shape, dtype=np.int64)) * np.dtype(leaf.dtype).itemsize
                 for leaf in jax.tree_util.tree_leaves(space.point_spec())
@@ -403,7 +413,7 @@ def _evaluate(
         None if observation_flat_index is None else jnp.full((p,), -jnp.inf, dtype=dtype)
     )
 
-    def accumulate(chunk_index, carry):
+    def accumulate(chunk_index: int | Array, carry: _GainCarry) -> _GainCarry:
         gain, totals, rows_valid, observation = carry
         outcome_indices = chunk_index * c + jnp.arange(c, dtype=jnp.int64)
         active_outcomes = outcome_indices < resources.outcome_count
@@ -434,7 +444,8 @@ def _evaluate(
             supported, predictive[None, :], 0
         )
         gain = gain + jnp.sum(jnp.exp(joint) * ratio)
-        if observation_flat_index is not None:
+        # The observation accumulator exists exactly when an outcome is observed.
+        if observation is not None:
             selected = active_outcomes & (outcome_indices == observation_flat_index)
             observation = jnp.maximum(
                 observation, jnp.max(jnp.where(selected[None, :], logs, -jnp.inf), axis=1)
@@ -511,7 +522,7 @@ def select_finite_experimental_design(
         )
     )
 
-    def evaluator(coordinates):
+    def evaluator(coordinates: PyTree[Array]) -> tuple[Array, Array]:
         index = jnp.asarray(0, dtype=jnp.int64)
         for coordinate, size in zip(
             coordinates, problem.designs.product_shape, strict=True
@@ -630,7 +641,9 @@ def update_finite_design_belief(
     if not isinstance(experiment, Experiment):
         raise TypeError("experiment must be an Experiment.")
 
-    def rejected(status, log_predictive=jnp.nan):
+    def rejected(
+        status: int | Array, log_predictive: ArrayLike = jnp.nan
+    ) -> FiniteDesignUpdate:
         return FiniteDesignUpdate(
             belief,
             jnp.asarray(False),

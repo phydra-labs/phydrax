@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 
 from phydrax.finance.core import FinanceEvidenceBinding, PricingLaw
@@ -16,7 +18,7 @@ from phydrax.tensor_train import TensorizedGrid, TensorTrain
 from phydrax.terms import DeepBSDERollout, DeepBSDEShootingDiagnostics
 
 
-def _law():
+def _law() -> Any:
     return PricingLaw(
         "candidate-q",
         "synthetic candidate law",
@@ -28,7 +30,7 @@ def _law():
     )
 
 
-def _binding():
+def _binding() -> Any:
     return FinanceEvidenceBinding(
         ("data-evidence",),
         ("model-evidence",),
@@ -37,7 +39,7 @@ def _binding():
     )
 
 
-def _deep_result(path_id="validation-path"):
+def _deep_result(path_id: Any = "validation-path") -> Any:
     paths = BSDEPathBatch(
         jnp.asarray([0.0, 1.0]),
         jnp.zeros((2, 2, 1)),
@@ -68,6 +70,7 @@ def _deep_result(path_id="validation-path"):
         jnp.asarray(True),
     )
     return DeepBSDEResult(
+        # ty: ignore[invalid-argument-type]
         None,
         rollout,
         diagnostics,
@@ -78,7 +81,7 @@ def _deep_result(path_id="validation-path"):
     )
 
 
-def _deep_applicability(training_path_id):
+def _deep_applicability(training_path_id: Any) -> Any:
     return DeepBSDEApplicability(
         _law(),
         contract_id="candidate-contract",
@@ -94,7 +97,7 @@ def _deep_applicability(training_path_id):
     )
 
 
-def test_deep_bsde_validation_cannot_be_relabeled_from_training():
+def test_deep_bsde_validation_cannot_be_relabeled_from_training() -> None:
     result = _deep_result()
     separated = deep_bsde_independent_validation(
         _deep_applicability("training-path"),
@@ -119,7 +122,7 @@ def test_deep_bsde_validation_cannot_be_relabeled_from_training():
     assert not bool(reused.valid)
 
 
-def _tensor_fixture(dense, relative_tolerance):
+def _tensor_fixture(dense: Any, relative_tolerance: Any) -> Any:
     law = _law()
     grid = TensorizedGrid.uniform(((0.0, 1.0), (0.0, 1.0)), (2, 2))
     approximation = TensorTrain.from_dense(
@@ -167,7 +170,7 @@ def _tensor_fixture(dense, relative_tolerance):
     return law, applicability, approximation, validation, support, causality
 
 
-def test_tensor_reconstruction_and_rank_evidence_fail_closed():
+def test_tensor_reconstruction_and_rank_evidence_fail_closed() -> None:
     dense = jnp.asarray([[1.0, 2.0], [2.0, 4.0]])
     law, applicability, approximation, validation, support, causality = _tensor_fixture(
         dense, 1e-6

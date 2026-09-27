@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -12,13 +15,15 @@ import phydrax as phx
 la = phx.linalg
 
 
-def _dense_policy():
+def _dense_policy() -> Any:
     return la.MatrixEquationPolicy(
         linear=la.LinearSolvePolicy(la.DenseLU()),
     )
 
 
-def test_generalized_matrix_equation_operator_matches_terms_and_kronecker_matrix():
+def test_generalized_matrix_equation_operator_matches_terms_and_kronecker_matrix() -> (
+    None
+):
     left_one = jnp.asarray([[2.0, 1.0], [-1.0, 3.0]])
     right_one = jnp.asarray([[1.0, 2.0, 0.0], [0.0, -1.0, 1.0], [0.5, 0.0, 2.0]])
     left_two = jnp.asarray([[0.5, -0.25], [1.0, 0.75]])
@@ -39,7 +44,7 @@ def test_generalized_matrix_equation_operator_matches_terms_and_kronecker_matrix
     assert operator.source.shape == (2, 3)
 
 
-def test_complex_matrix_equation_adjoint_satisfies_frobenius_identity():
+def test_complex_matrix_equation_adjoint_satisfies_frobenius_identity() -> None:
     left = jnp.asarray([[1.0 + 1.0j, 2.0], [0.5j, -1.0]])
     right = jnp.asarray([[2.0, -1.0j], [0.25 + 0.5j, 3.0]])
     operator = la.MatrixEquationLinearOperator(
@@ -53,7 +58,7 @@ def test_complex_matrix_equation_adjoint_satisfies_frobenius_identity():
     assert jnp.allclose(forward_inner, adjoint_inner, rtol=1e-12, atol=1e-12)
 
 
-def test_rectangular_sylvester_solve_matches_dense_reference():
+def test_rectangular_sylvester_solve_matches_dense_reference() -> None:
     left = jnp.asarray([[2.0, 1.0], [0.0, 3.0]])
     right = jnp.asarray([[4.0, -1.0, 0.5], [0.0, 5.0, 1.0], [0.0, 0.0, 6.0]])
     forcing = jnp.asarray([[1.0, 2.0, -1.0], [3.0, 4.0, 0.5]])
@@ -70,7 +75,9 @@ def test_rectangular_sylvester_solve_matches_dense_reference():
     assert result.provenance.convention == "A X + X B = C"
 
 
-def test_continuous_and_discrete_lyapunov_factories_preserve_hermitian_structure():
+def test_continuous_and_discrete_lyapunov_factories_preserve_hermitian_structure() -> (
+    None
+):
     continuous_operator = jnp.asarray([[-1.0 + 0.5j, 2.0], [0.0, -3.0 - 0.25j]])
     continuous_forcing = jnp.asarray([[2.0, 0.5j], [-0.5j, 1.0]])
     continuous_problem = la.continuous_lyapunov_equation(
@@ -110,7 +117,9 @@ def test_continuous_and_discrete_lyapunov_factories_preserve_hermitian_structure
     assert discrete.diagnostics.structure_satisfied
 
 
-def test_prepared_matrix_equation_is_jittable_refreshable_and_accepts_new_forcing():
+def test_prepared_matrix_equation_is_jittable_refreshable_and_accepts_new_forcing() -> (
+    None
+):
     first_left = jnp.asarray([[2.0, 0.5], [0.0, 3.0]])
     second_left = jnp.asarray([[1.5, -0.25], [0.25, 2.5]])
     right = jnp.asarray([[4.0, 0.25], [0.0, 5.0]])
@@ -151,7 +160,7 @@ def test_prepared_matrix_equation_is_jittable_refreshable_and_accepts_new_forcin
     )
 
 
-def test_prepared_matrix_equation_derivative_with_respect_to_forcing_is_correct():
+def test_prepared_matrix_equation_derivative_with_respect_to_forcing_is_correct() -> None:
     left = jnp.asarray([[2.0, 0.5], [0.0, 3.0]])
     right = jnp.asarray([[4.0, 0.25], [0.0, 5.0]])
     forcing = jnp.asarray([[1.0, 2.0], [3.0, -1.0]])
@@ -159,11 +168,11 @@ def test_prepared_matrix_equation_derivative_with_respect_to_forcing_is_correct(
     prepared = la.prepare_matrix_equation(problem, _dense_policy())
     kronecker = jnp.kron(left, jnp.eye(2)) + jnp.kron(jnp.eye(2), right.T)
 
-    def actual_objective(rhs):
+    def actual_objective(rhs: Any) -> Any:
         value = la.solve_matrix_equation(prepared, right_hand_side=rhs).value
         return jnp.sum(value**2)
 
-    def expected_objective(rhs):
+    def expected_objective(rhs: Any) -> Any:
         value = jnp.linalg.solve(kronecker, rhs.reshape(-1)).reshape((2, 2))
         return jnp.sum(value**2)
 
@@ -172,7 +181,7 @@ def test_prepared_matrix_equation_derivative_with_respect_to_forcing_is_correct(
     assert jnp.allclose(actual, expected, rtol=1e-10, atol=1e-11)
 
 
-def test_matrix_equation_validates_shape_structure_and_plan_identity():
+def test_matrix_equation_validates_shape_structure_and_plan_identity() -> None:
     term = la.MatrixEquationTerm(jnp.eye(2), jnp.eye(3))
     with pytest.raises(ValueError, match="shape"):
         la.MatrixEquationProblem((term,), jnp.eye(2))

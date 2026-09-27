@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -27,7 +28,7 @@ class MappedCochainGeometry(StrictModule, NonTrainableState):
         edge_vectors: tuple[ArrayLike, ...],
         cell_volumes: ArrayLike,
         /,
-    ):
+    ) -> None:
         faces = tuple(np.asarray(value, dtype=np.float64) for value in face_area_vectors)
         edges = tuple(np.asarray(value, dtype=np.float64) for value in edge_vectors)
         volumes = np.asarray(cell_volumes, dtype=np.float64)
@@ -70,7 +71,7 @@ class MappedALEConstrainedTransportPlan(StrictModule, NonTrainableState):
         bridge: StructuredCochainBridge,
         geometry: MappedCochainGeometry,
         /,
-    ):
+    ) -> None:
         if bridge.dimension != 3:
             raise ValueError("Mapped ALE constrained transport currently requires 3D.")
         if any(

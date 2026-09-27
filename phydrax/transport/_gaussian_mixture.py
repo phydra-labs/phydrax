@@ -10,7 +10,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -101,7 +101,7 @@ def gaussian_mixture_transport_problem(
     if not isfinite(tolerance) or tolerance < 0.0:
         raise ValueError("mass_tolerance must be finite and nonnegative.")
 
-    def one_left(left_mean, left_covariance):
+    def one_left(left_mean: Array, left_covariance: Array) -> tuple[Array, Array]:
         return jax.vmap(
             lambda right_mean, right_covariance: _gaussian_w2_cost(
                 left_mean,

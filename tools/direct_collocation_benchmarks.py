@@ -19,7 +19,7 @@ import phydrax as phx
 from benchmarks._runtime import measure_repeated, synchronize
 
 
-def _measure(operation, /, *, repeats: int):
+def _measure(operation: Any, /, *, repeats: int) -> Any:
     value, distribution = measure_repeated(
         operation,
         warmup=1,
@@ -29,7 +29,7 @@ def _measure(operation, /, *, repeats: int):
     return value, float(np.mean(samples)), float(np.std(samples))
 
 
-def _problem():
+def _problem() -> Any:
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, control, args: -0.2 * state + control,
         state_layout=phx.dynamics.StateLayout((2,)),

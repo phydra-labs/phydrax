@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -5,11 +7,13 @@ import pytest
 import phydrax as phx
 
 
-def _increment(_key, parameters, _tails, current, kernel_state):
+def _increment(
+    _key: Any, parameters: Any, _tails: Any, current: Any, kernel_state: Any
+) -> Any:
     return current + parameters, kernel_state
 
 
-def test_conditional_program_updates_arbitrary_pytree_state_by_stage():
+def test_conditional_program_updates_arbitrary_pytree_state_by_stage() -> None:
     conditional = phx.sampling.conditional
     specification = {
         "position": jax.ShapeDtypeStruct((2,), jnp.float64),
@@ -17,7 +21,9 @@ def test_conditional_program_updates_arbitrary_pytree_state_by_stage():
     }
     group = conditional.ConditionalVariableGroup("particles", 2, specification)
 
-    def update(_key, parameters, tails, current, kernel_state):
+    def update(
+        _key: Any, parameters: Any, tails: Any, current: Any, kernel_state: Any
+    ) -> Any:
         neighbor = tails[0]
         output = {
             "position": current["position"] + parameters * neighbor["position"],
@@ -76,7 +82,7 @@ def test_conditional_program_updates_arbitrary_pytree_state_by_stage():
     assert jnp.array_equal(samples["label"][:, 0], state.values[0]["label"])
 
 
-def test_conditional_program_supports_stateful_callable_kernels():
+def test_conditional_program_supports_stateful_callable_kernels() -> None:
     conditional = phx.sampling.conditional
     group = conditional.ConditionalVariableGroup(
         "x",
@@ -118,7 +124,7 @@ def test_conditional_program_supports_stateful_callable_kernels():
     assert jnp.all(result.samples[0][:, 1] == 3)
 
 
-def test_conditional_program_rejects_duplicate_heads_and_stale_state_owner():
+def test_conditional_program_rejects_duplicate_heads_and_stale_state_owner() -> None:
     conditional = phx.sampling.conditional
     group = conditional.ConditionalVariableGroup(
         "x",
@@ -144,7 +150,7 @@ def test_conditional_program_rejects_duplicate_heads_and_stale_state_owner():
         interaction_id="owner-check",
     )
 
-    def program(kernel_id):
+    def program(kernel_id: Any) -> Any:
         return conditional.prepare_conditional_program(
             (group,),
             (

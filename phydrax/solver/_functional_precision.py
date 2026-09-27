@@ -4,23 +4,20 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 
+from .._dtype_names import precision_dtype_name
 from .._fingerprint import canonical_fingerprint
-from .._precision import (
-    precision_dtype_name,
-    PrecisionEvidenceEnvelope,
-    PrecisionRequest,
-    PrecisionResolution,
-)
+from .._precision import PrecisionEvidenceEnvelope, PrecisionRequest, PrecisionResolution
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
-FunctionalMatmulPrecision = Literal[
+FunctionalMatmulPrecision: TypeAlias = Literal[
     "default",
     "high",
     "highest",
@@ -36,16 +33,12 @@ class FunctionalPrecisionPolicy(StrictModule, NonTrainableState):
     matmul_precision: FunctionalMatmulPrecision = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, matmul_precision: FunctionalMatmulPrecision = "default", /):
-        if matmul_precision not in (
-            "default",
-            "high",
-            "highest",
-            "BF16_BF16_F32",
-            "TF32_TF32_F32",
-            "F32_F32_F32",
-        ):
-            raise ValueError("Unsupported FunctionalSolver matmul precision.")
+    def __init__(
+        self, matmul_precision: FunctionalMatmulPrecision = "default", /
+    ) -> None:
+        matmul_precision = parse(
+            matmul_precision, FunctionalMatmulPrecision, "matmul_precision"
+        )
         self.matmul_precision = matmul_precision
         self.policy_id = canonical_fingerprint(
             {

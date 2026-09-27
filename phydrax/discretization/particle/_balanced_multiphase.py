@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -49,6 +50,8 @@ def corrected_phase_interface_geometry(
 ) -> PhaseInterfaceGeometryState:
     tq, _, trho = target.dynamics.state_layout.unpack(target_state)
     sq, _, srho = source.dynamics.state_layout.unpack(source_state)
+    if trho is None or srho is None:
+        raise ValueError("Multiphase WCSPH requires continuity-density phases.")
     relation = relation_state.relation
     ti = relation.target_indices
     sj = relation.source_indices
@@ -104,7 +107,7 @@ class ContinuumSurfaceStressPlan(StrictModule, NonTrainableState):
     surface_tension: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, surface_tension: float, /):
+    def __init__(self, surface_tension: float, /) -> None:
         tension = float(surface_tension)
         if tension < 0.0 or not np.isfinite(tension):
             raise ValueError("surface_tension must be finite and non-negative.")
@@ -127,7 +130,7 @@ class BalancedInterfaceForcePlan(StrictModule, NonTrainableState):
         /,
         *,
         contact_angle: ContactAnglePlan | None = None,
-    ):
+    ) -> None:
         self.pressure_plan = pressure_plan
         self.surface_stress = surface_stress
         self.contact_angle = contact_angle

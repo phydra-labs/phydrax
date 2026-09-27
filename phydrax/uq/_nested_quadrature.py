@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 from blackjax.ns.base import NSInfo, StateWithLogLikelihood
 from blackjax.ns.utils import compute_num_live, logX
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from ._particle import effective_sample_size
@@ -48,7 +48,7 @@ class NestedQuadratureResult(StrictModule):
         information: Array,
         posterior_effective_sample_size: Array,
         valid: Array,
-    ):
+    ) -> None:
         self.particles = particles
         self.sort_indices = jnp.asarray(sort_indices, dtype=jnp.int32)
         self.log_prior_volume = jnp.asarray(log_prior_volume)
@@ -85,7 +85,8 @@ def compute_nested_quadrature(
 
     order = jnp.argsort(likelihood, stable=True)
     sorted_particles = jax.tree.map(lambda value: value[order], particles)
-    info = NSInfo(sorted_particles, None)
+    # blackjax documents update_info as any PyTree; logX reads only the particles.
+    info = NSInfo(sorted_particles, None)  # ty: ignore[invalid-argument-type]
     log_volume_replicates, log_volume_elements = logX(
         key,
         info,

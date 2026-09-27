@@ -9,15 +9,18 @@ from typing import Any, ClassVar, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._differentiation import AbstractConstructionCertificate
 from ..._fingerprint import canonical_fingerprint
 from ..._holomorphic_linear import (
     HolomorphicMultiIndexSet,
+    HolomorphicMultiJet,
     MultivariableHolomorphicPotentialProvider,
 )
 from ..._model import TRIAL_SPACE_CERTIFICATE_KEY
+from ...typing import PRNGKey
 from ._complex_potential_2d import _parameter_count
 from ._core import _AbstractTrialSpaceField, TrialSpaceCertificate
 
@@ -37,7 +40,7 @@ class PluriharmonicCertificate(AbstractConstructionCertificate):
         complex_dimension: int,
         branch: int,
         holomorphic_certificate_id: str,
-    ):
+    ) -> None:
         dimension = int(complex_dimension)
         branch_ = int(branch)
         identifier = str(holomorphic_certificate_id)
@@ -74,7 +77,7 @@ class PluriharmonicPotential(_AbstractTrialSpaceField):
         /,
         *,
         branch: int = 0,
-    ):
+    ) -> None:
         if not isinstance(provider, MultivariableHolomorphicPotentialProvider):
             raise TypeError(
                 "provider must implement MultivariableHolomorphicPotentialProvider."
@@ -133,13 +136,13 @@ class PluriharmonicPotential(_AbstractTrialSpaceField):
         dimension = self.complex_dimension
         return values[:dimension] + 1j * values[dimension:]
 
-    def _jet(self, coordinates: ArrayLike, /):
+    def _jet(self, coordinates: ArrayLike, /) -> HolomorphicMultiJet:
         return self.provider.multi_jet(
             self._complex_coordinates(coordinates),
             self.index_set,
         )
 
-    def __call__(self, coordinates: ArrayLike, /, *, key=None) -> Array:
+    def __call__(self, coordinates: ArrayLike, /, *, key: PRNGKey | None = None) -> Array:
         del key
         return jnp.real(self._jet(coordinates).value[self.branch])
 

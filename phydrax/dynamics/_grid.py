@@ -9,9 +9,10 @@ from typing import TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
 
 
@@ -27,7 +28,7 @@ class TimeGrid(StrictModule):
     times: Array
     time_id: str = eqx.field(static=True)
 
-    def __init__(self, times: ArrayLike, /, *, time_id: str):
+    def __init__(self, times: ArrayLike, /, *, time_id: str) -> None:
         values = jnp.asarray(times)
         if values.ndim != 1 or values.shape[0] < 2:
             raise ValueError("TimeGrid times must be rank one with at least two entries.")
@@ -84,7 +85,7 @@ class IterationGrid(StrictModule):
     iterations: Array
     iteration_id: str = eqx.field(static=True)
 
-    def __init__(self, iterations: ArrayLike, /, *, iteration_id: str):
+    def __init__(self, iterations: ArrayLike, /, *, iteration_id: str) -> None:
         values = jnp.asarray(iterations)
         if values.ndim != 1 or values.shape[0] < 2:
             raise ValueError(

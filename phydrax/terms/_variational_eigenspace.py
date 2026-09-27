@@ -6,12 +6,12 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, TypeAlias
+from typing import Any, SupportsFloat, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
 
 from phydrax.domain import DomainFunction
 
@@ -33,10 +33,12 @@ from ..linalg import HermitianSpectrum
 from ..linalg.eigen import (
     block_rayleigh_trace,
     BlockRayleighEvaluation,
+    EigenTarget,
     ReducedRitzResult,
     solve_reduced_ritz,
 )
 from ..operators.linalg._ops import conjugate
+from ..typing import PRNGKey
 
 
 FormDensity = Callable[[DomainFunction, DomainFunction], DomainFunction]
@@ -67,7 +69,7 @@ def _tolerance(value: float, /) -> float:
     return tolerance
 
 
-def _weight(value: ArrayLike, /, *, nonnegative: bool) -> float:
+def _weight(value: SupportsFloat, /, *, nonnegative: bool) -> float:
     weight = float(value)
     if not math.isfinite(weight):
         raise ValueError("weight must be finite.")
@@ -92,7 +94,7 @@ def _integration_source(source: IntegrationSource, /, *, role: str) -> Integrati
 
 def _sample_realization(
     source: IntegrationSource,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> IntegrationRealization | None:
     if isinstance(source, CallerIntegration):
@@ -103,7 +105,7 @@ def _sample_realization(
 def _resolve_realization(
     source: IntegrationSource,
     batch: IntegrationRealization | None,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     role: str,
@@ -372,10 +374,10 @@ class VariationalEigenspace(AbstractSamplingTerm):
         stiffness_form: FormDensity,
         objective_vars: Sequence[str],
         mass_form: FormDensity | None = None,
-        weight: ArrayLike = 1.0,
+        weight: SupportsFloat = 1.0,
         tolerance: float = 1e-10,
         label: str | None = None,
-    ):
+    ) -> None:
         if not callable(stiffness_form):
             raise TypeError("stiffness_form must be callable.")
         if mass_form is not None and not callable(mass_form):
@@ -392,7 +394,7 @@ class VariationalEigenspace(AbstractSamplingTerm):
     def sample(
         self,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> IntegrationRealization | None:
         """Resolve one realization according to the typed integration source."""
         return _sample_realization(self.source, key)
@@ -402,7 +404,7 @@ class VariationalEigenspace(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: IntegrationRealization | None = None,
         **kwargs: Any,
     ) -> VariationalEigenspaceEvaluation:
@@ -445,7 +447,7 @@ class VariationalEigenspace(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: IntegrationRealization | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -471,8 +473,8 @@ class VariationalEigenspace(AbstractSamplingTerm):
         /,
         *,
         count: int | None = None,
-        which: str = "smallest-algebraic",
-        key: Key[Array, ""] = DOC_KEY0,
+        which: EigenTarget = "smallest-algebraic",
+        key: PRNGKey = DOC_KEY0,
         batch: IntegrationRealization | None = None,
         **kwargs: Any,
     ) -> VariationalEigenspaceResult:
@@ -527,10 +529,10 @@ class InvariantSubspaceResidual(AbstractSamplingTerm):
         metric_action: EigenspaceAction | None = None,
         pairing: FormDensity | None = None,
         residual_pairing: FormDensity | None = None,
-        weight: ArrayLike = 1.0,
+        weight: SupportsFloat = 1.0,
         tolerance: float = 1e-10,
         label: str | None = None,
-    ):
+    ) -> None:
         if not callable(operator_action):
             raise TypeError("operator_action must be callable.")
         if metric_action is not None and not callable(metric_action):
@@ -554,7 +556,7 @@ class InvariantSubspaceResidual(AbstractSamplingTerm):
     def sample(
         self,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> IntegrationRealization | None:
         """Resolve one realization according to the typed integration source."""
         return _sample_realization(self.source, key)
@@ -564,7 +566,7 @@ class InvariantSubspaceResidual(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         batch: IntegrationRealization | None,
         **kwargs: Any,
     ) -> _InvariantSubspaceAssembly:
@@ -665,7 +667,7 @@ class InvariantSubspaceResidual(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: IntegrationRealization | None = None,
         **kwargs: Any,
     ) -> InvariantSubspaceResidualEvaluation:
@@ -682,7 +684,7 @@ class InvariantSubspaceResidual(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: IntegrationRealization | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -708,8 +710,8 @@ class InvariantSubspaceResidual(AbstractSamplingTerm):
         /,
         *,
         count: int | None = None,
-        which: str = "smallest-algebraic",
-        key: Key[Array, ""] = DOC_KEY0,
+        which: EigenTarget = "smallest-algebraic",
+        key: PRNGKey = DOC_KEY0,
         batch: IntegrationRealization | None = None,
         **kwargs: Any,
     ) -> InvariantSubspaceResidualResult:

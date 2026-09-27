@@ -6,12 +6,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ...._doc import DOC_KEY0
 from ...._model._ports import PortBindingEvidence, ValuePort
@@ -33,6 +33,10 @@ from ._physics import OperatorOutputPipeline
 from ._trained_operator import TrainedOperator
 
 
+_OperatorPredictor: TypeAlias = Callable[
+    [AbstractOperatorModel, OperatorBatch, EvalKey, OperatorDTypePolicy],
+    OperatorPrediction,
+]
 _ROLLOUT_MODEL_ADDRESS = SampleAddress("operator-rollout", "model", role="step")
 
 
@@ -61,7 +65,7 @@ class OperatorRolloutRoute:
     transfer: Callable[[Any, Any, Any], Any] | None = None
     transfer_id: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for name, value in (
             ("source_name", self.source_name),
             ("prediction_name", self.prediction_name),
@@ -88,7 +92,7 @@ class OperatorRolloutControlRoute:
     policy: Callable[[OperatorBatch, Array, EvalKey], Any]
     policy_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.source_name or not self.policy_id or not callable(self.policy):
             raise ValueError(
                 "Control route requires source, callable policy, and identity."
@@ -105,7 +109,7 @@ class OperatorRolloutPolicy:
     truncate_every: int | None = None
     rematerialize: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if int(self.maximum_horizon) <= 0:
             raise ValueError("maximum_horizon must be positive.")
         if int(self.initial_horizon) <= 0:
@@ -247,7 +251,7 @@ def _feedback_physical_batch(
 
 
 def _operator_rollout_step(
-    predictor: Callable,
+    predictor: _OperatorPredictor,
     model: AbstractOperatorModel,
     carry: _OperatorRolloutCarry,
     route: OperatorRolloutRoute,
@@ -299,7 +303,7 @@ def _operator_rollout_step(
 
 
 def _stop_rollout_feedback(carry: _OperatorRolloutCarry, /) -> _OperatorRolloutCarry:
-    def stop(value):
+    def stop(value: object) -> object:
         return jax.lax.stop_gradient(value) if eqx.is_array(value) else value
 
     return _OperatorRolloutCarry(
@@ -310,7 +314,7 @@ def _stop_rollout_feedback(carry: _OperatorRolloutCarry, /) -> _OperatorRolloutC
 
 
 def _operator_rollout_scan(
-    predictor: Callable,
+    predictor: _OperatorPredictor,
     model: AbstractOperatorModel,
     physical_batch: OperatorBatch,
     execution_batch: OperatorBatch,
@@ -334,7 +338,9 @@ def _operator_rollout_scan(
         jnp.asarray(step_offset, dtype=jnp.int32),
     )
 
-    def scan_step(current_carry, index):
+    def scan_step(
+        current_carry: _OperatorRolloutCarry, index: int
+    ) -> tuple[_OperatorRolloutCarry, tuple[Any, ...]]:
         return _operator_rollout_step(
             predictor,
             model,

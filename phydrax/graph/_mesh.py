@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -13,6 +13,7 @@ from phydrax._strict import StrictModule
 from ..geometry.simplicial._ddg import DDGOperators, discrete_operators
 from ..geometry.simplicial._mesh import TriangleMesh
 from ..sparse import gather_routes, mask_routes, route_reduce
+from ..typing import parse
 from ._geometry import (
     _face_geometry,
     _triangle_adjacency,
@@ -25,7 +26,7 @@ from ._graph import ensure_graph
 from ._ir import GraphIR
 
 
-MeshLaplacianSign = Literal["neighbor_minus_self", "self_minus_neighbor"]
+MeshLaplacianSign: TypeAlias = Literal["neighbor_minus_self", "self_minus_neighbor"]
 
 
 def _tree_leading_size(tree: Any) -> int:
@@ -249,11 +250,8 @@ class MeshCotangentLaplacian(StrictModule):
         input_key: str | None = None,
         output_key: str | None = None,
         normalize_by_mass: bool = True,
-    ):
-        if sign not in ("neighbor_minus_self", "self_minus_neighbor"):
-            raise ValueError(
-                "MeshCotangentLaplacian sign must be 'neighbor_minus_self' or 'self_minus_neighbor'."
-            )
+    ) -> None:
+        sign = parse(sign, MeshLaplacianSign, "sign")
         self.weight = weight
         self.mass = mass
         self.weight_key = weight_key

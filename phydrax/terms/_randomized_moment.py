@@ -10,12 +10,14 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.domain import DomainFunction
 
 from .._doc import DOC_KEY0
 from .._precision import PrecisionEvidenceEnvelope
+from .._randomized_residual_modes import RandomizedResidualLossMode
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..conditions._base import AbstractMomentCondition
@@ -27,9 +29,9 @@ from ..integration import (
 )
 from ..integration._api import _requires_random_key
 from ..integration._execution import resolve_integration
+from ..typing import parse, PRNGKey
 from ._integrated import checked_estimate_field, validate_condition_source
 from ._randomized_quadratic import event_inner, randomized_squared_mean
-from ._randomized_residual import RandomizedResidualLossMode
 
 
 class RandomizedMomentBatch(StrictModule):
@@ -43,7 +45,7 @@ class RandomizedMomentBatch(StrictModule):
         left: tuple[IntegrationRealization, ...],
         right: tuple[IntegrationRealization, ...] | None = None,
         /,
-    ):
+    ) -> None:
         if len(left) < 2:
             raise ValueError("Randomized moments require at least two realizations.")
         if any(not isinstance(item, IntegrationRealization) for item in left):
@@ -99,7 +101,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
         scale: ArrayLike = 1.0,
         label: str | None = None,
         precision: IntegrationPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(condition, AbstractMomentCondition):
             raise TypeError(
                 "RandomizedMomentPenalty requires an AbstractMomentCondition."
@@ -117,8 +119,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
         count = int(num_realizations)
         if count < 2:
             raise ValueError("num_realizations must be at least two.")
-        if loss_mode not in ("u_statistic", "independent_product", "plug_in"):
-            raise ValueError("Unknown randomized moment loss_mode.")
+        loss_mode = parse(loss_mode, RandomizedResidualLossMode, "loss_mode")
         coefficient = jnp.asarray(scale, dtype=jnp.float64)
         if coefficient.shape != ():
             raise ValueError("Term scale must be a scalar.")
@@ -137,7 +138,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
         self.precision = precision_
         self.label = condition.label if label is None else str(label)
 
-    def sample(self, *, key: Key[Array, ""] = DOC_KEY0) -> RandomizedMomentBatch:
+    def sample(self, *, key: PRNGKey = DOC_KEY0) -> RandomizedMomentBatch:
         group_count = 2 if self.loss_mode == "independent_product" else 1
         keys = tuple(jr.split(key, group_count * self.num_realizations))
         left = tuple(
@@ -237,7 +238,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: RandomizedMomentBatch | None = None,
         **kwargs: Any,
@@ -265,7 +266,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: RandomizedMomentBatch | None = None,
         **kwargs: Any,

@@ -10,7 +10,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -30,7 +30,7 @@ class FieldJetSpec(StrictModule):
         *,
         value: bool = False,
         gradient: bool = False,
-    ):
+    ) -> None:
         name = str(field_name)
         if not name:
             raise ValueError("field_name must be non-empty.")
@@ -52,7 +52,7 @@ class LocalFieldJet(StrictModule):
         *,
         value: Array | None = None,
         gradient: Array | None = None,
-    ):
+    ) -> None:
         if value is None and gradient is None:
             raise ValueError("A local field jet must contain value or gradient.")
         self.value = value
@@ -75,7 +75,7 @@ class LocalGeometry(StrictModule):
         normal: Array | None = None,
         entity_indices: Array | None = None,
         block_name: str | None = None,
-    ):
+    ) -> None:
         points_ = jnp.asarray(points)
         if points_.ndim < 1:
             raise ValueError("Local geometry points must end in a coordinate axis.")
@@ -107,7 +107,7 @@ class FunctionalContext(StrictModule):
     time: Array
     user_args: Any
 
-    def __init__(self, *, time: Any = 0.0, user_args: Any = None):
+    def __init__(self, *, time: Any = 0.0, user_args: Any = None) -> None:
         time_ = jnp.asarray(time)
         if time_.shape != ():
             raise ValueError("Functional context time must be scalar.")
@@ -146,7 +146,7 @@ class LocalIntegralTerm(StrictModule):
         density_id: str,
         normal: bool = False,
         weight: float = 1.0,
-    ):
+    ) -> None:
         identifier_ = str(identifier)
         region_ = str(region)
         density_id_ = str(density_id)

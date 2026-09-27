@@ -3,17 +3,18 @@
 #
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.axes as cx
 
 from ..._frozendict import frozendict
 from ...graph import GraphIR
+from ...typing import parse
 from .._coordinate import CoordinateSpec
 from .._domain import JointFactor
 from .._factor_component import FactorComponent
@@ -28,7 +29,11 @@ from ._components import (
 )
 
 
-GraphMeasureMode = Literal["probability", "count"]
+if TYPE_CHECKING:
+    from .._function import DomainFunction
+
+
+GraphMeasureMode: TypeAlias = Literal["probability", "count"]
 
 
 def _feature_tree_size(tree: Any, /) -> int | None:
@@ -76,7 +81,7 @@ class GraphDomain(JointFactor):
         label: str = "graph",
         measure: GraphMeasureMode = "probability",
         validate: bool = True,
-    ):
+    ) -> None:
         """Create a domain over one sparse graph.
 
         Parameters:
@@ -90,8 +95,7 @@ class GraphDomain(JointFactor):
             raise TypeError("GraphDomain expects a phydrax.graph.GraphIR instance.")
         if validate:
             graph.validate()
-        if measure not in ("probability", "count"):
-            raise ValueError("GraphDomain measure must be 'probability' or 'count'.")
+        measure = parse(measure, GraphMeasureMode, "measure")
         self.graph = graph
         self._label = str(label)
         self._measure_mode = measure
@@ -276,7 +280,7 @@ class GraphDomain(JointFactor):
         edge_input_key: str | None = None,
         global_input_key: str | None = None,
         output_key: str | None = None,
-    ):
+    ) -> "DomainFunction":
         """Wrap a `GraphIR -> GraphIR` model as a graph `DomainFunction`.
 
         The wrapped model receives the sampled batch topology and can return node,
@@ -317,7 +321,7 @@ class GraphDomain(JointFactor):
         edge_input_key: str | None = None,
         global_input_key: str | None = None,
         output_key: str | None = None,
-    ):
+    ) -> "DomainFunction":
         """Wrap an autoregressive graph rollout as a graph `DomainFunction`.
 
         The stepper is applied for `steps` transitions on the sampled graph state,

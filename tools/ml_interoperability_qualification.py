@@ -323,6 +323,7 @@ class _ScenarioCollector:
         self.collection_failed = False
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
+        # ty: ignore[invalid-assignment]
         self.phases.setdefault(report.nodeid, {})[report.when] = report
 
     def pytest_collectreport(self, report: pytest.CollectReport) -> None:
@@ -569,6 +570,7 @@ def qualification_report(
         for gate in GATES
         if gate.gate_id in by_gate
     ]
+    # ty: ignore[not-subscriptable]
     outcomes = {record["gate"]: record["evidence"]["outcome"] for record in records}
     passed = [gate_id for gate_id in gates if outcomes[gate_id] == "passed"]
     failed = [gate_id for gate_id in gates if outcomes[gate_id] == "failed"]
@@ -626,6 +628,7 @@ def main() -> None:
         build_id=source_build_id(),
         environment=runtime_environment(),
         backend=jax.default_backend(),
+        # ty: ignore[unresolved-attribute]
         precision="float64" if jax.config.jax_enable_x64 else "float32",
     )
     payload = serialize_report(report)

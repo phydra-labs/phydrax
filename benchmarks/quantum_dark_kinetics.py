@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -17,7 +19,7 @@ from benchmarks._runtime import capture_environment
 from phydrax.equations._uehling_uhlenbeck import UehlingUhlenbeckPlan
 
 
-def _case(repetitions: int, spatial_cells: int):
+def _case(repetitions: int, spatial_cells: int) -> Any:
     plan = UehlingUhlenbeckPlan(
         jnp.asarray((-1, -1, -1, -1), dtype=jnp.int8),
         jnp.ones((4, 1)),
@@ -101,7 +103,7 @@ def _case(repetitions: int, spatial_cells: int):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repeats", type=int, default=100)
     parser.add_argument("--spatial-cells", type=int, default=256)

@@ -14,7 +14,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _small_mlp(key, *, width=6):
+def _small_mlp(key: Any, *, width: Any = 6) -> Any:
     return phx.nn.models.MLP(
         in_size=2,
         out_size=1,
@@ -24,7 +24,7 @@ def _small_mlp(key, *, width=6):
     )
 
 
-def test_homogeneous_and_heterogeneous_ensembles_share_predictive_contract():
+def test_homogeneous_and_heterogeneous_ensembles_share_predictive_contract() -> None:
     homogeneous = phx.uq.HomogeneousFunctionEnsemble.from_factory(
         _small_mlp,
         num_members=4,
@@ -45,7 +45,7 @@ def test_homogeneous_and_heterogeneous_ensembles_share_predictive_contract():
     assert heterogeneous_prediction.samples.data.shape == (2, 1)
 
 
-def test_ensemble_predictions_record_or_raise_for_invalid_members():
+def test_ensemble_predictions_record_or_raise_for_invalid_members() -> None:
     ensemble = phx.uq.HeterogeneousFunctionEnsemble(
         (
             lambda value, *, key: jnp.asarray(value) + 1.0,
@@ -55,6 +55,7 @@ def test_ensemble_predictions_record_or_raise_for_invalid_members():
     )
     recorded = ensemble.predict(jnp.asarray([1.0, 2.0]), key=jr.key(4))
 
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(jnp.asarray(recorded.valid.data), jnp.asarray([True, False]))
     assert jnp.array_equal(jnp.asarray(recorded.mean().data), jnp.asarray([2.0, 3.0]))
     with pytest.raises(FloatingPointError, match="invalid realizations"):
@@ -65,7 +66,9 @@ def test_ensemble_predictions_record_or_raise_for_invalid_members():
         )
 
 
-def test_randomized_prior_is_structurally_nontrainable_and_members_are_independent():
+def test_randomized_prior_is_structurally_nontrainable_and_members_are_independent() -> (
+    None
+):
     model = phx.uq.RandomizedPriorModel(
         _small_mlp(jr.key(5)),
         _small_mlp(jr.key(6)),
@@ -89,7 +92,7 @@ def test_randomized_prior_is_structurally_nontrainable_and_members_are_independe
     assert jnp.var(jnp.asarray(prediction.samples.data), axis=0).item() > 0.0
 
 
-def test_distribution_moments_probability_domain_and_joint_qmc_design():
+def test_distribution_moments_probability_domain_and_joint_qmc_design() -> None:
     normal = phx.uq.Normal(1.0, 2.0)
     lognormal = phx.uq.LogNormal(0.2, 0.4)
     empirical = phx.uq.EmpiricalDistribution(
@@ -115,12 +118,12 @@ def test_distribution_moments_probability_domain_and_joint_qmc_design():
     assert not jnp.array_equal(batch.values["a"], batch.values["b"])
 
 
-def test_lognormal_log_prob_is_safe_outside_support():
+def test_lognormal_log_prob_is_safe_outside_support() -> None:
     distribution = phx.uq.LogNormal(0.0, 1.0)
     assert distribution.log_prob(-1.0) == -jnp.inf
 
 
-def test_propagation_chunking_is_deterministic_and_records_invalid_draws():
+def test_propagation_chunking_is_deterministic_and_records_invalid_draws() -> None:
     samples = phx.uq.sample_joint(
         {"x": phx.uq.Uniform(-1.0, 1.0), "y": phx.uq.Normal(0.0, 1.0)},
         num_samples=64,
@@ -142,7 +145,7 @@ def test_propagation_chunking_is_deterministic_and_records_invalid_draws():
         phx.uq.propagate(lambda x, y: jnp.log(x - 2.0), samples, valid_policy="raise")
 
 
-def test_propagation_rejects_field_dimension_changes():
+def test_propagation_rejects_field_dimension_changes() -> None:
     samples = phx.uq.sample_joint(
         {"x": phx.uq.Uniform(0.0, 1.0)},
         num_samples=8,
@@ -150,7 +153,7 @@ def test_propagation_rejects_field_dimension_changes():
     )
     calls = 0
 
-    def changing_dims(x):
+    def changing_dims(x: Any) -> Any:
         nonlocal calls
         calls += 1
         dim = "x" if calls == 1 else "y"
@@ -160,14 +163,14 @@ def test_propagation_rejects_field_dimension_changes():
         phx.uq.propagate(changing_dims, samples)
 
 
-def test_sobol_jansen_matches_ishigami_reference_indices():
+def test_sobol_jansen_matches_ishigami_reference_indices() -> None:
     distributions = {
         "x1": phx.uq.Uniform(-jnp.pi, jnp.pi),
         "x2": phx.uq.Uniform(-jnp.pi, jnp.pi),
         "x3": phx.uq.Uniform(-jnp.pi, jnp.pi),
     }
 
-    def ishigami(x1, x2, x3):
+    def ishigami(x1: Any, x2: Any, x3: Any) -> Any:
         return jnp.sin(x1) + 7.0 * jnp.sin(x2) ** 2 + 0.1 * x3**4 * jnp.sin(x1)
 
     result = phx.uq.sobol_indices(
@@ -184,7 +187,7 @@ def test_sobol_jansen_matches_ishigami_reference_indices():
     assert jnp.allclose(jnp.asarray(result.total_order.data), expected_total, atol=0.04)
 
 
-def test_sobol_rejects_unknown_output_reduction():
+def test_sobol_rejects_unknown_output_reduction() -> None:
     invalid_reduction: Any = "median"
     with pytest.raises(ValueError, match="reduce_output"):
         phx.uq.sobol_indices(
@@ -196,16 +199,18 @@ def test_sobol_rejects_unknown_output_reduction():
         )
 
 
-def test_fit_ensemble_returns_deterministic_member_diagnostics_and_indexed_failures():
+def test_fit_ensemble_returns_deterministic_member_diagnostics_and_indexed_failures() -> (
+    None
+):
     class FittedMember(eqx.Module):
         value: jax.Array
         training_diagnostics: dict[str, jax.Array]
 
-        def __call__(self, x, *, key=None):
+        def __call__(self, x: Any, *, key: Any = None) -> Any:
             return self.value + x
 
     class Trainer:
-        def solve(self, *, seed):
+        def solve(self, *, seed: Any) -> Any:
             return FittedMember(
                 jnp.asarray(float(seed % 17)),
                 {"final_loss": jnp.asarray(1.0)},
@@ -238,7 +243,7 @@ def test_fit_ensemble_returns_deterministic_member_diagnostics_and_indexed_failu
     assert all("final_loss" in member.training_diagnostics for member in first.members)
 
     class FailingTrainer:
-        def solve(self, *, seed):
+        def solve(self, *, seed: Any) -> None:
             raise ValueError("training failed")
 
     with pytest.raises(phx.uq.EnsembleFitError) as error:
@@ -254,12 +259,12 @@ def test_fit_ensemble_returns_deterministic_member_diagnostics_and_indexed_failu
     assert isinstance(error.value.__cause__, ValueError)
 
 
-def test_homogeneous_ensemble_maps_only_its_declared_member_lane():
+def test_homogeneous_ensemble_maps_only_its_declared_member_lane() -> None:
     class Normalized(phx.StrictModule, phx.ParameterOwner):
         weight: jax.Array
         shift: jax.Array = phx.fixed_field()
 
-        def __call__(self, x, *, key=None):
+        def __call__(self, x: Any, *, key: Any = None) -> Any:
             return self.weight * (x - self.shift)
 
     shifts = jnp.arange(8.0).reshape((4, 2))

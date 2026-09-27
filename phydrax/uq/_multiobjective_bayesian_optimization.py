@@ -11,14 +11,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from numbers import Real
-from typing import Any, cast, Literal, NamedTuple
+from typing import Any, cast, Literal, NamedTuple, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 from phydrax.linalg import HermitianSpectrum
@@ -85,7 +86,7 @@ class MultiObjectiveBayesianOptimizationProblem(StrictModule):
         ] = (),
         validity: Callable[[BayesianOptimizationPoint], ArrayLike] | None = None,
         pending: Sequence[BayesianOptimizationPoint] = (),
-    ):
+    ) -> None:
         names, direction_tuple = tuple(objective_names), tuple(directions)
         if len(names) not in (2, 3):
             raise ValueError(
@@ -189,7 +190,7 @@ class GaussianProcessMultiObjectiveBayesianOptimization(StrictModule):
         max_hypervolume_points: int = 192,
         max_working_bytes: int = 256 * 1024 * 1024,
         max_hypervolume_work: int = 1_000_000_000,
-    ):
+    ) -> None:
         self.max_evaluations = _positive_integer(max_evaluations, name="max_evaluations")
         self.initial_evaluations = _positive_integer(
             initial_evaluations, name="initial_evaluations"
@@ -344,7 +345,11 @@ def _validate_pending(
             )
 
 
-def _preflight(problem, plan, /) -> tuple[int, int]:
+def _preflight(
+    problem: MultiObjectiveBayesianOptimizationProblem,
+    plan: GaussianProcessMultiObjectiveBayesianOptimization,
+    /,
+) -> tuple[int, int]:
     """Bound the largest epoch before candidate generation or physical calls."""
     if plan.objective_surrogate.kernel.output_names != problem.objective_names:
         raise ValueError("Objective surrogate output names/order must match the problem.")
@@ -372,11 +377,14 @@ def _preflight(problem, plan, /) -> tuple[int, int]:
         if count > limit:
             raise ValueError(f"Multiobjective BO {name} point capacity exceeded.")
     d = problem.domain.encoded_dimension
-    initial_pool = (
-        problem.domain.categorical.size
-        if problem.domain.continuous_dimension == 0
-        else max(t, plan.initial_evaluations + p)
-    )
+    if problem.domain.continuous_dimension == 0:
+        categorical = problem.domain.categorical
+        # Construction rejects domains with neither continuous nor categorical axes.
+        if not (categorical is not None):
+            raise RuntimeError("Internal invariant failed: categorical is not None.")
+        initial_pool = categorical.size
+    else:
+        initial_pool = max(t, plan.initial_evaluations + p)
     # Owned GP matrices, Cholesky/solve/eigensystem scratch, shared latent draws,
     # one tuple's conditional geometry, and candidate-separation temporaries.
     numeric_entries = (
@@ -403,8 +411,13 @@ def _preflight(problem, plan, /) -> tuple[int, int]:
     return peak, work
 
 
+_SurrogateState: TypeAlias = (
+    MultiOutputGaussianProcessLikelihoodState | GaussianProcessLikelihoodState
+)
+
+
 class _GPQuery(NamedTuple):
-    design: object
+    design: MultiOutputDesign | Array
     cross: Array
     solved: Array
     mean: Array
@@ -414,19 +427,23 @@ class _GPQuery(NamedTuple):
 class _PreparedGP:
     """Exact multi-output/scalar GP using one native observation factor per epoch."""
 
-    def __init__(self, points, values, state, max_bytes):
-        self.state = state
+    def __init__(
+        self, points: Array, values: Array, state: _SurrogateState, max_bytes: int
+    ) -> None:
+        # Kernel inputs pair with `multioutput` (MultiOutputDesign or dense points);
+        # ty cannot correlate that flag with the state union, so kernels stay dynamic.
+        self.state: Any = state
         self.multioutput = isinstance(state, MultiOutputGaussianProcessLikelihoodState)
         self.train = self.design(points)
-        if self.multioutput:
+        if isinstance(self.train, MultiOutputDesign):
             discrepancy = MultiOutputGaussianProcessDiscrepancy(self.train, values)
             residual = discrepancy.residual(jnp.zeros_like(discrepancy.observations))
-            noise = state.observation_noise(self.train)
+            noise = self.state.observation_noise(self.train)
         else:
             residual = values
-            noise = jnp.broadcast_to(state.noise_scale, values.shape)
-        covariance = state.kernel.matrix(self.train, self.train) + jnp.diag(
-            noise * noise + state.jitter
+            noise = jnp.broadcast_to(self.state.noise_scale, values.shape)
+        covariance = self.state.kernel.matrix(self.train, self.train) + jnp.diag(
+            noise * noise + self.state.jitter
         )
         self.factor = _factorize_positive(
             covariance,
@@ -435,7 +452,7 @@ class _PreparedGP:
         )
         self.alpha = _solve_vector(self.factor, residual)
 
-    def design(self, points):
+    def design(self, points: Array) -> MultiOutputDesign | Array:
         return (
             MultiOutputDesign.from_dense(
                 points, output_names=self.state.kernel.output_names
@@ -444,7 +461,7 @@ class _PreparedGP:
             else points
         )
 
-    def query(self, points):
+    def query(self, points: Array) -> _GPQuery:
         design = self.design(points)
         cross = self.state.kernel.matrix(design, self.train)
         solved, successful = _solve_columns(self.factor, cross.T)
@@ -455,7 +472,7 @@ class _PreparedGP:
         covariance = self.state.kernel.matrix(design, design) - cross @ solved
         return _GPQuery(design, cross, solved, mean, 0.5 * (covariance + covariance.T))
 
-    def cross_covariance(self, left, right):
+    def cross_covariance(self, left: _GPQuery, right: _GPQuery) -> Array:
         return (
             self.state.kernel.matrix(left.design, right.design)
             - left.cross @ right.solved
@@ -497,7 +514,12 @@ class _SampledBaseline(NamedTuple):
     inverse_root: Array
 
 
-def _sample_baseline(gp, points, key, plan):
+def _sample_baseline(
+    gp: _PreparedGP,
+    points: Array,
+    key: Array,
+    plan: GaussianProcessMultiObjectiveBayesianOptimization,
+) -> _SampledBaseline:
     query = gp.query(points)
     factor, inverse_root = _psd_factors(query.covariance, plan.psd_tolerance)
     noise = jr.normal(
@@ -506,7 +528,13 @@ def _sample_baseline(gp, points, key, plan):
     return _SampledBaseline(query, query.mean + noise @ factor.T, inverse_root)
 
 
-def _sample_conditional(gp, baseline, points, noise, plan):
+def _sample_conditional(
+    gp: _PreparedGP,
+    baseline: _SampledBaseline,
+    points: Array,
+    noise: Array,
+    plan: GaussianProcessMultiObjectiveBayesianOptimization,
+) -> Array:
     query = gp.query(points)
     cross = gp.cross_covariance(query, baseline.query)
     projected = cross @ baseline.inverse_root
@@ -527,13 +555,13 @@ def _sample_conditional(gp, baseline, points, noise, plan):
 
 
 def _sample_hvi(
-    baseline,
-    candidates,
-    baseline_feasible,
-    candidate_feasible,
-    reference,
-    baseline_hv=None,
-):
+    baseline: Array,
+    candidates: Array,
+    baseline_feasible: Array,
+    candidate_feasible: Array,
+    reference: Array,
+    baseline_hv: Array | None = None,
+) -> Array:
     """Feasibility filters individual points, never gates an entire q tuple."""
     if baseline_hv is None:
         baseline_hv = jax.vmap(_hypervolume, in_axes=(0, None, 0))(
@@ -546,8 +574,15 @@ def _sample_hvi(
 
 
 def _acquisition_scores(
-    problem, plan, encoded, objectives, constraints, valid, candidates, key
-):
+    problem: MultiObjectiveBayesianOptimizationProblem,
+    plan: GaussianProcessMultiObjectiveBayesianOptimization,
+    encoded: Array,
+    objectives: Array,
+    constraints: Array,
+    valid: Array,
+    candidates: Array,
+    key: Array,
+) -> tuple[Array, Array]:
     """Shared latent B union P draws, then only q-by-q conditional covariance."""
     active = np.asarray(jax.device_get(valid), dtype=np.bool_)
     train_points, train_values = encoded[active], objectives[active]
@@ -619,7 +654,13 @@ def _acquisition_scores(
     return jnp.stack(estimates), jnp.stack(errors)
 
 
-def _evaluate(problem, unit, category, key, proposal):
+def _evaluate(
+    problem: MultiObjectiveBayesianOptimizationProblem,
+    unit: Array,
+    category: Array,
+    key: Array,
+    proposal: int,
+) -> MultiObjectiveBayesianOptimizationObservation:
     point = problem.domain.decode(unit, category)
     physical_valid = jnp.asarray(
         True if problem.validity is None else problem.validity(point)
@@ -817,7 +858,7 @@ def multiobjective_bayesian_optimize(
         }
     )
 
-    def stack_keys(values):
+    def stack_keys(values: list[Array]) -> Array:
         return jnp.stack(values) if values else jr.split(root_key, 0)
 
     return MultiObjectiveBayesianOptimizationResult(

@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -12,7 +15,7 @@ from phydrax.domain import Interval1d
 from phydrax.terms import ResidualPenalty
 
 
-def _fixed_source(component, values):
+def _fixed_source(component: Any, values: Any) -> Any:
     batch = component.points({"x": jnp.asarray(values, dtype="float64").reshape((-1, 1))})
     realization = phx.integration.from_samples(
         phx.integration.mean_over(component),
@@ -21,7 +24,7 @@ def _fixed_source(component, values):
     return phx.integration.fixed(realization)
 
 
-def test_pointset_penalty_mean_and_sum():
+def test_pointset_penalty_mean_and_sum() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
     source = _fixed_source(component, [0.0, 0.5, 1.0])
@@ -37,14 +40,14 @@ def test_pointset_penalty_mean_and_sum():
     assert jnp.allclose(loss_sum, 6.0)
 
 
-def test_pointset_domainfunction_weight_mean_and_sum():
+def test_pointset_domainfunction_weight_mean_and_sum() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
     source = _fixed_source(component, [0.0, 0.5, 1.0])
     u = geom.Function()(0.0)
 
     @geom.Function("x")
-    def density(x):
+    def density(x: Any) -> Any:
         xx = _x_values(x)
         return xx + 1.0
 
@@ -58,14 +61,14 @@ def test_pointset_domainfunction_weight_mean_and_sum():
     assert jnp.allclose(loss_sum, 4.5)
 
 
-def test_pointset_domainfunction_weight_must_be_scalar_per_point():
+def test_pointset_domainfunction_weight_must_be_scalar_per_point() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
     source = _fixed_source(component, [0.0, 0.5, 1.0])
     u = geom.Function()(0.0)
 
     @geom.Function("x")
-    def bad_density(x):
+    def bad_density(x: Any) -> Any:
         xx = _x_values(x)
         return jnp.stack((xx, xx + 1.0), axis=-1)
 
@@ -75,7 +78,7 @@ def test_pointset_domainfunction_weight_must_be_scalar_per_point():
         _ = term.loss({"u": u}, key=jr.key(0))
 
 
-def _x_values(x):
+def _x_values(x: Any) -> Any:
     x_arr = jnp.asarray(x, dtype="float64")
     if x_arr.ndim == 0:
         return x_arr.reshape(())

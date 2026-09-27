@@ -10,11 +10,13 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from .._system import ContinuousSystem, DiscreteSystem
 from .._trajectory import StateLayout
 
@@ -46,11 +48,10 @@ class IdentificationStateTransform(StrictModule, NonTrainableState):
         unit_contract_id: str,
         partition_id: str,
         source_artifact_ids: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(physical_layout, StateLayout):
             raise TypeError("physical_layout must be a StateLayout.")
-        if kind not in ("affine", "log-affine"):
-            raise ValueError("kind must be 'affine' or 'log-affine'.")
+        kind = parse(kind, TransformKind, "kind")
         offset_ = jnp.asarray(offset)
         scale_ = jnp.asarray(scale, dtype=offset_.dtype)
         if (
@@ -167,7 +168,7 @@ class IdentifiedDynamicsArtifact(StrictModule, NonTrainableState):
         support_id: str,
         formulation_id: str,
         evidence_ids: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(transform, IdentificationStateTransform):
             raise TypeError("transform must be IdentificationStateTransform.")
         if not isinstance(system, (ContinuousSystem, DiscreteSystem)):

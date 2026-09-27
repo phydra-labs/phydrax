@@ -300,6 +300,7 @@ def test_registration_translation_inverse_consistency_and_folding() -> None:
     displacement = jnp.asarray([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     gradient = jnp.zeros((2, 3, 3))
     with pytest.raises(TypeError, match="reference_frame_id"):
+        # ty: ignore[missing-argument]
         prepared.evaluate(displacement, gradient)
     with pytest.raises(ValueError, match="REFERENCE_TO_TARGET"):
         RegistrationEvaluationPlan(
@@ -371,6 +372,7 @@ def test_green_lagrange_and_eulerian_synthetic_stretch() -> None:
     assert not bool(frame_mismatch.evidence.reference_frame_matched)
     assert not bool(frame_mismatch.evidence.successful)
     with pytest.raises(TypeError, match="reference_frame_id"):
+        # ty: ignore[missing-argument]
         prepared.evaluate(
             deformation_gradient,
             deformation_gradient_standard_deviation=jnp.full((1, 3, 3), 0.01),

@@ -5,10 +5,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.domain import DomainFunction
 
@@ -21,6 +22,10 @@ from ._validation import (
     validate_matrix_value,
     validate_vector_value,
 )
+
+
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
 
 
 _ADEngine = Literal["auto", "reverse", "forward", "jvp"]
@@ -39,13 +44,13 @@ class _MatrixVectorActionCallable(StrictModule):
         state: DomainFunction,
         hamiltonian_positions: tuple[int, ...],
         state_positions: tuple[int, ...],
-    ):
+    ) -> None:
         self.hamiltonian = hamiltonian
         self.state = state
         self.hamiltonian_positions = hamiltonian_positions
         self.state_positions = state_positions
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         hamiltonian_args = tuple(args[index] for index in self.hamiltonian_positions)
         state_args = tuple(args[index] for index in self.state_positions)
         hamiltonian = validate_matrix_value(
@@ -77,14 +82,14 @@ class _SchrodingerResidualCallable(StrictModule):
         derivative_positions: tuple[int, ...],
         action_positions: tuple[int, ...],
         hbar: Array,
-    ):
+    ) -> None:
         self.state_derivative = state_derivative
         self.action = action
         self.derivative_positions = derivative_positions
         self.action_positions = action_positions
         self.hbar = hbar
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         derivative_args = tuple(args[index] for index in self.derivative_positions)
         action_args = tuple(args[index] for index in self.action_positions)
         derivative = jnp.asarray(

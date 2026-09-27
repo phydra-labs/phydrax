@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ._context import AstrodynamicsContext
@@ -28,7 +29,7 @@ class ThirdBodyGravity(AbstractAstrodynamicsForce):
     context: AstrodynamicsContext
     force_id: str = eqx.field(static=True)
 
-    def __init__(self, ephemeris: TabulatedEphemeris, body_index: int, /):
+    def __init__(self, ephemeris: TabulatedEphemeris, body_index: int, /) -> None:
         if not isinstance(ephemeris, TabulatedEphemeris):
             raise TypeError("ephemeris must be a TabulatedEphemeris.")
         if isinstance(body_index, bool) or not isinstance(body_index, int):
@@ -47,7 +48,9 @@ class ThirdBodyGravity(AbstractAstrodynamicsForce):
             }
         )
 
-    def evaluate(self, time, state, args=None, /) -> AstrodynamicsForceEvaluation:
+    def evaluate(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None, /
+    ) -> AstrodynamicsForceEvaluation:
         del args
         packed = jnp.asarray(state)
         if packed.shape != (6,):
@@ -121,7 +124,7 @@ class ZonalHarmonicGravity(AbstractAstrodynamicsForce):
         j2: ArrayLike = 0.0,
         j3: ArrayLike = 0.0,
         j4: ArrayLike = 0.0,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         self.mu = jnp.asarray(mu).reshape(())
@@ -138,7 +141,9 @@ class ZonalHarmonicGravity(AbstractAstrodynamicsForce):
             }
         )
 
-    def evaluate(self, time, state, args: Any = None, /) -> AstrodynamicsForceEvaluation:
+    def evaluate(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None, /
+    ) -> AstrodynamicsForceEvaluation:
         del time, args
         packed = jnp.asarray(state)
         if packed.shape != (6,):

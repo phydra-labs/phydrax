@@ -5,11 +5,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from phydrax.domain import Domain, DomainFunction
 
 from .._strict import StrictModule
+
+
+if TYPE_CHECKING:
+    from ..nn._keys import EvalKey
 
 
 def _domains_compatible(a: Domain, b: Domain, /) -> bool:
@@ -45,13 +49,13 @@ class _PullbackCallable(StrictModule):
         replacements: tuple[DomainFunction | None, ...],
         replacement_positions: tuple[tuple[int, ...], ...],
         passthrough_positions: tuple[int | None, ...],
-    ):
+    ) -> None:
         self.source = source
         self.replacements = replacements
         self.replacement_positions = replacement_positions
         self.passthrough_positions = passthrough_positions
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Any:
         source_args: list[Any] = []
         for replacement, positions, passthrough_position in zip(
             self.replacements,

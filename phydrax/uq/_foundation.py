@@ -5,23 +5,29 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._frozendict import frozendict
 from .._probability import AbstractProbabilityLaw
 from .._strict import StrictModule
+from ..typing import parse
+from ._diagnostics import MCMCDiagnostics
 from ._mcmc import MCMCResult
 from ._posterior import PosteriorProblem
+from ._predictive import PredictiveField
 
 
-UQProduct = Literal["forward", "calibration", "robust"]
-UncertainVariableRole = Literal["aleatoric", "epistemic", "calibration", "nuisance"]
+UQProduct: TypeAlias = Literal["forward", "calibration", "robust"]
+UncertainVariableRole: TypeAlias = Literal[
+    "aleatoric", "epistemic", "calibration", "nuisance"
+]
 
 
 class UncertainVariable(StrictModule):
@@ -40,12 +46,11 @@ class UncertainVariable(StrictModule):
         *,
         role: UncertainVariableRole = "aleatoric",
         unit: str | None = None,
-    ):
+    ) -> None:
         identifier = _identifier(variable_id, "variable_id")
         if not isinstance(law, AbstractProbabilityLaw):
             raise TypeError("law must implement AbstractProbabilityLaw.")
-        if role not in ("aleatoric", "epistemic", "calibration", "nuisance"):
-            raise ValueError("Unknown uncertain-variable role.")
+        role = parse(role, UncertainVariableRole, "role")
         if unit is not None and (not isinstance(unit, str) or not unit):
             raise ValueError("unit must be a non-empty string or None.")
         self.variable_id = identifier
@@ -73,7 +78,7 @@ class Experiment(StrictModule):
         conditions: dict[str, Any] | frozendict[str, Any] | None = None,
         likelihood_id: str,
         diagnostic_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         identifier = _identifier(experiment_id, "experiment_id")
         likelihood = _identifier(likelihood_id, "likelihood_id")
         observation_leaves = jax.tree_util.tree_leaves(observations)
@@ -119,9 +124,8 @@ class UQPlan:
     checkpoint_every: int | None = None
     plan_id: str = field(init=False)
 
-    def __post_init__(self):
-        if self.product not in ("forward", "calibration", "robust"):
-            raise ValueError("Unknown UQ product.")
+    def __post_init__(self) -> None:
+        product = parse(self.product, UQProduct, "product")
         method = _identifier(self.method, "method")
         analysis = _identifier(self.analysis_plan_id, "analysis_plan_id")
         revision = _identifier(self.numeric_revision_id, "numeric_revision_id")
@@ -138,13 +142,14 @@ class UQPlan:
         profile = self.profile
         if profile is not None and (not isinstance(profile, str) or not profile):
             raise ValueError("profile must be a non-empty string or None.")
-        if self.product == "calibration" and profile is not None:
+        if product == "calibration" and profile is not None:
             raise ValueError("Calibration plans do not use a forward sampling profile.")
         interval = self.checkpoint_every
         if interval is not None:
             interval = int(interval)
             if interval < 1:
                 raise ValueError("checkpoint_every must be positive or None.")
+        object.__setattr__(self, "product", product)
         object.__setattr__(self, "method", method)
         object.__setattr__(self, "analysis_plan_id", analysis)
         object.__setattr__(self, "numeric_revision_id", revision)
@@ -155,7 +160,7 @@ class UQPlan:
         object.__setattr__(self, "checkpoint_every", interval)
         payload = {
             "kind": "uq-plan",
-            "product": self.product,
+            "product": product,
             "method": method,
             "analysis_plan_id": analysis,
             "numeric_revision_id": revision,
@@ -186,7 +191,7 @@ class PosteriorRecord(StrictModule):
         *,
         checkpoint_id: str | None = None,
         diagnostic_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         if not isinstance(plan, UQPlan) or plan.product != "calibration":
             raise TypeError("plan must be a calibration UQPlan.")
         if not isinstance(result, MCMCResult):
@@ -229,18 +234,22 @@ class PosteriorRecord(StrictModule):
         return self.result.problem
 
     @property
-    def diagnostics(self):
+    def diagnostics(self) -> MCMCDiagnostics:
         return self.result.diagnostics
 
     @property
-    def samples(self):
+    def samples(self) -> PyTree[Array]:
         return self.result.samples
 
-    def predict(self, *args: Any, **kwargs: Any):
+    def predict(
+        self, *args: Any, **kwargs: Any
+    ) -> PredictiveField | frozendict[str, PredictiveField]:
         """Delegate prediction to the authoritative chain-preserving result."""
         return self.result.predict(*args, **kwargs)
 
-    def predict_observations(self, key: Array, /, *args: Any, **kwargs: Any):
+    def predict_observations(
+        self, key: Array, /, *args: Any, **kwargs: Any
+    ) -> PredictiveField | frozendict[str, PredictiveField]:
         """Delegate observation prediction without changing sample axes."""
         return self.result.predict_observations(key, *args, **kwargs)
 

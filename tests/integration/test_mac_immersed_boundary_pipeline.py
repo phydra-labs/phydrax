@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def test_prescribed_immersed_imex_pipeline_accepts_fixed_zero_state():
+def test_prescribed_immersed_imex_pipeline_accepts_fixed_zero_state() -> None:
     count = 8
     grid = phx.discretization.TensorGridPlan(
         tuple(
@@ -36,7 +39,7 @@ def test_prescribed_immersed_imex_pipeline_accepts_fixed_zero_state():
         operators, transfer, boundaries=boundaries, tolerance=1.0e-8
     )
 
-    def motion(_time, _args):
+    def motion(_time: Any, _args: Any) -> Any:
         return markers.kinematics(position, jnp.zeros_like(position))
 
     method = phx.solver.MACImmersedBoundaryIMEXEulerMethod(

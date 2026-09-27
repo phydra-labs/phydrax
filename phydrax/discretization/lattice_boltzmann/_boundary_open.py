@@ -9,7 +9,8 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -36,7 +37,7 @@ class LatticeBoltzmannBoundaryState(StrictModule):
         convective_history: ArrayLike,
         convective_initialized: ArrayLike,
         /,
-    ):
+    ) -> None:
         history = jnp.asarray(convective_history)
         initialized = jnp.asarray(convective_initialized, dtype=jnp.bool_)
         if history.shape != initialized.shape:

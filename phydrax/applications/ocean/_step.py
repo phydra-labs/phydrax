@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._array_archive import (
     pack_array_tree,
@@ -74,7 +75,7 @@ class OceanBoussinesqSSPRK33Method(AbstractFixedStepMethod, NonTrainableState):
     ocean: PreparedCartesianBoussinesqOcean
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, ocean: PreparedCartesianBoussinesqOcean, /):
+    def __init__(self, ocean: PreparedCartesianBoussinesqOcean, /) -> None:
         if not isinstance(ocean, PreparedCartesianBoussinesqOcean):
             raise TypeError("ocean must be PreparedCartesianBoussinesqOcean.")
         self.ocean = ocean

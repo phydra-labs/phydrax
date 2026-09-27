@@ -9,11 +9,12 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import assert_never, Literal, TypeAlias
 
 import numpy as np
 
 from ._fingerprint import canonical_fingerprint
+from .typing import parse
 
 
 LimitStudyStatus: TypeAlias = Literal["complete", "abstained"]
@@ -57,11 +58,10 @@ class ScientificLimitAxis:
         *,
         transform: AxisTransform = "identity",
         minimum_span: float = 0.0,
-    ):
+    ) -> None:
         name_ = _identifier(name, "axis name")
         target_ = _finite(target, "axis target")
-        if transform not in ("identity", "inverse", "square", "log"):
-            raise ValueError("Unknown limit-axis transform.")
+        transform = parse(transform, AxisTransform, "transform")
         span = _finite(minimum_span, "minimum_span")
         if span < 0.0:
             raise ValueError("minimum_span must be non-negative.")
@@ -80,22 +80,25 @@ class ScientificLimitAxis:
 
     def coordinate(self, value: float, /) -> float:
         raw = _finite(value, f"{self.name} coordinate")
-        if self.transform == "identity":
-            transformed = raw
-            target = self.target
-        elif self.transform == "inverse":
-            if raw == 0.0 or self.target == 0.0:
-                raise ValueError("Inverse limit coordinates require nonzero values.")
-            transformed = 1.0 / raw
-            target = 1.0 / self.target
-        elif self.transform == "square":
-            transformed = raw * raw
-            target = self.target * self.target
-        else:
-            if raw <= 0.0 or self.target <= 0.0:
-                raise ValueError("Log limit coordinates require positive values.")
-            transformed = math.log(raw)
-            target = math.log(self.target)
+        match self.transform:
+            case "identity":
+                transformed = raw
+                target = self.target
+            case "inverse":
+                if raw == 0.0 or self.target == 0.0:
+                    raise ValueError("Inverse limit coordinates require nonzero values.")
+                transformed = 1.0 / raw
+                target = 1.0 / self.target
+            case "square":
+                transformed = raw * raw
+                target = self.target * self.target
+            case "log":
+                if raw <= 0.0 or self.target <= 0.0:
+                    raise ValueError("Log limit coordinates require positive values.")
+                transformed = math.log(raw)
+                target = math.log(self.target)
+            case _:
+                assert_never(self.transform)
         return transformed - target
 
 
@@ -118,7 +121,7 @@ class ScientificLimitDatum:
         /,
         *,
         ancestry_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         datum = _identifier(datum_id, "datum_id")
         if not isinstance(coordinates, Mapping) or not coordinates:
             raise TypeError("coordinates must be a non-empty mapping.")
@@ -169,7 +172,7 @@ class ScientificLimitVariation:
         *,
         included_datum_ids: Sequence[str] = (),
         minimum_points: int = 0,
-    ):
+    ) -> None:
         identifier = _identifier(variation_id, "variation_id")
         if not isinstance(axis_orders, Mapping) or not axis_orders:
             raise TypeError("axis_orders must be a non-empty mapping.")
@@ -211,7 +214,7 @@ class ScientificLimitStudyPlan:
         /,
         *,
         maximum_condition_number: float = 1e12,
-    ):
+    ) -> None:
         axes_ = tuple(axes)
         variations_ = tuple(variations)
         if not axes_ or any(not isinstance(item, ScientificLimitAxis) for item in axes_):

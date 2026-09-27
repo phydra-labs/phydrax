@@ -6,16 +6,28 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from math import isfinite
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, TYPE_CHECKING, TypeAlias
 
 import diffrax as dfx
 import equinox as eqx
 import jax.numpy as jnp
 from diffrax._term import WrapTerm
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from ..metrix import AbstractStateGeometry, EuclideanStateGeometry
+from ..typing import parse
+
+
+if TYPE_CHECKING:
+    from diffrax._custom_types import (
+        Args,
+        BoolScalarLike,
+        DenseInfo,
+        RealScalarLike,
+        VF,
+        Y,
+    )
 
 
 class GeometricLocalInterpolation(dfx.AbstractLocalInterpolation):
@@ -28,7 +40,12 @@ class GeometricLocalInterpolation(dfx.AbstractLocalInterpolation):
     local_increment: Array
     geometry: AbstractStateGeometry
 
-    def evaluate(self, t0, t1=None, left: bool = True):
+    def evaluate(
+        self,
+        t0: RealScalarLike,
+        t1: RealScalarLike | None = None,
+        left: bool = True,
+    ) -> Array:
         del left
         if t1 is not None:
             return self.evaluate(t1) - self.evaluate(t0)
@@ -40,7 +57,7 @@ class GeometricLocalInterpolation(dfx.AbstractLocalInterpolation):
             jnp.where(weight >= 1.0, self.y1, interior),
         )
 
-    def derivative(self, t, left: bool = True):
+    def derivative(self, t: RealScalarLike, left: bool = True) -> Array:
         del left
         weight = (t - self.t0) / (self.t1 - self.t0)
         local = weight * self.local_increment
@@ -81,7 +98,7 @@ def _require_exact_differential(
 
 def _term_vector_field(
     term: dfx.AbstractTerm,
-    time: Array,
+    time: RealScalarLike,
     state: Array,
     args: Any,
     /,
@@ -102,13 +119,13 @@ def _term_vector_field(
 class GeometricODETerm(dfx.ODETerm):
     """ODE term whose vector field retains physical tangent coordinates."""
 
-    def vf(self, t, y, args):
+    def vf(self, t: RealScalarLike, y: Y, args: Args) -> VF:
         return self.vector_field(t, y, args)
 
 
 def _term_vf_prod(
     term: dfx.AbstractTerm,
-    time: Array,
+    time: RealScalarLike,
     state: Array,
     args: Any,
     control: Any,
@@ -160,7 +177,7 @@ class GeometricEuler(AbstractGeometricSolver):
         GeometricLocalInterpolation
     )
 
-    def __init__(self, geometry: AbstractStateGeometry, /):
+    def __init__(self, geometry: AbstractStateGeometry, /) -> None:
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError("GeometricEuler geometry must be an AbstractStateGeometry.")
         _require_exact_differential(geometry, "GeometricEuler")
@@ -170,15 +187,31 @@ class GeometricEuler(AbstractGeometricSolver):
         self.stage_abscissae = (0.0,)
         self.causal_stage_extent = 1.0
 
-    def order(self, terms):
+    def order(self, terms: dfx.AbstractTerm) -> int:
         del terms
         return 1
 
-    def init(self, terms, t0, t1, y0, args):
+    def init(
+        self,
+        terms: dfx.AbstractTerm,
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        args: Args,
+    ) -> None:
         del terms, t0, t1, y0, args
         return None
 
-    def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
+    def step(
+        self,
+        terms: dfx.AbstractTerm,
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        args: Args,
+        solver_state: None,
+        made_jump: BoolScalarLike,
+    ) -> tuple[Y, None, DenseInfo, None, dfx.RESULTS]:
         del solver_state, made_jump
         value = _term_vf_prod(terms, t0, y0, args, terms.contr(t0, t1))
         tangent = _physical_tangent(
@@ -197,7 +230,7 @@ class GeometricEuler(AbstractGeometricSolver):
         )
         return y1, None, dense_info, None, dfx.RESULTS.successful
 
-    def func(self, terms, t0, y0, args):
+    def func(self, terms: dfx.AbstractTerm, t0: RealScalarLike, y0: Y, args: Args) -> VF:
         return _term_vector_field(terms, t0, y0, args)
 
 
@@ -214,7 +247,7 @@ class SeparableHamiltonianVectorField(StrictModule):
         kinetic_gradient: Callable[[Array, Array, Any], Array],
         configuration_dimension: int,
         /,
-    ):
+    ) -> None:
         if not callable(potential_gradient) or not callable(kinetic_gradient):
             raise TypeError("Hamiltonian gradients must be callable.")
         if int(configuration_dimension) <= 0:
@@ -247,7 +280,7 @@ class SeparableHamiltonianVectorField(StrictModule):
 
 
 def _separable_hamiltonian_vector_field(
-    terms: dfx.ODETerm | WrapTerm,
+    terms: dfx.AbstractTerm,
     /,
 ) -> tuple[SeparableHamiltonianVectorField, Array]:
     if isinstance(terms, WrapTerm):
@@ -273,7 +306,7 @@ class StormerVerlet(AbstractGeometricSolver):
     )
     configuration_dimension: int = eqx.field(static=True)
 
-    def __init__(self, configuration_dimension: int, /):
+    def __init__(self, configuration_dimension: int, /) -> None:
         if int(configuration_dimension) <= 0:
             raise ValueError("configuration_dimension must be positive.")
         self.configuration_dimension = int(configuration_dimension)
@@ -285,11 +318,18 @@ class StormerVerlet(AbstractGeometricSolver):
         self.stage_abscissae = (0.0, 0.5, 1.0)
         self.causal_stage_extent = 1.0
 
-    def order(self, terms):
+    def order(self, terms: dfx.AbstractTerm) -> int:
         del terms
         return 2
 
-    def init(self, terms, t0, t1, y0, args):
+    def init(
+        self,
+        terms: dfx.AbstractTerm,
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        args: Args,
+    ) -> None:
         del t0, t1, args
         vector_field, _ = _separable_hamiltonian_vector_field(terms)
         if vector_field.configuration_dimension != self.configuration_dimension:
@@ -299,23 +339,32 @@ class StormerVerlet(AbstractGeometricSolver):
         vector_field.split(y0)
         return None
 
-    def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
+    def step(
+        self,
+        terms: dfx.AbstractTerm,
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        args: Args,
+        solver_state: None,
+        made_jump: BoolScalarLike,
+    ) -> tuple[Y, None, DenseInfo, None, dfx.RESULTS]:
         del solver_state, made_jump
         vector_field, direction = _separable_hamiltonian_vector_field(terms)
         configuration, momentum = vector_field.split(y0)
         dt = terms.contr(t0, t1)
         half_momentum = momentum - 0.5 * dt * vector_field.potential_gradient(
-            t0 * direction,
+            jnp.asarray(t0 * direction),
             configuration,
             args,
         )
         next_configuration = configuration + dt * vector_field.kinetic_gradient(
-            (t0 + 0.5 * (t1 - t0)) * direction,
+            jnp.asarray((t0 + 0.5 * (t1 - t0)) * direction),
             half_momentum,
             args,
         )
         next_momentum = half_momentum - 0.5 * dt * vector_field.potential_gradient(
-            t1 * direction,
+            jnp.asarray(t1 * direction),
             next_configuration,
             args,
         )
@@ -329,11 +378,11 @@ class StormerVerlet(AbstractGeometricSolver):
         )
         return y1, None, dense_info, None, dfx.RESULTS.successful
 
-    def func(self, terms, t0, y0, args):
+    def func(self, terms: dfx.AbstractTerm, t0: RealScalarLike, y0: Y, args: Args) -> VF:
         return terms.vf(t0, y0, args)
 
 
-RKMKMethod = Literal["midpoint", "rk4"]
+RKMKMethod: TypeAlias = Literal["midpoint", "rk4"]
 
 
 class RKMK(AbstractGeometricSolver):
@@ -351,12 +400,11 @@ class RKMK(AbstractGeometricSolver):
         /,
         *,
         method: RKMKMethod = "rk4",
-    ):
+    ) -> None:
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError("RKMK geometry must be an AbstractStateGeometry.")
         _require_exact_differential(geometry, "RKMK")
-        if method not in ("midpoint", "rk4"):
-            raise ValueError("RKMK method must be 'midpoint' or 'rk4'.")
+        method = parse(method, RKMKMethod, "method")
         self.geometry = geometry
         self.method = method
         self.solver_id = f"solver:rkmk:{method}:{geometry.geometry_id}"
@@ -366,15 +414,24 @@ class RKMK(AbstractGeometricSolver):
         )
         self.causal_stage_extent = max(self.stage_abscissae)
 
-    def order(self, terms):
+    def order(self, terms: dfx.AbstractTerm) -> int:
         del terms
         return 2 if self.method == "midpoint" else 4
 
-    def init(self, terms, t0, t1, y0, args):
+    def init(
+        self,
+        terms: dfx.AbstractTerm,
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        args: Args,
+    ) -> None:
         del terms, t0, t1, y0, args
         return None
 
-    def _tableau(self):
+    def _tableau(
+        self,
+    ) -> tuple[tuple[float, ...], tuple[tuple[float, ...], ...], tuple[float, ...]]:
         if self.method == "midpoint":
             return (
                 self.stage_abscissae,
@@ -387,7 +444,16 @@ class RKMK(AbstractGeometricSolver):
             (1.0 / 6.0, 1.0 / 3.0, 1.0 / 3.0, 1.0 / 6.0),
         )
 
-    def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
+    def step(
+        self,
+        terms: dfx.AbstractTerm,
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        args: Args,
+        solver_state: None,
+        made_jump: BoolScalarLike,
+    ) -> tuple[Y, None, DenseInfo, None, dfx.RESULTS]:
         del solver_state, made_jump
         dt = t1 - t0
         abscissae, coefficients, weights = self._tableau()
@@ -418,7 +484,7 @@ class RKMK(AbstractGeometricSolver):
         )
         return y1, None, dense_info, None, dfx.RESULTS.successful
 
-    def func(self, terms, t0, y0, args):
+    def func(self, terms: dfx.AbstractTerm, t0: RealScalarLike, y0: Y, args: Args) -> VF:
         return _term_vector_field(terms, t0, y0, args)
 
 
@@ -439,7 +505,7 @@ class CommutatorFreeTableau(StrictModule):
         composition_coefficients: Sequence[Sequence[float]],
         order: int,
         tableau_id: str,
-    ):
+    ) -> None:
         nodes = tuple(float(value) for value in abscissae)
         stages = tuple(tuple(float(value) for value in row) for row in stage_coefficients)
         compositions = tuple(
@@ -494,7 +560,7 @@ class CommutatorFreeSolver(AbstractGeometricSolver):
         /,
         *,
         tableau: CommutatorFreeTableau | None = None,
-    ):
+    ) -> None:
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError(
                 "CommutatorFreeSolver geometry must be an AbstractStateGeometry."
@@ -520,15 +586,31 @@ class CommutatorFreeSolver(AbstractGeometricSolver):
         self.stage_abscissae = resolved.abscissae
         self.causal_stage_extent = max(resolved.abscissae) or 1.0
 
-    def order(self, terms):
+    def order(self, terms: dfx.AbstractTerm) -> int:
         del terms
         return self.tableau.order
 
-    def init(self, terms, t0, t1, y0, args):
+    def init(
+        self,
+        terms: dfx.AbstractTerm,
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        args: Args,
+    ) -> None:
         del terms, t0, t1, y0, args
         return None
 
-    def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
+    def step(
+        self,
+        terms: dfx.AbstractTerm,
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        args: Args,
+        solver_state: None,
+        made_jump: BoolScalarLike,
+    ) -> tuple[Y, None, DenseInfo, None, dfx.RESULTS]:
         del solver_state, made_jump
         dt = t1 - t0
         local_zero = _local_zero(self.geometry, y0)
@@ -565,8 +647,11 @@ class CommutatorFreeSolver(AbstractGeometricSolver):
         )
         return y1, None, dense_info, None, dfx.RESULTS.successful
 
-    def func(self, terms, t0, y0, args):
+    def func(self, terms: dfx.AbstractTerm, t0: RealScalarLike, y0: Y, args: Args) -> VF:
         return _term_vector_field(terms, t0, y0, args)
+
+
+_SRKMKTerms: TypeAlias = dfx.MultiTerm[tuple[dfx.AbstractTerm, dfx.AbstractTerm]]
 
 
 class SRKMK(AbstractGeometricSolver, dfx.AbstractStratonovichSolver):
@@ -577,7 +662,7 @@ class SRKMK(AbstractGeometricSolver, dfx.AbstractStratonovichSolver):
         GeometricLocalInterpolation
     )
 
-    def __init__(self, geometry: AbstractStateGeometry, /):
+    def __init__(self, geometry: AbstractStateGeometry, /) -> None:
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError("SRKMK geometry must be an AbstractStateGeometry.")
         _require_exact_differential(geometry, "SRKMK")
@@ -587,19 +672,35 @@ class SRKMK(AbstractGeometricSolver, dfx.AbstractStratonovichSolver):
         self.stage_abscissae = (0.0, 1.0)
         self.causal_stage_extent = 1.0
 
-    def order(self, terms):
+    def order(self, terms: _SRKMKTerms) -> int:
         del terms
         return 1
 
-    def strong_order(self, terms):
+    def strong_order(self, terms: _SRKMKTerms) -> float:
         del terms
         return 0.5
 
-    def init(self, terms, t0, t1, y0, args):
+    def init(
+        self,
+        terms: _SRKMKTerms,
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        args: Args,
+    ) -> None:
         del terms, t0, t1, y0, args
         return None
 
-    def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
+    def step(
+        self,
+        terms: _SRKMKTerms,
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        args: Args,
+        solver_state: None,
+        made_jump: BoolScalarLike,
+    ) -> tuple[Y, None, DenseInfo, None, dfx.RESULTS]:
         del solver_state, made_jump
         drift, diffusion = terms.terms
         dt = drift.contr(t0, t1)
@@ -654,7 +755,7 @@ class SRKMK(AbstractGeometricSolver, dfx.AbstractStratonovichSolver):
         )
         return y1, None, dense_info, None, dfx.RESULTS.successful
 
-    def func(self, terms, t0, y0, args):
+    def func(self, terms: _SRKMKTerms, t0: RealScalarLike, y0: Y, args: Args) -> VF:
         drift, diffusion = terms.terms
         return (
             _term_vector_field(drift, t0, y0, args),

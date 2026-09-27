@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -13,7 +16,7 @@ la = phx.linalg
 nl = phx.nonlinear
 
 
-def _gmres_policy(*, relative: float = 1e-12, maximum_steps: int):
+def _gmres_policy(*, relative: float = 1e-12, maximum_steps: int) -> Any:
     return la.LinearSolvePolicy(
         la.GMRES(restart=maximum_steps),
         tolerance=la.TolerancePolicy(
@@ -24,7 +27,7 @@ def _gmres_policy(*, relative: float = 1e-12, maximum_steps: int):
     )
 
 
-def test_eisenstat_walker_changes_inner_work_and_records_final_forcing():
+def test_eisenstat_walker_changes_inner_work_and_records_final_forcing() -> None:
     matrix = jnp.diag(jnp.asarray([1.0, 2.0, 4.0, 8.0]))
     expected = jnp.ones((4,))
     target = matrix @ expected
@@ -70,7 +73,7 @@ def test_eisenstat_walker_changes_inner_work_and_records_final_forcing():
     assert 1e-10 <= float(adaptive.diagnostics.final_forcing) < 0.5
 
 
-def test_inexact_newton_carries_gcrodr_state_under_dynamic_forcing():
+def test_inexact_newton_carries_gcrodr_state_under_dynamic_forcing() -> None:
     matrix = jnp.diag(jnp.asarray([1.0, 2.0, 4.0, 8.0]))
     expected = jnp.ones((4,))
     target = matrix @ expected + 0.05 * expected**3
@@ -116,7 +119,9 @@ def test_inexact_newton_carries_gcrodr_state_under_dynamic_forcing():
     assert result.provenance.notes == ("linear-method=gmres;linear-backend=native-krylov")
 
 
-def test_jacobian_refresh_policies_change_preparation_counts_without_losing_root():
+def test_jacobian_refresh_policies_change_preparation_counts_without_losing_root() -> (
+    None
+):
     problem = nl.NonlinearSystemProblem(
         lambda state, args: state**2 - 2.0,
         problem_id="refresh-counts",
@@ -153,7 +158,7 @@ def test_jacobian_refresh_policies_change_preparation_counts_without_losing_root
     }
 
 
-def test_rejection_refresh_reprepares_after_rejected_trust_steps_and_converges():
+def test_rejection_refresh_reprepares_after_rejected_trust_steps_and_converges() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, args: state**2 - 2.0,
         problem_id="rejection-refresh",
@@ -186,7 +191,7 @@ def test_rejection_refresh_reprepares_after_rejected_trust_steps_and_converges()
     assert int(result.diagnostics.jacobian_preparations) == rejected + 1
 
 
-def test_trust_region_dogleg_accepts_boundary_step_before_full_newton_fits():
+def test_trust_region_dogleg_accepts_boundary_step_before_full_newton_fits() -> None:
     matrix = jnp.diag(jnp.asarray([1.0, 4.0]))
     expected = jnp.asarray([2.0, 1.0])
     target = matrix @ expected
@@ -235,7 +240,7 @@ def test_trust_region_dogleg_accepts_boundary_step_before_full_newton_fits():
     assert jnp.allclose(converged.residual, jnp.zeros((2,)), atol=1e-10)
 
 
-def test_residual_evaluation_cap_is_hard_under_jit():
+def test_residual_evaluation_cap_is_hard_under_jit() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, args: state - 2.0,
         validity=lambda state, residual, auxiliary, args: jnp.all(state <= 0.0),
@@ -247,7 +252,7 @@ def test_residual_evaluation_cap_is_hard_under_jit():
         maximum_evaluations=2,
     )
 
-    def solve(initial):
+    def solve(initial: Any) -> Any:
         result = method.solve(problem, initial, termination=termination)
         return (
             result.status,
@@ -267,7 +272,7 @@ def test_residual_evaluation_cap_is_hard_under_jit():
     assert jnp.allclose(residual, jnp.asarray([-2.0]))
 
 
-def test_total_inner_iteration_cap_is_hard_under_jit():
+def test_total_inner_iteration_cap_is_hard_under_jit() -> None:
     matrix = jnp.diag(jnp.asarray([1.0, 2.0, 4.0, 8.0]))
     expected = jnp.ones((4,))
     target = matrix @ expected
@@ -287,7 +292,7 @@ def test_total_inner_iteration_cap_is_hard_under_jit():
         maximum_linear_iterations=3,
     )
 
-    def solve(initial):
+    def solve(initial: Any) -> Any:
         result = method.solve(problem, initial, termination=termination)
         return (
             result.status,

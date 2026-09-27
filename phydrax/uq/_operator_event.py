@@ -4,14 +4,15 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
-from ..nn.operator.data import OperatorOutputSpec, OperatorPrediction
+from ..nn.operator.data import FunctionSamples, OperatorOutputSpec, OperatorPrediction
+from ..typing import parse
 from ._operator import (
     _expected_output_shape,
     _output_mask,
@@ -23,7 +24,7 @@ from ._operator import (
 )
 
 
-Measure = Literal["quadrature", "uniform"]
+Measure: TypeAlias = Literal["quadrature", "uniform"]
 OperatorReduction = Literal["none", "mean", "sum"]
 
 
@@ -69,7 +70,7 @@ def operator_target_values(
     target: ArrayLike | OperatorPrediction,
     /,
     *,
-    query,
+    query: FunctionSamples,
     output_spec: OperatorOutputSpec,
     case_axes: tuple[str, ...],
     case_shape: tuple[int, ...],
@@ -105,7 +106,7 @@ def operator_target_values(
 
 
 def measure_weights(
-    query,
+    query: FunctionSamples,
     output_spec: OperatorOutputSpec,
     case_shape: tuple[int, ...],
     /,
@@ -113,7 +114,7 @@ def measure_weights(
     measure: Measure,
 ) -> Array:
     """Return physical pointwise reduction weights."""
-    validate_measure(measure)
+    measure = validate_measure(measure)
     if measure == "uniform":
         return jnp.ones(
             _expected_output_shape(query, output_spec, case_shape),
@@ -123,7 +124,7 @@ def measure_weights(
 
 
 def event_weights(
-    query,
+    query: FunctionSamples,
     output_spec: OperatorOutputSpec,
     case_shape: tuple[int, ...],
     /,
@@ -131,7 +132,7 @@ def event_weights(
     measure: Measure,
 ) -> Array:
     """Return normalized physical weights for whole-event Euclidean geometry."""
-    validate_measure(measure)
+    measure = validate_measure(measure)
     query_mask = query.mask_array(case_shape=case_shape)
     if measure == "quadrature":
         weights = query.weights(case_shape=case_shape, normalized=True)
@@ -188,9 +189,8 @@ def case_count(case_shape: tuple[int, ...], /) -> int:
     return count
 
 
-def validate_measure(measure: str, /) -> None:
-    if measure not in ("quadrature", "uniform"):
-        raise ValueError("measure must be 'quadrature' or 'uniform'.")
+def validate_measure(measure: str, /) -> Measure:
+    return parse(measure, Measure, "measure")
 
 
 __all__ = [

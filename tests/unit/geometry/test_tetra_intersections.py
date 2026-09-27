@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from itertools import permutations
+from typing import Any
 
 import numpy as np
 import pytest
@@ -30,7 +32,9 @@ def unit_tetrahedron() -> np.ndarray:
     )
 
 
-def test_identity_has_canonical_polytope_and_compensated_volume(unit_tetrahedron):
+def test_identity_has_canonical_polytope_and_compensated_volume(
+    unit_tetrahedron: Any,
+) -> None:
     result = intersect_tetrahedra(unit_tetrahedron, unit_tetrahedron)
 
     assert result.status is TetraIntersectionStatus.SUCCESS
@@ -51,7 +55,7 @@ def test_identity_has_canonical_polytope_and_compensated_volume(unit_tetrahedron
     assert result.evidence.volume_error < 1.0e-12
 
 
-def test_containment_returns_inner_tetrahedron(unit_tetrahedron):
+def test_containment_returns_inner_tetrahedron(unit_tetrahedron: Any) -> None:
     inner = 0.5 * unit_tetrahedron
     result = intersect_tetrahedra(unit_tetrahedron, inner)
 
@@ -63,7 +67,9 @@ def test_containment_returns_inner_tetrahedron(unit_tetrahedron):
     )
 
 
-def test_partial_overlap_matches_analytic_shifted_tetrahedron(unit_tetrahedron):
+def test_partial_overlap_matches_analytic_shifted_tetrahedron(
+    unit_tetrahedron: Any,
+) -> None:
     translated = unit_tetrahedron + 0.25
     result = intersect_tetrahedra(unit_tetrahedron, translated)
 
@@ -74,7 +80,9 @@ def test_partial_overlap_matches_analytic_shifted_tetrahedron(unit_tetrahedron):
 
 @pytest.mark.meshcore
 @pytest.mark.skipif(not meshcore_available(), reason="phydrax-meshcore unavailable")
-def test_shared_face_edge_and_vertex_are_zero_measure_contacts(unit_tetrahedron):
+def test_shared_face_edge_and_vertex_are_zero_measure_contacts(
+    unit_tetrahedron: Any,
+) -> None:
     # Three contact planes meeting in a shared edge form an exactly singular
     # triple; certifying that zero requires the exact predicates.
     exact = GeometryPrecisionPolicy(predicate_mode=PredicateMode.EXACT)
@@ -116,7 +124,9 @@ def test_shared_face_edge_and_vertex_are_zero_measure_contacts(unit_tetrahedron)
     assert vertex_result.evidence.vertex_count == 1
 
 
-def test_even_vertex_permutations_have_identical_canonical_result(unit_tetrahedron):
+def test_even_vertex_permutations_have_identical_canonical_result(
+    unit_tetrahedron: Any,
+) -> None:
     reference = intersect_tetrahedra(unit_tetrahedron, unit_tetrahedron)
     for order in permutations(range(4)):
         if (
@@ -133,7 +143,9 @@ def test_even_vertex_permutations_have_identical_canonical_result(unit_tetrahedr
         assert result.faces == reference.faces
 
 
-def test_inverted_near_degenerate_and_nonfinite_tetrahedra_fail_closed(unit_tetrahedron):
+def test_inverted_near_degenerate_and_nonfinite_tetrahedra_fail_closed(
+    unit_tetrahedron: Any,
+) -> None:
     inverted = unit_tetrahedron[[0, 1, 3, 2]]
     near_degenerate = unit_tetrahedron.copy()
     near_degenerate[3, 2] = 1.0e-15
@@ -154,7 +166,7 @@ def test_inverted_near_degenerate_and_nonfinite_tetrahedra_fail_closed(unit_tetr
     )
 
 
-def test_disjoint_and_volume_conservation_bounds(unit_tetrahedron):
+def test_disjoint_and_volume_conservation_bounds(unit_tetrahedron: Any) -> None:
     disjoint = unit_tetrahedron + np.asarray((2.0, 0.0, 0.0))
     result = intersect_tetrahedra(unit_tetrahedron, disjoint)
 
@@ -163,7 +175,7 @@ def test_disjoint_and_volume_conservation_bounds(unit_tetrahedron):
     assert result.volume <= 1.0 / 6.0
 
 
-def test_candidate_and_topology_limits_are_explicit(unit_tetrahedron):
+def test_candidate_and_topology_limits_are_explicit(unit_tetrahedron: Any) -> None:
     candidate_limited = intersect_tetrahedra(
         unit_tetrahedron,
         unit_tetrahedron,
@@ -179,7 +191,9 @@ def test_candidate_and_topology_limits_are_explicit(unit_tetrahedron):
     assert topology_limited.status is TetraIntersectionStatus.CANDIDATE_LIMIT
 
 
-def test_volume_only_and_repeated_results_are_deterministic(unit_tetrahedron):
+def test_volume_only_and_repeated_results_are_deterministic(
+    unit_tetrahedron: Any,
+) -> None:
     tolerance = TetraIntersectionTolerance(absolute=1.0e-13, relative=1.0e-11)
     first = intersect_tetrahedra(
         unit_tetrahedron,
@@ -220,7 +234,7 @@ SLIVER = np.asarray(
 ZERO_TOLERANCE = TetraIntersectionTolerance(absolute=0.0, relative=0.0)
 
 
-def test_unresolved_filtered_orientation_fails_closed(unit_tetrahedron):
+def test_unresolved_filtered_orientation_fails_closed(unit_tetrahedron: Any) -> None:
     result = intersect_tetrahedra(
         SLIVER,
         unit_tetrahedron + 100.0,
@@ -235,7 +249,7 @@ def test_unresolved_filtered_orientation_fails_closed(unit_tetrahedron):
 
 @pytest.mark.meshcore
 @pytest.mark.skipif(not meshcore_available(), reason="phydrax-meshcore unavailable")
-def test_exact_orientation_certifies_the_sliver(unit_tetrahedron):
+def test_exact_orientation_certifies_the_sliver(unit_tetrahedron: Any) -> None:
     result = intersect_tetrahedra(
         SLIVER,
         unit_tetrahedron + 100.0,

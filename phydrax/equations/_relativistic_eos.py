@@ -11,13 +11,15 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._interpolation import apply_gather_stencil, rectilinear_stencil
 from .._physical import RelativityScaleContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import positive_finite_float
 from ..units import UnitDefinition
 
 
@@ -419,13 +421,6 @@ def _finite_outputs(*values: Array) -> Array:
     return result
 
 
-def _positive_finite(value: float, name: str, /) -> float:
-    result = float(value)
-    if not np.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
-
-
 def _optional_upper_bound(
     value: float | None, lower: float, name: str, /
 ) -> float | None:
@@ -466,7 +461,7 @@ class GammaLawEOS(AbstractRelativisticEOS):
         minimum_specific_internal_energy: float = 0.0,
         maximum_specific_internal_energy: float | None = None,
         provenance: str = "analytic gamma-law",
-    ):
+    ) -> None:
         if not isinstance(scale, RelativityScaleContract):
             raise TypeError("scale must be a RelativityScaleContract.")
         gamma = float(adiabatic_index)
@@ -634,7 +629,7 @@ class PiecewisePolytropicEOS(AbstractRelativisticEOS):
         maximum_density: float | None = None,
         cold_constraint_tolerance: float = 1.0e-7,
         provenance: str = "analytic continuous piecewise polytrope",
-    ):
+    ) -> None:
         if not isinstance(scale, RelativityScaleContract):
             raise TypeError("scale must be a RelativityScaleContract.")
         breaks = np.asarray(density_breaks, dtype=np.float64)
@@ -651,12 +646,12 @@ class PiecewisePolytropicEOS(AbstractRelativisticEOS):
             raise ValueError("density_breaks must be finite, positive, and increasing.")
         if np.any(~np.isfinite(gammas)) or np.any(gammas <= 1.0) or np.any(gammas > 2.0):
             raise ValueError("adiabatic_indices must be finite and lie in (1, 2].")
-        first_constant = _positive_finite(
+        first_constant = positive_finite_float(
             initial_polytropic_constant, "initial_polytropic_constant"
         )
         first_offset = float(initial_specific_energy_offset)
         density_lower = float(minimum_density)
-        tolerance = _positive_finite(
+        tolerance = positive_finite_float(
             cold_constraint_tolerance, "cold_constraint_tolerance"
         )
         if (
@@ -929,7 +924,7 @@ class HybridColdThermalEOS(AbstractRelativisticEOS):
         minimum_thermal_specific_energy: float = 0.0,
         maximum_thermal_specific_energy: float | None = None,
         provenance: str = "analytic hybrid cold-plus-thermal EOS",
-    ):
+    ) -> None:
         if not isinstance(cold_eos, PiecewisePolytropicEOS):
             raise TypeError("cold_eos must be a PiecewisePolytropicEOS.")
         gamma = float(thermal_adiabatic_index)
@@ -1128,7 +1123,7 @@ class TabulatedFiniteTemperatureEOS(AbstractRelativisticEOS):
         provenance: str,
         source_checksum: str,
         license_id: str,
-    ):
+    ) -> None:
         if not isinstance(scale, RelativityScaleContract):
             raise TypeError("scale must be a RelativityScaleContract.")
         density = np.asarray(density_nodes, dtype=np.float64)

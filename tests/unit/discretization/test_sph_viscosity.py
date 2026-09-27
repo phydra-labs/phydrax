@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,12 +12,13 @@ import pytest
 import phydrax as phx
 
 
-def _compiled(viscosity, *, backend="dense"):
+def _compiled(viscosity: Any, *, backend: Any = "dense") -> Any:
     count = 8
     spacing = 1.0 / count
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(count), jnp.full((count,), spacing), ambient_dimension=1
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     method = phx.discretization.WeaklyCompressibleSPHMethodPlan(
         phx.discretization.WendlandC2SPHKernel(1),
@@ -44,13 +48,13 @@ def _compiled(viscosity, *, backend="dense"):
     )
 
 
-def _state(compiled, velocity):
+def _state(compiled: Any, velocity: Any) -> Any:
     count = compiled.dynamics.particles.capacity
     position = (jnp.arange(count, dtype="float64") + 0.5)[:, None] / count
     return compiled.initialize_state(position, velocity(position))
 
 
-def test_morris_viscosity_is_zero_for_uniform_translation():
+def test_morris_viscosity_is_zero_for_uniform_translation() -> None:
     compiled = _compiled(0.02)
     state = _state(compiled, lambda position: jnp.full_like(position, 0.3))
     diagnostics = compiled.dynamics.diagnostics(0.0, state, None)
@@ -60,7 +64,7 @@ def test_morris_viscosity_is_zero_for_uniform_translation():
     assert diagnostics.viscous_positive_power_defect == pytest.approx(0.0)
 
 
-def test_morris_viscosity_is_pairwise_momentum_conservative_and_dissipative():
+def test_morris_viscosity_is_pairwise_momentum_conservative_and_dissipative() -> None:
     compiled = _compiled(0.02)
     state = _state(compiled, lambda position: 0.1 * jnp.sin(2.0 * jnp.pi * position))
     diagnostics = compiled.dynamics.diagnostics(0.0, state, None)
@@ -76,7 +80,7 @@ def test_morris_viscosity_is_pairwise_momentum_conservative_and_dissipative():
     )
 
 
-def test_zero_morris_viscosity_produces_zero_viscous_rate():
+def test_zero_morris_viscosity_produces_zero_viscous_rate() -> None:
     compiled = _compiled(0.0)
     state = _state(compiled, lambda position: 0.1 * jnp.sin(2.0 * jnp.pi * position))
     diagnostics = compiled.dynamics.diagnostics(0.0, state, None)
@@ -86,7 +90,7 @@ def test_zero_morris_viscosity_produces_zero_viscous_rate():
     assert jnp.isinf(compiled.dynamics.stable_step(0.0, state, None).viscous)
 
 
-def test_morris_viscosity_dense_cell_and_derivative_parity():
+def test_morris_viscosity_dense_cell_and_derivative_parity() -> None:
     dense = _compiled(0.02, backend="dense")
     cell = _compiled(0.02, backend="cell")
     state = _state(dense, lambda position: 0.1 * jnp.sin(2.0 * jnp.pi * position))

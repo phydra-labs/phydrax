@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -23,7 +26,7 @@ from phydrax.equations._transport_closures import ConstantTransport
 jax.config.update("jax_enable_x64", True)
 
 
-def _method_and_state():
+def _method_and_state() -> Any:
     method = SmoothCompressibleD2VKineticMethod(
         d2v17_quadrature(),
         IdealGasMaterial(1.4, 1.0),
@@ -40,7 +43,7 @@ def _method_and_state():
     return method, state
 
 
-def test_zero_source_is_exact_and_has_zero_finite_evidence():
+def test_zero_source_is_exact_and_has_zero_finite_evidence() -> None:
     method, state = _method_and_state()
     result = ZeroSmoothCompressibleD2VForcingPlan(method).apply(state, jnp.asarray(0.125))
 
@@ -84,13 +87,14 @@ def test_zero_source_is_exact_and_has_zero_finite_evidence():
     assert int(result.evidence.status) == int(SmoothCompressibleD2VForcingStatus.SUCCESS)
 
 
-def test_body_force_has_zero_mass_exact_impulse_and_midpoint_work():
+def test_body_force_has_zero_mass_exact_impulse_and_midpoint_work() -> None:
     method, state = _method_and_state()
     acceleration = jnp.asarray((0.02, -0.03))
     heating = 0.04
     time_step = jnp.asarray(0.01)
     result = SmoothCompressibleD2VBodyForcingPlan(
         method,
+        # ty: ignore[invalid-argument-type]
         acceleration=acceleration,
         volumetric_heating=heating,
     ).apply(state, time_step)
@@ -187,7 +191,7 @@ def test_body_force_has_zero_mass_exact_impulse_and_midpoint_work():
     assert bool(result.evidence.finite)
 
 
-def test_pure_heating_changes_only_the_energy_zeroth_source_moment():
+def test_pure_heating_changes_only_the_energy_zeroth_source_moment() -> None:
     method, state = _method_and_state()
     time_step = jnp.asarray(0.2)
     heating = 0.3
@@ -226,7 +230,7 @@ def test_pure_heating_changes_only_the_energy_zeroth_source_moment():
     assert bool(result.successful)
 
 
-def test_negative_and_nonfinite_candidates_refuse_both_population_fields():
+def test_negative_and_nonfinite_candidates_refuse_both_population_fields() -> None:
     method, state = _method_and_state()
     zero = ZeroSmoothCompressibleD2VForcingPlan(method)
     negative_state = SmoothCompressibleKineticState(

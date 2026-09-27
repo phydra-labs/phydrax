@@ -11,7 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 
@@ -75,7 +77,7 @@ class MechanicalLoadAction(StrictModule, NonTrainableState):
         /,
         *,
         action_id: str | None = None,
-    ):
+    ) -> None:
         from ..applications.solid_mechanics._loads import AbstractMechanicalLoad
         from ..integration._deformed_measure import DeformedMeasurePlan
 
@@ -261,7 +263,7 @@ class MechanicalLoadAction(StrictModule, NonTrainableState):
             )
         size = current.size
 
-        def flattened_residual(flattened):
+        def flattened_residual(flattened: Array) -> Array:
             coordinates = flattened.reshape(current.shape)
             return self.residual(coordinates, state, args).reshape((size,))
 
@@ -338,7 +340,7 @@ class _NeuralMechanicalLoadRealization(StrictModule, NonTrainableState):
         state: MechanicalLoadState,
         trace_id: str,
         /,
-    ):
+    ) -> None:
         self.action = action
         self.coordinate_trace = coordinate_trace
         self.state = state

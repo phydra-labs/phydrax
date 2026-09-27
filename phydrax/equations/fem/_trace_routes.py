@@ -4,20 +4,23 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from collections.abc import Iterable
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization._conservation_boundary import AbstractConservationBoundary
 from ...discretization.fem._mortar import FiniteElementMortarPlan
+from ...typing import parse
 
 
-DGTraceRouteKind = Literal["conforming", "mortar", "boundary", "periodic"]
+DGTraceRouteKind: TypeAlias = Literal["conforming", "mortar", "boundary", "periodic"]
 
 
 class PreparedDGTraceRoute(StrictModule, NonTrainableState):
@@ -42,21 +45,20 @@ class PreparedDGTraceRoute(StrictModule, NonTrainableState):
         owner_dofs: ArrayLike,
         /,
         *,
-        neighbor_dofs: ArrayLike = (),
-        owner_basis: ArrayLike = (),
-        neighbor_basis: ArrayLike = (),
-        owner_gradients: ArrayLike = (),
-        physical_points: ArrayLike = (),
-        physical_weights: ArrayLike = (),
-        normal: ArrayLike = (),
+        neighbor_dofs: ArrayLike | tuple[()] = (),
+        owner_basis: ArrayLike | tuple[()] = (),
+        neighbor_basis: ArrayLike | tuple[()] = (),
+        owner_gradients: ArrayLike | tuple[()] = (),
+        physical_points: ArrayLike | tuple[()] = (),
+        physical_weights: ArrayLike | tuple[()] = (),
+        normal: ArrayLike | tuple[()] = (),
         mortar: FiniteElementMortarPlan | None = None,
         boundary: AbstractConservationBoundary | None = None,
-        component_transform: ArrayLike = (),
-        coordinate_transform: ArrayLike = (),
+        component_transform: ArrayLike | tuple[()] = (),
+        coordinate_transform: ArrayLike | tuple[()] = (),
         route_id: str,
-    ):
-        if route_kind not in ("conforming", "mortar", "boundary", "periodic"):
-            raise ValueError("Unknown DG trace route kind.")
+    ) -> None:
+        route_kind = parse(route_kind, DGTraceRouteKind, "route_kind")
         owner = jnp.asarray(owner_dofs, dtype=jnp.int32)
         neighbor = jnp.asarray(neighbor_dofs, dtype=jnp.int32)
         owner_basis_ = jnp.asarray(owner_basis)
@@ -131,7 +133,7 @@ class PreparedDGMortarBatch(StrictModule, NonTrainableState):
     route_ids: tuple[str, ...] = eqx.field(static=True)
     batch_id: str = eqx.field(static=True)
 
-    def __init__(self, routes, /):
+    def __init__(self, routes: Iterable[PreparedDGTraceRoute], /) -> None:
         values = tuple(routes)
         if not values or any(
             not isinstance(route, PreparedDGTraceRoute)
@@ -140,33 +142,35 @@ class PreparedDGMortarBatch(StrictModule, NonTrainableState):
             for route in values
         ):
             raise ValueError("Mortar batches require prepared mortar routes.")
+        # The validation above guarantees every route carries a mortar plan.
+        mortars = tuple(cast(FiniteElementMortarPlan, route.mortar) for route in values)
         shapes = {
             (
                 route.owner_dofs.shape,
                 route.neighbor_dofs.shape,
-                route.mortar.left_interpolation.shape,
-                route.mortar.right_interpolation.shape,
+                mortar.left_interpolation.shape,
+                mortar.right_interpolation.shape,
             )
-            for route in values
+            for route, mortar in zip(values, mortars, strict=True)
         }
         if len(shapes) != 1:
             raise ValueError("Mortar batch route shapes differ.")
         self.owner_dofs = jnp.stack(tuple(route.owner_dofs for route in values))
         self.neighbor_dofs = jnp.stack(tuple(route.neighbor_dofs for route in values))
         self.left_interpolation = jnp.stack(
-            tuple(route.mortar.left_interpolation for route in values)
+            tuple(mortar.left_interpolation for mortar in mortars)
         )
         self.right_interpolation = jnp.stack(
-            tuple(route.mortar.right_interpolation for route in values)
+            tuple(mortar.right_interpolation for mortar in mortars)
         )
         self.left_dual_pullback = jnp.stack(
-            tuple(route.mortar.left_raw_dual_pullback for route in values)
+            tuple(mortar.left_raw_dual_pullback for mortar in mortars)
         )
         self.right_dual_pullback = jnp.stack(
-            tuple(route.mortar.right_raw_dual_pullback for route in values)
+            tuple(mortar.right_raw_dual_pullback for mortar in mortars)
         )
         self.physical_weights = jnp.stack(
-            tuple(route.mortar.physical_weights for route in values)
+            tuple(mortar.physical_weights for mortar in mortars)
         )
         self.normal = jnp.stack(tuple(route.normal for route in values))
         self.route_ids = tuple(route.route_id for route in values)
@@ -206,7 +210,7 @@ class PreparedDGBoundaryBatch(StrictModule, NonTrainableState):
     route_ids: tuple[str, ...] = eqx.field(static=True)
     batch_id: str = eqx.field(static=True)
 
-    def __init__(self, routes, /):
+    def __init__(self, routes: Iterable[PreparedDGTraceRoute], /) -> None:
         values = tuple(routes)
         if (
             not values
@@ -216,7 +220,14 @@ class PreparedDGBoundaryBatch(StrictModule, NonTrainableState):
                 or route.boundary is None
                 for route in values
             )
-            or len({route.boundary.boundary_id for route in values}) != 1
+            # The any(...) clause above guarantees every route has a boundary.
+            or len(
+                {
+                    cast(AbstractConservationBoundary, route.boundary).boundary_id
+                    for route in values
+                }
+            )
+            != 1
             or len(
                 {
                     (
@@ -237,7 +248,8 @@ class PreparedDGBoundaryBatch(StrictModule, NonTrainableState):
             tuple(route.physical_weights for route in values)
         )
         self.normal = jnp.stack(tuple(route.normal for route in values))
-        self.boundary = values[0].boundary
+        # Validated above: every boundary route carries a boundary policy.
+        self.boundary = cast(AbstractConservationBoundary, values[0].boundary)
         self.route_ids = tuple(route.route_id for route in values)
         self.batch_id = canonical_fingerprint(
             {

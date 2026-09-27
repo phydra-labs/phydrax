@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def run():
+def run() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(6, periodic=True),
@@ -33,6 +36,7 @@ def run():
     )
     salinity = jnp.full(discretization.cell_shape, 35.0)
     coordinates = ocean.initial_state(velocity, temperature, salinity)
+    # ty: ignore[missing-argument]
     restriction = ocean.dynamics.step_restriction(coordinates)
     stage = ocean.dynamics.stage(0.0, coordinates)
     diagnostics = ocean.dynamics.diagnostics(0.0, coordinates)

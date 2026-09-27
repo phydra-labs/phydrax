@@ -2,20 +2,23 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _triangle_mesh():
+def _triangle_mesh() -> Any:
     return phx.discretization.CellMesh.from_triangles(
         jnp.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
         jnp.asarray([[0, 1, 2]], dtype=jnp.int32),
     )
 
 
-def _unit_hex_mesh():
+def _unit_hex_mesh() -> Any:
     coordinates = jnp.asarray(
         [
             [0.0, 0.0, 0.0],
@@ -36,7 +39,7 @@ def _unit_hex_mesh():
     return phx.discretization.CellMesh(coordinates, (block,))
 
 
-def test_field_representation_is_independent_of_conformity():
+def test_field_representation_is_independent_of_conformity() -> None:
     mesh = _triangle_mesh()
     h1 = phx.discretization.lagrange_element("triangle", 1)
     l2 = phx.discretization.discontinuous_element("triangle", 1)
@@ -66,7 +69,7 @@ def test_field_representation_is_independent_of_conformity():
     )
 
 
-def test_coefficient_layouts_have_distinct_bound_identities():
+def test_coefficient_layouts_have_distinct_bound_identities() -> None:
     discretization = phx.discretization.FiniteElementPlan(
         _triangle_mesh(),
         phx.discretization.FiniteElementFieldSpec(
@@ -147,7 +150,7 @@ def test_coefficient_layouts_have_distinct_bound_identities():
     assert jnp.array_equal(oriented, jnp.asarray([[2.0, -3.0]]))
 
 
-def test_run_configuration_round_trips_one_execution_vocabulary():
+def test_run_configuration_round_trips_one_execution_vocabulary() -> None:
     configuration = phx.solver.FiniteElementRunConfiguration(
         realization="matrix_free",
         local_kernel="sum_factorized",
@@ -166,7 +169,7 @@ def test_run_configuration_round_trips_one_execution_vocabulary():
         )
 
 
-def test_transfer_distinguishes_raw_dual_and_hilbert_adjoint():
+def test_transfer_distinguishes_raw_dual_and_hilbert_adjoint() -> None:
     source_mass = jnp.asarray([0.5, 0.5])
     target_mass = jnp.asarray([0.25, 0.5, 0.25])
     primal = jnp.asarray([[1.0, 0.0], [0.5, 0.5], [0.0, 1.0]])
@@ -188,6 +191,7 @@ def test_transfer_distinguishes_raw_dual_and_hilbert_adjoint():
     source = jnp.asarray([2.0, -1.0])
     target = jnp.asarray([0.5, 3.0, -2.0])
     raw = transfer.pullback(target)
+    # ty: ignore[unresolved-attribute]
     adjoint = transfer.hilbert_adjoint.mv(target)
 
     assert jnp.allclose(raw, primal.T @ target)
@@ -198,7 +202,7 @@ def test_transfer_distinguishes_raw_dual_and_hilbert_adjoint():
     )
 
 
-def test_q1_hexahedral_volume_contract_is_executable():
+def test_q1_hexahedral_volume_contract_is_executable() -> None:
     mesh = _unit_hex_mesh()
     discretization = phx.discretization.FiniteElementPlan(
         mesh,

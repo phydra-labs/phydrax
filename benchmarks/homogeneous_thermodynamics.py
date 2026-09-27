@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -16,7 +18,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _model(component_count: int):
+def _model(component_count: int) -> Any:
     names = tuple(f"X{index}" for index in range(component_count))
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         names,

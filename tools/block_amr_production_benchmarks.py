@@ -101,6 +101,7 @@ def benchmark(*, smoke: bool) -> dict[str, object]:
         ),
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
     )
@@ -148,6 +149,7 @@ def benchmark(*, smoke: bool) -> dict[str, object]:
         hierarchy,
         physical_component_count=2,
         method_id="production-benchmark-kernel",
+        # ty: ignore[invalid-argument-type]
         dtype=np.float64,
     )
     cache_result, compile_seconds = measure_host(

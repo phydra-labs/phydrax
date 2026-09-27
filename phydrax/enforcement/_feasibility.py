@@ -11,7 +11,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite
@@ -181,7 +182,7 @@ class BoxProjection(AbstractFeasibilityMap):
         *,
         tolerance: float = 1e-7,
         derivative_policy: ProjectionDerivativePolicy | None = None,
-    ):
+    ) -> None:
         tolerance_ = float(tolerance)
         if not isfinite(tolerance_) or tolerance_ <= 0.0:
             raise ValueError("tolerance must be finite and positive.")
@@ -279,7 +280,7 @@ class SimplexProjection(AbstractFeasibilityMap):
         *,
         tolerance: float = 1e-7,
         derivative_policy: ProjectionDerivativePolicy | None = None,
-    ):
+    ) -> None:
         tolerance_ = float(tolerance)
         if not isfinite(tolerance_) or tolerance_ <= 0.0:
             raise ValueError("tolerance must be finite and positive.")
@@ -362,7 +363,7 @@ class ConeProjection(AbstractFeasibilityMap):
         *,
         tolerance: float = 1e-7,
         derivative_policy: ProjectionDerivativePolicy | None = None,
-    ):
+    ) -> None:
         tolerance_ = float(tolerance)
         if not isinstance(cone, AbstractConvexCone):
             raise TypeError("cone must be an AbstractConvexCone.")
@@ -437,7 +438,7 @@ class SecondOrderConeProjection(AbstractFeasibilityMap):
         *,
         tolerance: float = 1e-7,
         derivative_policy: ProjectionDerivativePolicy | None = None,
-    ):
+    ) -> None:
         self.projection = ConeProjection(
             SecondOrderCone(dimension),
             tolerance=tolerance,
@@ -470,7 +471,7 @@ class PositiveSemidefiniteProjection(AbstractFeasibilityMap):
         *,
         tolerance: float = 1e-7,
         derivative_policy: ProjectionDerivativePolicy | None = None,
-    ):
+    ) -> None:
         cone = PositiveSemidefiniteCone(matrix_size)
         self.cone = cone
         self.coordinate_projection = ConeProjection(
@@ -556,7 +557,7 @@ class FeasibleParameterization(AbstractFeasibilityMap):
         /,
         *,
         tolerance: float = 1e-7,
-    ):
+    ) -> None:
         tolerance_ = float(tolerance)
         if not isinstance(transform, AbstractParameterTransform):
             raise TypeError("transform must be an AbstractParameterTransform.")
@@ -584,12 +585,22 @@ class FeasibleParameterization(AbstractFeasibilityMap):
         return self.transform(value)
 
     def _margin(self, result: Array, /) -> tuple[Array, Array]:
+        transform = self.transform
+        # __init__ pairs each parameterization with its transform class.
         if self.parameterization == "positive":
-            minimum = jnp.asarray(self.transform.minimum, dtype=result.dtype)
+            if not (isinstance(transform, PositiveTransform)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(transform, PositiveTransform)."
+                )
+            minimum = jnp.asarray(transform.minimum, dtype=result.dtype)
             return jnp.min(result - minimum), jnp.max(jnp.maximum(minimum - result, 0.0))
         if self.parameterization == "interval":
-            lower = jnp.asarray(self.transform.lower, dtype=result.dtype)
-            upper = jnp.asarray(self.transform.upper, dtype=result.dtype)
+            if not (isinstance(transform, IntervalTransform)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(transform, IntervalTransform)."
+                )
+            lower = jnp.asarray(transform.lower, dtype=result.dtype)
+            upper = jnp.asarray(transform.upper, dtype=result.dtype)
             margin = jnp.min(jnp.minimum(result - lower, upper - result))
             violation = jnp.max(
                 jnp.maximum(jnp.maximum(lower - result, result - upper), 0.0)
@@ -661,7 +672,7 @@ class StrictSecondOrderConeParameterization(AbstractFeasibilityMap):
     topology: FeasibleSetTopology = eqx.field(static=True, default="open")
     kind: FeasibilityKind = eqx.field(static=True, default="parameterization")
 
-    def __init__(self, dimension: int, /, *, minimum_margin: float = 1e-6):
+    def __init__(self, dimension: int, /, *, minimum_margin: float = 1e-6) -> None:
         margin = float(minimum_margin)
         if not isfinite(margin) or margin <= 0.0:
             raise ValueError("minimum_margin must be finite and positive.")
@@ -718,7 +729,7 @@ class AbstractCoefficientPropertyProvider(StrictModule):
     operator: AbstractLinearOperator
     provider_id: eqx.AbstractVar[str]
 
-    def __init__(self, representation: Any, operator: AbstractLinearOperator, /):
+    def __init__(self, representation: Any, operator: AbstractLinearOperator, /) -> None:
         from ._linear_representation import AbstractLinearRepresentation
 
         if not isinstance(representation, AbstractLinearRepresentation):
@@ -744,7 +755,7 @@ class MonotonicityProvider(AbstractCoefficientPropertyProvider):
         /,
         *,
         direction: Literal["increasing", "decreasing"] = "increasing",
-    ):
+    ) -> None:
         if direction not in ("increasing", "decreasing"):
             raise ValueError("direction must be 'increasing' or 'decreasing'.")
         super().__init__(representation, derivative_operator)
@@ -769,7 +780,7 @@ class ConvexityProvider(AbstractCoefficientPropertyProvider):
         /,
         *,
         curvature: Literal["convex", "concave"] = "convex",
-    ):
+    ) -> None:
         if curvature not in ("convex", "concave"):
             raise ValueError("curvature must be 'convex' or 'concave'.")
         super().__init__(representation, second_derivative_operator)
@@ -794,7 +805,7 @@ class PositivityProvider(AbstractCoefficientPropertyProvider):
         /,
         *,
         strict: bool = False,
-    ):
+    ) -> None:
         super().__init__(representation, evaluation_operator)
         self.strict = bool(strict)
 
@@ -817,7 +828,7 @@ class NormalizationProvider(AbstractCoefficientPropertyProvider):
         /,
         *,
         target: Any = 1.0,
-    ):
+    ) -> None:
         super().__init__(representation, mass_operator)
         target_ = mass_operator.target.validate(target)
         if not tree_allfinite(target_):
@@ -840,7 +851,9 @@ class ChanceFeasibility(StrictModule):
     constraint: ChanceConstraint
     policy: ChanceCertificatePolicy
 
-    def __init__(self, constraint: ChanceConstraint, policy: ChanceCertificatePolicy, /):
+    def __init__(
+        self, constraint: ChanceConstraint, policy: ChanceCertificatePolicy, /
+    ) -> None:
         if not isinstance(constraint, ChanceConstraint):
             raise TypeError("constraint must be a ChanceConstraint.")
         if not isinstance(policy, ChanceCertificatePolicy):

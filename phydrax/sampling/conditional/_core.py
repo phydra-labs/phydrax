@@ -13,12 +13,14 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, Key, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ..._fingerprint import canonical_fingerprint
 from ..._sampling import AbstractChainSampleResult, derive_key, SampleAddress
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 
 
 _CONDITIONAL_ADDRESS = SampleAddress(
@@ -39,7 +41,7 @@ class ConditionalVariableGroup(StrictModule, NonTrainableState):
 
     def __init__(
         self, name: str, count: int, state_spec: PyTree[jax.ShapeDtypeStruct], /
-    ):
+    ) -> None:
         if not isinstance(name, str) or not name:
             raise ValueError("Conditional variable-group name must be non-empty.")
         size = int(count)
@@ -89,7 +91,7 @@ class ConditionalInteractionGroup(StrictModule):
         /,
         *,
         interaction_id: str,
-    ):
+    ) -> None:
         heads = jnp.asarray(head_indices, dtype=jnp.int32).reshape((-1,))
         groups = tuple(str(value) for value in tail_groups)
         tails = tuple(jnp.asarray(value, dtype=jnp.int32) for value in tail_indices)
@@ -142,7 +144,7 @@ class AbstractConditionalKernel(StrictModule):
     @abstractmethod
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         parameters: Any,
         tails: tuple[Any, ...],
         current: Any,
@@ -155,18 +157,22 @@ class AbstractConditionalKernel(StrictModule):
 class CallableConditionalKernel(AbstractConditionalKernel):
     """Pure callable conditional sampler with explicit state initialization."""
 
-    sample_function: Callable = eqx.field(static=True)
-    initialize_function: Callable = eqx.field(static=True)
+    sample_function: Callable[
+        [PRNGKey, Any, tuple[Any, ...], Any, Any], tuple[Any, Any]
+    ] = eqx.field(static=True)
+    initialize_function: Callable[[PyTree[jax.ShapeDtypeStruct]], Any] = eqx.field(
+        static=True
+    )
     kernel_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        sample: Callable,
+        sample: Callable[[PRNGKey, Any, tuple[Any, ...], Any, Any], tuple[Any, Any]],
         /,
         *,
         kernel_id: str,
-        initialize: Callable | None = None,
-    ):
+        initialize: Callable[[PyTree[jax.ShapeDtypeStruct]], Any] | None = None,
+    ) -> None:
         if not callable(sample):
             raise TypeError("sample must be callable.")
         if not isinstance(kernel_id, str) or not kernel_id:
@@ -177,22 +183,38 @@ class CallableConditionalKernel(AbstractConditionalKernel):
         )
         self.kernel_id = kernel_id
 
-    def initialize(self, state_spec, /):
+    def initialize(self, state_spec: PyTree[jax.ShapeDtypeStruct], /) -> Any:
         return self.initialize_function(state_spec)
 
-    def sample(self, key, parameters, tails, current, kernel_state, /):
+    def sample(
+        self,
+        key: PRNGKey,
+        parameters: Any,
+        tails: tuple[Any, ...],
+        current: Any,
+        kernel_state: Any,
+        /,
+    ) -> tuple[Any, Any]:
         return self.sample_function(key, parameters, tails, current, kernel_state)
 
 
 class MetropolisWithinConditionalKernel(AbstractConditionalKernel):
     """Metropolis-within-Gibbs kernel from explicit proposal and local log-target callables."""
 
-    proposal: Callable = eqx.field(static=True)
-    proposal_log_prob: Callable = eqx.field(static=True)
-    log_target: Callable = eqx.field(static=True)
+    proposal: Callable[[PRNGKey, Any, Any], Any] = eqx.field(static=True)
+    proposal_log_prob: Callable[[Any, Any, Any], Array] = eqx.field(static=True)
+    log_target: Callable[[Any, tuple[Any, ...], Any], Array] = eqx.field(static=True)
     kernel_id: str = eqx.field(static=True)
 
-    def __init__(self, proposal, proposal_log_prob, log_target, /, *, kernel_id: str):
+    def __init__(
+        self,
+        proposal: Callable[[PRNGKey, Any, Any], Any],
+        proposal_log_prob: Callable[[Any, Any, Any], Array],
+        log_target: Callable[[Any, tuple[Any, ...], Any], Array],
+        /,
+        *,
+        kernel_id: str,
+    ) -> None:
         if not all(
             callable(value) for value in (proposal, proposal_log_prob, log_target)
         ):
@@ -204,11 +226,19 @@ class MetropolisWithinConditionalKernel(AbstractConditionalKernel):
         self.log_target = log_target
         self.kernel_id = kernel_id
 
-    def initialize(self, state_spec, /):
+    def initialize(self, state_spec: PyTree[jax.ShapeDtypeStruct], /) -> Array:
         del state_spec
         return jnp.asarray(0, dtype=jnp.uint32)
 
-    def sample(self, key, parameters, tails, current, kernel_state, /):
+    def sample(
+        self,
+        key: PRNGKey,
+        parameters: Any,
+        tails: tuple[Any, ...],
+        current: Any,
+        kernel_state: Array,
+        /,
+    ) -> tuple[Any, Array]:
         proposal_key = derive_key(key, _CONDITIONAL_ADDRESS, kernel_state, 0)
         acceptance_key = derive_key(key, _CONDITIONAL_ADDRESS, kernel_state, 1)
         proposed = self.proposal(proposal_key, current, parameters)
@@ -221,7 +251,7 @@ class MetropolisWithinConditionalKernel(AbstractConditionalKernel):
             ratio, 0.0
         )
 
-        def select(candidate, previous):
+        def select(candidate: Array, previous: Array) -> Array:
             mask = accepted.reshape(
                 accepted.shape + (1,) * (candidate.ndim - accepted.ndim)
             )
@@ -242,7 +272,7 @@ class ConditionalUpdateStage(StrictModule):
     update_indices: tuple[int, ...] = eqx.field(static=True)
     stage_id: str = eqx.field(static=True)
 
-    def __init__(self, update_indices: Sequence[int], /, *, stage_id: str):
+    def __init__(self, update_indices: Sequence[int], /, *, stage_id: str) -> None:
         indices = tuple(update_indices)
         if not indices or len(set(indices)) != len(indices) or min(indices) < 0:
             raise ValueError("Stage update indices must be unique and non-negative.")
@@ -426,7 +456,7 @@ def initialize_conditional_program(
 def conditional_program_step(
     program: PreparedConditionalUpdateProgram,
     state: ConditionalProgramState,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> ConditionalProgramState:
     """Advance every validated stage while preserving immutable snapshot semantics."""
@@ -510,7 +540,7 @@ def sample_conditional_program(
     state: ConditionalProgramState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     warmup_steps: int,
     num_draws: int,
     steps_per_draw: int = 1,
@@ -528,12 +558,16 @@ def sample_conditional_program(
     if warmup < 0 or draws < 1 or transitions < 1:
         raise ValueError("Conditional sampling counts are invalid.")
 
-    def advance(carry, _):
+    def advance(
+        carry: ConditionalProgramState, _: None
+    ) -> tuple[ConditionalProgramState, None]:
         return conditional_program_step(program, carry, key), None
 
     warmed, _ = jax.lax.scan(advance, state, xs=None, length=warmup)
 
-    def collect(carry, _):
+    def collect(
+        carry: ConditionalProgramState, _: None
+    ) -> tuple[ConditionalProgramState, tuple[Any, ...]]:
         updated, _ = jax.lax.scan(advance, carry, xs=None, length=transitions)
         return updated, updated.values
 

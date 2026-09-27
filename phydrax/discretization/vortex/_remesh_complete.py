@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -60,9 +61,9 @@ class CompleteVortexRemeshPlan(StrictModule, NonTrainableState):
         degree: int = 3,
         boundary: str = "reject",
         periodic: tuple[bool, ...] | None = None,
-        obstacle_clearance=None,
+        obstacle_clearance: Callable[[Array], Array] | None = None,
         obstacle_id: str | None = None,
-    ):
+    ) -> None:
         lower_, upper_ = (
             np.asarray(lower, dtype=np.float64),
             np.asarray(upper, dtype=np.float64),

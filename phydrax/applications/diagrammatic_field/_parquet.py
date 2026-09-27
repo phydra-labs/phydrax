@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -54,7 +55,7 @@ class ParquetIterationPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-10,
         damping: float = 0.75,
         maximum_vertex_elements: int = 1_000_000,
-    ):
+    ) -> None:
         iterations = int(maximum_iterations)
         tolerance_, damping_ = float(tolerance), float(damping)
         capacity = int(maximum_vertex_elements)
@@ -149,7 +150,7 @@ class PreparedParquetIteration(StrictModule, NonTrainableState):
         plan_id: str,
         prepared_id: str,
         /,
-    ):
+    ) -> None:
         self.fully_irreducible_vertex = fully_irreducible_vertex
         self.channel_bubbles = channel_bubbles
         self.channel_mixing = channel_mixing
@@ -170,7 +171,9 @@ class PreparedParquetIteration(StrictModule, NonTrainableState):
             raise ValueError("initial_channels must have shape (3, n, n).")
         initial_residuals = jnp.full((3,), jnp.inf)
 
-        def step(_, state):
+        def step(
+            _: Array, state: tuple[Array, Array, Array, Array]
+        ) -> tuple[Array, Array, Array, Array]:
             current, iterations, residuals, converged = state
             full = self.fully_irreducible_vertex + jnp.sum(current, axis=0)
             channel_images = contract(

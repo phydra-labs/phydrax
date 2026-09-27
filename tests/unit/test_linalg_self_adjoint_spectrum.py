@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -15,7 +18,7 @@ la = phx.linalg
 eigen = la.eigen
 
 
-def _self_adjoint_properties(*, positive_definite=False):
+def _self_adjoint_properties(*, positive_definite: Any = False) -> Any:
     evidence = {"self_adjoint": "construction"}
     if positive_definite:
         evidence.update(
@@ -27,11 +30,12 @@ def _self_adjoint_properties(*, positive_definite=False):
     return la.OperatorProperties(
         self_adjoint=True,
         positive_definite=positive_definite,
+        # ty: ignore[invalid-argument-type]
         evidence=evidence,
     )
 
 
-def _standard_problem(matrix):
+def _standard_problem(matrix: Any) -> Any:
     return eigen.Eigenproblem(
         la.DenseLinearOperator(
             matrix,
@@ -40,7 +44,9 @@ def _standard_problem(matrix):
     )
 
 
-def _generalized_problem(operator_matrix, metric_matrix, *, space=None):
+def _generalized_problem(
+    operator_matrix: Any, metric_matrix: Any, *, space: Any = None
+) -> Any:
     return eigen.GeneralizedEigenproblem(
         la.DenseLinearOperator(
             operator_matrix,
@@ -57,7 +63,7 @@ def _generalized_problem(operator_matrix, metric_matrix, *, space=None):
     )
 
 
-def _matrix_free_standard_problem(matrix):
+def _matrix_free_standard_problem(matrix: Any) -> Any:
     space = la.ArraySpace((matrix.shape[-1],), dtype=matrix.dtype)
     return eigen.Eigenproblem(
         la.FunctionLinearOperator(
@@ -69,7 +75,9 @@ def _matrix_free_standard_problem(matrix):
     )
 
 
-def _matrix_free_generalized_problem(operator_matrix, metric_matrix, *, space=None):
+def _matrix_free_generalized_problem(
+    operator_matrix: Any, metric_matrix: Any, *, space: Any = None
+) -> Any:
     space_ = (
         la.ArraySpace((operator_matrix.shape[-1],), dtype=operator_matrix.dtype)
         if space is None
@@ -91,7 +99,7 @@ def _matrix_free_generalized_problem(operator_matrix, metric_matrix, *, space=No
     )
 
 
-def test_self_adjoint_spectrum_reuses_dense_state_and_refreshes_numeric_values():
+def test_self_adjoint_spectrum_reuses_dense_state_and_refreshes_numeric_values() -> None:
     matrix = jnp.asarray(
         [
             [2.0, 0.4, 0.0, 0.0],
@@ -142,7 +150,7 @@ def test_self_adjoint_spectrum_reuses_dense_state_and_refreshes_numeric_values()
         )
 
 
-def test_generalized_spectrum_honors_declared_pairing_and_metric():
+def test_generalized_spectrum_honors_declared_pairing_and_metric() -> None:
     pairing_weights = jnp.asarray([2.0, 3.0, 5.0, 7.0])
     space = la.ArraySpace(
         (4,),
@@ -171,6 +179,7 @@ def test_generalized_spectrum_honors_declared_pairing_and_metric():
         space=space,
     )
     spectrum = eigen.self_adjoint_spectrum(problem)
+    # ty: ignore[deprecated]
     reference_values, reference_vectors = spla.eigh(paired_operator, paired_metric)
 
     assert bool(spectrum.successful)
@@ -192,7 +201,7 @@ def test_generalized_spectrum_honors_declared_pairing_and_metric():
     )
 
 
-def test_spectrum_planning_rejects_constraints_and_resource_overflow():
+def test_spectrum_planning_rejects_constraints_and_resource_overflow() -> None:
     diagonal = jnp.asarray([1.0, 2.0, 4.0, 8.0])
     operator = la.DiagonalLinearOperator(
         diagonal,
@@ -217,7 +226,7 @@ def test_spectrum_planning_rejects_constraints_and_resource_overflow():
         )
 
 
-def test_projector_is_basis_invariant_for_repeated_internal_eigenvalues():
+def test_projector_is_basis_invariant_for_repeated_internal_eigenvalues() -> None:
     matrix = jnp.diag(jnp.asarray([1.0, 1.0, 4.0, 7.0]))
     spectrum = eigen.prepare_self_adjoint_spectrum(_standard_problem(matrix))
     selection = eigen.SpectralSelection.real_below(
@@ -256,8 +265,8 @@ def test_projector_is_basis_invariant_for_repeated_internal_eigenvalues():
     (_standard_problem, _matrix_free_standard_problem),
 )
 def test_projector_derivatives_match_explicit_kernel_forward_reverse_and_finite_difference(
-    problem_factory,
-):
+    problem_factory: Any,
+) -> None:
     matrix = jnp.asarray(
         [
             [1.0, 0.0, 0.1, 0.0],
@@ -277,7 +286,7 @@ def test_projector_derivatives_match_explicit_kernel_forward_reverse_and_finite_
     selection = eigen.SpectralSelection.real_below(2.0, expected_dimension=2)
     policy = eigen.SelfAdjointSpectralSubspacePolicy(differentiation="projector")
 
-    def projector(current):
+    def projector(current: Any) -> Any:
         return eigen.self_adjoint_spectral_subspace(
             problem_factory(current),
             selection,
@@ -324,7 +333,9 @@ def test_projector_derivatives_match_explicit_kernel_forward_reverse_and_finite_
     assert explicit.diagnostics.relative_residual < 1e-12
 
 
-def test_complex_hermitian_projector_derivative_is_cluster_safe_and_matches_finite_difference():
+def test_complex_hermitian_projector_derivative_is_cluster_safe_and_matches_finite_difference() -> (
+    None
+):
     matrix = jnp.asarray(
         [
             [1.0 + 0.0j, 0.0, 0.0 + 0.1j, 0.0],
@@ -344,7 +355,7 @@ def test_complex_hermitian_projector_derivative_is_cluster_safe_and_matches_fini
     selection = eigen.SpectralSelection.real_below(2.0, expected_dimension=2)
     policy = eigen.SelfAdjointSpectralSubspacePolicy(differentiation="projector")
 
-    def projector(current):
+    def projector(current: Any) -> Any:
         return eigen.self_adjoint_spectral_subspace(
             _standard_problem(current),
             selection,
@@ -367,8 +378,8 @@ def test_complex_hermitian_projector_derivative_is_cluster_safe_and_matches_fini
     (_generalized_problem, _matrix_free_generalized_problem),
 )
 def test_generalized_projector_and_density_derivatives_include_metric_perturbations(
-    problem_factory,
-):
+    problem_factory: Any,
+) -> None:
     operator = jnp.diag(jnp.asarray([1.0, 4.0, 12.0, 28.0]))
     metric = jnp.diag(jnp.asarray([1.0, 2.0, 3.0, 4.0]))
     operator_perturbation = jnp.asarray(
@@ -390,7 +401,7 @@ def test_generalized_projector_and_density_derivatives_include_metric_perturbati
     selection = eigen.SpectralSelection.real_below(3.0, expected_dimension=2)
     policy = eigen.SelfAdjointSpectralSubspacePolicy(differentiation="projector")
 
-    def outputs(current_operator, current_metric):
+    def outputs(current_operator: Any, current_metric: Any) -> Any:
         result = eigen.self_adjoint_spectral_subspace(
             problem_factory(current_operator, current_metric),
             selection,
@@ -430,7 +441,7 @@ def test_generalized_projector_and_density_derivatives_include_metric_perturbati
     assert explicit.diagnostics.density_identity_residual_norm < 1e-12
 
 
-def test_subspace_reports_dimension_boundary_and_external_gap_failures():
+def test_subspace_reports_dimension_boundary_and_external_gap_failures() -> None:
     spectrum = eigen.prepare_self_adjoint_spectrum(
         _standard_problem(jnp.diag(jnp.asarray([1.0, 1.0, 4.0, 7.0])))
     )
@@ -460,7 +471,9 @@ def test_subspace_reports_dimension_boundary_and_external_gap_failures():
     )
 
 
-def test_batched_dense_eigen_lifecycle_handles_standard_generalized_and_complex_cases():
+def test_batched_dense_eigen_lifecycle_handles_standard_generalized_and_complex_cases() -> (
+    None
+):
     standard_matrices = jnp.asarray(
         [
             [[1.0, 0.2, 0.0], [0.2, 3.0, 0.1], [0.0, 0.1, 6.0]],
@@ -548,7 +561,9 @@ def test_batched_dense_eigen_lifecycle_handles_standard_generalized_and_complex_
         )
 
 
-def test_batched_spectral_subspaces_have_fixed_shapes_mixed_status_and_exact_derivatives():
+def test_batched_spectral_subspaces_have_fixed_shapes_mixed_status_and_exact_derivatives() -> (
+    None
+):
     matrices = jnp.stack(
         (
             jnp.diag(jnp.asarray([1.0, 2.0, 4.0])),
@@ -590,7 +605,7 @@ def test_batched_spectral_subspaces_have_fixed_shapes_mixed_status_and_exact_der
         differentiation="projector"
     )
 
-    def batched_projector(current):
+    def batched_projector(current: Any) -> Any:
         current_problem = eigen.Eigenproblem(
             la.DenseLinearOperator(
                 current,
@@ -626,7 +641,7 @@ def test_batched_spectral_subspaces_have_fixed_shapes_mixed_status_and_exact_der
         expected_dimension=2,
     )
 
-    def mixed_projector(current):
+    def mixed_projector(current: Any) -> Any:
         current_problem = eigen.Eigenproblem(
             la.DenseLinearOperator(
                 current,

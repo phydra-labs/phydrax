@@ -6,17 +6,25 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from itertools import combinations
+from typing import Any, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+
+
+if TYPE_CHECKING:
+    from ..discretization.finite_volume import (
+        MHDCTRateResult,
+        UpwindConstrainedTransportPlan,
+    )
 
 
 class LocalMHDEntityFactors(StrictModule):
@@ -33,11 +41,13 @@ class LocalMHDPositivityResult(StrictModule):
 
 
 class LocalMHDPositivityPlan(StrictModule, NonTrainableState):
-    spatial: object
+    spatial: UpwindConstrainedTransportPlan
     iterations: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, spatial, /, *, iterations: int = 24):
+    def __init__(
+        self, spatial: UpwindConstrainedTransportPlan, /, *, iterations: int = 24
+    ) -> None:
         from ..discretization.finite_volume import UpwindConstrainedTransportPlan
 
         count = int(iterations)
@@ -73,10 +83,11 @@ class LocalMHDPositivityPlan(StrictModule, NonTrainableState):
                 face = jnp.concatenate((lower, interior, upper), axis=axis)
             face_factors.append(face)
         edge_factors = []
-        if self.spatial.layout.dimension >= 2:
+        electromotive_degree = self.spatial.layout.electromotive_degree
+        if electromotive_degree is not None:
             for orientation in combinations(
                 range(self.spatial.layout.dimension),
-                int(self.spatial.layout.electromotive_degree),
+                int(electromotive_degree),
             ):
                 transverse = tuple(
                     axis
@@ -127,10 +138,11 @@ class LocalMHDPositivityPlan(StrictModule, NonTrainableState):
                 strict=True,
             )
         )
-        if self.spatial.layout.dimension == 1:
+        electromotive_degree = self.spatial.layout.electromotive_degree
+        if electromotive_degree is None:
             edge = jnp.zeros((0,), dtype=low_edge_integrals.dtype)
         else:
-            degree = int(self.spatial.layout.electromotive_degree)
+            degree = int(electromotive_degree)
             low_components = self.spatial.bridge.unpack(degree, low_edge_integrals)
             high_components = self.spatial.bridge.unpack(degree, high_edge_integrals)
             edge = self.spatial.bridge.pack(
@@ -159,7 +171,7 @@ class LocalMHDPositivityPlan(StrictModule, NonTrainableState):
         if not jnp.all(self.spatial.dynamics.system.admissible(low_full)):
             raise ValueError("Low-order MHD state must be admissible.")
 
-        def body(_, bounds):
+        def body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             lower, upper = bounds
             middle = 0.5 * (lower + upper)
             cell = low_cell + middle[..., None] * (high_cell - low_cell)
@@ -207,7 +219,7 @@ class DualEnergyMHDPlan(StrictModule, NonTrainableState):
     switch_fraction: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, gamma: float, /, *, switch_fraction: float = 1e-3):
+    def __init__(self, gamma: float, /, *, switch_fraction: float = 1e-3) -> None:
         gamma_ = float(gamma)
         fraction = float(switch_fraction)
         if gamma_ <= 1.0 or not 0.0 < fraction < 1.0:
@@ -250,10 +262,10 @@ class DualEnergyMHDPlan(StrictModule, NonTrainableState):
 
 
 class MHDCTUPredictorPlan(StrictModule, NonTrainableState):
-    spatial: object
+    spatial: UpwindConstrainedTransportPlan
     predictor_id: str = eqx.field(static=True)
 
-    def __init__(self, spatial, /):
+    def __init__(self, spatial: UpwindConstrainedTransportPlan, /) -> None:
         self.spatial = spatial
         self.predictor_id = canonical_fingerprint(
             {"kind": "mhd-ctu-half-step-predictor", "spatial": spatial.plan_id}
@@ -265,9 +277,9 @@ class MHDCTUPredictorPlan(StrictModule, NonTrainableState):
         cell_state: Array,
         magnetic_flux: Array,
         step_size: Array,
-        args=None,
+        args: Any = None,
         /,
-    ) -> tuple[Array, Array, object]:
+    ) -> tuple[Array, Array, MHDCTRateResult]:
         rate = self.spatial.rate(time, cell_state, magnetic_flux, args)
         return (
             cell_state + 0.5 * step_size * rate.cell_rate,
@@ -276,12 +288,17 @@ class MHDCTUPredictorPlan(StrictModule, NonTrainableState):
         )
 
 
+_MHDEigensystem: TypeAlias = Callable[
+    [Array, Array, int, Any], tuple[Array, Array, Array]
+]
+
+
 class MHDCharacteristicReconstructionPlan(StrictModule, NonTrainableState):
-    eigensystem: Callable = eqx.field(static=True)
+    eigensystem: _MHDEigensystem = eqx.field(static=True)
     declared_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, eigensystem: Callable, /, *, declared_id: str):
+    def __init__(self, eigensystem: _MHDEigensystem, /, *, declared_id: str) -> None:
         if not callable(eigensystem) or not declared_id:
             raise ValueError("MHD characteristic reconstruction metadata is invalid.")
         self.eigensystem = eigensystem
@@ -295,7 +312,7 @@ class MHDCharacteristicReconstructionPlan(StrictModule, NonTrainableState):
         left_state: Array,
         right_state: Array,
         axis: int,
-        args=None,
+        args: Any = None,
         /,
     ) -> tuple[Array, Array, Array]:
         left_matrix, _right_matrix, speeds = self.eigensystem(

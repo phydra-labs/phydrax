@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -16,7 +18,7 @@ import phydrax as phx
 import phydrax.solver.functional_decomposition._export as decomposition_export
 
 
-def _fixed_penalty(condition, count=8):
+def _fixed_penalty(condition: Any, count: Any = 8) -> Any:
     component = condition.on
     batch = component.sample(phx.domain.PointSampling(count), key=jr.key(0))
     realization = phx.integration.from_samples(
@@ -29,7 +31,7 @@ def _fixed_penalty(condition, count=8):
     )
 
 
-def _pou_problem():
+def _pou_problem() -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     cover = phx.domain.cartesian_subdomain_cover(
         domain,
@@ -53,7 +55,7 @@ def _pou_problem():
     return problem
 
 
-def _broken_problem():
+def _broken_problem() -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     cover = phx.domain.cartesian_subdomain_cover(domain, "x", 2)
     family = phx.domain.LocalFieldFamily(
@@ -80,7 +82,7 @@ def _broken_problem():
     return problem
 
 
-def test_pou_colored_block_schedule_respects_fixed_patch_state():
+def test_pou_colored_block_schedule_respects_fixed_patch_state() -> None:
     problem = _pou_problem()
     first, second = problem.cover.patch_ids
     prepared = phx.solver.prepare_functional_decomposition(
@@ -108,7 +110,7 @@ def test_pou_colored_block_schedule_respects_fixed_patch_state():
     assert result.state.kernel_states[1] is None
 
 
-def test_relaxed_schwarz_owns_fixed_trace_state_and_reduces_defect():
+def test_relaxed_schwarz_owns_fixed_trace_state_and_reduces_defect() -> None:
     problem = _broken_problem()
     prepared = phx.solver.prepare_functional_decomposition(
         problem,
@@ -141,7 +143,7 @@ def test_relaxed_schwarz_owns_fixed_trace_state_and_reduces_defect():
     assert result.state.local_steps == (3, 3)
 
 
-def test_mortar_nitsche_and_augmented_interface_terms_are_physical():
+def test_mortar_nitsche_and_augmented_interface_terms_are_physical() -> None:
     problem = _broken_problem()
     family = problem.family
     pairing = family.cover.pairings[0]
@@ -191,7 +193,7 @@ def test_mortar_nitsche_and_augmented_interface_terms_are_physical():
     np.testing.assert_allclose(nitsche.loss(smooth.solver_functions()), 0.0)
 
 
-def test_dense_local_curvature_uses_phydrax_linear_solve():
+def test_dense_local_curvature_uses_phydrax_linear_solve() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     solver = phx.solver.FunctionalSolver(
         functions={"u": domain.Parameter(1.0)},
@@ -218,7 +220,7 @@ def test_dense_local_curvature_uses_phydrax_linear_solve():
     assert result.approximation == "exact-local-dense-hessian"
 
 
-def test_local_test_space_applies_discrete_riesz_geometry():
+def test_local_test_space_applies_discrete_riesz_geometry() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     coordinates = jnp.linspace(0.0, 1.0, 9)
     points = domain.component().points({"x": coordinates[:, None]})
@@ -239,7 +241,7 @@ def test_local_test_space_applies_discrete_riesz_geometry():
     assert not test_space.evidence.orthonormal
 
 
-def test_arbitrary_hierarchy_trains_ordered_nonlinear_corrections():
+def test_arbitrary_hierarchy_trains_ordered_nonlinear_corrections() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     base_term = _fixed_penalty(
         phx.conditions.Residual("u", domain.component(), lambda value: value)
@@ -280,7 +282,9 @@ def test_arbitrary_hierarchy_trains_ordered_nonlinear_corrections():
     assert float(result.solver.loss(key=jr.key(7))) < float(base.loss(key=jr.key(7)))
 
 
-def test_sharding_hybrid_and_deployment_roundtrip(tmp_path, monkeypatch):
+def test_sharding_hybrid_and_deployment_roundtrip(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     problem = _pou_problem()
     family = problem.family
     plan = phx.solver.FunctionalDecompositionShardingPlan(family.cover)
@@ -303,7 +307,7 @@ def test_sharding_hybrid_and_deployment_roundtrip(tmp_path, monkeypatch):
     state_path = next(checkpoint_directory.glob("state-*.eqx"))
     deserialize = decomposition_export.eqx.tree_deserialise_leaves
 
-    def replace_path_after_open(state_stream, *args, **kwargs):
+    def replace_path_after_open(state_stream: Any, *args: Any, **kwargs: Any) -> Any:
         replacement = checkpoint_directory / "replacement.eqx"
         replacement.write_bytes(b"replacement")
         replacement.replace(state_path)
@@ -343,7 +347,7 @@ def test_sharding_hybrid_and_deployment_roundtrip(tmp_path, monkeypatch):
         phx.solver.load_decomposition_artifact(checkpoint_directory, artifact)
 
 
-def test_generalized_trace_aitken_and_bounded_asynchronous_schedule():
+def test_generalized_trace_aitken_and_bounded_asynchronous_schedule() -> None:
     problem = _broken_problem()
     prepared = phx.solver.prepare_functional_decomposition(
         problem,
@@ -389,7 +393,7 @@ def test_generalized_trace_aitken_and_bounded_asynchronous_schedule():
     assert asynchronous.state.maximum_observed_staleness == 1
 
 
-def test_local_kfac_and_matrix_free_gauss_newton_curvature_routes():
+def test_local_kfac_and_matrix_free_gauss_newton_curvature_routes() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     cover = phx.domain.cartesian_subdomain_cover(domain, "x", 2)
     local = {}
@@ -461,7 +465,7 @@ def test_local_kfac_and_matrix_free_gauss_newton_curvature_routes():
     assert matrix_free.final_loss < matrix_free.initial_loss
 
 
-def test_cycle_orders_and_real_device_collectives():
+def test_cycle_orders_and_real_device_collectives() -> None:
     assert phx.solver.FunctionalCyclePlan(1, (1, 1), kind="v").order(2) == (
         (0, True),
         (1, True),
@@ -491,7 +495,7 @@ def test_cycle_orders_and_real_device_collectives():
     assert schwarz.evidence.verified
 
 
-def test_multi_device_collectives_use_shard_map_global_semantics():
+def test_multi_device_collectives_use_shard_map_global_semantics() -> None:
     devices = tuple(jax.devices()[:2])
     if len(devices) < 2:
         pytest.skip("requires two real or explicitly configured JAX devices")

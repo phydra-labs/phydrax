@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from phydrax._strict import StrictModule
 
@@ -97,7 +98,7 @@ class DFSANE(AbstractNonlinearMethod):
         sufficient_decrease: float = 1e-4,
         maximum_search_steps: int = 24,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         history_ = int(history)
         search_steps = int(maximum_search_steps)
         values = tuple(
@@ -149,7 +150,10 @@ class DFSANE(AbstractNonlinearMethod):
         *,
         termination: NonlinearTermination,
         args: Any = None,
-        _initial_evaluation=None,
+        _initial_evaluation: tuple[
+            NonlinearSystemProblem, PyTree[Array], PyTree[Array], Any
+        ]
+        | None = None,
     ) -> NonlinearResult:
         self.precision.validate_tolerance(termination.absolute_residual)
         if _initial_evaluation is None:
@@ -204,7 +208,7 @@ class DFSANE(AbstractNonlinearMethod):
             ).astype(jnp.int32),
         )
 
-        def condition(current):
+        def condition(current: _SpectralRun) -> Array:
             within = (
                 jnp.asarray(True)
                 if termination.maximum_evaluations is None
@@ -216,7 +220,7 @@ class DFSANE(AbstractNonlinearMethod):
                 & within
             )
 
-        def body(current):
+        def body(current: _SpectralRun) -> _SpectralRun:
             direction = self.precision.direction(-current.sigma * current.residual)
             reference = jnp.max(current.merit_history)
             search = _SpectralSearch(
@@ -231,7 +235,7 @@ class DFSANE(AbstractNonlinearMethod):
                 nonfinite=jnp.asarray(0, dtype=jnp.int32),
             )
 
-            def search_condition(item):
+            def search_condition(item: _SpectralSearch) -> Array:
                 within = (
                     jnp.asarray(True)
                     if termination.maximum_evaluations is None
@@ -245,7 +249,7 @@ class DFSANE(AbstractNonlinearMethod):
                     & within
                 )
 
-            def search_body(item):
+            def search_body(item: _SpectralSearch) -> _SpectralSearch:
                 candidate_coordinates = jnp.asarray(
                     current.state + item.rate * direction,
                     dtype=current.state.dtype,

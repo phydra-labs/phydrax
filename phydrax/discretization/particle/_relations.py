@@ -13,6 +13,7 @@ partially modified graph.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import IntEnum
 from math import isfinite
 
@@ -20,7 +21,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -136,14 +138,14 @@ def make_pair_relation_events(
     parameter_width: int,
     /,
     *,
-    event_ids: ArrayLike = (),
-    event_kind: ArrayLike = (),
+    event_ids: ArrayLike | Sequence[int] = (),
+    event_kind: ArrayLike | Sequence[int] = (),
     valid: ArrayLike | None = None,
-    relation_ids: ArrayLike = (),
-    relation_incarnations: ArrayLike = (),
-    left: ArrayLike = (),
-    right: ArrayLike = (),
-    relation_kind: ArrayLike = (),
+    relation_ids: ArrayLike | Sequence[int] = (),
+    relation_incarnations: ArrayLike | Sequence[int] = (),
+    left: ArrayLike | Sequence[int] = (),
+    right: ArrayLike | Sequence[int] = (),
+    relation_kind: ArrayLike | Sequence[int] = (),
     parameters: ArrayLike | None = None,
     dtype: np.dtype | type = jnp.float64,
 ) -> PairRelationEventBatch:
@@ -165,7 +167,7 @@ def make_pair_relation_events(
     if event_values.ndim != 1 or count > capacity:
         raise ValueError("event_kind must be rank one and fit event_capacity.")
 
-    def padded(values: ArrayLike, fill: int, name: str) -> np.ndarray:
+    def padded(values: ArrayLike | Sequence[int], fill: int, name: str) -> np.ndarray:
         array = np.asarray(values, dtype=np.int32)
         if array.size == 0 and count:
             array = np.full((count,), fill, dtype=np.int32)
@@ -251,7 +253,7 @@ class DynamicPairRelationPlan(StrictModule, NonTrainableState):
         event_capacity: int | None = None,
         incarnation_maximum: int = 2**31 - 1,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         types = np.asarray(endpoint_types)
         relation_count = int(relation_capacity)
         width = int(parameter_width)
@@ -372,7 +374,7 @@ class PreparedDynamicPairRelations(StrictModule, NonTrainableState):
         /,
         *,
         prepared_scope_id: str = "dynamic-pair-relations",
-    ):
+    ) -> None:
         if not isinstance(plan, DynamicPairRelationPlan):
             raise TypeError("plan must be a DynamicPairRelationPlan.")
         scope = str(prepared_scope_id)
@@ -1057,7 +1059,7 @@ class PairSpringPlan(StrictModule, NonTrainableState):
         *,
         minimum_length: float = 1.0e-12,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         stiffness = int(stiffness_parameter)
         rest = int(rest_length_parameter)
         minimum = float(minimum_length)
@@ -1117,7 +1119,7 @@ class PreparedPairSpringEnergy(StrictModule, NonTrainableState):
         /,
         *,
         ambient_dimension: int,
-    ):
+    ) -> None:
         if not isinstance(plan, PairSpringPlan):
             raise TypeError("plan must be a PairSpringPlan.")
         if not isinstance(relations, PreparedDynamicPairRelations):

@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 from enum import IntEnum
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -20,11 +22,38 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
 from ..metrix._spacetime_conventions import RelativityConvention
-from ._relativistic_eos import AbstractRelativisticEOS, GammaLawEOS
+from ._relativistic_eos import (
+    AbstractRelativisticEOS,
+    GammaLawEOS,
+    RelativisticEOSState,
+)
 from ._relativistic_hydrodynamics import (
     valencia_geometric_source_from_projection,
     ValenciaGeometrySource,
 )
+
+
+_PrimitiveKinematics: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    RelativisticEOSState,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+_EnthalpyPressure: TypeAlias = tuple[Array, RelativisticEOSState, Array, Array, Array]
+_RecoveryEvaluation: TypeAlias = tuple[
+    Array, Array, RelativisticEOSState, Array, Array, Array, Array, Array
+]
 
 
 class ValenciaRecoveryStatus(IntEnum):
@@ -128,7 +157,7 @@ class IdealValenciaGRMHDSystem(StrictModule, NonTrainableState):
         bracket_iterations: int = 16,
         absolute_tolerance: float = 1.0e-11,
         relative_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(eos, AbstractRelativisticEOS):
             raise TypeError("eos must be AbstractRelativisticEOS.")
         if not isinstance(scale, RelativityScaleContract):
@@ -267,7 +296,7 @@ class IdealValenciaGRMHDSystem(StrictModule, NonTrainableState):
         geometry: ADMGridGeometry,
         composition: ArrayLike | None,
         /,
-    ):
+    ) -> _PrimitiveKinematics:
         density = primitive[..., 0]
         velocity = primitive[..., 1:4]
         pressure = primitive[..., 4]
@@ -464,7 +493,7 @@ class IdealValenciaGRMHDSystem(StrictModule, NonTrainableState):
         target_enthalpy: Array,
         composition: ArrayLike | None,
         /,
-    ):
+    ) -> _EnthalpyPressure:
         pressure_lower = jnp.full_like(density, self.pressure_floor)
         pressure_upper = jnp.full_like(density, self.pressure_ceiling)
         if isinstance(self.eos, GammaLawEOS):
@@ -500,7 +529,7 @@ class IdealValenciaGRMHDSystem(StrictModule, NonTrainableState):
             & (upper_state.specific_enthalpy >= target_enthalpy)
         )
 
-        def body(_, bounds):
+        def body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             lower, upper = bounds
             middle = 0.5 * (lower + upper)
             state = self.eos.evaluate_pressure(density, jnp.exp(middle), composition)
@@ -536,7 +565,7 @@ class IdealValenciaGRMHDSystem(StrictModule, NonTrainableState):
         total_energy: Array,
         composition: ArrayLike | None,
         /,
-    ):
+    ) -> _RecoveryEvaluation:
         safe_x = jnp.maximum(x, jnp.finfo(x.dtype).tiny)
         velocity_squared = (
             momentum_squared
@@ -619,7 +648,7 @@ class IdealValenciaGRMHDSystem(StrictModule, NonTrainableState):
             jnp.abs(total_energy) + rest_mass + magnetic_squared + 1.0,
         )
 
-        def expand(_, current):
+        def expand(_: Array, current: Array) -> Array:
             evaluation = self._recovery_residual(
                 current,
                 rest_mass,
@@ -643,7 +672,7 @@ class IdealValenciaGRMHDSystem(StrictModule, NonTrainableState):
         )
         root_bracketed = (lower_evaluation[0] <= 0.0) & (upper_evaluation[0] >= 0.0)
 
-        def bisect(_, bounds):
+        def bisect(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             low, high = bounds
             middle = 0.5 * (low + high)
             evaluation = self._recovery_residual(

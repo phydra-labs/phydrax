@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
@@ -33,9 +34,10 @@ from ...solver._channel_flow import (
     ChannelSBDF2State,
     PreparedChannelSBDF2Method,
 )
+from ...typing import parse
 
 
-InflowSpatialMode = Literal["compact", "spectral"]
+InflowSpatialMode: TypeAlias = Literal["compact", "spectral"]
 
 
 def _velocity_plus(
@@ -53,7 +55,7 @@ def _velocity_plus(
 
 
 def _broadcast_scalar(
-    value: ArrayLike, shape: tuple[int, ...], dtype, name: str, /
+    value: ArrayLike, shape: tuple[int, ...], dtype: DTypeLike, name: str, /
 ) -> Array:
     array = jnp.asarray(value, dtype=dtype)
     if jnp.broadcast_shapes(array.shape, shape) != shape:
@@ -129,7 +131,7 @@ class VectorEquilibriumWallStressPlan(StrictModule, NonTrainableState):
         tangency_tolerance: float = 1.0e-10,
         y_plus_envelope: tuple[float, float] = (0.0, 1.0e6),
         maximum_roughness_ratio: float = 0.2,
-    ):
+    ) -> None:
         kappa_ = float(kappa)
         iterations = int(root_iterations)
         bracket = int(bracket_iterations)
@@ -222,7 +224,9 @@ class PreparedVectorEquilibriumWallStress(StrictModule, NonTrainableState):
     roughness_support: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: VectorEquilibriumWallStressPlan, spatial_dimension: int, /):
+    def __init__(
+        self, plan: VectorEquilibriumWallStressPlan, spatial_dimension: int, /
+    ) -> None:
         if not isinstance(plan, VectorEquilibriumWallStressPlan):
             raise TypeError("plan must be a VectorEquilibriumWallStressPlan.")
         dimension = int(spatial_dimension)
@@ -476,7 +480,9 @@ def _compact_mass_neutral_basis(
 def _relative_loading_defect(loading: np.ndarray, scale: float, /) -> float:
     if loading.size == 0:
         return 0.0
-    return float(np.max(np.abs(loading))) / max(float(scale), np.finfo(np.float64).tiny)
+    return float(np.max(np.abs(loading))) / max(
+        float(scale), float(np.finfo(np.float64).tiny)
+    )
 
 
 class StochasticTurbulentInflowPreparationEvidence(StrictModule):
@@ -569,9 +575,8 @@ class StochasticTurbulentInflowPlan(StrictModule, NonTrainableState):
         covariance_tolerance: float = 1.0e-10,
         compatibility_tolerance: float = 1.0e-10,
         maximum_preparation_bytes: int = 256 * 1024 * 1024,
-    ):
-        if mode not in ("compact", "spectral"):
-            raise ValueError("Inflow mode must be 'compact' or 'spectral'.")
+    ) -> None:
+        mode = parse(mode, InflowSpatialMode, "mode")
         radius = float(compact_support_radius)
         covariance_error = float(covariance_tolerance)
         compatibility = float(compatibility_tolerance)
@@ -837,7 +842,7 @@ class StochasticTurbulentInflowPlan(StrictModule, NonTrainableState):
             else np.zeros((0, synthesis.shape[-1]), dtype=np.float64)
         )
         divergence_available = bool(divergence_blocks)
-        divergence_scale = max(synthesis_scale, np.finfo(np.float64).tiny)
+        divergence_scale = max(synthesis_scale, float(np.finfo(np.float64).tiny))
         if self.mode == "spectral" and covariance_rank:
             divergence_scale *= max(float(np.max(np.abs(wavevectors))), 1.0)
         if operator.size:
@@ -1219,7 +1224,7 @@ class PreparedVectorEquilibriumWallStressChannel(StrictModule, NonTrainableState
         sample_distance: ArrayLike,
         roughness_height: ArrayLike = 0.0,
         method: ChannelSBDF2Method | None = None,
-    ):
+    ) -> None:
         if not isinstance(wall_stress, PreparedVectorEquilibriumWallStress):
             raise TypeError("wall_stress must be a PreparedVectorEquilibriumWallStress.")
         if wall_stress.spatial_dimension != 3:
@@ -1556,7 +1561,7 @@ class PreparedStochasticTurbulentInflowMACBoundary(StrictModule, NonTrainableSta
         side: Literal["lower", "upper"],
         boundary_shape: tuple[int, ...],
         /,
-    ):
+    ) -> None:
         if not isinstance(inflow, PreparedStochasticTurbulentInflow):
             raise TypeError("inflow must be a PreparedStochasticTurbulentInflow.")
         axis_ = str(axis)

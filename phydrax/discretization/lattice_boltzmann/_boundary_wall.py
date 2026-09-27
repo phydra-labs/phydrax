@@ -8,7 +8,7 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -40,7 +40,7 @@ class LatticeBoltzmannWallLedger(StrictModule):
         work: Array,
         fluid_work: Array,
         /,
-    ):
+    ) -> None:
         self.fluid_impulse = fluid_impulse
         self.body_impulse = body_impulse
         self.force = force

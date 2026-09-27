@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -34,7 +35,7 @@ class MulticomponentAdmissibilityFilterPlan(StrictModule, NonTrainableState):
     iterations: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, node_weights: ArrayLike, /, *, iterations: int = 48):
+    def __init__(self, node_weights: ArrayLike, /, *, iterations: int = 48) -> None:
         weights = np.asarray(node_weights, dtype=np.float64)
         count = int(iterations)
         if (
@@ -75,7 +76,7 @@ class MulticomponentAdmissibilityFilterPlan(StrictModule, NonTrainableState):
         lower = jnp.zeros(mean.shape[:-1], dtype=value.dtype)
         upper = jnp.ones_like(lower)
 
-        def body(_, bounds):
+        def body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             low, high = bounds
             midpoint = 0.5 * (low + high)
             candidate = mean[..., None, :] + midpoint[..., None, None] * (

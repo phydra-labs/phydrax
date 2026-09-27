@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,15 +12,15 @@ import pytest
 import phydrax as phx
 
 
-def _zero_field(domain):
+def _zero_field(domain: Any) -> Any:
     @domain.Function("data")
-    def field(row):
+    def field(row: Any) -> Any:
         return 0.0 * row[0]
 
     return field
 
 
-def test_supervised_likelihood_preserves_targets_filters_cases_and_weights_risk():
+def test_supervised_likelihood_preserves_targets_filters_cases_and_weights_risk() -> None:
     rows = jnp.arange(4.0)[:, None]
     domain = phx.domain.DatasetDomain(rows)
     targets = jnp.asarray([0, 1, -99, 3], dtype=jnp.int32)
@@ -41,6 +44,7 @@ def test_supervised_likelihood_preserves_targets_filters_cases_and_weights_risk(
     assert batch.target.dtype == jnp.int32
     assert jnp.array_equal(batch.indices, jnp.asarray([3, 1]))
     assert jnp.array_equal(batch.target, jnp.asarray([3, 1]))
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(batch.sample_weight, jnp.asarray([4.0, 2.0]))
     np.testing.assert_allclose(
         term.log_prob({"u": field}, batch=batch),
@@ -49,6 +53,7 @@ def test_supervised_likelihood_preserves_targets_filters_cases_and_weights_risk(
     )
     np.testing.assert_allclose(
         term.loss({"u": field}, batch=batch),
+        # ty: ignore[invalid-argument-type, unsupported-operator]
         jnp.sum(batch.sample_weight * per_case) / jnp.sum(batch.sample_weight),
         atol=2e-15,
     )
@@ -71,7 +76,7 @@ def test_supervised_likelihood_preserves_targets_filters_cases_and_weights_risk(
     )
 
 
-def test_supervised_likelihood_rejects_invalid_case_masks_and_weights():
+def test_supervised_likelihood_rejects_invalid_case_masks_and_weights() -> None:
     domain = phx.domain.DatasetDomain(jnp.arange(3.0)[:, None])
     common = {
         "sampling": phx.domain.PointSampling(2, design="uniform"),
@@ -84,6 +89,7 @@ def test_supervised_likelihood_rejects_invalid_case_masks_and_weights():
             jnp.zeros((3,)),
             phx.uq.GaussianLikelihood(1.0),
             sample_mask=jnp.ones((3,)),
+            # ty: ignore[invalid-argument-type]
             **common,
         )
     with pytest.raises(ValueError, match="non-empty"):
@@ -93,6 +99,7 @@ def test_supervised_likelihood_rejects_invalid_case_masks_and_weights():
             jnp.zeros((3,)),
             phx.uq.GaussianLikelihood(1.0),
             sample_mask=jnp.zeros((3,), dtype="bool"),
+            # ty: ignore[invalid-argument-type]
             **common,
         )
     with pytest.raises(ValueError, match="strictly positive"):
@@ -102,6 +109,7 @@ def test_supervised_likelihood_rejects_invalid_case_masks_and_weights():
             jnp.zeros((3,)),
             phx.uq.GaussianLikelihood(1.0),
             sample_weight=jnp.asarray([1.0, 0.0, 1.0]),
+            # ty: ignore[invalid-argument-type]
             **common,
         )
     with pytest.raises(ValueError, match="shape"):
@@ -111,5 +119,6 @@ def test_supervised_likelihood_rejects_invalid_case_masks_and_weights():
             jnp.zeros((3,)),
             phx.uq.GaussianLikelihood(1.0),
             sample_weight=jnp.ones((2,)),
+            # ty: ignore[invalid-argument-type]
             **common,
         )

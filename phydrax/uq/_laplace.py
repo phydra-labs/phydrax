@@ -11,8 +11,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
@@ -70,7 +71,7 @@ class LaplaceResult(StrictModule):
         damping: Array,
         unravel: Any,
         backend: str = "dense",
-    ):
+    ) -> None:
         self.problem = problem
         self.map_position = map_position
         self.map_parameters = problem.parameter_space.constrain(map_position)

@@ -61,7 +61,7 @@ def _real_harmonic(
     order: int,
     polar: np.ndarray,
     azimuth: np.ndarray,
-):
+) -> np.ndarray:
     if order == 0:
         return np.real(sph_harm_y(angular, 0, polar, azimuth))
     magnitude = abs(order)

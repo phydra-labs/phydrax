@@ -10,7 +10,8 @@ from itertools import product
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 
@@ -36,7 +37,7 @@ class DenseHamiltonianND(StrictModule):
         grid_shape: Sequence[int],
         energy_reference: str,
         resources: QuantumResources,
-    ):
+    ) -> None:
         value = jnp.asarray(matrix, dtype=jnp.float64)
         volumes = jnp.asarray(cell_volumes, dtype=jnp.float64)
         shape = tuple(grid_shape)
@@ -76,7 +77,9 @@ class DenseHamiltonianND(StrictModule):
             self.matrix + value * jnp.eye(self.size, dtype=self.matrix.dtype),
         )
 
-    def operator(self, *, scale=Q, shift=0.0):
+    def operator(
+        self, *, scale: ArrayLike = Q, shift: ArrayLike = 0.0
+    ) -> la.DenseLinearOperator:
         matrix = (
             self.matrix - shift * jnp.eye(self.size, dtype=self.matrix.dtype)
         ) / scale
@@ -114,7 +117,7 @@ class EffectiveMassND(StrictModule):
         *,
         energy_reference: str,
         resources: QuantumResources | None = None,
-    ):
+    ) -> None:
         axis_values = tuple(np.asarray(axis, dtype=np.float64) for axis in axes)
         dimension = len(axis_values)
         if dimension < 2:

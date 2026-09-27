@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -5,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def test_spatial_ded_workflow_closes_process_heat_and_mass_ledgers():
+def test_spatial_ded_workflow_closes_process_heat_and_mass_ledgers() -> None:
     event = phx.manufacturing.ToolpathEvent(
         "track",
         "deposit",
@@ -54,7 +56,7 @@ def test_spatial_ded_workflow_closes_process_heat_and_mass_ledgers():
     assert jnp.max(result.state.temperature_k) > 300.0
 
 
-def test_spatial_electroviscoelastic_workflow_closes_surface_charge():
+def test_spatial_electroviscoelastic_workflow_closes_surface_charge() -> None:
     ehd = phx.electrohydrodynamics.CoupledElectrohydrodynamicSolver.create(
         jnp.asarray((1.0, 1.0)),
         jnp.eye(2),
@@ -98,7 +100,7 @@ def test_spatial_electroviscoelastic_workflow_closes_surface_charge():
     assert jnp.isclose(result.polymer_free_energy_j, 0, atol=1e-12)
 
 
-def test_vibroacoustic_monolithic_workflow_closes_both_blocks():
+def test_vibroacoustic_monolithic_workflow_closes_both_blocks() -> None:
     system = phx.acoustics.VibroacousticSystem.create(
         jnp.asarray(((1.0,),)),
         jnp.asarray(((0.1,),)),
@@ -115,7 +117,7 @@ def test_vibroacoustic_monolithic_workflow_closes_both_blocks():
     assert jnp.all(jnp.isfinite(result.acoustic_pressure_pa))
 
 
-def test_porous_electrode_closes_current_and_species_balances():
+def test_porous_electrode_closes_current_and_species_balances() -> None:
     system = phx.electrochemistry.PorousElectrodeSystem.create(
         jnp.asarray((1.0, 1.0)),
         jnp.zeros((1, 2, 2)),
@@ -135,8 +137,8 @@ def test_porous_electrode_closes_current_and_species_balances():
     assert jnp.all(result.state.concentration_mol_m3 < 1.0)
 
 
-def test_equation_oriented_recycle_flowsheet_converges_balances():
-    def residual(value):
+def test_equation_oriented_recycle_flowsheet_converges_balances() -> None:
+    def residual(value: Any) -> Any:
         product, recycle = value
         return jnp.asarray((product + recycle - 10.0, recycle - 0.25 * product))
 
@@ -152,7 +154,7 @@ def test_equation_oriented_recycle_flowsheet_converges_balances():
     assert result.scaled_residual_norm < 1e-10
 
 
-def test_fatigue_and_rotordynamics_workflows_expose_physical_diagnostics():
+def test_fatigue_and_rotordynamics_workflows_expose_physical_diagnostics() -> None:
     fatigue = phx.durability.FatigueAssessment(
         phx.durability.SNCurve(1000.0, -0.1), 2000.0
     ).evaluate(jnp.asarray((0.0, 100.0, 0.0, -100.0, 0.0)))
@@ -174,7 +176,7 @@ def test_fatigue_and_rotordynamics_workflows_expose_physical_diagnostics():
     assert jnp.all(response.bearing_dissipation_w >= 0)
 
 
-def test_maxwell_workflow_closes_field_equations():
+def test_maxwell_workflow_closes_field_equations() -> None:
     maxwell = phx.electromagnetics.MaxwellFrequencySystem.create(
         jnp.asarray(((4.0,),)),
         jnp.asarray(((1.0,),)),
@@ -185,7 +187,7 @@ def test_maxwell_workflow_closes_field_equations():
     assert maxwell.electric_energy_j > 0
 
 
-def test_wind_and_marine_workflows_close_dynamic_residuals():
+def test_wind_and_marine_workflows_close_dynamic_residuals() -> None:
     turbine = phx.applications.wind_energy.AeroHydroServoElasticSystem.create(
         jnp.asarray(((1.0,),)),
         jnp.asarray(((0.1,),)),
@@ -234,7 +236,7 @@ def test_wind_and_marine_workflows_close_dynamic_residuals():
         )
 
 
-def test_reservoir_pressure_workflow_conserves_pore_volume():
+def test_reservoir_pressure_workflow_conserves_pore_volume() -> None:
     system = phx.applications.reservoir.ReservoirPressureSystem.create(
         jnp.asarray((1e-6, 1e-6)),
         jnp.asarray(((1e-8, -1e-8), (-1e-8, 1e-8))),
@@ -257,7 +259,7 @@ def test_reservoir_pressure_workflow_conserves_pore_volume():
     assert result.well_production_rate_m3_s[0] > 0
 
 
-def test_flight_dynamics_preserves_trimmed_rest_state():
+def test_flight_dynamics_preserves_trimmed_rest_state() -> None:
     system = phx.applications.flight_dynamics.RigidBodyFlightSystem.create(
         2.0, jnp.diag(jnp.asarray((1.0, 2.0, 3.0)))
     )
@@ -279,7 +281,7 @@ def test_flight_dynamics_preserves_trimmed_rest_state():
     assert step.quaternion_norm_error < 1e-12
 
 
-def test_vascular_device_network_closes_mass_and_momentum():
+def test_vascular_device_network_closes_mass_and_momentum() -> None:
     network = phx.applications.vascular_devices.VascularDeviceNetwork.create(
         jnp.asarray(((1.0,), (-1.0,))),
         jnp.ones(2),
@@ -297,7 +299,7 @@ def test_vascular_device_network_closes_mass_and_momentum():
     assert step.dissipated_power_w >= 0
 
 
-def test_mineral_recycle_circuit_preserves_component_mass():
+def test_mineral_recycle_circuit_preserves_component_mass() -> None:
     circuit = phx.applications.mineral_processing.RecycleSeparationCircuit.create(
         jnp.asarray(((0.8, 0.2), (0.5, 0.1))),
         jnp.asarray((0.25, 0.1)),

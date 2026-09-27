@@ -7,12 +7,13 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -29,11 +30,14 @@ from ...operators.periodic._family import (
     PreparedPeriodicTranslationFamily,
 )
 from ...sparse import EdgeRelation
+from ...typing import parse
 from ...units import ENERGY, LENGTH, UnitDefinition
 
 
-BlochGaugeKind = Literal["lattice", "atomic"]
-SpinOrderKind = Literal["spinless", "blocked-alpha-beta", "interleaved-alpha-beta"]
+BlochGaugeKind: TypeAlias = Literal["lattice", "atomic"]
+SpinOrderKind: TypeAlias = Literal[
+    "spinless", "blocked-alpha-beta", "interleaved-alpha-beta"
+]
 
 
 class PeriodicBlochGauge(StrictModule, NonTrainableState):
@@ -42,9 +46,8 @@ class PeriodicBlochGauge(StrictModule, NonTrainableState):
     kind: BlochGaugeKind = eqx.field(static=True)
     gauge_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: BlochGaugeKind, /):
-        if kind not in ("lattice", "atomic"):
-            raise ValueError("Periodic Bloch gauge must be 'lattice' or 'atomic'.")
+    def __init__(self, kind: BlochGaugeKind, /) -> None:
+        kind = parse(kind, BlochGaugeKind, "kind")
         self.kind = kind
         self.gauge_id = canonical_fingerprint(
             {"kind": "periodic-bloch-gauge", "gauge": kind}
@@ -74,7 +77,7 @@ class PeriodicOrbitalBasisPlan(StrictModule, NonTrainableState):
         /,
         *,
         spin_order: SpinOrderKind = "spinless",
-    ):
+    ) -> None:
         if not isinstance(cell, PeriodicCell):
             raise TypeError("Periodic orbital bases require PeriodicCell.")
         labels_ = tuple(str(value).strip() for value in labels)
@@ -97,12 +100,7 @@ class PeriodicOrbitalBasisPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Periodic orbital basis length_unit must have length dimension."
             )
-        if spin_order not in (
-            "spinless",
-            "blocked-alpha-beta",
-            "interleaved-alpha-beta",
-        ):
-            raise ValueError("Periodic spin order is invalid.")
+        spin_order = parse(spin_order, SpinOrderKind, "spin_order")
         self.cell = cell
         self.centers_fractional = jnp.asarray(centers)
         self.labels = labels_
@@ -166,7 +164,7 @@ class PeriodicOrbitalPencilPlan(StrictModule, NonTrainableState):
         *,
         overlap_eigenvalue_floor: float = 1.0e-10,
         maximum_overlap_condition: float = 1.0e10,
-    ):
+    ) -> None:
         if not isinstance(basis, PeriodicOrbitalBasisPlan):
             raise TypeError("basis must be PeriodicOrbitalBasisPlan.")
         prepared_h = prepare_periodic_translation_family(
@@ -240,7 +238,7 @@ class PeriodicOrbitalPencilPlan(StrictModule, NonTrainableState):
         hamiltonian_state: PeriodicTranslationFamilyState,
         energy_unit: UnitDefinition,
         /,
-        **kwargs,
+        **kwargs: float,
     ) -> "PeriodicOrbitalPencilPlan":
         count = basis.orbital_count
         relation = EdgeRelation(
@@ -279,7 +277,7 @@ class PreparedPeriodicOrbitalPencil(StrictModule, NonTrainableState):
     overlap: PreparedPeriodicTranslationFamily
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: PeriodicOrbitalPencilPlan, /):
+    def __init__(self, plan: PeriodicOrbitalPencilPlan, /) -> None:
         if not isinstance(plan, PeriodicOrbitalPencilPlan):
             raise TypeError("plan must be PeriodicOrbitalPencilPlan.")
         hamiltonian = prepare_periodic_translation_family(

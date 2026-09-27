@@ -5,16 +5,17 @@
 from __future__ import annotations
 
 import math
-from typing import Literal, TypeAlias
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
-from .._numerics import solve_weighted_least_squares
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
+from .._numerics import solve_weighted_least_squares, WeightedLeastSquaresResult
 from .._strict import StrictModule
 from ..linalg._dense_inverse import dense_inverse
 
@@ -104,7 +105,7 @@ class ARIMAModel(StrictModule):
         /,
         *,
         differencing: int,
-    ):
+    ) -> None:
         ar = jnp.asarray(autoregressive)
         ma = jnp.asarray(moving_average)
         if ar.ndim != 1 or ma.ndim != 1:
@@ -290,7 +291,9 @@ def fit_arima(
         residual = residual.at[lag:].set(jnp.where(row_mask, target - fitted_tail, 0.0))
         residual_valid = residual_valid.at[:lag].set(False)
         residual_valid = residual_valid.at[lag:].set(row_mask)
-    coefficients = last_result.raw_coefficients
+    # iterations_ >= 1 was validated, so the loop assigned at least one result.
+    final_result = cast(WeightedLeastSquaresResult, last_result)
+    coefficients = final_result.raw_coefficients
     offset = 1 if include_intercept else 0
     intercept = coefficients[0] if include_intercept else jnp.asarray(0.0, data.dtype)
     ar = coefficients[offset : offset + p_]
@@ -310,7 +313,7 @@ def fit_arima(
             count <= features,
             TIME_SERIES_INSUFFICIENT,
             jnp.where(
-                (ridge_ == 0.0) & (last_result.rank < features),
+                (ridge_ == 0.0) & (final_result.rank < features),
                 TIME_SERIES_RANK_DEFICIENT,
                 TIME_SERIES_SUCCESS,
             ),
@@ -323,9 +326,9 @@ def fit_arima(
         residual_mask=residual_valid,
         log_likelihood=_gaussian_log_likelihood(residual, residual_valid, variance),
         effective_sample_count=count,
-        rank=last_result.rank,
-        condition_number=last_result.condition_number,
-        normal_equation_error=last_result.normal_equation_error,
+        rank=final_result.rank,
+        condition_number=final_result.condition_number,
+        normal_equation_error=final_result.normal_equation_error,
         status=status,
         iterations=iterations_,
     )
@@ -457,7 +460,7 @@ class VARModel(StrictModule):
         lag_matrices: ArrayLike,
         innovation_covariance: ArrayLike,
         /,
-    ):
+    ) -> None:
         intercept_ = jnp.asarray(intercept)
         matrices = jnp.asarray(lag_matrices)
         covariance = jnp.asarray(innovation_covariance)

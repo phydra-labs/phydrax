@@ -14,7 +14,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, PRNGKeyArray
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._interpolation import linear_interpolate
 
@@ -22,6 +23,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..measurement import PulseResponse, WaveformSupport
+from ..typing import PRNGKey
 from ..units import conversion_factor, derived_unit, LENGTH, TIME, UnitDefinition
 from ._lidar import PreparedLidarSurface
 
@@ -132,7 +134,7 @@ class HardSurfaceLidarWaveformPlan(StrictModule, NonTrainableState):
         wave_speed_unit: UnitDefinition,
         backscatter: float = 1.0,
         receiver_gains: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(surface, PreparedLidarSurface) or not isinstance(
             support, WaveformSupport
         ):
@@ -291,7 +293,7 @@ class LidarReturnExtractionPlan:
         candidates = jnp.where(peaks, matched, -jnp.inf)
         bin_indices = jnp.arange(matched.shape[1])
 
-        def select_one(scores):
+        def select_one(scores: Array) -> tuple[Array, Array, Array, Array]:
             initial = (
                 scores,
                 jnp.full((self.return_capacity,), -1, dtype=jnp.int32),
@@ -299,7 +301,9 @@ class LidarReturnExtractionPlan:
                 jnp.zeros((self.return_capacity,), dtype=jnp.bool_),
             )
 
-            def choose(index, state):
+            def choose(
+                index: Array, state: tuple[Array, Array, Array, Array]
+            ) -> tuple[Array, Array, Array, Array]:
                 remaining, selected, amplitudes, valid = state
                 peak = jnp.argmax(remaining).astype(jnp.int32)
                 amplitude = remaining[peak]
@@ -353,7 +357,7 @@ class AtmosphericLidarPlan(StrictModule, NonTrainableState):
         range_unit: UnitDefinition,
         wave_speed_unit: UnitDefinition,
         overlap: ArrayLike = 1.0,
-    ):
+    ) -> None:
         if not isinstance(support, WaveformSupport):
             raise TypeError("support must be WaveformSupport.")
         if not isinstance(range_unit, UnitDefinition) or range_unit.dimension != LENGTH:
@@ -452,7 +456,7 @@ class AtmosphericLidarPlan(StrictModule, NonTrainableState):
         evidence = LidarWaveformEvidence(
             jnp.sum(beta * self.segment_lengths),
             received,
-            0.0,
+            jnp.zeros((), dtype=received.dtype),
             finite,
             jnp.asarray(True),
             finite,
@@ -480,7 +484,7 @@ class SpecularLidarMultipathPlan(StrictModule, NonTrainableState):
         path_length_unit: UnitDefinition,
         wave_speed_unit: UnitDefinition,
         path_capacity: int,
-    ):
+    ) -> None:
         if not isinstance(support, WaveformSupport):
             raise TypeError("support must be WaveformSupport.")
         if (
@@ -600,7 +604,7 @@ class TimeResolvedMultipleScatteringPlan(StrictModule, NonTrainableState):
         wave_speed: float,
         distance_unit: UnitDefinition,
         wave_speed_unit: UnitDefinition,
-    ):
+    ) -> None:
         if not isinstance(support, WaveformSupport):
             raise TypeError("support must be WaveformSupport.")
         if (
@@ -653,7 +657,7 @@ class TimeResolvedMultipleScatteringPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def evaluate(self, key: PRNGKeyArray, /) -> LidarWaveformResult:
+    def evaluate(self, key: PRNGKey, /) -> LidarWaveformResult:
         ray_count = self.support.rays.sample_shape[0]
         random = (
             jr.exponential(key, (ray_count, self.packet_count, self.event_count))
@@ -684,7 +688,7 @@ class TimeResolvedMultipleScatteringPlan(StrictModule, NonTrainableState):
             LidarWaveformEvidence(
                 jnp.asarray(ray_count, dtype=waveform.dtype),
                 received,
-                0.0,
+                jnp.zeros((), dtype=received.dtype),
                 finite,
                 jnp.asarray(True),
                 finite,

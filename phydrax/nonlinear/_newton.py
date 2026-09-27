@@ -4,14 +4,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import isfinite
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax import core as jax_core
-from jaxtyping import Array, PyTree
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._iteration import (
     bind_iteration_scope,
@@ -36,19 +38,23 @@ from .._tree_math import (
     tree_where,
 )
 from ..linalg import (
+    AbstractLinearOperator,
     AbstractVectorSpace,
     DifferentiationPolicy,
     GMRES,
     initialize_recycling,
     LinearSolveControl,
     LinearSolvePolicy,
+    LinearSolveResult,
     LinearSolveStatus,
     LinearSystem,
+    PreparedLinearSolve,
     RecyclingState,
     solve as solve_linear,
     solve_recycled,
     TolerancePolicy,
 )
+from ..typing import parse
 from ._components import admit_residual_components
 from ._linearization import (
     _jacobian_solve_direction,
@@ -56,6 +62,7 @@ from ._linearization import (
     _jacobian_solve_right_hand_side,
     JacobianPolicy,
     prepare_jacobian,
+    PreparedJacobian,
 )
 from ._preconditioning import AbstractNonlinearSystemTransformation
 from ._types import (
@@ -100,7 +107,7 @@ def _usable_linear_status(status: Any, /) -> Array:
 
 
 def _space_inner(
-    space,
+    space: AbstractVectorSpace | None,
     left: PyTree[Any],
     right: PyTree[Any],
     precision: NonlinearPrecisionPolicy,
@@ -110,7 +117,7 @@ def _space_inner(
 
 
 def _space_norm(
-    space,
+    space: AbstractVectorSpace | None,
     vector: PyTree[Any],
     precision: NonlinearPrecisionPolicy,
     /,
@@ -216,7 +223,7 @@ class RootLineSearch(StrictModule):
         sufficient_decrease: float = 1e-4,
         minimum_rate: float = 1e-12,
         maximum_steps: int = 24,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -267,7 +274,7 @@ class RootTrustRegion(StrictModule):
         shrink: float = 0.25,
         growth: float = 2.0,
         maximum_attempts: int = 12,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -330,9 +337,8 @@ class NewtonForcingPolicy(StrictModule):
         maximum: float = 0.9,
         gamma: float = 0.9,
         exponent: float = 1.5,
-    ):
-        if strategy not in ("constant", "eisenstat-walker"):
-            raise ValueError("Unknown inexact-Newton forcing strategy.")
+    ) -> None:
+        strategy = parse(strategy, NewtonForcingStrategy, "strategy")
         values = tuple(
             float(value) for value in (initial, minimum, maximum, gamma, exponent)
         )
@@ -385,9 +391,8 @@ class JacobianRefreshPolicy(StrictModule):
         *,
         period: int = 1,
         residual_reduction: float = 0.5,
-    ):
-        if strategy not in ("every-step", "periodic", "stagnation", "rejection"):
-            raise ValueError("Unknown Jacobian refresh strategy.")
+    ) -> None:
+        strategy = parse(strategy, JacobianRefreshStrategy, "strategy")
         period_ = int(period)
         reduction = float(residual_reduction)
         if period_ < 1:
@@ -482,6 +487,37 @@ class _TrustResult(StrictModule):
     nonfinite_trials: Array
 
 
+_SearchCarry: TypeAlias = tuple[
+    PyTree[Array],
+    PyTree[Array],
+    Any,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+_TrustCarry: TypeAlias = tuple[
+    PyTree[Array],
+    PyTree[Array],
+    Any,
+    PyTree[Array],
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+_RootCarry: TypeAlias = tuple[PyTree[Array], _RootState, PreparedJacobian]
+_ObservedRootCarry: TypeAlias = tuple[
+    PyTree[Array], _RootState, PreparedJacobian, IterationRuntimeState
+]
+
+
 def _root_line_search(
     problem: NonlinearSystemProblem,
     state: PyTree[Any],
@@ -518,7 +554,7 @@ def _root_line_search(
         jnp.asarray(0, dtype=jnp.int32),
     )
 
-    def body(_, carry):
+    def body(_: int | Array, carry: _SearchCarry) -> _SearchCarry:
         (
             accepted_state,
             accepted_residual,
@@ -532,7 +568,7 @@ def _root_line_search(
             skipped_evaluations,
         ) = carry
 
-        def attempt(__):
+        def attempt(__: None) -> _SearchCarry:
             candidate = _tree_cast_like(
                 tree_add_scaled(state, direction, rate),
                 state,
@@ -605,7 +641,7 @@ def _root_line_search(
 
 
 def _dogleg_step(
-    state_space,
+    state_space: AbstractVectorSpace | None,
     newton_direction: PyTree[Any],
     cauchy_direction: PyTree[Any],
     radius: Array,
@@ -659,7 +695,7 @@ def _root_trust_region(
     auxiliary: Any,
     newton_direction: PyTree[Any],
     cauchy_direction: PyTree[Any],
-    jacobian,
+    jacobian: AbstractLinearOperator,
     radius: Array,
     maximum_evaluations: Array,
     args: Any,
@@ -691,7 +727,7 @@ def _root_trust_region(
         jnp.asarray(0, dtype=jnp.int32),
     )
 
-    def body(_, carry):
+    def body(_: int | Array, carry: _TrustCarry) -> _TrustCarry:
         (
             accepted_state,
             accepted_residual,
@@ -706,7 +742,7 @@ def _root_trust_region(
             skipped_evaluations,
         ) = carry
 
-        def attempt(__):
+        def attempt(__: None) -> _TrustCarry:
             step, boundary = _dogleg_step(
                 problem.state_space,
                 newton_direction,
@@ -823,7 +859,7 @@ def _initial_root_state(
     precision: NonlinearPrecisionPolicy,
     termination: NonlinearTermination,
     /,
-) -> tuple[NonlinearSystemProblem, PyTree[Array], _RootState, Any]:
+) -> tuple[NonlinearSystemProblem, PyTree[Array], _RootState, PreparedJacobian]:
     admit_residual_components(problem, args, implicit=False)
     state = problem.validate_state(initial_state)
     prepared_jacobian = prepare_jacobian(problem, state, jacobian_policy, args)
@@ -842,7 +878,7 @@ def _initial_root_state(
     residual_norm = _space_norm(residual_space, residual, precision)
     linear_operator = _jacobian_solve_operator(prepared_jacobian.operator)
 
-    def prepare_linear():
+    def prepare_linear() -> tuple[PreparedLinearSolve, LinearRefreshState]:
         return prepare_refresh_state(
             LinearSystem(linear_operator),
             _iteration_linear_policy(linear_policy),
@@ -930,10 +966,10 @@ def _root_attempt_handoff(
     residual: PyTree[Any],
     auxiliary: Any,
     previous_run: _RootState,
-    prepared_jacobian: Any,
+    prepared_jacobian: PreparedJacobian,
     args: Any,
     /,
-):
+) -> tuple[NonlinearSystemProblem, PyTree[Array], _RootState, PreparedJacobian]:
     """Start a Newton attempt from retained physical and derivative evidence."""
     if not isinstance(method, (NewtonKrylov, NewtonTrustRegion)):
         raise TypeError("method must be NewtonKrylov or NewtonTrustRegion.")
@@ -1034,14 +1070,14 @@ def _root_attempt_handoff(
 def _maybe_refresh_jacobian(
     problem: NonlinearSystemProblem,
     state: PyTree[Any],
-    current: Any,
+    current: PreparedJacobian,
     run: _RootState,
     jacobian_policy: JacobianPolicy,
     refresh_policy: JacobianRefreshPolicy,
     termination: NonlinearTermination,
     args: Any,
     /,
-) -> tuple[Any, Array]:
+) -> tuple[PreparedJacobian, Array]:
     requested = refresh_policy.should_refresh(
         run.jacobian_age,
         run.residual_norm,
@@ -1053,7 +1089,7 @@ def _maybe_refresh_jacobian(
     refresh = requested & (remaining > 1)
     current_dynamic, current_static = eqx.partition(current, eqx.is_array)
 
-    def prepare_dynamic(_):
+    def prepare_dynamic(_: None) -> PreparedJacobian:
         prepared = prepare_jacobian(problem, state, jacobian_policy, args)
         return eqx.partition(prepared, eqx.is_array)[0]
 
@@ -1069,7 +1105,7 @@ def _solve_newton_linear(
     run: _RootState,
     termination: NonlinearTermination,
     /,
-):
+) -> tuple[LinearSolveResult, RecyclingState | None]:
     control = _linear_control(prepared, run, termination)
     if run.recycling is None:
         return (
@@ -1118,8 +1154,8 @@ def _condition(
     termination: NonlinearTermination,
     iteration_limit: Array | None = None,
     /,
-):
-    def condition(carry):
+) -> Callable[[_RootCarry], Array]:
+    def condition(carry: _RootCarry) -> Array:
         state = carry[1]
         within_evaluations = (
             jnp.asarray(True)
@@ -1209,13 +1245,13 @@ def _root_iteration_metrics(run: _RootState, /) -> NonlinearDiagnostics:
 
 def _root_iteration_record(
     run: _RootState,
-    phase,
+    phase: IterationPhase | ArrayLike,
     /,
     *,
-    active=True,
-    committed=False,
-    terminal=False,
-    status=None,
+    active: ArrayLike = True,
+    committed: ArrayLike = False,
+    terminal: ArrayLike = False,
+    status: ArrayLike | None = None,
 ) -> IterationRecord:
     return IterationRecord(
         IterationCoordinates(
@@ -1258,14 +1294,14 @@ def _prepare_root_iteration(
 
 
 def _run_root_iteration_loop(
-    body,
-    condition,
-    carry,
-    static_run,
+    body: Callable[[_RootCarry], _RootCarry],
+    condition: Callable[[_RootCarry], Array],
+    carry: _RootCarry,
+    static_run: _RootState,
     iteration: IterationPlan | None,
     iteration_state: IterationRuntimeState | None,
     /,
-):
+) -> tuple[PyTree[Array], _RootState, PreparedJacobian, IterationRuntimeState | None]:
     if iteration is None:
         state, dynamic_run, dynamic_jacobian = jax.lax.while_loop(
             condition,
@@ -1275,10 +1311,10 @@ def _run_root_iteration_loop(
         return state, dynamic_run, dynamic_jacobian, None
     assert iteration_state is not None
 
-    def observed_condition(observed_carry):
+    def observed_condition(observed_carry: _ObservedRootCarry) -> Array:
         return condition(observed_carry[:3]) & ~observed_carry[3].stop_requested
 
-    def observed_body(observed_carry):
+    def observed_body(observed_carry: _ObservedRootCarry) -> _ObservedRootCarry:
         previous_run = eqx.combine(observed_carry[1], static_run)
         next_carry = body(observed_carry[:3])
         next_run = eqx.combine(next_carry[1], static_run)
@@ -1315,10 +1351,10 @@ def _run_root_iteration_loop(
 def _stopped_root_status(
     run: _RootState,
     termination: NonlinearTermination,
-    status,
+    status: Array,
     iteration_state: IterationRuntimeState | None,
     /,
-):
+) -> Array:
     if iteration_state is None:
         return status
     certified = run.residual_norm <= termination.residual_threshold(
@@ -1572,7 +1608,7 @@ class NewtonKrylov(AbstractNonlinearMethod):
         forcing_policy: NewtonForcingPolicy | None = None,
         jacobian_refresh: JacobianRefreshPolicy | None = None,
         line_search: RootLineSearch | None = None,
-    ):
+    ) -> None:
         self.jacobian_policy = (
             JacobianPolicy() if jacobian_policy is None else jacobian_policy
         )
@@ -1620,7 +1656,9 @@ class NewtonKrylov(AbstractNonlinearMethod):
         args: Any = None,
         precision: NonlinearPrecisionPolicy | None = None,
         iteration: IterationPlan | None = None,
-        _prepared_start: tuple[NonlinearSystemProblem, PyTree[Array], _RootState, Any]
+        _prepared_start: tuple[
+            NonlinearSystemProblem, PyTree[Array], _RootState, PreparedJacobian
+        ]
         | None = None,
         _iteration_limit: Array | None = None,
         _return_internal: bool = False,
@@ -1675,7 +1713,7 @@ class NewtonKrylov(AbstractNonlinearMethod):
         dynamic_run, static_run = eqx.partition(run, eqx.is_array)
         dynamic_jacobian, static_jacobian = eqx.partition(prepared_jacobian, eqx.is_array)
 
-        def body(carry):
+        def body(carry: _RootCarry) -> _RootCarry:
             current, dynamic, dynamic_derivative = carry
             current_run = eqx.combine(dynamic, static_run)
             carried_jacobian = eqx.combine(dynamic_derivative, static_jacobian)
@@ -1699,7 +1737,7 @@ class NewtonKrylov(AbstractNonlinearMethod):
                 ),
             ).astype(jnp.int32)
 
-            def terminal(_):
+            def terminal(_: None) -> _RootCarry:
                 updated = eqx.tree_at(
                     lambda item: item.status,
                     current_run,
@@ -1711,7 +1749,7 @@ class NewtonKrylov(AbstractNonlinearMethod):
                     dynamic_derivative,
                 )
 
-            def step(_):
+            def step(_: None) -> _RootCarry:
                 selected_jacobian, refreshed = _maybe_refresh_jacobian(
                     problem,
                     current,
@@ -1773,7 +1811,7 @@ class NewtonKrylov(AbstractNonlinearMethod):
                 )
                 search_budget = _remaining_evaluations(termination, used_before_search)
 
-                def search_direction(__):
+                def search_direction(__: None) -> _SearchResult:
                     return _root_line_search(
                         problem,
                         current,
@@ -1787,7 +1825,7 @@ class NewtonKrylov(AbstractNonlinearMethod):
                         precision_,
                     )
 
-                def failed_direction(__):
+                def failed_direction(__: None) -> _SearchResult:
                     return _SearchResult(
                         state=current,
                         residual=current_residual,
@@ -2033,7 +2071,7 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
         forcing_policy: NewtonForcingPolicy | None = None,
         jacobian_refresh: JacobianRefreshPolicy | None = None,
         trust_region: RootTrustRegion | None = None,
-    ):
+    ) -> None:
         self.jacobian_policy = (
             JacobianPolicy() if jacobian_policy is None else jacobian_policy
         )
@@ -2136,7 +2174,7 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
         dynamic_run, static_run = eqx.partition(run, eqx.is_array)
         dynamic_jacobian, static_jacobian = eqx.partition(prepared_jacobian, eqx.is_array)
 
-        def body(carry):
+        def body(carry: _RootCarry) -> _RootCarry:
             current, dynamic, dynamic_derivative = carry
             current_run = eqx.combine(dynamic, static_run)
             carried_jacobian = eqx.combine(dynamic_derivative, static_jacobian)
@@ -2160,7 +2198,7 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
                 ),
             ).astype(jnp.int32)
 
-            def terminal(_):
+            def terminal(_: None) -> _RootCarry:
                 updated = eqx.tree_at(
                     lambda item: item.status,
                     current_run,
@@ -2172,7 +2210,7 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
                     dynamic_derivative,
                 )
 
-            def step(_):
+            def step(_: None) -> _RootCarry:
                 selected_jacobian, refreshed = _maybe_refresh_jacobian(
                     problem,
                     current,
@@ -2255,7 +2293,7 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
                 )
                 search_budget = _remaining_evaluations(termination, used_before_search)
 
-                def search_direction(__):
+                def search_direction(__: None) -> _TrustResult:
                     return _root_trust_region(
                         problem,
                         current,
@@ -2271,7 +2309,7 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
                         precision_,
                     )
 
-                def failed_direction(__):
+                def failed_direction(__: None) -> _TrustResult:
                     return _TrustResult(
                         state=current,
                         residual=current_residual,

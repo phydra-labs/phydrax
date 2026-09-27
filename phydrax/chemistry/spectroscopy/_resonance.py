@@ -11,7 +11,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -41,7 +42,7 @@ class ResonanceRamanResult(StrictModule, NonTrainableState):
         successful: ArrayLike,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         polarizability = jnp.asarray(dynamic_polarizability)
         derivative = jnp.asarray(polarizability_derivatives, dtype=polarizability.dtype)
         isotropic = jnp.asarray(isotropic_invariants, dtype=polarizability.real.dtype)
@@ -106,7 +107,7 @@ class ResonanceRamanPlan(StrictModule, NonTrainableState):
         /,
         *,
         include_antiresonant: bool = True,
-    ):
+    ) -> None:
         excitation = jnp.asarray(excitation_energies)
         dipoles = jnp.asarray(transition_dipoles, dtype=excitation.dtype)
         dipole_derivatives = jnp.asarray(

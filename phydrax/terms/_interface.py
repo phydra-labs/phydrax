@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Literal
 
 from phydrax.domain import DomainFunction
@@ -16,7 +16,7 @@ from phydrax.operators.differential import (
 from ..conditions._base import AbstractResidualCondition
 from ..integration import IntegrationSource
 from ._integral_functional import IntegralFunctional
-from ._residual import _squared_frobenius_field
+from ._residual import _squared_frobenius_function
 
 
 def implicit_interface_penalty(
@@ -39,7 +39,7 @@ def implicit_interface_penalty(
     if not name:
         raise ValueError("level_set_field must be non-empty.")
 
-    def integrand(functions) -> DomainFunction:
+    def integrand(functions: Mapping[str, DomainFunction]) -> DomainFunction:
         if name not in functions:
             raise KeyError(f"Missing level-set field {name!r}.")
         residual = condition.residual(functions)
@@ -49,7 +49,7 @@ def implicit_interface_penalty(
             var=spatial_var,
             mode=mode,
         )
-        return density * _squared_frobenius_field(residual)
+        return density * _squared_frobenius_function(residual)
 
     fields = tuple(dict.fromkeys(condition.fields + (name,)))
     return IntegralFunctional(
@@ -82,7 +82,7 @@ def implicit_phase_penalty(
     if phase not in ("inside", "outside"):
         raise ValueError("phase must be 'inside' or 'outside'.")
 
-    def integrand(functions) -> DomainFunction:
+    def integrand(functions: Mapping[str, DomainFunction]) -> DomainFunction:
         if name not in functions:
             raise KeyError(f"Missing level-set field {name!r}.")
         residual = condition.residual(functions)
@@ -91,7 +91,7 @@ def implicit_phase_penalty(
             width=width,
             phase=phase,
         )
-        return indicator * _squared_frobenius_field(residual)
+        return indicator * _squared_frobenius_function(residual)
 
     fields = tuple(dict.fromkeys(condition.fields + (name,)))
     return IntegralFunctional(

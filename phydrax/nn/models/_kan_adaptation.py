@@ -5,22 +5,25 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Literal, overload
+from typing import Literal, overload, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._interpolation import (
     BSplineGrid,
     BSplineGridBank,
     BSplineGridTransfer,
     TrainableBSplineGrid,
+    TrainableBSplineGridBank,
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from .._utils import _get_size
 from ._kan import KAN, KANLayer
 from ._kan_basis import BSplineEdgeBasis
@@ -28,8 +31,8 @@ from ._separable_kan import SeparableKAN
 from .wrappers._separable_wrappers import Separable
 
 
-QuantileMethod = Literal["linear", "nearest", "midpoint"]
-DegenerateGridPolicy = Literal["retain", "uniform"]
+QuantileMethod: TypeAlias = Literal["linear", "nearest", "midpoint"]
+DegenerateGridPolicy: TypeAlias = Literal["retain", "uniform"]
 
 
 class KANGridAdaptationPlan(StrictModule, NonTrainableState):
@@ -49,17 +52,17 @@ class KANGridAdaptationPlan(StrictModule, NonTrainableState):
         quantile_method: QuantileMethod = "linear",
         degenerate_policy: DegenerateGridPolicy = "retain",
         per_input: bool = False,
-    ):
+    ) -> None:
         blend_ = float(blend)
         minimum_span_ = float(minimum_span)
         if not isfinite(blend_) or not 0.0 <= blend_ <= 1.0:
             raise ValueError("adaptation blend must lie between zero and one.")
         if not isfinite(minimum_span_) or minimum_span_ <= 0.0:
             raise ValueError("adaptation minimum_span must be finite and positive.")
-        if quantile_method not in ("linear", "nearest", "midpoint"):
-            raise ValueError(f"Unknown quantile method: {quantile_method!r}.")
-        if degenerate_policy not in ("retain", "uniform"):
-            raise ValueError(f"Unknown degenerate-grid policy: {degenerate_policy!r}.")
+        quantile_method = parse(quantile_method, QuantileMethod, "quantile_method")
+        degenerate_policy = parse(
+            degenerate_policy, DegenerateGridPolicy, "degenerate_policy"
+        )
         self.blend = blend_
         self.minimum_span = minimum_span_
         self.quantile_method = quantile_method
@@ -94,7 +97,7 @@ class KANGridAdaptationReport(StrictModule, NonTrainableState):
         skipped_paths: tuple[tuple[int, int], ...],
         degenerate_paths: tuple[tuple[int, int], ...],
         degenerate_grid_paths: tuple[tuple[int, int, int], ...],
-    ):
+    ) -> None:
         self.paths = paths
         self.input_indices = input_indices
         self.old_grids = old_grids
@@ -108,7 +111,7 @@ class KANGridAdaptationReport(StrictModule, NonTrainableState):
 
 
 class _AdaptationRecords:
-    def __init__(self):
+    def __init__(self) -> None:
         self.paths: list[tuple[int, int]] = []
         self.input_indices: list[int | None] = []
         self.old_grids: list[BSplineGrid] = []
@@ -244,7 +247,9 @@ def _adapt_layer(
     if coefficients is None:
         raise RuntimeError("B-spline KAN layer is missing its dense coefficients.")
 
-    if isinstance(layer.edge_basis.grid, TrainableBSplineGrid):
+    if isinstance(
+        layer.edge_basis.grid, (TrainableBSplineGrid, TrainableBSplineGridBank)
+    ):
         raise ValueError(
             "Explicit grid adaptation only supports fixed B-spline grids; "
             "trainable knot grids must be optimized through solver phases."

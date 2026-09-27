@@ -1,6 +1,7 @@
 import itertools
 import os
 import shutil
+from typing import Any
 
 import numpy as np
 import pytest
@@ -28,12 +29,12 @@ requires_worker = pytest.mark.skipif(
 
 
 @pytest.fixture(scope="module")
-def provider():
+def provider() -> Any:
     with MmgProvider() as value:
         yield value
 
 
-def _grid(dimension, count, *, drop=None):
+def _grid(dimension: Any, count: Any, *, drop: Any = None) -> Any:
     """Structured unit square (two triangles per square) or cube (Kuhn tetrahedra)."""
     axes = np.linspace(0.0, 1.0, count + 1)
     points = np.stack(np.meshgrid(*([axes] * dimension), indexing="ij"), -1).reshape(
@@ -60,7 +61,7 @@ def _grid(dimension, count, *, drop=None):
     return points, cells
 
 
-def _mesh(points, cells, **identities):
+def _mesh(points: Any, cells: Any, **identities: Any) -> Any:
     constructor = (
         phx.discretization.CellMesh.from_tetrahedra
         if cells.shape[1] == 4
@@ -69,7 +70,7 @@ def _mesh(points, cells, **identities):
     return constructor(points, cells, **identities)
 
 
-def _scope(mesh, dimension, mask):
+def _scope(mesh: Any, dimension: Any, mask: Any) -> Any:
     entities = mesh.entity_set(dimension)
     return phx.meshing.MeshingScope(
         mesh.mesh_id,
@@ -81,14 +82,14 @@ def _scope(mesh, dimension, mask):
     )
 
 
-def _facets(mesh):
+def _facets(mesh: Any) -> Any:
     connectivity = mesh.connectivity
     return np.asarray(
         connectivity.faces if mesh.topological_dimension == 3 else connectivity.edges
     )
 
 
-def _cell_corners(mesh, cell_ids=None):
+def _cell_corners(mesh: Any, cell_ids: Any = None) -> Any:
     points = np.asarray(mesh.coordinates)
     return np.concatenate(
         [
@@ -104,7 +105,7 @@ def _cell_corners(mesh, cell_ids=None):
     )
 
 
-def _cell_measures(mesh, cell_ids=None):
+def _cell_measures(mesh: Any, cell_ids: Any = None) -> Any:
     corners = _cell_corners(mesh, cell_ids)
     edges = corners[:, 1:] - corners[:, :1]
     if corners.shape[1] == 4:
@@ -114,13 +115,13 @@ def _cell_measures(mesh, cell_ids=None):
     return np.linalg.norm(np.cross(edges[:, 0], edges[:, 1]), axis=1) / 2
 
 
-def _vertex_attribute(provider, mesh, name, values):
+def _vertex_attribute(provider: Any, mesh: Any, name: Any, values: Any) -> Any:
     return phx.meshing.MeshAttribute(
         name, phx.meshing.MeshAttributeRole.USER, provider.vertex_scope(mesh), values
     )
 
 
-def _uniform_metric(provider, mesh, size):
+def _uniform_metric(provider: Any, mesh: Any, size: Any) -> Any:
     dimension = mesh.ambient_dimension
     return phx.meshing.MeshMetricField(
         provider.vertex_scope(mesh),
@@ -130,7 +131,7 @@ def _uniform_metric(provider, mesh, size):
     )
 
 
-def _two_regions(dimension, count):
+def _two_regions(dimension: Any, count: Any) -> Any:
     """Unit square/cube split at x = 0.5 with inlet (x = 0) and outlet (x = 1) patches."""
     points, cells = _grid(dimension, count)
     mesh = _mesh(points, cells)
@@ -151,17 +152,19 @@ def _two_regions(dimension, count):
     return phx.meshing.certify_cell_mesh(mesh, CONTRACT, zones=zones, patches=patches)
 
 
-def _by_name(items, name):
+def _by_name(items: Any, name: Any) -> Any:
     return next(item for item in items if item.name == name)
 
 
-def _members(mesh, dimension, scope):
+def _members(mesh: Any, dimension: Any, scope: Any) -> Any:
     return np.isin(np.asarray(mesh.entity_set(dimension).entity_ids), scope.entity_ids)
 
 
 @requires_worker
 @pytest.mark.parametrize("kind", ("planar", "surface", "volume"))
-def test_mmg_routes_preserve_domain_measure_without_inventing_ids(provider, kind):
+def test_mmg_routes_preserve_domain_measure_without_inventing_ids(
+    provider: Any, kind: Any
+) -> None:
     if kind == "planar":
         mesh = phx.discretization.CellMesh.from_triangles(
             np.array(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
@@ -211,7 +214,7 @@ def test_mmg_routes_preserve_domain_measure_without_inventing_ids(provider, kind
 
 
 @requires_worker
-def test_mmg_honors_a_rotated_anisotropic_tensor_metric(provider):
+def test_mmg_honors_a_rotated_anisotropic_tensor_metric(provider: Any) -> None:
     source = phx.meshing.certify_cell_mesh(
         phx.discretization.CellMesh.from_triangles(
             np.array(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
@@ -242,7 +245,9 @@ def test_mmg_honors_a_rotated_anisotropic_tensor_metric(provider):
 
 
 @requires_worker
-def test_mmg_surface_tensor_adaptation_returns_an_ambient_spd_metric(provider):
+def test_mmg_surface_tensor_adaptation_returns_an_ambient_spd_metric(
+    provider: Any,
+) -> None:
     # Tetrahedron edges are ridges, where Mmg stores metrics in a tangent frame.
     source = phx.meshing.certify_cell_mesh(
         phx.discretization.CellMesh.from_triangles(
@@ -272,7 +277,7 @@ def test_mmg_surface_tensor_adaptation_returns_an_ambient_spd_metric(provider):
 
 
 @requires_worker
-def test_mmg_binds_metric_rows_by_sorted_vertex_ids(provider):
+def test_mmg_binds_metric_rows_by_sorted_vertex_ids(provider: Any) -> None:
     mesh = phx.discretization.CellMesh.from_triangles(
         np.array(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
         np.array(((0, 1, 2), (0, 2, 3))),
@@ -293,7 +298,7 @@ def test_mmg_binds_metric_rows_by_sorted_vertex_ids(provider):
     assert near_origin > 4 * max(near_opposite, 1)
 
 
-def test_mmg_refuses_a_metric_from_another_numeric_mesh_revision():
+def test_mmg_refuses_a_metric_from_another_numeric_mesh_revision() -> None:
     mesh = phx.discretization.CellMesh.from_triangles(
         np.array(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
         np.array(((0, 1, 2),)),
@@ -315,7 +320,7 @@ def test_mmg_refuses_a_metric_from_another_numeric_mesh_revision():
 
 
 @requires_worker
-def test_mmg_reuses_one_worker_session_across_adaptations():
+def test_mmg_reuses_one_worker_session_across_adaptations() -> None:
     source = _two_regions(2, 2)
     with MmgProvider() as provider:
         metric = _uniform_metric(provider, source.mesh, 0.2)
@@ -330,7 +335,7 @@ def test_mmg_reuses_one_worker_session_across_adaptations():
 
 
 @requires_worker
-def test_mmg_timeout_refuses_and_relaunches_a_fresh_session():
+def test_mmg_timeout_refuses_and_relaunches_a_fresh_session() -> None:
     source = phx.meshing.certify_cell_mesh(_mesh(*_grid(3, 2)), CONTRACT)
     with MmgProvider() as provider:
         with pytest.raises(Failure) as caught:
@@ -349,7 +354,9 @@ def test_mmg_timeout_refuses_and_relaunches_a_fresh_session():
 
 @requires_worker
 @pytest.mark.parametrize("dimension", (2, 3))
-def test_mmg_retains_region_zones_and_boundary_patches(provider, dimension):
+def test_mmg_retains_region_zones_and_boundary_patches(
+    provider: Any, dimension: Any
+) -> None:
     source = _two_regions(dimension, 2)
     size = 0.3 if dimension == 3 else 0.1
     result = provider.adapt(source, metric=_uniform_metric(provider, source.mesh, size))
@@ -374,7 +381,9 @@ def test_mmg_retains_region_zones_and_boundary_patches(provider, dimension):
 
 @requires_worker
 @pytest.mark.parametrize("dimension", (2, 3))
-def test_mmg_interpolates_linear_fields_with_transfer_evidence(provider, dimension):
+def test_mmg_interpolates_linear_fields_with_transfer_evidence(
+    provider: Any, dimension: Any
+) -> None:
     source = phx.meshing.certify_cell_mesh(_mesh(*_grid(dimension, 2)), CONTRACT)
     gradient = np.arange(1.0, dimension + 1.0)
     points = np.asarray(source.mesh.coordinates)
@@ -404,7 +413,7 @@ def test_mmg_interpolates_linear_fields_with_transfer_evidence(provider, dimensi
 
 
 @requires_worker
-def test_mmg_level_set_discretizes_the_contour_and_keeps_regions(provider):
+def test_mmg_level_set_discretizes_the_contour_and_keeps_regions(provider: Any) -> None:
     source = _two_regions(2, 4)
     points = np.asarray(source.mesh.coordinates)
     # A P1-exact contour from (0, 0.3) to (1, 0.1) crossing both regions.
@@ -446,7 +455,7 @@ def test_mmg_level_set_discretizes_the_contour_and_keeps_regions(provider):
 
 
 @requires_worker
-def test_mmg_keeps_required_vertices(provider):
+def test_mmg_keeps_required_vertices(provider: Any) -> None:
     source = phx.meshing.certify_cell_mesh(_mesh(*_grid(2, 4)), CONTRACT)
     points = np.asarray(source.mesh.coordinates)
     required = np.all(points == (0.25, 0.75), axis=1) | np.all(
@@ -465,7 +474,7 @@ def test_mmg_keeps_required_vertices(provider):
     assert result.references.retained_required_vertices == 2
 
 
-def _holed_square(provider):
+def _holed_square(provider: Any) -> Any:
     """Unit square with a centered square hole [0.4, 0.6]^2 as the moving boundary."""
     points, cells = _grid(
         2, 10, drop=lambda origin: np.all((origin >= 0.35) & (origin < 0.55), axis=1)
@@ -484,12 +493,14 @@ def _holed_square(provider):
     return source, motion
 
 
-def _lagrangian_available(provider):
+def _lagrangian_available(provider: Any) -> Any:
     return provider.worker.identity.reported["lagrangian"]["mmg2d"]
 
 
 @requires_worker
-def test_mmg_lagrangian_motion_moves_the_boundary_and_carries_fields(provider):
+def test_mmg_lagrangian_motion_moves_the_boundary_and_carries_fields(
+    provider: Any,
+) -> None:
     if not _lagrangian_available(provider):
         pytest.skip("Mmg was built without USE_ELAS")
     source, motion = _holed_square(provider)
@@ -512,7 +523,7 @@ def test_mmg_lagrangian_motion_moves_the_boundary_and_carries_fields(provider):
 
 
 @requires_worker
-def test_mmg_lagrangian_motion_is_refused_without_elas(provider):
+def test_mmg_lagrangian_motion_is_refused_without_elas(provider: Any) -> None:
     if _lagrangian_available(provider):
         pytest.skip("Mmg was built with USE_ELAS")
     source, motion = _holed_square(provider)

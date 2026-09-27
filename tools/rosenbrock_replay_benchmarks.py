@@ -6,6 +6,7 @@ import argparse
 import json
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -20,7 +21,7 @@ from benchmarks._runtime import (
 )
 
 
-def _compiler_record(compiled):
+def _compiler_record(compiled: Any) -> Any:
     cost = compiled.cost_analysis()
     memory = compiled.memory_analysis()
     unavailable = (
@@ -38,17 +39,17 @@ def _compiler_record(compiled):
     )
 
 
-def _problem(kind: str, parameter):
+def _problem(kind: str, parameter: Any) -> Any:
     if kind == "scaled_decay":
 
-        def drift(time, state, rate):
+        def drift(time: Any, state: Any, rate: Any) -> Any:
             del time
             return -rate * state
 
         initial = jnp.asarray((1.0, 1.0e6))
     elif kind == "van_der_pol":
 
-        def drift(time, state, rate):
+        def drift(time: Any, state: Any, rate: Any) -> Any:
             del time
             return jnp.stack(
                 (
@@ -70,7 +71,7 @@ def _problem(kind: str, parameter):
     )
 
 
-def _benchmark_case(kind: str, parameter: float, repeats: int, warmup: int):
+def _benchmark_case(kind: str, parameter: float, repeats: int, warmup: int) -> Any:
     base = jnp.asarray(parameter)
     grid = phx.dynamics.TimeGrid(
         jnp.asarray((0.0, 0.5, 1.0)),
@@ -148,7 +149,9 @@ def _benchmark_case(kind: str, parameter: float, repeats: int, warmup: int):
     replay_value, replay_gradient = replay_compiled(base)
     value_difference = float(jnp.abs(fresh_value - replay_value))
     gradient_difference = float(jnp.abs(fresh_gradient - replay_gradient))
+    # ty: ignore[unsupported-operator]
     saved_seconds = fresh_timing.median_seconds - replay_timing.median_seconds
+    # ty: ignore[unsupported-operator]
     setup_seconds = record_timing.median_seconds + schedule_timing.median_seconds
     break_even = None if saved_seconds <= 0.0 else setup_seconds / saved_seconds
     replay_adequacy = phx.solver.solve_scheduled_rosenbrock(
@@ -160,6 +163,7 @@ def _benchmark_case(kind: str, parameter: float, repeats: int, warmup: int):
         and bool(replay_adequacy.completed)
         and value_difference < 1e-6
         and gradient_difference < 1e-5
+        # ty: ignore[unsupported-operator]
         and replay_timing.median_seconds < fresh_timing.median_seconds
         and break_even is not None
         and break_even <= 8.0
@@ -169,8 +173,10 @@ def _benchmark_case(kind: str, parameter: float, repeats: int, warmup: int):
         "parameter": parameter,
         "accepted_steps": int(source.stats["accepted_steps"]),
         "attempts": int(source.stats["attempts"]),
+        # ty: ignore[unresolved-attribute]
         "capacity": prepared.adaptive.maximum_accepted_steps,
         "capacity_utilization": float(
+            # ty: ignore[unresolved-attribute]
             source.stats["accepted_steps"] / prepared.adaptive.maximum_accepted_steps
         ),
         "record": record_timing.to_dict(),
@@ -201,7 +207,7 @@ def _benchmark_case(kind: str, parameter: float, repeats: int, warmup: int):
     }
 
 
-def benchmark(repeats: int, warmup: int):
+def benchmark(repeats: int, warmup: int) -> Any:
     cases = (
         _benchmark_case("scaled_decay", 2.0, repeats, warmup),
         _benchmark_case("van_der_pol", 10.0, repeats, warmup),
@@ -213,7 +219,7 @@ def benchmark(repeats: int, warmup: int):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repeats", type=int, default=10)
     parser.add_argument("--warmup", type=int, default=2)

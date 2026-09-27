@@ -9,14 +9,19 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ._advanced import PedrizzettiRelaxationPlan3D, ReformulatedVPMPlan3D
+from ._advanced import (
+    PedrizzettiRelaxationPlan3D,
+    ReformulatedVPMPlan3D,
+    VortexRelaxationResult3D,
+)
 from ._source import VortexSourceState
 
 
@@ -52,7 +57,7 @@ class ClassicVPMFormulation(AbstractVortexFormulation):
     requires_dynamic_core: bool = eqx.field(static=True)
     formulation_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /):
+    def __init__(self, dimension: int, /) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (2, 3):
             raise ValueError("Classic VPM dimension must be 2 or 3.")
@@ -104,7 +109,7 @@ class ReformulatedVPMFormulation(AbstractVortexFormulation):
     requires_dynamic_core: bool = eqx.field(static=True)
     formulation_id: str = eqx.field(static=True)
 
-    def __init__(self, f: float = 0.0, g: float = 0.2, /):
+    def __init__(self, f: float = 0.0, g: float = 0.2, /) -> None:
         plan = ReformulatedVPMPlan3D(f, g)
         self.plan = plan
         self.dimension = 3
@@ -153,7 +158,9 @@ class VortexRelaxationSchedule(StrictModule, NonTrainableState):
     every_steps: int = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self, relaxation: PedrizzettiRelaxationPlan3D, every_steps: int, /):
+    def __init__(
+        self, relaxation: PedrizzettiRelaxationPlan3D, every_steps: int, /
+    ) -> None:
         if (
             not isinstance(relaxation, PedrizzettiRelaxationPlan3D)
             or int(every_steps) <= 0
@@ -175,7 +182,7 @@ class VortexRelaxationSchedule(StrictModule, NonTrainableState):
         strength: ArrayLike,
         represented_vorticity: ArrayLike,
         /,
-    ):
+    ) -> tuple[Array, Array, VortexRelaxationResult3D]:
         index = jnp.asarray(step_index)
         candidate = self.relaxation.apply(strength, represented_vorticity)
         selected = (index % self.every_steps) == 0
@@ -206,7 +213,7 @@ class VortexLESPlan(StrictModule, NonTrainableState):
         *,
         allow_backscatter: bool = False,
         filter_id: str = "vortex-core-filter",
-    ):
+    ) -> None:
         mode_ = str(mode)
         coefficient_ = float(coefficient)
         if (
@@ -290,7 +297,7 @@ class BaroclinicVortexFormulation(StrictModule, NonTrainableState):
     gravity: Array
     formulation_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /, *, gravity: ArrayLike | None = None):
+    def __init__(self, dimension: int, /, *, gravity: ArrayLike | None = None) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (2, 3):
             raise ValueError("Baroclinic formulation dimension must be 2 or 3.")

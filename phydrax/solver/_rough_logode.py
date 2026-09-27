@@ -7,14 +7,15 @@ from __future__ import annotations
 import hashlib
 import types
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any
+from typing import Any, TypeAlias
 
 import diffrax as dfx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._strict import StrictModule
 
@@ -25,6 +26,7 @@ from ..linalg import (
     MatrixFunctionPolicy,
 )
 from ..linalg.krylov import KrylovBreakdownStatus
+from ..metrix import LocalRetraction
 from ..stochastic import AbstractRoughControl, LogSignatureControl, PrimitiveBasis
 from ._rough import (
     _fractional_hurst,
@@ -38,6 +40,10 @@ _LINEAR_LOGODE_SUCCESS = 0
 _LINEAR_LOGODE_UNCONVERGED = 1
 _LINEAR_LOGODE_BREAKDOWN = 2
 _LINEAR_LOGODE_NONFINITE = 3
+
+_LogODEIntervalStats: TypeAlias = tuple[Array, Array, Array]
+_LogODEScanItem: TypeAlias = tuple[Array, Array, Array]
+_LogODEScanOutput: TypeAlias = tuple[Array, Array, _LogODEIntervalStats]
 
 
 def _class_identifier(value: Any, /) -> str:
@@ -119,7 +125,7 @@ def _validate_log_control(
     return control
 
 
-def _local_field(retraction, local: Array, tangent: Array, /) -> Array:
+def _local_field(retraction: LocalRetraction, local: Array, tangent: Array, /) -> Array:
     point = retraction(local)
     return retraction.inverse_jvp(point, tangent)
 
@@ -127,7 +133,7 @@ def _local_field(retraction, local: Array, tangent: Array, /) -> Array:
 def _automatic_log_field(
     problem: RoughDifferentialProblem,
     control: LogSignatureControl,
-    retraction,
+    retraction: LocalRetraction,
     left_time: Array,
     coordinates: Array,
     coefficients: Array,
@@ -136,7 +142,7 @@ def _automatic_log_field(
     local_size = int(np.prod(problem.local_shape))
     if control.joint_time:
 
-        def augmented_fields(_time, augmented, _args):
+        def augmented_fields(_time: Array, augmented: Array, _args: object) -> Array:
             physical_time = augmented[0]
             local = augmented[1:].reshape(problem.local_shape)
             state = retraction(local)
@@ -170,7 +176,7 @@ def _automatic_log_field(
         )
     else:
 
-        def local_fields(_time, local_flat, _args):
+        def local_fields(_time: Array, local_flat: Array, _args: object) -> Array:
             local = local_flat.reshape(problem.local_shape)
             state = retraction(local)
             ambient = jnp.asarray(problem.vector_fields(left_time, state, problem.args))
@@ -194,7 +200,7 @@ def _automatic_log_field(
 def _explicit_log_field(
     problem: RoughDifferentialProblem,
     control: LogSignatureControl,
-    retraction,
+    retraction: LocalRetraction,
     left_time: Array,
     coordinates: Array,
     coefficients: Array,
@@ -256,7 +262,7 @@ class LogODE(AbstractRoughSolver):
         dt0: float | None = None,
         max_steps: int = 4096,
         explicit_fields: LiftedRoughVectorFields | None = None,
-    ):
+    ) -> None:
         if int(max_steps) <= 0:
             raise ValueError("max_steps must be positive.")
         if explicit_fields is not None and not callable(explicit_fields):
@@ -289,8 +295,12 @@ class LogODE(AbstractRoughSolver):
         log_control = _validate_log_control(problem, control)
         local_size = int(np.prod(problem.local_shape))
 
-        def one_path(path_coefficients):
-            def advance(state, item):
+        def one_path(
+            path_coefficients: Array,
+        ) -> tuple[Array, Array, _LogODEIntervalStats]:
+            def advance(
+                state: Array, item: _LogODEScanItem
+            ) -> tuple[Array, _LogODEScanOutput]:
                 left_time, right_time, coefficients = item
                 retraction = problem.geometry.local_retraction(state)
                 local_zero = jnp.zeros(problem.local_shape, dtype=state.dtype).reshape(
@@ -303,7 +313,9 @@ class LogODE(AbstractRoughSolver):
                 else:
                     initial_coordinates = local_zero
 
-                def vector_field(_artificial_time, coordinates, _args):
+                def vector_field(
+                    _artificial_time: object, coordinates: Array, _args: object
+                ) -> Array:
                     if self.explicit_fields is None:
                         return _automatic_log_field(
                             problem,
@@ -456,7 +468,7 @@ class LinearLogODE(AbstractRoughSolver):
         /,
         *,
         matrix_function_policy: MatrixFunctionPolicy | None = None,
-    ):
+    ) -> None:
         resolved = tuple(_operator(operator) for operator in operators)
         if not resolved:
             raise ValueError("operators must be non-empty.")
@@ -509,8 +521,10 @@ class LinearLogODE(AbstractRoughSolver):
                 raise ValueError("Each linear operator must preserve the state shape.")
         lifted = _lift_linear_operators(self.operators, log_control.primitive_basis)
 
-        def one_path(path_coefficients):
-            def advance(state, coefficients):
+        def one_path(path_coefficients: Array) -> tuple[Array, Array]:
+            def advance(
+                state: Array, coefficients: Array
+            ) -> tuple[Array, tuple[Array, Array]]:
                 combined = _WeightedOperator(lifted, coefficients)
                 space = ArraySpace(state.shape, dtype=state.dtype)
                 canonical_operator = FunctionLinearOperator(

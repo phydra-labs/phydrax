@@ -11,6 +11,7 @@ comparison to atmospheric observations or a spectral reference radiation model.
 
 import argparse
 import json
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -26,7 +27,7 @@ from phydrax.applications.atmosphere._radiation import (
 SIGMA = 5.670374419e-8
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--layers", type=int, default=12)
     args = parser.parse_args()
@@ -48,7 +49,7 @@ def main():
     ice = 0.015 * jnp.exp(-(((z - 0.3) / 0.2) ** 2)) / args.layers
     temperature = 220.0 + 65.0 * z
 
-    def evaluate(controls):
+    def evaluate(controls: Any) -> Any:
         calibrated = eqx.tree_at(
             lambda p: (p.longwave_absorption_scale, p.shortwave_scattering_scale),
             plan,
@@ -64,7 +65,7 @@ def main():
             controls[5],
         )
 
-    def observable(controls):
+    def observable(controls: Any) -> Any:
         result = evaluate(controls)
         return jnp.stack(
             (
@@ -125,6 +126,7 @@ def main():
     slab = ColumnRadiationPlan(
         analytic_optics, surface_albedo=albedo, surface_emissivity=1.0
     )
+    # ty: ignore[invalid-argument-type]
     one = slab.evaluate([260.0], [1.0], [0.0], [0.0], [0.0], 300.0, 400.0)
     a, b = 2 * absorption + scattering, scattering
     k = np.sqrt(a * a - b * b)

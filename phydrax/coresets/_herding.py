@@ -4,10 +4,12 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from phydrax.kernels import (
     AbstractPositiveDefiniteKernel,
@@ -18,6 +20,9 @@ from .._measure_weights import log_weights_from_normalized, normalized_weights
 from .._strict import StrictModule
 from ._kernel_reductions import _weighted_kernel_mean, _weighted_kernel_sum
 from ._types import CoresetSelection, KernelHerdingDiagnostics
+
+
+_HerdingCarry: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class KernelHerding(StrictModule):
@@ -36,7 +41,7 @@ class KernelHerding(StrictModule):
         kernel: AbstractPositiveDefiniteKernel | None = None,
         block_size: int = 256,
         unique: bool = True,
-    ):
+    ) -> None:
         count = int(num_points)
         block = int(block_size)
         if count <= 0:
@@ -187,7 +192,7 @@ def kernel_herd(
         jnp.zeros((source_points,), dtype=jnp.bool_),
     )
 
-    def body(iteration, state):
+    def body(iteration: Array, state: _HerdingCarry) -> _HerdingCarry:
         indices, output_mask, penalty, selected = state
         denominator = jnp.asarray(iteration + 1, dtype=safe_points.dtype)
         objective = target_mean - penalty / denominator

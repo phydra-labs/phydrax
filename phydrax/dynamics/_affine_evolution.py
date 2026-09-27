@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -26,7 +27,7 @@ class PreparedAffineLinearEvolution(StrictModule, NonTrainableState):
     source: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, matrix: ArrayLike, source: ArrayLike, /):
+    def __init__(self, matrix: ArrayLike, source: ArrayLike, /) -> None:
         matrix_ = jnp.asarray(matrix)
         source_ = jnp.asarray(source, dtype=matrix_.dtype)
         if matrix_.ndim != 2 or matrix_.shape[0] != matrix_.shape[1]:
@@ -58,7 +59,7 @@ class PreparedAffineLinearEvolution(StrictModule, NonTrainableState):
             "Affine evolution duration must be finite and nonnegative.",
         )
 
-        def advance(_):
+        def advance(_: None) -> AffineLinearEvolutionResult:
             action = matrix_exponential_phi_combination_action(
                 self.operator,
                 (state_, self.source),

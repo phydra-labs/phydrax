@@ -8,7 +8,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -81,13 +81,13 @@ def _center_interpolate(value: Array, axis: int, periodic: bool, /) -> Array:
 
 
 def _set_axis_boundary(value: Array, axis: int, index: int, target: Array, /) -> Array:
-    location = [slice(None)] * value.ndim
+    location: list[slice | int] = [slice(None)] * value.ndim
     location[axis] = index
     return value.at[tuple(location)].set(target)
 
 
 def _axis_boundary(value: Array, axis: int, index: int, /) -> Array:
-    location = [slice(None)] * value.ndim
+    location: list[slice | int] = [slice(None)] * value.ndim
     location[axis] = index
     return value[tuple(location)]
 
@@ -133,7 +133,7 @@ class MACMomentumPlan(StrictModule, NonTrainableState):
         *,
         boundaries: PreparedMACBoundaryPlan | MACBoundaryPlan | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         boundaries_ = (
@@ -182,7 +182,7 @@ class PreparedMACMomentumOperators(StrictModule, NonTrainableState):
     report: MACMomentumReport
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MACMomentumPlan, /):
+    def __init__(self, plan: MACMomentumPlan, /) -> None:
         if not isinstance(plan, MACMomentumPlan):
             raise TypeError("plan must be MACMomentumPlan.")
         grid = plan.operators.discretization.grid
@@ -398,7 +398,7 @@ class PreparedMACMomentumOperators(StrictModule, NonTrainableState):
         transport_ = self.boundaries.enforce(transport, stage_)
         advected_ = self.boundaries.homogeneous_rate(advected)
 
-        def action(value):
+        def action(value: FaceVelocity) -> FaceVelocity:
             return self.conservative_transport(transport_, value, stage=stage_)
 
         conservative = action(advected_)

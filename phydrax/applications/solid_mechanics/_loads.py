@@ -11,7 +11,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
@@ -19,6 +20,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...integration._deformed_measure import DeformedMeasureState
+from ...typing import parse
 
 
 MechanicalLoadSupport: TypeAlias = Literal["body", "boundary", "discrete"]
@@ -76,7 +78,7 @@ def _constant_or_field(
     return array, identifier
 
 
-def _scalar_parameter(state: MechanicalLoadState, dtype, /) -> Array:
+def _scalar_parameter(state: MechanicalLoadState, dtype: DTypeLike, /) -> Array:
     parameter = jnp.asarray(state.parameter, dtype=dtype)
     if parameter.shape != () or jnp.iscomplexobj(parameter):
         raise ValueError("This mechanical load requires one real scalar state parameter.")
@@ -168,17 +170,14 @@ class MechanicalLoadSemantics(StrictModule, NonTrainableState):
         potential_certified: bool,
         closure_id: str | None = None,
         orientation_id: str | None = None,
-    ):
-        if support not in ("body", "boundary", "discrete"):
-            raise ValueError("Unknown mechanical load support.")
-        if configuration not in ("reference", "current"):
-            raise ValueError("Unknown mechanical load configuration.")
-        if measure_frame not in ("reference", "current"):
-            raise ValueError("Unknown mechanical load measure frame.")
-        if load_frame not in ("reference", "current"):
-            raise ValueError("Unknown mechanical load vector frame.")
-        if conservativity not in ("potential", "virtual_work"):
-            raise ValueError("Unknown mechanical load conservative routing.")
+    ) -> None:
+        support = parse(support, MechanicalLoadSupport, "support")
+        configuration = parse(configuration, MechanicalLoadFrame, "configuration")
+        measure_frame = parse(measure_frame, MechanicalLoadFrame, "measure_frame")
+        load_frame = parse(load_frame, MechanicalLoadFrame, "load_frame")
+        conservativity = parse(
+            conservativity, MechanicalLoadConservativity, "conservativity"
+        )
         certified = bool(potential_certified)
         if conservativity == "potential" and not certified:
             raise ValueError("Potential routing requires a certified load potential.")
@@ -231,7 +230,7 @@ class MechanicalLoadState(StrictModule, NonTrainableState):
         state_id: str | None = None,
         pressure_history_id: str | None = None,
         volume_history_id: str | None = None,
-    ):
+    ) -> None:
         time_ = _real_inexact_array("Mechanical load time", time)
         if time_.shape != () or not bool(jnp.isfinite(time_)):
             raise ValueError("Mechanical load time must be one finite scalar.")
@@ -387,7 +386,7 @@ class ReferenceDeadTraction(AbstractMechanicalLoad):
         /,
         *,
         load_id: str | None = None,
-    ):
+    ) -> None:
         field, identifier = _constant_or_field(
             "reference-dead-traction", traction, load_id
         )
@@ -412,13 +411,13 @@ class ReferenceDeadTraction(AbstractMechanicalLoad):
 
     def _evaluate(
         self,
-        reference,
-        current,
-        measure,
-        reference_normal,
-        current_normal,
-        state,
-        args,
+        reference: Array,
+        current: Array,
+        measure: DeformedMeasureState,
+        reference_normal: Array | None,
+        current_normal: Array | None,
+        state: MechanicalLoadState,
+        args: Any,
         /,
     ) -> MechanicalLoadEvaluation:
         del reference_normal, current_normal
@@ -442,7 +441,7 @@ class ReferenceDeadBodyForce(AbstractMechanicalLoad):
         /,
         *,
         load_id: str | None = None,
-    ):
+    ) -> None:
         field, identifier = _constant_or_field(
             "reference-dead-body-force", body_force, load_id
         )
@@ -467,13 +466,13 @@ class ReferenceDeadBodyForce(AbstractMechanicalLoad):
 
     def _evaluate(
         self,
-        reference,
-        current,
-        measure,
-        reference_normal,
-        current_normal,
-        state,
-        args,
+        reference: Array,
+        current: Array,
+        measure: DeformedMeasureState,
+        reference_normal: Array | None,
+        current_normal: Array | None,
+        state: MechanicalLoadState,
+        args: Any,
         /,
     ) -> MechanicalLoadEvaluation:
         del reference_normal, current_normal
@@ -497,7 +496,7 @@ class CurrentBodyForce(AbstractMechanicalLoad):
         /,
         *,
         load_id: str | None = None,
-    ):
+    ) -> None:
         field, identifier = _constant_or_field("current-body-force", body_force, load_id)
         self.body_force = field
         self._load_id = identifier
@@ -520,13 +519,13 @@ class CurrentBodyForce(AbstractMechanicalLoad):
 
     def _evaluate(
         self,
-        reference,
-        current,
-        measure,
-        reference_normal,
-        current_normal,
-        state,
-        args,
+        reference: Array,
+        current: Array,
+        measure: DeformedMeasureState,
+        reference_normal: Array | None,
+        current_normal: Array | None,
+        state: MechanicalLoadState,
+        args: Any,
         /,
     ) -> MechanicalLoadEvaluation:
         del reference, reference_normal, current_normal
@@ -549,7 +548,7 @@ class CurrentSurfaceTraction(AbstractMechanicalLoad):
         /,
         *,
         load_id: str | None = None,
-    ):
+    ) -> None:
         field, identifier = _constant_or_field(
             "current-surface-traction", traction, load_id
         )
@@ -574,13 +573,13 @@ class CurrentSurfaceTraction(AbstractMechanicalLoad):
 
     def _evaluate(
         self,
-        reference,
-        current,
-        measure,
-        reference_normal,
-        current_normal,
-        state,
-        args,
+        reference: Array,
+        current: Array,
+        measure: DeformedMeasureState,
+        reference_normal: Array | None,
+        current_normal: Array | None,
+        state: MechanicalLoadState,
+        args: Any,
         /,
     ) -> MechanicalLoadEvaluation:
         del reference, reference_normal, current_normal
@@ -605,7 +604,7 @@ class ClosedSurfacePressure(AbstractMechanicalLoad):
         closure_id: str,
         orientation_id: str,
         load_id: str | None = None,
-    ):
+    ) -> None:
         value = _real_inexact_array("pressure", pressure)
         if value.shape != () or not bool(jnp.isfinite(value)):
             raise ValueError("Closed-surface pressure must be one finite scalar.")
@@ -648,13 +647,13 @@ class ClosedSurfacePressure(AbstractMechanicalLoad):
 
     def _evaluate(
         self,
-        reference,
-        current,
-        measure,
-        reference_normal,
-        current_normal,
-        state,
-        args,
+        reference: Array,
+        current: Array,
+        measure: DeformedMeasureState,
+        reference_normal: Array | None,
+        current_normal: Array | None,
+        state: MechanicalLoadState,
+        args: Any,
         /,
     ) -> MechanicalLoadEvaluation:
         del reference, reference_normal, args
@@ -691,7 +690,7 @@ class PneumaticPressure(AbstractMechanicalLoad):
         closure_id: str,
         orientation_id: str,
         load_id: str | None = None,
-    ):
+    ) -> None:
         pressure = _real_inexact_array("reference_pressure", reference_pressure)
         volume = float(reference_volume)
         exponent_ = float(exponent)
@@ -775,13 +774,13 @@ class PneumaticPressure(AbstractMechanicalLoad):
 
     def _evaluate(
         self,
-        reference,
-        current,
-        measure,
-        reference_normal,
-        current_normal,
-        state,
-        args,
+        reference: Array,
+        current: Array,
+        measure: DeformedMeasureState,
+        reference_normal: Array | None,
+        current_normal: Array | None,
+        state: MechanicalLoadState,
+        args: Any,
         /,
     ) -> MechanicalLoadEvaluation:
         del reference, reference_normal, args
@@ -825,7 +824,7 @@ class GeneralFollowerLoad(AbstractMechanicalLoad):
         measure_frame: MechanicalLoadFrame,
         load_frame: MechanicalLoadFrame = "current",
         load_id: str,
-    ):
+    ) -> None:
         if not callable(law):
             raise TypeError("Follower load law must be callable.")
         identifier = _required_identifier(load_id, "load_id")
@@ -850,13 +849,13 @@ class GeneralFollowerLoad(AbstractMechanicalLoad):
 
     def _evaluate(
         self,
-        reference,
-        current,
-        measure,
-        reference_normal,
-        current_normal,
-        state,
-        args,
+        reference: Array,
+        current: Array,
+        measure: DeformedMeasureState,
+        reference_normal: Array | None,
+        current_normal: Array | None,
+        state: MechanicalLoadState,
+        args: Any,
         /,
     ) -> MechanicalLoadEvaluation:
         del reference_normal, current_normal
@@ -885,7 +884,7 @@ class CompositeMechanicalLoad(AbstractMechanicalLoad):
         /,
         *,
         load_id: str | None = None,
-    ):
+    ) -> None:
         loads_ = tuple(loads)
         if not loads_ or any(
             not isinstance(load, AbstractMechanicalLoad) for load in loads_
@@ -953,13 +952,13 @@ class CompositeMechanicalLoad(AbstractMechanicalLoad):
 
     def _evaluate(
         self,
-        reference,
-        current,
-        measure,
-        reference_normal,
-        current_normal,
-        state,
-        args,
+        reference: Array,
+        current: Array,
+        measure: DeformedMeasureState,
+        reference_normal: Array | None,
+        current_normal: Array | None,
+        state: MechanicalLoadState,
+        args: Any,
         /,
     ) -> MechanicalLoadEvaluation:
         children = tuple(

@@ -6,12 +6,13 @@ from __future__ import annotations
 
 from enum import IntEnum
 from math import isfinite
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -19,6 +20,26 @@ from .._trainable import NonTrainableState
 from ..discretization import RealizedTemporalMesh
 from ..discretization.mpm import MPMRuntimeState, PreparedMPMDynamics
 from ..equations import MaterialPointArguments
+
+
+_AdaptiveMPMCarry: TypeAlias = tuple[
+    MPMRuntimeState, Array, Array, Array, Array, Array, Array, Array
+]
+_AdaptiveMPMAttemptOutput: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 
 class MPMAdaptiveStatus(IntEnum):
@@ -52,7 +73,7 @@ class MPMAdaptivePolicy(StrictModule, NonTrainableState):
         safety_factor: float = 0.9,
         minimum_step_size: float = 1.0e-12,
         maximum_step_size: float = np.inf,
-    ):
+    ) -> None:
         steps = int(maximum_steps)
         retries = int(maximum_retries)
         reduction = float(reduction_factor)
@@ -145,7 +166,7 @@ class AdaptiveMPMRolloutPlan(StrictModule, NonTrainableState):
         *,
         final_time: float,
         initial_step_size: float,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedMPMDynamics):
             raise TypeError("dynamics must be PreparedMPMDynamics.")
         if not isinstance(policy, MPMAdaptivePolicy):
@@ -214,7 +235,9 @@ class AdaptiveMPMRolloutPlan(StrictModule, NonTrainableState):
             is_leaf=lambda value: value is None,
         )
 
-        def attempt(carry, _):
+        def attempt(
+            carry: _AdaptiveMPMCarry, _: Array
+        ) -> tuple[_AdaptiveMPMCarry, _AdaptiveMPMAttemptOutput]:
             (
                 state,
                 next_step,
@@ -227,7 +250,7 @@ class AdaptiveMPMRolloutPlan(StrictModule, NonTrainableState):
             ) = carry
             active = ~finished & ~failed
 
-            def execute(_):
+            def execute(_: None) -> tuple[_AdaptiveMPMCarry, _AdaptiveMPMAttemptOutput]:
                 start = state.time
                 remaining = target - start
                 requested = jnp.minimum(jnp.minimum(next_step, maximum), remaining)
@@ -317,7 +340,9 @@ class AdaptiveMPMRolloutPlan(StrictModule, NonTrainableState):
                 )
                 return next_carry, output
 
-            def inactive(_):
+            def inactive(
+                _: None,
+            ) -> tuple[_AdaptiveMPMCarry, _AdaptiveMPMAttemptOutput]:
                 nan = jnp.asarray(jnp.nan, dtype=dtype)
                 output = (
                     jnp.asarray(False),

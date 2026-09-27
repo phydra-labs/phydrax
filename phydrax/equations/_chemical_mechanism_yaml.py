@@ -4,8 +4,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -19,6 +20,7 @@ from .._strict import StrictModule
 from ._chemical_components import ChemicalComponentCatalog
 from ._chemical_mechanism import ChemicalMechanismIR, ChemicalReactionSpec
 from ._chemical_rates import (
+    AbstractChemicalRatePlan,
     ArrheniusRatePlan,
     ChebyshevRatePlan,
     LindemannRatePlan,
@@ -209,7 +211,7 @@ def load_chemical_mechanism_yaml(
     )
 
 
-def _units(payload):
+def _units(payload: object) -> dict[str, float]:
     if not isinstance(payload, Mapping):
         raise ValueError("units must be a mapping.")
     names = {
@@ -236,7 +238,7 @@ def _units(payload):
     return factors
 
 
-def _phase(payload, units):
+def _phase(payload: object, units: Mapping[str, float]) -> ChemicalPhaseSpec:
     if not isinstance(payload, Mapping):
         raise ValueError("Each phase must be a mapping.")
     kind = ChemicalPhaseKind(_string(payload, "kind"))
@@ -260,7 +262,12 @@ def _phase(payload, units):
     )
 
 
-def _thermodynamics(schema, payload, species_payload, units):
+def _thermodynamics(
+    schema: ChemicalSpeciesSchema,
+    payload: Mapping[str, Any],
+    species_payload: Sequence[Any],
+    units: Mapping[str, float],
+) -> NASASpeciesThermodynamicsPlan | PolynomialSpeciesThermodynamicsPlan:
     model = str(payload.get("model", "nasa7"))
     by_species = _mapping(payload, "species")
     if model in ("nasa7", "nasa9"):
@@ -332,7 +339,9 @@ def _thermodynamics(schema, payload, species_payload, units):
     raise ValueError(f"Unsupported thermodynamic model {model!r}.")
 
 
-def _reaction(payload, schema, units):
+def _reaction(
+    payload: object, schema: ChemicalSpeciesSchema, units: Mapping[str, float]
+) -> ChemicalReactionSpec:
     if not isinstance(payload, Mapping):
         raise ValueError("Each reaction must be a mapping.")
     reactants = _mapping(payload, "reactants")
@@ -378,7 +387,13 @@ def _reaction(payload, schema, units):
     )
 
 
-def _rate(payload, schema, units, pre_factor, concentration_factor):
+def _rate(
+    payload: Mapping[str, Any],
+    schema: ChemicalSpeciesSchema,
+    units: Mapping[str, float],
+    pre_factor: float,
+    concentration_factor: float,
+) -> AbstractChemicalRatePlan:
     kind = str(payload.get("type", "arrhenius"))
     if kind == "arrhenius":
         return ArrheniusRatePlan(
@@ -390,16 +405,16 @@ def _rate(payload, schema, units, pre_factor, concentration_factor):
     for name, value in payload.get("efficiencies", {}).items():
         efficiencies[schema.species_names.index(str(name))] = float(value)
     if kind == "third-body":
-        return ThirdBodyRatePlan(
-            _rate(
-                _mapping(payload, "base"),
-                schema,
-                units,
-                pre_factor / concentration_factor,
-                concentration_factor,
-            ),
-            efficiencies,
+        base = _rate(
+            _mapping(payload, "base"),
+            schema,
+            units,
+            pre_factor / concentration_factor,
+            concentration_factor,
         )
+        if not isinstance(base, ArrheniusRatePlan):
+            raise TypeError("base must be ArrheniusRatePlan.")
+        return ThirdBodyRatePlan(base, efficiencies)
     if kind in ("lindemann", "troe"):
         low = _rate(
             _mapping(payload, "low"),
@@ -463,19 +478,21 @@ def _rate(payload, schema, units, pre_factor, concentration_factor):
         )
     if kind == "plog":
         entries = _sequence(payload, "entries")
-        return PLogRatePlan(
-            [float(value["pressure"]) * units["pressure"] for value in entries],
-            [
-                _rate(
-                    {"type": "arrhenius", **_mapping(value, "rate")},
-                    schema,
-                    units,
-                    pre_factor,
-                    concentration_factor,
-                )
-                for value in entries
-            ],
-        )
+        pressures = [float(value["pressure"]) * units["pressure"] for value in entries]
+        rates = [
+            _rate(
+                {"type": "arrhenius", **_mapping(value, "rate")},
+                schema,
+                units,
+                pre_factor,
+                concentration_factor,
+            )
+            for value in entries
+        ]
+        arrhenius = [rate for rate in rates if isinstance(rate, ArrheniusRatePlan)]
+        if len(arrhenius) != len(rates):
+            raise ValueError("PLOG pressures/rates are invalid.")
+        return PLogRatePlan(pressures, arrhenius)
     if kind == "chebyshev":
         coefficients = np.asarray(payload["coefficients"], dtype=np.float64).copy()
         coefficients[0, 0] = coefficients[0, 0] + np.log10(pre_factor)
@@ -491,25 +508,25 @@ def _rate(payload, schema, units, pre_factor, concentration_factor):
     raise ValueError(f"Unsupported reaction rate type {kind!r}.")
 
 
-def _mapping(payload, key):
+def _mapping(payload: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     if key not in payload or not isinstance(payload[key], Mapping):
         raise ValueError(f"{key} must be a mapping.")
     return payload[key]
 
 
-def _mapping_value(payload):
+def _mapping_value(payload: object) -> Mapping[str, Any]:
     if not isinstance(payload, Mapping):
         raise ValueError("Expected mapping value.")
     return payload
 
 
-def _sequence(payload, key):
+def _sequence(payload: Mapping[str, Any], key: str) -> tuple[Any, ...]:
     if key not in payload or isinstance(payload[key], (str, bytes, Mapping)):
         raise ValueError(f"{key} must be a sequence.")
     return tuple(payload[key])
 
 
-def _string(payload, key):
+def _string(payload: Mapping[str, Any], key: str) -> str:
     if key not in payload or not str(payload[key]):
         raise ValueError(f"{key} must be a nonempty string.")
     return str(payload[key])

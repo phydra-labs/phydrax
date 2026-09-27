@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -19,8 +20,8 @@ _EXPONENTS = [3.42525091, 0.62391373, 0.16885540]
 _COEFFICIENTS = [0.15432897, 0.53532814, 0.44463454]
 
 
-def _surface(system, evaluator, provider_id):
-    def wrapped(positions, _cell):
+def _surface(system: Any, evaluator: Any, provider_id: Any) -> Any:
+    def wrapped(positions: Any, _cell: Any) -> Any:
         energy, forces = evaluator(jnp.asarray(positions))
         return phx.chemistry.PotentialEnergySurfaceEvaluation(
             energy,
@@ -40,13 +41,17 @@ def _surface(system, evaluator, provider_id):
     )
 
 
-def qualification():
+def qualification() -> Any:
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     h2 = phx.atomistic.AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, -0.37], [0.0, 0.0, 0.37]],
+        # ty: ignore[invalid-argument-type]
         [1.008, 1.008],
         units.scale,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[11, 17],
     )
     h2_system = phx.atomistic.AtomisticSystemPlan.from_structure(
@@ -54,7 +59,9 @@ def qualification():
     )
     basis = phx.operators.quantum.gaussian.GaussianBasisPlan.from_contracted_s(
         [11, 17],
+        # ty: ignore[invalid-argument-type]
         [_EXPONENTS, _EXPONENTS],
+        # ty: ignore[invalid-argument-type]
         [_COEFFICIENTS, _COEFFICIENTS],
         source_id="sto-3g-hydrogen-qualification",
     ).prepare(h2_system)
@@ -87,10 +94,13 @@ def qualification():
 
     water_positions = np.asarray([[0.0, 0.0, 0.0], [0.95, 0.0, 0.0], [-0.24, 0.92, 0.0]])
     water = phx.atomistic.AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [8, 1, 1],
         water_positions,
+        # ty: ignore[invalid-argument-type]
         [15.999, 1.008, 1.008],
         units.scale,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[2, 3, 5],
     )
     water_system = phx.atomistic.AtomisticSystemPlan.from_structure(
@@ -117,16 +127,32 @@ def qualification():
     ).evaluate(water, hessian, np.zeros_like(water_positions))
 
     reactant = phx.atomistic.AtomicStructure(
-        [1], [[-1.0, 0.0, 0.0]], [1.0], units.scale, particle_ids=[41]
+        # ty: ignore[invalid-argument-type]
+        [1],
+        # ty: ignore[invalid-argument-type]
+        [[-1.0, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
+        [1.0],
+        units.scale,
+        # ty: ignore[invalid-argument-type]
+        particle_ids=[41],
     )
     product = phx.atomistic.AtomicStructure(
-        [1], [[1.0, 0.0, 0.0]], [1.0], units.scale, particle_ids=[41]
+        # ty: ignore[invalid-argument-type]
+        [1],
+        # ty: ignore[invalid-argument-type]
+        [[1.0, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
+        [1.0],
+        units.scale,
+        # ty: ignore[invalid-argument-type]
+        particle_ids=[41],
     )
     reaction_system = phx.atomistic.AtomisticSystemPlan.from_structure(
         reactant, units, molecule_ids=[0]
     )
 
-    def double_well(positions):
+    def double_well(positions: Any) -> Any:
         x, y, z = positions[0]
         return (
             (x * x - 1.0) ** 2 + 0.5 * y * y + 0.5 * z * z,
@@ -143,10 +169,14 @@ def qualification():
     ).run(reactant, product)
 
     full = phx.atomistic.AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         units.scale,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[51, 53],
     )
     full_system = phx.atomistic.AtomisticSystemPlan.from_structure(
@@ -156,7 +186,7 @@ def qualification():
         full_system, [51], boundary_bonds=[(51, 53)]
     ).prepare()
 
-    def quadratic(scale):
+    def quadratic(scale: Any) -> Any:
         return lambda positions: (
             0.5 * scale * jnp.sum(positions**2),
             -scale * positions,
@@ -181,7 +211,9 @@ def qualification():
     )
     periodic_family = (
         phx.operators.periodic.periodic_translation_family_from_dense_blocks(
-            [[0, 0, 0]], np.asarray([-1.0]).reshape((1, 1, 1, 1, 1))
+            # ty: ignore[invalid-argument-type]
+            [[0, 0, 0]],
+            np.asarray([-1.0]).reshape((1, 1, 1, 1, 1)),
         )
     )
     periodic_pencil = phx.chemistry.PeriodicOrbitalPencilPlan.orthonormal(
@@ -246,7 +278,7 @@ def qualification():
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--output",

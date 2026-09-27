@@ -10,22 +10,29 @@ import math
 from collections.abc import Callable, Sequence
 from enum import IntEnum
 from fractions import Fraction
-from typing import Literal, Protocol
+from typing import Literal, Protocol, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._physical import RelativityScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
+from ...typing import parse
 
 
-QuantumStatistics = Literal["boson", "fermion"]
+QuantumStatistics: TypeAlias = Literal["boson", "fermion"]
+_EvaporationCarry: TypeAlias = tuple[Array, Array, Array, Array]
+_EvaporationInterval: TypeAlias = tuple[Array, Array, Array]
+_EvaporationFluxes: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class QuantumFieldSpecies(StrictModule, NonTrainableState):
@@ -52,7 +59,7 @@ class QuantumFieldSpecies(StrictModule, NonTrainableState):
         *,
         multiplicity: int = 1,
         rest_mass_frequency: float = 0.0,
-    ):
+    ) -> None:
         identifier = str(species_id).strip()
         spin_ = float(spin)
         twice_spin = round(2.0 * spin_)
@@ -68,8 +75,7 @@ class QuantumFieldSpecies(StrictModule, NonTrainableState):
             raise ValueError(
                 "Quantum spin must be a nonnegative integer or half-integer."
             )
-        if statistics not in ("boson", "fermion"):
-            raise ValueError("Quantum statistics must be 'boson' or 'fermion'.")
+        statistics = parse(statistics, QuantumStatistics, "statistics")
         expected = "boson" if twice_spin % 2 == 0 else "fermion"
         if statistics != expected:
             raise ValueError(
@@ -123,7 +129,7 @@ class HawkingTailEvidence(StrictModule, NonTrainableState):
         qualified: ArrayLike,
         derivative_valid: ArrayLike,
         qualification_id: str,
-    ):
+    ) -> None:
         frequency = np.asarray(frequency_remainder_upper, dtype=np.float64)
         modes = np.asarray(mode_remainder_upper, dtype=np.float64)
         qualified_host = np.asarray(qualified, dtype=np.bool_)
@@ -193,7 +199,7 @@ class HawkingSpectrumPlan(StrictModule, NonTrainableState):
         relative_tail_tolerance: float = 1.0e-4,
         graybody_tolerance: float = 1.0e-10,
         corotation_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(scale, RelativityScaleContract):
             raise TypeError("scale must be a RelativityScaleContract.")
         if not scale.quantum_constants_explicit:
@@ -396,7 +402,7 @@ class HawkingScatteringData(StrictModule, NonTrainableState):
         tail_evidence: HawkingTailEvidence,
         source_ids: Sequence[Sequence[str]],
         qualification_id: str,
-    ):
+    ) -> None:
         if not isinstance(plan, HawkingSpectrumPlan):
             raise TypeError("plan must be a HawkingSpectrumPlan.")
         if not isinstance(tail_evidence, HawkingTailEvidence):
@@ -814,7 +820,7 @@ class KerrEvaporationState(StrictModule, NonTrainableState):
         elapsed_time: ArrayLike = 0.0,
         step_index: ArrayLike = 0,
         state_id: str,
-    ):
+    ) -> None:
         identifier = str(state_id).strip()
         if not identifier:
             raise ValueError("Kerr evaporation state_id must be non-empty.")
@@ -865,7 +871,7 @@ class KerrEvaporationPlan(StrictModule, NonTrainableState):
         maximum_mass_fraction_per_step: float = 1.0e-2,
         maximum_spin_change_per_step: float = 1.0e-2,
         extremality_margin: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(scale, RelativityScaleContract):
             raise TypeError("scale must be a RelativityScaleContract.")
         if not scale.quantum_constants_explicit:
@@ -1044,13 +1050,15 @@ def evolve_kerr_evaporation(
     quantum_area = plan.planck_area.astype(dtype)
     floor = plan.semiclassical_mass_floor.astype(dtype)
 
-    def step(carry, interval):
+    def step(
+        carry: _EvaporationCarry, interval: _EvaporationInterval
+    ) -> tuple[_EvaporationCarry, tuple[Array, ...]]:
         mass, angular_momentum, active, termination = carry
         start, end, local_index = interval
         dt = end - start
         attempted = active
 
-        def evaluate_current(_):
+        def evaluate_current(_: None) -> _EvaporationFluxes:
             state = KerrEvaporationState(
                 mass,
                 angular_momentum,
@@ -1075,7 +1083,7 @@ def evolve_kerr_evaporation(
                 spectrum.coverage_satisfied,
             )
 
-        def hold(_):
+        def hold(_: None) -> _EvaporationFluxes:
             return (
                 jnp.asarray(0.0, dtype=dtype),
                 jnp.asarray(0.0, dtype=dtype),

@@ -5,13 +5,15 @@
 from __future__ import annotations
 
 from enum import IntEnum
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
 from ._costs import SquaredEuclideanCost
 from ._problem import DiscreteTransportProblem
@@ -22,6 +24,11 @@ from ._results import (
     TransportProvenance,
 )
 from ._status import TransportStatus
+
+
+# (source_scaling, target_scaling, marginal_residual, scaling_residual,
+#  first_converged, converged, failed)
+_ScalingCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 
 class KernelApproximationStatus(IntEnum):
@@ -71,7 +78,7 @@ class PositiveKernelApproximationDiagnostics(StrictModule):
         zero_source_rows: ArrayLike,
         zero_target_rows: ArrayLike,
         finite_features: ArrayLike,
-    ):
+    ) -> None:
         status_ = jnp.asarray(status, dtype=jnp.int32)
         rank_ = jnp.asarray(rank, dtype=jnp.int32)
         num_probes_ = jnp.asarray(num_probes, dtype=jnp.int32)
@@ -189,7 +196,7 @@ class PositiveKernelFactors(StrictModule):
         epsilon: ArrayLike,
         diagnostics: PositiveKernelApproximationDiagnostics,
         factorization_id: str,
-    ):
+    ) -> None:
         source = jnp.asarray(source_factors, dtype=jnp.float64)
         target = jnp.asarray(target_factors, dtype=jnp.float64)
         if source.ndim != 2 or target.ndim != 2:
@@ -342,7 +349,7 @@ class GaussianPositiveFeatures(StrictModule):
         *,
         num_probes: int = 32,
         probe_tolerance: ArrayLike = jnp.inf,
-    ):
+    ) -> None:
         feature_rank = int(rank)
         probes = int(num_probes)
         if feature_rank < 1:
@@ -398,7 +405,7 @@ class GaussianPositiveFeatures(StrictModule):
         inverse_scale = jnp.sqrt(2.0 / epsilon_)
         rank_normalization = 0.5 * jnp.log(jnp.asarray(self.rank, dtype=epsilon_.dtype))
 
-        def log_features(points):
+        def log_features(points: Array) -> Array:
             squared_norm = jnp.sum(jnp.square(points), axis=1)
             return (
                 inverse_scale * (points @ projections.T)
@@ -624,7 +631,7 @@ class PositiveFeatureSinkhorn(AbstractBalancedTransportSolver):
         early_stop: bool = False,
         store_history: bool = False,
         statistic_block_size: int = 256,
-    ):
+    ) -> None:
         if not isinstance(feature_map, GaussianPositiveFeatures):
             raise TypeError("feature_map must be GaussianPositiveFeatures.")
         maximum = int(max_iterations)
@@ -766,7 +773,7 @@ class PositiveFeatureSinkhorn(AbstractBalancedTransportSolver):
             jnp.asarray(False),
         )
 
-        def step(carry, index):
+        def step(carry: _ScalingCarry, index: Array) -> tuple[_ScalingCarry, Array]:
             (
                 source_scaling,
                 target_scaling,
@@ -783,7 +790,7 @@ class PositiveFeatureSinkhorn(AbstractBalancedTransportSolver):
                 | (converged if self.early_stop else False)
             )
 
-            def update(_):
+            def update(_: None) -> tuple[Array, Array, Array, Array]:
                 source_denominator = factors_.source_factors @ (
                     factors_.target_factors.T @ target_scaling
                 )
@@ -843,7 +850,7 @@ class PositiveFeatureSinkhorn(AbstractBalancedTransportSolver):
                     ~finite,
                 )
 
-            def keep(_):
+            def keep(_: None) -> tuple[Array, Array, Array, Array]:
                 return source_scaling, target_scaling, scaling_residual, failed
 
             next_source, next_target, next_scaling_residual, next_failed = jax.lax.cond(
@@ -856,7 +863,7 @@ class PositiveFeatureSinkhorn(AbstractBalancedTransportSolver):
                 | (iteration == self.min_iterations)
             )
 
-            def check(_):
+            def check(_: None) -> tuple[Array, Array]:
                 source_marginal, target_marginal = _factor_marginals(
                     factors_, next_source, next_target
                 )
@@ -869,7 +876,7 @@ class PositiveFeatureSinkhorn(AbstractBalancedTransportSolver):
                 )
                 return jnp.where(finite, residual, jnp.inf), ~finite
 
-            def retain(_):
+            def retain(_: None) -> tuple[Array, Array]:
                 return marginal_residual, jnp.asarray(False)
 
             next_residual, marginal_failed = jax.lax.cond(
@@ -1124,7 +1131,7 @@ def _exact_ground_cost_probability(
     target_blocks = (target_count + block_size - 1) // block_size
     dtype = jnp.result_type(source_scaling, target_scaling, problem.source.points)
 
-    def source_body(source_block, total):
+    def source_body(source_block: Array, total: Array) -> Array:
         source_indices = source_block * block_size + jnp.arange(
             block_size, dtype=jnp.int32
         )
@@ -1133,7 +1140,7 @@ def _exact_ground_cost_probability(
         source_factor = factors.source_factors[safe_source_indices]
         source_scale = source_scaling[safe_source_indices]
 
-        def target_body(target_block, subtotal):
+        def target_body(target_block: Array, subtotal: Array) -> Array:
             target_indices = target_block * block_size + jnp.arange(
                 block_size, dtype=jnp.int32
             )

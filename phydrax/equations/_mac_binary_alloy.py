@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -87,7 +88,7 @@ class CompiledMACBinaryAlloyDynamics(StrictModule, NonTrainableState):
         phase_diagram: BinaryAlloyPhaseDiagramPlan,
         solute_transport: PreparedMACScalarTransport,
         /,
-    ):
+    ) -> None:
         if not isinstance(base, CompiledMACEnthalpyPorosityDynamics):
             raise TypeError("base must be CompiledMACEnthalpyPorosityDynamics.")
         if not isinstance(phase_diagram, BinaryAlloyPhaseDiagramPlan):
@@ -372,7 +373,12 @@ class CompiledMACBinaryAlloyDynamics(StrictModule, NonTrainableState):
         )
         finite = stage.finite & jnp.all(jnp.isfinite(values))
         return MACBinaryAlloyDiagnostics(
-            *tuple(values),
+            values[0],
+            values[1],
+            values[2],
+            values[3],
+            values[4],
+            values[5],
             finite,
             finite
             & stage.successful

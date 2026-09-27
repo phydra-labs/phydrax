@@ -33,14 +33,14 @@ from phydrax.nonlinear import NonlinearTermination
 
 
 def _constraint_block(
-    function,
+    function: Any,
     constraint_id: str,
     *,
-    scope,
+    scope: Any,
     participants: tuple[str, ...],
     owner: str,
     control_dependencies: tuple[str, ...],
-):
+) -> Any:
     return phx.control.games.GameConstraintBlock(
         phx.control.BoundedPathConstraint(
             function,
@@ -67,7 +67,7 @@ def _problem(
     case_count: int,
     constraint_count: int,
     /,
-):
+) -> Any:
     players = len(control_sizes)
     control_size = sum(control_sizes)
     player_ids = tuple(f"player-{index}" for index in range(players))
@@ -107,12 +107,12 @@ def _problem(
     a = 0.83 * jnp.eye(state_size)
     b = 0.04 * jnp.sin((state_index[:, None] + 1.0) * (control_index[None, :] + 1.0))
 
-    def transition(context, state, control, args):
+    def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context
         return args["A"] @ state + args["B"] @ control + 0.01 * jnp.sin(state)
 
-    def stage_cost(player, start, stop):
-        def cost(context, state, control, args):
+    def stage_cost(player: Any, start: Any, stop: Any) -> Any:
+        def cost(context: Any, state: Any, control: Any, args: Any) -> Any:
             del context, args
             owned = control[start:stop]
             target = 0.62 + 0.02 * player
@@ -125,8 +125,8 @@ def _problem(
 
         return cost
 
-    def terminal_cost(player):
-        def cost(time, state, args):
+    def terminal_cost(player: Any) -> Any:
+        def cost(time: Any, state: Any, args: Any) -> Any:
             del time, args
             coordinate = player % state_size
             return 0.02 * state[coordinate] ** 2
@@ -293,7 +293,7 @@ def _case(
     }
 
 
-def _specifications():
+def _specifications() -> Any:
     return (
         ("baseline", 4, 4, (1, 1), 1, 2),
         ("horizon-1", 1, 4, (1, 1), 1, 2),

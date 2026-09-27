@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -28,16 +31,16 @@ def _query() -> phx.graph.QueryGraph:
 
 
 class _AddLatentOne:
-    def __init__(self, indices):
+    def __init__(self, indices: Any) -> None:
         self.indices = jnp.asarray(indices, dtype=jnp.int32)
 
-    def __call__(self, graph):
+    def __call__(self, graph: Any) -> Any:
         nodes = dict(graph.nodes)
         nodes["latent"] = nodes["latent"].at[self.indices].add(1.0)
         return graph.replace(nodes=nodes, validate=False)
 
 
-def test_query_graph_with_source_features_installs_source_side_only():
+def test_query_graph_with_source_features_installs_source_side_only() -> None:
     graph = phx.graph.query_graph_with_source_features(
         _query(),
         jnp.array([[1.0], [3.0]]),
@@ -47,7 +50,7 @@ def test_query_graph_with_source_features_installs_source_side_only():
     assert jnp.allclose(graph.nodes["u"][:, 0], jnp.array([1.0, 3.0, 0.0]))
 
 
-def test_batched_query_graph_installs_and_extracts_flattened_case_features():
+def test_batched_query_graph_installs_and_extracts_flattened_case_features() -> None:
     query = phx.graph.batched_knn_query_graph(
         jnp.array([[[0.0], [1.0]], [[10.0], [11.0]]]),
         jnp.array([[[0.5]], [[10.5]]]),
@@ -74,7 +77,7 @@ def test_batched_query_graph_installs_and_extracts_flattened_case_features():
     )
 
 
-def test_query_graph_operator_can_gather_source_node_subset():
+def test_query_graph_operator_can_gather_source_node_subset() -> None:
     query = phx.graph.radius_query_graph(
         jnp.array([[0.0]]),
         jnp.array([[0.5]]),
@@ -99,7 +102,7 @@ def test_query_graph_operator_can_gather_source_node_subset():
     assert jnp.allclose(out.nodes["out"][:, 0], jnp.array([0.0, 3.0]))
 
 
-def test_query_target_features_extracts_target_payload():
+def test_query_target_features_extracts_target_payload() -> None:
     query = _query()
     graph = query.graph.replace(
         nodes={**query.graph.nodes, "out": jnp.array([[0.0], [0.0], [4.0]])},
@@ -112,7 +115,7 @@ def test_query_target_features_extracts_target_payload():
     )
 
 
-def test_query_graph_operator_transfers_source_graph_to_target_query_graph():
+def test_query_graph_operator_transfers_source_graph_to_target_query_graph() -> None:
     query = _query()
     op = phx.graph.QueryGraphOperator(
         query,
@@ -133,7 +136,7 @@ def test_query_graph_operator_transfers_source_graph_to_target_query_graph():
     )
 
 
-def test_query_graph_operator_result_can_be_used_as_graph_domain():
+def test_query_graph_operator_result_can_be_used_as_graph_domain() -> None:
     query = _query()
     out = phx.graph.QueryGraphOperator(
         query,
@@ -150,13 +153,13 @@ def test_query_graph_operator_result_can_be_used_as_graph_domain():
     )
 
     @domain.Function("graph")
-    def predicted(node):
+    def predicted(node: Any) -> Any:
         return node.get("out")[0]
 
     assert jnp.allclose(jnp.asarray(predicted(batch).data), jnp.array([4.0]))
 
 
-def test_query_encode_process_decode_transfers_source_to_latent_to_target():
+def test_query_encode_process_decode_transfers_source_to_latent_to_target() -> None:
     encoder_query = _query()
     decoder_query = phx.graph.radius_query_graph(
         jnp.array([[0.5]]),
@@ -184,7 +187,7 @@ def test_query_encode_process_decode_transfers_source_to_latent_to_target():
     )
 
 
-def test_query_encode_process_decode_result_can_be_used_as_graph_domain():
+def test_query_encode_process_decode_result_can_be_used_as_graph_domain() -> None:
     encoder_query = _query()
     decoder_query = phx.graph.radius_query_graph(
         jnp.array([[0.5]]),
@@ -208,7 +211,7 @@ def test_query_encode_process_decode_result_can_be_used_as_graph_domain():
     )
 
     @domain.Function("graph")
-    def prediction(node):
+    def prediction(node: Any) -> Any:
         return node.get("out")[0]
 
     assert jnp.allclose(jnp.asarray(prediction(batch).data), jnp.array([4.0]))

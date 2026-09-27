@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -47,7 +48,7 @@ from phydrax.applications.cardiovascular.electrophysiology._reaction import (
 )
 
 
-def _models():
+def _models() -> Any:
     return (
         CourtemancheAtrialParameters().prepare(),
         ZhangSinoatrialParameters().prepare(),

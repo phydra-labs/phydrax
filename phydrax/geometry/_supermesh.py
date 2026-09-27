@@ -30,12 +30,12 @@ through :class:`CommonRefinementStatus` with evidence.
 from __future__ import annotations
 
 from enum import IntEnum, StrEnum
-from typing import NamedTuple, TYPE_CHECKING
+from typing import Any, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .. import _meshcore
 from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
@@ -131,7 +131,7 @@ class CommonRefinementPolicy(StrictModule):
         maximum_memory_bytes: int = 4 * 1024**3,
         second_moments: bool = False,
         overlap_simplices: bool = False,
-    ):
+    ) -> None:
         if not isinstance(predicate_mode, PredicateMode):
             raise TypeError("predicate_mode must be a PredicateMode.")
         if predicate_mode is PredicateMode.FILTERED_DEVICE:
@@ -217,7 +217,7 @@ class CommonRefinementEvidence(StrictModule, NonTrainableState):
         counts: _Counts,
         retained_bytes: int,
         working_bytes: int,
-    ):
+    ) -> None:
         if not isinstance(status, CommonRefinementStatus):
             raise TypeError("status must be a CommonRefinementStatus.")
         source_defects = np.asarray(source_coverage_defects, dtype=np.float64)
@@ -327,7 +327,7 @@ class PreparedCommonRefinement(StrictModule, NonTrainableState):
         identities: tuple[str, str, str, str],
         policy: CommonRefinementPolicy,
         evidence: CommonRefinementEvidence,
-    ):
+    ) -> None:
         if not isinstance(policy, CommonRefinementPolicy) or not isinstance(
             evidence, CommonRefinementEvidence
         ):
@@ -662,7 +662,7 @@ def _standard_face_triangles(cells: np.ndarray, kind: str, /) -> np.ndarray:
 
 
 def _polyhedral_face_triangles(
-    connectivity, first_cell: int, cell_count: int, /
+    connectivity: Any, first_cell: int, cell_count: int, /
 ) -> tuple[np.ndarray, np.ndarray]:
     """Cell-oriented face triangles of explicit polyhedra from packed incidence."""
 
@@ -695,7 +695,7 @@ def _polyhedral_face_triangles(
     origin = starts[triangle_incidence]
     corner = anchor[triangle_incidence]
 
-    def vertex(offset):
+    def vertex(offset: Any) -> Any:
         return face_values[origin + (corner + direction * offset) % size]
 
     triangles = np.stack(
@@ -739,7 +739,7 @@ def _volume_block_pieces(
 
 
 def _block_pieces(
-    mesh: CellMesh, block, first_cell: int, coordinates: np.ndarray, mode, /
+    mesh: CellMesh, block: Any, first_cell: int, coordinates: np.ndarray, mode: Any, /
 ) -> _BlockPieces:
     cells = np.asarray(block.vertices, dtype=np.int64)
     match block.cell_kind:
@@ -920,6 +920,7 @@ def _clip_batch(
         source.pieces[source_piece],
         source.piece_counts[source_piece],
         target.pieces[target_piece],
+        # ty: ignore[not-subscriptable]
         target.piece_counts[target_piece],
     )
     if simplices:
@@ -968,7 +969,7 @@ class _BatchResult(NamedTuple):
     failures: int
 
 
-def _reduce_batch(batch: _Batch, pair_count: int, policy, dimension: int, /):
+def _reduce_batch(batch: _Batch, pair_count: int, policy: Any, dimension: int, /) -> Any:
     failed = batch.status != int(_meshcore.MeshcoreStatus.OK)
     outside = (batch.status == int(_meshcore.MeshcoreStatus.RANGE_ERROR)) | (
         batch.status == int(_meshcore.MeshcoreStatus.NONFINITE_INPUT)
@@ -987,6 +988,7 @@ def _reduce_batch(batch: _Batch, pair_count: int, policy, dimension: int, /):
     kept_counts = None
     if batch.simplices is not None:
         slots = np.arange(batch.simplices.shape[1])
+        # ty: ignore[not-subscriptable]
         present = slots[None, :] < batch.simplex_counts[:, None]
         simplex_pair = np.broadcast_to(batch.pair[:, None], present.shape)[present]
         flat = batch.simplices[present]
@@ -1040,7 +1042,9 @@ def _batch_bounds(
     return np.unique(np.concatenate(([0], bounds, [target_cells.size])))
 
 
-def _piece_pair_bytes(source: _Decomposition, target: _Decomposition, policy, /):
+def _piece_pair_bytes(
+    source: _Decomposition, target: _Decomposition, policy: Any, /
+) -> Any:
     simplices = policy.second_moments or policy.overlap_simplices
     if source.piece_counts is None:
         inputs = 2 * 12 * 8
@@ -1069,6 +1073,7 @@ def _entries_bytes(parts: list[_BatchResult], dimension: int, /) -> int:
         if part.second is not None:
             total += part.second.nbytes
         if part.simplices is not None:
+            # ty: ignore[unresolved-attribute]
             total += part.simplices.nbytes + 4 * part.simplex_counts.size
     return total
 
@@ -1117,16 +1122,19 @@ def _narrow_phase(
         volumes=_joined([part.volumes for part in parts], (0,)),
         first_moments=_joined([part.moments for part in parts], (0, dimension)),
         second_moments=(
+            # ty: ignore[invalid-argument-type]
             _joined([part.second for part in parts], (0, dimension, dimension))
             if policy.second_moments
             else None
         ),
         simplex_offsets=(
+            # ty: ignore[invalid-argument-type]
             _offsets(_joined([part.simplex_counts for part in parts], (0,)))
             if policy.overlap_simplices
             else None
         ),
         simplices=(
+            # ty: ignore[invalid-argument-type]
             _joined([part.simplices for part in parts], (0, dimension + 1, dimension))
             if policy.overlap_simplices
             else None
@@ -1218,7 +1226,7 @@ def _coverage_status(
     return CommonRefinementStatus.SUCCESS, "certified common refinement"
 
 
-def _validate_meshes(source, target, policy, /) -> None:
+def _validate_meshes(source: Any, target: Any, policy: Any, /) -> None:
     from ..discretization._cell_mesh import CellMesh
 
     if not isinstance(source, CellMesh) or not isinstance(target, CellMesh):

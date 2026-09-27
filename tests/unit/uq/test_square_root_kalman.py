@@ -15,13 +15,13 @@ from phydrax.uq._square_root import (
 
 def _problem(
     *,
-    case_shape=(),
-    mask=None,
-    step_valid=None,
-    prior_covariance=None,
-    process_covariance=None,
-    observation_covariance=None,
-):
+    case_shape: Any = (),
+    mask: Any = None,
+    step_valid: Any = None,
+    prior_covariance: Any = None,
+    process_covariance: Any = None,
+    observation_covariance: Any = None,
+) -> Any:
     if case_shape:
         values = jnp.asarray(
             [
@@ -94,7 +94,9 @@ def _problem(
     )
 
 
-def _scalar_problem(*, process_variance=0.1, observation_variance=0.2):
+def _scalar_problem(
+    *, process_variance: Any = 0.1, observation_variance: Any = 0.2
+) -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0, 1.5]),
         jnp.asarray([[1.0], [1.5], [1.25]]),
@@ -136,7 +138,9 @@ def _scalar_problem(*, process_variance=0.1, observation_variance=0.2):
     )
 
 
-def _assert_filter_equivalent(covariance, square_root, *, atol=2e-5):
+def _assert_filter_equivalent(
+    covariance: Any, square_root: Any, *, atol: Any = 2e-5
+) -> None:
     assert jnp.allclose(
         square_root.predicted_means, covariance.predicted_means, atol=atol
     )
@@ -165,7 +169,7 @@ def _assert_filter_equivalent(covariance, square_root, *, atol=2e-5):
     assert jnp.array_equal(square_root.status, covariance.status)
 
 
-def test_regular_filter_and_rts_match_covariance_form_with_provenance():
+def test_regular_filter_and_rts_match_covariance_form_with_provenance() -> None:
     problem = _problem()
     covariance = phx.uq.kalman_filter(
         problem,
@@ -204,7 +208,7 @@ def test_regular_filter_and_rts_match_covariance_form_with_provenance():
     assert square_root_smoother.execution_method == "sequential"
 
 
-def test_square_root_smoother_starts_each_case_at_its_last_active_step():
+def test_square_root_smoother_starts_each_case_at_its_last_active_step() -> None:
     step_valid = jnp.asarray(
         [[True, True, True, True], [True, True, True, False]],
         dtype=jnp.bool_,
@@ -231,7 +235,7 @@ def test_square_root_smoother_starts_each_case_at_its_last_active_step():
     )
 
 
-def test_square_root_smoother_propagates_factor_diagnostics_backward():
+def test_square_root_smoother_propagates_factor_diagnostics_backward() -> None:
     result = phx.uq.kalman_filter(
         _problem(),
         method="sequential",
@@ -296,7 +300,7 @@ def test_square_root_smoother_propagates_factor_diagnostics_backward():
     assert jnp.all(jnp.isfinite(proposal_smoother.covariances))
 
 
-def test_square_root_smoother_rejects_nonfinite_proposed_moments():
+def test_square_root_smoother_rejects_nonfinite_proposed_moments() -> None:
     result = phx.uq.kalman_filter(
         _problem(),
         method="sequential",
@@ -324,7 +328,7 @@ def test_square_root_smoother_rejects_nonfinite_proposed_moments():
     assert jnp.all(jnp.isfinite(smoother.covariances))
 
 
-def test_singular_psd_state_covariance_is_preserved_through_filter_and_smoother():
+def test_singular_psd_state_covariance_is_preserved_through_filter_and_smoother() -> None:
     problem = _problem(
         prior_covariance=jnp.asarray([[1.0, 0.0], [0.0, 0.0]]),
         process_covariance=jnp.asarray([[0.1, 0.0], [0.0, 0.0]]),
@@ -351,7 +355,7 @@ def test_singular_psd_state_covariance_is_preserved_through_filter_and_smoother(
     assert jnp.all(jnp.linalg.eigvalsh(square_root.filtered_covariances) >= -1e-6)
 
 
-def test_zero_observation_noise_matches_exact_covariance_update():
+def test_zero_observation_noise_matches_exact_covariance_update() -> None:
     problem = _scalar_problem(observation_variance=0.0)
     covariance = phx.uq.kalman_filter(
         problem, method="sequential", covariance_form="covariance"
@@ -364,7 +368,7 @@ def test_zero_observation_noise_matches_exact_covariance_update():
     assert jnp.all(square_root.status == phx.uq.KALMAN_SUCCESS)
 
 
-def test_missing_batched_and_padded_cases_match_without_hidden_updates():
+def test_missing_batched_and_padded_cases_match_without_hidden_updates() -> None:
     mask = jnp.asarray(
         [
             [[True, True], [True, False], [False, False], [True, True]],
@@ -398,8 +402,8 @@ def test_missing_batched_and_padded_cases_match_without_hidden_updates():
     )
 
 
-def test_square_root_filter_gradient_matches_covariance_filter_gradient():
-    def objective(scale, covariance_form):
+def test_square_root_filter_gradient_matches_covariance_filter_gradient() -> None:
+    def objective(scale: Any, covariance_form: Any) -> Any:
         observations = phx.stochastic.ObservationSequence(
             jnp.asarray([0.5, 1.0]),
             jnp.asarray([[0.7], [1.1]]),
@@ -415,7 +419,7 @@ def test_square_root_filter_gradient_matches_covariance_filter_gradient():
             prior_id="gradient-prior",
         )
 
-        def process_covariance(t0, t1, context):
+        def process_covariance(t0: Any, t1: Any, context: Any) -> Any:
             del t0, t1, context
             return jnp.reshape(scale**2, (1, 1))
 
@@ -460,7 +464,7 @@ def test_square_root_filter_gradient_matches_covariance_filter_gradient():
     assert jnp.allclose(square_root_gradient, covariance_gradient, atol=3e-5)
 
 
-def test_qr_factor_algebra_uses_conjugate_transposes_for_complex_values():
+def test_qr_factor_algebra_uses_conjugate_transposes_for_complex_values() -> None:
     filtered = phx.uq.GaussianFactor(
         jnp.asarray([[1.0 + 0.0j, 0.0j], [0.1j, 0.7 + 0.0j]])
     )
@@ -511,7 +515,7 @@ def test_qr_factor_algebra_uses_conjugate_transposes_for_complex_values():
     assert jnp.allclose(smoothed.covariance, expected_smoothed, atol=4e-6)
 
 
-def test_invalid_covariance_form_and_square_root_parallel_dispatch_are_explicit():
+def test_invalid_covariance_form_and_square_root_parallel_dispatch_are_explicit() -> None:
     problem = _problem()
     invalid_form: Any = "factor"
     invalid_method: Any = "invalid"

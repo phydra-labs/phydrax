@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -24,6 +25,7 @@ from ..._differentiation import (
 from ..._model import ModelBinding
 from ..._model._array import value_derivative_contract
 from ..._trainable import fixed_field
+from ...typing import parse
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
@@ -87,7 +89,7 @@ class SpectralEmbeddingModel(AbstractFittedModel):
         bandwidth: float,
         n_neighbors: int,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         train = jnp.asarray(training_features)
         vectors = jnp.asarray(eigenvectors)
         self.training_features = train
@@ -120,7 +122,15 @@ class SpectralEmbeddingModel(AbstractFittedModel):
         weights = self.training_weights.reshape((cases, self.training_weights.shape[-1]))
         active = self.active.reshape((cases, self.active.shape[-1]))
 
-        def transform_one(query, train_, vectors_, values_, degrees_, weights_, active_):
+        def transform_one(
+            query: Array,
+            train_: Array,
+            vectors_: Array,
+            values_: Array,
+            degrees_: Array,
+            weights_: Array,
+            active_: Array,
+        ) -> Array:
             distances = _euclidean_distances(query, train_)
             ranked = jnp.where(active_[None, :], distances, jnp.inf)
             _negative, indices = jax.lax.top_k(-ranked, self.n_neighbors)
@@ -194,7 +204,7 @@ class SpectralEmbeddingRecipe(AbstractRecipe):
         *,
         n_neighbors: int = 10,
         bandwidth: float = 1.0,
-    ):
+    ) -> None:
         if int(n_components) <= 0 or int(n_neighbors) <= 0:
             raise ValueError("n_components and n_neighbors must be positive.")
         if float(bandwidth) <= 0.0:
@@ -287,7 +297,7 @@ class SpectralEmbeddingRecipe(AbstractRecipe):
         )
 
 
-MDSMethod = Literal["classical", "smacof"]
+MDSMethod: TypeAlias = Literal["classical", "smacof"]
 
 
 class MultidimensionalScalingModel(AbstractFittedModel):
@@ -316,7 +326,7 @@ class MultidimensionalScalingModel(AbstractFittedModel):
         *,
         method: MDSMethod,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         train = jnp.asarray(training_features)
         embedding = jnp.asarray(training_embedding)
         self.training_features = train
@@ -358,7 +368,15 @@ class MultidimensionalScalingModel(AbstractFittedModel):
         grand = self.grand_mean.reshape((cases,))
         values = self.eigenvalues.reshape((cases, self.out_size))
 
-        def transform_one(query, train_, weights_, mean_, grand_, embedding_, values_):
+        def transform_one(
+            query: Array,
+            train_: Array,
+            weights_: Array,
+            mean_: Array,
+            grand_: Array,
+            embedding_: Array,
+            values_: Array,
+        ) -> Array:
             squared = pairwise_distances(query, train_, metric="squared-euclidean")
             return _classical_transform_one(
                 squared, weights_, mean_, grand_, embedding_, values_
@@ -386,7 +404,7 @@ def _smacof_one(
         1.0 - jnp.eye(weights.shape[0], dtype=pair_weights.dtype)
     )
 
-    def step(_iteration, state):
+    def step(_iteration: int | Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
         current, _previous_delta = state
         embedded = _euclidean_distances(current)
         ratio = jnp.where(
@@ -421,7 +439,7 @@ class MultidimensionalScalingRecipe(AbstractRecipe):
     """Weighted metric classical MDS or fixed-iteration SMACOF."""
 
     n_components: int = eqx.field(static=True)
-    method: str = eqx.field(static=True)
+    method: MDSMethod = eqx.field(static=True)
     iterations: int = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
 
@@ -432,15 +450,14 @@ class MultidimensionalScalingRecipe(AbstractRecipe):
         method: MDSMethod = "classical",
         iterations: int = 100,
         tolerance: float = 1e-5,
-    ):
+    ) -> None:
         if int(n_components) <= 0:
             raise ValueError("n_components must be positive.")
-        if method not in ("classical", "smacof"):
-            raise ValueError("Only metric classical and SMACOF MDS are supported.")
+        method = parse(method, MDSMethod, "method")
         if int(iterations) <= 0 or float(tolerance) <= 0.0:
             raise ValueError("iterations and tolerance must be positive.")
         self.n_components = int(n_components)
-        self.method = str(method)
+        self.method = method
         self.iterations = int(iterations)
         self.tolerance = float(tolerance)
 
@@ -572,7 +589,7 @@ class IsomapModel(AbstractFittedModel):
         *,
         n_neighbors: int,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         train = jnp.asarray(training_features)
         embedding = jnp.asarray(training_embedding)
         self.training_features = train
@@ -615,16 +632,16 @@ class IsomapModel(AbstractFittedModel):
         active = self.active.reshape((cases, self.active.shape[-1]))
 
         def transform_one(
-            query,
-            train_,
-            embedding_,
-            geodesic_,
-            weights_,
-            mean_,
-            grand_,
-            values_,
-            active_,
-        ):
+            query: Array,
+            train_: Array,
+            embedding_: Array,
+            geodesic_: Array,
+            weights_: Array,
+            mean_: Array,
+            grand_: Array,
+            values_: Array,
+            active_: Array,
+        ) -> Array:
             direct = _euclidean_distances(query, train_)
             ranked = jnp.where(active_[None, :], direct, jnp.inf)
             _negative, indices = jax.lax.top_k(-ranked, self.n_neighbors)
@@ -664,7 +681,7 @@ def _geodesic_one(
     graph = jnp.minimum(graph, graph.T)
     graph = graph.at[jnp.diag_indices(n)].set(jnp.where(active, 0.0, jnp.inf))
 
-    def relax(k, current):
+    def relax(k: int | Array, current: Array) -> Array:
         return jnp.minimum(current, current[:, k, None] + current[k, None, :])
 
     return jax.lax.fori_loop(0, n, relax, graph)
@@ -683,7 +700,7 @@ class IsomapRecipe(AbstractRecipe):
         *,
         n_neighbors: int = 8,
         max_samples: int = 2048,
-    ):
+    ) -> None:
         if int(n_components) <= 0 or int(n_neighbors) <= 0 or int(max_samples) <= 0:
             raise ValueError(
                 "n_components, n_neighbors, and max_samples must be positive."

@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -153,7 +154,9 @@ class FactorAnalysisModel(AbstractFittedModel):
 
     _input_binding = ModelBinding.blockwise("flat", pass_key=False)
 
-    def __init__(self, mean, loadings, noise_variance):
+    def __init__(
+        self, mean: ArrayLike, loadings: ArrayLike, noise_variance: ArrayLike
+    ) -> None:
         self.mean = jnp.asarray(mean)
         self.loadings = jnp.asarray(loadings)
         self.noise_variance = jnp.asarray(noise_variance)
@@ -213,7 +216,7 @@ class FactorAnalysis(AbstractRecipe):
         tolerance: float = 1e-6,
         min_noise: float = 1e-8,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.n_components = int(n_components)
         self.max_iterations = int(max_iterations)
         self.tolerance = float(tolerance)
@@ -239,7 +242,9 @@ class FactorAnalysis(AbstractRecipe):
         diagonal = jnp.real(jnp.diagonal(covariance, axis1=-2, axis2=-1))
         noise0 = jnp.maximum(0.5 * diagonal, self.min_noise)
 
-        def step(carry, _):
+        def step(
+            carry: tuple[Array, Array, Array, Array], _: None
+        ) -> tuple[tuple[Array, Array, Array, Array], Array]:
             noise, _previous, done, used = carry
             reduced = (
                 covariance - jnp.eye(width, dtype=covariance.dtype) * noise[..., None, :]
@@ -370,7 +375,7 @@ class ICAModel(AbstractFittedModel):
 
     _input_binding = ModelBinding.blockwise("flat", pass_key=False)
 
-    def __init__(self, mean, unmixing):
+    def __init__(self, mean: ArrayLike, unmixing: ArrayLike) -> None:
         self.mean = jnp.asarray(mean)
         self.unmixing = jnp.asarray(unmixing)
         relative_cutoff = (
@@ -442,7 +447,7 @@ class ICA(AbstractRecipe):
         max_iterations: int = 200,
         tolerance: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.n_components = int(n_components)
         self.max_iterations = int(max_iterations)
         self.tolerance = float(tolerance)
@@ -479,7 +484,9 @@ class ICA(AbstractRecipe):
             jnp.sum(weights, axis=-1, keepdims=True), jnp.finfo(weights.dtype).tiny
         )
 
-        def step(carry, _):
+        def step(
+            carry: tuple[Array, Array, Array, Array], _: None
+        ) -> tuple[tuple[Array, Array, Array, Array], Array]:
             matrix, done, used, residual = carry
             projections = whitened @ jnp.swapaxes(matrix, -1, -2)
             activation = jnp.tanh(projections)

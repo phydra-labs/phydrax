@@ -30,7 +30,7 @@ class IncompressibleSpectralBenchmarkRecord:
     smoke_successful: bool
 
 
-def _measure(function, argument, repeats):
+def _measure(function: Any, argument: Any, repeats: Any) -> Any:
     compiled = jax.jit(function)
     value, first_seconds = measure_synchronized(lambda: compiled(argument))
     value, distribution = measure_repeated(
@@ -41,6 +41,7 @@ def _measure(function, argument, repeats):
     return (
         value,
         1_000.0 * first_seconds,
+        # ty: ignore[invalid-argument-type]
         1_000.0 * float(distribution.mean_seconds),
     )
 
@@ -51,12 +52,14 @@ def _execution_record(value: jax.Array) -> dict[str, object]:
         "shape": list(value.shape),
         "dtype": str(value.dtype),
         "backend": jax.default_backend(),
+        # ty: ignore[unresolved-attribute]
         "device_platform": device.platform,
+        # ty: ignore[unresolved-attribute]
         "device_kind": device.device_kind,
     }
 
 
-def _channel_resource_record(report) -> dict[str, object]:
+def _channel_resource_record(report: Any) -> dict[str, object]:
     return {
         "lower_bandwidth": int(report.lower_bandwidth),
         "upper_bandwidth": int(report.upper_bandwidth),
@@ -130,6 +133,7 @@ def run_incompressible_spectral_benchmark(
         )
     )
     periodic_rate, first_jit, steady = _measure(
+        # ty: ignore[invalid-argument-type]
         lambda state: periodic(0.0, state, None),
         periodic_state,
         repeat_count,
@@ -140,6 +144,7 @@ def run_incompressible_spectral_benchmark(
     periodic_finite = bool(
         jnp.all(jnp.isfinite(periodic_rate))
         & jnp.isfinite(periodic_divergence)
+        # ty: ignore[unresolved-attribute]
         & jnp.isfinite(periodic_diagnostics.nonlinear_energy_rate)
         & jnp.isfinite(periodic_diagnostics.energy_balance_defect)
     )
@@ -177,6 +182,7 @@ def run_incompressible_spectral_benchmark(
     jax.block_until_ready(
         prescribed.factorization.factors
         if prescribed.factorization is not None
+        # ty: ignore[unresolved-attribute]
         else prescribed.ultraspherical.bulk_influence
     )
     channel_prepare = 1e3 * (time.perf_counter() - started)
@@ -235,6 +241,7 @@ def run_incompressible_spectral_benchmark(
         "storage": storage,
         "raw_invariants": {
             "divergence_norm": float(periodic_divergence),
+            # ty: ignore[unresolved-attribute]
             "nonlinear_energy_rate": float(periodic_diagnostics.nonlinear_energy_rate),
             "energy_balance_defect": float(periodic_diagnostics.energy_balance_defect),
             "finite": periodic_finite,

@@ -6,19 +6,30 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from math import prod
-from typing import Any, cast, Literal, TypeAlias
+from typing import Any, cast, Literal, Protocol, TypeAlias, TypedDict, TypeVar
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..linalg import AbstractLinearOperator, ArraySpace, OperatorCapabilities
 from ..metrix import AbstractStateGeometry, EuclideanStateGeometry
+from ..typing import parse
 from ._layout import InputLayout
 
 
-def _domain_cond(predicate, true_function, false_function, operand=None):
+_BranchResult = TypeVar("_BranchResult")
+
+
+def _domain_cond(
+    predicate: ArrayLike,
+    true_function: Callable[[Any], _BranchResult],
+    false_function: Callable[[Any], _BranchResult],
+    operand: object = None,
+) -> _BranchResult:
     # Resolve lazily: dynamics is imported before the nonlinear public facade.
     from ..nonlinear._domain_cond import domain_cond
 
@@ -44,10 +55,19 @@ DAELinearSetup: TypeAlias = Callable[
 class _ActiveDAESetupOperator(AbstractLinearOperator):
     """Use the exact identity setup for an inactive replay root."""
 
+    source: ArraySpace
+    target: ArraySpace
     operator: AbstractLinearOperator
     active: Array
 
-    def __init__(self, operator, active, source, target, /):
+    def __init__(
+        self,
+        operator: AbstractLinearOperator,
+        active: Array,
+        source: ArraySpace,
+        target: ArraySpace,
+        /,
+    ) -> None:
         self.operator = operator
         self.active = active
         self.source = source
@@ -62,15 +82,15 @@ class _ActiveDAESetupOperator(AbstractLinearOperator):
         self.batch_shape = ()
         self.operator_id = f"{operator.operator_id}:active-dae-root"
 
-    def mv(self, vector, /):
+    def mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
         value = self.source.validate(vector)
         return _domain_cond(self.active, self.operator.mv, lambda x: x, value)
 
-    def transpose_mv(self, vector, /):
+    def transpose_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
         value = self.target.validate(vector)
         return _domain_cond(self.active, self.operator.transpose_mv, lambda x: x, value)
 
-    def adjoint_mv(self, vector, /):
+    def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
         value = self.target.validate(vector)
         return _domain_cond(
             self.active,
@@ -79,7 +99,7 @@ class _ActiveDAESetupOperator(AbstractLinearOperator):
             value,
         )
 
-    def _assemble_diagonal(self, /):
+    def _assemble_diagonal(self, /) -> Array:
         from ..linalg._operators import _assemble_operator_diagonal
 
         return _domain_cond(
@@ -89,7 +109,7 @@ class _ActiveDAESetupOperator(AbstractLinearOperator):
             None,
         )
 
-    def _materialize(self, /):
+    def _materialize(self, /) -> Array:
         return _domain_cond(
             self.active,
             lambda _: self.operator._materialize(),
@@ -103,7 +123,7 @@ class _BoundDAELinearSetup(StrictModule):
     source: ArraySpace
     target: ArraySpace
 
-    def __call__(self, state, arguments, /):
+    def __call__(self, state: Array, arguments: Any, /) -> AbstractLinearOperator:
         if hasattr(arguments, "active"):
             from ..nonlinear._types import _guarded_call
 
@@ -130,6 +150,18 @@ class _BoundDAELinearSetup(StrictModule):
         )
 
 
+class _DAERootResidual(Protocol):
+    def trial_valid(self, unknown: Array, arguments: Any, /) -> Array: ...
+
+
+class _DAERootOptions(TypedDict):
+    trial_validity: Callable[[Array, Any], Array]
+    trial_validity_id: str
+    linear_setup: _BoundDAELinearSetup | None
+    tangent_linear_setup: _BoundDAELinearSetup | None
+    adjoint_linear_setup: _BoundDAELinearSetup | None
+
+
 def _identifier(value: str, owner: str, /) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{owner} must be a non-empty string.")
@@ -147,9 +179,7 @@ def _roles(value: Sequence[DAERole], owner: str, /) -> tuple[DAERole, ...]:
     roles = tuple(value)
     if not roles:
         raise ValueError(f"{owner} must not be empty.")
-    if any(role not in ("differential", "algebraic") for role in roles):
-        raise ValueError(f"{owner} entries must be 'differential' or 'algebraic'.")
-    return roles
+    return tuple(parse(role, DAERole, owner) for role in roles)
 
 
 def _inexact(value: ArrayLike, /) -> Array:
@@ -185,7 +215,7 @@ class DAEStructure(StrictModule):
         *,
         equation_roles: Sequence[DAERole] | None = None,
         component_axis: int | None = -1,
-    ):
+    ) -> None:
         variables = _roles(variable_roles, "variable_roles")
         equations = (
             variables
@@ -297,7 +327,7 @@ class DifferentialAlgebraicSystem(StrictModule):
         tangent_linear_setup: DAELinearSetup | None = None,
         adjoint_linear_setup: DAELinearSetup | None = None,
         system_id: str,
-    ):
+    ) -> None:
         if not callable(residual):
             raise TypeError("DifferentialAlgebraicSystem residual must be callable.")
         if (trial_validity is None) != (trial_validity_id is None):
@@ -365,25 +395,46 @@ class DifferentialAlgebraicSystem(StrictModule):
     def state_size(self) -> int:
         return prod(self.state_shape)
 
-    def trial_valid(self, time, state, state_rate, args=None, /, *, inputs=None) -> Array:
+    def trial_valid(
+        self,
+        time: ArrayLike,
+        state: ArrayLike,
+        state_rate: ArrayLike,
+        args: Any = None,
+        /,
+        *,
+        inputs: ArrayLike | None = None,
+    ) -> Array:
         """Check domain support without evaluating physical residuals or properties.
 
         The callback always receives ``(time, state, state_rate, args, inputs)``;
         autonomous systems receive ``inputs=None``.
         """
+        time_array = jnp.asarray(time)
+        state_array = jnp.asarray(state)
+        rate_array = jnp.asarray(state_rate)
         finite = (
-            jnp.all(jnp.isfinite(time))
-            & jnp.all(jnp.isfinite(state))
-            & jnp.all(jnp.isfinite(state_rate))
+            jnp.all(jnp.isfinite(time_array))
+            & jnp.all(jnp.isfinite(state_array))
+            & jnp.all(jnp.isfinite(rate_array))
         )
         if self.trial_validity is None:
             return finite
-        valid = jnp.asarray(self.trial_validity(time, state, state_rate, args, inputs))
+        valid = jnp.asarray(
+            self.trial_validity(time_array, state_array, rate_array, args, inputs)
+        )
         if valid.shape != () or valid.dtype != jnp.bool_:
             raise ValueError("DAE trial_validity must return one Boolean scalar.")
         return finite & valid
 
-    def root_options(self, kind, residual, source, target, /):
+    def root_options(
+        self,
+        kind: Literal["stage", "initialization", "event"],
+        residual: _DAERootResidual,
+        source: ArraySpace,
+        target: ArraySpace,
+        /,
+    ) -> _DAERootOptions:
         """Bind setup factories to exact native root coordinates.
 
         Stage unknowns are increments ``z`` about the retained physical reference.
@@ -401,7 +452,7 @@ class DifferentialAlgebraicSystem(StrictModule):
         if kind not in ("stage", "initialization", "event"):
             raise ValueError("Unknown DAE root kind.")
         setup = getattr(self, f"{kind}_linear_setup")
-        return dict(
+        return _DAERootOptions(
             trial_validity=residual.trial_valid,
             trial_validity_id=self.trial_validity_id or f"{self.system_id}:finite-domain",
             linear_setup=None
@@ -554,7 +605,7 @@ class DifferentialAlgebraicSystem(StrictModule):
                     f"mass_matrix must have shape {(size, size)}; got {constant_array.shape}."
                 )
 
-        def apply_mass(time, state, state_rate, args):
+        def apply_mass(time: Array, state: Array, state_rate: Array, args: Any) -> Array:
             resolved_mass = (
                 mass_matrix(time, state, args) if dynamic_mass else mass_matrix
             )
@@ -569,7 +620,7 @@ class DifferentialAlgebraicSystem(StrictModule):
                 )
             return (matrix @ state_rate.reshape((size,))).reshape(shape)
 
-        def validate_drift(value):
+        def validate_drift(value: ArrayLike) -> Array:
             drift = _inexact(value)
             if drift.shape != shape:
                 raise ValueError(
@@ -579,14 +630,18 @@ class DifferentialAlgebraicSystem(StrictModule):
 
         if input_layout is None:
 
-            def residual(time, state, state_rate, args):
+            def residual(
+                time: Array, state: Array, state_rate: Array, args: Any
+            ) -> Array:
                 return apply_mass(time, state, state_rate, args) - validate_drift(
                     vector_field(time, state, args)
                 )
 
         else:
 
-            def residual(time, state, state_rate, inputs, args):
+            def residual(
+                time: Array, state: Array, state_rate: Array, inputs: Array, args: Any
+            ) -> Array:
                 return apply_mass(time, state, state_rate, args) - validate_drift(
                     vector_field(time, state, inputs, args)
                 )

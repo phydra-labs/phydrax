@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _species(bridge, offset, sign, name, count=4):
+def _species(bridge: Any, offset: Any, sign: Any, name: Any, count: Any = 4) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(offset, offset + count),
         jnp.ones((count,)),
@@ -23,7 +26,7 @@ def _species(bridge, offset, sign, name, count=4):
     return charged, transfer
 
 
-def test_electrostatic_pic_step_is_atomic_and_constraint_aware():
+def test_electrostatic_pic_step_is_atomic_and_constraint_aware() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(16, periodic=True),),
         axis_names=("x",),
@@ -52,7 +55,7 @@ def test_electrostatic_pic_step_is_atomic_and_constraint_aware():
     )
 
 
-def _electromagnetic_pic():
+def _electromagnetic_pic() -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(3, periodic=True) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -76,7 +79,7 @@ def _electromagnetic_pic():
     return pic, maxwell
 
 
-def test_electromagnetic_pic_preserves_zero_current_constraints():
+def test_electromagnetic_pic_preserves_zero_current_constraints() -> None:
     pic, maxwell = _electromagnetic_pic()
     position = jnp.asarray([[0.25, 0.25, 0.25], [0.7, 0.6, 0.5]])
     velocity = jnp.zeros((2, 3))
@@ -90,7 +93,7 @@ def test_electromagnetic_pic_preserves_zero_current_constraints():
     assert result.diagnostics.magnetic_constraint < 1.0e-10
 
 
-def test_electromagnetic_pic_preserves_gauss_with_charge_separation_and_current():
+def test_electromagnetic_pic_preserves_gauss_with_charge_separation_and_current() -> None:
     pic, maxwell = _electromagnetic_pic()
     position = jnp.asarray([[0.25, 0.25, 0.25], [0.7, 0.6, 0.5]])
     positive_velocity = jnp.asarray([[0.1, 0.0, 0.0], [0.1, 0.0, 0.0]])

@@ -12,6 +12,7 @@ from typing import Literal, TypeAlias
 import numpy as np
 from scipy.linalg import hadamard
 
+from ..typing import parse
 from ._cubature import CubatureRuleData
 from ._orthogonal import standard_normal_hermite_rule_data
 
@@ -229,15 +230,7 @@ def gaussian_cubature_rule_data(
     dimension_ = _dimension(dimension)
     degree_ = _degree(degree)
     maximum = _maximum_points(maximum_points)
-    if family not in (
-        "auto",
-        "stroud-secrest-3-1",
-        "hadamard-3",
-        "stroud-secrest-5-2",
-        "stroud-secrest-5-3",
-        "tensor-hermite",
-    ):
-        raise ValueError(f"Unsupported Gaussian cubature family: {family!r}.")
+    family = parse(family, GaussianCubatureFamily, "family")
     selected = family
     if selected == "auto":
         if degree_ <= 3:

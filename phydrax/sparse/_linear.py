@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 from math import prod
-from typing import Any, Protocol
+from typing import Any, Protocol, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -26,6 +27,10 @@ from ..linalg._spaces import _coordinate_dtype
 from ..linalg._sparse_contract import AbstractSparseLinearOperator, SparseStorage
 from ._ops import linear_adjoint_apply, linear_apply, linear_transpose_apply
 from ._relation import EdgeRelation, RowRelation, SparseRelation
+
+
+if TYPE_CHECKING:
+    import scipy.sparse as sp
 
 
 class LinearAction(Protocol):
@@ -60,7 +65,7 @@ class SparseLinearMap(AbstractSparseLinearOperator):
         *,
         properties: OperatorProperties | None = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(relation, (EdgeRelation, RowRelation)):
             raise TypeError("relation must be an EdgeRelation or RowRelation.")
         values = jnp.asarray(coefficients)
@@ -152,7 +157,7 @@ class SparseLinearMap(AbstractSparseLinearOperator):
         safe_source = jnp.where(relation.valid, relation.source_indices, 0)
         safe_target = jnp.where(relation.valid, relation.target_indices, 0)
 
-        def materialize_one(values):
+        def materialize_one(values: Array) -> Array:
             values = jnp.where(
                 relation.valid,
                 values,
@@ -184,7 +189,7 @@ class SparseLinearMap(AbstractSparseLinearOperator):
     def sparse_storage(self, /) -> SparseStorage:
         return _canonical_sparse_storage(self.relation, self.coefficients)
 
-    def to_scipy(self):
+    def to_scipy(self) -> sp.csr_matrix:
         """Return a host-side CSR matrix, coalescing duplicate linear routes."""
         import scipy.sparse as sp
 
@@ -220,7 +225,7 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
         properties: OperatorProperties | None = None,
         operator_id: str | None = None,
         accumulation_dtype: Any | None = None,
-    ):
+    ) -> None:
         if not isinstance(relation, (EdgeRelation, RowRelation)):
             raise TypeError("relation must be an EdgeRelation or RowRelation.")
         if not isinstance(source, AbstractVectorSpace) or not isinstance(
@@ -358,7 +363,7 @@ def _assemble_relation_diagonal(
     diagonal_entry = relation.valid & (relation.source_indices == relation.target_indices)
     safe_target = jnp.where(diagonal_entry, relation.target_indices, 0)
 
-    def assemble_one(values):
+    def assemble_one(values: Array) -> Array:
         values = jnp.where(
             diagonal_entry,
             values,
@@ -393,7 +398,7 @@ class _SparseStoragePlan(StrictModule):
     route_shape: tuple[int, ...] = eqx.field(static=True)
     nnz: int = eqx.field(static=True)
 
-    def __init__(self, relation: SparseRelation, /):
+    def __init__(self, relation: SparseRelation, /) -> None:
         edge = (
             relation
             if isinstance(relation, EdgeRelation)

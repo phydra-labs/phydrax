@@ -13,13 +13,14 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import scipy.sparse as sp
+from jax.typing import DTypeLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import adjoint, ArraySpace, transpose
 from ...sparse import EdgeRelation, SparseCoordinateOperator
-from ._entities import VariablePatchEntityComplex
+from ._entities import EntityKey, VariablePatchEntityComplex
 
 
 class CompatibleEntityTransferEvidence(StrictModule, NonTrainableState):
@@ -44,7 +45,7 @@ class CompatibleEntityTransferEvidence(StrictModule, NonTrainableState):
         roundtrip_defect: float,
         commuting_defect: float,
         /,
-    ):
+    ) -> None:
         defects = (
             float(constant_defect),
             float(roundtrip_defect),
@@ -141,10 +142,16 @@ def _pad_operator(
     )
 
 
-def _scipy_matrix(operator: SparseCoordinateOperator, /):
-    valid = np.asarray(operator.relation.valid, dtype=np.bool_)
-    source = np.asarray(operator.relation.source_indices)[valid]
-    target = np.asarray(operator.relation.target_indices)[valid]
+def _scipy_matrix(operator: SparseCoordinateOperator, /) -> sp.csr_matrix:
+    relation = operator.relation
+    # _pad_operator builds every transfer operator over an EdgeRelation.
+    if not (isinstance(relation, EdgeRelation)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(relation, EdgeRelation)."
+        )
+    valid = np.asarray(relation.valid, dtype=np.bool_)
+    source = np.asarray(relation.source_indices)[valid]
+    target = np.asarray(relation.target_indices)[valid]
     coefficients = np.asarray(operator.coefficients)[valid]
     return sp.coo_matrix(
         (coefficients, (target, source)),
@@ -153,17 +160,17 @@ def _scipy_matrix(operator: SparseCoordinateOperator, /):
 
 
 def _prolongation_routes(
-    coarse_keys,
-    fine_keys,
+    coarse_keys: Sequence[EntityKey],
+    fine_keys: Sequence[EntityKey],
     ratio: int,
     coarse_shape: tuple[int, ...],
     periodic: tuple[bool, ...],
     /,
-):
+) -> tuple[list[int], list[int], list[float]]:
     coarse_by_key = {key: index for index, key in enumerate(coarse_keys)}
-    source = []
-    target = []
-    coefficients = []
+    source: list[int] = []
+    target: list[int] = []
+    coefficients: list[float] = []
     for fine_index, (orientation, fine_coordinate) in enumerate(fine_keys):
         tangent = frozenset(orientation)
         options = []
@@ -199,17 +206,17 @@ def _prolongation_routes(
 
 
 def _restriction_routes(
-    coarse_keys,
-    fine_keys,
+    coarse_keys: Sequence[EntityKey],
+    fine_keys: Sequence[EntityKey],
     ratio: int,
     fine_shape: tuple[int, ...],
     periodic: tuple[bool, ...],
     /,
-):
+) -> tuple[list[int], list[int], list[float]]:
     fine_by_key = {key: index for index, key in enumerate(fine_keys)}
-    source = []
-    target = []
-    coefficients = []
+    source: list[int] = []
+    target: list[int] = []
+    coefficients: list[float] = []
     for coarse_index, (orientation, coarse_coordinate) in enumerate(coarse_keys):
         tangent = tuple(orientation)
         offsets = tuple(product(range(ratio), repeat=len(tangent))) or ((),)
@@ -252,8 +259,8 @@ class CompatibleEntityTransferFamily(StrictModule, NonTrainableState):
         route_capacities: Sequence[int],
         /,
         *,
-        dtype=jnp.float64,
-    ):
+        dtype: DTypeLike = jnp.float64,
+    ) -> None:
         ratio = int(refinement_ratio)
         capacities = tuple(route_capacities)
         dimension = coarse.complex.dimension

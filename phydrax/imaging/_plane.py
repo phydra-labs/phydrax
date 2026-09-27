@@ -10,7 +10,7 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -54,7 +54,7 @@ class ImagePlaneSupport(StrictModule, NonTrainableState):
         pixel_spacing_rc: Array | Sequence[float] = (1.0, 1.0),
         detector_frame_id: str | None = None,
         support_id: str | None = None,
-    ):
+    ) -> None:
         shape = _shape2(image_shape, name="image_shape")
         origin = _vector2(pixel_origin_rc, name="pixel_origin_rc")
         spacing = _vector2(pixel_spacing_rc, name="pixel_spacing_rc")

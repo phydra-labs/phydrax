@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def peng_robinson_model():
+def peng_robinson_model() -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("methane", "ethane"),
         (phx.equations.ChemicalPhaseKind.GAS,) * 2,
@@ -44,7 +47,7 @@ def peng_robinson_model():
     )
 
 
-def test_peng_robinson_pressure_has_ideal_low_density_limit():
+def test_peng_robinson_pressure_has_ideal_low_density_limit() -> None:
     model = peng_robinson_model()
     temperature = jnp.asarray(350.0)
     density = jnp.asarray(1.0e-3)
@@ -60,7 +63,7 @@ def test_peng_robinson_pressure_has_ideal_low_density_limit():
     assert bool(state.evidence.successful)
 
 
-def test_peng_robinson_enumerates_fixed_three_root_slots():
+def test_peng_robinson_enumerates_fixed_three_root_slots() -> None:
     model = peng_robinson_model()
     roots = phx.equations.peng_robinson_roots(
         model,
@@ -76,7 +79,7 @@ def test_peng_robinson_enumerates_fixed_three_root_slots():
     assert bool(roots.stable[roots.minimum_gibbs_index])
 
 
-def test_peng_robinson_parameter_identity_is_content_sensitive():
+def test_peng_robinson_parameter_identity_is_content_sensitive() -> None:
     model = peng_robinson_model()
     base = model.residual.parameters
     changed = phx.equations.PengRobinsonParameters(
@@ -90,7 +93,7 @@ def test_peng_robinson_parameter_identity_is_content_sensitive():
     assert changed.parameter_id != base.parameter_id
 
 
-def test_peng_robinson_drives_single_phase_homogeneous_euler():
+def test_peng_robinson_drives_single_phase_homogeneous_euler() -> None:
     model = peng_robinson_model()
     system = phx.equations.HomogeneousMixtureEulerSystem(model)
     primitive = jnp.asarray((0.2, 0.3, 1.0, 350.0))

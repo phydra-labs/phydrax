@@ -8,7 +8,8 @@ from enum import IntEnum
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..nonlinear import NonlinearWorkBudget
@@ -47,7 +48,7 @@ class QuantumTrajectoryPlan(StrictModule):
         root_method: str = "toms748",
         plan_id: str = "quantum-trajectory",
         work_budget: NonlinearWorkBudget | None = None,
-    ):
+    ) -> None:
         if min(maximum_events, maximum_segments, root_iterations) < 1:
             raise ValueError("Trajectory capacities must be positive.")
         if root_tolerance <= 0.0 or root_method not in (
@@ -84,7 +85,7 @@ class QuantumTrajectoryEventTable(StrictModule):
         bracket_widths: ArrayLike,
         active: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.times = jnp.asarray(times)
         self.channels = jnp.asarray(channels, dtype=jnp.int32)
         self.thresholds = jnp.asarray(thresholds)
@@ -117,7 +118,7 @@ class QuantumTrajectoryCheckpoint(StrictModule):
         problem_id: str,
         plan_id: str,
         status: int = int(QuantumTrajectoryStatus.SUCCESS),
-    ):
+    ) -> None:
         self.state = jnp.asarray(state)
         self.time = jnp.asarray(time)
         self.threshold = jnp.asarray(threshold)

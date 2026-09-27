@@ -8,7 +8,8 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -34,7 +35,7 @@ class TriggerLine(StrictModule, NonTrainableState):
         prescale: int = 1,
         maximum_latency: float,
         maximum_resource_units: float,
-    ):
+    ) -> None:
         name_ = str(name).strip()
         seeds = tuple(sorted(str(value).strip() for value in seed_names))
         streams = tuple(sorted(str(value).strip() for value in stream_names))
@@ -81,7 +82,7 @@ class TriggerMenu(StrictModule, NonTrainableState):
     stream_names: tuple[str, ...] = eqx.field(static=True)
     menu_id: str = eqx.field(static=True)
 
-    def __init__(self, lines: Sequence[TriggerLine], /):
+    def __init__(self, lines: Sequence[TriggerLine], /) -> None:
         lines_ = tuple(lines)
         if not lines_ or any(not isinstance(value, TriggerLine) for value in lines_):
             raise TypeError("lines must contain typed non-empty trigger lines.")
@@ -119,7 +120,7 @@ class TriggerReplayResult(StrictModule, NonTrainableState):
     menu_id: str = eqx.field(static=True)
 
 
-def _mix_uint32(value, salt):
+def _mix_uint32(value: Array, salt: int) -> Array:
     mixed = value.astype(jnp.uint32) ^ jnp.asarray(salt, dtype=jnp.uint32)
     mixed ^= mixed >> jnp.uint32(16)
     mixed *= jnp.uint32(0x7FEB352D)

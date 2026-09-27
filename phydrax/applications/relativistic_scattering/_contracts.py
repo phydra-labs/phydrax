@@ -43,7 +43,7 @@ class PDFProviderPlan(StrictModule, NonTrainableState):
         flavor_scheme: str,
         x_support: tuple[float, float],
         scale_support: tuple[float, float],
-    ):
+    ) -> None:
         labels = tuple(
             str(value).strip()
             for value in (set_name, release, interpolation_id, alpha_s_id, flavor_scheme)
@@ -100,7 +100,7 @@ class MatchingMergingPlan(StrictModule, NonTrainableState):
         merging_scale: float,
         shower_provider_id: str,
         weight_names: Sequence[str],
-    ):
+    ) -> None:
         method = str(method_id).strip()
         shower = str(shower_provider_id).strip()
         multiplicities_ = tuple(multiplicities)

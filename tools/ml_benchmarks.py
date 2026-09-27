@@ -139,7 +139,7 @@ def _direct_linear_case(scale: str, factor: float, seed: int) -> BenchmarkCase:
     recipe = RidgeRecipe(0.05, fit_intercept=True)
     key = jax.random.PRNGKey(_case_seed(seed, f"direct-linear/{scale}"))
 
-    def operation(x, y, points, fit_key):
+    def operation(x: Any, y: Any, points: Any, fit_key: Any) -> Any:
         result = fit(recipe, x, y, key=fit_key)
         prediction = result.as_trainable()(points)
         return prediction, result.valid, result.status
@@ -178,7 +178,7 @@ def _spectral_case(scale: str, factor: float, seed: int) -> BenchmarkCase:
     key_seed = _case_seed(seed, f"spectral-pca/{scale}")
     key = jax.random.PRNGKey(key_seed)
 
-    def operation(x, points, fit_key):
+    def operation(x: Any, points: Any, fit_key: Any) -> Any:
         result = fit(recipe, x, key=fit_key)
         scores = result.as_trainable()(points)
         return scores, result.valid, result.status
@@ -236,7 +236,7 @@ def _iterative_clustering_case(scale: str, factor: float, seed: int) -> Benchmar
     key_seed = _case_seed(seed, f"iterative-kmeans/{scale}")
     key = jax.random.PRNGKey(key_seed)
 
-    def operation(x, points, fit_key):
+    def operation(x: Any, points: Any, fit_key: Any) -> Any:
         result = fit(recipe, x, key=fit_key)
         labels = result.as_trainable()(points)
         return labels, result.valid, result.status
@@ -283,7 +283,7 @@ def _kernel_case(scale: str, factor: float, seed: int) -> BenchmarkCase:
     key_seed = _case_seed(seed, f"kernel-ridge/{scale}")
     key = jax.random.PRNGKey(key_seed)
 
-    def operation(x, y, points, fit_key):
+    def operation(x: Any, y: Any, points: Any, fit_key: Any) -> Any:
         result = fit(recipe, x, y, key=fit_key)
         prediction = result.as_trainable()(points)
         return prediction, result.valid, result.status
@@ -332,7 +332,7 @@ def _fixed_capacity_tree_case(scale: str, factor: float, seed: int) -> Benchmark
     key = jax.random.PRNGKey(key_seed)
     predict = jax.jit(lambda model, points: model(points))
 
-    def operation(x, y, points, fit_key):
+    def operation(x: Any, y: Any, points: Any, fit_key: Any) -> Any:
         result = fit(recipe, x, y, key=fit_key)
         prediction = predict(result.as_trainable(), points)
         return prediction, result.valid, result.status

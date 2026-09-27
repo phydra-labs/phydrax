@@ -8,7 +8,8 @@ from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -46,7 +47,7 @@ class SmoothedElasticityPlan(StrictModule, NonTrainableState):
         /,
         *,
         stabilization: SmoothingStabilizationPolicy | None = None,
-    ):
+    ) -> None:
         if method == "ES":
             layout = edge_smoothing_layout(mesh)
         elif method == "NS":
@@ -133,7 +134,7 @@ class SelectiveESNSPlan(StrictModule, NonTrainableState):
         deviatoric_constitutive: ArrayLike,
         volumetric_constitutive: ArrayLike,
         /,
-    ):
+    ) -> None:
         edge = SmoothedElasticityPlan("ES", mesh, deviatoric_constitutive)
         node = SmoothedElasticityPlan("NS", mesh, volumetric_constitutive)
         self.edge_plan = edge
@@ -193,7 +194,7 @@ class Q4FSDTSmoothingPlan(StrictModule, NonTrainableState):
         bending_cells: int = 3,
         shear_cells: int = 1,
         nonlinear_cells: int = 3,
-    ):
+    ) -> None:
         membrane = q4_cell_smoothing_layout(mesh, membrane_cells)
         bending = q4_cell_smoothing_layout(mesh, bending_cells)
         shear = q4_cell_smoothing_layout(mesh, shear_cells)
@@ -245,7 +246,7 @@ class FullySmoothedAxisymmetricPlan(StrictModule, NonTrainableState):
         *,
         density: float = 1.0,
         cell_smoothing_count: int = 1,
-    ):
+    ) -> None:
         if variant == "CS":
             layout = q4_cell_smoothing_layout(mesh, cell_smoothing_count)
         elif variant == "ES":

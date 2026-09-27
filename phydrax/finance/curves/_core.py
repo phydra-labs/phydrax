@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import hashlib
 from enum import Enum
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, TypeVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..core import Currency, FinanceDate
@@ -68,6 +69,7 @@ _YIELD_REPRESENTATIONS = frozenset(
 _SURVIVAL_REPRESENTATIONS = frozenset(
     {CurveRepresentation.LOG_SURVIVAL, CurveRepresentation.HAZARD_RATE}
 )
+_EnumT = TypeVar("_EnumT", bound=Enum)
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -77,7 +79,7 @@ def _identifier(value: str, name: str, /) -> str:
     return identifier
 
 
-def _enum(value: Any, enum_type: type[Enum], name: str, /):
+def _enum(value: Any, enum_type: type[_EnumT], name: str, /) -> _EnumT:
     if isinstance(value, enum_type):
         return value
     allowed_values = tuple(member.value for member in enum_type)
@@ -99,7 +101,7 @@ def _real_vector(value: ArrayLike, name: str, /) -> Array:
 
 
 def _concrete_numpy(value: Array, /) -> np.ndarray | None:
-    if isinstance(value, jax.core.Tracer):
+    if isinstance(value, jax_core.Tracer):
         return None
     return np.asarray(value)
 
@@ -110,7 +112,7 @@ class CurveGrid(StrictModule):
     times: Array
     grid_id: str = eqx.field(static=True)
 
-    def __init__(self, times: ArrayLike, /):
+    def __init__(self, times: ArrayLike, /) -> None:
         times_ = _real_vector(times, "times")
         concrete = _concrete_numpy(times_)
         if concrete is None:
@@ -146,7 +148,7 @@ class InterpolationPolicy(StrictModule):
         *,
         left_extrapolation: ExtrapolationMode | str,
         right_extrapolation: ExtrapolationMode | str,
-    ):
+    ) -> None:
         self.method = _enum(method, InterpolationMethod, "method")
         self.left_extrapolation = _enum(
             left_extrapolation, ExtrapolationMode, "left_extrapolation"
@@ -177,7 +179,7 @@ class CurveDefinition(StrictModule):
         representation: CurveRepresentation | str,
         grid: CurveGrid,
         interpolation: InterpolationPolicy,
-    ):
+    ) -> None:
         if not isinstance(valuation_date, FinanceDate):
             raise TypeError("valuation_date must be a FinanceDate.")
         if currency is not None and not isinstance(currency, Currency):
@@ -401,7 +403,7 @@ class CurveSensitivity(StrictModule):
         *,
         input_ids: tuple[str, ...],
         quantity: CurveQuantity,
-    ):
+    ) -> None:
         values_ = jnp.asarray(values)
         jacobian_ = jnp.asarray(jacobian)
         if jacobian_.shape != values_.shape + (len(input_ids),):
@@ -430,7 +432,7 @@ class PreparedCurve(StrictModule):
         *,
         node_quote_jacobian: ArrayLike | None = None,
         quote_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         if not isinstance(definition, CurveDefinition):
             raise TypeError("definition must be a CurveDefinition.")
         nodes = _real_vector(node_values, "node_values")
@@ -680,7 +682,7 @@ class PreparedCurve(StrictModule):
     ) -> CurveSensitivity:
         query = self._query_times(times)
 
-        def evaluated(nodes):
+        def evaluated(nodes: Array) -> Array:
             refreshed = eqx.tree_at(lambda curve: curve.node_values, self, nodes)
             return refreshed.evaluate(query, quantity=quantity)
 
@@ -722,7 +724,7 @@ class CurveSet(StrictModule):
     curves: tuple[PreparedCurve, ...]
     curve_ids: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self, curves: tuple[PreparedCurve, ...], /):
+    def __init__(self, curves: tuple[PreparedCurve, ...], /) -> None:
         curves_ = tuple(curves)
         if not curves_:
             raise ValueError("CurveSet requires at least one curve.")

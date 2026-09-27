@@ -4,18 +4,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from itertools import pairwise
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import numpy as np
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
-ClassificationObjectiveKind = Literal["nll", "soft_cross_entropy", "focal"]
+ClassificationObjectiveKind: TypeAlias = Literal["nll", "soft_cross_entropy", "focal"]
 
 
 class ClassificationObjective(StrictModule, NonTrainableState):
@@ -34,15 +35,14 @@ class ClassificationObjective(StrictModule, NonTrainableState):
         gamma: float = 2.0,
         alpha: float | Sequence[float] | None = None,
         thresholds: Sequence[float] | None = None,
-    ):
-        if kind not in ("nll", "soft_cross_entropy", "focal"):
-            raise ValueError(f"Unsupported classification objective {kind!r}.")
+    ) -> None:
+        kind = parse(kind, ClassificationObjectiveKind, "kind")
         gamma_value = float(gamma)
         if not np.isfinite(gamma_value) or gamma_value < 0.0:
             raise ValueError("gamma must be finite and nonnegative.")
         if alpha is None:
             alpha_value: float | tuple[float, ...] | None = None
-        elif np.isscalar(alpha):
+        elif isinstance(alpha, (str, bytes)) or not isinstance(alpha, Iterable):
             alpha_value = float(alpha)
             if not np.isfinite(alpha_value):
                 raise ValueError("alpha must be finite.")

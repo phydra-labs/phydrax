@@ -9,6 +9,7 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 
 from .._strict import StrictModule
+from ..typing import parse
 
 
 RecyclingExtraction: TypeAlias = Literal["harmonic-ritz"]
@@ -28,14 +29,13 @@ class RecyclingPolicy(StrictModule):
         capacity: int = 20,
         extraction: RecyclingExtraction = "harmonic-ritz",
         refresh: RecyclingRefresh = "reuse-source",
-    ):
+    ) -> None:
         capacity_ = int(capacity)
         if capacity_ < 1:
             raise ValueError("Recycling capacity must be positive.")
         if extraction != "harmonic-ritz":
             raise ValueError("Only harmonic-ritz recycling extraction is supported.")
-        if refresh not in ("reuse-source", "rebuild"):
-            raise ValueError("Unknown recycling refresh policy.")
+        refresh = parse(refresh, RecyclingRefresh, "refresh")
         self.capacity = capacity_
         self.extraction = extraction
         self.refresh = refresh

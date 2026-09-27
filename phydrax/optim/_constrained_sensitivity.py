@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
@@ -20,14 +22,28 @@ from ..linalg import (
     DenseSVD,
     LeastSquaresProblem,
     LinearSolvePolicy,
+    LinearSolveResult,
     prepare as prepare_linear,
+    PreparedLinearSolve,
     solve as solve_linear,
 )
-from ._constrained_model import prepare_constrained_model
+from ..typing import parse
+from ._constrained_model import prepare_constrained_model, PreparedConstrainedModel
 from ._iterative import MinimizationProblem
 
 
 ConstrainedSensitivityMode: TypeAlias = Literal["fixed-active", "barrier"]
+# (prepared, initial, residual, matrix, system, active mask, model parameters, gradient)
+_SensitivitySystem: TypeAlias = tuple[
+    PreparedConstrainedModel,
+    Array,
+    Callable[[Array, Any], Array],
+    Array,
+    PreparedLinearSolve,
+    Array,
+    PyTree[Any],
+    Array,
+]
 
 
 class ConstrainedSensitivityResult(StrictModule):
@@ -51,7 +67,13 @@ def _linear_policy(
     return precision.bind_linear(linear_)
 
 
-def _least_squares(matrix, right, linear, precision, /):
+def _least_squares(
+    matrix: Array,
+    right: Array,
+    linear: LinearSolvePolicy | None,
+    precision: NonlinearPrecisionPolicy,
+    /,
+) -> LinearSolveResult:
     return solve_linear(
         LeastSquaresProblem(DenseLinearOperator(precision.accumulation(matrix))),
         precision.accumulation(right),
@@ -68,7 +90,7 @@ def _sensitivity_system(
     barrier: float,
     linear: LinearSolvePolicy | None,
     precision: NonlinearPrecisionPolicy,
-):
+) -> _SensitivitySystem:
     model_parameters = precision.state(parameters)
     prepared = prepare_constrained_model(problem, model_parameters, args=args)
     evaluation = prepared.evaluate(model_parameters, args)
@@ -119,7 +141,7 @@ def _sensitivity_system(
         )
     initial = jnp.concatenate([coordinates, equality_multipliers, active_multipliers])
 
-    def residual(combined, current_args):
+    def residual(combined: Array, current_args: Any) -> Array:
         x = combined[: coordinates.size]
         equality_dual = combined[coordinates.size : coordinates.size + equality_count]
         inequality_dual = combined[coordinates.size + equality_count :]
@@ -172,8 +194,7 @@ def constrained_solution_jvp(
     linear: LinearSolvePolicy | None = None,
     precision: NonlinearPrecisionPolicy | None = None,
 ) -> ConstrainedSensitivityResult:
-    if mode not in ("fixed-active", "barrier"):
-        raise ValueError("Unknown constrained sensitivity mode.")
+    mode = parse(mode, ConstrainedSensitivityMode, "mode")
     precision_ = NonlinearPrecisionPolicy() if precision is None else precision
     if not isinstance(precision_, NonlinearPrecisionPolicy):
         raise TypeError("precision must be NonlinearPrecisionPolicy or None.")

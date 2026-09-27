@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -20,7 +23,7 @@ from phydrax.operators.integral import (
 )
 
 
-def _interval_rule(count, lower=0.0, upper=1.0):
+def _interval_rule(count: Any, lower: Any = 0.0, upper: Any = 1.0) -> Any:
     step = (upper - lower) / count
     points = lower + step * (jnp.arange(count, dtype="float64") + 0.5)
     return {
@@ -29,7 +32,7 @@ def _interval_rule(count, lower=0.0, upper=1.0):
     }
 
 
-def _ball_rule(radius, dimension, count):
+def _ball_rule(radius: Any, dimension: Any, count: Any) -> Any:
     if dimension == 1:
         rule = _interval_rule(count, -radius, radius)
         return {"offsets": rule["points"], "weights": rule["weights"]}
@@ -43,7 +46,7 @@ def _ball_rule(radius, dimension, count):
     return {"offsets": offsets, "weights": weights}
 
 
-def test_integral_and_mean_delegate_to_typed_integration_api():
+def test_integral_and_mean_delegate_to_typed_integration_api() -> None:
     domain = Interval1d(0.0, 1.0)
     target = phx.integration.over(domain.component())
     plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(8))
@@ -56,14 +59,14 @@ def test_integral_and_mean_delegate_to_typed_integration_api():
     assert jnp.allclose(jnp.asarray(averaged.data), 2.0, atol=1e-12)
 
 
-def test_spatial_integral_nonlocal_kernel_converges_under_rule_refinement():
+def test_spatial_integral_nonlocal_kernel_converges_under_rule_refinement() -> None:
     domain = Interval1d(0.0, 1.0)
 
     @domain.Function("x")
-    def function(x):
+    def function(x: Any) -> Any:
         return jnp.sin(jnp.pi * x[0])
 
-    def kernel(pair):
+    def kernel(pair: Any) -> Any:
         x, y = pair[0], pair[1]
         return jnp.exp(-((x - y) ** 2))
 
@@ -81,11 +84,11 @@ def test_spatial_integral_nonlocal_kernel_converges_under_rule_refinement():
     assert relative_error < 1e-4
 
 
-def test_time_convolution_exp_sin_closed_form():
+def test_time_convolution_exp_sin_closed_form() -> None:
     domain = TimeInterval(0.0, 2.0)
 
     @domain.Function("t")
-    def function(t):
+    def function(t: Any) -> Any:
         return jnp.sin(t)
 
     convolution = time_convolution(
@@ -101,7 +104,7 @@ def test_time_convolution_exp_sin_closed_form():
     assert jnp.max(jnp.abs(values - exact)) < 2e-3
 
 
-def test_time_convolution_is_exact_zero_at_nonzero_domain_start():
+def test_time_convolution_is_exact_zero_at_nonzero_domain_start() -> None:
     domain = TimeInterval(2.0, 3.0)
     function = domain.Function("t")(lambda time: jnp.stack((time, time**2)))
     convolution = time_convolution(lambda lag: jnp.exp(-lag), function)
@@ -114,7 +117,7 @@ def test_time_convolution_is_exact_zero_at_nonzero_domain_start():
     assert convolution.metadata["integral_rule"] == "GaussLegendreRule"
 
 
-def test_time_convolution_nonzero_start_and_clustered_rule():
+def test_time_convolution_nonzero_start_and_clustered_rule() -> None:
     domain = TimeInterval(2.0, 3.0)
     function = domain.Function("t")(lambda time: (time - 2.0) ** 2)
     convolution = time_convolution(
@@ -128,7 +131,7 @@ def test_time_convolution_nonzero_start_and_clustered_rule():
     assert jnp.allclose(convolution(endpoint).data, 1.0 / 3.0, atol=1e-12)
 
 
-def test_fractional_laplacian_constant_zero():
+def test_fractional_laplacian_constant_zero() -> None:
     domain = Interval1d(-1.0, 1.0)
     function = DomainFunction(domain=domain, deps=(), func=jnp.array(3.14))
     operator = fractional_laplacian(function, alpha=1.2)
@@ -139,11 +142,11 @@ def test_fractional_laplacian_constant_zero():
     assert jnp.max(jnp.abs(values)) < 1e-12
 
 
-def test_nonlocal_integral_zero_field_zero_result():
+def test_nonlocal_integral_zero_field_zero_result() -> None:
     domain = Interval1d(0.0, 1.0)
     function = DomainFunction(domain=domain, deps=(), func=jnp.array(0.0))
 
-    def integrand(delta_value, displacement):
+    def integrand(delta_value: Any, displacement: Any) -> Any:
         return (jnp.abs(displacement[0]) < 0.25).astype("float64") * delta_value
 
     operator = nonlocal_integral(function, integrand=integrand, quad=_interval_rule(512))
@@ -154,11 +157,13 @@ def test_nonlocal_integral_zero_field_zero_result():
     assert jnp.max(jnp.abs(values)) < 1e-12
 
 
-def test_nonlocal_integral_time_dependent_field_integrates_to_time(sample_batch):
+def test_nonlocal_integral_time_dependent_field_integrates_to_time(
+    sample_batch: Any,
+) -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
 
     @domain.Function("t")
-    def function(time):
+    def function(time: Any) -> Any:
         return time
 
     operator = nonlocal_integral(
@@ -175,7 +180,7 @@ def test_nonlocal_integral_time_dependent_field_integrates_to_time(sample_batch)
     assert jnp.allclose(output, batch.points["t"].data[None, :], atol=1e-12)
 
 
-def test_nonlocal_integral_context_parameter_receives_full_context():
+def test_nonlocal_integral_context_parameter_receives_full_context() -> None:
     domain = Interval1d(0.0, 1.0)
     function = domain.Function("x")(lambda x: x[0])
     operator = nonlocal_integral(
@@ -190,7 +195,7 @@ def test_nonlocal_integral_context_parameter_receives_full_context():
     assert jnp.allclose(jnp.asarray(operator(points).data), 0.5, atol=1e-12)
 
 
-def test_local_integral_constant_field_equals_ball_volume():
+def test_local_integral_constant_field_equals_ball_volume() -> None:
     domain = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -211,7 +216,7 @@ def test_local_integral_constant_field_equals_ball_volume():
     assert jnp.allclose(value, jnp.pi * radius**2 * 2.5, atol=1e-12)
 
 
-def test_local_integral_zero_and_linear_symmetry():
+def test_local_integral_zero_and_linear_symmetry() -> None:
     interval = Interval1d(-1.0, 1.0)
     zero = DomainFunction(domain=interval, deps=(), func=jnp.array(0.0))
     rule_1d = _ball_rule(0.2, 1, 1024)
@@ -231,7 +236,7 @@ def test_local_integral_zero_and_linear_symmetry():
     )
 
     @square.Function("x")
-    def linear(x):
+    def linear(x: Any) -> Any:
         return x[0]
 
     ball_operator = local_integral_ball(

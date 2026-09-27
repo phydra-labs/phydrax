@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -21,6 +22,7 @@ from ..discretization.particle import (
     ReciprocalPairRadiationPlan,
 )
 from ..discretization.particle._particle_internal_unstructured import (
+    ParticleInternalMeshMetrics,
     PreparedUnstructuredParticleInternalMesh,
 )
 from ..discretization.splatting import PreparedMeshParticleGridSplat
@@ -59,7 +61,7 @@ class ParticleContinuumExchangePlan(StrictModule, NonTrainableState):
         /,
         *,
         schema_id: str,
-    ):
+    ) -> None:
         if not isinstance(transfer, PreparedMeshParticleGridSplat):
             raise TypeError("transfer must be PreparedMeshParticleGridSplat.")
         heat = np.asarray(heat_transfer_coefficient, dtype=np.float64)
@@ -167,6 +169,11 @@ class ParticleContinuumExchangePlan(StrictModule, NonTrainableState):
                 state.porosity,
             )
             if isinstance(prepared.mesh, PreparedUnstructuredParticleInternalMesh):
+                # Unstructured particle meshes always produce internal-mesh metrics.
+                if not (isinstance(metrics, ParticleInternalMeshMetrics)):
+                    raise RuntimeError(
+                        "Internal invariant failed: isinstance(metrics, ParticleInternalMeshMetrics)."
+                    )
                 boundary_mask = metrics.boundary_faces[None, :] & metrics.active_faces
                 owner_cells = metrics.owner_cells
                 face_weight = jnp.where(
@@ -306,16 +313,16 @@ class ReactiveCFDDEMCouplingPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        dem,
-        conversion,
-        continuum_exchange,
+        dem: PreparedSoftSphereDEMDynamics,
+        conversion: PreparedParticleConversionDynamics,
+        continuum_exchange: ParticleContinuumExchangePlan,
         /,
         *,
-        contact_exchange=None,
-        hydrodynamics=None,
-        morphology=None,
-        radiation=None,
-    ):
+        contact_exchange: ParticleContactExchangePlan | None = None,
+        hydrodynamics: UnresolvedCFDEMCouplingPlan | None = None,
+        morphology: DensityPorosityMorphologyPlan | None = None,
+        radiation: ReciprocalPairRadiationPlan | None = None,
+    ) -> None:
         if not isinstance(dem, PreparedSoftSphereDEMDynamics):
             raise TypeError("dem must be PreparedSoftSphereDEMDynamics.")
         if not isinstance(conversion, PreparedParticleConversionDynamics):

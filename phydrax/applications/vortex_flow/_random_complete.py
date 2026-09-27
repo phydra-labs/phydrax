@@ -9,7 +9,8 @@ from math import isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -71,7 +72,7 @@ class RandomVortexSolverPlan(StrictModule, NonTrainableState):
         lower: ArrayLike | None = None,
         upper: ArrayLike | None = None,
         antithetic: bool = True,
-    ):
+    ) -> None:
         if (
             not isinstance(velocity, AbstractPreparedVortexVelocity)
             or not isfinite(viscosity)
@@ -187,7 +188,9 @@ class RandomVortexSolverPlan(StrictModule, NonTrainableState):
         if dt.shape != () or (not typed_key and key.shape != (2,)):
             raise ValueError("Random-vortex step requires scalar dt and a JAX key.")
 
-        def velocity_one(position, strength, core, volume, active):
+        def velocity_one(
+            position: Array, strength: Array, core: Array, volume: Array, active: Array
+        ) -> tuple[Array, Array]:
             source = VortexSourceState(
                 position,
                 strength,
@@ -229,9 +232,18 @@ class RandomVortexSolverPlan(StrictModule, NonTrainableState):
         absorbed = jnp.zeros(state.active_mask.shape, dtype=jnp.bool_)
         reflected = jnp.zeros(state.active_mask.shape, dtype=jnp.bool_)
         if self.boundary == "periodic":
+            # Bounded boundary policies validate both bounds at construction.
+            if not (self.lower is not None and self.upper is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: self.lower is not None and self.upper is not None."
+                )
             width = self.upper - self.lower
             candidate = self.lower + jnp.mod(candidate - self.lower, width)
         elif self.boundary == "reflect":
+            if not (self.lower is not None and self.upper is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: self.lower is not None and self.upper is not None."
+                )
             width = self.upper - self.lower
             folded = jnp.mod(candidate - self.lower, 2.0 * width)
             reflected = jnp.any(
@@ -243,6 +255,10 @@ class RandomVortexSolverPlan(StrictModule, NonTrainableState):
                 2.0 * width - folded,
             )
         elif self.boundary == "absorb":
+            if not (self.lower is not None and self.upper is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: self.lower is not None and self.upper is not None."
+                )
             absorbed = jnp.any(
                 (candidate < self.lower) | (candidate > self.upper), axis=-1
             )

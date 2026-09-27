@@ -2,20 +2,23 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _embed(operator, site, sites):
+def _embed(operator: Any, site: Any, sites: Any) -> Any:
     value = jnp.asarray([[1.0 + 0.0j]])
     for index in range(sites):
         value = jnp.kron(value, operator if index == site else jnp.eye(2))
     return value
 
 
-def test_prefix_quadratic_mpo_matches_dense_definition():
+def test_prefix_quadratic_mpo_matches_dense_definition() -> None:
     charge = jnp.asarray([[0.0, 0.0], [0.0, 1.0]], dtype=jnp.complex128)
     generators = (charge, charge, charge)
     offsets = jnp.asarray([0.2, -0.1, 0.3])
@@ -39,7 +42,7 @@ def test_prefix_quadratic_mpo_matches_dense_definition():
     assert jnp.allclose(result.operator.to_dense(), expected, atol=1e-12)
 
 
-def test_prefix_quadratic_mpo_bond_dimension_is_chain_independent():
+def test_prefix_quadratic_mpo_bond_dimension_is_chain_independent() -> None:
     charge = jnp.asarray([[0.5, 0.0], [0.0, -0.5]], dtype=jnp.complex128)
     result = phx.tensor_network.build_prefix_quadratic_mpo(
         (charge,) * 12,
@@ -52,7 +55,7 @@ def test_prefix_quadratic_mpo_bond_dimension_is_chain_independent():
     assert result.evidence.maximum_bond_dimension == 3
 
 
-def test_prefix_quadratic_mpo_handles_one_site_and_rejects_nonhermitian_input():
+def test_prefix_quadratic_mpo_handles_one_site_and_rejects_nonhermitian_input() -> None:
     charge = jnp.asarray([[1.0, 0.0], [0.0, -1.0]])
     result = phx.tensor_network.build_prefix_quadratic_mpo(
         (charge,),

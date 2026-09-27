@@ -2,7 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 def upper_convected_rate(
@@ -11,7 +12,7 @@ def upper_convected_rate(
     material_derivative: ArrayLike,
     relaxation: ArrayLike,
     /,
-):
+) -> Array:
     a = jnp.asarray(conformation)
     g = jnp.asarray(velocity_gradient)
     return (
@@ -24,7 +25,7 @@ def upper_convected_rate(
 
 def gordon_schowalter_rate(
     tensor: ArrayLike, velocity_gradient: ArrayLike, slip_parameter: float, /
-):
+) -> Array:
     t = jnp.asarray(tensor)
     g = jnp.asarray(velocity_gradient)
     d = 0.5 * (g + jnp.swapaxes(g, -1, -2))

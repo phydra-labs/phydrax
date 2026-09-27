@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,16 +18,17 @@ import phydrax as phx
 from benchmarks._runtime import measure_repeated
 
 
-def _timed(function, repeats):
+def _timed(function: Any, repeats: Any) -> Any:
     value, distribution = measure_repeated(
         function,
         warmup=0,
         repeats=repeats,
     )
+    # ty: ignore[invalid-argument-type]
     return value, float(distribution.mean_seconds)
 
 
-def _triangular_grid(width):
+def _triangular_grid(width: Any) -> Any:
     axis = np.linspace(0.0, 1.0, width)
     x, y = np.meshgrid(axis, axis, indexing="xy")
     vertices = np.stack((x.reshape((-1,)), y.reshape((-1,))), axis=1)
@@ -46,7 +48,8 @@ def _triangular_grid(width):
     return jnp.asarray(vertices), jnp.asarray(faces, dtype=jnp.int32)
 
 
-def _tensor_case(size, repeats):
+def _tensor_case(size: Any, repeats: Any) -> Any:
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.FourierAxisSpec(size).materialize(0.0, 1.0)
     started = time.perf_counter()
     discretization = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
@@ -63,7 +66,7 @@ def _tensor_case(size, repeats):
     }
 
 
-def _fem_case(width, repeats):
+def _fem_case(width: Any, repeats: Any) -> Any:
     vertices, faces = _triangular_grid(width)
     started = time.perf_counter()
     mesh = phx.discretization.CellMesh.from_triangles(vertices, faces)
@@ -104,7 +107,7 @@ def _fem_case(width, repeats):
     }
 
 
-def _smoothing_case(width, repeats):
+def _smoothing_case(width: Any, repeats: Any) -> Any:
     vertices, faces = _triangular_grid(width)
     mesh = phx.discretization.CellMesh.from_triangles(vertices, faces)
     smoothing = phx.discretization.fem.smoothing
@@ -139,7 +142,7 @@ def _smoothing_case(width, repeats):
     }
 
 
-def _finite_volume_case(width, repeats):
+def _finite_volume_case(width: Any, repeats: Any) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(width),
@@ -187,7 +190,7 @@ def _finite_volume_case(width, repeats):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--tensor-size", type=int, default=256)
     parser.add_argument("--mesh-width", type=int, default=24)

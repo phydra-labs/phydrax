@@ -7,12 +7,14 @@
 from __future__ import annotations
 
 from math import isfinite
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -48,6 +50,9 @@ from ..excited._tda import ExcitedStateManifoldPlan, TammDancoffPlan
 from ._mean_field import mean_field_owner_id
 
 
+_SCFCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
+
+
 class SCFState(StrictModule, NonTrainableState):
     density: Array
     coefficients: Array
@@ -72,7 +77,7 @@ class SCFState(StrictModule, NonTrainableState):
         converged: ArrayLike,
         owner_id: str,
         /,
-    ):
+    ) -> None:
         density_ = jnp.asarray(density)
         coefficients_ = jnp.asarray(coefficients, dtype=density_.dtype)
         orbital_energies_ = jnp.asarray(orbital_energies, dtype=density_.dtype)
@@ -160,7 +165,7 @@ class NativeRHFPlan(StrictModule, NonTrainableState):
         damping: float = 0.25,
         linear_dependence_tolerance: float = 1.0e-9,
         force_displacement: float = 1.0e-4,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         if not isinstance(basis, PreparedGaussianBasis):
@@ -219,7 +224,7 @@ class NativeRHFPlan(StrictModule, NonTrainableState):
         *,
         embedding_positions_bohr: ArrayLike | None = None,
         embedding_charges: ArrayLike | None = None,
-    ):
+    ) -> SCFState:
         positions = jnp.asarray(positions_bohr)
         charges = jnp.asarray(self.system.atomic_numbers, dtype=positions.dtype)
         integrals = molecular_integrals(self.basis, positions, charges)
@@ -266,7 +271,7 @@ class NativeRHFPlan(StrictModule, NonTrainableState):
         electronic_energy = jnp.asarray(jnp.nan, dtype=positions.dtype)
         completed = jnp.asarray(0, dtype=jnp.int32)
 
-        def scf_step(iteration, carry):
+        def scf_step(iteration: Array, carry: _SCFCarry) -> _SCFCarry:
             (
                 density_,
                 previous_energy_,
@@ -307,7 +312,7 @@ class NativeRHFPlan(StrictModule, NonTrainableState):
             active = ~converged_
             next_converged = next_residual <= self.convergence_tolerance
 
-            def choose(new, old):
+            def choose(new: Array, old: Array) -> Array:
                 return jnp.where(active, new, old)
 
             return (
@@ -529,7 +534,7 @@ class PreparedNativeRHFCalculation(AbstractPreparedElectronicCalculation):
         capabilities: ElectronicProviderCapabilities,
         provider_id: str,
         /,
-    ):
+    ) -> None:
         self.calculation = calculation
         self.plan = plan
         self.capabilities = capabilities
@@ -614,7 +619,7 @@ class NativeRHFProvider(AbstractElectronicProvider):
     provider_id: str = eqx.field(static=True)
     capabilities: ElectronicProviderCapabilities
 
-    def __init__(self, plan: NativeRHFPlan, model_chemistry_id: str, /):
+    def __init__(self, plan: NativeRHFPlan, model_chemistry_id: str, /) -> None:
         if not isinstance(plan, NativeRHFPlan):
             raise TypeError("plan must be NativeRHFPlan.")
         model_id = str(model_chemistry_id).strip()

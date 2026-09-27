@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -13,7 +14,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _manifest(name: str, character: str):
+def _manifest(name: str, character: str) -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         name,
         checksum_algorithm="sha256",
@@ -31,7 +32,7 @@ def _manifest(name: str, character: str):
     )
 
 
-def _photon_table(name, character, energy_grid, values):
+def _photon_table(name: Any, character: Any, energy_grid: Any, values: Any) -> Any:
     provenance = phx.nuclear.NuclearDataProvenance(
         _manifest(name, character),
         f"https://example.invalid/{name}",
@@ -53,7 +54,7 @@ def _photon_table(name, character, energy_grid, values):
     )
 
 
-def build_photon_case(history_count=256):
+def build_photon_case(history_count: Any = 256) -> Any:
     energy_grid = phx.equations.PhotonEnergyGrid(
         jnp.asarray((500.0, 1500.0))
         * float(phx.units.conversion_factor(phx.units.ELECTRONVOLT, phx.units.JOULE))
@@ -81,7 +82,7 @@ def build_photon_case(history_count=256):
     return plan, origins, directions, energies
 
 
-def _sn_case():
+def _sn_case() -> Any:
     quadrature = phx.discretization.CertifiedSlabAngularQuadrature.gauss_legendre(4)
     incident = (
         jnp.zeros((1, quadrature.angle_count)).at[0, quadrature.ordinates > 0.0].set(1.0)
@@ -102,7 +103,7 @@ def _sn_case():
     )
 
 
-def _charged_case():
+def _charged_case() -> Any:
     material = phx.equations.ChargedRadiationMaterialLibrary(
         jnp.asarray((10.0, 2000.0)),
         jnp.full((1, 2), 1000.0),

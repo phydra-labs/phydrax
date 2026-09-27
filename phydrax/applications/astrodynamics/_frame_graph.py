@@ -4,7 +4,10 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -29,7 +32,7 @@ class FrameTransformEdge(StrictModule, NonTrainableState):
         precision_class: str,
         required_products: tuple[str, ...] = (),
         cost: int = 1,
-    ):
+    ) -> None:
         if not isinstance(transform, KinematicFrameTransform):
             raise TypeError("transform must be a KinematicFrameTransform.")
         precision = str(precision_class).strip()
@@ -59,7 +62,7 @@ class CompiledFramePath(StrictModule, NonTrainableState):
     edges: tuple[FrameTransformEdge, ...]
     path_id: str = eqx.field(static=True)
 
-    def __init__(self, edges: tuple[FrameTransformEdge, ...], /):
+    def __init__(self, edges: tuple[FrameTransformEdge, ...], /) -> None:
         items = tuple(edges)
         if not items:
             raise ValueError("Compiled frame path requires at least one edge.")
@@ -77,10 +80,10 @@ class CompiledFramePath(StrictModule, NonTrainableState):
     def apply(
         self,
         state: CartesianOrbitState,
-        relative_seconds,
+        relative_seconds: ArrayLike,
         /,
         *,
-        args=None,
+        args: Any = None,
     ) -> tuple[CartesianOrbitState, tuple[KinematicTransformEvaluation, ...]]:
         current = state
         evidence = []
@@ -110,7 +113,7 @@ class FrameTransformGraph(StrictModule, NonTrainableState):
         frames: tuple[FrameDefinition, ...],
         edges: tuple[FrameTransformEdge, ...],
         /,
-    ):
+    ) -> None:
         frame_items = tuple(frames)
         edge_items = tuple(edges)
         ids = tuple(frame.frame_id for frame in frame_items)

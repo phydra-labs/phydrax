@@ -4,17 +4,23 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._interpolation import apply_gather_stencil, GatherStencil, rectilinear_stencil
+from ..._interpolation import (
+    apply_gather_stencil,
+    GatherStencil,
+    InterpolationResult,
+    rectilinear_stencil,
+)
 from ..._physical import RelativityScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -44,7 +50,7 @@ class GRMediumFieldUnits(StrictModule, NonTrainableState):
         /,
         *,
         magnetic_field_unit: UnitDefinition = TESLA,
-    ):
+    ) -> None:
         if not isinstance(scale, RelativityScaleContract):
             raise TypeError("scale must be a RelativityScaleContract.")
         if not isinstance(magnetic_field_unit, UnitDefinition):
@@ -115,8 +121,8 @@ class FixedGRFieldSamplingPlan(StrictModule, NonTrainableState):
         *,
         query_shape: Sequence[int],
         source_id: str,
-        query_fingerprint: str,
-    ):
+        query_fingerprint: str | Mapping[str, object],
+    ) -> None:
         shape = tuple(query_shape)
         smooth = jax.lax.stop_gradient(jnp.asarray(interpolation_smooth, dtype=jnp.bool_))
         if not isinstance(stencil, GatherStencil):
@@ -193,7 +199,7 @@ def _sample_medium_fields(
         )
     mask = source_mask.reshape((source_size,))
 
-    def gather(values: Array):
+    def gather(values: Array) -> InterpolationResult:
         payload_shape = values.shape[len(spatial_shape) :]
         return apply_gather_stencil(
             values.reshape((source_size,) + payload_shape),
@@ -291,7 +297,7 @@ class FastLightSnapshot(StrictModule, NonTrainableState):
         magnetic_field_unit: UnitDefinition = TESLA,
         chart_id: str,
         source_id: str,
-    ):
+    ) -> None:
         axes_host = tuple(np.asarray(axis, dtype=np.float64) for axis in coordinate_axes)
         if (
             len(axes_host) != 3

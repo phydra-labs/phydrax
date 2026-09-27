@@ -11,7 +11,8 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 import phydrax.axes as cx
 
@@ -39,7 +40,7 @@ class PreparedResidualTerm(StrictModule):
         index: int,
         selection_scale: Any = 1.0,
         /,
-    ):
+    ) -> None:
         self.term = term
         self.realization = realization
         self.index = int(index)
@@ -72,7 +73,7 @@ class ResidualRootBlock(StrictModule):
         source_index: int,
         coordinate_kind: Literal["real", "imag"] = "real",
         event_shape: Sequence[int] = (),
-    ):
+    ) -> None:
         array = jnp.asarray(values)
         if array.ndim != 1 or jnp.iscomplexobj(array):
             raise TypeError("Residual root blocks must be one-dimensional real arrays.")
@@ -110,7 +111,7 @@ class FunctionalResidualLayout(StrictModule):
     total_size: int = eqx.field(static=True)
     logical_blocks: tuple[tuple[int, str], ...] = eqx.field(static=True)
 
-    def __init__(self, blocks: Sequence[ResidualRootBlock], /):
+    def __init__(self, blocks: Sequence[ResidualRootBlock], /) -> None:
         values = tuple(blocks)
         entries: list[ResidualRootEntry] = []
         logical: list[tuple[int, str]] = []
@@ -380,7 +381,7 @@ def prepared_residual_loss_and_flat_gradient(
 
     flat_params, unravel = ravel_pytree(params)
 
-    def loss_from_flat(flat):
+    def loss_from_flat(flat: Array) -> Array:
         return prepared_residual_terms_loss(
             unravel(flat),
             non_trainable,
@@ -412,7 +413,7 @@ class PreparedFunctionalResidual(StrictModule):
         iteration: Any,
         transform: Any = None,
         /,
-    ):
+    ) -> None:
         values = tuple(terms)
         if not values:
             raise ValueError("PreparedFunctionalResidual requires residual terms.")
@@ -510,7 +511,7 @@ def prepared_residual_jacobians(
     jacobians: list[Array] = []
     for term in residual.terms:
 
-        def term_roots(flat, _term=term):
+        def term_roots(flat: Array, _term: PreparedResidualTerm = term) -> Array:
             blocks = residual.blocks_for(unravel(flat), _term)
             term_entries = tuple(
                 entry

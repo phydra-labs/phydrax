@@ -5,19 +5,21 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
 from ...metrix.algebra import AlgebraProductPlan, BracketingPlan
+from ...typing import parse
 
 
-AnalyticityKind = Literal[
+AnalyticityKind: TypeAlias = Literal[
     "complex_holomorphic",
     "slice_regular",
     "left_fueter",
@@ -42,22 +44,9 @@ class AnalyticityOperator(StrictModule):
         *,
         tolerance: float = 1e-6,
         operator_id: str,
-    ):
-        supported = (
-            "complex_holomorphic",
-            "slice_regular",
-            "left_fueter",
-            "right_fueter",
-            "left_monogenic",
-            "right_monogenic",
-            "certified_linear",
-        )
-        if (
-            kind not in supported
-            or not callable(action)
-            or float(tolerance) <= 0.0
-            or not operator_id
-        ):
+    ) -> None:
+        kind = parse(kind, AnalyticityKind, "kind")
+        if not callable(action) or float(tolerance) <= 0.0 or not operator_id:
             raise ValueError("Analyticity operator kind/action/tolerance/id are invalid.")
         self.action = action
         self.kind = kind
@@ -85,7 +74,7 @@ class AlgebraAnalyticLayer(StrictModule, ParameterOwner):
         /,
         *,
         side: Literal["left", "right"],
-    ):
+    ) -> None:
         weights_ = jnp.asarray(weights)
         bias_ = jnp.asarray(bias, dtype=weights_.dtype)
         dimension = product.algebra.coordinate_dimension
@@ -107,7 +96,7 @@ class AlgebraAnalyticLayer(StrictModule, ParameterOwner):
         if value.shape != (self.weights.shape[1], self.weights.shape[2]):
             raise ValueError("Algebra analytic layer input has the wrong shape.")
 
-        def neuron(weights, bias):
+        def neuron(weights: Array, bias: Array) -> Array:
             terms = jax.vmap(
                 lambda weight, entry: (
                     self.product(weight, entry)
@@ -136,7 +125,7 @@ class AnalyticityEvidence(StrictModule):
         *,
         operator_kind: str,
         side: str,
-    ):
+    ) -> None:
         self.residual = jnp.asarray(residual)
         self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
@@ -162,7 +151,7 @@ class AlgebraAnalyticNetwork(StrictModule, ParameterOwner):
         /,
         *,
         network_id: str,
-    ):
+    ) -> None:
         layers_ = tuple(layers)
         if (
             not layers_

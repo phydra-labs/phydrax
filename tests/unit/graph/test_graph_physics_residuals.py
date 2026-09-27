@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -18,7 +21,7 @@ def _line_graph() -> phx.graph.GraphIR:
     )
 
 
-def _domain_and_node_batch():
+def _domain_and_node_batch() -> Any:
     domain = phx.domain.GraphDomain(_line_graph())
     nodes = domain.component({"graph": phx.domain.Nodes()})
     batch = nodes.sample(
@@ -27,19 +30,19 @@ def _domain_and_node_batch():
     return domain, nodes, batch
 
 
-def test_graph_poisson_residual_composes_laplacian_and_source():
+def test_graph_poisson_residual_composes_laplacian_and_source() -> None:
     domain, _nodes, batch = _domain_and_node_batch()
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> Any:
         return node[0]
 
     @domain.Function("graph")
-    def source(node):
+    def source(node: Any) -> Any:
         return jnp.where(node[0] < 0.5, -2.0, jnp.where(node[0] < 2.0, -4.0, 6.0))
 
     @domain.Function("graph")
-    def diffusivity(edge):
+    def diffusivity(edge: Any) -> Any:
         return edge[0]
 
     residual = phx.operators.graph_poisson_residual(
@@ -51,15 +54,15 @@ def test_graph_poisson_residual_composes_laplacian_and_source():
     assert jnp.allclose(jnp.asarray(residual(batch).data), jnp.zeros((3,)))
 
 
-def test_graph_conservation_residual_composes_divergence_and_source():
+def test_graph_conservation_residual_composes_divergence_and_source() -> None:
     domain, _nodes, batch = _domain_and_node_batch()
 
     @domain.Function("graph")
-    def flux(edge):
+    def flux(edge: Any) -> Any:
         return edge[0]
 
     @domain.Function("graph")
-    def source(node):
+    def source(node: Any) -> Any:
         return jnp.where(node[0] < 0.5, -2.0, jnp.where(node[0] < 2.0, -1.0, 3.0))
 
     residual = phx.operators.graph_conservation_residual(flux, source=source)
@@ -67,19 +70,19 @@ def test_graph_conservation_residual_composes_divergence_and_source():
     assert jnp.allclose(jnp.asarray(residual(batch).data), jnp.zeros((3,)))
 
 
-def test_graph_advection_diffusion_residual_adds_advective_flux():
+def test_graph_advection_diffusion_residual_adds_advective_flux() -> None:
     domain, _nodes, batch = _domain_and_node_batch()
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> Any:
         return node[0]
 
     @domain.Function("graph")
-    def flux(edge):
+    def flux(edge: Any) -> Any:
         return edge[0]
 
     @domain.Function("graph")
-    def source(node):
+    def source(node: Any) -> Any:
         return jnp.where(node[0] < 0.5, -3.0, jnp.where(node[0] < 2.0, -2.0, 5.0))
 
     residual = phx.operators.graph_advection_diffusion_residual(
@@ -91,21 +94,21 @@ def test_graph_advection_diffusion_residual_adds_advective_flux():
     assert jnp.allclose(jnp.asarray(residual(batch).data), jnp.zeros((3,)))
 
 
-def test_graph_heat_residual_zero_for_constant_implicit_step():
+def test_graph_heat_residual_zero_for_constant_implicit_step() -> None:
     domain, nodes, _batch = _domain_and_node_batch()
     structure = phx.domain.SampleLayout((("graph",),))
 
     @domain.Function("graph")
-    def u_current(node):
+    def u_current(node: Any) -> float:
         del node
         return 2.0
 
     @domain.Function("graph")
-    def u_next(node):
+    def u_next(node: Any) -> float:
         del node
         return 2.0
 
-    def residual(next_fn, current_fn):
+    def residual(next_fn: Any, current_fn: Any) -> Any:
         return phx.operators.graph_heat_residual(next_fn, current_fn, dt=0.25)
 
     condition = phx.conditions.Residual(("u_next", "u_current"), nodes, residual)
@@ -118,19 +121,19 @@ def test_graph_heat_residual_zero_for_constant_implicit_step():
     assert term.loss({"u_next": u_next, "u_current": u_current}) < 1e-12
 
 
-def test_graph_euler_residual_matches_explicit_rate():
+def test_graph_euler_residual_matches_explicit_rate() -> None:
     domain, _nodes, batch = _domain_and_node_batch()
 
     @domain.Function("graph")
-    def u_current(node):
+    def u_current(node: Any) -> Any:
         return node[0]
 
     @domain.Function("graph")
-    def rate(node):
+    def rate(node: Any) -> Any:
         return node[0] + 1.0
 
     @domain.Function("graph")
-    def u_next(node):
+    def u_next(node: Any) -> Any:
         return node[0] + 0.5 * (node[0] + 1.0)
 
     residual = phx.operators.graph_euler_residual(

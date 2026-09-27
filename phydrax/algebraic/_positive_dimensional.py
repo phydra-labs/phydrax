@@ -21,7 +21,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -114,7 +115,7 @@ class AffineSlice(StrictModule, NonTrainableState):
     codimension: int = eqx.field(static=True)
     slice_id: str = eqx.field(static=True)
 
-    def __init__(self, linear: ArrayLike, offset: ArrayLike, /):
+    def __init__(self, linear: ArrayLike, offset: ArrayLike, /) -> None:
         linear_ = _finite_array(linear, "linear", 2)
         offset_ = _finite_array(offset, "offset", 1)
         if offset_.shape != (linear_.shape[0],):
@@ -155,7 +156,7 @@ class PathRecord(StrictModule, NonTrainableState):
         target_index: int | None = None,
         residual_norm: float | None = None,
         diagnostic: str = "",
-    ):
+    ) -> None:
         path = _identifier(path_id, "path_id")
         batch = _identifier(batch_id, "batch_id")
         source = _nonnegative_integer(source_index, "source_index")
@@ -207,7 +208,7 @@ class PathInventory(StrictModule, NonTrainableState):
         *,
         path_capacity: int,
         budget_exhausted: bool = False,
-    ):
+    ) -> None:
         expected = tuple(
             _identifier(value, "expected path ID") for value in expected_path_ids
         )
@@ -293,7 +294,7 @@ class WitnessSet(StrictModule, NonTrainableState):
         points: ArrayLike,
         residual_norms: ArrayLike,
         /,
-    ):
+    ) -> None:
         system = _identifier(system_id, "system_id")
         dimension_ = _nonnegative_integer(dimension, "dimension")
         slice_ = AffineSlice(slice_matrix, slice_offset)
@@ -355,7 +356,7 @@ class MultigradedWitnessCollection(StrictModule, NonTrainableState):
         groups: Sequence[PolynomialVariableGroup],
         entries: Sequence[tuple[Sequence[int], WitnessSet]],
         /,
-    ):
+    ) -> None:
         system = _identifier(system_id, "system_id")
         ambient = _positive_integer(ambient_dimension, "ambient_dimension")
         groups_ = tuple(groups)
@@ -499,7 +500,7 @@ class PseudoWitnessSet(StrictModule, NonTrainableState):
         /,
         *,
         image_degree: int,
-    ):
+    ) -> None:
         system = _identifier(source_system_id, "source_system_id")
         map_ = _identifier(map_id, "map_id")
         source_dimension_ = _nonnegative_integer(source_dimension, "source_dimension")
@@ -611,7 +612,7 @@ class MonodromyEvidence(StrictModule, NonTrainableState):
         completed: Sequence[tuple[str, Sequence[int]]],
         paths: PathInventory,
         /,
-    ):
+    ) -> None:
         witness = _identifier(witness_set_id, "witness_set_id")
         count = _positive_integer(point_count, "point_count")
         attempted = tuple(
@@ -728,7 +729,7 @@ class TraceTestEvidence(StrictModule, NonTrainableState):
         tolerance: float,
         paths: PathInventory,
         /,
-    ):
+    ) -> None:
         witness = _identifier(witness_set_id, "witness_set_id")
         points = tuple(
             sorted(_nonnegative_integer(v, "point index") for v in point_indices)
@@ -798,7 +799,7 @@ class NumericalComponent(StrictModule, NonTrainableState):
         monodromy: MonodromyEvidence,
         trace_test: TraceTestEvidence,
         /,
-    ):
+    ) -> None:
         if not isinstance(witness_set, WitnessSet):
             raise TypeError("witness_set must be a WitnessSet.")
         if not isinstance(monodromy, MonodromyEvidence):
@@ -858,7 +859,7 @@ class RegenerationStage(StrictModule, NonTrainableState):
         equation_indices: Sequence[int],
         dimension: int,
         /,
-    ):
+    ) -> None:
         label_ = _identifier(label, "stage label")
         equations = tuple(
             sorted(
@@ -901,7 +902,7 @@ class RegenerationEdge(StrictModule, NonTrainableState):
         /,
         *,
         path_capacity: int,
-    ):
+    ) -> None:
         if not isinstance(source, RegenerationStage) or not isinstance(
             target, RegenerationStage
         ):
@@ -963,7 +964,7 @@ class RegenerationPlan(StrictModule, NonTrainableState):
         /,
         *,
         path_capacity: int,
-    ):
+    ) -> None:
         system = _identifier(system_id, "system_id")
         stages_ = tuple(stages)
         edges_ = tuple(edges)
@@ -1036,7 +1037,7 @@ class NumericalDecompositionResult(StrictModule, NonTrainableState):
         trace_tests: Sequence[TraceTestEvidence],
         path_inventories: Sequence[PathInventory] = (),
         /,
-    ):
+    ) -> None:
         if not isinstance(witness_collection, MultigradedWitnessCollection):
             raise TypeError("witness_collection must be MultigradedWitnessCollection.")
         components_ = tuple(components)

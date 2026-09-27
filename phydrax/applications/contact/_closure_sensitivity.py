@@ -7,11 +7,17 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.linalg as la
 
 from ..._strict import StrictModule
+from ...discretization.contact._interface import (
+    ContactInterfaceKinematics,
+    ContactInterfacePlan,
+)
 from ...discretization.contact._kinematics import ContactKinematicsEpoch
 from ._closure import ContactClosurePlan, evaluate_contact_closure
 from ._cone import (
@@ -68,11 +74,11 @@ def _replace_gaps(
 
 
 def _closure_gap_outputs(
-    plan,
-    kinematics,
-    state,
-    gaps,
-):
+    plan: ContactClosurePlan,
+    kinematics: ContactKinematicsEpoch,
+    state: ContactRouteState,
+    gaps: tuple[Array, ...],
+) -> tuple[Array, Array]:
     replaced = _replace_gaps(kinematics, gaps)
     evaluation = evaluate_contact_closure(plan, replaced, state)
     traction = (
@@ -85,11 +91,11 @@ def _closure_gap_outputs(
 
 def _branch_evidence(
     kinematics: ContactKinematicsEpoch,
-    derivative_values,
-    primal_successful,
-    source_id,
-    margin_tolerance,
-):
+    derivative_values: PyTree[Array],
+    primal_successful: ArrayLike,
+    source_id: str,
+    margin_tolerance: float,
+) -> ContactDerivativeEvidence:
     margins = []
     for batch in kinematics.batches:
         margins.append(
@@ -312,7 +318,9 @@ def contact_cone_solution_jvp(
     sliding_routes = branch_classification == 3
     sticking_routes = branch_classification == 2
 
-    def fixed_branch_residual(flat_impulse, free_value, matrix_value):
+    def fixed_branch_residual(
+        flat_impulse: Array, free_value: Array, matrix_value: Array
+    ) -> Array:
         impulse = flat_impulse.reshape(result.impulse.shape)
         changed = eqx.tree_at(
             lambda value: (
@@ -389,8 +397,8 @@ class MortarGapJVP(StrictModule):
 
 def mortar_gap_jvp(
     plan: MortarContactPlan,
-    interface,
-    kinematics,
+    interface: ContactInterfacePlan,
+    kinematics: ContactInterfaceKinematics,
     state: MortarContactState,
     tangent_gap: Array,
     /,
@@ -402,7 +410,7 @@ def mortar_gap_jvp(
     if tangent.shape != gap.shape:
         raise ValueError("Mortar tangent gap has invalid shape.")
 
-    def traction(gap_value):
+    def traction(gap_value: Array) -> Array:
         changed = eqx.tree_at(lambda value: value.gap, kinematics, gap_value)
         return evaluate_mortar_contact(plan, interface, changed, state).traction
 

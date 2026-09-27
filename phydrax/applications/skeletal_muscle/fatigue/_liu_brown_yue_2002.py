@@ -23,7 +23,8 @@ from math import isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -52,7 +53,7 @@ class LiuBrownYue2002Parameters(StrictModule):
     fatigue_rate_per_s: Array
     recovery_rate_per_s: Array
 
-    def __init__(self, *, fatigue_rate_per_s: float, recovery_rate_per_s: float):
+    def __init__(self, *, fatigue_rate_per_s: float, recovery_rate_per_s: float) -> None:
         fatigue = float(fatigue_rate_per_s)
         recovery = float(recovery_rate_per_s)
         if not isfinite(fatigue) or fatigue <= 0.0:
@@ -78,7 +79,7 @@ class LiuBrownYue2002Plan(StrictModule):
         *,
         muscle_id: str,
         protocol_id: str,
-    ):
+    ) -> None:
         if not isinstance(parameters, LiuBrownYue2002Parameters):
             raise TypeError("parameters must be LiuBrownYue2002Parameters.")
         if not isinstance(muscle_id, str) or not muscle_id:

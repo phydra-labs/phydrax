@@ -4,17 +4,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import isfinite
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TypeAlias, TypeVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array, core
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 from .._tree_math import (
     tree_add_scaled as _tree_add_scaled,
     tree_allfinite as _tree_allfinite,
@@ -156,7 +158,7 @@ class ProjectedGradient(AbstractMinimizationMethod):
         *,
         line_search: ArmijoLineSearch | None = None,
         project_initial: bool = True,
-    ):
+    ) -> None:
         search = ArmijoLineSearch() if line_search is None else line_search
         if not isinstance(search, ArmijoLineSearch):
             raise TypeError("line_search must be an ArmijoLineSearch or None.")
@@ -204,7 +206,7 @@ class ActiveSetNewton(AbstractMinimizationMethod):
         line_search: ArmijoLineSearch | None = None,
         active_tolerance: float = 1e-10,
         project_initial: bool = True,
-    ):
+    ) -> None:
         policy = (
             _default_active_set_linear_policy()
             if linear_policy is None
@@ -278,7 +280,7 @@ class BoundedNewtonTrustRegion(AbstractMinimizationMethod):
         expansion_factor: float = 2.0,
         active_tolerance: float = 1e-10,
         project_initial: bool = True,
-    ):
+    ) -> None:
         subproblem_ = SteihaugToint() if subproblem is None else subproblem
         if not isinstance(subproblem_, SteihaugToint):
             raise TypeError("subproblem must be SteihaugToint or None.")
@@ -365,7 +367,7 @@ class ProjectedLBFGS(AbstractMinimizationMethod):
         curvature_tolerance: float = 1e-10,
         active_tolerance: float = 1e-10,
         project_initial: bool = True,
-    ):
+    ) -> None:
         search = ArmijoLineSearch() if line_search is None else line_search
         history = int(history_size)
         curvature = float(curvature_tolerance)
@@ -422,7 +424,7 @@ def _bound_capabilities() -> OptimizationCapabilities:
 
 def _bound_layout_is_static(bounds: Bounds, /) -> bool:
     leaves = jax.tree.leaves(bounds.lower) + jax.tree.leaves(bounds.upper)
-    return all(not isinstance(leaf, jax.core.Tracer) for leaf in leaves)
+    return all(not isinstance(leaf, core.Tracer) for leaf in leaves)
 
 
 def _static_flat_bound(
@@ -574,6 +576,13 @@ class _LBFGSState(NamedTuple):
     history_count: Array
 
 
+_ValueFunction: TypeAlias = Callable[[PyTree[Any]], Array]
+_Linearized: TypeAlias = Callable[[PyTree[Any]], tuple[Array, PyTree[Array]]]
+_MethodState = TypeVar("_MethodState")
+_EmptyCarry: TypeAlias = tuple[_BoundState, tuple[()]]
+_LBFGSCarry: TypeAlias = tuple[_BoundState, _LBFGSState]
+
+
 def _lbfgs_direction(
     gradient: PyTree[Any],
     steps: PyTree[Any],
@@ -587,7 +596,9 @@ def _lbfgs_direction(
     history_size = inverse_curvatures.shape[0]
     alphas = jnp.zeros_like(inverse_curvatures)
 
-    def reverse_body(index, carry):
+    def reverse_body(
+        index: Array, carry: tuple[PyTree[Array], Array]
+    ) -> tuple[PyTree[Array], Array]:
         q, stored_alphas = carry
         buffer_index = jnp.maximum(history_count - 1 - index, 0)
         step = jax.tree.map(lambda values: values[buffer_index], steps)
@@ -624,7 +635,7 @@ def _lbfgs_direction(
     scale = jnp.where(history_count > 0, scale, 1.0)
     initial_result = _tree_scale(scale, q)
 
-    def forward_body(index, result):
+    def forward_body(index: Array, result: PyTree[Array]) -> PyTree[Array]:
         step = jax.tree.map(lambda values: values[index], steps)
         change = jax.tree.map(
             lambda values: values[index],
@@ -658,7 +669,9 @@ def _append_lbfgs_history(
 ) -> _LBFGSState:
     history_size = state.inverse_curvatures.shape[0]
 
-    def append_open_slot(_):
+    def append_open_slot(
+        _: None,
+    ) -> tuple[PyTree[Array], PyTree[Array], Array, Array]:
         updated_steps = jax.tree.map(
             lambda values, new: values.at[state.history_count].set(new),
             state.steps,
@@ -674,7 +687,7 @@ def _append_lbfgs_history(
         )
         return updated_steps, updated_changes, updated_inverse, state.history_count + 1
 
-    def replace_oldest(_):
+    def replace_oldest(_: None) -> tuple[PyTree[Array], PyTree[Array], Array, Array]:
         updated_steps = jax.tree.map(
             lambda values, new: jnp.concatenate(
                 (values[1:], jnp.expand_dims(new, 0)),
@@ -723,11 +736,11 @@ def _active_set_newton_direction(
     method: ActiveSetNewton,
     parameters: PyTree[Any],
     gradient: PyTree[Any],
-    linearized,
+    linearized: _Linearized,
     active: PyTree[Any],
     /,
 ) -> tuple[PyTree[Array], Any, Array]:
-    def hessian_action(vector):
+    def hessian_action(vector: PyTree[Any]) -> PyTree[Array]:
         free_vector = _tree_zeros_on_mask(vector, active)
         _, hessian_vector = linearized(free_vector)
         free_hessian_vector = _tree_zeros_on_mask(hessian_vector, active)
@@ -846,7 +859,7 @@ def _evaluate_bound_state(
 
 def _take_bound_step(
     state: _BoundState,
-    value_function,
+    value_function: _ValueFunction,
     value: Array,
     gradient: PyTree[Any],
     projected_gradient: PyTree[Any],
@@ -890,7 +903,7 @@ def _take_bound_step(
         _tree_allfinite(direction) & jnp.isfinite(directional) & (directional < 0.0)
     )
 
-    def invalid_direction(_):
+    def invalid_direction(_: None) -> _BoundState:
         return prepared._replace(
             status=jnp.asarray(
                 int(OptimizationStatus.INVALID_DIRECTION),
@@ -899,7 +912,7 @@ def _take_bound_step(
             rejected_steps=prepared.rejected_steps + 1,
         )
 
-    def line_search_step(_):
+    def line_search_step(_: None) -> _BoundState:
         search = armijo_backtracking(
             value_function,
             prepared.parameters,
@@ -965,12 +978,14 @@ def _take_bound_step(
 
 def _run_bound_iterations(
     initial_state: _BoundState,
-    initial_method_state: Any,
-    iteration_body,
+    initial_method_state: _MethodState,
+    iteration_body: Callable[
+        [tuple[_BoundState, _MethodState]], tuple[_BoundState, _MethodState]
+    ],
     termination: OptimizationTermination,
     /,
 ) -> _BoundState:
-    def condition(carry):
+    def condition(carry: tuple[_BoundState, _MethodState]) -> Array:
         state, _ = carry
         within_evaluations = (
             jnp.asarray(True)
@@ -1008,7 +1023,7 @@ def _run_bound_iterations(
 
 def _run_projected_gradient(
     method: ProjectedGradient,
-    value_function,
+    value_function: _ValueFunction,
     bounds: Bounds,
     initial_state: _BoundState,
     termination: OptimizationTermination,
@@ -1016,7 +1031,7 @@ def _run_projected_gradient(
 ) -> _BoundState:
     value_and_gradient = jax.value_and_grad(value_function)
 
-    def iteration_body(carry):
+    def iteration_body(carry: _EmptyCarry) -> _EmptyCarry:
         state, method_state = carry
         value, gradient = value_and_gradient(state.parameters)
         evaluated, projected_gradient, _ = _evaluate_bound_state(
@@ -1027,7 +1042,7 @@ def _run_projected_gradient(
             termination,
         )
 
-        def take_step(_):
+        def take_step(_: None) -> _BoundState:
             return _take_bound_step(
                 evaluated,
                 value_function,
@@ -1059,7 +1074,7 @@ def _run_projected_gradient(
 
 def _run_active_set_newton(
     method: ActiveSetNewton,
-    value_function,
+    value_function: _ValueFunction,
     bounds: Bounds,
     initial_state: _BoundState,
     termination: OptimizationTermination,
@@ -1067,7 +1082,7 @@ def _run_active_set_newton(
 ) -> _BoundState:
     value_and_gradient = jax.value_and_grad(value_function)
 
-    def iteration_body(carry):
+    def iteration_body(carry: _EmptyCarry) -> _EmptyCarry:
         state, method_state = carry
         (value, gradient), linearized = jax.linearize(
             value_and_gradient,
@@ -1081,7 +1096,7 @@ def _run_active_set_newton(
             termination,
         )
 
-        def take_step(_):
+        def take_step(_: None) -> _BoundState:
             active = bounds.active_mask(
                 evaluated.parameters,
                 gradient,
@@ -1144,7 +1159,7 @@ def _run_active_set_newton(
 
 def _run_bounded_newton_trust_region(
     method: BoundedNewtonTrustRegion,
-    value_function,
+    value_function: _ValueFunction,
     bounds: Bounds,
     initial_state: _BoundState,
     termination: OptimizationTermination,
@@ -1158,7 +1173,7 @@ def _run_bounded_newton_trust_region(
         )
     )
 
-    def iteration_body(carry):
+    def iteration_body(carry: _EmptyCarry) -> _EmptyCarry:
         state, method_state = carry
         (value, gradient), linearized = jax.linearize(
             value_and_gradient,
@@ -1172,7 +1187,7 @@ def _run_bounded_newton_trust_region(
             termination,
         )
 
-        def take_step(_):
+        def take_step(_: None) -> _BoundState:
             active = bounds.active_mask(
                 evaluated.parameters,
                 gradient,
@@ -1185,7 +1200,7 @@ def _run_bounded_newton_trust_region(
             )
             space = PyTreeSpace(evaluated.parameters)
 
-            def hessian_action(direction):
+            def hessian_action(direction: PyTree[Any]) -> PyTree[Array]:
                 free_direction = jax.tree.map(
                     lambda value, mask: jnp.where(mask, 0.0, value),
                     direction,
@@ -1445,7 +1460,7 @@ def _update_lbfgs_history(
 
 def _run_projected_lbfgs(
     method: ProjectedLBFGS,
-    value_function,
+    value_function: _ValueFunction,
     bounds: Bounds,
     initial_state: _BoundState,
     termination: OptimizationTermination,
@@ -1457,7 +1472,7 @@ def _run_projected_lbfgs(
         method.history_size,
     )
 
-    def iteration_body(carry):
+    def iteration_body(carry: _LBFGSCarry) -> _LBFGSCarry:
         state, history = carry
         value, gradient = value_and_gradient(state.parameters)
         evaluated, projected_gradient, _ = _evaluate_bound_state(
@@ -1468,7 +1483,7 @@ def _run_projected_lbfgs(
             termination,
         )
 
-        def take_step(_):
+        def take_step(_: None) -> _LBFGSCarry:
             active = bounds.active_mask(
                 evaluated.parameters,
                 gradient,
@@ -1563,7 +1578,7 @@ def _solve_bound_constrained(
     else:
         initial_feasible = bounds.contains(parameters)
         if (
-            not isinstance(initial_feasible, jax.core.Tracer)
+            not isinstance(initial_feasible, core.Tracer)
             and not np.asarray(initial_feasible).item()
         ):
             return _infeasible_result(method, problem, parameters)
@@ -1573,7 +1588,7 @@ def _solve_bound_constrained(
             int(OptimizationStatus.INFEASIBLE),
         ).astype(jnp.int32)
 
-    def value_function(candidate):
+    def value_function(candidate: PyTree[Any]) -> Array:
         return problem.value(candidate, args)[0]
 
     abstract_value = jax.eval_shape(value_function, parameters)
@@ -1720,7 +1735,9 @@ def _solve_bound_constrained(
 
 
 def _infeasible_result(
-    method: ProjectedGradient | ActiveSetNewton | ProjectedLBFGS,
+    method: (
+        ProjectedGradient | ActiveSetNewton | BoundedNewtonTrustRegion | ProjectedLBFGS
+    ),
     problem: MinimizationProblem,
     parameters: PyTree[Any],
     /,

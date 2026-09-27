@@ -10,11 +10,13 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._incompressible import FaceVelocity, PreparedMACOperators
 
 
@@ -45,7 +47,7 @@ _OPEN_KINDS = ("pressure-outlet", "traction-open")
 
 
 def _axis_boundary(value: Array, axis: int, index: int, /) -> Array:
-    location = [slice(None)] * value.ndim
+    location: list[slice | int] = [slice(None)] * value.ndim
     location[axis] = index
     return value[tuple(location)]
 
@@ -53,7 +55,7 @@ def _axis_boundary(value: Array, axis: int, index: int, /) -> Array:
 def _set_axis_boundary(
     value: Array, axis: int, index: int, target: ArrayLike, /
 ) -> Array:
-    location = [slice(None)] * value.ndim
+    location: list[slice | int] = [slice(None)] * value.ndim
     location[axis] = index
     return value.at[tuple(location)].set(target)
 
@@ -108,7 +110,7 @@ class MACBoundaryProvider(StrictModule, NonTrainableState):
         rate: ArrayLike | None = None,
         function: MACBoundaryProviderFunction | None = None,
         provider_id: str | None = None,
-    ):
+    ) -> None:
         value_ = jnp.asarray(value)
         if not jnp.issubdtype(value_.dtype, jnp.inexact):
             value_ = value_.astype("float64")
@@ -167,12 +169,11 @@ class MACBoundarySide(StrictModule, NonTrainableState):
         *,
         provider: MACBoundaryProvider | None = None,
         backflow_coefficient: float = 0.0,
-    ):
+    ) -> None:
         axis_ = str(axis)
         if not axis_:
             raise ValueError("MAC boundary axis must be non-empty.")
-        if side not in ("lower", "upper"):
-            raise ValueError("MAC boundary side must be 'lower' or 'upper'.")
+        side = parse(side, MACBoundarySideName, "side")
         allowed = _ESSENTIAL_KINDS + _OPEN_KINDS
         if kind not in allowed:
             raise ValueError("Unknown MAC boundary kind.")
@@ -232,7 +233,7 @@ class MACBoundaryPlan(StrictModule, NonTrainableState):
         operators: PreparedMACOperators,
         sides: Sequence[MACBoundarySide] | None = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         grid = operators.discretization.grid
@@ -302,7 +303,7 @@ class PreparedMACBoundaryPlan(StrictModule, NonTrainableState):
     closure_kind: MACPressureClosureKind = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MACBoundaryPlan, /):
+    def __init__(self, plan: MACBoundaryPlan, /) -> None:
         if not isinstance(plan, MACBoundaryPlan):
             raise TypeError("plan must be MACBoundaryPlan.")
         grid = plan.operators.discretization.grid
@@ -599,13 +600,16 @@ class PreparedMACBoundaryPlan(StrictModule, NonTrainableState):
             structured_axis = grid.structured_axes[axis]
             if homogeneous:
                 datum = jnp.zeros(self.side_shapes[position], dtype=value.dtype)
-            elif boundary.kind == "pressure-outlet":
-                datum = stage_.values[position]
             else:
-                traction = stage_.values[position]
-                outward_sign = -1.0 if side_index == 0 else 1.0
-                datum = -outward_sign * traction[axis]
-            if not homogeneous:
+                # Inhomogeneous gradients validated their stage data above.
+                if not (stage_ is not None):
+                    raise RuntimeError("Internal invariant failed: stage_ is not None.")
+                if boundary.kind == "pressure-outlet":
+                    datum = stage_.values[position]
+                else:
+                    traction = stage_.values[position]
+                    outward_sign = -1.0 if side_index == 0 else 1.0
+                    datum = -outward_sign * traction[axis]
                 datum = jnp.where(stage_.successful, datum, 0.0)
             if side_index == 0:
                 derivative = (moved[0] - datum) / (
@@ -643,7 +647,7 @@ class MACBoundaryCorrectionDescriptor(StrictModule, NonTrainableState):
         boundaries: PreparedMACBoundaryPlan,
         stage: MACBoundaryStageData,
         /,
-    ):
+    ) -> None:
         self.boundaries = boundaries
         self.stage = boundaries.validate_stage(stage)
         self.descriptor_id = canonical_fingerprint(

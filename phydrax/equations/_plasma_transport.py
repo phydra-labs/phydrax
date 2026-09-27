@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -58,7 +59,7 @@ class AmbipolarPlasmaTransportPlan(StrictModule):
         /,
         *,
         electron_thermal_conductivity: float,
-    ):
+    ) -> None:
         diffusivities = np.asarray(species_diffusivities, dtype=np.float64)
         electron_conductivity = float(electron_thermal_conductivity)
         if (

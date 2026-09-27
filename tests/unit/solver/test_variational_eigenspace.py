@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,14 +15,14 @@ import pytest
 import phydrax as phx
 
 
-def _dirichlet_modes():
+def _dirichlet_modes() -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     first = domain.Function("x")(lambda x: jnp.sin(jnp.pi * x[0]))
     second = domain.Function("x")(lambda x: jnp.sin(2.0 * jnp.pi * x[0]))
     return domain, first, second
 
 
-def _energy(left, right):
+def _energy(left: Any, right: Any) -> Any:
     left_gradient = phx.operators.conjugate(phx.operators.grad(left, var="x"))
     right_gradient = phx.operators.grad(right, var="x")
     return phx.operators.einsum(
@@ -29,7 +32,7 @@ def _energy(left, right):
     )
 
 
-def _term(domain):
+def _term(domain: Any) -> Any:
     return phx.terms.VariationalEigenspace(
         source=phx.integration.per_step(
             phx.integration.over(domain.component()),
@@ -40,7 +43,7 @@ def _term(domain):
     )
 
 
-def test_variational_eigenspace_recovers_dirichlet_laplacian_modes():
+def test_variational_eigenspace_recovers_dirichlet_laplacian_modes() -> None:
     domain, first, second = _dirichlet_modes()
     term = _term(domain)
     fields = {"u0": first, "u1": second}
@@ -60,7 +63,7 @@ def test_variational_eigenspace_recovers_dirichlet_laplacian_modes():
     assert jnp.allclose(evaluation.objective, 5.0 * jnp.pi**2, rtol=2e-10)
 
 
-def test_block_objective_is_basis_invariant_and_cluster_gradient_is_finite():
+def test_block_objective_is_basis_invariant_and_cluster_gradient_is_finite() -> None:
     stiffness = jnp.diag(jnp.asarray([2.0, 2.0]))
     mass = jnp.eye(2)
     change = jnp.asarray([[2.0, -1.0], [1.0, 3.0]])
@@ -85,7 +88,7 @@ def test_block_objective_is_basis_invariant_and_cluster_gradient_is_finite():
     assert jnp.allclose(gradient, 4.0, atol=2e-12)
 
 
-def test_variational_eigenspace_rejects_collapsed_trial_span():
+def test_variational_eigenspace_rejects_collapsed_trial_span() -> None:
     domain, first, _second = _dirichlet_modes()
     term = _term(domain)
     fields = {"u0": first, "u1": 2.0 * first}
@@ -97,7 +100,7 @@ def test_variational_eigenspace_rejects_collapsed_trial_span():
         jax.block_until_ready(term.loss(fields))
 
 
-def test_variational_eigenspace_supports_complex_trial_phases():
+def test_variational_eigenspace_supports_complex_trial_phases() -> None:
     domain, first, second = _dirichlet_modes()
     term = _term(domain)
     fields = {"u0": 1.0j * first, "u1": -second}
@@ -114,13 +117,13 @@ def test_variational_eigenspace_supports_complex_trial_phases():
 
 
 def _strong_residual_term(
-    domain,
+    domain: Any,
     *,
-    objective_vars=("u0", "u1"),
-    metric_action=None,
-    pairing=None,
-    residual_pairing=None,
-):
+    objective_vars: Any = ("u0", "u1"),
+    metric_action: Any = None,
+    pairing: Any = None,
+    residual_pairing: Any = None,
+) -> Any:
     return phx.terms.InvariantSubspaceResidual(
         source=phx.integration.per_step(
             phx.integration.over(domain.component()),
@@ -134,7 +137,7 @@ def _strong_residual_term(
     )
 
 
-def test_invariant_subspace_residual_solves_strong_dirichlet_modes():
+def test_invariant_subspace_residual_solves_strong_dirichlet_modes() -> None:
     domain, first, second = _dirichlet_modes()
     term = _strong_residual_term(domain)
     fields = {"u0": first, "u1": second}
@@ -155,7 +158,7 @@ def test_invariant_subspace_residual_solves_strong_dirichlet_modes():
     assert jnp.max(result.relative_residuals) < 2e-15
 
 
-def test_invariant_subspace_residual_supports_positive_generalized_metric():
+def test_invariant_subspace_residual_supports_positive_generalized_metric() -> None:
     domain, first, second = _dirichlet_modes()
     term = _strong_residual_term(
         domain,
@@ -174,7 +177,7 @@ def test_invariant_subspace_residual_supports_positive_generalized_metric():
     assert jnp.max(result.relative_residuals) < 2e-15
 
 
-def test_invariant_residual_is_trial_basis_invariant_and_cluster_safe():
+def test_invariant_residual_is_trial_basis_invariant_and_cluster_safe() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     first = domain.Function("x")(lambda x: x[0] * (1.0 - x[0]))
     second = domain.Function("x")(lambda x: x[0] * (1.0 - x[0]) * (2.0 * x[0] - 1.0))
@@ -219,7 +222,7 @@ def test_invariant_residual_is_trial_basis_invariant_and_cluster_safe():
         objective_vars=("u0", "u1"),
     )
 
-    def clustered_loss(scale):
+    def clustered_loss(scale: Any) -> Any:
         return identity_term.loss(
             {
                 "u0": first + scale * second,
@@ -231,7 +234,7 @@ def test_invariant_residual_is_trial_basis_invariant_and_cluster_safe():
     assert jnp.isfinite(gradient)
 
 
-def test_invariant_residual_rejects_collapsed_trial_span():
+def test_invariant_residual_rejects_collapsed_trial_span() -> None:
     domain, first, _second = _dirichlet_modes()
     term = _strong_residual_term(domain)
 
@@ -249,7 +252,7 @@ def test_invariant_residual_rejects_collapsed_trial_span():
         )
 
 
-def test_invariant_residual_is_complex_phase_invariant():
+def test_invariant_residual_is_complex_phase_invariant() -> None:
     domain, first, second = _dirichlet_modes()
     term = _strong_residual_term(domain)
     reference = term.ritz({"u0": first, "u1": second})
@@ -264,7 +267,7 @@ def test_invariant_residual_is_complex_phase_invariant():
     )
 
 
-def test_invariant_residual_rejects_non_self_adjoint_projection():
+def test_invariant_residual_rejects_non_self_adjoint_projection() -> None:
     domain, first, second = _dirichlet_modes()
     term = phx.terms.InvariantSubspaceResidual(
         source=phx.integration.per_step(
@@ -287,7 +290,7 @@ def test_invariant_residual_rejects_non_self_adjoint_projection():
         jax.block_until_ready(term.loss({"u0": first, "u1": second}))
 
 
-def test_invariant_residual_rejects_indefinite_residual_pairing():
+def test_invariant_residual_rejects_indefinite_residual_pairing() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     first = domain.Function("x")(lambda x: x[0] * (1.0 - x[0]))
     term = phx.terms.InvariantSubspaceResidual(
@@ -309,7 +312,7 @@ def test_invariant_residual_rejects_indefinite_residual_pairing():
         jax.block_until_ready(term.loss({"u": first}))
 
 
-def test_single_mode_residual_exposes_scalar_convenience_only_for_one_field():
+def test_single_mode_residual_exposes_scalar_convenience_only_for_one_field() -> None:
     domain, first, second = _dirichlet_modes()
     single = _strong_residual_term(domain, objective_vars=("u",))
     single_result = single.ritz({"u": first})
@@ -323,7 +326,7 @@ def test_single_mode_residual_exposes_scalar_convenience_only_for_one_field():
         _ = block_result.mode
 
 
-def test_invariant_residual_weight_must_be_nonnegative():
+def test_invariant_residual_weight_must_be_nonnegative() -> None:
     domain, _first, _second = _dirichlet_modes()
     with pytest.raises(ValueError, match="non-negative"):
         phx.terms.InvariantSubspaceResidual(
@@ -337,7 +340,7 @@ def test_invariant_residual_weight_must_be_nonnegative():
         )
 
 
-def test_invariant_residual_integration_sources_are_explicit():
+def test_invariant_residual_integration_sources_are_explicit() -> None:
     domain, first, _second = _dirichlet_modes()
     target = phx.integration.over(domain.component())
     plan = phx.integration.MonteCarloPlan(128)
@@ -366,14 +369,14 @@ def test_invariant_residual_integration_sources_are_explicit():
     )
 
 
-def test_invariant_residual_supports_vector_fields_with_explicit_pairing():
+def test_invariant_residual_supports_vector_fields_with_explicit_pairing() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     first = domain.Function("x")(lambda x: jnp.asarray([jnp.sin(jnp.pi * x[0]), 0.0]))
     second = domain.Function("x")(
         lambda x: jnp.asarray([0.0, jnp.sin(2.0 * jnp.pi * x[0])])
     )
 
-    def vector_pairing(left, right):
+    def vector_pairing(left: Any, right: Any) -> Any:
         return phx.operators.einsum(
             "...i,...i->...",
             phx.operators.conjugate(left),
@@ -397,7 +400,7 @@ def test_invariant_residual_supports_vector_fields_with_explicit_pairing():
     assert jnp.max(result.relative_residuals) < 2e-15
 
 
-def test_functional_solver_refines_held_out_strong_eigen_residual():
+def test_functional_solver_refines_held_out_strong_eigen_residual() -> None:
     domain, first, second = _dirichlet_modes()
     amplitude = domain.Parameter(0.25)
     trial = first + amplitude * second

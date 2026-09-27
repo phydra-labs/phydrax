@@ -11,7 +11,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -33,7 +34,7 @@ class GaussianScreeningPlan(StrictModule, NonTrainableState):
         *,
         maximum_displacement: float = 0.25,
         maximum_quartets: int = 16_777_216,
-    ):
+    ) -> None:
         threshold_ = float(threshold)
         displacement = float(maximum_displacement)
         capacity = int(maximum_quartets)
@@ -83,7 +84,7 @@ class PreparedGaussianScreening(StrictModule, NonTrainableState):
         basis: PreparedGaussianBasis,
         positions: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, GaussianScreeningPlan):
             raise TypeError("plan must be GaussianScreeningPlan.")
         if not isinstance(basis, PreparedGaussianBasis):

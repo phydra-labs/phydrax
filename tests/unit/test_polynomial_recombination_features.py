@@ -7,7 +7,7 @@ import phydrax as phx
 from phydrax._polynomial._total_degree import TotalDegreePolynomialFeatures
 
 
-def test_total_degree_features_standardize_and_evaluate_the_complete_span():
+def test_total_degree_features_standardize_and_evaluate_the_complete_span() -> None:
     basis = TotalDegreePolynomialFeatures(2, 2)
     points = jnp.asarray([[0.0, 0.0], [2.0, 0.0], [0.0, 4.0]])
     weights = jnp.asarray([0.25, 0.5, 0.25])
@@ -32,7 +32,7 @@ def test_total_degree_features_standardize_and_evaluate_the_complete_span():
     assert jnp.allclose(values, expected)
 
 
-def test_total_degree_enumeration_scales_with_feature_count_not_tensor_width():
+def test_total_degree_enumeration_scales_with_feature_count_not_tensor_width() -> None:
     basis = TotalDegreePolynomialFeatures(512, 1)
 
     assert basis.feature_count == 512
@@ -40,7 +40,7 @@ def test_total_degree_enumeration_scales_with_feature_count_not_tensor_width():
     assert jnp.array_equal(jnp.sum(basis.exponents, axis=1), jnp.ones((512,)))
 
 
-def test_total_degree_capacity_and_content_identity_are_explicit():
+def test_total_degree_capacity_and_content_identity_are_explicit() -> None:
     first = TotalDegreePolynomialFeatures(3, 3)
     replay = TotalDegreePolynomialFeatures(3, 3)
     alternative = TotalDegreePolynomialFeatures(3, 2)
@@ -55,7 +55,7 @@ def test_total_degree_capacity_and_content_identity_are_explicit():
         TotalDegreePolynomialFeatures(16, 2, maximum_feature_bytes=100)
 
 
-def test_polynomial_recombination_prepares_one_static_feature_contract():
+def test_polynomial_recombination_prepares_one_static_feature_contract() -> None:
     config = phx.solver.PolynomialRecombination(
         3,
         maximum_features=128,
@@ -75,6 +75,7 @@ def test_polynomial_recombination_prepares_one_static_feature_contract():
     assert basis.feature_count == 19
 
     with pytest.raises(ValueError, match="frozen-selection"):
+        # ty: ignore[invalid-argument-type]
         phx.solver.PolynomialRecombination(2, differentiation="through-selection")
     with pytest.raises(ValueError, match="maximum_moment_error"):
         phx.solver.PolynomialRecombination(2, maximum_moment_error=-1.0)

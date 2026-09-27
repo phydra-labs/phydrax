@@ -9,10 +9,13 @@ from math import isfinite
 from typing import Any
 
 import equinox as eqx
-from jaxtyping import Array, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._costs import _array_tree_storage_bytes, PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
 from ._operators import AbstractLinearOperator
@@ -43,7 +46,7 @@ class SparseFactorizationPreconditioner(AbstractPreconditioner, NonTrainableStat
         *,
         properties: PreconditionerProperties,
         preconditioner_id: str,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractSparseLinearOperator):
             raise TypeError("operator must be an AbstractSparseLinearOperator.")
         if not isinstance(factorization, PreparedSparseFactorization):
@@ -84,7 +87,7 @@ class SparseFactorizationPreconditioner(AbstractPreconditioner, NonTrainableStat
         residual: PyTree[Any],
         /,
         *,
-        iteration: Array | None = None,
+        iteration: ArrayLike | None = None,
     ) -> PyTree[Array]:
         del iteration
         coordinates = self.space.flatten(self.space.validate(residual))
@@ -254,7 +257,7 @@ class SparseFactorizationPreconditionerBuilder(_AbstractSparseFactorizationBuild
         self,
         policy: SparseFactorizationPolicy | None = None,
         /,
-    ):
+    ) -> None:
         policy_ = SparseFactorizationPolicy() if policy is None else policy
         if not isinstance(policy_, SparseFactorizationPolicy):
             raise TypeError("policy must be SparseFactorizationPolicy or None.")
@@ -286,7 +289,7 @@ class ILUPreconditionerBuilder(_AbstractSparseFactorizationBuilder):
         diagonal_shift: float = 0.0,
         allow_pivot_replacement: bool = False,
         replacement_value: float = 1e-12,
-    ):
+    ) -> None:
         fill = int(fill_level)
         numeric = tuple(
             float(value) for value in (pivot_tolerance, diagonal_shift, replacement_value)
@@ -297,8 +300,7 @@ class ILUPreconditionerBuilder(_AbstractSparseFactorizationBuilder):
             raise ValueError("ILU numeric policies must be finite.")
         if numeric[0] < 0.0 or numeric[1] < 0.0 or numeric[2] <= 0.0:
             raise ValueError("ILU pivot/shift policies are invalid.")
-        if ordering not in ("natural", "reverse-cuthill-mckee"):
-            raise ValueError(f"Unknown sparse ordering {ordering!r}.")
+        ordering = parse(ordering, SparseOrdering, "ordering")
         self.fill_level = fill
         self.ordering = ordering
         self.pivot_tolerance = numeric[0]
@@ -341,7 +343,7 @@ class ILUTPreconditionerBuilder(_AbstractSparseFactorizationBuilder):
         diagonal_shift: float = 0.0,
         allow_pivot_replacement: bool = False,
         replacement_value: float = 1e-12,
-    ):
+    ) -> None:
         fill = int(fill_level)
         maximum_fill = int(maximum_fill_per_row)
         numeric = tuple(
@@ -359,8 +361,7 @@ class ILUTPreconditionerBuilder(_AbstractSparseFactorizationBuilder):
             raise ValueError("ILUT numeric policies must be finite.")
         if any(value < 0.0 for value in numeric[:3]) or numeric[3] <= 0.0:
             raise ValueError("ILUT drop, pivot, or replacement policy is invalid.")
-        if ordering not in ("natural", "reverse-cuthill-mckee"):
-            raise ValueError(f"Unknown sparse ordering {ordering!r}.")
+        ordering = parse(ordering, SparseOrdering, "ordering")
         self.fill_level = fill
         self.drop_tolerance = numeric[0]
         self.maximum_fill_per_row = maximum_fill
@@ -408,7 +409,7 @@ class IncompleteCholeskyPreconditionerBuilder(_AbstractSparseFactorizationBuilde
         diagonal_shift: float = 0.0,
         allow_pivot_replacement: bool = False,
         replacement_value: float = 1e-12,
-    ):
+    ) -> None:
         fill = int(fill_level)
         maximum_fill = None if maximum_fill_per_row is None else int(maximum_fill_per_row)
         numeric = tuple(
@@ -426,8 +427,7 @@ class IncompleteCholeskyPreconditionerBuilder(_AbstractSparseFactorizationBuilde
             raise ValueError("IC numeric policies must be finite.")
         if any(value < 0.0 for value in numeric[:3]) or numeric[3] <= 0.0:
             raise ValueError("IC drop, pivot, or replacement policy is invalid.")
-        if ordering not in ("natural", "reverse-cuthill-mckee"):
-            raise ValueError(f"Unknown sparse ordering {ordering!r}.")
+        ordering = parse(ordering, SparseOrdering, "ordering")
         self.fill_level = fill
         self.drop_tolerance = numeric[0]
         self.maximum_fill_per_row = maximum_fill

@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import jax.numpy as jnp
 import pytest
@@ -39,15 +40,15 @@ _VERTICES = jnp.asarray(
 _FACES = jnp.asarray([[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]], dtype=jnp.int32)
 
 
-def _cell():
+def _cell() -> Any:
     return PeriodicCell(3.0 * jnp.eye(3))
 
 
-def _region():
+def _region() -> Any:
     return phx.geometry.MeshRegion(_VERTICES, _FACES)
 
 
-def _small_policy(**overrides):
+def _small_policy(**overrides: Any) -> Any:
     arguments = dict(
         splitting_parameter=1.4,
         real_cutoff=1,
@@ -61,10 +62,11 @@ def _small_policy(**overrides):
         max_resident_bytes=16 * 1024 * 1024,
     )
     arguments.update(overrides)
+    # ty: ignore[invalid-argument-type]
     return PeriodicEwaldPolicy3D(**arguments)
 
 
-def test_affine_lattice_reciprocal_vectors_and_bloch_phase_are_consistent():
+def test_affine_lattice_reciprocal_vectors_and_bloch_phase_are_consistent() -> None:
     lattice = jnp.asarray([[2.0, 0.2, 0.0], [0.0, 1.7, 0.1], [0.0, 0.0, 1.4]])
     cell = PeriodicCell(lattice, origin=jnp.asarray([-0.1, 0.2, 0.3]))
     assert cell.ambient_dimension == 3
@@ -85,7 +87,7 @@ def test_affine_lattice_reciprocal_vectors_and_bloch_phase_are_consistent():
         periodic_reciprocal_vectors_3d(partially_periodic)
 
 
-def test_absolutely_convergent_yukawa_matches_direct_images_and_bloch_character():
+def test_absolutely_convergent_yukawa_matches_direct_images_and_bloch_character() -> None:
     cell = PeriodicCell(2.0 * jnp.eye(3))
     alpha = jnp.asarray([0.19, -0.11, 0.07])
     displacement = jnp.asarray([0.31, -0.27, 0.22])
@@ -133,7 +135,7 @@ def test_absolutely_convergent_yukawa_matches_direct_images_and_bloch_character(
         )
 
 
-def test_modified_helmholtz_ewald_split_is_invariant_at_fixed_convergence():
+def test_modified_helmholtz_ewald_split_is_invariant_at_fixed_convergence() -> None:
     cell = PeriodicCell(2.0 * jnp.eye(3))
     displacement = jnp.asarray([0.29, 0.18, -0.24])
     alpha = jnp.asarray([0.13, 0.09, -0.05])
@@ -166,7 +168,7 @@ def test_modified_helmholtz_ewald_split_is_invariant_at_fixed_convergence():
     assert jnp.allclose(first, second, rtol=3.0e-5, atol=3.0e-6)
 
 
-def test_laplace_neutrality_gauge_and_fail_closed_allocations():
+def test_laplace_neutrality_gauge_and_fail_closed_allocations() -> None:
     cell = _cell()
     policy = _small_policy()
     operator = prepare_periodic_laplace_single_layer_dp0_3d(
@@ -209,7 +211,7 @@ def test_laplace_neutrality_gauge_and_fail_closed_allocations():
         )
 
 
-def test_helmholtz_wood_mode_and_unsearched_tail_fail_with_typed_evidence():
+def test_helmholtz_wood_mode_and_unsearched_tail_fail_with_typed_evidence() -> None:
     cell = _cell()
     policy = _small_policy(wood_tolerance=1.0e-8)
     with pytest.raises(PeriodicHelmholtzWoodAnomalyError) as caught:
@@ -231,7 +233,9 @@ def test_helmholtz_wood_mode_and_unsearched_tail_fail_with_typed_evidence():
         )
 
 
-def test_all_family_operators_have_exact_algebraic_transposes_and_bounded_actions():
+def test_all_family_operators_have_exact_algebraic_transposes_and_bounded_actions() -> (
+    None
+):
     cell = _cell()
     policy = _small_policy()
     modified = prepare_periodic_modified_helmholtz_single_layer_dp0_3d(

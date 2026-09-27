@@ -4,11 +4,14 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -65,7 +68,7 @@ class PICMovingWindowPlan(StrictModule, NonTrainableState):
         /,
         *,
         shift_cells: int = 1,
-    ):
+    ) -> None:
         if not isinstance(bridge, StructuredCochainBridge):
             raise TypeError("bridge must be StructuredCochainBridge.")
         selected = int(axis)
@@ -114,7 +117,7 @@ class PICMovingWindowPlan(StrictModule, NonTrainableState):
         )
         return self.bridge.pack(degree, shifted)
 
-    def _shift_auxiliary_leaf(self, value):
+    def _shift_auxiliary_leaf(self, value: Any) -> Any:
         if not eqx.is_array(value):
             return value
         if value.shape == (self.bridge.cochain.cell_counts[0],):

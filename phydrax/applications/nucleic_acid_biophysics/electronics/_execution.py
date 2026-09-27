@@ -15,11 +15,14 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -202,7 +205,9 @@ def _parameter_arrays(
     keys: tuple[BasisKey, ...],
     units: AtomisticUnitSystem,
     include_vacuum: bool,
-):
+) -> tuple[
+    npt.NDArray[np.complex128], npt.NDArray[np.complex128], npt.NDArray[np.float64]
+]:
     if set(parameters.basis_keys) != set(keys):
         raise ValueError(
             "Parameter basis must exactly cover the declared electronic sector."
@@ -233,7 +238,8 @@ def _parameter_arrays(
         elif channel.kind == "dephasing":
             target = source
         else:
-            target = indices[channel.target]
+            # ElectronicChannel validation guarantees bath channels carry a target.
+            target = indices[cast(BasisKey, channel.target)]
         jumps[index, target, source] = 1.0
         rates[index] = channel.rate * float(
             conversion_factor(channel.rate_unit, units.frequency_unit)
@@ -244,16 +250,16 @@ def _parameter_arrays(
 
 
 def _prepared(
-    hamiltonian,
-    jumps,
-    rates,
-    keys,
-    channel_ids,
-    graphs,
-    parameters,
-    units,
-    include_vacuum,
-    parents=(),
+    hamiltonian: npt.NDArray[np.complex128],
+    jumps: npt.NDArray[np.complex128],
+    rates: npt.NDArray[np.float64],
+    keys: tuple[BasisKey, ...],
+    channel_ids: tuple[str, ...],
+    graphs: tuple[ElectronicSiteGraph, ...],
+    parameters: tuple[ElectronicParameterArtifact, ...],
+    units: AtomisticUnitSystem,
+    include_vacuum: bool,
+    parents: tuple[str, ...] = (),
 ) -> PreparedElectronicModel:
     active = np.ones(len(rates), dtype=np.bool_)
     if not len(rates):
@@ -545,7 +551,12 @@ class ElectronicJumpEvolution:
     artifact: ScientificArtifactEnvelope
 
 
-def _step(model, step_size, time_unit, steps):
+def _step(
+    model: PreparedElectronicModel,
+    step_size: float,
+    time_unit: UnitDefinition,
+    steps: int,
+) -> float:
     if isinstance(steps, bool) or not isinstance(steps, int) or steps < 1:
         raise ValueError("Electronic evolution requires a positive integer step count.")
     step = float(step_size) * float(conversion_factor(time_unit, model.units.time_unit))
@@ -554,7 +565,14 @@ def _step(model, step_size, time_unit, steps):
     return step
 
 
-def _history(model, densities, times, valid, method, extra):
+def _history(
+    model: PreparedElectronicModel,
+    densities: Array,
+    times: Array,
+    valid: Array,
+    method: str,
+    extra: Mapping[str, object],
+) -> tuple[SampledSeries, ScientificArtifactEnvelope]:
     digest = canonical_fingerprint(
         {
             "model": model.artifact.artifact_id,

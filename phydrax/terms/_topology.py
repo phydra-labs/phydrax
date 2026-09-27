@@ -9,7 +9,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 
@@ -19,6 +20,7 @@ from .._term import AbstractEvaluatedScalarTerm, TermEvaluation
 from ..domain import DomainFunction
 from ..topology import FrozenPersistencePairing, PreparedVertexFiltration
 from ..topology._features import frozen_total_persistence
+from ..typing import PRNGKey
 
 
 class FrozenTopologyTerm(AbstractEvaluatedScalarTerm):
@@ -45,7 +47,7 @@ class FrozenTopologyTerm(AbstractEvaluatedScalarTerm):
         exponent: float = 1.0,
         weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         name = str(field)
         if not name:
             raise ValueError("Frozen topology field name must be non-empty.")
@@ -72,7 +74,7 @@ class FrozenTopologyTerm(AbstractEvaluatedScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> TermEvaluation:
@@ -109,7 +111,7 @@ class FrozenTopologyTerm(AbstractEvaluatedScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:

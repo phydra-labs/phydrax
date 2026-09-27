@@ -2,19 +2,22 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _mesh():
+def _mesh() -> Any:
     vertices = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [0.5, 0.5]])
     cells = jnp.asarray([[0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4]], dtype=jnp.int32)
     return phx.discretization.CellMesh.from_triangles(vertices, cells)
 
 
-def test_darcy_compiles_as_one_product_space_problem():
+def test_darcy_compiles_as_one_product_space_problem() -> None:
     mesh = _mesh()
     discretization = phx.discretization.FiniteElementPlan(
         mesh,
@@ -33,12 +36,13 @@ def test_darcy_compiles_as_one_product_space_problem():
     residual = compiled.residual(compiled.state_space.zeros())
 
     assert type(compiled) is phx.equations.CompiledFiniteElementProblem
+    # ty: ignore[unresolved-attribute]
     assert compiled.state_space.names == ("q", "p")
     assert tuple(value.shape for value in residual) == ((8,), (4,))
     assert not hasattr(compiled, "subproblems")
 
 
-def test_stokes_has_nonzero_off_diagonal_jvp_and_adjoint_identity():
+def test_stokes_has_nonzero_off_diagonal_jvp_and_adjoint_identity() -> None:
     mesh = _mesh()
     discretization = phx.discretization.FiniteElementPlan(
         mesh,
@@ -69,7 +73,7 @@ def test_stokes_has_nonzero_off_diagonal_jvp_and_adjoint_identity():
     assert jnp.allclose(block_image[1], image[1])
 
 
-def test_upwind_constant_state_is_preserved_with_matching_inflow():
+def test_upwind_constant_state_is_preserved_with_matching_inflow() -> None:
     mesh = _mesh()
     discretization = phx.discretization.FiniteElementPlan(
         mesh,
@@ -91,7 +95,7 @@ def test_upwind_constant_state_is_preserved_with_matching_inflow():
     assert jnp.linalg.norm(residual) < 1.0e-12
 
 
-def test_hdg_local_system_is_generated_and_reconstructed():
+def test_hdg_local_system_is_generated_and_reconstructed() -> None:
     mesh = _mesh()
     discretization = phx.discretization.FiniteElementPlan(
         mesh,

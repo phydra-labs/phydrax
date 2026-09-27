@@ -9,7 +9,8 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._base import (
@@ -39,7 +40,7 @@ class InputTransformedKernel(AbstractPositiveDefiniteKernel):
         transform_id: str,
         max_derivative_order: int | None = 0,
         input_ndim: int = 1,
-    ):
+    ) -> None:
         if not isinstance(kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("kernel must be a positive-definite kernel.")
         if not callable(transform_function):
@@ -115,7 +116,7 @@ class AffineInputTransform(StrictModule):
     offset: Array
     scale: Array
 
-    def __init__(self, offset: ArrayLike, scale: ArrayLike, /):
+    def __init__(self, offset: ArrayLike, scale: ArrayLike, /) -> None:
         offset_value = jnp.asarray(offset, dtype=jnp.float64)
         scale_value = jnp.asarray(scale, dtype=jnp.float64)
         if offset_value.ndim > 1 or scale_value.ndim > 1:

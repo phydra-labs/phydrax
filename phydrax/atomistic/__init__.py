@@ -401,10 +401,10 @@ from ._polymer_observables import (
 from ._potential import (
     AbstractAtomisticPotential,
     AbstractPreparedAtomisticPotential,
+    atomistic_potential_revision,
     AtomisticPotentialCapabilities,
     AtomisticPotentialRequirements,
     AtomisticSpeciesKind,
-    atomistic_potential_revision,
 )
 from ._potential_program import (
     AbstractAtomisticEnergyTerm,

@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ..._strict import StrictModule
 from ..._trainable import _lane_tree, resolve_array_roles
@@ -85,7 +86,7 @@ class ParameterSubspace(StrictModule):
         filter_spec: PyTree[bool] | Callable,
         *,
         alias_groups: Sequence[Sequence[str]] = (),
-    ):
+    ) -> None:
         mask = _selection_mask(tree, filter_spec)
         # Terminal nodes are wholly frozen: `None` in the selection and whole in
         # the complement, matching the role lanes of `partition_parameters`.

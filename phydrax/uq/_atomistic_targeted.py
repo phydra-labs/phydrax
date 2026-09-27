@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -43,7 +44,7 @@ class CenterOfMassPreservingBijector(AbstractBijector):
         /,
         *,
         chart_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(internal, AbstractBijector):
             raise TypeError("internal must implement AbstractBijector.")
         mass = np.asarray(masses, dtype=np.float64).reshape((-1,))
@@ -156,7 +157,7 @@ class ControlledHamiltonianReducedPotential(AbstractReducedPotential):
         neighborhood: AbstractPreparedParticleNeighborhood,
         state_index: int,
         /,
-    ):
+    ) -> None:
         if not isinstance(hamiltonian, PreparedControlledHamiltonian):
             raise TypeError("hamiltonian must be a PreparedControlledHamiltonian.")
         if not isinstance(thermodynamic, PreparedThermodynamicStateTable):

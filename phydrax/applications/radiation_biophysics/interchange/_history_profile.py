@@ -10,7 +10,8 @@ from dataclasses import dataclass
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax.qualification import ReferenceArtifactManifest
@@ -72,7 +73,7 @@ class TimedRadiationHistoryProfile:
         dosimetry_reference: ReferenceArtifactManifest | None,
         transport_reference: ReferenceArtifactManifest | None,
         chemical_reference: ReferenceArtifactManifest | None,
-    ):
+    ) -> None:
         if not isinstance(source, RadiationSource):
             raise TypeError("source must be RadiationSource.")
         if (

@@ -10,7 +10,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
@@ -30,8 +31,8 @@ class MPMDistributedPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        logical_grid_shape,
-        block_shape,
+        logical_grid_shape: Sequence[int],
+        block_shape: Sequence[int],
         block_owner: ArrayLike,
         /,
         *,
@@ -39,7 +40,7 @@ class MPMDistributedPlan(StrictModule, NonTrainableState):
         particle_capacity_per_device: int,
         halo_blocks: int = 1,
         periodic_axes: Sequence[bool] | None = None,
-    ):
+    ) -> None:
         grid = tuple(logical_grid_shape)
         block = tuple(block_shape)
         owners = np.asarray(block_owner, dtype=np.int32)
@@ -124,7 +125,7 @@ class MPMShardCheckpointManifest(StrictModule, NonTrainableState):
         shard_payload_ids: Sequence[str],
         ownership_plan_id: str,
         /,
-    ):
+    ) -> None:
         generation_ = int(generation)
         shards = tuple(str(value) for value in shard_payload_ids)
         owner = str(ownership_plan_id)

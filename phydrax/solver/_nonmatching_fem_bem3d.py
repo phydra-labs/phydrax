@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -66,7 +67,13 @@ class PreparedNonmatchingFEMBEM3D(StrictModule, NonTrainableState):
         )
 
 
-def _prepare(interior_matrix, boundary_matrix, coupling, family, maximum_dense_entries):
+def _prepare(
+    interior_matrix: ArrayLike,
+    boundary_matrix: ArrayLike,
+    coupling: ArrayLike,
+    family: str,
+    maximum_dense_entries: int,
+) -> PreparedNonmatchingFEMBEM3D:
     interior = np.asarray(interior_matrix)
     boundary = np.asarray(boundary_matrix)
     trace = np.asarray(coupling)

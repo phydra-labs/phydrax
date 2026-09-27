@@ -5,6 +5,7 @@
 """Fixed-topology geometry realization feeding dynamic finite elements."""
 
 import json
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -13,7 +14,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _diamond_discretization():
+def _diamond_discretization() -> Any:
     coordinates = jnp.asarray(
         [
             [1.0, 0.0],
@@ -35,7 +36,7 @@ def _diamond_discretization():
     return phx.discretization.FiniteElementPlan(mesh, field).prepare()
 
 
-def run():
+def run() -> Any:
     geometry = phx.geometry.Circle(
         (0.0, 0.0),
         1.0,
@@ -56,7 +57,7 @@ def run():
         phx.geometry.ParameterId("design-circle", "radius")
     )
 
-    def physical_area(radius):
+    def physical_area(radius: Any) -> Any:
         design = geometry.state.replace_at(radius_index, radius)
         realization = motion.realize(
             design,

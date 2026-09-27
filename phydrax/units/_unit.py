@@ -7,6 +7,8 @@ from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
@@ -188,7 +190,9 @@ def conversion_factor(source: UnitDefinition, target: UnitDefinition) -> Fractio
     return source.scale_to_reference / target.scale_to_reference
 
 
-def convert_value(value: Any, *, source: UnitDefinition, target: UnitDefinition):
+def convert_value(
+    value: ArrayLike, *, source: UnitDefinition, target: UnitDefinition
+) -> Array:
     """Convert a scalar or array through an exact, statically resolved factor."""
     factor = conversion_factor(source, target)
     array = jnp.asarray(value)

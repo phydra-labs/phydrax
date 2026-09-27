@@ -9,12 +9,13 @@ from typing import TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax.typing import DTypeLike
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._model import register_artifact_value
 from ..._strict import StrictModule
+from ...typing import parse
 from ._operations import (
     LocalKrausChannelOperation,
     LocalUnitaryOperation,
@@ -45,7 +46,7 @@ class PauliRotationInstruction(StrictModule):
         /,
         *,
         dtype: DTypeLike = jnp.complex128,
-    ):
+    ) -> None:
         selected_axes = tuple(str(axis).upper() for axis in axes)
         targets = _target_wire_ids(target_wire_ids)
         if len(selected_axes) != len(targets) or len(targets) not in (1, 2):
@@ -113,11 +114,10 @@ class QuantumProgramTemplate(StrictModule):
         *,
         state_kind: QuantumStateKind,
         dtype: DTypeLike = jnp.complex128,
-    ):
+    ) -> None:
         if not isinstance(layout, HilbertRegisterLayout):
             raise TypeError("layout must be a HilbertRegisterLayout.")
-        if state_kind not in ("state-vector", "density-matrix"):
-            raise ValueError("Unknown quantum-program state kind.")
+        state_kind = parse(state_kind, QuantumStateKind, "state_kind")
         selected_dtype = jnp.dtype(dtype)
         if selected_dtype not in (jnp.dtype(jnp.complex64), jnp.dtype(jnp.complex128)):
             raise TypeError("Quantum program templates require complex64 or complex128.")

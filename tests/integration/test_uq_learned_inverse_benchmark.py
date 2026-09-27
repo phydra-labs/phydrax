@@ -32,23 +32,23 @@ class _OutputComponent(eqx.Module):
     field: Any
     index: int = eqx.field(static=True)
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: Any = None, **kwargs: Any) -> Any:
         return self.field.func(*args, key=key, **kwargs)[self.index]
 
 
 class _StagedTrainer:
     def __init__(
         self,
-        solver,
+        solver: Any,
         *,
         first_iterations: int = 60,
         second_iterations: int = 40,
-    ):
+    ) -> None:
         self.solver = solver
         self.first_iterations = int(first_iterations)
         self.second_iterations = int(second_iterations)
 
-    def solve(self, *, seed: int, **kwargs):
+    def solve(self, *, seed: int, **kwargs: Any) -> Any:
         if kwargs:
             raise TypeError(f"Unexpected staged-solver arguments: {tuple(kwargs)!r}.")
         first = self.solver.solve(
@@ -69,7 +69,7 @@ class _StagedTrainer:
         )
 
 
-def _project_output(field, index: int):
+def _project_output(field: Any, index: int) -> Any:
     return phx.domain.DomainFunction(
         domain=field.domain,
         deps=field.deps,
@@ -77,11 +77,11 @@ def _project_output(field, index: int):
     )
 
 
-def _derived_fields(state) -> Mapping[str, Any]:
+def _derived_fields(state: Any) -> Mapping[str, Any]:
     geometry = state.domain
 
     @geometry.Function("x")
-    def boundary_factor(x):
+    def boundary_factor(x: Any) -> Any:
         return x[0] * (1.0 - x[0])
 
     solution = boundary_factor * _project_output(state, 0)
@@ -91,18 +91,18 @@ def _derived_fields(state) -> Mapping[str, Any]:
 
 
 def _make_inverse_solver(
-    key,
+    key: Any,
     /,
     *,
     randomized_prior: bool = False,
-    sensor_x=None,
-    sensor_targets=None,
-    observation_key=None,
-):
+    sensor_x: Any = None,
+    sensor_targets: Any = None,
+    observation_key: Any = None,
+) -> Any:
     geometry = phx.domain.Interval1d(0.0, 1.0)
     observation_layout = phx.domain.SampleLayout((("x",),)).canonicalize(geometry.labels)
 
-    def model_factory(model_key):
+    def model_factory(model_key: Any) -> Any:
         return phx.nn.models.MLP(
             in_size=1,
             out_size=2,
@@ -122,11 +122,11 @@ def _make_inverse_solver(
         model = model_factory(key)
     state = geometry.Model("x")(model)
 
-    def poisson_residual(state_field):
+    def poisson_residual(state_field: Any) -> Any:
         fields = _derived_fields(state_field)
         return -phx.operators.laplacian(fields["u"], var="x") - fields["source"]
 
-    def constant_source_residual(state_field):
+    def constant_source_residual(state_field: Any) -> Any:
         return phx.operators.grad(_derived_fields(state_field)["source"], var="x")
 
     poisson_condition = phx.conditions.Residual(
@@ -179,7 +179,7 @@ def _make_inverse_solver(
     )
 
     @geometry.Function("x")
-    def observed_field(x):
+    def observed_field(x: Any) -> Any:
         return jnp.interp(x[0], sensor_x, observations)
 
     observation_axis = observation_layout.axis_for("x")
@@ -216,11 +216,11 @@ def _make_inverse_solver(
     )
 
 
-def _fit_staged(key, *, seed: int):
+def _fit_staged(key: Any, *, seed: int) -> Any:
     return _StagedTrainer(_make_inverse_solver(key)).solve(seed=seed)
 
 
-def _fit_ensemble(key, *, randomized_prior: bool):
+def _fit_ensemble(key: Any, *, randomized_prior: bool) -> Any:
     return phx.uq.fit_ensemble(
         lambda member_key: _StagedTrainer(
             _make_inverse_solver(member_key, randomized_prior=randomized_prior)
@@ -232,25 +232,25 @@ def _fit_ensemble(key, *, randomized_prior: bool):
     )
 
 
-def _ensemble_fields(fit_result):
+def _ensemble_fields(fit_result: Any) -> Any:
     members = tuple(
         _derived_fields(member["state"]) for member in fit_result.ensemble.members
     )
     return phx.uq.HeterogeneousFunctionEnsemble(members)
 
 
-def _field_rmse(center, exact):
+def _field_rmse(center: Any, exact: Any) -> Any:
     return jnp.sqrt(jnp.mean((jnp.asarray(center) - jnp.asarray(exact)) ** 2))
 
 
 def _calibration_metrics(
-    center,
-    epistemic_scale,
-    observation_scale,
-    trajectories,
-    calibration_indices,
-    test_indices,
-):
+    center: Any,
+    epistemic_scale: Any,
+    observation_scale: Any,
+    trajectories: Any,
+    calibration_indices: Any,
+    test_indices: Any,
+) -> Any:
     center = jnp.asarray(center)
     total_scale = jnp.sqrt(jnp.asarray(epistemic_scale) ** 2 + observation_scale**2)
     calibration_center = jnp.broadcast_to(center, (calibration_indices.size, center.size))
@@ -312,7 +312,7 @@ def _calibration_metrics(
     os.environ.get("PHYDRAX_RUN_SLOW_BENCHMARKS") != "1",
     reason="set PHYDRAX_RUN_SLOW_BENCHMARKS=1 to run learned UQ training",
 )
-def test_learned_inverse_poisson_uq_comparison_benchmark(record_property):
+def test_learned_inverse_poisson_uq_comparison_benchmark(record_property: Any) -> None:
     query_x = jnp.linspace(0.0, 1.0, 65)
     points = {"x": cx.AxisArray(query_x[:, None], dims=("x", None))}
     exact = 0.5 * _TRUE_SOURCE * query_x * (1.0 - query_x)
@@ -467,11 +467,11 @@ _STRESS_SECOND_ITERATIONS = 30
 
 
 def _fit_stress_solver(
-    model_key,
-    observation_key,
+    model_key: Any,
+    observation_key: Any,
     *,
     seed: int,
-):
+) -> Any:
     trainer = _StagedTrainer(
         _make_inverse_solver(
             model_key,
@@ -485,11 +485,11 @@ def _fit_stress_solver(
 
 
 def _fit_stress_ensemble(
-    key,
-    observation_key,
+    key: Any,
+    observation_key: Any,
     *,
     randomized_prior: bool,
-):
+) -> Any:
     return phx.uq.fit_ensemble(
         lambda member_key: _StagedTrainer(
             _make_inverse_solver(
@@ -508,13 +508,13 @@ def _fit_stress_ensemble(
     )
 
 
-def _rank_correlation(left, right) -> float:
+def _rank_correlation(left: Any, right: Any) -> float:
     left = jnp.asarray(left)
     right = jnp.asarray(right)
     if float(jnp.std(left)) <= 1e-12 or float(jnp.std(right)) <= 1e-12:
         return 0.0
 
-    def ranks(values):
+    def ranks(values: Any) -> Any:
         order = jnp.argsort(values)
         return (
             jnp.zeros(values.shape, dtype="float64")
@@ -530,7 +530,9 @@ def _rank_correlation(left, right) -> float:
     return float(jnp.sum(left_centered * right_centered) / denominator)
 
 
-def _stress_trajectories(key, query_x, exact, *, num_cases: int = 3000):
+def _stress_trajectories(
+    key: Any, query_x: Any, exact: Any, *, num_cases: int = 3000
+) -> Any:
     coefficients = jr.normal(key, (num_cases, 4))
     observation_shape = 0.012 + 0.008 * query_x
     standardized_noise = (
@@ -542,7 +544,7 @@ def _stress_trajectories(key, query_x, exact, *, num_cases: int = 3000):
     return exact[None, :] + observation_shape[None, :] * standardized_noise
 
 
-def _evaluate_stress_trial(trial_index: int):
+def _evaluate_stress_trial(trial_index: int) -> Any:
     query_x = jnp.linspace(0.0, 1.0, 65)
     points = {"x": cx.AxisArray(query_x[:, None], dims=("x", None))}
     exact = 0.5 * _TRUE_SOURCE * query_x * (1.0 - query_x)
@@ -723,7 +725,7 @@ def _evaluate_stress_trial(trial_index: int):
     return method_metrics
 
 
-def _stress_retention_summary(trials):
+def _stress_retention_summary(trials: Any) -> Any:
     metric_names = tuple(trials[0]["deterministic"])
     aggregate = {
         method: {
@@ -804,8 +806,8 @@ def _stress_retention_summary(trials):
     }
 
 
-def test_stress_retention_gates_use_paired_scores_and_stability():
-    def metrics(nll, crps, extrapolation_rmse, full_rmse):
+def test_stress_retention_gates_use_paired_scores_and_stability() -> None:
+    def metrics(nll: Any, crps: Any, extrapolation_rmse: Any, full_rmse: Any) -> Any:
         return {
             "nll": nll,
             "crps": crps,
@@ -844,7 +846,7 @@ def test_stress_retention_gates_use_paired_scores_and_stability():
     os.environ.get("PHYDRAX_RUN_UQ_STRESS_BENCHMARKS") != "1",
     reason="set PHYDRAX_RUN_UQ_STRESS_BENCHMARKS=1 to run repeated UQ stress fits",
 )
-def test_sparse_sensor_extrapolation_retention_benchmark(record_property):
+def test_sparse_sensor_extrapolation_retention_benchmark(record_property: Any) -> None:
     trials = [
         _evaluate_stress_trial(trial_index) for trial_index in range(_STRESS_TRIAL_COUNT)
     ]
@@ -871,18 +873,18 @@ _MISSPECIFICATION_METHODS = ("deterministic", "ensemble")
 _MISSPECIFICATION_TRIAL_COUNT = 3
 
 
-def _misspecified_truth(x):
+def _misspecified_truth(x: Any) -> Any:
     x = jnp.asarray(x)
     baseline = 0.5 * _TRUE_SOURCE * x * (1.0 - x)
     return baseline + _MISSPECIFICATION_AMPLITUDE * jnp.sin(2.0 * jnp.pi * x)
 
 
-def _misspecified_fields(state) -> Mapping[str, Any]:
+def _misspecified_fields(state: Any) -> Mapping[str, Any]:
     fields = _derived_fields(state)
     geometry = state.domain
 
     @geometry.Function("x")
-    def true_forcing(x):
+    def true_forcing(x: Any) -> Any:
         return _TRUE_SOURCE + (
             _MISSPECIFICATION_AMPLITUDE
             * (2.0 * jnp.pi) ** 2
@@ -897,11 +899,11 @@ def _misspecified_fields(state) -> Mapping[str, Any]:
 
 
 def _fit_misspecification_solver(
-    model_key,
-    observation_key,
+    model_key: Any,
+    observation_key: Any,
     *,
     seed: int,
-):
+) -> Any:
     sensor_x = jnp.linspace(0.05, 0.95, 12)
     trainer = _StagedTrainer(
         _make_inverse_solver(
@@ -916,7 +918,7 @@ def _fit_misspecification_solver(
     return trainer.solve(seed=seed)
 
 
-def _fit_misspecification_ensemble(key, observation_key):
+def _fit_misspecification_ensemble(key: Any, observation_key: Any) -> Any:
     sensor_x = jnp.linspace(0.05, 0.95, 12)
     sensor_targets = _misspecified_truth(sensor_x)
     return phx.uq.fit_ensemble(
@@ -937,14 +939,14 @@ def _fit_misspecification_ensemble(key, observation_key):
     )
 
 
-def _misspecification_ensemble_fields(fit_result):
+def _misspecification_ensemble_fields(fit_result: Any) -> Any:
     members = tuple(
         _misspecified_fields(member["state"]) for member in fit_result.ensemble.members
     )
     return phx.uq.HeterogeneousFunctionEnsemble(members)
 
 
-def _evaluate_misspecification_trial(trial_index: int):
+def _evaluate_misspecification_trial(trial_index: int) -> Any:
     query_x = jnp.linspace(0.0, 1.0, 65)
     points = {"x": cx.AxisArray(query_x[:, None], dims=("x", None))}
     exact = _misspecified_truth(query_x)
@@ -1097,7 +1099,7 @@ def _evaluate_misspecification_trial(trial_index: int):
     return method_metrics
 
 
-def _misspecification_retention_summary(trials):
+def _misspecification_retention_summary(trials: Any) -> Any:
     metric_names = tuple(trials[0]["deterministic"])
     aggregate = {
         method: {
@@ -1180,7 +1182,7 @@ def _misspecification_retention_summary(trials):
     os.environ.get("PHYDRAX_RUN_UQ_MISSPEC_BENCHMARKS") != "1",
     reason="set PHYDRAX_RUN_UQ_MISSPEC_BENCHMARKS=1 to run model-form UQ fits",
 )
-def test_model_misspecification_retention_benchmark(record_property):
+def test_model_misspecification_retention_benchmark(record_property: Any) -> None:
     trials = [
         _evaluate_misspecification_trial(trial_index)
         for trial_index in range(_MISSPECIFICATION_TRIAL_COUNT)

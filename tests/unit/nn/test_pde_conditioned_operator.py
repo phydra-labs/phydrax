@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -15,7 +18,7 @@ from phydrax.nn.operator.architectures.conditioning._pde_conditioned import (
 )
 
 
-def _problem(constant: float, *, constant_first: bool = False):
+def _problem(constant: float, *, constant_first: bool = False) -> Any:
     field = phx.equations.PDEExpression.field("u")
     expression = constant + field if constant_first else field + constant
     return phx.equations.PDEProblemIR(
@@ -25,7 +28,7 @@ def _problem(constant: float, *, constant_first: bool = False):
     )
 
 
-def _batch(*, cases: int = 2, identical: bool = False):
+def _batch(*, cases: int = 2, identical: bool = False) -> Any:
     source = jnp.array([0.25, -0.5, 1.0])
     if cases:
         values = jnp.broadcast_to(source, (cases, source.size))
@@ -47,7 +50,7 @@ def _batch(*, cases: int = 2, identical: bool = False):
     )
 
 
-def _model():
+def _model() -> Any:
     source_key, equation_key, trunk_key, encoder_key = jr.split(jr.key(0), 4)
     operator = phx.nn.operator.architectures.DeepONet(
         branch={
@@ -87,14 +90,14 @@ def _model():
     return PDEConditionedOperator(operator, encoder, input_name="pde")
 
 
-def _tokens(constant: float, *, constant_first: bool = False):
+def _tokens(constant: float, *, constant_first: bool = False) -> Any:
     return phx.equations.tokenize_pde_ir(
         _problem(constant, constant_first=constant_first),
         dimension_basis=(),
     )
 
 
-def test_pde_conditioned_operator_composes_canonical_tasks_and_contracts():
+def test_pde_conditioned_operator_composes_canonical_tasks_and_contracts() -> None:
     model = _model()
     batch = _batch()
     tokens = _tokens(1.0)
@@ -156,7 +159,7 @@ def test_pde_conditioned_operator_composes_canonical_tasks_and_contracts():
         model(PDEConditionedInput(conditioned, tokens))
 
 
-def test_pde_conditioned_operator_supports_scalar_and_heterogeneous_case_tokens():
+def test_pde_conditioned_operator_supports_scalar_and_heterogeneous_case_tokens() -> None:
     model = _model()
     batch = _batch(identical=True)
     scalar_tokens = _tokens(1.0)
@@ -175,7 +178,7 @@ def test_pde_conditioned_operator_supports_scalar_and_heterogeneous_case_tokens(
     assert jnp.allclose(compiled, eager, rtol=1e-5, atol=1e-6)
 
 
-def test_pde_conditioned_operator_rejects_invalid_token_case_shape():
+def test_pde_conditioned_operator_rejects_invalid_token_case_shape() -> None:
     model = _model()
     batch = _batch()
     wrong_case_tokens = phx.equations.stack_pde_tokens(
@@ -189,7 +192,7 @@ def test_pde_conditioned_operator_rejects_invalid_token_case_shape():
         model(PDEConditionedInput(batch, wrong_case_tokens))
 
 
-def test_pde_conditioned_operator_has_finite_wrapper_gradients():
+def test_pde_conditioned_operator_has_finite_wrapper_gradients() -> None:
     model = _model()
     value = PDEConditionedInput(_batch(), _tokens(1.0))
 

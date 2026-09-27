@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import itertools
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -12,7 +14,7 @@ import phydrax as phx
 from phydrax.discretization import masked_simplex_facet_neighbors, MaskedSimplexMesh
 
 
-def _oriented(points, cells):
+def _oriented(points: Any, cells: Any) -> Any:
     edges = points[cells[:, 1:]] - points[cells[:, :1]]
     flip = np.linalg.det(edges) < 0.0
     cells = cells.copy()
@@ -20,7 +22,7 @@ def _oriented(points, cells):
     return cells
 
 
-def _square(count):
+def _square(count: Any) -> Any:
     axis = np.linspace(0.0, 1.0, count + 1)
     points = np.stack(np.meshgrid(axis, axis, indexing="ij"), axis=-1).reshape((-1, 2))
     index = np.arange((count + 1) ** 2).reshape((count + 1, count + 1))
@@ -31,7 +33,7 @@ def _square(count):
     return points, _oriented(points, np.asarray(cells, dtype=np.int32))
 
 
-def _cube(count):
+def _cube(count: Any) -> Any:
     axis = np.linspace(0.0, 1.0, count + 1)
     points = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1).reshape(
         (-1, 3)
@@ -49,7 +51,9 @@ def _cube(count):
     return points, _oriented(points, np.asarray(cells, dtype=np.int32))
 
 
-def _masked_layout(points, cells, vertex_capacity, cell_capacity, seed):
+def _masked_layout(
+    points: Any, cells: Any, vertex_capacity: Any, cell_capacity: Any, seed: Any
+) -> Any:
     """Pad a compact mesh into capacity slots with interleaved inactive lanes."""
     generator = np.random.default_rng(seed)
     vertex_slots = np.sort(
@@ -80,7 +84,7 @@ def _masked_layout(points, cells, vertex_capacity, cell_capacity, seed):
     return mesh, vertex_slots
 
 
-def _compact(points, cells):
+def _compact(points: Any, cells: Any) -> Any:
     kind = "triangle" if cells.shape[1] == 3 else "tetrahedron"
     mesh = (
         phx.discretization.CellMesh.from_triangles
@@ -93,7 +97,7 @@ def _compact(points, cells):
     return phx.discretization.FiniteElementPlan(mesh, field).prepare()
 
 
-def _source(points):
+def _source(points: Any) -> Any:
     return 1.0 + points[..., 0] + 2.0 * points[..., 1]
 
 
@@ -104,7 +108,7 @@ _CASES = {
 
 
 @pytest.fixture(params=sorted(_CASES))
-def case(request):
+def case(request: Any) -> Any:
     build, vertex_capacity, cell_capacity = _CASES[request.param]
     points, cells = build()
     mesh, slots = _masked_layout(points, cells, vertex_capacity, cell_capacity, 7)
@@ -113,7 +117,7 @@ def case(request):
     return points, cells, mesh, slots, system
 
 
-def test_masked_poisson_matches_compact_dirichlet_solve(case):
+def test_masked_poisson_matches_compact_dirichlet_solve(case: Any) -> None:
     points, cells, mesh, slots, system = case
     discretization = _compact(points, cells)
     form = phx.equations.FiniteElementForm(
@@ -155,7 +159,7 @@ def test_masked_poisson_matches_compact_dirichlet_solve(case):
     assert jnp.all(result.value[padding] == 0.0)
 
 
-def test_masked_operators_match_compact_actions_and_transpose(case):
+def test_masked_operators_match_compact_actions_and_transpose(case: Any) -> None:
     points, cells, mesh, slots, system = case
     discretization = _compact(points, cells)
     padding = np.setdiff1d(np.arange(mesh.vertex_capacity), slots)
@@ -176,7 +180,9 @@ def test_masked_operators_match_compact_actions_and_transpose(case):
         assert jnp.array_equal(action[padding], probe[padding])
 
 
-def test_masked_mass_integrates_constants_and_stiffness_annihilates_them(case):
+def test_masked_mass_integrates_constants_and_stiffness_annihilates_them(
+    case: Any,
+) -> None:
     points, cells, mesh, slots, system = case
     discretization = _compact(points, cells)
     ones = mesh.vertex_active.astype(jnp.float64)
@@ -188,7 +194,7 @@ def test_masked_mass_integrates_constants_and_stiffness_annihilates_them(case):
     np.testing.assert_allclose(system.stiffness.mv(ones), 0.0, atol=1e-12)
 
 
-def test_masked_plan_rejects_non_vertex_degrees_and_foreign_buckets():
+def test_masked_plan_rejects_non_vertex_degrees_and_foreign_buckets() -> None:
     points, cells = _square(2)
     mesh, _ = _masked_layout(points, cells, 12, 10, 0)
     other, _ = _masked_layout(points, cells, 13, 10, 0)

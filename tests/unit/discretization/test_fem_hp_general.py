@@ -14,7 +14,7 @@ from phydrax.discretization.fem._hp_general import (
 )
 
 
-def test_reference_refinement_templates_are_nonsingular_and_shape_complete():
+def test_reference_refinement_templates_are_nonsingular_and_shape_complete() -> None:
     templates = (
         tensor_bisection_template("quadrilateral", 2, 0),
         triangle_red_refinement_template(),
@@ -27,7 +27,7 @@ def test_reference_refinement_templates_are_nonsingular_and_shape_complete():
         assert np.all(np.abs(determinants) > 0.0)
 
 
-def test_general_hp_forest_and_nonconforming_overlay_have_stable_identity():
+def test_general_hp_forest_and_nonconforming_overlay_have_stable_identity() -> None:
     forest = GeneralHPForest.roots(
         ("triangle", "quadrilateral", "prism", "pyramid"),
         np.asarray(((2, 2, 0), (3, 2, 0), (2, 2, 3), (2, 2, 2))),

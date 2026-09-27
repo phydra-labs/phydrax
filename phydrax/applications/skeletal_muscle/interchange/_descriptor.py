@@ -4,19 +4,21 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import parse
 
 
-ExternalChannelRole = Literal["coordinate", "actuator", "sensor"]
+ExternalChannelRole: TypeAlias = Literal["coordinate", "actuator", "sensor"]
 _SI_DIMENSION_COUNT = 7
 _FORCE_OWNER_PUNCTUATION = frozenset("-._:")
 
@@ -85,7 +87,7 @@ class ExternalModelSource(StrictModule, NonTrainableState):
         license_uri: str,
         provenance_reference: str,
         provenance_sha256: str,
-    ):
+    ) -> None:
         values = tuple(
             _identifier(value, name)
             for value, name in (
@@ -139,7 +141,7 @@ class ExternalModelAsset(StrictModule, NonTrainableState):
         sha256: str,
         byte_count: int,
         /,
-    ):
+    ) -> None:
         name = _identifier(asset_name, "asset_name")
         uri = _identifier(source_uri, "asset source_uri")
         media = _identifier(media_type, "asset media_type")
@@ -184,7 +186,7 @@ class ExternalModelTransformation(StrictModule, NonTrainableState):
         specification_sha256: str,
         input_sha256: tuple[str, ...],
         output_sha256: str,
-    ):
+    ) -> None:
         name = _identifier(transformation_name, "transformation_name")
         package = _identifier(tool_package, "tool_package")
         revision = _identifier(tool_revision, "tool_revision")
@@ -230,10 +232,9 @@ class ExternalModelQuantity(StrictModule, NonTrainableState):
         external_unit: str,
         phydrax_unit: str,
         /,
-    ):
+    ) -> None:
         name = _identifier(quantity_name, "quantity_name")
-        if role not in ("coordinate", "actuator", "sensor"):
-            raise ValueError("role must be coordinate, actuator, or sensor.")
+        role = parse(role, ExternalChannelRole, "role")
         dimensions_ = tuple(si_dimensions)
         if len(dimensions_) != _SI_DIMENSION_COUNT or any(
             isinstance(value, (bool, np.bool_))
@@ -249,7 +250,7 @@ class ExternalModelQuantity(StrictModule, NonTrainableState):
         target_unit = _identifier(phydrax_unit, "phydrax_unit")
         self.quantity_name = name
         self.role = role
-        self.si_dimensions = dimensions  # type: ignore[assignment]
+        self.si_dimensions = dimensions
         self.external_unit = source_unit
         self.phydrax_unit = target_unit
         self.quantity_id = canonical_fingerprint(
@@ -281,7 +282,7 @@ class ExternalModelDimensionalContract(StrictModule, NonTrainableState):
         spatial_axes: tuple[str, ...],
         support: str,
         reference: str,
-    ):
+    ) -> None:
         values = tuple(quantities)
         if not values or not all(
             isinstance(value, ExternalModelQuantity) for value in values
@@ -339,7 +340,7 @@ class ExternalModelChannelBinding(StrictModule, NonTrainableState):
         *,
         scale: float,
         offset: float = 0.0,
-    ):
+    ) -> None:
         source = _identifier(source_name, "channel source_name")
         target = _identifier(target_name, "channel target_name")
         quantity = _identifier(quantity_name, "channel quantity_name")
@@ -398,7 +399,7 @@ class ExternalModelDescriptor(StrictModule, NonTrainableState):
         actuator_map: tuple[ExternalModelChannelBinding, ...],
         sensor_map: tuple[ExternalModelChannelBinding, ...],
         force_owner: str,
-    ):
+    ) -> None:
         if not isinstance(source, ExternalModelSource):
             raise TypeError("source must be ExternalModelSource.")
         asset_values = tuple(assets)
@@ -539,7 +540,7 @@ class ExternalModelHostInventory(StrictModule, NonTrainableState):
         coordinate_channels: tuple[str, ...],
         actuator_channels: tuple[str, ...],
         sensor_channels: tuple[str, ...],
-    ):
+    ) -> None:
         package = _identifier(source_package, "source_package")
         revision = _identifier(source_revision, "source_revision")
         hashes = tuple(
@@ -597,7 +598,7 @@ class ExternalModelPreparationEvidence(StrictModule, NonTrainableState):
         inventory_id: str,
         failure_reasons: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         failures = tuple(str(value) for value in failure_reasons)
         self.descriptor_id = descriptor_id
         self.inventory_id = inventory_id
@@ -621,7 +622,7 @@ class ExternalModelPreparationError(ValueError):
 
     evidence: ExternalModelPreparationEvidence
 
-    def __init__(self, evidence: ExternalModelPreparationEvidence, /):
+    def __init__(self, evidence: ExternalModelPreparationEvidence, /) -> None:
         self.evidence = evidence
         super().__init__("; ".join(evidence.failure_reasons))
 

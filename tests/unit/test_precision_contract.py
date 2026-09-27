@@ -2,10 +2,18 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax._dtype_names import (
+    complex_precision_dtype,
+    inexact_result_type,
+    precision_dtype_name,
+)
 from phydrax._numerics import (
     log_normalize,
     LogWeightedAccumulator,
@@ -17,9 +25,6 @@ from phydrax._numerics import (
     weight_ess,
 )
 from phydrax._precision import (
-    complex_precision_dtype,
-    inexact_result_type,
-    precision_dtype_name,
     PrecisionEvidenceEnvelope,
     PrecisionRequest,
     PrecisionResolution,
@@ -27,7 +32,7 @@ from phydrax._precision import (
 )
 
 
-def test_precision_contracts_are_strict_nested_and_content_addressed():
+def test_precision_contracts_are_strict_nested_and_content_addressed() -> None:
     request = PrecisionRequest(
         "test-domain",
         {"storage": "float32", "accumulation": "float64"},
@@ -62,7 +67,7 @@ def test_precision_contracts_are_strict_nested_and_content_addressed():
         PrecisionEvidenceEnvelope.from_dict(corrupted)
 
 
-def test_precision_dtype_vocabulary_distinguishes_semantic_and_storage_names():
+def test_precision_dtype_vocabulary_distinguishes_semantic_and_storage_names() -> None:
     assert precision_dtype_name(jnp.float64) == "float64"
     assert precision_dtype_name(jnp.complex64) == "complex64"
     assert complex_precision_dtype("bfloat16") == "complex64"
@@ -71,7 +76,7 @@ def test_precision_dtype_vocabulary_distinguishes_semantic_and_storage_names():
         precision_dtype_name(jnp.int32)
 
 
-def test_inexact_result_type_keeps_inexact_precision_and_defaults_exact_inputs():
+def test_inexact_result_type_keeps_inexact_precision_and_defaults_exact_inputs() -> None:
     default = jnp.asarray(1.0).dtype
     f32 = jnp.zeros(2, jnp.float32)
     for dtype in (jnp.float16, jnp.bfloat16, jnp.float32, jnp.complex64):
@@ -87,7 +92,7 @@ def test_inexact_result_type_keeps_inexact_precision_and_defaults_exact_inputs()
     assert inexact_result_type(1j) == jnp.asarray(1j).dtype
 
 
-def test_precision_resource_assumptions_round_trip_without_execution_claims():
+def test_precision_resource_assumptions_round_trip_without_execution_claims() -> None:
     assumptions = PrecisionResourceAssumptions(
         "test-domain",
         {"storage": "float32", "checkpoint": "float64"},
@@ -106,7 +111,9 @@ def test_precision_resource_assumptions_round_trip_without_execution_claims():
 
 @pytest.mark.parametrize("tolerance", ("relative_tolerance", "absolute_tolerance"))
 @pytest.mark.parametrize("value", (float("nan"), float("inf"), float("-inf")))
-def test_precision_selection_policy_rejects_nonfinite_tolerances(tolerance, value):
+def test_precision_selection_policy_rejects_nonfinite_tolerances(
+    tolerance: Any, value: Any
+) -> None:
     candidate = PrecisionSelectionCandidate(
         "finite",
         PrecisionRewritePolicy(
@@ -118,7 +125,7 @@ def test_precision_selection_policy_rejects_nonfinite_tolerances(tolerance, valu
         PrecisionSelectionPolicy((candidate,), **{tolerance: value})
 
 
-def test_precision_selection_policy_preserves_finite_tolerances():
+def test_precision_selection_policy_preserves_finite_tolerances() -> None:
     candidate = PrecisionSelectionCandidate(
         "finite",
         PrecisionRewritePolicy(
@@ -136,7 +143,7 @@ def test_precision_selection_policy_preserves_finite_tolerances():
     assert policy.absolute_tolerance == 2.5
 
 
-def test_precision_selection_rejects_nonfinite_candidate_outputs():
+def test_precision_selection_rejects_nonfinite_candidate_outputs() -> None:
     candidate = PrecisionSelectionCandidate(
         "nonfinite",
         PrecisionRewritePolicy(
@@ -160,7 +167,7 @@ def test_precision_selection_rejects_nonfinite_candidate_outputs():
         )
 
 
-def test_precision_selection_skips_nan_candidate_for_finite_candidate():
+def test_precision_selection_skips_nan_candidate_for_finite_candidate() -> None:
     candidates = tuple(
         PrecisionSelectionCandidate(
             dtype,
@@ -187,7 +194,7 @@ def test_precision_selection_skips_nan_candidate_for_finite_candidate():
     assert jnp.isinf(selected.evidence.candidates[0][3])
 
 
-def test_stable_reductions_respect_explicit_accumulation_dtype():
+def test_stable_reductions_respect_explicit_accumulation_dtype() -> None:
     log_weights = jnp.asarray([-1000.0, -1001.0, -1002.0], dtype=jnp.float32)
     normalized, log_sum, valid = log_normalize(
         log_weights,
@@ -202,7 +209,7 @@ def test_stable_reductions_respect_explicit_accumulation_dtype():
     assert jnp.allclose(jnp.sum(normalized), 1.0)
 
 
-def test_log_weighted_accumulator_widens_real_and_complex_values():
+def test_log_weighted_accumulator_widens_real_and_complex_values() -> None:
     real = LogWeightedAccumulator.from_values(
         jnp.asarray([1.0, 2.0], dtype=jnp.float32),
         jnp.asarray([0.0, -1.0], dtype=jnp.float32),

@@ -10,7 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ... import ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -148,7 +150,7 @@ class RodCapsuleGeometryPlan(StrictModule, NonTrainableState):
         segment_feature_ids: ArrayLike | None = None,
         solver_clearance: ArrayLike | float = 0.0,
         proxy_error: ArrayLike | float = 0.0,
-    ):
+    ) -> None:
         raw_radii = np.asarray(segment_radii)
         if raw_radii.ndim != 1 or raw_radii.size == 0:
             raise ValueError(
@@ -378,7 +380,7 @@ class PreparedRodCapsuleGeometry(StrictModule, NonTrainableState):
         surface_edge_order: Array,
         prepared_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, RodCapsuleGeometryPlan):
             raise TypeError("plan must be a RodCapsuleGeometryPlan.")
         if not isinstance(rod, PreparedRod) or rod.plan.dimension != 3:
@@ -709,7 +711,7 @@ class ReducedRodCapsuleContactParticipant(AbstractContactParticipant):
         reduced: PreparedReducedRod,
         geometry: PreparedRodCapsuleGeometry,
         /,
-    ):
+    ) -> None:
         if not isinstance(reduced, PreparedReducedRod):
             raise TypeError("reduced must be a PreparedReducedRod.")
         if not isinstance(geometry, PreparedRodCapsuleGeometry):

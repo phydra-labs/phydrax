@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -5,13 +7,17 @@ import pytest
 import phydrax as phx
 
 
-def _calculation_and_provider():
+def _calculation_and_provider() -> Any:
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     structure = phx.atomistic.AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [[-0.35, 0.0, 0.0], [0.35, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [1.008, 1.008],
         units.scale,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[7, 9],
     )
     system = phx.atomistic.AtomisticSystemPlan.from_structure(
@@ -28,7 +34,7 @@ def _calculation_and_provider():
         phx.chemistry.GroundStateTaskPlan.energy_and_forces(),
     )
 
-    def evaluate(plan, positions, cell):
+    def evaluate(plan: Any, positions: Any, cell: Any) -> Any:
         del cell
         coordinate = jnp.asarray(positions)
         energy = 0.5 * jnp.sum(coordinate**2)
@@ -56,7 +62,7 @@ def _calculation_and_provider():
     return units, structure, system, calculation, provider
 
 
-def test_result_archive_and_born_oppenheimer_adapter_roundtrip(tmp_path):
+def test_result_archive_and_born_oppenheimer_adapter_roundtrip(tmp_path: Any) -> None:
     _, structure, system, calculation, provider = _calculation_and_provider()
     prepared = provider.prepare(calculation)
     result = prepared.evaluate(structure.positions)
@@ -66,6 +72,7 @@ def test_result_archive_and_born_oppenheimer_adapter_roundtrip(tmp_path):
 
     assert restored.result_id == result.result_id
     np.testing.assert_allclose(restored.energy, result.energy)
+    # ty: ignore[no-matching-overload, unresolved-attribute]
     np.testing.assert_allclose(restored.forces, result.forces)
 
     lifecycle = phx.chemistry.chemistry_lifecycle(
@@ -90,17 +97,22 @@ def test_result_archive_and_born_oppenheimer_adapter_roundtrip(tmp_path):
     assert int(step.state.step_index) == 1
 
 
-def test_real_ase_calculator_executes_through_typed_provider():
+def test_real_ase_calculator_executes_through_typed_provider() -> None:
     ase = pytest.importorskip("ase")
+    # ty: ignore[unresolved-import]
     from ase.calculators.emt import EMT
 
     del ase
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     structure = phx.atomistic.AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [29, 29],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0], [2.6, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [63.546, 63.546],
         units.scale,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[21, 22],
     )
     system = phx.atomistic.AtomisticSystemPlan.from_structure(
@@ -126,17 +138,22 @@ def test_real_ase_calculator_executes_through_typed_provider():
 
     assert bool(result.successful)
     assert np.isfinite(float(result.energy))
+    # ty: ignore[unresolved-attribute]
     assert np.all(np.isfinite(np.asarray(result.forces)))
 
 
-def test_real_pyscf_rhf_preserves_native_force_order():
+def test_real_pyscf_rhf_preserves_native_force_order() -> None:
     pytest.importorskip("pyscf")
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     structure = phx.atomistic.AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, -0.37], [0.0, 0.0, 0.37]],
+        # ty: ignore[invalid-argument-type]
         [1.008, 1.008],
         units.scale,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[31, 37],
     )
     system = phx.atomistic.AtomisticSystemPlan.from_structure(
@@ -162,7 +179,9 @@ def test_real_pyscf_rhf_preserves_native_force_order():
     assert bool(result.successful)
     np.testing.assert_array_equal(result.header.stable_particle_ids, [31, 37])
     np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
         np.asarray(result.forces)[0],
+        # ty: ignore[unresolved-attribute]
         -np.asarray(result.forces)[1],
         rtol=1.0e-10,
         atol=1.0e-10,

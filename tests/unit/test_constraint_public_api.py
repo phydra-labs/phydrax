@@ -24,7 +24,7 @@ LEGACY_TERMS = {
 }
 
 
-def test_constraint_packages_are_the_only_root_constraint_surfaces():
+def test_constraint_packages_are_the_only_root_constraint_surfaces() -> None:
     assert {"conditions", "terms", "enforcement"} <= set(phx.__all__)
     assert phx.conditions is not None
     assert phx.terms is not None
@@ -35,7 +35,7 @@ def test_constraint_packages_are_the_only_root_constraint_surfaces():
     assert not hasattr(phx, "objectives")
 
 
-def test_conditions_expose_canonical_names_and_grouped_catalogs():
+def test_conditions_expose_canonical_names_and_grouped_catalogs() -> None:
     required = {
         "Dirichlet",
         "Initial",
@@ -59,13 +59,13 @@ def test_conditions_expose_canonical_names_and_grouped_catalogs():
     assert all(not hasattr(phx.conditions, name) for name in legacy)
 
 
-def test_terms_public_exports_resolve_without_duplicates():
+def test_terms_public_exports_resolve_without_duplicates() -> None:
     exported = tuple(phx.terms.__all__)
     assert len(exported) == len(set(exported))
     assert all(getattr(phx.terms, name) is not None for name in exported)
 
 
-def test_terms_do_not_expose_legacy_or_duplicate_physics_catalogs():
+def test_terms_do_not_expose_legacy_or_duplicate_physics_catalogs() -> None:
     assert LEGACY_TERMS.isdisjoint(phx.terms.__all__)
     assert all(not hasattr(phx.terms, name) for name in LEGACY_TERMS)
     assert not any(
@@ -73,6 +73,6 @@ def test_terms_do_not_expose_legacy_or_duplicate_physics_catalogs():
     )
 
 
-def test_collocation_policy_attachment_is_not_a_parallel_term_surface():
+def test_collocation_policy_attachment_is_not_a_parallel_term_surface() -> None:
     assert "with_collocation_policy" not in phx.sampling.collocation.__all__
     assert not hasattr(phx.sampling.collocation, "with_collocation_policy")

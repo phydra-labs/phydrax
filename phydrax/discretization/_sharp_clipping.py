@@ -6,18 +6,25 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import numpy as np
+import numpy.typing as npt
 
 
-def unique_points(points, tolerance, /):
-    unique = []
+def unique_points(
+    points: Iterable[np.ndarray], tolerance: float | np.floating, /
+) -> list[np.ndarray]:
+    unique: list[np.ndarray] = []
     for point in points:
         if not any(np.linalg.norm(point - existing) <= tolerance for existing in unique):
             unique.append(point)
     return unique
 
 
-def clip_positive_polygon(vertices, values, /):
+def clip_positive_polygon(
+    vertices: np.ndarray, values: np.ndarray, /
+) -> tuple[np.ndarray, list[np.ndarray]]:
     """Clip one counter-clockwise polygon to a linearly interpolated positive field."""
     output = []
     intersections = []
@@ -42,7 +49,13 @@ def clip_positive_polygon(vertices, values, /):
     return np.asarray(output), intersections
 
 
-def open_positive_segment(start, stop, start_value, stop_value, /):
+def open_positive_segment(
+    start: npt.ArrayLike,
+    stop: npt.ArrayLike,
+    start_value: float,
+    stop_value: float,
+    /,
+) -> tuple[float, float, np.ndarray, np.ndarray, np.ndarray]:
     """Return positive-subsegment fraction, measure, centroid, and endpoints."""
     start_ = np.asarray(start, dtype=np.float64)
     stop_ = np.asarray(stop, dtype=np.float64)
@@ -77,7 +90,7 @@ def open_positive_segment(start, stop, start_value, stop_value, /):
     )
 
 
-def polygon_measure_centroid(vertices, /):
+def polygon_measure_centroid(vertices: np.ndarray, /) -> tuple[float, np.ndarray]:
     """Return positive polygon area and centroid, or a zero empty-polygon measure."""
     if vertices.shape[0] < 3:
         return 0.0, np.zeros((2,))

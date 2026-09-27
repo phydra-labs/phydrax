@@ -9,7 +9,8 @@ from enum import IntEnum
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -39,7 +40,7 @@ class AlignedBinaryRemnantPlan(StrictModule, NonTrainableState):
         *,
         maximum_mass_ratio: float = 8.0,
         maximum_spin_magnitude: float = 0.8,
-    ):
+    ) -> None:
         ratio = float(maximum_mass_ratio)
         spin = float(maximum_spin_magnitude)
         if not math.isfinite(ratio) or ratio < 1.0 or ratio > 8.0:

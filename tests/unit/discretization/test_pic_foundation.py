@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _pic_transfer(*, particle_count=2):
+def _pic_transfer(*, particle_count: Any = 2) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(4, periodic=True) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -28,7 +31,7 @@ def _pic_transfer(*, particle_count=2):
     return bridge, charged, transfer
 
 
-def test_charged_particles_reuse_stable_support_and_validate_specific_charge():
+def test_charged_particles_reuse_stable_support_and_validate_specific_charge() -> None:
     _, charged, _ = _pic_transfer()
     assert charged.particles.capacity == 2
     np.testing.assert_allclose(charged.specific_charge, -1.0)
@@ -43,7 +46,7 @@ def test_charged_particles_reuse_stable_support_and_validate_specific_charge():
         ).prepare(particles)
 
 
-def test_relativistic_boris_preserves_proper_speed_in_magnetic_field():
+def test_relativistic_boris_preserves_proper_speed_in_magnetic_field() -> None:
     pusher = phx.discretization.pic.RelativisticBorisPlan()
     initial = jnp.asarray([[0.2, -0.1, 0.05]])
     result = pusher.push(
@@ -61,7 +64,7 @@ def test_relativistic_boris_preserves_proper_speed_in_magnetic_field():
     assert result.maximum_speed < 1.0
 
 
-def test_pic_charge_and_field_transfer_preserve_layout_and_fixed_route_ad():
+def test_pic_charge_and_field_transfer_preserve_layout_and_fixed_route_ad() -> None:
     bridge, charged, transfer = _pic_transfer()
     position = jnp.asarray([[0.2, 0.3, 0.4], [0.7, 0.6, 0.5]])
     routes = transfer.build(position)
@@ -88,7 +91,7 @@ def test_pic_charge_and_field_transfer_preserve_layout_and_fixed_route_ad():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_whitney_current_satisfies_continuity_across_cell_and_periodic_seam():
+def test_whitney_current_satisfies_continuity_across_cell_and_periodic_seam() -> None:
     bridge, _, transfer = _pic_transfer()
     current = phx.discretization.pic.ChargeConservingCurrentPlan(transfer)
     start = jnp.asarray([[0.24, 0.35, 0.45], [0.98, 0.65, 0.55]])

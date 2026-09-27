@@ -77,7 +77,7 @@ class ArrayArtifactProvenance:
         profile_ids: Sequence[str],
         unit_ids: Sequence[str],
         /,
-    ):
+    ) -> None:
         producer = _identifier(producer_id, "producer_id")
         sources = _identifiers(source_ids, "source_ids")
         profiles = _identifiers(profile_ids, "profile_ids")
@@ -118,14 +118,12 @@ class ArrayArtifactProvenance:
             raise ValueError("Array-artifact provenance record is malformed.")
         if record["kind"] != "array-artifact-provenance":
             raise ValueError("Array-artifact provenance kind is invalid.")
-        sources = record["source_ids"]
-        profiles = record["profile_ids"]
-        units = record["unit_ids"]
-        if any(
-            not isinstance(values, Sequence) or isinstance(values, str)
-            for values in (sources, profiles, units)
-        ):
-            raise TypeError("Serialized provenance identifiers must be sequences.")
+        sequences: list[Sequence[object]] = []
+        for values in (record["source_ids"], record["profile_ids"], record["unit_ids"]):
+            if not isinstance(values, Sequence) or isinstance(values, str):
+                raise TypeError("Serialized provenance identifiers must be sequences.")
+            sequences.append(values)
+        sources, profiles, units = sequences
         value = cls(
             str(record["producer_id"]),
             tuple(str(item) for item in sources),

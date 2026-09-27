@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -22,7 +25,7 @@ from phydrax.ml.linear import (
 )
 
 
-def _outlier_data():
+def _outlier_data() -> Any:
     features = jnp.array(
         [
             [-2.0, 0.0],
@@ -42,12 +45,12 @@ def _outlier_data():
     return features, targets
 
 
-def _sparse(features):
+def _sparse(features: Any) -> Any:
     columns = jnp.broadcast_to(jnp.arange(features.shape[-1]), features.shape)
     return SparseFeatures(features, columns, feature_count=features.shape[-1])
 
 
-def _assert_model_gradients(model, point):
+def _assert_model_gradients(model: Any, point: Any) -> None:
     input_gradient = jax.grad(lambda value: jnp.sum(jnp.square(model(value))))(point)
     coefficient_gradient = jax.grad(
         lambda value: jnp.sum(
@@ -64,7 +67,7 @@ def _assert_model_gradients(model, point):
     assert jnp.all(jnp.isfinite(intercept_gradient))
 
 
-def test_one_step_relaxed_robust_updates_match_weighted_subgradients():
+def test_one_step_relaxed_robust_updates_match_weighted_subgradients() -> None:
     batch = MLBatch(
         jnp.array([[2.0]]),
         jnp.array([3.0]),
@@ -81,6 +84,7 @@ def test_one_step_relaxed_robust_updates_match_weighted_subgradients():
         .fit_batch(batch)
         .as_trainable()
     )
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(huber.coefficients, jnp.array([0.4]))
 
     quantile = (
@@ -95,10 +99,11 @@ def test_one_step_relaxed_robust_updates_match_weighted_subgradients():
         .fit_batch(batch)
         .as_trainable()
     )
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(quantile.coefficients, jnp.array([0.1]))
 
 
-def test_huber_relaxed_robust_loss_masks_weights_sparse_jit_vmap_and_gradients():
+def test_huber_relaxed_robust_loss_masks_weights_sparse_jit_vmap_and_gradients() -> None:
     features, targets = _outlier_data()
     weights = jnp.linspace(0.5, 1.5, features.shape[0])
     recipe = HuberRegressorRecipe(
@@ -129,7 +134,7 @@ def test_huber_relaxed_robust_loss_masks_weights_sparse_jit_vmap_and_gradients()
         delta=1.0, l2_strength=0.1, max_iterations=3, tolerance=1e6
     )
 
-    def fit_loss(x, y, sample_weight, delta):
+    def fit_loss(x: Any, y: Any, sample_weight: Any, delta: Any) -> Any:
         fitted = (
             eqx.tree_at(lambda item: item.delta, base, delta)
             .fit_batch(MLBatch(x, y, sample_weight=sample_weight))
@@ -143,7 +148,7 @@ def test_huber_relaxed_robust_loss_masks_weights_sparse_jit_vmap_and_gradients()
     assert all(jnp.all(jnp.isfinite(value)) for value in gradients)
 
 
-def test_quantile_fixed_sparse_and_native_qp_have_explicit_gradient_policies():
+def test_quantile_fixed_sparse_and_native_qp_have_explicit_gradient_policies() -> None:
     features, targets = _outlier_data()
     scalar_targets = targets[:, 0]
     weights = jnp.linspace(0.8, 1.2, features.shape[0])
@@ -163,7 +168,7 @@ def test_quantile_fixed_sparse_and_native_qp_have_explicit_gradient_policies():
     assert fixed_result.derivative_contract.route is DerivativeRoute.UNROLLED
     _assert_model_gradients(fixed_model, features[0])
 
-    def fixed_loss(x, y, sample_weight, quantile):
+    def fixed_loss(x: Any, y: Any, sample_weight: Any, quantile: Any) -> Any:
         recipe = eqx.tree_at(lambda item: item.quantile, fixed, quantile)
         fitted = recipe.fit_batch(
             MLBatch(x, y, sample_weight=sample_weight)
@@ -197,7 +202,7 @@ def test_quantile_fixed_sparse_and_native_qp_have_explicit_gradient_policies():
     assert jax.jit(qp_model)(features).shape == scalar_targets.shape
     _assert_model_gradients(qp_model, features[0])
 
-    def qp_loss(x, y, sample_weight, quantile):
+    def qp_loss(x: Any, y: Any, sample_weight: Any, quantile: Any) -> Any:
         recipe = eqx.tree_at(lambda item: item.quantile, qp, quantile)
         fitted = recipe.fit_batch(
             MLBatch(x, y, sample_weight=sample_weight)
@@ -223,7 +228,7 @@ def test_quantile_fixed_sparse_and_native_qp_have_explicit_gradient_policies():
         QuantileRegressorRecipe(solver="dense-qp", max_dense_dimension=0)
 
 
-def test_ransac_requires_key_is_deterministic_and_stops_subset_fit_gradients():
+def test_ransac_requires_key_is_deterministic_and_stops_subset_fit_gradients() -> None:
     features, targets = _outlier_data()
     weights = jnp.linspace(0.5, 1.5, features.shape[0])
     recipe = RANSACRegressorRecipe(residual_threshold=0.5, min_samples=4, num_trials=8)
@@ -238,6 +243,7 @@ def test_ransac_requires_key_is_deterministic_and_stops_subset_fit_gradients():
     model = first.as_trainable()
     assert isinstance(model, RANSACModel)
     assert isinstance(first.diagnostics, RobustDiagnostics)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.coefficients, second.as_trainable().coefficients)
     assert jnp.array_equal(first.diagnostics.inlier_mask, second.diagnostics.inlier_mask)
     assert first.diagnostics.selected_subset.shape == (features.shape[0],)
@@ -248,7 +254,7 @@ def test_ransac_requires_key_is_deterministic_and_stops_subset_fit_gradients():
 
     query = features[:2]
 
-    def stopped_fit_loss(x, y, sample_weight):
+    def stopped_fit_loss(x: Any, y: Any, sample_weight: Any) -> Any:
         fitted = recipe.fit_batch(
             MLBatch(x, y, sample_weight=sample_weight), key=jax.random.key(7)
         ).as_trainable()
@@ -266,7 +272,7 @@ def test_ransac_requires_key_is_deterministic_and_stops_subset_fit_gradients():
         )
 
 
-def test_theil_sen_requires_key_is_deterministic_sparse_and_capacity_bounded():
+def test_theil_sen_requires_key_is_deterministic_sparse_and_capacity_bounded() -> None:
     features, targets = _outlier_data()
     recipe = TheilSenRegressorRecipe(subset_size=4, num_subsets=8)
     with pytest.raises(ValueError, match="explicit JAX key"):
@@ -276,6 +282,7 @@ def test_theil_sen_requires_key_is_deterministic_sparse_and_capacity_bounded():
     model = first.as_trainable()
     assert isinstance(model, TheilSenModel)
     assert isinstance(first.diagnostics, RobustDiagnostics)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.coefficients, second.as_trainable().coefficients)
     assert jnp.array_equal(
         first.diagnostics.selected_subset, second.diagnostics.selected_subset
@@ -293,7 +300,7 @@ def test_theil_sen_requires_key_is_deterministic_sparse_and_capacity_bounded():
 
     query = features[:2]
 
-    def stopped_fit_loss(x, y, sample_weight):
+    def stopped_fit_loss(x: Any, y: Any, sample_weight: Any) -> Any:
         fitted = recipe.fit_batch(
             MLBatch(x, y, sample_weight=sample_weight), key=jax.random.key(4)
         ).as_trainable()
@@ -309,7 +316,7 @@ def test_theil_sen_requires_key_is_deterministic_sparse_and_capacity_bounded():
         ).fit_batch(MLBatch(features, targets), key=jax.random.key(0))
 
 
-def test_relaxed_robust_losses_ignore_zero_weight_target_changes():
+def test_relaxed_robust_losses_ignore_zero_weight_target_changes() -> None:
     features, targets = _outlier_data()
     weights = jnp.ones((features.shape[0],)).at[1].set(0.0)
     changed = targets.at[1].set(jnp.array([1e4, -1e4]))
@@ -325,17 +332,20 @@ def test_relaxed_robust_losses_ignore_zero_weight_target_changes():
         second = recipe.fit_batch(
             MLBatch(features, changed, sample_weight=weights)
         ).as_trainable()
+        # ty: ignore[unresolved-attribute]
         assert jnp.allclose(first.coefficients, second.coefficients)
+        # ty: ignore[unresolved-attribute]
         assert jnp.allclose(first.intercept, second.intercept)
     no_intercept = (
         HuberRegressorRecipe(fit_intercept=False, max_iterations=2, tolerance=1e6)
         .fit_batch(MLBatch(features, targets))
         .as_trainable()
     )
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(no_intercept.intercept == 0.0)
 
 
-def test_relaxed_robust_nonconvergence_is_not_reported_as_valid():
+def test_relaxed_robust_nonconvergence_is_not_reported_as_valid() -> None:
     features, targets = _outlier_data()
     result = HuberRegressorRecipe(max_iterations=1, tolerance=0.0).fit_batch(
         MLBatch(features, targets)

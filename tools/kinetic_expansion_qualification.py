@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -40,7 +41,7 @@ from phydrax.discretization.lattice_boltzmann._thermal import (
 )
 
 
-def _maximum_absolute(value) -> float:
+def _maximum_absolute(value: Any) -> float:
     return float(jnp.max(jnp.abs(jnp.asarray(value))))
 
 
@@ -337,7 +338,9 @@ def _discrete_velocity_case() -> dict[str, object]:
     }
 
 
-def _qualification_execution_step(step_index, time, populations, step_size, args):
+def _qualification_execution_step(
+    step_index: Any, time: Any, populations: Any, step_size: Any, args: Any
+) -> Any:
     del time, step_size
     shifts = (
         (0, 0),

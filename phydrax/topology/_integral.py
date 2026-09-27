@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 
 import equinox as eqx
 import numpy as np
@@ -29,7 +29,7 @@ class IntegralHomologyDegree(StrictModule, NonTrainableState):
     torsion_invariants: tuple[int, ...] = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
-    def __init__(self, degree: int, free_rank: int, torsion: Sequence[int], /):
+    def __init__(self, degree: int, free_rank: int, torsion: Sequence[int], /) -> None:
         values = tuple(abs(int(value)) for value in torsion if abs(int(value)) > 1)
         if int(free_rank) < 0:
             raise ValueError("Integral homology free rank must be non-negative.")
@@ -56,7 +56,14 @@ class IntegralHomologyResult(StrictModule, NonTrainableState):
     backend: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
-    def __init__(self, degrees, /, *, source_id: str, backend: str):
+    def __init__(
+        self,
+        degrees: Iterable[IntegralHomologyDegree],
+        /,
+        *,
+        source_id: str,
+        backend: str,
+    ) -> None:
         values = tuple(degrees)
         self.degrees = values
         self.source_id = str(source_id)
@@ -77,7 +84,7 @@ class IntegralHomologyResult(StrictModule, NonTrainableState):
         raise KeyError(f"No integral homology result exists in degree {degree}.")
 
 
-def _matrix(complex: CellSubcomplex, degree: int, /):
+def _matrix(complex: CellSubcomplex, degree: int, /) -> np.ndarray:
     boundary = compact_boundary(complex, degree)
     values = np.zeros((boundary.row_count, boundary.column_count), dtype=object)
     for row, column, coefficient in zip(

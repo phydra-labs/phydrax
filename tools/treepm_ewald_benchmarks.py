@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -11,20 +12,20 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _block(value) -> None:
+def _block(value: Any) -> None:
     for leaf in jax.tree.leaves(value):
         if isinstance(leaf, jax.Array):
             leaf.block_until_ready()
 
 
-def _measure(function, *arguments):
+def _measure(function: Any, *arguments: Any) -> Any:
     started = time.perf_counter()
     value = function(*arguments)
     _block(value)
     return value, time.perf_counter() - started
 
 
-def _treepm_case(count: int):
+def _treepm_case(count: int) -> Any:
     key = jax.random.key(8820 + count)
     positions = 0.05 + 0.9 * jax.random.uniform(key, (count, 3))
     masses = 0.5 + jax.random.uniform(jax.random.fold_in(key, 1), (count,))
@@ -76,7 +77,7 @@ def _treepm_case(count: int):
     }
 
 
-def _ewald_case(count: int):
+def _ewald_case(count: int) -> Any:
     key = jax.random.key(9920 + count)
     positions = 0.05 + 0.9 * jax.random.uniform(key, (count, 3))
     masses = 0.5 + jax.random.uniform(jax.random.fold_in(key, 1), (count,))
@@ -89,6 +90,7 @@ def _ewald_case(count: int):
     direct = phx.solver.PeriodicEwaldForcePlan(
         (1.0, 1.0, 1.0),
         1.0,
+        # ty: ignore[invalid-argument-type]
         **common,
     )
     radius = phx.solver.PeriodicEwaldForcePlan(

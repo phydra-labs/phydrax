@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,7 +13,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_deep_kernel_likelihood_and_conditioning_preserve_feature_gradients():
+def test_deep_kernel_likelihood_and_conditioning_preserve_feature_gradients() -> None:
     coordinate = jnp.linspace(-1.0, 1.0, 12)
     points = jnp.stack((coordinate, coordinate**2), axis=1)
     observations = 0.7 * coordinate + 0.1 * jnp.sin(3.0 * coordinate)
@@ -24,7 +27,7 @@ def test_deep_kernel_likelihood_and_conditioning_preserve_feature_gradients():
         key=jr.key(41),
     )
 
-    def state(candidate):
+    def state(candidate: Any) -> Any:
         return phx.uq.GaussianProcessLikelihoodState(
             kernel=phx.kernels.AmplitudeKernel(
                 phx.kernels.InputTransformedKernel(
@@ -38,7 +41,7 @@ def test_deep_kernel_likelihood_and_conditioning_preserve_feature_gradients():
             noise_scale=0.03,
         )
 
-    def objective(candidate):
+    def objective(candidate: Any) -> Any:
         return model.log_marginal_likelihood(
             0.7 * coordinate,
             state=state(candidate),

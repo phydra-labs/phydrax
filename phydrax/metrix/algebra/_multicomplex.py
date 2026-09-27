@@ -5,11 +5,16 @@
 from __future__ import annotations
 
 from operator import index
+from typing import TypeAlias
 
 import equinox as eqx
 
 from ._core import AbstractFiniteRealAlgebraSpec
+from ._properties import AlgebraClaimSource, AlgebraClaimStatus
 from ._resources import AlgebraResourceBudget
+
+
+_FamilyClaim: TypeAlias = tuple[AlgebraClaimStatus, AlgebraClaimSource, tuple[str, ...]]
 
 
 class MulticomplexAlgebraSpec(AbstractFiniteRealAlgebraSpec):
@@ -23,7 +28,7 @@ class MulticomplexAlgebraSpec(AbstractFiniteRealAlgebraSpec):
         /,
         *,
         budget: AlgebraResourceBudget | None = None,
-    ):
+    ) -> None:
         if isinstance(rank, bool):
             raise TypeError("Multicomplex rank must be an integer.")
         rank_ = index(rank)
@@ -49,8 +54,8 @@ class MulticomplexAlgebraSpec(AbstractFiniteRealAlgebraSpec):
             )
             for row in range(dimension)
         )
-        proven = ("proven", "family_construction", ())
-        claims = {
+        proven: _FamilyClaim = ("proven", "family_construction", ())
+        claims: dict[str, _FamilyClaim] = {
             "commutative": proven,
             "associative": proven,
             "alternative": proven,

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -10,12 +13,12 @@ from phydrax.ml import MLBatch
 from phydrax.ml.decomposition import IncrementalPCA, PCA, POD, TruncatedSVD
 
 
-def _pivot_values(rows):
+def _pivot_values(rows: Any) -> Any:
     indices = jnp.argmax(jnp.abs(rows), axis=-1)
     return jnp.take_along_axis(rows, indices[..., None], axis=-1)[..., 0]
 
 
-def test_pca_preserves_case_sample_mask_weight_and_canonicalization_contracts():
+def test_pca_preserves_case_sample_mask_weight_and_canonicalization_contracts() -> None:
     base = jnp.array(
         [
             [-2.0, 0.0, 1.0],
@@ -36,8 +39,11 @@ def test_pca_preserves_case_sample_mask_weight_and_canonicalization_contracts():
     result = PCA(2, differentiate="basis").fit_batch(batch)
     model = result.as_trainable()
 
+    # ty: ignore[unresolved-attribute]
     assert model.offset.shape == (2, 3)
+    # ty: ignore[unresolved-attribute]
     assert model.transform(features).shape == (2, 5, 2)
+    # ty: ignore[unresolved-attribute]
     assert model.inverse_transform(model.transform(features)).shape == features.shape
     assert result.diagnostics.singular_values.shape == (2, 2)
     assert result.diagnostics.explained_energy.shape == (2, 2)
@@ -45,6 +51,7 @@ def test_pca_preserves_case_sample_mask_weight_and_canonicalization_contracts():
     assert result.diagnostics.weighted_orthogonality_error.shape == (2,)
     assert result.diagnostics.projector_gradient_supported.shape == (2,)
     assert result.diagnostics.basis_gradient_supported.shape == (2,)
+    # ty: ignore[unresolved-attribute]
     pivots = _pivot_values(model.weighted_components)
     assert jnp.allclose(jnp.imag(pivots), 0.0)
     assert jnp.all(jnp.real(pivots) >= 0.0)
@@ -52,7 +59,9 @@ def test_pca_preserves_case_sample_mask_weight_and_canonicalization_contracts():
     assert "basis representatives" in " ".join(result.derivative_contract.conditions)
 
 
-def test_pca_projector_prediction_fit_feature_and_fit_weight_gradients_are_finite():
+def test_pca_projector_prediction_fit_feature_and_fit_weight_gradients_are_finite() -> (
+    None
+):
     features = jnp.array(
         [
             [-2.0, 0.2, 1.0],
@@ -67,12 +76,14 @@ def test_pca_projector_prediction_fit_feature_and_fit_weight_gradients_are_finit
 
     prediction_gradient = jax.grad(lambda value: jnp.sum(jnp.square(model(value))))(point)
 
-    def feature_loss(value):
+    def feature_loss(value: Any) -> Any:
         fitted = PCA(2).fit_batch(MLBatch(value)).as_trainable()
+        # ty: ignore[unresolved-attribute]
         return jnp.sum(jnp.square(fitted.project(point)))
 
-    def weight_loss(weight):
+    def weight_loss(weight: Any) -> Any:
         fitted = PCA(2).fit_batch(MLBatch(features, sample_weight=weight)).as_trainable()
+        # ty: ignore[unresolved-attribute]
         return jnp.sum(jnp.square(fitted.project(point)))
 
     feature_gradient = jax.grad(feature_loss)(features)
@@ -82,20 +93,26 @@ def test_pca_projector_prediction_fit_feature_and_fit_weight_gradients_are_finit
     assert jnp.all(jnp.isfinite(weight_gradient))
 
 
-def test_truncated_svd_is_origin_anchored_jittable_and_vmappable():
+def test_truncated_svd_is_origin_anchored_jittable_and_vmappable() -> None:
     features = jnp.array([[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
     result = TruncatedSVD(2).fit_batch(MLBatch(features))
     model = result.as_trainable()
     points = jnp.array([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]])
 
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.offset, 0.0)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.project(features), features, atol=1e-5)
+    # ty: ignore[unresolved-attribute]
     assert jax.jit(model.transform)(points).shape == (2, 2)
+    # ty: ignore[unresolved-attribute]
     assert jax.vmap(model.transform)(points).shape == (2, 2)
     assert model.input_binding().batch_mode == "blockwise"
 
 
-def test_physical_pod_centering_mask_complex_phase_and_inverse_are_metric_correct():
+def test_physical_pod_centering_mask_complex_phase_and_inverse_are_metric_correct() -> (
+    None
+):
     coefficients = jnp.array(
         [[-2.0, 0.0], [-1.0, 1.0], [0.0, -1.0], [1.0, 1.0], [2.0, -1.0]]
     )
@@ -120,10 +137,13 @@ def test_physical_pod_centering_mask_complex_phase_and_inverse_are_metric_correc
         )
     )
     model = result.as_trainable()
+    # ty: ignore[unresolved-attribute]
     gram = model.components @ jnp.diag(metric) @ jnp.conj(model.components).T
 
     assert jnp.allclose(gram, jnp.eye(2), atol=2e-5)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.project(values)[..., :2], values[..., :2], atol=3e-5)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.project(values)[..., 2], model.offset[..., 2])
     assert result.diagnostics.query_layout_provenance == (
         "grid:x",
@@ -131,12 +151,13 @@ def test_physical_pod_centering_mask_complex_phase_and_inverse_are_metric_correc
     )
     assert result.diagnostics.centering_provenance == "masked-weighted-feature-mean"
     assert "feature:physical" in result.diagnostics.weighting_provenance
+    # ty: ignore[unresolved-attribute]
     pivots = _pivot_values(model.weighted_components)
     assert jnp.allclose(jnp.imag(pivots), 0.0, atol=1e-6)
     assert jnp.all(jnp.real(pivots) >= 0.0)
 
 
-def test_repeated_spectrum_disables_canonical_basis_gradient_diagnostic():
+def test_repeated_spectrum_disables_canonical_basis_gradient_diagnostic() -> None:
     features = jnp.array([[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]])
     result = PCA(1, differentiate="basis").fit_batch(MLBatch(features))
 
@@ -146,7 +167,7 @@ def test_repeated_spectrum_disables_canonical_basis_gradient_diagnostic():
     assert jnp.isclose(result.diagnostics.minimum_eigengap, 0.0, atol=1e-6)
 
 
-def test_incremental_pca_merges_immutable_chunks_and_matches_batch_projector():
+def test_incremental_pca_merges_immutable_chunks_and_matches_batch_projector() -> None:
     features = jnp.array(
         [
             [-3.0, -1.0, -4.0],
@@ -164,8 +185,12 @@ def test_incremental_pca_merges_immutable_chunks_and_matches_batch_projector():
     exact = PCA(2).fit_batch(batch)
     model = incremental.as_trainable()
 
+    # ty: ignore[unresolved-attribute]
     assert model.chunks_seen == 3
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.projector(), exact.as_trainable().projector(), atol=2e-4)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.total_weight, jnp.sum(batch.sample_weight))
+    # ty: ignore[unresolved-attribute]
     assert model.update_recipe(chunk_size=4).previous is model
     assert jax.jit(model.transform)(features).shape == (8, 2)

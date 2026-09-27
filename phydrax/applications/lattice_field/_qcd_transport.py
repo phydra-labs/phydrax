@@ -9,7 +9,8 @@ from enum import StrEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -45,7 +46,7 @@ class QCDTransportTable(StrictModule, NonTrainableState):
         valid: ArrayLike | None = None,
         source_kind: QCDTransportSourceKind,
         source_id: str,
-    ):
+    ) -> None:
         temperatures_ = np.asarray(temperatures, dtype=np.float64)
         chemical = np.asarray(baryon_chemical_potentials, dtype=np.float64)
         shear = np.asarray(shear_viscosity_over_entropy, dtype=np.float64)
@@ -147,7 +148,7 @@ def evaluate_qcd_transport(
         table.baryon_chemical_potentials[mi + 1] - table.baryon_chemical_potentials[mi]
     )
 
-    def interpolate(values):
+    def interpolate(values: Array) -> Array:
         return (
             (1.0 - ft) * (1.0 - fm) * values[ti, mi]
             + ft * (1.0 - fm) * values[ti + 1, mi]

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -12,14 +15,14 @@ import phydrax as phx
 la = phx.linalg
 
 
-def _self_adjoint_properties():
+def _self_adjoint_properties() -> Any:
     return la.OperatorProperties(
         self_adjoint=True,
         evidence={"self_adjoint": "construction"},
     )
 
 
-def test_shifted_family_solves_many_systems_from_one_shared_basis():
+def test_shifted_family_solves_many_systems_from_one_shared_basis() -> None:
     matrix = jnp.asarray([[4.0, 1.0, 0.0], [1.0, 3.0, 1.0], [0.0, 1.0, 2.0]])
     operator = la.DenseLinearOperator(
         matrix,
@@ -48,7 +51,7 @@ def test_shifted_family_solves_many_systems_from_one_shared_basis():
     assert jnp.allclose(result.solution(1), expected[1])
 
 
-def test_shifted_family_supports_complex_shifts_and_jitted_re_evaluation():
+def test_shifted_family_supports_complex_shifts_and_jitted_re_evaluation() -> None:
     matrix = jnp.asarray([[4.0, 1.0, 0.0], [1.0, 3.0, 1.0], [0.0, 1.0, 2.0]])
     operator = la.DenseLinearOperator(
         matrix,
@@ -76,7 +79,9 @@ def test_shifted_family_supports_complex_shifts_and_jitted_re_evaluation():
     assert jnp.allclose(result.value, expected, rtol=1e-11, atol=1e-11)
 
 
-def test_shifted_truncation_reports_true_physical_residuals_without_false_success():
+def test_shifted_truncation_reports_true_physical_residuals_without_false_success() -> (
+    None
+):
     matrix = jnp.asarray(
         [
             [4.0, 1.0, 0.0, 0.0],
@@ -114,7 +119,7 @@ def test_shifted_truncation_reports_true_physical_residuals_without_false_succes
     )
 
 
-def test_shifted_family_exposes_singular_systems_and_accepts_zero_rhs():
+def test_shifted_family_exposes_singular_systems_and_accepts_zero_rhs() -> None:
     operator = la.DiagonalLinearOperator(
         jnp.asarray([1.0, 2.0, 3.0]),
         operator_id="singular-shifted-operator",
@@ -133,7 +138,7 @@ def test_shifted_family_exposes_singular_systems_and_accepts_zero_rhs():
     assert jnp.array_equal(zero.diagnostics.residual_norm, jnp.zeros(2))
 
 
-def test_shifted_plan_enforces_whole_family_resource_budgets():
+def test_shifted_plan_enforces_whole_family_resource_budgets() -> None:
     operator = la.DiagonalLinearOperator(jnp.arange(1.0, 6.0))
     family = la.ShiftedLinearSystemFamily(operator, jnp.arange(6.0, 10.0))
     plan = la.plan_shifted_solve(
@@ -154,7 +159,7 @@ def test_shifted_plan_enforces_whole_family_resource_budgets():
         la.plan_shifted_solve(family, constrained)
 
 
-def test_shifted_refresh_preserves_plan_and_rebuilds_operator_rhs_and_shifts():
+def test_shifted_refresh_preserves_plan_and_rebuilds_operator_rhs_and_shifts() -> None:
     first_matrix = jnp.asarray([[3.0, 0.5], [0.5, 2.0]])
     first_operator = la.DenseLinearOperator(
         first_matrix,
@@ -191,11 +196,12 @@ def test_shifted_refresh_preserves_plan_and_rebuilds_operator_rhs_and_shifts():
     assert refreshed.prepared_id == prepared.prepared_id
     assert refreshed.numeric_version == 1
     assert refreshed.refresh_count == 1
+    # ty: ignore[unresolved-attribute]
     assert refreshed.projection.numeric_version == 1
     assert jnp.allclose(result.value, expected, rtol=1e-11, atol=1e-11)
 
 
-def test_shifted_solutions_differentiate_with_respect_to_runtime_shifts():
+def test_shifted_solutions_differentiate_with_respect_to_runtime_shifts() -> None:
     matrix = jnp.asarray([[3.0, 0.5], [0.5, 2.0]])
     operator = la.DenseLinearOperator(
         matrix,
@@ -209,11 +215,11 @@ def test_shifted_solutions_differentiate_with_respect_to_runtime_shifts():
         la.ShiftedSolvePolicy(max_dimension=2),
     )
 
-    def specialized(shifts):
+    def specialized(shifts: Any) -> Any:
         values = la.solve_shifted(prepared, shifts=shifts).value
         return jnp.sum(values**2)
 
-    def dense(shifts):
+    def dense(shifts: Any) -> Any:
         values = jax.vmap(
             lambda shift: jnp.linalg.solve(shift * jnp.eye(2) - matrix, rhs)
         )(shifts)
@@ -224,7 +230,7 @@ def test_shifted_solutions_differentiate_with_respect_to_runtime_shifts():
     assert jnp.allclose(actual, expected, rtol=1e-10, atol=1e-11)
 
 
-def _streaming_policy(*, max_dimension=2):
+def _streaming_policy(*, max_dimension: Any = 2) -> Any:
     return la.ShiftedSolvePolicy(
         "lanczos",
         execution="streaming",
@@ -236,7 +242,9 @@ def _streaming_policy(*, max_dimension=2):
     )
 
 
-def test_streaming_shifted_solve_uses_direct_residuals_and_spectral_error_bounds():
+def test_streaming_shifted_solve_uses_direct_residuals_and_spectral_error_bounds() -> (
+    None
+):
     matrix = jnp.asarray(
         [[2.0 + 0.0j, 1.0j], [-1.0j, 3.0 + 0.0j]],
         dtype=jnp.complex128,
@@ -308,7 +316,7 @@ def test_streaming_shifted_solve_uses_direct_residuals_and_spectral_error_bounds
     assert inadmissible.status[1] == int(la.ShiftedSolveStatus.SUCCESS)
 
 
-def test_streaming_shifted_admission_rejects_unproved_and_nonreal_families():
+def test_streaming_shifted_admission_rejects_unproved_and_nonreal_families() -> None:
     policy = _streaming_policy()
     unproved = la.DenseLinearOperator(
         jnp.eye(2),
@@ -358,7 +366,7 @@ def test_streaming_shifted_admission_rejects_unproved_and_nonreal_families():
         )
 
 
-def test_streaming_zero_rhs_and_numeric_refresh_preserve_lifecycle_identity():
+def test_streaming_zero_rhs_and_numeric_refresh_preserve_lifecycle_identity() -> None:
     properties = la.OperatorProperties(
         self_adjoint=True,
         positive_semidefinite=True,

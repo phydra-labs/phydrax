@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -11,13 +14,13 @@ from phydrax.domain import DatasetDomain, SampleLayout
 from phydrax.terms import SupervisedDatasetTerm
 
 
-def test_supervised_dataset_constraint_supervises_scalar_targets_exactly():
+def test_supervised_dataset_constraint_supervises_scalar_targets_exactly() -> None:
     data = jnp.asarray([[0.0, 1.0], [1.0, 2.0], [2.0, 4.0]])
     domain = DatasetDomain(data)
     targets = data[:, 0] + 2.0 * data[:, 1]
 
     @domain.Function("data")
-    def u(row):
+    def u(row: Any) -> Any:
         return row[0] + 2.0 * row[1]
 
     constraint = SupervisedDatasetTerm(
@@ -35,13 +38,13 @@ def test_supervised_dataset_constraint_supervises_scalar_targets_exactly():
     assert jnp.allclose(metrics["data_relative_l2_error"], 0.0)
 
 
-def test_supervised_dataset_constraint_supervises_vector_targets_exactly():
+def test_supervised_dataset_constraint_supervises_vector_targets_exactly() -> None:
     data = jnp.asarray([[0.0, 1.0], [1.0, 2.0], [2.0, 4.0]])
     domain = DatasetDomain(data)
     targets = jnp.stack((data[:, 0] + data[:, 1], data[:, 0] - data[:, 1]), axis=-1)
 
     @domain.Function("data")
-    def theta(row):
+    def theta(row: Any) -> Any:
         return jnp.asarray([row[0] + row[1], row[0] - row[1]])
 
     constraint = SupervisedDatasetTerm(
@@ -58,7 +61,7 @@ def test_supervised_dataset_constraint_supervises_vector_targets_exactly():
     assert jnp.allclose(metrics["data_rmse"], 0.0)
 
 
-def test_supervised_dataset_constraint_aligns_sampled_indices_with_targets():
+def test_supervised_dataset_constraint_aligns_sampled_indices_with_targets() -> None:
     data = jnp.arange(10.0, dtype="float64").reshape((5, 2))
     domain = DatasetDomain(data)
     targets = jnp.asarray([10.0, 20.0, 30.0, 40.0, 50.0])
@@ -75,7 +78,7 @@ def test_supervised_dataset_constraint_aligns_sampled_indices_with_targets():
     assert jnp.allclose(jnp.asarray(batch.points["data"].data), data[batch.indices])
 
 
-def test_supervised_dataset_constraint_samples_only_index_subset():
+def test_supervised_dataset_constraint_samples_only_index_subset() -> None:
     data = jnp.arange(12.0, dtype="float64").reshape((6, 2))
     domain = DatasetDomain(data)
     targets = data[:, 0]
@@ -93,7 +96,7 @@ def test_supervised_dataset_constraint_samples_only_index_subset():
     assert jnp.allclose(batch.target, targets[batch.indices])
 
 
-def test_supervised_dataset_constraint_supports_pytree_rows():
+def test_supervised_dataset_constraint_supports_pytree_rows() -> None:
     rows = {
         "a": jnp.asarray([[0.0], [1.0], [2.0]]),
         "b": jnp.asarray([1.0, 2.0, 4.0]),
@@ -102,7 +105,7 @@ def test_supervised_dataset_constraint_supports_pytree_rows():
     targets = rows["a"][:, 0] + rows["b"]
 
     @domain.Function("data")
-    def u(row):
+    def u(row: Any) -> Any:
         return row["a"][0] + row["b"]
 
     constraint = SupervisedDatasetTerm(
@@ -118,7 +121,7 @@ def test_supervised_dataset_constraint_supports_pytree_rows():
     assert jnp.allclose(loss, 0.0, atol=1e-12)
 
 
-def test_supervised_dataset_constraint_validates_targets_and_sampling():
+def test_supervised_dataset_constraint_validates_targets_and_sampling() -> None:
     domain = DatasetDomain(jnp.zeros((3, 2), dtype="float64"))
 
     with pytest.raises(ValueError, match="leading axis"):

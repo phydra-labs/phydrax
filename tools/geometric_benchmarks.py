@@ -51,7 +51,7 @@ def _benchmark(
     }
 
 
-def _metric_jet_case(points: jax.Array):
+def _metric_jet_case(points: jax.Array) -> Any:
     dimension = points.shape[-1]
     chart = phx.metrix.CoordinateChart(
         f"metric-{dimension}", tuple(f"q{index}" for index in range(dimension))
@@ -64,7 +64,7 @@ def _metric_jet_case(points: jax.Array):
     return jet.matrix, jet.inverse, jet.first_derivative, jet.second_derivative
 
 
-def _form_case(points: jax.Array):
+def _form_case(points: jax.Array) -> Any:
     dimension = points.shape[-1]
     chart = phx.metrix.CoordinateChart(
         f"forms-{dimension}", tuple(f"q{index}" for index in range(dimension))
@@ -80,7 +80,7 @@ def _form_case(points: jax.Array):
     return exterior(points), dual(points)
 
 
-def _poisson_case(points: jax.Array):
+def _poisson_case(points: jax.Array) -> Any:
     dimension = points.shape[-1]
     chart = phx.metrix.CoordinateChart(
         f"phase-{dimension}", tuple(f"z{index}" for index in range(dimension))
@@ -88,13 +88,13 @@ def _poisson_case(points: jax.Array):
     symplectic = phx.metrix.canonical_symplectic_form(chart)
     poisson = phx.metrix.symplectic_to_poisson(symplectic)
 
-    def hamiltonian(point):
+    def hamiltonian(point: Any) -> Any:
         return 0.5 * jnp.dot(point, point)
 
     return phx.metrix.hamiltonian_vector_field(hamiltonian, poisson, points)
 
 
-def _horizontal_case(points: jax.Array):
+def _horizontal_case(points: jax.Array) -> Any:
     dimension = points.shape[-1]
     chart = phx.metrix.CoordinateChart(
         f"horizontal-{dimension}", tuple(f"q{index}" for index in range(dimension))
@@ -106,26 +106,26 @@ def _horizontal_case(points: jax.Array):
         rank,
     )
 
-    def field(point):
+    def field(point: Any) -> Any:
         return jnp.dot(point, point)
 
     return phx.metrix.sub_laplacian(field, cometric, points)
 
 
-def _lorentzian_case(points: jax.Array):
+def _lorentzian_case(points: jax.Array) -> Any:
     dimension = points.shape[-1]
     chart = phx.metrix.CoordinateChart(
         f"spacetime-{dimension}", tuple(f"q{index}" for index in range(dimension))
     )
     metric = phx.metrix.minkowski_metric(chart)
 
-    def field(point):
+    def field(point: Any) -> Any:
         return -(point[0] ** 2) + jnp.sum(point[1:] ** 2)
 
     return phx.metrix.dalembertian(field, metric, points)
 
 
-def _map_geometry_case(points: jax.Array):
+def _map_geometry_case(points: jax.Array) -> Any:
     dimension = points.shape[-1]
     chart = phx.metrix.CoordinateChart(
         f"map-{dimension}", tuple(f"q{index}" for index in range(dimension))
@@ -136,7 +136,7 @@ def _map_geometry_case(points: jax.Array):
     return geometry.energy_density(points), geometry.tension_field(points)
 
 
-def _weighted_measure_case(points: jax.Array):
+def _weighted_measure_case(points: jax.Array) -> Any:
     dimension = points.shape[-1]
     chart = phx.metrix.CoordinateChart(
         f"measure-{dimension}", tuple(f"q{index}" for index in range(dimension))
@@ -148,7 +148,7 @@ def _weighted_measure_case(points: jax.Array):
     return measure.laplacian(lambda q: jnp.dot(q, q), points)
 
 
-def _kahler_case(points: jax.Array):
+def _kahler_case(points: jax.Array) -> Any:
     dimension = points.shape[-1]
     chart = phx.metrix.CoordinateChart(
         f"kahler-{dimension}", tuple(f"q{index}" for index in range(dimension))
@@ -225,7 +225,7 @@ def run_benchmarks(
     }
 
 
-def _csg_setup(grid_size: int):
+def _csg_setup(grid_size: int) -> Any:
     Sphere = phx.geometry.analytic.Sphere
     target_source = Sphere(
         (-0.45, 0.0, 0.0),
@@ -297,7 +297,9 @@ def _csg_setup(grid_size: int):
         ]
     )
 
-    def state_with_centers(compiled, indices, parameters, width=None):
+    def state_with_centers(
+        compiled: Any, indices: Any, parameters: Any, width: Any = None
+    ) -> Any:
         left = jnp.stack((parameters[0], jnp.asarray(0.0), jnp.asarray(0.0)))
         right = jnp.stack((parameters[1], jnp.asarray(0.0), jnp.asarray(0.0)))
         state = compiled.state.replace_at(indices[0], left)
@@ -306,18 +308,18 @@ def _csg_setup(grid_size: int):
             state = state.replace_at(indices[2], width)
         return state
 
-    def sharp_field(parameters, points):
+    def sharp_field(parameters: Any, points: Any) -> Any:
         state = state_with_centers(sharp, sharp_indices, parameters)
         return sharp.kernel.boundary_field(state, points)
 
-    def blend_field(parameters, width, points):
+    def blend_field(parameters: Any, width: Any, points: Any) -> Any:
         state = state_with_centers(blend, blend_indices, parameters, width)
         return blend.kernel.boundary_field(state, points)
 
-    def target_field(point):
+    def target_field(point: Any) -> Any:
         return target.kernel.boundary_field(target.state, point)
 
-    def target_trial(point):
+    def target_trial(point: Any) -> Any:
         value = target_field(point)
         return value**2
 
@@ -338,8 +340,8 @@ def _csg_setup(grid_size: int):
     }
 
 
-def _csg_loss(setup, strategy: str):
-    def loss(parameters, width):
+def _csg_loss(setup: Any, strategy: str) -> Any:
+    def loss(parameters: Any, width: Any) -> Any:
         if strategy == "sharp":
             field = setup["sharp_field"](parameters, setup["training_points"])
         else:
@@ -354,7 +356,7 @@ def _csg_loss(setup, strategy: str):
     return loss
 
 
-def _fit_csg(setup, strategy: str, seed: int, steps: int):
+def _fit_csg(setup: Any, strategy: str, seed: int, steps: int) -> Any:
     key = jax.random.key(seed)
     parameters = jnp.asarray([-0.85, 0.8]) + 0.08 * jax.random.normal(key, (2,))
     state = (
@@ -365,7 +367,7 @@ def _fit_csg(setup, strategy: str, seed: int, steps: int):
     )
     loss = _csg_loss(setup, strategy)
 
-    def step(state_, width):
+    def step(state_: Any, width: Any) -> Any:
         parameters_, first_moment, second_moment, iteration = state_
         value, gradient = jax.value_and_grad(loss)(parameters_, width)
         iteration = iteration + 1
@@ -411,13 +413,13 @@ def _fit_csg(setup, strategy: str, seed: int, steps: int):
     }
 
 
-def _csg_metric_functions(setup, geometry: str, width: jax.Array):
+def _csg_metric_functions(setup: Any, geometry: str, width: jax.Array) -> Any:
     if geometry == "sharp":
         return lambda parameters, points: setup["sharp_field"](parameters, points)
     return lambda parameters, points: setup["blend_field"](parameters, width, points)
 
 
-def _csg_record(setup, strategy: str, seed: int, fit, *, geometry: str):
+def _csg_record(setup: Any, strategy: str, seed: int, fit: Any, *, geometry: str) -> Any:
     width = fit["final_width"]
     evaluated = synchronize(
         _csg_record_metrics(
@@ -459,10 +461,12 @@ def _csg_record(setup, strategy: str, seed: int, fit, *, geometry: str):
     }
 
 
-def _csg_record_metrics(setup, parameters, *, geometry: str, width: jax.Array):
+def _csg_record_metrics(
+    setup: Any, parameters: Any, *, geometry: str, width: jax.Array
+) -> Any:
     field_for = _csg_metric_functions(setup, geometry, width)
 
-    def field(points):
+    def field(points: Any) -> Any:
         return field_for(parameters, points)
 
     mask = setup["boundary_mask"]
@@ -478,7 +482,7 @@ def _csg_record_metrics(setup, parameters, *, geometry: str, width: jax.Array):
         != (setup["target_training_field"] <= 0.0)
     )
 
-    def trial(point):
+    def trial(point: Any) -> Any:
         return field(point) ** 2
 
     forcing = jax.vmap(lambda point: jnp.trace(jax.hessian(trial)(point)))(

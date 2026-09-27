@@ -5,21 +5,28 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal, TypeAlias
+from typing import assert_never, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics import normalize_least_squares_design
 from ..._strict import StrictModule
 from ...data_utils import train_test_split_indices
+from ...typing import parse
 from .._evolution import DiscreteEvolution
 from .._layout import InputLayout
-from .._system import AbstractInputPolicy, DiscreteStepContext
+from .._system import (
+    AbstractInputPolicy,
+    ContinuousSystem,
+    DiscreteStepContext,
+    DiscreteSystem,
+)
 from ._sindy import _result_from_regression, SINDyResult
 from ._sindy_design import SINDyDesign, SINDyDesignDiagnostics, SINDyProblem
 from ._sparse_regression import AbstractSparseRegression, SparseRegressionResult
@@ -152,7 +159,9 @@ class _ObservedInputPolicy(AbstractInputPolicy):
     alignment: str = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def evaluate(self, coordinate, state, args=None, /) -> Array:
+    def evaluate(
+        self, coordinate: ArrayLike, state: ArrayLike, args: object = None, /
+    ) -> Array:
         del state, args
         query = jnp.asarray(coordinate)
         index = jnp.clip(
@@ -172,14 +181,16 @@ class _ObservedInputPolicy(AbstractInputPolicy):
     def evaluate_step(
         self,
         context: DiscreteStepContext,
-        state,
-        args=None,
+        state: ArrayLike,
+        args: object = None,
         /,
     ) -> Array:
         return self.evaluate(context.source, state, args)
 
 
-def _case_input_policy(problem: SINDyProblem, case: int, /):
+def _case_input_policy(
+    problem: SINDyProblem, case: int, /
+) -> _ObservedInputPolicy | None:
     data = problem.data
     if data.inputs is None:
         return None
@@ -250,7 +261,10 @@ def _rollout_error(
         policy = _case_input_policy(problem, case)
         current = flat_states[case, start].reshape(data.state_layout.shape)
         if result.formulation == "discrete":
-            evolution = DiscreteEvolution(system, input_policy=policy)
+            # SINDyResult.to_system builds a DiscreteSystem for discrete formulations.
+            evolution = DiscreteEvolution(
+                cast(DiscreteSystem, system), input_policy=policy
+            )
             valid = jnp.asarray(True)
             for step in range(start, end):
                 advanced = evolution.advance(
@@ -264,7 +278,10 @@ def _rollout_error(
         else:
             from ...solver import DiffraxEvolution
 
-            evolution = DiffraxEvolution(system, input_policy=policy)
+            # Non-discrete SINDy formulations build a ContinuousSystem.
+            evolution = DiffraxEvolution(
+                cast(ContinuousSystem, system), input_policy=policy
+            )
             advanced = evolution.advance(
                 current,
                 flat_coordinates[case, start],
@@ -316,9 +333,8 @@ class SINDySelectionPolicy(StrictModule):
         max_rollouts: int = 32,
         complexity_weight: float = 0.0,
         combined_weights: Sequence[float] = (1.0, 1.0, 1.0),
-    ):
-        if criterion not in ("equation", "one_step", "rollout", "combined", "bic"):
-            raise ValueError("Unsupported selection criterion.")
+    ) -> None:
+        criterion = parse(criterion, SelectionCriterion, "criterion")
         if not 0.0 < float(validation_fraction) < 1.0:
             raise ValueError("validation_fraction must lie in (0, 1).")
         if int(rollout_horizon) < 1 or int(max_rollouts) < 1:
@@ -415,6 +431,7 @@ def select_sindy_model(
     needs_one_step = resolved_policy.criterion in ("one_step", "combined")
     needs_rollout = resolved_policy.criterion in ("rollout", "combined")
     not_computed = jnp.asarray(jnp.nan, dtype=design.matrix.dtype)
+    criterion = resolved_policy.criterion
     for regressor in candidates_policies:
         regression = regressor.fit(training)
         candidate = _result_from_regression(problem, design, regression)
@@ -442,23 +459,26 @@ def select_sindy_model(
             else not_computed
         )
         complexity = jnp.sum(candidate.support).astype(design.matrix.dtype)
-        if resolved_policy.criterion == "equation":
-            base_score = equation
-        elif resolved_policy.criterion == "one_step":
-            base_score = one_step
-        elif resolved_policy.criterion == "rollout":
-            base_score = rollout
-        elif resolved_policy.criterion == "bic":
-            count = jnp.maximum(jnp.sum(design.valid & validation_mask), 1)
-            base_score = count * jnp.log(
-                jnp.maximum(equation, jnp.finfo(equation.dtype).tiny)
-            ) + complexity * jnp.log(count)
-        else:
-            base_score = (
-                resolved_policy.combined_weights[0] * equation
-                + resolved_policy.combined_weights[1] * one_step
-                + resolved_policy.combined_weights[2] * rollout
-            )
+        match criterion:
+            case "equation":
+                base_score = equation
+            case "one_step":
+                base_score = one_step
+            case "rollout":
+                base_score = rollout
+            case "bic":
+                count = jnp.maximum(jnp.sum(design.valid & validation_mask), 1)
+                base_score = count * jnp.log(
+                    jnp.maximum(equation, jnp.finfo(equation.dtype).tiny)
+                ) + complexity * jnp.log(count)
+            case "combined":
+                base_score = (
+                    resolved_policy.combined_weights[0] * equation
+                    + resolved_policy.combined_weights[1] * one_step
+                    + resolved_policy.combined_weights[2] * rollout
+                )
+            case _:
+                assert_never(criterion)
         valid_candidate = candidate.valid & jnp.isfinite(base_score)
         score = jnp.where(
             valid_candidate,

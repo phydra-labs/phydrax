@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import time
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -14,7 +15,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _case(cell_count: int, steps: int):
+def _case(cell_count: int, steps: int) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(cell_count, periodic=True),),
         axis_names=("x",),
@@ -38,6 +39,7 @@ def _case(cell_count: int, steps: int):
         problem, discretization, method
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.3, maximum_retries=0),
@@ -62,12 +64,12 @@ def _case(cell_count: int, steps: int):
     return runtime, temporal_mesh, initial
 
 
-def _measure(runtime, mesh, initial, replay):
+def _measure(runtime: Any, mesh: Any, initial: Any, replay: Any) -> Any:
     plan = phx.solver.ScheduledFiniteVolumeRolloutPlan(
         runtime, mesh, replay=replay, retention="final"
     )
 
-    def objective(content):
+    def objective(content: Any) -> Any:
         state = phx.solver.FiniteVolumeRuntimeState(
             initial.content_state.with_content(content),
             initial.topology_journal,

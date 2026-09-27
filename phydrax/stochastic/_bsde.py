@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 import phydrax.ein as ein
@@ -21,6 +22,7 @@ from phydrax.domain import DomainFunction
 from .._frozendict import frozendict
 from .._probability import _leading_shape
 from .._strict import StrictModule
+from ..typing import parse, PRNGKey
 from ._jump import JumpEventBatch
 from ._realization import is_stochastic_realization, StochasticRealization
 from ._wiener import WienerRealization
@@ -83,7 +85,7 @@ class BSDEPathBatch(StrictModule):
         realization: StochasticRealization | None = None,
         jump_events: Mapping[str, JumpEventBatch] | None = None,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         samples = _shape(sample_shape, owner="sample_shape") if sample_shape else ()
         state_event = _shape(state_shape, owner="state_shape")
         noise_event = _shape(noise_shape, owner="noise_shape")
@@ -193,7 +195,7 @@ class BSDEProblem(StrictModule):
         args: Any = None,
         time_label: str = "t",
         state_label: str = "x",
-    ):
+    ) -> None:
         for owner, value in (
             ("forward_sampler", forward_sampler),
             ("drift", drift),
@@ -222,7 +224,7 @@ class BSDEProblem(StrictModule):
         self.process_id = _name(process_id, owner="process_id")
         self.time_label, self.state_label = labels
 
-    def sample(self, key: Key[Array, ""], /) -> BSDEPathBatch:
+    def sample(self, key: PRNGKey, /) -> BSDEPathBatch:
         paths = self.forward_sampler(key)
         if not isinstance(paths, BSDEPathBatch):
             raise TypeError("forward_sampler must return a BSDEPathBatch.")
@@ -353,7 +355,7 @@ def autodiff_bsde_control(
     problem: BSDEProblem,
     /,
     *,
-    key: Key[Array, ""] = jr.key(0),
+    key: PRNGKey = jr.key(0),
 ) -> Array:
     """Compute Z = grad_x u sigma with full output/noise event semantics."""
     if not isinstance(problem, BSDEProblem):
@@ -363,7 +365,7 @@ def autodiff_bsde_control(
     if state_value.shape != problem.state_shape:
         raise ValueError("state must have exactly problem.state_shape.")
 
-    def value(state_argument):
+    def value(state_argument: Array) -> Array:
         return _predictor_value(
             value_predictor,
             time_value,
@@ -435,7 +437,7 @@ def evaluate_bsde(
     control_predictor: Callable | DomainFunction | None = None,
     control_mode: BSDEControlMode = "explicit",
     quadrature: BSDEQuadrature = "left",
-    key: Key[Array, ""] = jr.key(0),
+    key: PRNGKey = jr.key(0),
 ) -> BSDEEvaluation:
     """Evaluate one Markovian BSDE on explicitly aligned path intervals."""
     if not isinstance(problem, BSDEProblem):
@@ -447,10 +449,8 @@ def evaluate_bsde(
         or paths.noise_shape != problem.noise_shape
     ):
         raise ValueError("Path and BSDE state/noise shapes do not match.")
-    if control_mode not in ("explicit", "autodiff"):
-        raise ValueError("control_mode must be 'explicit' or 'autodiff'.")
-    if quadrature not in ("left", "trapezoid"):
-        raise ValueError("quadrature must be 'left' or 'trapezoid'.")
+    control_mode = parse(control_mode, BSDEControlMode, "control_mode")
+    quadrature = parse(quadrature, BSDEQuadrature, "quadrature")
     if control_mode == "explicit" and control_predictor is None:
         raise ValueError("Explicit BSDE control requires control_predictor.")
     value_key, control_key, right_control_key = jr.split(key, 3)
@@ -493,7 +493,7 @@ def evaluate_bsde(
     output_size = prod(problem.output_shape)
     noise_size = prod(problem.noise_shape)
 
-    def generator_value(time, state, value, control):
+    def generator_value(time: Array, state: Array, value: Array, control: Array) -> Array:
         output = jnp.asarray(problem.generator(time, state, value, control, problem.args))
         if output.shape != problem.output_shape:
             raise ValueError("BSDE generator returned an incompatible output shape.")
@@ -639,8 +639,7 @@ def bsde_objective_loss(
     """Compose terminal, local, and global residual losses without hidden terms."""
     if not isinstance(evaluation, BSDEEvaluation):
         raise TypeError("evaluation must be a BSDEEvaluation.")
-    if mode not in ("terminal", "local", "global", "joint"):
-        raise ValueError("Unknown BSDE objective mode.")
+    mode = parse(mode, BSDEObjectiveMode, "mode")
     weights = tuple(
         jnp.asarray(value, dtype=jnp.float64).reshape(())
         for value in (terminal_weight, local_weight, global_weight)
@@ -737,7 +736,7 @@ def semilinear_pde_residual(
     state: ArrayLike,
     /,
     *,
-    key: Key[Array, ""] = jr.key(0),
+    key: PRNGKey = jr.key(0),
 ) -> Array:
     """Evaluate u_t + b·grad u + 1/2 tr(sigma sigmaᵀ Hess u) + f(t,x,u,Z)."""
     if not isinstance(problem, BSDEProblem):
@@ -747,12 +746,12 @@ def semilinear_pde_residual(
     if time_value.shape != () or state_value.shape != problem.state_shape:
         raise ValueError("time must be scalar and state must equal problem.state_shape.")
 
-    def value_at_time(time_argument):
+    def value_at_time(time_argument: Array) -> Array:
         return _predictor_value(
             value_predictor, time_argument, state_value, problem, key=key
         )
 
-    def value_at_state(state_argument):
+    def value_at_state(state_argument: Array) -> Array:
         return _predictor_value(
             value_predictor, time_value, state_argument, problem, key=key
         )

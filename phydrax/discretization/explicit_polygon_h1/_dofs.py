@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -63,7 +64,7 @@ class ExplicitPolygonH1DofMap(StrictModule, NonTrainableState):
     local_width: int = eqx.field(static=True)
     dof_map_id: str = eqx.field(static=True)
 
-    def __init__(self, mesh: CellMesh, /):
+    def __init__(self, mesh: CellMesh, /) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be a CellMesh.")
         if not isinstance(mesh.connectivity, PolygonalConnectivity):

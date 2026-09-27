@@ -2,9 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import hashlib
 import os
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -22,11 +24,11 @@ from phydrax.backends.homotopy_continuation import (
 pytestmark = pytest.mark.homotopy_continuation_live
 
 
-def _digest(path):
+def _digest(path: Any) -> Any:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def _provider():
+def _provider() -> Any:
     required = (
         "PHYDRAX_JULIA_EXECUTABLE",
         "PHYDRAX_JULIA_SHA256",
@@ -71,7 +73,7 @@ def _provider():
     return HomotopyContinuationProvider(executable, environment)
 
 
-def test_live_isolated_roots_and_fixed_mode_power_flow():
+def test_live_isolated_roots_and_fixed_mode_power_flow() -> None:
     provider = _provider()
     system = algebraic.SparsePolynomialSystem.from_coo(
         ("x",),

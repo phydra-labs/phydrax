@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -29,14 +31,17 @@ from phydrax.chemistry.spectroscopy._response import (
 )
 
 
-def _evidence():
+def _evidence() -> Any:
     return SpectralResponseEvidence(0.0, 0.0, 0.0, 0.0, True)
 
 
-def test_raw_lines_and_instrument_product_are_distinct_and_preserve_area():
+def test_raw_lines_and_instrument_product_are_distinct_and_preserve_area() -> None:
     lines = SpectralResponseProduct(
+        # ty: ignore[invalid-argument-type]
         [1.0, 2.0],
+        # ty: ignore[invalid-argument-type]
         [[2.0, 3.0]],
+        # ty: ignore[invalid-argument-type]
         [True, True],
         units.ELECTRONVOLT,
         units.ONE,
@@ -75,10 +80,15 @@ def test_raw_lines_and_instrument_product_are_distinct_and_preserve_area():
     assert bool(result.evidence.successful)
 
 
-def test_stationary_instrument_refuses_line_strengths_instead_of_reinterpreting_them():
+def test_stationary_instrument_refuses_line_strengths_instead_of_reinterpreting_them() -> (
+    None
+):
     lines = SpectralResponseProduct(
+        # ty: ignore[invalid-argument-type]
         [1.0, 2.0],
+        # ty: ignore[invalid-argument-type]
         [[1.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [True, True],
         units.ELECTRONVOLT,
         units.ONE,
@@ -96,10 +106,13 @@ def test_stationary_instrument_refuses_line_strengths_instead_of_reinterpreting_
         kernel_capacity=1,
     )
     with pytest.raises(TypeError):
+        # ty: ignore[invalid-argument-type]
         apply_spectral_instrument(prepare_spectral_instrument(plan, [1.0]), lines)
 
 
-def test_fourier_positive_exponent_places_negative_phase_tone_at_positive_frequency():
+def test_fourier_positive_exponent_places_negative_phase_tone_at_positive_frequency() -> (
+    None
+):
     count = 64
     frequency = 5.0 / count
     time = np.arange(count)
@@ -118,30 +131,51 @@ def test_fourier_positive_exponent_places_negative_phase_tone_at_positive_freque
     assert bool(result.successful)
 
 
-def test_optical_frontend_keeps_drude_separate_and_uses_retarded_dielectric_sign():
+def test_optical_frontend_keeps_drude_separate_and_uses_retarded_dielectric_sign() -> (
+    None
+):
     raw = KuboRawTransitions(
+        # ty: ignore[invalid-argument-type]
         np.zeros((1, 1)),
+        # ty: ignore[invalid-argument-type]
         np.zeros((1, 1)),
+        # ty: ignore[invalid-argument-type]
         np.zeros((1, 1, 1)),
+        # ty: ignore[invalid-argument-type]
         np.zeros((1, 1, 1)),
+        # ty: ignore[invalid-argument-type]
         np.zeros((1, 1, 1), dtype="bool"),
+        # ty: ignore[invalid-argument-type]
         np.zeros((1, 1, 1)),
+        # ty: ignore[invalid-argument-type]
         np.zeros((1, 1, 1, 3, 3)),
+        # ty: ignore[invalid-argument-type]
         np.eye(3) * 7.0,
+        # ty: ignore[invalid-argument-type]
         np.eye(3),
+        # ty: ignore[invalid-argument-type]
         np.eye(3),
+        # ty: ignore[invalid-argument-type]
         np.eye(3),
+        # ty: ignore[invalid-argument-type]
         0.0,
+        # ty: ignore[invalid-argument-type]
         0.0,
+        # ty: ignore[invalid-argument-type]
         True,
         "kubo-plan",
         "diamagnetic-source",
     )
     kubo_evidence = KuboResponseEvidence(
+        # ty: ignore[invalid-argument-type]
         1.0,
+        # ty: ignore[invalid-argument-type]
         0.0,
+        # ty: ignore[invalid-argument-type]
         True,
+        # ty: ignore[invalid-argument-type]
         True,
+        # ty: ignore[invalid-argument-type]
         True,
         "physical-linewidth",
         False,
@@ -150,10 +184,13 @@ def test_optical_frontend_keeps_drude_separate_and_uses_retarded_dielectric_sign
     omega = np.asarray([1.0e14, 2.0e14])
     conductivity = np.broadcast_to(np.eye(3), (omega.size, 3, 3)).astype("complex128")
     kubo = FiniteFrequencyKuboResponse(
+        # ty: ignore[invalid-argument-type]
         omega,
+        # ty: ignore[invalid-argument-type]
         conductivity,
         raw,
         kubo_evidence,
+        # ty: ignore[invalid-argument-type]
         True,
         "kubo-plan",
     )
@@ -174,7 +211,7 @@ def test_optical_frontend_keeps_drude_separate_and_uses_retarded_dielectric_sign
     np.testing.assert_allclose(result.drude_weight, np.eye(3) * 7.0)
 
 
-def test_periodic_provider_tensors_retain_selection_and_stokes_balance_evidence():
+def test_periodic_provider_tensors_retain_selection_and_stokes_balance_evidence() -> None:
     class Phonons:
         fractional_qpoints = np.zeros((1, 3))
         angular_frequencies = np.asarray([[0.0, 0.0, 0.0, 1.0, 2.0, 3.0]])
@@ -201,13 +238,17 @@ def test_periodic_provider_tensors_retain_selection_and_stokes_balance_evidence(
     )
     result = periodic_vibrational_lines(
         PeriodicVibrationalSpectroscopyPlan(
+            # ty: ignore[invalid-argument-type]
             [1.0, 1.0],
+            # ty: ignore[invalid-argument-type]
             [[1.0, 0.0, 0.0]],
+            # ty: ignore[invalid-argument-type]
             [[1.0, 0.0, 0.0]],
             ("xx",),
             temperature=4.0,
             laser_angular_frequency=20.0,
         ),
+        # ty: ignore[invalid-argument-type]
         Phonons(),
         tensors,
         units.HERTZ,

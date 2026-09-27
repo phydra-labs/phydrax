@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -12,7 +15,7 @@ from phydrax.domain import PointBatch, SampleLayout, TrajectoryDatasetDomain
 from phydrax.operators.differential import partial_n, partial_t
 
 
-def _make_linear_problem():
+def _make_linear_problem() -> Any:
     inputs = jnp.asarray([[0.0], [1.0], [2.0]])
     lengths = jnp.asarray([2, 4, 3])
     domain = TrajectoryDatasetDomain(inputs, lengths, dt=0.25)
@@ -24,7 +27,7 @@ def _make_linear_problem():
     return domain, values, structure
 
 
-def _all_observation_batch(domain, structure):
+def _all_observation_batch(domain: Any, structure: Any) -> Any:
     case_indices = domain.flat_case_indices
     time_indices = domain.flat_time_indices
     times = domain.observation_times(case_indices, time_indices)
@@ -36,11 +39,11 @@ def _all_observation_batch(domain, structure):
     )
 
 
-def test_enforce_ragged_time_series_matches_all_observed_nodes_exactly():
+def test_enforce_ragged_time_series_matches_all_observed_nodes_exactly() -> None:
     domain, values, structure = _make_linear_problem()
 
     @domain.Function("data", "t")
-    def free(data, t):
+    def free(data: Any, t: Any) -> Any:
         del data, t
         return jnp.asarray([10.0, -10.0])
 
@@ -53,11 +56,11 @@ def test_enforce_ragged_time_series_matches_all_observed_nodes_exactly():
     assert jnp.allclose(pred, target, atol=1e-12)
 
 
-def test_enforce_ragged_time_series_supports_first_time_derivative():
+def test_enforce_ragged_time_series_supports_first_time_derivative() -> None:
     domain, values, structure = _make_linear_problem()
 
     @domain.Function("data", "t")
-    def free(data, t):
+    def free(data: Any, t: Any) -> Any:
         return jnp.asarray([data[0] + 2.0 * t, 1.0 - data[0] + 3.0 * t])
 
     hard = phx.enforcement.enforce_ragged_time_series(free, domain, values)
@@ -70,11 +73,13 @@ def test_enforce_ragged_time_series_supports_first_time_derivative():
     assert jnp.allclose(pred, expected, atol=1e-12)
 
 
-def test_enforce_ragged_time_series_supports_cubic_hermite_second_time_derivative():
+def test_enforce_ragged_time_series_supports_cubic_hermite_second_time_derivative() -> (
+    None
+):
     domain, values, structure = _make_linear_problem()
 
     @domain.Function("data", "t")
-    def free(data, t):
+    def free(data: Any, t: Any) -> Any:
         return jnp.asarray([data[0] + 2.0 * t, 1.0 - data[0] + 3.0 * t])
 
     hard = phx.enforcement.enforce_ragged_time_series(
@@ -92,11 +97,11 @@ def test_enforce_ragged_time_series_supports_cubic_hermite_second_time_derivativ
     assert jnp.allclose(pred, jnp.zeros_like(pred), atol=1e-10)
 
 
-def test_enforce_ragged_time_series_rejects_linear_second_time_derivative():
+def test_enforce_ragged_time_series_rejects_linear_second_time_derivative() -> None:
     domain, values, _structure = _make_linear_problem()
 
     @domain.Function("data", "t")
-    def free(data, t):
+    def free(data: Any, t: Any) -> Any:
         return jnp.asarray([data[0] + 2.0 * t, 1.0 - data[0] + 3.0 * t])
 
     hard = phx.enforcement.enforce_ragged_time_series(
@@ -107,11 +112,11 @@ def test_enforce_ragged_time_series_rejects_linear_second_time_derivative():
         partial_n(hard, var="t", order=2)
 
 
-def test_enforce_ragged_time_series_can_enforce_selected_components():
+def test_enforce_ragged_time_series_can_enforce_selected_components() -> None:
     domain, values, structure = _make_linear_problem()
 
     @domain.Function("data", "t")
-    def free(data, t):
+    def free(data: Any, t: Any) -> Any:
         del data, t
         return jnp.asarray([10.0, -5.0])
 
@@ -127,11 +132,11 @@ def test_enforce_ragged_time_series_can_enforce_selected_components():
     assert jnp.allclose(pred[:, 1], jnp.full_like(pred[:, 1], -5.0), atol=1e-12)
 
 
-def test_enforce_ragged_time_series_requires_trajectory_batch_indices():
+def test_enforce_ragged_time_series_requires_trajectory_batch_indices() -> None:
     domain, values, structure = _make_linear_problem()
 
     @domain.Function("data", "t")
-    def free(data, t):
+    def free(data: Any, t: Any) -> Any:
         return jnp.asarray([data[0] + 2.0 * t, 1.0 - data[0] + 3.0 * t])
 
     hard = phx.enforcement.enforce_ragged_time_series(free, domain, values)
@@ -145,15 +150,15 @@ def test_enforce_ragged_time_series_requires_trajectory_batch_indices():
         hard(stripped, key=jr.key(4))
 
 
-def test_physics_only_constraint_can_use_hard_enforced_ragged_data():
+def test_physics_only_constraint_can_use_hard_enforced_ragged_data() -> None:
     domain, values, structure = _make_linear_problem()
 
     @domain.Function("data", "t")
-    def free(data, t):
+    def free(data: Any, t: Any) -> Any:
         return jnp.asarray([data[0] + 2.0 * t, 1.0 - data[0] + 3.0 * t])
 
     @domain.Function()
-    def rhs():
+    def rhs() -> Any:
         return jnp.asarray([2.0, 3.0])
 
     hard = phx.enforcement.enforce_ragged_time_series(free, domain, values)
@@ -171,11 +176,11 @@ def test_physics_only_constraint_can_use_hard_enforced_ragged_data():
     assert jnp.allclose(loss, 0.0, atol=1e-12)
 
 
-def test_physics_only_constraint_can_use_second_derivative_hard_ragged_data():
+def test_physics_only_constraint_can_use_second_derivative_hard_ragged_data() -> None:
     domain, values, structure = _make_linear_problem()
 
     @domain.Function("data", "t")
-    def free(data, t):
+    def free(data: Any, t: Any) -> Any:
         return jnp.asarray([data[0] + 2.0 * t, 1.0 - data[0] + 3.0 * t])
 
     hard = phx.enforcement.enforce_ragged_time_series(

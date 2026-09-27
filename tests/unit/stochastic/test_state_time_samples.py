@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -9,7 +11,7 @@ from phydrax.stochastic._state_time import (
 from phydrax.stochastic._trajectory import StochasticTrajectory
 
 
-def _trajectory():
+def _trajectory() -> Any:
     states = jnp.arange(3 * 4 * 2, dtype="float64").reshape((3, 4, 2))
     valid = jnp.asarray(
         [
@@ -29,7 +31,7 @@ def _trajectory():
     )
 
 
-def test_state_time_samples_preserve_axes_masks_and_path_clusters():
+def test_state_time_samples_preserve_axes_masks_and_path_clusters() -> None:
     trajectory = _trajectory()
     batch = trajectory_state_time_samples(trajectory)
 
@@ -52,7 +54,7 @@ def test_state_time_samples_preserve_axes_masks_and_path_clusters():
     }
 
 
-def test_state_time_measure_retains_time_for_per_time_reductions():
+def test_state_time_measure_retains_time_for_per_time_reductions() -> None:
     trajectory = _trajectory()
     batch = trajectory_state_time_samples(
         trajectory,
@@ -77,7 +79,7 @@ def test_state_time_measure_retains_time_for_per_time_reductions():
     assert not target.independent
 
 
-def test_adapter_adds_a_synthetic_realization_axis_for_one_path_per_case():
+def test_adapter_adds_a_synthetic_realization_axis_for_one_path_per_case() -> None:
     trajectory = StochasticTrajectory(
         jnp.asarray([0.0, 0.5, 1.0]),
         jnp.zeros((3, 2)),
@@ -91,7 +93,7 @@ def test_adapter_adds_a_synthetic_realization_axis_for_one_path_per_case():
     assert batch.sample_axes == ("trajectory_sample", "time")
 
 
-def test_state_time_measure_carries_user_log_weights_without_flattening():
+def test_state_time_measure_carries_user_log_weights_without_flattening() -> None:
     trajectory = _trajectory()
     log_weights = jnp.linspace(-1.0, 1.0, 12).reshape((3, 4))
     target = trajectory_state_time_measure(
@@ -105,7 +107,7 @@ def test_state_time_measure_carries_user_log_weights_without_flattening():
     assert target.provenance == "stochastic-trajectory:state-time:global"
 
 
-def test_state_time_adapter_rejects_misaligned_weights_and_labels():
+def test_state_time_adapter_rejects_misaligned_weights_and_labels() -> None:
     trajectory = _trajectory()
     with pytest.raises(ValueError, match="match"):
         trajectory_state_time_samples(trajectory, log_weights=jnp.ones((3, 3)))

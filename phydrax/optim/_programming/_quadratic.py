@@ -7,12 +7,14 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from functools import partial
 from math import prod
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -46,6 +48,10 @@ from ._types import (
     ConvexProgramStatus,
     ConvexWarmStart,
 )
+
+
+_IterateCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
+_ProgramArrays: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
 def _batch_shape(value: Sequence[int], /) -> tuple[int, ...]:
@@ -209,7 +215,7 @@ class QuadraticProgram(StrictModule):
         bounds: Bounds | None = None,
         problem_id: str = "canonical-quadratic-program",
         convexity_evidence: str = "asserted",
-    ):
+    ) -> None:
         quadratic_value = jnp.asarray(quadratic)
         linear_value = jnp.asarray(linear)
         if (
@@ -789,7 +795,9 @@ def _dense_constrained_single(
         jnp.asarray(0, dtype=jnp.int32),
     )
 
-    def residuals(primal, slack, inequality_dual, equality_dual):
+    def residuals(
+        primal: Array, slack: Array, inequality_dual: Array, equality_dual: Array
+    ) -> tuple[Array, Array, Array, Array, Array]:
         dual_residual = (
             quadratic @ primal
             + regularization * primal
@@ -812,7 +820,7 @@ def _dense_constrained_single(
             residual_norm,
         )
 
-    def condition(state):
+    def condition(state: _IterateCarry) -> Array:
         primal, slack, inequality_dual, equality_dual, iterations = state
         *_, residual_norm = residuals(primal, slack, inequality_dual, equality_dual)
         infeasible = _farkas_certificate_single(
@@ -826,7 +834,7 @@ def _dense_constrained_single(
         )
         return (iterations < max_iterations) & (residual_norm > tolerance) & ~infeasible
 
-    def body(state):
+    def body(state: _IterateCarry) -> _IterateCarry:
         primal, slack, inequality_dual, equality_dual, iterations = state
         (
             dual_residual,
@@ -1777,7 +1785,7 @@ def _center_barrier_single(
     slack = jnp.maximum(slack, interior)
     inequality_dual = jnp.maximum(inequality_dual, interior)
 
-    def body(_, carry):
+    def body(_: Array, carry: _IterateCarry) -> _IterateCarry:
         primal_, slack_, inequality_dual_, equality_dual_, completed = carry
         residuals = _barrier_residuals(
             quadratic,
@@ -1980,7 +1988,7 @@ def _barrier_tangent_single(
         quadratic_tangent + jnp.swapaxes(quadratic_tangent, -1, -2)
     )
 
-    def equation(q, c, a, b, g, h):
+    def equation(q: Array, c: Array, a: Array, b: Array, g: Array, h: Array) -> Array:
         return jnp.concatenate(
             _barrier_residuals(
                 q,
@@ -2094,16 +2102,16 @@ def _barrier_primal_implicit(
 
 @_barrier_primal_implicit.defjvp
 def _barrier_primal_implicit_jvp(
-    max_iterations,
-    tolerance,
-    regularization,
-    step_fraction,
-    barrier,
-    centering_tolerance,
-    maximum_centering_steps,
-    primals,
-    tangents,
-):
+    max_iterations: int,
+    tolerance: float,
+    regularization: float,
+    step_fraction: float,
+    barrier: float,
+    centering_tolerance: float,
+    maximum_centering_steps: int,
+    primals: _ProgramArrays,
+    tangents: _ProgramArrays,
+) -> tuple[Array, Array]:
     (
         quadratic,
         linear,
@@ -2274,7 +2282,7 @@ def _active_set_tangent_single(
         quadratic_tangent + jnp.swapaxes(quadratic_tangent, -1, -2)
     )
 
-    def equation(q, c, a, b, g, h):
+    def equation(q: Array, c: Array, a: Array, b: Array, g: Array, h: Array) -> Array:
         return _active_set_equation(
             q,
             c,
@@ -2404,15 +2412,15 @@ def _dense_primal_implicit(
 
 @_dense_primal_implicit.defjvp
 def _dense_primal_implicit_jvp(
-    max_iterations,
-    tolerance,
-    regularization,
-    step_fraction,
-    active_set_tolerance,
-    strict_complementarity_tolerance,
-    primals,
-    tangents,
-):
+    max_iterations: int,
+    tolerance: float,
+    regularization: float,
+    step_fraction: float,
+    active_set_tolerance: float,
+    strict_complementarity_tolerance: float,
+    primals: _ProgramArrays,
+    tangents: _ProgramArrays,
+) -> tuple[Array, Array]:
     (
         quadratic,
         linear,
@@ -2583,7 +2591,7 @@ def prepare_qp_sensitivity(
     if not isinstance(derivative, ConvexDifferentiationPolicy):
         raise TypeError("differentiation must be a ConvexDifferentiationPolicy or None.")
 
-    def solution(candidate):
+    def solution(candidate: QuadraticProgram) -> Array:
         return solve_quadratic_program_primal(
             candidate,
             policy=policy,
@@ -2597,10 +2605,10 @@ def prepare_qp_sensitivity(
     )
     primal = linearization.primal
 
-    def pushforward(tangent):
+    def pushforward(tangent: QuadraticProgram) -> Array:
         return linearization.jvp(tangent)
 
-    def pullback(cotangent):
+    def pullback(cotangent: Array) -> QuadraticProgram:
         return linearization.vjp(cotangent)
 
     zero_tangent = jax.tree.map(

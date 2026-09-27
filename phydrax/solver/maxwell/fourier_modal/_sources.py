@@ -8,7 +8,8 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -48,7 +49,7 @@ class FourierModalExcitation(StrictModule):
         electric_currents: Sequence[ArrayLike] = (),
         magnetic_currents: Sequence[ArrayLike] = (),
         channel_weights: ArrayLike | None = None,
-    ):
+    ) -> None:
         left = jnp.asarray(left_incident)
         right = jnp.asarray(right_incident, dtype=left.dtype)
         if left.ndim < 2 or right.shape != left.shape:

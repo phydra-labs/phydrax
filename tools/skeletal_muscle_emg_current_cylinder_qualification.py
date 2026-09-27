@@ -12,6 +12,7 @@ claim is made by these manufactured numerical experiments.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -28,7 +29,7 @@ from phydrax.applications.skeletal_muscle.fibers import (
 )
 
 
-def make_source(nodes: int = 33, fibers: int = 1):
+def make_source(nodes: int = 33, fibers: int = 1) -> Any:
     """Explicit manufactured inputs, never anatomical package defaults."""
     ids = tuple(f"manufactured-fiber-{i}" for i in range(fibers))
     schedule = PrescribedFiberStimulusSchedule(
@@ -62,12 +63,17 @@ def make_source(nodes: int = 33, fibers: int = 1):
     return fiber, current, snapshot, candidate.commit(prior, snapshot)
 
 
-def make_conductor(current, *, angular=2, axial=3):
+def make_conductor(current: Any, *, angular: Any = 2, axial: Any = 3) -> Any:
     return Farina2004CylindricalConductorPlan(
+        # ty: ignore[invalid-argument-type]
         [0.03, 0.035, 0.04],
+        # ty: ignore[invalid-argument-type]
         [0.1, 0.5, 0.05, 1.0],
+        # ty: ignore[invalid-argument-type]
         [[0.0, -0.006], [0.15, 0.009]],
+        # ty: ignore[invalid-argument-type]
         [[0.002, 0.003], [0.002, 0.003]],
+        # ty: ignore[invalid-argument-type]
         [[1.0, -1.0]],
         ("e0", "e1"),
         ("bipolar",),
@@ -188,7 +194,7 @@ def qualify() -> dict[str, object]:
     }
 
 
-def main():
+def main() -> None:
     result = qualify()
     print(json.dumps(result, indent=2, sort_keys=True))
     if not result["passed"]:

@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -690,6 +691,7 @@ def _polyhedral_face_loops(
             isinstance(entry, tuple) and len(entry) == 2 and isinstance(entry[0], str)
         )
         if not descriptor:
+            # ty: ignore[invalid-assignment]
             explicit[index] = tuple(entry)
             continue
         kind_value, values = entry

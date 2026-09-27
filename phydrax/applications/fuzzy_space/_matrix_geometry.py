@@ -12,12 +12,14 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 
 
 class FuzzySphereMatrixGeometryPlan(StrictModule):
@@ -34,7 +36,7 @@ class FuzzySphereMatrixGeometryPlan(StrictModule):
         /,
         *,
         maximum_matrix_elements: int = 4_000_000,
-    ):
+    ) -> None:
         spin = int(twice_spin)
         dimension = spin + 1
         maximum = int(maximum_matrix_elements)
@@ -205,7 +207,7 @@ class FuzzyScalarMatrixModelPlan(StrictModule):
         proposal_scale: float = 0.05,
         draws: int = 100,
         burn_in: int = 20,
-    ):
+    ) -> None:
         if not isinstance(geometry, PreparedFuzzySphereMatrixGeometry):
             raise TypeError("geometry must be PreparedFuzzySphereMatrixGeometry.")
         mass = float(mass_squared)
@@ -269,7 +271,7 @@ class FuzzyScalarMatrixModelRun(StrictModule):
 def sample_fuzzy_scalar_matrix_model(
     plan: FuzzyScalarMatrixModelPlan,
     initial_field: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> FuzzyScalarMatrixModelRun:
     """Run a bounded Hermitian random-walk Metropolis matrix model."""

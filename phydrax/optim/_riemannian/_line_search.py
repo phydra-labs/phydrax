@@ -8,7 +8,8 @@ from collections.abc import Callable
 from typing import Any
 
 import jax
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._iterative._globalization import (
     armijo_backtracking as _armijo_backtracking,
@@ -35,7 +36,7 @@ def armijo_backtracking(
         raise TypeError("parameter_geometry must be a ParameterGeometry.")
     directional = parameter_geometry.inner(parameters, gradient, direction)
 
-    def step(base, tangent, rate):
+    def step(base: PyTree[Any], tangent: PyTree[Any], rate: Array) -> PyTree[Array]:
         scaled = jax.tree.map(lambda leaf: rate * leaf, tangent)
         return parameter_geometry.retract(base, scaled)
 

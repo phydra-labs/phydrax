@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
+from typing import Self, TypeVar
 
 from .._fingerprint import canonical_fingerprint
 from ._closure_taxonomy import (
@@ -27,7 +29,12 @@ def _strings(values: Sequence[str], label: str) -> tuple[str, ...]:
     return tuple(sorted(_identifier(str(value), label) for value in values))
 
 
-def _enums(kind, values):
+_StrEnumT = TypeVar("_StrEnumT", bound=StrEnum)
+
+
+def _enums(
+    kind: type[_StrEnumT], values: Iterable[_StrEnumT | str]
+) -> tuple[_StrEnumT, ...]:
     return tuple(sorted((kind(value) for value in values), key=lambda item: item.value))
 
 
@@ -52,24 +59,24 @@ class CapabilityClosureRequirement:
     @classmethod
     def create(
         cls,
-        requirement,
+        requirement: str,
         /,
         *,
-        minimum_depth,
-        physical_fields,
-        carriers,
-        coupling_locations,
-        execution_regimes,
-        topology_regimes,
-        workflow_classes,
-        required_benchmarks=(),
-        required_evidence_dimensions=(),
-        required_providers=(),
-        required_public_symbols=(),
-        required_documents=(),
-        source_ids=(),
-        rationale,
-    ):
+        minimum_depth: CapabilityDepth | int,
+        physical_fields: Iterable[PhysicsField | str],
+        carriers: Iterable[CarrierRepresentation | str],
+        coupling_locations: Iterable[CouplingLocation | str],
+        execution_regimes: Iterable[ExecutionRegime | str],
+        topology_regimes: Iterable[TopologyRegime | str],
+        workflow_classes: Iterable[WorkflowClass | str],
+        required_benchmarks: Sequence[str] = (),
+        required_evidence_dimensions: Sequence[str] = (),
+        required_providers: Sequence[str] = (),
+        required_public_symbols: Sequence[str] = (),
+        required_documents: Sequence[str] = (),
+        source_ids: Sequence[str] = (),
+        rationale: str,
+    ) -> Self:
         return cls(
             _identifier(requirement, "requirement"),
             CapabilityDepth(minimum_depth),
@@ -92,7 +99,7 @@ class CapabilityClosureRequirement:
     def requirement_id(self) -> str:
         return canonical_fingerprint(self.to_record(include_id=False))
 
-    def to_record(self, *, include_id=True):
+    def to_record(self, *, include_id: bool = True) -> dict[str, object]:
         record = {
             "kind": "capability-closure-requirement",
             "requirement": self.requirement,
@@ -128,17 +135,17 @@ class CapabilityGapResolution:
     @classmethod
     def create(
         cls,
-        requirement_id,
-        disposition,
-        actual_depth=CapabilityDepth.SEMANTIC,
+        requirement_id: str,
+        disposition: ClosureDisposition | str,
+        actual_depth: CapabilityDepth | int = CapabilityDepth.SEMANTIC,
         /,
         *,
-        capability_ids=(),
-        evidence_ids=(),
-        provider_ids=(),
-        rationale,
-        release_authorized=False,
-    ):
+        capability_ids: Iterable[str] = (),
+        evidence_ids: Sequence[str] = (),
+        provider_ids: Sequence[str] = (),
+        rationale: str,
+        release_authorized: bool = False,
+    ) -> Self:
         return cls(
             _identifier(requirement_id, "requirement ID"),
             ClosureDisposition(disposition),
@@ -156,7 +163,7 @@ class CapabilityGapResolution:
     def resolution_id(self) -> str:
         return canonical_fingerprint(self.to_record(include_id=False))
 
-    def to_record(self, *, include_id=True):
+    def to_record(self, *, include_id: bool = True) -> dict[str, object]:
         record = {
             "kind": "capability-gap-resolution",
             "requirement_id": self.requirement_id,

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -62,7 +65,7 @@ from phydrax.equations.fem._viscous_conservation import (
 )
 
 
-def _schema():
+def _schema() -> Any:
     names = ("fuel", "oxidizer")
     return ChemicalSpeciesSchema.from_unique_species(
         names,
@@ -75,7 +78,7 @@ def _schema():
     )
 
 
-def _thermodynamics(schema=None):
+def _thermodynamics(schema: Any = None) -> Any:
     schema = _schema() if schema is None else schema
     calorics = PolynomialSpeciesThermodynamicsPlan(
         schema,
@@ -92,20 +95,20 @@ def _thermodynamics(schema=None):
     )
 
 
-def _fields(schema):
+def _fields(schema: Any) -> Any:
     return FavreLESFieldContract(schema.schema_id, schema.species_names)
 
 
 def _closure(
-    schema,
-    coefficient=0.16,
+    schema: Any,
+    coefficient: Any = 0.16,
     *,
-    upper_bound=0.1,
-    isotropic_trace_policy="neglected",
-    filter_name="favre-cell-volume",
-    dissipation_coefficient=1.05,
-    kinetic_schmidt=1.0,
-):
+    upper_bound: Any = 0.1,
+    isotropic_trace_policy: Any = "neglected",
+    filter_name: Any = "favre-cell-volume",
+    dissipation_coefficient: Any = 1.05,
+    kinetic_schmidt: Any = 1.0,
+) -> Any:
     resolved_filter = ResolvedLESFilter(
         filter_name,
         family="implicit-grid-volume",
@@ -138,20 +141,20 @@ def _closure(
 
 
 def _inputs(
-    fields,
+    fields: Any,
     *,
-    density=1.2,
-    temperature=400.0,
-    velocity=(1.0, -0.5, 0.2),
-    velocity_gradient=((0.4, 0.1, 0.0), (-0.2, -0.1, 0.3), (0.0, 0.2, 0.05)),
-    temperature_gradient=(2.0, -1.0, 0.5),
-    mass_fractions=(0.3, 0.7),
-    mass_fraction_gradient=((0.1, 0.02, 0.0), (-0.1, -0.02, 0.0)),
-    specific_heat_capacity_pressure=1100.0,
-    partial_specific_enthalpies=(2.0e5, 3.0e5),
-    specific_sgs_kinetic_energy=None,
-    specific_sgs_kinetic_energy_gradient=None,
-):
+    density: Any = 1.2,
+    temperature: Any = 400.0,
+    velocity: Any = (1.0, -0.5, 0.2),
+    velocity_gradient: Any = ((0.4, 0.1, 0.0), (-0.2, -0.1, 0.3), (0.0, 0.2, 0.05)),
+    temperature_gradient: Any = (2.0, -1.0, 0.5),
+    mass_fractions: Any = (0.3, 0.7),
+    mass_fraction_gradient: Any = ((0.1, 0.02, 0.0), (-0.1, -0.02, 0.0)),
+    specific_heat_capacity_pressure: Any = 1100.0,
+    partial_specific_enthalpies: Any = (2.0e5, 3.0e5),
+    specific_sgs_kinetic_energy: Any = None,
+    specific_sgs_kinetic_energy_gradient: Any = None,
+) -> Any:
     return FavreLESInputs(
         jnp.asarray(density),
         jnp.asarray(temperature),
@@ -168,7 +171,7 @@ def _inputs(
     )
 
 
-def test_field_units_species_identity_and_filter_provenance_are_exact():
+def test_field_units_species_identity_and_filter_provenance_are_exact() -> None:
     schema = _schema()
     fields = _fields(schema)
     closure = _closure(schema)
@@ -211,7 +214,7 @@ def test_field_units_species_identity_and_filter_provenance_are_exact():
         )
 
 
-def test_constant_density_reduces_to_specific_model_and_is_objective():
+def test_constant_density_reduces_to_specific_model_and_is_objective() -> None:
     schema = _schema()
     closure = _closure(schema)
     inputs = _inputs(closure.fields)
@@ -258,7 +261,7 @@ def test_constant_density_reduces_to_specific_model_and_is_objective():
     )
 
 
-def test_total_energy_stress_work_heat_and_named_species_flux_signs():
+def test_total_energy_stress_work_heat_and_named_species_flux_signs() -> None:
     schema = _schema()
     closure = _closure(schema)
     inputs = _inputs(closure.fields)
@@ -285,7 +288,7 @@ def test_total_energy_stress_work_heat_and_named_species_flux_signs():
     assert bool(jnp.all(result.evidence.successful))
 
 
-def test_isotropic_trace_policy_is_explicit_and_conservatively_integrated():
+def test_isotropic_trace_policy_is_explicit_and_conservatively_integrated() -> None:
     schema = _schema()
     provided = _closure(schema, isotropic_trace_policy="provided-sgs-kinetic-energy")
     assert provided.transport_role == "physical-subgrid-transport"
@@ -365,7 +368,7 @@ def test_isotropic_trace_policy_is_explicit_and_conservatively_integrated():
     )
 
 
-def test_zero_coefficient_is_exact_and_invalid_or_unbounded_inputs_are_refused():
+def test_zero_coefficient_is_exact_and_invalid_or_unbounded_inputs_are_refused() -> None:
     schema = _schema()
     zero = _closure(schema, coefficient=0.0, upper_bound=0.0)
     result = zero.evaluate(_inputs(zero.fields))
@@ -400,7 +403,7 @@ def test_zero_coefficient_is_exact_and_invalid_or_unbounded_inputs_are_refused()
         jax.block_until_ready(output.kinematic_eddy_viscosity)
 
 
-def test_transported_sgs_energy_exchange_signs_and_positivity_restriction():
+def test_transported_sgs_energy_exchange_signs_and_positivity_restriction() -> None:
     schema = _schema()
     closure = _closure(
         schema,
@@ -469,7 +472,7 @@ def test_transported_sgs_energy_exchange_signs_and_positivity_restriction():
     )
 
 
-def test_transported_zero_state_and_total_energy_exchange_ledger_are_exact():
+def test_transported_zero_state_and_total_energy_exchange_ledger_are_exact() -> None:
     schema = _schema()
     zero_closure = _closure(
         schema,
@@ -509,7 +512,7 @@ def test_transported_zero_state_and_total_energy_exchange_ledger_are_exact():
         favre_les=closure,
     )
 
-    def state_at(point):
+    def state_at(point: Any) -> Any:
         density = 1.2 + 0.02 * point[0]
         fuel = 0.3 + 0.01 * point[1]
         species_density = density * jnp.stack((fuel, 1.0 - fuel))
@@ -560,12 +563,12 @@ def test_transported_zero_state_and_total_energy_exchange_ledger_are_exact():
         jax.block_until_ready(output)
 
 
-def test_jit_and_jvp_preserve_favre_transport_contract():
+def test_jit_and_jvp_preserve_favre_transport_contract() -> None:
     schema = _schema()
     closure = _closure(schema)
     base_gradient = jnp.asarray(((0.4, 0.1, 0.0), (-0.2, -0.1, 0.3), (0.0, 0.2, 0.05)))
 
-    def energy_flux(velocity_gradient):
+    def energy_flux(velocity_gradient: Any) -> Any:
         return closure.evaluate(
             _inputs(closure.fields, velocity_gradient=velocity_gradient)
         ).conservative_total_energy_flux
@@ -583,7 +586,7 @@ def test_jit_and_jvp_preserve_favre_transport_contract():
     assert float(jnp.sqrt(jnp.sum(tangent * tangent))) > 0.0
 
 
-def test_transported_coupled_state_is_restartable_jittable_and_differentiable():
+def test_transported_coupled_state_is_restartable_jittable_and_differentiable() -> None:
     schema = _schema()
     system = HomogeneousMixtureCompressibleNavierStokesSystem(
         _thermodynamics(schema),
@@ -602,13 +605,14 @@ def test_transported_coupled_state_is_restartable_jittable_and_differentiable():
         system.conserved_to_primitive(restarted), primitive, rtol=2.0e-6
     )
 
-    def coupled_terms(local_state):
+    def coupled_terms(local_state: Any) -> Any:
         gradient = jnp.zeros(local_state.shape + (3,), dtype=local_state.dtype)
         viscous, rate = system.viscous_flux_and_favre_rate(local_state, gradient)
         return jnp.concatenate(
             (
                 system.physical_flux(local_state, 0),
                 viscous.reshape((-1,)),
+                # ty: ignore[unresolved-attribute]
                 rate.conserved_source,
             )
         )
@@ -639,7 +643,7 @@ def test_transported_coupled_state_is_restartable_jittable_and_differentiable():
     np.testing.assert_allclose(speeds[-1] - primitive[2], expected_sound, rtol=2.0e-6)
 
 
-def test_gas_viscous_flux_adds_favre_transport_without_touching_stabilization():
+def test_gas_viscous_flux_adds_favre_transport_without_touching_stabilization() -> None:
     schema = _schema()
     thermodynamics = _thermodynamics(schema)
     closure = _closure(schema)
@@ -653,7 +657,7 @@ def test_gas_viscous_flux_adds_favre_transport_without_touching_stabilization():
         favre_les=closure,
     )
 
-    def state_at(point):
+    def state_at(point: Any) -> Any:
         density = 1.2 + 0.02 * point[0]
         fuel = 0.3 + 0.01 * point[1]
         species_density = density * jnp.stack((fuel, 1.0 - fuel))
@@ -702,7 +706,9 @@ def test_gas_viscous_flux_adds_favre_transport_without_touching_stabilization():
         )
 
 
-def test_existing_manufactured_compressible_semidiscrete_path_carries_favre_flux():
+def test_existing_manufactured_compressible_semidiscrete_path_carries_favre_flux() -> (
+    None
+):
     schema = _schema()
     system = HomogeneousMixtureCompressibleNavierStokesSystem(
         _thermodynamics(schema),
@@ -711,7 +717,7 @@ def test_existing_manufactured_compressible_semidiscrete_path_carries_favre_flux
         favre_les=_closure(schema),
     )
 
-    def exact_state(time, point, args):
+    def exact_state(time: Any, point: Any, args: Any) -> Any:
         del args
         phase = point[0] + 0.5 * point[1] - 0.25 * point[2] - time
         density = 1.2 + 0.01 * jnp.sin(phase)
@@ -737,7 +743,7 @@ def test_existing_manufactured_compressible_semidiscrete_path_carries_favre_flux
     assert bool(jnp.all(system.admissible(evidence.state)))
 
 
-def test_nodal_dg_semidiscrete_rhs_includes_gradient_aware_sgs_energy_rate():
+def test_nodal_dg_semidiscrete_rhs_includes_gradient_aware_sgs_energy_rate() -> None:
     schema = _schema()
     system = HomogeneousMixtureCompressibleNavierStokesSystem(
         _thermodynamics(schema),
@@ -804,8 +810,10 @@ def test_nodal_dg_semidiscrete_rhs_includes_gradient_aware_sgs_energy_rate():
         jnp.asarray((0.36, 0.84, 0.0, 0.0, 0.0, 400.0, 0.25))
     )
     state = jnp.broadcast_to(
-        point_state, discretization.field_spaces[0].vector_space.shape
+        point_state,
+        discretization.field_spaces[0].vector_space.shape,
     )
+    # ty: ignore[invalid-argument-type]
     rate = compiled(0.0, state)
     local_expected = system.favre_les_coupled_rate(
         point_state,

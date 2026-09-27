@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array
+from jax import Array
+from jaxtyping import PyTree
 
 import phydrax.axes as cx
 
@@ -20,11 +21,13 @@ from .._strict import StrictModule
 from ..nn.operator.data import (
     FunctionSamples,
     OperatorBatch,
+    OperatorFieldBatch,
     OperatorOutputSpec,
     OperatorPrediction,
 )
 from ..nn.operator.protocols import OperatorModel
 from ..nn.operator.training import OperatorLinearization
+from ..typing import parse
 from ._covariance import AbstractCovariance
 from ._linearized import LinearizedPropagationResult, propagate_linearized_map
 from ._predictive import (
@@ -35,15 +38,13 @@ from ._predictive import (
 )
 
 
-ValidPolicy = Literal["record", "raise"]
+ValidPolicy: TypeAlias = Literal["record", "raise"]
 _OPERATOR_POINT_DIM = "__phydra_operator_point"
 _OPERATOR_CHANNEL_DIM = "__phydra_operator_channel"
 
 
 def _validate_valid_policy(value: ValidPolicy) -> ValidPolicy:
-    if value not in ("record", "raise"):
-        raise ValueError("valid_policy must be 'record' or 'raise'.")
-    return value
+    return parse(value, ValidPolicy, "valid_policy")
 
 
 def _physical_dims(
@@ -175,7 +176,7 @@ def _select_prediction_field(
     prediction: OperatorPrediction,
     field_name: str,
     /,
-):
+) -> tuple[str, OperatorFieldBatch, FunctionSamples]:
     name = str(field_name)
     if not name:
         raise ValueError("field_name must be non-empty.")
@@ -376,7 +377,7 @@ class OperatorPredictionInterval(StrictModule):
         nominal_coverage: float,
         simultaneous: bool = False,
         calibrated: bool = False,
-    ):
+    ) -> None:
         if not isinstance(lower, OperatorPrediction) or not isinstance(
             upper, OperatorPrediction
         ):
@@ -440,7 +441,7 @@ class OperatorPredictiveField(StrictModule):
         field_name: str,
         query_name: str,
         valid_policy: ValidPolicy = "record",
-    ):
+    ) -> None:
         if not isinstance(predictive, PredictiveField):
             raise TypeError("predictive must be a PredictiveField.")
         if not isinstance(query, FunctionSamples):
@@ -860,11 +861,11 @@ def propagate_operator_linearized(
         dims=dims,
     )
 
-    def pushforward(tangent):
+    def pushforward(tangent: PyTree[Array]) -> cx.AxisArray:
         values = linearization.pushforward(tangent)
         return cx.AxisArray(jnp.where(mask, values, 0.0), dims=dims)
 
-    def pullback(cotangent):
+    def pullback(cotangent: PyTree[Array]) -> Array:
         if not isinstance(cotangent, cx.AxisArray):
             raise TypeError(
                 "Operator covariance cotangents must be phydrax.axes.AxisArray."

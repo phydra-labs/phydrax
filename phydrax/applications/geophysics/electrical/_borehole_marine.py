@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 
@@ -24,7 +25,9 @@ class BoreholeElectrodeArray(StrictModule, NonTrainableState):
     positions_m: Array
     array_id: str = eqx.field(static=True)
 
-    def __init__(self, trajectory: BoreholeTrajectory, measured_depth_m: ArrayLike, /):
+    def __init__(
+        self, trajectory: BoreholeTrajectory, measured_depth_m: ArrayLike, /
+    ) -> None:
         if not isinstance(trajectory, BoreholeTrajectory):
             raise TypeError("Borehole electrodes require BoreholeTrajectory.")
         depths = np.asarray(measured_depth_m, dtype=np.float64)
@@ -128,7 +131,7 @@ class MixedDimensionalCasingPlan(StrictModule, NonTrainableState):
         axial_conductance_S: ArrayLike,
         leakage_conductance_S: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             formation_operator, la.AbstractLinearOperator
         ) or not formation_operator.source.compatible(formation_operator.target):
@@ -175,13 +178,13 @@ class MixedDimensionalCasingPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _operator(self):
+    def _operator(self) -> la.FunctionLinearOperator:
         formation_count = self.formation_operator.source.size
         stations = self.coupling.shape[0]
         gauge_formation = self.gauge[:formation_count]
         gauge_casing = self.gauge[formation_count : formation_count + stations]
 
-        def action(values):
+        def action(values: Array) -> Array:
             formation = values[:formation_count]
             casing = values[formation_count : formation_count + stations]
             multiplier = values[-1]

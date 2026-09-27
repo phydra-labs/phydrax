@@ -13,19 +13,14 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
+from ...._validation import canonical_identifier
 from ....solver import finite_state_generator, FiniteStateGenerator
 from ....stochastic import AbstractJumpProcess
-
-
-def _identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    if not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty canonical identifier.")
-    return value
+from ....typing import PRNGKey
 
 
 def _positive_capacity(value: int, name: str, /) -> int:
@@ -45,7 +40,7 @@ class BloodCompartment:
     absorbing: bool = False
 
     def __post_init__(self) -> None:
-        identifier = _identifier(self.compartment_id, "compartment_id")
+        identifier = canonical_identifier(self.compartment_id, "compartment_id")
         volume = float(self.volume_m3)
         if not math.isfinite(volume) or volume <= 0.0:
             raise ValueError("volume_m3 must be finite and positive.")
@@ -64,8 +59,8 @@ class BloodFlow:
     volume_flow_m3_per_s: float
 
     def __post_init__(self) -> None:
-        source = _identifier(self.source_compartment_id, "source_compartment_id")
-        target = _identifier(self.target_compartment_id, "target_compartment_id")
+        source = canonical_identifier(self.source_compartment_id, "source_compartment_id")
+        target = canonical_identifier(self.target_compartment_id, "target_compartment_id")
         flow = float(self.volume_flow_m3_per_s)
         if source == target:
             raise ValueError("Blood flows must connect distinct compartments.")
@@ -219,7 +214,7 @@ class BloodTransitJumpProcess(AbstractJumpProcess):
         self.mark_shape = ()
         self.num_channels = source.shape[0]
         self.compartment_count = count
-        self.process_id = _identifier(process_id, "process_id")
+        self.process_id = canonical_identifier(process_id, "process_id")
 
     def _state_index(self, state: ArrayLike, /) -> tuple[Array, Array]:
         value = jnp.asarray(state)[0]
@@ -232,14 +227,21 @@ class BloodTransitJumpProcess(AbstractJumpProcess):
         index = jnp.clip(value, 0, self.compartment_count - 1).astype(jnp.int32)
         return index, valid
 
-    def intensities(self, t: ArrayLike, state: ArrayLike, args=None, /) -> Array:
+    def intensities(
+        self, t: ArrayLike, state: ArrayLike, args: object = None, /
+    ) -> Array:
         del t, args
         index, valid = self._state_index(state)
         rates = jnp.where(self.source_indices == index, self.transition_rates_per_s, 0.0)
         return jnp.where(valid, rates, jnp.full_like(rates, jnp.nan))
 
     def jump(
-        self, state: ArrayLike, channel: ArrayLike, mark: ArrayLike, args=None, /
+        self,
+        state: ArrayLike,
+        channel: ArrayLike,
+        mark: ArrayLike,
+        args: object = None,
+        /,
     ) -> Array:
         del mark, args
         values = jnp.asarray(state)
@@ -255,7 +257,15 @@ class BloodTransitJumpProcess(AbstractJumpProcess):
         destination = self.target_indices[selected].astype(values.dtype)
         return jnp.where(active, destination[None], values)
 
-    def sample_mark(self, key, t, state, channel, args=None, /) -> Array:
+    def sample_mark(
+        self,
+        key: PRNGKey,
+        t: ArrayLike,
+        state: ArrayLike,
+        channel: ArrayLike,
+        args: object = None,
+        /,
+    ) -> Array:
         del key, t, channel, args
         return jnp.asarray(0, dtype=jnp.asarray(state).dtype)
 
@@ -269,7 +279,7 @@ class PreparedCirculatingBloodModel:
     compartment_ids: tuple[str, ...]
 
     def encode(self, compartment_id: str, /) -> Array:
-        identifier = _identifier(compartment_id, "compartment_id")
+        identifier = canonical_identifier(compartment_id, "compartment_id")
         if identifier not in self.compartment_ids:
             raise ValueError("Unknown circulating-blood compartment identifier.")
         return jnp.asarray([self.compartment_ids.index(identifier)], dtype=jnp.int32)
@@ -323,11 +333,18 @@ def prepare_circulating_blood_model(
     identifiers = tuple(value.compartment_id for value in model.compartments)
     indices = {identifier: index for index, identifier in enumerate(identifiers)}
     volumes = {value.compartment_id: value.volume_m3 for value in model.compartments}
-    source = tuple(indices[value.source_compartment_id] for value in model.flows)
-    target = tuple(indices[value.target_compartment_id] for value in model.flows)
-    rates = tuple(
-        value.volume_flow_m3_per_s / volumes[value.source_compartment_id]
-        for value in model.flows
+    source = np.asarray(
+        [indices[value.source_compartment_id] for value in model.flows], dtype=np.int32
+    )
+    target = np.asarray(
+        [indices[value.target_compartment_id] for value in model.flows], dtype=np.int32
+    )
+    rates = np.asarray(
+        [
+            value.volume_flow_m3_per_s / volumes[value.source_compartment_id]
+            for value in model.flows
+        ],
+        dtype=np.float64,
     )
     process = BloodTransitJumpProcess(
         source,

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _prepared():
+def _prepared() -> Any:
     qcd = phx.applications.lattice_field
     convention = qcd.ChemicalChargeConvention(energy_unit=phx.units.GIGAELECTRONVOLT)
     domain = qcd.FiniteDensityDomain(
@@ -39,7 +42,7 @@ def _prepared():
     return qcd.prepare_taylor_eos(estimate), convention, domain
 
 
-def test_taylor_eos_fields_derive_from_one_pressure_potential():
+def test_taylor_eos_fields_derive_from_one_pressure_potential() -> None:
     qcd = phx.applications.lattice_field
     prepared, _, _ = _prepared()
     temperature = 0.2
@@ -55,7 +58,20 @@ def test_taylor_eos_fields_derive_from_one_pressure_potential():
     assert jnp.abs(result.thermodynamic_identity_residual) < 1.0e-12
 
 
-def test_heavy_ion_constraints_solve_declared_charge_ratio():
+@pytest.mark.parametrize("temperature_bounds", [(0.15,), (0.15, 0.25, 0.35)])
+def test_finite_density_domain_rejects_non_pair_temperature_bounds(
+    temperature_bounds: Any,
+) -> None:
+    qcd = phx.applications.lattice_field
+    with pytest.raises(ValueError, match="temperature"):
+        qcd.FiniteDensityDomain(
+            temperature_bounds,
+            ((-1.0, 1.0), (-0.5, 0.5), (-0.5, 0.5)),
+            maximum_total_order=2,
+        )
+
+
+def test_heavy_ion_constraints_solve_declared_charge_ratio() -> None:
     qcd = phx.applications.lattice_field
     prepared, _, _ = _prepared()
     result = qcd.solve_heavy_ion_path(
@@ -79,7 +95,7 @@ def test_heavy_ion_constraints_solve_declared_charge_ratio():
     assert int(final_update.iterations) == 1
 
 
-def test_taylor_table_refuses_extrapolation_and_passes_stability_checks():
+def test_taylor_table_refuses_extrapolation_and_passes_stability_checks() -> None:
     qcd = phx.applications.lattice_field
     prepared, convention, domain = _prepared()
     table = qcd.build_taylor_eos_table(
@@ -124,7 +140,7 @@ def test_taylor_table_refuses_extrapolation_and_passes_stability_checks():
         )
 
 
-def test_multi_charge_canonical_transform_reports_finite_support():
+def test_multi_charge_canonical_transform_reports_finite_support() -> None:
     qcd = phx.applications.lattice_field
     _, convention, _ = _prepared()
     plan = qcd.MultiChargeCanonicalPlan(

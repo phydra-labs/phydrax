@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -60,7 +61,7 @@ class ConservationIMEXMethod(StrictModule, NonTrainableState):
         *,
         validator: Callable | None = None,
         method_id: str,
-    ):
+    ) -> None:
         if (
             not isinstance(tableau, AdditiveIMEXTableau)
             or not callable(explicit_rhs)
@@ -118,7 +119,7 @@ class ConservationIMEXMethod(StrictModule, NonTrainableState):
             )
         )
 
-        def solver_shape(candidate):
+        def solver_shape(candidate: Array) -> Array:
             result = self.implicit_solver(
                 candidate, time_, step * self.tableau.implicit_matrix[0, 0], args
             )
@@ -148,7 +149,7 @@ class ConservationIMEXMethod(StrictModule, NonTrainableState):
             diagonal = self.tableau.implicit_matrix[stage, stage]
             coefficient = step * diagonal
 
-            def solve_stage(provisional):
+            def solve_stage(provisional: Array) -> ImplicitConservationStageResult:
                 result = self.implicit_solver(provisional, stage_time, coefficient, args)
                 if not isinstance(result, ImplicitConservationStageResult):
                     raise TypeError(
@@ -222,7 +223,7 @@ class ElementBlockPreconditioner(StrictModule):
         /,
         *,
         preconditioner_id: str,
-    ):
+    ) -> None:
         routes_ = tuple(jnp.asarray(value, dtype=jnp.int32) for value in routes)
         blocks_ = tuple(jnp.asarray(value) for value in blocks)
         if (

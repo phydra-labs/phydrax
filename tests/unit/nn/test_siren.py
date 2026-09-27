@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -8,7 +9,7 @@ from phydrax.nn.layers import SineLayer
 from phydrax.nn.models import SIREN
 
 
-def test_sine_layer_uses_distinct_first_and_hidden_initialization_bounds():
+def test_sine_layer_uses_distinct_first_and_hidden_initialization_bounds() -> None:
     first = SineLayer(
         in_size=4,
         out_size=7,
@@ -28,7 +29,7 @@ def test_sine_layer_uses_distinct_first_and_hidden_initialization_bounds():
     assert jnp.max(jnp.abs(hidden.weight)) <= math.sqrt(6.0 / 7.0) / 2.0
 
 
-def test_siren_shapes_jit_vmap_and_high_order_derivatives_are_finite():
+def test_siren_shapes_jit_vmap_and_high_order_derivatives_are_finite() -> None:
     model = SIREN(
         in_size=1,
         out_size="scalar",
@@ -39,7 +40,7 @@ def test_siren_shapes_jit_vmap_and_high_order_derivatives_are_finite():
         key=jr.key(3),
     )
 
-    def scalar_value(value):
+    def scalar_value(value: Any) -> Any:
         return model(jnp.asarray([value]))
 
     first = jax.grad(scalar_value)
@@ -57,7 +58,7 @@ def test_siren_shapes_jit_vmap_and_high_order_derivatives_are_finite():
     assert jnp.std(derivatives[1]) > 0.0
 
 
-def test_siren_vector_output_and_projection_follow_hidden_frequency_bound():
+def test_siren_vector_output_and_projection_follow_hidden_frequency_bound() -> None:
     model = SIREN(
         in_size=3,
         out_size=2,
@@ -69,4 +70,5 @@ def test_siren_vector_output_and_projection_follow_hidden_frequency_bound():
     bound = math.sqrt(6.0 / 10.0) / 2.5
 
     assert model(jnp.ones(3)).shape == (2,)
+    # ty: ignore[invalid-argument-type]
     assert jnp.max(jnp.abs(model.projection.weight)) <= bound

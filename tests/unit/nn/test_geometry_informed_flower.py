@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _model(*, key=jr.key(0), **overrides):
+def _model(*, key: Any = jr.key(0), **overrides: Any) -> Any:
     options = {
         "in_channels": "scalar",
         "out_channels": "scalar",
@@ -29,10 +32,17 @@ def _model(*, key=jr.key(0), **overrides):
         "source_key": "u",
     }
     options.update(overrides)
+    # ty: ignore[invalid-argument-type]
     return phx.nn.operator.architectures.GeometryInformedFlower(**options, key=key)
 
 
-def _point_batch(*, cases=0, condition=None, query_weights=None, query_mask=None):
+def _point_batch(
+    *,
+    cases: Any = 0,
+    condition: Any = None,
+    query_weights: Any = None,
+    query_mask: Any = None,
+) -> Any:
     nodes = jnp.linspace(0.0, 1.0, 8)
     query_nodes = jnp.linspace(0.05, 0.95, 5)
     values = 1.0 + jnp.sin(2.0 * jnp.pi * nodes)
@@ -82,7 +92,7 @@ def _point_batch(*, cases=0, condition=None, query_weights=None, query_mask=None
     )
 
 
-def test_geometry_informed_flower_runs_jit_and_has_finite_gradients():
+def test_geometry_informed_flower_runs_jit_and_has_finite_gradients() -> None:
     model = _model(key=jr.key(1))
     batch = _point_batch()
 
@@ -102,7 +112,9 @@ def test_geometry_informed_flower_runs_jit_and_has_finite_gradients():
 
 
 @pytest.mark.parametrize("support_kind", ("occupancy", "sdf"))
-def test_geometry_informed_flower_projects_explicit_hard_latent_support(support_kind):
+def test_geometry_informed_flower_projects_explicit_hard_latent_support(
+    support_kind: Any,
+) -> None:
     nodes = (jnp.arange(8, dtype="float64") + 0.5) / 8.0
     sdf = jnp.abs(nodes - 0.5) - 0.3
     expected_mask = sdf < 0.0
@@ -149,7 +161,7 @@ def test_geometry_informed_flower_projects_explicit_hard_latent_support(support_
     assert len(diagnostics.processor.blocks) == 3
 
 
-def test_latent_inverse_distance_support_reproduces_constant_fields_far_away():
+def test_latent_inverse_distance_support_reproduces_constant_fields_far_away() -> None:
     nodes = (jnp.arange(8, dtype="float64") + 0.5) / 8.0
     support_coordinates = (100.0 + jnp.arange(8, dtype="float64"))[:, None]
     batch = phx.nn.operator.OperatorBatch(
@@ -185,7 +197,7 @@ def test_latent_inverse_distance_support_reproduces_constant_fields_far_away():
     assert jnp.all(diagnostics.latent_mask)
 
 
-def test_geometry_informed_flower_propagates_case_conditions_and_diagnostics():
+def test_geometry_informed_flower_propagates_case_conditions_and_diagnostics() -> None:
     condition = jnp.array([[0.0], [1.0]])
     batch = _point_batch(cases=2, condition=condition)
     model = _model(
@@ -209,7 +221,7 @@ def test_geometry_informed_flower_propagates_case_conditions_and_diagnostics():
     assert jnp.allclose(model(batch), output)
 
 
-def test_geometry_informed_flower_enforces_end_to_end_conservation():
+def test_geometry_informed_flower_enforces_end_to_end_conservation() -> None:
     query_weights = jnp.array([0.1, 0.2, 0.25, 0.25, 0.2])
     query_mask = jnp.array([True, True, False, True, True])
     batch = _point_batch(query_weights=query_weights, query_mask=query_mask)

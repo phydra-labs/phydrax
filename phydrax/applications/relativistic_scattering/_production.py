@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -27,6 +28,7 @@ from ...particle_physics import (
     summarize_event_weights,
     WeightVariationKind,
 )
+from ...typing import PRNGKey
 from ._amplitudes import ScatteringProcess
 from ._events import WeightedEventStream
 from ._phase_space import kallen, TwoBodyPhaseSpaceMap
@@ -52,7 +54,7 @@ class BeamPlan(StrictModule, NonTrainableState):
         *,
         spectrum_id: str = "monoenergetic",
         crossing_id: str = "head-on",
-    ):
+    ) -> None:
         identities = tuple(pdg_ids)
         energy = float(center_of_mass_energy)
         spectrum = str(spectrum_id).strip()
@@ -91,7 +93,7 @@ class ScalePlan(StrictModule, NonTrainableState):
         /,
         *,
         scheme_id: str,
-    ):
+    ) -> None:
         renormalization = float(renormalization_scale)
         factorization = float(factorization_scale)
         scheme = str(scheme_id).strip()
@@ -145,7 +147,7 @@ class HardProcessPlan(StrictModule, NonTrainableState):
         spin_average: float = 1.0,
         color_average: float = 1.0,
         cosine_range: tuple[float, float] = (-1.0, 1.0),
-    ):
+    ) -> None:
         if not isinstance(process, ScatteringProcess):
             raise TypeError("process must be ScatteringProcess.")
         if not isinstance(beam, BeamPlan) or not isinstance(scales, ScalePlan):
@@ -217,7 +219,7 @@ class PreparedHardProcess(StrictModule):
 
     def __init__(
         self, plan: HardProcessPlan, matrix_element_squared: MatrixElementSquared, /
-    ):
+    ) -> None:
         if not isinstance(plan, HardProcessPlan):
             raise TypeError("plan must be HardProcessPlan.")
         if not callable(matrix_element_squared):
@@ -266,7 +268,9 @@ class HardEventProduction(StrictModule, NonTrainableState):
         return self.events.successful & self.ledger.successful
 
 
-def _one_hard_point(prepared: PreparedHardProcess, unit: Array, /):
+def _one_hard_point(
+    prepared: PreparedHardProcess, unit: Array, /
+) -> tuple[Array, Array, Array, Array]:
     total = jnp.asarray([prepared.plan.beam.center_of_mass_energy, 0.0, 0.0, 0.0])
     point = prepared.phase_space.map(unit, total)
     matrix_element = jnp.asarray(
@@ -307,8 +311,8 @@ def hard_process_integrand(
 def integrate_hard_process(
     prepared: PreparedHardProcess,
     vegas_plan: VegasPlan,
-    adaptation_key: Key[Array, ""],
-    production_key: Key[Array, ""],
+    adaptation_key: PRNGKey,
+    production_key: PRNGKey,
     /,
 ) -> VegasResult:
     if not isinstance(prepared, PreparedHardProcess):

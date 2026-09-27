@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._numerics._checkpointed_scan import checkpointed_scan
@@ -19,6 +20,8 @@ from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._temporal import RealizedTemporalMesh, TemporalMesh
+from ..discretization.finite_volume import FiniteVolumePrecisionPolicy
+from ..typing import parse
 from ._finite_volume_runtime import (
     FiniteVolumeRunStatus,
     FiniteVolumeRuntimeState,
@@ -29,6 +32,7 @@ from ._finite_volume_runtime import (
 FiniteVolumeRetentionPolicy: TypeAlias = Literal["final", "checkpoints", "trajectory"]
 FiniteVolumeReplayMode: TypeAlias = Literal["full", "step", "block"]
 RolloutLoss = Callable[[FiniteVolumeRuntimeState, Any], Array]
+_ScheduledCarry: TypeAlias = tuple[FiniteVolumeRuntimeState, Array]
 
 
 class FiniteVolumeReplayPolicy(StrictModule, NonTrainableState):
@@ -44,9 +48,8 @@ class FiniteVolumeReplayPolicy(StrictModule, NonTrainableState):
         /,
         *,
         block_size: int | None = None,
-    ):
-        if mode not in ("full", "step", "block"):
-            raise ValueError("Unknown finite-volume replay mode.")
+    ) -> None:
+        mode = parse(mode, FiniteVolumeReplayMode, "mode")
         size = None if block_size is None else int(block_size)
         if mode == "block":
             if size is None or size <= 0:
@@ -87,7 +90,7 @@ def _retained(
     final_state: FiniteVolumeRuntimeState,
     states: Array | None,
     times: Array,
-    precision,
+    precision: FiniteVolumePrecisionPolicy,
     /,
 ) -> tuple[Array, Array]:
     if retention == "final":
@@ -124,15 +127,14 @@ class AdaptiveFiniteVolumeRolloutPlan(StrictModule):
         retention: FiniteVolumeRetentionPolicy = "final",
         checkpoint_stride: int = 1,
         replay: FiniteVolumeReplayPolicy | None = None,
-    ):
+    ) -> None:
         attempts = int(attempt_count)
         stride = int(checkpoint_stride)
         if not isinstance(runtime, PreparedFiniteVolumeRuntime):
             raise TypeError("runtime must be PreparedFiniteVolumeRuntime.")
         if attempts <= 0 or stride <= 0:
             raise ValueError("Attempt count and checkpoint stride must be positive.")
-        if retention not in ("final", "checkpoints", "trajectory"):
-            raise ValueError("Unknown finite-volume retention policy.")
+        retention = parse(retention, FiniteVolumeRetentionPolicy, "retention")
         replay_ = FiniteVolumeReplayPolicy() if replay is None else replay
         if not isinstance(replay_, FiniteVolumeReplayPolicy):
             raise TypeError("replay must be FiniteVolumeReplayPolicy or None.")
@@ -162,7 +164,9 @@ class AdaptiveFiniteVolumeRolloutPlan(StrictModule):
             raise TypeError("initial_state must be FiniteVolumeRuntimeState.")
         retain_states = self.retention != "final"
 
-        def step(runtime_state, _):
+        def step(
+            runtime_state: FiniteVolumeRuntimeState, _: Array
+        ) -> tuple[FiniteVolumeRuntimeState, tuple[Array, ...]]:
             result = self.runtime.advance(runtime_state, args)
             next_state = result.runtime_state
             common = (next_state.time, result.accepted, next_state.last_status)
@@ -240,7 +244,7 @@ class ScheduledFiniteVolumeRolloutPlan(StrictModule):
         retention: FiniteVolumeRetentionPolicy = "final",
         checkpoint_stride: int = 1,
         replay: FiniteVolumeReplayPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(runtime, PreparedFiniteVolumeRuntime):
             raise TypeError("runtime must be PreparedFiniteVolumeRuntime.")
         if not isinstance(temporal_mesh, TemporalMesh):
@@ -254,8 +258,7 @@ class ScheduledFiniteVolumeRolloutPlan(StrictModule):
         stride = int(checkpoint_stride)
         if stride <= 0:
             raise ValueError("checkpoint_stride must be positive.")
-        if retention not in ("final", "checkpoints", "trajectory"):
-            raise ValueError("Unknown finite-volume retention policy.")
+        retention = parse(retention, FiniteVolumeRetentionPolicy, "retention")
         replay_ = FiniteVolumeReplayPolicy() if replay is None else replay
         if not isinstance(replay_, FiniteVolumeReplayPolicy):
             raise TypeError("replay must be FiniteVolumeReplayPolicy or None.")
@@ -324,11 +327,13 @@ class ScheduledFiniteVolumeRolloutPlan(StrictModule):
         del initial_time
         retain_states = self.retention != "final"
 
-        def step(carry, interval):
+        def step(
+            carry: _ScheduledCarry, interval: tuple[Array, Array]
+        ) -> tuple[_ScheduledCarry, tuple[Array, ...]]:
             runtime_state, active = carry
             start, step_size = interval
 
-            def execute(_):
+            def execute(_: None) -> tuple[_ScheduledCarry, tuple[Array, ...]]:
                 current = eqx.error_if(
                     runtime_state.time,
                     jnp.abs(runtime_state.time - start) > tolerance,
@@ -351,7 +356,7 @@ class ScheduledFiniteVolumeRolloutPlan(StrictModule):
                 )
                 return (result.runtime_state, next_active), output
 
-            def skip(_):
+            def skip(_: None) -> tuple[_ScheduledCarry, tuple[Array, ...]]:
                 common = (
                     runtime_state.time,
                     jnp.asarray(False),
@@ -427,7 +432,7 @@ class ScheduledFiniteVolumeRolloutPlan(StrictModule):
         if not np.isfinite(epsilon_) or epsilon_ <= 0.0:
             raise ValueError("epsilon must be finite and positive.")
 
-        def objective(content):
+        def objective(content: Array) -> Array:
             content_state = initial_state.content_state.with_content(content)
             runtime = FiniteVolumeRuntimeState(
                 content_state,

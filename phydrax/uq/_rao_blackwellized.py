@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
@@ -26,6 +27,7 @@ from ..stochastic._state_space import (
     StateSpaceStepContext,
 )
 from ..stochastic._state_space_input import AbstractStateSpaceInput
+from ..typing import parse, PRNGKey
 from ._conditional_moments import _condition_affine_gaussian_diagonal
 from ._covariance import (
     _factor_and_solve_covariance_system,
@@ -90,7 +92,7 @@ class RaoBlackwellizedStateSpaceModel(StrictModule):
         observation_shape: Sequence[int],
         model_id: str,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         if not isinstance(nonlinear_prior, AbstractStatePrior):
             raise TypeError("nonlinear_prior must implement AbstractStatePrior.")
         if not isinstance(nonlinear_transition, AbstractTransitionKernel):
@@ -223,7 +225,7 @@ class RaoBlackwellizedStateSpaceProblem(StrictModule):
         problem_id: str,
         args: Any = None,
         input_signal: AbstractStateSpaceInput | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, RaoBlackwellizedStateSpaceModel):
             raise TypeError("model must be a RaoBlackwellizedStateSpaceModel.")
         if not isinstance(observations, ObservationSequence):
@@ -346,10 +348,8 @@ def _configuration(
     count = int(num_particles)
     if count < 1:
         raise ValueError("num_particles must be positive.")
-    if method not in ("systematic", "stratified", "multinomial", "residual"):
-        raise ValueError("Unknown resampling_method.")
-    if policy not in ("ess", "always", "never"):
-        raise ValueError("Unknown resampling_policy.")
+    method = parse(method, ResamplingMethod, "method")
+    policy = parse(policy, ResamplingPolicy, "policy")
     level = float(threshold)
     if not np.isfinite(level) or not 0.0 < level <= 1.0:
         raise ValueError("resampling_threshold must lie in (0, 1].")
@@ -472,7 +472,7 @@ def _condition_linear_state(
 
 
 def rao_blackwellized_particle_filter(
-    key: Key[Array, ""],
+    key: PRNGKey,
     problem: RaoBlackwellizedStateSpaceProblem,
     /,
     *,
@@ -861,7 +861,7 @@ class RaoBlackwellizedFilterLikelihood(StrictModule):
 
     def __init__(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
         *,
         num_particles: int,
@@ -869,7 +869,7 @@ class RaoBlackwellizedFilterLikelihood(StrictModule):
         resampling_policy: ResamplingPolicy = "ess",
         resampling_threshold: float = 0.5,
         raise_on_failure: bool = False,
-    ):
+    ) -> None:
         count, method, policy, threshold = _configuration(
             num_particles,
             resampling_method,

@@ -7,7 +7,8 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._atlas_cover import AtlasCover
@@ -29,7 +30,7 @@ class PatchwiseTensorField(StrictModule):
         local_fields: Sequence[Callable[[Array], Array]],
         tensor_type: TensorType,
         /,
-    ):
+    ) -> None:
         fields = tuple(local_fields)
         if not isinstance(cover, AtlasCover):
             raise TypeError("cover must be an AtlasCover.")
@@ -72,7 +73,7 @@ class PatchwiseDifferentialForm(StrictModule):
         cover: AtlasCover,
         local_forms: Sequence[DifferentialForm],
         /,
-    ):
+    ) -> None:
         forms = tuple(local_forms)
         if not isinstance(cover, AtlasCover):
             raise TypeError("cover must be an AtlasCover.")
@@ -116,7 +117,7 @@ class PatchwiseMetric(StrictModule):
         cover: AtlasCover,
         local_metrics: Sequence[RiemannianMetric],
         /,
-    ):
+    ) -> None:
         metrics = tuple(local_metrics)
         if not isinstance(cover, AtlasCover):
             raise TypeError("cover must be an AtlasCover.")
@@ -153,7 +154,7 @@ class PatchwiseDensity(StrictModule):
         cover: AtlasCover,
         local_densities: Sequence[VolumeDensity],
         /,
-    ):
+    ) -> None:
         densities = tuple(local_densities)
         if not isinstance(cover, AtlasCover):
             raise TypeError("cover must be an AtlasCover.")

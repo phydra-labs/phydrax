@@ -13,7 +13,7 @@ from phydrax.applications.compact_objects._advanced_perturbations import (
 jax.config.update("jax_enable_x64", True)
 
 
-def test_massive_scalar_parameters_recover_neutral_schwarzschild_limit():
+def test_massive_scalar_parameters_recover_neutral_schwarzschild_limit() -> None:
     mass = 2.0
     field_mass = 0.1
     plan = MassiveFieldQuasiBoundPlan(
@@ -43,7 +43,7 @@ def test_massive_scalar_parameters_recover_neutral_schwarzschild_limit():
     assert not bool(parameters.superradiant)
 
 
-def test_charged_kerr_newman_shooting_returns_equation_residual_and_fixed_path():
+def test_charged_kerr_newman_shooting_returns_equation_residual_and_fixed_path() -> None:
     plan = MassiveFieldQuasiBoundPlan(
         1.0,
         0.2,
@@ -76,7 +76,7 @@ def test_charged_kerr_newman_shooting_returns_equation_residual_and_fixed_path()
     assert float(result.residual_norm) < abs(complex(result.hydrogenic_seed_residual))
 
 
-def test_simple_pole_residues_assemble_causal_green_functions():
+def test_simple_pole_residues_assemble_causal_green_functions() -> None:
     poles = jnp.asarray((1.0 - 0.1j, 2.0 - 0.2j))
     numerators = jnp.asarray((2.0 + 1.0j, -1.0 + 0.5j))
     wronskian_derivatives = jnp.asarray((4.0 + 0.0j, 2.0 - 1.0j))
@@ -110,7 +110,7 @@ def test_simple_pole_residues_assemble_causal_green_functions():
     assert not frequency_green.branch_cut_included
 
 
-def test_quadratic_ringdown_uses_regular_resonant_duhamel_limit():
+def test_quadratic_ringdown_uses_regular_resonant_duhamel_limit() -> None:
     poles = jnp.asarray((1.0 - 0.1j, 2.0 - 0.2j))
     amplitudes = jnp.asarray((1.5 + 0.25j, 0.0j))
     coupling = jnp.zeros((2, 2, 2), dtype="complex128").at[1, 0, 0].set(0.3 - 0.1j)

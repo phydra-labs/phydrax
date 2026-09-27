@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import itertools
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -19,7 +21,7 @@ _FACETS = {
 }
 
 
-def _square(count, generator):
+def _square(count: Any, generator: Any) -> Any:
     axis = np.linspace(0.0, 1.0, count + 1)
     points = np.stack(np.meshgrid(axis, axis, indexing="ij"), axis=-1).reshape((-1, 2))
     index = np.arange((count + 1) ** 2).reshape((count + 1, count + 1))
@@ -32,7 +34,7 @@ def _square(count, generator):
     return points, np.asarray(cells, dtype=np.int32)
 
 
-def _cube(count, generator):
+def _cube(count: Any, generator: Any) -> Any:
     axis = np.linspace(0.0, 1.0, count + 1)
     points = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1).reshape(
         (-1, 3)
@@ -52,7 +54,7 @@ def _cube(count, generator):
     return points, np.asarray(cells, dtype=np.int32)
 
 
-def _compact(points, cells):
+def _compact(points: Any, cells: Any) -> Any:
     """Compact FV reference; its plan also fixes positive cell orientation."""
     generator = np.random.default_rng(3)
     order = generator.permutation(cells.shape[0])
@@ -67,7 +69,9 @@ def _compact(points, cells):
     return plan.prepare(), oriented
 
 
-def _masked_layout(points, cells, vertex_capacity, cell_capacity, seed):
+def _masked_layout(
+    points: Any, cells: Any, vertex_capacity: Any, cell_capacity: Any, seed: Any
+) -> Any:
     """Pad a compact mesh into capacity slots with interleaved inactive lanes."""
     generator = np.random.default_rng(seed)
     vertex_slots = np.sort(
@@ -105,7 +109,7 @@ _CASES = {
 
 
 @pytest.fixture(params=sorted(_CASES))
-def case(request):
+def case(request: Any) -> Any:
     build, vertex_capacity, cell_capacity = _CASES[request.param]
     points, cells = build(np.random.default_rng(11))
     compact, oriented = _compact(points, cells)
@@ -114,7 +118,7 @@ def case(request):
     return compact, mesh, geometry
 
 
-def _route_keys(mesh, geometry):
+def _route_keys(mesh: Any, geometry: Any) -> Any:
     """Sorted vertex global IDs of every half-facet route, shaped (faces, d)."""
     cells = np.asarray(mesh.cells)
     facets = np.asarray(_FACETS[cells.shape[1]])
@@ -123,7 +127,7 @@ def _route_keys(mesh, geometry):
     return keys.reshape((geometry.face_capacity, -1))
 
 
-def _compact_face_index(compact):
+def _compact_face_index(compact: Any) -> Any:
     connectivity = compact.connectivity
     faces = np.asarray(
         connectivity.edges if compact.cell_dimension == 2 else connectivity.faces
@@ -132,7 +136,7 @@ def _compact_face_index(compact):
     return {tuple(np.sort(vertex_ids[face])): index for index, face in enumerate(faces)}
 
 
-def _route_correspondence(compact, mesh, geometry):
+def _route_correspondence(compact: Any, mesh: Any, geometry: Any) -> Any:
     """Compact face and owner-orientation sign of every active masked route."""
     routes = np.flatnonzero(np.asarray(geometry.face_active))
     lookup = _compact_face_index(compact)
@@ -146,7 +150,7 @@ def _route_correspondence(compact, mesh, geometry):
     return routes, faces, signs
 
 
-def test_masked_geometry_matches_compact_geometry_on_active_lanes(case):
+def test_masked_geometry_matches_compact_geometry_on_active_lanes(case: Any) -> None:
     compact, mesh, geometry = case
     cell_active = np.asarray(mesh.cell_active)
     cell_slots = np.flatnonzero(cell_active)
@@ -211,7 +215,7 @@ def test_masked_geometry_matches_compact_geometry_on_active_lanes(case):
     )
 
 
-def test_masked_geometry_padding_lanes_are_exact_zero_and_finite(case):
+def test_masked_geometry_padding_lanes_are_exact_zero_and_finite(case: Any) -> None:
     _, mesh, geometry = case
     cell_inactive = ~np.asarray(mesh.cell_active)
     route_inactive = ~np.asarray(geometry.face_active)
@@ -231,7 +235,7 @@ def test_masked_geometry_padding_lanes_are_exact_zero_and_finite(case):
     assert np.all(np.asarray(geometry.neighbor_cells)[route_inactive] == -1)
 
 
-def _compact_divergence(compact, face_flux):
+def _compact_divergence(compact: Any, face_flux: Any) -> Any:
     owner = np.asarray(compact.owner_cells)
     neighbor = np.asarray(compact.neighbor_cells)
     content = np.zeros((compact.cell_count,) + face_flux.shape[1:])
@@ -241,7 +245,7 @@ def _compact_divergence(compact, face_flux):
     return content / np.asarray(compact.cell_volumes)[:, None]
 
 
-def test_masked_divergence_matches_compact_and_ignores_padding(case):
+def test_masked_divergence_matches_compact_and_ignores_padding(case: Any) -> None:
     compact, mesh, geometry = case
     generator = np.random.default_rng(17)
     face_flux = generator.normal(size=(geometry.face_capacity, 2))
@@ -270,7 +274,7 @@ def test_masked_divergence_matches_compact_and_ignores_padding(case):
     )
 
 
-def test_masked_conservation_ledger_balances_boundary_flux(case):
+def test_masked_conservation_ledger_balances_boundary_flux(case: Any) -> None:
     _, mesh, geometry = case
     generator = np.random.default_rng(23)
     face_flux = generator.normal(size=(geometry.face_capacity, 3))
@@ -325,7 +329,7 @@ def test_masked_conservation_ledger_balances_boundary_flux(case):
     np.testing.assert_array_equal(interior_evidence.boundary_outward_sum, 0.0)
 
 
-def test_masked_conservation_rejects_source_on_inactive_cells(case):
+def test_masked_conservation_rejects_source_on_inactive_cells(case: Any) -> None:
     _, mesh, geometry = case
     source = np.zeros((geometry.cell_capacity, 1))
     source[np.flatnonzero(~np.asarray(mesh.cell_active))[0]] = 1.0
@@ -335,7 +339,7 @@ def test_masked_conservation_rejects_source_on_inactive_cells(case):
         )
 
 
-def test_masked_geometry_rejects_negatively_oriented_active_cell(case):
+def test_masked_geometry_rejects_negatively_oriented_active_cell(case: Any) -> None:
     _, mesh, _ = case
     cells = np.asarray(mesh.cells).copy()
     slot = np.flatnonzero(np.asarray(mesh.cell_active))[0]

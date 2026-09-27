@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -13,7 +16,7 @@ from phydrax.velocimetry.synthetic import (
 )
 
 
-def _small_plan(kind: PTVScenarioKind, **overrides) -> PTVScenarioPlan:
+def _small_plan(kind: PTVScenarioKind, **overrides: Any) -> PTVScenarioPlan:
     options = {
         "image_shape": (28, 30),
         "frame_count": 3,
@@ -26,6 +29,7 @@ def _small_plan(kind: PTVScenarioKind, **overrides) -> PTVScenarioPlan:
         "seed": 29,
     }
     options.update(overrides)
+    # ty: ignore[invalid-argument-type]
     return PTVScenarioPlan(kind, **options)
 
 

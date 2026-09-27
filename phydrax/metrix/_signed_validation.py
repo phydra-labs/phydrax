@@ -4,9 +4,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._metric import AbstractSemiRiemannianMetric, LorentzianMetric
@@ -37,7 +40,7 @@ class SignedMetricValidationReport(StrictModule):
         observed_near_zero: Array,
         minimum_absolute_eigenvalue: Array,
         maximum_condition_number: Array,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.maximum_asymmetry = jnp.asarray(maximum_asymmetry)
@@ -125,7 +128,7 @@ def validate_lorentzian_metric(
     metric: LorentzianMetric,
     points: ArrayLike,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> SignedMetricValidationReport:
     """Validate a Lorentzian metric at representative points."""
     if not isinstance(metric, LorentzianMetric):

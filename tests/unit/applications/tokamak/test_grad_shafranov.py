@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -5,7 +7,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _manufactured_case(count=13):
+def _manufactured_case(count: Any = 13) -> Any:
     r = np.linspace(1.0, 3.0, count)
     z = np.linspace(-1.0, 1.0, count)
     rr, zz = np.meshgrid(r, z)
@@ -29,7 +31,7 @@ def _manufactured_case(count=13):
     return plan, current, boundary, psi
 
 
-def test_fixed_boundary_grad_shafranov_recovers_quadratic_solution():
+def test_fixed_boundary_grad_shafranov_recovers_quadratic_solution() -> None:
     plan, current, boundary, expected = _manufactured_case()
     result = plan.solve(current, boundary)
 
@@ -41,12 +43,12 @@ def test_fixed_boundary_grad_shafranov_recovers_quadratic_solution():
     assert np.isfinite(result.total_plasma_current_a)
 
 
-def test_grad_shafranov_solution_differentiates_through_current_source():
+def test_grad_shafranov_solution_differentiates_through_current_source() -> None:
     plan, current, boundary, _ = _manufactured_case(9)
     current = jnp.asarray(current)
     boundary = jnp.asarray(boundary)
 
-    def objective(scale):
+    def objective(scale: Any) -> Any:
         result = plan.solve(scale * current, scale * boundary)
         return jnp.sum(result.poloidal_flux_wb_per_rad)
 

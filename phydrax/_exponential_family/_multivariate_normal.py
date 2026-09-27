@@ -7,8 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -19,13 +19,16 @@ from ..linalg import (
     FactorizationPolicy,
     factorize,
     inverse,
+    PreparedFactorization,
     verify_dense_properties,
 )
+from ..typing import PRNGKey
 from ._contracts import (
     _AbstractAnalyticExponentialFamily,
     _mean_domain_result,
     _natural_domain_result,
     ExponentialFamilyDomainResult,
+    ExponentialFamilyLaw,
     ExponentialFamilySignature,
     NaturalCoordinates,
     StatisticBatch,
@@ -40,7 +43,9 @@ def _error_if(value: Array, predicate: Array, message: str, /) -> Array:
     return value
 
 
-def _positive_definite_factorization(matrix: Array, /):
+def _positive_definite_factorization(
+    matrix: Array, /
+) -> tuple[PreparedFactorization, Array, Array]:
     evidence = verify_dense_properties(
         matrix,
         policy=DensePropertyVerificationPolicy(
@@ -86,7 +91,7 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
     packed_size: int = eqx.field(static=True)
     _signature: ExponentialFamilySignature = eqx.field(static=True)
 
-    def __init__(self, event_size: int):
+    def __init__(self, event_size: int) -> None:
         dimension = int(event_size)
         if dimension <= 0:
             raise ValueError("event_size must be positive.")
@@ -165,7 +170,9 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
         linear = ein.contract("...ij,...j->...i", precision, location_array)
         return self.natural(jnp.concatenate((linear, svec(-0.5 * precision)), axis=-1))
 
-    def law_from_location_covariance(self, location: ArrayLike, covariance: ArrayLike, /):
+    def law_from_location_covariance(
+        self, location: ArrayLike, covariance: ArrayLike, /
+    ) -> ExponentialFamilyLaw:
         """Return a multivariate Normal law from conventional parameters."""
         return self.law(self.natural_from_location_covariance(location, covariance))
 
@@ -285,7 +292,7 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
 
     def _sample(
         self,
-        key,
+        key: PRNGKey,
         natural_values: Array,
         sample_shape: tuple[int, ...],
         /,

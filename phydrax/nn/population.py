@@ -20,14 +20,16 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
+from .._dtype_names import inexact_result_type
 from .._numerics import solve_weighted_least_squares, WeightedLeastSquaresResult
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..domain import HyperRectangle
 from ..ein import contract
+from ..typing import PRNGKey
 
 
 if TYPE_CHECKING:
@@ -129,7 +131,7 @@ class LIFPopulation(StrictModule, NonTrainableState):
         gain_nA: ArrayLike,
         bias_nA: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(domain, HyperRectangle):
             raise TypeError("domain must be a native HyperRectangle.")
         if not np.all(np.isfinite(np.asarray(domain.bounds))):
@@ -184,7 +186,7 @@ def prepare_lif_population(
     neuron_count: int,
     /,
     *,
-    key: Key,
+    key: PRNGKey,
     encoders: ArrayLike | None = None,
     intercepts: ArrayLike | None = None,
     maximum_rates_hz: ArrayLike | None = None,
@@ -263,7 +265,7 @@ def sample_population_points(
     count: int,
     /,
     *,
-    key: Key,
+    key: PRNGKey,
     sampler: str = "latin_hypercube",
 ) -> Array:
     """Sample evaluation or independent held-out points using the native domain."""
@@ -516,7 +518,7 @@ def _filter_rates(
     decay = jnp.exp(-dt_ms / tau_ms)
     increment = -jnp.expm1(-dt_ms / tau_ms)
 
-    def step(previous, rate):
+    def step(previous: Array, rate: Array) -> tuple[Array, Array]:
         current = decay * previous + increment * rate
         return current, current
 

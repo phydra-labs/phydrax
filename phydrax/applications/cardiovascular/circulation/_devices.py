@@ -8,12 +8,14 @@ from __future__ import annotations
 
 from enum import IntFlag
 from math import isfinite, pi
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._interpolation import linear_interpolate
 
@@ -24,11 +26,16 @@ from ....dynamics import (
     DAEComponent,
     DAEDerivativeIncidence,
     DAEEquationBlock,
+    DAEJet,
     DAEPort,
     DAEVariableBlock,
 )
 from ._components import PressureFlowComponent
 from ._oxygen import exchange_membrane_oxygen, MembraneOxygenatorModel
+
+
+# Per-sample controller outputs stacked by jax.lax.scan during replay.
+_ReplayOutputs: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class PumpMapStatus(IntFlag):
@@ -85,7 +92,7 @@ class HydraulicDeviceComponent(PressureFlowComponent):
         *,
         component_kind: str,
         parameters: tuple[tuple[str, float | str], ...],
-    ):
+    ) -> None:
         PressureFlowComponent.__init__(
             self,
             dae_component,
@@ -110,7 +117,7 @@ class PumpHeadFlowMap(StrictModule, NonTrainableState):
         speed_axis_rpm: ArrayLike,
         head_kPa: ArrayLike,
         /,
-    ):
+    ) -> None:
         name = str(map_name).strip()
         flow_host = np.asarray(flow_axis_mm3_per_ms, dtype=np.float64)
         speed_host = np.asarray(speed_axis_rpm, dtype=np.float64)
@@ -230,7 +237,7 @@ class PacemakerControllerPlan(StrictModule, NonTrainableState):
         pulse_width_ms: float,
         pulse_amplitude_mA: float,
         /,
-    ):
+    ) -> None:
         lower = float(lower_rate_bpm)
         upper = float(upper_rate_bpm)
         refractory = float(refractory_period_ms)
@@ -410,7 +417,9 @@ def replay_pacemaker_controller(
     if times.ndim != 1 or sensed.shape != times.shape:
         raise ValueError("Pacemaker replay arrays must be equal one-dimensional shapes.")
 
-    def transition(state, sample):
+    def transition(
+        state: PacemakerControllerState, sample: tuple[Array, Array]
+    ) -> tuple[PacemakerControllerState, _ReplayOutputs]:
         time, sensed_now = sample
         result = step_pacemaker_controller(plan, state, time, sensed_now)
         return result.state, (
@@ -459,7 +468,7 @@ class PumpControllerPlan(StrictModule, NonTrainableState):
         minimum_integral_mm3: float,
         maximum_integral_mm3: float,
         timing_tolerance_ms: float = 1.0e-9,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -688,7 +697,9 @@ def replay_pump_controller(
     if times.ndim != 1 or measured.shape != times.shape or setpoint.shape != times.shape:
         raise ValueError("Pump replay arrays must have equal one-dimensional shapes.")
 
-    def transition(state, sample):
+    def transition(
+        state: PumpControllerState, sample: tuple[Array, Array, Array]
+    ) -> tuple[PumpControllerState, _ReplayOutputs]:
         result = step_pump_controller(plan, state, sample[0], sample[1], sample[2])
         return result.state, (
             result.speed_command_rpm,
@@ -760,7 +771,7 @@ class Cannula(StrictModule, NonTrainableState):
         *,
         dynamic_viscosity_mg_per_mm_ms: float = 3.5e-3,
         quadratic_loss_kPa_ms2_per_mm6: float = 0.0,
-    ):
+    ) -> None:
         values = _validated_hydraulic_parameters(
             cannula_id,
             length_mm,
@@ -821,7 +832,7 @@ class TubingSegment(StrictModule, NonTrainableState):
         *,
         dynamic_viscosity_mg_per_mm_ms: float = 3.5e-3,
         quadratic_loss_kPa_ms2_per_mm6: float = 0.0,
-    ):
+    ) -> None:
         values = _validated_hydraulic_parameters(
             tubing_id,
             length_mm,
@@ -878,7 +889,7 @@ class HydraulicOxygenator(StrictModule, NonTrainableState):
         /,
         *,
         quadratic_loss_kPa_ms2_per_mm6: float = 0.0,
-    ):
+    ) -> None:
         identifier = str(oxygenator_id).strip()
         linear = float(linear_resistance_kPa_ms_per_mm3)
         quadratic = float(quadratic_loss_kPa_ms2_per_mm6)
@@ -924,7 +935,7 @@ class HydraulicOxygenator(StrictModule, NonTrainableState):
 
 
 class _FlowConservationResidual(StrictModule):
-    def __call__(self, time: Array, jet, args, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         del time, args
         return jet.value("flow_in") - jet.value("flow_out")
 
@@ -933,7 +944,7 @@ class _HydraulicDropResidual(StrictModule):
     linear_resistance: Array
     quadratic_loss: Array
 
-    def __call__(self, time: Array, jet, args, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         del time, args
         flow = jet.value("flow_out")
         return (
@@ -948,7 +959,7 @@ class _PumpHeadResidual(StrictModule):
     pump_map: PumpHeadFlowMap
     speed_rpm: Array
 
-    def __call__(self, time: Array, jet, args, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         del time, args
         result = evaluate_pump_map(self.pump_map, jet.value("flow_out"), self.speed_rpm)
         return jet.value("pressure_out") - jet.value("pressure_in") - result.head_kPa
@@ -1080,7 +1091,7 @@ class ECMOCircuitPlan(StrictModule, NonTrainableState):
         oxygen_model: MembraneOxygenatorModel | None = None,
         bisection_steps: int = 64,
         residual_tolerance_kPa: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(pump_map, PumpHeadFlowMap):
             raise TypeError("pump_map must be a PumpHeadFlowMap.")
         if not isinstance(drainage_cannula, Cannula) or not isinstance(
@@ -1184,7 +1195,7 @@ def solve_ecmo_hydraulics(
     minimum_flow = plan.pump_map.flow_axis_mm3_per_ms[0]
     maximum_flow = plan.pump_map.flow_axis_mm3_per_ms[-1]
 
-    def residual(flow):
+    def residual(flow: Array) -> Array:
         map_result = evaluate_pump_map(plan.pump_map, flow, speed)
         drops = _ecmo_component_drops(plan, flow)
         total_drop = sum(drops, start=jnp.asarray(0.0, dtype=flow.dtype))
@@ -1202,7 +1213,7 @@ def solve_ecmo_hydraulics(
     speed_map_result = evaluate_pump_map(plan.pump_map, minimum_flow, speed)
     bracketed = (lower_residual >= 0.0) & (upper_residual <= 0.0)
 
-    def bisect(_, bracket):
+    def bisect(_: Array, bracket: tuple[Array, Array]) -> tuple[Array, Array]:
         lower, upper = bracket
         middle = 0.5 * (lower + upper)
         middle_residual = residual(middle)

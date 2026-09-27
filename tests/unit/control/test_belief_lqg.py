@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -22,16 +25,16 @@ from phydrax.linalg import LinearSolveStatus
 
 def _scalar_problem(
     *,
-    horizon=1,
-    prior_mean=1.0,
-    prior_covariance=2.0,
-    observation=1.0,
-    measurement_covariance=3.0,
-    process_covariance=4.0,
-    case_shape=(),
-    belief_id="shared-posterior",
-    covariance_tolerance=1.0e-7,
-):
+    horizon: Any = 1,
+    prior_mean: Any = 1.0,
+    prior_covariance: Any = 2.0,
+    observation: Any = 1.0,
+    measurement_covariance: Any = 3.0,
+    process_covariance: Any = 4.0,
+    case_shape: Any = (),
+    belief_id: Any = "shared-posterior",
+    covariance_tolerance: Any = 1.0e-7,
+) -> Any:
     a = jnp.broadcast_to(jnp.ones((horizon, 1, 1)), case_shape + (horizon, 1, 1))
     b = jnp.broadcast_to(jnp.ones((horizon, 1, 1)), case_shape + (horizon, 1, 1))
     g = jnp.broadcast_to(jnp.ones((horizon, 1, 1)), case_shape + (horizon, 1, 1))
@@ -72,7 +75,7 @@ def _scalar_problem(
     )
 
 
-def test_perfect_observation_reduces_exactly_to_full_state_additive_lqg():
+def test_perfect_observation_reduces_exactly_to_full_state_additive_lqg() -> None:
     horizon = 2
     process_covariances = jnp.asarray([[[0.5]], [[0.25]]])
     problem = CentralizedLQGProblem(
@@ -119,7 +122,7 @@ def test_perfect_observation_reduces_exactly_to_full_state_additive_lqg():
     )
 
 
-def test_no_observation_limit_is_the_exact_open_loop_mean_policy():
+def test_no_observation_limit_is_the_exact_open_loop_mean_policy() -> None:
     problem = _scalar_problem(
         observation=0.0,
         measurement_covariance=1.0,
@@ -136,7 +139,7 @@ def test_no_observation_limit_is_the_exact_open_loop_mean_policy():
     np.testing.assert_allclose(result.initial_expected_cost, 41.0 / 6.0, rtol=2e-6)
 
 
-def test_scalar_kalman_schedule_and_lqg_trace_terms_are_analytic():
+def test_scalar_kalman_schedule_and_lqg_trace_terms_are_analytic() -> None:
     result = finite_horizon_centralized_lqg(_scalar_problem(prior_mean=1.5))
 
     np.testing.assert_allclose(result.innovation_covariances[..., 0, 0], [5.0])
@@ -171,10 +174,10 @@ def test_scalar_kalman_schedule_and_lqg_trace_terms_are_analytic():
     np.testing.assert_array_equal(result.innovation_solve_successful, [True])
 
 
-def test_finite_uncertified_innovation_gain_propagates_failure(monkeypatch):
+def test_finite_uncertified_innovation_gain_propagates_failure(monkeypatch: Any) -> None:
     native_solve = belief_lqg.solve
 
-    def uncertified_solve(*args, **kwargs):
+    def uncertified_solve(*args: Any, **kwargs: Any) -> Any:
         result = native_solve(*args, **kwargs)
         result = eqx.tree_at(
             lambda item: item.status,
@@ -219,7 +222,7 @@ def test_finite_uncertified_innovation_gain_propagates_failure(monkeypatch):
     assert int(inactive.status) == int(CentralizedLQGStatus.SUCCESS)
 
 
-def test_policy_sees_only_the_posterior_belief_not_the_latent_world():
+def test_policy_sees_only_the_posterior_belief_not_the_latent_world() -> None:
     problem = _scalar_problem(
         prior_mean=0.0,
         prior_covariance=1.0,
@@ -250,10 +253,11 @@ def test_policy_sees_only_the_posterior_belief_not_the_latent_world():
     right_action = result.policy.action(context, right_history_belief, {"unused": 1})
     np.testing.assert_array_equal(left_action, right_action)
     with pytest.raises(TypeError, match="GaussianBelief"):
+        # ty: ignore[invalid-argument-type]
         result.policy.action(context, jnp.asarray([-2.0]), None)
 
 
-def test_covariance_assumptions_and_unsupported_correlations_are_rejected():
+def test_covariance_assumptions_and_unsupported_correlations_are_rejected() -> None:
     base = _scalar_problem()
     constructor_args = (
         base.dynamics_matrices,
@@ -299,7 +303,7 @@ def test_covariance_assumptions_and_unsupported_correlations_are_rejected():
         )
 
 
-def test_nontrivial_singular_innovation_is_invalid_without_a_pseudoinverse():
+def test_nontrivial_singular_innovation_is_invalid_without_a_pseudoinverse() -> None:
     base = _scalar_problem()
     problem = CentralizedLQGProblem(
         base.dynamics_matrices,
@@ -323,7 +327,7 @@ def test_nontrivial_singular_innovation_is_invalid_without_a_pseudoinverse():
     np.testing.assert_array_equal(result.innovation_well_posed, False)
 
 
-def test_successful_innovation_solve_cannot_override_well_posedness_failure():
+def test_successful_innovation_solve_cannot_override_well_posedness_failure() -> None:
     result = finite_horizon_centralized_lqg(
         _scalar_problem(
             prior_covariance=0.0,
@@ -344,7 +348,7 @@ def test_successful_innovation_solve_cannot_override_well_posedness_failure():
     )
 
 
-def test_problem_and_policy_reject_observation_timing_mismatches():
+def test_problem_and_policy_reject_observation_timing_mismatches() -> None:
     base = _scalar_problem()
     with pytest.raises(ValueError, match="pre-action observation timing"):
         CentralizedLQGProblem(
@@ -371,7 +375,7 @@ def test_problem_and_policy_reject_observation_timing_mismatches():
         result.policy.action(DiscreteStepContext(0.0, 2.0, 0), belief, None)
 
 
-def test_zero_process_and_state_uncertainty_reduce_to_affine_lqr():
+def test_zero_process_and_state_uncertainty_reduce_to_affine_lqr() -> None:
     problem = _scalar_problem(
         horizon=2,
         prior_mean=1.25,
@@ -412,7 +416,7 @@ def test_zero_process_and_state_uncertainty_reduce_to_affine_lqr():
     )
 
 
-def test_case_axes_and_filtered_jit_are_preserved():
+def test_case_axes_and_filtered_jit_are_preserved() -> None:
     case_shape = (2, 3)
     problem = _scalar_problem(
         horizon=2,

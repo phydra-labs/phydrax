@@ -15,6 +15,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..qualification._registry import SupportTuple
+from ..typing import parse
 from ._chunk_repository import _digest, _identifier, RepositoryCorruptionError
 
 
@@ -45,11 +46,10 @@ class TopologyRestartRelation(StrictModule, NonTrainableState):
         absolute_tolerance: float = 0.0,
         relative_tolerance: float = 0.0,
         reason: str = "",
-    ):
+    ) -> None:
         source_id = _support_id(source, "source")
         target_id = _support_id(target, "target")
-        if restart_class not in ("bitwise", "tolerance", "unsupported"):
-            raise ValueError("Unknown topology restart class.")
+        restart_class = parse(restart_class, RestartClass, "restart_class")
         absolute = _finite_nonnegative(absolute_tolerance, "absolute_tolerance")
         relative = _finite_nonnegative(relative_tolerance, "relative_tolerance")
         reason_ = str(reason).strip()
@@ -97,7 +97,7 @@ class TopologyRestartPolicy(StrictModule, NonTrainableState):
         allow_tolerance_restart: bool = False,
         maximum_absolute_tolerance: float = 0.0,
         maximum_relative_tolerance: float = 0.0,
-    ):
+    ) -> None:
         absolute = _finite_nonnegative(
             maximum_absolute_tolerance, "maximum_absolute_tolerance"
         )
@@ -137,7 +137,7 @@ class RestartAdmission(StrictModule, NonTrainableState):
         admitted: bool,
         reason: str,
         /,
-    ):
+    ) -> None:
         relation = _digest(relation_id, "relation_id")
         policy = _digest(policy_id, "policy_id")
         reason_ = str(reason).strip()
@@ -177,13 +177,12 @@ class CanonicalRestartChunk(StrictModule, NonTrainableState):
         /,
         *,
         payload_class: PayloadClass = "restart-state",
-    ):
+    ) -> None:
         logical = _identifier(logical_name, "logical_name")
         offset = _nonnegative(canonical_offset, "canonical_offset")
         count = _positive(byte_count, "byte_count")
         digest = _digest(payload_sha256, "payload_sha256")
-        if payload_class not in ("restart-state", "execution-cache"):
-            raise ValueError("Unknown restart payload class.")
+        payload_class = parse(payload_class, PayloadClass, "payload_class")
         self.logical_name = logical
         self.canonical_offset = offset
         self.byte_count = count
@@ -217,7 +216,7 @@ class DestinationShard(StrictModule, NonTrainableState):
         canonical_offset: int,
         byte_count: int,
         /,
-    ):
+    ) -> None:
         shard = _identifier(shard_id, "shard_id")
         logical = _identifier(logical_name, "logical_name")
         offset = _nonnegative(canonical_offset, "canonical_offset")
@@ -255,7 +254,7 @@ class RestartChunkMapping(StrictModule, NonTrainableState):
         target_offset: int,
         byte_count: int,
         /,
-    ):
+    ) -> None:
         source = _digest(source_chunk_id, "source_chunk_id")
         source_offset_ = _nonnegative(source_offset, "source_offset")
         target = _identifier(target_shard_id, "target_shard_id")
@@ -297,7 +296,7 @@ class DirectRestorePlan(StrictModule, NonTrainableState):
         destination_shards: Sequence[DestinationShard],
         mappings: Sequence[RestartChunkMapping],
         /,
-    ):
+    ) -> None:
         if not isinstance(relation, TopologyRestartRelation):
             raise TypeError("relation must be TopologyRestartRelation.")
         if not isinstance(admission, RestartAdmission):
@@ -391,7 +390,7 @@ class RestartExecutionReport(StrictModule, NonTrainableState):
         transferred_bytes: int,
         transfer_count: int,
         /,
-    ):
+    ) -> None:
         plan = _digest(plan_id, "plan_id")
         shards = tuple(
             _identifier(item, "restored shard ID") for item in restored_shard_ids

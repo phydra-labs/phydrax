@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
@@ -44,7 +45,7 @@ class TensorCompletionPlan(StrictModule):
         relative_tolerance: float,
         regularization: float,
         max_local_unknowns: int,
-    ):
+    ) -> None:
         raw_modes = tuple(mode_sizes)
         integer_fields = raw_modes + (max_rank, sweeps, max_local_unknowns)
         if any(
@@ -110,7 +111,7 @@ class TensorCompletionEvidence(StrictModule):
         *,
         observed_count: int,
         holdout_count: int,
-    ):
+    ) -> None:
         training = jnp.asarray(training_errors)
         holdout = jnp.asarray(holdout_errors)
         if training.ndim != 1 or holdout.shape != training.shape:
@@ -142,7 +143,7 @@ class TensorCompletionResult(StrictModule):
         evidence: TensorCompletionEvidence,
         converged: Array,
         /,
-    ):
+    ) -> None:
         self.tensor = tensor
         self.evidence = evidence
         self.converged = jnp.asarray(converged, dtype=jnp.bool_)
@@ -191,7 +192,7 @@ def _validate_samples(
 
 
 def _deterministic_initial(
-    mode_sizes: tuple[int, ...], max_rank: int, mean: Array, dtype, /
+    mode_sizes: tuple[int, ...], max_rank: int, mean: Array, dtype: DTypeLike, /
 ) -> TensorTrain:
     total = prod(mode_sizes)
     ranks = [1]
@@ -217,7 +218,7 @@ def _sample_core_frame(
     axis: int,
     /,
 ) -> Array:
-    def one(point):
+    def one(point: Array) -> Array:
         left = jnp.ones((1,), dtype=tensor.dtype)
         for position in range(axis):
             left = ein.contract(

@@ -122,9 +122,10 @@ without an absolute floor that would defeat a tighter requested outer tolerance.
 Convergence is not a certificate of loopy marginal accuracy or a unique physical
 branch.
 
-Use a pure closure with `jax.jit` for array-valued observables, or `eqx.filter_jit`
-for an Equinox callable/full result containing static evidence. A frozen prepared
-object containing arrays is not a hashable JAX static function argument.
+Prepared graphs, plans, states and laws are Equinox PyTrees. Pass them as ordinary
+arguments to `eqx.filter_jit`; their numerical arrays stay dynamic while their fixed
+structure participates in the compilation key. Do not mark a complete prepared
+object as a JAX static argument.
 
 Unary evidence uses the same flat variable-state layout:
 
@@ -304,6 +305,32 @@ weakening `phx.pgm`'s finite-discrete invariants.
 `phx.transport.discrete` provides retain-or-uniform forward noising,
 factor-graph-backed reverse Gibbs kernels, multilayer denoising processes, recovery
 objectives, adaptive mixing penalties, and explicit encoder/decoder embeddings.
+
+## Transformations and traced graphs
+
+Construct graph topology and prepare inference routes eagerly. After preparation,
+`DiscreteFactorGraph`, variable-elimination and junction-tree plans, prepared belief
+propagation and Gibbs plans, and `NormalizedFactorGraphLaw` may be ordinary dynamic
+arguments of `eqx.filter_jit`. The graph owns one immutable host copy of
+shape/routing topology and fixed device arrays for gathers and scatters; static
+metadata is absent from device runtime data.
+
+Replacing only numeric factor parameters with `eqx.tree_at` or a native refresh
+function retains `structure_id` and reuses the compilation. Changing cardinalities,
+factor scopes, parameter shape/dtype or kernel identity is a structural change and
+requires construction and preparation again.
+
+Map chains, cases or random keys, not topology. Under `vmap`, give the graph or
+prepared plan `in_axes=None`; heterogeneous structures use the existing packed or
+signature-grouped execution routes. Runtime assignment arrays may use any integer
+dtype. Invalid assignments remain outside support and score as −∞. Unary evidence
+containing NaN/+∞ and reverse-kernel observations outside support raise
+`equinox.EquinoxRuntimeError` in eager and compiled execution.
+
+Preparation and checkpoint I/O remain host boundaries.
+`initialize_gibbs`/`initialize_parallel_tempering` eagerly validate initial support.
+`wolff_cluster_step` remains eager because cluster growth is data-dependent host
+graph traversal.
 
 ## Boundaries
 

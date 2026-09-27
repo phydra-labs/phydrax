@@ -69,6 +69,7 @@ def _measure(
         repeats=repeats,
     )
     compile_seconds = compilation.lowering_seconds + compilation.compilation_seconds
+    # ty: ignore[invalid-argument-type]
     return compile_seconds, float(distribution.median_seconds), value
 
 
@@ -84,6 +85,7 @@ def _measure_eager(
         warmup=1,
         repeats=repeats,
     )
+    # ty: ignore[invalid-argument-type]
     return float(distribution.median_seconds), value
 
 
@@ -144,7 +146,7 @@ def _signax_benchmark(
     *,
     repeats: int,
 ) -> BenchmarkResult:
-    def forward(values):
+    def forward(values: Any) -> Any:
         return signax.signature(values, depth=depth, flatten=True)
 
     reverse = jax.grad(lambda values: jnp.sum(forward(values)))

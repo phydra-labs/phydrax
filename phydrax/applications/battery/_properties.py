@@ -4,14 +4,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
+from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint
 from ..._interpolation import apply_gather_stencil, rectilinear_stencil
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...operators.interpolation import InterpolationResult, linear_interpolate
 
@@ -22,7 +25,7 @@ def _identifier(value: str, name: str, /) -> str:
     return value
 
 
-def _support_bounds(values: ArrayLike, /) -> Array:
+def _support_bounds(values: ArrayLike | Sequence[float], /) -> Array:
     bounds = jnp.asarray(values)
     if bounds.shape != (2,) or jnp.issubdtype(bounds.dtype, jnp.complexfloating):
         raise ValueError("Property support bounds must be two real scalars.")
@@ -34,7 +37,7 @@ def _support_bounds(values: ArrayLike, /) -> Array:
     return bounds.astype(inexact_result_type(bounds))
 
 
-def _value_bounds(values: ArrayLike, dtype, /) -> Array:
+def _value_bounds(values: ArrayLike | Sequence[float], dtype: DTypeLike, /) -> Array:
     bounds = jnp.asarray(values, dtype=dtype)
     if bounds.shape != (2,) or jnp.issubdtype(bounds.dtype, jnp.complexfloating):
         raise ValueError("Property value bounds must be two real scalars.")
@@ -62,16 +65,16 @@ class ConstantPropertyLaw(StrictModule):
     def __init__(
         self,
         value: ArrayLike,
-        support_bounds: ArrayLike,
+        support_bounds: ArrayLike | Sequence[float],
         /,
         *,
-        value_bounds: ArrayLike = (-jnp.inf, jnp.inf),
+        value_bounds: ArrayLike | Sequence[float] = (-jnp.inf, jnp.inf),
         quantity: str,
         coordinate: str,
         value_unit: str,
         coordinate_unit: str,
         source_id: str,
-    ):
+    ) -> None:
         value_ = jnp.asarray(value)
         if value_.shape != () or jnp.issubdtype(value_.dtype, jnp.complexfloating):
             raise ValueError("Constant property value must be one real scalar.")
@@ -152,14 +155,14 @@ class TabulatedPropertyLaw(StrictModule):
         values: ArrayLike,
         /,
         *,
-        value_bounds: ArrayLike = (-jnp.inf, jnp.inf),
+        value_bounds: ArrayLike | Sequence[float] = (-jnp.inf, jnp.inf),
         source_mask: ArrayLike | None = None,
         quantity: str,
         coordinate: str,
         value_unit: str,
         coordinate_unit: str,
         source_id: str,
-    ):
+    ) -> None:
         nodes_ = jnp.asarray(nodes)
         values_ = jnp.asarray(values)
         if nodes_.ndim != 1 or nodes_.size < 2:
@@ -282,12 +285,12 @@ class ConcentrationTemperaturePropertyLaw(StrictModule):
         values: ArrayLike,
         /,
         *,
-        value_bounds: ArrayLike = (-jnp.inf, jnp.inf),
+        value_bounds: ArrayLike | Sequence[float] = (-jnp.inf, jnp.inf),
         source_mask: ArrayLike | None = None,
         quantity: str,
         value_unit: str,
         source_id: str,
-    ):
+    ) -> None:
         concentration_nodes = jnp.asarray(concentration_nodes_mol_m3)
         temperature_nodes = jnp.asarray(temperature_nodes_k)
         table = jnp.asarray(values)

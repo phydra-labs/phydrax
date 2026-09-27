@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -47,10 +50,11 @@ def _graphs() -> tuple[phx.graph.GraphIR, phx.graph.GraphIR]:
     ],
 )
 def test_graph_classification_target_preserves_hard_dtype_for_entity_kinds(
-    selection, component_kind, values, expected
-):
+    selection: Any, component_kind: Any, values: Any, expected: Any
+) -> None:
     domain = phx.domain.GraphDatasetDomain(_graphs())
     batch = domain.points_from_indices(
+        # ty: ignore[invalid-argument-type]
         [1, 0],
         component=selection,
         structure=phx.domain.SampleLayout((("graph",),)),
@@ -66,7 +70,7 @@ def test_graph_classification_target_preserves_hard_dtype_for_entity_kinds(
     assert jnp.array_equal(observed, jnp.asarray(expected))
 
 
-def test_graph_classification_target_uses_cochain_cell_node_selection():
+def test_graph_classification_target_uses_cochain_cell_node_selection() -> None:
     graph = phx.graph.GraphIR(
         nodes={
             "x": jnp.array([[0.0], [1.0], [2.0], [3.0]]),
@@ -81,15 +85,17 @@ def test_graph_classification_target_uses_cochain_cell_node_selection():
     )
     domain = phx.domain.GraphDatasetDomain((graph,))
     batch = domain.points_from_indices(
+        # ty: ignore[invalid-argument-type]
         [0],
         component=phx.domain.CochainCells(1, region="boundary"),
     )
+    # ty: ignore[invalid-argument-type]
     target = phx.terms.GraphClassificationTarget(domain, ([3, 4, 5, 6],))
 
     assert jnp.array_equal(jnp.asarray(target(batch).data), jnp.array([4]))
 
 
-def test_graph_trajectory_classification_is_ragged_nearest_and_dtype_safe():
+def test_graph_trajectory_classification_is_ragged_nearest_and_dtype_safe() -> None:
     domain = phx.domain.GraphTrajectoryDatasetDomain(
         _graphs(),
         jnp.array([2, 3], dtype=jnp.int32),
@@ -115,7 +121,7 @@ def test_graph_trajectory_classification_is_ragged_nearest_and_dtype_safe():
     assert jnp.array_equal(observed, jnp.array([2, 3, 10, 11, 12]))
 
 
-def test_graph_trajectory_soft_target_interpolation_must_be_explicit():
+def test_graph_trajectory_soft_target_interpolation_must_be_explicit() -> None:
     graph = _graphs()[0].replace(
         nodes=jnp.array([[0.0]]),
         edges=jnp.zeros((0, 1)),
@@ -153,12 +159,12 @@ def test_graph_trajectory_soft_target_interpolation_must_be_explicit():
     assert jnp.allclose(jnp.asarray(signal(batch).data), jnp.array([[0.75, 0.25]]))
 
 
-def test_graph_classification_mean_and_integral_use_graph_measure():
+def test_graph_classification_mean_and_integral_use_graph_measure() -> None:
     domain = phx.domain.GraphDatasetDomain(_graphs(), measure="count")
     component = domain.component({"graph": phx.domain.Nodes()})
 
     @domain.Function("graph")
-    def logits(node):
+    def logits(node: Any) -> float:
         del node
         return 0.0
 
@@ -189,12 +195,13 @@ def test_graph_classification_mean_and_integral_use_graph_measure():
     )
 
 
-def test_graph_component_selection_excludes_invalid_unselected_label():
+def test_graph_component_selection_excludes_invalid_unselected_label() -> None:
     domain = phx.domain.GraphDatasetDomain((_graphs()[0],))
+    # ty: ignore[invalid-argument-type]
     component = domain.component({"graph": phx.domain.BoundaryNodes([1])})
 
     @domain.Function("graph")
-    def logits(node):
+    def logits(node: Any) -> Any:
         del node
         return jnp.zeros((3,))
 
@@ -208,15 +215,15 @@ def test_graph_component_selection_excludes_invalid_unselected_label():
     assert jnp.isfinite(term.loss({"logits": logits}, key=jr.key(1)))
 
 
-def test_graph_hard_multiclass_gathers_without_one_hot(monkeypatch):
+def test_graph_hard_multiclass_gathers_without_one_hot(monkeypatch: Any) -> None:
     domain = phx.domain.GraphDatasetDomain((_graphs()[0],))
     component = domain.component({"graph": phx.domain.Nodes()})
 
     @domain.Function("graph")
-    def logits(node):
+    def logits(node: Any) -> Any:
         return jnp.array([node[0], 0.0, -node[0]])
 
-    def fail_one_hot(*args, **kwargs):
+    def fail_one_hot(*args: Any, **kwargs: Any) -> None:
         del args, kwargs
         raise AssertionError("hard categorical scoring must not allocate one-hot targets")
 
@@ -224,6 +231,7 @@ def test_graph_hard_multiclass_gathers_without_one_hot(monkeypatch):
     term = phx.terms.GraphClassificationTerm(
         "logits",
         component,
+        # ty: ignore[invalid-argument-type]
         ([0, 2],),
         phx.ml.TargetSchema("multiclass", class_labels=(0, 1, 2)),
         sampling=phx.domain.PointSampling(2),
@@ -231,12 +239,12 @@ def test_graph_hard_multiclass_gathers_without_one_hot(monkeypatch):
     assert jnp.isfinite(term.loss({"logits": logits}, key=jr.key(2)))
 
 
-def test_graph_invalid_active_label_is_infinite_and_masked_label_is_zero():
+def test_graph_invalid_active_label_is_infinite_and_masked_label_is_zero() -> None:
     domain = phx.domain.GraphDatasetDomain((_graphs()[0],))
     component = domain.component({"graph": phx.domain.Nodes()})
 
     @domain.Function("graph")
-    def logits(node):
+    def logits(node: Any) -> Any:
         del node
         return jnp.zeros((3,))
 
@@ -244,17 +252,21 @@ def test_graph_invalid_active_label_is_infinite_and_masked_label_is_zero():
     active = phx.terms.GraphClassificationTerm(
         "logits",
         component,
+        # ty: ignore[invalid-argument-type]
         ([7, 7],),
         schema,
         sampling=phx.domain.PointSampling(2),
+        # ty: ignore[invalid-argument-type]
         target_mask=([True, True],),
     )
     masked = phx.terms.GraphClassificationTerm(
         "logits",
         component,
+        # ty: ignore[invalid-argument-type]
         ([7, 7],),
         schema,
         sampling=phx.domain.PointSampling(2),
+        # ty: ignore[invalid-argument-type]
         target_mask=([False, False],),
     )
 
@@ -265,13 +277,13 @@ def test_graph_invalid_active_label_is_infinite_and_masked_label_is_zero():
     )
 
 
-def test_graph_soft_focal_multilabel_and_ordinal_objectives():
+def test_graph_soft_focal_multilabel_and_ordinal_objectives() -> None:
     graph = _graphs()[0]
     domain = phx.domain.GraphDatasetDomain((graph,))
     component = domain.component({"graph": phx.domain.Nodes()})
 
     @domain.Function("graph")
-    def multiclass_logits(node):
+    def multiclass_logits(node: Any) -> Any:
         del node
         return jnp.zeros((3,))
 
@@ -285,7 +297,7 @@ def test_graph_soft_focal_multilabel_and_ordinal_objectives():
     )
 
     @domain.Function("graph")
-    def multilabel_logits(node):
+    def multilabel_logits(node: Any) -> Any:
         del node
         return jnp.zeros((2,))
 
@@ -300,12 +312,13 @@ def test_graph_soft_focal_multilabel_and_ordinal_objectives():
     )
 
     @domain.Function("graph")
-    def ordinal_location(node):
+    def ordinal_location(node: Any) -> Any:
         return node[0] - 0.5
 
     ordinal = phx.terms.GraphClassificationTerm(
         "ordinal",
         component,
+        # ty: ignore[invalid-argument-type]
         ([0, 2],),
         phx.ml.TargetSchema("ordinal", class_labels=("low", "middle", "high")),
         sampling=phx.domain.PointSampling(2),
@@ -317,7 +330,7 @@ def test_graph_soft_focal_multilabel_and_ordinal_objectives():
     assert jnp.isfinite(ordinal.loss({"ordinal": ordinal_location}, key=jr.key(6)))
 
 
-def test_graph_trajectory_classification_composes_with_graph_physics_residual():
+def test_graph_trajectory_classification_composes_with_graph_physics_residual() -> None:
     domain = phx.domain.GraphTrajectoryDatasetDomain(
         _graphs(), jnp.array([2, 3], dtype=jnp.int32), dt=1.0
     )
@@ -329,12 +342,12 @@ def test_graph_trajectory_classification_composes_with_graph_physics_residual():
     )
 
     @domain.Function("graph", "t")
-    def logits(node, time):
+    def logits(node: Any, time: Any) -> float:
         del node, time
         return 0.0
 
     @domain.Function("graph", "t")
-    def state(node, time):
+    def state(node: Any, time: Any) -> float:
         del node, time
         return 2.0
 
@@ -350,7 +363,7 @@ def test_graph_trajectory_classification_composes_with_graph_physics_residual():
         sampling=sampling,
     )
 
-    def diffusion(field):
+    def diffusion(field: Any) -> Any:
         return domain.GraphModel(phx.graph.GraphDiffusion(), input_fn=field)
 
     condition = phx.conditions.Residual("state", component, diffusion)
@@ -366,12 +379,12 @@ def test_graph_trajectory_classification_composes_with_graph_physics_residual():
     assert jnp.allclose(solver.loss(key=jr.key(7)), jnp.log(2.0))
 
 
-def test_graph_zero_weight_skips_nonfinite_integrand():
+def test_graph_zero_weight_skips_nonfinite_integrand() -> None:
     domain = phx.domain.GraphDatasetDomain((_graphs()[0],))
     component = domain.component({"graph": phx.domain.Nodes()})
 
     @domain.Function("graph")
-    def poisoned(node):
+    def poisoned(node: Any) -> Any:
         del node
         return jnp.nan
 

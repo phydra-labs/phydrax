@@ -58,7 +58,7 @@ class MeshArrayBlock:
         connectivity: ArrayLike,
         global_ids: ArrayLike,
         /,
-    ):
+    ) -> None:
         name_ = str(name).strip()
         kind = str(cell_kind).strip()
         source_type = str(source_cell_type).strip()
@@ -128,7 +128,7 @@ class MeshArrayField:
         entity_dimension: int | None = None,
         entity_ids: ArrayLike | None = None,
         entity_kind: str = "mesh",
-    ):
+    ) -> None:
         name_ = str(name).strip()
         block = None if block_name is None else str(block_name).strip()
         role_ = str(role).strip()
@@ -235,7 +235,7 @@ class MeshArraySelection:
         region_role: str | None = None,
         connected: bool | None = None,
         adjacent_zone_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         name_ = str(name).strip()
         kind = str(entity_kind).strip()
         role_ = None if role is None else str(role).strip()
@@ -338,7 +338,7 @@ class MeshArrayArtifact:
         zones: tuple[MeshArraySelection, ...] = (),
         labels: tuple[MeshArraySelection, ...] = (),
         patches: tuple[MeshArraySelection, ...] = (),
-    ):
+    ) -> None:
         if np.asarray(points).dtype.kind not in "iuf":
             raise TypeError("Mesh array points must contain real numeric coordinates.")
         if (

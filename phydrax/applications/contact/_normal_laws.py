@@ -29,7 +29,7 @@ class BarrierNormalContactLaw(AbstractNormalContactLaw):
     activation_distance: float = eqx.field(static=True)
     _law_id: str = eqx.field(static=True)
 
-    def __init__(self, activation_distance: float, /):
+    def __init__(self, activation_distance: float, /) -> None:
         activation = float(activation_distance)
         if not np.isfinite(activation) or activation <= 0.0:
             raise ValueError("activation_distance must be finite and positive.")
@@ -102,7 +102,7 @@ class GeometricContactNormalLaw(AbstractNormalContactLaw):
     activation_distance: float = eqx.field(static=True)
     _law_id: str = eqx.field(static=True)
 
-    def __init__(self, activation_distance: float, /):
+    def __init__(self, activation_distance: float, /) -> None:
         activation = float(activation_distance)
         if not np.isfinite(activation) or activation <= 0.0:
             raise ValueError("activation_distance must be finite and positive.")
@@ -176,7 +176,7 @@ class CompliantNormalContactLaw(AbstractNormalContactLaw):
     damping: float = eqx.field(static=True)
     _law_id: str = eqx.field(static=True)
 
-    def __init__(self, *, damping: float = 0.0):
+    def __init__(self, *, damping: float = 0.0) -> None:
         damping_ = float(damping)
         if not np.isfinite(damping_) or damping_ < 0.0:
             raise ValueError("Contact damping must be finite and nonnegative.")
@@ -240,7 +240,7 @@ class AdhesiveBarrierNormalLaw(AbstractNormalContactLaw):
     adhesion_range: float = eqx.field(static=True)
     _law_id: str = eqx.field(static=True)
 
-    def __init__(self, activation_distance: float, adhesion_range: float, /):
+    def __init__(self, activation_distance: float, adhesion_range: float, /) -> None:
         adhesion = float(adhesion_range)
         if not np.isfinite(adhesion) or adhesion <= 0.0:
             raise ValueError("adhesion_range must be finite and positive.")

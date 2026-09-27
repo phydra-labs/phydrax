@@ -9,7 +9,8 @@ from typing import Any, Protocol, TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint
 from .._strict import StrictModule
@@ -54,7 +55,7 @@ class FidelityEvaluation(StrictModule, NonTrainableState):
         artifact_id: str | None = None,
         evidence_ids: tuple[str, ...] = (),
         evaluation_id: str | None = None,
-    ):
+    ) -> None:
         leaves = tuple(jnp.asarray(leaf) for leaf in jax_tree_leaves(observable))
         if not leaves:
             raise ValueError("observable must contain at least one array leaf.")

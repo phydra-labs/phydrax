@@ -12,8 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
-from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._precision import precision_itemsize
@@ -40,7 +40,7 @@ class PlacementResourcePolicy(StrictModule):
         maximum_devices: int = 1024,
         maximum_local_bytes: int = 2**31,
         maximum_transfer_bytes: int = 2**34,
-    ):
+    ) -> None:
         raw_values = (
             maximum_devices,
             maximum_local_bytes,
@@ -69,7 +69,7 @@ class PlacementResourcePolicy(StrictModule):
 class TensorNetworkMesh(NonTrainableState):
     """Caller-owned JAX mesh used only for independent exact slices."""
 
-    def __init__(self, devices: Sequence[object], axis_name: str = "slices", /):
+    def __init__(self, devices: Sequence[object], axis_name: str = "slices", /) -> None:
         devices_ = tuple(devices)
         axis = str(axis_name)
         if not devices_ or not axis:
@@ -115,7 +115,7 @@ class SlicePlacementPlan(NonTrainableState):
         transfer_bytes: int,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         self.slice_plan = slice_plan
         self.mesh = mesh
         self.resources = resources

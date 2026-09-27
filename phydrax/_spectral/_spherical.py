@@ -4,17 +4,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from importlib.metadata import version
 from math import prod
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import s2fft
+from jax import Array
+from jax.core import ShapedArray
 from jax.extend import core as jax_core
 from jax.interpreters import ad, batching, mlir
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 from s2fft.precompute_transforms import (
     construct as s2fft_construct,
     spherical as s2fft_precomputed,
@@ -27,6 +30,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._model import register_artifact_value
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
 SphericalSampling: TypeAlias = Literal["mw", "mwss", "dh", "gl"]
@@ -87,16 +91,28 @@ def _validate_precompute_limit(
 
 
 def _recursive_transform_impl(
-    values, precomputes, *, bandlimit, spin, sampling, reality, inverse
-):
+    values: Array,
+    precomputes: Sequence[Array],
+    *,
+    bandlimit: int,
+    spin: int,
+    sampling: SphericalSampling,
+    reality: bool,
+    inverse: bool,
+) -> Array:
     transform = s2fft_spherical.inverse_jax if inverse else s2fft_spherical.forward_jax
     return transform(values, bandlimit, spin, None, sampling, reality, precomputes)
 
 
 def _recursive_linear_impl(
-    values, *precomputes, transpose, source_shape, source_dtype, **configuration
-):
-    def apply(field):
+    values: Array,
+    *precomputes: Array,
+    transpose: bool,
+    source_shape: tuple[int, ...],
+    source_dtype: DTypeLike,
+    **configuration: Any,
+) -> Array:
+    def apply(field: Array) -> Array:
         return _recursive_transform_impl(field, precomputes, **configuration)
 
     if transpose:
@@ -104,7 +120,7 @@ def _recursive_linear_impl(
         # and real-field order convention. Never assume inverse == adjoint.
         _, pullback = jax.vjp(apply, jnp.zeros(source_shape, dtype=source_dtype))
 
-        def action(field):
+        def action(field: Array) -> Array:
             return pullback(field)[0]
 
     else:
@@ -114,12 +130,14 @@ def _recursive_linear_impl(
     return result.reshape((*values.shape[:-2], *result.shape[-2:]))
 
 
-def _recursive_linear_abstract(*operands, **configuration):
+def _recursive_linear_abstract(
+    *operands: ShapedArray, **configuration: Any
+) -> ShapedArray:
     shapes = tuple(jax.ShapeDtypeStruct(value.shape, value.dtype) for value in operands)
     result = jax.eval_shape(
         lambda *values: _recursive_linear_impl(*values, **configuration), *shapes
     )
-    return jax.core.ShapedArray(result.shape, result.dtype)
+    return ShapedArray(result.shape, result.dtype)
 
 
 _recursive_linear_p = jax_core.Primitive("phydrax_recursive_spherical_linear")
@@ -131,7 +149,11 @@ mlir.register_lowering(
 )
 
 
-def _recursive_linear_jvp(primals, tangents, **configuration):
+def _recursive_linear_jvp(
+    primals: Sequence[Array],
+    tangents: Sequence[Array | ad.Zero],
+    **configuration: Any,
+) -> tuple[Array, Array | ad.Zero]:
     values_tangent, *table_tangents = tangents
     if any(not isinstance(tangent, ad.Zero) for tangent in table_tangents):
         raise ValueError(
@@ -147,7 +169,12 @@ def _recursive_linear_jvp(primals, tangents, **configuration):
     return output, tangent
 
 
-def _recursive_linear_transpose(cotangent, values, *precomputes, **configuration):
+def _recursive_linear_transpose(
+    cotangent: Array | ad.Zero,
+    values: ad.UndefinedPrimal,
+    *precomputes: Array | ad.UndefinedPrimal,
+    **configuration: Any,
+) -> tuple[Array | ad.Zero | None, ...]:
     if any(ad.is_undefined_primal(table) for table in precomputes):
         raise ValueError("Recursive spherical precomputes are fixed preparation state.")
     if isinstance(cotangent, ad.Zero):
@@ -158,7 +185,9 @@ def _recursive_linear_transpose(cotangent, values, *precomputes, **configuration
     return (result, *(None for _ in precomputes))
 
 
-def _recursive_linear_batch(operands, axes, **configuration):
+def _recursive_linear_batch(
+    operands: Sequence[Array], axes: Sequence[int | None], **configuration: Any
+) -> tuple[Array, int | None]:
     value_axis, *table_axes = axes
     if any(axis is not None for axis in table_axes):
         raise ValueError(
@@ -175,7 +204,9 @@ ad.primitive_transposes[_recursive_linear_p] = _recursive_linear_transpose
 batching.primitive_batchers[_recursive_linear_p] = _recursive_linear_batch
 
 
-def _fixed_recursive_transform(values, precomputes, **configuration):
+def _fixed_recursive_transform(
+    values: Array, precomputes: tuple[Array, ...], **configuration: Any
+) -> Array:
     """Apply a fixed linear transform with paired native forward/adjoint rules.
 
     Both orientations remain linear primitives under higher AD, so neither a
@@ -202,7 +233,7 @@ class _RecursiveSphericalExecution(StrictModule, NonTrainableState):
         spin: int,
         sampling: SphericalSampling,
         max_precompute_bytes: int,
-    ):
+    ) -> None:
         estimate = 256 * bandlimit**2
         limit = _validate_precompute_limit(
             max_precompute_bytes,
@@ -288,7 +319,7 @@ class _PrecomputedSphericalExecution(StrictModule, NonTrainableState):
         sampling: SphericalSampling,
         reality: bool,
         max_precompute_bytes: int,
-    ):
+    ) -> None:
         order_count = bandlimit if reality else 2 * bandlimit - 1
         forward_theta = (
             s2_samples.ntheta(2 * bandlimit, "mwss")
@@ -402,7 +433,7 @@ class SphericalHarmonicPlan(StrictModule, NonTrainableState):
         reality: bool = True,
         execution: SphericalExecution = "recursive",
         max_precompute_bytes: int = _DEFAULT_PRECOMPUTE_BYTES,
-    ):
+    ) -> None:
         selected_bandlimit = int(bandlimit)
         selected_sampling = str(sampling).lower()
         selected_spin = int(spin)
@@ -410,14 +441,10 @@ class SphericalHarmonicPlan(StrictModule, NonTrainableState):
         selected_execution = str(execution).lower()
         if selected_bandlimit <= abs(selected_spin):
             raise ValueError("bandlimit must exceed the absolute spin.")
-        if selected_sampling not in ("mw", "mwss", "dh", "gl"):
-            raise ValueError("sampling must be 'mw', 'mwss', 'dh', or 'gl'.")
+        sampling_value = parse(selected_sampling, SphericalSampling, "sampling")
         if selected_reality and selected_spin != 0:
             raise ValueError("reality acceleration is valid only for spin-zero fields.")
-        if selected_execution not in ("recursive", "precomputed"):
-            raise ValueError("execution must be 'recursive' or 'precomputed'.")
-        sampling_value = selected_sampling
-        execution_value = selected_execution
+        execution_value = parse(selected_execution, SphericalExecution, "execution")
         theta = np.asarray(
             s2_samples.thetas(selected_bandlimit, sampling_value), dtype=np.float64
         )

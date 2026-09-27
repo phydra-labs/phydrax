@@ -11,18 +11,20 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
-from jaxtyping import Array
+from jax import Array
+from jaxtyping import PyTree
 
+from .._dtype_names import precision_dtype_name
 from .._fingerprint import canonical_fingerprint
 from .._precision import (
     dequantize_mx,
     MicroscaledArray,
     MicroscalingFormat,
-    precision_dtype_name,
     PrecisionFormat,
     quantize_mx,
 )
 from .._strict import StrictModule
+from ..typing import parse
 
 
 OptimizerStateLeafRole: TypeAlias = Literal[
@@ -32,8 +34,6 @@ OptimizerStateLeafRole: TypeAlias = Literal[
     "trace",
     "accumulator",
 ]
-
-_ROLES = frozenset({"exact", "first-moment", "second-moment", "trace", "accumulator"})
 
 
 class OptimizerStateCompressionPolicy(StrictModule):
@@ -54,7 +54,7 @@ class OptimizerStateCompressionPolicy(StrictModule):
         exact_roles: Sequence[str] = (),
         overflow: Literal["error", "saturate"] = "error",
         differentiation: Literal["none"] = "none",
-    ):
+    ) -> None:
         if isinstance(format, MicroscalingFormat):
             format_ = format
         else:
@@ -120,24 +120,29 @@ class CompressedOptimizerState(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
-def _role_tree(state: Any, /):
+def _role_tree(state: Any, /) -> PyTree[str]:
+    # Role trees reuse the Optax state containers with string role leaves, so
+    # they are built with ``_make`` rather than the array-typed constructors.
     if isinstance(state, optax.ScaleByAdamState):
-        return optax.ScaleByAdamState(
-            count="exact",
-            mu=jax.tree.map(lambda _: "first-moment", state.mu),
-            nu=jax.tree.map(lambda _: "second-moment", state.nu),
+        return optax.ScaleByAdamState._make(
+            (
+                "exact",
+                jax.tree.map(lambda _: "first-moment", state.mu),
+                jax.tree.map(lambda _: "second-moment", state.nu),
+            )
         )
     if isinstance(state, optax.ScaleByLionState):
-        return optax.ScaleByLionState(
-            count="exact",
-            mu=jax.tree.map(lambda _: "first-moment", state.mu),
+        return optax.ScaleByLionState._make(
+            ("exact", jax.tree.map(lambda _: "first-moment", state.mu))
         )
     if isinstance(state, optax.ScaleByRmsState):
-        return optax.ScaleByRmsState(nu=jax.tree.map(lambda _: "second-moment", state.nu))
+        return optax.ScaleByRmsState._make(
+            (jax.tree.map(lambda _: "second-moment", state.nu),)
+        )
     if isinstance(state, optax.TraceState):
-        return optax.TraceState(trace=jax.tree.map(lambda _: "trace", state.trace))
+        return optax.TraceState._make((jax.tree.map(lambda _: "trace", state.trace),))
     if isinstance(state, optax.ScaleByScheduleState):
-        return optax.ScaleByScheduleState(count="exact")
+        return optax.ScaleByScheduleState._make(("exact",))
     if isinstance(state, optax.EmptyState):
         return optax.EmptyState()
     if isinstance(state, optax.MaskedState):
@@ -151,15 +156,17 @@ def _role_tree(state: Any, /):
     )
 
 
-def _validated_role_layout(state: Any, leaf_roles: Any | None, /):
+def _validated_role_layout(
+    state: Any, leaf_roles: Any | None, /
+) -> tuple[tuple[Any, ...], jax.tree_util.PyTreeDef, tuple[OptimizerStateLeafRole, ...]]:
     roles = _role_tree(state) if leaf_roles is None else leaf_roles
     leaves, treedef = jax.tree.flatten(state)
     role_leaves, role_treedef = jax.tree.flatten(roles)
     if role_treedef != treedef or len(role_leaves) != len(leaves):
         raise ValueError("Optimizer leaf_roles must exactly match the state treedef.")
-    normalized = tuple(str(role) for role in role_leaves)
-    if any(role not in _ROLES for role in normalized):
-        raise ValueError("Optimizer leaf_roles contains an unknown role.")
+    normalized = tuple(
+        parse(str(role), OptimizerStateLeafRole, "leaf_roles") for role in role_leaves
+    )
     return tuple(leaves), treedef, normalized
 
 
@@ -185,9 +192,9 @@ def prepare_optimizer_state_compression(
     arrays = tuple(jnp.asarray(leaf) for leaf in leaves)
     if len(arrays) != len(paths):
         raise ValueError("Optimizer state must be an array-only PyTree.")
-    effective_roles = []
-    compressed = []
-    exact = []
+    effective_roles: list[OptimizerStateLeafRole] = []
+    compressed: list[int] = []
+    exact: list[int] = []
     for index, (path, array, role) in enumerate(zip(paths, arrays, roles, strict=True)):
         force_exact = (
             path in policy.exact_roles
@@ -231,7 +238,9 @@ def prepare_optimizer_state_compression(
     )
 
 
-def _compress_scalar(array: Array, plan: OptimizerStateCompressionPlan, /):
+def _compress_scalar(
+    array: Array, plan: OptimizerStateCompressionPlan, /
+) -> tuple[Array, Array]:
     format_ = plan.policy.format
     if not isinstance(format_, str):
         raise TypeError("Scalar compression requires a scalar format.")
@@ -333,7 +342,7 @@ def decompress_optimizer_state(
     plan: OptimizerStateCompressionPlan,
     state: CompressedOptimizerState,
     /,
-):
+) -> optax.OptState:
     """Reconstruct the exact prepared optimizer treedef in compute dtype."""
     if not isinstance(plan, OptimizerStateCompressionPlan):
         raise TypeError("plan must be an OptimizerStateCompressionPlan.")
@@ -377,7 +386,7 @@ class PreparedCompressedOptimizer(StrictModule):
         params: Any | None = None,
         /,
         **extra_args: Any,
-    ):
+    ) -> tuple[optax.Updates, CompressedOptimizerState]:
         decompressed = decompress_optimizer_state(self.plan, state)
         transformed, next_state = self.transformation.update(
             updates,

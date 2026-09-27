@@ -9,7 +9,8 @@ from enum import IntEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -55,7 +56,7 @@ class ChargedRadiationMaterialLibrary(StrictModule, NonTrainableState):
         *,
         commercial_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         energy = np.asarray(energy_ev, dtype=np.float64)
         stopping = np.asarray(stopping_power_ev_m, dtype=np.float64)
         scattering = np.asarray(scattering_power_rad2_m, dtype=np.float64)
@@ -134,7 +135,7 @@ class ChargedRadiationMaterialLibrary(StrictModule, NonTrainableState):
             self.energy_ev[upper] - self.energy_ev[lower]
         )
 
-        def interpolate(table):
+        def interpolate(table: Array) -> Array:
             left = table[safe_material, lower]
             right = table[safe_material, upper]
             return left + fraction * (right - left)

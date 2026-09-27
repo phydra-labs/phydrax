@@ -15,7 +15,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -36,7 +37,9 @@ from ._fiber_current import FiberCurrentState, PreparedFiberCurrent
 FARINA_2004_CYLINDRICAL_DOI = "10.1109/TBME.2003.820998"
 
 
-def _i_basis(order: Array, q: Array, radius: Array, reference: Array):
+def _i_basis(
+    order: Array, q: Array, radius: Array, reference: Array
+) -> tuple[Array, Array]:
     x, xref = q * radius, q * reference
     scale = jnp.exp(x - xref) / ive(order, xref)
     value = ive(order, x) * scale
@@ -44,7 +47,9 @@ def _i_basis(order: Array, q: Array, radius: Array, reference: Array):
     return value, derivative
 
 
-def _k_basis(order: Array, q: Array, radius: Array, reference: Array):
+def _k_basis(
+    order: Array, q: Array, radius: Array, reference: Array
+) -> tuple[Array, Array]:
     x, xref = q * radius, q * reference
     scale = jnp.exp(xref - x) / kve(order, xref)
     value = kve(order, x) * scale
@@ -160,7 +165,7 @@ class Farina2004CylindricalConductorPlan(StrictModule):
         material_source_id: str,
         electrode_source_id: str,
         residual_tolerance: float = 1.0e-7,
-    ):
+    ) -> None:
         radii = jnp.asarray(layer_radii_m, dtype=jnp.float64)
         sigma = jnp.asarray(conductivity_S_per_m, dtype=radii.dtype)
         centers = jnp.asarray(electrode_centers, dtype=radii.dtype)
@@ -290,7 +295,7 @@ class PreparedFarina2004CylindricalConductor(StrictModule):
         source: PreparedFiberCurrent,
         coordinate_frame_id: str,
         /,
-    ):
+    ) -> None:
         if coordinate_frame_id != plan.coordinate_frame_id:
             raise ValueError(
                 "The committed source and cylinder must use the same registered frame."
@@ -429,7 +434,9 @@ class PreparedFarina2004CylindricalConductor(StrictModule):
         self.contact_lead_field_ohm = contact_field
         self.radial_transfer_ohm_m = radial
         self.interface_relative_residual = jnp.max(relative)
-        self.source_current_shape = source.control_length_m.shape
+        # PreparedFiberCurrent builds control_length_m as (fiber, node) by construction.
+        fiber_count, node_count = source.control_length_m.shape
+        self.source_current_shape = (fiber_count, node_count)
         self.source_prepared_id, self.geometry_id = (
             source.prepared_id,
             source.plan.geometry_id,

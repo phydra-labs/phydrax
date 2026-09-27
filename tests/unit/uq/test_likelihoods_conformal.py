@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -10,7 +13,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def test_gaussian_and_student_t_likelihoods_are_finite_and_sample_shapes_match():
+def test_gaussian_and_student_t_likelihoods_are_finite_and_sample_shapes_match() -> None:
     gaussian = phx.uq.GaussianLikelihood(0.5)
     student = phx.uq.StudentTLikelihood(df=4.0, scale=0.75)
     location = jnp.asarray([0.0, 1.0])
@@ -22,7 +25,7 @@ def test_gaussian_and_student_t_likelihoods_are_finite_and_sample_shapes_match()
     assert student.sample(jr.key(1), location).shape == location.shape
 
 
-def test_elementwise_likelihoods_align_trailing_scalar_events_at_any_batch_rank():
+def test_elementwise_likelihoods_align_trailing_scalar_events_at_any_batch_rank() -> None:
     location = jnp.zeros((2, 3, 1))
     target = jnp.ones((2, 3))
     likelihoods = (
@@ -59,7 +62,7 @@ def test_elementwise_likelihoods_align_trailing_scalar_events_at_any_batch_rank(
         )
 
 
-def test_proper_scores_match_reference_identities():
+def test_proper_scores_match_reference_identities() -> None:
     gaussian_at_center = phx.uq.gaussian_crps(0.0, 1.0, 0.0)
     expected = (jnp.sqrt(2.0) - 1.0) / jnp.sqrt(jnp.pi)
     assert jnp.allclose(gaussian_at_center, expected)
@@ -73,7 +76,7 @@ def test_proper_scores_match_reference_identities():
     assert phx.uq.student_t_crps(0.0, 1.0, 4.0, 0.2) >= 0.0
 
 
-def test_metric_masks_remove_nonfinite_padding():
+def test_metric_masks_remove_nonfinite_padding() -> None:
     width = phx.uq.interval_width(
         jnp.asarray([0.0, jnp.nan]),
         jnp.asarray([2.0, jnp.nan]),
@@ -82,7 +85,7 @@ def test_metric_masks_remove_nonfinite_padding():
     assert width == 2.0
 
 
-def test_interval_calibration_diagnostics_use_inclusive_empirical_coverage():
+def test_interval_calibration_diagnostics_use_inclusive_empirical_coverage() -> None:
     diagnostics = phx.uq.interval_calibration_diagnostics(
         jnp.asarray([0.0, 0.0, 1.0, 3.0]),
         jnp.asarray([0.0, 2.0, 4.0, 7.0]),
@@ -100,7 +103,7 @@ def test_interval_calibration_diagnostics_use_inclusive_empirical_coverage():
     assert bool(diagnostics.valid)
 
 
-def test_interval_calibration_diagnostics_mask_padding_and_weight_cases():
+def test_interval_calibration_diagnostics_mask_padding_and_weight_cases() -> None:
     diagnostics = phx.uq.interval_calibration_diagnostics(
         jnp.asarray([0.0, jnp.nan, 0.0]),
         jnp.asarray([2.0, jnp.nan, 4.0]),
@@ -127,7 +130,7 @@ def test_interval_calibration_diagnostics_mask_padding_and_weight_cases():
         )
 
 
-def test_interval_calibration_diagnostics_report_zero_mass_as_invalid():
+def test_interval_calibration_diagnostics_report_zero_mass_as_invalid() -> None:
     diagnostics = phx.uq.interval_calibration_diagnostics(
         jnp.zeros((2,)),
         jnp.ones((2,)),
@@ -146,8 +149,8 @@ def test_interval_calibration_diagnostics_report_zero_mass_as_invalid():
 
 @pytest.mark.parametrize("nominal_coverage", [0.0, 1.0, -0.1, jnp.nan, [0.5]])
 def test_interval_calibration_diagnostics_reject_invalid_nominal_coverage(
-    nominal_coverage,
-):
+    nominal_coverage: Any,
+) -> None:
     with pytest.raises(ValueError, match="nominal_coverage"):
         phx.uq.interval_calibration_diagnostics(
             jnp.zeros((2,)),
@@ -157,7 +160,7 @@ def test_interval_calibration_diagnostics_reject_invalid_nominal_coverage(
         )
 
 
-def test_interval_calibration_diagnostics_reject_reversed_active_bounds():
+def test_interval_calibration_diagnostics_reject_reversed_active_bounds() -> None:
     with pytest.raises(ValueError, match="ordered"):
         phx.uq.interval_calibration_diagnostics(
             jnp.asarray([0.0, 2.0]),
@@ -167,7 +170,7 @@ def test_interval_calibration_diagnostics_reject_reversed_active_bounds():
         )
 
 
-def test_interval_calibration_diagnostics_broadcast_and_validate_masks():
+def test_interval_calibration_diagnostics_broadcast_and_validate_masks() -> None:
     diagnostics = phx.uq.interval_calibration_diagnostics(
         jnp.zeros((2,)),
         jnp.ones((2,)),
@@ -196,10 +199,10 @@ def test_interval_calibration_diagnostics_broadcast_and_validate_masks():
     ],
 )
 def test_interval_calibration_diagnostics_require_aligned_real_vectors(
-    lower,
-    upper,
-    target,
-):
+    lower: Any,
+    upper: Any,
+    target: Any,
+) -> None:
     with pytest.raises(ValueError, match="one-dimensional|aligned|real"):
         phx.uq.interval_calibration_diagnostics(
             lower,
@@ -209,7 +212,7 @@ def test_interval_calibration_diagnostics_require_aligned_real_vectors(
         )
 
 
-def test_gaussian_scale_calibrator_uses_closed_form_held_out_optimum():
+def test_gaussian_scale_calibrator_uses_closed_form_held_out_optimum() -> None:
     center = jnp.zeros((16,))
     target = jnp.full((16,), 2.0)
     scale = jnp.ones((16,))
@@ -225,12 +228,12 @@ def test_gaussian_scale_calibrator_uses_closed_form_held_out_optimum():
     assert after < before
 
 
-def test_operator_valued_likelihood_constraint_scores_transformed_observation():
+def test_operator_valued_likelihood_constraint_scores_transformed_observation() -> None:
     data = jnp.asarray([[0.0, 1.0], [1.0, 2.0], [2.0, 4.0]])
     domain = phx.domain.DatasetDomain(data)
 
     @domain.Function("data")
-    def field(row):
+    def field(row: Any) -> Any:
         return row[0] + row[1]
 
     targets = 2.0 * (data[:, 0] + data[:, 1])
@@ -247,7 +250,9 @@ def test_operator_valued_likelihood_constraint_scores_transformed_observation():
     assert jnp.allclose(loss, expected)
 
 
-def test_split_conformal_uses_exact_finite_sample_rank_and_rejects_impossible_rank():
+def test_split_conformal_uses_exact_finite_sample_rank_and_rejects_impossible_rank() -> (
+    None
+):
     center = jnp.zeros((9,))
     target = jnp.arange(9.0)
     calibrator = phx.uq.SplitConformal.calibrate(center, target, alpha=0.2)
@@ -257,7 +262,7 @@ def test_split_conformal_uses_exact_finite_sample_rank_and_rejects_impossible_ra
         phx.uq.SplitConformal.calibrate(center, target, alpha=0.01)
 
 
-def test_functional_conformal_aggregates_one_masked_score_per_case():
+def test_functional_conformal_aggregates_one_masked_score_per_case() -> None:
     center = jnp.zeros((9, 4))
     target = jnp.arange(9.0)[:, None] * jnp.ones((1, 4))
     mask = jnp.ones_like(target, dtype="bool").at[:, -1].set(False)
@@ -275,7 +280,7 @@ def test_functional_conformal_aggregates_one_masked_score_per_case():
     assert interval.calibrated
 
 
-def test_conformal_rejects_invalid_scale_axes_and_l2_box_intervals():
+def test_conformal_rejects_invalid_scale_axes_and_l2_box_intervals() -> None:
     center = cx.AxisArray(jnp.zeros((9, 2)), dims=("case", "x"))
     target = cx.AxisArray(jnp.ones((9, 2)), dims=("case", "y"))
     with pytest.raises(ValueError, match="matching shapes and dimensions"):
@@ -301,7 +306,7 @@ def test_conformal_rejects_invalid_scale_axes_and_l2_box_intervals():
         l2.interval(jnp.zeros((2,)))
 
 
-def test_functional_l2_conformal_masks_nonfinite_padding_before_reduction():
+def test_functional_l2_conformal_masks_nonfinite_padding_before_reduction() -> None:
     center = jnp.zeros((9, 2))
     target = jnp.ones((9, 2)).at[:, 1].set(jnp.nan)
     mask = jnp.ones((9, 2), dtype=jnp.bool_).at[:, 1].set(False)
@@ -318,7 +323,7 @@ def test_functional_l2_conformal_masks_nonfinite_padding_before_reduction():
     assert jnp.allclose(calibrator.radius, 1.0)
 
 
-def test_three_way_split_is_disjoint_complete_and_nonempty():
+def test_three_way_split_is_disjoint_complete_and_nonempty() -> None:
     train, calibration, test = phx.data_utils.train_calibration_test_split_indices(
         17,
         calibration_fraction=0.2,

@@ -2,14 +2,17 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _provider():
-    def evaluate(system, positions, cell):
+def _provider() -> Any:
+    def evaluate(system: Any, positions: Any, cell: Any) -> Any:
         del system, cell
         energy = jnp.sum(positions * positions)
         return phx.atomistic.ExternalAtomisticEvaluation(
@@ -23,7 +26,7 @@ def _provider():
     return phx.atomistic.CallableBornOppenheimerProvider(evaluate, "harmonic-reference")
 
 
-def _frame(system, positions, source):
+def _frame(system: Any, positions: Any, source: Any) -> Any:
     return phx.atomistic.AtomisticFrame(
         0.0,
         0,
@@ -36,7 +39,7 @@ def _frame(system, positions, source):
     )
 
 
-def _acquisition(frame, plan_id="seed-acquisition"):
+def _acquisition(frame: Any, plan_id: Any = "seed-acquisition") -> Any:
     return phx.atomistic.AcquisitionRecord(
         frame=frame,
         descriptor=frame.positions.reshape((-1,)),
@@ -49,10 +52,18 @@ def _acquisition(frame, plan_id="seed-acquisition"):
     )
 
 
-def test_campaign_labels_retrains_qualifies_and_promotes():
+def test_campaign_labels_retrains_qualifies_and_promotes() -> None:
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     system = phx.atomistic.AtomisticSystemPlan(
-        [10, 20], [1, 1], [1.0, 1.0], units, atom_type_ids=[1, 1]
+        # ty: ignore[invalid-argument-type]
+        [10, 20],
+        # ty: ignore[invalid-argument-type]
+        [1, 1],
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.0],
+        units,
+        # ty: ignore[invalid-argument-type]
+        atom_type_ids=[1, 1],
     ).prepare()
     provider = _provider()
     training_frame = _frame(
@@ -102,7 +113,7 @@ def test_campaign_labels_retrains_qualifies_and_promotes():
         "seed-committee",
     )
 
-    def qualify(committee):
+    def qualify(committee: Any) -> Any:
         evidence = phx.atomistic.AtomisticDynamicsClaimEvidence(
             phx.atomistic.AtomisticDynamicsQualificationClaim.FINITE_EXECUTION,
             committee.committee_id,

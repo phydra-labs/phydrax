@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _cell_grid(points=64, *, periodic=False):
+def _cell_grid(points: Any = 64, *, periodic: Any = False) -> Any:
     return phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(
@@ -20,11 +23,11 @@ def _cell_grid(points=64, *, periodic=False):
     ).prepare(jnp.asarray([[0.0], [1.0]]))
 
 
-def _dirichlet_boundaries():
+def _dirichlet_boundaries() -> Any:
     return {"x": ("dirichlet", "dirichlet")}
 
 
-def test_harmonic_face_interpolation_preserves_discontinuous_material_flux():
+def test_harmonic_face_interpolation_preserves_discontinuous_material_flux() -> None:
     grid = _cell_grid(64)
     x = grid.axes[0].nodes
     coefficient = jnp.where(x < 0.5, 1.0, 10.0)
@@ -51,7 +54,7 @@ def test_harmonic_face_interpolation_preserves_discontinuous_material_flux():
     np.testing.assert_allclose(face_flux, flux, rtol=2e-12, atol=2e-12)
 
 
-def test_neumann_diffusion_is_globally_conservative_and_has_weighted_adjoint():
+def test_neumann_diffusion_is_globally_conservative_and_has_weighted_adjoint() -> None:
     grid = _cell_grid(47)
     x = grid.axes[0].nodes
     coefficient = 1.0 + x**2
@@ -74,7 +77,7 @@ def test_neumann_diffusion_is_globally_conservative_and_has_weighted_adjoint():
     np.testing.assert_allclose(left, right, rtol=2e-10, atol=2e-10)
 
 
-def test_full_anisotropic_tensor_diffusion_preserves_conservative_flux_balance():
+def test_full_anisotropic_tensor_diffusion_preserves_conservative_flux_balance() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(24),
@@ -102,7 +105,7 @@ def test_full_anisotropic_tensor_diffusion_preserves_conservative_flux_balance()
     assert operator.stability_report.passed is None
 
 
-def test_periodic_conservative_and_skew_advection_preserve_mass_and_energy():
+def test_periodic_conservative_and_skew_advection_preserve_mass_and_energy() -> None:
     grid = _cell_grid(96, periodic=True)
     velocity = (jnp.ones(grid.faces("x").shape),)
     x = grid.axes[0].nodes
@@ -136,7 +139,7 @@ def test_periodic_conservative_and_skew_advection_preserve_mass_and_energy():
     assert conservative.plan.plan_id != skew.plan.plan_id
 
 
-def _conservative_problem(rhs, *, parameters):
+def _conservative_problem(rhs: Any, *, parameters: Any) -> Any:
     x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0))
     t = phx.equations.PDECoordinate("t", "time", bounds=(0.0, 1.0))
     u_field = phx.equations.PDEField("u", coordinates=("x", "t"))
@@ -181,7 +184,7 @@ def _conservative_problem(rhs, *, parameters):
     )
 
 
-def test_native_compiler_preserves_conservative_diffusion_expression_form():
+def test_native_compiler_preserves_conservative_diffusion_expression_form() -> None:
     grid = _cell_grid(32)
     u = phx.equations.PDEExpression.field("u")
     coefficient_expression = phx.equations.PDEExpression.parameter("a")
@@ -199,6 +202,7 @@ def test_native_compiler_preserves_conservative_diffusion_expression_form():
         boundaries=_dirichlet_boundaries(),
     ).prepare(coefficient)
 
+    # ty: ignore[invalid-argument-type]
     compiled_action = compiled(0.0, state, {"a": coefficient})
     explicit_action = explicit.apply(
         state,
@@ -213,7 +217,7 @@ def test_native_compiler_preserves_conservative_diffusion_expression_form():
     )
 
 
-def test_native_compiler_preserves_conservative_advection_expression_form():
+def test_native_compiler_preserves_conservative_advection_expression_form() -> None:
     grid = _cell_grid(48)
     u = phx.equations.PDEExpression.field("u")
     velocity_expression = phx.equations.PDEExpression.parameter("velocity")
@@ -232,6 +236,7 @@ def test_native_compiler_preserves_conservative_advection_expression_form():
         boundaries=_dirichlet_boundaries(),
     ).prepare(velocity)
 
+    # ty: ignore[invalid-argument-type]
     compiled_action = compiled(0.0, state, {"velocity": velocity})
     explicit_action = explicit.apply(
         state,

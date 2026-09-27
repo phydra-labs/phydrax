@@ -27,12 +27,13 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, BinaryIO, Literal
+from typing import Any, BinaryIO, Literal, NoReturn, TYPE_CHECKING, TypeAlias
 
 import jax
 import jax.core
 import jax.numpy as jnp
 import numpy as np
+from numpy.typing import DTypeLike
 
 from ._external_exchange import read_exchange, write_exchange
 from ._external_resource import read_bounded_resource, ResourceLimits
@@ -50,6 +51,7 @@ from ._model._component import ExecutionCapabilities
 from .artifacts import ScientificArtifactEnvelope
 from .backends._types import BackendUnavailableError
 from .logging import emit
+from .typing import parse
 
 
 def _host_only(*values: Any) -> None:
@@ -103,8 +105,8 @@ def _limits(max_bytes: int) -> ResourceLimits:
     )
 
 
-ExternalIsolation: type = Literal["trusted-local"]
-ExternalEnforcement: type = Literal[
+ExternalIsolation: TypeAlias = Literal["trusted-local"]
+ExternalEnforcement: TypeAlias = Literal[
     "trusted-local-direct-descriptor",
     "trusted-local-private-snapshot",
     "trusted-local-verified-path",
@@ -245,7 +247,7 @@ class EnergyRuntimeError(RuntimeError):
         *,
         result: EnergyRunResult | None = None,
         evidence: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         self.result = result
         self.evidence = dict(evidence or {})
         super().__init__(message)
@@ -692,7 +694,7 @@ class _HostWorker:
         inputs: Mapping[str, bytes],
         timeout: float,
         max_bytes: int = _DEFAULT_BYTES,
-    ):
+    ) -> None:
         _host_only(config)
         if os.name != "posix":
             raise OSError(
@@ -1006,7 +1008,7 @@ _WORKER_REJECTIONS = (
 # Rejections after which the native library state is not trusted for reuse.
 _WORKER_FATAL_REJECTIONS = ("resource_exhausted", "library_failure")
 
-NativeWorkerFailureKind: type = Literal[
+NativeWorkerFailureKind: TypeAlias = Literal[
     "unavailable", "startup", "timeout", "resource", "protocol", "exited", "rejected"
 ]
 
@@ -1020,7 +1022,7 @@ class NativeWorkerError(RuntimeError):
 
     def __init__(
         self, kind: NativeWorkerFailureKind, message: str, /, *, evidence: Mapping
-    ):
+    ) -> None:
         self.kind = kind
         self.evidence = dict(evidence)
         super().__init__(message)
@@ -1155,7 +1157,7 @@ class NativeWorker:
         policy: NativeWorkerPolicy | None = None,
         environment: Mapping[str, str] | None = None,
         execution_policy: ExternalExecutionPolicy | None = None,
-    ):
+    ) -> None:
         _host_only()
         if os.name != "posix":
             raise OSError("Persistent native workers require a POSIX host.")
@@ -1303,7 +1305,7 @@ class NativeWorker:
 
     def _fail(
         self, kind: NativeWorkerFailureKind, message: str, evidence: Mapping[str, Any]
-    ):
+    ) -> NoReturn:
         self.abort()
         record = {
             **self._context,
@@ -1352,7 +1354,7 @@ class NativeWorker:
                 self._buffer.extend(chunk)
 
     def _decode(self, data: bytes, stage: str) -> dict[str, Any]:
-        def pairs(items):
+        def pairs(items: Any) -> Any:
             record = {}
             for key, value in items:
                 if key in record:
@@ -1566,8 +1568,8 @@ class NativeWorker:
 
 # External model tiers ---------------------------------------------------------------
 
-ExternalTransport: type = Literal["copy", "dlpack"]
-ExternalDerivativeRoute: type = Literal["external-adjoint", "none"]
+ExternalTransport: TypeAlias = Literal["copy", "dlpack"]
+ExternalDerivativeRoute: TypeAlias = Literal["external-adjoint", "none"]
 
 # Phydrax methods that need only function values. A provider without an adjoint
 # reports them; none is ever selected on the caller's behalf.
@@ -1619,6 +1621,12 @@ class ExternalTensorSpec:
     name: str
     shape: tuple[int, ...]
     dtype: str
+
+    if TYPE_CHECKING:
+        # __post_init__ normalizes shape to a tuple and dtype to `numpy.dtype.str`.
+        def __init__(
+            self, name: str, shape: Sequence[int | np.integer], dtype: DTypeLike
+        ) -> None: ...
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name.strip():
@@ -1776,8 +1784,9 @@ class HostInferenceAdapter:
         )
         if not isinstance(self.binding, ArtifactBindingIdentity):
             raise TypeError("binding must be an ArtifactBindingIdentity.")
-        if self.transport not in ("copy", "dlpack"):
-            raise ValueError("transport must be 'copy' or 'dlpack'.")
+        object.__setattr__(
+            self, "transport", parse(self.transport, ExternalTransport, "transport")
+        )
 
     @property
     def capabilities(self) -> ExecutionCapabilities:
@@ -1944,7 +1953,7 @@ class ExternalAdjointAction(ABC):
         input_schema: Sequence[ExternalTensorSpec],
         output_schema: Sequence[ExternalTensorSpec],
         configuration_id: str,
-    ):
+    ) -> None:
         identifiers = {
             "provider": provider,
             "version": version,

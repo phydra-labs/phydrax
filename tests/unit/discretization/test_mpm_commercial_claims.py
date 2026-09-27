@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -11,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _claim():
+def _claim() -> Any:
     return phx.discretization.MPMClaimTuple(
         equation_family="solid-mechanics",
         dimension=2,
@@ -31,7 +33,7 @@ def _claim():
     )
 
 
-def _intended_use():
+def _intended_use() -> Any:
     return phx.discretization.MPMIntendedUse(
         "predict small elastic block displacement",
         phenomena=("finite-strain elasticity",),
@@ -44,7 +46,7 @@ def _intended_use():
     )
 
 
-def test_support_matrix_is_exact_and_fail_closed():
+def test_support_matrix_is_exact_and_fail_closed() -> None:
     claim = _claim()
     supported = phx.discretization.MPMSupportDecision(
         claim,
@@ -84,7 +86,7 @@ def test_support_matrix_is_exact_and_fail_closed():
         matrix.decision("missing")
 
 
-def test_release_bundle_requires_g0_g7_and_independent_review():
+def test_release_bundle_requires_g0_g7_and_independent_review() -> None:
     claim = _claim()
     intended = _intended_use()
     gates = tuple(
@@ -177,7 +179,9 @@ def test_release_bundle_requires_g0_g7_and_independent_review():
     assert code_assessment.releasable
 
 
-def test_derivative_results_distinguish_branch_event_surrogate_and_nondifferentiable():
+def test_derivative_results_distinguish_branch_event_surrogate_and_nondifferentiable() -> (
+    None
+):
     objective = lambda value: jnp.sum(value**2)
     primal = jnp.asarray((1.0, -2.0))
     direction = jnp.asarray((0.2, 0.3))

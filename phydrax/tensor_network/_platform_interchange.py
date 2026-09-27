@@ -57,7 +57,9 @@ def _payload_digest(value: np.ndarray, /) -> str:
 
 
 def _attribute(value: object, /) -> InterchangeAttribute:
-    if type(value) not in (str, int, float, bool):
+    if type(value) not in (str, int, float, bool) or not isinstance(
+        value, (str, int, float)
+    ):
         raise TypeError("Interchange attributes must be JSON scalar values.")
     if isinstance(value, str) and not value:
         raise ValueError("Interchange string attributes must be nonempty.")
@@ -84,7 +86,7 @@ class TensorNetworkInterchangeLimits(StrictModule, NonTrainableState):
         maximum_total_elements: int = 1_000_000_000,
         maximum_total_bytes: int = 4 * 1024**3,
         maximum_metadata_bytes: int = 16 * 1024**2,
-    ):
+    ) -> None:
         values = tuple(
             _positive_integer(value, name)
             for value, name in (
@@ -115,7 +117,7 @@ class TensorNetworkInterchangeLimits(StrictModule, NonTrainableState):
 class TensorNetworkInterchangeSecurityError(RuntimeError):
     failure = TensorNetworkFailure.SECURITY_LIMIT
 
-    def __init__(self, detail: str, /):
+    def __init__(self, detail: str, /) -> None:
         self.detail = _identifier(detail, "interchange security detail")
         super().__init__(f"security-limit: {self.detail}")
 
@@ -141,7 +143,7 @@ class TensorNetworkInterchangeDataset(StrictModule, NonTrainableState):
         role: str,
         payload_bytes: int,
         payload_sha256: str,
-    ):
+    ) -> None:
         name_ = _dataset_name(name)
         shape_ = tuple(shape)
         if any(value < 0 for value in shape_):
@@ -184,9 +186,7 @@ class TensorNetworkInterchangeDataset(StrictModule, NonTrainableState):
         return {**self._content_record(), "dataset_id": self.dataset_id}
 
     @classmethod
-    def from_record(
-        cls, record: Mapping[str, object], /
-    ) -> TensorNetworkInterchangeDataset:
+    def from_record(cls, record: Mapping[str, Any], /) -> TensorNetworkInterchangeDataset:
         expected = {
             "name",
             "shape",
@@ -252,7 +252,7 @@ class TensorNetworkLicenseProvenance(StrictModule, NonTrainableState):
         source_uri: str,
         text_sha256: str,
         notice_required: bool,
-    ):
+    ) -> None:
         values = tuple(
             _identifier(value, field)
             for value, field in (
@@ -296,7 +296,7 @@ class TensorNetworkDependencyProvenance(StrictModule, NonTrainableState):
         artifact_sha256: str,
         license_ids: Sequence[str],
         direct: bool,
-    ):
+    ) -> None:
         values = tuple(
             _identifier(value, field)
             for value, field in (
@@ -344,7 +344,7 @@ class TensorNetworkProvenance(StrictModule, NonTrainableState):
         dependency_lock_sha256: str,
         dependencies: Sequence[TensorNetworkDependencyProvenance],
         licenses: Sequence[TensorNetworkLicenseProvenance],
-    ):
+    ) -> None:
         commit = _identifier(source_commit, "source_commit")
         source_digest = _sha256(source_tree_sha256, "source_tree_sha256")
         lock_digest = _sha256(dependency_lock_sha256, "dependency_lock_sha256")
@@ -411,7 +411,7 @@ class TensorNetworkInterchangeManifest(StrictModule, NonTrainableState):
         provenance_id: str,
         datasets: Sequence[TensorNetworkInterchangeDataset],
         attributes: Mapping[str, InterchangeAttribute] | None = None,
-    ):
+    ) -> None:
         kind = TensorNetworkArchiveKind(artifact_kind)
         identifiers = tuple(
             _identifier(value, name)
@@ -472,7 +472,7 @@ class TensorNetworkInterchangeManifest(StrictModule, NonTrainableState):
 
     @classmethod
     def from_record(
-        cls, record: Mapping[str, object], /
+        cls, record: Mapping[str, Any], /
     ) -> TensorNetworkInterchangeManifest:
         expected = {
             "kind",
@@ -545,7 +545,7 @@ class TensorNetworkInterchangeValidation(StrictModule, NonTrainableState):
         failure: TensorNetworkFailure,
         mismatches: Sequence[str],
         /,
-    ):
+    ) -> None:
         manifest = _identifier(manifest_id, "manifest_id")
         limits = _identifier(limits_id, "limits_id")
         valid_ = bool(valid)

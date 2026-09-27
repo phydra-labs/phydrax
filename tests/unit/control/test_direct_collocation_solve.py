@@ -1,10 +1,12 @@
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _mesh(nodes=(0.0, 0.5, 1.0), *, identity="solve-direct-mesh"):
+def _mesh(nodes: Any = (0.0, 0.5, 1.0), *, identity: Any = "solve-direct-mesh") -> Any:
     return phx.discretization.TemporalMesh(
         jnp.asarray(nodes),
         role="collocation",
@@ -12,11 +14,11 @@ def _mesh(nodes=(0.0, 0.5, 1.0), *, identity="solve-direct-mesh"):
     )
 
 
-def _method():
+def _method() -> Any:
     return phx.optim.PrimalDualInteriorPoint(mode="dense-filter", max_dense_dimension=128)
 
 
-def _termination():
+def _termination() -> Any:
     return phx.optim.OptimizationTermination(
         absolute_optimality=1.0e-7,
         relative_optimality=0.0,
@@ -26,7 +28,7 @@ def _termination():
     )
 
 
-def _analytic_dae_problem():
+def _analytic_dae_problem() -> Any:
     system = phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, control, args: jnp.asarray(
             (
@@ -56,10 +58,10 @@ def _analytic_dae_problem():
 
 def _plan(
     *,
-    variable_duration=False,
-    identity="analytic-direct-plan",
-    exact_hessian=False,
-):
+    variable_duration: Any = False,
+    identity: Any = "analytic-direct-plan",
+    exact_hessian: Any = False,
+) -> Any:
     return phx.control.DirectCollocationPlan(
         _mesh(identity=f"{identity}:mesh"),
         method=phx.solver.ThetaMethod(0.5, endpoint=False),
@@ -78,7 +80,7 @@ def _plan(
     )
 
 
-def test_native_direct_collocation_solves_analytic_controlled_dae():
+def test_native_direct_collocation_solves_analytic_controlled_dae() -> None:
     problem = _analytic_dae_problem()
     result = phx.control.solve_direct_collocation(
         problem,
@@ -103,7 +105,7 @@ def test_native_direct_collocation_solves_analytic_controlled_dae():
     assert result.optimization_result.certificate is not None
 
 
-def test_native_sparse_augmented_direct_collocation_uses_exact_derivatives():
+def test_native_sparse_augmented_direct_collocation_uses_exact_derivatives() -> None:
     result = phx.control.solve_direct_collocation(
         _analytic_dae_problem(),
         _plan(exact_hessian=True, identity="analytic-direct-sparse"),
@@ -118,7 +120,7 @@ def test_native_sparse_augmented_direct_collocation_uses_exact_derivatives():
     assert result.diagnostics.maximum_constraint_violation <= 1e-6
 
 
-def test_variable_duration_recovers_unit_time_integrator_solution():
+def test_variable_duration_recovers_unit_time_integrator_solution() -> None:
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, control, args: control,
         state_layout=phx.dynamics.StateLayout((1,)),
@@ -155,7 +157,7 @@ def test_variable_duration_recovers_unit_time_integrator_solution():
     assert jnp.allclose(result.objective, 2.0, atol=2e-5)
 
 
-def test_continuous_control_problem_is_a_lossless_fixed_duration_input():
+def test_continuous_control_problem_is_a_lossless_fixed_duration_input() -> None:
     grid = phx.dynamics.TimeGrid(
         jnp.asarray((0.0, 0.5, 1.0)),
         time_id="control-adapter-time",
@@ -199,7 +201,7 @@ def test_continuous_control_problem_is_a_lossless_fixed_duration_input():
     assert len(compilation.problem.trajectory_constraints) == 1
 
 
-def test_off_grid_audit_preserves_matrix_state_and_control_events():
+def test_off_grid_audit_preserves_matrix_state_and_control_events() -> None:
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, control, args: control,
         state_layout=phx.dynamics.StateLayout((2, 2)),
@@ -233,7 +235,7 @@ def test_off_grid_audit_preserves_matrix_state_and_control_events():
     assert result.diagnostics.maximum_off_grid_defect <= 1e-7
 
 
-def test_direct_collocation_rejects_out_of_bound_initial_guess():
+def test_direct_collocation_rejects_out_of_bound_initial_guess() -> None:
     problem = _analytic_dae_problem()
     with pytest.raises(ValueError, match="violates its bounds"):
         phx.control.compile_direct_collocation(
@@ -247,7 +249,7 @@ def test_direct_collocation_rejects_out_of_bound_initial_guess():
         )
 
 
-def test_optional_ipopt_structured_route_matches_analytic_solution():
+def test_optional_ipopt_structured_route_matches_analytic_solution() -> None:
     pytest.importorskip("cyipopt")
     problem = _analytic_dae_problem()
     result = phx.control.solve_direct_collocation(

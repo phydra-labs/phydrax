@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -15,7 +17,9 @@ from phydrax.applications.cosmology._halo_lineage import (
 )
 
 
-def _match(descendants, overlaps, merits=None, *, successful=True):
+def _match(
+    descendants: Any, overlaps: Any, merits: Any = None, *, successful: Any = True
+) -> Any:
     descendants = jnp.asarray(descendants)
     overlaps = jnp.asarray(overlaps)
     if merits is None:
@@ -29,7 +33,7 @@ def _match(descendants, overlaps, merits=None, *, successful=True):
     )
 
 
-def _tracks_by_source(snapshot):
+def _tracks_by_source(snapshot: Any) -> Any:
     return {
         int(source): int(track)
         for source, track, active in zip(
@@ -42,15 +46,19 @@ def _tracks_by_source(snapshot):
     }
 
 
-def test_stable_tracks_survive_row_reordering_and_ties_are_deterministic():
+def test_stable_tracks_survive_row_reordering_and_ties_are_deterministic() -> None:
     plan = ParticleCoreLineagePlan(2, 3, 2, 16)
     first = plan.build(
+        # ty: ignore[invalid-argument-type]
         [[20, 10, -1], [200, 100, -1]],
+        # ty: ignore[invalid-argument-type]
         [[True, True, False], [True, True, False]],
         (_match([0, 1, -1], [2, 2, 0]),),
     )
     reordered = plan.build(
+        # ty: ignore[invalid-argument-type]
         [[10, 20, -1], [100, 200, -1]],
+        # ty: ignore[invalid-argument-type]
         [[True, True, False], [True, True, False]],
         (_match([0, 1, -1], [2, 2, 0]),),
     )
@@ -63,7 +71,9 @@ def test_stable_tracks_survive_row_reordering_and_ties_are_deterministic():
     )
 
     contested = plan.build(
+        # ty: ignore[invalid-argument-type]
         [[20, 10, -1], [100, -1, -1]],
+        # ty: ignore[invalid-argument-type]
         [[True, True, False], [True, False, False]],
         (_match([0, 0, -1], [3, 3, 0], [0.5, 0.5, 0.0]),),
     )
@@ -71,7 +81,7 @@ def test_stable_tracks_survive_row_reordering_and_ties_are_deterministic():
     assert accepted.tolist() == [False, True, False]
 
 
-def test_missing_core_evidence_never_creates_a_false_descendant():
+def test_missing_core_evidence_never_creates_a_false_descendant() -> None:
     plan = ParticleCoreLineagePlan(2, 2, 1, 8)
     malformed_claim = MergerMatchResult(
         jnp.asarray([0, -1]),
@@ -81,7 +91,9 @@ def test_missing_core_evidence_never_creates_a_false_descendant():
         jnp.asarray(True),
     )
     result = plan.build(
+        # ty: ignore[invalid-argument-type]
         [[1, -1], [2, -1]],
+        # ty: ignore[invalid-argument-type]
         [[True, False], [True, False]],
         (malformed_claim,),
     )
@@ -91,16 +103,20 @@ def test_missing_core_evidence_never_creates_a_false_descendant():
     assert int(result.snapshots[1].track_ids[0]) != int(result.snapshots[0].track_ids[0])
 
 
-def test_sink_descendant_and_reresolution_remain_distinct_representable_states():
+def test_sink_descendant_and_reresolution_remain_distinct_representable_states() -> None:
     plan = ParticleCoreLineagePlan(3, 2, 1, 16)
     result = plan.build(
+        # ty: ignore[invalid-argument-type]
         [[5, 9], [9, -1], [5, 9]],
+        # ty: ignore[invalid-argument-type]
         [[True, True], [True, False], [True, True]],
         (
             _match([-1, 0], [0, 2]),
             _match([1, -1], [2, 0]),
         ),
+        # ty: ignore[invalid-argument-type]
         sink_target_rows=[[0, -1], [-1, -1]],
+        # ty: ignore[invalid-argument-type]
         reresolved_track_ids=[[-1, -1], [-1, -1], [0, -1]],
         source_membership_ids=(("s5-0", "s9-0"), ("s9-1", ""), ("s5-2", "s9-2")),
         bound_membership_ids=(("b5-0", "b9-0"), ("b9-1", ""), ("b5-2", "b9-2")),
@@ -118,17 +134,21 @@ def test_sink_descendant_and_reresolution_remain_distinct_representable_states()
     )
 
 
-def test_duplicate_source_ids_and_event_overflow_are_rejected():
+def test_duplicate_source_ids_and_event_overflow_are_rejected() -> None:
     plan = ParticleCoreLineagePlan(2, 2, 1, 1)
     with pytest.raises(ValueError, match="unique"):
         plan.build(
+            # ty: ignore[invalid-argument-type]
             [[1, 1], [2, -1]],
+            # ty: ignore[invalid-argument-type]
             [[True, True], [True, False]],
             (_match([0, -1], [1, 0]),),
         )
     with pytest.raises(ValueError, match="event_capacity"):
         plan.build(
+            # ty: ignore[invalid-argument-type]
             [[1, -1], [2, -1]],
+            # ty: ignore[invalid-argument-type]
             [[True, False], [True, False]],
             (_match([0, -1], [1, 0]),),
         )

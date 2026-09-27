@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import math
+from typing import Any
 
 import jax.numpy as jnp
 
@@ -13,7 +14,7 @@ import phydrax as phx
 from benchmarks._runtime import measure_repeated, measure_synchronized
 
 
-def _timed(callback, *, repeats: int = 5):
+def _timed(callback: Any, *, repeats: int = 5) -> Any:
     _first, first_seconds = measure_synchronized(callback)
     value, distribution = measure_repeated(
         callback,
@@ -23,11 +24,12 @@ def _timed(callback, *, repeats: int = 5):
     return (
         float(value),
         1_000.0 * first_seconds,
+        # ty: ignore[invalid-argument-type]
         1_000.0 * float(distribution.mean_seconds),
     )
 
 
-def _disk_records():
+def _disk_records() -> Any:
     domain = phx.domain.GeometryDomain(phx.geometry.Circle((0.0, 0.0), 1.0).compile())
     target = phx.integration.over(domain.component())
     legacy_plan = phx.integration.FixedQuadraturePlan(
@@ -63,7 +65,7 @@ def _disk_records():
     )
 
 
-def _sphere_records():
+def _sphere_records() -> Any:
     domain = phx.domain.GeometryDomain(
         phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile()
     )
@@ -78,7 +80,7 @@ def _sphere_records():
         phx.integration.FixedQuadraturePlan(native_rule),
     )
 
-    def moments(realization):
+    def moments(realization: Any) -> Any:
         return jnp.stack(
             tuple(
                 phx.integration.reduce(
@@ -110,7 +112,7 @@ def _sphere_records():
     )
 
 
-def _normal_records():
+def _normal_records() -> Any:
     normal = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="z")
     function = normal.Function("z")(lambda z: z**20)
     target = phx.integration.expectation(normal)

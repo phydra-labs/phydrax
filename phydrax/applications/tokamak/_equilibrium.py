@@ -12,7 +12,8 @@ from dataclasses import dataclass, field
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+import numpy.typing as npt
+from jax import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -20,7 +21,9 @@ from ..._trainable import NonTrainableState
 from ._conventions import AxisymmetricMachineFrame, TokamakMagneticConvention
 
 
-def _real_array(value, name: str, shape: tuple[int, ...] | None = None):
+def _real_array(
+    value: npt.ArrayLike, name: str, shape: tuple[int, ...] | None = None
+) -> np.ndarray:
     array = np.array(value, dtype=np.float64, copy=True)
     if shape is not None and array.shape != shape:
         raise ValueError(f"{name} must have shape {shape}; got {array.shape}.")

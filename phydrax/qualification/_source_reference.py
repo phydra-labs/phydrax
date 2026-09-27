@@ -6,9 +6,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Self
 
 from .._fingerprint import canonical_fingerprint
 from ._closure_taxonomy import SourceReuseClass
@@ -66,29 +67,29 @@ class SourceReference:
     @classmethod
     def create(
         cls,
-        source_id,
-        repository_url,
-        revision,
-        license,
-        reuse_class,
+        source_id: str,
+        repository_url: str,
+        revision: str,
+        license: str,
+        reuse_class: SourceReuseClass | str,
         /,
         *,
-        concepts,
-        archive_digest="unresolved",
-        license_digest="unresolved",
-        relevant_paths=(),
-        relevant_documents=(),
-        publications=(),
-        code_inspected=False,
-        behavior_inspected=False,
-        copying_permitted=False,
-        provider_only=False,
-        notice_required=True,
-        data_rights="not-applicable",
-        technical_reviewer="unreviewed",
-        legal_reviewer="unreviewed",
-        review_status=SourceReview.UNREVIEWED,
-    ):
+        concepts: Sequence[str],
+        archive_digest: str = "unresolved",
+        license_digest: str = "unresolved",
+        relevant_paths: Sequence[str] = (),
+        relevant_documents: Sequence[str] = (),
+        publications: Iterable[PublicationReference] = (),
+        code_inspected: bool = False,
+        behavior_inspected: bool = False,
+        copying_permitted: bool = False,
+        provider_only: bool = False,
+        notice_required: bool = True,
+        data_rights: str = "not-applicable",
+        technical_reviewer: str = "unreviewed",
+        legal_reviewer: str = "unreviewed",
+        review_status: SourceReview | str = SourceReview.UNREVIEWED,
+    ) -> Self:
         return cls(
             _identifier(source_id, "source ID"),
             str(repository_url).strip(),
@@ -138,7 +139,7 @@ class SourceReference:
     def source_reference_id(self) -> str:
         return canonical_fingerprint(self.to_record(include_id=False))
 
-    def to_record(self, *, include_id=True) -> dict[str, object]:
+    def to_record(self, *, include_id: bool = True) -> dict[str, object]:
         record = {
             "kind": "source-reference",
             "source_id": self.source_id,
@@ -177,7 +178,7 @@ class SourceAbsorptionLedger:
     sources: tuple[SourceReference, ...]
 
     @classmethod
-    def create(cls, sources):
+    def create(cls, sources: Iterable[SourceReference]) -> Self:
         return cls(tuple(sorted(sources, key=lambda item: item.source_id)))
 
     def __post_init__(self) -> None:
@@ -189,7 +190,7 @@ class SourceAbsorptionLedger:
     def ledger_id(self) -> str:
         return canonical_fingerprint(self.to_record(include_id=False))
 
-    def to_record(self, *, include_id=True) -> dict[str, object]:
+    def to_record(self, *, include_id: bool = True) -> dict[str, object]:
         record = {
             "kind": "source-absorption-ledger",
             "sources": [value.to_record() for value in self.sources],

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -53,7 +56,9 @@ def _law() -> ConstantRefractiveIndex:
     )
 
 
-def _spaces(radial_count: int = 12, temporal_count: int = 64, radius: float = 20.0):
+def _spaces(
+    radial_count: int = 12, temporal_count: int = 64, radius: float = 20.0
+) -> Any:
     hankel = CylindricalHankelPlan(radius, radial_count, order=0).prepare()
     temporal_grid = TensorGridPlan(
         (FourierAxisSpec(temporal_count),), axis_names=("time",)
@@ -61,7 +66,7 @@ def _spaces(radial_count: int = 12, temporal_count: int = 64, radius: float = 20
     return hankel, PulseTimeSpace(temporal_grid, topology="periodic-cell")
 
 
-def _plan(hankel, time_space, omega: float, **overrides):
+def _plan(hankel: Any, time_space: Any, omega: float, **overrides: Any) -> Any:
     options = {
         "step_count": 4,
         "dealias_fraction": 1.0,
@@ -77,10 +82,13 @@ def _plan(hankel, time_space, omega: float, **overrides):
         "maximum_longitudinal_cutoff_fraction": 1.0,
     }
     options.update(overrides)
+    # ty: ignore[invalid-argument-type]
     return CylindricalUnidirectionalPropagationPlan(hankel, time_space, omega, **options)
 
 
-def _mode_field(hankel, time_space, temporal_mode: int, radial_mode: int):
+def _mode_field(
+    hankel: Any, time_space: Any, temporal_mode: int, radial_mode: int
+) -> Any:
     radial_spectrum = jnp.zeros(hankel.plan.radial_count, dtype=jnp.complex128)
     radial_spectrum = radial_spectrum.at[radial_mode].set(1.0)
     radial_values = hankel.inverse(radial_spectrum)
@@ -94,7 +102,7 @@ def _mode_field(hankel, time_space, temporal_mode: int, radial_mode: int):
     )
 
 
-def test_linear_hankel_modes_gain_the_analytic_longitudinal_phase():
+def test_linear_hankel_modes_gain_the_analytic_longitudinal_phase() -> None:
     hankel, time_space = _spaces()
     temporal_mode = 8
     radial_mode = 2
@@ -127,7 +135,7 @@ def test_linear_hankel_modes_gain_the_analytic_longitudinal_phase():
     assert result.response_evaluation.successful
 
 
-def test_temporal_edge_violation_has_explicit_cylindrical_status():
+def test_temporal_edge_violation_has_explicit_cylindrical_status() -> None:
     hankel, time_space = _spaces()
     field = _mode_field(hankel, time_space, 31, 0)
     plan = _plan(
@@ -150,7 +158,7 @@ def test_temporal_edge_violation_has_explicit_cylindrical_status():
     )
 
 
-def test_nonzero_azimuthal_order_is_rejected_for_optical_propagation():
+def test_nonzero_azimuthal_order_is_rejected_for_optical_propagation() -> None:
     hankel = CylindricalHankelPlan(10.0, 8, order=1).prepare()
     temporal_grid = TensorGridPlan((FourierAxisSpec(32),), axis_names=("time",)).prepare(
         jnp.asarray([[0.0], [2.0 * jnp.pi]])
@@ -161,7 +169,7 @@ def test_nonzero_azimuthal_order_is_rejected_for_optical_propagation():
         CylindricalUnidirectionalPropagationPlan(hankel, time_space, 5.0, step_count=2)
 
 
-def test_radial_boundary_and_high_mode_evidence_have_distinct_statuses():
+def test_radial_boundary_and_high_mode_evidence_have_distinct_statuses() -> None:
     hankel, time_space = _spaces(radius=8.0)
     carrier = jnp.exp(-10j * time_space.coordinates)
     boundary_values = jnp.zeros(
@@ -209,7 +217,7 @@ def test_radial_boundary_and_high_mode_evidence_have_distinct_statuses():
     )
 
 
-def test_cutoff_and_resource_limits_fail_closed_without_changing_the_field():
+def test_cutoff_and_resource_limits_fail_closed_without_changing_the_field() -> None:
     hankel, time_space = _spaces(radius=4.0)
     cutoff_field = _mode_field(hankel, time_space, 1, hankel.plan.radial_count - 1)
     cutoff_plan = _plan(

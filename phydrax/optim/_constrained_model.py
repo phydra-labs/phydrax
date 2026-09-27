@@ -10,8 +10,9 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -30,7 +31,7 @@ class ConstraintScalingPolicy(StrictModule):
         automatic: bool = True,
         objective_floor: float = 1.0,
         constraint_floor: float = 1.0,
-    ):
+    ) -> None:
         values = (float(objective_floor), float(constraint_floor))
         if any(not isfinite(value) or value <= 0.0 for value in values):
             raise ValueError("Constraint scaling floors must be finite and positive.")
@@ -81,12 +82,12 @@ class PreparedConstrainedModel(StrictModule):
     ) -> ConstrainedModelEvaluation:
         coordinates, _ = ravel_pytree(parameters)
 
-        def objective_coordinates(value):
+        def objective_coordinates(value: Array) -> Array:
             return self.problem.value(self.unflatten(value), args)[0]
 
         objective, gradient = jax.value_and_grad(objective_coordinates)(coordinates)
 
-        def constraint_coordinates(value):
+        def constraint_coordinates(value: Array) -> Array:
             return _flat_constraint_values(
                 self.problem,
                 self.unflatten(value),
@@ -147,7 +148,7 @@ class PreparedConstrainedModel(StrictModule):
         lower = jnp.asarray(lower_multipliers)
         upper = jnp.asarray(upper_multipliers)
 
-        def lagrangian(value):
+        def lagrangian(value: Array) -> Array:
             point = self.unflatten(value)
             objective = self.problem.value(point, args)[0]
             constraints = _flat_constraint_values(self.problem, point, args)

@@ -8,7 +8,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -34,7 +35,7 @@ class FieldPortModel(AbstractScatteringComponent):
         *,
         descriptor: LinearDescriptorSystem | None = None,
         model_id: str,
-    ):
+    ) -> None:
         if not isinstance(component, AbstractScatteringComponent):
             raise TypeError("component must be AbstractScatteringComponent.")
         if descriptor is not None and not isinstance(descriptor, LinearDescriptorSystem):
@@ -123,7 +124,7 @@ class _ElectrothermalResidualCore(StrictModule):
         inputs: Array | None,
         args: Any,
         /,
-    ):
+    ) -> Array:
         circuit_state, temperature = state[:-1], state[-1]
         circuit_rate, temperature_rate = state_rate[:-1], state_rate[-1]
         circuit_args = {"temperature": temperature, "user": args}
@@ -146,7 +147,9 @@ class _ElectrothermalResidualCore(StrictModule):
 class _AutonomousElectrothermalResidual(StrictModule):
     core: _ElectrothermalResidualCore
 
-    def __call__(self, time: Array, state: Array, state_rate: Array, args: Any, /):
+    def __call__(
+        self, time: Array, state: Array, state_rate: Array, args: Any, /
+    ) -> Array:
         return self.core.evaluate(time, state, state_rate, None, args)
 
 
@@ -161,7 +164,7 @@ class _InputElectrothermalResidual(StrictModule):
         inputs: Array,
         args: Any,
         /,
-    ):
+    ) -> Array:
         return self.core.evaluate(time, state, state_rate, inputs, args)
 
 

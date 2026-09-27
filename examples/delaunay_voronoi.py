@@ -25,6 +25,7 @@ Run with ``python examples/delaunay_voronoi.py``.
 """
 
 import json
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -42,7 +43,7 @@ if phx.geometry.resolve_host_predicate_mode(EXACT) is not EXACT:
 rng = np.random.default_rng(2026)
 
 
-def verify_delaunay(points):
+def verify_delaunay(points: Any) -> Any:
     """Triangulate and verify orientation and empty circumballs exactly."""
     triangulation = phx.geometry.DelaunayTriangulation(points)
     simplices = triangulation.simplices
@@ -51,9 +52,11 @@ def verify_delaunay(points):
     balls = tuple(corner[:, None, :] for corner in corners)
     if triangulation.dimension == 2:
         orientation = phx.geometry.orient2d(*corners, mode=EXACT)
+        # ty: ignore[too-many-positional-arguments]
         inside = phx.geometry.incircle(*balls, points[None, :, :], mode=EXACT)
     else:
         orientation = phx.geometry.orient3d(*corners, mode=EXACT)
+        # ty: ignore[too-many-positional-arguments]
         inside = phx.geometry.insphere(*balls, points[None, :, :], mode=EXACT)
     if not (np.all(orientation.certain) and np.all(inside.certain)):
         raise RuntimeError("EXACT predicates left an uncertain sign.")
@@ -80,7 +83,7 @@ def verify_delaunay(points):
     }
 
 
-def verify_diagram(diagram, box_measure):
+def verify_diagram(diagram: Any, box_measure: Any) -> Any:
     measures = diagram.cells.measures
     total = float(np.sum(measures))
     if abs(total - box_measure) > 1.0e-12 * box_measure or np.any(measures < 0.0):

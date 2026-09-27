@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from .._trainable import fixed_field
@@ -42,7 +43,7 @@ class _ControlCandidateEvaluator(StrictModule):
         parameterization: AbstractControlParameterization,
         solver_options: dict[str, Any],
         /,
-    ):
+    ) -> None:
         self.problem = problem
         self.parameterization = parameterization
         self.solver_options = solver_options
@@ -118,7 +119,7 @@ class ControlCandidateSearchResult(StrictModule):
         winner_evaluations: int,
         effective_batch_size: int,
         candidate_signature: str,
-    ):
+    ) -> None:
         valid_ = bool(valid)
         complete_winner = evaluation is not None and coefficients is not None
         if valid_ != complete_winner:

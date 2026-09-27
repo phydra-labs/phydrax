@@ -4,8 +4,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -18,13 +21,17 @@ from ._maxwell_sources import (
 )
 
 
+if TYPE_CHECKING:
+    from ._maxwell import MaxwellCochainLayout
+
+
 class PreparedPICMaxwellCurrentSource(StrictModule, NonTrainableState):
     electric_count: int = eqx.field(static=True)
     magnetic_count: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
     magnetic_closedness_preserving: bool = eqx.field(static=True)
 
-    def sample(self, time, args=None, /) -> MaxwellSourceForcing:
+    def sample(self, time: ArrayLike, args: object = None, /) -> MaxwellSourceForcing:
         del time
         if not isinstance(args, PICMaxwellCurrentArguments):
             raise TypeError("PIC Maxwell source requires PICMaxwellCurrentArguments.")
@@ -42,13 +49,15 @@ class PICMaxwellCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableState):
 
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, source_id: str = "pic-midpoint-current", /):
+    def __init__(self, source_id: str = "pic-midpoint-current", /) -> None:
         identifier = str(source_id)
         if not identifier:
             raise ValueError("source_id must be nonempty.")
         self.source_id = identifier
 
-    def prepare(self, bridge: StructuredCochainBridge, layout, /):
+    def prepare(
+        self, bridge: StructuredCochainBridge, layout: MaxwellCochainLayout, /
+    ) -> PreparedPICMaxwellCurrentSource:
         return PreparedPICMaxwellCurrentSource(
             layout.electric_count,
             layout.magnetic_count,

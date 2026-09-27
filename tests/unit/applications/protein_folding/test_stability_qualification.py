@@ -1,6 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
 import hashlib
+from typing import Any
 
 import pytest
 
@@ -113,7 +115,7 @@ _STABILITY_CRITERION_IDS = tuple(
 )
 
 
-def _source(tmp_path, *, uncertainty_reported=True):
+def _source(tmp_path: Any, *, uncertainty_reported: Any = True) -> Any:
     payload = (
         b"name,aa_seq,mut_type,WT_name,WT_cluster,ddG_ML\n"
         b"family-a-A1C,CAAA,A1C,family-a,family-a-cluster,0.5\n"
@@ -191,7 +193,7 @@ def _source(tmp_path, *, uncertainty_reported=True):
     return source
 
 
-def _features(source, measurements=None):
+def _features(source: Any, measurements: Any = None) -> Any:
     scalar = {residue: float(index) for index, residue in enumerate(_AA)}
     scalars = AminoAcidScalarDefinition(
         scalar,
@@ -235,7 +237,9 @@ def _features(source, measurements=None):
     return tuple(features)
 
 
-def _double_measurement(source, measurement_id, family_id, mutation_code, value):
+def _double_measurement(
+    source: Any, measurement_id: Any, family_id: Any, mutation_code: Any, value: Any
+) -> Any:
     template = source.measurements[0]
     uncertainty_manifest = template.uncertainty_source_manifest
     return ProteinStabilityMeasurement(
@@ -266,7 +270,9 @@ def _double_measurement(source, measurement_id, family_id, mutation_code, value)
     )
 
 
-def _double_case(source, case_id, family_id, distance, coupling):
+def _double_case(
+    source: Any, case_id: Any, family_id: Any, distance: Any, coupling: Any
+) -> Any:
     first = _double_measurement(source, f"{case_id}-A1C", family_id, "A1C", 0.25)
     second = _double_measurement(source, f"{case_id}-A2D", family_id, "A2D", -0.1)
     double = _double_measurement(
@@ -292,7 +298,9 @@ def _double_case(source, case_id, family_id, distance, coupling):
     )
 
 
-def test_processed_stability_admission_preserves_grouped_locked_evaluation(tmp_path):
+def test_processed_stability_admission_preserves_grouped_locked_evaluation(
+    tmp_path: Any,
+) -> None:
     source = _source(tmp_path)
     role_by_group = {
         source.measurements[0].independent_group_id: "calibration",
@@ -351,6 +359,7 @@ def test_processed_stability_admission_preserves_grouped_locked_evaluation(tmp_p
         "scientific",
         "passed",
         (cohort.campaign.campaign_id,),
+        # ty: ignore[invalid-argument-type]
         **evidence_inputs,
         campaign_start_record_ids=(),
         campaign_observation_record_ids=(),
@@ -360,10 +369,12 @@ def test_processed_stability_admission_preserves_grouped_locked_evaluation(tmp_p
         "passed",
         (
             cohort.campaign.campaign_id,
+            # ty: ignore[unresolved-attribute]
             selection.chosen_fit.predictor.model_id,
             selection.chosen_fit_id,
             selection.selection_id,
         ),
+        # ty: ignore[invalid-argument-type]
         **evidence_inputs,
         campaign_start_record_ids=(),
         campaign_observation_record_ids=(),
@@ -408,8 +419,8 @@ def test_processed_stability_admission_preserves_grouped_locked_evaluation(tmp_p
 
 
 def test_double_campaign_rejects_rekeyed_components_and_locked_family_leakage(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     source = _source(tmp_path)
     generated = (
         _double_case(source, "double-cal-a", "pair-cal-a", 4.0, 0.1),
@@ -461,6 +472,7 @@ def test_double_campaign_rejects_rekeyed_components_and_locked_family_leakage(
     pair_fit = fit_regularized_pair_interaction_model(
         cases,
         campaign,
+        # ty: ignore[unresolved-attribute]
         single_model_id=single_fit.predictor.model_id,
         ridge=1.0,
     )
@@ -498,13 +510,16 @@ def test_double_campaign_rejects_rekeyed_components_and_locked_family_leakage(
             rekeyed,
             second,
             campaign,
+            # ty: ignore[invalid-argument-type]
             single_fit.predictor,
+            # ty: ignore[invalid-argument-type]
             pair_fit.predictor,
             {},
             SupportTuple(
                 "protein.double-mutant-interaction-prediction",
                 {"assay": "test"},
             ),
+            # ty: ignore[invalid-argument-type]
             **qualification,
         )
     with pytest.raises(ValueError, match="training families"):
@@ -513,20 +528,23 @@ def test_double_campaign_rejects_rekeyed_components_and_locked_family_leakage(
             first,
             second,
             campaign,
+            # ty: ignore[invalid-argument-type]
             single_fit.predictor,
+            # ty: ignore[invalid-argument-type]
             pair_fit.predictor,
             {},
             SupportTuple(
                 "protein.double-mutant-interaction-prediction",
                 {"assay": "test"},
             ),
+            # ty: ignore[invalid-argument-type]
             **qualification,
         )
 
 
 def test_model_selection_rejects_relabeled_hyperparameters_and_cross_campaign_fit(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     source = _source(tmp_path)
     roles = {
         source.measurements[0].independent_group_id: "calibration",
@@ -633,7 +651,9 @@ def test_model_selection_rejects_relabeled_hyperparameters_and_cross_campaign_fi
         )
 
 
-def test_stability_requires_measurement_identifiability_and_feature_admission(tmp_path):
+def test_stability_requires_measurement_identifiability_and_feature_admission(
+    tmp_path: Any,
+) -> None:
     source = _source(tmp_path, uncertainty_reported=False)
     cohort = prepare_protein_stability_cohort(
         source,
@@ -730,6 +750,6 @@ def test_stability_requires_measurement_identifiability_and_feature_admission(tm
         fit_protein_feature_transform((denied_feature, *features[1:]), cohort)
 
 
-def test_mutation_admission_refuses_wrong_wild_type():
+def test_mutation_admission_refuses_wrong_wild_type() -> None:
     with pytest.raises(ValueError, match="does not match"):
         apply_mutation_code("CAAA", "A1D")

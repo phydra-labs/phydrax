@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array, core
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from phydrax.ein import contract
 
@@ -63,7 +64,7 @@ class MMAPolicy(StrictModule):
         dual_bisections: int = 64,
         dual_bracket_steps: int = 48,
         feasibility_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -156,7 +157,7 @@ class MethodOfMovingAsymptotes(AbstractMinimizationMethod):
 
     policy: MMAPolicy
 
-    def __init__(self, policy: MMAPolicy | None = None, /):
+    def __init__(self, policy: MMAPolicy | None = None, /) -> None:
         policy_ = MMAPolicy() if policy is None else policy
         if not isinstance(policy_, MMAPolicy):
             raise TypeError("policy must be MMAPolicy or None.")
@@ -304,7 +305,7 @@ def _mma_subproblem(
         - inequalities
     )
 
-    def primal(multipliers):
+    def primal(multipliers: Array) -> Array:
         p = p0 + contract("m,mn->n", multipliers, p_rows)
         q = q0 + contract("m,mn->n", multipliers, q_rows)
         root_p = jnp.sqrt(jnp.maximum(p, jnp.finfo(p.dtype).tiny))
@@ -314,7 +315,7 @@ def _mma_subproblem(
         )
         return jnp.clip(candidate, alpha, beta)
 
-    def approximate_constraints(candidate):
+    def approximate_constraints(candidate: Array) -> Array:
         return (
             jnp.sum(
                 p_rows / (asymptote_upper - candidate)
@@ -327,10 +328,10 @@ def _mma_subproblem(
     count = inequalities.shape[0]
     multipliers = jnp.zeros((count,), dtype=state.parameters.dtype)
 
-    def update_coordinate(index, current):
+    def update_coordinate(index: Array, current: Array) -> Array:
         zeroed = current.at[index].set(0.0)
 
-        def bracket_body(_, bracket):
+        def bracket_body(_: Array, bracket: tuple[Array, Array]) -> tuple[Array, Array]:
             lo, hi = bracket
             trial = zeroed.at[index].set(hi)
             violated = approximate_constraints(primal(trial))[index] > 0.0
@@ -349,7 +350,7 @@ def _mma_subproblem(
             ),
         )
 
-        def bisect_body(_, bracket):
+        def bisect_body(_: Array, bracket: tuple[Array, Array]) -> tuple[Array, Array]:
             lower_multiplier, upper_multiplier = bracket
             midpoint = 0.5 * (lower_multiplier + upper_multiplier)
             trial = zeroed.at[index].set(midpoint)
@@ -371,7 +372,7 @@ def _mma_subproblem(
 
     sweeps = max(1, policy.dual_iterations // max(count, 1))
 
-    def sweep_body(_, current):
+    def sweep_body(_: Array, current: Array) -> Array:
         return jax.lax.fori_loop(0, count, update_coordinate, current)
 
     multipliers = jax.lax.fori_loop(0, sweeps, sweep_body, multipliers)
@@ -406,7 +407,7 @@ def _solve_mma(
     lower_tree, upper_tree = problem.bounds.materialize(initial_parameters)
     lower, _ = ravel_pytree(lower_tree)
     upper, _ = ravel_pytree(upper_tree)
-    if not isinstance(lower, jax.core.Tracer):
+    if not isinstance(lower, core.Tracer):
         lower_host = np.asarray(lower)
         upper_host = np.asarray(upper)
         if np.any(
@@ -430,11 +431,11 @@ def _solve_mma(
     if layout.equality_indices.size:
         raise ValueError("MMA currently supports inequalities, not equalities.")
 
-    def objective_flat(coordinates):
+    def objective_flat(coordinates: Array) -> Array:
         value, _ = problem.value(unravel(coordinates), args)
         return value
 
-    def inequalities_flat(coordinates):
+    def inequalities_flat(coordinates: Array) -> Array:
         _, inequalities = _canonical_constraints(
             constraints_only,
             layout,
@@ -443,7 +444,7 @@ def _solve_mma(
         )
         return inequalities
 
-    def evaluate(coordinates):
+    def evaluate(coordinates: Array) -> tuple[Array, Array, Array, Array]:
         value, gradient = jax.value_and_grad(objective_flat)(coordinates)
         inequalities = inequalities_flat(coordinates)
         jacobian = jax.jacrev(inequalities_flat)(coordinates)
@@ -491,7 +492,7 @@ def _solve_mma(
         jnp.asarray(method.policy.move_limit, flat_initial.dtype),
     )
 
-    def condition(current):
+    def condition(current: _MMAState) -> Array:
         within_evaluations = (
             jnp.asarray(True)
             if termination.maximum_evaluations is None
@@ -503,7 +504,7 @@ def _solve_mma(
             & within_evaluations
         )
 
-    def body(current):
+    def body(current: _MMAState) -> _MMAState:
         _, gradient, inequalities, jacobian = evaluate(current.parameters)
         candidate, asymptote_lower, asymptote_upper, multipliers, subproblem_residual = (
             _mma_subproblem(

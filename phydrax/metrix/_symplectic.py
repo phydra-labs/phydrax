@@ -11,7 +11,8 @@ from math import factorial
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -27,7 +28,7 @@ class _CanonicalSymplecticCoefficients(StrictModule):
     dimension: int
     pair_positions: tuple[int, ...]
 
-    def __init__(self, dimension: int, /):
+    def __init__(self, dimension: int, /) -> None:
         half = dimension // 2
         indices = tuple(combinations(range(dimension), 2))
         lookup = {index: position for position, index in enumerate(indices)}
@@ -48,7 +49,7 @@ class SymplecticForm(StrictModule):
     form: DifferentialForm
     chart: CoordinateChart
 
-    def __init__(self, form: DifferentialForm, /):
+    def __init__(self, form: DifferentialForm, /) -> None:
         if not isinstance(form, DifferentialForm):
             raise TypeError("SymplecticForm requires a DifferentialForm.")
         if form.degree != 2:
@@ -90,7 +91,7 @@ class PoissonStructure(StrictModule):
         /,
         *,
         chart: CoordinateChart,
-    ):
+    ) -> None:
         if not callable(bivector):
             raise TypeError("Poisson bivector must be callable.")
         if not isinstance(chart, CoordinateChart):
@@ -115,7 +116,7 @@ class PoissonStructure(StrictModule):
 class _SymplecticPoissonMap(StrictModule):
     symplectic: SymplecticForm
 
-    def __init__(self, symplectic: SymplecticForm, /):
+    def __init__(self, symplectic: SymplecticForm, /) -> None:
         self.symplectic = symplectic
 
     def __call__(self, coordinates: Array, /) -> Array:
@@ -131,7 +132,7 @@ class _HamiltonianVectorEvaluator(StrictModule):
         hamiltonian: Callable[[Array], Array],
         poisson: PoissonStructure,
         /,
-    ):
+    ) -> None:
         self.hamiltonian = hamiltonian
         self.poisson = poisson
 
@@ -155,7 +156,7 @@ class _PoissonBracketEvaluator(StrictModule):
         right: Callable[[Array], Array],
         poisson: PoissonStructure,
         /,
-    ):
+    ) -> None:
         self.left = left
         self.right = right
         self.poisson = poisson
@@ -188,7 +189,7 @@ class SymplecticValidationReport(StrictModule):
         nondegenerate: Array,
         maximum_closure_residual: Array,
         minimum_singular_value: Array,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.closed = jnp.asarray(closed, dtype=jnp.bool_)
         self.nondegenerate = jnp.asarray(nondegenerate, dtype=jnp.bool_)
@@ -211,7 +212,7 @@ class PoissonValidationReport(StrictModule):
         jacobi: Array,
         maximum_skew_residual: Array,
         maximum_jacobi_residual: Array,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.skew = jnp.asarray(skew, dtype=jnp.bool_)
         self.jacobi = jnp.asarray(jacobi, dtype=jnp.bool_)
@@ -223,7 +224,7 @@ class _ScaledForm(StrictModule):
     form: DifferentialForm
     scale: float
 
-    def __init__(self, form: DifferentialForm, scale: float, /):
+    def __init__(self, form: DifferentialForm, scale: float, /) -> None:
         self.form = form
         self.scale = float(scale)
 

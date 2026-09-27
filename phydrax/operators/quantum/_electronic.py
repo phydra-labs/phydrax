@@ -6,23 +6,26 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, Key
+from jax import Array
+from jax.typing import DTypeLike
+from jaxtyping import PyTree
 
 from phydrax.ein import contract
 
+from ..._dtype_names import real_precision_dtype_name
 from ..._fingerprint import canonical_fingerprint
-from ..._precision import real_precision_dtype_name
 from ..._sampling import AbstractProposal
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomicStructure, AtomisticScaleContract
+from ...typing import parse, PRNGKey
 from ...units import BOHR, conversion_factor, HARTREE
 from ._amplitude import LogAmplitude
 from ._electronic_advanced import ElectronicVMCResourcePlan
@@ -65,10 +68,9 @@ class ElectronicKineticPolicy(StrictModule, NonTrainableState):
         *,
         trace_method: ElectronicTraceMethod = "exact",
         coordinate_chunk_size: int | None = None,
-        compute_dtype: object = "float64",
-    ):
-        if trace_method not in ("exact", "chunked-exact"):
-            raise ValueError("trace_method must be 'exact' or 'chunked-exact'.")
+        compute_dtype: DTypeLike = "float64",
+    ) -> None:
+        trace_method = parse(trace_method, ElectronicTraceMethod, "trace_method")
         if trace_method == "exact":
             if coordinate_chunk_size is not None:
                 raise ValueError("coordinate_chunk_size is only valid for chunked-exact.")
@@ -95,7 +97,7 @@ class ElectronicKineticPolicy(StrictModule, NonTrainableState):
         flat = jnp.asarray(configuration, dtype=self.compute_dtype).reshape((-1,))
         dimension = flat.shape[0]
 
-        def log_components(coordinates):
+        def log_components(coordinates: Array) -> Array:
             amplitude = model(coordinates.reshape(shape))
             if not isinstance(amplitude, LogAmplitude):
                 raise TypeError(
@@ -110,7 +112,7 @@ class ElectronicKineticPolicy(StrictModule, NonTrainableState):
         jacobian = jax.jacrev(log_components)
         component_gradient = jacobian(flat)
 
-        def diagonal_component(direction):
+        def diagonal_component(direction: Array) -> Array:
             _, directional_jacobian = jax.jvp(jacobian, (flat,), (direction,))
             return contract("ad,d->a", directional_jacobian, direction)
 
@@ -175,7 +177,7 @@ class ElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
         kinetic: ElectronicKineticPolicy | None = None,
         resource_plan: ElectronicVMCResourcePlan | None = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(nuclei, AtomicStructure):
             raise TypeError("nuclei must be an AtomicStructure.")
         if nuclei.has_periodic_metadata:
@@ -378,7 +380,7 @@ class _HarmonicMeanElectronProposal(AbstractProposal):
         electron_count: int,
         step_size: float,
         /,
-    ):
+    ) -> None:
         self.nuclei = nuclei
         self.electron_count = int(electron_count)
         self.step_size = float(step_size)
@@ -412,7 +414,7 @@ class _HarmonicMeanElectronProposal(AbstractProposal):
         standard_deviation = self.step_size * harmonic_mean
         return standard_deviation, ~singular & jnp.isfinite(standard_deviation)
 
-    def sample(self, key: Key[Array, ""], current: Array, /) -> Array:
+    def sample(self, key: PRNGKey, current: Array, /) -> Array:
         coordinate = jnp.asarray(current)
         if coordinate.shape != (self.electron_count, 3):
             raise ValueError(
@@ -445,7 +447,9 @@ class _HarmonicMeanElectronProposal(AbstractProposal):
         )
         return jnp.where(jnp.all(valid), log_probability, -jnp.inf)
 
-    def payload(self, key, current, proposed, /):
+    def payload(
+        self, key: PRNGKey, current: PyTree[Any], proposed: PyTree[Any], /
+    ) -> tuple[()]:
         del key, current, proposed
         return ()
 
@@ -484,7 +488,7 @@ def harmonic_mean_electron_proposal(
 
 
 def electronic_initial_walkers(
-    key: Key[Array, ""],
+    key: PRNGKey,
     nuclei: AtomicStructure,
     electron_count: int,
     walker_count: int,

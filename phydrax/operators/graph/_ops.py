@@ -2,11 +2,11 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 from phydrax.domain import BatchEvaluator, DomainFunction
@@ -19,12 +19,13 @@ from phydrax.domain.graph import (
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ...graph import segment_max, segment_mean, segment_min, segment_sum
+from ...typing import parse, PRNGKey
 
 
 GraphReduce = Literal["sum", "mean", "max", "min"]
 GraphComponentKind = Literal["nodes", "edges", "globals"]
-GraphDivergenceSign = Literal["in_minus_out", "out_minus_in"]
-GraphFlow = Literal["source_to_target", "target_to_source"]
+GraphDivergenceSign: TypeAlias = Literal["in_minus_out", "out_minus_in"]
+GraphFlow: TypeAlias = Literal["source_to_target", "target_to_source"]
 
 
 def _graph_axis(batch: GraphBatch, /) -> str:
@@ -292,7 +293,7 @@ def _field_data_on_graph_axis(
     batch: GraphBatch,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey | None = DOC_KEY0,
     **kwargs: Any,
 ) -> tuple[cx.AxisArray, int, jnp.ndarray]:
     y = func(batch, key=key, **kwargs)
@@ -331,7 +332,7 @@ def _optional_edge_weight_data(
     target: jnp.ndarray,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey | None = DOC_KEY0,
     **kwargs: Any,
 ) -> jnp.ndarray | None:
     if weight is None:
@@ -348,7 +349,7 @@ def _optional_edge_weight_data(
 class _GraphDegreeCallable(StrictModule, BatchEvaluator):
     mode: Literal["in", "out", "total"]
 
-    def __init__(self, mode: Literal["in", "out", "total"]):
+    def __init__(self, mode: Literal["in", "out", "total"]) -> None:
         self.mode = mode
 
     def __call_batch__(
@@ -356,7 +357,7 @@ class _GraphDegreeCallable(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         del key, kwargs
@@ -389,7 +390,7 @@ class _NeighborAggregateCallable(StrictModule, BatchEvaluator):
         *,
         reduce: GraphReduce,
         flow: Literal["source_to_target", "target_to_source"],
-    ):
+    ) -> None:
         self.u = u
         self.reduce = reduce
         self.flow = flow
@@ -399,7 +400,7 @@ class _NeighborAggregateCallable(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         batch = _require_node_batch(batch)
@@ -427,7 +428,7 @@ class _GraphLaplacianCallable(StrictModule, BatchEvaluator):
     u: DomainFunction
     normalize: bool
 
-    def __init__(self, u: DomainFunction, *, normalize: bool):
+    def __init__(self, u: DomainFunction, *, normalize: bool) -> None:
         self.u = u
         self.normalize = bool(normalize)
 
@@ -436,7 +437,7 @@ class _GraphLaplacianCallable(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         batch = _require_node_batch(batch)
@@ -477,7 +478,7 @@ class _GraphGradientCallable(StrictModule, BatchEvaluator):
         *,
         weight: DomainFunction | ArrayLike | None,
         flow: GraphFlow,
-    ):
+    ) -> None:
         self.u = u
         self.weight = weight
         self.flow = flow
@@ -487,7 +488,7 @@ class _GraphGradientCallable(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         batch = _require_edge_batch(batch)
@@ -526,7 +527,7 @@ class _GraphDivergenceCallable(StrictModule, BatchEvaluator):
         flux: DomainFunction,
         *,
         sign: GraphDivergenceSign,
-    ):
+    ) -> None:
         self.flux = flux
         self.sign = sign
 
@@ -535,7 +536,7 @@ class _GraphDivergenceCallable(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         batch = _require_node_batch(batch)
@@ -603,10 +604,7 @@ def graph_gradient(
     `u(receiver) - u(sender)` and returns an edge-domain field. Optional edge
     weights are evaluated on the same edge batch and multiplied into the result.
     """
-    if flow not in ("source_to_target", "target_to_source"):
-        raise ValueError(
-            "graph_gradient flow must be 'source_to_target' or 'target_to_source'."
-        )
+    flow = parse(flow, GraphFlow, "flow")
     return DomainFunction(
         domain=u.domain,
         deps=u.deps,
@@ -626,10 +624,7 @@ def graph_divergence(
     With `sign="in_minus_out"`, each edge contributes `+flux` to its receiver
     and `-flux` to its sender. `sign="out_minus_in"` flips that convention.
     """
-    if sign not in ("in_minus_out", "out_minus_in"):
-        raise ValueError(
-            "graph_divergence sign must be 'in_minus_out' or 'out_minus_in'."
-        )
+    sign = parse(sign, GraphDivergenceSign, "sign")
     return DomainFunction(
         domain=flux.domain,
         deps=flux.deps,

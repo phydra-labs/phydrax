@@ -10,11 +10,13 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._tree_math import validate_real_inexact_tree
 from ..linalg import PyTreeSpace
+from ..typing import parse
 from ._bounds import ProjectedLBFGS
 from ._iterative import (
     AbstractMinimizationMethod,
@@ -25,6 +27,7 @@ from ._iterative import (
 )
 from ._structured_compile import compile_structured_minimization
 from ._structured_method import AbstractStructuredNonlinearMethod
+from ._structured_nonlinear import StructuredNonlinearResult
 from ._structured_pool import (
     solve_pooled_structured_nonlinear,
     StructuredPoolEvidence,
@@ -51,7 +54,7 @@ class MultiStartPolicy(StrictModule):
         normal_scale: float = 1.0,
         seed: int = 0,
         lane_count: int | None = None,
-    ):
+    ) -> None:
         method = ProjectedLBFGS() if local_method is None else local_method
         if not isinstance(method, AbstractMinimizationMethod):
             raise TypeError("local_method must be AbstractMinimizationMethod or None.")
@@ -59,8 +62,7 @@ class MultiStartPolicy(StrictModule):
         scale = float(normal_scale)
         if count_ < 1:
             raise ValueError("Multi-start count must be positive.")
-        if generator not in ("uniform-bounds", "normal"):
-            raise ValueError("Unknown multi-start generator.")
+        generator = parse(generator, StartGenerator, "generator")
         if not isfinite(scale) or scale <= 0.0:
             raise ValueError("normal_scale must be finite and positive.")
         lanes = None if lane_count is None else int(lane_count)
@@ -86,7 +88,7 @@ class MultiStartResult(StrictModule):
     pool_evidence: StructuredPoolEvidence | None
 
     @property
-    def successful(self):
+    def successful(self) -> Array:
         return self.best.successful
 
 
@@ -99,7 +101,7 @@ def _starts(
     initial = validate_real_inexact_tree(initial_parameters, name="initial_parameters")
     space = PyTreeSpace(initial)
     center = space.flatten(initial)
-    key = jax.random.PRNGKey(policy.seed)
+    key = jax.random.key(policy.seed)
     if policy.generator == "uniform-bounds":
         if problem.bounds is None:
             raise ValueError("uniform-bounds starts require problem.bounds.")
@@ -123,17 +125,16 @@ def _starts(
             (policy.count - 1, space.size),
             dtype=center.dtype,
         )
-        if problem.bounds is not None:
+        bounds = problem.bounds
+        if bounds is not None:
             generated = jax.vmap(
-                lambda value: space.flatten(
-                    problem.bounds.project(space.unflatten(value))
-                )
+                lambda value: space.flatten(bounds.project(space.unflatten(value)))
             )(generated)
     return space, jnp.concatenate([center[None, :], generated], axis=0)
 
 
 def _decode_structured_multistart(
-    result,
+    result: StructuredNonlinearResult,
     space: PyTreeSpace,
     /,
 ) -> MinimizationResult:

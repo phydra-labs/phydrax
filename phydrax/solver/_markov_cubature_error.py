@@ -9,7 +9,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..discretization import TemporalMesh
@@ -34,7 +35,7 @@ class MarkovCubatureRefinementPolicy(StrictModule):
         *,
         marking_fraction: float = 0.5,
         embedded_degree: int = 1,
-    ):
+    ) -> None:
         absolute = float(absolute_tolerance)
         relative = float(relative_tolerance)
         maximum = int(maximum_intervals)
@@ -69,7 +70,7 @@ class WeakObservableEnvelope(StrictModule):
         /,
         *,
         norm_kind: str = "supremum",
-    ):
+    ) -> None:
         bounds = jnp.asarray(derivative_bounds)
         stability = jnp.asarray(stability_bound)
         if bounds.ndim != 1 or bounds.size == 0 or stability.shape != ():

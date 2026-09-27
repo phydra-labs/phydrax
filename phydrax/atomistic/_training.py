@@ -13,7 +13,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._doc import DOC_KEY0
@@ -40,9 +42,11 @@ from .._training_kernel import (
     run_training_attempt,
     TrainingKernelSpec,
     TrainingKernelState,
+    TrainingKeys,
     TrainingRejectionBudgetError,
 )
 from .._training_objective import _ObjectiveContribution
+from ..typing import PRNGKey
 from ._graph import AtomisticGraphExecutionPlan, realize_atomistic_graph
 from ._potential import AbstractAtomisticPotential, atomistic_potential_revision
 from ._types import AtomisticBatch, AtomisticStatus
@@ -82,7 +86,7 @@ class AtomisticTrainingProblem(StrictModule, NonTrainableState):
         validation_forces: ArrayLike | None = None,
         validation_energy_mask: ArrayLike | None = None,
         validation_force_mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         if (
             not isinstance(graph_execution, AtomisticGraphExecutionPlan)
             or graph_execution.backend != "dense"
@@ -226,7 +230,7 @@ class AtomisticTrainingPolicy(StrictModule, NonTrainableState):
         patience: int | None = None,
         min_delta: float = 0.0,
         select_best: bool = True,
-    ):
+    ) -> None:
         steps = int(maximum_steps)
         rate = float(learning_rate)
         energy_w = float(energy_weight)
@@ -572,7 +576,15 @@ def _host_loss(
     )
 
 
-def _supervision_objective(parameters, model_state, fixed, payload, keys):
+def _supervision_objective(
+    parameters: PyTree[Any],
+    model_state: PyTree[Any],
+    fixed: PyTree[Any],
+    payload: tuple[
+        AtomisticTrainingProblem, AtomisticTrainingNormalization, AtomisticTrainingPolicy
+    ],
+    keys: TrainingKeys,
+) -> tuple[_ObjectiveContribution, PyTree[Any], tuple[Array, Array]]:
     """Full-batch energy/force data fit; the payload is `(problem, normalization, policy)`."""
     del keys
     problem, normalization, policy = payload
@@ -642,7 +654,7 @@ def fit_atomistic_potential(
     policy: AtomisticTrainingPolicy,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     session: IterationSession | None = None,
     continuation: AtomisticTrainingResult | None = None,
 ) -> AtomisticTrainingResult:

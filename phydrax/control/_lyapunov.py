@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..linalg import (
@@ -158,10 +159,10 @@ def _validate_solver_scalars(
 def _continuous_schur_solution(matrix: Array, source: Array, /) -> Array:
     adjoint = jnp.conj(matrix.T)
 
-    def equation(value):
+    def equation(value: Array) -> Array:
         return matrix @ value + value @ adjoint
 
-    def solve(_, right_hand_side):
+    def solve(_: Callable[[Array], Array], right_hand_side: Array) -> Array:
         return jsp.linalg.solve_sylvester(
             matrix,
             adjoint,
@@ -169,7 +170,7 @@ def _continuous_schur_solution(matrix: Array, source: Array, /) -> Array:
             method="schur",
         )
 
-    def transpose_solve(_, right_hand_side):
+    def transpose_solve(_: Callable[[Array], Array], right_hand_side: Array) -> Array:
         return jsp.linalg.solve_sylvester(
             matrix.T,
             jnp.conj(matrix),
@@ -212,13 +213,13 @@ def _discrete_schur_impl(matrix: Array, source: Array, /) -> Array:
 def _discrete_schur_solution(matrix: Array, source: Array, /) -> Array:
     adjoint = jnp.conj(matrix.T)
 
-    def equation(value):
+    def equation(value: Array) -> Array:
         return value - matrix @ value @ adjoint
 
-    def solve(_, right_hand_side):
+    def solve(_: Callable[[Array], Array], right_hand_side: Array) -> Array:
         return _discrete_schur_impl(matrix, right_hand_side)
 
-    def transpose_solve(_, right_hand_side):
+    def transpose_solve(_: Callable[[Array], Array], right_hand_side: Array) -> Array:
         return _discrete_schur_impl(matrix.T, right_hand_side)
 
     return jax.lax.custom_linear_solve(
@@ -236,7 +237,7 @@ def _discrete_doubling_solution(
     *,
     max_iterations: int,
 ) -> Array:
-    def body(_, carry):
+    def body(_: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
         power, solution = carry
         solution = solution + power @ solution @ jnp.conj(power.T)
         return power @ power, solution
@@ -605,7 +606,7 @@ def finite_discrete_lyapunov(
     )
     identity = jnp.eye(dimension, dtype=matrix_array.dtype)
 
-    def body(_, carry):
+    def body(_: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
         solution, power = carry
         solution = source_array + matrix_array @ solution @ jnp.conj(matrix_array.T)
         return solution, matrix_array @ power
@@ -636,7 +637,7 @@ def finite_discrete_lyapunov(
 
 
 def _left_action(action: Callable[[Array], ArrayLike], matrix: Array, /) -> Array:
-    def apply(column):
+    def apply(column: Array) -> Array:
         result = jnp.asarray(action(column), dtype=matrix.dtype)
         if result.shape != column.shape:
             raise ValueError(
@@ -679,7 +680,7 @@ def _krylov_lyapunov(
     if restart_count <= 0 or step_count <= 0:
         raise ValueError("restart and max_steps must be positive.")
 
-    def equation(value):
+    def equation(value: Array) -> Array:
         left = _left_action(operator, value)
         if system_type == "continuous":
             return left + _right_adjoint_action(operator, value)

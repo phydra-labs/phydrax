@@ -10,6 +10,7 @@ import shutil
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import perf_counter
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -32,20 +33,20 @@ def _contract() -> phx.SpatialCoordinateContract:
     return phx.SpatialCoordinateContract(phx.units.MILLIMETER)
 
 
-def _timed(call):
+def _timed(call: Any) -> Any:
     started = perf_counter()
     result = call()
     return result, perf_counter() - started
 
 
-def _range(values) -> dict[str, float]:
+def _range(values: Any) -> dict[str, float]:
     samples = np.asarray(tuple(values), dtype="float64")
     if samples.ndim != 1 or not samples.size:
         raise ValueError("Benchmark ranges require one nonempty scalar sequence.")
     return {"minimum": float(np.min(samples)), "maximum": float(np.max(samples))}
 
 
-def _integer_range(values) -> dict[str, int]:
+def _integer_range(values: Any) -> dict[str, int]:
     samples = np.asarray(tuple(values), dtype=np.int64)
     if samples.ndim != 1 or not samples.size:
         raise ValueError("Benchmark ranges require one nonempty integer sequence.")
@@ -54,13 +55,14 @@ def _integer_range(values) -> dict[str, int]:
 
 def _planar_region(name: str, x0: float, x1: float) -> phx.geometry.PlanarMeshRegion:
     return phx.geometry.PlanarMeshRegion(
+        # ty: ignore[invalid-argument-type]
         np.asarray(((x0, 0.0), (x1, 0.0), (x1, 1.0), (x0, 1.0))),
         ((0, 1, 2, 3),),
         feature_id=name,
     )
 
 
-def _planar_partition(count: int, destination: Path):
+def _planar_partition(count: int, destination: Path) -> Any:
     contract = _contract()
     embedding = phx.geometry.PlanarEmbedding(
         (0.0, 0.0, 0.0),
@@ -86,11 +88,13 @@ def _planar_partition(count: int, destination: Path):
     return embedding, plan, phx.geometry.partition_planar(plan, destination=destination)
 
 
-def _persist_shape(shape, path: Path, contract: phx.SpatialCoordinateContract):
+def _persist_shape(
+    shape: Any, path: Path, contract: phx.SpatialCoordinateContract
+) -> Any:
     return phx.geometry.persist_occt_shape(shape, path, coordinate_contract=contract)
 
 
-def _cad_partition(count: int, destination: Path):
+def _cad_partition(count: int, destination: Path) -> Any:
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
     from OCP.gp import gp_Pnt
 
@@ -117,6 +121,7 @@ def _cad_partition(count: int, destination: Path):
 
 
 def _layout_bytes(count: int) -> bytes:
+    # ty: ignore[unresolved-import]
     import gdstk
 
     with TemporaryDirectory(prefix="phydrax-layout-benchmark-") as temporary:
@@ -522,7 +527,7 @@ def benchmark_hybrid_slab(resolution: int) -> dict[str, object]:
 
 
 @eqx.filter_jit
-def _realize_implicit_surface(plan, state):
+def _realize_implicit_surface(plan: Any, state: Any) -> Any:
     return plan.realize(state)
 
 
@@ -595,7 +600,7 @@ def _clustered_boxes(count: int, seed: int, /) -> tuple[np.ndarray, np.ndarray]:
 
 
 @eqx.filter_jit
-def _refit_and_query(bvh, lower, upper, queries):
+def _refit_and_query(bvh: Any, lower: Any, upper: Any, queries: Any) -> Any:
     refitted = refit_packed_bvh_bounds(bvh, lower, upper)
     return bvh_nearest_items(refitted, queries, k=4)
 
@@ -634,7 +639,7 @@ def benchmark_lbvh(resolution: int) -> dict[str, object]:
 
 
 @eqx.filter_jit
-def _device_overlap_pairs(first, second, *, capacity):
+def _device_overlap_pairs(first: Any, second: Any, *, capacity: Any) -> Any:
     return bvh_overlap_pairs(first, second, capacity=capacity)
 
 
@@ -728,7 +733,7 @@ def _planar_triangles(cells_per_axis: int, /) -> np.ndarray:
     )
 
 
-def _array_bytes(tree) -> int:
+def _array_bytes(tree: Any) -> int:
     """Bytes of the distinct array leaves a result retains."""
     leaves = {id(leaf): leaf for leaf in jax.tree.leaves(eqx.filter(tree, eqx.is_array))}
     return sum(leaf.nbytes for leaf in leaves.values())
@@ -762,6 +767,7 @@ def benchmark_incidence(resolution: int) -> dict[str, object]:
     if moved.topology_id != mesh.topology_id:
         raise RuntimeError("Coordinate refresh changed the mesh topology.")
     surface, surface_seconds = _timed(
+        # ty: ignore[invalid-argument-type]
         lambda: phx.geometry.simplicial.TriangleTopology(triangles)
     )
     return {
@@ -791,7 +797,7 @@ def benchmark_incidence(resolution: int) -> dict[str, object]:
     }
 
 
-def _jittered_unit_square_triangles(cells_per_axis: int, seed: int, /):
+def _jittered_unit_square_triangles(cells_per_axis: int, seed: int, /) -> Any:
     """Counterclockwise lattice triangles with interior vertices jittered in place."""
     axis = np.linspace(0.0, 1.0, cells_per_axis + 1)
     points = np.stack(np.meshgrid(axis, axis, indexing="ij"), axis=-1).reshape((-1, 2))
@@ -803,7 +809,7 @@ def _jittered_unit_square_triangles(cells_per_axis: int, seed: int, /):
     )
 
 
-def _cube_tetrahedra(cells_per_axis: int, /):
+def _cube_tetrahedra(cells_per_axis: int, /) -> Any:
     points, tetrahedra = _kuhn_tetrahedra(cells_per_axis)
     return phx.discretization.CellMesh.from_tetrahedra(points, tetrahedra)
 
@@ -856,7 +862,7 @@ def _remap_field(points: np.ndarray, /) -> np.ndarray:
     return np.sin(2.0 * np.pi * x) * np.cos(np.pi * y) + x * x
 
 
-def _finite_volume_averages(discretization, /) -> np.ndarray:
+def _finite_volume_averages(discretization: Any, /) -> np.ndarray:
     weights = np.where(
         np.asarray(discretization.cell_quadrature_valid),
         np.asarray(discretization.cell_quadrature_weights),
@@ -867,16 +873,16 @@ def _finite_volume_averages(discretization, /) -> np.ndarray:
 
 
 @eqx.filter_jit
-def _first_order_remap(plan, values):
+def _first_order_remap(plan: Any, values: Any) -> Any:
     return plan.apply(values)
 
 
 @eqx.filter_jit
-def _second_order_remap(plan, values):
+def _second_order_remap(plan: Any, values: Any) -> Any:
     return plan.apply(values)
 
 
-def _p1_space(mesh, /):
+def _p1_space(mesh: Any, /) -> Any:
     return phx.discretization.FiniteElementPlan(
         mesh,
         phx.discretization.FiniteElementFieldSpec(
@@ -885,7 +891,7 @@ def _p1_space(mesh, /):
     ).prepare()
 
 
-def _overlap_refinement(source_mesh, target_mesh, /):
+def _overlap_refinement(source_mesh: Any, target_mesh: Any, /) -> Any:
     refinement = phx.geometry.prepare_common_refinement(
         source_mesh,
         target_mesh,
@@ -896,7 +902,9 @@ def _overlap_refinement(source_mesh, target_mesh, /):
     return refinement
 
 
-def _l2_projection_residuals(source, target, transfer, /) -> dict[str, float]:
+def _l2_projection_residuals(
+    source: Any, target: Any, transfer: Any, /
+) -> dict[str, float]:
     """Conservation, Galerkin orthogonality, and transpose duality of one transfer."""
     values = jax.numpy.asarray(
         _remap_field(np.asarray(source.dof_maps[0].dof_coordinates))
@@ -935,7 +943,9 @@ _L2_PROJECTION_KERNELS = (
 )
 
 
-def _benchmark_l2_projection(target_mesh, moved_mesh, source_mesh, /) -> dict:
+def _benchmark_l2_projection(
+    target_mesh: Any, moved_mesh: Any, source_mesh: Any, /
+) -> dict:
     """Prepared-target P1 Galerkin L2 projection stages onto a triangle target.
 
     The target is prepared cold (symbolic and numeric factorization), refreshed
@@ -948,7 +958,7 @@ def _benchmark_l2_projection(target_mesh, moved_mesh, source_mesh, /) -> dict:
     """
     from phydrax.discretization.fem import _topology_transfer as projection_kernels
 
-    def kernel_compilations():
+    def kernel_compilations() -> Any:
         return {
             name: getattr(projection_kernels, name)._cached._cache_size()
             for name in _L2_PROJECTION_KERNELS
@@ -1087,7 +1097,7 @@ def benchmark_remap(resolution: int) -> dict[str, object]:
         lambda: jax.block_until_ready(_first_order_remap(remap.plan, values))
     )
 
-    def second_order_plan():
+    def second_order_plan() -> Any:
         return phx.discretization.UnstructuredSecondOrderRemapPlan(
             remap.plan, remap.refinement, source
         )
@@ -1143,7 +1153,7 @@ def benchmark_remap(resolution: int) -> dict[str, object]:
     }
 
 
-def _semantic_gmsh_specification(provider, partition):
+def _semantic_gmsh_specification(provider: Any, partition: Any) -> Any:
     source = partition.model
     whole = provider.whole_scope(source, 3)
     regions = tuple(
@@ -1183,7 +1193,7 @@ def _semantic_gmsh_specification(provider, partition):
     )
 
 
-def _semantic_gmsh_plan(provider, partition):
+def _semantic_gmsh_plan(provider: Any, partition: Any) -> Any:
     specification = _semantic_gmsh_specification(provider, partition)
     return specification, provider.plan(partition.model, specification)
 
@@ -1266,7 +1276,7 @@ def _benchmark_gmsh_semantic_case(
         )
 
 
-def _compiled_cost(compiled_entry, *arguments) -> dict[str, object]:
+def _compiled_cost(compiled_entry: Any, *arguments: Any) -> dict[str, object]:
     """Lowering and compile time plus compiler memory of one compiled entry."""
     lowered, lowering = _timed(lambda: compiled_entry.lower(*arguments))
     compiled, compile_seconds = _timed(lowered.compile)
@@ -1361,6 +1371,7 @@ def benchmark_device_bisection(resolution: int) -> dict[str, object]:
                 "allocated_cells": int(state.cursors[1]),
             }
         )
+    # ty: ignore[unresolved-attribute]
     compilations = {name: entry._cached._cache_size() for name, entry in entries.items()}
     result, commit_seconds = _timed(
         lambda: phx.meshing.commit_adaptive_simplex(prepared, state)
@@ -1407,7 +1418,7 @@ def benchmark_local_metric(resolution: int) -> dict[str, object]:
     points = np.stack(np.meshgrid(axis, axis, indexing="ij"), axis=-1).reshape((-1, 2))
     mesh = phx.discretization.CellMesh.from_triangles(points, _planar_triangles(side))
 
-    def prepare_host():
+    def prepare_host() -> Any:
         source = phx.meshing.certify_cell_mesh(mesh, _contract())
         certified = source.mesh
         rows = np.argsort(np.asarray(certified.vertex_global_ids), kind="stable")
@@ -1510,6 +1521,7 @@ def benchmark_local_metric(resolution: int) -> dict[str, object]:
             ),
         },
         "compiled": {"adapt_device_metric": cost},
+        # ty: ignore[unresolved-attribute]
         "compilations_after_calls": device_metric._compiled_adapt._cached._cache_size(),
         "stages_seconds": {
             "host_preparation": host_preparation,
@@ -1530,7 +1542,7 @@ def benchmark_local_metric(resolution: int) -> dict[str, object]:
 
 
 @eqx.filter_jit
-def _boundary_layer_cell_quality(coordinates, connectivity):
+def _boundary_layer_cell_quality(coordinates: Any, connectivity: Any) -> Any:
     return {
         kind: _standard_block_quality(kind, coordinates[rows], None)
         for kind, rows in connectivity.items()
@@ -1627,7 +1639,7 @@ def benchmark_boundary_layer(resolution: int) -> dict[str, object]:
 
 
 @eqx.filter_jit
-def _bisection_transfer_apply(transfer, values):
+def _bisection_transfer_apply(transfer: Any, values: Any) -> Any:
     return transfer.apply(values)
 
 
@@ -1735,7 +1747,7 @@ def benchmark_host_bisection(resolution: int) -> dict[str, object]:
 
 
 @eqx.filter_jit
-def _migrate_cell_data(transition, values):
+def _migrate_cell_data(transition: Any, values: Any) -> Any:
     return transition.transfer(values)
 
 
@@ -1890,7 +1902,7 @@ def _provider_worker() -> tuple[str, str] | None:
 
 
 @eqx.filter_jit
-def _adapted_quality(coordinates, connectivity):
+def _adapted_quality(coordinates: Any, connectivity: Any) -> Any:
     return {
         kind: _standard_block_quality(kind, coordinates[rows], None)
         for kind, rows in connectivity.items()
@@ -1914,7 +1926,7 @@ def benchmark_provider_worker(resolution: int) -> dict[str, object]:
     side = max(2, round((resolution / 2) ** 0.5))
     size = 0.5 / side
 
-    def prepare():
+    def prepare() -> Any:
         source = _lattice_square(side)
         scope = phx.meshing.MmgProvider.vertex_scope(source.mesh)
         metric = phx.meshing.MeshMetricField(
@@ -1935,14 +1947,14 @@ def benchmark_provider_worker(resolution: int) -> dict[str, object]:
 
     (source, request, arrays), preparation_seconds = _timed(prepare)
 
-    def open_provider():
+    def open_provider() -> Any:
         if provider_name == "mmg":
             provider = phx.meshing.MmgProvider(executable=executable)
             return provider, provider.worker
         provider = phx.meshing.OmegaHProvider(executable)
         return provider, provider.worker(1)
 
-    def execute(provider):
+    def execute(provider: Any) -> Any:
         if provider_name == "mmg":
             return provider.execute(request).mesh
         return provider.execute(source, request).target
@@ -2194,7 +2206,7 @@ def _cube_hexahedra(cells_per_axis: int, /) -> phx.discretization.CellMesh:
 
 
 @eqx.filter_jit
-def _mapped_cell_measures(discretization, coordinates):
+def _mapped_cell_measures(discretization: Any, coordinates: Any) -> Any:
     """Mapped measure of every cell and the reference-cell volume of every block."""
     return tuple(
         (block.measure, jax.numpy.sum(block.reference_weights))
@@ -2202,11 +2214,11 @@ def _mapped_cell_measures(discretization, coordinates):
     )
 
 
-def _certification_route(mesh, degree: int, name: str, /):
+def _certification_route(mesh: Any, degree: int, name: str, /) -> Any:
     """Host certification and compiled measure consumer of one curved geometry."""
     from phydrax.meshing._curving import _straight_geometry
 
-    def prepare():
+    def prepare() -> Any:
         straight = _straight_geometry(mesh, degree)
         names = straight.block_names
         return phx.discretization.CellGeometrySpec(
@@ -2307,26 +2319,26 @@ def benchmark_high_order_certification(resolution: int) -> dict[str, object]:
 
 
 @eqx.filter_jit
-def _device_orient2d(a, b, c):
+def _device_orient2d(a: Any, b: Any, c: Any) -> Any:
     return phx.geometry.orient2d(a, b, c, mode=phx.geometry.PredicateMode.FILTERED_DEVICE)
 
 
 @eqx.filter_jit
-def _device_orient3d(a, b, c, d):
+def _device_orient3d(a: Any, b: Any, c: Any, d: Any) -> Any:
     return phx.geometry.orient3d(
         a, b, c, d, mode=phx.geometry.PredicateMode.FILTERED_DEVICE
     )
 
 
 @eqx.filter_jit
-def _device_incircle(a, b, c, d):
+def _device_incircle(a: Any, b: Any, c: Any, d: Any) -> Any:
     return phx.geometry.incircle(
         a, b, c, d, mode=phx.geometry.PredicateMode.FILTERED_DEVICE
     )
 
 
 @eqx.filter_jit
-def _device_insphere(a, b, c, d, e):
+def _device_insphere(a: Any, b: Any, c: Any, d: Any, e: Any) -> Any:
     return phx.geometry.insphere(
         a, b, c, d, e, mode=phx.geometry.PredicateMode.FILTERED_DEVICE
     )
@@ -2396,6 +2408,7 @@ def _predicate_stages(
         "filtered_uncertain": int(np.count_nonzero(~filtered.certain)),
         "exact_zero": int(np.count_nonzero(exact.signs == 0)),
     }
+    # ty: ignore[invalid-return-type]
     return stages, compiled, counts, _array_bytes(result)
 
 
@@ -2455,7 +2468,7 @@ def benchmark_predicates(resolution: int) -> dict[str, object]:
 
 
 def _repeated_case(
-    runner,
+    runner: Any,
     resolution: int,
     repeats: int,
     /,

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import diffrax as dfx
 import equinox as eqx
 import jax
@@ -69,7 +72,7 @@ class _SyntheticLedger(StrictModule):
     successful: jax.Array
 
 
-def _candidate(domain_ok=True, ledger_ok=True):
+def _candidate(domain_ok: Any = True, ledger_ok: Any = True) -> Any:
     support = SupportTuple(
         "battery.simulation",
         {
@@ -88,7 +91,7 @@ def _candidate(domain_ok=True, ledger_ok=True):
 
 
 @pytest.fixture(autouse=True)
-def _synthetic_candidate_registry(monkeypatch):
+def _synthetic_candidate_registry(monkeypatch: Any) -> None:
     profiles = tuple(
         _candidate(domain, ledger)[0]
         for domain in (False, True)
@@ -109,7 +112,7 @@ class LinearOEDAdapter(StrictModule, NonTrainableState):
     domain_ok: bool = eqx.field(static=True)
     ledger_ok: bool = eqx.field(static=True)
 
-    def __init__(self, *, domain_ok=True, ledger_ok=True):
+    def __init__(self, *, domain_ok: Any = True, ledger_ok: Any = True) -> None:
         self.domain_ok = bool(domain_ok)
         self.ledger_ok = bool(ledger_ok)
         self.model_id = f"test:linear-oed:{int(self.domain_ok)}:{int(self.ledger_ok)}"
@@ -122,18 +125,22 @@ class LinearOEDAdapter(StrictModule, NonTrainableState):
         )
         self.observable_units = ("V", "K", "1", "1")
 
-    def prepare(self, /):
+    def prepare(self, /) -> Any:
         return self.model_id
 
-    def initial_state(self, prepared_model, parameters, initial_condition, /):
+    def initial_state(
+        self, prepared_model: Any, parameters: Any, initial_condition: Any, /
+    ) -> Any:
         assert prepared_model == self.model_id
         del parameters
         return jnp.asarray(initial_condition)
 
-    def problem(self, prepared_model, initial_state, runtime_inputs, /):
+    def problem(
+        self, prepared_model: Any, initial_state: Any, runtime_inputs: Any, /
+    ) -> Any:
         assert prepared_model == self.model_id
 
-        def drift(time_s, state, runtime):
+        def drift(time_s: Any, state: Any, runtime: Any) -> Any:
             del state
             return runtime.parameters["offset"] + runtime.parameters[
                 "current_gain"
@@ -148,7 +155,9 @@ class LinearOEDAdapter(StrictModule, NonTrainableState):
             problem_id=f"{self.model_id}:ode",
         )
 
-    def observe(self, prepared_model, times_s, states, runtime_inputs, /):
+    def observe(
+        self, prepared_model: Any, times_s: Any, states: Any, runtime_inputs: Any, /
+    ) -> Any:
         assert prepared_model == self.model_id
         del runtime_inputs
         voltage = jnp.asarray(states)
@@ -164,22 +173,26 @@ class LinearOEDAdapter(StrictModule, NonTrainableState):
         valid = jnp.full(times_s.shape, self.domain_ok, dtype="bool")
         return BatteryModelOutput(values, valid)
 
-    def ledger(self, prepared_model, native_solution, runtime_inputs, /):
+    def ledger(
+        self, prepared_model: Any, native_solution: Any, runtime_inputs: Any, /
+    ) -> Any:
         assert prepared_model == self.model_id
         del native_solution, runtime_inputs
         return _SyntheticLedger(jnp.asarray(self.ledger_ok))
 
 
-def _ledger_success(ledger):
+def _ledger_success(ledger: Any) -> Any:
     return ledger.successful
 
 
-def _log_prior(branches):
+def _log_prior(branches: Any) -> Any:
     leaves = tuple(jnp.ravel(jnp.asarray(value)) for value in jax.tree.leaves(branches))
     return -0.5 * jnp.sum(jnp.concatenate(leaves) ** 2)
 
 
-def _record(*, observation_shift=0.0, name="train", cell_id="oed-cell"):
+def _record(
+    *, observation_shift: Any = 0.0, name: Any = "train", cell_id: Any = "oed-cell"
+) -> Any:
     times = np.arange(4.0)
     return preprocess_battery_time_series(
         BatteryRawTimeSeries(
@@ -215,7 +228,7 @@ def _record(*, observation_shift=0.0, name="train", cell_id="oed-cell"):
     )
 
 
-def _split(record):
+def _split(record: Any) -> Any:
     calibration = _record(name="calibration", cell_id="oed-calibration-cell")
     test = _record(name="test", cell_id="oed-test-cell")
     corpus = (record, calibration, test)
@@ -234,7 +247,9 @@ def _split(record):
     )
 
 
-def _prepared_calibration(*, observation_shift=0.0, domain_ok=True, ledger_ok=True):
+def _prepared_calibration(
+    *, observation_shift: Any = 0.0, domain_ok: Any = True, ledger_ok: Any = True
+) -> Any:
     record = _record(observation_shift=observation_shift)
     protocol = BatteryProtocolPlan(
         (CurrentStepPlan(1.0), RestStepPlan(1.0), CurrentStepPlan(1.0))
@@ -242,6 +257,7 @@ def _prepared_calibration(*, observation_shift=0.0, domain_ok=True, ledger_ok=Tr
     profile, support_tuple = _candidate(domain_ok, ledger_ok)
     adapter = LinearOEDAdapter(domain_ok=domain_ok, ledger_ok=ledger_ok)
     prepared_experiment = BatteryExperimentPlan(
+        # ty: ignore[invalid-argument-type]
         adapter,
         protocol,
         BatteryOutputPlan(
@@ -296,7 +312,7 @@ def _prepared_calibration(*, observation_shift=0.0, domain_ok=True, ledger_ok=Tr
     ).prepare()
 
 
-def _support(*, current=(-3.0, 3.0), duration=(0.5, 1.5)):
+def _support(*, current: Any = (-3.0, 3.0), duration: Any = (0.5, 1.5)) -> Any:
     return BatteryOEDSupport(
         current[0],
         current[1],
@@ -307,7 +323,7 @@ def _support(*, current=(-3.0, 3.0), duration=(0.5, 1.5)):
     )
 
 
-def _qualification_criterion(role, support):
+def _qualification_criterion(role: Any, support: Any) -> Any:
     metric = (
         "battery-model-smoothness-defect"
         if role == "smoothness"
@@ -333,7 +349,7 @@ def _qualification_criterion(role, support):
     )
 
 
-def _campaign_records(role, criterion, support, replay_id):
+def _campaign_records(role: Any, criterion: Any, support: Any, replay_id: Any) -> Any:
     start = CampaignStartRecord(
         campaign_spec_id=f"test:{role}-campaign",
         criterion_id=criterion.criterion_id,
@@ -354,19 +370,19 @@ def _campaign_records(role, criterion, support, replay_id):
 
 
 def _qualification_evidence(
-    role,
-    criterion,
-    start,
-    observation,
-    subjects,
-    topology,
-    replay_id,
+    role: Any,
+    criterion: Any,
+    start: Any,
+    observation: Any,
+    subjects: Any,
+    topology: Any,
+    replay_id: Any,
     *,
-    outcome="passed",
-    expires_at=200,
-    evidence_kind="scientific",
-    criteria_ids=None,
-):
+    outcome: Any = "passed",
+    expires_at: Any = 200,
+    evidence_kind: Any = "scientific",
+    criteria_ids: Any = None,
+) -> Any:
     return QualificationEvidence(
         evidence_kind,
         outcome,
@@ -391,7 +407,7 @@ def _qualification_evidence(
     )
 
 
-def _trusted_model_contract(calibration, *, trust_key=b"oed-secret"):
+def _trusted_model_contract(calibration: Any, *, trust_key: Any = b"oed-secret") -> Any:
     experiment = calibration.plan.experiments[0]
     model_id = experiment.prepared.plan.model.model_id
     release_support = experiment.prepared.plan.support_tuple
@@ -523,7 +539,13 @@ def _trusted_model_contract(calibration, *, trust_key=b"oed-secret"):
     )
 
 
-def _oed(*, criterion="d_optimal", observation_shift=0.0, domain_ok=True, ledger_ok=True):
+def _oed(
+    *,
+    criterion: Any = "d_optimal",
+    observation_shift: Any = 0.0,
+    domain_ok: Any = True,
+    ledger_ok: Any = True,
+) -> Any:
     calibration = _prepared_calibration(
         observation_shift=observation_shift,
         domain_ok=domain_ok,
@@ -538,7 +560,7 @@ def _oed(*, criterion="d_optimal", observation_shift=0.0, domain_ok=True, ledger
     )
 
 
-def _expected_jacobian(amplitudes):
+def _expected_jacobian(amplitudes: Any) -> Any:
     first, second = amplitudes
     # Dict coordinates are current_gain then offset; the initial condition is last.
     return np.asarray(
@@ -552,7 +574,7 @@ def _expected_jacobian(amplitudes):
 
 
 @pytest.mark.parametrize("criterion", ("d_optimal", "a_optimal", "e_optimal"))
-def test_linear_sensitivity_fisher_and_native_criteria(criterion):
+def test_linear_sensitivity_fisher_and_native_criteria(criterion: Any) -> None:
     prepared = _oed(criterion=criterion)
     amplitudes = jnp.asarray((1.0, 2.0))
     result = evaluate_battery_oed(prepared, amplitudes)
@@ -581,7 +603,7 @@ def test_linear_sensitivity_fisher_and_native_criteria(criterion):
     assert result.parameters_digest
 
 
-def test_candidate_ranking_and_native_finite_search_are_exact():
+def test_candidate_ranking_and_native_finite_search_are_exact() -> None:
     prepared = _oed()
     candidates = BatteryOEDCandidateSet(jnp.asarray(((0.5, 0.5), (1.0, 1.0), (2.0, 2.0))))
     problem = prepare_battery_oed_enumeration(prepared, candidates)
@@ -595,11 +617,12 @@ def test_candidate_ranking_and_native_finite_search_are_exact():
     assert bool(search.exact)
     assert int(search.flat_indices[0]) == 2
     np.testing.assert_allclose(search.points[0], (2.0, 2.0))
+    # ty: ignore[unresolved-attribute]
     assert search.landscape_valid.tolist() == [True, True, True]
     assert problem.candidate_ids == candidates.candidate_ids
 
 
-def test_support_failures_are_invalid_and_duration_is_fixed():
+def test_support_failures_are_invalid_and_duration_is_fixed() -> None:
     prepared = _oed()
     outside = prepared.evaluate(jnp.asarray((4.0, 0.0)))
     assert not bool(outside.current_valid)
@@ -617,7 +640,7 @@ def test_support_failures_are_invalid_and_duration_is_fixed():
         prepared.evaluate(jnp.asarray((1.0,)))
 
 
-def test_failed_model_and_ledger_paths_are_infeasible_not_finite_scores():
+def test_failed_model_and_ledger_paths_are_infeasible_not_finite_scores() -> None:
     model_failure = _oed(domain_ok=False)
     model_result = model_failure.evaluate(jnp.asarray((1.0, 1.0)))
     assert not bool(model_result.simulation_valid)
@@ -641,7 +664,7 @@ def test_failed_model_and_ledger_paths_are_infeasible_not_finite_scores():
     assert bool(jnp.isnan(ledger_score))
 
 
-def test_jit_gradients_native_problem_and_provenance_are_deterministic():
+def test_jit_gradients_native_problem_and_provenance_are_deterministic() -> None:
     first = _oed()
     second = _oed()
     assert first.plan_id == second.plan_id
@@ -665,6 +688,7 @@ def test_jit_gradients_native_problem_and_provenance_are_deterministic():
 
     problem = prepare_battery_oed_continuous_problem(first)
     assert isinstance(problem, MinimizationProblem)
+    # ty: ignore[unresolved-attribute]
     assert bool(problem.bounds.contains(amplitudes))
     (value, auxiliary), gradient = problem.value_and_gradient(amplitudes)
     assert bool(auxiliary.valid)
@@ -673,7 +697,7 @@ def test_jit_gradients_native_problem_and_provenance_are_deterministic():
     assert bool(jnp.all(jnp.isfinite(gradient)))
 
 
-def test_observed_voltage_values_do_not_leak_into_local_design_information():
+def test_observed_voltage_values_do_not_leak_into_local_design_information() -> None:
     baseline = _oed(observation_shift=0.0)
     shifted_observations = _oed(observation_shift=5.0)
     amplitudes = jnp.asarray((1.25, 1.75))
@@ -706,7 +730,7 @@ def test_observed_voltage_values_do_not_leak_into_local_design_information():
     )
 
 
-def test_release_trust_current_evidence_and_content_ids_are_required():
+def test_release_trust_current_evidence_and_content_ids_are_required() -> None:
     calibration = _prepared_calibration()
     model_id = calibration.plan.experiments[0].prepared.plan.model.model_id
     (
@@ -804,7 +828,7 @@ def test_release_trust_current_evidence_and_content_ids_are_required():
         )
 
 
-def test_unrelated_kind_criterion_topology_and_replay_evidence_are_rejected():
+def test_unrelated_kind_criterion_topology_and_replay_evidence_are_rejected() -> None:
     calibration = _prepared_calibration()
     model_id = calibration.plan.experiments[0].prepared.plan.model.model_id
     (
@@ -965,7 +989,9 @@ def test_unrelated_kind_criterion_topology_and_replay_evidence_are_rejected():
         )
 
 
-def test_unreleased_profile_calibration_binding_and_asymmetric_prior_are_rejected():
+def test_unreleased_profile_calibration_binding_and_asymmetric_prior_are_rejected() -> (
+    None
+):
     calibration = _prepared_calibration()
     model_id = calibration.plan.experiments[0].prepared.plan.model.model_id
     (

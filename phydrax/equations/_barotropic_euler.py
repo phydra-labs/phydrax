@@ -7,7 +7,8 @@ from __future__ import annotations
 from typing import Any
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -35,7 +36,7 @@ class BarotropicEulerSystem(
         /,
         *,
         material: AbstractBarotropicMaterial,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (1, 2, 3):
             raise ValueError("Barotropic Euler dimension must be one, two, or three.")

@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -18,9 +21,10 @@ from ._free_surface_ale import PreparedGraphSurfaceALE
 
 
 FaceTuple = tuple[Array, ...]
+_CGCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
-def _tuple_add(left: FaceTuple, scale: Array, right: FaceTuple, /) -> FaceTuple:
+def _tuple_add(left: FaceTuple, scale: Array | float, right: FaceTuple, /) -> FaceTuple:
     return tuple(a + scale * b for a, b in zip(left, right, strict=True))
 
 
@@ -56,7 +60,7 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 200,
-    ):
+    ) -> None:
 
         if not isinstance(surface, PreparedGraphSurfaceALE):
             raise TypeError("surface must be PreparedGraphSurfaceALE.")
@@ -90,7 +94,7 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         if head.shape != expected:
             raise ValueError(f"Surface pressure head must have shape {expected}.")
         output = [jnp.zeros_like(value) for value in geometry.face_measures]
-        location = [slice(None)] * output[2].ndim
+        location: list[slice | int] = [slice(None)] * output[2].ndim
         location[2] = output[2].shape[2] - 1
         top_area = jnp.take(geometry.face_measures[2], -1, axis=2)
         output[2] = output[2].at[tuple(location)].set(-top_area * head)
@@ -105,7 +109,7 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
     ) -> FaceTuple:
         zero = tuple(jnp.zeros_like(value) for value in geometry.face_measures)
 
-        def divergence(values):
+        def divergence(values: FaceTuple) -> Array:
             return geometry.divergence(
                 tuple(value * active for value, active in zip(values, mask, strict=True))
             )
@@ -154,7 +158,7 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         if pressure.shape != rhs.shape:
             raise ValueError("Pressure-head guess shape is invalid.")
 
-        def action(value):
+        def action(value: Array) -> Array:
             gradient = self._gradient_covector(geometry, value, mask)
             inverse = self.surface.inverse_hodge(geometry, gradient, free_mask=mask)
             return geometry.divergence(inverse.velocity)
@@ -166,7 +170,7 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         active = norm > threshold
         failed = jnp.asarray(False)
 
-        def body(_, state):
+        def body(_: Array, state: _CGCarry) -> _CGCarry:
             value, residual_, direction_, norm_, active_, failed_ = state
             image = action(direction_)
             denominator = jnp.sum(geometry.cell_volumes * direction_ * image)

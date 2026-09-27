@@ -10,7 +10,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._polynomial._chebyshev import chebyshev_lobatto_data
@@ -73,7 +74,7 @@ def _analysis_from_synthesis(
     return np.asarray(jnp.stack(columns, axis=1))
 
 
-def _legendre_normalizers(count: int, length: ArrayLike, /) -> ArrayLike:
+def _legendre_normalizers(count: int, length: ArrayLike, /) -> np.ndarray | Array:
     """Orthonormal Legendre scaling `sqrt((2k + 1) / length)` on one interval.
 
     Host lengths give NumPy data for preparation; traced lengths give JAX data
@@ -117,7 +118,7 @@ class SpectralModeLayout(StrictModule, NonTrainableState):
         conjugate_indices: ArrayLike | None = None,
         nyquist_mask: ArrayLike | None = None,
         mode_ids: tuple[str, ...] | None = None,
-    ):
+    ) -> None:
         numbers_host = np.asarray(mode_numbers, dtype=np.int64).reshape((-1,))
         if numbers_host.size == 0 or len(set(numbers_host.tolist())) != numbers_host.size:
             raise ValueError("Spectral mode numbers must be non-empty and unique.")
@@ -205,7 +206,13 @@ def _finite_domain(
     expected = "periodic" if periodic else "bounded"
     if domain.kind != expected:
         raise ValueError(f"{basis} bases require an {expected} axis domain.")
-    return domain.lower, domain.upper
+    lower, upper = domain.lower, domain.upper
+    # AxisDomain requires both endpoints for bounded and periodic kinds.
+    if not (lower is not None and upper is not None):
+        raise RuntimeError(
+            "Internal invariant failed: lower is not None and upper is not None."
+        )
+    return lower, upper
 
 
 class PreparedSpectralAxis(StrictModule, NonTrainableState):
@@ -248,7 +255,7 @@ class PreparedSpectralAxis(StrictModule, NonTrainableState):
         derivative_exact: bool = True,
         derivative_residual: float = 0.0,
         modal_transform: ModalTransform | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, AbstractSpectralBasisPlan):
             raise TypeError("plan must be an AbstractSpectralBasisPlan.")
         if not isinstance(domain, AxisDomain):
@@ -476,8 +483,16 @@ class PreparedSpectralAxis(StrictModule, NonTrainableState):
         if points.ndim != 1:
             raise ValueError("Spectral point-synthesis coordinates must be rank one.")
         coefficient_dtype = jnp.dtype(self.precision.coefficient_dtype)
-        lower = self.domain.lower.astype(points.dtype)
-        upper = self.domain.upper.astype(points.dtype)
+        unsupported = (
+            f"Spectral axis {type(self.plan).__name__} ({self.family}) does not "
+            "expose arbitrary-point synthesis; constrained and rational bases "
+            "have no prepared per-point basis rows."
+        )
+        domain_lower, domain_upper = self.domain.lower, self.domain.upper
+        if domain_lower is None or domain_upper is None:
+            raise ValueError(unsupported)
+        lower = domain_lower.astype(points.dtype)
+        upper = domain_upper.astype(points.dtype)
         length = upper - lower
         offset = (points - lower)[:, None]
         count = self.mode_count
@@ -512,26 +527,34 @@ class PreparedSpectralAxis(StrictModule, NonTrainableState):
                 )
                 return rows.astype(coefficient_dtype)
             case ChebyshevBasisPlan() | LegendreBasisPlan():
+                family = self.family
+                derivative_matrix = self.derivative_matrix
+                # Prepared Chebyshev/Legendre axes carry their family and a modal
+                # derivative matrix by construction.
+                if family not in ("chebyshev", "legendre"):
+                    raise RuntimeError(
+                        "Internal invariant failed: family must be Chebyshev or Legendre."
+                    )
+                if derivative_matrix is None:
+                    raise RuntimeError(
+                        "Internal invariant failed: derivative_matrix is required."
+                    )
                 reference = (2.0 * points - (lower + upper)) / length
-                rows = standard_vandermonde(self.family, reference, count - 1)
-                if self.family == "legendre":
+                rows = standard_vandermonde(family, reference, count - 1)
+                if family == "legendre":
                     rows = rows * _legendre_normalizers(count, length)[None, :]
                 rows = rows.astype(coefficient_dtype)
                 for _ in range(derivative_order):
-                    rows = rows @ self.derivative_matrix
+                    rows = rows @ derivative_matrix
                 return rows
             case _:
-                raise ValueError(
-                    f"Spectral axis {type(self.plan).__name__} ({self.family}) does not "
-                    "expose arbitrary-point synthesis; constrained and rational bases "
-                    "have no prepared per-point basis rows."
-                )
+                raise ValueError(unsupported)
 
 
 class FourierBasisPlan(AbstractSpectralBasisPlan):
     """Complex exponential basis on a periodic interval."""
 
-    def __init__(self, mode_count: int):
+    def __init__(self, mode_count: int) -> None:
         count = int(mode_count)
         if count < 2:
             raise ValueError("Fourier bases require at least two modes.")
@@ -604,7 +627,7 @@ class FourierBasisPlan(AbstractSpectralBasisPlan):
 class SineBasisPlan(AbstractSpectralBasisPlan):
     """Cell-centered sine basis with homogeneous Dirichlet endpoint semantics."""
 
-    def __init__(self, mode_count: int):
+    def __init__(self, mode_count: int) -> None:
         count = int(mode_count)
         if count < 2:
             raise ValueError("Sine bases require at least two modes.")
@@ -663,7 +686,7 @@ class SineBasisPlan(AbstractSpectralBasisPlan):
 class CosineBasisPlan(AbstractSpectralBasisPlan):
     """Endpoint-including cosine basis with homogeneous Neumann semantics."""
 
-    def __init__(self, mode_count: int):
+    def __init__(self, mode_count: int) -> None:
         count = int(mode_count)
         if count < 2:
             raise ValueError("Cosine bases require at least two modes.")
@@ -732,7 +755,7 @@ class ChebyshevBasisPlan(AbstractSpectralBasisPlan):
         /,
         *,
         maximum_construction_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         count = int(mode_count)
         maximum = int(maximum_construction_bytes)
         if count < 2 or maximum <= 0:
@@ -853,7 +876,7 @@ class LegendreBasisPlan(AbstractSpectralBasisPlan):
         *,
         node_rule: Literal["gauss", "radau", "lobatto"] = "gauss",
         maximum_construction_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         count = int(mode_count)
         maximum = int(maximum_construction_bytes)
         if count < 2 or maximum <= 0:

@@ -98,7 +98,7 @@ class VortexVelocityCapabilities(StrictModule, NonTrainableState):
             "arbitrary-targets",
         ),
         acceleration: str = "none",
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (2, 3):
             raise ValueError("Vortex velocity dimension must be 2 or 3.")
@@ -195,7 +195,7 @@ class VortexDiffusionCapabilities(StrictModule, NonTrainableState):
         derivatives: tuple[str, ...] = (),
         topology: str = "same-support",
         acceleration: str = "none",
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (2, 3):
             raise ValueError("Vortex diffusion dimension must be 2 or 3.")

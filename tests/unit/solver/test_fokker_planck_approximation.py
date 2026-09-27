@@ -1,3 +1,5 @@
+from typing import Any
+
 import diffrax as dfx
 import jax.numpy as jnp
 import jax.random as jr
@@ -22,7 +24,7 @@ from phydrax.stochastic._path_ensemble import (
 )
 
 
-def _brownian_problem(initial_value=0.0):
+def _brownian_problem(initial_value: Any = 0.0) -> Any:
     return phx.solver.DifferentialProblem(
         lambda time, state, args: jnp.zeros_like(state),
         jnp.asarray([initial_value]),
@@ -39,12 +41,12 @@ def _brownian_problem(initial_value=0.0):
     )
 
 
-def _path_ensemble_stop_condition(time, state, args):
+def _path_ensemble_stop_condition(time: Any, state: Any, args: Any) -> Any:
     del time, args
     return state[0] > 100.0
 
 
-def _ensemble_plan(path_count=8):
+def _ensemble_plan(path_count: Any = 8) -> Any:
     return StochasticPathEnsemblePlan(
         phx.dynamics.TimeGrid(jnp.asarray([0.0, 0.05, 0.1]), time_id="weak-grid"),
         path_count=path_count,
@@ -53,7 +55,8 @@ def _ensemble_plan(path_count=8):
     )
 
 
-def _small_spde():
+def _small_spde() -> Any:
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.FourierAxisSpec(4).materialize(0.0, 1.0)
     discretization = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(discretization, 0.02, rank=1)
@@ -67,7 +70,7 @@ def _small_spde():
     )
 
 
-def test_path_ensemble_has_fixed_output_grid_replay_and_backend_evidence():
+def test_path_ensemble_has_fixed_output_grid_replay_and_backend_evidence() -> None:
     problem = _brownian_problem()
     plan = _ensemble_plan()
     first = solve_stochastic_path_ensemble(
@@ -85,7 +88,7 @@ def test_path_ensemble_has_fixed_output_grid_replay_and_backend_evidence():
     assert jnp.array_equal(first.states, replay.states)
 
 
-def test_path_ensemble_identity_includes_initial_state_content_and_absence():
+def test_path_ensemble_identity_includes_initial_state_content_and_absence() -> None:
     problem = _brownian_problem()
     plan = _ensemble_plan(path_count=2)
     absent = prepare_stochastic_path_ensemble(problem, plan, key=jr.key(11))
@@ -140,29 +143,29 @@ def test_path_ensemble_identity_includes_initial_state_content_and_absence():
     assert first_result.result_id != changed_result.result_id
 
 
-def test_path_ensemble_default_identity_binds_all_solve_settings():
+def test_path_ensemble_default_identity_binds_all_solve_settings() -> None:
     grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 0.05, 0.1]), time_id="configuration-grid"
     )
 
     def configured_plan(
         *,
-        time_grid=grid,
-        path_count=2,
-        dt0=0.01,
-        solver=None,
-        stepsize_controller=None,
-        adjoint=None,
-        event=None,
-        event_id=None,
-        max_steps=64,
-        rtol=1.0e-6,
-        atol=1.0e-8,
-        wiener_tolerance=1.0e-3,
-        levy_area="brownian",
-        dense=False,
-        throw=False,
-    ):
+        time_grid: Any = grid,
+        path_count: Any = 2,
+        dt0: Any = 0.01,
+        solver: Any = None,
+        stepsize_controller: Any = None,
+        adjoint: Any = None,
+        event: Any = None,
+        event_id: Any = None,
+        max_steps: Any = 64,
+        rtol: Any = 1.0e-6,
+        atol: Any = 1.0e-8,
+        wiener_tolerance: Any = 1.0e-3,
+        levy_area: Any = "brownian",
+        dense: Any = False,
+        throw: Any = False,
+    ) -> Any:
         return StochasticPathEnsemblePlan(
             time_grid,
             path_count=path_count,
@@ -284,7 +287,7 @@ def test_path_ensemble_default_identity_binds_all_solve_settings():
     assert len(identifiers) == len(changed) + 1
 
 
-def test_path_ensemble_requires_identity_for_opaque_execution_objects():
+def test_path_ensemble_requires_identity_for_opaque_execution_objects() -> None:
     grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 0.05, 0.1]), time_id="opaque-event-grid"
     )
@@ -317,13 +320,13 @@ def test_path_ensemble_requires_identity_for_opaque_execution_objects():
     assert first.plan_id != changed.plan_id
 
 
-def test_path_ensemble_execution_identity_propagates_to_prepared_and_result():
+def test_path_ensemble_execution_identity_propagates_to_prepared_and_result() -> None:
     problem = _brownian_problem()
     grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 0.05, 0.1]), time_id="execution-identity-grid"
     )
 
-    def plan(dt0):
+    def plan(dt0: Any) -> Any:
         return StochasticPathEnsemblePlan(
             grid,
             path_count=2,
@@ -370,7 +373,7 @@ def test_path_ensemble_execution_identity_propagates_to_prepared_and_result():
     assert first_result.temporal_evidence.configuration_id == first_plan.configuration_id
 
 
-def test_path_ensemble_rejects_realization_capacity_mismatch():
+def test_path_ensemble_rejects_realization_capacity_mismatch() -> None:
     problem = _brownian_problem()
     wrong = phx.stochastic.WienerRealization.independent(
         jr.key(2),
@@ -387,7 +390,7 @@ def test_path_ensemble_rejects_realization_capacity_mismatch():
         )
 
 
-def test_particle_fokker_planck_returns_normalized_empirical_weak_laws():
+def test_particle_fokker_planck_returns_normalized_empirical_weak_laws() -> None:
     plan = ParticleFokkerPlanckPlan(
         _ensemble_plan(path_count=16),
         (
@@ -406,7 +409,7 @@ def test_particle_fokker_planck_returns_normalized_empirical_weak_laws():
     assert jnp.all(jnp.isfinite(result.sampling_errors))
 
 
-def test_finite_spde_family_reports_coupled_cauchy_and_tail_evidence():
+def test_finite_spde_family_reports_coupled_cauchy_and_tail_evidence() -> None:
     spde = _small_spde()
     coarse_grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 0.1]), time_id="coarse-time-grid"
@@ -454,4 +457,5 @@ def test_finite_spde_family_reports_coupled_cauchy_and_tail_evidence():
     assert result.approximation_kind == "finite-time-refinement"
     assert result.cauchy_differences.shape == (1,)
     assert jnp.allclose(result.cauchy_differences, 0.0)
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(result.tail_bounds, jnp.asarray([0.2, 0.1]))

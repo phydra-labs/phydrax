@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from typing import TypeVar
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -35,7 +38,7 @@ class ALEFLIPPlan(StrictModule, NonTrainableState):
         /,
         *,
         gcl_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(splat, PreparedMeshParticleGridSplat):
             raise TypeError("splat must be PreparedMeshParticleGridSplat.")
         if not isinstance(cell_map, PreparedFiniteElementCellMap):
@@ -239,7 +242,10 @@ def advance_ale_flip(
     )
 
 
-def jax_tree_select(predicate: Array, candidate, old):
+_T = TypeVar("_T")
+
+
+def jax_tree_select(predicate: Array, candidate: _T, old: _T) -> _T:
     import jax
 
     return jax.tree.map(

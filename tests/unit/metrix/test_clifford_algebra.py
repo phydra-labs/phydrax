@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -12,11 +15,11 @@ import phydrax as phx
 cl = phx.metrix.clifford
 
 
-def _basis(layout):
+def _basis(layout: Any) -> Any:
     return tuple(cl.basis_blade(layout, bitmap) for bitmap in layout.bitmaps)
 
 
-def test_euclidean_plane_multiplication_table_and_associativity():
+def test_euclidean_plane_multiplication_table_and_associativity() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1))
     layout = cl.CliffordBladeLayout.full(algebra)
     product = cl.prepare_product(algebra, layout, layout, backend="sparse")
@@ -41,7 +44,7 @@ def test_euclidean_plane_multiplication_table_and_associativity():
                 )
 
 
-def test_signature_radical_and_sparse_closure_are_explicit():
+def test_signature_radical_and_sparse_closure_are_explicit() -> None:
     algebra = cl.CliffordAlgebraSpec((1, -1, 0))
     full = cl.CliffordBladeLayout.full(algebra)
     product = cl.prepare_product(algebra, full, full, backend="sparse")
@@ -74,7 +77,7 @@ def test_signature_radical_and_sparse_closure_are_explicit():
         )
 
 
-def test_product_kinds_involutions_and_layout_maps():
+def test_product_kinds_involutions_and_layout_maps() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1))
     full = cl.CliffordBladeLayout.full(algebra)
     vectors = cl.CliffordBladeLayout.grades_layout(algebra, (1,))
@@ -107,7 +110,7 @@ def test_product_kinds_involutions_and_layout_maps():
     )
 
 
-def test_product_preserves_dtype_and_jax_transformability():
+def test_product_preserves_dtype_and_jax_transformability() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1))
     layout = cl.CliffordBladeLayout.full(algebra)
     sparse = cl.prepare_product(algebra, layout, layout, backend="sparse")
@@ -124,7 +127,7 @@ def test_product_preserves_dtype_and_jax_transformability():
     assert sparse(complex_values, complex_values).dtype == jnp.complex128
 
 
-def test_resource_budget_rejects_before_layout_allocation():
+def test_resource_budget_rejects_before_layout_allocation() -> None:
     budget = cl.CliffordResourceBudget(maximum_blades=3)
     algebra = cl.CliffordAlgebraSpec((1, 1), budget=budget)
     with pytest.raises(ValueError, match="budget allows 3"):
@@ -132,7 +135,7 @@ def test_resource_budget_rejects_before_layout_allocation():
     assert cl.CliffordBladeLayout.grades_layout(algebra, (0, 1)).blade_count == 3
 
 
-def test_algebra_identity_is_independent_of_execution_budget_and_orientation():
+def test_algebra_identity_is_independent_of_execution_budget_and_orientation() -> None:
     first = cl.CliffordAlgebraSpec((1, -1))
     second = cl.CliffordAlgebraSpec(
         (1, -1),

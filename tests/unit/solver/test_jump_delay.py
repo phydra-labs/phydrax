@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import diffrax as dfx
 import jax.numpy as jnp
 import jax.random as jr
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _events(times, marks, *, capacity=3):
+def _events(times: Any, marks: Any, *, capacity: Any = 3) -> Any:
     count = len(times)
     padded_times = jnp.full((capacity,), jnp.nan).at[:count].set(jnp.asarray(times))
     channels = jnp.full((capacity,), -1, dtype=jnp.int32).at[:count].set(0)
@@ -26,7 +29,7 @@ def _events(times, marks, *, capacity=3):
     )
 
 
-def test_jump_delay_uses_right_continuous_history_at_exact_event_times():
+def test_jump_delay_uses_right_continuous_history_at_exact_event_times() -> None:
     base = phx.solver.DelayDifferentialProblem(
         lambda time, state, memory, args: jnp.zeros_like(state),
         lambda time, args: jnp.ones((1,)),
@@ -65,7 +68,7 @@ def test_jump_delay_uses_right_continuous_history_at_exact_event_times():
     assert solution.metadata["jump_side_convention"] == "right-continuous"
 
 
-def test_jump_delay_replays_one_global_wiener_path_across_events():
+def test_jump_delay_replays_one_global_wiener_path_across_events() -> None:
     noise = phx.solver.DelayWienerTerm(
         "driver",
         lambda time, state, memory, args: 0.2 * jnp.ones(state.shape + (1,)),
@@ -114,7 +117,7 @@ def test_jump_delay_replays_one_global_wiener_path_across_events():
     assert solution.metadata["driver_family"] == ("wiener-plus-finite-activity-jump")
 
 
-def test_jump_delay_accepts_an_empty_successful_schedule():
+def test_jump_delay_accepts_an_empty_successful_schedule() -> None:
     base = phx.solver.DelayDifferentialProblem(
         lambda time, state, memory, args: memory["lag"],
         lambda time, args: jnp.ones((1,)),
@@ -140,7 +143,7 @@ def test_jump_delay_accepts_an_empty_successful_schedule():
     assert solution.stats["num_jumps"] == 0
 
 
-def test_jump_delay_rejects_endpoint_and_unsorted_events():
+def test_jump_delay_rejects_endpoint_and_unsorted_events() -> None:
     base = phx.solver.DelayDifferentialProblem(
         lambda time, state, memory, args: jnp.zeros_like(state),
         lambda time, args: jnp.ones((1,)),

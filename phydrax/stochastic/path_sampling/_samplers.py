@@ -11,11 +11,13 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
+from jax.typing import DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from ._core import (
     _fixed_step_time_grid_valid,
     FunctionalDynamicsKernel,
@@ -82,7 +84,7 @@ class TPSPlan(StrictModule, NonTrainableState):
         maximum_shift: int = 1,
         lineage_capacity: int = 1024,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(ensemble, AbstractPathEnsemble):
             raise TypeError("ensemble must implement AbstractPathEnsemble.")
         if not isinstance(kernel, FunctionalDynamicsKernel):
@@ -234,7 +236,7 @@ def _zero_evaluation(plan: TPSPlan, path: PathBuffer, /) -> PathProposalEvaluati
 
 
 def _cast_evaluation(
-    evaluation: PathProposalEvaluation, dtype, /
+    evaluation: PathProposalEvaluation, dtype: DTypeLike, /
 ) -> PathProposalEvaluation:
     return PathProposalEvaluation(
         jnp.asarray(evaluation.target_log_ratio, dtype=dtype),
@@ -317,7 +319,7 @@ def initialize_tps(prepared: PreparedTPS, /) -> TPSState:
 def _propose_tps(
     plan: TPSPlan,
     path: PathBuffer,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> PathMoveResult:
     if plan.move_kind == "one-way-shooting":
@@ -355,7 +357,7 @@ def _propose_tps(
 def tps_step(
     prepared: PreparedTPS,
     state: TPSState,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> TPSStep:
     """Execute exactly one path proposal and commit or reject without retry."""
@@ -427,7 +429,7 @@ class TISPlan(StrictModule, NonTrainableState):
         move_kind: str = "two-way-shooting",
         lineage_capacity: int = 1024,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(network, InterfaceNetworkPlan):
             raise TypeError("network must be InterfaceNetworkPlan.")
         if not isinstance(kernel, FunctionalDynamicsKernel) or not isinstance(
@@ -547,7 +549,7 @@ def initialize_tis(prepared: PreparedTIS, /) -> TISState:
 def tis_step(
     prepared: PreparedTIS,
     state: TISState,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     replica_index: int = 0,
@@ -586,7 +588,7 @@ class RETISPlan(StrictModule, NonTrainableState):
     tis: TISPlan
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, tis: TISPlan, /, *, plan_id: str | None = None):
+    def __init__(self, tis: TISPlan, /, *, plan_id: str | None = None) -> None:
         if not isinstance(tis, TISPlan):
             raise TypeError("tis must be TISPlan.")
         identity = plan_id or canonical_fingerprint(
@@ -699,7 +701,7 @@ def initialize_retis(prepared: PreparedRETIS, /) -> RETISState:
 def retis_step(
     prepared: PreparedRETIS,
     state: RETISState,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     move_kind: str = "shooting",

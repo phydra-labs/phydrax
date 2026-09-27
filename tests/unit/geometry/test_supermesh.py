@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -25,7 +28,7 @@ pytestmark = [
 ]
 
 
-def _grid(cells: int, /):
+def _grid(cells: int, /) -> Any:
     axis = np.linspace(0.0, 1.0, cells + 1)
     x, y = np.meshgrid(axis, axis, indexing="ij")
     points = np.column_stack((x.ravel(), y.ravel()))
@@ -51,13 +54,13 @@ def _perturbed_triangles(cells: int, seed: int, /) -> CellMesh:
     )
 
 
-def _unit_square_moments(dimension: int, /):
+def _unit_square_moments(dimension: int, /) -> Any:
     first = np.full((dimension,), 0.5)
     second = np.full((dimension, dimension), 0.25) + np.eye(dimension) / 12.0
     return first, second
 
 
-def _cube_lattice(cells: int, /):
+def _cube_lattice(cells: int, /) -> Any:
     axis = np.linspace(0.0, 1.0, cells + 1)
     x, y, z = np.meshgrid(axis, axis, axis, indexing="ij")
     points = np.column_stack((x.ravel(), y.ravel(), z.ravel()))
@@ -92,7 +95,7 @@ def _hexahedra(cells: int, /) -> CellMesh:
     )
 
 
-def _assert_complete_moments(refinement, dimension: int, /) -> None:
+def _assert_complete_moments(refinement: Any, dimension: int, /) -> None:
     first, second = _unit_square_moments(dimension)
     assert refinement.status is CommonRefinementStatus.SUCCESS
     assert refinement.succeeded
@@ -109,7 +112,7 @@ def _assert_complete_moments(refinement, dimension: int, /) -> None:
     assert evidence.source_gap_count == evidence.source_double_count == 0
 
 
-def test_identical_meshes_give_the_diagonal_with_certified_measures():
+def test_identical_meshes_give_the_diagonal_with_certified_measures() -> None:
     mesh = _perturbed_triangles(6, 3)
     refinement = prepare_common_refinement(mesh, mesh)
 
@@ -132,7 +135,7 @@ def test_identical_meshes_give_the_diagonal_with_certified_measures():
     assert refinement.source_mesh_id == refinement.target_mesh_id == mesh.mesh_id
 
 
-def test_nonmatching_mixed_polygon_meshes_partition_moments_and_simplices():
+def test_nonmatching_mixed_polygon_meshes_partition_moments_and_simplices() -> None:
     points, quads = _grid(5)
     # Moving vertex (0.4, 0.4) inward turns its lower-left quadrilateral into a
     # nonconvex dart that needs a certified cone from a vertex.
@@ -175,7 +178,7 @@ def test_nonmatching_mixed_polygon_meshes_partition_moments_and_simplices():
     np.testing.assert_array_equal(ordered, np.arange(rows.size))
 
 
-def test_nonconvex_quadrilateral_cone_is_certified():
+def test_nonconvex_quadrilateral_cone_is_certified() -> None:
     # Reflex vertex (1, 1): the cone from vertex 0 folds, the cone from vertex 1
     # is certified.
     dart = CellMesh.from_polygons(
@@ -196,7 +199,7 @@ def test_nonconvex_quadrilateral_cone_is_certified():
     np.testing.assert_allclose(refinement.first_moments[0], (1.0, 1.0), rtol=1e-14)
 
 
-def test_three_dimensional_cells_of_every_kind_refine_the_unit_cube():
+def test_three_dimensional_cells_of_every_kind_refine_the_unit_cube() -> None:
     tetrahedra = _kuhn_tetrahedra(3)
     hexahedra = _hexahedra(2)
     points, corners = _cube_lattice(2)
@@ -212,6 +215,7 @@ def test_three_dimensional_cells_of_every_kind_refine_the_unit_cube():
     prism_points = np.concatenate((prism_points, ((1, 1, 1),)))
     prisms = CellMesh(
         prism_points,
+        # ty: ignore[invalid-argument-type]
         (CellBlock("prisms", "prism", ((0, 1, 2, 3, 4, 5), (1, 6, 2, 4, 7, 5))),),
     )
     policy = CommonRefinementPolicy(second_moments=True)
@@ -227,7 +231,9 @@ def test_three_dimensional_cells_of_every_kind_refine_the_unit_cube():
         ((0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0.5, 0.5, 0.5)), dtype=np.float64
     )
     pyramid = CellMesh(
-        pyramid_points, (CellBlock("pyramids", "pyramid", ((0, 1, 2, 3, 4),)),)
+        pyramid_points,
+        # ty: ignore[invalid-argument-type]
+        (CellBlock("pyramids", "pyramid", ((0, 1, 2, 3, 4),)),),
     )
     refinement = prepare_common_refinement(
         pyramid,
@@ -238,7 +244,7 @@ def test_three_dimensional_cells_of_every_kind_refine_the_unit_cube():
     assert float(np.sum(refinement.volumes)) == pytest.approx(1.0 / 6.0, rel=1e-14)
 
 
-def test_partial_coverage_fails_closed_unless_the_requirement_allows_it():
+def test_partial_coverage_fails_closed_unless_the_requirement_allows_it() -> None:
     source = _quad_mesh(4)
     points, quads = _grid(2)
     inner = CellMesh(0.5 * points + 0.25, (CellBlock("inner", "quadrilateral", quads),))
@@ -262,7 +268,7 @@ def test_partial_coverage_fails_closed_unless_the_requirement_allows_it():
     np.testing.assert_allclose(np.sum(complete.volumes), 0.25, rtol=1e-14)
 
 
-def test_double_coverage_is_reported_for_overlapping_cells():
+def test_double_coverage_is_reported_for_overlapping_cells() -> None:
     # Two cells covering [0.5, 1] x [0, 1] twice.
     overlapping = CellMesh.from_polygons(
         np.asarray(
@@ -285,20 +291,24 @@ def test_double_coverage_is_reported_for_overlapping_cells():
     assert refinement.evidence.target_double_count == 2
 
 
-def test_uncertain_and_uncertified_cells_fail_closed():
+def test_uncertain_and_uncertified_cells_fail_closed() -> None:
     # Nearly collinear corner: the filter cannot resolve it, exact predicates can.
     sliver = np.asarray(((0.5, 0.5), (12.0, 12.0), (24.0, 24.0 + 2.0**-48)))
+    # ty: ignore[invalid-argument-type]
     mesh = CellMesh.from_triangles(sliver, ((0, 1, 2),))
     filtered = prepare_common_refinement(
         mesh, mesh, policy=CommonRefinementPolicy(predicate_mode=PredicateMode.FILTERED)
     )
     exact = prepare_common_refinement(mesh, mesh)
     tiny = CellMesh.from_triangles(
-        1.0e-40 * np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))), ((0, 1, 2),)
+        1.0e-40 * np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
+        # ty: ignore[invalid-argument-type]
+        ((0, 1, 2),),
     )
     outside = prepare_common_refinement(tiny, tiny)
     bowtie = CellMesh(
         np.asarray(((0.0, 0.0), (1.0, 1.0), (1.0, 0.0), (0.0, 1.0))),
+        # ty: ignore[invalid-argument-type]
         (CellBlock("bowtie", "quadrilateral", ((0, 1, 2, 3),)),),
     )
     invalid = prepare_common_refinement(bowtie, _quad_mesh(1))
@@ -313,7 +323,7 @@ def test_uncertain_and_uncertified_cells_fail_closed():
     assert invalid.evidence.invalid_cell_count == 1
 
 
-def test_resource_limits_refuse_without_partial_entries():
+def test_resource_limits_refuse_without_partial_entries() -> None:
     source = _quad_mesh(6)
     target = _perturbed_triangles(5, 1)
     baseline = prepare_common_refinement(source, target)
@@ -330,7 +340,7 @@ def test_resource_limits_refuse_without_partial_entries():
     assert baseline.evidence.retained_bytes > 0
 
 
-def test_preparation_is_deterministic_and_validates_its_inputs():
+def test_preparation_is_deterministic_and_validates_its_inputs() -> None:
     source = _quad_mesh(3)
     target = _perturbed_triangles(4, 2)
     first = prepare_common_refinement(source, target)
@@ -339,6 +349,7 @@ def test_preparation_is_deterministic_and_validates_its_inputs():
     assert first.refinement_id == second.refinement_id
     np.testing.assert_array_equal(first.volumes, second.volumes)
     with pytest.raises(TypeError, match="CellMesh"):
+        # ty: ignore[invalid-argument-type]
         prepare_common_refinement(source, object())
     with pytest.raises(ValueError, match="dimension"):
         prepare_common_refinement(source, _kuhn_tetrahedra(1))

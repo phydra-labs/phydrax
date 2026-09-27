@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -5,7 +7,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _line():
+def _line() -> Any:
     return phx.discretization.finite_volume.MetricLinePlan(
         np.asarray([0.0, 0.2, 0.7, 1.0]),
         np.asarray([2.0, 3.0, 5.0]),
@@ -14,7 +16,7 @@ def _line():
     ).prepare()
 
 
-def test_metric_line_face_incidence_telescopes_exactly():
+def test_metric_line_face_incidence_telescopes_exactly() -> None:
     line = _line()
     flux = jnp.asarray([[2.0, -1.0], [3.0, 4.0], [-2.0, 5.0], [1.0, 7.0]])
     source = jnp.asarray([[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]])
@@ -27,16 +29,16 @@ def test_metric_line_face_incidence_telescopes_exactly():
     assert bool(evidence.successful)
 
 
-def test_metric_line_total_amount_uses_physical_cell_measures():
+def test_metric_line_total_amount_uses_physical_cell_measures() -> None:
     line = _line()
     density = jnp.asarray([[1.0, 2.0], [2.0, 4.0], [3.0, 6.0]])
     np.testing.assert_allclose(line.total_amount(density), [23.0, 46.0])
 
 
-def test_metric_line_gradient_and_differentiation_are_consistent():
+def test_metric_line_gradient_and_differentiation_are_consistent() -> None:
     line = _line()
 
-    def objective(values):
+    def objective(values: Any) -> Any:
         gradient = line.gradient(
             values,
             lower_boundary_value=jnp.asarray(0.0),

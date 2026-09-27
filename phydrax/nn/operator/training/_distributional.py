@@ -8,12 +8,13 @@ import hashlib
 import json
 from dataclasses import dataclass
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 from ...._doc import DOC_KEY0
+from ....typing import parse, PRNGKey
 from ..data import OperatorBatch, OperatorPrediction, OperatorTargetBatch
 from ..distribution import AbstractProbabilisticOperatorModel
 from ._losses import (
@@ -24,7 +25,7 @@ from ._losses import (
 )
 
 
-DistributionReduction = Literal["none", "mean", "sum"]
+DistributionReduction: TypeAlias = Literal["none", "mean", "sum"]
 
 
 def operator_distribution_nll(
@@ -33,7 +34,7 @@ def operator_distribution_nll(
     target: Array,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     reduction: DistributionReduction = "mean",
 ) -> Array:
     """Evaluate a complete-field negative log likelihood in model coordinates."""
@@ -54,7 +55,7 @@ class OperatorDistributionNLL(AbstractOperatorLossTerm):
     weight: float = 1.0
     reduction: DistributionReduction = "mean"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("OperatorDistributionNLL name must be non-empty.")
         if not self.target_field:
@@ -63,8 +64,11 @@ class OperatorDistributionNLL(AbstractOperatorLossTerm):
             raise ValueError(
                 "OperatorDistributionNLL weight must be finite and nonnegative."
             )
-        if self.reduction not in ("none", "mean", "sum"):
-            raise ValueError("reduction must be 'none', 'mean', or 'sum'.")
+        object.__setattr__(
+            self,
+            "reduction",
+            parse(self.reduction, DistributionReduction, "reduction"),
+        )
         if self.reduction == "none":
             raise ValueError(
                 "OperatorDistributionNLL used as a training term requires a scalar reduction."
@@ -72,13 +76,13 @@ class OperatorDistributionNLL(AbstractOperatorLossTerm):
 
     def __call__(
         self,
-        model,
+        model: object,
         prediction: OperatorPrediction,
         batch: OperatorBatch,
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,

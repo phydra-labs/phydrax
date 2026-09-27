@@ -4,13 +4,13 @@
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from phydrax.nn.activations import AdaptiveActivation
 
 
 class TestAdaptiveActivation:
-    def test_scalar_coefficient(self):
+    def test_scalar_coefficient(self) -> None:
         """Test with a scalar coefficient."""
 
         # Define a simple activation function
@@ -36,7 +36,7 @@ class TestAdaptiveActivation:
         expected_neg = jnp.array([0.0, 0.0, 0.0])  # ReLU zeros negative values
         assert jnp.allclose(output_neg, expected_neg)
 
-    def test_vector_coefficient(self):
+    def test_vector_coefficient(self) -> None:
         """Test with a vector coefficient."""
 
         # Define a simple activation function
@@ -57,7 +57,7 @@ class TestAdaptiveActivation:
         expected = jnp.tanh(x)  # With coefficient 1.0, should be same as tanh
         assert jnp.allclose(output, expected)
 
-    def test_default_init_value(self):
+    def test_default_init_value(self) -> None:
         """Test the default initialization value."""
 
         # Define a simple activation function
@@ -76,7 +76,7 @@ class TestAdaptiveActivation:
         expected = sigmoid(x)
         assert jnp.allclose(output, expected)
 
-    def test_matrix_coefficient(self):
+    def test_matrix_coefficient(self) -> None:
         """Test with a matrix coefficient."""
 
         # Define a simple activation function
@@ -97,7 +97,7 @@ class TestAdaptiveActivation:
         expected = elu(x)
         assert jnp.allclose(output, expected)
 
-    def test_broadcasting(self):
+    def test_broadcasting(self) -> None:
         """Test that broadcasting works correctly with different shapes."""
 
         # Define a simple activation function
@@ -122,7 +122,7 @@ class TestAdaptiveActivation:
         for i in range(batch_size):
             assert jnp.allclose(output[i], output[0])
 
-    def test_different_activation_functions(self):
+    def test_different_activation_functions(self) -> None:
         """Test with different activation functions."""
         # Test with several common activation functions
         activations = {

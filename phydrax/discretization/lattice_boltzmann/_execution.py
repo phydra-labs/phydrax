@@ -10,11 +10,12 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._lattice import LatticeBoltzmannVelocitySet
 
 
@@ -22,6 +23,8 @@ LatticeBoltzmannExecutionKind: TypeAlias = Literal["reference", "sharded", "fuse
 LatticeBoltzmannStep = Callable[
     [Array, Array, Array, Array, Any], "LatticeBoltzmannExecutionStep"
 ]
+_RealizationCarry: TypeAlias = tuple[Array, Array]
+_RealizationOutput: TypeAlias = tuple[Array, Array, Array, Array, Any]
 
 
 class LatticeBoltzmannExecutionStep(StrictModule):
@@ -54,9 +57,10 @@ class LatticeBoltzmannExecutionProvenance(StrictModule, NonTrainableState):
         lattice_id: str,
         step_count: int,
         /,
-    ):
-        if execution_kind not in ("reference", "sharded", "fused"):
-            raise ValueError("Unknown LBM execution kind.")
+    ) -> None:
+        execution_kind = parse(
+            execution_kind, LatticeBoltzmannExecutionKind, "execution_kind"
+        )
         identifiers = tuple(str(value) for value in (plan_id, step_id, lattice_id))
         count = int(step_count)
         if any(not value for value in identifiers) or count <= 0:
@@ -175,7 +179,9 @@ def _realize_lattice_boltzmann(
     _validate_scalar("step_size", dt)
     _validate_scalar("t0", initial_time)
 
-    def advance(carry, step_index):
+    def advance(
+        carry: _RealizationCarry, step_index: Array
+    ) -> tuple[_RealizationCarry, _RealizationOutput]:
         state, previous_success = carry
         time = initial_time + step_index * dt
         result = step(step_index, time, state, dt, args)
@@ -342,7 +348,7 @@ class ReferenceLatticeBoltzmannExecutionPlan(StrictModule, NonTrainableState):
         *,
         step_id: str,
         backend: str = "jax",
-    ):
+    ) -> None:
         if not isinstance(velocity_set, LatticeBoltzmannVelocitySet):
             raise TypeError("velocity_set must be a LatticeBoltzmannVelocitySet.")
         if not callable(step):
@@ -374,7 +380,13 @@ class ReferenceLatticeBoltzmannExecutionPlan(StrictModule, NonTrainableState):
         if not isinstance(dynamics, PreparedLatticeBoltzmannDynamics):
             raise TypeError("dynamics must be PreparedLatticeBoltzmannDynamics.")
 
-        def step(step_index, time, populations, step_size, args):
+        def step(
+            step_index: Array,
+            time: Array,
+            populations: Array,
+            step_size: Array,
+            args: Any,
+        ) -> LatticeBoltzmannExecutionStep:
             result = dynamics.step_detailed(
                 step_index, time, populations, step_size, args
             )

@@ -7,12 +7,17 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....observation import CovarianceAction, LinearNuisancePlan
+from ....observation import (
+    CovarianceAction,
+    LinearNuisancePlan,
+    NuisanceProjectionResult,
+)
 from ..potential_fields import RegionalTrendPlan
 
 
@@ -42,7 +47,7 @@ class GeodeticDeformationObservationPlan(StrictModule, NonTrainableState):
         strain_matrix: ArrayLike,
         model_size: int,
         /,
-    ):
+    ) -> None:
         size = int(model_size)
         matrices = tuple(
             jnp.asarray(value)
@@ -106,7 +111,7 @@ class InSARObservationPlan(StrictModule, NonTrainableState):
         *,
         coordinates_xy_m: ArrayLike | None = None,
         ramp_degree: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(forward, GeodeticDeformationObservationPlan):
             raise TypeError("InSAR observation requires geodetic forward plan.")
         observed = jnp.asarray(observed_los_m)
@@ -143,7 +148,9 @@ class InSARObservationPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def evaluate(self, displacement_parameters: ArrayLike, /):
+    def evaluate(
+        self, displacement_parameters: ArrayLike, /
+    ) -> tuple[Array, Array, Array, NuisanceProjectionResult | None]:
         prediction = self.forward.predict(
             displacement_parameters
         ).insar_los_displacement_m

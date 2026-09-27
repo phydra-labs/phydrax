@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -27,26 +28,26 @@ class _MatrixCorrectionOperator(phx.nn.operator.AbstractOperatorModel):
     in_size: str = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self, matrix):
+    def __init__(self, matrix: Any) -> None:
         self.matrix = jnp.asarray(matrix, dtype=jnp.float64)
         self.in_size = "scalar"
         self.out_size = "scalar"
 
     @property
-    def operator_contract(self):
+    def operator_contract(self) -> Any:
         return phx.nn.operator.operator_architecture_contract("FNO")
 
-    def __call_operator_batch__(self, batch, /, *, key=None):
+    def __call_operator_batch__(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         residual = batch.input("residual").values
         assert residual is not None
         return ein.contract("ij,j->i", self.matrix, residual)
 
-    def __call__(self, batch, /, *, key=None):
+    def __call__(self, batch: Any, /, *, key: Any = None) -> Any:
         return self.__call_operator_batch__(batch, key=key)
 
 
-def _field_space(name, support_id, vector_space):
+def _field_space(name: Any, support_id: Any, vector_space: Any) -> Any:
     return phx.discretization.DiscreteFieldSpace(
         name,
         support_id,
@@ -57,7 +58,7 @@ def _field_space(name, support_id, vector_space):
     )
 
 
-def _identity_transfer(source, target, transfer_id):
+def _identity_transfer(source: Any, target: Any, transfer_id: Any) -> Any:
     return phx.discretization.FieldTransfer(
         source,
         target,
@@ -70,7 +71,7 @@ def _identity_transfer(source, target, transfer_id):
     )
 
 
-def _operator_task():
+def _operator_task() -> Any:
     return phx.nn.operator.OperatorTask(
         "quick-poisson-correction",
         fields=(
@@ -96,7 +97,9 @@ def _operator_task():
     )
 
 
-def _solve_record(problem, right_hand_side, policy, *, warmup, repeats):
+def _solve_record(
+    problem: Any, right_hand_side: Any, policy: Any, *, warmup: Any, repeats: Any
+) -> Any:
     prepared, preparation_seconds = measure_synchronized(
         lambda: phx.linalg.prepare(problem, policy)
     )
@@ -138,7 +141,9 @@ def _solve_record(problem, right_hand_side, policy, *, warmup, repeats):
     }
 
 
-def run_quick(*, size=31, modes=4, warmup=1, repeats=3):
+def run_quick(
+    *, size: Any = 31, modes: Any = 4, warmup: Any = 1, repeats: Any = 3
+) -> Any:
     size_ = int(size)
     modes_ = int(modes)
     if size_ < 5 or not 1 <= modes_ < size_:
@@ -263,7 +268,7 @@ def run_quick(*, size=31, modes=4, warmup=1, repeats=3):
         11.0 * jnp.pi * coordinate
     )
 
-    def policy(builder):
+    def policy(builder: Any) -> Any:
         return phx.linalg.LinearSolvePolicy(
             phx.linalg.FGMRES(restart=min(size_, 32)),
             preconditioning=phx.linalg.PreconditioningPolicy(builder, side="right"),
@@ -322,7 +327,7 @@ def run_quick(*, size=31, modes=4, warmup=1, repeats=3):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run the deterministic learned numerical-correction benchmark."
     )

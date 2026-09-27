@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -32,7 +33,7 @@ class CalorimeterClusteringPlan(StrictModule, NonTrainableState):
         /,
         *,
         cluster_capacity: int,
-    ):
+    ) -> None:
         if not isinstance(geometry, CalorimeterGeometry):
             raise TypeError("geometry must be CalorimeterGeometry.")
         mapping = np.asarray(cell_to_cluster)

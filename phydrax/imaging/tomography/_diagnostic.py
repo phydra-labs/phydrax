@@ -7,13 +7,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -25,11 +25,12 @@ from ...equations import (
     DiagnosticPhotonCoefficientTable,
     PhotonEnergyGrid,
 )
+from ...typing import parse
 from ...units import conversion_factor, derived_unit, KILOGRAM, METER, UnitDefinition
 from ._core import BeerLambertResult, ProjectionSupport, VoxelXRayTransformPlan
 
 
-ExposureBasis = Literal["relative", "absolute"]
+ExposureBasis: TypeAlias = Literal["relative", "absolute"]
 _AREAL_MASS_UNIT = derived_unit("kg/m2", ((KILOGRAM, 1), (METER, -2)))
 _MASS_ATTENUATION_UNIT = derived_unit("m2/kg", ((METER, 2), (KILOGRAM, -1)))
 
@@ -51,12 +52,6 @@ def _identifier(value: str, name: str, /) -> str:
     return result
 
 
-def _exposure_basis(value: str, /) -> ExposureBasis:
-    if value not in ("relative", "absolute"):
-        raise ValueError("exposure_basis must be 'relative' or 'absolute'.")
-    return value
-
-
 def _grid(value: PhotonEnergyGrid, /) -> PhotonEnergyGrid:
     if not isinstance(value, PhotonEnergyGrid):
         raise TypeError("energy_grid must be PhotonEnergyGrid.")
@@ -75,7 +70,7 @@ class TubeSpectrum:
     def __post_init__(self) -> None:
         grid = _grid(self.energy_grid)
         fluence = _readonly(self.fluence, "fluence")
-        basis = _exposure_basis(self.exposure_basis)
+        basis = parse(self.exposure_basis, ExposureBasis, "exposure_basis")
         if fluence.shape != grid.energy_j.shape:
             raise ValueError("fluence must have one value per photon-energy bin.")
         if (
@@ -172,7 +167,7 @@ class AECSetting:
 
     def __post_init__(self) -> None:
         exposure = float(self.exposure)
-        basis = _exposure_basis(self.exposure_basis)
+        basis = parse(self.exposure_basis, ExposureBasis, "exposure_basis")
         if not np.isfinite(exposure) or exposure < 0.0:
             raise ValueError("AEC exposure must be finite and non-negative.")
         object.__setattr__(self, "exposure", exposure)
@@ -250,7 +245,7 @@ class ScatterLabel:
 
     def __post_init__(self) -> None:
         model = _identifier(self.model_id, "model_id")
-        basis = _exposure_basis(self.exposure_basis)
+        basis = parse(self.exposure_basis, ExposureBasis, "exposure_basis")
         if self.signal_domain != "detector_input":
             raise ValueError("Scatter signal_domain must be 'detector_input'.")
         object.__setattr__(self, "model_id", model)
@@ -382,7 +377,7 @@ class MaterialBasisProjectionPlan(StrictModule):
         /,
         *,
         path_length_unit: UnitDefinition = METER,
-    ):
+    ) -> None:
         if not isinstance(transform, VoxelXRayTransformPlan):
             raise TypeError("transform must be VoxelXRayTransformPlan.")
         materials = tuple(
@@ -480,7 +475,7 @@ class PolychromaticDetectorPlan(StrictModule, NonTrainableState):
         protocol: CTAcquisitionProtocol,
         coefficients: DiagnosticPhotonCoefficientTable,
         /,
-    ):
+    ) -> None:
         if not isinstance(support, ProjectionSupport):
             raise TypeError("support must be ProjectionSupport.")
         if not isinstance(protocol, CTAcquisitionProtocol):

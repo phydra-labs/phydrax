@@ -12,7 +12,7 @@ from math import isfinite, pi
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -67,7 +67,7 @@ class CompartmentSpec(StrictModule, NonTrainableState):
         *,
         capacitance_density_uF_cm2: float = 1.0,
         axial_resistivity_ohm_cm: float = 100.0,
-    ):
+    ) -> None:
         compartment = _identifier(compartment_id, "compartment_id")
         if parent_id is not None:
             parent = _identifier(parent_id, "parent_id")
@@ -106,7 +106,7 @@ class BranchSpec(StrictModule, NonTrainableState):
     compartment_ids: tuple[str, ...] = eqx.field(static=True)
     branch_spec_id: str = eqx.field(static=True)
 
-    def __init__(self, branch_id: str, compartment_ids: Sequence[str], /):
+    def __init__(self, branch_id: str, compartment_ids: Sequence[str], /) -> None:
         identifier = _identifier(branch_id, "branch_id")
         values = tuple(compartment_ids)
         if not values:
@@ -143,7 +143,7 @@ class CellMorphologyPlan(StrictModule, NonTrainableState):
         /,
         *,
         branches: Sequence[BranchSpec] = (),
-    ):
+    ) -> None:
         cell = _identifier(cell_id, "cell_id")
         specs = tuple(compartments)
         if not specs:
@@ -247,7 +247,7 @@ class PreparedCellMorphology(StrictModule, NonTrainableState):
         /,
         *,
         runtime_id: str,
-    ):
+    ) -> None:
         self.plan = plan
         self.topology = topology
         self.membrane_area_um2 = membrane_area_um2

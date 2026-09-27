@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,14 +13,16 @@ import numpy as np
 import phydrax as phx
 
 
-def _velocity(time, position, args):
+def _velocity(time: Any, position: Any, args: Any) -> Any:
     del time, args
     return jnp.broadcast_to(jnp.asarray((1.0, 0.0)), position.shape)
 
 
 def _plans(
-    *, motion, wall_policy=phx.discretization.FiniteParticleWallPolicy.IMPERMEABLE_SLIDE
-):
+    *,
+    motion: Any,
+    wall_policy: Any = phx.discretization.FiniteParticleWallPolicy.IMPERMEABLE_SLIDE,
+) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray((10, 11)),
         jnp.asarray((1.0, 0.0)),
@@ -60,7 +65,7 @@ def _plans(
     return population, plan
 
 
-def test_finite_radius_erosion_respects_fluid_side_and_particle_radius():
+def test_finite_radius_erosion_respects_fluid_side_and_particle_radius() -> None:
     circle = phx.geometry.Circle((0.0, 0.0), 1.0, feature_id="circle").compile()
     outside = phx.geometry.FiniteRadiusErosionPlan(
         circle, "outside", geometry_id="circle"
@@ -76,7 +81,7 @@ def test_finite_radius_erosion_respects_fluid_side_and_particle_radius():
     assert bool(inside.header.globally_eligible)
 
 
-def test_overdamped_particle_localizes_contact_and_slides_without_penetration():
+def test_overdamped_particle_localizes_contact_and_slides_without_penetration() -> None:
     population, plan = _plans(
         motion=phx.discretization.FiniteParticleMotionKind.OVERDAMPED_STOKES
     )
@@ -95,7 +100,7 @@ def test_overdamped_particle_localizes_contact_and_slides_without_penetration():
     assert result.accepted.event_count[0] == 1
 
 
-def test_inertial_drag_uses_declared_exact_local_substep_without_auto_switch():
+def test_inertial_drag_uses_declared_exact_local_substep_without_auto_switch() -> None:
     population, plan = _plans(
         motion=phx.discretization.FiniteParticleMotionKind.INERTIAL_STOKES
     )
@@ -116,7 +121,7 @@ def test_inertial_drag_uses_declared_exact_local_substep_without_auto_switch():
     )
 
 
-def test_absorbing_wall_deactivates_particle_transactionally():
+def test_absorbing_wall_deactivates_particle_transactionally() -> None:
     population, plan = _plans(
         motion=phx.discretization.FiniteParticleMotionKind.OVERDAMPED_STOKES,
         wall_policy=phx.discretization.FiniteParticleWallPolicy.ABSORB,

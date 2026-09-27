@@ -1,6 +1,7 @@
 """Observable inventory, transfer, reference and native artifact contracts."""
 
 from dataclasses import replace
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -21,7 +22,7 @@ from phydrax.applications.geophysics._flux_closure import (
 )
 
 
-def _binding(mass=(1.0, 3.0, 8.0), interval=2.0):
+def _binding(mass: Any = (1.0, 3.0, 8.0), interval: Any = 2.0) -> Any:
     thermo = MoistThermodynamicPlan()
     tasks = column_flux_tasks(
         "flux-regression",
@@ -37,7 +38,7 @@ def _binding(mass=(1.0, 3.0, 8.0), interval=2.0):
     ), thermo
 
 
-def _energy(thermo, dry, vapor, liquid=0.0, ice=0.0):
+def _energy(thermo: Any, dry: Any, vapor: Any, liquid: Any = 0.0, ice: Any = 0.0) -> Any:
     ed, ev, el, ei = thermo.phase_energies(285.0)
     return (
         jnp.asarray(dry) * ed
@@ -47,7 +48,7 @@ def _energy(thermo, dry, vapor, liquid=0.0, ice=0.0):
     )
 
 
-def test_paired_flux_cancels_inventory_on_nonuniform_layers_and_scales_with_dt():
+def test_paired_flux_cancels_inventory_on_nonuniform_layers_and_scales_with_dt() -> None:
     binding, thermo = _binding()
     dry = binding.measure.weights
     vapor = jnp.asarray([0.04, 0.12, 0.32])
@@ -83,7 +84,9 @@ def test_paired_flux_cancels_inventory_on_nonuniform_layers_and_scales_with_dt()
     assert longer.binding_id != result.binding_id
 
 
-def test_vapor_donor_cannot_borrow_liquid_or_throughflow_and_native_step_rejects():
+def test_vapor_donor_cannot_borrow_liquid_or_throughflow_and_native_step_rejects() -> (
+    None
+):
     binding, thermo = _binding()
     dry, vapor, liquid = (
         binding.measure.weights,
@@ -126,7 +129,7 @@ def test_vapor_donor_cannot_borrow_liquid_or_throughflow_and_native_step_rejects
     assert float(rejected.state.time) == float(state.time)
 
 
-def test_measure_units_reference_and_runtime_interval_are_bound():
+def test_measure_units_reference_and_runtime_interval_are_bound() -> None:
     binding, thermo = _binding()
     dry, vapor = binding.measure.weights, jnp.asarray([[0.02, 0.04, 0.08]])
     energy = _energy(thermo, dry, vapor)
@@ -161,8 +164,10 @@ def test_measure_units_reference_and_runtime_interval_are_bound():
         replace(binding, resolution_m=10.0).validate_batch(batch)
 
 
-def _nonuniform_transfer(thermo, *, bad=False):
+def _nonuniform_transfer(thermo: Any, *, bad: Any = False) -> Any:
+    # ty: ignore[invalid-argument-type]
     source, sm = column_flux_space([1.0, 3.0, 2.0, 6.0], "fine")
+    # ty: ignore[invalid-argument-type]
     target, tm = column_flux_space([4.0, 8.0], "coarse")
     matrix = (
         jnp.asarray([[0.5, 0.5, 0.0, 0.0], [0.0, 0.0, 0.5, 0.5]])
@@ -187,7 +192,7 @@ def _nonuniform_transfer(thermo, *, bad=False):
     return ConservativeColumnTransfer(transfer, sm, tm, thermo.plan_id)
 
 
-def test_native_measure_restriction_preserves_extensives_and_separates_numerics():
+def test_native_measure_restriction_preserves_extensives_and_separates_numerics() -> None:
     original_binding, thermo = _binding()
     transfer = _nonuniform_transfer(thermo)
     binding = replace(
@@ -205,12 +210,14 @@ def test_native_measure_restriction_preserves_extensives_and_separates_numerics(
         fine + physical + numerical,
         coarse,
         coarse,
+        # ty: ignore[invalid-argument-type]
         interval_bounds=[[0.0, 2.0]],
         fine_reference_after=fine + physical,
         coarse_reference_after=coarse,
         reference_id="known-reference",
     )
     np.testing.assert_allclose(target.flux, [[[0.002, 10.0]]], rtol=2e-6)
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         target.numerical_increment, [[[-0.002, -10.0], [0.002, 10.0]]], rtol=1e-5
     )
@@ -224,15 +231,23 @@ def test_native_measure_restriction_preserves_extensives_and_separates_numerics(
             fine + 1.0,
             coarse,
             coarse,
+            # ty: ignore[invalid-argument-type]
             interval_bounds=[[0.0, 2.0]],
         )
     with pytest.raises(ValueError):
         conditional_column_flux_target(
-            binding, transfer, fine, fine, coarse, coarse, interval_bounds=[[0.0, 3.0]]
+            binding,
+            transfer,
+            fine,
+            fine,
+            coarse,
+            coarse,
+            # ty: ignore[invalid-argument-type]
+            interval_bounds=[[0.0, 3.0]],
         )
 
 
-def test_equal_total_distinct_cases_cannot_broadcast_one_fine_endpoint():
+def test_equal_total_distinct_cases_cannot_broadcast_one_fine_endpoint() -> None:
     original, thermo = _binding()
     transfer = _nonuniform_transfer(thermo)
     binding = replace(
@@ -261,6 +276,7 @@ def test_equal_total_distinct_cases_cannot_broadcast_one_fine_endpoint():
         final,
         coarse,
         coarse,
+        # ty: ignore[invalid-argument-type]
         interval_bounds=bounds,
         fine_reference_after=final,
         coarse_reference_after=coarse,
@@ -277,6 +293,7 @@ def test_equal_total_distinct_cases_cannot_broadcast_one_fine_endpoint():
             final[:1],
             coarse,
             coarse,
+            # ty: ignore[invalid-argument-type]
             interval_bounds=bounds,
         )
     with pytest.raises(ValueError):
@@ -287,6 +304,7 @@ def test_equal_total_distinct_cases_cannot_broadcast_one_fine_endpoint():
             final,
             coarse,
             coarse,
+            # ty: ignore[invalid-argument-type]
             interval_bounds=bounds,
             fine_reference_after=final[:1],
             coarse_reference_after=coarse,
@@ -295,8 +313,8 @@ def test_equal_total_distinct_cases_cannot_broadcast_one_fine_endpoint():
 
 
 def test_native_artifact_reload_preserves_flux_and_rejects_wrong_restart_identity(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     binding, thermo = _binding()
     dry = binding.measure.weights
     vapor = jnp.asarray([[0.02, 0.04, 0.08]])
@@ -340,6 +358,7 @@ def test_native_artifact_reload_preserves_flux_and_rejects_wrong_restart_identit
         artifacts.append(restored)
     with pytest.raises(ValueError):
         deploy_column_flux(
+            # ty: ignore[invalid-argument-type]
             tuple(artifacts),
             binding,
             batch,
@@ -362,6 +381,7 @@ def test_native_artifact_reload_preserves_flux_and_rejects_wrong_restart_identit
     )
     with pytest.raises(ValueError):
         deploy_column_flux(
+            # ty: ignore[invalid-argument-type]
             tuple(artifacts),
             changed_binding,
             batch,
@@ -369,5 +389,6 @@ def test_native_artifact_reload_preserves_flux_and_rejects_wrong_restart_identit
             total_energy=energy,
             thermodynamics=thermo,
             dry_mass=dry,
+            # ty: ignore[invalid-argument-type]
             artifact_ids=tuple(model.artifact_id for model in artifacts),
         )

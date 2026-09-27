@@ -5,30 +5,33 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, cast, Literal, TypeAlias, TypedDict
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.finite_volume._hydrostatic_grid import (
+    _BoundaryValues,
     HydrostaticMetricEpoch,
     PreparedHydrostaticGrid,
 )
 from ...linalg._tridiagonal_lines import solve_tridiagonal_lines
 from ...solver._hydrostatic_free_surface import LinearImplicitFreeSurfacePlan
+from ...typing import parse
 from ._external_mode import ExternalModeSubcyclePolicy
 
 
-BoundaryKind = Literal[
+BoundaryKind: TypeAlias = Literal[
     "closed", "prescribed-elevation", "prescribed-transport", "flather", "radiation"
 ]
-MixingKind = Literal["prescribed", "ri", "kpp", "tke", "redi-gm"]
-ExternalMode = Literal["implicit", "split-explicit"]
+MixingKind: TypeAlias = Literal["prescribed", "ri", "kpp", "tke", "redi-gm"]
+ExternalMode: TypeAlias = Literal["implicit", "split-explicit"]
 
 
 def _safe_divide(numerator: Array, denominator: Array, /) -> Array:
@@ -104,7 +107,7 @@ class LinearHydrostaticEOS(StrictModule, NonTrainableState):
         reference_temperature: float = 10.0,
         alpha: float = 2.0e-4,
         beta: float = 7.6e-4,
-    ):
+    ) -> None:
         values = tuple(
             float(v)
             for v in (
@@ -179,7 +182,7 @@ class NonlinearSeawaterPolynomialEOS(StrictModule, NonTrainableState):
             2.5e-8,
             -1.5e-8,
         ),
-    ):
+    ) -> None:
         values = tuple(float(v) for v in coefficients)
         if len(values) != 7 or any(not np.isfinite(v) for v in values):
             raise ValueError("Nonlinear seawater EOS requires seven finite coefficients.")
@@ -267,7 +270,7 @@ class FreshwaterVolumeFluxPlan(StrictModule, NonTrainableState):
         *,
         absolute_salinity: float = 0.0,
         conservative_temperature: float = 10.0,
-    ):
+    ) -> None:
         rate_ = jnp.asarray(rate)
         if bool(jnp.any(~jnp.isfinite(rate_))):
             raise ValueError("Freshwater volume flux must be finite.")
@@ -321,18 +324,11 @@ class HydrostaticOpenBoundary(StrictModule, NonTrainableState):
         target_transport: float = 0.0,
         absolute_salinity: float = 35.0,
         conservative_temperature: float = 10.0,
-    ):
+    ) -> None:
         axis_ = int(axis)
         if axis_ not in (0, 1) or side not in ("lower", "upper"):
             raise ValueError("Hydrostatic boundaries require horizontal axis and side.")
-        if kind not in (
-            "closed",
-            "prescribed-elevation",
-            "prescribed-transport",
-            "flather",
-            "radiation",
-        ):
-            raise ValueError("Unknown hydrostatic open-boundary kind.")
+        kind = parse(kind, BoundaryKind, "kind")
         values = tuple(
             float(v)
             for v in (
@@ -389,9 +385,8 @@ class HydrostaticMixingPlan(StrictModule, NonTrainableState):
         redi_coefficient: float = 0.0,
         gm_coefficient: float = 0.0,
         tke_coefficient: float = 0.1,
-    ):
-        if kind not in ("prescribed", "ri", "kpp", "tke", "redi-gm"):
-            raise ValueError("Unknown hydrostatic mixing kind.")
+    ) -> None:
+        kind = parse(kind, MixingKind, "kind")
         values = tuple(
             float(v)
             for v in (
@@ -471,6 +466,23 @@ class HydrostaticStageResult(StrictModule):
     successful: Array
 
 
+class _HydrostaticPlanOptions(TypedDict, total=False):
+    """Keyword options accepted by ``HydrostaticPrimitiveEquationPlan``."""
+
+    eos: Any | None
+    mixing: HydrostaticMixingPlan | None
+    freshwater: FreshwaterVolumeFluxPlan | None
+    boundaries: Sequence[HydrostaticOpenBoundary]
+    gravity: float
+    reference_density: float
+    coriolis_f0: float
+    coriolis_beta: float
+    external_mode: ExternalMode
+    wetting_and_drying: bool
+    wet_depth: float
+    subcycle_policy: ExternalModeSubcyclePolicy | None
+
+
 class HydrostaticPrimitiveEquationPlan(StrictModule, NonTrainableState):
     """Hydrostatic primitive equations over prepared tensor-z/spherical metrics."""
 
@@ -506,7 +518,7 @@ class HydrostaticPrimitiveEquationPlan(StrictModule, NonTrainableState):
         wetting_and_drying: bool = False,
         wet_depth: float = 1.0e-6,
         subcycle_policy: ExternalModeSubcyclePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(geometry, PreparedHydrostaticGrid):
             raise TypeError("geometry must be PreparedHydrostaticGrid.")
         from ._teos10 import TEOS10GSW75EOS
@@ -525,8 +537,7 @@ class HydrostaticPrimitiveEquationPlan(StrictModule, NonTrainableState):
             for boundary in boundary_tuple
         ):
             raise TypeError("Hydrostatic boundaries must be HydrostaticOpenBoundary.")
-        if external_mode not in ("implicit", "split-explicit"):
-            raise ValueError("Unknown hydrostatic external mode.")
+        external_mode = parse(external_mode, ExternalMode, "external_mode")
         values = tuple(
             float(v)
             for v in (gravity, reference_density, coriolis_f0, coriolis_beta, wet_depth)
@@ -593,7 +604,7 @@ class PreparedHydrostaticOcean(StrictModule):
         plan: HydrostaticPrimitiveEquationPlan,
         free_surface: LinearImplicitFreeSurfacePlan,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.free_surface = free_surface
         self.prepared_id = canonical_fingerprint(
@@ -747,7 +758,7 @@ class PreparedHydrostaticOcean(StrictModule):
         transports: tuple[Array, Array],
         /,
         *,
-        boundary_values=None,
+        boundary_values: _BoundaryValues | None = None,
     ) -> tuple[Array, Array]:
         face_values = [
             _face_upwind(concentration, transports[0], 0, self.geometry.periodic[0]),
@@ -811,8 +822,8 @@ class PreparedHydrostaticOcean(StrictModule):
         epoch: HydrostaticMetricEpoch,
         /,
         *,
-        concentration_boundary=None,
-        density_boundary=None,
+        concentration_boundary: _BoundaryValues | None = None,
+        density_boundary: _BoundaryValues | None = None,
     ) -> tuple[tuple[Array, Array], Array]:
         gradient_x, gradient_y = self.geometry.layer_gradient(
             concentration, boundary_values=concentration_boundary
@@ -833,8 +844,9 @@ class PreparedHydrostaticOcean(StrictModule):
         density_x, density_y = self.geometry.layer_gradient(
             view.density, boundary_values=density_boundary
         )
-        density_vertical = jnp.gradient(view.density, axis=-1)
-        concentration_vertical = jnp.gradient(concentration, axis=-1)
+        # jnp.gradient returns a single Array for a scalar axis.
+        density_vertical = cast(Array, jnp.gradient(view.density, axis=-1))
+        concentration_vertical = cast(Array, jnp.gradient(concentration, axis=-1))
         x_vertical = self.geometry.face_average(density_vertical, 0)
         y_vertical = self.geometry.face_average(density_vertical, 1)
         slope_x = -_safe_divide(density_x, x_vertical)
@@ -883,7 +895,7 @@ class PreparedHydrostaticOcean(StrictModule):
         boundary_traces: HydrostaticBoundaryTraces | None = None,
     ) -> dict[str, Array]:
         tendency = {}
-        top = [slice(None)] * 3
+        top: list[slice | int] = [slice(None)] * 3
         top[-1] = -1
         for name, inventory in state.tracer_inventory.items():
             concentration = _safe_divide(inventory, epoch.cell_volume)
@@ -1023,7 +1035,8 @@ class PreparedHydrostaticOcean(StrictModule):
                     None if boundary_traces is None else boundary_traces.density
                 ),
             )
-            density_vertical = jnp.gradient(view.density, axis=-1)
+            # jnp.gradient returns a single Array for a scalar axis.
+            density_vertical = cast(Array, jnp.gradient(view.density, axis=-1))
             slope_x = -_safe_divide(
                 density_x,
                 self.geometry.face_average(density_vertical, 0),

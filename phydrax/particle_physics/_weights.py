@@ -9,7 +9,8 @@ from enum import IntEnum, StrEnum
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -70,7 +71,7 @@ class EventWeightSet(StrictModule, NonTrainableState):
         systematic_source_ids: Sequence[str] | None = None,
         event_active: ArrayLike | None = None,
         nominal_name: str = "nominal",
-    ):
+    ) -> None:
         values_ = jnp.asarray(values)
         if values_.ndim != 2 or values_.shape[0] < 1 or values_.shape[1] < 1:
             raise ValueError("values must have shape (event_capacity, weight_count).")

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -47,7 +50,9 @@ from phydrax.solver._dark_sector_epoch_runtime import (
 from phydrax.units import COULOMB
 
 
-def _contracts(*, product_capacity=2, lifetime=1.0, prompt_cutoff=0.0):
+def _contracts(
+    *, product_capacity: Any = 2, lifetime: Any = 1.0, prompt_cutoff: Any = 0.0
+) -> Any:
     units = RelativisticUnitContract(
         RelativityScaleContract(DimensionalScaleContract.si(), 1, 1, 1, 1),
         RelativityConvention(metric_signature="mostly_minus"),
@@ -139,7 +144,7 @@ def _contracts(*, product_capacity=2, lifetime=1.0, prompt_cutoff=0.0):
     return cascade
 
 
-def _event():
+def _event() -> Any:
     return HostEventRecord(
         11,
         0,
@@ -151,7 +156,7 @@ def _event():
     )
 
 
-def _seed(plan):
+def _seed(plan: Any) -> Any:
     state = empty_dark_sector_epoch_state(plan.runtime_plan, epoch_sequence=0)
     result = seed_decay_frontier_from_host(
         plan,
@@ -167,7 +172,9 @@ def _seed(plan):
     return result.state
 
 
-def test_finite_epoch_cascade_restarts_to_arbitrary_depth_with_stable_durable_work_ids():
+def test_finite_epoch_cascade_restarts_to_arbitrary_depth_with_stable_durable_work_ids() -> (
+    None
+):
     plan = _contracts()
     state = _seed(plan)
     depth = 20
@@ -215,7 +222,7 @@ def test_finite_epoch_cascade_restarts_to_arbitrary_depth_with_stable_durable_wo
     assert float(resident.frontier_values[0, 7]) == depth
 
 
-def test_prompt_and_delayed_proper_time_paths_remain_distinct():
+def test_prompt_and_delayed_proper_time_paths_remain_distinct() -> None:
     prompt_plan = _contracts(lifetime=0.01, prompt_cutoff=0.1)
     prompt = evolve_decay_cascade_epoch(
         prompt_plan,
@@ -239,7 +246,7 @@ def test_prompt_and_delayed_proper_time_paths_remain_distinct():
     assert bool(delayed.delayed[0])
 
 
-def test_product_capacity_backpressure_is_atomic_and_retains_parent_frontier():
+def test_product_capacity_backpressure_is_atomic_and_retains_parent_frontier() -> None:
     plan = _contracts(product_capacity=1)
     state = _seed(plan)
     evidence = evolve_decay_cascade_epoch(

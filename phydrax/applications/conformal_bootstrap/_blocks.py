@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -30,7 +31,7 @@ class ScalarBlockPlan(StrictModule):
         external_dimension: float,
         radial_order: int = 64,
         maximum_evaluations: int = 1_000_000,
-    ):
+    ) -> None:
         points = np.asarray(cross_ratios, dtype=np.float64)
         external = float(external_dimension)
         order = int(radial_order)

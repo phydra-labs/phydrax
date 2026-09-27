@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from typing import Literal, Self
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -28,7 +31,7 @@ class NativePanelGeometry3D(StrictModule):
     geometry_id: str = eqx.field(static=True)
 
     @classmethod
-    def from_panelization(cls, panelization: SurfacePanelization3D, /):
+    def from_panelization(cls, panelization: SurfacePanelization3D, /) -> Self:
         if not isinstance(panelization, SurfacePanelization3D):
             raise TypeError("panelization must be SurfacePanelization3D.")
         count = panelization.panel_count
@@ -82,7 +85,7 @@ class NativePanelFieldPlan3D(StrictModule):
     geometry: NativePanelGeometry3D
     field_id: str = eqx.field(static=True)
 
-    def __init__(self, geometry: NativePanelGeometry3D, /):
+    def __init__(self, geometry: NativePanelGeometry3D, /) -> None:
         if not isinstance(geometry, NativePanelGeometry3D):
             raise TypeError("geometry must be NativePanelGeometry3D.")
         self.geometry = geometry
@@ -105,7 +108,7 @@ class NativePanelFieldPlan3D(StrictModule):
         /,
         *,
         kind: str,
-        target_side: str = "exterior",
+        target_side: Literal["interior", "exterior", "boundary"] = "exterior",
         accuracy_clearance: float = 0.0,
     ) -> PanelFieldEvaluation3D:
         if kind not in ("source", "doublet"):
@@ -152,7 +155,9 @@ class NativePanelFieldPlan3D(StrictModule):
         panelization = self.geometry.panelization
         kernel = LaplaceLayerKernel3D()
 
-        def node_influence(target, source, normal):
+        def node_influence(
+            target: Array, source: Array, normal: Array
+        ) -> tuple[Array, Array]:
             if kind == "source":
                 potential = kernel.value(target, source)
                 velocity = jax.grad(kernel.value, argnums=0)(target, source)

@@ -28,6 +28,7 @@ sipg = phx.equations.fem.sipg_poisson_form(
     phx.equations.fem.SIPGPenaltyPolicy(12.0),
     dg.cell_domain,
     dg.interior_facet_domain,
+    # ty: ignore[invalid-argument-type]
     (phx.equations.fem.sipg_dirichlet(dg.exterior_facet_domain, boundary_data),),
 )
 compiled_sipg = phx.equations.compile_finite_element_problem(sipg, dg)
@@ -43,6 +44,7 @@ adaptation = phx.meshing.execute_mesh_adaptation(
         ),
     )
 )
+# ty: ignore[unresolved-attribute]
 transfer_defect = jnp.max(jnp.abs(adaptation.transfer.apply(jnp.ones((4,))) - 1.0))
 
 cg_field = phx.discretization.FiniteElementFieldSpec(

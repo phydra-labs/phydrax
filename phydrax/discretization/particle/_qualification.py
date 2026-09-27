@@ -10,7 +10,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
@@ -55,7 +56,7 @@ class ParticleBenchmarkIdentity(StrictModule, NonTrainableState):
     source_id: str = eqx.field(static=True)
     benchmark_id: str = eqx.field(static=True)
 
-    def __init__(self, name: str, configuration_id: str, source_id: str, /):
+    def __init__(self, name: str, configuration_id: str, source_id: str, /) -> None:
         values = tuple(str(value) for value in (name, configuration_id, source_id))
         if any(not value for value in values):
             raise ValueError("Particle benchmark identity fields must be non-empty.")
@@ -81,7 +82,7 @@ class ParticleClaimEvidence(StrictModule, NonTrainableState):
         evidence_id: str,
         satisfied: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(claim, ParticleQualificationClaim):
             raise TypeError("claim must be a ParticleQualificationClaim.")
         identifier = str(evidence_id)
@@ -133,7 +134,7 @@ class ParticleQualificationProfile(AbstractParticleQualificationProfile):
         divergence_l2_tolerance: float = 1e-3,
         complementarity_tolerance: float = 1e-6,
         boundary_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -194,7 +195,7 @@ class ParticleQualificationResult(StrictModule, NonTrainableState):
         execution_successful: ArrayLike,
         numerical_constraints_satisfied: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(maturity, ParticleMethodMaturity):
             raise TypeError("maturity must be a ParticleMethodMaturity.")
         if not isinstance(profile, AbstractParticleQualificationProfile):

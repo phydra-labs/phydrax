@@ -9,7 +9,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -104,7 +105,7 @@ class FundingPolicy(StrictModule):
         *,
         policy_id: str,
         funding_curve_id: str,
-    ):
+    ) -> None:
         borrowing = jnp.asarray(borrowing_spreads, dtype=jnp.float64)
         lending = jnp.asarray(lending_spreads, dtype=jnp.float64)
         if (
@@ -144,7 +145,7 @@ class MarginFundingPolicy(StrictModule):
         *,
         funding_curve_id: str,
         policy_id: str,
-    ):
+    ) -> None:
         spreads = jnp.asarray(funding_spreads, dtype=jnp.float64)
         host = np.asarray(jax.device_get(spreads))
         if spreads.ndim != 1 or spreads.shape[0] < 2:
@@ -172,7 +173,7 @@ class EconomicCapitalPolicy(StrictModule):
         /,
         *,
         policy_id: str,
-    ):
+    ) -> None:
         capital = jnp.asarray(capital_profile, dtype=jnp.float64)
         cost = jnp.asarray(cost_of_capital, dtype=jnp.float64)
         if (

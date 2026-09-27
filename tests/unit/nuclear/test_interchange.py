@@ -1,5 +1,6 @@
 import hashlib
 from io import BytesIO
+from typing import Any
 
 import h5py
 import numpy as np
@@ -7,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _reference(payload, name):
+def _reference(payload: Any, name: Any) -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         name,
         checksum_algorithm="sha256",
@@ -25,7 +26,7 @@ def _reference(payload, name):
     )
 
 
-def _resource(payload):
+def _resource(payload: Any) -> Any:
     return phx.interchange.bounded_resource_from_bytes(
         payload,
         limits=phx.interchange.ResourceLimits(
@@ -38,7 +39,7 @@ def _resource(payload):
     )
 
 
-def _statepoint_bytes():
+def _statepoint_bytes() -> Any:
     buffer = BytesIO()
     with h5py.File(buffer, "w") as handle:
         handle.attrs["filetype"] = np.bytes_("statepoint")
@@ -52,10 +53,13 @@ def _statepoint_bytes():
     return buffer.getvalue()
 
 
-def test_openmc_statepoint_import_preserves_mean_uncertainty_and_realizations():
+def test_openmc_statepoint_import_preserves_mean_uncertainty_and_realizations() -> None:
     payload = _statepoint_bytes()
     groups = phx.nuclear.EnergyGroupStructure(
-        [0.0, 1.0, 2.0], phx.units.MEGAELECTRONVOLT, source_id="groups"
+        # ty: ignore[invalid-argument-type]
+        [0.0, 1.0, 2.0],
+        phx.units.MEGAELECTRONVOLT,
+        source_id="groups",
     )
     result = phx.nuclear.interchange.import_openmc_multigroup_flux(
         _resource(payload),
@@ -77,7 +81,7 @@ def test_openmc_statepoint_import_preserves_mean_uncertainty_and_realizations():
     assert result.asset.references[0].manifest_id == result.reference.manifest_id
 
 
-def test_dagmc_artifact_remains_opaque_and_source_bound():
+def test_dagmc_artifact_remains_opaque_and_source_bound() -> None:
     buffer = BytesIO()
     with h5py.File(buffer, "w") as handle:
         handle.create_group("tstt")

@@ -41,7 +41,7 @@ def _action(scale: jax.Array, value: jax.Array) -> jax.Array:
     return laplacian + 0.8 * (value - padded[:-2]) + (1.0 + scale) * value
 
 
-def _solve(scale, rhs, *, restart, max_steps, mode):
+def _solve(scale: Any, rhs: Any, *, restart: Any, max_steps: Any, mode: Any) -> Any:
     size = rhs.shape[0]
     space = la.ArraySpace((size,), dtype=rhs.dtype)
     operator = la.FunctionLinearOperator(
@@ -56,7 +56,7 @@ def _solve(scale, rhs, *, restart, max_steps, mode):
     return la.solve(la.LinearSystem(operator), rhs, policy=policy)
 
 
-def _timed(name, function, arguments, *, warmup, repeats) -> dict[str, Any]:
+def _timed(name: Any, function: Any, arguments: Any, *, warmup: Any, repeats: Any) -> dict[str, Any]:
     compiled, compilation = measure_lower_and_compile(
         lambda: function.lower(*arguments),
         lambda lowered: lowered.compile(),
@@ -88,17 +88,17 @@ def _timed(name, function, arguments, *, warmup, repeats) -> dict[str, Any]:
     }
 
 
-def _cases(size, max_steps, restarts, *, warmup, repeats) -> list[dict[str, Any]]:
+def _cases(size: Any, max_steps: Any, restarts: Any, *, warmup: Any, repeats: Any) -> list[dict[str, Any]]:
     rhs = jnp.linspace(1.0, 2.0, size)
     scale = jnp.asarray(0.0)
     cases = []
     for restart in restarts:
-        def forward(scale_, rhs_, *, mode, restart_=restart):
+        def forward(scale_: Any, rhs_: Any, *, mode: Any, restart_: Any=restart) -> Any:
             return _solve(
                 scale_, rhs_, restart=restart_, max_steps=max_steps, mode=mode
             ).value
 
-        def loss(scale_, rhs_, restart_=restart):
+        def loss(scale_: Any, rhs_: Any, restart_: Any=restart) -> Any:
             value = _solve(
                 scale_, rhs_, restart=restart_, max_steps=max_steps, mode="algorithmic"
             ).value

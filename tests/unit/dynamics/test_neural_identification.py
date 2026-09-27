@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -20,12 +21,12 @@ class _ScaledStep(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, scale):
+    def __init__(self, scale: Any) -> None:
         self.scale = jnp.asarray(scale, dtype=jnp.float32)
         self.in_size = 1
         self.out_size = 1
 
-    def __call__(self, state, /, *, key=None):
+    def __call__(self, state: Any, /, *, key: Any = None) -> Any:
         del key
         return self.scale * state
 
@@ -37,12 +38,12 @@ class _ControlledStep(AbstractArrayModel):
 
     _input_binding = ModelBinding.pointwise("structured")
 
-    def __init__(self, scale=1.0):
+    def __init__(self, scale: Any = 1.0) -> None:
         self.scale = jnp.asarray(scale, dtype=jnp.float32)
         self.in_size = (1, 1)
         self.out_size = 1
 
-    def __call__(self, values, /, *, key=None):
+    def __call__(self, values: Any, /, *, key: Any = None) -> Any:
         del key
         state, control = values
         return self.scale * state + control
@@ -53,12 +54,12 @@ class _KeyedStep(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, scale):
+    def __init__(self, scale: Any) -> None:
         self.scale = jnp.asarray(scale, dtype=jnp.float32)
         self.in_size = 1
         self.out_size = 1
 
-    def __call__(self, state, /, *, key=None):
+    def __call__(self, state: Any, /, *, key: Any = None) -> Any:
         return self.scale * state + 0.01 * jr.normal(key, state.shape)
 
 
@@ -68,27 +69,27 @@ class _DropoutStep(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, scale):
+    def __init__(self, scale: Any) -> None:
         self.scale = jnp.asarray(scale, dtype=jnp.float32)
         self.dropout = eqx.nn.Dropout(p=0.5)
         self.in_size = 1
         self.out_size = 1
 
-    def __call__(self, state, /, *, key=None):
+    def __call__(self, state: Any, /, *, key: Any = None) -> Any:
         return self.dropout(self.scale * state, key=key)
 
 
 def _trajectory(
-    states,
+    states: Any,
     *,
-    coordinates=None,
-    sample_valid=None,
-    transition_valid=None,
-    reset_mask=None,
-    weights=None,
-    inputs=None,
-    input_alignment="transitions",
-):
+    coordinates: Any = None,
+    sample_valid: Any = None,
+    transition_valid: Any = None,
+    reset_mask: Any = None,
+    weights: Any = None,
+    inputs: Any = None,
+    input_alignment: Any = "transitions",
+) -> Any:
     values = jnp.asarray(states, dtype=jnp.float32).reshape((-1, 1))
     count = values.shape[0]
     return phx.dynamics.TrajectoryData(
@@ -110,7 +111,7 @@ def _trajectory(
     )
 
 
-def _source(data, horizon):
+def _source(data: Any, horizon: Any) -> Any:
     return _NeuralWindowSource(
         data,
         max_horizon=horizon,
@@ -120,7 +121,7 @@ def _source(data, horizon):
     )
 
 
-def _direct_transition(batch):
+def _direct_transition(batch: Any) -> Any:
     return phx.dynamics.identification.DirectDiscreteModelRolloutTransition(
         phx.dynamics.StateLayout((1,)),
         input_layout=(None if batch.inputs is None else phx.dynamics.InputLayout((1,))),
@@ -130,7 +131,7 @@ def _direct_transition(batch):
     )
 
 
-def _loss(model, batch, policy, objectives=None):
+def _loss(model: Any, batch: Any, policy: Any, objectives: Any = None) -> Any:
     terms = (
         (phx.dynamics.identification.SupervisedDiscreteModelObjective(),)
         if objectives is None
@@ -150,7 +151,7 @@ def _loss(model, batch, policy, objectives=None):
     return contribution.value, components
 
 
-def test_supervised_rollout_matches_manual_value_gradient_and_truncation():
+def test_supervised_rollout_matches_manual_value_gradient_and_truncation() -> None:
     data = _trajectory([1.0, 3.0, 7.0])
     batch = _source(data, 2).prepare(jnp.arange(2))
     full = phx.dynamics.identification.DiscreteModelRolloutPolicy(max_horizon=2)
@@ -172,7 +173,7 @@ def test_supervised_rollout_matches_manual_value_gradient_and_truncation():
     np.testing.assert_allclose(truncated_gradient.scale, -7.0)
 
 
-def test_rematerialization_and_semantic_chunk_keys_preserve_value_and_gradient():
+def test_rematerialization_and_semantic_chunk_keys_preserve_value_and_gradient() -> None:
     data = _trajectory([1.0, 1.5, 2.0, 2.5, 3.0])
     source = _source(data, 2)
     full_batch = source.prepare(jnp.arange(source.size))
@@ -220,7 +221,7 @@ def test_rematerialization_and_semantic_chunk_keys_preserve_value_and_gradient()
     )
 
 
-def test_lazy_windows_align_both_control_conventions_and_endpoint_evidence():
+def test_lazy_windows_align_both_control_conventions_and_endpoint_evidence() -> None:
     transition_data = _trajectory(
         [0.0, 1.0, 3.0, 6.0],
         inputs=jnp.asarray([[1.0], [2.0], [3.0]], dtype=jnp.float32),
@@ -257,7 +258,7 @@ def test_lazy_windows_align_both_control_conventions_and_endpoint_evidence():
     )
 
 
-def test_invalid_reset_nan_padding_is_sanitized_and_has_zero_support():
+def test_invalid_reset_nan_padding_is_sanitized_and_has_zero_support() -> None:
     data = _trajectory(
         [1.0, 2.0, jnp.nan, jnp.nan],
         coordinates=[0.0, 1.0, jnp.nan, jnp.nan],
@@ -291,10 +292,11 @@ def test_invalid_reset_nan_padding_is_sanitized_and_has_zero_support():
         shuffle=False,
     )
     assert result.completed_steps == 0
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(result.last_model.scale, jnp.asarray(2.0))
 
 
-def test_reference_branch_and_residual_objectives_match_manual_values():
+def test_reference_branch_and_residual_objectives_match_manual_values() -> None:
     data = _trajectory([1.0, 2.0, 4.0])
     batch = _source(data, 2).prepare(jnp.arange(2))
     policy = phx.dynamics.identification.DiscreteModelRolloutPolicy(max_horizon=2)
@@ -336,7 +338,7 @@ def test_reference_branch_and_residual_objectives_match_manual_values():
     assert not jnp.allclose(coupled_gradient.scale, stopped_gradient.scale)
 
 
-def test_full_reference_branch_equals_reference_generated_supervision():
+def test_full_reference_branch_equals_reference_generated_supervision() -> None:
     data = _trajectory([1.0, 2.0, 4.0])
     batch = _source(data, 2).prepare(jnp.arange(2))
     policy = phx.dynamics.identification.DiscreteModelRolloutPolicy(max_horizon=2)
@@ -366,7 +368,7 @@ def test_full_reference_branch_equals_reference_generated_supervision():
     np.testing.assert_allclose(reference_pair[1].scale, supervised_pair[1].scale)
 
 
-def test_fixed_step_data_rejection_and_batch_accumulation_invariance():
+def test_fixed_step_data_rejection_and_batch_accumulation_invariance() -> None:
     bad = _trajectory([1.0, 2.0, 3.0], coordinates=[0.0, 1.0, 2.5])
     with pytest.raises(ValueError, match="step_size"):
         phx.dynamics.identification.fit_discrete_model(
@@ -402,6 +404,7 @@ def test_fixed_step_data_rejection_and_batch_accumulation_invariance():
         data,
         batch_size=4,
         gradient_accumulation=1,
+        # ty: ignore[invalid-argument-type]
         **kwargs,
     )
     accumulated = phx.dynamics.identification.fit_discrete_model(
@@ -409,12 +412,14 @@ def test_fixed_step_data_rejection_and_batch_accumulation_invariance():
         data,
         batch_size=3,
         gradient_accumulation=2,
+        # ty: ignore[invalid-argument-type]
         **kwargs,
     )
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(full.last_model.scale, accumulated.last_model.scale)
 
 
-def test_checkpoint_resume_is_exact_and_rejects_objective_mismatch(tmp_path):
+def test_checkpoint_resume_is_exact_and_rejects_objective_mismatch(tmp_path: Any) -> None:
     data = _trajectory([1.0, 2.0, 4.0, 8.0])
     policy = phx.dynamics.identification.DiscreteModelRolloutPolicy(max_horizon=1)
     common = {
@@ -432,6 +437,7 @@ def test_checkpoint_resume_is_exact_and_rejects_objective_mismatch(tmp_path):
         data,
         epochs=2,
         steps=2,
+        # ty: ignore[invalid-argument-type]
         **common,
     )
     checkpoint = tmp_path / "neural-checkpoint"
@@ -441,6 +447,7 @@ def test_checkpoint_resume_is_exact_and_rejects_objective_mismatch(tmp_path):
         epochs=1,
         steps=1,
         checkpoint_path=checkpoint,
+        # ty: ignore[invalid-argument-type]
         **common,
     )
     resumed = phx.dynamics.identification.fit_discrete_model(
@@ -450,10 +457,14 @@ def test_checkpoint_resume_is_exact_and_rejects_objective_mismatch(tmp_path):
         steps=2,
         checkpoint_path=checkpoint,
         resume=True,
+        # ty: ignore[invalid-argument-type]
         **common,
     )
     np.testing.assert_array_equal(
-        uninterrupted.last_model.scale, resumed.last_model.scale
+        # ty: ignore[unresolved-attribute]
+        uninterrupted.last_model.scale,
+        # ty: ignore[unresolved-attribute]
+        resumed.last_model.scale,
     )
     assert resumed.resumed_from_step == 1
 
@@ -473,11 +484,14 @@ def test_checkpoint_resume_is_exact_and_rejects_objective_mismatch(tmp_path):
             ),
             checkpoint_path=checkpoint,
             resume=True,
+            # ty: ignore[invalid-argument-type]
             **common,
         )
 
 
-def test_neural_checkpoint_rejects_path_traversal_and_replacement(tmp_path, monkeypatch):
+def test_neural_checkpoint_rejects_path_traversal_and_replacement(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     data = _trajectory([1.0, 2.0, 4.0])
     checkpoint = tmp_path / "checkpoint-admission"
     common = {
@@ -492,6 +506,7 @@ def test_neural_checkpoint_rejects_path_traversal_and_replacement(tmp_path, monk
         "shuffle": False,
         "checkpoint_path": checkpoint,
     }
+    # ty: ignore[invalid-argument-type]
     phx.dynamics.identification.fit_discrete_model(_ScaledStep(1.0), data, **common)
     manifest_path = checkpoint / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
@@ -499,15 +514,20 @@ def test_neural_checkpoint_rejects_path_traversal_and_replacement(tmp_path, monk
     manifest_path.write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="canonical basename"):
         phx.dynamics.identification.fit_discrete_model(
-            _ScaledStep(1.0), data, resume=True, **common
+            _ScaledStep(1.0),
+            data,
+            resume=True,
+            # ty: ignore[invalid-argument-type]
+            **common,
         )
 
+    # ty: ignore[invalid-argument-type]
     phx.dynamics.identification.fit_discrete_model(_ScaledStep(1.0), data, **common)
     manifest = json.loads(manifest_path.read_text())
     state_path = checkpoint / manifest["state_file"]
     original_deserialise = _training_checkpoint.eqx.tree_deserialise_leaves
 
-    def replace_after_open(stream, template, **kwargs):
+    def replace_after_open(stream: Any, template: Any, **kwargs: Any) -> Any:
         state_path.unlink()
         state_path.write_bytes(b"replacement")
         return original_deserialise(stream, template, **kwargs)
@@ -519,11 +539,15 @@ def test_neural_checkpoint_rejects_path_traversal_and_replacement(tmp_path, monk
     )
     with pytest.raises(ValueError, match="unsafe or changed"):
         phx.dynamics.identification.fit_discrete_model(
-            _ScaledStep(1.0), data, resume=True, **common
+            _ScaledStep(1.0),
+            data,
+            resume=True,
+            # ty: ignore[invalid-argument-type]
+            **common,
         )
 
 
-def test_rollout_coefficients_require_positive_mass_at_every_reachable_horizon():
+def test_rollout_coefficients_require_positive_mass_at_every_reachable_horizon() -> None:
     data = _trajectory([1.0, 2.0, 4.0])
     policy = phx.dynamics.identification.DiscreteModelRolloutPolicy(
         max_horizon=2,
@@ -549,7 +573,7 @@ def test_rollout_coefficients_require_positive_mass_at_every_reachable_horizon()
         )
 
 
-def test_fit_rejects_key_required_deployment_and_freezes_dropout_inference():
+def test_fit_rejects_key_required_deployment_and_freezes_dropout_inference() -> None:
     data = _trajectory([1.0, 2.0, 4.0])
     policy = phx.dynamics.identification.DiscreteModelRolloutPolicy(max_horizon=1)
     common = {
@@ -564,12 +588,14 @@ def test_fit_rejects_key_required_deployment_and_freezes_dropout_inference():
         phx.dynamics.identification.fit_discrete_model(
             _KeyedStep(1.0),
             data,
+            # ty: ignore[invalid-argument-type]
             **common,
         )
 
     fitted = phx.dynamics.identification.fit_discrete_model(
         _DropoutStep(2.0),
         data,
+        # ty: ignore[invalid-argument-type]
         **common,
     )
     state = jnp.asarray([3.0], dtype=jnp.float32)
@@ -584,7 +610,7 @@ def test_fit_rejects_key_required_deployment_and_freezes_dropout_inference():
     )
 
 
-def test_rollout_transition_binds_port_declaring_models_through_layout_ports():
+def test_rollout_transition_binds_port_declaring_models_through_layout_ports() -> None:
     layout = phx.dynamics.StateLayout((2,))
     point = layout.value_port(role="point")
     ports = phx.ModelPorts(inputs=(point,), outputs=(point,))
@@ -602,7 +628,9 @@ def test_rollout_transition_binds_port_declaring_models_through_layout_ports():
     assert transition.owner_ports() == ports
     transition.validate_model(model)
     evidence = transition.component_binding(model).contract().port_binding
+    # ty: ignore[unresolved-attribute]
     assert evidence.inputs == ((point.port_id, point.port_id),)
+    # ty: ignore[unresolved-attribute]
     assert evidence.outputs == ((point.port_id, point.port_id),)
     result = transition.evaluate(model, context, state, None, key=None, iteration=None)
     np.testing.assert_allclose(result.accepted_state, [2.0, -2.0])

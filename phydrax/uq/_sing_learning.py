@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import optax
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import PyTree
 
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._sampling import derive_key, SampleAddress
@@ -22,10 +23,12 @@ from .._training_kernel import (
     run_training_attempt,
     SubspaceTrainingTree,
     TrainingKernelSpec,
+    TrainingKeys,
     TrainingRejectionBudgetError,
 )
 from .._training_objective import _ObjectiveContribution
 from ..nn.parameters import ParameterSubspace
+from ..typing import PRNGKey
 from ._sing import sing_smoother, SINGResult, SINGState
 from ._sing_transition import sing_objective, SINGTransitionPlan
 
@@ -50,7 +53,7 @@ class SINGLearningPolicy(StrictModule):
         /,
         *,
         factor_source: Any = None,
-    ):
+    ) -> None:
         counts = tuple(
             (
                 posterior_steps,
@@ -97,7 +100,13 @@ _FINAL_SMOOTHER_ADDRESS = SampleAddress(
 )
 
 
-def _negative_sing_objective(parameters, model_state, fixed, payload, keys):
+def _negative_sing_objective(
+    parameters: PyTree[Any],
+    model_state: PyTree[Any],
+    fixed: PyTree[Any],
+    payload: tuple[SINGState, Any, SINGTransitionPlan, Any],
+    keys: TrainingKeys,
+) -> tuple[_ObjectiveContribution, PyTree[Any], tuple[()]]:
     """Held-posterior negative SING objective of the subspace parameters.
 
     The payload is `(posterior_state, batch, transition_plan, observation_factor)`.
@@ -124,7 +133,7 @@ def fit_sing(
     optimizer: optax.GradientTransformation,
     state: SINGState | None = None,
     observation_factor: Any = None,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> SINGLearningResult:
     """Alternate posterior natural steps and held-posterior parameter steps.
 
@@ -196,6 +205,11 @@ def fit_sing(
                 factor_sampling_state,
             )
         if kernel is not None:
+            # `kernel`, `training`, and `parameter_subspace` are set together above.
+            if not (training is not None and parameter_subspace is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: training is not None and parameter_subspace is not None."
+                )
             payload = (
                 posterior.state,
                 batch,

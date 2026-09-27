@@ -11,6 +11,7 @@ import json
 import tempfile
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -80,7 +81,7 @@ def _capacity() -> CardiovascularCapacityManifest:
     )
 
 
-def _execution(route) -> CardiovascularExecutionManifest:
+def _execution(route: Any) -> CardiovascularExecutionManifest:
     return CardiovascularExecutionManifest(
         case_manifest_id="qualification:case",
         analysis_plan_id="qualification:analysis",
@@ -94,7 +95,7 @@ def _execution(route) -> CardiovascularExecutionManifest:
     )
 
 
-def _distributed_fem(part_count=2):
+def _distributed_fem(part_count: Any = 2) -> Any:
     mesh = CellMesh.from_triangles(
         np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
         np.asarray(((0, 1, 3), (1, 2, 3)), dtype=np.int32),
@@ -109,7 +110,9 @@ def _distributed_fem(part_count=2):
     return discretization, phases
 
 
-def _external_checkpoint(path: Path, execution, values, checkpoint_id: str) -> None:
+def _external_checkpoint(
+    path: Path, execution: Any, values: Any, checkpoint_id: str
+) -> None:
     array = np.asarray(values)
     manifest = CheckpointManifest(
         checkpoint_id,
@@ -207,7 +210,7 @@ def _cohort_qualification() -> dict[str, object]:
         _execution(CardiovascularCohortExecution(4)), tuple(reversed(case_ids))
     )
 
-    def execute(case_id, key):
+    def execute(case_id: Any, key: Any) -> Any:
         offset = sum(map(ord, case_id))
         return CardiovascularCohortCaseCandidate(jax.random.normal(key) + offset)
 
@@ -249,17 +252,17 @@ def _event_and_failure_qualification() -> dict[str, object]:
     )
     prepared = prepare_cardiovascular_scheduler(execution, plan)
 
-    def advance(state, subsystem_id, start_ms, end_ms):
+    def advance(state: Any, subsystem_id: Any, start_ms: Any, end_ms: Any) -> Any:
         del subsystem_id
         return CardiovascularStepCandidate(state + end_ms - start_ms)
 
-    def guards(state, time_ms):
+    def guards(state: Any, time_ms: Any) -> Any:
         del time_ms
         return jnp.asarray((state - 0.75, state - 0.75))
 
     ordering: list[str] = []
 
-    def reset(state, source_id, time_ms):
+    def reset(state: Any, source_id: Any, time_ms: Any) -> Any:
         del time_ms
         ordering.append(source_id)
         return CardiovascularStepCandidate(state + 0.125)
@@ -279,7 +282,9 @@ def _event_and_failure_qualification() -> dict[str, object]:
         reset,
     )
 
-    def injected_failure(state, subsystem_id, start_ms, end_ms):
+    def injected_failure(
+        state: Any, subsystem_id: Any, start_ms: Any, end_ms: Any
+    ) -> Any:
         del subsystem_id, start_ms, end_ms
         return CardiovascularStepCandidate(
             state + 10_000.0,
@@ -304,7 +309,7 @@ def _event_and_failure_qualification() -> dict[str, object]:
     )
     serialized_diagnostic = repr(diagnostic)
 
-    def wrong_shape(state, subsystem_id, start_ms, end_ms):
+    def wrong_shape(state: Any, subsystem_id: Any, start_ms: Any, end_ms: Any) -> Any:
         del subsystem_id, start_ms, end_ms
         return CardiovascularStepCandidate(jnp.stack((state, state)))
 
@@ -476,6 +481,7 @@ def _distributed_qualification(root: Path) -> dict[str, object]:
         ),
         "solver_successful": single_evidence.solver_state.successful,
         "owned_array_sharding": str(
+            # ty: ignore[unresolved-attribute]
             single_evidence.solver_state.owned_solution.sharding.spec
         ),
         "identity_binding": {
@@ -512,20 +518,28 @@ def qualification_report() -> dict[str, object]:
         and scheduler["event_commit"]
         and scheduler["event_count"] == 2
         and scheduler["event_order"] == ("valve-primary", "valve-secondary")
+        # ty: ignore[unsupported-operator]
         and scheduler["event_time_max_error_ms"] <= 1.0e-8
         and scheduler["saltation_records"] == 2
         and scheduler["replay_exact"]
         and scheduler["atomic_failure_rollback"]
         and scheduler["diagnostic_sanitized"]
         and scheduler["leaf_contract_enforced"]
+        # ty: ignore[unsupported-operator]
         and distributed["reference_residual"] <= 1.0e-12
         and distributed["reference_eligible"]
+        # ty: ignore[unsupported-operator]
         and distributed["single_device_operator_residual"] <= 1.0e-7
+        # ty: ignore[unsupported-operator]
         and distributed["single_device_halo_residual"] <= 1.0e-7
+        # ty: ignore[unsupported-operator]
         and distributed["single_device_transpose_residual"] <= 1.0e-7
+        # ty: ignore[unsupported-operator]
         and distributed["single_device_solver_residual"] <= 1.0e-6
+        # ty: ignore[unsupported-operator]
         and distributed["single_device_solver_serial_residual"] <= 1.0e-6
         and distributed["solver_successful"]
+        # ty: ignore[unresolved-attribute]
         and all(distributed["identity_binding"].values())
         and distributed["checkpoint_restart_exact"]
         and distributed["multi_device_valid_or_blocked"]

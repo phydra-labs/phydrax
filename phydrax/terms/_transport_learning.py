@@ -8,7 +8,7 @@ from typing import Any, Mapping
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.axes as cx
 
@@ -18,13 +18,14 @@ from .._term import AbstractScalarTerm
 from ..domain import DomainFunction
 from ..integration._api import IntegrationRealization, reduce
 from ..transport import AbstractGroundCost
+from ..typing import PRNGKey
 
 
 class _MongeCostEvaluator(StrictModule):
     map_evaluator: Any
     cost: AbstractGroundCost
 
-    def __call__(self, *args, key=None):
+    def __call__(self, *args: Any, key: PRNGKey | None = None) -> Array:
         source = (
             jnp.asarray(args[0])
             if len(args) == 1
@@ -65,7 +66,7 @@ class MongeMapTerm(AbstractScalarTerm):
         transport_weight: float = 1.0,
         discrepancy_weight: float = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(map_field, str) or not map_field:
             raise ValueError("map_field must be non-empty.")
         if not isinstance(source_realization, IntegrationRealization):
@@ -87,9 +88,9 @@ class MongeMapTerm(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
-        iter_=None,
-        **kwargs,
+        key: PRNGKey = DOC_KEY0,
+        iter_: int | Array | None = None,
+        **kwargs: Any,
     ) -> Array:
         del iter_, kwargs
         field = functions[self.map_field]
@@ -130,7 +131,7 @@ class NeuralDualTransportTerm(AbstractScalarTerm):
         constraint_weight: float = 1.0,
         full_pair_coverage: bool = False,
         label: str | None = None,
-    ):
+    ) -> None:
         if not source_potential or not target_potential:
             raise ValueError("potential field names must be non-empty.")
         if not isinstance(source_realization, IntegrationRealization) or not isinstance(
@@ -156,9 +157,9 @@ class NeuralDualTransportTerm(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
-        iter_=None,
-        **kwargs,
+        key: PRNGKey = DOC_KEY0,
+        iter_: int | Array | None = None,
+        **kwargs: Any,
     ) -> Array:
         del iter_, kwargs
         source_field = functions[self.source_potential]

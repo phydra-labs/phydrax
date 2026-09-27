@@ -14,14 +14,14 @@ import pytest
 import phydrax as phx
 
 
-def _square_complex(*, shift=0.0):
+def _square_complex(*, shift: Any = 0.0) -> Any:
     vertices = np.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
     vertices = vertices + float(shift)
     faces = np.asarray([[0, 1, 2], [0, 2, 3]], dtype=np.int32)
     return phx.graph.triangle_mesh_to_cochain_complex(vertices, faces)
 
 
-def _annulus_complex(*, harmonics=False):
+def _annulus_complex(*, harmonics: Any = False) -> Any:
     outer = np.asarray([[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]])
     vertices = np.concatenate((outer, 0.4 * outer), axis=0)
     faces = np.asarray(
@@ -37,7 +37,7 @@ def _annulus_complex(*, harmonics=False):
     return complex_ir
 
 
-def _fields():
+def _fields() -> Any:
     return (
         phx.nn.operator.OperatorFieldSpec(
             "vertex",
@@ -64,7 +64,7 @@ def _fields():
     )
 
 
-def _field_binding():
+def _field_binding() -> Any:
     # The cochain operator is built from `_fields()`: each output is the field port.
     ports = {field.name: field.value_port() for field in _fields() if field.is_target}
     return {
@@ -75,7 +75,7 @@ def _field_binding():
     }
 
 
-def _task(fields=None):
+def _task(fields: Any = None) -> Any:
     resolved_fields = _fields() if fields is None else tuple(fields)
     query_names = tuple(field.query_name for field in resolved_fields if field.is_target)
     return phx.nn.operator.OperatorTask(
@@ -99,7 +99,7 @@ def _task(fields=None):
     )
 
 
-def _batch(complex_ir=None, *, cases=3, edge_values=None):
+def _batch(complex_ir: Any = None, *, cases: Any = 3, edge_values: Any = None) -> Any:
     complex_ir = _square_complex() if complex_ir is None else complex_ir
     vertex_count, edge_count = complex_ir.cell_counts[:2]
     vertex_values = jnp.arange(cases * vertex_count, dtype="float64").reshape(
@@ -143,7 +143,7 @@ def _batch(complex_ir=None, *, cases=3, edge_values=None):
     )
 
 
-def _dataset(batch):
+def _dataset(batch: Any) -> Any:
     fields = _fields()
     targets = phx.nn.operator.OperatorTargetBatch.from_arrays(
         {
@@ -160,7 +160,7 @@ def _dataset(batch):
     return phx.nn.operator.training.OperatorDataset(batch, targets)
 
 
-def _model(*, key=jr.key(0), routes=None):
+def _model(*, key: Any = jr.key(0), routes: Any = None) -> Any:
     return phx.nn.operator.architectures.CochainNeuralOperator(
         _fields(),
         width=5,
@@ -170,11 +170,11 @@ def _model(*, key=jr.key(0), routes=None):
     )
 
 
-def _trainable_arrays(model):
+def _trainable_arrays(model: Any) -> Any:
     return jax.tree_util.tree_leaves(eqx.filter(model, eqx.is_array))
 
 
-def test_cochain_field_semantics_roundtrip_through_operator_task():
+def test_cochain_field_semantics_roundtrip_through_operator_task() -> None:
     task = _task()
     restored = phx.nn.operator.OperatorTask.from_dict(task.to_dict())
     assert restored.fields[0].cochain is not None
@@ -201,7 +201,7 @@ def test_cochain_field_semantics_roundtrip_through_operator_task():
         )
 
 
-def test_cochain_topology_survives_materialization_padding_stacking_and_slicing():
+def test_cochain_topology_survives_materialization_padding_stacking_and_slicing() -> None:
     batch = _batch(cases=2)
     first = phx.nn.operator.slice_operator_batch(batch, 0)
     second = phx.nn.operator.slice_operator_batch(batch, 1)
@@ -238,7 +238,7 @@ def test_cochain_topology_survives_materialization_padding_stacking_and_slicing(
     )
 
 
-def test_cochain_capability_contract_accepts_typed_fields_and_rejects_mismatch():
+def test_cochain_capability_contract_accepts_typed_fields_and_rejects_mismatch() -> None:
     batch = _batch(cases=2)
     accepted = phx.nn.operator.validate_operator_architecture(
         "CochainNeuralOperator",
@@ -274,7 +274,7 @@ def test_cochain_capability_contract_accepts_typed_fields_and_rejects_mismatch()
     assert "COCHAIN_TOPOLOGY_MISMATCH" in rejected.codes
 
 
-def test_cochain_operator_is_multi_output_batched_jittable_and_differentiable():
+def test_cochain_operator_is_multi_output_batched_jittable_and_differentiable() -> None:
     batch = _batch(cases=2)
     model = _model()
 
@@ -283,7 +283,7 @@ def test_cochain_operator_is_multi_output_batched_jittable_and_differentiable():
         model, batch
     )
 
-    def objective(edge_values):
+    def objective(edge_values: Any) -> Any:
         changed = eqx.tree_at(
             lambda item: item.inputs["edge_source"].values,
             batch,
@@ -309,7 +309,7 @@ def test_cochain_operator_is_multi_output_batched_jittable_and_differentiable():
     assert jnp.linalg.norm(gradient) > 0.0
 
 
-def test_cochain_operator_is_equivariant_to_independent_cell_reorientation():
+def test_cochain_operator_is_equivariant_to_independent_cell_reorientation() -> None:
     complex_ir = _square_complex()
     batch = _batch(complex_ir, cases=2)
     signs = (
@@ -344,7 +344,7 @@ def test_cochain_operator_is_equivariant_to_independent_cell_reorientation():
     )
 
 
-def test_harmonic_route_requires_and_uses_precomputed_topological_basis():
+def test_harmonic_route_requires_and_uses_precomputed_topological_basis() -> None:
     fields = (
         phx.nn.operator.OperatorFieldSpec(
             "edge",
@@ -374,7 +374,7 @@ def test_harmonic_route_requires_and_uses_precomputed_topological_basis():
         key=jr.key(5),
     )
 
-    def edge_batch(complex_ir):
+    def edge_batch(complex_ir: Any) -> Any:
         count = complex_ir.cell_counts[1]
         return phx.nn.operator.OperatorBatch(
             inputs={
@@ -401,7 +401,7 @@ def test_harmonic_route_requires_and_uses_precomputed_topological_basis():
         model(edge_batch(_annulus_complex(harmonics=False)))
 
 
-def test_zero_update_topological_block_has_exact_semigroup_identity():
+def test_zero_update_topological_block_has_exact_semigroup_identity() -> None:
     complex_ir = _square_complex()
     block = phx.nn.operator.architectures.TopologicalCochainBlock(
         2,
@@ -433,7 +433,7 @@ def test_zero_update_topological_block_has_exact_semigroup_identity():
     assert jnp.array_equal(three_steps, hidden)
 
 
-def test_cochain_normalization_centers_invariant_fields_but_not_signed_fields():
+def test_cochain_normalization_centers_invariant_fields_but_not_signed_fields() -> None:
     batch = _batch(cases=3)
     dataset = _dataset(batch)
     policy = phx.nn.operator.training.fit_operator_normalization(
@@ -483,7 +483,7 @@ def test_cochain_normalization_centers_invariant_fields_but_not_signed_fields():
     )
 
 
-def test_multi_field_training_and_checkpoint_resume_are_exact(tmp_path):
+def test_multi_field_training_and_checkpoint_resume_are_exact(tmp_path: Any) -> None:
     dataset = _dataset(_batch(cases=3))
     model = _model(key=jr.key(12))
     common: dict[str, Any] = {
@@ -548,24 +548,24 @@ def test_multi_field_training_and_checkpoint_resume_are_exact(tmp_path):
     )
 
 
-def _plain_source_residual(graph, fields, *, key):
+def _plain_source_residual(graph: Any, fields: Any, *, key: Any) -> Any:
     del graph, key
     return {"residual": fields["u"] - 0.1 * fields["forcing"]}
 
 
-def _plain_scaled_residual(graph, fields, *, key):
+def _plain_scaled_residual(graph: Any, fields: Any, *, key: Any) -> Any:
     del graph, key
     return {"residual": fields["u"] - 0.2 * fields["forcing"]}
 
 
-def test_cochain_residual_program_identity_uses_canonical_callable_payload():
+def test_cochain_residual_program_identity_uses_canonical_callable_payload() -> None:
     zero_spec = phx.discretization.CochainFieldSpec(
         0,
         cell_orientation="invariant",
         sampling="point_value",
     )
 
-    def program(residual_fn, **ids):
+    def program(residual_fn: Any, **ids: Any) -> Any:
         return phx.graph.CochainResidualProgram(
             inputs={"u": zero_spec, "forcing": zero_spec},
             outputs={"residual": zero_spec},
@@ -591,14 +591,14 @@ def test_cochain_residual_program_identity_uses_canonical_callable_payload():
     assert declared_first.fingerprint != declared_second.fingerprint
 
 
-def _source_matching_program(*, identity="tests.cochain.source_matching"):
+def _source_matching_program(*, identity: Any = "tests.cochain.source_matching") -> Any:
     zero_spec = phx.discretization.CochainFieldSpec(
         0,
         cell_orientation="invariant",
         sampling="point_value",
     )
 
-    def residual(graph, fields, *, key):
+    def residual(graph: Any, fields: Any, *, key: Any) -> Any:
         del graph, key
         return {"residual": fields["u"] - 0.1 * fields["forcing"]}
 
@@ -613,9 +613,9 @@ def _source_matching_program(*, identity="tests.cochain.source_matching"):
 
 def _source_matching_loss(
     *,
-    identity="tests.cochain.source_matching",
-    topology_fingerprint=None,
-):
+    identity: Any = "tests.cochain.source_matching",
+    topology_fingerprint: Any = None,
+) -> Any:
     return phx.nn.operator.training.CochainResidualLoss(
         name="zero_form_physics",
         program=_source_matching_program(identity=identity),
@@ -629,13 +629,13 @@ def _source_matching_loss(
     )
 
 
-def _targetless_dataset(*, cases=2):
+def _targetless_dataset(*, cases: Any = 2) -> Any:
     batch = _batch(cases=cases)
     targets = phx.nn.operator.OperatorTargetBatch.from_arrays({}, batch)
     return phx.nn.operator.training.OperatorDataset(batch, targets)
 
 
-def _small_cochain_model(*, key):
+def _small_cochain_model(*, key: Any) -> Any:
     return phx.nn.operator.architectures.CochainNeuralOperator(
         _fields(),
         width=3,
@@ -644,7 +644,7 @@ def _small_cochain_model(*, key):
     )
 
 
-def _physics_loss_value(term, model, dataset):
+def _physics_loss_value(term: Any, model: Any, dataset: Any) -> Any:
     prediction = model.evaluate(dataset.batch)
     context = phx.nn.operator.training.OperatorLossContext(
         prediction,
@@ -667,7 +667,7 @@ def _physics_loss_value(term, model, dataset):
     )
 
 
-def test_cochain_residual_loss_scatters_sparse_fields_and_locks_topology():
+def test_cochain_residual_loss_scatters_sparse_fields_and_locks_topology() -> None:
     dataset = _targetless_dataset(cases=2)
     model = _small_cochain_model(key=jr.key(30))
     term = _source_matching_loss()
@@ -690,7 +690,9 @@ def test_cochain_residual_loss_scatters_sparse_fields_and_locks_topology():
         _physics_loss_value(locked, model, dataset)
 
 
-def test_targetless_cochain_pino_update_and_checkpoint_resume_are_exact(tmp_path):
+def test_targetless_cochain_pino_update_and_checkpoint_resume_are_exact(
+    tmp_path: Any,
+) -> None:
     dataset = _targetless_dataset(cases=2)
     model = _small_cochain_model(key=jr.key(31))
     term = _source_matching_loss()
@@ -761,7 +763,7 @@ def test_targetless_cochain_pino_update_and_checkpoint_resume_are_exact(tmp_path
         )
 
 
-def test_targetless_operator_fit_requires_explicit_physics_and_scaling():
+def test_targetless_operator_fit_requires_explicit_physics_and_scaling() -> None:
     dataset = _targetless_dataset(cases=2)
     model = _small_cochain_model(key=jr.key(32))
     common: dict[str, Any] = {

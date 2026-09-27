@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -24,7 +27,9 @@ from phydrax.solver._finite_volume_topology_events import (
 class _PositiveScalarSystem(phx.equations.AbstractConservationSystem):
     base: phx.equations.ScalarConservationSystem
 
-    def __init__(self, dimension, flux, wave_speed, /, *, system_id):
+    def __init__(
+        self, dimension: Any, flux: Any, wave_speed: Any, /, *, system_id: Any
+    ) -> None:
         base = phx.equations.ScalarConservationSystem(
             dimension,
             flux,
@@ -36,33 +41,37 @@ class _PositiveScalarSystem(phx.equations.AbstractConservationSystem):
         self.component_names = base.component_names
         self.system_id = base.system_id
 
-    def physical_flux(self, state, axis, args=None, /):
+    def physical_flux(self, state: Any, axis: Any, args: Any = None, /) -> Any:
         return self.base.physical_flux(state, axis, args)
 
-    def max_wave_speed(self, left, right, axis, args=None, /):
+    def max_wave_speed(
+        self, left: Any, right: Any, axis: Any, args: Any = None, /
+    ) -> Any:
         return self.base.max_wave_speed(left, right, axis, args)
 
-    def signal_bounds(self, left, right, axis, args=None, /):
+    def signal_bounds(self, left: Any, right: Any, axis: Any, args: Any = None, /) -> Any:
         return self.base.signal_bounds(left, right, axis, args)
 
-    def normal_signal_bounds(self, left, right, normal, args=None, /):
+    def normal_signal_bounds(
+        self, left: Any, right: Any, normal: Any, args: Any = None, /
+    ) -> Any:
         return self.base.normal_signal_bounds(left, right, normal, args)
 
-    def conserved_to_primitive(self, state, /):
+    def conserved_to_primitive(self, state: Any, /) -> Any:
         return self.base.conserved_to_primitive(state)
 
-    def primitive_to_conserved(self, primitive, /):
+    def primitive_to_conserved(self, primitive: Any, /) -> Any:
         return self.base.primitive_to_conserved(primitive)
 
-    def reflect_state(self, state, axis, /):
+    def reflect_state(self, state: Any, axis: Any, /) -> Any:
         return self.base.reflect_state(state, axis)
 
-    def admissible(self, state, /):
+    def admissible(self, state: Any, /) -> Any:
         value = jnp.asarray(state)
         return jnp.all(jnp.isfinite(value), axis=-1) & (value[..., 0] >= 0.0)
 
 
-def _prepared(levels=3, *, precision=None):
+def _prepared(levels: Any = 3, *, precision: Any = None) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(16),),
         axis_names=("x",),
@@ -81,7 +90,7 @@ def _prepared(levels=3, *, precision=None):
     ).prepare()
 
 
-def _topology(prepared):
+def _topology(prepared: Any) -> Any:
     initial = prepared.initial_topology()
     level_count = len(initial.plan.levels)
     if level_count == 1:
@@ -103,7 +112,7 @@ def _topology(prepared):
     return result.topology
 
 
-def _hierarchy_state(topology, values=1.0):
+def _hierarchy_state(topology: Any, values: Any = 1.0) -> Any:
     if isinstance(values, (int, float)):
         per_level = (float(values),) * len(topology.plan.levels)
     else:
@@ -127,7 +136,7 @@ def _hierarchy_state(topology, values=1.0):
     return phx.discretization.BlockHierarchyState(topology, tuple(levels))
 
 
-def _boundaries(callback=None):
+def _boundaries(callback: Any = None) -> Any:
     boundary = (
         phx.discretization.ExtrapolationBoundary()
         if callback is None
@@ -142,7 +151,12 @@ def _boundaries(callback=None):
     )
 
 
-def _system(*, flux=None, positive=False, system_id="block-amr-runtime-scalar"):
+def _system(
+    *,
+    flux: Any = None,
+    positive: Any = False,
+    system_id: Any = "block-amr-runtime-scalar",
+) -> Any:
     flux_ = (lambda state, axis, args: state) if flux is None else flux
     cls = _PositiveScalarSystem if positive else phx.equations.ScalarConservationSystem
     return cls(
@@ -154,21 +168,21 @@ def _system(*, flux=None, positive=False, system_id="block-amr-runtime-scalar"):
 
 
 def _runtime(
-    prepared,
-    topology,
+    prepared: Any,
+    topology: Any,
     *,
-    schedule=None,
-    subcycling=None,
-    system=None,
-    source=None,
-    source_id=None,
-    boundaries=None,
-    specialist=None,
-    specialist_id=None,
-    indicator=None,
-    indicator_id=None,
-    precision=None,
-):
+    schedule: Any = None,
+    subcycling: Any = None,
+    system: Any = None,
+    source: Any = None,
+    source_id: Any = None,
+    boundaries: Any = None,
+    specialist: Any = None,
+    specialist_id: Any = None,
+    indicator: Any = None,
+    indicator_id: Any = None,
+    precision: Any = None,
+) -> Any:
     finite_volume = phx.discretization.BlockAMRFiniteVolumePlan(
         prepared,
         _system() if system is None else system,
@@ -193,7 +207,7 @@ def _runtime(
     return plan.prepare(topology)
 
 
-def test_one_level_schedule_degenerates_to_one_exact_ssprk_interval():
+def test_one_level_schedule_degenerates_to_one_exact_ssprk_interval() -> None:
     prepared = _prepared(1)
     topology = _topology(prepared)
     schedule = AMRTimeSchedulePlan(prepared)
@@ -214,7 +228,7 @@ def test_one_level_schedule_degenerates_to_one_exact_ssprk_interval():
     np.testing.assert_allclose(result.accepted_step_size, 0.2)
 
 
-def test_three_level_subcycling_uses_exact_stage_times_and_deepest_first_sync():
+def test_three_level_subcycling_uses_exact_stage_times_and_deepest_first_sync() -> None:
     prepared = _prepared(3)
     topology = _topology(prepared)
     runtime = _runtime(prepared, topology)
@@ -265,7 +279,7 @@ def test_three_level_subcycling_uses_exact_stage_times_and_deepest_first_sync():
         np.testing.assert_array_equal(outside_source, 0.0)
 
 
-def test_no_subcycling_retains_fillpatch_and_deepest_first_synchronization():
+def test_no_subcycling_retains_fillpatch_and_deepest_first_synchronization() -> None:
     prepared = _prepared(3)
     topology = _topology(prepared)
     schedule = AMRTimeSchedulePlan(prepared, subcycling=False)
@@ -283,21 +297,23 @@ def test_no_subcycling_retains_fillpatch_and_deepest_first_synchronization():
     assert all(ledger.end_time == 0.4 for ledger in result.accepted_ledgers)
 
 
-def test_coarse_old_new_endpoints_drive_fine_stage_temporal_interpolation():
+def test_coarse_old_new_endpoints_drive_fine_stage_temporal_interpolation() -> None:
     observed = []
 
-    def boundary(time, interior, coordinates, outward_normal, args):
+    def boundary(
+        time: Any, interior: Any, coordinates: Any, outward_normal: Any, args: Any
+    ) -> Any:
         del coordinates, outward_normal
         args["time"] = float(np.asarray(time))
         return interior
 
-    def flux(state, axis, args):
+    def flux(state: Any, axis: Any, args: Any) -> Any:
         del axis
         if state.shape[0] == 16:
             observed.append((args["time"], float(np.max(np.asarray(state)))))
         return jnp.zeros_like(state)
 
-    def source(time, state, coordinates, args):
+    def source(time: Any, state: Any, coordinates: Any, args: Any) -> Any:
         del time, coordinates, args
         return jnp.ones_like(state) if state.shape[1] == 4 else jnp.zeros_like(state)
 
@@ -324,7 +340,7 @@ def test_coarse_old_new_endpoints_drive_fine_stage_temporal_interpolation():
         )
 
 
-def test_accepted_ledgers_are_contiguous_and_consumed_without_an_extra_dt():
+def test_accepted_ledgers_are_contiguous_and_consumed_without_an_extra_dt() -> None:
     prepared = _prepared(3)
     topology = _topology(prepared)
     runtime = _runtime(
@@ -357,10 +373,12 @@ def test_accepted_ledgers_are_contiguous_and_consumed_without_an_extra_dt():
         assert register.owner_id == runtime.conservation.plan_id
 
 
-def test_deepest_first_restriction_updates_only_covered_cells_and_conserves_composite():
+def test_deepest_first_restriction_updates_only_covered_cells_and_conserves_composite() -> (
+    None
+):
     calls = []
 
-    def specialist(level, state, time, step_size, args):
+    def specialist(level: Any, state: Any, time: Any, step_size: Any, args: Any) -> Any:
         del args
         calls.append((level, float(time), float(step_size)))
         return state
@@ -397,8 +415,10 @@ def test_deepest_first_restriction_updates_only_covered_cells_and_conserves_comp
     np.testing.assert_allclose(result.composite_conservation_defect, 0.0, atol=2e-14)
 
 
-def test_late_finest_rejection_rolls_back_every_level_counter_and_journal_bitwise():
-    def source(time, state, coordinates, args):
+def test_late_finest_rejection_rolls_back_every_level_counter_and_journal_bitwise() -> (
+    None
+):
+    def source(time: Any, state: Any, coordinates: Any, args: Any) -> Any:
         del coordinates, args
         if state.shape[0] != 32:
             return jnp.zeros_like(state)
@@ -450,10 +470,12 @@ def test_late_finest_rejection_rolls_back_every_level_counter_and_journal_bitwis
         assert all(jnp.all(block.flux_integral == 0.0) for block in ledger.blocks)
 
 
-def test_topology_indicator_is_deferred_until_a_synchronized_accepted_root_endpoint():
+def test_topology_indicator_is_deferred_until_a_synchronized_accepted_root_endpoint() -> (
+    None
+):
     calls = []
 
-    def indicator(state, args):
+    def indicator(state: Any, args: Any) -> Any:
         del args
         calls.append((int(state.accepted_step), float(state.time)))
         return FiniteVolumeTopologyEventRequest(
@@ -486,11 +508,11 @@ def test_topology_indicator_is_deferred_until_a_synchronized_accepted_root_endpo
 
     rejected_calls = []
 
-    def rejected_indicator(state, args):
+    def rejected_indicator(state: Any, args: Any) -> Any:
         rejected_calls.append((state, args))
         return None
 
-    def rejecting_source(time, state, coordinates, args):
+    def rejecting_source(time: Any, state: Any, coordinates: Any, args: Any) -> Any:
         del time, coordinates, args
         return (
             -100.0 * jnp.ones_like(state)
@@ -519,8 +541,10 @@ def test_topology_indicator_is_deferred_until_a_synchronized_accepted_root_endpo
     assert int(rejected.runtime_state.topology_journal.count) == 0
 
 
-def test_fixed_epoch_runtime_is_jittable_differentiable_and_checkpoint_replayable():
-    def source(time, state, coordinates, rate):
+def test_fixed_epoch_runtime_is_jittable_differentiable_and_checkpoint_replayable() -> (
+    None
+):
+    def source(time: Any, state: Any, coordinates: Any, rate: Any) -> Any:
         del time, coordinates
         return rate * state
 
@@ -539,7 +563,7 @@ def test_fixed_epoch_runtime_is_jittable_differentiable_and_checkpoint_replayabl
     state = runtime.initial_state(_hierarchy_state(topology))
     dt = 0.05
 
-    def step(rate):
+    def step(rate: Any) -> Any:
         advanced = runtime.advance(state, dt, rate)
         return advanced.runtime_state.hierarchy_state.levels[0].values
 
@@ -556,7 +580,7 @@ def test_fixed_epoch_runtime_is_jittable_differentiable_and_checkpoint_replayabl
     assert jnp.isfinite(derivative)
 
 
-def test_prepared_runtime_refuses_stale_epoch_and_route_artifacts():
+def test_prepared_runtime_refuses_stale_epoch_and_route_artifacts() -> None:
     prepared = _prepared(2)
     topology = _topology(prepared)
     runtime = _runtime(prepared, topology)

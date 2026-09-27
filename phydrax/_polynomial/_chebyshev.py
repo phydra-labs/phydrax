@@ -9,7 +9,8 @@ from numbers import Integral
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import DTypeLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._numerics._quadrature_rules import clenshaw_curtis_data
@@ -50,7 +51,7 @@ def chebyshev_lobatto_data(
     /,
     *,
     maximum_derivative_order: int = 1,
-    dtype=jnp.float64,
+    dtype: DTypeLike = jnp.float64,
     maximum_construction_bytes: int = _DEFAULT_CONSTRUCTION_BYTES,
 ) -> ChebyshevLobattoData:
     """Prepare reference nodes, interpolation weights, quadrature, and derivatives."""

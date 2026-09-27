@@ -27,7 +27,7 @@ from phydrax.solver import solve_direct_ssa
 from phydrax.stochastic import PoissonClockRealization
 
 
-def test_gene_expression_evidence_inference_and_whole_cell_workflow():
+def test_gene_expression_evidence_inference_and_whole_cell_workflow() -> None:
     model = TelegraphGeneExpressionPlan(
         1.5,
         2.5,

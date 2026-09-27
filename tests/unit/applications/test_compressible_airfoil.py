@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -10,13 +12,13 @@ from phydrax.applications.compressible_flow import (
 from phydrax.qualification import ReferenceArtifactManifest
 
 
-def _ellipse_section():
+def _ellipse_section() -> Any:
     angle = np.linspace(0.0, 2.0 * np.pi, 32, endpoint=False)
     coordinates = np.stack((0.5 * np.cos(angle), 0.1 * np.sin(angle)), axis=-1)
     return AirfoilSectionPlan(coordinates)
 
 
-def test_airfoil_section_distance_and_o_grid_are_finite():
+def test_airfoil_section_distance_and_o_grid_are_finite() -> None:
     section = _ellipse_section()
     distance = section.closest_distance(jnp.asarray(((0.0, 0.0), (1.0, 0.0))))
     np.testing.assert_allclose(distance, (0.1, 0.5), atol=2.0e-3)
@@ -30,7 +32,7 @@ def test_airfoil_section_distance_and_o_grid_are_finite():
     assert prepared.minimum_cell_volume > 0.0
 
 
-def test_fixed_lift_uses_declared_bracket_and_residual():
+def test_fixed_lift_uses_declared_bracket_and_residual() -> None:
     plan = TransonicFixedLiftPlan(0.5, (0.0, 0.5), tolerance=1.0e-10)
     result = plan.solve(lambda angle, args: 0.1 + 2.0 * angle)
 
@@ -40,7 +42,7 @@ def test_fixed_lift_uses_declared_bracket_and_residual():
     assert abs(float(result.residual)) <= 1.0e-10
 
 
-def test_rae_case_binds_reference_rights_and_exact_conditions():
+def test_rae_case_binds_reference_rights_and_exact_conditions() -> None:
     manifest = ReferenceArtifactManifest(
         "rae2822-reference",
         checksum_algorithm="sha256",

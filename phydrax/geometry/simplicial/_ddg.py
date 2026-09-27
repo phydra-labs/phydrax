@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -26,7 +26,7 @@ class DDGOperators(StrictModule):
     basis_gradients: Array
     boundary_vertices: Array
 
-    def __init__(self, mesh: TriangleMesh):
+    def __init__(self, mesh: TriangleMesh) -> None:
         if not isinstance(mesh, TriangleMesh):
             raise TypeError("DDGOperators requires a TriangleMesh.")
         vertices = mesh.vertices

@@ -19,7 +19,7 @@ from phydrax.solver._impurity import (
 )
 
 
-def test_noninteracting_dmft_uses_shared_residual_and_exposes_finite_bath_error():
+def test_noninteracting_dmft_uses_shared_residual_and_exposes_finite_bath_error() -> None:
     labels = jnp.arange(-20, 20)
     plan = SingleSiteDMFTPlan(
         jnp.asarray([-1.0, 1.0]),

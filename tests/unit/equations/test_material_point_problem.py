@@ -4,13 +4,17 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _parts(*, assignment=None, boundary="reject", cell_primary=False):
+def _parts(
+    *, assignment: Any = None, boundary: Any = "reject", cell_primary: Any = False
+) -> Any:
     axis_type = (
         phx.discretization.UniformCellAxisSpec
         if cell_primary
@@ -47,7 +51,7 @@ def _parts(*, assignment=None, boundary="reject", cell_primary=False):
     return problem, particles, splat, domain
 
 
-def test_material_point_compiler_records_complete_dependency_bundle():
+def test_material_point_compiler_records_complete_dependency_bundle() -> None:
     problem, particles, splat, domain = _parts()
     compiled = phx.equations.compile_material_point_problem(
         problem,
@@ -71,7 +75,9 @@ def test_material_point_compiler_records_complete_dependency_bundle():
         phx.discretization.TensorBSplineSplatAssignment(3),
     ],
 )
-def test_material_point_compiler_accepts_capability_qualified_assignments(assignment):
+def test_material_point_compiler_accepts_capability_qualified_assignments(
+    assignment: Any,
+) -> None:
     problem, particles, splat, domain = _parts(assignment=assignment)
     compiled = phx.equations.compile_material_point_problem(
         problem,
@@ -85,7 +91,7 @@ def test_material_point_compiler_accepts_capability_qualified_assignments(assign
     )
 
 
-def test_material_point_compiler_rejects_cell_targets_and_drop_boundaries():
+def test_material_point_compiler_rejects_cell_targets_and_drop_boundaries() -> None:
     problem, particles, splat, domain = _parts(cell_primary=True)
     with pytest.raises(ValueError, match="nodal"):
         phx.equations.compile_material_point_problem(
@@ -107,7 +113,7 @@ def test_material_point_compiler_rejects_cell_targets_and_drop_boundaries():
         )
 
 
-def test_nonperiodic_compilation_requires_declared_complete_halo():
+def test_nonperiodic_compilation_requires_declared_complete_halo() -> None:
     axes = tuple(phx.discretization.UniformAxisSpec(13) for _ in range(2))
     grid = phx.discretization.TensorGridPlan(axes, axis_names=("x", "y")).prepare(
         jnp.asarray([[-0.1, -0.1], [1.1, 1.1]])

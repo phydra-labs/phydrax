@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PRNGKeyArray
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 
@@ -24,6 +26,11 @@ from ...optim import (
     NewtonKrylov,
     OptimizationTermination,
 )
+from ...typing import PRNGKey
+
+
+# pCN scan carry: whitened state, log likelihood, PRNG key, accepted count.
+_PCNCarry: TypeAlias = tuple[Array, Array, PRNGKey, Array]
 
 
 class MAPResult(StrictModule):
@@ -60,7 +67,7 @@ class MatrixFreeMAPPlan(StrictModule, NonTrainableState):
         damping: float = 1e-6,
         maximum_iterations: int = 30,
         gradient_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         if not callable(objective) or not callable(hessian_action):
             raise TypeError("MAP objective and Hessian action must be callable.")
         objective_identity = str(objective_id).strip()
@@ -167,7 +174,7 @@ class EnsembleKalmanInversionPlan(StrictModule, NonTrainableState):
         /,
         *,
         inflation: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(covariance, DiagonalCovarianceAction):
             raise TypeError(
                 "Scalable ensemble inversion currently requires diagonal covariance."
@@ -299,7 +306,7 @@ class PCNSampler(StrictModule, NonTrainableState):
         /,
         *,
         log_likelihood_id: str,
-    ):
+    ) -> None:
         likelihood_identity = str(log_likelihood_id).strip()
         step, count = float(step_size), int(sample_count)
         if (
@@ -321,9 +328,7 @@ class PCNSampler(StrictModule, NonTrainableState):
             }
         )
 
-    def sample(
-        self, key: PRNGKeyArray, initial_whitened: ArrayLike, /
-    ) -> PCNSamplingResult:
+    def sample(self, key: PRNGKey, initial_whitened: ArrayLike, /) -> PCNSamplingResult:
         initial = jnp.asarray(initial_whitened)
         if jnp.iscomplexobj(initial):
             raise TypeError("pCN whitened parameters must be real.")
@@ -341,7 +346,7 @@ class PCNSampler(StrictModule, NonTrainableState):
             "pCN initial log likelihood must be finite.",
         )
 
-        def step(carry, _):
+        def step(carry: _PCNCarry, _: None) -> tuple[_PCNCarry, tuple[Array, Array]]:
             state, value, random_key, accepted = carry
             proposal_key, uniform_key, next_key = jax.random.split(random_key, 3)
             noise = jax.random.normal(proposal_key, state.shape, dtype=state.dtype)

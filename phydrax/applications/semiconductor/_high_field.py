@@ -17,10 +17,19 @@ from enum import StrEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
-from ...units import derived_unit, JOULE, KELVIN, METER, SECOND, VOLT
+from ...units import (
+    derived_unit,
+    JOULE,
+    KELVIN,
+    METER,
+    SECOND,
+    UnitDefinition,
+    VOLT,
+)
 from ._quantities import _positive_scalar, _si, _text, ELEMENTARY_CHARGE_SI
 
 
@@ -29,14 +38,14 @@ FIELD_UNIT = derived_unit("V/m", ((VOLT, 1), (METER, -1)))
 PER_METER = derived_unit("1/m", ((METER, -1),))
 
 
-def _finite_scalar(value, name):
+def _finite_scalar(value: ArrayLike, name: str) -> Array:
     host = np.asarray(value)
     if host.shape != () or not np.isfinite(host):
         raise ValueError(f"{name} must be one finite scalar.")
     return jnp.asarray(value)
 
 
-def _temperature_bounds(bounds, unit=KELVIN):
+def _temperature_bounds(bounds: ArrayLike, unit: UnitDefinition = KELVIN) -> Array:
     values = _si(bounds, unit, KELVIN)
     host = np.asarray(values)
     if host.shape != (2,) or not np.all(np.isfinite(host)) or not 0 < host[0] < host[1]:
@@ -46,7 +55,7 @@ def _temperature_bounds(bounds, unit=KELVIN):
     return values
 
 
-def _temperature_valid(temperature, bounds):
+def _temperature_valid(temperature: Array, bounds: Array) -> Array:
     return (
         jnp.isfinite(temperature)
         & (temperature >= bounds[0])
@@ -54,7 +63,7 @@ def _temperature_valid(temperature, bounds):
     )
 
 
-def _admitted(value, valid):
+def _admitted(value: Array, valid: Array) -> Array:
     return jnp.where(valid, value, jnp.nan)
 
 
@@ -64,7 +73,9 @@ class HighFieldDrivingForce(StrEnum):
     ELECTRIC_FIELD = "electric_field"
     QUASI_FERMI_GRADIENT = "quasi_fermi_gradient"
 
-    def from_fields(self, electric_field, quasi_fermi_energy_gradient):
+    def from_fields(
+        self, electric_field: ArrayLike, quasi_fermi_energy_gradient: ArrayLike
+    ) -> Array:
         """Select E (V/m) or grad(EF)/q (input J/m), without changing signs.
 
         The scalar is the component along the face/path, not an inferred norm
@@ -107,21 +118,21 @@ class LocalVelocitySaturation(StrictModule):
 
     def __init__(
         self,
-        reference_velocity,
-        exponent,
+        reference_velocity: ArrayLike,
+        exponent: ArrayLike,
         /,
         *,
-        reference_temperature,
-        temperature_exponent,
-        maximum_force,
-        temperature_range,
-        driving_force,
-        orientation,
-        provenance,
-        velocity_unit=VELOCITY_UNIT,
-        field_unit=FIELD_UNIT,
-        temperature_unit=KELVIN,
-    ):
+        reference_temperature: ArrayLike,
+        temperature_exponent: ArrayLike,
+        maximum_force: ArrayLike,
+        temperature_range: ArrayLike,
+        driving_force: HighFieldDrivingForce | str,
+        orientation: str,
+        provenance: str,
+        velocity_unit: UnitDefinition = VELOCITY_UNIT,
+        field_unit: UnitDefinition = FIELD_UNIT,
+        temperature_unit: UnitDefinition = KELVIN,
+    ) -> None:
         self.reference_velocity = _positive_scalar(
             reference_velocity, velocity_unit, VELOCITY_UNIT, "saturation velocity"
         )
@@ -146,7 +157,9 @@ class LocalVelocitySaturation(StrictModule):
         self.orientation = _text(orientation, "calibration orientation")
         self.provenance = _text(provenance, "saturation provenance")
 
-    def evaluate(self, low_field_mobility, force, temperature):
+    def evaluate(
+        self, low_field_mobility: ArrayLike, force: ArrayLike, temperature: ArrayLike
+    ) -> SaturationEvaluation:
         """Return SI mobility m²/(V s), speeds m/s and an elementwise mask."""
         mu, force, temperature = jnp.broadcast_arrays(
             *map(jnp.asarray, (low_field_mobility, force, temperature))
@@ -227,28 +240,28 @@ class LocalImpactIonization(StrictModule):
 
     def __init__(
         self,
-        electron_prefactor,
-        hole_prefactor,
-        electron_critical_field,
-        hole_critical_field,
+        electron_prefactor: ArrayLike,
+        hole_prefactor: ArrayLike,
+        electron_critical_field: ArrayLike,
+        hole_critical_field: ArrayLike,
         /,
         *,
-        electron_exponent,
-        hole_exponent,
-        electron_temperature_exponent,
-        hole_temperature_exponent,
-        electron_birth_energy,
-        hole_birth_energy,
-        reference_temperature,
-        temperature_range,
-        maximum_field,
-        orientation,
-        provenance,
-        inverse_length_unit=PER_METER,
-        field_unit=FIELD_UNIT,
-        energy_unit=JOULE,
-        temperature_unit=KELVIN,
-    ):
+        electron_exponent: ArrayLike,
+        hole_exponent: ArrayLike,
+        electron_temperature_exponent: ArrayLike,
+        hole_temperature_exponent: ArrayLike,
+        electron_birth_energy: ArrayLike,
+        hole_birth_energy: ArrayLike,
+        reference_temperature: ArrayLike,
+        temperature_range: ArrayLike,
+        maximum_field: ArrayLike,
+        orientation: str,
+        provenance: str,
+        inverse_length_unit: UnitDefinition = PER_METER,
+        field_unit: UnitDefinition = FIELD_UNIT,
+        energy_unit: UnitDefinition = JOULE,
+        temperature_unit: UnitDefinition = KELVIN,
+    ) -> None:
         self.prefactors = jnp.stack(
             tuple(
                 _positive_scalar(
@@ -305,12 +318,12 @@ class LocalImpactIonization(StrictModule):
 
     def evaluate(
         self,
-        electric_field,
-        electron_number_flux_density,
-        hole_number_flux_density,
-        temperature,
-        band_gap,
-    ):
+        electric_field: ArrayLike,
+        electron_number_flux_density: ArrayLike,
+        hole_number_flux_density: ArrayLike,
+        temperature: ArrayLike,
+        band_gap: ArrayLike,
+    ) -> ImpactIonizationEvaluation:
         """Evaluate scalar/array SI fields, oriented flux densities, T(K), gap(J)."""
         field, gn, gp, temperature, gap = jnp.broadcast_arrays(
             *map(

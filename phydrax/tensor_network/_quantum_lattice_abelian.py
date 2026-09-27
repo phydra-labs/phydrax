@@ -34,7 +34,7 @@ class QuantumLatticeAbelianMPOPolicy(StrictModule):
         maximum_bond_dimension: int,
         maximum_tensor_elements: int,
         matrix_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         bond = int(maximum_bond_dimension)
         elements = int(maximum_tensor_elements)
         tolerance = float(matrix_tolerance)
@@ -85,7 +85,9 @@ def _matrix_charge_delta(
     return tuple(int(value) for value in unique[0])
 
 
-def _catalog(charges: tuple[tuple[int, ...], ...], /):
+def _catalog(
+    charges: tuple[tuple[int, ...], ...], /
+) -> tuple[tuple[tuple[int, ...], ...], tuple[int, ...], dict[int, int]]:
     counts = Counter(charges)
     ordered = tuple(sorted(counts))
     capacities = tuple(counts[value] for value in ordered)

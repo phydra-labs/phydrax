@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -23,16 +25,16 @@ from phydrax.nn.parameters import ParameterSubspace
 from phydrax.solver import PreparedFieldEquilibrium
 
 
-def _isochoric_energy(deformation_bar):
+def _isochoric_energy(deformation_bar: Any) -> Any:
     dimension = deformation_bar.shape[0]
     return 1.5 * (jnp.sum(deformation_bar * deformation_bar) - dimension)
 
 
-def _log_volume(deformation):
+def _log_volume(deformation: Any) -> Any:
     return jnp.log(jnp.linalg.det(deformation))
 
 
-def _law(*, bulk_modulus=None):
+def _law(*, bulk_modulus: Any = None) -> Any:
     return MixedHyperelasticLaw(
         _isochoric_energy,
         _log_volume,
@@ -41,7 +43,9 @@ def _law(*, bulk_modulus=None):
     )
 
 
-def test_exact_and_finite_bulk_laws_have_the_declared_pressure_equations_and_blocks():
+def test_exact_and_finite_bulk_laws_have_the_declared_pressure_equations_and_blocks() -> (
+    None
+):
     deformation = jnp.asarray(((1.2, 0.1), (0.0, 0.9)))
     pressure = jnp.asarray(2.5)
     exact = _law()
@@ -96,7 +100,9 @@ def test_exact_and_finite_bulk_laws_have_the_declared_pressure_equations_and_blo
     assert bool(finite_response.evidence.valid)
 
 
-def test_isochoric_response_is_scale_invariant_and_invalid_j_is_explicit_evidence():
+def test_isochoric_response_is_scale_invariant_and_invalid_j_is_explicit_evidence() -> (
+    None
+):
     law = _law()
     deformation = jnp.asarray(((1.1, 0.2), (0.1, 0.95)))
 
@@ -112,19 +118,25 @@ def test_isochoric_response_is_scale_invariant_and_invalid_j_is_explicit_evidenc
     assert not bool(invalid.evidence.valid)
 
 
-def test_mixed_form_declares_exact_and_finite_bulk_block_dependencies_without_penalty_aliasing():
+def test_mixed_form_declares_exact_and_finite_bulk_block_dependencies_without_penalty_aliasing() -> (
+    None
+):
     exact = mixed_hyperelastic_form("u", "p", MixedHyperelasticModel(_law()))
     finite = mixed_hyperelastic_form(
         "u", "p", MixedHyperelasticModel(_law(bulk_modulus=100.0))
     )
 
+    # ty: ignore[unresolved-attribute]
     assert exact.actions[0].input_fields == ("u", "p")
+    # ty: ignore[unresolved-attribute]
     assert exact.actions[1].input_fields == ("u",)
+    # ty: ignore[unresolved-attribute]
     assert finite.actions[0].input_fields == ("u", "p")
+    # ty: ignore[unresolved-attribute]
     assert finite.actions[1].input_fields == ("u", "p")
 
 
-def _neural_root():
+def _neural_root() -> Any:
     functions = {
         "u": jnp.asarray((0.4, -0.2)),
         "p": jnp.asarray(0.3),
@@ -133,12 +145,14 @@ def _neural_root():
     return functions, subspace
 
 
-def test_mixed_neural_stationarity_uses_field_equilibrium_and_refuses_implicit_gauge():
+def test_mixed_neural_stationarity_uses_field_equilibrium_and_refuses_implicit_gauge() -> (
+    None
+):
     functions, subspace = _neural_root()
     law = _law()
     gauge = PressureGaugePolicy("mean-zero")
 
-    def action(fields, realization, args):
+    def action(fields: Any, realization: Any, args: Any) -> Any:
         del args
         return 0.5 * jnp.vdot(fields["u"], fields["u"]) + fields["p"] * (
             jnp.sum(fields["u"]) - realization
@@ -189,15 +203,17 @@ def test_mixed_neural_stationarity_uses_field_equilibrium_and_refuses_implicit_g
         )
 
 
-def test_mixed_neural_virtual_work_retains_u_p_pullback_and_finite_bulk_refuses_gauge():
+def test_mixed_neural_virtual_work_retains_u_p_pullback_and_finite_bulk_refuses_gauge() -> (
+    None
+):
     functions, subspace = _neural_root()
     exact = _law()
 
-    def field_jet(fields, realization, args):
+    def field_jet(fields: Any, realization: Any, args: Any) -> Any:
         del realization, args
         return {"u": 2.0 * fields["u"], "p": fields["p"]}
 
-    def virtual_work(fields, jets, realization, args):
+    def virtual_work(fields: Any, jets: Any, realization: Any, args: Any) -> Any:
         del fields, realization, args
         return {"u": jets["u"] + jets["p"], "p": jnp.sum(jets["u"])}
 
@@ -233,7 +249,9 @@ def test_mixed_neural_virtual_work_retains_u_p_pullback_and_finite_bulk_refuses_
         )
 
 
-def test_augmented_lagrangian_updates_multiplier_and_rolls_back_every_outer_field():
+def test_augmented_lagrangian_updates_multiplier_and_rolls_back_every_outer_field() -> (
+    None
+):
     law = MixedHyperelasticLaw(
         _isochoric_energy,
         lambda deformation: jnp.linalg.det(deformation) - 1.0,

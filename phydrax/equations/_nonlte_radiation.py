@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -44,7 +45,7 @@ class NonLTELevelPopulationPlan(StrictModule, NonTrainableState):
         level_energies: ArrayLike,
         level_degeneracies: ArrayLike,
         /,
-    ):
+    ) -> None:
         count = int(species_count)
         owners = np.asarray(level_species, dtype=np.int32)
         energies = np.asarray(level_energies, dtype=np.float64)
@@ -198,7 +199,7 @@ class NonLTERadiationCoefficientPlan(StrictModule, NonTrainableState):
         spontaneous_rates: ArrayLike,
         absorption_cross_sections: ArrayLike,
         /,
-    ):
+    ) -> None:
         groups = int(group_count)
         lower = np.asarray(lower_levels, dtype=np.int32)
         upper = np.asarray(upper_levels, dtype=np.int32)

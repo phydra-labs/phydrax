@@ -5,13 +5,13 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity
@@ -31,9 +31,11 @@ from phydrax.nn.layers._physical_sequence import (
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
+from .....typing import parse, PRNGKey
 
-InputIntegration = Literal["zoh", "linear"]
-MixerExecution = Literal["recurrent", "associative"]
+
+InputIntegration: TypeAlias = Literal["zoh", "linear"]
+MixerExecution: TypeAlias = Literal["recurrent", "associative"]
 
 
 def _diagonal_state_space_contract_configuration(
@@ -120,8 +122,8 @@ class DiagonalStateSpaceMixer(AbstractOperatorModel):
         frequency_scale: float = 1.0,
         max_direct_length: int = 2048,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.in_size = in_channels
         self.out_size = in_channels if out_channels is None else out_channels
         self.state_size = int(state_size)
@@ -161,10 +163,10 @@ class DiagonalStateSpaceMixer(AbstractOperatorModel):
             raise ValueError("Input and output channel counts must be positive.")
         if self.state_size <= 0:
             raise ValueError("state_size must be positive.")
-        if input_integration not in ("zoh", "linear"):
-            raise ValueError("input_integration must be 'zoh' or 'linear'.")
-        if execution not in ("recurrent", "associative"):
-            raise ValueError("execution must be 'recurrent' or 'associative'.")
+        self.input_integration = parse(
+            input_integration, InputIntegration, "input_integration"
+        )
+        self.execution = parse(execution, MixerExecution, "execution")
         if not self.time_axis:
             raise ValueError("time_axis must be non-empty.")
         if self.max_direct_length <= 0:

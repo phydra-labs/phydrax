@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -31,7 +33,7 @@ from phydrax.control.games._variational import (
 
 
 def _path_inequality(
-    function,
+    function: Any,
     constraint_id: str,
     *,
     scope: GameConstraintScope,
@@ -59,7 +61,7 @@ def _path_inequality(
 
 
 def _trajectory_constraint(
-    function,
+    function: Any,
     constraint_id: str,
     *,
     scope: GameConstraintScope,
@@ -89,12 +91,12 @@ def _trajectory_constraint(
 
 
 def _two_player_problem(
-    linear,
+    linear: Any,
     *,
     constraints: OpenLoopGameConstraints | None = None,
-    dynamics_matrices=None,
-    control_matrices=None,
-    initial_state=None,
+    dynamics_matrices: Any = None,
+    control_matrices: Any = None,
+    initial_state: Any = None,
     problem_id: str = "test:open-loop-ve",
 ) -> FiniteHorizonLQOpenLoopVEProblem:
     partition = (
@@ -156,7 +158,7 @@ def _shared_resource_constraints() -> OpenLoopGameConstraints:
     return OpenLoopGameConstraints(partition, (lower_one, lower_two, resource))
 
 
-def test_shared_resource_selects_unique_ve_from_continuum_gne():
+def test_shared_resource_selects_unique_ve_from_continuum_gne() -> None:
     constraints = _shared_resource_constraints()
     problem = _two_player_problem(
         (((-2.0, 0.0),), ((0.0, -2.0),)),
@@ -179,7 +181,7 @@ def test_shared_resource_selects_unique_ve_from_continuum_gne():
     assert bool(result.vi_result.certificate.certified)
 
 
-def test_endpoint_gne_does_not_satisfy_one_common_shared_multiplier_kkt():
+def test_endpoint_gne_does_not_satisfy_one_common_shared_multiplier_kkt() -> None:
     constraints = _shared_resource_constraints()
     problem = _two_player_problem(
         (((-2.0, 0.0),), ((0.0, -2.0),)),
@@ -202,7 +204,7 @@ def test_endpoint_gne_does_not_satisfy_one_common_shared_multiplier_kkt():
     assert prepared.plan.multiplier_layout.num_multipliers == 3
 
 
-def test_private_only_game_reduces_to_open_loop_nash_and_retains_cross_costs():
+def test_private_only_game_reduces_to_open_loop_nash_and_retains_cross_costs() -> None:
     partition = PlayerControlPartition(("one", "two"), (1, 1))
     problem = _two_player_problem(
         (((-1.0, 4.0),), ((-3.0, -2.0),)),
@@ -218,7 +220,9 @@ def test_private_only_game_reduces_to_open_loop_nash_and_retains_cross_costs():
     assert bool(result.valid)
 
 
-def test_affine_dynamics_condensation_enforces_terminal_budget_and_reconstructs_states():
+def test_affine_dynamics_condensation_enforces_terminal_budget_and_reconstructs_states() -> (
+    None
+):
     partition = PlayerControlPartition(("one", "two"), (1, 1))
     terminal_budget = _trajectory_constraint(
         lambda trajectory, args: trajectory.final_state[..., 0] - 2.0,
@@ -246,7 +250,7 @@ def test_affine_dynamics_condensation_enforces_terminal_budget_and_reconstructs_
     assert bool(result.valid)
 
 
-def test_inactive_active_degenerate_and_nonisolated_evidence_are_distinct():
+def test_inactive_active_degenerate_and_nonisolated_evidence_are_distinct() -> None:
     partition = PlayerControlPartition(("one", "two"), (1, 1))
     inactive_constraint = _path_inequality(
         lambda time, state, control, args: control[0] + control[1] - 1.0,
@@ -309,7 +313,7 @@ def test_inactive_active_degenerate_and_nonisolated_evidence_are_distinct():
     assert int(nonisolated.nonisolation_dimension) == 2
 
 
-def test_audited_phase_i_certifies_infeasible_original_polyhedron():
+def test_audited_phase_i_certifies_infeasible_original_polyhedron() -> None:
     partition = PlayerControlPartition(("one",), (1,))
     upper = _path_inequality(
         lambda time, state, control, args: control[0],
@@ -347,7 +351,7 @@ def test_audited_phase_i_certifies_infeasible_original_polyhedron():
     assert not bool(result.valid)
 
 
-def test_case_axes_are_preserved_in_condensation_solve_and_status():
+def test_case_axes_are_preserved_in_condensation_solve_and_status() -> None:
     partition = PlayerControlPartition(("one", "two"), (1, 1))
     a = jnp.zeros((2, 1, 1, 1))
     b = jnp.zeros((2, 1, 1, 2))
@@ -389,7 +393,7 @@ def test_case_axes_are_preserved_in_condensation_solve_and_status():
     assert result.player_costs.shape == (2, 2)
 
 
-def test_jitted_prepared_solve_and_refresh_preserve_topology_identity():
+def test_jitted_prepared_solve_and_refresh_preserve_topology_identity() -> None:
     partition = PlayerControlPartition(("one", "two"), (1, 1))
     constraints = OpenLoopGameConstraints(partition)
     first = _two_player_problem(
@@ -416,7 +420,7 @@ def test_jitted_prepared_solve_and_refresh_preserve_topology_identity():
     assert int(refreshed.numeric_version) == int(prepared.numeric_version) + 1
 
 
-def test_natural_residual_uses_independent_projection_onto_original_polyhedron():
+def test_natural_residual_uses_independent_projection_onto_original_polyhedron() -> None:
     constraints = _shared_resource_constraints()
     problem = _two_player_problem(
         (((-2.0, 0.0),), ((0.0, -2.0),)),
@@ -439,7 +443,7 @@ def test_natural_residual_uses_independent_projection_onto_original_polyhedron()
     assert bool(result.projection_result.successful)
 
 
-def test_nonlinear_declared_constraint_is_structurally_invalid_not_certified_ve():
+def test_nonlinear_declared_constraint_is_structurally_invalid_not_certified_ve() -> None:
     partition = PlayerControlPartition(("one", "two"), (1, 1))
     nonlinear = _path_inequality(
         lambda time, state, control, args: control[0] ** 2 - 1.0,
@@ -461,7 +465,7 @@ def test_nonlinear_declared_constraint_is_structurally_invalid_not_certified_ve(
     assert not bool(result.valid)
 
 
-def test_nonfinite_problem_data_has_a_distinct_case_status():
+def test_nonfinite_problem_data_has_a_distinct_case_status() -> None:
     problem = _two_player_problem(
         (((-0.2, 0.0),), ((0.0, -0.2),)),
         dynamics_matrices=jnp.full((1, 1, 1), jnp.nan),

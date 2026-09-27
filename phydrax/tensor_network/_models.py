@@ -9,7 +9,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -34,7 +35,7 @@ class FiniteLocalTerm(StrictModule):
         /,
         *,
         coefficient: ArrayLike = 1.0,
-    ):
+    ) -> None:
         start_ = int(start)
         values = tuple(jnp.asarray(value) for value in operators)
         coefficient_ = jnp.asarray(coefficient)
@@ -288,7 +289,7 @@ class FixedStructureMPOCoefficients(StrictModule):
         basis_operators: Sequence[MatrixProductOperator],
         coefficients: ArrayLike,
         /,
-    ):
+    ) -> None:
         basis = tuple(basis_operators)
         values = jnp.asarray(coefficients)
         if not basis or any(

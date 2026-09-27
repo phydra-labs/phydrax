@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -33,7 +34,7 @@ class LearnedCircuitLawEvidence(StrictModule):
 class MonotoneLearnedConductanceLaw(AbstractImplicitCircuitLaw):
     """Learned nonnegative conductance; power g(v, u) v² is nonnegative."""
 
-    model: Any
+    model: Callable[[Array], ArrayLike]
     minimum_conductance: Array
     evidence: LearnedCircuitLawEvidence
 
@@ -43,9 +44,9 @@ class MonotoneLearnedConductanceLaw(AbstractImplicitCircuitLaw):
         /,
         *,
         minimum_conductance: ArrayLike = 0.0,
-        probe_voltages: ArrayLike = (-1.0, 0.0, 1.0),
+        probe_voltages: ArrayLike | Sequence[float] = (-1.0, 0.0, 1.0),
         law_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(model):
             raise TypeError("model must be callable.")
         minimum = jnp.asarray(minimum_conductance, dtype=jnp.float64)
@@ -93,13 +94,13 @@ class MonotoneLearnedConductanceLaw(AbstractImplicitCircuitLaw):
 
     def evaluate(
         self,
-        time,
-        terminal_voltages,
-        terminal_voltage_rates,
-        state,
-        state_rate,
-        inputs,
-        args,
+        time: Array,
+        terminal_voltages: Array,
+        terminal_voltage_rates: Array,
+        state: Array,
+        state_rate: Array,
+        inputs: Array,
+        args: Any,
         /,
     ) -> CircuitElementEvaluation:
         del time, terminal_voltage_rates, state, state_rate, inputs, args
@@ -137,7 +138,7 @@ def learned_conductance_element(
     /,
     *,
     minimum_conductance: ArrayLike = 0.0,
-    probe_voltages: ArrayLike = (-1.0, 0.0, 1.0),
+    probe_voltages: ArrayLike | Sequence[float] = (-1.0, 0.0, 1.0),
     element_id: str = "learned-conductance",
 ) -> CircuitElement:
     law = MonotoneLearnedConductanceLaw(

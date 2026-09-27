@@ -71,7 +71,7 @@ class FunctionalDecompositionPlan(StrictModule, NonTrainableState):
         required_window_regularity: int = 0,
         certification_tolerance: float | None = None,
         trace_points: int = 64,
-    ):
+    ) -> None:
         if not isinstance(
             training,
             (
@@ -129,7 +129,7 @@ class PreparedFunctionalDecomposition(StrictModule):
         routing: PreparedFieldRouting,
         trace_batches: tuple[Any, ...],
         /,
-    ):
+    ) -> None:
         self.problem = problem
         self.plan = plan
         self.solver = solver

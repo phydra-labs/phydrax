@@ -30,11 +30,12 @@ from typing import final, NamedTuple
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import positive_finite_float
 from ..discretization import (
     CellGeometrySpec,
     CellMesh,
@@ -88,13 +89,6 @@ class HighOrderCurvingStatus(StrEnum):
     UNRESOLVED_ASSOCIATION = "unresolved_association"
 
 
-def _positive(value: float, name: str, /) -> float:
-    result = float(value)
-    if not np.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
-
-
 def _non_negative(value: float, name: str, /) -> float:
     result = float(value)
     if not np.isfinite(result) or result < 0.0:
@@ -145,7 +139,7 @@ class HighOrderCurvingPolicy(StrictModule, NonTrainableState):
         validity: CellValidityPolicy | None = None,
         termination: OptimizationTermination | None = None,
         accept_valid_nonconverged_relaxation: bool = False,
-    ):
+    ) -> None:
         if isinstance(degree, bool) or not isinstance(degree, (int, np.integer)):
             raise TypeError("degree must be an integer.")
         if degree not in (2, 3):
@@ -170,13 +164,17 @@ class HighOrderCurvingPolicy(StrictModule, NonTrainableState):
             raise TypeError("accept_valid_nonconverged_relaxation must be bool.")
         self.degree = int(degree)
         self.relaxation_rounds = int(relaxation_rounds)
-        self.distortion_weight = _positive(distortion_weight, "distortion_weight")
+        self.distortion_weight = positive_finite_float(
+            distortion_weight, "distortion_weight"
+        )
         self.tangent_weight = _non_negative(tangent_weight, "tangent_weight")
         self.displacement_weight = _non_negative(
             displacement_weight, "displacement_weight"
         )
-        self.regularization = _positive(regularization, "regularization")
-        self.residual_tolerance = _positive(residual_tolerance, "residual_tolerance")
+        self.regularization = positive_finite_float(regularization, "regularization")
+        self.residual_tolerance = positive_finite_float(
+            residual_tolerance, "residual_tolerance"
+        )
         self.accept_valid_nonconverged_relaxation = accept_valid_nonconverged_relaxation
         self.validity = validity_
         self.termination = termination_
@@ -242,7 +240,7 @@ class CurvedGeometryEvidence(StrictModule, NonTrainableState):
         minimum_scaled_jacobian: float,
         maximum_distortion: float,
         /,
-    ):
+    ) -> None:
         if not isinstance(certificate, CellValidityCertificate):
             raise TypeError("certificate must be CellValidityCertificate.")
         dims = np.asarray(node_dimensions, dtype=np.int8)
@@ -312,7 +310,7 @@ class HighOrderCurvingResult(StrictModule, NonTrainableState):
         minimizations: tuple[MinimizationResult, ...],
         accepted_round: int | None,
         /,
-    ):
+    ) -> None:
         if not isinstance(status, HighOrderCurvingStatus):
             raise TypeError("status must be HighOrderCurvingStatus.")
         if status is HighOrderCurvingStatus.CURVED and not evidence.accepted:
@@ -457,6 +455,7 @@ def _node_owners(
         cells = np.asarray(block.vertices, dtype=np.int64)
         topology = reference_cell_topology(block.cell_kind)
         cell_rows = _entity_rows(mesh, top, np.asarray(block.global_ids, dtype=np.int64))
+        # ty: ignore[unresolved-attribute]
         for dimension, entities in enumerate(element.entity_dofs):
             for local, dofs in enumerate(entities):
                 if not dofs:
@@ -619,6 +618,7 @@ def _distortion_blocks(
         dimension = reference_cell_topology(block.cell_kind).dimension
         embedded = ambient > dimension
         samples = _control_lattice(block.cell_kind, degree, embedded)
+        # ty: ignore[unresolved-attribute]
         _, gradients = element.tabulate(samples)
         _, linear = lagrange_element(block.cell_kind, 1).tabulate(samples)
         straight = contract(
@@ -768,6 +768,7 @@ def verify_curved_geometry(
     if not isinstance(geometry, CellGeometrySpec):
         raise TypeError("geometry must be CellGeometrySpec.")
     classes = _node_classes(mesh, geometry, association, projection)
+    # ty: ignore[unresolved-attribute]
     degree = max(int(element.degree) for element in geometry.elements)
     blocks = _distortion_blocks(mesh, geometry, degree)
     return _evidence(mesh, geometry, classes, projection, blocks, policy)

@@ -18,6 +18,7 @@ def main() -> None:
     shells = phx.discretization.PeriodicFourierShellPlan(
         (count,),
         (1.0,),
+        # ty: ignore[invalid-argument-type]
         [0.0, jnp.pi, 3.0 * jnp.pi, 8.0 * jnp.pi],
     )
     auto = shells.auto_power(shells.transform(field))
@@ -34,7 +35,10 @@ def main() -> None:
         axis_names=("x",),
     ).prepare(jnp.asarray([[0.0], [1.0]]))
     particles = phx.discretization.ParticleSetPlan(
-        jnp.arange(2), [0.5, 0.5], ambient_dimension=1
+        jnp.arange(2),
+        # ty: ignore[invalid-argument-type]
+        [0.5, 0.5],
+        ambient_dimension=1,
     ).prepare()
     transfer = phx.discretization.ParticleGridSplatPlan(grid).prepare(particles)
     target_positions = jnp.asarray([[0.25], [0.75]])

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+from typing import Any
 
 import h5py
 import numpy as np
@@ -21,7 +22,7 @@ from phydrax.interchange.cosmology import (
 from phydrax.qualification import ReferenceArtifactManifest
 
 
-def _manifest(path, *, commercial=True):
+def _manifest(path: Any, *, commercial: Any = True) -> Any:
     payload = path.read_bytes()
     return ReferenceArtifactManifest(
         path.name,
@@ -40,7 +41,7 @@ def _manifest(path, *, commercial=True):
     )
 
 
-def _concept(path, *, dataset, values, ids=(4, 8)):
+def _concept(path: Any, *, dataset: Any, values: Any, ids: Any = (4, 8)) -> None:
     with h5py.File(path, "w") as handle:
         handle.attrs["a"] = 0.5
         handle.attrs["boxsize"] = 10.0
@@ -57,7 +58,9 @@ def _concept(path, *, dataset, values, ids=(4, 8)):
         group.create_dataset("ids", data=np.asarray(ids, dtype=np.int64))
 
 
-def test_concept_momentum_and_velocity_are_canonicalized_by_declared_semantic(tmp_path):
+def test_concept_momentum_and_velocity_are_canonicalized_by_declared_semantic(
+    tmp_path: Any,
+) -> None:
     momentum_path = tmp_path / "momentum.hdf5"
     raw = np.asarray([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
     _concept(momentum_path, dataset="mom", values=raw)
@@ -95,7 +98,9 @@ def test_concept_momentum_and_velocity_are_canonicalized_by_declared_semantic(tm
     assert velocity.report.status == AdapterStatus.DECLARED_LOSS
 
 
-def test_concept_rejects_rights_checksum_duplicate_ids_and_ambiguous_units(tmp_path):
+def test_concept_rejects_rights_checksum_duplicate_ids_and_ambiguous_units(
+    tmp_path: Any,
+) -> None:
     path = tmp_path / "snapshot.hdf5"
     _concept(path, dataset="mom", values=np.ones((2, 3)), ids=(4, 4))
     source = _manifest(path, commercial=False)
@@ -119,7 +124,9 @@ def test_concept_rejects_rights_checksum_duplicate_ids_and_ambiguous_units(tmp_p
         read_concept_snapshot(ambiguous_path, _manifest(ambiguous_path), component="cdm")
 
 
-def test_hbt_fields_memberships_and_relations_are_retained_without_aliasing(tmp_path):
+def test_hbt_fields_memberships_and_relations_are_retained_without_aliasing(
+    tmp_path: Any,
+) -> None:
     path = tmp_path / "SubSnap_003.hdf5"
     dtype = np.dtype(
         [
@@ -169,7 +176,7 @@ def test_hbt_fields_memberships_and_relations_are_retained_without_aliasing(tmp_
     assert any(loss.path == "Subhalos.HostHaloId" for loss in result.report.losses)
 
 
-def test_hbt_duplicate_tracks_fail_before_projection(tmp_path):
+def test_hbt_duplicate_tracks_fail_before_projection(tmp_path: Any) -> None:
     path = tmp_path / "duplicate.hdf5"
     rows = np.asarray([(7,), (7,)], dtype=np.dtype([("TrackId", "<i8")]))
     with h5py.File(path, "w") as handle:
@@ -184,7 +191,9 @@ def test_hbt_duplicate_tracks_fail_before_projection(tmp_path):
         )
 
 
-def test_pinocchio_catalog_lightcone_and_lineage_stay_approximation_tagged(tmp_path):
+def test_pinocchio_catalog_lightcone_and_lineage_stay_approximation_tagged(
+    tmp_path: Any,
+) -> None:
     catalog_path = tmp_path / "pinocchio.catalog.out"
     catalog_path.write_text(
         "# documented fixture\n10 20 1 2 3 4 5 6 7 8 9 12\n20 30 2 3 4 5 6 7 8 9 10 14\n"
@@ -202,6 +211,7 @@ def test_pinocchio_catalog_lightcone_and_lineage_stay_approximation_tagged(tmp_p
         box_size=(100.0, 100.0, 100.0),
     )
     assert catalog.report.status == AdapterStatus.DECLARED_LOSS
+    # ty: ignore[unresolved-attribute]
     assert "approximation" in catalog.sidecar.approximation_tag.lower()
 
     light_path = tmp_path / "pinocchio.plc.out"
@@ -216,7 +226,9 @@ def test_pinocchio_catalog_lightcone_and_lineage_stay_approximation_tagged(tmp_p
         source_mass_unit="Msun/h",
         source_velocity_unit="km/s",
     )
+    # ty: ignore[unresolved-attribute]
     assert bool(light.light_cone.phase_space_known[0])
+    # ty: ignore[unresolved-attribute]
     assert "approximation" in light.light_cone.approximation_tag.lower()
 
     history_path = tmp_path / "pinocchio.histories.out"
@@ -231,7 +243,7 @@ def test_pinocchio_catalog_lightcone_and_lineage_stay_approximation_tagged(tmp_p
     assert lineage.report.status == AdapterStatus.DECLARED_LOSS
 
 
-def test_pinocchio_duplicate_group_ids_are_rejected(tmp_path):
+def test_pinocchio_duplicate_group_ids_are_rejected(tmp_path: Any) -> None:
     path = tmp_path / "duplicate.catalog.out"
     path.write_text("1 20 1 2 3 4 5 6 7 8 9\n1 30 2 3 4 5 6 7 8 9 10\n")
     with pytest.raises(ValueError, match="unique"):

@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -106,7 +107,7 @@ class MACImmersedBoundaryIMEXEulerMethod(StrictModule, NonTrainableState):
         allow_route_refresh: bool = False,
         marker_constraint_normals: ArrayLike | None = None,
         maximum_resource_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
             raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
         if not isinstance(projection, MACImmersedBoundaryProjectionPlan):
@@ -401,7 +402,7 @@ class MACImmersedBoundarySBDF2Method(StrictModule, NonTrainableState):
         allow_route_refresh: bool = False,
         marker_constraint_normals: ArrayLike | None = None,
         maximum_resource_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         step = float(step_size)
         if not np.isfinite(step) or step <= 0.0:
             raise ValueError("SBDF2 step_size must be positive and finite.")

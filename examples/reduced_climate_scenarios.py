@@ -5,6 +5,7 @@ projection. Scenario/configuration/member axes are ordinary nested JAX vmaps.
 """
 
 import json
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -22,7 +23,7 @@ from phydrax.dynamics import TimeGrid
 from phydrax.solver import FixedStepRolloutPlan
 
 
-def run():
+def run() -> Any:
     with jax.enable_x64(True):
         gases = GasBoxModel(
             response_coefficients=((0.01, 0.2, 0.01), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
@@ -54,7 +55,8 @@ def run():
         problem = runtime.problem(initial, drivers)
         rollout = FixedStepRolloutPlan(retention="final")
 
-        def evaluate(scenario_scale, feedback, methane_lifetime):
+        def evaluate(scenario_scale: Any, feedback: Any, methane_lifetime: Any) -> Any:
+            # ty: ignore[unresolved-attribute]
             rates = problem.method.climate.plan.gases.decay_rates.at[1, 0].set(
                 1.0 / methane_lifetime
             )
@@ -95,10 +97,10 @@ def run():
             jnp.asarray(1.0), jnp.asarray(1.35), jnp.asarray(9.3)
         )
 
-        def prediction(feedback):
+        def prediction(feedback: Any) -> Any:
             return evaluate(jnp.asarray(1.0), feedback, jnp.asarray(9.3))[0]
 
-        def update(_, feedback):
+        def update(_: Any, feedback: Any) -> Any:
             predicted, derivative = jax.value_and_grad(prediction)(feedback)
             return jnp.clip(feedback - (predicted - observed) / derivative, 0.3, 3.0)
 

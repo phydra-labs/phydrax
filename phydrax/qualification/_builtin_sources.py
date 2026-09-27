@@ -162,7 +162,9 @@ _SOURCE_SPECS = (
 )
 
 
-def _source_reference(spec) -> SourceReference:
+def _source_reference(
+    spec: tuple[str, str, str, str, tuple[str, ...]],
+) -> SourceReference:
     source_id, _, license, reuse, concepts = spec
     (
         repository_url,

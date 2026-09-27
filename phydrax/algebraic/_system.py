@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -118,7 +119,7 @@ class SparsePolynomialSupport(StrictModule, NonTrainableState):
         /,
         *,
         groups: Sequence[PolynomialVariableGroup] = (),
-    ):
+    ) -> None:
         variables = _labels(variable_labels, "variable_labels")
         equations_labels = _labels(equation_labels, "equation_labels")
         equation_array = _host_nonnegative_integer_array(
@@ -201,7 +202,7 @@ class SparsePolynomialSystem(StrictModule):
         support: SparsePolynomialSupport,
         coefficients: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(support, SparsePolynomialSupport):
             raise TypeError("support must be SparsePolynomialSupport.")
         coefficients_ = jnp.asarray(coefficients)
@@ -332,7 +333,7 @@ class PolynomialScaling(StrictModule, NonTrainableState):
         variable_scale: ArrayLike,
         equation_scale: ArrayLike,
         /,
-    ):
+    ) -> None:
         variable = jnp.asarray(variable_scale)
         equation = jnp.asarray(equation_scale)
         if variable.ndim != 1 or equation.ndim != 1:

@@ -7,17 +7,23 @@ from __future__ import annotations
 from typing import Literal
 
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
 from phydrax.nn._contracts import model_regularity
 from phydrax.nn._keys import EvalKey
 from phydrax.nn.layers import RecurrentBatch
+from phydrax.nn.layers._weight_space_recurrence import (
+    WeightSpaceExecution,
+    WeightSpaceInputMode,
+)
 from phydrax.nn.models import WeightSpaceRecurrentModel
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 from phydrax.nn.parameters import ParameterSubspace
+
+from .....typing import PRNGKey
 
 
 WeightSpaceOutputSize = int | Literal["scalar"]
@@ -56,12 +62,12 @@ class WeightSpaceOperator(AbstractOperatorModel):
         query_size: int,
         out_channels: WeightSpaceOutputSize = "scalar",
         source_key: str | None = None,
-        execution: str = "associative",
-        input_mode: str = "difference",
+        execution: WeightSpaceExecution = "associative",
+        input_mode: WeightSpaceInputMode = "difference",
         maximum_retention: float = 0.999,
         input_scale: float = 1e-2,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         if not isinstance(subspace, ParameterSubspace):
             raise TypeError("subspace must be a ParameterSubspace.")
         self.in_size = int(observation_size)

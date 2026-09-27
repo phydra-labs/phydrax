@@ -6,12 +6,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from operator import index
+from typing import TypeAlias
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
+
+
+_RootCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 
 class SafeguardedRootResult(StrictModule):
@@ -99,7 +103,7 @@ def safeguarded_newton_bisection(
     upper_ = jnp.where(endpoint_exact, endpoint_root, upper_)
     f_lower = jnp.where(endpoint_exact, 0.0, f_lower)
     f_upper = jnp.where(endpoint_exact, 0.0, f_upper)
-    state = (
+    state: _RootCarry = (
         lower_,
         upper_,
         f_lower,
@@ -109,7 +113,7 @@ def safeguarded_newton_bisection(
         bracketed,
     )
 
-    def body(_, current):
+    def body(_: Array, current: _RootCarry) -> _RootCarry:
         lo, hi, flo, fhi, point, iterations, active = current
         value, derivative = function(point)
         exact = value == 0.0

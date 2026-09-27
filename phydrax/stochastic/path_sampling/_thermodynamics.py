@@ -12,7 +12,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -48,7 +49,7 @@ class DiscretePathThermodynamicsPlan(StrictModule, NonTrainableState):
         first_law_tolerance: float = 1.0e-10,
         detailed_balance_tolerance: float = 1.0e-10,
         reversal_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         beta = float(inverse_temperature)
         path_capacity = int(maximum_paths)
         step_capacity = int(maximum_steps)

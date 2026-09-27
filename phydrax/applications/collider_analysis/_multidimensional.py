@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -31,7 +32,7 @@ class MultiHistogramPlan(StrictModule, NonTrainableState):
         *,
         axis_names: Sequence[str],
         unit_ids: Sequence[str],
-    ):
+    ) -> None:
         edges_ = tuple(np.asarray(value, dtype=np.float64) for value in edges)
         names = tuple(str(value).strip() for value in axis_names)
         units = tuple(str(value).strip() for value in unit_ids)

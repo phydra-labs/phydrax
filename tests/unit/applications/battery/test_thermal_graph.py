@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -31,7 +34,7 @@ from phydrax.circuit import (
 class _HeatStore(AbstractImplicitCircuitLaw):
     """Thermal capacity fixture, not a battery or a pack model."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.terminal_count = 2
         self.voltage_rate_dependent = False
         self.state_layout = CircuitElementStateLayout(("differential",))
@@ -40,22 +43,22 @@ class _HeatStore(AbstractImplicitCircuitLaw):
 
     def evaluate(
         self,
-        time,
-        terminal_voltages,
-        terminal_voltage_rates,
-        state,
-        state_rate,
-        inputs,
-        args,
+        time: Any,
+        terminal_voltages: Any,
+        terminal_voltage_rates: Any,
+        state: Any,
+        state_rate: Any,
+        inputs: Any,
+        args: Any,
         /,
-    ):
+    ) -> Any:
         del time, terminal_voltages, terminal_voltage_rates, state, inputs
         return CircuitElementEvaluation(
             jnp.zeros(2), args.cells[0].heat_capacity_j_per_k * state_rate
         )
 
 
-def test_actual_resistor_heat_allocation_and_internal_edge_cancellation():
+def test_actual_resistor_heat_allocation_and_internal_edge_cancellation() -> None:
     store = CircuitElement(_HeatStore(), element_id="heat-store")
     source = CircuitElement(IndependentVoltageSourceLaw(5.0), element_id="voltage-source")
     circuit = NodalCircuit(
@@ -75,7 +78,10 @@ def test_actual_resistor_heat_allocation_and_internal_edge_cancellation():
         base.plan.layout.instance_range("right")[0],
     )
     graph = ThermalGraphPlan(
-        ("left", "right"), link_ids=("link",), heat_allocation=((0.25,), (0.75,))
+        ("left", "right"),
+        link_ids=("link",),
+        # ty: ignore[invalid-argument-type]
+        heat_allocation=((0.25,), (0.75,)),
     )
     system = augment_circuit_thermal_graph(base, graph, (left, right), lambda args: args)
     ocv = ConstantPropertyLaw(
@@ -113,6 +119,7 @@ def test_actual_resistor_heat_allocation_and_internal_edge_cancellation():
     # the resistor's actual 5 V * (5 V / 2 ohm), not that unrelated guess.
     state = jnp.asarray((5.0, 310.0, 290.0, -100.0))
     rate = jnp.zeros_like(state)
+    # ty: ignore[unresolved-attribute]
     terms = system.residual.graph_terms(jnp.asarray(0.0), state, rate, parameters)
     np.testing.assert_allclose(terms.resistor_heat_w, (12.5,))
     np.testing.assert_allclose(terms.allocated_heat_w, (3.125, 9.375))
@@ -126,12 +133,18 @@ def test_actual_resistor_heat_allocation_and_internal_edge_cancellation():
     np.testing.assert_allclose(delta[jnp.asarray((left, right))], (25.0, -50.0))
 
 
-def test_heat_allocation_refuses_energy_creation_and_negative_weights():
+def test_heat_allocation_refuses_energy_creation_and_negative_weights() -> None:
     with pytest.raises(ValueError, match="sum to one"):
         ThermalGraphPlan(
-            ("left", "right"), link_ids=("link",), heat_allocation=((0.8,), (0.8,))
+            ("left", "right"),
+            link_ids=("link",),
+            # ty: ignore[invalid-argument-type]
+            heat_allocation=((0.8,), (0.8,)),
         )
     with pytest.raises(ValueError, match="nonnegative"):
         ThermalGraphPlan(
-            ("left", "right"), link_ids=("link",), heat_allocation=((-0.1,), (1.1,))
+            ("left", "right"),
+            link_ids=("link",),
+            # ty: ignore[invalid-argument-type]
+            heat_allocation=((-0.1,), (1.1,)),
         )

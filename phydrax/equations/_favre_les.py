@@ -4,28 +4,32 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
+from .._dtype_names import inexact_result_type
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._les_closures import (
     AlgebraicLESInputs,
     LESFilterScale,
+    LESParameterProvenance,
     PreparedAlgebraicLESModel,
 )
 
 
-_FavreIsotropicTracePolicy = Literal["neglected", "provided-sgs-kinetic-energy"]
+_FavreIsotropicTracePolicy: TypeAlias = Literal[
+    "neglected", "provided-sgs-kinetic-energy"
+]
 
 
 class FavreLESFieldContract(StrictModule, NonTrainableState):
@@ -65,7 +69,7 @@ class FavreLESFieldContract(StrictModule, NonTrainableState):
         filter_scale_unit: str = "m",
         specific_enthalpy_unit: str = "J/kg",
         specific_heat_capacity_unit: str = "J/(kg*K)",
-    ):
+    ) -> None:
         if not isinstance(schema_id, str) or not schema_id.strip():
             raise ValueError("Favre LES schema_id must be a non-empty string.")
         if (
@@ -192,7 +196,7 @@ class FavreLESInputs(StrictModule):
         *,
         specific_sgs_kinetic_energy: ArrayLike | None = None,
         specific_sgs_kinetic_energy_gradient: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(fields, FavreLESFieldContract):
             raise TypeError("fields must be a FavreLESFieldContract.")
         density_ = jnp.asarray(density)
@@ -352,14 +356,14 @@ class PreparedFavreLESModel(StrictModule, NonTrainableState):
         isotropic_trace_policy: _FavreIsotropicTracePolicy = "neglected",
         sgs_kinetic_energy_dissipation_coefficient: float = 1.05,
         sgs_kinetic_energy_turbulent_schmidt_number: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(algebraic_model, PreparedAlgebraicLESModel):
             raise TypeError("algebraic_model must be a PreparedAlgebraicLESModel.")
         if not isinstance(filter_scale, LESFilterScale):
             raise TypeError("filter_scale must be a LESFilterScale.")
         if not isinstance(fields, FavreLESFieldContract):
             raise TypeError("fields must be a FavreLESFieldContract.")
-        if isinstance(filter_scale.directional_widths, jax.core.Tracer):
+        if isinstance(filter_scale.directional_widths, jax_core.Tracer):
             raise TypeError("Prepared Favre LES filter widths must be concrete.")
         widths = np.asarray(filter_scale.directional_widths)
         if np.any(~np.isfinite(widths)) or np.any(widths <= 0.0):
@@ -386,11 +390,9 @@ class PreparedFavreLESModel(StrictModule, NonTrainableState):
             raise ValueError(
                 "Favre SGS kinetic-energy turbulent Schmidt number must be finite and positive."
             )
-        if isotropic_trace_policy not in (
-            "neglected",
-            "provided-sgs-kinetic-energy",
-        ):
-            raise ValueError("Unsupported Favre isotropic SGS trace policy.")
+        isotropic_trace_policy = parse(
+            isotropic_trace_policy, _FavreIsotropicTracePolicy, "isotropic_trace_policy"
+        )
         if not isinstance(species_turbulent_schmidt_numbers, tuple):
             raise TypeError(
                 "species_turbulent_schmidt_numbers must be a tuple of named values."
@@ -447,7 +449,7 @@ class PreparedFavreLESModel(StrictModule, NonTrainableState):
         )
 
     @property
-    def provenance(self):
+    def provenance(self) -> LESParameterProvenance:
         """Return the complete resolved-filter and coefficient provenance."""
         return self.algebraic_model.provenance
 

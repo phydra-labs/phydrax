@@ -8,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_periodic_mac_taylor_green_pipeline_preserves_constraint_and_decay():
+def test_periodic_mac_taylor_green_pipeline_preserves_constraint_and_decay() -> None:
     count = 12
     viscosity = 0.02
     final_time = 0.01

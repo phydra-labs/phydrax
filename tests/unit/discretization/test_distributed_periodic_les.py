@@ -3,6 +3,8 @@
 #
 
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -29,7 +31,7 @@ from phydrax.equations._periodic_les import (
 )
 
 
-def _space(count=4):
+def _space(count: Any = 4) -> Any:
     return phx.discretization.TensorSpectralPlan(
         tuple(phx.discretization.FourierBasisPlan(count) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -37,7 +39,7 @@ def _space(count=4):
     ).prepare(tuple(phx.discretization.AxisDomain.periodic(0.0, 1.0) for _ in range(3)))
 
 
-def _scientific(space):
+def _scientific(space: Any) -> Any:
     resolved_filter = ResolvedLESFilter(
         "retained Fourier grid",
         family="sharp-fourier-projection",
@@ -68,7 +70,7 @@ def _scientific(space):
     return plan.prepare(space, projector)
 
 
-def _velocity(space):
+def _velocity(space: Any) -> Any:
     x, y, z = jnp.meshgrid(
         space.axes[0].nodes,
         space.axes[1].nodes,
@@ -86,7 +88,7 @@ def _velocity(space):
     return PeriodicLerayProjector(space).project(space.project(physical))
 
 
-def _topology(schedule="slab"):
+def _topology(schedule: Any = "slab") -> Any:
     device = jax.devices("cpu")[0]
     if schedule == "pencil":
         return SpectralMeshTopology(
@@ -101,7 +103,7 @@ def _topology(schedule="slab"):
     )
 
 
-def _distributed(scientific, schedule="slab", **kwargs):
+def _distributed(scientific: Any, schedule: Any = "slab", **kwargs: Any) -> Any:
     return DistributedPeriodicLESPlan(
         scientific,
         _topology(schedule),
@@ -110,7 +112,7 @@ def _distributed(scientific, schedule="slab", **kwargs):
     ).prepare()
 
 
-def test_distributed_periodic_les_single_device_parity_and_backend_identity():
+def test_distributed_periodic_les_single_device_parity_and_backend_identity() -> None:
     space = _space()
     scientific = _scientific(space)
     distributed = _distributed(scientific)
@@ -137,7 +139,7 @@ def test_distributed_periodic_les_single_device_parity_and_backend_identity():
     )
 
 
-def test_distributed_periodic_les_slab_pencil_layout_invariance_and_global_work():
+def test_distributed_periodic_les_slab_pencil_layout_invariance_and_global_work() -> None:
     space = _space()
     scientific = _scientific(space)
     state = _velocity(space)
@@ -180,8 +182,8 @@ def test_distributed_periodic_les_slab_pencil_layout_invariance_and_global_work(
 
 
 def test_distributed_periodic_les_has_no_host_gather_and_restart_is_layout_bound(
-    monkeypatch,
-):
+    monkeypatch: Any,
+) -> None:
     space = _space()
     distributed = _distributed(_scientific(space))
     state = _velocity(space)
@@ -202,7 +204,7 @@ def test_distributed_periodic_les_has_no_host_gather_and_restart_is_layout_bound
     assert restart.topology_id == distributed.execution.topology.topology_id
 
 
-def test_distributed_periodic_les_real_multi_device_slab_pencil_when_available():
+def test_distributed_periodic_les_real_multi_device_slab_pencil_when_available() -> None:
     devices = tuple(jax.devices("cpu"))
     if len(devices) < 4:
         pytest.skip(
@@ -253,7 +255,9 @@ def test_distributed_periodic_les_real_multi_device_slab_pencil_when_available()
     assert pencil_stage.reduction_axes == ("py", "px")
 
 
-def test_distributed_periodic_les_resource_and_support_refusals_are_exact(monkeypatch):
+def test_distributed_periodic_les_resource_and_support_refusals_are_exact(
+    monkeypatch: Any,
+) -> None:
     space = _space()
     scientific = _scientific(space)
     topology = _topology()
@@ -267,7 +271,8 @@ def test_distributed_periodic_les_resource_and_support_refusals_are_exact(monkey
     assert caught.value.report.closure_bytes > 0
     assert caught.value.report.total_bytes > caught.value.report.maximum_bytes
 
-    with pytest.raises(ValueError, match="only slab and pencil"):
+    with pytest.raises(ValueError, match="schedule"):
+        # ty: ignore[invalid-argument-type]
         DistributedPeriodicLESPlan(scientific, topology, schedule="channel")
 
     unavailable = DistributedPeriodicLESPlan(scientific, topology)
@@ -276,7 +281,7 @@ def test_distributed_periodic_les_resource_and_support_refusals_are_exact(monkey
         unavailable.prepare()
 
 
-def test_distributed_periodic_les_restriction_jit_and_jvp():
+def test_distributed_periodic_les_restriction_jit_and_jvp() -> None:
     space = _space()
     distributed = _distributed(_scientific(space))
     state = _velocity(space)

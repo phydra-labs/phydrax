@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -51,10 +52,11 @@ from ...operators.quantum._superconductivity import (
     prepare_fermionic_bdg,
     PreparedFermionicBdG,
 )
+from ...typing import parse
 from ...units import UnitDefinition
 
 
-SuperconductingEnsemble = Literal["fixed-chemical-potential", "fixed-filling"]
+SuperconductingEnsemble: TypeAlias = Literal["fixed-chemical-potential", "fixed-filling"]
 
 
 class PairingChannelPlan(StrictModule):
@@ -84,7 +86,7 @@ class PairingChannelPlan(StrictModule):
         *,
         phase_anchor: int = 0,
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(mode_order, FermionModeOrder) or not isinstance(
             mesh, ReciprocalMeshPlan
         ):
@@ -240,7 +242,7 @@ class SuperconductingMeanFieldPlan(StrictModule):
         termination: NonlinearTermination | None = None,
         minimum_gap: float = 1.0e-8,
         maximum_mode_count: int,
-    ):
+    ) -> None:
         if not isinstance(pencil, PreparedPeriodicOrbitalPencil) or not isinstance(
             channels, PairingChannelPlan
         ):
@@ -261,8 +263,7 @@ class SuperconductingMeanFieldPlan(StrictModule):
             raise ValueError(
                 "Normal and pairing families use different Fourier conventions."
             )
-        if ensemble not in ("fixed-chemical-potential", "fixed-filling"):
-            raise ValueError("Unknown superconducting ensemble.")
+        ensemble = parse(ensemble, SuperconductingEnsemble, "ensemble")
         if ensemble == "fixed-chemical-potential":
             if chemical_potential is None or target_filling is not None:
                 raise ValueError("Fixed-mu closure requires only chemical_potential.")
@@ -396,7 +397,7 @@ def solve_superconducting_mean_field(
     factors = plan.channels.form_factors
     minus = plan.channels.minus_k_indices
 
-    def mapping(state, args):
+    def mapping(state: Array, args: object) -> Array:
         del args
         amplitudes, chemical = _decode_state(plan, state)
         pairing = ein.contract("a,akij->kij", amplitudes, factors)
@@ -426,7 +427,7 @@ def solve_superconducting_mean_field(
         return encoded
 
     encoded_initial = np.concatenate((initial.real, initial.imag))
-    if plan.ensemble == "fixed-filling":
+    if plan.ensemble == "fixed-filling" and initial_chemical_potential is not None:
         encoded_initial = np.concatenate(
             (encoded_initial, np.asarray((float(initial_chemical_potential),)))
         )
@@ -556,7 +557,7 @@ class BdGChernPlan(StrictModule):
         refinement: PeriodicChernRefinementEvidence | None = None,
         require_refinement: bool = True,
         quantization_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         if not isinstance(connectivity, PreparedReciprocalConnectivity):
             raise TypeError("connectivity must be PreparedReciprocalConnectivity.")
         matrices = np.asarray(nambu_connection_matrices, dtype=np.complex128)

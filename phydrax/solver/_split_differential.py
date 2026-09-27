@@ -8,14 +8,15 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
 from .._strict import StrictModule
 from ..discretization import DiscretizationBundle
 from ..metrix import AbstractStateGeometry
-from ._differential import DifferentialVectorField
+from ._differential import DifferentialInterpretation, DifferentialVectorField
 from ._semilinear_drift import SemilinearDrift
 
 
@@ -33,7 +34,7 @@ class SplitDifferentialProblem(StrictModule):
     wiener_term_slices: frozendict[str, tuple[int, int]] = eqx.field(static=True)
     noise_shape: tuple[int, ...] = eqx.field(static=True)
     noise_id: str | None = eqx.field(static=True)
-    interpretation: str = eqx.field(static=True)
+    interpretation: DifferentialInterpretation = eqx.field(static=True)
     state_geometry_id: str | None = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
     discretization_bundle_id: str | None = eqx.field(static=True)
@@ -51,7 +52,7 @@ class SplitDifferentialProblem(StrictModule):
         state_geometry: AbstractStateGeometry | None = None,
         discretization_bundle: DiscretizationBundle | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(explicit_drift) or not callable(implicit_drift):
             raise TypeError("Split differential drifts must be callable.")
         start = jnp.asarray(t0, dtype=jnp.float64)
@@ -150,14 +151,14 @@ class SplitDifferentialProblem(StrictModule):
 class _SemilinearExplicitDrift(StrictModule):
     drift: SemilinearDrift
 
-    def __call__(self, time, state, args):
+    def __call__(self, time: Array, state: ArrayLike, args: object) -> Array:
         return self.drift.nonlinear(time, state, args)
 
 
 class _SemilinearImplicitDrift(StrictModule):
     drift: SemilinearDrift
 
-    def __call__(self, time, state, args):
+    def __call__(self, time: Array, state: ArrayLike, args: object) -> Array:
         del time, args
         return self.drift.linear(state)
 

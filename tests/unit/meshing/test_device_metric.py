@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import numpy as np
@@ -37,7 +40,7 @@ _UPPER = np.sqrt(2.0)
 _DEVICE = AdaptiveSimplexPolicy(vertex_capacity=256, cell_capacity=512)
 
 
-def _grid(count, /, *, perturbation=0.0, shear=0.0):
+def _grid(count: Any, /, *, perturbation: Any = 0.0, shear: Any = 0.0) -> Any:
     x, y = np.meshgrid(np.linspace(0.0, 1.0, count + 1), np.linspace(0.0, 1.0, count + 1))
     points = np.stack((x.ravel(), y.ravel()), axis=1)
     interior = np.all((points > 0.0) & (points < 1.0), axis=1)
@@ -54,7 +57,7 @@ def _grid(count, /, *, perturbation=0.0, shear=0.0):
     return points, triangles
 
 
-def _scope(mesh, dimension, entity_ids, /):
+def _scope(mesh: Any, dimension: Any, entity_ids: Any, /) -> Any:
     entities = mesh.entity_set(dimension)
     return MeshingScope(
         mesh.mesh_id,
@@ -66,7 +69,14 @@ def _scope(mesh, dimension, entity_ids, /):
     )
 
 
-def _source(count=4, /, *, perturbation=0.0, shear=0.0, organized=False):
+def _source(
+    count: Any = 4,
+    /,
+    *,
+    perturbation: Any = 0.0,
+    shear: Any = 0.0,
+    organized: Any = False,
+) -> Any:
     points, triangles = _grid(count, perturbation=perturbation, shear=shear)
     mesh = phx.discretization.CellMesh.from_triangles(points, triangles)
     contract = phx.SpatialCoordinateContract.si()
@@ -78,6 +88,7 @@ def _source(count=4, /, *, perturbation=0.0, shear=0.0, organized=False):
     centroids = np.concatenate(
         [coordinates[np.asarray(block.vertices)].mean(axis=1) for block in mesh.blocks]
     )
+    # ty: ignore[unresolved-attribute]
     edges = np.asarray(mesh.connectivity.edges)
     bottom = np.all(coordinates[edges][:, :, 1] == 0.0, axis=1)
     zones = (
@@ -93,7 +104,7 @@ def _source(count=4, /, *, perturbation=0.0, shear=0.0, organized=False):
     return phx.meshing.certify_cell_mesh(mesh, contract, patches=patches, zones=zones)
 
 
-def _metric(source, tensor, /):
+def _metric(source: Any, tensor: Any, /) -> Any:
     mesh = source.mesh
     vertices = mesh.entity_set(0)
     scope = _scope(mesh, 0, vertices.entity_ids)
@@ -101,19 +112,19 @@ def _metric(source, tensor, /):
     return MeshMetricField(scope, values, minimum_size=1.0e-3, maximum_size=10.0)
 
 
-def _policy(device=_DEVICE, /, **options):
+def _policy(device: Any = _DEVICE, /, **options: Any) -> Any:
     return MeshAdaptationPolicy(
         MeshAdaptationRoute.DEVICE_METRIC_2D, device_policy=device, **options
     )
 
 
-def _adapt(source, request, /, **options):
+def _adapt(source: Any, request: Any, /, **options: Any) -> Any:
     return execute_mesh_adaptation(
         prepare_mesh_adaptation(source, request, policy=_policy(**options))
     )
 
 
-def _signed_areas(mesh, /):
+def _signed_areas(mesh: Any, /) -> Any:
     points = np.asarray(mesh.coordinates)
     areas = []
     for block in mesh.blocks:
@@ -128,7 +139,7 @@ def _signed_areas(mesh, /):
     return np.concatenate(areas)
 
 
-def _edge_metric_lengths(mesh, tensor, /):
+def _edge_metric_lengths(mesh: Any, tensor: Any, /) -> Any:
     points = np.asarray(mesh.coordinates)
     edges = np.asarray(mesh.connectivity.edges)
     delta = points[edges[:, 1]] - points[edges[:, 0]]
@@ -140,7 +151,9 @@ def _edge_metric_lengths(mesh, tensor, /):
     [(np.eye(2) / 0.2**2, 0.0), (np.diag((1.0 / 0.5**2, 1.0 / 0.1**2)), 0.3)],
     ids=["isotropic", "anisotropic"],
 )
-def test_device_metric_adaptation_reaches_a_certified_unit_mesh(tensor, perturbation):
+def test_device_metric_adaptation_reaches_a_certified_unit_mesh(
+    tensor: Any, perturbation: Any
+) -> None:
     source = _source(perturbation=perturbation)
     result = _adapt(source, MetricMeshAdaptation(_metric(source, tensor)))
 
@@ -155,7 +168,7 @@ def test_device_metric_adaptation_reaches_a_certified_unit_mesh(tensor, perturba
     assert np.all(areas > 0.0)
     assert np.isclose(np.sum(areas), 1.0, rtol=0.0, atol=1.0e-14)
 
-    def field(points):
+    def field(points: Any) -> Any:
         return 2.0 + 3.0 * points[:, 0] - 1.5 * points[:, 1]
 
     target = result.target.mesh
@@ -174,7 +187,7 @@ def test_device_metric_adaptation_reaches_a_certified_unit_mesh(tensor, perturba
     np.testing.assert_allclose(np.asarray(values), expected, rtol=0.0, atol=1.0e-13)
 
 
-def test_device_metric_adaptation_preserves_zones_and_patches():
+def test_device_metric_adaptation_preserves_zones_and_patches() -> None:
     source = _source(organized=True)
     result = _adapt(source, MetricMeshAdaptation(_metric(source, np.eye(2) / 0.12**2)))
     mesh = result.target.mesh
@@ -197,7 +210,7 @@ def test_device_metric_adaptation_preserves_zones_and_patches():
     assert patch_length == pytest.approx(1.0, abs=1.0e-14)
 
 
-def test_device_relocation_moves_vertices_without_topology_change():
+def test_device_relocation_moves_vertices_without_topology_change() -> None:
     source = _source(6, perturbation=0.35)
     result = _adapt(
         source, RelocationMeshAdaptation(_metric(source, np.eye(2) / 0.17**2))
@@ -213,7 +226,9 @@ def test_device_relocation_moves_vertices_without_topology_change():
     assert np.all(_signed_areas(result.target.mesh) > 0.0)
 
 
-def test_stalled_metric_request_without_operations_preserves_source_but_not_convergence():
+def test_stalled_metric_request_without_operations_preserves_source_but_not_convergence() -> (
+    None
+):
     source = _source()
     mesh = source.mesh
     edges = mesh.entity_set(1)
@@ -234,7 +249,7 @@ def test_stalled_metric_request_without_operations_preserves_source_but_not_conv
     assert result.evidence.out_of_range_edges > 0
 
 
-def test_uncertain_device_predicates_escalate_without_applying_the_operation():
+def test_uncertain_device_predicates_escalate_without_applying_the_operation() -> None:
     # The slanted sides x = y / 2 and x = 1 + y / 2 are exactly straight, but
     # FILTERED_DEVICE certifies zero orientations only structurally: collapsing
     # or sliding a vertex of a slanted side needs host resolution.
@@ -250,7 +265,9 @@ def test_uncertain_device_predicates_escalate_without_applying_the_operation():
     assert not report.failed
     assert report.rejected_uncertain > 0
     result = commit_device_metric_adaptation(prepared, update.state)
+    # ty: ignore[unresolved-attribute]
     assert result.evidence.status & AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION
+    # ty: ignore[unresolved-attribute]
     assert result.evidence.collapses > 0
     points = np.asarray(source.mesh.coordinates)
     identifiers = np.asarray(source.mesh.vertex_global_ids)
@@ -268,14 +285,16 @@ def test_uncertain_device_predicates_escalate_without_applying_the_operation():
     assert np.isclose(np.sum(areas), 1.0, rtol=0.0, atol=1.0e-14)
 
 
-def _assert_same_arrays(first, second, /):
+def _assert_same_arrays(first: Any, second: Any, /) -> None:
     for before, after in zip(
         jax.tree_util.tree_leaves(first), jax.tree_util.tree_leaves(second), strict=True
     ):
         np.testing.assert_array_equal(np.asarray(after), np.asarray(before))
 
 
-def test_device_capacity_failure_is_recorded_refuses_later_calls_and_rejects_commit():
+def test_device_capacity_failure_is_recorded_refuses_later_calls_and_rejects_commit() -> (
+    None
+):
     source = _source()
     request = MetricMeshAdaptation(_metric(source, np.eye(2) / 0.2**2))
     tiny = AdaptiveSimplexPolicy(vertex_capacity=25, cell_capacity=32)
@@ -308,7 +327,7 @@ def test_device_capacity_failure_is_recorded_refuses_later_calls_and_rejects_com
     assert failure.value.category is MeshingFailureCategory.RESOURCE_EXHAUSTED
 
 
-def test_device_metric_adaptation_is_deterministic():
+def test_device_metric_adaptation_is_deterministic() -> None:
     source = _source(perturbation=0.3)
     request = MetricMeshAdaptation(
         _metric(source, np.diag((1.0 / 0.3**2, 1.0 / 0.12**2)))

@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
@@ -54,7 +55,7 @@ class PathfinderResult(StrictModule):
         approximation_duration_seconds: float,
         sampling_duration_seconds: float,
         optimization_steps: int,
-    ):
+    ) -> None:
         self.problem = problem
         self.state = state
         self.path = path

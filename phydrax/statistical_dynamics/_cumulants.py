@@ -5,11 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Self, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -24,6 +26,10 @@ from ..linalg import (
     MatrixEquationResult,
     solve_matrix_equation,
 )
+
+
+if TYPE_CHECKING:
+    from ._interactions import InteractionPartition
 
 
 def _adjoint(value: Array, /) -> Array:
@@ -57,7 +63,7 @@ class SecondCumulantLayout(StrictModule, NonTrainableState):
         *,
         eddy_indices: Sequence[int] | ArrayLike | None = None,
         layout_id: str | None = None,
-    ):
+    ) -> None:
         size = int(state_size)
         if size < 1:
             raise ValueError("state_size must be positive.")
@@ -107,11 +113,11 @@ class SecondCumulantLayout(StrictModule, NonTrainableState):
     @classmethod
     def from_partition(
         cls,
-        partition,
+        partition: InteractionPartition,
         /,
         *,
         layout_id: str | None = None,
-    ) -> "SecondCumulantLayout":
+    ) -> Self:
         from ._interactions import InteractionPartition
 
         if not isinstance(partition, InteractionPartition):
@@ -220,7 +226,7 @@ class DenseCumulantState(StrictModule):
         /,
         *,
         layout_id: str,
-    ):
+    ) -> None:
         mean_ = jnp.asarray(mean)
         covariance_ = jnp.asarray(covariance)
         identifier = str(layout_id)
@@ -255,7 +261,7 @@ class FactorCumulantState(StrictModule):
         /,
         *,
         layout_id: str,
-    ):
+    ) -> None:
         mean_ = jnp.asarray(mean)
         factor_ = jnp.asarray(factor)
         identifier = str(layout_id)
@@ -383,7 +389,7 @@ class ForcingCovariance(StrictModule, NonTrainableState):
         covariance_id: str | None = None,
         hermitian_tolerance: float = 1.0e-10,
         psd_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         value = jnp.asarray(covariance)
         if value.ndim != 2 or value.shape[0] != value.shape[1] or value.shape[0] < 1:
             raise ValueError("Forcing covariance must be a non-empty square matrix.")
@@ -467,7 +473,7 @@ class RankAdaptationPolicy(StrictModule, NonTrainableState):
         *,
         relative_threshold: float = 0.0,
         absolute_threshold: float = 0.0,
-    ):
+    ) -> None:
         minimum = int(minimum_rank)
         maximum = int(maximum_rank)
         relative = float(relative_threshold)

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _termination(*, steps=50, tolerance=1e-8):
+def _termination(*, steps: Any = 50, tolerance: Any = 1e-8) -> Any:
     return phx.optim.OptimizationTermination(
         absolute_optimality=tolerance,
         relative_optimality=0.0,
@@ -19,7 +22,7 @@ def _termination(*, steps=50, tolerance=1e-8):
     )
 
 
-def test_minimization_problem_auxiliary_status_and_provenance_contracts():
+def test_minimization_problem_auxiliary_status_and_provenance_contracts() -> None:
     problem = phx.optim.MinimizationProblem(
         lambda value, shift: (jnp.sum((value - shift) ** 2), {"shift": shift}),
         has_aux=True,
@@ -39,10 +42,11 @@ def test_minimization_problem_auxiliary_status_and_provenance_contracts():
     assert result.provenance.problem_id == "auxiliary-quadratic"
     assert result.provenance.backend == "optimistix"
     np.testing.assert_allclose(result.auxiliary["shift"], jnp.array([2.0, -1.0]))
+    # ty: ignore[invalid-argument-type]
     assert phx.optim.optimization_status_message(result.status) == "success"
 
 
-def test_optimistix_adapter_supports_filtered_jit_status_paths():
+def test_optimistix_adapter_supports_filtered_jit_status_paths() -> None:
     problem = phx.optim.MinimizationProblem(
         lambda value, target: jnp.sum((value - target) ** 2)
     )
@@ -67,7 +71,7 @@ def test_optimistix_adapter_supports_filtered_jit_status_paths():
     assert jnp.isnan(nonfinite.parameters[0])
 
 
-def test_optimistix_adapter_rejects_unenforceable_evaluation_budget():
+def test_optimistix_adapter_rejects_unenforceable_evaluation_budget() -> None:
     problem = phx.optim.MinimizationProblem(lambda value, _: jnp.sum(value**2))
     termination = phx.optim.OptimizationTermination(
         maximum_steps=10,
@@ -83,7 +87,9 @@ def test_optimistix_adapter_rejects_unenforceable_evaluation_budget():
         )
 
 
-def test_minimization_problem_rejects_non_scalar_and_constrained_backend_mismatch():
+def test_minimization_problem_rejects_non_scalar_and_constrained_backend_mismatch() -> (
+    None
+):
     vector_problem = phx.optim.MinimizationProblem(lambda value, _: value)
     with pytest.raises(TypeError, match="one real scalar"):
         vector_problem.value(jnp.ones(2))
@@ -110,7 +116,9 @@ def test_minimization_problem_rejects_non_scalar_and_constrained_backend_mismatc
     "method",
     [phx.optim.GaussNewton(), phx.optim.LevenbergMarquardt()],
 )
-def test_native_nonlinear_least_squares_methods_solve_nonlinear_residual(method):
+def test_native_nonlinear_least_squares_methods_solve_nonlinear_residual(
+    method: Any,
+) -> None:
     problem = phx.optim.NonlinearLeastSquaresProblem(
         lambda value, _: jnp.array([value[0] ** 2 - 4.0, value[1] - 3.0]),
         problem_id="two-residuals",
@@ -135,7 +143,7 @@ def test_native_nonlinear_least_squares_methods_solve_nonlinear_residual(method)
     assert int(result.iteration_evidence.observer_outputs[0].stored_count) > 0
 
 
-def test_native_minimization_control_stops_at_an_accepted_point():
+def test_native_minimization_control_stops_at_an_accepted_point() -> None:
     iteration = phx.execution.IterationPlan(
         granularity="attempt",
         observers=(phx.execution.IterationTraceObserver(8),),
@@ -162,7 +170,7 @@ def test_native_minimization_control_stops_at_an_accepted_point():
     assert int(result.iteration_evidence.observer_outputs[0].stored_count) == 1
 
 
-def test_external_optimization_exposes_terminal_evidence_only():
+def test_external_optimization_exposes_terminal_evidence_only() -> None:
     result = phx.optim.minimize(
         lambda value, target: jnp.sum((value - target) ** 2),
         jnp.asarray([0.0]),
@@ -180,7 +188,7 @@ def test_external_optimization_exposes_terminal_evidence_only():
     assert int(trace.terminal.status) == int(phx.optim.OptimizationStatus.SUCCESS)
 
 
-def test_gauss_newton_handles_rectangular_rank_deficient_residual():
+def test_gauss_newton_handles_rectangular_rank_deficient_residual() -> None:
     result = phx.optim.least_squares(
         lambda value, _: jnp.array([value[0] + value[1] - 2.0]),
         jnp.array([0.0, 0.0]),
@@ -193,7 +201,7 @@ def test_gauss_newton_handles_rectangular_rank_deficient_residual():
     assert result.diagnostics.linear_solves >= 1
 
 
-def test_newton_krylov_uses_descent_fallback_for_indefinite_hessian():
+def test_newton_krylov_uses_descent_fallback_for_indefinite_hessian() -> None:
     result = phx.optim.minimize(
         lambda value, _: jnp.sum(value**4 - value**2),
         jnp.array([0.2]),
@@ -208,7 +216,7 @@ def test_newton_krylov_uses_descent_fallback_for_indefinite_hessian():
     assert result.provenance.method == "newton-krylov"
 
 
-def test_newton_krylov_consumes_supplied_hessian_action():
+def test_newton_krylov_consumes_supplied_hessian_action() -> None:
     diagonal = jnp.asarray((2.0, 5.0))
     target = jnp.asarray((1.5, -0.4))
     problem = phx.optim.MinimizationProblem(
@@ -235,7 +243,7 @@ def test_newton_krylov_consumes_supplied_hessian_action():
     )
 
 
-def test_minimization_problem_requires_hessian_action_identity():
+def test_minimization_problem_requires_hessian_action_identity() -> None:
     with pytest.raises(ValueError, match="supplied together"):
         phx.optim.MinimizationProblem(
             lambda value, _: jnp.sum(value**2),
@@ -243,10 +251,10 @@ def test_minimization_problem_requires_hessian_action_identity():
         )
 
 
-def test_newton_krylov_forcing_controls_inner_accuracy_under_jit():
+def test_newton_krylov_forcing_controls_inner_accuracy_under_jit() -> None:
     diagonal = jnp.logspace(0.0, 6.0, 24)
 
-    def objective(value, _):
+    def objective(value: Any, _: Any) -> Any:
         return 0.5 * jnp.sum(diagonal * value**2)
 
     termination = _termination(steps=1, tolerance=0.0)
@@ -260,7 +268,7 @@ def test_newton_krylov_forcing_controls_inner_accuracy_under_jit():
         maximum_forcing=1e-8,
     )
 
-    def solve(method):
+    def solve(method: Any) -> Any:
         return phx.optim.minimize(
             objective,
             initial,
@@ -287,7 +295,7 @@ def test_newton_krylov_forcing_controls_inner_accuracy_under_jit():
     )
 
 
-def test_nonfinite_initial_parameters_return_typed_status():
+def test_nonfinite_initial_parameters_return_typed_status() -> None:
     result = phx.optim.minimize(
         lambda value, _: jnp.sum(value**2),
         jnp.array([jnp.nan]),
@@ -299,12 +307,12 @@ def test_nonfinite_initial_parameters_return_typed_status():
     assert not result.successful
 
 
-def _finite_only_at_nonpositive_parameters(parameters):
+def _finite_only_at_nonpositive_parameters(parameters: Any) -> Any:
     value = parameters[0]
     return jnp.where(value <= 0.0, (value - 1.0) ** 2, jnp.nan)
 
 
-def _finite_only_at_nonpositive_residual(parameters):
+def _finite_only_at_nonpositive_residual(parameters: Any) -> Any:
     value = parameters[0]
     return jnp.where(
         value <= 0.0,
@@ -313,7 +321,7 @@ def _finite_only_at_nonpositive_residual(parameters):
     )
 
 
-def test_scalar_and_bound_line_searches_report_all_nonfinite_trials():
+def test_scalar_and_bound_line_searches_report_all_nonfinite_trials() -> None:
     search = phx.optim.ArmijoLineSearch(maximum_steps=2)
     unconstrained = phx.optim.minimize(
         lambda parameters, _: _finite_only_at_nonpositive_parameters(parameters),
@@ -344,7 +352,7 @@ def test_scalar_and_bound_line_searches_report_all_nonfinite_trials():
         phx.optim.LevenbergMarquardt(maximum_trials=2),
     ],
 )
-def test_least_squares_methods_report_all_nonfinite_trials(method):
+def test_least_squares_methods_report_all_nonfinite_trials(method: Any) -> None:
     result = phx.optim.least_squares(
         lambda parameters, _: _finite_only_at_nonpositive_residual(parameters),
         jnp.array([0.0]),
@@ -357,7 +365,7 @@ def test_least_squares_methods_report_all_nonfinite_trials(method):
     assert result.diagnostics.rejected_steps == 1
 
 
-def test_composite_line_search_reports_all_nonfinite_trials():
+def test_composite_line_search_reports_all_nonfinite_trials() -> None:
     result = phx.optim.composite_least_squares(
         phx.optim.CompositeLeastSquaresProblem(
             lambda parameters, _: _finite_only_at_nonpositive_residual(parameters),
@@ -375,14 +383,14 @@ def test_composite_line_search_reports_all_nonfinite_trials():
     assert result.diagnostics.rejected_steps == 1
 
 
-def test_scipy_minimize_accepts_fused_explicit_host_gradients():
+def test_scipy_minimize_accepts_fused_explicit_host_gradients() -> None:
     target = jnp.asarray([1.5, -0.25])
     evaluations = []
 
-    def objective(*_):
+    def objective(*_: Any) -> None:
         raise AssertionError("The automatic objective must not run.")
 
-    def explicit(parameters, desired):
+    def explicit(parameters: Any, desired: Any) -> Any:
         evaluations.append(np.asarray(parameters))
         difference = parameters - desired
         return 0.5 * jnp.sum(difference**2), difference
@@ -417,7 +425,7 @@ def test_scipy_minimize_accepts_fused_explicit_host_gradients():
         )
 
 
-def test_newton_krylov_backtracking_uses_only_remaining_evaluation_budget():
+def test_newton_krylov_backtracking_uses_only_remaining_evaluation_budget() -> None:
     method = phx.optim.NewtonKrylov()
     parameters = jnp.asarray([2.0])
     state = method.init(parameters)

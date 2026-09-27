@@ -10,7 +10,8 @@ from math import prod
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -40,7 +41,7 @@ class BlockLevelPlan(StrictModule, NonTrainableState):
         *,
         halo_width: int | Sequence[int] = 1,
         refinement_ratio: int = 2,
-    ):
+    ) -> None:
         level_ = int(level)
         shape = tuple(block_shape)
         capacity = int(maximum_blocks)
@@ -100,7 +101,7 @@ class BlockHierarchyPlan(StrictModule, NonTrainableState):
         grid: PreparedTensorGrid,
         levels: Sequence[BlockLevelPlan],
         /,
-    ):
+    ) -> None:
         values = tuple(levels)
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("grid must be a PreparedTensorGrid.")
@@ -237,7 +238,7 @@ class BlockMetadata(StrictModule, NonTrainableState):
         parent_ids: ArrayLike,
         logical_indices: ArrayLike,
         neighbor_slots: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(plan, BlockLevelPlan):
             raise TypeError("plan must be a BlockLevelPlan.")
         mask = np.asarray(active, dtype=np.bool_)
@@ -324,7 +325,7 @@ class BlockLevelState(StrictModule):
         metadata: BlockMetadata,
         values: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, BlockLevelPlan) or not isinstance(
             metadata, BlockMetadata
         ):
@@ -463,7 +464,7 @@ class BlockHierarchyTopology(StrictModule, NonTrainableState):
         /,
         *,
         epoch: TopologyEpoch | None = None,
-    ):
+    ) -> None:
         metadata = tuple(levels)
         if not isinstance(plan, BlockHierarchyPlan) or len(metadata) != len(plan.levels):
             raise TypeError("Block hierarchy topology must match one hierarchy plan.")
@@ -683,7 +684,7 @@ class BlockHierarchyState(StrictModule):
         topology: BlockHierarchyTopology,
         levels: Sequence[BlockLevelState],
         /,
-    ):
+    ) -> None:
         values = tuple(levels)
         if not isinstance(topology, BlockHierarchyTopology) or len(values) != len(
             topology.plan.levels

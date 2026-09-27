@@ -5,26 +5,31 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..dynamics._differential_algebraic import DAEStructure, DifferentialAlgebraicSystem
 from ..dynamics._layout import InputLayout
 from ..dynamics._system import AbstractInputPolicy
-from ._elements import AbstractImplicitCircuitLaw, implicit_law_for
+from ._elements import AbstractImplicitCircuitLaw, CircuitVariableRole, implicit_law_for
 from ._mna import NodalCircuit, NodeId
+
+
+if TYPE_CHECKING:
+    from ..solver import DifferentialAlgebraicProblem
 
 
 class CircuitStateLayout(StrictModule):
     node_ids: tuple[NodeId, ...] = eqx.field(static=True)
     auxiliary_ranges: tuple[tuple[int, int], ...] = eqx.field(static=True)
     instance_ids: tuple[str, ...] = eqx.field(static=True)
-    roles: tuple[str, ...] = eqx.field(static=True)
+    roles: tuple[CircuitVariableRole, ...] = eqx.field(static=True)
     size: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
@@ -48,7 +53,7 @@ class CircuitInputBinding(StrictModule):
         input_names: Sequence[str],
         indices: Sequence[int],
         /,
-    ):
+    ) -> None:
         identifier = str(instance_id)
         names = tuple(str(name) for name in input_names)
         bound = tuple(indices)
@@ -64,7 +69,7 @@ class CircuitInputBinding(StrictModule):
         self.input_names = names
         self.indices = bound
 
-    def select(self, inputs: Array | None, dtype, /) -> Array:
+    def select(self, inputs: Array | None, dtype: DTypeLike, /) -> Array:
         if inputs is None:
             if self.indices:
                 raise ValueError(
@@ -462,7 +467,7 @@ def plan_circuit_dae(circuit: NodalCircuit, /) -> CircuitDAEPlan:
             differential_nodes.update(
                 node for node in instance.nodes if node != circuit.ground
             )
-    roles = tuple(
+    roles: tuple[CircuitVariableRole, ...] = tuple(
         "differential" if node in differential_nodes else "algebraic" for node in node_ids
     ) + tuple(role for law in laws for role in law.state_layout.roles)
     state_scale = jnp.concatenate(
@@ -573,7 +578,7 @@ def circuit_dae_problem(
     args: Any = None,
     input_policy: AbstractInputPolicy | None = None,
     initialization: Any = None,
-):
+) -> DifferentialAlgebraicProblem:
     if not isinstance(prepared, PreparedCircuitDAE):
         raise TypeError("prepared must be PreparedCircuitDAE.")
     _validate_input_policy(prepared, input_policy)

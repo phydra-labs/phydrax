@@ -9,7 +9,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -55,7 +55,7 @@ class FiniteVolumePhaseChangeStrangMethod(StrictModule):
         transport_runtime: PreparedFiniteVolumeRuntime,
         phase_change: VOFPhaseChangePlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(transport_runtime, PreparedFiniteVolumeRuntime):
             raise TypeError("transport_runtime must be PreparedFiniteVolumeRuntime.")
         if not isinstance(phase_change, VOFPhaseChangePlan):
@@ -124,7 +124,11 @@ class FiniteVolumePhaseChangeStrangMethod(StrictModule):
         return eqx.tree_at(lambda value: value.content_state, runtime_state, updated)
 
     def _half_source(
-        self, average: Array, step_size: Array, content, /
+        self,
+        average: Array,
+        step_size: Array,
+        content: FiniteVolumeConservativeContentState,
+        /,
     ) -> VOFPhaseChangeStageEvaluation:
         alpha = average[:, self.phase_change.phase_change.system.alpha_index]
         plic = self.phase_change.vof.reconstruct_stage(

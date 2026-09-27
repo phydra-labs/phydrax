@@ -11,7 +11,8 @@ from typing import Any, Protocol, TYPE_CHECKING
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 
@@ -69,7 +70,7 @@ class SampledControlFeasibility(StrictModule):
         num_terminal_constraints: int,
         tolerance: float,
         method_id: str,
-    ):
+    ) -> None:
         path = jnp.asarray(path_residuals)
         terminal = jnp.asarray(terminal_residuals)
         maximum = jnp.asarray(maximum_violation)

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -18,6 +21,7 @@ from phydrax.applications.skeletal_muscle.thermal import (
     Pennes1948Parameters,
     RetainedHeatProjection,
 )
+from phydrax.discretization import CellBlock, CellMesh
 from tools.skeletal_muscle_thermal_qualification import (
     manufactured_case,
     manufactured_source,
@@ -25,12 +29,12 @@ from tools.skeletal_muscle_thermal_qualification import (
 
 
 @pytest.fixture(autouse=True)
-def _double_precision():
+def _double_precision() -> Any:
     with jax.enable_x64(True):
         yield
 
 
-def test_heterogeneous_insulated_storage_and_rejected_stale_commit():
+def test_heterogeneous_insulated_storage_and_rejected_stale_commit() -> None:
     prepared = manufactured_case(heterogeneous=True)
     initial = prepared.initial_state()
     source = manufactured_source(prepared, initial)
@@ -89,7 +93,9 @@ def test_heterogeneous_insulated_storage_and_rejected_stale_commit():
     )
 
 
-def test_no_source_preserves_nonuniform_insulated_energy_and_perfusion_removes_heat():
+def test_no_source_preserves_nonuniform_insulated_energy_and_perfusion_removes_heat() -> (
+    None
+):
     initial = np.asarray([301.0, 302.0, 303.0, 304.0, 305.0, 306.0, 307.0, 308.0])
     insulated = manufactured_case(initial=initial)
     state = insulated.initial_state()
@@ -114,7 +120,9 @@ def test_no_source_preserves_nonuniform_insulated_energy_and_perfusion_removes_h
 
 
 @pytest.mark.parametrize("boundary", ["linear-flux", "linear-convection"])
-def test_mixed_boundary_linear_solution_and_equal_opposite_boundary_work(boundary):
+def test_mixed_boundary_linear_solution_and_equal_opposite_boundary_work(
+    boundary: Any,
+) -> None:
     prepared = manufactured_case(boundary=boundary)
     initial = prepared.initial_state()
     candidate = prepared.propose(
@@ -129,12 +137,18 @@ def test_mixed_boundary_linear_solution_and_equal_opposite_boundary_work(boundar
     np.testing.assert_allclose(outgoing, -0.2, atol=1e-9)
 
 
-def test_sparse_source_projection_and_uchida_heat_corrections_are_not_double_counted():
+def test_sparse_source_projection_and_uchida_heat_corrections_are_not_double_counted() -> (
+    None
+):
     model = UchidaUmberger2010Plan(
         UchidaUmberger2010Parameters(
+            # ty: ignore[invalid-argument-type]
             [0.5, 1.0],
+            # ty: ignore[invalid-argument-type]
             [0.5, 0.7],
+            # ty: ignore[invalid-argument-type]
             [0.1, 0.12],
+            # ty: ignore[invalid-argument-type]
             [10.0, 10.0],
         ),
         ("shortening", "lengthening"),
@@ -166,8 +180,11 @@ def test_sparse_source_projection_and_uchida_heat_corrections_are_not_double_cou
     assert float(result.muscle_metabolic_power_W[0]) > float(ledger.retained_power_W[0])
     projection = RetainedHeatProjection(
         model.muscle_ids,
+        # ty: ignore[invalid-argument-type]
         [0, 0, 1],
+        # ty: ignore[invalid-argument-type]
         [0, 1, 1],
+        # ty: ignore[invalid-argument-type]
         [0.25, 0.75, 1.0],
         cell_count=2,
         source_model_id=model.model_id,
@@ -182,8 +199,11 @@ def test_sparse_source_projection_and_uchida_heat_corrections_are_not_double_cou
     with pytest.raises(ValueError, match="conservative"):
         RetainedHeatProjection(
             ("a",),
+            # ty: ignore[invalid-argument-type]
             [0],
+            # ty: ignore[invalid-argument-type]
             [0],
+            # ty: ignore[invalid-argument-type]
             [0.9],
             cell_count=1,
             source_model_id="a",
@@ -210,8 +230,9 @@ def test_sparse_source_projection_and_uchida_heat_corrections_are_not_double_cou
     np.testing.assert_allclose(floor.retained_power_W, [0.5, 1.0])
 
 
-def test_scalar_field_rejects_invalid_parameters_and_boundary_partition():
+def test_scalar_field_rejects_invalid_parameters_and_boundary_partition() -> None:
     prepared = manufactured_case()
+    # ty: ignore[invalid-argument-type]
     invalid = Pennes1948Parameters([0.0], [8.0], [0.0], [4.0], [300.0])
     plan = eqx.tree_at(lambda x: x.parameters, prepared.plan, invalid)
     with pytest.raises(ValueError, match="admissible"):
@@ -227,15 +248,34 @@ def test_scalar_field_rejects_invalid_parameters_and_boundary_partition():
     plan = eqx.tree_at(lambda x: x.boundaries, prepared.plan, (partial,))
     with pytest.raises(ValueError, match="partition"):
         plan.prepare()
+    # Two tetrahedral blocks carry polyhedral connectivity, outside the P1 identity.
+    cells = np.asarray(prepared.plan.mesh.blocks[0].vertices)
+    split = cells.shape[0] // 2
+    two_block_mesh = CellMesh(
+        np.asarray(prepared.plan.mesh.coordinates),
+        (
+            CellBlock("first", "tetrahedron", cells[:split], global_ids=np.arange(split)),
+            CellBlock(
+                "second",
+                "tetrahedron",
+                cells[split:],
+                global_ids=np.arange(split, cells.shape[0]),
+            ),
+        ),
+    )
+    plan = eqx.tree_at(lambda x: x.mesh, prepared.plan, two_block_mesh)
+    with pytest.raises(ValueError, match="tetrahedral connectivity"):
+        plan.prepare()
     with pytest.raises(ValueError, match="tensors"):
+        # ty: ignore[invalid-argument-type]
         Pennes1948Parameters(jnp.eye(3), [8.0], [0.0], [4.0], [300.0])
 
 
-def test_source_response_derivative_and_vmap_match_conservative_slope():
+def test_source_response_derivative_and_vmap_match_conservative_slope() -> None:
     prepared = manufactured_case()
     initial = prepared.initial_state()
 
-    def response(power):
+    def response(power: Any) -> Any:
         source = manufactured_source(prepared, initial, dt=0.1, power=power)
         return jnp.mean(prepared.propose(initial, source).proposed_state.temperature_K)
 

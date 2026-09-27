@@ -4,7 +4,7 @@
 from ..qualification import CapabilityProfile, SupportTuple
 
 
-def system_modeling_candidate_profiles():
+def system_modeling_candidate_profiles() -> tuple[CapabilityProfile, ...]:
     specs = (
         (
             "system-modeling.acausal-connectors",

@@ -86,9 +86,11 @@ random_source = phx.discretization.VortexSourceState(
     core_radius=jnp.full((2,), 0.1),
     volume=jnp.ones((2,)),
 )
+# ty: ignore[call-non-callable]
 random = phx.applications.vortex_flow.RandomVortexSolverPlan(
     random_direct, 0.01, 4, antithetic=True
 ).step(
+    # ty: ignore[call-non-callable]
     phx.applications.vortex_flow.RandomVortexSolverPlan(
         random_direct, 0.01, 4, antithetic=True
     ).initialize(random_source),

@@ -5,17 +5,18 @@
 from __future__ import annotations
 
 import math
-from typing import Literal, TypeAlias
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...ml._batch import MLBatch
 from ...ml._contracts import FitResult
 from ...ml.covariance._estimators import (
+    CovarianceModel,
     EmpiricalCovariance,
     FactorCovariance as MLFactorCovariance,
     LedoitWolfCovariance,
@@ -26,6 +27,7 @@ from ...ml.covariance._random_matrix import (
     MarchenkoPasturDiagnostics,
     RandomMatrixCleaningResult,
 )
+from ...typing import parse
 from ...uq._covariance import DenseCovariance
 from ..core import FinanceEvidenceBinding, PhysicalLaw
 from ._returns import ReturnResult
@@ -46,9 +48,8 @@ class CovarianceDefinition(StrictModule):
         method: CovarianceMethod = "ledoit-wolf",
         correction: float = 1.0,
         regularization: float = 1e-8,
-    ):
-        if method not in ("sample", "ledoit-wolf", "oas"):
-            raise ValueError("method must be sample, ledoit-wolf, or oas.")
+    ) -> None:
+        method = parse(method, CovarianceMethod, "method")
         correction_ = float(correction)
         regularization_ = float(regularization)
         if not jnp.isfinite(correction_) or correction_ < 0.0:
@@ -81,7 +82,7 @@ class FactorModelDefinition(StrictModule):
         *,
         correction: float = 1.0,
         regularization: float = 1e-8,
-    ):
+    ) -> None:
         rank_ = int(rank)
         correction_ = float(correction)
         regularization_ = float(regularization)
@@ -116,7 +117,7 @@ class RMTCleaningDefinition(StrictModule):
         preserve_trace: bool = True,
         eigenvalue_floor: float = 0.0,
         edge_tolerance: float = 0.0,
-    ):
+    ) -> None:
         if replacement not in ("bulk-mean", "upper-edge", "hard-floor"):
             raise ValueError("unsupported RMT replacement rule.")
         floor = float(eigenvalue_floor)
@@ -277,7 +278,8 @@ def fit_covariance(
             regularization=definition.regularization,
         )
     fit = recipe.fit_batch(batch)
-    covariance_model = fit.model.model
+    # Native covariance recipes always wrap a CovarianceModel.
+    covariance_model = cast(CovarianceModel, fit.model.model)
     matrix = covariance_model.covariance
     values = jnp.linalg.eigvalsh(matrix)
     safe_values = jnp.where(plan.sample_mask[:, None], plan.values, 0.0)
@@ -361,7 +363,8 @@ def fit_factor_model(
         correction=definition.correction,
         regularization=definition.regularization,
     ).fit_batch(batch)
-    covariance_model = fit.model.model
+    # The native factor recipe always wraps a CovarianceModel.
+    covariance_model = cast(CovarianceModel, fit.model.model)
     loadings = covariance_model.factor_loadings[:, ::-1]
     pivot = jnp.argmax(jnp.abs(loadings), axis=0)
     signs = jnp.sign(loadings[pivot, jnp.arange(definition.rank)])

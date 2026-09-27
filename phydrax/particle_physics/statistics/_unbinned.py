@@ -10,7 +10,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -36,7 +37,7 @@ class UnbinnedDataSet(StrictModule, NonTrainableState):
         upper: ArrayLike,
         weights: ArrayLike | None = None,
         active: ArrayLike | None = None,
-    ):
+    ) -> None:
         values = np.asarray(observations, dtype=np.float64)
         names = tuple(str(value).strip() for value in observable_names)
         lower_ = np.asarray(lower, dtype=np.float64)
@@ -106,7 +107,7 @@ class ExtendedMixtureModel(StrictModule, NonTrainableState):
 
     def __init__(
         self, component_names: Sequence[str], normalization_evidence_ids: Sequence[str], /
-    ):
+    ) -> None:
         names = tuple(str(value).strip() for value in component_names)
         evidence = tuple(str(value).strip() for value in normalization_evidence_ids)
         if (

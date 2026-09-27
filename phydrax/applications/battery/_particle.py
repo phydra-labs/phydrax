@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -56,7 +57,7 @@ class BatteryParticlePlan(StrictModule, NonTrainableState):
         *,
         reference_faces: ArrayLike | None = None,
         particle_id: str = "particle",
-    ):
+    ) -> None:
         if isinstance(shell_count, bool) or not isinstance(shell_count, int):
             raise TypeError("shell_count must be an integer.")
         if (
@@ -103,7 +104,7 @@ class PreparedBatteryParticle(StrictModule, NonTrainableState):
     transport: PreparedRadialSpeciesTransport
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: BatteryParticlePlan, /):
+    def __init__(self, plan: BatteryParticlePlan, /) -> None:
         if not isinstance(plan, BatteryParticlePlan):
             raise TypeError("plan must be a BatteryParticlePlan.")
         mesh = plan.mesh.prepare()

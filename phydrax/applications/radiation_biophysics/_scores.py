@@ -9,12 +9,12 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from numbers import Integral
 
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._validation import positive_integer
 from ...imaging import ImageIndexAffine
 from ...interchange import AdapterLoss, AdapterReport, AdapterStatus
 from ...measurement import (
@@ -65,15 +65,6 @@ def _identifiers(
         raise ValueError(f"{name} must not be empty.")
     if len(set(result)) != len(result):
         raise ValueError(f"{name} must be unique.")
-    return result
-
-
-def _positive_integer(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
-    result = int(value)
-    if result < 1:
-        raise ValueError(f"{name} must be positive.")
     return result
 
 
@@ -243,7 +234,7 @@ class RadiationScoreDefinition:
         if representation not in ("voxel-grid", "dij"):
             raise ValueError("score representation must be voxel-grid or dij.")
         shape = tuple(
-            _positive_integer(value, "score shape entry") for value in self.shape
+            positive_integer(value, "score shape entry") for value in self.shape
         )
         expected_rank = 4 if representation == "dij" else 3
         if len(shape) != expected_rank:
@@ -328,8 +319,8 @@ class RadiationEstimatorEvidence:
 
     def __post_init__(self) -> None:
         estimator = _identifier(self.estimator, "estimator")
-        histories = _positive_integer(self.history_count, "history_count")
-        batches = _positive_integer(self.batch_count, "batch_count")
+        histories = positive_integer(self.history_count, "history_count")
+        batches = positive_integer(self.batch_count, "batch_count")
         kind = _identifier(self.uncertainty_kind, "uncertainty_kind")
         if kind not in _UNCERTAINTY_KINDS:
             raise ValueError("Unknown radiation estimator uncertainty kind.")

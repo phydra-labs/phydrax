@@ -42,6 +42,7 @@ def main() -> None:
         )
     )
     experiment = battery.BatteryExperimentPlan(
+        # ty: ignore[invalid-argument-type]
         adapter,
         protocol,
         battery.BatteryOutputPlan(

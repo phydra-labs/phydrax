@@ -15,7 +15,7 @@ import numpy as np
 from .._physical import SpatialCoordinateContract
 from ..interchange import AdapterLoss, AdapterReport, AdapterStatus
 from ..qualification import open_reference_artifact, ReferenceArtifactManifest
-from ..units import ONE, SECOND
+from ..units import ONE, SECOND, UnitDefinition
 from ._asset import DataOrigin, DataStage, DerivationRecord
 from ._field import QuantityField, SamplingSemantics, SpatialSamplingKind
 from ._quantity import QuantitySpec, ValueKind, ValueLayout
@@ -23,7 +23,7 @@ from ._support import PointSampleSupport
 from .lidar import LidarPointProduct
 
 
-def _quantity(name: str, kind: str, unit=ONE) -> QuantitySpec:
+def _quantity(name: str, kind: str, unit: UnitDefinition = ONE) -> QuantitySpec:
     return QuantitySpec(
         "lidar",
         name,

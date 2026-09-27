@@ -8,7 +8,8 @@ from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 
@@ -26,7 +27,7 @@ class BrooksCoreyRetention(StrictModule):
         residual_wetting_saturation: ArrayLike = 0.0,
         residual_nonwetting_saturation: ArrayLike = 0.0,
         /,
-    ):
+    ) -> None:
         entry, index, wetting, nonwetting = jnp.broadcast_arrays(
             jnp.asarray(entry_pressure_Pa),
             jnp.asarray(pore_size_index),
@@ -96,7 +97,7 @@ class HystereticRetentionPlan(StrictModule):
 
     def __init__(
         self, drainage: BrooksCoreyRetention, imbibition: BrooksCoreyRetention, /
-    ):
+    ) -> None:
         if not isinstance(drainage, BrooksCoreyRetention) or not isinstance(
             imbibition, BrooksCoreyRetention
         ):
@@ -173,7 +174,7 @@ class HystereticRetentionPlan(StrictModule):
 class DynamicCapillaryPressure(StrictModule):
     relaxation_Pa_s: Array
 
-    def __init__(self, relaxation_Pa_s: ArrayLike, /):
+    def __init__(self, relaxation_Pa_s: ArrayLike, /) -> None:
         value = jnp.asarray(relaxation_Pa_s)
         self.relaxation_Pa_s = eqx.error_if(
             value,

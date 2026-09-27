@@ -1,4 +1,5 @@
 from itertools import product
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -13,7 +14,7 @@ _CELLS = np.asarray(((0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4)), dtype=np.int32
 _BOUNDARY = np.asarray((True, True, True, True, False))
 
 
-def _mesh(center):
+def _mesh(center: Any) -> Any:
     coordinates = _TARGET.copy()
     coordinates[4] = center
     return phx.discretization.CellMesh.from_triangles(coordinates, _CELLS)
@@ -29,8 +30,8 @@ def _mesh(center):
     ),
 )
 def test_target_matrix_optimization_improves_quality_with_bit_identical_fixed_nodes(
-    objective, method
-):
+    objective: Any, method: Any
+) -> None:
     mesh = _mesh((0.75, 0.25))
     plan = meshing.TargetMatrixOptimizationPlan(
         mesh,
@@ -48,18 +49,23 @@ def test_target_matrix_optimization_improves_quality_with_bit_identical_fixed_no
     assert result.accepted_steps > 0
     assert result.final_objective < result.initial_objective
     np.testing.assert_array_equal(
-        result.result.mesh.coordinates[:4], np.asarray(mesh.coordinates)[:4]
+        # ty: ignore[unresolved-attribute]
+        result.result.mesh.coordinates[:4],
+        np.asarray(mesh.coordinates)[:4],
     )
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(result.result.mesh.coordinates[4], (0.5, 0.5), atol=1e-6)
     initial = meshing.evaluate_cell_quality(mesh).mean_ratios
+    # ty: ignore[unresolved-attribute]
     assert np.min(result.result.quality.evaluation.mean_ratios) > np.min(initial)
 
 
-def test_coordinate_bounds_are_enforced_by_projection():
+def test_coordinate_bounds_are_enforced_by_projection() -> None:
     plan = meshing.TargetMatrixOptimizationPlan(
         _mesh((0.75, 0.25)),
         target_coordinates=_TARGET,
         fixed_vertices=_BOUNDARY,
+        # ty: ignore[invalid-argument-type]
         coordinate_bounds=((0.6, 0.0), (1.0, 1.0)),
     )
     result = meshing.optimize_cell_mesh(plan, phx.SpatialCoordinateContract.si())
@@ -68,7 +74,7 @@ def test_coordinate_bounds_are_enforced_by_projection():
     np.testing.assert_allclose(np.asarray(result.coordinates)[4], (0.6, 0.5), atol=1e-6)
 
 
-def test_metric_alignment_moves_nodes_toward_unit_metric_edges():
+def test_metric_alignment_moves_nodes_toward_unit_metric_edges() -> None:
     mesh = _mesh((0.5, 0.5))
     vertices = mesh.entity_set(0)
     scope = meshing.MeshingScope(
@@ -96,7 +102,7 @@ def test_metric_alignment_moves_nodes_toward_unit_metric_edges():
     assert np.asarray(result.coordinates)[4, 0] < 0.5
 
 
-def test_untangling_certifies_a_folded_mesh_before_optimization():
+def test_untangling_certifies_a_folded_mesh_before_optimization() -> None:
     mesh = _mesh((1.3, 0.5))
     plan = meshing.TargetMatrixOptimizationPlan(
         mesh, target_coordinates=_TARGET, fixed_vertices=_BOUNDARY
@@ -104,14 +110,18 @@ def test_untangling_certifies_a_folded_mesh_before_optimization():
     result = meshing.optimize_cell_mesh(plan, phx.SpatialCoordinateContract.si())
 
     assert result.status is meshing.MeshOptimizationStatus.OPTIMIZED
+    # ty: ignore[unresolved-attribute]
     assert result.untangling.succeeded
+    # ty: ignore[unresolved-attribute]
     assert result.untangling.initial_inverted_count > 0
+    # ty: ignore[unresolved-attribute]
     assert result.untangling.final_inverted_count == 0
     assert np.isinf(result.initial_objective)
+    # ty: ignore[unresolved-attribute]
     assert np.all(np.asarray(result.result.quality.evaluation.sampled_valid))
 
 
-def test_inverted_meshes_fail_without_mutation():
+def test_inverted_meshes_fail_without_mutation() -> None:
     folded = _mesh((1.3, 0.5))
     unguarded = meshing.TargetMatrixOptimizationPlan(
         folded, target_coordinates=_TARGET, fixed_vertices=_BOUNDARY, untangling=None
@@ -129,19 +139,21 @@ def test_inverted_meshes_fail_without_mutation():
         trapped,
         target_coordinates=np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.2, 1.2))),
         fixed_vertices=np.asarray((True, True, True, False)),
+        # ty: ignore[invalid-argument-type]
         coordinate_bounds=((-1.0, -1.0), (0.0, 0.0)),
     )
     failed = meshing.optimize_cell_mesh(plan, phx.SpatialCoordinateContract.si())
     assert failed.status is meshing.MeshOptimizationStatus.UNTANGLING_FAILED
     assert failed.result is None and failed.inverted_count > 0
+    # ty: ignore[unresolved-attribute]
     assert not failed.untangling.succeeded
     np.testing.assert_array_equal(failed.coordinates, trapped.coordinates)
 
 
-def test_nonconverged_optimization_commits_only_under_explicit_acceptance():
+def test_nonconverged_optimization_commits_only_under_explicit_acceptance() -> None:
     mesh = _mesh((0.75, 0.25))
 
-    def optimize(accept):
+    def optimize(accept: Any) -> Any:
         plan = meshing.TargetMatrixOptimizationPlan(
             mesh,
             target_coordinates=_TARGET,
@@ -171,10 +183,10 @@ def test_nonconverged_optimization_commits_only_under_explicit_acceptance():
     assert admitted.final_objective < admitted.initial_objective
 
 
-def test_nonconverged_untangling_stage_is_accepted_only_when_permitted():
+def test_nonconverged_untangling_stage_is_accepted_only_when_permitted() -> None:
     folded = _mesh((1.3, 0.5))
 
-    def optimize(accept):
+    def optimize(accept: Any) -> Any:
         plan = meshing.TargetMatrixOptimizationPlan(
             folded,
             target_coordinates=_TARGET,
@@ -204,7 +216,7 @@ def test_nonconverged_untangling_stage_is_accepted_only_when_permitted():
     assert np.all(np.asarray(admitted.result.quality.evaluation.sampled_valid))
 
 
-def test_untangling_uses_its_stage_budget_when_a_valid_iterate_fails_audit():
+def test_untangling_uses_its_stage_budget_when_a_valid_iterate_fails_audit() -> None:
     folded = _mesh((1.3, 0.5))
     plan = meshing.TargetMatrixOptimizationPlan(
         folded,
@@ -218,12 +230,15 @@ def test_untangling_uses_its_stage_budget_when_a_valid_iterate_fails_audit():
     result = meshing.optimize_cell_mesh(plan, phx.SpatialCoordinateContract.si())
 
     assert result.status is meshing.MeshOptimizationStatus.UNTANGLING_FAILED
+    # ty: ignore[unresolved-attribute]
     assert result.untangling.final_inverted_count == 0
+    # ty: ignore[unresolved-attribute]
     assert not result.untangling.audit_passed
+    # ty: ignore[unresolved-attribute]
     assert len(result.untangling.minimizations) == 2
 
 
-def test_generic_high_order_coordinate_optimizer_preserves_fixed_nodes():
+def test_generic_high_order_coordinate_optimizer_preserves_fixed_nodes() -> None:
     element = phx.discretization.lagrange_element("triangle", 2)
     coordinates = np.array(element.reference_nodes, copy=True)
     coordinates[3:] += 0.1
@@ -257,7 +272,7 @@ _CUBE_FACES = (
 )
 
 
-def _prism_mesh(center):
+def _prism_mesh(center: Any) -> Any:
     base = np.column_stack((_TARGET, np.zeros((5,))))
     points = np.concatenate([base + (0.0, 0.0, height) for height in (0.0, 0.5, 1.0)])
     prisms = np.concatenate(
@@ -274,7 +289,7 @@ def _prism_mesh(center):
     ), target
 
 
-def _pyramid_mesh(apex):
+def _pyramid_mesh(apex: Any) -> Any:
     cube = np.asarray(
         [(x, y, z) for z in (0.0, 1.0) for y in (0.0, 1.0) for x in (0.0, 1.0)]
     )
@@ -287,7 +302,7 @@ def _pyramid_mesh(apex):
     ), target
 
 
-def _polyhedral_mesh(center):
+def _polyhedral_mesh(center: Any) -> Any:
     grid = np.asarray(
         [
             (x, y, z)
@@ -307,6 +322,7 @@ def _polyhedral_mesh(center):
         cells.append([[local[vertex] for vertex in face] for face in _CUBE_FACES])
     target = grid.copy()
     grid[13] = center
+    # ty: ignore[invalid-argument-type]
     mesh = phx.discretization.CellMesh.from_mixed_3d(grid, (), polyhedra={"cubes": cells})
     return mesh, target
 
@@ -320,8 +336,8 @@ def _polyhedral_mesh(center):
     ],
 )
 def test_prism_pyramid_and_polyhedral_optimization_improves_quality(
-    build, perturbed, free
-):
+    build: Any, perturbed: Any, free: Any
+) -> None:
     mesh, target = build(perturbed)
     fixed = np.ones((mesh.coordinates.shape[0],), dtype=np.bool_)
     fixed[free] = False
@@ -339,5 +355,6 @@ def test_prism_pyramid_and_polyhedral_optimization_improves_quality(
     optimized = np.asarray(result.coordinates)
     np.testing.assert_array_equal(optimized[fixed], np.asarray(mesh.coordinates)[fixed])
     np.testing.assert_allclose(optimized[free], target[free], atol=1e-5)
+    # ty: ignore[unresolved-attribute]
     final = np.min(np.asarray(result.result.quality.evaluation.mean_ratios))
     assert final > initial

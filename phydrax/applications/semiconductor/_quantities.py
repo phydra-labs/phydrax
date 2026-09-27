@@ -16,6 +16,8 @@ from types import MappingProxyType
 from typing import Any
 
 import numpy as np
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...measurement import resolve_quantity
 from ...units import (
@@ -82,13 +84,20 @@ _REFERENCE_UNITS = MappingProxyType(
 )
 
 
-def _si(value: Any, unit: UnitDefinition, reference: UnitDefinition):
+def _si(value: Any, unit: UnitDefinition, reference: UnitDefinition) -> Array:
     if not isinstance(unit, UnitDefinition):
         raise TypeError("Physical units must be native UnitDefinition values.")
     return convert_value(value, source=unit, target=reference)
 
 
-def _positive_scalar(value, unit, reference, name, *, nonnegative=False):
+def _positive_scalar(
+    value: ArrayLike,
+    unit: UnitDefinition,
+    reference: UnitDefinition,
+    name: str,
+    *,
+    nonnegative: bool = False,
+) -> Array:
     array = _si(value, unit, reference)
     host = np.asarray(array)
     if (
@@ -101,7 +110,7 @@ def _positive_scalar(value, unit, reference, name, *, nonnegative=False):
     return array
 
 
-def _text(value, name):
+def _text(value: object, name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{name} must be explicit nonempty text.")
     return value.strip()
@@ -120,7 +129,7 @@ class SemiconductorQuantitySpec:
     reference_configuration: str = ""
     quantity_id: str = field(init=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         resolved = resolve_quantity(
             domain="semiconductor",
             reference_units=_REFERENCE_UNITS,
@@ -135,7 +144,7 @@ class SemiconductorQuantitySpec:
         object.__setattr__(self, "axes", resolved.axes)
         object.__setattr__(self, "quantity_id", resolved.quantity_id)
 
-    def to_si(self, value: Any):
+    def to_si(self, value: Any) -> Array:
         return _si(value, self.unit, _REFERENCE_UNITS[self.quantity_kind])
 
 

@@ -4,17 +4,19 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, NoReturn
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....discretization._cell_complex import PolygonalConnectivity
 from ....geometry import MeshRegion, TriangleMesh
 from ....geometry.surface import SurfaceModel, SurfaceRealization
 from ....linalg import (
@@ -49,7 +51,7 @@ class UnsupportedScalarScreenJunctionError(ValueError):
 
     evidence: ScalarScreenJunctionEvidence3D
 
-    def __init__(self, message: str, evidence: ScalarScreenJunctionEvidence3D, /):
+    def __init__(self, message: str, evidence: ScalarScreenJunctionEvidence3D, /) -> None:
         self.evidence = evidence
         super().__init__(message)
 
@@ -106,7 +108,7 @@ class ScalarCrackSideMetadata3D(StrictModule, NonTrainableState):
     evaluation_route: str = eqx.field(static=True)
     metadata_id: str = eqx.field(static=True)
 
-    def __init__(self, minus_name: str = "minus", plus_name: str = "plus", /):
+    def __init__(self, minus_name: str = "minus", plus_name: str = "plus", /) -> None:
         minus = str(minus_name)
         plus = str(plus_name)
         if not minus or not plus:
@@ -280,8 +282,14 @@ def _support_arrays(
     if isinstance(support, SurfaceModel):
         mesh = support.mesh
         vertices = np.asarray(mesh.coordinates, dtype=np.float64)
-        faces = np.asarray(mesh.connectivity.cell_vertices, dtype=np.int32)
-        kinds = np.asarray(mesh.connectivity.cell_kinds, dtype=np.int32)
+        connectivity = mesh.connectivity
+        # SurfaceModel requires a two-dimensional CellMesh, which carries polygonal connectivity.
+        if not (isinstance(connectivity, PolygonalConnectivity)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(connectivity, PolygonalConnectivity)."
+            )
+        faces = np.asarray(connectivity.cell_vertices, dtype=np.int32)
+        kinds = np.asarray(connectivity.cell_kinds, dtype=np.int32)
         if faces.ndim != 2 or kinds.shape != (faces.shape[0],) or np.any(kinds != 3):
             raise ValueError("Scalar screens require affine triangle cells only.")
         return vertices, faces[:, :3], support.model_id
@@ -747,8 +755,8 @@ def prepare_scalar_screen_single_layer_dp0_3d(
 
 
 def prepare_scalar_screen_hypersingular_dp0_3d(
-    support: ScalarScreenSupport3D, /, **kwargs
-):
+    support: ScalarScreenSupport3D, /, **kwargs: object
+) -> NoReturn:
     """Reject W before any screen geometry or quadrature preparation."""
 
     del support, kwargs
@@ -757,7 +765,9 @@ def prepare_scalar_screen_hypersingular_dp0_3d(
     )
 
 
-def prepare_scalar_screen_calderon_dp0_3d(support: ScalarScreenSupport3D, /, **kwargs):
+def prepare_scalar_screen_calderon_dp0_3d(
+    support: ScalarScreenSupport3D, /, **kwargs: object
+) -> NoReturn:
     """Reject closed Calderón semantics on a two-sided open screen."""
 
     del support, kwargs
@@ -766,7 +776,9 @@ def prepare_scalar_screen_calderon_dp0_3d(support: ScalarScreenSupport3D, /, **k
     )
 
 
-def prepare_scalar_screen_junction_solve_3d(support: ScalarScreenSupport3D, /, **kwargs):
+def prepare_scalar_screen_junction_solve_3d(
+    support: ScalarScreenSupport3D, /, **kwargs: object
+) -> NoReturn:
     """Retain junction incidence and reject before operator preparation."""
 
     del kwargs

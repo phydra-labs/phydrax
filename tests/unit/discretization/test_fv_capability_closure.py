@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -34,7 +37,7 @@ from phydrax.equations._finite_volume_advanced import (
 from phydrax.equations._hyperbolic_systems import ShallowWaterSystem
 
 
-def test_polyhedral_cube_geometry_is_closed_and_positive():
+def test_polyhedral_cube_geometry_is_closed_and_positive() -> None:
     coordinates = np.asarray(
         [
             (0, 0, 0),
@@ -58,6 +61,7 @@ def test_polyhedral_cube_geometry_is_closed_and_positive():
             (3, 0, 4, 7),
         ),
     )
+    # ty: ignore[invalid-argument-type]
     mesh = CellMesh.from_polyhedra(coordinates, cells)
     geometry = prepare_polyhedral_finite_volume_geometry(mesh)
     finite_volume = UnstructuredFiniteVolumePlan.from_cell_mesh(mesh).prepare()
@@ -79,7 +83,7 @@ def test_polyhedral_cube_geometry_is_closed_and_positive():
     )
 
 
-def test_polyhedral_flux_vectors_are_owner_oriented_across_shared_face():
+def test_polyhedral_flux_vectors_are_owner_oriented_across_shared_face() -> None:
     coordinates = np.asarray(
         [
             (0, 0, 0),
@@ -116,6 +120,7 @@ def test_polyhedral_flux_vectors_are_owner_oriented_across_shared_face():
         ),
     )
     finite_volume = UnstructuredFiniteVolumePlan.from_cell_mesh(
+        # ty: ignore[invalid-argument-type]
         CellMesh.from_polyhedra(coordinates, cells)
     ).prepare()
 
@@ -145,7 +150,7 @@ def test_polyhedral_flux_vectors_are_owner_oriented_across_shared_face():
     np.testing.assert_allclose(cell_flux, 0.0, atol=1e-14)
 
 
-def test_equilibrium_weno_z_preserves_constant_surface_and_reports_dry_fallback():
+def test_equilibrium_weno_z_preserves_constant_surface_and_reports_dry_fallback() -> None:
     bed = jnp.asarray((0.0, 0.2, 0.5, 0.9, 1.0, 0.7, 0.3, 0.1))
     surface = jnp.ones_like(bed)
     state = jnp.stack((surface - bed, jnp.zeros_like(bed)), axis=-1)
@@ -165,7 +170,7 @@ def test_equilibrium_weno_z_preserves_constant_surface_and_reports_dry_fallback(
         lower_dgsem_shallow_water,
     ),
 )
-def test_method_wide_shallow_water_lowerings_preserve_lake_at_rest(lower):
+def test_method_wide_shallow_water_lowerings_preserve_lake_at_rest(lower: Any) -> None:
     bed = jnp.asarray((0.0, 0.2, 0.5, 0.1))
     bathymetry = PreparedShallowWaterBathymetry(
         bed,
@@ -186,19 +191,20 @@ def test_method_wide_shallow_water_lowerings_preserve_lake_at_rest(lower):
     np.testing.assert_allclose(prepared.residual(state), 0.0)
 
 
-def test_arbitrary_normal_hydrostatic_flux_has_zero_lake_mass_and_ale_gcl_flux():
+def test_arbitrary_normal_hydrostatic_flux_has_zero_lake_mass_and_ale_gcl_flux() -> None:
     system = ShallowWaterSystem(2)
     plan = ShallowWaterHydrostaticHLLPlan()
     normal = jnp.asarray((3.0, 4.0)) / 5.0
     left = jnp.asarray((1.0, 0.0, 0.0))
     right = jnp.asarray((0.5, 0.0, 0.0))
+    # ty: ignore[invalid-argument-type]
     result = plan.normal_face_contribution(system, left, right, 0.0, 0.5, normal)
     np.testing.assert_allclose(result.normal_flux[0], 0.0, atol=1e-7)
     np.testing.assert_allclose(result.left_correction[0], 0.0)
     np.testing.assert_allclose(result.right_correction[0], 0.0)
 
 
-def test_typed_open_boundaries_and_declared_geostrophic_reference():
+def test_typed_open_boundaries_and_declared_geostrophic_reference() -> None:
     policy = ShallowWaterWetDryPolicy()
     discharge = ShallowWaterNormalDischargeBoundary(
         lambda t, x, args: jnp.ones(x.shape[:-1]),
@@ -239,7 +245,7 @@ def test_typed_open_boundaries_and_declared_geostrophic_reference():
     )
 
 
-def test_multilayer_exner_les_and_subfloat_precision_contracts():
+def test_multilayer_exner_les_and_subfloat_precision_contracts() -> None:
     coupling = HydrostaticLayerCoupling.from_densities(jnp.asarray((1025.0, 1000.0)))
     system = MultilayerShallowWaterSystem(coupling, 1)
     state = jnp.asarray((1.0, 0.5, 0.0, 0.0))

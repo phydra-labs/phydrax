@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import opt_einsum as oe
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _space(points, cells, *, component_shape=()):
+def _space(points: Any, cells: Any, *, component_shape: Any = ()) -> Any:
     mesh = phx.discretization.CellMesh.from_polygons(jnp.asarray(points), cells)
     field = phx.discretization.ExplicitPolygonH1FieldSpec(
         "u", component_shape=component_shape
@@ -18,7 +21,7 @@ def _space(points, cells, *, component_shape=()):
     return phx.discretization.ExplicitPolygonH1Plan(mesh, field).prepare()
 
 
-def test_condensed_basis_certifies_partition_affine_reproduction_and_rank():
+def test_condensed_basis_certifies_partition_affine_reproduction_and_rank() -> None:
     space = _space(
         ((0.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 0.4), (0.0, 1.0)),
         ((0, 1, 2, 3, 4),),
@@ -42,7 +45,7 @@ def test_condensed_basis_certifies_partition_affine_reproduction_and_rank():
     assert jnp.all(evidence.mass_minimum_eigenvalue > 0.0)
 
 
-def test_triangle_reconstruction_is_affine_and_trace_is_orientation_independent():
+def test_triangle_reconstruction_is_affine_and_trace_is_orientation_independent() -> None:
     space = _space(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)), ((0, 1, 2),))
     state = space.mesh.coordinates[:, 0] + 2.0 * space.mesh.coordinates[:, 1]
     reconstruction = phx.discretization.prepare_explicit_polygon_h1_reconstruction(
@@ -61,7 +64,7 @@ def test_triangle_reconstruction_is_affine_and_trace_is_orientation_independent(
     assert jnp.allclose(trace, jnp.asarray([[0.0, 0.25, 1.0]]), atol=1e-11)
 
 
-def test_mixed_arity_padding_and_component_axes_are_inert():
+def test_mixed_arity_padding_and_component_axes_are_inert() -> None:
     points = (
         (0.0, 0.0),
         (1.0, 0.0),
@@ -89,7 +92,7 @@ def test_mixed_arity_padding_and_component_axes_are_inert():
     assert jnp.allclose(values, 1.0, atol=1e-11)
 
 
-def test_unmatched_hanging_interface_is_rejected_but_matched_collinear_is_valid():
+def test_unmatched_hanging_interface_is_rejected_but_matched_collinear_is_valid() -> None:
     points = jnp.asarray(
         (
             (0.0, 0.0),
@@ -102,27 +105,31 @@ def test_unmatched_hanging_interface_is_rejected_but_matched_collinear_is_valid(
         )
     )
     unmatched = phx.discretization.CellMesh.from_polygons(
-        points, ((0, 2, 4, 3), (0, 5, 6, 2, 1))
+        points,
+        # ty: ignore[invalid-argument-type]
+        ((0, 2, 4, 3), (0, 5, 6, 2, 1)),
     )
     field = phx.discretization.ExplicitPolygonH1FieldSpec("u")
     with pytest.raises(ValueError, match="T-junction|hanging-node"):
         phx.discretization.ExplicitPolygonH1Plan(unmatched, field).prepare()
 
     matched = phx.discretization.CellMesh.from_polygons(
-        points, ((0, 1, 2, 4, 3), (0, 5, 6, 2, 1))
+        points,
+        # ty: ignore[invalid-argument-type]
+        ((0, 1, 2, 4, 3), (0, 5, 6, 2, 1)),
     )
     space = phx.discretization.ExplicitPolygonH1Plan(matched, field).prepare()
     assert all(jnp.all(block.evidence.passed) for block in space.default_runtime.bases)
 
 
-def test_runtime_refresh_is_differentiable_and_preserves_layout_identity():
+def test_runtime_refresh_is_differentiable_and_preserves_layout_identity() -> None:
     space = _space(
         ((0.0, 0.0), (1.0, 0.0), (1.1, 1.0), (0.0, 1.0)),
         ((0, 1, 2, 3),),
     )
     coordinates = space.default_runtime.coordinates
 
-    def response(value):
+    def response(value: Any) -> Any:
         runtime = space.prepare_runtime(value, numeric_version="shape-gradient")
         return jnp.sum(runtime.bases[0].prolongation ** 2)
 
@@ -136,8 +143,9 @@ def test_runtime_refresh_is_differentiable_and_preserves_layout_identity():
     assert jnp.all(runtime.bases[0].evidence.passed)
 
 
-def test_resource_and_outside_reconstruction_fail_closed():
+def test_resource_and_outside_reconstruction_fail_closed() -> None:
     points = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+    # ty: ignore[invalid-argument-type]
     mesh = phx.discretization.CellMesh.from_polygons(jnp.asarray(points), ((0, 1, 2, 3),))
     field = phx.discretization.ExplicitPolygonH1FieldSpec("u")
     with pytest.raises(ValueError, match="arity budget"):
@@ -158,8 +166,9 @@ def test_resource_and_outside_reconstruction_fail_closed():
         )
 
 
-def test_runtime_is_bound_to_the_exact_polygon_plan():
+def test_runtime_is_bound_to_the_exact_polygon_plan() -> None:
     points = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
+    # ty: ignore[invalid-argument-type]
     mesh = phx.discretization.CellMesh.from_polygons(points, ((0, 1, 2, 3),))
     field = phx.discretization.ExplicitPolygonH1FieldSpec("u")
     source = phx.discretization.ExplicitPolygonH1Plan(

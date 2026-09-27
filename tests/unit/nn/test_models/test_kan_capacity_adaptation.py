@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _model(*, scan=False, per_input=False):
+def _model(*, scan: Any = False, per_input: Any = False) -> Any:
     return phx.nn.models.KAN(
         in_size=2,
         out_size="scalar",
@@ -28,12 +31,12 @@ def _model(*, scan=False, per_input=False):
     )
 
 
-def _trainable_count(model):
+def _trainable_count(model: Any) -> Any:
     trainable, _model_state, _ = phx.partition_parameters(model)
     return sum(leaf.size for leaf in jax.tree.leaves(trainable))
 
 
-def test_refinement_is_exact_pure_and_allocates_only_selected_edges():
+def test_refinement_is_exact_pure_and_allocates_only_selected_edges() -> None:
     model = _model(per_input=True)
     evaluation = jax.random.uniform(jax.random.key(1), (48, 2), minval=-1.0, maxval=1.0)
     original_knots = np.asarray(model.layers[0].edge_basis.grid.grids[0].knots).copy()
@@ -68,7 +71,7 @@ def test_refinement_is_exact_pure_and_allocates_only_selected_edges():
     )
 
 
-def test_exact_coarsening_undoes_inserted_capacity_with_certificate():
+def test_exact_coarsening_undoes_inserted_capacity_with_certificate() -> None:
     model = _model()
     refined, _ = phx.nn.models.refine_kan_edges(
         model,
@@ -95,7 +98,7 @@ def test_exact_coarsening_undoes_inserted_capacity_with_certificate():
     )
 
 
-def test_identical_hidden_block_layouts_preserve_scan_and_gradients():
+def test_identical_hidden_block_layouts_preserve_scan_and_gradients() -> None:
     model = _model(scan=True)
     repeated_layers = range(1, len(model.layers) - 1)
     indicators = {
@@ -121,7 +124,7 @@ def test_identical_hidden_block_layouts_preserve_scan_and_gradients():
             assert np.all(np.isfinite(np.asarray(block.coeffs)))
 
 
-def test_capacity_adaptation_validation_and_tolerance_are_explicit():
+def test_capacity_adaptation_validation_and_tolerance_are_explicit() -> None:
     model = _model()
     with pytest.raises(ValueError, match="one value per span"):
         phx.nn.models.refine_kan_edges(

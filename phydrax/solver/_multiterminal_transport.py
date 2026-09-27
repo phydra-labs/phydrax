@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -53,7 +54,7 @@ class PeriodicLeadContactPlan(StrictModule, NonTrainableState):
         device_coupling: ArrayLike,
         contact_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(lead, PeriodicPrincipalLayerLeadPlan):
             raise TypeError("lead must be PeriodicPrincipalLayerLeadPlan.")
         coupling = np.asarray(device_coupling)
@@ -105,7 +106,7 @@ class MultiTerminalCoherentProblem(StrictModule, NonTrainableState):
         particle_continuity_tolerance: float = 1.0e-8,
         energy_continuity_tolerance_watt: float = 1.0e-12,
         numerical_broadening_joule: float = 1.0e-12,
-    ):
+    ) -> None:
         hamiltonian_ = np.asarray(hamiltonian)
         overlap_ = np.asarray(overlap)
         contacts_ = tuple(contacts)
@@ -227,7 +228,7 @@ def solve_multiterminal_coherent(
         raise TypeError("problem must be MultiTerminalCoherentProblem.")
     contact_count = len(problem.contacts)
 
-    def one_energy(energy):
+    def one_energy(energy: Array) -> tuple[Array, Array, Array, Array, Array]:
         spectral_energy = energy + 1.0j * problem.numerical_broadening_joule
         prepared_leads = tuple(
             prepare_periodic_lead_embedding(
@@ -334,7 +335,7 @@ class TransportProbePlan(StrictModule, NonTrainableState):
         /,
         *,
         residual_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         indices = tuple(int(value) for value in probe_indices)
         tolerance = float(residual_tolerance)
         if (
@@ -431,7 +432,7 @@ def solve_dephasing_probes(
         problem.temperatures_kelvin,
     )
 
-    def one(transmission, occupation):
+    def one(transmission: Array, occupation: Array) -> tuple[Array, Array, Array]:
         return _probe_linear_solve(
             _landauer_laplacian(transmission),
             plan.probe_indices,

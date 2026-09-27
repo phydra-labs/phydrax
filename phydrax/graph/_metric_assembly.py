@@ -8,7 +8,7 @@ from collections.abc import Sequence
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -38,7 +38,7 @@ class MetricCochainAssembly(StrictModule):
         dual_measures: tuple[Array, ...],
         hodge_stars: tuple[Array, ...],
         /,
-    ):
+    ) -> None:
         self.complex = complex
         self.primal_measures = primal_measures
         self.dual_measures = dual_measures

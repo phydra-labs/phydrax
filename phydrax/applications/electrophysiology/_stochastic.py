@@ -15,7 +15,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -40,7 +40,7 @@ class MarkovChannelPlan(StrictModule, NonTrainableState):
     state_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, generator_per_ms: Array, compartment_count: int, /):
+    def __init__(self, generator_per_ms: Array, compartment_count: int, /) -> None:
         generator_host = np.asarray(generator_per_ms, dtype=np.float64)
         if (
             generator_host.ndim != 2
@@ -88,7 +88,7 @@ class PreparedMarkovChannel(StrictModule, NonTrainableState):
 
     def __init__(
         self, plan: MarkovChannelPlan, transition_probability: Array, dt_ms: float, /
-    ):
+    ) -> None:
         self.plan = plan
         self.transition_probability = transition_probability
         self.dt_ms = dt_ms
@@ -191,7 +191,9 @@ def _multinomial_exact(key: Array, count: Array, probabilities: Array, /) -> Arr
     state_count = probabilities.shape[0]
     draws = jnp.zeros((state_count,), dtype=jnp.int32)
 
-    def sample(destination, carry):
+    def sample(
+        destination: Array, carry: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
         output, remaining_count, remaining_probability = carry
         probability = jnp.where(
             remaining_probability > 0.0,

@@ -8,7 +8,8 @@ from math import comb
 
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..operators.quantum import BathCorrelationExpansion
@@ -29,7 +30,7 @@ class ScaledHEOMTopology(StrictModule):
         hierarchy: HEOMHierarchy,
         expansion: BathCorrelationExpansion,
         /,
-    ):
+    ) -> None:
         if hierarchy.term_count != expansion.rank:
             raise ValueError("Hierarchy and bath expansion ranks differ.")
         if jnp.any(jnp.abs(expansion.coefficients) == 0.0):

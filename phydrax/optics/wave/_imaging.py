@@ -9,7 +9,8 @@ from enum import IntEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -43,7 +44,7 @@ class FraunhoferImagingPlan(StrictModule, NonTrainableState):
         medium_wavenumber: ArrayLike,
         pupil_diameter: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(input_space, PlaneFieldSpace) or not isinstance(
             output_space, PlaneFieldSpace
         ):
@@ -326,9 +327,10 @@ def normalized_otf_mtf(intensity: IntensityPlane, /) -> NormalizedTransferFuncti
     hermitian_error = jnp.max(jnp.abs(normalized - conjugate_partner))
     centered = jnp.fft.fftshift(normalized)
     mtf = jnp.abs(centered)
-    frequency_axes = tuple(
-        jnp.fft.fftshift(jnp.fft.fftfreq(count, d=spacing))
-        for count, spacing in zip(intensity.space.shape, spacings, strict=True)
+    shape = intensity.space.shape
+    frequency_axes = (
+        jnp.fft.fftshift(jnp.fft.fftfreq(shape[0], d=spacings[0])),
+        jnp.fft.fftshift(jnp.fft.fftfreq(shape[1], d=spacings[1])),
     )
     nyquist = 0.5 / spacings
     finite = (

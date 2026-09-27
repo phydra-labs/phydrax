@@ -26,7 +26,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
@@ -35,6 +36,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float
 from ...linalg import (
     ConjugateGradient,
     determinant_small_linear,
@@ -147,13 +149,6 @@ _GEOMETRY_STATUS = (
 )
 
 
-def _positive(value: float, name: str, /) -> float:
-    number = float(value)
-    if not math.isfinite(number) or number <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return number
-
-
 class FiniteElementMeshMotionPolicy(StrictModule, NonTrainableState):
     """Route selection, route controls, solve tolerances, and acceptance policy.
 
@@ -192,22 +187,28 @@ class FiniteElementMeshMotionPolicy(StrictModule, NonTrainableState):
         maximum_nonlinear_steps: int = 100,
         relaxation_time: float = 1.0e-2,
         mmpde_initial_time_step: float = 1.0e-3,
-    ):
+    ) -> None:
         if not isinstance(route, FiniteElementMeshMotionRoute):
             raise TypeError("route must be FiniteElementMeshMotionRoute.")
         validity_ = MotionValidityPolicy() if validity is None else validity
         if not isinstance(validity_, MotionValidityPolicy):
             raise TypeError("validity must be MotionValidityPolicy or None.")
-        relative = _positive(solve_relative_tolerance, "solve_relative_tolerance")
-        absolute = _positive(solve_absolute_tolerance, "solve_absolute_tolerance")
-        nonlinear_relative = _positive(
+        relative = positive_finite_float(
+            solve_relative_tolerance, "solve_relative_tolerance"
+        )
+        absolute = positive_finite_float(
+            solve_absolute_tolerance, "solve_absolute_tolerance"
+        )
+        nonlinear_relative = positive_finite_float(
             nonlinear_relative_tolerance, "nonlinear_relative_tolerance"
         )
-        nonlinear_absolute = _positive(
+        nonlinear_absolute = positive_finite_float(
             nonlinear_absolute_tolerance, "nonlinear_absolute_tolerance"
         )
-        relaxation = _positive(relaxation_time, "relaxation_time")
-        initial_step = _positive(mmpde_initial_time_step, "mmpde_initial_time_step")
+        relaxation = positive_finite_float(relaxation_time, "relaxation_time")
+        initial_step = positive_finite_float(
+            mmpde_initial_time_step, "mmpde_initial_time_step"
+        )
         chi = float(stiffening_exponent)
         if not math.isfinite(chi) or chi < 0.0:
             raise ValueError("stiffening_exponent must be finite and non-negative.")
@@ -301,7 +302,7 @@ class FiniteElementBoundaryRealization(StrictModule):
         refresh_required: Any,
         status: Any,
         mapping_id: str,
-    ):
+    ) -> None:
         proposed = jnp.asarray(proposed_points, dtype=jnp.float64)
         safe = jnp.asarray(points, dtype=proposed.dtype)
         if proposed.ndim != 2 or safe.shape != proposed.shape:
@@ -355,7 +356,7 @@ class FiniteElementMeshMotionEvidence(StrictModule):
         plan_id: str,
         topology_id: str,
         geometry_layout_id: str,
-    ):
+    ) -> None:
         self.boundary = boundary
         self.geometry = geometry
         self.extension = extension
@@ -388,7 +389,7 @@ class FiniteElementMeshRealization(StrictModule):
         runtime: FiniteElementRuntimeData,
         evidence: FiniteElementMeshMotionEvidence,
         /,
-    ):
+    ) -> None:
         proposed = jnp.asarray(proposed_coordinates, dtype=jnp.float64)
         safe = jnp.asarray(coordinates, dtype=proposed.dtype)
         if proposed.ndim != 2 or safe.shape != proposed.shape:
@@ -569,7 +570,7 @@ class _DirichletExtension(StrictModule, NonTrainableState):
         policy: FiniteElementMeshMotionPolicy,
         problem_id: str,
         /,
-    ):
+    ) -> None:
         local_matrices, vertex_routes, padding = tensors
         components = local_matrices.shape[1] // vertex_routes.shape[1]
         vertex_count = boundary_vertices.size + interior_vertices.size
@@ -640,7 +641,7 @@ class _DirichletExtension(StrictModule, NonTrainableState):
         )
         self.components = components
 
-    def solve(self, boundary_displacement: Array, /):
+    def solve(self, boundary_displacement: Array, /) -> Any:
         """Interior displacement ``(interior, dim)`` and the native solve result."""
 
         if self.components == 1:
@@ -674,7 +675,7 @@ class _CornerEnergy(StrictModule, NonTrainableState):
 
     def __init__(
         self, reference: np.ndarray, blocks: tuple[tuple[str, np.ndarray], ...], /
-    ):
+    ) -> None:
         dimension = reference.shape[1]
         determinant_plan = SmallLinearSolvePlan(dimension)
         vertices = []
@@ -815,7 +816,7 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
         /,
         *,
         policy: FiniteElementMeshMotionPolicy | None = None,
-    ):
+    ) -> None:
         policy_ = FiniteElementMeshMotionPolicy() if policy is None else policy
         if not isinstance(policy_, FiniteElementMeshMotionPolicy):
             raise TypeError("policy must be FiniteElementMeshMotionPolicy or None.")
@@ -916,20 +917,22 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
         initial: Array,
         monitor: MeshMonitor | None,
         /,
-    ):
+    ) -> Any:
         energy = self.energy
         policy = self.policy
         count, dimension = self.reference_coordinates.shape
         interior_indices = self.interior_indices
 
-        def admissible(state, arguments):
+        def admissible(state: Any, arguments: Any) -> Any:
+            # ty: ignore[unresolved-attribute]
             return energy.admissible(self._points(state, arguments.boundary_points))
 
         match policy.route:
             case FiniteElementMeshMotionRoute.WINSLOW:
 
-                def residual(state, arguments):
+                def residual(state: Any, arguments: Any) -> Any:
                     return jax.grad(
+                        # ty: ignore[unresolved-attribute]
                         lambda interior: energy.winslow(
                             self._points(interior, arguments.boundary_points)
                         )
@@ -938,19 +941,22 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
                 method = NewtonKrylov(linear_policy=policy.linear_policy())
             case FiniteElementMeshMotionRoute.MMPDE:
 
-                def residual(state, arguments):
-                    def functional(interior):
+                def residual(state: Any, arguments: Any) -> Any:
+                    def functional(interior: Any) -> Any:
                         points = self._points(interior, arguments.boundary_points)
                         values = _monitor_tensors(
                             arguments.monitor(points), count, dimension
                         )
+                        # ty: ignore[unresolved-attribute]
                         return energy.huang(points, values)
 
                     points = self._points(state, arguments.boundary_points)
                     values = _monitor_tensors(arguments.monitor(points), count, dimension)
                     # Huang–Kamenski balancing P = det(M)**((p - 1) / 2).
                     balance = determinant_small_linear(
-                        energy.determinant_plan, values[interior_indices]
+                        # ty: ignore[unresolved-attribute]
+                        energy.determinant_plan,
+                        values[interior_indices],
                     ) ** (0.5 * (_MMPDE_EXPONENT - 1.0))
                     return (balance[:, None] / policy.relaxation_time) * jax.grad(
                         functional
@@ -999,7 +1005,13 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
             raise ValueError("boundary_displacement must have shape (boundary, dim).")
         boundary_points = reference[self.boundary_indices] + boundary
 
-        def result(interior, successful, status, iterations, residual_norm):
+        def result(
+            interior: Any,
+            successful: Any,
+            status: Any,
+            iterations: Any,
+            residual_norm: Any,
+        ) -> Any:
             displacement = (
                 jnp.zeros_like(reference)
                 .at[self.boundary_indices]
@@ -1029,6 +1041,7 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
                 FiniteElementMeshMotionRoute.HARMONIC
                 | FiniteElementMeshMotionRoute.LINEAR_ELASTICITY
             ):
+                # ty: ignore[unresolved-attribute]
                 interior, solved = self.linear.solve(boundary)
                 return result(
                     interior,
@@ -1040,6 +1053,7 @@ class FiniteElementMotionExtension(StrictModule, NonTrainableState):
             case (
                 FiniteElementMeshMotionRoute.WINSLOW | FiniteElementMeshMotionRoute.MMPDE
             ):
+                # ty: ignore[unresolved-attribute]
                 harmonic, _ = self.linear.solve(boundary)
                 initial = reference[self.interior_indices] + harmonic
                 root = self._stationary_route(boundary_points, initial, monitor)
@@ -1108,7 +1122,7 @@ class FiniteElementMeshMotionPlan(StrictModule):
         /,
         *,
         policy: FiniteElementMeshMotionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, FiniteElementDiscretization):
             raise TypeError("discretization must be FiniteElementDiscretization.")
         if not isinstance(boundary_provider, FiniteElementBoundaryProvider):
@@ -1131,6 +1145,7 @@ class FiniteElementMeshMotionPlan(StrictModule):
             discretization.coordinate_dofs,
             strict=True,
         ):
+            # ty: ignore[unresolved-attribute]
             if element.degree != 1 or element.local_dof_count != block.arity:
                 raise ValueError("Mesh motion requires affine P1/Q1 coordinates.")
             if not np.array_equal(np.asarray(dofs), np.asarray(block.vertices)):

@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -18,9 +19,9 @@ from ..._trainable import NonTrainableState
 from ._cell_list import CellListParticleNeighborhoodPlan
 from ._core import ParticleSetPlan
 from ._dem import DEMResolvedLoad, DEMRuntimeState, PreparedSoftSphereDEMDynamics
-from ._dem_contact_state import remap_dem_contact_history
+from ._dem_contact_state import DEMContactHistory, remap_dem_contact_history
 from ._dem_liquid import DEMLiquidState
-from ._neighborhood import DenseParticleNeighborhoodPlan
+from ._neighborhood import AbstractParticleNeighborhoodPlan, DenseParticleNeighborhoodPlan
 from ._pair_state import (
     IMPLICIT_BARRIER_INTERACTION,
     match_particle_pair_keys,
@@ -30,7 +31,7 @@ from ._pair_state import (
 from ._particle_morphology import ParticleDynamicBodyProperties
 from ._population import ParticlePopulationState
 from ._rigid_sphere import RigidSphereKinematics, RigidSphereSetPlan
-from ._verlet import VerletParticleNeighborhoodPlan
+from ._verlet import PreparedVerletParticleNeighborhood, VerletParticleNeighborhoodPlan
 
 
 class ParticleCapacityStatus(IntEnum):
@@ -54,7 +55,7 @@ class ParticleCapacityGrowthPolicy(StrictModule, NonTrainableState):
         minimum_increment: int = 8,
         maximum_capacity: int = 1_000_000,
         free_slot_trigger: int = 0,
-    ):
+    ) -> None:
         factor = float(growth_factor)
         increment = int(minimum_increment)
         maximum = int(maximum_capacity)
@@ -105,7 +106,7 @@ class ParticleCapacityRequest(StrictModule, NonTrainableState):
         required_pair_capacity: int = 0,
         required_internal_cells: int = 0,
         reason: str = "particle_event",
-    ):
+    ) -> None:
         particles = int(required_particle_slots)
         pairs = int(required_pair_capacity)
         cells = int(required_internal_cells)
@@ -178,7 +179,13 @@ def initialize_particle_execution_epoch(
     )
 
 
-def _grown_neighborhood_plan(plan, capacity: int, /):
+def _grown_neighborhood_plan(
+    plan: AbstractParticleNeighborhoodPlan, capacity: int, /
+) -> (
+    DenseParticleNeighborhoodPlan
+    | CellListParticleNeighborhoodPlan
+    | VerletParticleNeighborhoodPlan
+):
     pair_capacity = capacity * (capacity - 1) // 2
     if isinstance(plan, DenseParticleNeighborhoodPlan):
         return DenseParticleNeighborhoodPlan(pair_capacity, box=plan.box)
@@ -223,13 +230,13 @@ def _zero_resolved_load(dynamics: PreparedSoftSphereDEMDynamics, /) -> DEMResolv
 
 
 def _remap_boundary_history(
-    old_history,
-    new_empty,
-    old_ids,
-    new_ids,
-    active,
+    old_history: DEMContactHistory,
+    new_empty: DEMContactHistory,
+    old_ids: Array,
+    new_ids: Array,
+    active: Array,
     /,
-):
+) -> tuple[DEMContactHistory, Array]:
     old_zeros = jnp.zeros((old_ids.shape[0],), dtype=jnp.int64)
     new_zeros = jnp.zeros((new_ids.shape[0],), dtype=jnp.int64)
     old_keys = particle_wall_interaction_keys(
@@ -397,9 +404,10 @@ def grow_particle_execution_epoch(
         )
         boundary_histories.append(migrated)
         boundary_success = boundary_success & successful
+    new_neighborhood = new_dynamics.neighborhood
     cache = (
-        new_dynamics.neighborhood.initialize(position, active_mask=active)
-        if isinstance(new_dynamics.neighborhood.plan, VerletParticleNeighborhoodPlan)
+        new_neighborhood.initialize(position, active_mask=active)
+        if isinstance(new_neighborhood, PreparedVerletParticleNeighborhood)
         else None
     )
     liquid = (

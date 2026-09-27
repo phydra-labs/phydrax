@@ -4,10 +4,12 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -28,6 +30,10 @@ from ...linalg import (
     solve as solve_linear,
     StructuredDirect,
 )
+
+
+if TYPE_CHECKING:
+    from ._channel import ChannelStokesPlan
 
 
 class _PreparedBatchedTauSolve(StrictModule, NonTrainableState):
@@ -628,7 +634,7 @@ def _prepare_batched_tau_solve(
 
 
 def prepare_ultraspherical_channel(
-    plan,
+    plan: ChannelStokesPlan,
     shift: Array,
     synthesis: Array,
     quadrature_weights: Array,

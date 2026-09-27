@@ -6,6 +6,7 @@ import argparse
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -48,8 +49,9 @@ def _sphere_face_count(case: str) -> int | None:
     return face_count
 
 
-def _region(case: str):
+def _region(case: str) -> Any:
     if case == "tetrahedron":
+        # ty: ignore[invalid-argument-type]
         return phx.geometry.MeshRegion(_TETRA_VERTICES, _TETRA_FACES)
     if case == "two-tetrahedra":
         vertices = np.concatenate(
@@ -69,11 +71,12 @@ def _region(case: str):
             raise ValueError(
                 "[geometry] Deterministic icosphere refinement produced an unexpected face count."
             )
+        # ty: ignore[invalid-argument-type]
         return phx.geometry.MeshRegion(np.asarray(mesh.vertices), np.asarray(mesh.faces))
     raise ValueError(f"[geometry] Unknown benchmark case {case!r}.")
 
 
-def _selections(prepared, case: str):
+def _selections(prepared: Any, case: str) -> Any:
     if case != "two-tetrahedra":
         return {
             "body": phx.discretization.EntitySelection(
@@ -93,7 +96,7 @@ def _selections(prepared, case: str):
     }
 
 
-def _case(case: str):
+def _case(case: str) -> Any:
     region = _region(case)
     face_count = region.faces.shape[0]
     policy = phx.operators.LaplaceSingleLayerDP0GalerkinPolicy3D(
@@ -122,6 +125,7 @@ def _case(case: str):
     action = prepared.strong_operator.mv(vector)
     jax.block_until_ready(action)
     action_seconds = time.perf_counter() - started
+    # ty: ignore[unresolved-attribute]
     dense_error = float(jnp.max(jnp.abs(action - prepared.dense_oracle.matrix @ vector)))
 
     started = time.perf_counter()
@@ -153,6 +157,7 @@ def _case(case: str):
         failure_codes.append("nonfinite-capacitance")
     if (
         sphere_relative_error is not None
+        # ty: ignore[invalid-argument-type]
         and sphere_relative_error > _SPHERE_ERROR_LIMITS[sphere_faces]
     ):
         failure_codes.append("sphere-capacitance")
@@ -213,7 +218,7 @@ def _case(case: str):
     }
 
 
-def _sphere_refinement_evidence(records):
+def _sphere_refinement_evidence(records: Any) -> Any:
     sphere_records = [
         record for record in records if _sphere_face_count(record["case"]) is not None
     ]
@@ -246,7 +251,7 @@ def _sphere_refinement_evidence(records):
     }
 
 
-def _parser():
+def _parser() -> Any:
     parser = argparse.ArgumentParser(
         description="Benchmark 3D Laplace DP0 Galerkin capacitance."
     )
@@ -259,7 +264,7 @@ def _parser():
     return parser
 
 
-def main():
+def main() -> None:
     arguments = _parser().parse_args()
     cases = ["tetrahedron", "two-tetrahedra"]
     if not arguments.smoke:

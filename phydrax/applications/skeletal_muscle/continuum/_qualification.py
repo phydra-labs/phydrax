@@ -9,7 +9,8 @@ from math import isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -62,7 +63,7 @@ class GasamQualificationPlan(StrictModule, NonTrainableState):
         relative_tolerance: float = 2.0e-5,
         absolute_tolerance_pa: float = 1.0e-4,
         minimum_acoustic_value_pa: float = 0.0,
-    ):
+    ) -> None:
         relative = float(relative_tolerance)
         absolute = float(absolute_tolerance_pa)
         minimum = float(minimum_acoustic_value_pa)

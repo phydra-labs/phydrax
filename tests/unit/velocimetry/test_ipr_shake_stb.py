@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -40,7 +42,7 @@ from phydrax.velocimetry.tracking._stb import (
 from phydrax.velocimetry.tracking._tracks import TrackLinkPlan
 
 
-def _rig_and_geometry():
+def _rig_and_geometry() -> Any:
     geometry = ImagePlaneSupport((48, 48))
     intrinsics = CameraIntrinsics(
         (30.0, 30.0),
@@ -58,14 +60,14 @@ def _rig_and_geometry():
     return CameraRig((left, right)), geometry
 
 
-def _formation():
+def _formation() -> Any:
     return ParticleImageFormation(
         GaussianRasterizer(5, cutoff=3.0),
         PhotometricResponse(),
     )
 
 
-def _ipr_plan(particle_capacity: int, *, selected_capacity: int = 4):
+def _ipr_plan(particle_capacity: int, *, selected_capacity: int = 4) -> Any:
     detection = ParticleDetectionPlan(
         threshold=0.01,
         maximum_detections=4,
@@ -88,7 +90,9 @@ def _ipr_plan(particle_capacity: int, *, selected_capacity: int = 4):
     )
 
 
-def _render_truth(formation, rig, geometry, positions, amplitude, active):
+def _render_truth(
+    formation: Any, rig: Any, geometry: Any, positions: Any, amplitude: Any, active: Any
+) -> Any:
     return render_camera_stack(
         formation,
         rig,
@@ -100,7 +104,7 @@ def _render_truth(formation, rig, geometry, positions, amplitude, active):
     ).images
 
 
-def test_noiseless_ipr_recovers_missing_particle_and_reduces_residual():
+def test_noiseless_ipr_recovers_missing_particle_and_reduces_residual() -> None:
     rig, geometry = _rig_and_geometry()
     formation = _formation()
     truth_position = jnp.asarray([[-0.45, 0.05, 6.0], [0.55, -0.1, 6.4], [0.0, 0.0, 0.0]])
@@ -133,7 +137,7 @@ def test_noiseless_ipr_recovers_missing_particle_and_reduces_residual():
     assert jnp.sum(result.residual * result.residual) < jnp.sum(observed * observed)
 
 
-def test_ipr_rejects_duplicates_and_reports_subset_and_capacity():
+def test_ipr_rejects_duplicates_and_reports_subset_and_capacity() -> None:
     rig, geometry = _rig_and_geometry()
     formation = _formation()
     one_position = jnp.asarray([[0.0, 0.0, 6.0], [0.0, 0.0, 0.0]])
@@ -184,7 +188,7 @@ def test_ipr_rejects_duplicates_and_reports_subset_and_capacity():
     assert capacity.status == IPR_CAPACITY_EXHAUSTED
 
 
-def test_shake_reduces_robust_residual_and_frozen_topology_is_differentiable():
+def test_shake_reduces_robust_residual_and_frozen_topology_is_differentiable() -> None:
     rig, geometry = _rig_and_geometry()
     formation = _formation()
     truth = jnp.asarray([[0.2, -0.1, 6.0]])
@@ -221,7 +225,7 @@ def test_shake_reduces_robust_residual_and_frozen_topology_is_differentiable():
         result.initial_residual * result.initial_residual
     )
 
-    def refined_loss(x_coordinate):
+    def refined_loss(x_coordinate: Any) -> Any:
         shifted = initial.at[0, 0].set(x_coordinate)
         refined = shake_particles(
             plan,
@@ -240,7 +244,7 @@ def test_shake_reduces_robust_residual_and_frozen_topology_is_differentiable():
     assert jnp.isfinite(derivative)
 
 
-def test_stb_promotes_distinct_identity_and_terminates_through_tracking_core():
+def test_stb_promotes_distinct_identity_and_terminates_through_tracking_core() -> None:
     rig, geometry = _rig_and_geometry()
     formation = _formation()
     capacity = 2

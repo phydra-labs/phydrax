@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 
@@ -51,7 +52,7 @@ class BlackScholesModel(StrictModule):
 
     volatility: Array
 
-    def __init__(self, volatility: ArrayLike, /):
+    def __init__(self, volatility: ArrayLike, /) -> None:
         self.volatility = _scalar(volatility, "volatility", lower=0.0)
 
     def instantaneous_variance(self, spot: ArrayLike | None = None, /) -> Array:
@@ -64,7 +65,7 @@ class Black76Model(StrictModule):
 
     volatility: Array
 
-    def __init__(self, volatility: ArrayLike, /):
+    def __init__(self, volatility: ArrayLike, /) -> None:
         self.volatility = _scalar(volatility, "volatility", lower=0.0)
 
     def instantaneous_variance(self, forward: ArrayLike | None = None, /) -> Array:
@@ -77,7 +78,7 @@ class BachelierModel(StrictModule):
 
     volatility: Array
 
-    def __init__(self, volatility: ArrayLike, /):
+    def __init__(self, volatility: ArrayLike, /) -> None:
         self.volatility = _scalar(volatility, "volatility", lower=0.0)
 
     def instantaneous_variance(self, forward: ArrayLike | None = None, /) -> Array:
@@ -105,7 +106,7 @@ class HestonModel(StrictModule):
         /,
         *,
         require_feller: bool = True,
-    ):
+    ) -> None:
         if not isinstance(require_feller, bool):
             raise TypeError("require_feller must be boolean.")
         kappa = _scalar(mean_reversion, "mean_reversion", lower=0.0)
@@ -159,7 +160,7 @@ class SABRModel(StrictModule):
         /,
         *,
         shift: ArrayLike = 0.0,
-    ):
+    ) -> None:
         beta_ = _scalar(beta, "beta")
         beta_ = eqx.error_if(
             beta_, (beta_ < 0.0) | (beta_ > 1.0), "beta must lie in [0, 1]."
@@ -233,7 +234,7 @@ class LocalVolatilityModel(StrictModule):
         log_moneyness: ArrayLike,
         local_variance: ArrayLike,
         /,
-    ):
+    ) -> None:
         expiries_ = _ordered_grid(expiries, "expiries", positive=True)
         strikes_ = _ordered_grid(log_moneyness, "log_moneyness")
         variance = jnp.asarray(local_variance, dtype=jnp.float64)
@@ -300,7 +301,7 @@ class LocalStochasticVolatilityModel(StrictModule):
         /,
         *,
         reference_variance: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(variance_model, HestonModel):
             raise TypeError("variance_model must be a HestonModel.")
         if not isinstance(leverage_surface, LocalVolatilityModel):

@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -28,7 +29,7 @@ class RollingSpinningResistancePlan(StrictModule, NonTrainableState):
         rolling_coefficient: float,
         spinning_coefficient: float,
         regularization: float = 1.0e-10,
-    ):
+    ) -> None:
         rolling = float(rolling_coefficient)
         spinning = float(spinning_coefficient)
         regularization_ = float(regularization)

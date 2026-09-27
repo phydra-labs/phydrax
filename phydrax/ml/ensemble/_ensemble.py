@@ -5,13 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array
+from jax import Array
 
 from ..._differentiation import (
     DerivativeContract,
@@ -23,7 +23,11 @@ from ..._differentiation import (
 )
 from ..._model import AbstractArrayModel, ModelBinding
 from ..._strict import StrictModule
-from ...uq import HeterogeneousFunctionEnsemble, HomogeneousFunctionEnsemble
+from ...uq import (
+    HeterogeneousFunctionEnsemble,
+    HomogeneousFunctionEnsemble,
+    PredictiveField,
+)
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
@@ -140,7 +144,7 @@ class EnsembleFitDiagnostics(StrictModule):
         *,
         method: str,
         auxiliary_status: Any = (),
-    ):
+    ) -> None:
         self.member_valid = jnp.asarray(member_valid, dtype=jnp.bool_)
         self.member_status = jnp.asarray(member_status, dtype=jnp.int32)
         self.auxiliary_status = jnp.asarray(auxiliary_status, dtype=jnp.int32)
@@ -162,7 +166,7 @@ class HomogeneousEnsembleModel(AbstractFittedModel):
         /,
         *,
         member_weights: Any = None,
-    ):
+    ) -> None:
         values = tuple(members)
         if not values:
             raise ValueError("members must be non-empty.")
@@ -176,7 +180,7 @@ class HomogeneousEnsembleModel(AbstractFittedModel):
     def member_predictions(self, x: Any, /, *, key: Any = None) -> Array:
         return _homogeneous_predictions(self.ensemble, x, key)
 
-    def predictive(self, x: Any, /, *, key: Any):
+    def predictive(self, x: Any, /, *, key: Any) -> PredictiveField:
         """Return the shared UQ PredictiveField over raw member samples."""
         return self.ensemble.predict(x, key=_require_key(key, "predictive"))
 
@@ -204,7 +208,7 @@ class HeterogeneousEnsembleModel(AbstractFittedModel):
         /,
         *,
         member_weights: Any = None,
-    ):
+    ) -> None:
         values = tuple(members)
         if not values:
             raise ValueError("members must be non-empty.")
@@ -218,7 +222,7 @@ class HeterogeneousEnsembleModel(AbstractFittedModel):
     def member_predictions(self, x: Any, /, *, key: Any = None) -> Array:
         return _call_members(self.ensemble.members, x, key)
 
-    def predictive(self, x: Any, /, *, key: Any):
+    def predictive(self, x: Any, /, *, key: Any) -> PredictiveField:
         """Return the shared UQ PredictiveField over raw member samples."""
         return self.ensemble.predict(x, key=_require_key(key, "predictive"))
 
@@ -240,7 +244,7 @@ class SoftVotingModel(AbstractFittedModel):
 
     def __init__(
         self, members: Sequence[AbstractArrayModel], /, *, member_weights: Any = None
-    ):
+    ) -> None:
         values = tuple(members)
         if not values:
             raise ValueError("members must be non-empty.")
@@ -266,7 +270,7 @@ class HardVotingModel(AbstractFittedModel):
     out_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
     _input_binding = ModelBinding.pointwise()
 
-    def __init__(self, members: Sequence[AbstractArrayModel], /):
+    def __init__(self, members: Sequence[AbstractArrayModel], /) -> None:
         values = tuple(members)
         if not values:
             raise ValueError("members must be non-empty.")
@@ -316,7 +320,9 @@ class FeatureSubsetModel(AbstractFittedModel):
     out_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
     _input_binding = ModelBinding.pointwise()
 
-    def __init__(self, model: AbstractArrayModel, indices: Any, /, *, input_size: int):
+    def __init__(
+        self, model: AbstractArrayModel, indices: Any, /, *, input_size: int
+    ) -> None:
         selected = jnp.asarray(indices, dtype=jnp.int32)
         if selected.ndim != 1 or selected.shape[0] == 0:
             raise ValueError("indices must be a nonempty vector.")
@@ -344,7 +350,7 @@ class StackingModel(AbstractFittedModel):
 
     def __init__(
         self, bases: Sequence[AbstractArrayModel], meta_model: AbstractArrayModel, /
-    ):
+    ) -> None:
         values = tuple(bases)
         if not values:
             raise ValueError("bases must be non-empty.")
@@ -389,7 +395,7 @@ class MixtureOfExpertsModel(AbstractFittedModel):
         /,
         *,
         temperature: Any = 1.0,
-    ):
+    ) -> None:
         values = tuple(experts)
         if not values:
             raise ValueError("experts must be non-empty.")
@@ -446,8 +452,18 @@ def _flatten_prediction(prediction: Any, features: Any) -> Array:
     )
 
 
+_EnsembleFittedModel: TypeAlias = (
+    HomogeneousEnsembleModel
+    | HeterogeneousEnsembleModel
+    | SoftVotingModel
+    | HardVotingModel
+    | StackingModel
+    | MixtureOfExpertsModel
+)
+
+
 def _fit_result(
-    model: AbstractFittedModel,
+    model: _EnsembleFittedModel,
     diagnostics: EnsembleFitDiagnostics,
     method: str,
     *,
@@ -476,7 +492,7 @@ def _fit_result(
 
 def _fit_members(
     recipes: Sequence[AbstractRecipe], batch: MLBatch, key: Array, stream: int
-):
+) -> tuple[tuple[FitResult, ...], tuple[AbstractArrayModel, ...], Array, Array]:
     results = tuple(
         recipe.fit_batch(batch, key=_key(key, stream + index))
         for index, recipe in enumerate(recipes)
@@ -499,7 +515,7 @@ class BaggingRecipe(AbstractRecipe):
         *,
         num_members: int = 16,
         sample_fraction: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(recipe, AbstractRecipe):
             raise TypeError("recipe must be an AbstractRecipe.")
         if int(num_members) <= 0 or not (0.0 < float(sample_fraction) <= 1.0):
@@ -542,7 +558,7 @@ class RandomSubspaceRecipe(AbstractRecipe):
 
     def __init__(
         self, recipe: AbstractRecipe, /, *, num_members: int = 16, feature_count: int
-    ):
+    ) -> None:
         if not isinstance(recipe, AbstractRecipe):
             raise TypeError("recipe must be an AbstractRecipe.")
         if int(num_members) <= 0 or int(feature_count) <= 0:
@@ -596,7 +612,7 @@ class SoftVotingRecipe(AbstractRecipe):
 
     def __init__(
         self, recipes: Sequence[AbstractRecipe], /, *, member_weights: Any = None
-    ):
+    ) -> None:
         values = tuple(recipes)
         if not values or any(not isinstance(value, AbstractRecipe) for value in values):
             raise TypeError(
@@ -622,7 +638,7 @@ class SoftVotingRecipe(AbstractRecipe):
 class HardVotingRecipe(AbstractRecipe):
     recipes: tuple[AbstractRecipe, ...]
 
-    def __init__(self, recipes: Sequence[AbstractRecipe], /):
+    def __init__(self, recipes: Sequence[AbstractRecipe], /) -> None:
         values = tuple(recipes)
         if not values or any(not isinstance(value, AbstractRecipe) for value in values):
             raise TypeError(
@@ -654,7 +670,7 @@ class StackingRecipe(AbstractRecipe):
         /,
         *,
         num_folds: int = 5,
-    ):
+    ) -> None:
         bases = tuple(base_recipes)
         if not bases or any(not isinstance(value, AbstractRecipe) for value in bases):
             raise TypeError("base_recipes must be a nonempty sequence of recipes.")
@@ -772,7 +788,7 @@ class MixtureOfExpertsRecipe(AbstractRecipe):
         /,
         *,
         temperature: float = 1.0,
-    ):
+    ) -> None:
         experts = tuple(expert_recipes)
         if not experts or any(not isinstance(value, AbstractRecipe) for value in experts):
             raise TypeError("expert_recipes must be a nonempty sequence of recipes.")

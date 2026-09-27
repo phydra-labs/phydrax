@@ -10,10 +10,12 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ..._validation import positive_finite_float
 from ...algebraic._isolated import (
     IsolatedPolynomialRootProblem,
     plan_isolated_roots,
@@ -192,7 +194,9 @@ def _fixed_injections(
     return jnp.asarray(values)
 
 
-def _add_term(equation, exponent: tuple[int, ...], coefficient: float) -> None:
+def _add_term(
+    equation: dict[tuple[int, ...], float], exponent: tuple[int, ...], coefficient: float
+) -> None:
     equation[exponent] = equation.get(exponent, 0.0) + float(coefficient)
 
 
@@ -357,13 +361,6 @@ def compile_fixed_mode_power_flow_polynomial(
     )
 
 
-def _positive_tolerance(value: float, name: str, /) -> float:
-    result = float(value)
-    if not math.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
-
-
 def prepare_fixed_mode_power_flow_roots(
     polynomial: FixedModePowerFlowPolynomial,
     provider: HomotopyContinuationProvider,
@@ -392,11 +389,11 @@ def prepare_fixed_mode_power_flow_roots(
         near_real_relative_tolerance=near_real_relative_tolerance,
     )
     isolated = prepare_isolated_roots(plan)
-    physical = _positive_tolerance(
+    physical = positive_finite_float(
         physical_residual_tolerance, "physical_residual_tolerance"
     )
-    mode = _positive_tolerance(mode_tolerance, "mode_tolerance")
-    operational = _positive_tolerance(operational_tolerance, "operational_tolerance")
+    mode = positive_finite_float(mode_tolerance, "mode_tolerance")
+    operational = positive_finite_float(operational_tolerance, "operational_tolerance")
     identifier = canonical_fingerprint(
         {
             "kind": "prepared-fixed-mode-power-flow-roots",

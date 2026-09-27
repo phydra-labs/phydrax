@@ -10,7 +10,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
@@ -22,6 +23,7 @@ from ..metrix import (
     UnitaryGroup,
 )
 from ..operators.quantum._propagation import unitarity_residual
+from ..typing import parse
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._diffrax_backend import solve_diffrax
 from ._diffrax_state_packing import DiffraxComplexStatePolicy
@@ -64,14 +66,13 @@ class UnitaryPropagatorProblem(StrictModule):
         temporal_precision: TemporalPrecisionPolicy | None = None,
         geometry_precision: GeometryPrecisionPolicy | None = None,
         hermitian_precision: HermitianPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not callable(hamiltonian):
             raise TypeError("hamiltonian must be callable.")
         dimension_ = int(dimension)
         if dimension_ < 1:
             raise ValueError("dimension must be positive.")
-        if group_kind not in ("unitary", "special-unitary"):
-            raise ValueError("Unknown unitary group kind.")
+        group_kind = parse(group_kind, UnitaryGroupKind, "group_kind")
         if hermiticity_tolerance < 0.0:
             raise ValueError("hermiticity_tolerance must be non-negative.")
         temporal_ = (
@@ -182,7 +183,7 @@ class _UnitaryPropagatorDrift(StrictModule):
         problem: UnitaryPropagatorProblem,
         group: UnitaryGroup | SpecialUnitaryGroup,
         /,
-    ):
+    ) -> None:
         self.problem = problem
         self.group = group
 
@@ -225,7 +226,7 @@ class UnitaryPropagatorSolution(StrictModule):
         hbar: ArrayLike,
         geometry_precision_evidence: PrecisionEvidenceEnvelope,
         hermitian_precision_evidence: PrecisionEvidenceEnvelope,
-    ):
+    ) -> None:
         self.differential_solution = differential_solution
         self.times = differential_solution.times
         self.propagators = differential_solution.states

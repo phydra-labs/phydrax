@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax._fingerprint import canonical_fingerprint

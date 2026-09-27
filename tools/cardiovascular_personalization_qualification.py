@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 
@@ -21,6 +22,7 @@ from phydrax.applications.cardiovascular.personalization._design import (
     SensitivitySVDPlan,
 )
 from phydrax.applications.cardiovascular.personalization._inverse import (
+    # ty: ignore[unresolved-import]
     ElectrophysiologyInverseProblem,
 )
 from phydrax.applications.cardiovascular.personalization._likelihood import (
@@ -66,7 +68,7 @@ def _schema() -> CardiacParameterSchema:
     )
 
 
-def _activation_likelihood(target: float, record_id: str):
+def _activation_likelihood(target: float, record_id: str) -> Any:
     observation = ModalityObservation(
         record_id,
         "activation_time",

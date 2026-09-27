@@ -20,14 +20,20 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._execution_runtime import ExecutionGroup
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import ParticleDomainDecompositionPlan, ParticleHaloState
-from ._constraints import PreparedDistanceConstraints
+from ..discretization import (
+    ParticleDomainDecompositionPlan,
+    ParticleHaloState,
+    ParticleNeighborhoodState,
+)
+from ..typing import parse
+from ._constraints import ConstraintProjection, PreparedDistanceConstraints
 from ._potential_program import (
     AtomisticPotentialEvaluation,
     PreparedAtomisticPotentialProgram,
@@ -61,7 +67,7 @@ class DistributedOutputMask(StrictModule, NonTrainableState):
         virial: bool = True,
         atom_energy: bool = False,
         partition_energy: bool = True,
-    ):
+    ) -> None:
         values = (energy, forces, virial, atom_energy, partition_energy)
         if any(not isinstance(value, (bool, np.bool_)) for value in values):
             raise TypeError("Distributed output requests must be booleans.")
@@ -88,9 +94,8 @@ class DistributedReductionPolicy(StrictModule, NonTrainableState):
     mode: DistributedReductionMode = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, mode: DistributedReductionMode = "deterministic", /):
-        if mode not in ("fast", "deterministic", "compensated"):
-            raise ValueError("Unknown distributed reduction mode.")
+    def __init__(self, mode: DistributedReductionMode = "deterministic", /) -> None:
+        mode = parse(mode, DistributedReductionMode, "mode")
         self.mode = mode
         self.policy_id = canonical_fingerprint(
             {"kind": "distributed-atomistic-reduction", "mode": mode}
@@ -122,7 +127,7 @@ class DistributedCollectiveOperations(StrictModule, NonTrainableState):
         *,
         partition_index: int,
         collective_id: str,
-    ):
+    ) -> None:
         if (
             not callable(exchange)
             or not callable(reverse_exchange)
@@ -201,7 +206,7 @@ class DistributedPMEPlan(StrictModule, NonTrainableState):
         *,
         interpolation_order: int = 4,
         decomposition_axis: int = 0,
-    ):
+    ) -> None:
         shape = tuple(grid_shape)
         if len(shape) != 3 or any(
             isinstance(value, (bool, np.bool_))
@@ -287,7 +292,7 @@ class DistributedPolarizationPlan(StrictModule, NonTrainableState):
         *,
         maximum_iterations: int = 100,
         tolerance: float = 1.0e-7,
-    ):
+    ) -> None:
         if (
             isinstance(maximum_iterations, (bool, np.bool_))
             or not isinstance(maximum_iterations, (int, np.integer))
@@ -489,7 +494,7 @@ class DistributedAtomisticPlan(StrictModule, NonTrainableState):
         pme: DistributedPMEPlan | None = None,
         polarization: DistributedPolarizationPlan | None = None,
         execution_mode: DistributedExecutionMode = "local-reference",
-    ):
+    ) -> None:
         if not isinstance(system, PreparedAtomisticSystem) or not isinstance(
             decomposition, ParticleDomainDecompositionPlan
         ):
@@ -498,12 +503,13 @@ class DistributedAtomisticPlan(StrictModule, NonTrainableState):
             )
         if decomposition.box.ambient_dimension != 3:
             raise ValueError("Distributed atomistic decomposition must be 3D.")
-        if execution_mode not in ("local-reference", "collective"):
-            raise ValueError("Unknown distributed execution mode.")
+        execution_mode = parse(execution_mode, DistributedExecutionMode, "execution_mode")
         if execution_mode == "collective" and decomposition.partitions < 2:
             raise ValueError("Collective execution requires at least two partitions.")
 
-        def capacity(name: str, value: int | None, default: int, *, positive: bool):
+        def capacity(
+            name: str, value: int | None, default: int, *, positive: bool
+        ) -> int:
             resolved = default if value is None else value
             if (
                 isinstance(resolved, (bool, np.bool_))
@@ -852,7 +858,9 @@ class DistributedAtomisticCheckpointIdentity(StrictModule, NonTrainableState):
     payload_digest: str = eqx.field(static=True)
     checkpoint_id: str = eqx.field(static=True)
 
-    def __init__(self, state: DistributedAtomisticState, units: AtomisticUnitSystem, /):
+    def __init__(
+        self, state: DistributedAtomisticState, units: AtomisticUnitSystem, /
+    ) -> None:
         if not isinstance(state, DistributedAtomisticState) or not isinstance(
             units, AtomisticUnitSystem
         ):
@@ -1083,7 +1091,9 @@ def _ordered_sum(value: Array, policy: DistributedReductionPolicy) -> Array:
             0, array.shape[0], lambda index, total: total + array[index], initial
         )
 
-    def compensated_step(index, carry):
+    def compensated_step(
+        index: int | Array, carry: tuple[Array, Array]
+    ) -> tuple[Array, Array]:
         total, correction = carry
         increment = array[index] - correction
         updated = total + increment
@@ -1451,7 +1461,7 @@ def _accumulate_route_forces(
     flattened_mask = mask.reshape((-1,))
     flattened_forces = forces.reshape((-1, 3))
 
-    def particle_force(particle_index):
+    def particle_force(particle_index: Array) -> Array:
         selected = flattened_mask & (flattened_indices == particle_index)
         contributions = jnp.where(selected[:, None], flattened_forces, 0)
         return _ordered_sum(contributions, policy)
@@ -1689,7 +1699,7 @@ def evaluate_distributed_atomistic(
     capacity = runtime.plan.system.capacity
     partitions = runtime.plan.decomposition.partitions
 
-    def empty_phase():
+    def empty_phase() -> tuple[Array, Array, Array, Array, Array]:
         return (
             jnp.zeros((partitions,), dtype),
             jnp.zeros((partitions, capacity, 3), dtype),
@@ -1717,12 +1727,13 @@ def evaluate_distributed_atomistic(
     )
 
     if runtime.plan.execution_mode == "collective":
-        if runtime.collectives is None:
+        collectives = runtime.collectives
+        if collectives is None:
             raise ValueError("Collective reduction has no communication operations.")
-        rank = runtime.collectives.partition_index
+        rank = collectives.partition_index
 
         def collective_sum(value: Array) -> Array:
-            result = jnp.asarray(runtime.collectives.reduce_sum(value))
+            result = jnp.asarray(collectives.reduce_sum(value))
             if result.shape != value.shape:
                 raise ValueError("Collective reduction changed the contribution shape.")
             return result
@@ -1862,9 +1873,9 @@ def halo_short_range_evaluate(
     plan: DistributedAtomisticPlan,
     state: DistributedAtomisticState,
     potential: PreparedAtomisticPotentialProgram,
-    neighborhood,
+    neighborhood: ParticleNeighborhoodState,
     /,
-):
+) -> tuple[AtomisticPotentialEvaluation, Array]:
     """Evaluate the established short-range API through canonical ownership."""
     if (
         state.plan_id != plan.plan_id
@@ -1914,7 +1925,7 @@ def distributed_constraint_projection(
     proposed_positions: ArrayLike,
     momenta: ArrayLike,
     /,
-):
+) -> ConstraintProjection:
     return constraints.project_positions(previous_positions, proposed_positions, momenta)
 
 
@@ -1925,7 +1936,7 @@ def distributed_thermodynamic_reduction(
     *,
     policy: DistributedReductionPolicy | None = None,
     collectives: DistributedCollectiveOperations | None = None,
-):
+) -> tuple[Array, Array]:
     """Reduce thermodynamic values in a declared deterministic order."""
     energy = jnp.asarray(local_energy)
     momentum = jnp.asarray(local_momentum)
@@ -1960,7 +1971,7 @@ def distributed_particle_mesh_electrostatics(
     state: DistributedAtomisticState,
     reciprocal: DistributedReciprocalEvidence,
     /,
-):
+) -> tuple[Array, Array]:
     """Reduce state-bound reciprocal work through the prepared runtime."""
     if not isinstance(runtime, PreparedDistributedAtomisticRuntime) or not isinstance(
         state, DistributedAtomisticState

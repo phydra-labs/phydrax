@@ -1,5 +1,6 @@
 import hashlib
 from dataclasses import replace
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -27,7 +28,7 @@ from phydrax.units import ANGSTROM, CUBIC_METER, JOULE, PASCAL, UnitDefinition
 NANOMETER = UnitDefinition("nm", ANGSTROM.dimension, ANGSTROM.reference_system_id, "1e-9")
 
 
-def _fixture():
+def _fixture() -> Any:
     # Explicit complete zwitterionic alanine inventory. The harmonic-only
     # model is an analytical numerical fixture, not a calibrated force field.
     construct = ProteinConstruct(("A",), ("A",))
@@ -128,7 +129,9 @@ def _fixture():
     units = atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     system = atomistic.AtomisticSystemPlan(
         ids,
+        # ty: ignore[invalid-argument-type]
         numbers,
+        # ty: ignore[invalid-argument-type]
         [12 if z == 6 else 14 if z == 7 else 16 if z == 8 else 1 for z in numbers],
         units,
         topology=topology,
@@ -163,7 +166,7 @@ def _fixture():
     return binding, neighborhood, qualifier, mapping
 
 
-def test_ordered_construct_and_source_permutation_do_not_redefine_atoms():
+def test_ordered_construct_and_source_permutation_do_not_redefine_atoms() -> None:
     assert ProteinConstruct(("A", "B"), ("AG", "V")).residue_keys == (
         ResidueKey("A", 0),
         ResidueKey("A", 1),
@@ -200,7 +203,7 @@ def test_ordered_construct_and_source_permutation_do_not_redefine_atoms():
     assert rebound.hypothesis.hypothesis_id != h.hypothesis_id
 
 
-def test_missing_atoms_and_mixed_parameter_scales_refuse_handoff():
+def test_missing_atoms_and_mixed_parameter_scales_refuse_handoff() -> None:
     binding, _, _, mapping = _fixture()
     h = binding.hypothesis
     incomplete = ProteinStructureHypothesis(
@@ -233,7 +236,7 @@ def test_missing_atoms_and_mixed_parameter_scales_refuse_handoff():
         replace(binding.chemistry, hydrogen_counts=(6,))
 
 
-def test_geometry_detects_reflection_and_native_force_is_conservative():
+def test_geometry_detects_reflection_and_native_force_is_conservative() -> None:
     binding, neighborhood, qualifier, _ = _fixture()
     x = binding.realized_positions
     assert bool(qualifier.evaluate(x).successful)
@@ -253,7 +256,7 @@ def test_geometry_detects_reflection_and_native_force_is_conservative():
     assert float(jnp.max(jnp.abs(evaluated.forces))) > 0.01
 
 
-def test_short_native_nve_preserves_raw_hypothesis_and_energy():
+def test_short_native_nve_preserves_raw_hypothesis_and_energy() -> None:
     binding, neighborhood, qualifier, _ = _fixture()
     original = np.asarray(binding.hypothesis.positions).copy()
     thermodynamic = atomistic.AtomisticThermodynamicStatePlan(
@@ -292,7 +295,7 @@ def test_short_native_nve_preserves_raw_hypothesis_and_energy():
     )
 
 
-def test_short_native_nvt_uses_explicit_thermal_protocol_and_replays():
+def test_short_native_nvt_uses_explicit_thermal_protocol_and_replays() -> None:
     binding, neighborhood, qualifier, _ = _fixture()
     integrator = atomistic.BAOABLangevinPlan(0.01, 0.1)
     thermodynamic = atomistic.AtomisticThermodynamicStatePlan(
@@ -301,7 +304,7 @@ def test_short_native_nvt_uses_explicit_thermal_protocol_and_replays():
         temperature=300.0,
     )
 
-    def run():
+    def run() -> Any:
         return run_protein_dynamics(
             binding,
             neighborhood,

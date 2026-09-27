@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -7,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def _complex_space(bandlimit, spin):
+def _complex_space(bandlimit: Any, spin: Any) -> Any:
     return phx.discretization.SphericalSpectralPlan(
         bandlimit,
         spin=spin,
@@ -16,7 +18,7 @@ def _complex_space(bandlimit, spin):
     ).prepare()
 
 
-def _modal(space):
+def _modal(space: Any) -> Any:
     center = space.layout.bandlimit - 1
     coefficients = jnp.zeros(space.coefficient_shape, dtype=jnp.complex128)
     for degree in range(abs(space.layout.spin), space.layout.bandlimit):
@@ -30,7 +32,7 @@ def _modal(space):
 
 
 @pytest.mark.parametrize("spin", [-2, -1, 1, 2])
-def test_spin_point_evaluation_matches_s2fft_reconstruction(spin):
+def test_spin_point_evaluation_matches_s2fft_reconstruction(spin: Any) -> None:
     space = _complex_space(5, spin)
     coefficients = _modal(space)
     theta, phi = jnp.meshgrid(
@@ -43,7 +45,7 @@ def test_spin_point_evaluation_matches_s2fft_reconstruction(spin):
     np.testing.assert_allclose(actual, expected, rtol=4e-11, atol=4e-12)
 
 
-def test_spin_frame_rotation_and_framed_pole_are_explicit():
+def test_spin_frame_rotation_and_framed_pole_are_explicit() -> None:
     spin = 2
     space = _complex_space(4, spin)
     coefficients = _modal(space)
@@ -82,7 +84,7 @@ def test_spin_frame_rotation_and_framed_pole_are_explicit():
         space.evaluate(coefficients, north)
 
 
-def test_high_spin_stable_route_is_finite():
+def test_high_spin_stable_route_is_finite() -> None:
     space = _complex_space(9, 8)
     coefficients = _modal(space)
     value = space.evaluate_angles(coefficients, 0.7, -0.2)

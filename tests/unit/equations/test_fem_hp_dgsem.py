@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -17,7 +20,7 @@ from phydrax.equations.fem import (
 )
 
 
-def _certified_mortar():
+def _certified_mortar() -> Any:
     left_nodes = np.linspace(-1.0, 1.0, 4)
     right_nodes = np.linspace(-1.0, 1.0, 3)
     quadrature, weights = np.polynomial.legendre.leggauss(6)
@@ -49,7 +52,7 @@ def _certified_mortar():
     return mortar, metric, certificate
 
 
-def test_entropy_compatible_mortar_accumulates_conservative_ledgers():
+def test_entropy_compatible_mortar_accumulates_conservative_ledgers() -> None:
     mortar, metric, certificate = _certified_mortar()
     assert certificate.passed
     flux = 1.0 + mortar.quadrature_points[:, 0] ** 2
@@ -79,7 +82,7 @@ def test_entropy_compatible_mortar_accumulates_conservative_ledgers():
     )
 
 
-def test_uncertified_nonconforming_dgsem_is_rejected():
+def test_uncertified_nonconforming_dgsem_is_rejected() -> None:
     mortar, metric, _ = _certified_mortar()
     failed = certify_dgsem_mortar_compatibility(
         mortar,

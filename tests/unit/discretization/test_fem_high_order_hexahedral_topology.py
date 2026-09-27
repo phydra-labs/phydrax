@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -15,7 +18,7 @@ from phydrax.discretization._hexahedral import (
 )
 
 
-def _two_hex_mesh(*, cells=None, global_ids=(17, 41)):
+def _two_hex_mesh(*, cells: Any = None, global_ids: Any = (17, 41)) -> Any:
     coordinates = jnp.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -46,18 +49,18 @@ def _two_hex_mesh(*, cells=None, global_ids=(17, 41)):
     return phx.discretization.CellMesh(coordinates, (block,))
 
 
-def _element(order):
+def _element(order: Any) -> Any:
     return phx.discretization.fem.ReferenceNodalFamily(
         "hexahedron",
         order,
     ).finite_element()
 
 
-def _dof_map(mesh, order):
+def _dof_map(mesh: Any, order: Any) -> Any:
     return phx.discretization.FiniteElementDofMap(mesh, (_element(order),))
 
 
-def _local_face_trace_dofs(element, local_face):
+def _local_face_trace_dofs(element: Any, local_face: Any) -> Any:
     face_vertices = _FACES[local_face]
     edge_lookup = {frozenset(edge): index for index, edge in enumerate(_EDGES)}
     face_edges = tuple(
@@ -73,7 +76,7 @@ def _local_face_trace_dofs(element, local_face):
     )
 
 
-def test_q1_hex_routing_remains_vertex_compatible():
+def test_q1_hex_routing_remains_vertex_compatible() -> None:
     mesh = _two_hex_mesh()
     dof_map = phx.discretization.FiniteElementDofMap(
         mesh,
@@ -94,11 +97,11 @@ def test_q1_hex_routing_remains_vertex_compatible():
     ),
 )
 def test_high_order_hex_global_counts_layout_and_boundary_mask(
-    degree,
-    global_count,
-    entity_counts,
-    boundary_count,
-):
+    degree: Any,
+    global_count: Any,
+    entity_counts: Any,
+    boundary_count: Any,
+) -> None:
     mesh = _two_hex_mesh()
     element = _element(degree)
     dof_map = phx.discretization.FiniteElementDofMap(mesh, (element,))
@@ -117,7 +120,7 @@ def test_high_order_hex_global_counts_layout_and_boundary_mask(
     )
 
 
-def test_shared_hex_face_trace_is_single_valued_at_p3():
+def test_shared_hex_face_trace_is_single_valued_at_p3() -> None:
     mesh = _two_hex_mesh()
     element = _element(3)
     dof_map = phx.discretization.FiniteElementDofMap(mesh, (element,))
@@ -139,7 +142,7 @@ def test_shared_hex_face_trace_is_single_valued_at_p3():
     assert set(trace_routes[0].tolist()) == set(trace_routes[1].tolist())
 
 
-def test_all_quadrilateral_face_orientations_have_explicit_tensor_permutations():
+def test_all_quadrilateral_face_orientations_have_explicit_tensor_permutations() -> None:
     expected = {
         (0, 1, 2, 3): (0, 1, 2, 3, 4, 5),
         (1, 2, 3, 0): (4, 2, 0, 5, 3, 1),
@@ -164,7 +167,7 @@ def test_all_quadrilateral_face_orientations_have_explicit_tensor_permutations()
         assert tuple(_quadrilateral_tensor_permutation(cycle, 2, 3)) == tensor_permutation
 
 
-def test_high_order_hex_routing_and_content_identity_ignore_cell_row_order():
+def test_high_order_hex_routing_and_content_identity_ignore_cell_row_order() -> None:
     mesh = _two_hex_mesh()
     cells = np.asarray(mesh.blocks[0].vertices)
     reordered = _two_hex_mesh(cells=cells[::-1], global_ids=(41, 17))
@@ -181,7 +184,7 @@ def test_high_order_hex_routing_and_content_identity_ignore_cell_row_order():
     )
 
 
-def test_high_order_hex_dof_coordinates_reproduce_each_affine_cell():
+def test_high_order_hex_dof_coordinates_reproduce_each_affine_cell() -> None:
     mesh = _two_hex_mesh()
     element = _element(3)
     dof_map = phx.discretization.FiniteElementDofMap(mesh, (element,))
@@ -200,7 +203,7 @@ def test_high_order_hex_dof_coordinates_reproduce_each_affine_cell():
     )
 
 
-def test_compatible_anisotropic_hex_traces_route_globally():
+def test_compatible_anisotropic_hex_traces_route_globally() -> None:
     mesh = _two_hex_mesh()
     dof_map = _dof_map(mesh, (2, 3, 4))
 
@@ -209,7 +212,7 @@ def test_compatible_anisotropic_hex_traces_route_globally():
     assert np.count_nonzero(dof_map.boundary_dof_mask) == 82
 
 
-def test_incompatible_anisotropic_hex_trace_requires_a_mortar():
+def test_incompatible_anisotropic_hex_trace_requires_a_mortar() -> None:
     mesh = _two_hex_mesh(
         cells=(
             (0, 1, 2, 3, 4, 5, 6, 7),

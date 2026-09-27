@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -34,6 +35,8 @@ from ..linalg import (
 
 
 MomentumPredictor = Callable[[Array, Array, Any], Array]
+# velocity, face velocity, pressure, residual history, statuses, converged
+_CorrectorCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
 class _WeightedGaugedPressureAction(StrictModule, NonTrainableState):
@@ -45,7 +48,7 @@ class _WeightedGaugedPressureAction(StrictModule, NonTrainableState):
         operators: PreparedUnstructuredCollocatedOperators,
         face_inverse_momentum: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.operators = operators
         self.face_inverse_momentum = operators.validate_face_scalar(
             face_inverse_momentum, "Face inverse momentum"
@@ -99,7 +102,7 @@ class UnstructuredPressureProjectionPlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 200,
         dtype: Any | None = None,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedUnstructuredCollocatedOperators):
             raise TypeError("operators must be PreparedUnstructuredCollocatedOperators.")
         density_ = float(density)
@@ -315,7 +318,7 @@ class UnstructuredPressureCorrectionPlan(StrictModule, NonTrainableState):
         projection: UnstructuredPressureProjectionPlan,
         correctors: int = 2,
         /,
-    ):
+    ) -> None:
         if not isinstance(projection, UnstructuredPressureProjectionPlan):
             raise TypeError("projection must be UnstructuredPressureProjectionPlan.")
         correctors_ = int(correctors)
@@ -364,7 +367,7 @@ class UnstructuredPressureCorrectionPlan(StrictModule, NonTrainableState):
             predicted
         ).astype(dtype)
 
-        def body(index, carry):
+        def body(index: Array, carry: _CorrectorCarry) -> _CorrectorCarry:
             velocity_, face_, pressure_, history_, statuses_, converged_ = carry
             result = self.projection.project(
                 velocity_,

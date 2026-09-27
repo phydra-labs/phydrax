@@ -8,7 +8,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 
@@ -39,7 +40,7 @@ class OptionCallSlice(StrictModule):
         currency_code: str,
         numeraire_id: str,
         market_snapshot_id: str,
-    ):
+    ) -> None:
         strikes_ = jnp.asarray(strikes, dtype=jnp.float64)
         calls = jnp.asarray(call_prices, dtype=jnp.float64)
         forward_ = jnp.asarray(forward, dtype=jnp.float64)

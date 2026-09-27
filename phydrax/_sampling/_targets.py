@@ -12,7 +12,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 
@@ -62,7 +63,9 @@ class FullMarkovTarget(StrictModule):
     evaluate: Callable[[PyTree[Any]], Array]
     target_id: str = eqx.field(static=True)
 
-    def __init__(self, evaluate: Callable[[PyTree[Any]], Array], /, *, target_id: str):
+    def __init__(
+        self, evaluate: Callable[[PyTree[Any]], Array], /, *, target_id: str
+    ) -> None:
         if not callable(evaluate):
             raise TypeError("evaluate must be callable.")
         if not isinstance(target_id, str) or not target_id:
@@ -86,7 +89,11 @@ class FullMarkovTarget(StrictModule):
         )
 
     def propose(
-        self, state: MarkovTargetState, proposed_position: PyTree[Any], payload=(), /
+        self,
+        state: MarkovTargetState,
+        proposed_position: PyTree[Any],
+        payload: PyTree[Any] = (),
+        /,
     ) -> IncrementalTargetProposal:
         del payload
         proposed = jnp.asarray(self.evaluate(proposed_position))
@@ -103,7 +110,7 @@ class FullMarkovTarget(StrictModule):
     def commit(
         self,
         state: MarkovTargetState,
-        proposed_position,
+        proposed_position: PyTree[Any],
         proposal: IncrementalTargetProposal,
         accepted: Array,
         /,
@@ -159,7 +166,7 @@ class IncrementalMarkovTarget(StrictModule):
         maximum_chains: int | None = None,
         cache_bytes_per_chain: int = 0,
         workspace_bytes_per_chain: int = 0,
-    ):
+    ) -> None:
         if not all(callable(value) for value in (initialize, propose, select, refresh)):
             raise TypeError("All incremental target functions must be callable.")
         if refresh_validate is not None and not callable(refresh_validate):
@@ -228,7 +235,11 @@ class IncrementalMarkovTarget(StrictModule):
         )
 
     def propose(
-        self, state: MarkovTargetState, proposed_position, payload, /
+        self,
+        state: MarkovTargetState,
+        proposed_position: PyTree[Any],
+        payload: PyTree[Any],
+        /,
     ) -> IncrementalTargetProposal:
         ratio, cache, valid = self.propose_fn(
             state.position, state.cache, proposed_position, payload
@@ -250,7 +261,7 @@ class IncrementalMarkovTarget(StrictModule):
     def commit(
         self,
         state: MarkovTargetState,
-        proposed_position,
+        proposed_position: PyTree[Any],
         proposal: IncrementalTargetProposal,
         accepted: Array,
         /,

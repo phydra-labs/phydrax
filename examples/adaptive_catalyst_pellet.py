@@ -4,13 +4,15 @@
 
 """Adapt one two-dimensional catalyst-pellet mesh conservatively."""
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def grid(nx, ny):
+def grid(nx: Any, ny: Any) -> Any:
     vertices = np.asarray(
         [(2.0 * i / nx, j / ny) for j in range(ny + 1) for i in range(nx + 1)]
     )

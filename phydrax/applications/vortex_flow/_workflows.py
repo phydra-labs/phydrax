@@ -9,14 +9,17 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.vortex import (
+    AbstractPreparedVortexVelocity,
     VortexFilamentState,
     VortexFilamentTopology,
+    VortexVelocityEvaluation,
 )
 from ...discretization.vortex._source import (
     VortexSourceState,
@@ -28,7 +31,7 @@ class PassiveVortexProbes(StrictModule, NonTrainableState):
     position: Array
     probes_id: str = eqx.field(static=True)
 
-    def __init__(self, position: ArrayLike, /):
+    def __init__(self, position: ArrayLike, /) -> None:
         points = jnp.asarray(position, dtype=jnp.float64)
         if (
             points.ndim != 2
@@ -45,7 +48,12 @@ class PassiveVortexProbes(StrictModule, NonTrainableState):
             }
         )
 
-    def sample(self, prepared_velocity, source: VortexSourceState, /):
+    def sample(
+        self,
+        prepared_velocity: AbstractPreparedVortexVelocity,
+        source: VortexSourceState,
+        /,
+    ) -> VortexVelocityEvaluation:
         if not isinstance(source, VortexSourceState):
             raise TypeError("source must be VortexSourceState.")
         return prepared_velocity.evaluate(
@@ -125,7 +133,7 @@ class PrescribedVortexRigidMotion(StrictModule, NonTrainableState):
 
     def __init__(
         self, law: Callable[[Array, Any], VortexRigidMotionState], law_id: str, /
-    ):
+    ) -> None:
         if not callable(law) or not str(law_id):
             raise ValueError("Prescribed motion requires callable law and stable ID.")
         self.law = law

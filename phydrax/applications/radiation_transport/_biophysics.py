@@ -60,12 +60,11 @@ def photon_result_to_interaction_ledger(
                 raise ValueError(
                     "Native photon result contains an unknown process index."
                 )
+            position = positions[history_index, event_index]
             records.append(
                 PhysicalInteraction(
                     RadiationEventKey(history, "physical", f"event:{event_index}"),
-                    tuple(
-                        float(value) for value in positions[history_index, event_index]
-                    ),
+                    (float(position[0]), float(position[1]), float(position[2])),
                     float(deposited[history_index, event_index]),
                     track_id=f"photon:{int(history_id)}",
                     process=_PROCESS_NAMES[process_index],

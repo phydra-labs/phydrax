@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -10,7 +13,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _dem_epoch():
+def _dem_epoch() -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([10, 20]), jnp.ones((2,)), ambient_dimension=2
     ).prepare()
@@ -45,7 +48,7 @@ def _dem_epoch():
     )
 
 
-def test_pair_identity_and_contact_history_survive_capacity_growth():
+def test_pair_identity_and_contact_history_survive_capacity_growth() -> None:
     epoch = _dem_epoch()
     old_identity = epoch.state.particle_history.pair_keys[0]
     old_overlap = epoch.state.particle_history.normal.previous_overlap[0]
@@ -68,7 +71,7 @@ def test_pair_identity_and_contact_history_survive_capacity_growth():
     assert jnp.linalg.norm(transition.momentum_residual) < 1.0e-12
 
 
-def test_capacity_limit_rejects_without_changing_epoch():
+def test_capacity_limit_rejects_without_changing_epoch() -> None:
     epoch = _dem_epoch()
     transition = phx.discretization.grow_particle_execution_epoch(
         epoch,
@@ -83,7 +86,7 @@ def test_capacity_limit_rejects_without_changing_epoch():
     assert transition.accepted_epoch.dynamics.bodies.capacity == 2
 
 
-def test_triangle_wall_feature_identity_has_unique_shared_edge_owner():
+def test_triangle_wall_feature_identity_has_unique_shared_edge_owner() -> None:
     wall = phx.discretization.TriangleWallPlan(
         jnp.asarray(
             [
@@ -105,7 +108,7 @@ def test_triangle_wall_feature_identity_has_unique_shared_edge_owner():
     assert wall.edge_owner_triangle_ids[edge_id] == 3
 
 
-def _internal_epoch_state(epoch):
+def _internal_epoch_state(epoch: Any) -> Any:
     particles = epoch.dynamics.bodies.particles
     batch = phx.discretization.ParticleInternalBatchPlan(
         jnp.arange(particles.capacity),
@@ -125,7 +128,7 @@ def _internal_epoch_state(epoch):
     return batch, state
 
 
-def test_fixed_pool_insertion_grows_epoch_and_retires_identity_once():
+def test_fixed_pool_insertion_grows_epoch_and_retires_identity_once() -> None:
     epoch = _dem_epoch()
     batch, internal = _internal_epoch_state(epoch)
     template = phx.discretization.ReactiveParticleTemplatePlan(
@@ -191,7 +194,7 @@ def test_fixed_pool_insertion_grows_epoch_and_retires_identity_once():
     )
 
 
-def test_fragmentation_grows_epoch_and_conserves_inventory():
+def test_fragmentation_grows_epoch_and_conserves_inventory() -> None:
     epoch = _dem_epoch()
     batch, internal = _internal_epoch_state(epoch)
     result = phx.discretization.fragment_particle_with_growth(
@@ -216,7 +219,7 @@ def test_fragmentation_grows_epoch_and_conserves_inventory():
     assert jnp.abs(result.fragmentation.energy_residual) < 1.0e-12
 
 
-def test_fragmentation_rejects_duplicate_children_and_rolls_back_epoch_metadata():
+def test_fragmentation_rejects_duplicate_children_and_rolls_back_epoch_metadata() -> None:
     epoch = _dem_epoch()
     batch, internal = _internal_epoch_state(epoch)
     inactive_child = eqx.tree_at(
@@ -264,10 +267,10 @@ def test_fragmentation_rejects_duplicate_children_and_rolls_back_epoch_metadata(
     )
 
 
-def test_segmented_epoch_execution_records_growth_and_routes():
+def test_segmented_epoch_execution_records_growth_and_routes() -> None:
     epoch = _dem_epoch()
 
-    def step(current, index):
+    def step(current: Any, index: Any) -> Any:
         return current.dynamics.step_detailed(
             jnp.asarray(index, dtype=jnp.int32),
             jnp.asarray(index * 1.0e-5),
@@ -291,7 +294,7 @@ def test_segmented_epoch_execution_records_growth_and_routes():
     assert trajectory.final_epoch.dynamics.bodies.capacity == 4
 
 
-def test_unstructured_internal_mesh_measures_and_transport_are_conservative():
+def test_unstructured_internal_mesh_measures_and_transport_are_conservative() -> None:
     mesh = phx.discretization.UnstructuredParticleInternalMeshPlan(
         jnp.asarray(
             [
@@ -372,7 +375,7 @@ def test_unstructured_internal_mesh_measures_and_transport_are_conservative():
     assert jnp.abs(evaluation.internal_energy_residual) < 1.0e-12
 
 
-def test_superquadric_wall_sphere_limit_and_action_reaction():
+def test_superquadric_wall_sphere_limit_and_action_reaction() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0]), jnp.ones((1,)), ambient_dimension=3
     ).prepare()
@@ -433,7 +436,7 @@ def test_superquadric_wall_sphere_limit_and_action_reaction():
     assert wear.successful
 
 
-def test_ellipsoid_plane_witness_recovers_analytic_axis_gap():
+def test_ellipsoid_plane_witness_recovers_analytic_axis_gap() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([4]), jnp.ones((1,)), ambient_dimension=3
     ).prepare()

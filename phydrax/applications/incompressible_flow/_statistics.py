@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -189,7 +190,7 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
         tail_start_wavenumber: float | None = None,
         reality_tolerance: float = 1.0e-10,
         solenoidal_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledIncompressibleSpectralDynamics):
             raise TypeError("dynamics must be CompiledIncompressibleSpectralDynamics.")
         projector = dynamics.projector
@@ -256,6 +257,9 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
             averaging_id = None
             backscatter_id = None
         else:
+            # Exactly one of the LES actions is present in this branch.
+            if not (dynamic_les is not None):
+                raise RuntimeError("Internal invariant failed: dynamic_les is not None.")
             dynamic_model = dynamic_les.dynamic_model
             filter_id = dynamic_les.grid_filter.plan.resolved_filter.filter_id
             model_id = dynamic_model.model_id
@@ -592,6 +596,11 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
             finite_les = jnp.asarray(True)
             successful_les = jnp.asarray(True)
         else:
+            # Every LES branch above resolves a step restriction.
+            if not (step_restriction is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: step_restriction is not None."
+                )
             sgs_modeled_dissipation = selected_algebraic.modeled_dissipation
             sgs_identity_defect = selected_algebraic.energy_identity_defect
             sgs_projection_defect = selected_algebraic.projection_energy_defect
@@ -822,7 +831,7 @@ class SpectralChannelStatisticsPlan(StrictModule, NonTrainableState):
         kinematic_viscosity: float,
         wall_normal_axis: int = 1,
         reality_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(discretization, TensorSpectralDiscretization):
             raise TypeError("discretization must be a TensorSpectralDiscretization.")
         if len(discretization.axes) != 3:
@@ -830,7 +839,8 @@ class SpectralChannelStatisticsPlan(StrictModule, NonTrainableState):
         wall_axis = int(wall_normal_axis)
         if wall_axis < 0 or wall_axis >= 3:
             raise ValueError("wall_normal_axis must identify one channel axis.")
-        homogeneous = tuple(axis for axis in range(3) if axis != wall_axis)
+        first_axis, second_axis = (axis for axis in range(3) if axis != wall_axis)
+        homogeneous = (first_axis, second_axis)
         wall = discretization.axes[wall_axis]
         density_ = float(density)
         viscosity = float(kinematic_viscosity)
@@ -1079,7 +1089,7 @@ class MACPlaneWallStatisticsPlan(StrictModule, NonTrainableState):
         streamwise_axis: int = 0,
         lower_wall_velocity: ArrayLike | None = None,
         upper_wall_velocity: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         dimension = len(operators.discretization.cell_shape)
@@ -1218,8 +1228,8 @@ class MACPlaneWallStatisticsPlan(StrictModule, NonTrainableState):
         upper_shear = upper_shear.at[wall_axis].set(0.0)
         normal = values[wall_axis]
         normal_measures = self.operators.discretization.face_measures[wall_axis]
-        lower_selector = [slice(None)] * normal.ndim
-        upper_selector = [slice(None)] * normal.ndim
+        lower_selector: list[slice | int] = [slice(None)] * normal.ndim
+        upper_selector: list[slice | int] = [slice(None)] * normal.ndim
         lower_selector[wall_axis] = 0
         upper_selector[wall_axis] = normal.shape[wall_axis] - 1
         lower_values = normal[tuple(lower_selector)]
@@ -1228,23 +1238,27 @@ class MACPlaneWallStatisticsPlan(StrictModule, NonTrainableState):
         upper_measures = normal_measures[tuple(upper_selector)]
         lower_normal = jnp.sum(lower_measures * lower_values) / jnp.sum(lower_measures)
         upper_normal = jnp.sum(upper_measures * upper_values) / jnp.sum(upper_measures)
-        kinetic_energy = 0.5 * sum(
-            jnp.sum(measure.astype(value.dtype) * value**2)
-            for measure, value in zip(
-                self.operators.face_dual_measures, values, strict=True
+        kinetic_energy = 0.5 * jnp.asarray(
+            sum(
+                jnp.sum(measure.astype(value.dtype) * value**2)
+                for measure, value in zip(
+                    self.operators.face_dual_measures, values, strict=True
+                )
             )
         )
         if forcing is None:
             force_values = tuple(jnp.zeros_like(value) for value in values)
         else:
             force_values = self.operators.validate_velocity(forcing)
-        forcing_power = sum(
-            jnp.sum(measure.astype(value.dtype) * value * force)
-            for measure, value, force in zip(
-                self.operators.face_dual_measures,
-                values,
-                force_values,
-                strict=True,
+        forcing_power = jnp.asarray(
+            sum(
+                jnp.sum(measure.astype(value.dtype) * value * force)
+                for measure, value, force in zip(
+                    self.operators.face_dual_measures,
+                    values,
+                    force_values,
+                    strict=True,
+                )
             )
         )
         divergence = self.operators.divergence(values)

@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -30,7 +31,9 @@ class J2SecularPlan(StrictModule, NonTrainableState):
     j2: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, mu: ArrayLike, reference_radius: ArrayLike, j2: ArrayLike, /):
+    def __init__(
+        self, mu: ArrayLike, reference_radius: ArrayLike, j2: ArrayLike, /
+    ) -> None:
         self.mu = jnp.asarray(mu).reshape(())
         self.reference_radius = jnp.asarray(reference_radius).reshape(())
         self.j2 = jnp.asarray(j2).reshape(())

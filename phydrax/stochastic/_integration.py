@@ -4,18 +4,19 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import jax.numpy as jnp
 
 import phydrax.axes as cx
 
 from ..integration._targets import DiscreteMeasureTarget, WeightedSampleTarget
+from ..typing import parse
 from ._trajectory import StochasticTrajectory
 
 
-TrajectoryMeasureMode = Literal["marginal", "path"]
-TrajectoryTimeRule = Literal["left", "trapezoid"]
+TrajectoryMeasureMode: TypeAlias = Literal["marginal", "path"]
+TrajectoryTimeRule: TypeAlias = Literal["left", "trapezoid"]
 
 
 def _trajectory_arrays(
@@ -81,8 +82,7 @@ def trajectory_measure(
     """
     if not isinstance(trajectory, StochasticTrajectory):
         raise TypeError("trajectory must be a StochasticTrajectory.")
-    if mode not in ("marginal", "path"):
-        raise ValueError("mode must be 'marginal' or 'path'.")
+    mode = parse(mode, TrajectoryMeasureMode, "mode")
     states, marginal_valid, leading_dims, sample_dims = _trajectory_arrays(trajectory)
     if mode == "marginal":
         mask = marginal_valid
@@ -115,8 +115,7 @@ def time_measure(
     """Expose each trajectory's irregular saved-time grid as a fixed measure."""
     if not isinstance(trajectory, StochasticTrajectory):
         raise TypeError("trajectory must be a StochasticTrajectory.")
-    if rule not in ("left", "trapezoid"):
-        raise ValueError("rule must be 'left' or 'trapezoid'.")
+    rule = parse(rule, TrajectoryTimeRule, "rule")
     valid = jnp.asarray(trajectory.marginal_valid, dtype=jnp.bool_)
     invalid_prefix = jnp.cumsum(~valid, axis=-1) > 0
     if bool(jnp.any(valid & invalid_prefix)):

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -40,11 +43,11 @@ from phydrax.solver._relativistic_finite_volume import (
 from phydrax.units import KILOGRAM
 
 
-def _scale():
+def _scale() -> Any:
     return RelativityScaleContract.geometric(KILOGRAM)
 
 
-def _grid_stage(scale):
+def _grid_stage(scale: Any) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(4, periodic=True),),
         axis_names=("x",),
@@ -71,7 +74,7 @@ def _grid_stage(scale):
     return discretization, lower_valencia_stage_geometry(discretization, geometry, 0.0)
 
 
-def test_physical_opacities_and_photon_number_sources_are_positive_and_balanced():
+def test_physical_opacities_and_photon_number_sources_are_positive_and_balanced() -> None:
     scale = _scale()
     bremsstrahlung = ThermalBremsstrahlungGrayOpacityPlan(
         scale,
@@ -114,7 +117,7 @@ def test_physical_opacities_and_photon_number_sources_are_positive_and_balanced(
     np.testing.assert_allclose(result.ledger.balance_defect, 0.0, atol=1.0e-10)
 
 
-def test_two_temperature_coulomb_exchange_conserves_total_species_energy():
+def test_two_temperature_coulomb_exchange_conserves_total_species_energy() -> None:
     scale = _scale()
     coulomb = TwoTemperatureElectronIonClosure(
         scale,
@@ -151,7 +154,7 @@ def test_two_temperature_coulomb_exchange_conserves_total_species_energy():
     assert bool(jnp.all(result.state.electron_temperature > state.electron_temperature))
 
 
-def test_pair_reactions_preserve_charge_stoichiometry_and_total_energy():
+def test_pair_reactions_preserve_charge_stoichiometry_and_total_energy() -> None:
     plan = PairCreationAnnihilationPlan(
         pair_rest_energy=1.0,
         creation_coefficient=0.2,
@@ -174,7 +177,7 @@ def test_pair_reactions_preserve_charge_stoichiometry_and_total_energy():
     np.testing.assert_allclose(result.ledger.energy_defect, 0.0)
 
 
-def test_nonthermal_injection_and_gyrotropic_conduction_close_their_ledgers():
+def test_nonthermal_injection_and_gyrotropic_conduction_close_their_ledgers() -> None:
     scale = _scale()
     grid = NonthermalLorentzGrid(jnp.asarray((1.0, 2.0, 4.0, 8.0)))
     nonthermal = NonthermalElectronEvolutionPlan(

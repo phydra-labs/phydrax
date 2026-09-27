@@ -56,7 +56,7 @@ from tests._reactive_systems import reactive_fluid_sample, reactive_problem
 # G1: statistical closure -> PDE ------------------------------------------------
 
 
-def _conductivity_port():
+def _conductivity_port() -> Any:
     return phx.ValuePort(
         "thermal-conductivity",
         event_shape=(),
@@ -66,7 +66,7 @@ def _conductivity_port():
     )
 
 
-def _fit_closure(recipe, space, slope):
+def _fit_closure(recipe: Any, space: Any, slope: Any) -> Any:
     """Fit kappa(x) = 1 + slope * x on the owner's own coordinate port."""
     features = jnp.linspace(0.0, 1.0, 16)[:, None]
     return phx.ml.fit(
@@ -78,18 +78,18 @@ def _fit_closure(recipe, space, slope):
     )
 
 
-def _input_mapping(model_port, owner_port):
+def _input_mapping(model_port: Any, owner_port: Any) -> Any:
     return phx.PortMapping(inputs=[(model_port.port_id, owner_port.port_id)])
 
 
-def _heat_residual(kappa, u):
+def _heat_residual(kappa: Any, u: Any) -> Any:
     """Steady heat residual -(kappa u')' - f with the source of kappa = 1 + x/2, u = x^2."""
     source = kappa.domain.Function("x")(lambda x: -(2.0 + 2.0 * x))
     flux = kappa * phx.operators.partial_n(u, var="x", order=1)
     return -phx.operators.partial_n(flux, var="x", order=1) - source
 
 
-def _penalty(space, fields, residual):
+def _penalty(space: Any, fields: Any, residual: Any) -> Any:
     condition = phx.conditions.Residual(fields, space.component(), residual)
     source = phx.integration.per_step(
         phx.integration.mean_over(condition.on),
@@ -98,7 +98,7 @@ def _penalty(space, fields, residual):
     return phx.terms.ResidualPenalty(condition, source)
 
 
-def _array_leaves(tree):
+def _array_leaves(tree: Any) -> Any:
     return [leaf for leaf in jax.tree_util.tree_leaves(tree) if eqx.is_array(leaf)]
 
 
@@ -110,7 +110,7 @@ def _array_leaves(tree):
     ),
     ids=("ridge", "kernel-ridge"),
 )
-def test_g1_fitted_closure_keeps_ports_and_binds_frozen_into_a_pde(recipe):
+def test_g1_fitted_closure_keeps_ports_and_binds_frozen_into_a_pde(recipe: Any) -> None:
     space = phx.domain.Interval1d(0.0, 1.0)
     x_port = space.value_port("x")
     result = _fit_closure(recipe, space, 0.5)
@@ -121,11 +121,15 @@ def test_g1_fitted_closure_keeps_ports_and_binds_frozen_into_a_pde(recipe):
 
     kappa = space.Model("x", port_mapping=_input_mapping(x_port, x_port))(result.model)
     evidence = kappa.port_binding
+    # ty: ignore[unresolved-attribute]
     assert evidence.inputs == ((x_port.port_id, x_port.port_id),)
     # The coordinate's semantic axis is declared on both sides and verified; the
     # domain declares no coordinate units, so dimensions stay unverified.
+    # ty: ignore[unresolved-attribute]
     assert ("input", x_port.port_id, "axes") not in evidence.unverified
+    # ty: ignore[unresolved-attribute]
     assert ("input", x_port.port_id, "dimensions") in evidence.unverified
+    # ty: ignore[unresolved-attribute]
     assert not evidence.dimensions_verified
 
     network = phx.nn.models.MLP(
@@ -160,7 +164,7 @@ def test_g1_fitted_closure_keeps_ports_and_binds_frozen_into_a_pde(recipe):
     )
 
 
-def test_g1_explicit_parameter_subspace_trains_a_coefficient_subset():
+def test_g1_explicit_parameter_subspace_trains_a_coefficient_subset() -> None:
     space = phx.domain.Interval1d(0.0, 1.0)
     x_port = space.value_port("x")
     # The observed closure has the right intercept but a biased slope.
@@ -183,7 +187,7 @@ def test_g1_explicit_parameter_subspace_trains_a_coefficient_subset():
         solver.functions, (slope_path,)
     )
 
-    def leaf(tree, path):
+    def leaf(tree: Any, path: Any) -> Any:
         return dict(
             (jax.tree_util.keystr(key), value)
             for key, value in jax.tree_util.tree_flatten_with_path(tree)[0]
@@ -205,7 +209,7 @@ def test_g1_explicit_parameter_subspace_trains_a_coefficient_subset():
     assert trained.functions["kappa"].port_binding == kappa.port_binding
 
 
-def test_g1_mismatched_port_mapping_is_rejected_before_execution():
+def test_g1_mismatched_port_mapping_is_rejected_before_execution() -> None:
     space_time = phx.domain.Interval1d(0.0, 1.0) @ phx.domain.TimeInterval(0.0, 1.0)
     x_port, t_port = space_time.value_port("x"), space_time.value_port("t")
     features = jr.uniform(jr.key(0), (16, 2))
@@ -232,6 +236,7 @@ def test_g1_mismatched_port_mapping_is_rejected_before_execution():
     with pytest.raises(ValueError, match="never repacked"):
         space_time.Model("t", "x", port_mapping=in_order)(result.model)
     bound = space_time.Model("x", "t", port_mapping=in_order)(result.model)
+    # ty: ignore[unresolved-attribute]
     assert bound.port_binding.inputs == (
         (x_port.port_id, x_port.port_id),
         (t_port.port_id, t_port.port_id),
@@ -249,16 +254,16 @@ class _LearnedStress(phx.AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, modulus, stiffening):
+    def __init__(self, modulus: Any, stiffening: Any) -> None:
         self.modulus = jnp.asarray(modulus)
         self.stiffening = jnp.asarray(stiffening)
         self.in_size = 1
         self.out_size = 1
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         return self.modulus * x + self.stiffening * x**3
 
-    def model_execution_contract(self):
+    def model_execution_contract(self) -> Any:
         return phx.ModelExecutionContract(
             derivative=_smooth_derivative(),
             execution=phx.ExecutionCapabilities("native-jax"),
@@ -271,7 +276,7 @@ _BAR_ELEMENTS = 4
 _BAR_LENGTH = 1.0 / _BAR_ELEMENTS
 
 
-def _uniaxial_port(name, unit):
+def _uniaxial_port(name: Any, unit: Any) -> Any:
     return phx.ValuePort(
         f"g2.{name}",
         event_shape=(1,),
@@ -281,18 +286,20 @@ def _uniaxial_port(name, unit):
     )
 
 
-def _learned_bar_law(model):
+def _learned_bar_law(model: Any) -> Any:
     return phx.equations.LearnedConstitutiveModel(
         model,
         _uniaxial_port("strain", "1"),
         _uniaxial_port("stress", "Pa"),
+        # ty: ignore[invalid-argument-type]
         lower=[-0.2],
+        # ty: ignore[invalid-argument-type]
         upper=[0.2],
         model_id="g2-learned-bar-law",
     )
 
 
-def _bar_strain(displacement):
+def _bar_strain(displacement: Any) -> Any:
     nodal = jnp.concatenate((jnp.zeros(1), displacement))
     return ((nodal[1:] - nodal[:-1]) / _BAR_LENGTH)[:, None]
 
@@ -302,7 +309,7 @@ class _BarEquilibrium(eqx.Module):
 
     law: phx.equations.AbstractConstitutiveModel
 
-    def __call__(self, displacement, load):
+    def __call__(self, displacement: Any, load: Any) -> Any:
         response = self.law.evaluate(
             _bar_strain(displacement), jnp.zeros((_BAR_ELEMENTS, 0)), None, 0.0, 1.0
         )
@@ -311,7 +318,7 @@ class _BarEquilibrium(eqx.Module):
         return internal[1:] - jnp.zeros(_BAR_ELEMENTS).at[-1].set(load)
 
 
-def _bar_root(model, load):
+def _bar_root(model: Any, load: Any) -> Any:
     return phx.nonlinear.implicit_root_result(
         phx.nonlinear.NonlinearSystemProblem(_BarEquilibrium(_learned_bar_law(model))),
         jnp.zeros(_BAR_ELEMENTS),
@@ -322,7 +329,7 @@ def _bar_root(model, load):
     )
 
 
-def test_g2_native_newton_owns_acceptance_of_the_learned_law():
+def test_g2_native_newton_owns_acceptance_of_the_learned_law() -> None:
     accepted = _bar_root(_LearnedStress(1.0, 2.0), 0.1)
     assert bool(accepted.successful)
     assert float(jnp.max(jnp.abs(accepted.residual))) <= 1e-12
@@ -349,8 +356,8 @@ def test_g2_native_newton_owns_acceptance_of_the_learned_law():
         _learned_bar_law(relu)
 
 
-def test_g2_implicit_parameter_gradient_matches_finite_differences():
-    def tip(parameters):
+def test_g2_implicit_parameter_gradient_matches_finite_differences() -> None:
+    def tip(parameters: Any) -> Any:
         return _bar_root(_LearnedStress(parameters[0], parameters[1]), 0.1).state[-1]
 
     parameters = jnp.asarray([1.0, 2.0])
@@ -368,7 +375,7 @@ def test_g2_implicit_parameter_gradient_matches_finite_differences():
     assert len(jax.tree_util.tree_leaves(phx.partition_parameters(law)[0])) == 2
 
 
-def test_g2_invalid_tangent_poisons_the_derivative():
+def test_g2_invalid_tangent_poisons_the_derivative() -> None:
     equilibrium = _BarEquilibrium(_learned_bar_law(_LearnedStress(1.0, 2.0)))
     # Element 2 strains to 0.6, outside the learned support [-0.2, 0.2].
     displacement = jnp.asarray([0.05, 0.1, 0.25, 0.28])
@@ -395,11 +402,11 @@ class _NormalizedMember(eqx.Module):
     scaler: Any
     network: Any
 
-    def __call__(self, x):
+    def __call__(self, x: Any) -> Any:
         return self.network(self.scaler(x))
 
 
-def _member(index):
+def _member(index: Any) -> Any:
     shift = jnp.asarray([float(index), -float(index)])
     features = jr.normal(jr.key(10 + index), (32, 2)) * (1.0 + index) + shift
     scaler = phx.ml.fit(StandardScaler(), features).model
@@ -409,7 +416,7 @@ def _member(index):
     return _NormalizedMember(scaler, network)
 
 
-def test_g14_ensemble_members_keep_fixed_normalizers_and_serial_equals_vmap():
+def test_g14_ensemble_members_keep_fixed_normalizers_and_serial_equals_vmap() -> None:
     members = tuple(_member(index) for index in range(4))
     ensemble = phx.uq.HomogeneousFunctionEnsemble.from_members(members)
     layout = ensemble.layout
@@ -444,7 +451,7 @@ def test_g14_ensemble_members_keep_fixed_normalizers_and_serial_equals_vmap():
     # Training a lane moves parameters only; FIXED normalizers are not updated.
     parameters, model_state, fixed = phx.partition_parameters(stacked)
 
-    def loss(parameters):
+    def loss(parameters: Any) -> Any:
         model = phx.combine_parameters(parameters, model_state, fixed)
         outputs = eqx.filter_vmap(
             lambda member, x: member(x), in_axes=(layout.in_axes(model), None)
@@ -459,7 +466,7 @@ def test_g14_ensemble_members_keep_fixed_normalizers_and_serial_equals_vmap():
 # G17: axis identity --------------------------------------------------------------
 
 
-def _square_batch():
+def _square_batch() -> Any:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x") @ phx.domain.ScalarInterval(
         0.0, 1.0, label="y"
     )
@@ -471,14 +478,14 @@ def _square_batch():
     return domain, batch, axes
 
 
-def _blockwise(**layout):
+def _blockwise(**layout: Any) -> Any:
     return phx.domain.ModelBinding.blockwise("structured", pass_key=False, **layout)
 
 
-def test_g17_equal_extents_never_create_axis_identity():
+def test_g17_equal_extents_never_create_axis_identity() -> None:
     domain, batch, (x_axis, y_axis) = _square_batch()
 
-    def channels(values):
+    def channels(values: Any) -> Any:
         x, y = values
         # Three channels over the 3 x 3 grid: width equals both spatial extents.
         grid = x[:, None] + 10.0 * y[None, :]
@@ -487,7 +494,7 @@ def test_g17_equal_extents_never_create_axis_identity():
     out = domain.Model("x", "y", binding=_blockwise())(channels)(batch)
     assert out.dims == (x_axis, y_axis, None)
 
-    def x_profile(values):
+    def x_profile(values: Any) -> Any:
         x, _ = values
         # Leading axis is x by declaration; the width-3 trailing axis is a channel.
         return jnp.stack((x, x**2, x**3), axis=-1)
@@ -509,10 +516,10 @@ def test_g17_equal_extents_never_create_axis_identity():
     )
 
 
-def test_g17_raw_output_is_validated_only_against_its_declaration():
+def test_g17_raw_output_is_validated_only_against_its_declaration() -> None:
     domain, batch, _ = _square_batch()
 
-    def reduced(values):
+    def reduced(values: Any) -> Any:
         x, y = values
         return jnp.stack((jnp.sum(x), jnp.sum(y), jnp.sum(x * y)))
 
@@ -520,7 +527,7 @@ def test_g17_raw_output_is_validated_only_against_its_declaration():
     with pytest.raises(ValueError, match="declared leading axes"):
         domain.Model("x", "y", binding=_blockwise())(reduced)(batch)
 
-    def named(values):
+    def named(values: Any) -> Any:
         x, y = values
         return phx.axes.AxisArray(x[:, None] + y[None, :], dims=("rows", "cols"))
 
@@ -529,7 +536,7 @@ def test_g17_raw_output_is_validated_only_against_its_declaration():
         domain.Model("x", "y", binding=array_layout)(named)(batch)
 
 
-def test_g17_ports_with_equal_extents_do_not_share_identity():
+def test_g17_ports_with_equal_extents_do_not_share_identity() -> None:
     channels = phx.ml.FeatureSchema.anonymous(3).value_ports()[0]
     position = phx.ValuePort(
         "x",
@@ -563,7 +570,7 @@ def test_g17_ports_with_equal_extents_do_not_share_identity():
 # G11: regularity mismatch ------------------------------------------------------
 
 
-def _smooth_derivative():
+def _smooth_derivative() -> Any:
     return phx.DerivativeContract.smooth(
         (phx.DerivativeSurface.INPUT, phx.DerivativeSurface.MODEL_PARAMETER)
     )
@@ -576,19 +583,20 @@ class _PlanningOnly(phx.AbstractArrayModel):
     in_size: Any = eqx.field(static=True)
     out_size: Any = eqx.field(static=True)
 
-    def __init__(self, network):
+    def __init__(self, network: Any) -> None:
         self.network = network
         self.in_size = network.in_size
         self.out_size = network.out_size
 
-    def __call__(self, x, /, *, key=None):
+    # ty: ignore[invalid-method-override]
+    def __call__(self, x: Any, /, *, key: Any = None) -> None:
         raise AssertionError("The model was evaluated during planning.")
 
-    def model_execution_contract(self):
+    def model_execution_contract(self) -> Any:
         return self.network.model_execution_contract()
 
 
-def _relu_network(final_activation=None):
+def _relu_network(final_activation: Any = None) -> Any:
     return phx.nn.models.MLP(
         in_size="scalar",
         out_size="scalar",
@@ -600,7 +608,7 @@ def _relu_network(final_activation=None):
     )
 
 
-def _poisson_solver(network, **options):
+def _poisson_solver(network: Any, **options: Any) -> Any:
     space = phx.domain.Interval1d(0.0, 1.0)
     u = space.Model("x")(network)
     residual = _penalty(
@@ -609,7 +617,7 @@ def _poisson_solver(network, **options):
     return phx.solver.FunctionalSolver(functions={"u": u}, terms=(residual,), **options)
 
 
-def test_g11_relu_linear_pinn_laplacian_is_rejected_at_planning():
+def test_g11_relu_linear_pinn_laplacian_is_rejected_at_planning() -> None:
     network = _PlanningOnly(_relu_network())
 
     with pytest.raises(ValueError, match="Order-2 .*regularity-degenerate"):
@@ -622,7 +630,7 @@ def test_g11_relu_linear_pinn_laplacian_is_rejected_at_planning():
         )
 
 
-def test_g11_relu_tanh_composite_needs_almost_everywhere_acknowledgment():
+def test_g11_relu_tanh_composite_needs_almost_everywhere_acknowledgment() -> None:
     network = _relu_network(final_activation=jnp.tanh)
 
     with pytest.raises(ValueError, match="almost-everywhere-not-allowed"):
@@ -651,16 +659,16 @@ class _CubicResponse(phx.AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, precision):
+    def __init__(self, precision: Any) -> None:
         self.precision = precision
         self.in_size = 2
         self.out_size = 2
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         compute = jnp.dtype(self.precision.compute_dtype)
         return (x.astype(compute) ** 3).astype(x.dtype)
 
-    def model_execution_contract(self):
+    def model_execution_contract(self) -> Any:
         return phx.ModelExecutionContract(
             derivative=_smooth_derivative(),
             execution=phx.ExecutionCapabilities("native-jax"),
@@ -669,7 +677,7 @@ class _CubicResponse(phx.AbstractArrayModel):
         )
 
 
-def _precision(compute_dtype, **floors):
+def _precision(compute_dtype: Any, **floors: Any) -> Any:
     return phx.ComponentPrecisionContract(
         input_dtype="float64",
         parameter_dtype=compute_dtype,
@@ -684,11 +692,11 @@ def _precision(compute_dtype, **floors):
 class _CubicResidual(eqx.Module):
     response: phx.AbstractArrayModel
 
-    def __call__(self, state, target):
+    def __call__(self, state: Any, target: Any) -> Any:
         return self.response(state) - target
 
 
-def _newton(response, components, tolerance):
+def _newton(response: Any, components: Any, tolerance: Any) -> Any:
     return phx.nonlinear.NewtonKrylov().solve(
         phx.nonlinear.NonlinearSystemProblem(_CubicResidual(response)),
         jnp.ones(2),
@@ -709,14 +717,14 @@ def _newton(response, components, tolerance):
     "authority",
     (phx.ComponentAuthority.SURROGATE, phx.ComponentAuthority.MODEL),
 )
-def test_g15_undeclared_float32_residual_component_rejects_newton(authority):
+def test_g15_undeclared_float32_residual_component_rejects_newton(authority: Any) -> None:
     response = _CubicResponse(_precision("float32"))
 
     with pytest.raises(ValueError, match="float32.*declares no error floor"):
         _newton(response, ((response, authority),), 1e-12)
 
 
-def test_g15_declared_floor_derives_the_achievable_tolerance():
+def test_g15_declared_floor_derives_the_achievable_tolerance() -> None:
     response = _CubicResponse(_precision("float32", absolute_error_floor=1e-5))
     components = ((response, phx.ComponentAuthority.SURROGATE),)
     policy = phx.nonlinear.NonlinearPrecisionPolicy(
@@ -732,10 +740,11 @@ def test_g15_declared_floor_derives_the_achievable_tolerance():
     result = _newton(response, components, floor)
     assert bool(result.successful)
     exact = result.state**3 - jnp.asarray([2.0, 3.0])
+    # ty: ignore[unsupported-operator]
     assert float(jnp.max(jnp.abs(exact))) <= floor
 
 
-def test_g15_float32_accelerator_does_not_raise_the_residual_floor():
+def test_g15_float32_accelerator_does_not_raise_the_residual_floor() -> None:
     physical = _CubicResponse(_precision("float64", absolute_error_floor=1e-13))
     preconditioner = _CubicResponse(_precision("float32", absolute_error_floor=1e-6))
     components = (
@@ -777,16 +786,16 @@ class _NoisyResponse(phx.AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, gain):
+    def __init__(self, gain: Any) -> None:
         self.gain = jnp.asarray(gain)
         self.in_size = 2
         self.out_size = 2
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         noise = jr.normal(key, jnp.shape(x), dtype=x.dtype)
         return self.gain * jnp.tanh(x) + 0.05 * noise
 
-    def model_execution_contract(self):
+    def model_execution_contract(self) -> Any:
         return phx.ModelExecutionContract(
             derivative=_smooth_derivative(),
             execution=phx.ExecutionCapabilities("native-jax"),
@@ -798,11 +807,11 @@ class _NoisyResponse(phx.AbstractArrayModel):
 class _StochasticResidual(eqx.Module):
     response: phx.AbstractArrayModel
 
-    def __call__(self, state, target):
+    def __call__(self, state: Any, target: Any) -> Any:
         return state + self.response(state, key=jr.key(11)) - target
 
 
-def _implicit_state(response, target):
+def _implicit_state(response: Any, target: Any) -> Any:
     return phx.nonlinear.implicit_root_result(
         phx.nonlinear.NonlinearSystemProblem(_StochasticResidual(response)),
         jnp.zeros(2),
@@ -813,7 +822,7 @@ def _implicit_state(response, target):
     )
 
 
-def test_g16_stochastic_residual_is_rejected_on_certified_root_maps():
+def test_g16_stochastic_residual_is_rejected_on_certified_root_maps() -> None:
     problem = phx.nonlinear.NonlinearSystemProblem(
         _StochasticResidual(_NoisyResponse(0.5))
     )
@@ -824,13 +833,13 @@ def test_g16_stochastic_residual_is_rejected_on_certified_root_maps():
         phx.nonlinear.prepare_nonlinear(problem, jnp.zeros(2), args=jnp.ones(2))
 
 
-def test_g16_frozen_realization_reproduces_primal_and_derivative():
+def test_g16_frozen_realization_reproduces_primal_and_derivative() -> None:
     target = jnp.asarray([0.3, -0.2])
     frozen = phx.FrozenRealization(
         _NoisyResponse(0.5), jr.key(7), realization_id="noise-draw-7"
     )
 
-    def root(values):
+    def root(values: Any) -> Any:
         return _implicit_state(frozen, values).state
 
     first = _implicit_state(frozen, target)
@@ -865,14 +874,22 @@ class _FaceGenerator(phx.StrictModule):
 
     network: phx.nn.models.MLP
 
-    def __call__(self, system, left, right, baseline, context, args=None):
+    def __call__(
+        self,
+        system: Any,
+        left: Any,
+        right: Any,
+        baseline: Any,
+        context: Any,
+        args: Any = None,
+    ) -> Any:
         del system, baseline, args
         features = jnp.concatenate((left, right, context.unit_normal), axis=-1)
         flat = features.reshape((-1, features.shape[-1]))
         return 0.05 * jax.vmap(self.network)(flat).reshape(left.shape)
 
 
-def _learned_face_closure(dimension, key=0):
+def _learned_face_closure(dimension: Any, key: Any = 0) -> Any:
     components = dimension + 2
     generator = _FaceGenerator(
         phx.nn.models.MLP(
@@ -889,7 +906,7 @@ def _learned_face_closure(dimension, key=0):
     )
 
 
-def _unit_grid(shape, *, periodic):
+def _unit_grid(shape: Any, *, periodic: Any) -> Any:
     return phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(count, periodic=periodic)
@@ -899,11 +916,13 @@ def _unit_grid(shape, *, periodic):
     ).prepare(jnp.stack((jnp.zeros(len(shape)), jnp.ones(len(shape)))))
 
 
-def _extrapolation():
+def _extrapolation() -> Any:
     return phx.discretization.ExtrapolationBoundary()
 
 
-def _structured_euler(shape, closure, *, mapped=False, periodic=False):
+def _structured_euler(
+    shape: Any, closure: Any, *, mapped: Any = False, periodic: Any = False
+) -> Any:
     system = phx.equations.EulerSystem(len(shape))
     discretization = phx.discretization.FiniteVolumePlan(
         _unit_grid(shape, periodic=periodic), component_names=system.component_names
@@ -939,7 +958,7 @@ def _structured_euler(shape, closure, *, mapped=False, periodic=False):
     ).dynamics
 
 
-def _quadrilateral_mesh(system, nx, ny):
+def _quadrilateral_mesh(system: Any, nx: Any, ny: Any) -> Any:
     vertices = [(i / nx, j / ny) for j in range(ny + 1) for i in range(nx + 1)]
     cells = []
     for j in range(ny):
@@ -955,8 +974,14 @@ def _quadrilateral_mesh(system, nx, ny):
 
 
 def _unstructured_euler(
-    nx, ny, closure, *, interface_solver=None, motion=None, motion_id="static"
-):
+    nx: Any,
+    ny: Any,
+    closure: Any,
+    *,
+    interface_solver: Any = None,
+    motion: Any = None,
+    motion_id: Any = "static",
+) -> Any:
     system = phx.equations.EulerSystem(2)
     plan = _quadrilateral_mesh(system, nx, ny)
     discretization = plan.prepare()
@@ -988,7 +1013,7 @@ def _unstructured_euler(
     ).dynamics
 
 
-def _euler_state(shape):
+def _euler_state(shape: Any) -> Any:
     system = phx.equations.EulerSystem(2)
     x = jnp.linspace(0.0, 1.0, shape[0] * shape[1]).reshape(shape)
     primitive = jnp.stack(
@@ -997,7 +1022,7 @@ def _euler_state(shape):
     return system.primitive_to_conserved(primitive)
 
 
-def test_g8_plan_embedded_closure_trains_inside_prepared_dynamics():
+def test_g8_plan_embedded_closure_trains_inside_prepared_dynamics() -> None:
     reference = phx.discretization.ArbitraryNormalFaceClosurePlan(
         lambda system, left, right, baseline, context, args: 0.03 * (right - left),
         closure_id="reference-jump-dissipation",
@@ -1017,7 +1042,7 @@ def test_g8_plan_embedded_closure_trains_inside_prepared_dynamics():
         )
     )
 
-    def rollout(model):
+    def rollout(model: Any) -> Any:
         state = initial
         for _ in range(4):
             state = state + 2e-3 * model(0.0, state)
@@ -1036,14 +1061,14 @@ def test_g8_plan_embedded_closure_trains_inside_prepared_dynamics():
     )
     phx.require_parameter_roles(dynamics, context="G8 plan-embedded closure")
 
-    def loss(parameters):
+    def loss(parameters: Any) -> Any:
         model = phx.combine_parameters(parameters, model_state, fixed)
         return jnp.sum((rollout(model) - target) ** 2)
 
     optimizer = optax.adam(3e-2)
 
     @jax.jit
-    def step(parameters, optimizer_state):
+    def step(parameters: Any, optimizer_state: Any) -> Any:
         value, gradient = jax.value_and_grad(loss)(parameters)
         updates, optimizer_state = optimizer.update(gradient, optimizer_state)
         return optax.apply_updates(parameters, updates), optimizer_state, value
@@ -1066,7 +1091,7 @@ def test_g8_plan_embedded_closure_trains_inside_prepared_dynamics():
     assert model.dynamics_id == dynamics.dynamics_id
 
 
-def test_g9_one_face_closure_serves_cartesian_mapped_and_unstructured_owners():
+def test_g9_one_face_closure_serves_cartesian_mapped_and_unstructured_owners() -> None:
     closure = _learned_face_closure(2)
     grid_state = _euler_state((4, 3))
     contributions = {
@@ -1089,7 +1114,7 @@ def test_g9_one_face_closure_serves_cartesian_mapped_and_unstructured_owners():
     )
 
 
-def _triangulated_unit_square(resolution):
+def _triangulated_unit_square(resolution: Any) -> Any:
     """Vertices and diagonal-split triangles of a uniform unit-square mesh."""
     vertices = [
         (i / resolution, j / resolution)
@@ -1105,13 +1130,13 @@ def _triangulated_unit_square(resolution):
     return jnp.asarray(vertices), jnp.asarray(triangles, dtype=jnp.int32)
 
 
-def _triangle_mesh(vertices, triangles):
+def _triangle_mesh(vertices: Any, triangles: Any) -> Any:
     return phx.discretization.CellMesh(
         vertices, (phx.discretization.CellBlock("cells", "triangle", triangles),)
     )
 
 
-def _euler_state_port(frame_id="global"):
+def _euler_state_port(frame_id: Any = "global") -> Any:
     """Typed conserved Euler state: component identities, units, and frame."""
     density = phx.units.DimensionSignature({"mass": 1, "length": -3})
     momentum = phx.units.DimensionSignature({"mass": 1, "length": -2, "time": -1})
@@ -1126,7 +1151,7 @@ def _euler_state_port(frame_id="global"):
     )
 
 
-def _triangle_euler(discretization, closure):
+def _triangle_euler(discretization: Any, closure: Any) -> Any:
     boundaries = phx.discretization.UnstructuredFiniteVolumeBoundarySet(
         discretization.boundary_patch_names,
         {name: _extrapolation() for name in discretization.boundary_patch_names},
@@ -1144,7 +1169,7 @@ def _triangle_euler(discretization, closure):
     ).dynamics
 
 
-def _one_sided_facet_groups(owners, neighbors):
+def _one_sided_facet_groups(owners: Any, neighbors: Any) -> Any:
     """Facet groups in which no side's cells also hold another facet's other side.
 
     A one-sided trace binds its sites to the union of the side cells, so a group
@@ -1164,7 +1189,7 @@ def _one_sided_facet_groups(owners, neighbors):
     return groups
 
 
-def _facet_traces(view, sites, owners, neighbors):
+def _facet_traces(view: Any, sites: Any, owners: Any, neighbors: Any) -> Any:
     """Owner- and neighbor-side traces of a field view at interior facet sites."""
     left = jnp.zeros((len(owners),) + view.reconstruction.value_shape)
     right = jnp.zeros_like(left)
@@ -1183,7 +1208,9 @@ def _facet_traces(view, sites, owners, neighbors):
 _G9_RESOLUTION = 2
 
 
-def test_g9_finite_element_field_view_feeds_the_same_closure_and_ports_must_match():
+def test_g9_finite_element_field_view_feeds_the_same_closure_and_ports_must_match() -> (
+    None
+):
     closure = _learned_face_closure(2)
     system = phx.equations.EulerSystem(2)
     vertices, triangles = _triangulated_unit_square(_G9_RESOLUTION)
@@ -1288,17 +1315,25 @@ class _RecordingClosure(phx.StrictModule):
 
     contexts: list = eqx.field(static=True)
 
-    def __call__(self, system, left, right, baseline, context, args=None):
+    def __call__(
+        self,
+        system: Any,
+        left: Any,
+        right: Any,
+        baseline: Any,
+        context: Any,
+        args: Any = None,
+    ) -> Any:
         self.contexts.append(context)
         return jnp.zeros_like(baseline)
 
 
-def _deformation(time, vertices, args):
+def _deformation(time: Any, vertices: Any, args: Any) -> Any:
     del args
     return vertices.at[4, 0].add(0.15 * time)
 
 
-def test_g18_ale_closure_receives_exact_geometry_and_cartesian_parity():
+def test_g18_ale_closure_receives_exact_geometry_and_cartesian_parity() -> None:
     recorder = _RecordingClosure([])
     closure = phx.discretization.ArbitraryNormalFaceClosurePlan(
         recorder, closure_id="recording-closure"
@@ -1319,6 +1354,7 @@ def test_g18_ale_closure_receives_exact_geometry_and_cartesian_parity():
         jnp.broadcast_to(jnp.asarray((1.0, 0.2, -0.1, 1.0)), (4, 4))
     )
     initial = runtime.initialize_state(uniform, 0.0, 2e-2)
+    # ty: ignore[unresolved-attribute]
     stage = runtime.advance(initial).ale.geometry.stage_1
     recorder.contexts.clear()
     dynamics.evaluate_stage(initial.content_state, stage)
@@ -1376,7 +1412,7 @@ class _DriftPlant(AbstractDiscretePlant):
     require_finite_controls: bool = eqx.field(static=True)
     require_finite_parameters: bool = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         semantic = SemanticProvenance({"kind": "g12-drift-plant"})
         self.state_schema = ArrayPyTreeSchema.from_tree(
             {"x": jnp.zeros((1,))}, case_ndim=1
@@ -1395,14 +1431,18 @@ class _DriftPlant(AbstractDiscretePlant):
         self.require_finite_controls = True
         self.require_finite_parameters = True
 
-    def propose_reset(self, keys, parameters, /, *, case_shape, initial_time):
+    def propose_reset(
+        self, keys: Any, parameters: Any, /, *, case_shape: Any, initial_time: Any
+    ) -> Any:
         del keys, parameters, initial_time
         state = {"x": jnp.zeros(case_shape)}
         ok = jnp.ones(case_shape, dtype=jnp.bool_)
         status = jnp.zeros(case_shape, dtype=jnp.int32)
         return PlantProposal(state, state, ok, ok, status, status, None)
 
-    def propose_step(self, context, source, commands, parameters, keys, /):
+    def propose_step(
+        self, context: Any, source: Any, commands: Any, parameters: Any, keys: Any, /
+    ) -> Any:
         del context, keys
         successful = commands >= 0.0
         status = jnp.where(successful, 0, 37).astype(jnp.int32)
@@ -1418,7 +1458,9 @@ class _DriftEstimator(phx.StrictModule):
     updates: jax.Array = model_state_field()
 
 
-def _drift_error(parameters, model_state, fixed, payload, keys):
+def _drift_error(
+    parameters: Any, model_state: Any, fixed: Any, payload: Any, keys: Any
+) -> Any:
     del fixed, keys
     residual = payload["delta"] - parameters.rate
     next_state = eqx.tree_at(
@@ -1428,11 +1470,11 @@ def _drift_error(parameters, model_state, fixed, payload, keys):
     return contribution, next_state, {}
 
 
-def _observed_drift(source, step):
+def _observed_drift(source: Any, step: Any) -> Any:
     return {"delta": step.candidate_state.payload["x"] - source.payload["x"]}
 
 
-def _drift_setup(rule, **spec_options):
+def _drift_setup(rule: Any, **spec_options: Any) -> Any:
     plant = _DriftPlant()
     parameters = PlantParameters(
         {"gain": jnp.asarray(2.0)},
@@ -1461,7 +1503,14 @@ def _drift_setup(rule, **spec_options):
     return plant, parameters, plant_state, kernel, kernel.init(tree, jr.key(0))
 
 
-def _coupled(setup, plant_state, kernel_state, commands, policy, hooks=()):
+def _coupled(
+    setup: Any,
+    plant_state: Any,
+    kernel_state: Any,
+    commands: Any,
+    policy: Any,
+    hooks: Any = (),
+) -> Any:
     plant, parameters, _, kernel, _ = setup
     return phx.lifecycle.coupled_training_step(
         plant,
@@ -1479,8 +1528,8 @@ def _coupled(setup, plant_state, kernel_state, commands, policy, hooks=()):
     )
 
 
-def _assert_bitwise(actual, expected):
-    def data(leaf):
+def _assert_bitwise(actual: Any, expected: Any) -> None:
+    def data(leaf: Any) -> Any:
         if jax.dtypes.issubdtype(leaf.dtype, jax.dtypes.prng_key):
             return jr.key_data(leaf)
         return leaf
@@ -1495,7 +1544,9 @@ def _assert_bitwise(actual, expected):
 
 
 @pytest.mark.parametrize("policy", list(phx.lifecycle.CoupledTrainingPolicy))
-def test_g12_physical_rejection_restores_every_training_quantity_exactly(policy):
+def test_g12_physical_rejection_restores_every_training_quantity_exactly(
+    policy: Any,
+) -> None:
     setup = _drift_setup(
         OptaxUpdateRule(optax.adam(0.1), rule_id="adam"),
         target_policy=ExponentialMovingAverageTargetPolicy(decay=0.5),
@@ -1529,7 +1580,7 @@ def test_g12_physical_rejection_restores_every_training_quantity_exactly(policy)
         assert float(x[0]) == float(warm.plant_state.payload["x"][0]) + 2.0
 
 
-def test_g24_policy_decides_whether_a_valid_step_survives_a_training_rejection():
+def test_g24_policy_decides_whether_a_valid_step_survives_a_training_rejection() -> None:
     # One huge trial step: the line search rejects finitely and is authorized to
     # commit only its shrunken step size.
     setup = _drift_setup(BacktrackingLineSearchRule(initial_step=100.0, max_trials=1))
@@ -1576,20 +1627,20 @@ class _PreparedRollout(eqx.Module):
     target: jax.Array
 
 
-def _bind_face_closure(solve, closure):
+def _bind_face_closure(solve: Any, closure: Any) -> Any:
     """Rebind a trained closure into the FIXED prepared dynamics' closure slot."""
     if closure.closure_id != solve.dynamics.method.closure.closure_id:
         raise ValueError("The trained closure must keep the prepared slot identity.")
     return eqx.tree_at(lambda dynamics: dynamics.method.closure, solve.dynamics, closure)
 
 
-def _euler_rollout(dynamics, state):
+def _euler_rollout(dynamics: Any, state: Any) -> Any:
     for _ in range(4):
         state = state + 2e-3 * dynamics(0.0, state)
     return state
 
 
-def _rollout_misfit(owner, case):
+def _rollout_misfit(owner: Any, case: Any) -> Any:
     del case
     dynamics, solve = owner
     final = _euler_rollout(dynamics, solve.initial)
@@ -1598,7 +1649,7 @@ def _rollout_misfit(owner, case):
     )
 
 
-def _closure_rollout_objective(component=None):
+def _closure_rollout_objective(component: Any = None) -> Any:
     prepared = _structured_euler((16,), _learned_face_closure(1), periodic=True)
     reference = _structured_euler(
         (16,),
@@ -1628,7 +1679,9 @@ def _closure_rollout_objective(component=None):
     )
 
 
-def test_g8_closure_trains_through_a_rollout_objective_bound_into_fixed_dynamics():
+def test_g8_closure_trains_through_a_rollout_objective_bound_into_fixed_dynamics() -> (
+    None
+):
     closure = _learned_face_closure(1)
     objective = _closure_rollout_objective()
     before = objective.evaluate(closure)
@@ -1657,7 +1710,7 @@ _KRYLOV_SIZE = 48
 _KRYLOV_WORK = 8
 
 
-def _scaled_diagonal(contrast, seed):
+def _scaled_diagonal(contrast: Any, seed: Any) -> Any:
     """Badly scaled diagonal `10**u`, `u` uniform on `[-contrast, contrast]`."""
     exponents = jr.uniform(
         jr.key(seed), (_KRYLOV_SIZE,), minval=-contrast, maxval=contrast
@@ -1665,7 +1718,7 @@ def _scaled_diagonal(contrast, seed):
     return 10.0**exponents
 
 
-def _scaled_system(diagonal):
+def _scaled_system(diagonal: Any) -> Any:
     """Symmetric `D^{1/2} (I + 0.3 T) D^{1/2}` with `T` the unit tridiagonal coupling."""
     root = jnp.sqrt(diagonal)
     coupling = jnp.diag(jnp.ones(_KRYLOV_SIZE - 1), 1)
@@ -1686,7 +1739,7 @@ class _LearnedScalingPreconditioner(phx.linalg.AbstractPreconditioner):
     network: phx.nn.models.MLP
     features: jax.Array = phx.fixed_field()
 
-    def __init__(self, network, diagonal):
+    def __init__(self, network: Any, diagonal: Any) -> None:
         self.network = network
         self.features = jnp.log10(diagonal)[:, None]
         self.space = phx.linalg.ArraySpace((_KRYLOV_SIZE,), dtype=jnp.float64)
@@ -1695,7 +1748,7 @@ class _LearnedScalingPreconditioner(phx.linalg.AbstractPreconditioner):
         )
         self.preconditioner_id = "g3-learned-scaling"
 
-    def apply(self, residual, /, *, iteration=None):
+    def apply(self, residual: Any, /, *, iteration: Any = None) -> Any:
         del iteration
         scale = jnp.exp(jax.vmap(self.network)(self.features))
         supported = jnp.all(jnp.abs(self.features) <= 2.0)
@@ -1703,7 +1756,7 @@ class _LearnedScalingPreconditioner(phx.linalg.AbstractPreconditioner):
         return self.space.validate(jnp.where(supported, scale * residual, jnp.nan))
 
 
-def _scaling_network(seed=0):
+def _scaling_network(seed: Any = 0) -> Any:
     return phx.nn.models.MLP(
         in_size=1, out_size="scalar", width_size=16, depth=2, key=jr.key(seed)
     )
@@ -1715,7 +1768,7 @@ class _KrylovSolve(eqx.Module):
     system: Any
 
 
-def _fixed_work_policy(preconditioner):
+def _fixed_work_policy(preconditioner: Any) -> Any:
     return phx.linalg.LinearSolvePolicy(
         phx.linalg.FGMRES(restart=_KRYLOV_WORK),
         preconditioning=phx.linalg.PreconditioningPolicy(preconditioner, side="right"),
@@ -1727,7 +1780,7 @@ def _fixed_work_policy(preconditioner):
     )
 
 
-def _fixed_work_measure(owner, rhs):
+def _fixed_work_measure(owner: Any, rhs: Any) -> Any:
     system, policy = owner
     result = phx.linalg.solve(system, rhs, policy=policy)
     return phx.solver.AlgorithmicWorkResult(
@@ -1738,7 +1791,7 @@ def _fixed_work_measure(owner, rhs):
     )
 
 
-def _krylov_work_objective(diagonal, component=None):
+def _krylov_work_objective(diagonal: Any, component: Any = None) -> Any:
     return phx.solver.AlgorithmicWorkObjective(
         _KrylovSolve(_scaled_system(diagonal)),
         lambda solve, preconditioner: (
@@ -1753,7 +1806,7 @@ def _krylov_work_objective(diagonal, component=None):
     )
 
 
-def _production_solve(system, preconditioner, rhs):
+def _production_solve(system: Any, preconditioner: Any, rhs: Any) -> Any:
     return phx.linalg.solve(
         system,
         rhs,
@@ -1770,16 +1823,17 @@ def _production_solve(system, preconditioner, rhs):
     )
 
 
-def _never_bound(*_):
+def _never_bound(*_: Any) -> None:
     raise AssertionError("a refused objective must not bind or measure")
 
 
-def test_g10_solution_map_only_accelerator_is_refused_before_tracing():
+def test_g10_solution_map_only_accelerator_is_refused_before_tracing() -> None:
     diagonal = _scaled_diagonal(2.0, 3)
     preconditioner = _LearnedScalingPreconditioner(_scaling_network(), diagonal)
     refused = phx.solver.SolverObjective(
         _KrylovSolve(_scaled_system(diagonal)),
         _never_bound,
+        # ty: ignore[invalid-argument-type]
         _never_bound,
         objective_id="solution-map-only",
     )
@@ -1803,7 +1857,9 @@ def test_g10_solution_map_only_accelerator_is_refused_before_tracing():
     assert all(jnp.isfinite(jnp.asarray(norms)))
 
 
-def test_g3_learned_preconditioner_reduces_fixed_krylov_work_without_changing_answers():
+def test_g3_learned_preconditioner_reduces_fixed_krylov_work_without_changing_answers() -> (
+    None
+):
     diagonal = _scaled_diagonal(2.0, 3)
     system = _scaled_system(diagonal)
     untrained = _LearnedScalingPreconditioner(_scaling_network(), diagonal)
@@ -1848,7 +1904,9 @@ def test_g3_learned_preconditioner_reduces_fixed_krylov_work_without_changing_an
 # G20: mixed authority needs one compatible contribution per group ----------------
 
 
-def test_g20_closure_gets_rollout_signal_and_preconditioner_gets_fixed_work_signal():
+def test_g20_closure_gets_rollout_signal_and_preconditioner_gets_fixed_work_signal() -> (
+    None
+):
     diagonal = _scaled_diagonal(2.0, 3)
     tree = {
         "closure": _learned_face_closure(1),
@@ -1889,7 +1947,7 @@ class _ImplicitEulerStep(eqx.Module):
 
     step: float = eqx.field(static=True)
 
-    def __call__(self, state, previous):
+    def __call__(self, state: Any, previous: Any) -> Any:
         return state - previous + self.step * (state**3 + state)
 
 
@@ -1898,7 +1956,7 @@ class _CorrectedRollout(eqx.Module):
     step: float = eqx.field(static=True)
 
 
-def _corrected_rollout(owner, initial):
+def _corrected_rollout(owner: Any, initial: Any) -> Any:
     problem = phx.nonlinear.NonlinearSystemProblem(_ImplicitEulerStep(owner.step))
     termination = phx.nonlinear.NonlinearTermination(
         absolute_residual=1e-10, relative_residual=0.0, maximum_steps=50
@@ -1930,7 +1988,7 @@ def _corrected_rollout(owner, initial):
     )
 
 
-def test_g5_operator_proposals_stay_inspectable_beside_native_corrections():
+def test_g5_operator_proposals_stay_inspectable_beside_native_corrections() -> None:
     objective = phx.solver.RolloutObjective(
         None,
         lambda solve, proposal: _CorrectedRollout(proposal, 0.2),
@@ -1970,7 +2028,7 @@ class _ReactionDiffusionResidual(eqx.Module):
     mass: Any
     boundary: jax.Array
 
-    def __call__(self, dofs, source):
+    def __call__(self, dofs: Any, source: Any) -> Any:
         interior = self.stiffness.mv(dofs) + self.mass.mv(dofs**3) - self.mass.mv(source)
         return jnp.where(self.boundary, dofs, interior)
 
@@ -1984,7 +2042,7 @@ _G5_FIELD_PORT = phx.ValuePort(
 )
 
 
-def test_g5_native_corrector_owns_the_answer_and_exposes_both_fields_as_views():
+def test_g5_native_corrector_owns_the_answer_and_exposes_both_fields_as_views() -> None:
     discretization = phx.discretization.FiniteElementPlan(
         _triangle_mesh(*_triangulated_unit_square(4)),
         phx.discretization.FiniteElementFieldSpec(
@@ -2007,7 +2065,7 @@ def test_g5_native_corrector_owns_the_answer_and_exposes_both_fields_as_views():
     )
     domain = phx.domain.GeometryDomain(reconstruction.support_geometry, label="x")
 
-    def field(coefficients, name):
+    def field(coefficients: Any, name: Any) -> Any:
         return phx.discretization.DiscreteFieldFunctionView(
             reconstruction, coefficients, domain, variable="x", field_name=name
         ).as_domain_function()
@@ -2070,14 +2128,14 @@ class _LearnedDiscreteDynamics(phx.AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, drift, coupling, input_gain):
+    def __init__(self, drift: Any, coupling: Any, input_gain: Any) -> None:
         self.drift = jnp.asarray(drift)
         self.coupling = jnp.asarray(coupling)
         self.input_gain = jnp.asarray(input_gain)
         self.in_size = 3
         self.out_size = 2
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         state, control = x[:2], x[2:]
         rate = (
             self.drift @ state
@@ -2086,7 +2144,7 @@ class _LearnedDiscreteDynamics(phx.AbstractArrayModel):
         )
         return state + 0.1 * rate
 
-    def model_execution_contract(self):
+    def model_execution_contract(self) -> Any:
         return phx.ModelExecutionContract(
             derivative=_smooth_derivative(),
             execution=phx.ExecutionCapabilities("native-jax"),
@@ -2108,7 +2166,7 @@ _G4_QP = phx.optim.ConvexSolvePolicy(
 _G4_INITIAL = jnp.asarray([1.0, -0.5])
 
 
-def _g4_learned_plant():
+def _g4_learned_plant() -> Any:
     """The learned model is the transition; its parameters travel as ``args``."""
     return phx.control.DiscreteControlDynamics(
         phx.dynamics.DiscreteSystem(
@@ -2122,7 +2180,7 @@ def _g4_learned_plant():
     )
 
 
-def _g4_operating_trajectory(model):
+def _g4_operating_trajectory(model: Any) -> Any:
     """Nominal zero-control rollout of the learned model (stages 0..H-1)."""
     states = [_G4_INITIAL]
     for _ in range(_G4_HORIZON - 1):
@@ -2130,7 +2188,9 @@ def _g4_operating_trajectory(model):
     return jax.lax.stop_gradient(jnp.stack(states)), jnp.zeros((_G4_HORIZON, 1))
 
 
-def _g4_affine_dynamics(model, operating_states, operating_controls):
+def _g4_affine_dynamics(
+    model: Any, operating_states: Any, operating_controls: Any
+) -> Any:
     """Traceable (A, B, c) of the learned model along the operating trajectory."""
     linearization = phx.control.linearize_discrete_dynamics(
         _g4_learned_plant(),
@@ -2149,7 +2209,7 @@ def _g4_affine_dynamics(model, operating_states, operating_controls):
     )
 
 
-def _g4_controller(model, operating_states, operating_controls):
+def _g4_controller(model: Any, operating_states: Any, operating_controls: Any) -> Any:
     problem = phx.control.linear_quadratic_problem_from_discrete_dynamics(
         _g4_learned_plant(),
         _G4_TIMES,
@@ -2170,13 +2230,13 @@ def _g4_controller(model, operating_states, operating_controls):
     )
 
 
-def _g4_model(input_gain=(0.0, 1.0)):
+def _g4_model(input_gain: Any = (0.0, 1.0)) -> Any:
     return _LearnedDiscreteDynamics(
         [[0.0, 1.0], [-0.5, -0.1]], [[0.3, 0.0], [0.0, 0.2]], input_gain
     )
 
 
-def test_g4_mpc_sensitivity_through_the_learned_linearization():
+def test_g4_mpc_sensitivity_through_the_learned_linearization() -> None:
     model = _g4_model()
     operating_states, operating_controls = _g4_operating_trajectory(model)
     sensitivity = phx.control.prepare_receding_horizon_mpc_sensitivity(
@@ -2199,7 +2259,7 @@ def test_g4_mpc_sensitivity_through_the_learned_linearization():
         )
     )
 
-    def closed_loop_loss(input_gain):
+    def closed_loop_loss(input_gain: Any) -> Any:
         candidate = _g4_model(input_gain)
         result = _g4_controller(candidate, operating_states, operating_controls).solve()
         assert bool(result.successful)
@@ -2235,14 +2295,14 @@ class _LearnedVectorField(phx.AbstractArrayModel):
 
     _input_binding = phx.domain.ModelBinding.pointwise("structured")
 
-    def __init__(self, drift, coupling, input_gain):
+    def __init__(self, drift: Any, coupling: Any, input_gain: Any) -> None:
         self.drift = jnp.asarray(drift)
         self.coupling = jnp.asarray(coupling)
         self.input_gain = jnp.asarray(input_gain)
         self.in_size = (2, 1)
         self.out_size = 2
 
-    def __call__(self, values, /, *, key=None):
+    def __call__(self, values: Any, /, *, key: Any = None) -> Any:
         state, control = values
         return (
             self.drift @ state
@@ -2250,7 +2310,7 @@ class _LearnedVectorField(phx.AbstractArrayModel):
             + self.input_gain * control[0]
         )
 
-    def model_execution_contract(self):
+    def model_execution_contract(self) -> Any:
         return phx.ModelExecutionContract(
             derivative=_smooth_derivative(),
             execution=phx.ExecutionCapabilities("native-jax"),
@@ -2266,13 +2326,13 @@ _G4_GRID = phx.dynamics.TimeGrid(
 )
 
 
-def _g4_vector_field(input_gain=(0.0, 1.0)):
+def _g4_vector_field(input_gain: Any = (0.0, 1.0)) -> Any:
     return _LearnedVectorField(
         [[0.0, 1.0], [-0.5, -0.1]], [[0.3, 0.0], [0.0, 0.2]], input_gain
     )
 
 
-def _g4_bound_field(model):
+def _g4_bound_field(model: Any) -> Any:
     """The learned vector field bound once as a canonical continuous system."""
     return phx.dynamics.continuous_model_system(
         model,
@@ -2287,7 +2347,7 @@ class _HeldControlField(phx.StrictModule):
 
     system: phx.dynamics.ContinuousSystem
 
-    def __call__(self, time, state, control):
+    def __call__(self, time: Any, state: Any, control: Any) -> Any:
         return self.system(time, state, inputs=control)
 
 
@@ -2297,21 +2357,26 @@ class _FixedStepTransition(phx.StrictModule):
     method: phx.solver.SSPRK54FixedStepMethod
     substeps: int = eqx.field(static=True)
 
-    def __init__(self, system, substeps):
+    def __init__(self, system: Any, substeps: Any) -> None:
         self.method = phx.solver.SSPRK54FixedStepMethod(_HeldControlField(system))
         self.substeps = substeps
 
-    def __call__(self, context, state, control, args):
+    def __call__(self, context: Any, state: Any, control: Any, args: Any) -> Any:
         del args
         step = context.duration / self.substeps
         for index in range(self.substeps):
             state = self.method.step(
-                index, context.source + index * step, state, step, control
+                # ty: ignore[invalid-argument-type]
+                index,
+                context.source + index * step,
+                state,
+                step,
+                control,
             ).accepted_state
         return state
 
 
-def _g4_fixed_step_plant(system, substeps):
+def _g4_fixed_step_plant(system: Any, substeps: Any) -> Any:
     return phx.control.DiscreteControlDynamics(
         phx.dynamics.DiscreteSystem(
             _FixedStepTransition(system, substeps),
@@ -2322,7 +2387,7 @@ def _g4_fixed_step_plant(system, substeps):
     )
 
 
-def _g4_open_loop_rollout(dynamics, controls, **options):
+def _g4_open_loop_rollout(dynamics: Any, controls: Any, **options: Any) -> Any:
     return phx.control.ControlProblem(
         dynamics, _G4_GRID, _G4_INITIAL, problem_id="g4-open-loop"
     ).rollout(
@@ -2338,7 +2403,7 @@ _G4_CONTROLS = jnp.sin(jnp.arange(8.0))[:, None]
 _G4_TIGHT = {"rtol": 1e-12, "atol": 1e-12}
 
 
-def test_g4_one_bound_model_drives_continuous_and_fixed_step_discrete_dynamics():
+def test_g4_one_bound_model_drives_continuous_and_fixed_step_discrete_dynamics() -> None:
     model = _g4_vector_field()
     system = _g4_bound_field(model)
     continuous = phx.control.DifferentialControlDynamics(system)
@@ -2374,7 +2439,7 @@ def test_g4_one_bound_model_drives_continuous_and_fixed_step_discrete_dynamics()
     assert errors[1] > 4.0 * errors[2]
 
     # One parameter derivative: both owners differentiate the same model.
-    def terminal_energy(input_gain, owner):
+    def terminal_energy(input_gain: Any, owner: Any) -> Any:
         dynamics = owner(_g4_bound_field(_g4_vector_field(input_gain)))
         options = _G4_TIGHT if owner is phx.control.DifferentialControlDynamics else {}
         states = _g4_open_loop_rollout(dynamics, _G4_CONTROLS, **options).states
@@ -2391,7 +2456,7 @@ def test_g4_one_bound_model_drives_continuous_and_fixed_step_discrete_dynamics()
     assert jnp.allclose(discrete_gradient, continuous_gradient, rtol=1e-7, atol=1e-10)
 
 
-def _g4_policy_cost(owner, initial):
+def _g4_policy_cost(owner: Any, initial: Any) -> Any:
     # The grid reaches the measure as visible FIXED objective state, never as a
     # module global the callable reads.
     plant, grid, policy = owner
@@ -2411,7 +2476,9 @@ def _g4_policy_cost(owner, initial):
     )
 
 
-def test_g4_neural_feedback_policy_gradient_is_valid_and_trains_through_the_rollout():
+def test_g4_neural_feedback_policy_gradient_is_valid_and_trains_through_the_rollout() -> (
+    None
+):
     # The learned dynamics is FIXED inside the objective; the policy is the
     # DECISION component trained through the differentiable rollout.
     plant = _g4_fixed_step_plant(_g4_bound_field(_g4_vector_field()), 1)
@@ -2442,7 +2509,7 @@ def test_g4_neural_feedback_policy_gradient_is_valid_and_trains_through_the_roll
     parameters, model_state, fixed = phx.partition_parameters(policy)
     flat, unravel = ravel_pytree(parameters)
 
-    def loss(vector):
+    def loss(vector: Any) -> Any:
         candidate = phx.combine_parameters(unravel(vector), model_state, fixed)
         return objective.evaluate(candidate).value
 
@@ -2475,7 +2542,7 @@ _G19_QP = phx.optim.ConvexSolvePolicy(
 )
 
 
-def _g19_cost_blocks(weights):
+def _g19_cost_blocks(weights: Any) -> Any:
     """Traceable MPC stage costs from the tuned log weights."""
     state_weight, control_weight = jnp.exp(weights[0]), jnp.exp(weights[1])
     return (
@@ -2484,7 +2551,7 @@ def _g19_cost_blocks(weights):
     )
 
 
-def _g19_controller(weights, *, upper=0.3):
+def _g19_controller(weights: Any, *, upper: Any = 0.3) -> Any:
     state_costs, control_costs = _g19_cost_blocks(weights)
     problem = phx.control.LinearQuadraticControlProblem(
         jnp.broadcast_to(jnp.array([[1.0, 0.2], [0.0, 1.0]]), (_G19_HORIZON, 2, 2)),
@@ -2502,12 +2569,12 @@ def _g19_controller(weights, *, upper=0.3):
     )
 
 
-def _g19_performance(states, controls):
+def _g19_performance(states: Any, controls: Any) -> Any:
     """Closed-loop performance judged independently of the MPC's own weights."""
     return 0.5 * jnp.sum(states**2) + 0.05 * jnp.sum(controls**2)
 
 
-def test_g19_closed_loop_gradient_tunes_mpc_weights_through_active_bounds():
+def test_g19_closed_loop_gradient_tunes_mpc_weights_through_active_bounds() -> None:
     weights = jnp.asarray([0.0, jnp.log(0.1)])
     sensitivity = phx.control.prepare_receding_horizon_mpc_sensitivity(
         _g19_controller(weights)
@@ -2522,7 +2589,7 @@ def test_g19_closed_loop_gradient_tunes_mpc_weights_through_active_bounds():
     _, pullback = jax.vjp(_g19_cost_blocks, weights)
     (gradient,) = pullback((cotangent.state_costs, cotangent.control_costs))
 
-    def performance(candidate):
+    def performance(candidate: Any) -> Any:
         result = _g19_controller(candidate).solve()
         assert bool(result.successful)
         return _g19_performance(result.states, result.controls)
@@ -2542,7 +2609,7 @@ def test_g19_closed_loop_gradient_tunes_mpc_weights_through_active_bounds():
     assert performance(improved) < performance(weights)
 
 
-def test_g19_one_weak_window_refuses_the_complete_closed_loop_derivative():
+def test_g19_one_weak_window_refuses_the_complete_closed_loop_derivative() -> None:
     # Window 0's unconstrained optimum lies exactly on the control bound.
     problem = phx.control.LinearQuadraticControlProblem(
         jnp.ones((2, 1, 1)),
@@ -2582,11 +2649,13 @@ class _GainResponse(phx.StrictModule):
     weight: jax.Array = parameter_field()
     offset: jax.Array = phx.fixed_field()
 
-    def __call__(self, x):
+    def __call__(self, x: Any) -> Any:
         return self.weight * x + self.offset
 
 
-def _gain_error(parameters, model_state, fixed, payload, keys):
+def _gain_error(
+    parameters: Any, model_state: Any, fixed: Any, payload: Any, keys: Any
+) -> Any:
     del keys
     model = phx.combine_parameters(parameters, model_state, fixed)
     residual = model(payload["x"]) - payload["y"]
@@ -2596,7 +2665,7 @@ def _gain_error(parameters, model_state, fixed, payload, keys):
 _G22_SEMANTIC = phx.SemanticProvenance({"kind": "g22-gain-response"})
 
 
-def _g22_binding(model):
+def _g22_binding(model: Any) -> Any:
     parameters, _, _ = phx.partition_parameters(model)
     return phx.ArtifactBindingIdentity(
         _G22_SEMANTIC,
@@ -2609,7 +2678,7 @@ def _g22_binding(model):
     )
 
 
-def _g22_pool(**options):
+def _g22_pool(**options: Any) -> Any:
     return phx.execution.PoolExecutionSignature(
         topology_id="g22-cases",
         method_id="gain-map",
@@ -2619,7 +2688,9 @@ def _g22_pool(**options):
     )
 
 
-def test_g22_dynamic_weight_update_changes_numeric_revision_not_executable_identity():
+def test_g22_dynamic_weight_update_changes_numeric_revision_not_executable_identity() -> (
+    None
+):
     model = _GainResponse(jnp.asarray(0.5), jnp.asarray(1.0))
     kernel = prepare_training_kernel(
         model,
@@ -2686,7 +2757,7 @@ def test_g22_dynamic_weight_update_changes_numeric_revision_not_executable_ident
 # G6: external host refusal -----------------------------------------------------
 
 
-def _host_binding(kind):
+def _host_binding(kind: Any) -> Any:
     semantic = phx.SemanticProvenance({"kind": kind})
     return phx.ArtifactBindingIdentity(
         semantic,
@@ -2695,7 +2766,7 @@ def _host_binding(kind):
     )
 
 
-def _host_transforms(function, x):
+def _host_transforms(function: Any, x: Any) -> Any:
     return {
         "jit": lambda: jax.jit(function)(x),
         "vmap": lambda: jax.vmap(function)(jnp.stack((x, x))),
@@ -2705,7 +2776,7 @@ def _host_transforms(function, x):
     }
 
 
-def _query_batch(values):
+def _query_batch(values: Any) -> Any:
     axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, 3),
@@ -2720,7 +2791,7 @@ def _query_batch(values):
     )
 
 
-def _checkpoint_manifest():
+def _checkpoint_manifest() -> Any:
     return phx.nn.operator.adapters.OperatorCheckpointManifest(
         architecture="host-doubling",
         model_version="1.0.0",
@@ -2738,10 +2809,12 @@ def _checkpoint_manifest():
     )
 
 
-def test_g6_host_only_models_run_eagerly_and_refuse_transforms_before_invocation():
+def test_g6_host_only_models_run_eagerly_and_refuse_transforms_before_invocation() -> (
+    None
+):
     calls = []
 
-    def runtime(values):
+    def runtime(values: Any) -> Any:
         calls.append(values)
         return [2.0 * values[0]]
 
@@ -2763,6 +2836,7 @@ def test_g6_host_only_models_run_eagerly_and_refuse_transforms_before_invocation
     x = jnp.asarray([1.0, 2.0, 3.0])
 
     # Eager execution works on both surfaces.
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(host(x), 2.0 * x)
     assert jnp.array_equal(operator(_query_batch(x)), 2.0 * x)
     assert len(calls) == 2
@@ -2788,7 +2862,9 @@ def test_g6_host_only_models_run_eagerly_and_refuse_transforms_before_invocation
 # G7: stateful functional model --------------------------------------------------
 
 
-def _normalizing_apply(parameters, model_state, x, key, *, inference):
+def _normalizing_apply(
+    parameters: Any, model_state: Any, x: Any, key: Any, *, inference: Any
+) -> Any:
     """Scaled centering with a running mean; inference uses the committed mean."""
     del key
     if inference:
@@ -2801,7 +2877,9 @@ def _normalizing_apply(parameters, model_state, x, key, *, inference):
     return parameters["scale"] * (x - mean), next_state
 
 
-def _stateful_fit(parameters, model_state, fixed, payload, keys):
+def _stateful_fit(
+    parameters: Any, model_state: Any, fixed: Any, payload: Any, keys: Any
+) -> Any:
     model = phx.combine_parameters(parameters, model_state, fixed)
     output, advanced = model.transition(payload["x"], key=keys.attempt_key("model"))
     residual = output - payload["y"]
@@ -2809,7 +2887,7 @@ def _stateful_fit(parameters, model_state, fixed, payload, keys):
     return contribution, phx.partition_parameters(advanced)[1], {}
 
 
-def _stateful_kernel(rule):
+def _stateful_kernel(rule: Any) -> Any:
     model = phx.nn.models.FunctionalJAXAdapter(
         _normalizing_apply,
         {"scale": jnp.asarray(1.0)},
@@ -2838,7 +2916,7 @@ _G7_X = jnp.asarray([1.0, 2.0, 3.0, 6.0])
 _G7_PAYLOAD = {"x": _G7_X, "y": 2.0 * (_G7_X - 3.0)}
 
 
-def test_g7_stateful_model_state_commits_only_with_accepted_updates():
+def test_g7_stateful_model_state_commits_only_with_accepted_updates() -> None:
     # A rejected update commits neither parameters nor model state.
     kernel, state = _stateful_kernel(
         BacktrackingLineSearchRule(initial_step=100.0, max_trials=1)
@@ -2876,23 +2954,23 @@ def test_g7_stateful_model_state_commits_only_with_accepted_updates():
 # G13: staged external adjoint ---------------------------------------------------
 
 
-def _upstream(theta):
+def _upstream(theta: Any) -> Any:
     return jnp.stack((theta[0], theta[0] * theta[1], jnp.exp(theta[1])))
 
 
-def _provider_reference(x):
+def _provider_reference(x: Any) -> Any:
     """The mock provider's primal written in JAX: the all-JAX reference."""
     return jnp.sum(jnp.sin(x) * x), jnp.prod(1.0 + 0.1 * x)
 
 
-def _downstream(energy, volume):
+def _downstream(energy: Any, volume: Any) -> Any:
     return energy**2 + 3.0 * volume
 
 
 class _MockProvider(phx.interchange.ExternalAdjointAction):
     """Host provider with a hand-written adjoint and an optional replay drift."""
 
-    def __init__(self, *, drift=False, configuration="mock"):
+    def __init__(self, *, drift: Any = False, configuration: Any = "mock") -> None:
         super().__init__(
             provider="mock-provider",
             version="1.0",
@@ -2906,7 +2984,7 @@ class _MockProvider(phx.interchange.ExternalAdjointAction):
         self.drift = drift
         self.calls = []
 
-    def _primal(self, inputs):
+    def _primal(self, inputs: Any) -> Any:
         self.calls.append("primal")
         (x,) = inputs
         return phx.interchange.ExternalPrimalStage(
@@ -2916,7 +2994,7 @@ class _MockProvider(phx.interchange.ExternalAdjointAction):
             realization_id="state-" + x.tobytes().hex(),
         )
 
-    def _adjoint(self, stage, output_cotangents):
+    def _adjoint(self, stage: Any, output_cotangents: Any) -> Any:
         self.calls.append("adjoint")
         (x,) = stage.inputs
         energy_bar, volume_bar = output_cotangents
@@ -2928,7 +3006,7 @@ class _MockProvider(phx.interchange.ExternalAdjointAction):
         return (x_bar,), realization
 
 
-def _staged_gradient(provider, theta):
+def _staged_gradient(provider: Any, theta: Any) -> Any:
     x, pullback = jax.vjp(_upstream, theta)
     stage = provider.stage_primal(x)
     outputs = tuple(jnp.asarray(value) for value in stage.outputs)
@@ -2938,12 +3016,12 @@ def _staged_gradient(provider, theta):
     return loss, theta_bar, stage
 
 
-def test_g13_staged_external_vjp_matches_the_all_jax_reference_and_differences():
+def test_g13_staged_external_vjp_matches_the_all_jax_reference_and_differences() -> None:
     provider = _MockProvider()
     theta = jnp.asarray([0.7, -0.4])
     loss, theta_bar, stage = _staged_gradient(provider, theta)
 
-    def reference(value):
+    def reference(value: Any) -> Any:
         return _downstream(*_provider_reference(_upstream(value)))
 
     assert jnp.allclose(loss, reference(theta), rtol=1e-12)
@@ -2969,7 +3047,7 @@ def test_g13_staged_external_vjp_matches_the_all_jax_reference_and_differences()
     assert len(provider.calls) == calls
 
 
-def test_g13_replay_mismatch_is_refused():
+def test_g13_replay_mismatch_is_refused() -> None:
     x = _upstream(jnp.asarray([0.7, -0.4]))
     drifting = _MockProvider(drift=True)
     stage = drifting.stage_primal(x)
@@ -2986,13 +3064,15 @@ def test_g13_replay_mismatch_is_refused():
 # G21: replay derivative ----------------------------------------------------------
 
 
-def _inexact_leaves(tree):
+def _inexact_leaves(tree: Any) -> Any:
     return [
         leaf for leaf in jax.tree_util.tree_leaves(tree) if eqx.is_inexact_array(leaf)
     ]
 
 
-def _assert_replay_mismatch_poisons_only_the_cotangent(drifted, clean, loss_state):
+def _assert_replay_mismatch_poisons_only_the_cotangent(
+    drifted: Any, clean: Any, loss_state: Any
+) -> None:
     # A matched replay returns a usable cotangent for the state the loss reads.
     assert bool(clean.replay_matched)
     sensitivity = loss_state(clean.initial_state_cotangent)
@@ -3017,11 +3097,13 @@ class _ReplayDriftingLoad:
     the first sphere hard enough to open a contact the forward pass never saw.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.evaluations = 0
         self.drift_on = None
 
-    def __call__(self, time, position, velocity, angular_velocity, args):
+    def __call__(
+        self, time: Any, position: Any, velocity: Any, angular_velocity: Any, args: Any
+    ) -> Any:
         del time, velocity, args
         self.evaluations += 1
         push = 1.0e5 if self.evaluations == self.drift_on else 0.0
@@ -3031,7 +3113,7 @@ class _ReplayDriftingLoad:
         )
 
 
-def _g21_dem_vjp(*, drift_on_replay):
+def _g21_dem_vjp(*, drift_on_replay: Any) -> Any:
     load = _ReplayDriftingLoad()
     compiled = phx.equations.compile_discrete_element_problem(
         phx.equations.DiscreteElementProblemIR(
@@ -3084,7 +3166,7 @@ def _g21_dem_vjp(*, drift_on_replay):
     return result
 
 
-def test_g21_dem_replay_mismatch_invalidates_the_cotangent_and_keeps_evidence():
+def test_g21_dem_replay_mismatch_invalidates_the_cotangent_and_keeps_evidence() -> None:
     clean = _g21_dem_vjp(drift_on_replay=False)
     assert not bool(jnp.any(clean.replay.active_contacts))
     _assert_replay_mismatch_poisons_only_the_cotangent(
@@ -3097,16 +3179,18 @@ def test_g21_dem_replay_mismatch_invalidates_the_cotangent_and_keeps_evidence():
 class _ReplayDriftingWindow:
     """Reactive macro window whose fluid update drifts on one chosen evaluation."""
 
-    def __init__(self, drift_on):
+    def __init__(self, drift_on: Any) -> None:
         self.plan, self.initial, self.boundary, self.schedule = reactive_problem()
         self.evaluations = 0
         self.drift_on = drift_on
 
-    def __call__(self, coupling_state, index):
+    def __call__(self, coupling_state: Any, index: Any) -> Any:
         self.evaluations += 1
         drift = 1.0e-3 if self.evaluations == self.drift_on else 0.0
 
-        def update(fluid, momentum, energy, species, step_size):
+        def update(
+            fluid: Any, momentum: Any, energy: Any, species: Any, step_size: Any
+        ) -> Any:
             del momentum, step_size
             return fluid[0] + energy + drift, fluid[1] + species
 
@@ -3124,7 +3208,7 @@ class _ReplayDriftingWindow:
         )
 
 
-def _g21_reactive_vjp(*, drift_on_replay):
+def _g21_reactive_vjp(*, drift_on_replay: Any) -> Any:
     # Forward rollout, replay, then the differentiated terminal map.
     window = _ReplayDriftingWindow(2 if drift_on_replay else None)
     result = phx.solver.checkpointed_reactive_vjp(
@@ -3139,7 +3223,9 @@ def _g21_reactive_vjp(*, drift_on_replay):
     return result
 
 
-def test_g21_reactive_replay_mismatch_invalidates_the_cotangent_and_keeps_evidence():
+def test_g21_reactive_replay_mismatch_invalidates_the_cotangent_and_keeps_evidence() -> (
+    None
+):
     clean = _g21_reactive_vjp(drift_on_replay=False)
     assert bool(jnp.all(clean.replay.successful))
     _assert_replay_mismatch_poisons_only_the_cotangent(
@@ -3152,7 +3238,7 @@ def test_g21_reactive_replay_mismatch_invalidates_the_cotangent_and_keeps_eviden
 # G23: field validity -------------------------------------------------------------
 
 
-def _kinked_finite_element_view():
+def _kinked_finite_element_view() -> Any:
     """P1 field u = max(x - y, 0) on the unit square split along x = y."""
     mesh = phx.discretization.CellMesh(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
@@ -3179,7 +3265,7 @@ def _kinked_finite_element_view():
     )
 
 
-def test_g23_c0_facet_gradient_refuses_without_a_trace_side():
+def test_g23_c0_facet_gradient_refuses_without_a_trace_side() -> None:
     view = _kinked_finite_element_view()
     gradient = phx.operators.grad(view.as_domain_function(), var="x")
     facet = jnp.asarray((0.5, 0.5))
@@ -3195,7 +3281,7 @@ def test_g23_c0_facet_gradient_refuses_without_a_trace_side():
         phx.operators.laplacian(view.as_domain_function(), var="x")
 
 
-def test_g23_explicit_trace_sides_define_facet_gradients():
+def test_g23_explicit_trace_sides_define_facet_gradients() -> None:
     view = _kinked_finite_element_view()
     sites = jnp.asarray(((0.5, 0.5), (0.2, 0.2)))
     normal = jnp.asarray((1.0, -1.0)) / jnp.sqrt(2.0)

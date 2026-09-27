@@ -6,12 +6,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import comb, pi
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -222,7 +224,12 @@ def _time_weights(times: Array, window: Array, /) -> Array:
     return trapezoid * window
 
 
-def _spectrum(raw_correlation: Array, weights: Array, plan, /) -> Array:
+def _spectrum(
+    raw_correlation: Array,
+    weights: Array,
+    plan: FiniteTemperatureResponsePlan,
+    /,
+) -> Array:
     phases = jnp.exp(1.0j * plan.frequencies[:, None] * plan.times[None, :])
     return jnp.real(contract("wt,...t,t->...w", phases, raw_correlation, weights)) / (
         2.0 * pi
@@ -232,7 +239,7 @@ def _spectrum(raw_correlation: Array, weights: Array, plan, /) -> Array:
 def _thermal_channel_moments(
     source_hamiltonian: QuantumSectorOperator,
     target_hamiltonian: QuantumSectorOperator,
-    probe_action,
+    probe_action: Callable[[ArrayLike], Array],
     thermal_vectors: Array,
     norm_weights: Array,
     count: int,

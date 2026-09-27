@@ -6,12 +6,13 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._physical import SpatialCoordinateContract
@@ -35,10 +36,11 @@ from ..measurement import (
     SamplingSemantics,
     ValueLayout,
 )
+from ..typing import parse
 from ._result import ImageRenderResult, RenderEvidence
 
 
-FieldAssociation = Literal["vertex", "face"]
+FieldAssociation: TypeAlias = Literal["vertex", "face"]
 
 
 class SurfaceImagePlan(StrictModule, NonTrainableState):
@@ -70,7 +72,7 @@ class SurfaceImagePlan(StrictModule, NonTrainableState):
         field_association: FieldAssociation = "vertex",
         leaf_size: int = 8,
         traversal_stack_capacity: int = 64,
-    ):
+    ) -> None:
         if not isinstance(realization, SurfaceRealization):
             raise TypeError("realization must be SurfaceRealization.")
         if not isinstance(support, ImagePlaneSupport):
@@ -92,8 +94,9 @@ class SurfaceImagePlan(StrictModule, NonTrainableState):
             raise TypeError("quantity and layout must be measurement contracts.")
         if not isinstance(sampling, SamplingSemantics):
             raise TypeError("sampling must be SamplingSemantics.")
-        if field_association not in ("vertex", "face"):
-            raise ValueError("field_association must be 'vertex' or 'face'.")
+        field_association = parse(
+            field_association, FieldAssociation, "field_association"
+        )
         if camera.intrinsics.image_shape is not None and (
             camera.intrinsics.image_shape != support.image_shape
         ):

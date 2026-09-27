@@ -27,6 +27,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._identity import SemanticProvenance
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import normalized_identifier
 from ...discretization import (
     CellBlock,
     CellGeometrySpec,
@@ -97,15 +98,6 @@ def _flag(value: bool, name: str, /) -> bool:
     return bool(value)
 
 
-def _name(value: str, what: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{what} must be a string.")
-    text = value.strip()
-    if not text:
-        raise ValueError(f"{what} must be non-empty.")
-    return text
-
-
 @dataclass(frozen=True, slots=True)
 class MmgOptions:
     """Mmg operation controls in the source coordinate units.
@@ -132,7 +124,7 @@ class MmgOptions:
     surface_modification: bool = True
     optimize: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _positive(self.hausdorff_distance, "hausdorff_distance")
         for value, name in (
             (self.minimum_size, "minimum_size"),
@@ -201,13 +193,13 @@ class MmgLevelSet:
     exterior: str = "level-set-exterior"
     unsplit_regions: tuple[str, ...] = ()
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.values, MeshAttribute):
             raise TypeError("values must be MeshAttribute.")
         if not np.isfinite(float(self.isovalue)):
             raise ValueError("isovalue must be finite.")
         names = tuple(
-            _name(value, what)
+            normalized_identifier(value, what)
             for value, what in (
                 (self.interface, "interface"),
                 (self.interior, "interior"),
@@ -219,7 +211,7 @@ class MmgLevelSet:
         if isinstance(self.unsplit_regions, str):
             raise TypeError("unsplit_regions must be a tuple of region names.")
         for value in self.unsplit_regions:
-            _name(value, "unsplit region")
+            normalized_identifier(value, "unsplit region")
 
 
 class MmgLagrangianMode(StrEnum):
@@ -255,7 +247,7 @@ class MmgLagrangianMotion:
     moving_boundary: MeshingScope
     mode: MmgLagrangianMode = MmgLagrangianMode.DISPLACE_AND_REMESH
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.displacement, MeshAttribute):
             raise TypeError("displacement must be MeshAttribute.")
         if not isinstance(self.moving_boundary, MeshingScope):
@@ -455,6 +447,7 @@ def _regions(
         range(len(members)),
         key=lambda item: (
             members[item][0],
+            # ty: ignore[unresolved-attribute]
             "" if members[item][1] is None else members[item][1].name,
         ),
     )
@@ -935,7 +928,7 @@ class MmgAdaptationPlan:
     plan_id: str = field(init=False)
     _encoding: _Encoding = field(init=False, repr=False, compare=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.source, CellMeshingResult):
             raise TypeError("source must be CellMeshingResult.")
         if not isinstance(self.options, MmgOptions):
@@ -1044,10 +1037,12 @@ class MmgFieldTransfer(StrictModule, NonTrainableState):
         projected_count: int,
         maximum_projection_distance: float,
         tolerance: float,
-    ):
-        method_ = _name(method, "method")
-        configuration = _name(source_configuration, "source_configuration")
-        names = tuple(_name(value, "field name") for value in field_names)
+    ) -> None:
+        method_ = normalized_identifier(method, "method")
+        configuration = normalized_identifier(
+            source_configuration, "source_configuration"
+        )
+        names = tuple(normalized_identifier(value, "field name") for value in field_names)
         located, projected = int(located_count), int(projected_count)
         distance, tolerance_ = float(maximum_projection_distance), float(tolerance)
         if located < 0 or projected < 0:
@@ -1101,7 +1096,7 @@ class MmgReference(StrictModule, NonTrainableState):
         *,
         source_count: int,
         target_count: int,
-    ):
+    ) -> None:
         if kind not in ("region", "boundary", "interior", "exterior", "interface"):
             raise ValueError(f"Unknown Mmg reference kind {kind!r}.")
         if int(reference) <= 0 or int(source_count) < 0 or int(target_count) < 0:
@@ -1129,7 +1124,7 @@ class MmgReferenceRetention(StrictModule, NonTrainableState):
         *,
         required_vertices: int,
         retained_required_vertices: int,
-    ):
+    ) -> None:
         if not all(isinstance(item, MmgReference) for item in references):
             raise TypeError("references must contain MmgReference values.")
         if not 0 <= int(retained_required_vertices) <= int(required_vertices):
@@ -1180,9 +1175,9 @@ class MmgSessionEvidence(StrictModule, NonTrainableState):
         ranks: int,
         peak_rss_bytes: int,
         elapsed_seconds: float,
-    ):
-        session = _name(session_id, "session_id")
-        identity = _name(identity_id, "identity_id")
+    ) -> None:
+        session = normalized_identifier(session_id, "session_id")
+        identity = normalized_identifier(identity_id, "identity_id")
         if int(sequence) <= 0 or int(ranks) <= 0 or int(peak_rss_bytes) < 0:
             raise ValueError(
                 "Worker sequence, ranks, and peak memory must be valid counts."
@@ -1235,8 +1230,8 @@ class MmgAdaptationResult(StrictModule, NonTrainableState):
         references: MmgReferenceRetention,
         session: MmgSessionEvidence,
         /,
-    ):
-        plan = _name(plan_id, "plan_id")
+    ) -> None:
+        plan = normalized_identifier(plan_id, "plan_id")
         if not isinstance(mesh, CellMeshingResult):
             raise TypeError("mesh must be CellMeshingResult.")
         if metric is not None and (
@@ -1788,7 +1783,7 @@ class MmgProvider:
         launcher: Sequence[str] = (),
         environment: Mapping[str, str] | None = None,
         policy: NativeWorkerPolicy | None = None,
-    ):
+    ) -> None:
         self.worker = ProviderWorker(
             "mmg",
             executable=executable,

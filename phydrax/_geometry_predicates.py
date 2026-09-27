@@ -36,12 +36,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from enum import IntEnum, StrEnum
 from types import ModuleType
+from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ._bvh import bvh_overlap_pair_blocks, prepare_bvh
 from ._meshcore import (
@@ -85,7 +86,7 @@ class PredicateResult(StrictModule, NonTrainableState):
     certain: Array
     mode: PredicateMode = eqx.field(static=True)
 
-    def __init__(self, signs: Array, certain: Array, mode: PredicateMode):
+    def __init__(self, signs: Array, certain: Array, mode: PredicateMode) -> None:
         if not isinstance(mode, PredicateMode):
             raise TypeError("mode must be a PredicateMode.")
         if signs.dtype != np.int8:
@@ -127,7 +128,7 @@ def resolve_host_predicate_mode(mode: PredicateMode, /) -> PredicateMode:
 # degree, absolute-term multiplier).  Kernels are written once for NumPy and JAX.
 
 
-def _orient2d_kernel(xp: ModuleType, a, b, c, /):
+def _orient2d_kernel(xp: ModuleType, a: Any, b: Any, c: Any, /) -> Any:
     acx = a[..., 0] - c[..., 0]
     bcx = b[..., 0] - c[..., 0]
     acy = a[..., 1] - c[..., 1]
@@ -147,13 +148,13 @@ def _orient2d_kernel(xp: ModuleType, a, b, c, /):
     return det, permanent, zero, largest
 
 
-def _minor_zero(x_equal, y_equal, first: int, second: int, /):
+def _minor_zero(x_equal: Any, y_equal: Any, first: int, second: int, /) -> Any:
     # det[[x_i, y_i], [x_j, y_j]] = x_i y_j - x_j y_i is structurally zero when
     # each monomial has a vanishing difference.
     return (x_equal[first] | y_equal[second]) & (x_equal[second] | y_equal[first])
 
 
-def _orient3d_kernel(xp: ModuleType, a, b, c, d, /):
+def _orient3d_kernel(xp: ModuleType, a: Any, b: Any, c: Any, d: Any, /) -> Any:
     rows = (a, b, c)
     x = tuple(row[..., 0] - d[..., 0] for row in rows)
     y = tuple(row[..., 1] - d[..., 1] for row in rows)
@@ -182,7 +183,7 @@ def _orient3d_kernel(xp: ModuleType, a, b, c, d, /):
     return -shewchuk, permanent, zero, largest
 
 
-def _incircle_kernel(xp: ModuleType, a, b, c, d, /):
+def _incircle_kernel(xp: ModuleType, a: Any, b: Any, c: Any, d: Any, /) -> Any:
     rows = (a, b, c)
     x = tuple(row[..., 0] - d[..., 0] for row in rows)
     y = tuple(row[..., 1] - d[..., 1] for row in rows)
@@ -211,7 +212,7 @@ def _incircle_kernel(xp: ModuleType, a, b, c, d, /):
     return det, permanent, zero, largest
 
 
-def _insphere_kernel(xp: ModuleType, a, b, c, d, e, /):
+def _insphere_kernel(xp: ModuleType, a: Any, b: Any, c: Any, d: Any, e: Any, /) -> Any:
     rows = (a, b, c, d)
     x = tuple(row[..., 0] - e[..., 0] for row in rows)
     y = tuple(row[..., 1] - e[..., 1] for row in rows)
@@ -230,7 +231,7 @@ def _insphere_kernel(xp: ModuleType, a, b, c, d, e, /):
     lift = tuple(x[k] * x[k] + y[k] * y[k] + z[k] * z[k] for k in range(4))
     shewchuk = (lift[3] * abc - lift[2] * dab) + (lift[1] * cda - lift[0] * bcd)
 
-    def plus(i: int, j: int, /):
+    def plus(i: int, j: int, /) -> Any:
         return xp.abs(products[i, j]) + xp.abs(products[j, i])
 
     zp = tuple(xp.abs(value) for value in z)
@@ -244,7 +245,7 @@ def _insphere_kernel(xp: ModuleType, a, b, c, d, e, /):
     ye = tuple((row[..., 1] == e[..., 1]) for row in rows)
     ze = tuple((row[..., 2] == e[..., 2]) for row in rows)
 
-    def triple_zero(i: int, j: int, k: int, /):
+    def triple_zero(i: int, j: int, k: int, /) -> Any:
         return (
             (ze[i] | _minor_zero(xe, ye, j, k))
             & (ze[j] | _minor_zero(xe, ye, i, k))
@@ -284,7 +285,7 @@ class _Filter:
         coefficient: tuple[float, float],
         degree: int,
         multiplier: float,
-    ):
+    ) -> None:
         self.name = name
         self.kernel = kernel
         self.width = width
@@ -304,7 +305,7 @@ _INSPHERE = _Filter("insphere", _insphere_kernel, 3, 5, (16.0, 224.0), 5, 2880.0
 
 
 def _filter(
-    xp: ModuleType, spec: _Filter, points: tuple, dtype, safety: float, /
+    xp: ModuleType, spec: _Filter, points: tuple, dtype: Any, safety: float, /
 ) -> tuple:
     det, permanent, zero, largest = spec.kernel(xp, *points)
     info = np.finfo(dtype)
@@ -440,25 +441,31 @@ def _evaluate(spec: _Filter, values: tuple, mode: PredicateMode, /) -> Predicate
             raise TypeError("mode must be a PredicateMode.")
 
 
-def orient2d(a, b, c, /, *, mode: PredicateMode) -> PredicateResult:
+def orient2d(a: Any, b: Any, c: Any, /, *, mode: PredicateMode) -> PredicateResult:
     """Sign of ``det[b - a, c - a]`` for ``(..., 2)`` coordinates (leading axes broadcast)."""
 
     return _evaluate(_ORIENT2D, (a, b, c), mode)
 
 
-def orient3d(a, b, c, d, /, *, mode: PredicateMode) -> PredicateResult:
+def orient3d(
+    a: Any, b: Any, c: Any, d: Any, /, *, mode: PredicateMode
+) -> PredicateResult:
     """Sign of ``det[b - a, c - a, d - a]`` for ``(..., 3)`` coordinates."""
 
     return _evaluate(_ORIENT3D, (a, b, c, d), mode)
 
 
-def incircle(a, b, c, d, /, *, mode: PredicateMode) -> PredicateResult:
+def incircle(
+    a: Any, b: Any, c: Any, d: Any, /, *, mode: PredicateMode
+) -> PredicateResult:
     """Positive when ``d`` lies inside the circle through counterclockwise ``(a, b, c)``."""
 
     return _evaluate(_INCIRCLE, (a, b, c, d), mode)
 
 
-def insphere(a, b, c, d, e, /, *, mode: PredicateMode) -> PredicateResult:
+def insphere(
+    a: Any, b: Any, c: Any, d: Any, e: Any, /, *, mode: PredicateMode
+) -> PredicateResult:
     """Positive when ``e`` lies inside the sphere through positively oriented ``(a..d)``."""
 
     return _evaluate(_INSPHERE, (a, b, c, d, e), mode)
@@ -484,10 +491,10 @@ class SegmentIntersectionStatus(IntEnum):
 class SegmentIntersectionResult(StrictModule, NonTrainableState):
     """Batched closed-segment contact classes (int8 :class:`SegmentIntersectionStatus`)."""
 
-    status: Array
+    status: Array | np.ndarray
     mode: PredicateMode = eqx.field(static=True)
 
-    def __init__(self, status: Array, mode: PredicateMode):
+    def __init__(self, status: Array | np.ndarray, mode: PredicateMode) -> None:
         if not isinstance(mode, PredicateMode):
             raise TypeError("mode must be a PredicateMode.")
         if status.dtype != np.int8:
@@ -537,7 +544,7 @@ class PolygonSimplicityResult(StrictModule, NonTrainableState):
         *,
         candidate_pair_count: int,
         candidate_capacity_exceeded: bool,
-    ):
+    ) -> None:
         if not isinstance(mode, PredicateMode):
             raise TypeError("mode must be a PredicateMode.")
         if status.dtype != np.int8 or orientation.dtype != np.int8:
@@ -577,7 +584,9 @@ def _require_host_mode(mode: PredicateMode, /) -> None:
             raise TypeError("mode must be a PredicateMode.")
 
 
-def _classify_segments(a, b, c, d, mode: PredicateMode, /) -> np.ndarray:
+def _classify_segments(
+    a: Any, b: Any, c: Any, d: Any, mode: PredicateMode, /
+) -> np.ndarray:
     """Contact classes of closed segments ``ab`` and ``cd`` of shape ``(..., 2)``."""
 
     orientation = orient2d(
@@ -626,7 +635,7 @@ def _classify_segments(a, b, c, d, mode: PredicateMode, /) -> np.ndarray:
 
 
 def segment_intersections_2d(
-    a, b, c, d, /, *, mode: PredicateMode
+    a: Any, b: Any, c: Any, d: Any, /, *, mode: PredicateMode
 ) -> SegmentIntersectionResult:
     """Classify the contact of closed segments ``ab`` and ``cd`` (``(..., 2)``, broadcast).
 
@@ -637,9 +646,8 @@ def segment_intersections_2d(
 
     _require_host_mode(mode)
     flat, leading = _host_points((a, b, c, d), 2)
-    return SegmentIntersectionResult(
-        _classify_segments(*flat, mode).reshape(leading), mode
-    )
+    status = _classify_segments(flat[0], flat[1], flat[2], flat[3], mode)
+    return SegmentIntersectionResult(status.reshape(leading), mode)
 
 
 def _edge_pair_evidence(
@@ -710,7 +718,7 @@ def _extreme_turn(points: np.ndarray, mode: PredicateMode, /) -> PredicateResult
 
 
 def polygon_simplicity_2d(
-    vertices,
+    vertices: Any,
     /,
     *,
     mode: PredicateMode,
@@ -727,9 +735,8 @@ def polygon_simplicity_2d(
     """
 
     _require_host_mode(mode)
-    if (
-        isinstance(maximum_candidate_pairs, bool)
-        or not isinstance(maximum_candidate_pairs, (int, np.integer))
+    if isinstance(maximum_candidate_pairs, bool) or not isinstance(
+        maximum_candidate_pairs, (int, np.integer)
     ):
         raise TypeError("maximum_candidate_pairs must be an integer.")
     capacity = int(maximum_candidate_pairs)

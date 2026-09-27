@@ -5,11 +5,13 @@
 from __future__ import annotations
 
 from math import isfinite
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -42,6 +44,13 @@ IPR_CAPACITY_EXHAUSTED = 3
 IPR_NO_RESIDUAL_REDUCTION = 4
 IPR_NONFINITE = 5
 
+# (positions, amplitudes, active, loss)
+_InsertCarry: TypeAlias = tuple[Array, Array, Array, Array]
+# (position, amplitude, eligible)
+_InsertCandidate: TypeAlias = tuple[Array, Array, Array]
+# (accept, duplicate, capacity, no-reduction, nonfinite) decision flags
+_InsertDecision: TypeAlias = tuple[Array, Array, Array, Array, Array]
+
 
 class IPRPlan(StrictModule, NonTrainableState):
     """Fixed-resource iterative particle reconstruction policy."""
@@ -67,7 +76,7 @@ class IPRPlan(StrictModule, NonTrainableState):
         duplicate_distance: float = 0.05,
         minimum_candidate_intensity: float = 0.0,
         minimum_loss_reduction: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(detection, ParticleDetectionPlan):
             raise TypeError("detection must be ParticleDetectionPlan.")
         if not isinstance(association, MultiViewAssociationPlan):
@@ -275,7 +284,9 @@ def iterative_particle_reconstruction(
             & (candidate_amplitudes >= plan.minimum_candidate_intensity)
         )
 
-        def insert_candidate(carry, candidate):
+        def insert_candidate(
+            carry: _InsertCarry, candidate: _InsertCandidate
+        ) -> tuple[_InsertCarry, _InsertDecision]:
             trial_positions, trial_amplitudes, trial_active, trial_loss = carry
             candidate_position, candidate_amplitude, eligible = candidate
             delta = trial_positions - candidate_position

@@ -10,11 +10,14 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field
+from ..typing import parse
 from ._assembly import PreparedSparseAssembly
 from ._costs import _array_tree_storage_bytes, PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
@@ -88,9 +91,8 @@ class MultigridCyclePolicy(StrictModule):
     kind: MultigridCycleKind = eqx.field(static=True)
     cycle_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: MultigridCycleKind = "v", /):
-        if kind not in ("v", "w", "f", "full"):
-            raise ValueError(f"Unknown multigrid cycle kind {kind!r}.")
+    def __init__(self, kind: MultigridCycleKind = "v", /) -> None:
+        kind = parse(kind, MultigridCycleKind, "kind")
         self.kind = kind
         self.cycle_id = canonical_fingerprint(
             {"kind": "multigrid-cycle-policy", "cycle": kind}
@@ -117,7 +119,7 @@ class MultigridLevel(StrictModule):
         prolongation: AbstractLinearOperator | None = None,
         pre_smoothing: int = 1,
         post_smoothing: int = 1,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape or not operator.source.compatible(operator.target):
@@ -186,7 +188,7 @@ class MultigridSetupDiagnostics(StrictModule):
         level_storage_bytes: tuple[int, ...] = (),
         compatible_relaxation_factors: tuple[float, ...] = (),
         aggregate_candidate_ranks: tuple[tuple[int, ...], ...] = (),
-    ):
+    ) -> None:
         dimensions = tuple(level_dimensions)
         nonzeros = tuple(None if value is None else int(value) for value in level_nnz)
         if not dimensions or any(value < 0 for value in dimensions):
@@ -356,7 +358,7 @@ class MultigridHierarchy(StrictModule):
         hierarchy_id: str | None = None,
         diagnostics: MultigridSetupDiagnostics | None = None,
         sparse_assemblies: tuple[PreparedSparseAssembly | None, ...] | None = None,
-    ):
+    ) -> None:
         levels_ = tuple(levels)
         if len(levels_) < 2:
             raise ValueError("A multigrid hierarchy requires at least two levels.")
@@ -479,7 +481,7 @@ class MultigridPreconditioner(AbstractPreconditioner):
         /,
         *,
         cycle_policy: MultigridCyclePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(hierarchy, MultigridHierarchy):
             raise TypeError("hierarchy must be a MultigridHierarchy.")
         policy = MultigridCyclePolicy() if cycle_policy is None else cycle_policy
@@ -641,7 +643,7 @@ class MultigridLevelBuilder(StrictModule):
         prolongation: AbstractLinearOperator | None = None,
         pre_smoothing: int = 1,
         post_smoothing: int = 1,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape or not operator.source.compatible(operator.target):
@@ -692,7 +694,7 @@ class MultigridHierarchyBuilder(AbstractPreconditionerBuilder):
         *,
         properties: PreconditionerProperties | None = None,
         cycle_policy: MultigridCyclePolicy | None = None,
-    ):
+    ) -> None:
         levels_ = tuple(levels)
         if len(levels_) < 2:
             raise ValueError("A multigrid builder requires at least two levels.")

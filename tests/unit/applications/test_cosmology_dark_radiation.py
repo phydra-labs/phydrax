@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +12,7 @@ from phydrax.applications.cosmology._dark_radiation import (
 )
 
 
-def _packet(packet_id=41):
+def _packet(packet_id: Any = 41) -> Any:
     return DarkRadiationPacket(
         packet_id=jnp.asarray(packet_id, dtype=jnp.int64),
         species_id=jnp.asarray(7, dtype=jnp.int32),
@@ -23,7 +25,7 @@ def _packet(packet_id=41):
     )
 
 
-def test_packet_export_preserves_four_momentum_identity_and_time_level():
+def test_packet_export_preserves_four_momentum_identity_and_time_level() -> None:
     plan = DarkRadiationLedgerPlan(2, speed_of_light=1.0)
     initial = plan.empty()
     packet = _packet()
@@ -55,7 +57,7 @@ def test_packet_export_preserves_four_momentum_identity_and_time_level():
     assert bool(result.evidence.ledger_unchanged_on_failure)
 
 
-def test_capacity_and_four_momentum_failures_roll_back_every_ledger_leaf():
+def test_capacity_and_four_momentum_failures_roll_back_every_ledger_leaf() -> None:
     plan = DarkRadiationLedgerPlan(1)
     initial = plan.empty()
     first_packet = _packet(10)
@@ -86,13 +88,14 @@ def test_capacity_and_four_momentum_failures_roll_back_every_ledger_leaf():
     assert bool(imbalance.evidence.ledger_unchanged_on_failure)
 
 
-def test_runtime_dtype_tolerance_and_causal_four_vectors_fail_closed():
+def test_runtime_dtype_tolerance_and_causal_four_vectors_fail_closed() -> None:
     plan = DarkRadiationLedgerPlan(1)
     ledger = plan.empty(dtype=jnp.float32)
     packet = DarkRadiationPacket(
         51,
         3,
         9001,
+        # ty: ignore[invalid-argument-type]
         (101, 211),
         jnp.asarray(0.1, dtype=jnp.float32),
         jnp.asarray((0.01, 0.0, 0.0), dtype=jnp.float32),
@@ -120,6 +123,7 @@ def test_runtime_dtype_tolerance_and_causal_four_vectors_fail_closed():
             52,
             3,
             9002,
+            # ty: ignore[invalid-argument-type]
             (101, 211),
             jnp.asarray(2.0, dtype=jnp.float32),
             jnp.zeros((3,), dtype=jnp.float32),

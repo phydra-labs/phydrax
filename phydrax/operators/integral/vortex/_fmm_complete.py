@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -46,6 +47,7 @@ from ....discretization.vortex._interfaces import (
 from ....discretization.vortex._precision import VortexPrecisionPolicy
 from ....discretization.vortex._source import VortexSourceState, VortexTargetState
 from ....sparse import EdgeRelation, RelationExecutionPlan
+from ....typing import parse
 from ._gaussian2d import gaussian_vortex_kernel_2d
 from ._gaussian3d import GaussianErfVortexKernel3D
 
@@ -130,7 +132,7 @@ class VortexFMMPlan(AbstractVortexVelocityPlan):
         maximum_far_interactions: int | None = None,
         maximum_near_interactions: int | None = None,
         precision: VortexPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         reference = np.asarray(reference_position, dtype=np.float64)
         lower_array = np.asarray(lower, dtype=np.float64)
         upper_array = np.asarray(upper, dtype=np.float64)
@@ -165,6 +167,7 @@ class VortexFMMPlan(AbstractVortexVelocityPlan):
         near = (
             None if maximum_near_interactions is None else int(maximum_near_interactions)
         )
+        execution = parse(execution, VortexFMMExecution, "execution")
         if (
             reference.ndim != 2
             or reference.shape[0] == 0
@@ -189,7 +192,6 @@ class VortexFMMPlan(AbstractVortexVelocityPlan):
             or target_leaf <= 0
             or not np.isfinite(displacement)
             or displacement <= 0.0
-            or execution not in ("level_octree", "plane_dual")
             or coarse < 2
             or top_nodes <= 0
             or (queue is not None and queue <= 0)
@@ -320,7 +322,7 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
         plan: VortexFMMPlan,
         compatibility: VortexVelocityCompatibility,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.compatibility = compatibility
         self.dimension = plan.dimension
@@ -478,7 +480,9 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
     def _moments(self, source: VortexSourceState, /) -> tuple[Array, Array]:
         """P2M monopoles and first moments into the frozen reference leaves, then M2M."""
         topology = self.topology
+        # ty: ignore[unresolved-attribute]
         leaves = topology.point_leaves
+        # ty: ignore[unresolved-attribute]
         relative = source.safe_positions() - topology.node_centers[leaves]
         active = source.active_mask.reshape(
             source.active_mask.shape + (1,) * (source.safe_strength().ndim - 1)
@@ -486,12 +490,14 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
         strength = jnp.where(active, source.safe_strength(), 0.0)
         dtype = source.positions.dtype
         monopole = (
+            # ty: ignore[unresolved-attribute]
             jnp.zeros((topology.node_count,) + strength.shape[1:], dtype=dtype)
             .at[leaves]
             .add(strength)
         )
         first = (
             jnp.zeros(
+                # ty: ignore[unresolved-attribute]
                 (topology.node_count,) + strength.shape[1:] + (self.dimension,),
                 dtype=dtype,
             )
@@ -504,7 +510,7 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
             )
         )
 
-        def translate(values, child_centers, parent_centers):
+        def translate(values: Any, child_centers: Any, parent_centers: Any) -> Any:
             child_monopole, child_first = values
             shift = child_centers - parent_centers
             shift = shift.reshape(
@@ -512,6 +518,7 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
             )
             return child_monopole, child_first + child_monopole[..., None] * shift
 
+        # ty: ignore[unresolved-attribute]
         return topology.upward_pass((monopole, first), translate)
 
     def _multipole_field(
@@ -548,9 +555,11 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
     ) -> tuple[Array, Array]:
         """Node local values and gradients from V (M2L) and X (P2L) routes and L2L."""
         topology = self.topology
+        # ty: ignore[unresolved-attribute]
         centers = topology.node_centers
         # Masked route slots are evaluated at unit displacement so that every
         # kernel stays finite under differentiation.
+        # ty: ignore[unresolved-attribute]
         far = topology.v_list.routes
         displacement = jnp.where(
             far.valid[:, None],
@@ -564,7 +573,9 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
         )
         far_value = jnp.where(far.valid[:, None], far_value, 0.0)
         far_gradient = jnp.where(far.valid[:, None, None], far_gradient, 0.0)
+        # ty: ignore[unresolved-attribute]
         leaf = topology.x_list.routes
+        # ty: ignore[unresolved-attribute]
         points, point_valid = topology.leaf_points(leaf.source_indices)
         point_valid = point_valid & leaf.valid[:, None] & source.active_mask[points]
         point_displacement = jnp.where(
@@ -579,14 +590,16 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
         point_gradient = jnp.sum(
             jnp.where(point_valid[..., None, None], point_gradient, 0.0), axis=1
         )
+        # ty: ignore[unresolved-attribute]
         (far_local, far_local_gradient), _ = topology.v_list.execution.reduce(
             (far_value, far_gradient), accumulation="deterministic"
         )
+        # ty: ignore[unresolved-attribute]
         (leaf_local, leaf_local_gradient), _ = topology.x_list.execution.reduce(
             (point_value, point_gradient), accumulation="deterministic"
         )
 
-        def inherit(values, parent_centers, child_centers):
+        def inherit(values: Any, parent_centers: Any, child_centers: Any) -> Any:
             parent_value, parent_gradient = values
             shift = child_centers - parent_centers
             return (
@@ -594,6 +607,7 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
                 parent_gradient,
             )
 
+        # ty: ignore[unresolved-attribute]
         return topology.downward_pass(
             (far_local + leaf_local, far_local_gradient + leaf_local_gradient),
             inherit,
@@ -610,6 +624,7 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
     ) -> tuple[Array, Array, Array, Array, Array, Array]:
         """W-list multipole and U-list regularized direct fields at every target."""
         topology = self.topology
+        # ty: ignore[unresolved-attribute]
         centers = topology.node_centers
         positions = source.safe_positions()
         strengths = source.safe_strength()
@@ -620,14 +635,17 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
             else target.source_indices
         )
 
-        def one_target(item):
+        def one_target(item: Any) -> Any:
             position, leaf, identity = item
+            # ty: ignore[unresolved-attribute]
             nodes, valid = topology.w_list.rows(leaf)
             displacement = jnp.where(valid[:, None], position - centers[nodes], 1.0)
             values, gradients = jax.vmap(self._multipole_field)(
                 displacement, monopole[nodes], first_moment[nodes]
             )
+            # ty: ignore[unresolved-attribute]
             leaves, leaf_valid = topology.u_list.rows(leaf)
+            # ty: ignore[unresolved-attribute]
             points, point_valid = topology.leaf_points(leaves)
             points = points.reshape((-1,))
             pair_valid = (
@@ -875,7 +893,7 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
             source_first[far_source],
         )
 
-        def far_gradient(displacement, monopole, first):
+        def far_gradient(displacement: Any, monopole: Any, first: Any) -> Any:
             return jax.jacfwd(
                 lambda value: self._multipole_velocity(value, monopole, first)
             )(displacement)
@@ -1193,7 +1211,9 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
         topology = self.topology
         monopole, first_moment = self._moments(source)
         local_value, local_gradient = self._octree_locals(source, monopole, first_moment)
+        # ty: ignore[unresolved-attribute]
         target_leaves = jnp.maximum(topology.locate(target.positions), 0)
+        # ty: ignore[unresolved-attribute]
         delta = target.positions - topology.node_centers[target_leaves]
         (
             multipole_velocity,
@@ -1226,6 +1246,7 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
                 )
         else:
             vorticity = None
+        # ty: ignore[unresolved-attribute]
         route_sources, radii, distances, route_valid = topology.far_route_geometry()
         route_monopole = monopole[route_sources]
         monopole_norm = (
@@ -1242,10 +1263,14 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
             )
         )
         finite = jnp.all(jnp.isfinite(velocity_all)) & jnp.all(jnp.isfinite(gradient_all))
+        # ty: ignore[unresolved-attribute]
         source_overflow = ~topology.evidence.successful
         successful = finite & ~stale & ~source_overflow
+        # ty: ignore[unresolved-attribute]
         translations = jnp.asarray(topology.node_count - 1, dtype=jnp.int32)
+        # ty: ignore[unresolved-attribute]
         m2l_count = jnp.sum(topology.v_list.routes.valid, dtype=jnp.int32)
+        # ty: ignore[unresolved-attribute]
         p2l_count = jnp.sum(topology.x_list.routes.valid, dtype=jnp.int32)
         m2p_count = jnp.sum(m2p_counts, dtype=jnp.int32)
         near_count = jnp.sum(near_counts, dtype=jnp.int32)

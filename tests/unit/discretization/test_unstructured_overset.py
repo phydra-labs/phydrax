@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _overset_meshes():
+def _overset_meshes() -> Any:
     donor_vertices = np.asarray(
         ((0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (0.0, 1.0), (1.0, 1.0), (2.0, 1.0))
     )
@@ -28,7 +31,7 @@ def _overset_meshes():
     return donor, receptor
 
 
-def test_overset_overlap_is_constant_exact_and_conservative():
+def test_overset_overlap_is_constant_exact_and_conservative() -> None:
     donor, receptor = _overset_meshes()
     overset = phx.discretization.UnstructuredOversetPlan(
         donor,
@@ -62,7 +65,7 @@ def test_overset_overlap_is_constant_exact_and_conservative():
         )
 
 
-def test_periodic_sliding_overlap_rebuilds_and_closes_flux_budget():
+def test_periodic_sliding_overlap_rebuilds_and_closes_flux_budget() -> None:
     plan = phx.discretization.PeriodicSlidingInterfacePlan(
         np.asarray((0.0, 0.4, 1.0)),
         np.asarray((0.0, 0.25, 0.75, 1.0)),
@@ -87,7 +90,7 @@ def test_periodic_sliding_overlap_rebuilds_and_closes_flux_budget():
     np.testing.assert_allclose(jnp.sum(coupling.overlap_measures), 1.0, atol=2e-14)
 
 
-def test_sliding_interface_rejects_invalid_partitions():
+def test_sliding_interface_rejects_invalid_partitions() -> None:
     with pytest.raises(ValueError, match="partition"):
         phx.discretization.PeriodicSlidingInterfacePlan(
             np.asarray((0.0, 0.7, 0.6, 1.0)),
@@ -97,7 +100,7 @@ def test_sliding_interface_rejects_invalid_partitions():
         )
 
 
-def test_overset_masks_exclude_holes_and_require_active_fringe_endpoints():
+def test_overset_masks_exclude_holes_and_require_active_fringe_endpoints() -> None:
     donor, receptor = _overset_meshes()
     common = dict(
         donor_active_mask=np.asarray((True, True)),
@@ -114,6 +117,7 @@ def test_overset_masks_exclude_holes_and_require_active_fringe_endpoints():
             np.asarray((0, 1), dtype=np.int32),
             np.asarray((1.0, 1.0)),
             donor_hole_mask=np.asarray((True, False)),
+            # ty: ignore[invalid-argument-type]
             **{key: value for key, value in common.items() if key != "donor_hole_mask"},
         )
     with pytest.raises(ValueError, match="hole"):
@@ -125,6 +129,7 @@ def test_overset_masks_exclude_holes_and_require_active_fringe_endpoints():
             np.asarray((0, 1), dtype=np.int32),
             np.asarray((1.0, 1.0)),
             receptor_hole_mask=np.asarray((True,)),
+            # ty: ignore[invalid-argument-type]
             **{
                 key: value
                 for key, value in common.items()
@@ -153,7 +158,7 @@ def test_overset_masks_exclude_holes_and_require_active_fringe_endpoints():
         )
 
 
-def test_overset_donor_global_ids_permit_permuted_route_indices():
+def test_overset_donor_global_ids_permit_permuted_route_indices() -> None:
     donor, receptor = _overset_meshes()
     overset = phx.discretization.UnstructuredOversetPlan(
         donor,
@@ -173,7 +178,7 @@ def test_overset_donor_global_ids_permit_permuted_route_indices():
     np.testing.assert_allclose(overset.interpolate(jnp.asarray((1.0, 3.0))), 2.0)
 
 
-def test_overset_rejects_donor_overcoverage_and_bad_union_certificate():
+def test_overset_rejects_donor_overcoverage_and_bad_union_certificate() -> None:
     donor, receptor = _overset_meshes()
     args = (
         donor,
@@ -197,7 +202,7 @@ def test_overset_rejects_donor_overcoverage_and_bad_union_certificate():
         )
 
 
-def test_overset_union_certificate_identity_and_incomplete_map():
+def test_overset_union_certificate_identity_and_incomplete_map() -> None:
     donor, receptor = _overset_meshes()
     kwargs = dict(
         union_volume_certificate=np.asarray((1.0, 1.0)),
@@ -211,6 +216,7 @@ def test_overset_union_certificate_identity_and_incomplete_map():
         np.asarray((0, 2), dtype=np.int32),
         np.asarray((0, 1), dtype=np.int32),
         np.asarray((1.0, 1.0)),
+        # ty: ignore[invalid-argument-type]
         **kwargs,
     )
     changed_tolerance = phx.discretization.UnstructuredOversetPlan(
@@ -231,6 +237,7 @@ def test_overset_union_certificate_identity_and_incomplete_map():
         np.asarray((0, 2), dtype=np.int32),
         np.asarray((0, 1), dtype=np.int32),
         np.asarray((1.0, 1.0)),
+        # ty: ignore[invalid-argument-type]
         **{**kwargs, "epoch_id": "epoch-b"},
     )
     np.testing.assert_allclose(overset.union_volume_certificate, (1.0, 1.0))
@@ -248,7 +255,7 @@ def test_overset_union_certificate_identity_and_incomplete_map():
         )
 
 
-def test_overset_nonconservative_policy_rejected_and_bounded_is_explicit():
+def test_overset_nonconservative_policy_rejected_and_bounded_is_explicit() -> None:
     donor, receptor = _overset_meshes()
     common = (
         donor,
@@ -266,7 +273,7 @@ def test_overset_nonconservative_policy_rejected_and_bounded_is_explicit():
     assert bounded.bounded_interpolation
 
 
-def test_overset_rejects_stale_geometry_epoch():
+def test_overset_rejects_stale_geometry_epoch() -> None:
     donor, receptor = _overset_meshes()
     overset = phx.discretization.UnstructuredOversetPlan(
         donor,
@@ -295,7 +302,7 @@ def test_overset_rejects_stale_geometry_epoch():
         overset.validate_geometry(stale, receptor)
 
 
-def test_overset_face_artifact_is_complete_and_identity_bound():
+def test_overset_face_artifact_is_complete_and_identity_bound() -> None:
     donor, receptor = _overset_meshes()
     face_ids = np.asarray((0, 1), dtype=np.int32)
     points = np.asarray(receptor.face_quadrature_points)[face_ids]
@@ -320,7 +327,9 @@ def test_overset_face_artifact_is_complete_and_identity_bound():
         receptor_face_cells=cells,
     )
     assert overset.face_artifact_id
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(overset.receptor_face_points, points)
+    # ty: ignore[unresolved-attribute]
     assert overset.receptor_face_cells.shape == (2,)
     with pytest.raises(ValueError, match="require"):
         phx.discretization.UnstructuredOversetPlan(

@@ -17,7 +17,8 @@ from math import isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -70,7 +71,7 @@ class AlievPanfilovParameters(StrictModule, NonTrainableState):
         /,
         *,
         singularity_tolerance: float = 1.0e-7,
-    ):
+    ) -> None:
         coefficients = {
             "a": float(a),
             "b": float(b),
@@ -123,7 +124,7 @@ class AlievPanfilovState(StrictModule):
     activation: Array
     recovery: Array
 
-    def __init__(self, activation: ArrayLike, recovery: ArrayLike, /):
+    def __init__(self, activation: ArrayLike, recovery: ArrayLike, /) -> None:
         activation_ = jnp.asarray(activation)
         recovery_ = jnp.asarray(recovery, dtype=activation_.dtype)
         if activation_.shape != recovery_.shape or activation_.size == 0:

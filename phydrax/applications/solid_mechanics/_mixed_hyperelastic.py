@@ -11,7 +11,9 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from phydrax.ein import contract
 
@@ -22,7 +24,11 @@ from ...discretization.fem._mixed_constraint import (
     PreparedMixedFiniteElementConstraint,
     PressureGaugePolicy,
 )
-from ...equations import CellResidualAction, FiniteElementForm
+from ...equations import (
+    CellResidualAction,
+    FiniteElementExecutionContext,
+    FiniteElementForm,
+)
 from ...nn.parameters import ParameterSubspace
 from ...solver._field_equilibrium import (
     prepare_functional_stationarity,
@@ -154,7 +160,7 @@ class MixedHyperelasticLaw(StrictModule):
         *,
         bulk_modulus: float | None = None,
         minimum_jacobian: float = 0.0,
-    ):
+    ) -> None:
         if not callable(isochoric_energy):
             raise TypeError("isochoric_energy must be callable.")
         if not callable(volumetric_constraint):
@@ -337,7 +343,7 @@ class MixedHyperelasticModel(StrictModule):
 
     law: MixedHyperelasticLaw
 
-    def __init__(self, law: MixedHyperelasticLaw, /):
+    def __init__(self, law: MixedHyperelasticLaw, /) -> None:
         if not isinstance(law, MixedHyperelasticLaw):
             raise TypeError("law must be MixedHyperelasticLaw.")
         self.law = law
@@ -381,8 +387,14 @@ def mixed_hyperelastic_form(
         raise TypeError("model must be MixedHyperelasticModel.")
 
     def displacement_kernel(
-        values, gradients, points, weights, basis_values, basis_gradients, context
-    ):
+        values: tuple[Array, ...],
+        gradients: tuple[Array, ...],
+        points: Array,
+        weights: Array,
+        basis_values: Array,
+        basis_gradients: Array,
+        context: FiniteElementExecutionContext,
+    ) -> Array:
         del points, basis_values, context
         displacement_gradient = jnp.swapaxes(jnp.asarray(gradients[0]), -1, -2)
         pressure = jnp.asarray(values[1])
@@ -399,8 +411,14 @@ def mixed_hyperelastic_form(
         )
 
     def pressure_kernel(
-        values, gradients, points, weights, basis_values, basis_gradients, context
-    ):
+        values: tuple[Array, ...],
+        gradients: tuple[Array, ...],
+        points: Array,
+        weights: Array,
+        basis_values: Array,
+        basis_gradients: Array,
+        context: FiniteElementExecutionContext,
+    ) -> Array:
         del points, basis_gradients, context
         displacement_gradient = jnp.swapaxes(jnp.asarray(gradients[0]), -1, -2)
         dimension = displacement_gradient.shape[-1]
@@ -648,7 +666,7 @@ class MixedAugmentedLagrangianPlan(StrictModule, NonTrainableState):
         maximum_penalty: float = 1.0e12,
         constraint_reduction: float = 0.25,
         constraint_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(law, MixedHyperelasticLaw):
             raise TypeError("law must be MixedHyperelasticLaw.")
         if law.bulk_modulus is not None:

@@ -8,7 +8,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -49,7 +50,7 @@ class TractionVelocityPortHistory(StrictModule, NonTrainableState):
         /,
         *,
         port_id: str,
-    ):
+    ) -> None:
         traction = jnp.asarray(outgoing_traction)
         velocity_ = jnp.asarray(velocity, dtype=traction.dtype)
         weights = jnp.asarray(quadrature_weights, dtype=traction.dtype)
@@ -275,7 +276,7 @@ class NewmarkPolicy(StrictModule):
     beta: float
     gamma: float
 
-    def __init__(self, *, beta: float = 0.25, gamma: float = 0.5):
+    def __init__(self, *, beta: float = 0.25, gamma: float = 0.5) -> None:
         if beta <= 0.0 or gamma <= 0.0:
             raise ValueError("Newmark beta and gamma must be positive.")
         self.beta = float(beta)

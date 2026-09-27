@@ -13,7 +13,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -29,6 +30,7 @@ from ...operators.quantum import (
     uniform_sphere_electron_walkers,
 )
 from ...solver import VariationalMonteCarloProblem
+from ...typing import PRNGKey
 from ._sphere import HaldaneSpherePlan
 from ._trial_states import LaughlinSphereAmplitude
 
@@ -54,7 +56,7 @@ class LandauLevelMixingVMCPlan(StrictModule, NonTrainableState):
         hidden_dimension: int = 32,
         layer_count: int = 2,
         determinant_count: int = 4,
-    ):
+    ) -> None:
         if not isinstance(sphere, HaldaneSpherePlan):
             raise TypeError("sphere must be HaldaneSpherePlan.")
         if sphere.statistics != "fermion":
@@ -107,7 +109,7 @@ class PreparedLandauLevelMixingVMC(StrictModule):
 
 def prepare_landau_level_mixing_vmc(
     plan: LandauLevelMixingVMCPlan,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> PreparedLandauLevelMixingVMC:
     if not isinstance(plan, LandauLevelMixingVMCPlan):

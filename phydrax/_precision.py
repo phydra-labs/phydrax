@@ -7,29 +7,22 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from math import ceil, prod
-from typing import Any, Literal, TypeAlias
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import numpy as np
 
+from ._dtype_names import (
+    ComplexPrecisionDType,
+    precision_dtype_name,
+    ScalarPrecisionDType,
+)
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
+from .typing import parse
 
 
-RealPrecisionDType: TypeAlias = Literal[
-    "float8_e4m3fn",
-    "float8_e5m2",
-    "float8_e4m3fnuz",
-    "float8_e5m2fnuz",
-    "float16",
-    "bfloat16",
-    "float32",
-    "float64",
-]
-ComplexPrecisionDType: TypeAlias = Literal["complex64", "complex128"]
-ScalarPrecisionDType: TypeAlias = RealPrecisionDType | ComplexPrecisionDType
 MicroscalingElementFormat: TypeAlias = Literal[
     "float8_e4m3fn",
     "float8_e5m2",
@@ -51,37 +44,6 @@ PrecisionRole: TypeAlias = Literal[
     "checkpoint",
     "output",
 ]
-
-_PRECISION_DTYPES = frozenset(
-    (
-        "float8_e4m3fn",
-        "float8_e5m2",
-        "float8_e4m3fnuz",
-        "float8_e5m2fnuz",
-        "float16",
-        "bfloat16",
-        "float32",
-        "float64",
-        "complex64",
-        "complex128",
-    )
-)
-_PRECISION_ROLES = frozenset(
-    (
-        "storage",
-        "coefficient",
-        "compute",
-        "factorization",
-        "preconditioner",
-        "basis",
-        "accumulation",
-        "residual",
-        "certification",
-        "communication",
-        "checkpoint",
-        "output",
-    )
-)
 
 _MX_ALIASES = {
     "mxfp8-e4m3": "float8_e4m3fn",
@@ -116,7 +78,7 @@ class MicroscalingFormat:
         scale_format: str = "float8_e8m0fnu",
         axis: int = -1,
         packing: Literal["packed", "byte"] | None = None,
-    ):
+    ) -> None:
         element = _MX_ALIASES.get(str(element_format), str(element_format))
         if element not in _MX_BITS:
             raise ValueError(f"Unsupported microscaling element format {element!r}.")
@@ -172,7 +134,8 @@ class MicroscalingFormat:
             int(value["block_size"]),
             str(value["scale_format"]),
             int(value["axis"]),
-            str(value["packing"]),
+            # The constructor rejects packing values other than "packed"/"byte".
+            cast('Literal["packed", "byte"]', str(value["packing"])),
         )
 
 
@@ -181,59 +144,12 @@ PrecisionFormat: TypeAlias = (
 )
 
 
-def precision_dtype_name(value: Any, /) -> ScalarPrecisionDType:
-    """Return one canonical supported JAX scalar dtype name."""
-    dtype = jnp.dtype(jax.dtypes.canonicalize_dtype(jnp.dtype(value)))
-    name = dtype.name
-    if name not in _PRECISION_DTYPES:
-        raise ValueError(f"Unsupported precision dtype {name!r}.")
-    return name
-
-
-def real_precision_dtype_name(value: Any, /) -> RealPrecisionDType:
-    """Return one canonical supported real floating dtype name."""
-    name = precision_dtype_name(value)
-    if name not in (
-        "float8_e4m3fn",
-        "float8_e5m2",
-        "float8_e4m3fnuz",
-        "float8_e5m2fnuz",
-        "float16",
-        "bfloat16",
-        "float32",
-        "float64",
-    ):
-        raise ValueError(f"Precision dtype {name!r} is not real floating-point.")
-    return name
-
-
-def complex_precision_dtype(value: RealPrecisionDType | Any, /) -> ComplexPrecisionDType:
-    """Return the complex companion used for one real precision dtype."""
-    name = real_precision_dtype_name(value)
-    return "complex128" if name == "float64" else "complex64"
-
-
 def precision_itemsize(value: Any, /) -> int:
     if isinstance(value, MicroscalingFormat):
         raise ValueError(
             "Microscaling formats have fractional payload widths; use storage_bytes."
         )
     return jnp.dtype(precision_dtype_name(value)).itemsize
-
-
-def inexact_result_type(*values: Any) -> np.dtype:
-    """Return the JAX result dtype of ``values``, promoted to an inexact dtype.
-
-    Floating and complex inputs keep their precision (``float32`` stays
-    ``float32``); integer, boolean, and empty inputs use JAX's canonical default
-    floating dtype. Equivalent to ``jnp.result_type(*values, float)``, where the
-    weakly typed Python ``float`` never widens an inexact input.
-    """
-    if values:
-        dtype = jnp.result_type(*values)
-        if jnp.issubdtype(dtype, jnp.inexact):
-            return dtype
-    return jax.dtypes.canonicalize_dtype(jnp.float64)
 
 
 def _identifier(name: str, value: Any, /) -> str:
@@ -269,10 +185,7 @@ def _canonical_entries(
     /,
 ) -> tuple[tuple[str, PrecisionFormat | None], ...]:
     items = tuple(values.items()) if isinstance(values, Mapping) else tuple(values)
-    names = tuple(str(name) for name, _ in items)
-    if any(name not in _PRECISION_ROLES for name in names):
-        invalid = tuple(sorted(name for name in names if name not in _PRECISION_ROLES))
-        raise ValueError(f"Unknown precision roles {invalid!r}.")
+    names = tuple(parse(str(name), PrecisionRole, "precision role") for name, _ in items)
     if len(set(names)) != len(names):
         raise ValueError("Precision roles must be unique.")
     return tuple(
@@ -317,7 +230,7 @@ class PrecisionRequest:
         domain: str,
         requested: Mapping[str, Any] | Sequence[tuple[str, Any]],
         /,
-    ):
+    ) -> None:
         domain_ = _identifier("domain", domain)
         requested_ = _canonical_entries(requested)
         for role, format_ in requested_:
@@ -378,7 +291,7 @@ class PrecisionResolution:
         provider: str,
         effective: Mapping[str, Any] | Sequence[tuple[str, Any]],
         /,
-    ):
+    ) -> None:
         if not isinstance(request, PrecisionRequest):
             raise TypeError("request must be a PrecisionRequest.")
         provider_ = _identifier("provider", provider)
@@ -465,7 +378,7 @@ class PrecisionEvidenceEnvelope:
         *,
         children: Mapping[str, PrecisionEvidenceEnvelope]
         | Sequence[tuple[str, PrecisionEvidenceEnvelope]] = (),
-    ):
+    ) -> None:
         if not isinstance(resolution, PrecisionResolution):
             raise TypeError("resolution must be a PrecisionResolution.")
         observed_ = _canonical_entries(observed)
@@ -573,7 +486,7 @@ class PrecisionResourceAssumptions:
         domain: str,
         dtypes: Mapping[str, Any] | Sequence[tuple[str, Any]],
         /,
-    ):
+    ) -> None:
         domain_ = _identifier("domain", domain)
         dtypes_ = _canonical_entries(dtypes)
         item_sizes = tuple(
@@ -696,7 +609,7 @@ class MicroscaledArray(StrictModule):
         finite: Any,
         saturation_count: Any,
         /,
-    ):
+    ) -> None:
         if not isinstance(format, MicroscalingFormat):
             raise TypeError("format must be a MicroscalingFormat.")
         packed = jnp.asarray(packed_values, dtype=jnp.uint8)
@@ -960,7 +873,6 @@ def dequantize_mx(
 
 
 __all__ = [
-    "ComplexPrecisionDType",
     "MicroscaledArray",
     "MicroscalingElementFormat",
     "MicroscalingFormat",
@@ -970,12 +882,7 @@ __all__ = [
     "PrecisionResolution",
     "PrecisionResourceAssumptions",
     "PrecisionRole",
-    "RealPrecisionDType",
-    "ScalarPrecisionDType",
-    "complex_precision_dtype",
     "dequantize_mx",
-    "precision_dtype_name",
     "precision_itemsize",
     "quantize_mx",
-    "real_precision_dtype_name",
 ]

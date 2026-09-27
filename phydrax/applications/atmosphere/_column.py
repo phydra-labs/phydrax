@@ -19,7 +19,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._array_archive import read_array_archive, write_array_archive
 from ..._fingerprint import canonical_fingerprint
@@ -54,7 +55,7 @@ def conservative_radiation(
     return rate, -jnp.sum(rate, axis=-1)
 
 
-def _exchange_flux(quantity, mass, exchange_rate):
+def _exchange_flux(quantity: Array, mass: Array, exchange_rate: ArrayLike) -> Array:
     rate = jnp.broadcast_to(jnp.asarray(exchange_rate), quantity[..., :-1].shape)
     interface_mass = (
         2.0 * mass[..., :-1] * mass[..., 1:] / (mass[..., :-1] + mass[..., 1:])
@@ -65,7 +66,7 @@ def _exchange_flux(quantity, mass, exchange_rate):
     )
 
 
-def _flux_divergence(flux, template):
+def _flux_divergence(flux: Array, template: Array) -> Array:
     boundary = jnp.zeros_like(template[..., :1])
     return jnp.concatenate((boundary, flux), axis=-1) - jnp.concatenate(
         (flux, boundary), axis=-1
@@ -227,7 +228,7 @@ class MoistColumnPlan(StrictModule, NonTrainableState):
         mixing_rate: float = 0.0,
         surface_temperature: float = 290.0,
         forcing_cadence: int = 1,
-    ):
+    ) -> None:
         if thermodynamics is not None and not isinstance(
             thermodynamics, MoistThermodynamicPlan
         ):
@@ -602,7 +603,7 @@ class MoistColumnPlan(StrictModule, NonTrainableState):
         if int(steps) != steps or steps < 1:
             raise ValueError("steps must be a positive integer.")
 
-        def body(current, _):
+        def body(current: MoistColumnState, _: None) -> tuple[MoistColumnState, Array]:
             result = self.step(
                 current,
                 dt,

@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -8,11 +10,11 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _interval():
+def _interval() -> Any:
     return phx.domain.ScalarInterval(0.0, 1.0, label="x")
 
 
-def test_reference_cell_rules_integrate_constant_to_cell_measure():
+def test_reference_cell_rules_integrate_constant_to_cell_measure() -> None:
     rule = phx.integration.GaussLegendreRule(7)
     reference_rules = (
         (phx.integration.ReferenceIntervalRule(rule), 1.0),
@@ -27,7 +29,7 @@ def test_reference_cell_rules_integrate_constant_to_cell_measure():
         assert jnp.allclose(jnp.sum(data.weights), expected_measure, atol=1e-12)
 
 
-def test_fixed_integral_mean_and_density_have_distinct_measure_semantics():
+def test_fixed_integral_mean_and_density_have_distinct_measure_semantics() -> None:
     domain = _interval()
     component = domain.component()
     x_squared = domain.Function("x")(lambda x: x**2)
@@ -56,7 +58,7 @@ def test_fixed_integral_mean_and_density_have_distinct_measure_semantics():
     assert integral.error_estimate is None
 
 
-def _key_tolerant_square(x=jnp.asarray(2.0), *, key=None):
+def _key_tolerant_square(x: Any = jnp.asarray(2.0), *, key: Any = None) -> Any:
     del key
     return x**2
 
@@ -88,14 +90,16 @@ def _key_tolerant_square(x=jnp.asarray(2.0), *, key=None):
         ),
     ],
 )
-def test_domain_targets_reject_raw_callables_with_explicit_remedy(target, plan, key):
+def test_domain_targets_reject_raw_callables_with_explicit_remedy(
+    target: Any, plan: Any, key: Any
+) -> None:
     keyword = {} if key is None else {"key": key}
 
     with pytest.raises(TypeError, match=r"domain\.Function\(\*labels\)\(callable\)"):
         phx.integration.integrate(_key_tolerant_square, target, plan, **keyword)
 
 
-def test_density_targets_reject_raw_log_density_callables():
+def test_density_targets_reject_raw_log_density_callables() -> None:
     domain = _interval()
     target = phx.integration.normalized_density(
         phx.integration.over(domain.component()),
@@ -107,7 +111,7 @@ def test_density_targets_reject_raw_log_density_callables():
         phx.integration.integrate(1.0, target, plan)
 
 
-def test_declared_domain_functions_and_constants_integrate_over_domain_targets():
+def test_declared_domain_functions_and_constants_integrate_over_domain_targets() -> None:
     domain = _interval()
     target = phx.integration.over(domain.component())
     plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(8))
@@ -119,7 +123,7 @@ def test_declared_domain_functions_and_constants_integrate_over_domain_targets()
     assert jnp.allclose(jnp.asarray(constant.value.data), 3.0, atol=1e-12)
 
 
-def test_domain_functions_with_incompatible_support_are_rejected():
+def test_domain_functions_with_incompatible_support_are_rejected() -> None:
     wide = phx.domain.ScalarInterval(0.0, 2.0, label="x")
     target = phx.integration.over(_interval().component())
     plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(8))
@@ -128,7 +132,7 @@ def test_domain_functions_with_incompatible_support_are_rejected():
         phx.integration.integrate(wide.Function("x")(lambda x: x), target, plan)
 
 
-def test_materialize_reduce_reuses_exactly_the_same_realization():
+def test_materialize_reduce_reuses_exactly_the_same_realization() -> None:
     domain = _interval()
     target = phx.integration.over(domain.component())
     plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(10))
@@ -144,7 +148,7 @@ def test_materialize_reduce_reuses_exactly_the_same_realization():
     assert jnp.allclose(jnp.asarray(second.value.data), 1.0 / 3.0, atol=1e-12)
 
 
-def test_from_samples_attaches_target_measure_without_resampling():
+def test_from_samples_attaches_target_measure_without_resampling() -> None:
     domain = _interval()
     component = domain.component()
     points = component.sample(
@@ -165,7 +169,7 @@ def test_from_samples_attaches_target_measure_without_resampling():
     assert jnp.allclose(jnp.asarray(first.value.data), 1.0 / 3.0, atol=2e-2)
 
 
-def test_domain_sampling_plan_materializes_a_reducible_realization():
+def test_domain_sampling_plan_materializes_a_reducible_realization() -> None:
     domain = _interval()
     component = domain.component()
     plan = phx.domain.PointSampling(
@@ -186,7 +190,7 @@ def test_domain_sampling_plan_materializes_a_reducible_realization():
     assert jnp.allclose(jnp.asarray(estimate.value.data), 1.0 / 3.0, atol=2e-2)
 
 
-def test_domain_sampling_plan_requires_explicit_key_ownership():
+def test_domain_sampling_plan_requires_explicit_key_ownership() -> None:
     domain = _interval()
 
     with pytest.raises(ValueError, match="requires key"):
@@ -196,7 +200,7 @@ def test_domain_sampling_plan_requires_explicit_key_ownership():
         )
 
 
-def test_scalar_boundary_and_interior_factors_form_one_product_rule():
+def test_scalar_boundary_and_interior_factors_form_one_product_rule() -> None:
     space = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     time = phx.domain.ScalarInterval(0.0, 2.0, label="t")
     domain = phx.domain.ProductDomain(space, time)
@@ -213,7 +217,7 @@ def test_scalar_boundary_and_interior_factors_form_one_product_rule():
     assert estimate.num_evaluations == 16
 
 
-def test_scalar_boundary_product_preserves_probability_measure():
+def test_scalar_boundary_product_preserves_probability_measure() -> None:
     probability = phx.domain.ProbabilityDomain(
         phx.uq.Uniform(0.0, 2.0),
         label="z",
@@ -233,7 +237,7 @@ def test_scalar_boundary_product_preserves_probability_measure():
     assert estimate.num_evaluations == 10
 
 
-def test_sparse_grid_reports_level_difference_not_statistical_error():
+def test_sparse_grid_reports_level_difference_not_statistical_error() -> None:
     domain = _interval()
     function = domain.Function("x")(lambda x: x**4)
 
@@ -254,7 +258,7 @@ def test_sparse_grid_reports_level_difference_not_statistical_error():
     assert estimate.diagnostics.num_unique_nodes == current_count == 9
 
 
-def test_sparse_grid_requires_successful_coarser_level():
+def test_sparse_grid_requires_successful_coarser_level() -> None:
     domain = _interval()
     realization = phx.integration.materialize(
         phx.integration.mean_over(domain.component()),
@@ -278,10 +282,11 @@ def test_sparse_grid_requires_successful_coarser_level():
         phx.integration.IntegrationStatus.INVALID_NORMALIZATION_MASS
     )
     assert not estimate.successful
+    # ty: ignore[invalid-argument-type]
     assert jnp.isinf(estimate.error_estimate)
 
 
-def test_sparse_grid_requires_finite_level_difference():
+def test_sparse_grid_requires_finite_level_difference() -> None:
     domain = _interval()
     realization = phx.integration.materialize(
         phx.integration.over(domain.component()),
@@ -318,10 +323,11 @@ def test_sparse_grid_requires_finite_level_difference():
     assert not jnp.all(jnp.isfinite(estimate.diagnostics.level_difference))
     assert estimate.status == int(phx.integration.IntegrationStatus.NONFINITE_INTEGRAND)
     assert not estimate.successful
+    # ty: ignore[invalid-argument-type]
     assert jnp.isinf(estimate.error_estimate)
 
 
-def test_mapped_triangle_preserves_output_field_semantics():
+def test_mapped_triangle_preserves_output_field_semantics() -> None:
     rule = phx.integration.ReferenceTriangleRule(phx.integration.GaussLegendreRule(6))
     target = phx.integration.mapped(
         rule,
@@ -339,7 +345,7 @@ def test_mapped_triangle_preserves_output_field_semantics():
     assert jnp.allclose(jnp.asarray(estimate.value.data), 1.0 / 3.0, atol=1e-12)
 
 
-def test_output_pytrees_reduce_leafwise_with_structure_and_dtype_preserved():
+def test_output_pytrees_reduce_leafwise_with_structure_and_dtype_preserved() -> None:
     domain = _interval()
     realization = phx.integration.materialize(
         phx.integration.over(domain.component()),
@@ -367,14 +373,14 @@ def test_output_pytrees_reduce_leafwise_with_structure_and_dtype_preserved():
     assert estimate.error_estimate is None
 
 
-def test_reusable_realization_supports_jit_vmap_jvp_grad_and_complex_values():
+def test_reusable_realization_supports_jit_vmap_jvp_grad_and_complex_values() -> None:
     domain = _interval()
     realization = phx.integration.materialize(
         phx.integration.over(domain.component()),
         phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(12)),
     )
 
-    def objective(scale):
+    def objective(scale: Any) -> Any:
         function = domain.Function("x")(lambda x: scale * x**2 + 1j * scale * x)
         return phx.integration.reduce(function, realization).value.data
 
@@ -393,7 +399,7 @@ def test_reusable_realization_supports_jit_vmap_jvp_grad_and_complex_values():
     assert jnp.allclose(gradient, 1.0 / 3.0, atol=1e-12)
 
 
-def test_deterministic_and_randomized_key_contracts_are_explicit():
+def test_deterministic_and_randomized_key_contracts_are_explicit() -> None:
     domain = _interval()
     target = phx.integration.over(domain.component())
 
@@ -405,7 +411,7 @@ def test_deterministic_and_randomized_key_contracts_are_explicit():
         phx.integration.materialize(target, phx.integration.MonteCarloPlan(16))
 
 
-def test_zero_density_reports_invalid_normalization_mass():
+def test_zero_density_reports_invalid_normalization_mass() -> None:
     domain = _interval()
     target = phx.integration.normalized_density(
         phx.integration.over(domain.component()),
@@ -424,7 +430,7 @@ def test_zero_density_reports_invalid_normalization_mass():
 
 
 @pytest.mark.parametrize("use_sum", [False, True])
-def test_fixed_density_rejects_zero_normalized_component_mass(use_sum):
+def test_fixed_density_rejects_zero_normalized_component_mass(use_sum: Any) -> None:
     domain = _interval()
     left_empty = domain.component(where_all=lambda x: x < 0.0)
     if use_sum:
@@ -452,7 +458,7 @@ def test_fixed_density_rejects_zero_normalized_component_mass(use_sum):
     assert not jnp.all(jnp.isfinite(jnp.asarray(estimate.value.data)))
 
 
-def test_anisotropic_sparse_grid_preserves_constant_measure():
+def test_anisotropic_sparse_grid_preserves_constant_measure() -> None:
     x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     y = phx.domain.ScalarInterval(0.0, 1.0, label="y")
     domain = phx.domain.ProductDomain(x, y)
@@ -467,7 +473,7 @@ def test_anisotropic_sparse_grid_preserves_constant_measure():
     assert jnp.allclose(jnp.asarray(estimate.value.data), 1.0, atol=1e-12)
 
 
-def test_mapped_density_preserves_density_and_normalization_semantics():
+def test_mapped_density_preserves_density_and_normalization_semantics() -> None:
     rule = phx.integration.ReferenceIntervalRule(phx.integration.GaussLegendreRule(8))
     base = phx.integration.mapped(
         rule,
@@ -486,7 +492,7 @@ def test_mapped_density_preserves_density_and_normalization_semantics():
     assert jnp.allclose(jnp.asarray(estimate.value.data), 5.0 / 9.0, atol=1e-12)
 
 
-def test_mapped_target_mass_rescales_the_physical_measure():
+def test_mapped_target_mass_rescales_the_physical_measure() -> None:
     rule = phx.integration.ReferenceIntervalRule(phx.integration.GaussLegendreRule(8))
     target = phx.integration.mapped(
         rule,
@@ -506,7 +512,7 @@ def test_mapped_target_mass_rescales_the_physical_measure():
     assert jnp.allclose(estimate.diagnostics.target_mass, 2.0, atol=1e-12)
 
 
-def test_mapped_finite_operand_product_overflow_is_nonfinite_integrand():
+def test_mapped_finite_operand_product_overflow_is_nonfinite_integrand() -> None:
     rule = phx.integration.ReferenceIntervalRule(phx.integration.GaussLegendreRule(2))
     target = phx.integration.mapped(
         rule,
@@ -527,7 +533,7 @@ def test_mapped_finite_operand_product_overflow_is_nonfinite_integrand():
     assert not jnp.all(jnp.isfinite(jnp.asarray(estimate.value.data)))
 
 
-def test_mapped_finite_normalized_quotient_overflow_is_nonfinite_integrand():
+def test_mapped_finite_normalized_quotient_overflow_is_nonfinite_integrand() -> None:
     rule = phx.integration.ReferenceIntervalRule(phx.integration.GaussLegendreRule(2))
     base = phx.integration.mapped(
         rule,
@@ -560,7 +566,7 @@ def test_mapped_finite_normalized_quotient_overflow_is_nonfinite_integrand():
     assert not jnp.all(jnp.isfinite(jnp.asarray(estimate.value.data)))
 
 
-def test_fixed_probability_rejects_nonfinite_integrands():
+def test_fixed_probability_rejects_nonfinite_integrands() -> None:
     probability = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="z")
 
     estimate = phx.integration.integrate(
@@ -573,7 +579,7 @@ def test_fixed_probability_rejects_nonfinite_integrands():
     assert not estimate.successful
 
 
-def test_density_preserves_a_normalized_component_base_across_plans():
+def test_density_preserves_a_normalized_component_base_across_plans() -> None:
     domain = phx.domain.ScalarInterval(0.0, 2.0, label="x")
     target = phx.integration.density(
         phx.integration.mean_over(domain.component()),
@@ -608,7 +614,7 @@ def test_density_preserves_a_normalized_component_base_across_plans():
     )
 
 
-def test_probability_component_uses_probability_measure():
+def test_probability_component_uses_probability_measure() -> None:
     probability = phx.domain.ProbabilityDomain(
         phx.uq.Uniform(0.0, 2.0),
         label="z",
@@ -633,7 +639,7 @@ def test_probability_component_uses_probability_measure():
     assert jnp.allclose(jnp.asarray(mean.value.data), 1.0, atol=1e-12)
 
 
-def test_partial_axis_integration_does_not_apply_unreduced_geometry_weights():
+def test_partial_axis_integration_does_not_apply_unreduced_geometry_weights() -> None:
     geometry = phx.domain.GeometryDomain(
         phx.geometry.Circle(center=(0.0, 0.0), radius=1.0).compile()
     )
@@ -663,7 +669,7 @@ def test_partial_axis_integration_does_not_apply_unreduced_geometry_weights():
     )
 
 
-def test_sparse_grid_rejects_boundary_component_selectors():
+def test_sparse_grid_rejects_boundary_component_selectors() -> None:
     domain = phx.domain.ScalarInterval(0.0, 2.0, label="x")
     target = phx.integration.over(domain.component({"x": phx.domain.Boundary()}))
 
@@ -674,7 +680,7 @@ def test_sparse_grid_rejects_boundary_component_selectors():
         )
 
 
-def test_sparse_grid_requires_complete_coupled_axes_with_fixed_labels():
+def test_sparse_grid_requires_complete_coupled_axes_with_fixed_labels() -> None:
     x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     y = phx.domain.ScalarInterval(0.0, 1.0, label="y")
     t = phx.domain.ScalarInterval(0.0, 2.0, label="t")
@@ -697,7 +703,7 @@ def test_sparse_grid_requires_complete_coupled_axes_with_fixed_labels():
     assert realization.batch.batch.points.points["t"].data == 0.0
 
 
-def test_mapped_reduction_ignores_nonfinite_values_on_masked_points():
+def test_mapped_reduction_ignores_nonfinite_values_on_masked_points() -> None:
     rule = phx.integration.ReferenceIntervalRule(phx.integration.GaussLegendreRule(8))
     base = phx.integration.mapped(
         rule,
@@ -720,7 +726,7 @@ def test_mapped_reduction_ignores_nonfinite_values_on_masked_points():
     assert jnp.allclose(estimate.value.data, 1.0)
 
 
-def test_mapped_target_requires_scalar_positive_mass():
+def test_mapped_target_requires_scalar_positive_mass() -> None:
     rule = phx.integration.ReferenceIntervalRule(phx.integration.GaussLegendreRule(2))
     with pytest.raises(ValueError, match="one scalar"):
         phx.integration.mapped(

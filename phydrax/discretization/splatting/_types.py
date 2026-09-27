@@ -8,11 +8,13 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 SplatAccumulation: TypeAlias = Literal["fast", "deterministic", "compensated"]
@@ -32,13 +34,9 @@ class SplatExecutionPolicy(StrictModule, NonTrainableState):
         *,
         accumulation: SplatAccumulation = "deterministic",
         geometry_ad: SplatGeometryAD = "piecewise",
-    ):
-        if accumulation not in ("fast", "deterministic", "compensated"):
-            raise ValueError(
-                "accumulation must be 'fast', 'deterministic', or 'compensated'."
-            )
-        if geometry_ad not in ("piecewise", "frozen"):
-            raise ValueError("geometry_ad must be 'piecewise' or 'frozen'.")
+    ) -> None:
+        accumulation = parse(accumulation, SplatAccumulation, "accumulation")
+        geometry_ad = parse(geometry_ad, SplatGeometryAD, "geometry_ad")
         self.accumulation = accumulation
         self.geometry_ad = geometry_ad
         self.policy_id = canonical_fingerprint(
@@ -66,7 +64,7 @@ class ParticleGridSplatBudget(StrictModule, NonTrainableState):
         maximum_routes: int = 32_000_000,
         maximum_relation_bytes: int = 1024**3,
         maximum_scalar_workspace_bytes: int = 1024**3,
-    ):
+    ) -> None:
         values = tuple(
             (
                 maximum_sources,
@@ -159,7 +157,7 @@ class SplatBalanceEvidence(StrictModule):
         target_measure_id: str,
         execution_policy_id: str,
         precision_policy_id: str,
-    ):
+    ) -> None:
         self.active_source_total = jnp.asarray(active_source_total)
         self.supported_source_total = jnp.asarray(supported_source_total)
         self.dropped_source_total = jnp.asarray(dropped_source_total)
@@ -215,7 +213,7 @@ class SplatDepositResult(StrictModule):
         balance: SplatBalanceEvidence,
         successful: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(balance, SplatBalanceEvidence):
             raise TypeError("balance must be SplatBalanceEvidence.")
         content_ = jnp.asarray(content)
@@ -254,7 +252,7 @@ class SplatRouteScatterResult(StrictModule):
         *,
         execution_policy_id: str,
         precision_policy_id: str,
-    ):
+    ) -> None:
         execution = str(execution_policy_id)
         precision = str(precision_policy_id)
         if not execution or not precision:
@@ -295,7 +293,7 @@ class SplatReconstructionResult(StrictModule):
         denominator_tolerance: ArrayLike,
         zero_coverage_count: ArrayLike,
         successful: ArrayLike,
-    ):
+    ) -> None:
         values_ = jnp.asarray(values)
         numerator_ = jnp.asarray(numerator)
         denominator_ = jnp.asarray(denominator)

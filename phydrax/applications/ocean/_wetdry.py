@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -27,7 +28,7 @@ class WetDryEpochPolicy(StrictModule, NonTrainableState):
         wet_depth: float,
         dry_depth: float,
         grazing_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         wet = float(wet_depth)
         dry = float(dry_depth)
         tolerance = float(grazing_tolerance)
@@ -82,7 +83,7 @@ class HydrostaticWetDryEventPlan(StrictModule, NonTrainableState):
     policy: WetDryEpochPolicy
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, policy: WetDryEpochPolicy, /):
+    def __init__(self, policy: WetDryEpochPolicy, /) -> None:
         if not isinstance(policy, WetDryEpochPolicy):
             raise TypeError("policy must be a WetDryEpochPolicy.")
         self.policy = policy

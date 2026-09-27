@@ -9,7 +9,8 @@ from enum import StrEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -34,7 +35,7 @@ class PRISMClosurePlan(StrictModule, NonTrainableState):
         /,
         *,
         hard_core_diameters: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(kind, PRISMClosureKind):
             raise TypeError("kind must be PRISMClosureKind.")
         diameters = None

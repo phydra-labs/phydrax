@@ -11,7 +11,8 @@ from collections.abc import Mapping
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -49,7 +50,7 @@ class BlockAMRReferenceParityPlan(StrictModule, NonTrainableState):
         provider_revision: str,
         absolute_tolerance: float,
         relative_tolerance: float,
-    ):
+    ) -> None:
         entries = tuple(
             sorted(
                 (str(name), np.asarray(value)) for name, value in reference_values.items()

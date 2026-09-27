@@ -1,5 +1,6 @@
 import itertools
 import math
+from typing import Any
 
 import jax.numpy as jnp
 import pytest
@@ -7,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def _standard_normal_moment(exponents):
+def _standard_normal_moment(exponents: Any) -> Any:
     moment = 1
     for exponent in exponents:
         if exponent % 2:
@@ -16,7 +17,7 @@ def _standard_normal_moment(exponents):
     return float(moment)
 
 
-def _certify(rule):
+def _certify(rule: Any) -> None:
     points = rule.prepared.points
     weights = rule.prepared.weights
     for exponents in itertools.product(
@@ -45,10 +46,10 @@ def _certify(rule):
     ),
 )
 def test_positive_gaussian_families_certify_total_degree_moments(
-    dimension,
-    degree,
-    family,
-):
+    dimension: Any,
+    degree: Any,
+    family: Any,
+) -> None:
     rule = phx.integration.GaussianCubatureRule(
         dimension,
         degree,
@@ -64,7 +65,7 @@ def test_positive_gaussian_families_certify_total_degree_moments(
     _certify(rule)
 
 
-def test_gaussian_rule_identity_and_capacity_are_static_and_explicit():
+def test_gaussian_rule_identity_and_capacity_are_static_and_explicit() -> None:
     first = phx.integration.GaussianCubatureRule(3, 5)
     replay = phx.integration.GaussianCubatureRule(3, 5)
     alternative = phx.integration.GaussianCubatureRule(3, 3)
@@ -86,7 +87,7 @@ def test_gaussian_rule_identity_and_capacity_are_static_and_explicit():
         )
 
 
-def test_scalar_gaussian_rule_integrates_a_transformed_probability_domain():
+def test_scalar_gaussian_rule_integrates_a_transformed_probability_domain() -> None:
     probability = phx.domain.ProbabilityDomain(
         phx.uq.Normal(2.0, 3.0),
         label="z",
@@ -103,7 +104,7 @@ def test_scalar_gaussian_rule_integrates_a_transformed_probability_domain():
     assert jnp.allclose(jnp.asarray(estimate.value.data), 243.0, atol=1e-11)
 
 
-def test_grouped_gaussian_rule_preserves_coupled_probability_moments():
+def test_grouped_gaussian_rule_preserves_coupled_probability_moments() -> None:
     x = phx.domain.ProbabilityDomain(phx.uq.Normal(1.0, 2.0), label="x")
     y = phx.domain.ProbabilityDomain(phx.uq.Normal(-2.0, 0.5), label="y")
     domain = phx.domain.ProductDomain(x, y)
@@ -128,7 +129,7 @@ def test_grouped_gaussian_rule_preserves_coupled_probability_moments():
     assert jnp.allclose(jnp.asarray(estimate.value.data), 1.0, atol=1e-12)
 
 
-def test_grouped_gaussian_rule_requires_matching_normal_reference_factors():
+def test_grouped_gaussian_rule_requires_matching_normal_reference_factors() -> None:
     x = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="x")
     y = phx.domain.ScalarInterval(-1.0, 1.0, label="y")
     domain = phx.domain.ProductDomain(x, y)

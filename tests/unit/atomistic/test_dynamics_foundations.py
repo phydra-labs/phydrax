@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -16,13 +18,17 @@ from phydrax.units import (
 )
 
 
-def _runtime(*, step_size=1.0e-3, cell=None, topology=None):
+def _runtime(*, step_size: Any = 1.0e-3, cell: Any = None, topology: Any = None) -> Any:
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     plan = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [10, 20],
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         units,
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0],
         topology=topology,
         cell=cell,
@@ -32,6 +38,7 @@ def _runtime(*, step_size=1.0e-3, cell=None, topology=None):
         system.particles
     )
     potential = phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.LennardJonesPotential([1.0], [1.0], 2.5, switch_distance=2.0)]
     ).prepare(system)
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
@@ -46,7 +53,7 @@ def _runtime(*, step_size=1.0e-3, cell=None, topology=None):
     return units, system, dynamics, thermodynamic
 
 
-def test_unit_system_is_complete_and_derived_from_unit_definitions():
+def test_unit_system_is_complete_and_derived_from_unit_definitions() -> None:
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     assert units.scale.length_unit == ANGSTROM
     assert units.scale.energy_unit == ELECTRONVOLT
@@ -68,7 +75,7 @@ def test_unit_system_is_complete_and_derived_from_unit_definitions():
         phx.atomistic.AtomisticUnitSystem.from_dict(ambiguous)
 
 
-def test_scale_rejects_molar_energy_and_reduced_units_are_not_si_convertible():
+def test_scale_rejects_molar_energy_and_reduced_units_are_not_si_convertible() -> None:
     with pytest.raises(ValueError, match="ordinary ENERGY"):
         phx.atomistic.AtomisticScaleContract(ANGSTROM, KILOCALORIE_PER_MOLE)
     reduced = phx.atomistic.AtomisticUnitSystem.reduced()
@@ -76,13 +83,25 @@ def test_scale_rejects_molar_energy_and_reduced_units_are_not_si_convertible():
         conversion_factor(reduced.scale.length_unit, ANGSTROM)
 
 
-def test_system_identity_is_independent_of_initial_positions():
+def test_system_identity_is_independent_of_initial_positions() -> None:
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     structure_a = phx.atomistic.AtomicStructure(
-        [1, 1], [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], [1.0, 1.0], units.scale
+        # ty: ignore[invalid-argument-type]
+        [1, 1],
+        # ty: ignore[invalid-argument-type]
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.0],
+        units.scale,
     )
     structure_b = phx.atomistic.AtomicStructure(
-        [1, 1], [[3.0, 0.0, 0.0], [4.0, 0.0, 0.0]], [1.0, 1.0], units.scale
+        # ty: ignore[invalid-argument-type]
+        [1, 1],
+        # ty: ignore[invalid-argument-type]
+        [[3.0, 0.0, 0.0], [4.0, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.0],
+        units.scale,
     )
     first = phx.atomistic.AtomisticSystemPlan.from_structure(structure_a, units)
     second = phx.atomistic.AtomisticSystemPlan.from_structure(structure_b, units)
@@ -90,7 +109,7 @@ def test_system_identity_is_independent_of_initial_positions():
     assert structure_a.structure_id != structure_b.structure_id
 
 
-def test_topology_resolves_stable_ids_and_sparse_pair_exceptions():
+def test_topology_resolves_stable_ids_and_sparse_pair_exceptions() -> None:
     topology = phx.atomistic.MolecularTopologyPlan(
         bonds=[[20, 10]],
         pair_exceptions=[[10, 20]],
@@ -111,7 +130,7 @@ def test_topology_resolves_stable_ids_and_sparse_pair_exceptions():
 
 
 @pytest.mark.parametrize("periodic", [False, True])
-def test_lennard_jones_force_is_negative_energy_gradient(periodic):
+def test_lennard_jones_force_is_negative_energy_gradient(periodic: Any) -> None:
     cell = phx.discretization.PeriodicCell(6.0 * jnp.eye(3)) if periodic else None
     _, _, dynamics, thermodynamic = _runtime(cell=cell)
     positions = jnp.asarray([[5.6, 0.0, 0.0], [6.8, 0.0, 0.0]])
@@ -134,7 +153,9 @@ def test_lennard_jones_force_is_negative_energy_gradient(periodic):
 
 
 @pytest.mark.parametrize("periodic", [False, True])
-def test_coordinate_representations_preserve_bond_force_and_curvature(periodic):
+def test_coordinate_representations_preserve_bond_force_and_curvature(
+    periodic: Any,
+) -> None:
     cell = phx.discretization.PeriodicCell(6.0 * jnp.eye(3)) if periodic else None
     topology = phx.atomistic.MolecularTopologyPlan(bonds=[[10, 20]])
     _, system, _, _ = _runtime(cell=cell, topology=topology)
@@ -142,6 +163,7 @@ def test_coordinate_representations_preserve_bond_force_and_curvature(periodic):
         system.particles
     )
     potential = phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.HarmonicBondPotential([4.0], [1.0])]
     ).prepare(system)
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
@@ -166,10 +188,10 @@ def test_coordinate_representations_preserve_bond_force_and_curvature(periodic):
         kwargs["fractional_positions"] = cell.fractional(position)
         kwargs["cell_vectors"] = cell.vectors
 
-    def energy(coordinates):
+    def energy(coordinates: Any) -> Any:
         return potential.evaluate(coordinates, state.neighborhood, **kwargs).energy
 
-    def force(coordinates):
+    def force(coordinates: Any) -> Any:
         return potential.evaluate(coordinates, state.neighborhood, **kwargs).forces[1, 0]
 
     np.testing.assert_allclose(
@@ -188,7 +210,7 @@ def test_coordinate_representations_preserve_bond_force_and_curvature(periodic):
         fractional = cell.fractional(position)
         images = state.kinematics.image_counts
 
-        def cell_energy(vectors):
+        def cell_energy(vectors: Any) -> Any:
             coordinates = cell.cartesian_with_vectors(fractional, vectors)
             whole = cell.cartesian_with_vectors(fractional + images, vectors)
             return potential.evaluate(
@@ -205,7 +227,7 @@ def test_coordinate_representations_preserve_bond_force_and_curvature(periodic):
         )
 
 
-def test_velocity_verlet_is_reversible_to_second_order_and_jittable():
+def test_velocity_verlet_is_reversible_to_second_order_and_jittable() -> None:
     _, _, dynamics, thermodynamic = _runtime(step_size=1.0e-4)
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.15, 0.0, 0.0]])
     state = dynamics.initialize_state(

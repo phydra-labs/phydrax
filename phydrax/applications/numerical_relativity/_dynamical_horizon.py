@@ -9,7 +9,8 @@ from enum import IntEnum, IntFlag
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -101,7 +102,7 @@ class QuasilocalHorizonWorldtube(StrictModule, NonTrainableState):
         /,
         *,
         worldtube_name: str = "quasilocal-horizon-worldtube",
-    ):
+    ) -> None:
         times_host = np.asarray(times, dtype=np.float64)
         if (
             times_host.ndim != 1
@@ -277,7 +278,7 @@ class DynamicalHorizonBalancePlan(StrictModule, NonTrainableState):
         isolation_rate_tolerance: float = 1.0e-9,
         signature_tolerance: float = 1.0e-10,
         plan_name: str = "dynamical-horizon-balance",
-    ):
+    ) -> None:
         raw_capacity = np.asarray(time_capacity)
         if (
             raw_capacity.shape != ()

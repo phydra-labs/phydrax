@@ -14,7 +14,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax import Array
-from jaxtyping import ArrayLike, Key
+from jax.typing import ArrayLike
 
 from ..._differentiation import DerivativeRegularity
 from ..._interpolation import (
@@ -33,6 +33,7 @@ from ..._polynomial._orthogonal import (
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, ParameterOwner
+from ...typing import PRNGKey
 
 
 EdgeInitialization = Literal["default", "identity"]
@@ -116,7 +117,7 @@ class AbstractEdgeBasis(StrictModule):
         out_size: int,
         in_size: int,
         initialization: EdgeInitialization,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> Any:
         """Initialize one output-by-input edge-parameter PyTree."""
 
@@ -151,7 +152,7 @@ class OrthogonalPolynomialEdgeBasis(AbstractEdgeBasis):
         family: str = "chebyshev",
         regularization_start: int = 2,
         regularization_power: float = 2.0,
-    ):
+    ) -> None:
         if isinstance(degree, bool) or not isinstance(degree, int) or degree < 0:
             raise ValueError(
                 "Orthogonal polynomial degree must be a nonnegative integer."
@@ -192,7 +193,7 @@ class OrthogonalPolynomialEdgeBasis(AbstractEdgeBasis):
         out_size: int,
         in_size: int,
         initialization: EdgeInitialization,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> Array:
         coefficients = jnp.zeros((out_size, in_size, self.coefficient_count))
         if initialization == "identity":
@@ -243,7 +244,7 @@ class _BSplineQuadrature(StrictModule, NonTrainableState):
     points: Array
     weights: Array
 
-    def __init__(self, points: Array, weights: Array, /):
+    def __init__(self, points: Array, weights: Array, /) -> None:
         self.points = points
         self.weights = weights
 
@@ -272,7 +273,7 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
         per_input: bool = False,
         knot_entropy_weight: float = 0.0,
         knot_neighbor_weight: float = 0.0,
-    ):
+    ) -> None:
         if grid is None:
             degree_ = 3 if degree is None else degree
             interval_count = 8 if num_intervals is None else num_intervals
@@ -392,7 +393,7 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
         out_size: int,
         in_size: int,
         initialization: EdgeInitialization,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> Array:
         if isinstance(self.grid, (BSplineGridBank, TrainableBSplineGridBank)):
             if self.grid.num_grids != in_size:
@@ -519,7 +520,7 @@ class RationalBSplineEdgeParameters(StrictModule, ParameterOwner):
         control_values: ArrayLike,
         raw_log_weights: ArrayLike,
         /,
-    ):
+    ) -> None:
         control_values_ = jnp.asarray(control_values)
         raw_log_weights_ = jnp.asarray(raw_log_weights)
         if control_values_.ndim != 3:
@@ -566,7 +567,7 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
         weight_variation_weight: float = 1.0e-4,
         minimum_denominator: float = 1.0e-4,
         denominator_weight: float = 1.0,
-    ):
+    ) -> None:
         if grid is None:
             degree_ = 3 if degree is None else degree
             interval_count = 8 if num_intervals is None else num_intervals
@@ -699,7 +700,7 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
         out_size: int,
         in_size: int,
         initialization: EdgeInitialization,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> RationalBSplineEdgeParameters:
         if isinstance(self.grid, (BSplineGridBank, TrainableBSplineGridBank)):
             if self.grid.num_grids != in_size:

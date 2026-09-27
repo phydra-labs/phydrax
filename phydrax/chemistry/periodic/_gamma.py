@@ -7,12 +7,13 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -28,13 +29,14 @@ from ...linalg.eigen import (
     GeneralizedEigenproblem,
 )
 from ...operators.quantum.gaussian import FactorizedERITensor
+from ...typing import parse
 from ...units import ENERGY, LENGTH, UnitDefinition
 from .._result import ElectronicEnergyLedger
 from ._electrostatics import GTHPseudopotentialPlan
 from ._source import PeriodicProvenanceManifest
 
 
-GammaSCFClassification = Literal[
+GammaSCFClassification: TypeAlias = Literal[
     "production-supplied-gdf-rhf", "candidate-local-gth-lda-x"
 ]
 
@@ -68,7 +70,7 @@ class GammaSCFEvidence(StrictModule, NonTrainableState):
         /,
         *,
         factorization_tolerance: float | None = None,
-    ):
+    ) -> None:
         residuals = jnp.asarray(
             (
                 energy_residual,
@@ -104,7 +106,7 @@ class GammaSCFEvidence(StrictModule, NonTrainableState):
             )
         finite = jnp.all(jnp.isfinite(residuals)) & jnp.all(residuals >= 0.0)
         factor_ok = jnp.asarray(True)
-        if factorization is not None:
+        if factorization is not None and factorization_limit is not None:
             factor_ok = (
                 jnp.isfinite(factorization)
                 & (factorization >= 0.0)
@@ -188,7 +190,7 @@ class GammaSCFResult(StrictModule, NonTrainableState):
         energy_unit: UnitDefinition,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         energies = jnp.asarray(orbital_energies)
         occupations_ = jnp.asarray(occupations, dtype=energies.real.dtype)
         coefficients_ = jnp.asarray(coefficients)
@@ -201,9 +203,13 @@ class GammaSCFResult(StrictModule, NonTrainableState):
             or coefficients_.shape != (energies.size, energies.size)
             or density_.ndim not in (1, 2, 3)
             or not backend_
-            or classification
-            not in ("production-supplied-gdf-rhf", "candidate-local-gth-lda-x")
-            or not sources
+        ):
+            raise ValueError(
+                "Gamma SCF orbitals, density, classification, or sources are invalid."
+            )
+        classification = parse(classification, GammaSCFClassification, "classification")
+        if (
+            not sources
             or any(not value for value in sources)
             or len(set(sources)) != len(sources)
         ):
@@ -431,7 +437,7 @@ class GammaFFTDFPlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 200,
         damping: float = 0.3,
         maximum_grid_points: int = 512,
-    ):
+    ) -> None:
         if (
             not isinstance(cell, PeriodicCell)
             or cell.rank != 3
@@ -737,7 +743,7 @@ class GammaGDFPlan(StrictModule, NonTrainableState):
         maximum_factorization_residual: float = 1.0e-8,
         maximum_iterations: int = 200,
         damping: float = 0.2,
-    ):
+    ) -> None:
         one = jnp.asarray(one_body)
         overlap_ = jnp.asarray(overlap, dtype=one.dtype)
         electrons = float(electron_count)

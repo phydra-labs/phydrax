@@ -4,13 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 import equinox as eqx
 import jax
+import jax.core as jax_core
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
@@ -60,12 +60,12 @@ class _HighOrderTENOPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        order: Literal[6, 8],
+        order: int,
         /,
         *,
         cutoff: float = 1e-6,
         epsilon: float = 1e-14,
-    ):
+    ) -> None:
         if order == 6:
             offsets = (-2, -1, 0, 1, 2, 3)
             candidates = ((-2, -1, 0), (-1, 0, 1), (0, 1, 2), (0, 1, 2, 3))
@@ -261,7 +261,7 @@ class ExplicitStabilizationPlan(StrictModule, NonTrainableState):
         *,
         differentiability: BranchDifferentiationPolicy = BranchDifferentiationPolicy.FROZEN_DECISION,
         periodic: bool = False,
-    ):
+    ) -> None:
         strength_ = float(strength)
         if not np.isfinite(strength_) or strength_ < 0.0 or strength_ > 0.5:
             raise ValueError("Filter strength must lie in [0, 0.5].")
@@ -333,7 +333,7 @@ class ExplicitStabilizationPlan(StrictModule, NonTrainableState):
             case BranchDifferentiationPolicy.SMOOTH_SURROGATE:
                 sensor_ = jax.nn.sigmoid(sensor_)
             case BranchDifferentiationPolicy.UNSUPPORTED:
-                if isinstance(value, jax.core.Tracer):
+                if isinstance(value, jax_core.Tracer):
                     raise ValueError(
                         "ExplicitStabilizationPlan with UNSUPPORTED differentiability "
                         "rejects traced values."

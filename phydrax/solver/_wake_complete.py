@@ -9,7 +9,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -46,7 +47,7 @@ class WakeAdaptationPlan(StrictModule, NonTrainableState):
         *,
         coarsen_age: float,
         reconnection_distance: float,
-    ):
+    ) -> None:
         maximum, minimum, age, distance = (
             float(maximum_edge_length),
             float(minimum_edge_length),
@@ -136,7 +137,7 @@ class VortexWakeIntegratorPlan(StrictModule, NonTrainableState):
         *,
         core_diffusivity: float = 0.0,
         adaptation: WakeAdaptationPlan | None = None,
-    ):
+    ) -> None:
         method_, diffusivity = str(method), float(core_diffusivity)
         if method_ not in ("euler", "midpoint", "rk3") or diffusivity < 0.0:
             raise ValueError("Wake integrator method/diffusivity is invalid.")
@@ -174,7 +175,7 @@ class VortexWakeIntegratorPlan(StrictModule, NonTrainableState):
         if time_.shape != () or dt.shape != ():
             raise ValueError("Wake time and step must be scalar.")
 
-        def field(vertices, evaluation_time):
+        def field(vertices: Array, evaluation_time: Array) -> Array:
             value = jnp.asarray(
                 velocity(VortexTargetState(vertices), evaluation_time, args),
                 dtype=vertices.dtype,

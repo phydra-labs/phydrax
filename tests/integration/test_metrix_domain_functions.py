@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -7,7 +9,7 @@ import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 
 
-def _polar_problem():
+def _polar_problem() -> Any:
     domain = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(2.0, 0.0), side=2.0).compile()
     )
@@ -19,7 +21,7 @@ def _polar_problem():
     return domain, metric
 
 
-def _points(values):
+def _points(values: Any) -> Any:
     return frozendict(
         {
             "x": cx.AxisArray(
@@ -30,7 +32,7 @@ def _points(values):
     )
 
 
-def test_domain_function_riemannian_operators_match_polar_identities():
+def test_domain_function_riemannian_operators_match_polar_identities() -> None:
     domain, metric = _polar_problem()
     scalar = domain.Function("x")(lambda x: x[0] ** 2)
     vector = domain.Function("x")(lambda x: jnp.array([x[0], 0.0]))
@@ -67,7 +69,7 @@ def test_domain_function_riemannian_operators_match_polar_identities():
     assert jnp.allclose(jnp.asarray(inverse_divergence(points).data), 0.0, atol=1e-9)
 
 
-def test_laplace_beltrami_matches_unit_sphere_eigenfunction():
+def test_laplace_beltrami_matches_unit_sphere_eigenfunction() -> None:
     chart = phx.metrix.CoordinateChart("sphere", ("theta", "phi"))
     embedded = phx.metrix.EmbeddedChart(
         chart,
@@ -97,10 +99,11 @@ def test_laplace_beltrami_matches_unit_sphere_eigenfunction():
 
     assert jnp.allclose(values, expected, atol=1e-9)
     with pytest.raises(TypeError, match="RiemannianMetric"):
+        # ty: ignore[invalid-argument-type]
         phx.operators.laplace_beltrami(scalar, domain.component(), var="x")
 
 
-def test_riemannian_measure_multiplies_existing_component_weights():
+def test_riemannian_measure_multiplies_existing_component_weights() -> None:
     domain, metric = _polar_problem()
     component = phx.domain.with_riemannian_measure(
         domain.component(),
@@ -115,7 +118,7 @@ def test_riemannian_measure_multiplies_existing_component_weights():
     assert jnp.allclose(weights, jnp.array([1.5, 2.0, 2.5]))
 
 
-def test_metric_aware_domain_stochastic_operators_use_riemannian_volume():
+def test_metric_aware_domain_stochastic_operators_use_riemannian_volume() -> None:
     domain, metric = _polar_problem()
     density = domain.Function("x")(lambda x: x[0] ** 2)
     coordinate_drift = domain.Function("x")(lambda x: jnp.array([0.5 / x[0], 0.0]))
@@ -141,7 +144,7 @@ def test_metric_aware_domain_stochastic_operators_use_riemannian_volume():
     assert jnp.allclose(jnp.asarray(forward(points).data), 2.0, atol=1e-9)
 
 
-def test_metric_aware_fokker_planck_constraint_threads_metric_to_residual():
+def test_metric_aware_fokker_planck_constraint_threads_metric_to_residual() -> None:
     domain, metric = _polar_problem()
     density = domain.Function("x")(1.0)
     coordinate_drift = domain.Function("x")(lambda x: jnp.array([0.5 / x[0], 0.0]))
@@ -172,7 +175,7 @@ def test_metric_aware_fokker_planck_constraint_threads_metric_to_residual():
     assert solver.loss(key=jr.key(6)) < 1e-20
 
 
-def test_riemannian_residual_runs_through_functional_solver():
+def test_riemannian_residual_runs_through_functional_solver() -> None:
     domain, metric = _polar_problem()
     field = domain.Function("x")(lambda x: x[0] ** 2)
     condition = phx.conditions.Residual(

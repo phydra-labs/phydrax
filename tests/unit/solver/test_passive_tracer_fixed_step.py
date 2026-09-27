@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -17,7 +20,7 @@ from phydrax.solver._passive_tracer import (
 )
 
 
-def _transport(cells=12):
+def _transport(cells: Any = 12) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(cells, periodic=True),),
         axis_names=("x",),
@@ -34,7 +37,7 @@ def _transport(cells=12):
     return discretization, transport
 
 
-def _base_step(step_index, time, state, step_size, args):
+def _base_step(step_index: Any, time: Any, state: Any, step_size: Any, args: Any) -> Any:
     del step_index, time, step_size
     candidate = state + jnp.asarray(args["increment"], dtype=state.dtype)
     successful = jnp.asarray(args["successful"])
@@ -50,11 +53,13 @@ def _base_step(step_index, time, state, step_size, args):
     )
 
 
-def _base_method():
+def _base_method() -> Any:
     return CallableFixedStepMethod(_base_step, "passive-tracer-test-base")
 
 
-def test_fixed_step_wrapper_accepts_base_and_tracer_atomically_and_preserves_evidence():
+def test_fixed_step_wrapper_accepts_base_and_tracer_atomically_and_preserves_evidence() -> (
+    None
+):
     discretization, transport = _transport()
     dtype = transport.tracer_space.vector_space.dtype
     velocity = (jnp.zeros(discretization.face_layouts[0].shape, dtype=dtype),)
@@ -85,7 +90,7 @@ def test_fixed_step_wrapper_accepts_base_and_tracer_atomically_and_preserves_evi
     assert method.method_id
 
 
-def test_fixed_step_wrapper_rolls_back_tracer_when_base_rejects():
+def test_fixed_step_wrapper_rolls_back_tracer_when_base_rejects() -> None:
     discretization, transport = _transport()
     dtype = transport.tracer_space.vector_space.dtype
     velocity = (jnp.full(discretization.face_layouts[0].shape, 0.3, dtype=dtype),)
@@ -111,7 +116,7 @@ def test_fixed_step_wrapper_rolls_back_tracer_when_base_rejects():
     np.testing.assert_array_equal(result.accepted_state.tracer, state.tracer)
 
 
-def test_fixed_step_wrapper_rolls_back_successful_base_when_tracer_fails():
+def test_fixed_step_wrapper_rolls_back_successful_base_when_tracer_fails() -> None:
     discretization, transport = _transport()
     dtype = transport.tracer_space.vector_space.dtype
     nonfinite_velocity = (
@@ -141,7 +146,7 @@ def test_fixed_step_wrapper_rolls_back_successful_base_when_tracer_fails():
     np.testing.assert_array_equal(result.accepted_state.tracer, state.tracer)
 
 
-def test_fixed_step_wrapper_requires_explicit_velocity_provider_identity():
+def test_fixed_step_wrapper_requires_explicit_velocity_provider_identity() -> None:
     _, transport = _transport()
     with pytest.raises(ValueError, match="velocity_provider_id"):
         MACPassiveTracerFixedStepMethod(_base_method(), transport, lambda state: (), "")

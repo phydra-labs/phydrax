@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -14,7 +17,7 @@ from phydrax.control.stochastic._lqg import (
 )
 
 
-def _scalar_problem():
+def _scalar_problem() -> Any:
     return (
         jnp.asarray([[[1.0]], [[1.0]]]),
         jnp.asarray([[[1.0]], [[1.0]]]),
@@ -24,7 +27,7 @@ def _scalar_problem():
     )
 
 
-def test_zero_noise_is_an_exact_reduction_to_affine_finite_horizon_lqr():
+def test_zero_noise_is_an_exact_reduction_to_affine_finite_horizon_lqr() -> None:
     a, b, q, r, qf = _scalar_problem()
     q = jnp.ones_like(q)
     c = jnp.asarray([[0.2], [-0.1]])
@@ -101,7 +104,7 @@ def test_zero_noise_is_an_exact_reduction_to_affine_finite_horizon_lqr():
     np.testing.assert_array_equal(result.value.constants, deterministic.value.constants)
 
 
-def test_scalar_trace_recursion_and_initial_gaussian_cost_are_analytic():
+def test_scalar_trace_recursion_and_initial_gaussian_cost_are_analytic() -> None:
     a, b, q, r, qf = _scalar_problem()
     result = finite_horizon_lqg_state_feedback(
         a,
@@ -143,7 +146,7 @@ def test_scalar_trace_recursion_and_initial_gaussian_cost_are_analytic():
     )
 
 
-def test_case_axes_are_preserved_without_time_or_case_broadcasting():
+def test_case_axes_are_preserved_without_time_or_case_broadcasting() -> None:
     case_shape = (2, 3)
     horizon = 2
     a = jnp.broadcast_to(jnp.ones((horizon, 1, 1)), case_shape + (horizon, 1, 1))
@@ -194,7 +197,7 @@ def test_case_axes_are_preserved_without_time_or_case_broadcasting():
         )
 
 
-def test_malformed_indefinite_and_nonfinite_covariance_data_are_rejected():
+def test_malformed_indefinite_and_nonfinite_covariance_data_are_rejected() -> None:
     a, b, q, r, qf = _scalar_problem()
     factors = jnp.ones((2, 1, 1))
     covariances = jnp.ones((2, 1, 1))

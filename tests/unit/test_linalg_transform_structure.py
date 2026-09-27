@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -12,14 +15,14 @@ import phydrax as phx
 la = phx.linalg
 
 
-def _materialize(operator):
+def _materialize(operator: Any) -> Any:
     return la.materialize(
         operator,
         la.MaterializationPolicy(max_entries=10_000, max_bytes=1_000_000),
     )
 
 
-def test_dct_diagonal_operator_actions_properties_and_structured_solve():
+def test_dct_diagonal_operator_actions_properties_and_structured_solve() -> None:
     spectrum = jnp.asarray([1.0, 2.0, 4.0, 8.0])
     operator = la.TransformDiagonalLinearOperator(
         spectrum,
@@ -50,7 +53,7 @@ def test_dct_diagonal_operator_actions_properties_and_structured_solve():
     assert cost.operation_class == "transform-diagonal-action"
 
 
-def test_fft_diagonal_operator_has_correct_complex_transpose_and_adjoint():
+def test_fft_diagonal_operator_has_correct_complex_transpose_and_adjoint() -> None:
     spectrum = jnp.asarray([1.0 + 0.5j, 2.0 - 1.0j, 3.0 + 0.25j])
     operator = la.TransformDiagonalLinearOperator(
         spectrum,
@@ -73,7 +76,7 @@ def test_fft_diagonal_operator_has_correct_complex_transpose_and_adjoint():
     assert jnp.allclose(operator.mv(result.value), vector, atol=1e-12)
 
 
-def test_transform_diagonal_supports_multiaxis_event_shapes():
+def test_transform_diagonal_supports_multiaxis_event_shapes() -> None:
     spectrum = jnp.arange(1.0, 7.0).reshape((2, 3))
     space = la.ArraySpace((2, 3), dtype=jnp.float64)
     operator = la.TransformDiagonalLinearOperator(
@@ -94,7 +97,7 @@ def test_transform_diagonal_supports_multiaxis_event_shapes():
     )
 
 
-def test_transform_diagonal_singular_status_and_property_validation():
+def test_transform_diagonal_singular_status_and_property_validation() -> None:
     operator = la.TransformDiagonalLinearOperator(
         jnp.asarray([1.0, 0.0, 2.0]),
         transform="dct",
@@ -122,10 +125,10 @@ def test_transform_diagonal_singular_status_and_property_validation():
         )
 
 
-def test_transform_diagonal_structured_solve_differentiates_through_spectrum():
+def test_transform_diagonal_structured_solve_differentiates_through_spectrum() -> None:
     rhs = jnp.asarray([1.0, -2.0, 3.0])
 
-    def specialized(spectrum):
+    def specialized(spectrum: Any) -> Any:
         operator = la.TransformDiagonalLinearOperator(
             spectrum,
             transform="dct",
@@ -140,7 +143,7 @@ def test_transform_diagonal_structured_solve_differentiates_through_spectrum():
     spectrum = jnp.asarray([1.5, 2.0, 4.0])
     actual = jax.jit(jax.grad(specialized))(spectrum)
 
-    def spectral_formula(values):
+    def spectral_formula(values: Any) -> Any:
         operator = la.TransformDiagonalLinearOperator(
             jax.lax.stop_gradient(values),
             transform="dct",
@@ -191,8 +194,8 @@ def test_transform_diagonal_structured_solve_differentiates_through_spectrum():
     ],
 )
 def test_structure_compiler_recovers_exact_native_structures(
-    matrix, candidate, expected_type
-):
+    matrix: Any, candidate: Any, expected_type: Any
+) -> None:
     policy = la.StructureCompilationPolicy(
         candidates=(candidate,),
         max_bandwidth=3,
@@ -207,7 +210,7 @@ def test_structure_compiler_recovers_exact_native_structures(
     assert jnp.array_equal(_materialize(compiled.operator), matrix)
 
 
-def test_structure_compiler_requires_explicit_approximation_consent():
+def test_structure_compiler_requires_explicit_approximation_consent() -> None:
     matrix = jnp.asarray([[2.0, 1e-8], [0.0, 3.0]])
     with pytest.raises(ValueError, match="require allow_approximation"):
         la.StructureCompilationPolicy(absolute_tolerance=1e-7)
@@ -240,7 +243,7 @@ def test_structure_compiler_requires_explicit_approximation_consent():
     )
 
 
-def test_structure_compiler_detects_dct_and_fft_diagonalization():
+def test_structure_compiler_detects_dct_and_fft_diagonalization() -> None:
     dct_operator = la.TransformDiagonalLinearOperator(
         jnp.asarray([1.0, 2.0, 4.0, 8.0]),
         transform="dct",
@@ -283,7 +286,7 @@ def test_structure_compiler_detects_dct_and_fft_diagonalization():
     )
 
 
-def test_structure_refresh_preserves_identity_and_rejects_structural_drift():
+def test_structure_refresh_preserves_identity_and_rejects_structural_drift() -> None:
     matrix = jnp.diag(jnp.asarray([1.0, 2.0, 3.0]))
     policy = la.StructureCompilationPolicy(
         candidates=("diagonal",),

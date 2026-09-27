@@ -3,20 +3,22 @@
 #
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
 from ...graph import batch_graphs, GraphIR, LayoutPlan
+from ...typing import parse, PRNGKey
 from .._coordinate import CoordinateSpec
 from .._domain import JointFactor
 from .._factor_component import FactorComponent
@@ -38,7 +40,7 @@ if TYPE_CHECKING:
 GRAPH_DATASET_INDEX_KEY = "__phydrax_graph_dataset_index__"
 GRAPH_SAMPLE_INDEX_KEY = "__phydrax_graph_sample_index__"
 GRAPH_ENTITY_OFFSET_KEY = "__phydrax_graph_entity_offset__"
-GraphDatasetMeasureMode = Literal["probability", "count"]
+GraphDatasetMeasureMode: TypeAlias = Literal["probability", "count"]
 
 
 def _to_axis_fields(tree: Any, axis: str, /) -> Any:
@@ -153,7 +155,7 @@ class GraphDatasetDomain(JointFactor):
         measure: GraphDatasetMeasureMode = "probability",
         layout: LayoutPlan | None = None,
         validate: bool = True,
-    ):
+    ) -> None:
         """Create a finite graph-family domain.
 
         Parameters:
@@ -166,10 +168,7 @@ class GraphDatasetDomain(JointFactor):
         """
         if len(graphs) == 0:
             raise ValueError("GraphDatasetDomain requires at least one graph.")
-        if measure not in ("probability", "count"):
-            raise ValueError(
-                "GraphDatasetDomain measure must be 'probability' or 'count'."
-            )
+        measure = parse(measure, GraphDatasetMeasureMode, "measure")
         graphs_tuple = tuple(graphs)
         for graph in graphs_tuple:
             if not isinstance(graph, GraphIR):
@@ -299,7 +298,7 @@ class GraphDatasetDomain(JointFactor):
         num_points: int,
         *,
         sampler: str = "uniform",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         """Sample graph-case indices from the dataset."""
         del sampler
@@ -338,7 +337,7 @@ class GraphDatasetDomain(JointFactor):
         structure: SampleLayout,
         label: str | None = None,
         sampler: str = "uniform",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> GraphBatch:
         """Sample graph cases and materialize the selected graph entities."""
         indices = self.sample_indices(num_points, sampler=sampler, key=key)
@@ -444,7 +443,7 @@ class GraphDatasetDomain(JointFactor):
         edge_input_key: str | None = None,
         global_input_key: str | None = None,
         output_key: str | None = None,
-    ):
+    ) -> "DomainFunction":
         """Wrap a `GraphIR -> GraphIR` model as a graph-family `DomainFunction`.
 
         The model is evaluated on each sampled batched topology and returns the
@@ -485,7 +484,7 @@ class GraphDatasetDomain(JointFactor):
         edge_input_key: str | None = None,
         global_input_key: str | None = None,
         output_key: str | None = None,
-    ):
+    ) -> "DomainFunction":
         """Wrap an autoregressive graph rollout as a graph-family `DomainFunction`.
 
         Use this when a graph model predicts a sequence by repeatedly applying a

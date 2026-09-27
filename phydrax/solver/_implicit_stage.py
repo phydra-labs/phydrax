@@ -7,7 +7,8 @@ from __future__ import annotations
 from typing import Any
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..dynamics import AbstractInputPolicy, DifferentialAlgebraicSystem
@@ -37,7 +38,7 @@ class ImplicitStageArguments(StrictModule):
         fallback_state: ArrayLike,
         active: ArrayLike,
         model_args: Any,
-    ):
+    ) -> None:
         time_ = jnp.asarray(time)
         shift_ = jnp.asarray(shift)
         offset = jnp.asarray(rate_offset)
@@ -94,7 +95,7 @@ class ImplicitStageResidual(StrictModule):
         system: DifferentialAlgebraicSystem,
         input_policy: AbstractInputPolicy | None = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(system, DifferentialAlgebraicSystem):
             raise TypeError("ImplicitStageResidual requires DifferentialAlgebraicSystem.")
         if input_policy is not None and not isinstance(input_policy, AbstractInputPolicy):
@@ -102,8 +103,10 @@ class ImplicitStageResidual(StrictModule):
         self.system = system
         self.input_policy = input_policy
 
-    def trial_valid(self, increment, arguments, /):
-        def active(_):
+    def trial_valid(
+        self, increment: Array, arguments: ImplicitStageArguments, /
+    ) -> Array:
+        def active(_: None) -> Array:
             state = arguments.physical_state(increment)
             inputs = (
                 None
@@ -133,7 +136,7 @@ class ImplicitStageResidual(StrictModule):
         if not isinstance(arguments, ImplicitStageArguments):
             raise TypeError("arguments must be ImplicitStageArguments.")
 
-        def active(_):
+        def active(_: None) -> Array:
             state = arguments.physical_state(increment)
             state_rate = arguments.state_rate(increment)
             inputs = (

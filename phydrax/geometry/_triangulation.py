@@ -79,7 +79,7 @@ class TriangulationEvidence(StrictModule, NonTrainableState):
         simplex_count: int,
         minimum_angle_degrees: float,
         content: dict,
-    ):
+    ) -> None:
         if not isinstance(status, MeshcoreStatus):
             raise TypeError("status must be a MeshcoreStatus.")
         counts = (
@@ -230,7 +230,7 @@ class DelaunayTriangulation(StrictModule, NonTrainableState):
     vertex_map: np.ndarray
     evidence: TriangulationEvidence
 
-    def __init__(self, points: object, /, *, max_simplices: int | None = None):
+    def __init__(self, points: object, /, *, max_simplices: int | None = None) -> None:
         point_array = _point_array(points, "points", (2, 3))
         dimension = point_array.shape[1]
         if dimension == 2:
@@ -295,7 +295,7 @@ class ConstrainedDelaunayTriangulation(StrictModule, NonTrainableState):
         max_area: float = math.inf,
         max_steiner: int = 0,
         max_triangles: int | None = None,
-    ):
+    ) -> None:
         point_array = _point_array(points, "points", (2,))
         mesh_points, triangles, segment_ids, status = constrained_delaunay_2d(
             point_array,
@@ -366,7 +366,7 @@ class DiagramCells(StrictModule, NonTrainableState):
         face_labels: np.ndarray,
         measures: np.ndarray,
         centroids: np.ndarray,
-    ):
+    ) -> None:
         cell_count = measures.shape[0]
         if cell_vertex_offsets.shape != (cell_count + 1,) or cell_face_offsets.shape != (
             cell_count + 1,
@@ -417,7 +417,7 @@ class _Planes:
         normals: np.ndarray,
         values: np.ndarray,
         labels: np.ndarray,
-    ):
+    ) -> None:
         self.offsets = offsets
         self.normals = normals
         self.values = values
@@ -709,7 +709,7 @@ class VoronoiDiagram(StrictModule, NonTrainableState):
         box_upper: object,
         domain_normals: object | None = None,
         domain_offsets: object | None = None,
-    ):
+    ) -> None:
         point_array = _point_array(points, "points", (2, 3))
         count, dimension = point_array.shape
         lower, upper, normals, offsets = _domain(
@@ -780,7 +780,7 @@ class PowerDiagram(StrictModule, NonTrainableState):
         domain_normals: object | None = None,
         domain_offsets: object | None = None,
         max_simplices: int | None = None,
-    ):
+    ) -> None:
         point_array = _point_array(points, "points", (2, 3))
         count, dimension = point_array.shape
         weight_array = np.asarray(weights)

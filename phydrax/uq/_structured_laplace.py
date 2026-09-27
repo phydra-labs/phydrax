@@ -5,20 +5,22 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 import phydrax.linalg as la
 from phydrax.linalg import eigen as eigen_api
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ..typing import parse
 from ._covariance import CovarianceOperator
 from ._linearized import LinearizedPropagationResult, propagate_linearized
 from ._posterior import AbstractBijector, IdentityBijector, PosteriorProblem
@@ -30,8 +32,8 @@ from ._predictive import PredictiveField
 from ._whitening import GaussianPriorWhitening
 
 
-StructuredCurvature = Literal["full", "diagonal", "lanczos", "lobpcg"]
-LikelihoodCurvature = Literal["hessian", "ggn"]
+StructuredCurvature: TypeAlias = Literal["full", "diagonal", "lanczos", "lobpcg"]
+LikelihoodCurvature: TypeAlias = Literal["hessian", "ggn"]
 
 
 class StructuredCurvatureEstimate(StrictModule):
@@ -91,7 +93,7 @@ class StructuredLaplaceResult(StrictModule):
         rank: int | None,
         likelihood_curvature: LikelihoodCurvature,
         approximate_memory_bytes: int,
-    ):
+    ) -> None:
         self.problem = problem
         self.map_position = map_position
         self.map_parameters = problem.parameter_space.constrain(map_position)
@@ -263,10 +265,10 @@ def fit_structured_laplace(
     del mv_jit
     if not isinstance(problem, PosteriorProblem):
         raise TypeError("problem must be a PosteriorProblem.")
-    if curvature not in ("full", "diagonal", "lanczos", "lobpcg"):
-        raise ValueError(f"Unknown structured curvature {curvature!r}.")
-    if likelihood_curvature not in ("hessian", "ggn"):
-        raise ValueError("likelihood_curvature must be 'hessian' or 'ggn'.")
+    curvature = parse(curvature, StructuredCurvature, "curvature")
+    likelihood_curvature = parse(
+        likelihood_curvature, LikelihoodCurvature, "likelihood_curvature"
+    )
     if likelihood_curvature == "ggn" and problem.gauss_newton_residual_fn is None:
         raise ValueError(
             "GGN curvature requires an explicit Gauss-Newton residual callback."
@@ -297,11 +299,11 @@ def fit_structured_laplace(
         if key is None:
             raise ValueError("Low-rank curvature requires a PRNG key.")
 
-    def to_position(flat):
+    def to_position(flat: Array) -> PyTree[Array]:
         value = unravel(flat)
         return value if whitening is None else whitening.unwhiten(value)
 
-    def negative_log_likelihood(flat):
+    def negative_log_likelihood(flat: Array) -> Array:
         value = to_position(flat)
         return -problem.log_likelihood(problem.parameter_space.constrain(value))
 
@@ -317,7 +319,7 @@ def fit_structured_laplace(
             flat_position,
         )
 
-        def curvature_mv(vector):
+        def curvature_mv(vector: Array) -> Array:
             return residual_linearization.vjp(residual_linearization.jvp(vector))
 
     retained_rank: int | None = None
@@ -393,16 +395,16 @@ def fit_structured_laplace(
         "Structured Laplace posterior precision is not positive definite.",
     )
 
-    def apply_spectral(vector, power):
+    def apply_spectral(vector: Array, power: float) -> Array:
         projected = jnp.conj(precision_vectors.T) @ vector
         return precision_vectors @ (projected * precision_values**power)
 
-    def scale_mv(vector):
+    def scale_mv(vector: PyTree[Array]) -> PyTree[Array]:
         flat, restore = ravel_pytree(vector)
         result = restore(apply_spectral(flat, -0.5))
         return result if whitening is None else whitening.unwhiten_vector(result)
 
-    def covariance_mv(vector):
+    def covariance_mv(vector: PyTree[Array]) -> PyTree[Array]:
         base_vector = vector if whitening is None else whitening.unwhiten_vector(vector)
         flat, restore = ravel_pytree(base_vector)
         result = restore(apply_spectral(flat, -1.0))

@@ -2,9 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import hashlib
 import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -26,7 +28,7 @@ from phydrax.backends.macaulay2 import Macaulay2Environment, Macaulay2Provider
 pytestmark = pytest.mark.macaulay2_live
 
 
-def _provider():
+def _provider() -> Any:
     required = (
         "PHYDRAX_MACAULAY2_EXECUTABLE",
         "PHYDRAX_MACAULAY2_SHA256",
@@ -50,7 +52,7 @@ def _provider():
     return Macaulay2Provider(Macaulay2Environment(executable))
 
 
-def _quadratic():
+def _quadratic() -> Any:
     support = SparsePolynomialSupport(
         ("x",),
         ("f",),
@@ -60,7 +62,7 @@ def _quadratic():
     return ExactSparsePolynomialSystem(support, ("-1", "1"), QQ)
 
 
-def test_live_macaulay2_groebner_and_discriminant():
+def test_live_macaulay2_groebner_and_discriminant() -> None:
     provider = _provider()
     system = _quadratic()
 
@@ -70,7 +72,9 @@ def test_live_macaulay2_groebner_and_discriminant():
     )
     basis_result = execute_exact_symbolic(basis)
     assert basis_result.status is ExactSymbolicStatus.SUCCESS
+    # ty: ignore[unresolved-attribute]
     assert basis_result.output.domain.domain_id == QQ.domain_id
+    # ty: ignore[unresolved-attribute]
     assert basis_result.output.variable_count == 1
 
     discriminant = prepare_exact_symbolic(
@@ -83,4 +87,5 @@ def test_live_macaulay2_groebner_and_discriminant():
     )
     discriminant_result = execute_exact_symbolic(discriminant)
     assert discriminant_result.status is ExactSymbolicStatus.SUCCESS
+    # ty: ignore[unresolved-attribute]
     assert discriminant_result.output.coefficient_values() == (4,)

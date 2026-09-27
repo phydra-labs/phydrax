@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -15,7 +16,7 @@ from ..._trainable import NonTrainableState
 from ...discretization import CellComplexTopology, OrientedEdgePathPlan
 from ...operators.quantum import BasisStateSubspace, HilbertRegisterLayout
 from ...solver import LocalHamiltonian, LocalHamiltonianTerm
-from ...topology import CellSubcomplex, compute_homology, PrimeField
+from ...topology import CellSubcomplex, compute_homology, HomologyResult, PrimeField
 
 
 _PAULI_X = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128)
@@ -81,7 +82,7 @@ class Z2GaugeModel(StrictModule, NonTrainableState):
         electric_coupling: float,
         magnetic_coupling: float,
         external_charges: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(topology, CellComplexTopology):
             raise TypeError("topology must be CellComplexTopology.")
         if topology.dimension < 1:
@@ -297,7 +298,7 @@ def z2_loop_operator(
     )
 
 
-def z2_homology(model: Z2GaugeModel, /):
+def z2_homology(model: Z2GaugeModel, /) -> HomologyResult:
     """Compute exact GF(2) homology for topological-sector labeling."""
     if not isinstance(model, Z2GaugeModel):
         raise TypeError("model must be Z2GaugeModel.")

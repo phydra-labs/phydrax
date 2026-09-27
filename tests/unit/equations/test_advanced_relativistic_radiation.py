@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -28,11 +31,11 @@ from phydrax.metrix._spacetime_conventions import RelativityConvention
 from phydrax.units import KILOGRAM
 
 
-def _contracts():
+def _contracts() -> Any:
     return RelativityScaleContract.geometric(KILOGRAM), RelativityConvention.canonical()
 
 
-def _geometry(scale, convention, shape=(2,)):
+def _geometry(scale: Any, convention: Any, shape: Any = (2,)) -> Any:
     identity = jnp.broadcast_to(jnp.eye(3), shape + (3, 3))
     return ADMGridGeometry(
         jnp.ones(shape),
@@ -52,7 +55,7 @@ def _geometry(scale, convention, shape=(2,)):
     )
 
 
-def _absorbing_interaction(system):
+def _absorbing_interaction(system: Any) -> Any:
     return GRGrayRadiationInteractionPlan(
         system,
         ConstantGRGrayOpacityPlan(
@@ -63,7 +66,9 @@ def _absorbing_interaction(system):
     )
 
 
-def test_multigroup_and_neutrino_exchange_balance_energy_momentum_and_lepton_number():
+def test_multigroup_and_neutrino_exchange_balance_energy_momentum_and_lepton_number() -> (
+    None
+):
     scale, convention = _contracts()
     geometry = _geometry(scale, convention)
     multigroup = GRMultigroupM1RadiationSystem(
@@ -115,7 +120,7 @@ def test_multigroup_and_neutrino_exchange_balance_energy_momentum_and_lepton_num
     assert bool(jnp.all(neutrino_exchange.qualified))
 
 
-def test_vet_discrete_ordinates_and_monte_carlo_recover_isotropic_pressure():
+def test_vet_discrete_ordinates_and_monte_carlo_recover_isotropic_pressure() -> None:
     scale, convention = _contracts()
     geometry = _geometry(scale, convention)
     directions = jnp.asarray(

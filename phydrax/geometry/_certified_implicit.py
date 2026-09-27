@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -34,7 +35,7 @@ class CertifiedImplicitCover(StrictModule, NonTrainableState):
         value_upper: ArrayLike,
         gradient_norm_lower: ArrayLike,
         /,
-    ):
+    ) -> None:
         boxes_ = jnp.asarray(boxes)
         lower = jnp.asarray(value_lower)
         upper = jnp.asarray(value_upper)
@@ -93,7 +94,7 @@ class CertifiedImplicitTopology(StrictModule, NonTrainableState):
         /,
         *,
         theorem: str,
-    ):
+    ) -> None:
         theorem_ = str(theorem)
         if not theorem_:
             raise ValueError("Implicit topology requires an explicit theorem identifier.")

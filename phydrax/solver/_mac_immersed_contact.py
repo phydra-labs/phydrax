@@ -9,7 +9,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -64,7 +65,7 @@ class MACRigidImmersedContactMethod(StrictModule, NonTrainableState):
         *,
         maximum_iterations: int = 8,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         iterations = int(maximum_iterations)
         tolerance_ = float(tolerance)
         if iterations <= 0 or tolerance_ <= 0.0:
@@ -93,7 +94,7 @@ class MACRigidImmersedContactMethod(StrictModule, NonTrainableState):
         self,
         time: ArrayLike,
         fluid_state: ArrayLike,
-        body_kinematics,
+        body_kinematics: RigidBodyKinematics,
         contact_state: HardContactState,
         geometry: RigidContactGeometryProvider,
         /,
@@ -181,7 +182,7 @@ class MACRigidImmersedJointMethod(StrictModule, NonTrainableState):
         *,
         maximum_iterations: int = 8,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         iterations = int(maximum_iterations)
         tolerance_ = float(tolerance)
         if iterations <= 0 or tolerance_ <= 0.0:

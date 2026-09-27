@@ -15,7 +15,7 @@ from types import MappingProxyType
 from typing import Any, TypeAlias
 
 import equinox as eqx
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule

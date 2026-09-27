@@ -282,7 +282,7 @@ class LayoutAdapterError(AdapterError):
         *,
         report: AdapterReport | None = None,
         resource_manifest: ResourceManifest | None = None,
-    ):
+    ) -> None:
         self.report = report
         self.resource_manifest = resource_manifest
         super().__init__(status, message)
@@ -309,7 +309,7 @@ class _LayoutDecoder:
         resource: BoundedResource,
         policy: LayoutImportPolicy,
         scale: float,
-    ):
+    ) -> None:
         self.gdstk = gdstk
         self.library = library
         self.resource = resource
@@ -529,6 +529,7 @@ class _LayoutDecoder:
             }
         )
         geometry = PlanarMeshRegion(
+            # ty: ignore[invalid-argument-type]
             canonical,
             (tuple(range(canonical.shape[0])),),
             feature_id=f"layout-region-{physical_id}",

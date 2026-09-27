@@ -4,19 +4,21 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
-AxisDomainKind = Literal["bounded", "periodic", "half_line", "real_line"]
-HalfLineDirection = Literal["positive", "negative"]
+AxisDomainKind: TypeAlias = Literal["bounded", "periodic", "half_line", "real_line"]
+HalfLineDirection: TypeAlias = Literal["positive", "negative"]
 
 
 class AxisDomain(StrictModule, NonTrainableState):
@@ -36,9 +38,8 @@ class AxisDomain(StrictModule, NonTrainableState):
         lower: ArrayLike | None = None,
         upper: ArrayLike | None = None,
         direction: HalfLineDirection | None = None,
-    ):
-        if kind not in ("bounded", "periodic", "half_line", "real_line"):
-            raise ValueError("Unknown axis domain kind.")
+    ) -> None:
+        kind = parse(kind, AxisDomainKind, "kind")
         lower_ = (
             None if lower is None else jnp.asarray(lower, dtype=jnp.float64).reshape(())
         )
@@ -46,34 +47,45 @@ class AxisDomain(StrictModule, NonTrainableState):
             None if upper is None else jnp.asarray(upper, dtype=jnp.float64).reshape(())
         )
         direction_: HalfLineDirection | None = direction
-        if kind in ("bounded", "periodic"):
-            if lower_ is None or upper_ is None or direction_ is not None:
-                raise ValueError("Bounded and periodic domains require two endpoints.")
-            endpoints = jnp.stack((lower_, upper_))
-            endpoints = eqx.error_if(
-                endpoints,
-                ~(jnp.all(jnp.isfinite(endpoints)) & (endpoints[1] > endpoints[0])),
-                "Axis domain endpoints must be finite and increasing.",
-            )
-            lower_, upper_ = endpoints[0], endpoints[1]
-        elif kind == "half_line":
-            if direction_ not in ("positive", "negative"):
-                raise ValueError("Half-line domains require a direction.")
-            endpoint = lower_ if direction_ == "positive" else upper_
-            absent = upper_ if direction_ == "positive" else lower_
-            if endpoint is None or absent is not None:
-                raise ValueError("Half-line domains require exactly one finite endpoint.")
-            endpoint = eqx.error_if(
-                endpoint,
-                ~jnp.isfinite(endpoint),
-                "Half-line endpoint must be finite.",
-            )
-            if direction_ == "positive":
-                lower_ = endpoint
-            else:
-                upper_ = endpoint
-        elif lower_ is not None or upper_ is not None or direction_ is not None:
-            raise ValueError("Real-line domains do not accept endpoints or direction.")
+        match kind:
+            case "bounded" | "periodic":
+                if lower_ is None or upper_ is None or direction_ is not None:
+                    raise ValueError(
+                        "Bounded and periodic domains require two endpoints."
+                    )
+                endpoints = jnp.stack((lower_, upper_))
+                endpoints = eqx.error_if(
+                    endpoints,
+                    ~(jnp.all(jnp.isfinite(endpoints)) & (endpoints[1] > endpoints[0])),
+                    "Axis domain endpoints must be finite and increasing.",
+                )
+                lower_, upper_ = endpoints[0], endpoints[1]
+            case "half_line":
+                if direction_ is None:
+                    raise ValueError("Half-line domains require a direction.")
+                direction_ = parse(direction_, HalfLineDirection, "direction")
+                endpoint = lower_ if direction_ == "positive" else upper_
+                absent = upper_ if direction_ == "positive" else lower_
+                if endpoint is None or absent is not None:
+                    raise ValueError(
+                        "Half-line domains require exactly one finite endpoint."
+                    )
+                endpoint = eqx.error_if(
+                    endpoint,
+                    ~jnp.isfinite(endpoint),
+                    "Half-line endpoint must be finite.",
+                )
+                if direction_ == "positive":
+                    lower_ = endpoint
+                else:
+                    upper_ = endpoint
+            case "real_line":
+                if lower_ is not None or upper_ is not None or direction_ is not None:
+                    raise ValueError(
+                        "Real-line domains do not accept endpoints or direction."
+                    )
+            case _:
+                assert_never(kind)
 
         payload = {
             "kind": "axis-domain",
@@ -120,13 +132,23 @@ class AxisDomain(StrictModule, NonTrainableState):
     def finite_bounds(self) -> Array | None:
         if self.kind not in ("bounded", "periodic"):
             return None
-        return jnp.stack((self.lower, self.upper))
+        lower, upper = self.lower, self.upper
+        if not (lower is not None and upper is not None):
+            raise RuntimeError(
+                "Internal invariant failed: lower is not None and upper is not None."
+            )
+        return jnp.stack((lower, upper))
 
     @property
     def length(self) -> Array:
         if self.kind not in ("bounded", "periodic"):
             raise ValueError("Unbounded axis domains do not have a finite length.")
-        return self.upper - self.lower
+        lower, upper = self.lower, self.upper
+        if not (lower is not None and upper is not None):
+            raise RuntimeError(
+                "Internal invariant failed: lower is not None and upper is not None."
+            )
+        return upper - lower
 
 
 __all__ = ["AxisDomain", "AxisDomainKind", "HalfLineDirection"]

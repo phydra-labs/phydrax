@@ -8,9 +8,11 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._classification import categorical_log_prob_from_logits
+from ..typing import PRNGKey
 from ._contracts import (
     _AbstractAnalyticExponentialFamily,
     _mean_domain_result,
@@ -28,7 +30,7 @@ class CategoricalFamily(_AbstractAnalyticExponentialFamily):
     num_categories: int = eqx.field(static=True)
     _signature: ExponentialFamilySignature = eqx.field(static=True)
 
-    def __init__(self, num_categories: int):
+    def __init__(self, num_categories: int) -> None:
         categories = int(num_categories)
         if categories < 2:
             raise ValueError("num_categories must be at least two.")
@@ -138,7 +140,7 @@ class CategoricalFamily(_AbstractAnalyticExponentialFamily):
 
     def _sample(
         self,
-        key,
+        key: PRNGKey,
         natural_values: Array,
         sample_shape: tuple[int, ...],
         /,

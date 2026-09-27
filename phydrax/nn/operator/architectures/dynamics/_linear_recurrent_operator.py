@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
@@ -19,6 +19,8 @@ from phydrax.nn.layers import LinearRecurrentUnit, RecurrentBatch
 from phydrax.nn.models import LinearRecurrentModel
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
+
+from .....typing import PRNGKey
 
 
 def _contract_configuration(
@@ -67,8 +69,8 @@ class LinearRecurrentOperator(AbstractOperatorModel):
         minimum_radius: float = 0.0,
         maximum_radius: float = 0.999,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         resolved_output = in_channels if out_channels is None else out_channels
         input_count = _get_size(in_channels)
         output_count = _get_size(resolved_output)

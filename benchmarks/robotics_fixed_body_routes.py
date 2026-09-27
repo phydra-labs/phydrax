@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -33,7 +35,7 @@ def _urdf(joints: int) -> str:
     return '<robot name="route-benchmark">' + "".join(links + edges) + "</robot>"
 
 
-def _case(joints: int, routes: int):
+def _case(joints: int, routes: int) -> Any:
     adaptation = parse_urdf_text(_urdf(joints))
     particles = adaptation.particles.prepare()
     bodies = adaptation.bodies.prepare(particles)

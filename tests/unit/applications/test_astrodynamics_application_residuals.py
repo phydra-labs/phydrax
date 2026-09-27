@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +11,7 @@ import phydrax as phx
 astro = phx.applications.astrodynamics
 
 
-def _context():
+def _context() -> Any:
     return astro.AstrodynamicsContext(
         astro.AstrodynamicsScaleContract.si(),
         astro.ReferenceEpoch(astro.TimeInstant(astro.JulianDate(2451545.0), "TT")),
@@ -17,7 +19,7 @@ def _context():
     )
 
 
-def _record(mean_motion, eccentricity=0.1):
+def _record(mean_motion: Any, eccentricity: Any = 0.1) -> Any:
     return astro.TleRecord(
         "synthetic-line-1",
         "synthetic-line-2",
@@ -38,12 +40,14 @@ def _record(mean_motion, eccentricity=0.1):
     )
 
 
-def _event_vector_field(time, state, args):
+def _event_vector_field(time: Any, state: Any, args: Any) -> Any:
     del time, args
     return jnp.zeros_like(state)
 
 
-def test_single_pair_regularization_crosses_close_orbit_and_rolls_back_ambiguity():
+def test_single_pair_regularization_crosses_close_orbit_and_rolls_back_ambiguity() -> (
+    None
+):
     context = _context()
     radius = 0.1
     speed = np.sqrt(2.0 / radius)
@@ -80,7 +84,7 @@ def test_single_pair_regularization_crosses_close_orbit_and_rolls_back_ambiguity
     np.testing.assert_array_equal(rejected.velocities, crowded_velocity)
 
 
-def test_tle_static_regimes_resonances_and_range_failure():
+def test_tle_static_regimes_resonances_and_range_failure() -> None:
     record = _record(10.0)
     with pytest.raises(ValueError, match="continuous solver epoch"):
         astro.ReferenceEpoch(record.epoch)
@@ -146,7 +150,7 @@ def test_tle_static_regimes_resonances_and_range_failure():
     assert int(nonfinite.status) == int(astro.AstrodynamicsStatus.NONFINITE_INPUT)
 
 
-def test_tle_matches_vallado_near_earth_and_resonant_deep_space_vectors():
+def test_tle_matches_vallado_near_earth_and_resonant_deep_space_vectors() -> None:
     cases = (
         (
             "near-earth",
@@ -233,10 +237,10 @@ def test_tle_matches_vallado_near_earth_and_resonant_deep_space_vectors():
             )
 
 
-def test_astrodynamics_event_ids_include_guard_and_reset_parameters():
+def test_astrodynamics_event_ids_include_guard_and_reset_parameters() -> None:
     context = _context()
 
-    def make(radius, delta_velocity):
+    def make(radius: Any, delta_velocity: Any) -> Any:
         return astro.AstrodynamicsEventPlan(
             astro.RadiusGuard(radius),
             astro.ImpulsiveVelocityReset(delta_velocity),
@@ -258,13 +262,14 @@ def test_astrodynamics_event_ids_include_guard_and_reset_parameters():
     assert reference.hybrid.plan_id != different_reset.hybrid.plan_id
 
 
-def test_astrodynamics_event_opaque_callables_require_declared_identity():
+def test_astrodynamics_event_opaque_callables_require_declared_identity() -> None:
     context = _context()
+    # ty: ignore[invalid-argument-type]
     reset = astro.ImpulsiveVelocityReset((0.0, 0.01, 0.0))
     inner = lambda time, state, args: jnp.sum(state[:3] ** 2) - 7000.0**2
     outer = lambda time, state, args: jnp.sum(state[:3] ** 2) - 7100.0**2
 
-    def make(guard, **ids):
+    def make(guard: Any, **ids: Any) -> Any:
         return astro.AstrodynamicsEventPlan(
             guard,
             reset,
@@ -291,7 +296,7 @@ def test_astrodynamics_event_opaque_callables_require_declared_identity():
     assert declared_inner.hybrid.plan_id != declared_outer.hybrid.plan_id
 
 
-def test_bundled_astronomy_assets_are_typed_bounded_and_offline():
+def test_bundled_astronomy_assets_are_typed_bounded_and_offline() -> None:
     context = _context()
     gravity_context = astro.AstrodynamicsContext(
         context.scale,

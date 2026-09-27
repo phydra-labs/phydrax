@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax._model import AbstractArrayModel, register_artifact_value
@@ -29,8 +30,10 @@ from phydrax.nn._utils import _get_size
 from phydrax.nn.operator.data import OperatorBatch, OperatorOutputSpec
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
+from .....typing import parse
 
-DriverOutputTransform = Literal["direct", "softplus"]
+
+DriverOutputTransform: TypeAlias = Literal["direct", "softplus"]
 
 
 class ChemicalConditionalAffineScaling(StrictModule, NonTrainableState):
@@ -49,7 +52,7 @@ class ChemicalConditionalAffineScaling(StrictModule, NonTrainableState):
         *,
         driver_output_transform: DriverOutputTransform = "direct",
         scaling_id: str | None = None,
-    ):
+    ) -> None:
         state = jnp.asarray(state_scale)
         if state.ndim != 1:
             raise ValueError("state_scale must be one-dimensional.")
@@ -70,8 +73,9 @@ class ChemicalConditionalAffineScaling(StrictModule, NonTrainableState):
             or float(np.asarray(duration)) <= 0.0
         ):
             raise ValueError("All conditional-affine scales must be finite and positive.")
-        if driver_output_transform not in ("direct", "softplus"):
-            raise ValueError("driver_output_transform must be 'direct' or 'softplus'.")
+        driver_output_transform = parse(
+            driver_output_transform, DriverOutputTransform, "driver_output_transform"
+        )
         generated = canonical_fingerprint(
             {
                 "kind": "chemical-conditional-affine-scaling",
@@ -122,7 +126,7 @@ class StoichiometricRateCorrection(StrictModule):
         *,
         log_multiplier_bound: float | None = None,
         correction_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(context_model, AbstractArrayModel) or not isinstance(
             species_model, AbstractArrayModel
         ):
@@ -248,7 +252,7 @@ class ChemicalConditionalAffineOperator(AbstractOperatorModel):
         temperature_name: str = "temperature",
         pressure_name: str = "pressure",
         query_name: str = "time",
-    ):
+    ) -> None:
         if not isinstance(chemistry, PreparedChemicalConditionalAffine):
             raise TypeError("chemistry must be PreparedChemicalConditionalAffine.")
         if not isinstance(driver_model, AbstractOperatorModel):

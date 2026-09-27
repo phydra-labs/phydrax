@@ -3,19 +3,29 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import TypedDict, Unpack
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...artifacts import ScientificArtifactEnvelope
-from ...atomistic import PreparedAtomisticForceField
+from ...atomistic import AtomisticPotentialEvaluation, PreparedAtomisticForceField
+from ...discretization import ParticleNeighborhoodState
 from ...qualification import ReferenceArtifactManifest
 from ...units import conversion_factor, UnitDefinition
 from ._chemical_state import ResolvedProteinChemistry
 from ._construct import ProteinAtomKey
 from ._hypotheses import ProteinStructureHypothesis
+
+
+class _RequestedUse(TypedDict, total=False):
+    commercial_use: bool
+    redistribution: bool
+    training_use: bool
+    export: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,11 +36,13 @@ class ProteinMappingCoverage:
     unexpected_atoms: tuple[ProteinAtomKey, ...]
 
     @property
-    def complete(self):
+    def complete(self) -> bool:
         return not self.missing_atoms and not self.unexpected_atoms
 
 
-def protein_mapping_coverage(hypothesis, chemistry) -> ProteinMappingCoverage:
+def protein_mapping_coverage(
+    hypothesis: ProteinStructureHypothesis, chemistry: ResolvedProteinChemistry
+) -> ProteinMappingCoverage:
     if hypothesis.construct.fingerprint() != chemistry.construct.fingerprint():
         raise ValueError(
             "Hypothesis and chemical realization describe different ordered constructs."
@@ -66,7 +78,11 @@ class PreparedProteinBinding:
     rights: tuple[ReferenceArtifactManifest, ...]
     binding_id: str
 
-    def evaluate(self, neighborhood, positions=None):
+    def evaluate(
+        self,
+        neighborhood: ParticleNeighborhoodState,
+        positions: ArrayLike | None = None,
+    ) -> AtomisticPotentialEvaluation:
         """Conservative energy and full active forces; fixed atoms retain reactions.
 
         ``neighborhood`` is an already realized native ParticleNeighborhoodState.
@@ -77,7 +93,7 @@ class PreparedProteinBinding:
             self.realized_positions if positions is None else positions, neighborhood
         )
 
-    def require_rights(self, **requested_use):
+    def require_rights(self, **requested_use: Unpack[_RequestedUse]) -> tuple[str, ...]:
         return tuple(manifest.require_rights(**requested_use) for manifest in self.rights)
 
 
@@ -89,10 +105,10 @@ def bind_protein(
     *,
     parameter_energy_unit: UnitDefinition,
     parameter_rights: tuple[ReferenceArtifactManifest, ...],
-    commercial_use=False,
-    redistribution=False,
-    training_use=False,
-    export=False,
+    commercial_use: bool = False,
+    redistribution: bool = False,
+    training_use: bool = False,
+    export: bool = False,
 ) -> PreparedProteinBinding:
     """Bind a complete user-parameterized isolated protein, without atom completion.
 

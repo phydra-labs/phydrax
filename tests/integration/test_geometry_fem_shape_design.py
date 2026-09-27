@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _problem_components():
+def _problem_components() -> Any:
     coordinates = jnp.asarray(
         [
             [1.0, 0.0],
@@ -45,12 +48,12 @@ def _problem_components():
     return geometry, discretization, motion
 
 
-def test_state_design_acceptance_uses_the_same_dynamic_fe_realization():
+def test_state_design_acceptance_uses_the_same_dynamic_fe_realization() -> None:
     geometry, discretization, motion = _problem_components()
     radius_index = geometry.schema.index(phx.geometry.ParameterId("circle", "radius"))
     design = geometry.state.replace_at(radius_index, jnp.asarray(1.1))
 
-    def area(current_design):
+    def area(current_design: Any) -> Any:
         realization = motion.realize(
             current_design,
             numeric_version="shape-design-area",

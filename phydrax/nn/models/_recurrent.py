@@ -6,17 +6,18 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import prod
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._callable import _ensure_special_kwonly_args
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...typing import parse
 from .._keys import EvalKey, split_eval_key
 from ..layers import (
     AbstractRecurrentCell,
@@ -28,8 +29,8 @@ from ..layers import (
 from ..layers._recurrent_cells import _recurrent_cell_output_width
 
 
-RecurrentReturnMode = Literal["sequence", "final"]
-BidirectionalMerge = Literal["concatenate", "sum", "mean"]
+RecurrentReturnMode: TypeAlias = Literal["sequence", "final"]
+BidirectionalMerge: TypeAlias = Literal["concatenate", "sum", "mean"]
 
 
 def _apply_readout(
@@ -169,13 +170,12 @@ class RecurrentSequenceModel(StrictModule, ParameterOwner):
         *,
         readout: Callable | None = None,
         return_mode: RecurrentReturnMode = "sequence",
-    ):
+    ) -> None:
         if not isinstance(cell, AbstractRecurrentCell):
             raise TypeError("cell must implement AbstractRecurrentCell.")
         if readout is not None and not callable(readout):
             raise TypeError("readout must be callable or None.")
-        if return_mode not in ("sequence", "final"):
-            raise ValueError("return_mode must be 'sequence' or 'final'.")
+        return_mode = parse(return_mode, RecurrentReturnMode, "return_mode")
         self.cell = cell
         self.readout = None if readout is None else _ensure_special_kwonly_args(readout)
         self.return_mode = return_mode
@@ -246,17 +246,15 @@ class BidirectionalRecurrentSequenceModel(StrictModule, ParameterOwner):
         readout: Callable | None = None,
         merge: BidirectionalMerge = "concatenate",
         return_mode: RecurrentReturnMode = "sequence",
-    ):
+    ) -> None:
         if not isinstance(forward_cell, AbstractRecurrentCell) or not isinstance(
             backward_cell, AbstractRecurrentCell
         ):
             raise TypeError("forward_cell and backward_cell must be recurrent cells.")
         if readout is not None and not callable(readout):
             raise TypeError("readout must be callable or None.")
-        if merge not in ("concatenate", "sum", "mean"):
-            raise ValueError("merge must be 'concatenate', 'sum', or 'mean'.")
-        if return_mode not in ("sequence", "final"):
-            raise ValueError("return_mode must be 'sequence' or 'final'.")
+        merge = parse(merge, BidirectionalMerge, "merge")
+        return_mode = parse(return_mode, RecurrentReturnMode, "return_mode")
         if merge != "concatenate":
             forward_width = _recurrent_cell_output_width(forward_cell)
             backward_width = _recurrent_cell_output_width(backward_cell)

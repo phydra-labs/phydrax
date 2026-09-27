@@ -1,8 +1,10 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
-from jaxtyping import Array
+from jax import Array
 
 import phydrax as phx
 
@@ -13,17 +15,19 @@ class _BrownianFieldOperator(phx.nn.operator.AbstractProbabilisticOperatorModel)
     in_size: str
     out_size: str
 
-    def __init__(self, scale_power=0.5, uncertainty_source="process"):
+    def __init__(
+        self, scale_power: Any = 0.5, uncertainty_source: Any = "process"
+    ) -> None:
         self.scale_power = jnp.asarray(scale_power, dtype="float64")
         self.uncertainty_source = str(uncertainty_source)
         self.in_size = "scalar"
         self.out_size = "scalar"
 
     @property
-    def operator_output_specs(self):
+    def operator_output_specs(self) -> Any:
         return {"output": phx.nn.operator.OperatorOutputSpec("scalar")}
 
-    def distribution(self, batch, /, *, key=None):
+    def distribution(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         state = batch.input("state").values
         duration = batch.input("duration").values
@@ -36,12 +40,13 @@ class _BrownianFieldOperator(phx.nn.operator.AbstractProbabilisticOperatorModel)
             output_spec=phx.nn.operator.OperatorOutputSpec("scalar"),
             case_axes=batch.case_axes,
             case_shape=batch.case_shape,
+            # ty: ignore[invalid-argument-type]
             uncertainty_source=self.uncertainty_source,
         )
 
 
 class _AdditiveDriverOperator(eqx.Module):
-    def __call__(self, batch, /, *, key=None):
+    def __call__(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         return (
             batch.input("state").values
@@ -50,7 +55,9 @@ class _AdditiveDriverOperator(eqx.Module):
         )
 
 
-def _transition_batch(*, cases=2, size=4, driver=False, forcing=0.0):
+def _transition_batch(
+    *, cases: Any = 2, size: Any = 4, driver: Any = False, forcing: Any = 0.0
+) -> Any:
     axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, size, endpoint=False),
@@ -77,7 +84,7 @@ def _transition_batch(*, cases=2, size=4, driver=False, forcing=0.0):
     )
 
 
-def _marginal_law(*, forcing=0.0, uncertainty_source="process"):
+def _marginal_law(*, forcing: Any = 0.0, uncertainty_source: Any = "process") -> Any:
     batch = _transition_batch(forcing=forcing)
     spec = phx.nn.operator.training.OperatorTransitionSpec(
         phx.nn.operator.OperatorOutputSpec("scalar")
@@ -90,7 +97,7 @@ def _marginal_law(*, forcing=0.0, uncertainty_source="process"):
     )
 
 
-def _pathwise_law(*, forcing=0.0):
+def _pathwise_law(*, forcing: Any = 0.0) -> Any:
     batch = _transition_batch(driver=True, forcing=forcing)
     spec = phx.nn.operator.training.OperatorTransitionSpec(
         phx.nn.operator.OperatorOutputSpec("scalar"),
@@ -111,7 +118,7 @@ def _pathwise_law(*, forcing=0.0):
     )
 
 
-def test_marginal_transition_is_process_distribution_and_preserves_forcing():
+def test_marginal_transition_is_process_distribution_and_preserves_forcing() -> None:
     law = _marginal_law(forcing=0.25)
     state = jnp.zeros((2, 4))
     distribution = law.marginal_transition(state, t0=0.1, t1=0.5)
@@ -128,7 +135,7 @@ def test_marginal_transition_is_process_distribution_and_preserves_forcing():
         invalid.marginal_transition(state, t0=0.0, t1=0.2)
 
 
-def test_marginal_rollout_replays_and_exports_process_uncertainty():
+def test_marginal_rollout_replays_and_exports_process_uncertainty() -> None:
     law = _marginal_law()
     times = jnp.asarray([0.0, 0.2, 0.5])
     first = phx.nn.operator.training.marginal_operator_rollout(
@@ -176,7 +183,7 @@ def test_marginal_rollout_replays_and_exports_process_uncertainty():
     assert predictive.mean().data.shape == (2, 3, 4)
 
 
-def test_pathwise_rollout_reuses_one_wiener_field_and_satisfies_cocycle():
+def test_pathwise_rollout_reuses_one_wiener_field_and_satisfies_cocycle() -> None:
     law = _pathwise_law(forcing=0.3)
     driver = phx.stochastic.WienerRealization(
         jr.key(3),
@@ -258,7 +265,9 @@ def test_pathwise_rollout_reuses_one_wiener_field_and_satisfies_cocycle():
         )
 
 
-def test_operator_transition_objectives_are_exactly_shaped_jittable_and_differentiable():
+def test_operator_transition_objectives_are_exactly_shaped_jittable_and_differentiable() -> (
+    None
+):
     law = _marginal_law()
     states = jnp.zeros((3, 2, 4))
     times = jnp.asarray([0.0, 0.2, 0.5])
@@ -284,7 +293,7 @@ def test_operator_transition_objectives_are_exactly_shaped_jittable_and_differen
     assert jnp.allclose(chain[:, 0], expected_chain)
     assert jnp.allclose(direct[:, 0], expected_direct)
 
-    def semigroup_objective(candidate):
+    def semigroup_objective(candidate: Any) -> Any:
         return phx.stochastic.semigroup_objective(
             candidate,
             states[0],

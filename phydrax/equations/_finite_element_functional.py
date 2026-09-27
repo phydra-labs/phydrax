@@ -8,7 +8,8 @@ from collections.abc import Callable, Mapping, Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -20,6 +21,7 @@ from ..discretization._local_variational import AbstractPreparedLocalDiscretizat
 from ..discretization.fem import FiniteElementDiscretization, IntegrationDomain
 from ._finite_element_variational import (
     _default_rule,
+    _finite_element_runtime,
     _reference_rule_data,
     FiniteElementExecutionContext,
 )
@@ -49,7 +51,7 @@ class FiniteElementFunctional(StrictModule, NonTrainableState):
         *,
         domain: IntegrationDomain | None = None,
         rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
-    ):
+    ) -> None:
         identifier = str(functional_id)
         field = str(field_name)
         if not identifier or not field or not callable(density):
@@ -184,7 +186,7 @@ class FiniteElementFunctional(StrictModule, NonTrainableState):
             geometry = discretization.evaluate_block_geometry(
                 self.field_name,
                 block_index,
-                context.runtime.coordinates,
+                _finite_element_runtime(context).coordinates,
                 data.points,
                 data.weights,
             )

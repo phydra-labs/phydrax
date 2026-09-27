@@ -7,7 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -40,7 +42,7 @@ class PersistenceDiagram(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str,
-    ):
+    ) -> None:
         degree_array = np.asarray(degrees, dtype=np.int32)
         births = np.asarray(birth_values)
         deaths = np.asarray(death_values)
@@ -113,7 +115,7 @@ class PackedPersistenceDiagram(StrictModule, NonTrainableState):
         diagram: PersistenceDiagram,
         capacity: int,
         /,
-    ):
+    ) -> None:
         if not isinstance(diagram, PersistenceDiagram):
             raise TypeError("Packing requires a PersistenceDiagram.")
         size = int(capacity)
@@ -126,7 +128,7 @@ class PackedPersistenceDiagram(StrictModule, NonTrainableState):
         count = diagram.interval_count
         active = np.arange(size) < count
 
-        def pad(value: Array, *, dtype=None):
+        def pad(value: Array, *, dtype: npt.DTypeLike | None = None) -> Array:
             source = np.asarray(value, dtype=dtype)
             output = np.zeros((size,), dtype=source.dtype)
             output[:count] = source

@@ -6,10 +6,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import jax.numpy as jnp
 
+from ..typing import parse
 from ._ir import PDECondition, PDEEquation, PDEExpression, PDEProblemIR
 from ._validate import infer_expression_type, validate_pde_ir
 
@@ -19,19 +20,8 @@ if TYPE_CHECKING:
     from phydrax.integration import IntegrationSource
 
 
-DifferentialBackend = Literal["ad", "jet", "fd", "basis"]
+DifferentialBackend: TypeAlias = Literal["ad", "jet", "fd", "basis"]
 IntegralCompiler = Callable[[Any, str, PDEProblemIR], Any]
-
-
-_DIFFERENTIAL_BACKENDS = ("ad", "jet", "fd", "basis")
-
-
-def _validate_differential_backend(backend: str, /) -> DifferentialBackend:
-    if backend not in _DIFFERENTIAL_BACKENDS:
-        raise ValueError(
-            f"Unknown differential backend {backend!r}; expected one of {_DIFFERENTIAL_BACKENDS}."
-        )
-    return backend
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,7 +93,9 @@ def compile_pde_expression(
     integral_compiler: IntegralCompiler | None = None,
 ) -> Any:
     """Compile a validated expression DAG to native PhydraX operations."""
-    differential_backend = _validate_differential_backend(differential_backend)
+    differential_backend = parse(
+        differential_backend, DifferentialBackend, "differential_backend"
+    )
     infer_expression_type(expression, problem)
     parameter_values: dict[str, Any] = {
         item.name: item.value for item in problem.parameters if item.value is not None
@@ -244,7 +236,9 @@ def make_pde_operator(
     integral_compiler: IntegralCompiler | None = None,
 ) -> Callable[..., Any]:
     """Adapt an expression to the operator signature used by PhydraX constraints."""
-    differential_backend = _validate_differential_backend(differential_backend)
+    differential_backend = parse(
+        differential_backend, DifferentialBackend, "differential_backend"
+    )
     names = (
         tuple(field.name for field in problem.fields)
         if field_names is None
@@ -323,7 +317,9 @@ def compile_pde_problem(
     integral_compiler: IntegralCompiler | None = None,
 ) -> CompiledPDEProblem:
     """Compile every equation and restriction to executable residuals."""
-    differential_backend = _validate_differential_backend(differential_backend)
+    differential_backend = parse(
+        differential_backend, DifferentialBackend, "differential_backend"
+    )
     validate_pde_ir(problem)
 
     def compile_expression(expression: PDEExpression) -> Any:

@@ -1,4 +1,5 @@
 import importlib.util
+from typing import Any
 
 import jax.numpy as jnp
 import pytest
@@ -19,7 +20,7 @@ def _make_graph() -> vx.GraphIR:
     )
 
 
-def test_graph_ir_counts_and_edge_index():
+def test_graph_ir_counts_and_edge_index() -> None:
     graph = _make_graph()
     assert graph.num_graphs == 1
     assert graph.num_nodes == 3
@@ -27,7 +28,7 @@ def test_graph_ir_counts_and_edge_index():
     assert graph.edge_index.shape == (2, 3)
 
 
-def test_batch_unbatch_graphs_roundtrip():
+def test_batch_unbatch_graphs_roundtrip() -> None:
     g1 = _make_graph()
     g2 = _make_graph().replace(nodes=jnp.array([[4.0], [5.0], [6.0]]), validate=True)
 
@@ -45,7 +46,7 @@ def test_batch_unbatch_graphs_roundtrip():
     assert jnp.array_equal(pieces[1].receivers, g2.receivers)
 
 
-def test_graph_counts_helper():
+def test_graph_counts_helper() -> None:
     graph = _make_graph()
     counts = vx.graph_counts(graph)
     assert counts == {"n_graph": 1, "n_node": 3, "n_edge": 3}
@@ -61,12 +62,12 @@ def test_graph_counts_helper():
     ],
 )
 def test_graph_ir_rejects_cross_graph_edge_ownership(
-    senders,
-    receivers,
-    n_node,
-    n_edge,
-    message,
-):
+    senders: Any,
+    receivers: Any,
+    n_node: Any,
+    n_edge: Any,
+    message: Any,
+) -> None:
     node_count = sum(n_node)
     edge_count = sum(n_edge)
     with pytest.raises(ValueError, match=message):
@@ -90,11 +91,11 @@ def test_graph_ir_rejects_cross_graph_edge_ownership(
     ],
 )
 def test_graph_ir_accepts_graph_local_edges_with_empty_neighbors(
-    n_node,
-    n_edge,
-    senders,
-    receivers,
-):
+    n_node: Any,
+    n_edge: Any,
+    senders: Any,
+    receivers: Any,
+) -> None:
     graph = vx.GraphIR(
         nodes=jnp.zeros((sum(n_node), 1)),
         edges=jnp.zeros((sum(n_edge), 1)),
@@ -106,7 +107,7 @@ def test_graph_ir_accepts_graph_local_edges_with_empty_neighbors(
     graph.validate(strict=False)
 
 
-def test_graph_ir_ownership_is_independent_of_strict_size_checks():
+def test_graph_ir_ownership_is_independent_of_strict_size_checks() -> None:
     graph = vx.GraphIR(
         nodes=jnp.zeros((2, 1)),
         edges=jnp.zeros((1, 1)),
@@ -121,7 +122,7 @@ def test_graph_ir_ownership_is_independent_of_strict_size_checks():
         graph.validate(strict=False)
 
 
-def test_missing_jraph_errors_provide_phydrax_install_guidance(monkeypatch):
+def test_missing_jraph_errors_provide_phydrax_install_guidance(monkeypatch: Any) -> None:
     graph = _make_graph()
     monkeypatch.setattr(importlib.util, "find_spec", lambda _: None)
 

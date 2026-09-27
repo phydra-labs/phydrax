@@ -15,7 +15,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax.ein import contract
 
@@ -83,7 +84,7 @@ class SoftCorePolicy(StrictModule, NonTrainableState):
         lennard_jones_alpha: float = 0.5,
         electrostatic_alpha: float = 0.5,
         coupling_power: int = 2,
-    ):
+    ) -> None:
         lj = float(lennard_jones_alpha)
         electrostatic = float(electrostatic_alpha)
         if not isinstance(coupling_power, (int, np.integer)) or isinstance(
@@ -128,7 +129,7 @@ class AlchemicalControlSchedulePlan(StrictModule, NonTrainableState):
         control_kinds: Sequence[AlchemicalControlKind | str],
         controls: ArrayLike,
         /,
-    ):
+    ) -> None:
         states = tuple(str(value).strip() for value in state_ids)
         names = tuple(str(value).strip() for value in control_ids)
         kinds = tuple(AlchemicalControlKind(value) for value in control_kinds)
@@ -245,7 +246,7 @@ class AlchemicalInteractionPartitionPlan(StrictModule, NonTrainableState):
         changes_masses: bool = False,
         changes_constraints: bool = False,
         changes_virtual_geometry: bool = False,
-    ):
+    ) -> None:
         names = tuple(str(value).strip() for value in control_ids)
         regions = tuple(np.asarray(value) for value in region_particle_ids)
         modes = (
@@ -351,7 +352,7 @@ class PreparedAlchemicalInteractionPartition(StrictModule, NonTrainableState):
         force_field: PreparedAtomisticForceField,
         soft_core: SoftCorePolicy,
         /,
-    ):
+    ) -> None:
         if plan.control_ids != schedule.control_ids:
             raise ValueError(
                 "Schedule and partition control identities must match exactly."
@@ -478,7 +479,9 @@ class PreparedAlchemicalInteractionPartition(StrictModule, NonTrainableState):
                     f"No canonical {kind.value} term is available for its control."
                 )
 
-        def selected(membership: np.ndarray, mode: AlchemicalRegionInteractionMode):
+        def selected(
+            membership: np.ndarray, mode: AlchemicalRegionInteractionMode
+        ) -> np.ndarray:
             count = np.count_nonzero(membership, axis=1)
             if mode is AlchemicalRegionInteractionMode.CROSS:
                 return (count > 0) & (count < membership.shape[1])
@@ -667,7 +670,7 @@ class PreparedAlchemicalInteractionPartition(StrictModule, NonTrainableState):
         left: Array,
         right: Array,
         controls: Array,
-        dtype,
+        dtype: DTypeLike,
         /,
     ) -> AtomisticInteractionScaleState:
         value = jnp.asarray(controls, dtype=dtype)
@@ -757,7 +760,7 @@ class ControlledHamiltonianPlan(StrictModule, NonTrainableState):
         /,
         *,
         soft_core: SoftCorePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(force_field, PreparedAtomisticForceField):
             raise TypeError("force_field must be a PreparedAtomisticForceField.")
         if not isinstance(schedule, AlchemicalControlSchedulePlan):
@@ -808,7 +811,7 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
         plan: ControlledHamiltonianPlan,
         partition: PreparedAlchemicalInteractionPartition,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.force_field = plan.force_field
         self.system = plan.force_field.system
@@ -836,7 +839,7 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
         self,
         state_index: ArrayLike | None,
         control_values: ArrayLike | None,
-        dtype,
+        dtype: DTypeLike,
         /,
     ) -> tuple[Array, Array, Array]:
         if state_index is not None and control_values is not None:
@@ -859,7 +862,7 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
         self,
         neighborhood: ParticleNeighborhoodState,
         controls: Array,
-        dtype,
+        dtype: DTypeLike,
         /,
     ) -> AtomisticInteractionScaleState:
         pairs = neighborhood.pair_relation
@@ -972,11 +975,18 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
                 - selected_cell.fractional_with_vectors(position, vectors)
             )
 
-        def closure(value: Array, control: Array):
+        def closure(
+            value: Array, control: Array
+        ) -> tuple[Array, tuple[Array, Array, Array, Array]]:
             kwargs = dict(context_kwargs)
             if unwrapped_offset is not None:
                 kwargs["unwrapped_positions"] = value + unwrapped_offset
             if fractional_offset is not None:
+                # fractional_offset is only bound together with a cell and cell vectors.
+                if not (selected_cell is not None and vectors is not None):
+                    raise RuntimeError(
+                        "Internal invariant failed: selected_cell is not None and vectors is not None."
+                    )
                 kwargs["fractional_positions"] = (
                     selected_cell.fractional_with_vectors(value, vectors)
                     + fractional_offset

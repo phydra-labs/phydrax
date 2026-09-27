@@ -22,24 +22,27 @@ import sys
 import tomllib
 from functools import partial
 from pathlib import Path
+from types import ModuleType
+from typing import Any, SupportsComplex, SupportsFloat, TypeAlias
 
 
 _MAX_DEPENDENCY_FILES = 100000
 _MAX_DEPENDENCY_BYTES = 2 * 1024 * 1024 * 1024
+_Table: TypeAlias = dict[str, list[str] | list[list[float | str | None]]]
 
 
-def _digest(path):
+def _digest(path: str | os.PathLike[str]) -> str:
     with Path(path).open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def _json_identity(value):
+def _json_identity(value: object) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
 
 
-def _number(value):
+def _number(value: str | SupportsFloat | None) -> float | str | None:
     if value is None:
         return None
     if isinstance(value, str):
@@ -48,7 +51,7 @@ def _number(value):
     return number if math.isfinite(number) else None
 
 
-def _real(value, label):
+def _real(value: SupportsComplex | SupportsFloat, label: str) -> float:
     number = complex(value)
     if not math.isfinite(number.real) or not math.isfinite(number.imag):
         raise RuntimeError(f"Nonfinite {label} returned by the solver.")
@@ -57,7 +60,7 @@ def _real(value, label):
     return float(number.real)
 
 
-def _table(frame):
+def _table(frame: Any) -> _Table:
     return {
         "index": [str(value).strip() for value in frame.index],
         "columns": [str(value).strip() for value in frame.columns],
@@ -65,7 +68,7 @@ def _table(frame):
     }
 
 
-def _evidence(setup, name):
+def _evidence(setup: Any, name: str) -> _Table:
     frame, raw = setup.get_convergence()
     if frame is None or not isinstance(raw, str) or not raw.strip():
         raise RuntimeError("Solver did not export adaptive convergence evidence.")
@@ -78,7 +81,7 @@ def _evidence(setup, name):
     return _table(frame)
 
 
-def _distribution_evidence(name, expected_version):
+def _distribution_evidence(name: str, expected_version: str) -> dict[str, object]:
     distribution = importlib.metadata.distribution(name)
     if distribution.version != expected_version:
         raise RuntimeError(
@@ -116,7 +119,7 @@ def _distribution_evidence(name, expected_version):
     }
 
 
-def _verify_sources(request):
+def _verify_sources(request: dict[str, Any]) -> None:
     identities = request["source_files_sha256"]
     for name, expected in identities.items():
         if _digest(Path("source") / name) != expected:
@@ -134,7 +137,7 @@ def _verify_sources(request):
         )
 
 
-def _ansys_processes(psutil):
+def _ansys_processes(psutil: ModuleType) -> list[Any]:
     return [
         process
         for process in psutil.process_iter(["name"])
@@ -142,7 +145,7 @@ def _ansys_processes(psutil):
     ]
 
 
-def main():
+def main() -> None:
     if sys.platform != "win32":
         raise RuntimeError(
             "The pinned QDesignOptimizer profile requires Windows AEDT COM."

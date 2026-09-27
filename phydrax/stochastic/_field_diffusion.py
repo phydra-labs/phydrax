@@ -6,13 +6,15 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field
+from ..typing import PRNGKey
 from ._gaussian_diffusion import AbstractGaussianDiffusion
 from ._spatial_noise import SpatialNoiseBasis
 from ._subspace_diffusion import AffineSubspaceLayout, SubspaceGaussianDiffusion
@@ -32,7 +34,7 @@ class FieldNoiseGeometry(StrictModule):
         /,
         *,
         field_space_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(basis, SpatialNoiseBasis):
             raise TypeError("basis must be a SpatialNoiseBasis.")
         if jnp.iscomplexobj(basis.modes):
@@ -116,8 +118,13 @@ class FieldGaussianDiffusion(StrictModule):
     process_id: str = eqx.field(static=True)
 
     def __init__(
-        self, geometry, coefficient_process, /, *, process_id: str | None = None
-    ):
+        self,
+        geometry: FieldNoiseGeometry,
+        coefficient_process: AbstractGaussianDiffusion,
+        /,
+        *,
+        process_id: str | None = None,
+    ) -> None:
         if not isinstance(geometry, FieldNoiseGeometry):
             raise TypeError("geometry must be a FieldNoiseGeometry.")
         if not isinstance(coefficient_process, AbstractGaussianDiffusion):
@@ -144,12 +151,12 @@ class FieldGaussianDiffusion(StrictModule):
         )
         self.process_id = identifier
 
-    def perturb(
-        self, key: Key[Array, ""], field: ArrayLike, /, *, time: ArrayLike
-    ) -> Array:
+    def perturb(self, key: PRNGKey, field: ArrayLike, /, *, time: ArrayLike) -> Array:
         return self.subspace_process.perturb(key, field, time=time)
 
-    def conditional_coefficient_score(self, perturbed, clean, /, *, time):
+    def conditional_coefficient_score(
+        self, perturbed: ArrayLike, clean: ArrayLike, /, *, time: ArrayLike
+    ) -> Array:
         return self.subspace_process.conditional_coefficient_score(
             perturbed,
             clean,

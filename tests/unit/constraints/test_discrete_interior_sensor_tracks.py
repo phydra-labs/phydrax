@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.random as jr
 
@@ -9,16 +12,16 @@ import phydrax as phx
 from phydrax.domain import Interval1d, SampleLayout, TimeInterval
 
 
-def _xt_domain():
+def _xt_domain() -> Any:
     return Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
 
 
-def test_sensor_track_observation_matches_linear_time_target():
+def test_sensor_track_observation_matches_linear_time_target() -> None:
     domain = _xt_domain()
     structure = SampleLayout((("x", "t"),))
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return 2.0 * t
 
     component = domain.component()
@@ -33,12 +36,12 @@ def test_sensor_track_observation_matches_linear_time_target():
     assert loss_fn(jr.key(0)) < 1e-6
 
 
-def test_sensor_tracks_single_time_constant():
+def test_sensor_tracks_single_time_constant() -> None:
     domain = _xt_domain()
     structure = SampleLayout((("x", "t"),))
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> float:
         return 3.0
 
     component = domain.component()

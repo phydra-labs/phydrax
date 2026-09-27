@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -24,13 +26,13 @@ from phydrax.stochastic import WienerRealization
 
 
 def _noise(
-    increments,
+    increments: Any,
     *,
-    validity=None,
-    realization_ids=None,
-    coupling_id="coupling:shared",
-    independence_labels=None,
-):
+    validity: Any = None,
+    realization_ids: Any = None,
+    coupling_id: Any = "coupling:shared",
+    independence_labels: Any = None,
+) -> Any:
     values = jnp.asarray(increments, dtype="float64")
     path_count = values.shape[0]
     time_grid = TimeGrid(
@@ -56,20 +58,22 @@ def _noise(
     )
 
 
-def _problem(*, num_steps=2, stage_cost=None, terminal_cost=None):
+def _problem(
+    *, num_steps: Any = 2, stage_cost: Any = None, terminal_cost: Any = None
+) -> Any:
     grid = TimeGrid(
         jnp.arange(num_steps + 1, dtype="float64"), time_id=f"feedback:{num_steps}:time"
     )
 
-    def transition(context, state, action, noise, args):
+    def transition(context: Any, state: Any, action: Any, noise: Any, args: Any) -> Any:
         del context, args
         return state + action + noise
 
-    def zero_stage(context, state, action, args):
+    def zero_stage(context: Any, state: Any, action: Any, args: Any) -> Any:
         del context, state, action, args
         return jnp.asarray(0.0)
 
-    def final_state_cost(time, state, args):
+    def final_state_cost(time: Any, state: Any, args: Any) -> Any:
         del time, args
         return state[0]
 
@@ -86,8 +90,8 @@ def _problem(*, num_steps=2, stage_cost=None, terminal_cost=None):
     )
 
 
-def test_exact_deterministic_feedback_rollout():
-    def stage_cost(context, state, action, args):
+def test_exact_deterministic_feedback_rollout() -> None:
+    def stage_cost(context: Any, state: Any, action: Any, args: Any) -> Any:
         del context, args
         return state[0] + action[0]
 
@@ -110,11 +114,11 @@ def test_exact_deterministic_feedback_rollout():
     assert int(paths.status[0]) == FeedbackPolicyEvaluationStatus.SUCCESS
 
 
-def test_policy_cannot_observe_current_noise():
+def test_policy_cannot_observe_current_noise() -> None:
     problem = _problem(num_steps=1)
     prepared = _noise(jnp.asarray([[[2.0]], [[-3.0]]]))
 
-    def state_feedback(context, state, args):
+    def state_feedback(context: Any, state: Any, args: Any) -> Any:
         del context, args
         return 2.0 * state
 
@@ -124,7 +128,7 @@ def test_policy_cannot_observe_current_noise():
     np.testing.assert_allclose(paths.states[:, 1], [[5.0], [0.0]])
 
 
-def test_prepared_noise_is_bound_to_exact_physical_grid():
+def test_prepared_noise_is_bound_to_exact_physical_grid() -> None:
     problem = _problem(num_steps=1)
     wrong_grid = TimeGrid(
         jnp.asarray([0.0, 2.0]),
@@ -152,7 +156,7 @@ def test_prepared_noise_is_bound_to_exact_physical_grid():
         )
 
 
-def test_realization_replay_ids_and_antithetic_cluster_labels():
+def test_realization_replay_ids_and_antithetic_cluster_labels() -> None:
     problem = _problem(num_steps=2)
     grid = problem.time_grid
     realization = WienerRealization.antithetic(
@@ -191,7 +195,7 @@ def test_realization_replay_ids_and_antithetic_cluster_labels():
     assert int(evaluation.evidence.independent_cluster_count) == 2
 
 
-def test_common_random_number_comparison_retains_pairing():
+def test_common_random_number_comparison_retains_pairing() -> None:
     problem = _problem(num_steps=1)
     prepared = _noise(jnp.asarray([[[0.5]], [[-0.25]], [[1.0]]]))
     left = rollout_feedback(
@@ -217,7 +221,7 @@ def test_common_random_number_comparison_retains_pairing():
     assert comparison.right_policy_id == "right"
 
 
-def test_comparison_rejects_mismatched_coupling():
+def test_comparison_rejects_mismatched_coupling() -> None:
     problem = _problem(num_steps=1)
     increments = jnp.asarray([[[0.5]], [[-0.25]]])
     left_noise = _noise(increments, coupling_id="coupling:left")
@@ -230,7 +234,7 @@ def test_comparison_rejects_mismatched_coupling():
         compare_feedback_policies(left, right)
 
 
-def test_invalid_noise_paths_remain_case_local():
+def test_invalid_noise_paths_remain_case_local() -> None:
     problem = _problem(num_steps=1)
     prepared = _noise(
         jnp.asarray([[[0.0]], [[1.0]], [[jnp.nan]]]),
@@ -272,7 +276,7 @@ def test_invalid_noise_paths_remain_case_local():
         EntropicRisk(0.2),
     ],
 )
-def test_empirical_risk_uses_existing_optim_risk_exactly(risk):
+def test_empirical_risk_uses_existing_optim_risk_exactly(risk: Any) -> None:
     problem = _problem(num_steps=1)
     prepared = _noise(jnp.asarray([[[0.0]], [[1.0]], [[3.0]]]))
     evaluation = evaluate_feedback_policy(
@@ -294,7 +298,7 @@ def test_empirical_risk_uses_existing_optim_risk_exactly(risk):
         assert evaluation.evidence.coverage == "none"
 
 
-def test_hoeffding_requires_bounds_and_training_data_has_no_coverage_claim():
+def test_hoeffding_requires_bounds_and_training_data_has_no_coverage_claim() -> None:
     problem = _problem(num_steps=1)
     prepared = _noise(jnp.asarray([[[0.0]], [[1.0]], [[-0.5]]]))
     policy = lambda context, state, args: jnp.zeros((1,))

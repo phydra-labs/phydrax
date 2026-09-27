@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from hashlib import new as new_digest
@@ -20,7 +21,7 @@ from .._fingerprint import canonical_fingerprint
 from .._physical import SpatialCoordinateContract
 from ..geometry import FrameTransformGraph, FrameTransformTimeline, RigidFrame
 from ..qualification import ReferenceArtifactManifest
-from ..units import derived_unit, METER, ONE, RADIAN, SECOND
+from ..units import derived_unit, METER, ONE, RADIAN, SECOND, UnitDefinition
 from ._asset import (
     AcquisitionIdentity,
     DataOrigin,
@@ -31,7 +32,12 @@ from ._asset import (
 from ._collection import MeasurementCollection, MeasurementRole, MeasurementRoleAssignment
 from ._field import QuantityField, SamplingSemantics, SpatialSamplingKind
 from ._quantity import QuantitySpec, ValueKind, ValueLayout
-from ._support import IndexSampleSupport, PointSampleSupport, RaySampleSupport
+from ._support import (
+    IndexSampleSupport,
+    PointSampleSupport,
+    RaySampleSupport,
+    SampleSupport,
+)
 from ._time import SampleTimeAxis
 
 
@@ -514,7 +520,7 @@ def _payload_contract(
     values: np.ndarray,
     frame_id: str,
     /,
-) -> tuple[np.ndarray, tuple[int, ...], tuple[str, ...], ValueLayout, object]:
+) -> tuple[np.ndarray, tuple[int, ...], tuple[str, ...], ValueLayout, UnitDefinition]:
     array = np.asarray(values)
     if record.kind is RosMessageKind.IMAGE:
         if name != "values" or array.ndim not in (2, 3):
@@ -728,14 +734,14 @@ def _lower_record(
 def _asset(
     asset_id: str,
     values: np.ndarray,
-    support,
+    support: SampleSupport,
     name: str,
-    unit,
+    unit: UnitDefinition,
     layout: ValueLayout,
     acquisition: AcquisitionIdentity,
     derivation: DerivationRecord,
     reference: ReferenceArtifactManifest,
-    metadata: dict[str, object],
+    metadata: Mapping[str, object],
 ) -> MeasurementAsset:
     field = QuantityField(
         f"{asset_id}.field",

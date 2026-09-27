@@ -9,7 +9,8 @@ from typing import Any, ClassVar, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -138,7 +139,7 @@ class ExactNeighborRegressorModel(AbstractFittedModel):
         feature_count: int,
         output_shape: tuple[int, ...],
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         support_, weight_, mask_, features, cases = _model_support(
             support, support_weight, support_mask, feature_count, case_shape
         )
@@ -225,7 +226,7 @@ class ExactNeighborClassifierModel(AbstractFittedModel):
         class_count: int,
         feature_count: int,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         support_, weight_, mask_, features, cases = _model_support(
             support, support_weight, support_mask, feature_count, case_shape
         )
@@ -319,7 +320,7 @@ class KernelNeighborRegressorModel(AbstractFittedModel):
         output_shape: tuple[int, ...],
         case_shape: tuple[int, ...],
         temperature: ArrayLike,
-    ):
+    ) -> None:
         support_, weight_, mask_, features, cases = _model_support(
             support, support_weight, support_mask, feature_count, case_shape
         )
@@ -406,7 +407,7 @@ class KernelNeighborClassifierModel(AbstractFittedModel):
         feature_count: int,
         case_shape: tuple[int, ...],
         temperature: ArrayLike,
-    ):
+    ) -> None:
         support_, weight_, mask_, features, cases = _model_support(
             support, support_weight, support_mask, feature_count, case_shape
         )
@@ -496,7 +497,7 @@ class RadiusNeighborRegressorModel(AbstractFittedModel):
         output_shape: tuple[int, ...],
         case_shape: tuple[int, ...],
         radius: ArrayLike,
-    ):
+    ) -> None:
         support_, weight_, mask_, features, cases = _model_support(
             support, support_weight, support_mask, feature_count, case_shape
         )
@@ -580,7 +581,7 @@ class RadiusNeighborClassifierModel(AbstractFittedModel):
         feature_count: int,
         case_shape: tuple[int, ...],
         radius: ArrayLike,
-    ):
+    ) -> None:
         support_, weight_, mask_, features, cases = _model_support(
             support, support_weight, support_mask, feature_count, case_shape
         )
@@ -664,7 +665,7 @@ class NearestCentroidModel(AbstractFittedModel):
         class_count: int,
         case_shape: tuple[int, ...],
         temperature: ArrayLike,
-    ):
+    ) -> None:
         centroids_ = jnp.asarray(centroids)
         mask_ = jnp.asarray(class_mask, dtype=jnp.bool_)
         features = int(feature_count)
@@ -710,7 +711,9 @@ class NearestCentroidModel(AbstractFittedModel):
         return jnp.where(valid, jnp.argmax(probability, axis=-1), -1).astype(jnp.int32)
 
 
-def _prepare_support(batch: MLBatch, capacity: int | None, policy: WeightPolicy):
+def _prepare_support(
+    batch: MLBatch, capacity: int | None, policy: WeightPolicy
+) -> tuple[Array, Array, Array, int]:
     cap = batch.sample_count if capacity is None else int(capacity)
     if cap <= 0:
         raise ValueError("capacity must be positive.")
@@ -727,7 +730,9 @@ def _prepare_support(batch: MLBatch, capacity: int | None, policy: WeightPolicy)
     return x, mask & feature_valid & (weight > 0), weight, cap
 
 
-def _fit_status(batch: MLBatch, support_mask: Array, capacity: int, minimum_support: int):
+def _fit_status(
+    batch: MLBatch, support_mask: Array, capacity: int, minimum_support: int
+) -> tuple[Array, Array, Array]:
     effective = jnp.sum(support_mask, axis=-1)
     exhausted = capacity < batch.sample_count
     sufficient = effective >= minimum_support
@@ -767,7 +772,7 @@ class KNeighborsRegressorRecipe(AbstractRecipe):
         metric: Any = "euclidean",
         capacity: int | None = None,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if int(neighbor_count) <= 0:
             raise ValueError("neighbor_count must be positive.")
         self.neighbor_count = int(neighbor_count)
@@ -850,7 +855,7 @@ class KNeighborsClassifierRecipe(AbstractRecipe):
         metric: Any = "euclidean",
         capacity: int | None = None,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if int(neighbor_count) <= 0 or int(class_count) < 2:
             raise ValueError(
                 "neighbor_count must be positive and class_count at least two."
@@ -928,7 +933,7 @@ class KernelNeighborsRegressorRecipe(AbstractRecipe):
         metric: Any = "squared-euclidean",
         capacity: int | None = None,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.recipe = KNeighborsRegressorRecipe(
             1, metric=metric, capacity=capacity, weight_policy=weight_policy
         )
@@ -985,7 +990,7 @@ class KernelNeighborsClassifierRecipe(AbstractRecipe):
         metric: Any = "squared-euclidean",
         capacity: int | None = None,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.recipe = KNeighborsClassifierRecipe(
             1,
             class_count=class_count,
@@ -1046,7 +1051,7 @@ class RadiusNeighborsRegressorRecipe(AbstractRecipe):
         metric: Any = "euclidean",
         capacity: int | None = None,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.recipe = KNeighborsRegressorRecipe(
             1, metric=metric, capacity=capacity, weight_policy=weight_policy
         )
@@ -1095,7 +1100,7 @@ class RadiusNeighborsClassifierRecipe(AbstractRecipe):
         metric: Any = "euclidean",
         capacity: int | None = None,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.recipe = KNeighborsClassifierRecipe(
             1,
             class_count=class_count,
@@ -1149,7 +1154,7 @@ class NearestCentroidRecipe(AbstractRecipe):
         metric: Any = "squared-euclidean",
         temperature: ArrayLike = 1.0,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if int(class_count) < 2:
             raise ValueError("class_count must be at least two.")
         self.class_count = int(class_count)

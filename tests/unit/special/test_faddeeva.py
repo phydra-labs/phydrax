@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -34,7 +35,9 @@ def _mp_voigt(x: mp.mpf, sigma: mp.mpf, gamma: mp.mpf) -> mp.mpf:
         (jnp.complex128, 5e-13, 5e-14),
     ],
 )
-def test_wofz_matches_scipy_across_complex_plane(dtype, rtol, atol):
+def test_wofz_matches_scipy_across_complex_plane(
+    dtype: Any, rtol: Any, atol: Any
+) -> None:
     real = np.asarray([-40.0, -12.0, -6.0, -2.0, 0.0, 2.0, 6.0, 12.0, 40.0])
     imaginary = np.asarray([-6.0, -2.0, -0.1, 0.0, 0.1, 2.0, 6.0])
     arguments = (real[:, None] + 1j * imaginary[None, :]).astype(dtype)
@@ -43,7 +46,7 @@ def test_wofz_matches_scipy_across_complex_plane(dtype, rtol, atol):
     np.testing.assert_allclose(actual, expected, rtol=rtol, atol=atol)
 
 
-def test_wofz_matches_high_precision_hard_points():
+def test_wofz_matches_high_precision_hard_points() -> None:
     arguments = np.asarray(
         [0.0j, 1.0 + 2.0j, -2.0 + 0.01j, 3.0 - 0.5j, -3.5 - 2.0j, -5.0j, 12.0 + 0.001j]
     )
@@ -59,7 +62,9 @@ def test_wofz_matches_high_precision_hard_points():
         (jnp.float64, 1e300, 5e-15, 5e-16),
     ],
 )
-def test_dawsn_matches_scipy_across_real_domain(dtype, maximum, rtol, atol):
+def test_dawsn_matches_scipy_across_real_domain(
+    dtype: Any, maximum: Any, rtol: Any, atol: Any
+) -> None:
     positive = np.geomspace(1.0 / maximum, maximum, 241)
     values = np.concatenate(
         [
@@ -74,7 +79,9 @@ def test_dawsn_matches_scipy_across_real_domain(dtype, maximum, rtol, atol):
 
 
 @pytest.mark.parametrize("threshold", [3.25, 6.25])
-def test_dawsn_regime_switches_are_value_and_derivative_continuous(threshold):
+def test_dawsn_regime_switches_are_value_and_derivative_continuous(
+    threshold: Any,
+) -> None:
     values = jnp.asarray(
         [
             np.nextafter(threshold, -np.inf),
@@ -93,7 +100,7 @@ def test_dawsn_regime_switches_are_value_and_derivative_continuous(threshold):
     )
 
 
-def test_faddeeva_reflection_conjugation_and_real_axis_identities():
+def test_faddeeva_reflection_conjugation_and_real_axis_identities() -> None:
     z = jnp.asarray([0.2 + 0.4j, 2.0 + 1.0j, -1.5 + 0.2j])
     reflected = phx.special.wofz(-z)
     expected_reflected = 2.0 * jnp.exp(-(z**2)) - phx.special.wofz(z)
@@ -125,10 +132,10 @@ def test_faddeeva_reflection_conjugation_and_real_axis_identities():
     )
 
 
-def test_wofz_forward_reverse_and_higher_order_derivatives_agree():
+def test_wofz_forward_reverse_and_higher_order_derivatives_agree() -> None:
     coefficient = 0.4 - 0.2j
 
-    def observable(coordinates):
+    def observable(coordinates: Any) -> Any:
         z = coordinates[0] + 1j * coordinates[1]
         return jnp.real(coefficient * phx.special.wofz(z))
 
@@ -153,7 +160,7 @@ def test_wofz_forward_reverse_and_higher_order_derivatives_agree():
 
 
 @pytest.mark.parametrize("value", [-8.0, -3.25, -0.2, 0.0, 0.2, 6.25])
-def test_dawsn_first_and_second_derivatives_match_high_precision(value):
+def test_dawsn_first_and_second_derivatives_match_high_precision(value: Any) -> None:
     x = jnp.asarray(value)
     first = jax.grad(phx.special.dawsn)(x)
     second = jax.grad(jax.grad(phx.special.dawsn))(x)
@@ -173,7 +180,7 @@ def test_dawsn_first_and_second_derivatives_match_high_precision(value):
         (jnp.float64, 7e-13, 8e-14),
     ],
 )
-def test_voigt_profile_matches_scipy(dtype, rtol, atol):
+def test_voigt_profile_matches_scipy(dtype: Any, rtol: Any, atol: Any) -> None:
     x = np.linspace(-30.0, 30.0, 241, dtype=np.dtype(dtype))[:, None]
     sigma = np.asarray([0.2, 0.8, 3.0], dtype=np.dtype(dtype))[None, :]
     gamma = np.asarray([0.0, 0.3, 2.0], dtype=np.dtype(dtype))[None, :]
@@ -185,7 +192,7 @@ def test_voigt_profile_matches_scipy(dtype, rtol, atol):
     assert np.all(actual >= 0.0)
 
 
-def test_voigt_profile_gradient_matches_high_precision_reference():
+def test_voigt_profile_gradient_matches_high_precision_reference() -> None:
     parameters = jnp.asarray([0.7, 1.2, 0.4])
     actual = jax.grad(lambda args: phx.special.voigt_profile(*args))(parameters)
     with mp.workdps(80):
@@ -200,7 +207,7 @@ def test_voigt_profile_gradient_matches_high_precision_reference():
     np.testing.assert_allclose(np.asarray(actual), expected, rtol=8e-13, atol=8e-14)
 
 
-def test_voigt_boundary_derivative_contract():
+def test_voigt_boundary_derivative_contract() -> None:
     x = jnp.asarray(0.5)
     gamma = jnp.asarray(1.0)
     sigma_tangent = jax.jvp(
@@ -230,7 +237,7 @@ def test_voigt_boundary_derivative_contract():
     assert jnp.isnan(invalid_tangent)
 
 
-def test_voigt_profile_is_normalized():
+def test_voigt_profile_is_normalized() -> None:
     profile = jax.jit(lambda value: phx.special.voigt_profile(value, 0.8, 0.3))
     profile(jnp.asarray(0.0)).block_until_ready()
     area, error = scipy.integrate.quad(

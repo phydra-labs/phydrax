@@ -4,7 +4,7 @@
 from ..qualification import CapabilityProfile, SupportTuple
 
 
-def frequency_candidate_profiles():
+def frequency_candidate_profiles() -> tuple[CapabilityProfile, ...]:
     specs = (
         ("frequency.axis-convention", {"axis": "strict-hz", "phasor": "explicit"}),
         ("frequency.scattering-network", {"matrix": "frequency-port-port"}),

@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -50,7 +51,7 @@ class DistributedAerothermodynamicPlan(StrictModule, NonTrainableState):
         face_owner: ArrayLike,
         particle_capacity_per_shard: ArrayLike,
         /,
-    ):
+    ) -> None:
         cells = np.asarray(cell_owner, dtype=np.int32)
         faces = np.asarray(face_owner, dtype=np.int32)
         capacities = np.asarray(particle_capacity_per_shard, dtype=np.int32)

@@ -4,14 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, cast, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
-from jax import core as jax_core
-from jaxtyping import Array
+from jax import Array, core as jax_core
 
 import phydrax.axes as cx
 from phydrax.domain import PointBatch
@@ -21,6 +20,10 @@ from .._strict import StrictModule
 from ._batches import PointIntegrationBatch, WeightedSampleBatch
 from ._targets import DiscreteMeasureTarget, ProbabilityTarget, WeightedSampleTarget
 from ._transformations import MeasureTransformationRecord
+
+
+if TYPE_CHECKING:
+    from ._api import IntegrationRealization
 
 
 class FiniteMeasureRealization(StrictModule):
@@ -125,7 +128,7 @@ def transformed_weighted_realization(
     provenance: str,
     indices: Array | None = None,
     selection_mask: Array | None = None,
-):
+) -> IntegrationRealization:
     """Rebuild a weighted realization and append ordered transformation evidence."""
 
     from ._api import IntegrationRealization

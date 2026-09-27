@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -5,6 +7,11 @@ from phydrax.geometry import MeshRegion
 from phydrax.linalg import LinearCapabilityError, MaterializationPolicy, materialize
 from phydrax.operators.integral.layer_potential._galerkin3d import (
     LaplaceSingleLayerDP0GalerkinPolicy3D,
+    prepare_laplace_single_layer_dp0_3d,
+)
+from phydrax.operators.integral.layer_potential._hierarchical3d import (
+    prepare_scalar_h_matrix_provider_3d,
+    ScalarFastPolicy3D,
 )
 from phydrax.operators.integral.layer_potential._scalar_calderon3d import (
     prepare_scalar_calderon_dp0_3d,
@@ -23,7 +30,7 @@ _VERTICES = jnp.asarray(
 _FACES = jnp.asarray([[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]], dtype=jnp.int32)
 
 
-def _policy():
+def _policy() -> Any:
     return LaplaceSingleLayerDP0GalerkinPolicy3D(
         regular_order=3,
         singular_order=3,
@@ -36,13 +43,13 @@ def _policy():
     )
 
 
-def _prepared(kernel=None):
+def _prepared(kernel: Any = None) -> Any:
     return prepare_scalar_calderon_dp0_3d(
         MeshRegion(_VERTICES, _FACES), kernel=kernel, policy=_policy()
     )
 
 
-def test_outward_trace_convention_and_constant_harmonic_jump():
+def test_outward_trace_convention_and_constant_harmonic_jump() -> None:
     convention = SCALAR_TRACE_CONVENTION_3D
     assert convention.ambient_dimension == 3
     assert convention.boundary_dimension == 2
@@ -62,7 +69,7 @@ def test_outward_trace_convention_and_constant_harmonic_jump():
     assert jnp.allclose(interior_trace, -1.0, rtol=1.5e-1, atol=1.5e-1)
 
 
-def test_weak_kprime_is_exact_transpose_and_every_strong_action_transposes():
+def test_weak_kprime_is_exact_transpose_and_every_strong_action_transposes() -> None:
     prepared = _prepared()
     x = jnp.asarray([0.2, -0.4, 0.7, 0.1], dtype=prepared.space.dtype)
     y = jnp.asarray([-0.3, 0.5, 0.9, -0.2], dtype=prepared.space.dtype)
@@ -86,7 +93,7 @@ def test_weak_kprime_is_exact_transpose_and_every_strong_action_transposes():
         )
 
 
-def test_kernel_metadata_precision_resources_and_complex_helmholtz_actions():
+def test_kernel_metadata_precision_resources_and_complex_helmholtz_actions() -> None:
     laplace = _prepared()
     report = laplace.assembly_report
     assert report.pde == "-Delta(u)=0"
@@ -138,8 +145,9 @@ def test_kernel_metadata_precision_resources_and_complex_helmholtz_actions():
     assert jnp.all(jnp.isfinite(screened.single_layer.mv(jnp.ones((4,)))))
 
 
-def test_hypersingular_open_surface_and_frequency_envelope_fail_closed():
+def test_hypersingular_open_surface_and_frequency_envelope_fail_closed() -> None:
     with pytest.raises(UnsupportedScalarBoundarySpaceError, match=r"H\^1/2"):
+        # ty: ignore[invalid-argument-type]
         prepare_scalar_hypersingular_dp0_3d(None)
 
     open_faces = _FACES[:3]
@@ -150,3 +158,30 @@ def test_hypersingular_open_surface_and_frequency_envelope_fail_closed():
 
     with pytest.raises(ValueError, match="panel-frequency envelope"):
         _prepared(ScalarKernelFamily3D.outgoing_helmholtz(10.0))
+
+
+def test_scalar_fast_provider_operator_matches_exact_dp0_action_and_duality() -> None:
+    exact = prepare_laplace_single_layer_dp0_3d(
+        MeshRegion(_VERTICES, _FACES), policy=_policy()
+    )
+    policy = ScalarFastPolicy3D(tolerance=1.0e-8)
+    operator = prepare_scalar_h_matrix_provider_3d(exact, policy).as_linear_operator()
+    x = jnp.asarray([0.2, -0.4, 0.7, 0.1])
+    y = jnp.asarray([-0.3, 0.5, 0.9, -0.2])
+
+    assert operator.source == exact.strong_operator.source
+    assert operator.target == exact.strong_operator.target
+    forward = operator.mv(x)
+    assert forward.shape == (4,)
+    assert jnp.allclose(
+        forward, exact.strong_operator.mv(x), rtol=policy.tolerance, atol=0.0
+    )
+    assert jnp.allclose(
+        y @ operator.mv(x), x @ operator.transpose_mv(y), rtol=1.0e-12, atol=1.0e-12
+    )
+    assert jnp.allclose(
+        jnp.vdot(y, operator.mv(x)),
+        jnp.vdot(operator.adjoint_mv(y), x),
+        rtol=1.0e-12,
+        atol=1.0e-12,
+    )

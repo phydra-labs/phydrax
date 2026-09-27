@@ -6,9 +6,11 @@ from typing import Literal, TypeAlias
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from ..typing import parse
 
 
 ProcessEventKind: TypeAlias = Literal["move", "deposit", "remove", "dwell", "heat"]
@@ -26,11 +28,9 @@ class ToolpathEvent:
     power_w: float = 0.0
     mass_rate_kg_s: float = 0.0
 
-    def __post_init__(self):
-        supported = {"move", "deposit", "remove", "dwell", "heat"}
+    def __post_init__(self) -> None:
         if (
             not self.event_id
-            or self.kind not in supported
             or not self.frame_id
             or not np.isfinite(self.start_time_s)
             or not np.isfinite(self.end_time_s)
@@ -39,6 +39,7 @@ class ToolpathEvent:
             or not self.start
         ):
             raise ValueError("Toolpath event is invalid or uses an unsupported kind.")
+        object.__setattr__(self, "kind", parse(self.kind, ProcessEventKind, "kind"))
         if (
             any(
                 not np.isfinite(v)
@@ -53,7 +54,7 @@ class ToolpathEvent:
             raise ValueError("Toolpath event data are incompatible with its kind.")
 
     @property
-    def event_fingerprint(self):
+    def event_fingerprint(self) -> str:
         return canonical_fingerprint(
             {
                 "kind": "toolpath-event",

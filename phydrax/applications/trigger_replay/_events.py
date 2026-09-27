@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -92,7 +93,9 @@ class EventBuildingPlan:
     maximum_timestamp_spread: int
     plan_id: str
 
-    def __init__(self, required_source_ids, /, *, maximum_timestamp_spread: int):
+    def __init__(
+        self, required_source_ids: Iterable[object], /, *, maximum_timestamp_spread: int
+    ) -> None:
         sources = tuple(sorted(str(value).strip() for value in required_source_ids))
         spread = int(maximum_timestamp_spread)
         if (

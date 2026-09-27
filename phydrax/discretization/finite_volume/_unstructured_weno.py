@@ -11,13 +11,14 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._cell_polynomial import (
     CellPolynomialReconstructionPlan,
     PreparedCellPolynomialReconstruction,
@@ -51,7 +52,7 @@ class UnstructuredWENOZReconstructionPlan(StrictModule, NonTrainableState):
         epsilon: float = 1e-12,
         power: int = 2,
         limiter: UnstructuredWENOLimiter = "cell_extrema",
-    ):
+    ) -> None:
         if isinstance(degree, bool) or not isinstance(degree, Integral):
             raise TypeError("degree must be an integer.")
         degree_ = int(degree)
@@ -77,8 +78,7 @@ class UnstructuredWENOZReconstructionPlan(StrictModule, NonTrainableState):
             raise ValueError("epsilon must be positive and finite.")
         if isinstance(power, bool) or not isinstance(power, Integral) or int(power) < 1:
             raise ValueError("power must be a positive integer.")
-        if limiter not in ("none", "cell_extrema"):
-            raise ValueError("Unknown unstructured WENO limiter.")
+        limiter = parse(limiter, UnstructuredWENOLimiter, "limiter")
         self.degree = degree_
         self.weight_power = float(weight_power)
         self.oversampling = oversampling_
@@ -123,7 +123,7 @@ class PreparedUnstructuredWENOZReconstruction(StrictModule, NonTrainableState):
         plan: UnstructuredWENOZReconstructionPlan,
         discretization: UnstructuredFiniteVolumeDiscretization,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, UnstructuredWENOZReconstructionPlan):
             raise TypeError("plan must be UnstructuredWENOZReconstructionPlan.")
         if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):

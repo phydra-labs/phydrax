@@ -11,7 +11,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -49,7 +50,7 @@ class MolecularGeometryConvergencePlan(StrictModule, NonTrainableState):
         step_tolerance: float = 1.0e-8,
         maximum_steps: int = 256,
         maximum_evaluations: int = 2048,
-    ):
+    ) -> None:
         maximum = float(maximum_force)
         rms = float(rms_force)
         step = float(step_tolerance)
@@ -112,7 +113,7 @@ class MolecularGeometryOptimizationResult(StrictModule, NonTrainableState):
         successful: ArrayLike,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(initial_structure, AtomicStructure) or not isinstance(
             final_structure, AtomicStructure
         ):
@@ -169,7 +170,7 @@ class MolecularGeometryOptimizationPlan(StrictModule, NonTrainableState):
         *,
         method: AbstractMinimizationMethod | None = None,
         convergence: MolecularGeometryConvergencePlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         if not isinstance(surface, AbstractPreparedPotentialEnergySurface):
@@ -234,7 +235,7 @@ class MolecularGeometryOptimizationPlan(StrictModule, NonTrainableState):
         cache_evaluation: PotentialEnergySurfaceEvaluation | None = None
         provider_evaluations = 0
 
-        def evaluate_active(value) -> PotentialEnergySurfaceEvaluation:
+        def evaluate_active(value: ArrayLike) -> PotentialEnergySurfaceEvaluation:
             nonlocal cache_position, cache_evaluation, provider_evaluations
             active_position = np.asarray(value, dtype=initial.dtype).reshape((-1, 3))
             if cache_position is not None and np.array_equal(
@@ -251,10 +252,12 @@ class MolecularGeometryOptimizationPlan(StrictModule, NonTrainableState):
             provider_evaluations += 1
             return evaluated
 
-        def objective(value, _):
+        def objective(value: ArrayLike, _: object) -> Array:
             return evaluate_active(value).energy
 
-        def value_and_gradient(value, _):
+        def value_and_gradient(
+            value: ArrayLike, _: object
+        ) -> tuple[tuple[Array, PotentialEnergySurfaceEvaluation], Array]:
             evaluated = evaluate_active(value)
             gradient = -evaluated.forces[mobile]
             return (evaluated.energy, evaluated), gradient

@@ -11,13 +11,15 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from ._core import DigitBank, SensitiveHitBank, TruthStepBank
 
 
@@ -35,7 +37,7 @@ class SensitiveHitPlan(StrictModule, NonTrainableState):
         *,
         channel_count: int,
         conditions_id: str,
-    ):
+    ) -> None:
         mapping = np.asarray(element_to_channel)
         channels = int(channel_count)
         conditions = str(conditions_id).strip()
@@ -117,7 +119,7 @@ class DigitizationPlan(StrictModule, NonTrainableState):
         threshold: float,
         maximum_adc: int,
         conditions_id: str,
-    ):
+    ) -> None:
         calibration_ = np.asarray(calibration, dtype=np.float64)
         noise = np.asarray(noise_standard_deviation, dtype=np.float64)
         crosstalk_ = np.asarray(crosstalk, dtype=np.float64)
@@ -187,7 +189,7 @@ class DigitizationResult(StrictModule, NonTrainableState):
 def digitize_sensitive_hits(
     plan: DigitizationPlan,
     hits: SensitiveHitBank,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> DigitizationResult:
     """Aggregate, smear, couple, quantize, saturate, and suppress channel signals."""
@@ -208,7 +210,7 @@ def digitize_sensitive_hits(
     )
     calibrated = deposited * plan.calibration[None, :]
 
-    def event_noise(event_id):
+    def event_noise(event_id: Array) -> Array:
         event_key = jr.fold_in(key, jnp.asarray(event_id, dtype=jnp.uint32))
         return jr.normal(event_key, (plan.channel_count,), dtype=calibrated.dtype)
 

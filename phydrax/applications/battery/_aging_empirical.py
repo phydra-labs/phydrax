@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -92,7 +93,7 @@ class EmpiricalAgingSupport(StrictModule, NonTrainableState):
         maximum_time_gap_s: float,
         maximum_macrostep_s: float,
         source_id: str,
-    ):
+    ) -> None:
         temperature = _support_bounds(
             temperature_bounds_k,
             "Temperature support",
@@ -161,7 +162,9 @@ class EmpiricalAgingTopology(StrictModule, NonTrainableState):
     history_node_count: int = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
 
-    def __init__(self, support: EmpiricalAgingSupport, history_node_count: int, /):
+    def __init__(
+        self, support: EmpiricalAgingSupport, history_node_count: int, /
+    ) -> None:
         if not isinstance(support, EmpiricalAgingSupport):
             raise TypeError("support must be EmpiricalAgingSupport.")
         if isinstance(history_node_count, bool) or not isinstance(
@@ -231,7 +234,7 @@ class EmpiricalAgingCoefficients(StrictModule):
         capacity_loss_scale: ArrayLike,
         resistance_growth_scale: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             _real_scalar(value, name)
             for value, name in (
@@ -331,7 +334,7 @@ class EmpiricalAgingState(StrictModule):
         time_s: ArrayLike,
         charge_throughput_c: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             _real_scalar(value, name)
             for value, name in (
@@ -365,7 +368,7 @@ class EmpiricalAgingStressHistory(StrictModule):
         state_of_charge: ArrayLike,
         current_a: ArrayLike,
         /,
-    ):
+    ) -> None:
         arrays = tuple(
             jnp.asarray(value)
             for value in (times_s, temperature_k, state_of_charge, current_a)

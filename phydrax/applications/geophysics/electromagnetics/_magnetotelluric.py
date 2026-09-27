@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 from phydrax import ein
@@ -40,7 +41,7 @@ def _inverse_2x2(matrix: Array, name: str) -> Array:
 class GalvanicDistortion(StrictModule):
     matrix: Array
 
-    def __init__(self, matrix: ArrayLike, /):
+    def __init__(self, matrix: ArrayLike, /) -> None:
         value = jnp.asarray(matrix)
         if value.shape != (2, 2) or jnp.iscomplexobj(value):
             raise ValueError("Galvanic distortion must be one real 2x2 matrix.")
@@ -70,7 +71,7 @@ class MagnetotelluricResponse(StrictModule):
 class MagnetotelluricResponsePlan(StrictModule, NonTrainableState):
     frequencies_Hz: Array
 
-    def __init__(self, frequencies_Hz: ArrayLike, /):
+    def __init__(self, frequencies_Hz: ArrayLike, /) -> None:
         frequency = jnp.asarray(frequencies_Hz)
         if frequency.ndim != 1 or frequency.size == 0:
             raise ValueError("MT frequencies must be a nonempty vector.")
@@ -166,7 +167,7 @@ class RemoteReferenceMTPlan(StrictModule, NonTrainableState):
 
     regularization: float = eqx.field(static=True)
 
-    def __init__(self, *, regularization: float = 0.0):
+    def __init__(self, *, regularization: float = 0.0) -> None:
         value = float(regularization)
         if not np.isfinite(value) or value < 0:
             raise ValueError(

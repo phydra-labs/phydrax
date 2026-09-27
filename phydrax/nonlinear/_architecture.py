@@ -12,7 +12,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
@@ -74,7 +75,7 @@ class NonlinearModel(StrictModule):
         precision_evidence: PrecisionEvidenceEnvelope,
         precision_policy_id: str,
         model_id: str,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be AbstractLinearOperator.")
         if not isinstance(work, NonlinearWork):
@@ -207,7 +208,7 @@ class RootLinearModelPolicy(AbstractNonlinearModelPolicy):
         /,
         *,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         policy = JacobianPolicy() if jacobian is None else jacobian
         precision_ = NonlinearPrecisionPolicy() if precision is None else precision
         if not isinstance(policy, JacobianPolicy):
@@ -217,7 +218,13 @@ class RootLinearModelPolicy(AbstractNonlinearModelPolicy):
         self.jacobian = policy
         self.precision = precision_
 
-    def prepare(self, problem, state, args, /) -> NonlinearModel:
+    def prepare(
+        self,
+        problem: NonlinearSystemProblem,
+        state: PyTree[Any],
+        args: Any,
+        /,
+    ) -> NonlinearModel:
         prepared = prepare_jacobian(problem, state, self.jacobian, args)
         self.precision.validate_trees(state, prepared.residual)
         self.precision.validate_accumulation_space(prepared.operator.target)
@@ -255,7 +262,7 @@ class NewtonDirectionPolicy(AbstractDirectionPolicy):
         /,
         *,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         policy = LinearSolvePolicy() if linear is None else linear
         precision_ = NonlinearPrecisionPolicy() if precision is None else precision
         if not isinstance(policy, LinearSolvePolicy):
@@ -265,7 +272,12 @@ class NewtonDirectionPolicy(AbstractDirectionPolicy):
         self.linear = policy
         self.precision = precision_
 
-    def compute(self, model, budget, /) -> DirectionResult:
+    def compute(
+        self,
+        model: NonlinearModel,
+        budget: NonlinearWorkBudget,
+        /,
+    ) -> DirectionResult:
         if not isinstance(model, NonlinearModel):
             raise TypeError("model must be NonlinearModel.")
         if not isinstance(budget, NonlinearWorkBudget):
@@ -301,7 +313,7 @@ class NewtonDirectionPolicy(AbstractDirectionPolicy):
         )
         preflight = budget.permits(minimum_work)
 
-        def execute(_):
+        def execute(_: None) -> DirectionResult:
             right_hand_side = jax.tree.map(jnp.negative, model.residual)
             linear_result = solve_linear(
                 linear_problem,
@@ -369,7 +381,7 @@ class NewtonDirectionPolicy(AbstractDirectionPolicy):
                 direction_id="newton",
             )
 
-        def reject(_):
+        def reject(_: None) -> DirectionResult:
             slope = jnp.asarray(jnp.nan, dtype=model.residual_norm.dtype)
             return DirectionResult(
                 direction=model.operator.source.zeros(),
@@ -406,7 +418,7 @@ class ResidualArmijoPolicy(AbstractGlobalizationPolicy):
         minimum_rate: float = 1e-10,
         maximum_steps: int = 24,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -435,7 +447,15 @@ class ResidualArmijoPolicy(AbstractGlobalizationPolicy):
         self.maximum_steps = steps
         self.precision = precision_
 
-    def apply(self, problem, model, direction, args, budget, /):
+    def apply(
+        self,
+        problem: NonlinearSystemProblem,
+        model: NonlinearModel,
+        direction: DirectionResult,
+        args: Any,
+        budget: NonlinearWorkBudget,
+        /,
+    ) -> GlobalizationResult:
         if not isinstance(problem, NonlinearSystemProblem):
             raise TypeError("problem must be NonlinearSystemProblem.")
         if not isinstance(model, NonlinearModel):
@@ -470,7 +490,7 @@ class ResidualArmijoPolicy(AbstractGlobalizationPolicy):
             valid_seen=jnp.asarray(False),
         )
 
-        def condition(item):
+        def condition(item: _Search) -> Array:
             trial_work = NonlinearWork(
                 residual_evaluations=item.evaluations + 1,
                 validity_evaluations=item.evaluations + 1,
@@ -483,7 +503,7 @@ class ResidualArmijoPolicy(AbstractGlobalizationPolicy):
                 & budget.permits(trial_work)
             )
 
-        def body(item):
+        def body(item: _Search) -> _Search:
             candidate = jax.tree.map(
                 lambda value, delta: jnp.asarray(
                     value + item.rate * delta,
@@ -581,7 +601,7 @@ class ResidualArmijoPolicy(AbstractGlobalizationPolicy):
 class RootResidualCertificate(AbstractNonlinearCertificate):
     precision: NonlinearPrecisionPolicy
 
-    def __init__(self, precision: NonlinearPrecisionPolicy | None = None, /):
+    def __init__(self, precision: NonlinearPrecisionPolicy | None = None, /) -> None:
         precision_ = NonlinearPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, NonlinearPrecisionPolicy):
             raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
@@ -589,13 +609,13 @@ class RootResidualCertificate(AbstractNonlinearCertificate):
 
     def certify(
         self,
-        problem,
-        state,
-        residual,
-        auxiliary,
-        termination,
-        initial_residual_norm,
-        args,
+        problem: NonlinearSystemProblem,
+        state: PyTree[Any],
+        residual: PyTree[Any],
+        auxiliary: Any,
+        termination: NonlinearTermination,
+        initial_residual_norm: Any,
+        args: Any,
         /,
     ) -> NonlinearCertificate:
         if not isinstance(problem, NonlinearSystemProblem):

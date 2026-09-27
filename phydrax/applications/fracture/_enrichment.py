@@ -9,7 +9,8 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -34,7 +35,7 @@ class CrackTipMaterial(StrictModule, NonTrainableState):
         /,
         *,
         kinematics: Literal["plane_strain", "plane_stress"] = "plane_strain",
-    ):
+    ) -> None:
         young = np.asarray(young_modulus)
         poisson = np.asarray(poisson_ratio)
         convention = str(kinematics)
@@ -75,7 +76,7 @@ class IsotropicWilliamsCrackTipBasis(StrictModule, NonTrainableState):
     material: CrackTipMaterial
     basis_id: str = eqx.field(static=True)
 
-    def __init__(self, material: CrackTipMaterial, /):
+    def __init__(self, material: CrackTipMaterial, /) -> None:
         if not isinstance(material, CrackTipMaterial):
             raise TypeError("material must be CrackTipMaterial.")
         self.material = material
@@ -179,7 +180,7 @@ class ShiftedCrackEnrichment(StrictModule, NonTrainableState):
         /,
         *,
         tip_id: int,
-    ):
+    ) -> None:
         if not isinstance(geometry, CrackFrontGeometry):
             raise TypeError("geometry must be CrackFrontGeometry.")
         if not isinstance(basis, IsotropicWilliamsCrackTipBasis):

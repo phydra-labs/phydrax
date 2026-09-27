@@ -5,11 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from typing import Self
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -39,7 +41,7 @@ class StateVectorOperator(StrictModule):
         /,
         *,
         operator_id: str,
-    ):
+    ) -> None:
         if not callable(action) or not callable(adjoint_action):
             raise TypeError("Operator and adjoint actions must be callable.")
         self.action_function = action
@@ -48,7 +50,7 @@ class StateVectorOperator(StrictModule):
         self.operator_id = str(operator_id)
 
     @classmethod
-    def from_matrix(cls, matrix: ArrayLike, /, *, operator_id: str):
+    def from_matrix(cls, matrix: ArrayLike, /, *, operator_id: str) -> Self:
         value = jnp.asarray(matrix)
         if value.ndim != 2 or value.shape[0] != value.shape[1]:
             raise ValueError("Operator matrix must be square.")
@@ -95,7 +97,7 @@ class QuantumJumpProblem(StrictModule):
         *,
         geometry_precision: GeometryPrecisionPolicy | None = None,
         problem_id: str = "quantum-jump",
-    ):
+    ) -> None:
         if not isinstance(hamiltonian, StateVectorOperator):
             raise TypeError("hamiltonian must be a StateVectorOperator.")
         collapse = tuple(collapse_operators)
@@ -153,7 +155,7 @@ class QuantumTrajectoryEnsemble(StrictModule):
         maximum_statistical_error: float = 0.25,
         temporal_precision: TemporalPrecisionPolicy,
         geometry_precision: GeometryPrecisionPolicy,
-    ):
+    ) -> None:
         if not isinstance(temporal_precision, TemporalPrecisionPolicy):
             raise TypeError("temporal_precision must be TemporalPrecisionPolicy.")
         if not isinstance(geometry_precision, GeometryPrecisionPolicy):
@@ -251,7 +253,7 @@ def _trajectory(
     count: int,
     temporal_precision: TemporalPrecisionPolicy,
     geometry_precision: GeometryPrecisionPolicy,
-):
+) -> tuple[Array, Array, Array]:
     channel_count = len(problem.collapse_operators)
     decision_address = SampleAddress(
         "quantum-trajectory",
@@ -266,7 +268,7 @@ def _trajectory(
         role="channel",
     )
 
-    def advance(state, index):
+    def advance(state: Array, index: Array) -> tuple[Array, tuple[Array, Array, Array]]:
         decision_key = derive_key(key, decision_address, index)
         channel_key = derive_key(key, channel_address, index)
         if channel_count:

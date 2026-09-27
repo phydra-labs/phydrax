@@ -1,5 +1,7 @@
 """Solve and replay a two-player affine linear-quadratic feedback Nash game."""
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -61,7 +63,7 @@ if not bool(solution.valid):
     )
 
 
-def transition(context, state, control, args):
+def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
     step = context.step_index
     return args["A"][step] @ state + args["B"][step] @ control + args["c"][step]
 

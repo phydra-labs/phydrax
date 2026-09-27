@@ -103,7 +103,7 @@ class OpenVDBLevelSetRebuild(StrictModule, NonTrainableState):
     half_width: float = eqx.field(static=True)
     operation_id: str = eqx.field(static=True)
 
-    def __init__(self, *, half_width: float = 3.0):
+    def __init__(self, *, half_width: float = 3.0) -> None:
         width = float(half_width)
         if not np.isfinite(width) or not 1.0 <= width <= np.finfo(np.float32).max:
             raise ValueError("half_width must be a float32-representable value >= 1.")
@@ -133,7 +133,7 @@ class OpenVDBMeshingSpec(StrictModule, NonTrainableState):
         isovalue: float = 0.0,
         adaptivity: float = 0.0,
         rebuild: OpenVDBLevelSetRebuild | None = None,
-    ):
+    ) -> None:
         level = float(isovalue)
         adaptive = float(adaptivity)
         if not np.isfinite(level) or abs(level) > np.finfo(np.float32).max:

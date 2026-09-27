@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _negative_entropy_geometry(dimension):
+def _negative_entropy_geometry(dimension: Any) -> Any:
     primal_chart = phx.metrix.CoordinateChart(
         f"mirror-positive-{dimension}",
         tuple(f"x{index}" for index in range(dimension)),
@@ -39,7 +42,7 @@ def _negative_entropy_geometry(dimension):
     )
 
 
-def _path_containing(parameters, name):
+def _path_containing(parameters: Any, name: Any) -> Any:
     return next(
         path
         for path in phx.optim.ParameterMirrorGeometry.array_leaf_paths(parameters)
@@ -47,7 +50,7 @@ def _path_containing(parameters, name):
     )
 
 
-def test_unit_mirror_step_solves_negative_entropy_divergence_exactly():
+def test_unit_mirror_step_solves_negative_entropy_divergence_exactly() -> None:
     initial = jnp.asarray([0.3, 1.4, 2.2])
     target = jnp.asarray([0.8, 0.5, 1.7])
     parameters = {"positive": initial}
@@ -59,7 +62,7 @@ def test_unit_mirror_step_solves_negative_entropy_divergence_exactly():
     optimizer = phx.optim.mirror_descent(parameter_geometry, learning_rate=1.0)
     state = optimizer.init(parameters)
 
-    def objective(tree):
+    def objective(tree: Any) -> Any:
         value = tree["positive"]
         return jnp.sum(value * jnp.log(value / target) - value + target)
 
@@ -72,7 +75,7 @@ def test_unit_mirror_step_solves_negative_entropy_divergence_exactly():
     assert state.metrics.constraint_residual == 0.0
 
 
-def test_mirror_descent_updates_mixed_weighted_and_product_leaves():
+def test_mirror_descent_updates_mixed_weighted_and_product_leaves() -> None:
     parameters = {
         "positive": jnp.asarray([[0.4, 0.9], [1.3, 0.6]]),
         "euclidean": jnp.asarray(1.5),
@@ -106,7 +109,7 @@ def test_mirror_descent_updates_mixed_weighted_and_product_leaves():
     assert state.metrics.dual_displacement_norm > 0.0
 
 
-def test_mirror_descent_schedule_is_jittable_and_zero_rate_is_noop():
+def test_mirror_descent_schedule_is_jittable_and_zero_rate_is_noop() -> None:
     parameters = {"positive": jnp.asarray([0.6, 1.2])}
     gradients = {"positive": jnp.asarray([0.4, -0.3])}
     path = _path_containing(parameters, "positive")
@@ -130,7 +133,7 @@ def test_mirror_descent_schedule_is_jittable_and_zero_rate_is_noop():
     assert int(state.step) == 2
 
 
-def test_parameter_mirror_geometry_rejects_invalid_bindings_and_updates():
+def test_parameter_mirror_geometry_rejects_invalid_bindings_and_updates() -> None:
     parameters = {"positive": jnp.asarray([0.5, 1.0])}
     geometry = _negative_entropy_geometry(2)
     with pytest.raises(ValueError, match="Unknown ParameterMirrorGeometry leaf paths"):
@@ -138,6 +141,7 @@ def test_parameter_mirror_geometry_rejects_invalid_bindings_and_updates():
 
     path = _path_containing(parameters, "positive")
     with pytest.raises(TypeError, match="must be bound to a LegendreGeometry"):
+        # ty: ignore[invalid-argument-type]
         phx.optim.ParameterMirrorGeometry(parameters, {path: None})
     with pytest.raises(ValueError, match="finite and positive"):
         phx.optim.ParameterMirrorGeometry(
@@ -157,6 +161,7 @@ def test_parameter_mirror_geometry_rejects_invalid_bindings_and_updates():
     with pytest.raises(TypeError, match="MirrorDescentState"):
         optimizer.update(
             {"positive": jnp.asarray([0.1, 0.2])},
+            # ty: ignore[invalid-argument-type]
             object(),
             parameters,
         )
@@ -168,7 +173,7 @@ def test_parameter_mirror_geometry_rejects_invalid_bindings_and_updates():
         )
 
 
-def test_parameter_mirror_geometry_reports_infinite_invalid_residual():
+def test_parameter_mirror_geometry_reports_infinite_invalid_residual() -> None:
     parameters = {"positive": jnp.asarray([0.5, 1.0])}
     path = _path_containing(parameters, "positive")
     binding = phx.optim.ParameterMirrorGeometry(

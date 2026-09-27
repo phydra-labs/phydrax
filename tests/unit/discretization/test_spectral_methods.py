@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -6,7 +8,7 @@ import phydrax as phx
 from phydrax._polynomial._orthogonal import standard_series_value
 
 
-def _fourier(count=16):
+def _fourier(count: Any = 16) -> Any:
     return phx.discretization.TensorSpectralPlan(
         (phx.discretization.FourierBasisPlan(count),),
         axis_names=("x",),
@@ -14,7 +16,7 @@ def _fourier(count=16):
     ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
 
 
-def test_fourier_modal_roundtrip_derivative_parseval_and_gradient():
+def test_fourier_modal_roundtrip_derivative_parseval_and_gradient() -> None:
     space = _fourier(16)
     x = space.axes[0].nodes
     values = 0.3 + jnp.sin(2.0 * jnp.pi * x) - 0.2 * jnp.cos(6.0 * jnp.pi * x)
@@ -37,7 +39,7 @@ def test_fourier_modal_roundtrip_derivative_parseval_and_gradient():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_tensor_spectral_noise_basis_tracks_modal_and_point_value_spaces():
+def test_tensor_spectral_noise_basis_tracks_modal_and_point_value_spaces() -> None:
     space = _fourier(8)
     modal = phx.stochastic.SpatialNoiseBasis.from_spectrum(space, 0.1, rank=3)
     refined_modal = phx.stochastic.SpatialNoiseBasis.from_spectrum(
@@ -75,7 +77,7 @@ def test_tensor_spectral_noise_basis_tracks_modal_and_point_value_spaces():
     assert bounded.modal_shape != bounded.physical_shape
 
 
-def test_padding_dealiasing_removes_near_cutoff_quadratic_alias():
+def test_padding_dealiasing_removes_near_cutoff_quadratic_alias() -> None:
     space = _fourier(12)
     x = space.axes[0].nodes
     coefficients = space.project(jnp.sin(10.0 * jnp.pi * x))
@@ -101,7 +103,7 @@ def test_padding_dealiasing_removes_near_cutoff_quadratic_alias():
     assert jnp.allclose(method_product, product, rtol=1e-11, atol=1e-11)
 
 
-def test_chebyshev_and_legendre_derivatives_are_polynomial_exact():
+def test_chebyshev_and_legendre_derivatives_are_polynomial_exact() -> None:
     for basis in (
         phx.discretization.ChebyshevBasisPlan(12),
         phx.discretization.LegendreBasisPlan(12),
@@ -119,7 +121,7 @@ def test_chebyshev_and_legendre_derivatives_are_polynomial_exact():
         assert jnp.allclose(actual, expected, rtol=1e-10, atol=1e-10)
 
 
-def test_constrained_legendre_basis_and_boundary_lift_satisfy_endpoint_data():
+def test_constrained_legendre_basis_and_boundary_lift_satisfy_endpoint_data() -> None:
     boundary = phx.discretization.SpectralBoundaryConditionPlan.dirichlet()
     base_plan = phx.discretization.LegendreBasisPlan(12)
     constrained = phx.discretization.ConstrainedBasisPlan(base_plan, boundary)
@@ -132,7 +134,9 @@ def test_constrained_legendre_basis_and_boundary_lift_satisfy_endpoint_data():
         phx.discretization.AxisDomain.interval(-1.0, 1.0),
         precision=space.plan.precision,
     )
+    # ty: ignore[unresolved-attribute]
     synthesis = np.asarray(space.axes[0].modal_transform.synthesis)
+    # ty: ignore[unresolved-attribute]
     base_analysis = np.asarray(base.modal_transform.analysis)
     normalizers = np.sqrt(0.5 * (2.0 * np.arange(base.mode_count) + 1.0))
     base_coefficients = (
@@ -154,7 +158,7 @@ def test_constrained_legendre_basis_and_boundary_lift_satisfy_endpoint_data():
     assert jnp.allclose(lift_upper, -2.0, atol=1e-10)
 
 
-def test_galerkin_poisson_and_generalized_tau_use_internal_linalg():
+def test_galerkin_poisson_and_generalized_tau_use_internal_linalg() -> None:
     boundary = phx.discretization.SpectralBoundaryConditionPlan.dirichlet()
     space = phx.discretization.TensorSpectralPlan(
         (

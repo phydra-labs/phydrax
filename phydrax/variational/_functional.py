@@ -9,7 +9,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -31,7 +31,7 @@ class Functional(StrictModule):
         /,
         *,
         variable_fields: Sequence[str],
-    ):
+    ) -> None:
         identifier_ = str(identifier)
         if not identifier_:
             raise ValueError("Functional identifier must be non-empty.")
@@ -96,7 +96,7 @@ class FunctionalEvaluation(StrictModule):
         diagnostics: Sequence[Any] = (),
         functional_id: str,
         binding_id: str,
-    ):
+    ) -> None:
         value_ = jnp.asarray(value)
         terms_ = tuple(jnp.asarray(term) for term in term_values)
         if value_.shape != () or any(term.shape != () for term in terms_):

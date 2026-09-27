@@ -7,7 +7,8 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
@@ -33,7 +34,7 @@ class AtlasPatchQuadrature(StrictModule):
         *,
         ownership_weights: ArrayLike | None = None,
         patch_id: str,
-    ):
+    ) -> None:
         points = jnp.asarray(coordinates)
         weights_ = jnp.asarray(weights, dtype=points.real.dtype)
         if points.ndim != 2 or weights_.shape != (points.shape[0],):
@@ -71,7 +72,7 @@ class AtlasIntegrationTarget(StrictModule):
         /,
         *,
         target_id: str,
-    ):
+    ) -> None:
         if not isinstance(cover, AtlasCover):
             raise TypeError("cover must be an AtlasCover.")
         patches_ = tuple(patches)
@@ -111,7 +112,7 @@ class AtlasIntegrationResult(StrictModule):
         valid: ArrayLike,
         target_id: str,
         precision_evidence: PrecisionEvidenceEnvelope,
-    ):
+    ) -> None:
         self.value = jnp.asarray(value)
         self.patch_values = jnp.asarray(patch_values)
         self.represented_weight = jnp.asarray(represented_weight)

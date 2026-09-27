@@ -7,13 +7,14 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, overload
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
@@ -80,7 +81,7 @@ class AMRTransferBinding(StrictModule, NonTrainableState):
         formulation: NumericalRelativityFormulation,
         transfer_plan_id: str,
         transition_plan_id: str,
-    ):
+    ) -> None:
         identifiers = tuple(
             str(value).strip()
             for value in (
@@ -107,8 +108,8 @@ class AMRTransferBinding(StrictModule, NonTrainableState):
             transfer_plan,
             transition_plan,
         ) = identifiers
-        self.source_content_id = source_id
-        self.target_content_id = target_id
+        self.source_content_id = canonical_fingerprint(source_id)
+        self.target_content_id = canonical_fingerprint(target_id)
         self.source_topology_id = source_topology
         self.target_topology_id = target_topology
         self.source_epoch_id = source_epoch
@@ -212,7 +213,7 @@ class NumericalRelativityAMRHaloPlan(StrictModule, NonTrainableState):
         /,
         *,
         transfer: AMREntityTransferPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(topology, BlockHierarchyTopology):
             raise TypeError("NR AMR halo planning requires BlockHierarchyTopology.")
         name = str(field_name)
@@ -383,7 +384,7 @@ class Z4cAMRTransferPlan(StrictModule, NonTrainableState):
         /,
         *,
         constraint_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         tolerance = float(constraint_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError(
@@ -466,7 +467,7 @@ class RelativisticMaterialTransferPlan(StrictModule, NonTrainableState):
         /,
         *,
         conservation_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         tolerance = float(conservation_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError(
@@ -493,7 +494,7 @@ class RelativisticMaterialTransferPlan(StrictModule, NonTrainableState):
         return state
 
     @staticmethod
-    def _volume(value: ArrayLike, shape: tuple[int, int, int], dtype: Any, /) -> Array:
+    def _volume(value: ArrayLike, shape: tuple[int, ...], dtype: DTypeLike, /) -> Array:
         volume = jnp.asarray(value, dtype=dtype)
         if volume.shape == ():
             volume = jnp.broadcast_to(volume, shape)
@@ -642,7 +643,7 @@ class RelativisticRadiationTransferPlan(StrictModule, NonTrainableState):
         return state
 
     @staticmethod
-    def _volume(value: ArrayLike, shape: tuple[int, int, int], dtype, /) -> Array:
+    def _volume(value: ArrayLike, shape: tuple[int, ...], dtype: DTypeLike, /) -> Array:
         volume = jnp.asarray(value, dtype=dtype)
         if volume.shape == ():
             volume = jnp.broadcast_to(volume, shape)
@@ -826,7 +827,7 @@ class RelativisticMagneticAMRTransferPlan(StrictModule, NonTrainableState):
         direction: str,
         refinement_ratio: int = 2,
         divergence_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         tolerance = float(divergence_tolerance)
         direction_ = str(direction)
         if (
@@ -912,7 +913,7 @@ class RelativisticMagneticRefluxPlan(StrictModule, NonTrainableState):
         /,
         *,
         divergence_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         tolerance = float(divergence_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("Magnetic reflux tolerance must be finite and nonnegative.")
@@ -996,7 +997,7 @@ class RelativisticMaterialSubcyclingPlan(StrictModule, NonTrainableState):
         *,
         subcycling: bool = True,
         temporal_method_id: str = "temporal:ssprk33",
-    ):
+    ) -> None:
         formulation_ = _formulation(formulation)
         if not any(name in formulation_ for name in ("grhd", "grmhd", "grrmhd")):
             raise ValueError(
@@ -1061,7 +1062,7 @@ class NumericalRelativityAMRTopologyEpoch(StrictModule, NonTrainableState):
         /,
         *,
         magnetic_bridge: StructuredCochainBridge | None = None,
-    ):
+    ) -> None:
         formulation_ = _formulation(formulation)
         if not isinstance(hierarchy, BlockHierarchyState) or not isinstance(
             distribution, PreparedNumericalRelativityAMRDistribution
@@ -1129,7 +1130,7 @@ class NumericalRelativityAMRState(StrictModule):
         epoch: NumericalRelativityAMRTopologyEpoch,
         fields: Sequence[ArrayLike],
         /,
-    ):
+    ) -> None:
         if not isinstance(epoch, NumericalRelativityAMRTopologyEpoch):
             raise TypeError("NR AMR state requires NumericalRelativityAMRTopologyEpoch.")
         values = tuple(jnp.asarray(value) for value in fields)
@@ -1211,6 +1212,30 @@ def _packed_material_valid(
             & jnp.all(block[..., 4] >= 0.0)
         )
     return valid
+
+
+@overload
+def _with_transfer_binding(
+    evidence: Z4cAMRTransferEvidence,
+    binding: AMRTransferBinding,
+    /,
+) -> Z4cAMRTransferEvidence: ...
+
+
+@overload
+def _with_transfer_binding(
+    evidence: RelativisticMaterialTransferEvidence,
+    binding: AMRTransferBinding,
+    /,
+) -> RelativisticMaterialTransferEvidence: ...
+
+
+@overload
+def _with_transfer_binding(
+    evidence: RelativisticMagneticTransferEvidence,
+    binding: AMRTransferBinding,
+    /,
+) -> RelativisticMagneticTransferEvidence: ...
 
 
 def _with_transfer_binding(
@@ -1365,7 +1390,7 @@ class NumericalRelativityAMRTopologyTransition(StrictModule, NonTrainableState):
         /,
         *,
         transfer_plans: Sequence[Any] = (),
-    ):
+    ) -> None:
         if not isinstance(source, NumericalRelativityAMRTopologyEpoch) or not isinstance(
             compilation, BlockTopologyCompileResult
         ):

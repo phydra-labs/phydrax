@@ -16,8 +16,10 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
 import numpy as np
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, ArrayLike, PyTree
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 
@@ -68,7 +70,7 @@ class BayesianOptimizationDomain(StrictModule):
         lower_bounds: PyTree[Any] | None = None,
         upper_bounds: PyTree[Any] | None = None,
         categorical: FiniteProductSpace | None = None,
-    ):
+    ) -> None:
         if continuous_template is None:
             if lower_bounds is not None or upper_bounds is not None:
                 raise ValueError("Continuous bounds require a continuous_template.")
@@ -203,7 +205,7 @@ class BayesianOptimizationProblem(StrictModule):
         *,
         constraints: Sequence[Callable[[BayesianOptimizationPoint], ArrayLike]] = (),
         pending: Sequence[BayesianOptimizationPoint] = (),
-    ):
+    ) -> None:
         if not callable(objective):
             raise TypeError("objective must be callable.")
         if not isinstance(domain, BayesianOptimizationDomain):
@@ -254,7 +256,7 @@ class GaussianProcessBayesianOptimization(StrictModule):
         candidate_tuple_count: int = 256,
         fantasy_count: int = 128,
         minimum_separation: float = 1e-6,
-    ):
+    ) -> None:
         maximum = _positive_integer(max_evaluations, name="max_evaluations")
         initial = _positive_integer(initial_evaluations, name="initial_evaluations")
         batch = _positive_integer(batch_size, name="batch_size")
@@ -617,7 +619,11 @@ def _initial_candidate_points(
     /,
 ) -> tuple[Array, Array]:
     if domain.continuous_dimension == 0:
-        pool_count = domain.categorical.size
+        categorical = domain.categorical
+        # Construction rejects domains with neither continuous nor categorical axes.
+        if not (categorical is not None):
+            raise RuntimeError("Internal invariant failed: categorical is not None.")
+        pool_count = categorical.size
         units = jnp.zeros((pool_count, 0), dtype=domain.continuous_initial.dtype)
         categories = jnp.arange(pool_count, dtype=jnp.int32)
     else:
@@ -891,7 +897,7 @@ def _positive_integer(value: int, /, *, name: str) -> int:
     return result
 
 
-def _positive_real(value: Real, /, *, name: str) -> float:
+def _positive_real(value: object, /, *, name: str) -> float:
     if not isinstance(value, Real) or isinstance(value, bool):
         raise TypeError(f"{name} must be a real scalar.")
     result = float(value)

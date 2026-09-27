@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 
 from phydrax.conditions import ArrayCodomain, FieldSpec, ProductFieldSpec
@@ -8,7 +10,7 @@ from phydrax.enforcement import (
 from phydrax.linalg import ArraySpace
 
 
-def test_explicit_linear_representation_round_trips_without_model_introspection():
+def test_explicit_linear_representation_round_trips_without_model_introspection() -> None:
     field_spec = ProductFieldSpec(
         (FieldSpec("u", ArrayCodomain.from_shape((2,), dtype="float64")),)
     )
@@ -33,7 +35,7 @@ def test_explicit_linear_representation_round_trips_without_model_introspection(
     assert representation.certificate.round_trip_exact
 
 
-def _representation(field):
+def _representation(field: Any) -> Any:
     field_spec = ProductFieldSpec(
         (FieldSpec(field, ArrayCodomain.from_shape((1,), dtype="float64")),)
     )
@@ -50,7 +52,9 @@ def _representation(field):
     )
 
 
-def test_replacement_preserves_unrepresented_fields_and_composes_disjoint_children():
+def test_replacement_preserves_unrepresented_fields_and_composes_disjoint_children() -> (
+    None
+):
     representation = ProductLinearRepresentation(
         (_representation("u"), _representation("v"))
     )

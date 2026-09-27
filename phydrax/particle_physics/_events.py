@@ -9,7 +9,8 @@ from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -54,7 +55,7 @@ class ParticleEventPlan(StrictModule, NonTrainableState):
         vertex_capacity: int,
         provider_status_namespace: str,
         momentum_order: str = "E,px,py,pz",
-    ):
+    ) -> None:
         if not isinstance(catalog, ParticleCatalogReference):
             raise TypeError("catalog must be ParticleCatalogReference.")
         if (
@@ -143,7 +144,7 @@ class PreparedParticleEvents(StrictModule, NonTrainableState):
     plan: ParticleEventPlan
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ParticleEventPlan, /):
+    def __init__(self, plan: ParticleEventPlan, /) -> None:
         if not isinstance(plan, ParticleEventPlan):
             raise TypeError("plan must be ParticleEventPlan.")
         self.plan = plan

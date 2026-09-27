@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -24,7 +27,7 @@ from phydrax.discretization.discrete_velocity._quadrature import (
 jax.config.update("jax_enable_x64", True)
 
 
-def _d2q9_quadrature():
+def _d2q9_quadrature() -> Any:
     velocities = np.asarray(
         (
             (0, 0),
@@ -50,7 +53,7 @@ def _d2q9_quadrature():
     )
 
 
-def _thermal_statistics(quadrature):
+def _thermal_statistics(quadrature: Any) -> Any:
     velocities = quadrature.velocities
     cx = velocities[:, 0]
     cy = velocities[:, 1]
@@ -66,7 +69,7 @@ def _thermal_statistics(quadrature):
     )
 
 
-def _energy_equilibrium(quadrature, total_energy=2.4):
+def _energy_equilibrium(quadrature: Any, total_energy: Any = 2.4) -> Any:
     plan = PositiveLearnedThermalEnergyPlan(quadrature, 5)
     result = plan.evaluate(
         jnp.asarray(total_energy),
@@ -77,7 +80,9 @@ def _energy_equilibrium(quadrature, total_energy=2.4):
     return result
 
 
-def test_pressure_extended_particle_equilibrium_has_exact_pressure_stress_moments():
+def test_pressure_extended_particle_equilibrium_has_exact_pressure_stress_moments() -> (
+    None
+):
     quadrature = _d2q9_quadrature()
     plan = PressureExtendedParticleEquilibriumPlan(quadrature)
     density = jnp.asarray((1.2, 0.85))
@@ -116,7 +121,7 @@ def test_pressure_extended_particle_equilibrium_has_exact_pressure_stress_moment
     assert bool(jnp.all(result.evidence.minimum_population > 0.0))
 
 
-def test_pressure_extension_reference_state_has_zero_moment_correction():
+def test_pressure_extension_reference_state_has_zero_moment_correction() -> None:
     quadrature = _d2q9_quadrature()
     plan = PressureExtendedParticleEquilibriumPlan(quadrature)
 
@@ -142,7 +147,7 @@ def test_pressure_extension_reference_state_has_zero_moment_correction():
     )
 
 
-def test_positive_learned_family_preserves_native_energy_and_supplied_moments():
+def test_positive_learned_family_preserves_native_energy_and_supplied_moments() -> None:
     quadrature = _d2q9_quadrature()
     statistics = _thermal_statistics(quadrature)
     parameters = jnp.asarray((0.3, 0.12, -0.07, -0.04, 0.025))
@@ -169,14 +174,16 @@ def test_positive_learned_family_preserves_native_energy_and_supplied_moments():
     assert plan.plan_id == result.plan_id == result.evidence.plan_id
 
 
-def test_positive_learned_family_differentiates_trunk_values_and_natural_parameters():
+def test_positive_learned_family_differentiates_trunk_values_and_natural_parameters() -> (
+    None
+):
     quadrature = _d2q9_quadrature()
     plan = PositiveLearnedThermalEnergyPlan(quadrature, 5)
     statistics = _thermal_statistics(quadrature)
     parameters = jnp.asarray((0.0, 0.09, -0.06, -0.03, 0.02))
     probe = quadrature.velocities[:, 0] + 0.3 * quadrature.velocities[:, 1] ** 2
 
-    def observable(statistic_values, natural_values):
+    def observable(statistic_values: Any, natural_values: Any) -> Any:
         populations = plan.evaluate(
             jnp.asarray(2.2), statistic_values, natural_values
         ).populations
@@ -192,7 +199,7 @@ def test_positive_learned_family_differentiates_trunk_values_and_natural_paramet
     assert float(jnp.linalg.norm(natural_gradient[1:])) > 1.0e-6
 
 
-def test_learned_family_refuses_values_outside_its_declared_support():
+def test_learned_family_refuses_values_outside_its_declared_support() -> None:
     quadrature = _d2q9_quadrature()
     statistics = _thermal_statistics(quadrature)
     plan = PositiveLearnedThermalEnergyPlan(
@@ -216,7 +223,9 @@ def test_learned_family_refuses_values_outside_its_declared_support():
     np.testing.assert_array_equal(result.populations, jnp.zeros_like(result.populations))
 
 
-def test_g_star_has_zero_limit_and_nonzero_stress_correction_without_energy_defect():
+def test_g_star_has_zero_limit_and_nonzero_stress_correction_without_energy_defect() -> (
+    None
+):
     quadrature = _d2q9_quadrature()
     particle_plan = PressureExtendedParticleEquilibriumPlan(quadrature)
     thermal_plan = MatchedThermalCrossRelaxationPlan(quadrature)
@@ -269,7 +278,9 @@ def test_g_star_has_zero_limit_and_nonzero_stress_correction_without_energy_defe
     )
 
 
-def test_prandtl_cross_relaxation_conserves_g_star_energy_and_has_unit_pr_zero_limit():
+def test_prandtl_cross_relaxation_conserves_g_star_energy_and_has_unit_pr_zero_limit() -> (
+    None
+):
     quadrature = _d2q9_quadrature()
     particle_plan = PressureExtendedParticleEquilibriumPlan(quadrature)
     thermal_plan = MatchedThermalCrossRelaxationPlan(quadrature)
@@ -323,7 +334,7 @@ def test_prandtl_cross_relaxation_conserves_g_star_energy_and_has_unit_pr_zero_l
     )
 
 
-def test_integer_frame_shift_roundtrips_and_obeys_raw_moment_transformations():
+def test_integer_frame_shift_roundtrips_and_obeys_raw_moment_transformations() -> None:
     quadrature = _d2q9_quadrature()
     particle_plan = PressureExtendedParticleEquilibriumPlan(quadrature)
     relative_velocity = jnp.asarray((0.09, -0.04))
@@ -377,7 +388,7 @@ def test_integer_frame_shift_roundtrips_and_obeys_raw_moment_transformations():
     )
 
 
-def test_integer_frame_plan_reports_hull_refusal_and_rejects_unsupported_rules():
+def test_integer_frame_plan_reports_hull_refusal_and_rejects_unsupported_rules() -> None:
     quadrature = _d2q9_quadrature()
     plan = IntegerVelocityFrameShiftPlan(quadrature, jnp.asarray((1, 0)))
 

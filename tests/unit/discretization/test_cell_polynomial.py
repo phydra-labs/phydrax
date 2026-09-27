@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import math
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -17,7 +19,7 @@ from phydrax.discretization import (
 )
 
 
-def _quadrilateral_grid(nx=4, ny=4):
+def _quadrilateral_grid(nx: Any = 4, ny: Any = 4) -> Any:
     logical = np.asarray([(i / nx, j / ny) for j in range(ny + 1) for i in range(nx + 1)])
     x = logical[:, 0]
     y = logical[:, 1]
@@ -33,7 +35,7 @@ def _quadrilateral_grid(nx=4, ny=4):
     return vertices, np.asarray(quadrilaterals, dtype=np.int32)
 
 
-def _tetrahedral_grid(resolution):
+def _tetrahedral_grid(resolution: Any) -> Any:
     vertices = np.asarray(
         [
             (i / resolution, j / resolution, k / resolution)
@@ -43,7 +45,7 @@ def _tetrahedral_grid(resolution):
         ]
     )
 
-    def vertex(i, j, k):
+    def vertex(i: Any, j: Any, k: Any) -> Any:
         return k * (resolution + 1) ** 2 + j * (resolution + 1) + i
 
     tetrahedra = []
@@ -71,7 +73,7 @@ def _tetrahedral_grid(resolution):
     return vertices, np.asarray(tetrahedra, dtype=np.int32)
 
 
-def _cell_averages(discretization, function):
+def _cell_averages(discretization: Any, function: Any) -> Any:
     values = function(discretization.cell_quadrature_points)
     return (
         jnp.sum(discretization.cell_quadrature_weights * values, axis=1)
@@ -79,13 +81,13 @@ def _cell_averages(discretization, function):
     )
 
 
-def _quadratic(points):
+def _quadratic(points: Any) -> Any:
     x = points[..., 0]
     y = points[..., 1]
     return 0.7 + 0.3 * x - 0.2 * y + 0.4 * x**2 - 0.25 * x * y + 0.15 * y**2
 
 
-def _cubic_3d(points):
+def _cubic_3d(points: Any) -> Any:
     x = points[..., 0]
     y = points[..., 1]
     z = points[..., 2]
@@ -105,7 +107,7 @@ def _cubic_3d(points):
     )
 
 
-def _cubic_advection_residual(points, velocity):
+def _cubic_advection_residual(points: Any, velocity: Any) -> Any:
     x = points[..., 0]
     y = points[..., 1]
     z = points[..., 2]
@@ -119,7 +121,7 @@ def _cubic_advection_residual(points, velocity):
     )
 
 
-def _scalar_system(velocity):
+def _scalar_system(velocity: Any) -> Any:
     speed = jnp.asarray(velocity)
     return phx.equations.ScalarConservationSystem(
         speed.size,
@@ -132,12 +134,12 @@ def _scalar_system(velocity):
 
 
 def _coupling_mesh_plan(
-    nx=4,
-    ny=4,
+    nx: Any = 4,
+    ny: Any = 4,
     *,
-    x_offset=0.0,
-    component_names=None,
-):
+    x_offset: Any = 0.0,
+    component_names: Any = None,
+) -> Any:
     vertices = np.asarray(
         [(x_offset + i / nx, j / ny) for j in range(ny + 1) for i in range(nx + 1)]
     )
@@ -158,12 +160,12 @@ def _coupling_mesh_plan(
 
 
 def _compile_scalar_coupling(
-    discretization,
+    discretization: Any,
     coupling: UnstructuredFiniteVolumeCouplingPlan | None = None,
     *,
-    reconstruction=None,
-    interface_solver=None,
-):
+    reconstruction: Any = None,
+    interface_solver: Any = None,
+) -> Any:
     system = _scalar_system((0.4, -0.15))
     method = phx.discretization.UnstructuredFiniteVolumeMethodPlan(
         (
@@ -198,7 +200,7 @@ def _compile_scalar_coupling(
     )
 
 
-def _two_material_system():
+def _two_material_system() -> Any:
     eos = phx.equations.TwoMaterialEOSClosure(
         phx.equations.IdealGasMaterial(1.4),
         phx.equations.StiffenedGasMaterial(4.4, 2.0, 1.0),
@@ -207,11 +209,11 @@ def _two_material_system():
 
 
 def _compile_two_material_coupling(
-    discretization,
+    discretization: Any,
     coupling: UnstructuredFiniteVolumeCouplingPlan | None = None,
     *,
-    reconstruction=None,
-):
+    reconstruction: Any = None,
+) -> Any:
     system = _two_material_system()
     method = phx.discretization.UnstructuredFiniteVolumeMethodPlan(
         (
@@ -242,7 +244,9 @@ def _compile_two_material_coupling(
     )
 
 
-def _coupling_hierarchy(coarse, *, nx=4, ny=4, x_offset=0.0):
+def _coupling_hierarchy(
+    coarse: Any, *, nx: Any = 4, ny: Any = 4, x_offset: Any = 0.0
+) -> Any:
     fine = _coupling_mesh_plan(2 * nx, 2 * ny, x_offset=x_offset).prepare()
     parent = np.asarray(
         [(j // 2) * nx + i // 2 for j in range(2 * ny) for i in range(2 * nx)],
@@ -284,7 +288,7 @@ def _coupling_hierarchy(coarse, *, nx=4, ny=4, x_offset=0.0):
     )
 
 
-def _current_coupling_artifacts(base_plan, discretization):
+def _current_coupling_artifacts(base_plan: Any, discretization: Any) -> Any:
     motion = phx.discretization.FixedConnectivityMotionPlan(
         base_plan,
         lambda time, vertices, args: vertices,
@@ -331,13 +335,13 @@ def _current_coupling_artifacts(base_plan, discretization):
 
 
 def _stationary_embedded_coupling(
-    discretization,
+    discretization: Any,
     *,
-    level_set=None,
-    field_id="stationary-cut",
-    body_tag=7,
-    stabilization_policy=None,
-):
+    level_set: Any = None,
+    field_id: Any = "stationary-cut",
+    body_tag: Any = 7,
+    stabilization_policy: Any = None,
+) -> Any:
     level_set_ = (
         (lambda points, args: points[:, 0] - 0.43) if level_set is None else level_set
     )
@@ -358,7 +362,7 @@ def _stationary_embedded_coupling(
     return coupling, embedded_boundary, embedded_boundaries
 
 
-def test_unstructured_coupling_types_are_exported_from_discretization_root():
+def test_unstructured_coupling_types_are_exported_from_discretization_root() -> None:
     assert (
         UnstructuredFiniteVolumeCouplingPlan
         is phx.discretization.finite_volume.UnstructuredFiniteVolumeCouplingPlan
@@ -390,8 +394,8 @@ def test_unstructured_coupling_types_are_exported_from_discretization_root():
     ),
 )
 def test_moving_unstructured_rejects_non_refreshable_high_order_at_compile_and_dynamics(
-    reconstruction_plan,
-):
+    reconstruction_plan: Any,
+) -> None:
     base_plan = _coupling_mesh_plan(6, 6)
     discretization = base_plan.prepare()
     reconstruction = reconstruction_plan.prepare(discretization)
@@ -436,7 +440,7 @@ def test_moving_unstructured_rejects_non_refreshable_high_order_at_compile_and_d
     assert type(reconstruction).__name__ in str(dynamics_error.value)
 
 
-def test_moving_unstructured_piecewise_constant_compiles():
+def test_moving_unstructured_piecewise_constant_compiles() -> None:
     base_plan = _coupling_mesh_plan()
     discretization = base_plan.prepare()
     motion = phx.discretization.FixedConnectivityMotionPlan(
@@ -456,7 +460,7 @@ def test_moving_unstructured_piecewise_constant_compiles():
     )
 
 
-def test_two_material_vof_rejects_rusanov_without_vof_and_high_order_stage_path():
+def test_two_material_vof_rejects_rusanov_without_vof_and_high_order_stage_path() -> None:
     system = _two_material_system()
     discretization = _coupling_mesh_plan(component_names=system.component_names).prepare()
     gradient = phx.discretization.CellPolynomialReconstructionPlan(1).prepare(
@@ -476,7 +480,7 @@ def test_two_material_vof_rejects_rusanov_without_vof_and_high_order_stage_path(
         )
 
 
-def test_two_material_vof_valid_compile_preserves_geometry_and_identities():
+def test_two_material_vof_valid_compile_preserves_geometry_and_identities() -> None:
     system = _two_material_system()
     discretization = _coupling_mesh_plan(component_names=system.component_names).prepare()
     gradient = phx.discretization.CellPolynomialReconstructionPlan(1).prepare(
@@ -510,7 +514,7 @@ def test_two_material_vof_valid_compile_preserves_geometry_and_identities():
     assert first.compilation_id != second.compilation_id
 
 
-def test_two_material_vof_rejects_equal_size_moved_geometry_and_stale_gradient():
+def test_two_material_vof_rejects_equal_size_moved_geometry_and_stale_gradient() -> None:
     system = _two_material_system()
     current = _coupling_mesh_plan(component_names=system.component_names).prepare()
     moved = _coupling_mesh_plan(
@@ -549,7 +553,7 @@ def test_two_material_vof_rejects_equal_size_moved_geometry_and_stale_gradient()
         )
 
 
-def test_cell_polynomial_is_k_exact_on_mapped_quadrilaterals():
+def test_cell_polynomial_is_k_exact_on_mapped_quadrilaterals() -> None:
     vertices, quadrilaterals = _quadrilateral_grid()
     discretization = phx.discretization.UnstructuredFiniteVolumePlan(
         vertices, quadrilaterals=quadrilaterals
@@ -589,7 +593,7 @@ def test_cell_polynomial_is_k_exact_on_mapped_quadrilaterals():
     assert reconstruction.report.minimum_rank == reconstruction.basis.feature_count
 
 
-def test_degree_one_cell_polynomial_is_affine_exact_on_tetrahedra():
+def test_degree_one_cell_polynomial_is_affine_exact_on_tetrahedra() -> None:
     vertices = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -621,7 +625,7 @@ def test_degree_one_cell_polynomial_is_affine_exact_on_tetrahedra():
         discretization
     )
 
-    def affine(points):
+    def affine(points: Any) -> Any:
         return 0.4 + 0.2 * points[..., 0] - 0.3 * points[..., 1] + 0.5 * points[..., 2]
 
     state = _cell_averages(discretization, affine)
@@ -655,7 +659,9 @@ def test_degree_one_cell_polynomial_is_affine_exact_on_tetrahedra():
     )
 
 
-def test_degree_three_tetrahedral_advection_residual_is_cubic_exact_under_refinement():
+def test_degree_three_tetrahedral_advection_residual_is_cubic_exact_under_refinement() -> (
+    None
+):
     velocity = np.asarray((0.3, -0.2, 0.25))
     maximum_errors = []
     for resolution in (2, 3):
@@ -717,7 +723,7 @@ def test_degree_three_tetrahedral_advection_residual_is_cubic_exact_under_refine
     assert max(maximum_errors) < 2e-8
 
 
-def test_cell_polynomial_rejects_rank_deficient_components():
+def test_cell_polynomial_rejects_rank_deficient_components() -> None:
     discretization = phx.discretization.UnstructuredFiniteVolumePlan(
         np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
         quadrilaterals=np.asarray(((0, 1, 2, 3),)),
@@ -726,7 +732,7 @@ def test_cell_polynomial_rejects_rank_deficient_components():
         phx.discretization.CellPolynomialReconstructionPlan(1).prepare(discretization)
 
 
-def test_unstructured_weno_z_has_exact_smooth_limit_and_jittable_gradient():
+def test_unstructured_weno_z_has_exact_smooth_limit_and_jittable_gradient() -> None:
     vertices, quadrilaterals = _quadrilateral_grid()
     discretization = phx.discretization.UnstructuredFiniteVolumePlan(
         vertices, quadrilaterals=quadrilaterals
@@ -735,7 +741,7 @@ def test_unstructured_weno_z_has_exact_smooth_limit_and_jittable_gradient():
         2, limiter="none"
     ).prepare(discretization)
 
-    def affine(points):
+    def affine(points: Any) -> Any:
         return 0.8 + 0.25 * points[..., 0] - 0.15 * points[..., 1]
 
     state = _cell_averages(discretization, affine)
@@ -760,7 +766,9 @@ def test_unstructured_weno_z_has_exact_smooth_limit_and_jittable_gradient():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_unstructured_weno_sector_stencils_remain_compact_under_refinement_and_rotation():
+def test_unstructured_weno_sector_stencils_remain_compact_under_refinement_and_rotation() -> (
+    None
+):
     maximum_depths = []
     for cells, angle in ((8, 0.0), (16, 0.0), (8, 0.63), (16, 0.63)):
         vertices, quadrilaterals = _quadrilateral_grid(cells, cells)
@@ -804,10 +812,10 @@ def test_unstructured_weno_sector_stencils_remain_compact_under_refinement_and_r
     assert maximum_depths[3] <= maximum_depths[2] + 1
 
 
-def test_unstructured_weno_smooth_trace_error_converges_on_refined_mapped_grids():
+def test_unstructured_weno_smooth_trace_error_converges_on_refined_mapped_grids() -> None:
     errors = []
 
-    def smooth(points):
+    def smooth(points: Any) -> Any:
         return jnp.exp(0.3 * points[..., 0] + 0.2 * points[..., 1])
 
     for cells in (6, 12, 24):
@@ -848,7 +856,7 @@ def test_unstructured_weno_smooth_trace_error_converges_on_refined_mapped_grids(
     assert min(rates) > 1.7
 
 
-def test_unstructured_weno_extrema_limiter_preserves_cell_average_bounds():
+def test_unstructured_weno_extrema_limiter_preserves_cell_average_bounds() -> None:
     vertices, quadrilaterals = _quadrilateral_grid(6, 4)
     discretization = phx.discretization.UnstructuredFiniteVolumePlan(
         vertices, quadrilaterals=quadrilaterals
@@ -871,7 +879,7 @@ def test_unstructured_weno_extrema_limiter_preserves_cell_average_bounds():
     np.testing.assert_allclose(constant_left, 1.0)
     np.testing.assert_allclose(constant_right, 1.0)
 
-    def traces(values):
+    def traces(values: Any) -> Any:
         return reconstruction.reconstruct_at(
             values, discretization.face_quadrature_points
         )
@@ -885,7 +893,7 @@ def test_unstructured_weno_extrema_limiter_preserves_cell_average_bounds():
     assert all(jnp.all(jnp.isfinite(value)) for value in tangent)
 
 
-def test_unstructured_weno_flux_quadrature_recovers_affine_advection_residual():
+def test_unstructured_weno_flux_quadrature_recovers_affine_advection_residual() -> None:
     vertices, quadrilaterals = _quadrilateral_grid()
     system = _scalar_system((0.6, -0.25))
     discretization = phx.discretization.UnstructuredFiniteVolumePlan(
@@ -914,11 +922,12 @@ def test_unstructured_weno_flux_quadrature_recovers_affine_advection_residual():
     )
     compiled = phx.equations.compile_conservation_problem(problem, discretization, method)
 
-    def affine(points):
+    def affine(points: Any) -> Any:
         return 0.8 + 0.25 * points[..., 0] - 0.15 * points[..., 1]
 
     state = _cell_averages(discretization, affine)[:, None]
     residual, diagnostics = compiled.residual_with_diagnostics(jnp.asarray(0.0), state)
+    # ty: ignore[not-iterable]
     flux, _ = compiled.face_fluxes(jnp.asarray(0.0), state)
     balance_terms = np.asarray(discretization.cell_volumes[:, None] * residual)
     integrated = np.asarray(flux * discretization.face_measures[:, None])
@@ -930,6 +939,7 @@ def test_unstructured_weno_flux_quadrature_recovers_affine_advection_residual():
     expected_defect = math.fsum(
         balance_terms[:, 0].tolist() + boundary_terms[:, 0].tolist()
     )
+    # ty: ignore[unresolved-attribute]
     assert float(diagnostics.conservation_defect[0]) == expected_defect
     expected = -(0.6 * 0.25 + (-0.25) * (-0.15))
     np.testing.assert_allclose(residual, expected, rtol=2e-9, atol=2e-9)
@@ -939,11 +949,12 @@ def test_unstructured_weno_flux_quadrature_recovers_affine_advection_residual():
         rtol=2e-9,
         atol=2e-9,
     )
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(diagnostics.conservation_defect, 0.0, atol=2e-12)
     assert compiled.stable_step(state) > 0.0
 
 
-def test_unstructured_weno_uses_shared_positivity_runtime():
+def test_unstructured_weno_uses_shared_positivity_runtime() -> None:
     vertices, quadrilaterals = _quadrilateral_grid()
     system = phx.equations.EulerSystem(2)
     discretization = phx.discretization.UnstructuredFiniteVolumePlan(
@@ -979,7 +990,9 @@ def test_unstructured_weno_uses_shared_positivity_runtime():
     )
     state = system.primitive_to_conserved(primitive)
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
-        dynamics, phx.discretization.FluxPositivityPlan()
+        # ty: ignore[invalid-argument-type]
+        dynamics,
+        phx.discretization.FluxPositivityPlan(),
     )
     initial = runtime.initialize_state(state, 0.0, 1e-3)
     np.testing.assert_allclose(
@@ -1011,7 +1024,7 @@ def test_unstructured_weno_uses_shared_positivity_runtime():
     )
 
 
-def test_unstructured_coupling_none_is_the_canonical_empty_compilation():
+def test_unstructured_coupling_none_is_the_canonical_empty_compilation() -> None:
     discretization = _coupling_mesh_plan().prepare()
     compiled_default = _compile_scalar_coupling(discretization)
     coupling_type = phx.discretization.finite_volume.UnstructuredFiniteVolumeCouplingPlan
@@ -1031,7 +1044,7 @@ def test_unstructured_coupling_none_is_the_canonical_empty_compilation():
     assert compiled_default.dynamics.coupling.topology_event_policy == "disabled"
 
 
-def test_unstructured_coupling_components_and_event_policies_change_identities():
+def test_unstructured_coupling_components_and_event_policies_change_identities() -> None:
     base_plan = _coupling_mesh_plan()
     discretization = base_plan.prepare()
     (
@@ -1116,7 +1129,7 @@ def test_unstructured_coupling_components_and_event_policies_change_identities()
     assert prepared.topology_event_policy == "accepted_step"
 
 
-def test_stationary_embedded_boundary_compilation_prepares_certified_metrics():
+def test_stationary_embedded_boundary_compilation_prepares_certified_metrics() -> None:
     discretization = _coupling_mesh_plan().prepare()
     coupling, embedded_boundary, embedded_boundaries = _stationary_embedded_coupling(
         discretization
@@ -1149,7 +1162,7 @@ def test_stationary_embedded_boundary_compilation_prepares_certified_metrics():
     assert compiled.compilation_id != static_compiled.compilation_id
 
 
-def test_embedded_boundary_metric_policy_and_body_identities_reach_compilation():
+def test_embedded_boundary_metric_policy_and_body_identities_reach_compilation() -> None:
     discretization = _coupling_mesh_plan().prepare()
     base, _, _ = _stationary_embedded_coupling(
         discretization,
@@ -1200,8 +1213,8 @@ def test_embedded_boundary_metric_policy_and_body_identities_reach_compilation()
     ("vof", "amr", "overset", "sliding", "motion", "topology_events"),
 )
 def test_embedded_boundary_compilation_rejects_coupled_subsystems_with_ids(
-    component,
-):
+    component: Any,
+) -> None:
     base_plan = _coupling_mesh_plan()
     discretization = base_plan.prepare()
     (
@@ -1240,6 +1253,7 @@ def test_embedded_boundary_compilation_rejects_coupled_subsystems_with_ids(
         )
     else:
         options[component] = conflicting_components[component]
+    # ty: ignore[invalid-argument-type]
     coupling = UnstructuredFiniteVolumeCouplingPlan(**options)
     conflicting_id = (
         coupling.topology_event_id
@@ -1264,7 +1278,7 @@ def test_embedded_boundary_compilation_rejects_coupled_subsystems_with_ids(
         assert f"{component}=" in message
 
 
-def test_embedded_boundary_compilation_rejects_high_order_reconstruction():
+def test_embedded_boundary_compilation_rejects_high_order_reconstruction() -> None:
     discretization = _coupling_mesh_plan().prepare()
     coupling, _, _ = _stationary_embedded_coupling(discretization)
     reconstruction = phx.discretization.CellPolynomialReconstructionPlan(1).prepare(
@@ -1282,7 +1296,9 @@ def test_embedded_boundary_compilation_rejects_high_order_reconstruction():
         )
 
 
-def test_embedded_boundary_compilation_requires_complete_supported_body_policies():
+def test_embedded_boundary_compilation_requires_complete_supported_body_policies() -> (
+    None
+):
     discretization = _coupling_mesh_plan().prepare()
     embedded_boundary = phx.discretization.EmbeddedBoundaryPlan(
         discretization,
@@ -1320,7 +1336,7 @@ def test_embedded_boundary_compilation_requires_complete_supported_body_policies
         )
 
 
-def test_embedded_boundary_compilation_rejects_extra_cut_boundary_policies():
+def test_embedded_boundary_compilation_rejects_extra_cut_boundary_policies() -> None:
     discretization = _coupling_mesh_plan().prepare()
     embedded_boundary = phx.discretization.EmbeddedBoundaryPlan(
         discretization,
@@ -1349,8 +1365,8 @@ def test_embedded_boundary_compilation_rejects_extra_cut_boundary_policies():
 
 
 def test_embedded_boundary_compilation_rejects_failed_and_stale_metrics(
-    monkeypatch,
-):
+    monkeypatch: Any,
+) -> None:
     vertices, quadrilaterals = _quadrilateral_grid()
     discretization = phx.discretization.UnstructuredFiniteVolumePlan(
         vertices,
@@ -1410,7 +1426,9 @@ def test_embedded_boundary_compilation_rejects_failed_and_stale_metrics(
         _compile_scalar_coupling(discretization, current_coupling)
 
 
-def test_embedded_boundary_compilation_rejects_three_dimensions_and_viscous_physics():
+def test_embedded_boundary_compilation_rejects_three_dimensions_and_viscous_physics() -> (
+    None
+):
     tetrahedral = phx.discretization.UnstructuredFiniteVolumePlan(
         np.asarray(
             (
@@ -1461,7 +1479,7 @@ def test_embedded_boundary_compilation_rejects_three_dimensions_and_viscous_phys
         )
 
 
-def test_unstructured_coupling_rejects_invalid_event_combinations():
+def test_unstructured_coupling_rejects_invalid_event_combinations() -> None:
     coupling_type = phx.discretization.finite_volume.UnstructuredFiniteVolumeCouplingPlan
     sliding = phx.discretization.PeriodicSlidingInterfacePlan(
         np.asarray((0.0, 1.0)),
@@ -1481,7 +1499,7 @@ def test_unstructured_coupling_rejects_invalid_event_combinations():
         )
 
 
-def test_unstructured_coupling_rejects_stale_and_mismatched_artifacts():
+def test_unstructured_coupling_rejects_stale_and_mismatched_artifacts() -> None:
     base_plan = _coupling_mesh_plan()
     discretization = base_plan.prepare()
     coupling_type = phx.discretization.finite_volume.UnstructuredFiniteVolumeCouplingPlan
@@ -1558,7 +1576,7 @@ def test_unstructured_coupling_rejects_stale_and_mismatched_artifacts():
         )
 
 
-def test_unstructured_coupling_preserves_hllc_system_validation():
+def test_unstructured_coupling_preserves_hllc_system_validation() -> None:
     discretization = _coupling_mesh_plan().prepare()
     with pytest.raises(ValueError, match="Euler-compatible"):
         _compile_scalar_coupling(

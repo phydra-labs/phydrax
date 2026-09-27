@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.domain import DomainFunction
 
@@ -24,6 +25,7 @@ from ..stochastic._bsde import (
     BSDEPathBatch,
     BSDEProblem,
 )
+from ..typing import PRNGKey
 
 
 DeepSplittingPredictor: TypeAlias = Callable | DomainFunction
@@ -140,7 +142,7 @@ def deep_splitting_labels(
     slice_index: int,
     /,
     *,
-    key: Key[Array, ""] = jr.key(0),
+    key: PRNGKey = jr.key(0),
 ) -> DeepSplittingLabelBatch:
     """Build the explicit right-endpoint target U[n+1] + dt f[n+1]."""
     if not isinstance(problem, BSDEProblem):
@@ -182,7 +184,7 @@ def deep_splitting_labels(
     )
     sample_count = prod(paths.sample_shape) if paths.sample_shape else 1
 
-    def source_at(state, value, control):
+    def source_at(state: Array, value: Array, control: Array) -> Array:
         source = jnp.asarray(
             problem.generator(right_time, state, value, control, problem.args)
         )
@@ -230,9 +232,7 @@ def deep_splitting_labels(
     )
 
 
-DeepSplittingLabelProvider: TypeAlias = Callable[
-    [Key[Array, ""]], DeepSplittingLabelBatch
-]
+DeepSplittingLabelProvider: TypeAlias = Callable[[PRNGKey], DeepSplittingLabelBatch]
 
 
 class DeepSplittingRegressionTerm(AbstractSamplingTerm):
@@ -256,7 +256,7 @@ class DeepSplittingRegressionTerm(AbstractSamplingTerm):
         labels: DeepSplittingLabelBatch | DeepSplittingLabelProvider,
         value_weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(problem, BSDEProblem):
             raise TypeError("problem must be a BSDEProblem.")
         if not isinstance(value_name, str) or not value_name:
@@ -287,7 +287,7 @@ class DeepSplittingRegressionTerm(AbstractSamplingTerm):
     def sample(
         self,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
     ) -> DeepSplittingLabelBatch:
         if self.fixed_labels is not None:
             return self.fixed_labels
@@ -303,7 +303,7 @@ class DeepSplittingRegressionTerm(AbstractSamplingTerm):
         labels: DeepSplittingLabelBatch,
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
     ) -> Array:
         _validate_labels(labels, self.problem, self.slice_index)
         if self.value_name not in functions:
@@ -323,7 +323,7 @@ class DeepSplittingRegressionTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
         batch: DeepSplittingLabelBatch | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -342,7 +342,7 @@ class DeepSplittingRegressionTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
         batch: DeepSplittingLabelBatch | None = None,
     ) -> DeepSplittingRegressionDiagnostics:
         sampling_key, prediction_key = jr.split(key)

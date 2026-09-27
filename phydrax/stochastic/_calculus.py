@@ -4,15 +4,20 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..metrix import AbstractStateGeometry
+
+
+if TYPE_CHECKING:
+    from ..solver._differential import DifferentialProblem
 
 
 class StratonovichCorrectionResult(StrictModule):
@@ -74,7 +79,7 @@ def _euclidean_correction(vector_fields: Any, state: Array, /) -> tuple[Array, A
     directions = jnp.moveaxis(sigma, -1, 0)
     indices = jnp.arange(sigma.shape[-1])
 
-    def one(index, direction):
+    def one(index: Array, direction: Array) -> Array:
         column = lambda value: jnp.asarray(vector_fields(value))[..., index]
         _, derivative = jax.jvp(column, (state,), (direction,))
         return derivative
@@ -174,7 +179,7 @@ def stratonovich_to_ito_problem(
     *,
     tangent_evidence: Any = None,
     precision: Any = None,
-):
+) -> tuple[DifferentialProblem, StratonovichCorrectionResult]:
     """Convert a declared Stratonovich problem and return initial-point evidence."""
     from ..solver._differential import DifferentialProblem
 

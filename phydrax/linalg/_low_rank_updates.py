@@ -6,19 +6,22 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from typing import Any, Literal
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
+from jaxtyping import PyTree
 
 from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._binding import LinearSolveTemplate
 from ._factorizations import PreparedFactorization
 from ._operators import AbstractLinearOperator
@@ -29,17 +32,18 @@ from ._problems import LinearSystem
 from ._results import LinearSolveResult, LinearSolveStatus
 from ._runtime import (
     _pack_rhs,
+    _PackedRHSLayout,
     _unpack_value,
     bind_numeric,
     prepare_template,
     solve,
 )
-from ._spaces import RHSLayout
+from ._spaces import AbstractVectorSpace, RHSLayout
 from ._structured_operators import BasePlusLowRankLinearOperator
 from .backends._jax_dense import dense_lu_slogdet, DenseLUState
 
 
-BaseNonsingularity = Literal["certified", "asserted"]
+BaseNonsingularity: TypeAlias = Literal["certified", "asserted"]
 
 
 class LowRankSolveStatus(IntEnum):
@@ -65,7 +69,7 @@ class LowRankResourcePolicy(StrictModule):
         max_rank: int = 4096,
         max_storage_bytes: int = 512 * 1024 * 1024,
         max_workspace_bytes: int = 512 * 1024 * 1024,
-    ):
+    ) -> None:
         values = tuple(
             (
                 max_rank,
@@ -95,7 +99,7 @@ class LowRankSolvePolicy(StrictModule):
         base_nonsingularity: BaseNonsingularity = "certified",
         failure: FailurePolicy | None = None,
         resources: LowRankResourcePolicy | None = None,
-    ):
+    ) -> None:
         base_ = LinearSolvePolicy() if base is None else base
         failure_ = FailurePolicy("error") if failure is None else failure
         resources_ = LowRankResourcePolicy() if resources is None else resources
@@ -108,8 +112,9 @@ class LowRankSolvePolicy(StrictModule):
         limit = float(condition_limit)
         if not math.isfinite(limit) or limit < 1.0:
             raise ValueError("condition_limit must be finite and at least one.")
-        if base_nonsingularity not in ("certified", "asserted"):
-            raise ValueError("base_nonsingularity must be 'certified' or 'asserted'.")
+        base_nonsingularity = parse(
+            base_nonsingularity, BaseNonsingularity, "base_nonsingularity"
+        )
         self.base = base_
         self.condition_limit = limit
         self.base_nonsingularity = base_nonsingularity
@@ -126,7 +131,7 @@ class LowRankCostEstimate(StrictModule):
     preparation_workspace_bytes: int = eqx.field(static=True)
     solve_workspace_bytes_per_rhs: int = eqx.field(static=True)
 
-    def __init__(self, dimension: int, rank: int, itemsize: int, /):
+    def __init__(self, dimension: int, rank: int, itemsize: int, /) -> None:
         n, r, size = int(dimension), int(rank), int(itemsize)
         self.dimension = n
         self.rank = r
@@ -154,7 +159,7 @@ class LowRankSolvePlan(StrictModule):
         policy: LowRankSolvePolicy,
         base_template: LinearSolveTemplate,
         cost: LowRankCostEstimate,
-    ):
+    ) -> None:
         self.policy = policy
         self.base_template = base_template
         self.cost = cost
@@ -208,7 +213,7 @@ class PreparedLowRankSolve(StrictModule):
         correction_pivots: Array,
         correction_condition: Array,
         numeric_version: Any,
-    ):
+    ) -> None:
         version = jnp.asarray(numeric_version, dtype=jnp.int32)
         if version.ndim != 0:
             raise ValueError("numeric_version must be scalar.")
@@ -252,7 +257,7 @@ class LowRankSolveDiagnostics(StrictModule):
         base_matvec_count: Array,
         correction_condition: Array,
         rank: int,
-    ):
+    ) -> None:
         self.residual_norm = jnp.asarray(residual_norm)
         self.relative_residual = jnp.asarray(relative_residual)
         self.base_status = jnp.asarray(base_status, dtype=jnp.int32)
@@ -274,7 +279,7 @@ class LowRankSolveProvenance(StrictModule):
     operator_numeric_version: Array
     base_numeric_version: Array
 
-    def __init__(self, prepared: PreparedLowRankSolve, /):
+    def __init__(self, prepared: PreparedLowRankSolve, /) -> None:
         self.plan_id = prepared.plan.plan_id
         self.prepared_id = prepared.prepared_id
         self.operator_id = prepared.operator.operator_id
@@ -302,7 +307,7 @@ class LowRankSolveResult(StrictModule):
         provenance: LowRankSolveProvenance,
         base_result: LinearSolveResult,
         /,
-    ):
+    ) -> None:
         self.value = value
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.diagnostics = diagnostics
@@ -314,7 +319,7 @@ class LowRankSolveResult(StrictModule):
         return self.status == int(LowRankSolveStatus.SUCCESS)
 
 
-LowRankUpdateRoute = Literal[
+LowRankUpdateRoute: TypeAlias = Literal[
     "dense",
     "row-indexed",
     "column-indexed",
@@ -362,56 +367,55 @@ class LowRankUpdate(StrictModule):
         *,
         dimension: int,
         route: LowRankUpdateRoute,
-    ):
+    ) -> None:
         left = jnp.asarray(left_factor)
         right = jnp.asarray(right_factor)
         indices_ = jnp.asarray(indices, dtype=jnp.int32)
         size = int(dimension)
         if size < 1:
             raise ValueError("Low-rank update dimension must be positive.")
-        if route not in (
-            "dense",
-            "row-indexed",
-            "column-indexed",
-            "skew-row-column-indexed",
-        ):
-            raise ValueError("Unknown low-rank update route.")
-        if route == "dense":
-            if left.ndim != 2 or right.shape != left.shape or left.shape[0] != size:
-                raise ValueError("Dense factors must have matching shape (n, rank).")
-            rank = left.shape[1]
-            expected_indices = (rank,)
-        elif route == "row-indexed":
-            if (
-                left.ndim != 2
-                or right.ndim != 2
-                or left.shape[0] != 0
-                or right.shape[0] != size
-                or left.shape[1] != right.shape[1]
-            ):
-                raise ValueError(
-                    "Indexed-row data must have factor shapes (0, rank) and (n, rank)."
-                )
-            rank = right.shape[1]
-            expected_indices = (rank,)
-        elif route == "column-indexed":
-            if (
-                left.ndim != 2
-                or right.ndim != 2
-                or right.shape[0] != 0
-                or left.shape[0] != size
-                or right.shape[1] != left.shape[1]
-            ):
-                raise ValueError(
-                    "Indexed-column data must have factor shapes (n, rank) and (0, rank)."
-                )
-            rank = left.shape[1]
-            expected_indices = (rank,)
-        else:
-            if left.shape != (size, 2) or right.shape != (size, 2):
-                raise ValueError("Skew row/column data must have factor shapes (n, 2).")
-            rank = 2
-            expected_indices = (1,)
+        route = parse(route, LowRankUpdateRoute, "route")
+        match route:
+            case "dense":
+                if left.ndim != 2 or right.shape != left.shape or left.shape[0] != size:
+                    raise ValueError("Dense factors must have matching shape (n, rank).")
+                rank = left.shape[1]
+                expected_indices = (rank,)
+            case "row-indexed":
+                if (
+                    left.ndim != 2
+                    or right.ndim != 2
+                    or left.shape[0] != 0
+                    or right.shape[0] != size
+                    or left.shape[1] != right.shape[1]
+                ):
+                    raise ValueError(
+                        "Indexed-row data must have factor shapes (0, rank) and (n, rank)."
+                    )
+                rank = right.shape[1]
+                expected_indices = (rank,)
+            case "column-indexed":
+                if (
+                    left.ndim != 2
+                    or right.ndim != 2
+                    or right.shape[0] != 0
+                    or left.shape[0] != size
+                    or right.shape[1] != left.shape[1]
+                ):
+                    raise ValueError(
+                        "Indexed-column data must have factor shapes (n, rank) and (0, rank)."
+                    )
+                rank = left.shape[1]
+                expected_indices = (rank,)
+            case "skew-row-column-indexed":
+                if left.shape != (size, 2) or right.shape != (size, 2):
+                    raise ValueError(
+                        "Skew row/column data must have factor shapes (n, 2)."
+                    )
+                rank = 2
+                expected_indices = (1,)
+            case _:
+                assert_never(route)
         if rank < 1:
             raise ValueError("Low-rank updates must contain at least one column.")
         if indices_.shape != expected_indices:
@@ -475,7 +479,7 @@ class PreparedLowRankSequence(StrictModule):
         log_abs_determinant_ratio: Any = 0,
         status: Any = LowRankDeterminantStatus.SUCCESS,
         base_lineage: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedLowRankSolve):
             raise TypeError("prepared must be a PreparedLowRankSolve.")
         active = jnp.asarray(active_rank, dtype=jnp.int32)
@@ -605,7 +609,7 @@ class LowRankDeterminantProvenance(StrictModule):
         sequence: PreparedLowRankSequence,
         update: LowRankUpdate,
         /,
-    ):
+    ) -> None:
         self.solve = LowRankSolveProvenance(sequence.prepared)
         self.sequence_id = sequence.sequence_id
         self.update_id = update.update_id
@@ -650,7 +654,7 @@ class LowRankDeterminantResult(StrictModule):
         current_solved_left_factor: ArrayLike,
         base_result: LinearSolveResult,
         provenance: LowRankDeterminantProvenance,
-    ):
+    ) -> None:
         self.value = jnp.asarray(value)
         self.sign = jnp.asarray(sign)
         self.log_abs = jnp.asarray(log_abs)
@@ -716,7 +720,7 @@ class LowRankPfaffianResult(StrictModule):
         status: ArrayLike,
         determinant: LowRankDeterminantResult,
         compact_pfaffian: PfaffianResult,
-    ):
+    ) -> None:
         self.value = jnp.asarray(value)
         self.sign = jnp.asarray(sign)
         self.log_abs = jnp.asarray(log_abs)
@@ -1502,7 +1506,7 @@ def _validate_sequence_update(
         raise TypeError("Low-rank update dtype must match the sequence coordinate dtype.")
 
 
-def _update_left_coordinates(update: LowRankUpdate, dtype, /) -> Array:
+def _update_left_coordinates(update: LowRankUpdate, dtype: DTypeLike, /) -> Array:
     if update.route == "dense" or update.route == "column-indexed":
         return update.left_factor
     if update.route == "row-indexed":
@@ -1528,7 +1532,9 @@ def _update_right_transpose_action(
     return contract("nr,nk->rk", update.right_factor, coordinates)
 
 
-def _dense_update_factors(update: LowRankUpdate, dtype, /) -> tuple[Array, Array]:
+def _dense_update_factors(
+    update: LowRankUpdate, dtype: DTypeLike, /
+) -> tuple[Array, Array]:
     left = _update_left_coordinates(update, dtype)
     if update.route == "dense" or update.route == "row-indexed":
         return left, update.right_factor
@@ -1730,7 +1736,7 @@ def _validate_plan_operator(
         raise ValueError("Low-rank numeric binding changed symbolic operator structure.")
 
 
-def _certifies_nonsingular(operator, /) -> bool:
+def _certifies_nonsingular(operator: AbstractLinearOperator, /) -> bool:
     properties = operator.properties
     if properties.certifies("positive_definite"):
         return True
@@ -1738,15 +1744,15 @@ def _certifies_nonsingular(operator, /) -> bool:
     return rank is not None and rank == operator.source.size
 
 
-def _operator_columns(operator, coordinates: Array, /) -> Array:
-    def apply(column):
+def _operator_columns(operator: AbstractLinearOperator, coordinates: Array, /) -> Array:
+    def apply(column: Array) -> Array:
         return operator.target.flatten(operator.mv(operator.source.unflatten(column)))
 
     return jax.vmap(apply, in_axes=1, out_axes=1)(coordinates)
 
 
-def _column_norm(space, coordinates: Array, /) -> Array:
-    def norm(column):
+def _column_norm(space: AbstractVectorSpace, coordinates: Array, /) -> Array:
+    def norm(column: Array) -> Array:
         vector = space.unflatten(column)
         squared = jnp.real(space.inner(vector, vector))
         return jnp.sqrt(jnp.maximum(squared, 0.0))
@@ -1754,7 +1760,7 @@ def _column_norm(space, coordinates: Array, /) -> Array:
     return jax.vmap(norm, in_axes=1)(coordinates)
 
 
-def _restore_axes(value: Array, layout, /) -> Array:
+def _restore_axes(value: Array, layout: _PackedRHSLayout, /) -> Array:
     return jnp.asarray(value).reshape(layout.rhs_shape)
 
 

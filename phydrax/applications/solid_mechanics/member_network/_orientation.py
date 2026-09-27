@@ -9,7 +9,8 @@ from enum import IntEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
@@ -49,7 +50,7 @@ class SectionOrientationField(StrictModule, NonTrainableState):
         *,
         continuity_group: ArrayLike | None = None,
         orientation_id: str = "section-orientation-field",
-    ):
+    ) -> None:
         frames_ = jnp.asarray(frames)
         sources_ = jnp.asarray(sources, dtype=jnp.int32)
         if frames_.ndim != 3 or frames_.shape[-2:] != (3, 3):

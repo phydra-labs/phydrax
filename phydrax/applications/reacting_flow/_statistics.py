@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -50,7 +51,7 @@ class ReactiveClosureTargetPlan(StrictModule):
         /,
         *,
         conservation_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(
             system,
             (
@@ -191,7 +192,7 @@ class ReactiveFlowStatisticsPlan(StrictModule):
         system: HomogeneousMixtureEulerSystem
         | HomogeneousMixtureCompressibleNavierStokesSystem,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             system,
             (

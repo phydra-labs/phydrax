@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._interpolation import barycentric_basis
@@ -23,6 +24,16 @@ from ....integration import (
 )
 from ....operators.differential._jet import jet_terms
 from ....special import hankel1
+from ._core import BoundaryPanelization2D
+
+
+if TYPE_CHECKING:
+    from ._helmholtz2d import HelmholtzCombinedField2D, HelmholtzLayerPotential2D
+    from ._laplace2d import LaplaceLayerPotential2D
+
+    _LayerField2D: TypeAlias = (
+        LaplaceLayerPotential2D | HelmholtzLayerPotential2D | HelmholtzCombinedField2D
+    )
 
 
 class QBXEvaluation2D(StrictModule):
@@ -40,7 +51,9 @@ class QBXEvaluation2D(StrictModule):
     expansion_order: int = eqx.field(static=True)
 
 
-def _kernel_value(potential, target: Array, source: Array, normal: Array) -> Array:
+def _kernel_value(
+    potential: _LayerField2D, target: Array, source: Array, normal: Array
+) -> Array:
     from ._helmholtz2d import HelmholtzCombinedField2D, HelmholtzLayerPotential2D
 
     if isinstance(potential, HelmholtzCombinedField2D):
@@ -157,7 +170,7 @@ def _raw_derivatives(normalized: Array, order: int) -> Array:
 
 @eqx.filter_jit
 def _helmholtz_directional_components(
-    potential,
+    potential: HelmholtzLayerPotential2D | HelmholtzCombinedField2D,
     center: Array,
     source: Array,
     normal: Array,
@@ -202,7 +215,7 @@ def _helmholtz_directional_components(
 
 
 def _directional_terms(
-    potential,
+    potential: _LayerField2D,
     center: Array,
     source: Array,
     normal: Array,
@@ -300,7 +313,7 @@ def _panel_plan(
 
 
 def _center_clearance(
-    panelization,
+    panelization: BoundaryPanelization2D,
     center: Array,
     associated_panel: int,
     radius: Array,
@@ -323,7 +336,7 @@ def _center_clearance(
 
 
 def _integrate_center_coefficients(
-    potential,
+    potential: _LayerField2D,
     center: Array,
     direction: Array,
     order: int,
@@ -376,7 +389,9 @@ def _integrate_center_coefficients(
             )(reference)
             density = density_basis @ node_density
 
-            def one(source, normal, jacobian, weight):
+            def one(
+                source: Array, normal: Array, jacobian: Array, weight: Array
+            ) -> Array:
                 return (
                     _directional_terms(
                         potential,
@@ -420,7 +435,7 @@ def _integrate_center_coefficients(
 
 
 def evaluate_qbx_2d(
-    potential,
+    potential: _LayerField2D,
     targets: ArrayLike,
     /,
     *,

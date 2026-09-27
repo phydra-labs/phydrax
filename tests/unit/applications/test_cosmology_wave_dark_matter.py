@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +13,7 @@ from phydrax.applications.cosmology._wave_dark_matter import (
 )
 
 
-def _fourier_space(count=6):
+def _fourier_space(count: Any = 6) -> Any:
     return phx.discretization.TensorSpectralPlan(
         tuple(phx.discretization.FourierBasisPlan(count) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -19,7 +21,13 @@ def _fourier_space(count=6):
     ).prepare(tuple(phx.discretization.AxisDomain.periodic(0.0, 1.0) for _ in range(3)))
 
 
-def _prepared(*, schedule=(1.0, 1.001), policy=None, gravity=0.1, hbar=0.05):
+def _prepared(
+    *,
+    schedule: Any = (1.0, 1.001),
+    policy: Any = None,
+    gravity: Any = 0.1,
+    hbar: Any = 0.05,
+) -> Any:
     space = _fourier_space()
     background = phx.applications.cosmology.FLRWBackground(1.0, 1.0)
     selected = (
@@ -40,7 +48,7 @@ def _prepared(*, schedule=(1.0, 1.001), policy=None, gravity=0.1, hbar=0.05):
     return space, background, prepared
 
 
-def test_uniform_density_has_zero_mean_zero_potential_and_conserved_mass():
+def test_uniform_density_has_zero_mean_zero_potential_and_conserved_mass() -> None:
     space, _, prepared = _prepared(schedule=(1.0, 1.001, 1.002))
     state = prepared.initialize(jnp.ones(space.physical_shape, dtype=jnp.complex128))
 
@@ -58,7 +66,7 @@ def test_uniform_density_has_zero_mean_zero_potential_and_conserved_mass():
     assert not result.diagnostics.dealiasing.exact
 
 
-def test_free_plane_wave_has_analytic_cosmological_phase_and_norm():
+def test_free_plane_wave_has_analytic_cosmological_phase_and_norm() -> None:
     space, background, prepared = _prepared(schedule=(1.0, 1.0005, 1.001))
     x = space.axes[0].nodes[:, None, None]
     initial_psi = jnp.broadcast_to(
@@ -95,7 +103,7 @@ def test_free_plane_wave_has_analytic_cosmological_phase_and_norm():
     assert bool(jnp.all(result.diagnostics.zero_mode_removed))
 
 
-def test_manufactured_poisson_residual_closes_on_retained_modes():
+def test_manufactured_poisson_residual_closes_on_retained_modes() -> None:
     space, _, prepared = _prepared()
     x = space.axes[0].nodes[:, None, None]
     density = 1.0 + 0.1 * jnp.cos(2.0 * jnp.pi * x)
@@ -113,7 +121,7 @@ def test_manufactured_poisson_residual_closes_on_retained_modes():
     assert bool(poisson.successful)
 
 
-def test_fixed_grid_jvp_matches_free_wave_tangent_and_can_be_disabled():
+def test_fixed_grid_jvp_matches_free_wave_tangent_and_can_be_disabled() -> None:
     space, background, prepared = _prepared()
     x = space.axes[0].nodes[:, None, None]
     psi = jnp.broadcast_to(jnp.exp(2j * jnp.pi * x), space.physical_shape)
@@ -145,7 +153,7 @@ def test_fixed_grid_jvp_matches_free_wave_tangent_and_can_be_disabled():
         disabled.jvp(disabled.initialize(psi), tangent)
 
 
-def test_phase_resolution_rejection_rolls_back_and_masks_later_steps():
+def test_phase_resolution_rejection_rolls_back_and_masks_later_steps() -> None:
     policy = WaveDarkMatterStepPolicy(
         maximum_phase_radians=1.0e-6,
         minimum_de_broglie_cells=2.0,
@@ -169,8 +177,9 @@ def test_phase_resolution_rejection_rolls_back_and_masks_later_steps():
     assert int(result.diagnostics.first_failed_step) == 0
 
 
-def test_unsupported_geometry_curvature_state_and_schedule_fail_closed():
+def test_unsupported_geometry_curvature_state_and_schedule_fail_closed() -> None:
     background = phx.applications.cosmology.FLRWBackground(1.0, 1.0)
+    # ty: ignore[invalid-argument-type]
     plan = WaveDarkMatterPlan(1.0, (1.0, 1.001))
     bounded = phx.discretization.TensorSpectralPlan(
         (phx.discretization.ChebyshevBasisPlan(6),),
@@ -198,4 +207,5 @@ def test_unsupported_geometry_curvature_state_and_schedule_fail_closed():
         )
         jax.block_until_ready(state.psi)
     with pytest.raises(ValueError, match="increasing"):
+        # ty: ignore[invalid-argument-type]
         WaveDarkMatterPlan(1.0, (1.0, 1.0))

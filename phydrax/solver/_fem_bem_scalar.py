@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -41,6 +42,7 @@ from ..operators.integral.layer_potential._laplace3d import (
 from ..operators.integral.layer_potential._scalar_calderon3d import (
     ScalarCalderonDP0Galerkin3D,
 )
+from ..operators.integral.layer_potential._surface3d import SurfaceTargetReport3D
 
 
 _FORMULATION = (
@@ -106,7 +108,7 @@ class ScalarLaplaceFEMBEMResult3D(StrictModule, ExplicitFreeze):
         /,
         *,
         accuracy_clearance: float = 0.0,
-    ):
+    ) -> tuple[Array, tuple[SurfaceTargetReport3D, SurfaceTargetReport3D]]:
         """Evaluate ``D gamma0+ - S gamma1+`` at certified exterior targets."""
 
         double_values, double_report = evaluate_laplace_layer_3d(
@@ -175,7 +177,9 @@ class PreparedScalarLaplaceFEMBEM3D(StrictModule, NonTrainableState):
         values = self.mass_operator.source.validate(volume_source_coefficients)
         return self.mass_operator.mv(values)
 
-    def right_hand_side(self, volume_source_coefficients: ArrayLike, /):
+    def right_hand_side(
+        self, volume_source_coefficients: ArrayLike, /
+    ) -> tuple[Array, Array]:
         """Return the interior volume load and homogeneous exterior equation."""
 
         load = self.volume_load(volume_source_coefficients)
@@ -398,6 +402,15 @@ def solve_scalar_laplace_fem_bem_3d(
     )
     double_layer = prepared.calderon.double_layer_potential(trace)
     single_layer = prepared.calderon.single_layer_potential(conormal)
+    # Preparation admits only the Laplace Calderon kernel family.
+    if not (isinstance(double_layer, LaplaceLayerPotential3D)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(double_layer, LaplaceLayerPotential3D)."
+        )
+    if not (isinstance(single_layer, LaplaceLayerPotential3D)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(single_layer, LaplaceLayerPotential3D)."
+        )
     finite = (
         jnp.all(jnp.isfinite(interior))
         & jnp.all(jnp.isfinite(conormal))

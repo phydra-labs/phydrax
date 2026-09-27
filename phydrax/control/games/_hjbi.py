@@ -13,13 +13,15 @@ from typing import Any, Literal, NamedTuple, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from ..._dtype_names import inexact_result_type
 from ..._interpolation import linear_interpolate
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import TimeGrid
+from ...typing import parse
 from ..stochastic._hjb import (
     _finite_real_array,
     _nonnegative_tolerance,
@@ -94,7 +96,7 @@ class DiscreteZeroSumHJBIProblem(StrictModule, NonTrainableState):
         args: Any = None,
         corner_tolerance: float = 0.0,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(spatial_grid, BoundedUniformGrid1D):
             raise TypeError("spatial_grid must be a BoundedUniformGrid1D.")
         if not isinstance(time_grid, TimeGrid):
@@ -261,10 +263,7 @@ class _RawHJBI(NamedTuple):
 
 
 def _action_order(value: str, name: str, /) -> HJBIActionOrder:
-    order = str(value)
-    if order not in ("max_min", "min_max"):
-        raise ValueError(f"{name} must be 'max_min' or 'min_max'.")
-    return order
+    return parse(str(value), HJBIActionOrder, name)
 
 
 def _callback_scalar(

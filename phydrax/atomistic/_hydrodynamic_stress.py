@@ -9,7 +9,8 @@ from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -42,7 +43,7 @@ class HydrodynamicStressPlan(StrictModule):
         require_brownian_extra: bool = False,
         stress_symmetry_tolerance: float = 1.0e-10,
         incompressibility_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         values = (dynamic_viscosity, volume, boltzmann_constant)
         if any(
             not math.isfinite(float(value)) or float(value) <= 0.0 for value in values

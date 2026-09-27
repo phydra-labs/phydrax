@@ -13,7 +13,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import lineax as lx
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.axes as cx
 
@@ -25,6 +27,7 @@ from .._uncertainty import UncertaintySource, validate_uncertainty_source
 from ..discretization import DiscretizationBundle, RealizedTemporalMesh
 from ..metrix import AbstractStateGeometry
 from ..stochastic._wiener import WienerRealization
+from ..typing import parse
 from ._solution_validation import validate_solution_arrays
 from ._temporal_method import TemporalSolveEvidence
 from ._wiener_operator import WienerNoiseLayout
@@ -33,7 +36,7 @@ from ._wiener_operator import WienerNoiseLayout
 DifferentialInterpretation: TypeAlias = Literal["ito", "stratonovich"]
 NoiseStructure: TypeAlias = Literal["additive", "commutative", "general"]
 WienerCoefficientRepresentation: TypeAlias = Literal["dense", "diagonal", "operator"]
-DifferentialVectorField: TypeAlias = Callable[[Array, Array, Any], ArrayLike]
+DifferentialVectorField: TypeAlias = Callable[[Array, PyTree, Any], PyTree]
 WienerCoefficient: TypeAlias = Callable[[Array, Array, Any], Any]
 
 
@@ -57,7 +60,7 @@ class WienerTerm(StrictModule):
         structure: NoiseStructure = "general",
         basis_id: str | None = None,
         representation: WienerCoefficientRepresentation = "dense",
-    ):
+    ) -> None:
         if not isinstance(name, str) or not name:
             raise ValueError("WienerTerm name must be a non-empty string.")
         if not callable(coefficient):
@@ -65,14 +68,10 @@ class WienerTerm(StrictModule):
         shape = tuple(noise_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("WienerTerm noise dimensions must be positive.")
-        if structure not in ("additive", "commutative", "general"):
-            raise ValueError(
-                "WienerTerm structure must be 'additive', 'commutative', or 'general'."
-            )
-        if representation not in ("dense", "diagonal", "operator"):
-            raise ValueError(
-                "WienerTerm representation must be 'dense', 'diagonal', or 'operator'."
-            )
+        structure = parse(structure, NoiseStructure, "structure")
+        representation = parse(
+            representation, WienerCoefficientRepresentation, "representation"
+        )
         if basis_id is not None and (not isinstance(basis_id, str) or not basis_id):
             raise ValueError("WienerTerm basis_id must be non-empty or None.")
         self.name = name
@@ -289,7 +288,7 @@ class DifferentialProblem(StrictModule):
         state_geometry: AbstractStateGeometry | None = None,
         discretization_bundle: DiscretizationBundle | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(drift):
             raise TypeError("DifferentialProblem drift must be callable.")
         start = jnp.asarray(t0, dtype=jnp.float64)
@@ -306,8 +305,9 @@ class DifferentialProblem(StrictModule):
             ~(end > start),
             "DifferentialProblem requires t1 > t0.",
         )
-        if interpretation not in ("ito", "stratonovich"):
-            raise ValueError("interpretation must be 'ito' or 'stratonovich'.")
+        interpretation = parse(
+            interpretation, DifferentialInterpretation, "interpretation"
+        )
 
         state_is_array = eqx.is_array_like(initial_state)
         state = (
@@ -531,7 +531,7 @@ class DifferentialSolution(StrictModule):
         temporal_evidence: TemporalSolveEvidence | None = None,
         problem_id: str | None = None,
         iteration_evidence: IterationEvidence | None = None,
-    ):
+    ) -> None:
         if eqx.is_array_like(states):
             arrays = validate_solution_arrays(
                 times,
@@ -622,8 +622,9 @@ class DifferentialSolution(StrictModule):
             raise ValueError("DifferentialSolution solver_id must be non-empty.")
         if not isinstance(resolved_solver_method, str) or not resolved_solver_method:
             raise ValueError("DifferentialSolution resolved_method must be non-empty.")
-        if interpretation not in ("ito", "stratonovich"):
-            raise ValueError("interpretation must be 'ito' or 'stratonovich'.")
+        interpretation = parse(
+            interpretation, DifferentialInterpretation, "interpretation"
+        )
         if state_geometry_id is not None and (
             not isinstance(state_geometry_id, str) or not state_geometry_id
         ):

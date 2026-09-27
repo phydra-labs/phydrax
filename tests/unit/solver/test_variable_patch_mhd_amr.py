@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_variable_patch_reflux_curl_preserves_discrete_divergence():
+def test_variable_patch_reflux_curl_preserves_discrete_divergence() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(2),

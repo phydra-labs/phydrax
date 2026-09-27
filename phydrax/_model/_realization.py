@@ -9,7 +9,7 @@ from typing import Any, final, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._differentiation import _identifier
 from .._trainable import fixed_field
@@ -55,7 +55,7 @@ class FrozenRealization(AbstractArrayModel):
         /,
         *,
         realization_id: str,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("FrozenRealization requires an AbstractArrayModel.")
         self.model = model

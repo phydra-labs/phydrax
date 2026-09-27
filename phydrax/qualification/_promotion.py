@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Mapping
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, TYPE_CHECKING
 
 from .._fingerprint import canonical_fingerprint, canonical_json
 from ..logging import emit
@@ -20,6 +22,10 @@ from ._trust import (
     QualificationRoleTrust,
     SignedQualificationRecord,
 )
+
+
+if TYPE_CHECKING:
+    from ..service._security import AsymmetricSigner
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +91,7 @@ class PromotionState:
         }
 
     @classmethod
-    def from_record(cls, record, /):
+    def from_record(cls, record: Mapping[str, Any], /) -> PromotionState:
         if record.get("kind") != "promotion-state":
             raise ValueError("Invalid promotion-state record.")
         values = {
@@ -126,7 +132,7 @@ class PromotionRepository:
     restoring the entire repository to an older filesystem snapshot.
     """
 
-    def __init__(self, path: str | Path, /):
+    def __init__(self, path: str | Path, /) -> None:
         self.path = str(path)
         with closing(self._connect()) as connection:
             connection.executescript("""
@@ -148,7 +154,7 @@ class PromotionRepository:
                     BEGIN SELECT RAISE(ABORT, 'promotion floor cannot be deleted'); END;
             """)
 
-    def _connect(self):
+    def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=30, isolation_level=None)
         connection.execute("PRAGMA synchronous=FULL")
         return connection
@@ -222,8 +228,10 @@ class PromotionRepository:
     ) -> PromotionState:
         state.verify(trust_policy.roles, at_time=at_time)
         if state.index_id is not None:
-            _validate_index(index, trust_policy, state.distribution_id, at_time)
-            if index.index_id != state.index_id:
+            validated = _validate_index(
+                index, trust_policy, state.distribution_id, at_time
+            )
+            if validated.index_id != state.index_id:
                 raise ValueError("Promotion index was substituted.")
         elif index is not None:
             raise ValueError("An empty channel transition cannot retain an active index.")
@@ -301,7 +309,12 @@ class PromotionRepository:
         return state
 
 
-def _validate_index(index, trust_policy, distribution_id, at_time):
+def _validate_index(
+    index: ReleaseIndex | None,
+    trust_policy: AsymmetricReleaseTrustPolicy,
+    distribution_id: str | None,
+    at_time: int,
+) -> ReleaseIndex:
     if not isinstance(index, ReleaseIndex) or not distribution_id:
         raise ValueError(
             "An active promotion requires an exact signed index and distribution."
@@ -323,11 +336,12 @@ def _validate_index(index, trust_policy, distribution_id, at_time):
                     "Promotion proof is missing or belongs to a different distribution."
                 )
             proofs[0].verify(trust_policy, at_time=at_time)
+    return index
 
 
 def advance_channel(
     repository: PromotionRepository,
-    signer,
+    signer: AsymmetricSigner,
     trust_policy: AsymmetricReleaseTrustPolicy,
     /,
     *,
@@ -347,9 +361,9 @@ def advance_channel(
         raise PromotionConflictError("Promotion compare-and-swap predecessor changed.")
     if action in ("promote", "rollback"):
         try:
-            _validate_index(index, trust_policy, distribution_id, at_time)
+            validated = _validate_index(index, trust_policy, distribution_id, at_time)
             if action == "rollback" and not any(
-                state.index_id == index.index_id for state in history
+                state.index_id == validated.index_id for state in history
             ):
                 raise ValueError("Rollback target was never admitted on this channel.")
         except (ValueError, TypeError, KeyError, RuntimeError):
@@ -379,7 +393,7 @@ def advance_channel(
                 for gate in profile.release_evidence
             ),
         )
-    content = {
+    content: dict[str, Any] = {
         "kind": "promotion-state",
         "channel": channel,
         "generation": 1 if previous is None else previous.generation + 1,

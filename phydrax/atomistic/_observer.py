@@ -8,7 +8,7 @@ from abc import abstractmethod
 from typing import Any
 
 import equinox as eqx
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from ._dynamics import AtomisticDynamicsState, PreparedAtomisticDynamics

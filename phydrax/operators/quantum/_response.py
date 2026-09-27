@@ -11,7 +11,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -28,7 +29,7 @@ class QuantumSectorProbe(StrictModule):
     target_basis_id: str = eqx.field(static=True)
     charge_delta: int = eqx.field(static=True)
 
-    def __init__(self, operator: QuantumSectorOperator, /, *, probe_id: str):
+    def __init__(self, operator: QuantumSectorOperator, /, *, probe_id: str) -> None:
         if not isinstance(operator, QuantumSectorOperator):
             raise TypeError("operator must be QuantumSectorOperator.")
         identifier = str(probe_id)
@@ -68,7 +69,7 @@ class ZeroTemperatureResponsePlan(StrictModule):
         positivity_tolerance: float = 1e-10,
         source_tolerance: float = 1e-8,
         required_window: tuple[float, float] | None = None,
-    ):
+    ) -> None:
         values = np.asarray(frequencies, dtype=np.float64)
         eta = float(broadening)
         moments = int(moment_count)
@@ -193,7 +194,7 @@ class FiniteTemperatureResponsePlan(StrictModule):
         maximum_workspace_bytes: int,
         positivity_tolerance: float = 1e-8,
         kms_tolerance: float = 1e-2,
-    ):
+    ) -> None:
         times_ = np.asarray(times, dtype=np.float64)
         frequencies_ = np.asarray(frequencies, dtype=np.float64)
         window_ = np.asarray(window, dtype=np.float64)

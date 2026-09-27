@@ -8,7 +8,8 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -32,6 +33,7 @@ from ..linalg import (
 from ..sparse import SparseLinearMap
 from ._network import (
     _compile_topology,
+    _CompiledTopology,
     _flatten_definition,
     _Flattened,
     ScatteringNetworkDiagnostics,
@@ -76,7 +78,7 @@ class ScatteringActionPolicy(StrictModule):
         compatibility_atol: float = 1e-12,
         residual_tolerance: float = 1e-8,
         linear: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         limits = (
             int(maximum_channels),
             int(maximum_operator_bytes),
@@ -170,7 +172,9 @@ class _ScatteringSystemAction(StrictModule):
         return value - self.connection.mv(self.scattering.mv(value))
 
 
-def _connection_structure(compiled) -> tuple[list[int], list[int]]:
+def _connection_structure(
+    compiled: _CompiledTopology,
+) -> tuple[list[int], list[int]]:
     sources: list[int] = []
     targets: list[int] = []
     flat, connection_blocks = compiled[0], compiled[5]

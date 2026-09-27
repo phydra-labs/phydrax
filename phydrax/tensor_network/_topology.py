@@ -20,7 +20,7 @@ class ContractionLeg(StrictModule):
     label: str = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
 
-    def __init__(self, label: str, dimension: int, /):
+    def __init__(self, label: str, dimension: int, /) -> None:
         label_ = str(label)
         dimension_ = int(dimension)
         if not label_ or dimension_ < 1:
@@ -40,7 +40,7 @@ class ContractionOperand(StrictModule):
         operand_id: str,
         legs: Sequence[ContractionLeg] = (),
         /,
-    ):
+    ) -> None:
         identifier = str(operand_id)
         values = tuple(legs)
         if not identifier:
@@ -74,7 +74,7 @@ class ContractionStructure(StrictModule):
         /,
         *,
         arithmetic_domain: str = "ordinary",
-    ):
+    ) -> None:
         values = tuple(operands)
         output_labels = tuple(str(label) for label in outputs)
         if not values or any(
@@ -155,7 +155,7 @@ class CircuitGate(StrictModule):
     gate_id: str = eqx.field(static=True)
     wires: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, gate_id: str, wires: Sequence[int], /):
+    def __init__(self, gate_id: str, wires: Sequence[int], /) -> None:
         identifier = str(gate_id)
         wires_ = tuple(wires)
         if not identifier or not wires_ or len(set(wires_)) != len(wires_):

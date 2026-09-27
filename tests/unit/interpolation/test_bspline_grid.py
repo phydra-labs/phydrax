@@ -20,7 +20,7 @@ from phydrax._interpolation import (
 )
 
 
-def test_open_uniform_grid_preserves_kan_grid_contract():
+def test_open_uniform_grid_preserves_kan_grid_contract() -> None:
     grid = BSplineGrid.open_uniform(3, 8)
 
     assert grid.degree == 3
@@ -34,7 +34,7 @@ def test_open_uniform_grid_preserves_kan_grid_contract():
     assert phx.nn.models.BSplineGrid is BSplineGrid
 
 
-def test_homogeneous_grid_bank_matches_independent_grid_evaluation():
+def test_homogeneous_grid_bank_matches_independent_grid_evaluation() -> None:
     grids = (
         BSplineGrid.open_uniform(3, 4),
         BSplineGrid(
@@ -90,7 +90,7 @@ def test_homogeneous_grid_bank_matches_independent_grid_evaluation():
     )
 
 
-def test_trainable_grid_is_ordered_bounded_and_differentiable():
+def test_trainable_grid_is_ordered_bounded_and_differentiable() -> None:
     grid = TrainableBSplineGrid(
         jnp.asarray([-8.0, -2.0, 0.0, 1.0, 7.0]),
         3,
@@ -99,7 +99,7 @@ def test_trainable_grid_is_ordered_bounded_and_differentiable():
     coefficients = jnp.asarray([0.2, -0.7, 1.1, 0.4, -0.3, 0.8, -0.1, 0.5])
     query = jnp.asarray(0.17)
 
-    def evaluate(logits):
+    def evaluate(logits: Any) -> Any:
         candidate = eqx.tree_at(lambda value: value.raw_span_logits, grid, logits)
         return bspline_evaluate(
             candidate.knots,
@@ -125,7 +125,7 @@ def test_trainable_grid_is_ordered_bounded_and_differentiable():
     )
 
 
-def test_trainable_grid_quadrature_and_regularization_follow_live_spans():
+def test_trainable_grid_quadrature_and_regularization_follow_live_spans() -> None:
     fixed = BSplineGrid(
         jnp.asarray(
             [-1.0, -1.0, -1.0, -1.0, -0.75, -0.2, 0.18, 0.81, 1.0, 1.0, 1.0, 1.0]
@@ -157,7 +157,7 @@ def test_trainable_grid_quadrature_and_regularization_follow_live_spans():
     )
 
 
-def test_nonuniform_repeated_and_unclamped_grid_metadata():
+def test_nonuniform_repeated_and_unclamped_grid_metadata() -> None:
     knots = jnp.asarray([-1.0, 0.0, 0.0, 0.3, 0.3, 0.8, 1.0, 1.0, 2.0])
     grid = BSplineGrid(knots, 2)
 
@@ -168,7 +168,7 @@ def test_nonuniform_repeated_and_unclamped_grid_metadata():
     assert not grid.is_uniform
 
 
-def test_span_quadrature_integrates_polynomials_exactly():
+def test_span_quadrature_integrates_polynomials_exactly() -> None:
     grid = BSplineGrid(
         jnp.asarray([0.0, 0.0, 0.0, 0.0, 0.13, 0.4, 0.4, 0.87, 1.0, 1.0, 1.0, 1.0]),
         3,
@@ -186,7 +186,7 @@ def test_span_quadrature_integrates_polynomials_exactly():
     assert float(jnp.sum(derivative_weights)) == pytest.approx(1.0, abs=1e-13)
 
 
-def test_kan_basis_accepts_an_explicit_nonuniform_grid():
+def test_kan_basis_accepts_an_explicit_nonuniform_grid() -> None:
     grid = BSplineGrid(
         jnp.asarray([-1.0, -1.0, -1.0, -0.7, -0.15, 0.55, 1.0, 1.0, 1.0]),
         2,
@@ -218,12 +218,14 @@ def test_kan_basis_accepts_an_explicit_nonuniform_grid():
         ([0.0, 0.0, 0.0, 0.0], 1, ValueError, "multiplicity"),
     ],
 )
-def test_grid_validation_rejects_invalid_knot_contracts(knots, degree, error, message):
+def test_grid_validation_rejects_invalid_knot_contracts(
+    knots: Any, degree: Any, error: Any, message: Any
+) -> None:
     with pytest.raises(error, match=message):
         BSplineGrid(jnp.asarray(knots), degree)
 
 
-def test_grid_constructor_validation():
+def test_grid_constructor_validation() -> None:
     invalid_degree: Any = 2.5
     with pytest.raises(TypeError, match="integer"):
         BSplineGrid.open_uniform(3, invalid_degree)

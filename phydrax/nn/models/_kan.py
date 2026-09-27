@@ -9,12 +9,13 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...typing import PRNGKey
 from .._base import _AbstractBaseModel
 from .._contracts import AFFINE, compose_regularity, SMOOTH, sum_regularity
 from .._keys import EvalKey
@@ -54,7 +55,7 @@ class KANEdgeBlock(StrictModule, ParameterOwner):
         input_indices: Sequence[int],
         edge_basis: AbstractEdgeBasis,
         coeffs: Any,
-    ):
+    ) -> None:
         outputs = tuple(output_indices)
         inputs = tuple(input_indices)
         if not outputs or len(outputs) != len(inputs):
@@ -125,8 +126,8 @@ class KANLayer(StrictModule):
         init: Literal["default", "identity"] = "default",
         autoscale: bool = False,
         use_bias: bool = True,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         in_size_c = _canonical_size(in_size)
         out_size_c = _canonical_size(out_size)
         in_shape = _get_value_shape(in_size_c)
@@ -311,8 +312,8 @@ class KAN(_AbstractBaseModel):
         skip_connection: bool = True,
         use_bias: bool = True,
         scan: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         in_size_c = _canonical_size(in_size)
         out_size_c = _canonical_size(out_size)
         in_shape = _get_value_shape(in_size_c)

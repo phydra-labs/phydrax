@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ._minibatch_posterior import MinibatchPosteriorProblem, MinibatchSource
@@ -36,7 +37,7 @@ class MinibatchPosteriorCapabilities(StrictModule):
         observation_variance: bool,
         observation_sampling: bool,
         full_log_density: bool,
-    ):
+    ) -> None:
         has_factorized_prior = bool(factorized_prior)
         has_full_density = bool(full_log_density)
         self.factorized_prior = has_factorized_prior
@@ -96,7 +97,7 @@ class MinibatchPosteriorDiagnostics(StrictModule):
         full_log_density_matches: bool | None,
         full_gradient_matches: bool | None,
         failures: tuple[str, ...],
-    ):
+    ) -> None:
         self.capabilities = capabilities
         self.initial_log_density_estimate = jnp.asarray(initial_log_density_estimate)
         self.epoch_log_density = jnp.asarray(epoch_log_density)

@@ -8,9 +8,12 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax import Array
+from jax.typing import ArrayLike
 
+from ..._dtype_names import real_precision_dtype_name
 from ..._fingerprint import canonical_fingerprint
-from ..._precision import precision_itemsize, real_precision_dtype_name
+from ..._precision import precision_itemsize
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
@@ -31,7 +34,7 @@ class VortexPrecisionPolicy(StrictModule, NonTrainableState):
         compute_dtype: Any | None = None,
         accumulation_dtype: Any | None = None,
         output_dtype: Any | None = None,
-    ):
+    ) -> None:
         coordinate = (
             None
             if coordinate_dtype is None
@@ -76,11 +79,11 @@ class VortexPrecisionPolicy(StrictModule, NonTrainableState):
             )
         return observed
 
-    def compute(self, value: Any, /):
+    def compute(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         return array if self.compute_dtype is None else array.astype(self.compute_dtype)
 
-    def accumulation(self, value: Any, /):
+    def accumulation(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         return (
             array
@@ -88,11 +91,18 @@ class VortexPrecisionPolicy(StrictModule, NonTrainableState):
             else array.astype(self.accumulation_dtype)
         )
 
-    def output(self, value: Any, /):
+    def output(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         return array if self.output_dtype is None else array.astype(self.output_dtype)
 
-    def sum(self, value: Any, /, *, axis: Any = None, keepdims: bool = False):
+    def sum(
+        self,
+        value: ArrayLike,
+        /,
+        *,
+        axis: int | tuple[int, ...] | None = None,
+        keepdims: bool = False,
+    ) -> Array:
         return jnp.sum(self.accumulation(value), axis=axis, keepdims=keepdims)
 
 

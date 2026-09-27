@@ -78,7 +78,7 @@ class _Parser:
         exponent := [+-] integer ["/" integer] | "(" exponent ")"
     """
 
-    def __init__(self, expression: str, tokens: tuple[_Token, ...], /):
+    def __init__(self, expression: str, tokens: tuple[_Token, ...], /) -> None:
         self.expression = expression
         self.tokens = tokens
         self.position = 0
@@ -109,8 +109,8 @@ class _Parser:
 
     def parse(self) -> tuple[UnitComponent, ...]:
         factors = self.product()
-        if self.peek() is not None:
-            raise self.fail(f"has an unexpected {self.peek()[1]!r}")
+        if (token := self.peek()) is not None:
+            raise self.fail(f"has an unexpected {token[1]!r}")
         return factors
 
     def product(self) -> tuple[UnitComponent, ...]:

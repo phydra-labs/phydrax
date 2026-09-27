@@ -4,11 +4,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeAlias
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 
@@ -18,6 +19,10 @@ from ._gaussian_factor import (
     gaussian_factor_log_determinant,
     gaussian_factor_quadratic_form,
 )
+
+
+# (mean, covariance, normalized innovation squared, log likelihood, valid, finite).
+_ConditioningOutputs: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
 class GaussianConditioningResult(StrictModule):
@@ -124,7 +129,7 @@ def condition_gaussian_moments(
         & jnp.all(jnp.isfinite(innovation))
     )
 
-    def solve_update(_):
+    def solve_update(_: None) -> _ConditioningOutputs:
         solve_result = la.solve(
             la.LinearSystem(
                 la.DenseLinearOperator(
@@ -184,7 +189,7 @@ def condition_gaussian_moments(
             finite,
         )
 
-    def skip_update(_):
+    def skip_update(_: None) -> _ConditioningOutputs:
         finite = (
             jnp.all(jnp.isfinite(mean))
             & jnp.all(jnp.isfinite(covariance))

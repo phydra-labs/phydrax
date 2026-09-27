@@ -11,6 +11,7 @@ import equinox as eqx
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from .._tensor_support import GridLocation, PreparedTensorGrid
 
 
@@ -32,16 +33,8 @@ class GridRegion(StrictModule, NonTrainableState):
     kind: GridRegionKind = eqx.field(static=True)
     region_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: GridRegionKind, /, *, region_id: str | None = None):
-        if kind not in (
-            "interior",
-            "physical_boundary",
-            "owned",
-            "halo",
-            "coarse_fine",
-            "full",
-        ):
-            raise ValueError("Unknown grid region kind.")
+    def __init__(self, kind: GridRegionKind, /, *, region_id: str | None = None) -> None:
+        kind = parse(kind, GridRegionKind, "kind")
         identifier = (
             canonical_fingerprint({"kind": "grid-region", "region": kind})
             if region_id is None
@@ -80,7 +73,7 @@ class DerivativeRequest(StrictModule, NonTrainableState):
         source_location: GridLocation | None = None,
         target_location: GridLocation | None = None,
         request_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("grid must be a PreparedTensorGrid.")
         name_ = str(name)
@@ -91,16 +84,13 @@ class DerivativeRequest(StrictModule, NonTrainableState):
         accuracy = int(accuracy_order)
         if derivative <= 0 or accuracy <= 0:
             raise ValueError("Derivative and accuracy orders must be positive.")
-        if bias not in ("centered", "forward", "backward"):
-            raise ValueError("Unknown stencil bias.")
+        bias = parse(bias, StencilBias, "bias")
         axis_index = grid.axis_names.index(axis_)
-        boundary_ = (
+        boundary_: BoundaryClosureKind = (
             ("periodic" if grid.axes[axis_index].periodic else "one_sided")
             if boundary is None
-            else boundary
+            else parse(boundary, BoundaryClosureKind, "boundary")
         )
-        if boundary_ not in ("periodic", "one_sided"):
-            raise ValueError("Unknown boundary closure kind.")
         if boundary_ == "periodic" and not grid.axes[axis_index].periodic:
             raise ValueError("Periodic closure requires a periodic axis.")
         source = grid.centered_location if source_location is None else source_location

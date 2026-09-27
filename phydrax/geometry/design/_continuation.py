@@ -6,16 +6,18 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from math import isfinite
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...optim import DifferentialEvolutionSearch
+from ...typing import PRNGKey
 from .._contracts import CompiledGeometry, GeometrySource, GeometryTolerance
 from ..analytic._operations import BlendCSG, SharpCSG
 from ._constraints import AbstractDesignConstraint, DesignConstraintSystem
@@ -35,7 +37,7 @@ class CSGContinuationPolicy(StrictModule):
         /,
         *,
         terminal_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         widths_ = tuple(float(value) for value in widths)
         if not widths_ or any(not isfinite(value) or value <= 0.0 for value in widths_):
             raise ValueError("CSG continuation widths must be finite and positive.")
@@ -81,7 +83,7 @@ class CSGContinuationResult(StrictModule):
 
 
 class _SmoothBuild:
-    def __init__(self):
+    def __init__(self) -> None:
         self.width_ids: list[ParameterId] = []
 
     def convert(self, source: GeometrySource, path: str = "root") -> GeometrySource:
@@ -218,7 +220,7 @@ def solve_csg_continuation(
     *,
     initial_state: DesignState | None = None,
     search: DifferentialEvolutionSearch | None = None,
-    key: Key[Array, ""] | None = None,
+    key: PRNGKey | None = None,
     bounds: Mapping[ParameterId, tuple[ArrayLike, ArrayLike]] | None = None,
     solve_options: Mapping[str, Any] | None = None,
 ) -> CSGContinuationResult:
@@ -243,9 +245,11 @@ def solve_csg_continuation(
         if search is None:
             result = system.solve(initial_state=state, **options)
         else:
+            # A non-None search was validated above to come with an explicit key.
+            search_key = cast(PRNGKey, key)
             result = system.search(
                 search,
-                key=jr.fold_in(key, epoch),
+                key=jr.fold_in(search_key, epoch),
                 bounds=bounds,
                 initial_state=state,
             )

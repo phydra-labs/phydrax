@@ -49,7 +49,7 @@ class DataLineage(StrictModule, NonTrainableState):
         publisher_id: str = "",
         upstream_lineage_ids: Sequence[str] = (),
         transformation_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         source = _text(source_id, "source_id")
         dataset = _text(dataset_id, "dataset_id")
         publisher = _text(publisher_id, "publisher_id", optional=True)

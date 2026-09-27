@@ -3,11 +3,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Hashable, Iterable, Sequence
+from typing import Any, cast, SupportsFloat, SupportsIndex, TypeAlias, TypedDict
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
+from jax import Array
 
 from ..._strict import StrictModule
 from ...optim import (
@@ -20,7 +23,29 @@ from ...optim import (
     QuadraticProgram,
     refresh_convex_program,
 )
-from ._spec import _positive, EnergySystem, Horizon, profile
+from ._spec import (
+    _positive,
+    Converter,
+    EnergySystem,
+    Horizon,
+    Inventory,
+    profile,
+    ScenarioTree,
+    Source,
+)
+
+
+_Term: TypeAlias = tuple[SupportsIndex, SupportsFloat]
+_Row: TypeAlias = tuple[dict[int, float], float]
+
+
+class _ProgramData(TypedDict):
+    equality_matrix: Array
+    equality_rhs: Array
+    inequality_matrix: Array
+    inequality_rhs: Array
+    bounds: Bounds
+    problem_id: str
 
 
 class EnergyScaling(StrictModule):
@@ -33,7 +58,7 @@ class EnergyScaling(StrictModule):
     dynamics: float = 1.0
     objective: float = 1.0
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         for value in (
             self.flow,
             self.inventory,
@@ -84,7 +109,8 @@ def information_keys(
     tree = spec.chronology.scenario_tree
     result = []
     for h in spec.chronology.horizons if horizon is None else (horizon,):
-        path = None if tree is None else tree.ancestors(h.scenario)
+        # Chronology validation requires a scenario on every scenario-tree horizon.
+        path = None if tree is None else tree.ancestors(cast(str, h.scenario))
         for t in range(len(h.durations) + int(state)):
             if path is None:
                 result.append((h.name, t))
@@ -96,29 +122,35 @@ def information_keys(
 
 
 class _Builder:
-    def __init__(self, scaling):
+    def __init__(self, scaling: EnergyScaling) -> None:
         self.scaling = scaling
-        self.lower, self.upper, self.linear, self.quadratic = [], [], [], []
-        self.variables, self.rows, self.binary = [], [], []
-        self.equalities, self.inequalities = [], []
-        self.equality_lookup = {}
-        self.coordinate_scale = []
-        self.shared = {}
+        self.lower: list[float] = []
+        self.upper: list[float] = []
+        self.linear: list[float] = []
+        self.quadratic: list[float] = []
+        self.variables: list[EnergyVariable] = []
+        self.rows: list[EnergyRow] = []
+        self.binary: list[int] = []
+        self.equalities: list[_Row] = []
+        self.inequalities: list[_Row] = []
+        self.equality_lookup: dict[tuple[tuple[tuple[int, float], ...], float], int] = {}
+        self.coordinate_scale: list[float] = []
+        self.shared: dict[tuple[str, Hashable], int] = {}
 
     def variable(
         self,
-        name,
-        size,
+        name: str,
+        size: int,
         *,
-        scale=1.0,
-        lower=0.0,
-        upper=np.inf,
-        cost=0.0,
-        quadratic=0.0,
-        binary=False,
-        keys=None,
-        namespace=None,
-    ):
+        scale: float = 1.0,
+        lower: npt.ArrayLike = 0.0,
+        upper: npt.ArrayLike = np.inf,
+        cost: npt.ArrayLike = 0.0,
+        quadratic: npt.ArrayLike = 0.0,
+        binary: bool = False,
+        keys: Sequence[Hashable] | None = None,
+        namespace: str | None = None,
+    ) -> npt.NDArray[np.int64]:
         lo, hi, c, q = [
             np.broadcast_to(np.asarray(value), (size,))
             for value in (lower, upper, cost, quadratic)
@@ -147,8 +179,16 @@ class _Builder:
         self.variables.append(EnergyVariable(name, tuple(indices), scale))
         return np.asarray(indices, dtype=np.int64)
 
-    def row(self, name, terms, rhs=0.0, *, equality=False, scale=1.0):
-        combined = {}
+    def row(
+        self,
+        name: str,
+        terms: Iterable[_Term],
+        rhs: SupportsFloat = 0.0,
+        *,
+        equality: bool = False,
+        scale: float = 1.0,
+    ) -> None:
+        combined: dict[int, float] = {}
         for index, coefficient in terms:
             combined[int(index)] = (
                 combined.get(int(index), 0.0)
@@ -166,10 +206,10 @@ class _Builder:
                 self.equality_lookup[key] = index
         self.rows.append(EnergyRow(name, index, equality, scale))
 
-    def program(self):
+    def program(self) -> LinearProgram | QuadraticProgram:
         n = len(self.lower)
 
-        def matrix(rows):
+        def matrix(rows: list[_Row]) -> tuple[Array, Array]:
             a, b = np.zeros((len(rows), n)), np.zeros(len(rows))
             for i, (terms, rhs) in enumerate(rows):
                 for j, value in terms.items():
@@ -179,14 +219,14 @@ class _Builder:
 
         a, b = matrix(self.equalities)
         g, h = matrix(self.inequalities)
-        kwargs = dict(
-            equality_matrix=a,
-            equality_rhs=b,
-            inequality_matrix=g,
-            inequality_rhs=h,
-            bounds=Bounds(jnp.asarray(self.lower), jnp.asarray(self.upper)),
-            problem_id="energy-system",
-        )
+        kwargs: _ProgramData = {
+            "equality_matrix": a,
+            "equality_rhs": b,
+            "inequality_matrix": g,
+            "inequality_rhs": h,
+            "bounds": Bounds(jnp.asarray(self.lower), jnp.asarray(self.upper)),
+            "problem_id": "energy-system",
+        }
         c = jnp.asarray(self.linear)
         if any(value != 0 for value in self.quadratic):
             return QuadraticProgram(
@@ -198,7 +238,14 @@ class _Builder:
         return LinearProgram(c, **kwargs)
 
 
-def _lower(spec: EnergySystem, exact: bool, scaling: EnergyScaling):
+def _lower(
+    spec: EnergySystem, exact: bool, scaling: EnergyScaling
+) -> tuple[
+    LinearProgram | QuadraticProgram,
+    tuple[EnergyVariable, ...],
+    tuple[EnergyRow, ...],
+    tuple[int, ...],
+]:
     # Revalidate replaced Equinox specifications as well as ordinarily constructed ones.
     spec.__check_init__()
     chronology, n = spec.chronology, spec.chronology.size
@@ -206,8 +253,8 @@ def _lower(spec: EnergySystem, exact: bool, scaling: EnergyScaling):
     accounting = chronology.accounting_weight
     keys, slices = information_keys(spec), chronology.slices()
     b = _Builder(scaling)
-    investment_vars = {}
-    budget_terms = []
+    investment_vars: dict[str, np.int64] = {}
+    budget_terms: list[_Term] = []
     for investment in spec.investments:
         if investment.maximum <= 0:
             continue
@@ -228,7 +275,10 @@ def _lower(spec: EnergySystem, exact: bool, scaling: EnergyScaling):
             probability = (
                 1
                 if investment.scenario_node is None
-                else chronology.scenario_tree.probability(investment.scenario_node)
+                # EnergySystem validation requires a tree for scenario investments.
+                else cast(ScenarioTree, chronology.scenario_tree).probability(
+                    investment.scenario_node
+                )
             )
             build = b.variable(
                 f"build/{investment.name}",
@@ -251,8 +301,15 @@ def _lower(spec: EnergySystem, exact: bool, scaling: EnergyScaling):
     if spec.policy.investment_budget is not None:
         b.row("policy/investment-budget", budget_terms, spec.policy.investment_budget)
 
-    def capacity(asset, dimension, base, h, stage):
-        fixed, terms, maximum = base, [], base
+    def capacity(
+        asset: Source | Converter | Inventory,
+        dimension: str,
+        base: float,
+        h: Horizon,
+        stage: int,
+    ) -> tuple[float, list[tuple[np.int64, float]], float]:
+        fixed, maximum = base, base
+        terms: list[tuple[np.int64, float]] = []
         for investment in spec.investments:
             if (
                 investment.asset == asset.name
@@ -265,9 +322,11 @@ def _lower(spec: EnergySystem, exact: bool, scaling: EnergyScaling):
                     terms.append((investment_vars[investment.name], -1))
         return fixed, terms, maximum
 
-    balances = {point.name: [[] for _ in range(n)] for point in spec.points}
+    balances: dict[str, list[list[_Term]]] = {
+        point.name: [[] for _ in range(n)] for point in spec.points
+    }
     demand_rhs = {point.name: np.zeros(n) for point in spec.points}
-    emission_terms = []
+    emission_terms: list[_Term] = []
     for point in spec.points:
         spill = b.variable(
             f"spill/{point.name}",
@@ -293,12 +352,13 @@ def _lower(spec: EnergySystem, exact: bool, scaling: EnergyScaling):
         for t in range(n):
             balances[demand.point][t].append((unserved[t], 1))
 
+    # ``kind`` is "source" exactly for records drawn from ``spec.sources``.
     for asset, kind in [
         *((a, "source") for a in spec.sources),
         *((a, "converter") for a in spec.converters),
     ]:
         availability = (
-            profile(asset.availability, n, "availability")
+            profile(cast(Source, asset).availability, n, "availability")
             if kind == "source"
             else np.ones(n)
         )
@@ -351,7 +411,7 @@ def _lower(spec: EnergySystem, exact: bool, scaling: EnergyScaling):
                     [(flow[t], 1), *((i, v * av) for i, v in terms)],
                     fixed * av,
                 )
-                if on is not None:
+                if on is not None and start is not None:
                     b.row(
                         f"commit-upper/{asset.name}/{t}",
                         ((flow[t], 1), (on[t], -maximum * av)),
@@ -385,9 +445,9 @@ def _lower(spec: EnergySystem, exact: bool, scaling: EnergyScaling):
         for t in range(n):
             emission_terms.append((flow[t], accounting[t] * emissions[t]))
             if kind == "source":
-                balances[asset.point][t].append((flow[t], 1))
+                balances[cast(Source, asset).point][t].append((flow[t], 1))
         if kind == "converter":
-            for port in asset.ports:
+            for port in cast(Converter, asset).ports:
                 coefficients = profile(port.coefficient, n, "port coefficient")
                 for t in range(n):
                     balances[port.point][t].append((flow[t], coefficients[t]))
@@ -413,7 +473,7 @@ def _lower(spec: EnergySystem, exact: bool, scaling: EnergyScaling):
             if not exact:
                 raise ValueError("Exclusive storage modes require exact=True.")
             mode = b.variable(f"mode/{store.name}", n, upper=1, binary=True, keys=keys)
-        states = {}
+        states: dict[str, npt.NDArray[np.int64]] = {}
         for h in chronology.horizons:
             region = slices[h.name]
             boundary = next(
@@ -498,8 +558,12 @@ def _lower(spec: EnergySystem, exact: bool, scaling: EnergyScaling):
                     )
         for boundary in store.boundaries:
             if boundary.terminal in ("periodic", "linked"):
-                other = (
-                    boundary.horizon if boundary.terminal == "periodic" else boundary.link
+                # InventoryBoundary validation requires a link for linked terminals.
+                other = cast(
+                    str,
+                    boundary.horizon
+                    if boundary.terminal == "periodic"
+                    else boundary.link,
                 )
                 b.row(
                     f"terminal/{store.name}/{boundary.horizon}",

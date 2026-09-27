@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -14,11 +17,11 @@ from phydrax.metrix._spacetime_conventions import RelativityConvention
 from phydrax.units import KILOGRAM
 
 
-def _scale():
+def _scale() -> Any:
     return RelativityScaleContract.geometric(KILOGRAM)
 
 
-def _geometry(scale, convention):
+def _geometry(scale: Any, convention: Any) -> Any:
     dtype = jnp.float32
     identity = jnp.eye(3, dtype=dtype)
     return ADMGridGeometry(
@@ -39,7 +42,7 @@ def _geometry(scale, convention):
     )
 
 
-def test_relativistic_ohm_closure_recovers_resistive_and_ideal_limits():
+def test_relativistic_ohm_closure_recovers_resistive_and_ideal_limits() -> None:
     scale = _scale()
     convention = RelativityConvention.canonical()
     geometry = _geometry(scale, convention)
@@ -75,7 +78,7 @@ def test_relativistic_ohm_closure_recovers_resistive_and_ideal_limits():
     assert not bool(resistive.ideal_limit)
 
 
-def test_force_free_projection_enforces_degeneracy_and_magnetic_dominance():
+def test_force_free_projection_enforces_degeneracy_and_magnetic_dominance() -> None:
     scale = _scale()
     convention = RelativityConvention.canonical()
     geometry = _geometry(scale, convention)
@@ -95,7 +98,7 @@ def test_force_free_projection_enforces_degeneracy_and_magnetic_dominance():
     assert not bool(projected.derivative_valid)
 
 
-def test_force_free_current_closure_preserves_parallel_constraint_current():
+def test_force_free_current_closure_preserves_parallel_constraint_current() -> None:
     scale = _scale()
     convention = RelativityConvention.canonical()
     geometry = _geometry(scale, convention)
@@ -122,7 +125,7 @@ def test_force_free_current_closure_preserves_parallel_constraint_current():
     assert bool(result.qualified)
 
 
-def test_force_free_coordinate_characteristics_remain_on_adm_light_cone():
+def test_force_free_coordinate_characteristics_remain_on_adm_light_cone() -> None:
     scale = _scale()
     convention = RelativityConvention.canonical()
     geometry = _geometry(scale, convention)

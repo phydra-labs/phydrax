@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optimistix as optx
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -30,6 +31,7 @@ from ...metrix._metric_domain import MetricDomainEvidence
 from ...metrix._spacetime_conventions import RelativityConvention
 from ...solver._differential import DifferentialProblem
 from ...solver._diffrax_backend import solve_diffrax
+from ...typing import parse
 from ...units import UnitDefinition
 from ._gr_bundles import (
     AbstractGRConstantOfMotion,
@@ -69,7 +71,7 @@ class GRRayState(StrictModule):
         *,
         screen_basis: ArrayLike | None = None,
         active: ArrayLike | None = None,
-    ):
+    ) -> None:
         points = jnp.asarray(coordinates)
         velocities = jnp.asarray(tangents, dtype=points.dtype)
         if points.ndim != 2 or points.shape[-1] != 4 or velocities.shape != points.shape:
@@ -168,7 +170,7 @@ class GRRayPlan(StrictModule):
         event_tolerance: float = 1.0e-8,
         maximum_steps: int = 4096,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(metric, LorentzianMetric) or metric.chart.dimension != 4:
             raise TypeError("GR ray plans require a four-dimensional LorentzianMetric.")
         if not isinstance(scale, RelativityScaleContract):
@@ -192,8 +194,7 @@ class GRRayPlan(StrictModule):
             )
         if bool(jnp.any(~jnp.isfinite(affine))) or bool(jnp.any(jnp.diff(affine) <= 0.0)):
             raise ValueError("affine_parameter must be finite and strictly increasing.")
-        if ray_kind not in ("null", "timelike"):
-            raise ValueError("ray_kind must be 'null' or 'timelike'.")
+        ray_kind = parse(ray_kind, GRRayKind, "ray_kind")
         if events is not None and any(
             margin is not None
             for margin in (capture_margin, escape_margin, domain_margin)
@@ -371,7 +372,7 @@ class _GRGeodesicDrift(StrictModule):
         *,
         transport_screen_basis: bool,
         track_jacobi: bool,
-    ):
+    ) -> None:
         self.connection = LeviCivitaConnection(metric)
         self.transport_screen_basis = transport_screen_basis
         self.track_jacobi = track_jacobi
@@ -412,7 +413,7 @@ class _GRGeodesicDrift(StrictModule):
 class _GREventCondition(StrictModule):
     margin: GRRayEventMargin | None
 
-    def __init__(self, margin: GRRayEventMargin | None, /):
+    def __init__(self, margin: GRRayEventMargin | None, /) -> None:
         self.margin = margin
 
     def __call__(
@@ -478,7 +479,7 @@ class GRRayResult(StrictModule):
         scale_id: str,
         coordinate_unit_id: str,
         affine_parameter_unit_id: str,
-    ):
+    ) -> None:
         points = jnp.asarray(coordinates)
         velocities = jnp.asarray(tangents, dtype=points.dtype)
         affine = jnp.asarray(affine_parameter, dtype=points.dtype)
@@ -518,8 +519,7 @@ class GRRayResult(StrictModule):
             raise TypeError("status_evidence must be GRRayStatusEvidence.")
         if not isinstance(bundle_evidence, GRRayBundleEvidence):
             raise TypeError("bundle_evidence must be GRRayBundleEvidence.")
-        if ray_kind not in ("null", "timelike"):
-            raise ValueError("ray_kind must be 'null' or 'timelike'.")
+        ray_kind = parse(ray_kind, GRRayKind, "ray_kind")
         identities = (
             plan_id,
             result_id,

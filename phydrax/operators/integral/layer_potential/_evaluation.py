@@ -9,7 +9,8 @@ from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -39,7 +40,7 @@ class LayerEvaluationPlan2D(StrictModule, NonTrainableState):
         qbx_order: int = 6,
         qbx_radius_factor: float = 0.5,
         adaptive_plan: AdaptiveQuadraturePlan | None = None,
-    ):
+    ) -> None:
         if method not in ("direct", "adaptive", "qbx"):
             raise ValueError("Unknown layer evaluator method.")
         clearance = float(accuracy_clearance)
@@ -122,7 +123,7 @@ class LayerEvaluationReport(StrictModule, NonTrainableState):
         near_panel_count: int = 0,
         far_panel_count: int = 0,
         failed_panel_count: int = 0,
-    ):
+    ) -> None:
         if not isinstance(plan, LayerEvaluationPlan2D):
             raise TypeError("plan must be a LayerEvaluationPlan2D.")
         if not representation_id or not error_kind:
@@ -177,7 +178,7 @@ class LayerEvaluationResult(StrictModule, NonTrainableState):
         values: Array,
         target_report: LayerPotentialTargetReport,
         evaluation_report: LayerEvaluationReport,
-    ):
+    ) -> None:
         if not isinstance(target_report, LayerPotentialTargetReport):
             raise TypeError("target_report must be a LayerPotentialTargetReport.")
         if not isinstance(evaluation_report, LayerEvaluationReport):
@@ -238,6 +239,7 @@ def evaluate_layer_potential(
         elif not (
             plan.method == "adaptive"
             and target_side == "boundary"
+            and not isinstance(potential, HelmholtzCombinedField2D)
             and potential.kind == "single"
             and bool(jnp.all(jnp.any(node_collision, axis=1)))
         ):

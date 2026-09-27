@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -39,7 +42,7 @@ POLICY = InterpolationPolicy(
 )
 
 
-def _resolved_schedule(periods=2):
+def _resolved_schedule(periods: Any = 2) -> Any:
     start = VALUATION_DATE.ordinal
     starts = jnp.asarray(
         [start + 365 * index for index in range(periods)], dtype=jnp.int32
@@ -70,7 +73,14 @@ def _resolved_schedule(periods=2):
     )
 
 
-def _curve(curve_id, currency, nodes, *, representation="log_discount", role="discount"):
+def _curve(
+    curve_id: Any,
+    currency: Any,
+    nodes: Any,
+    *,
+    representation: Any = "log_discount",
+    role: Any = "discount",
+) -> Any:
     nodes = jnp.asarray(nodes)
     definition = CurveDefinition(
         curve_id=curve_id,
@@ -84,7 +94,7 @@ def _curve(curve_id, currency, nodes, *, representation="log_discount", role="di
     return PreparedCurve(definition, nodes)
 
 
-def _zero_curves():
+def _zero_curves() -> Any:
     return CurveSet(
         (
             _curve("discount", USD, jnp.zeros((4,))),
@@ -93,7 +103,7 @@ def _zero_curves():
     )
 
 
-def test_fixed_bond_clean_dirty_and_accrued_prices_are_distinct_and_reconcile():
+def test_fixed_bond_clean_dirty_and_accrued_prices_are_distinct_and_reconcile() -> None:
     fixed_leg = ResolvedFixedLeg(
         contract_id="bond-leg",
         schedule=_resolved_schedule(),
@@ -117,7 +127,7 @@ def test_fixed_bond_clean_dirty_and_accrued_prices_are_distinct_and_reconcile():
     np.testing.assert_allclose(clean + accrued, dirty, atol=1e-6)
 
 
-def test_fra_start_discounting_and_futures_price_quote_conventions_are_explicit():
+def test_fra_start_discounting_and_futures_price_quote_conventions_are_explicit() -> None:
     schedule = _resolved_schedule(periods=1)
     simple_rate = 0.05
     projection = _curve(
@@ -172,7 +182,7 @@ def test_fra_start_discounting_and_futures_price_quote_conventions_are_explicit(
     np.testing.assert_allclose(future.present_value(curves), 1_000.0, rtol=2e-5)
 
 
-def test_payer_receiver_swap_parity_is_exact_under_identical_curves():
+def test_payer_receiver_swap_parity_is_exact_under_identical_curves() -> None:
     schedule = _resolved_schedule()
     simple_rate = 0.05
     projection = _curve(
@@ -183,7 +193,7 @@ def test_payer_receiver_swap_parity_is_exact_under_identical_curves():
     )
     curves = CurveSet((_curve("discount", USD, jnp.zeros((4,))), projection))
 
-    def swap(contract_id, fixed_direction, floating_direction):
+    def swap(contract_id: Any, fixed_direction: Any, floating_direction: Any) -> Any:
         fixed = ResolvedFixedLeg(
             contract_id=f"{contract_id}-fixed",
             schedule=schedule,
@@ -219,7 +229,7 @@ def test_payer_receiver_swap_parity_is_exact_under_identical_curves():
     )
 
 
-def test_cross_currency_swap_retains_both_notional_exchange_streams():
+def test_cross_currency_swap_retains_both_notional_exchange_streams() -> None:
     schedule = _resolved_schedule()
     usd_discount = _curve("usd-discount", USD, jnp.zeros((4,)))
     usd_projection = _curve("usd-projection", USD, jnp.zeros((4,)), role="projection")
@@ -268,7 +278,7 @@ def test_cross_currency_swap_retains_both_notional_exchange_streams():
     )
 
 
-def test_deliverable_fx_forward_retains_two_known_notional_exchange_legs():
+def test_deliverable_fx_forward_retains_two_known_notional_exchange_legs() -> None:
     curves = CurveSet(
         (
             _curve("eur-discount", EUR, jnp.zeros((4,))),
@@ -297,7 +307,7 @@ def test_deliverable_fx_forward_retains_two_known_notional_exchange_legs():
     np.testing.assert_allclose(forward.present_value(curves, 1.1), 0.0)
 
 
-def test_inflation_leg_distinguishes_known_and_projected_lagged_fixings():
+def test_inflation_leg_distinguishes_known_and_projected_lagged_fixings() -> None:
     schedule = _resolved_schedule()
     discount = _curve("discount", USD, jnp.zeros((4,)))
     index = _curve(

@@ -13,11 +13,13 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._hybrid_event import HybridReplayPolicy
 from ._partitioned_coupling_graph import PreparedCoupling
 from ._partitioned_coupling_runtime import advance_coupling_window
@@ -62,7 +64,7 @@ class AdaptiveCouplingWindowPolicy(StrictModule, NonTrainableState):
         maximum_factor: float = 5.0,
         maximum_attempts: int = 8,
         retryable_statuses: Sequence[int | CouplingStatus] = (),
-    ):
+    ) -> None:
         initial = float(initial_size)
         minimum = float(minimum_size)
         maximum = float(maximum_size)
@@ -145,7 +147,7 @@ class AdaptiveCouplingRolloutPlan(StrictModule, NonTrainableState):
         /,
         *,
         retention: AdaptiveCouplingRetention = "final",
-    ):
+    ) -> None:
         windows = int(maximum_windows)
         if windows < 1 or windows > segment_policy.maximum_segments:
             raise ValueError("maximum_windows must fit the DCD segment capacity.")
@@ -153,8 +155,7 @@ class AdaptiveCouplingRolloutPlan(StrictModule, NonTrainableState):
             raise ValueError("DCD step capacity must cover every window attempt.")
         if not isinstance(replay_policy, HybridReplayPolicy):
             raise TypeError("replay_policy must be HybridReplayPolicy.")
-        if retention not in ("final", "windows"):
-            raise ValueError("Unknown adaptive coupling retention policy.")
+        retention = parse(retention, AdaptiveCouplingRetention, "retention")
         self.maximum_windows = windows
         self.segment_policy = segment_policy
         self.window_policy = window_policy
@@ -287,7 +288,7 @@ def rollout_adaptive_coupling(
         def attempt_body(_: int, attempt: _AttemptCarry) -> _AttemptCarry:
             active = ~attempt.done
 
-            def execute(_: None):
+            def execute(_: None) -> _AttemptCarry:
                 result = advance_coupling_window(
                     prepared, carry.state, attempt.trial_size, args
                 )
@@ -445,7 +446,7 @@ class CouplingTopologyRequest(StrictModule):
         topology_code: ArrayLike,
         status: ArrayLike = 0,
         /,
-    ):
+    ) -> None:
         requested_ = jnp.asarray(requested, dtype=jnp.bool_).reshape(())
         participant = jnp.asarray(participant_epoch_codes, dtype=jnp.int32)
         capacities = jnp.asarray(waveform_required_samples, dtype=jnp.int32)
@@ -491,7 +492,7 @@ class CallableCouplingEpochTransfer(AbstractCouplingEpochTransfer):
         /,
         *,
         transfer_id: str,
-    ):
+    ) -> None:
         if not callable(function) or not transfer_id:
             raise ValueError("Callable epoch transfer requires a function and ID.")
         self.function = function
@@ -523,7 +524,7 @@ class PreparedCouplingEpoch(StrictModule, NonTrainableState):
         participant_epoch_codes: Sequence[int],
         waveform_required_samples: Sequence[int],
         topology_code: int,
-    ):
+    ) -> None:
         participant = tuple(str(value) for value in participant_epoch_ids)
         waveform = tuple(str(value) for value in waveform_capacity_ids)
         participant_codes = tuple(participant_epoch_codes)
@@ -587,7 +588,7 @@ class CouplingEpochTransitionPlan(StrictModule, NonTrainableState):
         source_exchange_ids: Sequence[str],
         target_exchange_ids: Sequence[str],
         transition_id: str,
-    ):
+    ) -> None:
         routes = (
             tuple(participant_state_transfers),
             tuple(exchange_transfers),

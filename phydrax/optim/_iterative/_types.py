@@ -12,13 +12,15 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ..._bounds import _static_bound_metadata, Bounds
 from ..._iteration import IterationEvidence
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._tree_math import validate_real_inexact_tree as _validate_real_inexact_tree
+from ...typing import parse
 
 
 class OptimizationStatus(IntEnum):
@@ -97,7 +99,7 @@ class OptimizationTermination(StrictModule):
         relative_step: float = 1e-10,
         maximum_steps: int = 256,
         maximum_evaluations: int | None = None,
-    ):
+    ) -> None:
         tolerances = (
             float(absolute_optimality),
             float(relative_optimality),
@@ -149,7 +151,7 @@ class OptimizationCapabilities(StrictModule):
         prepared_refresh: bool,
         implicit_differentiation: bool,
         explicit_host_gradient: bool = False,
-    ):
+    ) -> None:
         self.scalar_objective = bool(scalar_objective)
         self.residual_objective = bool(residual_objective)
         self.matrix_free = bool(matrix_free)
@@ -194,7 +196,7 @@ class MinimizationProblem(StrictModule):
         constraints: Sequence["NonlinearConstraint"] = (),
         derivative_execution: DerivativeExecutionKind | None = None,
         problem_id: str = "callable-minimization",
-    ):
+    ) -> None:
         if not callable(objective):
             raise TypeError("objective must be callable.")
         if hessian_action is not None and not callable(hessian_action):
@@ -219,15 +221,15 @@ class MinimizationProblem(StrictModule):
             not isinstance(constraint, NonlinearConstraint) for constraint in constraints_
         ):
             raise TypeError("constraints must contain NonlinearConstraint values.")
-        derivative_execution_ = (
+        derivative_execution_ = parse(
             "explicit-host"
             if derivative_execution is None and explicit_value_and_gradient is not None
             else "automatic-jax"
             if derivative_execution is None
-            else derivative_execution
+            else derivative_execution,
+            DerivativeExecutionKind,
+            "derivative_execution",
         )
-        if derivative_execution_ not in ("automatic-jax", "explicit-host"):
-            raise ValueError("Unknown derivative_execution.")
         if (explicit_value_and_gradient is None) != (
             derivative_execution_ == "automatic-jax"
         ):
@@ -301,7 +303,7 @@ class MinimizationProblem(StrictModule):
         if self.explicit_value_and_gradient is not None:
             return self._explicit_evaluation(parameters, args)
 
-        def value_with_aux(candidate):
+        def value_with_aux(candidate: PyTree[Any]) -> tuple[Array, Any]:
             return self.value(candidate, args)
 
         return eqx.filter_value_and_grad(value_with_aux, has_aux=True)(parameters)
@@ -346,7 +348,7 @@ class NonlinearLeastSquaresProblem(StrictModule):
         has_aux: bool = False,
         bounds: Bounds | None = None,
         problem_id: str = "nonlinear-least-squares",
-    ):
+    ) -> None:
         if not callable(residual):
             raise TypeError("residual must be callable.")
         if bounds is not None and not isinstance(bounds, Bounds):
@@ -399,7 +401,7 @@ class NonlinearConstraint(StrictModule):
         lower: Any = -jnp.inf,
         upper: Any = jnp.inf,
         constraint_id: str = "nonlinear-constraint",
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         identifier = str(constraint_id)
@@ -535,7 +537,7 @@ class OptimizationDiagnostics(StrictModule):
         complementarity: Any = jnp.nan,
         active_constraints: Any = 0,
         counts_complete: bool = True,
-    ):
+    ) -> None:
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
         self.accepted_steps = jnp.asarray(accepted_steps, dtype=jnp.int32)
         self.rejected_steps = jnp.asarray(rejected_steps, dtype=jnp.int32)
@@ -605,7 +607,7 @@ class IterativeStepMetrics(StrictModule):
         reduction_ratio: Any = jnp.nan,
         direction_fallback: Any = False,
         status: Any = OptimizationStatus.ITERATING,
-    ):
+    ) -> None:
         objective_ = jnp.asarray(objective)
         scalar_dtype = jnp.result_type(objective_, jnp.float32)
         self.objective = objective_.astype(scalar_dtype)
@@ -652,7 +654,7 @@ class OptimizationProvenance(StrictModule):
         implicit_differentiation: bool = False,
         notes: str = "",
         precision_policy_id: str | None = None,
-    ):
+    ) -> None:
         values = tuple(
             str(value) for value in (problem_id, method, backend, globalization)
         )
@@ -714,7 +716,7 @@ class OptimizationCertificate(StrictModule):
         evaluation_work: Any = 0,
         certificate_id: str,
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
-    ):
+    ) -> None:
         if precision_evidence is not None and not isinstance(
             precision_evidence,
             PrecisionEvidenceEnvelope,
@@ -759,7 +761,7 @@ class OptimizationStatusEvidence(StrictModule):
         promoted: Any,
         demoted: Any,
         decision_reason: str,
-    ):
+    ) -> None:
         if not isinstance(certificate, OptimizationCertificate):
             raise TypeError("certificate must be OptimizationCertificate.")
         reason = str(decision_reason)
@@ -803,7 +805,7 @@ class ConstrainedOptimalityCertificate(StrictModule):
         equality_sources: tuple[str, ...] = (),
         inequality_sources: tuple[str, ...] = (),
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
-    ):
+    ) -> None:
         if precision_evidence is not None and not isinstance(
             precision_evidence,
             PrecisionEvidenceEnvelope,
@@ -877,7 +879,7 @@ class MinimizationResult(StrictModule):
         method_evidence: Any = None,
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
         iteration_evidence: IterationEvidence | None = None,
-    ):
+    ) -> None:
         if not isinstance(diagnostics, OptimizationDiagnostics):
             raise TypeError("diagnostics must be OptimizationDiagnostics.")
         if not isinstance(provenance, OptimizationProvenance):
@@ -962,7 +964,7 @@ class LeastSquaresResult(StrictModule):
         method_evidence: Any = None,
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
         iteration_evidence: IterationEvidence | None = None,
-    ):
+    ) -> None:
         if not isinstance(diagnostics, OptimizationDiagnostics):
             raise TypeError("diagnostics must be OptimizationDiagnostics.")
         if not isinstance(provenance, OptimizationProvenance):

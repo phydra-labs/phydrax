@@ -58,6 +58,7 @@ def _jit_timings(
     return (
         compile_seconds + first_execution_seconds,
         compile_seconds,
+        # ty: ignore[invalid-argument-type]
         float(steady.median_seconds),
     )
 
@@ -85,7 +86,7 @@ def _convergence_limits(configuration: BenchmarkConfiguration) -> tuple[float, f
     return 1.03, 400.0
 
 
-def _binomial_bounds(nominal: float, count: int, *, standard_errors: float = 4.0):
+def _binomial_bounds(nominal: float, count: int, *, standard_errors: float = 4.0) -> Any:
     standard_error = math.sqrt(nominal * (1.0 - nominal) / float(count))
     return (
         max(0.0, nominal - standard_errors * standard_error),
@@ -160,7 +161,7 @@ def _tree_nbytes(tree: Any) -> int:
     return sum(jnp.asarray(leaf).nbytes for leaf in jax.tree_util.tree_leaves(tree))
 
 
-def _elliptic_solution(parameters: Any, *, num_interior: int = 31):
+def _elliptic_solution(parameters: Any, *, num_interior: int = 31) -> Any:
     theta = jnp.asarray(parameters)
     spacing = 1.0 / float(num_interior + 1)
     interfaces = jnp.linspace(0.0, 1.0, num_interior + 1)
@@ -340,7 +341,7 @@ def nonlinear_transformed_ode(
     true_rate = 0.8
     observation_scale = 0.03
 
-    def forward(parameters, locations):
+    def forward(parameters: Any, locations: Any) -> Any:
         return parameters["amplitude"] * jnp.exp(-parameters["rate"] * locations)
 
     observations = forward(
@@ -535,14 +536,14 @@ def neural_selected_subspace(
         model, ("['head']",)
     )
 
-    def full_forward(full_model, locations):
+    def full_forward(full_model: Any, locations: Any) -> Any:
         hidden = jnp.tanh(
             locations[:, None] * full_model["features"]["weight"][None, :]
             + full_model["features"]["bias"][None, :]
         )
         return hidden @ full_model["head"]["weight"] + full_model["head"]["bias"]
 
-    def selected_forward(selected, locations):
+    def selected_forward(selected: Any, locations: Any) -> Any:
         return full_forward(subspace.reconstruct(selected), locations)
 
     sensor_truth = full_forward(true_model, sensor_x)
@@ -553,7 +554,7 @@ def neural_selected_subspace(
     )
     space = phx.uq.ParameterSpace(subspace.initial, priors=priors)
 
-    def normalized_residual(selected):
+    def normalized_residual(selected: Any) -> Any:
         return (selected_forward(selected, sensor_x) - observations) / observation_scale
 
     problem = phx.uq.PosteriorProblem(
@@ -706,7 +707,7 @@ def multimodal_tempered_inference(
     component_mean = component_variance * mode_location / likelihood_scale**2
     expected_variance = component_variance + component_mean**2
 
-    def log_likelihood(value):
+    def log_likelihood(value: Any) -> Any:
         return jsp.special.logsumexp(
             jnp.stack(
                 [
@@ -853,11 +854,11 @@ def flow_assisted_multimodal(
         1.0 - positive_weight
     ) * jnp.outer(component_mean, component_mean)
 
-    def component_log_density(value, location):
+    def component_log_density(value: Any, location: Any) -> Any:
         difference = value - location
         return -0.5 * difference @ likelihood_precision @ difference
 
-    def log_likelihood(value):
+    def log_likelihood(value: Any) -> Any:
         return jsp.special.logsumexp(
             jnp.stack(
                 (
@@ -1095,7 +1096,7 @@ def flow_assisted_multimodal(
     )
 
 
-def _poisson_basis(x):
+def _poisson_basis(x: Any) -> Any:
     return 0.5 * x * (1.0 - x)
 
 
@@ -1113,16 +1114,16 @@ def misspecified_pde_discrepancy(
     fixed_amplitude = 0.25
     fixed_length_scale = 0.22
 
-    def physical(parameter, locations):
+    def physical(parameter: Any, locations: Any) -> Any:
         return parameter * locations
 
-    def truth(locations):
+    def truth(locations: Any) -> Any:
         return physical(true_parameter, locations) + 0.3 * jnp.sin(jnp.pi * locations)
 
-    def joint_physical_mean(parameters):
+    def joint_physical_mean(parameters: Any) -> Any:
         return physical(parameters["parameter"], observation_x)
 
-    def gp_state(amplitude, length_scale, noise_scale):
+    def gp_state(amplitude: Any, length_scale: Any, noise_scale: Any) -> Any:
         return phx.uq.GaussianProcessLikelihoodState(
             kernel=phx.kernels.AmplitudeKernel(
                 phx.kernels.Matern32Kernel(length_scale=length_scale),
@@ -1131,7 +1132,7 @@ def misspecified_pde_discrepancy(
             noise_scale=noise_scale,
         )
 
-    def joint_state(parameters):
+    def joint_state(parameters: Any) -> Any:
         return gp_state(
             parameters["amplitude"],
             parameters["length_scale"],
@@ -1537,10 +1538,10 @@ def correlated_vector_discrepancy(
     observation_mask = jnp.ones((observation_x.size, 2), dtype="bool")
     observation_mask = observation_mask.at[1::3, 1].set(False).at[2::4, 0].set(False)
 
-    def base(locations):
+    def base(locations: Any) -> Any:
         return jnp.stack([locations, 2.0 * locations], axis=1)
 
-    def discrepancy(locations):
+    def discrepancy(locations: Any) -> Any:
         latent = amplitude * jnp.sin(2.0 * jnp.pi * locations)
         return jnp.stack([latent, -0.6 * latent], axis=1)
 
@@ -1697,7 +1698,7 @@ def operator_conditioned_inverse_pde(
     true_diffusion = 1.7
     wrong_diffusion = jnp.asarray(1.0)
 
-    def field(points):
+    def field(points: Any) -> Any:
         return jnp.sin(jnp.pi * points)
 
     forcing = true_diffusion * jnp.pi**2 * field(operator_points)
@@ -1711,7 +1712,7 @@ def operator_conditioned_inverse_pde(
         noise_scale=jnp.asarray([0.005, 0.02]),
     )
 
-    def discrepancy(diffusion):
+    def discrepancy(diffusion: Any) -> Any:
         return phx.uq.FunctionalGaussianProcessDiscrepancy(
             (
                 phx.uq.FunctionalObservationBlock(
@@ -1733,7 +1734,7 @@ def operator_conditioned_inverse_pde(
         jnp.zeros_like(operator_points),
     )
 
-    def log_likelihood(diffusion):
+    def log_likelihood(diffusion: Any) -> Any:
         return discrepancy(diffusion).log_marginal_likelihood(
             zero_mean,
             state=state,
@@ -1817,7 +1818,7 @@ class _BenchmarkFeatureMap(eqx.Module):
     weight: jax.Array
     bias: jax.Array
 
-    def __call__(self, point):
+    def __call__(self, point: Any) -> Any:
         return jnp.tanh(self.weight @ point + self.bias)
 
 
@@ -1839,7 +1840,7 @@ def deep_kernel_likelihood_timing(
         0.1 * jr.normal(bias_key, (4,)),
     )
 
-    def deep_state(candidate):
+    def deep_state(candidate: Any) -> Any:
         return phx.uq.GaussianProcessLikelihoodState(
             kernel=phx.kernels.AmplitudeKernel(
                 phx.kernels.InputTransformedKernel(
@@ -1853,13 +1854,13 @@ def deep_kernel_likelihood_timing(
             noise_scale=0.02,
         )
 
-    def deep_objective(candidate):
+    def deep_objective(candidate: Any) -> Any:
         return model.log_marginal_likelihood(
             physical_mean,
             state=deep_state(candidate),
         )
 
-    def stationary_objective(log_length_scale):
+    def stationary_objective(log_length_scale: Any) -> Any:
         state = phx.uq.GaussianProcessLikelihoodState(
             kernel=phx.kernels.AmplitudeKernel(
                 phx.kernels.SquaredExponentialKernel(
@@ -2011,19 +2012,21 @@ def _small_deep_ensemble_predictions(
     """Fit independent bootstrapped nonlinear regressors for a robust baseline."""
     optimizer = optax.adam(1.0e-2)
 
-    def predict(parameters, inputs):
+    def predict(parameters: Any, inputs: Any) -> Any:
         hidden = jnp.tanh(
             inputs[:, None] * parameters["input_weight"][None, :]
             + parameters["hidden_bias"][None, :]
         )
         return hidden @ parameters["output_weight"] + parameters["output_bias"]
 
-    def loss(parameters, inputs, targets):
+    def loss(parameters: Any, inputs: Any, targets: Any) -> Any:
         residual = predict(parameters, inputs) - targets
         return jnp.mean(residual**2)
 
     @jax.jit
-    def train_step(parameters, optimizer_state, inputs, targets):
+    def train_step(
+        parameters: Any, optimizer_state: Any, inputs: Any, targets: Any
+    ) -> Any:
         gradients = jax.grad(loss)(parameters, inputs, targets)
         updates, next_optimizer_state = optimizer.update(
             gradients,
@@ -2087,13 +2090,13 @@ def stochastic_gradient_regression(
     analytic_mean = analytic_covariance @ (design.T @ observations / observation_scale**2)
     analytic_scale = jnp.sqrt(jnp.diag(analytic_covariance))
 
-    def position_from_vector(vector):
+    def position_from_vector(vector: Any) -> Any:
         return {
             "offset": vector[0],
             "nested": {"positive_rate": vector[1]},
         }
 
-    def vector_from_physical(parameters):
+    def vector_from_physical(parameters: Any) -> Any:
         return jnp.stack(
             (
                 parameters["offset"],
@@ -2118,12 +2121,12 @@ def stochastic_gradient_regression(
         seed=seed + 1,
     )
 
-    def likelihood_factors(parameters, batch):
+    def likelihood_factors(parameters: Any, batch: Any) -> Any:
         vector = vector_from_physical(parameters)
         prediction = vector[0] + vector[1] * batch.data["input"]
         return -0.5 * ((batch.data["target"] - prediction) / observation_scale) ** 2
 
-    def full_log_likelihood(parameters):
+    def full_log_likelihood(parameters: Any) -> Any:
         vector = vector_from_physical(parameters)
         return jnp.sum(-0.5 * ((observations - design @ vector) / observation_scale) ** 2)
 
@@ -2258,7 +2261,7 @@ def stochastic_gradient_regression(
         )
     )
 
-    def sample_matrix(result):
+    def sample_matrix(result: Any) -> Any:
         return jnp.stack(
             (
                 result.unconstrained_samples["offset"].reshape(-1),
@@ -2452,7 +2455,7 @@ def stochastic_gradient_regression(
     )
     epoch_batches = tuple(source.epoch(0))
 
-    def gradient_vector(gradient):
+    def gradient_vector(gradient: Any) -> Any:
         return jnp.stack(
             (
                 gradient["offset"],
@@ -2631,7 +2634,7 @@ def linearized_uncertainty_propagation(
     nonlinear_center = jnp.asarray([0.6, -0.4])
     nonlinear_base_covariance = jnp.asarray([[1.0, 0.35], [0.35, 0.8]])
 
-    def nonlinear_map(value):
+    def nonlinear_map(value: Any) -> Any:
         return jnp.asarray(
             [
                 jnp.sin(value[0]) + 0.1 * value[1] ** 2,
@@ -2694,7 +2697,7 @@ def linearized_uncertainty_propagation(
     slope_grid = jnp.linspace(0.5, 3.0, 1_024)
     eiv_log_likelihood = jax.vmap(measurement_term.log_prob)(slope_grid)
 
-    def latent_log_likelihood(slope):
+    def latent_log_likelihood(slope: Any) -> Any:
         effective_scale = jnp.sqrt(observation_scale**2 + slope**2 * input_scale**2)
         residual = measured_targets - slope * measured_inputs
         return jnp.sum(
@@ -2969,7 +2972,7 @@ def dynamic_factor_stochastic_volatility(
         jnp.concatenate((stationary_factor_variance, stationary_volatility_variance))
     )
 
-    def joint_sample(key, state, t0, t1, context):
+    def joint_sample(key: Any, state: Any, t0: Any, t1: Any, context: Any) -> Any:
         del t0, t1, context
         factor_key, volatility_key = jr.split(key)
         previous_factor = state[:factors]
@@ -2985,11 +2988,13 @@ def dynamic_factor_stochastic_volatility(
         ) * jr.normal(factor_key, (factors,))
         return jnp.concatenate((next_factor, next_volatility))
 
-    def diagonal_gaussian_log_prob(value, mean, variance):
+    def diagonal_gaussian_log_prob(value: Any, mean: Any, variance: Any) -> Any:
         residual = value - mean
         return -0.5 * jnp.sum(residual**2 / variance + jnp.log(2.0 * jnp.pi * variance))
 
-    def joint_log_prob(next_state, state, t0, t1, context):
+    def joint_log_prob(
+        next_state: Any, state: Any, t0: Any, t1: Any, context: Any
+    ) -> Any:
         del t0, t1, context
         previous_factor = state[:factors]
         previous_volatility = state[factors:]
@@ -3007,7 +3012,9 @@ def dynamic_factor_stochastic_volatility(
             next_factor, factor_location, jnp.exp(next_volatility)
         )
 
-    def observation_log_prob(value, state, time, mask, context):
+    def observation_log_prob(
+        value: Any, state: Any, time: Any, mask: Any, context: Any
+    ) -> Any:
         del time, context
         residual = value - loadings @ state[:factors]
         terms = -0.5 * (
@@ -3069,7 +3076,7 @@ def dynamic_factor_stochastic_volatility(
         )
     )
 
-    def volatility_sample(key, state, t0, t1, context):
+    def volatility_sample(key: Any, state: Any, t0: Any, t1: Any, context: Any) -> Any:
         del t0, t1, context
         return (
             volatility_mean
@@ -3077,7 +3084,9 @@ def dynamic_factor_stochastic_volatility(
             + jnp.sqrt(volatility_innovation_variance) * jr.normal(key, (factors,))
         )
 
-    def volatility_log_prob(next_state, state, t0, t1, context):
+    def volatility_log_prob(
+        next_state: Any, state: Any, t0: Any, t1: Any, context: Any
+    ) -> Any:
         del t0, t1, context
         location = volatility_mean + volatility_persistence * (state - volatility_mean)
         return diagonal_gaussian_log_prob(
@@ -3153,7 +3162,7 @@ def dynamic_factor_stochastic_volatility(
         rb_smoother.backward_simulation.nonlinear_paths, axis=0
     )
 
-    def rmse(estimate, truth):
+    def rmse(estimate: Any, truth: Any) -> Any:
         return jnp.sqrt(jnp.mean((estimate - truth) ** 2))
 
     micro_mean = jnp.zeros(factors)
@@ -3161,7 +3170,7 @@ def dynamic_factor_stochastic_volatility(
     micro_value = observation_array[0]
     micro_mask = jnp.ones(assets, dtype="bool")
 
-    def diagonal_condition(mean, covariance, value):
+    def diagonal_condition(mean: Any, covariance: Any, value: Any) -> Any:
         return _condition_affine_gaussian_diagonal(
             mean,
             covariance,
@@ -3172,7 +3181,7 @@ def dynamic_factor_stochastic_volatility(
             micro_mask,
         )[:3]
 
-    def dense_condition(mean, covariance, value):
+    def dense_condition(mean: Any, covariance: Any, value: Any) -> Any:
         innovation = value - loadings @ mean
         innovation_covariance = loadings @ covariance @ loadings.T + jnp.diag(
             idiosyncratic_variance
@@ -3212,14 +3221,14 @@ def dynamic_factor_stochastic_volatility(
         for left, right in zip(diagonal_output, dense_output, strict=True)
     )
 
-    def array_bytes(value):
+    def array_bytes(value: Any) -> Any:
         return sum(
             leaf.size * leaf.dtype.itemsize
             for leaf in jax.tree_util.tree_leaves(value)
             if eqx.is_array(leaf)
         )
 
-    def status_counts(values):
+    def status_counts(values: Any) -> Any:
         codes = tuple(jax.device_get(values).reshape(-1).tolist())
         return {str(code): codes.count(code) for code in sorted(set(codes))}
 
@@ -3362,12 +3371,12 @@ def exponential_family_geometry(
     poisson_natural = 0.3 + 0.4 * jr.normal(keys[2], (sample_count,))
     poisson_targets = jr.poisson(keys[3], jnp.exp(poisson_natural)).astype("float64")
 
-    def bernoulli_log_prob(natural, targets):
+    def bernoulli_log_prob(natural: Any, targets: Any) -> Any:
         return bernoulli_family.log_prob(
             bernoulli_family.natural(natural[..., None]), targets
         )
 
-    def poisson_log_prob(natural, targets):
+    def poisson_log_prob(natural: Any, targets: Any) -> Any:
         return poisson_family.log_prob(
             poisson_family.natural(natural[..., None]), targets
         )
@@ -3417,7 +3426,7 @@ def exponential_family_geometry(
     )
     midpoint = sample_count // 2
 
-    def merged_projection():
+    def merged_projection() -> Any:
         left = phx.uq.ExponentialFamilyProjectionAccumulator.from_log_weights(
             bernoulli_family,
             bernoulli_targets[:midpoint],
@@ -3439,7 +3448,7 @@ def exponential_family_geometry(
     normal_natural = jnp.asarray([0.2, -0.7])
     normal_direction = jnp.asarray([0.4, -0.3])
 
-    def family_fisher(natural, direction):
+    def family_fisher(natural: Any, direction: Any) -> Any:
         return phx.uq.exponential_family_fisher_action(
             normal_family,
             normal_family.natural(natural),
@@ -3468,10 +3477,10 @@ def exponential_family_geometry(
     parameters = 0.2 * jr.normal(keys[6], (parameter_dimension,))
     parameter_direction = jr.normal(keys[7], (parameter_dimension,))
 
-    def natural_fn(values):
+    def natural_fn(values: Any) -> Any:
         return (design @ values - 0.2)[..., None]
 
-    def parameter_fisher(values, direction):
+    def parameter_fisher(values: Any, direction: Any) -> Any:
         return phx.uq.exponential_family_parameter_fisher_action(
             poisson_family,
             natural_fn,
@@ -3494,7 +3503,7 @@ def exponential_family_geometry(
     categorical_logits = 0.7 * jr.normal(keys[8], (structured_count, 5))
     categorical_targets = jr.categorical(keys[9], categorical_logits).astype("float64")
 
-    def categorical_log_prob(logits, targets):
+    def categorical_log_prob(logits: Any, targets: Any) -> Any:
         return categorical_family.log_prob(
             categorical_family.natural_from_logits(logits), targets
         )
@@ -3525,7 +3534,7 @@ def exponential_family_geometry(
         axis=-1,
     )
 
-    def gamma_round_trip(values):
+    def gamma_round_trip(values: Any) -> Any:
         return gamma_family.natural_from_mean(
             gamma_family.mean_from_natural(gamma_family.natural(values))
         )
@@ -3590,7 +3599,7 @@ def exponential_family_geometry(
         dirichlet_concentration
     ) - jsp.special.digamma(jnp.sum(dirichlet_concentration, axis=-1, keepdims=True))
 
-    def dirichlet_round_trip(values):
+    def dirichlet_round_trip(values: Any) -> Any:
         return dirichlet_family.natural_from_mean(
             dirichlet_family.mean_from_natural(dirichlet_family.natural(values))
         )
@@ -3895,10 +3904,10 @@ def multifidelity_target_prediction(
         for index, point in enumerate(train_points)
     )
 
-    def target_function(x):
+    def target_function(x: Any) -> Any:
         return jnp.sin(2.0 * jnp.pi * x) + 0.2 * x
 
-    def low_function(x):
+    def low_function(x: Any) -> Any:
         return 0.9 * jnp.sin(2.0 * jnp.pi * x) + 0.2 * x + 0.1
 
     high_indices = frozenset((1, 4, 7, 10))

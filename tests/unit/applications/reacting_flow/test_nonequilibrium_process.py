@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +12,7 @@ from phydrax.applications.reacting_flow import (
 )
 
 
-def _problem(*, chemistry=False):
+def _problem(*, chemistry: Any = False) -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A2", "A"),
         (phx.equations.ChemicalPhaseKind.GAS,) * 2,
@@ -88,7 +90,7 @@ def _problem(*, chemistry=False):
     return system, mechanism, runtime, state
 
 
-def _advance(*, chemistry=False):
+def _advance(*, chemistry: Any = False) -> Any:
     system, mechanism, runtime, state = _problem(chemistry=chemistry)
     transport = phx.solver.prepare_balance_law_transport(runtime)
     process = ThermochemicalNonequilibriumProcessPlan(
@@ -102,11 +104,12 @@ def _advance(*, chemistry=False):
     result = balance.advance_prescribed(
         balance.initialize_state(runtime_state), 0.0, 1.0e-3
     )
+    # ty: ignore[unresolved-attribute]
     after = result.runtime_state.transport_state.cell_average().reshape(state.shape)
     return system, state, result, after
 
 
-def test_mode_relaxation_moves_toward_heavy_temperature_with_zero_energy_source():
+def test_mode_relaxation_moves_toward_heavy_temperature_with_zero_energy_source() -> None:
     system, before, result, after = _advance()
     assert bool(result.accepted)
     np.testing.assert_array_equal(
@@ -119,7 +122,7 @@ def test_mode_relaxation_moves_toward_heavy_temperature_with_zero_energy_source(
     assert jnp.all(system.mode_temperatures(after) > system.mode_temperatures(before))
 
 
-def test_joint_chemistry_relaxation_preserves_elements_mass_and_total_energy():
+def test_joint_chemistry_relaxation_preserves_elements_mass_and_total_energy() -> None:
     system, before, result, after = _advance(chemistry=True)
     assert bool(result.accepted)
     assert jnp.all(after[..., 0] < before[..., 0])
@@ -136,16 +139,17 @@ def test_joint_chemistry_relaxation_preserves_elements_mass_and_total_energy():
     )
 
 
-def test_gradient_length_knudsen_reports_modes_and_hysteretic_recommendation():
+def test_gradient_length_knudsen_reports_modes_and_hysteretic_recommendation() -> None:
     euler, _, _, _ = _problem()
     system = phx.equations.TwoTemperatureMixtureNavierStokesSystem(
         euler.thermodynamics,
         phx.equations.ConstantTransport(2.0e-5, 0.03),
         1,
+        # ty: ignore[invalid-argument-type]
         mode_diffusivities=(4.0e-5,),
     )
 
-    def state_at(coordinate):
+    def state_at(coordinate: Any) -> Any:
         return system.primitive_to_conserved(
             jnp.asarray(
                 (

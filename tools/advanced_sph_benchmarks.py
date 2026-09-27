@@ -9,6 +9,7 @@ import json
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 
@@ -19,12 +20,12 @@ class IntervalGeometry:
     bounds = jnp.asarray([[0.0], [1.0]])
 
     @staticmethod
-    def signed_distance(points):
+    def signed_distance(points: Any) -> Any:
         x = points[:, 0]
         return jnp.minimum(x, 1.0 - x)
 
     @staticmethod
-    def boundary_normal(points):
+    def boundary_normal(points: Any) -> Any:
         return jnp.where(points[:, :1] < 0.5, -1.0, 1.0)
 
 
@@ -53,7 +54,7 @@ class AdvancedSPHBenchmark:
     dfsph_production_qualified: bool
 
     @property
-    def passed(self):
+    def passed(self) -> Any:
         return (
             self.maturity == "experimental"
             and self.execution_successful
@@ -74,11 +75,12 @@ class AdvancedSPHBenchmark:
         )
 
 
-def _phase(name, count=6):
+def _phase(name: Any, count: Any = 6) -> Any:
     spacing = 1.0 / count
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(count), jnp.full((count,), spacing), ambient_dimension=1, name=name
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     kernel = phx.discretization.WendlandC2SPHKernel(1)
     method = phx.discretization.WeaklyCompressibleSPHMethodPlan(
@@ -107,7 +109,7 @@ def _phase(name, count=6):
     return compiled, position, state, box
 
 
-def run_advanced_sph_benchmark():
+def run_advanced_sph_benchmark() -> Any:
     compiled, position, state, box = _phase("phase-a")
     diagnostics = compiled.dynamics.diagnostics(0.0, state, None)
     neighborhood = compiled.dynamics.neighborhood.build(position)
@@ -140,7 +142,10 @@ def run_advanced_sph_benchmark():
         box=box,
     )
     multiphase_diagnostics = multiphase.diagnostics(
-        0.0, multiphase.pack(state, second_state), None
+        # ty: ignore[invalid-argument-type]
+        0.0,
+        multiphase.pack(state, second_state),
+        None,
     )
     kernel = compiled.dynamics.method.kernel
     prepared_neighborhood = compiled.dynamics.neighborhood
@@ -154,7 +159,11 @@ def run_advanced_sph_benchmark():
         phx.discretization.IISPHMethodPlan(1.0, maximum_iterations=3, tolerance=1.0),
     )
     iisph_result = iisph.step_detailed(
-        0.0, iisph.initialize_state(position, zero_velocity), 0.001
+        # ty: ignore[invalid-argument-type]
+        0.0,
+        iisph.initialize_state(position, zero_velocity),
+        # ty: ignore[invalid-argument-type]
+        0.001,
     )
     dfsph = phx.discretization.PreparedDFSPH(
         particles,
@@ -170,7 +179,11 @@ def run_advanced_sph_benchmark():
         ),
     )
     dfsph_result = dfsph.step_detailed(
-        0.0, dfsph.initialize_state(position, zero_velocity), 0.001
+        # ty: ignore[invalid-argument-type]
+        0.0,
+        dfsph.initialize_state(position, zero_velocity),
+        # ty: ignore[invalid-argument-type]
+        0.001,
     )
     kernel = compiled.dynamics.method.kernel
     wall = phx.discretization.WallParticleGenerationPlan(
@@ -275,7 +288,7 @@ def run_advanced_sph_benchmark():
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Qualify advanced particle methods.")
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()

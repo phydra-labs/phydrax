@@ -9,10 +9,12 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._spaces import AbstractVectorSpace, PyTreeSpace
 
 
@@ -22,9 +24,10 @@ RematerializationPolicy: TypeAlias = Literal["store", "rematerialize"]
 class LinearizationPolicy(StrictModule):
     rematerialization: RematerializationPolicy = eqx.field(static=True)
 
-    def __init__(self, rematerialization: RematerializationPolicy = "store", /):
-        if rematerialization not in ("store", "rematerialize"):
-            raise ValueError("Unknown linearization rematerialization policy.")
+    def __init__(self, rematerialization: RematerializationPolicy = "store", /) -> None:
+        rematerialization = parse(
+            rematerialization, RematerializationPolicy, "rematerialization"
+        )
         self.rematerialization = rematerialization
 
 
@@ -53,7 +56,7 @@ class PreparedLinearization(StrictModule):
         policy: LinearizationPolicy,
         linearization_id: str,
         auxiliary: Any = None,
-    ):
+    ) -> None:
         self.source = source
         self.target = target
         self.point = point
@@ -110,7 +113,7 @@ def prepare_linearization(
     primal_ = target_.validate(primal)
     transposed = jax.linear_transpose(pushforward, source_.zeros())
 
-    def apply_transpose(cotangent):
+    def apply_transpose(cotangent: PyTree[Any]) -> PyTree[Array]:
         return transposed(cotangent)[0]
 
     pullback = eqx.filter_closure_convert(apply_transpose, target_.structure())

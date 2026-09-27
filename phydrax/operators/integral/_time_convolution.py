@@ -5,16 +5,19 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.domain import AbstractScalarDomain, DomainFunction
 
 from ..._doc import DOC_KEY0
 from ...integration import GaussLegendreRule
 from ...integration._rules import IntervalRule
+from ...typing import PRNGKey
 from .._causal_quadrature import causal_reference_rule
 
 
@@ -78,19 +81,21 @@ def time_convolution(
         )
     u_time_position = u.deps.index(time_var) if time_var in u.deps else None
 
-    def _u_at_time(u_args: list[object], time: Array, *, key, **kwargs):
+    def _u_at_time(
+        u_args: list[object], time: Array, *, key: PRNGKey, **kwargs: Any
+    ) -> Any:
         call_args = list(u_args)
         if u_time_position is not None:
             call_args[u_time_position] = time
         return u.func(*call_args, key=key, **kwargs)
 
-    def _op(*args, key=None, **kwargs):
+    def _op(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         evaluation_key = DOC_KEY0 if key is None else key
         target_time = jnp.asarray(args[time_position], dtype=jnp.float64).reshape(())
         duration = jnp.maximum(target_time - t0, 0.0)
         u_args = [args[index] for index in u_positions]
 
-        def integrate(_):
+        def integrate(_: None) -> Array:
             source_times = t0 + duration * reference_nodes
             lags = target_time - source_times
             values = jax.vmap(
@@ -109,7 +114,7 @@ def time_convolution(
             effective_weights = duration * reference_weights * kernel_values
             return jnp.tensordot(effective_weights, values, axes=(0, 0))
 
-        def zero(_):
+        def zero(_: None) -> Array:
             return jnp.zeros_like(_u_at_time(u_args, t0, key=evaluation_key, **kwargs))
 
         return jax.lax.cond(duration > 0.0, integrate, zero, operand=None)

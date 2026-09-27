@@ -9,7 +9,7 @@ from math import prod
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from ..stochastic import StateSpaceProblem
@@ -97,7 +97,7 @@ def state_space_path_log_density(
             end_time = times[case_index, step_index]
             context = problem.step_context(case_index, step_index)
 
-            def transition_term(_):
+            def transition_term(_: None) -> Array:
                 return jnp.asarray(
                     problem.model.transition.log_prob(
                         next_state,
@@ -108,7 +108,7 @@ def state_space_path_log_density(
                     )
                 ).reshape(())
 
-            def observation_term(_):
+            def observation_term(_: None) -> Array:
                 return jnp.asarray(
                     problem.model.observation.log_prob(
                         observation_values[case_index, step_index],

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,12 +12,13 @@ import pytest
 import phydrax as phx
 
 
-def _compiled(*, backend="cell", viscosity=0.0):
+def _compiled(*, backend: Any = "cell", viscosity: Any = 0.0) -> Any:
     count = 8
     spacing = 1.0 / count
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(count), jnp.full((count,), spacing), ambient_dimension=1
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     method = phx.discretization.WeaklyCompressibleSPHMethodPlan(
         phx.discretization.WendlandC2SPHKernel(1),
@@ -44,7 +48,7 @@ def _compiled(*, backend="cell", viscosity=0.0):
     )
 
 
-def _initial(amplitude=0.002):
+def _initial(amplitude: Any = 0.002) -> Any:
     position = (jnp.arange(8, dtype="float64") + 0.5)[:, None] / 8.0
     position = position + amplitude * jnp.sin(2.0 * jnp.pi * position)
     velocity = jnp.zeros_like(position)
@@ -52,7 +56,7 @@ def _initial(amplitude=0.002):
 
 
 @pytest.mark.parametrize("solver", [phx.solver.SSPRK33(), phx.solver.SSPRK54()])
-def test_wcsph_solves_through_native_ssprk_methods(solver):
+def test_wcsph_solves_through_native_ssprk_methods(solver: Any) -> None:
     compiled = _compiled(viscosity=0.01)
     position, velocity = _initial()
     problem = compiled.as_differential_problem(position, velocity, t0=0.0, t1=0.002)
@@ -71,12 +75,12 @@ def test_wcsph_solves_through_native_ssprk_methods(solver):
     assert solution.discretization_bundle_id == compiled.discretization_bundle.bundle_id
 
 
-def test_dense_and_cell_wcsph_trajectories_match():
+def test_dense_and_cell_wcsph_trajectories_match() -> None:
     dense = _compiled(backend="dense", viscosity=0.01)
     cell = _compiled(backend="cell", viscosity=0.01)
     position, velocity = _initial()
 
-    def solve(compiled):
+    def solve(compiled: Any) -> Any:
         return phx.solver.solve_diffrax(
             compiled.as_differential_problem(position, velocity, t0=0.0, t1=0.002),
             save_times=jnp.asarray([0.0, 0.001, 0.002]),
@@ -95,10 +99,10 @@ def test_dense_and_cell_wcsph_trajectories_match():
     )
 
 
-def test_short_wcsph_trajectory_has_fixed_discrete_gradient():
+def test_short_wcsph_trajectory_has_fixed_discrete_gradient() -> None:
     compiled = _compiled(viscosity=0.0)
 
-    def terminal(amplitude):
+    def terminal(amplitude: Any) -> Any:
         position, velocity = _initial(amplitude)
         solution = phx.solver.solve_diffrax(
             compiled.as_differential_problem(position, velocity, t0=0.0, t1=0.001),

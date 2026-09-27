@@ -11,7 +11,9 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._iteration import (
     bind_iteration_scope,
@@ -25,6 +27,7 @@ from .._iteration import (
     IterationSessionState,
 )
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._markov import MarkovSampleResult, MarkovState, MetropolisHastings, sample_markov
 
 
@@ -35,7 +38,9 @@ class MarkovChunkPlan(StrictModule):
     chunk_count: int = eqx.field(static=True)
     capacity: int = eqx.field(static=True)
 
-    def __init__(self, total_draws: int, chunk_size: int, /, *, steps_per_draw: int = 1):
+    def __init__(
+        self, total_draws: int, chunk_size: int, /, *, steps_per_draw: int = 1
+    ) -> None:
         total, chunk, steps = int(total_draws), int(chunk_size), int(steps_per_draw)
         if total <= 0 or chunk <= 0 or steps <= 0:
             raise ValueError(
@@ -74,13 +79,13 @@ class MarkovChunkIterationMetrics(StrictModule):
 
 
 def _chunk_iteration_record(
-    phase,
-    completed_draws,
-    chunk_index,
-    metrics,
+    phase: IterationPhase,
+    completed_draws: ArrayLike,
+    chunk_index: ArrayLike,
+    metrics: MarkovChunkIterationMetrics,
     /,
     *,
-    terminal=False,
+    terminal: bool = False,
 ) -> IterationRecord:
     return IterationRecord(
         IterationCoordinates(
@@ -110,7 +115,7 @@ def sample_markov_chunked(
     state: MarkovState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     plan: MarkovChunkPlan,
     iteration: IterationPlan | None = None,
     session: IterationSession | None = None,

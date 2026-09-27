@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -70,11 +71,11 @@ REPLAY_GRADIENT_RELATIVE_TOLERANCE = 1.0e-10
 
 
 def _stage_two_binding(
-    stage_one,
+    stage_one: Any,
     *,
-    semantic_id=None,
-    training_preparation_id=None,
-):
+    semantic_id: Any = None,
+    training_preparation_id: Any = None,
+) -> Any:
     source = stage_one.binding.plan
     return LearnedEnergyEquilibriumBindingPlan(
         source.equilibrium_plan,
@@ -93,7 +94,7 @@ def _stage_two_binding(
     )
 
 
-def _runtime(binding):
+def _runtime(binding: Any) -> Any:
     method = SmoothCompressibleD2VKineticMethod(
         binding.equilibrium_plan.quadrature,
         binding.material,
@@ -108,7 +109,7 @@ def _runtime(binding):
     )
 
 
-def _sample_key(trajectory_id, *, time_index=0):
+def _sample_key(trajectory_id: Any, *, time_index: Any = 0) -> Any:
     return ClosureSampleKey(
         case_id=f"case-{trajectory_id}",
         trajectory_id=trajectory_id,
@@ -118,7 +119,7 @@ def _sample_key(trajectory_id, *, time_index=0):
     )
 
 
-def _trajectory_id_for_split(schema_id, partition, split):
+def _trajectory_id_for_split(schema_id: Any, partition: Any, split: Any) -> Any:
     for index in range(10_000):
         trajectory_id = f"{split}-{index}"
         sample = ClosureSample(
@@ -131,7 +132,7 @@ def _trajectory_id_for_split(schema_id, partition, split):
     raise RuntimeError(f"Could not construct deterministic {split} trajectory.")
 
 
-def _rollout_schema(runtime, binding):
+def _rollout_schema(runtime: Any, binding: Any) -> Any:
     return SmoothCompressibleRolloutSchema(
         runtime.transport.spatial_shape,
         jnp.float64,
@@ -147,7 +148,7 @@ def _rollout_schema(runtime, binding):
     )
 
 
-def _reference_conserved(runtime, density, phase):
+def _reference_conserved(runtime: Any, density: Any, phase: Any) -> Any:
     nx, ny = runtime.transport.spatial_shape
     x = (jnp.arange(nx, dtype=jnp.float64) + 0.5) / nx
     y = (jnp.arange(ny, dtype=jnp.float64) + 0.5) / ny
@@ -172,7 +173,9 @@ def _reference_conserved(runtime, density, phase):
     )
 
 
-def _oracle_trajectory(runtime, binding, trajectory_id, density, phase):
+def _oracle_trajectory(
+    runtime: Any, binding: Any, trajectory_id: Any, density: Any, phase: Any
+) -> Any:
     schema = _rollout_schema(runtime, binding)
     conserved = _reference_conserved(runtime, density, phase)
     velocity = conserved[..., 1:3] / conserved[..., 0, None]
@@ -220,7 +223,7 @@ def _oracle_trajectory(runtime, binding, trajectory_id, density, phase):
     )
 
 
-def _dataset(runtime, binding):
+def _dataset(runtime: Any, binding: Any) -> Any:
     partition = LeakageSafePartitionPlan(
         "trajectory",
         train_fraction=0.5,
@@ -258,12 +261,12 @@ def _dataset(runtime, binding):
     return dataset
 
 
-def _schedules():
+def _schedules() -> Any:
     policy = AdaptiveReplayPreparationPolicy(2_000_000, 2_000_000)
     return tuple(prepare_replay_schedule(horizon, 4096, policy) for horizon in CURRICULUM)
 
 
-def _training_plan(runtime, binding, replay_mode):
+def _training_plan(runtime: Any, binding: Any, replay_mode: Any) -> Any:
     options = {}
     if replay_mode == "block":
         options["replay_block_size"] = 4
@@ -278,12 +281,13 @@ def _training_plan(runtime, binding, replay_mode):
         learning_rate=1.0e-5,
         maximum_scaled_flux_error=6.0e-2,
         replay_mode=replay_mode,
+        # ty: ignore[invalid-argument-type]
         **options,
     )
 
 
-def _gradient_measurement(model, plan, dataset, horizon):
-    def loss(candidate):
+def _gradient_measurement(model: Any, plan: Any, dataset: Any, horizon: Any) -> Any:
+    def loss(candidate: Any) -> Any:
         return kinetic_rollout_objective(
             candidate, plan, dataset.statistics, dataset.train_windows, horizon
         )[0]
@@ -291,7 +295,7 @@ def _gradient_measurement(model, plan, dataset, horizon):
     return eqx.filter_grad(loss)(model), float(np.asarray(loss(model)))
 
 
-def _maximum_relative_gradient_difference(left, right):
+def _maximum_relative_gradient_difference(left: Any, right: Any) -> Any:
     left_leaves = tuple(
         np.asarray(value) for value in jax.tree.leaves(left) if eqx.is_array(value)
     )
@@ -314,7 +318,7 @@ def _maximum_relative_gradient_difference(left, right):
     return maximum
 
 
-def _atomic_write_report(report):
+def _atomic_write_report(report: Any) -> None:
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     temporary = REPORT_PATH.with_name(f".{REPORT_PATH.name}.tmp")
     temporary.write_text(
@@ -432,7 +436,9 @@ def main() -> None:
         "trained_no_regression": float(np.asarray(trained_loss))
         <= float(np.asarray(baseline_loss)) + 1.0e-14,
         "replay_objective_and_gradient_agree": all(
+            # ty: ignore[unsupported-operator]
             value["absolute_loss_error"] <= REPLAY_LOSS_TOLERANCE
+            # ty: ignore[unsupported-operator]
             and value["maximum_relative_gradient_error"]
             <= REPLAY_GRADIENT_RELATIVE_TOLERANCE
             for value in replay.values()

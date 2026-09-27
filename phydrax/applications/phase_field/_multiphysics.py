@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -133,7 +134,7 @@ class CoupledMultiphysicsPlan(StrictModule, NonTrainableState):
         exchange_tolerance: float = 1.0e-8,
         conservation_tolerance: float = 1.0e-8,
         entropy_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         required = (
             (graph, PhaseFieldCouplingGraph),
             (thermal, NonisothermalSolidificationPlan),

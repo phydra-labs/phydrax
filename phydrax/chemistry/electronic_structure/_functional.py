@@ -9,7 +9,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -26,7 +27,11 @@ def _safe_density(value: Array, /) -> Array:
     return jnp.maximum(value, jnp.finfo(value.dtype).tiny ** 0.25)
 
 
-def _pw92_component(radius: Array, parameters, /) -> Array:
+def _pw92_component(
+    radius: Array,
+    parameters: tuple[float, float, float, float, float, float],
+    /,
+) -> Array:
     a, alpha, beta1, beta2, beta3, beta4 = parameters
     square_root = jnp.sqrt(radius)
     denominator = (
@@ -120,7 +125,7 @@ class NativeXCFunctional(StrictModule, NonTrainableState):
     plan: DensityFunctionalPlan
     functional_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: DensityFunctionalPlan, /):
+    def __init__(self, plan: DensityFunctionalPlan, /) -> None:
         if not isinstance(plan, DensityFunctionalPlan):
             raise TypeError("plan must be DensityFunctionalPlan.")
         supported = {
@@ -236,7 +241,7 @@ class NativeXCFunctional(StrictModule, NonTrainableState):
         alpha = jnp.asarray(alpha_density_matrix)
         beta = jnp.asarray(beta_density_matrix, dtype=alpha.dtype)
 
-        def energy(alpha_, beta_):
+        def energy(alpha_: Array, beta_: Array) -> Array:
             return self.energy(alpha_, beta_, ao_values, ao_gradients, weights)
 
         value, gradients = jax.value_and_grad(energy, argnums=(0, 1))(alpha, beta)

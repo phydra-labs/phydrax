@@ -20,7 +20,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -57,7 +58,7 @@ class GraphEikonalRoute(StrictModule, NonTrainableState):
         /,
         *,
         maximum_sweeps: int | None = None,
-    ):
+    ) -> None:
         nodes = np.asarray(node_ids, dtype=np.int64)
         edges = np.asarray(edge_ids, dtype=np.int64)
         incidence = np.asarray(edge_nodes, dtype=np.int32)
@@ -111,7 +112,7 @@ class FiniteElementEikonalRoute(StrictModule, NonTrainableState):
         /,
         *,
         maximum_sweeps: int | None = None,
-    ):
+    ) -> None:
         nodes = np.asarray(node_ids, dtype=np.int64)
         element_id_values = np.asarray(element_ids, dtype=np.int64)
         cells = np.asarray(elements, dtype=np.int32)
@@ -172,7 +173,7 @@ class AnisotropicEikonalPlan(StrictModule, NonTrainableState):
         *,
         residual_tolerance_ms: float = 1.0e-7,
         path_tie_tolerance_ms: float = 1.0e-7,
-    ):
+    ) -> None:
         if not isinstance(route, (GraphEikonalRoute, FiniteElementEikonalRoute)):
             raise TypeError(
                 "route must be GraphEikonalRoute or FiniteElementEikonalRoute."
@@ -460,7 +461,7 @@ def solve_anisotropic_eikonal(
     arrivals = jnp.full((prepared.node_count,), infinity, dtype=dtype)
     arrivals = arrivals.at[sources].min(source_times)
 
-    def relax(sweep, carry):
+    def relax(sweep: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
         values, first_converged = carry
         edge_proposals = values[origins] + weights
         best = jnp.full_like(values, infinity).at[destinations].min(edge_proposals)

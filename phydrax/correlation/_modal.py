@@ -2,7 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 def stabilization_mask(
@@ -13,7 +14,7 @@ def stabilization_mask(
     frequency_tolerance: float = 0.01,
     damping_tolerance: float = 0.05,
     /,
-):
+) -> Array:
     f = jnp.asarray(frequencies)
     d = jnp.asarray(damping)
     pf = jnp.asarray(previous_frequencies)
@@ -29,7 +30,7 @@ def modal_pairing_cost(
     frequency_candidate: ArrayLike,
     frequency_weight: float = 1.0,
     /,
-):
+) -> Array:
     return (
         1
         - jnp.asarray(mac)

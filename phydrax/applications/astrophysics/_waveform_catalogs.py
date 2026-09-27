@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -30,15 +31,15 @@ class QnmModeTable(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        frequency,
-        damping_time,
-        mode_indices,
-        provenance,
+        frequency: ArrayLike,
+        damping_time: ArrayLike,
+        mode_indices: ArrayLike,
+        provenance: ObservationDataProvenance,
         /,
         *,
-        time_unit="geometric-time",
-        frequency_convention="cycles-per-time",
-    ):
+        time_unit: str = "geometric-time",
+        frequency_convention: str = "cycles-per-time",
+    ) -> None:
         if not isinstance(provenance, ObservationDataProvenance):
             raise TypeError("provenance must be ObservationDataProvenance.")
         unit = str(time_unit).strip()
@@ -114,7 +115,7 @@ class RingdownPlan(StrictModule, NonTrainableState):
     modes: QnmModeTable
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, modes: QnmModeTable, /):
+    def __init__(self, modes: QnmModeTable, /) -> None:
         if not isinstance(modes, QnmModeTable):
             raise TypeError("modes must be a QnmModeTable.")
         self.modes = modes

@@ -43,7 +43,7 @@ class ImplicitProjectionPolicy:
     minimum_gradient_norm: float = 1.0e-8
     trust_fraction: float = 0.35
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.maximum_steps <= 0:
             raise ValueError("maximum_steps must be positive.")
         for name, value in (
@@ -73,7 +73,7 @@ class ImplicitSurfacePolicy:
     allow_approximate_zero_set: bool = False
     allow_nonsmooth_field: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.projection, ImplicitProjectionPolicy):
             raise TypeError("projection must be an ImplicitProjectionPolicy.")
         for name, value in (

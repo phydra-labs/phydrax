@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -51,7 +52,7 @@ class ImplicitMPMMethodPlan(StrictModule, NonTrainableState):
         nonlinear_method: NewtonKrylov | None = None,
         termination: NonlinearTermination | None = None,
         /,
-    ):
+    ) -> None:
         method = (
             NewtonKrylov(
                 linear_policy=LinearSolvePolicy(
@@ -123,7 +124,7 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
         explicit: PreparedMPMDynamics,
         method: ImplicitMPMMethodPlan | None = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(explicit, PreparedMPMDynamics):
             raise TypeError("explicit must be PreparedMPMDynamics.")
         method_ = ImplicitMPMMethodPlan() if method is None else method
@@ -218,6 +219,11 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
         initial_guess = normalized.velocity
         if dynamics.boundary is not None:
             if dynamics.compact_storage:
+                # Compact storage is block-sparse, whose build always returns a state.
+                if not (storage_state is not None):
+                    raise RuntimeError(
+                        "Internal invariant failed: storage_state is not None."
+                    )
                 initial_guess = dynamics.boundary.apply_indexed(
                     initial_guess,
                     grid_mass,
@@ -231,7 +237,7 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
                 ).velocity
         density = mass / jnp.where(active_particles, particle.reference_volume, 1.0)
 
-        def residual(grid_velocity, _):
+        def residual(grid_velocity: Array, _: object) -> tuple[Array, Array]:
             gathered = gather_apic(
                 execution_routes,
                 grid_velocity.reshape((dynamics.grid_count, dimension)),
@@ -272,6 +278,11 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
             value = jnp.where(normalized.active[..., None], value, grid_velocity)
             if dynamics.boundary is not None:
                 if dynamics.compact_storage:
+                    # Compact storage is block-sparse, whose build always returns a state.
+                    if not (storage_state is not None):
+                        raise RuntimeError(
+                            "Internal invariant failed: storage_state is not None."
+                        )
                     logical = storage_state.logical_node_ids.reshape((-1,))
                     valid_nodes = storage_state.node_valid.reshape((-1,))
                     mask = (

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def test_design_state_updates_preserve_schema_and_tree_structure():
+def test_design_state_updates_preserve_schema_and_tree_structure() -> None:
     source = phx.geometry.Sphere(
         center=(0.0, 0.0, 0.0),
         radius=1.0,
@@ -28,7 +31,7 @@ def test_design_state_updates_preserve_schema_and_tree_structure():
     assert compiled.boundary_field(jnp.array([1.5, 0.0, 0.0])) == pytest.approx(0.5)
     assert updated.boundary_field(jnp.array([1.5, 0.0, 0.0])) == pytest.approx(-0.5)
 
-    def volume(radius):
+    def volume(radius: Any) -> Any:
         state = compiled.state.replace_at(radius_index, radius)
         return compiled.kernel.measure(state)
 
@@ -37,7 +40,7 @@ def test_design_state_updates_preserve_schema_and_tree_structure():
     assert evaluate(jnp.array([2.0, 0.0, 0.0])) == pytest.approx(0.0)
 
 
-def test_field_certificates_propagate_through_translation_and_sharp_union():
+def test_field_certificates_propagate_through_translation_and_sharp_union() -> None:
     left = phx.geometry.Sphere(
         (0.0, 0.0, 0.0),
         1.0,
@@ -67,7 +70,7 @@ def test_field_certificates_propagate_through_translation_and_sharp_union():
         union.signed_distance(jnp.array([0.0, 0.0, 0.0]))
 
 
-def test_analytic_domains_have_exact_measures_queries_and_fixed_shape_samples():
+def test_analytic_domains_have_exact_measures_queries_and_fixed_shape_samples() -> None:
     circle = phx.domain.GeometryDomain(phx.geometry.Circle((1.0, -1.0), 2.0).compile())
     sphere = phx.domain.GeometryDomain(
         phx.geometry.Sphere((0.0, 0.0, 0.0), 2.0).compile()
@@ -91,13 +94,15 @@ def test_analytic_domains_have_exact_measures_queries_and_fixed_shape_samples():
     assert jnp.all(box._on_boundary(box_boundary))
 
 
-def test_bounded_rejection_reports_failure_without_hanging_or_underfilling_silently():
+def test_bounded_rejection_reports_failure_without_hanging_or_underfilling_silently() -> (
+    None
+):
     plan = phx.geometry.RejectionSamplingPlan(
         proposals_per_round=4,
         maximum_rounds=3,
     )
 
-    def run(key):
+    def run(key: Any) -> Any:
         return phx.geometry.bounded_rejection_sample(
             lambda _key, count: jnp.zeros((count, 2)),
             lambda points: jnp.zeros((points.shape[0],), dtype="bool"),
@@ -117,7 +122,7 @@ def test_bounded_rejection_reports_failure_without_hanging_or_underfilling_silen
     assert result.report.rounds == plan.maximum_rounds
 
 
-def test_triangle_mesh_query_index_returns_closest_features_and_surface_atlas():
+def test_triangle_mesh_query_index_returns_closest_features_and_surface_atlas() -> None:
     mesh = phx.geometry.TriangleMesh(
         vertices=jnp.array(
             [
@@ -149,7 +154,7 @@ def test_triangle_mesh_query_index_returns_closest_features_and_surface_atlas():
     assert jnp.allclose(jacobian, jnp.array([[0.5]]))
 
 
-def test_boundary_atlas_integration_and_hard_constraint_work_end_to_end():
+def test_boundary_atlas_integration_and_hard_constraint_work_end_to_end() -> None:
     source = phx.geometry.Circle(
         (0.0, 0.0),
         1.5,
@@ -168,7 +173,7 @@ def test_boundary_atlas_integration_and_hard_constraint_work_end_to_end():
     assert integral.value.data == pytest.approx(geometry.boundary_measure)
 
     @geometry.Function("x")
-    def raw_field(x):
+    def raw_field(x: Any) -> Any:
         return jnp.sum(x * x)
 
     enforced = phx.enforcement.enforce_dirichlet(raw_field, boundary, target=3.0)

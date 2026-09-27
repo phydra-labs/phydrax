@@ -4,7 +4,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_wcs_imaging_and_survey_closure():
+def test_wcs_imaging_and_survey_closure() -> None:
     physics = phx.applications.astrophysics
     wcs = physics.TangentSipWcsPlan(
         jnp.asarray([1.0, 0.5]),
@@ -38,7 +38,7 @@ def test_wcs_imaging_and_survey_closure():
     assert bool(image.valid)
 
 
-def test_radiative_waveform_and_exoplanet_closure():
+def test_radiative_waveform_and_exoplanet_closure() -> None:
     physics = phx.applications.astrophysics
     transfer = physics.RayTransferPlan(jnp.ones(4), ray_id="closure").evaluate(
         jnp.ones(4), jnp.zeros(4)
@@ -67,7 +67,7 @@ def test_radiative_waveform_and_exoplanet_closure():
     assert float(lens.magnification) > 1.0
 
 
-def test_ray_transfer_zero_extinction_and_polarized_singular_operator():
+def test_ray_transfer_zero_extinction_and_polarized_singular_operator() -> None:
     physics = phx.applications.astrophysics
     ray = physics.RayTransferPlan(jnp.ones(4), ray_id="zero-extinction")
     scalar = ray.evaluate(jnp.ones(4), jnp.zeros(4), jnp.asarray(2.0))

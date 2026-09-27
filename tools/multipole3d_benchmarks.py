@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,7 +17,7 @@ import phydrax as phx
 from benchmarks._runtime import measure_repeated, measure_synchronized
 
 
-def _problem(source_count: int, target_count: int):
+def _problem(source_count: int, target_count: int) -> Any:
     rng = np.random.default_rng(390174)
     sources = jnp.asarray(rng.uniform(-0.9, 0.9, size=(source_count, 3)))
     targets = jnp.asarray(rng.uniform(-0.9, 0.9, size=(target_count, 3)))
@@ -24,7 +25,9 @@ def _problem(source_count: int, target_count: int):
     return sources, targets, strengths
 
 
-def _reference(kernel, sources, strengths, targets, parameter):
+def _reference(
+    kernel: Any, sources: Any, strengths: Any, targets: Any, parameter: Any
+) -> Any:
     radii = jnp.linalg.norm(targets[:, None, :] - sources[None, :, :], axis=-1)
     if kernel == "laplace":
         numerator = jnp.ones_like(radii)
@@ -35,7 +38,16 @@ def _reference(kernel, sources, strengths, targets, parameter):
     return jnp.sum(numerator * strengths[None, :] / (4.0 * jnp.pi * radii), axis=1)
 
 
-def _case(kernel, sources, targets, strengths, order, depth, repeats, parameter):
+def _case(
+    kernel: Any,
+    sources: Any,
+    targets: Any,
+    strengths: Any,
+    order: Any,
+    depth: Any,
+    repeats: Any,
+    parameter: Any,
+) -> Any:
     if kernel == "laplace":
         plan_type, keyword = phx.operators.LaplaceMultipolePlan3D, {}
     elif kernel == "helmholtz":

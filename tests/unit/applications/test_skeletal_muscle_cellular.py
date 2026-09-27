@@ -95,7 +95,7 @@ _OPEN_COR_FAST_TRACE = {
 }
 
 
-def test_source_identity_layouts_and_state_count_resolution():
+def test_source_identity_layouts_and_state_count_resolution() -> None:
     model = ShortenFastTwitchModel()
 
     assert model.source_revision == "637da9ef28f7992e40fe79947364a51a38ec818c"
@@ -123,7 +123,7 @@ def test_source_identity_layouts_and_state_count_resolution():
         assert all(symbol.count("/") == 1 for symbol in layout.source_symbols)
 
 
-def test_source_initial_rhs_and_current_reference_values():
+def test_source_initial_rhs_and_current_reference_values() -> None:
     model = ShortenFastTwitchModel()
     state = model.initialize(dtype=jnp.float64)
     evaluation = model.evaluate(0.0, state)
@@ -176,7 +176,7 @@ def test_source_initial_rhs_and_current_reference_values():
         )
 
 
-def test_opencor_source_trajectory_current_calcium_and_tension_agreement():
+def test_opencor_source_trajectory_current_calcium_and_tension_agreement() -> None:
     model = ShortenFastTwitchModel()
     grid = np.linspace(0.0, 1.0, 11)
     trajectory = (
@@ -203,7 +203,7 @@ def test_opencor_source_trajectory_current_calcium_and_tension_agreement():
     assert final.cytosolic_calcium_uM.shape == (2,)
 
 
-def test_source_pulse_alignment_and_endpoint_convention():
+def test_source_pulse_alignment_and_endpoint_convention() -> None:
     protocol = ShortenPulseProtocol()
     times = jnp.asarray([-1.0e-6, 0.0, 0.499999, 0.5, 49.999, 50.0, 50.5, 400.0, 400.5])
     expected = jnp.asarray([0.0, 150.0, 150.0, 0.0, 0.0, 150.0, 0.0, 150.0, 0.0])
@@ -214,11 +214,13 @@ def test_source_pulse_alignment_and_endpoint_convention():
     )
 
     with pytest.raises(ValueError, match="pin every stimulus"):
+        # ty: ignore[invalid-argument-type]
         ShortenIntegrationPlan(ShortenFastTwitchModel(), [0.0, 1.0])
+    # ty: ignore[invalid-argument-type]
     ShortenIntegrationPlan(ShortenFastTwitchModel(), [0.0, 0.5, 1.0])
 
 
-def test_exact_gates_semigroup_and_stiffness_evidence():
+def test_exact_gates_semigroup_and_stiffness_evidence() -> None:
     model = ShortenFastTwitchModel()
     state = model.initialize()
     full = model.exact_gate_update(0.75, state, 0.02)
@@ -234,7 +236,8 @@ def test_exact_gates_semigroup_and_stiffness_evidence():
     assert float(stiffness_ratio) > 1.0e6
 
 
-def test_failed_step_trajectory_pairs_rolled_back_time_and_values():
+def test_failed_step_trajectory_pairs_rolled_back_time_and_values() -> None:
+    # ty: ignore[invalid-argument-type]
     prepared = ShortenIntegrationPlan(ShortenFastTwitchModel(), [0.0, 0.5]).prepare()
     initial = prepared.initialize()
     misaligned = ShortenCellState(0.1, initial.values)
@@ -248,18 +251,23 @@ def test_failed_step_trajectory_pairs_rolled_back_time_and_values():
     )
 
 
-def test_integration_schedule_is_fixed_and_identity_is_content_complete():
+def test_integration_schedule_is_fixed_and_identity_is_content_complete() -> None:
     model = ShortenFastTwitchModel()
+    # ty: ignore[invalid-argument-type]
     plan = ShortenIntegrationPlan(model, [0.0, 0.5, 1.0])
+    # ty: ignore[invalid-argument-type]
     same = ShortenIntegrationPlan(model, [0.0, 0.5, 1.0])
+    # ty: ignore[invalid-argument-type]
     different_grid = ShortenIntegrationPlan(model, [0.0, 0.5, 1.5])
     different_timing = ShortenIntegrationPlan(
         model,
+        # ty: ignore[invalid-argument-type]
         [0.0, 0.5, 1.0],
         protocol=ShortenPulseProtocol(period_ms=60.0),
     )
     different_amplitude = ShortenIntegrationPlan(
         model,
+        # ty: ignore[invalid-argument-type]
         [0.0, 0.5, 1.0],
         protocol=ShortenPulseProtocol(amplitude_uA_per_cm2=125.0),
     )
@@ -269,7 +277,7 @@ def test_integration_schedule_is_fixed_and_identity_is_content_complete():
     assert different_amplitude.plan_id != plan.plan_id
 
 
-def test_rhs_is_jittable_vectorized_and_forward_differentiable():
+def test_rhs_is_jittable_vectorized_and_forward_differentiable() -> None:
     model = ShortenFastTwitchModel()
     state = model.initialize(dtype=jnp.float64)
     compiled = eqx.filter_jit(lambda configured, value: configured.rhs(0.75, value))
@@ -321,7 +329,7 @@ def test_rhs_is_jittable_vectorized_and_forward_differentiable():
     assert float(jnp.linalg.norm(parameter_tangent)) > 0.0
 
 
-def test_batched_layout_and_admissibility_contract():
+def test_batched_layout_and_admissibility_contract() -> None:
     model = ShortenFastTwitchModel()
     state = model.initialize((4,))
     evaluation = model.evaluate(jnp.arange(4) * 0.1, state)

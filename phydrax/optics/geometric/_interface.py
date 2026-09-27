@@ -8,7 +8,8 @@ import math
 from enum import IntEnum
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -30,7 +31,7 @@ class OpticalRayState(StrictModule, NonTrainableState):
         refractive_indices: ArrayLike,
         geometric_path_lengths: ArrayLike | None = None,
         optical_path_lengths: ArrayLike | None = None,
-    ):
+    ) -> None:
         origins_ = jnp.asarray(origins)
         directions_ = jnp.asarray(directions)
         indices_ = jnp.asarray(refractive_indices)

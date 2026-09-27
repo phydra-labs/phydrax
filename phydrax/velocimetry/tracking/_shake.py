@@ -9,7 +9,8 @@ from math import isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -53,7 +54,7 @@ class ShakePlan(StrictModule, NonTrainableState):
         minimum_amplitude: float = 0.0,
         convergence_tolerance: float = 1.0e-8,
         loss: AbstractRobustLoss | None = None,
-    ):
+    ) -> None:
         iterations_ = int(iterations)
         scalars = tuple(
             float(value)
@@ -196,7 +197,7 @@ def shake_particles(
     valid = valid & rig.camera_valid[:, None, None]
     safe_observed = jnp.where(valid, observed, 0.0)
 
-    def objective(position_value: Array, amplitude_value: Array):
+    def objective(position_value: Array, amplitude_value: Array) -> Array:
         rendered = render_camera_stack(
             formation,
             rig,
@@ -216,7 +217,9 @@ def shake_particles(
     )
     initial_positions = positions
 
-    def refine_one(carry: tuple[Array, Array, Array], unused):
+    def refine_one(
+        carry: tuple[Array, Array, Array], unused: None
+    ) -> tuple[tuple[Array, Array, Array], tuple[Array, Array]]:
         current_positions, current_amplitudes, current_loss = carry
         loss_value, gradients = jax.value_and_grad(objective, argnums=(0, 1))(
             current_positions, current_amplitudes

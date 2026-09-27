@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -8,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def _grid(count=24, dimension=1):
+def _grid(count: Any = 24, dimension: Any = 1) -> Any:
     names = tuple("xyz"[:dimension])
     grid = phx.discretization.TensorGridPlan(
         tuple(
@@ -22,7 +23,7 @@ def _grid(count=24, dimension=1):
 
 
 @pytest.mark.parametrize("order", (2, 4, 6, 8))
-def test_periodic_sbp_derivative_has_skew_norm_identity(order):
+def test_periodic_sbp_derivative_has_skew_norm_identity(order: Any) -> None:
     grid = _grid(max(12, order + 3))
     prepared = phx.discretization.SBPDerivativePlan(
         grid, "x", interior_order=order
@@ -35,7 +36,7 @@ def test_periodic_sbp_derivative_has_skew_norm_identity(order):
     assert jnp.max(jnp.abs(result - 2.0 * jnp.pi * jnp.cos(2.0 * jnp.pi * x))) < 0.3
 
 
-def test_entropy_conservative_two_point_flux_is_symmetric_and_consistent():
+def test_entropy_conservative_two_point_flux_is_symmetric_and_consistent() -> None:
     system = phx.equations.EulerSystem(2)
     flux = phx.discretization.EntropyConservativeEulerFluxPlan()
     left = system.primitive_to_conserved(jnp.asarray((1.1, 0.3, -0.2, 1.2)))
@@ -56,7 +57,7 @@ def test_entropy_conservative_two_point_flux_is_symmetric_and_consistent():
     assert flux.consistent
 
 
-def test_sbp_flux_differencing_preserves_constant_state_and_conserved_totals():
+def test_sbp_flux_differencing_preserves_constant_state_and_conserved_totals() -> None:
     grid = _grid(24)
     system = phx.equations.EulerSystem(1)
     discretization = phx.discretization.TensorSBPPlan(
@@ -84,7 +85,9 @@ def test_sbp_flux_differencing_preserves_constant_state_and_conserved_totals():
             axis=-1,
         )
     )
+    # ty: ignore[invalid-argument-type]
     constant_rate = compiled(0.0, constant)
+    # ty: ignore[invalid-argument-type]
     smooth_rate = jax.jit(lambda value: compiled(0.0, value))(smooth)
     conservation_rate = jnp.sum(
         discretization.quadrature_weights[..., None] * smooth_rate, axis=0
@@ -92,15 +95,18 @@ def test_sbp_flux_differencing_preserves_constant_state_and_conserved_totals():
 
     np.testing.assert_allclose(constant_rate, 0.0, atol=2e-12)
     np.testing.assert_allclose(conservation_rate, 0.0, atol=2e-12)
+    # ty: ignore[unresolved-attribute]
     assert compiled.dynamics.report.sparse
     assert (
+        # ty: ignore[unresolved-attribute]
         compiled.dynamics.report.pair_counts[0]
+        # ty: ignore[unresolved-attribute]
         < compiled.dynamics.report.dense_pair_count
     )
     assert jnp.isfinite(compiled.stable_step(smooth))
 
 
-def test_sbp_entropy_diagnostics_and_linearization_are_finite():
+def test_sbp_entropy_diagnostics_and_linearization_are_finite() -> None:
     grid = _grid(16)
     system = phx.equations.EulerSystem(1)
     discretization = phx.discretization.TensorSBPPlan(
@@ -129,6 +135,7 @@ def test_sbp_entropy_diagnostics_and_linearization_are_finite():
             axis=-1,
         )
     )
+    # ty: ignore[invalid-argument-type]
     residual, diagnostics = compiled.residual_with_diagnostics(0.0, state)
     balance_terms = np.asarray(discretization.quadrature_weights[..., None] * residual)
     expected_rate = np.asarray(
@@ -137,19 +144,23 @@ def test_sbp_entropy_diagnostics_and_linearization_are_finite():
             for index in range(balance_terms.shape[1])
         ]
     )
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(diagnostics.conservation_rate, expected_rate)
+    # ty: ignore[invalid-argument-type, invalid-assignment]
     _, pushforward, pullback = compiled.linearize(0.0, state)
     tangent = jnp.ones_like(state) * 1e-3
 
     assert diagnostics is not None
+    # ty: ignore[unresolved-attribute]
     assert diagnostics.admissible
+    # ty: ignore[invalid-argument-type, unresolved-attribute]
     assert jnp.abs(diagnostics.convective_entropy_rate) < 2e-10
     assert jnp.all(jnp.isfinite(pushforward(tangent)))
     assert jnp.all(jnp.isfinite(pullback(tangent)[0]))
     assert jnp.all(jnp.isfinite(residual))
 
 
-def test_sbp_flux_differencing_rejects_unsupported_boundaries_and_systems():
+def test_sbp_flux_differencing_rejects_unsupported_boundaries_and_systems() -> None:
     bounded = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(16),), axis_names=("x",)
     ).prepare(jnp.asarray([[0.0], [1.0]]))

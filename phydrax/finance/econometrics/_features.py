@@ -9,10 +9,11 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import parse
 from ._datasets import PreparedPointInTimePanel
 from ._returns import ReturnResult
 
@@ -39,7 +40,7 @@ class FeatureDefinition(StrictModule):
         /,
         *,
         aggregation: FeatureAggregation = "point",
-    ):
+    ) -> None:
         if not isinstance(name, str) or not name.strip():
             raise ValueError("feature name must be nonempty.")
         series = int(series_index)
@@ -54,8 +55,7 @@ class FeatureDefinition(StrictModule):
             raise ValueError("feature lags must be unique.")
         if aggregation == "point" and len(lags_) != 1:
             raise ValueError("point aggregation requires exactly one lag.")
-        if aggregation not in ("point", "mean", "sum"):
-            raise ValueError("aggregation must be 'point', 'mean', or 'sum'.")
+        aggregation = parse(aggregation, FeatureAggregation, "aggregation")
         self.name = name.strip()
         self.series_index = series
         self.lags = tuple(sorted(lags_))
@@ -88,15 +88,14 @@ class LabelDefinition(StrictModule):
         *,
         horizon: int,
         aggregation: LabelAggregation = "sum",
-    ):
+    ) -> None:
         if not isinstance(name, str) or not name.strip():
             raise ValueError("label name must be nonempty.")
         series = int(series_index)
         horizon_ = int(horizon)
         if series < 0 or horizon_ < 1:
             raise ValueError("series_index must be nonnegative and horizon positive.")
-        if aggregation not in ("sum", "mean", "compound"):
-            raise ValueError("aggregation must be 'sum', 'mean', or 'compound'.")
+        aggregation = parse(aggregation, LabelAggregation, "aggregation")
         self.name = name.strip()
         self.series_index = series
         self.horizon = horizon_
@@ -129,7 +128,7 @@ class FeatureLabelContract(StrictModule):
         *,
         row_capacity: int,
         decision_clock: DecisionClock = "available",
-    ):
+    ) -> None:
         features_ = tuple(features)
         if not features_ or not all(
             isinstance(feature, FeatureDefinition) for feature in features_
@@ -144,8 +143,7 @@ class FeatureLabelContract(StrictModule):
         capacity = int(row_capacity)
         if capacity < 1:
             raise ValueError("row_capacity must be positive.")
-        if decision_clock not in ("event", "available"):
-            raise ValueError("decision_clock must be 'event' or 'available'.")
+        decision_clock = parse(decision_clock, DecisionClock, "decision_clock")
         self.features = features_
         self.label = label
         self.decision_clock = decision_clock

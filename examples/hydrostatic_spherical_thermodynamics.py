@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def run():
+def run() -> Any:
     lon = jnp.linspace(0.0, 0.2, 7)
     lat = jnp.linspace(-0.4, 0.4, 5)
     z = jnp.linspace(-100.0, 0.0, 5)

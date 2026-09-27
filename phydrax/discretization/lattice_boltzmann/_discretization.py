@@ -7,9 +7,11 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import PrecisionEvidenceEnvelope
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -50,7 +52,7 @@ class LatticeBoltzmannPlan(AbstractDiscretizationPlan):
         field_name: str = "populations",
         key: DiscretizationKey | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("LBM plan requires a PreparedTensorGrid.")
         if not isinstance(velocity_set, LatticeBoltzmannVelocitySet):
@@ -129,7 +131,9 @@ class LatticeBoltzmannDiscretization(AbstractPreparedDiscretization):
     numeric_version: str = eqx.field(static=True)
     preparation: PreparationReport
 
-    def __init__(self, plan: LatticeBoltzmannPlan, /, *, numeric_version: str = "0"):
+    def __init__(
+        self, plan: LatticeBoltzmannPlan, /, *, numeric_version: str = "0"
+    ) -> None:
         if not isinstance(plan, LatticeBoltzmannPlan):
             raise TypeError("plan must be a LatticeBoltzmannPlan.")
         grid = plan.grid
@@ -243,7 +247,7 @@ class LatticeBoltzmannDiscretization(AbstractPreparedDiscretization):
         self.preparation = preparation
 
     @property
-    def precision_evidence(self):
+    def precision_evidence(self) -> PrecisionEvidenceEnvelope:
         return self.precision.evidence()
 
     @property

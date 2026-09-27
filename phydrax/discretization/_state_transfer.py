@@ -12,10 +12,12 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from .._strict import StrictModule
 from ..linalg import ArraySpace, FunctionLinearOperator
+from ..typing import parse
 from ._spaces import DiscreteFieldSpace
 from ._transfer import FieldTransfer, TransferProperties
 
@@ -127,7 +129,7 @@ class AbstractRefinementTransfer(StrictModule):
         self,
         /,
         *,
-        dtype=np.float64,
+        dtype: DTypeLike = np.float64,
     ) -> FunctionLinearOperator:
         """Return restriction as a rectangular canonical linear operator."""
         source = ArraySpace(self.fine_shape, dtype=dtype)
@@ -143,7 +145,7 @@ class AbstractRefinementTransfer(StrictModule):
         self,
         /,
         *,
-        dtype=np.float64,
+        dtype: DTypeLike = np.float64,
     ) -> FunctionLinearOperator:
         """Return prolongation as a rectangular canonical linear operator."""
         source = ArraySpace(self.coarse_shape, dtype=dtype)
@@ -204,7 +206,9 @@ class AbstractRefinementTransfer(StrictModule):
 class IdentityStateTransfer(AbstractRefinementTransfer):
     """Identity transfer for levels sharing one state layout."""
 
-    def __init__(self, state_shape: Sequence[int], /, *, transfer_id: str | None = None):
+    def __init__(
+        self, state_shape: Sequence[int], /, *, transfer_id: str | None = None
+    ) -> None:
         shape = _shape(state_shape, "state_shape")
         self.fine_shape = shape
         self.coarse_shape = shape
@@ -240,17 +244,15 @@ class TensorGridStateTransfer(AbstractRefinementTransfer):
         boundary: TensorGridBoundary = "endpoint",
         restriction: TensorGridRestriction = "injection",
         transfer_id: str | None = None,
-    ):
+    ) -> None:
         fine = _shape(fine_shape, "fine_shape")
         coarse = _shape(coarse_shape, "coarse_shape")
         if len(fine) != len(coarse):
             raise ValueError("fine_shape and coarse_shape must have equal rank.")
         if any(fine_size < coarse_size for fine_size, coarse_size in zip(fine, coarse)):
             raise ValueError("Every fine grid axis must be at least as large as coarse.")
-        if boundary not in ("endpoint", "periodic"):
-            raise ValueError("boundary must be 'endpoint' or 'periodic'.")
-        if restriction not in ("injection", "weighted"):
-            raise ValueError("restriction must be 'injection' or 'weighted'.")
+        boundary = parse(boundary, TensorGridBoundary, "boundary")
+        restriction = parse(restriction, TensorGridRestriction, "restriction")
         prolongations: list[Array] = []
         restrictions: list[Array] = []
         for fine_size, coarse_size in zip(fine, coarse, strict=True):
@@ -311,7 +313,7 @@ class SpectralCoefficientStateTransfer(AbstractRefinementTransfer):
         *,
         axis: int = 0,
         transfer_id: str | None = None,
-    ):
+    ) -> None:
         fine = _shape(fine_shape, "fine_shape")
         coarse = _shape(coarse_shape, "coarse_shape")
         if len(fine) != len(coarse):

@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -76,7 +77,7 @@ class FixedPartitionHybridState(StrictModule):
         /,
         *,
         checkpoint_eligible: ArrayLike = True,
-    ):
+    ) -> None:
         if not isinstance(finite_volume, FiniteVolumeRuntimeState):
             raise TypeError("finite_volume must be FiniteVolumeRuntimeState.")
         if not isinstance(kinetic, SmoothCompressibleKineticState):
@@ -211,7 +212,13 @@ class _FixedHybridStageFluxCallback(StrictModule):
         /,
     ) -> FiniteVolumeStageFlux:
         del stage_index, time
-        discretization = self.finite_volume.dynamics.discretization
+        dynamics = self.finite_volume.dynamics
+        # Construction admits only stationary structured finite-volume dynamics.
+        if not (isinstance(dynamics, PreparedFiniteVolumeDynamics)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(dynamics, PreparedFiniteVolumeDynamics)."
+            )
+        discretization = dynamics.discretization
         replacements = tuple(
             jnp.zeros(
                 layout.shape + (state.shape[-1],),
@@ -313,7 +320,7 @@ class PreparedFixedPartitionHybridRuntime(StrictModule):
         /,
         *,
         conservation_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(finite_volume, PreparedFiniteVolumeRuntime):
             raise TypeError("finite_volume must be PreparedFiniteVolumeRuntime.")
         if not isinstance(finite_volume.dynamics, PreparedFiniteVolumeDynamics):
@@ -716,7 +723,13 @@ class PreparedFixedPartitionHybridRuntime(StrictModule):
         /,
     ) -> Array:
         residuals = []
-        discretization = self.finite_volume.dynamics.discretization
+        dynamics = self.finite_volume.dynamics
+        # Construction admits only stationary structured finite-volume dynamics.
+        if not (isinstance(dynamics, PreparedFiniteVolumeDynamics)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(dynamics, PreparedFiniteVolumeDynamics)."
+            )
+        discretization = dynamics.discretization
         for interface_index, (axis, face_index) in enumerate(
             zip(
                 self.finite_volume_face_axes,
@@ -1028,7 +1041,7 @@ class DynamicHybridOwnershipState(StrictModule):
         transition_count: ArrayLike,
         accepted_step: ArrayLike,
         /,
-    ):
+    ) -> None:
         owned = jnp.asarray(finite_volume_owned, dtype=jnp.bool_)
         dwell = jnp.asarray(dwell_steps, dtype=jnp.int32)
         last_change = jnp.asarray(last_change_step, dtype=jnp.int32)
@@ -1074,7 +1087,7 @@ class DynamicHybridCompositeState(StrictModule):
         /,
         *,
         checkpoint_eligible: ArrayLike = True,
-    ):
+    ) -> None:
         conserved = jnp.asarray(finite_volume_conserved)
         if not isinstance(kinetic, SmoothCompressibleKineticState):
             raise TypeError("kinetic must be SmoothCompressibleKineticState.")
@@ -1157,7 +1170,7 @@ class DynamicHybridOwnershipPlan(StrictModule):
         finite_volume_stencil_radius: tuple[int, int],
         kinetic_reach: tuple[int, int],
         population_floor: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(method, SmoothCompressibleD2VKineticMethod):
             raise TypeError("method must be SmoothCompressibleD2VKineticMethod.")
         if not isinstance(learned_energy, PreparedLearnedEnergyEquilibriumBinding):
@@ -1191,7 +1204,7 @@ class DynamicHybridOwnershipPlan(StrictModule):
             or learned_energy.plan.material.material_id != method.material.material_id
         ):
             raise ValueError("Dynamic ownership method and learned lift must match.")
-        radius = tuple(stencil[axis] + reach[axis] for axis in range(2))
+        radius = (stencil[0] + reach[0], stencil[1] + reach[1])
         shifts = tuple(
             (first, second)
             for first, second in product(

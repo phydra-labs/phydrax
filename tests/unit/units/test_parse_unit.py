@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fractions import Fraction
+from typing import Any
 
 import pytest
 
@@ -20,7 +21,7 @@ from phydrax.units import (
 )
 
 
-def test_every_exported_catalog_unit_resolves_from_its_own_symbol():
+def test_every_exported_catalog_unit_resolves_from_its_own_symbol() -> None:
     catalog = {
         name: value
         for name, value in vars(units).items()
@@ -51,15 +52,15 @@ def test_every_exported_catalog_unit_resolves_from_its_own_symbol():
     ],
 )
 def test_compound_expressions_resolve_to_exact_dimension_and_scale(
-    expression, dimension, scale
-):
+    expression: Any, dimension: Any, scale: Any
+) -> None:
     unit = parse_unit(expression)
     assert unit.symbol == expression
     assert unit.dimension == dimension
     assert unit.scale_to_reference == scale
 
 
-def test_equivalent_spellings_share_dimension_and_scale():
+def test_equivalent_spellings_share_dimension_and_scale() -> None:
     left = parse_unit("kg/(m^2*s)")
     right = parse_unit("kg m^-2 s^-1")
     assert (left.dimension, left.scale_to_reference) == (
@@ -69,14 +70,14 @@ def test_equivalent_spellings_share_dimension_and_scale():
     assert parse_unit("kg/m3") == units.KILOGRAM_PER_CUBIC_METER
 
 
-def test_quotients_associate_left_to_right():
+def test_quotients_associate_left_to_right() -> None:
     assert parse_unit("kg/m/s").dimension == DimensionSignature(
         {"mass": 1, "length": -1, "time": -1}
     )
 
 
 @pytest.mark.parametrize("expression", ["furlong", "m/fortnight", "W", "degC"])
-def test_unknown_symbols_raise_value_error_naming_the_expression(expression):
+def test_unknown_symbols_raise_value_error_naming_the_expression(expression: Any) -> None:
     with pytest.raises(ValueError, match="unknown unit symbol") as error:
         parse_unit(expression)
     assert repr(expression) in str(error.value)
@@ -100,16 +101,17 @@ def test_unknown_symbols_raise_value_error_naming_the_expression(expression):
         "J/kg K",
     ],
 )
-def test_malformed_expressions_raise_value_error(expression):
+def test_malformed_expressions_raise_value_error(expression: Any) -> None:
     with pytest.raises(ValueError, match="Unit expression"):
         parse_unit(expression)
 
 
-def test_rational_power_without_exact_scale_fails_closed():
+def test_rational_power_without_exact_scale_fails_closed() -> None:
     with pytest.raises(ValueError, match="exact rational scale"):
         parse_unit("mm^(1/2)")
 
 
-def test_non_string_expression_is_a_type_error():
+def test_non_string_expression_is_a_type_error() -> None:
     with pytest.raises(TypeError):
+        # ty: ignore[invalid-argument-type]
         parse_unit(units.METER)

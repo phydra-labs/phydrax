@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -62,23 +63,23 @@ class SolidLiquidEnthalpyPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        reference_density,
-        reference_temperature,
-        solidus_temperature,
-        liquidus_temperature,
-        solid_heat_capacity,
-        liquid_heat_capacity,
-        latent_heat,
-        solid_conductivity,
-        liquid_conductivity,
-        liquid_kinematic_viscosity,
+        reference_density: float,
+        reference_temperature: float,
+        solidus_temperature: float,
+        liquidus_temperature: float,
+        solid_heat_capacity: float,
+        liquid_heat_capacity: float,
+        latent_heat: float,
+        solid_conductivity: float,
+        liquid_conductivity: float,
+        liquid_kinematic_viscosity: float,
         /,
         *,
-        thermal_expansion=0.0,
-        buoyancy_reference_temperature=None,
-        mushy_resistance_coefficient=1.0e6,
-        mushy_regularization=1.0e-3,
-    ):
+        thermal_expansion: float = 0.0,
+        buoyancy_reference_temperature: float | None = None,
+        mushy_resistance_coefficient: float = 1.0e6,
+        mushy_regularization: float = 1.0e-3,
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -352,26 +353,26 @@ class BinaryAlloyPhaseDiagramPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        reference_density,
-        reference_temperature,
-        melting_temperature,
-        liquidus_slope,
-        partition_coefficient,
-        smoothing_width,
-        heat_capacity,
-        latent_heat,
-        solid_conductivity,
-        liquid_conductivity,
-        liquid_kinematic_viscosity,
-        solid_solute_diffusivity,
-        liquid_solute_diffusivity,
+        reference_density: float,
+        reference_temperature: float,
+        melting_temperature: float,
+        liquidus_slope: float,
+        partition_coefficient: float,
+        smoothing_width: float,
+        heat_capacity: float,
+        latent_heat: float,
+        solid_conductivity: float,
+        liquid_conductivity: float,
+        liquid_kinematic_viscosity: float,
+        solid_solute_diffusivity: float,
+        liquid_solute_diffusivity: float,
         /,
         *,
-        mushy_resistance_coefficient=1.0e6,
-        mushy_regularization=1.0e-3,
-        maximum_root_steps=30,
-        root_tolerance=1.0e-9,
-    ):
+        mushy_resistance_coefficient: float = 1.0e6,
+        mushy_regularization: float = 1.0e-3,
+        maximum_root_steps: int = 30,
+        root_tolerance: float = 1.0e-9,
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -465,8 +466,10 @@ class BinaryAlloyPhaseDiagramPlan(StrictModule, NonTrainableState):
         flat_h = enthalpy_.reshape((-1,))
         flat_c = concentration.reshape((-1,))
 
-        def solve_one(target_enthalpy, composition):
-            def residual(temperature):
+        def solve_one(
+            target_enthalpy: Array, composition: Array
+        ) -> tuple[Array, Array, Array, Array, Array]:
+            def residual(temperature: Array) -> Array:
                 fraction = self._liquid_fraction(temperature, composition)
                 return (
                     self.reference_density

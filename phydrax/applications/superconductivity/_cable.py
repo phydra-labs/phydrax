@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -92,7 +93,7 @@ class SuperconductingCablePlan(StrictModule, NonTrainableState):
         dump_resistance: float,
         protection_trigger_temperature: float,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(material, SuperconductingMaterialLawPlan):
             raise TypeError("material must be SuperconductingMaterialLawPlan.")
         lengths = np.asarray(cell_lengths, dtype=np.float64)
@@ -174,7 +175,9 @@ class SuperconductingCablePlan(StrictModule, NonTrainableState):
     def cell_count(self) -> int:
         return self.cell_lengths.size
 
-    def _sharing(self, current: Array, temperature: Array, /):
+    def _sharing(
+        self, current: Array, temperature: Array, /
+    ) -> tuple[Array, Array, Array, Array, Array]:
         evaluated = self.material.evaluate(
             temperature,
             self.magnetic_field,
@@ -186,7 +189,7 @@ class SuperconductingCablePlan(StrictModule, NonTrainableState):
         upper = jnp.minimum(magnitude, critical_current)
         lower = jnp.zeros_like(upper)
 
-        def iteration(_, bounds):
+        def iteration(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             low, high = bounds
             superconducting = 0.5 * (low + high)
             safe_critical = jnp.maximum(

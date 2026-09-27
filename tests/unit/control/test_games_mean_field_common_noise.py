@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -22,7 +24,14 @@ from phydrax.stochastic import (
 )
 
 
-def _law(value, flow_id, source_path_id, *, particles=4, weights=None):
+def _law(
+    value: Any,
+    flow_id: Any,
+    source_path_id: Any,
+    *,
+    particles: Any = 4,
+    weights: Any = None,
+) -> Any:
     return EmpiricalMeanField(
         jnp.asarray([0.0, 1.0]),
         jnp.full((particles, 2, 1), value),
@@ -34,15 +43,15 @@ def _law(value, flow_id, source_path_id, *, particles=4, weights=None):
     )
 
 
-def _flow_means(flow):
+def _flow_means(flow: Any) -> Any:
     return jnp.stack([flow.snapshot(time).mean[0] for time in flow.times])
 
 
-def _flow_mean(flow):
+def _flow_mean(flow: Any) -> Any:
     return float(jnp.mean(_flow_means(flow)))
 
 
-def _response(flow):
+def _response(flow: Any) -> Any:
     particles = flow.sample_shape[0]
     paths = BSDEPathBatch(
         flow.times,
@@ -89,7 +98,7 @@ def _response(flow):
     )
 
 
-def _induced(response, value, *, source_path_id=None):
+def _induced(response: Any, value: Any, *, source_path_id: Any = None) -> Any:
     return _law(
         value,
         f"induced:{response.flow_id}",
@@ -102,12 +111,14 @@ def _induced(response, value, *, source_path_id=None):
     )
 
 
-def _normalized_weights(flow):
+def _normalized_weights(flow: Any) -> Any:
     weights = flow.weights.reshape((flow.num_particles, flow.times.size))
     return weights / jnp.sum(weights, axis=0, keepdims=True)
 
 
-def _law_mixture(current, induced, damping, iteration, history, args):
+def _law_mixture(
+    current: Any, induced: Any, damping: Any, iteration: Any, history: Any, args: Any
+) -> Any:
     del history, args
     time_count = current.times.size
     particles = jnp.concatenate(
@@ -147,24 +158,24 @@ def _law_mixture(current, induced, damping, iteration, history, args):
 
 
 def _problem(
-    initial_flows,
-    histories,
-    probabilities,
-    labels,
-    induced_value,
+    initial_flows: Any,
+    histories: Any,
+    probabilities: Any,
+    labels: Any,
+    induced_value: Any,
     *,
-    scenario_ids=("down", "up"),
-    observed=None,
-    induced_source=None,
-    law_mixture=_law_mixture,
-    law_mixture_id="conditional-exact-union-support-mixture",
-):
-    def best_response(flow, history, args):
+    scenario_ids: Any = ("down", "up"),
+    observed: Any = None,
+    induced_source: Any = None,
+    law_mixture: Any = _law_mixture,
+    law_mixture_id: Any = "conditional-exact-union-support-mixture",
+) -> Any:
+    def best_response(flow: Any, history: Any, args: Any) -> Any:
         if observed is not None:
             observed.append(("response", flow.mean_field_id, history))
         return _response(flow)
 
-    def induced(response, history, args):
+    def induced(response: Any, history: Any, args: Any) -> Any:
         if observed is not None:
             observed.append(("induced", response.flow_id, history))
         return _induced(
@@ -175,7 +186,7 @@ def _problem(
             ),
         )
 
-    def distance(current, candidate, history, args):
+    def distance(current: Any, candidate: Any, history: Any, args: Any) -> Any:
         if observed is not None:
             observed.append(("distance", current.mean_field_id, history))
         return jnp.max(jnp.abs(_flow_means(current) - _flow_means(candidate)))
@@ -208,13 +219,13 @@ def _problem(
 
 
 def _plan(
-    maximum_iterations=3,
+    maximum_iterations: Any = 3,
     *,
-    tolerance=1.0e-9,
-    damping=1.0,
-    minimum_ess=2.0,
-    minimum_clusters=2,
-):
+    tolerance: Any = 1.0e-9,
+    damping: Any = 1.0,
+    minimum_ess: Any = 2.0,
+    minimum_clusters: Any = 2,
+) -> Any:
     return CommonNoiseMeanFieldPlan(
         maximum_iterations=maximum_iterations,
         consistency_tolerance=tolerance,
@@ -225,14 +236,14 @@ def _plan(
     )
 
 
-def _balanced_initial():
+def _balanced_initial() -> Any:
     return (
         _law(-1.0, "conditional-down", "idiosyncratic-down"),
         _law(1.0, "conditional-up", "idiosyncratic-up"),
     )
 
 
-def test_two_public_scenarios_keep_distinct_conditional_laws_and_histories():
+def test_two_public_scenarios_keep_distinct_conditional_laws_and_histories() -> None:
     histories = (jnp.asarray([-0.5, -1.0]), jnp.asarray([0.5, 1.0]))
     observed = []
     problem = _problem(
@@ -282,11 +293,13 @@ def test_two_public_scenarios_keep_distinct_conditional_laws_and_histories():
         "public-history:down",
         "public-history:up",
     )
+    # ty: ignore[unresolved-attribute]
     assert result.best_response_path_ids[0][0].startswith("best-response-paths:")
+    # ty: ignore[unresolved-attribute]
     assert result.induced_source_path_ids[0][0].startswith("independent-forward-paths:")
 
 
-def test_scenario_permutation_preserves_id_keyed_conditional_evidence():
+def test_scenario_permutation_preserves_id_keyed_conditional_evidence() -> None:
     initial = _balanced_initial()
     histories = (jnp.asarray([-1.0]), jnp.asarray([1.0]))
     labels = (("a", "b", "c", "d"), ("e", "f", "g", "h"))
@@ -324,7 +337,7 @@ def test_scenario_permutation_preserves_id_keyed_conditional_evidence():
     )
 
 
-def test_zero_probability_atom_is_retained_but_not_required_or_evaluated():
+def test_zero_probability_atom_is_retained_but_not_required_or_evaluated() -> None:
     histories = (jnp.asarray([-1.0]), jnp.asarray([9.0]))
     observed = []
     problem = _problem(
@@ -350,7 +363,7 @@ def test_zero_probability_atom_is_retained_but_not_required_or_evaluated():
     assert all(entry[2] is histories[0] for entry in observed)
 
 
-def test_positive_atom_with_one_independent_cluster_is_rejected():
+def test_positive_atom_with_one_independent_cluster_is_rejected() -> None:
     problem = _problem(
         _balanced_initial(),
         (jnp.asarray([-1.0]), jnp.asarray([1.0])),
@@ -367,7 +380,7 @@ def test_positive_atom_with_one_independent_cluster_is_rejected():
     assert not result.best_response_validity_history[0, 0]
 
 
-def test_conditional_forward_laws_must_use_distinct_idiosyncratic_paths():
+def test_conditional_forward_laws_must_use_distinct_idiosyncratic_paths() -> None:
     problem = _problem(
         _balanced_initial(),
         (jnp.asarray([-1.0]), jnp.asarray([1.0])),
@@ -384,7 +397,7 @@ def test_conditional_forward_laws_must_use_distinct_idiosyncratic_paths():
     assert result.induced_flow_validity_history[0].tolist() == [True, False]
 
 
-def test_matching_unconditional_mean_cannot_replace_conditional_consistency():
+def test_matching_unconditional_mean_cannot_replace_conditional_consistency() -> None:
     problem = _problem(
         _balanced_initial(),
         (jnp.asarray([-1.0]), jnp.asarray([1.0])),
@@ -420,15 +433,17 @@ def test_matching_unconditional_mean_cannot_replace_conditional_consistency():
     assert not result.unconditional_law_consistency_evaluated
 
 
-def test_damping_is_applied_separately_inside_each_conditional_law():
+def test_damping_is_applied_separately_inside_each_conditional_law() -> None:
     observed_means = []
     mixture_histories = []
 
-    def induced_target(flow, history):
+    def induced_target(flow: Any, history: Any) -> Any:
         observed_means.append((_flow_mean(flow), float(history[0])))
         return 1.0 if float(history[0]) < 0.0 else 3.0
 
-    def conditional_mixture(current, induced, damping, iteration, history, args):
+    def conditional_mixture(
+        current: Any, induced: Any, damping: Any, iteration: Any, history: Any, args: Any
+    ) -> Any:
         mixture_histories.append(float(history[0]))
         return _law_mixture(current, induced, damping, iteration, history, args)
 
@@ -459,12 +474,14 @@ def test_damping_is_applied_separately_inside_each_conditional_law():
     np.testing.assert_array_equal(
         jnp.unique(result.conditional_flows[1].particles), jnp.asarray([2.0, 3.0])
     )
+    # ty: ignore[unresolved-attribute]
     assert result.current_flow_ids[1][0].startswith("conditional-union-mixture:0:")
+    # ty: ignore[unresolved-attribute]
     assert result.current_flow_ids[1][1].startswith("conditional-union-mixture:0:")
     assert result.law_mixture_id == "conditional-exact-union-support-mixture"
 
 
-def test_subunit_conditional_damping_requires_an_identified_law_mixture():
+def test_subunit_conditional_damping_requires_an_identified_law_mixture() -> None:
     with pytest.raises(ValueError, match="must be supplied together"):
         _problem(
             _balanced_initial(),
@@ -492,7 +509,7 @@ def test_subunit_conditional_damping_requires_an_identified_law_mixture():
         )
 
 
-def test_invalid_conditional_law_mixture_callback_fails_closed():
+def test_invalid_conditional_law_mixture_callback_fails_closed() -> None:
     problem = _problem(
         _balanced_initial(),
         (jnp.asarray([-1.0]), jnp.asarray([1.0])),
@@ -514,8 +531,10 @@ def test_invalid_conditional_law_mixture_callback_fails_closed():
     assert not result.valid
 
 
-def test_unit_conditional_damping_uses_each_induced_law_directly():
-    def forbidden_mixture(current, induced, damping, iteration, history, args):
+def test_unit_conditional_damping_uses_each_induced_law_directly() -> None:
+    def forbidden_mixture(
+        current: Any, induced: Any, damping: Any, iteration: Any, history: Any, args: Any
+    ) -> None:
         raise AssertionError("law_mixture must not be called when damping is one")
 
     problem = _problem(
@@ -543,7 +562,7 @@ def test_unit_conditional_damping_uses_each_induced_law_directly():
     assert all(flow.source_path_id is not None for flow in result.conditional_flows)
 
 
-def test_nonconvergent_conditional_map_exhausts_outer_capacity():
+def test_nonconvergent_conditional_map_exhausts_outer_capacity() -> None:
     problem = _problem(
         _balanced_initial(),
         (jnp.asarray([-1.0]), jnp.asarray([1.0])),
@@ -564,7 +583,7 @@ def test_nonconvergent_conditional_map_exhausts_outer_capacity():
     assert not result.converged
 
 
-def test_success_label_is_candidate_evidence_without_unconditional_or_mfc_claim():
+def test_success_label_is_candidate_evidence_without_unconditional_or_mfc_claim() -> None:
     problem = _problem(
         _balanced_initial(),
         (jnp.asarray([-1.0]), jnp.asarray([1.0])),

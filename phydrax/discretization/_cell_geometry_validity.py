@@ -27,11 +27,12 @@ from dataclasses import dataclass
 from enum import IntEnum
 from functools import cache
 from itertools import product
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -83,7 +84,7 @@ class CellValidityPolicy(StrictModule, NonTrainableState):
         maximum_piece_count: int = 1_000_000,
         relative_determinant_floor: float = 1.0e-12,
         relative_planarity_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         depth = int(maximum_subdivision_depth)
         pieces = int(maximum_piece_count)
         floor = float(relative_determinant_floor)
@@ -139,10 +140,10 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        status,
-        determinant_lower,
-        determinant_upper,
-        depth,
+        status: Any,
+        determinant_lower: Any,
+        determinant_upper: Any,
+        depth: Any,
         /,
         *,
         block_names: tuple[str, ...],
@@ -151,7 +152,7 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
         geometry_id: str,
         geometry_layout_id: str,
         policy_id: str,
-    ):
+    ) -> None:
         status_ = np.asarray(status, dtype=np.int32)
         lower = np.asarray(determinant_lower, dtype=np.float64)
         upper = np.asarray(determinant_upper, dtype=np.float64)
@@ -514,7 +515,7 @@ class _BlockCertificate:
 
 
 def _evaluate_pieces(
-    element,
+    element: Any,
     cell_kind: str,
     plan: _BernsteinPlan,
     local: np.ndarray,
@@ -564,7 +565,7 @@ def _evaluate_pieces(
 
 
 def _root_scale(
-    element, cell_kind: str, plan: _BernsteinPlan, local: np.ndarray, /
+    element: Any, cell_kind: str, plan: _BernsteinPlan, local: np.ndarray, /
 ) -> np.ndarray:
     reference = _reference_points(cell_kind, plan.nodes)
     _, gradients = element.tabulate(reference)
@@ -576,7 +577,7 @@ def _root_scale(
 
 
 def _certify_polynomial_block(
-    element,
+    element: Any,
     cell_kind: str,
     local: np.ndarray,
     policy: CellValidityPolicy,
@@ -828,7 +829,7 @@ def _polygon_measure(points: np.ndarray, policy: CellValidityPolicy, /) -> tuple
     )
 
 
-def _certify_polygon_block(points: np.ndarray, policy: CellValidityPolicy, /):
+def _certify_polygon_block(points: np.ndarray, policy: CellValidityPolicy, /) -> Any:
     """Certify polygon cells without assuming star-shapedness.
 
     A planar polygon is valid iff its vertices are finite and distinct, its
@@ -1013,8 +1014,17 @@ def certify_cell_geometry_validity(
             if mesh_ is None:
                 raise ValueError("Polyhedral validity certification requires the mesh.")
             if tables is None:
-                tables = polyhedral_star_tables(mesh_.connectivity)
+                connectivity = mesh_.connectivity
+                if not isinstance(connectivity, PolyhedralConnectivity):
+                    raise TypeError(
+                        "Polyhedral geometry requires polyhedral mesh connectivity."
+                    )
+                tables = polyhedral_star_tables(connectivity)
                 polyhedral_points = _polyhedral_coordinates(mesh_, routes, values)
+            if polyhedral_points is None:
+                raise RuntimeError(
+                    "Polyhedral coordinate preparation did not produce coordinates."
+                )
             blocks.append(
                 _certify_polyhedral_cells(
                     tables,

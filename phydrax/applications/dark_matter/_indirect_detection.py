@@ -9,7 +9,8 @@ from enum import IntEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -68,7 +69,7 @@ class JFactor(StrictModule, NonTrainableState):
         /,
         *,
         target_id: str,
-    ):
+    ) -> None:
         value, uncertainty = _factor_arrays(
             value_gev2_cm5, standard_deviation_gev2_cm5, "J factor"
         )
@@ -101,7 +102,7 @@ class DFactor(StrictModule, NonTrainableState):
         /,
         *,
         target_id: str,
-    ):
+    ) -> None:
         value, uncertainty = _factor_arrays(
             value_gev_cm2, standard_deviation_gev_cm2, "D factor"
         )
@@ -132,7 +133,7 @@ class ExactLineFluxTable(StrictModule, NonTrainableState):
         integrated_flux_cm2_s: ArrayLike,
         standard_deviation_cm2_s: ArrayLike,
         /,
-    ):
+    ) -> None:
         energies = np.asarray(energy_gev, dtype=np.float64)
         values = np.asarray(integrated_flux_cm2_s, dtype=np.float64)
         uncertainty = np.asarray(standard_deviation_cm2_s, dtype=np.float64)
@@ -380,7 +381,7 @@ class BinnedIndirectDetectionPlan(StrictModule, NonTrainableState):
         /,
         *,
         exposure_cm2_s: ArrayLike,
-    ):
+    ) -> None:
         edges = np.asarray(energy_bin_edges_gev, dtype=np.float64)
         exposure = np.asarray(exposure_cm2_s, dtype=np.float64)
         if (

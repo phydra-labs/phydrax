@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -72,7 +73,7 @@ class UnstructuredElectromagneticPICPlan(StrictModule, NonTrainableState):
         *,
         pusher: RelativisticBorisPlan | None = None,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(maxwell, PreparedUnstructuredMaxwell):
             raise TypeError("maxwell must be PreparedUnstructuredMaxwell.")
         if not isinstance(current, UnstructuredWhitneyCurrentPlan):

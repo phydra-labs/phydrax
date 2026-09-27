@@ -11,7 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key, PyTree
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -30,6 +32,7 @@ from ...linalg._shifted import (
     ShiftedSolveStatus,
     solve_shifted,
 )
+from ...typing import PRNGKey
 from ._pseudofermion_operator import AbstractPseudofermionDiracOperator
 from ._rational_approximation import (
     CertifiedRationalApproximation,
@@ -45,7 +48,7 @@ class _DiracNormalOperator(AbstractLinearOperator):
 
     dirac: AbstractPseudofermionDiracOperator
 
-    def __init__(self, dirac: AbstractPseudofermionDiracOperator, /):
+    def __init__(self, dirac: AbstractPseudofermionDiracOperator, /) -> None:
         if not isinstance(dirac, AbstractPseudofermionDiracOperator):
             raise TypeError("dirac must implement AbstractPseudofermionDiracOperator.")
         self.dirac = dirac
@@ -112,7 +115,7 @@ class PseudofermionSolveRoles(StrictModule):
         action: RationalFunctionPolicy | None = None,
         force: RationalFunctionPolicy | None = None,
         acceptance: RationalFunctionPolicy | None = None,
-    ):
+    ) -> None:
         action_ = _default_policy(1.0e-5, 1.0e-7) if action is None else action
         refresh_ = action_ if refresh is None else refresh
         force_ = _default_policy(1.0e-4, 1.0e-6) if force is None else force
@@ -211,7 +214,7 @@ class TwoFlavorPseudofermionTerm(StrictModule):
         /,
         *,
         solves: PseudofermionSolveRoles | None = None,
-    ):
+    ) -> None:
         normal = _validate_dirac_interval(dirac, spectral_interval)
         solves_ = PseudofermionSolveRoles() if solves is None else solves
         if not isinstance(solves_, PseudofermionSolveRoles):
@@ -265,7 +268,7 @@ class HasenbuschRatioPseudofermionTerm(StrictModule):
         *,
         mass_shift: float,
         solves: PseudofermionSolveRoles | None = None,
-    ):
+    ) -> None:
         normal = _validate_dirac_interval(dirac, spectral_interval)
         shift = float(mass_shift)
         if not math.isfinite(shift) or shift <= 0.0:
@@ -333,7 +336,7 @@ class FractionalPowerPseudofermionTerm(StrictModule):
         *,
         determinant_power: float,
         solves: PseudofermionSolveRoles | None = None,
-    ):
+    ) -> None:
         normal = _validate_dirac_interval(dirac, spectral_interval)
         power = float(determinant_power)
         if not math.isfinite(power) or power <= 0.0:
@@ -383,7 +386,7 @@ PseudofermionTerm: TypeAlias = (
 
 def refresh_pseudofermion(
     term: PseudofermionTerm,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     links: ArrayLike | None = None,
@@ -532,7 +535,7 @@ def pseudofermion_force(
     stopped = jax.tree.map(jax.lax.stop_gradient, shifted.value)
     active = jnp.abs(function.residues) > 0
 
-    def differentiated_action(candidate):
+    def differentiated_action(candidate: Array) -> Array:
         candidate_normal = _DiracNormalOperator(term.dirac.with_links(candidate))
         total = jnp.asarray(0.0, dtype=jnp.real(links_).dtype)
         for index in range(function.num_poles):
@@ -643,7 +646,7 @@ def _validate_dirac_interval(
             "The spectral interval does not certify this Dirac normal operator."
         )
     lower = jnp.asarray(interval.lower)
-    if not isinstance(lower, jax.core.Tracer) and float(lower) <= 0.0:
+    if not isinstance(lower, jax_core.Tracer) and float(lower) <= 0.0:
         raise ValueError(
             "Pseudofermions require a strictly positive spectral lower bound."
         )
@@ -663,7 +666,7 @@ def _validate_approximation(
         raise ValueError(f"{name} uses a different spectral interval.")
     if approximation.target.target_id != target.target_id:
         raise ValueError(f"{name} approximates the wrong scalar function.")
-    if not isinstance(approximation.successful, jax.core.Tracer) and not bool(
+    if not isinstance(approximation.successful, jax_core.Tracer) and not bool(
         approximation.successful
     ):
         raise ValueError(f"{name} did not satisfy its requested approximation contract.")
@@ -704,7 +707,7 @@ def _exact_rational_certificate(
     )
 
 
-def _standard_action_gaussian(space: Any, key: Key[Array, ""], /) -> PyTree[Array]:
+def _standard_action_gaussian(space: Any, key: PRNGKey, /) -> PyTree[Array]:
     structure = space.structure()
     leaves, treedef = jax.tree.flatten(structure)
     keys = jr.split(key, len(leaves))

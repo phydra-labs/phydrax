@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -5,7 +7,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _state_space_problem():
+def _state_space_problem() -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0]),
         jnp.asarray([[1.0], [2.0]]),
@@ -38,7 +40,7 @@ def _state_space_problem():
     )
 
 
-def test_filter_and_smoother_results_have_portable_archives(tmp_path):
+def test_filter_and_smoother_results_have_portable_archives(tmp_path: Any) -> None:
     problem = _state_space_problem()
     kalman = phx.uq.kalman_filter(problem)
     particle = phx.uq.bootstrap_particle_filter(jr.key(70), problem, num_particles=8)
@@ -72,7 +74,7 @@ def test_filter_and_smoother_results_have_portable_archives(tmp_path):
     )
 
 
-def _bsde_evaluation():
+def _bsde_evaluation() -> Any:
     times = jnp.linspace(0.0, 1.0, 3)
     increments = jnp.asarray([[[0.2], [-0.1]], [[-0.3], [0.4]]])
     states = jnp.concatenate(
@@ -108,7 +110,9 @@ def _bsde_evaluation():
     )
 
 
-def test_bsde_evaluation_has_portable_residual_and_provenance_archive(tmp_path):
+def test_bsde_evaluation_has_portable_residual_and_provenance_archive(
+    tmp_path: Any,
+) -> None:
     evaluation = _bsde_evaluation()
     destination = phx.uq.export_result(evaluation, tmp_path / "bsde.phxresult")
     archive = phx.uq.read_result_archive(destination)
@@ -125,7 +129,7 @@ def test_bsde_evaluation_has_portable_residual_and_provenance_archive(tmp_path):
     )
 
 
-def _physical_case_state_space_problem():
+def _physical_case_state_space_problem() -> Any:
     case_shape = (2, 2)
     observations = phx.stochastic.ObservationSequence(
         jnp.broadcast_to(jnp.asarray([0.5, 1.0]), case_shape + (2,)),
@@ -171,8 +175,8 @@ def _physical_case_state_space_problem():
 
 
 def test_particle_fisher_archives_map_physical_cases_and_score_coordinates(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     problem = _physical_case_state_space_problem()
     filtered = phx.uq.bootstrap_particle_filter(
         jr.key(72),

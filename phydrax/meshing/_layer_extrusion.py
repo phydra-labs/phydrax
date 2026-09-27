@@ -16,25 +16,26 @@ the source boundary so the sweep never meets the core through a quad curtain.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
-from OCP.BOPAlgo import BOPAlgo_Splitter  # ty: ignore[unresolved-import]
-from OCP.BRepAdaptor import BRepAdaptor_Surface  # ty: ignore[unresolved-import]
-from OCP.BRepAlgoAPI import BRepAlgoAPI_Common  # ty: ignore[unresolved-import]
-from OCP.BRepGProp import BRepGProp  # ty: ignore[unresolved-import]
-from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism  # ty: ignore[unresolved-import]
-from OCP.GeomAbs import GeomAbs_Plane  # ty: ignore[unresolved-import]
-from OCP.gp import gp_Vec  # ty: ignore[unresolved-import]
-from OCP.GProp import GProp_GProps  # ty: ignore[unresolved-import]
-from OCP.TopAbs import (  # ty: ignore[unresolved-import]
+from jax import Array
+from OCP.BOPAlgo import BOPAlgo_Splitter
+from OCP.BRepAdaptor import BRepAdaptor_Surface
+from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
+from OCP.BRepGProp import BRepGProp
+from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism
+from OCP.GeomAbs import GeomAbs_Plane
+from OCP.gp import gp_Vec
+from OCP.GProp import GProp_GProps
+from OCP.TopAbs import (
     TopAbs_FACE,
     TopAbs_REVERSED,
     TopAbs_SOLID,
 )
-from OCP.TopoDS import TopoDS  # ty: ignore[unresolved-import]
+from OCP.TopoDS import TopoDS
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -56,14 +57,14 @@ def _unsupported(message: str, /) -> MeshingFailure:
     )
 
 
-def _volume(shape, /) -> tuple[float, np.ndarray]:
+def _volume(shape: Any, /) -> tuple[float, np.ndarray]:
     properties = GProp_GProps()
     BRepGProp.VolumeProperties_s(shape, properties)
     center = properties.CentreOfMass()
     return properties.Mass(), np.asarray((center.X(), center.Y(), center.Z()))
 
 
-def _plane(face, /) -> tuple[np.ndarray, float] | None:
+def _plane(face: Any, /) -> tuple[np.ndarray, float] | None:
     """Outward unit normal and offset of a planar face, or ``None`` when curved."""
     adaptor = BRepAdaptor_Surface(face)
     if adaptor.GetType() != GeomAbs_Plane:
@@ -77,7 +78,7 @@ def _plane(face, /) -> tuple[np.ndarray, float] | None:
     return normal, float(normal @ np.asarray((origin.X(), origin.Y(), origin.Z())))
 
 
-def _scope(model: BRepModel, dimension: int, identifiers, /) -> MeshingScope:
+def _scope(model: BRepModel, dimension: int, identifiers: Any, /) -> MeshingScope:
     revision = model.report.source_revision
     return MeshingScope(
         model.report.source_id,
@@ -106,10 +107,10 @@ class BoundaryLayerExtrusion(StrictModule, NonTrainableState):
         control: BoundaryLayerControl,
         layer_solid_ids: tuple[int, ...],
         core_solid_ids: tuple[int, ...],
-        slab_volumes,
+        slab_volumes: Any,
         maximum_relative_volume_residual: float,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, BRepModel):
             raise TypeError("source must be BRepModel.")
         if not isinstance(control, BoundaryLayerControl) or (
@@ -135,7 +136,7 @@ class BoundaryLayerExtrusion(StrictModule, NonTrainableState):
         )
 
 
-def _validated_request(model: BRepModel, control: BoundaryLayerControl, /):
+def _validated_request(model: BRepModel, control: BoundaryLayerControl, /) -> Any:
     if not isinstance(model, BRepModel):
         raise TypeError("source must be BRepModel.")
     if not isinstance(control, BoundaryLayerControl):
@@ -147,12 +148,16 @@ def _validated_request(model: BRepModel, control: BoundaryLayerControl, /):
     revision = model.report.source_revision
     for scope, dimension in ((control.wall_scope, 2), (control.volume_scope, 3)):
         if (
+            # ty: ignore[unresolved-attribute]
             scope.source_id != model.report.source_id
+            # ty: ignore[unresolved-attribute]
             or scope.source_revision != revision
+            # ty: ignore[unresolved-attribute]
             or scope.entity_set_id != f"{revision}:brep:{dimension}"
         ):
             raise ValueError("The control scopes must bind this BRep source revision.")
     walls = tuple(int(value) for value in np.asarray(control.wall_scope.entity_ids))
+    # ty: ignore[unresolved-attribute]
     solids = {int(value) for value in np.asarray(control.volume_scope.entity_ids)}
     owners = []
     for wall in walls:
@@ -165,8 +170,10 @@ def _validated_request(model: BRepModel, control: BoundaryLayerControl, /):
     return walls, owners
 
 
-def _extrusion_prisms(shape, walls, owners, total: float, /):
+def _extrusion_prisms(shape: Any, walls: Any, owners: Any, total: float, /) -> Any:
+    # ty: ignore[unresolved-attribute]
     faces = _explore_unique(shape, TopAbs_FACE, TopoDS.Face_s)
+    # ty: ignore[unresolved-attribute]
     solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid_s)
     prisms = []
     planes = []
@@ -195,7 +202,7 @@ def _extrusion_prisms(shape, walls, owners, total: float, /):
     return prisms, planes
 
 
-def _split(shape, prisms, /):
+def _split(shape: Any, prisms: Any, /) -> Any:
     splitter = BOPAlgo_Splitter()
     splitter.AddArgument(shape)
     for prism in prisms:
@@ -210,9 +217,13 @@ def _split(shape, prisms, /):
     return splitter.Shape()
 
 
-def _classify_slabs(model: BRepModel, prisms, planes, total: float, scale: float, /):
+def _classify_slabs(
+    model: BRepModel, prisms: Any, planes: Any, total: float, scale: float, /
+) -> Any:
     shape, _, _ = read_occt_shape(model.report.source_id)
+    # ty: ignore[unresolved-attribute]
     faces = _explore_unique(shape, TopAbs_FACE, TopoDS.Face_s)
+    # ty: ignore[unresolved-attribute]
     solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid_s)
     measures = [_volume(solid) for solid in solids]
     tolerance = 1.0e-9 * scale
@@ -294,10 +305,15 @@ def prepare_boundary_layer_extrusion(
     slabs, bottoms, tops, volumes, residual = _classify_slabs(
         partitioned, prisms, planes, total, scale
     )
+    # ty: ignore[unresolved-attribute]
     controlled = {int(value) for value in np.asarray(control.volume_scope.entity_ids)}
+    # ty: ignore[unresolved-attribute]
     original = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid_s)
     published = _explore_unique(
-        read_occt_shape(partitioned.report.source_id)[0], TopAbs_SOLID, TopoDS.Solid_s
+        read_occt_shape(partitioned.report.source_id)[0],
+        TopAbs_SOLID,
+        # ty: ignore[unresolved-attribute]
+        TopoDS.Solid_s,
     )
     core = []
     for index, solid in enumerate(published):

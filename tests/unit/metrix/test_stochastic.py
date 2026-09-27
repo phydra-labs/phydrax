@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -5,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _polar_metric():
+def _polar_metric() -> Any:
     chart = phx.metrix.CoordinateChart("polar", ("r", "theta"))
     return phx.metrix.diagonal_metric(
         lambda q: jnp.array([1.0, q[0] ** 2]),
@@ -13,10 +15,12 @@ def _polar_metric():
     )
 
 
-def test_coordinate_stratonovich_correction_supports_rectangular_noise_and_batches():
+def test_coordinate_stratonovich_correction_supports_rectangular_noise_and_batches() -> (
+    None
+):
     drift = lambda q: jnp.array([q[1], -q[0]])
 
-    def diffusion(q):
+    def diffusion(q: Any) -> Any:
         return jnp.array(
             [
                 [q[0], 0.0, q[1]],
@@ -61,7 +65,7 @@ def test_coordinate_stratonovich_correction_supports_rectangular_noise_and_batch
     )
 
 
-def test_coordinate_and_covariant_drifts_agree_for_polar_brownian_motion():
+def test_coordinate_and_covariant_drifts_agree_for_polar_brownian_motion() -> None:
     metric = _polar_metric()
     covariance = lambda q: metric.inverse(q)
     coordinate_drift = lambda q: jnp.array([0.5 / q[0], 0.0])
@@ -76,7 +80,7 @@ def test_coordinate_and_covariant_drifts_agree_for_polar_brownian_motion():
     assert jnp.allclose(covariant, 0.0, atol=1e-10)
 
 
-def test_covariant_generators_and_fokker_planck_are_chart_consistent():
+def test_covariant_generators_and_fokker_planck_are_chart_consistent() -> None:
     cartesian_chart = phx.metrix.CoordinateChart("cartesian", ("x", "y"))
     cartesian_metric = phx.metrix.euclidean_metric(cartesian_chart)
     polar_metric = _polar_metric()
@@ -136,7 +140,9 @@ def test_covariant_generators_and_fokker_planck_are_chart_consistent():
     assert jnp.allclose(polar_forward, cartesian_forward, atol=1e-9)
 
 
-def test_covariant_stochastic_operators_support_vector_outputs_jit_and_gradients():
+def test_covariant_stochastic_operators_support_vector_outputs_jit_and_gradients() -> (
+    None
+):
     chart = phx.metrix.CoordinateChart("line", ("x",))
     metric = phx.metrix.euclidean_metric(chart)
     observable = lambda q: jnp.array([q[0] ** 2, q[0] ** 3])
@@ -171,7 +177,7 @@ def test_covariant_stochastic_operators_support_vector_outputs_jit_and_gradients
         generated,
     )
 
-    def value(scale):
+    def value(scale: Any) -> Any:
         return phx.metrix.covariant_kolmogorov_generator(
             lambda q: q[0] ** 2,
             drift,
@@ -185,7 +191,7 @@ def test_covariant_stochastic_operators_support_vector_outputs_jit_and_gradients
     assert not jnp.allclose(derivative, 0.0)
 
 
-def test_stochastic_geometry_rejects_ambiguous_or_malformed_coefficients():
+def test_stochastic_geometry_rejects_ambiguous_or_malformed_coefficients() -> None:
     chart = phx.metrix.CoordinateChart("plane", ("x", "y"))
     metric = phx.metrix.euclidean_metric(chart)
     point = jnp.zeros(2)

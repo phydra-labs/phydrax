@@ -1,3 +1,5 @@
+from typing import Any
+
 import diffrax as dfx
 import equinox as eqx
 import jax
@@ -9,19 +11,19 @@ import phydrax as phx
 
 
 def _problem(
-    lag,
+    lag: Any,
     /,
     *,
-    drift=lambda time, state, memory, args: memory[0],
-    history=lambda time, args: jnp.ones((1,)),
-    t1=2.0,
-    minimum_delay=0.4,
-    maximum_delay=1.1,
-    monotone_argument=True,
-    root_isolation_step=None,
-    args=None,
-    second_lag=None,
-):
+    drift: Any = lambda time, state, memory, args: memory[0],
+    history: Any = lambda time, args: jnp.ones((1,)),
+    t1: Any = 2.0,
+    minimum_delay: Any = 0.4,
+    maximum_delay: Any = 1.1,
+    monotone_argument: Any = True,
+    root_isolation_step: Any = None,
+    args: Any = None,
+    second_lag: Any = None,
+) -> Any:
     delays = [
         phx.solver.StateDependentDelay(
             "state_delay",
@@ -53,11 +55,11 @@ def _problem(
     )
 
 
-def _piecewise_exact(time):
+def _piecewise_exact(time: Any) -> Any:
     return 1.0 + time + 0.5 * jnp.maximum(time - 1.0, 0.0) ** 2
 
 
-def test_state_dependent_tracker_finds_manufactured_known_root_and_restarts():
+def test_state_dependent_tracker_finds_manufactured_known_root_and_restarts() -> None:
     known_root = 0.5 / 0.9
     problem = _problem(
         lambda time, state, args: 0.5 + 0.1 * state[0],
@@ -89,7 +91,7 @@ def test_state_dependent_tracker_finds_manufactured_known_root_and_restarts():
     assert jnp.min(jnp.abs(roots - known_root)) < 2e-9
 
 
-def test_multiple_state_delays_deduplicate_a_simultaneous_root():
+def test_multiple_state_delays_deduplicate_a_simultaneous_root() -> None:
     lag = lambda time, state, args: 0.5 + 0.0 * state[0]
     problem = _problem(
         lag,
@@ -113,7 +115,7 @@ def test_multiple_state_delays_deduplicate_a_simultaneous_root():
     assert jnp.all(jnp.isinf(roots[1:]))
 
 
-def test_state_dependent_root_capacity_is_enforced_at_runtime():
+def test_state_dependent_root_capacity_is_enforced_at_runtime() -> None:
     problem = _problem(
         lambda time, state, args: 0.5 + 0.0 * state[0],
         drift=lambda time, state, memory, args: jnp.ones_like(state),
@@ -133,7 +135,7 @@ def test_state_dependent_root_capacity_is_enforced_at_runtime():
         )
 
 
-def test_state_dependent_lag_bound_violation_fails_explicitly():
+def test_state_dependent_lag_bound_violation_fails_explicitly() -> None:
     problem = _problem(
         lambda time, state, args: 0.3 - 0.4 * time,
         drift=lambda time, state, memory, args: jnp.ones_like(state),
@@ -152,7 +154,7 @@ def test_state_dependent_lag_bound_violation_fails_explicitly():
         )
 
 
-def test_user_events_before_and_after_an_internal_root_are_distinguished():
+def test_user_events_before_and_after_an_internal_root_are_distinguished() -> None:
     problem = _problem(
         lambda time, state, args: 0.5 + 0.0 * state[0],
         drift=lambda time, state, memory, args: jnp.ones_like(state),
@@ -162,7 +164,7 @@ def test_user_events_before_and_after_an_internal_root_are_distinguished():
         maximum_delay=0.5,
     )
 
-    def solve_until(level):
+    def solve_until(level: Any) -> Any:
         event = dfx.Event(
             lambda t, y, args, **kwargs: y[0] - level,
             root_finder=optx.Newton(rtol=1e-10, atol=1e-10),
@@ -186,7 +188,7 @@ def test_user_events_before_and_after_an_internal_root_are_distinguished():
     assert jnp.array_equal(after.valid, jnp.asarray([True, True, True, False]))
 
 
-def test_fixed_and_adaptive_state_dependent_solves_converge():
+def test_fixed_and_adaptive_state_dependent_solves_converge() -> None:
     rate = 0.7
     problem = _problem(
         lambda time, state, args: 1.0 + 0.0 * state[0],
@@ -227,7 +229,7 @@ def test_fixed_and_adaptive_state_dependent_solves_converge():
     assert adaptive_errors[-1] < 0.05 * adaptive_errors[0]
 
 
-def test_dynamic_tracking_recovers_high_order_across_a_delayed_discontinuity():
+def test_dynamic_tracking_recovers_high_order_across_a_delayed_discontinuity() -> None:
     problem = _problem(
         lambda time, state, args: 1.0 + 0.0 * state[0],
         minimum_delay=1.0,
@@ -258,7 +260,7 @@ def test_dynamic_tracking_recovers_high_order_across_a_delayed_discontinuity():
     assert int(untracked.stats["num_dynamic_discontinuity_roots"]) == 0
 
 
-def test_state_dependent_solution_agrees_with_a_highly_refined_reference():
+def test_state_dependent_solution_agrees_with_a_highly_refined_reference() -> None:
     lag = lambda time, state, args: 0.45 + 0.04 * jnp.tanh(state[0])
     problem = _problem(
         lag,
@@ -287,10 +289,10 @@ def test_state_dependent_solution_agrees_with_a_highly_refined_reference():
     assert jnp.allclose(candidate.states, reference.states, rtol=3e-6, atol=3e-7)
 
 
-def test_lag_parameter_gradient_away_from_a_topology_change():
+def test_lag_parameter_gradient_away_from_a_topology_change() -> None:
     terminal_time = 0.25
 
-    def terminal(delay):
+    def terminal(delay: Any) -> Any:
         problem = _problem(
             lambda time, state, args: args + 0.0 * state[0],
             history=lambda time, args: jnp.asarray([time]),
@@ -312,7 +314,7 @@ def test_lag_parameter_gradient_away_from_a_topology_change():
     assert jnp.allclose(jax.grad(terminal)(delay), -terminal_time, atol=2e-7)
 
 
-def test_nonmonotone_declaration_requires_a_root_isolation_contract():
+def test_nonmonotone_declaration_requires_a_root_isolation_contract() -> None:
     with pytest.raises(ValueError, match="root_isolation_step"):
         _problem(
             lambda time, state, args: 0.5 + 0.05 * jnp.sin(20.0 * time),
@@ -323,7 +325,7 @@ def test_nonmonotone_declaration_requires_a_root_isolation_contract():
         )
 
 
-def test_nonmonotone_tracking_isolates_forward_and_reverse_crossings():
+def test_nonmonotone_tracking_isolates_forward_and_reverse_crossings() -> None:
     frequency = 4.0 * jnp.pi
     problem = _problem(
         lambda time, state, args: 0.5 + 0.2 * jnp.sin(frequency * time),

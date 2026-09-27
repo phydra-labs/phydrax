@@ -8,7 +8,7 @@ from typing import Literal
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 

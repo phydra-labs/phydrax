@@ -11,7 +11,7 @@ from math import gcd, isfinite, pi, sqrt
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -101,7 +101,7 @@ class HaldaneModelPlan(StrictModule, NonTrainableState):
         energy_unit: UnitDefinition,
         length_unit: UnitDefinition,
         /,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -145,13 +145,13 @@ class HaldaneModelPlan(StrictModule, NonTrainableState):
             forward = np.zeros((2, 2), dtype=np.complex128)
             forward[0, 1] = -t1
             reverse = np.conj(forward.T)
-            translations.extend((translation, tuple(-value for value in translation)))
+            translations.extend((translation, (-translation[0], -translation[1])))
             matrices.extend((forward, reverse))
         amplitude = t2 * np.exp(1.0j * phase)
         for translation in ((1, 0), (0, -1), (-1, 1)):
             forward = np.diag((amplitude, np.conj(amplitude))).astype(np.complex128)
             reverse = np.conj(forward.T)
-            translations.extend((translation, tuple(-value for value in translation)))
+            translations.extend((translation, (-translation[0], -translation[1])))
             matrices.extend((forward, reverse))
         return _prepared_pencil(
             _honeycomb_cell(self.lattice_spacing),
@@ -187,7 +187,7 @@ class KaneMeleModelPlan(StrictModule, NonTrainableState):
         energy_unit: UnitDefinition,
         length_unit: UnitDefinition,
         /,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -250,13 +250,13 @@ class KaneMeleModelPlan(StrictModule, NonTrainableState):
             else:
                 forward = np.zeros((4, 4), dtype=np.complex128)
                 forward[:2, 2:] = spin_block
-                translations.extend((translation, tuple(-value for value in translation)))
+                translations.extend((translation, (-translation[0], -translation[1])))
                 matrices.extend((forward, np.conj(forward.T)))
         for translation in ((1, 0), (0, -1), (-1, 1)):
             forward = np.zeros((4, 4), dtype=np.complex128)
             forward[:2, :2] = 1.0j * intrinsic * sigma_z
             forward[2:, 2:] = -1.0j * intrinsic * sigma_z
-            translations.extend((translation, tuple(-value for value in translation)))
+            translations.extend((translation, (-translation[0], -translation[1])))
             matrices.extend((forward, np.conj(forward.T)))
         prepared = _prepared_pencil(
             _honeycomb_cell(self.lattice_spacing),
@@ -297,7 +297,7 @@ class HofstadterModelPlan(StrictModule, NonTrainableState):
         energy_unit: UnitDefinition,
         length_unit: UnitDefinition,
         /,
-    ):
+    ) -> None:
         numerator = int(flux_numerator)
         denominator = int(flux_denominator)
         hopping_ = float(hopping)

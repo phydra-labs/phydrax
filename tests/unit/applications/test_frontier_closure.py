@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 
 from phydrax.algebraic import SparsePolynomialSystem
@@ -34,7 +36,7 @@ from phydrax.optics import wave
 from phydrax.particle_physics import integrate_native_rge, NativeSpectrumModelPlan
 
 
-def _s3_irrep_basis():
+def _s3_irrep_basis() -> Any:
     resources = SectorBasisResourcePolicy(
         maximum_dimension=32,
         maximum_table_bytes=1_000_000,
@@ -234,6 +236,7 @@ def test_mapped_infinite_phi4_kink_has_correct_sector() -> None:
             ("potential",),
             (0, 0, 0),
             ((4,), (2,), (0,)),
+            # ty: ignore[invalid-argument-type]
             (0.25, -0.5, 0.25),
         ),
         "phi4",
@@ -255,8 +258,11 @@ def test_zero_coupling_multimode_envelope_is_identity() -> None:
     time = np.linspace(-2.0, 2.0, 16, endpoint=False)
     plan = wave.CoupledEnvelopePlan(
         time,
+        # ty: ignore[invalid-argument-type]
         (0.0,),
+        # ty: ignore[invalid-argument-type]
         (0.0,),
+        # ty: ignore[invalid-argument-type]
         (10.0, 12.0),
         np.zeros((2, 16)),
         np.zeros((2, 16)),
@@ -431,3 +437,32 @@ def test_projective_variety_reuses_canonical_sparse_polynomials() -> None:
     evidence = complex_geometry.assess_projective_variety(plan, point)
     assert plan.system.system_id == system.system_id
     assert bool(evidence.accepted)
+
+
+def test_defect_scattering_runs_with_asserted_metric_evidence() -> None:
+    potential = phase_field.PolynomialDefectPotential(
+        SparsePolynomialSystem.from_coo(
+            ("phi",),
+            ("potential",),
+            (0, 0, 0),
+            ((4,), (2,), (0,)),
+            # ty: ignore[invalid-argument-type]
+            (0.25, -0.5, 0.25),
+        ),
+        "phi4",
+    )
+    points = np.linspace(-5.0, 5.0, 17)
+    plan = phase_field.DefectScatteringPlan(
+        potential,
+        np.asarray(((1.0,),)),
+        points,
+        time_step=0.1,
+        steps=2,
+    )
+    fields = np.tanh(points / np.sqrt(2.0))[:, None]
+    result = phase_field.run_defect_scattering(plan, fields, np.zeros_like(fields))
+    assert result.fields.shape == (3, 17, 1)
+    assert bool(result.finite)
+    assert np.allclose(
+        result.topological_charge, (2.0 * np.tanh(5.0 / np.sqrt(2.0)),), atol=1e-2
+    )

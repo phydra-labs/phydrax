@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..sparse import RowRelation
@@ -31,7 +32,7 @@ class SparseFeatures(StrictModule):
         feature_count: int,
         valid: ArrayLike | None = None,
         case_shape: tuple[int, ...] = (),
-    ):
+    ) -> None:
         values_ = jnp.asarray(values)
         columns_ = jnp.asarray(column_indices)
         cases = tuple(case_shape)
@@ -77,7 +78,9 @@ class SparseFeatures(StrictModule):
         indices = self.columns.source_indices.reshape(values.shape)
         valid = self.columns.valid.reshape(values.shape)
 
-        def materialize(case_values, case_indices, case_valid):
+        def materialize(
+            case_values: Array, case_indices: Array, case_valid: Array
+        ) -> Array:
             rows = jnp.broadcast_to(
                 jnp.arange(self.sample_count, dtype=jnp.int32)[:, None],
                 case_indices.shape,

@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 from phydrax import ein
@@ -49,7 +52,7 @@ class ImplicitTimeDomainEMPlan(StrictModule, NonTrainableState):
     policy: la.LinearSolvePolicy
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, mesh: CellMesh, survey: FrequencyDomainEMSurvey, /):
+    def __init__(self, mesh: CellMesh, survey: FrequencyDomainEMSurvey, /) -> None:
         space = TetrahedralNedelecSpace(mesh)
         if not isinstance(survey, FrequencyDomainEMSurvey):
             raise TypeError(
@@ -95,14 +98,20 @@ class ImplicitTimeDomainEMPlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
-    def _operators(self, material: ConductiveEMMaterial, dt: Array):
-        def mass(field):
+    def _operators(
+        self, material: ConductiveEMMaterial, dt: Array
+    ) -> tuple[
+        la.FunctionLinearOperator,
+        Callable[[ArrayLike], Array],
+        Callable[[ArrayLike], Array],
+    ]:
+        def mass(field: ArrayLike) -> Array:
             return self.space.mass_action(field, material.conductivity_S_m)
 
-        def stiffness(field):
+        def stiffness(field: ArrayLike) -> Array:
             return self.space.curl_curl_action(field, material.inverse_permeability_m_H)
 
-        def action(reduced):
+        def action(reduced: Array) -> Array:
             full = (
                 jnp.zeros((self.space.edge_count,), dtype=reduced.dtype)
                 .at[self.free_edges]

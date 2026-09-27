@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -103,6 +104,7 @@ def prepare_campaign(sample_times_s: Sequence[float], /) -> PreparedCampaign:
         "net_heat_w",
     )
     experiment = BatteryExperimentPlan(
+        # ty: ignore[invalid-argument-type]
         adapter,
         protocol,
         BatteryOutputPlan(output_names),
@@ -336,11 +338,12 @@ def prepare_campaign(sample_times_s: Sequence[float], /) -> PreparedCampaign:
         adapter.model_id,
         execute,
         execute,
+        # ty: ignore[invalid-argument-type]
         resource_observations,
     )
 
 
-def resource_observations(executed, /) -> dict[str, int | None]:
+def resource_observations(executed: Any, /) -> dict[str, int | None]:
     result, _ = executed
     stats = result.native_solution.stats
     attempted = stats.get("num_steps")
@@ -350,7 +353,9 @@ def resource_observations(executed, /) -> dict[str, int | None]:
     }
 
 
-def raw_output(spec, executed, campaign_directory: Path, /) -> dict[str, object]:
+def raw_output(
+    spec: Any, executed: Any, campaign_directory: Path, /
+) -> dict[str, object]:
     result, residuals = executed
     host_residuals = np.asarray(residuals, dtype="float64")
     if host_residuals.shape != (len(spec.planned_schedule.sample_times_s),):
@@ -450,7 +455,7 @@ def raw_output(spec, executed, campaign_directory: Path, /) -> dict[str, object]
     return _finite_observation(content)
 
 
-def _finite_observation(value):
+def _finite_observation(value: Any) -> Any:
     # Missing scientific values remain null, never substituted with a measured zero.
     if isinstance(value, float) and not math.isfinite(value):
         return None

@@ -10,10 +10,14 @@ PicardUpdate with a reusable native tridiagonal Poisson inverse action.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from .... import linalg as la
 from ...._strict import StrictModule
@@ -24,8 +28,15 @@ from ....nonlinear import (
     prepare_nonlinear_update,
     refresh_nonlinear_update,
 )
-from ._basis import _array, EffectiveMass1D, SchrodingerResult, solve_schrodinger
+from ._basis import (
+    _array,
+    EffectiveMass1D,
+    SchrodingerResult,
+    solve_schrodinger,
+    TransverseModes,
+)
 from ._coherent import CoherentDevice, CoherentResult, integrate_coherent
+from ._leads import BoundStateOccupation
 
 
 class QuantumPoisson1D(StrictModule):
@@ -46,8 +57,12 @@ class QuantumPoisson1D(StrictModule):
     scale: Array
 
     def __init__(
-        self, basis, face_permittivity, fixed_charge_density, electrode_voltages
-    ):
+        self,
+        basis: EffectiveMass1D,
+        face_permittivity: ArrayLike,
+        fixed_charge_density: ArrayLike,
+        electrode_voltages: ArrayLike,
+    ) -> None:
         if not isinstance(basis, EffectiveMass1D):
             raise TypeError(
                 "Quantum Poisson currently admits the EffectiveMass1D cell basis only."
@@ -86,7 +101,7 @@ class QuantumPoisson1D(StrictModule):
         )
         self.prepared = la.prepare(la.LinearSystem(op), policy)
 
-    def right_hand_side(self, quantum_charge_density):
+    def right_hand_side(self, quantum_charge_density: ArrayLike) -> Array:
         quantum = jnp.asarray(quantum_charge_density)
         if quantum.shape != self.cell_volumes.shape:
             raise ValueError("Quantum charge must have one density per cell.")
@@ -99,7 +114,7 @@ class QuantumPoisson1D(StrictModule):
             / self.scale
         )
 
-    def residual(self, potential, quantum_charge_density):
+    def residual(self, potential: ArrayLike, quantum_charge_density: ArrayLike) -> Array:
         """Integrated physical Poisson residual, C per cell."""
         potential_ = jnp.asarray(potential)
         if potential_.shape != self.cell_volumes.shape:
@@ -108,10 +123,10 @@ class QuantumPoisson1D(StrictModule):
             self.operator.mv(potential_) - self.right_hand_side(quantum_charge_density)
         )
 
-    def solve(self, quantum_charge_density):
+    def solve(self, quantum_charge_density: ArrayLike) -> la.LinearSolveResult:
         return la.solve(self.prepared, self.right_hand_side(quantum_charge_density))
 
-    def terminal_charge(self, potential):
+    def terminal_charge(self, potential: ArrayLike) -> Array:
         return self.face_capacitances[jnp.asarray([0, -1])] * (
             self.electrode_voltages - jnp.asarray(potential)[jnp.asarray([0, -1])]
         )
@@ -140,8 +155,14 @@ class QuantumPoissonResult(StrictModule):
 
 
 def _self_consistent(
-    poisson, evaluate, initial_potential, *, potential_tolerance, maximum_steps, damping
-):
+    poisson: QuantumPoisson1D,
+    evaluate: Callable[[Array], SchrodingerResult | CoherentResult],
+    initial_potential: ArrayLike,
+    *,
+    potential_tolerance: float,
+    maximum_steps: int,
+    damping: float,
+) -> QuantumPoissonResult:
     if (
         isinstance(maximum_steps, bool)
         or not isinstance(maximum_steps, (int, np.integer))
@@ -164,7 +185,7 @@ def _self_consistent(
         problem_id="quantum-poisson-frozen-charge-update",
     )
 
-    def inverse_action(residual):
+    def inverse_action(residual: Array) -> Array:
         result = la.solve(poisson.prepared, residual)
         return eqx.error_if(
             result.value,
@@ -244,19 +265,19 @@ def _self_consistent(
 
 
 def solve_schrodinger_poisson(
-    basis,
-    poisson,
-    chemical_potential,
-    temperature,
+    basis: EffectiveMass1D,
+    poisson: QuantumPoisson1D,
+    chemical_potential: ArrayLike,
+    temperature: ArrayLike,
     *,
-    count,
-    initial_potential=None,
-    transverse=None,
-    omitted_particle_tolerance=1e-8,
-    potential_tolerance=1e-7,
-    maximum_steps=100,
-    damping=0.2,
-):
+    count: int,
+    initial_potential: ArrayLike | None = None,
+    transverse: TransverseModes | None = None,
+    omitted_particle_tolerance: float = 1e-8,
+    potential_tolerance: float = 1e-7,
+    maximum_steps: int = 100,
+    damping: float = 0.2,
+) -> QuantumPoissonResult:
     """Grand-canonical self-consistent confinement, not fixed particle number."""
     if not isinstance(basis, EffectiveMass1D):
         raise TypeError("Schrodinger-Poisson requires an EffectiveMass1D basis.")
@@ -266,7 +287,7 @@ def solve_schrodinger_poisson(
         raise ValueError("Quantum and Poisson charge measures must be identical.")
     initial = jnp.zeros_like(basis.x) if initial_potential is None else initial_potential
 
-    def evaluate(psi):
+    def evaluate(psi: Array) -> SchrodingerResult:
         return solve_schrodinger(
             basis.hamiltonian(psi),
             chemical_potential,
@@ -287,16 +308,16 @@ def solve_schrodinger_poisson(
 
 
 def solve_coherent_poisson(
-    device,
-    poisson,
+    device: CoherentDevice,
+    poisson: QuantumPoisson1D,
     *,
-    initial_potential=None,
-    bound_occupation=None,
-    potential_tolerance=1e-7,
-    maximum_steps=100,
-    damping=0.2,
-    integration_options=None,
-):
+    initial_potential: ArrayLike | None = None,
+    bound_occupation: BoundStateOccupation | None = None,
+    potential_tolerance: float = 1e-7,
+    maximum_steps: int = 100,
+    damping: float = 0.2,
+    integration_options: Mapping[str, Any] | None = None,
+) -> QuantumPoissonResult:
     """Coherent NEGF-Poisson with fixed reservoir energies and explicit gates.
 
     device.hamiltonian is the zero-potential material/kinetic operator. Contact
@@ -317,7 +338,7 @@ def solve_coherent_poisson(
         else initial_potential
     )
 
-    def evaluate(psi):
+    def evaluate(psi: Array) -> CoherentResult:
         return integrate_coherent(
             device.with_potential(psi), bound_occupation=bound_occupation, **options
         )

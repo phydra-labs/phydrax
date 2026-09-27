@@ -4,10 +4,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._trainable import NonTrainableState
@@ -29,7 +31,7 @@ class MultigroupM1RadiationSystem(AbstractAdmissibleSystem, NonTrainableState):
         *,
         reduced_light_speed: float = 1.0,
         energy_floor: float = 1e-12,
-    ):
+    ) -> None:
         groups = int(group_count)
         dimension_ = int(dimension)
         speed = float(reduced_light_speed)
@@ -98,7 +100,7 @@ class MultigroupM1RadiationSystem(AbstractAdmissibleSystem, NonTrainableState):
             + 0.5 * (3.0 * chi - 1.0)[..., None, None] * outer
         )
 
-    def physical_flux(self, state: Array, axis: int, args=None, /) -> Array:
+    def physical_flux(self, state: Array, axis: int, args: Any = None, /) -> Array:
         del args
         axis_ = int(axis)
         groups = self._groups(state)
@@ -117,7 +119,7 @@ class MultigroupM1RadiationSystem(AbstractAdmissibleSystem, NonTrainableState):
         left: Array,
         right: Array,
         axis: int,
-        args=None,
+        args: Any = None,
         /,
     ) -> Array:
         del right, axis, args
@@ -128,7 +130,7 @@ class MultigroupM1RadiationSystem(AbstractAdmissibleSystem, NonTrainableState):
         left: Array,
         right: Array,
         axis: int,
-        args=None,
+        args: Any = None,
         /,
     ) -> tuple[Array, Array]:
         speed = self.max_wave_speed(left, right, axis, args)
@@ -139,7 +141,7 @@ class MultigroupM1RadiationSystem(AbstractAdmissibleSystem, NonTrainableState):
         left: Array,
         right: Array,
         unit_normal: Array,
-        args=None,
+        args: Any = None,
         /,
     ) -> tuple[Array, Array]:
         del right, unit_normal, args

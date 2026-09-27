@@ -5,13 +5,13 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from phydrax._strict import StrictModule
 
 from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
 from ._barrier import ConeBarrierOracle
-from ._cones import ProductCone, ZeroCone
+from ._cones import AbstractConvexCone, ProductCone, ZeroCone
 from ._problem import (
     _conic_matrix_mv,
     _conic_matrix_transpose_mv,
@@ -30,16 +30,22 @@ class HomogeneousConicState(StrictModule):
     iterations: Array
 
 
-def _split(cone, value):
+def _split(cone: AbstractConvexCone, value: Array) -> tuple[Array, ...]:
     return cone.split(value) if isinstance(cone, ProductCone) else (value,)
 
 
-def _blocks(cone):
+def _blocks(cone: AbstractConvexCone) -> tuple[AbstractConvexCone, ...]:
     return cone.cones if isinstance(cone, ProductCone) else (cone,)
 
 
-def _centrality(cone, barrier, slack, dual, mu):
-    pieces = []
+def _centrality(
+    cone: AbstractConvexCone,
+    barrier: ConeBarrierOracle,
+    slack: Array,
+    dual: Array,
+    mu: Array,
+) -> Array:
+    pieces: list[Array] = []
     for block, slack_block, dual_block in zip(
         _blocks(cone), _split(cone, slack), _split(cone, dual), strict=True
     ):
@@ -55,7 +61,9 @@ def _centrality(cone, barrier, slack, dual, mu):
     return jnp.concatenate(tuple(pieces))
 
 
-def _embedding_residual(program, barrier, vector, mu):
+def _embedding_residual(
+    program: ConicProgram, barrier: ConeBarrierOracle, vector: Array, mu: Array
+) -> Array:
     n, m = program.num_variables, program.num_constraints
     x = vector[:n]
     z = vector[n : n + m]
@@ -84,16 +92,16 @@ def _embedding_residual(program, barrier, vector, mu):
     )
 
 
-def _positive_step(value, direction):
+def _positive_step(value: Array, direction: Array) -> Array:
     candidate = jnp.where(direction < 0.0, -value / direction, jnp.inf)
     return jnp.minimum(1.0, jnp.min(candidate, initial=jnp.inf))
 
 
-def _dual_step(cone, point, direction):
+def _dual_step(cone: AbstractConvexCone, point: Array, direction: Array) -> Array:
     lower = jnp.asarray(0.0, dtype=point.dtype)
     upper = jnp.asarray(1.0, dtype=point.dtype)
 
-    def body(_, state):
+    def body(_: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
         lo, hi = state
         middle = 0.5 * (lo + hi)
         candidate = point + middle * direction
@@ -110,7 +118,9 @@ def _dual_step(cone, point, direction):
     return jnp.where(accepted, 1.0, 0.995 * lower)
 
 
-def _direction(program, barrier, vector, mu):
+def _direction(
+    program: ConicProgram, barrier: ConeBarrierOracle, vector: Array, mu: Array
+) -> tuple[Array, Array]:
     residual = _embedding_residual(program, barrier, vector, mu)
     jacobian = jax.jacfwd(lambda value: _embedding_residual(program, barrier, value, mu))(
         vector
@@ -123,7 +133,9 @@ def _direction(program, barrier, vector, mu):
     return result.value, result.successful
 
 
-def _step_bound(program, barrier, vector, direction):
+def _step_bound(
+    program: ConicProgram, barrier: ConeBarrierOracle, vector: Array, direction: Array
+) -> Array:
     n, m = program.num_variables, program.num_constraints
     z = vector[n : n + m]
     s = vector[n + m : n + 2 * m]
@@ -146,7 +158,7 @@ def solve_homogeneous_conic(
     *,
     maximum_steps: int,
     tolerance: float,
-):
+) -> HomogeneousConicState:
     """Monotone homogeneous embedding with affine and centered Newton solves."""
     if program.batch_shape:
         raise ValueError("Homogeneous conic kernel currently requires one case.")
@@ -163,7 +175,9 @@ def solve_homogeneous_conic(
     active = jnp.asarray(True)
     iterations = jnp.asarray(0, dtype=jnp.int32)
 
-    def iteration(_, state):
+    def iteration(
+        _: Array, state: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
         vector_, active_, iterations_ = state
         n, m = program.num_variables, program.num_constraints
         slack = vector_[n + m : n + 2 * m]

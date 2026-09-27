@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, cast, TypeAlias
+from typing import Any, cast, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -21,10 +22,17 @@ from ..discretization import IntegrationDomain
 from ..linalg import OperatorProperties
 
 
+if TYPE_CHECKING:
+    from ..integration import ReferenceCellData
+
+
 IntegrationRule: TypeAlias = Any
+_IntegrationRules: TypeAlias = (
+    Mapping[str, IntegrationRule] | Sequence[tuple[str, IntegrationRule]]
+)
 
 
-def _rule_data(rule: IntegrationRule, /):
+def _rule_data(rule: IntegrationRule, /) -> ReferenceCellData:
     from ..integration import reference_rule_data
 
     return reference_rule_data(rule)
@@ -44,7 +52,7 @@ def _rule_id(rule: IntegrationRule, /) -> str:
 
 
 def _normalize_rules(
-    rules: Mapping[str, IntegrationRule] | Sequence[tuple[str, IntegrationRule]],
+    rules: _IntegrationRules,
     /,
 ) -> tuple[tuple[str, IntegrationRule], ...]:
     items = tuple(rules.items()) if isinstance(rules, Mapping) else tuple(rules)
@@ -83,7 +91,7 @@ class VariationalActionDescriptor(StrictModule, NonTrainableState):
         coefficient_values: Sequence["VariationalCoefficient"] = (),
         provider_offers: Sequence[str] = ("native",),
         evaluator: Callable | None = None,
-    ):
+    ) -> None:
         kind = str(action_kind)
         provider_kind = str(provider_action_kind)
         domain = str(default_domain_kind)
@@ -154,7 +162,7 @@ class VariationalCoefficient(StrictModule, NonTrainableState):
         rule_id: str | None = None,
         side: str = "none",
         layout_axes: Sequence[str] | None = None,
-    ):
+    ) -> None:
         location_ = str(location)
         if location_ not in ("point", "cell", "facet", "quadrature", "dof"):
             raise ValueError(
@@ -363,6 +371,11 @@ def coefficient(
     )
 
 
+_CoefficientInput: TypeAlias = (
+    VariationalCoefficient | ArrayLike | Callable[[Array, object], ArrayLike]
+)
+
+
 class DiffusionAction(StrictModule, NonTrainableState):
     field_name: str = eqx.field(static=True)
     diffusivity: VariationalCoefficient
@@ -373,13 +386,13 @@ class DiffusionAction(StrictModule, NonTrainableState):
     def __init__(
         self,
         field_name: str,
-        diffusivity=1.0,
+        diffusivity: _CoefficientInput = 1.0,
         /,
         *,
-        action_id="diffusion",
-        domain=None,
-        rules=(),
-    ):
+        action_id: str = "diffusion",
+        domain: IntegrationDomain | None = None,
+        rules: _IntegrationRules = (),
+    ) -> None:
         field = str(field_name)
         identifier = str(action_id)
         if not field or not identifier:
@@ -426,15 +439,15 @@ class TensorDiffusionAction(StrictModule, NonTrainableState):
     def __init__(
         self,
         field_name: str,
-        diffusivity=1.0,
+        diffusivity: _CoefficientInput = 1.0,
         /,
         *,
         tensor_axes: Sequence[str] = ("flux", "gradient"),
         properties: OperatorProperties | None = None,
-        action_id="tensor-diffusion",
-        domain=None,
-        rules=(),
-    ):
+        action_id: str = "tensor-diffusion",
+        domain: IntegrationDomain | None = None,
+        rules: _IntegrationRules = (),
+    ) -> None:
         field = str(field_name)
         identifier = str(action_id)
         axes = tuple(str(value) for value in tensor_axes)
@@ -518,8 +531,15 @@ class MassAction(StrictModule, NonTrainableState):
     rules: tuple[tuple[str, IntegrationRule], ...]
 
     def __init__(
-        self, field_name: str, value=1.0, /, *, action_id="mass", domain=None, rules=()
-    ):
+        self,
+        field_name: str,
+        value: _CoefficientInput = 1.0,
+        /,
+        *,
+        action_id: str = "mass",
+        domain: IntegrationDomain | None = None,
+        rules: _IntegrationRules = (),
+    ) -> None:
         field = str(field_name)
         identifier = str(action_id)
         if not field or not identifier:
@@ -558,8 +578,15 @@ class SourceAction(StrictModule, NonTrainableState):
     rules: tuple[tuple[str, IntegrationRule], ...]
 
     def __init__(
-        self, field_name: str, source, /, *, action_id="source", domain=None, rules=()
-    ):
+        self,
+        field_name: str,
+        source: _CoefficientInput,
+        /,
+        *,
+        action_id: str = "source",
+        domain: IntegrationDomain | None = None,
+        rules: _IntegrationRules = (),
+    ) -> None:
         field = str(field_name)
         identifier = str(action_id)
         if not field or not identifier:
@@ -600,13 +627,13 @@ class BoundaryLoadAction(StrictModule, NonTrainableState):
     def __init__(
         self,
         field_name: str,
-        load,
+        load: _CoefficientInput,
         /,
         *,
-        action_id="boundary-load",
-        domain=None,
-        rules=(),
-    ):
+        action_id: str = "boundary-load",
+        domain: IntegrationDomain | None = None,
+        rules: _IntegrationRules = (),
+    ) -> None:
         field = str(field_name)
         identifier = str(action_id)
         if not field or not identifier:

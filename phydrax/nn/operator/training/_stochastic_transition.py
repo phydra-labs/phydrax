@@ -7,14 +7,15 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Mapping, Sequence
 from math import prod
-from typing import Any, Literal, TypeAlias
+from typing import Any, assert_never, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._frozendict import frozendict
 from ...._strict import StrictModule
@@ -36,11 +37,16 @@ from ....stochastic._realization import (
 )
 from ....stochastic._trajectory import _TrajectoryRecord, StochasticTrajectory
 from ....stochastic._wiener import WienerRealization
+from ....typing import parse, PRNGKey
 from ..data import FunctionSamples, OperatorBatch, OperatorOutputSpec
 from ..distribution import (
     AbstractOperatorDistribution,
     AbstractProbabilisticOperatorModel,
 )
+
+
+if TYPE_CHECKING:
+    from ....uq._predictive import PredictiveField
 
 
 OperatorDriverKind: TypeAlias = Literal["wiener", "jump"]
@@ -176,7 +182,7 @@ def _default_process_axes(rank: int, existing: Sequence[str], /) -> tuple[str, .
 
 
 def _key_fingerprint(
-    key: Key[Array, ""],
+    key: PRNGKey,
     process_id: str,
     times: Array,
     initial_state: Array,
@@ -212,22 +218,11 @@ class OperatorDriverBinding(StrictModule):
         *,
         kind: OperatorDriverKind,
         quantity: OperatorDriverQuantity,
-    ):
+    ) -> None:
         resolved_input = _name(input_name, owner="input_name")
         resolved_component = _name(component, owner="component")
-        if kind not in ("wiener", "jump"):
-            raise ValueError("kind must be 'wiener' or 'jump'.")
-        quantities = (
-            "increment",
-            "event_times",
-            "event_offsets",
-            "event_channels",
-            "event_marks",
-            "event_mask",
-            "channel_counts",
-        )
-        if quantity not in quantities:
-            raise ValueError(f"quantity must be one of {quantities}; got {quantity!r}.")
+        kind = parse(kind, OperatorDriverKind, "kind")
+        quantity = parse(quantity, OperatorDriverQuantity, "quantity")
         if kind == "wiener" and quantity != "increment":
             raise ValueError("Wiener bindings require quantity='increment'.")
         if kind == "jump" and quantity == "increment":
@@ -266,7 +261,7 @@ class OperatorTransitionSpec(StrictModule):
         driver_bindings: Sequence[OperatorDriverBinding] = (),
         query_name: str = "query",
         output_field: str = "output",
-    ):
+    ) -> None:
         if not isinstance(output_spec, OperatorOutputSpec):
             raise TypeError("output_spec must be an OperatorOutputSpec.")
         state = _name(state_input, owner="state_input")
@@ -697,30 +692,35 @@ def _jump_driver_values(
             continue
         batch = event_batches[binding.component]
         mask = masks[binding.component]
-        if binding.quantity == "event_times":
-            value = jnp.where(mask, batch.times, 0.0)
-        elif binding.quantity == "event_offsets":
-            value = jnp.where(mask, batch.times - start, 0.0)
-        elif binding.quantity == "event_channels":
-            value = jnp.where(mask, batch.channels, -1)
-        elif binding.quantity == "event_marks":
-            shaped_mask = mask.reshape(mask.shape + (1,) * len(batch.mark_shape))
-            value = jnp.where(shaped_mask, batch.marks, 0)
-        elif binding.quantity == "event_mask":
-            value = mask
-        elif binding.quantity == "channel_counts":
-            event_shape = spec.driver_event_shape(template, binding.input_name)
-            if len(event_shape) != 1:
-                raise ValueError(
-                    "channel_counts driver fields must have event shape (num_channels,)."
+        quantity = binding.quantity
+        match quantity:
+            case "event_times":
+                value = jnp.where(mask, batch.times, 0.0)
+            case "event_offsets":
+                value = jnp.where(mask, batch.times - start, 0.0)
+            case "event_channels":
+                value = jnp.where(mask, batch.channels, -1)
+            case "event_marks":
+                shaped_mask = mask.reshape(mask.shape + (1,) * len(batch.mark_shape))
+                value = jnp.where(shaped_mask, batch.marks, 0)
+            case "event_mask":
+                value = mask
+            case "channel_counts":
+                event_shape = spec.driver_event_shape(template, binding.input_name)
+                if len(event_shape) != 1:
+                    raise ValueError(
+                        "channel_counts driver fields must have event shape "
+                        "(num_channels,)."
+                    )
+                channels = jnp.arange(event_shape[0], dtype=batch.channels.dtype)
+                value = jnp.sum(
+                    mask[..., None] & (batch.channels[..., None] == channels),
+                    axis=-2,
                 )
-            channels = jnp.arange(event_shape[0], dtype=batch.channels.dtype)
-            value = jnp.sum(
-                mask[..., None] & (batch.channels[..., None] == channels),
-                axis=-2,
-            )
-        else:
-            raise AssertionError(f"Unhandled jump quantity {binding.quantity!r}.")
+            case "increment":
+                raise AssertionError(f"Unhandled jump quantity {quantity!r}.")
+            case _:
+                assert_never(quantity)
         values[binding.input_name] = value
     return values
 
@@ -733,7 +733,7 @@ class OperatorProcessDistribution(AbstractProcessDistribution):
     batch_shape: tuple[int, ...] = eqx.field(static=True)
     uncertainty_source: Literal["process"] = eqx.field(static=True)
 
-    def __init__(self, distribution: AbstractOperatorDistribution, /):
+    def __init__(self, distribution: AbstractOperatorDistribution, /) -> None:
         if not isinstance(distribution, AbstractOperatorDistribution):
             raise TypeError("distribution must implement AbstractOperatorDistribution.")
         if distribution.uncertainty_source != "process":
@@ -751,7 +751,7 @@ class OperatorProcessDistribution(AbstractProcessDistribution):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         return self.operator_distribution.sample(key, sample_shape)
@@ -777,7 +777,7 @@ class OperatorMarginalTransition(AbstractMarginalTransitionLaw):
         /,
         *,
         process_id: str,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractProbabilisticOperatorModel):
             raise TypeError(
                 "OperatorMarginalTransition requires an AbstractProbabilisticOperatorModel."
@@ -825,7 +825,7 @@ class OperatorPathwiseTransition(AbstractPathwiseTransition):
         /,
         *,
         process_id: str,
-    ):
+    ) -> None:
         if not callable(model):
             raise TypeError("OperatorPathwiseTransition model must be callable.")
         if not isinstance(spec, OperatorTransitionSpec):
@@ -903,7 +903,7 @@ class OperatorProcessTransition(StrictModule):
         /,
         *,
         process_id: str,
-    ):
+    ) -> None:
         if not callable(model):
             raise TypeError("OperatorProcessTransition model must be callable.")
         if not isinstance(spec, OperatorTransitionSpec):
@@ -953,7 +953,7 @@ class OperatorJumpTransition(StrictModule):
         /,
         *,
         process_id: str,
-    ):
+    ) -> None:
         if not callable(model):
             raise TypeError("OperatorJumpTransition model must be callable.")
         if not isinstance(spec, OperatorTransitionSpec):
@@ -1011,11 +1011,10 @@ class StochasticOperatorRollout(StrictModule):
         process_id: str,
         kind: OperatorTransitionKind,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         if not isinstance(trajectory, StochasticTrajectory):
             raise TypeError("trajectory must be a StochasticTrajectory.")
-        if kind not in ("marginal", "pathwise", "process"):
-            raise ValueError("kind must be 'marginal', 'pathwise', or 'process'.")
+        kind = parse(kind, OperatorTransitionKind, "kind")
         resolved_id = _name(process_id, owner="process_id")
         self.trajectory = trajectory
         self.process_id = str(resolved_id)
@@ -1034,7 +1033,7 @@ class StochasticOperatorRollout(StrictModule):
     def is_pathwise(self) -> bool:
         return self.kind != "marginal"
 
-    def to_predictive(self):
+    def to_predictive(self) -> PredictiveField:
         """Return a coordinate-aware predictive field with process sample axes."""
         return self.trajectory.to_predictive()
 
@@ -1170,7 +1169,7 @@ def marginal_operator_rollout(
     times: ArrayLike,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_realizations: int,
     initial_state: ArrayLike | None = None,
     realization_axis: str = "__phydra_uq_process",
@@ -1603,7 +1602,7 @@ def operator_jump_generator_objective(
     time: ArrayLike,
     step: ArrayLike,
     observable: Callable[[Array], Array],
-    key: Key[Array, ""],
+    key: PRNGKey,
     continuous_generator: Callable[[Array, Array], Array] | None = None,
     num_transition_samples: int = 256,
     num_mark_samples: int = 1,
@@ -1665,7 +1664,7 @@ def operator_weak_generator_objective(
     step: ArrayLike,
     observable: Callable[[Array], Array],
     generator_observable: Callable[[Array, Array], Array],
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_samples: int = 256,
     reduction: OperatorTransitionReduction = "mean",
 ) -> Array:

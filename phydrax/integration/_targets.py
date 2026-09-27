@@ -9,7 +9,7 @@ from typing import Any, cast, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.axes as cx
 from phydrax.domain import (
@@ -34,8 +34,9 @@ def _axes(
     axes = value if isinstance(value, tuple) else (value,)
     if not axes:
         raise ValueError("sample_axes must contain at least one axis.")
-    if all(isinstance(axis, int) for axis in axes):
-        return tuple(axes)
+    integer_axes = tuple(axis for axis in axes if isinstance(axis, int))
+    if len(integer_axes) == len(axes):
+        return integer_axes
     if all(isinstance(axis, str) and axis for axis in axes):
         return tuple(str(axis) for axis in axes)
     raise TypeError("sample_axes must contain only integers or only non-empty names.")
@@ -101,7 +102,7 @@ class ComponentTarget(StrictModule):
         *,
         axes: str | tuple[str, ...] | None = None,
         normalized: bool = False,
-    ):
+    ) -> None:
         if not isinstance(component, (DomainComponent, ComponentSum)):
             raise TypeError("component must be a DomainComponent or ComponentSum.")
         self.component = component
@@ -122,7 +123,7 @@ class ProbabilityTarget(StrictModule):
         /,
         *,
         target_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(probability, ProbabilityDomain):
             raise TypeError("probability must be a ProbabilityDomain.")
         identifier = probability.label if target_id is None else str(target_id)
@@ -147,7 +148,7 @@ class DensityTarget(StrictModule):
         /,
         *,
         normalized: bool,
-    ):
+    ) -> None:
         self.base = base
         self.log_density = log_density
         self.normalized = bool(normalized)
@@ -175,7 +176,7 @@ class DiscreteMeasureTarget(StrictModule):
         normalized: bool = False,
         target_mass: Array | None = None,
         provenance: str = "external-discrete",
-    ):
+    ) -> None:
         reduced_axes = (axes,) if isinstance(axes, str) else tuple(axes)
         if not reduced_axes or any(not axis for axis in reduced_axes):
             raise ValueError("axes must contain at least one non-empty name.")
@@ -262,7 +263,7 @@ class WeightedSampleTarget(StrictModule):
         mask: Array | cx.AxisArray | None = None,
         sample_axes: int | str | tuple[int, ...] | tuple[str, ...] = 0,
         provenance: str = "external-weighted-samples",
-    ):
+    ) -> None:
         axes = _axes(sample_axes)
         if isinstance(log_weights, cx.AxisArray):
             if not all(isinstance(axis, str) for axis in axes):
@@ -370,7 +371,7 @@ class MappedTarget(StrictModule):
         *,
         mask: Callable | Array | None = None,
         target_mass: Array | None = None,
-    ):
+    ) -> None:
         mass = _target_mass(target_mass)
         if mass is not None and mass.shape != ():
             raise ValueError("Mapped target_mass must be one scalar.")
@@ -405,7 +406,7 @@ class MultilevelTarget(StrictModule):
         /,
         *,
         sampler_id: str,
-    ):
+    ) -> None:
         from ..fidelity import FidelityPath
         from ..stochastic._hierarchy import StochasticCouplingPlan
 

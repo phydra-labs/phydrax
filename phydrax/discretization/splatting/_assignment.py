@@ -11,7 +11,8 @@ from math import prod
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -50,7 +51,7 @@ class SplatAssignmentCapabilities(StrictModule, NonTrainableState):
         source_geometry_kind: str = "point",
         domain_differentiable: bool = False,
         maximum_support_radius_cells: float = 2.0,
-    ):
+    ) -> None:
         reproduction = int(polynomial_reproduction_order)
         derivative = int(maximum_explicit_derivative_order)
         if reproduction < 0 or derivative < 0:
@@ -121,7 +122,7 @@ class SplatAssignmentState(StrictModule):
         first_moments: ArrayLike,
         second_moments: ArrayLike,
         gradient_sums: ArrayLike,
-    ):
+    ) -> None:
         indices_ = jnp.asarray(indices)
         weights_ = jnp.asarray(weights)
         gradients = jnp.asarray(weight_gradients)
@@ -453,7 +454,7 @@ class MultilinearSplatAssignment(AbstractStructuredSplatAssignment):
     capabilities: SplatAssignmentCapabilities = eqx.field(static=True)
     assignment_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         capabilities = SplatAssignmentCapabilities(
             partition_of_unity=True,
             nonnegative_weights=True,
@@ -499,12 +500,20 @@ class MultilinearSplatAssignment(AbstractStructuredSplatAssignment):
                     axis.periodic,
                 )
 
-    def validate_input(self, assignment_input, source_count, dimension, /) -> None:
+    def validate_input(
+        self, assignment_input: object, source_count: int, dimension: int, /
+    ) -> None:
         del source_count, dimension
         if assignment_input is not None:
             raise ValueError("Multilinear assignment accepts no source-domain input.")
 
-    def update_input(self, position, deformation_gradient, committed_input, /) -> object:
+    def update_input(
+        self,
+        position: Array,
+        deformation_gradient: Array,
+        committed_input: object,
+        /,
+    ) -> object:
         del position, deformation_gradient, committed_input
         return None
 

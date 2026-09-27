@@ -4,10 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -16,7 +20,11 @@ from ._dem import DEMEvaluation, PreparedSoftSphereDEMDynamics
 from ._pairwise import scatter_pair_exchange
 from ._particle_internal_mesh import PreparedParticleInternalBatch
 from ._particle_internal_state import ParticleConversionState
-from ._particle_internal_unstructured import PreparedUnstructuredParticleInternalMesh
+from ._particle_internal_unstructured import ParticleInternalMeshMetrics
+
+
+if TYPE_CHECKING:
+    from ...equations import ParticleThermodynamicMaterialPlan
 
 
 _STEFAN_BOLTZMANN = 5.670374419e-8
@@ -48,11 +56,11 @@ class ReciprocalPairRadiationPlan(StrictModule, NonTrainableState):
         pair_view_factor: ArrayLike,
         /,
         *,
-        wall_emissivity: ArrayLike = (),
-        wall_view_factor: ArrayLike = (),
+        wall_emissivity: ArrayLike | Sequence[float] = (),
+        wall_view_factor: ArrayLike | Sequence[float] = (),
         maximum_range: float,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         emissivity = np.asarray(particle_emissivity, dtype=np.float64)
         view = np.asarray(pair_view_factor, dtype=np.float64)
         wall = np.asarray(wall_emissivity, dtype=np.float64)
@@ -102,10 +110,10 @@ class ReciprocalPairRadiationPlan(StrictModule, NonTrainableState):
         evaluation: DEMEvaluation,
         conversion_batches: tuple[PreparedParticleInternalBatch, ...],
         conversion_state: ParticleConversionState,
-        thermodynamic_materials,
+        thermodynamic_materials: tuple[ParticleThermodynamicMaterialPlan, ...],
         /,
         *,
-        wall_temperatures: ArrayLike = (),
+        wall_temperatures: ArrayLike | Sequence[float] = (),
     ) -> ParticleRadiationEvaluation:
         batches = tuple(conversion_batches)
         materials = tuple(thermodynamic_materials)
@@ -118,7 +126,7 @@ class ReciprocalPairRadiationPlan(StrictModule, NonTrainableState):
         owner_temperature = jnp.zeros((capacity,), dtype=dtype)
         owner_area = jnp.zeros((capacity,), dtype=dtype)
         coverage = jnp.zeros((capacity,), dtype=jnp.int32)
-        surface_routes = []
+        surface_routes: list[tuple[Array, Array] | None] = []
         for prepared, state, material in zip(
             batches, conversion_state.batches, materials, strict=True
         ):
@@ -129,7 +137,7 @@ class ReciprocalPairRadiationPlan(StrictModule, NonTrainableState):
                 metrics.cell_measures,
                 state.porosity,
             )
-            if isinstance(prepared.mesh, PreparedUnstructuredParticleInternalMesh):
+            if isinstance(metrics, ParticleInternalMeshMetrics):
                 boundary_mask = metrics.boundary_faces[None, :] & metrics.active_faces
                 face_weight = jnp.where(
                     boundary_mask,
@@ -271,7 +279,7 @@ class ReciprocalPairRadiationPlan(StrictModule, NonTrainableState):
         )
 
 
-def _effective_emissivity(left, right):
+def _effective_emissivity(left: Array, right: Array) -> Array:
     return 1.0 / (1.0 / left + 1.0 / right - 1.0)
 
 

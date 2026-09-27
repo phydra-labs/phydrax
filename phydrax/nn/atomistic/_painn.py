@@ -11,7 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 from phydrax.ein import contract
 
@@ -35,6 +35,7 @@ from ...atomistic._types import (
     AtomisticPrecisionPolicy,
     AtomisticScaleContract,
 )
+from ...typing import PRNGKey
 from ..layers import Linear
 from ..parameters import IdentityTransform
 
@@ -59,7 +60,7 @@ class _PaiNNInteraction(StrictModule):
     update_in: Linear
     update_out: Linear
 
-    def __init__(self, feature_count: int, radial_basis_count: int, key: Key[Array, ""]):
+    def __init__(self, feature_count: int, radial_basis_count: int, key: PRNGKey) -> None:
         keys = jr.split(key, 8)
         identity = IdentityTransform()
         self.filter_in = Linear(
@@ -219,8 +220,8 @@ class PaiNNPotential(AbstractAtomisticPotential):
         maximum_species_id: int = 118,
         species_kind: AtomisticSpeciesKind = AtomisticSpeciesKind.ATOMIC_NUMBER,
         precision: AtomisticPrecisionPolicy | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         if not isinstance(scale, AtomisticScaleContract):
             raise TypeError("scale must be an AtomisticScaleContract.")
         cutoff_value = float(cutoff)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -27,7 +29,7 @@ from phydrax.metrix import (
 )
 
 
-def _frame(spectral, units, time, token):
+def _frame(spectral: Any, units: Any, time: Any, token: Any) -> Any:
     shape = spectral.physical_shape
     identity = jnp.broadcast_to(jnp.eye(3), shape + (3, 3))
     geometry = ADMGridGeometry(
@@ -59,7 +61,7 @@ def _frame(spectral, units, time, token):
     )
 
 
-def test_compiled_relativistic_stress_metric_geodesic_endpoint_workflow():
+def test_compiled_relativistic_stress_metric_geodesic_endpoint_workflow() -> None:
     count = 3
     convention = RelativityConvention.canonical()
     scale = RelativityScaleContract(CODE_COSMOLOGY_SCALE, 1, 1, 1, 1)

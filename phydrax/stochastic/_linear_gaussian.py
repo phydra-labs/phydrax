@@ -11,7 +11,8 @@ from typing import Any, cast, NamedTuple
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -122,7 +123,7 @@ class LinearGaussianParameterization(StrictModule):
         offset: ArrayLike | Callable[[Array, Array, Any], ArrayLike] = 0.0,
         parameterization_id: str = "linear-gaussian-parameters",
         resolved_method: str = "provided",
-    ):
+    ) -> None:
         for owner, value in (
             ("transition", transition),
             ("covariance", covariance),
@@ -197,7 +198,7 @@ class LinearGaussianDynamics(StrictModule):
         dynamics_id: str = "linear-gaussian-lti",
         process_id: str = "linear-gaussian",
         approximation_id: str = "exact-lti",
-    ):
+    ) -> None:
         shape = _shape(state_shape)
         size = prod(shape) if shape else 1
         matrix = jnp.asarray(drift_matrix)
@@ -227,7 +228,7 @@ class LinearGaussianDynamics(StrictModule):
         self.approximation_id = _name(approximation_id, owner="approximation_id")
         self.resolved_method = "matrix-exponential/augmented-exponential/van-loan"
 
-    def __call__(self, time: ArrayLike, state: ArrayLike, args, /) -> Array:
+    def __call__(self, time: ArrayLike, state: ArrayLike, args: object, /) -> Array:
         del time, args
         values = jnp.asarray(state)
         if (

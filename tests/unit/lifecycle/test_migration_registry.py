@@ -37,7 +37,7 @@ def _identity_copy(record: Mapping[str, object]) -> Mapping[str, object]:
 
 
 def _mutate_input(record: Mapping[str, object]) -> Mapping[str, object]:
-    record["mutated"] = True  # type: ignore[index]
+    record["mutated"] = True  # ty: ignore[invalid-assignment]
     return {"value": record["value"]}
 
 
@@ -178,6 +178,7 @@ def test_report_reconstruction_and_rollback_select_the_parent_artifact() -> None
         "artifact_id": report.input_digest,
         "lineage": [report.input_digest],
     }
+    # ty: ignore[invalid-assignment]
     parent["record"]["value"] = -1
     assert report.input_record == {"value": 19}
     assert restored.rollback_artifact_id == report.input_digest

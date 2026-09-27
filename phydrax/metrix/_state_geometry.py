@@ -12,11 +12,14 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.linalg as la
 
 from .._strict import StrictModule
+from ..typing import parse
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -122,100 +125,100 @@ class AbstractStateGeometry(StrictModule):
     supports_commutator_free: eqx.AbstractVar[bool]
 
     @abstractmethod
-    def contains(self, state: ArrayLike, /) -> Array:
+    def contains(self, state: PyTree[ArrayLike], /) -> Array:
         """Return one scalar boolean indicating membership in the point space."""
         raise NotImplementedError
 
     @abstractmethod
     def project_tangent(
         self,
-        state: ArrayLike,
-        vector: ArrayLike,
+        state: PyTree[ArrayLike],
+        vector: PyTree[ArrayLike],
         /,
-    ) -> Array:
+    ) -> PyTree[Array]:
         """Project a point-storage ambient vector to a physical tangent."""
         raise NotImplementedError
 
     @abstractmethod
     def retract(
         self,
-        state: ArrayLike,
-        local_tangent: ArrayLike,
+        state: PyTree[ArrayLike],
+        local_tangent: PyTree[ArrayLike],
         /,
-    ) -> Array:
+    ) -> PyTree[Array]:
         """Map a local perturbation at ``state`` to point storage."""
         raise NotImplementedError
 
     @abstractmethod
     def inverse_retract(
         self,
-        state: ArrayLike,
-        point: ArrayLike,
+        state: PyTree[ArrayLike],
+        point: PyTree[ArrayLike],
         /,
-    ) -> Array:
+    ) -> PyTree[Array]:
         """Return local perturbation coordinates for a nearby point."""
         raise NotImplementedError
 
     @abstractmethod
     def retraction_jvp(
         self,
-        state: ArrayLike,
-        local_tangent: ArrayLike,
-        local_velocity: ArrayLike,
+        state: PyTree[ArrayLike],
+        local_tangent: PyTree[ArrayLike],
+        local_velocity: PyTree[ArrayLike],
         /,
-    ) -> Array:
+    ) -> PyTree[Array]:
         """Push a local velocity to a physical tangent at the retracted point."""
         raise NotImplementedError
 
     @abstractmethod
     def retraction_inverse_jvp(
         self,
-        state: ArrayLike,
-        point: ArrayLike,
-        tangent: ArrayLike,
+        state: PyTree[ArrayLike],
+        point: PyTree[ArrayLike],
+        tangent: PyTree[ArrayLike],
         /,
-    ) -> Array:
+    ) -> PyTree[Array]:
         """Push a physical tangent through the inverse chart to local velocity."""
         raise NotImplementedError
 
     @abstractmethod
     def retraction_vjp(
         self,
-        state: ArrayLike,
-        local_tangent: ArrayLike,
-        cotangent: ArrayLike,
+        state: PyTree[ArrayLike],
+        local_tangent: PyTree[ArrayLike],
+        cotangent: PyTree[ArrayLike],
         /,
-    ) -> Array:
+    ) -> PyTree[Array]:
         """Algebraically transpose the retraction differential to a local covector."""
         raise NotImplementedError
 
     @abstractmethod
     def transport_tangent(
         self,
-        state: ArrayLike,
-        point: ArrayLike,
-        tangent: ArrayLike,
+        state: PyTree[ArrayLike],
+        point: PyTree[ArrayLike],
+        tangent: PyTree[ArrayLike],
         /,
-    ) -> Array:
+    ) -> PyTree[Array]:
         """Transport a physical tangent from ``state`` to ``point``."""
         raise NotImplementedError
 
     @abstractmethod
     def transport_cotangent_pullback(
         self,
-        state: ArrayLike,
-        point: ArrayLike,
-        cotangent: ArrayLike,
+        state: PyTree[ArrayLike],
+        point: PyTree[ArrayLike],
+        cotangent: PyTree[ArrayLike],
         /,
-    ) -> Array:
+    ) -> PyTree[Array]:
         """Pull a physical cotangent at ``point`` back to ``state``."""
         raise NotImplementedError
 
     @abstractmethod
     def cut_locus_margin(
         self,
-        state: ArrayLike,
-        point: ArrayLike,
+        state: PyTree[ArrayLike],
+        point: PyTree[ArrayLike],
         /,
     ) -> Array:
         """Return a non-negative scalar margin for the supported inverse chart."""
@@ -476,7 +479,7 @@ class LocalRetraction(StrictModule):
     retraction_id: str = eqx.field(static=True)
     resolved_method: str = eqx.field(static=True)
 
-    def __init__(self, geometry: AbstractStateGeometry, base_point: ArrayLike, /):
+    def __init__(self, geometry: AbstractStateGeometry, base_point: ArrayLike, /) -> None:
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError("LocalRetraction geometry must be an AbstractStateGeometry.")
         base = jnp.asarray(base_point)
@@ -589,7 +592,7 @@ class EuclideanStateGeometry(AbstractStateGeometry):
         self,
         *,
         geometry_id: str = "state-geometry:euclidean",
-    ):
+    ) -> None:
         self.geometry_id = _identifier(geometry_id, "geometry_id")
         self.retraction_method = "addition"
         self.trivial = True
@@ -759,7 +762,7 @@ class EmbeddedStateGeometry(AbstractStateGeometry):
         cut_locus_margin_action: Callable[[Array, Array], Array] | None = None,
         isometric_transport: bool = False,
         supports_commutator_free: bool = False,
-    ):
+    ) -> None:
         for function, name in (
             (membership, "membership"),
             (tangent_projection, "tangent_projection"),
@@ -1007,7 +1010,7 @@ class PointwiseStateGeometry(AbstractStateGeometry):
         local_shape: Sequence[int] | None = None,
         tangent_shape: Sequence[int] | None = None,
         geometry_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError("Pointwise geometry must wrap an AbstractStateGeometry.")
         point = _role_shape(point_shape, "point_shape")
@@ -1359,7 +1362,9 @@ def _symmetric_matrix_logarithm(value: Array, /) -> Array:
 
 
 @_symmetric_matrix_logarithm.defjvp
-def _symmetric_matrix_logarithm_jvp(primals, tangents):
+def _symmetric_matrix_logarithm_jvp(
+    primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
     (value,) = primals
     (tangent,) = tangents
     symmetric_value = _symmetric(value)
@@ -1400,7 +1405,9 @@ def _symmetric_matrix_square_root(value: Array, /) -> Array:
 
 
 @_symmetric_matrix_square_root.defjvp
-def _symmetric_matrix_square_root_jvp(primals, tangents):
+def _symmetric_matrix_square_root_jvp(
+    primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
     (value,) = primals
     (tangent,) = tangents
     eigenvalues, eigenvectors = jnp.linalg.eigh(_symmetric(value))
@@ -1463,10 +1470,9 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
         retraction: MatrixRetraction = "exponential",
         tolerance: float = 1e-6,
         geometry_id: str | None = None,
-    ):
+    ) -> None:
         n = _dimension(dimension)
-        if retraction not in ("exponential", "cayley"):
-            raise ValueError("SO(n) retraction must be 'exponential' or 'cayley'.")
+        retraction = parse(retraction, MatrixRetraction, "retraction")
         if tolerance <= 0.0:
             raise ValueError("tolerance must be positive.")
         self.dimension = n
@@ -1611,7 +1617,7 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
             )
             return _skew(_transpose(velocity))
 
-        def differential(local_velocity):
+        def differential(local_velocity: Array) -> Array:
             ambient_velocity = self.retraction_jvp(
                 matrix,
                 local,
@@ -1792,7 +1798,7 @@ class SymmetricPositiveDefiniteStateGeometry(AbstractStateGeometry):
         *,
         tolerance: float = 1e-8,
         geometry_id: str | None = None,
-    ):
+    ) -> None:
         n = _dimension(dimension)
         if tolerance <= 0.0:
             raise ValueError("tolerance must be positive.")

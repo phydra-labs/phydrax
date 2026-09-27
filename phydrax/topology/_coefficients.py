@@ -41,7 +41,7 @@ class PrimeField(StrictModule, NonTrainableState):
     modulus: int = eqx.field(static=True)
     field_id: str = eqx.field(static=True)
 
-    def __init__(self, modulus: int, /):
+    def __init__(self, modulus: int, /) -> None:
         value = int(modulus)
         if value > _MAX_PRIME:
             raise ValueError(
@@ -79,7 +79,7 @@ class RationalField(StrictModule, NonTrainableState):
 
     field_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.field_id = canonical_fingerprint({"kind": "rational-field"})
 
 

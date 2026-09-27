@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from numbers import Integral
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -30,6 +31,9 @@ from ._types import (
     CombinatorialResult,
     CombinatorialStatus,
 )
+
+
+_FlowState: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 class FlowDecision(StrictModule):
@@ -55,7 +59,7 @@ class CapacitatedFlowSpace(AbstractCombinatorialSpace):
         balances: Any,
         capacities: Any,
         /,
-    ):
+    ) -> None:
         if not isinstance(relation, EdgeRelation):
             raise TypeError("relation must be an EdgeRelation.")
         if relation.source_size != relation.target_size:
@@ -108,8 +112,9 @@ class CapacitatedFlowSpace(AbstractCombinatorialSpace):
     def structure_id(self) -> str:
         return self._structure_id
 
-    def decision_spec(self, /) -> FlowDecision:
-        return FlowDecision(jax.ShapeDtypeStruct((self.edge_count,), jnp.int32))
+    def decision_spec(self, /) -> PyTree[jax.ShapeDtypeStruct]:
+        edges = self.edge_count
+        return jax.eval_shape(lambda: FlowDecision(jnp.zeros((edges,), dtype=jnp.int32)))
 
     def feature_spec(self, /) -> jax.ShapeDtypeStruct:
         return jax.ShapeDtypeStruct((self.edge_count,), jnp.float32)
@@ -141,7 +146,7 @@ class CapacitatedFlowSpace(AbstractCombinatorialSpace):
         upper_residual = jnp.sum(jnp.maximum(flow - self.capacities, 0), axis=-1)
         flat = flow.reshape((-1, self.edge_count))
 
-        def balance_one(value):
+        def balance_one(value: Array) -> Array:
             balance = jnp.zeros((self.vertex_count,), dtype=jnp.int32)
             balance = balance.at[self.relation.source_indices].add(value)
             balance = balance.at[self.relation.target_indices].add(-value)
@@ -215,10 +220,10 @@ def _augment_feasibility(
     reached = jnp.zeros((vertex_count,), dtype=jnp.bool_).at[source].set(has_source)
     predecessor = jnp.full((vertex_count,), -1, dtype=jnp.int32)
 
-    def reach_round(_, reach_state):
+    def reach_round(_: Array, reach_state: tuple[Array, Array]) -> tuple[Array, Array]:
         reached_, predecessor_ = reach_state
 
-        def inspect(arc, inner):
+        def inspect(arc: Array, inner: tuple[Array, Array]) -> tuple[Array, Array]:
             reached_inner, predecessor_inner = inner
             left = residual_sources[arc]
             right = residual_targets[arc]
@@ -247,7 +252,9 @@ def _augment_feasibility(
         found,
     )
 
-    def inspect_path(_, state):
+    def inspect_path(
+        _: Array, state: tuple[Array, Array, Array, Array]
+    ) -> tuple[Array, Array, Array, Array]:
         current, delta, active, path_valid = state
         safe_current = jnp.clip(current, 0, vertex_count - 1)
         arc = predecessor[safe_current]
@@ -265,7 +272,9 @@ def _augment_feasibility(
     )
     path_valid = path_valid & ~active & (terminal == source) & (delta > 0)
 
-    def update_path(_, state):
+    def update_path(
+        _: Array, state: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
         flow_, current, active_ = state
         safe_current = jnp.clip(current, 0, vertex_count - 1)
         arc = predecessor[safe_current]
@@ -314,11 +323,15 @@ def _negative_cycle(
         jnp.asarray(-1, dtype=jnp.int32),
     )
 
-    def relaxation_round(_, round_state):
+    def relaxation_round(
+        _: Array, round_state: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
         distances, predecessor, _ = round_state
         updated = jnp.asarray(-1, dtype=jnp.int32)
 
-        def relax(arc, state):
+        def relax(
+            arc: Array, state: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array, Array]:
             distances_, predecessor_, updated_ = state
             left = residual_sources[arc]
             right = residual_targets[arc]
@@ -342,7 +355,7 @@ def _negative_cycle(
     )
     cycle_found = updated >= 0
 
-    def enter_cycle(_, vertex):
+    def enter_cycle(_: Array, vertex: Array) -> Array:
         safe_vertex = jnp.clip(vertex, 0, vertex_count - 1)
         arc = predecessor[safe_vertex]
         safe_arc = jnp.clip(arc, 0, residual_edges - 1)
@@ -382,7 +395,9 @@ def _cancel_cycle(
         cycle_found,
     )
 
-    def inspect(_, state):
+    def inspect(
+        _: Array, state: tuple[Array, Array, Array, Array]
+    ) -> tuple[Array, Array, Array, Array]:
         current, delta, active, valid = state
         safe_current = jnp.clip(current, 0, vertex_count - 1)
         arc = predecessor[safe_current]
@@ -400,7 +415,7 @@ def _cancel_cycle(
     )
     cycle_valid = cycle_valid & ~active & (terminal == cycle_vertex) & (delta > 0)
 
-    def update(_, state):
+    def update(_: Array, state: tuple[Array, Array, Array]) -> tuple[Array, Array, Array]:
         flow_, current, active_ = state
         safe_current = jnp.clip(current, 0, vertex_count - 1)
         arc = predecessor[safe_current]
@@ -439,15 +454,15 @@ def _solve_flow_one(
         jnp.asarray(False),
     )
 
-    def condition(state):
+    def condition(state: _FlowState) -> Array:
         return (state[1] < maximum_iterations) & ~state[2] & ~state[3] & ~state[4]
 
-    def body(state):
+    def body(state: _FlowState) -> _FlowState:
         flow_, steps, blocked, optimal, numerical = state
         excess = balances - _realized_balance(flow_, sources, targets, vertex_count)
         feasible = jnp.all(excess == 0)
 
-        def make_feasible(values):
+        def make_feasible(values: _FlowState) -> _FlowState:
             (
                 current_flow,
                 current_steps,
@@ -473,7 +488,7 @@ def _solve_flow_one(
                 current_numerical,
             )
 
-        def improve(values):
+        def improve(values: _FlowState) -> _FlowState:
             (
                 current_flow,
                 current_steps,
@@ -557,7 +572,7 @@ class CycleCancelingMinCostFlow(AbstractLinearCombinatorialMethod):
         maximum_iterations: int = 10_000,
         maximum_vertices: int = 100_000,
         maximum_edges: int = 1_000_000,
-    ):
+    ) -> None:
         limits = (maximum_iterations, maximum_vertices, maximum_edges)
         if any(
             isinstance(value, bool) or not isinstance(value, Integral) for value in limits

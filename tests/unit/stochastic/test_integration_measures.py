@@ -7,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _trajectory(*, valid=None, independent=True):
+def _trajectory(*, valid: Any = None, independent: Any = True) -> Any:
     times = jnp.asarray([0.0, 0.2, 0.5, 1.0])
     states = jnp.arange(2 * 3 * 4, dtype="float64").reshape((2, 3, 4, 1))
     realizations = (
@@ -37,7 +37,7 @@ def _trajectory(*, valid=None, independent=True):
     )
 
 
-def test_trajectory_marginal_measure_retains_case_time_and_state_axes():
+def test_trajectory_marginal_measure_retains_case_time_and_state_axes() -> None:
     valid = jnp.ones((2, 3, 4), dtype="bool").at[0, 0, 2].set(False)
     trajectory = _trajectory(valid=valid)
     target = phx.stochastic.trajectory_measure(trajectory, mode="marginal")
@@ -53,7 +53,7 @@ def test_trajectory_marginal_measure_retains_case_time_and_state_axes():
     assert estimate.error_kind == "weighted-iid-standard-error"
 
 
-def test_trajectory_path_measure_excludes_an_entire_failed_path():
+def test_trajectory_path_measure_excludes_an_entire_failed_path() -> None:
     valid = jnp.ones((2, 3, 4), dtype="bool").at[0, 0, 2].set(False)
     trajectory = _trajectory(valid=valid)
     target = phx.stochastic.trajectory_measure(trajectory, mode="path")
@@ -70,7 +70,7 @@ def test_trajectory_path_measure_excludes_an_entire_failed_path():
     assert jnp.array_equal(estimate.diagnostics.active_samples, jnp.asarray([2, 3]))
 
 
-def test_missing_trajectory_independence_metadata_suppresses_standard_error():
+def test_missing_trajectory_independence_metadata_suppresses_standard_error() -> None:
     trajectory = _trajectory(independent=False)
     target = phx.stochastic.trajectory_measure(trajectory)
 
@@ -82,7 +82,7 @@ def test_missing_trajectory_independence_metadata_suppresses_standard_error():
 
 
 @pytest.mark.parametrize("rule", ("left", "trapezoid"))
-def test_irregular_time_measure_respects_ragged_prefix_masks(rule):
+def test_irregular_time_measure_respects_ragged_prefix_masks(rule: Any) -> None:
     times = jnp.asarray(
         [
             [0.0, 0.2, 0.5, 1.0],
@@ -114,7 +114,7 @@ def test_irregular_time_measure_respects_ragged_prefix_masks(rule):
     assert jnp.all(estimate.successful)
 
 
-def test_normalized_trapezoid_time_measure_integrates_linear_time_exactly():
+def test_normalized_trapezoid_time_measure_integrates_linear_time_exactly() -> None:
     times = jnp.asarray([[0.0, 0.2, 0.5, 1.0], [0.0, 0.3, 0.7, 1.2]])
     trajectory = phx.stochastic.StochasticTrajectory(
         times,
@@ -135,7 +135,7 @@ def test_normalized_trapezoid_time_measure_integrates_linear_time_exactly():
     assert jnp.allclose(jnp.asarray(estimate.value.data), jnp.asarray([0.5, 0.6]))
 
 
-def test_time_measure_rejects_non_prefix_validity_masks():
+def test_time_measure_rejects_non_prefix_validity_masks() -> None:
     valid = jnp.asarray([[True, False, True, False]])
     trajectory = phx.stochastic.StochasticTrajectory(
         jnp.asarray([0.0, 0.2, 0.5, 1.0]),
@@ -151,7 +151,7 @@ def test_time_measure_rejects_non_prefix_validity_masks():
         phx.stochastic.time_measure(trajectory)
 
 
-def test_trajectory_measure_rejects_unknown_mode():
+def test_trajectory_measure_rejects_unknown_mode() -> None:
     invalid_mode: Any = "unknown"
     with pytest.raises(ValueError, match="mode"):
         phx.stochastic.trajectory_measure(_trajectory(), mode=invalid_mode)

@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from dataclasses import fields
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -19,22 +21,22 @@ from phydrax.discretization.finite_volume._amr import BlockAMRConservationPlan
 
 
 def _stage(
-    flux_rate,
-    source_rate,
+    flux_rate: Any,
+    source_rate: Any,
     *,
-    geometry_family_id="geometry-family:mesh",
-    geometry_layout_id="geometry-layout:mesh",
-    geometry_version=1,
-    evidence_policy_id="evidence-policy:gcl",
-    evidence_version=None,
-    topology_epoch_id="topology:0",
-    active_cell_mask=(True, True),
-    owner=(0, 1),
-    neighbor=(1, -1),
-    active=(True, True),
-    block_id="faces:physical",
-    block_kind="physical",
-):
+    geometry_family_id: Any = "geometry-family:mesh",
+    geometry_layout_id: Any = "geometry-layout:mesh",
+    geometry_version: Any = 1,
+    evidence_policy_id: Any = "evidence-policy:gcl",
+    evidence_version: Any = None,
+    topology_epoch_id: Any = "topology:0",
+    active_cell_mask: Any = (True, True),
+    owner: Any = (0, 1),
+    neighbor: Any = (1, -1),
+    active: Any = (True, True),
+    block_id: Any = "faces:physical",
+    block_kind: Any = "physical",
+) -> Any:
     if evidence_version is None:
         evidence_version = geometry_version
     block = ConservationStageFluxRateBlock(
@@ -59,19 +61,19 @@ def _stage(
 
 
 def _integrate(
-    stage1,
-    stage2,
-    stage3,
-    dt=0.25,
+    stage1: Any,
+    stage2: Any,
+    stage3: Any,
+    dt: Any = 0.25,
     *,
-    start_version=None,
-    end_version=4,
-    start_evidence_version=None,
-    end_evidence_version=None,
-    start_time=1.25,
-    end_time=None,
-    accepted_step=7,
-):
+    start_version: Any = None,
+    end_version: Any = 4,
+    start_evidence_version: Any = None,
+    end_evidence_version: Any = None,
+    start_time: Any = 1.25,
+    end_time: Any = None,
+    accepted_step: Any = 7,
+) -> Any:
     if start_version is None:
         start_version = stage1.geometry_version
     if start_evidence_version is None:
@@ -97,7 +99,7 @@ def _integrate(
     )
 
 
-def test_stage_scatter_uses_owner_outward_signs_and_adds_source_rate():
+def test_stage_scatter_uses_owner_outward_signs_and_adds_source_rate() -> None:
     ledger = _stage(
         [[2.0, 3.0], [5.0, 7.0]],
         [[0.5, 1.0], [1.5, 2.0]],
@@ -111,7 +113,7 @@ def test_stage_scatter_uses_owner_outward_signs_and_adds_source_rate():
     assert ledger.blocks[0].units == "content/time"
 
 
-def test_stage_rate_block_schema_contains_no_time_increment():
+def test_stage_rate_block_schema_contains_no_time_increment() -> None:
     field_names = {field.name for field in fields(ConservationStageFluxRateBlock)}
 
     assert "flux_rate" in field_names
@@ -119,7 +121,7 @@ def test_stage_rate_block_schema_contains_no_time_increment():
     assert "time_increment" not in field_names
 
 
-def test_ssprk33_integrates_rates_exactly_and_multiplies_by_dt_once():
+def test_ssprk33_integrates_rates_exactly_and_multiplies_by_dt_once() -> None:
     rate1 = np.asarray([[6.0, 12.0], [18.0, 24.0]])
     rate2 = np.asarray([[12.0, 18.0], [24.0, 30.0]])
     rate3 = np.asarray([[30.0, 36.0], [42.0, 48.0]])
@@ -142,7 +144,9 @@ def test_ssprk33_integrates_rates_exactly_and_multiplies_by_dt_once():
     assert accepted.blocks[0].units == "content"
 
 
-def test_accepted_ledger_retains_dynamic_temporal_provenance_without_fingerprinting_it():
+def test_accepted_ledger_retains_dynamic_temporal_provenance_without_fingerprinting_it() -> (
+    None
+):
     stage = _stage([[1.0], [2.0]], [[0.0], [0.0]])
     field_names = {field.name for field in fields(AcceptedConservationIntegralLedger)}
     assert {"start_time", "end_time", "accepted_step"} <= field_names
@@ -173,7 +177,7 @@ def test_accepted_ledger_retains_dynamic_temporal_provenance_without_fingerprint
     assert first.ledger_id == second.ledger_id
 
 
-def test_ssprk33_accepts_dtype_roundoff_but_rejects_interval_mismatch():
+def test_ssprk33_accepts_dtype_roundoff_but_rejects_interval_mismatch() -> None:
     stage = _stage([[1.0], [2.0]], [[0.0], [0.0]])
     start = jnp.asarray(1.0, dtype=jnp.float32)
     dt = jnp.asarray(0.1, dtype=jnp.float32)
@@ -210,7 +214,9 @@ def test_ssprk33_accepts_dtype_roundoff_but_rejects_interval_mismatch():
         pytest.param(2.0, 1.0, "greater than start_time", id="reversed"),
     ],
 )
-def test_accepted_ledger_rejects_invalid_temporal_interval(start_time, end_time, message):
+def test_accepted_ledger_rejects_invalid_temporal_interval(
+    start_time: Any, end_time: Any, message: Any
+) -> None:
     stage = _stage([[1.0], [2.0]], [[0.0], [0.0]])
 
     with pytest.raises(Exception, match=message):
@@ -233,7 +239,9 @@ def test_accepted_ledger_rejects_invalid_temporal_interval(start_time, end_time,
         pytest.param([1], "scalar", id="nonscalar"),
     ],
 )
-def test_accepted_ledger_requires_nonnegative_scalar_integer_step(accepted_step, message):
+def test_accepted_ledger_requires_nonnegative_scalar_integer_step(
+    accepted_step: Any, message: Any
+) -> None:
     stage = _stage([[1.0], [2.0]], [[0.0], [0.0]])
 
     with pytest.raises(Exception, match=message):
@@ -247,7 +255,9 @@ def test_accepted_ledger_requires_nonnegative_scalar_integer_step(accepted_step,
         jax.block_until_ready(invalid.source_integral)
 
 
-def test_repeated_semantic_block_kinds_are_allowed_when_ids_and_routes_are_unique():
+def test_repeated_semantic_block_kinds_are_allowed_when_ids_and_routes_are_unique() -> (
+    None
+):
     left_patch = ConservationStageFluxRateBlock(
         jnp.asarray([[2.0]]),
         jnp.asarray([0], dtype=jnp.int32),
@@ -290,7 +300,7 @@ def test_repeated_semantic_block_kinds_are_allowed_when_ids_and_routes_are_uniqu
     )
 
 
-def test_ledger_rejects_duplicate_block_ids_and_duplicate_routes():
+def test_ledger_rejects_duplicate_block_ids_and_duplicate_routes() -> None:
     first = ConservationStageFluxRateBlock(
         jnp.ones((1, 1)),
         jnp.asarray([0], dtype=jnp.int32),
@@ -326,13 +336,18 @@ def test_ledger_rejects_duplicate_block_ids_and_duplicate_routes():
 
     with pytest.raises(ValueError, match="IDs must be unique"):
         ConservationStageLedger(
-            (first, repeated_id), jnp.zeros((2, 1)), jnp.ones(2, dtype="bool"), **kwargs
+            (first, repeated_id),
+            jnp.zeros((2, 1)),
+            jnp.ones(2, dtype="bool"),
+            # ty: ignore[invalid-argument-type]
+            **kwargs,
         )
     with pytest.raises(ValueError, match="routes must be unique"):
         ConservationStageLedger(
             (first, repeated_route),
             jnp.zeros((2, 1)),
             jnp.ones(2, dtype="bool"),
+            # ty: ignore[invalid-argument-type]
             **kwargs,
         )
 
@@ -345,7 +360,9 @@ def test_ledger_rejects_duplicate_block_ids_and_duplicate_routes():
         pytest.param([[0.0], [np.finfo(np.float32).tiny]], id="tiny-nonzero"),
     ],
 )
-def test_stage_ledger_rejects_every_nonzero_source_rate_on_inactive_cells(source_rate):
+def test_stage_ledger_rejects_every_nonzero_source_rate_on_inactive_cells(
+    source_rate: Any,
+) -> None:
     with pytest.raises(Exception, match="exactly zero on inactive cells"):
         _stage(
             [[2.0], [0.0]],
@@ -357,7 +374,7 @@ def test_stage_ledger_rejects_every_nonzero_source_rate_on_inactive_cells(source
         )
 
 
-def test_accepted_ledger_rejects_nonzero_source_integral_on_inactive_cells():
+def test_accepted_ledger_rejects_nonzero_source_integral_on_inactive_cells() -> None:
     with pytest.raises(Exception, match="exactly zero on inactive cells"):
         AcceptedConservationIntegralLedger(
             (),
@@ -384,14 +401,14 @@ def test_accepted_ledger_rejects_nonzero_source_integral_on_inactive_cells():
         )
 
 
-def test_active_cell_mask_is_exact_boolean_and_has_one_entry_per_cell():
+def test_active_cell_mask_is_exact_boolean_and_has_one_entry_per_cell() -> None:
     with pytest.raises(TypeError, match="boolean dtype"):
         _stage([[1.0], [2.0]], [[0.0], [0.0]], active_cell_mask=(1, 1))
     with pytest.raises(ValueError, match="one value per cell"):
         _stage([[1.0], [2.0]], [[0.0], [0.0]], active_cell_mask=(True,))
 
 
-def test_active_face_routes_cannot_own_or_neighbor_an_inactive_cell():
+def test_active_face_routes_cannot_own_or_neighbor_an_inactive_cell() -> None:
     with pytest.raises(Exception, match="active route through an inactive cell"):
         _stage(
             [[1.0], [0.0]],
@@ -403,7 +420,7 @@ def test_active_face_routes_cannot_own_or_neighbor_an_inactive_cell():
         )
 
 
-def test_ssprk33_preserves_active_mask_and_rejects_stage_mask_mismatch():
+def test_ssprk33_preserves_active_mask_and_rejects_stage_mask_mismatch() -> None:
     common = dict(
         flux_rate=[[2.0], [0.0]],
         source_rate=[[1.0], [0.0]],
@@ -442,7 +459,7 @@ def test_ssprk33_preserves_active_mask_and_rejects_stage_mask_mismatch():
         _integrate(stage1, changed_family, stage3, start_version=1, end_version=4)
 
 
-def test_dynamic_ale_versions_and_rates_share_one_jit_geometry_layout():
+def test_dynamic_ale_versions_and_rates_share_one_jit_geometry_layout() -> None:
     template = _stage(
         [[0.0], [0.0]],
         [[0.0], [0.0]],
@@ -451,15 +468,15 @@ def test_dynamic_ale_versions_and_rates_share_one_jit_geometry_layout():
     trace_count = {"value": 0}
 
     def form_and_integrate(
-        stage_rates,
-        geometry_versions,
-        evidence_versions,
-        end_geometry_version,
-        end_evidence_version,
-        start_time,
-        end_time,
-        accepted_step,
-    ):
+        stage_rates: Any,
+        geometry_versions: Any,
+        evidence_versions: Any,
+        end_geometry_version: Any,
+        end_evidence_version: Any,
+        start_time: Any,
+        end_time: Any,
+        accepted_step: Any,
+    ) -> Any:
         trace_count["value"] += 1
         stages = tuple(
             ConservationStageLedger(
@@ -556,7 +573,9 @@ def test_dynamic_ale_versions_and_rates_share_one_jit_geometry_layout():
     assert int(second.accepted_step) == 9
 
 
-def test_stage_evidence_identity_requires_canonical_policy_and_scalar_integer_version():
+def test_stage_evidence_identity_requires_canonical_policy_and_scalar_integer_version() -> (
+    None
+):
     ledger = _stage(
         [[1.0], [2.0]],
         [[0.0], [0.0]],
@@ -578,14 +597,16 @@ def test_stage_evidence_identity_requires_canonical_policy_and_scalar_integer_ve
         _stage([[1.0], [2.0]], [[0.0], [0.0]], evidence_version=1.0)
 
 
-def test_geometry_versions_are_dynamic_scalar_integers():
+def test_geometry_versions_are_dynamic_scalar_integers() -> None:
     with pytest.raises(ValueError, match="scalar"):
         _stage([[1.0], [2.0]], [[0.0], [0.0]], geometry_version=[1])
     with pytest.raises(TypeError, match="integer dtype"):
         _stage([[1.0], [2.0]], [[0.0], [0.0]], geometry_version=1.0)
 
 
-def test_accepted_geometry_and_evidence_endpoints_are_retained_and_match_stage_one():
+def test_accepted_geometry_and_evidence_endpoints_are_retained_and_match_stage_one() -> (
+    None
+):
     stages = tuple(
         _stage(
             [[1.0], [2.0]],
@@ -632,7 +653,7 @@ def test_accepted_geometry_and_evidence_endpoints_are_retained_and_match_stage_o
         jax.block_until_ready(invalid.source_integral)
 
 
-def test_ssprk33_rejects_geometry_layout_evidence_policy_or_route_mismatch():
+def test_ssprk33_rejects_geometry_layout_evidence_policy_or_route_mismatch() -> None:
     stage1 = _stage([[1.0], [2.0]], [[0.0], [0.0]], geometry_version=1)
     changed_layout = _stage(
         [[1.0], [2.0]],
@@ -662,7 +683,7 @@ def test_ssprk33_rejects_geometry_layout_evidence_policy_or_route_mismatch():
         _integrate(stage1, changed_route, stage1, start_version=1)
 
 
-def test_ssprk33_cannot_span_a_topology_epoch_change():
+def test_ssprk33_cannot_span_a_topology_epoch_change() -> None:
     stage1 = _stage([[1.0], [2.0]], [[0.0], [0.0]], geometry_version=1)
     changed_stage = _stage(
         [[1.0], [2.0]],
@@ -723,7 +744,7 @@ def test_ssprk33_cannot_span_a_topology_epoch_change():
         pytest.param(jnp.inf, "finite values", id="nonfinite"),
     ],
 )
-def test_ssprk33_rejects_invalid_time_increment(dt, message):
+def test_ssprk33_rejects_invalid_time_increment(dt: Any, message: Any) -> None:
     stage = _stage([[1.0], [2.0]], [[0.0], [0.0]])
 
     with pytest.raises(Exception, match=message):
@@ -738,7 +759,7 @@ def test_ssprk33_rejects_invalid_time_increment(dt, message):
         jax.block_until_ready(invalid.source_integral)
 
 
-def test_inactive_faces_are_zeroed_before_scatter_and_accepted_integration():
+def test_inactive_faces_are_zeroed_before_scatter_and_accepted_integration() -> None:
     stage1 = _stage(
         [[2.0, 4.0], [1000.0, 2000.0]],
         [[0.0, 0.0], [0.0, 0.0]],
@@ -766,7 +787,7 @@ def test_inactive_faces_are_zeroed_before_scatter_and_accepted_integration():
     np.testing.assert_array_equal(accepted.blocks[0].flux_integral[1], np.zeros(2))
 
 
-def test_accepted_conservation_sums_use_content_without_measure_division():
+def test_accepted_conservation_sums_use_content_without_measure_division() -> None:
     stage = _stage(
         [[2.0, 3.0], [5.0, 7.0]],
         [[1.0, 2.0], [3.0, 4.0]],
@@ -779,7 +800,7 @@ def test_accepted_conservation_sums_use_content_without_measure_division():
     np.testing.assert_allclose(net_cell_sum, source_sum - boundary_outward_sum)
 
 
-def test_ledger_validates_routes_components_masks_and_finiteness():
+def test_ledger_validates_routes_components_masks_and_finiteness() -> None:
     with pytest.raises(TypeError, match="boolean dtype"):
         ConservationStageFluxRateBlock(
             jnp.ones((1, 2)),
@@ -804,7 +825,7 @@ def test_ledger_validates_routes_components_masks_and_finiteness():
         _stage([[0.0], [0.0]], [[jnp.inf], [0.0]])
 
 
-def test_static_ledger_ids_include_evidence_policy_but_exclude_dynamic_versions():
+def test_static_ledger_ids_include_evidence_policy_but_exclude_dynamic_versions() -> None:
     first = _stage(
         [[1.0], [2.0]],
         [[0.0], [0.0]],
@@ -876,7 +897,7 @@ def test_static_ledger_ids_include_evidence_policy_but_exclude_dynamic_versions(
     assert accepted1.blocks[0].integral_block_id != ""
 
 
-def test_empty_block_ledger_derives_concrete_shape_and_is_immutable():
+def test_empty_block_ledger_derives_concrete_shape_and_is_immutable() -> None:
     ledger = ConservationStageLedger(
         (),
         jnp.asarray([[1.0, 2.0], [3.0, 4.0]]),
@@ -898,7 +919,7 @@ def test_empty_block_ledger_derives_concrete_shape_and_is_immutable():
         ledger.geometry_layout_id = "geometry-layout:changed"
 
 
-def _amr_conservation_plan():
+def _amr_conservation_plan() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(2, periodic=True),),
         axis_names=("x",),
@@ -912,17 +933,17 @@ def _amr_conservation_plan():
 
 
 def _amr_accepted_ledger(
-    flux_integral,
-    start_time,
-    end_time,
-    accepted_step,
-    plan,
+    flux_integral: Any,
+    start_time: Any,
+    end_time: Any,
+    accepted_step: Any,
+    plan: Any,
     *,
-    start_version=None,
-    end_version=None,
-    start_evidence_version=None,
-    end_evidence_version=None,
-):
+    start_version: Any = None,
+    end_version: Any = None,
+    start_evidence_version: Any = None,
+    end_evidence_version: Any = None,
+) -> Any:
     interval = end_time - start_time
     integral = np.asarray(flux_integral, dtype=np.float32)
     start_version = accepted_step if start_version is None else start_version
@@ -959,7 +980,7 @@ def _amr_accepted_ledger(
     )
 
 
-def test_amr_route_aggregation_and_register_use_one_canonical_interval_union():
+def test_amr_route_aggregation_and_register_use_one_canonical_interval_union() -> None:
     plan = _amr_conservation_plan()
     coarse = _amr_accepted_ledger([[0.4], [0.8]], 2.0, 2.2, 50, plan)
     fine = (
@@ -1016,8 +1037,8 @@ def test_amr_route_aggregation_and_register_use_one_canonical_interval_union():
     ],
 )
 def test_amr_register_rejects_noncanonical_fine_interval_union(
-    fine_intervals, accepted_steps, message
-):
+    fine_intervals: Any, accepted_steps: Any, message: Any
+) -> None:
     plan = _amr_conservation_plan()
     coarse = _amr_accepted_ledger([[0.4], [0.8]], 2.0, 2.2, 50, plan)
     fine = tuple(
@@ -1046,7 +1067,7 @@ def test_amr_register_rejects_noncanonical_fine_interval_union(
         jax.block_until_ready(register.coarse_flux)
 
 
-def test_amr_route_aggregation_rejects_unbound_route_identity():
+def test_amr_route_aggregation_rejects_unbound_route_identity() -> None:
     plan = _amr_conservation_plan()
     ledger = _amr_accepted_ledger([[0.4], [0.8]], 2.0, 2.2, 50, plan)
 
@@ -1062,8 +1083,8 @@ def test_amr_route_aggregation_rejects_unbound_route_identity():
     ],
 )
 def test_amr_route_aggregation_requires_contiguous_dynamic_versions(
-    second_versions, message
-):
+    second_versions: Any, message: Any
+) -> None:
     plan = _amr_conservation_plan()
     first = _amr_accepted_ledger([[0.1], [0.2]], 2.0, 2.1, 100, plan)
     second = _amr_accepted_ledger(
@@ -1086,7 +1107,7 @@ def test_amr_route_aggregation_requires_contiguous_dynamic_versions(
         jax.block_until_ready(result)
 
 
-def test_amr_reflux_rejects_same_shaped_register_from_another_plan():
+def test_amr_reflux_rejects_same_shaped_register_from_another_plan() -> None:
     plan = _amr_conservation_plan()
     coarse = _amr_accepted_ledger([[0.4], [0.8]], 2.0, 2.2, 50, plan)
     fine = (

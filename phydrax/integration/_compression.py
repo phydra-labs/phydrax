@@ -5,10 +5,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
-from jaxtyping import Array
+from jax import Array
 
 from phydrax.coresets import (
     CoresetSelection,
@@ -24,6 +24,10 @@ from ._measure_transform import (
     lower_finite_measure,
     transformed_weighted_realization,
 )
+
+
+if TYPE_CHECKING:
+    from ._api import IntegrationRealization
 
 
 CompressionMethod = MomentRecombination | KernelHerding
@@ -71,7 +75,7 @@ def compress(
     /,
     *,
     features: FeatureMap | Any | None = None,
-):
+) -> IntegrationRealization:
     """Compress a finite positive realization before evaluating its integrand."""
 
     measure = lower_finite_measure(realization)

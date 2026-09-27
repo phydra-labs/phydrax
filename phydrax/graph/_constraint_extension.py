@@ -14,6 +14,7 @@ from ..geometry._trace_extension import (
     DiscreteTraceCorrectionProvider,
     PreparedTraceExtension,
 )
+from ..linalg import RankPolicy, SolveResourcePolicy
 from ..linalg._operators import AbstractLinearOperator
 
 
@@ -53,7 +54,7 @@ class GraphHarmonicCorrectionProvider(StrictModule, NonTrainableState):
         anchored_components: tuple[int, ...],
         gauged_components: tuple[int, ...] = (),
         gauge_certificate_id: str | None = None,
-    ):
+    ) -> None:
         operators = (
             restriction_operator,
             candidate_operator,
@@ -123,7 +124,12 @@ class GraphHarmonicCorrectionProvider(StrictModule, NonTrainableState):
         )
 
     def prepare(
-        self, /, *, rank=None, resources=None, numeric_version=0
+        self,
+        /,
+        *,
+        rank: RankPolicy | None = None,
+        resources: SolveResourcePolicy | None = None,
+        numeric_version: int = 0,
     ) -> PreparedTraceExtension:
         construction_id = canonical_fingerprint(
             {

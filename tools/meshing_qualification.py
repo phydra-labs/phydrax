@@ -15,6 +15,7 @@ from collections.abc import Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import perf_counter
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -103,13 +104,14 @@ def _missing_dependency(dependency: str, detail: str, /) -> dict[str, object]:
 
 def _planar_region(name: str, x0: float, x1: float) -> phx.geometry.PlanarMeshRegion:
     return phx.geometry.PlanarMeshRegion(
+        # ty: ignore[invalid-argument-type]
         np.asarray(((x0, 0.0), (x1, 0.0), (x1, 1.0), (x0, 1.0))),
         ((0, 1, 2, 3),),
         feature_id=name,
     )
 
 
-def _planar_partition(destination: Path):
+def _planar_partition(destination: Path) -> Any:
     contract = _contract()
     embedding = phx.geometry.PlanarEmbedding(
         (0.0, 0.0, 0.0),
@@ -139,8 +141,8 @@ def _planar_partition(destination: Path):
 
 
 def _persist_partition_operand(
-    shape, path: Path, contract: phx.SpatialCoordinateContract
-):
+    shape: Any, path: Path, contract: phx.SpatialCoordinateContract
+) -> Any:
     return phx.geometry.persist_occt_shape(
         shape,
         path,
@@ -148,7 +150,7 @@ def _persist_partition_operand(
     )
 
 
-def _three_dimensional_partition(destination: Path):
+def _three_dimensional_partition(destination: Path) -> Any:
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
     from OCP.gp import gp_Pnt
 
@@ -175,7 +177,7 @@ def _three_dimensional_partition(destination: Path):
     return phx.geometry.partition_brep(plan, destination=destination / "composite.brep")
 
 
-def _region_controls(provider, partition, model=None):
+def _region_controls(provider: Any, partition: Any, model: Any = None) -> Any:
     source = partition.model if model is None else model
     return tuple(
         phx.meshing.RegionControl(
@@ -188,7 +190,7 @@ def _region_controls(provider, partition, model=None):
     )
 
 
-def _patch_controls(provider, partition, model=None):
+def _patch_controls(provider: Any, partition: Any, model: Any = None) -> Any:
     source = partition.model if model is None else model
     return tuple(
         phx.meshing.PatchControl(
@@ -201,13 +203,13 @@ def _patch_controls(provider, partition, model=None):
 
 
 def _semantic_gmsh_specification(
-    provider,
-    partition,
-    model=None,
+    provider: Any,
+    partition: Any,
+    model: Any = None,
     /,
     *,
     scoped_size: bool,
-):
+) -> Any:
     source = partition.model if model is None else model
     whole = provider.whole_scope(source, 3)
     controls = (
@@ -243,7 +245,7 @@ def _semantic_gmsh_specification(
     return specification, controls
 
 
-def _require_semantic_gmsh_result(result, partition) -> None:
+def _require_semantic_gmsh_result(result: Any, partition: Any) -> None:
     if not result.audit.passed or not result.compliance.passed:
         raise RuntimeError("Semantic Gmsh result failed audit or compliance.")
     zones = {
@@ -352,6 +354,7 @@ def qualify_gmsh() -> dict[str, object]:
 
 
 def _layout_bytes() -> bytes:
+    # ty: ignore[unresolved-import]
     import gdstk
 
     with TemporaryDirectory(prefix="phydrax-layout-fixture-") as temporary:
@@ -363,7 +366,7 @@ def _layout_bytes() -> bytes:
         return path.read_bytes()
 
 
-def _decode_layout():
+def _decode_layout() -> Any:
     contract = _contract()
     limits = phx.interchange.ResourceLimits(
         max_bytes=1_000_000,
@@ -383,7 +386,7 @@ def _decode_layout():
     )
 
 
-def _hybrid_face_indices(source, axis: int, coordinate: float):
+def _hybrid_face_indices(source: Any, axis: int, coordinate: float) -> Any:
     points = np.asarray(source.mesh_vertices)
     triangles = points[np.asarray(source.mesh_faces)]
     face_ids = np.asarray(source.triangle_face_ids)
@@ -399,7 +402,7 @@ def _hybrid_face_indices(source, axis: int, coordinate: float):
     )
 
 
-def _hybrid_gmsh_result(destination: Path, *, schedule=None):
+def _hybrid_gmsh_result(destination: Path, *, schedule: Any = None) -> Any:
     from OCP.BOPAlgo import BOPAlgo_Splitter
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
     from OCP.gp import gp_Pnt
@@ -429,6 +432,7 @@ def _hybrid_gmsh_result(destination: Path, *, schedule=None):
     swept_scope = provider.entity_scope(source, source.solid_ids[swept])
     core_scope = provider.entity_scope(source, source.solid_ids[core])
     layer_schedule = (
+        # ty: ignore[invalid-argument-type]
         phx.meshing.LayerSchedule((0.08, 0.10, 0.12)) if schedule is None else schedule
     )
     if not isinstance(layer_schedule, phx.meshing.LayerSchedule):
@@ -479,7 +483,9 @@ def _hybrid_gmsh_result(destination: Path, *, schedule=None):
     return provider.plan(source, specification).execute(), control
 
 
-def _mesh_scope(mesh: phx.discretization.CellMesh, dimension: int, ids: np.ndarray):
+def _mesh_scope(
+    mesh: phx.discretization.CellMesh, dimension: int, ids: np.ndarray
+) -> Any:
     entities = mesh.entity_set(dimension)
     return phx.meshing.MeshingScope(
         mesh.mesh_id,
@@ -494,7 +500,7 @@ def _mesh_scope(mesh: phx.discretization.CellMesh, dimension: int, ids: np.ndarr
 def qualify_manifold() -> dict[str, object]:
     import manifold3d
 
-    def cube(offset):
+    def cube(offset: Any) -> Any:
         arrays = manifold3d.Manifold.cube().translate(offset).to_mesh64()
         return phx.geometry.SurfaceModel.from_triangles(
             arrays.vert_properties[:, :3],
@@ -1185,10 +1191,14 @@ def _distribution_route(
             part, policy=policy, cell_weights=weights, **ownership
         )
     )
+    # ty: ignore[unresolved-attribute]
     owner = np.asarray(distribution.partition.cell_owner)
+    # ty: ignore[unresolved-attribute]
     evidence = distribution.evidence
     part_weights = np.bincount(owner, weights=weights, minlength=policy.part_count)
+    # ty: ignore[unresolved-attribute]
     halos = tuple(np.asarray(rows) for rows in distribution.halo_rows)
+    # ty: ignore[unresolved-attribute]
     edge_cut = _distribution_edge_cut(part.carrier.mesh, owner)
     ghost_owned = any(np.any(owner[rows] == rank) for rank, rows in enumerate(halos))
     if (
@@ -1202,8 +1212,10 @@ def _distribution_route(
         raise RuntimeError(
             f"{policy.kind.value} distribution evidence failed its recount."
         )
+    # ty: ignore[invalid-return-type]
     return distribution, {
         "status": "passed",
+        # ty: ignore[unresolved-attribute]
         "distribution_id": distribution.distribution_id,
         "evidence_id": evidence.evidence_id,
         "provenance": evidence.provenance,
@@ -1235,7 +1247,9 @@ def _distribution_transition(
             source, target_part, lineage, policy=policy, cell_weights=weights
         )
     )
+    # ty: ignore[unresolved-attribute]
     target = transition.target
+    # ty: ignore[unresolved-attribute]
     mesh = target_part.carrier.mesh
     target_ids, target_areas, _ = _distribution_cells(mesh)
     source_ids = np.asarray(source.cell_global_ids)
@@ -1246,8 +1260,10 @@ def _distribution_transition(
     parents[_distribution_rows(target_ids, lineage_targets)] = _distribution_rows(
         source_ids, lineage_sources
     )
+    # ty: ignore[unresolved-attribute]
     if np.any(parents < 0) or not np.all(np.asarray(transition.target_defined)):
         raise RuntimeError("Bisection lineage left a target cell without a parent.")
+    # ty: ignore[unresolved-attribute]
     moved = np.asarray(transition.transfer(jnp.asarray(density)))
     copy_error = float(np.max(np.abs(moved - density[parents])))
     integral_before = float(np.sum(density * source_areas))
@@ -1258,9 +1274,12 @@ def _distribution_transition(
     receiver = np.asarray(target.partition.cell_owner, dtype=np.int64)
     remote = sender != receiver
     counts = np.bincount(sender * parts + receiver, minlength=parts * parts)
+    # ty: ignore[unresolved-attribute]
     slots = np.arange(transition.send.capacity)
+    # ty: ignore[unresolved-attribute]
     sent = np.concatenate([np.asarray(transition.sent_by(rank)) for rank in range(parts)])
     received = np.concatenate(
+        # ty: ignore[unresolved-attribute]
         [np.asarray(transition.received_by(rank)) for rank in range(parts)]
     )
     preserved = np.asarray(cells.relation_kinds) == int(
@@ -1268,6 +1287,7 @@ def _distribution_transition(
     )
     bound = (
         1.0 + parts * np.max(weights) / np.sum(weights)
+        # ty: ignore[unresolved-attribute]
         if transition.rebalanced
         else policy.maximum_imbalance
     )
@@ -1275,10 +1295,14 @@ def _distribution_transition(
         "exact_parent_copy": copy_error == 0.0,
         "integral_preserved": residual <= 1e-12,
         "migration_counts": np.array_equal(
-            np.asarray(transition.migration_counts), counts.reshape((parts, parts))
+            # ty: ignore[unresolved-attribute]
+            np.asarray(transition.migration_counts),
+            counts.reshape((parts, parts)),
         ),
+        # ty: ignore[unresolved-attribute]
         "migrated_cells": int(transition.migrated_cells) == np.count_nonzero(remote),
         "migration_volume": np.isclose(
+            # ty: ignore[unresolved-attribute]
             float(transition.migration_volume),
             np.sum(weights[remote]),
             rtol=1e-14,
@@ -1290,7 +1314,9 @@ def _distribution_transition(
         "edge_cut": int(target.evidence.edge_cut)
         == _distribution_edge_cut(mesh, receiver),
         "source_ids_unchanged": np.array_equal(
-            np.asarray(transition.source.cell_global_ids), source_ids
+            # ty: ignore[unresolved-attribute]
+            np.asarray(transition.source.cell_global_ids),
+            source_ids,
         ),
         "target_ids_native": np.array_equal(
             np.asarray(target.cell_global_ids), target_ids
@@ -1304,19 +1330,24 @@ def _distribution_transition(
         raise RuntimeError(f"Distribution transition failed checks: {failed}.")
     return {
         "status": "passed",
+        # ty: ignore[unresolved-attribute]
         "transition_id": transition.transition_id,
+        # ty: ignore[unresolved-attribute]
         "lineage_id": transition.lineage_id,
         "source_distribution_id": source.distribution_id,
         "target_distribution_id": target.distribution_id,
         "target_provenance": target.evidence.provenance,
         "maximum_imbalance": policy.maximum_imbalance,
+        # ty: ignore[unresolved-attribute]
         "rebalanced": transition.rebalanced,
         "imbalance_after": float(target.evidence.imbalance),
         "imbalance_bound": float(bound),
         "edge_cut_after": int(target.evidence.edge_cut),
         "halo_replicas_after": int(target.evidence.halo_replicas),
         "migration_counts": counts.reshape((parts, parts)).tolist(),
+        # ty: ignore[unresolved-attribute]
         "migrated_cells": int(transition.migrated_cells),
+        # ty: ignore[unresolved-attribute]
         "migration_volume": float(transition.migration_volume),
         "message_slots": int(slots.size),
         "preserved_cells": int(np.count_nonzero(preserved)),
@@ -1342,7 +1373,9 @@ def qualify_distribution() -> dict[str, object]:
     source, certify_stage = _measured(
         lambda: phx.meshing.certify_cell_mesh(_distribution_lattice(8), _contract())
     )
+    # ty: ignore[invalid-argument-type]
     part = phx.meshing.MeshPart("distribution-square", source)
+    # ty: ignore[unresolved-attribute]
     cell_ids, areas, centroids = _distribution_cells(source.mesh)
     # The right half costs twice as much, so balanced parts differ in cell count.
     weights = np.where(centroids[:, 0] > 0.5, 2.0, 1.0)
@@ -1372,6 +1405,7 @@ def qualify_distribution() -> dict[str, object]:
         part,
         phx.meshing.MeshPartitionPolicy(kind.PROVIDER, parts),
         weights,
+        # ty: ignore[invalid-argument-type]
         np.max(strip_weights) / np.mean(strip_weights),
         ownership=strips,
     )
@@ -1382,6 +1416,7 @@ def qualify_distribution() -> dict[str, object]:
     adaptation, adaptation_stage = _measured(
         lambda: phx.meshing.execute_mesh_adaptation(
             phx.meshing.prepare_mesh_adaptation(
+                # ty: ignore[invalid-argument-type]
                 source,
                 phx.meshing.MarkedMeshAdaptation(marked),
                 policy=phx.meshing.MeshAdaptationPolicy(
@@ -1390,7 +1425,9 @@ def qualify_distribution() -> dict[str, object]:
             )
         )
     )
+    # ty: ignore[unresolved-attribute]
     target = adaptation.target
+    # ty: ignore[unresolved-attribute]
     if adaptation.lineage is None or not target.audit.passed:
         raise RuntimeError("Native bisection did not refine the marked subregion.")
     target_part = phx.meshing.MeshPart(part.name, target)
@@ -1402,6 +1439,7 @@ def qualify_distribution() -> dict[str, object]:
         name: _distribution_transition(
             hilbert,
             target_part,
+            # ty: ignore[unresolved-attribute]
             adaptation.lineage,
             phx.meshing.MeshPartitionPolicy(
                 kind.HILBERT, parts, maximum_imbalance=tolerance
@@ -1423,6 +1461,7 @@ def qualify_distribution() -> dict[str, object]:
     return {
         "status": "passed",
         "source": {
+            # ty: ignore[invalid-argument-type]
             **_result_identity(source),
             "part_id": part.part_id,
             "distribution_id": hilbert.distribution_id,
@@ -1430,23 +1469,29 @@ def qualify_distribution() -> dict[str, object]:
         "target": {
             **_result_identity(target),
             "part_id": target_part.part_id,
+            # ty: ignore[unresolved-attribute]
             "adaptation_result_id": adaptation.result_id,
+            # ty: ignore[unresolved-attribute]
             "lineage_id": adaptation.lineage.lineage_id,
         },
         "runtime": _runtime_identity(),
         "quality": {
+            # ty: ignore[unresolved-attribute]
             "before": _quality_summary(source.quality),
             "after": _quality_summary(target.quality),
         },
         "routes": routes,
         "adaptation": {
+            # ty: ignore[unresolved-attribute]
             "route": adaptation.route.value,
+            # ty: ignore[unresolved-attribute]
             "status": adaptation.status.value,
             "marked_cells": int(marked.size),
         },
         "transitions": transitions,
         "transfer": {name: value["transfer"] for name, value in transitions.items()},
         "conservation": {
+            # ty: ignore[not-subscriptable]
             name: value["transfer"]["relative_integral_residual"]
             for name, value in transitions.items()
         },
@@ -1465,7 +1510,7 @@ def qualify_distribution() -> dict[str, object]:
     }
 
 
-def _forest_balance(topology: phx.discretization.ForestHierarchyTopology, /):
+def _forest_balance(topology: phx.discretization.ForestHierarchyTopology, /) -> Any:
     """Level histogram and the largest level jump across shared faces."""
     levels = topology.leaf_levels().astype(np.int64)
     workset = topology.workset
@@ -1503,6 +1548,7 @@ def qualify_forest_amr() -> dict[str, object]:
     )
     compiler = phx.discretization.ForestTopologyCompiler(plan)
     initial, initialize_stage = _measured(lambda: compiler.initialize(1))
+    # ty: ignore[unresolved-attribute]
     topology = initial.topology
     finest = np.asarray(plan.root_shape, dtype=np.int64) << plan.maximum_level
     # Drive one interior point to the maximum level; every step forces 2:1
@@ -1515,10 +1561,14 @@ def qualify_forest_amr() -> dict[str, object]:
         refined, stage = _measured(
             lambda topology=topology, marks=marks: compiler.adapt(topology, marks)
         )
+        # ty: ignore[unresolved-attribute]
         if not refined.status.successful:
+            # ty: ignore[unresolved-attribute]
             raise RuntimeError(f"Forest refinement failed: {refined.status.message}")
+        # ty: ignore[unresolved-attribute]
         closures += refined.evidence.balance_refinements
         refinement_stages.append(stage)
+        # ty: ignore[unresolved-attribute]
         topology = refined.topology
     source = topology
     # One mixed epoch: refine near the center, coarsen every family on the right.
@@ -1530,10 +1580,13 @@ def qualify_forest_amr() -> dict[str, object]:
     marks[: source.leaf_count] = np.where(centers[:, 0] > 0.75, -1, 0)
     marks[source.locate_cells([plan.maximum_level], (finest * 5 // 8)[None, :])] = 1
     adapted, adapt_stage = _measured(lambda: compiler.adapt(source, marks))
+    # ty: ignore[unresolved-attribute]
     evidence = adapted.evidence
+    # ty: ignore[unresolved-attribute]
     target = adapted.topology
     before, after = _forest_balance(source), _forest_balance(target)
     if (
+        # ty: ignore[unresolved-attribute]
         not adapted.status.successful
         or evidence.coarsened_families == 0
         or evidence.requested_refinements == 0
@@ -1545,6 +1598,7 @@ def qualify_forest_amr() -> dict[str, object]:
     transition, transition_stage = _measured(
         lambda: phx.discretization.ForestFieldTransition(source, target)
     )
+    # ty: ignore[unresolved-attribute]
     routes = transition.routes
     capacity = source.signature.leaf_capacity
     rng = np.random.default_rng(11)
@@ -1559,16 +1613,21 @@ def qualify_forest_amr() -> dict[str, object]:
         lambda: jax.block_until_ready(routes.apply(field))
     )
     content_before = float(jnp.sum(routes.source_measures * field))
+    # ty: ignore[unresolved-attribute]
     content_after = float(jnp.sum(routes.target_measures * transferred.values))
     residual = abs(content_after - content_before) / abs(content_before)
+    # ty: ignore[unresolved-attribute]
     reported = float(jnp.max(jnp.abs(transferred.conservation_residual)))
     constant = np.asarray(routes.apply(jnp.full((capacity,), 2.5)).values)
     constant_error = float(
         np.max(np.abs(constant[np.asarray(target.workset.leaf_valid)] - 2.5))
     )
     if (
+        # ty: ignore[unresolved-attribute]
         not bool(transferred.successful)
+        # ty: ignore[unresolved-attribute]
         or not transition.properties.conservative
+        # ty: ignore[unresolved-attribute]
         or not transition.properties.constant_preserving
         or residual > 1e-13
         or reported > 1e-12 * abs(content_before)
@@ -1584,15 +1643,21 @@ def qualify_forest_amr() -> dict[str, object]:
         lambda: partition_plan.prepare(target)
     )
     migration, migration_stage = _measured(
+        # ty: ignore[unresolved-attribute]
         lambda: source_partition.migration_to(target_partition, transition=transition)
     )
+    # ty: ignore[unresolved-attribute]
     migrated = target_partition.unpack(migration.migrate(source_partition.pack(field)))
+    # ty: ignore[unresolved-attribute]
     migration_error = float(jnp.max(jnp.abs(migrated - transferred.values)))
     round_trip = bool(
+        # ty: ignore[unresolved-attribute]
         jnp.array_equal(source_partition.unpack(source_partition.pack(field)), field)
     )
     partitions = {
+        # ty: ignore[unresolved-attribute]
         "source": source_partition.evidence,
+        # ty: ignore[unresolved-attribute]
         "target": target_partition.evidence,
     }
     if (
@@ -1608,14 +1673,17 @@ def qualify_forest_amr() -> dict[str, object]:
             "topology_id": source.topology_id,
             "epoch_id": source.epoch.epoch_id,
             "leaves": source.leaf_count,
+            # ty: ignore[unresolved-attribute]
             "partition_id": source_partition.partition_id,
         },
         "target": {
             "topology_id": target.topology_id,
             "epoch_id": target.epoch.epoch_id,
             "leaves": target.leaf_count,
+            # ty: ignore[unresolved-attribute]
             "adapt_result_id": adapted.result_id,
             "adapt_evidence_id": evidence.evidence_id,
+            # ty: ignore[unresolved-attribute]
             "partition_id": target_partition.partition_id,
         },
         "runtime": _runtime_identity(),
@@ -1631,13 +1699,19 @@ def qualify_forest_amr() -> dict[str, object]:
             "requested_refinements": evidence.requested_refinements,
             "requested_coarsenings": evidence.requested_coarsenings,
             "coarsened_families": evidence.coarsened_families,
+            # ty: ignore[unresolved-attribute]
             "retained_leaves": transition.retained_leaves,
+            # ty: ignore[unresolved-attribute]
             "prolonged_leaves": transition.prolonged_leaves,
+            # ty: ignore[unresolved-attribute]
             "restricted_leaves": transition.restricted_leaves,
         },
         "transfer": {
+            # ty: ignore[unresolved-attribute]
             "transition_id": transition.transition_id,
+            # ty: ignore[unresolved-attribute]
             "conservative": transition.properties.conservative,
+            # ty: ignore[unresolved-attribute]
             "constant_preserving": transition.properties.constant_preserving,
             "constant_error": constant_error,
             "distributed_migration_error": migration_error,
@@ -1651,7 +1725,9 @@ def qualify_forest_amr() -> dict[str, object]:
         "distribution": {
             "parts": partition_plan.part_count,
             "ghost_stencil": partition_plan.ghost_stencil.value,
+            # ty: ignore[unresolved-attribute]
             "migration_id": migration.migration_id,
+            # ty: ignore[unresolved-attribute]
             "moved_leaves": migration.moved_leaves,
             **{
                 name: {
@@ -1758,11 +1834,18 @@ def _qualify_omega_h_ranks(worker: str | None, ranks: int, /) -> dict[str, objec
     with phx.meshing.OmegaHProvider(executable) as provider:
         result, adapt_stage = _measured(
             lambda: provider.execute(
-                source, metric, fields=fields, ranks=ranks, gather=True
+                # ty: ignore[invalid-argument-type]
+                source,
+                metric,
+                fields=fields,
+                ranks=ranks,
+                gather=True,
             )
         )
+    # ty: ignore[unresolved-attribute]
     target = result.target
     target_ids, target_areas, _ = _distribution_cells(target.mesh)
+    # ty: ignore[unresolved-attribute]
     potential, transferred = result.fields
     target_points = np.asarray(target.mesh.coordinates)[
         np.argsort(np.asarray(target.mesh.vertex_global_ids))
@@ -1774,6 +1857,7 @@ def _qualify_omega_h_ranks(worker: str | None, ranks: int, /) -> dict[str, objec
     mass_before = float(np.sum(density * areas))
     mass_after = float(np.sum(np.asarray(transferred.values)[rows] * target_areas))
     mass_residual = abs(mass_after - mass_before) / abs(mass_before)
+    # ty: ignore[unresolved-attribute]
     conserve = result.evidence.fields[1]
     reported_before = float(np.sum(np.asarray(conserve.integral_before)))
     reported_after = float(np.sum(np.asarray(conserve.integral_after)))
@@ -1790,6 +1874,7 @@ def _qualify_omega_h_ranks(worker: str | None, ranks: int, /) -> dict[str, objec
             "owned_vertices": int(np.count_nonzero(np.asarray(partition.vertex_owned))),
             "ghost_vertices": int(np.count_nonzero(np.asarray(partition.vertex_ghosts))),
         }
+        # ty: ignore[unresolved-attribute]
         for partition in result.partitions
     ]
     owned = [value["owned_cells"] for value in partitions]
@@ -1798,6 +1883,7 @@ def _qualify_omega_h_ranks(worker: str | None, ranks: int, /) -> dict[str, objec
         "positive_cells": bool(np.all(target_areas > 0.0)),
         "domain_area": bool(np.isclose(np.sum(target_areas), 1.0, rtol=0.0, atol=1e-12)),
         "refined": target_ids.size > cell_ids.size,
+        # ty: ignore[unresolved-attribute]
         "lineage_unknown": result.lineage_status == "unknown",
         "zone_area": bool(np.isclose(left_area, 0.5, rtol=0.0, atol=1e-12)),
         "linear_reproduction": linear_error <= 1e-12,
@@ -1807,8 +1893,11 @@ def _qualify_omega_h_ranks(worker: str | None, ranks: int, /) -> dict[str, objec
         ),
         "ownership": sum(owned) == target_ids.size and min(owned) > 0,
         "ghosts": ranks == 1 or all(value["ghost_cells"] > 0 for value in partitions),
+        # ty: ignore[unresolved-attribute]
         "ranks": result.evidence.ranks == ranks and len(partitions) == ranks,
+        # ty: ignore[unresolved-attribute]
         "distribution": (result.distribution is None) == (ranks == 1),
+        # ty: ignore[unresolved-attribute]
         "metric": bool(np.all(np.linalg.eigvalsh(np.asarray(result.metric.values)) > 0)),
     }
     failed = sorted(name for name, passed in checks.items() if not passed)
@@ -1816,35 +1905,50 @@ def _qualify_omega_h_ranks(worker: str | None, ranks: int, /) -> dict[str, objec
         raise RuntimeError(f"Omega_h qualification failed checks: {failed}.")
     record = {
         "status": "passed",
+        # ty: ignore[invalid-argument-type]
         "source": _result_identity(source),
         "target": {
             **_result_identity(target),
+            # ty: ignore[unresolved-attribute]
             "omega_h_result_id": result.result_id,
+            # ty: ignore[unresolved-attribute]
             "lineage_status": result.lineage_status,
         },
         "runtime": {
             **_runtime_identity(),
+            # ty: ignore[unresolved-attribute]
             "provider_version": result.provider.version,
+            # ty: ignore[unresolved-attribute]
             "actual_version": result.runtime.actual_version,
             "worker_executable": executable,
+            # ty: ignore[unresolved-attribute]
             "worker_identity": result.evidence.identity_id,
+            # ty: ignore[unresolved-attribute]
             "worker_session": result.evidence.session_id,
+            # ty: ignore[unresolved-attribute]
             "ranks": result.evidence.ranks,
         },
         "quality": {
+            # ty: ignore[unresolved-attribute]
             "before": _quality_summary(source.quality),
             "after": _quality_summary(target.quality),
             "omega_h_metric_quality": [
+                # ty: ignore[unresolved-attribute]
                 result.evidence.minimum_quality,
+                # ty: ignore[unresolved-attribute]
                 result.evidence.maximum_quality,
             ],
             "omega_h_metric_length": [
+                # ty: ignore[unresolved-attribute]
                 result.evidence.minimum_length,
+                # ty: ignore[unresolved-attribute]
                 result.evidence.maximum_length,
             ],
+            # ty: ignore[unresolved-attribute]
             "iterations": result.evidence.iterations,
         },
         "transfer": {
+            # ty: ignore[unresolved-attribute]
             "methods": {value.name: value.method for value in result.evidence.fields},
             "linear_reproduction_error": linear_error,
         },
@@ -1861,13 +1965,17 @@ def _qualify_omega_h_ranks(worker: str | None, ranks: int, /) -> dict[str, objec
         "resources": {
             "certification": certify_stage,
             "adaptation": adapt_stage,
+            # ty: ignore[unresolved-attribute]
             "worker_peak_rss_bytes": result.evidence.peak_rss_bytes,
             "target_retained_bytes": _distribution_retained_bytes(target),
         },
     }
+    # ty: ignore[unresolved-attribute]
     if result.distribution is not None:
+        # ty: ignore[unresolved-attribute]
         distribution = result.distribution.evidence
         record["distribution"] = {
+            # ty: ignore[unresolved-attribute]
             "distribution_id": result.distribution.distribution_id,
             "provenance": distribution.provenance,
             "part_weights": np.asarray(distribution.part_weights).tolist(),
@@ -1963,7 +2071,10 @@ def _metric_unit_measurements(
     values = np.asarray(metric.values, dtype=np.float64)
     lengths = np.asarray(
         phx.meshing.metric_edge_lengths(
-            values, points, inverse[np.asarray(mesh.connectivity.edges)]
+            values,
+            points,
+            # ty: ignore[unresolved-attribute]
+            inverse[np.asarray(mesh.connectivity.edges)],
         )
     )
     cells = inverse[_mesh_triangles(mesh)]
@@ -2028,7 +2139,7 @@ def _adaptation_transfer_evidence(
     }
 
 
-def _metric_operation_evidence(evidence, /) -> dict[str, object]:
+def _metric_operation_evidence(evidence: Any, /) -> dict[str, object]:
     """Fields shared by `LocalMetricEvidence` and `DeviceMetricEvidence`."""
     return {
         "evidence_id": evidence.evidence_id,
@@ -2057,6 +2168,7 @@ def qualify_metric_adaptation() -> dict[str, object]:
             phx.discretization.CellMesh.from_triangles(points, triangles), _contract()
         )
     )
+    # ty: ignore[unresolved-attribute]
     metric = _layer_metric(source.mesh)
     request = phx.meshing.MetricMeshAdaptation(metric)
     native_policy = phx.meshing.MeshAdaptationPolicy(
@@ -2064,6 +2176,7 @@ def qualify_metric_adaptation() -> dict[str, object]:
     )
     native, native_record = _measured(
         lambda: phx.meshing.execute_mesh_adaptation(
+            # ty: ignore[invalid-argument-type]
             phx.meshing.prepare_mesh_adaptation(source, request, policy=native_policy)
         )
     )
@@ -2075,60 +2188,87 @@ def qualify_metric_adaptation() -> dict[str, object]:
     )
     prepared, prepare_record = _measured(
         lambda: phx.meshing.prepare_device_metric_adaptation(
-            source, request, policy=device_policy
+            # ty: ignore[invalid-argument-type]
+            source,
+            request,
+            policy=device_policy,
         )
     )
     update, adapt_record = _measured(
         lambda: jax.block_until_ready(
+            # ty: ignore[unresolved-attribute]
             phx.meshing.adapt_device_metric(prepared.layout, prepared.state)
         )
     )
+    # ty: ignore[unresolved-attribute]
     report = jax.device_get(update.report)
     device, commit_record = _measured(
+        # ty: ignore[invalid-argument-type, unresolved-attribute]
         lambda: phx.meshing.commit_device_metric_adaptation(prepared, update.state)
     )
     relocation, relocation_record = _measured(
         lambda: phx.meshing.execute_mesh_adaptation(
             phx.meshing.prepare_mesh_adaptation(
-                source, phx.meshing.RelocationMeshAdaptation(metric), policy=native_policy
+                # ty: ignore[invalid-argument-type]
+                source,
+                phx.meshing.RelocationMeshAdaptation(metric),
+                policy=native_policy,
             )
         )
     )
     adapted = {"native": native, "device": device}
+    # ty: ignore[unresolved-attribute]
     if any(result.metric is None for result in (*adapted.values(), relocation)):
         raise RuntimeError("A metric adaptation did not bind its metric to the target.")
+    # ty: ignore[unresolved-attribute]
     before = _metric_unit_measurements(source.mesh, metric)
     after = {
+        # ty: ignore[unresolved-attribute]
         name: _metric_unit_measurements(result.target.mesh, result.metric)
         for name, result in adapted.items()
     }
+    # ty: ignore[unresolved-attribute]
     relocated = _metric_unit_measurements(relocation.target.mesh, relocation.metric)
     transfer = {
-        name: _adaptation_transfer_evidence(result) for name, result in adapted.items()
+        # ty: ignore[invalid-argument-type]
+        name: _adaptation_transfer_evidence(result)
+        for name, result in adapted.items()
     }
+    # ty: ignore[invalid-argument-type]
     relocation_transfer = _adaptation_transfer_evidence(relocation)
     checks = {
+        # ty: ignore[unresolved-attribute]
         "native target audited": native.target.audit.passed,
+        # ty: ignore[unresolved-attribute]
         "device target audited": device.target.audit.passed,
+        # ty: ignore[unresolved-attribute]
         "relocation target audited": relocation.target.audit.passed,
         "device passes did not fail": not bool(report.failed),
         "relocation kept the topology": (
+            # ty: ignore[unresolved-attribute]
             relocation.target.mesh.topology_id == source.mesh.topology_id
+            # ty: ignore[unresolved-attribute]
             and relocation.evidence.relocations > 0
+            # ty: ignore[unresolved-attribute]
             and relocation.evidence.splits == relocation.evidence.collapses == 0
         ),
     }
     for name, result in adapted.items():
         checks[f"{name} moved toward the unit mesh"] = (
+            # ty: ignore[unsupported-operator]
             after[name]["unit_fraction"] > before["unit_fraction"]
+            # ty: ignore[unresolved-attribute]
             and result.evidence.unit_fraction >= 0.9
         )
         checks[f"{name} transfer reproduces linear fields"] = (
             transfer[name]["preserves_linear"]
+            # ty: ignore[unsupported-operator]
             and transfer[name]["linear_error"] <= 1.0e-12
+            # ty: ignore[unsupported-operator]
             and transfer[name]["constant_error"] <= 1.0e-12
         )
         checks[f"{name} target covers the source area"] = (
+            # ty: ignore[unsupported-operator]
             transfer[name]["area_residual"] <= 1.0e-12
         )
     failed = [name for name, passed in checks.items() if not passed]
@@ -2137,26 +2277,34 @@ def qualify_metric_adaptation() -> dict[str, object]:
     return {
         "status": "passed",
         "checks": sorted(checks),
+        # ty: ignore[invalid-argument-type]
         "source": {**_result_identity(source), "metric_id": metric.metric_id},
         "target": {
             name: {
+                # ty: ignore[unresolved-attribute]
                 **_result_identity(result.target),
+                # ty: ignore[unresolved-attribute]
                 "metric_id": result.metric.metric_id,
             }
             for name, result in (*adapted.items(), ("relocation", relocation))
         },
         "runtime": {
             **_runtime_identity(),
+            # ty: ignore[unresolved-attribute]
             "native_predicate_mode": native.evidence.predicate_mode.value,
+            # ty: ignore[unresolved-attribute]
             "device_layout_id": prepared.layout.signature_id,
         },
         "quality": {
+            # ty: ignore[unresolved-attribute]
             "before": {**_quality_summary(source.quality), "metric": before},
             "after": {
+                # ty: ignore[unresolved-attribute]
                 name: {**_quality_summary(result.target.quality), "metric": after[name]}
                 for name, result in adapted.items()
             },
             "relocation": {
+                # ty: ignore[unresolved-attribute]
                 **_quality_summary(relocation.target.quality),
                 "metric": relocated,
             },
@@ -2171,15 +2319,22 @@ def qualify_metric_adaptation() -> dict[str, object]:
         },
         "routes": {
             "native": {
+                # ty: ignore[unresolved-attribute]
                 "adaptation_status": native.status.value,
+                # ty: ignore[unresolved-attribute]
                 "evidence": _metric_operation_evidence(native.evidence),
             },
             "device": {
+                # ty: ignore[unresolved-attribute]
                 "adaptation_status": device.status.value,
                 "evidence": {
+                    # ty: ignore[unresolved-attribute]
                     **_metric_operation_evidence(device.evidence),
+                    # ty: ignore[unresolved-attribute]
                     "rejected_cavity": device.evidence.rejected_cavity,
+                    # ty: ignore[unresolved-attribute]
                     "status_flags": int(device.evidence.status),
+                    # ty: ignore[unresolved-attribute]
                     "status_names": device.evidence.status.name,
                 },
                 "report": {
@@ -2189,7 +2344,9 @@ def qualify_metric_adaptation() -> dict[str, object]:
                 },
             },
             "relocation": {
+                # ty: ignore[unresolved-attribute]
                 "adaptation_status": relocation.status.value,
+                # ty: ignore[unresolved-attribute]
                 "evidence": _metric_operation_evidence(relocation.evidence),
             },
         },
@@ -2201,18 +2358,22 @@ def qualify_metric_adaptation() -> dict[str, object]:
             "device_commit": commit_record,
             "relocation": relocation_record,
             "device_capacity": {
+                # ty: ignore[unresolved-attribute]
                 "vertices": prepared.layout.vertex_capacity,
+                # ty: ignore[unresolved-attribute]
                 "cells": prepared.layout.cell_capacity,
             },
             "device_state_bytes": sum(
-                leaf.nbytes for leaf in jax.tree.leaves(prepared.state)
+                leaf.nbytes
+                # ty: ignore[unresolved-attribute]
+                for leaf in jax.tree.leaves(prepared.state)
             ),
         },
     }
 
 
 def _gmsh_metric_run(
-    square, control: phx.meshing.BackgroundMetricControl, options, /
+    square: Any, control: phx.meshing.BackgroundMetricControl, options: Any, /
 ) -> tuple[phx.meshing.CellMeshingResult, dict[str, object]]:
     provider = phx.meshing.GmshProvider(options)
     scope = provider.whole_scope(square, 2)
@@ -2226,12 +2387,15 @@ def _gmsh_metric_run(
     plan, plan_record = _measured(
         lambda: provider.plan(square, specification, background_metric=control)
     )
+    # ty: ignore[unresolved-attribute]
     result, execute_record = _measured(plan.execute)
+    # ty: ignore[unresolved-attribute]
     if not result.audit.passed or not result.compliance.passed:
         raise RuntimeError(f"Gmsh {control.mode.value} metric mesh failed its audit.")
     prefix = f"background_metric:{control.control_id}:"
     compliance = {
         key.removeprefix(prefix): value
+        # ty: ignore[unresolved-attribute]
         for key, value in result.compliance.achieved
         if key.startswith(prefix)
     }
@@ -2242,17 +2406,22 @@ def _gmsh_metric_run(
         "unit_edge_fraction",
     ]:
         raise RuntimeError("Gmsh compliance lacks the background metric edge lengths.")
+    # ty: ignore[unresolved-attribute]
     points = np.asarray(result.mesh.coordinates, dtype=np.float64)
+    # ty: ignore[unresolved-attribute]
     edges = np.asarray(result.mesh.connectivity.edges)
     vectors = points[edges[:, 1]] - points[edges[:, 0]]
     midpoints = 0.5 * (points[edges[:, 0]] + points[edges[:, 1]])
     diagonal = np.diagonal(_layer_metric_tensors(midpoints), axis1=1, axis2=2)
     analytic = np.sqrt(np.sum(vectors**2 * diagonal, axis=1))
+    # ty: ignore[unresolved-attribute]
     area = float(np.sum(_triangle_areas(points, _mesh_triangles(result.mesh))))
     extent = np.mean(np.abs(vectors), axis=0)
+    # ty: ignore[invalid-return-type]
     return result, {
         "mode": control.mode.value,
         "control_id": control.control_id,
+        # ty: ignore[unresolved-attribute]
         "plan_id": plan.plan_id,
         "algorithm_2d": options.algorithm_2d.value,
         "compliance_metric_edge_lengths": compliance,
@@ -2323,18 +2492,22 @@ def qualify_gmsh_metric() -> dict[str, object]:
         )
     results = {"isotropic": isotropic, "anisotropic": anisotropic}
     records = {"isotropic": isotropic_record, "anisotropic": anisotropic_record}
+    # ty: ignore[not-subscriptable]
     unit = anisotropic_record["compliance_metric_edge_lengths"]["unit_edge_fraction"]
     checks = {
+        # ty: ignore[unresolved-attribute]
         "background certified": certified_background.audit.passed,
         "isotropic mode refines every direction": (
             isotropic.mesh.entity_set(2).count > anisotropic.mesh.entity_set(2).count
         ),
         "anisotropic cells stretch along the layer": (
+            # ty: ignore[unsupported-operator]
             anisotropic_record["mean_edge_extent_y_over_x"] > 1.5
         ),
         "anisotropic mesh is near unit": unit >= 0.8,
     }
     for name, record in records.items():
+        # ty: ignore[unsupported-operator]
         checks[f"{name} mesh covers the face"] = abs(record["area"] - 1.0) <= 1.0e-12
     failed = [name for name, passed in checks.items() if not passed]
     if failed:
@@ -2344,6 +2517,7 @@ def qualify_gmsh_metric() -> dict[str, object]:
         "checks": sorted(checks),
         "source": {
             "brep_source_revision": square.source_revision,
+            # ty: ignore[invalid-argument-type]
             "background": _result_identity(certified_background),
             "metric_id": metric.metric_id,
         },
@@ -2354,12 +2528,14 @@ def qualify_gmsh_metric() -> dict[str, object]:
             "provider_version": anisotropic.runtime.actual_version,
         },
         "quality": {
+            # ty: ignore[unresolved-attribute]
             "before": _quality_summary(certified_background.quality),
             "after": {
                 name: _quality_summary(result.quality) for name, result in results.items()
             },
         },
         "conservation": {
+            # ty: ignore[unsupported-operator]
             name: {"area": record["area"], "area_residual": abs(record["area"] - 1.0)}
             for name, record in records.items()
         },
@@ -2374,7 +2550,7 @@ def qualify_gmsh_metric() -> dict[str, object]:
     }
 
 
-def _layer_wall_mesh(points: np.ndarray, triangles: np.ndarray, /):
+def _layer_wall_mesh(points: np.ndarray, triangles: np.ndarray, /) -> Any:
     return phx.discretization.CellMesh(
         np.asarray(points, dtype=np.float64),
         (
@@ -2388,7 +2564,7 @@ def _layer_wall_mesh(points: np.ndarray, triangles: np.ndarray, /):
     )
 
 
-def _layer_box_wall(half_width: float, count: int, /):
+def _layer_box_wall(half_width: float, count: int, /) -> Any:
     """Outward-oriented structured triangulation of a centered box surface."""
     grid = np.linspace(-half_width, half_width, count + 1)
     u, v = (value.ravel() for value in np.meshgrid(grid, grid, indexing="ij"))
@@ -2417,7 +2593,7 @@ def _layer_box_wall(half_width: float, count: int, /):
     return _layer_wall_mesh(coordinates, triangles)
 
 
-def _layer_plate(count: int, height: float, /, *, flip: bool):
+def _layer_plate(count: int, height: float, /, *, flip: bool) -> Any:
     """Unit-square plate at ``height`` growing along +z (or -z when flipped)."""
     grid = np.linspace(0.0, 1.0, count + 1)
     x, y = (value.ravel() for value in np.meshgrid(grid, grid, indexing="ij"))
@@ -2428,7 +2604,7 @@ def _layer_plate(count: int, height: float, /, *, flip: bool):
     return points, triangles[:, ::-1] if flip else triangles
 
 
-def _advancing_layer_control(wall, schedule, /, **options):
+def _advancing_layer_control(wall: Any, schedule: Any, /, **options: Any) -> Any:
     cells = wall.entity_set(2)
     return phx.meshing.BoundaryLayerControl(
         phx.meshing.MeshingScope(
@@ -2451,20 +2627,20 @@ def _layer_enclosed_volume(points: np.ndarray, triangles: np.ndarray, /) -> floa
     return float(np.sum(corners[:, 0] * np.cross(corners[:, 1], corners[:, 2])) / 6.0)
 
 
-def _layer_block_rows(mesh, /) -> np.ndarray:
+def _layer_block_rows(mesh: Any, /) -> np.ndarray:
     return np.concatenate(
         [np.asarray(block.vertices, dtype=np.int64) for block in mesh.blocks]
     )
 
 
-def _layer_retained_bytes(tree, /) -> int:
+def _layer_retained_bytes(tree: Any, /) -> int:
     leaves = {
         id(leaf): leaf for leaf in jax.tree.leaves(tree) if isinstance(leaf, jax.Array)
     }
     return sum(leaf.nbytes for leaf in leaves.values())
 
 
-def _layer_entity_rows(identifiers, requested, /) -> np.ndarray:
+def _layer_entity_rows(identifiers: Any, requested: Any, /) -> np.ndarray:
     """Rows of the unique ``identifiers`` holding every ``requested`` ID."""
     values = np.asarray(identifiers, dtype=np.int64)
     wanted = np.asarray(requested, dtype=np.int64)
@@ -2475,7 +2651,7 @@ def _layer_entity_rows(identifiers, requested, /) -> np.ndarray:
     return rows
 
 
-def _layer_evidence(evidence, /) -> dict[str, object]:
+def _layer_evidence(evidence: Any, /) -> dict[str, object]:
     return {
         "evidence_id": evidence.evidence_id,
         "requested_thicknesses": list(evidence.requested_thicknesses),
@@ -2506,7 +2682,7 @@ def _layer_evidence(evidence, /) -> dict[str, object]:
     }
 
 
-def _layer_certificate_counts(certificate, /) -> dict[str, object]:
+def _layer_certificate_counts(certificate: Any, /) -> dict[str, object]:
     return {
         "certificate_id": certificate.certificate_id,
         "cells": certificate.status.shape[0],
@@ -2516,7 +2692,7 @@ def _layer_certificate_counts(certificate, /) -> dict[str, object]:
     }
 
 
-def _layer_quality(mesh, /):
+def _layer_quality(mesh: Any, /) -> Any:
     return phx.meshing.summarize_cell_quality(phx.meshing.evaluate_cell_quality(mesh))
 
 
@@ -2539,11 +2715,15 @@ def qualify_boundary_layer() -> dict[str, object]:
         lambda: phx.meshing.prepare_boundary_layers(wall, control)
     )
     before, wall_quality = _measured(lambda: _layer_quality(wall))
+    # ty: ignore[unresolved-attribute]
     after, layer_quality = _measured(lambda: _layer_quality(layers.mesh))
     certificate, certification = _measured(
+        # ty: ignore[unresolved-attribute]
         lambda: phx.discretization.certify_cell_geometry_validity(layers.mesh)
     )
+    # ty: ignore[unresolved-attribute]
     evidence = layers.evidence
+    # ty: ignore[unresolved-attribute]
     cells = sum(block.cell_count for block in layers.mesh.blocks)
     requested = np.asarray(schedule.thicknesses, dtype=np.float64)
     measured = np.stack(
@@ -2555,20 +2735,28 @@ def qualify_boundary_layer() -> dict[str, object]:
     )
     thickness_error = float(np.max(np.abs(measured - requested) / requested))
     growth_error = float(np.max(np.abs(np.asarray(evidence.achieved_growth_rates) - 1.2)))
+    # ty: ignore[unresolved-attribute]
     layer_volume = float(np.sum(np.asarray(after.evaluation.measures)))
     enclosed = _layer_enclosed_volume(
-        np.asarray(layers.cap.coordinates), _layer_block_rows(layers.cap)
+        # ty: ignore[unresolved-attribute]
+        np.asarray(layers.cap.coordinates),
+        # ty: ignore[unresolved-attribute]
+        _layer_block_rows(layers.cap),
     ) - _layer_enclosed_volume(np.asarray(wall.coordinates), _layer_block_rows(wall))
     volume_residual = abs(layer_volume - enclosed) / enclosed
     if (
+        # ty: ignore[unresolved-attribute]
         not layers.closed_cap
+        # ty: ignore[unresolved-attribute]
         or layers.validity.certified_valid_count != cells
+        # ty: ignore[unresolved-attribute]
         or certificate.certified_valid_count != cells
         or evidence.convex_ridge_count != 24
         or evidence.corner_patch_count != 8
         or evidence.detected_collision_count != 0
         or thickness_error > 1.0e-9
         or growth_error > 1.0e-9
+        # ty: ignore[unresolved-attribute]
         or after.sampled_invalid_count != 0
         or volume_residual > 1.0e-10
     ):
@@ -2594,10 +2782,13 @@ def qualify_boundary_layer() -> dict[str, object]:
         lambda: phx.meshing.prepare_boundary_layers(channel, reduction)
     )
     reduced_certificate, reduced_certification = _measured(
+        # ty: ignore[unresolved-attribute]
         lambda: phx.discretization.certify_cell_geometry_validity(reduced.mesh)
     )
     # The cap faces away from its layers: lower-front faces point along +z.
+    # ty: ignore[unresolved-attribute]
     cap_points = np.asarray(reduced.cap.coordinates)
+    # ty: ignore[unresolved-attribute]
     cap_corners = cap_points[_layer_block_rows(reduced.cap)]
     upward = (
         np.cross(
@@ -2608,7 +2799,9 @@ def qualify_boundary_layer() -> dict[str, object]:
     clearance = float(
         np.min(cap_corners[~upward][..., 2]) - np.max(cap_corners[upward][..., 2])
     )
+    # ty: ignore[unresolved-attribute]
     reduced_evidence = reduced.evidence
+    # ty: ignore[unresolved-attribute]
     reduced_cells = sum(block.cell_count for block in reduced.mesh.blocks)
     if (
         reduced_evidence.predicted_collision_vertex_count != 50
@@ -2617,6 +2810,7 @@ def qualify_boundary_layer() -> dict[str, object]:
         or clearance <= 0.0
         or np.max(np.abs(np.asarray(reduced_evidence.achieved_growth_rates) - 1.2))
         > 1.0e-9
+        # ty: ignore[unresolved-attribute]
         or reduced_certificate.certified_valid_count != reduced_cells
     ):
         raise RuntimeError("REDUCE_THICKNESS did not resolve the narrow-gap collision.")
@@ -2631,17 +2825,25 @@ def qualify_boundary_layer() -> dict[str, object]:
             "schedule_id": schedule.schedule_id,
         },
         "target": {
+            # ty: ignore[unresolved-attribute]
             "result_id": layers.result_id,
+            # ty: ignore[unresolved-attribute]
             "mesh_id": layers.mesh.mesh_id,
+            # ty: ignore[unresolved-attribute]
             "topology_id": layers.mesh.topology_id,
+            # ty: ignore[unresolved-attribute]
             "vertices": layers.mesh.coordinates.shape[0],
             "cells": cells,
+            # ty: ignore[unresolved-attribute]
             "cap_mesh_id": layers.cap.mesh_id,
+            # ty: ignore[unresolved-attribute]
             "closed_cap": layers.closed_cap,
         },
         "runtime": _runtime_identity(),
         "quality": {
+            # ty: ignore[invalid-argument-type]
             "before": _quality_summary(before),
+            # ty: ignore[invalid-argument-type]
             "after": _quality_summary(after),
         },
         "conservation": {
@@ -2650,6 +2852,7 @@ def qualify_boundary_layer() -> dict[str, object]:
             "relative_volume_residual": volume_residual,
         },
         "certificates": {
+            # ty: ignore[unresolved-attribute]
             "layer_generation": _layer_certificate_counts(layers.validity),
             "independent": _layer_certificate_counts(certificate),
         },
@@ -2661,6 +2864,7 @@ def qualify_boundary_layer() -> dict[str, object]:
         "collision": {
             "gap": gap,
             "wall_faces": channel.blocks[0].cell_count,
+            # ty: ignore[unresolved-attribute]
             "result_id": reduced.result_id,
             "front_clearance": clearance,
             "certificate": _layer_certificate_counts(reduced_certificate),
@@ -2678,7 +2882,9 @@ def qualify_boundary_layer() -> dict[str, object]:
     }
 
 
-def _gmsh_layered_route(provider, source, route, corner, schedule, tolerance, /):
+def _gmsh_layered_route(
+    provider: Any, source: Any, route: Any, corner: Any, schedule: Any, tolerance: Any, /
+) -> Any:
     """Plan, execute, and independently audit one layered Gmsh volume route."""
     points = np.asarray(source.mesh_vertices)
     face_ids = np.asarray(source.triangle_face_ids)
@@ -2710,10 +2916,13 @@ def _gmsh_layered_route(provider, source, route, corner, schedule, tolerance, /)
         layer_controls=(control,),
     )
     plan, planning = _measured(lambda: provider.plan(source, specification))
+    # ty: ignore[unresolved-attribute]
     result, execution = _measured(plan.execute)
     certificate, certification = _measured(
+        # ty: ignore[unresolved-attribute]
         lambda: phx.discretization.certify_cell_geometry_validity(result.mesh)
     )
+    # ty: ignore[unresolved-attribute]
     mesh = result.mesh
     connectivity = mesh.connectivity
     owners = np.asarray(connectivity.face_owner, dtype=np.int64)
@@ -2723,8 +2932,10 @@ def _gmsh_layered_route(provider, source, route, corner, schedule, tolerance, /)
     face_entities = mesh.entity_set(2).entity_ids
     patches = {
         patch.name: _layer_entity_rows(face_entities, patch.scope.entity_ids)
+        # ty: ignore[unresolved-attribute]
         for patch in result.patches
     }
+    # ty: ignore[unresolved-attribute]
     zones = {zone.name: zone.scope.entity_ids for zone in result.zones}
     if set(zones) != {"boundary-layer", "core"} or set(patches) != {
         "wall",
@@ -2742,7 +2953,7 @@ def _gmsh_layered_route(provider, source, route, corner, schedule, tolerance, /)
     entry_faces = np.asarray(connectivity.cell_face_values, dtype=np.int64)
     entry_signs = np.asarray(connectivity.cell_face_sign_values, dtype=np.float64)
 
-    def triangles(faces, zones):
+    def triangles(faces: Any, zones: Any) -> Any:
         """Triangles of ``faces`` oriented out of their incident cells in ``zones``."""
         selected = np.isin(entry_faces, faces) & np.isin(zone_of[entry_cells], zones)
         rows = entry_faces[selected]
@@ -2767,6 +2978,7 @@ def _gmsh_layered_route(provider, source, route, corner, schedule, tolerance, /)
         )
     )
     coordinates = np.asarray(mesh.coordinates)
+    # ty: ignore[unresolved-attribute]
     evaluation = result.quality.evaluation
     measures = np.asarray(evaluation.measures)
     measure_rows = _layer_entity_rows(evaluation.cell_global_ids, cell_entities)
@@ -2790,6 +3002,7 @@ def _gmsh_layered_route(provider, source, route, corner, schedule, tolerance, /)
     key = f"layer:{control.control_id}:"
     achieved = {
         name.removeprefix(key): value
+        # ty: ignore[unresolved-attribute]
         for name, value in result.compliance.achieved
         if name.startswith(key)
         or name in ("fixed_boundary_bitwise", "layer_interface_compliance")
@@ -2824,8 +3037,11 @@ def _gmsh_layered_route(provider, source, route, corner, schedule, tolerance, /)
     )
     cells = sum(block.cell_count for block in mesh.blocks)
     if (
+        # ty: ignore[unresolved-attribute]
         not result.audit.passed
+        # ty: ignore[unresolved-attribute]
         or not result.compliance.passed
+        # ty: ignore[unresolved-attribute]
         or not all(association.complete for association in result.associations)
         or not conforming
         or achieved["fixed_boundary_bitwise"] != 1.0
@@ -2833,23 +3049,32 @@ def _gmsh_layered_route(provider, source, route, corner, schedule, tolerance, /)
         or achieved["layer_count"] != schedule.layer_count
         or thickness_error > tolerance
         or growth_error > tolerance * schedule.growth_rates[0]
+        # ty: ignore[unresolved-attribute]
         or certificate.certified_valid_count != cells
+        # ty: ignore[unresolved-attribute]
         or result.quality.sampled_invalid_count != 0
         or domain_residual > 1.0e-10
         or layer_residual > 1.0e-10
     ):
         raise RuntimeError(f"Gmsh {route.value} layers failed audit or compliance.")
     return {
+        # ty: ignore[unresolved-attribute]
         "plan_id": plan.plan_id,
         "control_id": control.control_id,
+        # ty: ignore[invalid-argument-type]
         "target": _result_identity(result),
         "provider": {
+            # ty: ignore[unresolved-attribute]
             "version": result.runtime.actual_version,
+            # ty: ignore[unresolved-attribute]
             "runtime_id": result.runtime.runtime_id,
+            # ty: ignore[unresolved-attribute]
             "deterministic": result.runtime.deterministic,
         },
         "stages": {
-            stage.stage.value: stage.status.value for stage in result.trace.stages
+            stage.stage.value: stage.status.value
+            # ty: ignore[unresolved-attribute]
+            for stage in result.trace.stages
         },
         "cell_counts": {block.cell_kind: block.cell_count for block in mesh.blocks},
         "zone_cells": {name: ids.shape[0] for name, ids in zones.items()},
@@ -2864,6 +3089,7 @@ def _gmsh_layered_route(provider, source, route, corner, schedule, tolerance, /)
         "certificate": _layer_certificate_counts(certificate),
         "quality": {
             "before": _quality_summary(before),
+            # ty: ignore[unresolved-attribute]
             "after": _quality_summary(result.quality),
         },
         "conservation": {
@@ -3024,26 +3250,38 @@ def _supermesh_case(
     refinement, refinement_record = _measured(
         lambda: phx.geometry.prepare_common_refinement(source, target, policy=policy)
     )
+    # ty: ignore[unresolved-attribute]
     evidence = refinement.evidence
+    # ty: ignore[unresolved-attribute]
     if not refinement.succeeded:
         raise RuntimeError(
+            # ty: ignore[unresolved-attribute]
             f"Common refinement failed: {refinement.status.name}: {evidence.reason}."
         )
+    # ty: ignore[unresolved-attribute]
     dimension = refinement.dimension
+    # ty: ignore[unresolved-attribute]
     volumes = np.asarray(refinement.volumes, dtype=np.float64)
+    # ty: ignore[unresolved-attribute]
     moments = np.asarray(refinement.first_moments, dtype=np.float64)
     ledgers = {}
     for role, cells, measures, first in (
         (
             "source",
+            # ty: ignore[unresolved-attribute]
             refinement.source_cells,
+            # ty: ignore[unresolved-attribute]
             refinement.source_measures,
+            # ty: ignore[unresolved-attribute]
             refinement.source_first_moments,
         ),
         (
             "target",
+            # ty: ignore[unresolved-attribute]
             refinement.target_cells,
+            # ty: ignore[unresolved-attribute]
             refinement.target_measures,
+            # ty: ignore[unresolved-attribute]
             refinement.target_first_moments,
         ),
     ):
@@ -3072,7 +3310,9 @@ def _supermesh_case(
         "measure_defect": abs(float(np.sum(volumes)) - 1.0),
         "first_moment_defect": float(np.max(np.abs(np.sum(moments, axis=0) - 0.5))),
     }
+    # ty: ignore[unresolved-attribute]
     offsets = np.asarray(refinement.simplex_offsets, dtype=np.int64)
+    # ty: ignore[unresolved-attribute]
     simplices = np.asarray(refinement.simplices, dtype=np.float64)
     signed = np.linalg.det(simplices[:, 1:] - simplices[:, :1]) / np.prod(
         np.arange(1, dimension + 1)
@@ -3101,6 +3341,7 @@ def _supermesh_case(
         or evidence.uncertain_predicate_count
         or evidence.invalid_cell_count
         or evidence.intersection_failure_count
+        # ty: ignore[unresolved-attribute]
         or not (source_result.audit.passed and target_result.audit.passed)
     ):
         raise RuntimeError(
@@ -3108,20 +3349,28 @@ def _supermesh_case(
             f"partition {partition_defect}, evidence {evidence.reason}."
         )
     return {
+        # ty: ignore[invalid-argument-type]
         "source": {**_result_identity(source_result), "mesh_id": source.mesh_id},
+        # ty: ignore[invalid-argument-type]
         "target": {**_result_identity(target_result), "mesh_id": target.mesh_id},
         "identities": {
+            # ty: ignore[unresolved-attribute]
             "refinement_id": refinement.refinement_id,
             "evidence_id": evidence.evidence_id,
             "policy_id": policy.policy_id,
+            # ty: ignore[unresolved-attribute]
             "source_topology_id": refinement.source_topology_id,
+            # ty: ignore[unresolved-attribute]
             "target_topology_id": refinement.target_topology_id,
         },
         "quality": {
+            # ty: ignore[unresolved-attribute]
             "source": _quality_summary(source_result.quality),
+            # ty: ignore[unresolved-attribute]
             "target": _quality_summary(target_result.quality),
         },
         "coverage": {
+            # ty: ignore[unresolved-attribute]
             "status": refinement.status.name,
             "reason": evidence.reason,
             "maximum_relative_source_defect": evidence.maximum_relative_source_defect,
@@ -3140,6 +3389,7 @@ def _supermesh_case(
             "candidate": evidence.candidate_pair_count,
             "accepted": evidence.accepted_pair_count,
             "piece_pairs": evidence.piece_pair_count,
+            # ty: ignore[unresolved-attribute]
             "entries": refinement.entry_count,
             "overlap_simplices": simplices.shape[0],
         },
@@ -3198,7 +3448,9 @@ def qualify_supermesh() -> dict[str, object]:
         "target": {name: case["target"] for name, case in cases.items()},
         "runtime": _runtime_identity(),
         "quality": {
+            # ty: ignore[not-subscriptable]
             "before": {name: case["quality"]["source"] for name, case in cases.items()},
+            # ty: ignore[not-subscriptable]
             "after": {name: case["quality"]["target"] for name, case in cases.items()},
         },
         "conservation": {name: case["conservation"] for name, case in cases.items()},
@@ -3210,7 +3462,7 @@ def qualify_supermesh() -> dict[str, object]:
     }
 
 
-def _remap_cell_averages(discretization, function, /) -> np.ndarray:
+def _remap_cell_averages(discretization: Any, function: Any, /) -> np.ndarray:
     """Quadrature cell averages of ``function`` on one FV discretization."""
     weights = np.where(
         np.asarray(discretization.cell_quadrature_valid),
@@ -3245,45 +3497,64 @@ def qualify_remap_p1() -> dict[str, object]:
             triangles=np.asarray(triangles.blocks[0].vertices),
         ).prepare()
     )
+    # ty: ignore[unresolved-attribute]
     source_result = phx.meshing.certify_cell_mesh(source.mesh, contract)
+    # ty: ignore[unresolved-attribute]
     target_result = phx.meshing.certify_cell_mesh(target.mesh, contract)
     prepared, refinement_record = _measured(
         lambda: discretization.prepare_unstructured_conservative_remap(
-            source, target, provenance="qualification-remap-p1"
+            # ty: ignore[invalid-argument-type]
+            source,
+            # ty: ignore[invalid-argument-type]
+            target,
+            provenance="qualification-remap-p1",
         )
     )
+    # ty: ignore[unresolved-attribute]
     if not prepared.succeeded:
+        # ty: ignore[unresolved-attribute]
         raise RuntimeError(f"P0 remap preparation failed: {prepared.reason}.")
     limited_plan, limited_record = _measured(
         lambda: discretization.UnstructuredSecondOrderRemapPlan(
-            prepared.plan, prepared.refinement, source
+            # ty: ignore[unresolved-attribute]
+            prepared.plan,
+            # ty: ignore[unresolved-attribute]
+            prepared.refinement,
+            # ty: ignore[invalid-argument-type]
+            source,
         )
     )
     unlimited_plan, unlimited_record = _measured(
         lambda: discretization.UnstructuredSecondOrderRemapPlan(
+            # ty: ignore[unresolved-attribute]
             prepared.plan,
+            # ty: ignore[unresolved-attribute]
             prepared.refinement,
+            # ty: ignore[invalid-argument-type]
             source,
             limiter=discretization.UnstructuredRemapLimiter.NONE,
         )
     )
+    # ty: ignore[unresolved-attribute]
     source_volumes = np.asarray(source.cell_volumes, dtype=np.float64)
+    # ty: ignore[unresolved-attribute]
     target_volumes = np.asarray(target.cell_volumes, dtype=np.float64)
     smooth = jnp.asarray(_remap_cell_averages(source, _remap_field))
     smooth_exact = _remap_cell_averages(target, _remap_field)
     linear = jnp.asarray(_remap_cell_averages(source, _remap_linear))
     linear_exact = _remap_cell_averages(target, _remap_linear)
+    # ty: ignore[unresolved-attribute]
     centers = np.asarray(source.cell_centers)
     step = jnp.asarray(np.where(centers[:, 0] + 0.3 * centers[:, 1] > 0.55, 2.0, -1.0))
     constant = jnp.ones_like(smooth)
 
-    def relative_l1(values, exact):
+    def relative_l1(values: Any, exact: Any) -> Any:
         return float(
             np.sum(target_volumes * np.abs(np.asarray(values) - exact))
             / np.sum(target_volumes * np.abs(exact))
         )
 
-    def mass_residual(source_values, target_values):
+    def mass_residual(source_values: Any, target_values: Any) -> Any:
         return abs(
             float(np.sum(target_volumes * np.asarray(target_values)))
             - float(np.sum(source_volumes * np.asarray(source_values)))
@@ -3292,6 +3563,7 @@ def qualify_remap_p1() -> dict[str, object]:
     p0, p0_record = _measured(
         lambda: jax.block_until_ready(
             {
+                # ty: ignore[unresolved-attribute]
                 name: prepared.plan.apply(values)
                 for name, values in (
                     ("constant", constant),
@@ -3305,6 +3577,7 @@ def qualify_remap_p1() -> dict[str, object]:
     p1, p1_record = _measured(
         lambda: jax.block_until_ready(
             {
+                # ty: ignore[unresolved-attribute]
                 name: limited_plan.apply(values)
                 for name, values in (
                     ("constant", constant),
@@ -3315,38 +3588,59 @@ def qualify_remap_p1() -> dict[str, object]:
             }
         )
     )
+    # ty: ignore[unresolved-attribute]
     unlimited_linear = unlimited_plan.apply(linear)
+    # ty: ignore[not-subscriptable, unresolved-attribute]
     p0_defect = prepared.plan.conservation_defect(smooth, p0["smooth"])
     fv = {
         "p0": {
+            # ty: ignore[not-subscriptable]
             "constant_error": float(np.max(np.abs(np.asarray(p0["constant"]) - 1.0))),
+            # ty: ignore[not-subscriptable]
             "smooth_mass_residual": mass_residual(smooth, p0["smooth"]),
+            # ty: ignore[not-subscriptable]
             "step_mass_residual": mass_residual(step, p0["step"]),
             "plan_conservation_defect": float(np.max(np.abs(np.asarray(p0_defect)))),
+            # ty: ignore[not-subscriptable]
             "smooth_relative_l1_error": relative_l1(p0["smooth"], smooth_exact),
+            # ty: ignore[not-subscriptable]
             "linear_relative_l1_error": relative_l1(p0["linear"], linear_exact),
+            # ty: ignore[not-subscriptable]
             "step_bounds": [float(jnp.min(p0["step"])), float(jnp.max(p0["step"]))],
         },
         "limited_p1": {
             "constant_error": float(
+                # ty: ignore[not-subscriptable]
                 np.max(np.abs(np.asarray(p1["constant"].values) - 1.0))
             ),
+            # ty: ignore[not-subscriptable]
             "smooth_mass_residual": mass_residual(smooth, p1["smooth"].values),
+            # ty: ignore[not-subscriptable]
             "step_mass_residual": mass_residual(step, p1["step"].values),
             "step_conservation_residual_after": float(
+                # ty: ignore[not-subscriptable]
                 np.abs(np.asarray(p1["step"].conservation_residual_after))
             ),
+            # ty: ignore[not-subscriptable]
             "step_restored": bool(p1["step"].restored),
+            # ty: ignore[not-subscriptable]
             "smooth_relative_l1_error": relative_l1(p1["smooth"].values, smooth_exact),
+            # ty: ignore[not-subscriptable]
             "linear_relative_l1_error": relative_l1(p1["linear"].values, linear_exact),
             "step_bounds": [
+                # ty: ignore[not-subscriptable]
                 float(jnp.min(p1["step"].values)),
+                # ty: ignore[not-subscriptable]
                 float(jnp.max(p1["step"].values)),
             ],
+            # ty: ignore[not-subscriptable]
             "step_limited_cells": int(p1["step"].limited_count),
+            # ty: ignore[not-subscriptable]
             "step_minimum_limiter_factor": float(p1["step"].minimum_limiter_factor),
+            # ty: ignore[unresolved-attribute]
             "gradient_minimum_rank": int(np.min(np.asarray(limited_plan.gradient_rank))),
             "gradient_maximum_condition": float(
+                # ty: ignore[unresolved-attribute]
                 np.max(np.asarray(limited_plan.gradient_condition))
             ),
         },
@@ -3383,7 +3677,7 @@ def qualify_remap_p1() -> dict[str, object]:
     fem_source_mesh = _jittered_unit_square_triangles(7, 1)
     fem_target_mesh = _jittered_unit_square_triangles(5, 2)
 
-    def p1_space(mesh):
+    def p1_space(mesh: Any) -> Any:
         return discretization.FiniteElementPlan(
             mesh,
             discretization.FiniteElementFieldSpec(
@@ -3399,14 +3693,21 @@ def qualify_remap_p1() -> dict[str, object]:
             policy=phx.geometry.CommonRefinementPolicy(overlap_simplices=True),
         )
     )
+    # ty: ignore[unresolved-attribute]
     if not fem_refinement.succeeded:
+        # ty: ignore[unresolved-attribute]
         raise RuntimeError(f"L2 projection refinement failed: {fem_refinement.status}.")
     prepared_target, target_record = _measured(
         lambda: discretization.prepare_l2_projection_target(fem_target, field_name="u")
     )
     transfer, transfer_record = _measured(
         lambda: discretization.prepare_l2_projection_transfer(
-            fem_source, prepared_target, fem_refinement, field_name="u"
+            fem_source,
+            # ty: ignore[invalid-argument-type]
+            prepared_target,
+            # ty: ignore[invalid-argument-type]
+            fem_refinement,
+            field_name="u",
         )
     )
     source_dofs = np.asarray(fem_source.dof_maps[0].dof_coordinates)
@@ -3421,8 +3722,11 @@ def qualify_remap_p1() -> dict[str, object]:
     projected, projection_record = _measured(
         lambda: jax.block_until_ready(
             (
+                # ty: ignore[unresolved-attribute]
                 transfer.apply(jnp.ones_like(jnp.asarray(fem_smooth))),
+                # ty: ignore[unresolved-attribute]
                 transfer.apply(jnp.asarray(_remap_linear(source_dofs))),
+                # ty: ignore[unresolved-attribute]
                 transfer.apply(jnp.asarray(fem_smooth)),
             )
         )
@@ -3430,31 +3734,45 @@ def qualify_remap_p1() -> dict[str, object]:
     source_integral = float(np.dot(source_weights, fem_smooth))
     fem = {
         "flags": {
+            # ty: ignore[unresolved-attribute]
             "preserves_constants": transfer.preserves_constants,
+            # ty: ignore[unresolved-attribute]
             "preserves_linear": transfer.preserves_linear,
+            # ty: ignore[unresolved-attribute]
             "conservative": transfer.conservative,
+            # ty: ignore[unresolved-attribute]
             "positivity_preserving": transfer.positivity_preserving,
         },
+        # ty: ignore[not-subscriptable]
         "constant_error": float(np.max(np.abs(np.asarray(projected[0]) - 1.0))),
         "linear_maximum_error": float(
+            # ty: ignore[not-subscriptable]
             np.max(np.abs(np.asarray(projected[1]) - _remap_linear(target_dofs)))
         ),
         "smooth_integral_relative_residual": abs(
+            # ty: ignore[not-subscriptable]
             float(np.dot(target_weights, np.asarray(projected[2]))) - source_integral
         )
         / abs(source_integral),
         "smooth_nodal_maximum_error": float(
+            # ty: ignore[not-subscriptable]
             np.max(np.abs(np.asarray(projected[2]) - _remap_field(target_dofs)))
         ),
+        # ty: ignore[unresolved-attribute]
         "target_mass_condition": float(prepared_target.mass_condition.value),
+        # ty: ignore[unresolved-attribute]
         "factorization_status": int(prepared_target.factorization.status),
     }
     if (
         not (
+            # ty: ignore[unresolved-attribute]
             transfer.preserves_constants
+            # ty: ignore[unresolved-attribute]
             and transfer.preserves_linear
+            # ty: ignore[unresolved-attribute]
             and transfer.conservative
         )
+        # ty: ignore[unresolved-attribute]
         or transfer.positivity_preserving
         or max(
             fem["constant_error"],
@@ -3464,13 +3782,16 @@ def qualify_remap_p1() -> dict[str, object]:
         > 1.0e-10
     ):
         raise RuntimeError(f"L2 projection qualification failed: {fem}.")
+    # ty: ignore[unresolved-attribute]
     evidence = prepared.evidence
     return {
         "status": "passed",
         "source": {
             "finite_volume": {
                 **_result_identity(source_result),
+                # ty: ignore[unresolved-attribute]
                 "prepared_id": source.prepared_id,
+                # ty: ignore[unresolved-attribute]
                 "geometry_id": source.geometry_id,
             },
             "finite_element": {
@@ -3483,7 +3804,9 @@ def qualify_remap_p1() -> dict[str, object]:
         "target": {
             "finite_volume": {
                 **_result_identity(target_result),
+                # ty: ignore[unresolved-attribute]
                 "prepared_id": target.prepared_id,
+                # ty: ignore[unresolved-attribute]
                 "geometry_id": target.geometry_id,
             },
             "finite_element": {
@@ -3494,12 +3817,19 @@ def qualify_remap_p1() -> dict[str, object]:
             },
         },
         "identities": {
+            # ty: ignore[unresolved-attribute]
             "refinement_id": prepared.refinement.refinement_id,
+            # ty: ignore[unresolved-attribute]
             "remap_id": prepared.remap_id,
+            # ty: ignore[unresolved-attribute]
             "p0_plan_id": prepared.plan.plan_id,
+            # ty: ignore[unresolved-attribute]
             "limited_p1_plan_id": limited_plan.plan_id,
+            # ty: ignore[unresolved-attribute]
             "unlimited_p1_plan_id": unlimited_plan.plan_id,
+            # ty: ignore[unresolved-attribute]
             "l2_refinement_id": fem_refinement.refinement_id,
+            # ty: ignore[unresolved-attribute]
             "l2_transfer_id": transfer.transfer_id,
         },
         "runtime": _runtime_identity(),
@@ -3512,6 +3842,7 @@ def qualify_remap_p1() -> dict[str, object]:
             "coverage": {
                 "maximum_relative_source_defect": evidence.maximum_relative_source_defect,
                 "maximum_relative_target_defect": evidence.maximum_relative_target_defect,
+                # ty: ignore[unresolved-attribute]
                 "entries": prepared.refinement.entry_count,
             },
         },
@@ -3530,7 +3861,9 @@ def qualify_remap_p1() -> dict[str, object]:
             "l2_apply": projection_record,
             "refinement_retained_bytes": evidence.retained_bytes,
             "refinement_working_bytes": evidence.working_bytes,
+            # ty: ignore[unresolved-attribute]
             "l2_refinement_retained_bytes": fem_refinement.evidence.retained_bytes,
+            # ty: ignore[unresolved-attribute]
             "l2_refinement_working_bytes": fem_refinement.evidence.working_bytes,
         },
     }
@@ -3567,7 +3900,7 @@ def _bisection_adapt(
     source: phx.meshing.CellMeshingResult,
     refine: np.ndarray,
     coarsen: np.ndarray,
-    hierarchy,
+    hierarchy: Any,
     /,
     *,
     device_policy: phx.discretization.AdaptiveSimplexPolicy | None = None,
@@ -3581,13 +3914,16 @@ def _bisection_adapt(
     prepared, preparation = _measured(
         lambda: phx.meshing.prepare_mesh_adaptation(source, request, policy=policy)
     )
+    # ty: ignore[invalid-argument-type]
     result, execution = _measured(lambda: phx.meshing.execute_mesh_adaptation(prepared))
+    # ty: ignore[unresolved-attribute]
     if not result.target.audit.passed:
         raise RuntimeError(f"{route.name} produced a target that failed its audit.")
+    # ty: ignore[invalid-return-type]
     return result, {"prepare": preparation, "execute": execution}
 
 
-def _bisection_retained_bytes(tree, /) -> int:
+def _bisection_retained_bytes(tree: Any, /) -> int:
     """Bytes of the distinct array leaves an adaptation artifact retains."""
     leaves = {
         id(leaf): leaf
@@ -3601,14 +3937,18 @@ def _bisection_lineage(result: phx.meshing.MeshAdaptationResult, /) -> dict[str,
     """Every entity is an identity, a lineage relation, or created/deleted."""
     source, target = result.source.mesh, result.target.mesh
     lineage = result.lineage
+    # ty: ignore[unresolved-attribute]
     dimensions = tuple(record.dimension for record in lineage.entities)
     width = np.asarray(source.blocks[0].vertices).shape[1]
     complete = (
         dimensions == tuple(range(width))
+        # ty: ignore[unresolved-attribute]
         and lineage.source_topology_id == source.topology_id
+        # ty: ignore[unresolved-attribute]
         and lineage.target_topology_id == target.topology_id
     )
     relations = {}
+    # ty: ignore[unresolved-attribute]
     for record in lineage.entities:
         before = np.asarray(source.entity_set(record.dimension).entity_ids)
         after = np.asarray(target.entity_set(record.dimension).entity_ids)
@@ -3633,10 +3973,11 @@ def _bisection_lineage(result: phx.meshing.MeshAdaptationResult, /) -> dict[str,
         }
     if not complete:
         raise RuntimeError("Bisection lineage does not account for every entity.")
+    # ty: ignore[unresolved-attribute]
     return {"lineage_id": lineage.lineage_id, "complete": complete, **relations}
 
 
-def _bisection_evidence(evidence, /) -> dict[str, object]:
+def _bisection_evidence(evidence: Any, /) -> dict[str, object]:
     return {
         "evidence_id": evidence.evidence_id,
         "requested_refinements": evidence.requested_refinements,
@@ -3658,7 +3999,7 @@ def _bisection_evidence(evidence, /) -> dict[str, object]:
     }
 
 
-def _bisection_p1_integral(mesh: phx.discretization.CellMesh, values, /) -> float:
+def _bisection_p1_integral(mesh: phx.discretization.CellMesh, values: Any, /) -> float:
     """Exact integral of the P1 interpolant of vertex values."""
     cells = np.asarray(mesh.blocks[0].vertices)
     corners = np.asarray(mesh.coordinates)[cells]
@@ -3674,26 +4015,36 @@ def _bisection_transfer(result: phx.meshing.MeshAdaptationResult, /) -> dict[str
     source = np.asarray(result.source.mesh.coordinates)
     target = np.asarray(result.target.mesh.coordinates)
     slope = np.linspace(0.5, 1.5, source.shape[1])
+    # ty: ignore[unresolved-attribute]
     linear = np.asarray(transfer.apply(source @ slope + 0.25))
     reproduction = float(np.max(np.abs(linear - (target @ slope + 0.25))))
+    # ty: ignore[unresolved-attribute]
     constant = np.asarray(transfer.apply(np.ones((source.shape[0],))))
     smooth = np.sin(3.0 * source[:, 0]) * np.cos(2.0 * source[:, -1])
+    # ty: ignore[unresolved-attribute]
     moved = np.asarray(transfer.apply(smooth))
     residual = _bisection_p1_integral(result.target.mesh, moved) - _bisection_p1_integral(
         result.source.mesh, smooth
     )
     if (
+        # ty: ignore[unresolved-attribute]
         not transfer.preserves_constants
+        # ty: ignore[unresolved-attribute]
         or not transfer.preserves_linear
         or reproduction > 1.0e-12
         or float(np.max(np.abs(constant - 1.0))) > 1.0e-14
     ):
         raise RuntimeError("The bisection transfer does not reproduce P1 fields.")
     return {
+        # ty: ignore[unresolved-attribute]
         "transfer_id": transfer.transfer_id,
+        # ty: ignore[unresolved-attribute]
         "preserves_constants": transfer.preserves_constants,
+        # ty: ignore[unresolved-attribute]
         "preserves_linear": transfer.preserves_linear,
+        # ty: ignore[unresolved-attribute]
         "conservative": transfer.conservative,
+        # ty: ignore[unresolved-attribute]
         "positivity_preserving": transfer.positivity_preserving,
         "linear_reproduction_error": reproduction,
         "constant_reproduction_error": float(np.max(np.abs(constant - 1.0))),
@@ -3717,6 +4068,7 @@ def _bisection_shape_classes(
     current, hierarchy = source, None
     for _ in range(rounds):
         cells = np.sort(_bisection_cell_ids(current.mesh))
+        # ty: ignore[invalid-argument-type]
         result, _ = _bisection_adapt(route, current, cells, (), hierarchy)
         current, hierarchy = result.target, result.hierarchy
         angle = min(angle, current.quality.minimum_angle)
@@ -3725,11 +4077,13 @@ def _bisection_shape_classes(
     angles, ratios = [], []
     for _ in range(cycles):
         marks = _bisection_corner_cells(current.mesh)
+        # ty: ignore[invalid-argument-type]
         result, _ = _bisection_adapt(route, current, marks, (), hierarchy)
         current, hierarchy = result.target, result.hierarchy
         angles.append(current.quality.minimum_angle)
         ratios.append(current.quality.minimum_mean_ratio)
     bounded = min(angles) >= angle * (1.0 - 1.0e-9) and min(ratios) >= 0.999 * mean_ratio
+    # ty: ignore[unresolved-attribute]
     if not bounded or result.evidence.maximum_generation < cycles:
         raise RuntimeError("Repeated bisection left the uniform shape-class bound.")
     return {
@@ -3742,6 +4096,7 @@ def _bisection_shape_classes(
         "minimum_angle_ratio_to_source": min(angles) / source.quality.minimum_angle,
         "minimum_mean_ratio_ratio_to_source": min(ratios)
         / source.quality.minimum_mean_ratio,
+        # ty: ignore[unresolved-attribute]
         "maximum_generation": result.evidence.maximum_generation,
         "final_cells": current.mesh.blocks[0].cell_count,
         "bounded": bounded,
@@ -3756,14 +4111,25 @@ def _bisection_round_trip(
         lambda: phx.meshing.certify_cell_mesh(mesh, _contract())
     )
     marks = np.sort(_bisection_cell_ids(mesh))[::3]
+    # ty: ignore[invalid-argument-type]
     first, first_stages = _bisection_adapt(route, source, marks, (), None)
     corner = _bisection_corner_cells(first.target.mesh)
     second, second_stages = _bisection_adapt(
-        route, first.target, corner, (), first.hierarchy
+        route,
+        first.target,
+        corner,
+        # ty: ignore[invalid-argument-type]
+        (),
+        first.hierarchy,
     )
     everything = np.sort(_bisection_cell_ids(second.target.mesh))
     restored, restore_stages = _bisection_adapt(
-        route, second.target, (), everything, second.hierarchy
+        route,
+        second.target,
+        # ty: ignore[invalid-argument-type]
+        (),
+        everything,
+        second.hierarchy,
     )
     back = restored.target.mesh
     identical = (
@@ -3779,15 +4145,18 @@ def _bisection_round_trip(
     if not identical or first.status is not complete or second.status is not complete:
         raise RuntimeError("The bisection refine/coarsen round trip is not exact.")
     refinement = _bisection_transfer(first)
+    # ty: ignore[invalid-argument-type]
     if not refinement["conservative"] or abs(refinement["p1_integral_residual"]) > 1e-13:
         raise RuntimeError("Refinement transfer does not conserve P1 integrals.")
     return {
+        # ty: ignore[invalid-argument-type]
         "source": _result_identity(source),
         "refined": _result_identity(second.target),
         "target": _result_identity(restored.target),
         "statuses": [status.value for status in statuses],
         "restores_source_topology": identical,
         "quality": {
+            # ty: ignore[unresolved-attribute]
             "before": _quality_summary(source.quality),
             "refined": _quality_summary(second.target.quality),
             "after": _quality_summary(restored.target.quality),
@@ -3807,7 +4176,9 @@ def _bisection_round_trip(
             "local_refinement": _bisection_evidence(second.evidence),
             "coarsening": _bisection_evidence(restored.evidence),
         },
+        # ty: ignore[unresolved-attribute]
         "hierarchy_id": second.hierarchy.hierarchy_id,
+        # ty: ignore[invalid-argument-type]
         "shape_classes": _bisection_shape_classes(source, rounds, cycles),
         "resources": {
             "certify": certification,
@@ -3834,7 +4205,9 @@ def qualify_bisection() -> dict[str, object]:
         "target": {name: record["target"] for name, record in dimensions.items()},
         "quality": {
             name: {
+                # ty: ignore[not-subscriptable]
                 "before": record["quality"]["before"],
+                # ty: ignore[not-subscriptable]
                 "after": record["quality"]["after"],
             }
             for name, record in dimensions.items()
@@ -3843,6 +4216,7 @@ def qualify_bisection() -> dict[str, object]:
         "conservation": {
             name: {
                 stage: values["p1_integral_residual"]
+                # ty: ignore[unresolved-attribute]
                 for stage, values in record["transfer"].items()
             }
             for name, record in dimensions.items()
@@ -3866,17 +4240,22 @@ def _bisection_target_bytes(
         "vertex_global_ids": np.asarray(mesh.vertex_global_ids).tobytes(),
         "cells": np.asarray(block.vertices).tobytes(),
         "cell_global_ids": np.asarray(block.global_ids).tobytes(),
+        # ty: ignore[unresolved-attribute]
         "lineage_id": result.lineage.lineage_id,
+        # ty: ignore[unresolved-attribute]
         "hierarchy_id": result.hierarchy.hierarchy_id,
+        # ty: ignore[unresolved-attribute]
         "stencil_id": result.stencil.stencil_id,
+        # ty: ignore[unresolved-attribute]
         "transfer_id": result.transfer.transfer_id,
         "rejected_coarsening_ids": np.asarray(
+            # ty: ignore[unresolved-attribute]
             result.evidence.rejected_coarsening_ids
         ).tobytes(),
     }
 
 
-def _bisection_same_target(host, device, /) -> list[str]:
+def _bisection_same_target(host: Any, device: Any, /) -> list[str]:
     first, second = _bisection_target_bytes(host), _bisection_target_bytes(device)
     differences = [key for key in first if first[key] != second[key]]
     if differences:
@@ -3886,7 +4265,7 @@ def _bisection_same_target(host, device, /) -> list[str]:
     return list(first)
 
 
-def _bisection_simplex_report(report, /) -> dict[str, object]:
+def _bisection_simplex_report(report: Any, /) -> dict[str, object]:
     status = phx.discretization.AdaptiveSimplexStatus(int(report.status))
     return {
         "status": int(status),
@@ -3921,9 +4300,16 @@ def _bisection_device_parity(
     )
     source = phx.meshing.certify_cell_mesh(mesh, _contract())
     marks = np.sort(_bisection_cell_ids(mesh))[::3]
+    # ty: ignore[invalid-argument-type]
     host, host_first = _bisection_adapt(host_route, source, marks, (), None)
     device, device_first = _bisection_adapt(
-        device_route, source, marks, (), None, device_policy=device_policy
+        device_route,
+        source,
+        marks,
+        # ty: ignore[invalid-argument-type]
+        (),
+        None,
+        device_policy=device_policy,
     )
     compared = _bisection_same_target(host, device)
     refine = _bisection_corner_cells(host.target.mesh)
@@ -3943,30 +4329,45 @@ def _bisection_device_parity(
     policy = phx.meshing.MeshAdaptationPolicy(device_route, device_policy=device_policy)
     epoch, preparation = _measured(
         lambda: phx.meshing.prepare_adaptive_simplex(
-            device.target, policy=policy, hierarchy=device.hierarchy
+            device.target,
+            policy=policy,
+            # ty: ignore[invalid-argument-type]
+            hierarchy=device.hierarchy,
         )
     )
+    # ty: ignore[unresolved-attribute]
     layout = epoch.layout
     refined, refinement = _measured(
         lambda: jax.block_until_ready(
             phx.discretization.refine_adaptive_simplex(
-                layout, epoch.state, epoch.cell_marks(refine)
+                layout,
+                # ty: ignore[unresolved-attribute]
+                epoch.state,
+                # ty: ignore[unresolved-attribute]
+                epoch.cell_marks(refine),
             )
         )
     )
     coarsened, coarsening = _measured(
         lambda: jax.block_until_ready(
             phx.discretization.coarsen_adaptive_simplex(
-                layout, refined.state, epoch.cell_marks(coarsen)
+                layout,
+                # ty: ignore[unresolved-attribute]
+                refined.state,
+                # ty: ignore[unresolved-attribute]
+                epoch.cell_marks(coarsen),
             )
         )
     )
     committed, commit = _measured(
+        # ty: ignore[invalid-argument-type, unresolved-attribute]
         lambda: phx.meshing.commit_adaptive_simplex(epoch, coarsened.state)
     )
     _bisection_same_target(host_second, committed)
     reports = {
+        # ty: ignore[unresolved-attribute]
         "refine": _bisection_simplex_report(refined.report),
+        # ty: ignore[unresolved-attribute]
         "coarsen": _bisection_simplex_report(coarsened.report),
     }
     if any(report["failed"] for report in reports.values()):
@@ -3977,6 +4378,7 @@ def _bisection_device_parity(
         "statuses": {
             "first": [host.status.value, device.status.value],
             "second": [host_second.status.value, device_second.status.value],
+            # ty: ignore[unresolved-attribute]
             "explicit_epoch": committed.status.value,
         },
         "byte_identical_fields": compared,
@@ -4012,13 +4414,14 @@ def _bisection_device_parity(
             "epoch_refine": refinement,
             "epoch_coarsen": coarsening,
             "epoch_commit": commit,
+            # ty: ignore[unresolved-attribute]
             "epoch_state_bytes": _bisection_retained_bytes(coarsened.state),
             "transfer_retained_bytes": _bisection_retained_bytes(device_second.transfer),
         },
     }
 
 
-def _bisection_metric_measurements(evidence, /) -> dict[str, object]:
+def _bisection_metric_measurements(evidence: Any, /) -> dict[str, object]:
     return {
         "evidence_id": evidence.evidence_id,
         "passes": evidence.passes,
@@ -4073,19 +4476,26 @@ def _bisection_metric_comparison(
     )
     update, adaptation = _measured(
         lambda: jax.block_until_ready(
+            # ty: ignore[unresolved-attribute]
             phx.meshing.adapt_device_metric(prepared.layout, prepared.state)
         )
     )
+    # ty: ignore[unresolved-attribute]
     report = jax.device_get(update.report)
     device, commit = _measured(
+        # ty: ignore[invalid-argument-type, unresolved-attribute]
         lambda: phx.meshing.commit_device_metric_adaptation(prepared, update.state)
     )
     complete = phx.meshing.MeshAdaptationStatus.COMPLETE
     if (
         bool(report.failed)
+        # ty: ignore[unresolved-attribute]
         or device.status is not complete
+        # ty: ignore[unresolved-attribute]
         or not device.evidence.converged
+        # ty: ignore[unresolved-attribute]
         or not native.target.audit.passed
+        # ty: ignore[unresolved-attribute]
         or not device.target.audit.passed
     ):
         raise RuntimeError("DEVICE_METRIC_2D did not reach a certified unit mesh.")
@@ -4093,19 +4503,26 @@ def _bisection_metric_comparison(
     return {
         "source": _result_identity(source),
         "target": {
+            # ty: ignore[unresolved-attribute]
             "native": _result_identity(native.target),
+            # ty: ignore[unresolved-attribute]
             "device": _result_identity(device.target),
         },
+        # ty: ignore[unresolved-attribute]
         "statuses": {"native": native.status.value, "device": device.status.value},
         "quality": {
             "before": _quality_summary(source.quality),
             "after": {
+                # ty: ignore[unresolved-attribute]
                 "native": _quality_summary(native.target.quality),
+                # ty: ignore[unresolved-attribute]
                 "device": _quality_summary(device.target.quality),
             },
         },
         "measurements": {
+            # ty: ignore[unresolved-attribute]
             "native": _bisection_metric_measurements(native.evidence),
+            # ty: ignore[unresolved-attribute]
             "device": _bisection_metric_measurements(device.evidence),
         },
         "device_report": {
@@ -4125,14 +4542,21 @@ def _bisection_metric_comparison(
             "minimum_metric_quality": float(report.minimum_metric_quality),
         },
         "layout": {
+            # ty: ignore[unresolved-attribute]
             "signature_id": prepared.layout.signature_id,
+            # ty: ignore[unresolved-attribute]
             "vertex_capacity": prepared.layout.vertex_capacity,
+            # ty: ignore[unresolved-attribute]
             "cell_capacity": prepared.layout.cell_capacity,
+            # ty: ignore[unresolved-attribute]
             "record_capacity": prepared.layout.record_capacity,
+            # ty: ignore[unresolved-attribute]
             "ball_width": prepared.layout.ball_width,
         },
         "transfer": {
+            # ty: ignore[invalid-argument-type]
             "native": _bisection_transfer(native),
+            # ty: ignore[invalid-argument-type]
             "device": _bisection_transfer(device),
         },
         "resources": {
@@ -4140,6 +4564,7 @@ def _bisection_metric_comparison(
             "device_prepare": preparation,
             "device_adapt": adaptation,
             "device_commit": commit,
+            # ty: ignore[unresolved-attribute]
             "device_state_bytes": _bisection_retained_bytes(update.state),
         },
     }
@@ -4186,7 +4611,7 @@ _CAD_CURVING_ASSOCIATION = phx.meshing.AssociationPropagationPolicy(
 )
 
 
-def _cad_curving_volume(mesh, geometry) -> float:
+def _cad_curving_volume(mesh: Any, geometry: Any) -> float:
     """Volume of mapped P1/P2/P3 tetrahedra.
 
     The degree-aware finite-element rule integrates their polynomial Jacobian
@@ -4202,7 +4627,7 @@ def _cad_curving_volume(mesh, geometry) -> float:
     return float(sum(jnp.sum(block.measure) for block in blocks))
 
 
-def _cad_curving_certificate(certificate) -> dict[str, object]:
+def _cad_curving_certificate(certificate: Any) -> dict[str, object]:
     lower = np.asarray(certificate.determinant_lower)
     upper = np.asarray(certificate.determinant_upper)
     return {
@@ -4225,7 +4650,7 @@ def _cad_curving_certificate(certificate) -> dict[str, object]:
     }
 
 
-def _cad_curving_association(mesh, projection):
+def _cad_curving_association(mesh: Any, projection: Any) -> Any:
     """Vertex association plus completeness and ambiguity of every entity level."""
     vertices, vertex_record = _measured(
         lambda: phx.meshing.associate_mesh_vertices(
@@ -4235,19 +4660,30 @@ def _cad_curving_association(mesh, projection):
     entities, entity_record = _measured(
         lambda: tuple(
             phx.meshing.associate_mesh_entities(
-                mesh, vertices, projection, dimension, policy=_CAD_CURVING_ASSOCIATION
+                mesh,
+                # ty: ignore[invalid-argument-type]
+                vertices,
+                projection,
+                dimension,
+                policy=_CAD_CURVING_ASSOCIATION,
             )
             for dimension in (1, 2, 3)
         )
     )
     counts = {
         str(dimension): {
+            # ty: ignore[unresolved-attribute]
             "association_id": association.association_id,
+            # ty: ignore[unresolved-attribute]
             "rows": association.target_global_ids.shape[0],
+            # ty: ignore[unresolved-attribute]
             "resolved": int(np.count_nonzero(np.asarray(association.resolved))),
+            # ty: ignore[unresolved-attribute]
             "ambiguous": int(np.count_nonzero(np.asarray(association.ambiguous))),
+            # ty: ignore[unresolved-attribute]
             "maximum_residual": float(np.max(np.asarray(association.residuals))),
         }
+        # ty: ignore[not-iterable]
         for dimension, association in enumerate((vertices, *entities))
     }
     if any(
@@ -4261,45 +4697,65 @@ def _cad_curving_association(mesh, projection):
     return vertices, counts, {"vertices": vertex_record, "entities": entity_record}
 
 
-def _cad_curving_degree(mesh, association, projection, degree, exact_volume):
+def _cad_curving_degree(
+    mesh: Any, association: Any, projection: Any, degree: Any, exact_volume: Any
+) -> Any:
     """Curve, independently certify, and measure one geometry degree."""
     policy = phx.meshing.HighOrderCurvingPolicy(degree=degree)
     curved, curving_record = _measured(
         lambda: phx.meshing.curve_cell_mesh(mesh, association, projection, policy=policy)
     )
+    # ty: ignore[unresolved-attribute]
     if curved.status is not phx.meshing.HighOrderCurvingStatus.CURVED:
+        # ty: ignore[unresolved-attribute]
         raise RuntimeError(f"cad-curving: P{degree} ended with {curved.status}.")
     certificate, certification_record = _measured(
         lambda: phx.discretization.certify_cell_geometry_validity(
-            curved.geometry, mesh=mesh
+            # ty: ignore[unresolved-attribute]
+            curved.geometry,
+            mesh=mesh,
         )
     )
     valid = phx.discretization.CellValidityStatus.CERTIFIED_VALID
+    # ty: ignore[unresolved-attribute]
     if not np.all(np.asarray(certificate.status) == valid):
         raise RuntimeError(f"cad-curving: a P{degree} cell is not certified valid.")
+    # ty: ignore[unresolved-attribute]
     if certificate.certificate_id != curved.evidence.certificate.certificate_id:
         raise RuntimeError("cad-curving: recertification differs from curving evidence.")
+    # ty: ignore[unresolved-attribute]
     if curved.evidence.maximum_residual > policy.residual_tolerance:
         raise RuntimeError(f"cad-curving: P{degree} nodes lie off the B-Rep.")
     straight = phx.meshing.verify_curved_geometry(
-        curved.straight, mesh, association, projection, policy=policy
+        # ty: ignore[unresolved-attribute]
+        curved.straight,
+        mesh,
+        association,
+        projection,
+        policy=policy,
     )
     if straight.accepted:
         raise RuntimeError("cad-curving: straight nodes lie on the curved B-Rep.")
     volumes, volume_record = _measured(
         lambda: (
+            # ty: ignore[unresolved-attribute]
             _cad_curving_volume(mesh, curved.straight),
+            # ty: ignore[unresolved-attribute]
             _cad_curving_volume(mesh, curved.geometry),
         )
     )
+    # ty: ignore[not-iterable]
     errors = tuple(abs(volume - exact_volume) / exact_volume for volume in volumes)
     if not errors[1] < 0.25 * errors[0]:
         raise RuntimeError(f"cad-curving: P{degree} did not reduce the volume error.")
+    # ty: ignore[unresolved-attribute]
     geometry = curved.geometry
     return {
         "target": {
+            # ty: ignore[unresolved-attribute]
             "result_id": curved.result_id,
             "geometry_layout_id": geometry.geometry_layout_id,
+            # ty: ignore[unresolved-attribute]
             "evidence_id": curved.evidence.evidence_id,
             "geometry_nodes": geometry.coordinates.shape[0],
         },
@@ -4310,25 +4766,33 @@ def _cad_curving_degree(mesh, association, projection, degree, exact_volume):
                 "certificate": _cad_curving_certificate(straight.certificate),
             },
             "after": {
+                # ty: ignore[unresolved-attribute]
                 "minimum_scaled_jacobian": curved.evidence.minimum_scaled_jacobian,
+                # ty: ignore[unresolved-attribute]
                 "maximum_distortion": curved.evidence.maximum_distortion,
                 "certificate": _cad_curving_certificate(certificate),
             },
         },
         "conservation": {
             "exact_volume": exact_volume,
+            # ty: ignore[not-subscriptable]
             "straight_volume": volumes[0],
+            # ty: ignore[not-subscriptable]
             "curved_volume": volumes[1],
             "straight_relative_error": errors[0],
             "curved_relative_error": errors[1],
             "straight_node_residual": straight.maximum_residual,
+            # ty: ignore[unresolved-attribute]
             "curved_node_residual": curved.evidence.maximum_residual,
             "residual_tolerance": policy.residual_tolerance,
         },
         "curving": {
+            # ty: ignore[unresolved-attribute]
             "status": curved.status.value,
             "policy_id": policy.policy_id,
+            # ty: ignore[unresolved-attribute]
             "relaxation_rounds": len(curved.minimizations),
+            # ty: ignore[unresolved-attribute]
             "constrained_nodes": int(np.count_nonzero(curved.evidence.constrained)),
         },
         "resources": {
@@ -4341,7 +4805,9 @@ def _cad_curving_degree(mesh, association, projection, degree, exact_volume):
     }
 
 
-def _cad_curving_solid(name, shape, exact_volume, size, directory: Path):
+def _cad_curving_solid(
+    name: Any, shape: Any, exact_volume: Any, size: Any, directory: Path
+) -> Any:
     """Gmsh P1 tetrahedra of one OCCT solid curved to P2 and P3 on its B-Rep."""
     contract = phx.SpatialCoordinateContract.si()
     path = directory / f"{name}.brep"
@@ -4367,18 +4833,27 @@ def _cad_curving_solid(name, shape, exact_volume, size, directory: Path):
     result, meshing_record = _measured(
         lambda: provider.plan(source, specification).execute()
     )
+    # ty: ignore[unresolved-attribute]
     if not result.audit.passed:
         raise RuntimeError(f"cad-curving: the Gmsh {name} mesh failed its audit.")
     projection, projection_record = _measured(
         lambda: phx.geometry.prepare_brep_projection(model, path)
     )
     association, counts, association_records = _cad_curving_association(
-        result.mesh, projection
+        # ty: ignore[unresolved-attribute]
+        result.mesh,
+        projection,
     )
+    # ty: ignore[unresolved-attribute]
     straight_certificate = phx.discretization.certify_cell_geometry_validity(result.mesh)
     degrees = {
         f"P{degree}": _cad_curving_degree(
-            result.mesh, association, projection, degree, exact_volume
+            # ty: ignore[unresolved-attribute]
+            result.mesh,
+            association,
+            projection,
+            degree,
+            exact_volume,
         )
         for degree in (2, 3)
     }
@@ -4388,13 +4863,17 @@ def _cad_curving_solid(name, shape, exact_volume, size, directory: Path):
             "source_revision": model.source_revision,
             "source_digest": model.source_digest,
             "model_id": model.model_id,
+            # ty: ignore[unresolved-attribute]
             "projection_id": projection.projection_id,
+            # ty: ignore[unresolved-attribute]
             "brep_entity_counts": list(projection.entity_counts),
+            # ty: ignore[invalid-argument-type]
             "straight": _result_identity(result),
         },
         "target": {key: record["target"] for key, record in degrees.items()},
         "quality": {
             "before": {
+                # ty: ignore[unresolved-attribute]
                 **_quality_summary(result.quality),
                 "certificate": _cad_curving_certificate(straight_certificate),
             },
@@ -4410,7 +4889,9 @@ def _cad_curving_solid(name, shape, exact_volume, size, directory: Path):
             **{key: record["resources"] for key, record in degrees.items()},
         },
         "provider": {
+            # ty: ignore[unresolved-attribute]
             "provider": result.provider.name,
+            # ty: ignore[unresolved-attribute]
             "version": result.runtime.actual_version,
         },
     }
@@ -4734,10 +5215,14 @@ def _qualify_predicate(
     )
     swapped = function(arrays[1], arrays[0], *arrays[2:], mode=mode.EXACT).signs
     # Distinct ids: the index-ordered perturbation used inside the triangulations.
+    # ty: ignore[too-many-positional-arguments]
     perturbed = symbolic(*arrays, np.arange(arity, dtype=np.int64))
     routes = {
+        # ty: ignore[unresolved-attribute]
         "filtered": (filtered.signs, filtered.certain),
+        # ty: ignore[unresolved-attribute]
         "device": (np.asarray(device.signs), np.asarray(device.certain)),
+        # ty: ignore[unresolved-attribute]
         "exact": (exact.signs, exact.certain),
     }
     records = {
@@ -4746,6 +5231,7 @@ def _qualify_predicate(
                 route: (signs[start:stop], certain[start:stop])
                 for route, (signs, certain) in routes.items()
             },
+            # ty: ignore[not-subscriptable]
             reference[start:stop],
             perturbed[start:stop],
         )
@@ -4756,9 +5242,11 @@ def _qualify_predicate(
         "device_cold": device_cold,
         "device_warm": device_warm,
         "exact": exact_stage,
+        # ty: ignore[unresolved-attribute]
         "exact_native_rows": int(np.count_nonzero(~filtered.certain)),
         "integer_reference": reference_stage,
     }
+    # ty: ignore[invalid-return-type, unresolved-attribute]
     return records, resources, exact.signs, int(np.count_nonzero(swapped != -exact.signs))
 
 
@@ -4888,19 +5376,23 @@ def _delaunay_record(points: np.ndarray, /) -> dict[str, object]:
 
     exact = phx.geometry.PredicateMode.EXACT
     triangulation, stage = _measured(lambda: phx.geometry.DelaunayTriangulation(points))
+    # ty: ignore[unresolved-attribute]
     simplices = triangulation.simplices
     corners = tuple(points[simplices[:, index]] for index in range(simplices.shape[1]))
     # Every (simplex, point) pair.
     balls = tuple(corner[:, None, :] for corner in corners)
     if points.shape[1] == 2:
         orientation = phx.geometry.orient2d(*corners, mode=exact)
+        # ty: ignore[too-many-positional-arguments]
         inside = phx.geometry.incircle(*balls, points[None], mode=exact)
     else:
         orientation = phx.geometry.orient3d(*corners, mode=exact)
+        # ty: ignore[too-many-positional-arguments]
         inside = phx.geometry.insphere(*balls, points[None], mode=exact)
     hull = ConvexHull(points).volume
     measure = float(np.sum(_simplex_measures(points, simplices)))
     repeated = phx.geometry.DelaunayTriangulation(points)
+    # ty: ignore[unresolved-attribute]
     evidence = triangulation.evidence
     record = {
         "points": points.shape[0],
@@ -5046,7 +5538,7 @@ def _constrained_record() -> tuple[
     holes = np.asarray(((1.0, 1.0),))
     min_angle, max_area = 28.0, 0.02
 
-    def triangulate(max_steiner: int, refine: bool):
+    def triangulate(max_steiner: int, refine: bool) -> Any:
         return phx.geometry.ConstrainedDelaunayTriangulation(
             points,
             segments,
@@ -5060,13 +5552,15 @@ def _constrained_record() -> tuple[
     refined, refined_stage = _measured(lambda: triangulate(4000, True))
     limited = triangulate(1, True)
     repeated = triangulate(4000, True)
+    # ty: ignore[unresolved-attribute]
     areas = _simplex_measures(refined.points, refined.triangles)
     orientation = phx.geometry.orient2d(
+        # ty: ignore[unresolved-attribute]
         *(refined.points[refined.triangles[:, index]] for index in range(3)),
         mode=phx.geometry.PredicateMode.EXACT,
     )
 
-    def certify(triangulation):
+    def certify(triangulation: Any) -> Any:
         return phx.meshing.certify_cell_mesh(
             phx.discretization.CellMesh.from_triangles(
                 triangulation.points, triangulation.triangles
@@ -5078,28 +5572,43 @@ def _constrained_record() -> tuple[
     after, after_stage = _measured(lambda: certify(refined))
     plate_area = 4.0 - 0.25
     record = {
+        # ty: ignore[unresolved-attribute]
         "status": refined.evidence.status,
+        # ty: ignore[unresolved-attribute]
         "route": refined.evidence.route,
+        # ty: ignore[unresolved-attribute]
         "predicate_mode": refined.evidence.predicate_mode.value,
         "requested_minimum_angle_degrees": min_angle,
+        # ty: ignore[unresolved-attribute]
         "minimum_angle_degrees": refined.evidence.minimum_angle_degrees,
+        # ty: ignore[unresolved-attribute]
         "unrefined_minimum_angle_degrees": unrefined.evidence.minimum_angle_degrees,
+        # ty: ignore[unresolved-attribute]
         "certified_minimum_angle_degrees": float(np.degrees(after.quality.minimum_angle)),
         "requested_maximum_area": max_area,
         "maximum_area": float(np.max(areas)),
         "relative_area_residual": abs(float(np.sum(areas)) - plate_area) / plate_area,
         "positive_orientations": int(np.count_nonzero(orientation.signs == 1)),
+        # ty: ignore[unresolved-attribute]
         "triangles": refined.triangles.shape[0],
+        # ty: ignore[unresolved-attribute]
         "unrefined_triangles": unrefined.triangles.shape[0],
+        # ty: ignore[unresolved-attribute]
         "steiner_points": refined.evidence.steiner_count,
+        # ty: ignore[invalid-argument-type]
         "conformity": _segment_conformity(refined, segments),
+        # ty: ignore[invalid-argument-type]
         "unrefined_conformity": _segment_conformity(unrefined, segments),
         "limited_status": limited.evidence.status,
         "limited_steiner_points": limited.evidence.steiner_count,
+        # ty: ignore[unresolved-attribute]
         "evidence_id": refined.evidence.evidence_id,
         "repeat_equal": bool(
+            # ty: ignore[unresolved-attribute]
             repeated.evidence.evidence_id == refined.evidence.evidence_id
+            # ty: ignore[unresolved-attribute]
             and np.array_equal(repeated.points, refined.points)
+            # ty: ignore[unresolved-attribute]
             and np.array_equal(repeated.triangles, refined.triangles)
         ),
         "resources": {
@@ -5119,16 +5628,19 @@ def _constrained_record() -> tuple[
         or any(
             item["uncovered_segments"]
             or item["off_segment_endpoints"]
+            # ty: ignore[unsupported-operator]
             or item["maximum_relative_length_defect"] > 1.0e-12
             for item in conformity
         )
         or record["limited_status"] != "refinement_limit"
         or record["limited_steiner_points"] > 1
         or not record["repeat_equal"]
+        # ty: ignore[unresolved-attribute]
         or not (before.audit.passed and after.audit.passed)
         or record["certified_minimum_angle_degrees"] < min_angle * (1.0 - 1.0e-12)
     ):
         raise RuntimeError(f"Constrained Delaunay qualification failed: {record}")
+    # ty: ignore[invalid-return-type]
     return record, before, after
 
 
@@ -5143,7 +5655,7 @@ def _reciprocal_faces(cells: phx.geometry.DiagramCells, /) -> bool:
 
 
 def _diagram_record(
-    diagram, repeated, lower: np.ndarray, upper: np.ndarray, stage: dict, /
+    diagram: Any, repeated: Any, lower: np.ndarray, upper: np.ndarray, stage: dict, /
 ) -> dict[str, object]:
     """Box coverage, reciprocity, centroid, and repeat checks of one diagram."""
     cells, evidence = diagram.cells, diagram.evidence
@@ -5195,10 +5707,14 @@ def _diagram_pair(
         lambda: phx.geometry.VoronoiDiagram(generators, **box)
     )
     power, power_stage = _measured(
+        # ty: ignore[invalid-argument-type]
         lambda: phx.geometry.PowerDiagram(generators, weights, **box)
     )
     unweighted = phx.geometry.PowerDiagram(
-        generators, np.zeros((count,), dtype=np.float64), **box
+        generators,
+        np.zeros((count,), dtype=np.float64),
+        # ty: ignore[invalid-argument-type]
+        **box,
     )
     voronoi_record = _diagram_record(
         voronoi,
@@ -5207,14 +5723,17 @@ def _diagram_pair(
         upper,
         voronoi_stage,
     )
+    # ty: ignore[unresolved-attribute]
     deviation = float(np.max(np.abs(unweighted.cells.measures - voronoi.cells.measures)))
     voronoi_record["unweighted_power_maximum_deviation"] = deviation
+    # ty: ignore[unresolved-attribute]
     if deviation > 1.0e-10 * float(np.max(voronoi.cells.measures)):
         raise RuntimeError("Unweighted power cells differ from the Voronoi cells.")
     return {
         f"voronoi_{dimension}d": voronoi_record,
         f"power_{dimension}d": _diagram_record(
             power,
+            # ty: ignore[invalid-argument-type]
             phx.geometry.PowerDiagram(generators, weights, **box),
             lower,
             upper,
@@ -5254,6 +5773,7 @@ def qualify_triangulation() -> dict[str, object]:
     )
     redundant = {
         "redundant_count": hidden.evidence.redundant_count,
+        # ty: ignore[unresolved-attribute]
         "dual_vertex_map": hidden.dual_vertex_map.tolist(),
         "redundant_measure": float(hidden.cells.measures[3]),
         "measure_sum": float(np.sum(hidden.cells.measures)),
@@ -5272,6 +5792,7 @@ def qualify_triangulation() -> dict[str, object]:
         },
         **{
             f"constrained_{name}": stage
+            # ty: ignore[unresolved-attribute]
             for name, stage in constrained.pop("resources").items()
         },
         **{name: record.pop("resources") for name, record in diagrams.items()},

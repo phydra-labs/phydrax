@@ -22,12 +22,13 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass
+from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
@@ -134,7 +135,7 @@ class BoundaryLayerPolicy(StrictModule, NonTrainableState):
         reduction_factor: float = 0.7,
         simplex_cap: bool = True,
         validity: CellValidityPolicy | None = None,
-    ):
+    ) -> None:
         counts = (
             ("visibility_iterations", visibility_iterations),
             ("proximity_samples", proximity_samples),
@@ -231,7 +232,7 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
     certified_valid_count: int = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
-    def __init__(self, **values):
+    def __init__(self, **values: Any) -> None:
         requested = tuple(float(value) for value in values["requested_thicknesses"])
         if (
             not requested
@@ -354,16 +355,16 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
         self,
         mesh: CellMesh,
         cap: CellMesh | None,
-        wall_vertices,
-        cap_vertices,
-        layer_index,
+        wall_vertices: Any,
+        cap_vertices: Any,
+        layer_index: Any,
         validity: CellValidityCertificate,
         evidence: BoundaryLayerEvidence,
         /,
         *,
         control_id: str,
         policy_id: str,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh) or not isinstance(cap, (CellMesh, type(None))):
             raise TypeError("mesh must be CellMesh and cap CellMesh or None.")
         if not isinstance(validity, CellValidityCertificate):
@@ -459,7 +460,7 @@ def _mesh_faces(mesh: CellMesh, /) -> tuple[np.ndarray, np.ndarray]:
     return faces, np.where(faces[:, 3] < 0, 3, 4).astype(np.int64)
 
 
-def _half_edges(faces: np.ndarray, arity: np.ndarray, /):
+def _half_edges(faces: np.ndarray, arity: np.ndarray, /) -> Any:
     local = np.arange(4)
     valid = local[None, :] < arity[:, None]
     following = np.where(local[None, :] + 1 < arity[:, None], local[None, :] + 1, 0)
@@ -469,7 +470,7 @@ def _half_edges(faces: np.ndarray, arity: np.ndarray, /):
     return start, end, owner
 
 
-def _edge_table(faces: np.ndarray, arity: np.ndarray, /):
+def _edge_table(faces: np.ndarray, arity: np.ndarray, /) -> Any:
     start, end, owner = _half_edges(faces, arity)
     keys = np.sort(np.stack((start, end), axis=1), axis=1)
     edges, inverse, counts = np.unique(
@@ -507,7 +508,7 @@ def _unit(vectors: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     return vectors / safe[..., None], norms
 
 
-def _newell_normals(points: np.ndarray, faces: np.ndarray, arity: np.ndarray, /):
+def _newell_normals(points: np.ndarray, faces: np.ndarray, arity: np.ndarray, /) -> Any:
     local = np.arange(4)
     following = np.where(local[None, :] + 1 < arity[:, None], local[None, :] + 1, 0)
     valid = local[None, :] < arity[:, None]
@@ -522,7 +523,7 @@ def _newell_normals(points: np.ndarray, faces: np.ndarray, arity: np.ndarray, /)
 # ---------------------------------------------------------------- visibility QP
 
 
-def _hull_norm(weights, normals):
+def _hull_norm(weights: Any, normals: Any) -> Any:
     point = weights @ normals
     return 0.5 * jnp.sum(point * point)
 
@@ -531,7 +532,7 @@ _VISIBILITY_METHOD = AcceleratedProximalGradient()
 
 
 @functools.partial(jax.jit, static_argnames=("maximum_steps",))
-def _visibility_weights(normals, *, maximum_steps: int):
+def _visibility_weights(normals: Any, *, maximum_steps: int) -> Any:
     """Minimum-norm convex combination of each column's padded face normals."""
     termination = OptimizationTermination(
         absolute_optimality=1.0e-13,
@@ -539,7 +540,7 @@ def _visibility_weights(normals, *, maximum_steps: int):
         maximum_steps=maximum_steps,
     )
 
-    def solve(block):
+    def solve(block: Any) -> Any:
         count = block.shape[0]
         result = proximal_minimize(
             _hull_norm,
@@ -554,7 +555,7 @@ def _visibility_weights(normals, *, maximum_steps: int):
     return jax.vmap(solve)(normals)
 
 
-def _padded_groups(groups: np.ndarray, members: np.ndarray, count: int, /):
+def _padded_groups(groups: np.ndarray, members: np.ndarray, count: int, /) -> Any:
     """Pad per-group member lists (grouped rows) by repeating each group's first member."""
     order = np.argsort(groups, kind="stable")
     groups_ = groups[order]
@@ -881,8 +882,14 @@ def _sector_graph(wall: _Wall, sectors: _Sectors, /) -> tuple[np.ndarray, np.nda
 
 
 def _smooth_directions(
-    wall, sectors, direction, reference, normals, constraints, control
-):
+    wall: Any,
+    sectors: Any,
+    direction: Any,
+    reference: Any,
+    normals: Any,
+    constraints: Any,
+    control: Any,
+) -> Any:
     """Weighted Laplacian smoothing that never loses more than 5% visibility."""
     first, second = _sector_graph(wall, sectors)
     lengths = np.linalg.norm(
@@ -944,7 +951,7 @@ def _fan_lists(
     direction: np.ndarray,
     feature_angle: float,
     /,
-):
+) -> Any:
     """Ordered fan column lists of every split ridge at both endpoints."""
     ridges = np.flatnonzero(split)
     ridge_faces = wall.edge_faces[ridges]
@@ -1131,7 +1138,9 @@ def _build_front(
     )
 
 
-def _corner_patches(wall, ends, sector_a, sector_b, lists, /):
+def _corner_patches(
+    wall: Any, ends: Any, sector_a: Any, sector_b: Any, lists: Any, /
+) -> Any:
     """Cycles of fan and sector columns around closed vertices with three or more ridges."""
     degree = np.bincount(ends.reshape(-1), minlength=wall.points.shape[0])
     corners = []
@@ -1220,12 +1229,12 @@ def _curvature_limits(wall: _Wall, policy: BoundaryLayerPolicy, /) -> np.ndarray
     return policy.curvature_fraction * radius
 
 
-def _triangle_distance(triangles: np.ndarray):
+def _triangle_distance(triangles: np.ndarray) -> Any:
     first = jnp.asarray(triangles[:, 0])
     second = jnp.asarray(triangles[:, 1])
     third = jnp.asarray(triangles[:, 2])
 
-    def distance(point, items):
+    def distance(point: Any, items: Any) -> Any:
         corner = first[items]
         return point_triangle_distance(
             jnp.broadcast_to(point, corner.shape), corner, second[items], third[items]
@@ -1322,7 +1331,7 @@ def _vertex_graph(wall: _Wall, /) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return edges[:, 0], edges[:, 1], 1.0 / np.maximum(lengths, np.finfo(np.float64).tiny)
 
 
-def _smooth_scale(scale: np.ndarray, graph, iterations: int, /) -> np.ndarray:
+def _smooth_scale(scale: np.ndarray, graph: Any, iterations: int, /) -> np.ndarray:
     """Monotone weighted Laplacian smoothing: scales only ever decrease."""
     first, second, weight = graph
     total = np.bincount(first, weight, scale.size) + np.bincount(
@@ -1338,7 +1347,7 @@ def _smooth_scale(scale: np.ndarray, graph, iterations: int, /) -> np.ndarray:
     return scale
 
 
-def _smooth_counts(counts: np.ndarray, graph, /) -> np.ndarray:
+def _smooth_counts(counts: np.ndarray, graph: Any, /) -> np.ndarray:
     """Neighboring layer counts differ by at most one layer."""
     first, second, _ = graph
     for _ in range(int(counts.max(initial=0)) + 1):
@@ -1402,7 +1411,7 @@ def _positions(front: _Front, columns: _Columns, points: np.ndarray, /) -> np.nd
     return np.concatenate((points, level_points.transpose(1, 0, 2).reshape(-1, 3)))
 
 
-def _front_rows(front: _Front, columns: _Columns, /):
+def _front_rows(front: _Front, columns: _Columns, /) -> Any:
     """Front faces, splitting wall quads whose vertices carry different layer counts."""
     counts = columns.count[front.column_vertex]
     face_counts = np.where(front.faces >= 0, counts[np.maximum(front.faces, 0)], -1)
@@ -1425,7 +1434,9 @@ def _front_rows(front: _Front, columns: _Columns, /):
     return rows, arity
 
 
-def _layer_cells(rows, arity, bottom_ids, top_ids, /) -> dict[str, np.ndarray]:
+def _layer_cells(
+    rows: Any, arity: Any, bottom_ids: Any, top_ids: Any, /
+) -> dict[str, np.ndarray]:
     """Standard cells of one layer from front faces and their collapse pattern."""
     cells: dict[str, list[np.ndarray]] = {name: [] for name in _VOLUME_KINDS}
     safe = np.maximum(rows, 0)
@@ -1736,7 +1747,7 @@ def _initial_columns(
     medial: np.ndarray,
     curvature_limited: np.ndarray,
     control: BoundaryLayerControl,
-    graph,
+    graph: Any,
     /,
 ) -> tuple[_Columns, int]:
     thicknesses = np.asarray(control.schedule.thicknesses, dtype=np.float64)
@@ -1809,8 +1820,15 @@ def _initial_columns(
 
 
 def _merge_template(
-    wall, front, predicted, medial, column_height, fraction, scale, merged_top
-):
+    wall: Any,
+    front: Any,
+    predicted: Any,
+    medial: Any,
+    column_height: Any,
+    fraction: Any,
+    scale: Any,
+    merged_top: Any,
+) -> None:
     """Scale paired opposing columns to meet at their midpoint and share its vertex."""
     partner, gap = _merge_pairs(wall, front, predicted, medial)
     sectors = np.flatnonzero(front.column_kind == _SECTOR)
@@ -1836,7 +1854,7 @@ def _grow_layers(
     environment: _Environment,
     control: BoundaryLayerControl,
     policy: BoundaryLayerPolicy,
-    graph,
+    graph: Any,
     /,
 ) -> _Resolution:
     layers = columns.levels.size - 1
@@ -2019,7 +2037,7 @@ def _cap_pyramids(
 
 def _measured_thicknesses(
     wall: _Wall, front: _Front, columns: _Columns, points: np.ndarray, /
-):
+) -> Any:
     layers = columns.levels.size - 1
     grow_triangles, _ = _split_polygons(wall.faces[wall.grow], wall.arity[wall.grow])
     total = front.column_vertex.size
@@ -2107,7 +2125,9 @@ def _grow_boundary_layers(
     )
 
 
-def _column_limits(wall, front, stretch, obstacles, control, policy, /):
+def _column_limits(
+    wall: Any, front: Any, stretch: Any, obstacles: Any, control: Any, policy: Any, /
+) -> Any:
     """Per-column height limits, curvature-limited vertices, and medial heights."""
     total = control.schedule.total_thickness
     proximity = _proximity_limits(wall, front, stretch, total, obstacles, policy)
@@ -2120,7 +2140,7 @@ def _column_limits(wall, front, stretch, obstacles, control, policy, /):
     return np.minimum(proximity, curvature), curvature_limited, medial
 
 
-def _cap_mesh(points: np.ndarray, cap: np.ndarray, arity: np.ndarray, /):
+def _cap_mesh(points: np.ndarray, cap: np.ndarray, arity: np.ndarray, /) -> Any:
     vertices = np.unique(cap[cap >= 0])
     if not vertices.size:
         return None, vertices

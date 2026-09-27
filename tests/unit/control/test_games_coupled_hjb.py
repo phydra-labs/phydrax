@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -20,12 +23,16 @@ from phydrax.control.stochastic import (
 from phydrax.dynamics import TimeGrid
 
 
-def _zero_coefficient(player, time, state, joint_action, args):
+def _zero_coefficient(
+    player: Any, time: Any, state: Any, joint_action: Any, args: Any
+) -> float:
     del player, time, state, joint_action, args
     return 0.0
 
 
-def _static_problem(cost, *, actions=None, problem_id="static-coupled-hjb"):
+def _static_problem(
+    cost: Any, *, actions: Any = None, problem_id: Any = "static-coupled-hjb"
+) -> Any:
     if actions is None:
         actions = (jnp.asarray([0.0, 1.0]), jnp.asarray([0.0, 1.0]))
     grid = BoundedUniformGrid1D(-1.0, 1.0, 5)
@@ -46,11 +53,11 @@ def _static_problem(cost, *, actions=None, problem_id="static-coupled-hjb"):
 
 def _plan(
     *,
-    maximum_iterations=3,
-    damping=1.0,
-    update="jacobi",
-    plan_id="coupled-policy-iteration",
-):
+    maximum_iterations: Any = 3,
+    damping: Any = 1.0,
+    update: Any = "jacobi",
+    plan_id: Any = "coupled-policy-iteration",
+) -> Any:
     return CoupledHJBPolicyIterationPlan(
         maximum_iterations=maximum_iterations,
         fixed_point_tolerance=0.0,
@@ -60,7 +67,7 @@ def _plan(
     )
 
 
-def _uniform_selectors(problem, selectors):
+def _uniform_selectors(problem: Any, selectors: Any) -> Any:
     selectors = np.asarray(selectors, dtype=np.int32)
     return np.broadcast_to(
         selectors[:, None, None],
@@ -72,12 +79,14 @@ def _uniform_selectors(problem, selectors):
     ).copy()
 
 
-def test_decoupled_players_reduce_to_independent_discrete_hjb_tables():
+def test_decoupled_players_reduce_to_independent_discrete_hjb_tables() -> None:
     actions = (jnp.asarray([-1.0, 1.0]), jnp.asarray([0.0, 2.0, 3.0]))
     bases = (1.0, 2.0)
     targets = (1.0, 2.0)
 
-    def coupled_cost(player, time, state, joint_action, args):
+    def coupled_cost(
+        player: Any, time: Any, state: Any, joint_action: Any, args: Any
+    ) -> Any:
         del time, state, args
         return bases[player] + (joint_action[player] - targets[player]) ** 2
 
@@ -88,15 +97,17 @@ def test_decoupled_players_reduce_to_independent_discrete_hjb_tables():
 
     for player in range(problem.num_players):
 
-        def independent_drift(time, state, action, args):
+        def independent_drift(time: Any, state: Any, action: Any, args: Any) -> float:
             del time, state, action, args
             return 0.0
 
-        def independent_diffusion(time, state, action, args):
+        def independent_diffusion(time: Any, state: Any, action: Any, args: Any) -> float:
             del time, state, action, args
             return 0.0
 
-        def independent_cost(time, state, action, args, *, player=player):
+        def independent_cost(
+            time: Any, state: Any, action: Any, args: Any, *, player: Any = player
+        ) -> Any:
             del time, state, args
             return bases[player] + (action - targets[player]) ** 2
 
@@ -122,8 +133,8 @@ def test_decoupled_players_reduce_to_independent_discrete_hjb_tables():
     assert float(coupled.evidence.maximum_policy_evaluation_residual) < 1.0e-7
 
 
-def test_two_player_joint_profiles_converge_to_own_hamiltonian_fixed_point():
-    def cost(player, time, state, joint_action, args):
+def test_two_player_joint_profiles_converge_to_own_hamiltonian_fixed_point() -> None:
+    def cost(player: Any, time: Any, state: Any, joint_action: Any, args: Any) -> Any:
         del time, state, args
         if player == 0:
             return (joint_action[0] - 1.0) ** 2 + 0.1 * joint_action[1]
@@ -152,8 +163,10 @@ def test_two_player_joint_profiles_converge_to_own_hamiltonian_fixed_point():
     )
 
 
-def test_multiple_starts_preserve_distinct_coordination_branches_and_ids():
-    def coordination_cost(player, time, state, joint_action, args):
+def test_multiple_starts_preserve_distinct_coordination_branches_and_ids() -> None:
+    def coordination_cost(
+        player: Any, time: Any, state: Any, joint_action: Any, args: Any
+    ) -> Any:
         del time, state, args
         opponent = 1 - player
         return (joint_action[player] - joint_action[opponent]) ** 2
@@ -181,8 +194,10 @@ def test_multiple_starts_preserve_distinct_coordination_branches_and_ids():
     assert result.evidence.branch.history_capacity == 1
 
 
-def test_jacobi_and_gauss_seidel_have_distinct_declared_one_sweep_updates():
-    def anti_coordination_cost(player, time, state, joint_action, args):
+def test_jacobi_and_gauss_seidel_have_distinct_declared_one_sweep_updates() -> None:
+    def anti_coordination_cost(
+        player: Any, time: Any, state: Any, joint_action: Any, args: Any
+    ) -> Any:
         del time, state, args
         opponent = 1 - player
         return (joint_action[player] + joint_action[opponent] - 1.0) ** 2
@@ -214,8 +229,10 @@ def test_jacobi_and_gauss_seidel_have_distinct_declared_one_sweep_updates():
     assert gauss_seidel.update == "gauss_seidel"
 
 
-def test_fixed_damping_relaxes_policy_probabilities_and_is_recorded():
-    def dominant_one_cost(player, time, state, joint_action, args):
+def test_fixed_damping_relaxes_policy_probabilities_and_is_recorded() -> None:
+    def dominant_one_cost(
+        player: Any, time: Any, state: Any, joint_action: Any, args: Any
+    ) -> Any:
         del time, state, args
         return (joint_action[player] - 1.0) ** 2
 
@@ -238,8 +255,10 @@ def test_fixed_damping_relaxes_policy_probabilities_and_is_recorded():
     assert not bool(result.successful)
 
 
-def test_selector_ties_use_lowest_declared_index_and_expose_tie_identity():
-    def tied_cost(player, time, state, joint_action, args):
+def test_selector_ties_use_lowest_declared_index_and_expose_tie_identity() -> None:
+    def tied_cost(
+        player: Any, time: Any, state: Any, joint_action: Any, args: Any
+    ) -> float:
         del player, time, state, joint_action, args
         return 0.0
 
@@ -257,8 +276,10 @@ def test_selector_ties_use_lowest_declared_index_and_expose_tie_identity():
     assert bool(result.successful)
 
 
-def test_nonconvergence_fills_fixed_capacity_history_without_success_label():
-    def anti_coordination_cost(player, time, state, joint_action, args):
+def test_nonconvergence_fills_fixed_capacity_history_without_success_label() -> None:
+    def anti_coordination_cost(
+        player: Any, time: Any, state: Any, joint_action: Any, args: Any
+    ) -> Any:
         del time, state, args
         opponent = 1 - player
         return (joint_action[player] + joint_action[opponent] - 1.0) ** 2
@@ -279,7 +300,7 @@ def test_nonconvergence_fills_fixed_capacity_history_without_success_label():
     assert result.status_label == "MAXIMUM_POLICY_ITERATIONS"
 
 
-def test_nested_refinement_is_explicit_and_can_gate_a_local_fixed_point():
+def test_nested_refinement_is_explicit_and_can_gate_a_local_fixed_point() -> None:
     grid = BoundedUniformGrid1D(-1.0, 1.0, 7)
     time_grid = TimeGrid(jnp.asarray([0.0, 0.02, 0.04]), time_id="coupled-refinement")
     terminal = np.stack(
@@ -292,7 +313,7 @@ def test_nested_refinement_is_explicit_and_can_gate_a_local_fixed_point():
     boundary[0] = 1.0
     boundary[1] = 2.0
 
-    def drift(player, time, state, joint_action, args):
+    def drift(player: Any, time: Any, state: Any, joint_action: Any, args: Any) -> Any:
         del time, state, joint_action, args
         return 0.2 if player == 0 else -0.15
 
@@ -330,8 +351,8 @@ def test_nested_refinement_is_explicit_and_can_gate_a_local_fixed_point():
     assert bool(loose.successful)
 
 
-def test_success_label_is_local_only_and_carries_no_broad_solution_claim():
-    def cost(player, time, state, joint_action, args):
+def test_success_label_is_local_only_and_carries_no_broad_solution_claim() -> None:
+    def cost(player: Any, time: Any, state: Any, joint_action: Any, args: Any) -> float:
         del player, time, state, joint_action, args
         return 0.0
 

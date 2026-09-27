@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -11,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _compiled(transfer, schedule, *, fields=None):
+def _compiled(transfer: Any, schedule: Any, *, fields: Any = None) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformAxisSpec(12, periodic=True, endpoint=False)
@@ -63,7 +65,7 @@ def _compiled(transfer, schedule, *, fields=None):
         phx.discretization.APICTransferPlan(),
     ],
 )
-def test_transfer_family_preserves_constant_translation(transfer):
+def test_transfer_family_preserves_constant_translation(transfer: Any) -> None:
     compiled, arguments, state, velocity = _compiled(
         transfer, phx.discretization.USLMPMSchedule()
     )
@@ -78,7 +80,7 @@ def test_transfer_family_preserves_constant_translation(transfer):
         )
 
 
-def test_advection_plans_are_independent_of_velocity_transfer():
+def test_advection_plans_are_independent_of_velocity_transfer() -> None:
     transferred = jnp.asarray([[2.0, 0.0]])
     pic = jnp.asarray([[1.0, 0.0]])
     previous = jnp.asarray([[0.0, 0.0]])
@@ -105,7 +107,9 @@ def test_advection_plans_are_independent_of_velocity_transfer():
         phx.discretization.PostAdvectionMUSLMPMSchedule(affine_transfer=True),
     ],
 )
-def test_remaining_musl_variants_rebuild_and_certify_second_transfer(schedule):
+def test_remaining_musl_variants_rebuild_and_certify_second_transfer(
+    schedule: Any,
+) -> None:
     compiled, arguments, state, _ = _compiled(
         phx.discretization.APICTransferPlan(), schedule
     )
@@ -125,7 +129,7 @@ def test_remaining_musl_variants_rebuild_and_certify_second_transfer(schedule):
         phx.discretization.PostAdvectionMUSLMPMSchedule(),
     ],
 )
-def test_multifield_schedules_reapply_simultaneous_constraints(schedule):
+def test_multifield_schedules_reapply_simultaneous_constraints(schedule: Any) -> None:
     slots = jnp.asarray((0, 0, 1, 1), dtype=jnp.int32)
     contact = phx.discretization.KWayMPMContactPlan(
         2,

@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -20,7 +22,7 @@ from phydrax.applications.incompressible_flow._forcing import (
 )
 
 
-def _periodic_parameterization():
+def _periodic_parameterization() -> Any:
     space = phx.discretization.TensorSpectralPlan(
         (
             phx.discretization.FourierBasisPlan(4),
@@ -48,12 +50,12 @@ def _periodic_parameterization():
     return parameterization, projector
 
 
-def _correction_rollout(parameterization, parameters, sample_times):
+def _correction_rollout(parameterization: Any, parameters: Any, sample_times: Any) -> Any:
     return parameterization.sample(parameters, sample_times)
 
 
-def _basis_coordinate_evaluator(basis):
-    def evaluate(corrections, sample_times):
+def _basis_coordinate_evaluator(basis: Any) -> Any:
+    def evaluate(corrections: Any, sample_times: Any) -> Any:
         del sample_times
         coordinates = jax.vmap(basis.analyze)(corrections)
         return coordinates[:, :2]
@@ -62,13 +64,13 @@ def _basis_coordinate_evaluator(basis):
 
 
 def _objective(
-    observation_values=(0.2, -0.3),
-    training_mask=(True, False),
+    observation_values: Any = (0.2, -0.3),
+    training_mask: Any = (True, False),
     *,
-    amplitude_weight=0.2,
-    temporal_difference_weight=0.1,
-    runtime_identity_updates=None,
-):
+    amplitude_weight: Any = 0.2,
+    temporal_difference_weight: Any = 0.1,
+    runtime_identity_updates: Any = None,
+) -> Any:
     parameterization, projector = _periodic_parameterization()
     windows = TimeAverageWindows(
         jnp.asarray([0.25, 0.75, 1.25, 1.75]),
@@ -125,7 +127,9 @@ def _objective(
     return objective, projector
 
 
-def test_sparse_time_average_operator_uses_declared_windows_and_reports_mismatch():
+def test_sparse_time_average_operator_uses_declared_windows_and_reports_mismatch() -> (
+    None
+):
     windows = TimeAverageWindows.from_bounds(
         jnp.asarray([0.0, 1.0, 2.0]),
         jnp.asarray([0.0, 1.0]),
@@ -151,7 +155,7 @@ def test_sparse_time_average_operator_uses_declared_windows_and_reports_mismatch
     np.testing.assert_allclose(predicted - data.values, jnp.asarray([0.5, -1.0, 5.0]))
 
 
-def test_periodic_model_error_correction_is_exactly_divergence_free_and_real():
+def test_periodic_model_error_correction_is_exactly_divergence_free_and_real() -> None:
     parameterization, projector = _periodic_parameterization()
     parameters = jnp.linspace(
         -0.4,
@@ -172,7 +176,7 @@ def test_periodic_model_error_correction_is_exactly_divergence_free_and_real():
     assert "not-identifiable-as-sgs-stress" in parameterization.model_interpretation
 
 
-def test_quadratic_model_error_regularization_separates_terms():
+def test_quadratic_model_error_regularization_separates_terms() -> None:
     parameters = jnp.asarray([[1.0, -1.0], [3.0, 1.0]])
     regularization = QuadraticModelErrorRegularization(
         amplitude_weight=2.0,
@@ -186,7 +190,7 @@ def test_quadratic_model_error_regularization_separates_terms():
     np.testing.assert_allclose(evidence.total, expected_amplitude + expected_temporal)
 
 
-def test_objective_value_gradient_matches_jax_and_centered_difference():
+def test_objective_value_gradient_matches_jax_and_centered_difference() -> None:
     objective, _ = _objective()
     parameters = jnp.linspace(
         -0.15,
@@ -229,7 +233,7 @@ def test_objective_value_gradient_matches_jax_and_centered_difference():
     assert "not-identifiable-as-sgs-stress" in evaluated.evidence.model_interpretation
 
 
-def test_holdout_observations_are_reported_but_do_not_enter_training_value():
+def test_holdout_observations_are_reported_but_do_not_enter_training_value() -> None:
     first, _ = _objective(
         observation_values=(0.2, -0.3),
         amplitude_weight=0.0,
@@ -266,12 +270,12 @@ def test_holdout_observations_are_reported_but_do_not_enter_training_value():
         ("observation_id", "other-observations"),
     ),
 )
-def test_objective_rejects_runtime_identity_mismatches(field, value):
+def test_objective_rejects_runtime_identity_mismatches(field: Any, value: Any) -> None:
     with pytest.raises(ValueError, match=field):
         _objective(runtime_identity_updates={field: value})
 
 
-def test_objective_rejects_observation_operator_identity_mismatch():
+def test_objective_rejects_observation_operator_identity_mismatch() -> None:
     parameterization, _ = _periodic_parameterization()
     windows = TimeAverageWindows(
         jnp.asarray([0.25, 0.75]),
@@ -322,7 +326,7 @@ def test_objective_rejects_observation_operator_identity_mismatch():
         )
 
 
-def test_invalid_sparse_observations_fail_closed_at_construction():
+def test_invalid_sparse_observations_fail_closed_at_construction() -> None:
     windows = TimeAverageWindows(
         jnp.asarray([0.0, 1.0]),
         jnp.asarray([[1.0, 1.0]]),

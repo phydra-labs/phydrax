@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
@@ -71,7 +72,7 @@ class FreeEnergyLBMRuntimeParameters(StrictModule):
         moving_wall_velocities: ArrayLike | None = None,
         wall_normal: ArrayLike | None = None,
         wetting_mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         viscosity = jnp.asarray(kinematic_viscosity)
         mobility = jnp.asarray(phase_mobility, dtype=viscosity.dtype)
         wetting = jnp.asarray(wetting_strength, dtype=viscosity.dtype)
@@ -141,7 +142,7 @@ class FreeEnergyLBMMethod(StrictModule, NonTrainableState):
         conservation_tolerance: float = 1.0e-11,
         relative_energy_tolerance: float = 1.0e-8,
         maximum_cells: int = 1_000_000,
-    ):
+    ) -> None:
         if not isinstance(hydrodynamic_method, LatticeBoltzmannMethodPlan):
             raise TypeError("hydrodynamic_method must be LatticeBoltzmannMethodPlan.")
         if hydrodynamic_method.forcing is None:
@@ -357,7 +358,7 @@ class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
         method: FreeEnergyLBMMethod,
         boundary: PreparedLatticeBoltzmannBoundary,
         /,
-    ):
+    ) -> None:
         if not isinstance(discretization, LatticeBoltzmannDiscretization):
             raise TypeError("discretization must be an LBM discretization.")
         if not isinstance(scaling, LatticeBoltzmannScaling):
@@ -434,7 +435,7 @@ class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
         )
 
     def _wetting_data(
-        self, parameters: FreeEnergyLBMRuntimeParameters, dtype, /
+        self, parameters: FreeEnergyLBMRuntimeParameters, dtype: DTypeLike, /
     ) -> tuple[Array | None, Array | None, Array]:
         if parameters.wetting_mask.size == 0:
             return None, None, jnp.asarray(True)
@@ -453,7 +454,7 @@ class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
         return safe_wall, mask, jnp.all(~mask | normal_valid)
 
     def _safe_thermodynamics(
-        self, parameters: FreeEnergyLBMRuntimeParameters, dtype, /
+        self, parameters: FreeEnergyLBMRuntimeParameters, dtype: DTypeLike, /
     ) -> tuple[BinaryThermodynamicParameters, Array, Array]:
         values = parameters.thermodynamics
         bulk = jnp.asarray(values.bulk_scale, dtype=dtype)

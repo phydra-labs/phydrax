@@ -6,6 +6,7 @@
 
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -14,7 +15,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _timed(function, argument, repeats=20):
+def _timed(function: Any, argument: Any, repeats: Any = 20) -> Any:
     compiled = eqx.filter_jit(function)
     started = time.perf_counter()
     value = compiled(argument)
@@ -27,7 +28,7 @@ def _timed(function, argument, repeats=20):
     return value, compile_seconds, (time.perf_counter() - started) / repeats
 
 
-def main():
+def main() -> None:
     count = 4096
     parameter = jnp.linspace(0.05, 0.95, count)
     points = jnp.stack(
@@ -35,7 +36,7 @@ def main():
     )
     triangle = jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
 
-    def energy(value):
+    def energy(value: Any) -> Any:
         distance = phx.discretization.point_triangle_distance(
             value,
             jnp.broadcast_to(triangle[0], value.shape),

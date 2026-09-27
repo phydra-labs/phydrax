@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.random as jr
 import pytest
@@ -16,7 +19,9 @@ from phydrax.operators.differential import (
 )
 
 
-def _mlp_field(domain, activation, *, depth=2, final_activation=None):
+def _mlp_field(
+    domain: Any, activation: Any, *, depth: Any = 2, final_activation: Any = None
+) -> Any:
     network = phx.nn.models.MLP(
         in_size="scalar",
         out_size="scalar",
@@ -29,17 +34,17 @@ def _mlp_field(domain, activation, *, depth=2, final_activation=None):
     return domain.Model("x")(network)
 
 
-def _laplacian_residual(fields):
+def _laplacian_residual(fields: Any) -> Any:
     return laplacian(fields["u"], var="x")
 
 
-def test_trace_derivative_requests_keeps_laplacian_contracted():
+def test_trace_derivative_requests_keeps_laplacian_contracted() -> None:
     domain = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @domain.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 2 + x[0] * x[1]
 
     condition = phx.conditions.Residual(
@@ -57,11 +62,11 @@ def test_trace_derivative_requests_keeps_laplacian_contracted():
     assert all(request.order <= 2 for request in requests)
 
 
-def test_trace_derivative_requests_retains_high_order_for_generic_planning():
+def test_trace_derivative_requests_retains_high_order_for_generic_planning() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
 
     @domain.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 3
 
     condition = phx.conditions.Residual(
@@ -81,11 +86,11 @@ def test_trace_derivative_requests_retains_high_order_for_generic_planning():
     assert plan_derivative_execution(requests).strategy == "jvp"
 
 
-def test_trace_derivative_requests_retains_nested_laplacians():
+def test_trace_derivative_requests_retains_nested_laplacians() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
 
     @domain.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 4
 
     condition = phx.conditions.Residual(
@@ -102,7 +107,7 @@ def test_trace_derivative_requests_retains_nested_laplacians():
     assert plan_derivative_execution(requests).strategy == "jvp"
 
 
-def test_degree_bound_algebra_decides_degeneracy_through_planning():
+def test_degree_bound_algebra_decides_degeneracy_through_planning() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     u = _mlp_field(domain, jax.nn.relu)
 
@@ -112,18 +117,21 @@ def test_degree_bound_algebra_decides_degeneracy_through_planning():
             trace_derivative_requests(_laplacian_residual, {"u": field})
     # A product of piecewise-linear fields has quadratic pieces.
     (request,) = trace_derivative_requests(_laplacian_residual, {"u": u * u})
+    # ty: ignore[unresolved-attribute]
     assert request.admission.level(phx.DerivativeSurface.INPUT) is (
         phx.GradientLevel.ALMOST_EVERYWHERE
     )
+    # ty: ignore[unresolved-attribute]
     assert request.admission.conditions == ("singular-part-ignored",)
 
 
-def test_accumulated_order_bounds_nested_derivatives():
+def test_accumulated_order_bounds_nested_derivatives() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     u = _mlp_field(domain, squared_relu, depth=1)
 
     (request,) = trace_derivative_requests(_laplacian_residual, {"u": u})
     assert request.order == 2
+    # ty: ignore[unresolved-attribute]
     assert request.admission.conditions == ()
     with pytest.raises(ValueError, match="Order-4 derivative.*regularity-degenerate"):
         trace_derivative_requests(
@@ -132,7 +140,7 @@ def test_accumulated_order_bounds_nested_derivatives():
         )
 
 
-def test_owner_authority_governs_undeclared_and_almost_everywhere_regularity():
+def test_owner_authority_governs_undeclared_and_almost_everywhere_regularity() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     weight = domain.Function("x")(lambda x: x * (1.0 - x))
     trial = weight * _mlp_field(domain, jax.numpy.tanh)
@@ -140,10 +148,12 @@ def test_owner_authority_governs_undeclared_and_almost_everywhere_regularity():
     exploratory = phx.RegularityPolicy(allow_undeclared=True)
 
     (direct,) = trace_derivative_requests(_laplacian_residual, {"u": trial})
+    # ty: ignore[unresolved-attribute]
     assert direct.admission.conditions == ("regularity-undeclared",)
     (admitted,) = trace_derivative_requests(
         _laplacian_residual, {"u": trial}, authority=surrogate, policy=exploratory
     )
+    # ty: ignore[unresolved-attribute]
     assert admitted.admission.conditions == ("regularity-undeclared",)
     for authority, policy in (
         (surrogate, None),
@@ -156,6 +166,7 @@ def test_owner_authority_governs_undeclared_and_almost_everywhere_regularity():
 
     piecewise = _mlp_field(domain, jax.nn.relu, final_activation=jax.numpy.tanh)
     (direct,) = trace_derivative_requests(_laplacian_residual, {"u": piecewise})
+    # ty: ignore[unresolved-attribute]
     assert direct.admission.conditions == ("singular-part-ignored",)
     with pytest.raises(ValueError, match="almost-everywhere-not-allowed"):
         trace_derivative_requests(
@@ -163,7 +174,7 @@ def test_owner_authority_governs_undeclared_and_almost_everywhere_regularity():
         )
 
 
-def test_derivatives_along_independent_variables_need_no_regularity():
+def test_derivatives_along_independent_variables_need_no_regularity() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0) @ phx.domain.TimeInterval(0.0, 1.0)
     u = _mlp_field(domain, jax.nn.relu)
 
@@ -176,7 +187,7 @@ def test_derivatives_along_independent_variables_need_no_regularity():
     assert all(request.admission is None for request in requests)
 
 
-def test_direct_partial_n_rejects_only_proven_degeneracy():
+def test_direct_partial_n_rejects_only_proven_degeneracy() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     u = _mlp_field(domain, jax.nn.relu)
 

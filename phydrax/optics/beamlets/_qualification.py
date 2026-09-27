@@ -7,7 +7,8 @@ from __future__ import annotations
 from enum import IntEnum
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -40,7 +41,7 @@ class NineRayTraceSamples(StrictModule, NonTrainableState):
         perturbation_steps: ArrayLike,
         valid: ArrayLike = True,
         /,
-    ):
+    ) -> None:
         inputs = jnp.asarray(input_phase_space)
         outputs = jnp.asarray(output_phase_space)
         steps = jnp.asarray(perturbation_steps)

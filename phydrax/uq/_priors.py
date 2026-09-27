@@ -8,7 +8,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._distributions import _open_unit_interval, AbstractDistribution
 
@@ -20,7 +21,7 @@ class PowerLaw(AbstractDistribution):
     low: Array
     high: Array
 
-    def __init__(self, alpha: ArrayLike, low: ArrayLike, high: ArrayLike):
+    def __init__(self, alpha: ArrayLike, low: ArrayLike, high: ArrayLike) -> None:
         exponent = jnp.asarray(alpha, dtype=jnp.float64).reshape(())
         lower = jnp.asarray(low, dtype=jnp.float64).reshape(())
         upper = jnp.asarray(high, dtype=jnp.float64).reshape(())
@@ -44,7 +45,7 @@ class PowerLaw(AbstractDistribution):
     def _normalizer(self) -> Array:
         return self._power_integral(0)
 
-    def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: Array, sample_shape: tuple[int, ...] = ()) -> Array:
         return self.icdf(jr.uniform(key, tuple(sample_shape), dtype=self.low.dtype))
 
     def icdf(self, value: ArrayLike, /) -> Array:
@@ -101,7 +102,7 @@ class TruncatedNormal(AbstractDistribution):
         scale: ArrayLike,
         low: ArrayLike,
         high: ArrayLike,
-    ):
+    ) -> None:
         location_ = jnp.asarray(location, dtype=jnp.float64).reshape(())
         scale_ = jnp.asarray(scale, dtype=jnp.float64).reshape(())
         low_ = jnp.asarray(low, dtype=jnp.float64).reshape(())
@@ -126,7 +127,7 @@ class TruncatedNormal(AbstractDistribution):
         self.lower_cdf = lower
         self.mass = mass
 
-    def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: Array, sample_shape: tuple[int, ...] = ()) -> Array:
         return self.icdf(jr.uniform(key, tuple(sample_shape), dtype=self.location.dtype))
 
     def icdf(self, value: ArrayLike, /) -> Array:
@@ -185,13 +186,13 @@ class TruncatedNormal(AbstractDistribution):
 class HalfNormal(AbstractDistribution):
     scale: Array
 
-    def __init__(self, scale: ArrayLike):
+    def __init__(self, scale: ArrayLike) -> None:
         scale_ = jnp.asarray(scale, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(scale_) & (scale_ > 0.0)):
             raise ValueError("Half-normal scale must be finite and positive.")
         self.scale = scale_
 
-    def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: Array, sample_shape: tuple[int, ...] = ()) -> Array:
         return (
             jnp.abs(jr.normal(key, tuple(sample_shape), dtype=self.scale.dtype))
             * self.scale
@@ -231,7 +232,7 @@ class Cauchy(AbstractDistribution):
     location: Array
     scale: Array
 
-    def __init__(self, location: ArrayLike, scale: ArrayLike):
+    def __init__(self, location: ArrayLike, scale: ArrayLike) -> None:
         location_ = jnp.asarray(location, dtype=jnp.float64).reshape(())
         scale_ = jnp.asarray(scale, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(location_) & jnp.isfinite(scale_) & (scale_ > 0.0)):
@@ -239,7 +240,7 @@ class Cauchy(AbstractDistribution):
         self.location = location_
         self.scale = scale_
 
-    def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: Array, sample_shape: tuple[int, ...] = ()) -> Array:
         return self.icdf(jr.uniform(key, tuple(sample_shape), dtype=self.location.dtype))
 
     def icdf(self, value: ArrayLike, /) -> Array:
@@ -278,7 +279,7 @@ class StudentT(AbstractDistribution):
         degrees_of_freedom: ArrayLike,
         location: ArrayLike = 0.0,
         scale: ArrayLike = 1.0,
-    ):
+    ) -> None:
         df = jnp.asarray(degrees_of_freedom, dtype=jnp.float64).reshape(())
         location_ = jnp.asarray(location, dtype=jnp.float64).reshape(())
         scale_ = jnp.asarray(scale, dtype=jnp.float64).reshape(())
@@ -294,7 +295,7 @@ class StudentT(AbstractDistribution):
         self.location = location_
         self.scale = scale_
 
-    def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: Array, sample_shape: tuple[int, ...] = ()) -> Array:
         return self.location + self.scale * jr.t(
             key,
             self.degrees_of_freedom,
@@ -310,7 +311,7 @@ class StudentT(AbstractDistribution):
     def icdf(self, value: ArrayLike, /) -> Array:
         probability = _open_unit_interval(value)
 
-        def body(_, bounds):
+        def body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             lower, upper = bounds
             middle = 0.5 * (lower + upper)
             candidate = jnp.tan(middle)
@@ -363,7 +364,7 @@ class StudentT(AbstractDistribution):
 class SineAngle(AbstractDistribution):
     """Polar angle on [0, pi] induced by isotropic spherical area."""
 
-    def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: Array, sample_shape: tuple[int, ...] = ()) -> Array:
         return self.icdf(jr.uniform(key, tuple(sample_shape)))
 
     def icdf(self, value: ArrayLike, /) -> Array:
@@ -395,7 +396,7 @@ class SineAngle(AbstractDistribution):
 class CosineAngle(AbstractDistribution):
     """Latitude-like angle on [-pi/2, pi/2] induced by spherical area."""
 
-    def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: Array, sample_shape: tuple[int, ...] = ()) -> Array:
         return self.icdf(jr.uniform(key, tuple(sample_shape)))
 
     def icdf(self, value: ArrayLike, /) -> Array:

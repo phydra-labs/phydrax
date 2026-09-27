@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import numpy as np
 
 import phydrax as phx
@@ -13,19 +16,19 @@ _POINTS = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.5, 0.5)
 _CELLS = np.asarray(((0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4)), dtype=np.int32)
 
 
-def _certified(points, cells):
+def _certified(points: Any, cells: Any) -> Any:
     mesh = phx.discretization.CellMesh.from_triangles(points, cells)
     return meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
 
-def _shifted_center(source, shift):
+def _shifted_center(source: Any, shift: Any) -> Any:
     coordinates = np.asarray(source.mesh.coordinates).copy()
     center = int(np.argmin(np.linalg.norm(coordinates - 0.5, axis=1)))
     coordinates[center, 0] += shift
     return coordinates, center
 
 
-def _grid(count):
+def _grid(count: Any) -> Any:
     axis = np.linspace(0.0, 1.0, count + 1)
     x, y = np.meshgrid(axis, axis, indexing="ij")
     points = np.stack((x.ravel(), y.ravel()), axis=1)
@@ -35,7 +38,7 @@ def _grid(count):
     return points, np.concatenate((np.stack((a, b, c), 1), np.stack((a, c, d), 1)))
 
 
-def test_monitor_escalates_deterministically_from_accept_to_relocate_to_remesh():
+def test_monitor_escalates_deterministically_from_accept_to_relocate_to_remesh() -> None:
     source = _certified(_POINTS, _CELLS)
     monitor = meshing.MeshMotionMonitor(source.mesh)
 
@@ -64,7 +67,7 @@ def test_monitor_escalates_deterministically_from_accept_to_relocate_to_remesh()
     assert folded.minimum_jacobian_ratio < 0.0
 
 
-def test_monitor_rejects_unrealized_boundaries_and_nonfinite_coordinates():
+def test_monitor_rejects_unrealized_boundaries_and_nonfinite_coordinates() -> None:
     source = _certified(_POINTS, _CELLS)
     monitor = meshing.MeshMotionMonitor(source.mesh)
     coordinates = np.asarray(source.mesh.coordinates)
@@ -80,7 +83,7 @@ def test_monitor_rejects_unrealized_boundaries_and_nonfinite_coordinates():
     assert rejected.certificate is None
 
 
-def test_advance_untangles_a_folded_mesh_with_a_bit_identical_boundary():
+def test_advance_untangles_a_folded_mesh_with_a_bit_identical_boundary() -> None:
     source = _certified(_POINTS, _CELLS)
     monitor = meshing.MeshMotionMonitor(source.mesh)
     folded, center = _shifted_center(source, 0.6)
@@ -93,20 +96,23 @@ def test_advance_untangles_a_folded_mesh_with_a_bit_identical_boundary():
         Decision.RELOCATE,
         Decision.ACCEPT_MOTION,
     ]
+    # ty: ignore[unresolved-attribute]
     assert advance.relocation.untangling.succeeded
+    # ty: ignore[unresolved-attribute]
     relocated = np.asarray(advance.relocation.coordinates)
     boundary = np.arange(relocated.shape[0]) != center
     np.testing.assert_array_equal(relocated[boundary], folded[boundary])
     np.testing.assert_allclose(relocated[center], (0.5, 0.5), atol=1.0e-5)
+    # ty: ignore[unresolved-attribute]
     assert advance.result.audit.passed
     assert advance.transition is None
 
 
-def test_advance_escalates_a_nonconverged_relocation_unless_explicitly_admitted():
+def test_advance_escalates_a_nonconverged_relocation_unless_explicitly_admitted() -> None:
     source = _certified(_POINTS, _CELLS)
     shifted, _ = _shifted_center(source, 0.4)
 
-    def advance(accept):
+    def advance(accept: Any) -> Any:
         policy = meshing.MeshMotionMonitorPolicy(
             relocation_termination=phx.optim.OptimizationTermination(maximum_steps=1),
             accept_valid_nonconverged_relocation=accept,
@@ -134,7 +140,7 @@ def test_advance_escalates_a_nonconverged_relocation_unless_explicitly_admitted(
     )
 
 
-def test_advance_requests_a_metric_remesh_when_relocation_cannot_recover():
+def test_advance_requests_a_metric_remesh_when_relocation_cannot_recover() -> None:
     points, cells = _grid(4)
     source = _certified(points, cells)
     monitor = meshing.MeshMotionMonitor(source.mesh)
@@ -149,12 +155,17 @@ def test_advance_requests_a_metric_remesh_when_relocation_cannot_recover():
     assert advance.adaptation is None
     assert advance.assessments[0].decision in (Decision.RELOCATE, Decision.REMESH)
     assert advance.assessments[-1].decision is not Decision.ACCEPT_MOTION
+    # ty: ignore[unresolved-attribute]
     assert advance.relocation.accepted
     metric = advance.remesh_metric
+    # ty: ignore[unresolved-attribute]
     assert metric.scope.source_id == advance.result.mesh.mesh_id
     # The reference size h = 1/4 per vertex restores isotropic reference cells.
     np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
         np.asarray(metric.values)[:, 0, 0],
+        # ty: ignore[unresolved-attribute]
         np.asarray(metric.values)[:, 1, 1],
     )
+    # ty: ignore[unresolved-attribute]
     assert np.all(np.asarray(metric.values)[:, 0, 0] > 1.0)

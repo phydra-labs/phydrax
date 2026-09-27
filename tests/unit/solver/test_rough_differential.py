@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import opt_einsum as oe
@@ -6,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def _linear_problem(rate):
+def _linear_problem(rate: Any) -> Any:
     return phx.solver.RoughDifferentialProblem(
         lambda time, state, args: rate * state[..., None],
         jnp.asarray([1.2]),
@@ -15,7 +17,7 @@ def _linear_problem(rate):
     )
 
 
-def test_piecewise_linear_lift_and_coarsening_satisfy_chens_identity():
+def test_piecewise_linear_lift_and_coarsening_satisfy_chens_identity() -> None:
     times = jnp.linspace(0.0, 1.0, 5)
     values = jnp.asarray([[0.0, 0.0], [0.3, -0.2], [0.1, 0.4], [0.8, 0.5], [0.7, 1.0]])
     rough_path = phx.stochastic.GeometricRoughPath.from_values(times, values)
@@ -38,7 +40,7 @@ def test_piecewise_linear_lift_and_coarsening_satisfy_chens_identity():
     assert jnp.allclose(symmetric, expected)
 
 
-def test_davie_step_uses_second_level_factor_jvp_and_improves_smooth_path_error():
+def test_davie_step_uses_second_level_factor_jvp_and_improves_smooth_path_error() -> None:
     rate = 0.8
     one_step_path = phx.stochastic.GeometricRoughPath.from_values(
         jnp.asarray([0.0, 0.3]),
@@ -80,7 +82,7 @@ def test_davie_step_uses_second_level_factor_jvp_and_improves_smooth_path_error(
     assert euler.state_geometry_id == "state-geometry:euclidean"
 
 
-def test_fractional_gaussian_rough_dynamics_track_linear_geometric_solution():
+def test_fractional_gaussian_rough_dynamics_track_linear_geometric_solution() -> None:
     process = phx.stochastic.FractionalGaussianProcess(
         0.7,
         0.4,
@@ -123,7 +125,7 @@ def test_fractional_gaussian_rough_dynamics_track_linear_geometric_solution():
     )
 
 
-def test_step_two_fractional_solver_rejects_hurst_requiring_level_three():
+def test_step_two_fractional_solver_rejects_hurst_requiring_level_three() -> None:
     process = phx.stochastic.FractionalGaussianProcess(0.3, 0.2)
     realization = phx.stochastic.FractionalGaussianRealization(
         process,
@@ -139,7 +141,7 @@ def test_step_two_fractional_solver_rejects_hurst_requiring_level_three():
         )
 
 
-def test_rough_euler_retracts_quaternion_physical_tangent_steps():
+def test_rough_euler_retracts_quaternion_physical_tangent_steps() -> None:
     geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
     base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
     angular_velocity = jnp.asarray([0.2, -0.1, 0.3])
@@ -168,7 +170,7 @@ def test_rough_euler_retracts_quaternion_physical_tangent_steps():
     assert bool(geometry.contains(solution.states[-1]))
 
 
-def test_rough_problem_rejects_point_shape_for_quaternion_tangent_field():
+def test_rough_problem_rejects_point_shape_for_quaternion_tangent_field() -> None:
     geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
     with pytest.raises(ValueError, match="physical tangent shape"):
         phx.solver.RoughDifferentialProblem(
@@ -179,7 +181,7 @@ def test_rough_problem_rejects_point_shape_for_quaternion_tangent_field():
         )
 
 
-def test_davie_transports_unequal_quaternion_tangent_spaces():
+def test_davie_transports_unequal_quaternion_tangent_spaces() -> None:
     geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
     base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
     angular_velocity = jnp.asarray([0.2, -0.1, 0.3])

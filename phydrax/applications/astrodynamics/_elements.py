@@ -5,15 +5,22 @@
 from __future__ import annotations
 
 import math
+from typing import TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ._context import AstrodynamicsContext
 from ._state import CartesianOrbitState
 from ._status import AstrodynamicsStatus
+
+
+_OrbitGeometry: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 def _norm(value: Array, /) -> Array:
@@ -42,7 +49,7 @@ class ModifiedEquinoctialElements(StrictModule):
         /,
         *,
         retrograde_factor: int = 1,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         if isinstance(retrograde_factor, bool) or not isinstance(retrograde_factor, int):
@@ -73,7 +80,7 @@ class ClassicalOrbitalElements(StrictModule):
         values: ArrayLike,
         context: AstrodynamicsContext,
         /,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         values_ = jnp.asarray(values)
@@ -98,7 +105,7 @@ class ClassicalConversionResult(StrictModule):
     equatorial: Array
 
 
-def _orbit_geometry(state: CartesianOrbitState, mu: ArrayLike, /):
+def _orbit_geometry(state: CartesianOrbitState, mu: ArrayLike, /) -> _OrbitGeometry:
     coupling = jnp.asarray(mu, dtype=state.position.dtype).reshape(())
     radius = _norm(state.position)
     speed_squared = jnp.sum(state.velocity * state.velocity)

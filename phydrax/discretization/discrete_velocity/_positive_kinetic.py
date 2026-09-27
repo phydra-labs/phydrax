@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._exponential_family import (
     FiniteSupportExponentialFamily,
@@ -19,6 +21,7 @@ from ..._exponential_family import (
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from .._kinetic_entropy import KineticEntropyRootPlan, solve_kinetic_entropy_root
 from ._compressible_contracts import (
     CompressibleKineticConservationEvidence,
@@ -35,7 +38,7 @@ from ._compressible_rules import (
 )
 
 
-PositiveKineticCollisionKind = Literal["bgk", "entropic"]
+PositiveKineticCollisionKind: TypeAlias = Literal["bgk", "entropic"]
 
 
 class PositiveCompressibleKineticPlan(StrictModule, NonTrainableState):
@@ -62,7 +65,7 @@ class PositiveCompressibleKineticPlan(StrictModule, NonTrainableState):
         collision_kind: PositiveKineticCollisionKind | None = None,
         equilibrium_solve: FiniteSupportNaturalSolvePlan | None = None,
         entropy_root: KineticEntropyRootPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(rule, CompressibleVelocityRule):
             raise TypeError("rule must be a CompressibleVelocityRule.")
         gamma_value = float(gamma)
@@ -71,15 +74,13 @@ class PositiveCompressibleKineticPlan(StrictModule, NonTrainableState):
             raise ValueError("gamma must lie in (1, 5/3].")
         if not np.isfinite(gas_value) or gas_value <= 0.0:
             raise ValueError("gas_constant must be finite and positive.")
-        selected_collision = (
+        selected_collision = parse(
             ("entropic" if rule.model_kind == "entropic-d3q343" else "bgk")
             if collision_kind is None
-            else collision_kind
+            else collision_kind,
+            PositiveKineticCollisionKind,
+            "collision_kind",
         )
-        if selected_collision not in ("bgk", "entropic"):
-            raise ValueError(
-                f"Unknown positive kinetic collision {selected_collision!r}."
-            )
         solve = (
             FiniteSupportNaturalSolvePlan()
             if equilibrium_solve is None
@@ -457,7 +458,7 @@ def guided_d3q39_plan(
     gamma: float = 1.4,
     gas_constant: float = 1.0,
     collision_kind: PositiveKineticCollisionKind = "bgk",
-    dtype: np.dtype | str = np.float64,
+    dtype: npt.DTypeLike = np.float64,
 ) -> PositiveCompressibleKineticPlan:
     return PositiveCompressibleKineticPlan(
         d3q39_guided_rule(dtype=dtype),
@@ -471,7 +472,7 @@ def entropic_d3q343_plan(
     *,
     gamma: float = 1.4,
     gas_constant: float = 1.0,
-    dtype: np.dtype | str = np.float64,
+    dtype: npt.DTypeLike = np.float64,
 ) -> PositiveCompressibleKineticPlan:
     return PositiveCompressibleKineticPlan(
         d3q343_entropic_rule(dtype=dtype),

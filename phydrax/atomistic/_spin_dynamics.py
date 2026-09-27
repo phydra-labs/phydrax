@@ -11,7 +11,8 @@ import jax
 import jax.numpy as jnp
 import lineax as lx
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -46,7 +47,7 @@ class ProductSphereStateGeometry(AbstractStateGeometry):
     supports_isometric_transport: bool = eqx.field(static=True)
     supports_commutator_free: bool = eqx.field(static=True)
 
-    def __init__(self, site_count: int, /):
+    def __init__(self, site_count: int, /) -> None:
         sites = int(site_count)
         if sites < 1:
             raise ValueError("Product sphere geometry requires at least one site.")
@@ -230,7 +231,7 @@ class LandauLifshitzGilbertPlan(StrictModule):
         step_size: float,
         maximum_steps: int,
         temperature: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(hamiltonian, PreparedClassicalSpinHamiltonian):
             raise TypeError("hamiltonian must be PreparedClassicalSpinHamiltonian.")
         sites = hamiltonian.plan.site_count
@@ -326,7 +327,7 @@ class ClassicalSpinDynamicsState(StrictModule):
         /,
         *,
         wiener_realization_id: str | None = None,
-    ):
+    ) -> None:
         values = jnp.asarray(directions)
         time_ = jnp.asarray(time)
         step_ = jnp.asarray(step_index, dtype=jnp.int64)
@@ -462,7 +463,7 @@ def _llg_problem(
 ) -> DifferentialProblem:
     plan = prepared.plan
 
-    def drift(time, directions, args):
+    def drift(time: Array, directions: Array, args: object) -> Array:
         del time, args
         evaluation = evaluate_classical_spin_hamiltonian(plan.hamiltonian, directions)
         return _llg_field_action(
@@ -475,10 +476,12 @@ def _llg_problem(
     if plan.thermal:
         sites = plan.hamiltonian.plan.site_count
 
-        def coefficient(time, directions, args):
+        def coefficient(
+            time: Array, directions: Array, args: object
+        ) -> lx.FunctionLinearOperator:
             del time, args
 
-            def action(noise):
+            def action(noise: Array) -> Array:
                 field = prepared.thermal_field_amplitude[:, None] * noise
                 return _llg_field_action(
                     directions,
@@ -590,7 +593,7 @@ def solve_llg_dynamics(
         jnp.where(mask[None, :], jnp.abs(norms - 1.0), 0.0), initial=0.0
     )
 
-    def trajectory_values(value):
+    def trajectory_values(value: Array) -> tuple[Array, Array]:
         evaluation = evaluate_classical_spin_hamiltonian(prepared.plan.hamiltonian, value)
         drift = _llg_field_action(
             value,

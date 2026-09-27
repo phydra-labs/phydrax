@@ -11,11 +11,13 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from .._force_density import ForceDensityResult
 from .._force_density_stability import analyze_force_density_mechanisms
+from .._force_density_topology import ForceDensityStructure
 from ._blocks import AbstractAxialLaw, LinearAxialLaw, MemberNetworkAssembly
 from ._equilibrium import MemberNetworkInputs
 from ._properties import MemberPropertyMap
@@ -79,7 +81,7 @@ class PrestressFabricationPolicy(StrictModule):
         force_tolerance: float = 1.0e-6,
         require_stability: bool = True,
         require_sequence: bool = True,
-    ):
+    ) -> None:
         minimum = jnp.asarray(minimum_rest_length)
         maximum = jnp.asarray(maximum_rest_length, dtype=minimum.dtype)
         stroke_minimum = jnp.asarray(minimum_stroke, dtype=minimum.dtype)
@@ -137,7 +139,9 @@ class PrestressRealizabilityResult(StrictModule):
         return self.verdict == int(StructuralEvidenceVerdict.CERTIFIED)
 
 
-def _member_lengths(target: PrestressTarget, structure, /) -> Array:
+def _member_lengths(
+    target: PrestressTarget, structure: ForceDensityStructure, /
+) -> Array:
     vectors = target.positions[structure.receivers] - target.positions[structure.senders]
     return jnp.sqrt(jnp.sum(vectors * vectors, axis=-1))
 
@@ -288,7 +292,7 @@ def assess_prestress_realizability(
 
 def member_network_from_force_density(
     result: ForceDensityResult,
-    structure,
+    structure: ForceDensityStructure,
     properties: MemberPropertyMap,
     assembly: MemberNetworkAssembly,
     /,

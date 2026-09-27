@@ -14,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _piecewise_problem(*, scale=1.0, t1=2.0):
+def _piecewise_problem(*, scale: Any = 1.0, t1: Any = 2.0) -> Any:
     return phx.solver.DelayDifferentialProblem(
         lambda time, state, memory, args: args * memory["lag"],
         lambda time, args: jnp.ones((1,)),
@@ -25,7 +25,7 @@ def _piecewise_problem(*, scale=1.0, t1=2.0):
     )
 
 
-def _piecewise_exact(times, scale=1.0):
+def _piecewise_exact(times: Any, scale: Any = 1.0) -> Any:
     first = 1.0 + scale * times
     shifted = times - 1.0
     second = 1.0 + scale * times + 0.5 * scale**2 * shifted**2
@@ -33,7 +33,7 @@ def _piecewise_exact(times, scale=1.0):
 
 
 @pytest.mark.parametrize("solver", [dfx.Euler(), dfx.Heun(), dfx.Tsit5()])
-def test_fixed_diffrax_delay_solvers_execute_through_unified_api(solver):
+def test_fixed_diffrax_delay_solvers_execute_through_unified_api(solver: Any) -> None:
     times = jnp.linspace(0.0, 2.0, 41)
     solution = phx.solver.solve_diffrax_delay(
         _piecewise_problem(),
@@ -55,7 +55,7 @@ def test_fixed_diffrax_delay_solvers_execute_through_unified_api(solver):
     )
 
 
-def test_fixed_controller_shortens_a_step_at_propagated_discontinuity():
+def test_fixed_controller_shortens_a_step_at_propagated_discontinuity() -> None:
     solution = phx.solver.solve_diffrax_delay(
         _piecewise_problem(),
         save_times=jnp.asarray([0.0, 1.0, 2.0]),
@@ -69,7 +69,7 @@ def test_fixed_controller_shortens_a_step_at_propagated_discontinuity():
     assert jnp.allclose(solution.states[:, 0], jnp.asarray([1.0, 2.0, 3.36]))
 
 
-def test_fixed_implicit_delay_solver_uses_explicit_nonlinear_tolerances():
+def test_fixed_implicit_delay_solver_uses_explicit_nonlinear_tolerances() -> None:
     delay = 0.2
     problem = phx.solver.DelayDifferentialProblem(
         lambda time, state, memory, args: (
@@ -95,8 +95,8 @@ def test_fixed_implicit_delay_solver_uses_explicit_nonlinear_tolerances():
     assert solution.stats["controller_mode"] == "fixed"
 
 
-def test_fixed_delay_solver_converges_at_euler_order():
-    def terminal(step):
+def test_fixed_delay_solver_converges_at_euler_order() -> None:
+    def terminal(step: Any) -> Any:
         solution = phx.solver.solve_diffrax_delay(
             _piecewise_problem(),
             save_times=jnp.asarray([2.0]),
@@ -113,8 +113,8 @@ def test_fixed_delay_solver_converges_at_euler_order():
     assert jnp.all(orders > 0.85)
 
 
-def test_fixed_delay_solver_is_jittable_vectorizable_and_differentiable():
-    def terminal(scale):
+def test_fixed_delay_solver_is_jittable_vectorizable_and_differentiable() -> None:
+    def terminal(scale: Any) -> Any:
         solution = phx.solver.solve_diffrax_delay(
             _piecewise_problem(scale=scale),
             save_times=jnp.asarray([2.0]),
@@ -131,7 +131,7 @@ def test_fixed_delay_solver_is_jittable_vectorizable_and_differentiable():
     assert jnp.isclose(jax.grad(terminal)(1.0), 3.0, atol=1e-5)
 
 
-def test_rolling_whole_solve_matches_full_history_with_bounded_storage():
+def test_rolling_whole_solve_matches_full_history_with_bounded_storage() -> None:
     problem = _piecewise_problem(t1=4.0)
     times = jnp.linspace(0.0, 4.0, 41)
     common: dict[str, Any] = {
@@ -166,7 +166,7 @@ def test_rolling_whole_solve_matches_full_history_with_bounded_storage():
         rolling.evaluate(jnp.asarray([0.5]))
 
 
-def test_fixed_history_capacity_counts_only_step_splitting_breakpoints():
+def test_fixed_history_capacity_counts_only_step_splitting_breakpoints() -> None:
     aligned = phx.solver.fixed_delay_history_capacity(
         1.0,
         0.05,
@@ -184,7 +184,7 @@ def test_fixed_history_capacity_counts_only_step_splitting_breakpoints():
     assert split == 9
 
 
-def test_rolling_history_capacity_is_explicit_for_adaptive_execution():
+def test_rolling_history_capacity_is_explicit_for_adaptive_execution() -> None:
     problem = _piecewise_problem(t1=2.0)
     with pytest.raises(ValueError, match="explicit history_capacity"):
         phx.solver.solve_diffrax_delay(
@@ -214,7 +214,7 @@ def test_rolling_history_capacity_is_explicit_for_adaptive_execution():
         )
 
 
-def test_fixed_delay_solver_rejects_missing_or_noncausal_step_size():
+def test_fixed_delay_solver_rejects_missing_or_noncausal_step_size() -> None:
     common: dict[str, Any] = {
         "save_times": jnp.asarray([1.0]),
         "solver": dfx.Euler(),
@@ -232,7 +232,7 @@ def test_fixed_delay_solver_rejects_missing_or_noncausal_step_size():
         phx.solver.solve_diffrax_delay(_piecewise_problem(), dt0=1.1, **common)
 
 
-def test_fixed_delay_solver_rejects_unconstrained_fixed_controller():
+def test_fixed_delay_solver_rejects_unconstrained_fixed_controller() -> None:
     with pytest.raises(ValueError, match="ConstantStepSize"):
         phx.solver.solve_diffrax_delay(
             _piecewise_problem(),

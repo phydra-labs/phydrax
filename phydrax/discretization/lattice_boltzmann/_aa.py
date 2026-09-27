@@ -9,7 +9,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -50,7 +50,7 @@ class AALatticeBoltzmannPlan(StrictModule, NonTrainableState):
     velocity_set: LatticeBoltzmannVelocitySet
     addressing_id: str = eqx.field(static=True)
 
-    def __init__(self, velocity_set: LatticeBoltzmannVelocitySet, /):
+    def __init__(self, velocity_set: LatticeBoltzmannVelocitySet, /) -> None:
         if not isinstance(velocity_set, LatticeBoltzmannVelocitySet):
             raise TypeError("velocity_set must be a LatticeBoltzmannVelocitySet.")
         self.velocity_set = velocity_set

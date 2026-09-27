@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,7 +18,7 @@ import phydrax as phx
 from benchmarks._runtime import capture_environment, measure_repeated
 
 
-def _triangles(count: int):
+def _triangles(count: int) -> Any:
     columns = int(np.ceil(np.sqrt(count)))
     vertices = []
     triangles = []
@@ -53,7 +54,7 @@ def benchmark(*, smoke: bool) -> dict[str, object]:
     centers = jnp.asarray(vertices[triangles].mean(axis=1))
     directions = centers / jnp.sqrt(jnp.sum(centers * centers, axis=1, keepdims=True))
 
-    def dynamic_query(current_vertices):
+    def dynamic_query(current_vertices: Any) -> Any:
         geometry = phx.geometry.refit_triangle_ray_geometry(
             query, current_vertices, geometry_id="benchmark-geometry"
         )

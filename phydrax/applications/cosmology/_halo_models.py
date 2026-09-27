@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -50,7 +51,7 @@ class SmoothComponentSphericalCollapsePlan(StrictModule, NonTrainableState):
         steps: int = 1024,
         bisection_iterations: int = 64,
         collapse_radius: float = 1.0e-3,
-    ):
+    ) -> None:
         initial = float(initial_scale_factor)
         steps_ = int(steps)
         iterations = int(bisection_iterations)
@@ -88,7 +89,7 @@ class SmoothComponentSphericalCollapsePlan(StrictModule, NonTrainableState):
         step = (log_end - log_start) / self.steps
         initial = jnp.stack((1.0 - overdensity / 3.0, -overdensity / 3.0))
 
-        def rate(log_scale, state):
+        def rate(log_scale: Array, state: Array) -> Array:
             scale = jnp.exp(log_scale)
             radius = jnp.maximum(state[0], self.collapse_radius * 0.1)
             velocity = state[1]
@@ -100,7 +101,7 @@ class SmoothComponentSphericalCollapsePlan(StrictModule, NonTrainableState):
                 )
             )
 
-        def advance(index, state):
+        def advance(index: Array, state: Array) -> Array:
             time = log_start + index * step
             k1 = rate(time, state)
             k2 = rate(time + 0.5 * step, state + 0.5 * step * k1)
@@ -128,7 +129,7 @@ class SmoothComponentSphericalCollapsePlan(StrictModule, NonTrainableState):
             "Spherical-collapse target must lie after the initial epoch and at or before a=1.",
         )
 
-        def bisect(_, bounds):
+        def bisect(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             lower, upper = bounds
             midpoint = 0.5 * (lower + upper)
             terminal = self._terminal_radius(background, target, midpoint)
@@ -202,7 +203,7 @@ class TinkerDuffy200mPlan(StrictModule, NonTrainableState):
         mass_domain: tuple[float, float],
         maximum_redshift: float = 2.0,
         pivot_mass: float = 2.0e12,
-    ):
+    ) -> None:
         if not isinstance(variance, LinearVariancePlan):
             raise TypeError("variance must be LinearVariancePlan.")
         minimum, maximum = (float(value) for value in mass_domain)
@@ -263,7 +264,7 @@ class TinkerDuffy200mPlan(StrictModule, NonTrainableState):
         )
         log_mass = jnp.log(mass)
 
-        def log_sigma(log_value):
+        def log_sigma(log_value: Array) -> Array:
             value = jnp.exp(log_value)
             sigma = self.variance.sigma(background, linear_power, value, scale)
             return jnp.log(sigma)
@@ -340,7 +341,7 @@ class MatterHaloModel200mPlan(StrictModule, NonTrainableState):
     profile: NFWProfile
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, triplet: TinkerDuffy200mPlan, profile: NFWProfile, /):
+    def __init__(self, triplet: TinkerDuffy200mPlan, profile: NFWProfile, /) -> None:
         if not isinstance(triplet, TinkerDuffy200mPlan) or not isinstance(
             profile, NFWProfile
         ):
@@ -460,7 +461,7 @@ class HaloCatalog(StrictModule):
         box_size: tuple[float, ...],
         artifact: ScientificArtifactEnvelope,
         /,
-    ):
+    ) -> None:
         ids = jax.lax.stop_gradient(jnp.asarray(halo_ids))
         position = jax.lax.stop_gradient(jnp.asarray(positions))
         velocity = jax.lax.stop_gradient(jnp.asarray(velocities, dtype=position.dtype))
@@ -570,7 +571,7 @@ class Zheng07OccupationExpectation200m(StrictModule):
         satellite_mass: ArrayLike,
         satellite_slope: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (

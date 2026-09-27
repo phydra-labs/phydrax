@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -73,7 +74,7 @@ class DiscreteOrdinatesTransportPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-9,
         dsa: bool = False,
         dsa_relaxation: float = 0.5,
-    ):
+    ) -> None:
         if not isinstance(problem, MultigroupSlabTransportProblem):
             raise TypeError("problem must be MultigroupSlabTransportProblem.")
         iterations = int(maximum_iterations)
@@ -140,7 +141,9 @@ class DiscreteOrdinatesTransportPlan(StrictModule, NonTrainableState):
             incoming = self._incoming(angular, group, angle)
             coefficient = jnp.abs(mu) / width
 
-            def step(boundary_flux, values):
+            def step(
+                boundary_flux: Array, values: tuple[Array, Array, Array]
+            ) -> tuple[Array, Array]:
                 source, attenuation, total_value = values
                 flux = (source + attenuation * boundary_flux) / (
                     total_value + attenuation
@@ -226,7 +229,7 @@ class DiscreteOrdinatesTransportPlan(StrictModule, NonTrainableState):
         initial_nonnegative = jnp.all(scalar >= 0.0)
         scalar = jnp.where(initial_finite & initial_nonnegative, scalar, 0.0)
 
-        def body(_, carry):
+        def body(_: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             previous_angular, previous_scalar = carry
             return self._iterate(previous_angular, previous_scalar)
 

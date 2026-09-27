@@ -4,14 +4,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Callable, Iterable
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -62,15 +64,15 @@ class VehicleConfiguration(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        dry_mass,
-        dry_inertia,
-        tank_locations,
-        tank_capacities,
-        wheel_axes,
-        wheel_inertias,
-        context,
+        dry_mass: npt.ArrayLike,
+        dry_inertia: npt.ArrayLike,
+        tank_locations: npt.ArrayLike,
+        tank_capacities: npt.ArrayLike,
+        wheel_axes: npt.ArrayLike,
+        wheel_inertias: npt.ArrayLike,
+        context: AstrodynamicsContext,
         /,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         mass = np.asarray(dry_mass, dtype=np.float64)
@@ -147,6 +149,12 @@ class VehicleEffectorEvaluation(StrictModule):
     valid: Array
 
 
+_VehicleEffector: TypeAlias = Callable[
+    [Array, VehicleState, Any], VehicleEffectorEvaluation
+]
+_VehicleCarry: TypeAlias = tuple[VehicleState, Array]
+
+
 class VehicleResult(StrictModule):
     times: Array
     states: VehicleState
@@ -158,11 +166,19 @@ class VehicleResult(StrictModule):
 
 class CoupledVehiclePlan(StrictModule, NonTrainableState):
     configuration: VehicleConfiguration
-    effectors: tuple[Callable, ...]
+    effectors: tuple[_VehicleEffector, ...]
     times: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, configuration, effectors, times, /, *, effector_ids):
+    def __init__(
+        self,
+        configuration: VehicleConfiguration,
+        effectors: Iterable[_VehicleEffector],
+        times: npt.ArrayLike,
+        /,
+        *,
+        effector_ids: Iterable[str],
+    ) -> None:
         if not isinstance(configuration, VehicleConfiguration):
             raise TypeError("configuration must be a VehicleConfiguration.")
         items = tuple(effectors)
@@ -255,7 +271,7 @@ class CoupledVehiclePlan(StrictModule, NonTrainableState):
         return derivative, valid
 
     def rollout(
-        self, initial: VehicleState, command_schedule: Callable, /
+        self, initial: VehicleState, command_schedule: Callable[[Array], object], /
     ) -> VehicleResult:
         if not isinstance(initial, VehicleState):
             raise TypeError("initial must be a VehicleState.")
@@ -280,12 +296,16 @@ class CoupledVehiclePlan(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(initial.wheel_momentum))
         )
 
-        def add(state, derivative, factor):
+        def add(
+            state: VehicleState, derivative: VehicleState, factor: Array
+        ) -> VehicleState:
             return jax.tree.map(
                 lambda value, delta: value + factor * delta, state, derivative
             )
 
-        def step(carry, interval):
+        def step(
+            carry: _VehicleCarry, interval: Array
+        ) -> tuple[_VehicleCarry, _VehicleCarry]:
             state, active = carry
             start, end = interval
             dt = end - start
@@ -356,7 +376,13 @@ class FswSchedule(StrictModule, NonTrainableState):
     commands: Array
     modes: Array
 
-    def __init__(self, breakpoints, commands, modes, /):
+    def __init__(
+        self,
+        breakpoints: npt.ArrayLike,
+        commands: npt.ArrayLike,
+        modes: npt.ArrayLike,
+        /,
+    ) -> None:
         points = np.asarray(breakpoints, dtype=np.float64)
         command_values = np.asarray(commands, dtype=np.float64)
         mode_values = np.asarray(modes, dtype=np.int32)

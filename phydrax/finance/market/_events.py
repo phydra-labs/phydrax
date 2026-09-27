@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+import numpy.typing as npt
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -37,16 +38,16 @@ class PointInTimePanel(StrictModule, NonTrainableState):
     def __init__(
         self,
         layout: RiskFactorLayout,
-        event_time_ns: Array,
-        decision_time_ns: Array,
-        values: Array,
-        valid_mask: Array,
-        status: Array,
-        availability_time_ns: Array,
+        event_time_ns: npt.ArrayLike,
+        decision_time_ns: npt.ArrayLike,
+        values: npt.ArrayLike,
+        valid_mask: npt.ArrayLike,
+        status: npt.ArrayLike,
+        availability_time_ns: npt.ArrayLike,
         /,
         *,
         observation_ids: Sequence[Sequence[str]],
-    ):
+    ) -> None:
         if not isinstance(layout, RiskFactorLayout):
             raise TypeError("layout must be a RiskFactorLayout.")
         event_host = np.asarray(event_time_ns, dtype=np.int64)
@@ -225,7 +226,7 @@ class MarketEventStream(StrictModule, NonTrainableState):
         /,
         *,
         archive_time: FinancialTimestamp,
-    ):
+    ) -> None:
         if not isinstance(archive_time, FinancialTimestamp):
             raise TypeError("archive_time must be a FinancialTimestamp.")
         values = tuple(observations)
@@ -299,7 +300,7 @@ class PreparedMarketEventStream(StrictModule, NonTrainableState):
         capacity: int,
         tie_policy: QuoteTiePolicy,
         max_age_ns: int | None,
-    ):
+    ) -> None:
         if not isinstance(stream, MarketEventStream):
             raise TypeError("stream must be a MarketEventStream.")
         if not isinstance(layout, RiskFactorLayout):

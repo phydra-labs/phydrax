@@ -7,15 +7,17 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from math import isfinite, sqrt
 from statistics import NormalDist
-from typing import Literal, TypeAlias
+from typing import assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ..typing import parse
 
 
 SPDERefinementAxis: TypeAlias = Literal[
@@ -64,7 +66,7 @@ class WeakObservableEstimate(StrictModule):
         /,
         *,
         confidence_level: float = 0.95,
-    ):
+    ) -> None:
         resolved_name = str(name)
         values = (float(estimate), float(reference), float(standard_error))
         if not resolved_name:
@@ -113,7 +115,7 @@ class SPDEErrorBudget(StrictModule):
         spatial: float = 0.0,
         noise: float = 0.0,
         sampling: float = 0.0,
-    ):
+    ) -> None:
         values = tuple(float(value) for value in (temporal, spatial, noise, sampling))
         if any(not isfinite(value) or value < 0.0 for value in values):
             raise ValueError(
@@ -167,7 +169,7 @@ class SPDEConvergenceLevel(StrictModule):
         realization_id: str | None = None,
         coupling_id: str | None = None,
         provenance: Mapping[str, str] | None = None,
-    ):
+    ) -> None:
         scale = float(resolution)
         cost = float(work)
         if not isfinite(scale) or scale <= 0.0:
@@ -212,22 +214,25 @@ class SPDEConvergenceLevel(StrictModule):
         return matches[0]
 
     def metric(self, metric: SPDEConvergenceMetric, /) -> float:
-        if metric == "strong":
-            value = self.strong_error
-        elif metric == "pathwise":
-            value = self.pathwise_error
-        elif metric == "invariant":
-            value = self.invariant_error
-        elif self.error_budget is not None:
-            mapping = {
-                "temporal": self.error_budget.temporal,
-                "spatial": self.error_budget.spatial,
-                "noise": self.error_budget.noise,
-                "sampling": self.error_budget.sampling,
-            }
-            value = mapping[metric]
-        else:
-            value = None
+        metric = parse(metric, SPDEConvergenceMetric, "metric")
+        budget = self.error_budget
+        match metric:
+            case "strong":
+                value = self.strong_error
+            case "pathwise":
+                value = self.pathwise_error
+            case "invariant":
+                value = self.invariant_error
+            case "temporal":
+                value = None if budget is None else budget.temporal
+            case "spatial":
+                value = None if budget is None else budget.spatial
+            case "noise":
+                value = None if budget is None else budget.noise
+            case "sampling":
+                value = None if budget is None else budget.sampling
+            case _:
+                assert_never(metric)
         if value is None:
             raise ValueError(
                 f"Metric {metric!r} is absent at resolution {self.resolution}."
@@ -249,9 +254,8 @@ class SPDEConvergenceStudy(StrictModule):
         /,
         *,
         reference_id: str,
-    ):
-        if refined_axis not in ("time", "space", "noise_rank", "ensemble"):
-            raise ValueError(f"Unknown SPDE refinement axis {refined_axis!r}.")
+    ) -> None:
+        refined_axis = parse(refined_axis, SPDERefinementAxis, "refined_axis")
         values = tuple(levels)
         if len(values) < 2 or any(
             not isinstance(value, SPDEConvergenceLevel) for value in values
@@ -442,7 +446,7 @@ class NoiseTruncationLevel(StrictModule):
         stationary_solution_residual: float | None,
         strong_rms_error: float,
         weak_observable_residuals: Mapping[str, float] | None = None,
-    ):
+    ) -> None:
         retained = int(rank)
         if retained < 0:
             raise ValueError("rank must be non-negative.")
@@ -499,7 +503,7 @@ class NoiseTruncationStudy(StrictModule):
         horizon: float,
         operator_id: str,
         basis_id: str,
-    ):
+    ) -> None:
         values = tuple(levels)
         if not values or any(
             not isinstance(value, NoiseTruncationLevel) for value in values

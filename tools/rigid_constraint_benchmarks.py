@@ -6,6 +6,7 @@
 
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -14,7 +15,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _tree_bytes(tree):
+def _tree_bytes(tree: Any) -> Any:
     return sum(
         leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree.leaves(tree)
@@ -22,7 +23,7 @@ def _tree_bytes(tree):
     )
 
 
-def _case(body_count):
+def _case(body_count: Any) -> Any:
     body_ids = jnp.arange(1000, 1000 + body_count, dtype=jnp.int64)
     masses = jnp.ones((body_count,))
     particles = phx.discretization.ParticleSetPlan(
@@ -80,7 +81,7 @@ def _case(body_count):
     )
     graph = phx.discretization.RigidJointGraphPlan(ball=ball, hinge=hinge)
 
-    def gravity(time_, kinematics, args):
+    def gravity(time_: Any, kinematics: Any, args: Any) -> Any:
         del time_, args
         return phx.discretization.RigidBodyLoad(
             masses[:, None] * jnp.asarray([0.0, -9.81, 0.0]),
@@ -102,12 +103,12 @@ def _case(body_count):
     return dynamics, state, ball.count, hinge.count
 
 
-def _measure(body_count, repeats=8):
+def _measure(body_count: Any, repeats: Any = 8) -> Any:
     dynamics, state, ball_count, hinge_count = _case(body_count)
     step_size = jnp.asarray(1.0e-3)
 
     @eqx.filter_jit
-    def step(current, index):
+    def step(current: Any, index: Any) -> Any:
         return dynamics.step(
             current,
             step_size * index,
@@ -162,7 +163,7 @@ def _measure(body_count, repeats=8):
     }
 
 
-def main():
+def main() -> None:
     results = [_measure(count) for count in (4, 8, 16)]
     print(
         json.dumps(

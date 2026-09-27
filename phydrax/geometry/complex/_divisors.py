@@ -9,7 +9,8 @@ from collections.abc import Callable, Mapping, Sequence
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...metrix import CoordinateAtlas
@@ -29,7 +30,7 @@ class DivisorChart(StrictModule):
         *,
         multiplicity: int = 1,
         component_id: str,
-    ):
+    ) -> None:
         if (
             int(chart_index) < 0
             or not callable(defining_function)
@@ -59,7 +60,7 @@ class DivisorClearanceEvidence(StrictModule):
         sampled: ArrayLike,
         certified: ArrayLike,
         clear: ArrayLike,
-    ):
+    ) -> None:
         self.lower_bounds = jnp.asarray(lower_bounds)
         self.sampled = jnp.asarray(sampled, dtype=jnp.bool_)
         self.certified = jnp.asarray(certified, dtype=jnp.bool_)
@@ -81,7 +82,7 @@ class DivisorIntersection(StrictModule):
         transverse: ArrayLike,
         valid: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.point = jnp.asarray(point)
         self.jacobian_rank = jnp.asarray(jacobian_rank, dtype=jnp.int32)
         self.expected_rank = int(expected_rank)
@@ -108,7 +109,7 @@ class CartierDivisor(StrictModule):
         *,
         tolerance: float = 1e-8,
         divisor_id: str,
-    ):
+    ) -> None:
         charts_ = tuple(charts)
         if (
             not isinstance(atlas, CoordinateAtlas)
@@ -255,7 +256,7 @@ class MeromorphicSection(StrictModule):
         numerators: Sequence[Callable[[Array], Array]],
         denominators: Sequence[Callable[[Array], Array]],
         /,
-    ):
+    ) -> None:
         numerator_ = tuple(numerators)
         denominator_ = tuple(denominators)
         if (

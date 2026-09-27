@@ -1,24 +1,26 @@
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _regression_design(time, context):
+def _regression_design(time: Any, context: Any) -> Any:
     return jnp.asarray((1.0, time + context.args["design_shift"]))
 
 
-def _deterministic_transition(t0, t1, context):
+def _deterministic_transition(t0: Any, t1: Any, context: Any) -> Any:
     interval = t1 - t0
     return jnp.asarray(((1.0, interval), (0.0, context.args["deterministic_retention"])))
 
 
-def _deterministic_observation(time, context):
+def _deterministic_observation(time: Any, context: Any) -> Any:
     del time
     return jnp.asarray((context.args["deterministic_loading"], 0.0))
 
 
-def test_named_components_compile_known_transition_and_observation_blocks():
+def test_named_components_compile_known_transition_and_observation_blocks() -> None:
     components = (
         phx.stochastic.DampedTrendComponent(
             "trend",
@@ -120,7 +122,7 @@ def test_named_components_compile_known_transition_and_observation_blocks():
     assert provenance[4].transition_id == "physical-deterministic-transition"
 
 
-def test_physical_time_closed_forms_for_level_trend_and_damping():
+def test_physical_time_closed_forms_for_level_trend_and_damping() -> None:
     context = phx.stochastic.StateSpaceStepContext.empty()
     level = phx.stochastic.LocalLevelComponent(
         "level", process_variance=0.25, initial_variance=2.0
@@ -134,23 +136,28 @@ def test_physical_time_closed_forms_for_level_trend_and_damping():
     )
 
     assert jnp.allclose(
-        level.process_covariance(1.0, 3.5, context), jnp.asarray(((0.625,),))
+        # ty: ignore[invalid-argument-type]
+        level.process_covariance(1.0, 3.5, context),
+        jnp.asarray(((0.625,),)),
     )
     assert jnp.allclose(
+        # ty: ignore[invalid-argument-type]
         trend.transition_matrix(1.0, 3.5, context),
         jnp.asarray(((1.0, 2.5), (0.0, 1.0))),
     )
     assert jnp.allclose(
+        # ty: ignore[invalid-argument-type]
         trend.process_covariance(1.0, 3.5, context),
         jnp.diag(jnp.asarray((0.25, 0.75))),
     )
     assert jnp.allclose(
+        # ty: ignore[invalid-argument-type]
         damped.transition_matrix(0.0, 2.0, context),
         jnp.asarray(((1.0, 0.75), (0.0, 0.25))),
     )
 
 
-def test_compiled_prior_preserves_physical_cases_and_observation_masks():
+def test_compiled_prior_preserves_physical_cases_and_observation_masks() -> None:
     model = phx.stochastic.compile_structural_state_space(
         (
             phx.stochastic.LocalLevelComponent(
@@ -241,22 +248,30 @@ def test_compiled_prior_preserves_physical_cases_and_observation_masks():
         (
             (
                 phx.stochastic.AutoregressiveComponent(
-                    "ar-a", (0.5,), process_variance=0.1
+                    "ar-a",
+                    # ty: ignore[invalid-argument-type]
+                    (0.5,),
+                    process_variance=0.1,
                 ),
                 phx.stochastic.AutoregressiveComponent(
-                    "ar-b", (-0.5,), process_variance=0.1
+                    "ar-b",
+                    # ty: ignore[invalid-argument-type]
+                    (-0.5,),
+                    process_variance=0.1,
                 ),
             ),
             "label-unidentifiable",
         ),
     ],
 )
-def test_compiler_rejects_redundant_or_unidentifiable_combinations(components, message):
+def test_compiler_rejects_redundant_or_unidentifiable_combinations(
+    components: Any, message: Any
+) -> None:
     with pytest.raises(ValueError, match=message):
         phx.stochastic.compile_structural_state_space(components, 0.2)
 
 
-def test_fixed_multicoefficient_regression_is_rejected_as_unidentifiable():
+def test_fixed_multicoefficient_regression_is_rejected_as_unidentifiable() -> None:
     with pytest.raises(ValueError, match="unidentifiable"):
         phx.stochastic.RegressionComponent(
             "fixed",
@@ -265,7 +280,7 @@ def test_fixed_multicoefficient_regression_is_rejected_as_unidentifiable():
         )
 
 
-def test_zero_fixed_regression_design_is_rejected_as_unidentifiable():
+def test_zero_fixed_regression_design_is_rejected_as_unidentifiable() -> None:
     with pytest.raises(ValueError, match="identically zero.*unidentifiable"):
         phx.stochastic.RegressionComponent(
             "zero-design",
@@ -274,7 +289,7 @@ def test_zero_fixed_regression_design_is_rejected_as_unidentifiable():
         )
 
 
-def test_process_noise_compiles_as_independent_endpoint_noise():
+def test_process_noise_compiles_as_independent_endpoint_noise() -> None:
     component = phx.stochastic.ProcessNoiseComponent("white", variance=0.5)
 
     model = phx.stochastic.compile_structural_state_space((component,), 0.25)
@@ -294,7 +309,7 @@ def test_process_noise_compiles_as_independent_endpoint_noise():
     assert jnp.array_equal(observation_covariance, jnp.asarray([[0.25]]))
 
 
-def test_zero_observation_variance_has_exact_support_and_mask_semantics():
+def test_zero_observation_variance_has_exact_support_and_mask_semantics() -> None:
     model = phx.stochastic.compile_structural_state_space(
         (
             phx.stochastic.LocalLevelComponent(
@@ -337,7 +352,7 @@ def test_zero_observation_variance_has_exact_support_and_mask_semantics():
     assert masked == 0.0
 
 
-def test_dense_compiler_rejects_unsupported_state_size():
+def test_dense_compiler_rejects_unsupported_state_size() -> None:
     trend = phx.stochastic.TrendComponent("trend", level_variance=0.1, slope_variance=0.1)
 
     with pytest.raises(ValueError, match="at most 1 states"):

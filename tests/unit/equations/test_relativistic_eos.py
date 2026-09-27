@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -24,11 +27,11 @@ from phydrax.equations._relativistic_eos import (
 from phydrax.units import KILOGRAM
 
 
-def _geometric_scale():
+def _geometric_scale() -> Any:
     return RelativityScaleContract.geometric(KILOGRAM)
 
 
-def _cold_eos():
+def _cold_eos() -> Any:
     return PiecewisePolytropicEOS(
         _geometric_scale(),
         jnp.asarray((1.0,)),
@@ -38,7 +41,7 @@ def _cold_eos():
     )
 
 
-def _tabulated_eos(*, pressure_scale=1.0):
+def _tabulated_eos(*, pressure_scale: Any = 1.0) -> Any:
     density = np.asarray((1.0, 2.0, 4.0))
     temperature = np.asarray((1.0, 2.0, 4.0))
     composition = np.asarray((0.1, 0.4, 0.8))
@@ -58,7 +61,9 @@ def _tabulated_eos(*, pressure_scale=1.0):
     )
 
 
-def test_gamma_law_state_is_thermodynamically_consistent_and_vector_differentiable():
+def test_gamma_law_state_is_thermodynamically_consistent_and_vector_differentiable() -> (
+    None
+):
     scale = _geometric_scale()
     eos = GammaLawEOS(
         scale,
@@ -101,7 +106,7 @@ def test_gamma_law_state_is_thermodynamically_consistent_and_vector_differentiab
     np.testing.assert_allclose(pressure_state.specific_internal_energy, energy)
 
 
-def test_gamma_law_reports_exact_domain_failures_without_repairing_inputs():
+def test_gamma_law_reports_exact_domain_failures_without_repairing_inputs() -> None:
     eos = GammaLawEOS(
         _geometric_scale(),
         4.0 / 3.0,
@@ -120,7 +125,7 @@ def test_gamma_law_reports_exact_domain_failures_without_repairing_inputs():
     assert state.specific_internal_energy[1] == pytest.approx(1.1)
 
 
-def test_piecewise_polytrope_is_continuous_and_obeys_cold_first_law():
+def test_piecewise_polytrope_is_continuous_and_obeys_cold_first_law() -> None:
     eos = _cold_eos()
     break_density = jnp.asarray(1.0)
     left = eos.evaluate(break_density - 1.0e-6)
@@ -153,7 +158,7 @@ def test_piecewise_polytrope_is_continuous_and_obeys_cold_first_law():
     assert not bool(inconsistent.physically_valid)
 
 
-def test_hybrid_eos_uses_cold_energy_as_an_explicit_thermal_boundary():
+def test_hybrid_eos_uses_cold_energy_as_an_explicit_thermal_boundary() -> None:
     cold = _cold_eos()
     eos = HybridColdThermalEOS(cold, 1.5)
     density = jnp.asarray((0.6, 2.0, 3.0))
@@ -188,7 +193,9 @@ def test_hybrid_eos_uses_cold_energy_as_an_explicit_thermal_boundary():
     assert below.pressure != cold.evaluate(jnp.asarray(2.0)).pressure
 
 
-def test_tabulated_eos_has_bounded_fixed_interpolation_and_smooth_branch_gradients():
+def test_tabulated_eos_has_bounded_fixed_interpolation_and_smooth_branch_gradients() -> (
+    None
+):
     eos = _tabulated_eos()
     density = jnp.asarray((1.25, 1.5, 3.0))
     temperature = jnp.asarray((1.25, 1.5, 3.0))
@@ -235,7 +242,7 @@ def test_tabulated_eos_has_bounded_fixed_interpolation_and_smooth_branch_gradien
     )
 
 
-def test_tabulated_eos_support_endpoints_are_not_derivative_valid():
+def test_tabulated_eos_support_endpoints_are_not_derivative_valid() -> None:
     eos = _tabulated_eos()
     states = eos.evaluate_temperature(
         jnp.asarray((1.0, 4.0, 1.5, 1.5, 1.5, 1.5)),
@@ -247,7 +254,9 @@ def test_tabulated_eos_support_endpoints_are_not_derivative_valid():
     assert not bool(jnp.any(states.derivative_valid))
 
 
-def test_tabulated_eos_reports_each_support_failure_and_never_returns_boundary_values():
+def test_tabulated_eos_reports_each_support_failure_and_never_returns_boundary_values() -> (
+    None
+):
     eos = _tabulated_eos()
     state = eos.evaluate_temperature(
         jnp.asarray((0.5, 2.0, 2.0, 2.0)),
@@ -268,7 +277,7 @@ def test_tabulated_eos_reports_each_support_failure_and_never_returns_boundary_v
     assert bool(jnp.isnan(below_energy.temperature))
 
 
-def test_tabulated_identity_binds_all_numeric_content_and_host_evidence():
+def test_tabulated_identity_binds_all_numeric_content_and_host_evidence() -> None:
     base = _tabulated_eos()
     changed = _tabulated_eos(pressure_scale=1.01)
 
@@ -280,7 +289,7 @@ def test_tabulated_identity_binds_all_numeric_content_and_host_evidence():
     assert base.table_evidence.minimum_causality_margin >= 0.0
 
 
-def test_tabulated_eos_rejects_nonmonotone_or_acausal_content_on_host():
+def test_tabulated_eos_rejects_nonmonotone_or_acausal_content_on_host() -> None:
     density = np.asarray((1.0, 2.0, 4.0))
     temperature = np.asarray((1.0, 2.0, 4.0))
     composition = np.asarray((0.1, 0.4, 0.8))

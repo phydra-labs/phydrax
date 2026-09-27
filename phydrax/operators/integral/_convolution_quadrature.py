@@ -10,7 +10,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 
@@ -62,7 +63,7 @@ class ConvolutionQuadratureContourPolicy(StrictModule):
         *,
         radius: float | None = None,
         tolerance: float | None = None,
-    ):
+    ) -> None:
         radius_ = None if radius is None else float(radius)
         tolerance_ = None if tolerance is None else float(tolerance)
         if radius_ is not None and (
@@ -132,7 +133,7 @@ class ConvolutionQuadratureContour(StrictModule):
         method: ConvolutionQuadratureMethod,
         tolerance: float,
         conjugate_symmetric: bool,
-    ):
+    ) -> None:
         self.zeta = zeta
         self.parameters = parameters
         self.step_size = step_size

@@ -9,7 +9,8 @@ from enum import StrEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -48,7 +49,7 @@ class ThermalBoundaryCondition(StrictModule, NonTrainableState):
         *,
         value: ArrayLike = 0.0,
         boundary_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(kind, ThermalBoundaryKind):
             raise TypeError("kind must be a ThermalBoundaryKind.")
         mask = np.asarray(node_mask)
@@ -105,7 +106,7 @@ class ThermalLatticeBoltzmannPlan(StrictModule, NonTrainableState):
         *,
         reference_temperature: float = 0.0,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         capacity = np.asarray(volumetric_heat_capacity, dtype=np.float64)
         conductivity = np.asarray(thermal_conductivity, dtype=np.float64)
         reference = float(reference_temperature)
@@ -155,7 +156,7 @@ class BoussinesqCouplingPlan(StrictModule, NonTrainableState):
         *,
         reference_temperature: float,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         density = np.asarray(reference_density, dtype=np.float64)
         expansion = np.asarray(thermal_expansion, dtype=np.float64)
         acceleration = np.asarray(gravity, dtype=np.float64)
@@ -429,7 +430,7 @@ def initialize_thermal_ledger(
     return ThermalEnergyLedger(total, zero, zero, zero, zero)
 
 
-def _validate_lattice_precision(lattice, precision):
+def _validate_lattice_precision(lattice: object, precision: object) -> None:
     if not isinstance(lattice, LatticeBoltzmannVelocitySet):
         raise TypeError("lattice must be a LatticeBoltzmannVelocitySet.")
     if not isinstance(precision, LatticeBoltzmannPrecisionPolicy):

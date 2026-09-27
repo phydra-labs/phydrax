@@ -11,7 +11,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._array_tree import ArrayPyTreeSchema
 from ..._fingerprint import canonical_fingerprint
@@ -111,7 +112,7 @@ class ReducedRodContactPlantState(StrictModule):
         contact_state: RodContactManifoldState,
         sensor_state: ReducedRodPassiveSensorState,
         /,
-    ):
+    ) -> None:
         if not isinstance(reduced_state, ReducedRodState):
             raise TypeError("reduced_state must be ReducedRodState.")
         if not isinstance(material_state, ReducedRodMaterialState):
@@ -325,7 +326,7 @@ class PreparedReducedRodContactPlant(AbstractDiscretePlant, NonTrainableState):
         initial_material_state: ReducedRodMaterialState | None = None,
         native_loads: RodLoadLedger | None = None,
         capability_id: RodContactCapabilityId | None = None,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedReducedRodDynamics):
             raise TypeError("dynamics must be PreparedReducedRodDynamics.")
         from ._rod_reduced_integrators import (

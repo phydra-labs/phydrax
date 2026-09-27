@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..metrix import bures_squared_distance
@@ -39,7 +40,7 @@ class NonMarkovianComparisonResult(StrictModule):
         pseudomode_times: ArrayLike,
         heom_times: ArrayLike,
         memory_times: ArrayLike,
-    ):
+    ) -> None:
         pseudomode = jnp.asarray(pseudomode_states)
         heom = jnp.asarray(heom_states)
         memory = jnp.asarray(memory_states)
@@ -94,7 +95,7 @@ class SpinBosonComparisonResult(StrictModule):
         *,
         heom_times: ArrayLike,
         memory_times: ArrayLike,
-    ):
+    ) -> None:
         heom = jnp.asarray(heom_states)
         memory = jnp.asarray(memory_states)
         heom_grid = jnp.asarray(heom_times)
@@ -189,7 +190,7 @@ def spin_boson_dephasing_comparison(
     )
     heom = solve_heom(heom_problem, step_size=step_size, steps=steps)
 
-    def kernel(lag, density):
+    def kernel(lag: Array, density: Array) -> Array:
         correlation = expansion(lag)
         return -jnp.real(correlation) * (
             sigma_z @ (sigma_z @ density - density @ sigma_z)

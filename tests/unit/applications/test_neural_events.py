@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import heapq
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -34,14 +35,14 @@ _enqueue = jax.jit(enqueue_neural_event)
 _pop = jax.jit(pop_neural_event)
 
 
-def _assert_unchanged(before, after):
+def _assert_unchanged(before: Any, after: Any) -> None:
     for original, result in zip(
         jax.tree.leaves(before), jax.tree.leaves(after), strict=True
     ):
         np.testing.assert_array_equal(original, result)
 
 
-def test_heap_same_time_slot_order_and_same_relation_emission_order():
+def test_heap_same_time_slot_order_and_same_relation_emission_order() -> None:
     queue = initialize_event_queue(6)
     events = [
         (2.0, 5, 10.0),
@@ -77,7 +78,7 @@ def test_heap_same_time_slot_order_and_same_relation_emission_order():
     assert (int(slot), int(generation), float(amplitude), int(count)) == (-1, -1, 0.0, 0)
 
 
-def test_heap_interleaved_push_pop_matches_independent_priority_queue():
+def test_heap_interleaved_push_pop_matches_independent_priority_queue() -> None:
     queue = initialize_event_queue(13)
     reference = []
     random = np.random.default_rng(941)
@@ -113,7 +114,7 @@ def test_heap_interleaved_push_pop_matches_independent_priority_queue():
         )
 
 
-def test_capacity_rejection_preserves_all_events_and_emission_counter():
+def test_capacity_rejection_preserves_all_events_and_emission_counter() -> None:
     queue = initialize_event_queue(2)
     queue, _ = _enqueue(queue, 2.0, 1, 0, 0.5)
     queue, _ = _enqueue(queue, 1.0, 2, 0, 0.25)
@@ -135,7 +136,7 @@ def test_capacity_rejection_preserves_all_events_and_emission_counter():
     _assert_unchanged(empty, popped[0])
 
 
-def test_invalid_events_cannot_consume_capacity_or_overflow_identifiers():
+def test_invalid_events_cannot_consume_capacity_or_overflow_identifiers() -> None:
     queue, _ = _enqueue(initialize_event_queue(3), 2.0, 0, 1, 0.25)
     invalid = [
         (np.nan, 0, 1, 1.0, 1),
@@ -159,7 +160,7 @@ def test_invalid_events_cannot_consume_capacity_or_overflow_identifiers():
     assert (float(time), int(slot), float(amplitude)) == (1.0, 2, -0.5)
 
 
-def test_generation_cancellation_compacts_and_preserves_surviving_event_order():
+def test_generation_cancellation_compacts_and_preserves_surviving_event_order() -> None:
     queue = initialize_event_queue(8)
     events = [
         (0.0, 0, 0, 10.0, 1),
@@ -195,7 +196,7 @@ def test_generation_cancellation_compacts_and_preserves_surviving_event_order():
     assert np.isposinf(float(peek_neural_event_time(compacted)))
 
 
-def test_source_fanout_indexes_only_active_relations_with_stable_row_order():
+def test_source_fanout_indexes_only_active_relations_with_stable_row_order() -> None:
     synapse = CurrentSynapse(5.0, -0.1)
     prepared = SynapseNetworkPlan(
         (2, 1),

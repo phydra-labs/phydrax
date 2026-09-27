@@ -6,21 +6,23 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Mapping, Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._frozendict import frozendict
 from ..._score_field import StateTimeScoreField
 from ..._strict import StrictModule
 from ...domain import DomainFunction
+from ...typing import parse, PRNGKey
 
 
-GuidanceExactness = Literal["exact", "approximate", "heuristic"]
+GuidanceExactness: TypeAlias = Literal["exact", "approximate", "heuristic"]
 
 
 class ScoreContext(StrictModule):
@@ -35,7 +37,7 @@ class ScoreContext(StrictModule):
         /,
         *,
         context_id: str | None = None,
-    ):
+    ) -> None:
         converted = tuple(
             (str(name), jnp.asarray(value)) for name, value in values.items()
         )
@@ -75,7 +77,7 @@ class AbstractScoreGuidance(StrictModule):
         context: ScoreContext,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
     ) -> GuidanceEvaluation:
         raise NotImplementedError
 
@@ -100,7 +102,7 @@ class _AbstractScalarFieldGradientGuidance(AbstractScoreGuidance):
         scale: float,
         exactness: GuidanceExactness,
         guidance_id: str,
-    ):
+    ) -> None:
         if not isinstance(field, DomainFunction):
             raise TypeError("Guidance field must be a DomainFunction.")
         contexts = tuple(str(name) for name in context_labels)
@@ -120,8 +122,7 @@ class _AbstractScalarFieldGradientGuidance(AbstractScoreGuidance):
         value = float(scale)
         if not jnp.isfinite(value):
             raise ValueError("Guidance scale must be finite.")
-        if exactness not in ("exact", "approximate", "heuristic"):
-            raise ValueError("Unknown guidance exactness.")
+        exactness = parse(exactness, GuidanceExactness, "exactness")
         if not guidance_id:
             raise ValueError("guidance_id must be non-empty.")
         self.field = field
@@ -132,7 +133,15 @@ class _AbstractScalarFieldGradientGuidance(AbstractScoreGuidance):
         self.exactness = exactness
         self.guidance_id = guidance_id
 
-    def evaluate(self, state, time, context, /, *, key=None) -> GuidanceEvaluation:
+    def evaluate(
+        self,
+        state: ArrayLike,
+        time: ArrayLike,
+        context: ScoreContext,
+        /,
+        *,
+        key: PRNGKey | None = None,
+    ) -> GuidanceEvaluation:
         if not isinstance(context, ScoreContext):
             raise TypeError("context must be a ScoreContext.")
         required = tuple(
@@ -146,7 +155,7 @@ class _AbstractScalarFieldGradientGuidance(AbstractScoreGuidance):
             raise ValueError("One guidance evaluation requires scalar time.")
         time_array = jnp.asarray(time)
 
-        def scalar(current):
+        def scalar(current: Array) -> Array:
             arguments = tuple(
                 current
                 if dep == self.state_label
@@ -175,7 +184,7 @@ class TimeConditionedLikelihoodGuidance(_AbstractScalarFieldGradientGuidance):
         time_label: str = "t",
         context_labels: Sequence[str] = (),
         guidance_id: str = "time-conditioned-likelihood",
-    ):
+    ) -> None:
         super().__init__(
             log_likelihood,
             state_label=state_label,
@@ -201,7 +210,7 @@ class PotentialGuidance(_AbstractScalarFieldGradientGuidance):
         time_label: str = "t",
         context_labels: Sequence[str] = (),
         guidance_id: str = "potential-guidance",
-    ):
+    ) -> None:
         super().__init__(
             potential,
             state_label=state_label,
@@ -228,7 +237,7 @@ class ClassifierFreeGuidance(AbstractScoreGuidance):
         *,
         weight: float,
         guidance_id: str = "classifier-free-guidance",
-    ):
+    ) -> None:
         if not isinstance(unconditional, StateTimeScoreField) or not isinstance(
             conditional, StateTimeScoreField
         ):
@@ -244,7 +253,15 @@ class ClassifierFreeGuidance(AbstractScoreGuidance):
         self.exactness = "exact" if value == 1.0 else "heuristic"
         self.guidance_id = guidance_id
 
-    def evaluate(self, state, time, context, /, *, key=None) -> GuidanceEvaluation:
+    def evaluate(
+        self,
+        state: ArrayLike,
+        time: ArrayLike,
+        context: ScoreContext,
+        /,
+        *,
+        key: PRNGKey | None = None,
+    ) -> GuidanceEvaluation:
         if not isinstance(context, ScoreContext):
             raise TypeError("context must be a ScoreContext.")
         conditional_names = tuple(
@@ -297,7 +314,7 @@ class GuidedScoreField(StrictModule):
         /,
         *,
         guided_score_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(base, StateTimeScoreField):
             raise TypeError("base must be a StateTimeScoreField.")
         values = tuple(guidance)
@@ -323,7 +340,15 @@ class GuidedScoreField(StrictModule):
         self.guidance = values
         self.guided_score_id = identifier
 
-    def evaluate(self, state, time, context, /, *, key=None):
+    def evaluate(
+        self,
+        state: ArrayLike,
+        time: ArrayLike,
+        context: ScoreContext,
+        /,
+        *,
+        key: PRNGKey | None = None,
+    ) -> tuple[Array, tuple[GuidanceEvaluation, ...], Array]:
         if not isinstance(context, ScoreContext):
             raise TypeError("context must be a ScoreContext.")
         required = tuple(
@@ -345,7 +370,15 @@ class GuidedScoreField(StrictModule):
         )
         return score, evaluations, valid
 
-    def __call__(self, state, time, /, *, context, key=None):
+    def __call__(
+        self,
+        state: ArrayLike,
+        time: ArrayLike,
+        /,
+        *,
+        context: ScoreContext,
+        key: PRNGKey | None = None,
+    ) -> Array:
         return self.evaluate(state, time, context, key=key)[0]
 
 

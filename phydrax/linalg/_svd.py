@@ -6,17 +6,19 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, Self, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._materialization import MaterializationPolicy, materialize
 from ._operators import AbstractLinearOperator, adjoint
 from ._policies import FailurePolicy, RankPolicy
@@ -44,7 +46,7 @@ class SVDProblem(StrictModule):
         /,
         *,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape:
@@ -80,7 +82,7 @@ class SVDProblem(StrictModule):
 class DenseSVD(StrictModule):
     """Pure-JAX dense singular value decomposition."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     @property
@@ -94,7 +96,7 @@ class SVDTolerancePolicy(StrictModule):
     residual: float = eqx.field(static=True)
     orthogonality: float = eqx.field(static=True)
 
-    def __init__(self, *, residual: float = 1e-7, orthogonality: float = 1e-7):
+    def __init__(self, *, residual: float = 1e-7, orthogonality: float = 1e-7) -> None:
         values = float(residual), float(orthogonality)
         if any(not math.isfinite(value) or value < 0.0 for value in values):
             raise ValueError("SVD tolerances must be finite and non-negative.")
@@ -112,7 +114,7 @@ class SVDResourcePolicy(StrictModule):
         preparation_bytes: int = 512 * 1024 * 1024,
         workspace_bytes: int = 512 * 1024 * 1024,
         operator_matvecs: int = 1_000_000,
-    ):
+    ) -> None:
         values = (
             int(preparation_bytes),
             int(workspace_bytes),
@@ -147,17 +149,17 @@ class SVDSolvePolicy(StrictModule):
         resources: SVDResourcePolicy | None = None,
         differentiation: SVDDifferentiationMode = "none",
         failure: FailurePolicy | None = None,
-    ):
+    ) -> None:
         method_ = DenseSVD() if method is None else method
         if not isinstance(method_, DenseSVD):
             raise TypeError("method must be DenseSVD.")
         count_ = int(count)
         if count_ < 1:
             raise ValueError("SVD count must be positive.")
-        if which not in ("largest", "smallest"):
-            raise ValueError("SVD target must be 'largest' or 'smallest'.")
-        if differentiation not in ("none", "singular-values"):
-            raise ValueError("SVD differentiation must be 'none' or 'singular-values'.")
+        which = parse(which, SVDTarget, "which")
+        differentiation = parse(
+            differentiation, SVDDifferentiationMode, "differentiation"
+        )
         tolerance_ = SVDTolerancePolicy() if tolerance is None else tolerance
         rank_ = RankPolicy() if rank is None else rank
         materialization_ = (
@@ -203,7 +205,7 @@ class SVDCostEstimate(StrictModule):
         accepted: bool,
         reason: str,
         /,
-    ):
+    ) -> None:
         values = tuple(
             (
                 storage_bytes,
@@ -239,7 +241,7 @@ class SVDSolvePlan(StrictModule):
         policy: SVDSolvePolicy,
         cost: SVDCostEstimate,
         /,
-    ):
+    ) -> None:
         if policy.count > problem.maximum_rank:
             raise ValueError("Requested SVD count exceeds min(target size, source size).")
         if not cost.accepted:
@@ -296,7 +298,7 @@ class DenseSVDState(StrictModule):
         source_factor: Array,
         target_factor: Array,
         /,
-    ):
+    ) -> None:
         reduced = jnp.asarray(reduced_operator)
         source = jnp.asarray(source_factor)
         target = jnp.asarray(target_factor)
@@ -327,7 +329,7 @@ class PreparedSVDSolve(StrictModule):
         /,
         *,
         numeric_version: Any = 0,
-    ):
+    ) -> None:
         if not isinstance(problem, SVDProblem):
             raise TypeError("problem must be an SVDProblem.")
         if not isinstance(plan, SVDSolvePlan):
@@ -403,19 +405,19 @@ class _SVDNumerics(tuple):
 
     def __new__(
         cls,
-        values,
-        left,
-        right,
-        left_residuals,
-        right_residuals,
-        relative_residuals,
-        left_orthogonality,
-        right_orthogonality,
-        isolation_gaps,
-        converged,
-        numerical_rank,
-        rank_cutoff,
-    ):
+        values: Array,
+        left: Array,
+        right: Array,
+        left_residuals: Array,
+        right_residuals: Array,
+        relative_residuals: Array,
+        left_orthogonality: Array,
+        right_orthogonality: Array,
+        isolation_gaps: Array,
+        converged: Array,
+        numerical_rank: Array,
+        rank_cutoff: Array,
+    ) -> Self:
         return tuple.__new__(
             cls,
             (
@@ -885,12 +887,15 @@ def _mathematical_singular_values(
 
 
 @_mathematical_singular_values.def_jvp
-def _mathematical_singular_values_jvp(primals, tangents):
+def _mathematical_singular_values_jvp(
+    primals: tuple[SVDProblem, Array, Array, Array],
+    tangents: tuple[SVDProblem, object, object, object],
+) -> tuple[Array, Array]:
     problem, values, left, right = primals
     problem_tangent, _, _, _ = tangents
     target = problem.operator.target
 
-    def perturbation(current_problem):
+    def perturbation(current_problem: SVDProblem) -> Array:
         contributions = []
         for index in range(values.shape[0]):
             left_vector = target.unflatten(left[:, index])

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import tempfile
@@ -21,7 +23,7 @@ from phydrax._publication import publish_bytes, publish_resource_set
 from phydrax._resource_set import read_bounded_resource_set, ResourceSetLimits
 
 
-def _elapsed(operation):
+def _elapsed(operation: Any) -> Any:
     start = time.perf_counter()
     value = operation()
     return value, time.perf_counter() - start
@@ -42,7 +44,7 @@ def _single_file(root: Path, size: int) -> dict[str, object]:
         )
     )
 
-    def stream_identity():
+    def stream_identity() -> Any:
         with open_bounded_resource(
             destination.name,
             trusted_root=root,

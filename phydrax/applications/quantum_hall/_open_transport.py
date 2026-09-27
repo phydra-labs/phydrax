@@ -11,7 +11,8 @@ from math import isfinite, isqrt
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -43,7 +44,7 @@ class OpenHallTransportPlan(StrictModule, NonTrainableState):
         /,
         *,
         residual_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         generator = np.asarray(liouvillian, dtype=np.complex128)
         currents = np.asarray(current_operators, dtype=np.complex128)
         identifier = str(bath_identity).strip()

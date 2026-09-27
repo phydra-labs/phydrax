@@ -13,11 +13,11 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optimistix as optx
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
+from .._dtype_names import inexact_result_type
 from .._frozendict import frozendict
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ..integration import (
     GaussLegendreRule,
@@ -25,6 +25,7 @@ from ..integration import (
     IntervalRule,
 )
 from ..metrix import AbstractStateGeometry
+from ..typing import parse
 from ._differential import DifferentialInterpretation, NoiseStructure
 
 
@@ -52,7 +53,7 @@ class DelayValues(StrictModule):
     values: tuple[Array, ...]
     names: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self, names: Sequence[str], values: Sequence[ArrayLike], /):
+    def __init__(self, names: Sequence[str], values: Sequence[ArrayLike], /) -> None:
         resolved_names = tuple(names)
         resolved_values = tuple(jnp.asarray(value) for value in values)
         if len(resolved_names) != len(resolved_values):
@@ -98,7 +99,7 @@ class DelayHistoryWindow(StrictModule):
         minimum_delay: ArrayLike,
         maximum_delay: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.history = history
         self.time = jnp.asarray(time)
         self.minimum_delay = jnp.asarray(minimum_delay)
@@ -151,7 +152,7 @@ class ConstantDelay(StrictModule):
     name: str = eqx.field(static=True)
     delay: Array
 
-    def __init__(self, name: str, delay: ArrayLike, /):
+    def __init__(self, name: str, delay: ArrayLike, /) -> None:
         if not isinstance(name, str) or not name:
             raise ValueError("ConstantDelay name must be a non-empty string.")
         value = jnp.asarray(delay, dtype=jnp.float64)
@@ -199,7 +200,7 @@ class StateDependentDelay(StrictModule):
         maximum_delay: ArrayLike | None = None,
         monotone_argument: bool = True,
         root_isolation_step: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(name, str) or not name:
             raise ValueError("StateDependentDelay name must be a non-empty string.")
         if not callable(lag):
@@ -285,7 +286,7 @@ class FunctionalDelay(StrictModule):
         *,
         output_kind: Literal["ambient", "point", "tangent"] = "ambient",
         discontinuity_lags: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(name, str) or not name:
             raise ValueError("FunctionalDelay name must be a non-empty string.")
         if not callable(functional):
@@ -366,7 +367,7 @@ class DistributedDelay(StrictModule):
         *,
         quadrature: IntervalRule | None = None,
         reducer: DistributedDelayReducer | None = None,
-    ):
+    ) -> None:
         if not isinstance(name, str) or not name:
             raise ValueError("DistributedDelay name must be a non-empty string.")
         if not callable(kernel):
@@ -542,7 +543,7 @@ class DerivativeDelay(StrictModule):
         /,
         *,
         transport: Callable[[Array, Array, Array, Any], ArrayLike] | None = None,
-    ):
+    ) -> None:
         if not isinstance(name, str) or not name:
             raise ValueError("DerivativeDelay name must be a non-empty string.")
         if not isinstance(delay, (ConstantDelay, StateDependentDelay)):
@@ -589,7 +590,7 @@ class DelayWienerTerm(StrictModule):
         *,
         structure: NoiseStructure = "general",
         basis_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(name, str) or not name:
             raise ValueError("DelayWienerTerm name must be a non-empty string.")
         if not callable(coefficient):
@@ -597,10 +598,7 @@ class DelayWienerTerm(StrictModule):
         shape = tuple(noise_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("DelayWienerTerm noise dimensions must be positive.")
-        if structure not in ("additive", "commutative", "general"):
-            raise ValueError(
-                "DelayWienerTerm structure must be 'additive', 'commutative', or 'general'."
-            )
+        structure = parse(structure, NoiseStructure, "structure")
         if basis_id is not None and (not isinstance(basis_id, str) or not basis_id):
             raise ValueError("DelayWienerTerm basis_id must be non-empty or None.")
         self.name = name
@@ -953,7 +951,7 @@ class DelayDifferentialProblem(StrictModule):
         interpretation: DifferentialInterpretation = "ito",
         state_geometry: AbstractStateGeometry | None = None,
         problem_id: str = "delay-differential-problem",
-    ):
+    ) -> None:
         if not callable(drift) or not callable(history):
             raise TypeError("drift and history must be callable.")
         if history_derivative is not None and not callable(history_derivative):
@@ -995,8 +993,9 @@ class DelayDifferentialProblem(StrictModule):
             and history_derivative is None
         ):
             raise ValueError("history_derivative is required by DerivativeDelay terms.")
-        if interpretation not in ("ito", "stratonovich"):
-            raise ValueError("interpretation must be 'ito' or 'stratonovich'.")
+        interpretation = parse(
+            interpretation, DifferentialInterpretation, "interpretation"
+        )
 
         state = jnp.asarray(history(start, args))
         state_shape = tuple(state.shape)
@@ -1313,7 +1312,7 @@ class NeutralDelayProblem(StrictModule):
         history_derivative: DelayHistoryDerivative | None = None,
         state_geometry: AbstractStateGeometry | None = None,
         problem_id: str = "neutral-delay-problem",
-    ):
+    ) -> None:
         if not callable(neutral_functional):
             raise TypeError("neutral_functional must be callable.")
         if endpoint_neutral is not None and not callable(endpoint_neutral):

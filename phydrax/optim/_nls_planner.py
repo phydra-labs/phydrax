@@ -9,7 +9,7 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._nonlinear_precision import NonlinearPrecisionPolicy
@@ -55,7 +55,7 @@ class LeastSquaresRoutePolicy(StrictModule):
         rank_cutoff: float = 1e-10,
         iterative_tolerance: float = 1e-8,
         iterative_steps: int = 1000,
-    ):
+    ) -> None:
         dimension = int(dense_dimension)
         steps = int(iterative_steps)
         values = tuple(
@@ -203,16 +203,15 @@ def prepare_schur_plan(graph: PreparedResidualGraph, /) -> SchurComplementPlan:
         for index, group in enumerate(groups)
         if not graph.graph.parameter_blocks[index].constant
     )
-    eliminated_values = [
-        offsets[index]
-        for index, group in enumerate(groups)
-        if group == minimum_group and offsets[index] is not None
-    ]
-    retained_values = [
-        offsets[index]
-        for index, group in enumerate(groups)
-        if group != minimum_group and offsets[index] is not None
-    ]
+    eliminated_values: list[Array] = []
+    retained_values: list[Array] = []
+    for block_offsets, group in zip(offsets, groups, strict=True):
+        if block_offsets is None:
+            continue
+        if group == minimum_group:
+            eliminated_values.append(block_offsets)
+        else:
+            retained_values.append(block_offsets)
     if not eliminated_values or not retained_values:
         raise ValueError(
             "Schur planning requires nonempty eliminated and retained groups."

@@ -1,10 +1,12 @@
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 from phydrax.domain import Interval1d
 
 
-def test_diffrax_collocation_plan_uses_fixed_capacity_lifecycle_and_identity():
+def test_diffrax_collocation_plan_uses_fixed_capacity_lifecycle_and_identity() -> None:
     domain = Interval1d(0.0, 1.0)
     component = domain.component({"x": phx.domain.Interior()})
     target = phx.integration.over(component)
@@ -18,7 +20,7 @@ def test_diffrax_collocation_plan_uses_fixed_capacity_lifecycle_and_identity():
     )
 
     @domain.Function("x")
-    def integrand(x):
+    def integrand(x: Any) -> Any:
         return x[0]
 
     realization = phx.integration.materialize(target, plan)
@@ -28,7 +30,7 @@ def test_diffrax_collocation_plan_uses_fixed_capacity_lifecycle_and_identity():
     assert int(estimate.diagnostics.active_collocation) == 2
 
 
-def test_diffrax_collocation_solver_failure_is_typed_not_converged():
+def test_diffrax_collocation_solver_failure_is_typed_not_converged() -> None:
     plan = phx.integration.DiffraxCollocationQuadraturePlan(
         jnp.asarray([0.5]),
         jnp.asarray([1.0]),

@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -45,7 +46,7 @@ class ContactInterfacePlan(StrictModule, NonTrainableState):
         minus_node_count: int,
         route_keys: ArrayLike | None = None,
         valid: ArrayLike | None = None,
-    ):
+    ) -> None:
         plus_index = np.asarray(plus_indices)
         minus_index = np.asarray(minus_indices)
         plus_weight = np.asarray(plus_weights, dtype=np.float64)

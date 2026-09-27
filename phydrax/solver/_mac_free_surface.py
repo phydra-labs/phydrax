@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._sharp_measures import QualifiedSharpGeometry
@@ -125,7 +126,7 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         boundaries_ = (
@@ -288,7 +289,7 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
             else geometry.cell_fluid_measure.astype(dtype)
         )
 
-        def masked_gauge(value):
+        def masked_gauge(value: Array) -> Array:
             denominator = jnp.sum(jnp.where(liquid, full_volumes, 0.0))
             mean = jnp.where(
                 denominator > 0.0,
@@ -298,7 +299,7 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
             )
             return jnp.where(liquid, value - mean, 0.0)
 
-        def atmospheric(_):
+        def atmospheric(_: None) -> MACFreeSurfaceProjectionResult:
             coefficient_cell = jnp.full(
                 self.operators.discretization.cell_shape,
                 dt / self.density,
@@ -468,16 +469,23 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
                 )
                 - physical_swept
             )
-            energy_before = 0.5 * sum(
-                jnp.sum(dual * opened * value**2)
-                for dual, opened, value in zip(
-                    self.operators.face_dual_measures, aperture, values, strict=True
+            energy_before = 0.5 * jnp.asarray(
+                sum(
+                    jnp.sum(dual * opened * value**2)
+                    for dual, opened, value in zip(
+                        self.operators.face_dual_measures, aperture, values, strict=True
+                    )
                 )
             )
-            energy_after = 0.5 * sum(
-                jnp.sum(dual * opened * value**2)
-                for dual, opened, value in zip(
-                    self.operators.face_dual_measures, aperture, corrected, strict=True
+            energy_after = 0.5 * jnp.asarray(
+                sum(
+                    jnp.sum(dual * opened * value**2)
+                    for dual, opened, value in zip(
+                        self.operators.face_dual_measures,
+                        aperture,
+                        corrected,
+                        strict=True,
+                    )
                 )
             )
             return MACFreeSurfaceProjectionResult(

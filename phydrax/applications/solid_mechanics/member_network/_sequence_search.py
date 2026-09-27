@@ -41,7 +41,7 @@ class ConstructionSequenceSearchProblem(AbstractBranchAndBoundProblem):
         /,
         *,
         problem_id: str = "construction-sequence-search",
-    ):
+    ) -> None:
         if not isinstance(space, PrecedenceSpace):
             raise TypeError("space must be a PrecedenceSpace.")
         if not all(
@@ -110,7 +110,9 @@ class ConstructionSequenceSearchProblem(AbstractBranchAndBoundProblem):
             state=state,
         )
 
-    def branch(self, node: PrecedenceNode, evaluation: BranchNodeEvaluation, /):
+    def branch(
+        self, node: PrecedenceNode, evaluation: BranchNodeEvaluation, /
+    ) -> tuple[PrecedenceNode, ...]:
         del evaluation
         return self.space.branch(node)
 

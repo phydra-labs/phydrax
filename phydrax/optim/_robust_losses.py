@@ -11,7 +11,9 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 
@@ -39,7 +41,7 @@ class IdentityLoss(AbstractRobustLoss):
     def loss_id(self) -> str:
         return "identity"
 
-    def evaluate(self, squared_norm, /):
+    def evaluate(self, squared_norm: ArrayLike, /) -> RobustLossEvaluation:
         value = jnp.asarray(squared_norm)
         return RobustLossEvaluation(
             value,
@@ -52,7 +54,7 @@ class IdentityLoss(AbstractRobustLoss):
 class HuberLoss(AbstractRobustLoss):
     delta: float = eqx.field(static=True)
 
-    def __init__(self, delta: float = 1.0, /):
+    def __init__(self, delta: float = 1.0, /) -> None:
         value = float(delta)
         if not isfinite(value) or value <= 0.0:
             raise ValueError("Huber delta must be finite and positive.")
@@ -62,7 +64,7 @@ class HuberLoss(AbstractRobustLoss):
     def loss_id(self) -> str:
         return f"huber/{self.delta}"
 
-    def evaluate(self, squared_norm, /):
+    def evaluate(self, squared_norm: ArrayLike, /) -> RobustLossEvaluation:
         value = jnp.asarray(squared_norm)
         threshold = self.delta * self.delta
         root = jnp.sqrt(jnp.maximum(value, 1e-30))
@@ -76,7 +78,7 @@ class HuberLoss(AbstractRobustLoss):
 class SoftL1Loss(AbstractRobustLoss):
     scale: float = eqx.field(static=True)
 
-    def __init__(self, scale: float = 1.0, /):
+    def __init__(self, scale: float = 1.0, /) -> None:
         value = float(scale)
         if not isfinite(value) or value <= 0.0:
             raise ValueError("Soft-L1 scale must be finite and positive.")
@@ -86,7 +88,7 @@ class SoftL1Loss(AbstractRobustLoss):
     def loss_id(self) -> str:
         return f"soft-l1/{self.scale}"
 
-    def evaluate(self, squared_norm, /):
+    def evaluate(self, squared_norm: ArrayLike, /) -> RobustLossEvaluation:
         value = jnp.asarray(squared_norm)
         scaled = value / (self.scale * self.scale)
         root = jnp.sqrt(1.0 + scaled)
@@ -99,7 +101,7 @@ class SoftL1Loss(AbstractRobustLoss):
 class CauchyLoss(AbstractRobustLoss):
     scale: float = eqx.field(static=True)
 
-    def __init__(self, scale: float = 1.0, /):
+    def __init__(self, scale: float = 1.0, /) -> None:
         value = float(scale)
         if not isfinite(value) or value <= 0.0:
             raise ValueError("Cauchy scale must be finite and positive.")
@@ -109,7 +111,7 @@ class CauchyLoss(AbstractRobustLoss):
     def loss_id(self) -> str:
         return f"cauchy/{self.scale}"
 
-    def evaluate(self, squared_norm, /):
+    def evaluate(self, squared_norm: ArrayLike, /) -> RobustLossEvaluation:
         value = jnp.asarray(squared_norm)
         scale_squared = self.scale * self.scale
         denominator = 1.0 + value / scale_squared
@@ -122,7 +124,7 @@ class CauchyLoss(AbstractRobustLoss):
 class ArctanLoss(AbstractRobustLoss):
     scale: float = eqx.field(static=True)
 
-    def __init__(self, scale: float = 1.0, /):
+    def __init__(self, scale: float = 1.0, /) -> None:
         value = float(scale)
         if not isfinite(value) or value <= 0.0:
             raise ValueError("Arctan scale must be finite and positive.")
@@ -132,7 +134,7 @@ class ArctanLoss(AbstractRobustLoss):
     def loss_id(self) -> str:
         return f"arctan/{self.scale}"
 
-    def evaluate(self, squared_norm, /):
+    def evaluate(self, squared_norm: ArrayLike, /) -> RobustLossEvaluation:
         value = jnp.asarray(squared_norm)
         scale_squared = self.scale * self.scale
         scaled = value / scale_squared
@@ -146,7 +148,7 @@ class ArctanLoss(AbstractRobustLoss):
 class TukeyLoss(AbstractRobustLoss):
     scale: float = eqx.field(static=True)
 
-    def __init__(self, scale: float = 1.0, /):
+    def __init__(self, scale: float = 1.0, /) -> None:
         value = float(scale)
         if not isfinite(value) or value <= 0.0:
             raise ValueError("Tukey scale must be finite and positive.")
@@ -156,7 +158,7 @@ class TukeyLoss(AbstractRobustLoss):
     def loss_id(self) -> str:
         return f"tukey/{self.scale}"
 
-    def evaluate(self, squared_norm, /):
+    def evaluate(self, squared_norm: ArrayLike, /) -> RobustLossEvaluation:
         value = jnp.asarray(squared_norm)
         scale_squared = self.scale * self.scale
         scaled = value / scale_squared
@@ -176,7 +178,7 @@ class ScaledLoss(AbstractRobustLoss):
     loss: AbstractRobustLoss
     scale: float = eqx.field(static=True)
 
-    def __init__(self, loss: AbstractRobustLoss, scale: float, /):
+    def __init__(self, loss: AbstractRobustLoss, scale: float, /) -> None:
         if not isinstance(loss, AbstractRobustLoss):
             raise TypeError("loss must be AbstractRobustLoss.")
         value = float(scale)
@@ -189,7 +191,7 @@ class ScaledLoss(AbstractRobustLoss):
     def loss_id(self) -> str:
         return f"scaled/{self.scale}/{self.loss.loss_id}"
 
-    def evaluate(self, squared_norm, /):
+    def evaluate(self, squared_norm: ArrayLike, /) -> RobustLossEvaluation:
         result = self.loss.evaluate(squared_norm)
         return RobustLossEvaluation(
             self.scale * result.rho,
@@ -200,7 +202,9 @@ class ScaledLoss(AbstractRobustLoss):
 
 
 def squared_tree_norm(value: PyTree[Any], /) -> Array:
-    return sum(jnp.real(jnp.vdot(leaf, leaf)) for leaf in jax.tree.leaves(value))
+    return jnp.asarray(
+        sum(jnp.real(jnp.vdot(leaf, leaf)) for leaf in jax.tree.leaves(value))
+    )
 
 
 def robustify_residual(

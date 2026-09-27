@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -5,10 +7,10 @@ import pytest
 import phydrax.tensor_train as tt
 
 
-def test_two_site_cross_reports_pivots_evaluations_and_held_out_estimator():
+def test_two_site_cross_reports_pivots_evaluations_and_held_out_estimator() -> None:
     modes = (4, 4, 4)
 
-    def evaluator(indices):
+    def evaluator(indices: Any) -> Any:
         values = indices.astype(jnp.float32)
         return (values[:, 0] + 1) * (values[:, 1] + 2) * (values[:, 2] + 1)
 
@@ -31,14 +33,14 @@ def test_two_site_cross_reports_pivots_evaluations_and_held_out_estimator():
     assert result.evidence.holdout_relative_error_estimator < 2e-3
 
 
-def test_rank_one_cross_preserves_nonunit_anchor_scale():
+def test_rank_one_cross_preserves_nonunit_anchor_scale() -> None:
     factors = (
         jnp.asarray([2.0, 3.0], dtype=jnp.float32),
         jnp.asarray([5.0, 7.0], dtype=jnp.float32),
         jnp.asarray([11.0, 13.0], dtype=jnp.float32),
     )
 
-    def evaluator(indices):
+    def evaluator(indices: Any) -> Any:
         return (
             factors[0][indices[:, 0]]
             * factors[1][indices[:, 1]]
@@ -64,7 +66,7 @@ def test_rank_one_cross_preserves_nonunit_anchor_scale():
     assert jnp.allclose(result.tensor.evaluate(all_indices), evaluator(all_indices))
 
 
-def test_cross_and_completion_reject_nonfinite_observations_and_policy():
+def test_cross_and_completion_reject_nonfinite_observations_and_policy() -> None:
     with pytest.raises(ValueError, match="regularization"):
         tt.TTCrossPlan(
             (2, 2),
@@ -114,7 +116,7 @@ def test_cross_and_completion_reject_nonfinite_observations_and_policy():
         )
 
 
-def test_amen_like_poisson_solve_uses_true_global_residual():
+def test_amen_like_poisson_solve_uses_true_global_residual() -> None:
     size = 6
     modes = (size,)
     operator = tt.laplacian_operator(
@@ -158,7 +160,7 @@ def test_amen_like_poisson_solve_uses_true_global_residual():
     assert result.converged
 
 
-def test_weighted_completion_reports_independent_holdout_error():
+def test_weighted_completion_reports_independent_holdout_error() -> None:
     dense = (jnp.arange(4, dtype=jnp.float32) + 1)[:, None] * (
         jnp.arange(4, dtype=jnp.float32) + 2
     )[None, :]
@@ -213,7 +215,7 @@ def test_weighted_completion_reports_independent_holdout_error():
     assert result.evidence.holdout_relative_error_estimator < 2e-3
 
 
-def test_block_smallest_eigen_solver_returns_orthogonal_tt_block():
+def test_block_smallest_eigen_solver_returns_orthogonal_tt_block() -> None:
     diagonal = jnp.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=jnp.float32)
     diagonal_train = tt.tt_svd(diagonal, max_ranks=2, relative_tolerance=0.0).tensor
     operator = tt.diagonal_operator(diagonal_train)

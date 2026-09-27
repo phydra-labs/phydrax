@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Literal
 
-from jaxtyping import Array
+from jax import Array
 
 from phydrax._strict import StrictModule
 from phydrax.equations._tokens import PDETokenBatch
@@ -27,7 +27,7 @@ class PDEConditionedInput(StrictModule):
     batch: OperatorBatch
     tokens: PDETokenBatch
 
-    def __init__(self, batch: OperatorBatch, tokens: PDETokenBatch, /):
+    def __init__(self, batch: OperatorBatch, tokens: PDETokenBatch, /) -> None:
         if not isinstance(batch, OperatorBatch):
             raise TypeError("PDEConditionedInput batch must be an OperatorBatch.")
         if not isinstance(tokens, PDETokenBatch):
@@ -36,7 +36,9 @@ class PDEConditionedInput(StrictModule):
         self.tokens = tokens
 
 
-def _pde_conditioned_contract(model):
+def _pde_conditioned_contract(
+    model: PDEConditionedOperator,
+) -> ConfiguredOperatorContract:
     wrapped = model.operator.operator_contract
     capability = wrapped.capabilities
     input_name = model.input_name
@@ -83,7 +85,7 @@ class PDEConditionedOperator(AbstractOperatorModel):
         /,
         *,
         input_name: str = "equation",
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractOperatorModel):
             raise TypeError("PDEConditionedOperator requires an operator model.")
         if not isinstance(encoder, PDEConditionEncoder):

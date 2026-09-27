@@ -9,10 +9,11 @@ from enum import IntEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
+from ..._dtype_names import inexact_result_type
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._distance import (
@@ -115,7 +116,7 @@ class ContactStencilBatch(StrictModule, NonTrainableState):
         overflow_count: ArrayLike = 0,
         route_keys: ArrayLike | None = None,
         batch_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(kind, ContactStencilKind):
             raise TypeError("kind must be ContactStencilKind.")
         count = int(capacity)
@@ -246,7 +247,7 @@ class ContactStencilBatch(StrictModule, NonTrainableState):
         capacity: int,
         /,
         *,
-        dtype=jnp.float64,
+        dtype: DTypeLike = jnp.float64,
     ) -> ContactStencilBatch:
         count = int(capacity)
         return cls(

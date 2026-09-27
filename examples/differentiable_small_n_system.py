@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def main():
+def main() -> None:
     astro = phx.applications.astrodynamics
     context = astro.AstrodynamicsContext(
         astro.AstrodynamicsScaleContract.si(),

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
@@ -27,6 +28,7 @@ from ._lifecycle import (
     solve_prepared_convex_program,
 )
 from ._mixed_integer import (
+    CanonicalMixedIntegerProgram,
     MixedIntegerCandidate,
     MixedIntegerCandidateAudit,
     MixedIntegerCertificate,
@@ -44,6 +46,10 @@ from ._mixed_integer_policy import (
 from ._problem import ConicProgram, LinearProgram
 from ._quadratic import ConvexProgramResult, QuadraticProgram
 from ._types import ConvexProgramStatus, ConvexWarmStart
+
+
+if TYPE_CHECKING:
+    from ._mixed_integer_lifecycle import PreparedMixedIntegerProgram
 
 
 @dataclass(slots=True)
@@ -155,7 +161,7 @@ class _MixedIntegerBranchProblem(AbstractBranchAndBoundProblem):
         policy: MixedIntegerSolvePolicy,
         state: _NativeTemplateState,
         /,
-    ):
+    ) -> None:
         method = policy.method
         if not isinstance(method, NativeMixedIntegerBranchAndBound):
             raise TypeError("Native mixed-integer execution requires its native method.")
@@ -346,7 +352,11 @@ class _MixedIntegerBranchProblem(AbstractBranchAndBoundProblem):
         )
 
 
-def solve_native_mixed_integer(prepared, candidates, /) -> MixedIntegerResult:
+def solve_native_mixed_integer(
+    prepared: PreparedMixedIntegerProgram,
+    candidates: tuple[MixedIntegerCandidate, ...],
+    /,
+) -> MixedIntegerResult:
     from ._mixed_integer_lifecycle import PreparedMixedIntegerProgram
 
     if not isinstance(prepared, PreparedMixedIntegerProgram):
@@ -492,11 +502,11 @@ def _linear_bound_certificate(
     lower_proof, upper_proof = [None] * n, [None] * n
     supports = tuple(np.flatnonzero(row) for row in matrix)
 
-    def add(target, proof, scale):
+    def add(target: dict[int, float], proof: dict[int, float], scale: float) -> None:
         for index, value in proof.items():
             target[index] = target.get(index, 0.0) + scale * value
 
-    def audit(proof):
+    def audit(proof: dict[int, float]) -> DualRayAudit | None:
         multipliers = np.zeros(len(rhs))
         for index, value in proof.items():
             multipliers[index] = value
@@ -598,7 +608,12 @@ def _linear_bound_certificate(
     return None
 
 
-def _replace_bounds(program, lower, upper, /):
+def _replace_bounds(
+    program: CanonicalMixedIntegerProgram,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    /,
+) -> CanonicalMixedIntegerProgram:
     if np.array_equal(lower, np.asarray(program.lower_bounds)) and np.array_equal(
         upper, np.asarray(program.upper_bounds)
     ):

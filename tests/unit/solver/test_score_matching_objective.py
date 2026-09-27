@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -15,7 +17,7 @@ from phydrax.terms._score_matching import (
 class _LinearScore(eqx.Module):
     coefficient: jnp.ndarray = phx.parameter_field()
 
-    def __call__(self, state, time):
+    def __call__(self, state: Any, time: Any) -> Any:
         del time
         return self.coefficient * state
 
@@ -23,12 +25,19 @@ class _LinearScore(eqx.Module):
 class _MatrixScore(eqx.Module):
     matrix: jnp.ndarray = phx.parameter_field()
 
-    def __call__(self, state, time):
+    def __call__(self, state: Any, time: Any) -> Any:
         del time
         return self.matrix @ state
 
 
-def _trajectory(*, dimension=3, paths=512, times=2, seed=0, valid=None):
+def _trajectory(
+    *,
+    dimension: Any = 3,
+    paths: Any = 512,
+    times: Any = 2,
+    seed: Any = 0,
+    valid: Any = None,
+) -> Any:
     states = jr.normal(jr.key(seed), (paths, times, dimension))
     if valid is None:
         valid = jnp.ones((paths, times), dtype="bool")
@@ -43,7 +52,7 @@ def _trajectory(*, dimension=3, paths=512, times=2, seed=0, valid=None):
     )
 
 
-def _score_function(model, dimension):
+def _score_function(model: Any, dimension: Any) -> Any:
     space = phx.domain.HyperRectangle(
         jnp.full((dimension,), -10.0),
         jnp.full((dimension,), 10.0),
@@ -53,7 +62,7 @@ def _score_function(model, dimension):
     return domain.Function("x", "t")(model)
 
 
-def test_exact_and_implicit_score_matching_agree_for_diagonal_linear_score():
+def test_exact_and_implicit_score_matching_agree_for_diagonal_linear_score() -> None:
     dimension = 4
     trajectory = _trajectory(dimension=dimension, paths=128, times=3)
     samples = trajectory_state_time_samples(trajectory, time_label="t")
@@ -79,7 +88,7 @@ def test_exact_and_implicit_score_matching_agree_for_diagonal_linear_score():
     assert jnp.allclose(implicit_value, expected)
 
 
-def test_sliced_score_matching_matches_implicit_objective_in_expectation():
+def test_sliced_score_matching_matches_implicit_objective_in_expectation() -> None:
     dimension = 5
     trajectory = _trajectory(dimension=dimension, paths=512, times=2, seed=2)
     samples = trajectory_state_time_samples(trajectory, time_label="t")
@@ -101,7 +110,7 @@ def test_sliced_score_matching_matches_implicit_objective_in_expectation():
     assert jnp.allclose(sliced_value, implicit_value, atol=8e-2)
 
 
-def test_masks_exclude_invalid_particle_states_and_time_coverage_is_reported():
+def test_masks_exclude_invalid_particle_states_and_time_coverage_is_reported() -> None:
     states = jnp.asarray(
         [
             [[1.0], [2.0], [1000.0]],
@@ -139,7 +148,7 @@ def test_masks_exclude_invalid_particle_states_and_time_coverage_is_reported():
     assert diagnostics.num_times == 3
 
 
-def test_probe_standard_error_decreases_for_off_diagonal_divergence():
+def test_probe_standard_error_decreases_for_off_diagonal_divergence() -> None:
     dimension = 12
     trajectory = _trajectory(dimension=dimension, paths=32, times=1, seed=3)
     samples = trajectory_state_time_samples(trajectory, time_label="t")
@@ -168,7 +177,7 @@ def test_probe_standard_error_decreases_for_off_diagonal_divergence():
     assert large_error < small_error
 
 
-def test_implicit_score_matching_trains_gaussian_score_field():
+def test_implicit_score_matching_trains_gaussian_score_field() -> None:
     dimension = 3
     trajectory = _trajectory(dimension=dimension, paths=1024, times=2, seed=4)
     samples = trajectory_state_time_samples(trajectory, time_label="t")
@@ -197,10 +206,10 @@ def test_implicit_score_matching_trains_gaussian_score_field():
     assert jnp.allclose(coefficient, -1.0, atol=0.12)
 
 
-def test_resampled_particle_provider_runs_once_per_optimizer_update():
+def test_resampled_particle_provider_runs_once_per_optimizer_update() -> None:
     calls = []
 
-    def provider(key):
+    def provider(key: Any) -> Any:
         calls.append(key)
         return _trajectory(dimension=2, paths=32, times=1, seed=len(calls))
 
@@ -227,7 +236,7 @@ def test_resampled_particle_provider_runs_once_per_optimizer_update():
     assert len(calls) == 4
 
 
-def test_dimension_100_implicit_smoke_uses_jvps_and_rejects_scalar_score():
+def test_dimension_100_implicit_smoke_uses_jvps_and_rejects_scalar_score() -> None:
     dimension = 100
     trajectory = _trajectory(dimension=dimension, paths=4, times=1, seed=6)
     samples = trajectory_state_time_samples(trajectory, time_label="t")

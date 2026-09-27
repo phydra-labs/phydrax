@@ -18,12 +18,14 @@ from __future__ import annotations
 import itertools
 import math
 from functools import partial
+from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -221,7 +223,7 @@ class FiniteElementRecoveryEvidence(StrictModule, NonTrainableState):
         *,
         failed_patch_count: int,
         maximum_asymmetry: float,
-    ):
+    ) -> None:
         self.recovery_id = prepared.recovery_id
         self.patch_count = prepared.patch_count
         self.extended_patch_count = prepared.extended_patch_count
@@ -243,7 +245,9 @@ class FiniteElementRecoveryEvidence(StrictModule, NonTrainableState):
         return self.failed_patch_count == 0
 
 
-def _block_geometry(discretization, field_name, block_index, coordinates, points):
+def _block_geometry(
+    discretization: Any, field_name: Any, block_index: Any, coordinates: Any, points: Any
+) -> Any:
     points_ = jnp.asarray(points)
     return discretization.evaluate_block_geometry(
         field_name,
@@ -255,7 +259,7 @@ def _block_geometry(discretization, field_name, block_index, coordinates, points
 
 
 def _node_ownership(
-    discretization, field, elements, coordinates, field_name, /
+    discretization: Any, field: Any, elements: Any, coordinates: Any, field_name: Any, /
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Owner vertices and physical positions of every DOF node and vertex."""
     dof_map = discretization.dof_maps[field]
@@ -316,8 +320,14 @@ def _vertex_patches(
 
 
 def _patch_system(
-    pairs, samples_per_cell, sample_points, centers, dimension, degree, condition
-):
+    pairs: Any,
+    samples_per_cell: Any,
+    sample_points: Any,
+    centers: Any,
+    dimension: Any,
+    degree: Any,
+    condition: Any,
+) -> Any:
     rows, cells = pairs
     sample_rows = np.repeat(rows, samples_per_cell)
     sample_columns = (
@@ -480,7 +490,7 @@ def prepare_gradient_recovery(
 
 
 @eqx.filter_jit
-def _recover_nodes(prepared: PreparedGradientRecovery, values: Array, /):
+def _recover_nodes(prepared: PreparedGradientRecovery, values: Array, /) -> Any:
     """Recovered gradients ``(dofs, columns, d)`` of ``(dofs, columns)`` fields."""
     columns = values.shape[1]
     dimension = prepared.dimension
@@ -504,7 +514,7 @@ def _recover_nodes(prepared: PreparedGradientRecovery, values: Array, /):
     )
 
 
-def _coefficients(prepared: PreparedGradientRecovery, coefficients: ArrayLike, /):
+def _coefficients(prepared: PreparedGradientRecovery, coefficients: ArrayLike, /) -> Any:
     if not isinstance(prepared, PreparedGradientRecovery):
         raise TypeError("prepared must be PreparedGradientRecovery.")
     values = jnp.asarray(coefficients)

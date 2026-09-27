@@ -10,6 +10,7 @@ import argparse
 import json
 from collections import Counter
 from pathlib import Path
+from typing import Any
 
 from phydrax.qualification import (
     application_promotion_portfolios,
@@ -21,6 +22,7 @@ from phydrax.qualification import (
 
 def _markdown(record: dict[str, object], /) -> str:
     declarations = record["declarations"]
+    # ty: ignore[not-iterable]
     counts = Counter(item["disposition"] for item in declarations)
     lines = [
         "# Capability inventory",
@@ -47,6 +49,7 @@ def _markdown(record: dict[str, object], /) -> str:
             "| --- | --- | --- | --- | ---: |",
         ]
     )
+    # ty: ignore[not-iterable]
     for declaration in declarations:
         lines.append(
             "| "
@@ -72,7 +75,7 @@ def _markdown(record: dict[str, object], /) -> str:
     return "\n".join(lines)
 
 
-def _closure_markdown(matrices, ledger) -> str:
+def _closure_markdown(matrices: Any, ledger: Any) -> str:
     lines = [
         "# Omniphysics closure matrix",
         "",

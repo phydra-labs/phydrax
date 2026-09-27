@@ -10,13 +10,14 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...solver import DifferentialProblem
+from ...solver import DifferentialProblem, DifferentialSolution
 from ._experiment import BatteryRuntimeInputs
 from ._properties import (
     ConcentrationTemperaturePropertyLaw,
@@ -24,7 +25,13 @@ from ._properties import (
     TabulatedPropertyLaw,
 )
 from ._results import BatteryModelOutput
-from ._spm import _stable_asinh_ratio, _transport, BatteryPropertyLaw, SpmState
+from ._spm import (
+    _SpmTransportEvaluation,
+    _stable_asinh_ratio,
+    _transport,
+    BatteryPropertyLaw,
+    SpmState,
+)
 from ._spme_marquis2019 import (
     _finite_large_ratio,
     _region_mean,
@@ -36,6 +43,7 @@ from ._spme_marquis2019 import (
     Marquis2019SpmeState,
     PreparedMarquis2019Spme,
 )
+from ._through_cell import _ThroughCellEvaluation
 
 
 _FARADAY_C_MOL = 96485.33212
@@ -183,7 +191,7 @@ class BrosaPlanellaTspmeParameters(StrictModule):
         electrolyte_thermodynamic_factor: _PropertyLaw,
         negative_entropic_coefficient: BatteryPropertyLaw,
         positive_entropic_coefficient: BatteryPropertyLaw,
-    ):
+    ) -> None:
         if not isinstance(spme_parameters, Marquis2019SpmeParameters):
             raise TypeError("spme_parameters must be Marquis2019SpmeParameters.")
         ambient = _scalar(ambient_temperature_k, "ambient_temperature_k")
@@ -468,7 +476,9 @@ class BrosaPlanellaTspmeInitialCondition(StrictModule):
 
     spme_initial_condition: Marquis2019SpmeInitialCondition
 
-    def __init__(self, spme_initial_condition: Marquis2019SpmeInitialCondition, /):
+    def __init__(
+        self, spme_initial_condition: Marquis2019SpmeInitialCondition, /
+    ) -> None:
         if not isinstance(spme_initial_condition, Marquis2019SpmeInitialCondition):
             raise TypeError(
                 "spme_initial_condition must be Marquis2019SpmeInitialCondition."
@@ -487,7 +497,7 @@ class BrosaPlanellaTspmeState(StrictModule):
         spme_state: Marquis2019SpmeState,
         temperature_k: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(spme_state, Marquis2019SpmeState):
             raise TypeError("spme_state must be Marquis2019SpmeState.")
         temperature = jnp.asarray(temperature_k)
@@ -551,7 +561,7 @@ class BrosaPlanellaTspmePlan(StrictModule, NonTrainableState):
         ledger_energy_absolute_tolerance_j: float = 1.0e-4,
         ledger_heat_absolute_tolerance_w_m3: float = 1.0e-8,
         ledger_relative_tolerance: float = 1.0e-5,
-    ):
+    ) -> None:
         if not isinstance(spme_plan, Marquis2019SpmePlan):
             raise TypeError("spme_plan must be Marquis2019SpmePlan.")
         small = float(applicability_small_parameter_threshold)
@@ -612,7 +622,7 @@ class PreparedBrosaPlanellaTspme(StrictModule, NonTrainableState):
     spme: PreparedMarquis2019Spme
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: BrosaPlanellaTspmePlan, /):
+    def __init__(self, plan: BrosaPlanellaTspmePlan, /) -> None:
         if not isinstance(plan, BrosaPlanellaTspmePlan):
             raise TypeError("plan must be BrosaPlanellaTspmePlan.")
         spme = plan.spme_plan.prepare()
@@ -703,8 +713,8 @@ class _BrosaPlanellaTspmeEvaluation(StrictModule):
     domain_valid: Array
     total_solid_lithium_mol: Array
     total_electrolyte_lithium_mol: Array
-    particle_transport: object
-    electrolyte_transport: object
+    particle_transport: _SpmTransportEvaluation
+    electrolyte_transport: _ThroughCellEvaluation
 
 
 def _check_prepared(
@@ -1519,7 +1529,7 @@ class BrosaPlanellaTspmeAdapter(StrictModule, NonTrainableState):
     observable_units: tuple[str, ...] = eqx.field(static=True)
     source_formulation_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: BrosaPlanellaTspmePlan, /):
+    def __init__(self, plan: BrosaPlanellaTspmePlan, /) -> None:
         if not isinstance(plan, BrosaPlanellaTspmePlan):
             raise TypeError("plan must be BrosaPlanellaTspmePlan.")
         self.plan = plan
@@ -1744,7 +1754,7 @@ class BrosaPlanellaTspmeAdapter(StrictModule, NonTrainableState):
     def ledger(
         self,
         prepared_model: PreparedBrosaPlanellaTspme,
-        native_solution,
+        native_solution: DifferentialSolution,
         runtime_inputs: BatteryRuntimeInputs,
         /,
     ) -> BrosaPlanellaTspmeLedger:
@@ -1840,7 +1850,7 @@ class BrosaPlanellaTspmeAdapter(StrictModule, NonTrainableState):
             final_energy - initial_energy - generated_energy + boundary_energy
         )
 
-        def valid_max(values):
+        def valid_max(values: Array) -> Array:
             return jnp.max(jnp.where(valid, jnp.abs(values), 0.0))
 
         maximum_heat_residual = valid_max(evaluation.heat_sum_residual_w_m3)

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -5,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _reverse_kernel():
+def _reverse_kernel() -> Any:
     variables = phx.pgm.DiscreteVariableGroup("x", shape=(2,), num_states=2)
     factor = phx.pgm.DenseTableFactorGroup(
         (
@@ -31,7 +33,7 @@ def _reverse_kernel():
     return graph, prepared, kernel
 
 
-def test_discrete_forward_and_factor_graph_reverse_process_shapes():
+def test_discrete_forward_and_factor_graph_reverse_process_shapes() -> None:
     discrete = phx.transport.discrete
     graph, prepared, reverse = _reverse_kernel()
     forward = discrete.DiscreteForwardProcess((discrete.CategoricalNoisingKernel(0.8),))
@@ -64,7 +66,7 @@ def test_discrete_forward_and_factor_graph_reverse_process_shapes():
         )
 
 
-def test_recovery_objective_adaptive_control_and_hybrid_embedding():
+def test_recovery_objective_adaptive_control_and_hybrid_embedding() -> None:
     discrete = phx.transport.discrete
     graph, _prepared, reverse = _reverse_kernel()
     positive = jnp.asarray([[0, 0], [1, 1]])

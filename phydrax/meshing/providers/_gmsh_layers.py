@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -49,7 +50,7 @@ class _PlanarBandGeneration:
 
 
 def _straight_surface_curves(
-    gmsh,
+    gmsh: Any,
     surface: int,
     embedding: PlanarEmbedding,
     /,
@@ -99,7 +100,7 @@ def _straight_surface_curves(
 
 
 def _configure_full_quad_band_closure(
-    gmsh,
+    gmsh: Any,
     embedding: PlanarEmbedding,
     constrained_curves: dict[int, int],
     target_size: float | None,
@@ -140,6 +141,7 @@ def _configure_full_quad_band_closure(
     neighbors: dict[int, set[int]] = {
         curve: set() for curves, _ in boundaries.values() for curve in curves
     }
+    # ty: ignore[invalid-assignment]
     for pairs in parallel_pairs.values():
         for first, second in pairs:
             neighbors[first].add(second)
@@ -193,7 +195,7 @@ def _configure_full_quad_band_closure(
 
 
 def _apply_planar_band_constraints(
-    gmsh,
+    gmsh: Any,
     bands: PlanarBandResult | None,
     cad_entities: _CadEntityMap | None,
     requested_kinds: set[str],
@@ -294,7 +296,7 @@ def _apply_planar_band_constraints(
 
 
 def _audit_planar_band_fronts(
-    gmsh, generation: _PlanarBandGeneration | None, /
+    gmsh: Any, generation: _PlanarBandGeneration | None, /
 ) -> tuple[tuple[tuple[str, float], ...], tuple[tuple[str, float], ...]]:
     if generation is None:
         return (), ()
@@ -314,12 +316,16 @@ def _audit_planar_band_fronts(
                 stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
             )
         planar = generation.embedding.to_planar(points)
+        # ty: ignore[unresolved-attribute]
         origin = np.asarray(layer.source_origin, dtype=np.float64)
+        # ty: ignore[unresolved-attribute]
         inward = np.asarray(layer.inward_normal, dtype=np.float64)
         distances = (planar - origin) @ inward
         residual = float(
+            # ty: ignore[unresolved-attribute]
             np.max(np.abs(distances - layer.cumulative_distance), initial=0.0)
         )
+        # ty: ignore[unresolved-attribute]
         tangent = np.asarray(layer.tangent, dtype=np.float64)
         tangential_positions = np.unique((planar - origin) @ tangent)
         if tangential_positions.size < 2:
@@ -331,7 +337,9 @@ def _audit_planar_band_fronts(
         maximum_tangential_spacing = float(np.max(np.diff(tangential_positions)))
         scale = max(
             1.0,
+            # ty: ignore[unresolved-attribute]
             layer.source_length,
+            # ty: ignore[unresolved-attribute]
             layer.cumulative_distance,
             float(np.max(np.abs(planar), initial=0.0)),
         )
@@ -342,16 +350,20 @@ def _audit_planar_band_fronts(
                 "Generated planar band nodes do not lie on the exact requested front.",
                 stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
             )
+        # ty: ignore[unresolved-attribute]
         if maximum_tangential_spacing > layer.tangential_target + tolerance:
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
                 "Generated planar band tangential spacing exceeds its target.",
                 stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
             )
+        # ty: ignore[unresolved-attribute]
         key = f"planar_band:{layer.control_id}:{layer.region_name}:front:{layer.layer_index + 1}"
         requested.extend(
             (
+                # ty: ignore[unresolved-attribute]
                 (f"{key}:distance", layer.cumulative_distance),
+                # ty: ignore[unresolved-attribute]
                 (f"{key}:tangential_target", layer.tangential_target),
             )
         )
@@ -400,7 +412,9 @@ class _LayerAudit:
     layer_by_element_tag: dict[int, int]
 
 
-def _cad_symmetric_difference(gmsh, dimension: int, left, right, /) -> float:
+def _cad_symmetric_difference(
+    gmsh: Any, dimension: int, left: Any, right: Any, /
+) -> float:
     baseline = set(gmsh.model.getEntities())
     measure = 0.0
     for first, second in ((left, right), (right, left)):
@@ -420,7 +434,7 @@ def _cad_symmetric_difference(gmsh, dimension: int, left, right, /) -> float:
 
 
 def _certify_swept_volume(
-    gmsh,
+    gmsh: Any,
     volume: tuple[int, int],
     source_surface: int,
     target_surface: int,
@@ -453,7 +467,9 @@ def _certify_swept_volume(
     return face_difference, volume_difference
 
 
-def _prepare_swept_geometry(gmsh, plan, shape, cad_entities, /):
+def _prepare_swept_geometry(
+    gmsh: Any, plan: Any, shape: Any, cad_entities: Any, /
+) -> Any:
     controls = plan.specification.layer_controls
     if not controls or any(
         control.route is not BoundaryLayerRoute.EXACT_SWEEP for control in controls
@@ -578,6 +594,7 @@ def _prepare_swept_geometry(gmsh, plan, shape, cad_entities, /):
                     direction,
                     unit,
                     levels,
+                    # ty: ignore[invalid-argument-type]
                     volume_difference / max(volume_measure, np.finfo(np.float64).tiny),
                 )
             )
@@ -613,7 +630,7 @@ def _prepare_swept_geometry(gmsh, plan, shape, cad_entities, /):
     return _SweepGeneration(tuple(prepared))
 
 
-def _entity_linear_triangles(gmsh, surface: int, /) -> np.ndarray:
+def _entity_linear_triangles(gmsh: Any, surface: int, /) -> np.ndarray:
     blocks = []
     element_types, _, node_blocks = gmsh.model.mesh.getElements(2, surface)
     for element_type, node_values in zip(element_types, node_blocks, strict=True):
@@ -637,7 +654,7 @@ def _entity_linear_triangles(gmsh, surface: int, /) -> np.ndarray:
 
 
 def _matching_lateral_surface(
-    gmsh, candidates: tuple[int, ...], point: np.ndarray, tolerance: float, /
+    gmsh: Any, candidates: tuple[int, ...], point: np.ndarray, tolerance: float, /
 ) -> int:
     matches = []
     for surface in candidates:
@@ -658,7 +675,7 @@ def _matching_lateral_surface(
     return matches[0]
 
 
-def _install_swept_cells(gmsh, sweep: _SweepGeneration, /) -> None:
+def _install_swept_cells(gmsh: Any, sweep: _SweepGeneration, /) -> None:
     for value in sweep.volumes:
         gmsh.model.mesh.removeElements(3, value.volume_tag)
     for surface in sorted(
@@ -809,7 +826,7 @@ def _install_swept_cells(gmsh, sweep: _SweepGeneration, /) -> None:
         )
 
 
-def _audit_layers(sweep, rows, node_tags, points, /) -> _LayerAudit:
+def _audit_layers(sweep: Any, rows: Any, node_tags: Any, points: Any, /) -> _LayerAudit:
     if sweep is None:
         return _LayerAudit((), (), {}, {})
     volume_map = {value.volume_tag: value for value in sweep.volumes}
@@ -1092,7 +1109,7 @@ class _BoundaryLayerField:
     fan_points: tuple[int, ...]
 
 
-def _endpoint_tangent(gmsh, curve: int, point: np.ndarray, /) -> np.ndarray:
+def _endpoint_tangent(gmsh: Any, curve: int, point: np.ndarray, /) -> np.ndarray:
     """Unit tangent of ``curve`` at its endpoint ``point``, directed into the curve."""
     lower, upper = gmsh.model.getParametrizationBounds(1, curve)
     ends = np.asarray(
@@ -1108,7 +1125,9 @@ def _endpoint_tangent(gmsh, curve: int, point: np.ndarray, /) -> np.ndarray:
     return tangent / np.linalg.norm(tangent)
 
 
-def _wall_fan_points(gmsh, control: BoundaryLayerControl, curves, /) -> tuple[int, ...]:
+def _wall_fan_points(
+    gmsh: Any, control: BoundaryLayerControl, curves: Any, /
+) -> tuple[int, ...]:
     """Classify wall-curve junctions; FAN convex corners, REJECT any feature corner."""
     incident: dict[int, list[int]] = {}
     for curve in curves:
@@ -1151,7 +1170,11 @@ def _wall_fan_points(gmsh, control: BoundaryLayerControl, curves, /) -> tuple[in
 
 
 def _apply_boundary_layer_field(
-    gmsh, specification, cad_entities: _CadEntityMap | None, requested_kinds: set[str], /
+    gmsh: Any,
+    specification: Any,
+    cad_entities: _CadEntityMap | None,
+    requested_kinds: set[str],
+    /,
 ) -> _BoundaryLayerField | None:
     """Lower one planar PROVIDER control to a Gmsh BoundaryLayer field."""
     if (
@@ -1238,7 +1261,7 @@ def _field_columns(
 
 
 def _audit_boundary_layer_field(
-    gmsh,
+    gmsh: Any,
     field: _BoundaryLayerField | None,
     rows: tuple[_ElementRows, ...],
     node_tags: np.ndarray,

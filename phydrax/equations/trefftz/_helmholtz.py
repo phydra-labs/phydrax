@@ -10,10 +10,12 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._doc import DOC_KEY0
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ...typing import PRNGKey
 from ._core import (
     AbstractTrefftzBasis,
     SimilarityNormalization,
@@ -28,7 +30,7 @@ def sample_unit_directions(
     dimension: int,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> Array:
     """Sample fixed unit directions from normalized Gaussian vectors."""
 
@@ -107,7 +109,7 @@ class HelmholtzPlaneWaveBasis(AbstractTrefftzBasis):
         *,
         normalization: SimilarityNormalization | None = None,
         resources: TrefftzResourceBudget | None = None,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         wavenumber_ = float(wavenumber)
         if dimension_ < 2:
@@ -162,7 +164,7 @@ class HelmholtzPlaneWaveBasis(AbstractTrefftzBasis):
                 "finite plane-wave subspace",
             ),
             construction_residual=direction_residual,
-            construction_tolerance=(256.0 * np.finfo(np.float64).eps * dimension_),
+            construction_tolerance=float(256.0 * np.finfo(np.float64).eps * dimension_),
         )
         self.normalization = normalization_
         self.physical_wavenumber = jnp.asarray(wavenumber_, dtype=jnp.float64).reshape(())

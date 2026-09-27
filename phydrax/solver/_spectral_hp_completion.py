@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -37,7 +38,7 @@ class HPNewtonKrylovBuilder(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-10,
         damping: float = 1.0,
         /,
-    ):
+    ) -> None:
         if maximum_iterations <= 0 or tolerance <= 0.0 or not 0.0 < damping <= 1.0:
             raise ValueError("Newton-Krylov controls are invalid.")
         self.maximum_iterations = int(maximum_iterations)
@@ -81,7 +82,7 @@ class NonlinearLocalCondensation(StrictModule, NonTrainableState):
         /,
         *,
         newton: HPNewtonKrylovBuilder | None = None,
-    ):
+    ) -> None:
         size = int(local_size)
         retained = np.asarray(retained_dofs, dtype=np.int32)
         interior = np.setdiff1d(np.arange(size, dtype=np.int32), retained)
@@ -100,7 +101,7 @@ class NonlinearLocalCondensation(StrictModule, NonTrainableState):
     ) -> HPNewtonKrylovResult:
         retained = jnp.asarray(retained_values)
 
-        def interior_residual(interior):
+        def interior_residual(interior: Array) -> Array:
             full = jnp.zeros(
                 (self.retained_dofs.size + self.interior_dofs.size,), dtype=interior.dtype
             )
@@ -118,7 +119,7 @@ class HPFASMultigrid(StrictModule, NonTrainableState):
 
     def __init__(
         self, level_count: int, /, *, pre_smoothing: int = 2, post_smoothing: int = 2
-    ):
+    ) -> None:
         if level_count < 2 or pre_smoothing < 0 or post_smoothing < 0:
             raise ValueError("FAS hierarchy or smoothing counts are invalid.")
         self.level_count = int(level_count)
@@ -167,7 +168,7 @@ class HPRestrictedSchwarz(StrictModule, NonTrainableState):
         /,
         *,
         multiplicative: bool = False,
-    ):
+    ) -> None:
         restriction = tuple(jnp.asarray(value) for value in restrictions)
         matrices = tuple(np.asarray(value) for value in local_matrices)
         if not restriction or len(restriction) != len(matrices):
@@ -224,7 +225,7 @@ class BDDCFETIDPTracePlan(StrictModule, NonTrainableState):
     coarse_matrix: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, primal_constraints: ArrayLike, local_schur: ArrayLike, /):
+    def __init__(self, primal_constraints: ArrayLike, local_schur: ArrayLike, /) -> None:
         constraints = jnp.asarray(primal_constraints)
         schur = jnp.asarray(local_schur)
         if (
@@ -300,7 +301,7 @@ class FrozenHPAdjointSchedule(StrictModule, NonTrainableState):
     transfers: tuple[FiniteElementHPTransferPlan, ...]
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self, transfers: Sequence[FiniteElementHPTransferPlan], /):
+    def __init__(self, transfers: Sequence[FiniteElementHPTransferPlan], /) -> None:
         transfers_ = tuple(transfers)
         if any(
             not isinstance(value, FiniteElementHPTransferPlan) for value in transfers_
@@ -331,7 +332,7 @@ class RelaxedHPMarking(StrictModule, NonTrainableState):
     temperature: float = eqx.field(static=True)
     budget: int = eqx.field(static=True)
 
-    def __init__(self, budget: int, temperature: float = 0.1, /):
+    def __init__(self, budget: int, temperature: float = 0.1, /) -> None:
         if budget <= 0 or temperature <= 0.0:
             raise ValueError("Relaxed marking budget and temperature must be positive.")
         self.temperature = float(temperature)
@@ -363,7 +364,7 @@ class RelaxedHPMarking(StrictModule, NonTrainableState):
 class MeshVaryingUQAggregator(StrictModule, NonTrainableState):
     reference_size: int = eqx.field(static=True)
 
-    def __init__(self, reference_size: int, /):
+    def __init__(self, reference_size: int, /) -> None:
         if reference_size <= 0:
             raise ValueError("Reference UQ field size must be positive.")
         self.reference_size = int(reference_size)

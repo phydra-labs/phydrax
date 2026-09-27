@@ -11,7 +11,7 @@ import phydrax as phx
 q = phx.operators.quantum
 
 
-def test_unitary_gate_quality_separates_leakage_and_conditional_fidelity():
+def test_unitary_gate_quality_separates_leakage_and_conditional_fidelity() -> None:
     angle = jnp.asarray(0.4)
     rotation = jnp.asarray(
         [
@@ -37,7 +37,7 @@ def test_unitary_gate_quality_separates_leakage_and_conditional_fidelity():
     )
 
 
-def test_unitary_and_channel_gate_quality_agree_for_a_unitary_channel():
+def test_unitary_and_channel_gate_quality_agree_for_a_unitary_channel() -> None:
     unitary = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128)
     subspace = q.BasisStateSubspace(2, (0, 1))
     unitary_result = q.unitary_gate_quality(unitary, unitary, subspace)
@@ -54,7 +54,7 @@ def test_unitary_and_channel_gate_quality_agree_for_a_unitary_channel():
     assert bool(channel_result.diagnostics.valid)
 
 
-def test_finite_channel_gate_quality_matches_amplitude_damping_formula():
+def test_finite_channel_gate_quality_matches_amplitude_damping_formula() -> None:
     probability = jnp.asarray(0.3)
     kraus = jnp.asarray(
         [
@@ -74,7 +74,7 @@ def test_finite_channel_gate_quality_matches_amplitude_damping_formula():
     assert jnp.allclose(result.conditional_fidelity, expected)
 
 
-def test_coherent_pauli_expansion_reconstructs_without_rate_semantics():
+def test_coherent_pauli_expansion_reconstructs_without_rate_semantics() -> None:
     operator = jnp.asarray(
         [[jnp.exp(0.2j), 0.0], [0.0, jnp.exp(-0.2j)]],
         dtype=jnp.complex128,

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -16,7 +18,7 @@ from phydrax.operators.differential._stochastic_estimators import (
 )
 
 
-def test_raw_trace_samples_reduce_to_the_existing_estimate_and_replay():
+def test_raw_trace_samples_reduce_to_the_existing_estimate_and_replay() -> None:
     state = jnp.asarray([0.2, -0.3, 0.7])
     matrix = jnp.asarray([[1.0, 0.4, -0.2], [0.4, 2.0, 0.3], [-0.2, 0.3, 0.8]])
     function = lambda value: value[0] ** 4 + value[1] ** 2 + 3.0 * value[2] ** 2
@@ -48,7 +50,7 @@ def test_raw_trace_samples_reduce_to_the_existing_estimate_and_replay():
     assert jnp.array_equal(samples.dependence_ids, jnp.arange(512))
 
 
-def test_divergence_samples_use_jvps_and_match_linear_trace_in_expectation():
+def test_divergence_samples_use_jvps_and_match_linear_trace_in_expectation() -> None:
     dimension = 100
     diagonal = jnp.linspace(0.2, 1.2, dimension)
     state = jnp.linspace(-1.0, 1.0, dimension)
@@ -64,13 +66,13 @@ def test_divergence_samples_use_jvps_and_match_linear_trace_in_expectation():
     assert jnp.allclose(samples.standard_error, 0.0)
 
 
-def test_probe_standard_error_and_parameter_gradient_have_expected_behavior():
+def test_probe_standard_error_and_parameter_gradient_have_expected_behavior() -> None:
     state = jnp.asarray([0.3, -0.5, 0.7, 0.1])
     field = lambda scale, value: (
         scale * jnp.asarray([value[1], value[0], value[3], value[2]])
     )
 
-    def estimate(scale, count):
+    def estimate(scale: Any, count: Any) -> Any:
         samples = stochastic_divergence_samples(
             lambda value: field(scale, value),
             state,
@@ -88,7 +90,7 @@ def test_probe_standard_error_and_parameter_gradient_have_expected_behavior():
     assert jnp.isfinite(gradient)
 
 
-def test_raw_sample_contract_rejects_vector_field_shape_mismatch():
+def test_raw_sample_contract_rejects_vector_field_shape_mismatch() -> None:
     with pytest.raises(ValueError, match="preserve"):
         stochastic_divergence_samples(
             lambda value: jnp.sum(value),
@@ -97,7 +99,7 @@ def test_raw_sample_contract_rejects_vector_field_shape_mismatch():
         )
 
 
-def test_uniform_dimension_sum_is_unbiased_and_full_subset_is_exact():
+def test_uniform_dimension_sum_is_unbiased_and_full_subset_is_exact() -> None:
     contributions = jnp.linspace(0.1, 2.0, 40)
     policy = DimensionSamplingPolicy(40, 12)
     samples = dimension_sum_samples(
@@ -120,7 +122,7 @@ def test_uniform_dimension_sum_is_unbiased_and_full_subset_is_exact():
     assert jnp.allclose(full.standard_error, 0.0)
 
 
-def test_importance_dimension_sampling_uses_inverse_probability_weights():
+def test_importance_dimension_sampling_uses_inverse_probability_weights() -> None:
     contributions = jnp.asarray([1.0, 2.0, 4.0, 8.0])
     probabilities = contributions / jnp.sum(contributions)
     samples = dimension_sum_samples(
@@ -140,7 +142,9 @@ def test_importance_dimension_sampling_uses_inverse_probability_weights():
     assert jnp.allclose(samples.standard_error, 0.0)
 
 
-def test_coordinate_laplacian_samples_scale_to_dimension_1000_without_dense_hessian():
+def test_coordinate_laplacian_samples_scale_to_dimension_1000_without_dense_hessian() -> (
+    None
+):
     dimension = 1000
     state = jnp.linspace(-1.0, 1.0, dimension)
     coefficients = jnp.linspace(0.5, 1.5, dimension)

@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _linear_data(matrix, *, steps=400, reset=None):
+def _linear_data(matrix: Any, *, steps: Any = 400, reset: Any = None) -> Any:
     matrix = jnp.asarray(matrix, dtype=jnp.float64)
     state = jnp.asarray([1.0, -0.4], dtype=jnp.float64)
     values = []
@@ -32,7 +35,7 @@ def _linear_data(matrix, *, steps=400, reset=None):
     )
 
 
-def _identity_library(layout):
+def _identity_library(layout: Any) -> Any:
     return phx.dynamics.identification.CustomFeatureLibrary(
         lambda states, inputs: states,
         state_layout=layout,
@@ -41,7 +44,7 @@ def _identity_library(layout):
     )
 
 
-def test_vamp_and_tica_return_diagnosed_slow_coordinates():
+def test_vamp_and_tica_return_diagnosed_slow_coordinates() -> None:
     data = _linear_data([[0.97, 0.0], [0.0, 0.55]])
     library = _identity_library(data.state_layout)
 
@@ -63,7 +66,7 @@ def test_vamp_and_tica_return_diagnosed_slow_coordinates():
     assert tica.diagnostics.lag.physical_lag_mean == 0.4
 
 
-def test_lagged_fit_excludes_resets_and_rejects_irregular_physical_lag():
+def test_lagged_fit_excludes_resets_and_rejects_irregular_physical_lag() -> None:
     reset = jnp.zeros((29,), dtype="bool").at[12].set(True)
     data = _linear_data([[0.9, 0.0], [0.0, 0.7]], steps=30, reset=reset)
     library = _identity_library(data.state_layout)
@@ -83,7 +86,7 @@ def test_lagged_fit_excludes_resets_and_rejects_irregular_physical_lag():
     assert not bool(rejected.diagnostics.lag.uniform_physical_lag)
 
 
-def test_vamp_heldout_score_is_finite():
+def test_vamp_heldout_score_is_finite() -> None:
     training = _linear_data([[0.95, -0.08], [0.08, 0.78]], steps=250)
     validation = _linear_data([[0.95, -0.08], [0.08, 0.78]], steps=120)
     fitted = phx.dynamics.identification.fit_vamp(
@@ -97,7 +100,7 @@ def test_vamp_heldout_score_is_finite():
     assert score.effective_samples > 0.0
 
 
-def test_tica_repeated_modes_report_basis_ambiguity():
+def test_tica_repeated_modes_report_basis_ambiguity() -> None:
     angles = jnp.linspace(0.0, 12.0 * jnp.pi, 600)
     states = jnp.stack((jnp.sin(angles), jnp.cos(angles)), axis=-1)
     data = phx.dynamics.TrajectoryData(

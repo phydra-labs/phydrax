@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
@@ -20,6 +21,7 @@ from ._boundary import PreparedLatticeBoltzmannBoundary
 from ._collision import macroscopic_raw_moments, quadratic_equilibrium
 from ._discretization import LatticeBoltzmannDiscretization
 from ._interfacial import continuum_surface_force, InterfacialFields
+from ._lattice import LatticeBoltzmannVelocitySet
 from ._method import (
     LatticeBoltzmannMethodPlan,
     PreparedLatticeBoltzmannMethodPlan,
@@ -55,7 +57,7 @@ class ColorGradientLBMRuntimeParameters(StrictModule):
         wall_normal: ArrayLike | None = None,
         wetting_mask: ArrayLike | None = None,
         contact_angle: ArrayLike = 0.5 * jnp.pi,
-    ):
+    ) -> None:
         viscosity = jnp.asarray(kinematic_viscosity)
         if viscosity.shape != () or not jnp.issubdtype(viscosity.dtype, jnp.inexact):
             raise ValueError("kinematic_viscosity must be one inexact scalar array.")
@@ -111,7 +113,7 @@ class ColorGradientLBMMethod(StrictModule, NonTrainableState):
         maximum_mach: float = 0.3,
         maximum_capillary_number: float = 1.0,
         conservation_tolerance: float = 1.0e-11,
-    ):
+    ) -> None:
         if not isinstance(hydrodynamic_method, LatticeBoltzmannMethodPlan):
             raise TypeError("hydrodynamic_method must be LatticeBoltzmannMethodPlan.")
         if hydrodynamic_method.forcing is None:
@@ -211,7 +213,7 @@ def recolor_populations(
     red_density: ArrayLike,
     blue_density: ArrayLike,
     interface_normal: ArrayLike,
-    velocity_set,
+    velocity_set: LatticeBoltzmannVelocitySet,
     recoloring_strength: ArrayLike,
     /,
     *,
@@ -283,7 +285,7 @@ class PreparedColorGradientLBMDynamics(StrictModule, NonTrainableState):
         method: ColorGradientLBMMethod,
         boundary: PreparedLatticeBoltzmannBoundary,
         /,
-    ):
+    ) -> None:
         if not isinstance(discretization, LatticeBoltzmannDiscretization):
             raise TypeError("discretization must be an LBM discretization.")
         if not isinstance(scaling, LatticeBoltzmannScaling):
@@ -347,7 +349,7 @@ class PreparedColorGradientLBMDynamics(StrictModule, NonTrainableState):
         return ColorGradientLBMState(red, blue)
 
     def _wetting_data(
-        self, parameters: ColorGradientLBMRuntimeParameters, dtype, /
+        self, parameters: ColorGradientLBMRuntimeParameters, dtype: DTypeLike, /
     ) -> tuple[Array | None, Array | None, Array, Array]:
         shape = self.discretization.grid.shape
         dimension = self.discretization.velocity_set.dimension

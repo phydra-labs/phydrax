@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -48,7 +49,7 @@ class HomogeneousSpinorQEDTangentState(StrictModule):
         electric_field_tangent: ArrayLike,
         mode_spinor_tangent: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(base, HomogeneousSpinorQEDState):
             raise TypeError("base must be HomogeneousSpinorQEDState.")
         potential = jnp.asarray(vector_potential_tangent)
@@ -156,7 +157,7 @@ class PreparedHomogeneousSpinorQEDTangent(StrictModule, NonTrainableState):
         vector_potential_tangent: ArrayLike = 0.0,
         electric_field_tangent: ArrayLike = 0.0,
         mode_spinor_tangent: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(base, PreparedHomogeneousSpinorQED):
             raise TypeError("base must be PreparedHomogeneousSpinorQED.")
         if not callable(perturbation_current):
@@ -390,7 +391,7 @@ class RetardedVolterraResponsePlan(StrictModule, NonTrainableState):
         *,
         causality_tolerance: float = 0.0,
         maximum_time_points: int = 16384,
-    ):
+    ) -> None:
         time = np.asarray(times, dtype=np.float64)
         values = np.asarray(kernel)
         tolerance = float(causality_tolerance)

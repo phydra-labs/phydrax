@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._differentiation import AbstractConstructionCertificate
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -20,7 +21,11 @@ from ..._holomorphic import ComplexAffineNormalization, HolomorphicJet
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState, ParameterOwner
 from ...continuation import ParameterContinuationProblem
-from ...optim import variable_projection, VariableProjectionProblem
+from ...optim import (
+    variable_projection,
+    VariableProjectionProblem,
+    VariableProjectionResult,
+)
 from ._holomorphic_constraints import HolomorphicAffineCoefficientMap
 from ._holomorphic_frame import HolomorphicPolynomialFrame
 
@@ -32,7 +37,7 @@ class PoleSet(StrictModule, NonTrainableState):
     orders: tuple[int, ...] = eqx.field(static=True)
     pole_set_id: str = eqx.field(static=True)
 
-    def __init__(self, locations: ArrayLike, orders: Sequence[int], /):
+    def __init__(self, locations: ArrayLike, orders: Sequence[int], /) -> None:
         locations_raw = np.asarray(locations, dtype=np.complex128)
         orders_ = tuple(orders)
         if locations_raw.ndim != 1 or locations_raw.size == 0:
@@ -66,7 +71,7 @@ class TrainablePoleSet(StrictModule, ParameterOwner):
     location_imag: Array
     orders: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, locations: ArrayLike, orders: Sequence[int], /):
+    def __init__(self, locations: ArrayLike, orders: Sequence[int], /) -> None:
         fixed = PoleSet(locations, orders)
         self.location_real = jnp.real(fixed.locations)
         self.location_imag = jnp.imag(fixed.locations)
@@ -105,7 +110,7 @@ class MeromorphicLinearFrameCertificate(AbstractConstructionCertificate):
         maximum_derivative_order: int,
         normalization_id: str,
         pole_set_id: str,
-    ):
+    ) -> None:
         output = int(complex_output_size)
         coefficient_count = int(real_coefficient_count)
         derivative = int(maximum_derivative_order)
@@ -149,7 +154,7 @@ class MeromorphicMapCertificate(AbstractConstructionCertificate):
         *,
         parameter_mode: str,
         construction_dependency: str,
-    ):
+    ) -> None:
         mode = str(parameter_mode)
         dependency = str(construction_dependency)
         if not mode or not dependency:
@@ -190,7 +195,7 @@ class PoleClearanceReport(StrictModule, NonTrainableState):
         center: complex,
         radius: float,
         required_clearance: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(poles, PoleSet):
             raise TypeError("poles must be PoleSet.")
         center_ = complex(center)
@@ -257,7 +262,7 @@ class DomainHolomorphicCertificate(StrictModule, NonTrainableState):
         meromorphic: MeromorphicMapCertificate,
         clearance: PoleClearanceReport,
         /,
-    ):
+    ) -> None:
         if not isinstance(meromorphic, MeromorphicMapCertificate):
             raise TypeError("meromorphic must be MeromorphicMapCertificate.")
         if not isinstance(clearance, PoleClearanceReport):
@@ -302,7 +307,7 @@ class MeromorphicLinearFrame(StrictModule, NonTrainableState):
         *,
         normalization: ComplexAffineNormalization | None = None,
         maximum_derivative_order: int = 4,
-    ):
+    ) -> None:
         degree = int(regular_degree)
         output = int(complex_output_size)
         derivative = int(maximum_derivative_order)
@@ -398,7 +403,7 @@ class ConstrainedMeromorphicPotential(StrictModule, ParameterOwner):
         /,
         *,
         initial_free_coordinates: ArrayLike | None = None,
-    ):
+    ) -> None:
         frame = coefficient_map.operator.plan.frame
         certificate = frame.linear_frame_certificate()
         if not isinstance(certificate, MeromorphicLinearFrameCertificate):
@@ -479,7 +484,7 @@ class MeromorphicVariableProjectionPlan(StrictModule, NonTrainableState):
         regular_degree: int,
         pole_orders: Sequence[int],
         /,
-    ):
+    ) -> None:
         coordinates_ = jnp.asarray(coordinates)
         observations_ = jnp.asarray(observations)
         degree = int(regular_degree)
@@ -543,7 +548,7 @@ class MeromorphicVariableProjectionPlan(StrictModule, NonTrainableState):
             (jnp.real(observations_complex), jnp.imag(observations_complex))
         )
 
-        def design(parameters, args):
+        def design(parameters: Array, args: object) -> Array:
             del args
             complex_design = self._complex_design(parameters)
             real = jnp.real(complex_design)
@@ -556,7 +561,7 @@ class MeromorphicVariableProjectionPlan(StrictModule, NonTrainableState):
             problem_id=self.plan_id,
         )
 
-    def fit(self, initial_poles: ArrayLike, /, **kwargs):
+    def fit(self, initial_poles: ArrayLike, /, **kwargs: Any) -> VariableProjectionResult:
         """Fit nonlinear pole locations and the optimal linear coefficient block."""
         locations = jnp.asarray(initial_poles)
         pole_count = len(self.pole_orders)
@@ -576,11 +581,11 @@ class MeromorphicVariableProjectionPlan(StrictModule, NonTrainableState):
             raise ValueError("final_observations must match the complex fitting data.")
         initial = self.observations
 
-        def stationarity(parameters, coordinate, args):
+        def stationarity(parameters: Array, coordinate: Array, args: Any) -> Array:
             observations = (1.0 - coordinate) * initial + coordinate * final
             problem = self.problem(observations)
 
-            def objective(values):
+            def objective(values: Array) -> Array:
                 residual = problem.linear_solution(values, args)[1]
                 return 0.5 * jnp.real(jnp.vdot(residual, residual))
 

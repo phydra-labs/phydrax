@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -76,7 +77,7 @@ class SmoothedElasticityOperator(StrictModule, NonTrainableState):
         local_stiffness: ArrayLike,
         global_node_count: int,
         /,
-    ):
+    ) -> None:
         local = jnp.asarray(local_stiffness)
         count = int(global_node_count)
         local_width = 2 * layout.dof_routes.shape[1]

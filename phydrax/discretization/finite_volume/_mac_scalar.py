@@ -10,11 +10,13 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._diffusion import (
     ConservativeAdvectionPlan,
     ConservativeBoundaryCondition,
@@ -48,7 +50,7 @@ def _finite_array(value: ArrayLike, owner: str, /) -> Array:
 
 
 def _boundary_slice(value: Array, axis: int, index: int, /) -> Array:
-    location = [slice(None)] * value.ndim
+    location: list[slice | int] = [slice(None)] * value.ndim
     location[axis] = index
     return value[tuple(location)]
 
@@ -67,7 +69,7 @@ class MACScalarLayout(StrictModule, NonTrainableState):
         operators: PreparedMACOperators,
         field_names: Sequence[str],
         /,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         names = _canonical_names(field_names)
@@ -93,7 +95,7 @@ class MACScalarLayout(StrictModule, NonTrainableState):
         return self.operators.discretization.cell_shape
 
     @property
-    def dtype(self):
+    def dtype(self) -> np.dtype:
         return self.operators.pressure_space.dtype
 
     def _field_index(self, name: str, /) -> int:
@@ -172,9 +174,8 @@ class MACScalarBoundaryCondition(StrictModule, NonTrainableState):
         /,
         *,
         function_id: str | None = None,
-    ):
-        if kind not in ("periodic", "dirichlet", "neumann", "flux"):
-            raise ValueError("Unknown MAC scalar boundary kind.")
+    ) -> None:
+        kind = parse(kind, MACScalarBoundaryKind, "kind")
         if callable(value):
             if kind != "flux":
                 raise ValueError(
@@ -269,7 +270,7 @@ class MACScalarBoundarySet(StrictModule, NonTrainableState):
             ],
         ]
         | None = None,
-    ):
+    ) -> None:
         if not isinstance(layout, MACScalarLayout):
             raise TypeError("layout must be MACScalarLayout.")
         supplied = (
@@ -310,12 +311,13 @@ class MACScalarBoundarySet(StrictModule, NonTrainableState):
                         raise ValueError(
                             "Each MAC scalar wall axis requires lower and upper data."
                         )
-                    pair = tuple(
+                    lower_condition, upper_condition = (
                         value
                         if isinstance(value, MACScalarBoundaryCondition)
                         else MACScalarBoundaryCondition(value)
                         for value in raw_pair
                     )
+                    pair = (lower_condition, upper_condition)
                     if any(value.kind == "periodic" for value in pair):
                         raise ValueError(
                             "Static MAC walls cannot use periodic scalar data."
@@ -410,7 +412,7 @@ class MACScalarTransport(StrictModule, NonTrainableState):
         advection: MACScalarAdvection = "upwind",
         source: Any = None,
         source_id: str | None = None,
-    ):
+    ) -> None:
         field_name = str(name)
         if not field_name:
             raise ValueError("MAC scalar transport requires a non-empty field name.")
@@ -425,8 +427,7 @@ class MACScalarTransport(StrictModule, NonTrainableState):
             raise ValueError(
                 "MAC scalar diffusivity must be one finite nonnegative scalar or one nonnegative value per grid axis."
             )
-        if advection not in ("centered", "upwind"):
-            raise ValueError("MAC scalar advection must be 'centered' or 'upwind'.")
+        advection = parse(advection, MACScalarAdvection, "advection")
         if source is not None and not callable(source):
             raise TypeError("MAC scalar source must be callable or None.")
         if source is None:
@@ -469,7 +470,7 @@ class MACScalarReaction(StrictModule, NonTrainableState):
         *,
         rate_bounds: Mapping[str, float],
         reaction_id: str,
-    ):
+    ) -> None:
         names = _canonical_names(field_names)
         if not callable(rate):
             raise TypeError("MAC scalar reaction rate must be callable.")
@@ -513,7 +514,7 @@ class MACScalarSGSField(StrictModule, NonTrainableState):
         turbulent_prandtl_number: float | None = None,
         turbulent_schmidt_number: float | None = None,
         no_sgs: bool = False,
-    ):
+    ) -> None:
         field_name = str(name)
         if not field_name:
             raise ValueError("MAC scalar SGS declarations require a field name.")
@@ -558,7 +559,7 @@ class MACScalarSGSPlan(StrictModule, NonTrainableState):
     field_names: tuple[str, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, fields: Sequence[MACScalarSGSField], /):
+    def __init__(self, fields: Sequence[MACScalarSGSField], /) -> None:
         values = tuple(fields)
         if not values or any(
             not isinstance(value, MACScalarSGSField) for value in values
@@ -608,7 +609,7 @@ class PreparedMACScalarSGS(StrictModule, NonTrainableState):
         transport: PreparedMACScalarTransport,
         field_names: Sequence[str],
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, MACScalarSGSPlan):
             raise TypeError("plan must be MACScalarSGSPlan.")
         if not isinstance(transport, PreparedMACScalarTransport):
@@ -690,7 +691,7 @@ class MACScalarProblem(StrictModule, NonTrainableState):
         *,
         reaction: MACScalarReaction | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         values = tuple(transports)
         if not values or any(
             not isinstance(value, MACScalarTransport) for value in values
@@ -841,7 +842,7 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
         layout: MACScalarLayout,
         boundaries: MACScalarBoundarySet,
         /,
-    ):
+    ) -> None:
         if not isinstance(problem, MACScalarProblem):
             raise TypeError("problem must be MACScalarProblem.")
         if not isinstance(layout, MACScalarLayout):
@@ -997,7 +998,7 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
                     coordinates,
                     args,
                 )
-                location = [slice(None)] * output[axis].ndim
+                location: list[slice | int] = [slice(None)] * output[axis].ndim
                 location[axis] = index
                 output[axis] = (
                     output[axis].at[tuple(location)].set(orientation * outward_loss)
@@ -1268,8 +1269,8 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
                 2.0 * jnp.sum(volumes * centered * piece) / total_volume
                 for piece in pieces
             )
-            diffusive_content_rate = sum(content_rates[1:4])
-            diffusive_variance_rate = sum(variance_rates[1:4])
+            diffusive_content_rate = jnp.asarray(sum(content_rates[1:4]))
+            diffusive_variance_rate = jnp.asarray(sum(variance_rates[1:4]))
             content_rate = jnp.sum(volumes * result.rate)
             variance_rate = 2.0 * jnp.sum(volumes * centered * result.rate) / total_volume
             content_defect = content_rate - sum(content_rates)

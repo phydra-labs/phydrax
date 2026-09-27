@@ -5,6 +5,7 @@
 """Composable finite supports, field spaces, measures, and approximation records."""
 
 from importlib import import_module
+from typing import Any
 
 from . import (
     amr,
@@ -44,6 +45,7 @@ from ._adaptive_simplex import (
     coarsen_adaptive_simplex,
     masked_simplex_facet_neighbors,
     masked_simplex_signature,
+    MaskedSimplexCellKind,
     MaskedSimplexMesh,
     refine_adaptive_simplex,
     refine_adaptive_simplex_parts,
@@ -2345,7 +2347,7 @@ _FACADE_EXPORT_MODULES = (
 )
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     for module_name in reversed(_FACADE_EXPORT_MODULES):
         module = import_module(module_name, __package__)
         if name in module.__all__:
@@ -2555,6 +2557,7 @@ __all__ = [
     "AdaptiveSimplexStatus",
     "AdaptiveSimplexUpdate",
     "MaskedSimplexMesh",
+    "MaskedSimplexCellKind",
     "adaptive_simplex_bucket",
     "adaptive_simplex_state",
     "coarsen_adaptive_simplex",

@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -26,7 +27,7 @@ class HydroelasticPressureFieldPlan(StrictModule, NonTrainableState):
     cell_global_ids: Array
     field_id: str = eqx.field(static=True)
 
-    def __init__(self, mesh: CellMesh, /):
+    def __init__(self, mesh: CellMesh, /) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be a CellMesh.")
         if (
@@ -60,7 +61,7 @@ class HydroelasticPressureFieldPlan(StrictModule, NonTrainableState):
 class HydroelasticPressureFieldState(StrictModule):
     pressure: Array
 
-    def __init__(self, pressure: ArrayLike, /):
+    def __init__(self, pressure: ArrayLike, /) -> None:
         value = jnp.asarray(pressure)
         if value.ndim != 1 or not jnp.issubdtype(value.dtype, jnp.floating):
             raise ValueError("Hydroelastic pressure state must be a real vector.")
@@ -125,7 +126,7 @@ class HydroelasticPatchExtractionPlan(StrictModule, NonTrainableState):
         maximum_polytope_edges: int,
         patch_capacity: int,
         tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         pairs = int(maximum_overlap_pairs)
         edges = int(maximum_polytope_edges)
         capacity = int(patch_capacity)

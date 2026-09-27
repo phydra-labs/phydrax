@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _schema(phases=(None, None)):
+def _schema(phases: Any = (None, None)) -> Any:
     selected = (
         (phx.equations.ChemicalPhaseKind.SOLID, phx.equations.ChemicalPhaseKind.SOLID)
         if phases == (None, None)
@@ -27,7 +30,7 @@ def _schema(phases=(None, None)):
     )
 
 
-def _batch(species_count=2, shells=3):
+def _batch(species_count: Any = 2, shells: Any = 3) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0]), jnp.ones((1,)), ambient_dimension=3
     ).prepare()
@@ -41,7 +44,7 @@ def _batch(species_count=2, shells=3):
     return particles, plan, plan.prepare(particles)
 
 
-def _conversion_role_value(state, scale):
+def _conversion_role_value(state: Any, scale: Any) -> Any:
     return jax.tree.map(
         lambda leaf: (
             jnp.full_like(leaf, scale)
@@ -52,7 +55,7 @@ def _conversion_role_value(state, scale):
     )
 
 
-def _conversion_tree_pair(reference, covector, vector):
+def _conversion_tree_pair(reference: Any, covector: Any, vector: Any) -> Any:
     products = (
         jnp.vdot(covector_leaf, vector_leaf)
         for base, covector_leaf, vector_leaf in zip(
@@ -66,7 +69,7 @@ def _conversion_tree_pair(reference, covector, vector):
     return sum(products, start=jnp.asarray(0.0))
 
 
-def test_particle_conversion_geometry_certifies_four_spaces_and_frozen_routes():
+def test_particle_conversion_geometry_certifies_four_spaces_and_frozen_routes() -> None:
     _, _, batch = _batch(shells=2)
     batch_state = phx.discretization.initialize_particle_internal_batch(
         batch,
@@ -126,7 +129,7 @@ def test_particle_conversion_geometry_certifies_four_spaces_and_frozen_routes():
         geometry.inverse_retract(state, incompatible)
 
 
-def test_thermodynamic_inversion_and_radial_transport_are_conservative():
+def test_thermodynamic_inversion_and_radial_transport_are_conservative() -> None:
     schema = _schema()
     thermodynamics = phx.equations.ParticleThermodynamicMaterialPlan(
         phx.equations.PolynomialSpeciesThermodynamicsPlan(
@@ -208,7 +211,7 @@ def test_thermodynamic_inversion_and_radial_transport_are_conservative():
     assert evaluation.entropy_production >= 0.0
 
 
-def test_reaction_network_conserves_elements_and_reaction_energy():
+def test_reaction_network_conserves_elements_and_reaction_energy() -> None:
     schema = _schema()
     thermodynamics = phx.equations.ParticleThermodynamicMaterialPlan(
         phx.equations.PolynomialSpeciesThermodynamicsPlan(
@@ -248,7 +251,7 @@ def test_reaction_network_conserves_elements_and_reaction_energy():
     assert jnp.all(evaluation.internal_energy_rate > 0.0)
 
 
-def test_evaporation_and_shrinking_core_report_exhaustion_restrictions():
+def test_evaporation_and_shrinking_core_report_exhaustion_restrictions() -> None:
     schema = _schema(
         (phx.equations.ChemicalPhaseKind.LIQUID, phx.equations.ChemicalPhaseKind.GAS)
     )
@@ -303,7 +306,7 @@ def test_evaporation_and_shrinking_core_report_exhaustion_restrictions():
     assert core.explicit_step_restriction > 0.0
 
 
-def test_continuum_exchange_deposits_exact_opposite_heat_and_species():
+def test_continuum_exchange_deposits_exact_opposite_heat_and_species() -> None:
     schema = _schema()
     thermodynamics = phx.equations.ParticleThermodynamicMaterialPlan(
         phx.equations.PolynomialSpeciesThermodynamicsPlan(

@@ -7,14 +7,17 @@ Only this worker produces aerodynamic-result.json. Native engine convergence
 and OpenMDAO's reverse total derivatives are the source of the reported data.
 """
 
+from __future__ import annotations
+
 import hashlib
 import importlib.metadata
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 
-def _fingerprint(value):
+def _fingerprint(value: object) -> str:
     return hashlib.sha256(
         json.dumps(
             value,
@@ -26,12 +29,12 @@ def _fingerprint(value):
     ).hexdigest()
 
 
-def _file_hash(path):
+def _file_hash(path: str | os.PathLike[str]) -> str:
     with Path(path).open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def _verify_runtime(runtime):
+def _verify_runtime(runtime: dict[str, Any]) -> str:
     pins = dict(runtime["implementation_files"])
     for path, expected in pins.items():
         if _file_hash(path) != expected:
@@ -39,7 +42,7 @@ def _verify_runtime(runtime):
     return _fingerprint(pins)
 
 
-def main():
+def main() -> None:
     request = json.loads(Path("aerodynamic-request.json").read_text())
     runtime = request["runtime"]
     runtime_sha = _verify_runtime(runtime)
@@ -62,7 +65,7 @@ def main():
             "The serialized aerodynamic profile is serial, not MPI-distributed."
         )
 
-    def array_hash(array):
+    def array_hash(array: np.ndarray) -> str:
         value = np.ascontiguousarray(array, dtype=np.float64)
         return hashlib.sha256(value.tobytes()).hexdigest()
 
@@ -79,7 +82,7 @@ def main():
             raise ValueError("Wrong native DAFoam input-vector length: " + name)
     solver.set_solver_input(design)
 
-    def mesh_hash():
+    def mesh_hash() -> str:
         coords = np.empty(solver.xv0.size)
         solver.solver.getOFMeshPoints(coords)
         if not np.isfinite(coords).all():
@@ -250,6 +253,11 @@ def main():
                                 result["failure_reason"] = failure
                                 result["total_derivatives"] = []
                                 break
+                            # A missing total always records a failure and breaks above.
+                            if not (totals is not None):
+                                raise RuntimeError(
+                                    "Internal invariant failed: totals is not None."
+                                )
                             for variable in design:
                                 result["total_derivatives"].append(
                                     {

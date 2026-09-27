@@ -9,7 +9,8 @@ import itertools
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -48,7 +49,7 @@ class UnstructuredWhitneyCurrentPlan(StrictModule, NonTrainableState):
         *,
         maximum_segments: int = 8,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if locator.cell_map.coordinate_element.degree != 1:
             raise ValueError("Whitney current requires an order-one cell map.")
         cells = np.asarray(locator.cells, dtype=np.int32)

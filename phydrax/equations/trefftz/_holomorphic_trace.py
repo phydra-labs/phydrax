@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._holomorphic import (
@@ -22,10 +23,11 @@ from ..._holomorphic import (
 from ..._holomorphic_linear import HolomorphicLinearFrame
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._holomorphic_frame import HolomorphicPolynomialFrame
 
 
-HolomorphicTraceEvidenceKind = Literal[
+HolomorphicTraceEvidenceKind: TypeAlias = Literal[
     "finite-functional-exact",
     "continuous-subspace-exact",
     "continuous-validated-bound",
@@ -53,14 +55,10 @@ class HolomorphicTraceCertificate(StrictModule, NonTrainableState):
         field_id: str,
         topology_assumptions: tuple[str, ...] = (),
         residual_bound: ArrayLike = 0.0,
-    ):
-        if evidence_kind not in (
-            "finite-functional-exact",
-            "continuous-subspace-exact",
-            "continuous-validated-bound",
-            "sampled-audit",
-        ):
-            raise ValueError("Unknown holomorphic trace evidence kind.")
+    ) -> None:
+        evidence_kind = parse(
+            evidence_kind, HolomorphicTraceEvidenceKind, "evidence_kind"
+        )
         identifiers = (str(geometry_id), str(trace_space_id), str(field_id))
         assumptions = tuple(str(value) for value in topology_assumptions)
         bound = jnp.asarray(residual_bound)
@@ -116,7 +114,7 @@ class HolomorphicContourFunctional(StrictModule, NonTrainableState):
         output_index: int = 0,
         component_weight: complex = 1.0 + 0.0j,
         construction: str = "holomorphic-contour-moment",
-    ):
+    ) -> None:
         nodes_raw = np.asarray(nodes, dtype=np.complex128)
         if nodes_raw.ndim == 1:
             nodes_raw = nodes_raw[:, None]
@@ -221,7 +219,7 @@ class DiskHolomorphicTracePlan(StrictModule, NonTrainableState):
         *,
         center: complex = 0.0j,
         radius: float = 1.0,
-    ):
+    ) -> None:
         mode = int(maximum_mode)
         center_ = complex(center)
         radius_ = float(radius)
@@ -309,7 +307,7 @@ class DiskHolomorphicTraceLift(StrictModule, NonTrainableState):
         plan: DiskHolomorphicTracePlan,
         coefficient_vector: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, DiskHolomorphicTracePlan):
             raise TypeError("plan must be DiskHolomorphicTracePlan.")
         coefficients = jnp.asarray(coefficient_vector)

@@ -8,10 +8,13 @@ import argparse
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+
+# ty: ignore[unresolved-import]
 from phydrax.interchange.energy_runtime import pin_energy_executable
 
 from phydrax.applications.building_energy import (
@@ -36,7 +39,7 @@ from phydrax.optim import OptimizationTermination
 from phydrax.units import derived_unit, JOULE, KELVIN, SECOND
 
 
-def run_native():
+def run_native() -> Any:
     sources = (
         BuildingSource(
             (Zone("a", 10000),),
@@ -123,7 +126,7 @@ def run_native():
         "passed": bool(control.successful) and control_error <= 0.02,
     }
 
-    def make_source(p):
+    def make_source(p: Any) -> Any:
         return BuildingSource(
             (Zone("a", 10000 * jnp.exp(p[0])),),
             adjacencies=(Adjacency("out", "a", None, 10),),
@@ -138,10 +141,22 @@ def run_native():
         model, jnp.array([295.0]), times, jnp.full(4, 275.0), heat
     ).temperature[1:]
     train = BuildingExperiment(
-        [300.0], times, jnp.full(4, 280.0), heat, train_target, experiment_id="training"
+        # ty: ignore[invalid-argument-type]
+        [300.0],
+        times,
+        jnp.full(4, 280.0),
+        heat,
+        train_target,
+        experiment_id="training",
     )
     heldout = BuildingExperiment(
-        [295.0], times, jnp.full(4, 275.0), heat, hold_target, experiment_id="heldout"
+        # ty: ignore[invalid-argument-type]
+        [295.0],
+        times,
+        jnp.full(4, 275.0),
+        heat,
+        hold_target,
+        experiment_id="heldout",
     )
     calibration = calibrate_building(
         make_source,
@@ -160,7 +175,7 @@ def run_native():
     return output
 
 
-def run_energyplus_reference(path, version, license_id):
+def run_energyplus_reference(path: Any, version: Any, license_id: Any) -> Any:
     executable = pin_energy_executable(path, version=version, license_id=license_id)
     idf_version = ".".join(version.split(".")[:2])
     reference = energyplus_adiabatic_reference(version=idf_version)
@@ -203,7 +218,9 @@ def run_energyplus_reference(path, version, license_id):
     }
 
 
-def run_radiance_reference(oconv_path, rtrace_path, raypath, version, license_id):
+def run_radiance_reference(
+    oconv_path: Any, rtrace_path: Any, raypath: Any, version: Any, license_id: Any
+) -> Any:
     oconv = pin_energy_executable(oconv_path, version=version, license_id=license_id)
     rtrace = pin_energy_executable(rtrace_path, version=version, license_id=license_id)
     operator, runs = produce_uniform_sky_reference(
@@ -221,7 +238,7 @@ def run_radiance_reference(oconv_path, rtrace_path, raypath, version, license_id
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--energyplus")
     parser.add_argument("--energyplus-version", default="26.1")

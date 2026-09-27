@@ -5,13 +5,20 @@
 from __future__ import annotations
 
 from enum import IntEnum, IntFlag
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+
+
+if TYPE_CHECKING:
+    from ..spatial import SparseBlockTopologyState
+    from ._lifecycle_amr import MPMLifecycleState
 
 
 class MPMRunStatus(IntEnum):
@@ -82,8 +89,8 @@ class MPMRuntimeState(StrictModule):
     material_slots: Array
     body_ids: Array
     velocity_field_slots: Array
-    storage_state: object
-    lifecycle_state: object
+    storage_state: SparseBlockTopologyState | None
+    lifecycle_state: MPMLifecycleState | None
 
     def __init__(
         self,
@@ -96,10 +103,10 @@ class MPMRuntimeState(StrictModule):
         material_slots: ArrayLike | None = None,
         body_ids: ArrayLike | None = None,
         velocity_field_slots: ArrayLike | None = None,
-        storage_state: object = None,
-        lifecycle_state: object = None,
+        storage_state: SparseBlockTopologyState | None = None,
+        lifecycle_state: MPMLifecycleState | None = None,
         /,
-    ):
+    ) -> None:
         self.particles = particles
         self.time = jnp.asarray(time)
         self.accepted_step = jnp.asarray(accepted_step, dtype=jnp.int32)

@@ -1,12 +1,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
+from .._binding import PreparedNucleotideBinding
 from ._frames import base_frames
 
 
@@ -29,7 +33,7 @@ class NucleotideStructureQualifier(StrictModule):
     Missing six-ring atoms and missing phosphates remain explicit failures.
     """
 
-    binding: object
+    binding: PreparedNucleotideBinding
     ring_indices: Array
     ring_mask: Array
     backbone_indices: Array
@@ -39,8 +43,13 @@ class NucleotideStructureQualifier(StrictModule):
     image_policy: str = eqx.field(static=True)
 
     def __init__(
-        self, binding, *, maximum_ring_deviation, backbone_interval, image_policy
-    ):
+        self,
+        binding: PreparedNucleotideBinding,
+        *,
+        maximum_ring_deviation: float,
+        backbone_interval: Sequence[float],
+        image_policy: str,
+    ) -> None:
         if (
             image_policy not in ("nonperiodic", "unwrapped")
             or not np.isfinite(maximum_ring_deviation)
@@ -87,11 +96,11 @@ class NucleotideStructureQualifier(StrictModule):
         )
         self.maximum_deviation, self.backbone_interval, self.image_policy = (
             float(maximum_ring_deviation),
-            tuple(backbone_interval),
+            (backbone_interval[0], backbone_interval[1]),
             image_policy,
         )
 
-    def evaluate(self, positions):
+    def evaluate(self, positions: ArrayLike) -> NucleotideStructureQualification:
         coordinates = jnp.asarray(positions)
         frame = base_frames(coordinates, self.binding, image_policy=self.image_policy)
         ring_points = coordinates[self.ring_indices]

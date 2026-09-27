@@ -98,6 +98,7 @@ def qualify(substep_counts: tuple[int, ...]) -> dict[str, object]:
     errors = [row["maximum_scaled_state_error"] for row in rows]
     # Compare above the explicit adaptive-reaction/dense-oracle tolerance floor.
     refinement = all(
+        # ty: ignore[unsupported-operator]
         fine <= 0.8 * coarse + 1e-7
         for coarse, fine in zip(errors[:-1], errors[1:], strict=True)
     )
@@ -105,6 +106,7 @@ def qualify(substep_counts: tuple[int, ...]) -> dict[str, object]:
         bool(oracle.evidence.successful)
         and all(row["successful"] for row in rows)
         and refinement
+        # ty: ignore[unsupported-operator]
         and errors[-1] < 2e-3
     )
     return {

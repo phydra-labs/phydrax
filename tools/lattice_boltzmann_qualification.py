@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -21,7 +22,7 @@ from benchmarks._runtime import (
 )
 
 
-def _grid(shape, lengths, periodic):
+def _grid(shape: Any, lengths: Any, periodic: Any) -> Any:
     dimension = len(shape)
     return phx.discretization.TensorGridPlan(
         tuple(
@@ -33,17 +34,17 @@ def _grid(shape, lengths, periodic):
 
 
 def _compiled(
-    shape,
-    lengths,
-    periodic,
-    velocity_set,
-    collision,
+    shape: Any,
+    lengths: Any,
+    periodic: Any,
+    velocity_set: Any,
+    collision: Any,
     *,
-    physical_viscosity,
-    lattice_viscosity=0.1,
-    acceleration=None,
-    moving_faces=(),
-):
+    physical_viscosity: Any,
+    lattice_viscosity: Any = 0.1,
+    acceleration: Any = None,
+    moving_faces: Any = (),
+) -> Any:
     grid = _grid(shape, lengths, periodic)
     discretization = phx.discretization.LatticeBoltzmannPlan(grid, velocity_set).prepare()
     cell_size = float(discretization.cell_size)
@@ -76,7 +77,7 @@ def _compiled(
     return compiled, parameters
 
 
-def _rollout(compiled, parameters, initial, steps):
+def _rollout(compiled: Any, parameters: Any, initial: Any, steps: Any) -> Any:
     method = phx.solver.LatticeBoltzmannFixedStepMethod(compiled.dynamics)
     dt = float(compiled.scaling.time_step)
     problem = phx.solver.FixedStepProblem(
@@ -91,7 +92,7 @@ def _rollout(compiled, parameters, initial, steps):
     return phx.solver.FixedStepRolloutPlan(retention="final").rollout(problem)
 
 
-def _observed_order(spacing, errors):
+def _observed_order(spacing: Any, errors: Any) -> Any:
     valid = np.asarray(errors) > 0.0
     if np.sum(valid) < 2:
         return None
@@ -102,7 +103,7 @@ def _observed_order(spacing, errors):
     )
 
 
-def _shear_decay_case():
+def _shear_decay_case() -> Any:
     physical_viscosity = 0.02
     amplitude = 0.05
     final_time = 0.1
@@ -163,7 +164,7 @@ def _shear_decay_case():
     }
 
 
-def _d3q19_case():
+def _d3q19_case() -> Any:
     resolution = 16
     physical_viscosity = 0.02
     amplitude = 0.03
@@ -224,7 +225,7 @@ def _d3q19_case():
     }
 
 
-def _channel_case(*, couette):
+def _channel_case(*, couette: Any) -> Any:
     physical_viscosity = 0.02
     acceleration = None if couette else jnp.asarray((0.001, 0.0))
     wall_speed = 0.01 if couette else 0.0
@@ -263,6 +264,7 @@ def _channel_case(*, couette):
         expected = (
             wall_speed * y
             if couette
+            # ty: ignore[not-subscriptable]
             else float(acceleration[0]) * y * (1.0 - y) / (2.0 * physical_viscosity)
         )
         relative_l2 = float(
@@ -311,7 +313,7 @@ def _channel_case(*, couette):
     }
 
 
-def _runtime_case(*, warmup, repeats):
+def _runtime_case(*, warmup: Any, repeats: Any) -> Any:
     resolution = 128
     compiled, parameters = _compiled(
         (resolution, resolution),
@@ -326,14 +328,16 @@ def _runtime_case(*, warmup, repeats):
     time = jnp.asarray(0.0)
     step_size = jnp.asarray(compiled.scaling.time_step)
 
-    def step(populations):
+    def step(populations: Any) -> Any:
         return compiled.dynamics.step_detailed(
             step_index, time, populations, step_size, parameters
         ).accepted_state
 
     jitted = eqx.filter_jit(step)
     compiled_step, timing = measure_lower_and_compile(
-        lambda: jitted.lower(initial), lambda lowered: lowered.compile()
+        # ty: ignore[unresolved-attribute]
+        lambda: jitted.lower(initial),
+        lambda lowered: lowered.compile(),
     )
     final, distribution = measure_repeated(
         lambda: compiled_step(initial), warmup=warmup, repeats=repeats
@@ -373,7 +377,7 @@ def _runtime_case(*, warmup, repeats):
     }
 
 
-def qualification(*, warmup=2, repeats=5):
+def qualification(*, warmup: Any = 2, repeats: Any = 5) -> Any:
     return {
         "environment": capture_environment().to_dict(),
         "scope": {
@@ -391,7 +395,7 @@ def qualification(*, warmup=2, repeats=5):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--output",

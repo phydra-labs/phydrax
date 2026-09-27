@@ -13,7 +13,7 @@ from typing import Sequence
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -69,7 +69,7 @@ class IonSpecies(StrictModule, NonTrainableState):
     valence: int = eqx.field(static=True)
     species_fingerprint: str = eqx.field(static=True)
 
-    def __init__(self, species_id: str, valence: int, /):
+    def __init__(self, species_id: str, valence: int, /) -> None:
         identifier = _identifier(species_id, "species_id")
         if isinstance(valence, bool) or not isinstance(valence, int):
             raise TypeError("valence must be an integer.")
@@ -109,7 +109,7 @@ class IonDynamicsPlan(StrictModule, NonTrainableState):
         minimum_concentration_mM: float = 1.0e-12,
         conservation_tolerance_mol: float = 1.0e-18,
         charge_tolerance_C: float = 1.0e-15,
-    ):
+    ) -> None:
         species_values = tuple(species)
         if not species_values or any(
             not isinstance(value, IonSpecies) for value in species_values
@@ -182,7 +182,7 @@ class PreparedIonDynamics(StrictModule, NonTrainableState):
         thermal_voltage_to_mV: float,
         charge_per_nA_ms_C: float,
         amount_per_mM_pL_mol: float,
-    ):
+    ) -> None:
         self.plan = plan
         self.valence = valence
         self.intracellular_volume_pL = intracellular_volume_pL

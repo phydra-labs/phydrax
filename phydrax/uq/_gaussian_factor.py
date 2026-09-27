@@ -9,7 +9,8 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -51,7 +52,7 @@ class GaussianFactor(StrictModule):
         rank_tolerance: ArrayLike = 0.0,
         factor_id: str = "gaussian-factor",
         resolved_method: str = "provided-rectangular-factor",
-    ):
+    ) -> None:
         value = jnp.asarray(factor)
         if not jnp.issubdtype(value.dtype, jnp.inexact):
             raise TypeError("Gaussian factors must have an inexact dtype.")

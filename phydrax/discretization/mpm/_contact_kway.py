@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 from itertools import combinations
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -19,6 +21,11 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
 from ._contact import AbstractMPMFrictionPlan, SharpCoulombMPMFrictionPlan
+
+
+_NodeContactSolution: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class MPMContactGraph(StrictModule):
@@ -75,7 +82,7 @@ class KWayMPMContactPlan(StrictModule, NonTrainableState):
         maximum_steps: int = 25,
         tolerance: float = 1.0e-10,
         smoothing: float = 0.0,
-    ):
+    ) -> None:
         fields = int(field_count)
         maximum = fields * (fields - 1) // 2
         steps = int(maximum_steps)
@@ -214,26 +221,26 @@ class KWayMPMContactPlan(StrictModule, NonTrainableState):
         )
 
         def solve_node(
-            node_mass,
-            node_velocity,
-            node_normals,
-            node_gaps,
-            node_valid,
-            node_mask,
-            node_values,
-        ):
+            node_mass: Array,
+            node_velocity: Array,
+            node_normals: Array,
+            node_gaps: Array,
+            node_valid: Array,
+            node_mask: Array,
+            node_values: Array,
+        ) -> _NodeContactSolution:
             first = pairs[:, 0]
             second = pairs[:, 1]
             inverse_mass = jnp.where(node_mass > 0.0, 1.0 / node_mass, 0.0)
 
-            def contact_velocity(lambdas):
+            def contact_velocity(lambdas: Array) -> Array:
                 impulse = lambdas[:, None] * node_normals
                 delta = jnp.zeros_like(node_velocity)
                 delta = delta.at[first].add(-impulse * inverse_mass[first, None])
                 delta = delta.at[second].add(impulse * inverse_mass[second, None])
                 return node_velocity + delta
 
-            def residual(lambdas):
+            def residual(lambdas: Array) -> Array:
                 current = contact_velocity(lambdas)
                 relative = current[first] - current[second]
                 normal_speed = jnp.sum(relative * node_normals, axis=-1)
@@ -245,7 +252,7 @@ class KWayMPMContactPlan(StrictModule, NonTrainableState):
                 )
                 return jnp.where(node_valid, root, lambdas)
 
-            def iteration(_, lambdas):
+            def iteration(_: int | Array, lambdas: Array) -> Array:
                 value = residual(lambdas)
                 jacobian = jax.jacfwd(residual)(lambdas)
                 identity = jnp.eye(self.maximum_pairs, dtype=lambdas.dtype)

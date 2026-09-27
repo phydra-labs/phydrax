@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _reactive_species():
+def _reactive_species() -> Any:
     return phx.discretization.dsmc.DSMCSpeciesPlan(
         ("A", "B", "C", "D"),
         jnp.asarray((1.0, 1.0, 1.5, 0.5)),
@@ -26,7 +29,7 @@ def _reactive_species():
     )
 
 
-def _state():
+def _state() -> Any:
     return phx.discretization.dsmc.DSMCParticleState(
         jnp.asarray(((0.25,), (0.75,))),
         jnp.asarray(((1.0,), (-1.0,))),
@@ -40,7 +43,9 @@ def _state():
     )
 
 
-def test_internal_physics_is_identity_for_rejected_collision_and_conservative_when_accepted():
+def test_internal_physics_is_identity_for_rejected_collision_and_conservative_when_accepted() -> (
+    None
+):
     species = _reactive_species()
     channel = phx.discretization.dsmc.DSMCReactionChannelPlan(
         (0, 1), (2, 3), threshold_energy=0.0, probability=1.0
@@ -75,7 +80,7 @@ def test_internal_physics_is_identity_for_rejected_collision_and_conservative_wh
     np.testing.assert_allclose(after_momentum, before_momentum, atol=1.0e-12)
 
 
-def test_reaction_can_draw_threshold_energy_from_rotational_reservoir():
+def test_reaction_can_draw_threshold_energy_from_rotational_reservoir() -> None:
     species = _reactive_species()
     channel = phx.discretization.dsmc.DSMCReactionChannelPlan(
         (0, 1), (2, 3), threshold_energy=1.5, probability=1.0
@@ -110,7 +115,7 @@ def test_reaction_can_draw_threshold_energy_from_rotational_reservoir():
     np.testing.assert_allclose(result.energy_defect, 0.0, atol=1.0e-12)
 
 
-def test_reactive_plan_requires_element_and_mass_conservation():
+def test_reactive_plan_requires_element_and_mass_conservation() -> None:
     species = _reactive_species()
     invalid = phx.discretization.dsmc.DSMCReactionChannelPlan(
         (0, 1), (0, 0), threshold_energy=0.0, probability=1.0

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -16,7 +19,7 @@ from phydrax._array_archive import (
 )
 
 
-def _cell_grid(shape):
+def _cell_grid(shape: Any) -> Any:
     dimension = len(shape)
     return phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(count) for count in shape),
@@ -24,12 +27,14 @@ def _cell_grid(shape):
     ).prepare(jnp.asarray([[0.0] * dimension, [1.0] * dimension]))
 
 
-def _cosine_envelope(time, args):
+def _cosine_envelope(time: Any, args: Any) -> Any:
     del args
     return jnp.cos(time)
 
 
-def test_portable_fd_checkpoint_roundtrips_fields_auxiliary_and_identity(tmp_path):
+def test_portable_fd_checkpoint_roundtrips_fields_auxiliary_and_identity(
+    tmp_path: Any,
+) -> None:
     plan = phx.discretization.FDCheckpointPlan(
         ("grid-id", "operator-id"),
         "ssprk3",
@@ -73,7 +78,9 @@ def test_portable_fd_checkpoint_roundtrips_fields_auxiliary_and_identity(tmp_pat
         phx.discretization.read_fd_checkpoint(path, incompatible)
 
 
-def test_fd_checkpoint_refuses_nonfinite_or_nonscalar_runtime_state(tmp_path):
+def test_fd_checkpoint_refuses_nonfinite_or_nonscalar_runtime_state(
+    tmp_path: Any,
+) -> None:
     plan = phx.discretization.FDCheckpointPlan(("grid-id",), "ssprk3")
     fields = {"state": jnp.ones((4,))}
 
@@ -110,7 +117,7 @@ def test_fd_checkpoint_refuses_nonfinite_or_nonscalar_runtime_state(tmp_path):
         phx.discretization.read_fd_checkpoint(corrupt_path, plan)
 
 
-def test_boundary_halo_and_transfer_actions_have_exact_discrete_vjps():
+def test_boundary_halo_and_transfer_actions_have_exact_discrete_vjps() -> None:
     boundary = phx.discretization.CellGhostBoundary(
         0,
         "dirichlet",
@@ -159,7 +166,7 @@ def test_boundary_halo_and_transfer_actions_have_exact_discrete_vjps():
     assert transfer_report.passed
 
 
-def test_checkpointed_time_discrete_adjoint_matches_closed_form_gradient():
+def test_checkpointed_time_discrete_adjoint_matches_closed_form_gradient() -> None:
     steps = 20
     dt = 0.01
     parameter = jnp.asarray(0.7)
@@ -198,7 +205,9 @@ def test_checkpointed_time_discrete_adjoint_matches_closed_form_gradient():
 
 
 @pytest.mark.parametrize("dimension", [1, 2, 3, 4])
-def test_structured_cochain_bridge_satisfies_boundary_of_boundary_identity(dimension):
+def test_structured_cochain_bridge_satisfies_boundary_of_boundary_identity(
+    dimension: Any,
+) -> None:
     bridge = phx.discretization.StructuredCochainBridge(_cell_grid((3,) * dimension))
     values = jnp.arange(bridge.cochain.cell_counts[0], dtype="float64")
 
@@ -211,7 +220,7 @@ def test_structured_cochain_bridge_satisfies_boundary_of_boundary_identity(dimen
     np.testing.assert_allclose(bridge.pack(0, components), values)
 
 
-def test_structured_cochain_refuses_combinatorial_allocation_before_building():
+def test_structured_cochain_refuses_combinatorial_allocation_before_building() -> None:
     with pytest.raises(ValueError, match="maximum_entities"):
         phx.discretization.StructuredCochainBridge(
             _cell_grid((3, 3, 3, 3)),
@@ -221,7 +230,7 @@ def test_structured_cochain_refuses_combinatorial_allocation_before_building():
         )
 
 
-def test_prepared_maxwell_preserves_constraints_and_material_gradients():
+def test_prepared_maxwell_preserves_constraints_and_material_gradients() -> None:
     bridge = phx.discretization.StructuredCochainBridge(_cell_grid((3, 3, 3)))
     degree_zero = bridge.cochain.cell_counts[0]
     degree_one = bridge.cochain.cell_counts[1]
@@ -285,10 +294,11 @@ def test_prepared_maxwell_preserves_constraints_and_material_gradients():
     assert diagnostics.magnetic_constraint_linf < 2e-11
     assert diagnostics.gauss_rate_linf < 2e-11
     assert jnp.abs(diagnostics.power_balance_residual) < 2e-11
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(diagnostics.step_fraction, 0.1)
     assert jnp.isfinite(maxwell.energy(stepped))
 
-    def material_energy(epsilon):
+    def material_energy(epsilon: Any) -> Any:
         prepared = phx.solver.CompatibleMaxwellPlan(
             bridge,
             constitutive=phx.solver.maxwell.DiagonalMaxwellConstitutivePlan(
@@ -322,7 +332,7 @@ def test_prepared_maxwell_preserves_constraints_and_material_gradients():
         jax.block_until_ready(invalid.primary.electric_displacement)
 
 
-def test_elastic_energy_and_incompressible_projection_are_compatible():
+def test_elastic_energy_and_incompressible_projection_are_compatible() -> None:
     bridge = phx.discretization.StructuredCochainBridge(_cell_grid((3, 3, 3)))
 
     elasticity = phx.solver.CompatibleElasticityDynamics(

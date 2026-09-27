@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...typing import parse, PRNGKey
 
 
-OrdinalCutpointAnchor = Literal["mean", "fixed_first"]
+OrdinalCutpointAnchor: TypeAlias = Literal["mean", "fixed_first"]
 
 
 def _inverse_softplus(value: Array, /) -> Array:
@@ -34,20 +36,19 @@ class OrderedOrdinalCutpoints(StrictModule, ParameterOwner):
         class_count: int,
         /,
         *,
-        key: Key | None = None,
+        key: PRNGKey | None = None,
         initial: ArrayLike | None = None,
         minimum_gap: float = 1.0e-3,
         anchor: OrdinalCutpointAnchor = "mean",
         anchor_value: float = 0.0,
-    ):
+    ) -> None:
         count = int(class_count)
         if count < 3:
             raise ValueError("Ordered ordinal cutpoints require at least three classes.")
         gap_floor = float(minimum_gap)
         if not jnp.isfinite(gap_floor) or gap_floor <= 0.0:
             raise ValueError("minimum_gap must be finite and strictly positive.")
-        if anchor not in ("mean", "fixed_first"):
-            raise ValueError("anchor must be 'mean' or 'fixed_first'.")
+        anchor = parse(anchor, OrdinalCutpointAnchor, "anchor")
         if not jnp.isfinite(float(anchor_value)):
             raise ValueError("anchor_value must be finite.")
         cutpoint_count = count - 1

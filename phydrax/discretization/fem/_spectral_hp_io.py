@@ -13,7 +13,9 @@ import equinox as eqx
 import jax.numpy as jnp
 import meshio
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -24,10 +26,15 @@ from ..._mesh_file_profiles import resolve_mesh_file_profile
 from ..._publication import publish_bytes
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from .._cell_complex import PolyhedralConnectivity
+from .._cell_complex import (
+    PolygonalConnectivity,
+    PolyhedralConnectivity,
+    TetrahedralConnectivity,
+)
 from .._cell_geometry import CellGeometrySpec
 from .._cell_mesh import CellBlock, CellMesh
 from .._cell_ordering import MESHIO_CELL_TYPES, reference_node_permutation
+from .._hexahedral import HexahedralConnectivity
 from ._hp_runtime import FiniteElementHPEpoch
 from ._mortar import FiniteElementMortarMetricData, FiniteElementMortarPlan
 from ._reference import lagrange_element
@@ -36,7 +43,7 @@ from ._reference import lagrange_element
 class PersistentSemanticCache(StrictModule, NonTrainableState):
     directory: str = eqx.field(static=True)
 
-    def __init__(self, directory: str | Path, /):
+    def __init__(self, directory: str | Path, /) -> None:
         path = Path(directory)
         path.mkdir(parents=True, exist_ok=True)
         self.directory = str(path)
@@ -100,7 +107,7 @@ class FusedMortarAction(StrictModule, NonTrainableState):
 class FusedTensorTransfer(StrictModule, NonTrainableState):
     factors: tuple[Array, ...]
 
-    def __init__(self, factors: Sequence[ArrayLike], /):
+    def __init__(self, factors: Sequence[ArrayLike], /) -> None:
         factors_ = tuple(jnp.asarray(value) for value in factors)
         if not factors_ or any(value.ndim != 2 for value in factors_):
             raise ValueError("Fused tensor transfers require rank-2 axis factors.")
@@ -130,7 +137,7 @@ class HPMixedPrecisionPolicy(StrictModule, NonTrainableState):
 
     def __init__(
         self, storage_dtype: str, compute_dtype: str, accumulation_dtype: str, /
-    ):
+    ) -> None:
         dtypes = tuple(
             np.dtype(value)
             for value in (storage_dtype, compute_dtype, accumulation_dtype)
@@ -161,7 +168,7 @@ class HPWorksetMemoryPlan(StrictModule, NonTrainableState):
         dtype: str,
         maximum_bytes: int,
         /,
-    ):
+    ) -> None:
         widths = tuple(local_widths)
         components = int(component_count)
         budget = int(maximum_bytes)
@@ -191,7 +198,7 @@ def write_adaptive_vtk(
         "tetrahedron": "tetra",
         "hexahedron": "hexahedron",
     }
-    cells = [
+    cells: list[tuple[str, npt.ArrayLike] | meshio.CellBlock] = [
         (cell_types[block.cell_kind], np.asarray(block.vertices, dtype=np.int32))
         for block in mesh.blocks
     ]
@@ -281,7 +288,7 @@ def write_hp_forest(path: str | Path, epoch: FiniteElementHPEpoch, /) -> None:
 def _canonical_source_metadata(
     metadata: Mapping[str, object], /
 ) -> tuple[tuple[str, str], ...]:
-    def portable(value):
+    def portable(value: object) -> object:
         if isinstance(value, Mapping):
             return {
                 str(key): portable(item)
@@ -381,7 +388,7 @@ class FiniteElementMeshImportReport(StrictModule, NonTrainableState):
         source_entity_counts: Mapping[str, int] | Sequence[tuple[str, int]] = (),
         imported_entity_counts: Mapping[str, int] | Sequence[tuple[str, int]] = (),
         dropped_entity_counts: Mapping[str, int] | Sequence[tuple[str, int]] = (),
-    ):
+    ) -> None:
         names = tuple(str(value) for value in block_names)
         kinds = tuple(str(value) for value in cell_kinds)
         orders = tuple(geometry_orders)
@@ -474,7 +481,7 @@ class FiniteElementMeshImport(StrictModule, NonTrainableState):
         /,
         *,
         volume_groups: Mapping[str, Sequence[int]] | None = None,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be CellMesh.")
         if not isinstance(coordinate_spec, CellGeometrySpec):
@@ -655,15 +662,21 @@ def read_finite_element_mesh(
         points,
     )
 
+    connectivity = mesh.connectivity
     if topological_dimension == 2:
-        facet_vertices = np.asarray(mesh.connectivity.edges)
+        # CellMesh builds polygonal connectivity for every two-dimensional mesh.
+        if not (isinstance(connectivity, PolygonalConnectivity)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(connectivity, PolygonalConnectivity)."
+            )
+        facet_vertices = np.asarray(connectivity.edges)
         facets_by_key = {
             tuple(sorted(int(value) for value in vertices)): index
             for index, vertices in enumerate(facet_vertices)
         }
-    elif isinstance(mesh.connectivity, PolyhedralConnectivity):
-        offsets = np.asarray(mesh.connectivity.face_vertex_offsets, dtype=np.int32)
-        values = np.asarray(mesh.connectivity.face_vertex_values, dtype=np.int32)
+    elif isinstance(connectivity, PolyhedralConnectivity):
+        offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int32)
+        values = np.asarray(connectivity.face_vertex_values, dtype=np.int32)
         facets_by_key = {
             tuple(sorted(int(value) for value in values[int(start) : int(stop)])): index
             for index, (start, stop) in enumerate(
@@ -671,7 +684,14 @@ def read_finite_element_mesh(
             )
         }
     else:
-        facet_vertices = np.asarray(mesh.connectivity.faces)
+        # Other three-dimensional CellMesh connectivity is tetrahedral or hexahedral.
+        if not (
+            isinstance(connectivity, (TetrahedralConnectivity, HexahedralConnectivity))
+        ):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(connectivity, (TetrahedralConnectivity, HexahedralConnectivity))."
+            )
+        facet_vertices = np.asarray(connectivity.faces)
         facets_by_key = {
             tuple(sorted(int(value) for value in vertices)): index
             for index, vertices in enumerate(facet_vertices)

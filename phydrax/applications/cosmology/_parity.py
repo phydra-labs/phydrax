@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -40,7 +41,7 @@ class ParityProfile(StrictModule, NonTrainableState):
         references: tuple[str, ...],
         metrics: tuple[str, ...],
         negative_boundaries: tuple[str, ...],
-    ):
+    ) -> None:
         name_ = str(name).strip()
         geometry_ = str(geometry).strip()
         groups = tuple(
@@ -102,7 +103,7 @@ class ParityEvidence(StrictModule):
         metric_limits: ArrayLike,
         artifact: ScientificArtifactEnvelope,
         /,
-    ):
+    ) -> None:
         values = jnp.asarray(metric_values)
         limits = jnp.asarray(metric_limits, dtype=values.dtype)
         if values.shape != (len(profile.metrics),) or limits.shape != values.shape:

@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -36,7 +37,7 @@ class HydroelasticMaterialPlan(StrictModule, NonTrainableState):
         dissipation: float = 0.0,
         friction: float = 0.0,
         velocity_regularization: float = 1.0e-6,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -119,7 +120,9 @@ def evaluate_hydroelastic_contact(
         raise ValueError("Hydroelastic relative velocity has invalid shape.")
     compression = jnp.maximum(-kinematics.gap, 0.0)
 
-    def side_pressure(material, supplied):
+    def side_pressure(
+        material: HydroelasticMaterialPlan | None, supplied: ArrayLike | None
+    ) -> Array:
         if supplied is not None:
             value = jnp.asarray(supplied, dtype=kinematics.gap.dtype)
             if value.shape != (interface.capacity,):

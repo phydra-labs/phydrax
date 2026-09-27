@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -38,7 +39,7 @@ class WallCorrectedPSEPlan(StrictModule, NonTrainableState):
         *,
         cutoff_factor: float = 4.0,
         policy: str = "mirror",
-    ):
+    ) -> None:
         if (
             float(smoothing_scale) <= 0.0
             or float(cutoff_factor) <= 0.0

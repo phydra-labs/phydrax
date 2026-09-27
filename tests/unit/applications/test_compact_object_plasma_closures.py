@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -17,11 +20,11 @@ from phydrax.applications.compact_objects._plasma_closures import (
 from phydrax.units import KILOGRAM
 
 
-def _scale():
+def _scale() -> Any:
     return RelativityScaleContract.geometric(KILOGRAM)
 
 
-def test_two_temperature_exchange_relaxes_exactly_without_creating_energy():
+def test_two_temperature_exchange_relaxes_exactly_without_creating_energy() -> None:
     closure = TwoTemperatureElectronIonClosure(
         _scale(),
         equilibration_time=2.0,
@@ -50,7 +53,7 @@ def test_two_temperature_exchange_relaxes_exactly_without_creating_energy():
     assert bool(result.derivative_valid)
 
 
-def test_two_temperature_closure_rejects_unrepresented_kinetic_regimes():
+def test_two_temperature_closure_rejects_unrepresented_kinetic_regimes() -> None:
     with pytest.raises(NotImplementedError, match="velocity-space kinetic"):
         TwoTemperatureElectronIonClosure(
             _scale(),
@@ -61,7 +64,7 @@ def test_two_temperature_closure_rejects_unrepresented_kinetic_regimes():
         )
 
 
-def test_bounded_nonthermal_record_has_content_identity_and_physical_moments():
+def test_bounded_nonthermal_record_has_content_identity_and_physical_moments() -> None:
     distribution = BoundedNonthermalParticleDistribution(
         _scale(),
         jnp.asarray((1.0, 2.0, 8.0)),
@@ -94,7 +97,7 @@ def test_bounded_nonthermal_record_has_content_identity_and_physical_moments():
     assert distribution.distribution_id != changed.distribution_id
 
 
-def test_nonthermal_record_rejects_unbounded_or_anisotropic_support():
+def test_nonthermal_record_rejects_unbounded_or_anisotropic_support() -> None:
     with pytest.raises(ValueError, match="invalid"):
         BoundedNonthermalParticleDistribution(
             _scale(),

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -68,28 +71,28 @@ _MULTICLASS_SCHEMA = TargetSchema(
 )
 
 
-def _sparse(values):
+def _sparse(values: Any) -> Any:
     columns = jnp.broadcast_to(jnp.arange(values.shape[-1]), values.shape)
     return SparseFeatures(values, columns, feature_count=values.shape[-1])
 
 
-def _platt():
+def _platt() -> Any:
     return PlattCalibrationRecipe(max_iterations=2, tolerance=1e3)
 
 
-def _temperature():
+def _temperature() -> Any:
     return TemperatureCalibrationRecipe(num_classes=3, max_iterations=2, tolerance=1e3)
 
 
-def _vector():
+def _vector() -> Any:
     return VectorCalibrationRecipe(num_classes=3, max_iterations=2, tolerance=1e3)
 
 
-def _matrix():
+def _matrix() -> Any:
     return MatrixCalibrationRecipe(num_classes=3, max_iterations=2, tolerance=1e3)
 
 
-def _multiclass():
+def _multiclass() -> Any:
     return MulticlassCalibrationRecipe(num_classes=3, max_iterations=2, tolerance=1e3)
 
 
@@ -139,8 +142,8 @@ def _multiclass():
     ],
 )
 def test_every_smooth_calibration_family_normalizes_labels_and_jit_vmap_outputs(
-    recipe, features, targets, schema, model_type, method
-):
+    recipe: Any, features: Any, targets: Any, schema: Any, model_type: Any, method: Any
+) -> None:
     result = recipe.fit_batch(MLBatch(features, targets, target_schema=schema))
     model = result.as_trainable()
     probability = result.model(features)
@@ -183,7 +186,9 @@ def test_every_smooth_calibration_family_normalizes_labels_and_jit_vmap_outputs(
     assert result.derivative_contract.route is DerivativeRoute.UNROLLED
 
 
-def test_platt_calibration_preserves_case_masks_product_weights_and_frozen_execution():
+def test_platt_calibration_preserves_case_masks_product_weights_and_frozen_execution() -> (
+    None
+):
     features = jnp.stack((_BINARY_SCORES, 0.7 * _BINARY_SCORES + 0.1))
     targets = jnp.stack((_BINARY_TARGETS, _BINARY_TARGETS))
     target_mask = jnp.ones_like(targets, dtype="bool").at[:, 1].set(False)
@@ -217,7 +222,9 @@ def test_platt_calibration_preserves_case_masks_product_weights_and_frozen_execu
     assert recipe.max_iterations == 2
 
 
-def test_calibration_rejects_sparse_and_complex_logits_and_checks_new_sample_width():
+def test_calibration_rejects_sparse_and_complex_logits_and_checks_new_sample_width() -> (
+    None
+):
     dense = (
         _temperature()
         .fit_batch(MLBatch(_MULTICLASS_LOGITS, _MULTICLASS_TARGETS))
@@ -262,11 +269,11 @@ def test_calibration_rejects_sparse_and_complex_logits_and_checks_new_sample_wid
     ],
 )
 def test_every_smooth_calibrator_has_declared_fit_input_and_parameter_gradients(
-    recipe, features, targets, probe
-):
+    recipe: Any, features: Any, targets: Any, probe: Any
+) -> None:
     weights = jnp.linspace(0.8, 1.3, features.shape[0])
 
-    def fit_loss(values, sample_weight, learning_rate):
+    def fit_loss(values: Any, sample_weight: Any, learning_rate: Any) -> Any:
         configured = eqx.tree_at(lambda item: item.learning_rate, recipe, learning_rate)
         model = configured.fit_batch(
             MLBatch(values, targets, sample_weight=sample_weight)
@@ -338,7 +345,9 @@ def test_every_smooth_calibrator_has_declared_fit_input_and_parameter_gradients(
     assert jnp.all(jnp.isfinite(parameter_gradient))
 
 
-def test_exact_and_smooth_isotonic_are_monotone_distinct_and_extrapolate_constantly():
+def test_exact_and_smooth_isotonic_are_monotone_distinct_and_extrapolate_constantly() -> (
+    None
+):
     batch = MLBatch(
         _BINARY_SCORES,
         _BINARY_TARGETS,
@@ -350,9 +359,13 @@ def test_exact_and_smooth_isotonic_are_monotone_distinct_and_extrapolate_constan
     exact = exact_result.as_trainable()
     smooth = smooth_result.as_trainable()
     probes = jnp.linspace(-4.0, 4.0, 41)
+    # ty: ignore[unresolved-attribute]
     exact_positive = exact.positive_probability(probes)
+    # ty: ignore[unresolved-attribute]
     smooth_positive = smooth.positive_probability(probes)
+    # ty: ignore[unresolved-attribute]
     last = int(exact.block_count) - 1
+    # ty: ignore[unresolved-attribute]
     boundary = exact.positive_probability(jnp.array([-1e6, 1e6]))
 
     assert isinstance(exact, IsotonicCalibrationModel)
@@ -390,7 +403,7 @@ def test_exact_and_smooth_isotonic_are_monotone_distinct_and_extrapolate_constan
     assert jax.vmap(smooth)(probes).shape == (41, 2)
 
 
-def test_isotonic_prediction_gradients_match_exact_and_smooth_contracts():
+def test_isotonic_prediction_gradients_match_exact_and_smooth_contracts() -> None:
     exact = (
         IsotonicCalibrationRecipe()
         .fit_batch(MLBatch(_BINARY_SCORES, _BINARY_TARGETS))
@@ -406,17 +419,21 @@ def test_isotonic_prediction_gradients_match_exact_and_smooth_contracts():
         lambda values: eqx.tree_at(
             lambda item: item.values, exact, values
         ).positive_probability(point)
+        # ty: ignore[unresolved-attribute]
     )(exact.values)
     smooth_parameter_gradient = jax.grad(
         lambda values: eqx.tree_at(
             lambda item: item.values, smooth, values
         ).positive_probability(point)
+        # ty: ignore[unresolved-attribute]
     )(smooth.values)
+    # ty: ignore[unresolved-attribute]
     smooth_input_gradient = jax.grad(smooth.positive_probability)(point)
     bandwidth_gradient = jax.grad(
         lambda bandwidth: eqx.tree_at(
             lambda item: item.bandwidth, smooth, bandwidth
         ).positive_probability(point)
+        # ty: ignore[unresolved-attribute]
     )(smooth.bandwidth)
 
     assert jnp.all(jnp.isfinite(exact_parameter_gradient))
@@ -425,7 +442,7 @@ def test_isotonic_prediction_gradients_match_exact_and_smooth_contracts():
     assert jnp.isfinite(bandwidth_gradient)
 
 
-def test_isotonic_masks_are_equivalent_to_removing_samples():
+def test_isotonic_masks_are_equivalent_to_removing_samples() -> None:
     mask = jnp.arange(10) != 9
     masked = (
         IsotonicCalibrationRecipe()
@@ -455,7 +472,9 @@ def test_isotonic_masks_are_equivalent_to_removing_samples():
     assert jnp.allclose(masked(probes), removed(probes))
 
 
-def test_calibrated_classifier_composes_frozen_base_and_calibrator_with_explicit_key():
+def test_calibrated_classifier_composes_frozen_base_and_calibrator_with_explicit_key() -> (
+    None
+):
     recipe = CalibratedClassifierRecipe(
         GaussianNaiveBayesRecipe(var_smoothing=0.03),
         PlattCalibrationRecipe(max_iterations=2, tolerance=1e3),
@@ -483,7 +502,9 @@ def test_calibrated_classifier_composes_frozen_base_and_calibrator_with_explicit
     assert jax.vmap(model)(_BINARY_SCORES[:2]).shape == (2, 2)
 
 
-def test_calibration_failures_report_empty_single_class_nonfinite_and_nonconvergence():
+def test_calibration_failures_report_empty_single_class_nonfinite_and_nonconvergence() -> (
+    None
+):
     empty = _platt().fit_batch(
         MLBatch(
             _BINARY_SCORES,
@@ -521,7 +542,9 @@ def test_calibration_failures_report_empty_single_class_nonfinite_and_nonconverg
     assert jnp.all(jnp.isfinite(nonconverged.model(_BINARY_SCORES)))
 
 
-def test_calibration_rejects_rank_capacity_schema_and_complex_composition_mismatches():
+def test_calibration_rejects_rank_capacity_schema_and_complex_composition_mismatches() -> (
+    None
+):
     with pytest.raises(ValueError, match="exactly one score feature"):
         _platt().fit_batch(MLBatch(jnp.ones((10, 2)), _BINARY_TARGETS))
     with pytest.raises(ValueError, match="one logit per class"):

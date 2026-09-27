@@ -5,22 +5,27 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..linalg import LinearSolvePolicy
 from ._iterative._types import Bounds
 from ._pde_constrained import (
     AbstractStateSolver,
+    StateAcceptanceEvidence,
     StateDesignConstraint,
     StateDesignProblem,
+    StateEquationResult,
 )
 from ._state_design_linearization import (
     prepare_state_design_linearization,
@@ -28,7 +33,14 @@ from ._state_design_linearization import (
 )
 
 
-def _schema(tree, name):
+_Schema: TypeAlias = tuple[
+    jax.tree_util.PyTreeDef, tuple[tuple[tuple[int, ...], str], ...]
+]
+_Decoder: TypeAlias = Callable[[PyTree[Array]], PyTree[Array]]
+_StateDesignFunction: TypeAlias = Callable[[PyTree[Any], PyTree[Any], Any], object]
+
+
+def _schema(tree: PyTree[Array], name: str) -> _Schema:
     leaves, structure = jax.tree.flatten(tree)
     if not leaves or any(not eqx.is_array(leaf) for leaf in leaves):
         raise TypeError(f"{name} must be a nonempty array-only PyTree.")
@@ -38,14 +50,16 @@ def _schema(tree, name):
 
 
 class _FrozenDecoder(StrictModule, NonTrainableState):
-    function: Callable
-    latent_schema: Any = eqx.field(static=True)
-    physical_schema: Any = eqx.field(static=True)
+    function: _Decoder
+    latent_schema: _Schema = eqx.field(static=True)
+    physical_schema: _Schema = eqx.field(static=True)
     decoder_id: str = eqx.field(static=True)
     realization_id: str = eqx.field(static=True)
-    design_admissibility: Callable | None = eqx.field(static=True)
+    design_admissibility: Callable[[PyTree[Array]], ArrayLike] | None = eqx.field(
+        static=True
+    )
 
-    def __call__(self, latent):
+    def __call__(self, latent: PyTree[Array]) -> PyTree[Array]:
         if _schema(latent, "latent design") != self.latent_schema:
             raise ValueError("Latent design PyTree, shape, or dtype changed.")
         physical = self.function(latent)
@@ -73,15 +87,25 @@ class _DecodedStateSolver(AbstractStateSolver):
     physical_problem: StateDesignProblem
     decoder: _FrozenDecoder
 
-    def __init__(self, physical_problem, decoder, /):
+    def __init__(
+        self, physical_problem: StateDesignProblem, decoder: _FrozenDecoder, /
+    ) -> None:
         self.physical_problem = physical_problem
         self.decoder = decoder
 
     @property
-    def method_id(self):
+    def method_id(self) -> str:
         return f"decoded/{self.physical_problem.state_solver.method_id}"
 
-    def solve(self, problem, design, initial_state, /, *, args):
+    def solve(
+        self,
+        problem: StateDesignProblem,
+        design: PyTree[Any],
+        initial_state: PyTree[Any],
+        /,
+        *,
+        args: Any,
+    ) -> StateEquationResult:
         del problem
         # Some native solvers use physical material/geometry coordinates directly.
         # Merely reusing that solver with a latent design would violate its contract.
@@ -104,27 +128,27 @@ class StateDesignParameterization(StrictModule, NonTrainableState):
     decoder: _FrozenDecoder
 
     @property
-    def decoder_id(self):
+    def decoder_id(self) -> str:
         return self.decoder.decoder_id
 
     @property
-    def realization_id(self):
+    def realization_id(self) -> str:
         return self.decoder.realization_id
 
-    def decode(self, latent, /):
+    def decode(self, latent: PyTree[Array], /) -> PyTree[Array]:
         return self.decoder(latent)
 
     def response_vjp(
         self,
-        latent,
-        initial_state,
+        latent: PyTree[Array],
+        initial_state: PyTree[Any],
         /,
         *,
-        response=None,
-        cotangent=None,
-        depends_on_state=True,
-        args=None,
-        linear_policy=None,
+        response: Callable[[PyTree[Any], PyTree[Any], Any], PyTree[Any]] | None = None,
+        cotangent: PyTree[Any] | None = None,
+        depends_on_state: bool = True,
+        args: Any = None,
+        linear_policy: LinearSolvePolicy | None = None,
     ) -> LatentStateDesignVJP:
         """Pull one accepted physical response back without an outer-optimizer AD."""
         physical, pullback = jax.vjp(self.decode, latent)
@@ -165,7 +189,7 @@ class _DecodedCoordinate(StrictModule):
     decoder: _FrozenDecoder
     index: int = eqx.field(static=True)
 
-    def __call__(self, state, latent, args):
+    def __call__(self, state: PyTree[Any], latent: PyTree[Array], args: Any) -> Array:
         del state, args
         values, _ = ravel_pytree(self.decoder(latent))
         return values[self.index]
@@ -173,7 +197,7 @@ class _DecodedCoordinate(StrictModule):
 
 def reparameterize_state_design(
     problem: StateDesignProblem,
-    decode: Callable,
+    decode: _Decoder,
     latent_template: PyTree[Array],
     physical_template: PyTree[Array],
     /,
@@ -181,7 +205,7 @@ def reparameterize_state_design(
     decoder_id: str,
     realization_id: str,
     latent_bounds: Bounds | None = None,
-    design_admissibility: Callable | None = None,
+    design_admissibility: Callable[[PyTree[Array]], ArrayLike] | None = None,
 ) -> StateDesignParameterization:
     """Compose a fixed decoder through residual, objective, gates and constraints.
 
@@ -217,18 +241,25 @@ def reparameterize_state_design(
     )
     decoder(latent_template)
 
-    def residual(state, latent, args):
+    def residual(state: PyTree[Any], latent: PyTree[Array], args: Any) -> PyTree[Array]:
         return problem.residual(state, decoder(latent), args)
 
-    def objective(state, latent, args):
+    def objective(state: PyTree[Any], latent: PyTree[Array], args: Any) -> object:
         return problem.objective(state, decoder(latent), args)
 
-    def compose(function):
+    def compose(function: _StateDesignFunction) -> _StateDesignFunction:
         return lambda state, latent, args: function(state, decoder(latent), args)
 
     def certification(
-        state, latent, residual, status, *, reference_norm, args, solver_acceptance=None
-    ):
+        state: PyTree[Any],
+        latent: PyTree[Array],
+        residual: PyTree[Any],
+        status: Any,
+        *,
+        reference_norm: Any,
+        args: Any,
+        solver_acceptance: StateAcceptanceEvidence | None = None,
+    ) -> StateAcceptanceEvidence:
         return problem.state_evidence(
             state,
             decoder(latent),

@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._admissibility import AdmissibilityHeader
 from ..._fingerprint import canonical_fingerprint
@@ -87,7 +88,7 @@ class AerothermodynamicProductionPlan(StrictModule):
     profile: AerothermodynamicProfile
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, profile: AerothermodynamicProfile, /):
+    def __init__(self, profile: AerothermodynamicProfile, /) -> None:
         if not isinstance(
             profile,
             (
@@ -357,10 +358,14 @@ class AerothermodynamicProductionPlan(StrictModule):
             state.accepted_steps + 1,
             state.runtime_id,
         )
-        gas_accepted = None if gas is None else jnp.where(successful, gas, state.gas)
+        gas_accepted = (
+            None
+            if gas is None or state.gas is None
+            else jnp.where(successful, gas, state.gas)
+        )
         radiation_accepted = (
             None
-            if radiation is None
+            if radiation is None or state.radiation_energy is None
             else jnp.where(successful, radiation, state.radiation_energy)
         )
         if material is not None and state.material is not None:

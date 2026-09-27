@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -13,7 +15,7 @@ DENSITY = jnp.asarray([0.8, -0.4, 0.3, 1.1])
 WEIGHTS = jnp.asarray([0.7, 1.2, 0.8, 0.9])
 
 
-def _prepared():
+def _prepared() -> Any:
     return phx.operators.LaplaceMultipolePlan3D(
         SOURCES,
         [-1.0, -1.0, -1.0],
@@ -24,7 +26,7 @@ def _prepared():
     ).prepare()
 
 
-def test_weighted_single_and_double_layer_adapters_match_direct_kernels():
+def test_weighted_single_and_double_layer_adapters_match_direct_kernels() -> None:
     prepared = _prepared()
     strengths = DENSITY * WEIGHTS
     single = phx.operators.evaluate_laplace_layer_multipole_3d(
@@ -53,7 +55,7 @@ def test_weighted_single_and_double_layer_adapters_match_direct_kernels():
     np.testing.assert_allclose(double.values, expected_double, rtol=3.5e-2, atol=1e-3)
 
 
-def _clustered_layer():
+def _clustered_layer() -> Any:
     rng = np.random.default_rng(29)
     sources = np.concatenate(
         (
@@ -78,7 +80,7 @@ def _clustered_layer():
     )
 
 
-def test_qbx_adapter_far_locals_reproduce_far_field_at_centers():
+def test_qbx_adapter_far_locals_reproduce_far_field_at_centers() -> None:
     sources, targets, density, weights = _clustered_layer()
     prepared = phx.operators.LaplaceMultipolePlan3D(
         sources,
@@ -103,7 +105,7 @@ def test_qbx_adapter_far_locals_reproduce_far_field_at_centers():
     np.testing.assert_allclose(local_values, evaluation.far_values, rtol=1e-9, atol=1e-11)
 
 
-def test_layer_and_qbx_adapters_accept_plane_far_execution():
+def test_layer_and_qbx_adapters_accept_plane_far_execution() -> None:
     prepared = phx.operators.LaplaceMultipolePlan3D(
         SOURCES,
         [-1.0, -1.0, -1.0],

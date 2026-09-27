@@ -10,7 +10,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -47,6 +48,7 @@ from ...solver._quantum_program import (
     DenseQuantumProgramPolicy,
     DenseQuantumProgramResult,
 )
+from ...typing import parse
 from .._schema import AbstractFittedModel
 
 
@@ -174,7 +176,7 @@ class DenseCircuitStateModel(AbstractFittedModel):
         *,
         initial_state: ArrayLike | None = None,
         policy: DenseQuantumProgramPolicy | None = None,
-    ):
+    ) -> None:
         if template.state_kind != "state-vector":
             raise ValueError("DenseCircuitStateModel requires a state-vector template.")
         in_size, _ = _validate_angle_model(angle_model, template)
@@ -243,9 +245,8 @@ class DenseCircuitExpectationModel(AbstractFittedModel):
         initial_state: ArrayLike | None = None,
         program_policy: DenseQuantumProgramPolicy | None = None,
         observable_policy: DenseQuantumObservablePolicy | None = None,
-    ):
-        if gradient_method not in ("autodiff", "parameter-shift"):
-            raise ValueError("Unknown circuit gradient method.")
+    ) -> None:
+        gradient_method = parse(gradient_method, CircuitGradientMethod, "gradient_method")
         in_size, _ = _validate_angle_model(angle_model, template)
         circuit = _prepare_execution(template, initial_state, program_policy)
         observable_plan = plan_dense_quantum_observables(
@@ -349,7 +350,7 @@ class BinaryVariationalCircuitClassifier(AbstractFittedModel):
         negative_label: float,
         positive_label: float,
         /,
-    ):
+    ) -> None:
         if not isinstance(feature_model, DenseCircuitExpectationModel):
             raise TypeError("feature_model must be DenseCircuitExpectationModel.")
         selected_weight = jnp.asarray(weight)

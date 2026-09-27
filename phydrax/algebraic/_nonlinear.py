@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -30,7 +31,7 @@ class _RealPolynomialResidual(StrictModule):
         variable_coordinates: ComplexCartesianCoordinates,
         equation_coordinates: ComplexCartesianCoordinates,
         /,
-    ):
+    ) -> None:
         self.system = system
         self.variable_coordinates = variable_coordinates
         self.equation_coordinates = equation_coordinates
@@ -89,7 +90,7 @@ class ComplexPolynomialRootLowering(StrictModule):
         /,
         *,
         complex_dtype: Any | None = None,
-    ):
+    ) -> None:
         if not isinstance(system, SparsePolynomialSystem):
             raise TypeError("system must be SparsePolynomialSystem.")
         if system.support.equation_count != system.support.variable_count:

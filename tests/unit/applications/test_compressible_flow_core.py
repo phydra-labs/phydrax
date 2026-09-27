@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -30,7 +32,7 @@ from phydrax.equations import (
 )
 
 
-def _model(species_count=2):
+def _model(species_count: Any = 2) -> Any:
     names = tuple(chr(ord("A") + index) for index in range(species_count))
     schema = ChemicalSpeciesSchema.from_unique_species(
         names,
@@ -54,7 +56,7 @@ def _model(species_count=2):
     return HomogeneousHelmholtzPlan(ideal, ZeroResidualHelmholtzTerm(schema))
 
 
-def _uniform_primitive(system, shape=()):
+def _uniform_primitive(system: Any, shape: Any = ()) -> Any:
     species = jnp.broadcast_to(
         jnp.asarray((0.35, 0.65), dtype=jnp.float32), shape + (system.species_count,)
     )
@@ -65,7 +67,7 @@ def _uniform_primitive(system, shape=()):
     return jnp.concatenate((species, velocity, temperature), axis=-1)
 
 
-def test_reference_characteristic_acoustic_entropy_and_vorticity_waves():
+def test_reference_characteristic_acoustic_entropy_and_vorticity_waves() -> None:
     system = HomogeneousMixtureEulerSystem(_model(), 2)
     points = jnp.stack(
         jnp.meshgrid(jnp.linspace(0.0, 1.0, 5), jnp.linspace(0.0, 1.0, 4)),
@@ -84,7 +86,7 @@ def test_reference_characteristic_acoustic_entropy_and_vorticity_waves():
         )
 
 
-def test_full_species_normal_flux_reflection_and_characteristic_modes():
+def test_full_species_normal_flux_reflection_and_characteristic_modes() -> None:
     system = HomogeneousMixtureEulerSystem(_model(), 2)
     state = system.primitive_to_conserved(_uniform_primitive(system))
     normal = jnp.asarray((0.6, 0.8))
@@ -115,7 +117,7 @@ def test_full_species_normal_flux_reflection_and_characteristic_modes():
     )
 
 
-def test_conservative_mixture_forcing_work_and_named_budget_decomposition():
+def test_conservative_mixture_forcing_work_and_named_budget_decomposition() -> None:
     system = HomogeneousMixtureEulerSystem(_model(), 2)
     state = system.primitive_to_conserved(_uniform_primitive(system, (3,)))
     forcing = CompressibleForcingPlan(
@@ -152,7 +154,7 @@ def test_conservative_mixture_forcing_work_and_named_budget_decomposition():
     assert bool(budget.complete)
 
 
-def test_favre_raw_moments_spectra_and_wall_thermal_statistics():
+def test_favre_raw_moments_spectra_and_wall_thermal_statistics() -> None:
     nx, ny = 6, 4
     system = HomogeneousMixtureEulerSystem(_model(), 2)
     primitive = _uniform_primitive(system, (nx, ny))
@@ -181,7 +183,7 @@ def test_favre_raw_moments_spectra_and_wall_thermal_statistics():
     assert statistics.solenoidal_spectrum.shape == (nx, ny)
 
 
-def test_full_species_characteristic_boundary_and_sponge_ledgers():
+def test_full_species_characteristic_boundary_and_sponge_ledgers() -> None:
     system = HomogeneousMixtureEulerSystem(_model(), 1)
     far_field = system.primitive_to_conserved(_uniform_primitive(system))
     interior_primitive = _uniform_primitive(system).at[system.species_count].set(-0.1)
@@ -208,7 +210,7 @@ def test_full_species_characteristic_boundary_and_sponge_ledgers():
     assert bool(sponge_result.ledger.finite)
 
 
-def test_finite_x_boundary_layer_owns_canonical_composition_and_temperature():
+def test_finite_x_boundary_layer_owns_canonical_composition_and_temperature() -> None:
     model = _model()
     system = HomogeneousMixtureEulerSystem(model, 2)
     inflow = FiniteXBoundaryLayerInflowPlan(

@@ -1,13 +1,16 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _geometry():
+def _geometry() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4),
@@ -36,7 +39,9 @@ def _geometry():
     return plan, plan.state(0.0)
 
 
-def test_stationary_patch_embedded_boundary_clips_conservatively_and_marks_small_cells():
+def test_stationary_patch_embedded_boundary_clips_conservatively_and_marks_small_cells() -> (
+    None
+):
     geometry_plan, geometry = _geometry()
     embedded = phx.discretization.VariablePatchEmbeddedBoundaryPlan(
         geometry_plan.plan_id,
@@ -63,7 +68,7 @@ def test_stationary_patch_embedded_boundary_clips_conservatively_and_marks_small
     assert embedded.evidence.maximum_face_closure_defect <= 1.0e-12
 
 
-def test_stationary_patch_embedded_boundary_rejects_ambiguous_vertex_crossing():
+def test_stationary_patch_embedded_boundary_rejects_ambiguous_vertex_crossing() -> None:
     geometry_plan, geometry = _geometry()
     plan = phx.discretization.VariablePatchEmbeddedBoundaryPlan(
         geometry_plan.plan_id,

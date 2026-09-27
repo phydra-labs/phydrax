@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -18,7 +20,7 @@ from phydrax.optim._multipoint_state_design import (
 opt = phx.optim
 
 
-def _policy():
+def _policy() -> Any:
     return opt.StateAcceptancePolicy(
         state_relative_tolerance=1e-8,
         state_absolute_tolerance=1e-8,
@@ -27,12 +29,12 @@ def _policy():
     )
 
 
-def _bind(shared, local, args):
+def _bind(shared: Any, local: Any, args: Any) -> Any:
     del args
     return shared + local
 
 
-def test_failed_heterogeneous_block_retains_separate_final_evidence():
+def test_failed_heterogeneous_block_retains_separate_final_evidence() -> None:
     healthy = opt.StateDesignProblem(
         lambda state, design, _: state - design,
         lambda state, design, _: state**2 + design**2,
@@ -68,7 +70,7 @@ def test_failed_heterogeneous_block_retains_separate_final_evidence():
     assert float(result.state[0]) == pytest.approx(2.0, abs=1e-7)
 
 
-def test_raw_child_status_failure_survives_residual_recertification():
+def test_raw_child_status_failure_survives_residual_recertification() -> None:
     healthy = opt.StateDesignProblem(
         lambda state, design, _: state - design,
         lambda state, design, _: state**2,
@@ -117,7 +119,7 @@ def test_raw_child_status_failure_survives_residual_recertification():
     assert not bool(fresh.accepted)
 
 
-def test_large_case_cannot_hide_small_state_or_transpose_defect():
+def test_large_case_cannot_hide_small_state_or_transpose_defect() -> None:
     child = opt.StateDesignProblem(
         lambda state, design, _: state - design,
         lambda state, design, _: state**2 + design**2,
@@ -162,7 +164,9 @@ def test_large_case_cannot_hide_small_state_or_transpose_defect():
     )
 
 
-def test_child_vector_equalities_bound_bindings_and_cross_case_constraints_survive():
+def test_child_vector_equalities_bound_bindings_and_cross_case_constraints_survive() -> (
+    None
+):
     child = opt.StateDesignProblem(
         lambda state, design, _: state - design,
         lambda state, design, _: state**2,
@@ -239,7 +243,7 @@ def test_child_vector_equalities_bound_bindings_and_cross_case_constraints_survi
     assert program.equality_indices.tolist() == [0, 1, 2, 3, 8]
 
 
-def test_case_identity_collision_cannot_alias_constraint_or_acceptance_evidence():
+def test_case_identity_collision_cannot_alias_constraint_or_acceptance_evidence() -> None:
     child = opt.StateDesignProblem(
         lambda state, design, _: state - design,
         lambda state, design, _: state**2,
@@ -262,7 +266,7 @@ def test_case_identity_collision_cannot_alias_constraint_or_acceptance_evidence(
         multipoint.to_state_design_problem()
 
 
-def test_rejected_case_rolls_back_entire_shared_local_state_design_pair():
+def test_rejected_case_rolls_back_entire_shared_local_state_design_pair() -> None:
     child = opt.StateDesignProblem(
         lambda state, design, _: state - design,
         lambda state, design, target: (state - target) ** 2 + 0.1 * design**2,

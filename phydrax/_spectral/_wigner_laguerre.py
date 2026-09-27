@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -29,7 +30,7 @@ class WignerLaguerrePlan(StrictModule, NonTrainableState):
         radial: RadialLaguerrePlan,
         wigner: WignerTransformPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(radial, RadialLaguerrePlan):
             raise TypeError("radial must be a RadialLaguerrePlan.")
         if not isinstance(wigner, WignerTransformPlan):

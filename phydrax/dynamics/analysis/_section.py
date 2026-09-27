@@ -11,10 +11,12 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import parse
 from .._evolution import AbstractEvolution, DiscreteEvolution, EvolutionTrajectory
 from .._layout import StateLayout
 from .._trajectory import TrajectoryData
@@ -71,7 +73,7 @@ class AffineSection(AbstractSection):
         *,
         state_layout: StateLayout,
         section_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(state_layout, StateLayout):
             raise TypeError("state_layout must be a StateLayout.")
         normal_values = jnp.asarray(normal)
@@ -140,7 +142,7 @@ class CallableSection(AbstractSection):
         *,
         state_layout: StateLayout,
         section_id: str,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         if not isinstance(state_layout, StateLayout):
@@ -390,10 +392,8 @@ def find_section_crossings(
     """Detect oriented brackets and refine roots into fixed-capacity event buffers."""
     if not isinstance(section, AbstractSection):
         raise TypeError("section must be an AbstractSection.")
-    if direction not in ("any", "positive", "negative"):
-        raise ValueError("direction must be 'any', 'positive', or 'negative'.")
-    if refinement not in ("interpolation", "evolution"):
-        raise ValueError("refinement must be 'interpolation' or 'evolution'.")
+    direction = parse(direction, SectionDirection, "direction")
+    refinement = parse(refinement, SectionRefinement, "refinement")
     if evolution is not None and not isinstance(evolution, AbstractEvolution):
         raise TypeError("evolution must be an AbstractEvolution or None.")
     if refinement == "evolution" and evolution is None:

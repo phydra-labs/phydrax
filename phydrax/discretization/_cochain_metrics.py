@@ -9,10 +9,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -37,7 +37,7 @@ class PreparedCochainTopology(StrictModule, NonTrainableState):
         *,
         boundary_masks: Sequence[ArrayLike] | None = None,
         key: DiscretizationKey | None = None,
-    ):
+    ) -> None:
         if not isinstance(topology, CellComplexTopology):
             raise TypeError("Prepared cochain topology requires CellComplexTopology.")
         counts = tuple(entity.count for entity in topology.entity_sets)
@@ -92,7 +92,7 @@ class CochainMetricEvidence(StrictModule, NonTrainableState):
         geometry_layout_id: str,
         active_masks: Sequence[ArrayLike],
         /,
-    ):
+    ) -> None:
         family = str(geometry_family_id)
         layout = str(geometry_layout_id)
         masks = tuple(np.asarray(mask, dtype=np.bool_) for mask in active_masks)
@@ -130,7 +130,7 @@ class CochainMetricPlan(StrictModule, NonTrainableState):
         geometry_family_id: str,
         geometry_layout_id: str,
         coordinate_shapes: Sequence[tuple[int, int] | None] | None = None,
-    ):
+    ) -> None:
         if not isinstance(prepared_topology, PreparedCochainTopology):
             raise TypeError("Cochain metric plan requires PreparedCochainTopology.")
         counts = tuple(entity.count for entity in prepared_topology.topology.entity_sets)
@@ -210,7 +210,7 @@ class CochainMetricPlan(StrictModule, NonTrainableState):
             time=time,
             revision=revision,
         )
-        if isinstance(state.valid, jax.core.Tracer) or not bool(state.valid):
+        if isinstance(state.valid, jax_core.Tracer) or not bool(state.valid):
             raise ValueError("Cochain metric snapshot is inadmissible.")
         return state
 
@@ -246,7 +246,7 @@ class CochainMetricState(StrictModule):
         active_masks: Sequence[ArrayLike] | None = None,
         time: ArrayLike = 0.0,
         revision: ArrayLike = 0,
-    ):
+    ) -> None:
         if not isinstance(plan, CochainMetricPlan):
             raise TypeError("Cochain metric state requires CochainMetricPlan.")
         counts = tuple(
@@ -312,6 +312,7 @@ class CochainMetricState(StrictModule):
             (expected is None) != (value is None)
             or (
                 expected is not None
+                and value is not None
                 and (
                     value.ndim != 2
                     or value.shape != expected
@@ -418,7 +419,7 @@ class CochainMetricState(StrictModule):
 
     def host_snapshot(self, /) -> CochainDiscretization:
         """Create a host-only metric-space snapshot from a valid accepted state."""
-        if isinstance(self.valid, jax.core.Tracer) or not bool(self.valid):
+        if isinstance(self.valid, jax_core.Tracer) or not bool(self.valid):
             raise ValueError(
                 "Only an accepted host cochain metric state may be snapshotted."
             )

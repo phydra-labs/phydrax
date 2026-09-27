@@ -9,7 +9,8 @@ from typing import Any, ClassVar
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._differentiation import (
     DerivativeContract,
@@ -47,7 +48,7 @@ def _project_capped_simplex(values: Array, caps: Array) -> Array:
     lower = jnp.min(values - caps)
     upper = jnp.max(values)
 
-    def search(_iteration, bounds):
+    def search(_iteration: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
         low, high = bounds
         multiplier = 0.5 * (low + high)
         mass = jnp.sum(jnp.clip(values - multiplier, 0.0, caps))
@@ -77,7 +78,7 @@ def _fit_ocsvm_one(
     )
     step_size = float(learning_rate) / lipschitz_bound
 
-    def step(_iteration, current):
+    def step(_iteration: Array, current: Array) -> Array:
         gradient = gram @ current
         return _project_capped_simplex(current - step_size * gradient, caps)
 
@@ -119,7 +120,7 @@ class OneClassSVMModel(AbstractFittedModel):
         kernel: AbstractPositiveDefiniteKernel,
         *,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         if not isinstance(kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("kernel must be a native AbstractPositiveDefiniteKernel.")
         train = jnp.asarray(training_features)
@@ -155,7 +156,9 @@ class OneClassSVMModel(AbstractFittedModel):
         )
         rho = self.rho.reshape((cases,))
 
-        def score_one(query, train_, coefficients_, rho_):
+        def score_one(
+            query: Array, train_: Array, coefficients_: Array, rho_: Array
+        ) -> Array:
             cross_gram = self.kernel.matrix(query, train_)
             return rho_ - cross_gram @ coefficients_
 
@@ -191,7 +194,7 @@ class OneClassSVMRecipe(AbstractRecipe):
         iterations: int = 250,
         learning_rate: float = 0.1,
         tolerance: float = 1e-5,
-    ):
+    ) -> None:
         kernel_ = SquaredExponentialKernel() if kernel is None else kernel
         if not isinstance(kernel_, AbstractPositiveDefiniteKernel):
             raise TypeError("kernel must be a native AbstractPositiveDefiniteKernel.")

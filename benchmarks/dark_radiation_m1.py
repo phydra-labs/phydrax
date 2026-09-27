@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -64,7 +66,7 @@ def main() -> None:
     correction = correction.at[:, 0].set(1.0e-8 * jnp.cos(coordinate))
 
     @eqx.filter_jit
-    def action(values):
+    def action(values: Any) -> Any:
         redshift = system.group_redshift_flux(values, hubble)
         provisional = values + 1.0e-2 * redshift.conservative_rate
         realizability = system.enforce_realizability(provisional)

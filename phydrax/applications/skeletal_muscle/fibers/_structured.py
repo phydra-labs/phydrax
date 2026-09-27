@@ -8,13 +8,15 @@ from __future__ import annotations
 
 from enum import IntFlag
 from math import isfinite
+from typing import TypeAlias
 
 import diffrax as dfx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._identity import NumericRevision, SemanticProvenance, strict_module_payload
@@ -25,6 +27,11 @@ from ....solver import DifferentialProblem, solve_diffrax
 from ._bundle import PrescribedFiberStimulusSchedule
 from ._reaction import AbstractFiberReaction
 from ._territories import MotorUnitEndplateStimulus
+
+
+# Per-substep (reaction_ok, diffusion_ok, admissible, steps, residual, balance, pivot).
+_SubstepEvidence: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+_SubstepInputs: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class StructuredFiberResponseStatus(IntFlag):
@@ -39,7 +46,7 @@ class StructuredFiberResponseStatus(IntFlag):
     SOURCE_GEOMETRY_MISMATCH = 128
 
 
-def _real_array(value: ArrayLike, /, *, dtype=None) -> Array:
+def _real_array(value: ArrayLike, /, *, dtype: DTypeLike | None = None) -> Array:
     result = jnp.asarray(value)
     if jnp.issubdtype(result.dtype, jnp.complexfloating):
         raise TypeError("Fiber geometry, times and coefficients must be real.")
@@ -227,7 +234,7 @@ class StructuredFiberResponsePlan(StrictModule, NonTrainableState):
         diffusion_tolerance: float = 1.0e-8,
         pivot_tolerance: float = 1.0e-14,
         minimum_segment_length_mm: float = 1.0e-10,
-    ):
+    ) -> None:
         ids = tuple(str(value).strip() for value in fiber_ids)
         if not ids or any(not value for value in ids) or len(set(ids)) != len(ids):
             raise ValueError("fiber_ids must be nonempty and unique.")
@@ -361,7 +368,13 @@ class PreparedStructuredFiberResponse(StrictModule):
     numeric_revision_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, reaction, diffusivity_mm2_per_ms, /):
+    def __init__(
+        self,
+        plan: StructuredFiberResponsePlan,
+        reaction: AbstractFiberReaction,
+        diffusivity_mm2_per_ms: ArrayLike,
+        /,
+    ) -> None:
         if not isinstance(plan, StructuredFiberResponsePlan):
             raise TypeError("plan must be StructuredFiberResponsePlan.")
         if not isinstance(reaction, AbstractFiberReaction):
@@ -472,8 +485,20 @@ class PreparedStructuredFiberResponse(StrictModule):
             state.node_positions_mm[None] + theta * (end - state.node_positions_mm)[None]
         )
 
-    def _reaction_step(self, values, start, end, full_start, current, stretch, rate, /):
-        def solve_local(y, injected, initial_stretch, stretch_rate):
+    def _reaction_step(
+        self,
+        values: Array,
+        start: Array,
+        end: Array,
+        full_start: Array,
+        current: Array,
+        stretch: Array,
+        rate: Array,
+        /,
+    ) -> tuple[Array, Array, Array, Array]:
+        def solve_local(
+            y: Array, injected: Array, initial_stretch: Array, stretch_rate: Array
+        ) -> tuple[Array, Array, Array, Array]:
             problem = DifferentialProblem(
                 _LocalReactionDrift(
                     self.reaction, injected, initial_stretch, stretch_rate, full_start
@@ -523,7 +548,9 @@ class PreparedStructuredFiberResponse(StrictModule):
             jnp.sum(steps, dtype=jnp.int32),
         )
 
-    def _diffusion_step(self, voltage, geometry, step_ms, /):
+    def _diffusion_step(
+        self, voltage: Array, geometry: MovingFiberGeometry1D, step_ms: Array, /
+    ) -> tuple[Array, Array, Array, Array, Array]:
         conductance = geometry.segment_conductance_mm_per_ms
         zero = jnp.zeros_like(conductance[:, :1])
         left = jnp.concatenate((zero, conductance), axis=1)
@@ -647,8 +674,10 @@ class PreparedStructuredFiberResponse(StrictModule):
             & source_matches
         )
 
-        def advance(_):
-            def substep(values, inputs):
+        def advance(_: None) -> tuple[Array, _SubstepEvidence]:
+            def substep(
+                values: Array, inputs: _SubstepInputs
+            ) -> tuple[Array, _SubstepEvidence]:
                 start, end, positions_start, positions_end = inputs
                 duration = end - start
                 midpoint = start + 0.5 * duration
@@ -683,7 +712,7 @@ class PreparedStructuredFiberResponse(StrictModule):
                 substep, state.values, (times[:-1], times[1:], path[:-1], path[1:])
             )
 
-        def reject(_):
+        def reject(_: None) -> tuple[Array, _SubstepEvidence]:
             shape = (self.plan.substep_count,)
             false = jnp.zeros(shape, dtype=jnp.bool_)
             zero = jnp.zeros(shape, dtype=state.values.dtype)
@@ -763,7 +792,12 @@ class PreparedStructuredFiberResponse(StrictModule):
             state, proposed, self.geometry(path[-1]), path, evidence
         )
 
-    def commit(self, state, candidate, /) -> StructuredFiberResponseState:
+    def commit(
+        self,
+        state: StructuredFiberResponseState,
+        candidate: StructuredFiberResponseCandidate,
+        /,
+    ) -> StructuredFiberResponseState:
         if candidate.evidence.prepared_id != self.prepared_id:
             raise ValueError("Fiber candidate belongs to a different prepared response.")
         return candidate.commit(state)

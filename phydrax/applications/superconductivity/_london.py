@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 import phydrax.linalg as la
@@ -59,7 +60,7 @@ class ThinFilmLondonPlan(StrictModule, NonTrainableState):
     constraint_labels: tuple[str, ...] = eqx.field(static=True)
     hessian: Array
     moment_load: Array
-    factorization: object
+    factorization: la.PreparedFactorization
     softening_length: float = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -74,7 +75,7 @@ class ThinFilmLondonPlan(StrictModule, NonTrainableState):
         constraint_labels: tuple[str, ...] = (),
         softening_length: float | None = None,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(mesh, TriangleMesh):
             raise TypeError("mesh must be TriangleMesh.")
         pearl = float(pearl_length)

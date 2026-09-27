@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._uncertainty import UncertaintySource, validate_uncertainty_source
@@ -49,7 +50,7 @@ class LinearizedVarianceEstimate(StrictModule):
         *,
         num_probes: int,
         probe_distribution: str,
-    ):
+    ) -> None:
         self.variance = variance
         self.standard_error = standard_error
         self.num_probes = int(num_probes)
@@ -76,7 +77,7 @@ class LinearizedDenseCovariance(StrictModule):
         *,
         output_template: PyTree[Array],
         unravel: Any,
-    ):
+    ) -> None:
         path_leaves = jax.tree_util.tree_flatten_with_path(output_template)[0]
         self.matrix = jnp.asarray(matrix)
         self.hermitian_defect = jnp.asarray(hermitian_defect)
@@ -129,7 +130,7 @@ class LinearizedPropagationResult(StrictModule):
         pullback: Callable[[PyTree[Array]], PyTree[Array]],
         source: UncertaintySource,
         coordinate_covariance: bool = True,
-    ):
+    ) -> None:
         _validate_array_tree(input_template, owner="Linearized input", finite=True)
         _validate_array_tree(mean, owner="Linearized output", finite=True)
         input_dimension, input_unravel = _validate_covariance_template(
@@ -387,7 +388,7 @@ class LinearizedPropagationResult(StrictModule):
         )
 
     def _factor_directions(self) -> tuple[PyTree[Array], int]:
-        def input_dtype(directions):
+        def input_dtype(directions: PyTree[Array]) -> PyTree[Array]:
             return jax.tree_util.tree_map(
                 lambda value, template: value.astype(template.dtype),
                 directions,
@@ -501,11 +502,19 @@ def _validate_like(
     )
 
 
-def _real_pullback(transpose: Callable[..., Any], cotangent: PyTree[Array], /):
+def _real_pullback(
+    transpose: Callable[[PyTree[Array]], tuple[PyTree[Array]]],
+    cotangent: PyTree[Array],
+    /,
+) -> PyTree[Array]:
     return transpose(cotangent)[0]
 
 
-def _complex_pullback(transpose: Callable[..., Any], cotangent: PyTree[Array], /):
+def _complex_pullback(
+    transpose: Callable[[PyTree[Array]], tuple[PyTree[Array]]],
+    cotangent: PyTree[Array],
+    /,
+) -> PyTree[Array]:
     return _conjugate_tree(transpose(_conjugate_tree(cotangent))[0])
 
 

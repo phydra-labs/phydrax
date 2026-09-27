@@ -7,20 +7,21 @@
 from __future__ import annotations
 
 from enum import IntEnum
-from math import isfinite
-from typing import Any
+from typing import Any, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ..._bounds import Bounds
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ..._validation import positive_finite_float
 from ...dynamics import TimeGrid
 from ...nonlinear import (
     NonlinearTermination,
@@ -49,6 +50,42 @@ from ._constraints import (
     OpenLoopGameConstraints,
 )
 from ._layout import PlayerControlPartition
+
+
+if TYPE_CHECKING:
+    from ._generalized_nash import FiniteHorizonLQOpenLoopGNEProblem
+
+
+_KKTState: TypeAlias = tuple[Array, Array, Array]
+_KKTArgs: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
+_VENumericPreparation: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    ConvexProgramResult,
+    Array,
+    VariationalInequalityProblem,
+    _KKTState,
+    _KKTArgs,
+]
 
 
 OPEN_LOOP_VARIATIONAL_GNE = "OPEN_LOOP_VARIATIONAL_GNE"
@@ -131,7 +168,7 @@ class FiniteHorizonLQOpenLoopVEProblem(StrictModule):
         time_grid: TimeGrid | None = None,
         problem_id: str = "control:game:lq-open-loop-ve",
         dynamics_id: str = "control:game:dynamics:affine-discrete",
-    ):
+    ) -> None:
         if not isinstance(partition, PlayerControlPartition):
             raise TypeError("partition must be a PlayerControlPartition.")
         a = _real_array(dynamics_matrices, "dynamics_matrices")
@@ -478,13 +515,6 @@ def _exact_array(
     return array
 
 
-def _positive_tolerance(value: float, name: str, /) -> float:
-    result = float(value)
-    if not isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
-
-
 def _case_all_finite(value: Array, case_rank: int, /) -> Array:
     axes = tuple(range(case_rank, value.ndim))
     return jnp.all(jnp.isfinite(value), axis=axes) if axes else jnp.isfinite(value)
@@ -608,15 +638,15 @@ def plan_open_loop_ve(
             "Nash formulation."
         )
     tolerances = (
-        _positive_tolerance(structural_tolerance, "structural_tolerance"),
-        _positive_tolerance(convexity_tolerance, "convexity_tolerance"),
-        _positive_tolerance(monotonicity_tolerance, "monotonicity_tolerance"),
-        _positive_tolerance(regularity_tolerance, "regularity_tolerance"),
-        _positive_tolerance(feasibility_tolerance, "feasibility_tolerance"),
-        _positive_tolerance(kkt_tolerance, "kkt_tolerance"),
-        _positive_tolerance(natural_residual_tolerance, "natural_residual_tolerance"),
+        positive_finite_float(structural_tolerance, "structural_tolerance"),
+        positive_finite_float(convexity_tolerance, "convexity_tolerance"),
+        positive_finite_float(monotonicity_tolerance, "monotonicity_tolerance"),
+        positive_finite_float(regularity_tolerance, "regularity_tolerance"),
+        positive_finite_float(feasibility_tolerance, "feasibility_tolerance"),
+        positive_finite_float(kkt_tolerance, "kkt_tolerance"),
+        positive_finite_float(natural_residual_tolerance, "natural_residual_tolerance"),
     )
-    step = _positive_tolerance(natural_step, "natural_step")
+    step = positive_finite_float(natural_step, "natural_step")
     method_ = (
         SemismoothNewton(
             feasibility="preserve-box",
@@ -720,7 +750,7 @@ def _validate_topology(
 
 
 def _condense_dynamics(
-    problem: FiniteHorizonLQOpenLoopVEProblem, /
+    problem: FiniteHorizonLQOpenLoopVEProblem | FiniteHorizonLQOpenLoopGNEProblem, /
 ) -> tuple[Array, Array]:
     n = problem.state_size
     variables = problem.horizon * problem.control_size
@@ -750,7 +780,7 @@ def _condense_dynamics(
 
 
 def _condense_costs(
-    problem: FiniteHorizonLQOpenLoopVEProblem,
+    problem: FiniteHorizonLQOpenLoopVEProblem | FiniteHorizonLQOpenLoopGNEProblem,
     state_maps: Array,
     state_offsets: Array,
     /,
@@ -872,7 +902,7 @@ def _condense_costs(
 
 
 def _trajectory(
-    problem: FiniteHorizonLQOpenLoopVEProblem,
+    problem: FiniteHorizonLQOpenLoopVEProblem | FiniteHorizonLQOpenLoopGNEProblem,
     state_maps: Array,
     state_offsets: Array,
     flat_controls: Array,
@@ -894,7 +924,7 @@ def _trajectory(
 
 
 def _constraint_values(
-    problem: FiniteHorizonLQOpenLoopVEProblem,
+    problem: FiniteHorizonLQOpenLoopVEProblem | FiniteHorizonLQOpenLoopGNEProblem,
     state_maps: Array,
     state_offsets: Array,
     flat_controls: Array,
@@ -920,7 +950,7 @@ def _constraint_values(
 
 
 def _constraint_linearization(
-    problem: FiniteHorizonLQOpenLoopVEProblem,
+    problem: FiniteHorizonLQOpenLoopVEProblem | FiniteHorizonLQOpenLoopGNEProblem,
     state_maps: Array,
     state_offsets: Array,
     constraint_args: Any,
@@ -1087,7 +1117,7 @@ def _phase_one(
     return solve_quadratic_program(program, policy=plan.phase_one_policy)
 
 
-def _kkt_operator(state, args, /):
+def _kkt_operator(state: _KKTState, args: _KKTArgs, /) -> _KKTState:
     controls, equality_variables, inequality_variables = state
     (
         pseudogradient,
@@ -1132,7 +1162,7 @@ def _numeric_preparation(
     initial_inequality_multipliers: Array | None,
     constraint_args: Any,
     /,
-):
+) -> _VENumericPreparation:
     state_maps, state_offsets = _condense_dynamics(problem)
     (
         player_hessians,
@@ -1175,7 +1205,14 @@ def _numeric_preparation(
         & jnp.all(player_convex, axis=-1)
         & (affinity <= plan.structural_tolerance)
     )
-    safe_lowered = tuple(_safe(value) for value in lowered)
+    safe_lowered = (
+        _safe(lowered[0]),
+        _safe(lowered[1]),
+        _safe(lowered[2]),
+        _safe(lowered[3]),
+        _safe(lowered[4]),
+        _safe(lowered[5]),
+    )
     safe_pseudogradient = _safe(pseudogradient)
     safe_pseudolinear = _safe(pseudolinear)
     phase_result = _phase_one(
@@ -1436,7 +1473,7 @@ def refresh_open_loop_ve(
 
 
 def _player_costs(
-    problem: FiniteHorizonLQOpenLoopVEProblem,
+    problem: FiniteHorizonLQOpenLoopVEProblem | FiniteHorizonLQOpenLoopGNEProblem,
     states: Array,
     controls: Array,
     /,

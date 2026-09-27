@@ -169,7 +169,9 @@ induced fields on fixed physical integration realizations. At each Diffrax vecto
 evaluation it projects the requested physical field rate onto the model tangent space.
 `NeuralTangentSolvePolicy("rectangular")` uses direct weighted least squares;
 `"gram"` solves the damped empirical Gram system and may use a prepared positive
-preconditioner.
+preconditioner. The certified implicit adjoint solves the self-adjoint damped normal
+system with `adjoint_linear_policy`: by default the Gram policy, or for the
+rectangular formulation PCG with positive damping and MINRES without damping.
 
 The metric realization is frozen for the complete Diffrax solve. Resampling at
 internal Runge--Kutta stages would make the parameter vector field stochastic and

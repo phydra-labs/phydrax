@@ -16,7 +16,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -33,6 +34,7 @@ from ..linalg.eigen import (
     ShiftInvertTransform,
     StandardTransform,
 )
+from ..typing import parse
 from ._availability import import_backend_module, probe_backend
 from ._types import (
     AbstractExternalBackend,
@@ -104,7 +106,7 @@ class SLEPcSTOptions(StrictModule):
         pc_type: str,
         factor_solver_type: str | None = None,
         options_prefix: str | None = None,
-    ):
+    ) -> None:
         if st_type not in ("sinvert", "cayley"):
             raise ValueError("st_type must be 'sinvert' or 'cayley'.")
         ksp = str(ksp_type)
@@ -144,7 +146,7 @@ class SLEPcEigenPolicy(StrictModule):
         subspace_dimension: int | None = None,
         st_options: SLEPcSTOptions | None = None,
         failure_mode: SLEPcFailureMode = "status",
-    ):
+    ) -> None:
         selected = (
             GeneralEigenSelection("largest-magnitude", count=1)
             if selection is None
@@ -160,8 +162,7 @@ class SLEPcEigenPolicy(StrictModule):
             raise TypeError("transform must be a general eigen transform.")
         if not isinstance(tolerances, GeneralEigenTolerancePolicy):
             raise TypeError("tolerance must be a GeneralEigenTolerancePolicy.")
-        if operator_mode not in ("shell", "csr"):
-            raise ValueError("operator_mode must be 'shell' or 'csr'.")
+        operator_mode = parse(operator_mode, SLEPcOperatorMode, "operator_mode")
         iterations = int(maximum_iterations)
         dimension = None if subspace_dimension is None else int(subspace_dimension)
         if iterations < 1:
@@ -170,8 +171,7 @@ class SLEPcEigenPolicy(StrictModule):
             raise ValueError("subspace_dimension must be at least two or None.")
         if st_options is not None and not isinstance(st_options, SLEPcSTOptions):
             raise TypeError("st_options must be SLEPcSTOptions or None.")
-        if failure_mode not in ("status", "error"):
-            raise ValueError("failure_mode must be 'status' or 'error'.")
+        failure_mode = parse(failure_mode, SLEPcFailureMode, "failure_mode")
         self.selection = selected
         self.transform = transformed
         self.tolerance = tolerances
@@ -742,7 +742,7 @@ def _prepare_numeric(
 
 
 class _ShellMatrixContext:
-    def __init__(self, operator: AbstractLinearOperator):
+    def __init__(self, operator: AbstractLinearOperator) -> None:
         self.operator = operator
         self.action_count = 0
         self.host_to_device_bytes = 0
@@ -801,8 +801,7 @@ def _create_shell_matrix(PETSc: Any, operator: AbstractLinearOperator) -> tuple[
 
 
 def _create_csr_matrix(PETSc: Any, operator: AbstractLinearOperator) -> tuple[Any, int]:
-    _require_sparse(operator, "operator")
-    storage = operator.sparse_storage()
+    storage = _require_sparse(operator, "operator").sparse_storage()
     if not storage.canonical or not storage.sorted_indices:
         raise ValueError("SLEPc CSR mode requires canonical sorted CSR storage.")
     values = np.asarray(storage.values, dtype=PETSc.ScalarType)
@@ -1066,11 +1065,14 @@ def _validate_two_sided_operator(operator: AbstractLinearOperator, name: str, /)
         )
 
 
-def _require_sparse(operator: AbstractLinearOperator, name: str, /) -> None:
+def _require_sparse(
+    operator: AbstractLinearOperator, name: str, /
+) -> AbstractSparseLinearOperator:
     if not isinstance(operator, AbstractSparseLinearOperator):
         raise TypeError(
             f"SLEPc operator_mode='csr' requires {name} to be an AbstractSparseLinearOperator."
         )
+    return operator
 
 
 def _validate_plan_problem(plan: SLEPcEigenPlan, problem: GeneralEigenproblem, /) -> None:

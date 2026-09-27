@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -31,7 +32,7 @@ class CausalTimeSlabSchedule(StrictModule, NonTrainableState):
         overlap_fraction: float = 0.0,
         causal_strength: float = 1.0,
         schedule_id: str = "causal-time-slabs",
-    ):
+    ) -> None:
         values = np.asarray(boundaries, dtype=np.float64)
         if values.ndim != 1 or values.size < 2 or np.any(~np.isfinite(values)):
             raise ValueError("boundaries must contain at least two finite times.")

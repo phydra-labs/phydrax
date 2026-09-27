@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._document_resource import decode_json_resource
 from ..._external_resource import (
@@ -105,7 +106,7 @@ class AstrodynamicsDataStore(StrictModule, NonTrainableState):
     root: str = eqx.field(static=True)
     store_id: str = eqx.field(static=True)
 
-    def __init__(self, root: str | Path, /):
+    def __init__(self, root: str | Path, /) -> None:
         path = Path(root).expanduser().resolve()
         if not path.is_dir():
             raise ValueError(
@@ -158,7 +159,7 @@ class AstronomyCoefficientTable(StrictModule, NonTrainableState):
         coefficients: dict[str, object],
         provenance: AstrodynamicsDataProvenance,
         /,
-    ):
+    ) -> None:
         names = tuple(sorted(str(name) for name in coefficients))
         values = tuple(
             jax.lax.stop_gradient(jnp.asarray(coefficients[name], dtype=jnp.float64))
@@ -270,7 +271,7 @@ def _store(store: AstrodynamicsDataStore | None, /) -> AstrodynamicsDataStore:
 
 def _payload(
     name: str, store: AstrodynamicsDataStore | None, /
-) -> tuple[dict[str, object], ArtifactManifest]:
+) -> tuple[dict[str, Any], ArtifactManifest]:
     manifest = ASTRONOMY_ASSET_MANIFESTS[name]
     pinned = _store(store).resolve(name, manifest)
     resource = bounded_resource_from_bytes(

@@ -14,7 +14,8 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...dynamics import DiscreteStepContext, TimeGrid
@@ -161,7 +162,7 @@ class ControlledTransitionProblem(StrictModule):
         terminal_cost: TerminalCost,
         args: Any = None,
         problem_id: str,
-    ):
+    ) -> None:
         if not callable(transition):
             raise TypeError("transition must be callable.")
         if not isinstance(time_grid, TimeGrid):
@@ -216,7 +217,7 @@ class PreparedControlledNoise(StrictModule):
         independence_labels: ArrayLike,
         noise_shape: Sequence[int],
         time_grid: TimeGrid,
-    ):
+    ) -> None:
         if not isinstance(time_grid, TimeGrid):
             raise TypeError("time_grid must be a TimeGrid.")
         noises = _shape(noise_shape, "noise_shape")
@@ -351,7 +352,7 @@ class ControlledPathBatch(StrictModule):
         terminal_costs: ArrayLike,
         returns: ArrayLike,
         policy_id: str,
-    ):
+    ) -> None:
         if not isinstance(problem, ControlledTransitionProblem):
             raise TypeError("problem must be a ControlledTransitionProblem.")
         if not isinstance(prepared_noise, PreparedControlledNoise):
@@ -470,7 +471,7 @@ class MonteCarloEvidence(StrictModule):
         risk_kind: str,
         sample_role: SampleRole,
         return_bounds: tuple[float, float] | None,
-    ):
+    ) -> None:
         scalar_fields = {}
         for name, value in (
             ("valid_path_count", valid_path_count),

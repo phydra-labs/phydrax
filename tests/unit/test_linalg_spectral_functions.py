@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -14,7 +17,7 @@ la = phx.linalg
 eigen = la.eigen
 
 
-def _self_adjoint_properties(*, positive_definite=False):
+def _self_adjoint_properties(*, positive_definite: Any = False) -> Any:
     evidence = {"self_adjoint": "construction"}
     if positive_definite:
         evidence.update(
@@ -26,11 +29,12 @@ def _self_adjoint_properties(*, positive_definite=False):
     return la.OperatorProperties(
         self_adjoint=True,
         positive_definite=positive_definite,
+        # ty: ignore[invalid-argument-type]
         evidence=evidence,
     )
 
 
-def _standard_problem(matrix):
+def _standard_problem(matrix: Any) -> Any:
     return eigen.Eigenproblem(
         la.DenseLinearOperator(
             matrix,
@@ -39,7 +43,7 @@ def _standard_problem(matrix):
     )
 
 
-def _generalized_problem(operator_matrix, metric_matrix):
+def _generalized_problem(operator_matrix: Any, metric_matrix: Any) -> Any:
     return eigen.GeneralizedEigenproblem(
         la.DenseLinearOperator(
             operator_matrix,
@@ -52,7 +56,7 @@ def _generalized_problem(operator_matrix, metric_matrix):
     )
 
 
-def _matrix_free_standard_problem(matrix):
+def _matrix_free_standard_problem(matrix: Any) -> Any:
     space = la.ArraySpace((matrix.shape[-1],), dtype=matrix.dtype)
     return eigen.Eigenproblem(
         la.FunctionLinearOperator(
@@ -64,7 +68,7 @@ def _matrix_free_standard_problem(matrix):
     )
 
 
-def _matrix_free_generalized_problem(operator_matrix, metric_matrix):
+def _matrix_free_generalized_problem(operator_matrix: Any, metric_matrix: Any) -> Any:
     space = la.ArraySpace(
         (operator_matrix.shape[-1],),
         dtype=operator_matrix.dtype,
@@ -85,7 +89,9 @@ def _matrix_free_generalized_problem(operator_matrix, metric_matrix):
     )
 
 
-def test_polynomial_spectral_operator_matches_direct_matrix_polynomial_and_reuses_spectrum():
+def test_polynomial_spectral_operator_matches_direct_matrix_polynomial_and_reuses_spectrum() -> (
+    None
+):
     matrix = jnp.asarray(
         [
             [2.0, 0.4, 0.0, 0.0],
@@ -114,7 +120,7 @@ def test_polynomial_spectral_operator_matches_direct_matrix_polynomial_and_reuse
     assert result.provenance.spectrum_plan_id == prepared.plan.plan_id
 
 
-def test_fermi_dirac_values_and_trainable_parameters_match_scalar_reference():
+def test_fermi_dirac_values_and_trainable_parameters_match_scalar_reference() -> None:
     diagonal = jnp.asarray([-2.0, -0.5, 1.0, 3.0])
     chemical_potential = jnp.asarray(0.3)
     temperature = jnp.asarray(0.7)
@@ -134,7 +140,7 @@ def test_fermi_dirac_values_and_trainable_parameters_match_scalar_reference():
     assert jnp.allclose(result.trace, jnp.sum(reference), atol=1e-12)
     policy = eigen.SelfAdjointSpectralOperatorPolicy(differentiation="frechet")
 
-    def trace(current_chemical_potential, current_temperature):
+    def trace(current_chemical_potential: Any, current_temperature: Any) -> Any:
         return eigen.self_adjoint_spectral_operator(
             _standard_problem(jnp.diag(diagonal)),
             eigen.FermiDiracSpectralFunction(
@@ -177,8 +183,8 @@ def test_fermi_dirac_values_and_trainable_parameters_match_scalar_reference():
     (_standard_problem, _matrix_free_standard_problem),
 )
 def test_loewner_derivative_is_finite_at_repeated_eigenvalues_and_matches_finite_difference(
-    problem_factory,
-):
+    problem_factory: Any,
+) -> None:
     matrix = jnp.asarray(
         [
             [1.0, 0.0, 0.1, 0.0],
@@ -199,7 +205,7 @@ def test_loewner_derivative_is_finite_at_repeated_eigenvalues_and_matches_finite
     coefficient_tangent = jnp.asarray([0.1, -0.05, 0.03, -0.01])
     policy = eigen.SelfAdjointSpectralOperatorPolicy(differentiation="frechet")
 
-    def operator(current_matrix, current_coefficients):
+    def operator(current_matrix: Any, current_coefficients: Any) -> Any:
         return eigen.self_adjoint_spectral_operator(
             problem_factory(current_matrix),
             eigen.PolynomialSpectralFunction(current_coefficients),
@@ -258,8 +264,8 @@ def test_loewner_derivative_is_finite_at_repeated_eigenvalues_and_matches_finite
     (_generalized_problem, _matrix_free_generalized_problem),
 )
 def test_generalized_loewner_derivative_and_density_include_metric_tangent(
-    problem_factory,
-):
+    problem_factory: Any,
+) -> None:
     operator = jnp.diag(jnp.asarray([1.0, 4.0, 12.0, 28.0]))
     metric = jnp.diag(jnp.asarray([1.0, 2.0, 3.0, 4.0]))
     operator_tangent = jnp.asarray(
@@ -281,7 +287,7 @@ def test_generalized_loewner_derivative_and_density_include_metric_tangent(
     function = eigen.FermiDiracSpectralFunction(jnp.asarray(2.0), jnp.asarray(0.8))
     policy = eigen.SelfAdjointSpectralOperatorPolicy(differentiation="frechet")
 
-    def outputs(current_operator, current_metric):
+    def outputs(current_operator: Any, current_metric: Any) -> Any:
         result = eigen.self_adjoint_spectral_operator(
             problem_factory(current_operator, current_metric),
             function,
@@ -311,12 +317,12 @@ def test_generalized_loewner_derivative_and_density_include_metric_tangent(
     assert jnp.allclose(tangent[1], finite_difference[1], rtol=5e-6, atol=5e-7)
 
 
-def test_zeroth_power_has_an_exact_finite_zero_frechet_derivative_at_zero():
+def test_zeroth_power_has_an_exact_finite_zero_frechet_derivative_at_zero() -> None:
     matrix = jnp.diag(jnp.asarray([0.0, 2.0, 5.0]))
     perturbation = jnp.asarray([[0.2, -0.1, 0.0], [-0.1, 0.3, 0.2], [0.0, 0.2, -0.4]])
     policy = eigen.SelfAdjointSpectralOperatorPolicy(differentiation="frechet")
 
-    def operator(current):
+    def operator(current: Any) -> Any:
         return eigen.self_adjoint_spectral_operator(
             _standard_problem(current),
             eigen.FractionalPowerSpectralFunction(0.0),
@@ -330,7 +336,7 @@ def test_zeroth_power_has_an_exact_finite_zero_frechet_derivative_at_zero():
     assert jnp.array_equal(tangent, jnp.zeros_like(tangent))
 
 
-def test_builtin_spectral_functions_match_scipy_references():
+def test_builtin_spectral_functions_match_scipy_references() -> None:
     matrix = jnp.asarray(
         [
             [2.0, 0.3, 0.0],
@@ -365,7 +371,7 @@ def test_builtin_spectral_functions_match_scipy_references():
         assert jnp.allclose(result.operator, reference, rtol=1e-10, atol=1e-10)
 
 
-def test_invalid_spectral_domains_report_status_without_clipping():
+def test_invalid_spectral_domains_report_status_without_clipping() -> None:
     matrix = jnp.diag(jnp.asarray([-1.0, 1.0, 3.0]))
     logarithm = eigen.self_adjoint_spectral_operator(
         _standard_problem(matrix),
@@ -388,7 +394,9 @@ def test_invalid_spectral_domains_report_status_without_clipping():
     assert not bool(pole.diagnostics.domain_valid)
 
 
-def test_batched_spectral_functions_preserve_batch_axes_mixed_status_and_loewner_derivatives():
+def test_batched_spectral_functions_preserve_batch_axes_mixed_status_and_loewner_derivatives() -> (
+    None
+):
     positive = jnp.asarray(
         [
             [[1.0, 0.1, 0.0], [0.1, 2.0, 0.2], [0.0, 0.2, 4.0]],
@@ -405,7 +413,7 @@ def test_batched_spectral_functions_preserve_batch_axes_mixed_status_and_loewner
     coefficient_tangent = jnp.asarray([0.1, -0.05, 0.03])
     policy = eigen.SelfAdjointSpectralOperatorPolicy(differentiation="frechet")
 
-    def outputs(matrices, polynomial_coefficients):
+    def outputs(matrices: Any, polynomial_coefficients: Any) -> Any:
         problem = eigen.Eigenproblem(
             la.DenseLinearOperator(
                 matrices,
@@ -477,7 +485,7 @@ def test_batched_spectral_functions_preserve_batch_axes_mixed_status_and_loewner
 
     mixed_policy = eigen.SelfAdjointSpectralOperatorPolicy(differentiation="frechet")
 
-    def mixed_operator(matrices):
+    def mixed_operator(matrices: Any) -> Any:
         problem = eigen.Eigenproblem(
             la.DenseLinearOperator(
                 matrices,

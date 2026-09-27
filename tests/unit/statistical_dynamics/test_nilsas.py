@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _affine_shadowing_case(*, memory_mode):
+def _affine_shadowing_case(*, memory_mode: Any) -> Any:
     system = phx.dynamics.DiscreteSystem(
         lambda coordinate, state, args: 0.5 * state + args["offset"],
         state_layout=phx.dynamics.StateLayout((1,)),
@@ -48,7 +51,7 @@ def _affine_shadowing_case(*, memory_mode):
     return result
 
 
-def test_nilsas_store_and_recompute_match_exact_discrete_gradient():
+def test_nilsas_store_and_recompute_match_exact_discrete_gradient() -> None:
     stored = _affine_shadowing_case(memory_mode="store")
     recomputed = _affine_shadowing_case(memory_mode="recompute")
     expected = 2.0 - 4.0 * (1.0 - 0.5**101) / 101.0
@@ -75,7 +78,7 @@ def test_nilsas_store_and_recompute_match_exact_discrete_gradient():
         )
 
 
-def test_nilsas_prepared_identity_binds_exact_trajectory_content():
+def test_nilsas_prepared_identity_binds_exact_trajectory_content() -> None:
     system = phx.dynamics.DiscreteSystem(
         lambda coordinate, state, args: 0.5 * state + args,
         state_layout=phx.dynamics.StateLayout((1,)),
@@ -115,7 +118,7 @@ def test_nilsas_prepared_identity_binds_exact_trajectory_content():
     assert first.prepared_id != second.prepared_id
 
 
-def test_nilsas_enforces_declared_flow_neutral_constraint():
+def test_nilsas_enforces_declared_flow_neutral_constraint() -> None:
     matrix = jnp.diag(jnp.asarray([0.8, 0.5]))
     system = phx.dynamics.DiscreteSystem(
         lambda coordinate, state, args: matrix @ state + args,
@@ -164,3 +167,19 @@ def test_nilsas_enforces_declared_flow_neutral_constraint():
     assert bool(result.successful)
     assert result.approximation == "finite-horizon-time-discrete-flow-adjoint-shadowing"
     np.testing.assert_allclose(result.neutral_constraint_residual, 0.0, atol=1e-10)
+
+
+def test_plan_stores_the_canonical_memory_mode_and_identity() -> None:
+    canonical = phx.statistical_dynamics.NILSASPlan(1, 0, 0, 2, 2, memory_mode="store")
+    equal = phx.statistical_dynamics.NILSASPlan(
+        1,
+        0,
+        0,
+        2,
+        2,
+        # ty: ignore[invalid-argument-type]
+        memory_mode=np.str_("store"),
+    )
+
+    assert type(equal.memory_mode) is str
+    assert equal.plan_id == canonical.plan_id

@@ -12,7 +12,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -51,7 +52,7 @@ class CompressibleKineticCaseIR(StrictModule):
         relaxation_rate: float,
         time_step: float,
         dtype: str = "float64",
-    ):
+    ) -> None:
         shape = tuple(int(value) for value in grid_shape)
         if len(shape) != 3 or any(value < 1 for value in shape):
             raise ValueError("grid_shape must contain three positive extents.")

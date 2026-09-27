@@ -8,7 +8,7 @@ from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 
@@ -39,7 +39,7 @@ class OperatorFunctionalConformal(StrictModule):
         *,
         case_axis: str,
         field_name: str,
-    ):
+    ) -> None:
         if not isinstance(calibrator, FunctionalConformal):
             raise TypeError("calibrator must be a FunctionalConformal.")
         axis = str(case_axis)
@@ -212,7 +212,7 @@ def _calibration_case_axis(
 
 
 def _require_nonempty_calibration_cases(
-    mask,
+    mask: ArrayLike,
     /,
     *,
     case_axes: tuple[str, ...],

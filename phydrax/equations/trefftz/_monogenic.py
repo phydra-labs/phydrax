@@ -13,7 +13,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -135,7 +136,7 @@ def _dirac_block(
     residual = 0.0 if product.size == 0 else float(np.max(np.abs(product)))
     operator_scale = 1.0 if matrix.size == 0 else float(np.max(np.abs(matrix)))
     basis_scale = max(float(np.max(np.abs(nullspace))), 1.0)
-    tolerance = (
+    tolerance = float(
         256.0
         * np.finfo(np.float64).eps
         * operator_scale
@@ -173,7 +174,7 @@ class MonogenicPolynomialBasis(AbstractTrefftzBasis):
         *,
         normalization: SimilarityNormalization | None = None,
         resources: TrefftzResourceBudget | None = None,
-    ):
+    ) -> None:
         if not isinstance(algebra, CliffordAlgebraSpec):
             raise TypeError("algebra must be a CliffordAlgebraSpec.")
         if not algebra.nondegenerate:
@@ -362,7 +363,7 @@ class LinearMonogenicField(_AbstractTrialSpaceField, StructuredDerivativeProvide
         channels: int = 1,
         initial_scale: float = 0.0,
         key: Array = DOC_KEY0,
-    ):
+    ) -> None:
         if not isinstance(basis, MonogenicPolynomialBasis):
             raise TypeError("basis must be MonogenicPolynomialBasis.")
         channels_ = int(channels)

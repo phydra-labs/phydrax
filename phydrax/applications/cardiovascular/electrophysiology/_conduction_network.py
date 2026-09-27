@@ -13,7 +13,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -70,7 +71,7 @@ class PurkinjeNetworkPlan(StrictModule, NonTrainableState):
         event_capacity: int,
         stimulus_capacity: int | None = None,
         collision_tolerance_ms: float = 1.0e-9,
-    ):
+    ) -> None:
         nodes = np.asarray(node_ids, dtype=np.int64)
         edges = np.asarray(edge_ids, dtype=np.int64)
         incidence = np.asarray(edge_nodes, dtype=np.int32)
@@ -379,7 +380,7 @@ def propagate_purkinje(
 
     def push(
         time: float, node: int, event_id: int, category: str, payload: tuple[int, ...]
-    ):
+    ) -> None:
         nonlocal insertion
         stable_node = int(node_ids[node]) if node >= 0 else np.iinfo(np.int64).max
         heapq.heappush(
@@ -438,7 +439,9 @@ def propagate_purkinje(
         last_processed = max(last_processed, time)
         return True
 
-    def schedule_wave(depart_time: float, source: int, edge_index: int, parent: int):
+    def schedule_wave(
+        depart_time: float, source: int, edge_index: int, parent: int
+    ) -> None:
         nonlocal next_event_id
         left, right = incidence[edge_index]
         target = int(right if source == left else left)

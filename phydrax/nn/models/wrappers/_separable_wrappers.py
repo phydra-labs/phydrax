@@ -10,7 +10,7 @@ from typing import Any, ClassVar, Literal
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.axes as cx
 from phydrax.domain import GridBatch, PointBatch
@@ -28,6 +28,7 @@ from ...._frozendict import frozendict
 from ...._model import AxisModelEvaluator, ModelBinding, StructuredDerivativeProvider
 from ...._strict import StrictModule
 from ....logging import emit
+from ....typing import PRNGKey
 from ..._base import _AbstractBaseModel, _AbstractStructuredInputModel
 from ..._contracts import compose_regularity, model_regularity, product_regularity
 from ..._keys import EvalKey, split_eval_key
@@ -66,7 +67,7 @@ class LatentExecutionPolicy(StrictModule):
             "auto", "dense_points", "coord_separable", "hybrid", "full_tensor"
         ] = "auto",
         fallback: Literal["warn", "error", "silent"] = "warn",
-    ):
+    ) -> None:
         self.topology = topology
         self.layout = layout
         self.fallback = fallback
@@ -83,7 +84,7 @@ class _LatentTopologyPlan(StrictModule):
         requested: Literal["grouped", "flat", "best_effort_flat", "strict_flat"],
         effective: Literal["grouped", "flat"],
         fallback_message: str | None = None,
-    ):
+    ) -> None:
         self.requested = requested
         self.effective = effective
         self.fallback_message = fallback_message
@@ -155,9 +156,9 @@ class LatentContractionModel(
         keep_outputs_complex: bool = False,
         execution_policy: LatentExecutionPolicy | None = None,
         scan: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         **factor_models: _AbstractBaseModel,
-    ):
+    ) -> None:
         r"""Create a latent contraction model.
 
         **Keyword arguments:**
@@ -905,7 +906,7 @@ class LatentContractionModel(
             out = jnp.squeeze(out, axis=-1)
         return out
 
-    def _split_key(self, key: EvalKey, /):
+    def _split_key(self, key: EvalKey, /) -> tuple[None, ...] | Array:
         return split_eval_key(key, len(self.factor_models))
 
 
@@ -953,8 +954,8 @@ class Separable(_AbstractStructuredInputModel):
         keep_outputs_complex: bool = False,
         split_input: int | None = None,
         scan: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         r"""Create a separable wrapper.
 
         **Keyword arguments:**
@@ -1240,7 +1241,7 @@ class Separable(_AbstractStructuredInputModel):
             group_models = self.models[model_index : model_index + clones]
             group_keys = keys[model_index : model_index + clones]
 
-            def group_latents(value):
+            def group_latents(value: Array) -> Array:
                 product = jnp.ones(
                     (self.latent_size, _get_size(self.out_size)),
                     dtype=jnp.result_type(value),
@@ -1353,5 +1354,5 @@ class Separable(_AbstractStructuredInputModel):
             out = jnp.squeeze(out, axis=-1)
         return out
 
-    def _split_key(self, key: EvalKey, /):
+    def _split_key(self, key: EvalKey, /) -> tuple[None, ...] | Array:
         return split_eval_key(key, len(self.models))

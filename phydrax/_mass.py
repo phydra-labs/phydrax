@@ -9,8 +9,8 @@ from typing import TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 from ._strict import StrictModule
 
@@ -29,7 +29,7 @@ class ExactMass(StrictModule):
 
     value: Array
 
-    def __init__(self, value: ArrayLike, /):
+    def __init__(self, value: ArrayLike, /) -> None:
         value_ = jnp.asarray(value, dtype=jnp.float64).reshape(())
         self.value = _nonnegative(value_, "Measure mass must be non-negative.")
 
@@ -50,7 +50,7 @@ class EstimatedMass(StrictModule):
         *,
         evaluations: int,
         provenance: str,
-    ):
+    ) -> None:
         value_ = jnp.asarray(value, dtype=jnp.float64).reshape(())
         uncertainty_ = jnp.asarray(uncertainty, dtype=jnp.float64).reshape(())
         message = "Estimated mass and uncertainty must be non-negative."
@@ -69,7 +69,7 @@ class UnknownMass(StrictModule):
 
     reason: str = eqx.field(static=True)
 
-    def __init__(self, reason: str, /):
+    def __init__(self, reason: str, /) -> None:
         if not reason:
             raise ValueError("UnknownMass.reason must be non-empty.")
         self.reason = reason

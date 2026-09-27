@@ -8,7 +8,8 @@ from collections.abc import Callable
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..linalg import (
@@ -40,7 +41,7 @@ class HolomorphicBundleFrame(StrictModule):
         /,
         *,
         frame_id: str,
-    ):
+    ) -> None:
         if not isinstance(convention, ComplexCoordinateConvention):
             raise TypeError("convention must be a ComplexCoordinateConvention.")
         if not callable(hermitian_metric):
@@ -81,7 +82,7 @@ class ChernConnection(StrictModule):
 
     frame: HolomorphicBundleFrame
 
-    def __init__(self, frame: HolomorphicBundleFrame, /):
+    def __init__(self, frame: HolomorphicBundleFrame, /) -> None:
         if not isinstance(frame, HolomorphicBundleFrame):
             raise TypeError("frame must be a HolomorphicBundleFrame.")
         self.frame = frame
@@ -160,7 +161,7 @@ class HolomorphicBundleTransition(StrictModule):
         target: HolomorphicBundleFrame,
         gauge: Callable[[Array], Array],
         /,
-    ):
+    ) -> None:
         if not isinstance(source, HolomorphicBundleFrame) or not isinstance(
             target, HolomorphicBundleFrame
         ):
@@ -181,7 +182,7 @@ class HolomorphicBundleTransition(StrictModule):
     ) -> Array:
         source_metric = self.source.metric(source_coordinates)
         target_metric = self.target.metric(target_coordinates)
-        gauge = jnp.asarray(self.gauge_function(source_coordinates))
+        gauge = jnp.asarray(self.gauge_function(jnp.asarray(source_coordinates)))
         transformed = jnp.swapaxes(jnp.conj(gauge), -1, -2) @ target_metric @ gauge
         return jnp.max(jnp.abs(source_metric - transformed), axis=(-2, -1))
 

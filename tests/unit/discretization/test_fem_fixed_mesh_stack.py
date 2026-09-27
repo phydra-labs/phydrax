@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _mesh():
+def _mesh() -> Any:
     vertices = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
     cells = jnp.asarray([[0, 1, 3], [1, 2, 3]], dtype=jnp.int32)
     return phx.discretization.CellMesh.from_triangles(
@@ -16,7 +19,7 @@ def _mesh():
     )
 
 
-def test_action_ir_and_packed_facet_routes_are_explicit():
+def test_action_ir_and_packed_facet_routes_are_explicit() -> None:
     mesh = _mesh()
     field = phx.discretization.FiniteElementFieldSpec(
         "u", phx.discretization.discontinuous_element("triangle", 1)
@@ -47,7 +50,7 @@ def test_action_ir_and_packed_facet_routes_are_explicit():
     assert dict(facet.neighbor_gathers)["u"].shape == dict(facet.gathers)["u"].shape
 
 
-def test_rectangular_element_tensor_has_exact_sparse_and_transpose_actions():
+def test_rectangular_element_tensor_has_exact_sparse_and_transpose_actions() -> None:
     matrices = jnp.asarray([[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]])
     inputs = jnp.asarray([[0, 1]], dtype=jnp.int32)
     outputs = jnp.asarray([[0, 1, 2]], dtype=jnp.int32)
@@ -60,7 +63,7 @@ def test_rectangular_element_tensor_has_exact_sparse_and_transpose_actions():
     assert jnp.allclose(operator.as_sparse_coordinate().mv(value), operator.mv(value))
 
 
-def test_conforming_p3_routes_and_tensor_partial_action():
+def test_conforming_p3_routes_and_tensor_partial_action() -> None:
     mesh = _mesh()
     element = phx.discretization.lagrange_element("triangle", 3)
     discretization = phx.discretization.FiniteElementPlan(
@@ -88,7 +91,7 @@ def test_conforming_p3_routes_and_tensor_partial_action():
     assert jnp.allclose(tensor.mv(jnp.arange(1.0, 5.0)), jnp.arange(1.0, 5.0))
 
 
-def test_block_graph_preconditioner_data_and_auxiliary_validity():
+def test_block_graph_preconditioner_data_and_auxiliary_validity() -> None:
     mesh = _mesh()
     p1 = phx.discretization.lagrange_element("triangle", 1)
     discretization = phx.discretization.FiniteElementPlan(
@@ -115,7 +118,7 @@ def test_block_graph_preconditioner_data_and_auxiliary_validity():
         mesh, phx.discretization.FiniteElementFieldSpec("s", p1)
     ).prepare()
 
-    def auxiliary(state, context):
+    def auxiliary(state: Any, context: Any) -> Any:
         return phx.equations.fem.FiniteElementAuxiliaryEvaluation(
             state + 1.0, successful=True, admissible=True
         )
@@ -132,11 +135,13 @@ def test_block_graph_preconditioner_data_and_auxiliary_validity():
     data = scalar_compiled.preconditioner_data()
 
     assert evaluated.valid
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(evaluated.trial_state, 1.0)
+    # ty: ignore[unresolved-attribute]
     assert data.diagonal.shape == (4,)
 
 
-def test_observation_restart_and_result_roundtrip(tmp_path):
+def test_observation_restart_and_result_roundtrip(tmp_path: Any) -> None:
     space = phx.linalg.ArraySpace((4,))
     observation = phx.equations.fem.CoordinateObservation(
         space, jnp.asarray([1, 3]), weights=jnp.asarray([2.0, 1.0])
@@ -171,7 +176,7 @@ def test_observation_restart_and_result_roundtrip(tmp_path):
     assert loaded.result_id == result.result_id
 
 
-def test_contact_search_and_cut_quadrature_are_deterministic():
+def test_contact_search_and_cut_quadrature_are_deterministic() -> None:
     collision = phx.discretization.contact
     source = phx.linalg.ArraySpace((6, 2), dtype=np.float64)
     slave_plan = collision.CollisionSurfacePlan(

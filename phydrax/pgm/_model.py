@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from math import prod
 from typing import Any, Literal, TypeAlias
 
@@ -12,7 +13,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -21,7 +24,7 @@ from ..graph import HypergraphBipartiteGraph, incidence_to_bipartite_graph
 from ._kernel import AbstractDiscreteFactorKernel, FactorKernelCapabilities
 
 
-def _integer_array(name: str, value: Any, /) -> Array:
+def _host_integer_array(name: str, value: Any, /) -> Array:
     array = jnp.asarray(value)
     if not jnp.issubdtype(array.dtype, jnp.integer):
         raise TypeError(f"{name} must contain integers.")
@@ -33,7 +36,14 @@ def _integer_array(name: str, value: Any, /) -> Array:
     return array.astype(jnp.int32)
 
 
-def _real_array(name: str, value: Any, /) -> Array:
+def _integer_array(name: str, value: Any, /) -> Array:
+    array = jnp.asarray(value)
+    if not jnp.issubdtype(array.dtype, jnp.integer):
+        raise TypeError(f"{name} must contain integers.")
+    return array
+
+
+def _host_real_array(name: str, value: Any, /) -> Array:
     array = jnp.asarray(value)
     if jnp.iscomplexobj(array):
         raise TypeError(f"{name} must be real-valued.")
@@ -43,6 +53,19 @@ def _real_array(name: str, value: Any, /) -> Array:
     if np.any(np.isnan(host)) or np.any(np.isposinf(host)):
         raise ValueError(f"{name} may contain finite values and -inf only.")
     return array
+
+
+def _real_array(name: str, value: Any, /) -> Array:
+    array = jnp.asarray(value)
+    if jnp.iscomplexobj(array):
+        raise TypeError(f"{name} must be real-valued.")
+    if not jnp.issubdtype(array.dtype, jnp.inexact):
+        array = array.astype("float64")
+    return eqx.error_if(
+        array,
+        jnp.any(jnp.isnan(array)) | jnp.any(jnp.isposinf(array)),
+        f"{name} may contain finite values and -inf only.",
+    )
 
 
 def _selection_tuple(
@@ -94,7 +117,7 @@ class DiscreteVariableGroup(StrictModule, NonTrainableState):
         *,
         num_states: int | ArrayLike,
         shape: tuple[int, ...] | None = None,
-    ):
+    ) -> None:
         if not isinstance(name, str) or not name:
             raise ValueError("Variable group name must be a non-empty string.")
         raw = jnp.asarray(num_states)
@@ -112,7 +135,7 @@ class DiscreteVariableGroup(StrictModule, NonTrainableState):
                     f"num_states shape must be {resolved_shape}; got {tuple(raw.shape)}."
                 )
             cardinalities = raw
-        cardinalities = _integer_array("num_states", cardinalities)
+        cardinalities = _host_integer_array("num_states", cardinalities)
         host = np.asarray(cardinalities)
         if np.any(host < 1):
             raise ValueError("Every variable cardinality must be at least one.")
@@ -146,9 +169,9 @@ class VariableSelection(StrictModule, NonTrainableState):
     def __init__(
         self,
         group: DiscreteVariableGroup | str,
-        indices: ArrayLike,
+        indices: ArrayLike | Sequence[int],
         /,
-    ):
+    ) -> None:
         if isinstance(group, DiscreteVariableGroup):
             name = group.name
         elif isinstance(group, str) and group:
@@ -156,7 +179,7 @@ class VariableSelection(StrictModule, NonTrainableState):
         else:
             raise TypeError("group must be a DiscreteVariableGroup or non-empty name.")
         self.group_name = name
-        self.indices = _integer_array("selection indices", indices).reshape((-1,))
+        self.indices = _host_integer_array("selection indices", indices).reshape((-1,))
 
     @classmethod
     def all(cls, group: DiscreteVariableGroup, /) -> VariableSelection:
@@ -181,9 +204,9 @@ class DenseTableFactorGroup(StrictModule, ParameterOwner):
         selections: Sequence[VariableSelection],
         log_potentials: ArrayLike,
         /,
-    ):
+    ) -> None:
         scope = _selection_tuple(selections)
-        values = _real_array("log_potentials", log_potentials)
+        values = _host_real_array("log_potentials", log_potentials)
         if values.ndim != len(scope) + 1:
             raise ValueError(
                 "Dense log potentials need one factor axis followed by one state axis per scope position."
@@ -215,15 +238,15 @@ class EnumeratedFactorGroup(StrictModule, ParameterOwner):
         configurations: ArrayLike,
         log_potentials: ArrayLike,
         /,
-    ):
+    ) -> None:
         scope = _selection_tuple(selections)
-        configs = _integer_array("configurations", configurations)
+        configs = _host_integer_array("configurations", configurations)
         if configs.ndim != 2 or configs.shape[1] != len(scope):
             raise ValueError("configurations must have shape (configuration, arity).")
         host_configs = np.asarray(configs)
         if len({tuple(row) for row in host_configs.tolist()}) != configs.shape[0]:
             raise ValueError("Enumerated configurations must be unique.")
-        values = _real_array("log_potentials", log_potentials)
+        values = _host_real_array("log_potentials", log_potentials)
         expected = (scope[0].size, configs.shape[0])
         if values.shape != expected:
             raise ValueError(
@@ -250,9 +273,11 @@ class IsingFactorGroup(StrictModule, ParameterOwner):
     weights: Array
     factor_id: str = eqx.field(static=True)
 
-    def __init__(self, selections: Sequence[VariableSelection], weights: ArrayLike, /):
+    def __init__(
+        self, selections: Sequence[VariableSelection], weights: ArrayLike, /
+    ) -> None:
         scope = _selection_tuple(selections)
-        values = _real_array("weights", weights).reshape((-1,))
+        values = _host_real_array("weights", weights).reshape((-1,))
         if not bool(np.all(np.isfinite(np.asarray(values)))):
             raise ValueError("Ising weights must be finite.")
         if values.shape != (scope[0].size,):
@@ -278,11 +303,11 @@ class PottsFactorGroup(StrictModule, ParameterOwner):
         selections: Sequence[VariableSelection],
         log_potentials: ArrayLike,
         /,
-    ):
+    ) -> None:
         scope = _selection_tuple(selections)
         if len(scope) not in (1, 2):
             raise ValueError("Potts factors must be unary or pairwise.")
-        values = _real_array("log_potentials", log_potentials)
+        values = _host_real_array("log_potentials", log_potentials)
         if values.ndim != len(scope) + 1 or values.shape[0] != scope[0].size:
             raise ValueError(
                 "Potts tables need one factor axis and one state axis per variable."
@@ -310,7 +335,7 @@ class LogicalFactorGroup(StrictModule, NonTrainableState):
         /,
         *,
         kind: Literal["or", "and"],
-    ):
+    ) -> None:
         parent_scope = tuple(parents)
         if not parent_scope:
             raise ValueError("Logical factors require at least one parent.")
@@ -334,9 +359,9 @@ class BinaryCardinalityFactorGroup(StrictModule, ParameterOwner):
         selections: Sequence[VariableSelection],
         log_count_potentials: ArrayLike,
         /,
-    ):
+    ) -> None:
         scope = _selection_tuple(selections)
-        values = _real_array("log_count_potentials", log_count_potentials)
+        values = _host_real_array("log_count_potentials", log_count_potentials)
         expected = (scope[0].size, len(scope) + 1)
         if values.shape != expected:
             raise ValueError(
@@ -365,7 +390,7 @@ class KernelFactorGroup(StrictModule, ParameterOwner):
         kernel: AbstractDiscreteFactorKernel,
         parameters: Any,
         /,
-    ):
+    ) -> None:
         scope = _selection_tuple(selections)
         if not isinstance(kernel, AbstractDiscreteFactorKernel):
             raise TypeError("kernel must implement AbstractDiscreteFactorKernel.")
@@ -513,7 +538,7 @@ class VariableStateValues(StrictModule):
     values: Array
     structure_id: str = eqx.field(static=True)
 
-    def __init__(self, values: ArrayLike, /, *, structure_id: str):
+    def __init__(self, values: ArrayLike, /, *, structure_id: str) -> None:
         array = jnp.asarray(values)
         if jnp.iscomplexobj(array):
             raise TypeError("variable-state values must be real-valued.")
@@ -523,6 +548,92 @@ class VariableStateValues(StrictModule):
             raise ValueError("structure_id must be non-empty.")
         self.values = array
         self.structure_id = structure_id
+
+
+def _readonly_int32(name: str, value: Any, /) -> npt.NDArray[np.int32]:
+    source = np.asarray(value)
+    if not np.issubdtype(source.dtype, np.integer):
+        raise TypeError(f"{name} must contain integers.")
+    if source.size and (
+        source.min() < np.iinfo(np.int32).min or source.max() > np.iinfo(np.int32).max
+    ):
+        raise ValueError(f"{name} values must fit in int32.")
+    result = np.asarray(source, dtype=np.int32, order="C").copy()
+    result.setflags(write=False)
+    return result
+
+
+@dataclass(frozen=True, slots=True, eq=False, init=False)
+class _FactorGraphHostTopology:
+    """Immutable host owner of shape- and routing-determining graph topology."""
+
+    structure_id: str
+    cardinalities: npt.NDArray[np.int32]
+    state_offsets: npt.NDArray[np.int32]
+    factor_scopes: tuple[npt.NDArray[np.int32], ...]
+
+    def __init__(
+        self,
+        structure_id: str,
+        cardinalities: Any,
+        state_offsets: Any,
+        factor_scopes: Sequence[Any],
+        /,
+    ) -> None:
+        if not isinstance(structure_id, str) or not structure_id:
+            raise ValueError("structure_id must be non-empty.")
+        cards = _readonly_int32("cardinalities", cardinalities)
+        offsets = _readonly_int32("state_offsets", state_offsets)
+        scopes = tuple(
+            _readonly_int32(f"factor_scopes[{index}]", scope)
+            for index, scope in enumerate(factor_scopes)
+        )
+        if cards.ndim != 1 or np.any(cards < 1):
+            raise ValueError("cardinalities must be a one-dimensional positive array.")
+        expected_offsets = np.concatenate(
+            (
+                np.zeros((1,), dtype=np.int64),
+                np.cumsum(cards, dtype=np.int64),
+            )
+        )
+        if (
+            offsets.ndim != 1
+            or offsets.shape != expected_offsets.shape
+            or not np.array_equal(offsets, expected_offsets)
+        ):
+            raise ValueError(
+                "state_offsets must be the cumulative offsets of cardinalities."
+            )
+        for scope in scopes:
+            if scope.ndim != 2:
+                raise ValueError("Every factor scope group must be two-dimensional.")
+            if scope.size and (np.any(scope < 0) or np.any(scope >= cards.size)):
+                raise ValueError("Factor scope variable indices must be in bounds.")
+
+        object.__setattr__(self, "structure_id", structure_id)
+        object.__setattr__(self, "cardinalities", cards)
+        object.__setattr__(self, "state_offsets", offsets)
+        object.__setattr__(self, "factor_scopes", scopes)
+
+    @property
+    def num_variable_states(self) -> int:
+        return int(self.state_offsets[-1]) if self.state_offsets.size else 0
+
+    def __eq__(self, other: object, /) -> bool:
+        if not isinstance(other, _FactorGraphHostTopology):
+            return NotImplemented
+        return self.structure_id == other.structure_id
+
+    def __hash__(self) -> int:
+        return hash(self.structure_id)
+
+    def __repr__(self) -> str:
+        return (
+            "_FactorGraphHostTopology("
+            f"structure_id={self.structure_id!r}, "
+            f"num_variables={self.cardinalities.size}, "
+            f"num_factor_groups={len(self.factor_scopes)})"
+        )
 
 
 class DiscreteFactorGraph(StrictModule):
@@ -537,6 +648,7 @@ class DiscreteFactorGraph(StrictModule):
     group_offsets: tuple[tuple[str, int, int], ...] = eqx.field(static=True)
     structure_id: str = eqx.field(static=True)
     factor_signatures: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    _host_topology: _FactorGraphHostTopology = eqx.field(static=True)
     parameter_signature: tuple[tuple[tuple[int, ...], str], ...] = eqx.field(static=True)
 
     def __init__(
@@ -544,7 +656,7 @@ class DiscreteFactorGraph(StrictModule):
         variable_groups: Sequence[DiscreteVariableGroup],
         factor_groups: Sequence[FactorGroup] = (),
         /,
-    ):
+    ) -> None:
         variables = tuple(variable_groups)
         factors = tuple(factor_groups)
         if any(not isinstance(group, DiscreteVariableGroup) for group in variables):
@@ -588,6 +700,7 @@ class DiscreteFactorGraph(StrictModule):
         )
         cardinalities_host = np.asarray(cardinalities, dtype=np.int32)
 
+        scope_hosts: list[np.ndarray] = []
         scopes: list[Array] = []
         signatures: list[tuple[int, ...]] = []
         factor_payloads: list[dict[str, Any]] = []
@@ -629,6 +742,7 @@ class DiscreteFactorGraph(StrictModule):
                     )
             _validate_factor_signature(group, signature)
             scopes.append(scope)
+            scope_hosts.append(scope_host)
             signatures.append(signature)
             count = factor_count(group)
             if count:
@@ -692,6 +806,12 @@ class DiscreteFactorGraph(StrictModule):
         self.topology = topology
         self.group_offsets = tuple(offsets)
         self.structure_id = structure_id
+        self._host_topology = _FactorGraphHostTopology(
+            structure_id,
+            cardinalities_host,
+            state_offsets,
+            scope_hosts,
+        )
         self.parameter_signature = tuple(
             _factor_parameter_signature(group) for group in factors
         )
@@ -706,11 +826,7 @@ class DiscreteFactorGraph(StrictModule):
 
     @property
     def num_variable_states(self) -> int:
-        return (
-            int(self.variable_state_offsets[-1])
-            if self.variable_state_offsets.size
-            else 0
-        )
+        return self._host_topology.num_variable_states
 
     def group_offset(self, name: str, /) -> tuple[int, int]:
         for group_name, start, stop in self.group_offsets:
@@ -818,7 +934,7 @@ def factor_group_dense_tables(
         values = group.log_count_potentials[:, counts]
     elif isinstance(group, KernelFactorGroup):
 
-        def score_configuration(configuration):
+        def score_configuration(configuration: Array) -> Array:
             # Preserve the public (..., factor_count, arity) kernel ABI.
             states = jnp.broadcast_to(configuration, (count, len(signature)))
             return group.kernel.log_scores(group.parameters, states)
@@ -846,8 +962,8 @@ def _dense_scores(tables: Array, states: Array, /) -> Array:
     arity = states.shape[-1]
     flat_states = states.reshape((-1, factor_count_, arity))
 
-    def one_batch(batch_states):
-        def one_factor(table, factor_states):
+    def one_batch(batch_states: Array) -> Array:
+        def one_factor(table: Array, factor_states: Array) -> Array:
             return table[tuple(factor_states)]
 
         return jax.vmap(one_factor)(tables, batch_states)
@@ -889,7 +1005,7 @@ def factor_group_scores(
         factor_count_ = counts.shape[-1]
         flat_counts = counts.reshape((-1, factor_count_))
 
-        def one_batch(batch_counts):
+        def one_batch(batch_counts: Array) -> Array:
             return group.log_count_potentials[
                 jnp.arange(factor_count_, dtype=jnp.int32),
                 batch_counts,
@@ -932,18 +1048,19 @@ def factor_graph_log_score(
         raise ValueError(
             f"assignments must end with variable axis {graph.num_variables}."
         )
-    integer_states = states.astype(jnp.int32)
+    support = factor_graph_contains(graph, states)
+    safe_states = jnp.where(support[..., jnp.newaxis], states, 0).astype(jnp.int32)
     score = jnp.zeros(states.shape[:-1], dtype=_graph_score_dtype(graph))
     for group_index, scope in enumerate(graph.factor_scopes):
-        scope_states = integer_states[..., scope]
+        scope_states = safe_states[..., scope]
         score = score + jnp.sum(
             factor_group_scores(graph, group_index, scope_states),
             axis=-1,
         )
-    return jnp.where(factor_graph_contains(graph, states), score, -jnp.inf)
+    return jnp.where(support, score, -jnp.inf)
 
 
-def _graph_score_dtype(graph: DiscreteFactorGraph, /):
+def _graph_score_dtype(graph: DiscreteFactorGraph, /) -> np.dtype:
     dtypes = []
     for group in graph.factor_groups:
         if isinstance(
@@ -1036,7 +1153,7 @@ def pack_evidence(
     leading_shape: tuple[int, ...] | None = None
     for group, (_, start, stop) in zip(graph.variable_groups, graph.group_offsets):
         array = _real_array(f"evidence[{group.name!r}]", values[group.name])
-        cards = np.asarray(group.flat_cardinalities)
+        cards = graph._host_topology.cardinalities[start:stop]
         if cards.size and np.all(cards == cards[0]):
             expected_tail = group.shape + (int(cards[0]),)
             if tuple(array.shape[-len(expected_tail) :]) != expected_tail:

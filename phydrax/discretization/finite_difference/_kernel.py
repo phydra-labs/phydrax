@@ -11,11 +11,13 @@ from typing import Any, cast, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 PatchExecutionKind: TypeAlias = Literal["vmap", "lax_map"]
@@ -41,7 +43,7 @@ class PatchKernelPlan(StrictModule, NonTrainableState):
         *,
         execution: PatchExecutionKind = "vmap",
         plan_id: str | None = None,
-    ):
+    ) -> None:
         shape = tuple(kernel_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("kernel_shape dimensions must be positive.")
@@ -51,8 +53,7 @@ class PatchKernelPlan(StrictModule, NonTrainableState):
         )
         if not functions or not all(callable(function) for function in functions):
             raise TypeError("kernel must contain one or more callables.")
-        if execution not in ("vmap", "lax_map"):
-            raise ValueError("Unknown patch execution kind.")
+        execution = parse(execution, PatchExecutionKind, "execution")
         identifier = (
             canonical_fingerprint(
                 {
@@ -85,7 +86,7 @@ class PreparedPatchKernel(StrictModule, NonTrainableState):
     offsets: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: PatchKernelPlan, input_shape: Sequence[int], /):
+    def __init__(self, plan: PatchKernelPlan, input_shape: Sequence[int], /) -> None:
         if not isinstance(plan, PatchKernelPlan):
             raise TypeError("plan must be a PatchKernelPlan.")
         shape = tuple(input_shape)
@@ -190,14 +191,13 @@ class OrderedPatchKernelPlan(StrictModule, NonTrainableState):
         *,
         direction: SweepDirection = "forward",
         plan_id: str | None = None,
-    ):
+    ) -> None:
         size = int(kernel_size)
         if size <= 0 or size % 2 == 0:
             raise ValueError("Ordered patch kernels require a positive odd kernel size.")
         if not callable(kernel):
             raise TypeError("kernel must be callable.")
-        if direction not in ("forward", "backward"):
-            raise ValueError("Unknown sweep direction.")
+        direction = parse(direction, SweepDirection, "direction")
         identifier = (
             canonical_fingerprint(
                 {

@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -27,11 +28,27 @@ from ...discretization.spectral._dealias import (
     PreparedDealiasingPlan,
 )
 from ...discretization.spectral._space import TensorSpectralDiscretization
+from ...typing import parse
 from ._background import FLRWBackground
 from ._scales import CODE_COSMOLOGY_SCALE, CosmologyScaleContract
 
 
 WaveDarkMatterDifferentiability: TypeAlias = Literal["smooth_fixed_grid", "none"]
+_WaveStepCarry: TypeAlias = tuple[Array, Array, Array, Array, tuple[Array, ...]]
+_WaveStepOutput: TypeAlias = tuple[
+    tuple[Array, ...],
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 
 class WaveDarkMatterState(StrictModule):
@@ -70,7 +87,7 @@ class WaveDarkMatterStepPolicy(StrictModule, NonTrainableState):
         zero_mode_absolute_tolerance: float = 1.0e-10,
         relative_amplitude_floor: float = 1.0e-10,
         differentiability: WaveDarkMatterDifferentiability = "smooth_fixed_grid",
-    ):
+    ) -> None:
         values = (
             float(maximum_phase_radians),
             float(minimum_de_broglie_cells),
@@ -89,8 +106,9 @@ class WaveDarkMatterStepPolicy(StrictModule, NonTrainableState):
             or not 0.0 < values[5] < 1.0
         ):
             raise ValueError("Wave-dark-matter step-policy values are invalid.")
-        if differentiability not in ("smooth_fixed_grid", "none"):
-            raise ValueError("Unknown wave-dark-matter differentiation policy.")
+        differentiability = parse(
+            differentiability, WaveDarkMatterDifferentiability, "differentiability"
+        )
         (
             self.maximum_phase_radians,
             self.minimum_de_broglie_cells,
@@ -221,7 +239,7 @@ class WaveDarkMatterPlan(StrictModule, NonTrainableState):
         step_policy: WaveDarkMatterStepPolicy | None = None,
         dealiasing: AbstractDealiasingPlan | None = None,
         scale: CosmologyScaleContract = CODE_COSMOLOGY_SCALE,
-    ):
+    ) -> None:
         mass = float(boson_mass)
         gravity = float(gravitational_constant)
         hbar = float(reduced_planck_constant)
@@ -338,7 +356,7 @@ class PreparedPeriodicWaveDarkMatter(StrictModule, NonTrainableState):
         dealiasing: PreparedDealiasingPlan,
         background: FLRWBackground,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, WaveDarkMatterPlan):
             raise TypeError("plan must be WaveDarkMatterPlan.")
         if not isinstance(discretization, TensorSpectralDiscretization):
@@ -489,10 +507,19 @@ class PreparedPeriodicWaveDarkMatter(StrictModule, NonTrainableState):
             require_schedule_start=True,
         )
 
+    def _tensor_evaluation(self, /) -> TensorSpectralDiscretization:
+        evaluation = self.dealiasing.evaluation
+        # Dealiasing retains this tensor grid, and prepared pairs share one family.
+        if not (isinstance(evaluation, TensorSpectralDiscretization)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(evaluation, TensorSpectralDiscretization)."
+            )
+        return evaluation
+
     def _evaluation_wavefunction(self, psi: Array, /) -> tuple[Array, Array]:
         coefficients = self.discretization.project(psi)
         embedded = self.dealiasing.embed(coefficients)
-        values = self.dealiasing.evaluation.reconstruct(embedded, real_output=False)
+        values = self._tensor_evaluation().reconstruct(embedded, real_output=False)
         return coefficients, values
 
     def _poisson_modal(self, psi: Array, /) -> tuple[Array, Array, Array, Array, Array]:
@@ -795,7 +822,7 @@ class PreparedPeriodicWaveDarkMatter(StrictModule, NonTrainableState):
         /,
     ) -> tuple[Array, Array]:
         _, evaluation_psi, _, _, potential_coefficients = self._poisson_modal(psi)
-        potential = self.dealiasing.evaluation.reconstruct(
+        potential = self._tensor_evaluation().reconstruct(
             self.dealiasing.embed(potential_coefficients),
             real_output=True,
         )
@@ -846,7 +873,7 @@ class PreparedPeriodicWaveDarkMatter(StrictModule, NonTrainableState):
     def _smooth_final_psi(self, initial_psi: Array, /) -> Array:
         intervals = jnp.stack((self.scale_factors[:-1], self.scale_factors[1:]), axis=-1)
 
-        def step(psi, interval):
+        def step(psi: Array, interval: Array) -> tuple[Array, None]:
             candidate, _, _ = self._candidate(psi, interval[0], interval[1])
             return candidate, None
 
@@ -873,7 +900,9 @@ class PreparedPeriodicWaveDarkMatter(StrictModule, NonTrainableState):
         initial_norm = initial_snapshot[1]
         intervals = jnp.stack((self.scale_factors[:-1], self.scale_factors[1:]), axis=-1)
 
-        def step(carry, interval):
+        def step(
+            carry: _WaveStepCarry, interval: Array
+        ) -> tuple[_WaveStepCarry, _WaveStepOutput]:
             current_psi, current_scale, active, accepted_count, current_snapshot = carry
             candidate_psi, kinetic_phase, potential_phase = self._candidate(
                 current_psi,

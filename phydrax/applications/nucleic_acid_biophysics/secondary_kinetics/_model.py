@@ -9,6 +9,7 @@ import json
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import SupportsFloat
 
 from ...._fingerprint import canonical_fingerprint
 from ....qualification import ReferenceArtifactManifest
@@ -26,7 +27,7 @@ from ._state import SecondaryStructureState
 _AVOGADRO = 6.02214076e23
 
 
-def _positive(value: float, name: str) -> float:
+def _positive(value: SupportsFloat, name: str) -> float:
     result = float(value)
     if not math.isfinite(result) or result <= 0:
         raise ValueError(f"{name} must be finite and positive.")
@@ -68,7 +69,7 @@ class AssociationConvention:
         concentration_unit: UnitDefinition = MOLE_PER_CUBIC_METER,
         volume: float | None = None,
         volume_unit: UnitDefinition = CUBIC_METER,
-    ):
+    ) -> None:
         concentration = _positive(
             standard_concentration
             * conversion_factor(concentration_unit, MOLE_PER_CUBIC_METER),
@@ -287,7 +288,7 @@ class SecondaryEnergyModel:
             dict(self.internal_energies),
         )
 
-        def required(table, key, kind):
+        def required(table: Mapping[str, float], key: str, kind: str) -> float:
             if key not in table:
                 raise ValueError(f"Missing source-pinned {kind} parameter for {key}.")
             return table[key]
@@ -348,7 +349,7 @@ class SecondaryRateLaw:
     association_prefactor: float
     time_unit: UnitDefinition = SECOND
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.name not in ("metropolis", "symmetric_barrier", "association_metropolis"):
             raise ValueError("Unknown secondary kinetic rate law.")
         _positive(self.unimolecular_prefactor, "unimolecular prefactor")

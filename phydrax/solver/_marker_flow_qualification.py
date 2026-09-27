@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -37,7 +38,7 @@ class MarkerFlowQualificationProfile(StrictModule, NonTrainableState):
         require_stochastic: bool = False,
         require_contact: bool = False,
         require_interface: bool = False,
-    ):
+    ) -> None:
         family_ = str(family)
         values = np.asarray(
             (
@@ -122,7 +123,7 @@ class MarkerFlowQualificationPlan(StrictModule, NonTrainableState):
     profile: MarkerFlowQualificationProfile
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, profile: MarkerFlowQualificationProfile, /):
+    def __init__(self, profile: MarkerFlowQualificationProfile, /) -> None:
         if not isinstance(profile, MarkerFlowQualificationProfile):
             raise TypeError("profile must be MarkerFlowQualificationProfile.")
         self.profile = profile

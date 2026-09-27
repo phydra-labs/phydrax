@@ -2,8 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
 import platform
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -12,7 +14,7 @@ import phydrax as phx
 from benchmarks._runtime import measure_repeated, measure_synchronized
 
 
-def _bridge(shape):
+def _bridge(shape: Any) -> Any:
     dimension = len(shape)
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(count) for count in shape),
@@ -21,7 +23,7 @@ def _bridge(shape):
     return phx.discretization.StructuredCochainBridge(grid)
 
 
-def _measure_case(shape, polarization):
+def _measure_case(shape: Any, polarization: Any) -> Any:
     bridge = _bridge(shape)
     source = phx.solver.maxwell.MaxwellElectricCurrentSourcePlan(
         jnp.asarray([0]),
@@ -69,7 +71,7 @@ def _measure_case(shape, polarization):
     }
 
 
-def main():
+def main() -> None:
     rows = (
         _measure_case((8, 8, 8), "full_3d"),
         _measure_case((64, 64), "tez"),

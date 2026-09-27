@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._flow_matching_metric import AbstractFlowMatchingMetric
@@ -35,7 +36,7 @@ class OperatorFlowMatchingMetric(AbstractFlowMatchingMetric, NonTrainableState):
         channel_metric: ArrayLike | None = None,
         precision: GeometryPrecisionPolicy | None = None,
         metric_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(query, FunctionSamples):
             raise TypeError("query must be FunctionSamples.")
         if not isinstance(output_spec, OperatorOutputSpec):

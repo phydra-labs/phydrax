@@ -5,18 +5,20 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..imaging import ImagePlaneSupport
 from ..sparse import EdgeRelation, RelationExecutionPlan
+from ..typing import parse
 
 
 RASTER_INACTIVE = 0
@@ -25,8 +27,8 @@ RASTER_CLIPPED = 2
 RASTER_SUPPORT_OVERFLOW = 3
 RASTER_INVALID = 4
 
-GaussianRasterKind = Literal["reference", "tiled"]
-GaussianRasterAccumulation = Literal["fast", "deterministic", "compensated"]
+GaussianRasterKind: TypeAlias = Literal["reference", "tiled"]
+GaussianRasterAccumulation: TypeAlias = Literal["fast", "deterministic", "compensated"]
 
 
 class GaussianRasterExecutionPlan(StrictModule, NonTrainableState):
@@ -46,16 +48,14 @@ class GaussianRasterExecutionPlan(StrictModule, NonTrainableState):
         maximum_tile_routes: int | None = None,
         accumulation: GaussianRasterAccumulation = "deterministic",
     ) -> None:
-        if kind not in ("reference", "tiled"):
-            raise ValueError("kind must be 'reference' or 'tiled'.")
+        kind = parse(kind, GaussianRasterKind, "kind")
         tiles = tuple(tile_shape)
         if len(tiles) != 2 or any(size <= 0 for size in tiles):
             raise ValueError("tile_shape must contain two positive sizes.")
         capacity = None if maximum_tile_routes is None else int(maximum_tile_routes)
         if capacity is not None and capacity <= 0:
             raise ValueError("maximum_tile_routes must be positive when provided.")
-        if accumulation not in ("fast", "deterministic", "compensated"):
-            raise ValueError("Unknown Gaussian raster accumulation policy.")
+        accumulation = parse(accumulation, GaussianRasterAccumulation, "accumulation")
         self.kind = kind
         self.tile_shape = tiles
         self.maximum_tile_routes = capacity
@@ -348,7 +348,9 @@ class GaussianRasterizer(StrictModule, NonTrainableState):
         dtype = contributions.dtype
         image = jnp.zeros((height, width), dtype=dtype)
 
-        def deposit_one(current: Array, particle: tuple[Array, ...]):
+        def deposit_one(
+            current: Array, particle: tuple[Array, Array, Array, Array]
+        ) -> tuple[Array, None]:
             values, row, column, valid = particle
             indices = jnp.clip(row, 0, height - 1) * width + jnp.clip(
                 column, 0, width - 1

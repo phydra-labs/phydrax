@@ -202,6 +202,7 @@ def mesh_region_from_source(
     if recenter:
         vertices = vertices - 0.5 * (np.min(vertices, axis=0) + np.max(vertices, axis=0))
     feature_id_ = feature_id or _canonical_feature_id("mesh-region", vertices, faces)
+    # ty: ignore[invalid-argument-type]
     return MeshRegion(vertices, faces, feature_id=feature_id_)
 
 
@@ -217,6 +218,7 @@ def planar_region_from_triangles(
 
     vertices_, faces_ = _canonical_triangle_arrays(vertices, faces)
     coordinates = vertices_[:, :2]
+    # ty: ignore[invalid-argument-type]
     topology = TriangleTopology(faces_, num_vertices=coordinates.shape[0])
     if topology.num_face_components != 1:
         raise ValueError("Planar mesh must represent one connected polygonal region.")
@@ -260,6 +262,7 @@ def planar_region_from_triangles(
         compact_vertices,
         loop_offsets,
     )
+    # ty: ignore[invalid-argument-type]
     return PlanarMeshRegion(compact_vertices, loops, feature_id=feature_id_)
 
 

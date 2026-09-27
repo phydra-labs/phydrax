@@ -4,9 +4,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax.domain import AbstractGeometry, DomainFunction
@@ -14,6 +15,10 @@ from phydrax.domain import AbstractGeometry, DomainFunction
 from ..._strict import StrictModule
 from ...metrix import HorizontalCometric, sub_laplacian as _sub_laplacian, VolumeDensity
 from ._domain_ops import _factor_and_dim, _resolve_var, grad
+
+
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
 
 
 def _horizontal_contract(
@@ -54,7 +59,7 @@ class _HorizontalGradientCallable(StrictModule):
         deps: tuple[str, ...],
         variable: str,
         /,
-    ):
+    ) -> None:
         positions = {label: position for position, label in enumerate(deps)}
         self.differential = differential
         self.cometric = cometric
@@ -63,7 +68,7 @@ class _HorizontalGradientCallable(StrictModule):
         )
         self.coordinate_position = positions[variable]
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         differential = jnp.asarray(
             self.differential.func(
                 *[args[position] for position in self.differential_positions],
@@ -94,7 +99,7 @@ class _SubLaplacianCallable(StrictModule):
         deps: tuple[str, ...],
         variable: str,
         /,
-    ):
+    ) -> None:
         positions = {label: position for position, label in enumerate(deps)}
         self.function = function
         self.cometric = cometric
@@ -103,8 +108,8 @@ class _SubLaplacianCallable(StrictModule):
         self.variable_argument = function.deps.index(variable)
         self.coordinate_position = positions[variable]
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
-        def field(coordinates):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
+        def field(coordinates: Array) -> Array:
             function_args = list(args[position] for position in self.argument_positions)
             function_args[self.variable_argument] = coordinates
             return self.function.func(*function_args, key=key, **kwargs)

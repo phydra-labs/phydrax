@@ -57,7 +57,7 @@ class PreparedUnstructuredConservativeRemap(StrictModule, NonTrainableState):
         *,
         status: CommonRefinementStatus,
         reason: str,
-    ):
+    ) -> None:
         from ...geometry._supermesh import (
             CommonRefinementStatus,
             PreparedCommonRefinement,

@@ -2,6 +2,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 import numpy as np
 import pytest
@@ -65,7 +66,7 @@ for line in sys.stdin:
 """
 
 
-def _worker(tmp_path, mode, **options):
+def _worker(tmp_path: Any, mode: Any, **options: Any) -> Any:
     path = tmp_path / "fake-worker"
     path.write_text(_FAKE_WORKER.format(python=sys.executable), encoding="utf-8")
     path.chmod(0o755)
@@ -80,7 +81,7 @@ def _worker(tmp_path, mode, **options):
     )
 
 
-def test_worker_session_is_reused_and_identity_is_probed_once(tmp_path):
+def test_worker_session_is_reused_and_identity_is_probed_once(tmp_path: Any) -> None:
     worker = _worker(tmp_path, "echo")
     values = np.arange(6, dtype=np.float64).reshape(3, 2)
     first = worker.call("scale", {"factor": 2}, {"x": values}, limits=MeshingLimits())
@@ -95,7 +96,7 @@ def test_worker_session_is_reused_and_identity_is_probed_once(tmp_path):
     assert not second.arrays["y"].flags.writeable
 
 
-def test_worker_timeout_is_refused_and_the_next_call_relaunches(tmp_path):
+def test_worker_timeout_is_refused_and_the_next_call_relaunches(tmp_path: Any) -> None:
     worker = _worker(tmp_path, "sleep")
     values = np.zeros((2, 2), dtype=np.float64)
 
@@ -105,14 +106,16 @@ def test_worker_timeout_is_refused_and_the_next_call_relaunches(tmp_path):
         )
 
     assert failure.value.category is MeshingFailureCategory.TIMED_OUT
+    # ty: ignore[unresolved-attribute]
     assert "upstream library noise" in failure.value.__cause__.evidence["log"]
+    # ty: ignore[unresolved-attribute]
     first_session = failure.value.__cause__.evidence["session_id"]
     assert worker.session().identity.session_id != first_session
     assert worker.launches == 2
     worker.close()
 
 
-def test_worker_rejection_maps_its_kind_and_keeps_the_session(tmp_path):
+def test_worker_rejection_maps_its_kind_and_keeps_the_session(tmp_path: Any) -> None:
     worker = _worker(tmp_path, "reject")
     values = np.ones((1, 1), dtype=np.float64)
 
@@ -134,8 +137,8 @@ def test_worker_rejection_maps_its_kind_and_keeps_the_session(tmp_path):
     ),
 )
 def test_worker_failures_surface_as_meshing_failures_with_evidence(
-    tmp_path, mode, category
-):
+    tmp_path: Any, mode: Any, category: Any
+) -> None:
     worker = _worker(
         tmp_path, mode, policy=NativeWorkerPolicy(maximum_memory_bytes=2**30)
     )
@@ -146,6 +149,7 @@ def test_worker_failures_surface_as_meshing_failures_with_evidence(
         )
 
     assert failure.value.category is category
+    # ty: ignore[unresolved-attribute]
     evidence = failure.value.__cause__.evidence
     if mode == "exit":
         assert evidence["returncode"] == 7
@@ -154,11 +158,11 @@ def test_worker_failures_surface_as_meshing_failures_with_evidence(
     worker.close()
 
 
-def test_concurrent_calls_share_one_session_in_sequence(tmp_path):
+def test_concurrent_calls_share_one_session_in_sequence(tmp_path: Any) -> None:
     worker = _worker(tmp_path, "echo")
     barrier = threading.Barrier(8)
 
-    def run(index):
+    def run(index: Any) -> Any:
         values = np.full((2, 2), index, dtype=np.float64)
         barrier.wait()
         return worker.call("scale", {}, {"x": values}, limits=MeshingLimits())
@@ -174,12 +178,14 @@ def test_concurrent_calls_share_one_session_in_sequence(tmp_path):
         np.testing.assert_array_equal(result.arrays["y"], np.full((2, 2), 2.0 * index))
 
 
-def test_concurrent_calls_replace_exhausted_sessions_without_failure(tmp_path):
+def test_concurrent_calls_replace_exhausted_sessions_without_failure(
+    tmp_path: Any,
+) -> None:
     worker = _worker(tmp_path, "echo", policy=NativeWorkerPolicy(maximum_calls=1))
     barrier = threading.Barrier(4)
     values = np.ones((2,), dtype=np.float64)
 
-    def run(_):
+    def run(_: Any) -> Any:
         barrier.wait()
         return worker.call("scale", {}, {"x": values}, limits=MeshingLimits())
 
@@ -192,7 +198,7 @@ def test_concurrent_calls_replace_exhausted_sessions_without_failure(tmp_path):
     assert all(result.sequence == 1 for result in results)
 
 
-def test_session_close_waits_for_the_call_in_flight(tmp_path):
+def test_session_close_waits_for_the_call_in_flight(tmp_path: Any) -> None:
     worker = _worker(tmp_path, "slow")
     session = worker.session()
     values = np.arange(3, dtype=np.float64)
@@ -220,7 +226,7 @@ def test_session_close_waits_for_the_call_in_flight(tmp_path):
     assert worker.launches == 2
 
 
-def test_missing_worker_is_provider_unavailable(tmp_path):
+def test_missing_worker_is_provider_unavailable(tmp_path: Any) -> None:
     worker = ProviderWorker(
         "fake",
         executable=str(tmp_path / "missing-worker"),
@@ -235,7 +241,9 @@ def test_missing_worker_is_provider_unavailable(tmp_path):
     assert failure.value.category is MeshingFailureCategory.PROVIDER_UNAVAILABLE
 
 
-def test_exchange_round_trip_verifies_checksums_and_declared_entries(tmp_path):
+def test_exchange_round_trip_verifies_checksums_and_declared_entries(
+    tmp_path: Any,
+) -> None:
     arrays = {
         "coordinates": np.linspace(0.0, 1.0, 12).reshape(4, 3),
         "ids": np.array((9, 3, 7), dtype=np.int64),

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -24,8 +27,8 @@ _CASES = (
 
 @pytest.mark.parametrize("order,levels,num_points,boundary", _CASES)
 def test_alpert_multiwavelet_roundtrips_divisible_and_padded_lengths(
-    order, levels, num_points, boundary
-):
+    order: Any, levels: Any, num_points: Any, boundary: Any
+) -> None:
     values = jnp.asarray(np.random.default_rng(912).normal(size=(2, num_points, 3)))
     transform = AlpertMultiwaveletTransform(
         order=order,
@@ -44,7 +47,9 @@ def test_alpert_multiwavelet_roundtrips_divisible_and_padded_lengths(
 
 
 @pytest.mark.parametrize("order", (1, 2, 3, 4))
-def test_alpert_multiwavelet_is_orthogonal_and_annihilates_constant_details(order):
+def test_alpert_multiwavelet_is_orthogonal_and_annihilates_constant_details(
+    order: Any,
+) -> None:
     transform = AlpertMultiwaveletTransform(
         order=order,
         levels=3,
@@ -73,7 +78,7 @@ def test_alpert_multiwavelet_is_orthogonal_and_annihilates_constant_details(orde
     )
 
 
-def test_alpert_multiwavelet_is_shape_independent_jittable_and_differentiable():
+def test_alpert_multiwavelet_is_shape_independent_jittable_and_differentiable() -> None:
     transform = AlpertMultiwaveletTransform(
         order=3,
         levels=2,
@@ -104,12 +109,13 @@ def test_alpert_multiwavelet_is_shape_independent_jittable_and_differentiable():
     assert long_coefficients.transform_fingerprint == transform.fingerprint
 
 
-def test_alpert_multiwavelet_rejects_invalid_configuration_and_coefficients():
+def test_alpert_multiwavelet_rejects_invalid_configuration_and_coefficients() -> None:
     with pytest.raises(ValueError, match="positive"):
         AlpertMultiwaveletTransform(order=0)
     with pytest.raises(ValueError, match="positive"):
         AlpertMultiwaveletTransform(levels=0)
     with pytest.raises(ValueError, match="boundary"):
+        # ty: ignore[invalid-argument-type]
         AlpertMultiwaveletTransform(boundary="reflect")
 
     transform = AlpertMultiwaveletTransform(order=2, levels=2)

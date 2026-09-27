@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -39,14 +40,14 @@ _ASSET = (
 
 
 def manufactured_case(
-    resolution=1,
+    resolution: Any = 1,
     *,
-    perfusion=0.0,
-    heterogeneous=False,
-    boundary="insulated",
-    initial=None,
-    projection=None,
-):
+    perfusion: Any = 0.0,
+    heterogeneous: Any = False,
+    boundary: Any = "insulated",
+    initial: Any = None,
+    projection: Any = None,
+) -> Any:
     """Explicit numerical fixture constants from the repository-owned raw asset."""
     raw = _ASSET.read_bytes()
     asset = json.loads(raw)
@@ -56,7 +57,7 @@ def manufactured_case(
     axis = np.linspace(0, 1, resolution + 1)
     coordinates = np.asarray([(x, y, z) for x in axis for y in axis for z in axis])
 
-    def vertex(i, j, k):
+    def vertex(i: Any, j: Any, k: Any) -> Any:
         return (i * (resolution + 1) + j) * (resolution + 1) + k
 
     cells = []
@@ -96,6 +97,7 @@ def manufactured_case(
         ),
     ).prepare()
     exterior = np.asarray(disc.exterior_facet_domain.entity_indices)
+    # ty: ignore[unresolved-attribute]
     faces = np.asarray(mesh.connectivity.faces)[exterior]
     face_x = coordinates[faces, 0]
     patches = []
@@ -185,10 +187,15 @@ def manufactured_case(
     )
     nregions = len(regions)
     parameters = Pennes1948Parameters(
+        # ty: ignore[invalid-argument-type]
         [2.0, 4.0] if heterogeneous else [2.0],
+        # ty: ignore[invalid-argument-type]
         [8.0] * nregions,
+        # ty: ignore[invalid-argument-type]
         [perfusion] * nregions,
+        # ty: ignore[invalid-argument-type]
         [4.0] * nregions,
+        # ty: ignore[invalid-argument-type]
         [300.0] * nregions,
     )
     if projection is None:
@@ -227,7 +234,9 @@ def manufactured_case(
     ).prepare()
 
 
-def manufactured_source(prepared, state, dt=0.1, power=2.0):
+def manufactured_source(
+    prepared: Any, state: Any, dt: Any = 0.1, power: Any = 2.0
+) -> Any:
     return RetainedHeatLedger(
         jnp.asarray([[power], [0.0], [0.0], [0.0], [0.0]]),
         ("manufactured-source",),
@@ -241,7 +250,7 @@ def manufactured_source(prepared, state, dt=0.1, power=2.0):
     )
 
 
-def run_qualification(smoke=False):
+def run_qualification(smoke: Any = False) -> Any:
     reports = []
     for label, kwargs in (
         ("uniform-source", {}),
@@ -312,7 +321,7 @@ def run_qualification(smoke=False):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke", action="store_true")
     args = parser.parse_args()

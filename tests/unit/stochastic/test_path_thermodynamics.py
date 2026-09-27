@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -12,7 +15,7 @@ from phydrax.stochastic.path_sampling import (
 )
 
 
-def _paths():
+def _paths() -> Any:
     return tuple(
         PathBuffer.from_trajectory(
             jnp.asarray([[0.0], [offset], [1.0 + offset]]),
@@ -23,7 +26,7 @@ def _paths():
     )
 
 
-def test_normalized_path_thermodynamics_obeys_reversal_and_fluctuation_identity():
+def test_normalized_path_thermodynamics_obeys_reversal_and_fluctuation_identity() -> None:
     paths = _paths()
     forward = jnp.asarray([0.6, 0.3, 0.1])
     reverse = jnp.asarray([0.3, 0.3, 0.4])
@@ -72,7 +75,7 @@ def test_normalized_path_thermodynamics_obeys_reversal_and_fluctuation_identity(
     )
 
 
-def test_path_thermodynamics_retains_failed_detailed_balance_evidence():
+def test_path_thermodynamics_retains_failed_detailed_balance_evidence() -> None:
     paths = _paths()
     plan = DiscretePathThermodynamicsPlan(
         1.0,

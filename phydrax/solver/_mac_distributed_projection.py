@@ -4,12 +4,15 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.sharding import PartitionSpec
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -20,6 +23,35 @@ from ..discretization.finite_volume._mac_distributed import (
     MACDistributedState,
     PreparedMACDistributedTopology,
 )
+
+
+# (iteration, solution, residual, direction, residual_squared, valid)
+_CGCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+# (velocity, pressure, increment, divergence_before, divergence, pressure_residual,
+#  right_hand_side, face_inverse, iteration, residual_norm, rhs_norm,
+#  divergence_norm, compatibility_defect, gauge_defect, adjoint_defect,
+#  all_finite, rank_agreement, linear_converged, committed)
+_LocalProjection: TypeAlias = tuple[
+    FaceVelocity,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    FaceVelocity,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 
 def _finite_tree(pressure: Array, velocity: FaceVelocity, /) -> Array:
@@ -39,7 +71,7 @@ class MACCollectiveAdapter(StrictModule, NonTrainableState):
     topology_id: str = eqx.field(static=True)
     adapter_id: str = eqx.field(static=True)
 
-    def __init__(self, topology: PreparedMACDistributedTopology, /):
+    def __init__(self, topology: PreparedMACDistributedTopology, /) -> None:
         if not isinstance(topology, PreparedMACDistributedTopology):
             raise TypeError("topology must be PreparedMACDistributedTopology.")
         names = tuple(str(name) for name in topology.plan.mesh.axis_names)
@@ -149,7 +181,7 @@ class MACDistributedProjectionPlan(StrictModule, NonTrainableState):
         relative_tolerance: float = 1e-9,
         absolute_tolerance: float = 1e-9,
         maximum_iterations: int = 500,
-    ):
+    ) -> None:
         if not isinstance(topology, PreparedMACDistributedTopology):
             raise TypeError("topology must be PreparedMACDistributedTopology.")
         density_ = float(density)
@@ -245,28 +277,28 @@ class MACDistributedProjectionPlan(StrictModule, NonTrainableState):
         dimension = stencils.dimension
 
         def local_project(
-            velocity,
-            incoming_pressure,
-            inverse_cell,
-            cell_volumes,
-            face_measures,
-            face_distances,
-        ):
-            def compatibility_project(value):
+            velocity: FaceVelocity,
+            incoming_pressure: Array,
+            inverse_cell: Array,
+            cell_volumes: Array,
+            face_measures: FaceVelocity,
+            face_distances: FaceVelocity,
+        ) -> _LocalProjection:
+            def compatibility_project(value: Array) -> Array:
                 return value - collectives.weighted_mean(value, cell_volumes)
 
-            def gauge_project(value):
+            def gauge_project(value: Array) -> Array:
                 return value - collectives.weighted_mean(value, cell_volumes)
 
-            def gradient(value):
+            def gradient(value: Array) -> FaceVelocity:
                 return stencils.gradient(value, face_distances)
 
-            def divergence(value):
+            def divergence(value: FaceVelocity) -> Array:
                 return stencils.divergence(value, face_measures, cell_volumes)
 
             face_inverse = stencils.interpolate_inverse_momentum(inverse_cell)
 
-            def action(value):
+            def action(value: Array) -> Array:
                 mean = collectives.weighted_mean(value, cell_volumes)
                 projected = value - mean
                 derivative = gradient(projected)
@@ -305,7 +337,7 @@ class MACDistributedProjectionPlan(StrictModule, NonTrainableState):
                 & (step > 0.0)
             )
 
-            def condition(carry):
+            def condition(carry: _CGCarry) -> Array:
                 iteration, _, _, _, squared, valid = carry
                 return (
                     (iteration < maximum_iterations)
@@ -313,7 +345,7 @@ class MACDistributedProjectionPlan(StrictModule, NonTrainableState):
                     & (squared > tolerance_squared)
                 )
 
-            def body(carry):
+            def body(carry: _CGCarry) -> _CGCarry:
                 iteration, solution, residual_, direction_, squared, valid = carry
                 action_direction = action(direction_)
                 denominator = jnp.real(

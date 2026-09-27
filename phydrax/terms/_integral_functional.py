@@ -6,11 +6,11 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, SupportsFloat
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
 
 from phydrax.domain import DomainFunction
 
@@ -28,6 +28,7 @@ from ..integration import (
     resolve_integration,
 )
 from ..integration._adaptive_signed import AdaptiveSignedEstimator
+from ..typing import PRNGKey
 
 
 class IntegralFunctional(AbstractSamplingTerm):
@@ -47,10 +48,10 @@ class IntegralFunctional(AbstractSamplingTerm):
         integrand: Callable[[Mapping[str, DomainFunction]], DomainFunction]
         | DomainFunction,
         objective_vars: Sequence[str] | None = None,
-        weight: ArrayLike = 1.0,
+        weight: SupportsFloat = 1.0,
         label: str | None = None,
         nonfinite_integrand: Literal["raise", "propagate"] = "raise",
-    ):
+    ) -> None:
         if not isinstance(integrand, DomainFunction) and not callable(integrand):
             raise TypeError("integrand must be a DomainFunction or callable.")
         if not isinstance(
@@ -88,7 +89,7 @@ class IntegralFunctional(AbstractSamplingTerm):
         source: IntegrationSource,
         operator: Callable[..., DomainFunction],
         objective_vars: str | Sequence[str],
-        weight: ArrayLike = 1.0,
+        weight: SupportsFloat = 1.0,
         label: str | None = None,
         nonfinite_integrand: Literal["raise", "propagate"] = "raise",
     ) -> "IntegralFunctional":
@@ -114,7 +115,7 @@ class IntegralFunctional(AbstractSamplingTerm):
     def sample(
         self,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> IntegrationRealization | None:
         """Resolve one realization according to the typed integration source."""
         if isinstance(self.source, CallerIntegration):
@@ -137,7 +138,7 @@ class IntegralFunctional(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: IntegrationRealization | None = None,
         **kwargs: Any,
     ) -> Array:

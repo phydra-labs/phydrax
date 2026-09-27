@@ -10,7 +10,8 @@ from math import isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -18,7 +19,7 @@ from .._geometry_precision import GeometryPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ._atlas_cover import ChartSupport
-from ._chart import ChartTransition
+from ._chart import ChartTransition, CoordinateChart
 from ._hessian_geometry import HessianGeometry
 from ._information_operator import InformationMetricOperator
 from ._metric import RiemannianMetric
@@ -78,7 +79,7 @@ class LegendreGeometry(StrictModule):
         primal_support: ChartSupport,
         dual_support: ChartSupport,
         geometry_id: str,
-    ):
+    ) -> None:
         if not isinstance(hessian_geometry, HessianGeometry):
             raise TypeError("hessian_geometry must be a HessianGeometry.")
         if not callable(inverse_dual_coordinates):
@@ -103,11 +104,11 @@ class LegendreGeometry(StrictModule):
         self.geometry_id = identifier
 
     @property
-    def primal_chart(self):
+    def primal_chart(self) -> CoordinateChart:
         return self.hessian_geometry.chart
 
     @property
-    def dual_chart(self):
+    def dual_chart(self) -> CoordinateChart:
         return self.dual_support.chart
 
     @property
@@ -292,7 +293,7 @@ class LegendreValidationReport(StrictModule):
         maximum_fenchel_young_diagonal_gap: ArrayLike,
         maximum_bregman_diagonal_error: ArrayLike,
         precision_evidence: PrecisionEvidenceEnvelope,
-    ):
+    ) -> None:
         if not isinstance(metric_validation, MetricValidationReport):
             raise TypeError("metric_validation must be a MetricValidationReport.")
         if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):

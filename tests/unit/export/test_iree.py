@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 from dataclasses import replace
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -12,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _manifest():
+def _manifest() -> Any:
     return phx.export.IREEArtifactManifest(
         format="phydrax-iree-inference",
         artifact_id="artifact",
@@ -40,7 +41,7 @@ def _manifest():
     )
 
 
-def test_iree_manifest_round_trip_is_strict_and_json_safe():
+def test_iree_manifest_round_trip_is_strict_and_json_safe() -> None:
     manifest = _manifest()
     restored = phx.export.IREEArtifactManifest.from_dict(
         json.loads(json.dumps(manifest.to_dict()))
@@ -53,21 +54,21 @@ def test_iree_manifest_round_trip_is_strict_and_json_safe():
 
 
 class _HostArray:
-    def __init__(self, value):
+    def __init__(self, value: Any) -> None:
         self._value = np.asarray(value)
 
-    def to_host(self):
+    def to_host(self) -> Any:
         return self._value
 
 
-def _fake_executable(manifest, result):
+def _fake_executable(manifest: Any, result: Any) -> Any:
     executable = object.__new__(phx.export.IREEExecutable)
     executable.manifest = manifest
     executable._function = lambda *_: result
     return executable
 
 
-def test_iree_executable_validates_each_ordered_heterogeneous_output():
+def test_iree_executable_validates_each_ordered_heterogeneous_output() -> None:
     manifest = replace(
         _manifest(),
         output_names=("prediction", "accepted", "iteration"),
@@ -128,8 +129,10 @@ def test_iree_executable_validates_each_ordered_heterogeneous_output():
         )(argument)
 
 
-def test_iree_export_rejects_dynamic_key_empty_inputs_and_invalid_policy(tmp_path):
-    def model(x, *, key=None):
+def test_iree_export_rejects_dynamic_key_empty_inputs_and_invalid_policy(
+    tmp_path: Any,
+) -> None:
+    def model(x: Any, *, key: Any = None) -> Any:
         del key
         return x
 
@@ -145,7 +148,7 @@ def test_iree_export_rejects_dynamic_key_empty_inputs_and_invalid_policy(tmp_pat
     with pytest.raises(ValueError, match="non-empty"):
         phx.export.IREEExportPolicy(target_backend="")
 
-    def multi_output_model(x, *, key=None):
+    def multi_output_model(x: Any, *, key: Any = None) -> Any:
         del key
         return x, jnp.sum(x)
 
@@ -164,7 +167,7 @@ def test_iree_export_rejects_dynamic_key_empty_inputs_and_invalid_policy(tmp_pat
             output_names=("value", "value"),
         )
 
-    def list_output_model(x, *, key=None):
+    def list_output_model(x: Any, *, key: Any = None) -> Any:
         del key
         return [x, jnp.sum(x)]
 
@@ -176,7 +179,7 @@ def test_iree_export_rejects_dynamic_key_empty_inputs_and_invalid_policy(tmp_pat
         )
 
 
-def test_iree_load_requires_an_out_of_band_module_pin(tmp_path):
+def test_iree_load_requires_an_out_of_band_module_pin(tmp_path: Any) -> None:
     module_bytes = b"self-checksummed but not independently trusted"
     manifest = replace(
         _manifest(),
@@ -205,8 +208,8 @@ if _HAS_IREE:
 
 
 @pytest.mark.skipif(not _HAS_IREE, reason="IREE optional packages are not installed")
-def test_iree_compiles_validates_loads_and_rejects_wrong_inputs(tmp_path):
-    def model(x, *, key=None):
+def test_iree_compiles_validates_loads_and_rejects_wrong_inputs(tmp_path: Any) -> None:
+    def model(x: Any, *, key: Any = None) -> Any:
         del key
         coefficients = jnp.asarray(((1.0, -0.5), (0.25, 2.0)), dtype=x.dtype)
         return jnp.tanh(x @ coefficients)
@@ -247,8 +250,10 @@ def test_iree_compiles_validates_loads_and_rejects_wrong_inputs(tmp_path):
 
 
 @pytest.mark.skipif(not _HAS_IREE, reason="IREE optional packages are not installed")
-def test_iree_compiles_ordered_heterogeneous_outputs_without_packing(tmp_path):
-    def model(x, *, key=None):
+def test_iree_compiles_ordered_heterogeneous_outputs_without_packing(
+    tmp_path: Any,
+) -> None:
+    def model(x: Any, *, key: Any = None) -> Any:
         del key
         return (
             jnp.sin(x),
@@ -279,7 +284,9 @@ def test_iree_compiles_ordered_heterogeneous_outputs_without_packing(tmp_path):
     assert result.manifest.output_dtypes == tuple(
         np.dtype(value.dtype).str for value in expected
     )
+    # ty: ignore[invalid-argument-type]
     assert len(result.manifest.maximum_absolute_errors) == 3
+    # ty: ignore[invalid-argument-type]
     assert len(result.manifest.maximum_relative_errors) == 3
     for deployed_value, native_value in zip(actual, expected, strict=True):
         native_array = np.asarray(native_value)

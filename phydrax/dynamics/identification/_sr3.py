@@ -9,7 +9,7 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._numerics import normalize_least_squares_design
 from ..._strict import StrictModule
@@ -22,6 +22,7 @@ from ...linalg import (
     prepare,
     solve,
 )
+from ...typing import parse
 from ._sindy_design import SINDyDesign
 from ._sparse_regression import (
     _solve_outputs,
@@ -81,7 +82,7 @@ class SR3Regression(AbstractSparseRegression):
         unbiased_refit: bool = False,
         zero_tolerance: float | None = None,
         max_features: int = 4096,
-    ):
+    ) -> None:
         regularization_value = float(regularization)
         relaxation = float(relaxation_strength)
         convergence_tolerance = float(tolerance)
@@ -91,8 +92,7 @@ class SR3Regression(AbstractSparseRegression):
             raise ValueError("regularization must be finite and nonnegative.")
         if not np.isfinite(relaxation) or relaxation <= 0.0:
             raise ValueError("relaxation_strength must be finite and positive.")
-        if penalty not in ("l0", "l1"):
-            raise ValueError("penalty must be 'l0' or 'l1'.")
+        penalty = parse(penalty, SR3Penalty, "penalty")
         if iterations < 1:
             raise ValueError("max_iterations must be positive.")
         if not np.isfinite(convergence_tolerance) or convergence_tolerance < 0.0:

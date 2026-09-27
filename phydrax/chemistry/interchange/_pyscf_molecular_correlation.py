@@ -11,10 +11,11 @@ import importlib.metadata
 import importlib.util
 from collections.abc import Callable
 from math import isfinite
+from typing import Any
 
 import equinox as eqx
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..electronic_structure.correlation import (
@@ -31,7 +32,7 @@ def is_pyscf_molecular_correlation_available() -> bool:
     return importlib.util.find_spec("pyscf") is not None
 
 
-def require_pyscf_molecular_correlation():
+def require_pyscf_molecular_correlation() -> tuple[Any, Any, Any]:
     if not is_pyscf_molecular_correlation_available():
         raise ImportError(
             "Molecular coupled-cluster gradients require optional dependency 'pyscf'."
@@ -68,7 +69,7 @@ class PySCFMolecularCoupledClusterGradientProvider(
         frozen_orbitals: tuple[int, ...] = (),
         scf_tolerance: float = 1.0e-11,
         scf_maximum_iterations: int = 128,
-    ):
+    ) -> None:
         if not callable(molecule_builder):
             raise TypeError("molecule_builder must be callable.")
         if not isinstance(coupled_cluster, CoupledClusterPlan):

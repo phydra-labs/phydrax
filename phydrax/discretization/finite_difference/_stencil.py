@@ -5,16 +5,18 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal, TypeAlias
+from typing import get_args, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from .._tensor_support import GridLocation
 from ._coefficients import StencilCoefficientPlan
 from ._request import BoundaryClosureKind, DerivativeRequest
@@ -44,7 +46,7 @@ class StencilFootprint(StrictModule, NonTrainableState):
         lower: Sequence[int],
         upper: Sequence[int],
         /,
-    ):
+    ) -> None:
         names = tuple(str(name) for name in axis_names)
         lower_ = tuple(lower)
         upper_ = tuple(upper)
@@ -93,16 +95,8 @@ class StencilRowReport(StrictModule, NonTrainableState):
         valid_width: int,
         coefficient_plan: StencilCoefficientPlan,
         /,
-    ):
-        if kind not in (
-            "interior",
-            "lower_closure",
-            "upper_closure",
-            "corner",
-            "ghost",
-            "interface",
-        ):
-            raise ValueError("Unknown stencil row kind.")
+    ) -> None:
+        kind = parse(kind, StencilRowKind, "kind")
         width = int(valid_width)
         if width <= coefficient_plan.derivative_order:
             raise ValueError("Stencil row width must exceed derivative order.")
@@ -144,7 +138,7 @@ class LinearStencil(StrictModule, NonTrainableState):
         valid: ArrayLike | None = None,
         row_kinds: Sequence[StencilRowKind] | None = None,
         stencil_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(request, DerivativeRequest):
             raise TypeError("request must be a DerivativeRequest.")
         axis = int(axis_index)
@@ -192,14 +186,7 @@ class LinearStencil(StrictModule, NonTrainableState):
             StencilRowReport(kind, int(np.count_nonzero(row_valid)), plan)
             for kind, row_valid, plan in zip(kinds, valid_, plans, strict=True)
         )
-        kind_values = (
-            "interior",
-            "lower_closure",
-            "upper_closure",
-            "corner",
-            "ghost",
-            "interface",
-        )
+        kind_values = get_args(StencilRowKind)
         kind_codes = np.asarray(
             [kind_values.index(kind) for kind in kinds], dtype=np.int8
         )
@@ -258,11 +245,10 @@ class BoundaryStencilSet(StrictModule, NonTrainableState):
         kind: BoundaryClosureKind,
         interior_accuracy_order: int | None = None,
         closure_accuracy_order: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(stencil, LinearStencil):
             raise TypeError("stencil must be a LinearStencil.")
-        if kind not in ("periodic", "one_sided"):
-            raise ValueError("Unknown boundary stencil kind.")
+        kind = parse(kind, BoundaryClosureKind, "kind")
         interior_rows = [
             report.achieved_accuracy_order
             for report in stencil.row_reports

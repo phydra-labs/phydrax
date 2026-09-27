@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -20,6 +21,7 @@ from ...stochastic._state_space import (
     StateSpaceStepContext,
     TransitionSample,
 )
+from ...typing import PRNGKey
 
 
 if TYPE_CHECKING:
@@ -58,7 +60,9 @@ def _flat_case_index(
     return jnp.sum(index * multipliers)
 
 
-def _state_indices(values: Array, support: Array, state_shape: tuple[int, ...], /):
+def _state_indices(
+    values: Array, support: Array, state_shape: tuple[int, ...], /
+) -> tuple[Array, Array]:
     if state_shape:
         if (
             values.ndim < len(state_shape)
@@ -91,7 +95,7 @@ class ControlledTransitionKernel(AbstractTransitionKernel, NonTrainableState):
     approximation_id: str = eqx.field(static=True)
     has_log_density: bool = eqx.field(static=True)
 
-    def __init__(self, result: SchrodingerBridgeResult, /):
+    def __init__(self, result: SchrodingerBridgeResult, /) -> None:
         from ._solver import require_converged_bridge, SchrodingerBridgeResult
 
         if not isinstance(result, SchrodingerBridgeResult):
@@ -148,7 +152,15 @@ class ControlledTransitionKernel(AbstractTransitionKernel, NonTrainableState):
             "Bridge transition times do not match context.step_index and the solved grid.",
         )
 
-    def sample(self, key, state, t0, t1, context, /) -> TransitionSample:
+    def sample(
+        self,
+        key: PRNGKey,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> TransitionSample:
         case_index, step_index = self._case_step(context)
         step_index = self._validate_interval(step_index, t0, t1)
         count = prod(self.case_shape) if self.case_shape else 1
@@ -176,7 +188,15 @@ class ControlledTransitionKernel(AbstractTransitionKernel, NonTrainableState):
             approximation_id=self.approximation_id,
         )
 
-    def log_prob(self, next_state, state, t0, t1, context, /) -> Array:
+    def log_prob(
+        self,
+        next_state: ArrayLike,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
         case_index, step_index = self._case_step(context)
         step_index = self._validate_interval(step_index, t0, t1)
         count = prod(self.case_shape) if self.case_shape else 1
@@ -203,7 +223,7 @@ class ControlledTransitionKernel(AbstractTransitionKernel, NonTrainableState):
 
 
 def _sample_indices_flat(
-    key: Key[Array, ""], result: SchrodingerBridgeResult, sample_count: int, /
+    key: PRNGKey, result: SchrodingerBridgeResult, sample_count: int, /
 ) -> Array:
     problem = result.problem
     case_count = problem.num_cases
@@ -212,10 +232,12 @@ def _sample_indices_flat(
         (case_count, problem.num_steps, problem.num_states, problem.num_states)
     )
 
-    def sample_case(case_index, initial_probability, transitions):
+    def sample_case(
+        case_index: Array, initial_probability: Array, transitions: Array
+    ) -> Array:
         case_key = jr.fold_in(key, case_index.astype(jnp.uint32))
 
-        def sample_member(member_index):
+        def sample_member(member_index: Array) -> Array:
             member_key = jr.fold_in(case_key, member_index.astype(jnp.uint32))
             start_key = jr.fold_in(member_key, jnp.asarray(0, dtype=jnp.uint32))
             initial_log = jnp.where(
@@ -223,7 +245,9 @@ def _sample_indices_flat(
             )
             initial_state = jr.categorical(start_key, initial_log).astype(jnp.int32)
 
-            def step(state_index, step_data):
+            def step(
+                state_index: Array, step_data: tuple[Array, Array]
+            ) -> tuple[Array, Array]:
                 step_index, matrix = step_data
                 step_key = jr.fold_in(member_key, (step_index + 1).astype(jnp.uint32))
                 probabilities = matrix[state_index]
@@ -248,7 +272,7 @@ def _sample_indices_flat(
 
 
 def sample_bridge_state_indices(
-    key: Key[Array, ""],
+    key: PRNGKey,
     result: SchrodingerBridgeResult,
     /,
     *,
@@ -272,7 +296,7 @@ def sample_bridge_state_indices(
 
 
 def sample_bridge_paths(
-    key: Key[Array, ""],
+    key: PRNGKey,
     result: SchrodingerBridgeResult,
     /,
     *,
@@ -323,7 +347,7 @@ def _path_indices(
         (case_count, problem.num_states) + problem.state_shape
     )
 
-    def match_case(case_values, case_support):
+    def match_case(case_values: Array, case_support: Array) -> tuple[Array, Array]:
         flattened = case_values.reshape(
             (sample_count * (problem.num_steps + 1),) + problem.state_shape
         )
@@ -349,7 +373,12 @@ def _path_log_prob(
         else result.controlled_transition_probabilities
     ).reshape((case_count, problem.num_steps, problem.num_states, problem.num_states))
 
-    def evaluate_case(case_indices, case_valid, initial_probability, transitions):
+    def evaluate_case(
+        case_indices: Array,
+        case_valid: Array,
+        initial_probability: Array,
+        transitions: Array,
+    ) -> Array:
         initial_values = initial_probability[case_indices[:, 0]]
         log_probability = jnp.where(
             initial_values > 0.0, jnp.log(initial_values), -jnp.inf
@@ -380,7 +409,7 @@ def reference_path_log_prob(
 
 
 def sample_bridge(
-    key: Key[Array, ""],
+    key: PRNGKey,
     result: SchrodingerBridgeResult,
     /,
     *,

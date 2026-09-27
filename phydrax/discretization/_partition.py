@@ -9,7 +9,8 @@ import operator
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -31,7 +32,7 @@ class CellPartition(StrictModule, NonTrainableState):
     part_count: int = eqx.field(static=True)
     partition_id: str = eqx.field(static=True)
 
-    def __init__(self, cell_owner: ArrayLike, part_count: int, /):
+    def __init__(self, cell_owner: ArrayLike, part_count: int, /) -> None:
         owner = np.asarray(cell_owner)
         count = operator.index(part_count)
         if owner.ndim != 1 or not np.issubdtype(owner.dtype, np.integer):
@@ -81,7 +82,7 @@ class CellAdjacency(StrictModule, NonTrainableState):
     cell_count: int = eqx.field(static=True)
     adjacency_id: str = eqx.field(static=True)
 
-    def __init__(self, pairs: ArrayLike, cell_count: int, /):
+    def __init__(self, pairs: ArrayLike, cell_count: int, /) -> None:
         values = np.asarray(pairs)
         count = operator.index(cell_count)
         if isinstance(cell_count, bool) or count <= 0:
@@ -243,7 +244,7 @@ class CellPartitionHalo(StrictModule, NonTrainableState):
         *,
         layers: int,
         cell_global_ids: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(partition, CellPartition) or not isinstance(
             adjacency, CellAdjacency
         ):

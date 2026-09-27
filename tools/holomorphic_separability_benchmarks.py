@@ -25,7 +25,7 @@ def _parameter_count(model: Any, /) -> int:
 
 
 def _cauchy_riemann_residual(model: Any, point: jax.Array, /) -> jax.Array:
-    def real_map(value):
+    def real_map(value: Any) -> Any:
         output = jnp.asarray(model(value[0] + 1j * value[1])).reshape((-1,))
         return jnp.concatenate((jnp.real(output), jnp.imag(output)))
 
@@ -36,7 +36,7 @@ def _cauchy_riemann_residual(model: Any, point: jax.Array, /) -> jax.Array:
     return jnp.maximum(jnp.max(jnp.abs(first)), jnp.max(jnp.abs(second)))
 
 
-def _polynomial(coefficients: jax.Array, /):
+def _polynomial(coefficients: jax.Array, /) -> Any:
     values = jnp.asarray(coefficients, dtype="float64")
     potential = phx.equations.HolomorphicPolynomialPotential(
         values.shape[0],
@@ -120,7 +120,7 @@ def run_holomorphic_separability_benchmarks() -> dict[str, Any]:
 
     product_jet = product.jet(z, 4)
 
-    def scalar(value):
+    def scalar(value: Any) -> Any:
         return product(value)[0]
 
     derivative = scalar

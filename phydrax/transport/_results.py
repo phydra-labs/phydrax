@@ -8,8 +8,8 @@ from abc import abstractmethod
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._blocks import apply_plan, coupling_statistics, dense_plan
@@ -39,7 +39,7 @@ class TransportProvenance(StrictModule):
         /,
         *,
         approximation: str = "exact",
-    ):
+    ) -> None:
         self.method = str(method)
         self.cost = str(cost)
         self.execution = str(execution)

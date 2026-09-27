@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.linalg as la
 
@@ -25,6 +26,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import AbstractFixedStepMethod, FixedStepResult
+from ...solver._mac_ale import MACALEStageGeometry
 from ._free_surface_ale import FaceTuple
 from ._free_surface_step import (
     FreeSurfaceALEContinuationState,
@@ -107,7 +109,7 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
         /,
         *,
         mass: float = 1.0,
-        inertia: ArrayLike = (1.0, 1.0, 1.0),
+        inertia: ArrayLike | tuple[float, float, float] = (1.0, 1.0, 1.0),
         moving: bool = True,
         viscous_drag: float = 0.0,
         modal_basis: ArrayLike | None = None,
@@ -115,7 +117,7 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
         modal_stiffness: ArrayLike | None = None,
         modal_damping: ArrayLike | None = None,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         markers = jnp.asarray(reference_markers)
         normals = jnp.asarray(reference_normals, dtype=markers.dtype)
         weights = jnp.asarray(marker_weights, dtype=markers.dtype)
@@ -187,10 +189,15 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
     def initial_state(
         self,
         *,
-        position: ArrayLike = (0.0, 0.0, 0.0),
-        quaternion: ArrayLike = (1.0, 0.0, 0.0, 0.0),
-        linear_velocity: ArrayLike = (0.0, 0.0, 0.0),
-        angular_velocity: ArrayLike = (0.0, 0.0, 0.0),
+        position: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
+        quaternion: ArrayLike | tuple[float, float, float, float] = (
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+        ),
+        linear_velocity: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
+        angular_velocity: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
     ) -> HydroelasticBodyState:
         rigid = RigidBodyState(
             jnp.asarray(position, dtype=self.reference_markers.dtype),
@@ -204,7 +211,7 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
             jnp.zeros_like(self.modal_mass),
         )
 
-    def geometry(self, state: HydroelasticBodyState, /):
+    def geometry(self, state: HydroelasticBodyState, /) -> tuple[Array, Array, Array]:
         rotation = _quaternion_matrix(state.rigid.quaternion)
         markers = state.rigid.position + self.reference_markers @ rotation.T
         normals = self.reference_normals @ rotation.T
@@ -234,7 +241,7 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
             (chunk_count, chunk_capacity)
         )
 
-        def distance_chunk(inputs):
+        def distance_chunk(inputs: tuple[Array, Array]) -> Array:
             centers, chunk_valid = inputs
             squared = jnp.sum(
                 (markers[:, None, :] - centers[None, :, :]) ** 2,
@@ -248,7 +255,7 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
         )
         scale = jnp.maximum(distance_sum / count, 1.0e-12)
 
-        def weight_chunk(inputs):
+        def weight_chunk(inputs: tuple[Array, Array]) -> tuple[Array, Array]:
             centers, chunk_valid = inputs
             squared = jnp.sum(
                 (markers[:, None, :] - centers[None, :, :]) ** 2,
@@ -300,7 +307,7 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
             (chunk_count, chunk_capacity)
         )
 
-        def interpolate_chunk(inputs):
+        def interpolate_chunk(inputs: tuple[Array, Array, Array]) -> Array:
             chunk_centers, chunk_values, chunk_valid = inputs
             squared = jnp.sum(
                 (markers[:, None, :] - chunk_centers[None, :, :]) ** 2,
@@ -325,7 +332,7 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
     def gather_normal_velocity(
         self,
         hydrodynamics: PreparedOnePhaseFreeSurfaceALE,
-        geometry,
+        geometry: MACALEStageGeometry,
         velocity: FaceTuple,
         body: HydroelasticBodyState,
         /,
@@ -345,7 +352,7 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
         )
         normal_velocity = jnp.sum(gathered * normals, axis=-1)
 
-        def gather(candidate):
+        def gather(candidate: FaceTuple) -> Array:
             cells = geometry.reconstruct_cell_velocity(candidate)
             sampled = self._interpolate_velocity(
                 geometry.cell_centers,
@@ -383,7 +390,7 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
     def couple(
         self,
         hydrodynamics: PreparedOnePhaseFreeSurfaceALE,
-        geometry,
+        geometry: MACALEStageGeometry,
         momentum: FaceTuple,
         velocity: FaceTuple,
         body: HydroelasticBodyState,
@@ -396,7 +403,7 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
             markers,
         )
 
-        def gather(candidate):
+        def gather(candidate: FaceTuple) -> Array:
             cells = geometry.reconstruct_cell_velocity(candidate)
             sampled = self._interpolate_velocity(
                 geometry.cell_centers,
@@ -432,7 +439,7 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
         )
         slip = gather_linearization.primal - body_normal_velocity
 
-        def fluid_response(multiplier):
+        def fluid_response(multiplier: Array) -> Array:
             covector = gather_linearization.vjp(multiplier)
             inverse = hydrodynamics.surface.inverse_hodge(geometry, covector)
             return gather(inverse.velocity)
@@ -441,7 +448,7 @@ class MappedRigidHydroelasticBodyPlan(StrictModule, NonTrainableState):
         space = la.ArraySpace((marker_count,), dtype=markers.dtype)
         rigid_matrix = body_map @ body_inverse @ body_map.T
 
-        def response_action(candidate):
+        def response_action(candidate: Array) -> Array:
             modal = (
                 self.modal_basis @ ((self.modal_basis.T @ candidate) / self.modal_mass)
                 if has_modes
@@ -572,7 +579,7 @@ class RigidHydroelasticALEMethod(AbstractFixedStepMethod, NonTrainableState):
         fluid_method: OnePhaseFreeSurfaceALEMethod,
         body_plan: MappedRigidHydroelasticBodyPlan,
         /,
-    ):
+    ) -> None:
         self.fluid_method = fluid_method
         self.body_plan = body_plan
         self.method_id = canonical_fingerprint(
@@ -658,7 +665,9 @@ class RigidHydroelasticALEMethod(AbstractFixedStepMethod, NonTrainableState):
         )
 
 
-def _modal_vector(value, size, default, dtype):
+def _modal_vector(
+    value: ArrayLike | None, size: int, default: float, dtype: DTypeLike
+) -> Array:
     if value is None:
         return jnp.full((size,), default, dtype=dtype)
     array = jnp.asarray(value, dtype=dtype)

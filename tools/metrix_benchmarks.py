@@ -23,7 +23,7 @@ def _metric(dimension: int) -> phx.metrix.RiemannianMetric:
         tuple(f"q{index}" for index in range(dimension)),
     )
 
-    def matrix(coordinates):
+    def matrix(coordinates: Any) -> Any:
         direction = jnp.sin(coordinates)
         diagonal = 1.5 + coordinates**2
         return jnp.diag(diagonal) + 0.05 * jnp.outer(direction, direction)
@@ -58,7 +58,7 @@ def _benchmark(
     }
 
 
-def _jet_outputs(metric: phx.metrix.RiemannianMetric, coordinates: jax.Array):
+def _jet_outputs(metric: phx.metrix.RiemannianMetric, coordinates: jax.Array) -> Any:
     jet = phx.metrix.metric_jet(metric, coordinates, order=2)
     assert jet.first_derivative is not None
     assert jet.second_derivative is not None
@@ -73,7 +73,7 @@ def _jet_outputs(metric: phx.metrix.RiemannianMetric, coordinates: jax.Array):
     )
 
 
-def _repeated_outputs(metric: phx.metrix.RiemannianMetric, coordinates: jax.Array):
+def _repeated_outputs(metric: phx.metrix.RiemannianMetric, coordinates: jax.Array) -> Any:
     matrix_function = metric.matrix_function
     first_derivative = jax.jacfwd(matrix_function)
     return (

@@ -10,6 +10,9 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..series import SampledSeries, SeriesSupport
@@ -52,7 +55,7 @@ class EnergySeries(StrictModule):
         provenance: tuple[str, ...] = (),
         reference_id: str | None = None,
         sign_convention: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(samples, SampledSeries):
             raise TypeError("samples must be a native SampledSeries")
         if not isinstance(unit, UnitDefinition):
@@ -99,7 +102,7 @@ class EnergySeries(StrictModule):
 
 def _with_samples(
     series: EnergySeries, samples: SampledSeries, meaning: str, operation: str
-):
+) -> EnergySeries:
     return EnergySeries(
         samples,
         quantity=series.quantity,
@@ -116,7 +119,7 @@ def _with_samples(
     )
 
 
-def _monotonic_coordinates(support: SeriesSupport):
+def _monotonic_coordinates(support: SeriesSupport) -> Array:
     coordinates = support.broadcast_coordinates()
     return eqx.error_if(
         coordinates,
@@ -125,7 +128,7 @@ def _monotonic_coordinates(support: SeriesSupport):
     )
 
 
-def _leaf_masks(samples: SampledSeries):
+def _leaf_masks(samples: SampledSeries) -> PyTree:
     if samples.value_valid is None:
         return jax.tree_util.tree_map(
             lambda value: jnp.ones(value.shape, dtype=jnp.bool_), samples.values
@@ -170,12 +173,19 @@ def rebin_energy_series(series: EnergySeries, support: SeriesSupport) -> EnergyS
     target_active = support.edge_valid.reshape((support.num_series, support.capacity - 1))
     prefix_rank = len(source.series_shape) + 1
 
-    def align_leaf(values, mask):
+    def align_leaf(values: Array, mask: Array) -> tuple[Array, Array]:
         event_shape = values.shape[prefix_rank:]
         values = values.reshape((source.num_series, source.capacity - 1) + event_shape)
         mask = mask.reshape(values.shape)
 
-        def align_row(nodes, out_nodes, payload, valid, edges, out_edges):
+        def align_row(
+            nodes: Array,
+            out_nodes: Array,
+            payload: Array,
+            valid: Array,
+            edges: Array,
+            out_edges: Array,
+        ) -> tuple[Array, Array]:
             width = jnp.diff(nodes)
             expansion = (1,) * len(event_shape)
             valid = valid & edges.reshape(edges.shape + expansion)
@@ -206,7 +216,7 @@ def rebin_energy_series(series: EnergySeries, support: SeriesSupport) -> EnergyS
             )
             partial = jnp.clip(out_nodes - nodes[index], 0, width[index])
 
-            def primitive(delta, slope):
+            def primitive(delta: Array, slope: Array) -> Array:
                 zero = jnp.zeros((1,) + event_shape, dtype=delta.dtype)
                 cumulative = jnp.concatenate((zero, jnp.cumsum(delta, axis=0)), axis=0)
                 return cumulative[index] + slope[index] * partial.reshape(
@@ -262,7 +272,7 @@ def integrate_energy_series(series: EnergySeries) -> tuple[Any, UnitDefinition]:
     width = jnp.diff(samples.support.broadcast_coordinates(), axis=-1)
     width = width * float(conversion_factor(series.time_unit, SECOND))
 
-    def total(value, mask):
+    def total(value: Array, mask: Array) -> Array:
         expansion = (1,) * (value.ndim - axis - 1)
         active = samples.support.edge_valid.reshape(
             samples.support.edge_valid.shape + expansion
@@ -313,7 +323,9 @@ def counter_to_intervals(
     ) != jax.tree_util.tree_structure(samples.values):
         raise ValueError("reset increments must match the counter value PyTree")
 
-    def differences(value, mask, reset):
+    def differences(
+        value: Array, mask: Array, reset: ArrayLike | None
+    ) -> tuple[Array, Array]:
         left = jnp.take(value, jnp.arange(value.shape[axis] - 1), axis=axis)
         right = jnp.take(value, jnp.arange(1, value.shape[axis]), axis=axis)
         valid = jnp.take(mask, jnp.arange(value.shape[axis] - 1), axis=axis) & jnp.take(

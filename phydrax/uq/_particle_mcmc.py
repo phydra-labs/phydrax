@@ -12,11 +12,14 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._sampling import AbstractProposal
 from .._strict import StrictModule
 from ..stochastic._state_space import state_space_key, StateSpaceProblem
+from ..typing import parse, PRNGKey
 from ._particle import (
     bootstrap_particle_filter,
     normalize_log_weights,
@@ -131,7 +134,7 @@ def _reference_path(problem: StateSpaceProblem, path: ArrayLike, /) -> Array:
 
 
 def conditional_particle_filter(
-    key: Key[Array, ""],
+    key: PRNGKey,
     problem: StateSpaceProblem,
     reference_path: ArrayLike,
     /,
@@ -422,7 +425,7 @@ def conditional_particle_filter(
 
 
 def sample_conditional_particle_path(
-    key: Key[Array, ""],
+    key: PRNGKey,
     result: ConditionalParticleFilterResult,
     /,
 ) -> Array:
@@ -457,7 +460,7 @@ def sample_conditional_particle_path(
 
 
 def particle_gibbs(
-    key: Key[Array, ""],
+    key: PRNGKey,
     problem: StateSpaceProblem,
     initial_path: ArrayLike,
     /,
@@ -544,7 +547,7 @@ def _particle_log_likelihood(
 
 
 def particle_marginal_metropolis_hastings(
-    key: Key[Array, ""],
+    key: PRNGKey,
     initial_parameters: PyTree[Any],
     problem: Callable[[PyTree[Any]], StateSpaceProblem],
     log_prior: Callable[[PyTree[Any]], ArrayLike],
@@ -574,13 +577,7 @@ def particle_marginal_metropolis_hastings(
         raise ValueError("num_warmup must be nonnegative.")
     if thin < 1:
         raise ValueError("thinning must be positive.")
-    if resampling_method not in (
-        "systematic",
-        "stratified",
-        "multinomial",
-        "residual",
-    ):
-        raise ValueError("Unknown resampling_method.")
+    resampling_method = parse(resampling_method, ResamplingMethod, "resampling_method")
     current = jax.tree_util.tree_map(jnp.asarray, initial_parameters)
     if not jax.tree_util.tree_leaves(current):
         raise ValueError("initial_parameters must be non-empty.")

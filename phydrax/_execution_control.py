@@ -9,6 +9,7 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 from enum import Enum
+from types import TracebackType
 from typing import Any, Self
 
 import jax
@@ -161,7 +162,12 @@ class ExecutionFailureContext:
     def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exception_type, exception, traceback) -> bool:
+    def __exit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool:
         if exception is not None and self.mode is FailureScope.COUPLED:
             self.token.cancel(f"coupled execution failed: {exception}")
         return False

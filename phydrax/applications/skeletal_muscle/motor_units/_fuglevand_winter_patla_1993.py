@@ -23,7 +23,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -77,7 +78,7 @@ class FuglevandWinterPatla1993Parameters(StrictModule):
         peak_firing_rate_difference_hz: float = 10.0,
         firing_rate_gain_hz_per_excitation: float = 1.0,
         interspike_interval_cv: float = 0.2,
-    ):
+    ) -> None:
         values = {
             "recruitment_threshold_range": float(recruitment_threshold_range),
             "twitch_force_range": float(twitch_force_range),
@@ -138,7 +139,7 @@ class FuglevandWinterPatla1993Plan(StrictModule):
         event_capacity_per_unit: int = 16,
         random_stream_id: str,
         parameters: FuglevandWinterPatla1993Parameters | None = None,
-    ):
+    ) -> None:
         if isinstance(unit_count, bool) or not isinstance(unit_count, int):
             raise TypeError("unit_count must be an integer.")
         if unit_count <= 0:
@@ -224,7 +225,7 @@ class FuglevandWinterPatla1993RandomInput(StrictModule, NonTrainableState):
     semantic_step: Array
     stream_id: str = eqx.field(static=True)
 
-    def __init__(self, key: Any, semantic_step: ArrayLike, /, *, stream_id: str):
+    def __init__(self, key: Any, semantic_step: ArrayLike, /, *, stream_id: str) -> None:
         if not isinstance(stream_id, str) or not stream_id:
             raise ValueError("stream_id must be a nonempty string.")
         key_data = jr.key_data(key)

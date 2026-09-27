@@ -9,11 +9,16 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax import core as jax_core
-from jaxtyping import Array
+from jax import Array, core as jax_core
 
 from .._strict import StrictModule
-from ..optim import OptimizationDiagnostics, OptimizationProvenance
+from ..optim import (
+    ConvexProgramProvenance,
+    ConvexProgramResult,
+    MixedIntegerResult,
+    OptimizationDiagnostics,
+    OptimizationProvenance,
+)
 from ._problem import MomentCalibrationProblem
 
 
@@ -45,7 +50,7 @@ _STATUS_MESSAGES = {
 
 
 def moment_calibration_status_message(
-    status: int | MomentCalibrationStatus,
+    status: int | MomentCalibrationStatus | Array,
     /,
 ) -> str:
     """Return a stable human-readable calibration status message."""
@@ -57,7 +62,7 @@ class MomentCalibrationDiagnostics(StrictModule):
     """Moment, regularity, concentration, and optimizer evidence."""
 
     optimizer_status: Array
-    optimization: OptimizationDiagnostics
+    optimization: OptimizationDiagnostics | ConvexProgramResult | MixedIntegerResult
     prior_moments: Array
     target_residual: Array
     scaled_target_residual: Array
@@ -93,7 +98,7 @@ class MomentCalibrationProvenance(StrictModule):
     moment_count: int = eqx.field(static=True)
     execution: str = eqx.field(static=True)
     differentiation: str = eqx.field(static=True)
-    optimizer: OptimizationProvenance
+    optimizer: OptimizationProvenance | ConvexProgramProvenance | MixedIntegerResult
 
 
 class MomentCalibrationResult(StrictModule):

@@ -8,7 +8,8 @@ from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -26,7 +27,7 @@ class _ComposedDifferentiableMap(StrictModule):
         first: Callable[[Array], Array],
         second: Callable[[Array], Array],
         /,
-    ):
+    ) -> None:
         self.first = first
         self.second = second
 
@@ -47,7 +48,7 @@ class DifferentiableMap(StrictModule):
         target: CoordinateChart,
         map: Callable[[Array], Array],
         /,
-    ):
+    ) -> None:
         if not isinstance(source, CoordinateChart) or not isinstance(
             target, CoordinateChart
         ):
@@ -146,7 +147,7 @@ class Immersion(StrictModule):
         target: CoordinateChart,
         map: Callable[[Array], Array],
         /,
-    ):
+    ) -> None:
         if source.dimension > target.dimension:
             raise ValueError(
                 "An immersion source dimension must not exceed its target dimension."
@@ -207,7 +208,7 @@ class ImmersionValidationReport(StrictModule):
         valid: ArrayLike,
         finite: ArrayLike,
         minimum_singular_value: ArrayLike,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.minimum_singular_value = jnp.asarray(minimum_singular_value)

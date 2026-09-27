@@ -8,7 +8,8 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._manifold import AbstractGeodesicManifold
 
@@ -27,7 +28,7 @@ class ComplexEuclideanManifold(AbstractGeodesicManifold):
     transport_is_isometric: bool = eqx.field(static=True)
     transport_is_parallel: bool = eqx.field(static=True)
 
-    def __init__(self, point_shape: Sequence[int], /):
+    def __init__(self, point_shape: Sequence[int], /) -> None:
         shape = tuple(point_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError(

@@ -14,7 +14,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -131,7 +132,7 @@ class PereiraBotelho2019FiberCurrentPlan(StrictModule):
         geometry_license: str,
         absolute_neutrality_tolerance_A: float = 1.0e-15,
         relative_neutrality_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         ids = tuple(str(value).strip() for value in fiber_ids)
         positions = jnp.asarray(positions_m, dtype=jnp.float64)
         radius = jnp.asarray(radius_m, dtype=positions.dtype)
@@ -216,7 +217,7 @@ class PreparedFiberCurrent(StrictModule):
         plan: PereiraBotelho2019FiberCurrentPlan,
         fiber: PreparedSkeletalFiberBundle,
         /,
-    ):
+    ) -> None:
         if not isinstance(fiber, PreparedSkeletalFiberBundle):
             raise TypeError(
                 "Requires the fixed-geometry Shorten fiber family, not moving geometry."

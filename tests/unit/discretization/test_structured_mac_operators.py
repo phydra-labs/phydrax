@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -6,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def _prepared(count=24, *, periodic=True):
+def _prepared(count: Any = 24, *, periodic: Any = True) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(count, periodic=periodic),),
         axis_names=("x",),
@@ -15,7 +17,7 @@ def _prepared(count=24, *, periodic=True):
     return grid, phx.discretization.MACOperatorPlan(finite_volume).prepare()
 
 
-def test_mac_operator_bundle_certifies_adjoint_nullspace_and_laplacian():
+def test_mac_operator_bundle_certifies_adjoint_nullspace_and_laplacian() -> None:
     grid, operators = _prepared(32)
     pressure = jnp.sin(2.0 * jnp.pi * grid.structured_axes[0].interval_centers)
     gradient = operators.gradient(pressure)
@@ -35,7 +37,7 @@ def test_mac_operator_bundle_certifies_adjoint_nullspace_and_laplacian():
     )
 
 
-def test_mac_velocity_block_space_preserves_face_pairing_and_coordinates():
+def test_mac_velocity_block_space_preserves_face_pairing_and_coordinates() -> None:
     _, operators = _prepared(16)
     velocity = (jnp.sin(2.0 * jnp.pi * jnp.arange(16) / 16.0),)
 
@@ -49,7 +51,7 @@ def test_mac_velocity_block_space_preserves_face_pairing_and_coordinates():
     np.testing.assert_allclose(energy, expected, atol=1e-14)
 
 
-def test_mac_rate_projection_uses_the_same_transform_and_iterative_actions():
+def test_mac_rate_projection_uses_the_same_transform_and_iterative_actions() -> None:
     _, operators = _prepared(32)
     rate = (jnp.sin(2.0 * jnp.pi * jnp.arange(32) / 32.0),)
 
@@ -67,7 +69,7 @@ def test_mac_rate_projection_uses_the_same_transform_and_iterative_actions():
     assert jnp.linalg.norm(iterative.divergence_after) < 1e-8
 
 
-def test_mac_projection_transform_and_iterative_routes_agree():
+def test_mac_projection_transform_and_iterative_routes_agree() -> None:
     _, operators = _prepared(32)
     velocity = (jnp.sin(2.0 * jnp.pi * jnp.arange(32) / 32.0),)
     transform = phx.solver.MACPressureProjectionPlan(
@@ -88,7 +90,7 @@ def test_mac_projection_transform_and_iterative_routes_agree():
     assert jnp.linalg.norm(iterative.divergence_after) < 1e-8
 
 
-def test_mac_variable_coefficient_projection_is_jittable_and_idempotent():
+def test_mac_variable_coefficient_projection_is_jittable_and_idempotent() -> None:
     grid, operators = _prepared(24)
     projection = phx.solver.MACPressureProjectionPlan(
         operators, solve_method="iterative", tolerance=1e-9
@@ -116,7 +118,7 @@ def test_mac_variable_coefficient_projection_is_jittable_and_idempotent():
     np.testing.assert_allclose(second.velocity[0], first.velocity[0], atol=2e-7)
 
 
-def test_mac_projection_validates_coefficients_and_transform_eligibility():
+def test_mac_projection_validates_coefficients_and_transform_eligibility() -> None:
     _, operators = _prepared(12)
     transform = phx.solver.MACPressureProjectionPlan(operators, solve_method="transform")
     velocity = (jnp.ones((12,)),)

@@ -9,12 +9,14 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from numbers import Integral
+from typing import TypeVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._sampling import IncrementalMarkovTarget, SingleCoordinateProposalPayload
@@ -27,6 +29,7 @@ from ...linalg import (
     evaluate_pfaffian,
     factorization_policy_from_linear_solve,
     factorize,
+    LowRankPfaffianResult,
     LowRankSolvePolicy,
     PfaffianPolicy,
     prepare_factorized_low_rank_sequence,
@@ -96,7 +99,7 @@ class PfaffianJastrowAmplitude(StrictModule, ParameterOwner):
         pairing_id: str,
         cusp_id: str,
         policy: PfaffianPolicy,
-    ):
+    ) -> None:
         if not callable(pairing_evaluator) or not callable(jastrow):
             raise TypeError("pairing_evaluator and jastrow must be callable.")
         if isinstance(particle_count, bool) or not isinstance(particle_count, Integral):
@@ -416,7 +419,7 @@ def _compact_cache(
     pairing_matrix: Array,
     correlation: Array,
     locality_residual: Array,
-    proposal,
+    proposal: LowRankPfaffianResult,
     /,
 ) -> PfaffianJastrowCache:
     sequence = accept_low_rank_update(
@@ -620,7 +623,12 @@ def _propose_target(
     return log_ratio, proposed_cache, valid
 
 
-def _select_target(current, proposed, accepted: Array, /):
+_Selected = TypeVar("_Selected")
+
+
+def _select_target(
+    current: _Selected, proposed: _Selected, accepted: Array, /
+) -> _Selected:
     return jax.tree_util.tree_map(
         lambda current_leaf, proposed_leaf: jnp.where(
             accepted,

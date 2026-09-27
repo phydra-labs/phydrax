@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from numbers import Integral
 from typing import Protocol, runtime_checkable
@@ -13,7 +14,9 @@ from typing import Protocol, runtime_checkable
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from numpy.typing import DTypeLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._physical import SpatialCoordinateContract
@@ -24,7 +27,7 @@ from ._quantity import canonical_quantity_text
 from ._time import SampleTimeAxis
 
 
-def _shape(value, name: str, /) -> tuple[int, ...]:
+def _shape(value: Iterable[int], name: str, /) -> tuple[int, ...]:
     if isinstance(value, Integral):
         raise TypeError(f"{name} must be a sequence of positive integers.")
     shape = tuple(value)
@@ -36,7 +39,9 @@ def _shape(value, name: str, /) -> tuple[int, ...]:
     return shape
 
 
-def _readonly(value: ArrayLike, name: str, /, *, dtype=None) -> np.ndarray:
+def _readonly(
+    value: ArrayLike, name: str, /, *, dtype: DTypeLike | None = None
+) -> np.ndarray:
     array = np.array(value, dtype=dtype, copy=True)
     if array.dtype.hasobject:
         raise TypeError(f"{name} must not use object dtype.")

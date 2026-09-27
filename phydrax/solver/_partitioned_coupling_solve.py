@@ -11,12 +11,13 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._numerics._checkpointed_scan import checkpointed_scan
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._fixed_step import FixedStepReplayPolicy
 from ._partitioned_coupling_graph import (
     CouplingGraph,
@@ -33,6 +34,21 @@ from ._partitioned_coupling_types import (
 
 
 CouplingRetentionPolicy: TypeAlias = Literal["final", "checkpoints", "trajectory"]
+# Accepted state, still-active flag, and terminal status.
+_WindowCarry: TypeAlias = tuple[CouplingState, Array, Array]
+# Success, status, convergence, residuals, participant statuses/evaluations, iterations.
+_WindowPayload: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+_WindowOutcome: TypeAlias = tuple[
+    CouplingState, Array, Array, Array, Array, Array, Array, Array
+]
+_TrajectoryPayload: TypeAlias = tuple[
+    CouplingState, Array, Array, Array, Array, Array, Array, Array
+]
+# Participant buffers, exchange buffers, validity buffer, and write cursor.
+_CheckpointBuffers: TypeAlias = tuple[tuple[Any, ...], tuple[Any, ...], Array, Array]
+_CheckpointCarry: TypeAlias = tuple[
+    _WindowCarry, tuple[Any, ...], tuple[Any, ...], Array, Array
+]
 
 
 def _prepend(initial: Any, values: Any, /) -> Any:
@@ -78,7 +94,7 @@ class CouplingProblem(StrictModule, NonTrainableState):
         args: Any = None,
         resources: CouplingResourcePolicy | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(graph, CouplingGraph):
             raise TypeError("graph must be CouplingGraph.")
         if not isinstance(policy, AbstractCouplingPolicy):
@@ -183,9 +199,8 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
         retention: CouplingRetentionPolicy = "final",
         checkpoint_stride: int = 1,
         replay: FixedStepReplayPolicy | None = None,
-    ):
-        if retention not in ("final", "checkpoints", "trajectory"):
-            raise ValueError("Unknown coupling retention policy.")
+    ) -> None:
+        retention = parse(retention, CouplingRetentionPolicy, "retention")
         stride = int(checkpoint_stride)
         if stride <= 0:
             raise ValueError("checkpoint_stride must be positive.")
@@ -227,10 +242,12 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
         participant_count = len(prepared.subsystems)
         residual_dtype = prepared.reference_state.time.dtype
 
-        def step(carry, window_index):
+        def step(
+            carry: _WindowCarry, window_index: Array
+        ) -> tuple[_WindowCarry, _WindowPayload]:
             state, active, terminal_status = carry
 
-            def execute(_):
+            def execute(_: None) -> _WindowOutcome:
                 result = advance_coupling_window(prepared, state, size, args)
                 return (
                     result.accepted_state,
@@ -243,7 +260,7 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
                     result.diagnostics.coupling_iterations,
                 )
 
-            def skip(_):
+            def skip(_: None) -> _WindowOutcome:
                 return (
                     state,
                     jnp.asarray(False),
@@ -288,7 +305,9 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
 
         if self.retention == "trajectory":
 
-            def trajectory_step(carry, window_index):
+            def trajectory_step(
+                carry: _WindowCarry, window_index: Array
+            ) -> tuple[_WindowCarry, _TrajectoryPayload]:
                 next_carry, payload = step(carry, window_index)
                 return next_carry, (next_carry[0], *payload)
 
@@ -390,12 +409,14 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
                 jnp.zeros((len(saved_indices),), dtype=jnp.bool_).at[0].set(True)
             )
 
-            def checkpoint_step(carry, window_index):
+            def checkpoint_step(
+                carry: _CheckpointCarry, window_index: Array
+            ) -> tuple[_CheckpointCarry, _WindowPayload]:
                 base_carry, participants, exchanges, valid_buffer, cursor = carry
                 next_carry, payload = step(base_carry, window_index)
                 accepted, successful, _ = next_carry
 
-                def store(values):
+                def store(values: _CheckpointBuffers) -> _CheckpointBuffers:
                     participant_values, exchange_values, validity, current = values
                     participant_values = tuple(
                         jax.tree.map(

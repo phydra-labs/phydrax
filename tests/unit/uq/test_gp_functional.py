@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,11 +12,11 @@ import pytest
 import phydrax as phx
 
 
-def _design(points, functional, name):
+def _design(points: Any, functional: Any, name: Any) -> Any:
     return phx.uq.FunctionalDesign.from_inputs(points, functional, name=name)
 
 
-def test_squared_exponential_functional_covariances_match_closed_forms():
+def test_squared_exponential_functional_covariances_match_closed_forms() -> None:
     length_scale = jnp.array([0.4, 0.7])
     kernel = phx.kernels.SquaredExponentialKernel(length_scale=length_scale)
     left = jnp.array([[-0.2, 0.3], [0.4, -0.1]])
@@ -59,7 +62,7 @@ def test_squared_exponential_functional_covariances_match_closed_forms():
     assert jnp.allclose(laplacian_diagonal, expected_laplacian_diagonal)
 
 
-def test_functional_exact_and_fitc_conditioning_are_finite_and_block_ordered():
+def test_functional_exact_and_fitc_conditioning_are_finite_and_block_ordered() -> None:
     points = jnp.linspace(0.05, 0.95, 9)
     derivative_points = jnp.linspace(0.1, 0.9, 7)
     value = phx.uq.value_functional(1)
@@ -115,13 +118,15 @@ def test_functional_exact_and_fitc_conditioning_are_finite_and_block_ordered():
     assert jnp.all(sparse.variance >= 0.0)
 
 
-def test_dynamic_differential_operator_coefficients_are_jittable_and_differentiable():
+def test_dynamic_differential_operator_coefficients_are_jittable_and_differentiable() -> (
+    None
+):
     points = jnp.linspace(0.1, 0.9, 6)
     laplacian = phx.uq.laplacian_functional(1)
     derivative = phx.uq.partial_derivative_functional(1, 0)
     kernel = phx.kernels.SquaredExponentialKernel(length_scale=0.35)
 
-    def objective(coefficients):
+    def objective(coefficients: Any) -> Any:
         diffusion, advection = coefficients
         operator = diffusion * laplacian + advection * derivative
         design = _design(points, operator, "dynamic-pde")
@@ -137,7 +142,7 @@ def test_dynamic_differential_operator_coefficients_are_jittable_and_differentia
     assert jnp.any(jnp.abs(gradient) > 0.0)
 
 
-def test_functional_regularity_gate_rejects_unsupported_laplacian():
+def test_functional_regularity_gate_rejects_unsupported_laplacian() -> None:
     design = _design(
         jnp.array([0.2, 0.5]),
         phx.uq.laplacian_functional(1),

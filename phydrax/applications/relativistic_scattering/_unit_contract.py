@@ -14,11 +14,12 @@ from __future__ import annotations
 
 import math
 from fractions import Fraction
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, TypeVar
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 import phydrax.linalg as linalg
@@ -37,6 +38,7 @@ from ...metrix import (
     tetrad_project_vector,
     tetrad_reconstruct_vector,
 )
+from ...typing import parse
 from ...units import derived_unit, UnitDefinition
 
 
@@ -62,35 +64,13 @@ IdenticalParticleNormalization: TypeAlias = Literal[
     "ordered-labeled-final-state",
 ]
 
-_PHASE_SPACE_NORMALIZATIONS = frozenset(("lorentz-invariant-2E",))
-_S_MATRIX_NORMALIZATIONS = frozenset(("covariant-delta",))
-_SPIN_NORMALIZATIONS = frozenset(
-    ("average-initial-sum-final", "sum-all", "density-matrix-explicit")
-)
-_COLOR_NORMALIZATIONS = _SPIN_NORMALIZATIONS
-_POLARIZATION_NORMALIZATIONS = frozenset(
-    (
-        "physical-helicity",
-        "covariant-gauge-with-ward-check",
-        "density-matrix-explicit",
-    )
-)
-_IDENTICAL_PARTICLE_NORMALIZATIONS = frozenset(
-    ("factorial-symmetry", "ordered-labeled-final-state")
-)
+_IdentifierT = TypeVar("_IdentifierT", bound=str)
 
 
-def _identifier(value: str, name: str, /) -> str:
+def _identifier(value: _IdentifierT, name: str, /) -> _IdentifierT:
     if not isinstance(value, str) or not value or value != value.strip():
         raise ValueError(f"{name} must be a non-empty canonical identifier.")
     return value
-
-
-def _normalization(value: str, allowed: frozenset[str], name: str, /) -> str:
-    normalized = _identifier(value, name)
-    if normalized not in allowed:
-        raise ValueError(f"Unknown {name}: {normalized!r}.")
-    return normalized
 
 
 def _real_array(value: ArrayLike, name: str, /) -> Array:
@@ -164,7 +144,7 @@ class RelativisticUnitContract(StrictModule, NonTrainableState):
         color_normalization: ColorNormalization = "average-initial-sum-final",
         polarization_normalization: PolarizationNormalization = "physical-helicity",
         identical_particle_normalization: IdenticalParticleNormalization = "factorial-symmetry",
-    ):
+    ) -> None:
         if not isinstance(scale, RelativityScaleContract):
             raise TypeError("scale must be a RelativityScaleContract.")
         if not isinstance(convention, RelativityConvention):
@@ -173,35 +153,25 @@ class RelativisticUnitContract(StrictModule, NonTrainableState):
             raise ValueError(
                 "Relativistic unit contracts require explicitly declared c and hbar."
             )
-        phase_space = _normalization(
+        phase_space = parse(
             phase_space_normalization,
-            _PHASE_SPACE_NORMALIZATIONS,
-            "phase-space normalization",
+            PhaseSpaceNormalization,
+            "phase_space_normalization",
         )
-        s_matrix = _normalization(
-            s_matrix_normalization,
-            _S_MATRIX_NORMALIZATIONS,
-            "S-matrix normalization",
+        s_matrix = parse(
+            s_matrix_normalization, SMatrixNormalization, "s_matrix_normalization"
         )
-        spin = _normalization(
-            spin_normalization,
-            _SPIN_NORMALIZATIONS,
-            "spin normalization",
-        )
-        color = _normalization(
-            color_normalization,
-            _COLOR_NORMALIZATIONS,
-            "color normalization",
-        )
-        polarization = _normalization(
+        spin = parse(spin_normalization, SpinNormalization, "spin_normalization")
+        color = parse(color_normalization, ColorNormalization, "color_normalization")
+        polarization = parse(
             polarization_normalization,
-            _POLARIZATION_NORMALIZATIONS,
-            "polarization normalization",
+            PolarizationNormalization,
+            "polarization_normalization",
         )
-        identical = _normalization(
+        identical = parse(
             identical_particle_normalization,
-            _IDENTICAL_PARTICLE_NORMALIZATIONS,
-            "identical-particle normalization",
+            IdenticalParticleNormalization,
+            "identical_particle_normalization",
         )
         dimensional = scale.dimensional_scale
         momentum = derived_unit(
@@ -645,7 +615,7 @@ class LocalRelativisticFramePlan(StrictModule, NonTrainableState):
         *,
         observer_id: str,
         orientation_id: str,
-    ):
+    ) -> None:
         if not isinstance(geometry, ADMGridGeometry):
             raise TypeError("geometry must be an ADMGridGeometry.")
         if not isinstance(tetrad, OrthonormalTetrad):

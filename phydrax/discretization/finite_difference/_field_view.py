@@ -30,7 +30,7 @@ from typing import Any, final
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._differentiation import DerivativeRegularity
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -51,6 +51,7 @@ from ...linalg import (
     RHSLayout,
 )
 from ...sparse import linear_apply, linear_transpose_apply
+from .._spaces import TensorDofLayout
 from .._view_support import tensor_box_support_geometry
 from .._views import (
     AbstractFieldReconstructionKernel,
@@ -70,7 +71,7 @@ class MultilinearGridInterpolation(StrictModule, NonTrainableState):
 
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.policy_id = canonical_fingerprint({"kind": "multilinear-grid-interpolation"})
 
 
@@ -88,7 +89,7 @@ class BSplineGridInterpolation(StrictModule, NonTrainableState):
     condition_limit: float = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, degree: int, /, *, condition_limit: float = 1.0e12):
+    def __init__(self, degree: int, /, *, condition_limit: float = 1.0e12) -> None:
         if isinstance(degree, bool) or not isinstance(degree, Integral):
             raise TypeError("B-spline interpolation degree must be an int.")
         if degree < 2:
@@ -179,7 +180,7 @@ class FiniteDifferenceFieldReconstructionKernel(
         /,
         *,
         field_space_id: str,
-    ):
+    ) -> None:
         axes = tuple(np.asarray(values, dtype=np.float64) for values in nodes)
         knots: tuple[np.ndarray, ...] = ()
         collocation: tuple[PreparedFactorization, ...] = ()
@@ -260,8 +261,10 @@ class FiniteDifferenceFieldReconstructionKernel(
                 if any(derivative):
                     raise ValueError("Multilinear grid interpolation has no derivatives.")
                 indices, weights, support = self._multilinear(query)
-            case BSplineGridInterpolation():
-                indices, weights, support = self._bspline(query, derivative)
+            case BSplineGridInterpolation() as bspline:
+                indices, weights, support = self._bspline(
+                    query, derivative, bspline.degree
+                )
             case _:
                 raise TypeError("Unknown finite-difference grid interpolation.")
         status = jnp.where(
@@ -305,7 +308,7 @@ class FiniteDifferenceFieldReconstructionKernel(
         return stencil.indices, stencil.weights, stencil.support
 
     def _bspline(
-        self, query: Array, derivative: tuple[int, ...], /
+        self, query: Array, derivative: tuple[int, ...], degree: int, /
     ) -> tuple[Array, Array, Array]:
         count = query.shape[0]
         indices = jnp.zeros((count, 1), dtype=jnp.int32)
@@ -317,7 +320,7 @@ class FiniteDifferenceFieldReconstructionKernel(
             jet = bspline_jet_stencil(
                 knots,
                 query[:, axis],
-                degree=self.interpolation.degree,
+                degree=degree,
                 maximum_order=order,
                 bounds="fill",
             )
@@ -374,7 +377,8 @@ class FiniteDifferenceFieldReconstructionKernel(
 def _centered_space(discretization: PreparedFiniteDifferenceDiscretization, /) -> Any:
     centered = discretization.grid.centered_location.location_id
     for space in discretization.field_spaces:
-        if space.layout.location_id == centered:
+        layout = space.layout
+        if isinstance(layout, TensorDofLayout) and layout.location_id == centered:
             return space
     raise ValueError(
         "The finite-difference discretization has no field space at the grid's "

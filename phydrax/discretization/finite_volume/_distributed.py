@@ -12,8 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from ..._execution_runtime import ExecutionGroup
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -73,7 +74,7 @@ class FiniteVolumeDecompositionPlan(StrictModule, NonTrainableState):
         halo_width: int,
         periodic: Sequence[bool] | None = None,
         grid_revision: str | None = None,
-    ):
+    ) -> None:
         shape = tuple(global_shape)
         splits = tuple(split_factors)
         names = tuple(str(value) for value in axis_names)
@@ -154,14 +155,15 @@ class PreparedFiniteVolumeDecomposition(StrictModule, NonTrainableState):
         *,
         devices: Sequence[jax.Device] | None = None,
         execution_group: ExecutionGroup | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, FiniteVolumeDecompositionPlan):
             raise TypeError("plan must be a FiniteVolumeDecompositionPlan.")
-        available = tuple(
-            jax.devices()
-            if devices is None and execution_group is None
-            else (execution_group.devices if execution_group is not None else devices)
-        )
+        if execution_group is not None:
+            available = tuple(execution_group.devices)
+        elif devices is not None:
+            available = tuple(devices)
+        else:
+            available = tuple(jax.devices())
         required = prod(plan.split_factors)
         if execution_group is not None and len(available) != required:
             raise ValueError(

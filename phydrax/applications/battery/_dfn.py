@@ -12,7 +12,8 @@ from dataclasses import dataclass
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 
@@ -133,7 +134,7 @@ class IsothermalDFNPlan(StrictModule):
         *,
         maximum_newton_steps: int = 12,
         residual_tolerance: float = 1.0e-4,
-    ):
+    ) -> None:
         counts = tuple((negative_cells, separator_cells, positive_cells, radial_cells))
         if any(value < 2 for value in counts):
             raise ValueError(
@@ -195,7 +196,7 @@ class IsothermalDFNPlan(StrictModule):
             jnp.asarray(0.0),
         )
 
-    def _geometry(self, parameters: DFNParameters):
+    def _geometry(self, parameters: DFNParameters) -> tuple[Array, Array]:
         lengths = jnp.concatenate(
             (
                 jnp.full(
@@ -216,7 +217,13 @@ class IsothermalDFNPlan(StrictModule):
         return lengths, centers
 
     @staticmethod
-    def _face_flux(potential, conductivity, centers, left, right):
+    def _face_flux(
+        potential: Array,
+        conductivity: float,
+        centers: Array,
+        left: ArrayLike,
+        right: ArrayLike,
+    ) -> Array:
         internal = -conductivity * jnp.diff(potential) / jnp.diff(centers)
         return jnp.concatenate((jnp.asarray([left]), internal, jnp.asarray([right])))
 
@@ -270,7 +277,7 @@ class IsothermalDFNPlan(StrictModule):
         if initial.shape != (size,):
             raise RuntimeError("DFN algebraic layout is inconsistent.")
 
-        def unpack(vector):
+        def unpack(vector: Array) -> tuple[Array, Array, Array, Array, Array]:
             offset = 0
             phi_e = vector[offset : offset + self.through_cells]
             offset += self.through_cells
@@ -283,7 +290,7 @@ class IsothermalDFNPlan(StrictModule):
             j_p = vector[offset : offset + self.positive_cells]
             return phi_e, phi_n, phi_p, j_n, j_p
 
-        def residual(vector):
+        def residual(vector: Array) -> Array:
             phi_e, phi_n, phi_p, j_n, j_p = unpack(vector)
             i_n = self._face_flux(
                 phi_n,
@@ -366,7 +373,9 @@ class IsothermalDFNPlan(StrictModule):
         )
 
     @staticmethod
-    def _particle_rate(concentration, diffusivity, radius, flux):
+    def _particle_rate(
+        concentration: Array, diffusivity: float, radius: float, flux: ArrayLike
+    ) -> Array:
         radial_cells = concentration.shape[-1]
         step = radius / radial_cells
         inner = concentration[..., 1:] - concentration[..., :-1]
@@ -492,7 +501,7 @@ class SeriesBatteryPackPlan:
         cell_plans: Sequence[IsothermalDFNPlan],
         cell_parameters: Sequence[DFNParameters],
         /,
-    ):
+    ) -> None:
         plans = tuple(cell_plans)
         parameters = tuple(cell_parameters)
         if not plans or len(plans) != len(parameters):

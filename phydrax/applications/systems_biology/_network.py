@@ -10,14 +10,16 @@ from collections.abc import Mapping, Sequence
 from dataclasses import fields, is_dataclass
 from enum import Enum, IntEnum
 from math import factorial, isfinite
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -26,6 +28,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...equations import PreparedChemicalMechanism
 from ...stochastic import AbstractJumpProcess
+from ...typing import PRNGKey
 
 
 ApproximationKind: TypeAlias = Literal["deterministic", "cle"]
@@ -168,7 +171,7 @@ class CompartmentSpec(StrictModule, NonTrainableState):
     measure: Array
     unit: str = eqx.field(static=True)
 
-    def __init__(self, name: str, measure: ArrayLike, /, *, unit: str = "volume"):
+    def __init__(self, name: str, measure: ArrayLike, /, *, unit: str = "volume") -> None:
         self.name = _path_name(name, "Compartment name")
         self.measure = _scalar(measure, "Compartment measure", positive=True)
         self.unit = _name(unit, "Compartment measure unit")
@@ -194,7 +197,7 @@ class SpeciesSpec(StrictModule, NonTrainableState):
         quantity: str = "count",
         unit: str = "molecule",
         thermochemical_name: str | None = None,
-    ):
+    ) -> None:
         self.name = _path_name(name, "Species name")
         self.compartment = _name(compartment, "Species compartment")
         if not isinstance(reservoir, bool):
@@ -215,7 +218,7 @@ class MassActionPropensity(StrictModule):
     rate: Array
     orders: tuple[tuple[str, int], ...] = eqx.field(static=True)
 
-    def __init__(self, rate: ArrayLike, orders: Mapping[str, int], /):
+    def __init__(self, rate: ArrayLike, orders: Mapping[str, int], /) -> None:
         self.rate = _scalar(rate, "Mass-action rate")
         self.orders = _order_mapping(orders, "Mass-action orders")
 
@@ -240,7 +243,7 @@ class HillPropensity(StrictModule):
         *,
         basal_rate: ArrayLike = 0.0,
         repression: bool = False,
-    ):
+    ) -> None:
         self.maximum_rate = _scalar(maximum_rate, "Hill maximum rate")
         self.half_saturation = _scalar(
             half_saturation, "Hill half-saturation", positive=True
@@ -266,7 +269,7 @@ class MichaelisMentenPropensity(StrictModule):
         michaelis_constant: ArrayLike,
         substrate: str,
         /,
-    ):
+    ) -> None:
         self.maximum_rate = _scalar(maximum_rate, "Michaelis--Menten maximum rate")
         self.michaelis_constant = _scalar(
             michaelis_constant, "Michaelis constant", positive=True
@@ -280,7 +283,7 @@ class PromoterTransitionPropensity(StrictModule):
     rate: Array
     source: str = eqx.field(static=True)
 
-    def __init__(self, rate: ArrayLike, source: str, /):
+    def __init__(self, rate: ArrayLike, source: str, /) -> None:
         self.rate = _scalar(rate, "Promoter-transition rate")
         self.source = _name(source, "Promoter-transition source")
 
@@ -309,7 +312,7 @@ class StoichiometricProcessSpec(StrictModule):
         /,
         *,
         thermochemical_reaction: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(
             propensity,
             (
@@ -335,7 +338,7 @@ class StoichiometricRuntime(StrictModule):
 
     parameters: Array
 
-    def __init__(self, parameters: ArrayLike, /):
+    def __init__(self, parameters: ArrayLike, /) -> None:
         raw = jnp.asarray(parameters)
         if raw.dtype == jnp.bool_:
             raise TypeError("Runtime parameters must not be boolean.")
@@ -438,7 +441,7 @@ class StoichiometricNetworkPlan(StrictModule, NonTrainableState):
         *,
         stoichiometry_capacity: int | None = None,
         time_unit: str = "s",
-    ):
+    ) -> None:
         name_value = _name(name, "Network name")
         time_unit_value = _name(time_unit, "Network time unit")
         compartment_values = tuple(compartments)
@@ -569,7 +572,7 @@ class PreparedStoichiometricNetwork(StrictModule, NonTrainableState):
     maximum_order: int = eqx.field(static=True)
     network_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: StoichiometricNetworkPlan, /):
+    def __init__(self, plan: StoichiometricNetworkPlan, /) -> None:
         if not isinstance(plan, StoichiometricNetworkPlan):
             raise TypeError("plan must be StoichiometricNetworkPlan.")
         species_index = {item.name: index for index, item in enumerate(plan.species)}
@@ -740,7 +743,7 @@ class PreparedStoichiometricNetwork(StrictModule, NonTrainableState):
     def default_runtime(self) -> StoichiometricRuntime:
         return StoichiometricRuntime(self.propensity_parameters)
 
-    def initial_state(self, values: ArrayLike, /) -> Array:
+    def initial_state(self, values: npt.ArrayLike, /) -> Array:
         raw = jnp.asarray(values)
         if raw.dtype == jnp.bool_:
             raise TypeError("Initial state must not be boolean.")
@@ -969,7 +972,7 @@ class PreparedStoichiometricNetwork(StrictModule, NonTrainableState):
         self,
         state: ArrayLike,
         duration: ArrayLike,
-        key: Key[Array, ""],
+        key: PRNGKey,
         runtime: StoichiometricRuntime | None = None,
         /,
         *,
@@ -1338,7 +1341,7 @@ class CompartmentalJumpProcess(AbstractJumpProcess):
     mark_shape: tuple[int, ...] = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
 
-    def __init__(self, network: PreparedStoichiometricNetwork, /):
+    def __init__(self, network: PreparedStoichiometricNetwork, /) -> None:
         if not isinstance(network, PreparedStoichiometricNetwork):
             raise TypeError("network must be PreparedStoichiometricNetwork.")
         if any(item.quantity != "count" for item in network.plan.species):
@@ -1351,19 +1354,31 @@ class CompartmentalJumpProcess(AbstractJumpProcess):
             {"kind": "systems-biology-exact-jump", "network": network.network_id}
         )
 
-    def intensities(self, time, state, args=None, /):
+    def intensities(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None, /
+    ) -> Array:
         del time
         runtime = self.network.default_runtime() if args is None else args
         return self.network.evaluate(state, runtime, mode="ssa").propensities
 
-    def jump(self, state, channel, mark, args=None, /):
+    def jump(
+        self, state: ArrayLike, channel: ArrayLike, mark: ArrayLike, args: Any = None, /
+    ) -> Array:
         del mark, args
         return (
             jnp.asarray(state)
             + self.network.dynamic_stoichiometry[jnp.asarray(channel, dtype=jnp.int32)]
         )
 
-    def sample_mark(self, key, time, state, channel, args=None, /):
+    def sample_mark(
+        self,
+        key: PRNGKey,
+        time: ArrayLike,
+        state: ArrayLike,
+        channel: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> Array:
         del key, time, channel, args
         return jnp.asarray(0, dtype=jnp.asarray(state).dtype)
 

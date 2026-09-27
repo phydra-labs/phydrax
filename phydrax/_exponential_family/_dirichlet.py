@@ -4,13 +4,17 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from ..typing import PRNGKey
 from ._contracts import (
     _mean_domain_result,
     _natural_domain_result,
@@ -19,6 +23,7 @@ from ._contracts import (
     EXPONENTIAL_FAMILY_NONFINITE,
     ExponentialFamilyConversionResult,
     ExponentialFamilyDomainResult,
+    ExponentialFamilyLaw,
     ExponentialFamilySignature,
     MeanCoordinates,
     NaturalCoordinates,
@@ -27,6 +32,9 @@ from ._contracts import (
 
 
 _EULER_MASCHERONI = 0.5772156649015329
+
+# lower, upper, concentration, iterations, converged, loop iteration
+_DirichletBisectionState: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
 def _dirichlet_residual(concentration: Array, mean: Array, /) -> Array:
@@ -42,7 +50,7 @@ def _inverse_digamma(value: Array, /) -> Array:
     )
     initial = jnp.maximum(initial, jnp.sqrt(jnp.finfo(value.dtype).tiny))
 
-    def step(_, current):
+    def step(_: Array, current: Array) -> Array:
         update = (jsp.special.digamma(current) - value) / jsp.special.polygamma(
             1, current
         )
@@ -71,17 +79,17 @@ def _solve_dirichlet_concentration(
     lower = jnp.log(initial_total) - 4.0
     upper = jnp.log(initial_total) + 4.0
 
-    def concentration_from_log_total(log_total):
+    def concentration_from_log_total(log_total: Array) -> Array:
         total = jnp.exp(log_total)[..., None]
         shifted_mean = mean + jsp.special.digamma(total)
         return _inverse_digamma(shifted_mean)
 
-    def total_residual(log_total):
+    def total_residual(log_total: Array) -> Array:
         total = jnp.exp(log_total)
         concentration = concentration_from_log_total(log_total)
         return jnp.sum(concentration, axis=-1) / total - 1.0
 
-    def bracket_step(_, bounds):
+    def bracket_step(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
         lower_value, upper_value = bounds
         lower_residual = total_residual(lower_value)
         upper_residual = total_residual(upper_value)
@@ -100,11 +108,11 @@ def _solve_dirichlet_concentration(
         + rtol * coordinate_scale
     )
 
-    def condition(state):
+    def condition(state: _DirichletBisectionState) -> Array:
         _, _, _, _, converged_values, loop_iteration = state
         return (loop_iteration < max_iterations) & jnp.any(~converged_values)
 
-    def step(state):
+    def step(state: _DirichletBisectionState) -> _DirichletBisectionState:
         (
             lower_value,
             upper_value,
@@ -163,7 +171,9 @@ def _implicit_dirichlet_concentration(mean: Array, concentration: Array, /) -> A
 
 
 @_implicit_dirichlet_concentration.defjvp
-def _implicit_dirichlet_concentration_jvp(primals, tangents):
+def _implicit_dirichlet_concentration_jvp(
+    primals: tuple[Array, Array], tangents: tuple[Array, Array]
+) -> tuple[Array, Array]:
     mean, concentration = primals
     mean_tangent, _ = tangents
     del mean
@@ -194,7 +204,7 @@ class DirichletFamily(AbstractExponentialFamily):
         atol: float = 1e-12,
         rtol: float = 1e-12,
         max_iterations: int = 100,
-    ):
+    ) -> None:
         categories = int(num_categories)
         absolute = float(atol)
         relative = float(rtol)
@@ -237,7 +247,7 @@ class DirichletFamily(AbstractExponentialFamily):
         values = values.astype(jnp.result_type(values, 0.0))
         return self.natural(values - 1.0)
 
-    def law_from_concentration(self, concentration: ArrayLike, /):
+    def law_from_concentration(self, concentration: ArrayLike, /) -> ExponentialFamilyLaw:
         """Return a Dirichlet law from conventional concentration parameters."""
         return self.law(self.natural_from_concentration(concentration))
 
@@ -370,7 +380,7 @@ class DirichletFamily(AbstractExponentialFamily):
 
     def _sample(
         self,
-        key,
+        key: PRNGKey,
         natural_values: Array,
         sample_shape: tuple[int, ...],
         /,

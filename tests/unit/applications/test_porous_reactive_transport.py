@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -25,7 +28,7 @@ from phydrax.linalg import DenseLU, LinearSolvePolicy
 from phydrax.nonlinear import NewtonKrylov, NonlinearTermination
 
 
-def _geometry():
+def _geometry() -> Any:
     return UnstructuredFiniteVolumePlan(
         np.asarray(
             (
@@ -40,11 +43,11 @@ def _geometry():
     ).prepare()
 
 
-def _method():
+def _method() -> Any:
     return NewtonKrylov(linear_policy=LinearSolvePolicy(DenseLU()))
 
 
-def _termination():
+def _termination() -> Any:
     return NonlinearTermination(
         absolute_residual=1e-10,
         relative_residual=0.0,
@@ -54,13 +57,21 @@ def _termination():
     )
 
 
-def _dimer():
+def _dimer() -> Any:
     return MassActionSystem(
-        ("A",), ("A2",), [[2.0]], [np.log(2.0)], [0.0, 0.0], reference_concentration=1.0
+        ("A",),
+        ("A2",),
+        # ty: ignore[invalid-argument-type]
+        [[2.0]],
+        # ty: ignore[invalid-argument-type]
+        [np.log(2.0)],
+        # ty: ignore[invalid-argument-type]
+        [0.0, 0.0],
+        reference_concentration=1.0,
     )
 
 
-def test_water_volume_change_and_upstream_transport_preserve_component_moles():
+def test_water_volume_change_and_upstream_transport_preserve_component_moles() -> None:
     d = _geometry()
     face = int(np.flatnonzero(np.asarray(d.neighbor_cells) >= 0)[0])
     owner, neighbor = int(d.owner_cells[face]), int(d.neighbor_cells[face])
@@ -82,7 +93,9 @@ def test_water_volume_change_and_upstream_transport_preserve_component_moles():
     np.testing.assert_allclose(result.component_balance, 0.0, atol=1e-11)
 
 
-def test_boundary_injection_zero_initial_inventory_and_outflow_use_correct_states():
+def test_boundary_injection_zero_initial_inventory_and_outflow_use_correct_states() -> (
+    None
+):
     d = _geometry()
     faces = np.flatnonzero(
         (np.asarray(d.neighbor_cells) < 0) & (np.asarray(d.owner_cells) == 0)
@@ -122,7 +135,7 @@ def test_boundary_injection_zero_initial_inventory_and_outflow_use_correct_state
         )
 
 
-def test_rotated_spd_hybrid_dispersion_preserves_affine_field_and_physical_flux():
+def test_rotated_spd_hybrid_dispersion_preserves_affine_field_and_physical_flux() -> None:
     d = _geometry()
     tensor = jnp.asarray(((2.0, 0.4, 0.2), (0.4, 1.5, -0.1), (0.2, -0.1, 1.0)))
     gradient = jnp.asarray((0.3, -0.2, 0.4))
@@ -150,10 +163,10 @@ def test_rotated_spd_hybrid_dispersion_preserves_affine_field_and_physical_flux(
     np.testing.assert_allclose(result.component_balance, 0.0, atol=1e-10)
 
 
-def test_mass_action_component_balance_and_native_forward_reverse_derivatives():
+def test_mass_action_component_balance_and_native_forward_reverse_derivatives() -> None:
     chemistry = _dimer()
 
-    def primary(total):
+    def primary(total: Any) -> Any:
         return chemistry.solve(
             jnp.asarray([total]), initial_concentrations=jnp.asarray([0.5, 0.5])
         ).concentrations[0]
@@ -170,16 +183,22 @@ def test_mass_action_component_balance_and_native_forward_reverse_derivatives():
     np.testing.assert_allclose(result.mass_action_residual, 0.0, atol=1e-10)
 
 
-def test_declared_charge_replacement_exposes_open_component_and_davies_activities():
+def test_declared_charge_replacement_exposes_open_component_and_davies_activities() -> (
+    None
+):
     acid = MassActionSystem(
         ("H+", "A-"),
         ("HA",),
+        # ty: ignore[invalid-argument-type]
         [[1.0, 1.0]],
+        # ty: ignore[invalid-argument-type]
         [0.0],
+        # ty: ignore[invalid-argument-type]
         [1.0, -1.0, 0.0],
         reference_concentration=1.0,
         charge_balance_component=0,
     )
+    # ty: ignore[invalid-argument-type]
     result = acid.solve([0.1, 1.0], initial_concentrations=[0.5, 0.5, 0.5])
     np.testing.assert_allclose(
         result.concentrations[:2], [(np.sqrt(5.0) - 1.0) / 2.0] * 2, atol=1e-10
@@ -187,22 +206,42 @@ def test_declared_charge_replacement_exposes_open_component_and_davies_activitie
     np.testing.assert_allclose(result.charge_residual, 0.0, atol=1e-10)
     np.testing.assert_allclose(result.component_residual, [0.9, 0.0], atol=1e-10)
     salt = MassActionSystem(
-        ("Na+", "Cl-"), (), np.empty((0, 2)), [], [1.0, -1.0], activity_model="davies"
+        ("Na+", "Cl-"),
+        (),
+        np.empty((0, 2)),
+        # ty: ignore[invalid-argument-type]
+        [],
+        # ty: ignore[invalid-argument-type]
+        [1.0, -1.0],
+        activity_model="davies",
     )
+    # ty: ignore[invalid-argument-type]
     ions = salt.solve([10.0, 10.0], initial_concentrations=[9.0, 9.0])
     gamma = 10.0 ** (-0.509 * (0.1 / 1.1 - 0.003))
     np.testing.assert_allclose(ions.activities, [0.01 * gamma] * 2, atol=1e-10)
     with pytest.raises(
         (ValueError, eqx.EquinoxRuntimeError), match="successful physical root"
     ):
+        # ty: ignore[invalid-argument-type]
         salt.solve([1000.0, 1000.0], initial_concentrations=[1000.0, 1000.0])
 
 
-def test_mineral_exhaustion_and_precipitation_move_identical_stoichiometric_moles():
+def test_mineral_exhaustion_and_precipitation_move_identical_stoichiometric_moles() -> (
+    None
+):
     aqueous = MassActionSystem(
-        ("A",), (), np.empty((0, 1)), [], [0.0], reference_concentration=1.0
+        ("A",),
+        (),
+        np.empty((0, 1)),
+        # ty: ignore[invalid-argument-type]
+        [],
+        # ty: ignore[invalid-argument-type]
+        [0.0],
+        reference_concentration=1.0,
     )
+    # ty: ignore[invalid-argument-type]
     mineral = MineralKinetics(aqueous, ("A(s)",), [[1.0]], [np.log(100.0)], [10.0])
+    # ty: ignore[invalid-argument-type]
     result = mineral.step([0.2], [0.05], 1.0, 1.0, [1.0], initial_concentrations=[0.2])
     np.testing.assert_allclose(result.mineral_inventory, [0.0], atol=1e-12)
     np.testing.assert_allclose(result.extents, [0.05], atol=1e-12)
@@ -210,21 +249,40 @@ def test_mineral_exhaustion_and_precipitation_move_identical_stoichiometric_mole
     np.testing.assert_allclose(result.component_balance, 0.0, atol=1e-10)
     assert result.rates[0] > result.extents[0]
     precipitation = MineralKinetics(
-        aqueous, ("A(s)",), [[1.0]], [0.0], [1.0], allow_nucleation=(True,)
+        aqueous,
+        ("A(s)",),
+        # ty: ignore[invalid-argument-type]
+        [[1.0]],
+        # ty: ignore[invalid-argument-type]
+        [0.0],
+        # ty: ignore[invalid-argument-type]
+        [1.0],
+        allow_nucleation=(True,),
     )
     deposited = precipitation.step(
-        [2.0], [0.0], 1.0, 1.0, [1.0], initial_concentrations=[2.0]
+        # ty: ignore[invalid-argument-type]
+        [2.0],
+        # ty: ignore[invalid-argument-type]
+        [0.0],
+        1.0,
+        1.0,
+        # ty: ignore[invalid-argument-type]
+        [1.0],
+        # ty: ignore[invalid-argument-type]
+        initial_concentrations=[2.0],
     )
     np.testing.assert_allclose(deposited.component_inventory, [1.5], atol=1e-10)
     np.testing.assert_allclose(deposited.mineral_inventory, [0.5], atol=1e-10)
     np.testing.assert_allclose(deposited.component_balance, 0.0, atol=1e-10)
+    # ty: ignore[invalid-argument-type]
     unseeded = MineralKinetics(aqueous, ("A(s)",), [[1.0]], [0.0], [1.0])
+    # ty: ignore[invalid-argument-type]
     absent = unseeded.step([2.0], [0.0], 1.0, 1.0, [1.0], initial_concentrations=[2.0])
     np.testing.assert_allclose(absent.component_inventory, [2.0], atol=1e-10)
     np.testing.assert_allclose(absent.mineral_inventory, [0.0], atol=1e-12)
 
 
-def _exchange(d):
+def _exchange(d: Any) -> Any:
     surface = UnstructuredFiniteVolumePlan(
         np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
         triangles=np.asarray(((0, 1, 2),)),
@@ -232,20 +290,28 @@ def _exchange(d):
     return FractureMatrixExchange(
         d,
         surface,
+        # ty: ignore[invalid-argument-type]
         [0, 1],
+        # ty: ignore[invalid-argument-type]
         [0, 0],
         parent_global_ids=d.cell_global_ids,
         aperture=0.02,
         porosity=1.0,
+        # ty: ignore[invalid-argument-type]
         contact_areas=[0.5, 0.5],
+        # ty: ignore[invalid-argument-type]
         distances=[0.25, 0.25],
+        # ty: ignore[invalid-argument-type]
         origin=[0.0, 0.0, 0.0],
+        # ty: ignore[invalid-argument-type]
         tangent_axes=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
         fracture_id="resolved-plane-z0",
     )
 
 
-def test_fracture_storage_parent_exchange_and_water_balance_are_mixed_dimensional():
+def test_fracture_storage_parent_exchange_and_water_balance_are_mixed_dimensional() -> (
+    None
+):
     d = _geometry()
     exchange = _exchange(d)
     np.testing.assert_allclose(exchange.water_volumes(), [0.01], atol=1e-12)
@@ -291,8 +357,9 @@ def test_fracture_storage_parent_exchange_and_water_balance_are_mixed_dimensiona
         exchange.step(oldm, oldf, vm, vf, jnp.asarray([0.01, 0.01]), 1.0)
 
 
-def test_reactive_split_transports_totals_then_solves_real_chemistry_and_solids():
+def test_reactive_split_transports_totals_then_solves_real_chemistry_and_solids() -> None:
     d, chemistry = _geometry(), _dimer()
+    # ty: ignore[invalid-argument-type]
     kinetics = MineralKinetics(chemistry, ("A(s)",), [[1.0]], [np.log(100.0)], [10.0])
     transport = ComponentTransport(d, chemistry.primary_names)
     volumes = jnp.full((2,), 0.1)
@@ -312,6 +379,7 @@ def test_reactive_split_transports_totals_then_solves_real_chemistry_and_solids(
         transport_method=_method(),
         transport_termination=_termination(),
     )
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(result.mineral_inventory, 0.0, atol=1e-11)
     np.testing.assert_allclose(result.component_inventory, old + 0.01, atol=1e-10)
     np.testing.assert_allclose(

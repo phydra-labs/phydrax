@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -172,17 +173,17 @@ class PhysicalPIVResult2D(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        positions_xy,
-        displacement_xy,
-        velocity_xy,
-        valid,
+        positions_xy: ArrayLike,
+        displacement_xy: ArrayLike,
+        velocity_xy: ArrayLike,
+        valid: ArrayLike,
         source_field_id: str,
         transform_id: str,
         spatial_unit: UnitDefinition,
         time_unit: UnitDefinition,
         frame_id: str,
         /,
-    ):
+    ) -> None:
         positions = jnp.asarray(positions_xy)
         displacement = jnp.asarray(displacement_xy)
         velocity = jnp.asarray(velocity_xy)

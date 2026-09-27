@@ -10,7 +10,8 @@ from typing import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._bspline import BSplineJetStencil
@@ -77,7 +78,7 @@ class TensorBSplineJetPlan(StrictModule):
         *,
         maximum_order: int = 2,
         multi_indices: Sequence[Sequence[int]] | None = None,
-    ):
+    ) -> None:
         stencils = tuple(axis_stencils)
         if not stencils:
             raise ValueError("A tensor B-spline plan requires at least one axis stencil.")

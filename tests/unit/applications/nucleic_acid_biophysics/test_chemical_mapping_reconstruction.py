@@ -1,6 +1,7 @@
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -20,7 +21,9 @@ from phydrax.qualification import ReferenceArtifactManifest
 from phydrax.units import ANGSTROM
 
 
-def manifest(payload=b"independent synthetic assay", *, training=True):
+def manifest(
+    payload: Any = b"independent synthetic assay", *, training: Any = True
+) -> Any:
     return ReferenceArtifactManifest(
         "processed assay",
         checksum_algorithm="sha256",
@@ -39,8 +42,14 @@ def manifest(payload=b"independent synthetic assay", *, training=True):
 
 
 def observation(
-    values, *, replicate="r1", temperature=0.0, observed=None, lower=None, sd=None
-):
+    values: Any,
+    *,
+    replicate: Any = "r1",
+    temperature: Any = 0.0,
+    observed: Any = None,
+    lower: Any = None,
+    sd: Any = None,
+) -> Any:
     construct = NucleicAcidConstruct(("r",), ("ACG",), ("RNA",), (False,))
     return ChemicalMappingObservation(
         construct,
@@ -59,7 +68,7 @@ def observation(
     )
 
 
-def test_observation_masks_negative_values_and_correlated_noise():
+def test_observation_masks_negative_values_and_correlated_noise() -> None:
     lower = np.array([[0.1, 0.0], [0.06, 0.08]])
     obs = observation([-0.4, np.nan, 0.8], observed=[True, False, True], lower=lower)
     predicted = jnp.array([-0.3, 99.0, 0.7])
@@ -75,7 +84,7 @@ def test_observation_masks_negative_values_and_correlated_noise():
         observation([1.0, 2.0, 3.0], lower=np.eye(3) * 0.2)
 
 
-def test_shared_population_feature_fit_and_withheld_condition_prediction():
+def test_shared_population_feature_fit_and_withheld_condition_prediction() -> None:
     signal = np.array([0.1, 0.5, 0.9])
     temperatures = np.array([0.0, 0.0, 1.0, 1.0])
     groups = ("r1", "r2", "r1", "r2")
@@ -113,6 +122,7 @@ def test_shared_population_feature_fit_and_withheld_condition_prediction():
         condition_names=("temperature",),
     )
     np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
         held_model.predict(fitted.optimization.parameters)[0],
         withheld.reactivity,
         atol=1e-6,
@@ -126,7 +136,7 @@ def test_shared_population_feature_fit_and_withheld_condition_prediction():
     assert not bool(constant.fit().identifiable)
 
 
-def test_real_rdat_retains_mutant_constructs_negative_reactivity_and_scores():
+def test_real_rdat_retains_mutant_constructs_negative_reactivity_and_scores() -> None:
     root = Path(__file__).resolve().parents[3] / "fixtures" / "nucleic_acid_biophysics"
     payload = (root / "TODEX_DMS_0000.rdat").read_bytes()
     record = json.loads((root / "TODEX_DMS_0000.source.json").read_text())
@@ -170,7 +180,7 @@ def test_real_rdat_retains_mutant_constructs_negative_reactivity_and_scores():
 
     # Depositor design is a hypothesis only; withholding whole mutant constructs
     # tests the actual numerical prediction route without an accuracy claim.
-    def feature(entry):
+    def feature(entry: Any) -> Any:
         return np.array(
             [
                 float(entry.declared_structure[key.position] == ".")
@@ -193,6 +203,7 @@ def test_real_rdat_retains_mutant_constructs_negative_reactivity_and_scores():
         baseline_groups=("shared",) * 4,
         condition_features=np.zeros((4, 0)),
     )
+    # ty: ignore[unresolved-attribute]
     predicted = held_model.predict(fit.optimization.parameters)
     scores = tuple(
         entry.observation.score(y) for entry, y in zip(withheld, predicted, strict=True)
@@ -214,11 +225,19 @@ def test_real_rdat_retains_mutant_constructs_negative_reactivity_and_scores():
         )
 
 
-def test_native_interval_reconstruction_distinguishes_reflection():
+def test_native_interval_reconstruction_distinguishes_reflection() -> None:
     ids = [901, 77, 360, 29]
     units = AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     system = AtomisticSystemPlan(
-        ids, [6] * 4, [12.0] * 4, units, atom_type_ids=[0] * 4
+        # ty: ignore[invalid-argument-type]
+        ids,
+        # ty: ignore[invalid-argument-type]
+        [6] * 4,
+        # ty: ignore[invalid-argument-type]
+        [12.0] * 4,
+        units,
+        # ty: ignore[invalid-argument-type]
+        atom_type_ids=[0] * 4,
     ).prepare()
     target = jnp.array(
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -11,7 +13,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _selected_root():
+def _selected_root() -> Any:
     root = {
         "u": jnp.asarray((0.4, -0.2)),
         "fixed": jnp.asarray(3.0),
@@ -23,11 +25,11 @@ def _selected_root():
     return root, subspace
 
 
-def test_functional_stationarity_is_the_gradient_of_one_fixed_realization():
+def test_functional_stationarity_is_the_gradient_of_one_fixed_realization() -> None:
     root, subspace = _selected_root()
     target = jnp.asarray((0.1, 0.3))
 
-    def action(functions, realization, args):
+    def action(functions: Any, realization: Any, args: Any) -> Any:
         del args
         displacement = functions["u"] - realization
         return 0.5 * jnp.vdot(displacement, displacement)
@@ -48,21 +50,23 @@ def test_functional_stationarity_is_the_gradient_of_one_fixed_realization():
         rtol=0.0,
         atol=0.0,
     )
+    # ty: ignore[unresolved-attribute]
     assert prepared.problem.state_space.size == subspace.total_dimension
+    # ty: ignore[unresolved-attribute]
     assert prepared.problem.residual_space.compatible(prepared.problem.state_space)
     assert prepared.root["fixed"] == root["fixed"]
     np.testing.assert_allclose(prepared.reconstruct(state)["u"], root["u"])
 
 
-def test_virtual_work_assembles_the_jet_vjp_and_retains_its_tangent():
+def test_virtual_work_assembles_the_jet_vjp_and_retains_its_tangent() -> None:
     root, subspace = _selected_root()
     matrix = jnp.asarray(((2.0, -1.0), (0.5, 3.0)))
 
-    def field_jet(functions, realization, args):
+    def field_jet(functions: Any, realization: Any, args: Any) -> Any:
         del realization, args
         return matrix @ functions["u"]
 
-    def virtual_work(functions, jets, realization, args):
+    def virtual_work(functions: Any, jets: Any, realization: Any, args: Any) -> Any:
         del functions, realization, args
         return jets * jets
 

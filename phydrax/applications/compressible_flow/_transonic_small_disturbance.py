@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -47,7 +48,7 @@ class TransonicSmallDisturbancePlan(StrictModule, NonTrainableState):
         gamma: float = 1.4,
         maximum_steps: int = 40,
         residual_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         x = np.asarray(x_coordinates, dtype=np.float64)
         y = np.asarray(y_coordinates, dtype=np.float64)
         mach = float(free_stream_mach)
@@ -162,7 +163,7 @@ class TransonicSmallDisturbancePlan(StrictModule, NonTrainableState):
                 relative_residual=0.0,
                 maximum_steps=self.maximum_steps,
                 maximum_evaluations=4 * self.maximum_steps,
-                maximum_linear_iterations=8 * np.prod(self.shape),
+                maximum_linear_iterations=8 * int(np.prod(self.shape)),
             ),
             args=(forcing_, boundary),
         )

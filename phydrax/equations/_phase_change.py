@@ -7,7 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -35,14 +37,14 @@ class AntoineSaturationPressurePlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        coefficient_a,
-        coefficient_b,
-        coefficient_c,
+        coefficient_a: float,
+        coefficient_b: float,
+        coefficient_c: float,
         /,
         *,
-        temperature_interval,
-        pressure_scale=133.322,
-    ):
+        temperature_interval: npt.ArrayLike,
+        pressure_scale: float = 133.322,
+    ) -> None:
         a, b, c, scale = (
             float(coefficient_a),
             float(coefficient_b),

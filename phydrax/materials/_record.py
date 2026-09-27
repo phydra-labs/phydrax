@@ -3,7 +3,9 @@
 #
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import Self
 
 import numpy as np
 
@@ -18,7 +20,15 @@ class MaterialRecord:
     source_ids: tuple[str, ...] = ()
 
     @classmethod
-    def create(cls, material_id, revision, composition, /, *, source_ids=()):
+    def create(
+        cls,
+        material_id: str,
+        revision: str,
+        composition: Mapping[str, float],
+        /,
+        *,
+        source_ids: Iterable[str] = (),
+    ) -> Self:
         return cls(
             str(material_id).strip(),
             str(revision).strip(),
@@ -26,7 +36,7 @@ class MaterialRecord:
             tuple(sorted(str(v) for v in source_ids)),
         )
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         component_ids = tuple(name for name, _ in self.composition)
         if (
             not self.material_id
@@ -50,7 +60,7 @@ class MaterialRecord:
             )
 
     @property
-    def record_id(self):
+    def record_id(self) -> str:
         return canonical_fingerprint(
             {
                 "kind": "material-record",

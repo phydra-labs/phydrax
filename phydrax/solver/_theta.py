@@ -9,7 +9,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -25,7 +25,7 @@ class ThetaMethod(StrictModule, NonTrainableState):
     endpoint: bool = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, theta: float = 0.5, /, *, endpoint: bool = False):
+    def __init__(self, theta: float = 0.5, /, *, endpoint: bool = False) -> None:
         value = float(theta)
         if not isfinite(value) or not 0.0 < value <= 1.0:
             raise ValueError("theta must be finite and lie in (0, 1].")

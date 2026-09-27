@@ -9,7 +9,8 @@ from typing import Any, TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._geometry_precision import GeometryPrecisionPolicy
@@ -56,7 +57,7 @@ class MACEnthalpyPorosityProblem(StrictModule, NonTrainableState):
         *,
         source: Any = None,
         source_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(material, SolidLiquidEnthalpyPlan):
             raise TypeError("material must be SolidLiquidEnthalpyPlan.")
         gravity_ = jnp.asarray(gravity, dtype=jnp.float64)
@@ -165,7 +166,7 @@ class CompiledMACEnthalpyPorosityDynamics(StrictModule):
         /,
         *,
         compilation_id: str,
-    ):
+    ) -> None:
         self.flow_problem = flow_problem
         self.problem = problem
         self.momentum = momentum
@@ -458,7 +459,16 @@ class CompiledMACEnthalpyPorosityDynamics(StrictModule):
         )
         return MACEnthalpyPorosityDiagnostics(
             enthalpy,
-            *tuple(values),
+            values[0],
+            values[1],
+            values[2],
+            values[3],
+            values[4],
+            values[5],
+            values[6],
+            values[7],
+            values[8],
+            values[9],
             stage.projection_converged,
             finite,
             successful,

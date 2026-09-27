@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from math import isfinite
 from numbers import Integral
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
@@ -39,8 +41,8 @@ class ChainCompressionEvidence(StrictModule):
         *,
         precision_evidence: PrecisionEvidenceEnvelope,
         precision_policy_id: str,
-        real_dtype,
-    ):
+        real_dtype: DTypeLike,
+    ) -> None:
         records = tuple(truncations)
         if any(not isinstance(record, TensorTruncationEvidence) for record in records):
             raise TypeError("truncations must contain TensorTruncationEvidence values.")
@@ -65,13 +67,21 @@ class ChainCompressionEvidence(StrictModule):
         self.precision_policy_id = str(precision_policy_id)
 
 
-def _require_same_precision(left, right, /) -> TensorNetworkPrecisionPolicy:
+def _require_same_precision(
+    left: MatrixProductState | MatrixProductOperator,
+    right: MatrixProductState | MatrixProductOperator,
+    /,
+) -> TensorNetworkPrecisionPolicy:
     if left.precision.policy_id != right.precision.policy_id:
         raise ValueError("Tensor-network precision policies must match.")
     return left.precision
 
 
-def _compression_evidence(result, records, /) -> ChainCompressionEvidence:
+def _compression_evidence(
+    result: MatrixProductState | MatrixProductOperator,
+    records: Sequence[TensorTruncationEvidence],
+    /,
+) -> ChainCompressionEvidence:
     return ChainCompressionEvidence(
         tuple(records),
         precision_evidence=result.precision_evidence,
@@ -347,7 +357,7 @@ class VariationalCompressionPolicy(StrictModule):
         gradient_step: float = 0.05,
         residual_tolerance: float = 1e-8,
         maximum_tensor_elements: int = 10_000_000,
-    ):
+    ) -> None:
         if any(
             not isinstance(value, Integral) or isinstance(value, bool)
             for value in (
@@ -390,14 +400,16 @@ class VariationalCompressionEvidence(StrictModule):
     initial_compression: ChainCompressionEvidence
 
 
-def _tuple_inner(left, right, /):
+def _tuple_inner(left: Sequence[Array], right: Sequence[Array], /) -> Array:
     environment = jnp.ones((1, 1), dtype=jnp.result_type(left[0], right[0]))
     for first, second in zip(left, right, strict=True):
         environment = ein.contract("ab,api,bpj->ij", environment, jnp.conj(first), second)
     return environment.reshape(())
 
 
-def _compression_objective(candidate, target, target_norm, /):
+def _compression_objective(
+    candidate: Sequence[Array], target: Sequence[Array], target_norm: Array, /
+) -> Array:
     own = jnp.real(_tuple_inner(candidate, candidate))
     cross = jnp.real(_tuple_inner(candidate, target))
     return jnp.maximum(own - 2.0 * cross + target_norm, 0.0)

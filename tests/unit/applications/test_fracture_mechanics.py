@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _sharp_state():
+def _sharp_state() -> Any:
     fracture = phx.applications.fracture
     vertices = jnp.asarray(
         [
@@ -48,7 +51,7 @@ def _sharp_state():
     return mesh, fracture.SharpFractureState(geometry, topology, quadrature)
 
 
-def test_finite_crack_geometry_does_not_classify_its_infinite_extension():
+def test_finite_crack_geometry_does_not_classify_its_infinite_extension() -> None:
     fracture = phx.applications.fracture
     vertices = jnp.asarray(
         [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [2.0, 0.0], [3.0, 0.0], [2.0, 1.0]]
@@ -74,7 +77,7 @@ def test_finite_crack_geometry_does_not_classify_its_infinite_extension():
     assert jnp.isclose(geometry.length, 0.3)
 
 
-def test_sharp_plus_minus_tip_and_face_quadrature_conserve_measure():
+def test_sharp_plus_minus_tip_and_face_quadrature_conserve_measure() -> None:
     _, state = _sharp_state()
     quadrature = state.quadrature
     integrated_area = (
@@ -99,7 +102,7 @@ def test_sharp_plus_minus_tip_and_face_quadrature_conserve_measure():
     assert quadrature.evidence.relative_area_defect < 1.0e-12
 
 
-def test_shifted_heaviside_and_williams_enrichment_vanish_at_owning_nodes():
+def test_shifted_heaviside_and_williams_enrichment_vanish_at_owning_nodes() -> None:
     fracture = phx.applications.fracture
     geometry = fracture.CrackFrontGeometry(
         jnp.asarray([[-1.0, 0.0], [1.0, 0.0]]),
@@ -130,7 +133,7 @@ def test_shifted_heaviside_and_williams_enrichment_vanish_at_owning_nodes():
     assert jnp.isclose(material.kappa, 2.0)
 
 
-def test_interaction_integral_reports_path_and_energy_consistent_sif_evidence():
+def test_interaction_integral_reports_path_and_energy_consistent_sif_evidence() -> None:
     fracture = phx.applications.fracture
     contour_count = 3
     stress = jnp.broadcast_to(
@@ -175,7 +178,7 @@ def test_interaction_integral_reports_path_and_energy_consistent_sif_evidence():
     assert evidence.energy_consistency_defect == 0.0
 
 
-def test_rejected_growth_transaction_rolls_back_every_sharp_object():
+def test_rejected_growth_transaction_rolls_back_every_sharp_object() -> None:
     fracture = phx.applications.fracture
     mesh, state = _sharp_state()
     proposal = fracture.CrackGrowthProposal(
@@ -205,7 +208,7 @@ def test_rejected_growth_transaction_rolls_back_every_sharp_object():
     assert not transaction.accepted
 
 
-def test_accepted_growth_transaction_promotes_geometry_topology_and_quadrature():
+def test_accepted_growth_transaction_promotes_geometry_topology_and_quadrature() -> None:
     fracture = phx.applications.fracture
     mesh, state = _sharp_state()
     proposal = fracture.CrackGrowthProposal(
@@ -236,7 +239,7 @@ def test_accepted_growth_transaction_promotes_geometry_topology_and_quadrature()
     assert promoted.quadrature.topology_id == promoted.topology.topology_id
 
 
-def test_diffuse_fixed_history_neural_block_is_bounded_and_irreversible():
+def test_diffuse_fixed_history_neural_block_is_bounded_and_irreversible() -> None:
     fracture = phx.applications.fracture
     accepted = fracture.PhaseFieldHistoryState(
         jnp.asarray([[0.2], [0.4]]),
@@ -272,7 +275,9 @@ def test_diffuse_fixed_history_neural_block_is_bounded_and_irreversible():
     assert form.field_names == ("displacement", "damage")
 
 
-def test_crack_face_contact_mapping_preserves_gap_action_reaction_and_topology_state():
+def test_crack_face_contact_mapping_preserves_gap_action_reaction_and_topology_state() -> (
+    None
+):
     fracture = phx.applications.fracture
     contact = phx.applications.contact
     _, state = _sharp_state()

@@ -6,13 +6,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from phydrax.ein import contract
 
@@ -42,6 +42,10 @@ class WaveParticleGasCosmologyState(StrictModule):
     wave: WaveDarkMatterState
     particles: CosmologicalParticleState
     gas: ComovingEulerState
+
+
+_WaveParticleCarry: TypeAlias = tuple[WaveParticleCosmologyState, Array, Array]
+_WaveParticleGasCarry: TypeAlias = tuple[WaveParticleGasCosmologyState, Array, Array]
 
 
 class MixedDensityAssembly(StrictModule):
@@ -84,7 +88,7 @@ class MixedDensityAssembler(StrictModule):
         /,
         *,
         include_gas: bool,
-    ):
+    ) -> None:
         if not isinstance(wave, PreparedPeriodicWaveDarkMatter):
             raise TypeError("wave must be PreparedPeriodicWaveDarkMatter.")
         if not isinstance(particle_gravity, ParticleMeshGravityPlan):
@@ -251,7 +255,7 @@ class SharedPeriodicGravityPlan(StrictModule):
         assembler: MixedDensityAssembler,
         particle_gravity: ParticleMeshGravityPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(assembler, MixedDensityAssembler):
             raise TypeError("assembler must be MixedDensityAssembler.")
         if not isinstance(particle_gravity, ParticleMeshGravityPlan):
@@ -525,7 +529,7 @@ class WaveParticleCosmologyPlan(StrictModule):
         particles: CosmologicalKDKPlan,
         gravity: ParticleMeshGravityPlan,
         /,
-    ):
+    ) -> None:
         _validate_owner_bindings(wave, particles, gravity, None)
         self.wave = wave
         self.particles = particles
@@ -564,7 +568,7 @@ class WaveParticleGasCosmologyPlan(StrictModule):
         gas: ComovingEulerPlan,
         gravity: ParticleMeshGravityPlan,
         /,
-    ):
+    ) -> None:
         _validate_owner_bindings(wave, particles, gravity, gas)
         self.wave = wave
         self.particles = particles
@@ -721,7 +725,9 @@ def _select_wave_particle_gas(
     )
 
 
-def _diagnostics(recorded: tuple[Array, ...], accepted_steps: Array, completed: Array, /):
+def _diagnostics(
+    recorded: tuple[Array, ...], accepted_steps: Array, completed: Array, /
+) -> MixedCosmologyDiagnostics:
     (
         attempted,
         accepted,
@@ -824,7 +830,7 @@ class PreparedWaveParticleCosmology(StrictModule):
     gravity: SharedPeriodicGravityPlan
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: WaveParticleCosmologyPlan, /):
+    def __init__(self, plan: WaveParticleCosmologyPlan, /) -> None:
         if not isinstance(plan, WaveParticleCosmologyPlan):
             raise TypeError("plan must be WaveParticleCosmologyPlan.")
         density = MixedDensityAssembler(plan.wave, plan.gravity, include_gas=False)
@@ -881,10 +887,12 @@ class PreparedWaveParticleCosmology(StrictModule):
             ),
         )
 
-        def step(carry, end):
+        def step(
+            carry: _WaveParticleCarry, end: Array
+        ) -> tuple[_WaveParticleCarry, tuple[Array, ...]]:
             current, active, count = carry
 
-            def attempt(_):
+            def attempt(_: None) -> tuple[_WaveParticleCarry, tuple[Array, ...]]:
                 start = current.wave.scale_factor
                 assembly_0 = self.density.assemble(current)
                 gravity_0 = self.gravity.solve(assembly_0, args)
@@ -1034,7 +1042,7 @@ class PreparedWaveParticleCosmology(StrictModule):
                     count + successful.astype(jnp.int32),
                 ), recorded
 
-            def stopped(_):
+            def stopped(_: None) -> tuple[_WaveParticleCarry, tuple[Array, ...]]:
                 assembly = self.density.assemble(current)
                 zero = jnp.asarray(0.0, dtype=current.wave.psi.real.dtype)
                 zeros_component = jnp.zeros((3,), dtype=zero.dtype)
@@ -1119,7 +1127,7 @@ class PreparedWaveParticleGasCosmology(StrictModule):
     gravity: SharedPeriodicGravityPlan
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: WaveParticleGasCosmologyPlan, /):
+    def __init__(self, plan: WaveParticleGasCosmologyPlan, /) -> None:
         if not isinstance(plan, WaveParticleGasCosmologyPlan):
             raise TypeError("plan must be WaveParticleGasCosmologyPlan.")
         density = MixedDensityAssembler(plan.wave, plan.gravity, include_gas=True)
@@ -1182,10 +1190,12 @@ class PreparedWaveParticleGasCosmology(StrictModule):
             ComovingEulerState(state.gas.cell_average, initial_scale),
         )
 
-        def step(carry, end):
+        def step(
+            carry: _WaveParticleGasCarry, end: Array
+        ) -> tuple[_WaveParticleGasCarry, tuple[Array, ...]]:
             current, active, count = carry
 
-            def attempt(_):
+            def attempt(_: None) -> tuple[_WaveParticleGasCarry, tuple[Array, ...]]:
                 start = current.wave.scale_factor
                 assembly_0 = self.density.assemble(current)
                 gravity_0 = self.gravity.solve(assembly_0, args)
@@ -1413,7 +1423,7 @@ class PreparedWaveParticleGasCosmology(StrictModule):
                     count + successful.astype(jnp.int32),
                 ), recorded
 
-            def stopped(_):
+            def stopped(_: None) -> tuple[_WaveParticleGasCarry, tuple[Array, ...]]:
                 assembly = self.density.assemble(current)
                 zero = jnp.asarray(0.0, dtype=current.wave.psi.real.dtype)
                 zeros_component = jnp.zeros((3,), dtype=zero.dtype)

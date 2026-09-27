@@ -18,11 +18,11 @@ from phydrax._fingerprint import canonical_fingerprint
 from phydrax._trainable import partition_parameters
 
 
-def _state_bytes(state) -> int:
+def _state_bytes(state: Any) -> int:
     return sum(entry.value.size * entry.value.dtype.itemsize for entry in state.entries)
 
 
-def _complex_parameter_leaves(value) -> int:
+def _complex_parameter_leaves(value: Any) -> int:
     parameters, _, _ = partition_parameters(value)
     return sum(
         int(jnp.iscomplexobj(leaf))
@@ -31,7 +31,7 @@ def _complex_parameter_leaves(value) -> int:
     )
 
 
-def _constrained_potential():
+def _constrained_potential() -> Any:
     frame = phx.equations.HolomorphicPolynomialFrame.one_variable(4)
     operator = phx.equations.HolomorphicConstraintOperatorPlan(
         frame,
@@ -84,6 +84,7 @@ def run_complex_parameter_interchange_benchmarks() -> dict[str, Any]:
         polynomial_state,
     )
     polynomial_error = float(
+        # ty: ignore[invalid-argument-type]
         jnp.max(jnp.abs(polynomial(0.15 - 0.2j) - restored_polynomial(0.15 - 0.2j)))
     )
 
@@ -108,6 +109,7 @@ def run_complex_parameter_interchange_benchmarks() -> dict[str, Any]:
     poles = phx.equations.PoleSet(jnp.asarray([2.0 + 0.1j]), (2,))
     meromorphic_frame = phx.equations.MeromorphicLinearFrame(2, poles)
     meromorphic_operator = phx.equations.HolomorphicConstraintOperatorPlan(
+        # ty: ignore[invalid-argument-type]
         meromorphic_frame,
         (
             phx.equations.HolomorphicPointFunctional.value(-0.5),

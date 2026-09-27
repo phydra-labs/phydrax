@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Iterable
 from math import isfinite
-from typing import Any, ClassVar, Literal, TypeAlias
+from typing import Any, cast, ClassVar, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -14,7 +15,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import optax
-from jaxtyping import Array, Key
+from jax import Array
 
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -46,6 +47,7 @@ from ..discretization.discrete_velocity._smooth_compressible import (
 from ..discretization.discrete_velocity._spatial import (
     PreparedSmoothCompressibleD2V17SpatialDynamics,
 )
+from ..typing import parse, PRNGKey
 from ._kinetic_equilibrium import LearnedEnergyEquilibriumBindingPlan
 from ._kinetic_rollout import (
     PreparedSmoothCompressibleRolloutDataset,
@@ -60,7 +62,7 @@ _DEFAULT_CURRICULUM = (1, 2, 4, 8, 16, 25)
 _OBJECTIVE_ID = "kinetic-rollout"
 
 
-def _positive_integer(value: int, role: str, /) -> int:
+def _positive_integer(value: object, role: str, /) -> int:
     if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
         raise TypeError(f"{role} must be an integer.")
     result = int(value)
@@ -133,7 +135,7 @@ class KineticRolloutTrainingPlan(StrictModule):
         replay_block_size: int | None = None,
         replay_schedules: tuple[PreparedReplaySchedule, ...] = (),
         rejection_budget: int = 64,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedSmoothCompressibleD2V17SpatialDynamics):
             raise TypeError(
                 "dynamics must be PreparedSmoothCompressibleD2V17SpatialDynamics."
@@ -153,9 +155,10 @@ class KineticRolloutTrainingPlan(StrictModule):
                 _positive_integer(accepted_updates_per_horizon, "accepted updates"),
             ) * len(horizons)
         else:
+            # Non-integer schedules are iterated as given; iteration rejects scalars.
+            schedule = cast(Iterable[int], accepted_updates_per_horizon)
             updates = tuple(
-                _positive_integer(value, "accepted updates")
-                for value in accepted_updates_per_horizon
+                _positive_integer(value, "accepted updates") for value in schedule
             )
             if len(updates) != len(horizons):
                 raise ValueError(
@@ -187,8 +190,7 @@ class KineticRolloutTrainingPlan(StrictModule):
         )
         if flux_gate <= 0.0:
             raise ValueError("maximum_scaled_flux_error must be positive.")
-        if replay_mode not in ("full", "step", "block", "scheduled"):
-            raise ValueError("Unknown kinetic-rollout replay mode.")
+        replay_mode = parse(replay_mode, CheckpointedScanMode, "replay_mode")
         block = (
             None
             if replay_block_size is None
@@ -356,7 +358,9 @@ def _single_trajectory_objective(
     U_scale = jnp.asarray(statistics.U_scale, dtype=dtype)
     g_scale = jnp.asarray(statistics.g_scale, dtype=dtype)
 
-    def step(carry: _KineticRolloutScanCarry, targets: tuple[Array, Array]):
+    def step(
+        carry: _KineticRolloutScanCarry, targets: tuple[Array, Array]
+    ) -> tuple[_KineticRolloutScanCarry, None]:
         g_target, U_target = targets
         state = SmoothCompressibleKineticState(
             carry.particle_populations, carry.total_energy_populations
@@ -689,7 +693,9 @@ class _GuardedRolloutRule(AbstractKernelUpdateRule):
     dtype: str = eqx.field(static=True)
     rule_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: KineticRolloutTrainingPlan, guard_count: int, dtype: Any):
+    def __init__(
+        self, plan: KineticRolloutTrainingPlan, guard_count: int, dtype: Any
+    ) -> None:
         self.proposal = OptaxUpdateRule(
             plan.optimizer(), rule_id=f"adam:{float(plan.learning_rate).hex()}"
         )
@@ -849,7 +855,7 @@ class KineticRolloutTrainingState(StrictModule):
         plan_id: str,
         dataset_id: str,
         model_structure_id: str,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractArrayModel) or not isinstance(
             best_model, AbstractArrayModel
         ):
@@ -933,8 +939,12 @@ class KineticRolloutTrainingState(StrictModule):
                 "arrays": array_tree_fingerprint(
                     {
                         "model": model,
-                        "training": dataclasses.replace(
-                            training, root_key=jr.key_data(training.root_key)
+                        # Raw key data is fingerprinted without constructing a
+                        # training state, whose contract requires a typed key.
+                        "training": eqx.tree_at(
+                            lambda state: state.root_key,
+                            training,
+                            jr.key_data(training.root_key),
                         ),
                         "best_model": best_model,
                         "best_loss": best_loss_,
@@ -975,14 +985,13 @@ class KineticRolloutTrainingResult(StrictModule):
         attempts: tuple[KineticRolloutUpdateResult, ...],
         termination: KineticRolloutTermination,
         /,
-    ):
+    ) -> None:
         if not isinstance(state, KineticRolloutTrainingState):
             raise TypeError("state must be KineticRolloutTrainingState.")
         attempts_ = tuple(attempts)
         if any(not isinstance(value, KineticRolloutUpdateResult) for value in attempts_):
             raise TypeError("attempts must contain KineticRolloutUpdateResult values.")
-        if termination not in ("maximum_attempts", "curriculum_complete"):
-            raise ValueError("Unknown kinetic-rollout termination.")
+        termination = parse(termination, KineticRolloutTermination, "termination")
         self.state = state
         self.attempts = attempts_
         self.termination = termination
@@ -1051,7 +1060,7 @@ def initialize_kinetic_rollout_training(
     dataset: PreparedSmoothCompressibleRolloutDataset,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> KineticRolloutTrainingState:
     """Initialize an exact kernel boundary and immutable baseline selection."""
 
@@ -1189,7 +1198,8 @@ def attempt_kinetic_rollout_update(
         # A nonfinite evaluation rolls the guard judgment back with everything
         # else: the candidate was never judged.
         guard_loss = jnp.asarray(jnp.nan, dtype=judged.guard_loss.dtype)
-        guard_compact = kernel.rule.unjudged_guard()
+        # _training_kernel always installs a _GuardedRolloutRule.
+        guard_compact = cast(_GuardedRolloutRule, kernel.rule).unjudged_guard()
         proposal_finite = jnp.asarray(False)
     else:
         guard_loss = judged.guard_loss

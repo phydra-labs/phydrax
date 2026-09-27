@@ -6,14 +6,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from enum import IntEnum
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from phydrax.ein import contract
 
@@ -34,9 +35,18 @@ from ._spaces import (
 from .krylov import (
     arnoldi,
     golub_kahan,
+    GolubKahanDecomposition,
     KrylovBreakdownStatus,
     lanczos,
 )
+
+
+_LanczosProbeSample: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+_SolveProbeSample: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class SpectralEstimate(StrictModule):
@@ -378,7 +388,7 @@ def estimate_numerical_range(
     dtype = _coordinate_dtype(operator.source)
     keys = jr.split(key, count)
 
-    def one(probe_key):
+    def one(probe_key: Array) -> Array:
         if np.issubdtype(dtype, np.complexfloating):
             real_key, imaginary_key = jr.split(probe_key)
             real_dtype = np.empty((), dtype=dtype).real.dtype
@@ -610,7 +620,7 @@ def stochastic_trace(
         )
     )
 
-    def one(coordinates):
+    def one(coordinates: Array) -> _LanczosProbeSample:
         decomposition = lanczos(
             _coordinate_action(operator),
             coordinates,
@@ -873,7 +883,7 @@ def estimate_inverse_diagonal(
         _coordinate_dtype(operator.source),
     )
 
-    def one(probe):
+    def one(probe: Array) -> _SolveProbeSample:
         physical = operator.target.unflatten(probe)
         result = solve(LinearSystem(operator), physical, policy=solve_policy)
         sample = jnp.conj(probe) * operator.source.flatten(result.value)
@@ -963,8 +973,8 @@ def _positive_int(value: Any, name: str, /) -> int:
     return result
 
 
-def _coordinate_action(operator: AbstractLinearOperator, /):
-    def action(coordinates):
+def _coordinate_action(operator: AbstractLinearOperator, /) -> Callable[[Array], Array]:
+    def action(coordinates: Array) -> Array:
         return operator.target.flatten(
             operator.mv(operator.source.unflatten(coordinates))
         )
@@ -972,8 +982,10 @@ def _coordinate_action(operator: AbstractLinearOperator, /):
     return action
 
 
-def _coordinate_adjoint_action(operator: AbstractLinearOperator, /):
-    def action(coordinates):
+def _coordinate_adjoint_action(
+    operator: AbstractLinearOperator, /
+) -> Callable[[Array], Array]:
+    def action(coordinates: Array) -> Array:
         return operator.source.flatten(
             operator.adjoint_mv(operator.target.unflatten(coordinates))
         )
@@ -981,8 +993,10 @@ def _coordinate_adjoint_action(operator: AbstractLinearOperator, /):
     return action
 
 
-def _coordinate_inner(operator: AbstractLinearOperator, /):
-    def inner(left, right):
+def _coordinate_inner(
+    operator: AbstractLinearOperator, /
+) -> Callable[[Array, Array], Array]:
+    def inner(left: Array, right: Array) -> Array:
         return operator.source.inner(
             operator.source.unflatten(left), operator.source.unflatten(right)
         )
@@ -1120,11 +1134,11 @@ def _effective_lanczos_quadrature(
     if not isinstance(value_spec, jax.ShapeDtypeStruct) or value_spec.shape != ():
         raise TypeError("scalar_function must return scalar-compatible values.")
 
-    def empty(_):
+    def empty(_: Array) -> Array:
         return jnp.asarray(jnp.nan, dtype=value_spec.dtype)
 
-    def branch(size: int):
-        def evaluate(matrix):
+    def branch(size: int) -> Callable[[Array], Array]:
+        def evaluate(matrix: Array) -> Array:
             eigenvalues, eigenvectors = jnp.linalg.eigh(matrix[:size, :size])
             weights = jnp.abs(eigenvectors[0]) ** 2
             values = jnp.asarray(scalar_function(eigenvalues))
@@ -1166,7 +1180,7 @@ def _masked_statistics(
     return samples, estimate, standard_error
 
 
-def _golub_kahan_matrix(decomposition, /) -> Array:
+def _golub_kahan_matrix(decomposition: GolubKahanDecomposition, /) -> Array:
     dimension = decomposition.diagonal.size
     matrix = jnp.zeros(
         (dimension + 1, dimension),

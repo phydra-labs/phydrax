@@ -9,7 +9,9 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -33,9 +35,17 @@ class LaplaceFMMEvaluation2D(StrictModule, NonTrainableState):
     evaluation_id: str = eqx.field(static=True)
 
 
-def _build_tree(points: np.ndarray, leaf_size: int):
+def _build_tree(
+    points: np.ndarray, leaf_size: int
+) -> tuple[
+    np.ndarray,
+    npt.NDArray[np.float64],
+    npt.NDArray[np.int32],
+    tuple[np.ndarray, ...],
+    int,
+]:
     centers: list[np.ndarray] = []
-    radii: list[float] = []
+    radii: list[float | np.floating] = []
     children: list[list[int]] = []
     index_sets: list[np.ndarray] = []
 
@@ -96,7 +106,7 @@ def _multipole_tail_bound(
     )
 
 
-def _m2m(child_moments: Array, child_center: complex, parent_center: complex) -> Array:
+def _m2m(child_moments: Array, child_center: Array, parent_center: Array) -> Array:
     order = child_moments.shape[0] - 1
     displacement = child_center - parent_center
     return jnp.stack(
@@ -116,7 +126,7 @@ def _m2m(child_moments: Array, child_center: complex, parent_center: complex) ->
     )
 
 
-def _m2l(moment: Array, source_center: complex, target_center: complex) -> Array:
+def _m2l(moment: Array, source_center: Array, target_center: Array) -> Array:
     order = moment.shape[0] - 1
     displacement = target_center - source_center
     local = [
@@ -138,7 +148,7 @@ def _m2l(moment: Array, source_center: complex, target_center: complex) -> Array
     return jnp.stack(local)
 
 
-def _l2l(parent_local: Array, parent_center: complex, child_center: complex) -> Array:
+def _l2l(parent_local: Array, parent_center: Array, child_center: Array) -> Array:
     order = parent_local.shape[0] - 1
     displacement = child_center - parent_center
     return jnp.stack(
@@ -178,7 +188,7 @@ class LaplaceFMMBackend2D(StrictModule, NonTrainableState):
         expansion_order: int = 8,
         leaf_size: int = 32,
         opening_angle: float = 0.5,
-    ):
+    ) -> None:
         if (
             not isinstance(potential, LaplaceLayerPotential2D)
             or potential.kind != "single"

@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..core import (
@@ -52,7 +53,7 @@ class Holding(StrictModule):
     asset: AssetReference = eqx.field(static=True)
     quantity: Array
 
-    def __init__(self, asset: AssetReference, quantity: ArrayLike, /):
+    def __init__(self, asset: AssetReference, quantity: ArrayLike, /) -> None:
         if not isinstance(asset, AssetReference):
             raise TypeError("asset must be an AssetReference.")
         self.asset = asset
@@ -65,7 +66,7 @@ class CashBalance(StrictModule):
     amount: CurrencyAmount
     account_id: str = eqx.field(static=True)
 
-    def __init__(self, account_id: str, amount: CurrencyAmount, /):
+    def __init__(self, account_id: str, amount: CurrencyAmount, /) -> None:
         if not isinstance(amount, CurrencyAmount):
             raise TypeError("amount must be a CurrencyAmount.")
         self.account_id = _id(account_id, "account_id")
@@ -94,7 +95,7 @@ class TaxLot(StrictModule):
         /,
         *,
         acquired_index: int,
-    ):
+    ) -> None:
         if not isinstance(asset, AssetReference):
             raise TypeError("asset must be an AssetReference.")
         if not isinstance(cost_basis, CurrencyAmount):
@@ -145,7 +146,7 @@ class LedgerTrade(StrictModule):
         *,
         execution_index: int,
         settlement_index: int,
-    ):
+    ) -> None:
         if not isinstance(asset, AssetReference):
             raise TypeError("asset must be an AssetReference.")
         currency = _same_currency(principal_cash_flow, fees, tax_cost)
@@ -192,7 +193,7 @@ class LotLedgerEntry(StrictModule):
         /,
         *,
         effective_index: int,
-    ):
+    ) -> None:
         if not isinstance(asset, AssetReference):
             raise TypeError("asset must be an AssetReference.")
         if not isinstance(basis_delta, CurrencyAmount):
@@ -236,7 +237,7 @@ class PortfolioLedger(StrictModule):
         initial_lots: tuple[TaxLot, ...] = (),
         trades: tuple[LedgerTrade, ...] = (),
         lot_entries: tuple[LotLedgerEntry, ...] = (),
-    ):
+    ) -> None:
         if not isinstance(base_currency, Currency):
             raise TypeError("base_currency must be a Currency.")
         holdings, cash, lots = (

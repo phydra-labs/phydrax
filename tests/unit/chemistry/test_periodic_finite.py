@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 
 from phydrax.discretization import PeriodicCell
@@ -14,12 +16,19 @@ from phydrax.operators.periodic import (
 from phydrax.units import ANGSTROM, ELECTRONVOLT
 
 
-def _chain():
+def _chain() -> Any:
+    # ty: ignore[invalid-argument-type]
     cell = PeriodicCell([[1.0]])
     basis = PeriodicOrbitalBasisPlan(
-        cell, ("s",), [[0.0]], ANGSTROM, PeriodicBlochGauge("lattice")
+        cell,
+        ("s",),
+        # ty: ignore[invalid-argument-type]
+        [[0.0]],
+        ANGSTROM,
+        PeriodicBlochGauge("lattice"),
     )
     h = periodic_translation_family_from_dense_blocks(
+        # ty: ignore[invalid-argument-type]
         [[-1], [0], [1]],
         np.asarray([[[[[-1.0]]]], [[[[0.0]]]], [[[[-1.0]]]]]),
     )
@@ -28,7 +37,7 @@ def _chain():
     ).prepare()
 
 
-def test_open_periodic_and_twisted_realizations_have_exact_boundary_entries():
+def test_open_periodic_and_twisted_realizations_have_exact_boundary_entries() -> None:
     _, pencil = _chain()
     open_result = PeriodicFiniteOrbitalPlan(
         pencil, PeriodicFiniteBoundaryPlan.open((3,))
@@ -53,10 +62,13 @@ def test_open_periodic_and_twisted_realizations_have_exact_boundary_entries():
     np.testing.assert_allclose(abs(twisted[0, 2]), 1.0, atol=1.0e-14)
 
 
-def test_prescribed_disorder_is_applied_in_documented_cell_orbital_order():
+def test_prescribed_disorder_is_applied_in_documented_cell_orbital_order() -> None:
     basis, pencil = _chain()
     disorder = PrescribedPeriodicDisorder(
-        [[0.1], [0.2], [0.3]], basis.basis_id, "fixed-disorder-case"
+        # ty: ignore[invalid-argument-type]
+        [[0.1], [0.2], [0.3]],
+        basis.basis_id,
+        "fixed-disorder-case",
     )
     realization = PeriodicFiniteOrbitalPlan(
         pencil,
@@ -70,11 +82,12 @@ def test_prescribed_disorder_is_applied_in_documented_cell_orbital_order():
     assert realization.order == "cell-c-order_then-orbital-order"
 
 
-def test_layer_populations_partition_generalized_metric_population():
+def test_layer_populations_partition_generalized_metric_population() -> None:
     _, pencil = _chain()
     realization = PeriodicFiniteOrbitalPlan(
         pencil, PeriodicFiniteBoundaryPlan.open((3,))
     ).realize()
+    # ty: ignore[invalid-argument-type]
     result = finite_layer_populations(realization, np.eye(3), [1.0, 0.5, 0.0], 0)
 
     np.testing.assert_allclose(result.layer_populations, [1.0, 0.5, 0.0])
@@ -82,7 +95,7 @@ def test_layer_populations_partition_generalized_metric_population():
     assert bool(result.successful)
 
 
-def test_slab_route_opens_only_the_selected_axis():
+def test_slab_route_opens_only_the_selected_axis() -> None:
     boundary = PeriodicFiniteBoundaryPlan.slab((2, 3, 4), 2)
     assert boundary.periodic_axes == (True, True, False)
     assert boundary.kind == "slab"

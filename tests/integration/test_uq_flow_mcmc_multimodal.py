@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
@@ -9,7 +12,7 @@ import jax.scipy as jsp
 import phydrax as phx
 
 
-def test_flow_nuts_recovers_represented_asymmetric_modes():
+def test_flow_nuts_recovers_represented_asymmetric_modes() -> None:
     prior_scale = 4.0
     likelihood_scale = 0.35
     mode_location = 2.2
@@ -21,7 +24,7 @@ def test_flow_nuts_recovers_represented_asymmetric_modes():
         positive_weight * (1.0 - positive_weight) * component_mean**2
     )
 
-    def log_likelihood(value):
+    def log_likelihood(value: Any) -> Any:
         return jsp.special.logsumexp(
             jnp.stack(
                 (

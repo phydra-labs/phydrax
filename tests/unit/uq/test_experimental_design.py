@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -14,7 +17,7 @@ def _binary_channel(error_probability: float) -> jnp.ndarray:
     return jnp.asarray([[[1.0 - error, error], [error, 1.0 - error]]])
 
 
-def test_exact_finite_information_distinguishes_target_semantics_and_error():
+def test_exact_finite_information_distinguishes_target_semantics_and_error() -> None:
     error = 0.1
     conditional = _binary_channel(error)
     prior = jnp.asarray([0.5, 0.5])
@@ -52,7 +55,7 @@ def test_exact_finite_information_distinguishes_target_semantics_and_error():
     assert parameter.approximation == "exact_finite_enumeration"
 
 
-def test_nested_monte_carlo_reports_outer_error_and_unknown_finite_inner_bias():
+def test_nested_monte_carlo_reports_outer_error_and_unknown_finite_inner_bias() -> None:
     outer_count = 1024
     inner_count = 256
     theta_key, noise_key, inner_key = jr.split(jr.key(14), 3)
@@ -89,7 +92,7 @@ def test_nested_monte_carlo_reports_outer_error_and_unknown_finite_inner_bias():
     assert "finite-inner" in result.error_basis
 
 
-def test_parameter_estimator_samples_observations_through_posterior_problem():
+def test_parameter_estimator_samples_observations_through_posterior_problem() -> None:
     parameter_space = phx.uq.ParameterSpace(
         jnp.asarray(0.0),
         log_prior=lambda value: -0.5 * value * value,
@@ -136,7 +139,7 @@ def test_parameter_estimator_samples_observations_through_posterior_problem():
     assert result.estimator_standard_error.shape == (1,)
 
 
-def _constraint_candidates():
+def _constraint_candidates() -> Any:
     return (
         phx.uq.ExperimentalDesignCandidate(
             "control",
@@ -180,7 +183,7 @@ def _constraint_candidates():
     )
 
 
-def _constraint_utility(candidates):
+def _constraint_utility(candidates: Any) -> Any:
     return phx.uq.ExpectedUtilityResult(
         expected_utility=jnp.asarray([0.0, 3.0, 2.0, 2.0]),
         estimator_standard_error=jnp.asarray([0.01, 0.01, 0.01, 0.01]),
@@ -197,7 +200,7 @@ def _constraint_utility(candidates):
     )
 
 
-def test_batch_selection_is_deterministic_and_respects_all_constraints():
+def test_batch_selection_is_deterministic_and_respects_all_constraints() -> None:
     candidates = _constraint_candidates()
     utility = _constraint_utility(candidates)
     constraints = phx.uq.ExperimentalBatchConstraints(
@@ -237,7 +240,7 @@ def test_batch_selection_is_deterministic_and_respects_all_constraints():
     assert restored.plan_id == first.plan_id
 
 
-def test_mandatory_control_is_costed_with_explicit_zero_information_utility():
+def test_mandatory_control_is_costed_with_explicit_zero_information_utility() -> None:
     candidates = _constraint_candidates()
     utility = phx.uq.ExpectedUtilityResult(
         expected_utility=jnp.asarray([jnp.nan, 3.0, 2.0, 2.0]),
@@ -272,7 +275,7 @@ def test_mandatory_control_is_costed_with_explicit_zero_information_utility():
     assert plan.objective_value == pytest.approx(5.0)
 
 
-def test_prospective_plan_identity_freezes_registered_inputs():
+def test_prospective_plan_identity_freezes_registered_inputs() -> None:
     candidates = _constraint_candidates()
     utility = _constraint_utility(candidates)
     constraints = phx.uq.ExperimentalBatchConstraints(
@@ -284,12 +287,12 @@ def test_prospective_plan_identity_freezes_registered_inputs():
     )
 
     def select(
-        values,
+        values: Any,
         *,
-        objective="model-information",
-        models=("additive", "interaction"),
-        analysis="analysis-a",
-    ):
+        objective: Any = "model-information",
+        models: Any = ("additive", "interaction"),
+        analysis: Any = "analysis-a",
+    ) -> Any:
         return phx.uq.select_experimental_batch(
             values,
             utility,
@@ -330,7 +333,7 @@ def test_prospective_plan_identity_freezes_registered_inputs():
     )
 
 
-def test_retrospective_replay_reports_and_normalizes_unmatched_realized_budgets():
+def test_retrospective_replay_reports_and_normalizes_unmatched_realized_budgets() -> None:
     candidates = tuple(
         phx.uq.ExperimentalDesignCandidate(
             f"candidate-{index}",

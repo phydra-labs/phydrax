@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...nonlinear import (
@@ -73,7 +74,7 @@ class SurfaceWaterHeatPlan(StrictModule):
         gravity_m_s2: float = 9.80665,
         active_tolerance: float = 1.0e-8,
         termination: NonlinearTermination | None = None,
-    ):
+    ) -> None:
         if not isinstance(coupled, CoupledWaterHeatPlan) or not isinstance(
             surface, OrthogonalDiffusiveWaveSurfacePlan
         ):
@@ -189,7 +190,7 @@ class SurfaceWaterHeatPlan(StrictModule):
         temperature_scale = self.coupled.temperature_scale_K
         head_scale = jnp.asarray(1.0)
 
-        def physical_residual(unknown):
+        def physical_residual(unknown: Array) -> Array:
             base = unknown[: 2 * base_size]
             head = unknown[2 * base_size : 2 * base_size + ns]
             dry = unknown[2 * base_size + ns : 2 * base_size + 2 * ns]
@@ -259,11 +260,13 @@ class SurfaceWaterHeatPlan(StrictModule):
                 )
             )
 
-        def scaled_residual(scaled, args):
+        def scaled_residual(scaled: Array, args: object) -> Array:
             del args
             return physical_residual(scaled * self.unknown_scale)
 
-        def valid(scaled, residual, auxiliary, args):
+        def valid(
+            scaled: Array, residual: object, auxiliary: object, args: object
+        ) -> Array:
             del residual, auxiliary, args
             unknown = scaled * self.unknown_scale
             base = unknown[: 2 * base_size]

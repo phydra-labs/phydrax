@@ -18,7 +18,7 @@ class JointDecompositionTraining(StrictModule, NonTrainableState):
 
     num_iterations: int = eqx.field(static=True)
 
-    def __init__(self, num_iterations: int, /):
+    def __init__(self, num_iterations: int, /) -> None:
         value = int(num_iterations)
         if value < 0:
             raise ValueError("num_iterations must be non-negative.")
@@ -43,7 +43,7 @@ class BlockDecompositionTraining(StrictModule, NonTrainableState):
         sweep: Literal["jacobi", "gauss-seidel", "colored"] = "jacobi",
         active_patch_ids: tuple[str, ...] | None = None,
         fixed_patch_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         sweeps_ = int(sweeps)
         inner_ = int(inner_iterations)
         if sweeps_ < 0 or inner_ < 0:
@@ -87,7 +87,7 @@ class SchwarzDecompositionTraining(StrictModule, NonTrainableState):
         sweep: Literal["jacobi", "gauss-seidel", "colored"] = "jacobi",
         relaxation: float = 1.0,
         interface_tolerance: float | None = None,
-    ):
+    ) -> None:
         sweeps_ = int(sweeps)
         inner_ = int(inner_iterations)
         relaxation_ = float(relaxation)

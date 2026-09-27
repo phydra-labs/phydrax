@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -45,7 +46,7 @@ class HaloLineageEventKind(IntEnum):
     MATCH_FAILURE = 7
 
 
-def _array(value: ArrayLike, *, dtype=None) -> Array:
+def _array(value: ArrayLike, *, dtype: DTypeLike | None = None) -> Array:
     return jax.lax.stop_gradient(jnp.asarray(value, dtype=dtype))
 
 
@@ -109,7 +110,7 @@ class HaloTrackSnapshot(StrictModule, NonTrainableState):
         *,
         source_membership_ids: Sequence[str] | None = None,
         bound_membership_ids: Sequence[str] | None = None,
-    ):
+    ) -> None:
         rows = _array(source_row_indices, dtype=jnp.int64)
         source_ids = _array(source_halo_ids, dtype=jnp.int64)
         tracks = _array(track_ids, dtype=jnp.int64)
@@ -232,7 +233,7 @@ class HaloLineageEventLedger(StrictModule, NonTrainableState):
         active_mask: ArrayLike,
         successful: ArrayLike,
         /,
-    ):
+    ) -> None:
         kinds = _array(event_kinds, dtype=jnp.int8)
         snapshots = _array(snapshot_indices, dtype=jnp.int32)
         tracks = _array(track_ids, dtype=jnp.int64)
@@ -303,7 +304,7 @@ class HaloTracerEvidence(StrictModule, NonTrainableState):
         accepted_mask: ArrayLike,
         successful: ArrayLike,
         /,
-    ):
+    ) -> None:
         particles = _array(particle_ids, dtype=jnp.int64)
         ranks = _array(binding_ranks, dtype=jnp.int32)
         present = _array(present_mask, dtype=jnp.bool_)
@@ -386,7 +387,7 @@ class HaloLineageProduct(StrictModule, NonTrainableState):
         sink_mask: ArrayLike,
         successful: ArrayLike,
         /,
-    ):
+    ) -> None:
         snapshots_ = tuple(snapshots)
         if not snapshots_ or not all(
             isinstance(item, HaloTrackSnapshot) for item in snapshots_
@@ -457,7 +458,7 @@ class ParticleCoreLineagePlan(StrictModule, NonTrainableState):
         tracer_capacity: int,
         event_capacity: int,
         /,
-    ):
+    ) -> None:
         values = tuple(
             (
                 snapshot_capacity,

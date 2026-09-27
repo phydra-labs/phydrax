@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -20,7 +21,7 @@ from ..equations._mac_enthalpy_porosity import (
     CompiledMACEnthalpyPorosityDynamics,
     MACEnthalpyPorosityStage,
 )
-from ..linalg import LinearSolvePolicy
+from ..linalg import FunctionLinearOperator, LinearSolvePolicy
 from ._mac_composite_projection import (
     CompositeMACProjectionPlan,
     CompositeMACProjectionResult,
@@ -139,8 +140,8 @@ def _face_resistance(
 class MACEnthalpyPorosityIMEXEulerMethod(StrictModule, NonTrainableState):
     dynamics: CompiledMACEnthalpyPorosityDynamics
     face_density: FaceVelocity
-    divergence_operator: object
-    gradient_operator: object
+    divergence_operator: FunctionLinearOperator
+    gradient_operator: FunctionLinearOperator
     variable_linear_policy: LinearSolvePolicy
     pressure_linear_policy: LinearSolvePolicy
     fixed_step_size: float | None = eqx.field(static=True)
@@ -156,7 +157,7 @@ class MACEnthalpyPorosityIMEXEulerMethod(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledMACEnthalpyPorosityDynamics):
             raise TypeError("dynamics must be CompiledMACEnthalpyPorosityDynamics.")
         fixed = None if fixed_step_size is None else float(fixed_step_size)
@@ -363,8 +364,8 @@ class MACEnthalpyPorositySBDF2Result(StrictModule):
 class MACEnthalpyPorositySBDF2Method(StrictModule, NonTrainableState):
     dynamics: CompiledMACEnthalpyPorosityDynamics
     startup: MACEnthalpyPorosityIMEXEulerMethod
-    divergence_operator: object
-    gradient_operator: object
+    divergence_operator: FunctionLinearOperator
+    gradient_operator: FunctionLinearOperator
     variable_linear_policy: LinearSolvePolicy
     pressure_linear_policy: LinearSolvePolicy
     step_size: float = eqx.field(static=True)
@@ -380,7 +381,7 @@ class MACEnthalpyPorositySBDF2Method(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         step = float(step_size)
         if not np.isfinite(step) or step <= 0.0:
             raise ValueError("SBDF2 step_size must be positive and finite.")

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _problem():
+def _problem() -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0, 1.5]),
         jnp.asarray([[1.0], [2.0], [1.5]]),
@@ -50,7 +53,9 @@ def _problem():
 
 
 @pytest.mark.parametrize("resampling_policy", ("never", "always", "ess"))
-def test_genealogical_score_covers_complete_model_and_resampling(resampling_policy):
+def test_genealogical_score_covers_complete_model_and_resampling(
+    resampling_policy: Any,
+) -> None:
     filtered = phx.uq.bootstrap_particle_filter(
         jax.random.key(1),
         _problem(),
@@ -74,12 +79,12 @@ def test_genealogical_score_covers_complete_model_and_resampling(resampling_poli
 class _ScaledLocation(eqx.Module):
     gain: jax.Array = phx.parameter_field()
 
-    def __call__(self, state, time, context):
+    def __call__(self, state: Any, time: Any, context: Any) -> Any:
         del time, context
         return self.gain * state
 
 
-def test_genealogical_score_excludes_fixed_observation_covariance():
+def test_genealogical_score_excludes_fixed_observation_covariance() -> None:
     problem = _problem()
     observation = phx.stochastic.GaussianObservationModel(
         _ScaledLocation(jnp.asarray(1.0)),
@@ -117,7 +122,7 @@ def test_genealogical_score_excludes_fixed_observation_covariance():
     assert jnp.all(jnp.isfinite(score.flat_score))
 
 
-def test_genealogical_score_replays_exactly_with_semantic_particle_keys():
+def test_genealogical_score_replays_exactly_with_semantic_particle_keys() -> None:
     problem = _problem()
     first_filter = phx.uq.bootstrap_particle_filter(
         jax.random.key(2),
@@ -141,7 +146,7 @@ def test_genealogical_score_replays_exactly_with_semantic_particle_keys():
     assert jnp.array_equal(first.flat_score, second.flat_score)
 
 
-def test_genealogical_score_cost_state_has_linear_particle_shape():
+def test_genealogical_score_cost_state_has_linear_particle_shape() -> None:
     problem = _problem()
     small = phx.uq.particle_genealogical_score(
         phx.uq.bootstrap_particle_filter(

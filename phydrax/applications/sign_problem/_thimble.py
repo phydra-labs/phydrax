@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ... import ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -60,7 +61,7 @@ class HolomorphicFlowQuadraturePlan(StrictModule, NonTrainableState):
         maximum_jacobian_entries: int = 4_194_304,
         maximum_imaginary_action_drift: float = 1e-5,
         minimum_average_residual_phase: float = 1e-3,
-    ):
+    ) -> None:
         time = float(flow_time)
         steps = int(flow_steps)
         nodes = int(maximum_nodes)
@@ -235,7 +236,7 @@ def _flow_map(prepared: PreparedHolomorphicFlowQuadrature, real_point: Array, /)
     step_size = prepared.plan.flow_time / prepared.plan.flow_steps
     initial = real_point.astype(jnp.result_type(real_point.dtype, 1j))
 
-    def step(point, _):
+    def step(point: Array, _: None) -> tuple[Array, None]:
         k1 = _upward_flow_vector(prepared, point)
         k2 = _upward_flow_vector(prepared, point + 0.5 * step_size * k1)
         k3 = _upward_flow_vector(prepared, point + 0.5 * step_size * k2)

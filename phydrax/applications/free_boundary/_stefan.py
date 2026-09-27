@@ -6,12 +6,14 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any, get_args, Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
 import optax
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._doc import DOC_KEY0
@@ -25,13 +27,18 @@ from ..._training_kernel import (
     prepare_training_kernel,
     run_training_attempt,
     TrainingKernelSpec,
+    TrainingKeys,
 )
 from ..._training_objective import _ObjectiveContribution
+from ..._validation import positive_finite_float
 from ...geometry import regularized_delta_values, regularized_heaviside_values
 from ...sampling.collocation import CausalTimeSlabSchedule
+from ...typing import PRNGKey
 
 
-StefanRepresentation = Literal["explicit_front", "implicit_level_set", "reference_map"]
+StefanRepresentation: TypeAlias = Literal[
+    "explicit_front", "implicit_level_set", "reference_map"
+]
 
 
 class OnePhaseStefanParameters(StrictModule, NonTrainableState):
@@ -57,7 +64,7 @@ class OnePhaseStefanParameters(StrictModule, NonTrainableState):
         domain_length: ArrayLike,
         final_time: ArrayLike,
         jacobian_floor: ArrayLike = 1.0e-6,
-    ):
+    ) -> None:
         self.diffusivity = _positive_scalar(diffusivity, "diffusivity")
         self.conductivity = _positive_scalar(conductivity, "conductivity")
         self.volumetric_latent_heat = _positive_scalar(
@@ -87,7 +94,7 @@ class StefanBoundaryData(StrictModule, NonTrainableState):
         initial_temperature: Callable[[Array], Array],
         boundary_temperature: Callable[[Array], Array],
         /,
-    ):
+    ) -> None:
         if not callable(initial_temperature) or not callable(boundary_temperature):
             raise TypeError("Stefan temperature data must be callable.")
         self.initial_temperature = initial_temperature
@@ -111,7 +118,7 @@ class StefanCollocationBatch(StrictModule, NonTrainableState):
         boundary_times: ArrayLike,
         interface_times: ArrayLike,
         initial_reference: ArrayLike,
-    ):
+    ) -> None:
         interior = jnp.asarray(interior_reference, dtype=jnp.float64)
         ambient = jnp.asarray(ambient_points, dtype=jnp.float64)
         boundary = jnp.asarray(boundary_times, dtype=jnp.float64).reshape((-1,))
@@ -154,7 +161,7 @@ class ExplicitFrontStefanPINN(StrictModule):
 
     def __init__(
         self, temperature: Callable[[Array], Array], front: Callable[[Array], Array], /
-    ):
+    ) -> None:
         if not callable(temperature) or not callable(front):
             raise TypeError("Explicit Stefan fields must be callable.")
         self.temperature = temperature
@@ -170,7 +177,7 @@ class ImplicitLevelSetStefanPINN(StrictModule):
         temperature: Callable[[Array], Array],
         level_set: Callable[[Array], Array],
         /,
-    ):
+    ) -> None:
         if not callable(temperature) or not callable(level_set):
             raise TypeError("Implicit Stefan fields must be callable.")
         self.temperature = temperature
@@ -186,7 +193,7 @@ class ReferenceMapStefanPINN(StrictModule):
         reference_temperature: Callable[[Array], Array],
         coordinate_map: Callable[[Array], Array],
         /,
-    ):
+    ) -> None:
         if not callable(reference_temperature) or not callable(coordinate_map):
             raise TypeError("Reference-map Stefan fields must be callable.")
         self.reference_temperature = reference_temperature
@@ -211,7 +218,7 @@ class StefanLoss(StrictModule):
         interface_temperature: ArrayLike,
         stefan_balance: ArrayLike,
         geometry: ArrayLike = 0.0,
-    ):
+    ) -> None:
         self.pde = jnp.asarray(pde).reshape(())
         self.initial = jnp.asarray(initial).reshape(())
         self.fixed_boundary = jnp.asarray(fixed_boundary).reshape(())
@@ -238,13 +245,13 @@ class StefanRepresentationComparison(StrictModule, NonTrainableState):
     explicit: StefanLoss
     implicit: StefanLoss
     reference: StefanLoss
-    best_representation: str
+    best_representation: StefanRepresentation
 
     def __init__(
         self, explicit: StefanLoss, implicit: StefanLoss, reference: StefanLoss, /
-    ):
+    ) -> None:
         losses = jnp.asarray((explicit.total, implicit.total, reference.total))
-        names = ("explicit_front", "implicit_level_set", "reference_map")
+        names = get_args(StefanRepresentation)
         self.explicit = explicit
         self.implicit = implicit
         self.reference = reference
@@ -260,7 +267,7 @@ def stefan_collocation_batch(
     boundary_points: int,
     interface_points: int,
     initial_points: int,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     final_time: float | None = None,
 ) -> StefanCollocationBatch:
     """Materialize reproducible scrambled-Sobol Stefan collocation blocks."""
@@ -329,14 +336,14 @@ def explicit_front_stefan_loss(
     data: StefanBoundaryData,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> StefanLoss:
     """Evaluate a one-phase Stefan PINN with a separately learned front."""
 
     temperature = lambda point: _scalar_call(model.temperature, point, key)
     front = lambda time: _scalar_call(model.front, jnp.asarray((time,)), key)
 
-    def pde_one(reference_point):
+    def pde_one(reference_point: Array) -> Array:
         coordinate, time = reference_point
         physical = jnp.asarray((coordinate * front(time), time))
         gradient = jax.grad(temperature)(physical)
@@ -359,7 +366,7 @@ def explicit_front_stefan_loss(
     boundary_target = jax.vmap(data.boundary_temperature)(batch.boundary_times)
     fixed_boundary = jnp.mean((boundary_prediction - boundary_target) ** 2)
 
-    def interface_one(time):
+    def interface_one(time: Array) -> tuple[Array, Array]:
         position = front(time)
         point = jnp.asarray((position, time))
         value = temperature(point)
@@ -401,16 +408,18 @@ def implicit_level_set_stefan_loss(
     *,
     interface_width: float,
     gradient_floor: float = 1.0e-12,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> StefanLoss:
     """Evaluate a fixed-ambient-domain Stefan PINN with a learned level set."""
 
-    width = _positive_float(interface_width, "interface_width")
-    floor = _positive_float(gradient_floor, "gradient_floor")
+    width = positive_finite_float(interface_width, "interface_width")
+    floor = positive_finite_float(gradient_floor, "gradient_floor")
     temperature = lambda point: _scalar_call(model.temperature, point, key)
     level_set = lambda point: _scalar_call(model.level_set, point, key)
 
-    def ambient_one(point):
+    def ambient_one(
+        point: Array,
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
         value = level_set(point)
         indicator = regularized_heaviside_values(-value, width=width)
         delta = regularized_delta_values(value, width=width)
@@ -479,14 +488,14 @@ def reference_map_stefan_loss(
     data: StefanBoundaryData,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> StefanLoss:
     """Evaluate a Stefan PINN pulled back to a learned reference-domain map."""
 
     temperature = lambda point: _scalar_call(model.reference_temperature, point, key)
     coordinate_map = lambda point: _scalar_call(model.coordinate_map, point, key)
 
-    def pde_one(point):
+    def pde_one(point: Array) -> tuple[Array, Array]:
         map_gradient = jax.grad(coordinate_map)(point)
         jacobian = map_gradient[0]
         safe_jacobian = jnp.maximum(jacobian, parameters.jacobian_floor)
@@ -532,7 +541,7 @@ def reference_map_stefan_loss(
         boundary_map**2
     )
 
-    def interface_one(time):
+    def interface_one(time: Array) -> tuple[Array, Array]:
         point = jnp.asarray((1.0, time))
         value = temperature(point)
         map_gradient = jax.grad(coordinate_map)(point)
@@ -574,7 +583,7 @@ def compare_stefan_representations(
     /,
     *,
     interface_width: float,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> StefanRepresentationComparison:
     """Evaluate all three representations on identical physical collocation."""
 
@@ -593,7 +602,14 @@ def compare_stefan_representations(
     )
 
 
-def _stefan_objective(parameters, model_state, fixed, loss, keys, /):
+def _stefan_objective(
+    parameters: PyTree[Any],
+    model_state: PyTree[Any],
+    fixed: PyTree[Any],
+    loss: Callable[[Any], StefanLoss],
+    keys: TrainingKeys,
+    /,
+) -> tuple[_ObjectiveContribution, PyTree[Any], StefanLoss]:
     """Kernel objective: the ordered Stefan total as one unit-support contribution."""
     del keys
     result = loss(combine_parameters(parameters, model_state, fixed))
@@ -699,7 +715,7 @@ def fit_stefan_time_slabs(
     )
 
 
-def _scalar_call(model: Callable[[Array], Array], point: Array, key, /) -> Array:
+def _scalar_call(model: Callable[[Array], Array], point: Array, key: PRNGKey, /) -> Array:
     value = (
         model(point, key=key) if isinstance(model, AbstractArrayModel) else model(point)
     )
@@ -720,13 +736,6 @@ def _positive_scalar(value: ArrayLike, name: str, /) -> Array:
     scalar = _finite_scalar(value, name)
     if float(scalar) <= 0.0:
         raise ValueError(f"{name} must be positive.")
-    return scalar
-
-
-def _positive_float(value: float, name: str, /) -> float:
-    scalar = float(value)
-    if not math.isfinite(scalar) or scalar <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
     return scalar
 
 

@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import argparse
 import json
+from typing import Any
 
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _periodic_advection(resolutions, cfl):
+def _periodic_advection(resolutions: Any, cfl: Any) -> Any:
     case = phx.equations.periodic_advection_verification_case()
     errors = []
     conservation = []
@@ -36,15 +37,18 @@ def _periodic_advection(resolutions, cfl):
         compiled = phx.equations.compile_conservation_problem(
             problem, discretization, method
         )
+        # ty: ignore[invalid-argument-type]
         state = case.initial_state(discretization.cell_centers, 0.0, None)
         initial_integral = jnp.sum(discretization.cell_volumes[..., None] * state)
         time = jnp.asarray(0.0)
+        # ty: ignore[invalid-argument-type]
         stepper = phx.solver.UnsplitFiniteVolumeSSPRK3Plan(compiled.dynamics)
         while float(time) < case.final_time:
             stable = compiled.stable_step(state, cfl=cfl)
             dt = jnp.minimum(stable, case.final_time - time)
             result = stepper.advance(time, state, dt)
             state, time = result.state, result.time
+        # ty: ignore[call-non-callable]
         exact = case.exact_state(discretization.cell_centers, time, None)
         norms = phx.equations.finite_volume_error_norms(
             state, exact, discretization.cell_volumes
@@ -66,7 +70,7 @@ def _periodic_advection(resolutions, cfl):
     }
 
 
-def _euler_case(case, resolution, steps):
+def _euler_case(case: Any, resolution: Any, steps: Any) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(resolution),),
         axis_names=("x",),
@@ -91,6 +95,7 @@ def _euler_case(case, resolution, steps):
     )
     compiled = phx.equations.compile_conservation_problem(problem, discretization, method)
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         compiled.dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.35),
@@ -126,7 +131,7 @@ def _euler_case(case, resolution, steps):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--case",

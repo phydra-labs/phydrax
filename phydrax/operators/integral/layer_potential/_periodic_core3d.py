@@ -10,7 +10,8 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from scipy import special
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -24,6 +25,7 @@ from ._galerkin3d import (
     LaplaceSingleLayerDP0GalerkinPolicy3D,
     prepare_laplace_single_layer_dp0_3d,
 )
+from ._surface3d import SurfacePanelization3D
 
 
 _Family = Literal["modified-helmholtz", "laplace", "helmholtz"]
@@ -128,7 +130,7 @@ class PeriodicEwaldPolicy3D(StrictModule, NonTrainableState):
         max_preparation_workspace_bytes: int = 256 * 1024 * 1024,
         max_resident_bytes: int = 256 * 1024 * 1024,
         precision: IntegrationPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         eta = float(splitting_parameter)
         real = int(real_cutoff)
         reciprocal = int(reciprocal_cutoff)
@@ -334,7 +336,9 @@ class PeriodicScalarDP0Operator3D(StrictModule, NonTrainableState):
 
 
 class _EwaldEvaluation:
-    def __init__(self, value: np.ndarray, real_shell: float, reciprocal_shell: float):
+    def __init__(
+        self, value: np.ndarray, real_shell: float, reciprocal_shell: float
+    ) -> None:
         self.value = value
         self.real_shell = float(real_shell)
         self.reciprocal_shell = float(reciprocal_shell)
@@ -386,7 +390,7 @@ def _screened_smooth_at_zero(screening: complex, eta: float) -> complex:
 
 
 def _ewald_green_host(
-    displacements: np.ndarray,
+    displacements: ArrayLike,
     cell: PeriodicCell,
     bloch_wavevector: np.ndarray,
     policy: PeriodicEwaldPolicy3D,
@@ -524,7 +528,7 @@ def _ewald_green_host(
 
 
 def _direct_screened_image_sum_host(
-    displacement: np.ndarray,
+    displacement: ArrayLike,
     cell: PeriodicCell,
     screening: float,
     bloch_wavevector: np.ndarray,
@@ -573,7 +577,7 @@ def _strict_fractional_clearance(region: MeshRegion, cell: PeriodicCell) -> floa
 
 
 def _build_smooth_weak_matrix(
-    panelization,
+    panelization: SurfacePanelization3D,
     cell: PeriodicCell,
     bloch_wavevector: np.ndarray,
     policy: PeriodicEwaldPolicy3D,

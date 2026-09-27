@@ -10,7 +10,8 @@ from enum import StrEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -44,7 +45,7 @@ class TheoryPrediction(StrictModule, NonTrainableState):
         observable_names: Sequence[str],
         unit_id: str,
         process_plan_id: str,
-    ):
+    ) -> None:
         values_ = np.asarray(values, dtype=np.float64)
         covariance_ = np.asarray(covariance, dtype=np.float64)
         names = tuple(str(value).strip() for value in observable_names)
@@ -147,7 +148,7 @@ class EFTMorphingPlan(StrictModule, NonTrainableState):
         coefficient_names: Sequence[str],
         observable_names: Sequence[str],
         source_prediction_id: str,
-    ):
+    ) -> None:
         base_ = np.asarray(base, dtype=np.float64)
         linear_ = np.asarray(linear, dtype=np.float64)
         quadratic_ = np.asarray(quadratic, dtype=np.float64)

@@ -13,19 +13,21 @@ atomic commit or rollback.
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 VertexTissueDimension: TypeAlias = Literal[2, 3]
@@ -150,7 +152,8 @@ def _validate_edge_rows(
             or not np.all(vertex_active[endpoints])
         ):
             raise ValueError("Active edges must join two distinct active vertices.")
-        undirected = tuple(sorted((int(endpoints[0]), int(endpoints[1]))))
+        first, second = int(endpoints[0]), int(endpoints[1])
+        undirected = (min(first, second), max(first, second))
         if undirected in undirected_edges:
             raise ValueError("Active edges must represent distinct undirected edges.")
         undirected_edges.add(undirected)
@@ -314,7 +317,7 @@ def _validate_polyhedral_topology(
             raise ValueError("Active faces must represent distinct polygonal interfaces.")
         canonical_faces.add(canonical)
         for directed in _face_edges(vertices):
-            edge = tuple(sorted(directed))
+            edge = (min(directed), max(directed))
             if edge not in declared_edges:
                 raise ValueError(
                     "Every face edge must be present in edge_vertex_indices."
@@ -351,7 +354,7 @@ def _validate_polyhedral_topology(
             if orientation < 0:
                 vertices = vertices[::-1]
             for start, end in _face_edges(vertices):
-                undirected = tuple(sorted((start, end)))
+                undirected = (min(start, end), max(start, end))
                 sign = 1 if start < end else -1
                 balance[undirected] = balance.get(undirected, 0) + sign
                 occurrences[undirected] = occurrences.get(undirected, 0) + 1
@@ -463,10 +466,8 @@ class VertexTissuePlan(StrictModule, NonTrainableState):
         field_names: tuple[str, ...] = (),
         minimum_edge_length: float = 1.0e-8,
         minimum_cell_measure: float = 1.0e-10,
-    ):
-        if isinstance(dimension, bool) or dimension not in (2, 3):
-            raise ValueError("dimension must be 2 or 3.")
-        dimension_ = int(dimension)
+    ) -> None:
+        dimension_ = parse(dimension, VertexTissueDimension, "dimension")
         vertices, vertex_active = _identifier_array("vertex_ids", vertex_ids)
         edges, edge_active = _identifier_array("edge_ids", edge_ids)
         cells, cell_active = _identifier_array("cell_ids", cell_ids)
@@ -782,7 +783,7 @@ def polygonal_vertex_tissue_plan(
     target_cell_perimeter: ArrayLike,
     perimeter_stiffness: ArrayLike,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> VertexTissuePlan:
     """Construct a validated 2D confluent polygonal vertex-tissue plan."""
 
@@ -818,7 +819,7 @@ def polyhedral_vertex_tissue_plan(
     target_cell_surface_area: ArrayLike,
     surface_stiffness: ArrayLike,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> VertexTissuePlan:
     """Construct a validated 3D confluent polyhedral vertex-tissue plan."""
 
@@ -903,12 +904,17 @@ class VertexTissueState(StrictModule):
         time: ArrayLike,
         prepared_id: str,
         /,
-    ):
+    ) -> None:
         positions_ = jnp.asarray(positions)
         fields_ = jnp.asarray(cell_fields)
         time_ = jnp.asarray(time)
-        if positions_.ndim != 2 or positions_.shape[-1] not in (2, 3):
+        if positions_.ndim != 2:
             raise ValueError("positions must have shape (vertex_capacity, 2|3).")
+        parse(
+            positions_.shape[-1],
+            VertexTissueDimension,
+            "positions spatial dimension",
+        )
         if fields_.ndim != 2:
             raise ValueError("cell_fields must have shape (cell_capacity, field_count).")
         if time_.shape != ():
@@ -958,7 +964,7 @@ class PreparedVertexTissue(StrictModule, NonTrainableState):
     reference_quality_valid: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: VertexTissuePlan, reference_positions: ArrayLike, /):
+    def __init__(self, plan: VertexTissuePlan, reference_positions: ArrayLike, /) -> None:
         if not isinstance(plan, VertexTissuePlan):
             raise TypeError("plan must be a VertexTissuePlan.")
         positions = _real_array("reference_positions", reference_positions, 2)
@@ -1440,7 +1446,7 @@ class VertexTissueDynamicsPlan(StrictModule, NonTrainableState):
         *,
         maximum_displacement: float = 1.0,
         energy_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         step = float(step_size)
         maximum = float(maximum_displacement)
         tolerance = float(energy_tolerance)
@@ -1478,7 +1484,9 @@ class PreparedVertexTissueDynamics(StrictModule, NonTrainableState):
     tissue: PreparedVertexTissue
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: VertexTissueDynamicsPlan, tissue: PreparedVertexTissue, /):
+    def __init__(
+        self, plan: VertexTissueDynamicsPlan, tissue: PreparedVertexTissue, /
+    ) -> None:
         if not isinstance(plan, VertexTissueDynamicsPlan):
             raise TypeError("plan must be a VertexTissueDynamicsPlan.")
         if not isinstance(tissue, PreparedVertexTissue):
@@ -1661,7 +1669,7 @@ class VertexTissueTopologyEvent(StrictModule, NonTrainableState):
         /,
         *,
         conservation_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         kind_ = _enum_kind(kind)
         if (
             not isinstance(source_prepared_id, str)
@@ -1717,7 +1725,7 @@ class VertexTissueTopologyCandidate(StrictModule, NonTrainableState):
         state: VertexTissueState,
         source_state_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(event, VertexTissueTopologyEvent):
             raise TypeError("event must be a VertexTissueTopologyEvent.")
         if not isinstance(prepared, PreparedVertexTissue):
@@ -2193,7 +2201,7 @@ class VertexTissueTopologyResult(StrictModule, NonTrainableState):
         status: ArrayLike,
         result_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedVertexTissue):
             raise TypeError("prepared must be a PreparedVertexTissue.")
         if not isinstance(state, VertexTissueState):

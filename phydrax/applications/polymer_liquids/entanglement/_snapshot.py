@@ -10,7 +10,7 @@ from itertools import pairwise
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -36,7 +36,7 @@ class PrimitivePathSnapshotPlan(StrictModule, NonTrainableState):
         maximum_chains: int,
         maximum_beads_per_chain: int,
         maximum_bond_length: float,
-    ):
+    ) -> None:
         particles = int(maximum_particles)
         chains = int(maximum_chains)
         beads = int(maximum_beads_per_chain)
@@ -116,7 +116,7 @@ class PreparedPrimitivePathSnapshot(StrictModule, NonTrainableState):
         layout: PolymerChainLayoutPlan,
         chain_ids: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, PrimitivePathSnapshotPlan):
             raise TypeError("plan must be PrimitivePathSnapshotPlan.")
         if not isinstance(dynamics, PreparedAtomisticDynamics):
@@ -149,7 +149,8 @@ class PreparedPrimitivePathSnapshot(StrictModule, NonTrainableState):
         for row, active_row in zip(indices, mask, strict=True):
             chain = row[active_row]
             expected.extend(
-                tuple(sorted((int(left), int(right)))) for left, right in pairwise(chain)
+                (min(int(left), int(right)), max(int(left), int(right)))
+                for left, right in pairwise(chain)
             )
         actual = {
             tuple(sorted((int(left), int(right))))

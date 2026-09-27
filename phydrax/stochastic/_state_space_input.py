@@ -10,14 +10,16 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from .._dtype_names import inexact_result_type
 from .._interpolation._bspline import bspline_stencil
 from .._interpolation._bspline_grid import BSplineGrid
 from .._interpolation._stencil import apply_gather_stencil
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ..series import SampledSeries, SampledSeriesReconstruction, SeriesSupport
+from ..typing import parse
 
 
 SampledInputInterpolation: TypeAlias = Literal["zero-order-hold", "linear"]
@@ -106,9 +108,8 @@ class SampledStateSpaceInput(AbstractStateSpaceInput):
         knot_valid: ArrayLike | None = None,
         interpolation: SampledInputInterpolation,
         input_id: str,
-    ):
-        if interpolation not in ("zero-order-hold", "linear"):
-            raise ValueError("interpolation must be 'zero-order-hold' or 'linear'.")
+    ) -> None:
+        interpolation = parse(interpolation, SampledInputInterpolation, "interpolation")
         identifier = _name(input_id, owner="input_id")
         times_raw = jnp.asarray(times)
         values_raw = jnp.asarray(values)
@@ -229,7 +230,7 @@ class BSplineStateSpaceInput(AbstractStateSpaceInput):
         *,
         case_shape: tuple[int, ...] = (),
         input_id: str,
-    ):
+    ) -> None:
         if not isinstance(grid, BSplineGrid):
             raise TypeError("grid must be a BSplineGrid.")
         cases = _shape(tuple(case_shape), owner="case_shape")

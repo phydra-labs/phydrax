@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -39,7 +42,7 @@ from phydrax.ml.semi_supervised import (
 )
 
 
-def _result(model, batch, method):
+def _result(model: Any, batch: Any, method: Any) -> Any:
     valid = jnp.ones(batch.case_shape or (), dtype="bool")
     status = jnp.zeros(batch.case_shape or (), dtype=jnp.int32)
     return FitResult(
@@ -80,13 +83,13 @@ class _PriorModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, prior, case_shape, in_size):
+    def __init__(self, prior: Any, case_shape: Any, in_size: Any) -> None:
         self.prior = jnp.asarray(prior)
         self.case_shape = tuple(case_shape)
         self.in_size = int(in_size)
         self.out_size = self.prior.shape[-1]
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         del key
         values = jnp.asarray(x)
         sample_shape = values.shape[len(self.case_shape) : -1]
@@ -97,7 +100,7 @@ class _PriorModel(AbstractArrayModel):
 
 
 class _PriorRecipe(AbstractRecipe):
-    def fit_batch(self, batch, /, *, key=None):
+    def fit_batch(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         targets = batch.require_targets()
         weight = batch.effective_weight() * jnp.all(batch.target_mask, axis=-1)
@@ -114,17 +117,17 @@ class _ScoreModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self, in_size):
+    def __init__(self, in_size: Any) -> None:
         self.in_size = int(in_size)
         self.out_size = "scalar"
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         del key
         return jnp.asarray(x)[..., 0]
 
 
 class _ScoreRecipe(AbstractRecipe):
-    def fit_batch(self, batch, /, *, key=None):
+    def fit_batch(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         return _result(_ScoreModel(batch.feature_count), batch, "score")
 
@@ -134,23 +137,23 @@ class _ConstantModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self, value, in_size):
+    def __init__(self, value: Any, in_size: Any) -> None:
         self.value = jnp.asarray(value)
         self.in_size = int(in_size)
         self.out_size = "scalar"
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         del key
         return jnp.broadcast_to(self.value, jnp.asarray(x).shape[:-1])
 
 
 class _ConstantRecipe(AbstractRecipe):
-    def fit_batch(self, batch, /, *, key=None):
+    def fit_batch(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         return _result(_ConstantModel(2.0, batch.feature_count), batch, "constant")
 
 
-def _graph_batch(case=True):
+def _graph_batch(case: Any = True) -> Any:
     x = jnp.array([[-2.0], [-1.5], [-1.0], [1.0], [1.5], [2.0]])
     y = jnp.array([10, 10, 10, 20, 20, 20])
     target_mask = jnp.array([True, False, True, True, False, True])
@@ -166,7 +169,7 @@ def _graph_batch(case=True):
     )
 
 
-def _soft_batch():
+def _soft_batch() -> Any:
     x = jnp.array([[-2.0], [-1.0], [0.0], [1.0], [2.0]])
     targets = jnp.array([[1.0, 0.0], [1.0, 0.0], [0.5, 0.5], [0.0, 1.0], [0.0, 1.0]])
     target_mask = jnp.array(
@@ -180,7 +183,7 @@ def _soft_batch():
     )
 
 
-def test_label_propagation_spreading_schema_masks_weights_cases_jit_and_grad():
+def test_label_propagation_spreading_schema_masks_weights_cases_jit_and_grad() -> None:
     batch = _graph_batch(case=True)
     propagation = LabelPropagationRecipe(iterations=80, tolerance=1e-3).fit_batch(batch)
     spreading = LabelSpreadingRecipe(alpha=0.7, iterations=80, tolerance=1e-3).fit_batch(
@@ -206,7 +209,7 @@ def test_label_propagation_spreading_schema_masks_weights_cases_jit_and_grad():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_hard_label_reporting_is_distinct_and_preserves_external_vocabulary():
+def test_hard_label_reporting_is_distinct_and_preserves_external_vocabulary() -> None:
     batch = _graph_batch(case=False)
     result = HardLabelPropagationRecipe(
         LabelPropagationRecipe(iterations=80, tolerance=1e-3)
@@ -222,7 +225,9 @@ def test_hard_label_reporting_is_distinct_and_preserves_external_vocabulary():
     assert result.derivative_contract.level(DerivativeSurface.INPUT) is GradientLevel.NONE
 
 
-def test_graph_models_fail_closed_for_complex_features_vocabularies_and_partial_masks():
+def test_graph_models_fail_closed_for_complex_features_vocabularies_and_partial_masks() -> (
+    None
+):
     batch = _graph_batch(case=False)
     with pytest.raises(TypeError, match="real-valued features"):
         LabelPropagationRecipe().fit_batch(
@@ -248,7 +253,7 @@ def test_graph_models_fail_closed_for_complex_features_vocabularies_and_partial_
         )
 
 
-def test_soft_and_hard_self_training_are_distinct_keyed_and_deterministic():
+def test_soft_and_hard_self_training_are_distinct_keyed_and_deterministic() -> None:
     batch = _soft_batch()
     soft_recipe = SoftSelfTrainingRecipe(_PriorRecipe(), iterations=2, blend=0.5)
     hard_recipe = HardSelfTrainingRecipe(
@@ -272,7 +277,7 @@ def test_soft_and_hard_self_training_are_distinct_keyed_and_deterministic():
     assert jax.jit(soft.as_trainable())(batch.dense_features()).shape == (5, 2)
 
 
-def test_soft_and_hard_one_class_compositions_gate_natively():
+def test_soft_and_hard_one_class_compositions_gate_natively() -> None:
     x = jnp.array([[-2.0], [-0.5], [0.5], [2.0]])
     batch = MLBatch(x, jnp.array([0.0, 0.0, 1.0, 1.0]))
     soft_recipe = SoftOneClassCompositionRecipe(

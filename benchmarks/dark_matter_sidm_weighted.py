@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -25,7 +27,7 @@ from phydrax.applications.cosmology._sidm_weighted import WeightedSIDMPlan
 cosmology = phx.applications.cosmology
 
 
-def _particle_mesh(particles, grid_count):
+def _particle_mesh(particles: Any, grid_count: Any) -> Any:
     axes = tuple(
         phx.discretization.UniformCellAxisSpec(grid_count, periodic=True)
         for _ in range(3)
@@ -68,7 +70,7 @@ def _particle_mesh(particles, grid_count):
     )
 
 
-def _case(root_count: int, grid_count: int, repetitions: int):
+def _case(root_count: int, grid_count: int, repetitions: int) -> Any:
     capacity = 2 * root_count
     indices = jnp.arange(capacity, dtype=jnp.float64)
     positions = jnp.stack(
@@ -157,7 +159,7 @@ def _case(root_count: int, grid_count: int, repetitions: int):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root-counts", nargs="+", type=int, default=[16, 32, 64])
     parser.add_argument("--grid-count", type=int, default=8)

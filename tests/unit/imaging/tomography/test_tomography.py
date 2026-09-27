@@ -1,10 +1,12 @@
+from typing import Any
+
 import numpy as np
 import pytest
 
 import phydrax as phx
 
 
-def _support(origin=(-1.0, 0.5, 0.5), direction=(1.0, 0.0, 0.0)):
+def _support(origin: Any = (-1.0, 0.5, 0.5), direction: Any = (1.0, 0.0, 0.0)) -> Any:
     contract = phx.SpatialCoordinateContract(
         phx.units.METER,
         coordinate_system="cartesian-world",
@@ -20,12 +22,14 @@ def _support(origin=(-1.0, 0.5, 0.5), direction=(1.0, 0.0, 0.0)):
     return phx.imaging.tomography.ProjectionSupport(rays, (1,), ("view-0",))
 
 
-def test_voxel_projector_and_transpose_are_matched():
+def test_voxel_projector_and_transpose_are_matched() -> None:
     support = _support()
     plan = phx.imaging.tomography.VoxelXRayTransformPlan(
         support,
         (2, 1, 1),
+        # ty: ignore[invalid-argument-type]
         (0, 0, 0),
+        # ty: ignore[invalid-argument-type]
         (1, 1, 1),
         support.rays.coordinate_contract,
     )
@@ -41,7 +45,7 @@ def test_voxel_projector_and_transpose_are_matched():
     np.testing.assert_allclose(left, right)
 
 
-def test_beer_lambert_and_iterative_reconstruction_reduce_projection_residual():
+def test_beer_lambert_and_iterative_reconstruction_reduce_projection_residual() -> None:
     detector = phx.imaging.tomography.BeerLambertPlan(np.asarray((100.0,)))
     response = detector.evaluate(np.asarray((np.log(2.0),)))
     np.testing.assert_allclose(response.expected_signal, (50.0,))
@@ -56,7 +60,9 @@ def test_beer_lambert_and_iterative_reconstruction_reduce_projection_residual():
     plan = phx.imaging.tomography.VoxelXRayTransformPlan(
         support,
         (2, 1, 1),
+        # ty: ignore[invalid-argument-type]
         (0, 0, 0),
+        # ty: ignore[invalid-argument-type]
         (1, 1, 1),
         support.rays.coordinate_contract,
     )
@@ -65,7 +71,7 @@ def test_beer_lambert_and_iterative_reconstruction_reduce_projection_residual():
     assert solved.residual_norms[-1] <= solved.residual_norms[0]
 
 
-def test_tetrahedral_projector_has_matched_transpose():
+def test_tetrahedral_projector_has_matched_transpose() -> None:
     vertices = np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype="float64")
     support = _support(origin=(-1.0, 0.1, 0.1))
     transform = phx.imaging.tomography.TetrahedralXRayTransformPlan(
@@ -81,7 +87,7 @@ def test_tetrahedral_projector_has_matched_transpose():
     )
 
 
-def test_tomography_plans_refuse_mismatched_geometry_and_invalid_policies():
+def test_tomography_plans_refuse_mismatched_geometry_and_invalid_policies() -> None:
     support = _support()
     wrong_contract = phx.SpatialCoordinateContract(
         phx.units.MILLIMETER,
@@ -92,7 +98,9 @@ def test_tomography_plans_refuse_mismatched_geometry_and_invalid_policies():
         phx.imaging.tomography.VoxelXRayTransformPlan(
             support,
             (2, 1, 1),
+            # ty: ignore[invalid-argument-type]
             (0, 0, 0),
+            # ty: ignore[invalid-argument-type]
             (1, 1, 1),
             wrong_contract,
         )
@@ -100,7 +108,9 @@ def test_tomography_plans_refuse_mismatched_geometry_and_invalid_policies():
         phx.imaging.tomography.VoxelXRayTransformPlan(
             support,
             (2, 1, 1),
+            # ty: ignore[invalid-argument-type]
             (np.nan, 0, 0),
+            # ty: ignore[invalid-argument-type]
             (1, 1, 1),
             support.rays.coordinate_contract,
         )
@@ -114,7 +124,9 @@ def test_tomography_plans_refuse_mismatched_geometry_and_invalid_policies():
     transform = phx.imaging.tomography.VoxelXRayTransformPlan(
         support,
         (2, 1, 1),
+        # ty: ignore[invalid-argument-type]
         (0, 0, 0),
+        # ty: ignore[invalid-argument-type]
         (1, 1, 1),
         support.rays.coordinate_contract,
     )

@@ -9,7 +9,8 @@ from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
@@ -41,7 +42,7 @@ class CableActiveSetPolicy(StrictModule, NonTrainableState):
         deactivation_tolerance: float = 1.0e-10,
         strict_complementarity_tolerance: float = 1.0e-7,
         maximum_active_set_changes: int = 50,
-    ):
+    ) -> None:
         values = (
             float(activation_tolerance),
             float(deactivation_tolerance),

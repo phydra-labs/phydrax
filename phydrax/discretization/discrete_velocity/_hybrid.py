@@ -8,7 +8,8 @@ import equinox as eqx
 import jax.nn as jnn
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -60,7 +61,7 @@ class KineticShockSensorPlan(StrictModule, NonTrainableState):
         nonequilibrium_weight: float = 0.5,
         threshold: float = 0.2,
         transition_width: float = 0.025,
-    ):
+    ) -> None:
         if not isinstance(material, IdealGasMaterial):
             raise TypeError("Shock sensing requires an IdealGasMaterial.")
         values = tuple(
@@ -218,7 +219,7 @@ class ConformingFVKineticState(StrictModule):
         finite_volume_conserved: ArrayLike,
         kinetic: SmoothCompressibleKineticState,
         /,
-    ):
+    ) -> None:
         conserved = jnp.asarray(finite_volume_conserved)
         if not isinstance(kinetic, SmoothCompressibleKineticState):
             raise TypeError("kinetic must be SmoothCompressibleKineticState.")
@@ -293,7 +294,7 @@ class FixedConformingFVKineticInterfacePlan(StrictModule):
         /,
         *,
         population_floor: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(method, SmoothCompressibleD2VKineticMethod):
             raise TypeError("method must be SmoothCompressibleD2VKineticMethod.")
         if not isinstance(finite_volume_system, AbstractAdmissibleSystem):

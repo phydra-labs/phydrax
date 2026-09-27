@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -36,7 +37,7 @@ class OceanAxisConvention(StrictModule, NonTrainableState):
         *,
         positive_up: bool = True,
         coordinate_units: str = "m",
-    ):
+    ) -> None:
         vertical = int(vertical_axis)
         units = str(coordinate_units)
         if vertical not in (0, 1, 2):
@@ -114,7 +115,7 @@ class LinearSeawaterReference(StrictModule, NonTrainableState):
         haline_contraction: float = 7.6e-4,
         temperature_name: str = "temperature",
         salinity_name: str = "salinity",
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -172,7 +173,8 @@ class LinearSeawaterReference(StrictModule, NonTrainableState):
 
     @property
     def field_names(self) -> tuple[str, str]:
-        return tuple(sorted((self.temperature_name, self.salinity_name)))
+        first, second = sorted((self.temperature_name, self.salinity_name))
+        return first, second
 
     def density_anomaly(
         self,

@@ -10,7 +10,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -33,7 +34,7 @@ class WaveComponent(StrictModule, NonTrainableState):
         phase: float = 0.0,
         wavenumber: float = 0.0,
         /,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -89,13 +90,13 @@ class IncidentWavePlan(StrictModule, NonTrainableState):
         gravity: float = 9.81,
         current: tuple[float, float] = (0.0, 0.0),
         ramp_time: float = 0.0,
-    ):
+    ) -> None:
         supplied = tuple(components)
         if not supplied or any(not isinstance(c, WaveComponent) for c in supplied):
             raise ValueError("IncidentWavePlan requires WaveComponent entries.")
         depth_ = float(depth)
         gravity_ = float(gravity)
-        current_ = tuple(float(value) for value in current)
+        current_ = (float(current[0]), float(current[1]))
         ramp = float(ramp_time)
         if (
             depth_ <= 0.0
@@ -254,7 +255,7 @@ def _dispersion_root(
         direction
     )
 
-    def residual(k):
+    def residual(k: float) -> float:
         intrinsic = angular_frequency - k * projected_current
         return gravity * k * math.tanh(k * depth) - intrinsic**2
 

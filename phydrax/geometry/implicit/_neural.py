@@ -8,20 +8,23 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass
-from typing import Any, final
+from typing import Any, final, NoReturn
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jaxtyping import PyTree
 
 from ..._differentiation import CapabilityEvidenceKind, DerivativeRegularity
 from ..._fingerprint import canonical_fingerprint
 from ..._model._array import AbstractArrayModel
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState, partition_parameters
+from ..._validation import positive_finite_float
+from ...typing import PRNGKey
 from .._atlas import BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
@@ -37,7 +40,7 @@ from .._contracts import (
     GeometryKind,
     GeometrySource,
 )
-from .._sampling import bounded_rejection_sample, RejectionSamplingPlan
+from .._sampling import bounded_rejection_sample, RejectionSamplingPlan, SamplingResult
 from .._validity import GeometryValidityEvidence
 from ..analytic._primitives import _check_points, _feature_id
 from ..design._schema import (
@@ -159,7 +162,7 @@ class NeuralImplicitCertificate(StrictModule, NonTrainableState):
         boundary_points: Array,
         clearance_points: Array,
         evidence: GeometryValidityEvidence,
-    ):
+    ) -> None:
         if field.topology_identity is not None:
             raise ValueError(
                 "Sampled neural implicit evidence carries no field topology identity."
@@ -225,7 +228,9 @@ def _field_regularity(regularity: DerivativeRegularity | None, /) -> FieldRegula
     return FieldRegularity.NONSMOOTH
 
 
-def _network_parts(network: AbstractArrayModel, /):
+def _network_parts(
+    network: AbstractArrayModel, /
+) -> tuple[tuple[str, ...], tuple[Array, ...], jax.tree_util.PyTreeDef, PyTree, PyTree]:
     """Split `network` by array role into design parameters and fixed data.
 
     Returns the PARAMETER lane as `(names, leaves, treedef)`, the FIXED lane's
@@ -256,7 +261,9 @@ def _network_values(network: AbstractArrayModel, points: Array, /) -> Array:
     return jax.vmap(network)(points)
 
 
-def _evaluate_network(network: AbstractArrayModel, points: Array, dimension: int, /):
+def _evaluate_network(
+    network: AbstractArrayModel, points: Array, dimension: int, /
+) -> Array:
     points_ = _check_points(points, dimension)
     values = _network_values(network, points_.reshape((-1, dimension)))
     return values.reshape(points_.shape[:-1])
@@ -306,7 +313,7 @@ class _NeuralImplicitKernel(GeometryKernel):
         certificate: FieldCertificate,
         capabilities: frozenset[GeometryCapability],
         source_id: str,
-    ):
+    ) -> None:
         self.network_fixed = network_fixed
         self.network_static = network_static
         self.network_treedef = network_treedef
@@ -357,6 +364,11 @@ class _NeuralImplicitKernel(GeometryKernel):
         dimension = self.ambient_dimension
         error = self.certificate.evaluation_error
         lipschitz = self.certificate.lipschitz_upper_bound
+        # The neural certifier always records both bounds on the kernel certificate.
+        if not (error is not None and lipschitz is not None):
+            raise RuntimeError(
+                "Internal invariant failed: error is not None and lipschitz is not None."
+            )
         interior = _evaluate_network(network, self.interior_points, dimension)
         exterior = _evaluate_network(network, self.exterior_points, dimension)
         clearance = _evaluate_network(network, self.clearance_points, dimension)
@@ -457,11 +469,19 @@ class _NeuralImplicitKernel(GeometryKernel):
             "Neural implicit regions have no evidenced boundary measure route."
         )
 
-    def sample_interior(self, state, num_points, /, *, key, plan=None):
+    def sample_interior(
+        self,
+        state: DesignState,
+        num_points: int,
+        /,
+        *,
+        key: PRNGKey,
+        plan: RejectionSamplingPlan | None = None,
+    ) -> SamplingResult:
         bounds = self.region_bounds
         dimension = self.ambient_dimension
 
-        def proposal(proposal_key, count):
+        def proposal(proposal_key: PRNGKey, count: int) -> Array:
             return jr.uniform(
                 proposal_key,
                 shape=(count, dimension),
@@ -480,7 +500,9 @@ class _NeuralImplicitKernel(GeometryKernel):
             dtype=bounds.dtype,
         )
 
-    def sample_boundary(self, state, num_points, /, *, key):
+    def sample_boundary(
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
+    ) -> NoReturn:
         del state, num_points, key
         raise NotImplementedError(
             "Neural implicit regions do not provide boundary sampling."
@@ -602,7 +624,11 @@ def _square_arcs(inside: tuple[bool, ...], /) -> tuple[tuple[int, int], ...]:
     crossing = tuple(k for k in range(4) if inside[k] != inside[(k + 1) % 4])
     if len(crossing) == 4:
         return tuple(((k - 1) % 4, k) for k in range(4) if inside[k])
-    return (crossing,) if crossing else ()
+    if not crossing:
+        return ()
+    # A cyclic square changes sign an even number of times: here exactly twice.
+    first, second = crossing
+    return ((first, second),)
 
 
 @functools.cache
@@ -777,7 +803,9 @@ def _bounds_nodes(nodes: np.ndarray, /) -> np.ndarray:
     return nodes[on_bounds]
 
 
-def _network_contract(network: AbstractArrayModel, dimension: int, /):
+def _network_contract(
+    network: AbstractArrayModel, dimension: int, /
+) -> DerivativeRegularity | None:
     if not isinstance(network, AbstractArrayModel):
         raise TypeError("network must be an AbstractArrayModel.")
     if network.in_size != dimension or network.out_size != "scalar":
@@ -903,7 +931,12 @@ def _certify(
         {GeometryCapability.REGION_QUERY, GeometryCapability.INTERIOR_SAMPLING}
     )
 
-    def compiled(certificate, capabilities, boundary_points, margin):
+    def compiled(
+        certificate: FieldCertificate,
+        capabilities: frozenset[GeometryCapability],
+        boundary_points: Array,
+        margin: float | None,
+    ) -> CompiledGeometry:
         context = _ParameterCollector()
         kernel = _compile_kernel(
             context,
@@ -974,13 +1007,6 @@ def _points(value: Any, bounds: np.ndarray, name: str, /) -> Array:
     return jnp.asarray(host)
 
 
-def _positive(value: Any, name: str, /) -> float:
-    result = float(value)
-    if not np.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
-
-
 @final
 class NeuralImplicitRegion(GeometrySource):
     r"""Region bounded by the zero set of a neural field, with sampled evidence.
@@ -1049,7 +1075,7 @@ class NeuralImplicitRegion(GeometrySource):
         topology: ImplicitRegionTopology | None = None,
         policy: ImplicitSurfacePolicy = _DEFAULT_POLICY,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         bounds_ = np.asarray(bounds, dtype=np.float64)
         if (
             bounds_.ndim != 2
@@ -1063,7 +1089,7 @@ class NeuralImplicitRegion(GeometrySource):
         exterior = _points(exterior_points, bounds_, "exterior_points")
         if sign_margin is None:
             raise ValueError("Neural implicit evidence requires sign_margin.")
-        margin = _positive(sign_margin, "sign_margin")
+        margin = positive_finite_float(sign_margin, "sign_margin")
         if evaluation_error is None:
             raise ValueError("Neural implicit evidence requires evaluation_error.")
         error = float(evaluation_error)
@@ -1088,7 +1114,7 @@ class NeuralImplicitRegion(GeometrySource):
         gradient = (
             None
             if gradient_margin is None
-            else _positive(gradient_margin, "gradient_margin")
+            else positive_finite_float(gradient_margin, "gradient_margin")
         )
         if topology is not None and not isinstance(topology, ImplicitRegionTopology):
             raise TypeError("topology must be an ImplicitRegionTopology or None.")

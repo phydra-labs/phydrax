@@ -4,31 +4,29 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from collections.abc import Sequence
+from typing import Any, Literal, TypeAlias, TypeVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
+
+from ..typing import parse
 
 
-ChainMethod = Literal["sequential", "vectorized"]
-NUTSChainMethod = Literal["sequential", "vectorized", "interleaved"]
+ChainMethod: TypeAlias = Literal["sequential", "vectorized"]
+NUTSChainMethod: TypeAlias = Literal["sequential", "vectorized", "interleaved"]
 
 
 def _validate_chain_method(value: ChainMethod, /) -> ChainMethod:
-    if value not in ("sequential", "vectorized"):
-        raise ValueError("chain_method must be 'sequential' or 'vectorized'.")
-    return value
+    return parse(value, ChainMethod, "chain_method")
 
 
 def _validate_nuts_chain_method(value: NUTSChainMethod, /) -> NUTSChainMethod:
-    if value not in ("sequential", "vectorized", "interleaved"):
-        raise ValueError(
-            "chain_method must be 'sequential', 'vectorized', or 'interleaved'."
-        )
-    return value
+    return parse(value, NUTSChainMethod, "chain_method")
 
 
 def _prepare_chain_positions(
@@ -101,11 +99,14 @@ def _split_chain_keys(key: Array, num_chains: int, /) -> tuple[Array, Array]:
     return root_key, jr.split(root_key, int(num_chains))
 
 
-def _stack_trees(values):
+_TreeT = TypeVar("_TreeT")
+
+
+def _stack_trees(values: Sequence[_TreeT]) -> _TreeT:
     return jax.tree_util.tree_map(lambda *leaves: jnp.stack(leaves), *values)
 
 
-def _unstack_tree(tree, count: int):
+def _unstack_tree(tree: _TreeT, count: int) -> tuple[_TreeT, ...]:
     return tuple(
         jax.tree_util.tree_map(lambda value: value[index], tree)
         for index in range(int(count))

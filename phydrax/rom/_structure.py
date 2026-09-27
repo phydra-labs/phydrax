@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -29,7 +30,7 @@ class SymplecticReduction(StrictModule, NonTrainableState):
         /,
         *,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         values = jnp.asarray(basis)
         form = jnp.asarray(symplectic_form)
         if (
@@ -93,7 +94,7 @@ class PortHamiltonianReduction(StrictModule, NonTrainableState):
         /,
         *,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         inter = jnp.asarray(interconnection)
         dissip = jnp.asarray(dissipation)
         energy = jnp.asarray(energy_metric)
@@ -172,7 +173,7 @@ class DissipativeStructureEvidence(StrictModule, NonTrainableState):
         *,
         structure_id: str,
         tolerance: float,
-    ):
+    ) -> None:
         change = jnp.asarray(energy_change)
         defect = jnp.asarray(invariant_defect)
         identifier = str(structure_id)

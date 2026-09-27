@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -11,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _support(assignment):
+def _support(assignment: Any) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformAxisSpec(16, periodic=True, endpoint=False)
@@ -39,7 +41,7 @@ def _support(assignment):
 
 
 @pytest.mark.parametrize("evolving", [False, True])
-def test_gimp_partition_gradient_moment_and_apic_compatibility(evolving):
+def test_gimp_partition_gradient_moment_and_apic_compatibility(evolving: Any) -> None:
     widths = jnp.full((3, 2), 0.025)
     assignment = phx.discretization.UniformGIMPSplatAssignment(
         widths, maximum_half_width_cells=0.75, evolving=evolving
@@ -59,7 +61,7 @@ def test_gimp_partition_gradient_moment_and_apic_compatibility(evolving):
 
 
 @pytest.mark.parametrize("kind", ["cpdi", "cpdi2"])
-def test_cpdi_variants_are_complete_and_domain_state_is_transactional(kind):
+def test_cpdi_variants_are_complete_and_domain_state_is_transactional(kind: Any) -> None:
     if kind == "cpdi":
         reference = jnp.broadcast_to(0.025 * jnp.eye(2), (3, 2, 2))
         assignment = phx.discretization.AffineCPDISplatAssignment(
@@ -84,11 +86,12 @@ def test_cpdi_variants_are_complete_and_domain_state_is_transactional(kind):
     next_input = assignment.update_input(moved, next_deformation, assignment_input)
     assert type(next_input) is type(assignment_input)
     if kind == "cpdi2":
+        # ty: ignore[unresolved-attribute]
         assert not jnp.allclose(next_input.corners, assignment_input.corners)
         np.testing.assert_array_equal(assignment_input.center, position)
 
 
-def test_cpdi_inversion_rejects_routes_and_mpm_attempt():
+def test_cpdi_inversion_rejects_routes_and_mpm_attempt() -> None:
     reference = jnp.broadcast_to(0.025 * jnp.eye(2), (3, 2, 2))
     assignment = phx.discretization.AffineCPDISplatAssignment(reference)
     grid, particles, splat, position, _, _, _ = _support(assignment)

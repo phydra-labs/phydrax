@@ -5,11 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -31,7 +33,7 @@ class MPMParticleDomainPlan(StrictModule, NonTrainableState):
         *,
         periodic: Sequence[bool] | None = None,
         support_margin: float | Sequence[float],
-    ):
+    ) -> None:
         bounds_ = np.asarray(bounds, dtype=np.float64)
         if (
             bounds_.ndim != 2
@@ -51,10 +53,13 @@ class MPMParticleDomainPlan(StrictModule, NonTrainableState):
         )
         if len(periodic_) != dimension:
             raise ValueError("periodic must contain one flag per MPM dimension.")
+        # np.isscalar splits the declared float | Sequence[float] union; ty cannot narrow it.
         if np.isscalar(support_margin):
-            margins = (float(support_margin),) * dimension
+            margins = (float(cast(float, support_margin)),) * dimension
         else:
-            margins = tuple(float(value) for value in support_margin)
+            margins = tuple(
+                float(value) for value in cast(Sequence[float], support_margin)
+            )
         if len(margins) != dimension or any(
             not np.isfinite(value) or value < 0.0 for value in margins
         ):

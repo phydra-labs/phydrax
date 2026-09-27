@@ -9,7 +9,8 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -49,7 +50,7 @@ class PlanarRefractiveStack(StrictModule, NonTrainableState):
         refractive_indices: ArrayLike,
         *,
         interface_active: ArrayLike | None = None,
-    ):
+    ) -> None:
         points_host = np.asarray(interface_points, dtype=np.float64)
         normals_host = np.asarray(interface_normals, dtype=np.float64)
         indices_host = np.asarray(refractive_indices, dtype=np.float64)

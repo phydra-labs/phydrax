@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -22,8 +25,8 @@ from phydrax.control.games._local_lq import (
 )
 
 
-def _stage_cost(player):
-    def cost(context, state, control, args):
+def _stage_cost(player: Any) -> Any:
+    def cost(context: Any, state: Any, control: Any, args: Any) -> Any:
         step = context.step_index
         cross = args["beta"] * args["N"][player, step]
         return (
@@ -38,8 +41,8 @@ def _stage_cost(player):
     return cost
 
 
-def _terminal_cost(player):
-    def cost(time, state, args):
+def _terminal_cost(player: Any) -> Any:
+    def cost(time: Any, state: Any, args: Any) -> Any:
         del time
         return (
             0.5 * state @ args["terminal_Q"][player] @ state
@@ -50,7 +53,7 @@ def _terminal_cost(player):
     return cost
 
 
-def _affine_data():
+def _affine_data() -> Any:
     return {
         "A": jnp.asarray(
             [
@@ -128,7 +131,7 @@ def _affine_data():
     }
 
 
-def _permute_data(data):
+def _permute_data(data: Any) -> Any:
     players = jnp.asarray([1, 0])
     controls = jnp.asarray([1, 0])
     return {
@@ -150,13 +153,13 @@ def _permute_data(data):
     }
 
 
-def _affine_problem(*, permuted=False):
+def _affine_problem(*, permuted: Any = False) -> Any:
     data = _affine_data()
     if permuted:
         data = _permute_data(data)
     input_layout = phx.dynamics.InputLayout((2,), roles="control")
 
-    def transition(context, state, control, args):
+    def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
         step = context.step_index
         return (
             args["A"][step] @ state
@@ -191,7 +194,7 @@ def _affine_problem(*, permuted=False):
         problem_id="permuted-local-affine" if permuted else "local-affine",
     )
 
-    def nominal_policy(context, state, args):
+    def nominal_policy(context: Any, state: Any, args: Any) -> Any:
         step = context.step_index
         return args["nominal_K"][step] @ state + args["nominal_k"][step]
 
@@ -203,7 +206,7 @@ def _affine_problem(*, permuted=False):
     return problem, evaluate_game_policy(problem, policy)
 
 
-def _scaling(problem, *, permuted=False):
+def _scaling(problem: Any, *, permuted: Any = False) -> Any:
     state = jnp.asarray([2.0, 0.5])
     control = jnp.asarray([3.0, 0.25])
     cost = jnp.asarray([4.0, 0.75])
@@ -218,7 +221,9 @@ def _scaling(problem, *, permuted=False):
     )
 
 
-def _suggest(problem, evaluation, scaling, *, suggestion_id="local-test"):
+def _suggest(
+    problem: Any, evaluation: Any, scaling: Any, *, suggestion_id: Any = "local-test"
+) -> Any:
     return suggest_local_affine_game_policy(
         problem,
         evaluation,
@@ -232,7 +237,7 @@ def _suggest(problem, evaluation, scaling, *, suggestion_id="local-test"):
     )
 
 
-def test_exact_affine_lq_identity_from_a_nonzero_nominal():
+def test_exact_affine_lq_identity_from_a_nonzero_nominal() -> None:
     problem, evaluation = _affine_problem()
     suggestion = _suggest(problem, evaluation, _scaling(problem))
     data = problem.args
@@ -275,7 +280,7 @@ def test_exact_affine_lq_identity_from_a_nonzero_nominal():
     np.testing.assert_allclose(suggestion.model.terminal_Q, data["terminal_Q"], rtol=2e-6)
 
 
-def test_state_control_cross_derivative_keeps_n_by_m_orientation():
+def test_state_control_cross_derivative_keeps_n_by_m_orientation() -> None:
     problem, evaluation = _affine_problem()
     suggestion = _suggest(problem, evaluation, _scaling(problem))
 
@@ -308,7 +313,7 @@ def test_state_control_cross_derivative_keeps_n_by_m_orientation():
     )
 
 
-def test_dynamics_defect_uses_nominal_next_minus_nonlinear_transition():
+def test_dynamics_defect_uses_nominal_next_minus_nonlinear_transition() -> None:
     problem, evaluation = _affine_problem()
     displacement = jnp.asarray([0.3, -0.4])
     altered_states = evaluation.trajectory.states.at[1].add(displacement)
@@ -332,7 +337,7 @@ def test_dynamics_defect_uses_nominal_next_minus_nonlinear_transition():
     )
 
 
-def test_model_and_policy_preserve_explicit_T_and_T_plus_one_axes():
+def test_model_and_policy_preserve_explicit_T_and_T_plus_one_axes() -> None:
     problem, evaluation = _affine_problem()
     suggestion = _suggest(problem, evaluation, _scaling(problem))
     model = suggestion.model
@@ -356,7 +361,7 @@ def test_model_and_policy_preserve_explicit_T_and_T_plus_one_axes():
     assert suggestion.policy.feedforward.shape == (horizon, 2)
 
 
-def test_deviation_policy_converts_to_absolute_control_and_rolls_out_physically():
+def test_deviation_policy_converts_to_absolute_control_and_rolls_out_physically() -> None:
     problem, evaluation = _affine_problem()
     suggestion = _suggest(problem, evaluation, _scaling(problem))
     policy = suggestion.policy.with_feedforward_scale(
@@ -391,7 +396,7 @@ def test_deviation_policy_converts_to_absolute_control_and_rolls_out_physically(
     assert rollout.trajectory.control_id == "quarter-step-local-policy"
 
 
-def test_player_and_control_permutation_is_equivariant():
+def test_player_and_control_permutation_is_equivariant() -> None:
     problem, evaluation = _affine_problem()
     permuted_problem, permuted_evaluation = _affine_problem(permuted=True)
     suggestion = _suggest(problem, evaluation, _scaling(problem), suggestion_id="base")
@@ -440,7 +445,7 @@ def test_player_and_control_permutation_is_equivariant():
     )
 
 
-def _one_player_problem():
+def _one_player_problem() -> Any:
     input_layout = phx.dynamics.InputLayout((1,), roles="control")
     time_grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 0.4, 1.0]),
@@ -461,11 +466,11 @@ def _one_player_problem():
         "df": jnp.asarray([0.7]),
     }
 
-    def transition(context, state, control, data):
+    def transition(context: Any, state: Any, control: Any, data: Any) -> Any:
         step = context.step_index
         return data["A"][step] @ state + data["B"][step] @ control + data["c"][step]
 
-    def stage(context, state, control, data):
+    def stage(context: Any, state: Any, control: Any, data: Any) -> Any:
         step = context.step_index
         return (
             0.5 * state @ data["Q"][0, step] @ state
@@ -476,7 +481,7 @@ def _one_player_problem():
             + data["d"][0, step]
         )
 
-    def terminal(time, state, data):
+    def terminal(time: Any, state: Any, data: Any) -> Any:
         del time
         return 0.5 * state @ data["Qf"][0] @ state + data["qf"][0] @ state + data["df"][0]
 
@@ -504,7 +509,7 @@ def _one_player_problem():
     return problem, evaluate_game_policy(problem, policy)
 
 
-def test_one_player_local_game_reduces_to_finite_horizon_lqr():
+def test_one_player_local_game_reduces_to_finite_horizon_lqr() -> None:
     problem, evaluation = _one_player_problem()
     suggestion = _suggest(
         problem,
@@ -540,11 +545,11 @@ def test_one_player_local_game_reduces_to_finite_horizon_lqr():
     )
 
 
-def test_exact_derivative_blocks_are_jittable_and_differentiable():
+def test_exact_derivative_blocks_are_jittable_and_differentiable() -> None:
     problem, evaluation = _affine_problem()
     scaling = _scaling(problem)
 
-    def blocks(beta):
+    def blocks(beta: Any) -> Any:
         varied = eqx.tree_at(lambda value: value.args["beta"], problem, beta)
         model = _suggest(
             varied,
@@ -565,25 +570,25 @@ def test_exact_derivative_blocks_are_jittable_and_differentiable():
     np.testing.assert_allclose(cross_jacobian, problem.args["N"], rtol=2e-6)
 
 
-def _failure_problem(control_costs):
+def _failure_problem(control_costs: Any) -> Any:
     input_layout = phx.dynamics.InputLayout((2,), roles="control")
     time_grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 1.0]),
         time_id="local-failure-grid",
     )
 
-    def transition(context, state, control, args):
+    def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, control, args
         return state
 
-    def stage(player):
-        def cost(context, state, control, args):
+    def stage(player: Any) -> Any:
+        def cost(context: Any, state: Any, control: Any, args: Any) -> Any:
             del context, state
             return 0.5 * control @ args[player] @ control
 
         return cost
 
-    def terminal(time, state, args):
+    def terminal(time: Any, state: Any, args: Any) -> Any:
         del time, state, args
         return jnp.asarray(0.0)
 
@@ -613,7 +618,7 @@ def _failure_problem(control_costs):
     return problem, evaluation, scaling
 
 
-def test_lq_curvature_failure_status_and_evidence_propagate_exactly():
+def test_lq_curvature_failure_status_and_evidence_propagate_exactly() -> None:
     costs = (
         jnp.asarray([[-1.0, 0.0], [0.0, 1.0]]),
         jnp.asarray([[1.0, 0.0], [0.0, 1.0]]),
@@ -631,7 +636,7 @@ def test_lq_curvature_failure_status_and_evidence_propagate_exactly():
     assert not bool(suggestion.valid)
 
 
-def test_lq_rank_failure_status_and_evidence_propagate_exactly():
+def test_lq_rank_failure_status_and_evidence_propagate_exactly() -> None:
     singular = jnp.ones((2, 2))
     problem, evaluation, scaling = _failure_problem((singular, singular))
     suggestion = _suggest(problem, evaluation, scaling, suggestion_id="rank")

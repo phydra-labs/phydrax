@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import pairwise
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -177,7 +178,7 @@ def _planar_edge_patch_connected(
 
 
 def _planar_surface_evidence(
-    gmsh,
+    gmsh: Any,
     source: BRepModel,
     mesh: CellMesh,
     specification: SurfaceMeshingSpec,
@@ -561,7 +562,7 @@ def _connectivity_face_edge_rows(
 
 
 def _semantic_surface_evidence(
-    gmsh,
+    gmsh: Any,
     source: BRepModel,
     mesh: CellMesh,
     rows: tuple[_ElementRows, ...],

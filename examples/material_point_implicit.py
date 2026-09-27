@@ -4,12 +4,14 @@
 
 """One dense backward-Euler material-point step with implicit derivatives."""
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def run():
+def run() -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformAxisSpec(8, periodic=True, endpoint=False)

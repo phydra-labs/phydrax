@@ -13,7 +13,8 @@ from types import MappingProxyType
 from typing import Any
 
 import numpy as np
-from jaxtyping import ArrayLike
+import numpy.typing as npt
+from jax.typing import ArrayLike
 
 from .._fingerprint import (
     array_tree_fingerprint,
@@ -51,7 +52,9 @@ def _identifier(value: str, name: str, /) -> str:
     return result
 
 
-def _readonly(value: ArrayLike, name: str, /, *, dtype=None) -> np.ndarray:
+def _readonly(
+    value: ArrayLike, name: str, /, *, dtype: npt.DTypeLike = None
+) -> np.ndarray:
     array = np.array(value, dtype=dtype, copy=True)
     if array.dtype.hasobject:
         raise TypeError(f"{name} must not use an object dtype.")

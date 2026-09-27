@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -6,7 +8,7 @@ import phydrax as phx
 from phydrax.applications import incompressible_flow as flow
 
 
-def _periodic_space(count=6, dimension=3):
+def _periodic_space(count: Any = 6, dimension: Any = 3) -> Any:
     names = ("x", "y", "z")[:dimension]
     return phx.discretization.TensorSpectralPlan(
         tuple(phx.discretization.FourierBasisPlan(count) for _ in names),
@@ -17,7 +19,7 @@ def _periodic_space(count=6, dimension=3):
     )
 
 
-def _channel_space():
+def _channel_space() -> Any:
     return phx.discretization.TensorSpectralPlan(
         (
             phx.discretization.FourierBasisPlan(4),
@@ -35,7 +37,7 @@ def _channel_space():
     )
 
 
-def test_constant_power_forcing_is_admissible_exact_and_fail_closed():
+def test_constant_power_forcing_is_admissible_exact_and_fail_closed() -> None:
     space = _periodic_space()
     projector = phx.discretization.PeriodicLerayProjector(space)
     basis = flow.SolenoidalHermitianFourierBasis(
@@ -80,7 +82,7 @@ def test_constant_power_forcing_is_admissible_exact_and_fail_closed():
     assert bool(jnp.all(jnp.isfinite(adjoint)))
 
 
-def test_solenoidal_ou_subdivision_restart_and_stage_values_are_exact():
+def test_solenoidal_ou_subdivision_restart_and_stage_values_are_exact() -> None:
     space = _periodic_space(dimension=2)
     projector = phx.discretization.PeriodicLerayProjector(space)
     basis = flow.SolenoidalHermitianFourierBasis(
@@ -128,7 +130,7 @@ def test_solenoidal_ou_subdivision_restart_and_stage_values_are_exact():
     assert float(coordinates.reality_defect(whole.end_forcing)) < 1.0e-12
 
 
-def test_compiled_periodic_statistics_keep_equation_terms_separate():
+def test_compiled_periodic_statistics_keep_equation_terms_separate() -> None:
     space = _periodic_space()
     dynamics = phx.equations.compile_periodic_incompressible_flow(
         phx.equations.IncompressibleFlowProblem(3, 0.05),
@@ -177,6 +179,7 @@ def test_compiled_periodic_statistics_keep_equation_terms_separate():
         statistics.molecular_dissipation_shells.integral.sum(),
         native_molecular_dissipation,
     )
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         statistics.advective_transfer_shells.integral.sum(),
         native_advective_transfer,
@@ -201,7 +204,7 @@ def test_compiled_periodic_statistics_keep_equation_terms_separate():
     assert statistics.sgs_prepared_action_id is None
 
 
-def test_zero_coefficient_periodic_les_statistics_match_no_les_terms():
+def test_zero_coefficient_periodic_les_statistics_match_no_les_terms() -> None:
     space = _periodic_space(count=4)
     problem = phx.equations.IncompressibleFlowProblem(3, 0.05)
     method = phx.discretization.PseudospectralMethodPlan(
@@ -272,12 +275,13 @@ def test_zero_coefficient_periodic_les_statistics_match_no_les_terms():
     assert les_statistics.sgs_filter_id == resolved_filter.filter_id
     assert les_statistics.sgs_model_id == les_plan.prepared_model.model_id
     assert les_statistics.sgs_prepared_model_id == (les_plan.prepared_model.prepared_id)
+    # ty: ignore[unresolved-attribute]
     assert les_statistics.sgs_prepared_action_id == zero_les.algebraic_les.prepared_id
     assert les_statistics.sgs_regularization_id is not None
     assert not bool(les_statistics.sgs_regularization_available)
 
 
-def test_channel_couette_and_poiseuille_keep_signed_walls_separate():
+def test_channel_couette_and_poiseuille_keep_signed_walls_separate() -> None:
     space = _channel_space()
     plan = flow.SpectralChannelStatisticsPlan(
         space,

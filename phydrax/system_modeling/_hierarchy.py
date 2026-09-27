@@ -9,12 +9,12 @@ class Component:
     name: str
     children: tuple["Component", ...] = ()
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.name or len({x.name for x in self.children}) != len(self.children):
             raise ValueError("Component hierarchy invalid.")
 
 
-def flatten_component(component: Component, prefix: str = ""):
+def flatten_component(component: Component, prefix: str = "") -> tuple[str, ...]:
     path = f"{prefix}.{component.name}" if prefix else component.name
     result = [path]
     for child in component.children:

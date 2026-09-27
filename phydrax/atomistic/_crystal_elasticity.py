@@ -6,12 +6,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from math import isfinite
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -76,21 +79,21 @@ class CrystalElasticityResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        energy,
-        stress,
-        elastic_tensor,
-        voigt_stiffness,
-        stability_eigenvalues,
-        stress_residual,
-        elastic_residual,
-        stability_tolerance,
-        successful,
-        energy_unit,
-        stress_unit,
-        potential_kind_ids,
-        system_id,
+        energy: ArrayLike,
+        stress: ArrayLike,
+        elastic_tensor: ArrayLike,
+        voigt_stiffness: ArrayLike,
+        stability_eigenvalues: ArrayLike,
+        stress_residual: ArrayLike,
+        elastic_residual: ArrayLike,
+        stability_tolerance: float,
+        successful: ArrayLike,
+        energy_unit: UnitDefinition,
+        stress_unit: UnitDefinition,
+        potential_kind_ids: Iterable[str],
+        system_id: str,
         /,
-    ):
+    ) -> None:
         self.energy = jnp.asarray(energy).reshape(())
         self.stress = jnp.asarray(stress, dtype=self.energy.dtype).reshape((3, 3))
         self.elastic_tensor = jnp.asarray(
@@ -165,7 +168,7 @@ class CrystalElasticityPlan(StrictModule, NonTrainableState):
         stability_tolerance: float = 0.0,
         stress_symmetry_tolerance: float = 1.0e-9,
         elastic_symmetry_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(potential, PreparedAtomisticPotentialProgram):
             raise TypeError("potential must be PreparedAtomisticPotentialProgram.")
         if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
@@ -360,7 +363,9 @@ class CrystalElasticityPlan(StrictModule, NonTrainableState):
             and float(elastic_residual) <= self.elastic_symmetry_tolerance
         )
         units = self.potential.system.plan.units
-        kinds = tuple(term.kind.value for term in self.potential.plan.terms)
+        # The constructor admits only ManyBodyPotential terms.
+        terms = cast(tuple[ManyBodyPotential, ...], self.potential.plan.terms)
+        kinds = tuple(term.kind.value for term in terms)
         return CrystalElasticityResult(
             energy,
             stress,
@@ -405,7 +410,7 @@ class CrystalNVEEvidence(StrictModule, NonTrainableState):
         trajectory_id: str,
         maximum_relative_energy_drift: float,
         maximum_momentum_drift: float,
-    ):
+    ) -> None:
         time = np.asarray(times, dtype=np.float64)
         energy = np.asarray(total_energies, dtype=np.float64)
         momentum = np.asarray(linear_momenta, dtype=np.float64)

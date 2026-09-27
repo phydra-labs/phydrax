@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import time
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -14,7 +15,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _problem():
+def _problem() -> Any:
     count = 3
     grid = phx.discretization.TensorGridPlan(
         tuple(
@@ -55,6 +56,7 @@ def _problem():
     primitive = primitive.at[..., 4].set(1.0)
     primitive = primitive.at[..., 5].set(0.2)
     full = system.primitive_to_conserved(primitive)
+    # ty: ignore[invalid-argument-type]
     spatial = phx.discretization.UpwindConstrainedTransportPlan(dynamics, bridge)
     integrator = phx.solver.ConstrainedMHDSSPRK3Plan(spatial, cfl=0.2)
     state = integrator.initialize(full, magnetic_flux, step_size=1e-4)
@@ -84,7 +86,7 @@ def _problem():
     return transport, runtime, initial, adaptive
 
 
-def _replay(runtime, initial, realized, mode, block_size):
+def _replay(runtime: Any, initial: Any, realized: Any, mode: Any, block_size: Any) -> Any:
     policy = phx.solver.FiniteVolumeReplayPolicy(mode, block_size=block_size)
     plan = phx.solver.ScheduledBalanceLawRolloutPlan.from_realized_mesh(
         runtime,
@@ -93,14 +95,17 @@ def _replay(runtime, initial, realized, mode, block_size):
     )
     started = time.perf_counter()
     result = plan.rollout(initial)
+    # ty: ignore[unresolved-attribute]
     jax.block_until_ready(result.final_state.transport_state.cell_state)
     duration = time.perf_counter() - started
     reference = realized.final_state.transport_state
     final = result.final_state.transport_state
     return {
         "duration_seconds": duration,
+        # ty: ignore[unresolved-attribute]
         "cell_defect": float(jnp.max(jnp.abs(final.cell_state - reference.cell_state))),
         "magnetic_defect": float(
+            # ty: ignore[unresolved-attribute]
             jnp.max(jnp.abs(final.magnetic_flux - reference.magnetic_flux))
         ),
         "all_intervals_accepted": bool(jnp.all(result.accepted)),

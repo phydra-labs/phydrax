@@ -10,13 +10,14 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._triangle_fv import TriangleFiniteVolumeDiscretization
 
 
@@ -31,7 +32,7 @@ def _cell_neighbor_stencils(
     cell_count: int,
     centers: np.ndarray,
     /,
-):
+) -> tuple[np.ndarray, np.ndarray]:
     adjacency = [set() for _ in range(cell_count)]
     for left, right in zip(owner, neighbor, strict=True):
         if right >= 0:
@@ -88,7 +89,7 @@ class PreparedTriangleWLSQ(StrictModule, NonTrainableState):
         /,
         *,
         weight_power: float = 2.0,
-    ):
+    ) -> None:
         if not isinstance(discretization, TriangleFiniteVolumeDiscretization):
             raise TypeError("WLSQ requires triangular finite-volume geometry.")
         centers = np.asarray(discretization.cell_centers)
@@ -171,11 +172,10 @@ class TriangleMUSCLReconstructionPlan(StrictModule, NonTrainableState):
         *,
         limiter: TriangleLimiterKind = "venkatakrishnan",
         epsilon: float = 1e-12,
-    ):
+    ) -> None:
         if not isinstance(gradient, PreparedTriangleWLSQ):
             raise TypeError("gradient must be PreparedTriangleWLSQ.")
-        if limiter not in ("unlimited", "barth_jespersen", "venkatakrishnan"):
-            raise ValueError("Unknown triangle MUSCL limiter.")
+        limiter = parse(limiter, TriangleLimiterKind, "limiter")
         self.gradient = gradient
         self.limiter = limiter
         self.epsilon = float(epsilon)
@@ -217,7 +217,7 @@ class TriangleMUSCLReconstructionPlan(StrictModule, NonTrainableState):
             minimum = jnp.min(jnp.where(mask, gathered, value[:, None, ...]), axis=1)
             maximum = jnp.max(jnp.where(mask, gathered, value[:, None, ...]), axis=1)
 
-            def factors(cell_values, delta, cell_indices):
+            def factors(cell_values: Array, delta: Array, cell_indices: Array) -> Array:
                 upper = maximum[cell_indices] - cell_values[cell_indices]
                 lower = minimum[cell_indices] - cell_values[cell_indices]
                 allowed = jnp.where(delta >= 0.0, upper, lower)

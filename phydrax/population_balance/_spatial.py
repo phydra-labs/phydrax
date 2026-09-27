@@ -9,12 +9,13 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 def spatial_population_rate(
     flux_divergence: ArrayLike, internal_rate: ArrayLike, source: ArrayLike = 0.0, /
-):
+) -> Array:
     flux = jnp.asarray(flux_divergence)
     internal = jnp.asarray(internal_rate)
     source_ = jnp.asarray(source)

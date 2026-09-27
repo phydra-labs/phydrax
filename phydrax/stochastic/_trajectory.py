@@ -7,22 +7,29 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from math import prod
-from typing import Any, Literal
+from typing import Any, Literal, Self, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._realization import (
     is_stochastic_realization,
     realization_independence_labels,
     realization_path_labels as _realization_path_ids,
     StochasticRealization,
 )
+
+
+if TYPE_CHECKING:
+    from ..nn.operator.training import OperatorDataset
+    from ..uq._predictive import PredictiveField
 
 
 TransitionWeighting = Literal["trajectory", "transition"]
@@ -67,7 +74,7 @@ class StochasticDriverSegmentReference:
     source_time: float
     target_time: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.trajectory_id or not self.physical_case_id:
             raise ValueError("Trajectory and physical-case IDs must be non-empty.")
         if int(self.source_index) < 0 or int(self.target_index) <= int(self.source_index):
@@ -101,7 +108,7 @@ class _TrajectoryRecord:
     uncertainty_source: str | None = None
     metadata: Mapping[str, Any] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         cases = tuple(self.case_shape)
         realizations = tuple(self.realization_shape)
         state = tuple(self.state_shape)
@@ -146,7 +153,7 @@ class _TrajectoryRecord:
         if self.realizations is not None:
             object.__setattr__(self, "realizations", tuple(self.realizations))
 
-    def prepend(self, initial_time: ArrayLike, initial_state: ArrayLike, /):
+    def prepend(self, initial_time: ArrayLike, initial_state: ArrayLike, /) -> Self:
         """Return a record with one finite initial state prepended."""
         leading = self.case_shape + self.realization_shape
         initial = jnp.asarray(initial_state)
@@ -273,7 +280,7 @@ class StochasticTrajectory(StrictModule):
         basis_id: str | None = None,
         approximation_id: str | None = None,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         cases = tuple(case_shape)
         if any(size <= 0 for size in cases):
             raise ValueError("case_shape dimensions must be positive.")
@@ -454,7 +461,7 @@ class StochasticTrajectory(StrictModule):
             )
         return tuple(out)
 
-    def to_predictive(self):
+    def to_predictive(self) -> PredictiveField:
         """Convert realization axes into explicit process-uncertainty axes.
 
         Validity is reduced conservatively across every physical case and saved
@@ -689,7 +696,7 @@ class StochasticTransitionView(StrictModule):
         source_indices: ArrayLike,
         target_indices: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(trajectory, StochasticTrajectory):
             raise TypeError("trajectory must be a StochasticTrajectory.")
         sources = jnp.asarray(source_indices, dtype=jnp.int32).reshape((-1,))
@@ -782,7 +789,7 @@ class StochasticTransitionView(StrictModule):
 
     def sample_flat_indices(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         num_samples: int,
         /,
         *,
@@ -864,7 +871,7 @@ class StochasticTransitionView(StrictModule):
         duration_name: str | None = "duration",
         source_time_name: str | None = None,
         case_axis: str = "transition",
-    ):
+    ) -> OperatorDataset:
         """Lower valid transitions to the canonical neural-operator dataset."""
         from ..nn.operator import OperatorCaseProvenance
         from ..nn.operator.training import operator_dataset_from_arrays

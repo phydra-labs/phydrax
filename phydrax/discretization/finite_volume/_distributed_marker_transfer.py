@@ -5,11 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -22,7 +24,7 @@ from ._mac_marker_transfer import (
 )
 
 
-DistributedMarkerExchange = Callable[[str, object], object]
+DistributedMarkerExchange = Callable[[str, Any], Any]
 
 
 class DistributedMarkerOwnershipPlan(StrictModule, NonTrainableState):
@@ -44,7 +46,7 @@ class DistributedMarkerOwnershipPlan(StrictModule, NonTrainableState):
         /,
         *,
         rank_count: int,
-    ):
+    ) -> None:
         ids = np.asarray(marker_ids)
         owner = np.asarray(owner_rank)
         support = np.asarray(support_rank)
@@ -124,7 +126,7 @@ class DistributedMACMarkerTransfer(StrictModule, NonTrainableState):
         ownership: DistributedMarkerOwnershipPlan,
         rank: int,
         /,
-    ):
+    ) -> None:
         if local.markers.capacity != ownership.marker_ids.size or not np.array_equal(
             np.asarray(local.markers.plan.marker_ids),
             np.asarray(ownership.marker_ids),

@@ -9,12 +9,14 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._core import ParticleDiscretization
 from ._pairwise import ParticlePairGeometry, ParticlePairRelation
 
@@ -44,21 +46,13 @@ class ParticlePopulation(StrictModule, NonTrainableState):
         role: ParticlePopulationRole,
         state_shape: Sequence[int] | None = None,
         population_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         if not name_:
             raise ValueError("Particle population name must be non-empty.")
         if not isinstance(particles, ParticleDiscretization):
             raise TypeError("particles must be a ParticleDiscretization.")
-        allowed = (
-            "dynamic-fluid",
-            "static-boundary",
-            "prescribed-boundary",
-            "dynamic-rigid",
-            "material-phase",
-        )
-        if role not in allowed:
-            raise ValueError("Unknown particle population role.")
+        role = parse(role, ParticlePopulationRole, "role")
         shape = None if state_shape is None else tuple(state_shape)
         if shape is not None and (not shape or any(size <= 0 for size in shape)):
             raise ValueError("state_shape must contain positive dimensions or be None.")
@@ -105,7 +99,7 @@ class ParticleInteractionKey(StrictModule, NonTrainableState):
         /,
         *,
         reciprocal: bool,
-    ):
+    ) -> None:
         if not isinstance(target_population, ParticlePopulation) or not isinstance(
             source_population, ParticlePopulation
         ):
@@ -135,7 +129,7 @@ class ParticleAssemblyStateLayout(StrictModule, NonTrainableState):
     total_size: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, populations: Sequence[ParticlePopulation], /):
+    def __init__(self, populations: Sequence[ParticlePopulation], /) -> None:
         dynamic = tuple(population for population in populations if population.dynamic)
         names = tuple(population.name for population in dynamic)
         shapes = tuple(population.state_shape for population in dynamic)
@@ -186,7 +180,7 @@ class ParticleAssemblyPlan(StrictModule, NonTrainableState):
     state_layout: ParticleAssemblyStateLayout
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, populations: Sequence[ParticlePopulation], /):
+    def __init__(self, populations: Sequence[ParticlePopulation], /) -> None:
         values = tuple(populations)
         if not values or any(
             not isinstance(population, ParticlePopulation) for population in values

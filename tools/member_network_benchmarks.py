@@ -8,6 +8,7 @@ import argparse
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -20,7 +21,7 @@ sm = phx.applications.solid_mechanics
 mn = sm.member_network
 
 
-def axial_chain(node_count: int):
+def axial_chain(node_count: int) -> Any:
     nodes = int(node_count)
     edges = jnp.stack((jnp.arange(nodes - 1), jnp.arange(1, nodes)), axis=-1).astype(
         jnp.int32
@@ -36,7 +37,9 @@ def axial_chain(node_count: int):
     properties = mn.MemberPropertyMap(
         (material,),
         (mn.AxialSection(1.0),),
+        # ty: ignore[invalid-argument-type]
         (0,) * (nodes - 1),
+        # ty: ignore[invalid-argument-type]
         (0,) * (nodes - 1),
     )
     reference = mn.MemberReferenceState(structure, positions)
@@ -57,7 +60,7 @@ def axial_chain(node_count: int):
     return problem, inputs, initial
 
 
-def run_axial(node_count: int, repeats: int):
+def run_axial(node_count: int, repeats: int) -> Any:
     problem, inputs, initial = axial_chain(node_count)
     started = time.perf_counter()
     plan = mn.plan_member_network(problem, inputs, initial)
@@ -91,7 +94,7 @@ def run_axial(node_count: int, repeats: int):
     }
 
 
-def run_beam():
+def run_beam() -> Any:
     structure = sm.ForceDensityStructure.from_edges(
         jnp.asarray(((0, 1),), dtype=jnp.int32),
         2,
@@ -101,13 +104,19 @@ def run_beam():
     positions = jnp.asarray(((0.0, 0.0), (1.0, 0.0)))
     material = mn.LinearElasticMaterial(1000.0, 400.0, 1.0)
     properties = mn.MemberPropertyMap(
-        (material,), (mn.BeamSection(1.0, 1.0, 1.0, 0.5, 100.0, 100.0),), (0,), (0,)
+        (material,),
+        (mn.BeamSection(1.0, 1.0, 1.0, 0.5, 100.0, 100.0),),
+        # ty: ignore[invalid-argument-type]
+        (0,),
+        # ty: ignore[invalid-argument-type]
+        (0,),
     )
     reference = mn.MemberReferenceState(structure, positions)
     dofs = mn.MemberDOFLayout(
         structure, rotation_constrained=jnp.asarray(((True,), (False,)))
     )
     definition = mn.MemberNetworkDefinition(structure, reference, properties, dofs)
+    # ty: ignore[invalid-argument-type]
     assembly = mn.MemberNetworkAssembly((mn.CorotationalFrameBlock((0,)),))
     problem = mn.MemberNetworkProblem(definition, assembly)
     initial = mn.MemberKinematics(positions, jnp.zeros((2, 1)))
@@ -130,13 +139,14 @@ def run_beam():
         "status": int(result.status),
         "tip_y": float(result.state.kinematics.positions[1, 1]),
         "minimum_tangent_eigenvalue": float(stability.minimum_eigenvalue),
+        # ty: ignore[not-subscriptable]
         "minimum_angular_frequency": float(stability.angular_frequencies[0]),
         "modal_evidence_valid": bool(stability.modal_valid),
         "wall_seconds": time.perf_counter() - started,
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument(

@@ -11,7 +11,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -56,7 +57,7 @@ class AliasSpectrumPlan(StrictModule, NonTrainableState):
         *,
         commercial_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         energy = np.asarray(energies, dtype=np.float64)
         probability = np.asarray(probabilities, dtype=np.float64)
         if not isinstance(energy_unit, UnitDefinition):
@@ -116,7 +117,7 @@ class AliasSpectrumPlan(StrictModule, NonTrainableState):
         )
         history = raw_history.astype(jnp.uint32)
 
-        def one(identifier):
+        def one(identifier: Array) -> Array:
             first = jr.uniform(_history_stream_key(key, identifier, 0))
             second = jr.uniform(_history_stream_key(key, identifier, 1))
             column = jnp.minimum(
@@ -147,7 +148,7 @@ class DiagnosticXRaySourcePlan(StrictModule, NonTrainableState):
         *,
         cone_half_angle: float,
         source_id: str,
-    ):
+    ) -> None:
         position_ = np.asarray(position, dtype=np.float64)
         axis_ = np.asarray(axis, dtype=np.float64)
         angle = float(cone_half_angle)
@@ -197,7 +198,7 @@ class DiagnosticXRaySourcePlan(StrictModule, NonTrainableState):
         energies = self.spectrum.sample(jr.fold_in(key, 0), history)
         cosine_minimum = jnp.cos(self.cone_half_angle)
 
-        def direction(identifier):
+        def direction(identifier: Array) -> Array:
             cosine = cosine_minimum + (1.0 - cosine_minimum) * jr.uniform(
                 _history_stream_key(key, identifier, 1)
             )

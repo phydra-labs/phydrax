@@ -24,7 +24,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._numerics import solve_weighted_least_squares
@@ -69,7 +70,7 @@ class PhysicalRelativeForceCalibrationPlan(StrictModule):
         asset_id: str,
         relative_rank_cutoff: float = 1.0e-10,
         maximum_condition_number: float = 1.0e10,
-    ):
+    ) -> None:
         design = jnp.asarray(nuisance_design)
         if design.ndim != 2 or design.shape[0] < 1:
             raise ValueError("nuisance_design must have shape (samples>=1, nuisances).")

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
@@ -11,6 +11,10 @@ from phydrax._strict import StrictModule
 from ._geometry import _face_geometry, _validate_mesh_arrays
 from ._graph import ensure_graph
 from ._ir import GraphIR
+
+
+if TYPE_CHECKING:
+    from ..domain.graph import BoundaryNodes, Edges, InteriorNodes, Nodes
 
 
 LineGraphConnectivity = Literal["directed_path", "shared_node"]
@@ -98,19 +102,19 @@ class LineGraph(StrictModule):
         transition_edges: Any,
         source_edge_indices: Any,
         target_edge_indices: Any,
-    ):
+    ) -> None:
         self.graph = graph
         self.original_edges = jnp.asarray(original_edges, dtype=jnp.int32)
         self.transition_edges = jnp.asarray(transition_edges, dtype=jnp.int32)
         self.source_edge_indices = jnp.asarray(source_edge_indices, dtype=jnp.int32)
         self.target_edge_indices = jnp.asarray(target_edge_indices, dtype=jnp.int32)
 
-    def original_edges_component(self):
+    def original_edges_component(self) -> Nodes:
         from ..domain.graph import Nodes
 
         return Nodes()
 
-    def transition_edges_component(self):
+    def transition_edges_component(self) -> Edges:
         from ..domain.graph import Edges
 
         return Edges()
@@ -230,29 +234,29 @@ class MeshDualGraph(StrictModule):
         dual_edges: Any,
         boundary_faces: Any,
         interior_faces: Any,
-    ):
+    ) -> None:
         self.graph = graph
         self.face_nodes = jnp.asarray(face_nodes, dtype=jnp.int32)
         self.dual_edges = jnp.asarray(dual_edges, dtype=jnp.int32)
         self.boundary_faces = jnp.asarray(boundary_faces, dtype=jnp.int32)
         self.interior_faces = jnp.asarray(interior_faces, dtype=jnp.int32)
 
-    def face_nodes_component(self):
+    def face_nodes_component(self) -> Nodes:
         from ..domain.graph import Nodes
 
         return Nodes()
 
-    def dual_edges_component(self):
+    def dual_edges_component(self) -> Edges:
         from ..domain.graph import Edges
 
         return Edges()
 
-    def boundary_faces_component(self):
+    def boundary_faces_component(self) -> BoundaryNodes:
         from ..domain.graph import BoundaryNodes
 
         return BoundaryNodes(self.boundary_faces)
 
-    def interior_faces_component(self):
+    def interior_faces_component(self) -> InteriorNodes:
         from ..domain.graph import InteriorNodes
 
         return InteriorNodes(self.interior_faces)

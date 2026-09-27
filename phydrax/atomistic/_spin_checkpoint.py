@@ -35,7 +35,7 @@ class AtomisticSpinCheckpointPlan(StrictModule, NonTrainableState):
         /,
         *,
         scope_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedLandauLifshitzGilbert):
             raise TypeError("dynamics must be PreparedLandauLifshitzGilbert.")
         if scope_id is not None and (

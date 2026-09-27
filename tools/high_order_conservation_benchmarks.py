@@ -9,10 +9,13 @@ import gc
 import json
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+
+# ty: ignore[unresolved-import]
 from high_order_conservation_qualification import (
     _smooth_periodic_state,
     _tensor_problem,
@@ -20,7 +23,9 @@ from high_order_conservation_qualification import (
 )
 
 
-def _timed_samples(compiled, arguments, minimum_seconds, minimum_repeats):
+def _timed_samples(
+    compiled: Any, arguments: Any, minimum_seconds: Any, minimum_repeats: Any
+) -> Any:
     samples = []
     repeat_count = int(minimum_repeats)
     for _trial in range(5):
@@ -39,14 +44,14 @@ def _timed_samples(compiled, arguments, minimum_seconds, minimum_repeats):
 
 
 def _measure_callable(
-    function,
-    arguments,
-    dof_count,
-    resident_bytes,
+    function: Any,
+    arguments: Any,
+    dof_count: Any,
+    resident_bytes: Any,
     *,
-    minimum_seconds,
-    minimum_repeats,
-):
+    minimum_seconds: Any,
+    minimum_repeats: Any,
+) -> Any:
     compiled = jax.jit(function)
     start = perf_counter()
     result = compiled(*arguments)
@@ -71,14 +76,14 @@ def _measure_callable(
 
 
 def _measure_dynamics(
-    dynamics,
-    state,
+    dynamics: Any,
+    state: Any,
     *,
-    minimum_seconds,
-    minimum_repeats,
-    ad_dynamics=None,
-    ad_state=None,
-):
+    minimum_seconds: Any,
+    minimum_repeats: Any,
+    ad_dynamics: Any = None,
+    ad_state: Any = None,
+) -> Any:
     derivative_dynamics = dynamics if ad_dynamics is None else ad_dynamics
     derivative_state = state if ad_state is None else ad_state
     direction = jnp.linspace(
@@ -145,7 +150,7 @@ def _measure_dynamics(
     }
 
 
-def _case_passed(case, limits):
+def _case_passed(case: Any, limits: Any) -> Any:
     primal = case["primal"]
     measured = ("primal", "ad_primal", "jvp", "vjp")
     return bool(
@@ -172,11 +177,11 @@ def _case_passed(case, limits):
 
 def run(
     *,
-    profile="production",
-    minimum_seconds=1.0,
-    minimum_repeats=5,
-    limits=None,
-):
+    profile: Any = "production",
+    minimum_seconds: Any = 1.0,
+    minimum_repeats: Any = 5,
+    limits: Any = None,
+) -> Any:
     if profile == "production":
         tensor_shape = (32, 32, 4)
         triangle_shape = (48, 48, 2)
@@ -286,7 +291,7 @@ def run(
     return result
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--profile", choices=("smoke", "production"), default="production"

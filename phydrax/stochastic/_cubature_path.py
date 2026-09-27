@@ -4,19 +4,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import factorial
-from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from scipy.optimize import least_squares
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._polynomial._cubature import CubatureRuleData
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import positive_integer
 from ._signature import piecewise_linear_signature
 
 
@@ -53,7 +55,7 @@ class WienerCubaturePathData(StrictModule, NonTrainableState):
         family: str,
         source_rule_id: str,
         maximum_path_bytes: int = _DEFAULT_PATH_BYTES,
-    ):
+    ) -> None:
         increments_host = np.asarray(increments, dtype=np.float64)
         widths_host = np.asarray(segment_widths, dtype=np.float64).reshape((-1,))
         weights_host = np.asarray(weights, dtype=np.float64).reshape((-1,))
@@ -90,12 +92,12 @@ class WienerCubaturePathData(StrictModule, NonTrainableState):
             raise ValueError("Wiener cubature segment widths must sum to one.")
         if not np.isclose(np.sum(weights_host), 1.0, rtol=tolerance, atol=tolerance):
             raise ValueError("Wiener cubature path weights must sum to one.")
-        gaussian_degree_ = _positive_integer(gaussian_degree, "gaussian_degree")
-        signature_degree_ = _positive_integer(signature_degree, "signature_degree")
+        gaussian_degree_ = positive_integer(gaussian_degree, "gaussian_degree")
+        signature_degree_ = positive_integer(signature_degree, "signature_degree")
         if signature_degree_ > gaussian_degree_:
             raise ValueError("signature_degree cannot exceed gaussian_degree.")
         storage_bytes = increments_host.nbytes + widths_host.nbytes + weights_host.nbytes
-        maximum = _positive_integer(maximum_path_bytes, "maximum_path_bytes")
+        maximum = positive_integer(maximum_path_bytes, "maximum_path_bytes")
         if storage_bytes > maximum:
             raise ValueError("Wiener cubature path data exceeds maximum_path_bytes.")
         if (
@@ -154,7 +156,7 @@ def _validation_tolerance(
     /,
 ) -> float:
     magnitude = max(1.0, float(np.max(np.abs(increments)))) ** degree
-    return (
+    return float(
         np.finfo(increments.dtype).eps
         * max(path_count, segment_count, noise_dimension)
         * magnitude
@@ -176,7 +178,7 @@ def _expected_wiener_signature_level(
     )
     brownian_pair_weights = tuple(0.5**count for count in range(degree // 2 + 1))
 
-    def coefficient(word):
+    def coefficient(word: tuple[int, ...]) -> float:
         generator_factors = 0
         brownian_pairs = 0
         position = 0
@@ -335,7 +337,9 @@ def fit_wiener_cubature_path(
     path_count: int,
     segment_count: int,
     initial_data: WienerCubaturePathData | ArrayLike,
-    optimizer=None,
+    optimizer: (
+        Callable[[Callable[[np.ndarray], np.ndarray], np.ndarray], ArrayLike] | None
+    ) = None,
     maximum_signature_terms: int = 1_000_000,
     maximum_workspace_bytes: int = _DEFAULT_PATH_BYTES,
 ) -> WienerCubaturePathData:
@@ -346,12 +350,12 @@ def fit_wiener_cubature_path(
     degree downgrade or negative-weight fallback.  A custom optimizer receives
     ``(residual_function, initial_vector)`` and must return the final vector.
     """
-    dimension = _positive_integer(noise_dimension, "noise_dimension")
-    degree = _positive_integer(signature_degree, "signature_degree")
-    paths = _positive_integer(path_count, "path_count")
-    segments = _positive_integer(segment_count, "segment_count")
-    term_cap = _positive_integer(maximum_signature_terms, "maximum_signature_terms")
-    byte_cap = _positive_integer(maximum_workspace_bytes, "maximum_workspace_bytes")
+    dimension = positive_integer(noise_dimension, "noise_dimension")
+    degree = positive_integer(signature_degree, "signature_degree")
+    paths = positive_integer(path_count, "path_count")
+    segments = positive_integer(segment_count, "segment_count")
+    term_cap = positive_integer(maximum_signature_terms, "maximum_signature_terms")
+    byte_cap = positive_integer(maximum_workspace_bytes, "maximum_workspace_bytes")
     driver_dimension = dimension + 1
     signature_terms = sum(driver_dimension**level for level in range(1, degree + 1))
     if signature_terms > term_cap:
@@ -377,7 +381,7 @@ def fit_wiener_cubature_path(
     initial_logits = np.log(initial_weights)
     initial_vector = np.concatenate((initial_increments.reshape((-1,)), initial_logits))
 
-    def unpack(vector):
+    def unpack(vector: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         split = paths * segments * dimension
         increments = np.asarray(vector[:split]).reshape(expected_shape)
         logits = np.asarray(vector[split:])
@@ -385,7 +389,7 @@ def fit_wiener_cubature_path(
         weights = np.exp(shifted)
         return increments, weights / np.sum(weights)
 
-    def residual(vector):
+    def residual(vector: np.ndarray) -> np.ndarray:
         increments, weights = unpack(vector)
         driver_increments = _time_augmented_increments(increments, widths)
         levels = tuple(
@@ -440,15 +444,6 @@ def fit_wiener_cubature_path(
         source_rule_id=source_id,
         maximum_path_bytes=byte_cap,
     )
-
-
-def _positive_integer(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
-    result = int(value)
-    if result < 1:
-        raise ValueError(f"{name} must be positive.")
-    return result
 
 
 __all__ = [

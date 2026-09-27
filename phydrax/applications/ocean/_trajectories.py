@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -67,7 +68,7 @@ class PassiveOceanTrajectoryPlan(StrictModule, NonTrainableState):
     maximum_steps: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, ocean: PreparedHydrostaticOcean, maximum_steps: int, /):
+    def __init__(self, ocean: PreparedHydrostaticOcean, maximum_steps: int, /) -> None:
         if not isinstance(ocean, PreparedHydrostaticOcean):
             raise TypeError("ocean must be a PreparedHydrostaticOcean.")
         capacity = int(maximum_steps)
@@ -173,7 +174,9 @@ class PassiveOceanTrajectoryPlan(StrictModule, NonTrainableState):
         particle_count = positions.shape[0]
         initial_active = jnp.all(jnp.isfinite(positions), axis=-1)
 
-        def step(carry, index):
+        def step(
+            carry: tuple[Array, Array], index: Array
+        ) -> tuple[tuple[Array, Array], tuple[Array, Array, Array, Array]]:
             current, active = carry
             velocity, inside = self._sample(state, current)
             execute = (index < requested) & active & inside & capacity_valid

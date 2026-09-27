@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -24,7 +27,7 @@ from phydrax.solver._finite_volume_topology_events import (
 )
 
 
-def _plan(**kwargs):
+def _plan(**kwargs: Any) -> Any:
     return PeriodicSlidingInterfacePlan(
         np.asarray([0.0, 0.5, 1.0]),
         np.asarray([0.0, 0.25, 0.75, 1.0]),
@@ -34,11 +37,11 @@ def _plan(**kwargs):
     )
 
 
-def _epoch(name, *, index=0):
+def _epoch(name: Any, *, index: Any = 0) -> Any:
     return TopologyEpoch(index, f"geometry-{name}", f"topology-{name}", "serial")
 
 
-def _artifacts(epoch):
+def _artifacts(epoch: Any) -> Any:
     return FiniteVolumeTopologyArtifacts(
         epoch,
         f"prepared:{epoch.topology_id}",
@@ -48,7 +51,7 @@ def _artifacts(epoch):
     )
 
 
-def test_stationary_sliding_parity_and_coverage_evidence():
+def test_stationary_sliding_parity_and_coverage_evidence() -> None:
     plan = _plan()
     coupling = plan.coupling(0.0)
     values = jnp.asarray([[1.0], [3.0]])
@@ -59,7 +62,7 @@ def test_stationary_sliding_parity_and_coverage_evidence():
     assert coupling.evidence_id
 
 
-def test_moving_shift_changes_routes_only_at_boundary():
+def test_moving_shift_changes_routes_only_at_boundary() -> None:
     plan = _plan()
     stationary = plan.coupling(0.0)
     moved = plan.coupling(0.25)
@@ -71,7 +74,7 @@ def test_moving_shift_changes_routes_only_at_boundary():
     )
 
 
-def test_deterministic_shift_equivalence_and_precision_identity():
+def test_deterministic_shift_equivalence_and_precision_identity() -> None:
     plan = _plan(shift_precision=12)
     first = plan.coupling(0.25)
     equivalent = plan.coupling(1.25)
@@ -80,7 +83,7 @@ def test_deterministic_shift_equivalence_and_precision_identity():
     assert plan.plan_id != _plan(shift_precision=11).plan_id
 
 
-def test_equal_opposite_integrated_seam_flux_is_conservative():
+def test_equal_opposite_integrated_seam_flux_is_conservative() -> None:
     coupling = _plan().coupling(0.125)
     density = jnp.asarray([[2.0], [4.0]])
     left, right = coupling.integrated_seam_flux(density, 0.2)
@@ -88,12 +91,12 @@ def test_equal_opposite_integrated_seam_flux_is_conservative():
     assert np.allclose(coupling.flux_conservation_defect(density * 0.2, right), 0.0)
 
 
-def test_fixed_stage_path_is_jittable_and_map_is_frozen():
+def test_fixed_stage_path_is_jittable_and_map_is_frozen() -> None:
     coupling = _plan().coupling(0.125)
     values = jnp.asarray([[2.0], [4.0]])
 
     @jax.jit
-    def apply_map(state):
+    def apply_map(state: Any) -> Any:
         return coupling.interpolate_left_to_right(state)
 
     first = apply_map(values)
@@ -102,7 +105,7 @@ def test_fixed_stage_path_is_jittable_and_map_is_frozen():
     assert coupling.normalized_shift == pytest.approx(0.125)
 
 
-def test_accepted_step_scheduler_creates_one_successor_event():
+def test_accepted_step_scheduler_creates_one_successor_event() -> None:
     initial = _epoch("initial")
     successor = _epoch("successor", index=1)
     successor_artifacts = _artifacts(successor)
@@ -143,7 +146,7 @@ def test_accepted_step_scheduler_creates_one_successor_event():
     assert result.journal.current_epoch_id == successor.epoch_id
 
 
-def test_failed_coverage_transaction_rolls_back_without_successor():
+def test_failed_coverage_transaction_rolls_back_without_successor() -> None:
     initial = _epoch("initial")
     successor = _epoch("successor", index=1)
     successor_artifacts = _artifacts(successor)
@@ -184,7 +187,7 @@ def test_failed_coverage_transaction_rolls_back_without_successor():
     assert result.statuses == (TopologyEventStatus.FAILED_COVERAGE,)
 
 
-def test_restart_replay_preserves_shift_and_event_identity():
+def test_restart_replay_preserves_shift_and_event_identity() -> None:
     plan = _plan(shift_precision=13)
     coupling = plan.coupling(-0.375)
     replay = plan.coupling(coupling.normalized_shift)
@@ -193,7 +196,7 @@ def test_restart_replay_preserves_shift_and_event_identity():
     assert coupling.shift_precision == 13
 
 
-def test_rejected_step_cannot_enqueue_sliding_event():
+def test_rejected_step_cannot_enqueue_sliding_event() -> None:
     initial = _epoch("initial")
     scheduler = FiniteVolumeTopologyEventScheduler(
         FiniteVolumeTopologyEventJournal.allocate(
@@ -210,7 +213,7 @@ def test_rejected_step_cannot_enqueue_sliding_event():
     assert scheduler.pending_requests == ()
 
 
-def test_stale_sliding_request_is_rejected_before_artifact_use():
+def test_stale_sliding_request_is_rejected_before_artifact_use() -> None:
     initial = _epoch("initial")
     stale = _epoch("stale")
     scheduler = FiniteVolumeTopologyEventScheduler(
@@ -227,7 +230,7 @@ def test_stale_sliding_request_is_rejected_before_artifact_use():
         scheduler.submit(request, 1, 0.5)
 
 
-def _sliding_grid_plan(system):
+def _sliding_grid_plan(system: Any) -> Any:
     vertices = np.asarray([(i / 2.0, j / 2.0) for j in range(3) for i in range(3)])
     cells = np.asarray(
         (
@@ -247,7 +250,7 @@ def _sliding_grid_plan(system):
     )
 
 
-def _certified_face_values(discretization, face_ids, face_cells):
+def _certified_face_values(discretization: Any, face_ids: Any, face_cells: Any) -> Any:
     ids = np.asarray(face_ids, dtype=np.int32)
     cells = np.asarray(face_cells, dtype=np.int32)
     owners = np.asarray(discretization.owner_cells)[ids]
@@ -274,10 +277,10 @@ def _certified_face_values(discretization, face_ids, face_cells):
 
 def _moving_sliding_runtime(
     *,
-    motion=None,
-    consistency_policy=None,
-    step_policy=None,
-):
+    motion: Any = None,
+    consistency_policy: Any = None,
+    step_policy: Any = None,
+) -> Any:
     system = phx.equations.EulerSystem(2)
     mesh_plan = _sliding_grid_plan(system)
     discretization = mesh_plan.prepare()
@@ -297,7 +300,7 @@ def _moving_sliding_runtime(
         **face_artifact,
     )
 
-    def translation(time, vertices, args):
+    def translation(time: Any, vertices: Any, args: Any) -> Any:
         del args
         return vertices.at[:, 0].add(0.2 * time)
 
@@ -316,7 +319,7 @@ def _moving_sliding_runtime(
     )
     wall_speed = 0.2 if motion is None else 0.0
 
-    def wall_velocity(time, points, normals, args):
+    def wall_velocity(time: Any, points: Any, normals: Any, args: Any) -> Any:
         del time, points, normals, args
         return jnp.asarray((wall_speed, 0.0))
 
@@ -347,6 +350,7 @@ def _moving_sliding_runtime(
         coupling=coupling_plan,
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         step_policy,
@@ -354,7 +358,7 @@ def _moving_sliding_runtime(
     return system, discretization, overset, coupling_plan, runtime
 
 
-def _nonuniform_state(system, discretization):
+def _nonuniform_state(system: Any, discretization: Any) -> Any:
     primitive = jnp.asarray(
         (
             (1.0, 0.25, 0.0, 1.0),
@@ -367,7 +371,7 @@ def _nonuniform_state(system, discretization):
     return system.primitive_to_conserved(primitive)
 
 
-def _overset_budget(block, cell_count):
+def _overset_budget(block: Any, cell_count: Any) -> Any:
     scattered = np.zeros(
         (cell_count, np.asarray(block.flux_integral).shape[-1]),
         dtype=np.asarray(block.flux_integral).dtype,
@@ -381,7 +385,7 @@ def _overset_budget(block, cell_count):
     return scattered
 
 
-def _overset_rate_budget(block, cell_count):
+def _overset_rate_budget(block: Any, cell_count: Any) -> Any:
     scattered = np.zeros(
         (cell_count, np.asarray(block.flux_rate).shape[-1]),
         dtype=np.asarray(block.flux_rate).dtype,
@@ -395,7 +399,7 @@ def _overset_rate_budget(block, cell_count):
     return scattered
 
 
-def test_prepared_coupling_accepts_only_current_plan_sliding_map():
+def test_prepared_coupling_accepts_only_current_plan_sliding_map() -> None:
     _, discretization, _, coupling_plan, _ = _moving_sliding_runtime()
     assert coupling_plan.sliding is not None
     supplied = coupling_plan.sliding.coupling(0.2)
@@ -411,7 +415,7 @@ def test_prepared_coupling_accepts_only_current_plan_sliding_map():
         coupling_plan.prepare(discretization, sliding_coupling=foreign)
 
 
-def test_moved_overset_correction_uses_stage_faces_and_grid_velocity():
+def test_moved_overset_correction_uses_stage_faces_and_grid_velocity() -> None:
     system, discretization, overset, coupling_plan, runtime = _moving_sliding_runtime()
     initial = runtime.initialize_state(
         _nonuniform_state(system, discretization),
@@ -475,7 +479,7 @@ def test_moved_overset_correction_uses_stage_faces_and_grid_velocity():
     assert np.all(np.asarray(shifted_speed) >= 0.0)
     assert np.all(np.asarray(shifted_measures) > 0.0)
 
-    def shifted_mass_objective(value):
+    def shifted_mass_objective(value: Any) -> Any:
         block, _, _ = shifted_dynamics._overset_correction(
             value,
             result.ale.geometry.stage_2,
@@ -494,7 +498,7 @@ def test_moved_overset_correction_uses_stage_faces_and_grid_velocity():
     assert correction.block_kind == "overset-correction"
 
 
-def test_accepted_shift_changes_overset_ledger_and_successor_runtime():
+def test_accepted_shift_changes_overset_ledger_and_successor_runtime() -> None:
     system, discretization, _, _, runtime = _moving_sliding_runtime()
     initial = runtime.initialize_state(
         _nonuniform_state(system, discretization),
@@ -531,7 +535,7 @@ def test_accepted_shift_changes_overset_ledger_and_successor_runtime():
     np.testing.assert_allclose(second_budget.sum(axis=0), 0.0, atol=1.0e-12)
 
 
-def test_sliding_map_is_frozen_across_ale_retries():
+def test_sliding_map_is_frozen_across_ale_retries() -> None:
     consistency = phx.discretization.finite_volume.ALEGeometryConsistencyPolicy(
         absolute_tolerance=3.0e-3,
         relative_tolerance=0.0,
@@ -539,7 +543,7 @@ def test_sliding_map_is_frozen_across_ale_retries():
         minimum_reduction_factor=0.1,
     )
 
-    def nonlinear_deformation(time, vertices, args):
+    def nonlinear_deformation(time: Any, vertices: Any, args: Any) -> Any:
         del args
         return vertices.at[4, 0].add(0.8 * time**2)
 
@@ -559,7 +563,7 @@ def test_sliding_map_is_frozen_across_ale_retries():
     )
     shift_calls = []
 
-    def accepted_shift(time, args):
+    def accepted_shift(time: Any, args: Any) -> float:
         del args
         shift_calls.append(float(np.asarray(time)))
         return 0.2
@@ -579,7 +583,7 @@ def test_sliding_map_is_frozen_across_ale_retries():
     )
 
 
-def test_receptor_face_ids_are_validated_and_missing_artifacts_fail_closed():
+def test_receptor_face_ids_are_validated_and_missing_artifacts_fail_closed() -> None:
     system = phx.equations.EulerSystem(2)
     mesh_plan = _sliding_grid_plan(system)
     discretization = mesh_plan.prepare()
@@ -608,7 +612,7 @@ def test_receptor_face_ids_are_validated_and_missing_artifacts_fail_closed():
 
     uncertified = phx.discretization.UnstructuredOversetPlan(*common)
 
-    def translation(time, vertices, args):
+    def translation(time: Any, vertices: Any, args: Any) -> Any:
         del args
         return vertices.at[:, 0].add(0.2 * time)
 

@@ -12,7 +12,8 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.kernels import AbstractPositiveDefiniteKernel
 
@@ -50,7 +51,7 @@ class LinearDifferentialFunctional(StrictModule):
         /,
         *,
         functional_id: str = "linear_differential",
-    ):
+    ) -> None:
         shape = _input_shape(input_shape)
         coordinate_count = prod(shape)
         orders = tuple(tuple(term) for term in derivative_orders)
@@ -332,7 +333,7 @@ class FunctionalObservationBlock(StrictModule):
         *,
         name: str,
         valid_knot_count: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(functional, LinearDifferentialFunctional):
             raise TypeError("functional must be a LinearDifferentialFunctional.")
         input_array = _as_functional_inputs(inputs, functional.input_shape)
@@ -377,7 +378,7 @@ class FunctionalDesign(StrictModule):
     input_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     input_ndim: int = eqx.field(static=True)
 
-    def __init__(self, blocks: Sequence[FunctionalObservationBlock], /):
+    def __init__(self, blocks: Sequence[FunctionalObservationBlock], /) -> None:
         block_tuple = tuple(blocks)
         if not block_tuple:
             raise ValueError("A functional design needs at least one block.")
@@ -490,7 +491,7 @@ class FunctionalGaussianProcessLikelihoodState(StrictModule):
         noise_layout: Literal["block", "observation"] = "block",
         jitter: ArrayLike = 1e-8,
         inducing_design: FunctionalDesign | None = None,
-    ):
+    ) -> None:
         if not isinstance(kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("kernel must be a positive-definite kernel.")
         noise = jnp.asarray(noise_scale, dtype=jnp.float64)
@@ -553,7 +554,7 @@ class FunctionalGaussianProcessCondition(StrictModule):
         mean: ArrayLike,
         covariance: ArrayLike,
         variance: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(design, FunctionalDesign):
             raise TypeError("design must be a FunctionalDesign.")
         mean_array = design.flatten(mean, name="conditioned functional mean")
@@ -599,7 +600,7 @@ class FunctionalGaussianProcessDiscrepancy(StrictModule):
         design: FunctionalDesign | Sequence[FunctionalObservationBlock],
         observations: ArrayLike | tuple[ArrayLike, ...],
         /,
-    ):
+    ) -> None:
         resolved_design = (
             design if isinstance(design, FunctionalDesign) else FunctionalDesign(design)
         )

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -14,12 +16,12 @@ from phydrax.solver._relativistic_primitive import (
 from phydrax.units import KILOGRAM
 
 
-def _system():
+def _system() -> Any:
     scale = RelativityScaleContract.geometric(KILOGRAM)
     return ValenciaGRHDSystem(GammaLawEOS(scale, 5.0 / 3.0))
 
 
-def _geometry(shape, system, *, valid=True):
+def _geometry(shape: Any, system: Any, *, valid: Any = True) -> Any:
     identity = jnp.broadcast_to(jnp.eye(3, dtype=jnp.float64), shape + (3, 3))
     return ADMGridGeometry(
         jnp.ones(shape, dtype=jnp.float64),
@@ -39,7 +41,7 @@ def _geometry(shape, system, *, valid=True):
     )
 
 
-def test_c2p_primary_round_trip_certifies_recomposition_and_evidence():
+def test_c2p_primary_round_trip_certifies_recomposition_and_evidence() -> None:
     system = _system()
     geometry = _geometry((4,), system)
     primitive = jnp.asarray(
@@ -72,7 +74,7 @@ def test_c2p_primary_round_trip_certifies_recomposition_and_evidence():
     assert result.candidates.iterations.shape == (4, 3)
 
 
-def test_c2p_fixed_bracket_is_a_visible_secondary_candidate():
+def test_c2p_fixed_bracket_is_a_visible_secondary_candidate() -> None:
     system = _system()
     geometry = _geometry((1,), system)
     primitive = jnp.asarray(((0.4, 5.0, 0.92, 0.0, 0.0),), dtype=jnp.float64)
@@ -93,7 +95,7 @@ def test_c2p_fixed_bracket_is_a_visible_secondary_candidate():
     assert jnp.allclose(result.primitive, primitive, rtol=1.0e-8, atol=1.0e-9)
 
 
-def test_near_vacuum_atmosphere_and_hard_budget_failure_are_not_silent():
+def test_near_vacuum_atmosphere_and_hard_budget_failure_are_not_silent() -> None:
     system = _system()
     geometry = _geometry((2,), system)
     vacuum = jnp.zeros((2, 5), dtype=jnp.float64)
@@ -134,7 +136,7 @@ def test_near_vacuum_atmosphere_and_hard_budget_failure_are_not_silent():
     assert jnp.all(strict.atmosphere.conservative_increment == 0.0)
 
 
-def test_c2p_invalid_geometry_status_and_jit_fixed_shapes():
+def test_c2p_invalid_geometry_status_and_jit_fixed_shapes() -> None:
     system = _system()
     valid_geometry = _geometry((3,), system)
     invalid_geometry = _geometry((3,), system, valid=False)

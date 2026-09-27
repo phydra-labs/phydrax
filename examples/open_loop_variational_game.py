@@ -1,5 +1,7 @@
 """Solve a convex shared-resource game with one common VE multiplier."""
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -9,14 +11,14 @@ partition = phx.control.games.PlayerControlPartition(("one", "two"), (1, 1))
 
 
 def path_inequality(
-    function,
-    constraint_id,
+    function: Any,
+    constraint_id: Any,
     *,
-    scope,
-    participants,
-    owner,
-    control_dependencies,
-):
+    scope: Any,
+    participants: Any,
+    owner: Any,
+    control_dependencies: Any,
+) -> Any:
     return phx.control.games.GameConstraintBlock(
         phx.control.BoundedPathConstraint(
             function,

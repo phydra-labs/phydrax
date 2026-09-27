@@ -14,7 +14,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -26,6 +27,7 @@ from ...discretization.particle._relativistic_stress_transfer import (
 from ...lifecycle import CheckpointManifest, ProcessCheckpointPublication
 from ...lifecycle._repository import ArtifactRepository
 from ...metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
+from ...typing import parse
 from ._checkpoint import (
     assemble_distributed_numerical_relativity_checkpoint,
     DistributedNumericalRelativityRestart,
@@ -64,7 +66,9 @@ class EinsteinVlasovAMRStressTransferResult(StrictModule):
     evidence: EinsteinVlasovAMRStressEvidence
 
 
-def _proper_volume(value: ArrayLike, shape: tuple[int, ...], dtype, role: str) -> Array:
+def _proper_volume(
+    value: ArrayLike, shape: tuple[int, ...], dtype: DTypeLike, role: str
+) -> Array:
     volume = jnp.asarray(value, dtype=dtype)
     if volume.shape == ():
         volume = jnp.broadcast_to(volume, shape)
@@ -128,7 +132,7 @@ class EinsteinVlasovAMRStressTransferPlan(StrictModule, NonTrainableState):
         /,
         *,
         conservation_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         tolerance = float(conservation_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("Stress-transfer tolerance must be finite and nonnegative.")
@@ -205,8 +209,7 @@ class EinsteinVlasovAMRStressTransferPlan(StrictModule, NonTrainableState):
             raise TypeError("target_geometry must be ADMGridGeometry.")
         if len(projection.leading_shape) != 3 or len(target_geometry.leading_shape) != 3:
             raise ValueError("Einstein-Vlasov AMR stress transfer is three-dimensional.")
-        if direction not in ("prolong", "restrict"):
-            raise ValueError("direction must be 'prolong' or 'restrict'.")
+        direction = parse(direction, StressTransferDirection, "direction")
         source_channels = jnp.where(
             projection.active[..., None], _stress_channels(projection), 0.0
         )
@@ -335,7 +338,7 @@ class EinsteinVlasovParticleMigrationPlan(StrictModule, NonTrainableState):
         distribution: PreparedNumericalRelativityAMRDistribution,
         particle_capacity_per_owner: int,
         /,
-    ):
+    ) -> None:
         if not isinstance(distribution, PreparedNumericalRelativityAMRDistribution):
             raise TypeError(
                 "distribution must be PreparedNumericalRelativityAMRDistribution."
@@ -549,7 +552,7 @@ class EinsteinVlasovCheckpointPlan(StrictModule, NonTrainableState):
         frame_provider_id: str,
         placement_id: str,
         restart: NumericalRelativityRestartPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(template, EinsteinVlasovMatterState):
             raise TypeError("template must be EinsteinVlasovMatterState.")
         if not isinstance(route_template, EinsteinVlasovParticleRoute):
@@ -671,7 +674,7 @@ class EinsteinVlasovCheckpointPlan(StrictModule, NonTrainableState):
             axis=-1,
         )
 
-        def byte_rows(values):
+        def byte_rows(values: Array) -> Array:
             return jax.lax.bitcast_convert_type(values, jnp.uint8).reshape(
                 (particles.capacity, -1)
             )
@@ -918,7 +921,7 @@ class EinsteinVlasovCheckpointPlan(StrictModule, NonTrainableState):
         per_owner_count = control[4:]
         template_particles = state_template.particles
 
-        def placed(value, template_value):
+        def placed(value: Array, template_value: Array) -> Array:
             return jax.device_put(value, template_value.sharding)
 
         particles = RelativisticParticleState(

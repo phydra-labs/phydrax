@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _cochain(shape=(3, 4), *, periodic=True):
+def _cochain(shape: Any = (3, 4), *, periodic: Any = True) -> Any:
     dimension = len(shape)
     grid = phx.discretization.TensorGridPlan(
         tuple(
@@ -22,7 +25,7 @@ def _cochain(shape=(3, 4), *, periodic=True):
     return phx.discretization.StructuredCochainBridge(grid).cochain
 
 
-def test_phi4_action_matches_explicit_cochain_energy_and_gradient():
+def test_phi4_action_matches_explicit_cochain_energy_and_gradient() -> None:
     cochain = _cochain()
     action = phx.operators.path_integral.Phi4LatticeAction(
         cochain,
@@ -48,7 +51,7 @@ def test_phi4_action_matches_explicit_cochain_energy_and_gradient():
     assert jnp.allclose(jnp.vdot(gradient, direction), finite_difference, rtol=2e-4)
 
 
-def test_phi4_incremental_cache_matches_full_action_and_rejection():
+def test_phi4_incremental_cache_matches_full_action_and_rejection() -> None:
     action = phx.operators.path_integral.Phi4LatticeAction(
         _cochain((4, 3)),
         kinetic_scale=0.8,
@@ -78,7 +81,7 @@ def test_phi4_incremental_cache_matches_full_action_and_rejection():
     assert jnp.array_equal(rejected_cache.action, cache.action)
 
 
-def test_phi4_target_and_observable_contracts_are_composable():
+def test_phi4_target_and_observable_contracts_are_composable() -> None:
     action = phx.operators.path_integral.Phi4LatticeAction(
         _cochain((3, 3)),
         mass_squared=1.0,
@@ -114,7 +117,7 @@ def test_phi4_target_and_observable_contracts_are_composable():
     )
 
 
-def test_phi4_normalizability_and_locality_are_fail_closed():
+def test_phi4_normalizability_and_locality_are_fail_closed() -> None:
     massless = phx.operators.path_integral.Phi4LatticeAction(
         _cochain((4,)),
         mass_squared=0.0,
@@ -145,7 +148,7 @@ def test_phi4_normalizability_and_locality_are_fail_closed():
         phx.operators.path_integral.prepare_local_phi4_action(dense_action)
 
 
-def test_phi4_action_and_local_proposal_are_jittable():
+def test_phi4_action_and_local_proposal_are_jittable() -> None:
     action = phx.operators.path_integral.Phi4LatticeAction(_cochain((4, 4)))
     field = jnp.zeros(action.configuration_shape)
     compiled_action = eqx.filter_jit(action.action)(field)

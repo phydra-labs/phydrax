@@ -7,16 +7,17 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 from ...._classification import (
     classification_probabilities,
     pointwise_classification_loss,
 )
+from ....typing import parse, PRNGKey
 from ..data import (
     FunctionSamples,
     OperatorBatch,
@@ -32,12 +33,12 @@ from ._losses import (
 )
 
 
-OperatorSupportReduction = Literal["mean", "integral"]
-OperatorCaseReduction = Literal["mean", "sum"]
-OperatorZeroMeasure = Literal["error", "zero"]
-OperatorOverlapKind = Literal["dice", "jaccard", "tversky"]
-OperatorOverlapClassReduction = Literal["micro", "macro", "weighted"]
-OperatorEmptyOverlap = Literal["error", "zero", "one"]
+OperatorSupportReduction: TypeAlias = Literal["mean", "integral"]
+OperatorCaseReduction: TypeAlias = Literal["mean", "sum"]
+OperatorZeroMeasure: TypeAlias = Literal["error", "zero"]
+OperatorOverlapKind: TypeAlias = Literal["dice", "jaccard", "tversky"]
+OperatorOverlapClassReduction: TypeAlias = Literal["micro", "macro", "weighted"]
+OperatorEmptyOverlap: TypeAlias = Literal["error", "zero", "one"]
 
 
 def _validate_common(
@@ -50,7 +51,7 @@ def _validate_common(
     support_reduction: OperatorSupportReduction,
     case_reduction: OperatorCaseReduction,
     zero_measure: OperatorZeroMeasure,
-) -> None:
+) -> tuple[OperatorSupportReduction, OperatorCaseReduction, OperatorZeroMeasure]:
     if not name:
         raise ValueError("Operator classification loss names must be non-empty.")
     if not jnp.isfinite(weight) or weight < 0.0:
@@ -63,12 +64,11 @@ def _validate_common(
         raise ValueError("prediction_field must be non-empty or None.")
     if target_field is not None and not target_field:
         raise ValueError("target_field must be non-empty or None.")
-    if support_reduction not in ("mean", "integral"):
-        raise ValueError("support_reduction must be 'mean' or 'integral'.")
-    if case_reduction not in ("mean", "sum"):
-        raise ValueError("case_reduction must be 'mean' or 'sum'.")
-    if zero_measure not in ("error", "zero"):
-        raise ValueError("zero_measure must be 'error' or 'zero'.")
+    return (
+        parse(support_reduction, OperatorSupportReduction, "support_reduction"),
+        parse(case_reduction, OperatorCaseReduction, "case_reduction"),
+        parse(zero_measure, OperatorZeroMeasure, "zero_measure"),
+    )
 
 
 def _resolve_fields(
@@ -281,8 +281,11 @@ class OperatorClassificationNLL(AbstractOperatorLossTerm):
     case_reduction: OperatorCaseReduction = "mean"
     zero_measure: OperatorZeroMeasure = "error"
 
-    def __post_init__(self):
-        _validate_common(**self.__dict__)
+    def __post_init__(self) -> None:
+        support, case, zero = _validate_common(**self.__dict__)
+        object.__setattr__(self, "support_reduction", support)
+        object.__setattr__(self, "case_reduction", case)
+        object.__setattr__(self, "zero_measure", zero)
         if self.classification.target != "hard":
             raise ValueError("OperatorClassificationNLL requires hard targets.")
 
@@ -294,7 +297,7 @@ class OperatorClassificationNLL(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -330,8 +333,11 @@ class OperatorSoftClassificationLoss(AbstractOperatorLossTerm):
     case_reduction: OperatorCaseReduction = "mean"
     zero_measure: OperatorZeroMeasure = "error"
 
-    def __post_init__(self):
-        _validate_common(**self.__dict__)
+    def __post_init__(self) -> None:
+        support, case, zero = _validate_common(**self.__dict__)
+        object.__setattr__(self, "support_reduction", support)
+        object.__setattr__(self, "case_reduction", case)
+        object.__setattr__(self, "zero_measure", zero)
         if self.classification.target != "soft":
             raise ValueError("OperatorSoftClassificationLoss requires soft targets.")
 
@@ -343,7 +349,7 @@ class OperatorSoftClassificationLoss(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -384,8 +390,8 @@ class OperatorFocalClassificationLoss(AbstractOperatorLossTerm):
     gamma: float = 2.0
     alpha: float | tuple[float, ...] | None = None
 
-    def __post_init__(self):
-        _validate_common(
+    def __post_init__(self) -> None:
+        support, case, zero = _validate_common(
             name=self.name,
             weight=self.weight,
             classification=self.classification,
@@ -395,6 +401,9 @@ class OperatorFocalClassificationLoss(AbstractOperatorLossTerm):
             case_reduction=self.case_reduction,
             zero_measure=self.zero_measure,
         )
+        object.__setattr__(self, "support_reduction", support)
+        object.__setattr__(self, "case_reduction", case)
+        object.__setattr__(self, "zero_measure", zero)
         if self.classification.target != "hard":
             raise ValueError("OperatorFocalClassificationLoss requires hard targets.")
         if self.classification.kind == "ordinal":
@@ -439,7 +448,7 @@ class OperatorFocalClassificationLoss(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -532,8 +541,8 @@ class OperatorOverlapLoss(AbstractOperatorLossTerm):
     alpha: float = 0.5
     beta: float = 0.5
 
-    def __post_init__(self):
-        _validate_common(
+    def __post_init__(self) -> None:
+        support, case, zero = _validate_common(
             name=self.name,
             weight=self.weight,
             classification=self.classification,
@@ -543,12 +552,20 @@ class OperatorOverlapLoss(AbstractOperatorLossTerm):
             case_reduction=self.case_reduction,
             zero_measure=self.zero_measure,
         )
-        if self.overlap not in ("dice", "jaccard", "tversky"):
-            raise ValueError("overlap must be 'dice', 'jaccard', or 'tversky'.")
-        if self.class_reduction not in ("micro", "macro", "weighted"):
-            raise ValueError("class_reduction must be 'micro', 'macro', or 'weighted'.")
-        if self.empty not in ("error", "zero", "one"):
-            raise ValueError("empty must be 'error', 'zero', or 'one'.")
+        object.__setattr__(self, "support_reduction", support)
+        object.__setattr__(self, "case_reduction", case)
+        object.__setattr__(self, "zero_measure", zero)
+        object.__setattr__(
+            self, "overlap", parse(self.overlap, OperatorOverlapKind, "overlap")
+        )
+        object.__setattr__(
+            self,
+            "class_reduction",
+            parse(self.class_reduction, OperatorOverlapClassReduction, "class_reduction"),
+        )
+        object.__setattr__(
+            self, "empty", parse(self.empty, OperatorEmptyOverlap, "empty")
+        )
         if not jnp.isfinite(self.alpha) or not jnp.isfinite(self.beta):
             raise ValueError("Tversky alpha and beta must be finite.")
         if self.alpha < 0.0 or self.beta < 0.0:
@@ -562,7 +579,7 @@ class OperatorOverlapLoss(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,

@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ...linalg import (
@@ -239,7 +240,7 @@ class PreparedStencilOperator(AbstractLinearOperator):
         /,
         *,
         precision: FDExecutionPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(stencil_set, BoundaryStencilSet):
             raise TypeError("stencil_set must be a BoundaryStencilSet.")
         if not isinstance(source, DiscreteFieldSpace) or not isinstance(

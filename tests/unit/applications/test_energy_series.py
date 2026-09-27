@@ -1,6 +1,9 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -20,11 +23,11 @@ WATT = derived_unit("W", ((JOULE, 1), (SECOND, -1)))
 HOUR = UnitDefinition("h", SECOND.dimension, SECOND.reference_system_id, 3600)
 
 
-def test_irregular_rebin_preserves_energy_and_parameter_derivative():
+def test_irregular_rebin_preserves_energy_and_parameter_derivative() -> None:
     support = SeriesSupport(jnp.array([0.0, 2.0, 5.0]), coordinate_id="time")
     target = SeriesSupport(jnp.array([0.0, 1.0, 3.0, 5.0]), coordinate_id="time")
 
-    def rebin(values):
+    def rebin(values: Any) -> Any:
         series = EnergySeries(
             SampledSeries(support, values, alignment="edge", series_id="load"),
             quantity="active_power",
@@ -45,7 +48,7 @@ def test_irregular_rebin_preserves_energy_and_parameter_derivative():
     assert jnp.allclose(derivative, jnp.array([2.0, 3.0]) * 3600)
 
 
-def test_incomplete_channel_is_not_imputed_or_integrated():
+def test_incomplete_channel_is_not_imputed_or_integrated() -> None:
     support = SeriesSupport(jnp.array([0.0, 1.0, 2.0]), coordinate_id="time")
     source = EnergySeries(
         SampledSeries(
@@ -62,13 +65,14 @@ def test_incomplete_channel_is_not_imputed_or_integrated():
     result = rebin_energy_series(
         source, SeriesSupport(jnp.array([0.0, 2.0]), coordinate_id="time")
     )
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(result.samples.value_valid, jnp.array([[True, False]]))
     assert jnp.allclose(result.samples.values[:, 0], jnp.array([3.0]))
     with pytest.raises(eqx.EquinoxRuntimeError):
         integrate_energy_series(result)
 
 
-def test_interval_integrals_subdivide_without_changing_total():
+def test_interval_integrals_subdivide_without_changing_total() -> None:
     source = EnergySeries(
         SampledSeries(
             SeriesSupport(jnp.array([0.0, 2.0, 5.0]), coordinate_id="time"),
@@ -88,10 +92,11 @@ def test_interval_integrals_subdivide_without_changing_total():
     outside = rebin_energy_series(
         source, SeriesSupport(jnp.array([-1.0, 1.0, 6.0]), coordinate_id="time")
     )
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(outside.samples.value_valid, jnp.array([False, False]))
 
 
-def test_counter_decrease_requires_explicit_consumption_evidence():
+def test_counter_decrease_requires_explicit_consumption_evidence() -> None:
     source = EnergySeries(
         SampledSeries(
             SeriesSupport(jnp.array([0.0, 1.0, 2.0]), coordinate_id="time"),

@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -50,7 +51,7 @@ class StressIntensityFactors(StrictModule, NonTrainableState):
         topology_id: str,
         quadrature_id: str,
         state_version: int,
-    ):
+    ) -> None:
         mode_i = np.asarray(mode_i_by_contour)
         mode_ii = np.asarray(mode_ii_by_contour)
         j_values = np.asarray(j_by_contour)

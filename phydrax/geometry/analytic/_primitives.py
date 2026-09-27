@@ -13,9 +13,11 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, Key
+from jax import Array
+from jax.typing import DTypeLike
 
 from ..._polynomial._cubature import CubatureReference
+from ...typing import PRNGKey
 from .._atlas import (
     BoundaryAtlas,
     box_boundary_atlas,
@@ -26,12 +28,18 @@ from .._capabilities import GeometryCapability
 from .._certificate import exact_signed_distance_certificate, FieldCertificate
 from .._closest_point import box_closest_point, radial_closest_point
 from .._contracts import (
+    ClosestPointResult,
     ContactCurvatureResult,
     GeometryKernel,
     GeometryKind,
     GeometrySource,
 )
-from .._cubature import AbstractCubatureMap, CubatureAtlas, CubatureComponent
+from .._cubature import (
+    AbstractCubatureMap,
+    CubatureAtlas,
+    CubatureComponent,
+    CubatureMapEvaluation,
+)
 from .._sampling import (
     complete_sampling_result,
     RejectionSamplingPlan,
@@ -114,14 +122,14 @@ def _check_points(points: Array, dimension: int) -> Array:
 class _RadialCubatureMap(AbstractCubatureMap):
     center: Array
     radius: Array
-    reference: str = eqx.field(static=True)
+    reference: CubatureReference = eqx.field(static=True)
 
     def __init__(
         self,
         center: Array,
         radius: Array,
         reference: CubatureReference,
-    ):
+    ) -> None:
         self.center = jnp.asarray(center, dtype=jnp.float64)
         self.radius = jnp.asarray(radius, dtype=jnp.float64).reshape(())
         self.reference = reference
@@ -164,7 +172,7 @@ class _RadialCubatureMap(AbstractCubatureMap):
         chart_indices: Array,
         reference: Array,
         /,
-    ):
+    ) -> CubatureMapEvaluation:
         return super().evaluate(chart_indices, reference)
 
 
@@ -175,7 +183,9 @@ def _finite_norm(value: Array) -> Array:
 
 
 @_finite_norm.defjvp
-def _finite_norm_jvp(primals, tangents):
+def _finite_norm_jvp(
+    primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
     (value,) = primals
     (tangent,) = tangents
     norm = _finite_norm(value)
@@ -225,7 +235,7 @@ class Ball(GeometrySource):
         radius: Any,
         *,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         self.center = _validate_nonempty_vector(center, name="center")
         self.radius = _validate_positive_scalar(radius, name="radius")
         self.feature_id = _feature_id(feature_id, "ball")
@@ -252,7 +262,7 @@ class Circle(GeometrySource):
         radius: Any,
         *,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         self.center = _validate_vector(center, 2, name="center")
         self.radius = _validate_positive_scalar(radius, name="radius")
         self.feature_id = _feature_id(feature_id, "circle")
@@ -279,7 +289,7 @@ class Sphere(GeometrySource):
         radius: Any,
         *,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         self.center = _validate_vector(center, 3, name="center")
         self.radius = _validate_positive_scalar(radius, name="radius")
         self.feature_id = _feature_id(feature_id, "sphere")
@@ -306,7 +316,7 @@ class _BallKernel(GeometryKernel):
         *,
         dimension: int,
         source_id: str,
-    ):
+    ) -> None:
         if dimension <= 0:
             raise ValueError("Ball dimension must be positive.")
         self.center = center
@@ -361,7 +371,7 @@ class _BallKernel(GeometryKernel):
         norm = jnp.linalg.norm(direction, axis=-1, keepdims=True)
         return direction / jnp.maximum(norm, jnp.finfo(points_.dtype).eps)
 
-    def closest_point(self, state: DesignState, points: Array, /):
+    def closest_point(self, state: DesignState, points: Array, /) -> ClosestPointResult:
         points_ = _check_points(points, self.dimension)
         center, radius = self._parameters(state)
         return radial_closest_point(
@@ -398,7 +408,7 @@ class _BallKernel(GeometryKernel):
         center, radius = self._parameters(state)
         return jnp.stack((center - radius, center + radius))
 
-    def _unit_measure(self, dtype) -> Array:
+    def _unit_measure(self, dtype: DTypeLike) -> Array:
         half_dimension = jnp.asarray(0.5 * self.dimension, dtype=dtype)
         return jnp.exp(
             half_dimension * jnp.log(jnp.asarray(jnp.pi, dtype=dtype))
@@ -420,7 +430,7 @@ class _BallKernel(GeometryKernel):
     def _directions(
         self,
         count: int,
-        key: Key[Array, ""],
+        key: PRNGKey,
         *,
         dtype: jnp.dtype,
     ) -> Array:
@@ -434,7 +444,7 @@ class _BallKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         del plan
@@ -455,7 +465,7 @@ class _BallKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> SamplingResult:
         center, radius = self._parameters(state)
         directions = self._directions(int(num_points), key, dtype=center.dtype)
@@ -538,7 +548,7 @@ class Orthotope(GeometrySource):
         size: Any,
         *,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         center_ = _validate_nonempty_vector(center, name="center")
         size_ = _validate_nonempty_vector(size, name="size")
         if size_.shape != center_.shape:
@@ -571,7 +581,7 @@ class Box(GeometrySource):
         size: Any,
         *,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         center_ = _validate_vector(center, 3, name="center")
         size_ = _validate_vector(size, 3, name="size")
         if np.any(np.asarray(size_) <= 0.0):
@@ -602,7 +612,7 @@ class _OrthotopeKernel(GeometryKernel):
         *,
         dimension: int,
         source_id: str,
-    ):
+    ) -> None:
         if dimension <= 0:
             raise ValueError("Orthotope dimension must be positive.")
         self.center = center
@@ -663,7 +673,7 @@ class _OrthotopeKernel(GeometryKernel):
         norm = jnp.linalg.norm(normal, axis=-1, keepdims=True)
         return normal / jnp.maximum(norm, jnp.finfo(points_.dtype).eps)
 
-    def closest_point(self, state: DesignState, points: Array, /):
+    def closest_point(self, state: DesignState, points: Array, /) -> ClosestPointResult:
         points_ = _check_points(points, self.dimension)
         center, size = self._parameters(state)
         return box_closest_point(
@@ -693,7 +703,7 @@ class _OrthotopeKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         del plan
@@ -713,7 +723,7 @@ class _OrthotopeKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> SamplingResult:
         count = int(num_points)
         face_key, coordinate_key = jr.split(key)

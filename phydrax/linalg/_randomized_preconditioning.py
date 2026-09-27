@@ -11,13 +11,16 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._costs import PreconditionerCostEstimate
 from ._hermitian_spectral import HermitianSpectrum
 from ._materialization import MaterializationPolicy
@@ -80,7 +83,7 @@ def _operator_columns(
 ) -> Array:
     space = operator.source
 
-    def apply(column):
+    def apply(column: Array) -> Array:
         value = operator.mv(space.unflatten(column))
         return space.flatten(value)
 
@@ -115,7 +118,7 @@ class RandomizedNystromDiagnostics(StrictModule):
         requested_rank: int,
         sketch_size: int,
         refresh_count: int,
-    ):
+    ) -> None:
         self.ritz_values = jnp.asarray(ritz_values)
         self.effective_rank = jnp.asarray(effective_rank, dtype=jnp.int32)
         self.core_minimum_eigenvalue = jnp.asarray(core_minimum_eigenvalue)
@@ -149,7 +152,7 @@ class RandomizedNystromPreconditioner(AbstractPreconditioner, NonTrainableState)
         *,
         space: ArraySpace | PyTreeSpace,
         preconditioner_id: str,
-    ):
+    ) -> None:
         basis_ = jnp.asarray(basis)
         values = jnp.asarray(ritz_values)
         shift_ = jnp.asarray(shift, dtype=values.real.dtype).reshape(())
@@ -242,7 +245,7 @@ class RandomizedNystromPreconditionerBuilder(AbstractPreconditionerBuilder):
         probe_refresh: ProbeRefresh = "reuse",
         stabilization: float | None = None,
         psd_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         rank_ = int(rank)
         oversampling_ = int(oversampling)
         shift_ = float(shift)
@@ -254,8 +257,7 @@ class RandomizedNystromPreconditionerBuilder(AbstractPreconditionerBuilder):
             raise ValueError("oversampling must be non-negative.")
         if not isfinite(shift_) or shift_ <= 0.0:
             raise ValueError("shift must be finite and strictly positive.")
-        if probe_refresh not in ("reuse", "redraw"):
-            raise ValueError("probe_refresh must be 'reuse' or 'redraw'.")
+        probe_refresh = parse(probe_refresh, ProbeRefresh, "probe_refresh")
         if stabilization is not None and (
             not isfinite(float(stabilization)) or float(stabilization) <= 0.0
         ):

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+from typing import Any
 
 import numpy as np
 import pytest
@@ -41,14 +42,14 @@ from phydrax.units import (
 
 
 def _binding(
-    kind="temperature",
-    unit=KELVIN,
+    kind: Any = "temperature",
+    unit: Any = KELVIN,
     *,
-    axes=(),
-    temporal=None,
-    vertical=None,
-    reference="absolute",
-):
+    axes: Any = (),
+    temporal: Any = None,
+    vertical: Any = None,
+    reference: Any = "absolute",
+) -> Any:
     layout = StateLayout((1,), component_names=("native_field",))
     quantity = GeophysicalQuantity(
         "native_field", kind, unit, axes=axes, reference_configuration=reference
@@ -62,7 +63,7 @@ def _binding(
     )
 
 
-def _packed_dataset():
+def _packed_dataset() -> Any:
     xr = pytest.importorskip("xarray")
     return xr.Dataset(
         {
@@ -104,7 +105,9 @@ def _packed_dataset():
     )
 
 
-def test_packed_masks_affine_units_calendar_and_native_archive_round_trip(tmp_path):
+def test_packed_masks_affine_units_calendar_and_native_archive_round_trip(
+    tmp_path: Any,
+) -> None:
     binding = _binding(axes=("latitude", "time"))
     data, report = from_cf_dataset(_packed_dataset(), bindings={"tas": binding})
     assert report.status == AdapterStatus.DECLARED_LOSS
@@ -129,7 +132,7 @@ def test_packed_masks_affine_units_calendar_and_native_archive_round_trip(tmp_pa
         restored.values("tas")[0, 0] = 1.0
 
 
-def test_accumulations_keep_amounts_and_require_exact_interval_support():
+def test_accumulations_keep_amounts_and_require_exact_interval_support() -> None:
     xr = pytest.importorskip("xarray")
     unit = derived_unit("kg/m2", ((KILOGRAM, 1), (METER, -2)))
     binding = _binding(
@@ -173,7 +176,7 @@ def test_accumulations_keep_amounts_and_require_exact_interval_support():
         from_cf_dataset(dataset, bindings={"rain": binding})
 
 
-def _hybrid_dataset():
+def _hybrid_dataset() -> Any:
     xr = pytest.importorskip("xarray")
     dataset = xr.Dataset(
         {
@@ -220,7 +223,9 @@ def _hybrid_dataset():
     return dataset, _binding(axes=("latitude", "lev"), vertical=coordinate)
 
 
-def test_hybrid_interfaces_are_derived_from_bounds_not_midpoint_coefficients(tmp_path):
+def test_hybrid_interfaces_are_derived_from_bounds_not_midpoint_coefficients(
+    tmp_path: Any,
+) -> None:
     dataset, binding = _hybrid_dataset()
     data, _ = from_cf_dataset(dataset, bindings={"temperature": binding})
     record = data.descriptor["vertical"]["lev"]
@@ -238,7 +243,7 @@ def test_hybrid_interfaces_are_derived_from_bounds_not_midpoint_coefficients(tmp
         from_cf_dataset(dataset, bindings={"temperature": binding})
 
 
-def test_native_archive_rejects_semantic_and_payload_tampering(tmp_path):
+def test_native_archive_rejects_semantic_and_payload_tampering(tmp_path: Any) -> None:
     data, _ = from_cf_dataset(_packed_dataset(), bindings={"tas": _binding()})
     path = tmp_path / "native.zip"
     write_geophysical_archive(path, data, run_id="source")
@@ -265,7 +270,7 @@ def test_native_archive_rejects_semantic_and_payload_tampering(tmp_path):
 
 
 @pytest.mark.parametrize("scalar", [False, True])
-def test_time_support_follows_scalar_or_auxiliary_coordinate(scalar):
+def test_time_support_follows_scalar_or_auxiliary_coordinate(scalar: Any) -> None:
     xr = pytest.importorskip("xarray")
     unit = derived_unit("kg/m2", ((KILOGRAM, 1), (METER, -2)))
     dataset = xr.Dataset(
@@ -305,7 +310,7 @@ def test_time_support_follows_scalar_or_auxiliary_coordinate(scalar):
     np.testing.assert_array_equal(exported.rain.values, dataset.rain.values)
 
 
-def test_native_custom_temperature_unit_exports_as_cf_reference_unit():
+def test_native_custom_temperature_unit_exports_as_cf_reference_unit() -> None:
     milli = UnitDefinition(
         "application_temperature_tick",
         KELVIN.dimension,
@@ -324,7 +329,7 @@ def test_native_custom_temperature_unit_exports_as_cf_reference_unit():
     np.testing.assert_allclose(restored.values("tas"), data.values("tas"), equal_nan=True)
 
 
-def test_lwe_precipitation_rate_remains_volume_flux_not_mass_flux():
+def test_lwe_precipitation_rate_remains_volume_flux_not_mass_flux() -> None:
     xr = pytest.importorskip("xarray")
     unit = derived_unit("m/s", ((METER, 1), (SECOND, -1)))
     dataset = xr.Dataset(
@@ -347,7 +352,7 @@ def test_lwe_precipitation_rate_remains_volume_flux_not_mass_flux():
         )
 
 
-def test_bound_pressure_coordinate_converts_its_bounds_with_its_values():
+def test_bound_pressure_coordinate_converts_its_bounds_with_its_values() -> None:
     xr = pytest.importorskip("xarray")
     dataset = xr.Dataset(
         {"pressure_bounds": (("pressure", "bounds"), [[100.0, 300.0], [300.0, 900.0]])},
@@ -378,7 +383,7 @@ def test_bound_pressure_coordinate_converts_its_bounds_with_its_values():
     )
 
 
-def test_directional_quantity_cannot_silently_reinterpret_wind_component():
+def test_directional_quantity_cannot_silently_reinterpret_wind_component() -> None:
     xr = pytest.importorskip("xarray")
     unit = derived_unit("m/s", ((METER, 1), (SECOND, -1)))
     dataset = xr.Dataset(
@@ -395,7 +400,7 @@ def test_directional_quantity_cannot_silently_reinterpret_wind_component():
     np.testing.assert_array_equal(data.values("wind"), [4.0])
 
 
-def test_unknown_required_semantics_and_eager_limits_fail_closed():
+def test_unknown_required_semantics_and_eager_limits_fail_closed() -> None:
     dataset = _packed_dataset()
     bindings = {"tas": _binding()}
     with pytest.raises(ResourceReadError):
@@ -418,7 +423,9 @@ def test_unknown_required_semantics_and_eager_limits_fail_closed():
     ("format", "dependency", "suffix"),
     [("netcdf", "scipy", ".nc"), ("zarr", "zarr", ".zarr")],
 )
-def test_actual_optional_cf_storage_round_trip(tmp_path, format, dependency, suffix):
+def test_actual_optional_cf_storage_round_trip(
+    tmp_path: Any, format: Any, dependency: Any, suffix: Any
+) -> None:
     pytest.importorskip(dependency)
     bindings = {"tas": _binding()}
     data, _ = from_cf_dataset(_packed_dataset(), bindings=bindings)
@@ -431,7 +438,7 @@ def test_actual_optional_cf_storage_round_trip(tmp_path, format, dependency, suf
     assert restored.descriptor["provenance"]["resources"][0]["content_sha256"]
 
 
-def test_actual_optional_grib_decoder(tmp_path):
+def test_actual_optional_grib_decoder(tmp_path: Any) -> None:
     codes = pytest.importorskip("eccodes")
     pytest.importorskip("cfgrib")
     pytest.importorskip("xarray")
@@ -477,7 +484,7 @@ def test_actual_optional_grib_decoder(tmp_path):
     assert references.issubset(exported.variables)
 
 
-def test_grib_temporal_dependencies_follow_semantics_and_reject_inconsistency():
+def test_grib_temporal_dependencies_follow_semantics_and_reject_inconsistency() -> None:
     xr = pytest.importorskip("xarray")
     dataset = xr.Dataset(
         {

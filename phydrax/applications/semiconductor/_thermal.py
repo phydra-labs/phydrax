@@ -14,14 +14,16 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
-from ...units import derived_unit, JOULE, KELVIN, METER, SECOND
+from ...units import derived_unit, JOULE, KELVIN, METER, SECOND, UnitDefinition
 from ..thermofluids import (
     temperature_boundary_component,
     thermal_capacitance_component,
     thermal_conductor_component,
+    ThermofluidComponent,
 )
 from ._high_field import _admitted, _temperature_bounds, _temperature_valid
 from ._quantities import _positive_scalar, _text
@@ -38,13 +40,18 @@ THERMAL_CONDUCTIVITY_UNIT = derived_unit(
 CUBIC_METER = derived_unit("m3", ((METER, 3),))
 
 
-def _carrier_name(carrier):
+def _carrier_name(carrier: str) -> str:
     if carrier not in ("electron", "hole"):
         raise ValueError("carrier must be 'electron' or 'hole'.")
     return carrier
 
 
-def _kinetic_energy(thermodynamics, carrier, density, temperature):
+def _kinetic_energy(
+    thermodynamics: BandThermodynamics,
+    carrier: str,
+    density: ArrayLike,
+    temperature: ArrayLike,
+) -> Array:
     if carrier == "electron":
         return thermodynamics.electron_energy_density(density, temperature)
     return thermodynamics.hole_energy_density(density, temperature)
@@ -72,15 +79,15 @@ class ConstantLatticeHeatCapacity(StrictModule):
 
     def __init__(
         self,
-        volumetric_heat_capacity,
+        volumetric_heat_capacity: ArrayLike,
         /,
         *,
-        reference_temperature,
-        temperature_range,
-        provenance,
-        capacity_unit=VOLUMETRIC_HEAT_CAPACITY_UNIT,
-        temperature_unit=KELVIN,
-    ):
+        reference_temperature: ArrayLike,
+        temperature_range: ArrayLike,
+        provenance: str,
+        capacity_unit: UnitDefinition = VOLUMETRIC_HEAT_CAPACITY_UNIT,
+        temperature_unit: UnitDefinition = KELVIN,
+    ) -> None:
         self.volumetric_heat_capacity = _positive_scalar(
             volumetric_heat_capacity,
             capacity_unit,
@@ -100,7 +107,7 @@ class ConstantLatticeHeatCapacity(StrictModule):
             raise ValueError("reference temperature must lie in temperature_range.")
         self.provenance = _text(provenance, "lattice heat capacity provenance")
 
-    def evaluate(self, temperature):
+    def evaluate(self, temperature: ArrayLike) -> LatticeEnergyEvaluation:
         temperature = jnp.asarray(temperature)
         valid = _temperature_valid(temperature, self.temperature_range)
         capacity = jnp.broadcast_to(self.volumetric_heat_capacity, temperature.shape)
@@ -110,13 +117,13 @@ class ConstantLatticeHeatCapacity(StrictModule):
             _admitted(energy, valid), _admitted(capacity, valid), valid
         )
 
-    def internal_energy(self, temperature):
+    def internal_energy(self, temperature: ArrayLike) -> Array:
         return self.evaluate(temperature).internal_energy_density
 
-    def heat_capacity(self, temperature):
+    def heat_capacity(self, temperature: ArrayLike) -> Array:
         return self.evaluate(temperature).heat_capacity
 
-    def temperature(self, internal_energy_density):
+    def temperature(self, internal_energy_density: ArrayLike) -> Array:
         temperature = (
             self.reference_temperature
             + jnp.asarray(internal_energy_density) / self.volumetric_heat_capacity
@@ -125,7 +132,15 @@ class ConstantLatticeHeatCapacity(StrictModule):
             temperature, _temperature_valid(temperature, self.temperature_range)
         )
 
-    def component(self, name, volume, /, *, port_count=1, volume_unit=CUBIC_METER):
+    def component(
+        self,
+        name: str,
+        volume: ArrayLike,
+        /,
+        *,
+        port_count: int = 1,
+        volume_unit: UnitDefinition = CUBIC_METER,
+    ) -> ThermofluidComponent:
         """Prepare the native constant-capacity lumped component (C=volume*cv).
 
         This is a preparation-time adapter; its generic DAE must separately
@@ -162,21 +177,23 @@ class ThermalConductance(StrictModule):
 
     def __init__(
         self,
-        conductance,
+        conductance: ArrayLike,
         /,
         *,
-        temperature_range,
-        provenance,
-        conductance_unit=THERMAL_CONDUCTANCE_UNIT,
-        temperature_unit=KELVIN,
-    ):
+        temperature_range: ArrayLike,
+        provenance: str,
+        conductance_unit: UnitDefinition = THERMAL_CONDUCTANCE_UNIT,
+        temperature_unit: UnitDefinition = KELVIN,
+    ) -> None:
         self.conductance = _positive_scalar(
             conductance, conductance_unit, THERMAL_CONDUCTANCE_UNIT, "thermal conductance"
         )
         self.temperature_range = _temperature_bounds(temperature_range, temperature_unit)
         self.provenance = _text(provenance, "thermal conductance provenance")
 
-    def evaluate(self, temperature_left, temperature_right):
+    def evaluate(
+        self, temperature_left: ArrayLike, temperature_right: ArrayLike
+    ) -> ThermalExchangeEvaluation:
         left, right = jnp.broadcast_arrays(
             *map(jnp.asarray, (temperature_left, temperature_right))
         )
@@ -193,7 +210,7 @@ class ThermalConductance(StrictModule):
             valid,
         )
 
-    def component(self, name, /):
+    def component(self, name: str, /) -> ThermofluidComponent:
         """Native conductor; its inward terminal flows are opposite body gains."""
         return thermal_conductor_component(name, conductance=float(self.conductance))
 
@@ -204,7 +221,14 @@ class ThermalBoundaryExchange(StrictModule):
     conductor: ThermalConductance
     reservoir_temperature: Array
 
-    def __init__(self, conductor, reservoir_temperature, /, *, temperature_unit=KELVIN):
+    def __init__(
+        self,
+        conductor: ThermalConductance,
+        reservoir_temperature: ArrayLike,
+        /,
+        *,
+        temperature_unit: UnitDefinition = KELVIN,
+    ) -> None:
         if not isinstance(conductor, ThermalConductance):
             raise TypeError("conductor must be a ThermalConductance.")
         self.conductor = conductor
@@ -216,11 +240,11 @@ class ThermalBoundaryExchange(StrictModule):
         ):
             raise ValueError("reservoir temperature must lie in the conductor domain.")
 
-    def evaluate(self, device_temperature):
+    def evaluate(self, device_temperature: ArrayLike) -> ThermalExchangeEvaluation:
         """Left is device, right is the external thermal reservoir."""
         return self.conductor.evaluate(device_temperature, self.reservoir_temperature)
 
-    def reservoir_component(self, name, /):
+    def reservoir_component(self, name: str, /) -> ThermofluidComponent:
         return temperature_boundary_component(
             name, temperature=float(self.reservoir_temperature)
         )
@@ -257,16 +281,16 @@ class CarrierEnergyRelaxation(StrictModule):
 
     def __init__(
         self,
-        thermodynamics,
-        carrier,
-        relaxation_time,
+        thermodynamics: BandThermodynamics,
+        carrier: str,
+        relaxation_time: ArrayLike,
         /,
         *,
-        temperature_range,
-        provenance,
-        time_unit=SECOND,
-        temperature_unit=KELVIN,
-    ):
+        temperature_range: ArrayLike,
+        provenance: str,
+        time_unit: UnitDefinition = SECOND,
+        temperature_unit: UnitDefinition = KELVIN,
+    ) -> None:
         self.thermodynamics = thermodynamics
         self.carrier = _carrier_name(carrier)
         self.relaxation_time = _positive_scalar(
@@ -276,7 +300,12 @@ class CarrierEnergyRelaxation(StrictModule):
         self.thermodynamics.admit_temperature(self.temperature_range)
         self.provenance = _text(provenance, "carrier relaxation provenance")
 
-    def evaluate(self, density, carrier_temperature, lattice_temperature):
+    def evaluate(
+        self,
+        density: ArrayLike,
+        carrier_temperature: ArrayLike,
+        lattice_temperature: ArrayLike,
+    ) -> CarrierRelaxationEvaluation:
         density, tc, tl = jnp.broadcast_arrays(
             *map(
                 jnp.asarray,
@@ -359,16 +388,16 @@ class CarrierEnergyTransport(StrictModule):
 
     def __init__(
         self,
-        thermodynamics,
-        carrier,
-        thermal_conductivity,
+        thermodynamics: BandThermodynamics,
+        carrier: str,
+        thermal_conductivity: ArrayLike,
         /,
         *,
-        temperature_range,
-        provenance,
-        conductivity_unit=THERMAL_CONDUCTIVITY_UNIT,
-        temperature_unit=KELVIN,
-    ):
+        temperature_range: ArrayLike,
+        provenance: str,
+        conductivity_unit: UnitDefinition = THERMAL_CONDUCTIVITY_UNIT,
+        temperature_unit: UnitDefinition = KELVIN,
+    ) -> None:
         self.thermodynamics = thermodynamics
         self.carrier = _carrier_name(carrier)
         self.thermal_conductivity = _positive_scalar(
@@ -384,15 +413,15 @@ class CarrierEnergyTransport(StrictModule):
 
     def evaluate(
         self,
-        number_flux,
-        density_left,
-        density_right,
-        temperature_left,
-        temperature_right,
-        band_edge_left,
-        band_edge_right,
-        transmissibility,
-    ):
+        number_flux: ArrayLike,
+        density_left: ArrayLike,
+        density_right: ArrayLike,
+        temperature_left: ArrayLike,
+        temperature_right: ArrayLike,
+        band_edge_left: ArrayLike,
+        band_edge_right: ArrayLike,
+        transmissibility: ArrayLike,
+    ) -> CarrierEnergyFluxEvaluation:
         flux, nl, nr, tl, tr, bl, br, metric = jnp.broadcast_arrays(
             *map(
                 jnp.asarray,

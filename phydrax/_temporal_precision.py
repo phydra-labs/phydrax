@@ -9,17 +9,22 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
-from ._precision import (
+from ._dtype_names import (
     complex_precision_dtype,
     precision_dtype_name,
+    real_precision_dtype_name,
+    ScalarPrecisionDType,
+)
+from ._precision import (
     precision_itemsize,
     PrecisionEvidenceEnvelope,
     PrecisionRequest,
     PrecisionResolution,
     PrecisionResourceAssumptions,
-    real_precision_dtype_name,
-    ScalarPrecisionDType,
 )
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
@@ -76,7 +81,7 @@ class TemporalPrecisionPolicy(StrictModule, NonTrainableState):
         decision_dtype: Any | None = None,
         checkpoint_dtype: Any | None = None,
         output_dtype: Any | None = None,
-    ):
+    ) -> None:
         coefficient = (
             None
             if coefficient_dtype is None
@@ -260,7 +265,7 @@ class TemporalPrecisionPolicy(StrictModule, NonTrainableState):
                 "internal precision and an independent output dtype are supported."
             )
 
-    def coefficient(self, value: Any, /):
+    def coefficient(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         return (
             array
@@ -268,7 +273,7 @@ class TemporalPrecisionPolicy(StrictModule, NonTrainableState):
             else array.astype(self.coefficient_dtype)
         )
 
-    def stage(self, value: Any, /):
+    def stage(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         if self.stage_dtype is None or not jnp.issubdtype(array.dtype, jnp.inexact):
             return array
@@ -276,7 +281,7 @@ class TemporalPrecisionPolicy(StrictModule, NonTrainableState):
             _effective_dtype(self.stage_dtype, precision_dtype_name(array.dtype))
         )
 
-    def accumulation(self, value: Any, /):
+    def accumulation(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         if self.accumulation_dtype is None or not jnp.issubdtype(
             array.dtype, jnp.inexact
@@ -289,7 +294,7 @@ class TemporalPrecisionPolicy(StrictModule, NonTrainableState):
             )
         )
 
-    def residual(self, value: Any, /):
+    def residual(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         if self.residual_dtype is None or not jnp.issubdtype(array.dtype, jnp.inexact):
             return array
@@ -297,11 +302,11 @@ class TemporalPrecisionPolicy(StrictModule, NonTrainableState):
             _effective_dtype(self.residual_dtype, precision_dtype_name(array.dtype))
         )
 
-    def decision(self, value: Any, /):
+    def decision(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         return array if self.decision_dtype is None else array.astype(self.decision_dtype)
 
-    def checkpoint(self, value: Any, /):
+    def checkpoint(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         if self.checkpoint_dtype is None or not jnp.issubdtype(array.dtype, jnp.inexact):
             return array
@@ -312,8 +317,8 @@ class TemporalPrecisionPolicy(StrictModule, NonTrainableState):
             )
         )
 
-    def output(self, value: Any, /):
-        def cast(array_value):
+    def output(self, value: PyTree[ArrayLike], /) -> PyTree[Array]:
+        def cast(array_value: ArrayLike) -> Array:
             array = jnp.asarray(array_value)
             if self.output_dtype is None or not jnp.issubdtype(array.dtype, jnp.inexact):
                 return array

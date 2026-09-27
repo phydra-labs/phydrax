@@ -13,7 +13,7 @@ import jax
 import jax.core as jax_core
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -49,7 +49,7 @@ class SchurEigenproblem(StrictModule):
         /,
         *,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape or not operator.source.compatible(operator.target):
@@ -90,7 +90,7 @@ class SchurTolerancePolicy(StrictModule):
         relative: float = 1e-8,
         absolute: float = 1e-10,
         unitarity: float = 1e-8,
-    ):
+    ) -> None:
         values = tuple(float(value) for value in (relative, absolute, unitarity))
         if any(not math.isfinite(value) or value < 0.0 for value in values):
             raise ValueError("Schur tolerances must be finite and non-negative.")
@@ -108,7 +108,7 @@ class SchurResourcePolicy(StrictModule):
         *,
         preparation_bytes: int = 512 * 1024 * 1024,
         workspace_bytes: int = 1024 * 1024 * 1024,
-    ):
+    ) -> None:
         preparation = int(preparation_bytes)
         workspace = int(workspace_bytes)
         if preparation < 0 or workspace < 0:
@@ -134,7 +134,7 @@ class SchurSolvePolicy(StrictModule):
         resources: SchurResourcePolicy | None = None,
         materialization: MaterializationPolicy | None = None,
         failure: FailurePolicy | None = None,
-    ):
+    ) -> None:
         if backend != "jax-cpu":
             raise ValueError("Only backend='jax-cpu' is supported.")
         tolerance_ = SchurTolerancePolicy() if tolerance is None else tolerance

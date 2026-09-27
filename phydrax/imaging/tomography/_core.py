@@ -8,12 +8,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from numbers import Integral
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 from phydrax._bvh import BVHBuildPolicy, prepare_bvh, ray_select_leaf_items
@@ -108,7 +111,7 @@ class VoxelXRayTransformPlan(StrictModule, NonTrainableState):
         spacing: ArrayLike,
         volume_coordinate_contract: SpatialCoordinateContract,
         /,
-    ):
+    ) -> None:
         if not isinstance(volume_coordinate_contract, SpatialCoordinateContract):
             raise TypeError(
                 "volume_coordinate_contract must be SpatialCoordinateContract."
@@ -200,7 +203,7 @@ def _siddon_routes(
     shape: tuple[int, int, int],
     origin: np.ndarray,
     spacing: np.ndarray,
-):
+) -> tuple[npt.NDArray[np.int32], npt.NDArray[np.float64], npt.NDArray[np.bool_]]:
     origins = np.asarray(rays.origins)
     directions = np.asarray(rays.directions)
     active = np.asarray(rays.active_mask)
@@ -270,7 +273,7 @@ class TetrahedralXRayTransformPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_segments_per_ray: int = 64,
-    ):
+    ) -> None:
         if not isinstance(coordinate_contract, SpatialCoordinateContract):
             raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         if coordinate_contract.spatial_id != support.rays.coordinate_contract.spatial_id:
@@ -429,12 +432,15 @@ class BeerLambertResult(StrictModule, NonTrainableState):
     successful: Array
 
 
+_ConjugateGradientCarry: TypeAlias = tuple[Array, Array, Array, Array]
+
+
 @dataclass(frozen=True, slots=True)
 class BeerLambertPlan:
     incident_signal: np.ndarray
     dark_signal: float = 0.0
     gain: float = 1.0
-    saturation: float = np.finfo(np.float64).max
+    saturation: float = float(np.finfo(np.float64).max)
 
     def __post_init__(self) -> None:
         incident = np.array(self.incident_signal, dtype=np.float64, copy=True)
@@ -493,7 +499,7 @@ class FilteredBackprojectionPlan(StrictModule, NonTrainableState):
         output_x: ArrayLike,
         output_y: ArrayLike,
         /,
-    ):
+    ) -> None:
         angles_ = np.asarray(angles)
         detector_ = np.asarray(detector_coordinates)
         output_x_ = np.asarray(output_x)
@@ -600,7 +606,9 @@ class IterativeCTPlan:
         direction = self.transform.transpose(residual) - self.l2_regularization * x
         gamma = jnp.sum(direction * direction)
 
-        def step(carry, _):
+        def step(
+            carry: _ConjugateGradientCarry, _: None
+        ) -> tuple[_ConjugateGradientCarry, Array]:
             x, residual, direction, gamma = carry
             projected = self.transform.forward(direction).values
             denominator = jnp.sum(

@@ -13,13 +13,18 @@ import numpy as np
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ..data import function_samples_with_values, OperatorBatch
+from ..data import (
+    function_samples_with_values,
+    FunctionSamples,
+    OperatorBatch,
+    OperatorCaseProvenance,
+)
 from ..sampling import OperatorCase
 from ._dataset import operator_dataset_from_cases, OperatorDataset
 
 
 def _stopped_batch(batch: OperatorBatch, /) -> OperatorBatch:
-    def stopped(samples):
+    def stopped(samples: FunctionSamples) -> FunctionSamples:
         return function_samples_with_values(
             samples,
             None if samples.values is None else jax.lax.stop_gradient(samples.values),
@@ -67,7 +72,7 @@ class OperatorResidualCorpus(StrictModule, NonTrainableState):
         residual_loss_fingerprint: str,
         source_artifact_ids: Sequence[str],
         corpus_id: str,
-    ):
+    ) -> None:
         if not isinstance(dataset, OperatorDataset):
             raise TypeError("dataset must be an OperatorDataset.")
         if dataset.targets.fields:
@@ -131,6 +136,7 @@ def prepare_operator_residual_corpus(
         raise ValueError("Required residual provenance keys must be unique.")
 
     stopped_cases = []
+    stopped_provenance: list[OperatorCaseProvenance] = []
     provenance_payload = []
     for case in cases_:
         if not case.case_active or not np.isfinite(case.case_log_weight):
@@ -154,6 +160,7 @@ def prepare_operator_residual_corpus(
                 case_active=True,
             )
         )
+        stopped_provenance.append(case.provenance)
         provenance_payload.append(
             {
                 "case_id": case.provenance.case_id,
@@ -166,7 +173,7 @@ def prepare_operator_residual_corpus(
         tuple(case.batch for case in stopped_cases),
         tuple(case.targets for case in stopped_cases),
         case_axis="residual_case",
-        provenance=tuple(case.provenance for case in stopped_cases),
+        provenance=tuple(stopped_provenance),
         case_log_weights=tuple(case.case_log_weight for case in stopped_cases),
         case_mask=tuple(case.case_active for case in stopped_cases),
     )

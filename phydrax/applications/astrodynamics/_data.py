@@ -11,6 +11,7 @@ import equinox as eqx
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 AstrodynamicsDataDifferentiability: TypeAlias = Literal[
@@ -42,7 +43,7 @@ class AstrodynamicsDataProvenance(StrictModule, NonTrainableState):
         epoch_id: str,
         scale_id: str,
         differentiability: AstrodynamicsDataDifferentiability,
-    ):
+    ) -> None:
         values = tuple(
             str(value).strip()
             for value in (
@@ -58,8 +59,9 @@ class AstrodynamicsDataProvenance(StrictModule, NonTrainableState):
         )
         if any(not value for value in values):
             raise ValueError("Astrodynamics data provenance fields must be non-empty.")
-        if differentiability not in ("native-parameter", "coordinate-only", "constant"):
-            raise ValueError("Unknown astrodynamics data differentiability contract.")
+        differentiability = parse(
+            differentiability, AstrodynamicsDataDifferentiability, "differentiability"
+        )
         (
             self.producer,
             self.producer_version,

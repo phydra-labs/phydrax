@@ -10,7 +10,8 @@ from typing import Any, TYPE_CHECKING
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -59,7 +60,7 @@ class SpectralStateLayout(StrictModule):
         fields: Sequence[PDEField],
         discretization: TensorSpectralDiscretization | SphericalSpectralDiscretization,
         /,
-    ):
+    ) -> None:
         field_values = tuple(fields)
         if not field_values or not all(
             isinstance(field, PDEField) for field in field_values
@@ -237,7 +238,7 @@ class _SpectralEvaluator(StrictModule):
         *,
         field_coordinate_axes: Sequence[tuple[str, tuple[int, ...]]] = (),
         parameter_coordinate_axes: Sequence[tuple[str, tuple[int, ...]]] = (),
-    ):
+    ) -> None:
         self.layout = layout
         self.discretization = discretization
         self.method = method
@@ -844,7 +845,7 @@ class CompiledSpectralDynamics(StrictModule):
         compilation_id: str,
         source_hash: str,
         resolved_method: str,
-    ):
+    ) -> None:
         residual_key = DiscretizationKey(
             "spectral_form",
             DiscretizationRole.RESIDUAL,
@@ -1060,9 +1061,10 @@ def _linear_symbol(
         return None
     if expression.op == "derivative":
         child = children[0]
-        if child is None or expression.coordinate not in coordinate_axes:
+        coordinate = expression.coordinate
+        if child is None or coordinate is None or coordinate not in coordinate_axes:
             return None
-        axes = coordinate_axes[expression.coordinate]
+        axes = coordinate_axes[coordinate]
         if expression.axis is None:
             if len(axes) != 1:
                 return None
@@ -1087,17 +1089,18 @@ def _linear_symbol(
         )
     if expression.op == "laplacian":
         child = children[0]
-        if child is None or expression.coordinate not in coordinate_axes:
+        coordinate = expression.coordinate
+        if child is None or coordinate is None or coordinate not in coordinate_axes:
             return None
         if isinstance(discretization, SphericalSpectralDiscretization):
-            if coordinate_axes[expression.coordinate] != (0, 1):
+            if coordinate_axes[coordinate] != (0, 1):
                 return None
             return (
                 jnp.asarray(0.0, dtype=dtype),
                 child[1] * discretization.laplacian_multiplier().astype(dtype),
             )
         symbol = zero
-        for axis in coordinate_axes[expression.coordinate]:
+        for axis in coordinate_axes[coordinate]:
             prepared = discretization.axes[axis]
             if prepared.derivative_matrix is not None or prepared.family not in (
                 "fourier",
@@ -1226,7 +1229,11 @@ def compile_spectral_pde(
     rhs = _evolution_rhs(problem, time_coordinate)
     degrees = tuple(_field_degree(expression) for expression in rhs)
     nonlinear = any(value is None or value > 1 for value in degrees)
-    required_degree = None if any(value is None for value in degrees) else max(degrees)
+    required_degree = (
+        None
+        if any(value is None for value in degrees)
+        else max(value for value in degrees if value is not None)
+    )
     prepared_method = method.prepare(
         discretization,
         required_polynomial_degree=required_degree,

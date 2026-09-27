@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from importlib import import_module
 from types import ModuleType
 
@@ -127,7 +127,7 @@ def _public_owner(module_name: str, /) -> str:
     return ".".join(parts)
 
 
-def _provider(module_name: str, function_name: str, /) -> Callable[[], object]:
+def _provider(module_name: str, function_name: str, /) -> Callable[[], Iterable[object]]:
     module = import_module(module_name)
     function = getattr(module, function_name)
     if not callable(function):
@@ -218,7 +218,7 @@ def _rom_declarations() -> tuple[CapabilityDeclaration, ...]:
                 profile.capability,
                 "phydrax.rom",
                 disposition,
-                domain_maturity=entry.maturity.value,
+                domain_maturity=entry.maturity.name.lower().replace("_", "-"),
                 profiles=()
                 if disposition is CapabilityDisposition.INTERNAL
                 else (profile,),

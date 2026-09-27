@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 import phydrax.axes as cx
 
@@ -37,7 +38,7 @@ class TensorProductSpace(AbstractVectorSpace):
         /,
         *,
         space_id: str | None = None,
-    ):
+    ) -> None:
         factors_ = tuple(factors)
         if not factors_ or not all(
             isinstance(factor, AbstractVectorSpace) for factor in factors_
@@ -105,7 +106,7 @@ class AxisArraySpace(AbstractVectorSpace):
     layout: cx.AxisLayout = eqx.field(static=True)
     shape: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, template: cx.AxisArray, /, *, space_id: str | None = None):
+    def __init__(self, template: cx.AxisArray, /, *, space_id: str | None = None) -> None:
         if not isinstance(template, cx.AxisArray):
             raise TypeError("template must be an AxisArray.")
         delegate = PyTreeSpace(template)

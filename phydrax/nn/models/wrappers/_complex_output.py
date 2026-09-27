@@ -5,7 +5,7 @@
 from typing import Literal, overload
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
@@ -37,17 +37,19 @@ class ComplexOutputModel(StrictModule, ParameterOwner):
     _base_out_size: int = 1
 
     @overload
-    def __init__(self, model: _AbstractBaseModel, /): ...
+    def __init__(self, model: _AbstractBaseModel, /) -> None: ...
 
     @overload
-    def __init__(self, models: tuple[_AbstractBaseModel, _AbstractBaseModel], /): ...
+    def __init__(
+        self, models: tuple[_AbstractBaseModel, _AbstractBaseModel], /
+    ) -> None: ...
 
     def __init__(
         self,
         model_or_models: _AbstractBaseModel
         | tuple[_AbstractBaseModel, _AbstractBaseModel],
         /,
-    ):
+    ) -> None:
         if isinstance(model_or_models, tuple):
             if len(model_or_models) != 2:
                 raise ValueError("ComplexOutputModel expects a (real, imag) model pair.")

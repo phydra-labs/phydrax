@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from importlib.metadata import version
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -39,7 +40,7 @@ class VortexBenchmarkReport:
     cases: tuple[VortexBenchmarkCase, ...]
 
     @property
-    def passed(self):
+    def passed(self) -> Any:
         return bool(
             self.cases
             and all(
@@ -55,7 +56,7 @@ class VortexBenchmarkReport:
         )
 
 
-def _time(function, arguments, repetitions=4):
+def _time(function: Any, arguments: Any, repetitions: Any = 4) -> Any:
     started = perf_counter()
     first = function(*arguments)
     jax.block_until_ready(first)
@@ -69,7 +70,7 @@ def _time(function, arguments, repetitions=4):
     return first_ms, steady_ms, value
 
 
-def _direct_case(dimension, count):
+def _direct_case(dimension: Any, count: Any) -> Any:
     key = jax.random.key(100 + dimension + count)
     position = jax.random.normal(key, (count, dimension))
     core = jnp.full((count,), 0.15)
@@ -123,7 +124,7 @@ def _direct_case(dimension, count):
     )
 
 
-def _periodic_case(count, grid_count):
+def _periodic_case(count: Any, grid_count: Any) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(count), jnp.ones((count,)), ambient_dimension=2
     ).prepare()
@@ -151,7 +152,7 @@ def _periodic_case(count, grid_count):
     core = jnp.full((count,), 1.0 / grid_count)
     identity = jnp.arange(count, dtype=jnp.int32)
 
-    def evaluate(p, g, c):
+    def evaluate(p: Any, g: Any, c: Any) -> Any:
         source = phx.discretization.VortexSourceState(
             p,
             g,
@@ -184,7 +185,7 @@ def _periodic_case(count, grid_count):
     )
 
 
-def _pse_case(count):
+def _pse_case(count: Any) -> Any:
     key = jax.random.key(300 + count)
     position = jax.random.uniform(key, (count, 2))
     strength = jax.random.normal(jax.random.fold_in(key, 1), (count,))
@@ -222,7 +223,7 @@ def _pse_case(count):
     )
 
 
-def run_vortex_method_benchmark(*, smoke=False):
+def run_vortex_method_benchmark(*, smoke: Any = False) -> Any:
     direct_count = 32 if smoke else 512
     viscous_count = 24 if smoke else 256
     periodic_count = 32 if smoke else 512
@@ -241,7 +242,7 @@ def run_vortex_method_benchmark(*, smoke=False):
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Benchmark native vortex methods.")
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--output", type=Path)

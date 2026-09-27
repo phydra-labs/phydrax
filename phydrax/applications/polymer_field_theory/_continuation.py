@@ -8,7 +8,7 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -44,7 +44,7 @@ class SCFTInteractionContinuationPlan(StrictModule, NonTrainableState):
         maximum_step: float = 0.25,
         maximum_steps: int = 64,
         maximum_retries: int = 8,
-    ):
+    ) -> None:
         lower = float(minimum_scale)
         upper = float(maximum_scale)
         initial = float(initial_step)
@@ -125,7 +125,7 @@ def continue_scft_interactions(
         space_id=f"{prepared.prepared_id}:interaction-continuation-space",
     )
 
-    def residual(fields, scale, _):
+    def residual(fields: Array, scale: Array, _: object) -> Array:
         evaluation = prepared.evaluate(fields, chi_n=prepared.plan.model.chi_n * scale)
         return jnp.where(evaluation.successful, evaluation.residual, jnp.nan)
 

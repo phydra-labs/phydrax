@@ -8,7 +8,7 @@ from collections.abc import Callable
 from enum import IntEnum
 from itertools import product
 from math import ceil
-from typing import Literal, NamedTuple, TypeAlias
+from typing import Any, Literal, NamedTuple, TypeAlias
 
 import equinox as eqx
 import jax
@@ -20,6 +20,7 @@ from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 from phydrax.sparse import EdgeRelation
 
+from ...typing import parse
 from ._morton import (
     _canonical_morton_point_order,
     _MortonPointOrder,
@@ -187,8 +188,7 @@ def _validated_capacities(
         raise ValueError("source_capacity and target_capacity must be positive.")
     if target_chunk_size is not None and int(target_chunk_size) < 1:
         raise ValueError("target_chunk_size must be positive when supplied.")
-    if distance_backend not in ("jax", "pallas"):
-        raise ValueError("distance_backend must be 'jax' or 'pallas'.")
+    distance_backend = parse(distance_backend, SpatialDistanceBackend, "distance_backend")
     return sources, targets
 
 
@@ -410,7 +410,7 @@ def _finest_populated_level(
     depth = address_plan.maximum_depth
     batch = rows.valid.shape[0]
 
-    def refine(_, bounds):
+    def refine(_: Any, bounds: Any) -> Any:
         low, high = bounds
         middle = (low + high + 1) // 2
         _, counts, _ = _stencil_spans(address_plan, sources, rows, middle, prune, margin)
@@ -736,7 +736,7 @@ class MortonNeighborQueryPlan(StrictModule):
         )
         retry = rows.valid & ~first.overflow & ~first.certified
 
-        def coarser(_) -> _NearestRows:
+        def coarser(_: Any) -> _NearestRows:
             wider = _dynamic_level_wider_than(
                 self.address_plan, first.bound, inputs.margin
             )
@@ -813,9 +813,17 @@ class MortonNeighborQueryPlan(StrictModule):
             self.target_chunk_size,
         )
         status, evidence = _row_outcomes(
-            inputs, nearest.overflow, nearest.certified, nearest.required
+            inputs,
+            # ty: ignore[unresolved-attribute]
+            nearest.overflow,
+            # ty: ignore[unresolved-attribute]
+            nearest.certified,
+            # ty: ignore[unresolved-attribute]
+            nearest.required,
         )
+        # ty: ignore[unresolved-attribute]
         valid = nearest.valid & (status == MortonNeighborQueryStatus.COMPLETE)[:, None]
+        # ty: ignore[unresolved-attribute]
         logical = inputs.sources.order.storage_to_logical[nearest.storage]
         successful = (
             evidence["complete"]
@@ -1080,10 +1088,19 @@ class MortonRadiusRelationPlan(StrictModule):
         )
         order = inputs.sources.order
         status, evidence = _row_outcomes(
-            inputs, rows.overflow, rows.certified, rows.required
+            inputs,
+            # ty: ignore[unresolved-attribute]
+            rows.overflow,
+            # ty: ignore[unresolved-attribute]
+            rows.certified,
+            # ty: ignore[unresolved-attribute]
+            rows.required,
         )
         row_counts = jnp.where(
-            status == MortonNeighborQueryStatus.COMPLETE, rows.counts, 0
+            status == MortonNeighborQueryStatus.COMPLETE,
+            # ty: ignore[unresolved-attribute]
+            rows.counts,
+            0,
         )
         required_pairs = jnp.sum(row_counts, dtype=jnp.int32)
         pair_overflow = required_pairs > self.maximum_pairs
@@ -1100,6 +1117,7 @@ class MortonRadiusRelationPlan(StrictModule):
             & ~pair_overflow
         )
         relation = self._pack_pairs(
+            # ty: ignore[invalid-argument-type]
             rows,
             row_counts,
             inputs.rows.stable_ids,

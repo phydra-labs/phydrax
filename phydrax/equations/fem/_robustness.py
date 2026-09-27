@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
@@ -39,7 +41,7 @@ class ConservativeSubcellPlan(StrictModule, NonTrainableState):
     evidence: ConservativeSubcellEvidence
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, element: FiniteElementSpec, volume_rule: Any, /):
+    def __init__(self, element: FiniteElementSpec, volume_rule: Any, /) -> None:
         from ...integration._rules import reference_rule_data
 
         if not isinstance(element, FiniteElementSpec):
@@ -136,7 +138,7 @@ class RobustnessSensorPlan(StrictModule, NonTrainableState):
         activation: float = 0.2,
         release: float = 0.1,
         hysteresis_steps: int = 2,
-    ):
+    ) -> None:
         activation_ = float(activation)
         release_ = float(release)
         steps = int(hysteresis_steps)
@@ -161,7 +163,7 @@ class RobustnessSensorPlan(StrictModule, NonTrainableState):
         )
 
     def initial_state(
-        self, cell_count: int, dtype=jnp.float64, /
+        self, cell_count: int, dtype: DTypeLike = jnp.float64, /
     ) -> RobustnessSensorState:
         return RobustnessSensorState(
             jnp.zeros((cell_count,), dtype=dtype),
@@ -216,7 +218,9 @@ class EntropyViscosityPlan(StrictModule, NonTrainableState):
     maximum_fraction: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, coefficient: float = 0.5, maximum_fraction: float = 0.5, /):
+    def __init__(
+        self, coefficient: float = 0.5, maximum_fraction: float = 0.5, /
+    ) -> None:
         coefficient_ = float(coefficient)
         maximum_ = float(maximum_fraction)
         if (
@@ -271,7 +275,7 @@ class ConservationCorrectionLadderPlan(StrictModule, NonTrainableState):
         differentiability: BranchDifferentiationPolicy = (
             BranchDifferentiationPolicy.BRANCHWISE
         ),
-    ):
+    ) -> None:
         if not isinstance(differentiability, BranchDifferentiationPolicy):
             raise TypeError("differentiability must be a BranchDifferentiationPolicy.")
         match differentiability:
@@ -302,7 +306,7 @@ class ConservationCorrectionLadderPlan(StrictModule, NonTrainableState):
         *,
         cell_content: ArrayLike | None = None,
         step_size: ArrayLike | None = None,
-        admissible=None,
+        admissible: Callable[[Array], ArrayLike] | None = None,
     ) -> ConservationCorrectionResult:
         if not isinstance(high_order, ConservationStageLedger) or not isinstance(
             low_order, ConservationStageLedger

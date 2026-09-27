@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from math import atan2, cos, fabs, pi, sin, sqrt
 from types import MappingProxyType
+from typing import Any, TYPE_CHECKING, TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -23,8 +24,39 @@ from ..._strict import Strict
 deg2rad = pi / 180.0
 twopi = 2.0 * pi
 
+_GravityConstants: TypeAlias = tuple[
+    float, float, float, float, float, float, float, float
+]
+_InitlResult: TypeAlias = tuple[
+    float,
+    str,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+]
 
-def _dpper(satrec, inclo, init, ep, inclp, nodep, argpp, mp, opsmode):
+
+def _dpper(
+    satrec: _SGP4CoefficientBuilder,
+    inclo: float,
+    init: str,
+    ep: float,
+    inclp: float,
+    nodep: float,
+    argpp: float,
+    mp: float,
+    opsmode: str,
+) -> tuple[float, float, float, float, float]:
     e3 = satrec.e3
     ee2 = satrec.ee2
     peo = satrec.peo
@@ -134,45 +166,45 @@ def _dpper(satrec, inclo, init, ep, inclp, nodep, argpp, mp, opsmode):
 
 
 def _dscom(
-    epoch,
-    ep,
-    argpp,
-    tc,
-    inclp,
-    nodep,
-    np,
-    e3,
-    ee2,
-    peo,
-    pgho,
-    pho,
-    pinco,
-    plo,
-    se2,
-    se3,
-    sgh2,
-    sgh3,
-    sgh4,
-    sh2,
-    sh3,
-    si2,
-    si3,
-    sl2,
-    sl3,
-    sl4,
-    xgh2,
-    xgh3,
-    xgh4,
-    xh2,
-    xh3,
-    xi2,
-    xi3,
-    xl2,
-    xl3,
-    xl4,
-    zmol,
-    zmos,
-):
+    epoch: float,
+    ep: float,
+    argpp: float,
+    tc: float,
+    inclp: float,
+    nodep: float,
+    np: float,
+    e3: float,
+    ee2: float,
+    peo: float,
+    pgho: float,
+    pho: float,
+    pinco: float,
+    plo: float,
+    se2: float,
+    se3: float,
+    sgh2: float,
+    sgh3: float,
+    sgh4: float,
+    sh2: float,
+    sh3: float,
+    si2: float,
+    si3: float,
+    sl2: float,
+    sl3: float,
+    sl4: float,
+    xgh2: float,
+    xgh3: float,
+    xgh4: float,
+    xh2: float,
+    xh3: float,
+    xi2: float,
+    xi3: float,
+    xl2: float,
+    xl3: float,
+    xl4: float,
+    zmol: float,
+    zmos: float,
+) -> tuple[float, ...]:
     zes = 0.01675
     zel = 0.0549
     c1ss = 2.9864797e-06
@@ -404,79 +436,79 @@ def _dscom(
 
 
 def _dsinit(
-    xke,
-    cosim,
-    emsq,
-    argpo,
-    s1,
-    s2,
-    s3,
-    s4,
-    s5,
-    sinim,
-    ss1,
-    ss2,
-    ss3,
-    ss4,
-    ss5,
-    sz1,
-    sz3,
-    sz11,
-    sz13,
-    sz21,
-    sz23,
-    sz31,
-    sz33,
-    t,
-    tc,
-    gsto,
-    mo,
-    mdot,
-    no,
-    nodeo,
-    nodedot,
-    xpidot,
-    z1,
-    z3,
-    z11,
-    z13,
-    z21,
-    z23,
-    z31,
-    z33,
-    ecco,
-    eccsq,
-    em,
-    argpm,
-    inclm,
-    mm,
-    nm,
-    nodem,
-    irez,
-    atime,
-    d2201,
-    d2211,
-    d3210,
-    d3222,
-    d4410,
-    d4422,
-    d5220,
-    d5232,
-    d5421,
-    d5433,
-    dedt,
-    didt,
-    dmdt,
-    dnodt,
-    domdt,
-    del1,
-    del2,
-    del3,
-    xfact,
-    xlamo,
-    xli,
-    xni,
-):
+    xke: float,
+    cosim: float,
+    emsq: float,
+    argpo: float,
+    s1: float,
+    s2: float,
+    s3: float,
+    s4: float,
+    s5: float,
+    sinim: float,
+    ss1: float,
+    ss2: float,
+    ss3: float,
+    ss4: float,
+    ss5: float,
+    sz1: float,
+    sz3: float,
+    sz11: float,
+    sz13: float,
+    sz21: float,
+    sz23: float,
+    sz31: float,
+    sz33: float,
+    t: float,
+    tc: float,
+    gsto: float,
+    mo: float,
+    mdot: float,
+    no: float,
+    nodeo: float,
+    nodedot: float,
+    xpidot: float,
+    z1: float,
+    z3: float,
+    z11: float,
+    z13: float,
+    z21: float,
+    z23: float,
+    z31: float,
+    z33: float,
+    ecco: float,
+    eccsq: float,
+    em: float,
+    argpm: float,
+    inclm: float,
+    mm: float,
+    nm: float,
+    nodem: float,
+    irez: int,
+    atime: float,
+    d2201: float,
+    d2211: float,
+    d3210: float,
+    d3222: float,
+    d4410: float,
+    d4422: float,
+    d5220: float,
+    d5232: float,
+    d5421: float,
+    d5433: float,
+    dedt: float,
+    didt: float,
+    dmdt: float,
+    dnodt: float,
+    domdt: float,
+    del1: float,
+    del2: float,
+    del3: float,
+    xfact: float,
+    xlamo: float,
+    xli: float,
+    xni: float,
+) -> tuple[float, ...]:
     q22 = 1.7891679e-06
     q31 = 2.1460748e-06
     q33 = 2.2123015e-07
@@ -665,7 +697,16 @@ def _dsinit(
     )
 
 
-def _initl(xke, j2, ecco, epoch, inclo, no, method, opsmode):
+def _initl(
+    xke: float,
+    j2: float,
+    ecco: float,
+    epoch: float,
+    inclo: float,
+    no: float,
+    method: str,
+    opsmode: str,
+) -> _InitlResult:
     x2o3 = 2.0 / 3.0
     eccsq = ecco * ecco
     omeosq = 1.0 - eccsq
@@ -720,21 +761,21 @@ def _initl(xke, j2, ecco, epoch, inclo, no, method, opsmode):
 
 
 def sgp4init(
-    whichconst,
-    opsmode,
-    satn,
-    epoch,
-    xbstar,
-    xndot,
-    xnddot,
-    xecco,
-    xargpo,
-    xinclo,
-    xmo,
-    xno_kozai,
-    xnodeo,
-    satrec,
-):
+    whichconst: _GravityConstants,
+    opsmode: str,
+    satn: int | str,
+    epoch: float,
+    xbstar: float,
+    xndot: float,
+    xnddot: float,
+    xecco: float,
+    xargpo: float,
+    xinclo: float,
+    xmo: float,
+    xno_kozai: float,
+    xnodeo: float,
+    satrec: _SGP4CoefficientBuilder,
+) -> bool:
     temp4 = 1.5e-12
     satrec.isimp = 0
     satrec.method = "n"
@@ -1256,7 +1297,7 @@ def sgp4init(
     return True
 
 
-def gstime(jdut1):
+def gstime(jdut1: float) -> float:
     tut1 = (jdut1 - 2451545.0) / 36525.0
     temp = (
         -6.2e-06 * tut1 * tut1 * tut1
@@ -1276,18 +1317,24 @@ _gstime = gstime
 class _SGP4CoefficientBuilder:
     """Private mutable receiver for the imperative Vallado initialization."""
 
+    if TYPE_CHECKING:
+
+        def __getattr__(self, name: str, /) -> Any: ...
+
+        def __setattr__(self, name: str, value: object, /) -> None: ...
+
 
 class SGP4Coefficients(Strict):
     """Immutable prepared scalar coefficients for one TLE."""
 
     _values: Mapping[str, object]
 
-    def __init__(self, builder: _SGP4CoefficientBuilder, /):
+    def __init__(self, builder: _SGP4CoefficientBuilder, /) -> None:
         if not isinstance(builder, _SGP4CoefficientBuilder):
             raise TypeError("builder must be an SGP4 coefficient builder.")
         self._values = MappingProxyType(vars(builder).copy())
 
-    def __getattr__(self, name: str):
+    def __getattr__(self, name: str) -> Any:
         values = self._values
         if name in values:
             return values[name]
@@ -1518,7 +1565,9 @@ def _dspace_jax(
     delta = direction * step_minutes
     step2 = 0.5 * step_minutes * step_minutes
 
-    def integrate(carry, index):
+    def integrate(
+        carry: tuple[jax.Array, jax.Array, jax.Array], index: jax.Array
+    ) -> tuple[tuple[jax.Array, jax.Array, jax.Array], jax.Array]:
         atime, xli, xni = carry
         active = index < bounded_steps
         xndt, xldot, xnddt = _resonance_derivatives(satrec, atime, xli, xni)
@@ -1660,7 +1709,7 @@ def propagate_sgp4(
     xl = mp + argpp + nodep + long_period_scale * xlcof * axnl
     u = jnp.mod(xl - nodep, 2.0 * jnp.pi)
 
-    def solve_kepler(_, eccentric_longitude):
+    def solve_kepler(_: jax.Array, eccentric_longitude: jax.Array) -> jax.Array:
         sine = jnp.sin(eccentric_longitude)
         cosine = jnp.cos(eccentric_longitude)
         denominator = 1.0 - cosine * axnl - sine * aynl

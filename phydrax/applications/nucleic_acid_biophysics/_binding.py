@@ -8,7 +8,8 @@ from dataclasses import dataclass
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+import numpy.typing as npt
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -24,7 +25,7 @@ class NucleotideAtomMapping:
     nucleotide_keys: tuple[NucleotideKey, ...]
     atom_names: tuple[str, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if any(
             not isinstance(x, tuple)
             for x in (self.atom_ids, self.nucleotide_keys, self.atom_names)
@@ -81,7 +82,10 @@ class PreparedNucleotideBinding(StrictModule, NonTrainableState):
 
 
 def prepare_nucleotide_binding(
-    mapping, support_atom_ids, *, coordinate_mask=None
+    mapping: NucleotideAtomMapping,
+    support_atom_ids: PreparedAtomisticSystem | npt.ArrayLike,
+    *,
+    coordinate_mask: npt.ArrayLike | None = None,
 ) -> PreparedNucleotideBinding:
     """Prepare without relabeling IDs; missing coordinates are not inactive padding.
 

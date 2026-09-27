@@ -9,6 +9,7 @@ import hmac
 import json
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -47,6 +48,7 @@ from phydrax.qualification import (
     HMACSHA256ReleaseSigner,
     HMACSHA256TrustPolicy,
     ReleaseGateEvidence,
+    SupportDependency,
     SupportTuple,
 )
 from tools.cardiovascular_release_qualification import (
@@ -119,7 +121,7 @@ def _artifacts(*, expires_at: int = 100) -> CardiovascularArtifactSet:
 
 
 class _HMACVerifier:
-    def __init__(self, signer_id: str, secret: bytes):
+    def __init__(self, signer_id: str, secret: bytes) -> None:
         self._signer_id = signer_id
         self._secret = secret
 
@@ -136,7 +138,9 @@ class _HMACVerifier:
         return hmac.compare_digest(expected, signature)
 
 
-def _profile_parts(support: SupportTuple, dependency_profile_ids: tuple[str, ...] = ()):
+def _profile_parts(
+    support: SupportTuple, dependency_profile_ids: tuple[str, ...] = ()
+) -> Any:
     claims = CardiovascularClaimsMatrix(
         (
             CardiovascularClaimDecision(
@@ -194,7 +198,7 @@ def _complete_case(
     *,
     artifact_expires_at: int = 100,
     dependency_profile_ids: tuple[str, ...] = (),
-):
+) -> Any:
     support = _support()
     profile, roles = _profile_parts(support, dependency_profile_ids)
     secrets = {
@@ -556,13 +560,17 @@ def test_failed_stale_and_unapproved_gate_evidence_are_distinct() -> None:
         gates.append(
             CardiovascularGateEvidence.issue(
                 gate,
+                # ty: ignore[invalid-argument-type]
                 passed=values["passed"],
                 evidence_ids=gate_record.release_evidence.evidence_ids,
                 reviewer_id=bundle.roles.expected_reviewer(gate),
                 dossier_id=gate_record.dossier_id,
+                # ty: ignore[invalid-argument-type]
                 issued_at=values["issued_at"],
+                # ty: ignore[invalid-argument-type]
                 expires_at=values["expires_at"],
                 signer=signers[bundle.roles.expected_reviewer(gate)],
+                # ty: ignore[invalid-argument-type]
                 deviation_ids=values["deviation_ids"],
             )
         )
@@ -902,6 +910,56 @@ def test_dependency_profiles_must_be_complete_released_and_fresh() -> None:
     assert complete.qualified
 
 
+def test_dependency_profiles_resolve_nested_support_dependencies() -> None:
+    def released(
+        profile_id: str, support: SupportTuple, *dependencies: SupportDependency
+    ) -> CapabilityProfile:
+        evidence = ReleaseGateEvidence(
+            f"{profile_id}-qualified",
+            passed=True,
+            evidence_ids=(f"{profile_id}-artifact",),
+            reviewer_id="dependency-reviewer",
+            issued_at=10,
+            expires_at=100,
+        )
+        return CapabilityProfile(
+            profile_id,
+            "phydrax",
+            "1",
+            (support,),
+            dependencies=dependencies,
+            required_gates=(evidence.gate,),
+            release_evidence=(evidence,),
+            released=True,
+        )
+
+    base_support = SupportTuple("cardiovascular.mesh", {"route": "native"})
+    base = released("cardiovascular.mesh-native", base_support)
+    solver = released(
+        "cardiovascular.solver-native",
+        SupportTuple("cardiovascular.solver", {"route": "native"}),
+        SupportDependency(base.profile_id, base_support.support_tuple_id),
+    )
+    profile, bundle, trust, _, verifiers = _complete_case(
+        dependency_profile_ids=(solver.profile_id,)
+    )
+
+    missing_base = evaluate_cardiovascular_release_candidate(
+        profile, bundle, trust, verifiers, at_time=20, dependency_profiles=(solver,)
+    )
+    assert f"missing-dependency-profile:{base.profile_id}" in missing_base.blockers
+
+    complete = evaluate_cardiovascular_release_candidate(
+        profile,
+        bundle,
+        trust,
+        verifiers,
+        at_time=20,
+        dependency_profiles=(solver, base),
+    )
+    assert complete.qualified
+
+
 def _write_supply_chain_record(path: Path, record: dict[str, object]) -> Path:
     path.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
     return path
@@ -922,7 +980,7 @@ def _synthetic_supply_chain_dossier(
 ) -> dict[str, object]:
     commit = "0123456789abcdef0123456789abcdef01234567"
 
-    def clean_git(command, **_kwargs):
+    def clean_git(command: Any, **_kwargs: Any) -> Any:
         stdout = f"{commit}\n" if command[1:3] == ["rev-parse", "HEAD"] else ""
         return type(
             "CompletedGitCommand",
@@ -1138,6 +1196,7 @@ def test_release_artifact_builder_emits_dependency_complete_g5_evidence(
     report = build_cardiovascular_release_artifacts(
         tmp_path,
         tmp_path / "derived-release",
+        # ty: ignore[invalid-argument-type]
         **inputs,
     )
 
@@ -1145,10 +1204,13 @@ def test_release_artifact_builder_emits_dependency_complete_g5_evidence(
     assert report["g5_evidence_ready"]
     assert not report["commercial_ready"]
     assert not report["grants_commercial_license"]
+    # ty: ignore[invalid-argument-type]
     assert set(report["distribution_artifacts"]) == {"wheel", "sdist", "container"}
+    # ty: ignore[unresolved-attribute]
     for record in report["distribution_artifacts"].values():
         assert record["sha256"] == _file_sha256(Path(record["path"]))
 
+    # ty: ignore[not-subscriptable]
     spdx_path = Path(report["generated"]["sbom-spdx"]["path"])
     spdx = json.loads(spdx_path.read_text(encoding="utf-8"))
     assert "NOASSERTION" not in json.dumps(spdx)
@@ -1183,6 +1245,7 @@ def test_release_artifact_builder_emits_dependency_complete_g5_evidence(
     ) in relationships
     assert all(package["checksums"] for package in spdx["packages"])
 
+    # ty: ignore[not-subscriptable]
     cyclonedx_path = Path(report["generated"]["sbom-cyclonedx"]["path"])
     cyclonedx = json.loads(cyclonedx_path.read_text(encoding="utf-8"))
     assert cyclonedx["metadata"]["component"]["name"] == "phydrax"
@@ -1207,6 +1270,7 @@ def test_release_artifact_builder_emits_dependency_complete_g5_evidence(
         ]
     )
 
+    # ty: ignore[not-subscriptable]
     manifest_path = Path(report["generated"]["supply-chain-evidence-manifest"]["path"])
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["g5_evidence_ready"]
@@ -1238,27 +1302,32 @@ def test_release_artifact_builder_rejects_mismatched_bound_supply_chain_inputs(
     report = build_cardiovascular_release_artifacts(
         tmp_path,
         tmp_path / "derived-release",
+        # ty: ignore[invalid-argument-type]
         **inputs,
     )
 
     assert not report["g5_evidence_ready"]
+    # ty: ignore[unsupported-operator]
     assert "external-license-report-record:lock-sha256-mismatch" in report["blockers"]
     assert (
+        # ty: ignore[unsupported-operator]
         "external-license-report-record:package-source-mismatch:alpha@1.0"
         in report["blockers"]
     )
     assert (
+        # ty: ignore[unsupported-operator]
         f"external-license-report-record:package-hash-missing:alpha@1.0:{'11' * 32}"
         in report["blockers"]
     )
     assert (
+        # ty: ignore[unsupported-operator]
         "external-supply-chain-attestation-record:subject-hash-mismatch:distribution:wheel"
         in report["blockers"]
     )
 
 
 def test_repository_preflight_refuses_nonproduction_license_and_missing_dossier(
-    tmp_path,
+    tmp_path: Any,
 ) -> None:
     (tmp_path / "LICENSE").write_text(
         "PHYDRA NON-PRODUCTION LICENSE\nCommercial Use requires a separate license\n",
@@ -1272,19 +1341,22 @@ def test_repository_preflight_refuses_nonproduction_license_and_missing_dossier(
     assert not report["commercial_ready"]
     assert not report["grants_commercial_license"]
     assert not report["regulated_device_claim"]
+    # ty: ignore[not-subscriptable]
     assert report["release_decision"]["separate_from_qualification"]
+    # ty: ignore[not-subscriptable]
     assert report["preflight_blockers"][:3] == [
         "commercial-license-grant-absent:repository-license-is-non-production-only",
         "artifact-sbom:missing",
         "artifact-build-provenance:missing",
     ]
+    # ty: ignore[invalid-argument-type]
     assert tuple(report["gates"]) == tuple(
         gate.gate_key for gate in CardiovascularReleaseGate
     )
 
 
 def test_release_artifact_builder_derives_unsigned_records_and_keeps_authority_external(
-    tmp_path,
+    tmp_path: Any,
 ) -> None:
     (tmp_path / "uv.lock").write_text(
         'version = 1\n[[package]]\nname = "asdex"\nversion = "0.5.1"\n',
@@ -1316,30 +1388,47 @@ def test_release_artifact_builder_derives_unsigned_records_and_keeps_authority_e
         "supply-chain-evidence-manifest",
         "unsigned-gate-dossier",
         "artifact-hashes",
+        # ty: ignore[invalid-argument-type]
     } == set(report["generated"])
+    # ty: ignore[unresolved-attribute]
     for record in report["generated"].values():
         assert Path(record["path"]).is_file()
         assert len(record["sha256"]) == 64
+    # ty: ignore[unsupported-operator]
     assert "notice-license-text-missing:SING-MIT.txt" in report["blockers"]
+    # ty: ignore[unsupported-operator]
     assert "notice-license-text-missing:ASDEX-MIT.txt" in report["blockers"]
     assert (
+        # ty: ignore[unsupported-operator]
         "commercial-license-grant-absent:repository-license-is-pnpl" in report["blockers"]
     )
+    # ty: ignore[unsupported-operator]
     assert "external-commercial-license-record:missing" in report["blockers"]
+    # ty: ignore[unsupported-operator]
     assert "external-data-rights-record:missing" in report["blockers"]
+    # ty: ignore[unsupported-operator]
     assert "external-signer-record:missing" in report["blockers"]
+    # ty: ignore[unsupported-operator]
     assert "external-verifier-record:missing" in report["blockers"]
+    # ty: ignore[unsupported-operator]
     assert "external-vulnerability-report-record:missing" in report["blockers"]
+    # ty: ignore[unsupported-operator]
     assert "external-license-report-record:missing" in report["blockers"]
+    # ty: ignore[unsupported-operator]
     assert "external-supply-chain-attestation-record:missing" in report["blockers"]
+    # ty: ignore[unsupported-operator]
     assert "distribution-artifact:missing" in report["blockers"]
+    # ty: ignore[unsupported-operator]
     assert "dependency-metadata:asdex@0.5.1:source-unresolved" in report["blockers"]
+    # ty: ignore[unsupported-operator]
     assert "dependency-metadata:asdex@0.5.1:hash-unresolved" in report["blockers"]
     assert (
+        # ty: ignore[unsupported-operator]
         "dependency-metadata:asdex@0.5.1:license-concluded-unresolved"
         in report["blockers"]
     )
     spdx = json.loads(
+        # ty: ignore[not-subscriptable]
         Path(report["generated"]["sbom-spdx"]["path"]).read_text(encoding="utf-8")
     )
     assert "NOASSERTION" in json.dumps(spdx)

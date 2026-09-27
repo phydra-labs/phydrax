@@ -12,7 +12,7 @@ from typing import TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -1143,7 +1143,7 @@ def _identify_id(
 class _Factor:
     def __init__(
         self, variables: tuple[str, ...], random: tuple[str, ...], values: np.ndarray
-    ):
+    ) -> None:
         self.variables = variables
         self.random = random
         self.values = values

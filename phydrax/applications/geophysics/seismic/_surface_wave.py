@@ -9,7 +9,8 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
@@ -42,7 +43,7 @@ class LayeredLoveWavePlan(StrictModule, NonTrainableState):
         *,
         mode_count: int = 4,
         scan_count: int = 512,
-    ):
+    ) -> None:
         thickness = np.asarray(thickness_m, dtype=np.float64)
         density = np.asarray(density_kg_m3, dtype=np.float64)
         velocity = np.asarray(shear_velocity_m_s, dtype=np.float64)
@@ -155,13 +156,13 @@ class HomogeneousRayleighWavePlan(StrictModule, NonTrainableState):
     s_velocity_m_s: float = eqx.field(static=True)
     phase_velocity_m_s: float = eqx.field(static=True)
 
-    def __init__(self, p_velocity_m_s: float, s_velocity_m_s: float, /):
+    def __init__(self, p_velocity_m_s: float, s_velocity_m_s: float, /) -> None:
         p, s = float(p_velocity_m_s), float(s_velocity_m_s)
         if not np.isfinite(p) or not np.isfinite(s) or p <= s or s <= 0:
             raise ValueError("Rayleigh halfspace requires finite vp > vs > 0.")
         ratio = (p / s) ** 2
 
-        def equation(x):
+        def equation(x: float) -> float:
             return (2 - x) ** 2 - 4 * np.sqrt(1 - x) * np.sqrt(1 - x / ratio)
 
         left, right = 1e-8, 1 - 1e-8
@@ -208,7 +209,7 @@ class AmbientNoiseCorrelationPlan(StrictModule, NonTrainableState):
         /,
         *,
         normalization: Literal["none", "one-bit", "spectral-whitening"] = "none",
-    ):
+    ) -> None:
         window, step, interval = (
             int(window_samples),
             int(step_samples),
@@ -319,7 +320,7 @@ class AmbientNoiseCorrelationPlan(StrictModule, NonTrainableState):
 class HVSRPlan(StrictModule, NonTrainableState):
     sample_interval_s: float = eqx.field(static=True)
 
-    def __init__(self, sample_interval_s: float, /):
+    def __init__(self, sample_interval_s: float, /) -> None:
         interval = float(sample_interval_s)
         if not np.isfinite(interval) or interval <= 0:
             raise ValueError("HVSR sample interval must be positive and finite.")

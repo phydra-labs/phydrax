@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax.ein import contract
 
@@ -47,7 +48,7 @@ class HeartOnlyBidomainRoute(StrictModule, NonTrainableState):
 
     route_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.route_id = canonical_fingerprint(
             {"kind": "cardiovascular-heart-only-bidomain-route"}
         )
@@ -77,7 +78,7 @@ class HeartTorsoBidomainRoute(StrictModule, NonTrainableState):
         interface_node_pairs: ArrayLike,
         interface_conductance_mS: ArrayLike,
         /,
-    ):
+    ) -> None:
         node_ids = np.asarray(torso_node_ids, dtype=np.int64)
         element_ids = np.asarray(torso_element_ids, dtype=np.int64)
         nodes = np.asarray(torso_nodes_mm, dtype=np.float64)
@@ -166,7 +167,7 @@ class BidomainFEMPlan(StrictModule, NonTrainableState):
         residual_tolerance: float = 1.0e-9,
         gauge_tolerance_mV: float = 1.0e-9,
         source_compatibility_tolerance_uA: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(route, (HeartOnlyBidomainRoute, HeartTorsoBidomainRoute)):
             raise TypeError("route must be a heart-only or heart--torso bidomain route.")
         node_ids = np.asarray(heart_node_ids, dtype=np.int64)
@@ -620,7 +621,7 @@ def initialize_bidomain_state(
 
 
 def zero_bidomain_inputs(
-    prepared: PreparedBidomainFEM, /, *, dtype=None
+    prepared: PreparedBidomainFEM, /, *, dtype: DTypeLike | None = None
 ) -> BidomainStepInputs:
     resolved_dtype = prepared.heart_mass_matrix.dtype if dtype is None else dtype
     heart = jnp.zeros((prepared.heart_node_count,), dtype=resolved_dtype)

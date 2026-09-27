@@ -9,7 +9,7 @@ from collections.abc import Callable, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, Key
+from jax import Array
 
 from .._execution_plan import ExecutionPlan
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -23,6 +23,7 @@ from ..lifecycle import (
     RevisionLineage,
     RunRecord,
 )
+from ..typing import PRNGKey
 from ._committee import (
     AcquisitionPlan,
     AcquisitionRecord,
@@ -77,7 +78,7 @@ class AtomisticLabelSet(StrictModule, NonTrainableState):
         /,
         *,
         parent: "AtomisticLabelSet | None" = None,
-    ):
+    ) -> None:
         values = tuple(records)
         if not values or any(
             not isinstance(value, AtomisticLabelRecord) for value in values
@@ -248,7 +249,7 @@ class AtomisticLearningCampaignPlan(StrictModule, NonTrainableState):
         training: AtomisticTrainingPolicy,
         committee_reduction: CommitteeReductionPolicy,
         /,
-    ):
+    ) -> None:
         if not isinstance(system, PreparedAtomisticSystem):
             raise TypeError("system must be PreparedAtomisticSystem.")
         if not isinstance(provider, AbstractExternalAtomisticProvider):
@@ -303,7 +304,7 @@ class AtomisticLearningCampaignState(StrictModule, NonTrainableState):
         *,
         committee: CommitteeAtomisticPotential | None = None,
         round_index: int = 0,
-    ):
+    ) -> None:
         if not isinstance(labels, AtomisticLabelSet):
             raise TypeError("labels must be AtomisticLabelSet.")
         if committee is not None and not isinstance(
@@ -510,7 +511,7 @@ def run_atomistic_campaign_round(
     frames: Sequence[AtomisticFrame],
     uncertainty: Sequence[AtomisticUncertaintyEvidence],
     initial_potentials: Sequence[AbstractAtomisticPotential],
-    keys: Sequence[Key[Array, ""]],
+    keys: Sequence[PRNGKey],
     qualify: Callable[
         [CommitteeAtomisticPotential], AtomisticDynamicsQualificationResult
     ],

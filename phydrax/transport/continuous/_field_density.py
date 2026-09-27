@@ -11,12 +11,14 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._probability import _leading_shape, AbstractProbabilityLaw
 from ..._strict import StrictModule
 from ...stochastic._path_diffusion import TrajectoryEventLayout
+from ...typing import PRNGKey
 
 
 class HybridFlowSample(StrictModule):
@@ -39,7 +41,7 @@ class HybridFlowLaw(StrictModule):
         /,
         *,
         mode_id: str,
-    ):
+    ) -> None:
         probabilities = jnp.asarray(mode_probabilities, dtype=jnp.float64)
         laws = tuple(conditional_laws)
         if probabilities.ndim != 1 or probabilities.size == 0:
@@ -68,7 +70,7 @@ class HybridFlowLaw(StrictModule):
         return self.conditional_laws[0].event_shape
 
     def sample(
-        self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()
+        self, key: PRNGKey, sample_shape: tuple[int, ...] = ()
     ) -> HybridFlowSample:
         shape = tuple(sample_shape)
         mode_key, value_key = jr.split(key)
@@ -76,7 +78,7 @@ class HybridFlowLaw(StrictModule):
         keys = jr.split(value_key, max(prod(shape), 1))
         flat_modes = modes.reshape((-1,))
 
-        def one(mode, sample_key):
+        def one(mode: Array, sample_key: Array) -> Array:
             branches = tuple(
                 lambda law=law: law.sample(sample_key) for law in self.conditional_laws
             )
@@ -98,7 +100,7 @@ class HybridFlowLaw(StrictModule):
         flat_values = values.reshape((-1,) + self.event_shape)
         flat_modes = modes.reshape((-1,))
 
-        def one(selected_mode, item):
+        def one(selected_mode: Array, item: Array) -> Array:
             branches = tuple(
                 lambda law=law: law.log_prob(item) for law in self.conditional_laws
             )
@@ -125,7 +127,7 @@ class TrajectoryFlowLaw(AbstractProbabilityLaw):
         *,
         support_tolerance: float = 1.0e-8,
         law_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(coefficient_law, AbstractProbabilityLaw) or not isinstance(
             layout, TrajectoryEventLayout
         ):
@@ -155,7 +157,7 @@ class TrajectoryFlowLaw(AbstractProbabilityLaw):
     def density_measure_kind(self) -> str:
         return "trajectory"
 
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         return self.layout.synthesize(self.coefficient_law.sample(key, sample_shape))
 
     def log_prob(self, value: ArrayLike, /) -> Array:
@@ -206,7 +208,7 @@ class FiniteFieldFlowLaw(StrictModule):
         field_space_id: str,
         query_evidence: Any = None,
         law_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(coefficient_law, AbstractProbabilityLaw):
             raise TypeError("coefficient_law must be an AbstractProbabilityLaw.")
         if not callable(decoder):
@@ -235,7 +237,7 @@ class FiniteFieldFlowLaw(StrictModule):
 
     def sample_field(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         query: PreparedFieldQuery,
         sample_shape: tuple[int, ...] = (),
     ) -> FiniteFieldSample:
@@ -289,7 +291,7 @@ class ConditionalFiniteFieldFlowLaw(StrictModule):
         /,
         *,
         field_space_id: str,
-    ):
+    ) -> None:
         if (
             not callable(source_encoder)
             or not callable(conditional_coefficient_law)

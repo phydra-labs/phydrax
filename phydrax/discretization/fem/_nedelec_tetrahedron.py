@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -62,7 +63,7 @@ class TetrahedralNedelecSpace(StrictModule, NonTrainableState):
     cell_space: ArraySpace
     space_id: str = eqx.field(static=True)
 
-    def __init__(self, mesh: CellMesh, /, *, geometry_tolerance: float = 1e-12):
+    def __init__(self, mesh: CellMesh, /, *, geometry_tolerance: float = 1e-12) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("Tetrahedral H(curl) space requires CellMesh.")
         if mesh.topological_dimension != 3 or mesh.ambient_dimension != 3:
@@ -252,7 +253,7 @@ class TetrahedralNedelecSpace(StrictModule, NonTrainableState):
         mass_tensor: ArrayLike = 0.0,
         curl_tensor: ArrayLike = 1.0,
     ) -> FunctionLinearOperator:
-        def action(values):
+        def action(values: Array) -> Array:
             return self.curl_curl_action(values, curl_tensor) + self.mass_action(
                 values, mass_tensor
             )

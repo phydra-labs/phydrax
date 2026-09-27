@@ -1,5 +1,6 @@
 import hashlib
 from dataclasses import replace
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -32,7 +33,12 @@ from phydrax.qualification import ReferenceArtifactManifest
 from phydrax.units import ANGSTROM, ELECTRONVOLT
 
 
-def _rights(payload=b"original numerical fixture", *, training=True, export=True):
+def _rights(
+    payload: Any = b"original numerical fixture",
+    *,
+    training: Any = True,
+    export: Any = True,
+) -> Any:
     return ReferenceArtifactManifest(
         "original-synthetic-coordinate-fixture",
         checksum_algorithm="sha256",
@@ -50,7 +56,7 @@ def _rights(payload=b"original numerical fixture", *, training=True, export=True
     )
 
 
-def _fixture():
+def _fixture() -> Any:
     construct = ProteinConstruct(("chain",), ("A",))
     keys = tuple(
         ProteinAtomKey(construct.residue_keys[0], name) for name in ("CA", "N", "C", "CB")
@@ -79,7 +85,7 @@ def _fixture():
     return construct, keys, atom_ids, support, x
 
 
-def _data(support, x, rights=None):
+def _data(support: Any, x: Any, rights: Any = None) -> Any:
     conditions = np.linspace(-1.0, 1.0, 12)[:, None]
     positions = np.broadcast_to(x, (12, 4, 3)).copy()
     positions[:, 3, 2] += 0.25 * conditions[:, 0]
@@ -98,7 +104,7 @@ def _data(support, x, rights=None):
     )
 
 
-def _source(manifest, name="raw"):
+def _source(manifest: Any, name: Any = "raw") -> Any:
     return ScientificArtifactEnvelope(
         artifact_kind="user-coordinate-output",
         content_digest=manifest.checksum,
@@ -111,7 +117,7 @@ def _source(manifest, name="raw"):
     )
 
 
-def test_gauge_preserves_handedness_and_proper_rigid_invariance():
+def test_gauge_preserves_handedness_and_proper_rigid_invariance() -> None:
     _, _, _, support, x = _fixture()
     rotation = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
     first, valid = eqx.filter_jit(support.canonicalize)(jnp.asarray(x))
@@ -131,7 +137,7 @@ def test_gauge_preserves_handedness_and_proper_rigid_invariance():
     assert jnp.allclose(jnp.sum(gradient, axis=0), 0.0, atol=1e-10)
 
 
-def test_offline_provider_mapping_reorders_without_erasing_parent_rights():
+def test_offline_provider_mapping_reorders_without_erasing_parent_rights() -> None:
     construct, keys, mapping, support, x = _fixture()
     output, restricted_weights = _rights(), _rights(b"restricted-weights", training=False)
     records = tuple(
@@ -186,7 +192,7 @@ def test_offline_provider_mapping_reorders_without_erasing_parent_rights():
         map_protein_hypothesis(result.hypotheses[0], support, bad_mapping)
 
 
-def test_training_refuses_restrictions_and_validation_leakage():
+def test_training_refuses_restrictions_and_validation_leakage() -> None:
     _, _, _, support, x = _fixture()
     with pytest.raises(PermissionError):
         _data(support, x, _rights(training=False))
@@ -214,7 +220,7 @@ def test_training_refuses_restrictions_and_validation_leakage():
         )
 
 
-def test_actual_native_training_sampling_and_weight_admission(tmp_path):
+def test_actual_native_training_sampling_and_weight_admission(tmp_path: Any) -> None:
     _, _, _, support, x = _fixture()
     data = _data(support, x)
     fit = fit_coordinate_model(

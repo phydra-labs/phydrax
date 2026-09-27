@@ -10,7 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
@@ -148,7 +148,9 @@ class PreparedSparseVoxelGrid(NonTrainableState, StrictModule):
             + extent * (integer.astype(extent.dtype) + 0.5) / self.address_plan.resolution
         )
 
-    def interpolation_stencil(self, points: jax.Array):
+    def interpolation_stencil(
+        self, points: jax.Array
+    ) -> tuple[SparseVoxelLookup, jax.Array, jax.Array]:
         values = jnp.asarray(points)
         if values.ndim != 2 or values.shape[1] != self.dimension:
             raise ValueError(f"points must have shape (count, {self.dimension}).")

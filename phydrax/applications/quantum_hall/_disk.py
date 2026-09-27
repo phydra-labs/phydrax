@@ -11,7 +11,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -44,7 +45,7 @@ class HallDiskPlan(StrictModule, NonTrainableState):
         /,
         *,
         edge_orbitals: int = 2,
-    ):
+    ) -> None:
         particles = int(particle_count)
         projection = int(twice_projection)
         confinement_ = tuple(float(value) for value in confinement)

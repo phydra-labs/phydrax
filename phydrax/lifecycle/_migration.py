@@ -98,7 +98,7 @@ def _exact_fields(
 
 
 def _normalize_json(value: object, path: str = "$", /) -> JsonValue:
-    if value is None or type(value) in (bool, int, str):
+    if value is None or type(value) is bool or type(value) is int or type(value) is str:
         return value
     if type(value) is float:
         if not math.isfinite(value):
@@ -150,7 +150,7 @@ def _artifact_digest(format_id: str, record: Mapping[str, JsonValue], /) -> str:
     )
 
 
-def _lineage(values: Sequence[str], name: str = "lineage", /) -> tuple[str, ...]:
+def _lineage(values: Sequence[object], name: str = "lineage", /) -> tuple[str, ...]:
     if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
         raise TypeError(f"{name} must be a sequence of artifact digests.")
     return tuple(_digest(value, f"{name} digest") for value in values)
@@ -175,7 +175,7 @@ class MigrationEdge(StrictModule, NonTrainableState):
         *,
         migration_id: str,
         lossy: bool = False,
-    ):
+    ) -> None:
         source = _identifier(source_format_id, "source-format ID")
         target = _identifier(target_format_id, "target-format ID")
         if source == target:
@@ -245,7 +245,7 @@ class MigrationReport(StrictModule, NonTrainableState):
         migration_ids: Sequence[str],
         lineage: Sequence[str],
         lossy: bool,
-    ):
+    ) -> None:
         input_format = _identifier(input_format_id, "input-format ID")
         output_format = _identifier(output_format_id, "output-format ID")
         input_value = _object(input_record, "Migration input record")
@@ -355,9 +355,12 @@ class MigrationReport(StrictModule, NonTrainableState):
             output_record, Mapping
         ):
             raise TypeError("Serialized migration records must be object mappings.")
+        sequences: list[Sequence[object]] = []
         for name, values in (("migration_ids", migration_ids), ("lineage", lineage)):
             if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
                 raise TypeError(f"Serialized {name} must be a sequence.")
+            sequences.append(values)
+        migration_ids, lineage = sequences
         if type(record["lossy"]) is not bool:
             raise TypeError("Serialized lossy must be a boolean.")
         value = cls(
@@ -397,7 +400,7 @@ class CompatibilityRegistry(StrictModule, NonTrainableState):
         current_writer_id: str,
         edges: Sequence[MigrationEdge],
         /,
-    ):
+    ) -> None:
         current = _identifier(current_writer_id, "current-writer ID")
         if not isinstance(edges, Sequence) or isinstance(edges, (str, bytes)):
             raise TypeError("edges must be a sequence of MigrationEdge values.")

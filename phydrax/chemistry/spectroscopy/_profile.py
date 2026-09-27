@@ -12,7 +12,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from scipy.special import ndtr, voigt_profile
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -85,7 +86,7 @@ class SpectralProfileResult(StrictModule, NonTrainableState):
         successful: ArrayLike,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         grid_ = jnp.asarray(grid)
         intensity = jnp.asarray(intensity_density, dtype=grid_.dtype)
         if grid_.ndim != 1 or intensity.shape != grid_.shape:
@@ -140,7 +141,7 @@ class SpectralProfilePlan(StrictModule, NonTrainableState):
         fwhm: float,
         lorentzian_fwhm: float | None = None,
         area_tolerance: float = 5.0e-3,
-    ):
+    ) -> None:
         if not isinstance(line_shape, SpectralLineShape):
             raise TypeError("line_shape must be SpectralLineShape.")
         lower = float(minimum)
@@ -212,7 +213,7 @@ class SpectralProfilePlan(StrictModule, NonTrainableState):
         else:
             gamma = 0.5 * self.lorentzian_fwhm
             profiles = voigt_profile(offsets, gaussian_sigma, gamma)
-            captured = np.trapezoid(profiles, grid, axis=0)
+            captured = np.asarray(np.trapezoid(profiles, grid, axis=0), dtype=np.float64)
         raw_areas = np.trapezoid(profiles, grid, axis=0)
         valid_areas = raw_areas > np.finfo(np.float64).tiny
         profiles = profiles / np.where(valid_areas, raw_areas, 1.0)[None, :]

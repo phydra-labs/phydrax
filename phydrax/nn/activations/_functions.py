@@ -3,7 +3,8 @@
 #
 
 import jax
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 def squared_relu(x: ArrayLike, /) -> Array:

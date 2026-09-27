@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _diagnostics():
+def _diagnostics() -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0, 1]), jnp.ones((2,)), ambient_dimension=2
     ).prepare()
@@ -44,7 +47,7 @@ def _diagnostics():
     return compiled.diagnostics(0.0, state)
 
 
-def test_batched_inverse_and_parameter_ensemble_require_valid_certificates():
+def test_batched_inverse_and_parameter_ensemble_require_valid_certificates() -> None:
     diagnostics = _diagnostics()
     policy = phx.discretization.DEMSensitivityPolicy(
         activation_margin=1.0e-12,
@@ -55,7 +58,7 @@ def test_batched_inverse_and_parameter_ensemble_require_valid_certificates():
         neighborhood_margin=1.0e-12,
     )
 
-    def forward(parameter, case):
+    def forward(parameter: Any, case: Any) -> Any:
         return parameter * case, diagnostics
 
     cases = jnp.asarray([1.0, 2.0, 3.0])
@@ -79,7 +82,7 @@ def test_batched_inverse_and_parameter_ensemble_require_valid_certificates():
     assert ensemble.predictions.shape == (3, 3)
 
 
-def test_hybrid_event_localization_and_saltation_are_transverse():
+def test_hybrid_event_localization_and_saltation_are_transverse() -> None:
     guard = phx.solver.HybridGuardPlan(
         lambda time, state, args: state[0],
         guard_id=phx.discretization.DEMHybridEventKind.CONTACT_ONSET.value,

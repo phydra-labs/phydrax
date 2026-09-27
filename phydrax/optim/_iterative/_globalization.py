@@ -6,20 +6,49 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import isfinite
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ..._tree_math import (
     tree_allfinite as _tree_allfinite,
     tree_inner as _tree_inner,
     tree_where as _tree_where,
 )
+
+
+# (iteration, rate, base, tangent, candidate, candidate_value, accepted, finite_seen)
+_ArmijoCarry: TypeAlias = tuple[
+    Array, Array, PyTree[Any], PyTree[Any], PyTree[Any], Array, Array, Array
+]
+# (iteration, rate, low_rate, high_rate, low_value, previous_rate, previous_value,
+#  bracketed, accepted_parameters, accepted_value, accepted_gradient,
+#  accepted_directional, finite_seen, accepted, armijo, curvature, accepted_rate)
+_StrongWolfeCarry: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    PyTree[Any],
+    Array,
+    PyTree[Any],
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 
 class ArmijoLineSearch(StrictModule):
@@ -39,7 +68,7 @@ class ArmijoLineSearch(StrictModule):
         sufficient_decrease: float = 1e-4,
         maximum_steps: int = 20,
         minimum_rate: float = 1e-12,
-    ):
+    ) -> None:
         initial = float(initial_rate)
         reduction = float(contraction)
         decrease = float(sufficient_decrease)
@@ -87,7 +116,7 @@ class ArmijoResult(StrictModule):
         accepted: Array,
         directional_derivative: Array,
         finite_candidate_seen: Array,
-    ):
+    ) -> None:
         self.parameters = parameters
         self.value = jnp.asarray(value)
         self.rate = jnp.asarray(rate)
@@ -145,7 +174,7 @@ def armijo_backtracking(
         )
     )
 
-    def condition(carry):
+    def condition(carry: _ArmijoCarry) -> Array:
         iteration, rate, _, _, _, _, accepted, _ = carry
         return (
             (iteration < policy.maximum_steps)
@@ -155,7 +184,7 @@ def armijo_backtracking(
             & jnp.isfinite(rate)
         )
 
-    def body(carry):
+    def body(carry: _ArmijoCarry) -> _ArmijoCarry:
         iteration, rate, base, tangent, _, _, _, finite_seen = carry
         candidate = step(base, tangent, rate)
         candidate_value = jnp.asarray(value_function(candidate)).reshape(())
@@ -231,7 +260,7 @@ class StrongWolfeLineSearch(StrictModule):
         maximum_steps: int = 40,
         minimum_rate: float = 1e-12,
         maximum_rate: float = 1e6,
-    ):
+    ) -> None:
         initial = float(initial_rate)
         expansion_ = float(expansion)
         decrease = float(sufficient_decrease)
@@ -297,7 +326,7 @@ class StrongWolfeResult(StrictModule):
         sufficient_decrease_satisfied: Any,
         curvature_satisfied: Any,
         finite_candidate_seen: Any,
-    ):
+    ) -> None:
         self.parameters = parameters
         self.value = jnp.asarray(value)
         self.gradient = gradient
@@ -364,7 +393,7 @@ def strong_wolfe_line_search(
         )
     )
 
-    def condition(carry):
+    def condition(carry: _StrongWolfeCarry) -> Array:
         iteration, rate, *_, accepted, __, ___, ____ = carry
         return (
             (iteration < policy.maximum_steps)
@@ -375,7 +404,7 @@ def strong_wolfe_line_search(
             & (rate <= maximum_rate)
         )
 
-    def body(carry):
+    def body(carry: _StrongWolfeCarry) -> _StrongWolfeCarry:
         (
             iteration,
             rate,

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -24,7 +27,7 @@ from phydrax.algebraic._positive_dimensional import (
 )
 
 
-def _parabola_witness():
+def _parabola_witness() -> Any:
     return WitnessSet(
         "parabola-and-origin",
         1,
@@ -35,7 +38,7 @@ def _parabola_witness():
     )
 
 
-def _success_inventory(batch, targets, *, prefix="path"):
+def _success_inventory(batch: Any, targets: Any, *, prefix: Any = "path") -> Any:
     records = tuple(
         PathRecord(
             f"{prefix}:{source}",
@@ -54,7 +57,7 @@ def _success_inventory(batch, targets, *, prefix="path"):
     )
 
 
-def _swap_monodromy(witness):
+def _swap_monodromy(witness: Any) -> Any:
     inventory = _success_inventory("loop-0", (1, 0), prefix="loop-0")
     return MonodromyEvidence(
         witness.witness_id,
@@ -65,7 +68,7 @@ def _swap_monodromy(witness):
     )
 
 
-def _trace(witness, residual):
+def _trace(witness: Any, residual: Any) -> Any:
     records = tuple(
         PathRecord(
             f"trace:{sample}:{source}",
@@ -94,7 +97,7 @@ def _trace(witness, residual):
     )
 
 
-def _parabola_collection(witness):
+def _parabola_collection(witness: Any) -> Any:
     group = PolynomialVariableGroup("plane", (0, 1))
     return MultigradedWitnessCollection(
         witness.system_id,
@@ -104,7 +107,7 @@ def _parabola_collection(witness):
     )
 
 
-def test_isolated_point_and_parabola_form_dimension_indexed_witness_collection():
+def test_isolated_point_and_parabola_form_dimension_indexed_witness_collection() -> None:
     group = PolynomialVariableGroup("plane", (0, 1))
     isolated = WitnessSet(
         "parabola-and-origin",
@@ -134,7 +137,7 @@ def test_isolated_point_and_parabola_form_dimension_indexed_witness_collection()
     )
 
 
-def test_witness_and_multigraded_slice_validation_rejects_malformed_data():
+def test_witness_and_multigraded_slice_validation_rejects_malformed_data() -> None:
     with pytest.raises(ValueError, match="exactly d"):
         WitnessSet(
             "system",
@@ -175,7 +178,7 @@ def test_witness_and_multigraded_slice_validation_rejects_malformed_data():
         )
 
 
-def test_monodromy_validates_each_permutation_against_endpoint_inventory():
+def test_monodromy_validates_each_permutation_against_endpoint_inventory() -> None:
     witness = _parabola_witness()
     inventory = _success_inventory("loop-0", (1, 0), prefix="loop-0")
 
@@ -207,7 +210,7 @@ def test_monodromy_validates_each_permutation_against_endpoint_inventory():
         )
 
 
-def test_path_inventories_preserve_partial_failure_and_budget_exhaustion():
+def test_path_inventories_preserve_partial_failure_and_budget_exhaustion() -> None:
     partial = PathInventory(
         ("p0", "p1"),
         (
@@ -254,7 +257,7 @@ def test_path_inventories_preserve_partial_failure_and_budget_exhaustion():
         )
 
 
-def test_trace_failure_prevents_complete_decomposition_evidence_claim():
+def test_trace_failure_prevents_complete_decomposition_evidence_claim() -> None:
     witness = _parabola_witness()
     monodromy = _swap_monodromy(witness)
     trace = _trace(witness, 1.0e-3)
@@ -272,12 +275,14 @@ def test_trace_failure_prevents_complete_decomposition_evidence_claim():
     assert not result.evidence_complete
     assert "not-exact-irreducibility-or-completeness" in result.claim
     with pytest.raises(AttributeError):
+        # ty: ignore[unresolved-attribute]
         _ = result.complete
     with pytest.raises(AttributeError):
+        # ty: ignore[unresolved-attribute]
         _ = component.irreducible
 
 
-def test_passing_monodromy_and_trace_are_qualified_numerical_evidence_only():
+def test_passing_monodromy_and_trace_are_qualified_numerical_evidence_only() -> None:
     witness = _parabola_witness()
     monodromy = _swap_monodromy(witness)
     trace = _trace(witness, 0.0)
@@ -297,7 +302,7 @@ def test_passing_monodromy_and_trace_are_qualified_numerical_evidence_only():
     )
 
 
-def test_pseudo_witness_and_regeneration_contracts_validate_dimensions_and_ids():
+def test_pseudo_witness_and_regeneration_contracts_validate_dimensions_and_ids() -> None:
     pseudo = PseudoWitnessSet(
         "source-system",
         "parabola-map",

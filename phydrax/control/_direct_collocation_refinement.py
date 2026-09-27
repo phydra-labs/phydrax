@@ -12,13 +12,14 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..discretization import TemporalMesh
 from ..dynamics import StateLayout
 from ..optim import AbstractMinimizationMethod, Bounds, OptimizationTermination
+from ..typing import parse
 from ._direct_collocation import (
     compile_direct_collocation,
     DirectCollocationBounds,
@@ -121,9 +122,8 @@ class DirectCollocationRefinementPolicy(StrictModule):
         minimum_defect_reduction: float = 0.05,
         failure_mode: DirectCollocationRefinementFailureMode = "status",
         policy_id: str = "control:direct-collocation:refinement",
-    ):
-        if mode not in ("uniform", "bulk-defect"):
-            raise ValueError("mode must be 'uniform' or 'bulk-defect'.")
+    ) -> None:
+        mode = parse(mode, DirectCollocationRefinementMode, "mode")
         levels = int(maximum_levels)
         capacity = int(maximum_intervals)
         fraction = float(bulk_fraction)
@@ -134,8 +134,9 @@ class DirectCollocationRefinementPolicy(StrictModule):
             raise ValueError("bulk_fraction must lie in (0, 1].")
         if not 0.0 <= reduction <= 1.0:
             raise ValueError("minimum_defect_reduction must lie in [0, 1].")
-        if failure_mode not in ("status", "error"):
-            raise ValueError("failure_mode must be 'status' or 'error'.")
+        failure_mode = parse(
+            failure_mode, DirectCollocationRefinementFailureMode, "failure_mode"
+        )
         if not isinstance(policy_id, str) or not policy_id:
             raise ValueError("policy_id must be a non-empty string.")
         self.mode = mode

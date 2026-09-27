@@ -10,14 +10,15 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...typing import PRNGKey
 from .._keys import EvalKey
 from ._linear import Linear
 
@@ -35,7 +36,7 @@ class ManifoldWarpDiagnostics(StrictModule):
         tangent_displacement: Array,
         transported_points: Array,
         interpolation_weights: Array,
-    ):
+    ) -> None:
         self.tangent_displacement = jnp.asarray(tangent_displacement)
         self.transported_points = jnp.asarray(transported_points)
         self.interpolation_weights = jnp.asarray(interpolation_weights)
@@ -97,8 +98,8 @@ class ManifoldMultiheadWarp(StrictModule, ParameterOwner):
         conditioning_size: int = 0,
         displacement_width: int | None = None,
         kernel_scale: float = 0.2,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.ambient_dim = int(ambient_dim)
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)

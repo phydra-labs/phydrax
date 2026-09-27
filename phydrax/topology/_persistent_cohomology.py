@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -28,9 +29,9 @@ class TerminalCocycleAnnotation(StrictModule, NonTrainableState):
     def __init__(
         self,
         basis: FiniteFieldBasis,
-        essential_pair_indices,
+        essential_pair_indices: ArrayLike,
         /,
-    ):
+    ) -> None:
         indices = jnp.asarray(essential_pair_indices, dtype=jnp.int32)
         if indices.shape != (basis.generator_count,):
             raise ValueError(
@@ -56,7 +57,7 @@ class PersistentCohomologyResult(StrictModule, NonTrainableState):
         annotations: tuple[TerminalCocycleAnnotation, ...],
         field: PrimeField,
         /,
-    ):
+    ) -> None:
         self.persistence = persistence
         self.terminal_cocycles = terminal_cocycles
         self.annotations = annotations

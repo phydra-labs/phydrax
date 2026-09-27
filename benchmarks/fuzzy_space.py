@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 
@@ -13,7 +15,7 @@ from phydrax.operators.quantum.lattice import SU2SectorResourcePolicy
 from phydrax.tensor_network import su2_fusion
 
 
-def benchmark_case(twice_flux: int, statistics: str):
+def benchmark_case(twice_flux: int, statistics: str) -> Any:
     resources = SU2SectorResourcePolicy(
         maximum_product_dimension=10_000,
         maximum_sector_dimension=10_000,

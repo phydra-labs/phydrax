@@ -219,7 +219,7 @@ class OptimistixAdapter(BenchmarkAdapter):
         solver = _root_solver(prepared_state, optx, lx)
         problem = prepared_state.spec.problem
 
-        def solve_for_target(target):
+        def solve_for_target(target: Any) -> Any:
             solution = optx.root_find(
                 lambda value, expected: _jax_root_residual(problem, value, expected, jnp),
                 solver,
@@ -286,7 +286,7 @@ class OptimistixAdapter(BenchmarkAdapter):
         )
 
 
-def _root_solver(state: _OptimistixState, optx, lx):
+def _root_solver(state: _OptimistixState, optx: Any, lx: Any) -> Any:
     tolerance = state.spec.tolerances
     if state.spec.solver_mode == "default":
         return optx.Newton(
@@ -315,7 +315,7 @@ def _root_solver(state: _OptimistixState, optx, lx):
     )
 
 
-def _jax_root_residual(problem, value, target, jnp):
+def _jax_root_residual(problem: Any, value: Any, target: Any, jnp: Any) -> Any:
     if problem.root_kind == "separable":
         return value * value - target
     if problem.grid_spacing is None:

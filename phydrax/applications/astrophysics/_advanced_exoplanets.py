@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -32,7 +33,7 @@ class OblateOccultationPlan(StrictModule, NonTrainableState):
     angular_nodes: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, *, radial_order=96, angular_order=192):
+    def __init__(self, *, radial_order: int = 96, angular_order: int = 192) -> None:
         radial = GaussLegendreRule(int(radial_order)).data()
         angular = GaussLegendreRule(int(angular_order)).data()
         self.radial_nodes = 0.5 * (radial.nodes + 1.0)
@@ -103,7 +104,14 @@ class FiniteSourceMicrolensingPlan(StrictModule, NonTrainableState):
     source_radius: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, source_radius: ArrayLike, /, *, radial_order=48, angular_order=96):
+    def __init__(
+        self,
+        source_radius: ArrayLike,
+        /,
+        *,
+        radial_order: int = 48,
+        angular_order: int = 96,
+    ) -> None:
         radial = GaussLegendreRule(int(radial_order)).data()
         angular = GaussLegendreRule(int(angular_order)).data()
         self.radial_nodes = 0.5 * (radial.nodes + 1.0)

@@ -11,10 +11,18 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..ein import contract
-from ..linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
+from ..linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    LinearSolvePolicy,
+    LinearSolveResult,
+    LinearSystem,
+    solve,
+)
 from ._core import ElectrohydrodynamicLedger
 
 
@@ -133,7 +141,9 @@ class CoupledElectrohydrodynamicSolver:
             float(tolerance),
         )
 
-    def _fields(self, charge: Array, fixed_charge: Array, external_body_force: Array):
+    def _fields(
+        self, charge: Array, fixed_charge: Array, external_body_force: Array
+    ) -> tuple[LinearSolveResult, LinearSolveResult, Array, Array, Array, Array]:
         potential = solve(
             LinearSystem(DenseLinearOperator(self.poisson_operator)),
             charge + fixed_charge,

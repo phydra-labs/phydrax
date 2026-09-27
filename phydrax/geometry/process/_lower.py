@@ -8,15 +8,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
-from OCP.BRepBuilderAPI import (  # ty: ignore[unresolved-import]
+from OCP.BRepBuilderAPI import (
     BRepBuilderAPI_MakeFace,
     BRepBuilderAPI_MakePolygon,
 )
-from OCP.BRepCheck import BRepCheck_Analyzer  # ty: ignore[unresolved-import]
-from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism  # ty: ignore[unresolved-import]
-from OCP.gp import gp_Pnt, gp_Vec  # ty: ignore[unresolved-import]
+from OCP.BRepCheck import BRepCheck_Analyzer
+from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism
+from OCP.gp import gp_Pnt, gp_Vec
+
+
+if TYPE_CHECKING:
+    from OCP.TopoDS import TopoDS_Shape, TopoDS_Wire
 
 from ..._fingerprint import canonical_fingerprint
 from .._cad_revision import AssociationGraph, CADRevision
@@ -165,7 +170,7 @@ def _footprint_loops(footprint: PlanarMeshRegion, /) -> tuple[np.ndarray, ...]:
     return tuple(loops)
 
 
-def _wire(points: np.ndarray, z: float, /):
+def _wire(points: np.ndarray, z: float, /) -> TopoDS_Wire:
     builder = BRepBuilderAPI_MakePolygon()
     for x, y in points:
         builder.Add(gp_Pnt(float(x), float(y), z))
@@ -175,7 +180,9 @@ def _wire(points: np.ndarray, z: float, /):
     return builder.Wire()
 
 
-def _vertical_extrusion(footprint: PlanarMeshRegion, interval: ZInterval, /):
+def _vertical_extrusion(
+    footprint: PlanarMeshRegion, interval: ZInterval, /
+) -> TopoDS_Shape:
     loops = _footprint_loops(footprint)
     face_builder = BRepBuilderAPI_MakeFace(_wire(loops[0], interval.lower), True)
     for hole in loops[1:]:

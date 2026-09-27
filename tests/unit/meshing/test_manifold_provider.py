@@ -1,4 +1,5 @@
 from importlib.util import find_spec
+from typing import Any
 
 import numpy as np
 import pytest
@@ -18,7 +19,7 @@ pytestmark = [
 ]
 
 
-def _cube(offset):
+def _cube(offset: Any) -> Any:
     vertices = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -68,7 +69,7 @@ def _cube(offset):
         (SurfaceBooleanOperation.INTERSECTION, 0.5),
     ],
 )
-def test_boolean_preserves_expected_solid_volume(operation, volume):
+def test_boolean_preserves_expected_solid_volume(operation: Any, volume: Any) -> None:
     result = ManifoldProvider().execute((_cube((0, 0, 0)), _cube((0.5, 0, 0))), operation)
     faces = np.asarray(result.mesh.blocks[0].vertices)
     points = np.asarray(result.mesh.coordinates)[faces]
@@ -80,14 +81,14 @@ def test_boolean_preserves_expected_solid_volume(operation, volume):
     assert result.boundary is not None
 
 
-def test_empty_intersection_is_not_a_successful_mesh():
+def test_empty_intersection_is_not_a_successful_mesh() -> None:
     with pytest.raises(MeshingFailure, match="empty"):
         ManifoldProvider().execute(
             (_cube((0, 0, 0)), _cube((2, 0, 0))), SurfaceBooleanOperation.INTERSECTION
         )
 
 
-def _signed_volume(result):
+def _signed_volume(result: Any) -> Any:
     faces = np.asarray(result.mesh.blocks[0].vertices)
     points = np.asarray(result.mesh.coordinates)[faces]
     return np.sum(np.sum(points[:, 0] * np.cross(points[:, 1], points[:, 2]), axis=1)) / 6
@@ -101,7 +102,7 @@ def _signed_volume(result):
         (SurfaceBooleanOperation.INTERSECTION, 0.25),
     ],
 )
-def test_nary_boolean_combines_every_operand(operation, volume):
+def test_nary_boolean_combines_every_operand(operation: Any, volume: Any) -> None:
     operands = (_cube((0, 0, 0)), _cube((0.5, 0, 0)), _cube((0.75, 0, 0)))
 
     result = ManifoldProvider().execute(operands, operation)
@@ -110,7 +111,7 @@ def test_nary_boolean_combines_every_operand(operation, volume):
     assert result.audit.passed
 
 
-def test_vertex_properties_transfer_linearly_on_their_source_faces():
+def test_vertex_properties_transfer_linearly_on_their_source_faces() -> None:
     left, right = _cube((0, 0, 0)), _cube((0.5, 0.25, 0.25))
     # Affine fields are reproduced exactly by barycentric transfer, and differ
     # between operands so cut-curve corners must keep their own face's value.
@@ -124,8 +125,11 @@ def test_vertex_properties_transfer_linearly_on_their_source_faces():
     )
 
     (attribute,) = result.attributes
+    # ty: ignore[unresolved-attribute]
     faces = np.asarray(result.boundary.mesh.blocks[0].vertices)
+    # ty: ignore[unresolved-attribute]
     face_ids = np.asarray(result.boundary.mesh.blocks[0].global_ids)
+    # ty: ignore[unresolved-attribute]
     corners = np.asarray(result.boundary.mesh.coordinates)[faces][
         np.argsort(face_ids, kind="stable")
     ]
@@ -158,7 +162,7 @@ def test_vertex_properties_transfer_linearly_on_their_source_faces():
     assert achieved[residual] <= 1e-8
 
 
-def test_vertex_properties_require_one_array_per_operand():
+def test_vertex_properties_require_one_array_per_operand() -> None:
     left, right = _cube((0, 0, 0)), _cube((0.5, 0, 0))
     with pytest.raises(ValueError, match="one array per operand"):
         ManifoldProvider().execute(

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -7,7 +9,7 @@ import phydrax as phx
 cosmology = phx.applications.cosmology
 
 
-def _artifact(kind):
+def _artifact(kind: Any) -> Any:
     return cosmology.ScientificArtifactEnvelope(
         artifact_kind=kind,
         content_digest=f"{kind}-fixture",
@@ -20,7 +22,7 @@ def _artifact(kind):
     )
 
 
-def _profile():
+def _profile() -> Any:
     return cosmology.ParityProfile(
         name="restricted-scalar-flat",
         equations=("Einstein-Boltzmann-linear",),
@@ -34,7 +36,7 @@ def _profile():
     )
 
 
-def test_native_thermodynamics_and_scalar_transfer_are_finite():
+def test_native_thermodynamics_and_scalar_transfer_are_finite() -> None:
     scale = jnp.linspace(0.1, 1.0, 16)
     rates = cosmology.ThermodynamicsRateTable(
         scale,
@@ -80,7 +82,7 @@ def test_native_thermodynamics_and_scalar_transfer_are_finite():
     assert set(np.asarray(result.transition_phases).tolist()) == {0, 1, 2}
 
 
-def test_flat_radial_and_line_of_sight_projection():
+def test_flat_radial_and_line_of_sight_projection() -> None:
     radial = cosmology.FlatRadialKernelPlan(6)
     values = radial.evaluate(jnp.asarray([0.0, 1.0]))
     np.testing.assert_allclose(values[0, 0], 1.0)
@@ -88,6 +90,7 @@ def test_flat_radial_and_line_of_sight_projection():
     time = jnp.linspace(0.0, 1.0, 32)
     k = jnp.geomspace(0.1, 2.0, 24)
     source = jnp.exp(-(((time[None, :] - 0.5) / 0.1) ** 2)) * jnp.ones((k.size, 1))
+    # ty: ignore[invalid-argument-type]
     result = cosmology.LineOfSightSpectraPlan(radial, [2, 3, 4]).project(
         time, k, source, 2.1e-9 * jnp.ones_like(k)
     )
@@ -95,11 +98,13 @@ def test_flat_radial_and_line_of_sight_projection():
     assert jnp.all(result.spectra >= 0.0)
 
 
-def test_parity_evidence_enforces_metric_limits():
+def test_parity_evidence_enforces_metric_limits() -> None:
     profile = _profile()
     evidence = cosmology.ParityEvidence(
         profile,
+        # ty: ignore[invalid-argument-type]
         [1.0e-5, 2.0e-5],
+        # ty: ignore[invalid-argument-type]
         [2.0e-5, 2.0e-5],
         _artifact("parity-corpus"),
     )

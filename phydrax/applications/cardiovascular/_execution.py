@@ -16,14 +16,15 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Generic, TypeAlias, TypeVar
+from typing import Any, cast, Generic, TypeAlias, TypedDict, TypeVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from ..._array_archive import ArrayArchiveCorruptionError, ArrayArchiveLimits
 from ..._execution_pool import (
@@ -187,7 +188,7 @@ class CardiovascularRuntimeError(RuntimeError):
         phase: str,
         run_id: str | None = None,
         entity_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         status_ = CardiovascularRuntimeStatus(status)
         if status_ is CardiovascularRuntimeStatus.SUCCESS:
             raise ValueError("CardiovascularRuntimeError requires a failure status.")
@@ -223,7 +224,7 @@ class CardiovascularCapacityManifest(StrictModule, NonTrainableState):
         maximum_scheduled_steps: int,
         maximum_events: int,
         maximum_partitions: int,
-    ):
+    ) -> None:
         positive = (
             _positive_integer(maximum_cohort_cases, "maximum_cohort_cases"),
             _positive_integer(maximum_state_values, "maximum_state_values"),
@@ -283,7 +284,7 @@ class CardiovascularCapacityRequest(StrictModule, NonTrainableState):
         scheduled_steps: int = 0,
         events: int = 0,
         partitions: int = 0,
-    ):
+    ) -> None:
         values = tuple(
             _nonnegative_integer(value, name)
             for value, name in (
@@ -329,7 +330,7 @@ class CardiovascularCapacityAdmission(StrictModule, NonTrainableState):
         eligible: bool,
         exceeded_resources: Sequence[str],
         /,
-    ):
+    ) -> None:
         capacity = _identifier(capacity_id, "capacity_id")
         request = _identifier(request_id, "request_id")
         exceeded = tuple(sorted(_identifier(v, "resource") for v in exceeded_resources))
@@ -416,7 +417,7 @@ class CardiovascularSerialExecution(StrictModule, NonTrainableState):
     device_index: int = eqx.field(static=True)
     route_id: str = eqx.field(static=True)
 
-    def __init__(self, device_index: int = 0, /):
+    def __init__(self, device_index: int = 0, /) -> None:
         index = _nonnegative_integer(device_index, "device_index")
         self.device_index = index
         self.route_id = canonical_fingerprint(
@@ -430,7 +431,7 @@ class CardiovascularCohortExecution(StrictModule, NonTrainableState):
     lane_count: int = eqx.field(static=True)
     route_id: str = eqx.field(static=True)
 
-    def __init__(self, lane_count: int, /):
+    def __init__(self, lane_count: int, /) -> None:
         lanes = _positive_integer(lane_count, "lane_count")
         self.lane_count = lanes
         self.route_id = canonical_fingerprint(
@@ -444,7 +445,7 @@ class CardiovascularDistributedReferenceExecution(StrictModule, NonTrainableStat
     partition_count: int = eqx.field(static=True)
     route_id: str = eqx.field(static=True)
 
-    def __init__(self, partition_count: int, /):
+    def __init__(self, partition_count: int, /) -> None:
         count = _positive_integer(partition_count, "partition_count")
         self.partition_count = count
         self.route_id = canonical_fingerprint(
@@ -470,7 +471,7 @@ class CardiovascularDistributedCollectiveExecution(StrictModule, NonTrainableSta
         /,
         *,
         process_count: int = 1,
-    ):
+    ) -> None:
         count = _positive_integer(partition_count, "partition_count")
         axis = _identifier(axis_name, "axis_name")
         processes = _positive_integer(process_count, "process_count")
@@ -523,7 +524,7 @@ class CardiovascularExecutionManifest(StrictModule, NonTrainableState):
         backend: str,
         capacity: CardiovascularCapacityManifest,
         route: CardiovascularExecutionRoute,
-    ):
+    ) -> None:
         identifiers = tuple(
             _identifier(value, name)
             for value, name in (
@@ -599,7 +600,7 @@ class CardiovascularSingleDeviceEvidence(StrictModule, NonTrainableState):
         device_id: int,
         process_index: int,
         visible_backend_devices: int,
-    ):
+    ) -> None:
         execution = _identifier(execution_manifest_id, "execution_manifest_id")
         reason_ = _identifier(reason, "reason")
         platform_ = _identifier(platform, "platform")
@@ -713,7 +714,7 @@ class CardiovascularCheckpointRecord(StrictModule, NonTrainableState):
         archive: LifecycleArchive,
         execution_manifest_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(archive, LifecycleArchive):
             raise TypeError("archive must be LifecycleArchive.")
         manifest = archive.manifest
@@ -749,7 +750,7 @@ class CardiovascularLifecycleCheckpointCodec(StrictModule, NonTrainableState):
     execution: CardiovascularExecutionManifest
     codec_id: str = eqx.field(static=True)
 
-    def __init__(self, execution: CardiovascularExecutionManifest, /):
+    def __init__(self, execution: CardiovascularExecutionManifest, /) -> None:
         if not isinstance(execution, CardiovascularExecutionManifest):
             raise TypeError("execution must be CardiovascularExecutionManifest.")
         self.execution = execution
@@ -960,7 +961,7 @@ class PreparedCardiovascularCohort(StrictModule, NonTrainableState):
         lane_count: int,
         signature: PoolExecutionSignature,
         /,
-    ):
+    ) -> None:
         execution = _identifier(execution_manifest_id, "execution_manifest_id")
         cases = tuple(sorted(_identifier(value, "case_id") for value in case_ids))
         lanes = _positive_integer(lane_count, "lane_count")
@@ -999,7 +1000,7 @@ class CardiovascularCohortCaseCandidate(StrictModule, Generic[Value]):
         *,
         accepted: bool = True,
         status: CardiovascularRuntimeStatus = CardiovascularRuntimeStatus.SUCCESS,
-    ):
+    ) -> None:
         accepted_ = bool(accepted)
         status_ = CardiovascularRuntimeStatus(status)
         if accepted_ != (status_ is CardiovascularRuntimeStatus.SUCCESS):
@@ -1029,7 +1030,7 @@ class CardiovascularCohortEvidence(StrictModule, NonTrainableState):
         prepared_id: str,
         status: CardiovascularRuntimeStatus,
         /,
-    ):
+    ) -> None:
         keys = jnp.asarray(semantic_keys, dtype=jnp.uint32)
         accepted_ = jnp.asarray(accepted, dtype=jnp.bool_)
         waves = jnp.asarray(completion_wave, dtype=jnp.int32)
@@ -1114,6 +1115,20 @@ def prepare_cardiovascular_cohort(
 # Semantic RNG family of cohort cases: a case key depends only on the root key
 # and the stable case ID, never on cohort membership, order, or lane placement.
 _COHORT_CASE_ADDRESS = SampleAddress("cardiovascular", "cohort", role="case")
+
+# Operator/transposed actions, reconstructed guess/rhs, owned solution, residual,
+# success flag and iteration count from one collective shard.
+_CollectiveLocalResult: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array
+]
+
+
+class _CapabilityArguments(TypedDict):
+    backend: str
+    requested_device_count: int
+    available_device_count: int
+    requested_process_count: int
+    available_process_count: int
 
 
 def execute_cardiovascular_cohort(
@@ -1217,7 +1232,7 @@ class CardiovascularDistributedCapability(StrictModule, NonTrainableState):
         device_process_indices: Sequence[int] = (),
         device_mesh_id: str | None = None,
         transport_id: str | None = None,
-    ):
+    ) -> None:
         reference = bool(reference_eligible)
         transport = bool(transport_eligible)
         reason_ = _identifier(reason, "reason")
@@ -1331,7 +1346,7 @@ class CardiovascularDistributedContract(StrictModule, NonTrainableState):
         ),
         capability: CardiovascularDistributedCapability,
         /,
-    ):
+    ) -> None:
         solver_policy = _identifier(solver_policy_id, "solver_policy_id")
         execution = _identifier(execution_manifest_id, "execution_manifest_id")
         if not isinstance(phase_plan, FiniteElementDistributedPhasePlan):
@@ -1437,7 +1452,7 @@ def prepare_cardiovascular_distributed_execution(
     available_devices = (
         len(local_devices) if requested_processes == 1 else len(backend_devices)
     )
-    capability_arguments = {
+    capability_arguments: _CapabilityArguments = {
         "backend": execution.backend,
         "requested_device_count": route.partition_count,
         "available_device_count": available_devices,
@@ -1547,7 +1562,7 @@ class CardiovascularDistributedReferenceEvidence(StrictModule, NonTrainableState
         residual_norm: ArrayLike,
         contract_id: str,
         /,
-    ):
+    ) -> None:
         partitions = jnp.asarray(partition_values)
         serial = jnp.asarray(serial_reference)
         distributed = jnp.asarray(distributed_reference)
@@ -1655,7 +1670,7 @@ class CardiovascularDistributedSolverState(StrictModule, NonTrainableState):
         device_mesh_id: str,
         transport_id: str,
         checkpoint_id: str | None = None,
-    ):
+    ) -> None:
         solution = jnp.asarray(owned_solution)
         right_hand_side = jnp.asarray(owned_right_hand_side)
         identifiers = jnp.asarray(owned_dof_ids)
@@ -1784,7 +1799,7 @@ class CardiovascularDistributedCollectiveEvidence(StrictModule, NonTrainableStat
         *,
         owned_value_count: int,
         halo_value_count: int,
-    ):
+    ) -> None:
         if not isinstance(solver_state, CardiovascularDistributedSolverState):
             raise TypeError("solver_state must be CardiovascularDistributedSolverState.")
         serial = jnp.asarray(serial_operator_action)
@@ -1888,7 +1903,7 @@ class _OwnedShardedFiniteElementOperator(AbstractLinearOperator):
         dof_owner: ArrayLike,
         axis_name: str,
         /,
-    ):
+    ) -> None:
         owners = jnp.asarray(dof_owner)
         axis = _identifier(axis_name, "axis_name")
         collective = JaxCollectiveBackend(axis)
@@ -1975,8 +1990,8 @@ def execute_cardiovascular_distributed_collective(
             phase="distributed-collective",
             entity_ids=(contract.contract_id, capability.capability_id),
         )
-    _validate_finite_element_operator(dof_map, finite_element_operator)
-    mesh = _cardiovascular_device_mesh(contract)
+    source, target = _validate_finite_element_operator(dof_map, finite_element_operator)
+    mesh = _cardiovascular_device_mesh(contract, contract.route)
     owners, owned_ids, owned_valid, halo_ids, halo_valid = _distributed_dof_layout(
         contract, dof_map
     )
@@ -2057,15 +2072,15 @@ def execute_cardiovascular_distributed_collective(
     owned_spec = PartitionSpec(axis_name, *(None for _ in range(owned_guess.ndim - 1)))
     collective = JaxCollectiveBackend(axis_name)
 
-    def execute_local(local_guess, local_rhs):
+    def execute_local(local_guess: Array, local_rhs: Array) -> _CollectiveLocalResult:
         part = jax.lax.axis_index(axis_name)
         ids = owned_ids_array[part]
         valid = owned_valid_array[part]
         reconstructed_guess = collective.sum(
-            _scatter_owned(local_guess[0], ids, valid, finite_element_operator.source)
+            _scatter_owned(local_guess[0], ids, valid, source)
         )
         reconstructed_rhs = collective.sum(
-            _scatter_owned(local_rhs[0], ids, valid, finite_element_operator.target)
+            _scatter_owned(local_rhs[0], ids, valid, target)
         )
         operator_action = distributed_operator.mv(reconstructed_guess)
         transpose_action = distributed_operator.transpose_mv(reconstructed_rhs)
@@ -2125,13 +2140,13 @@ def execute_cardiovascular_distributed_collective(
         owned_solution,
         owned_ids,
         owned_valid,
-        finite_element_operator.source,
+        source,
     )
     original_guess = _unpack_owned_values(
         owned_guess,
         owned_ids,
         owned_valid,
-        finite_element_operator.source,
+        source,
     )
     solver_state = CardiovascularDistributedSolverState(
         owned_solution,
@@ -2249,7 +2264,8 @@ def read_cardiovascular_distributed_solver_checkpoint(
         "solver/iteration_count",
         "solver/successful",
     )
-    manifest = record.archive.manifest
+    # CardiovascularCheckpointRecord only admits complete CheckpointManifest archives.
+    manifest = cast(CheckpointManifest, record.archive.manifest)
     shards = {shard.shard_id: shard for shard in manifest.shards}
     if (
         set(record.arrays) != set(names)
@@ -2271,8 +2287,10 @@ def read_cardiovascular_distributed_solver_checkpoint(
             phase="distributed-checkpoint-read",
             entity_ids=(contract.contract_id, record.checkpoint_id),
         )
-    mesh = _cardiovascular_device_mesh(contract)
-    axis_name = contract.route.axis_name
+    # Solver states bind their contract, and only collective routes produce them.
+    route = cast(CardiovascularDistributedCollectiveExecution, contract.route)
+    mesh = _cardiovascular_device_mesh(contract, route)
+    axis_name = route.axis_name
     solution = np.asarray(record.arrays["solver/owned_solution"])
     right_hand_side = np.asarray(record.arrays["solver/owned_right_hand_side"])
     sharding = NamedSharding(
@@ -2303,7 +2321,11 @@ def read_cardiovascular_distributed_solver_checkpoint(
     )
 
 
-def _cardiovascular_device_mesh(contract: CardiovascularDistributedContract, /) -> Mesh:
+def _cardiovascular_device_mesh(
+    contract: CardiovascularDistributedContract,
+    route: CardiovascularDistributedCollectiveExecution,
+    /,
+) -> Mesh:
     capability = contract.capability
     devices = {
         (int(device.process_index), int(device.id)): device
@@ -2317,9 +2339,7 @@ def _cardiovascular_device_mesh(contract: CardiovascularDistributedContract, /) 
             strict=True,
         )
     )
-    if len(keys) != contract.route.partition_count or any(
-        key not in devices for key in keys
-    ):
+    if len(keys) != route.partition_count or any(key not in devices for key in keys):
         raise CardiovascularRuntimeError(
             CardiovascularRuntimeStatus.DISTRIBUTED_INELIGIBLE,
             phase="distributed-device-mesh",
@@ -2327,7 +2347,7 @@ def _cardiovascular_device_mesh(contract: CardiovascularDistributedContract, /) 
         )
     return Mesh(
         np.asarray(tuple(devices[key] for key in keys), dtype=object),
-        (contract.route.axis_name,),
+        (route.axis_name,),
     )
 
 
@@ -2335,7 +2355,7 @@ def _validate_finite_element_operator(
     dof_map: FiniteElementDofMap,
     operator: AbstractLinearOperator,
     /,
-) -> None:
+) -> tuple[ArraySpace, ArraySpace]:
     expected = (dof_map.global_dof_count,) + dof_map.component_shape
     if (
         not isinstance(operator.source, ArraySpace)
@@ -2349,6 +2369,7 @@ def _validate_finite_element_operator(
             "Distributed FEM execution requires one unbatched square ArraySpace "
             "operator matching the supplied finite-element DOF map with transpose."
         )
+    return operator.source, operator.target
 
 
 def _distributed_dof_layout(
@@ -2558,7 +2579,7 @@ class CardiovascularSaltationPolicy(StrictModule, NonTrainableState):
     minimum_absolute_slope_per_ms: float = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, guard_unit: str, minimum_absolute_slope_per_ms: float, /):
+    def __init__(self, guard_unit: str, minimum_absolute_slope_per_ms: float, /) -> None:
         unit = _identifier(guard_unit, "guard_unit")
         slope = float(minimum_absolute_slope_per_ms)
         if not math.isfinite(slope) or slope <= 0.0:
@@ -2593,7 +2614,7 @@ class CardiovascularEventSpec(StrictModule, NonTrainableState):
         priority: int = 0,
         terminal: bool = False,
         saltation_policy: CardiovascularSaltationPolicy | None = None,
-    ):
+    ) -> None:
         source = _identifier(source_id, "source_id")
         direction_ = int(direction)
         priority_ = int(priority)
@@ -2647,7 +2668,7 @@ class CardiovascularMultiratePlan(StrictModule, NonTrainableState):
         events: Sequence[CardiovascularEventSpec] = (),
         localization_iterations: int = 40,
         localization_tolerance_ms: float = 1.0e-9,
-    ):
+    ) -> None:
         subsystems = tuple(_identifier(v, "subsystem_id") for v in subsystem_ids)
         rates = tuple(
             _positive_integer(v, "substeps_per_macro") for v in substeps_per_macro
@@ -2714,7 +2735,7 @@ class PreparedCardiovascularScheduler(StrictModule, NonTrainableState):
         event_capacity: int,
         state_value_capacity: int,
         /,
-    ):
+    ) -> None:
         execution = _identifier(execution_manifest_id, "execution_manifest_id")
         if not isinstance(plan, CardiovascularMultiratePlan):
             raise TypeError("plan must be CardiovascularMultiratePlan.")
@@ -2769,7 +2790,7 @@ class CardiovascularStepCandidate(StrictModule, Generic[State]):
         *,
         accepted: bool = True,
         status: CardiovascularRuntimeStatus = CardiovascularRuntimeStatus.SUCCESS,
-    ):
+    ) -> None:
         accepted_ = bool(accepted)
         status_ = CardiovascularRuntimeStatus(status)
         if accepted_ != (status_ is CardiovascularRuntimeStatus.SUCCESS):
@@ -2820,7 +2841,7 @@ class CardiovascularScheduleCandidate(StrictModule, Generic[State]):
         proposed_state: State,
         evidence: CardiovascularScheduleEvidence,
         /,
-    ):
+    ) -> None:
         if not isinstance(evidence, CardiovascularScheduleEvidence):
             raise TypeError("evidence must be CardiovascularScheduleEvidence.")
         if jax.tree_util.tree_structure(initial_state) != jax.tree_util.tree_structure(
@@ -2855,7 +2876,7 @@ class CardiovascularScheduleCommit(StrictModule, Generic[State]):
         evidence: CardiovascularScheduleEvidence,
         candidate_id: str,
         /,
-    ):
+    ) -> None:
         committed_ = bool(committed)
         status_ = CardiovascularRuntimeStatus(status)
         if committed_ != (status_ is CardiovascularRuntimeStatus.SUCCESS):
@@ -2889,7 +2910,7 @@ class CardiovascularReplayEvidence(StrictModule, NonTrainableState):
         reference_evidence_id: str,
         replay_evidence_id: str,
         /,
-    ):
+    ) -> None:
         equivalent_ = bool(equivalent)
         reference = _identifier(reference_evidence_id, "reference_evidence_id")
         replay = _identifier(replay_evidence_id, "replay_evidence_id")

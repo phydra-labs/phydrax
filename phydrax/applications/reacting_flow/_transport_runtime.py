@@ -5,11 +5,13 @@
 from __future__ import annotations
 
 from math import isfinite
+from typing import cast
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -62,7 +64,7 @@ class TransportPropertyReusePlan(StrictModule, NonTrainableState):
         logarithmic_sensitivities: tuple[tuple[float, float], ...],
         maximum_relative_errors: tuple[float, float, float],
         maximum_reuse_count: int,
-    ):
+    ) -> None:
         if not isinstance(properties, AbstractGasTransportPropertyPlan):
             raise TypeError("properties must implement AbstractGasTransportPropertyPlan.")
         temperature = tuple(float(value) for value in temperature_bounds)
@@ -95,7 +97,10 @@ class TransportPropertyReusePlan(StrictModule, NonTrainableState):
         self.properties = properties
         self.temperature_bounds = temperature
         self.pressure_bounds = pressure
-        self.logarithmic_sensitivities = sensitivities
+        # Every sensitivity row is validated above to hold exactly two values.
+        self.logarithmic_sensitivities = cast(
+            tuple[tuple[float, float], ...], sensitivities
+        )
         self.maximum_relative_errors = errors
         self.maximum_reuse_count = count
         self.plan_id = canonical_fingerprint(
@@ -192,7 +197,7 @@ class TransportPropertyReusePlan(StrictModule, NonTrainableState):
         )
         reuse_all = reused[0] & reused[1] & reused[2]
 
-        def evaluate_fresh(_):
+        def evaluate_fresh(_: None) -> GasTransportPropertyEvaluation:
             return self.properties.evaluate(temperature_, pressure_)
 
         fresh = jax.lax.cond(

@@ -11,9 +11,10 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, Key
+from jax import Array
 
-from ..._mass import ExactMass, product_mass, scale_mass, sum_mass
+from ..._mass import ExactMass, Mass, product_mass, scale_mass, sum_mass
+from ...typing import PRNGKey
 from .._atlas import BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
@@ -92,7 +93,7 @@ class Extrusion(GeometrySource):
         height: Any,
         *,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(profile, GeometrySource):
             raise TypeError("Extrusion.profile must be a GeometrySource.")
         height_host = np.asarray(height, dtype=np.float64)
@@ -124,7 +125,7 @@ class _ExtrusionKernel(GeometryKernel):
     profile: GeometryKernel
     height: ParameterBinding = eqx.field(static=True)
 
-    def __init__(self, profile: GeometryKernel, height: ParameterBinding):
+    def __init__(self, profile: GeometryKernel, height: ParameterBinding) -> None:
         self.profile = profile
         self.height = height
 
@@ -168,7 +169,7 @@ class _ExtrusionKernel(GeometryKernel):
     def field_certificate(self) -> FieldCertificate:
         return _extrusion_certificate(self.profile.field_certificate)
 
-    def geometry_validity(self, state, /):
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
         height = self.height.read(state)
         local = GeometryValidityEvidence(
             finite=jnp.isfinite(height),
@@ -206,7 +207,7 @@ class _ExtrusionKernel(GeometryKernel):
         leading = points_.shape[:-1]
         flat = points_.reshape((-1, self.ambient_dimension))
 
-        def field(point):
+        def field(point: Array) -> Array:
             return self.boundary_field(state, point[None, :])[0]
 
         gradient = jax.vmap(jax.grad(field))(flat)
@@ -233,7 +234,7 @@ class _ExtrusionKernel(GeometryKernel):
             state
         ) * self._height(state)
 
-    def interior_mass(self, state: DesignState, /):
+    def interior_mass(self, state: DesignState, /) -> Mass:
         return product_mass(
             (
                 self.profile.interior_mass(state),
@@ -241,7 +242,7 @@ class _ExtrusionKernel(GeometryKernel):
             )
         )
 
-    def boundary_mass(self, state: DesignState, /):
+    def boundary_mass(self, state: DesignState, /) -> Mass:
         return sum_mass(
             (
                 scale_mass(
@@ -263,7 +264,7 @@ class _ExtrusionKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         profile_key, axial_key = jr.split(key)
@@ -295,7 +296,7 @@ class _ExtrusionKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> SamplingResult:
         side_key, cap_key, axial_key, choose_key, sign_key = jr.split(key, 5)
         count = int(num_points)
@@ -348,7 +349,7 @@ class Revolution(GeometrySource):
         profile: GeometrySource,
         *,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(profile, GeometrySource):
             raise TypeError("Revolution.profile must be a GeometrySource.")
         self.profile = profile
@@ -368,7 +369,7 @@ class Revolution(GeometrySource):
 class _RevolutionKernel(GeometryKernel):
     profile: GeometryKernel
 
-    def __init__(self, profile: GeometryKernel):
+    def __init__(self, profile: GeometryKernel) -> None:
         self.profile = profile
 
     @property
@@ -397,7 +398,7 @@ class _RevolutionKernel(GeometryKernel):
     def field_certificate(self) -> FieldCertificate:
         return _revolution_certificate(self.profile.field_certificate)
 
-    def geometry_validity(self, state, /):
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
         bounds = self.profile.bounds(state)
         radial_margin = bounds[0, 0]
         local = GeometryValidityEvidence(
@@ -429,7 +430,7 @@ class _RevolutionKernel(GeometryKernel):
         leading = points_.shape[:-1]
         flat = points_.reshape((-1, 3))
 
-        def field(point):
+        def field(point: Array) -> Array:
             return self.boundary_field(state, point[None, :])[0]
 
         gradient = jax.vmap(jax.grad(field))(flat)
@@ -468,7 +469,7 @@ class _RevolutionKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         del state, num_points, key, plan
@@ -482,7 +483,7 @@ class _RevolutionKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> SamplingResult:
         del state, num_points, key
         raise NotImplementedError(

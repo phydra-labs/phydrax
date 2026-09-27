@@ -7,15 +7,18 @@ from __future__ import annotations
 import abc
 import math
 from enum import IntEnum
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import parse
 from .._policies import FailurePolicy
+from ._problems import EigenproblemLike
 from ._self_adjoint_spectrum import (
     prepare_self_adjoint_spectrum,
     PreparedSelfAdjointSpectrum,
@@ -61,7 +64,7 @@ class PolynomialSpectralFunction(AbstractSpectralFunction):
 
     coefficients: Array
 
-    def __init__(self, coefficients: ArrayLike, /):
+    def __init__(self, coefficients: ArrayLike, /) -> None:
         values = jnp.asarray(coefficients)
         if values.ndim != 1 or values.shape[0] == 0:
             raise ValueError("coefficients must be a non-empty rank-one array.")
@@ -110,7 +113,7 @@ class FermiDiracSpectralFunction(AbstractSpectralFunction):
         chemical_potential: ArrayLike,
         temperature: ArrayLike,
         /,
-    ):
+    ) -> None:
         chemical = _real_scalar(chemical_potential, "chemical_potential")
         thermal = _real_scalar(temperature, "temperature")
         if chemical.dtype != thermal.dtype:
@@ -148,7 +151,7 @@ class FermiDiracSpectralFunction(AbstractSpectralFunction):
 class ExponentialSpectralFunction(AbstractSpectralFunction):
     """Matrix exponential spectral function."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.function_id = "exponential"
 
     def value(self, eigenvalue: ArrayLike, /) -> Array:
@@ -167,7 +170,7 @@ class ExponentialSpectralFunction(AbstractSpectralFunction):
 class LogarithmSpectralFunction(AbstractSpectralFunction):
     """Principal real matrix logarithm on certified positive spectra."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.function_id = "logarithm"
 
     def value(self, eigenvalue: ArrayLike, /) -> Array:
@@ -190,7 +193,7 @@ class LogarithmSpectralFunction(AbstractSpectralFunction):
 class SquareRootSpectralFunction(AbstractSpectralFunction):
     """Principal real square root on certified positive spectra."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.function_id = "square-root"
 
     def value(self, eigenvalue: ArrayLike, /) -> Array:
@@ -213,7 +216,7 @@ class SquareRootSpectralFunction(AbstractSpectralFunction):
 class InverseSquareRootSpectralFunction(AbstractSpectralFunction):
     """Inverse principal square root on certified positive spectra."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.function_id = "inverse-square-root"
 
     def value(self, eigenvalue: ArrayLike, /) -> Array:
@@ -240,7 +243,7 @@ class FractionalPowerSpectralFunction(AbstractSpectralFunction):
     power: float = eqx.field(static=True)
     integer_power: bool = eqx.field(static=True)
 
-    def __init__(self, power: float, /):
+    def __init__(self, power: float, /) -> None:
         exponent = float(power)
         if not math.isfinite(exponent):
             raise ValueError("power must be finite.")
@@ -275,7 +278,7 @@ class ResolventSpectralFunction(AbstractSpectralFunction):
 
     shift: Array
 
-    def __init__(self, shift: ArrayLike, /):
+    def __init__(self, shift: ArrayLike, /) -> None:
         value = _real_scalar(shift, "shift")
         self.shift = value
         self.function_id = f"resolvent:{value.dtype}"
@@ -324,15 +327,16 @@ class SelfAdjointSpectralOperatorPolicy(StrictModule):
         absolute_tolerance: float = 1e-10,
         differentiation: SpectralFunctionDifferentiation = "none",
         failure: FailurePolicy | None = None,
-    ):
+    ) -> None:
         relative = float(relative_tolerance)
         absolute = float(absolute_tolerance)
         if any(not math.isfinite(value) or value < 0.0 for value in (relative, absolute)):
             raise ValueError(
                 "Spectral operator tolerances must be finite and non-negative."
             )
-        if differentiation not in ("none", "frechet"):
-            raise ValueError("differentiation must be 'none' or 'frechet'.")
+        differentiation = parse(
+            differentiation, SpectralFunctionDifferentiation, "differentiation"
+        )
         failure_ = FailurePolicy() if failure is None else failure
         if not isinstance(failure_, FailurePolicy):
             raise TypeError("failure must be a FailurePolicy or None.")
@@ -388,7 +392,7 @@ class SelfAdjointSpectralOperator(StrictModule):
 
 
 def self_adjoint_spectral_operator(
-    spectrum_or_problem,
+    spectrum_or_problem: PreparedSelfAdjointSpectrum | EigenproblemLike,
     function: AbstractSpectralFunction,
     /,
     *,
@@ -477,14 +481,14 @@ def self_adjoint_spectral_operator(
 
 @eqx.filter_custom_jvp
 def _attach_spectral_operator_derivative(
-    problem,
-    function,
-    operator,
-    eigenvalues,
-    eigenvectors,
-    inverse_basis,
-    derivative_valid,
-):
+    problem: EigenproblemLike,
+    function: AbstractSpectralFunction,
+    operator: Array,
+    eigenvalues: Array,
+    eigenvectors: Array,
+    inverse_basis: Array,
+    derivative_valid: Array,
+) -> Array:
     del (
         problem,
         function,
@@ -497,7 +501,26 @@ def _attach_spectral_operator_derivative(
 
 
 @_attach_spectral_operator_derivative.def_jvp
-def _spectral_operator_jvp(primals, tangents):
+def _spectral_operator_jvp(
+    primals: tuple[
+        EigenproblemLike,
+        AbstractSpectralFunction,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+    ],
+    tangents: tuple[
+        Any,
+        Any,
+        Array | None,
+        Array | None,
+        Array | None,
+        Array | None,
+        Array | None,
+    ],
+) -> tuple[Array, Array]:
     (
         problem,
         function,
@@ -523,16 +546,16 @@ def _spectral_operator_jvp(primals, tangents):
 
 @eqx.filter_custom_jvp
 def _attach_spectral_density_derivative(
-    problem,
-    function,
-    density,
-    operator,
-    paired_metric,
-    eigenvalues,
-    eigenvectors,
-    inverse_basis,
-    derivative_valid,
-):
+    problem: EigenproblemLike,
+    function: AbstractSpectralFunction,
+    density: Array,
+    operator: Array,
+    paired_metric: Array,
+    eigenvalues: Array,
+    eigenvectors: Array,
+    inverse_basis: Array,
+    derivative_valid: Array,
+) -> Array:
     del (
         problem,
         function,
@@ -547,7 +570,30 @@ def _attach_spectral_density_derivative(
 
 
 @_attach_spectral_density_derivative.def_jvp
-def _spectral_density_jvp(primals, tangents):
+def _spectral_density_jvp(
+    primals: tuple[
+        EigenproblemLike,
+        AbstractSpectralFunction,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+    ],
+    tangents: tuple[
+        Any,
+        Any,
+        Array | None,
+        Array | None,
+        Array | None,
+        Array | None,
+        Array | None,
+        Array | None,
+        Array | None,
+    ],
+) -> tuple[Array, Array]:
     (
         problem,
         function,
@@ -583,14 +629,14 @@ def _spectral_density_jvp(primals, tangents):
 
 
 def _spectral_operator_tangent(
-    problem,
-    problem_tangent,
-    function,
-    function_tangent,
-    eigenvalues,
-    eigenvectors,
-    inverse_basis,
-):
+    problem: EigenproblemLike,
+    problem_tangent: Any,
+    function: AbstractSpectralFunction,
+    function_tangent: Any,
+    eigenvalues: Array,
+    eigenvectors: Array,
+    inverse_basis: Array,
+) -> tuple[Array, Array, Array]:
     perturbation, paired_metric_tangent = perturbation_in_eigenbasis(
         problem,
         problem_tangent,
@@ -615,14 +661,14 @@ def _spectral_operator_tangent(
 
 
 def _spectral_operator_evidence(
-    spectrum,
-    function_values,
-    uncertainty,
-    domain_valid,
-    operator,
-    density,
-    policy,
-):
+    spectrum: PreparedSelfAdjointSpectrum,
+    function_values: Array,
+    uncertainty: Array,
+    domain_valid: Array,
+    operator: Array,
+    density: Array,
+    policy: SelfAdjointSpectralOperatorPolicy,
+) -> tuple[SelfAdjointSpectralOperatorDiagnostics, Array]:
     expected_images = (
         spectrum.eigenvectors
         * function_values.astype(spectrum.eigenvectors.dtype)[..., None, :]
@@ -685,7 +731,7 @@ def _spectral_operator_evidence(
     return diagnostics, status
 
 
-def _eigenvalue_uncertainty(spectrum):
+def _eigenvalue_uncertainty(spectrum: PreparedSelfAdjointSpectrum) -> Array:
     scale = jnp.maximum(jnp.abs(spectrum.eigenvalues), 1)
     return 4 * jnp.maximum(
         spectrum.source_diagnostics.residual_norms,
@@ -693,7 +739,9 @@ def _eigenvalue_uncertainty(spectrum):
     )
 
 
-def _stable_divided_difference(function, left, right):
+def _stable_divided_difference(
+    function: AbstractSpectralFunction, left: ArrayLike, right: ArrayLike
+) -> Array:
     x = jnp.asarray(left)
     y = jnp.asarray(right)
     difference = x - y
@@ -705,7 +753,7 @@ def _stable_divided_difference(function, left, right):
     return jnp.where(close, midpoint_derivative, quotient)
 
 
-def _real_scalar(value, name):
+def _real_scalar(value: ArrayLike, name: str) -> Array:
     array = jnp.asarray(value)
     if array.shape != ():
         raise ValueError(f"{name} must be scalar.")

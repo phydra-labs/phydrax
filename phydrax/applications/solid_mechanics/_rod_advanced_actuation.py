@@ -10,13 +10,15 @@ from typing import TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float
 from ...linalg import ArraySpace, FunctionLinearOperator
 from ._rod_dynamics import RodState
 from ._rod_materials import (
@@ -72,13 +74,6 @@ def _identifier(value: str, owner: str, /) -> str:
     if not identifier:
         raise ValueError(f"{owner} must be nonempty.")
     return identifier
-
-
-def _positive_finite(value: float, owner: str, /) -> float:
-    result = float(value)
-    if not isfinite(result) or result <= 0.0:
-        raise ValueError(f"{owner} must be finite and positive.")
-    return result
 
 
 def _finite_pair(value: tuple[float, float], owner: str, /) -> tuple[float, float]:
@@ -192,7 +187,7 @@ class RodTubeStation(StrictModule, NonTrainableState):
     xi: float = eqx.field(static=True)
     station_id: str = eqx.field(static=True)
 
-    def __init__(self, segment_id: int, xi: float, offset_material: ArrayLike, /):
+    def __init__(self, segment_id: int, xi: float, offset_material: ArrayLike, /) -> None:
         if isinstance(segment_id, bool) or int(segment_id) != segment_id:
             raise TypeError("segment_id must be an integer.")
         segment = int(segment_id)
@@ -259,7 +254,7 @@ class ReducedTubeChamberPlan(StrictModule, NonTrainableState):
         thermal_networks: bool = False,
         vacuum: bool = False,
         volumetric_bodies: bool = False,
-    ):
+    ) -> None:
         if not isinstance(stations, tuple) or len(stations) < 2:
             raise ValueError("stations must contain at least two RodTubeStation values.")
         if not all(isinstance(station, RodTubeStation) for station in stations):
@@ -283,14 +278,14 @@ class ReducedTubeChamberPlan(StrictModule, NonTrainableState):
             raise ValueError("Every chamber span must have one positive area.")
         if any(station.offset_material.dtype != areas.dtype for station in stations):
             raise TypeError("Chamber stations and areas must share a dtype.")
-        dead = _positive_finite(dead_volume, "dead_volume")
+        dead = positive_finite_float(dead_volume, "dead_volume")
         minimum, maximum = _finite_pair(volume_bounds, "volume_bounds")
         ambient = float(ambient_pressure)
         if minimum <= 0.0 or not isfinite(ambient) or ambient < 0.0:
             raise ValueError(
                 "Volume bounds must be positive and ambient pressure nonnegative."
             )
-        minimum_span = _positive_finite(minimum_span_length, "minimum_span_length")
+        minimum_span = positive_finite_float(minimum_span_length, "minimum_span_length")
         manifest = _identifier(source_manifest_id, "source_manifest_id")
         calibration = _identifier(calibration_id, "calibration_id")
         self.stations = stations
@@ -339,7 +334,7 @@ class PreparedReducedTubeChamber(StrictModule, NonTrainableState):
     workset_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ReducedTubeChamberPlan, rod: PreparedReducedRod, /):
+    def __init__(self, plan: ReducedTubeChamberPlan, rod: PreparedReducedRod, /) -> None:
         if not isinstance(plan, ReducedTubeChamberPlan):
             raise TypeError("plan must be a ReducedTubeChamberPlan.")
         if not isinstance(rod, PreparedReducedRod):
@@ -441,7 +436,7 @@ class PreparedReducedTubeChamber(StrictModule, NonTrainableState):
         node_count = self.reduction.rod.plan.node_count
         segment_count = self.reduction.rod.plan.segment_count
 
-        def station_velocity(velocity):
+        def station_velocity(velocity: tuple[Array, Array]) -> Array:
             linear, angular = velocity
             centers = (1.0 - xis)[:, None] * linear[start_ids] + xis[:, None] * linear[
                 end_ids
@@ -450,12 +445,12 @@ class PreparedReducedTubeChamber(StrictModule, NonTrainableState):
             angular_world = ein.contract("sij,sj->si", frames, angular[segment_ids])
             return centers + jnp.cross(angular_world, offsets_world)
 
-        def action(velocity):
+        def action(velocity: tuple[Array, Array]) -> Array:
             velocities = station_velocity(velocity)
             span_rates = jnp.sum(directions * (velocities[1:] - velocities[:-1]), axis=-1)
             return jnp.sum(areas * span_rates)
 
-        def transpose_action(covector):
+        def transpose_action(covector: Array) -> tuple[Array, Array]:
             pressure = jnp.asarray(covector)
             span_efforts = pressure * areas[:, None] * directions
             station_efforts = jnp.zeros_like(points)
@@ -489,10 +484,10 @@ class PreparedReducedTubeChamber(StrictModule, NonTrainableState):
         native_operator = self.native_volume_rate_operator(state)
         lift = self.reduction.lift_velocity_operator(state.coefficients)
 
-        def action(rate):
+        def action(rate: Array) -> Array:
             return native_operator.mv(lift.mv(rate))
 
-        def transpose_action(covector):
+        def transpose_action(covector: Array) -> Array:
             return lift.transpose_mv(native_operator.transpose_mv(covector))
 
         return FunctionLinearOperator(
@@ -548,7 +543,7 @@ class RegulatedTubePressureState(StrictModule):
 
     gauge_pressure: Array
 
-    def __init__(self, gauge_pressure: ArrayLike, /):
+    def __init__(self, gauge_pressure: ArrayLike, /) -> None:
         value = jnp.asarray(gauge_pressure)
         if value.shape != () or not jnp.issubdtype(value.dtype, jnp.inexact):
             raise TypeError("gauge_pressure must be a real inexact scalar.")
@@ -560,7 +555,7 @@ class RegulatedTubePressureCommand(StrictModule):
 
     target_gauge_pressure: Array
 
-    def __init__(self, target_gauge_pressure: ArrayLike, /):
+    def __init__(self, target_gauge_pressure: ArrayLike, /) -> None:
         value = jnp.asarray(target_gauge_pressure)
         if value.shape != () or not jnp.issubdtype(value.dtype, jnp.inexact):
             raise TypeError("target_gauge_pressure must be a real inexact scalar.")
@@ -628,7 +623,7 @@ class RegulatedReducedTubePressurePlan(StrictModule, NonTrainableState):
         compressors: bool = False,
         leakage: bool = False,
         thermal_networks: bool = False,
-    ):
+    ) -> None:
         if not isinstance(chamber, ReducedTubeChamberPlan):
             raise TypeError("chamber must be a ReducedTubeChamberPlan.")
         _reject_requested_exclusions(
@@ -641,9 +636,9 @@ class RegulatedReducedTubePressurePlan(StrictModule, NonTrainableState):
         minimum, maximum = _finite_pair(pressure_bounds, "pressure_bounds")
         if minimum < 0.0:
             raise ValueError("Regulated tube pressure does not support vacuum.")
-        rise = _positive_finite(maximum_rise_rate, "maximum_rise_rate")
-        fall = _positive_finite(maximum_fall_rate, "maximum_fall_rate")
-        tolerance = _positive_finite(power_tolerance, "power_tolerance")
+        rise = positive_finite_float(maximum_rise_rate, "maximum_rise_rate")
+        fall = positive_finite_float(maximum_fall_rate, "maximum_fall_rate")
+        tolerance = positive_finite_float(power_tolerance, "power_tolerance")
         self.chamber = chamber
         self.minimum_pressure = minimum
         self.maximum_pressure = maximum
@@ -683,7 +678,7 @@ class PreparedRegulatedReducedTubePressureActuation(StrictModule, NonTrainableSt
         plan: RegulatedReducedTubePressurePlan,
         chamber: PreparedReducedTubeChamber,
         /,
-    ):
+    ) -> None:
         if chamber.plan.plan_id != plan.chamber.plan_id:
             raise ValueError("Prepared chamber does not belong to the pressure plan.")
         provenance = canonical_fingerprint(
@@ -858,7 +853,7 @@ class SealedTubePressureState(StrictModule):
 
     charge_scale: Array
 
-    def __init__(self, charge_scale: ArrayLike, /):
+    def __init__(self, charge_scale: ArrayLike, /) -> None:
         value = jnp.asarray(charge_scale)
         if value.shape != () or not jnp.issubdtype(value.dtype, jnp.inexact):
             raise TypeError("charge_scale must be a real inexact scalar.")
@@ -920,7 +915,7 @@ class SealedReducedTubePressurePlan(StrictModule, NonTrainableState):
         compressors: bool = False,
         leakage: bool = False,
         thermal_networks: bool = False,
-    ):
+    ) -> None:
         if not isinstance(chamber, ReducedTubeChamberPlan):
             raise TypeError("chamber must be a ReducedTubeChamberPlan.")
         _reject_requested_exclusions(
@@ -930,16 +925,16 @@ class SealedReducedTubePressurePlan(StrictModule, NonTrainableState):
             leakage=leakage,
             thermal_networks=thermal_networks,
         )
-        pressure = _positive_finite(
+        pressure = positive_finite_float(
             reference_absolute_pressure, "reference_absolute_pressure"
         )
-        volume = _positive_finite(reference_volume, "reference_volume")
+        volume = positive_finite_float(reference_volume, "reference_volume")
         exponent_ = float(exponent)
         if pressure <= chamber.ambient_pressure:
             raise ValueError("Reference gas pressure must exceed ambient pressure.")
         if not isfinite(exponent_) or exponent_ < 0.0:
             raise ValueError("exponent must be finite and nonnegative.")
-        tolerance = _positive_finite(power_tolerance, "power_tolerance")
+        tolerance = positive_finite_float(power_tolerance, "power_tolerance")
         self.chamber = chamber
         self.reference_absolute_pressure = pressure
         self.reference_volume = volume
@@ -977,7 +972,7 @@ class PreparedSealedReducedTubePressureActuation(StrictModule, NonTrainableState
         plan: SealedReducedTubePressurePlan,
         chamber: PreparedReducedTubeChamber,
         /,
-    ):
+    ) -> None:
         if chamber.plan.plan_id != plan.chamber.plan_id:
             raise ValueError("Prepared chamber does not belong to the sealed plan.")
         provenance = canonical_fingerprint(
@@ -1140,7 +1135,7 @@ class IntrinsicStrainActuationState(StrictModule):
 
     activation: Array
 
-    def __init__(self, activation: ArrayLike, /):
+    def __init__(self, activation: ArrayLike, /) -> None:
         value = jnp.asarray(activation)
         if value.ndim != 1 or not jnp.issubdtype(value.dtype, jnp.inexact):
             raise TypeError("activation must be a real inexact rank-one array.")
@@ -1152,7 +1147,7 @@ class IntrinsicStrainCommand(StrictModule):
 
     target_activation: Array
 
-    def __init__(self, target_activation: ArrayLike, /):
+    def __init__(self, target_activation: ArrayLike, /) -> None:
         value = jnp.asarray(target_activation)
         if value.ndim != 1 or not jnp.issubdtype(value.dtype, jnp.inexact):
             raise TypeError("target_activation must be a real inexact rank-one array.")
@@ -1222,7 +1217,7 @@ class IntrinsicStrainActuationPlan(StrictModule, NonTrainableState):
         dielectric_field_solve: bool = False,
         thermal_networks: bool = False,
         swelling_transport: bool = False,
-    ):
+    ) -> None:
         _reject_requested_exclusions(
             "IntrinsicStrainActuationPlan",
             hysteresis=hysteresis,
@@ -1286,7 +1281,7 @@ class PreparedIntrinsicStrainActuation(StrictModule, NonTrainableState):
 
     def __init__(
         self, plan: IntrinsicStrainActuationPlan, material: RodConstitutiveTrial, /
-    ):
+    ) -> None:
         if not isinstance(material, RodConstitutiveTrial):
             raise TypeError("material must be a prepared RodConstitutiveTrial.")
         expected = (
@@ -1439,7 +1434,7 @@ class VariableStiffnessState(StrictModule):
 
     activation: Array
 
-    def __init__(self, activation: ArrayLike, /):
+    def __init__(self, activation: ArrayLike, /) -> None:
         value = jnp.asarray(activation)
         if value.shape != () or not jnp.issubdtype(value.dtype, jnp.inexact):
             raise TypeError("activation must be a real inexact scalar.")
@@ -1451,7 +1446,7 @@ class VariableStiffnessCommand(StrictModule):
 
     target_activation: Array
 
-    def __init__(self, target_activation: ArrayLike, /):
+    def __init__(self, target_activation: ArrayLike, /) -> None:
         value = jnp.asarray(target_activation)
         if value.shape != () or not jnp.issubdtype(value.dtype, jnp.inexact):
             raise TypeError("target_activation must be a real inexact scalar.")
@@ -1522,7 +1517,7 @@ class VariableStiffnessActuationPlan(StrictModule, NonTrainableState):
         rate_dependent_modulus: bool = False,
         damping_modulation: bool = False,
         topology_change: bool = False,
-    ):
+    ) -> None:
         _reject_requested_exclusions(
             "VariableStiffnessActuationPlan",
             jamming=jamming,
@@ -1541,8 +1536,8 @@ class VariableStiffnessActuationPlan(StrictModule, NonTrainableState):
         _validate_psd("minimum_stiffness", minimum)
         _validate_psd("maximum_stiffness", maximum)
         _validate_psd("maximum_stiffness - minimum_stiffness", maximum - minimum)
-        rise = _positive_finite(maximum_rise_rate, "maximum_rise_rate")
-        fall = _positive_finite(maximum_fall_rate, "maximum_fall_rate")
+        rise = positive_finite_float(maximum_rise_rate, "maximum_rise_rate")
+        fall = positive_finite_float(maximum_fall_rate, "maximum_fall_rate")
         manifest = _identifier(source_manifest_id, "source_manifest_id")
         calibration = _identifier(calibration_id, "calibration_id")
         self.minimum_stiffness = jnp.asarray(minimum)
@@ -1580,7 +1575,7 @@ class PreparedVariableStiffnessActuation(StrictModule, NonTrainableState):
 
     def __init__(
         self, plan: VariableStiffnessActuationPlan, material: RodConstitutiveTrial, /
-    ):
+    ) -> None:
         if not isinstance(material, RodConstitutiveTrial):
             raise TypeError("material must be a prepared RodConstitutiveTrial.")
         expected = (
@@ -1774,7 +1769,7 @@ class MagneticCurrentState(StrictModule):
 
     currents: Array
 
-    def __init__(self, currents: ArrayLike, /):
+    def __init__(self, currents: ArrayLike, /) -> None:
         value = jnp.asarray(currents)
         if value.ndim != 1 or not jnp.issubdtype(value.dtype, jnp.inexact):
             raise TypeError("currents must be a real inexact rank-one array.")
@@ -1786,7 +1781,7 @@ class MagneticCurrentCommand(StrictModule):
 
     target_currents: Array
 
-    def __init__(self, target_currents: ArrayLike, /):
+    def __init__(self, target_currents: ArrayLike, /) -> None:
         value = jnp.asarray(target_currents)
         if value.ndim != 1 or not jnp.issubdtype(value.dtype, jnp.inexact):
             raise TypeError("target_currents must be a real inexact rank-one array.")
@@ -1869,7 +1864,7 @@ class AffineMagneticActuationPlan(StrictModule, NonTrainableState):
         mutual_fields: bool = False,
         maxwell_solves: bool = False,
         coupled_rl_circuits: bool = False,
-    ):
+    ) -> None:
         _reject_requested_exclusions(
             "AffineMagneticActuationPlan",
             nonlinear_ferromagnetics=nonlinear_ferromagnetics,
@@ -1935,7 +1930,7 @@ class AffineMagneticActuationPlan(StrictModule, NonTrainableState):
             raise ValueError("Current bounds and slew limits are invalid.")
         manifest = _identifier(source_manifest_id, "source_manifest_id")
         calibration = _identifier(calibration_id, "calibration_id")
-        power_tolerance_ = _positive_finite(power_tolerance, "power_tolerance")
+        power_tolerance_ = positive_finite_float(power_tolerance, "power_tolerance")
         self.uniform_field_per_current = jnp.asarray(uniform)
         self.field_gradient_per_current = jnp.asarray(gradient)
         self.field_origin = jnp.asarray(origin)
@@ -1982,7 +1977,9 @@ class PreparedAffineMagneticActuation(StrictModule, NonTrainableState):
     actuation_id: str = eqx.field(static=True)
     provenance_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: AffineMagneticActuationPlan, rod: PreparedReducedRod, /):
+    def __init__(
+        self, plan: AffineMagneticActuationPlan, rod: PreparedReducedRod, /
+    ) -> None:
         if not isinstance(rod, PreparedReducedRod):
             raise TypeError("Affine magnetic actuation requires a PreparedReducedRod.")
         if rod.rod.plan.dimension != 3:

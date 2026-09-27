@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -31,7 +32,7 @@ class LocalEliminationPlan(StrictModule, NonTrainableState):
     local_size: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, local_size: int, retained_dofs: ArrayLike, /):
+    def __init__(self, local_size: int, retained_dofs: ArrayLike, /) -> None:
         size = int(local_size)
         retained = np.asarray(retained_dofs, dtype=np.int32)
         if size <= 1 or retained.ndim != 1 or retained.size == 0:

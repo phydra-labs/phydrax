@@ -8,7 +8,8 @@ from collections.abc import Callable
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -59,7 +60,7 @@ class BoundaryIntegralVorticityFluxPlan2D(StrictModule, NonTrainableState):
 
     def __init__(
         self, geometry: FlowPanelGeometry2D, /, *, policy: LinearSolvePolicy | None = None
-    ):
+    ) -> None:
         if not isinstance(geometry, FlowPanelGeometry2D):
             raise TypeError("geometry must be FlowPanelGeometry2D.")
         self.geometry = geometry
@@ -181,7 +182,15 @@ class WallCrossingPlan(StrictModule, NonTrainableState):
     policy: str = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, signed_distance, normal, /, *, policy: str, policy_id: str):
+    def __init__(
+        self,
+        signed_distance: Callable[[Array], Array],
+        normal: Callable[[Array], Array],
+        /,
+        *,
+        policy: str,
+        policy_id: str,
+    ) -> None:
         if (
             not callable(signed_distance)
             or not callable(normal)
@@ -245,7 +254,7 @@ class WallCrossingPlan(StrictModule, NonTrainableState):
         )
 
 
-def jax_vmap(function, values):
+def jax_vmap(function: Callable[[Array], Array], values: Array) -> Array:
     import jax
 
     return jax.vmap(function)(values)
@@ -263,7 +272,9 @@ class ReducedSeparationModel(StrictModule, NonTrainableState):
     critical_shear: float = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, critical_pressure_gradient: float, critical_shear: float, /):
+    def __init__(
+        self, critical_pressure_gradient: float, critical_shear: float, /
+    ) -> None:
         self.critical_pressure_gradient, self.critical_shear = (
             float(critical_pressure_gradient),
             float(critical_shear),

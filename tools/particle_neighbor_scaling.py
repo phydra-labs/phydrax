@@ -10,6 +10,7 @@ import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -42,13 +43,13 @@ class NeighborScalingReport:
     finite: bool
 
     @property
-    def passed(self):
+    def passed(self) -> Any:
         return self.finite and all(
             case.successful and case.force_parity_error <= 1.0e-11 for case in self.cases
         )
 
 
-def _relation_bytes(state):
+def _relation_bytes(state: Any) -> Any:
     relation = state.pair_relation
     return sum(
         value.nbytes
@@ -67,7 +68,7 @@ def _relation_bytes(state):
     )
 
 
-def _case(dimension, resolution):
+def _case(dimension: Any, resolution: Any) -> Any:
     axes = [
         (jnp.arange(resolution, dtype="float64") + 0.5) / resolution
         for _ in range(dimension)
@@ -137,6 +138,7 @@ def _case(dimension, resolution):
         particle_count=count,
         dense_pair_capacity=dense.dynamics.neighborhood.pair_capacity,
         cell_pair_capacity=cell.dynamics.neighborhood.pair_capacity,
+        # ty: ignore[unresolved-attribute]
         cell_candidate_slots=cell.dynamics.neighborhood.candidate_slot_count,
         dense_relation_bytes=_relation_bytes(dense_state),
         cell_relation_bytes=_relation_bytes(cell_state),
@@ -149,7 +151,7 @@ def _case(dimension, resolution):
     )
 
 
-def run_scaling_sweep(*, smoke=False):
+def run_scaling_sweep(*, smoke: Any = False) -> Any:
     configurations = (
         ((1, 16), (2, 4), (3, 3))
         if smoke
@@ -187,7 +189,7 @@ def run_scaling_sweep(*, smoke=False):
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Measure dense and cell-list particle scaling."
     )

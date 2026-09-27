@@ -12,8 +12,9 @@ from phydrax.solver._guided_elastic_modes import (
 )
 
 
-def test_fixed_q_form_retains_longitudinal_strain_energy():
+def test_fixed_q_form_retains_longitudinal_strain_energy() -> None:
     form = guided_elasticity_form("u", 1.0, 2.0, 1.0)
+    # ty: ignore[unresolved-attribute]
     kernel = form.actions[0].kernel
     displacement = jnp.asarray([[[0.0, 0.0, 1.0]]], dtype=jnp.complex128)
     transverse_gradient = jnp.zeros((1, 1, 3, 2), dtype=jnp.complex128)
@@ -31,7 +32,7 @@ def test_fixed_q_form_retains_longitudinal_strain_energy():
     assert form.declared_properties.certifies("self_adjoint")
 
 
-def test_analytic_guided_elastic_frequencies_and_mass_orthogonality():
+def test_analytic_guided_elastic_frequencies_and_mass_orthogonality() -> None:
     axial_wavenumber = 1.5
     transverse_wavenumbers = np.asarray([2.0, 3.0])
     wave_speeds = np.asarray([4.0, 5.0])

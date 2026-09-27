@@ -7,12 +7,15 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..optim import DifferentialEvolutionSearch
 from ..optim._differential_evolution import _bounded_differential_evolution
 from ..optim._pytree import _PyTreeVectorizer
+from ..typing import PRNGKey
 from ._bayesian_optimization import (
     bayesian_optimize,
     BayesianOptimizationDomain,
@@ -31,7 +34,9 @@ class _PosteriorObjective(StrictModule):
     problem: PosteriorProblem
     vectorizer: _PyTreeVectorizer
 
-    def __init__(self, problem: PosteriorProblem, vectorizer: _PyTreeVectorizer, /):
+    def __init__(
+        self, problem: PosteriorProblem, vectorizer: _PyTreeVectorizer, /
+    ) -> None:
         self.problem = problem
         self.vectorizer = vectorizer
 
@@ -41,6 +46,8 @@ class _PosteriorObjective(StrictModule):
 
 class MAPSearchResult(StrictModule):
     """Posterior mode candidate and population evidence from differential evolution."""
+
+    __strict_contract__ = True
 
     problem: PosteriorProblem
     position: PyTree[Array]
@@ -52,7 +59,7 @@ class MAPSearchResult(StrictModule):
     best_objective_history: Array
     lower_bounds: PyTree[Array]
     upper_bounds: PyTree[Array]
-    key: Key[Array, ""]
+    key: PRNGKey
     search: DifferentialEvolutionSearch
     population_converged: bool = eqx.field(static=True)
     termination_reason: str = eqx.field(static=True)
@@ -64,23 +71,23 @@ class MAPSearchResult(StrictModule):
     def __init__(
         self,
         *,
-        problem,
-        position,
-        objective,
-        population_positions,
-        population_objectives,
-        best_objective_history,
-        lower_bounds,
-        upper_bounds,
-        key,
-        search,
-        population_converged,
-        termination_reason,
-        generations,
-        objective_evaluations,
-        invalid_evaluations,
-        design_signature,
-    ):
+        problem: PosteriorProblem,
+        position: PyTree[ArrayLike],
+        objective: ArrayLike,
+        population_positions: PyTree[ArrayLike],
+        population_objectives: ArrayLike,
+        best_objective_history: ArrayLike,
+        lower_bounds: PyTree[ArrayLike],
+        upper_bounds: PyTree[ArrayLike],
+        key: PRNGKey,
+        search: DifferentialEvolutionSearch,
+        population_converged: bool,
+        termination_reason: str,
+        generations: int,
+        objective_evaluations: int,
+        invalid_evaluations: int,
+        design_signature: str,
+    ) -> None:
         position_ = jax.tree_util.tree_map(jnp.asarray, position)
         objective_ = jnp.asarray(objective, dtype=jnp.float64).reshape(())
         self.problem = problem
@@ -136,7 +143,7 @@ def search_map(
     search: DifferentialEvolutionSearch | GaussianProcessBayesianOptimization,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     position_bounds: PositionBounds,
     initial_position: PyTree[Array] | None = None,
 ) -> MAPSearchResult | BayesianOptimizationMAPResult:

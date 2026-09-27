@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -39,7 +40,7 @@ class BEMFractureProblem3D(StrictModule, NonTrainableState):
         cohesive_strength: float = 0.0,
         relaxation: float = 0.1,
         maximum_iterations: int = 100,
-    ):
+    ) -> None:
         if not isinstance(traction_operator, AbstractLinearOperator):
             raise TypeError(
                 "traction_operator must be a prepared conforming BEM operator."
@@ -135,7 +136,7 @@ class PreparedBEMFracture3D(StrictModule, NonTrainableState):
         friction = self.problem.friction_coefficient
         cohesion = self.problem.cohesive_strength
 
-        def iteration(_, jump_flat):
+        def iteration(_: Array, jump_flat: Array) -> Array:
             residual = self.problem.traction_operator.mv(jump_flat) - load
             candidate = jump_flat - omega * residual
             vectors = candidate.reshape((count, 3))

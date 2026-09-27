@@ -74,7 +74,11 @@ def plummer_scaled_cartesian_derivatives(
     for exponent in exponents:
         value = jnp.asarray(0.0, dtype=relative.dtype)
         for paired in product(*(range(component // 2 + 1) for component in exponent)):
-            remaining = tuple(exponent[axis] - 2 * paired[axis] for axis in range(3))
+            remaining = (
+                exponent[0] - 2 * paired[0],
+                exponent[1] - 2 * paired[1],
+                exponent[2] - 2 * paired[2],
+            )
             radial_order = sum(exponent) - sum(paired)
             coefficient = 1
             for axis in range(3):

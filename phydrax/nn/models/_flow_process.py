@@ -11,7 +11,8 @@ from math import prod
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
@@ -19,6 +20,7 @@ from ...stochastic._process import (
     AbstractMarginalTransitionLaw,
     AbstractProcessDistribution,
 )
+from ...typing import PRNGKey
 from ..flows import (
     AbstractFlowDistribution,
     coupling_flow,
@@ -79,7 +81,7 @@ class StateTimeProcessConditioner(StrictModule):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     condition_size: int = eqx.field(static=True)
 
-    def __init__(self, state_shape: Sequence[int], /):
+    def __init__(self, state_shape: Sequence[int], /) -> None:
         self.state_shape = _shape(state_shape, name="state_shape")
         self.condition_size = prod(self.state_shape) + 2
 
@@ -104,7 +106,7 @@ class IdentityCoefficientTransition(StrictModule):
 
     state_shape: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, state_shape: Sequence[int], /):
+    def __init__(self, state_shape: Sequence[int], /) -> None:
         self.state_shape = _shape(state_shape, name="state_shape")
 
     def __call__(
@@ -139,7 +141,7 @@ class FlowProcessDistribution(AbstractProcessDistribution):
         condition: ArrayLike,
         event_shape: Sequence[int],
         process_id: str,
-    ):
+    ) -> None:
         if not isinstance(flow, AbstractFlowDistribution):
             raise TypeError("flow must be an AbstractFlowDistribution.")
         events = _shape(event_shape, name="event_shape")
@@ -175,7 +177,7 @@ class FlowProcessDistribution(AbstractProcessDistribution):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         shape = _sample_shape(sample_shape)
@@ -225,7 +227,7 @@ class LatentFlowCoefficientProcess(AbstractMarginalTransitionLaw, ParameterOwner
         state_shape: Sequence[int],
         process_id: str | None = None,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(flow, AbstractFlowDistribution):
             raise TypeError("flow must be an AbstractFlowDistribution.")
         if not callable(conditioner) or not callable(location_transition):
@@ -290,7 +292,7 @@ class LatentFlowCoefficientProcess(AbstractMarginalTransitionLaw, ParameterOwner
 
 
 def conditional_coupling_flow_process(
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     state_shape: Sequence[int],

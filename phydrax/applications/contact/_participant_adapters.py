@@ -9,7 +9,9 @@ from collections.abc import Callable
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from phydrax.ein import contract
 
@@ -40,7 +42,7 @@ from ...linalg import (
 )
 
 
-def _rigid_rotation(rotation_vector):
+def _rigid_rotation(rotation_vector: Array) -> Array:
     dimension = rotation_vector.shape[-1]
     if dimension == 1:
         angle = rotation_vector[..., 0]
@@ -94,7 +96,7 @@ class RigidContactParticipant(AbstractContactParticipant):
         /,
         *,
         body_count: int,
-    ):
+    ) -> None:
         if not isinstance(plan, CollisionSurfacePlan):
             raise TypeError("plan must be CollisionSurfacePlan.")
         vertices = jnp.asarray(local_vertices)
@@ -199,7 +201,9 @@ class RigidContactParticipant(AbstractContactParticipant):
             rotational = jnp.cross(angular_velocity[self.vertex_owner], world_offset)
         return linear_velocity[self.vertex_owner] + rotational
 
-    def effort_pullback(self, state: PyTree, surface_effort: ArrayLike, /):
+    def effort_pullback(
+        self, state: PyTree, surface_effort: ArrayLike, /
+    ) -> PyTree[Array]:
         translation, rotation_vector = self.space.validate(state)
         del translation
         effort = self.contact_effort_space.validate(

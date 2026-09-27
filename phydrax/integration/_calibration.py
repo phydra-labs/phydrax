@@ -4,10 +4,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from ..optim import AbstractScalarIterativeMethod, OptimizationTermination
@@ -25,6 +25,10 @@ from ._measure_transform import (
     lower_finite_measure,
     transformed_weighted_realization,
 )
+
+
+if TYPE_CHECKING:
+    from ._api import IntegrationRealization
 
 
 class MeasureCalibrationDiagnostics(StrictModule):
@@ -47,7 +51,7 @@ def calibrate(
     termination: OptimizationTermination | None = None,
     policy: MomentCalibrationPolicy | None = None,
     initial_dual: Array | None = None,
-):
+) -> IntegrationRealization:
     """Calibrate one realized finite measure to normalized target expectations."""
 
     if not isinstance(target, (ExactMoments, QuadraticMoments)):

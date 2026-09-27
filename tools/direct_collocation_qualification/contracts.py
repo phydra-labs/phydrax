@@ -71,7 +71,7 @@ class DirectCollocationQualificationCase:
     def identity_payload(self) -> dict[str, Any]:
         return asdict(self)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for value, owner in (
             (self.case_id, "case_id"),
             (self.family, "family"),
@@ -111,7 +111,7 @@ class DirectCollocationQualificationRecord:
     record_id: str
 
     @classmethod
-    def create(cls, **values):
+    def create(cls, **values: Any) -> Any:
         payload = dict(values)
         payload.pop("record_id", None)
         _finite_json(payload, "qualification record")
@@ -163,7 +163,7 @@ class DirectCollocationQualificationArtifact:
         cases: tuple[DirectCollocationQualificationCase, ...],
         records: tuple[DirectCollocationQualificationRecord, ...],
         graduation: dict[str, Any],
-    ):
+    ) -> Any:
         _validate_artifact_evidence(metadata, cases, records, graduation)
         payload = {
             "metadata": metadata,
@@ -181,7 +181,7 @@ class DirectCollocationQualificationArtifact:
         )
 
     @classmethod
-    def from_dict(cls, value: dict[str, Any], /):
+    def from_dict(cls, value: dict[str, Any], /) -> Any:
         expected = {"metadata", "cases", "records", "graduation", "artifact_id"}
         if set(value) != expected:
             raise ValueError(f"Qualification artifact keys must be {sorted(expected)}.")

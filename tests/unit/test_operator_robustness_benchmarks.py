@@ -9,7 +9,7 @@ from tools.operator_benchmarks.scenarios import (
 )
 
 
-def test_sensor_dropout_ladder_uses_nested_declared_masks():
+def test_sensor_dropout_ladder_uses_nested_declared_masks() -> None:
     scenario = periodic_burgers_scenario(
         train_resolution=12,
         test_resolution=16,
@@ -38,7 +38,7 @@ def test_sensor_dropout_ladder_uses_nested_declared_masks():
     assert dict(ladder.metadata)["sensor_dropout_ladder"] == "0.1,0.3,0.5"
 
 
-def test_irregular_causal_scenario_runs_recurrent_architectures():
+def test_irregular_causal_scenario_runs_recurrent_architectures() -> None:
     scenario = irregular_causal_relaxation_scenario(
         points=9,
         num_cases=3,

@@ -6,33 +6,39 @@ from __future__ import annotations
 
 from fractions import Fraction
 from operator import index
+from typing import TypeAlias
 
 import equinox as eqx
 
 from ._core import AbstractFiniteRealAlgebraSpec
+from ._properties import AlgebraClaimSource, AlgebraClaimStatus
 from ._resources import AlgebraResourceBudget
 
 
-def _add(left, right):
+_Element: TypeAlias = tuple[Fraction, ...]
+_FamilyClaim: TypeAlias = tuple[AlgebraClaimStatus, AlgebraClaimSource, tuple[str, ...]]
+
+
+def _add(left: _Element, right: _Element) -> _Element:
     return tuple(a + b for a, b in zip(left, right, strict=True))
 
 
-def _subtract(left, right):
+def _subtract(left: _Element, right: _Element) -> _Element:
     return tuple(a - b for a, b in zip(left, right, strict=True))
 
 
-def _negate(value):
+def _negate(value: _Element) -> _Element:
     return tuple(-entry for entry in value)
 
 
-def _conjugate(level: int, value, /):
+def _conjugate(level: int, value: _Element, /) -> _Element:
     if level == 0:
         return tuple(value)
     half = 1 << (level - 1)
     return _conjugate(level - 1, value[:half]) + _negate(value[half:])
 
 
-def _multiply(level: int, left, right, /):
+def _multiply(level: int, left: _Element, right: _Element, /) -> _Element:
     if level == 0:
         return (left[0] * right[0],)
     half = 1 << (level - 1)
@@ -49,7 +55,7 @@ def _multiply(level: int, left, right, /):
     return first + second
 
 
-def _basis(dimension: int, position: int, /):
+def _basis(dimension: int, position: int, /) -> _Element:
     return tuple(Fraction(int(index_ == position)) for index_ in range(dimension))
 
 
@@ -65,7 +71,7 @@ def _labels(level: int, /) -> tuple[str, ...]:
     return ("1",) + tuple(f"e{index_}" for index_ in range(1, 1 << level))
 
 
-def _terms(level: int, /):
+def _terms(level: int, /) -> tuple[tuple[int, int, int, int, int], ...]:
     dimension = 1 << level
     basis = tuple(_basis(dimension, position) for position in range(dimension))
     terms = []
@@ -86,14 +92,14 @@ def _terms(level: int, /):
     return tuple(terms)
 
 
-def _family_claims(level: int, labels: tuple[str, ...], /):
-    proven = ("proven", "family_construction", ())
-    disproven_zero = (
+def _family_claims(level: int, labels: tuple[str, ...], /) -> dict[str, _FamilyClaim]:
+    proven: _FamilyClaim = ("proven", "family_construction", ())
+    disproven_zero: _FamilyClaim = (
         "disproven",
         "family_construction",
         ("no-zero-divisor-family-proof",),
     )
-    claims = {
+    claims: dict[str, _FamilyClaim] = {
         "positive_norm": proven,
         "division_algebra": proven
         if level <= 3
@@ -183,7 +189,7 @@ class CayleyDicksonAlgebraSpec(AbstractFiniteRealAlgebraSpec):
         /,
         *,
         budget: AlgebraResourceBudget | None = None,
-    ):
+    ) -> None:
         _initialize_cayley_dickson(self, level, budget)
 
     def _family_marker(self) -> str:
@@ -193,7 +199,7 @@ class CayleyDicksonAlgebraSpec(AbstractFiniteRealAlgebraSpec):
 class RealAlgebraSpec(AbstractFiniteRealAlgebraSpec):
     level: int = eqx.field(static=True)
 
-    def __init__(self, *, budget: AlgebraResourceBudget | None = None):
+    def __init__(self, *, budget: AlgebraResourceBudget | None = None) -> None:
         _initialize_cayley_dickson(self, 0, budget)
 
     def _family_marker(self) -> str:
@@ -203,7 +209,7 @@ class RealAlgebraSpec(AbstractFiniteRealAlgebraSpec):
 class ComplexAlgebraSpec(AbstractFiniteRealAlgebraSpec):
     level: int = eqx.field(static=True)
 
-    def __init__(self, *, budget: AlgebraResourceBudget | None = None):
+    def __init__(self, *, budget: AlgebraResourceBudget | None = None) -> None:
         _initialize_cayley_dickson(self, 1, budget)
 
     def _family_marker(self) -> str:
@@ -213,7 +219,7 @@ class ComplexAlgebraSpec(AbstractFiniteRealAlgebraSpec):
 class QuaternionAlgebraSpec(AbstractFiniteRealAlgebraSpec):
     level: int = eqx.field(static=True)
 
-    def __init__(self, *, budget: AlgebraResourceBudget | None = None):
+    def __init__(self, *, budget: AlgebraResourceBudget | None = None) -> None:
         _initialize_cayley_dickson(self, 2, budget)
 
     def _family_marker(self) -> str:
@@ -223,7 +229,7 @@ class QuaternionAlgebraSpec(AbstractFiniteRealAlgebraSpec):
 class OctonionAlgebraSpec(AbstractFiniteRealAlgebraSpec):
     level: int = eqx.field(static=True)
 
-    def __init__(self, *, budget: AlgebraResourceBudget | None = None):
+    def __init__(self, *, budget: AlgebraResourceBudget | None = None) -> None:
         _initialize_cayley_dickson(self, 3, budget)
 
     def _family_marker(self) -> str:

@@ -2,10 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import hashlib
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -33,12 +35,12 @@ from phydrax.backends.macaulay2 import (
 )
 
 
-def _digest(path):
+def _digest(path: Any) -> Any:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 @pytest.fixture
-def provider():
+def provider() -> Any:
     executable = PinnedExecutable(
         sys.executable,
         _digest(sys.executable),
@@ -49,7 +51,7 @@ def provider():
     return Macaulay2Provider(Macaulay2Environment(executable))
 
 
-def _univariate_system():
+def _univariate_system() -> Any:
     return ExactSparsePolynomialSystem.from_coo(
         ("x",),
         ("f", "g"),
@@ -60,7 +62,7 @@ def _univariate_system():
     )
 
 
-def _bivariate_system():
+def _bivariate_system() -> Any:
     return ExactSparsePolynomialSystem.from_coo(
         ("x", "y"),
         ("f", "g"),
@@ -71,7 +73,7 @@ def _bivariate_system():
     )
 
 
-def _prepared(provider, operation):
+def _prepared(provider: Any, operation: Any) -> Any:
     if operation is ExactSymbolicOperation.ELIMINATE:
         system = _bivariate_system()
         arguments = EliminateArguments((0,))
@@ -92,7 +94,7 @@ def _prepared(provider, operation):
     return prepare_macaulay2_symbolic(plan, provider)
 
 
-def _response(prepared, polynomials):
+def _response(prepared: Any, polynomials: Any) -> Any:
     provider = prepared.provider
     environment = provider.environment
     plan = prepared.plan
@@ -123,14 +125,14 @@ def _response(prepared, polynomials):
     }
 
 
-def _encoded(payload):
+def _encoded(payload: Any) -> Any:
     return (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
 
 @pytest.mark.parametrize("operation", tuple(ExactSymbolicOperation))
 def test_closed_operations_build_data_only_requests_and_parse_exact_fake_results(
-    provider, operation
-):
+    provider: Any, operation: Any
+) -> None:
     prepared = _prepared(provider, operation)
     request = macaulay2_request_record(prepared)
 
@@ -161,13 +163,17 @@ def test_closed_operations_build_data_only_requests_and_parse_exact_fake_results
     )
 
     assert result.status is ExactSymbolicStatus.SUCCESS
+    # ty: ignore[unresolved-attribute]
     assert result.output.coefficients == ("-1", "1")
+    # ty: ignore[unresolved-attribute]
     assert result.evidence.claim == "exact_claimed_by_external_provider"
+    # ty: ignore[unresolved-attribute]
     assert result.evidence.run_artifact_id == "fake-worker-run"
+    # ty: ignore[unresolved-attribute]
     assert "operation-variable-order" in result.evidence.independently_checked
 
 
-def test_malformed_output_and_duplicate_fields_are_rejected(provider):
+def test_malformed_output_and_duplicate_fields_are_rejected(provider: Any) -> None:
     prepared = _prepared(provider, ExactSymbolicOperation.GROEBNER_BASIS)
     with pytest.raises(ValueError, match="unexpected field inventory"):
         parse_macaulay2_result(b"{}", prepared)
@@ -175,7 +181,9 @@ def test_malformed_output_and_duplicate_fields_are_rejected(provider):
         parse_macaulay2_result(b'{"request_id":"a","request_id":"b"}', prepared)
 
 
-def test_response_identity_mismatch_is_distinct_from_malformed_output(provider):
+def test_response_identity_mismatch_is_distinct_from_malformed_output(
+    provider: Any,
+) -> None:
     prepared = _prepared(provider, ExactSymbolicOperation.GROEBNER_BASIS)
     payload = _response(
         prepared,
@@ -193,7 +201,7 @@ def test_response_identity_mismatch_is_distinct_from_malformed_output(provider):
         parse_macaulay2_result(_encoded(payload), prepared)
 
 
-def test_unavailable_provider_requires_explicit_environment_and_has_no_fallback():
+def test_unavailable_provider_requires_explicit_environment_and_has_no_fallback() -> None:
     availability = macaulay2_availability()
 
     assert not availability.available
@@ -202,7 +210,7 @@ def test_unavailable_provider_requires_explicit_environment_and_has_no_fallback(
         availability.require("algebraic.exact.groebner_basis")
 
 
-def test_zero_polynomial_payload_is_a_valid_exact_result(provider):
+def test_zero_polynomial_payload_is_a_valid_exact_result(provider: Any) -> None:
     prepared = _prepared(provider, ExactSymbolicOperation.GROEBNER_BASIS)
     payload = _response(
         prepared,
@@ -218,11 +226,14 @@ def test_zero_polynomial_payload_is_a_valid_exact_result(provider):
     result = parse_macaulay2_result(_encoded(payload), prepared)
 
     assert result.status is ExactSymbolicStatus.SUCCESS
+    # ty: ignore[unresolved-attribute]
     assert result.output.coefficients == ("0",)
     assert result.externally_claimed_exact
 
 
-def test_exact_symbolic_resource_limits_refuse_oversized_dimensions_before_prepare():
+def test_exact_symbolic_resource_limits_refuse_oversized_dimensions_before_prepare() -> (
+    None
+):
     system = _bivariate_system()
 
     with pytest.raises(ValueError, match="variable_count"):
@@ -234,7 +245,7 @@ def test_exact_symbolic_resource_limits_refuse_oversized_dimensions_before_prepa
         )
 
 
-def test_installation_inventory_is_verified_for_availability(tmp_path):
+def test_installation_inventory_is_verified_for_availability(tmp_path: Any) -> None:
     executable = PinnedExecutable(
         sys.executable,
         _digest(sys.executable),

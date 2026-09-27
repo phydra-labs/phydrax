@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._interpolation import linear_interpolate
 
@@ -43,7 +44,7 @@ class TabulatedMaxwellianReactivity(StrictModule, NonTrainableState):
         reactivity_m3_s: ArrayLike,
         channel: NuclearReactionChannel,
         /,
-    ):
+    ) -> None:
         if not isinstance(channel, NuclearReactionChannel):
             raise TypeError("channel must be NuclearReactionChannel.")
         energy_host = np.asarray(thermal_energy_j, dtype=np.float64)
@@ -137,7 +138,7 @@ class ThermalFusionReactionPlan(StrictModule, NonTrainableState):
         reactivity: TabulatedMaxwellianReactivity,
         species: NuclearSpeciesTable,
         /,
-    ):
+    ) -> None:
         if not isinstance(channel, NuclearReactionChannel):
             raise TypeError("channel must be NuclearReactionChannel.")
         if not isinstance(reactivity, TabulatedMaxwellianReactivity):
@@ -185,8 +186,14 @@ class ThermalFusionReactionPlan(StrictModule, NonTrainableState):
                 "Fusion product kinematics do not close the channel Q value."
             )
         kinetic = jnp.asarray(kinetic_host)
-        reactant_ids = tuple(item.species.species_id for item in channel.reactants)
-        product_ids = tuple(item.species.species_id for item in channel.products)
+        reactant_ids = (
+            channel.reactants[0].species.species_id,
+            channel.reactants[1].species.species_id,
+        )
+        product_ids = (
+            channel.products[0].species.species_id,
+            channel.products[1].species.species_id,
+        )
         self.reactivity = reactivity
         self.product_kinetic_energy_j = kinetic
         self.q_value_j = channel.q_value_j

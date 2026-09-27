@@ -5,12 +5,11 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax import lax
-from jaxtyping import Array
+from jax import Array, lax
 
 from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
@@ -34,6 +33,11 @@ from ._temporal_precision import TemporalPrecisionPolicy
 
 _DEFAULT_ARGS = object()
 
+# (configuration, velocity, acceleration, valid)
+_AlphaCarry: TypeAlias = tuple[Array, Array, Array, Array]
+# (configuration, velocity, acceleration, valid, residual norm, iterations)
+_AlphaStepOutput: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+
 
 class GeneralizedAlphaMethod(StrictModule, NonTrainableState):
     """Second-order generalized-alpha method with controlled high-frequency damping."""
@@ -55,7 +59,7 @@ class GeneralizedAlphaMethod(StrictModule, NonTrainableState):
         alpha_f: float | None = None,
         beta: float | None = None,
         gamma: float | None = None,
-    ):
+    ) -> None:
         explicit = (alpha_m, alpha_f, beta, gamma)
         if any(value is not None for value in explicit):
             if spectral_radius is not None or any(value is None for value in explicit):
@@ -250,7 +254,7 @@ class GeneralizedAlphaSolution(StrictModule):
         method_id: str,
         problem_id: str,
         time_id: str,
-    ):
+    ) -> None:
         count = jnp.asarray(times).size
         prefix = (count,)
         if (
@@ -376,7 +380,9 @@ def solve_generalized_alpha(
         precision=nonlinear_precision,
     )
 
-    def advance(carry, values):
+    def advance(
+        carry: _AlphaCarry, values: tuple[Array, Array]
+    ) -> tuple[_AlphaCarry, _AlphaStepOutput]:
         configuration, velocity, acceleration, prior_valid = carry
         target_time, step_size = values
         arguments = _GeneralizedAlphaArguments(
@@ -388,7 +394,7 @@ def solve_generalized_alpha(
             runtime_args,
         )
 
-        def solve_step(_):
+        def solve_step(_: None) -> _AlphaStepOutput:
             refreshed = refresh_nonlinear(
                 stage_prepared,
                 stage_problem,
@@ -397,7 +403,7 @@ def solve_generalized_alpha(
             )
             result = implicit_root_result(refreshed)
             next_acceleration = jnp.asarray(result.state)
-            next_configuration, next_velocity, *_ = stage_residual.kinematics(
+            next_configuration, next_velocity, *_kinematics = stage_residual.kinematics(
                 next_acceleration, arguments
             )
             residual = precision_.residual(stage_residual(next_acceleration, arguments))
@@ -420,7 +426,7 @@ def solve_generalized_alpha(
                 result.diagnostics.iterations,
             )
 
-        def skip_step(_):
+        def skip_step(_: None) -> _AlphaStepOutput:
             nan = jnp.full_like(configuration, jnp.nan)
             return (
                 nan,

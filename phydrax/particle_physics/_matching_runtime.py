@@ -12,7 +12,9 @@ from enum import IntEnum, StrEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -73,14 +75,14 @@ class NamedWeightSnapshot(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        values: ArrayLike,
+        values: npt.ArrayLike,
         /,
         *,
-        event_active: ArrayLike,
+        event_active: npt.ArrayLike,
         names: Sequence[str],
         variation_kinds: Sequence[WeightVariationKind | str],
         correlation_groups: Sequence[str],
-    ):
+    ) -> None:
         values_ = jnp.asarray(values)
         active = jnp.asarray(event_active, dtype=jnp.bool_)
         names_ = tuple(str(value).strip() for value in names)
@@ -296,7 +298,7 @@ def _event_identity(event: ParticleEventBatch | HostEventRecord, /) -> str:
                         value.value for value in event.weights.variation_kinds
                     ],
                     "correlation_groups": list(event.weights.correlation_groups),
-                    "nominal_name": event.weights.nominal_name,
+                    "nominal_name": event.weights.names[event.weights.nominal_index],
                 },
             }
         )
@@ -341,7 +343,7 @@ class ProviderExecutionChain(StrictModule, NonTrainableState):
     records: tuple[ProviderExecutionRecord, ...]
     chain_id: str = eqx.field(static=True)
 
-    def __init__(self, records: Sequence[ProviderExecutionRecord], /):
+    def __init__(self, records: Sequence[ProviderExecutionRecord], /) -> None:
         values = tuple(records)
         if not values or any(
             not isinstance(value, ProviderExecutionRecord) for value in values

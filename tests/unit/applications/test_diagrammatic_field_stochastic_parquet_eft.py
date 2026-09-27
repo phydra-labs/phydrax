@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import math
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -11,7 +13,7 @@ import numpy as np
 from phydrax.applications import diagrammatic_field as df
 
 
-def _catalog_diagram(order):
+def _catalog_diagram(order: Any) -> Any:
     phi = df.FieldSpec("catalog-phi", statistics="boson")
     propagator = df.PropagatorSpec(phi, mass=1.0)
     rule = df.VertexRule(
@@ -20,9 +22,11 @@ def _catalog_diagram(order):
         1.0,
         perturbative_order=order,
     )
+    # ty: ignore[invalid-argument-type]
     route = df.MomentumRoute([0.75], 0.0)
     return df.DiagramGraph(
         (df.VertexInsertion("v", rule),),
+        # ty: ignore[invalid-argument-type]
         (df.PropagatorLine("p", propagator, "v", "v", df.MomentumRoute([0.0])),),
         (
             df.ExternalLeg("in", phi, "v", route, incoming=True),
@@ -31,12 +35,12 @@ def _catalog_diagram(order):
     )
 
 
-def _eft_basis():
+def _eft_basis() -> Any:
     phi = df.FieldSpec("eft-phi", statistics="boson")
     return df.EFTOperatorBasis((df.EFTOperator("phi2", (phi, phi), 2.0),))
 
 
-def test_diagram_monte_carlo_satisfies_birth_death_and_worm_detailed_balance():
+def test_diagram_monte_carlo_satisfies_birth_death_and_worm_detailed_balance() -> None:
     diagrams = (_catalog_diagram(1), _catalog_diagram(2))
     prepared = df.DiagramMonteCarloPlan(
         steps=2_000,
@@ -58,7 +62,7 @@ def test_diagram_monte_carlo_satisfies_birth_death_and_worm_detailed_balance():
     assert result.evidence.phase_standard_error >= 0.0
 
 
-def test_finite_parquet_iteration_reaches_the_analytic_scalar_fixed_point():
+def test_finite_parquet_iteration_reaches_the_analytic_scalar_fixed_point() -> None:
     bare = jnp.asarray([[1.0]])
     bubbles = jnp.full((3, 1, 1), 0.1)
     result = (
@@ -78,7 +82,7 @@ def test_finite_parquet_iteration_reaches_the_analytic_scalar_fixed_point():
     np.testing.assert_allclose(result.full_vertex, [[expected]], rtol=1e-10)
 
 
-def test_native_matching_and_rg_running_recover_known_one_operator_flow():
+def test_native_matching_and_rg_running_recover_known_one_operator_flow() -> None:
     basis = _eft_basis()
     matched = (
         df.EFTMatchingPlan(basis, jnp.asarray([[1.0]]))
@@ -113,7 +117,7 @@ def test_native_matching_and_rg_running_recover_known_one_operator_flow():
     )
 
 
-def test_eft_truncation_and_statistical_uncertainties_remain_independent():
+def test_eft_truncation_and_statistical_uncertainties_remain_independent() -> None:
     basis = _eft_basis()
     state = df.WilsonCoefficientState(
         jnp.asarray([-2.0 + 0.0j]),

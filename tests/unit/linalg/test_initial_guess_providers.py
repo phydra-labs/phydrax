@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -16,21 +19,23 @@ nl = phx.nonlinear
 MATRIX = jnp.asarray([[4.0, 1.0, 0.0], [1.0, 3.0, 0.5], [0.0, 0.5, 2.0]])
 
 
-def _diagonal_operator():
+def _diagonal_operator() -> Any:
     space = la.ArraySpace((2,))
     return la.DenseLinearOperator(
         jnp.asarray([[2.0, 0.0], [0.0, 3.0]]), source=space, target=space
     )
 
 
-def _operator(matrix=MATRIX):
+def _operator(matrix: Any = MATRIX) -> Any:
     space = la.ArraySpace((3,))
     return la.FunctionLinearOperator(
         lambda value: matrix @ value, source=space, target=space
     )
 
 
-def _policy(mode="mathematical", *, max_steps=None, relative=1e-12):
+def _policy(
+    mode: Any = "mathematical", *, max_steps: Any = None, relative: Any = 1e-12
+) -> Any:
     return la.LinearSolvePolicy(
         la.FGMRES(restart=3),
         tolerance=la.TolerancePolicy(
@@ -45,11 +50,11 @@ class _Fixed(la.AbstractInitialGuessProvider):
     value: jax.Array
     provider_id: str = eqx.field(static=True)
 
-    def __init__(self, value, provider_id="fixed"):
+    def __init__(self, value: Any, provider_id: Any = "fixed") -> None:
         self.value = jnp.asarray(value)
         self.provider_id = provider_id
 
-    def propose(self, data, baseline):
+    def propose(self, data: Any, baseline: Any) -> Any:
         return self.value
 
 
@@ -57,11 +62,11 @@ class _TreeFixed(la.AbstractInitialGuessProvider):
     value: dict
     provider_id: str = eqx.field(static=True)
 
-    def __init__(self, value, provider_id="tree-fixed"):
+    def __init__(self, value: Any, provider_id: Any = "tree-fixed") -> None:
         self.value = value
         self.provider_id = provider_id
 
-    def propose(self, data, baseline):
+    def propose(self, data: Any, baseline: Any) -> Any:
         return self.value
 
 
@@ -70,30 +75,31 @@ class _Linear(phx.AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, weight):
+    def __init__(self, weight: Any) -> None:
         self.weight = jnp.asarray(weight)
         self.in_size = 3
         self.out_size = 3
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         return self.weight @ x
 
 
 class _RhsMap(phx.StrictModule):
     model: object
 
-    def __call__(self, data, baseline):
+    def __call__(self, data: Any, baseline: Any) -> Any:
+        # ty: ignore[call-non-callable]
         return self.model(data)
 
 
 class _BoundRhsMap(phx.StrictModule):
     binding: phx.ComponentBinding
 
-    def __call__(self, data, baseline):
+    def __call__(self, data: Any, baseline: Any) -> Any:
         return self.binding.model(data)
 
 
-def test_projection_history_exactly_recovers_the_rhs_span():
+def test_projection_history_exactly_recovers_the_rhs_span() -> None:
     operator = _diagonal_operator()
     history = la.HistoryInitialGuess(operator, "shifted-family", capacity=3)
     history = history.update(operator, jnp.asarray([1.0, 0.0]), time=0.0)
@@ -105,13 +111,16 @@ def test_projection_history_exactly_recovers_the_rhs_span():
     )
 
     assert jnp.allclose(history.propose(rhs, jnp.zeros(2)), jnp.asarray([2.0, 6.0]))
+    # ty: ignore[unresolved-attribute]
     assert bool(result.initial_guess.accepted)
+    # ty: ignore[unresolved-attribute]
     assert float(result.initial_guess.proposal_residual_norm) < 1.0e-12
+    # ty: ignore[unresolved-attribute]
     assert result.initial_guess.provider_id == history.provider_id
     assert jnp.allclose(result.value, jnp.asarray([2.0, 6.0]))
 
 
-def test_rolling_qr_history_recovers_span_after_eviction():
+def test_rolling_qr_history_recovers_span_after_eviction() -> None:
     operator = _diagonal_operator()
     history = la.HistoryInitialGuess(
         operator, "family", strategy="rolling-qr", capacity=2
@@ -127,7 +136,7 @@ def test_rolling_qr_history_recovers_span_after_eviction():
     assert history.update_count == 3
 
 
-def test_rejected_history_update_is_bitwise_inert():
+def test_rejected_history_update_is_bitwise_inert() -> None:
     operator = _diagonal_operator()
     history = la.HistoryInitialGuess(
         operator, "family", strategy="last-solution", capacity=2
@@ -140,7 +149,7 @@ def test_rejected_history_update_is_bitwise_inert():
     assert jnp.array_equal(rejected.solution_basis, history.solution_basis)
 
 
-def test_stabilized_extrapolation_requires_and_reproduces_a_target_time():
+def test_stabilized_extrapolation_requires_and_reproduces_a_target_time() -> None:
     operator = _diagonal_operator()
     history = la.HistoryInitialGuess(
         operator,
@@ -160,7 +169,7 @@ def test_stabilized_extrapolation_requires_and_reproduces_a_target_time():
         history.propose(rhs, jnp.zeros(2))
 
 
-def test_worse_or_nonfinite_proposals_visibly_keep_the_native_zero_guess():
+def test_worse_or_nonfinite_proposals_visibly_keep_the_native_zero_guess() -> None:
     problem = la.LinearSystem(_operator())
     rhs = jnp.asarray([1.0, 2.0, 3.0])
     native = la.solve(problem, rhs, policy=_policy())
@@ -173,19 +182,25 @@ def test_worse_or_nonfinite_proposals_visibly_keep_the_native_zero_guess():
         initial_guess=_Fixed([jnp.nan, 0.0, 0.0]),
     )
 
+    # ty: ignore[unresolved-attribute]
     assert not bool(worse.initial_guess.accepted)
+    # ty: ignore[unresolved-attribute]
     assert bool(worse.initial_guess.proposal_valid)
+    # ty: ignore[unresolved-attribute]
     assert float(worse.initial_guess.proposal_residual_norm) > float(
+        # ty: ignore[unresolved-attribute]
         worse.initial_guess.baseline_residual_norm
     )
+    # ty: ignore[unresolved-attribute]
     assert not bool(nonfinite.initial_guess.accepted)
+    # ty: ignore[unresolved-attribute]
     assert not bool(nonfinite.initial_guess.proposal_valid)
     for result in (worse, nonfinite):
         assert jnp.array_equal(result.value, native.value)
         assert int(result.diagnostics.iterations) == int(native.diagnostics.iterations)
 
 
-def test_accepted_proposals_are_selected_per_rhs_under_jit():
+def test_accepted_proposals_are_selected_per_rhs_under_jit() -> None:
     problem = la.LinearSystem(_operator())
     solution = jnp.asarray([1.0, -1.0, 2.0])
     rhs = jnp.stack([MATRIX @ solution, -(MATRIX @ solution)], axis=-1)
@@ -205,18 +220,18 @@ def test_accepted_proposals_are_selected_per_rhs_under_jit():
     assert jnp.allclose(result.value[:, 0], solution, atol=1.0e-10)
 
 
-def test_production_selection_carries_no_derivative_but_raw_proposals_train():
+def test_production_selection_carries_no_derivative_but_raw_proposals_train() -> None:
     problem = la.LinearSystem(_operator())
     rhs = jnp.asarray([1.0, 2.0, 3.0])
     policy = _policy("algorithmic", max_steps=2, relative=0.0)
 
-    def production(weight):
+    def production(weight: Any) -> Any:
         provider = la.LearnedInitialGuess(_RhsMap(_Linear(weight)))
         return jnp.sum(
             la.solve(problem, rhs, policy=policy, initial_guess=provider).value
         )
 
-    def training(weight):
+    def training(weight: Any) -> Any:
         provider = la.LearnedInitialGuess(_RhsMap(_Linear(weight)))
         guess = provider.propose(rhs, jnp.zeros(3))
         return jnp.sum(la.solve(problem, rhs, policy=policy, initial_guess=guess).value)
@@ -229,12 +244,13 @@ def test_production_selection_carries_no_derivative_but_raw_proposals_train():
         initial_guess=la.LearnedInitialGuess(_RhsMap(_Linear(weight))),
     )
 
+    # ty: ignore[unresolved-attribute]
     assert bool(production_result.initial_guess.accepted)
     assert jnp.array_equal(jax.grad(production)(weight), jnp.zeros((3, 3)))
     assert float(jnp.max(jnp.abs(jax.grad(training)(weight)))) > 0.0
 
 
-def test_learned_provider_binds_its_model_as_an_accelerator():
+def test_learned_provider_binds_its_model_as_an_accelerator() -> None:
     model = _Linear(jnp.eye(3))
     provider = la.LearnedInitialGuess(_RhsMap(model))
 
@@ -246,12 +262,13 @@ def test_learned_provider_binds_its_model_as_an_accelerator():
     assert contract.slot_semantic_id == la.AbstractInitialGuessProvider.slot_semantic_id
     assert [id(leaf) for leaf in jax.tree.leaves(parameters)] == [id(model.weight)]
     with pytest.raises(TypeError, match="callable module"):
+        # ty: ignore[invalid-argument-type]
         la.LearnedInitialGuess(model)
     with pytest.raises(ValueError, match="model component"):
         la.LearnedInitialGuess(lambda data, baseline: data)
 
 
-def test_learned_provider_binds_port_declaring_models_through_its_callable():
+def test_learned_provider_binds_port_declaring_models_through_its_callable() -> None:
     owner = phx.ModelPorts(
         inputs=(full_port("system.rhs", (3,)),),
         outputs=(full_port("system.solution", (3,)),),
@@ -269,13 +286,15 @@ def test_learned_provider_binds_port_declaring_models_through_its_callable():
     provider = la.LearnedInitialGuess(_BoundRhsMap(bound))
     ((location, contract),) = provider.component_contracts()
     assert location == "function.binding"
+    # ty: ignore[unresolved-attribute]
     assert contract.port_binding.inputs == ((owner.inputs[0].port_id,) * 2,)
+    # ty: ignore[unresolved-attribute]
     assert contract.port_binding.unverified == ()
     rhs = jnp.asarray([1.0, 2.0, 3.0])
     assert jnp.array_equal(provider.propose(rhs, jnp.zeros(3)), rhs)
 
 
-def test_nonlinear_initial_state_keeps_the_baseline_for_out_of_domain_proposals():
+def test_nonlinear_initial_state_keeps_the_baseline_for_out_of_domain_proposals() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state**2 - target,
         trial_validity=lambda state, target: jnp.all(state > 0.0),
@@ -302,7 +321,7 @@ def test_nonlinear_initial_state_keeps_the_baseline_for_out_of_domain_proposals(
     assert bool(result.successful)
 
 
-def test_nonlinear_selection_is_one_decision_across_every_state_leaf():
+def test_nonlinear_selection_is_one_decision_across_every_state_leaf() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, target: {
             "a": state["a"] - target,
@@ -323,7 +342,7 @@ def test_nonlinear_selection_is_one_decision_across_every_state_leaf():
     assert jnp.array_equal(selected["b"], close["b"])
 
 
-def test_selection_evidence_indexes_trailing_rhs_axes_and_rejects_other_layouts():
+def test_selection_evidence_indexes_trailing_rhs_axes_and_rejects_other_layouts() -> None:
     from phydrax.linalg._initial_guess import _select_proposal
 
     proposal = jnp.asarray([[1.0, 5.0], [2.0, 6.0], [3.0, 7.0]])

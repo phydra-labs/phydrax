@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from typing import Literal, overload
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -27,6 +28,18 @@ from ...rendering import (
     render_camera_stack,
 )
 from ._common import PTVScenarioKind, SyntheticEvidence
+
+
+@overload
+def _finite_vector(
+    value: Sequence[float], length: Literal[3], /, *, name: str
+) -> tuple[float, float, float]: ...
+
+
+@overload
+def _finite_vector(
+    value: Sequence[float], length: int, /, *, name: str
+) -> tuple[float, ...]: ...
 
 
 def _finite_vector(
@@ -91,7 +104,7 @@ class PTVScenarioPlan(StrictModule, NonTrainableState):
         read_noise_std: float = 0.0,
         shot_noise: bool = False,
         seed: int = 0,
-    ):
+    ) -> None:
         kind_ = PTVScenarioKind(kind)
         family = kind_.value if family_id is None else str(family_id)
         shape = tuple(image_shape)
@@ -275,7 +288,7 @@ class PTVSyntheticCase(StrictModule, NonTrainableState):
         family_id: str,
         plan_id: str,
         scenario_id: str,
-    ):
+    ) -> None:
         if not isinstance(geometry, ImagePlaneSupport):
             raise TypeError("geometry must be ImagePlaneSupport.")
         if not isinstance(true_rig, CameraRig) or not isinstance(nominal_rig, CameraRig):

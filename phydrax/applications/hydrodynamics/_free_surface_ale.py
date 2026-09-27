@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -20,6 +21,8 @@ from ...solver._mac_ale import MACALEGeometryPlan, MACALEStageGeometry
 
 
 FaceTuple = tuple[Array, ...]
+_TupleCGCarry: TypeAlias = tuple[FaceTuple, FaceTuple, FaceTuple, Array, Array, Array]
+_ArrayCGCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
 def _cell_to_vertices(value: Array, periodic: tuple[bool, bool], /) -> Array:
@@ -37,7 +40,9 @@ def _cell_to_vertices(value: Array, periodic: tuple[bool, bool], /) -> Array:
 
 
 def _tuple_dot(left: FaceTuple, right: FaceTuple, /) -> Array:
-    return sum(jnp.real(jnp.vdot(a, b)) for a, b in zip(left, right, strict=True))
+    return jnp.asarray(
+        sum(jnp.real(jnp.vdot(a, b)) for a, b in zip(left, right, strict=True))
+    )
 
 
 def _tuple_add(left: FaceTuple, scale: Array, right: FaceTuple, /) -> FaceTuple:
@@ -120,7 +125,7 @@ class GraphSurfaceALEPlan(StrictModule, NonTrainableState):
         maximum_slope: float = 1.0,
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 200,
-    ):
+    ) -> None:
         if not isinstance(reference, FiniteVolumeDiscretization):
             raise TypeError("reference must be FiniteVolumeDiscretization.")
         if len(reference.cell_shape) != 3:
@@ -177,7 +182,7 @@ class PreparedGraphSurfaceALE(StrictModule):
     bottom_vertices: Array
     surface_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: GraphSurfaceALEPlan, /):
+    def __init__(self, plan: GraphSurfaceALEPlan, /) -> None:
         reference = plan.reference
         x_axis, y_axis, z_axis = reference.grid.structured_axes
         periodic = (x_axis.periodic, y_axis.periodic)
@@ -185,7 +190,9 @@ class PreparedGraphSurfaceALE(StrictModule):
         horizontal_area = reference.cell_volumes / z_axis.interval_widths[None, None, :]
         horizontal_area = horizontal_area[..., 0]
 
-        def coordinate_map(time, point, args):
+        def coordinate_map(
+            time: Array, point: Array, args: GraphALEStageArguments
+        ) -> Array:
             stage = args
             eta = stage.eta + (time - stage.time_origin) * stage.eta_rate
             eta_vertices = _cell_to_vertices(eta, periodic)
@@ -200,7 +207,9 @@ class PreparedGraphSurfaceALE(StrictModule):
             sigma = (point[2] - reference_bottom) / (reference_top - reference_bottom)
             return jnp.asarray((point[0], point[1], bottom + sigma * (surface - bottom)))
 
-        def grid_velocity(time, point, args):
+        def grid_velocity(
+            time: Array, point: Array, args: GraphALEStageArguments
+        ) -> Array:
             del time
             stage = args
             rate_vertices = _cell_to_vertices(stage.eta_rate, periodic)
@@ -233,7 +242,8 @@ class PreparedGraphSurfaceALE(StrictModule):
 
     @property
     def eta_shape(self) -> tuple[int, int]:
-        return self.plan.reference.cell_shape[:2]
+        cell_shape = self.plan.reference.cell_shape
+        return (cell_shape[0], cell_shape[1])
 
     def stage_arguments(
         self,
@@ -271,8 +281,9 @@ class PreparedGraphSurfaceALE(StrictModule):
         x_axis, y_axis, _ = self.plan.reference.grid.structured_axes
         dx = x_axis.interval_widths[:, None]
         dy = y_axis.interval_widths[None, :]
-        slope_x = jnp.gradient(eta_, axis=0) / dx
-        slope_y = jnp.gradient(eta_, axis=1) / dy
+        # jnp.gradient returns a single Array for a scalar axis.
+        slope_x = cast(Array, jnp.gradient(eta_, axis=0)) / dx
+        slope_y = cast(Array, jnp.gradient(eta_, axis=1)) / dy
         slope = jnp.sqrt(slope_x**2 + slope_y**2)
         gcl = jnp.max(jnp.abs(geometry.gcl_residual))
         finite = (
@@ -331,7 +342,7 @@ class PreparedGraphSurfaceALE(StrictModule):
             else tuple(jnp.asarray(value, dtype=target[0].dtype) for value in free_mask)
         )
 
-        def apply(value):
+        def apply(value: FaceTuple) -> FaceTuple:
             masked = tuple(v * m for v, m in zip(value, mask, strict=True))
             image = self.apply_hodge(geometry, masked)
             return tuple(v * m for v, m in zip(image, mask, strict=True))
@@ -344,7 +355,7 @@ class PreparedGraphSurfaceALE(StrictModule):
         active = norm > threshold
         failed = jnp.asarray(False)
 
-        def body(_, state):
+        def body(_: Array, state: _TupleCGCarry) -> _TupleCGCarry:
             current, residual_, direction_, norm_, active_, failed_ = state
             image = apply(direction_)
             denominator = _tuple_dot(direction_, image)
@@ -406,7 +417,7 @@ class PreparedGraphSurfaceALE(StrictModule):
         if eta_.shape != self.eta_shape or target.shape != self.eta_shape:
             raise ValueError("Surface kinematic shapes are invalid.")
 
-        def action(rate):
+        def action(rate: Array) -> Array:
             return jax.jvp(self._column_volumes, (eta_,), (rate,))[1]
 
         value = jnp.zeros_like(eta_)
@@ -417,7 +428,7 @@ class PreparedGraphSurfaceALE(StrictModule):
         active = norm > threshold
         failed = jnp.asarray(False)
 
-        def body(_, state):
+        def body(_: Array, state: _ArrayCGCarry) -> _ArrayCGCarry:
             current, residual_, direction_, norm_, active_, failed_ = state
             image = action(direction_)
             denominator = jnp.real(jnp.vdot(direction_, image))

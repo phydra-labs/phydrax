@@ -20,14 +20,19 @@ def main() -> None:
     source = cosmo.CoordinateLayout(("P0:k0", "P2:k0", "P4:k0"))
     observed = cosmo.CoordinateLayout(("d0", "d1"))
     observation = cosmo.LinearObservationPlan(
-        [[1.0, 0.5, 0.0], [0.0, 0.25, 1.0]], source, observed
+        # ty: ignore[invalid-argument-type]
+        [[1.0, 0.5, 0.0], [0.0, 0.25, 1.0]],
+        source,
+        observed,
     )
     likelihood = cosmo.CorrelatedGaussianPlan(
+        # ty: ignore[invalid-argument-type]
         [2.0, 1.0],
         observation,
         cosmo.PrecisionCovarianceAction(jnp.eye(2), 0.0, observed),
     )
     likelihood_result = likelihood.evaluate(
+        # ty: ignore[invalid-argument-type]
         cosmo.TheoryVector([1.0, 2.0, 0.5], source, "example-theory")
     )
 

@@ -11,7 +11,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -34,18 +35,18 @@ class MP2Result(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        correlation_energy,
-        opposite_spin_energy,
-        same_spin_energy,
-        total_energy,
-        amplitudes,
-        minimum_denominator,
-        residual_bound,
-        successful,
+        correlation_energy: ArrayLike,
+        opposite_spin_energy: ArrayLike,
+        same_spin_energy: ArrayLike,
+        total_energy: ArrayLike,
+        amplitudes: ArrayLike,
+        minimum_denominator: ArrayLike,
+        residual_bound: ArrayLike,
+        successful: ArrayLike,
         plan_id: str,
         store_id: str,
         /,
-    ):
+    ) -> None:
         amplitude = jnp.asarray(amplitudes)
         dtype = amplitude.real.dtype
         self.correlation_energy = jnp.asarray(correlation_energy, dtype=dtype).reshape(())
@@ -98,7 +99,7 @@ class MP2Plan(StrictModule, NonTrainableState):
         same_spin_scale: float = 1.0,
         denominator_tolerance: float = 1.0e-8,
         regularization: float = 0.0,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (

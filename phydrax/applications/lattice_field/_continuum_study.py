@@ -13,13 +13,15 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float
 from ...linalg import (
     DenseLinearOperator,
     eigen,
@@ -28,6 +30,7 @@ from ...linalg import (
     FailurePolicy,
     MaterializationPolicy,
     OperatorProperties,
+    PreparedFactorization,
 )
 
 
@@ -39,13 +42,6 @@ def _identifier(value: str, name: str, /) -> str:
     if not identifier:
         raise ValueError(f"{name} must be non-empty.")
     return identifier
-
-
-def _finite_positive(value: float, name: str, /) -> float:
-    resolved = float(value)
-    if not isfinite(resolved) or resolved <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return resolved
 
 
 class ScaleSettingCondition(StrictModule, NonTrainableState):
@@ -65,10 +61,10 @@ class ScaleSettingCondition(StrictModule, NonTrainableState):
         scheme: str,
         physical_reference_uncertainty: float = 0.0,
         minimum_signal_to_noise: float = 3.0,
-    ):
-        reference = _finite_positive(physical_reference, "physical_reference")
+    ) -> None:
+        reference = positive_finite_float(physical_reference, "physical_reference")
         uncertainty = float(physical_reference_uncertainty)
-        signal = _finite_positive(minimum_signal_to_noise, "minimum_signal_to_noise")
+        signal = positive_finite_float(minimum_signal_to_noise, "minimum_signal_to_noise")
         scheme_id = _identifier(scheme, "scheme")
         if not isfinite(uncertainty) or uncertainty < 0.0:
             raise ValueError(
@@ -98,7 +94,7 @@ class RenormalizationCondition(StrictModule, NonTrainableState):
     scale: str = eqx.field(static=True)
     condition_id: str = eqx.field(static=True)
 
-    def __init__(self, *, scheme: str, scale: str, power: float = 1.0):
+    def __init__(self, *, scheme: str, scale: str, power: float = 1.0) -> None:
         scheme_id = _identifier(scheme, "scheme")
         scale_id = _identifier(scale, "scale")
         power_ = float(power)
@@ -142,7 +138,7 @@ class CorrelatedContinuumData(StrictModule, NonTrainableState):
         covariance_id: str,
         maximum_data_points: int = 4096,
         symmetry_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         observable = np.asarray(bare_observable, dtype=np.float64).reshape((-1,))
         inverse = np.asarray(inverse_scale, dtype=np.float64).reshape((-1,))
         renormalization = np.asarray(renormalization_factor, dtype=np.float64).reshape(
@@ -233,22 +229,22 @@ class ContinuumSystematicVariation(StrictModule, NonTrainableState):
         maximum_lattice_spacing: float | None = None,
         minimum_physical_extent: float | None = None,
         variation_id: str | None = None,
-    ):
-        cutoff = _finite_positive(cutoff_power, "cutoff_power")
+    ) -> None:
+        cutoff = positive_finite_float(cutoff_power, "cutoff_power")
         volume = (
             None
             if finite_volume_power is None
-            else _finite_positive(finite_volume_power, "finite_volume_power")
+            else positive_finite_float(finite_volume_power, "finite_volume_power")
         )
         maximum = (
             None
             if maximum_lattice_spacing is None
-            else _finite_positive(maximum_lattice_spacing, "maximum_lattice_spacing")
+            else positive_finite_float(maximum_lattice_spacing, "maximum_lattice_spacing")
         )
         minimum = (
             None
             if minimum_physical_extent is None
-            else _finite_positive(minimum_physical_extent, "minimum_physical_extent")
+            else positive_finite_float(minimum_physical_extent, "minimum_physical_extent")
         )
         resolved_id = (
             canonical_fingerprint(
@@ -295,7 +291,7 @@ class ContinuumStudyPlan(StrictModule, NonTrainableState):
         minimum_degrees_of_freedom: int = 1,
         maximum_matrix_entries: int = 1_000_000,
         maximum_matrix_bytes: int = 64 * 1024 * 1024,
-    ):
+    ) -> None:
         if not isinstance(scale_setting, ScaleSettingCondition):
             raise TypeError("scale_setting must be ScaleSettingCondition.")
         if not isinstance(renormalization, RenormalizationCondition):
@@ -395,7 +391,9 @@ def _factorization_policy(plan: ContinuumStudyPlan, /) -> FactorizationPolicy:
     )
 
 
-def _positive_factor(matrix: Array, plan: ContinuumStudyPlan, /):
+def _positive_factor(
+    matrix: Array, plan: ContinuumStudyPlan, /
+) -> tuple[PreparedFactorization | None, bool]:
     symmetric = 0.5 * (matrix + matrix.T)
     self_adjoint = OperatorProperties(
         self_adjoint=True,
@@ -444,7 +442,7 @@ def _fit_once(
     /,
 ) -> tuple[Array, Array, Array, bool]:
     covariance_factor, covariance_valid = _positive_factor(covariance, plan)
-    if not covariance_valid:
+    if covariance_factor is None or not covariance_valid:
         zeros = jnp.zeros((design.shape[1],), dtype=observable.dtype)
         square = jnp.zeros((design.shape[1], design.shape[1]), dtype=observable.dtype)
         return zeros, square, jnp.asarray(jnp.inf), False
@@ -461,7 +459,7 @@ def _fit_once(
     normal = 0.5 * (normal + normal.T)
     right_hand_side = contract("ni,n->i", design, precision_observable.value)
     normal_factor, normal_valid = _positive_factor(normal, plan)
-    if not normal_valid:
+    if normal_factor is None or not normal_valid:
         zeros = jnp.zeros((design.shape[1],), dtype=observable.dtype)
         square = jnp.zeros((design.shape[1], design.shape[1]), dtype=observable.dtype)
         return zeros, square, jnp.asarray(jnp.inf), False

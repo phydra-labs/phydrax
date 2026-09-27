@@ -13,7 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -54,7 +54,7 @@ class TaylorExponentialResourcePolicy(StrictModule):
         estimator_retries: int = 2,
         max_retained_storage_bytes: int = 64 * 1024 * 1024,
         max_workspace_bytes: int = 512 * 1024 * 1024,
-    ):
+    ) -> None:
         values = {
             "max_degree": max_degree,
             "max_power": max_power,
@@ -111,7 +111,7 @@ class TaylorExponentialPolicy(StrictModule):
         resources: TaylorExponentialResourcePolicy | None = None,
         differentiation: DifferentiationPolicy | None = None,
         failure: FailurePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(error_tolerance, (int, float, np.floating)) or isinstance(
             error_tolerance, bool
         ):

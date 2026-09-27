@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -20,7 +23,7 @@ from phydrax.signal import (
 
 @pytest.mark.parametrize("length", (1, 2, 7, 8))
 @pytest.mark.parametrize("periodic", (False, True))
-def test_standard_windows_match_scipy(length, periodic):
+def test_standard_windows_match_scipy(length: Any, periodic: Any) -> None:
     symmetric = not periodic
     cases = (
         (hann_window, scipy_windows.hann, ()),
@@ -30,12 +33,14 @@ def test_standard_windows_match_scipy(length, periodic):
         (tukey_window, scipy_windows.tukey, (0.35,)),
     )
     for actual_fn, expected_fn, parameters in cases:
+        # ty: ignore[missing-argument, too-many-positional-arguments]
         actual = actual_fn(length, *parameters, periodic=periodic, dtype=jnp.float64)
+        # ty: ignore[no-matching-overload]
         expected = expected_fn(length, *parameters, sym=symmetric)
         assert np.allclose(actual, expected, rtol=1e-12, atol=1e-12)
 
 
-def test_continuous_window_parameters_are_differentiable_under_jit():
+def test_continuous_window_parameters_are_differentiable_under_jit() -> None:
     kaiser_energy = jax.jit(lambda beta: jnp.sum(kaiser_window(9, beta) ** 2))
     tukey_energy = jax.jit(lambda alpha: jnp.sum(tukey_window(9, alpha) ** 2))
 
@@ -43,7 +48,7 @@ def test_continuous_window_parameters_are_differentiable_under_jit():
     assert jnp.isfinite(jax.grad(tukey_energy)(jnp.asarray(0.4)))
 
 
-def test_window_validation_rejects_invalid_configuration():
+def test_window_validation_rejects_invalid_configuration() -> None:
     with pytest.raises(ValueError, match="length"):
         hann_window(0)
     with pytest.raises(TypeError, match="floating dtype"):

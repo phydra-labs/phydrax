@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 import pytest
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
@@ -20,7 +22,7 @@ _POLICY = phx.meshing.AssociationPropagationPolicy(classification_tolerance=1e-8
 _STATUS = phx.meshing.HighOrderCurvingStatus
 
 
-def _bound(shape, embedding=None):
+def _bound(shape: Any, embedding: Any = None) -> Any:
     model = phx.geometry.model_from_occt_shape(
         shape,
         coordinate_contract=_CONTRACT,
@@ -30,7 +32,7 @@ def _bound(shape, embedding=None):
     return phx.geometry.prepare_brep_projection(model, shape, embedding=embedding)
 
 
-def _plate_projection():
+def _plate_projection() -> Any:
     polygon = BRepBuilderAPI_MakePolygon()
     for x, y in ((-2, -2), (2, -2), (2, 2), (-2, 2)):
         polygon.Add(gp_Pnt(x, y, 0))
@@ -44,7 +46,7 @@ def _plate_projection():
     return _bound(BRepAlgoAPI_Cut(square, disk).Shape(), embedding)
 
 
-def _plate_mesh(apex):
+def _plate_mesh(apex: Any) -> Any:
     """Square plate with a unit hole: the hole is meshed by four chords."""
     ring = np.asarray([[1, 0], [0, 1], [-1, 0], [0, -1]], dtype=np.float64)
     outer = np.asarray(
@@ -61,7 +63,7 @@ def _plate_mesh(apex):
     return phx.discretization.CellMesh.from_triangles(points, triangles)
 
 
-def _icosphere(level):
+def _icosphere(level: Any) -> Any:
     golden = (1.0 + 5.0**0.5) / 2.0
     points = np.asarray(
         [
@@ -108,7 +110,7 @@ def _icosphere(level):
     return phx.discretization.CellMesh.from_triangles(points @ (tilt @ turn).T, faces)
 
 
-def _cylinder_mesh(rings, layers, height=2.0):
+def _cylinder_mesh(rings: Any, layers: Any, height: Any = 2.0) -> Any:
     disk = [np.zeros(2)]
     for ring in range(1, rings + 1):
         angles = 2.0 * np.pi * np.arange(6 * ring) / (6 * ring)
@@ -138,7 +140,7 @@ def _cylinder_mesh(rings, layers, height=2.0):
     return phx.discretization.CellMesh.from_tetrahedra(points, cells)
 
 
-def _mapped(geometry, reference, cells=None):
+def _mapped(geometry: Any, reference: Any, cells: Any = None) -> Any:
     """Geometry map evaluated at reference points of every (selected) cell."""
     element = geometry.elements[0]
     routes = np.asarray(geometry.geometry_dofs[0])
@@ -147,7 +149,7 @@ def _mapped(geometry, reference, cells=None):
     return np.einsum("mn,cna->cma", np.asarray(values), nodes)
 
 
-def _triangle_lattice(samples=6):
+def _triangle_lattice(samples: Any = 6) -> Any:
     return np.asarray(
         [
             (i / samples, j / samples)
@@ -157,7 +159,7 @@ def _triangle_lattice(samples=6):
     )
 
 
-def _sphere_error(geometry):
+def _sphere_error(geometry: Any) -> Any:
     return float(
         np.max(
             np.abs(np.linalg.norm(_mapped(geometry, _triangle_lattice()), axis=-1) - 1)
@@ -165,7 +167,7 @@ def _sphere_error(geometry):
     )
 
 
-def _lateral_error(geometry, mesh):
+def _lateral_error(geometry: Any, mesh: Any) -> Any:
     """Largest radial deviation of the lateral boundary faces of a cylinder mesh."""
     vertices = np.asarray(mesh.blocks[0].vertices)
     radius = np.linalg.norm(np.asarray(mesh.coordinates)[:, :2], axis=1)
@@ -185,7 +187,7 @@ def _lateral_error(geometry, mesh):
     return worst
 
 
-def _classes(association, mesh):
+def _classes(association: Any, mesh: Any) -> Any:
     """``(dimension, index)`` B-Rep class and residual of every mesh vertex row."""
     rows = {
         int(value): row for row, value in enumerate(np.asarray(mesh.vertex_global_ids))
@@ -201,7 +203,7 @@ def _classes(association, mesh):
     return classes, residuals
 
 
-def _rows(mesh, points):
+def _rows(mesh: Any, points: Any) -> Any:
     coordinates = np.asarray(mesh.coordinates)
     return np.asarray(
         [
@@ -211,7 +213,7 @@ def _rows(mesh, points):
     )
 
 
-def test_bisection_propagates_corner_edge_and_face_classes():
+def test_bisection_propagates_corner_edge_and_face_classes() -> None:
     projection = _plate_projection()
     mesh = _plate_mesh((1.2, 1.2))
     association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
@@ -259,7 +261,7 @@ def test_bisection_propagates_corner_edge_and_face_classes():
     assert np.all(classes[~interior, 0] < 2)
 
 
-def _collapse(mesh, removed, kept):
+def _collapse(mesh: Any, removed: Any, kept: Any) -> Any:
     """Target mesh and lineage of collapsing vertex row ``removed`` into ``kept``."""
     identifiers = np.asarray(mesh.vertex_global_ids)
     cells = np.asarray(mesh.blocks[0].vertices)
@@ -284,7 +286,7 @@ def _collapse(mesh, removed, kept):
     return target, MeshLineage(mesh.topology_id, target.topology_id, (record,))
 
 
-def test_collapses_must_keep_a_vertex_bounding_the_removed_class():
+def test_collapses_must_keep_a_vertex_bounding_the_removed_class() -> None:
     projection = _plate_projection()
     mesh = _plate_mesh((1.2, 1.2))
     association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
@@ -303,7 +305,7 @@ def test_collapses_must_keep_a_vertex_bounding_the_removed_class():
     assert error.value.target_ids.tolist() == [int(mesh.vertex_global_ids[hole])]
 
 
-def test_rederivation_after_unknown_lineage_recovers_classes():
+def test_rederivation_after_unknown_lineage_recovers_classes() -> None:
     projection = _plate_projection()
     source_mesh = _plate_mesh((1.2, 1.2))
     association = phx.meshing.associate_mesh_vertices(
@@ -328,7 +330,7 @@ def test_rederivation_after_unknown_lineage_recovers_classes():
     )
 
 
-def test_p2_sphere_curving_raises_the_geometric_convergence_order():
+def test_p2_sphere_curving_raises_the_geometric_convergence_order() -> None:
     projection = _bound(BRepPrimAPI_MakeSphere(1.0).Shape())
     policy = phx.meshing.HighOrderCurvingPolicy(degree=2, relaxation_rounds=1)
     errors = []
@@ -350,7 +352,9 @@ def test_p2_sphere_curving_raises_the_geometric_convergence_order():
     assert curved_coarse / curved_fine > 7.0
 
 
-def test_p2_cylinder_curving_is_certified_and_periodic_nodes_follow_the_isometry():
+def test_p2_cylinder_curving_is_certified_and_periodic_nodes_follow_the_isometry() -> (
+    None
+):
     projection = _bound(BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape())
     mesh = _cylinder_mesh(2, 2)
     association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
@@ -407,12 +411,12 @@ def test_p2_cylinder_curving_is_certified_and_periodic_nodes_follow_the_isometry
     assert np.max(np.abs(nodes[top_nodes] - straight[top_nodes])) > 0.01
 
 
-def test_inverting_curving_rolls_back_and_converged_relaxation_repairs_it():
+def test_inverting_curving_rolls_back_and_converged_relaxation_repairs_it() -> None:
     projection = _plate_projection()
     mesh = _plate_mesh((0.8, 0.8))
     association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
 
-    def curve(rounds, steps):
+    def curve(rounds: Any, steps: Any) -> Any:
         policy = phx.meshing.HighOrderCurvingPolicy(
             degree=2,
             relaxation_rounds=rounds,
@@ -446,12 +450,14 @@ def test_inverting_curving_rolls_back_and_converged_relaxation_repairs_it():
     assert relaxed.evidence.minimum_scaled_jacobian > 0.0
 
 
-def test_nonconverged_relaxation_replaces_a_valid_projection_only_when_permitted():
+def test_nonconverged_relaxation_replaces_a_valid_projection_only_when_permitted() -> (
+    None
+):
     projection = _bound(BRepPrimAPI_MakeSphere(1.0).Shape())
     mesh = _icosphere(1)
     association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
 
-    def curve(rounds, accept):
+    def curve(rounds: Any, accept: Any) -> Any:
         policy = phx.meshing.HighOrderCurvingPolicy(
             degree=2,
             relaxation_rounds=rounds,
@@ -479,7 +485,7 @@ def test_nonconverged_relaxation_replaces_a_valid_projection_only_when_permitted
     )
 
 
-def test_verification_certifies_existing_high_order_geometry():
+def test_verification_certifies_existing_high_order_geometry() -> None:
     projection = _bound(BRepPrimAPI_MakeSphere(1.0).Shape())
     mesh = _icosphere(1)
     association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)

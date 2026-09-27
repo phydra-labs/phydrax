@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -36,7 +39,7 @@ from phydrax.linalg.eigen import (
 class _NeverMaterializedOperator(AbstractLinearOperator):
     matrix: jax.Array
 
-    def __init__(self, matrix, /, *, operator_id):
+    def __init__(self, matrix: Any, /, *, operator_id: Any) -> None:
         matrix_ = jnp.asarray(matrix)
         space = ArraySpace((matrix_.shape[0],), dtype=matrix_.dtype)
         self.source = space
@@ -51,20 +54,21 @@ class _NeverMaterializedOperator(AbstractLinearOperator):
         self.batch_shape = ()
         self.operator_id = operator_id
 
-    def mv(self, vector):
+    def mv(self, vector: Any) -> Any:
         return self.matrix @ self.source.validate(vector)
 
-    def transpose_mv(self, vector):
+    def transpose_mv(self, vector: Any) -> Any:
         return self.matrix.T @ self.target.validate(vector)
 
-    def adjoint_mv(self, vector):
+    def adjoint_mv(self, vector: Any) -> Any:
         return jnp.conj(self.matrix.T) @ self.target.validate(vector)
 
-    def _materialize(self):
+    # ty: ignore[invalid-method-override]
+    def _materialize(self) -> None:
         raise AssertionError("SLEPc shell planning must not materialize operators")
 
 
-def _problem(*, generalized=False, dtype=jnp.float64):
+def _problem(*, generalized: Any = False, dtype: Any = jnp.float64) -> Any:
     matrix = jnp.diag(jnp.asarray([2.0, 6.0, 15.0], dtype=dtype))
     operator = _NeverMaterializedOperator(matrix, operator_id="slepc-shell-A")
     if not generalized:
@@ -80,10 +84,12 @@ def _problem(*, generalized=False, dtype=jnp.float64):
     )
 
 
-def test_slepc_shell_plan_is_dependency_free_and_never_materializes(monkeypatch):
+def test_slepc_shell_plan_is_dependency_free_and_never_materializes(
+    monkeypatch: Any,
+) -> None:
     problem = _problem(generalized=True)
 
-    def unexpected_probe():
+    def unexpected_probe() -> None:
         raise AssertionError("symbolic planning must not probe optional dependencies")
 
     monkeypatch.setattr(slepc_backend, "slepc_availability", unexpected_probe)
@@ -100,7 +106,7 @@ def test_slepc_shell_plan_is_dependency_free_and_never_materializes(monkeypatch)
     assert first.policy.operator_mode == "shell"
 
 
-def test_slepc_prepare_reports_missing_optional_dependencies(monkeypatch):
+def test_slepc_prepare_reports_missing_optional_dependencies(monkeypatch: Any) -> None:
     problem = _problem()
     unavailable = BackendAvailability(
         capabilities=SLEPC_CAPABILITIES,
@@ -117,7 +123,7 @@ def test_slepc_prepare_reports_missing_optional_dependencies(monkeypatch):
         )
 
 
-def test_slepc_transform_rejects_shell_instead_of_materializing():
+def test_slepc_transform_rejects_shell_instead_of_materializing() -> None:
     problem = _problem()
     selection = GeneralEigenSelection.closest(6.25, 1)
 
@@ -152,7 +158,9 @@ def test_slepc_transform_rejects_shell_instead_of_materializing():
         )
 
 
-def test_slepc_csr_mode_requires_sparse_operators_and_declared_transform_options():
+def test_slepc_csr_mode_requires_sparse_operators_and_declared_transform_options() -> (
+    None
+):
     problem = _problem(generalized=True)
     closest = GeneralEigenSelection.closest(3.0, 1)
 
@@ -198,7 +206,7 @@ def test_slepc_csr_mode_requires_sparse_operators_and_declared_transform_options
         )
 
 
-def test_slepc_plan_rejects_unsupported_selection_without_provider_imports():
+def test_slepc_plan_rejects_unsupported_selection_without_provider_imports() -> None:
     problem = _problem()
 
     with pytest.raises(ValueError, match="largest-real"):
@@ -208,7 +216,7 @@ def test_slepc_plan_rejects_unsupported_selection_without_provider_imports():
         )
 
 
-def test_slepc_original_generalized_pencil_verification_pairs_and_normalizes():
+def test_slepc_original_generalized_pencil_verification_pairs_and_normalizes() -> None:
     problem = _problem(generalized=True)
     values = np.asarray([3.0 + 0.0j, 5.0 + 0.0j])
     right = np.asarray(
@@ -264,7 +272,7 @@ def test_slepc_original_generalized_pencil_verification_pairs_and_normalizes():
     assert action_count > 0
 
 
-def test_slepc_complex_original_pencil_residuals_use_adjoint_actions():
+def test_slepc_complex_original_pencil_residuals_use_adjoint_actions() -> None:
     matrix = jnp.asarray(
         [
             [1.0 + 2.0j, 0.0],

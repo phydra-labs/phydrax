@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -33,6 +34,7 @@ from ...linalg import (
     SmallLinearSolvePlan,
     solve_small_linear,
 )
+from ...typing import parse
 from ._rod_materials import (
     LinearElasticRodMaterialPlan,
     PreparedLinearElasticRodMaterial,
@@ -248,16 +250,14 @@ class RodPlan(StrictModule, NonTrainableState):
         orientation_norm_tolerance: float = 1.0e-4,
         inextensibility_tolerance: float = 1.0e-5,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         segments = np.asarray(segment_node_ids)
         if segments.ndim != 2 or segments.shape[1:] != (2,) or segments.shape[0] < 1:
             raise ValueError("segment_node_ids must have shape (segment_count, 2).")
         if not np.issubdtype(segments.dtype, np.integer):
             raise TypeError("segment_node_ids must have an integer dtype.")
         positions = _require_real_array("rest_positions", rest_positions, 2)
-        dimension = positions.shape[1]
-        if dimension not in (2, 3):
-            raise ValueError("Cosserat rods require ambient dimension 2 or 3.")
+        dimension = parse(positions.shape[1], RodDimension, "rest_positions dimension")
         segment_count = segments.shape[0]
         node_count = positions.shape[0]
         if node_count != segment_count + 1:
@@ -419,17 +419,18 @@ class RodState(StrictModule):
         orientations: ArrayLike,
         angular_velocities: ArrayLike,
         /,
-    ):
+    ) -> None:
         positions_ = jnp.asarray(positions)
         velocities_ = jnp.asarray(velocities)
         orientations_ = jnp.asarray(orientations)
         angular_ = jnp.asarray(angular_velocities)
-        if positions_.ndim != 2 or positions_.shape[-1] not in (2, 3):
+        if positions_.ndim != 2:
             raise ValueError("Rod positions must have shape (nodes, 2|3).")
+        dimension = parse(positions_.shape[-1], RodDimension, "positions dimension")
         if velocities_.shape != positions_.shape:
             raise ValueError("Rod velocities must match positions.")
         segment_count = positions_.shape[0] - 1
-        if positions_.shape[-1] == 2:
+        if dimension == 2:
             if orientations_.shape != (segment_count,) or angular_.shape != (
                 segment_count,
             ):
@@ -485,7 +486,7 @@ class PreparedRod(StrictModule, NonTrainableState):
     material_workset_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: RodPlan, /):
+    def __init__(self, plan: RodPlan, /) -> None:
         if not isinstance(plan, RodPlan):
             raise TypeError("plan must be a RodPlan.")
         segment_vectors = (
@@ -1044,9 +1045,8 @@ class RodEndpointAttachment(StrictModule, NonTrainableState):
         /,
         *,
         attachment_id: str | None = None,
-    ):
-        if endpoint not in ("start", "end"):
-            raise ValueError("endpoint must be 'start' or 'end'.")
+    ) -> None:
+        endpoint = parse(endpoint, RodEndpoint, "endpoint")
         body_id = int(rigid_body_id)
         if body_id < 0:
             raise ValueError("rigid_body_id must be nonnegative.")
@@ -1190,7 +1190,7 @@ class RodDynamicsPlan(StrictModule, NonTrainableState):
         maximum_angular_increment: float = np.pi,
         projection_iterations: int = 8,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if integrator != "symplectic":
             raise ValueError("The fixed-topology rod supports the symplectic integrator.")
         time_bound = float(maximum_time_step)
@@ -1260,7 +1260,7 @@ def _project_inextensible_positions(
     plan = rod.plan
     inverse_mass = 1.0 / plan.node_masses
 
-    def project_segment(segment_index, current):
+    def project_segment(segment_index: Array, current: Array) -> Array:
         left = plan.segment_node_ids[segment_index, 0]
         right = plan.segment_node_ids[segment_index, 1]
         vector = current[right] - current[left]
@@ -1273,7 +1273,7 @@ def _project_inextensible_positions(
         current = current.at[left].add(left_update)
         return current.at[right].add(-right_update)
 
-    def project_sweep(_, current):
+    def project_sweep(_: Array, current: Array) -> Array:
         return jax.lax.fori_loop(0, plan.segment_count, project_segment, current)
 
     return jax.lax.fori_loop(0, iterations, project_sweep, positions)
@@ -1289,7 +1289,7 @@ def _project_inextensible_velocities(
     plan = rod.plan
     inverse_mass = 1.0 / plan.node_masses
 
-    def project_segment(segment_index, current):
+    def project_segment(segment_index: Array, current: Array) -> Array:
         left = plan.segment_node_ids[segment_index, 0]
         right = plan.segment_node_ids[segment_index, 1]
         vector = positions[right] - positions[left]
@@ -1303,7 +1303,7 @@ def _project_inextensible_velocities(
         current = current.at[left].add((inverse_mass[left] / weight_sum) * impulse)
         return current.at[right].add(-(inverse_mass[right] / weight_sum) * impulse)
 
-    def project_sweep(_, current):
+    def project_sweep(_: Array, current: Array) -> Array:
         return jax.lax.fori_loop(0, plan.segment_count, project_segment, current)
 
     return jax.lax.fori_loop(0, iterations, project_sweep, velocities)
@@ -1335,7 +1335,7 @@ class PreparedRodDynamics(StrictModule, NonTrainableState):
     inertia_solve: SmallLinearSolvePlan | None
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, rod: PreparedRod, plan: RodDynamicsPlan, /):
+    def __init__(self, rod: PreparedRod, plan: RodDynamicsPlan, /) -> None:
         if not isinstance(rod, PreparedRod):
             raise TypeError("rod must be a PreparedRod.")
         if not isinstance(plan, RodDynamicsPlan):

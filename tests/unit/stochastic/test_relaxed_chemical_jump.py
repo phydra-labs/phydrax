@@ -8,7 +8,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_relaxed_chemical_jump_reports_continuous_bias_evidence():
+def test_relaxed_chemical_jump_reports_continuous_bias_evidence() -> None:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (

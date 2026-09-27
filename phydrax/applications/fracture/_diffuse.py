@@ -4,18 +4,25 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...equations import CellResidualAction, FiniteElementForm
+from ...equations import (
+    CellResidualAction,
+    FiniteElementExecutionContext,
+    FiniteElementForm,
+)
 from ...equations.fem import symmetric_gradient
 
 
@@ -37,7 +44,7 @@ class PhaseFieldFractureParameters(StrictModule, NonTrainableState):
         /,
         *,
         residual_stiffness: ArrayLike = 1.0e-8,
-    ):
+    ) -> None:
         values = tuple(
             np.asarray(value)
             for value in (
@@ -98,7 +105,7 @@ class PhaseFieldHistoryState(StrictModule, NonTrainableState):
         /,
         *,
         state_version: int = 0,
-    ):
+    ) -> None:
         history_ = np.asarray(history)
         damage = np.asarray(accepted_damage)
         version = int(state_version)
@@ -163,7 +170,7 @@ class PhaseFieldHistoryTransaction(StrictModule, NonTrainableState):
         *,
         base_state_version: int,
         accepted: bool,
-    ):
+    ) -> None:
         history = np.asarray(trial_history)
         damage = np.asarray(trial_damage)
         version = int(base_state_version)
@@ -225,7 +232,7 @@ class FixedHistoryNeuralBlock(StrictModule, NonTrainableState):
         /,
         *,
         base_state_version: int,
-    ):
+    ) -> None:
         history = jnp.asarray(fixed_history)
         damage_ = jnp.asarray(damage)
         logits_ = jnp.asarray(logits)
@@ -275,10 +282,12 @@ class FixedHistoryNeuralBlock(StrictModule, NonTrainableState):
 class BoundedNeuralFixedHistoryController(StrictModule):
     """Map pointwise neural logits into the irreversible interval [d_n, 1]."""
 
-    network: object
+    network: Callable[[Array], Array]
     controller_id: str = eqx.field(static=True)
 
-    def __init__(self, network: object, /, *, controller_id: str):
+    def __init__(
+        self, network: Callable[[Array], Array], /, *, controller_id: str
+    ) -> None:
         if not callable(network):
             raise TypeError("network must be callable.")
         identifier = str(controller_id)
@@ -342,7 +351,7 @@ class PhaseFieldFractureModel(StrictModule, NonTrainableState):
         displacement_field: str = "displacement",
         damage_field: str = "damage",
         model_id: str = "phase-field-fracture",
-    ):
+    ) -> None:
         if not isinstance(parameters, PhaseFieldFractureParameters):
             raise TypeError("parameters must be PhaseFieldFractureParameters.")
         displacement = str(displacement_field)
@@ -388,8 +397,14 @@ class PhaseFieldFractureModel(StrictModule, NonTrainableState):
         parameters = self.parameters
 
         def equilibrium(
-            values, gradients, points, weights, test_basis, test_gradients, context
-        ):
+            values: tuple[Array, ...],
+            gradients: tuple[Array, ...],
+            points: Array,
+            weights: Array,
+            test_basis: Array,
+            test_gradients: Array,
+            context: FiniteElementExecutionContext,
+        ) -> Array:
             displacement_gradient, _ = gradients
             _, damage = values
             strain = symmetric_gradient(displacement_gradient)
@@ -412,8 +427,14 @@ class PhaseFieldFractureModel(StrictModule, NonTrainableState):
             return ein.contract("cq,cqib,cqab->cia", weights, test_gradients, stress)
 
         def damage_residual(
-            values, gradients, points, weights, test_basis, test_gradients, context
-        ):
+            values: tuple[Array, ...],
+            gradients: tuple[Array, ...],
+            points: Array,
+            weights: Array,
+            test_basis: Array,
+            test_gradients: Array,
+            context: FiniteElementExecutionContext,
+        ) -> Array:
             _, damage = values
             _, damage_gradient = gradients
             if history.shape[0] != damage.shape[0] or history.shape[1] not in (

@@ -6,7 +6,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._trainable import ParameterOwner
@@ -29,7 +30,7 @@ class AffineFlowBijector(AbstractBijector, ParameterOwner):
         /,
         *,
         architecture_id: str = "native-affine-flow",
-    ):
+    ) -> None:
         shift_ = np.asarray(shift)
         scale_ = np.asarray(scale)
         if shift_.shape != scale_.shape or not shift_.shape:

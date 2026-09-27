@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -10,11 +13,11 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _observation_problem(*, sample_observation=True):
+def _observation_problem(*, sample_observation: Any = True) -> Any:
     query_scale = 0.2
     space = phx.uq.ParameterSpace(jnp.asarray(0.9), priors=phx.uq.Normal(0.0, 2.0))
 
-    def noise_scale(parameter):
+    def noise_scale(parameter: Any) -> Any:
         return 0.1 + 0.05 * parameter
 
     sampler = None
@@ -37,7 +40,7 @@ def _observation_problem(*, sample_observation=True):
     return problem
 
 
-def _laplace(problem):
+def _laplace(problem: Any) -> Any:
     return phx.uq.fit_laplace(
         problem,
         jnp.asarray(0.99),
@@ -45,7 +48,7 @@ def _laplace(problem):
     )
 
 
-def test_laplace_prediction_propagates_conditional_variance_and_total_variance():
+def test_laplace_prediction_propagates_conditional_variance_and_total_variance() -> None:
     problem = _observation_problem()
     result = _laplace(problem)
     query = jnp.linspace(0.5, 1.5, 5)
@@ -66,7 +69,9 @@ def test_laplace_prediction_propagates_conditional_variance_and_total_variance()
     assert jnp.all(prediction.observation_variance().data > 0.0)
 
 
-def test_laplace_observation_draws_are_reproducible_chunk_invariant_and_separated():
+def test_laplace_observation_draws_are_reproducible_chunk_invariant_and_separated() -> (
+    None
+):
     problem = _observation_problem()
     result = _laplace(problem)
     query = jnp.linspace(0.5, 1.5, 4)
@@ -95,7 +100,7 @@ def test_laplace_observation_draws_are_reproducible_chunk_invariant_and_separate
     )
 
 
-def test_observation_draws_recover_declared_gaussian_variance():
+def test_observation_draws_recover_declared_gaussian_variance() -> None:
     problem = _observation_problem()
     result = _laplace(problem)
     query = jnp.asarray([0.5, 1.0])
@@ -113,7 +118,7 @@ def test_observation_draws_recover_declared_gaussian_variance():
     assert jnp.allclose(empirical, expected, rtol=0.12, atol=3e-3)
 
 
-def test_observation_prediction_requires_explicit_sampler_and_valid_draws():
+def test_observation_prediction_requires_explicit_sampler_and_valid_draws() -> None:
     query = jnp.ones((2,))
     missing = _laplace(_observation_problem(sample_observation=False))
     with pytest.raises(ValueError, match="no observation-sampling function"):
@@ -146,7 +151,7 @@ def test_observation_prediction_requires_explicit_sampler_and_valid_draws():
 
 
 @pytest.mark.parametrize("step_size", (jnp.nan, jnp.inf))
-def test_mcmc_rejects_nonfinite_initial_step_size(step_size):
+def test_mcmc_rejects_nonfinite_initial_step_size(step_size: Any) -> None:
     with pytest.raises(ValueError, match="finite"):
         phx.uq.sample_nuts(
             _observation_problem(),
@@ -158,7 +163,7 @@ def test_mcmc_rejects_nonfinite_initial_step_size(step_size):
         )
 
 
-def test_mcmc_observation_prediction_preserves_chain_and_draw_axes():
+def test_mcmc_observation_prediction_preserves_chain_and_draw_axes() -> None:
     problem = _observation_problem()
     query = jnp.asarray([0.5, 1.0])
     result = phx.uq.sample_nuts(

@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._spectral._spherical import (
     _spherical_mode_layout_id,
@@ -44,7 +45,7 @@ class SphericalModeLayout(StrictModule, NonTrainableState):
         *,
         spin: int = 0,
         reality: bool = True,
-    ):
+    ) -> None:
         limit = int(bandlimit)
         spin_ = int(spin)
         reality_ = bool(reality)

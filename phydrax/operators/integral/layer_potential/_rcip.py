@@ -8,7 +8,8 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -23,7 +24,7 @@ from ....linalg import (
 )
 
 
-def _dense_solve(matrix: Array, right: Array, problem_id: str, /) -> Array:
+def _dense_solve(matrix: ArrayLike, right: ArrayLike, problem_id: str, /) -> Array:
     return solve(
         LinearSystem(
             DenseLinearOperator(matrix),
@@ -64,7 +65,7 @@ class RCIPPreconditioner2D(StrictModule, NonTrainableState):
         /,
         *,
         topology_id: str,
-    ):
+    ) -> None:
         coarse = jnp.asarray(coarse_matrix)
         if coarse.ndim != 2 or coarse.shape[0] != coarse.shape[1]:
             raise ValueError("RCIP coarse_matrix must be square.")

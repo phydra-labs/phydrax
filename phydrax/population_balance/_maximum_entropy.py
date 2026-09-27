@@ -3,12 +3,13 @@
 #
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 def exponential_maximum_entropy_density(
     coordinate: ArrayLike, moment0: ArrayLike, moment1: ArrayLike, /
-):
+) -> Array:
     m0 = jnp.asarray(moment0)
     m1 = jnp.asarray(moment1)
     x = jnp.asarray(coordinate)

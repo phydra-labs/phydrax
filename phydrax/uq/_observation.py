@@ -12,10 +12,12 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._likelihoods import AbstractLikelihood
 from ..stochastic._state_space import AbstractObservationModel, StateSpaceStepContext
+from ..typing import PRNGKey
 
 
 def _shape(value: Sequence[int], /, *, owner: str) -> tuple[int, ...]:
@@ -49,7 +51,7 @@ class LikelihoodObservationModel(AbstractObservationModel):
         parameters: (
             Callable[[Array, Array, StateSpaceStepContext], Mapping[str, Any]] | None
         ) = None,
-    ):
+    ) -> None:
         if not isinstance(likelihood, AbstractLikelihood):
             raise TypeError("likelihood must implement AbstractLikelihood.")
         if not callable(location):
@@ -118,7 +120,7 @@ class LikelihoodObservationModel(AbstractObservationModel):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         state: ArrayLike,
         time: ArrayLike,
         context: StateSpaceStepContext,

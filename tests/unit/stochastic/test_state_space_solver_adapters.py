@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -7,7 +9,7 @@ import phydrax as phx
 
 
 class _AdditiveFieldOperator(eqx.Module):
-    def __call__(self, batch, /, *, key=None):
+    def __call__(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         return (
             batch.input("state").values
@@ -21,20 +23,22 @@ class _ScalarPathwiseTransition(phx.stochastic.AbstractPathwiseTransition):
     driver_shape: tuple[int, ...] = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.state_shape = ()
         self.driver_shape = ()
         self.process_id = "scalar-pathwise"
 
-    def pathwise_transition(self, state, /, *, t0, t1, driver_increment):
+    def pathwise_transition(
+        self, state: Any, /, *, t0: Any, t1: Any, driver_increment: Any
+    ) -> Any:
         del t0, t1
         return state + driver_increment
 
-    def combine_driver_segments(self, first, second, /):
+    def combine_driver_segments(self, first: Any, second: Any, /) -> Any:
         return first + second
 
 
-def test_differential_transition_adapts_ode_and_sde_solvers():
+def test_differential_transition_adapts_ode_and_sde_solvers() -> None:
     ode = phx.stochastic.DifferentialTransitionKernel(
         lambda time, state, context: state * context.args,
         state_shape=(1,),
@@ -78,7 +82,7 @@ def test_differential_transition_adapts_ode_and_sde_solvers():
     assert jnp.allclose(traced.values, jnp.exp(1.0), rtol=1e-5)
 
 
-def test_jump_and_hybrid_transition_adapters_preserve_solver_status():
+def test_jump_and_hybrid_transition_adapters_preserve_solver_status() -> None:
     process = phx.stochastic.JumpProcess(
         lambda time, state, context: jnp.asarray([1.0]) + 0.0 * context.step_index,
         lambda state, channel, mark, context: (
@@ -126,7 +130,7 @@ def test_jump_and_hybrid_transition_adapters_preserve_solver_status():
     assert hybrid_sample.values[0] >= 1.0
 
 
-def test_scalar_transition_batches_keep_per_member_validity():
+def test_scalar_transition_batches_keep_per_member_validity() -> None:
     transition = phx.stochastic.PathwiseTransitionKernel(
         _ScalarPathwiseTransition(),
         lambda _key, _t0, _t1, _context: jnp.asarray([1.0, 1.0, 1.0]),
@@ -167,7 +171,7 @@ def test_scalar_transition_batches_keep_per_member_validity():
     assert scalar_sample.valid.shape == (2,)
 
 
-def test_finite_state_transition_has_exact_normalized_mass_and_filters():
+def test_finite_state_transition_has_exact_normalized_mass_and_filters() -> None:
     process = phx.stochastic.JumpProcess(
         lambda time, state, context: jnp.where(
             state[0] < 2, jnp.asarray([1.0]), jnp.asarray([0.0])
@@ -218,7 +222,7 @@ def test_finite_state_transition_has_exact_normalized_mass_and_filters():
     assert jnp.all(jnp.isin(result.particles, states))
 
 
-def test_operator_pathwise_transition_filters_complete_fields():
+def test_operator_pathwise_transition_filters_complete_fields() -> None:
     axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, 4, endpoint=False),

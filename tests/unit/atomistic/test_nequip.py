@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -20,14 +22,14 @@ from phydrax.units import ANGSTROM, ELECTRONVOLT
 SCALE = AtomisticScaleContract(ANGSTROM, ELECTRONVOLT)
 
 
-def _execution(maximum_neighbors=3):
+def _execution(maximum_neighbors: Any = 3) -> Any:
     return AtomisticGraphExecutionPlan(
         maximum_neighbors,
         maximum_dense_atoms=4,
     )
 
 
-def _model(*, interaction_count=2):
+def _model(*, interaction_count: Any = 2) -> Any:
     return NequIPPotential(
         SCALE,
         cutoff=2.5,
@@ -38,13 +40,14 @@ def _model(*, interaction_count=2):
     )
 
 
-def _structure(positions=None):
+def _structure(positions: Any = None) -> Any:
     if positions is None:
         positions = [[0.0, 0.0, 0.0], [0.9, 0.1, 0.0], [-0.2, 0.8, 0.2]]
+    # ty: ignore[invalid-argument-type]
     return AtomicStructure([8, 1, 1], positions, [15.999, 1.008, 1.008], SCALE)
 
 
-def test_energy_is_rigid_motion_invariant_and_force_is_equivariant():
+def test_energy_is_rigid_motion_invariant_and_force_is_equivariant() -> None:
     model = _model()
     structure = _structure()
     reference = energy_and_forces(model, structure, _execution())
@@ -65,7 +68,7 @@ def test_energy_is_rigid_motion_invariant_and_force_is_equivariant():
     assert observed.provenance.frozen_candidate_topology
 
 
-def test_conservative_force_matches_energy_finite_difference():
+def test_conservative_force_matches_energy_finite_difference() -> None:
     model = _model(interaction_count=1)
     batch = AtomisticBatch.from_structure(_structure())
     prediction = energy_and_forces(model, batch, _execution())
@@ -85,13 +88,16 @@ def test_conservative_force_matches_energy_finite_difference():
     np.testing.assert_allclose(prediction.net_torque, 0.0, atol=3e-9)
 
 
-def test_three_atom_energy_is_continuous_when_one_edge_crosses_cutoff():
+def test_three_atom_energy_is_continuous_when_one_edge_crosses_cutoff() -> None:
     model = _model(interaction_count=1)
 
-    def energy(distance):
+    def energy(distance: Any) -> Any:
         structure = AtomicStructure(
+            # ty: ignore[invalid-argument-type]
             [1, 6, 8],
+            # ty: ignore[invalid-argument-type]
             [[0.0, 0.0, 0.0], [0.7, 0.2, 0.0], [distance, 0.0, 0.0]],
+            # ty: ignore[invalid-argument-type]
             [1.0, 12.0, 16.0],
             SCALE,
         )
@@ -105,7 +111,7 @@ def test_three_atom_energy_is_continuous_when_one_edge_crosses_cutoff():
     assert abs(float(above - at)) < 1e-5
 
 
-def test_atom_and_species_permutation_preserves_energy_and_permutes_force():
+def test_atom_and_species_permutation_preserves_energy_and_permutes_force() -> None:
     model = _model()
     structure = _structure()
     permutation = np.asarray([2, 0, 1])
@@ -124,8 +130,11 @@ def test_atom_and_species_permutation_preserves_energy_and_permutes_force():
     )
 
 
-def test_padding_is_masked_and_neighbor_overflow_fails_closed_without_truncation():
+def test_padding_is_masked_and_neighbor_overflow_fails_closed_without_truncation() -> (
+    None
+):
     model = _model()
+    # ty: ignore[invalid-argument-type]
     hydrogen = AtomicStructure([1], [[0.0, 0.0, 0.0]], [1.0], SCALE)
     water = _structure()
     batch = AtomisticBatch.from_structures((hydrogen, water), atom_capacity=4)
@@ -148,21 +157,31 @@ def test_padding_is_masked_and_neighbor_overflow_fails_closed_without_truncation
         overflow_model(water, _execution(0))
 
 
-def test_nonfinite_padding_geometry_is_sanitized_before_radial_and_angular_maps():
+def test_nonfinite_padding_geometry_is_sanitized_before_radial_and_angular_maps() -> None:
     model = _model()
     reference = AtomicStructure(
-        [1, 8], [[0.0, 0.0, 0.0], [0.8, 0.1, 0.0]], [1.0, 16.0], SCALE
+        # ty: ignore[invalid-argument-type]
+        [1, 8],
+        # ty: ignore[invalid-argument-type]
+        [[0.0, 0.0, 0.0], [0.8, 0.1, 0.0]],
+        # ty: ignore[invalid-argument-type]
+        [1.0, 16.0],
+        SCALE,
     )
     padded = AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [1, 8, 0, 0],
+        # ty: ignore[invalid-argument-type]
         [
             [0.0, 0.0, 0.0],
             [0.8, 0.1, 0.0],
             [np.nan, np.nan, np.nan],
             [np.inf, -np.inf, np.inf],
         ],
+        # ty: ignore[invalid-argument-type]
         [1.0, 16.0, 0.0, 0.0],
         SCALE,
+        # ty: ignore[invalid-argument-type]
         active_mask=[True, True, False, False],
     )
     observed = energy_and_forces(model, padded, _execution())
@@ -179,7 +198,7 @@ def test_nonfinite_padding_geometry_is_sanitized_before_radial_and_angular_maps(
     np.testing.assert_allclose(observed.forces[0, 2:], 0.0, atol=0.0)
 
 
-def test_radial_modulation_has_one_output_per_actual_tensor_product_weight():
+def test_radial_modulation_has_one_output_per_actual_tensor_product_weight() -> None:
     model = _model(interaction_count=1)
     interaction = model.interactions[0]
     plan = interaction.tensor_product.plan
@@ -190,7 +209,7 @@ def test_radial_modulation_has_one_output_per_actual_tensor_product_weight():
     assert model.configuration.maximum_degree == 2
 
 
-def test_jit_position_vjp_and_second_parameter_derivative_are_finite():
+def test_jit_position_vjp_and_second_parameter_derivative_are_finite() -> None:
     model = _model(interaction_count=1)
     batch = AtomisticBatch.from_structure(_structure())
     compiled = jax.jit(
@@ -204,7 +223,7 @@ def test_jit_position_vjp_and_second_parameter_derivative_are_finite():
     )
     assert pullback(jnp.ones_like(energy))[0].shape == batch.positions.shape
 
-    def embedding_energy(embedding):
+    def embedding_energy(embedding: Any) -> Any:
         candidate = eqx.tree_at(lambda value: value.embedding, model, embedding)
         return jnp.sum(candidate.energy(batch, _execution()))
 
@@ -215,13 +234,17 @@ def test_jit_position_vjp_and_second_parameter_derivative_are_finite():
     assert bool(jnp.all(jnp.isfinite(second)))
 
 
-def test_periodic_metadata_and_tensor_product_resource_overflow_are_rejected():
+def test_periodic_metadata_and_tensor_product_resource_overflow_are_rejected() -> None:
     periodic = AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [1],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [1.0],
         SCALE,
         cell=np.eye(3),
+        # ty: ignore[invalid-argument-type]
         periodic_axes=[True, False, False],
     )
     with pytest.raises(ValueError, match="nonperiodic"):

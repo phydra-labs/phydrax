@@ -11,7 +11,8 @@ from math import isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._identity import SemanticProvenance
 from ...._strict import StrictModule
@@ -36,7 +37,9 @@ class HeidlaufRoehrle2014QualificationPlan(StrictModule, NonTrainableState):
     difference_step: float = eqx.field(static=True)
     qualification_id: str = eqx.field(static=True)
 
-    def __init__(self, *, relative_tolerance=5.0e-3, difference_step=2.0e-3):
+    def __init__(
+        self, *, relative_tolerance: float = 5.0e-3, difference_step: float = 2.0e-3
+    ) -> None:
         tolerance = float(relative_tolerance)
         step = float(difference_step)
         if (
@@ -63,9 +66,9 @@ class HeidlaufRoehrle2014QualificationPlan(StrictModule, NonTrainableState):
     def evaluate(
         self,
         material: PreparedHeidlaufRoehrle2014Material,
-        deformation,
-        pressure,
-        deformation_rate,
+        deformation: ArrayLike,
+        pressure: ArrayLike,
+        deformation_rate: ArrayLike,
         /,
     ) -> HeidlaufRoehrle2014QualificationEvidence:
         if not isinstance(material, PreparedHeidlaufRoehrle2014Material):
@@ -101,7 +104,7 @@ class HeidlaufRoehrle2014QualificationPlan(StrictModule, NonTrainableState):
         active_power = jnp.sum(response.active_first_piola * rate)
         expected_power = response.active_nominal_stress_pa * stretch_rate
 
-        def relative(left, right):
+        def relative(left: Array, right: Array) -> Array:
             return jnp.linalg.norm(left - right) / jnp.maximum(
                 1.0, jnp.linalg.norm(right)
             )
@@ -124,7 +127,13 @@ class HeidlaufRoehrle2014QualificationPlan(StrictModule, NonTrainableState):
             & negative.evidence.valid
         )
         return HeidlaufRoehrle2014QualificationEvidence(
-            *errors, valid, self.qualification_id
+            errors[0],
+            errors[1],
+            errors[2],
+            errors[3],
+            errors[4],
+            valid,
+            self.qualification_id,
         )
 
 

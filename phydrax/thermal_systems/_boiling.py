@@ -10,7 +10,7 @@ from typing import Literal, TypeAlias
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 
 BoilingRegime: TypeAlias = Literal["single-phase", "nucleate", "transition", "film"]
@@ -44,7 +44,7 @@ class PoolBoilingCurve:
     film_coefficient_w_m2_k: float
     latent_heat_j_kg: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         values = (
             self.saturation_temperature_k,
             self.single_phase_coefficient_w_m2_k,

@@ -2,7 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import warnings
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -19,17 +21,17 @@ from phydrax.nn.parameters import ParameterSubspace
 from phydrax.terms import TrajectorySignal
 
 
-def _inexact_leaves(tree):
+def _inexact_leaves(tree: Any) -> Any:
     return tuple(
         leaf for leaf in jax.tree_util.tree_leaves(tree) if eqx.is_inexact_array(leaf)
     )
 
 
-def _array_leaves(tree):
+def _array_leaves(tree: Any) -> Any:
     return tuple(leaf for leaf in jax.tree_util.tree_leaves(tree) if eqx.is_array(leaf))
 
 
-def _make_trajectory_problem():
+def _make_trajectory_problem() -> Any:
     inputs = jnp.asarray([[0.0, 1.0], [1.0, 2.0], [2.0, 4.0]])
     lengths = jnp.asarray([2, 4, 3])
     domain = TrajectoryDatasetDomain(inputs, lengths, dt=0.5)
@@ -42,11 +44,11 @@ class _ScaledQueryTransfer(eqx.Module):
     transfer: phx.graph.QueryGraphOperator
     scale: jnp.ndarray = phx.parameter_field()
 
-    def __init__(self, transfer: phx.graph.QueryGraphOperator, scale):
+    def __init__(self, transfer: phx.graph.QueryGraphOperator, scale: Any) -> None:
         self.transfer = transfer
         self.scale = jnp.asarray(scale, dtype="float64")
 
-    def __call__(self, graph):
+    def __call__(self, graph: Any) -> Any:
         out = self.transfer(graph)
         nodes = dict(out.nodes)
         nodes["out"] = nodes["out"] * self.scale
@@ -56,10 +58,10 @@ class _ScaledQueryTransfer(eqx.Module):
 class _ScaledNodeRate(eqx.Module):
     scale: jnp.ndarray = phx.parameter_field()
 
-    def __init__(self, scale):
+    def __init__(self, scale: Any) -> None:
         self.scale = jnp.asarray(scale, dtype="float64")
 
-    def __call__(self, graph):
+    def __call__(self, graph: Any) -> Any:
         return graph.replace(
             nodes=jnp.ones_like(graph.nodes) * self.scale,
             validate=False,
@@ -69,7 +71,7 @@ class _ScaledNodeRate(eqx.Module):
 class _RawScale(eqx.Module):
     scale: jax.Array
 
-    def __call__(self, x, **_kwargs):
+    def __call__(self, x: Any, **_kwargs: Any) -> Any:
         return self.scale * x[0]
 
 
@@ -77,11 +79,11 @@ class _StatefulScale(phx.ParameterOwner, eqx.Module):
     scale: jax.Array
     calls: jax.Array = phx.model_state_field()
 
-    def __call__(self, x, **_kwargs):
+    def __call__(self, x: Any, **_kwargs: Any) -> Any:
         return self.scale * x[0]
 
 
-def _residual_solver(func):
+def _residual_solver(func: Any) -> Any:
     domain = Interval1d(0.0, 1.0)
     field = DomainFunction(domain=domain, deps=("x",), func=func)
     component = domain.component()
@@ -96,7 +98,7 @@ def _residual_solver(func):
     return phx.solver.FunctionalSolver(functions={"u": field}, terms=(term,))
 
 
-def test_trajectory_signal_construction_does_not_make_static_jax_arrays():
+def test_trajectory_signal_construction_does_not_make_static_jax_arrays() -> None:
     domain, _inputs, values = _make_trajectory_problem()
 
     with warnings.catch_warnings(record=True) as caught:
@@ -107,7 +109,7 @@ def test_trajectory_signal_construction_does_not_make_static_jax_arrays():
     assert not any("JAX array is being set as static" in message for message in messages)
 
 
-def test_trajectory_signal_values_are_not_trainable_solver_leaves():
+def test_trajectory_signal_values_are_not_trainable_solver_leaves() -> None:
     domain, _inputs, values = _make_trajectory_problem()
     signal = TrajectorySignal(domain, values, interpolation="linear")
 
@@ -117,7 +119,7 @@ def test_trajectory_signal_values_are_not_trainable_solver_leaves():
     assert values.shape in fixed_shapes
 
 
-def test_domain_parameter_stays_trainable_but_plain_constant_is_fixed():
+def test_domain_parameter_stays_trainable_but_plain_constant_is_fixed() -> None:
     domain = Interval1d(0.0, 1.0)
     param = domain.Parameter(1.0)
     const = DomainFunction(domain=domain, deps=(), func=jnp.asarray(2.0))
@@ -130,7 +132,7 @@ def test_domain_parameter_stays_trainable_but_plain_constant_is_fixed():
     assert any(bool(jnp.allclose(leaf, 2.0)) for leaf in _inexact_leaves(const_fixed))
 
 
-def test_trajectory_domain_arrays_are_not_trainable_model_leaves():
+def test_trajectory_domain_arrays_are_not_trainable_model_leaves() -> None:
     domain, inputs, _values = _make_trajectory_problem()
     model = MLP(
         in_size=3,
@@ -151,7 +153,7 @@ def test_trajectory_domain_arrays_are_not_trainable_model_leaves():
     assert domain.lengths.shape in fixed_shapes
 
 
-def test_hard_ragged_table_is_fixed_but_free_model_stays_trainable():
+def test_hard_ragged_table_is_fixed_but_free_model_stays_trainable() -> None:
     domain, _inputs, values = _make_trajectory_problem()
     model = MLP(
         in_size=3,
@@ -172,7 +174,7 @@ def test_hard_ragged_table_is_fixed_but_free_model_stays_trainable():
     assert values.shape in fixed_shapes
 
 
-def test_embedded_query_graph_state_is_fixed_but_graph_model_params_trainable():
+def test_embedded_query_graph_state_is_fixed_but_graph_model_params_trainable() -> None:
     source = phx.graph.GraphIR(
         nodes={
             "positions": jnp.array([[0.0], [1.0]]),
@@ -206,7 +208,7 @@ def test_embedded_query_graph_state_is_fixed_but_graph_model_params_trainable():
     assert query.graph.edges["kernel_weight"].shape in fixed_shapes
 
 
-def test_graph_rollout_stepper_dt_is_fixed_but_vector_field_params_trainable():
+def test_graph_rollout_stepper_dt_is_fixed_but_vector_field_params_trainable() -> None:
     graph = phx.graph.GraphIR(
         nodes=jnp.array([[0.0], [1.0]]),
         n_node=jnp.array([2], dtype=jnp.int32),
@@ -226,7 +228,7 @@ def test_graph_rollout_stepper_dt_is_fixed_but_vector_field_params_trainable():
     assert graph.nodes.shape in tuple(leaf.shape for leaf in fixed_leaves)
 
 
-def test_partition_functions_returns_recombinable_role_lanes():
+def test_partition_functions_returns_recombinable_role_lanes() -> None:
     domain = Interval1d(0.0, 1.0)
     solver = phx.solver.FunctionalSolver(
         functions={
@@ -247,7 +249,7 @@ def test_partition_functions_returns_recombinable_role_lanes():
     )
 
 
-def test_functional_solve_rejects_undeclared_arrays_unless_explicitly_selected():
+def test_functional_solve_rejects_undeclared_arrays_unless_explicitly_selected() -> None:
     solver = _residual_solver(_RawScale(jnp.asarray(2.0)))
 
     with pytest.raises(ValueError, match=r"(?s)FunctionalSolver\.solve.*\.func\.scale"):
@@ -267,7 +269,9 @@ def test_functional_solve_rejects_undeclared_arrays_unless_explicitly_selected()
     assert float(trained.functions["u"].func.scale) < 2.0
 
 
-def test_gradient_training_carries_model_state_but_linear_trial_space_rejects_it():
+def test_gradient_training_carries_model_state_but_linear_trial_space_rejects_it() -> (
+    None
+):
     solver = _residual_solver(_StatefulScale(jnp.asarray(2.0), jnp.asarray(7)))
 
     trained = solver.solve(num_iter=1, optim=optax.sgd(0.1), keep_best=False, jit=False)

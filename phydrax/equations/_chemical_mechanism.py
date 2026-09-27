@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from typing import TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -30,6 +32,9 @@ from ._chemical_thermodynamics import (
 )
 
 
+_StoichiometryLike: TypeAlias = Mapping[str, float] | Iterable[tuple[str, float]]
+
+
 class ChemicalReactionSpec(StrictModule):
     name: str = eqx.field(static=True)
     reactants: tuple[tuple[str, float], ...] = eqx.field(static=True)
@@ -43,16 +48,16 @@ class ChemicalReactionSpec(StrictModule):
     def __init__(
         self,
         name: str,
-        reactants,
-        products,
+        reactants: _StoichiometryLike,
+        products: _StoichiometryLike,
         forward_rate: AbstractChemicalRatePlan,
         /,
         *,
-        forward_orders=None,
+        forward_orders: _StoichiometryLike | None = None,
         reverse_rate: AbstractChemicalRatePlan | None = None,
         thermodynamic_reversible: bool = False,
         duplicate_group: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         reactant_values = _normalized_stoichiometry(reactants, "reactants")
         product_values = _normalized_stoichiometry(products, "products")
@@ -97,9 +102,9 @@ class ChemicalMechanismIR(StrictModule):
         name: str,
         schema: ChemicalSpeciesSchema,
         thermodynamics: AbstractSpeciesThermodynamicsPlan,
-        reactions,
+        reactions: Iterable[ChemicalReactionSpec],
         /,
-    ):
+    ) -> None:
         name_ = str(name)
         reaction_values = tuple(reactions)
         if not name_:
@@ -170,7 +175,7 @@ class PreparedChemicalMechanism(StrictModule):
     mechanism_id: str = eqx.field(static=True)
     preparation_evidence: ChemicalMechanismEvidence
 
-    def __init__(self, mechanism: ChemicalMechanismIR, /):
+    def __init__(self, mechanism: ChemicalMechanismIR, /) -> None:
         if not isinstance(mechanism, ChemicalMechanismIR):
             raise TypeError("mechanism must be ChemicalMechanismIR.")
         species_index = {
@@ -394,11 +399,11 @@ class PreparedChemicalMechanism(StrictModule):
 
     def _thermodynamic_reverse_rate(
         self,
-        reaction_index,
-        forward_rate,
-        temperature,
-        thermodynamics,
-    ):
+        reaction_index: int,
+        forward_rate: Array,
+        temperature: Array,
+        thermodynamics: SpeciesThermodynamicEvaluation,
+    ) -> Array:
         net = self.net_stoichiometry[reaction_index]
         delta_gibbs = jnp.sum(net * thermodynamics.molar_gibbs_energy, axis=-1)
         logarithmic_equilibrium = -delta_gibbs / (UNIVERSAL_GAS_CONSTANT * temperature)
@@ -424,7 +429,9 @@ class PreparedChemicalMechanism(StrictModule):
         return forward_rate * jnp.exp(-logarithmic_rate_ratio)
 
 
-def _normalized_stoichiometry(values, name):
+def _normalized_stoichiometry(
+    values: _StoichiometryLike, name: str
+) -> tuple[tuple[str, float], ...]:
     if isinstance(values, Mapping):
         entries = tuple((str(key), float(value)) for key, value in values.items())
     else:
@@ -440,7 +447,7 @@ def _normalized_stoichiometry(values, name):
     return tuple((key, value) for key, value in entries if value > 0.0)
 
 
-def _mass_action(concentrations, orders):
+def _mass_action(concentrations: Array, orders: Array) -> tuple[Array, Array]:
     required = orders > 0.0
     expanded = concentrations[..., None, :]
     feasible = jnp.all((~required) | (expanded > 0.0), axis=-1)
@@ -449,7 +456,9 @@ def _mass_action(concentrations, orders):
     return jnp.where(feasible, product, 0.0), feasible
 
 
-def _validate_rate_species_axis(rate, species_count, reaction_name):
+def _validate_rate_species_axis(
+    rate: AbstractChemicalRatePlan, species_count: int, reaction_name: str
+) -> None:
     if isinstance(rate, (ThirdBodyRatePlan, LindemannRatePlan)) and (
         rate.efficiencies.shape != (species_count,)
     ):

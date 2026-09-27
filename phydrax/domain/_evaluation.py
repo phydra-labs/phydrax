@@ -11,13 +11,15 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
 from .._model import ModelBinding
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._structure import GridBatch, PointBatch
 
 
@@ -34,7 +36,7 @@ class FunctionBinding:
         args: tuple[Any, ...],
         /,
         *,
-        key: Any,
+        key: PRNGKey | None,
         iter_: Any,
         kwargs: Mapping[str, Any],
     ) -> Any:
@@ -60,7 +62,7 @@ class PointwiseEvaluator(StrictModule):
         /,
         *,
         binding: FunctionBinding | None = None,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("PointwiseEvaluator.function must be callable.")
         if binding is not None and not isinstance(binding, FunctionBinding):
@@ -68,7 +70,13 @@ class PointwiseEvaluator(StrictModule):
         self.function = function
         self.binding = FunctionBinding() if binding is None else binding
 
-    def __call__(self, *args: Any, key=None, iter_=None, **kwargs: Any) -> Any:
+    def __call__(
+        self,
+        *args: Any,
+        key: PRNGKey | None = None,
+        iter_: Any = None,
+        **kwargs: Any,
+    ) -> Any:
         coordinate_positions = tuple(
             index for index, arg in enumerate(args) if isinstance(arg, tuple)
         )
@@ -135,7 +143,7 @@ class BatchEvaluator(abc.ABC):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         raise NotImplementedError
@@ -151,13 +159,13 @@ class AxisBatchEvaluator(abc.ABC):
         deps: tuple[str, ...],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         raise NotImplementedError
 
 
-def resolve_batch_evaluator(evaluator: Callable, /) -> BatchEvaluator | None:
+def resolve_batch_evaluator(evaluator: Callable[..., Any], /) -> BatchEvaluator | None:
     """Return an evaluator that explicitly implements the batch protocol."""
     return evaluator if isinstance(evaluator, BatchEvaluator) else None
 
@@ -370,7 +378,7 @@ def try_blockwise_evaluation(
     binding: ModelBinding,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey | None = DOC_KEY0,
     **kwargs: Any,
 ) -> tuple[cx.AxisArray | None, str | None]:
     """Try one model call over independent batch axes without point materialization.
@@ -464,7 +472,7 @@ def evaluate_pointwise_callable(
     deps: tuple[str, ...],
     domain_labels: tuple[str, ...],
     points: Any,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey | None = DOC_KEY0,
     kwargs: Mapping[str, Any] | None = None,
 ) -> cx.AxisArray:
     """Evaluate a coordinate callable on a mapping, point batch, or grid batch."""
@@ -489,7 +497,7 @@ def evaluate_pointwise_callable(
         else:
             dep_values = tuple(_unwrap_fields_to_data(points_map[dep]) for dep in deps)
 
-            def _call(*args: Any):
+            def _call(*args: Any) -> Any:
                 return evaluator(*args, key=key, **call_kwargs)
 
             mapped = _call
@@ -519,7 +527,7 @@ def evaluate_pointwise_callable(
         out = cx.AxisArray(values, dims=(None,) * values.ndim)
     else:
 
-        def _call(*args: Any, **kwargs: Any):
+        def _call(*args: Any, **kwargs: Any) -> Any:
             return evaluator(*args, **kwargs)
 
         out = cx.cmap(_call, out_axes="leading")(
@@ -538,7 +546,7 @@ def evaluate_domain_function(
     deps: tuple[str, ...],
     domain_labels: tuple[str, ...],
     points: Any,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey | None = DOC_KEY0,
     kwargs: Mapping[str, Any] | None = None,
 ) -> cx.AxisArray:
     """Evaluate one bound domain field through its declared evaluator protocol."""

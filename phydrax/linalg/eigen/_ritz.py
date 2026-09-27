@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from .._hermitian_spectral import HermitianSpectrum
@@ -21,10 +22,10 @@ from .._policies import (
     LinearSolvePolicy,
 )
 from .._problems import LinearSystem
-from .._properties import OperatorProperties
+from .._properties import OperatorProperties, PropertyEvidence
 from .._runtime import solve as solve_linear
 from .._spaces import RHSLayout
-from ._policies import DenseEigh, EigenSolvePolicy
+from ._policies import DenseEigh, EigenSolvePolicy, EigenTarget
 from ._problems import Eigenproblem, EigenproblemLike, GeneralizedEigenproblem
 from ._results import EigenSolveResult
 from ._runtime import eigensolve
@@ -59,7 +60,7 @@ def _hermiticity_residual(value: Array, /) -> Array:
 
 
 def _gram_properties(*, positive_definite: bool) -> OperatorProperties:
-    evidence = {"self_adjoint": "asserted"}
+    evidence: dict[str, PropertyEvidence] = {"self_adjoint": "asserted"}
     if positive_definite:
         evidence["positive_definite"] = "asserted"
     return OperatorProperties(
@@ -231,7 +232,7 @@ def solve_reduced_ritz(
     /,
     *,
     count: int | None = None,
-    which: str = "smallest-algebraic",
+    which: EigenTarget = "smallest-algebraic",
     tolerance: float = 1e-10,
 ) -> ReducedRitzResult:
     """Solve one dense Hermitian Ritz pencil through the native eigen runtime."""
@@ -276,14 +277,14 @@ def solve_reduced_ritz(
 
 
 def _operator_columns(operator: Any, space: Any, basis: Array, /) -> Array:
-    def apply(column):
+    def apply(column: Array) -> Array:
         return space.flatten(operator.mv(space.unflatten(column)))
 
     return jax.vmap(apply, in_axes=1, out_axes=1)(basis)
 
 
 def _pairing_matrix(space: Any, left: Array, right: Array, /) -> Array:
-    def row(left_column):
+    def row(left_column: Array) -> Array:
         left_vector = space.unflatten(left_column)
         return jax.vmap(
             lambda right_column: space.inner(
@@ -297,7 +298,7 @@ def _pairing_matrix(space: Any, left: Array, right: Array, /) -> Array:
 
 
 def _column_norms(space: Any, values: Array, /) -> Array:
-    def norm(column):
+    def norm(column: Array) -> Array:
         vector = space.unflatten(column)
         return jnp.sqrt(jnp.maximum(jnp.real(space.inner(vector, vector)), 0.0))
 
@@ -310,7 +311,7 @@ def rayleigh_ritz(
     /,
     *,
     count: int | None = None,
-    which: str = "smallest-algebraic",
+    which: EigenTarget = "smallest-algebraic",
     tolerance: float = 1e-10,
 ) -> TrialSubspaceRitzResult:
     """Extract and certify Ritz pairs from any coordinate trial basis."""
@@ -327,10 +328,11 @@ def rayleigh_ritz(
     if not jnp.issubdtype(basis.dtype, jnp.inexact):
         raise TypeError("trial_basis must use a real or complex inexact dtype.")
     space.unflatten(basis[:, 0])
-    if problem.constraints is not None:
+    constraints = problem.constraints
+    if constraints is not None:
         basis = jax.vmap(
             lambda column: space.flatten(
-                problem.constraints.orthogonal_component(space.unflatten(column))
+                constraints.orthogonal_component(space.unflatten(column))
             ),
             in_axes=1,
             out_axes=1,

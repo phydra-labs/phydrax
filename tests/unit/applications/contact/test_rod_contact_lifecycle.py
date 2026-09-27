@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -64,10 +66,11 @@ def _plane(feature_id: int = 1000) -> PlaneContactGeometry:
         static_mask=True,
         provenance_id=f"plane-{feature_id}",
     )
+    # ty: ignore[invalid-argument-type]
     return PlaneContactGeometry((0.0, 0.0, 1.0), 0.0, feature_policy=policy)
 
 
-def _active_keys(result) -> np.ndarray:
+def _active_keys(result: Any) -> np.ndarray:
     valid = np.asarray(result.witnesses.valid)
     return np.asarray(result.witnesses.route_keys)[valid]
 

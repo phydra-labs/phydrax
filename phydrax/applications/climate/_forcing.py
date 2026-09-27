@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -43,7 +43,7 @@ class Myhre1998Forcing(StrictModule):
     source: str = eqx.field(static=True)
     forcing_id: str = eqx.field(static=True)
 
-    def __init__(self, external_names: tuple[str, ...] = (), /):
+    def __init__(self, external_names: tuple[str, ...] = (), /) -> None:
         gas_names = (
             "CO2_logarithmic",
             "CH4_square_root",

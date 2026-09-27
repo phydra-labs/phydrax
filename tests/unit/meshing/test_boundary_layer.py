@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -12,7 +14,7 @@ pytestmark = pytest.mark.skipif(
 SCHEDULE = phx.meshing.LayerSchedule.geometric(3, 0.01, growth_rate=1.2)
 
 
-def _wall(points, triangles):
+def _wall(points: Any, triangles: Any) -> Any:
     return phx.discretization.CellMesh(
         np.asarray(points, dtype=np.float64),
         (
@@ -26,7 +28,7 @@ def _wall(points, triangles):
     )
 
 
-def _whole(mesh):
+def _whole(mesh: Any) -> Any:
     cells = mesh.entity_set(2)
     return phx.meshing.MeshingScope(
         mesh.mesh_id,
@@ -38,7 +40,7 @@ def _whole(mesh):
     )
 
 
-def _control(mesh, **options):
+def _control(mesh: Any, **options: Any) -> Any:
     return phx.meshing.BoundaryLayerControl(
         _whole(mesh),
         SCHEDULE,
@@ -47,7 +49,7 @@ def _control(mesh, **options):
     )
 
 
-def _plate(count, height=0.0, *, flip=False):
+def _plate(count: Any, height: Any = 0.0, *, flip: Any = False) -> Any:
     values = np.linspace(0.0, 1.0, count + 1)
     x, y = np.meshgrid(values, values, indexing="ij")
     points = np.stack((x.ravel(), y.ravel(), np.full(x.size, height)), axis=1)
@@ -66,7 +68,7 @@ def _plate(count, height=0.0, *, flip=False):
     return points, triangles[:, ::-1] if flip else triangles
 
 
-def _oriented(points, triangles, center, outward):
+def _oriented(points: Any, triangles: Any, center: Any, outward: Any) -> Any:
     corners = points[triangles]
     normals = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
     away = np.sum(normals * (corners.mean(axis=1) - center), axis=1) > 0.0
@@ -76,7 +78,7 @@ def _oriented(points, triangles, center, outward):
     return triangles
 
 
-def _icosphere(radius, subdivisions):
+def _icosphere(radius: Any, subdivisions: Any) -> Any:
     t = (1.0 + 5.0**0.5) / 2.0
     points = [
         np.asarray(value, dtype=np.float64)
@@ -121,7 +123,7 @@ def _icosphere(radius, subdivisions):
     for _ in range(subdivisions):
         middle = {}
 
-        def split(first, second, *, middle=middle):
+        def split(first: Any, second: Any, *, middle: Any = middle) -> Any:
             key = (min(first, second), max(first, second))
             if key not in middle:
                 value = points[first] + points[second]
@@ -138,7 +140,7 @@ def _icosphere(radius, subdivisions):
     return points, _oriented(points, np.asarray(faces), np.zeros(3), True)
 
 
-def _box(lower, upper, count, *, outward):
+def _box(lower: Any, upper: Any, count: Any, *, outward: Any) -> Any:
     lower = np.asarray(lower, dtype=np.float64)
     upper = np.asarray(upper, dtype=np.float64)
     index: dict[tuple[float, ...], int] = {}
@@ -146,10 +148,11 @@ def _box(lower, upper, count, *, outward):
     triangles = []
     grid = np.linspace(0.0, 1.0, count + 1)
 
-    def vertex(value):
+    def vertex(value: Any) -> Any:
         key = tuple(np.round(value, 12))
         if key not in index:
             index[key] = len(points)
+            # ty: ignore[unresolved-attribute]
             points.append(value)
         return index[key]
 
@@ -173,17 +176,17 @@ def _box(lower, upper, count, *, outward):
     )
 
 
-def _cell_counts(result):
+def _cell_counts(result: Any) -> Any:
     return dict(result.evidence.cell_counts)
 
 
-def _assert_certified(result):
+def _assert_certified(result: Any) -> None:
     cells = sum(block.cell_count for block in result.mesh.blocks)
     assert result.validity.certified_valid_count == cells
     assert result.evidence.certified_valid_count == cells
 
 
-def test_flat_wall_layers_realize_the_exact_schedule():
+def test_flat_wall_layers_realize_the_exact_schedule() -> None:
     points, triangles = _plate(5)
     wall = _wall(points, triangles)
 
@@ -215,7 +218,7 @@ def test_flat_wall_layers_realize_the_exact_schedule():
     assert not result.closed_cap
 
 
-def test_quadrilateral_walls_grow_hexahedra_closed_by_transition_pyramids():
+def test_quadrilateral_walls_grow_hexahedra_closed_by_transition_pyramids() -> None:
     values = np.linspace(0.0, 1.0, 4)
     x, y = np.meshgrid(values, values, indexing="ij")
     points = np.stack((x.ravel(), y.ravel(), np.zeros(x.size)), axis=1)
@@ -242,6 +245,7 @@ def test_quadrilateral_walls_grow_hexahedra_closed_by_transition_pyramids():
     np.testing.assert_allclose(
         result.evidence.achieved_thicknesses, SCHEDULE.thicknesses, rtol=1e-12
     )
+    # ty: ignore[unresolved-attribute]
     assert {block.cell_kind for block in result.cap.blocks} == {"triangle"}
     layer_index = np.asarray(result.layer_index)
     pyramids = result.mesh.block("pyramids")
@@ -249,7 +253,7 @@ def test_quadrilateral_walls_grow_hexahedra_closed_by_transition_pyramids():
     _assert_certified(result)
 
 
-def test_local_terminations_close_columns_with_pyramids_and_tetrahedra():
+def test_local_terminations_close_columns_with_pyramids_and_tetrahedra() -> None:
     lower, lower_triangles = _plate(4)
     upper, upper_triangles = _plate(4, flip=True)
     upper[:, 2] = 0.03 + 0.17 * upper[:, 0]
@@ -273,7 +277,9 @@ def test_local_terminations_close_columns_with_pyramids_and_tetrahedra():
     _assert_certified(result)
 
 
-def test_curved_wall_layers_realize_thickness_and_growth_along_the_wall_distance():
+def test_curved_wall_layers_realize_thickness_and_growth_along_the_wall_distance() -> (
+    None
+):
     points, triangles = _icosphere(0.4, 2)
     wall = _wall(points, triangles)
 
@@ -289,12 +295,15 @@ def test_curved_wall_layers_realize_thickness_and_growth_along_the_wall_distance
     np.testing.assert_allclose(evidence.achieved_growth_rates, 1.2, rtol=1e-6)
     assert evidence.fan_column_count == 0
     assert result.closed_cap
+    # ty: ignore[unresolved-attribute]
     radii = np.linalg.norm(np.asarray(result.cap.coordinates), axis=1)
     assert np.all(radii > 0.4)
     _assert_certified(result)
 
 
-def test_convex_corners_fan_into_certified_hexahedra_pyramids_and_corner_tetrahedra():
+def test_convex_corners_fan_into_certified_hexahedra_pyramids_and_corner_tetrahedra() -> (
+    None
+):
     points, triangles = _box((-0.3, -0.3, -0.3), (0.3, 0.3, 0.3), 3, outward=True)
     wall = _wall(points, triangles)
 
@@ -312,11 +321,12 @@ def test_convex_corners_fan_into_certified_hexahedra_pyramids_and_corner_tetrahe
         evidence.achieved_thicknesses, SCHEDULE.thicknesses, rtol=1e-9
     )
     assert result.closed_cap
+    # ty: ignore[unresolved-attribute]
     assert {block.cell_kind for block in result.cap.blocks} == {"triangle"}
     _assert_certified(result)
 
 
-def test_concave_right_angle_corners_are_stretched_and_certified():
+def test_concave_right_angle_corners_are_stretched_and_certified() -> None:
     points, triangles = _box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), 3, outward=False)
     wall = _wall(points, triangles)
 
@@ -332,7 +342,7 @@ def test_concave_right_angle_corners_are_stretched_and_certified():
     _assert_certified(result)
 
 
-def test_acute_concave_wedge_is_rejected_with_its_crease_vertices():
+def test_acute_concave_wedge_is_rejected_with_its_crease_vertices() -> None:
     count = 3
     values = np.linspace(0.0, 1.0, count + 1)
     angle = np.deg2rad(30.0)
@@ -377,7 +387,7 @@ def test_acute_concave_wedge_is_rejected_with_its_crease_vertices():
     np.testing.assert_allclose(failure.value.locations, points[crease])
 
 
-def test_rim_columns_slide_along_the_adjacent_side_surfaces():
+def test_rim_columns_slide_along_the_adjacent_side_surfaces() -> None:
     points, triangles = _box((0.0, 0.0, 0.0), (1.0, 1.0, 0.5), 4, outward=False)
     heights = points[triangles][:, :, 2]
     open_box = triangles[~np.all(np.isclose(heights, 0.5), axis=1)]
@@ -411,7 +421,7 @@ def test_rim_columns_slide_along_the_adjacent_side_surfaces():
     _assert_certified(result)
 
 
-def _channel(gap):
+def _channel(gap: Any) -> Any:
     lower, lower_triangles = _plate(4)
     upper, upper_triangles = _plate(4, gap, flip=True)
     return _wall(
@@ -420,7 +430,7 @@ def _channel(gap):
     )
 
 
-def test_opposing_channel_walls_fail_with_colliding_vertex_evidence():
+def test_opposing_channel_walls_fail_with_colliding_vertex_evidence() -> None:
     wall = _channel(0.05)
 
     with pytest.raises(phx.meshing.MeshingFailure) as failure:
@@ -439,7 +449,9 @@ def test_opposing_channel_walls_fail_with_colliding_vertex_evidence():
         phx.meshing.BoundaryLayerCollisionPolicy.MERGE,
     ),
 )
-def test_opposing_channel_walls_resolve_by_the_explicit_collision_policy(collision):
+def test_opposing_channel_walls_resolve_by_the_explicit_collision_policy(
+    collision: Any,
+) -> None:
     gap = 0.05
     wall = _channel(gap)
 

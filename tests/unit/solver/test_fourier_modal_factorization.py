@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -8,7 +10,7 @@ from phydrax.discretization.spectral import LatticeHarmonicPlan
 from phydrax.solver.maxwell import fourier_modal as fm
 
 
-def _patterned_lattice():
+def _patterned_lattice() -> Any:
     return LatticeHarmonicPlan.parallelogramic((3,), (9,)).prepare(
         jnp.asarray(((1.0, 0.0),))
     )

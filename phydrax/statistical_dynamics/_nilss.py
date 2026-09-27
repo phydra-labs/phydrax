@@ -10,7 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from phydrax import ein
 
@@ -54,7 +56,7 @@ def _propagate_columns(
     if basis.shape[1] == 0:
         return basis, jnp.asarray(True)
 
-    def propagate(column):
+    def propagate(column: Array) -> tuple[Array, Array]:
         result = problem.evolution.tangent_action(
             state,
             column,
@@ -129,8 +131,8 @@ class NILSSPlan(AbstractShadowingSolvePlan):
         rank_tolerance: float = 1.0e-10,
         maximum_retained_bytes: int = 2 * 1024 * 1024 * 1024,
         maximum_workspace_bytes: int = 4 * 1024 * 1024 * 1024,
-    ):
-        values = validate_shadowing_plan(
+    ) -> None:
+        values, memory = validate_shadowing_plan(
             "nilss",
             state_dimension,
             unstable_dimension,
@@ -155,8 +157,8 @@ class NILSSPlan(AbstractShadowingSolvePlan):
             self.maximum_workspace_bytes,
         ) = values
         self.method = "nilss"
-        self.memory_mode = "store"
-        self.plan_id = shadowing_plan_id("nilss", values, self.memory_mode)
+        self.memory_mode = memory
+        self.plan_id = shadowing_plan_id("nilss", values, memory)
 
     def prepare(
         self,
@@ -220,13 +222,13 @@ class NILSSPlan(AbstractShadowingSolvePlan):
             if (initial_basis is None) == (key is None):
                 raise ValueError("Provide exactly one of initial_basis and key.")
             basis = (
-                jax.random.normal(
+                jnp.asarray(initial_basis, dtype=trajectory.states.dtype)
+                if key is None
+                else jax.random.normal(
                     key,
                     (self.state_dimension, self.basis_dimension),
                     dtype=trajectory.states.dtype,
                 )
-                if initial_basis is None
-                else jnp.asarray(initial_basis, dtype=trajectory.states.dtype)
             )
             if basis.shape != (self.state_dimension, self.basis_dimension):
                 raise ValueError("initial_basis has an incompatible shape.")
@@ -315,7 +317,7 @@ class PreparedNILSS(StrictModule, NonTrainableState):
         direction: PyTree[Array],
         initial_basis: Array,
         initial_basis_defect: ArrayLike,
-    ):
+    ) -> None:
         self.plan = plan
         self.cost = cost
         self.problem = problem

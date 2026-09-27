@@ -11,7 +11,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -48,7 +49,7 @@ class CashflowBatch(StrictModule, NonTrainableState):
         *,
         obligation_ids: Sequence[str] = (),
         capacity: int | None = None,
-    ):
+    ) -> None:
         dates = tuple(payment_dates)
         currency_values = tuple(currencies)
         amount_host = np.asarray(amounts)

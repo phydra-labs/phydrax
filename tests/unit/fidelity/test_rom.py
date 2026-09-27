@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _prepared_affine_rom():
+def _prepared_affine_rom() -> Any:
     full = phx.linalg.ArraySpace((2,), dtype=jnp.float64, space_id="affine-test-full")
     basis = phx.rom.ReducedBasisArtifact(
         phx.linalg.LinearSubspace(
@@ -68,7 +71,7 @@ def _prepared_affine_rom():
     return phx.rom.prepare_affine_linear_rom(problem, coefficients)
 
 
-def test_affine_rom_evaluator_propagates_reduced_state_and_validity():
+def test_affine_rom_evaluator_propagates_reduced_state_and_validity() -> None:
     model = _prepared_affine_rom()
     level = phx.fidelity.FidelityLevelSpec(
         "rom",
@@ -105,7 +108,9 @@ def test_affine_rom_evaluator_propagates_reduced_state_and_validity():
     assert unsupported.result.solve_result is None
 
 
-def test_affine_rom_evaluator_exposes_prepared_observation_without_reconstruction():
+def test_affine_rom_evaluator_exposes_prepared_observation_without_reconstruction() -> (
+    None
+):
     model = _prepared_affine_rom()
     level = phx.fidelity.FidelityLevelSpec(
         "rom-qoi",
@@ -131,7 +136,7 @@ def test_affine_rom_evaluator_exposes_prepared_observation_without_reconstructio
     assert evaluation.result.reconstructed_state is None
 
 
-def test_affine_rom_evaluator_rejects_observable_and_contract_mismatches():
+def test_affine_rom_evaluator_rejects_observable_and_contract_mismatches() -> None:
     model = _prepared_affine_rom()
     wrong_observable = phx.fidelity.FidelityLevelSpec(
         "wrong-observable",

@@ -13,7 +13,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -45,7 +46,7 @@ class CallablePolarizabilityProvider(AbstractPolarizabilityProvider):
 
     def __init__(
         self, evaluator: PolarizabilityEvaluator, provider_id: str, system_id: str, /
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         provider = str(provider_id).strip()
@@ -68,7 +69,7 @@ class NativeLDAPolarizabilityProvider(AbstractPolarizabilityProvider):
     provider_id: str = eqx.field(static=True)
     system_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: NativeLDAPlan, /):
+    def __init__(self, plan: NativeLDAPlan, /) -> None:
         if not isinstance(plan, NativeLDAPlan):
             raise TypeError("plan must be NativeLDAPlan.")
         self.plan = plan
@@ -115,7 +116,7 @@ class RamanSpectrumResult(StrictModule, NonTrainableState):
         activity_unit: UnitDefinition,
         source_result_ids: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         waves = jnp.asarray(wavenumbers)
         derivatives = jnp.asarray(polarizability_derivatives, dtype=waves.dtype)
         mode_count = waves.size
@@ -209,7 +210,7 @@ class RamanSpectrumPlan(StrictModule, NonTrainableState):
         grid_maximum: float = 4000.0,
         grid_size: int = 4001,
         line_shape: SpectralLineShape = SpectralLineShape.GAUSSIAN,
-    ):
+    ) -> None:
         if provider.system_id != system.system_id:
             raise ValueError("Raman provider belongs to another system.")
         if not isinstance(line_shape, SpectralLineShape):

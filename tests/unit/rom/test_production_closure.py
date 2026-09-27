@@ -1,10 +1,12 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _basis(space, matrix, name):
+def _basis(space: Any, matrix: Any, name: Any) -> Any:
     return phx.rom.ReducedBasisArtifact(
         phx.linalg.LinearSubspace(
             space,
@@ -21,7 +23,7 @@ def _basis(space, matrix, name):
     )
 
 
-def test_physical_pod_resources_and_capability_governance():
+def test_physical_pod_resources_and_capability_governance() -> None:
     space = phx.linalg.ArraySpace((3,), dtype=jnp.float64, space_id="pod-space")
     result = phx.ml.decomposition.PhysicalPODPlan(
         2, retained_energy=1.0, centered=False
@@ -47,7 +49,7 @@ def test_physical_pod_resources_and_capability_governance():
     assert not profile.released
 
 
-def test_rectangular_projection_affine_evolution_and_trace_lift():
+def test_rectangular_projection_affine_evolution_and_trace_lift() -> None:
     full = phx.linalg.ArraySpace((2,), dtype=jnp.float64, space_id="system-full")
     trial = _basis(full, [[1.0], [0.0]], "trial")
     test = _basis(full, [[1.0, 0.0], [0.0, 1.0]], "test")
@@ -97,16 +99,19 @@ def test_rectangular_projection_affine_evolution_and_trace_lift():
     system = phx.rom.prepare_affine_evolution_rom(evolution).bind(
         jnp.asarray([1.0]), jnp.asarray([2.0]), jnp.asarray([1.0])
     )
+    # ty: ignore[missing-argument]
     residual = system.residual(
+        # ty: ignore[invalid-argument-type]
         0.0,
         jnp.asarray([1.0, 2.0]),
         jnp.asarray([-2.0, -4.0]),
+        # ty: ignore[invalid-argument-type]
         None,
     )
     np.testing.assert_allclose(residual, 0.0, atol=1e-12)
 
 
-def test_scm_primal_dual_bundle_and_immutable_generation(tmp_path):
+def test_scm_primal_dual_bundle_and_immutable_generation(tmp_path: Any) -> None:
     scm = phx.rom.SuccessiveConstraintArtifact(
         jnp.asarray([0.5, 0.25]),
         jnp.asarray([2.0, 2.0]),
@@ -170,7 +175,7 @@ def test_scm_primal_dual_bundle_and_immutable_generation(tmp_path):
     assert transaction.child.generation == 1
 
 
-def test_quadratic_neural_atlas_sensor_and_assimilation_contracts():
+def test_quadratic_neural_atlas_sensor_and_assimilation_contracts() -> None:
     latent = phx.linalg.ArraySpace((2,), dtype=jnp.float64, space_id="latent")
     full = phx.linalg.ArraySpace((3,), dtype=jnp.float64, space_id="chart-full")
     quadratic = phx.rom.QuadraticStateChart(
@@ -240,7 +245,7 @@ def test_quadratic_neural_atlas_sensor_and_assimilation_contracts():
     assert float(nis) > 0.0
 
 
-def test_ssm_balancing_interpolatory_and_structure_preserving_reductions():
+def test_ssm_balancing_interpolatory_and_structure_preserving_reductions() -> None:
     evidence = phx.dynamics.identification.SpectralSubmanifoldEvidence(
         jnp.asarray([-1.0, -2.0]),
         jnp.asarray(1.0),
@@ -287,3 +292,21 @@ def test_ssm_balancing_interpolatory_and_structure_preserving_reductions():
         jnp.eye(2),
     )
     assert port.system_matrix().shape == (2, 2)
+
+
+def test_rom_execution_requirements_declare_batch_and_reduced_axes() -> None:
+    requirements = phx.rom.rom_execution_requirements(
+        "rom-owner",
+        batch_axis=4,
+        reduced_axis=3,
+        dtype="float64",
+        distributed_output=False,
+    )
+    axes = {axis.name: axis for axis in requirements.logical_axes}
+    assert set(axes) == {"rom-batch", "rom-reduced"}
+    assert axes["rom-batch"].size == 4
+    assert axes["rom-batch"].kind == phx.execution.LogicalAxisKind.INDEPENDENT
+    assert axes["rom-reduced"].size == 3
+    assert axes["rom-reduced"].kind == phx.execution.LogicalAxisKind.MODEL
+    assert requirements.dtypes == ("float64",)
+    assert not requirements.allows_distributed_output

@@ -6,20 +6,22 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from numbers import Integral
-from typing import Any, Literal
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, Key, PyTree
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 
 from .._polynomial._orthogonal import standard_normal_hermite_rule_data
 from .._strict import StrictModule
+from ..typing import parse, PRNGKey
 from ._gaussian_factor import gaussian_factor_from_covariance, GaussianFactor
 
 
@@ -51,7 +53,7 @@ class NonlinearGaussianTransformResult(StrictModule):
         return self.valid
 
 
-GaussianExpectationMethod = Literal[
+GaussianExpectationMethod: TypeAlias = Literal[
     "cubature", "unscented", "gauss-hermite", "monte-carlo"
 ]
 
@@ -378,7 +380,7 @@ def gaussian_expectation(
     /,
     *,
     method: GaussianExpectationMethod = "cubature",
-    key: Key[Array, ""] | None = None,
+    key: PRNGKey | None = None,
     num_samples: int = 32,
     order: int = 3,
     max_dimension: int = 5,
@@ -388,61 +390,61 @@ def gaussian_expectation(
     kappa: float = 0.0,
 ) -> GaussianExpectationResult:
     """Evaluate an arbitrary PyTree expectation without forming output covariance."""
-    if method not in ("cubature", "unscented", "gauss-hermite", "monte-carlo"):
-        raise ValueError(
-            "method must be 'cubature', 'unscented', 'gauss-hermite', or 'monte-carlo'."
-        )
+    method = parse(method, GaussianExpectationMethod, "method")
     _, flat_mean, _ = _input_coordinates(mean, factor)
     rank = factor.rank
     real_dtype = jnp.real(flat_mean).dtype
-    if method == "cubature":
-        points, weights = _spherical_radial_rule(rank, real_dtype)
-        method_id = "spherical-radial-cubature"
-        parameters: tuple[tuple[str, float], ...] = ()
-    elif method == "unscented":
-        alpha_ = _configuration_float(alpha, "alpha", nonnegative=False)
-        beta_ = _configuration_float(beta, "beta", nonnegative=False)
-        kappa_ = _configuration_float(kappa, "kappa", nonnegative=False)
-        if alpha_ <= 0.0:
-            raise ValueError("alpha must be positive.")
-        points, weights, _, _ = _scaled_unscented_rule(
-            rank,
-            real_dtype,
-            alpha=alpha_,
-            beta=beta_,
-            kappa=kappa_,
-        )
-        method_id = "scaled-unscented"
-        parameters = (("alpha", alpha_), ("beta", beta_), ("kappa", kappa_))
-    elif method == "gauss-hermite":
-        order_ = _configuration_int(order, "order", minimum=1)
-        max_dimension_ = _configuration_int(max_dimension, "max_dimension", minimum=1)
-        max_points_ = _configuration_int(max_points, "max_points", minimum=1)
-        points, weights = _gauss_hermite_rule(
-            rank,
-            real_dtype,
-            order=order_,
-            max_dimension=max_dimension_,
-            max_points=max_points_,
-        )
-        method_id = "gauss-hermite"
-        parameters = (
-            ("order", float(order_)),
-            ("max_dimension", float(max_dimension_)),
-            ("max_points", float(max_points_)),
-        )
-    else:
-        sample_count = _configuration_int(num_samples, "num_samples", minimum=1)
-        if key is None:
-            raise ValueError("key is required for method='monte-carlo'.")
-        if rank == 0:
-            points = jnp.zeros((1, 0), dtype=real_dtype)
-            weights = jnp.ones((1,), dtype=real_dtype)
-        else:
-            points = jr.normal(key, (sample_count, rank), dtype=real_dtype)
-            weights = jnp.full((sample_count,), 1.0 / sample_count, dtype=real_dtype)
-        method_id = "fixed-sample-monte-carlo"
-        parameters = (("num_samples", float(sample_count)),)
+    match method:
+        case "cubature":
+            points, weights = _spherical_radial_rule(rank, real_dtype)
+            method_id = "spherical-radial-cubature"
+            parameters: tuple[tuple[str, float], ...] = ()
+        case "unscented":
+            alpha_ = _configuration_float(alpha, "alpha", nonnegative=False)
+            beta_ = _configuration_float(beta, "beta", nonnegative=False)
+            kappa_ = _configuration_float(kappa, "kappa", nonnegative=False)
+            if alpha_ <= 0.0:
+                raise ValueError("alpha must be positive.")
+            points, weights, _, _ = _scaled_unscented_rule(
+                rank,
+                real_dtype,
+                alpha=alpha_,
+                beta=beta_,
+                kappa=kappa_,
+            )
+            method_id = "scaled-unscented"
+            parameters = (("alpha", alpha_), ("beta", beta_), ("kappa", kappa_))
+        case "gauss-hermite":
+            order_ = _configuration_int(order, "order", minimum=1)
+            max_dimension_ = _configuration_int(max_dimension, "max_dimension", minimum=1)
+            max_points_ = _configuration_int(max_points, "max_points", minimum=1)
+            points, weights = _gauss_hermite_rule(
+                rank,
+                real_dtype,
+                order=order_,
+                max_dimension=max_dimension_,
+                max_points=max_points_,
+            )
+            method_id = "gauss-hermite"
+            parameters = (
+                ("order", float(order_)),
+                ("max_dimension", float(max_dimension_)),
+                ("max_points", float(max_points_)),
+            )
+        case "monte-carlo":
+            sample_count = _configuration_int(num_samples, "num_samples", minimum=1)
+            if key is None:
+                raise ValueError("key is required for method='monte-carlo'.")
+            if rank == 0:
+                points = jnp.zeros((1, 0), dtype=real_dtype)
+                weights = jnp.ones((1,), dtype=real_dtype)
+            else:
+                points = jr.normal(key, (sample_count, rank), dtype=real_dtype)
+                weights = jnp.full((sample_count,), 1.0 / sample_count, dtype=real_dtype)
+            method_id = "fixed-sample-monte-carlo"
+            parameters = (("num_samples", float(sample_count)),)
+        case _:
+            assert_never(method)
     return _weighted_expectation(
         function,
         mean,

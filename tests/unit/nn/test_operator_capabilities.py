@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -11,14 +14,14 @@ import phydrax as phx
 
 def _grid_batch(
     *,
-    size=5,
-    periodic=True,
-    mask=None,
-    physical_quadrature=True,
-    basis="uniform",
-    query_shift=0.0,
-    nodes=None,
-):
+    size: Any = 5,
+    periodic: Any = True,
+    mask: Any = None,
+    physical_quadrature: Any = True,
+    basis: Any = "uniform",
+    query_shift: Any = 0.0,
+    nodes: Any = None,
+) -> Any:
     nodes = (
         jnp.arange(size, dtype="float64") / max(size, 1)
         if nodes is None
@@ -64,7 +67,7 @@ def _grid_batch(
     )
 
 
-def _graph_batch(*, quadrature=True):
+def _graph_batch(*, quadrature: Any = True) -> Any:
     graph = phx.graph.GraphIR(
         nodes=jnp.zeros((3, 1)),
         senders=jnp.asarray([0, 1, 2]),
@@ -90,7 +93,7 @@ def _graph_batch(*, quadrature=True):
     return phx.nn.operator.OperatorBatch(inputs={"u": source}, queries={"query": query})
 
 
-def test_every_registered_architecture_has_one_runtime_and_training_contract():
+def test_every_registered_architecture_has_one_runtime_and_training_contract() -> None:
     for name, status in phx.nn.operator.OPERATOR_ARCHITECTURE_STATUSES.items():
         assert status.name == name
         assert isinstance(status.capabilities, phx.nn.operator.OperatorCapabilitySpec)
@@ -127,7 +130,9 @@ def test_operator_recommendation_requires_current_scenario_promotion() -> None:
     assert not historical.recommendation_eligible
 
 
-def test_configured_contract_preserves_registered_configuration_and_rejects_conflicts():
+def test_configured_contract_preserves_registered_configuration_and_rejects_conflicts() -> (
+    None
+):
     tfno = phx.nn.operator.operator_architecture_contract(
         "TFNO", configuration={"rank": 4}
     )
@@ -140,7 +145,7 @@ def test_configured_contract_preserves_registered_configuration_and_rejects_conf
         )
 
 
-def test_model_instance_contract_tracks_capability_affecting_constructor_state():
+def test_model_instance_contract_tracks_capability_affecting_constructor_state() -> None:
     fno = phx.nn.operator.architectures.FNO(
         n_modes=(3,),
         width=4,
@@ -158,7 +163,7 @@ def test_model_instance_contract_tracks_capability_affecting_constructor_state()
     assert fno_configuration["source_key"] == "u"
 
 
-def test_capability_report_accepts_supported_fno_inputs():
+def test_capability_report_accepts_supported_fno_inputs() -> None:
     masked = jnp.ones((2, 5, 5), dtype="bool").at[0, 0, 0].set(False)
     batch = _grid_batch(periodic=False, mask=masked)
     report = phx.nn.operator.validate_operator_architecture("FNO", batch)
@@ -170,7 +175,9 @@ def test_capability_report_accepts_supported_fno_inputs():
     "architecture",
     ("FNO", "CNO", "UNO", "Flower", "IFNO", "UPT"),
 )
-def test_grid_operator_contracts_accept_resolution_transfer_and_rollout(architecture):
+def test_grid_operator_contracts_accept_resolution_transfer_and_rollout(
+    architecture: Any,
+) -> None:
     report = phx.nn.operator.validate_operator_architecture(
         architecture,
         _grid_batch(),
@@ -183,7 +190,7 @@ def test_grid_operator_contracts_accept_resolution_transfer_and_rollout(architec
     assert report.accepted
 
 
-def test_cno_and_uno_declare_their_actual_measure_and_mask_support():
+def test_cno_and_uno_declare_their_actual_measure_and_mask_support() -> None:
     masked = jnp.ones((2, 5, 5), dtype="bool").at[0, 2, 3].set(False)
     cno_masked = phx.nn.operator.validate_operator_architecture(
         "CNO", _grid_batch(mask=masked)
@@ -200,7 +207,7 @@ def test_cno_and_uno_declare_their_actual_measure_and_mask_support():
     assert uno_masked.accepted
 
 
-def test_cno_family_catalog_requires_exact_periodic_uniform_fourier_axes():
+def test_cno_family_catalog_requires_exact_periodic_uniform_fourier_axes() -> None:
     for architecture in ("CNO", "UNO"):
         capabilities = phx.nn.operator.operator_architecture_contract(
             architecture
@@ -246,7 +253,7 @@ def test_cno_family_catalog_requires_exact_periodic_uniform_fourier_axes():
         )
 
 
-def test_spectral_operator_contracts_match_runtime_invariants():
+def test_spectral_operator_contracts_match_runtime_invariants() -> None:
     wavelet = phx.nn.operator.operator_architecture_contract(
         "WaveletNeuralOperator"
     ).capabilities
@@ -268,7 +275,7 @@ def test_spectral_operator_contracts_match_runtime_invariants():
     assert not sfno.resolution_transfer
 
 
-def test_fixed_query_is_separate_from_source_query_structure():
+def test_fixed_query_is_separate_from_source_query_structure() -> None:
     variable_query_problem = phx.nn.operator.OperatorProblemSpec(
         source_query_relation="coincident",
         query_is_fixed=False,
@@ -289,7 +296,7 @@ def test_fixed_query_is_separate_from_source_query_structure():
     assert "FIXED_QUERY_REQUIRED" in pod.codes
 
 
-def test_function_frame_contract_is_research_scoped_and_query_independent():
+def test_function_frame_contract_is_research_scoped_and_query_independent() -> None:
     status = phx.nn.operator.operator_architecture_status("function_encoder")
     capabilities = status.capabilities
     report = phx.nn.operator.validate_operator_architecture(
@@ -316,7 +323,7 @@ def test_function_frame_contract_is_research_scoped_and_query_independent():
     assert "UNSUPPORTED_GEOMETRY" in unsupported_graph.codes
 
 
-def test_graph_contract_requires_native_topology_and_physical_measure():
+def test_graph_contract_requires_native_topology_and_physical_measure() -> None:
     valid = phx.nn.operator.validate_operator_architecture(
         "GraphNeuralOperator", _graph_batch()
     )
@@ -333,7 +340,7 @@ def test_graph_contract_requires_native_topology_and_physical_measure():
     assert "UNSUPPORTED_GEOMETRY" in coordinate_only.codes
 
 
-def test_training_requirements_separate_task_specific_from_foundation_claims():
+def test_training_requirements_separate_task_specific_from_foundation_claims() -> None:
     batch = _grid_batch()
     poseidon = phx.nn.operator.validate_operator_architecture("Poseidon", batch)
     assert "MISSING_PRETRAINED_WEIGHTS" in poseidon.codes

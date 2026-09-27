@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import diffrax as dfx
 import equinox as eqx
 import jax
@@ -53,7 +56,7 @@ class _SyntheticLedger(StrictModule):
     successful: jax.Array
 
 
-def _candidate():
+def _candidate() -> Any:
     support = SupportTuple(
         "battery.simulation",
         {
@@ -73,7 +76,7 @@ def _candidate():
 
 
 @pytest.fixture(autouse=True)
-def _synthetic_candidate_registry(monkeypatch):
+def _synthetic_candidate_registry(monkeypatch: Any) -> None:
     profile, _ = _candidate()
     monkeypatch.setattr(
         _qualification,
@@ -89,25 +92,29 @@ class LinearVoltageAdapter(StrictModule, NonTrainableState):
     observable_units: tuple[str, ...] = eqx.field(static=True)
     domain_limit: float = eqx.field(static=True)
 
-    def __init__(self, *, domain_limit=1.0e6):
+    def __init__(self, *, domain_limit: Any = 1.0e6) -> None:
         self.model_id = "test:linear-voltage"
         self.equation_form = "ode"
         self.observable_names = ("voltage_v",)
         self.observable_units = ("V",)
         self.domain_limit = float(domain_limit)
 
-    def prepare(self, /):
+    def prepare(self, /) -> Any:
         return self.model_id
 
-    def initial_state(self, prepared_model, parameters, initial_condition, /):
+    def initial_state(
+        self, prepared_model: Any, parameters: Any, initial_condition: Any, /
+    ) -> Any:
         assert prepared_model == self.model_id
         del parameters
         return jnp.asarray(initial_condition)
 
-    def problem(self, prepared_model, initial_state, runtime_inputs, /):
+    def problem(
+        self, prepared_model: Any, initial_state: Any, runtime_inputs: Any, /
+    ) -> Any:
         assert prepared_model == self.model_id
 
-        def drift(time_s, state, runtime):
+        def drift(time_s: Any, state: Any, runtime: Any) -> Any:
             del time_s, state
             return jnp.asarray(runtime.parameters["rate_v_s"])
 
@@ -120,7 +127,9 @@ class LinearVoltageAdapter(StrictModule, NonTrainableState):
             problem_id="test:linear-voltage:ode",
         )
 
-    def observe(self, prepared_model, times_s, states, runtime_inputs, /):
+    def observe(
+        self, prepared_model: Any, times_s: Any, states: Any, runtime_inputs: Any, /
+    ) -> Any:
         assert prepared_model == self.model_id
         del runtime_inputs
         voltage = jnp.asarray(states)
@@ -131,13 +140,15 @@ class LinearVoltageAdapter(StrictModule, NonTrainableState):
         )
         return BatteryModelOutput(voltage[:, None], valid)
 
-    def ledger(self, prepared_model, native_solution, runtime_inputs, /):
+    def ledger(
+        self, prepared_model: Any, native_solution: Any, runtime_inputs: Any, /
+    ) -> Any:
         assert prepared_model == self.model_id
         del native_solution, runtime_inputs
         return _SyntheticLedger(jnp.asarray(True))
 
 
-def _manifest(record_id):
+def _manifest(record_id: Any) -> Any:
     return ArtifactManifest(
         artifact_id=f"local-{record_id}",
         producer="battery-calibration-test",
@@ -152,14 +163,14 @@ def _manifest(record_id):
 
 
 def _record(
-    record_id,
-    initial,
-    rate,
-    offset,
+    record_id: Any,
+    initial: Any,
+    rate: Any,
+    offset: Any,
     *,
-    voltage_mask=(True, True, True),
-    cell_id="cell-shared",
-):
+    voltage_mask: Any = (True, True, True),
+    cell_id: Any = "cell-shared",
+) -> Any:
     times = np.asarray((0.0, 1.0, 2.0))
     voltage = initial + rate * times + offset
     raw = BatteryRawTimeSeries(
@@ -189,7 +200,7 @@ def _record(
     )
 
 
-def _split(records):
+def _split(records: Any) -> Any:
     calibration_record = _record(
         "split-calibration", 0.0, 0.0, 0.0, cell_id="cell-calibration"
     )
@@ -210,14 +221,15 @@ def _split(records):
     )
 
 
-def _ledger_bool(ledger):
+def _ledger_bool(ledger: Any) -> Any:
     return ledger.successful
 
 
-def _prepared(record, *, domain_limit=1.0e6, maximum_steps=128):
+def _prepared(record: Any, *, domain_limit: Any = 1.0e6, maximum_steps: Any = 128) -> Any:
     protocol = BatteryProtocolPlan((CurrentStepPlan(2.0),))
     profile, support = _candidate()
     return BatteryExperimentPlan(
+        # ty: ignore[invalid-argument-type]
         LinearVoltageAdapter(domain_limit=domain_limit),
         protocol,
         BatteryOutputPlan(("voltage_v",)),
@@ -235,16 +247,16 @@ def _prepared(record, *, domain_limit=1.0e6, maximum_steps=128):
     ).prepare()
 
 
-def _add_offset(prediction, nuisance):
+def _add_offset(prediction: Any, nuisance: Any) -> Any:
     return prediction + nuisance
 
 
-def _log_prior(branches):
+def _log_prior(branches: Any) -> Any:
     leaves = jax.tree_util.tree_leaves(branches)
     return -0.5 * sum(jnp.sum(value * value) for value in leaves)
 
 
-def _space(raw_rate, initials, offsets):
+def _space(raw_rate: Any, initials: Any, offsets: Any) -> Any:
     position = BatteryCalibrationParameterBranches(
         {"rate_v_s": jnp.asarray(raw_rate)},
         tuple(jnp.asarray(value) for value in initials),
@@ -258,7 +270,7 @@ def _space(raw_rate, initials, offsets):
     return ParameterSpace(position, bijectors=bijectors, log_prior=_log_prior)
 
 
-def _two_experiment_plan(*, domain_limit=1.0e6):
+def _two_experiment_plan(*, domain_limit: Any = 1.0e6) -> Any:
     record_one = _record("one", 1.0, 2.0, 0.25, voltage_mask=(True, False, True))
     record_two = _record("two", -1.0, 2.0, -0.5)
     first = BatteryCalibrationExperiment(
@@ -293,7 +305,9 @@ def _two_experiment_plan(*, domain_limit=1.0e6):
     )
 
 
-def test_multi_experiment_native_problems_share_physics_and_apply_masks_whitening():
+def test_multi_experiment_native_problems_share_physics_and_apply_masks_whitening() -> (
+    None
+):
     plan = _two_experiment_plan()
     prepared = plan.prepare()
     position = plan.parameter_space.initial
@@ -329,7 +343,7 @@ def test_multi_experiment_native_problems_share_physics_and_apply_masks_whitenin
     assert np.isfinite(np.asarray(composite.objective(position)))
 
 
-def test_precision_whitening_jvp_jacobian_and_jit_agree():
+def test_precision_whitening_jvp_jacobian_and_jit_agree() -> None:
     record = _record("one", 1.0, 2.0, 0.0)
     layout = battery_calibration_coordinate_layout(record, ("voltage_v",))
     precision = 4.0 * jnp.eye(3)
@@ -386,12 +400,12 @@ def test_precision_whitening_jvp_jacobian_and_jit_agree():
     np.testing.assert_allclose(prepared.residual(position), expected, rtol=2.0e-5)
 
 
-def _broken_nuisance(prediction, nuisance):
+def _broken_nuisance(prediction: Any, nuisance: Any) -> None:
     del prediction, nuisance
     raise RuntimeError("programming defect")
 
 
-def test_declared_domain_failure_is_invalid_but_programming_error_propagates():
+def test_declared_domain_failure_is_invalid_but_programming_error_propagates() -> None:
     invalid_plan = _two_experiment_plan(domain_limit=2.0)
     invalid_residual = invalid_plan.prepare().residual(
         invalid_plan.parameter_space.initial
@@ -409,6 +423,7 @@ def test_declared_domain_failure_is_invalid_but_programming_error_propagates():
         record,
         channel_map=("voltage_v",),
         channel_scales=1.0,
+        # ty: ignore[invalid-argument-type]
         nuisance_model=_broken_nuisance,
         nuisance_model_id="test:broken-nuisance",
         ledger_success=_ledger_bool,
@@ -436,7 +451,7 @@ def test_declared_domain_failure_is_invalid_but_programming_error_propagates():
         plan.prepare().residual(position)
 
 
-def test_preparation_rejects_unknown_ledgers_test_data_and_covariance_mismatch():
+def test_preparation_rejects_unknown_ledgers_test_data_and_covariance_mismatch() -> None:
     record = _record("one", 1.0, 2.0, 0.0)
     prepared = _prepared(record)
     with pytest.raises(TypeError, match="Unknown battery adapters"):
@@ -492,6 +507,7 @@ def test_preparation_rejects_unknown_ledgers_test_data_and_covariance_mismatch()
             (experiment,),
             space,
             group_split=split,
+            # ty: ignore[invalid-argument-type]
             fit_partition="test",
             parameter_space_id="test:partition-space",
         )

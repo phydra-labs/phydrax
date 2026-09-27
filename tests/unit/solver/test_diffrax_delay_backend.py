@@ -12,17 +12,17 @@ from phydrax.solver._diffrax_delay_backend import _delay_discontinuity_times
 
 
 def _constant_delay_problem(
-    drift,
-    history,
-    delays,
+    drift: Any,
+    history: Any,
+    delays: Any,
     /,
     *,
-    diffusion=None,
-    noise_shape=None,
-    noise_id=None,
-    interpretation="ito",
-    **kwargs,
-):
+    diffusion: Any = None,
+    noise_shape: Any = None,
+    noise_id: Any = None,
+    interpretation: Any = "ito",
+    **kwargs: Any,
+) -> Any:
     delay_values = jnp.asarray(delays).reshape((-1,))
     delay_terms = tuple(
         phx.solver.ConstantDelay(f"delay_{index}", delay_values[index])
@@ -51,7 +51,7 @@ def _constant_delay_problem(
     )
 
 
-def _piecewise_problem(*, t1=2.0):
+def _piecewise_problem(*, t1: Any = 2.0) -> Any:
     return _constant_delay_problem(
         lambda time, state, delayed, args: delayed[0],
         lambda time, args: jnp.ones((1,)),
@@ -61,11 +61,11 @@ def _piecewise_problem(*, t1=2.0):
     )
 
 
-def _piecewise_exact(times):
+def _piecewise_exact(times: Any) -> Any:
     return 1.0 + times + 0.5 * jnp.maximum(times - 1.0, 0.0) ** 2
 
 
-def test_diffrax_delay_recovers_piecewise_method_of_steps_and_dense_output():
+def test_diffrax_delay_recovers_piecewise_method_of_steps_and_dense_output() -> None:
     times = jnp.linspace(0.0, 2.0, 21)
     solution = phx.solver.solve_diffrax_delay(
         _piecewise_problem(),
@@ -90,16 +90,16 @@ def test_diffrax_delay_recovers_piecewise_method_of_steps_and_dense_output():
     assert jnp.allclose(dense[..., 0], _piecewise_exact(query), atol=2e-7)
 
 
-def test_diffrax_delay_preserves_matrix_state_and_multiple_delay_ordering():
+def test_diffrax_delay_preserves_matrix_state_and_multiple_delay_ordering() -> None:
     rate = 0.3
     delays = jnp.asarray([0.35, 0.6])
     weights = jnp.asarray([0.4, 0.6])
     base = jnp.asarray([[1.0, 0.5], [-0.25, 2.0]])
 
-    def history(time, args):
+    def history(time: Any, args: Any) -> Any:
         return jnp.exp(rate * time) * base
 
-    def drift(time, state, delayed, args):
+    def drift(time: Any, state: Any, delayed: Any, args: Any) -> Any:
         del time, state, args
         coefficients = rate * weights * jnp.exp(rate * delays)
         return jnp.tensordot(coefficients, delayed.stacked, axes=((0,), (0,)))
@@ -126,13 +126,13 @@ def test_diffrax_delay_preserves_matrix_state_and_multiple_delay_ordering():
     assert jnp.allclose(dense, dense_expected, rtol=2e-6, atol=2e-7)
 
 
-def test_diffrax_delay_supports_stiff_implicit_solver_and_stage_time_bound():
+def test_diffrax_delay_supports_stiff_implicit_solver_and_stage_time_bound() -> None:
     delay = 0.2
 
-    def history(time, args):
+    def history(time: Any, args: Any) -> Any:
         return jnp.exp(-time) * jnp.ones((1,))
 
-    def drift(time, state, delayed, args):
+    def drift(time: Any, state: Any, delayed: Any, args: Any) -> Any:
         del time, args
         return -1000.0 * state + 999.0 * jnp.exp(-delay) * delayed[0]
 
@@ -163,7 +163,7 @@ def test_diffrax_delay_supports_stiff_implicit_solver_and_stage_time_bound():
     assert jnp.max(lengths) <= solution.stats["maximum_causal_step"] + 1e-14
 
 
-def test_rejected_steps_never_enter_accepted_delay_history():
+def test_rejected_steps_never_enter_accepted_delay_history() -> None:
     solution = phx.solver.solve_diffrax_delay(
         _piecewise_problem(),
         save_times=jnp.asarray([2.0]),
@@ -182,7 +182,7 @@ def test_rejected_steps_never_enter_accepted_delay_history():
     assert jnp.allclose(solution.states[0, 0], 3.5, atol=2e-5)
 
 
-def test_delay_discontinuity_schedule_generates_additive_descendants():
+def test_delay_discontinuity_schedule_generates_additive_descendants() -> None:
     delays = jnp.asarray([1.0, jnp.sqrt(2.0)])
     sources = jnp.asarray([-0.25, 0.0])
     schedule = _delay_discontinuity_times(
@@ -214,8 +214,8 @@ def test_delay_discontinuity_schedule_generates_additive_descendants():
         )
 
 
-def test_diffrax_delay_is_jittable_vectorizable_and_differentiable():
-    def terminal(rate):
+def test_diffrax_delay_is_jittable_vectorizable_and_differentiable() -> None:
+    def terminal(rate: Any) -> Any:
         problem = _constant_delay_problem(
             lambda time, state, delayed, args: rate * state,
             lambda time, args: jnp.exp(rate * time) * jnp.ones((1,)),
@@ -237,7 +237,7 @@ def test_diffrax_delay_is_jittable_vectorizable_and_differentiable():
     rates = jnp.asarray([0.1, 0.3])
     assert jnp.allclose(jax.vmap(terminal)(rates), jnp.exp(0.5 * rates), atol=2e-7)
 
-    def dense_value(value):
+    def dense_value(value: Any) -> Any:
         problem = _constant_delay_problem(
             lambda time, state, delayed, args: value * state,
             lambda time, args: jnp.exp(value * time) * jnp.ones((1,)),
@@ -262,10 +262,10 @@ def test_diffrax_delay_is_jittable_vectorizable_and_differentiable():
     )
 
 
-def test_diffrax_delay_differentiates_constant_delay_away_from_schedule_changes():
+def test_diffrax_delay_differentiates_constant_delay_away_from_schedule_changes() -> None:
     terminal_time = 0.25
 
-    def terminal(delay):
+    def terminal(delay: Any) -> Any:
         problem = _constant_delay_problem(
             lambda time, state, delayed, args: delayed[0],
             lambda time, args: jnp.asarray([time]),
@@ -286,7 +286,7 @@ def test_diffrax_delay_differentiates_constant_delay_away_from_schedule_changes(
     assert jnp.allclose(jax.grad(terminal)(delay), -terminal_time, atol=2e-9)
 
 
-def test_diffrax_delay_event_bounds_saved_and_dense_values():
+def test_diffrax_delay_event_bounds_saved_and_dense_values() -> None:
     problem = _constant_delay_problem(
         lambda time, state, delayed, args: jnp.ones_like(state),
         lambda time, args: jnp.asarray([0.0]),
@@ -318,7 +318,7 @@ def test_diffrax_delay_event_bounds_saved_and_dense_values():
         solution.evaluate(jnp.asarray(0.31))
 
 
-def test_diffrax_delay_validates_unsupported_configurations():
+def test_diffrax_delay_validates_unsupported_configurations() -> None:
     problem = _piecewise_problem(t1=0.5)
     times = jnp.asarray([0.5])
 
@@ -385,7 +385,7 @@ def test_diffrax_delay_validates_unsupported_configurations():
         no_schedule.evaluate(jnp.asarray(0.25))
 
 
-def test_diffrax_delay_accepts_direct_adjoint():
+def test_diffrax_delay_accepts_direct_adjoint() -> None:
     problem = _constant_delay_problem(
         lambda time, state, delayed, args: 0.2 * state,
         lambda time, args: jnp.ones((1,)),
@@ -402,7 +402,7 @@ def test_diffrax_delay_accepts_direct_adjoint():
     assert jnp.allclose(solution.states[0, 0], jnp.exp(0.06), atol=2e-7)
 
 
-def test_complex_delay_and_fixed_capacity_segmented_route_use_real_coordinates():
+def test_complex_delay_and_fixed_capacity_segmented_route_use_real_coordinates() -> None:
     problem = _constant_delay_problem(
         lambda time, state, delayed, args: jnp.conj(delayed[0]),
         lambda time, args: jnp.asarray([1.0 + 0.25j]),

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -116,7 +118,7 @@ def main() -> None:
         arguments.channels,
     )
 
-    def native_table_action(spectrum):
+    def native_table_action(spectrum: Any) -> Any:
         ledger = kernel.apply(spectrum)
         return (
             ledger.deposited_energy_gev,

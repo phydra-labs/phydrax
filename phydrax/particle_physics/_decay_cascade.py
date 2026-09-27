@@ -11,12 +11,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 from numbers import Integral
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -76,7 +78,7 @@ class DarkDecayChannel(StrictModule, NonTrainableState):
     decay: TwoBodyDecayPlan
     channel_id: str = eqx.field(static=True)
 
-    def __init__(self, decay: TwoBodyDecayPlan, /):
+    def __init__(self, decay: TwoBodyDecayPlan, /) -> None:
         if not isinstance(decay, TwoBodyDecayPlan):
             raise TypeError("decay must be the existing TwoBodyDecayPlan owner.")
         self.decay = decay
@@ -100,7 +102,7 @@ class DarkDecaySpeciesOwner(StrictModule, NonTrainableState):
         *,
         owner_id: str,
         mean_proper_lifetime: float,
-    ):
+    ) -> None:
         channels_ = tuple(channels)
         pdg_id_ = _pdg_id(pdg_id, "pdg_id")
         owner = str(owner_id).strip()
@@ -171,7 +173,7 @@ class DarkDecayCascadePlan(StrictModule, NonTrainableState):
         model_revision_id: str,
         prompt_lifetime_cutoff: float,
         production_evidence_ids: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(runtime_plan, DarkSectorEpochPlan):
             raise TypeError("runtime_plan must be DarkSectorEpochPlan.")
         if not isinstance(species, ParticleSpeciesTable):
@@ -447,7 +449,37 @@ def seed_decay_frontier_from_host(
     )
 
 
-def _cascade_tables(plan: DarkDecayCascadePlan):
+# Twenty-three frontier, product, event, counter, and evidence arrays in the decay loop.
+_CascadeCarry: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+
+
+def _cascade_tables(
+    plan: DarkDecayCascadePlan,
+) -> tuple[Array, Array, Array, Array, Array, Array, Array, tuple[TwoBodyDecayPlan, ...]]:
     species_ids = np.asarray(plan.species.pdg_ids)
     active = np.asarray(plan.species.active)
     charges = np.asarray(plan.species.charges)
@@ -498,7 +530,7 @@ def _cascade_tables(plan: DarkDecayCascadePlan):
     )
 
 
-def _child_ids(parent_ids, ordinal, epoch_sequence):
+def _child_ids(parent_ids: Array, ordinal: int, epoch_sequence: ArrayLike) -> Array:
     constants = jnp.asarray(
         (
             0x9E3779B9,
@@ -626,7 +658,7 @@ def evolve_decay_cascade_epoch(
         charge_residual,
     )
 
-    def body(index, values):
+    def body(index: Array, values: _CascadeCarry) -> _CascadeCarry:
         (
             next_ids,
             next_values,

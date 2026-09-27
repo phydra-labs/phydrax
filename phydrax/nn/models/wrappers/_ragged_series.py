@@ -5,11 +5,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.axes as cx
 from phydrax.domain import BatchEvaluator, PointBatch
@@ -18,10 +18,16 @@ from ...._callable import _ensure_special_kwonly_args
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
 from ...._trainable import ParameterOwner
+from ....typing import parse
 from ..._keys import EvalKey, fold_in_eval_key, split_eval_key
 
 
-MaskedSeriesReduction = Literal["mean", "sum"]
+_PoolCarry: TypeAlias = tuple[Array, Array]
+_CaseData: TypeAlias = tuple[Array, Array, Array]
+_StepData: TypeAlias = tuple[Array, Array, Array]
+
+
+MaskedSeriesReduction: TypeAlias = Literal["mean", "sum"]
 
 
 class RaggedSeriesBatchInput(StrictModule):
@@ -45,7 +51,7 @@ class RaggedSeriesBatchInput(StrictModule):
         length: Array,
         sample_index: Array | None = None,
         sample_scale: Array | None = None,
-    ):
+    ) -> None:
         self.static = static
         self.series = series
         self.time = jnp.asarray(time, dtype=jnp.float64)
@@ -157,7 +163,7 @@ class RaggedSeriesModel(StrictModule, BatchEvaluator, ParameterOwner):
     model: Callable
     label: str
 
-    def __init__(self, model: Callable, /, *, label: str = "data"):
+    def __init__(self, model: Callable, /, *, label: str = "data") -> None:
         self.model = _ensure_special_kwonly_args(model)
         self.label = str(label)
 
@@ -215,9 +221,8 @@ class MaskedSeriesPoolingModel(StrictModule, ParameterOwner):
         include_static_in_steps: bool = False,
         include_static_in_readout: bool = True,
         scale_sampled_sum: bool = False,
-    ):
-        if reduction not in ("mean", "sum"):
-            raise ValueError("reduction must be either 'mean' or 'sum'.")
+    ) -> None:
+        reduction = parse(reduction, MaskedSeriesReduction, "reduction")
         self.step_model = _ensure_special_kwonly_args(step_model)
         self.readout_model = _ensure_special_kwonly_args(readout_model)
         self.reduction = reduction
@@ -278,16 +283,16 @@ class MaskedSeriesPoolingModel(StrictModule, ParameterOwner):
         zero_latent = jnp.zeros((latent_size,), dtype=output_spec.dtype)
         max_length = step_input.shape[1]
 
-        def pool_case(case_data):
+        def pool_case(case_data: _CaseData) -> _PoolCarry:
             case_index, features, case_mask = case_data
 
-            def step(carry, step_data):
+            def step(carry: _PoolCarry, step_data: _StepData) -> tuple[_PoolCarry, None]:
                 pooled_value, valid_count = carry
                 time_index, feature, active = step_data
                 site = case_index * max_length + time_index
                 step_key = fold_in_eval_key(key_step, site)
 
-                def evaluate(_):
+                def evaluate(_: None) -> Array:
                     value = jnp.asarray(self.step_model(feature, key=step_key))
                     return value.reshape((latent_size,))
 

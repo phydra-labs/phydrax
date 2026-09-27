@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 
@@ -18,7 +19,7 @@ from phydrax.applications.skeletal_muscle.fatigue import (
 )
 
 
-def _record(state):
+def _record(state: Any) -> Any:
     return jnp.stack(
         (state.uncommitted_fraction, state.active_fraction, state.fatigued_fraction)
     )

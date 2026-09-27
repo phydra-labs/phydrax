@@ -12,7 +12,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -20,18 +21,20 @@ from ...pgm import (
     contrastive_divergence_loss,
     DiscreteFactorGraph,
     factor_graph_log_score,
+    FactorGraphTrainingDiagnostics,
     GibbsSchedule,
     GibbsState,
     PreparedChromaticGibbs,
     sample_gibbs,
 )
+from ...typing import PRNGKey
 
 
 class AbstractDiscreteNoisingKernel(StrictModule):
     kernel_id: eqx.AbstractVar[str]
 
     @abstractmethod
-    def sample(self, key: Key[Array, ""], state: Array, cardinalities: Array, /) -> Array:
+    def sample(self, key: PRNGKey, state: Array, cardinalities: Array, /) -> Array:
         raise NotImplementedError
 
     @abstractmethod
@@ -45,21 +48,21 @@ class CategoricalNoisingKernel(AbstractDiscreteNoisingKernel):
     retention: float = eqx.field(static=True)
     kernel_id: str = eqx.field(static=True)
 
-    def __init__(self, retention: float, /):
+    def __init__(self, retention: float, /) -> None:
         value = float(retention)
         if not isfinite(value) or not 0.0 <= value <= 1.0:
             raise ValueError("retention must lie in [0, 1].")
         self.retention = value
         self.kernel_id = f"categorical-noise:{value}"
 
-    def sample(self, key, state, cardinalities, /):
+    def sample(self, key: PRNGKey, state: Array, cardinalities: Array, /) -> Array:
         retain_key, noise_key = jr.split(key)
         retain = jr.bernoulli(retain_key, self.retention, state.shape)
         uniform = jr.uniform(noise_key, state.shape)
         noise = jnp.floor(uniform * cardinalities).astype(jnp.int32)
         return jnp.where(retain, state, noise)
 
-    def log_prob(self, next_state, state, cardinalities, /):
+    def log_prob(self, next_state: Array, state: Array, cardinalities: Array, /) -> Array:
         same = next_state == state
         probability = (1.0 - self.retention) / cardinalities
         probability = probability + same * self.retention
@@ -71,7 +74,7 @@ class DiscreteForwardProcess(StrictModule):
     kernels: tuple[AbstractDiscreteNoisingKernel, ...]
     process_id: str = eqx.field(static=True)
 
-    def __init__(self, kernels: Sequence[AbstractDiscreteNoisingKernel], /):
+    def __init__(self, kernels: Sequence[AbstractDiscreteNoisingKernel], /) -> None:
         values = tuple(kernels)
         if not values or any(
             not isinstance(value, AbstractDiscreteNoisingKernel) for value in values
@@ -85,9 +88,7 @@ class DiscreteForwardProcess(StrictModule):
             }
         )
 
-    def sample_path(
-        self, key: Key[Array, ""], initial: Array, cardinalities: Array, /
-    ) -> Array:
+    def sample_path(self, key: PRNGKey, initial: Array, cardinalities: Array, /) -> Array:
         initial_state = jnp.asarray(initial, dtype=jnp.int32)
         cards = jnp.asarray(cardinalities, dtype=jnp.int32)
         if cards.shape != initial_state.shape[-1:] or bool(jnp.any(cards < 1)):
@@ -119,7 +120,7 @@ class FactorGraphReverseKernel(StrictModule):
         output_variables: ArrayLike,
         schedule: GibbsSchedule,
         /,
-    ):
+    ) -> None:
         if not isinstance(graph, DiscreteFactorGraph):
             raise TypeError("graph must be DiscreteFactorGraph.")
         if not isinstance(prepared, PreparedChromaticGibbs):
@@ -162,16 +163,22 @@ class FactorGraphReverseKernel(StrictModule):
             }
         )
 
-    def sample(self, key: Key[Array, ""], noisy: Array, initial: GibbsState, /) -> Array:
+    def sample(self, key: PRNGKey, noisy: Array, initial: GibbsState, /) -> Array:
         if initial.positions.shape[1:] != (self.graph.num_variables,):
             raise ValueError("initial Gibbs state does not match the reverse graph.")
-        values = jnp.asarray(noisy, dtype=jnp.int32)
+        values = jnp.asarray(noisy)
+        if not jnp.issubdtype(values.dtype, jnp.integer):
+            raise TypeError("noisy must contain integer states.")
         expected = (initial.num_chains, self.input_variables.shape[0])
         if values.shape != expected:
             raise ValueError(f"noisy must have shape {expected}; got {values.shape}.")
         input_cardinalities = self.graph.cardinalities[self.input_variables]
-        if bool(jnp.any((values < 0) | (values >= input_cardinalities[jnp.newaxis, :]))):
-            raise ValueError("noisy contains a state outside reverse-input support.")
+        values = eqx.error_if(
+            values,
+            jnp.any((values < 0) | (values >= input_cardinalities[jnp.newaxis, :])),
+            "noisy contains a state outside reverse-input support.",
+        )
+        values = values.astype(jnp.int32)
         positions = initial.positions.at[:, self.input_variables].set(values)
         state = GibbsState(
             positions,
@@ -204,7 +211,7 @@ class DiscreteDenoisingProcess(StrictModule):
         forward: DiscreteForwardProcess,
         reverse: Sequence[FactorGraphReverseKernel],
         /,
-    ):
+    ) -> None:
         if not isinstance(forward, DiscreteForwardProcess):
             raise TypeError("forward must be DiscreteForwardProcess.")
         reverse_values = tuple(reverse)
@@ -226,7 +233,7 @@ class DiscreteDenoisingProcess(StrictModule):
 
     def sample_reverse(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         noisy: ArrayLike,
         initial_states: Sequence[GibbsState],
         /,
@@ -257,7 +264,7 @@ class RecoveryLikelihoodObjective(StrictModule):
         positive_assignments: Array,
         negative_assignments: Array,
         /,
-    ):
+    ) -> tuple[Array, FactorGraphTrainingDiagnostics]:
         return contrastive_divergence_loss(
             kernel.graph,
             positive_assignments,
@@ -286,7 +293,7 @@ class AdaptiveMixingPenalty(StrictModule):
         update_fraction: float = 0.2,
         minimum: float = 1e-4,
         maximum: float = 1.0,
-    ):
+    ) -> None:
         values = tuple(
             float(value) for value in (target, update_fraction, minimum, maximum)
         )
@@ -340,7 +347,7 @@ class HybridDiscreteEmbedding(StrictModule):
 
     def __init__(
         self, encoder: Callable, decoder: Callable, process: DiscreteDenoisingProcess, /
-    ):
+    ) -> None:
         if not isinstance(process, DiscreteDenoisingProcess):
             raise TypeError("process must be DiscreteDenoisingProcess.")
         if not callable(encoder) or not callable(decoder):

@@ -9,7 +9,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -38,7 +38,7 @@ class FiniteVolumeExecutionSpec(StrictModule, NonTrainableState):
         /,
         *,
         step_policy: FiniteVolumeStepPolicy | None = None,
-    ):
+    ) -> None:
         end = float(end_time)
         steps = int(maximum_steps)
         policy = FiniteVolumeStepPolicy() if step_policy is None else step_policy
@@ -87,7 +87,7 @@ class FiniteVolumeCaseSpec(StrictModule, NonTrainableState):
         /,
         *,
         precision: FiniteVolumePrecisionPolicy | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         if not name_:
             raise ValueError("Finite-volume case name must be non-empty.")

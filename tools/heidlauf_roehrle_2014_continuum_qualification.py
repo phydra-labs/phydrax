@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 
@@ -27,7 +28,7 @@ from phydrax.discretization import (
 )
 
 
-def qualify():
+def qualify() -> Any:
     source_id = "qualification-prescribed-gamma"
     architecture = UniformFiberArchitecturePlan("qualification-2014-x").prepare(
         jnp.asarray((1.0, 0.0, 0.0))
@@ -96,7 +97,7 @@ def qualify():
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()

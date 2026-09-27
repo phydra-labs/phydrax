@@ -13,9 +13,11 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ...._validation import canonical_identifier
 from ....measurement import (
     QuantitySpec,
     RadiationQuantityKind,
@@ -24,7 +26,7 @@ from ....measurement import (
 from ....solver import JumpSolution, solve_direct_ssa
 from ....stochastic import JUMP_MAX_EVENTS, PoissonClockRealization
 from ....units import GRAY_PER_SECOND
-from ._model import _identifier, PreparedCirculatingBloodModel
+from ._model import PreparedCirculatingBloodModel
 
 
 ABSORBED_DOSE_RATE_REFERENCE = "circulating-blood-absorbed-dose-per-second"
@@ -492,7 +494,7 @@ def simulate_circulating_blood_dose(
     if not isinstance(realization, PoissonClockRealization):
         raise TypeError("realization must be a PoissonClockRealization.")
     initial = prepared.encode(
-        _identifier(initial_compartment_id, "initial_compartment_id")
+        canonical_identifier(initial_compartment_id, "initial_compartment_id")
     )
     start, end = _time_bounds(t0_s, t1_s)
     solution = solve_direct_ssa(

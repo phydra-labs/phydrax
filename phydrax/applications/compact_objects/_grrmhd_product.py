@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -25,6 +26,7 @@ from ...metrix import (
     decompose_adm_metric,
     ingoing_kerr_domain_evidence,
     ingoing_kerr_metric,
+    LorentzianMetric,
     pullback_lorentzian_metric,
     RelativityConvention,
 )
@@ -62,7 +64,7 @@ class IngoingKerrGridPlan(StrictModule, NonTrainableState):
     chart: CoordinateChart
     mass: float = eqx.field(static=True)
     spin: float = eqx.field(static=True)
-    metric: object
+    metric: LorentzianMetric
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -203,7 +205,7 @@ class IngoingKerrGridPlan(StrictModule, NonTrainableState):
     ) -> tuple[Array, Array, Array]:
         flat = spatial_coordinates.reshape((-1, 3))
 
-        def fields(point):
+        def fields(point: Array) -> tuple[Array, Array, Array]:
             coordinate = jnp.concatenate((time[None], point))
             decomposition = decompose_adm_metric(self.metric, coordinate)
             return (
@@ -325,6 +327,9 @@ class GRRMHDTorusInitialDataPlan(StrictModule, NonTrainableState):
         bridge = self.runtime.material_transport.constrained_transport.bridge
         degree = 1
         coordinates = bridge.cochain.coordinates[degree]
+        # StructuredCochainBridge populates coordinates at every degree.
+        if not (coordinates is not None):
+            raise RuntimeError("Internal invariant failed: coordinates is not None.")
         torus = self.torus.evaluate(coordinates)
         potential = jnp.zeros(
             (bridge.cochain.cell_counts[degree],), dtype=coordinates.dtype

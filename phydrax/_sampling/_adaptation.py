@@ -9,7 +9,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 
@@ -31,7 +32,7 @@ class RobbinsMonroScalePolicy(StrictModule):
         minimum_scale: float = 1e-5,
         maximum_scale: float = 10.0,
         warmup_chunks: int,
-    ):
+    ) -> None:
         target, rate, power = map(float, (target_acceptance, learning_rate, decay_power))
         lower, upper = map(float, (minimum_scale, maximum_scale))
         warmup = int(warmup_chunks)

@@ -9,12 +9,14 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ..._strict import StrictModule
 from ...linalg import AbstractVectorSpace
 from ...nonlinear import NonlinearSystemProblem
 from ...solver._field_equilibrium import PreparedFieldEquilibrium
+from ...typing import parse
 
 
 MechanicsRootCoordinates: TypeAlias = Literal[
@@ -62,7 +64,7 @@ class MechanicsEquilibriumProblem(StrictModule):
         admissibility_id: str | None = None,
         root_coordinates: MechanicsRootCoordinates | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if isinstance(problem, PreparedFieldEquilibrium):
             root = problem.problem
             prepared_realization = problem.realization_id
@@ -93,10 +95,7 @@ class MechanicsEquilibriumProblem(StrictModule):
             raise TypeError(
                 "problem must be a NonlinearSystemProblem or PreparedFieldEquilibrium."
             )
-        if coordinates not in ("physical-state", "field-parameters"):
-            raise ValueError(
-                "root_coordinates must be 'physical-state' or 'field-parameters'."
-            )
+        coordinates = parse(coordinates, MechanicsRootCoordinates, "root_coordinates")
         if admissibility is not None and not callable(admissibility):
             raise TypeError("admissibility must be callable or None.")
         if (admissibility is None) != (admissibility_id is None):

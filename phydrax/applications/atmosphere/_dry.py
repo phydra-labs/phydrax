@@ -6,12 +6,14 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import cast
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -54,7 +56,9 @@ class DryAir(StrictModule, NonTrainableState):
     heat_capacity_pressure: float = eqx.field(static=True)
     air_id: str = eqx.field(static=True)
 
-    def __init__(self, mole_fractions: Sequence[float] = (0.78084, 0.20946, 0.00934)):
+    def __init__(
+        self, mole_fractions: Sequence[float] = (0.78084, 0.20946, 0.00934)
+    ) -> None:
         fraction = np.asarray(mole_fractions, dtype=np.float64)
         if (
             fraction.shape != (3,)
@@ -164,7 +168,7 @@ class DryHydrostaticReference(StrictModule, NonTrainableState):
         pressure: float = 100000.0,
         height: float = 0.0,
         gravity: float = 9.80665,
-    ):
+    ) -> None:
         if family not in ("isothermal", "isentropic"):
             raise ValueError("Hydrostatic family must be isothermal or isentropic.")
         values = (float(temperature), float(pressure), float(height), float(gravity))
@@ -290,7 +294,7 @@ class DryAtmospherePlan(StrictModule, NonTrainableState):
         prescribed: Sequence[tuple[ArrayLike | None, ArrayLike | None]] | None = None,
         order: int = 2,
         cfl: float = 0.35,
-    ):
+    ) -> None:
         shape_ = tuple(shape)
         bounds_ = np.asarray(bounds, dtype=np.float64)
         if (
@@ -355,10 +359,15 @@ class DryAtmospherePlan(StrictModule, NonTrainableState):
             )
         self.shape, self.bounds, self.boundaries = (
             shape_,
-            tuple(tuple(float(x) for x in row) for row in bounds_),
+            (
+                tuple(float(x) for x in bounds_[0]),
+                tuple(float(x) for x in bounds_[1]),
+            ),
             pairs,
         )
-        self.prescribed, self.order, self.cfl = data, order, float(cfl)
+        # Every prescribed entry was validated above as one lower/upper pair.
+        prescribed_ = cast(tuple[tuple[Array | None, Array | None], ...], data)
+        self.prescribed, self.order, self.cfl = prescribed_, order, float(cfl)
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "dry-atmosphere",
@@ -452,7 +461,9 @@ class PreparedDryAtmosphere(AbstractFixedStepMethod, NonTrainableState):
     method_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: DryAtmospherePlan, balance: PreparedAtmosphericBalance):
+    def __init__(
+        self, plan: DryAtmospherePlan, balance: PreparedAtmosphericBalance
+    ) -> None:
         self.plan, self.balance = plan, balance
         self.precision = FiniteVolumePrecisionPolicy(
             jnp.dtype(balance.reference.dtype).name
@@ -654,7 +665,15 @@ class PreparedDryAtmosphere(AbstractFixedStepMethod, NonTrainableState):
             self.budget(result),
         )
 
-    def step(self, step_index, time, state, step_size, args, /) -> FixedStepResult:
+    def step(
+        self,
+        step_index: Array,
+        time: Array,
+        state: DryAtmosphereState,
+        step_size: Array,
+        args: object,
+        /,
+    ) -> FixedStepResult:
         del args
         size = eqx.error_if(
             jnp.asarray(step_size),
@@ -685,7 +704,9 @@ class PreparedDryAtmosphere(AbstractFixedStepMethod, NonTrainableState):
                 "Atmospheric rollout requires a nonempty vector of step sizes."
             )
 
-        def body(carry, size):
+        def body(
+            carry: tuple[DryAtmosphereState, Array], size: Array
+        ) -> tuple[tuple[DryAtmosphereState, Array], tuple[Array, Array, Array]]:
             previous, running = carry
             result = self.advance(previous, jnp.where(running, size, 0.0))
             running = running & result.accepted

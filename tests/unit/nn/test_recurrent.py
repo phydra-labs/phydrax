@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -20,97 +22,97 @@ from phydrax.nn.models import CausalCoordinateNetwork, CausalCoordinatePlan
 class _RandomAccumulator(AbstractRecurrentCell):
     width: int = eqx.field(static=True)
 
-    def __init__(self, width):
+    def __init__(self, width: Any) -> None:
         self.width = int(width)
 
-    def initial_state(self, case_shape, /, *, dtype):
+    def initial_state(self, case_shape: Any, /, *, dtype: Any) -> Any:
         return jnp.zeros(case_shape + (self.width,), dtype=dtype)
 
-    def step(self, state, inputs, /, *, key=None):
+    def step(self, state: Any, inputs: Any, /, *, key: Any = None) -> Any:
         noise = jnp.zeros_like(inputs) if key is None else jr.normal(key, inputs.shape)
         next_state = state + inputs + noise
         return next_state, 2.0 * next_state
 
 
 class _PhysicalAccumulator(AbstractTimeAwareRecurrentCell):
-    def initial_state(self, case_shape, /, *, dtype):
+    def initial_state(self, case_shape: Any, /, *, dtype: Any) -> Any:
         return jnp.zeros(case_shape, dtype=dtype)
 
-    def step(self, state, inputs, /, *, key=None):
+    def step(self, state: Any, inputs: Any, /, *, key: Any = None) -> Any:
         del key
         next_state = state + inputs
         return next_state, next_state
 
     def step_with_context(
         self,
-        state,
-        inputs,
+        state: Any,
+        inputs: Any,
         /,
         *,
-        time,
-        interval,
-        key=None,
-    ):
+        time: Any,
+        interval: Any,
+        key: Any = None,
+    ) -> Any:
         del key
         next_state = state + inputs * (time + interval)
         return next_state, next_state
 
 
 class _PhysicalVectorAccumulator(AbstractTimeAwareRecurrentCell):
-    def initial_state(self, case_shape, /, *, dtype):
+    def initial_state(self, case_shape: Any, /, *, dtype: Any) -> Any:
         return jnp.zeros(case_shape + (1,), dtype=dtype)
 
-    def step(self, state, inputs, /, *, key=None):
+    def step(self, state: Any, inputs: Any, /, *, key: Any = None) -> Any:
         del key
         next_state = state + inputs
         return next_state, next_state
 
     def step_with_context(
         self,
-        state,
-        inputs,
+        state: Any,
+        inputs: Any,
         /,
         *,
-        time,
-        interval,
-        key=None,
-    ):
+        time: Any,
+        interval: Any,
+        key: Any = None,
+    ) -> Any:
         del key
         next_state = state + inputs * (time + interval)[..., None]
         return next_state, next_state
 
 
 class _PhysicalAdditiveRecurrence(AbstractTimeAwareAssociativeRecurrence):
-    def initial_state(self, case_shape, /, *, dtype):
+    def initial_state(self, case_shape: Any, /, *, dtype: Any) -> Any:
         return jnp.zeros(case_shape, dtype=dtype)
 
-    def identity(self, case_shape, /, *, dtype):
+    def identity(self, case_shape: Any, /, *, dtype: Any) -> Any:
         return jnp.zeros(case_shape, dtype=dtype)
 
-    def encode_step(self, inputs, /, *, key=None):
+    def encode_step(self, inputs: Any, /, *, key: Any = None) -> Any:
         del key
         return inputs
 
     def encode_step_with_context(
         self,
-        inputs,
+        inputs: Any,
         /,
         *,
-        time,
-        interval,
-        key=None,
-    ):
+        time: Any,
+        interval: Any,
+        key: Any = None,
+    ) -> Any:
         del key
         return inputs * (time + interval)
 
-    def combine(self, left, right, /):
+    def combine(self, left: Any, right: Any, /) -> Any:
         return left + right
 
-    def apply_prefix(self, state, summary, /):
+    def apply_prefix(self, state: Any, summary: Any, /) -> Any:
         return state + summary
 
 
-def _packed_affine_batch():
+def _packed_affine_batch() -> Any:
     transitions = jnp.asarray(
         [
             [[0.8, 0.7], [0.6, 0.5], [0.4, 0.3], [9.0, 9.0], [9.0, 9.0]],
@@ -127,7 +129,7 @@ def _packed_affine_batch():
     return RecurrentBatch((transitions, additions), valid, reset=reset)
 
 
-def test_recurrent_batch_rejects_ambiguous_padding_and_resets():
+def test_recurrent_batch_rejects_ambiguous_padding_and_resets() -> None:
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="after padding"):
         batch = RecurrentBatch(
             jnp.ones((4, 2)),
@@ -144,7 +146,7 @@ def test_recurrent_batch_rejects_ambiguous_padding_and_resets():
         jax.block_until_ready(batch.valid)
 
 
-def test_affine_serial_and_associative_execution_match_with_resets_and_padding():
+def test_affine_serial_and_associative_execution_match_with_resets_and_padding() -> None:
     recurrence = AffineRecurrence(jnp.asarray([1.0, -0.5]))
     batch = _packed_affine_batch()
 
@@ -169,7 +171,7 @@ def test_affine_serial_and_associative_execution_match_with_resets_and_padding()
     assert jnp.allclose(serial.states[1, 2], reset_step)
 
 
-def test_affine_chunking_preserves_canonical_reset_state():
+def test_affine_chunking_preserves_canonical_reset_state() -> None:
     recurrence = AffineRecurrence(jnp.asarray([1.0, -0.5]))
     transitions = jnp.asarray(
         [
@@ -215,7 +217,7 @@ def test_affine_chunking_preserves_canonical_reset_state():
         )
 
 
-def test_affine_composition_order_matches_dense_matrix_serial_execution():
+def test_affine_composition_order_matches_dense_matrix_serial_execution() -> None:
     recurrence = AffineRecurrence(jnp.asarray([0.3, -0.2]), mode="matrix")
     transitions = jnp.asarray(
         [
@@ -232,12 +234,12 @@ def test_affine_composition_order_matches_dense_matrix_serial_execution():
     assert jnp.allclose(serial.states, associative.states, atol=1e-6, rtol=1e-6)
 
 
-def test_affine_execution_has_matching_finite_gradients_and_vmap_behavior():
+def test_affine_execution_has_matching_finite_gradients_and_vmap_behavior() -> None:
     recurrence = AffineRecurrence(jnp.asarray([0.2, -0.1]))
     transitions = jnp.asarray([[0.9, 0.8], [0.7, 0.6], [0.5, 0.4]])
     valid = jnp.asarray([True, True, True])
 
-    def loss(additions, execution):
+    def loss(additions: Any, execution: Any) -> Any:
         batch = RecurrentBatch((transitions, additions), valid)
         result = run_affine_recurrence(recurrence, batch, execution=execution)
         return jnp.sum(result.outputs**2)
@@ -262,7 +264,9 @@ def test_affine_execution_has_matching_finite_gradients_and_vmap_behavior():
     assert batched.shape == (2, 3, 2)
 
 
-def test_generic_recurrent_cell_masks_outputs_and_propagates_keys_deterministically():
+def test_generic_recurrent_cell_masks_outputs_and_propagates_keys_deterministically() -> (
+    None
+):
     cell = _RandomAccumulator(3)
     inputs = jnp.ones((4, 3))
     valid = jnp.asarray([True, True, False, False])
@@ -278,11 +282,11 @@ def test_generic_recurrent_cell_masks_outputs_and_propagates_keys_deterministica
     assert jnp.array_equal(result.final_state, result.states[-1])
 
 
-def test_physical_time_and_intervals_reach_serial_and_associative_dispatch():
+def test_physical_time_and_intervals_reach_serial_and_associative_dispatch() -> None:
     inputs = jnp.ones((3,))
     valid = jnp.ones((3,), dtype="bool")
 
-    def evaluate(times):
+    def evaluate(times: Any) -> Any:
         batch = RecurrentBatch(inputs, valid, time=times)
         serial = run_recurrent(_PhysicalAccumulator(), batch)
         associative = run_associative_recurrence(
@@ -311,13 +315,13 @@ def test_physical_time_and_intervals_reach_serial_and_associative_dispatch():
     assert jnp.allclose(changed_causal.ordered_outputs[..., 0], changed_serial)
 
 
-def test_time_aware_streaming_context_preserves_the_boundary_interval_exactly():
+def test_time_aware_streaming_context_preserves_the_boundary_interval_exactly() -> None:
     inputs = jnp.ones((5,))
     valid = jnp.ones((5,), dtype="bool")
     times = jnp.asarray((0.0, 1.0, 3.0, 6.0, 10.0))
     split = 2
 
-    def evaluate(executor, recurrence):
+    def evaluate(executor: Any, recurrence: Any) -> Any:
         whole = executor(
             recurrence,
             RecurrentBatch(inputs, valid, time=times),
@@ -356,7 +360,7 @@ def test_time_aware_streaming_context_preserves_the_boundary_interval_exactly():
     assert bool(second_serial.final_context.has_time)
 
 
-def test_causal_coordinate_streaming_preserves_physical_boundary_context():
+def test_causal_coordinate_streaming_preserves_physical_boundary_context() -> None:
     network = CausalCoordinateNetwork(_PhysicalVectorAccumulator())
     times = jnp.asarray((0.0, 1.0, 3.0, 6.0, 10.0))
     inputs = jnp.ones((5, 1))
@@ -376,4 +380,5 @@ def test_causal_coordinate_streaming_preserves_physical_boundary_context():
         whole.ordered_outputs,
     )
     assert second.final_context is second.recurrent.final_context
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(second.final_context.time, times[-1])

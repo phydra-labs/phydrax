@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -21,6 +22,7 @@ from .._trainable import NonTrainableState
 from ..linalg import HermitianSpectrum
 from ..special._dtype import promote_real
 from ..special._normal import normal_quantile
+from ..typing import parse
 
 
 GaussianPathConstructionMethod: TypeAlias = Literal["chronological", "bridge", "pca"]
@@ -47,7 +49,7 @@ class GaussianPathConstructionPlan(StrictModule, NonTrainableState):
         times: ArrayLike,
         method: GaussianPathConstructionMethod = "chronological",
         factor_rank: int | None = None,
-    ):
+    ) -> None:
         (nodes,) = promote_real("GaussianPathConstructionPlan times", times)
         nodes_host = np.asarray(jax.device_get(nodes))
         if nodes_host.ndim != 1 or nodes_host.size < 2:
@@ -61,8 +63,7 @@ class GaussianPathConstructionPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Gaussian path times must have finite, strictly positive intervals."
             )
-        if method not in ("chronological", "bridge", "pca"):
-            raise ValueError("method must be 'chronological', 'bridge', or 'pca'.")
+        method = parse(method, GaussianPathConstructionMethod, "method")
 
         full_rank = nodes_host.size - 1
         if factor_rank is None:

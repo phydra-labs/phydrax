@@ -54,7 +54,7 @@ class _Contract(AbstractContract):
 
     def __init__(
         self, contract_id: str, cashflows: CashflowBatch, settlement: SettlementTerms
-    ):
+    ) -> None:
         self.contract_id = contract_id
         self.cashflows = cashflows
         self.settlement = settlement
@@ -197,7 +197,7 @@ def test_contract_trade_and_position_remain_distinct_lifecycle_objects() -> None
     with pytest.raises(TypeError, match="unresolved"):
         Trade(
             "bad-trade",
-            resolved,  # type: ignore[arg-type]
+            resolved,  # ty: ignore[invalid-argument-type]
             1.0,
             _time(100, "bad-execution"),
             settlement=_settlement(),
@@ -205,7 +205,7 @@ def test_contract_trade_and_position_remain_distinct_lifecycle_objects() -> None
     with pytest.raises(TypeError, match="resolved"):
         Position(
             "bad-position",
-            definition,  # type: ignore[arg-type]
+            definition,  # ty: ignore[invalid-argument-type]
             1.0,
             account_id="book-a",
         )

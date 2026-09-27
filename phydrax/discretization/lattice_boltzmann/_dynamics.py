@@ -9,7 +9,8 @@ from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -65,7 +66,7 @@ class LatticeBoltzmannRuntimeParameters(StrictModule):
         moving_wall_velocities: ArrayLike | None = None,
         local_root_solver: LocalRootSolver | None = None,
         boundary_parameters: LatticeBoltzmannBoundaryParameters | None = None,
-    ):
+    ) -> None:
         viscosity = jnp.asarray(kinematic_viscosity)
         walls = (
             jnp.empty((0,), dtype=viscosity.dtype)
@@ -140,7 +141,7 @@ class PreparedLatticeBoltzmannDynamics(StrictModule, NonTrainableState):
         acceleration: LatticeAcceleration | None = None,
         acceleration_id: str | None = None,
         implicit_acceleration: VelocityDependentAccelerationPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, LatticeBoltzmannDiscretization):
             raise TypeError("discretization must be an LBM discretization.")
         if not isinstance(scaling, LatticeBoltzmannScaling):

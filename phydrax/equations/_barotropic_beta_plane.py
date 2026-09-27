@@ -6,12 +6,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import prod
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -27,9 +28,10 @@ from ..discretization.spectral._space import TensorSpectralDiscretization
 from ..linalg import ArraySpace, DiagonalLinearOperator
 from ..solver._etdrk import ETDRKMethod, PreparedETDRKMethod
 from ..solver._semilinear_drift import SemilinearDrift
+from ..typing import parse
 
 
-DissipationOrder = Literal[1, 2, 3, 4]
+DissipationOrder: TypeAlias = Literal[1, 2, 3, 4]
 BilinearSelector = Callable[[Callable[[Array, Array], Array], Array, ArrayLike], Array]
 
 
@@ -122,7 +124,7 @@ class BarotropicBetaPlane(StrictModule, NonTrainableState):
         dealiasing: PreparedDealiasingPlan | None = None,
         reality_tolerance: float = 1.0e-10,
         maximum_coordinate_size: int = 10_000_000,
-    ):
+    ) -> None:
         if not isinstance(discretization, TensorSpectralDiscretization):
             raise TypeError("discretization must be a TensorSpectralDiscretization.")
         beta_ = float(beta)
@@ -136,10 +138,10 @@ class BarotropicBetaPlane(StrictModule, NonTrainableState):
             or drag < 0.0
             or not np.isfinite(viscosity_)
             or viscosity_ < 0.0
-            or order not in (1, 2, 3, 4)
-            or not np.isfinite(tolerance)
-            or tolerance < 0.0
         ):
+            raise ValueError("Beta-plane coefficients and tolerances are invalid.")
+        order = parse(order, DissipationOrder, "dissipation_order")
+        if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("Beta-plane coefficients and tolerances are invalid.")
         waves, squared, inverse, admissible, volume = _modal_geometry(discretization)
         if dealiasing is None:
@@ -199,7 +201,9 @@ class BarotropicBetaPlane(StrictModule, NonTrainableState):
 
     @property
     def state_shape(self) -> tuple[int, int]:
-        return self.discretization.modal_shape
+        # Construction admits exactly two periodic Fourier axes.
+        first, second = self.discretization.modal_shape
+        return (first, second)
 
     def validate_state(self, vorticity: ArrayLike, /) -> Array:
         value = jnp.asarray(vorticity)

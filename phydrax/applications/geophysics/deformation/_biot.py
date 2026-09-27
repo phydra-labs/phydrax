@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 
@@ -61,7 +62,7 @@ class MixedBiotPoromechanicsPlan(StrictModule, NonTrainableState):
         /,
         *,
         policy: la.LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not all(
             isinstance(value, la.AbstractLinearOperator)
             for value in (elasticity, coupling, storage, flow)
@@ -141,11 +142,11 @@ class MixedBiotPoromechanicsPlan(StrictModule, NonTrainableState):
         )
         return BiotState(displacement_, pressure, jnp.asarray(0.0), self.plan_id)
 
-    def _operator(self, dt: Array):
+    def _operator(self, dt: Array) -> la.FunctionLinearOperator:
         nu = self.displacement_space.size
         alpha = self.biot_coefficient
 
-        def action(values):
+        def action(values: Array) -> Array:
             displacement = self.displacement_space.unflatten(values[:nu])
             pressure = self.pressure_space.unflatten(values[nu:])
             mechanical = self.elasticity.mv(displacement)

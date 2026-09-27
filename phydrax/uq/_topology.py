@@ -8,7 +8,8 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -33,7 +34,7 @@ class TopologyEnsembleSummary(StrictModule, NonTrainableState):
         /,
         *,
         weights: ArrayLike | None = None,
-    ):
+    ) -> None:
         values = tuple(snapshots)
         if not values:
             raise ValueError("Topology ensemble summaries require snapshots.")

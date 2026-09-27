@@ -35,11 +35,12 @@ def _measure(function: Callable[[], Any], repeats: int) -> _Measured:
     return _Measured(
         value,
         1_000.0 * first_seconds,
+        # ty: ignore[invalid-argument-type]
         1_000.0 * float(distribution.mean_seconds),
     )
 
 
-def _ode(rate: float, *, problem_id: str):
+def _ode(rate: float, *, problem_id: str) -> Any:
     return phx.solver.DifferentialProblem(
         lambda time, state, parameter: -parameter * state,
         jnp.asarray([1.0]),
@@ -50,7 +51,7 @@ def _ode(rate: float, *, problem_id: str):
     )
 
 
-def _dae(rate: float):
+def _dae(rate: float) -> Any:
     system = phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, parameter: state_rate + parameter * state,
         state_shape=(1,),
@@ -65,7 +66,9 @@ def _dae(rate: float):
     )
 
 
-def _record(name: str, measured: _Measured, terminal: Any, exact: float, successful: Any):
+def _record(
+    name: str, measured: _Measured, terminal: Any, exact: float, successful: Any
+) -> Any:
     terminal_value = float(jnp.asarray(terminal))
     return {
         "name": name,
@@ -267,7 +270,7 @@ def run_time_integrator_benchmarks(*, steps: int, repeats: int) -> dict[str, Any
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--steps", type=int, default=16)
     parser.add_argument("--repeats", type=int, default=3)

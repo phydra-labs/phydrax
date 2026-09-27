@@ -2,8 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import hashlib
 from io import BytesIO
+from typing import Any
 
 import h5py
 import numpy as np
@@ -32,7 +34,7 @@ from tools.external_radiation_score_qualification import (
 _LIMITS = ResourceLimits(1_000_000, 8, 100, 100, 100)
 
 
-def _manifest(payload: bytes, name: str, *, commercial: bool = False):
+def _manifest(payload: bytes, name: str, *, commercial: bool = False) -> Any:
     return ReferenceArtifactManifest(
         name,
         checksum_algorithm="sha256",
@@ -50,12 +52,12 @@ def _manifest(payload: bytes, name: str, *, commercial: bool = False):
     )
 
 
-def _resource(payload: bytes):
+def _resource(payload: bytes) -> Any:
     return bounded_resource_from_bytes(payload, limits=_LIMITS)
 
 
-def _run(engine: str, revision: str, *, config_payload: bytes = b"configuration"):
-    def reference(role: str, payload: bytes):
+def _run(engine: str, revision: str, *, config_payload: bytes = b"configuration") -> Any:
+    def reference(role: str, payload: bytes) -> Any:
         return _manifest(payload, f"{engine}:{role}")
 
     return ExternalRadiationRunIdentity(
@@ -70,7 +72,7 @@ def _run(engine: str, revision: str, *, config_payload: bytes = b"configuration"
     )
 
 
-def _affine():
+def _affine() -> Any:
     return ImageIndexAffine(
         np.eye(4),
         "score-index",
@@ -84,14 +86,14 @@ def _affine():
 
 
 def _score(
-    kind=RadiationQuantityKind.DOSE_TO_WATER,
-    unit=GRAY,
+    kind: Any = RadiationQuantityKind.DOSE_TO_WATER,
+    unit: Any = GRAY,
     *,
-    shape=(2, 1, 1),
-    axes=("x", "y", "z"),
-    normalization="per-source-primary",
-    representation="voxel-grid",
-):
+    shape: Any = (2, 1, 1),
+    axes: Any = ("x", "y", "z"),
+    normalization: Any = "per-source-primary",
+    representation: Any = "voxel-grid",
+) -> Any:
     return RadiationScoreDefinition(
         f"fixture-{kind.value}",
         kind,
@@ -107,7 +109,7 @@ def _score(
     )
 
 
-def _hdf5_result():
+def _hdf5_result() -> Any:
     stream = BytesIO()
     with h5py.File(stream, "w") as handle:
         handle.attrs["producer"] = "OpenXRayMC"
@@ -152,7 +154,9 @@ def _hdf5_result():
     return result, payload, reference, profile
 
 
-def test_openxraymc_hdf5_preserves_profile_rights_losses_and_correlated_evidence():
+def test_openxraymc_hdf5_preserves_profile_rights_losses_and_correlated_evidence() -> (
+    None
+):
     result, payload, reference, profile = _hdf5_result()
     assert result.profile_id == profile.profile_id
     assert (
@@ -174,7 +178,7 @@ def test_openxraymc_hdf5_preserves_profile_rights_losses_and_correlated_evidence
         _openxraymc.import_openxraymc_hdf5(_resource(damaged), reference, profile)
 
 
-def test_openxraymc_hdf5_preflights_logical_shape_before_reading_payload():
+def test_openxraymc_hdf5_preflights_logical_shape_before_reading_payload() -> None:
     _, _, _, profile = _hdf5_result()
     stream = BytesIO()
     with h5py.File(stream, "w") as handle:
@@ -194,7 +198,7 @@ def test_openxraymc_hdf5_preflights_logical_shape_before_reading_payload():
         _openxraymc.import_openxraymc_hdf5(_resource(payload), reference, profile)
 
 
-def test_radiation_score_definition_distinguishes_physical_meanings_and_dij():
+def test_radiation_score_definition_distinguishes_physical_meanings_and_dij() -> None:
     definitions = (
         _score(RadiationQuantityKind.ABSORBED_DOSE),
         _score(RadiationQuantityKind.KERMA),
@@ -231,7 +235,7 @@ def test_radiation_score_definition_distinguishes_physical_meanings_and_dij():
         )
 
 
-def test_moqui_npz_checks_exact_members_affine_and_semantic_requirements():
+def test_moqui_npz_checks_exact_members_affine_and_semantic_requirements() -> None:
     values = np.asarray([3.0, 4.0], dtype="<f4").reshape((2, 1, 1))
     uncertainty = np.asarray([0.3, 0.4], dtype="<f4").reshape((2, 1, 1))
     stream = BytesIO()
@@ -279,7 +283,7 @@ def test_moqui_npz_checks_exact_members_affine_and_semantic_requirements():
         )
 
 
-def test_moqui_embedded_mha_validates_geometry_and_refuses_absent_uncertainty():
+def test_moqui_embedded_mha_validates_geometry_and_refuses_absent_uncertainty() -> None:
     header = (
         "ObjectType = Image\n"
         "NDims = 3\n"
@@ -321,7 +325,7 @@ def test_moqui_embedded_mha_validates_geometry_and_refuses_absent_uncertainty():
         )
 
 
-def test_mcgpu_raw_binds_configuration_identity_dij_and_declared_losses():
+def test_mcgpu_raw_binds_configuration_identity_dij_and_declared_losses() -> None:
     config = b"ENGINE = MCGPU\nSCORE = DOSE_INFLUENCE\n"
     run = _run("MCGPU", "1.3", config_payload=config)
     score = _score(
@@ -376,7 +380,7 @@ def test_mcgpu_raw_binds_configuration_identity_dij_and_declared_losses():
         )
 
 
-def test_qualification_is_research_only_and_profiles_expose_no_execution_api():
+def test_qualification_is_research_only_and_profiles_expose_no_execution_api() -> None:
     result, _, _, _ = _hdf5_result()
     qualification = external_radiation_score_qualification((result,))
     assert qualification["successful"]

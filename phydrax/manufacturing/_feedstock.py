@@ -11,7 +11,7 @@ class FeedstockSpecification:
     form: str
     mass_rate_kg_s: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             not self.feedstock_id
             or not self.material_id

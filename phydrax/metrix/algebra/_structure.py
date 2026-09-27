@@ -44,7 +44,7 @@ class AlgebraRationalVector(StrictModule, NonTrainableState):
     entries: tuple[RationalPair, ...] = eqx.field(static=True)
     vector_id: str = eqx.field(static=True)
 
-    def __init__(self, entries: Sequence[RationalPair | int | Fraction], /):
+    def __init__(self, entries: Sequence[RationalPair | int | Fraction], /) -> None:
         values = tuple(_fraction(value) for value in entries)
         if not values:
             raise ValueError("Algebra rational vectors must be non-empty.")
@@ -64,7 +64,9 @@ class AlgebraRationalMap(StrictModule, NonTrainableState):
     rows: tuple[tuple[RationalPair, ...], ...] = eqx.field(static=True)
     map_id: str = eqx.field(static=True)
 
-    def __init__(self, rows: Sequence[Sequence[RationalPair | int | Fraction]], /):
+    def __init__(
+        self, rows: Sequence[Sequence[RationalPair | int | Fraction]], /
+    ) -> None:
         values = tuple(tuple(_fraction(value) for value in row) for row in rows)
         if not values or any(len(row) != len(values) for row in values):
             raise ValueError("Algebra rational maps must be non-empty and square.")
@@ -112,7 +114,7 @@ class AlgebraStructureTable(StrictModule, NonTrainableState):
         /,
         *,
         budget: AlgebraResourceBudget,
-    ):
+    ) -> None:
         if isinstance(coordinate_dimension, bool):
             raise TypeError("Algebra coordinate dimension must be an integer.")
         dimension = index(coordinate_dimension)

@@ -9,12 +9,14 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
+from ...typing import parse
 from ._dfsph import DFSPHFactorState, PreparedDFSPH
 from ._iisph import PreparedIISPH
 from ._qualification import ParticleConstraintResiduals
@@ -202,9 +204,8 @@ class ProjectedIterationAccelerationPlan(StrictModule, NonTrainableState):
         *,
         relaxation_minimum: float = 0.3,
         relaxation_maximum: float = 0.9,
-    ):
-        if kind not in ("reference", "chebyshev", "anderson"):
-            raise ValueError("Unknown projection acceleration kind.")
+    ) -> None:
+        kind = parse(kind, ProjectionAccelerationKind, "kind")
         if not 0.0 < relaxation_minimum <= relaxation_maximum <= 1.0:
             raise ValueError("Projection relaxation bounds are invalid.")
         self.kind = kind
@@ -219,7 +220,9 @@ class ProjectedIterationAccelerationPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def relaxation(self, iteration: ArrayLike, maximum_iterations: int, /) -> Array:
+    def relaxation(
+        self, iteration: ArrayLike, maximum_iterations: int, /
+    ) -> Array | float:
         fraction = jnp.asarray(iteration) / jnp.maximum(maximum_iterations - 1, 1)
         if self.kind == "reference":
             return jnp.asarray(self.relaxation_minimum)
@@ -243,7 +246,7 @@ class ProductionProjectedSolvePlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 100,
         tolerance: float = 1e-8,
         acceleration: ProjectedIterationAccelerationPlan | None = None,
-    ):
+    ) -> None:
         if maximum_iterations <= 0 or tolerance <= 0.0:
             raise ValueError("Projected solve controls are invalid.")
         self.maximum_iterations = int(maximum_iterations)
@@ -284,7 +287,7 @@ def solve_projected_pressure(
     diagonal = jnp.diag(matrix)
     safe_diagonal = jnp.where(jnp.abs(diagonal) > 1e-14, diagonal, 1.0)
 
-    def body(iteration, carry):
+    def body(iteration: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
         pressure, _ = carry
         residual = matrix @ pressure - rhs
         relaxation = plan.acceleration.relaxation(iteration, plan.maximum_iterations)

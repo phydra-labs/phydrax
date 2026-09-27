@@ -8,11 +8,13 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._probability import AbstractProbabilityLaw
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from ._density import ContinuousFlowLaw
 from ._transport import ContinuousTransport
 
@@ -34,7 +36,7 @@ class ConditionalContinuousFlowLaw(AbstractProbabilityLaw):
         input_policy: Any,
         context_id: str,
         max_exact_dimension: int = 32,
-    ):
+    ) -> None:
         if not context_id:
             raise ValueError("context_id must be non-empty.")
         # The supplied transport must already be prepared at this fixed context.  Its
@@ -60,7 +62,7 @@ class ConditionalContinuousFlowLaw(AbstractProbabilityLaw):
     def density_measure_kind(self) -> str:
         return "lebesgue"
 
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         return self.flow_law.sample(key, sample_shape)
 
     def log_prob(self, value: ArrayLike, /) -> Array:
@@ -104,7 +106,7 @@ class PiecewiseContinuousFlowLaw(AbstractProbabilityLaw):
         tape_provider: Any,
         max_exact_dimension: int = 32,
         law_id: str | None = None,
-    ):
+    ) -> None:
         if (
             not callable(forward_event_map)
             or not callable(inverse_event_map)
@@ -144,7 +146,7 @@ class PiecewiseContinuousFlowLaw(AbstractProbabilityLaw):
     def density_measure_kind(self) -> str:
         return "lebesgue"
 
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         continuous = self.flow_law.sample(key, sample_shape)
         return self.forward_event_map(continuous, self.prepared_schedule)
 

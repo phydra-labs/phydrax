@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -47,18 +48,19 @@ from ..discretization.spectral._dealias import (
 )
 from ..discretization.spectral._incompressible import PeriodicLerayProjector
 from ..equations._les_closures import LESParameterProvenance, ResolvedLESFilter
+from ..typing import parse
 from ._dataset import TrainOnlyNormalizer
 from ._les import LESStressConvention
 from ._state import _declared_dimension, FlowStateSchema
 
 
-ClosureDeploymentKind = Literal["conservative_face", "spectral_drift"]
-SpectralEnergyPolicy = Literal["nonincreasing", "diagnostic"]
-StressEnergyPolicy = Literal["signed", "dissipative", "bounded_backscatter"]
+ClosureDeploymentKind: TypeAlias = Literal["conservative_face", "spectral_drift"]
+SpectralEnergyPolicy: TypeAlias = Literal["nonincreasing", "diagnostic"]
+StressEnergyPolicy: TypeAlias = Literal["signed", "dissipative", "bounded_backscatter"]
 
 
 def conservative_face_numeric_revision(
-    binding: LearnedClosureBindingPlan | TrainableLearnedClosureBinding, /
+    binding: _AbstractLearnedClosureBinding, /
 ) -> NumericRevision:
     """Numeric revision of a conservative-face predictor under its binding identity.
 
@@ -260,7 +262,7 @@ class LearnedClosureBindingPlan(_AbstractLearnedClosureBinding, ExplicitFreeze):
         differentiability: BranchDifferentiationPolicy = (
             BranchDifferentiationPolicy.SMOOTH
         ),
-    ):
+    ) -> None:
         if not callable(predictor):
             raise TypeError("predictor must be callable.")
         # Face corrections and modal drifts are structured callables over native
@@ -291,9 +293,9 @@ class LearnedClosureBindingPlan(_AbstractLearnedClosureBinding, ExplicitFreeze):
         outputs = tuple(str(value).strip() for value in output_component_names)
         artifact = str(model_artifact_id).strip()
         normalizer = str(normalizer_provenance_id).strip()
+        deployment = parse(deployment, ClosureDeploymentKind, "deployment_kind")
         if (
-            deployment not in ("conservative_face", "spectral_drift")
-            or not schema
+            not schema
             or not inputs
             or not outputs
             or any(not value for value in (*inputs, *outputs))
@@ -346,7 +348,7 @@ class TrainableLearnedClosureBinding(_AbstractLearnedClosureBinding):
 
     predictor: Callable = parameter_field()
 
-    def __init__(self, predictor: Callable, source: LearnedClosureBindingPlan, /):
+    def __init__(self, predictor: Callable, source: LearnedClosureBindingPlan, /) -> None:
         if not isinstance(source, LearnedClosureBindingPlan):
             raise TypeError("source must be a LearnedClosureBindingPlan.")
         self.predictor = trainable_provider(predictor)
@@ -380,7 +382,7 @@ class LearnedStressFeatureSchema(StrictModule, NonTrainableState):
         shape: tuple[int, ...],
         dtype: Any,
         flow_schema_id: str,
-    ):
+    ) -> None:
         name_ = str(name).strip()
         names = tuple(str(value).strip() for value in component_names)
         units = tuple(str(value).strip() for value in component_units)
@@ -484,7 +486,7 @@ class LearnedStressOutputContract(StrictModule, NonTrainableState):
         stress_convention: LESStressConvention = "deviatoric",
         symmetry_tolerance: float = 1e-6,
         trace_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         shape_ = tuple(shape)
         dtype_ = np.dtype(dtype)
         values = tuple(
@@ -597,7 +599,7 @@ class LearnedStressBindingPlan(StrictModule, NonTrainableState):
         normalizer_id: str,
         energy_policy: StressEnergyPolicy = "signed",
         maximum_backscatter_fraction: float | None = None,
-    ):
+    ) -> None:
         if not isinstance(feature_schema, LearnedStressFeatureSchema):
             raise TypeError("feature_schema must be a LearnedStressFeatureSchema.")
         if not isinstance(output_contract, LearnedStressOutputContract):
@@ -616,8 +618,7 @@ class LearnedStressBindingPlan(StrictModule, NonTrainableState):
         )
         if not artifact or not normalizer:
             raise ValueError("Learned stress artifact identities must be non-empty.")
-        if policy not in ("signed", "dissipative", "bounded_backscatter"):
-            raise ValueError("Unsupported learned stress energy policy.")
+        policy = parse(policy, StressEnergyPolicy, "energy_policy")
         if policy == "bounded_backscatter":
             if (
                 fraction is None
@@ -768,7 +769,7 @@ class LearnedStressEvidence(StrictModule, NonTrainableState):
         nonfinite_count: ArrayLike,
         valid: ArrayLike,
         plan: LearnedStressBindingPlan,
-    ):
+    ) -> None:
         if not isinstance(plan, LearnedStressBindingPlan):
             raise TypeError("plan must be a LearnedStressBindingPlan.")
         self.raw_local_transfer = jnp.asarray(raw_local_transfer)
@@ -838,7 +839,7 @@ class LearnedStressResult(StrictModule, NonTrainableState):
         derivative_contract: DerivativeContract,
         derivative_valid: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(evidence, LearnedStressEvidence):
             raise TypeError("evidence must be LearnedStressEvidence.")
         if not isinstance(header, AdmissibilityHeader):
@@ -882,7 +883,7 @@ class PreparedLearnedStressBinding(StrictModule, ExplicitFreeze):
         /,
         *,
         port_mapping: PortMapping | None = None,
-    ):
+    ) -> None:
         if not callable(predictor):
             raise TypeError("predictor must be callable.")
         if not isinstance(normalizer, TrainOnlyNormalizer):
@@ -1001,7 +1002,9 @@ class PreparedLearnedStressBinding(StrictModule, ExplicitFreeze):
         elif self.plan.energy_policy == "bounded_backscatter":
             raw_forward = jnp.sum(jnp.maximum(raw_transfer, 0.0))
             raw_backscatter = jnp.sum(jnp.maximum(-raw_transfer, 0.0))
-            backscatter_limit = self.plan.maximum_backscatter_fraction * raw_forward
+            # The plan admits bounded_backscatter only with a validated finite fraction.
+            fraction = cast(float, self.plan.maximum_backscatter_fraction)
+            backscatter_limit = fraction * raw_forward
             safe_backscatter = jnp.where(raw_backscatter > 0.0, raw_backscatter, 1.0)
             backscatter_scale = jnp.minimum(1.0, backscatter_limit / safe_backscatter)
             selected_transfer = jnp.where(
@@ -1157,7 +1160,7 @@ class SpectralDriftEvidence(StrictModule, NonTrainableState):
         dealiasing_kind: str,
         dealiasing_exact: bool,
         energy_policy: SpectralEnergyPolicy,
-    ):
+    ) -> None:
         self.raw_energy_rate = jnp.asarray(raw_energy_rate)
         self.constrained_energy_rate = jnp.asarray(constrained_energy_rate)
         self.divergence_norm = jnp.asarray(divergence_norm)
@@ -1194,7 +1197,9 @@ class SpectralFallbackArtifact(StrictModule, NonTrainableState):
     fallback_kind: str = eqx.field(static=True)
     artifact_id: str = eqx.field(static=True)
 
-    def __init__(self, *, used: ArrayLike, reason_code: ArrayLike, binding_id: str):
+    def __init__(
+        self, *, used: ArrayLike, reason_code: ArrayLike, binding_id: str
+    ) -> None:
         binding = str(binding_id).strip()
         if not binding:
             raise ValueError("binding_id must be non-empty.")
@@ -1228,7 +1233,7 @@ class SpectralDriftResult(StrictModule, NonTrainableState):
         evidence: SpectralDriftEvidence,
         fallback: SpectralFallbackArtifact,
         /,
-    ):
+    ) -> None:
         if not isinstance(evidence, SpectralDriftEvidence):
             raise TypeError("evidence must be SpectralDriftEvidence.")
         if not isinstance(fallback, SpectralFallbackArtifact):
@@ -1257,7 +1262,7 @@ class PreparedSpectralDriftHook(StrictModule):
 
     def __init__(
         self,
-        binding: LearnedClosureBindingPlan | TrainableLearnedClosureBinding,
+        binding: _AbstractLearnedClosureBinding,
         projector: PeriodicLerayProjector,
         hermitian_coordinates: HermitianSpectralCoordinates,
         dealiasing: PreparedDealiasingPlan,
@@ -1265,7 +1270,7 @@ class PreparedSpectralDriftHook(StrictModule):
         *,
         energy_policy: SpectralEnergyPolicy,
         evidence_tolerance: float,
-    ):
+    ) -> None:
         if not isinstance(binding, _AbstractLearnedClosureBinding):
             raise TypeError(
                 "binding must be a LearnedClosureBindingPlan or "
@@ -1284,9 +1289,9 @@ class PreparedSpectralDriftHook(StrictModule):
             )
         policy = str(energy_policy).strip()
         tolerance = float(evidence_tolerance)
+        policy = parse(policy, SpectralEnergyPolicy, "energy_policy")
         if (
-            policy not in ("nonincreasing", "diagnostic")
-            or not np.isfinite(tolerance)
+            not np.isfinite(tolerance)
             or tolerance < 0.0
             or projector.state_shape != hermitian_coordinates.state_shape
             or dealiasing.retained.prepared_id != projector.discretization.prepared_id

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import math
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -30,7 +31,13 @@ from phydrax.solver._jump_hitting import event_first_hit, finite_generator_hitti
 from phydrax.stochastic import JumpProcess, PoissonClockRealization
 
 
-def _model(*, pair_energy=math.log(1.5), profile="pair_loop", commercial=True, **updates):
+def _model(
+    *,
+    pair_energy: Any = math.log(1.5),
+    profile: Any = "pair_loop",
+    commercial: Any = True,
+    **updates: Any,
+) -> Any:
     # Independently authored exact analytical fixture, not measured biophysics.
     data = {
         "profile": profile,
@@ -77,8 +84,12 @@ def _model(*, pair_energy=math.log(1.5), profile="pair_loop", commercial=True, *
 
 
 def _prepared(
-    *, copies=1, alpha=1.0, rate_name="association_metropolis", pair_energy=math.log(1.5)
-):
+    *,
+    copies: Any = 1,
+    alpha: Any = 1.0,
+    rate_name: Any = "association_metropolis",
+    pair_energy: Any = math.log(1.5),
+) -> Any:
     construct = NucleicAcidConstruct(
         tuple(["a"] + [f"t{i}" for i in range(copies)]),
         tuple(["A"] + ["T"] * copies),
@@ -99,7 +110,7 @@ def _prepared(
     )
 
 
-def test_partition_and_pair_legality_preserve_labeled_identity():
+def test_partition_and_pair_legality_preserve_labeled_identity() -> None:
     first = StrandComplexPartition(("a", "b", "c"), (("c",), ("b", "a")))
     second = StrandComplexPartition(("a", "b", "c"), (("a", "b"), ("c",)))
     assert first == second
@@ -127,7 +138,9 @@ def test_partition_and_pair_legality_preserve_labeled_identity():
 @pytest.mark.parametrize(
     "rate_name", ["metropolis", "symmetric_barrier", "association_metropolis"]
 )
-def test_rate_ratios_and_labeled_combinatorics_match_partition_function(rate_name):
+def test_rate_ratios_and_labeled_combinatorics_match_partition_function(
+    rate_name: Any,
+) -> None:
     system = _prepared(copies=2, alpha=7.0, rate_name=rate_name, pair_energy=-1.0)
     generator = system.generator()
     q = generator.matrix
@@ -147,7 +160,7 @@ def test_rate_ratios_and_labeled_combinatorics_match_partition_function(rate_nam
         )
 
 
-def test_legal_toggles_cannot_create_crossings_or_second_partners_under_jit():
+def test_legal_toggles_cannot_create_crossings_or_second_partners_under_jit() -> None:
     system = _prepared(copies=2)
     state = system.encode(system.states[1])
     rates = eqx.filter_jit(system.process.intensities)(0.0, state)
@@ -158,7 +171,7 @@ def test_legal_toggles_cannot_create_crossings_or_second_partners_under_jit():
     assert jnp.all(jnp.isnan(system.process.intensities(0.0, jnp.asarray([-1]))))
 
 
-def test_native_generator_refuses_omitted_reachable_states_and_reports_leakage():
+def test_native_generator_refuses_omitted_reachable_states_and_reports_leakage() -> None:
     system = _prepared()
     with pytest.raises(ValueError, match="omits reachable"):
         system.generator((system.states[0],))
@@ -178,7 +191,9 @@ def test_native_generator_refuses_omitted_reachable_states_and_reports_leakage()
         )
 
 
-def test_nearest_neighbor_and_loop_terms_are_consumed_and_missing_parameters_refuse():
+def test_nearest_neighbor_and_loop_terms_are_consumed_and_missing_parameters_refuse() -> (
+    None
+):
     construct = NucleicAcidConstruct(("x",), ("GGAAACC",), ("DNA",), (False,))
     keys = construct.nucleotide_keys
     state = SecondaryStructureState(construct, ((keys[0], keys[6]), (keys[1], keys[5])))
@@ -201,7 +216,7 @@ def test_nearest_neighbor_and_loop_terms_are_consumed_and_missing_parameters_ref
     )
 
 
-def test_parameter_rights_chemistry_and_temperature_are_real_admission_gates():
+def test_parameter_rights_chemistry_and_temperature_are_real_admission_gates() -> None:
     with pytest.raises(PermissionError):
         _model(commercial=False)
     system = _prepared()
@@ -220,7 +235,7 @@ def test_parameter_rights_chemistry_and_temperature_are_real_admission_gates():
         )
 
 
-def test_elementary_concentration_scaling_does_not_change_dissociation():
+def test_elementary_concentration_scaling_does_not_change_dissociation() -> None:
     small, large = _prepared(alpha=1), _prepared(alpha=10)
     q_small, q_large = small.generator().matrix, large.generator().matrix
     assert jnp.allclose(q_small[0, 1], 10 * q_large[0, 1])
@@ -236,7 +251,7 @@ def test_elementary_concentration_scaling_does_not_change_dissociation():
 
 
 @pytest.mark.parametrize("solver", [solve_next_reaction, solve_direct_ssa])
-def test_real_ssa_matches_exact_transients_and_first_passage(solver):
+def test_real_ssa_matches_exact_transients_and_first_passage(solver: Any) -> None:
     system = _prepared()
     target = system.joined_target(system.construct.strand_ids)
     initial = system.encode(system.states[0])
@@ -278,7 +293,7 @@ def test_real_ssa_matches_exact_transients_and_first_passage(solver):
     np.testing.assert_allclose(exact.mean_first_passage_time, [0.5, 0.0])
 
 
-def test_event_first_hit_distinguishes_initial_censoring_and_capacity_failure():
+def test_event_first_hit_distinguishes_initial_censoring_and_capacity_failure() -> None:
     inert = JumpProcess(
         lambda t, state, args: jnp.zeros(1),
         lambda state, channel, mark, args: state,
@@ -339,7 +354,7 @@ def test_event_first_hit_distinguishes_initial_censoring_and_capacity_failure():
     assert never_reached.observation_end == solution.events.times[0]
 
 
-def test_finite_absorption_keeps_non_hitting_classes_and_infinite_mfpt():
+def test_finite_absorption_keeps_non_hitting_classes_and_infinite_mfpt() -> None:
     process = JumpProcess(
         lambda t, state, args: jnp.where(
             state[0] == 0, jnp.asarray([1.0, 3.0]), jnp.zeros(2)
@@ -364,7 +379,7 @@ def test_finite_absorption_keeps_non_hitting_classes_and_infinite_mfpt():
     assert result.mean_first_passage_time[1] == 0.0
 
 
-def test_actual_ssa_capacity_failure_preserves_an_already_observed_first_hit():
+def test_actual_ssa_capacity_failure_preserves_an_already_observed_first_hit() -> None:
     system = _prepared()
     initial = system.encode(system.states[0])
     clocks = PoissonClockRealization(
@@ -393,7 +408,7 @@ def test_actual_ssa_capacity_failure_preserves_an_already_observed_first_hit():
     assert not jnp.any(solution.valid)
 
 
-def test_first_hit_refuses_actual_hybrid_continuous_crossing_and_raw_ledger():
+def test_first_hit_refuses_actual_hybrid_continuous_crossing_and_raw_ledger() -> None:
     process_id = "hybrid-continuous-crossing-before-first-event"
     clocks = PoissonClockRealization(
         jr.key(203),
@@ -422,11 +437,13 @@ def test_first_hit_refuses_actual_hybrid_continuous_crossing_and_raw_ledger():
     )
     assert bool(hybrid.successful)
     assert hybrid.events.times[0] == pytest.approx(0.75, abs=1e-8)
+    # ty: ignore[not-subscriptable]
     assert hybrid.events.pre_states[0, 0] == pytest.approx(0.75, abs=1e-8)
     assert hybrid.states[-1, 0] == pytest.approx(1.0, abs=1e-8)
     for unqualified in (hybrid, hybrid.events):
         with pytest.raises(TypeError, match="pure-jump"):
             event_first_hit(
+                # ty: ignore[invalid-argument-type]
                 unqualified,
                 jnp.asarray([0.0]),
                 lambda state: state[0] >= 0.5,

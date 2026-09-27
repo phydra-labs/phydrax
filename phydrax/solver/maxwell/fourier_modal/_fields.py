@@ -9,13 +9,15 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import parse
 from ._boundary_cascade import prepare_layer_boundary
 from ._continuous import (
     continuous_boundary_at,
@@ -236,7 +238,7 @@ class RectangularFiniteAperture(StrictModule, NonTrainableState):
     widths: Array
     aperture_id: str = eqx.field(static=True)
 
-    def __init__(self, widths: ArrayLike, /, *, aperture_id: str | None = None):
+    def __init__(self, widths: ArrayLike, /, *, aperture_id: str | None = None) -> None:
         value = np.asarray(widths, dtype=np.float64)
         if value.shape != (2,) or np.any(~np.isfinite(value)) or np.any(value <= 0.0):
             raise ValueError("Rectangular aperture widths must be positive shape (2,).")
@@ -265,7 +267,7 @@ class SampledFiniteAperture(StrictModule, NonTrainableState):
         /,
         *,
         aperture_id: str | None = None,
-    ):
+    ) -> None:
         points_ = np.asarray(points, dtype=np.float64)
         weights_ = np.asarray(weights, dtype=np.float64)
         if (
@@ -313,7 +315,7 @@ class FiniteApertureFarFieldPlan(StrictModule, NonTrainableState):
         query_capacity: int,
         normalization: FiniteApertureNormalization = "aperture-area",
         /,
-    ):
+    ) -> None:
         values = np.asarray(directions, dtype=np.float64)
         capacity = int(query_capacity)
         if (
@@ -331,8 +333,7 @@ class FiniteApertureFarFieldPlan(StrictModule, NonTrainableState):
             raise ValueError("Far-field directions must be nonzero.")
         if not isinstance(aperture, RectangularFiniteAperture | SampledFiniteAperture):
             raise TypeError("Unknown finite aperture plan.")
-        if normalization not in ("none", "aperture-area"):
-            raise ValueError("Unknown finite-aperture normalization.")
+        normalization = parse(normalization, FiniteApertureNormalization, "normalization")
         padded = np.zeros((capacity, 3), dtype=np.float64)
         padded[:, 2] = 1.0
         padded[: values.shape[0]] = values / norms[:, None]

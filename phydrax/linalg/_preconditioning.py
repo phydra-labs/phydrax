@@ -13,6 +13,7 @@ import numpy as np
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._assembly import (
     assemble_diagonal,
     assemble_uniform_blocks,
@@ -183,7 +184,7 @@ class DenseInversePreconditionerBuilder(AbstractPreconditionerBuilder):
 
     _builder_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._builder_id = canonical_fingerprint(
             {"kind": "dense-inverse-preconditioner-builder"}
         )
@@ -285,7 +286,7 @@ class JacobiPreconditionerBuilder(AbstractPreconditionerBuilder):
     relaxation: float = eqx.field(static=True)
     _builder_id: str = eqx.field(static=True)
 
-    def __init__(self, *, relaxation: float = 1.0):
+    def __init__(self, *, relaxation: float = 1.0) -> None:
         value = float(relaxation)
         if not np.isfinite(value) or value <= 0.0:
             raise ValueError("relaxation must be finite and positive.")
@@ -415,7 +416,7 @@ class BlockJacobiPreconditionerBuilder(AbstractPreconditionerBuilder):
         *,
         relaxation: float = 1.0,
         assembly: SparseAssemblyPolicy | None = None,
-    ):
+    ) -> None:
         size = int(block_size)
         if size < 1:
             raise ValueError("block_size must be positive.")
@@ -682,11 +683,9 @@ class PreconditioningPolicy(StrictModule):
         setup_operator: AbstractLinearOperator | None = None,
         side: PreconditioningSide = "auto",
         refresh: PreconditionerRefreshPolicy | None = None,
-    ):
-        if side not in ("auto", "left", "right"):
-            raise ValueError("side must be 'auto', 'left', or 'right'.")
-        if refresh is not None and refresh not in ("frozen", "numeric", "rebuild"):
-            raise ValueError("refresh must be 'frozen', 'numeric', or 'rebuild'.")
+    ) -> None:
+        side = parse(side, PreconditioningSide, "side")
+        refresh = parse(refresh, PreconditionerRefreshPolicy | None, "refresh")
         if isinstance(source, AbstractPreconditioner):
             if setup_operator is not None:
                 raise ValueError(
@@ -704,11 +703,11 @@ class PreconditioningPolicy(StrictModule):
             self.preconditioner = None
             self.builder = source
             self.setup_operator = setup_operator
-            self.refresh_policy = source.default_refresh if refresh is None else refresh
-            if self.refresh_policy not in ("frozen", "numeric", "rebuild"):
-                raise ValueError(
-                    "Builder default_refresh must be 'frozen', 'numeric', or 'rebuild'."
-                )
+            self.refresh_policy = parse(
+                source.default_refresh if refresh is None else refresh,
+                PreconditionerRefreshPolicy,
+                "default_refresh",
+            )
         else:
             raise TypeError(
                 "source must be an AbstractPreconditioner or AbstractPreconditionerBuilder."
@@ -790,7 +789,7 @@ class PreconditionerPlan(StrictModule):
         side: Literal["left", "right"],
         materialization: MaterializationPolicy | None = None,
         compute_dtype: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(policy, PreconditioningPolicy):
             raise TypeError("policy must be a PreconditioningPolicy.")
         if not isinstance(system_operator, AbstractLinearOperator):
@@ -900,7 +899,7 @@ class PreparedPreconditioner(StrictModule):
         numeric_version: Any,
         built_numeric_version: Any,
         refresh_kind: PreconditionerRefreshKind,
-    ):
+    ) -> None:
         if not isinstance(plan, PreconditionerPlan):
             raise TypeError("plan must be a PreconditionerPlan.")
         if setup_operator is not None and not isinstance(
@@ -929,14 +928,7 @@ class PreparedPreconditioner(StrictModule):
             invalid,
             "Preconditioner numeric versions must satisfy 0 <= built_numeric_version <= numeric_version.",
         )
-        if refresh_kind not in (
-            "prepared",
-            "supplied",
-            "reused",
-            "refreshed",
-            "rebuilt",
-        ):
-            raise ValueError("Unknown preconditioner refresh kind.")
+        refresh_kind = parse(refresh_kind, PreconditionerRefreshKind, "refresh_kind")
         _validate_prepared_action(action, plan)
         self.action = action
         self.setup_operator = setup_operator

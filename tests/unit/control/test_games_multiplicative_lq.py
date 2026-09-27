@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -19,7 +22,7 @@ from phydrax.control.stochastic._multiplicative_lq import (
 from phydrax.dynamics import TimeGrid
 
 
-def test_correlated_noise_rows_match_direct_two_player_stationarity_system():
+def test_correlated_noise_rows_match_direct_two_player_stationarity_system() -> None:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     a = 1.1
     b = np.asarray([0.8, -0.4])
@@ -89,7 +92,7 @@ def test_correlated_noise_rows_match_direct_two_player_stationarity_system():
     assert result.diagnostics.maximum_bellman_residual < 1e-12
 
 
-def test_control_noise_dtpd_term_changes_coupled_nash_answer():
+def test_control_noise_dtpd_term_changes_coupled_nash_answer() -> None:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     a = jnp.ones((1, 1, 1))
     b = jnp.asarray([[[1.0, 0.5]]])
@@ -108,6 +111,7 @@ def test_control_noise_dtpd_term_changes_coupled_nash_answer():
         qf,
         partition,
         control_noise_matrices=jnp.zeros((1, 1, 1, 2)),
+        # ty: ignore[invalid-argument-type]
         **common,
     )
     with_control_noise = finite_horizon_multiplicative_lq_feedback_nash(
@@ -118,6 +122,7 @@ def test_control_noise_dtpd_term_changes_coupled_nash_answer():
         qf,
         partition,
         control_noise_matrices=jnp.asarray([[[[0.8, -0.3]]]]),
+        # ty: ignore[invalid-argument-type]
         **common,
     )
 
@@ -132,7 +137,7 @@ def test_control_noise_dtpd_term_changes_coupled_nash_answer():
     )
 
 
-def test_zero_noise_reduces_to_exact_deterministic_feedback_nash():
+def test_zero_noise_reduces_to_exact_deterministic_feedback_nash() -> None:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     horizon = 2
     a = jnp.asarray([[[1.0]], [[0.9]]])
@@ -201,7 +206,7 @@ def test_zero_noise_reduces_to_exact_deterministic_feedback_nash():
     np.testing.assert_array_equal(stochastic.trace_increments, jnp.zeros((2, horizon)))
 
 
-def test_one_player_game_matches_multiplicative_lq_control():
+def test_one_player_game_matches_multiplicative_lq_control() -> None:
     partition = PlayerControlPartition(("controller",), (1,))
     horizon = 2
     a = jnp.asarray([[[1.0]], [[0.9]]])
@@ -266,7 +271,7 @@ def test_one_player_game_matches_multiplicative_lq_control():
     np.testing.assert_allclose(game.trace_increments[0], control.trace_increments)
 
 
-def test_additive_noise_trace_evidence_keeps_player_and_time_axes():
+def test_additive_noise_trace_evidence_keeps_player_and_time_axes() -> None:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     noise_bias = jnp.asarray([[[0.2], [-0.1]]])
     gamma = jnp.asarray([[[1.0, 0.4], [0.4, 0.5]]])
@@ -292,7 +297,7 @@ def test_additive_noise_trace_evidence_keeps_player_and_time_axes():
     np.testing.assert_allclose(result.values[1].constants, [expected[1], 0.0])
 
 
-def test_case_axes_jit_and_autodiff_preserve_coupled_noise_dependence():
+def test_case_axes_jit_and_autodiff_preserve_coupled_noise_dependence() -> None:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     cases = 2
     a = jnp.ones((cases, 1, 1, 1))
@@ -304,7 +309,7 @@ def test_case_axes_jit_and_autodiff_preserve_coupled_noise_dependence():
     gamma = jnp.ones((cases, 1, 1, 1))
     time_grid = TimeGrid(jnp.asarray([0.0, 1.0]), time_id="multiplicative-game-cases")
 
-    def solve(control_scale):
+    def solve(control_scale: Any) -> Any:
         channel = jnp.asarray([[0.3, -0.1], [0.5, 0.2]])
         control_noise = control_scale * channel[:, None, None, None, :]
         return finite_horizon_multiplicative_lq_feedback_nash(
@@ -338,7 +343,9 @@ def test_case_axes_jit_and_autodiff_preserve_coupled_noise_dependence():
     assert not np.isclose(gradient, 0.0)
 
 
-def test_jitted_cases_report_covariance_curvature_rank_condition_and_nonfinite_failures():
+def test_jitted_cases_report_covariance_curvature_rank_condition_and_nonfinite_failures() -> (
+    None
+):
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     cases = 7
     a = jnp.ones((cases, 1, 1, 1)).at[3, 0, 0, 0].set(jnp.nan)

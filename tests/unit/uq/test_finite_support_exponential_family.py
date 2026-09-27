@@ -8,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_finite_support_warm_mean_inversion_recovers_moments_and_probabilities():
+def test_finite_support_warm_mean_inversion_recovers_moments_and_probabilities() -> None:
     family = phx.uq.FiniteSupportExponentialFamily(
         jnp.asarray(((-1.0, 1.0), (0.0, 0.0), (1.0, 1.0), (2.0, 4.0))),
         jnp.asarray((0.2, 0.3, 0.3, 0.2)),
@@ -46,7 +46,7 @@ def test_finite_support_warm_mean_inversion_recovers_moments_and_probabilities()
     )
 
 
-def test_finite_support_exterior_target_fails_without_plausible_coordinates():
+def test_finite_support_exterior_target_fails_without_plausible_coordinates() -> None:
     family = phx.uq.FiniteSupportExponentialFamily(
         jnp.asarray(((-1.0,), (0.0,), (1.0,))),
         jnp.ones(3),
@@ -59,7 +59,7 @@ def test_finite_support_exterior_target_fails_without_plausible_coordinates():
     assert jnp.all(jnp.isnan(result.conversion.natural.values))
 
 
-def test_finite_support_rejects_points_inside_box_but_outside_convex_hull():
+def test_finite_support_rejects_points_inside_box_but_outside_convex_hull() -> None:
     family = phx.uq.FiniteSupportExponentialFamily(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
         jnp.ones(3),

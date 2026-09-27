@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def test_constraint_operator_reuses_factorization_across_affine_targets():
+def test_constraint_operator_reuses_factorization_across_affine_targets() -> None:
     frame = phx.equations.HolomorphicPolynomialFrame.one_variable(3)
     functionals = (
         phx.equations.HolomorphicPointFunctional.value(-1.0),
@@ -55,7 +58,7 @@ def test_constraint_operator_reuses_factorization_across_affine_targets():
     assert certificate.linear_in_parameters
 
 
-def test_vector_frame_supports_coupled_outputs_and_several_variables():
+def test_vector_frame_supports_coupled_outputs_and_several_variables() -> None:
     indices = phx.equations.HolomorphicMultiIndexSet.total_degree(2, 2)
     normalization = phx.equations.ComplexAffineNormalization(
         jnp.asarray([0.1 + 0.2j, -0.3 + 0.1j]),
@@ -76,6 +79,7 @@ def test_vector_frame_supports_coupled_outputs_and_several_variables():
     )
     normal = phx.equations.HolomorphicPointFunctional.normal_derivative(
         coordinate,
+        # ty: ignore[invalid-argument-type]
         (0.6, -0.2, 0.4, 0.7),
         output_index=1,
         component="imaginary",
@@ -101,7 +105,7 @@ def test_vector_frame_supports_coupled_outputs_and_several_variables():
     )
 
 
-def test_nonlinear_cardinal_projection_enforces_targets_after_parameter_change():
+def test_nonlinear_cardinal_projection_enforces_targets_after_parameter_change() -> None:
     frame = phx.equations.HolomorphicPolynomialFrame.one_variable(1)
     functionals = (
         phx.equations.HolomorphicPointFunctional.value(-1.0),
@@ -125,6 +129,7 @@ def test_nonlinear_cardinal_projection_enforces_targets_after_parameter_change()
     changed_provider = eqx.tree_at(
         lambda value: value.layers[0].weight_real,
         provider,
+        # ty: ignore[unresolved-attribute]
         provider.layers[0].weight_real + 0.2,
     )
     changed = projector.project(changed_provider, jnp.asarray([0.5, -0.25]))
@@ -137,16 +142,16 @@ def test_nonlinear_cardinal_projection_enforces_targets_after_parameter_change()
     assert jnp.allclose(jnp.real(changed(1.0)[0]), -0.25, atol=2e-12)
 
 
-def test_biharmonic_and_plane_elasticity_functionals_match_physical_wrappers():
+def test_biharmonic_and_plane_elasticity_functionals_match_physical_wrappers() -> None:
     frame = phx.equations.HolomorphicPolynomialFrame.one_variable(3, 2)
     coefficient_count = frame.real_coefficient_count
     coefficients = jnp.linspace(-0.3, 0.5, coefficient_count)
 
     class _FramePotential(eqx.Module):
-        def __call__(self, coordinate):
+        def __call__(self, coordinate: Any) -> Any:
             return frame.evaluate(coordinate, coefficients)
 
-        def jet(self, coordinate, order):
+        def jet(self, coordinate: Any, order: Any) -> Any:
             value = self(coordinate)
             derivatives = tuple(
                 frame.basis_derivative(coordinate, (current,)) @ coefficients
@@ -154,7 +159,7 @@ def test_biharmonic_and_plane_elasticity_functionals_match_physical_wrappers():
             )
             return phx.equations.HolomorphicJet(value, derivatives)
 
-        def holomorphic_certificate(self):
+        def holomorphic_certificate(self) -> Any:
             certificate = frame.linear_frame_certificate()
             return phx.equations.HolomorphicMapCertificate(
                 complex_input_size=1,
@@ -210,7 +215,7 @@ def test_biharmonic_and_plane_elasticity_functionals_match_physical_wrappers():
     assert material.material_id in displacement_y.construction_dependencies
 
 
-def test_constraint_rank_compatibility_and_validation_fail_closed():
+def test_constraint_rank_compatibility_and_validation_fail_closed() -> None:
     frame = phx.equations.HolomorphicPolynomialFrame.one_variable(1)
     duplicate = phx.equations.HolomorphicPointFunctional.value(0.0)
     operator = phx.equations.HolomorphicConstraintOperatorPlan(
@@ -228,6 +233,7 @@ def test_constraint_rank_compatibility_and_validation_fail_closed():
     constant_frame = phx.equations.HolomorphicPolynomialFrame.one_variable(0)
     inactive = phx.equations.HolomorphicPointFunctional.normal_derivative(
         0.0,
+        # ty: ignore[invalid-argument-type]
         (1.0, 0.0),
     )
     with pytest.raises(ValueError, match="derivative order"):

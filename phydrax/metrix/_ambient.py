@@ -9,7 +9,8 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -79,7 +80,7 @@ class ManifoldTangentMeasureEvidence(StrictModule):
         log_volume: ArrayLike,
         orientation: ArrayLike,
         valid: ArrayLike,
-    ):
+    ) -> None:
         self.metric = jnp.asarray(metric)
         self.inverse_metric = jnp.asarray(inverse_metric)
         self.tangent_projector = jnp.asarray(tangent_projector)
@@ -119,7 +120,7 @@ class RiemannianMapMeasureEvidence(StrictModule):
         hausdorff_jacobian: ArrayLike,
         orientation: ArrayLike,
         valid: ArrayLike,
-    ):
+    ) -> None:
         self.ambient_point = jnp.asarray(ambient_point)
         self.metric = jnp.asarray(metric)
         self.inverse_metric = jnp.asarray(inverse_metric)
@@ -167,7 +168,7 @@ class RegularLevelSetManifold(AbstractRiemannianManifold):
         retraction_iterations: int = 8,
         manifold_id: str = "regular-level-set",
         precision: GeometryPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not callable(constraint):
             raise TypeError("constraint must be callable.")
         ambient = int(ambient_dimension)
@@ -381,7 +382,7 @@ class ImmersedRiemannianManifoldAdapter(AbstractRiemannianManifold):
         orientation: int = 1,
         rank_tolerance: float = 1e-8,
         manifold_id: str = "immersed-manifold",
-    ):
+    ) -> None:
         if not callable(immersion):
             raise TypeError("immersion must be callable.")
         coordinate = int(coordinate_dimension)

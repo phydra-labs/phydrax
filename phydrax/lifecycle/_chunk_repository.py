@@ -15,6 +15,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..qualification._registry import SupportTuple
+from ..typing import parse
 
 
 ChunkEncoding: TypeAlias = Literal["identity", "zlib"]
@@ -72,7 +73,7 @@ class CheckpointResourcePolicy(StrictModule, NonTrainableState):
         maximum_outbox_records: int,
         maximum_outbox_bytes: int,
         maximum_json_nesting: int = 32,
-    ):
+    ) -> None:
         resource = _identifier(resource_policy_id, "resource_policy_id")
         names = (
             "maximum_manifest_bytes",
@@ -273,7 +274,7 @@ class RepositoryTransaction(StrictModule, NonTrainableState):
         base_manifest_id: str | None,
         base_pointer_token: str | None,
         started_at: int,
-    ):
+    ) -> None:
         provider = _identifier(provider_id, "provider_id")
         artifact = _identifier(artifact_id, "artifact_id")
         writer = _identifier(writer_id, "writer_id")
@@ -353,7 +354,7 @@ class ChunkRecord(StrictModule, NonTrainableState):
         encoding: ChunkEncoding,
         object_key: str,
         /,
-    ):
+    ) -> None:
         transaction = _digest(transaction_id, "transaction_id")
         logical = _identifier(logical_name, "logical_name")
         index_ = _nonnegative(index, "index")
@@ -362,8 +363,7 @@ class ChunkRecord(StrictModule, NonTrainableState):
         encoded_size_ = _nonnegative(encoded_size, "encoded_size")
         plaintext_digest = _digest(plaintext_sha256, "plaintext_sha256")
         encoded_digest = _digest(encoded_sha256, "encoded_sha256")
-        if encoding not in ("identity", "zlib"):
-            raise ValueError("Chunk encoding must be 'identity' or 'zlib'.")
+        encoding = parse(encoding, ChunkEncoding, "encoding")
         key = _object_key(object_key)
         self.transaction_id = transaction
         self.logical_name = logical
@@ -398,9 +398,7 @@ class ChunkRecord(StrictModule, NonTrainableState):
     @classmethod
     def from_record(cls, record: Mapping[str, object], /) -> ChunkRecord:
         _record_kind(record, "artifact-chunk")
-        encoding = _required_string(record, "encoding")
-        if encoding not in ("identity", "zlib"):
-            raise ValueError("Serialized chunk has an unsupported encoding.")
+        encoding = parse(_required_string(record, "encoding"), ChunkEncoding, "encoding")
         value = cls(
             _required_string(record, "transaction_id"),
             _required_string(record, "logical_name"),
@@ -441,7 +439,7 @@ class ArtifactManifest(StrictModule, NonTrainableState):
         *,
         metadata: Mapping[str, str] | Sequence[tuple[str, str]] = (),
         committed_at: int,
-    ):
+    ) -> None:
         provider = _identifier(provider_id, "provider_id")
         artifact = _identifier(artifact_id, "artifact_id")
         transaction = _digest(transaction_id, "transaction_id")
@@ -538,7 +536,7 @@ class LeaseRecord(StrictModule, NonTrainableState):
         issued_at: int,
         expires_at: int,
         /,
-    ):
+    ) -> None:
         provider = _identifier(provider_id, "provider_id")
         artifact = _identifier(artifact_id, "artifact_id")
         holder = _identifier(holder_id, "holder_id")
@@ -602,7 +600,7 @@ class LegalHoldRecord(StrictModule, NonTrainableState):
         authority: str,
         placed_at: int,
         /,
-    ):
+    ) -> None:
         provider = _identifier(provider_id, "provider_id")
         artifact = _identifier(artifact_id, "artifact_id")
         hold = _identifier(hold_id, "hold_id")
@@ -657,7 +655,7 @@ class RetentionPolicy(StrictModule, NonTrainableState):
         keep_latest_commits: int = 1,
         minimum_age_seconds: int = 0,
         abandoned_attempt_grace_seconds: int = 3600,
-    ):
+    ) -> None:
         keep = _nonnegative(keep_latest_commits, "keep_latest_commits")
         age = _nonnegative(minimum_age_seconds, "minimum_age_seconds")
         grace = _nonnegative(
@@ -711,7 +709,7 @@ class TombstoneRecord(StrictModule, NonTrainableState):
         created_at: int,
         eligible_at: int,
         /,
-    ):
+    ) -> None:
         provider = _identifier(provider_id, "provider_id")
         artifact = _identifier(artifact_id, "artifact_id")
         reason_ = str(reason).strip()
@@ -773,7 +771,7 @@ class GarbageCollectionReport(StrictModule, NonTrainableState):
         removed_artifact_ids: Sequence[str],
         expired_lease_ids: Sequence[str],
         /,
-    ):
+    ) -> None:
         provider = _identifier(provider_id, "provider_id")
         collected = _timestamp(collected_at, "collected_at")
         attempts = _identifiers(removed_attempt_ids, "removed_attempt_ids")

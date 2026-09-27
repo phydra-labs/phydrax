@@ -13,7 +13,9 @@ from typing import Any, ClassVar, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._differentiation import ComponentAuthority
 from .._fingerprint import canonical_fingerprint
@@ -25,6 +27,7 @@ from .._model import (
 )
 from .._model._component import slot_component_contracts
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._dense_pseudoinverse import apply_pseudoinverse, factor_pseudoinverse
 from ._operators import AbstractLinearOperator
 from ._policies import RankPolicy
@@ -177,21 +180,13 @@ class HistoryInitialGuess(AbstractInitialGuessProvider, NonTrainableState):
         rank_tolerance: float = 1.0e-10,
         constraint_id: str = "unconstrained",
         nullspace_policy_id: str = "none",
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be AbstractLinearOperator.")
-        strategy_ = str(strategy)
         capacity_ = int(capacity)
         degree = int(extrapolation_degree)
         tolerance = float(rank_tolerance)
-        if strategy_ not in (
-            "zero",
-            "last-solution",
-            "projection",
-            "rolling-qr",
-            "stabilized-extrapolation",
-        ):
-            raise ValueError("Unknown history initial-guess strategy.")
+        strategy_ = parse(strategy, HistoryInitialGuessStrategy, "strategy")
         if (
             capacity_ < 1
             or degree < 0
@@ -387,7 +382,7 @@ class HistoryInitialGuess(AbstractInitialGuessProvider, NonTrainableState):
         effective = self.effective_dimension
         full = effective >= self.capacity
 
-        def append(values, entry):
+        def append(values: Array, entry: Array) -> Array:
             return jax.lax.cond(
                 full,
                 lambda current: jnp.concatenate(
@@ -397,7 +392,7 @@ class HistoryInitialGuess(AbstractInitialGuessProvider, NonTrainableState):
                 values,
             )
 
-        def record(history):
+        def record(history: HistoryInitialGuess) -> HistoryInitialGuess:
             return eqx.tree_at(
                 lambda value: (
                     value.solution_basis,
@@ -447,7 +442,7 @@ class LearnedInitialGuess(AbstractInitialGuessProvider):
         /,
         *,
         provider_id: str = "learned-initial-guess",
-    ):
+    ) -> None:
         if _is_component(function):
             raise TypeError(
                 "function must map (data, baseline) to a proposed solution; hold an "

@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -9,7 +11,7 @@ from phydrax.discretization.spectral._modal_discovery import PreparedModalSuppor
 
 
 class _UnitCoefficient(eqx.Module):
-    def __call__(self, query, *, key=None):
+    def __call__(self, query: Any, *, key: Any = None) -> Any:
         del query, key
         return jnp.asarray(1.0 + 0.0j)
 
@@ -17,12 +19,12 @@ class _UnitCoefficient(eqx.Module):
 class _ConstantModulation(eqx.Module):
     value: float
 
-    def __call__(self, features, *, key=None):
+    def __call__(self, features: Any, *, key: Any = None) -> Any:
         del features, key
         return jnp.asarray(self.value)
 
 
-def _space(count=4):
+def _space(count: Any = 4) -> Any:
     return phx.discretization.TensorSpectralPlan(
         (phx.discretization.FourierBasisPlan(count),),
         axis_names=("x",),
@@ -30,7 +32,7 @@ def _space(count=4):
     ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
 
 
-def test_exponential_spectral_envelope_preserves_zero_and_declares_aggregation():
+def test_exponential_spectral_envelope_preserves_zero_and_declares_aggregation() -> None:
     modes = jnp.asarray([[0.0, 0.0], [1.0, 2.0]])
     summed = phx.nn.models.ExponentialSpectralEnvelope(
         jnp.asarray([0.5, 1.0]),
@@ -48,7 +50,7 @@ def test_exponential_spectral_envelope_preserves_zero_and_declares_aggregation()
     assert jnp.allclose(summed.rates, jnp.asarray([0.5, 1.0]))
 
 
-def test_implicit_modal_field_composes_basis_modulation_decay_and_reality():
+def test_implicit_modal_field_composes_basis_modulation_decay_and_reality() -> None:
     space = _space()
     modulation = phx.nn.models.SpectralBasisModulation(
         _ConstantModulation(2.0),
@@ -80,12 +82,13 @@ def test_implicit_modal_field_composes_basis_modulation_decay_and_reality():
     assert jnp.allclose(inputs[:, 1], 0.3)
     assert jnp.allclose(state, coefficients)
     assert jnp.allclose(tangent, 0.0)
+    # ty: ignore[unresolved-attribute]
     assert field.hermitian_coordinates.reality_defect(coefficients) == 0.0
     assert field.query(0.3, jnp.asarray([0, 2])).shape == (2,)
     assert field.physical_values(0.3).shape == space.physical_shape
 
 
-def test_implicit_modal_field_binds_one_time_domain_and_guards_resources():
+def test_implicit_modal_field_binds_one_time_domain_and_guards_resources() -> None:
     space = _space()
     field = phx.nn.models.ImplicitModalField(_UnitCoefficient(), space)
     time = phx.domain.ScalarInterval(0.0, 1.0, label="time")
@@ -103,7 +106,7 @@ def test_implicit_modal_field_binds_one_time_domain_and_guards_resources():
         )
 
 
-def test_sparse_modal_field_ignores_padded_duplicate_indices_and_gradients():
+def test_sparse_modal_field_ignores_padded_duplicate_indices_and_gradients() -> None:
     coefficients = jnp.asarray([[2.5], [17.0], [-9.0]])
     support = PreparedModalSupport(
         jnp.asarray([[0], [0], [1]], dtype=jnp.int32),
@@ -118,7 +121,7 @@ def test_sparse_modal_field_ignores_padded_duplicate_indices_and_gradients():
 
     assert jnp.array_equal(field(), jnp.asarray([[2.5], [0.0]]))
 
-    def zero_mode(values):
+    def zero_mode(values: Any) -> Any:
         updated = eqx.tree_at(lambda candidate: candidate.coefficients, support, values)
         return phx.nn.models.SparseImplicitModalField(updated, (2,))()[0, 0]
 

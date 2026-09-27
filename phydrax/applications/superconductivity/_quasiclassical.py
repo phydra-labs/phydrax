@@ -9,7 +9,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -21,13 +22,13 @@ from ..._trainable import NonTrainableState
 _REDUCED_PLANCK = 1.054571817e-34
 
 
-def _a_derivative(value, delta, omega, speed):
+def _a_derivative(value: Array, delta: Array, omega: Array, speed: Array) -> Array:
     return (delta - 2.0 * omega * value - jnp.conj(delta) * value**2) / (
         _REDUCED_PLANCK * speed
     )
 
 
-def _b_derivative(value, delta, omega, speed):
+def _b_derivative(value: Array, delta: Array, omega: Array, speed: Array) -> Array:
     return -(jnp.conj(delta) - 2.0 * omega * value - delta * value**2) / (
         _REDUCED_PLANCK * speed
     )
@@ -47,7 +48,7 @@ class FermiSurfacePlan(StrictModule, NonTrainableState):
         form_factors: ArrayLike,
         channel_labels: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         velocity = np.asarray(velocities, dtype=np.float64)
         weight = np.asarray(weights, dtype=np.float64)
         factors = np.asarray(form_factors, dtype=np.complex128)
@@ -98,7 +99,7 @@ class MatsubaraQuadraturePlan(StrictModule, NonTrainableState):
     frequencies: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, temperature_energy: float, frequency_count: int, /):
+    def __init__(self, temperature_energy: float, frequency_count: int, /) -> None:
         temperature = float(temperature_energy)
         count = int(frequency_count)
         if not isfinite(temperature) or temperature <= 0.0 or count < 1:
@@ -152,7 +153,7 @@ class RiccatiTrajectoryPlan(StrictModule, NonTrainableState):
         *,
         vector_potential_coupling: float = 0.0,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(fermi_surface, FermiSurfacePlan):
             raise TypeError("fermi_surface must be FermiSurfacePlan.")
         lengths = np.asarray(segment_lengths, dtype=np.float64)
@@ -187,7 +188,7 @@ class RiccatiTrajectoryPlan(StrictModule, NonTrainableState):
         return self.segment_lengths.shape[1]
 
     @staticmethod
-    def _bulk_coherence(gap, frequency):
+    def _bulk_coherence(gap: Array, frequency: Array) -> tuple[Array, Array]:
         omega = jnp.sqrt(frequency**2 + jnp.abs(gap) ** 2)
         denominator = frequency + omega
         return gap / denominator, jnp.conj(gap) / denominator
@@ -305,7 +306,7 @@ class QuasiclassicalSuperconductivityPlan(StrictModule, NonTrainableState):
         damping: float = 0.5,
         iterations: int = 128,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(trajectories, RiccatiTrajectoryPlan) or not isinstance(
             matsubara, MatsubaraQuadraturePlan
         ):
@@ -345,7 +346,7 @@ class QuasiclassicalSuperconductivityPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _gap(self, amplitudes):
+    def _gap(self, amplitudes: Array) -> Array:
         trajectory = contract(
             "a,ak->k",
             amplitudes,
@@ -360,7 +361,7 @@ class QuasiclassicalSuperconductivityPlan(StrictModule, NonTrainableState):
             ),
         )
 
-    def _mapping(self, amplitudes):
+    def _mapping(self, amplitudes: Array) -> tuple[Array, RiccatiTrajectoryResult]:
         gap = self._gap(amplitudes)
         propagator = self.trajectories.evaluate(self.matsubara, gap)
         segment_average = jnp.mean(propagator.anomalous_green, axis=-1)
@@ -471,7 +472,7 @@ class RetardedSpectroscopyPlan(StrictModule, NonTrainableState):
         /,
         *,
         broadening: float,
-    ):
+    ) -> None:
         if not isinstance(equilibrium, QuasiclassicalSuperconductivityPlan):
             raise TypeError("equilibrium must be QuasiclassicalSuperconductivityPlan.")
         energy = np.asarray(energies, dtype=np.float64)

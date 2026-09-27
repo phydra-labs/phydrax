@@ -52,6 +52,7 @@ def run() -> dict[str, float]:
         "sipg_apply_seconds": elapsed,
         "local_adaptation_seconds": adapt_elapsed,
         "refined_cells": float(adaptation.target.mesh.blocks[0].cell_count),
+        # ty: ignore[unresolved-attribute]
         "transfer_rows": float(adaptation.transfer.target_size),
         "adaptation_identity_length": float(len(adaptation.result_id)),
     }

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -7,7 +9,7 @@ import phydrax as phx
 two_phase_api = phx.applications.two_phase_flow
 
 
-def _prepared():
+def _prepared() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4),
@@ -22,12 +24,13 @@ def _prepared():
     return two_phase_api.IncompressibleTwoPhaseVOFPlan(discretization, material).prepare()
 
 
-def test_two_phase_events_expose_wetting_contact_piercing_and_breaking_routes():
+def test_two_phase_events_expose_wetting_contact_piercing_and_breaking_routes() -> None:
     prepared = _prepared()
     previous_alpha = jnp.zeros((4, 4)).at[1:3, 1:3].set(1.0)
     alpha = previous_alpha.at[0, 1].set(0.5).at[1, 1].set(0.5)
     previous = prepared.initial_state(previous_alpha)
     state = prepared.initial_state(alpha)
+    # ty: ignore[invalid-argument-type]
     body = two_phase_api.TwoPhaseMovingBodyPlan((0.375, 0.375), 0.3, velocity=(0.0, 0.0))
     evidence = two_phase_api.TwoPhaseCapabilityEventPlan(
         maximum_topology_changes=0,
@@ -43,7 +46,7 @@ def test_two_phase_events_expose_wetting_contact_piercing_and_breaking_routes():
     assert not bool(evidence.derivative_available)
 
 
-def test_two_phase_identity_remesh_is_conservative_and_epoch_explicit():
+def test_two_phase_identity_remesh_is_conservative_and_epoch_explicit() -> None:
     prepared = _prepared()
     alpha = jnp.linspace(0.0, 1.0, 16).reshape((4, 4))
     velocity = tuple(

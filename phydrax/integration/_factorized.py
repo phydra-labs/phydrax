@@ -10,7 +10,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -41,7 +42,7 @@ class FactorizedBilinearTerm(StrictModule):
         *,
         coefficient: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(left, AxisFactorizedField) or not isinstance(
             right, AxisFactorizedField
         ):
@@ -99,7 +100,8 @@ def _prepared_term_factors(
 def _factor_shape(factors: tuple[AxisFactor, ...], /) -> tuple[int, int]:
     if not factors:
         raise ValueError("A factorized product term requires factors.")
-    shape = tuple(factors[0].tensor.shape[-2:])
+    first_shape = factors[0].tensor.shape
+    shape = (first_shape[-2], first_shape[-1])
     if any(tuple(factor.tensor.shape[-2:]) != shape for factor in factors):
         raise ValueError(
             "Every factor in one product term must share latent and output sizes."

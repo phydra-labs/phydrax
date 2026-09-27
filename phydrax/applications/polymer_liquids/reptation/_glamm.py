@@ -8,7 +8,8 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax.ein import contract
 
@@ -43,7 +44,7 @@ class GLAMMPlan(StrictModule, NonTrainableState):
         convective_constraint_release: float = 0.0,
         maximum_stability_number: float = 0.25,
         incompressibility_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if int(contour_nodes) < 3:
             raise ValueError("contour_nodes must be at least three.")
         positive = (time_step, plateau_modulus, disengagement_time, rouse_time)
@@ -101,7 +102,7 @@ class GLAMMPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def initialize(self, *, dtype=jnp.float64) -> GLAMMState:
+    def initialize(self, *, dtype: DTypeLike = jnp.float64) -> GLAMMState:
         identity = jnp.eye(3, dtype=dtype)
         conformation = jnp.broadcast_to(identity, (self.contour_nodes, 3, 3))
         return GLAMMState(

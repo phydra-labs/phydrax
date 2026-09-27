@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -37,7 +39,7 @@ from phydrax.units import METER
 EPSILON = 11.7 * 8.8541878128e-12
 
 
-def _resources(**changes):
+def _resources(**changes: Any) -> Any:
     values = dict(
         maximum_nodes=256,
         maximum_edges=768,
@@ -51,14 +53,14 @@ def _resources(**changes):
     return DetectorResourcePolicy(**values)
 
 
-def _interval_bridge(edges=8, *, lower=0.0, upper=1.0):
+def _interval_bridge(edges: Any = 8, *, lower: Any = 0.0, upper: Any = 1.0) -> Any:
     grid = TensorGridPlan(
         (UniformCellAxisSpec(edges, periodic=False),), axis_names=("x",)
     ).prepare(jnp.asarray([[lower], [upper]]))
     return StructuredCochainBridge(grid)
 
 
-def _endpoint_electrodes(bridge):
+def _endpoint_electrodes(bridge: Any) -> Any:
     x = np.asarray(bridge.cochain.coordinates[0])[:, 0]
     return (
         DetectorElectrode("inner", np.isclose(x, x[0])),
@@ -66,7 +68,9 @@ def _endpoint_electrodes(bridge):
     )
 
 
-def _parallel_detector(*, resources=None, length=2.0, area=3.0):
+def _parallel_detector(
+    *, resources: Any = None, length: Any = 2.0, area: Any = 3.0
+) -> Any:
     bridge = _interval_bridge(lower=0.0, upper=length)
     return SemiconductorDetectorPlan(
         bridge,
@@ -80,7 +84,7 @@ def _parallel_detector(*, resources=None, length=2.0, area=3.0):
     )
 
 
-def test_parallel_plate_bias_and_weighting_are_distinct_and_capacitance_closes():
+def test_parallel_plate_bias_and_weighting_are_distinct_and_capacitance_closes() -> None:
     length, area = 2.0, 3.0
     detector = _parallel_detector(length=length, area=area)
     x = detector.bridge.cochain.coordinates[0][:, 0]
@@ -111,10 +115,11 @@ def test_parallel_plate_bias_and_weighting_are_distinct_and_capacitance_closes()
 
     route = DetectorTrajectoryRoute(StateLayout((1,)), (0,))
     with pytest.raises(TypeError, match="bias results cannot substitute"):
+        # ty: ignore[invalid-argument-type]
         PrescribedShockleyRamoPlan(weighting_plan, bias, route)
 
 
-def test_coaxial_logarithmic_weighting_and_capacitance_are_recovered():
+def test_coaxial_logarithmic_weighting_and_capacitance_are_recovered() -> None:
     inner, outer, length = 0.4, 2.5, 1.7
     radii = np.geomspace(inner, outer, 17)
     normalized = (radii - inner) / (outer - inner)
@@ -145,7 +150,7 @@ def test_coaxial_logarithmic_weighting_and_capacitance_are_recovered():
     assert weighting.evidence.certified
 
 
-def _segmented_detector(*, complete=True):
+def _segmented_detector(*, complete: Any = True) -> Any:
     grid = TensorGridPlan(
         (
             UniformCellAxisSpec(4, periodic=False),
@@ -180,7 +185,7 @@ def _segmented_detector(*, complete=True):
     )
 
 
-def test_segmented_complete_basis_and_prescribed_response_close_without_motion():
+def test_segmented_complete_basis_and_prescribed_response_close_without_motion() -> None:
     detector = _segmented_detector()
     weighting_plan = DetectorWeightingFieldPlan(detector)
     weighting = weighting_plan.solve()
@@ -219,7 +224,7 @@ def test_segmented_complete_basis_and_prescribed_response_close_without_motion()
     )
 
 
-def test_partition_certificate_requires_complete_dirichlet_electrodes():
+def test_partition_certificate_requires_complete_dirichlet_electrodes() -> None:
     detector = _segmented_detector(complete=False)
     weighting_plan = DetectorWeightingFieldPlan(detector)
     weighting = weighting_plan.solve()
@@ -238,7 +243,7 @@ def test_partition_certificate_requires_complete_dirichlet_electrodes():
         )
 
 
-def test_route_and_resource_failures_are_explicit_and_preallocation_bounded():
+def test_route_and_resource_failures_are_explicit_and_preallocation_bounded() -> None:
     bridge = _interval_bridge(edges=8)
     with pytest.raises(ValueError, match="node count"):
         SemiconductorDetectorPlan(
@@ -292,7 +297,7 @@ def test_route_and_resource_failures_are_explicit_and_preallocation_bounded():
     assert not invalid.successful
 
 
-def test_existing_chain_transport_profiles_bind_real_routes_and_exact_nonclaims():
+def test_existing_chain_transport_profiles_bind_real_routes_and_exact_nonclaims() -> None:
     names_and_symbols = {
         "semiconductor.quantum.chain-landauer.canonical": (
             semiconductor_quantum.integrate_coherent,
@@ -316,6 +321,7 @@ def test_existing_chain_transport_profiles_bind_real_routes_and_exact_nonclaims(
         profile = profiles[name]
         support = dict(profile.support_tuples[0].attributes)
         assert callable(symbol)
+        # ty: ignore[unresolved-attribute]
         assert support["code_id"].endswith(symbol.__name__)
         assert support["nonclaim"] == nonclaim
         assert not ({"candidate", "maturity", "released", "status"} & set(support))
@@ -330,8 +336,10 @@ def test_existing_chain_transport_profiles_bind_real_routes_and_exact_nonclaims(
     ):
         dependency = profiles[name].dependencies
         assert len(dependency) == 1
+        # ty: ignore[unresolved-attribute]
         assert dependency[0].profile_id == landauer.profile_id
         assert (
+            # ty: ignore[unresolved-attribute]
             dependency[0].support_tuple_id == landauer.support_tuples[0].support_tuple_id
         )
 
@@ -345,7 +353,7 @@ def test_existing_chain_transport_profiles_bind_real_routes_and_exact_nonclaims(
             semiconductor_candidate_profile(removed_placeholder)
 
 
-def test_chain_transport_campaign_keeps_calibration_and_locked_units_disjoint():
+def test_chain_transport_campaign_keeps_calibration_and_locked_units_disjoint() -> None:
     campaign = semiconductor_quantum_transport_campaign()
     roles = {role.name: set(role.case_ids) for role in campaign.roles}
     calibration = roles["calibration"]

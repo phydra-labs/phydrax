@@ -27,15 +27,15 @@ from phydrax.nonlinear import NonlinearTermination
 
 
 def _path_block(
-    function,
+    function: Any,
     constraint_id: str,
     *,
-    scope,
+    scope: Any,
     participants: tuple[str, ...],
     owner: str | None,
     residual_shape: tuple[int, ...],
     control_dependencies: tuple[str, ...],
-):
+) -> Any:
     return phx.control.games.GameConstraintBlock(
         phx.control.BoundedPathConstraint(
             function,
@@ -62,7 +62,7 @@ def _problem(
     case_count: int,
     shared_constraint_count: int,
     /,
-):
+) -> Any:
     players = len(control_sizes)
     control_size = sum(control_sizes)
     player_ids = tuple(f"player-{index}" for index in range(players))
@@ -261,7 +261,7 @@ def _case(
     }
 
 
-def _specifications():
+def _specifications() -> Any:
     return (
         ("baseline", 4, 4, (1, 1), 1, 1),
         ("horizon-1", 1, 4, (1, 1), 1, 1),

@@ -4,11 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -32,7 +35,7 @@ class SpectralSubmanifoldEvidence(StrictModule, NonTrainableState):
         *,
         spectral_quotient: int,
         minimum_resonance_detuning: float,
-    ):
+    ) -> None:
         eigenvalues = jnp.asarray(selected_eigenvalues)
         gap = jnp.asarray(spectral_gap)
         quotient = int(spectral_quotient)
@@ -81,7 +84,7 @@ class SpectralSubmanifoldModel(StrictModule, NonTrainableState):
         validity_radius: float,
         observation_contract_id: str,
         partition_id: str,
-    ):
+    ) -> None:
         chart = jnp.asarray(chart_coefficients)
         flow = jnp.asarray(flow_coefficients)
         powers = jnp.asarray(exponents, dtype=jnp.int32)
@@ -147,7 +150,9 @@ class SpectralSubmanifoldModel(StrictModule, NonTrainableState):
         value = jnp.asarray(reduced)
         return self.flow_coefficients @ self.features(value)
 
-    def invariance_residual(self, reduced: ArrayLike, full_vector_field, /) -> Array:
+    def invariance_residual(
+        self, reduced: ArrayLike, full_vector_field: Callable[[Array], ArrayLike], /
+    ) -> Array:
         value = jnp.asarray(reduced)
         tangent = jax.jacfwd(self.decode)(value)
         return tangent @ self.flow(value) - jnp.asarray(

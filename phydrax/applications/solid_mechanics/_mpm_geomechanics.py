@@ -6,12 +6,14 @@ from __future__ import annotations
 
 import abc
 from math import pi
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -22,11 +24,13 @@ from ...equations import (
     MPMConstitutiveResponse,
     MPMLinearizedConstitutiveResponse,
 )
-from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...linalg import SmallLinearSolvePlan, SmallLinearSolveResult, solve_small_linear
 from ...nonlinear import LocalRootPlan
 
 
-def _validated_frictional_values(name, values):
+def _validated_frictional_values(
+    name: str, values: tuple[ArrayLike, ...]
+) -> tuple[Array, ...]:
     arrays = tuple(jnp.asarray(value) for value in values)
     if any(value.shape != () for value in arrays) or any(
         not bool(jnp.isfinite(value)) for value in arrays
@@ -54,14 +58,14 @@ class DruckerPragerParameters(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        shear_modulus,
-        bulk_modulus,
-        cohesion,
-        friction_angle,
-        dilation_angle,
-        hardening_modulus=0.0,
+        shear_modulus: ArrayLike,
+        bulk_modulus: ArrayLike,
+        cohesion: ArrayLike,
+        friction_angle: ArrayLike,
+        dilation_angle: ArrayLike,
+        hardening_modulus: ArrayLike = 0.0,
         /,
-    ):
+    ) -> None:
         values = _validated_frictional_values(
             "Drucker-Prager",
             (
@@ -93,14 +97,14 @@ class MohrCoulombParameters(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        shear_modulus,
-        bulk_modulus,
-        cohesion,
-        friction_angle,
-        dilation_angle,
-        hardening_modulus=0.0,
+        shear_modulus: ArrayLike,
+        bulk_modulus: ArrayLike,
+        cohesion: ArrayLike,
+        friction_angle: ArrayLike,
+        dilation_angle: ArrayLike,
+        hardening_modulus: ArrayLike = 0.0,
         /,
-    ):
+    ) -> None:
         values = _validated_frictional_values(
             "Mohr-Coulomb",
             (
@@ -129,8 +133,13 @@ class ModifiedCamClayParameters(StrictModule, NonTrainableState):
     hardening_modulus: Array
 
     def __init__(
-        self, shear_modulus, bulk_modulus, critical_state_slope, hardening_modulus, /
-    ):
+        self,
+        shear_modulus: ArrayLike,
+        bulk_modulus: ArrayLike,
+        critical_state_slope: ArrayLike,
+        hardening_modulus: ArrayLike,
+        /,
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (
@@ -167,7 +176,7 @@ class NonlocalSofteningPlan(StrictModule, NonTrainableState):
         *,
         viscosity: float = 0.0,
         minimum_modulus: float = 0.0,
-    ):
+    ) -> None:
         length = float(characteristic_length)
         viscosity_ = float(viscosity)
         minimum = float(minimum_modulus)
@@ -192,7 +201,13 @@ class NonlocalSofteningPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def regularize(self, local_history, nonlocal_history, step_size, /):
+    def regularize(
+        self,
+        local_history: ArrayLike,
+        nonlocal_history: ArrayLike,
+        step_size: ArrayLike,
+        /,
+    ) -> Array:
         local = jnp.asarray(local_history)
         nonlocal_ = jnp.asarray(nonlocal_history, dtype=local.dtype)
         dt = jnp.asarray(step_size, dtype=local.dtype)
@@ -212,12 +227,20 @@ class GeomechanicalFailureEvidence(StrictModule):
     successful: Array
 
 
-def _inverse(value):
+_PressureDependentParameters: TypeAlias = (
+    DruckerPragerParameters | MohrCoulombParameters | ModifiedCamClayParameters
+)
+_PointOutputs: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, dict[str, Array]
+]
+
+
+def _inverse(value: Array) -> SmallLinearSolveResult:
     identity = jnp.broadcast_to(jnp.eye(3, dtype=value.dtype), value.shape)
     return solve_small_linear(SmallLinearSolvePlan(3), value, identity)
 
 
-def _log_strain(deformation):
+def _log_strain(deformation: Array) -> tuple[Array, Array]:
     right = deformation.T @ deformation
     eigenvalues, eigenvectors = jnp.linalg.eigh(right)
     valid = jnp.all(eigenvalues > 0.0) & jnp.all(jnp.isfinite(eigenvalues))
@@ -225,7 +248,7 @@ def _log_strain(deformation):
     return (eigenvectors * logarithmic[None, :]) @ eigenvectors.T, valid
 
 
-def _elastic_stress(elastic_strain, shear, bulk):
+def _elastic_stress(elastic_strain: Array, shear: Array, bulk: Array) -> Array:
     trace = jnp.trace(elastic_strain)
     deviatoric = elastic_strain - trace / 3.0 * jnp.eye(3, dtype=elastic_strain.dtype)
     return 2.0 * shear * deviatoric + bulk * trace * jnp.eye(
@@ -233,13 +256,15 @@ def _elastic_stress(elastic_strain, shear, bulk):
     )
 
 
-def _invariants(stress):
+def _invariants(stress: Array) -> tuple[Array, Array, Array]:
     mean = jnp.trace(stress) / 3.0
     deviatoric = stress - mean * jnp.eye(3, dtype=stress.dtype)
     return -mean, jnp.sqrt(1.5 * jnp.sum(deviatoric * deviatoric)), deviatoric
 
 
-def _first_piola(kirchhoff, deformation):
+def _first_piola(
+    kirchhoff: Array, deformation: Array
+) -> tuple[Array, SmallLinearSolveResult]:
     inverse = _inverse(deformation)
     return kirchhoff @ inverse.value.T, inverse
 
@@ -252,23 +277,32 @@ class _AbstractPressureDependentPlan(AbstractImplicitMPMConstitutivePlan):
     plan_id: str = eqx.field(static=True)
 
     @abc.abstractmethod
-    def initialize_state(self, batch_shape, dtype, /):
+    def initialize_state(
+        self, batch_shape: tuple[int, ...], dtype: DTypeLike, /
+    ) -> Array:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def _point(self, deformation, history, density, parameters, step_size):
+    def _point(
+        self,
+        deformation: Array,
+        history: Array,
+        density: Array,
+        parameters: Any,
+        step_size: ArrayLike,
+    ) -> _PointOutputs:
         raise NotImplementedError
 
     def evaluate_linearized(
         self,
-        deformation_gradient,
-        committed_state,
-        reference_density,
-        parameters,
-        time,
-        step_size,
+        deformation_gradient: ArrayLike,
+        committed_state: ArrayLike,
+        reference_density: ArrayLike,
+        parameters: _PressureDependentParameters,
+        time: ArrayLike,
+        step_size: ArrayLike,
         /,
-    ):
+    ) -> MPMLinearizedConstitutiveResponse:
         response = self.evaluate(
             deformation_gradient,
             committed_state,
@@ -282,7 +316,7 @@ class _AbstractPressureDependentPlan(AbstractImplicitMPMConstitutivePlan):
         density = jnp.asarray(reference_density, dtype=deformation.dtype)
         batch_shape = deformation.shape[:-2]
 
-        def stress(value, history, rho):
+        def stress(value: Array, history: Array, rho: Array) -> Array:
             return self._point(value, history, rho, parameters, step_size)[0]
 
         tangent = jax.vmap(jax.jacfwd(stress, argnums=0))(
@@ -293,7 +327,14 @@ class _AbstractPressureDependentPlan(AbstractImplicitMPMConstitutivePlan):
         successful = jnp.all(jnp.isfinite(tangent), axis=(-4, -3, -2, -1))
         return MPMLinearizedConstitutiveResponse(response, tangent, successful)
 
-    def _response(self, deformation, state, density, parameters, step_size):
+    def _response(
+        self,
+        deformation: Array,
+        state: Array,
+        density: Array,
+        parameters: _PressureDependentParameters,
+        step_size: ArrayLike,
+    ) -> MPMConstitutiveResponse:
         batch_shape = deformation.shape[:-2]
         outputs = jax.vmap(
             lambda value, history, rho: self._point(
@@ -335,7 +376,7 @@ class DruckerPragerMPMConstitutivePlan(
     _AbstractPressureDependentPlan,
     NonTrainableState,
 ):
-    def __init__(self):
+    def __init__(self) -> None:
         self.dimension = 3
         self.kinematics = "three_dimensional"
         self.state_shape = (10,)
@@ -350,10 +391,19 @@ class DruckerPragerMPMConstitutivePlan(
             {"kind": "drucker-prager-mpm", "flow": "non-associated"}
         )
 
-    def initialize_state(self, batch_shape, dtype, /):
+    def initialize_state(
+        self, batch_shape: tuple[int, ...], dtype: DTypeLike, /
+    ) -> Array:
         return jnp.zeros(tuple(batch_shape) + self.state_shape, dtype=dtype)
 
-    def _point(self, deformation, history, density, parameters, step_size):
+    def _point(
+        self,
+        deformation: Array,
+        history: Array,
+        density: Array,
+        parameters: DruckerPragerParameters,
+        step_size: ArrayLike,
+    ) -> _PointOutputs:
         del step_size
         plastic = history[:9].reshape((3, 3))
         hardening = history[9]
@@ -428,14 +478,14 @@ class DruckerPragerMPMConstitutivePlan(
 
     def evaluate(
         self,
-        deformation_gradient,
-        committed_state,
-        reference_density,
-        parameters,
-        time,
-        step_size,
+        deformation_gradient: ArrayLike,
+        committed_state: ArrayLike,
+        reference_density: ArrayLike,
+        parameters: DruckerPragerParameters,
+        time: ArrayLike,
+        step_size: ArrayLike,
         /,
-    ):
+    ) -> MPMConstitutiveResponse:
         del time
         if not isinstance(parameters, DruckerPragerParameters):
             raise TypeError("parameters must be DruckerPragerParameters.")
@@ -449,7 +499,7 @@ class DruckerPragerMPMConstitutivePlan(
 
 
 class MohrCoulombMPMConstitutivePlan(_AbstractPressureDependentPlan, NonTrainableState):
-    def __init__(self):
+    def __init__(self) -> None:
         self.dimension = 3
         self.kinematics = "three_dimensional"
         self.state_shape = (10,)
@@ -464,10 +514,19 @@ class MohrCoulombMPMConstitutivePlan(_AbstractPressureDependentPlan, NonTrainabl
             {"kind": "mohr-coulomb-mpm", "return": "principal-semismooth"}
         )
 
-    def initialize_state(self, batch_shape, dtype, /):
+    def initialize_state(
+        self, batch_shape: tuple[int, ...], dtype: DTypeLike, /
+    ) -> Array:
         return jnp.zeros(tuple(batch_shape) + self.state_shape, dtype=dtype)
 
-    def _point(self, deformation, history, density, parameters, step_size):
+    def _point(
+        self,
+        deformation: Array,
+        history: Array,
+        density: Array,
+        parameters: MohrCoulombParameters,
+        step_size: ArrayLike,
+    ) -> _PointOutputs:
         del step_size
         plastic = history[:9].reshape((3, 3))
         hardening = history[9]
@@ -543,14 +602,14 @@ class MohrCoulombMPMConstitutivePlan(_AbstractPressureDependentPlan, NonTrainabl
 
     def evaluate(
         self,
-        deformation_gradient,
-        committed_state,
-        reference_density,
-        parameters,
-        time,
-        step_size,
+        deformation_gradient: ArrayLike,
+        committed_state: ArrayLike,
+        reference_density: ArrayLike,
+        parameters: MohrCoulombParameters,
+        time: ArrayLike,
+        step_size: ArrayLike,
         /,
-    ):
+    ) -> MPMConstitutiveResponse:
         del time
         if not isinstance(parameters, MohrCoulombParameters):
             raise TypeError("parameters must be MohrCoulombParameters.")
@@ -573,7 +632,7 @@ class ModifiedCamClayMPMConstitutivePlan(
 
     def __init__(
         self, *, initial_preconsolidation_pressure: float, initial_void_ratio: float
-    ):
+    ) -> None:
         pressure = float(initial_preconsolidation_pressure)
         void = float(initial_void_ratio)
         if pressure <= 0.0 or void <= 0.0:
@@ -600,7 +659,9 @@ class ModifiedCamClayMPMConstitutivePlan(
             }
         )
 
-    def initialize_state(self, batch_shape, dtype, /):
+    def initialize_state(
+        self, batch_shape: tuple[int, ...], dtype: DTypeLike, /
+    ) -> Array:
         shape = tuple(batch_shape)
         return jnp.concatenate(
             (
@@ -613,7 +674,14 @@ class ModifiedCamClayMPMConstitutivePlan(
             axis=-1,
         )
 
-    def _point(self, deformation, history, density, parameters, step_size):
+    def _point(
+        self,
+        deformation: Array,
+        history: Array,
+        density: Array,
+        parameters: ModifiedCamClayParameters,
+        step_size: ArrayLike,
+    ) -> _PointOutputs:
         del step_size
         plastic = history[:9].reshape((3, 3))
         pc_old, void_old = history[9], history[10]
@@ -626,7 +694,7 @@ class ModifiedCamClayMPMConstitutivePlan(
         yield_trial = q_trial**2 + slope**2 * p_trial * (p_trial - pc_old)
         flow = 3.0 * deviatoric - slope**2 * (2.0 * p_trial - pc_old) / 3.0 * jnp.eye(3)
 
-        def consistency(multiplier):
+        def consistency(multiplier: Array) -> Array:
             next_plastic = plastic + multiplier * flow
             stress = _elastic_stress(
                 strain - next_plastic, parameters.shear_modulus, parameters.bulk_modulus
@@ -688,14 +756,14 @@ class ModifiedCamClayMPMConstitutivePlan(
 
     def evaluate(
         self,
-        deformation_gradient,
-        committed_state,
-        reference_density,
-        parameters,
-        time,
-        step_size,
+        deformation_gradient: ArrayLike,
+        committed_state: ArrayLike,
+        reference_density: ArrayLike,
+        parameters: ModifiedCamClayParameters,
+        time: ArrayLike,
+        step_size: ArrayLike,
         /,
-    ):
+    ) -> MPMConstitutiveResponse:
         del time
         if not isinstance(parameters, ModifiedCamClayParameters):
             raise TypeError("parameters must be ModifiedCamClayParameters.")

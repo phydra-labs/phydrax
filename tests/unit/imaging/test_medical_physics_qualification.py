@@ -3,7 +3,7 @@ import pytest
 import phydrax as phx
 
 
-def test_medical_physics_capability_profiles_are_exact_and_unreleased():
+def test_medical_physics_capability_profiles_are_exact_and_unreleased() -> None:
     imaging = {
         profile.name: profile for profile in phx.imaging.imaging_candidate_profiles()
     }
@@ -54,6 +54,6 @@ def test_medical_physics_capability_profiles_are_exact_and_unreleased():
     )
 
 
-def test_unknown_medical_imaging_profile_fails_closed():
+def test_unknown_medical_imaging_profile_fails_closed() -> None:
     with pytest.raises(ValueError, match="Unknown imaging candidate profile"):
         phx.imaging.imaging_candidate_profile("imaging.dicom.generic")

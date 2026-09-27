@@ -45,8 +45,12 @@ import statistics
 import subprocess
 from dataclasses import replace
 from pathlib import Path, PurePath
+from typing import Any
 
+# ty: ignore[unresolved-import]
 from phydrax.interchange._resource import read_bounded_resource, ResourceLimits
+
+# ty: ignore[unresolved-import]
 from phydrax.interchange.energy_runtime import EnergyRuntimeError, PinnedExecutable
 
 from phydrax.interchange._device_design import DeviceQualificationError, DeviceSource
@@ -65,7 +69,7 @@ from phydrax.interchange.hfss_design import (
 _CONFIG_BYTES = 1024 * 1024
 
 
-def _resource(path, base, max_bytes):
+def _resource(path: Any, base: Any, max_bytes: Any) -> Any:
     if not isinstance(path, str) or not path or "\x00" in path or "\\" in path:
         raise ValueError("Input resource paths must be nonempty POSIX text paths.")
     return read_bounded_resource(
@@ -81,7 +85,7 @@ def _resource(path, base, max_bytes):
     ).data
 
 
-def _external_path(value, base):
+def _external_path(value: Any, base: Any) -> Any:
     if not isinstance(value, str) or not value or "\x00" in value:
         raise ValueError("External runtime paths must be nonempty text paths.")
     path = Path(value).expanduser()
@@ -92,19 +96,19 @@ def _external_path(value, base):
     return str(path)
 
 
-def _pinned_executable(data, base):
+def _pinned_executable(data: Any, base: Any) -> Any:
     fields = dict(data)
     fields["path"] = _external_path(fields["path"], base)
     return PinnedExecutable(**fields)
 
 
-def _source(data, base):
+def _source(data: Any, base: Any) -> Any:
     fields = dict(data)
     fields["directory"] = _external_path(fields["directory"], base)
     return DeviceSource(**fields)
 
 
-def _save_run(run, directory):
+def _save_run(run: Any, directory: Any) -> Any:
     directory.mkdir(parents=True, exist_ok=False)
     (directory / "stdout.txt").write_bytes(run.stdout)
     (directory / "stderr.txt").write_bytes(run.stderr)
@@ -125,7 +129,7 @@ def _save_run(run, directory):
     }
 
 
-def _failure_status(failure):
+def _failure_status(failure: Any) -> Any:
     if isinstance(failure, DeviceQualificationError):
         if isinstance(failure.__cause__, EnergyRuntimeError):
             return "engine-unavailable-or-failed"
@@ -137,7 +141,7 @@ def _failure_status(failure):
     return "configuration-failed"
 
 
-def main():
+def main() -> Any:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -193,6 +197,7 @@ def main():
                     tuple(window) for window in profile_data["mode_windows_hz"]
                 )
                 profile_data["targets"] = tuple(
+                    # ty: ignore[invalid-argument-type]
                     HFSSDesignTarget(**{**target, "labels": tuple(target["labels"])})
                     for target in profile_data["targets"]
                 )

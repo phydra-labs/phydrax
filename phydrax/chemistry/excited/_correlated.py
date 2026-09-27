@@ -12,7 +12,7 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -45,7 +45,7 @@ class CorrelatedManifoldPlan(StrictModule, NonTrainableState):
         /,
         *,
         residual_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         method_ = str(method).strip().lower()
         sector_ = str(sector).strip().lower()
         roots = int(root_count)
@@ -91,7 +91,9 @@ class CallableCorrelatedManifoldProvider(AbstractCorrelatedManifoldProvider):
     evaluator: CorrelatedManifoldEvaluator = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
-    def __init__(self, evaluator: CorrelatedManifoldEvaluator, provider_id: str, /):
+    def __init__(
+        self, evaluator: CorrelatedManifoldEvaluator, provider_id: str, /
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         provider = str(provider_id).strip()

@@ -12,7 +12,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._array_archive import read_array_archive, write_array_archive
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -38,7 +39,7 @@ class ParticleBenchmarkRecord(StrictModule, NonTrainableState):
         qualification: ParticleQualificationResult,
         metrics: Sequence[tuple[str, float]],
         /,
-    ):
+    ) -> None:
         values = tuple((str(name), float(value)) for name, value in metrics)
         self.identity = identity
         self.qualification = qualification
@@ -57,7 +58,7 @@ class ParticleBenchmarkRegistry(StrictModule, NonTrainableState):
     records: tuple[ParticleBenchmarkRecord, ...]
     registry_id: str = eqx.field(static=True)
 
-    def __init__(self, records: Sequence[ParticleBenchmarkRecord], /):
+    def __init__(self, records: Sequence[ParticleBenchmarkRecord], /) -> None:
         values = tuple(records)
         identifiers = tuple(record.record_id for record in values)
         if len(set(identifiers)) != len(identifiers):
@@ -110,7 +111,7 @@ class ParticleQualificationArtifact(StrictModule, NonTrainableState):
         code_version: str,
         package_fingerprint: str,
         /,
-    ):
+    ) -> None:
         values = tuple(
             str(value) for value in (method_id, code_version, package_fingerprint)
         )
@@ -187,7 +188,7 @@ class ParticleReplayPacket(StrictModule, NonTrainableState):
         problem_id: str,
         method_id: str,
         failure_status: str,
-    ):
+    ) -> None:
         self.state = jnp.asarray(state)
         self.time = jnp.asarray(time)
         self.step_index = jnp.asarray(step_index, dtype=jnp.int32)
@@ -272,7 +273,7 @@ class ParticleSupportMatrix(StrictModule, NonTrainableState):
     entries: tuple[ParticleSupportMatrixEntry, ...]
     matrix_id: str = eqx.field(static=True)
 
-    def __init__(self, entries: Sequence[ParticleSupportMatrixEntry], /):
+    def __init__(self, entries: Sequence[ParticleSupportMatrixEntry], /) -> None:
         values = tuple(entries)
         self.entries = values
         self.matrix_id = canonical_fingerprint(

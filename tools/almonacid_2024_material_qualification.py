@@ -31,6 +31,7 @@ _DEFAULT_ORACLE = (
 
 def qualify(oracle: Path = _DEFAULT_ORACLE) -> dict:
     with tarfile.open(oracle, "r:gz") as archive:
+        # ty: ignore[invalid-context-manager]
         with archive.extractfile("run-record.json") as stream:
             record = json.load(stream)
         content_id = record.pop("content_id")
@@ -39,6 +40,7 @@ def qualify(oracle: Path = _DEFAULT_ORACLE) -> dict:
         ).encode()
         if hashlib.sha256(canonical).hexdigest() != content_id:
             raise ValueError("Material oracle record content identity does not match.")
+        # ty: ignore[invalid-context-manager]
         with archive.extractfile("samples.jsonl") as stream:
             raw_samples = stream.read()
         if (

@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 from phydrax.ein import contract
@@ -23,7 +24,7 @@ class NematicTensorBasis(StrictModule, NonTrainableState):
     matrices: Array
     basis_id: str = eqx.field(static=True)
 
-    def __init__(self, orientation_dimension: int = 3, /):
+    def __init__(self, orientation_dimension: int = 3, /) -> None:
         dimension = int(orientation_dimension)
         if dimension not in (2, 3):
             raise ValueError("Nematic orientation dimension must be two or three.")
@@ -90,7 +91,7 @@ class LandauDeGennesParameters(StrictModule):
         *,
         chiral_wave_number: ArrayLike = 0.0,
         dielectric_anisotropy: ArrayLike = 0.0,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (
@@ -132,7 +133,7 @@ class BerisEdwardsParameters(StrictModule):
         /,
         *,
         activity: ArrayLike = 0.0,
-    ):
+    ) -> None:
         mobility = jnp.asarray(rotational_mobility)
         alignment = jnp.asarray(flow_alignment, dtype=mobility.dtype)
         activity_ = jnp.asarray(activity, dtype=mobility.dtype)
@@ -171,7 +172,7 @@ class LandauDeGennesClosure(StrictModule, NonTrainableState):
     basis: NematicTensorBasis
     closure_id: str = eqx.field(static=True)
 
-    def __init__(self, basis: NematicTensorBasis, /):
+    def __init__(self, basis: NematicTensorBasis, /) -> None:
         if not isinstance(basis, NematicTensorBasis):
             raise TypeError("basis must be NematicTensorBasis.")
         self.basis = basis
@@ -390,7 +391,7 @@ def beris_edwards_constitutive_fields(
     )
 
 
-def _levi_civita(dtype):
+def _levi_civita(dtype: DTypeLike) -> Array:
     return jnp.asarray(
         (
             ((0.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, -1.0, 0.0)),

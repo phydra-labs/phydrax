@@ -8,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_dimension_signature_is_exact_and_canonical():
+def test_dimension_signature_is_exact_and_canonical() -> None:
     left = phx.units.DimensionSignature(
         (("time", -1), ("length", Fraction(1, 2)), ("time", 1))
     )
@@ -20,12 +20,13 @@ def test_dimension_signature_is_exact_and_canonical():
     assert (phx.units.LENGTH * phx.units.TIME**-1) == phx.units.VELOCITY
 
 
-def test_dimension_signature_rejects_inexact_exponents():
+def test_dimension_signature_rejects_inexact_exponents() -> None:
     with pytest.raises(TypeError, match="integers or fractions"):
+        # ty: ignore[invalid-argument-type]
         phx.units.DimensionSignature({"length": 0.5})
 
 
-def test_dimension_payload_roundtrip_and_tamper_detection():
+def test_dimension_payload_roundtrip_and_tamper_detection() -> None:
     dimension = phx.units.ENERGY / phx.units.AMOUNT
     assert phx.units.DimensionSignature.from_dict(dimension.to_dict()) == dimension
     payload = dimension.to_dict()
@@ -38,7 +39,7 @@ def test_dimension_payload_roundtrip_and_tamper_detection():
         phx.units.DimensionSignature.from_dict(ambiguous)
 
 
-def test_unit_conversion_is_exact_and_differentiable():
+def test_unit_conversion_is_exact_and_differentiable() -> None:
     assert phx.units.conversion_factor(phx.units.KILOMETER, phx.units.METER) == Fraction(
         1000
     )
@@ -66,7 +67,7 @@ def test_unit_conversion_is_exact_and_differentiable():
     assert float(jax.grad(convert)(jnp.asarray(2.0))) == 1000.0
 
 
-def test_nuclear_and_magnetic_units_have_exact_si_semantics():
+def test_nuclear_and_magnetic_units_have_exact_si_semantics() -> None:
     square_meter = phx.units.derived_unit("m2-fixture", ((phx.units.METER, 2),))
     assert phx.units.conversion_factor(phx.units.BARN, square_meter) == Fraction(
         1, 10**28
@@ -83,7 +84,7 @@ def test_nuclear_and_magnetic_units_have_exact_si_semantics():
     assert phx.units.HENRY.dimension == phx.units.WEBER.dimension / phx.units.CURRENT
 
 
-def test_unit_conversion_rejects_dimension_and_reference_mismatches():
+def test_unit_conversion_rejects_dimension_and_reference_mismatches() -> None:
     with pytest.raises(ValueError, match="matching dimensions"):
         phx.units.conversion_factor(phx.units.METER, phx.units.SECOND)
 
@@ -92,7 +93,7 @@ def test_unit_conversion_rejects_dimension_and_reference_mismatches():
         phx.units.conversion_factor(code_meter, phx.units.METER)
 
 
-def test_unit_payload_roundtrip_and_tamper_detection():
+def test_unit_payload_roundtrip_and_tamper_detection() -> None:
     unit = phx.units.KILOCALORIE_PER_MOLE
     restored = phx.units.UnitDefinition.from_dict(unit.to_dict())
     assert restored == unit
@@ -108,7 +109,7 @@ def test_unit_payload_roundtrip_and_tamper_detection():
         phx.units.UnitDefinition.from_dict(ambiguous)
 
 
-def test_derived_units_require_exact_scales_and_shared_references():
+def test_derived_units_require_exact_scales_and_shared_references() -> None:
     velocity = phx.units.derived_unit(
         "km/s", ((phx.units.KILOMETER, 1), (phx.units.SECOND, -1))
     )
@@ -118,12 +119,13 @@ def test_derived_units_require_exact_scales_and_shared_references():
     assert huge.scale_to_reference == 10**400
 
     with pytest.raises(TypeError, match="exact positive rational"):
+        # ty: ignore[invalid-argument-type]
         phx.units.UnitDefinition("bad", phx.units.LENGTH, "si", 0.1)
     with pytest.raises(ValueError, match="exact rational root"):
         phx.units.derived_unit("sqrt-km", ((phx.units.KILOMETER, Fraction(1, 2)),))
 
 
-def test_hertz_is_the_exact_inverse_second_unit():
+def test_hertz_is_the_exact_inverse_second_unit() -> None:
     assert phx.units.HERTZ.dimension == phx.units.FREQUENCY
     assert phx.units.HERTZ.scale_to_reference == 1
     assert phx.units.HERTZ.symbol == "Hz"

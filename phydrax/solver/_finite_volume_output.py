@@ -9,11 +9,12 @@ import json
 from importlib import import_module
 from importlib.util import find_spec
 from pathlib import Path
+from types import ModuleType
 from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope
@@ -42,7 +43,7 @@ OutputDiscretization = (
 )
 
 
-def _h5py():
+def _h5py() -> ModuleType:
     if find_spec("h5py") is None:
         raise ImportError(
             "Finite-volume HDF5 output requires the optional 'h5py' package."
@@ -127,7 +128,7 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
         *,
         precision: FiniteVolumePrecisionPolicy | None = None,
         partition: PreparedDistributedBlockAMRHierarchy | None = None,
-    ):
+    ) -> None:
         if isinstance(discretization, PreparedBlockAMRRuntime):
             block_runtime = discretization
             topology = block_runtime.dynamics.topology
@@ -644,6 +645,10 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
                     raise TypeError(
                         "shallow_water must be ShallowWaterObservables or None."
                     )
+                if not isinstance(discretization, FiniteVolumeDiscretization):
+                    raise ValueError(
+                        "Shallow-water views require structured finite-volume output."
+                    )
                 expected_shape = discretization.cell_shape
                 if (
                     shallow_water.depth.shape != expected_shape
@@ -903,7 +908,9 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
             )
         )
 
-    def _records(self):
+    def _records(
+        self,
+    ) -> tuple[tuple[tuple[str, float, str | None, int | None], ...], int]:
         h5py = _h5py()
         with h5py.File(self.hdf5_path, "r") as handle:
             records = []

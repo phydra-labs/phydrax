@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 from zipfile import ZipFile
 
 from phydrax._fingerprint import canonical_fingerprint
@@ -128,7 +129,7 @@ def _run(command: list[str], cwd: Path, /) -> str:
     return result.stdout
 
 
-def _unique_json_object(pairs):
+def _unique_json_object(pairs: Any) -> Any:
     record = {}
     for key, value in pairs:
         if key in record:
@@ -149,6 +150,7 @@ def verify_installed_distribution(
     artifacts = {}
     for name in ("wheel", "sdist", "sbom"):
         record = manifest[name]
+        # ty: ignore[not-subscriptable]
         filename = record["filename"]
         path = manifest_path.parent / "artifacts" / filename
         if _artifact(path) != record:
@@ -185,6 +187,7 @@ def verify_installed_distribution(
             installed = package / relative
             identity = _artifact(installed)
             with archive.open(member) as stream:
+                # ty: ignore[invalid-argument-type]
                 digest = hashlib.file_digest(stream, "sha256").hexdigest()
             if identity["sha256"] != digest:
                 raise ValueError(f"Executed package differs from wheel: {relative}")
@@ -205,6 +208,7 @@ def verify_installed_distribution(
     return {
         "distribution_id": manifest["distribution_id"],
         "source_build_id": manifest["source_build_id"],
+        # ty: ignore[not-subscriptable]
         "wheel_sha256": manifest["wheel"]["sha256"],
         "installed_package_path": str(package),
         "installed_package_digest": canonical_fingerprint({"files": members}),
@@ -292,6 +296,7 @@ def build_distribution(root: Path, output: Path, /, *, uv: str = "uv") -> Path:
                 ):
                     raise RuntimeError(f"Installed package differs from wheel: {member}")
     snapshot, harness = output / "frozen-source", output / "harness"
+    # ty: ignore[not-iterable]
     for record in before["files"]:
         relative = Path(record["path"])
         destination = snapshot / relative

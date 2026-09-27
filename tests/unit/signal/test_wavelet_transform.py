@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -32,7 +35,7 @@ _CASES = (
 )
 
 
-def _pywavelets_coefficients(values, transform):
+def _pywavelets_coefficients(values: Any, transform: Any) -> Any:
     return pywt.wavedecn(
         np.asarray(values),
         wavelet=tuple(bank.name for bank in transform.filter_banks),
@@ -44,8 +47,8 @@ def _pywavelets_coefficients(values, transform):
 
 @pytest.mark.parametrize("shape,axes,levels,wavelet,boundary", _CASES)
 def test_discrete_wavelet_transform_matches_pywavelets_and_roundtrips(
-    shape, axes, levels, wavelet, boundary
-):
+    shape: Any, axes: Any, levels: Any, wavelet: Any, boundary: Any
+) -> None:
     values = np.random.default_rng(831).normal(size=shape)
     transform = DiscreteWaveletTransform(
         axes,
@@ -65,7 +68,7 @@ def test_discrete_wavelet_transform_matches_pywavelets_and_roundtrips(
     assert np.allclose(transform.synthesis(actual), values, rtol=5e-12, atol=5e-12)
 
 
-def test_discrete_wavelet_transform_is_jittable_vmappable_and_differentiable():
+def test_discrete_wavelet_transform_is_jittable_vmappable_and_differentiable() -> None:
     transform = DiscreteWaveletTransform(
         (-2,), levels=3, wavelet="db2", boundary="periodization"
     )
@@ -89,7 +92,7 @@ def test_discrete_wavelet_transform_is_jittable_vmappable_and_differentiable():
     assert jnp.allclose(gradient, 2.0 * values, rtol=1e-11, atol=1e-11)
 
 
-def test_discrete_wavelet_transform_is_shape_independent_and_plan_safe():
+def test_discrete_wavelet_transform_is_shape_independent_and_plan_safe() -> None:
     transform = DiscreteWaveletTransform(
         (-2,), levels=2, wavelet="db2", boundary="periodization"
     )
@@ -111,7 +114,7 @@ def test_discrete_wavelet_transform_is_shape_independent_and_plan_safe():
         incompatible.synthesis(short_coefficients)
 
 
-def test_discrete_wavelet_transform_rejects_invalid_configuration_and_shapes():
+def test_discrete_wavelet_transform_rejects_invalid_configuration_and_shapes() -> None:
     with pytest.raises(ValueError, match="at least one axis"):
         DiscreteWaveletTransform((), levels=1)
     with pytest.raises(ValueError, match="unique"):
@@ -120,7 +123,8 @@ def test_discrete_wavelet_transform_rejects_invalid_configuration_and_shapes():
         DiscreteWaveletTransform((0,), levels=0)
     with pytest.raises(ValueError, match="one value per transformed axis"):
         DiscreteWaveletTransform((0, 1), levels=1, wavelet=("haar",))
-    with pytest.raises(ValueError, match="boundaries"):
+    with pytest.raises(ValueError, match="boundary"):
+        # ty: ignore[invalid-argument-type]
         DiscreteWaveletTransform((0,), levels=1, boundary="reflect")
 
     transform = DiscreteWaveletTransform((0,), levels=3)

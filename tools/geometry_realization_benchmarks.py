@@ -7,9 +7,12 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
+
+# ty: ignore[unresolved-import]
 from geometry_realization_qualification import _motion_setup
 
 import phydrax as phx
@@ -22,7 +25,7 @@ from benchmarks._runtime import (
 )
 
 
-def _surface_case(count: int, *, warmup: int, repeats: int):
+def _surface_case(count: int, *, warmup: int, repeats: int) -> Any:
     geometry = phx.geometry.Sphere(
         (0.0, 0.0, 0.0),
         0.75,
@@ -53,7 +56,7 @@ def _surface_case(count: int, *, warmup: int, repeats: int):
         phx.geometry.ParameterId(f"sphere-{count}", "radius")
     )
 
-    def vertices(radius):
+    def vertices(radius: Any) -> Any:
         state = geometry.state.replace_at(radius_index, radius)
         return plan.realize(state).proposed_vertices
 
@@ -90,7 +93,7 @@ def _surface_case(count: int, *, warmup: int, repeats: int):
     }
 
 
-def _finite_element_case(*, warmup: int, repeats: int):
+def _finite_element_case(*, warmup: int, repeats: int) -> Any:
     geometry, discretization, motion, radius_index = _motion_setup()
     design = geometry.state.replace_at(radius_index, jnp.asarray(1.1))
     realization, first_realization_seconds = measure_synchronized(
@@ -102,7 +105,7 @@ def _finite_element_case(*, warmup: int, repeats: int):
         repeats=repeats,
     )
 
-    def area(radius):
+    def area(radius: Any) -> Any:
         current = geometry.state.replace_at(radius_index, radius)
         moved = motion.realize(current)
         blocks = discretization.evaluate_geometry("u", moved.runtime.coordinates)
@@ -133,7 +136,7 @@ def _finite_element_case(*, warmup: int, repeats: int):
     }
 
 
-def _sharp_measure_case(count: int, *, warmup: int, repeats: int):
+def _sharp_measure_case(count: int, *, warmup: int, repeats: int) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(count),
@@ -144,13 +147,14 @@ def _sharp_measure_case(count: int, *, warmup: int, repeats: int):
     discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
     mac = phx.discretization.MACOperatorPlan(discretization).prepare()
 
-    def plane(points, time, args):
+    def plane(points: Any, time: Any, args: Any) -> Any:
         del time, args
         return points[..., 0] - 0.3125
 
     plan = phx.discretization.MACExactSDFMeasurePlan(
         mac,
         plane,
+        # ty: ignore[invalid-argument-type]
         phx.geometry.ExactSDFEnclosureCertificate(
             phx.geometry.exact_signed_distance_certificate(smooth=True)
         ),
@@ -180,7 +184,7 @@ def _sharp_measure_case(count: int, *, warmup: int, repeats: int):
     }
 
 
-def run(*, smoke: bool, warmup: int, repeats: int):
+def run(*, smoke: bool, warmup: int, repeats: int) -> Any:
     resolutions = (7,) if smoke else (7, 9)
     return {
         "environment": capture_environment().to_dict(),
@@ -198,7 +202,7 @@ def run(*, smoke: bool, warmup: int, repeats: int):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Record fixed-topology geometry realization timings."
     )

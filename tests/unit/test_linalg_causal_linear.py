@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -19,7 +22,7 @@ from phydrax.linalg._gaussian_chain import (
 )
 
 
-def _dense_operator(transitions):
+def _dense_operator(transitions: Any) -> Any:
     num_steps, state_size, _ = transitions.shape
     rows = []
     for time in range(num_steps):
@@ -36,7 +39,7 @@ def _dense_operator(transitions):
     return jnp.concatenate(rows, axis=0)
 
 
-def _problem(dtype=jnp.float64):
+def _problem(dtype: Any = jnp.float64) -> Any:
     transitions = jnp.asarray(
         [
             [[0.0, 0.0], [0.0, 0.0]],
@@ -51,7 +54,7 @@ def _problem(dtype=jnp.float64):
 
 
 @pytest.mark.parametrize("damping", (0.0, 0.3))
-def test_causal_least_squares_matches_dense_normal_equations(damping):
+def test_causal_least_squares_matches_dense_normal_equations(damping: Any) -> None:
     transitions, residuals = _problem()
     operator = _dense_operator(transitions)
     expected = jnp.linalg.solve(
@@ -72,7 +75,7 @@ def test_causal_least_squares_matches_dense_normal_equations(damping):
     )
 
 
-def test_affine_and_transpose_scans_match_dense_triangular_solves():
+def test_affine_and_transpose_scans_match_dense_triangular_solves() -> None:
     transitions, right = _problem()
     operator = _dense_operator(transitions)
 
@@ -89,7 +92,7 @@ def test_affine_and_transpose_scans_match_dense_triangular_solves():
     )
 
 
-def test_causal_linear_solves_have_correct_reverse_derivatives():
+def test_causal_linear_solves_have_correct_reverse_derivatives() -> None:
     transitions, right = _problem()
     operator = _dense_operator(transitions)
     weights = jnp.arange(right.size, dtype=right.dtype).reshape(right.shape)
@@ -102,7 +105,7 @@ def test_causal_linear_solves_have_correct_reverse_derivatives():
     assert jnp.allclose(gradient, expected)
 
 
-def test_causal_linear_contract_rejects_invalid_shapes_and_damping():
+def test_causal_linear_contract_rejects_invalid_shapes_and_damping() -> None:
     transitions, residuals = _problem()
     with pytest.raises(ValueError, match="transitions"):
         associative_affine_solve(transitions[:, 0], residuals)
@@ -112,7 +115,7 @@ def test_causal_linear_contract_rejects_invalid_shapes_and_damping():
         solve_causal_least_squares(transitions, residuals, jnp.asarray(-1.0))
 
 
-def test_gaussian_scan_combination_fails_closed_on_singular_system():
+def test_gaussian_scan_combination_fails_closed_on_singular_system() -> None:
     left = GaussianFilterElement(
         jnp.asarray([[1.0]]),
         jnp.asarray([0.0]),

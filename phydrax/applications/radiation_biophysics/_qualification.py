@@ -18,6 +18,8 @@ from dataclasses import asdict, dataclass
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ...linalg import DenseLinearOperator
@@ -56,7 +58,7 @@ class LesionExpectationSupport:
     denominator: float
     candidate_artifact_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             not isinstance(self.direct_multiplicity, tuple)
             or not isinstance(self.indirect_multiplicity, tuple)
@@ -113,8 +115,12 @@ def prepare_lesion_expectation(
 
 
 def expected_initial_lesion_yield(
-    logits, direct_multiplicity, indirect_multiplicity, active_mask, denominators
-):
+    logits: Array,
+    direct_multiplicity: ArrayLike,
+    indirect_multiplicity: ArrayLike,
+    active_mask: ArrayLike,
+    denominators: ArrayLike,
+) -> Array:
     """JIT/grad-safe exact independent-candidate union probability on fixed support.
 
     Shape: logits (2,), multiplicities/mask (condition, site), denominators
@@ -135,7 +141,7 @@ class RadiationCondition:
     scavenger_mol_per_m3: float
     chemistry_endpoint_s: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _text(self.condition_id, "condition")
         for value in (
             self.dose_gy,
@@ -166,7 +172,7 @@ class RadiationCalibrationData:
     reference: ReferenceArtifactManifest
     source_kind: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         n = len(self.observation_ids)
         arrays = (
             self.observation_ids,
@@ -229,7 +235,7 @@ class RadiationCalibrationData:
             }
         )
 
-    def prepared_arrays(self):
+    def prepared_arrays(self) -> tuple[Array, Array, Array, Array]:
         capacity = max(1, max(len(item.direct_multiplicity) for item in self.supports))
         direct = np.zeros((len(self.supports), capacity), dtype=np.int64)
         indirect = np.zeros_like(direct)
@@ -275,7 +281,7 @@ class RadiationStageEvidence:
     maximum_standardized_rms: float
     upstream_artifact_ids: tuple[str, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.stage not in (
             "dosimetry",
             "transport",
@@ -364,13 +370,13 @@ def calibrate_radiation_lesions(
     training: RadiationCalibrationData,
     heldout: RadiationCalibrationData,
     *,
-    initial_logits,
-    prior_mean,
-    prior_standard_deviation,
+    initial_logits: ArrayLike,
+    prior_mean: ArrayLike,
+    prior_standard_deviation: ArrayLike,
     stage_evidence: tuple[RadiationStageEvidence, ...] = (),
     maximum_heldout_standardized_rms: float = 2.0,
     termination: OptimizationTermination | None = None,
-    commercial_use=False,
+    commercial_use: bool = False,
 ) -> RadiationCalibrationResult:
     """Fit two independent-candidate probabilities, then predict withheld conditions.
 
@@ -421,10 +427,10 @@ def calibrate_radiation_lesions(
     observed = jnp.asarray(training.observed_yields)
     sigma = jnp.asarray(training.standard_errors)
 
-    def likelihood_residual(logits):
+    def likelihood_residual(logits: Array) -> Array:
         return (expected_initial_lesion_yield(logits, *train_arrays) - observed) / sigma
 
-    def residual(logits, args):
+    def residual(logits: Array, args: object) -> Array:
         del args
         return jnp.concatenate((likelihood_residual(logits), (logits - mean) / prior_sd))
 

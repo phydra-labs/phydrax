@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -45,7 +46,7 @@ class DsstPlan(StrictModule, NonTrainableState):
         /,
         *,
         model_ids: tuple[str, ...],
-    ):
+    ) -> None:
         rates = tuple(averaged_rates)
         short = tuple(short_period_terms)
         if not rates or any(not callable(value) for value in (*rates, *short)):
@@ -91,7 +92,7 @@ class DsstPlan(StrictModule, NonTrainableState):
         if not isinstance(initial, ModifiedEquinoctialElements):
             raise TypeError("initial must be ModifiedEquinoctialElements.")
 
-        def step(elements, interval):
+        def step(elements: Array, interval: Array) -> tuple[Array, tuple[Array, Array]]:
             start, end = interval
             dt = end - start
             k1 = self._rate(start, elements, args)

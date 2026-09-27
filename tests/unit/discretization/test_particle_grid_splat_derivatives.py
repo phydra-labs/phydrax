@@ -4,13 +4,17 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _prepared(*, geometry_ad="piecewise", accumulation="deterministic"):
+def _prepared(
+    *, geometry_ad: Any = "piecewise", accumulation: Any = "deterministic"
+) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(5),), axis_names=("x",)
     ).prepare(jnp.asarray([[0.0], [1.0]]))
@@ -27,14 +31,14 @@ def _prepared(*, geometry_ad="piecewise", accumulation="deterministic"):
     )
 
 
-def test_payload_jvp_vjp_and_gather_are_the_same_linear_pair():
+def test_payload_jvp_vjp_and_gather_are_the_same_linear_pair() -> None:
     prepared = _prepared()
     position = jnp.asarray([[0.2], [0.7]])
     state = prepared.build(position)
     payload = jnp.asarray([2.0, -1.0])
     tangent = jnp.asarray([0.4, 0.7])
 
-    def deposit(value):
+    def deposit(value: Any) -> Any:
         return prepared.deposit_content(state, value).content
 
     _, jvp = jax.jvp(deposit, (payload,), (tangent,))
@@ -52,7 +56,7 @@ def test_payload_jvp_vjp_and_gather_are_the_same_linear_pair():
     )
 
 
-def test_complex_adjoint_identity_in_every_accumulation_mode():
+def test_complex_adjoint_identity_in_every_accumulation_mode() -> None:
     position = jnp.asarray([[0.2], [0.7]])
     payload = jnp.asarray([2.0 + 0.5j, -1.0 + 3.0j])
     cotangent = jnp.asarray([0.3 - 0.1j, -0.5 + 0.7j, 0.9, 0.2 - 0.8j, -0.1 + 0.4j])
@@ -61,7 +65,7 @@ def test_complex_adjoint_identity_in_every_accumulation_mode():
         prepared = _prepared(accumulation=accumulation)
         state = prepared.build(position)
 
-        def deposit(value):
+        def deposit(value: Any) -> Any:
             return prepared.deposit_content(state, value).content
 
         output, pullback = jax.vjp(deposit, payload)
@@ -74,18 +78,18 @@ def test_complex_adjoint_identity_in_every_accumulation_mode():
         )
 
 
-def test_position_jvp_and_vjp_match_finite_difference_inside_cells():
+def test_position_jvp_and_vjp_match_finite_difference_inside_cells() -> None:
     prepared = _prepared()
     position = jnp.asarray([[0.2], [0.7]])
     direction = jnp.asarray([[0.3], [-0.2]])
     content = jnp.asarray([2.0, 4.0])
     weight = jnp.asarray([0.2, -0.7, 0.4, 0.8, -0.1])
 
-    def output(value):
+    def output(value: Any) -> Any:
         state = prepared.build(value)
         return prepared.deposit_content(state, content).content
 
-    def loss(value):
+    def loss(value: Any) -> Any:
         return jnp.vdot(output(value), weight)
 
     _, jvp = jax.jvp(output, (position,), (direction,))
@@ -100,13 +104,13 @@ def test_position_jvp_and_vjp_match_finite_difference_inside_cells():
     assert jnp.allclose(analytic, finite, rtol=1e-8, atol=1e-9)
 
 
-def test_reconstruction_derivative_matches_finite_difference():
+def test_reconstruction_derivative_matches_finite_difference() -> None:
     prepared = _prepared()
     position = jnp.asarray([[0.2], [0.7]])
     samples = jnp.asarray([1.0, 3.0])
     weights = jnp.asarray([2.0, 1.0])
 
-    def loss(value):
+    def loss(value: Any) -> Any:
         state = prepared.build(value)
         result = prepared.reconstruct(state, samples, weights)
         return jnp.sum(result.values**2)
@@ -121,7 +125,7 @@ def test_reconstruction_derivative_matches_finite_difference():
     assert jnp.allclose(jnp.vdot(gradient, direction), finite, rtol=1e-7, atol=1e-8)
 
 
-def test_jit_vmap_and_scan_preserve_transfer_results():
+def test_jit_vmap_and_scan_preserve_transfer_results() -> None:
     prepared = _prepared()
     content = jnp.asarray([2.0, 4.0])
     positions = jnp.asarray(
@@ -133,12 +137,12 @@ def test_jit_vmap_and_scan_preserve_transfer_results():
     )
 
     @jax.jit
-    def apply(position):
+    def apply(position: Any) -> Any:
         return prepared.deposit_content(prepared.build(position), content).content
 
     vmapped = jax.vmap(apply)(positions)
 
-    def step(_, position):
+    def step(_: Any, position: Any) -> Any:
         value = apply(position)
         return None, value
 
@@ -149,12 +153,12 @@ def test_jit_vmap_and_scan_preserve_transfer_results():
     assert jnp.allclose(scanned, sequential)
 
 
-def test_frozen_geometry_is_zero_under_jit_vmap_and_scan():
+def test_frozen_geometry_is_zero_under_jit_vmap_and_scan() -> None:
     prepared = _prepared(geometry_ad="frozen")
     content = jnp.asarray([2.0, 4.0])
     positions = jnp.asarray([[[0.2], [0.7]], [[0.25], [0.75]], [[0.3], [0.8]]])
 
-    def loss(position):
+    def loss(position: Any) -> Any:
         value = prepared.deposit_content(prepared.build(position), content).content
         return jnp.sum(value**2)
 
@@ -167,7 +171,7 @@ def test_frozen_geometry_is_zero_under_jit_vmap_and_scan():
     assert jnp.all(scanned == 0.0)
 
 
-def test_periodic_total_content_has_zero_position_gradient():
+def test_periodic_total_content_has_zero_position_gradient() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(8, periodic=True, endpoint=False),),
         axis_names=("x",),
@@ -178,7 +182,7 @@ def test_periodic_total_content_has_zero_position_gradient():
     prepared = phx.discretization.ParticleGridSplatPlan(grid).prepare(particles)
     content = jnp.asarray([2.0, -3.0])
 
-    def total(position):
+    def total(position: Any) -> Any:
         return jnp.sum(
             prepared.deposit_content(prepared.build(position), content).content
         )
@@ -187,7 +191,7 @@ def test_periodic_total_content_has_zero_position_gradient():
     assert jnp.allclose(gradient, 0.0, atol=1e-12)
 
 
-def test_exact_grid_node_reports_zero_route_weight_margin():
+def test_exact_grid_node_reports_zero_route_weight_margin() -> None:
     prepared = _prepared()
     state = prepared.build(jnp.asarray([[0.25], [0.75]]))
 

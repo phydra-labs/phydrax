@@ -15,7 +15,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -47,7 +48,7 @@ class AnharmonicForceFieldResult(StrictModule, NonTrainableState):
         successful: ArrayLike,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         quadratic_ = jnp.asarray(quadratic)
         gradient_ = jnp.asarray(gradient, dtype=quadratic_.dtype)
         cubic_ = jnp.asarray(cubic, dtype=quadratic_.dtype)
@@ -107,7 +108,7 @@ class AnharmonicForceFieldPlan(StrictModule, NonTrainableState):
         *,
         stationarity_tolerance: float = 1.0e-7,
         symmetry_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not callable(energy):
             raise TypeError("energy must be a differentiable callable.")
         count = int(mode_count)
@@ -208,7 +209,7 @@ class VibrationalPerturbationResult(StrictModule, NonTrainableState):
         kind: VibrationalPerturbationKind,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         states = jnp.asarray(state_quanta, dtype=jnp.int32)
         harmonic = jnp.asarray(harmonic_energies)
         anharmonic = jnp.asarray(anharmonic_energies, dtype=harmonic.dtype)
@@ -263,7 +264,7 @@ def _product_basis_hamiltonian(
     quartic: np.ndarray,
     maximum_quanta: int,
     maximum_basis_states: int,
-):
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     mode_count = frequencies.size
     states = np.asarray(
         tuple(product(range(maximum_quanta + 1), repeat=mode_count)), dtype=np.int64
@@ -278,7 +279,7 @@ def _product_basis_hamiltonian(
     identity = np.eye(local_dimension)
     powers = tuple(np.linalg.matrix_power(coordinate, power) for power in range(5))
 
-    def product_operator(counts):
+    def product_operator(counts: np.ndarray) -> np.ndarray:
         result = np.asarray([[1.0]])
         for count in counts:
             result = np.kron(result, powers[count] if count else identity)
@@ -323,7 +324,7 @@ class VibrationalPerturbationPlan(StrictModule, NonTrainableState):
         maximum_basis_states: int = 4096,
         resonance_tolerance: float = 1.0e-3,
         coupling_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(kind, VibrationalPerturbationKind) or not isinstance(
             force_field, AnharmonicForceFieldResult
         ):

@@ -6,29 +6,26 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
-FermionicTwoParticleChannel = Literal[
+FermionicTwoParticleChannel: TypeAlias = Literal[
     "particle-hole-direct",
     "particle-hole-crossed",
     "particle-particle",
 ]
 
-_CHANNELS = (
-    "particle-hole-direct",
-    "particle-hole-crossed",
-    "particle-particle",
-)
 _OPERATOR_ORDER = ("annihilation", "creation", "annihilation", "creation")
 
 
@@ -46,9 +43,8 @@ class FermionicTwoParticleChannelConvention(StrictModule, NonTrainableState):
     operator_order: tuple[str, str, str, str] = eqx.field(static=True)
     convention_id: str = eqx.field(static=True)
 
-    def __init__(self, channel: FermionicTwoParticleChannel, /):
-        if channel not in _CHANNELS:
-            raise ValueError("Unknown fermionic two-particle channel.")
+    def __init__(self, channel: FermionicTwoParticleChannel, /) -> None:
+        channel = parse(channel, FermionicTwoParticleChannel, "channel")
         self.channel = channel
         self.operator_order = _OPERATOR_ORDER
         self.convention_id = canonical_fingerprint(
@@ -173,7 +169,7 @@ class MatsubaraTwoParticleGreenFunction(StrictModule):
         fermion_label_count: int | None = None,
         maximum_elements: int = 16_777_216,
         representation_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(convention, FermionicTwoParticleChannelConvention):
             raise TypeError("convention must be FermionicTwoParticleChannelConvention.")
         beta_ = float(beta)

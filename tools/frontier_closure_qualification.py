@@ -193,6 +193,7 @@ def run_qualification() -> dict[str, object]:
             ("potential",),
             (0, 0, 0),
             ((4,), (2,), (0,)),
+            # ty: ignore[invalid-argument-type]
             (0.25, -0.5, 0.25),
         ),
         "phi4",
@@ -200,8 +201,11 @@ def run_qualification() -> dict[str, object]:
     defect = phase_field.solve_mapped_infinite_defect(
         phase_field.MappedInfiniteDefectPlan(
             potential,
+            # ty: ignore[invalid-argument-type]
             ((1.0,),),
+            # ty: ignore[invalid-argument-type]
             (-1.0,),
+            # ty: ignore[invalid-argument-type]
             (1.0,),
             collocation_count=33,
             residual_tolerance=1e-7,
@@ -211,8 +215,11 @@ def run_qualification() -> dict[str, object]:
     time = np.linspace(-2.0, 2.0, 16, endpoint=False)
     envelope_plan = wave.CoupledEnvelopePlan(
         time,
+        # ty: ignore[invalid-argument-type]
         (0.0,),
+        # ty: ignore[invalid-argument-type]
         (0.0,),
+        # ty: ignore[invalid-argument-type]
         (10.0,),
         np.zeros((1, 16)),
         np.zeros((1, 16)),

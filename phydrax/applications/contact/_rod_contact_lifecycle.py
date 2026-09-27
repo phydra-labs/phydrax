@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from enum import IntEnum
 from math import isfinite
 from typing import Any
@@ -13,7 +13,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 from phydrax.ein import contract
@@ -143,7 +145,7 @@ class RodContactWitnessBatch(StrictModule, NonTrainableState):
         capacity: int,
         finite: ArrayLike | None = None,
         batch_id: str | None = None,
-    ):
+    ) -> None:
         count = int(capacity)
         if count <= 0:
             raise ValueError("Rod contact witness capacity must be positive.")
@@ -373,7 +375,7 @@ class RodContactSearchPlan(StrictModule, NonTrainableState):
         route: str | RodContactSearchRoute = "dense",
         maximum_tree_depth: int = 64,
         maximum_traversal_visits: int = 1_000_000,
-    ):
+    ) -> None:
         capacity_ = int(capacity)
         plane_capacity_ = int(plane_capacity)
         activation = float(activation_distance)
@@ -452,7 +454,7 @@ class PreparedRodContactSearch(StrictModule, NonTrainableState):
         geometry: PreparedRodCapsuleGeometry | CollisionSurfacePlan,
         planes: Sequence[PlaneContactGeometry],
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, RodContactSearchPlan):
             raise TypeError("plan must be RodContactSearchPlan.")
         if isinstance(geometry, PreparedRodCapsuleGeometry):
@@ -567,7 +569,7 @@ class _BVHNode:
         edge: int = -1,
         count: int = 1,
         depth: int = 1,
-    ):
+    ) -> None:
         self.lower = lower
         self.upper = upper
         self.left = left
@@ -1460,7 +1462,7 @@ class RodContactManifoldState(StrictModule, NonTrainableState):
         *,
         capacity: int,
         tangent_dimension: int = 2,
-    ):
+    ) -> None:
         count = int(capacity)
         tangent = int(tangent_dimension)
         if count <= 0 or tangent != 2:
@@ -1690,7 +1692,7 @@ class _HistoryRecord:
         age: int,
         retention: int,
         revision: int,
-    ):
+    ) -> None:
         self.key = key
         self.active = active
         self.left = left
@@ -2003,7 +2005,7 @@ class RodContactCCDPlan(StrictModule, NonTrainableState):
         distance_tolerance: float = 1.0e-9,
         safety_fraction: float = 0.9,
         minimum_progress: float = 1.0e-12,
-    ):
+    ) -> None:
         iterations = int(maximum_iterations)
         tolerance = float(distance_tolerance)
         safety = float(safety_fraction)
@@ -2308,7 +2310,7 @@ class CompositeContactParticipantBlock(StrictModule, NonTrainableState):
         /,
         *,
         block_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(velocity_operator, AbstractLinearOperator):
             raise TypeError("velocity_operator must be AbstractLinearOperator.")
         if not isinstance(inverse_mass_operator, AbstractLinearOperator):
@@ -2370,7 +2372,7 @@ def build_rod_contact_velocity_operator(
     )
     safe_indices = jnp.clip(local_indices, 0, participant.surface_plan.vertex_count - 1)
 
-    def action(rate):
+    def action(rate: PyTree[Array]) -> Array:
         surface_velocity = participant.velocities(configuration_, rate)
         gathered = jnp.where(inside[..., None], surface_velocity[safe_indices], 0.0)
         relative = jnp.sum(witnesses.coefficients[..., None] * gathered, axis=1)
@@ -2381,7 +2383,7 @@ def build_rod_contact_velocity_operator(
         local = jnp.concatenate((normal_velocity, tangent_velocity), axis=-1)
         return jnp.where(witnesses.valid[:, None], local, 0.0)
 
-    def transpose_action(local_impulse):
+    def transpose_action(local_impulse: Array) -> PyTree[Array]:
         local = jnp.where(witnesses.valid[:, None], local_impulse, 0.0)
         world = witnesses.normal * local[:, :1] + jnp.sum(
             witnesses.tangent_basis * local[:, None, 1:], axis=-1
@@ -2442,7 +2444,7 @@ def build_capsule_contact_velocity_operator(
     centerline = participant.positions(configuration_)
     segment_nodes = participant.geometry.rod.plan.segment_node_ids
 
-    def radial_fallback(indices, radii):
+    def radial_fallback(indices: Array, radii: Array) -> Array:
         nodes = segment_nodes[indices]
         axes = centerline[nodes[:, 1]] - centerline[nodes[:, 0]]
         axes = axes / jnp.linalg.norm(axes, axis=-1, keepdims=True)
@@ -2474,7 +2476,7 @@ def build_capsule_contact_velocity_operator(
         right_fallback,
     )
 
-    def action(rate):
+    def action(rate: PyTree[Array]) -> Array:
         left_velocity = participant.surface_velocity(
             configuration_,
             rate,
@@ -2497,7 +2499,7 @@ def build_capsule_contact_velocity_operator(
         local = jnp.concatenate((normal_velocity, tangent_velocity), axis=-1)
         return jnp.where(witnesses.valid[:, None], local, 0.0)
 
-    def transpose_action(local_impulse):
+    def transpose_action(local_impulse: Array) -> PyTree[Array]:
         local = jnp.where(witnesses.valid[:, None], local_impulse, 0.0)
         world = witnesses.normal * local[:, :1] + jnp.sum(
             witnesses.tangent_basis * local[:, None, 1:], axis=-1
@@ -2626,7 +2628,7 @@ class CompositeContactResponse(StrictModule, NonTrainableState):
         compliance: ArrayLike = 0.0,
         normal_bias: ArrayLike = 0.0,
         solver: ContactConeSolverPlan | None = None,
-    ):
+    ) -> None:
         values = tuple(blocks)
         if not values or not all(
             isinstance(value, CompositeContactParticipantBlock) for value in values
@@ -2686,7 +2688,7 @@ class CompositeContactResponse(StrictModule, NonTrainableState):
         if not isinstance(solver_, ContactConeSolverPlan):
             raise TypeError("solver must be ContactConeSolverPlan or None.")
 
-        def delassus_action(local_impulse):
+        def delassus_action(local_impulse: Array) -> Array:
             total = contact_space.zeros()
             for block in values:
                 effort = dual_transpose(block.velocity_operator).mv(local_impulse)
@@ -2794,7 +2796,7 @@ def _local_values(
 
 
 def _matrix_free_contact_solve(
-    action,
+    action: Callable[[Array], Array],
     free: Array,
     compliance: Array,
     friction: Array,
@@ -2805,7 +2807,7 @@ def _matrix_free_contact_solve(
 ) -> tuple[Array, Array, Array]:
     mask = valid[:, None]
 
-    def law_action(value):
+    def law_action(value: Array) -> Array:
         active = jnp.where(mask, value, 0.0)
         return jnp.where(mask, action(active) + compliance * active, 0.0)
 
@@ -2833,7 +2835,9 @@ def _matrix_free_contact_solve(
     first_converged = jnp.asarray(solver.maximum_iterations, dtype=jnp.int32)
     residual_norm = jnp.asarray(jnp.inf, dtype=free.dtype)
 
-    def iteration_body(iteration, state):
+    def iteration_body(
+        iteration: Array, state: tuple[Array, Array, Array, Array]
+    ) -> tuple[Array, Array, Array, Array]:
         value_, converged_, first_converged_, residual_norm_ = state
         gradient = law_action(value_) + free
         projected = project_signorini_coulomb_product(

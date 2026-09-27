@@ -18,7 +18,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -74,7 +75,7 @@ class SurfaceTensionPolicy(StrictModule, NonTrainableState):
         density_floor: float,
         capillary_cfl: float,
         policy_id: str = "surface-tension-policy",
-    ):
+    ) -> None:
         sigma = float(surface_tension)
         floor = float(density_floor)
         cfl = float(capillary_cfl)
@@ -130,7 +131,7 @@ class VariableSurfaceTensionPolicy(StrictModule, NonTrainableState):
         density_floor: float,
         capillary_cfl: float,
         law_id: str,
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("Variable surface-tension evaluator must be callable.")
         floor = float(density_floor)
@@ -224,7 +225,7 @@ class CurvatureEvidence(StrictModule, NonTrainableState):
         reconstruction_id: str = "unknown-reconstruction",
         evidence_id: str | None = None,
         tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         kappa = jnp.asarray(curvature)
         fit_residual = jnp.asarray(residual)
         if (
@@ -362,7 +363,7 @@ class CapillaryFaceRateBlock(StrictModule, NonTrainableState):
         geometry_id: str,
         evidence_id: str,
         block_id: str = "capillary",
-    ):
+    ) -> None:
         momentum = jnp.asarray(momentum_rate)
         work = jnp.asarray(energy_work_rate, dtype=momentum.dtype)
         owners = jnp.asarray(owner_cells, dtype=jnp.int32)
@@ -519,7 +520,7 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
         *,
         curvature_tolerance: float = 1.0e-6,
         condition_limit: float = 1.0e8,
-    ):
+    ) -> None:
         if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
             raise TypeError("Balanced capillarity requires unstructured FV geometry.")
         if discretization.cell_dimension != 2:
@@ -556,7 +557,9 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
             }
         )
 
-    def _plic_values(self, plic: Any, /):
+    def _plic_values(
+        self, plic: Any, /
+    ) -> tuple[Array, Array, Array, Array, bool, str, str]:
         try:
             normals = jnp.asarray(plic.normals)
             centers = getattr(plic, "interface_centers", None)
@@ -765,7 +768,7 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
         volume_fraction: ArrayLike | None,
         velocity: ArrayLike | None,
         /,
-    ):
+    ) -> tuple[Array, Array, Array, Array, Array, CurvatureEvidence]:
         density_ = self._validate_density(density)
         del density_
         if volume_fraction is None:

@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -48,7 +49,7 @@ class MACGhostFluidProjectionPlan(StrictModule, NonTrainableState):
     projection: MACFreeSurfaceProjectionPlan
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, projection: MACFreeSurfaceProjectionPlan, /):
+    def __init__(self, projection: MACFreeSurfaceProjectionPlan, /) -> None:
         if not isinstance(projection, MACFreeSurfaceProjectionPlan):
             raise TypeError("projection must be MACFreeSurfaceProjectionPlan.")
         self.projection = projection
@@ -105,9 +106,11 @@ class MACGhostFluidProjectionPlan(StrictModule, NonTrainableState):
             dt,
             pressure=pressure,
         )
-        jump_work = sum(
-            jnp.sum(impulse * (before + 0.5 * impulse))
-            for impulse, before in zip(impulses, values, strict=True)
+        jump_work = jnp.asarray(
+            sum(
+                jnp.sum(impulse * (before + 0.5 * impulse))
+                for impulse, before in zip(impulses, values, strict=True)
+            )
         )
         finite = (
             geometry.finite

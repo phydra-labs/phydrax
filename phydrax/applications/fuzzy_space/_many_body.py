@@ -16,7 +16,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -51,6 +52,7 @@ from ...tensor_network import (
     su2_clebsch_gordan,
     su2_fusion,
 )
+from ...typing import parse
 
 
 FuzzyManyBodyStatistics: TypeAlias = Literal["boson", "fermion"]
@@ -133,7 +135,7 @@ class FuzzyThreeBodyTerm:
         annihilators: Sequence[int],
         coefficient: complex,
         /,
-    ):
+    ) -> None:
         creators_ = tuple(creators)
         annihilators_ = tuple(annihilators)
         coefficient_ = complex(coefficient)
@@ -147,8 +149,8 @@ class FuzzyThreeBodyTerm:
             "annihilators": annihilators_,
             "coefficient": (coefficient_.real, coefficient_.imag),
         }
-        object.__setattr__(self, "creators", creators_)  # type: ignore[arg-type]
-        object.__setattr__(self, "annihilators", annihilators_)  # type: ignore[arg-type]
+        object.__setattr__(self, "creators", creators_)
+        object.__setattr__(self, "annihilators", annihilators_)
         object.__setattr__(self, "coefficient", coefficient_)
         object.__setattr__(self, "term_id", canonical_fingerprint(content))
 
@@ -182,11 +184,10 @@ class FuzzySphereManyBodyPlan(StrictModule):
         maximum_nonzero_routes: int = 10_000_000,
         maximum_table_bytes: int = 64 * 1024 * 1024,
         tolerance: float = 1e-12,
-    ):
+    ) -> None:
         flux = int(twice_monopole_flux)
         particles = int(particle_count)
         projection = None if twice_projection is None else int(twice_projection)
-        statistics_ = str(statistics)
         potentials = tuple(
             sorted((int(spin), float(value)) for spin, value in pseudopotentials.items())
         )
@@ -195,10 +196,11 @@ class FuzzySphereManyBodyPlan(StrictModule):
         maximum_routes = int(maximum_nonzero_routes)
         maximum_table = int(maximum_table_bytes)
         tolerance_ = float(tolerance)
-        if flux < 1 or particles < 2 or statistics_ not in ("boson", "fermion"):
+        if flux < 1 or particles < 2:
             raise ValueError(
                 "Fuzzy many-body flux, particles, or statistics are invalid."
             )
+        statistics_ = parse(statistics, FuzzyManyBodyStatistics, "statistics")
         if statistics_ == "fermion" and particles > flux + 1:
             raise ValueError("Fermion particle count exceeds the orbital count.")
         if projection is not None and (
@@ -245,7 +247,7 @@ class FuzzySphereManyBodyPlan(StrictModule):
         self.twice_monopole_flux = flux
         self.particle_count = particles
         self.twice_projection = projection
-        self.statistics = statistics_  # type: ignore[assignment]
+        self.statistics = statistics_
         self.pseudopotentials = potentials
         self.three_body_terms = terms
         self.maximum_basis_dimension = maximum_basis
@@ -284,7 +286,7 @@ class _FuzzyManyBodyLinearOperator(AbstractLinearOperator):
         /,
         *,
         self_adjoint: bool,
-    ):
+    ) -> None:
         rows_ = jnp.asarray(rows, dtype=jnp.int32)
         columns_ = jnp.asarray(columns, dtype=jnp.int32)
         values_ = jnp.asarray(values, dtype=jnp.complex128)

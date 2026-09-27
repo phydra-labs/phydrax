@@ -15,7 +15,7 @@ from phydrax.stochastic._point_process import (
 )
 
 
-def test_univariate_hawkes_likelihood_matches_compensator_oracle():
+def test_univariate_hawkes_likelihood_matches_compensator_oracle() -> None:
     process = ExponentialHawkesProcess(
         jnp.asarray([0.5]), jnp.asarray([[0.2]]), jnp.asarray([[1.0]])
     )
@@ -39,7 +39,7 @@ def test_univariate_hawkes_likelihood_matches_compensator_oracle():
     assert jnp.isclose(result.log_likelihood, expected)
 
 
-def test_simultaneous_tie_policy_does_not_create_artificial_excitation():
+def test_simultaneous_tie_policy_does_not_create_artificial_excitation() -> None:
     process = ExponentialHawkesProcess(
         jnp.asarray([0.4]), jnp.asarray([[0.3]]), jnp.asarray([[1.2]])
     )
@@ -66,7 +66,7 @@ def test_simultaneous_tie_policy_does_not_create_artificial_excitation():
     assert simultaneous_result.tied_event_count == 1
 
 
-def test_hawkes_stability_evidence_and_seeded_prefix_are_explicit():
+def test_hawkes_stability_evidence_and_seeded_prefix_are_explicit() -> None:
     unstable = ExponentialHawkesProcess(
         jnp.asarray([0.2]), jnp.asarray([[2.0]]), jnp.asarray([[1.0]])
     )
@@ -118,7 +118,7 @@ def test_hawkes_stability_evidence_and_seeded_prefix_are_explicit():
     assert not exhausted.successful
 
 
-def test_rmt_cleaning_is_psd_trace_preserving_and_diagnosed():
+def test_rmt_cleaning_is_psd_trace_preserving_and_diagnosed() -> None:
     covariance = jnp.diag(jnp.asarray([0.1, 0.5, 1.0, 10.0]))
 
     diagnostics = marchenko_pastur_diagnostics(covariance, 100)

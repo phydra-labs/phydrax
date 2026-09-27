@@ -3,14 +3,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from math import isfinite
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -32,7 +35,7 @@ from ._models import (
 )
 
 
-def _identifier(value, name):
+def _identifier(value: object, name: str) -> str:
     if not isinstance(value, str) or not value or value.strip() != value:
         raise ValueError(f"{name} must be a nonempty trimmed identifier.")
     return value
@@ -48,16 +51,16 @@ class ExperimentConditions(StrictModule):
 
     def __init__(
         self,
-        temperature,
-        denaturant,
+        temperature: npt.ArrayLike,
+        denaturant: npt.ArrayLike,
         /,
         *,
-        convention=ThermodynamicConvention(),
-        temperature_unit=KELVIN,
-        denaturant_unit=None,
-        concentration=None,
-        concentration_unit=None,
-    ):
+        convention: ThermodynamicConvention = ThermodynamicConvention(),
+        temperature_unit: UnitDefinition = KELVIN,
+        denaturant_unit: UnitDefinition | None = None,
+        concentration: npt.ArrayLike | None = None,
+        concentration_unit: UnitDefinition | None = None,
+    ) -> None:
         t = np.asarray(temperature, dtype=np.float64) * float(
             conversion_factor(temperature_unit, KELVIN)
         )
@@ -112,7 +115,7 @@ class ExperimentParameter:
     scale: float
     free: bool = True
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _identifier(self.name, "Parameter name")
         if not isinstance(self.unit, UnitDefinition):
             raise TypeError("Parameter unit must be UnitDefinition.")
@@ -132,7 +135,7 @@ class NamedParameterMap(StrictModule):
     free_names: tuple[str, ...] = eqx.field(static=True)
     units: tuple[UnitDefinition, ...] = eqx.field(static=True)
 
-    def __init__(self, parameters):
+    def __init__(self, parameters: Iterable[ExperimentParameter]) -> None:
         parameters = tuple(parameters)
         if not parameters or any(
             not isinstance(p, ExperimentParameter) for p in parameters
@@ -149,13 +152,13 @@ class NamedParameterMap(StrictModule):
         self.names, self.units = names, tuple(p.unit for p in parameters)
         self.free_names = tuple(p.name for p in parameters if p.free)
 
-    def decode(self, coordinates):
+    def decode(self, coordinates: ArrayLike) -> Array:
         z = jnp.asarray(coordinates)
         if z.shape != (len(self.free_names),):
             raise ValueError("Fit coordinate vector must match the free parameter map.")
         return self.initial.at[self.free_indices].add(self.scale[self.free_indices] * z)
 
-    def named_values(self, coordinates):
+    def named_values(self, coordinates: ArrayLike) -> dict[str, Array]:
         values = self.decode(coordinates)
         return dict(zip(self.names, values, strict=True))
 
@@ -163,7 +166,11 @@ class NamedParameterMap(StrictModule):
 _BASELINE_TERMS = ("intercept", "temperature", "denaturant", "temperature_denaturant")
 
 
-def _baseline_units(signal_unit, convention, terms):
+def _baseline_units(
+    signal_unit: UnitDefinition,
+    convention: ThermodynamicConvention,
+    terms: tuple[str, ...],
+) -> tuple[UnitDefinition, ...]:
     choices = (
         signal_unit,
         derived_unit("signal/K", ((signal_unit, 1), (KELVIN, -1))),
@@ -207,7 +214,7 @@ class FluorescenceExperiment:
     bindings: Mapping[str, str] | None = None
     commercial_use: bool = False
 
-    def parameter_slots(self):
+    def parameter_slots(self) -> tuple[tuple[str, UnitDefinition], ...]:
         groups = tuple(dict.fromkeys(self.groups))
         units = _baseline_units(
             self.signal_unit, self.model.convention, self.baseline_terms
@@ -244,7 +251,7 @@ class KineticRateExperiment:
     bindings: Mapping[str, str] | None = None
     commercial_use: bool = False
 
-    def parameter_slots(self):
+    def parameter_slots(self) -> tuple[tuple[str, UnitDefinition], ...]:
         return self.model.parameter_slots()
 
 
@@ -270,20 +277,28 @@ class PreparedProteinObservation(StrictModule):
     group_names: tuple[str, ...] = eqx.field(static=True)
     baseline_terms: tuple[str, ...] = eqx.field(static=True)
 
-    def _predict(self, conditions, group_indices, baseline_features, physical_parameters):
+    def _predict(
+        self,
+        conditions: ExperimentConditions,
+        group_indices: Array,
+        baseline_features: Array,
+        physical_parameters: Array,
+    ) -> Array:
         p = physical_parameters[self.parameter_indices] * self.parameter_factors
         t, d, c = conditions.temperature, conditions.denaturant, conditions.concentration
-        if self.kinetic:
-            return self.model.predict_log_rate(p, t, d)
+        model = self.model
+        # Kinetic observations hold exactly the kinetic model family.
+        if isinstance(model, (ChevronKinetics, ParallelPathKinetics)):
+            return model.predict_log_rate(p, t, d)
         n = self.model_parameter_count
-        populations = self.model.populations(p[:n], t, d, c)
+        populations = model.populations(p[:n], t, d, c)
         baselines = p[n:].reshape(
-            (self.group_count, len(self.model.state_names), baseline_features.shape[1])
+            (self.group_count, len(model.state_names), baseline_features.shape[1])
         )
         state_signal = contract("nst,nt->ns", baselines[group_indices], baseline_features)
         return jnp.sum(populations * state_signal, axis=-1)
 
-    def predict(self, physical_parameters):
+    def predict(self, physical_parameters: Array) -> Array:
         return self._predict(
             self.conditions,
             self.group_indices,
@@ -291,7 +306,13 @@ class PreparedProteinObservation(StrictModule):
             physical_parameters,
         )
 
-    def prepare_prediction(self, conditions, /, *, groups=None):
+    def prepare_prediction(
+        self,
+        conditions: ExperimentConditions,
+        /,
+        *,
+        groups: Sequence[str] | None = None,
+    ) -> Callable[[Array], Array]:
         """Prepare a JIT/grad-safe callable on new conditions, without fake data.
 
         The callable consumes the joint map's physical parameter vector. New
@@ -343,13 +364,13 @@ class PreparedProteinObservation(StrictModule):
             )
         return eqx.Partial(self._predict, conditions, indices, features)
 
-    def residual(self, physical_parameters):
+    def residual(self, physical_parameters: Array) -> Array:
         residual = self.predict(physical_parameters)[self.active_indices] - self.observed
         if self.covariance is not None:
             return self.covariance.whiten(residual)
         return residual / self.standard_errors
 
-    def log_likelihood(self, physical_parameters):
+    def log_likelihood(self, physical_parameters: Array) -> Array:
         residual = self.residual(physical_parameters)
         logdet = (
             self.covariance.logdet_covariance
@@ -364,7 +385,10 @@ class PreparedProteinObservation(StrictModule):
         return jnp.where(jnp.isfinite(logp), logp, -jnp.inf)
 
 
-def _prepare_observation(plan, parameters):
+def _prepare_observation(
+    plan: FluorescenceExperiment | KineticRateExperiment,
+    parameters: NamedParameterMap,
+) -> PreparedProteinObservation:
     _identifier(plan.name, "Experiment name")
     _identifier(plan.source_id, "Source identity")
     if plan.source_kind not in ("synthetic", "experimental"):
@@ -538,30 +562,35 @@ class PreparedProteinExperiments(StrictModule):
     parameters: NamedParameterMap
     problem_id: str = eqx.field(static=True)
 
-    def predict(self, coordinates):
+    def predict(self, coordinates: ArrayLike) -> tuple[Array, ...]:
         values = self.parameters.decode(coordinates)
         return tuple(observation.predict(values) for observation in self.observations)
 
-    def residual(self, coordinates):
+    def residual(self, coordinates: ArrayLike) -> Array:
         values = self.parameters.decode(coordinates)
         return jnp.concatenate(
             tuple(observation.residual(values) for observation in self.observations)
         )
 
-    def log_likelihood(self, coordinates):
+    def log_likelihood(self, coordinates: ArrayLike) -> Array:
         values = self.parameters.decode(coordinates)
-        return sum(
-            observation.log_likelihood(values) for observation in self.observations
+        # Preparation rejects an empty observation tuple, so the sum is an Array.
+        return cast(
+            Array,
+            sum(observation.log_likelihood(values) for observation in self.observations),
         )
 
     @property
-    def initial_coordinates(self):
+    def initial_coordinates(self) -> Array:
         return jnp.zeros(
             (len(self.parameters.free_names),), dtype=self.parameters.initial.dtype
         )
 
 
-def prepare_protein_experiments(experiments, parameters):
+def prepare_protein_experiments(
+    experiments: Iterable[FluorescenceExperiment | KineticRateExperiment],
+    parameters: Iterable[ExperimentParameter],
+) -> PreparedProteinExperiments:
     """Host preparation for the finite named equilibrium/kinetic model family."""
     plans = tuple(experiments)
     if not plans or any(

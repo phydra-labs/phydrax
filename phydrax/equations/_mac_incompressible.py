@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import Any, Protocol, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._geometry_precision import GeometryPrecisionPolicy
@@ -22,6 +23,7 @@ from ..discretization import (
 )
 from ..discretization.finite_volume import (
     FaceVelocity,
+    MACVariationalViscosityResult,
     PreparedMACMomentumOperators,
 )
 from ..discretization.finite_volume._mac_boundary import MACBoundaryStageData
@@ -30,16 +32,13 @@ from ._dynamic_les import (
     NonnegativeBackscatterClip,
 )
 from ._incompressible import IncompressibleFlowProblem
+from ._les_closures import AlgebraicLESResult
 from ._mac_dynamic_les import (
     MACDynamicLESPlan,
     MACDynamicLESStage,
     PreparedMACDynamicLES,
 )
-from ._mac_les import (
-    MACAlgebraicLESPlan,
-    MACLESStageResult,
-    PreparedMACAlgebraicLES,
-)
+from ._mac_les import MACAlgebraicLESPlan
 
 
 if TYPE_CHECKING:
@@ -47,6 +46,43 @@ if TYPE_CHECKING:
         MACPressureProjectionPlan,
         MACRateProjectionResult,
     )
+
+
+class MACAlgebraicLESStage(Protocol):
+    """Pre-projection algebraic LES stage evidence consumed by MAC dynamics."""
+
+    @property
+    def viscosity_result(self) -> MACVariationalViscosityResult: ...
+
+    @property
+    def boundary_power(self) -> Array: ...
+
+    @property
+    def model_result(self) -> AlgebraicLESResult: ...
+
+    @property
+    def physical_rate(self) -> FaceVelocity: ...
+
+    @property
+    def finite(self) -> Array: ...
+
+    @property
+    def successful(self) -> Array: ...
+
+
+class MACAlgebraicLESAction(Protocol):
+    """Prepared current-state algebraic LES action for MAC dynamics."""
+
+    @property
+    def prepared_id(self) -> str: ...
+
+    def evaluate(
+        self, velocity: FaceVelocity, boundary_stage: MACBoundaryStageData, /
+    ) -> MACAlgebraicLESStage: ...
+
+    def step_restriction(
+        self, velocity: FaceVelocity, boundary_stage: MACBoundaryStageData, /
+    ) -> tuple[Array, bool]: ...
 
 
 class MACLESStepRestriction(StrictModule):
@@ -67,7 +103,7 @@ class MACIncompressibleRateComponents(StrictModule):
     sgs: FaceVelocity
     forcing: FaceVelocity
     unconstrained: FaceVelocity
-    les_stage: MACLESStageResult | None
+    les_stage: MACAlgebraicLESStage | None
     dynamic_les_stage: MACDynamicLESStage | None
 
 
@@ -106,7 +142,7 @@ class MACIncompressibleDiagnostics(StrictModule):
     dynamic_backscatter_limit_count: Array
     dynamic_accepted_update_count: Array
     dynamic_rejected_update_count: Array
-    dynamic_les_available: Array
+    dynamic_les_available: bool
     dynamic_evidence_finite: Array
     dynamic_les_id: str | None = eqx.field(static=True)
     projection_id: str = eqx.field(static=True)
@@ -118,7 +154,7 @@ class CompiledMACIncompressibleDynamics(StrictModule):
     problem: IncompressibleFlowProblem
     momentum: PreparedMACMomentumOperators
     projection: MACPressureProjectionPlan
-    algebraic_les: PreparedMACAlgebraicLES | None
+    algebraic_les: MACAlgebraicLESAction | None
     dynamic_les: PreparedMACDynamicLES | None
     discretization_bundle: DiscretizationBundle
     compilation_id: str = eqx.field(static=True)
@@ -130,12 +166,12 @@ class CompiledMACIncompressibleDynamics(StrictModule):
         problem: IncompressibleFlowProblem,
         momentum: PreparedMACMomentumOperators,
         projection: MACPressureProjectionPlan,
-        algebraic_les: PreparedMACAlgebraicLES | None,
+        algebraic_les: MACAlgebraicLESAction | None,
         dynamic_les: PreparedMACDynamicLES | None,
         /,
         *,
         compilation_id: str,
-    ):
+    ) -> None:
         discretization = momentum.operators.discretization
         residual_key = DiscretizationKey(
             "mac_incompressible_form",
@@ -151,14 +187,14 @@ class CompiledMACIncompressibleDynamics(StrictModule):
             )
         ]
         dependencies = [discretization.key.key_id]
-        if algebraic_les is not None or dynamic_les is not None:
+        les_action = dynamic_les if dynamic_les is not None else algebraic_les
+        if les_action is not None:
             dynamic = dynamic_les is not None
             les_key = DiscretizationKey(
                 "mac_dynamic_les" if dynamic else "mac_algebraic_les",
                 DiscretizationRole.AUXILIARY,
                 domain_labels=discretization.key.domain_labels,
             )
-            les_action = dynamic_les if dynamic else algebraic_les
             records.append(
                 DiscretizationRecord(
                     les_key,

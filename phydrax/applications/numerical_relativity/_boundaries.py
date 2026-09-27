@@ -11,7 +11,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -136,7 +137,7 @@ class AnalyticBoundary(AbstractZ4cBoundary):
         /,
         *,
         width: int = 3,
-    ):
+    ) -> None:
         if not callable(solution):
             raise TypeError("solution must be callable.")
         identifier = str(solution_id)
@@ -229,7 +230,7 @@ class CharacteristicRadiativeBoundary(AbstractZ4cBoundary):
         center: tuple[float, float, float] = (0.0, 0.0, 0.0),
         speed: float = 1.0,
         width: int = 1,
-    ):
+    ) -> None:
         values = np.asarray(asymptotic_values)
         center_ = tuple(float(value) for value in center)
         speed_ = float(speed)

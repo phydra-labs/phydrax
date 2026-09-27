@@ -2,9 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
 from dataclasses import asdict, replace
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -32,7 +34,9 @@ from benchmarks.advanced_solvers.nonlinear_peer_runners import (
 )
 
 
-def _observation(case_id, implementation, certified, work, *, backend=True):
+def _observation(
+    case_id: Any, implementation: Any, certified: Any, work: Any, *, backend: Any = True
+) -> Any:
     initial = stable_fingerprint({"case": case_id, "initial": [0.0]})
     result = stable_fingerprint({"case": case_id, "result": [work]})
     return CampaignObservation(
@@ -67,7 +71,9 @@ def _observation(case_id, implementation, certified, work, *, backend=True):
     )
 
 
-def test_peer_manifest_freezes_revisions_and_runtime_identity_without_schema_metadata():
+def test_peer_manifest_freezes_revisions_and_runtime_identity_without_schema_metadata() -> (
+    None
+):
     manifest_path = (
         Path(__file__).parents[2]
         / "benchmarks"
@@ -107,7 +113,7 @@ def test_peer_manifest_freezes_revisions_and_runtime_identity_without_schema_met
     }
 
 
-def test_family_profile_penalizes_failed_certificates_without_mixing_work_units():
+def test_family_profile_penalizes_failed_certificates_without_mixing_work_units() -> None:
     observations = [
         _observation(case_id, implementation, certified, work)
         for case_id, implementation, certified, work in (
@@ -132,7 +138,7 @@ def test_family_profile_penalizes_failed_certificates_without_mixing_work_units(
     assert fast_tau2.fraction == 0.5
 
 
-def test_backend_claims_and_independent_certificates_remain_separate():
+def test_backend_claims_and_independent_certificates_remain_separate() -> None:
     false_success = _observation("a", "backend", False, 1.0, backend=True)
     false_failure = _observation("b", "backend", True, 1.0, backend=False)
     audit = superiority_audit([false_success, false_failure])
@@ -159,7 +165,7 @@ def test_backend_claims_and_independent_certificates_remain_separate():
     ]
 
 
-def test_campaign_output_is_flat_json_without_schema_records(tmp_path):
+def test_campaign_output_is_flat_json_without_schema_records(tmp_path: Any) -> None:
     output = tmp_path / "campaign.json"
     assert (
         main(
@@ -190,7 +196,7 @@ def test_campaign_output_is_flat_json_without_schema_records(tmp_path):
     assert "Infinity" not in output.read_text()
 
 
-def test_runner_messages_reject_revision_and_initial_fingerprint_mismatches():
+def test_runner_messages_reject_revision_and_initial_fingerprint_mismatches() -> None:
     spec = PeerSpec(
         "peer",
         "a" * 40,
@@ -226,9 +232,10 @@ def test_runner_messages_reject_revision_and_initial_fingerprint_mismatches():
         validate_peer_response(request, wrong_revision)
 
 
-def test_unavailable_observation_serializes_with_nulls():
+def test_unavailable_observation_serializes_with_nulls() -> None:
     available = _observation("case", "implementation", True, 1.0)
     unavailable = CampaignObservation(
+        # ty: ignore[invalid-argument-type]
         **{
             **asdict(available),
             "available": False,
@@ -258,13 +265,13 @@ def test_unavailable_observation_serializes_with_nulls():
     assert "Infinity" not in payload
 
 
-def test_global_rastrigin_uses_dimension_scaled_known_zero_target():
+def test_global_rastrigin_uses_dimension_scaled_known_zero_target() -> None:
     rastrigin = _global_cases()["rastrigin"]
     assert float(rastrigin(jnp.zeros(4))) == 0.0
     assert float(rastrigin(jnp.ones(4))) > 0.0
 
 
-def test_lagged_root_campaign_uses_declared_quasilinear_models():
+def test_lagged_root_campaign_uses_declared_quasilinear_models() -> None:
     case = _root_cases()["quasilinear-diffusion"]
     initial = jnp.asarray(case.initial)
     previous = jnp.asarray(case.args)
@@ -281,7 +288,7 @@ def test_lagged_root_campaign_uses_declared_quasilinear_models():
     assert observation.work_counts["linear_iterations"] > 0
 
 
-def test_lagged_root_campaign_retains_unsupported_case_rows():
+def test_lagged_root_campaign_retains_unsupported_case_rows() -> None:
     observation = _run_root("brown-almost-linear", "phydrax-lagged")
 
     assert not observation.available
@@ -289,7 +296,7 @@ def test_lagged_root_campaign_retains_unsupported_case_rows():
     assert observation.certified is None
 
 
-def test_root_descriptor_fingerprint_covers_case_content():
+def test_root_descriptor_fingerprint_covers_case_content() -> None:
     cases = _root_cases()
     domain = cases["domain-restricted"]
     tiny = cases["tiny-column-underflow"]
@@ -352,7 +359,7 @@ def test_root_descriptor_fingerprint_covers_case_content():
     json.dumps(payload, allow_nan=False)
 
 
-def test_native_and_external_root_rows_share_the_physical_certificate():
+def test_native_and_external_root_rows_share_the_physical_certificate() -> None:
     solution = np.asarray([0.0, 0.0])
     native = _root_raw_observation(
         "singular-start-rational",
@@ -385,7 +392,7 @@ def test_native_and_external_root_rows_share_the_physical_certificate():
     assert native.certificate_components == external.certificate_components
 
 
-def test_physical_root_certificate_rejects_initial_norm_false_positive():
+def test_physical_root_certificate_rejects_initial_norm_false_positive() -> None:
     case = _root_cases()["diagonal-polynomial"]
     parameters = np.asarray(case.args)
     candidate = np.sqrt(parameters)
@@ -400,18 +407,21 @@ def test_physical_root_certificate_rejects_initial_norm_false_positive():
     )
 
     assert old_normalized_value <= case.termination.absolute_residual
+    # ty: ignore[unsupported-operator]
     assert physical_norm > components["physical_residual_threshold"]
     assert certified is False
 
 
-def test_ineligible_root_row_skips_without_residual_or_solver_work(monkeypatch):
+def test_ineligible_root_row_skips_without_residual_or_solver_work(
+    monkeypatch: Any,
+) -> None:
     cases = _root_cases()
     tiny = cases["tiny-column-underflow"]
     assert [
         implementation for implementation, eligible, _, _ in tiny.eligibility if eligible
     ] == ["phydrax-scaled-newton"]
 
-    def unexpected_execution(*args, **kwargs):
+    def unexpected_execution(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("ineligible case executed")
 
     blocked = replace(
@@ -442,7 +452,7 @@ def test_ineligible_root_row_skips_without_residual_or_solver_work(monkeypatch):
     assert observation.steady_seconds == ()
 
 
-def test_scaled_newton_counts_scale_preparation_as_work():
+def test_scaled_newton_counts_scale_preparation_as_work() -> None:
     observation = _run_root("tiny-column-underflow", "phydrax-scaled-newton")
 
     assert observation.available
@@ -452,7 +462,7 @@ def test_scaled_newton_counts_scale_preparation_as_work():
     assert observation.work > 1.0
 
 
-def test_tiny_column_wrong_root_fails_known_root_gate():
+def test_tiny_column_wrong_root_fails_known_root_gate() -> None:
     case = _root_cases()["tiny-column-underflow"]
     certified, physical_norm, components = _independent_root_certificate(
         case,

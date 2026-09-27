@@ -2,14 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from math import prod
+from typing import Any
 
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _finite_volume(*, periodic, count=4):
+def _finite_volume(*, periodic: Any, count: Any = 4) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(count, periodic=periodic)
@@ -20,7 +22,7 @@ def _finite_volume(*, periodic, count=4):
     return phx.discretization.FiniteVolumePlan(grid).prepare()
 
 
-def test_mac_marker_transfer_is_dual_measure_adjoint():
+def test_mac_marker_transfer_is_dual_measure_adjoint() -> None:
     finite_volume = _finite_volume(periodic=True)
     operators = phx.discretization.MACOperatorPlan(finite_volume).prepare()
     marker_position = jnp.asarray([[0.25, 0.25], [0.75, 0.75]])
@@ -44,7 +46,7 @@ def test_mac_marker_transfer_is_dual_measure_adjoint():
     assert jnp.max(jnp.abs(diagnostics.torque_residual)) < 1e-10
 
 
-def test_single_device_distributed_projection_preserves_global_contract():
+def test_single_device_distributed_projection_preserves_global_contract() -> None:
     finite_volume = _finite_volume(periodic=True)
     operators = phx.discretization.MACOperatorPlan(finite_volume).prepare()
     momentum = phx.discretization.MACMomentumPlan(operators).prepare()
@@ -66,7 +68,7 @@ def test_single_device_distributed_projection_preserves_global_contract():
     assert projection.gauge_defect < 1e-8
 
 
-def test_identity_mapped_and_ale_geometries_preserve_free_stream():
+def test_identity_mapped_and_ale_geometries_preserve_free_stream() -> None:
     finite_volume = _finite_volume(periodic=False)
     mapped = phx.discretization.MappedMACGeometryPlan(
         finite_volume, lambda points: points, mapping_id="identity-map"
@@ -88,7 +90,7 @@ def test_identity_mapped_and_ale_geometries_preserve_free_stream():
     assert jnp.linalg.norm(result.divergence_after) < 1e-8
 
 
-def test_identity_remesh_epoch_preserves_cells_flux_and_momentum():
+def test_identity_remesh_epoch_preserves_cells_flux_and_momentum() -> None:
     finite_volume = _finite_volume(periodic=False)
     mapped = phx.discretization.MappedMACGeometryPlan(
         finite_volume, lambda points: points, mapping_id="identity-remesh-map"

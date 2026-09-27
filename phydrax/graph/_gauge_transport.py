@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -59,7 +60,7 @@ class GaugeCovariantShiftPlan(StrictModule, NonTrainableState):
         forward_orientations: ArrayLike,
         boundary_phases: LatticeBoundaryPhasePlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(link_space, MatrixGaugeLinkSpace):
             raise TypeError("link_space must be MatrixGaugeLinkSpace.")
         if not isinstance(representation, AbstractGaugeRepresentation):
@@ -250,7 +251,7 @@ class GaugeStaplePlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_staples_per_link: int = 64,
-    ):
+    ) -> None:
         if not isinstance(link_space, MatrixGaugeLinkSpace):
             raise TypeError("link_space must be MatrixGaugeLinkSpace.")
         if not isinstance(link_space.group, (UnitaryGroup, SpecialUnitaryGroup)):

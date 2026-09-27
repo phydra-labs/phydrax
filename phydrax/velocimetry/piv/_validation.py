@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..imaging import DenseDisplacementField2D
 from ._types import PIVQuality2D, ValidationEvidence2D

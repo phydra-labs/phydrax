@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -19,7 +20,7 @@ from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSys
 from ._beam import AcceleratorBunch, AcceleratorConvention
 
 
-def _symplectic_form(dtype):
+def _symplectic_form(dtype: DTypeLike) -> Array:
     form = jnp.zeros((6, 6), dtype=dtype)
     for index in (0, 2, 4):
         form = form.at[index, index + 1].set(1.0)
@@ -45,7 +46,7 @@ class SymplecticMapPlan(StrictModule, NonTrainableState):
         *,
         element_id: str,
         maximum_symplectic_residual: float = 1.0e-10,
-    ):
+    ) -> None:
         matrix_ = np.asarray(matrix, dtype=np.float64)
         offset_ = np.asarray(offset, dtype=np.float64)
         maximum = float(maximum_symplectic_residual)
@@ -102,7 +103,7 @@ class RingTrackingPlan(StrictModule, NonTrainableState):
         *,
         horizontal_aperture: float,
         vertical_aperture: float,
-    ):
+    ) -> None:
         if not isinstance(one_turn, SymplecticMapPlan):
             raise TypeError("one_turn must be SymplecticMapPlan.")
         turns = int(turn_count)
@@ -145,7 +146,9 @@ def track_ring(plan: RingTrackingPlan, bunch: AcceleratorBunch, /) -> RingTracki
     if plan.one_turn.convention.convention_id != bunch.convention.convention_id:
         raise ValueError("Ring map and bunch coordinate conventions differ.")
 
-    def turn(carry, turn_index):
+    def turn(
+        carry: tuple[Array, Array, Array], turn_index: Array
+    ) -> tuple[tuple[Array, Array, Array], tuple[Array, Array]]:
         coordinates, active, loss_turn = carry
         candidate = coordinates @ plan.one_turn.matrix.T + plan.one_turn.offset
         inside = (jnp.abs(candidate[:, 0]) <= plan.horizontal_aperture) & (
@@ -226,7 +229,7 @@ class LongitudinalWakePlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, zeta_edges: ArrayLike, wake_values: ArrayLike, /, *, kick_scale: float
-    ):
+    ) -> None:
         edges = np.asarray(zeta_edges, dtype=np.float64)
         wake = np.asarray(wake_values, dtype=np.float64)
         scale = float(kick_scale)

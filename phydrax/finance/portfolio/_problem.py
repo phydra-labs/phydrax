@@ -9,7 +9,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..core import FinanceEvidenceBinding, PhysicalLaw
@@ -66,7 +67,7 @@ class ForecastLaw(StrictModule):
         evidence: FinanceEvidenceBinding,
         scenario_returns: ArrayLike | None = None,
         scenario_probabilities: ArrayLike | None = None,
-    ):
+    ) -> None:
         assets = tuple(str(asset) for asset in asset_ids)
         if (
             not assets
@@ -101,7 +102,7 @@ class ForecastLaw(StrictModule):
             )
         scenarios = None
         probabilities = None
-        if supplied_scenarios:
+        if scenario_returns is not None and scenario_probabilities is not None:
             scenarios = jnp.asarray(scenario_returns, dtype=expected.dtype)
             if scenarios.ndim not in (2, 3) or scenarios.shape[-1] != count:
                 raise ValueError(
@@ -166,7 +167,7 @@ class PortfolioScaling(StrictModule):
         *,
         objective_scale: float = 1.0,
         constraint_scale: float = 1.0,
-    ):
+    ) -> None:
         scale = _real_array(weight_scale, "weight_scale", ndim=1)
         if bool(np.any(np.asarray(scale) <= 0.0)):
             raise ValueError("weight_scale must be strictly positive.")
@@ -203,7 +204,7 @@ class PortfolioProblem(StrictModule):
         decision_time_ns: int,
         scaling: PortfolioScaling | None = None,
         current_weights: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(forecast, ForecastLaw):
             raise TypeError("forecast must be a ForecastLaw.")
         objective_types = (
@@ -286,14 +287,13 @@ class PortfolioProblem(StrictModule):
             SpectralRiskObjective,
             DrawdownRiskObjective,
         )
-        if (
-            isinstance(objective, scenario_objectives)
-            and forecast.scenario_returns is None
-        ):
+        scenario_returns = forecast.scenario_returns
+        if isinstance(objective, scenario_objectives) and scenario_returns is None:
             raise ValueError("The selected objective requires finite scenarios.")
         if (
             isinstance(objective, DrawdownRiskObjective)
-            and forecast.scenario_returns.ndim != 3
+            and scenario_returns is not None
+            and scenario_returns.ndim != 3
         ):
             raise ValueError("Drawdown risk requires scenario paths with a stage axis.")
         if isinstance(

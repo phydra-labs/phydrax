@@ -6,20 +6,22 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
-DatasetSplit = Literal["train", "validation", "test"]
-PartitionLevel = Literal["case", "trajectory", "realization", "time_block"]
+DatasetSplit: TypeAlias = Literal["train", "validation", "test"]
+PartitionLevel: TypeAlias = Literal["case", "trajectory", "realization", "time_block"]
 
 
 @runtime_checkable
@@ -90,7 +92,7 @@ class DatasetExtent(StrictModule, NonTrainableState):
         realization_id: str,
         time_block_id: str,
         sample_count: int,
-    ):
+    ) -> None:
         identifiers = tuple(
             str(value).strip()
             for value in (case_id, trajectory_id, realization_id, time_block_id)
@@ -137,7 +139,7 @@ class ClosureDatasetChunk(StrictModule, NonTrainableState):
         byte_size: int,
         sha256: str,
         encoding: str = "identity",
-    ):
+    ) -> None:
         extent = str(extent_id).strip()
         logical = str(logical_name).strip()
         digest = str(sha256).strip().lower()
@@ -229,7 +231,7 @@ class ChunkedClosureDatasetManifest(StrictModule, NonTrainableState):
         analysis_dag_id: str,
         extents: tuple[DatasetExtent, ...],
         chunks: tuple[ClosureDatasetChunk, ...],
-    ):
+    ) -> None:
         dataset = str(dataset_id).strip()
         schema = str(schema_id).strip()
         dag = str(analysis_dag_id).strip()
@@ -406,7 +408,7 @@ class ClosureSampleKey(StrictModule, NonTrainableState):
         realization_id: str,
         time_block_id: str,
         time_index: int,
-    ):
+    ) -> None:
         identifiers = tuple(
             str(value).strip()
             for value in (case_id, trajectory_id, realization_id, time_block_id)
@@ -449,7 +451,9 @@ class ClosureSample(StrictModule, NonTrainableState):
     schema_id: str = eqx.field(static=True)
     sample_id: str = eqx.field(static=True)
 
-    def __init__(self, values: ArrayLike, key: ClosureSampleKey, /, *, schema_id: str):
+    def __init__(
+        self, values: ArrayLike, key: ClosureSampleKey, /, *, schema_id: str
+    ) -> None:
         if not isinstance(key, ClosureSampleKey):
             raise TypeError("key must be a ClosureSampleKey.")
         array = jnp.asarray(values)
@@ -477,17 +481,13 @@ class PartitionAssignment(StrictModule, NonTrainableState):
 
     def __init__(
         self, *, sample_id: str, group_key: tuple[str, ...], split: DatasetSplit
-    ):
+    ) -> None:
         sample = str(sample_id).strip()
         group = tuple(str(value).strip() for value in group_key)
         split_ = str(split).strip()
-        if (
-            not sample
-            or not group
-            or any(not value for value in group)
-            or split_ not in ("train", "validation", "test")
-        ):
+        if not sample or not group or any(not value for value in group):
             raise ValueError("Partition assignment is invalid.")
+        split_ = parse(split_, DatasetSplit, "split")
         self.sample_id = sample
         self.group_key = group
         self.split = split_
@@ -518,15 +518,15 @@ class LeakageSafePartitionPlan(StrictModule, NonTrainableState):
         validation_fraction: float,
         test_fraction: float,
         salt: str,
-    ):
+    ) -> None:
         level_ = str(level).strip()
         fractions = tuple(
             float(value) for value in (train_fraction, validation_fraction, test_fraction)
         )
         salt_ = str(salt).strip()
+        level_ = parse(level_, PartitionLevel, "level")
         if (
-            level_ not in ("case", "trajectory", "realization", "time_block")
-            or any(not np.isfinite(value) or value < 0.0 for value in fractions)
+            any(not np.isfinite(value) or value < 0.0 for value in fractions)
             or not np.isclose(sum(fractions), 1.0, rtol=0.0, atol=1e-12)
             or fractions[0] <= 0.0
             or not salt_
@@ -583,7 +583,7 @@ class LeakageSafePartition(StrictModule, NonTrainableState):
         plan: LeakageSafePartitionPlan,
         assignments: tuple[PartitionAssignment, ...],
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, LeakageSafePartitionPlan):
             raise TypeError("plan must be a LeakageSafePartitionPlan.")
         values = tuple(assignments)
@@ -620,8 +620,7 @@ class LeakageSafePartition(StrictModule, NonTrainableState):
 
     def sample_ids(self, split: DatasetSplit, /) -> tuple[str, ...]:
         split_ = str(split).strip()
-        if split_ not in ("train", "validation", "test"):
-            raise ValueError("Unknown dataset split.")
+        split_ = parse(split_, DatasetSplit, "split")
         return tuple(
             value.sample_id for value in self.assignments if value.split == split_
         )
@@ -643,7 +642,7 @@ class NormalizerProvenance(StrictModule, NonTrainableState):
         training_sample_ids: tuple[str, ...],
         feature_name: str,
         schema_id: str,
-    ):
+    ) -> None:
         partition = str(partition_id).strip()
         assignments = tuple(str(value).strip() for value in training_assignment_ids)
         samples = tuple(str(value).strip() for value in training_sample_ids)
@@ -690,7 +689,7 @@ class TrainOnlyNormalizer(StrictModule, NonTrainableState):
         /,
         *,
         epsilon: float,
-    ):
+    ) -> None:
         if not isinstance(provenance, NormalizerProvenance):
             raise TypeError("provenance must be NormalizerProvenance.")
         mean_ = jnp.asarray(mean)

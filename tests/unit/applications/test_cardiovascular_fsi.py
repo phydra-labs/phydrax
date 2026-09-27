@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -32,7 +34,7 @@ from phydrax.solver._partitioned_coupling_runtime import advance_coupling_window
 from phydrax.solver._partitioned_coupling_types import CouplingWindow
 
 
-def _grid(count=8, *, periodic=True):
+def _grid(count: Any = 8, *, periodic: Any = True) -> Any:
     return phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(count, periodic=periodic)
@@ -42,17 +44,17 @@ def _grid(count=8, *, periodic=True):
     ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
 
 
-def _lattice(count=8):
+def _lattice(count: Any = 8) -> Any:
     return phx.discretization.LatticeBoltzmannPlan(
         _grid(count, periodic=True), phx.discretization.D2Q9()
     ).prepare()
 
 
-def _finite_volume(count=4):
+def _finite_volume(count: Any = 4) -> Any:
     return phx.discretization.FiniteVolumePlan(_grid(count, periodic=False)).prepare()
 
 
-def test_sparse_lbm_marker_transfer_preserves_transpose_force_torque_and_power():
+def test_sparse_lbm_marker_transfer_preserves_transpose_force_torque_and_power() -> None:
     lattice = _lattice()
     position = jnp.asarray([[0.31, 0.37], [0.68, 0.59], [0.2, 0.8]])
     transfer_plan = SparseMarkerTransferPlan(
@@ -91,7 +93,7 @@ def test_sparse_lbm_marker_transfer_preserves_transpose_force_torque_and_power()
     assert jnp.abs(diagnostics.interface_power_residual) < 1.0e-10
 
 
-def test_fixed_marker_routes_fail_closed_after_losing_prepared_coverage():
+def test_fixed_marker_routes_fail_closed_after_losing_prepared_coverage() -> None:
     lattice = _lattice()
     initial = jnp.asarray([[0.45, 0.45]])
     transfer = SparseMarkerTransferPlan(
@@ -105,7 +107,7 @@ def test_fixed_marker_routes_fail_closed_after_losing_prepared_coverage():
     assert relation.evidence.coverage_fraction[0] < transfer.plan.minimum_coverage
 
 
-def test_sparse_direct_forcing_couples_a_compliant_marker_without_dense_action():
+def test_sparse_direct_forcing_couples_a_compliant_marker_without_dense_action() -> None:
     lattice = _lattice()
     position = jnp.asarray([[0.44, 0.53]])
     transfer = SparseMarkerTransferPlan(
@@ -135,7 +137,7 @@ def test_sparse_direct_forcing_couples_a_compliant_marker_without_dense_action()
     assert result.force_density.shape == lattice.grid.shape + (2,)
 
 
-def test_lbm_participant_gates_actual_post_advance_no_slip():
+def test_lbm_participant_gates_actual_post_advance_no_slip() -> None:
     lattice = _lattice()
     position = jnp.asarray([[0.44, 0.53]])
     transfer = SparseMarkerTransferPlan(
@@ -149,7 +151,9 @@ def test_lbm_participant_gates_actual_post_advance_no_slip():
     velocity = jnp.zeros(lattice.grid.shape + (2,))
     density = jnp.ones(lattice.grid.shape)
 
-    def ignore_fluid_force(_window, state, _force_density, _args):
+    def ignore_fluid_force(
+        _window: Any, state: Any, _force_density: Any, _args: Any
+    ) -> Any:
         candidate_velocity, candidate_density = state
         return ImmersedLBMAdvanceResult(
             state,
@@ -187,7 +191,7 @@ def test_lbm_participant_gates_actual_post_advance_no_slip():
     assert post_lbm.maximum_velocity_residual > forcing.convergence_tolerance
 
 
-def test_partitioned_lbm_fem_builder_runs_added_mass_iteration():
+def test_partitioned_lbm_fem_builder_runs_added_mass_iteration() -> None:
     lattice = _lattice(count=6)
     position = jnp.asarray([[0.5, 0.5]])
     transfer = SparseMarkerTransferPlan(
@@ -201,10 +205,10 @@ def test_partitioned_lbm_fem_builder_runs_added_mass_iteration():
     grid_velocity = jnp.zeros(lattice.grid.shape + (2,))
     density = jnp.ones(lattice.grid.shape)
 
-    def fluid_fields(state, _args):
+    def fluid_fields(state: Any, _args: Any) -> Any:
         return state
 
-    def advance_fluid(window, state, force_density, _args):
+    def advance_fluid(window: Any, state: Any, force_density: Any, _args: Any) -> Any:
         velocity, rho = state
         candidate_velocity = velocity + window.size * force_density / rho[..., None]
         return ImmersedLBMAdvanceResult(
@@ -218,7 +222,7 @@ def test_partitioned_lbm_fem_builder_runs_added_mass_iteration():
             jnp.asarray(1, dtype=jnp.int32),
         )
 
-    def advance_solid(_window, _state, body_load, _args):
+    def advance_solid(_window: Any, _state: Any, body_load: Any, _args: Any) -> Any:
         candidate_velocity = 0.02 * body_load
         candidate = (position, candidate_velocity)
         return ImmersedFEMAdvanceResult(
@@ -270,7 +274,7 @@ def test_partitioned_lbm_fem_builder_runs_added_mass_iteration():
     assert result.accepted_state.window_index == 1
 
 
-def test_conforming_ale_qualifies_gcl_and_rolls_back_on_minimum_gap():
+def test_conforming_ale_qualifies_gcl_and_rolls_back_on_minimum_gap() -> None:
     finite_volume = _finite_volume()
     motion = phx.solver.MACALEGeometryPlan(
         finite_volume,
@@ -329,7 +333,7 @@ def test_conforming_ale_qualifies_gcl_and_rolls_back_on_minimum_gap():
     assert jnp.array_equal(rejected.accepted_state.pressure, state.pressure)
 
 
-def _contact_residual():
+def _contact_residual() -> Any:
     contact = phx.applications.contact
     collision = phx.discretization.contact
     query_space = phx.linalg.ArraySpace((1, 2), dtype=np.float64)
@@ -397,7 +401,7 @@ def _contact_residual():
     )
 
 
-def _cut_cell_route(maximum_leakage_proxy):
+def _cut_cell_route(maximum_leakage_proxy: Any) -> Any:
     finite_volume = _finite_volume()
     operators = phx.discretization.MACOperatorPlan(finite_volume).prepare()
     geometry = phx.discretization.MACDiffuseSDFGeometryPlan(
@@ -424,8 +428,13 @@ def _cut_cell_route(maximum_leakage_proxy):
 
 
 def _stationary_leaflet_step(
-    _start, _step, configuration, velocity, _contact_residual, _args
-):
+    _start: Any,
+    _step: Any,
+    configuration: Any,
+    velocity: Any,
+    _contact_residual: Any,
+    _args: Any,
+) -> Any:
     return LeafletStructuralAdvanceResult(
         configuration,
         velocity,
@@ -436,7 +445,7 @@ def _stationary_leaflet_step(
     )
 
 
-def test_cut_cell_leaflet_contact_reports_leakage_without_sealing_claim():
+def test_cut_cell_leaflet_contact_reports_leakage_without_sealing_claim() -> None:
     workflow = LeafletContactWorkflowPlan(
         _contact_residual(),
         _cut_cell_route(1.0),
@@ -458,7 +467,9 @@ def test_cut_cell_leaflet_contact_reports_leakage_without_sealing_claim():
     assert not result.evidence.fluid.refinement_required
 
 
-def test_leaflet_leakage_failure_rolls_back_structure_and_cut_cell_state_atomically():
+def test_leaflet_leakage_failure_rolls_back_structure_and_cut_cell_state_atomically() -> (
+    None
+):
     workflow = LeafletContactWorkflowPlan(
         _contact_residual(),
         _cut_cell_route(0.5),
@@ -475,15 +486,24 @@ def test_leaflet_leakage_failure_rolls_back_structure_and_cut_cell_state_atomica
     assert jnp.array_equal(result.accepted_state.configuration, state.configuration)
     assert jnp.array_equal(result.accepted_state.velocity, state.velocity)
     assert jnp.array_equal(
+        # ty: ignore[unresolved-attribute]
         result.accepted_state.fluid_state.geometry.cell_fluid_fraction,
+        # ty: ignore[unresolved-attribute]
         state.fluid_state.geometry.cell_fluid_fraction,
     )
 
 
-def test_leaflet_rejects_invalid_native_start_contact_even_if_candidate_is_valid():
+def test_leaflet_rejects_invalid_native_start_contact_even_if_candidate_is_valid() -> (
+    None
+):
     def move_into_contact_band(
-        _start, _step, configuration, velocity, _contact_residual, _args
-    ):
+        _start: Any,
+        _step: Any,
+        configuration: Any,
+        velocity: Any,
+        _contact_residual: Any,
+        _args: Any,
+    ) -> Any:
         candidate = configuration.at[0, 1].set(0.1)
         return LeafletStructuralAdvanceResult(
             candidate,

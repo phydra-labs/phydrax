@@ -10,13 +10,15 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 SequenceFormFactorKind: TypeAlias = Literal[
@@ -29,7 +31,7 @@ class SiteMixturePlan(StrictModule, NonTrainableState):
     number_densities: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, site_ids: tuple[str, ...], number_densities: ArrayLike, /):
+    def __init__(self, site_ids: tuple[str, ...], number_densities: ArrayLike, /) -> None:
         identifiers = tuple(str(value).strip() for value in site_ids)
         densities = np.asarray(number_densities, dtype=np.float64)
         if (
@@ -71,7 +73,7 @@ class SequenceFormFactorPlan(StrictModule, NonTrainableState):
         /,
         *,
         site_count: int | None = None,
-    ):
+    ) -> None:
         sequence = np.asarray(sequence_site_types, dtype=np.int32)
         length = float(statistical_segment_length)
         count = (
@@ -79,9 +81,9 @@ class SequenceFormFactorPlan(StrictModule, NonTrainableState):
             if site_count is None and sequence.size
             else int(site_count or 0)
         )
+        kind = parse(kind, SequenceFormFactorKind, "kind")
         if (
-            kind not in ("gaussian-chain", "freely-jointed-chain", "gaussian-ring")
-            or sequence.ndim != 1
+            sequence.ndim != 1
             or sequence.size == 0
             or np.any(sequence < 0)
             or count <= 0
@@ -143,7 +145,7 @@ class TabulatedFormFactorPlan(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str,
-    ):
+    ) -> None:
         wave = np.asarray(wave_numbers, dtype=np.float64)
         matrix = np.asarray(values, dtype=np.float64)
         source = str(source_id).strip()
@@ -204,7 +206,7 @@ class SitePairPotentialPlan(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str,
-    ):
+    ) -> None:
         radial = np.asarray(radii, dtype=np.float64)
         potential = np.asarray(beta_potential, dtype=np.float64)
         source = str(source_id).strip()

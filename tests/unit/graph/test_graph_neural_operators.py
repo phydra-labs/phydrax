@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -39,7 +42,7 @@ def _graphs() -> tuple[phx.graph.GraphIR, phx.graph.GraphIR]:
     return graph0, graph1
 
 
-def test_graph_kernel_integral_aggregates_weighted_source_nodes():
+def test_graph_kernel_integral_aggregates_weighted_source_nodes() -> None:
     kernel = phx.graph.GraphKernelIntegral(
         lambda edges, sent, recv, globals_: edges[:, 0],
     )
@@ -48,7 +51,7 @@ def test_graph_kernel_integral_aggregates_weighted_source_nodes():
     assert jnp.allclose(out.nodes[:, 0], jnp.array([0.0, 0.0, 3.0]))
 
 
-def test_graph_kernel_integral_normalizes_by_receiver_degree():
+def test_graph_kernel_integral_normalizes_by_receiver_degree() -> None:
     graph = phx.graph.GraphIR(
         nodes=jnp.array([[1.0], [2.0], [4.0]]),
         senders=jnp.array([0, 1], dtype=jnp.int32),
@@ -62,7 +65,7 @@ def test_graph_kernel_integral_normalizes_by_receiver_degree():
     assert jnp.allclose(out.nodes[:, 0], jnp.array([0.0, 0.0, 1.5]))
 
 
-def test_graph_diffusion_computes_weighted_incidence_laplacian():
+def test_graph_diffusion_computes_weighted_incidence_laplacian() -> None:
     diffusion = phx.graph.GraphDiffusion(
         lambda edges, sent, recv, globals_: edges[:, 0],
     )
@@ -71,7 +74,7 @@ def test_graph_diffusion_computes_weighted_incidence_laplacian():
     assert jnp.allclose(out.nodes[:, 0], jnp.array([-2.0, -4.0, 6.0]))
 
 
-def test_repeated_graph_processor_applies_block_multiple_times():
+def test_repeated_graph_processor_applies_block_multiple_times() -> None:
     block = phx.graph.GraphMapFeatures(embed_node_fn=lambda nodes: nodes + 1.0)
     processor = phx.graph.RepeatedGraphProcessor(block, steps=3)
     out = processor(_line_graph())
@@ -79,10 +82,11 @@ def test_repeated_graph_processor_applies_block_multiple_times():
     assert jnp.allclose(out.nodes[:, 0], jnp.array([3.0, 4.0, 6.0]))
 
 
-def test_graph_neural_operator_preserves_padding_entries():
+def test_graph_neural_operator_preserves_padding_entries() -> None:
     base = phx.domain.GraphDatasetDomain(_graphs())
     domain = base.with_layout(base.layout_for_batch_size(2, multiple=2))
     batch = domain.points_from_indices(
+        # ty: ignore[invalid-argument-type]
         [0, 1],
         component=phx.domain.Nodes(),
         structure=phx.domain.SampleLayout((("graph",),)),
@@ -96,7 +100,7 @@ def test_graph_neural_operator_preserves_padding_entries():
     assert jnp.allclose(out.nodes[5, 0], 0.0)
 
 
-def test_graph_kernel_integral_wraps_as_domain_graph_model():
+def test_graph_kernel_integral_wraps_as_domain_graph_model() -> None:
     domain = phx.domain.GraphDomain(_line_graph())
     component = domain.component({"graph": phx.domain.Nodes()})
     batch = component.sample(
@@ -104,7 +108,7 @@ def test_graph_kernel_integral_wraps_as_domain_graph_model():
     )
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> Any:
         return node[0]
 
     model = phx.graph.GraphKernelIntegral(lambda edges, sent, recv, globals_: edges[:, 0])
@@ -113,7 +117,7 @@ def test_graph_kernel_integral_wraps_as_domain_graph_model():
     assert jnp.allclose(jnp.asarray(integral(batch).data), jnp.array([0.0, 0.0, 3.0]))
 
 
-def test_graph_diffusion_penalty_zero_for_constant_graph_time_field():
+def test_graph_diffusion_penalty_zero_for_constant_graph_time_field() -> None:
     domain = phx.domain.GraphTrajectoryDatasetDomain(
         _graphs(),
         jnp.array([3, 5], dtype=jnp.int32),
@@ -125,11 +129,11 @@ def test_graph_diffusion_penalty_zero_for_constant_graph_time_field():
     structure = phx.domain.SampleLayout((("graph", "t"),))
 
     @domain.Function("graph", "t")
-    def u(node, t):
+    def u(node: Any, t: Any) -> float:
         del node, t
         return 2.0
 
-    def residual(f):
+    def residual(f: Any) -> Any:
         return domain.GraphModel(phx.graph.GraphDiffusion(), input_fn=f)
 
     condition = phx.conditions.Residual("u", component, residual)

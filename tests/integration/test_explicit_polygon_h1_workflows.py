@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import opt_einsum as oe
@@ -9,7 +12,7 @@ import opt_einsum as oe
 import phydrax as phx
 
 
-def _structured_space(count, *, component_shape=()):
+def _structured_space(count: Any, *, component_shape: Any = ()) -> Any:
     coordinates = jnp.asarray(
         tuple((i / count, j / count) for j in range(count + 1) for i in range(count + 1))
     )
@@ -23,6 +26,7 @@ def _structured_space(count, *, component_shape=()):
         for j in range(count)
         for i in range(count)
     )
+    # ty: ignore[invalid-argument-type]
     mesh = phx.discretization.CellMesh.from_polygons(coordinates, cells)
     field = phx.discretization.ExplicitPolygonH1FieldSpec(
         "u", component_shape=component_shape
@@ -30,11 +34,11 @@ def _structured_space(count, *, component_shape=()):
     return phx.discretization.ExplicitPolygonH1Plan(mesh, field).prepare()
 
 
-def _poisson_error(count):
+def _poisson_error(count: Any) -> Any:
     space = _structured_space(count)
     constraint = phx.discretization.explicit_polygon_h1_dirichlet_constraint(space, "u")
 
-    def source(points, _args):
+    def source(points: Any, _args: Any) -> Any:
         x = points[..., 0]
         y = points[..., 1]
         return 2.0 * (x * (1.0 - x) + y * (1.0 - y))
@@ -69,14 +73,14 @@ def _poisson_error(count):
     return error, result.successful
 
 
-def test_explicit_polygon_poisson_error_decreases_under_refinement():
+def test_explicit_polygon_poisson_error_decreases_under_refinement() -> None:
     coarse, coarse_success = _poisson_error(2)
     fine, fine_success = _poisson_error(4)
     assert jnp.all(coarse_success) & jnp.all(fine_success)
     assert fine < 0.45 * coarse
 
 
-def test_explicit_polygon_linear_elasticity_has_exact_rigid_rotation_mode():
+def test_explicit_polygon_linear_elasticity_has_exact_rigid_rotation_mode() -> None:
     space = _structured_space(2, component_shape=(2,))
     coordinates = space.mesh.coordinates
     state = jnp.stack((-coordinates[:, 1], coordinates[:, 0]), axis=-1)
@@ -86,7 +90,9 @@ def test_explicit_polygon_linear_elasticity_has_exact_rigid_rotation_mode():
     assert jnp.allclose(residual, 0.0, atol=1e-10)
 
 
-def test_explicit_polygon_neo_hookean_energy_residual_and_tangent_are_consistent():
+def test_explicit_polygon_neo_hookean_energy_residual_and_tangent_are_consistent() -> (
+    None
+):
     space = _structured_space(2, component_shape=(2,))
     parameters = phx.applications.solid_mechanics.NeoHookeanParameters(1.0, 2.0)
     functional = phx.applications.solid_mechanics.neo_hookean_functional("u", parameters)
@@ -114,7 +120,7 @@ def test_explicit_polygon_neo_hookean_energy_residual_and_tangent_are_consistent
     assert jnp.abs(perturbed_value - first_order_value) < 1.0e-8
     assert jnp.linalg.norm(perturbed_residual - first_order_residual) < 1.0e-8
 
-    def geometry_response(coordinates_):
+    def geometry_response(coordinates_: Any) -> Any:
         runtime = space.prepare_runtime(coordinates_, numeric_version="differentiated")
         context = phx.equations.FiniteElementExecutionContext(runtime)
         return compiled.full_potential(state, context)

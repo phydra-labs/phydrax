@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import hashlib
 import importlib.util
 import shutil
@@ -10,6 +11,7 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -21,7 +23,7 @@ _DATA = Path(__file__).parent / "data"
 
 
 @pytest.fixture(scope="module")
-def compiled_fmu(tmp_path_factory):
+def compiled_fmu(tmp_path_factory: Any) -> Any:
     if importlib.util.find_spec("fmpy") is None:
         pytest.skip("requires optional FMPy and a native C compiler")
     if sys.platform not in ("darwin", "linux"):
@@ -29,6 +31,7 @@ def compiled_fmu(tmp_path_factory):
     compiler = shutil.which("cc")
     if compiler is None:
         pytest.skip("requires a native C compiler for the original real FMU specimen")
+    # ty: ignore[unresolved-import]
     import fmpy
 
     root = tmp_path_factory.mktemp("real-energy-fmu").resolve()
@@ -55,7 +58,7 @@ def compiled_fmu(tmp_path_factory):
     return archive, hashlib.sha256(archive.read_bytes()).hexdigest()
 
 
-def test_real_fmu_integration_event_and_actual_state_restore(compiled_fmu):
+def test_real_fmu_integration_event_and_actual_state_restore(compiled_fmu: Any) -> None:
     path, digest = compiled_fmu
     with FMICoSimulationSession(
         path.name,
@@ -89,7 +92,7 @@ def test_real_fmu_integration_event_and_actual_state_restore(compiled_fmu):
         session.get_values(("x",))
 
 
-def test_real_fmu_termination_and_parameter_lifecycle(compiled_fmu):
+def test_real_fmu_termination_and_parameter_lifecycle(compiled_fmu: Any) -> None:
     path, digest = compiled_fmu
     with FMICoSimulationSession(
         path.name,
@@ -108,7 +111,7 @@ def test_real_fmu_termination_and_parameter_lifecycle(compiled_fmu):
             session.advance(2)
 
 
-def test_archive_pin_and_path_extraction_policy(tmp_path):
+def test_archive_pin_and_path_extraction_policy(tmp_path: Any) -> None:
     root = tmp_path.resolve()
     path = root / "bad.fmu"
     with zipfile.ZipFile(path, "w") as archive:
@@ -154,7 +157,9 @@ def test_archive_pin_and_path_extraction_policy(tmp_path):
         inspect_fmu(path.name, sha256="0" * 64, trusted_root=root)
 
 
-def test_xml_entities_and_archive_expansion_fail_before_runtime_import(tmp_path):
+def test_xml_entities_and_archive_expansion_fail_before_runtime_import(
+    tmp_path: Any,
+) -> None:
     path = tmp_path.resolve() / "bad.fmu"
     valid_xml = (_DATA / "energy_accumulator.xml").read_bytes()
     declaration_end = valid_xml.index(b"\n") + 1

@@ -2,8 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
 import os
+from typing import Any
 
 import pytest
 
@@ -17,7 +19,9 @@ from tools.uq_benchmarks.scenarios import SCENARIOS
     os.environ.get("PHYDRAX_RUN_UQ_BENCHMARKS") != "1",
     reason="set PHYDRAX_RUN_UQ_BENCHMARKS=1 to run the complete UQ release matrix",
 )
-def test_complete_uq_benchmark_matrix_passes_and_writes_machine_report(tmp_path):
+def test_complete_uq_benchmark_matrix_passes_and_writes_machine_report(
+    tmp_path: Any,
+) -> None:
     report = run_benchmark_matrix(profile="smoke")
     destination = report.write_json(tmp_path / "uq-benchmark-smoke.json")
     payload = json.loads(destination.read_text(encoding="utf-8"))
@@ -45,7 +49,9 @@ def test_complete_uq_benchmark_matrix_passes_and_writes_machine_report(tmp_path)
     os.environ.get("PHYDRAX_RUN_UQ_BENCHMARKS") != "1",
     reason="set PHYDRAX_RUN_UQ_BENCHMARKS=1 to run the UQ GP scaling gates",
 )
-def test_gp_scaling_benchmark_passes_accuracy_and_reuse_speedup_gates(tmp_path):
+def test_gp_scaling_benchmark_passes_accuracy_and_reuse_speedup_gates(
+    tmp_path: Any,
+) -> None:
     report = run_gp_scaling_benchmark(profile="smoke")
     destination = report.write_json(tmp_path / "uq-gp-scaling-smoke.json")
     payload = json.loads(destination.read_text(encoding="utf-8"))
@@ -69,7 +75,9 @@ def test_gp_scaling_benchmark_passes_accuracy_and_reuse_speedup_gates(tmp_path):
     os.environ.get("PHYDRAX_RUN_UQ_BENCHMARKS") != "1",
     reason="set PHYDRAX_RUN_UQ_BENCHMARKS=1 to run the NUTS scheduling benchmark",
 )
-def test_nuts_scheduling_benchmark_preserves_results_and_writes_report(tmp_path):
+def test_nuts_scheduling_benchmark_preserves_results_and_writes_report(
+    tmp_path: Any,
+) -> None:
     report = run_nuts_scheduling_benchmark(
         profile="smoke",
         targets=("correlated",),

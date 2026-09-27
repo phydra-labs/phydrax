@@ -9,7 +9,8 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax.ein import contract
 
@@ -39,7 +40,7 @@ class AtomisticDrivenStressPlan(StrictModule, NonTrainableState):
         require_stresslet: bool = False,
         require_brownian_stress: bool = False,
         cell_virial_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         tolerance = float(cell_virial_tolerance)
         if momentum_frame != "peculiar":
             raise ValueError("Driven atomistic stress requires peculiar momenta.")
@@ -88,7 +89,7 @@ class AtomisticDrivenStressResult(StrictModule):
 
 def _optional_stress(
     value: ArrayLike | None,
-    dtype,
+    dtype: DTypeLike,
     /,
 ) -> tuple[Array, Array]:
     if value is None:

@@ -4,17 +4,21 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
+from collections.abc import Iterable
+from typing import get_args, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._context import AstrodynamicsContext
 from ._data import AstrodynamicsDataProvenance
 from ._status import AstrodynamicsStatus
@@ -35,8 +39,15 @@ class TrackingStationCatalog(StrictModule, NonTrainableState):
     catalog_id: str = eqx.field(static=True)
 
     def __init__(
-        self, station_ids, position, velocity, horizon_elevation, context, provenance, /
-    ):
+        self,
+        station_ids: Iterable[str],
+        position: npt.ArrayLike,
+        velocity: npt.ArrayLike,
+        horizon_elevation: npt.ArrayLike,
+        context: AstrodynamicsContext,
+        provenance: AstrodynamicsDataProvenance,
+        /,
+    ) -> None:
         ids = tuple(str(value).strip() for value in station_ids)
         position_ = np.asarray(position, dtype=np.float64)
         velocity_ = np.asarray(velocity, dtype=np.float64)
@@ -86,15 +97,15 @@ class ObservationSchedule(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        times,
-        station_index,
-        observable_index,
-        observed,
-        covariance_root,
-        mask,
-        observable_kinds,
+        times: npt.ArrayLike,
+        station_index: npt.ArrayLike,
+        observable_index: npt.ArrayLike,
+        observed: npt.ArrayLike,
+        covariance_root: npt.ArrayLike,
+        mask: npt.ArrayLike,
+        observable_kinds: Iterable[TrackingObservable],
         /,
-    ):
+    ) -> None:
         times_ = np.asarray(times, dtype=np.float64)
         stations = np.asarray(station_index)
         kinds = np.asarray(observable_index)
@@ -102,12 +113,7 @@ class ObservationSchedule(StrictModule, NonTrainableState):
         root = np.asarray(covariance_root, dtype=np.float64)
         mask_ = np.asarray(mask)
         labels = tuple(observable_kinds)
-        catalog = (
-            "range",
-            "range_rate",
-            "azimuth_elevation",
-            "right_ascension_declination",
-        )
+        catalog: tuple[TrackingObservable, ...] = get_args(TrackingObservable)
         count = times_.size
         if (
             times_.ndim != 1
@@ -122,7 +128,6 @@ class ObservationSchedule(StrictModule, NonTrainableState):
             or not np.issubdtype(mask_.dtype, np.bool_)
             or not labels
             or len(set(labels)) != len(labels)
-            or any(label not in catalog for label in labels)
             or np.any(kinds < 0)
             or np.any(kinds >= len(labels))
             or np.any(~np.isfinite(times_))
@@ -135,6 +140,9 @@ class ObservationSchedule(StrictModule, NonTrainableState):
             raise ValueError(
                 "Observation schedule arrays or observable catalog are invalid."
             )
+        labels = tuple(
+            parse(label, TrackingObservable, "observable_kinds") for label in labels
+        )
         kind_codes = np.asarray(
             [catalog.index(labels[int(index)]) for index in kinds],
             dtype=np.int32,
@@ -171,7 +179,9 @@ class TrackingObservationPlan(StrictModule, NonTrainableState):
     schedule: ObservationSchedule
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, stations, schedule, /):
+    def __init__(
+        self, stations: TrackingStationCatalog, schedule: ObservationSchedule, /
+    ) -> None:
         if not isinstance(stations, TrackingStationCatalog):
             raise TypeError("stations must be a TrackingStationCatalog.")
         if not isinstance(schedule, ObservationSchedule):
@@ -201,7 +211,7 @@ class TrackingObservationPlan(StrictModule, NonTrainableState):
         kind: Array,
         horizon: Array,
         /,
-    ):
+    ) -> tuple[Array, Array]:
         relative = state[:3] - station
         relative_velocity = state[3:] - station_velocity
         distance = jnp.sqrt(jnp.sum(relative * relative))

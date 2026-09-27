@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _species():
+def _species() -> Any:
     return phx.discretization.dsmc.DSMCSpeciesPlan(
         ("A",),
         jnp.asarray((1.0,)),
@@ -22,7 +25,7 @@ def _species():
     )
 
 
-def _empty_particles(capacity=4):
+def _empty_particles(capacity: Any = 4) -> Any:
     return phx.discretization.dsmc.DSMCParticleState(
         jnp.full((capacity, 1), 0.5),
         jnp.zeros((capacity, 1)),
@@ -36,7 +39,7 @@ def _empty_particles(capacity=4):
     )
 
 
-def _reservoir(*, density=3.0, injection_capacity=3):
+def _reservoir(*, density: Any = 3.0, injection_capacity: Any = 3) -> Any:
     cells = phx.discretization.dsmc.DSMCStructuredCellPlan(
         jnp.asarray((0.0,)), jnp.asarray((1.0,)), (1,)
     )
@@ -53,7 +56,7 @@ def _reservoir(*, density=3.0, injection_capacity=3):
     )
 
 
-def test_half_range_reservoir_injects_inward_and_tracks_extensive_content():
+def test_half_range_reservoir_injects_inward_and_tracks_extensive_content() -> None:
     reservoir = _reservoir()
     result = reservoir.inject(
         _empty_particles(),
@@ -74,7 +77,7 @@ def test_half_range_reservoir_injects_inward_and_tracks_extensive_content():
     assert int(result.state.incarnation[index]) == 1
 
 
-def test_reservoir_refuses_request_or_particle_capacity_without_truncation():
+def test_reservoir_refuses_request_or_particle_capacity_without_truncation() -> None:
     request_limited = _reservoir(density=100.0, injection_capacity=1)
     result = request_limited.inject(
         _empty_particles(),
@@ -98,7 +101,7 @@ def test_reservoir_refuses_request_or_particle_capacity_without_truncation():
     assert int(result.injected_count) == 0
 
 
-def test_production_surface_event_uses_hit_time_and_surface_ledger():
+def test_production_surface_event_uses_hit_time_and_surface_ledger() -> None:
     species = _species()
     cells = phx.discretization.dsmc.DSMCStructuredCellPlan(
         jnp.asarray((0.0,)), jnp.asarray((1.0,)), (1,)
@@ -185,7 +188,7 @@ def test_production_surface_event_uses_hit_time_and_surface_ledger():
     assert result.boundary_exchange.surface_momentum[0] < 0.0
 
 
-def test_specular_streaming_keeps_exact_upper_face_hit_inside_domain():
+def test_specular_streaming_keeps_exact_upper_face_hit_inside_domain() -> None:
     cells = phx.discretization.dsmc.DSMCStructuredCellPlan(
         jnp.asarray((0.0,)), jnp.asarray((1.0,)), (1,)
     )

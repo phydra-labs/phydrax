@@ -9,7 +9,7 @@ from typing import Any, Literal
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ._pattern import SparsePattern
 from ._structural_interpret import _prop_jaxpr
@@ -49,7 +49,7 @@ def trace_sparse_pattern(
         symmetric = False
     elif derivative_kind == "hessian":
 
-        def scalar_function(value):
+        def scalar_function(value: Array) -> Array:
             output = jnp.asarray(function(value, sample_args))
             if output.size != 1:
                 raise ValueError("Sparse Hessian tracing requires scalar output.")

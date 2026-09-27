@@ -9,11 +9,12 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum_chunks
 from ..._strict import StrictModule
+from ...typing import parse
 from ..multiblock import InterfaceOrientation
 from ._positivity import FiniteVolumeAdmissibilityReport, FluxPositivityPlan
 from ._riemann import AbstractNumericalFluxPlan
@@ -94,20 +95,19 @@ class ConservativeMultiblockInterfacePlan(StrictModule):
         *,
         left_side: InterfaceSide = "upper",
         right_side: InterfaceSide = "lower",
-    ):
+    ) -> None:
         if not isinstance(left, FiniteVolumeDiscretization) or not isinstance(
             right, FiniteVolumeDiscretization
         ):
             raise TypeError("Multiblock FV interfaces require two discretizations.")
         left_axis_ = int(left_axis)
         right_axis_ = int(right_axis)
-        if (
-            not 0 <= left_axis_ < len(left.cell_shape)
-            or not 0 <= right_axis_ < len(right.cell_shape)
-            or left_side not in ("lower", "upper")
-            or right_side not in ("lower", "upper")
+        if not 0 <= left_axis_ < len(left.cell_shape) or not 0 <= right_axis_ < len(
+            right.cell_shape
         ):
             raise ValueError("Multiblock FV axis or side is invalid.")
+        left_side = parse(left_side, InterfaceSide, "left_side")
+        right_side = parse(right_side, InterfaceSide, "right_side")
         if left_side != "upper" or right_side != "lower":
             raise ValueError(
                 "Initial multiblock FV orientation requires upper-to-lower sides."
@@ -234,7 +234,7 @@ class FiniteVolumeMultiblockRuntimePlan(StrictModule):
         interfaces: tuple[ConservativeMultiblockInterfacePlan, ...],
         positivity: FluxPositivityPlan,
         /,
-    ):
+    ) -> None:
         blocks = tuple(block_dynamics)
         interfaces_ = tuple(interfaces)
         if not blocks:
@@ -288,7 +288,7 @@ class FiniteVolumeMultiblockRuntimePlan(StrictModule):
         fallback_accepted = jnp.all(jnp.stack(fallback_valid))
         high_accepted = jnp.all(jnp.stack(high_valid))
 
-        def body(_, bounds):
+        def body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             lower, upper = bounds
             midpoint = 0.5 * (lower + upper)
             valid = jnp.all(

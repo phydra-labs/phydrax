@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -28,7 +31,7 @@ from phydrax.discretization.lattice_boltzmann._fused import (
 from phydrax.discretization.lattice_boltzmann._lattice import D2Q9, D3Q19, D3Q27
 
 
-def _halo_schedule(dimension, *, shape=None):
+def _halo_schedule(dimension: Any, *, shape: Any = None) -> Any:
     names = tuple("xyz"[:dimension])
     global_shape = (4,) * dimension if shape is None else tuple(shape)
     halo = HaloPlan(
@@ -43,7 +46,9 @@ def _halo_schedule(dimension, *, shape=None):
     )
 
 
-def _execution_step(step_index, time, populations, step_size, args):
+def _execution_step(
+    step_index: Any, time: Any, populations: Any, step_size: Any, args: Any
+) -> Any:
     del time, step_size
     candidate = populations + args
     successful = step_index != 1
@@ -63,7 +68,7 @@ def _execution_step(step_index, time, populations, step_size, args):
     )
 
 
-def test_lbm_halo_routes_cover_every_velocity_offset_and_codimension():
+def test_lbm_halo_routes_cover_every_velocity_offset_and_codimension() -> None:
     for velocity_set in (D2Q9(), D3Q19(), D3Q27()):
         halo = LatticeBoltzmannHaloSchedule(
             velocity_set,
@@ -81,6 +86,7 @@ def test_lbm_halo_routes_cover_every_velocity_offset_and_codimension():
         assert all(
             route.descriptor is None
             if route.local
+            # ty: ignore[unresolved-attribute]
             else route.descriptor.offset == route.source_offset
             for route in halo.routes
         )
@@ -90,7 +96,9 @@ def test_lbm_halo_routes_cover_every_velocity_offset_and_codimension():
         assert {route.codimension for route in halo.routes} == expected_codimensions
 
 
-def test_lbm_reference_halo_exchange_is_direction_selected_for_faces_and_corners():
+def test_lbm_reference_halo_exchange_is_direction_selected_for_faces_and_corners() -> (
+    None
+):
     velocity_set = D2Q9()
     halo = LatticeBoltzmannHaloSchedule(
         velocity_set,
@@ -112,7 +120,7 @@ def test_lbm_reference_halo_exchange_is_direction_selected_for_faces_and_corners
     np.testing.assert_allclose(exchanged[0, 0, 1:3, 1:4], blocks[0, 0])
 
 
-def test_sharded_lbm_plan_records_unpartitioned_trailing_q_metadata():
+def test_sharded_lbm_plan_records_unpartitioned_trailing_q_metadata() -> None:
     velocity_set = D2Q9()
     reference = ReferenceLatticeBoltzmannExecutionPlan(
         velocity_set,
@@ -145,7 +153,7 @@ def test_sharded_lbm_plan_records_unpartitioned_trailing_q_metadata():
         ShardedLatticeBoltzmannExecutionPlan(reference, halo, backend="numpy")
 
 
-def test_aa_even_odd_storage_is_canonical_equivalent_and_checkpoint_exact():
+def test_aa_even_odd_storage_is_canonical_equivalent_and_checkpoint_exact() -> None:
     velocity_set = D2Q9()
     plan = AALatticeBoltzmannPlan(velocity_set)
     canonical = jnp.arange(
@@ -180,7 +188,7 @@ def test_aa_even_odd_storage_is_canonical_equivalent_and_checkpoint_exact():
     np.testing.assert_array_equal(plan.canonical(restored), canonical + 1.0)
 
 
-def test_fused_realization_preserves_failure_and_diagnostic_reference_behavior():
+def test_fused_realization_preserves_failure_and_diagnostic_reference_behavior() -> None:
     velocity_set = D2Q9()
     reference = ReferenceLatticeBoltzmannExecutionPlan(
         velocity_set,
@@ -228,7 +236,7 @@ def test_fused_realization_preserves_failure_and_diagnostic_reference_behavior()
     assert realized.provenance.backend == "jax"
 
 
-def test_prepared_distributed_dynamics_matches_actual_hydrodynamic_reference():
+def test_prepared_distributed_dynamics_matches_actual_hydrodynamic_reference() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4, periodic=True),

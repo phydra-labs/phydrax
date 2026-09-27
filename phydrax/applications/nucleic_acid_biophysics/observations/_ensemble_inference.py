@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -11,8 +12,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -53,7 +55,7 @@ class StructuralEnsembleHypothesis:
     source_case_ids: tuple[str, ...]
     parent_case_ids: tuple[str, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             not isinstance(self.state_ids, tuple)
             or len(self.state_ids) < 2
@@ -138,7 +140,7 @@ class ConditionPopulationModel(StrictModule, NonTrainableState):
         kind: PopulationModelKind,
         design: ArrayLike | None = None,
         feature_names: tuple[str, ...] = (),
-    ):
+    ) -> None:
         conditions, states, names = (
             tuple(condition_ids),
             tuple(state_ids),
@@ -223,7 +225,7 @@ class EnsembleDiagnosticPolicy:
     singular_relative_tolerance: float
     maximum_residual_correlation: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -370,7 +372,7 @@ class FiniteStructuralEnsembleModel(StrictModule, NonTrainableState):
         response_prior_scale: float,
         population_prior_scale: float = 2.0,
         dirichlet_concentration: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(batch, MutationProfileBatch) or not isinstance(
             hypothesis, StructuralEnsembleHypothesis
         ):
@@ -505,7 +507,11 @@ class FiniteStructuralEnsembleModel(StrictModule, NonTrainableState):
             }
         )
 
-    def _parameter_space(self, initial_response_logits=None, initial_population=None):
+    def _parameter_space(
+        self,
+        initial_response_logits: ArrayLike | None = None,
+        initial_population: ArrayLike | None = None,
+    ) -> ParameterSpace:
         response = (
             self.response_prior_mean
             if initial_response_logits is None
@@ -544,7 +550,7 @@ class FiniteStructuralEnsembleModel(StrictModule, NonTrainableState):
         concentration = self.dirichlet_concentration
         free = self.population_model.kind == "free-simplex"
 
-        def log_prior(parameters):
+        def log_prior(parameters: Mapping[str, Array]) -> Array:
             value = -0.5 * jnp.sum(
                 ((parameters["response_logits"] - response_mean) / response_scale) ** 2
             )
@@ -560,11 +566,15 @@ class FiniteStructuralEnsembleModel(StrictModule, NonTrainableState):
 
         return ParameterSpace(initial, bijectors=bijectors, log_prior=log_prior)
 
-    def condition_populations(self, parameters, /) -> Array:
+    def condition_populations(self, parameters: Mapping[str, Array], /) -> Array:
         return self.population_model.populations(parameters["population"])
 
     def state_mutation_probabilities(
-        self, parameters, /, *, observation_offset=None
+        self,
+        parameters: Mapping[str, Array],
+        /,
+        *,
+        observation_offset: ArrayLike | None = None,
     ) -> Array:
         offset = (
             self.observation_offset
@@ -578,7 +588,7 @@ class FiniteStructuralEnsembleModel(StrictModule, NonTrainableState):
             raise ValueError("State response logits have an incompatible shape.")
         return jax.nn.sigmoid(response[None, :, :] + offset[:, None, :])
 
-    def _state_log_scores(self, parameters) -> Array:
+    def _state_log_scores(self, parameters: Mapping[str, Array]) -> Array:
         probability_logits = (
             parameters["response_logits"][None, :, :]
             + self.observation_offset[:, None, :]
@@ -592,20 +602,20 @@ class FiniteStructuralEnsembleModel(StrictModule, NonTrainableState):
         populations = self.condition_populations(parameters)[self.batch.condition_index]
         return jnp.log(populations) + state_likelihood
 
-    def per_profile_log_likelihood(self, parameters, /) -> Array:
+    def per_profile_log_likelihood(self, parameters: Mapping[str, Array], /) -> Array:
         scores = self._state_log_scores(parameters)
 
-        def normalize(value):
+        def normalize(value: Array) -> Array:
             result = run_exact_factor_graph(self.latent_state_graph, (value[None, :],))
             return result.log_normalizer
 
         normalized = jax.vmap(normalize)(scores)
         return jnp.where(self.batch.analysis_mask, normalized, 0.0)
 
-    def state_posterior(self, parameters, /) -> Array:
+    def state_posterior(self, parameters: Mapping[str, Array], /) -> Array:
         scores = self._state_log_scores(parameters)
 
-        def marginal(value):
+        def marginal(value: Array) -> Array:
             result = run_exact_factor_graph(self.latent_state_graph, (value[None, :],))
             return result.variable_probabilities.values
 
@@ -614,7 +624,7 @@ class FiniteStructuralEnsembleModel(StrictModule, NonTrainableState):
 
     def posterior_prediction(
         self,
-        parameters,
+        parameters: Mapping[str, Array],
         /,
         *,
         condition_index: ArrayLike | None = None,
@@ -676,8 +686,8 @@ class FiniteStructuralEnsembleModel(StrictModule, NonTrainableState):
 
     def posterior_problem(
         self,
-        initial_response_logits=None,
-        initial_population=None,
+        initial_response_logits: ArrayLike | None = None,
+        initial_population: ArrayLike | None = None,
         *,
         fit_profile_mask: ArrayLike | None = None,
     ) -> PosteriorProblem:
@@ -699,7 +709,7 @@ class FiniteStructuralEnsembleModel(StrictModule, NonTrainableState):
 
     def diagnostics(
         self,
-        parameters,
+        parameters: Mapping[str, Array],
         policy: EnsembleDiagnosticPolicy,
         /,
         *,
@@ -813,7 +823,7 @@ class FiniteStructuralEnsembleModel(StrictModule, NonTrainableState):
         )
 
     def permutation_invariant_summary(
-        self, parameters, /
+        self, parameters: Mapping[str, Array], /
     ) -> PermutationInvariantEnsembleSummary:
         prediction = self.posterior_prediction(parameters)
         state_mean = jnp.mean(prediction.state_mutation_probability, axis=(0, 2))
@@ -846,10 +856,10 @@ class FiniteStructuralEnsembleModel(StrictModule, NonTrainableState):
         /,
         *,
         policy: EnsembleDiagnosticPolicy,
-        initial_response_logits=None,
-        initial_population=None,
+        initial_response_logits: ArrayLike | None = None,
+        initial_population: ArrayLike | None = None,
         fit_profile_mask: ArrayLike | None = None,
-        requested_use=None,
+        requested_use: Mapping[str, bool] | None = None,
         max_steps: int = 500,
         gradient_tolerance: float = 1e-6,
     ) -> FiniteEnsembleFit:
@@ -997,7 +1007,9 @@ def compare_ensemble_supports(
     )
 
 
-def _residual_correlation_excess(mutation, prediction, mask):
+def _residual_correlation_excess(
+    mutation: Array, prediction: EnsemblePosteriorPrediction, mask: Array
+) -> Array:
     residual = mutation - prediction.mutation_probability
     pair_mask = mask[:, :, None] & mask[:, None, :]
     count = jnp.sum(pair_mask, axis=0)

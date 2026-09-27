@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -15,11 +18,11 @@ class _InitialADriver(AbstractOperatorModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.in_size = 3
         self.out_size = 1
 
-    def __call_operator_batch__(self, batch, /, *, key=None):
+    def __call_operator_batch__(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         state = batch.input("state").values
         assert state is not None
@@ -30,7 +33,7 @@ class _InitialADriver(AbstractOperatorModel):
             batch.case_shape + query.sample_shape + (1,),
         )
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         return self.__call_operator_batch__(x, key=key)
 
 
@@ -38,19 +41,19 @@ class _QueryDriver(AbstractOperatorModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.in_size = 3
         self.out_size = 1
 
-    def __call_operator_batch__(self, batch, /, *, key=None):
+    def __call_operator_batch__(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         return batch.require_single_query().coordinates_array(case_shape=batch.case_shape)
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         return self.__call_operator_batch__(x, key=key)
 
 
-def _mechanism():
+def _mechanism() -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B", "C"),
         (
@@ -88,13 +91,13 @@ def _mechanism():
     ).prepare()
 
 
-def _chemistry():
+def _chemistry() -> Any:
     return phx.equations.ChemicalConditionalAffinePlan(("B", "C"), ("A",)).prepare(
         _mechanism()
     )
 
 
-def _batch(duration=(0.0, 0.01), *, mask=None):
+def _batch(duration: Any = (0.0, 0.01), *, mask: Any = None) -> Any:
     return phx.nn.operator.OperatorBatch(
         inputs={
             "state": phx.nn.operator.FunctionSamples(
@@ -117,7 +120,7 @@ def _batch(duration=(0.0, 0.01), *, mask=None):
     )
 
 
-def _scaling():
+def _scaling() -> Any:
     return phx.nn.operator.architectures.ChemicalConditionalAffineScaling(
         jnp.ones((3,), dtype=jnp.float64),
         jnp.ones((1,), dtype=jnp.float64),
@@ -125,7 +128,7 @@ def _scaling():
     )
 
 
-def test_operator_uses_auxiliary_driver_and_returns_authoritative_state():
+def test_operator_uses_auxiliary_driver_and_returns_authoritative_state() -> None:
     model = phx.nn.operator.architectures.ChemicalConditionalAffineOperator(
         _chemistry(),
         _InitialADriver(),
@@ -144,7 +147,7 @@ def test_operator_uses_auxiliary_driver_and_returns_authoritative_state():
     np.testing.assert_allclose(result.element_residual, 0.0, atol=1e-13)
 
 
-def test_operator_queries_driver_at_scaled_midpoint_and_honors_masks():
+def test_operator_queries_driver_at_scaled_midpoint_and_honors_masks() -> None:
     model = phx.nn.operator.architectures.ChemicalConditionalAffineOperator(
         _chemistry(),
         _QueryDriver(),
@@ -159,7 +162,7 @@ def test_operator_queries_driver_at_scaled_midpoint_and_honors_masks():
     np.testing.assert_array_equal(values[1], jnp.zeros((3,)))
 
 
-def test_stoichiometric_rate_correction_is_positive_and_identity_initialized():
+def test_stoichiometric_rate_correction_is_positive_and_identity_initialized() -> None:
     context = phx.nn.models.MLP(
         in_size=4,
         out_size=2,
@@ -197,7 +200,7 @@ def test_stoichiometric_rate_correction_is_positive_and_identity_initialized():
     assert multiplier.shape == (1,)
 
 
-def test_operator_catalog_declares_research_local_transition():
+def test_operator_catalog_declares_research_local_transition() -> None:
     status = phx.nn.operator.catalog.operator_architecture_status(
         "ChemicalConditionalAffineOperator"
     )
@@ -207,7 +210,7 @@ def test_operator_catalog_declares_research_local_transition():
     assert status.capabilities.source_geometries == ("abstract", "point_cloud")
 
 
-def test_staged_losses_use_driver_and_teacher_forced_paths():
+def test_staged_losses_use_driver_and_teacher_forced_paths() -> None:
     model = phx.nn.operator.architectures.ChemicalConditionalAffineOperator(
         _chemistry(),
         _InitialADriver(),

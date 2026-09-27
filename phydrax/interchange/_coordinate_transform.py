@@ -13,7 +13,8 @@ from typing import Any, cast
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._external_resource import read_bounded_resource, ResourceLimits, ResourceManifest
 from .._fingerprint import canonical_fingerprint
@@ -61,7 +62,7 @@ class CoordinateTransformPlan(StrictModule, NonTrainableState):
         expected_resource_sha256: Mapping[str, str],
         maximum_accuracy_m: float | None = None,
         maximum_resource_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         if not isinstance(source, GeospatialContract) or not isinstance(
             target, GeospatialContract
         ):
@@ -181,7 +182,7 @@ class CoordinateTransformResult(StrictModule, NonTrainableState):
         pyproj_version: str,
         proj_version: str,
         reported_accuracy_m: float | None,
-    ):
+    ) -> None:
         values = np.asarray(coordinates, dtype=np.float64)
         if (
             values.shape != source_shape

@@ -51,7 +51,7 @@ class HEPProviderBinding(StrictModule, NonTrainableState):
         side_effects: Sequence[str],
         license_ids: Sequence[str],
         reproducibility: ReproducibilityGrade,
-    ):
+    ) -> None:
         if not isinstance(profile, CapabilityProfile):
             raise TypeError("profile must be CapabilityProfile.")
         if not isinstance(differentiation, DerivativeEvidence):

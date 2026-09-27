@@ -9,7 +9,8 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -28,7 +29,7 @@ class DGMultirateTracePlan(StrictModule, NonTrainableState):
         /,
         *,
         history_depth: int = 3,
-    ):
+    ) -> None:
         levels = jnp.asarray(facet_levels, dtype=jnp.int32)
         depth = int(history_depth)
         if levels.ndim != 2 or levels.shape[1] != 2 or levels.size == 0:
@@ -73,7 +74,7 @@ class DGTraceHistory(StrictModule):
         times: ArrayLike,
         effective_depth: ArrayLike,
         /,
-    ):
+    ) -> None:
         values_ = jnp.asarray(values)
         times_ = jnp.asarray(times)
         effective = jnp.asarray(effective_depth, dtype=jnp.int32)
@@ -97,7 +98,7 @@ class DGTraceHistory(StrictModule):
         cls,
         depth: int,
         trace_shape: tuple[int, ...],
-        dtype,
+        dtype: DTypeLike,
         /,
     ) -> DGTraceHistory:
         return cls(
@@ -124,7 +125,7 @@ class DGTraceHistory(StrictModule):
         ):
             raise ValueError("DG trace update value/time/acceptance are incompatible.")
 
-        def perform(history):
+        def perform(history: DGTraceHistory) -> DGTraceHistory:
             values = jnp.concatenate((value_[None], history.values[:-1]), axis=0)
             times = jnp.concatenate((time_[None], history.times[:-1]), axis=0)
             return DGTraceHistory(
@@ -199,7 +200,7 @@ class TimeSlabFluxLedger(StrictModule):
         /,
         *,
         ledger_id: str,
-    ):
+    ) -> None:
         flux = jnp.asarray(integrated_flux)
         accumulated = jnp.asarray(accumulated_duration)
         expected = jnp.asarray(expected_duration)
@@ -225,7 +226,7 @@ class TimeSlabFluxLedger(StrictModule):
         /,
         *,
         ledger_id: str,
-        dtype=jnp.float64,
+        dtype: DTypeLike = jnp.float64,
     ) -> "TimeSlabFluxLedger":
         return cls(
             jnp.zeros((int(route_count),) + tuple(component_shape), dtype=dtype),
@@ -274,7 +275,7 @@ class ConservativeLocalTimeStepPlan(StrictModule, NonTrainableState):
         macro_step_size: float,
         trace_plan: DGMultirateTracePlan,
         /,
-    ):
+    ) -> None:
         levels = jnp.asarray(cell_levels, dtype=jnp.int32)
         step = float(macro_step_size)
         if (

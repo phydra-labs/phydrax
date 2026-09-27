@@ -19,7 +19,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy.special as jspecial
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -226,7 +227,7 @@ class GaussianSubsystemPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_covariance_elements: int = 1_048_576,
-    ):
+    ) -> None:
         if isinstance(mode_count, bool) or not isinstance(mode_count, (int, np.integer)):
             raise TypeError("mode_count must be an integer.")
         count = int(mode_count)
@@ -264,7 +265,7 @@ class PreparedGaussianSubsystem(StrictModule, NonTrainableState):
     quadrature_indices: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: GaussianSubsystemPlan, /):
+    def __init__(self, plan: GaussianSubsystemPlan, /) -> None:
         if not isinstance(plan, GaussianSubsystemPlan):
             raise TypeError("plan must be a GaussianSubsystemPlan.")
         indices = _quadrature_indices(plan.modes)
@@ -332,7 +333,7 @@ class GaussianEntanglementPlan(StrictModule, NonTrainableState):
         transposed_modes: Sequence[int],
         tolerance: float = 1e-9,
         maximum_covariance_elements: int = 1_048_576,
-    ):
+    ) -> None:
         subsystem = GaussianSubsystemPlan(
             mode_count,
             subsystem_modes,
@@ -379,7 +380,7 @@ class PreparedGaussianEntanglement(StrictModule, NonTrainableState):
     symplectic_form: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: GaussianEntanglementPlan, /):
+    def __init__(self, plan: GaussianEntanglementPlan, /) -> None:
         if not isinstance(plan, GaussianEntanglementPlan):
             raise TypeError("plan must be a GaussianEntanglementPlan.")
         indices = _quadrature_indices(plan.subsystem_modes)

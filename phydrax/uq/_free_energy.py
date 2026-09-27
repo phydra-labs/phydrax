@@ -16,7 +16,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -27,6 +28,7 @@ from ..linalg._dense_pseudoinverse import (
     factor_pseudoinverse,
 )
 from ..linalg._policies import RankPolicy
+from ..typing import parse
 from ._free_energy_kernels import (
     bar_kernel,
     fep_kernel,
@@ -233,7 +235,7 @@ class ReducedPotentialDataset(StrictModule, NonTrainableState):
         bias_ids: Sequence[str | None] = (),
         unit_system_id: str | None = None,
         unit_id: str,
-    ):
+    ) -> None:
         potential = _floating_array(values, "values")
         if potential.ndim != 2 or potential.shape[0] < 2 or potential.shape[1] < 1:
             raise ValueError(
@@ -436,7 +438,7 @@ class ReducedWorkDataset(StrictModule, NonTrainableState):
         bias_ids: Sequence[str | None] = (),
         unit_system_id: str | None = None,
         unit_id: str,
-    ):
+    ) -> None:
         work = _floating_array(values, "values")
         if work.ndim != 1 or work.size < 1:
             raise ValueError("values must be a non-empty capacity vector.")
@@ -488,12 +490,7 @@ class ReducedWorkDataset(StrictModule, NonTrainableState):
         potentials = (potentials_[0], potentials_[1])
         measures_ = _identifiers(measure_ids, "measure_id", count=2)
         measures = (measures_[0], measures_[1])
-        if work_kind not in (
-            "equilibrium-difference",
-            "targeted-map",
-            "nonequilibrium-switching",
-        ):
-            raise ValueError("work_kind is not a supported reduced-work definition.")
+        work_kind = parse(work_kind, WorkKind, "work_kind")
         mapping = None if mapping_id is None else _identifier(mapping_id, "mapping_id")
         if measures[0] != measures[1] and mapping is None:
             raise ValueError(
@@ -543,7 +540,7 @@ class ReducedWorkDataset(StrictModule, NonTrainableState):
             "unit_id": unit,
             "qualification_id": qualification,
             "sampling_exact": exact,
-            "sampling_bias_bound": bias_bound.hex(),
+            "sampling_bias_bound": float(bias_bound).hex(),
         }
         arrays = {
             "values": canonical_values,
@@ -645,7 +642,7 @@ class ThermodynamicDerivativeDataset(StrictModule, NonTrainableState):
         bias_ids: Sequence[str | None] = (),
         unit_system_id: str | None = None,
         unit_id: str,
-    ):
+    ) -> None:
         derivative = _floating_array(values, "values")
         if derivative.ndim != 2 or derivative.shape[0] < 2 or derivative.shape[1] < 1:
             raise ValueError(
@@ -739,7 +736,7 @@ class ThermodynamicDerivativeDataset(StrictModule, NonTrainableState):
             "unit_id": unit,
             "qualification_id": qualification,
             "sampling_exact": exact,
-            "sampling_bias_bound": bias_bound.hex(),
+            "sampling_bias_bound": float(bias_bound).hex(),
         }
         arrays = {
             "values": canonical_values,
@@ -815,7 +812,7 @@ class FreeEnergySelectionPlan(StrictModule, NonTrainableState):
         minimum_overlap: float = 1.0e-3,
         uncertainty_method: UncertaintyMethod = "analytic",
         bootstrap_replicates: int = 0,
-    ):
+    ) -> None:
         burn = int(burn_in)
         stride_ = int(stride)
         block = None if block_length is None else int(block_length)
@@ -832,10 +829,9 @@ class FreeEnergySelectionPlan(StrictModule, NonTrainableState):
             raise ValueError("Minimum samples and blocks must be positive.")
         if not math.isfinite(overlap) or overlap < 0.0 or overlap >= 1.0:
             raise ValueError("minimum_overlap must be finite and in [0, 1).")
-        if uncertainty_method not in ("analytic", "block-bootstrap"):
-            raise ValueError(
-                "uncertainty_method must be 'analytic' or 'block-bootstrap'."
-            )
+        uncertainty_method = parse(
+            uncertainty_method, UncertaintyMethod, "uncertainty_method"
+        )
         if uncertainty_method == "block-bootstrap" and replicates < 2:
             raise ValueError("Block bootstrap requires at least two replicates.")
         if uncertainty_method == "analytic" and replicates != 0:
@@ -912,7 +908,7 @@ class FreeEnergySelectionEvidence(StrictModule, NonTrainableState):
         block_count: int,
         dataset_kind: str,
         dataset_id: str,
-    ):
+    ) -> None:
         if not isinstance(plan, FreeEnergySelectionPlan):
             raise TypeError("plan must be FreeEnergySelectionPlan.")
         kept = jnp.asarray(retained, dtype=jnp.bool_)
@@ -1093,7 +1089,7 @@ class FreeEnergyResult(StrictModule, NonTrainableState):
         method: str,
         dataset_id: str,
         selection_id: str,
-    ):
+    ) -> None:
         free = _floating_array(free_energies, "free_energies").reshape((-1,))
         states = _identifiers(state_ids, "state_id", count=free.size, unique=True)
         if free.size < 2:
@@ -1237,7 +1233,12 @@ class FreeEnergyResult(StrictModule, NonTrainableState):
         )
 
 
-def _dataset_observations(dataset: FreeEnergyDataset, /):
+_DatasetObservations: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, str, int
+]
+
+
+def _dataset_observations(dataset: FreeEnergyDataset, /) -> _DatasetObservations:
     if isinstance(dataset, ReducedPotentialDataset):
         safe_origin = jnp.clip(dataset.origin_state, 0, len(dataset.state_ids) - 1)
         observable = dataset.values[safe_origin, jnp.arange(dataset.values.shape[1])]

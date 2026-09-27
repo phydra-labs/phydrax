@@ -10,7 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -60,7 +62,7 @@ class WilsonGaugeAction(AbstractIncrementalLatticeAction):
         /,
         *,
         plaquette_couplings: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(link_space, MatrixGaugeLinkSpace):
             raise TypeError("link_space must be MatrixGaugeLinkSpace.")
         if not isinstance(boundaries, CellBoundaryPathPlan):
@@ -139,7 +141,7 @@ class WilsonGaugeAction(AbstractIncrementalLatticeAction):
             (path_indices.shape[0],) + self.link_space.point_shape,
         )
 
-        def step(accumulator, position):
+        def step(accumulator: Array, position: Array) -> tuple[Array, None]:
             edges = paths.edge_indices[path_indices, position]
             factors = links[edges]
             inverses = self.link_space.group.inverse(factors)

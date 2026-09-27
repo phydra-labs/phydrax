@@ -9,7 +9,7 @@ from collections.abc import Mapping
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -22,7 +22,7 @@ class Z1PlusExportPlan(StrictModule, NonTrainableState):
     tool_version: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, *, maximum_bytes: int, tool_version: str):
+    def __init__(self, *, maximum_bytes: int, tool_version: str) -> None:
         maximum = int(maximum_bytes)
         version = str(tool_version).strip()
         if maximum <= 0 or not version:

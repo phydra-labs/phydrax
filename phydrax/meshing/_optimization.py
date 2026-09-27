@@ -18,11 +18,13 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from enum import StrEnum
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._physical import SpatialCoordinateContract
@@ -273,18 +275,18 @@ def _minimize_free_coordinates(
 
 
 @eqx.filter_jit
-def _evaluate_energy(energy: _TargetMatrixEnergy, coordinates: Array, /):
+def _evaluate_energy(energy: _TargetMatrixEnergy, coordinates: Array, /) -> Any:
     return energy(coordinates), energy.corner_determinants(coordinates)
 
 
-def _method(method: ProjectedLBFGS | NewtonTrustRegion | None, /):
+def _method(method: ProjectedLBFGS | NewtonTrustRegion | None, /) -> Any:
     resolved = ProjectedLBFGS() if method is None else method
     if not isinstance(resolved, (ProjectedLBFGS, NewtonTrustRegion)):
         raise TypeError("method must be ProjectedLBFGS, NewtonTrustRegion, or None.")
     return resolved
 
 
-def _termination(termination: OptimizationTermination | None, /):
+def _termination(termination: OptimizationTermination | None, /) -> Any:
     resolved = (
         OptimizationTermination(maximum_steps=100) if termination is None else termination
     )
@@ -323,7 +325,7 @@ class MeshUntanglingPolicy(StrictModule, NonTrainableState):
 
     def __init__(
         self, *, maximum_stages: int = 4, regularization_threshold: float = 1.0e-3
-    ):
+    ) -> None:
         if not isinstance(maximum_stages, (int, np.integer)) or maximum_stages <= 0:
             raise ValueError("maximum_stages must be a positive integer.")
         threshold = finite_real_scalar(
@@ -369,7 +371,7 @@ class MeshUntanglingEvidence(StrictModule, NonTrainableState):
         final_inverted_count: int,
         audit_passed: bool,
         accept_valid_nonconverged: bool,
-    ):
+    ) -> None:
         if not minimizations or len(minimizations) != len(regularizations):
             raise ValueError("Every untangling stage needs one minimization and delta.")
         self.minimizations = tuple(minimizations)
@@ -440,7 +442,7 @@ class TargetMatrixOptimizationPlan(StrictModule, NonTrainableState):
         untangling: MeshUntanglingPolicy | None = MeshUntanglingPolicy(),
         audit_policy: CellMeshAuditPolicy | None = None,
         accept_valid_nonconverged: bool = False,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be CellMesh.")
         if not isinstance(objective, MeshQualityObjective):
@@ -587,6 +589,7 @@ def _polyhedral_stars(
 ) -> tuple[np.ndarray, np.ndarray, _StarCentroids]:
     """Star-simplex routes of polyhedral ``cells`` into appended centroid rows."""
 
+    # ty: ignore[invalid-argument-type]
     tables = polyhedral_star_tables(mesh.connectivity)
     selected = np.isin(tables.star_cell, cells)
     star_cell = tables.star_cell[selected]
@@ -668,6 +671,7 @@ def _corner_targets(
         block_corners = vertices[:, routes].reshape(-1, routes.shape[1])
         corners.append(block_corners)
         if metric_values is None:
+            # ty: ignore[invalid-argument-type]
             targets.append(np.asarray(_corner_matrices(points, block_corners)))
         else:
             # Log-Euclidean cell metric; every corner of a cell shares it.
@@ -739,7 +743,7 @@ class MeshOptimizationResult(StrictModule, NonTrainableState):
         initial_objective: float,
         final_objective: float,
         inverted_count: int,
-    ):
+    ) -> None:
         if not isinstance(status, MeshOptimizationStatus):
             raise TypeError("status must be MeshOptimizationStatus.")
         if (status in _ACCEPTED_STATUSES) != (result is not None):
@@ -921,7 +925,7 @@ def optimize_cell_mesh(
     initial = float(np.asarray(initial_value))
     inverted = _inverted_count(plan, original, determinants)
 
-    def failure(status, count, minimization, untangling):
+    def failure(status: Any, count: Any, minimization: Any, untangling: Any) -> Any:
         return MeshOptimizationResult(
             plan,
             status,
@@ -1005,7 +1009,7 @@ class CellGeometryOptimizationResult(StrictModule):
     minimization: MinimizationResult
     optimizer_status: OptimizationStatus = eqx.field(static=True)
 
-    def __init__(self, coordinates: Array, minimization: MinimizationResult, /):
+    def __init__(self, coordinates: Array, minimization: MinimizationResult, /) -> None:
         if not isinstance(minimization, MinimizationResult):
             raise TypeError("minimization must be MinimizationResult.")
         self.coordinates = coordinates

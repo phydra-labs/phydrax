@@ -11,7 +11,8 @@ from typing import Any, final, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ...._callable import _ensure_special_kwonly_args, _KeyIterAdapter
 from ...._differentiation import DerivativeRegularity
@@ -30,7 +31,9 @@ from ...activations import activation_regularity
 _Layout = Literal["value", "passthrough"]
 
 
-def _flatten_value(x: Array, /, *, in_size: int | tuple[int, ...] | Literal["scalar"]):
+def _flatten_value(
+    x: Array, /, *, in_size: int | tuple[int, ...] | Literal["scalar"]
+) -> tuple[Array, tuple[()]]:
     x_arr = jnp.asarray(x)
     if in_size == "scalar":
         if x_arr.shape == ():
@@ -191,7 +194,7 @@ class EquinoxModel(_AbstractBaseModel):
         in_size: SizeLike,
         out_size: SizeLike,
         layout: _Layout = "value",
-    ):
+    ) -> None:
         self.module = _stateless_module(module, wrapper=type(self).__name__)
         self.in_size = _canonical_size(in_size)
         self.out_size = _canonical_size(out_size)
@@ -238,7 +241,7 @@ class EquinoxStructuredModel(_AbstractStructuredInputModel):
         in_size: SizeLike,
         out_size: SizeLike,
         layout: _Layout = "passthrough",
-    ):
+    ) -> None:
         self.module = _stateless_module(module, wrapper=type(self).__name__)
         self.in_size = _canonical_size(in_size)
         self.out_size = _canonical_size(out_size)
@@ -323,7 +326,7 @@ class FunctionalJAXAdapter(_AbstractBaseModel):
         in_size: SizeLike,
         out_size: SizeLike,
         inference: bool,
-    ):
+    ) -> None:
         if not callable(apply):
             raise TypeError("apply must be callable.")
         if not isinstance(inference, bool):

@@ -6,12 +6,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -39,15 +42,15 @@ class ThreePhononScatteringResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        decay,
-        coalescence,
-        momentum,
-        detailed_balance,
-        decay_count,
-        coalescence_count,
-        successful,
+        decay: ArrayLike,
+        coalescence: ArrayLike,
+        momentum: ArrayLike,
+        detailed_balance: ArrayLike,
+        decay_count: int,
+        coalescence_count: int,
+        successful: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.decay_rates = jnp.asarray(decay)
         self.coalescence_rates = jnp.asarray(coalescence, dtype=self.decay_rates.dtype)
         self.total_rates = self.decay_rates + self.coalescence_rates
@@ -93,16 +96,16 @@ class ThreePhononModeVertices(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        decay_vertices,
-        coalescence_vertices,
-        angular_frequencies,
-        qpoint_indices,
-        mesh_shape,
-        energy_unit,
-        ifc3_id,
-        phonon_result_id,
+        decay_vertices: npt.ArrayLike,
+        coalescence_vertices: npt.ArrayLike,
+        angular_frequencies: npt.ArrayLike,
+        qpoint_indices: npt.ArrayLike,
+        mesh_shape: Sequence[int],
+        energy_unit: UnitDefinition,
+        ifc3_id: str,
+        phonon_result_id: str,
         /,
-    ):
+    ) -> None:
         decay = np.asarray(decay_vertices)
         coalescence = np.asarray(coalescence_vertices)
         frequency = np.asarray(angular_frequencies)
@@ -181,7 +184,7 @@ class IFC3ModeVertexPlan(StrictModule, NonTrainableState):
         phonon_result_id: str,
         maximum_channels: int = 50_000_000,
         maximum_bytes: int = 2_147_483_648,
-    ):
+    ) -> None:
         if not isinstance(ifc3, ThirdOrderForceConstants):
             raise TypeError("ifc3 must be ThirdOrderForceConstants.")
         if not isinstance(units, AtomisticUnitSystem):
@@ -363,19 +366,19 @@ class ThreePhononRTAResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        scattering,
-        lifetimes,
-        mode_conductivity,
-        conductivity,
-        mean_free_paths,
-        ballistic,
-        antisymmetry,
-        eigenvalues,
-        finite_conductivity,
-        successful,
-        unit_system_id,
+        scattering: ThreePhononScatteringResult,
+        lifetimes: ArrayLike,
+        mode_conductivity: ArrayLike,
+        conductivity: ArrayLike,
+        mean_free_paths: ArrayLike,
+        ballistic: ArrayLike,
+        antisymmetry: ArrayLike,
+        eigenvalues: ArrayLike,
+        finite_conductivity: ArrayLike,
+        successful: ArrayLike,
+        unit_system_id: str,
         /,
-    ):
+    ) -> None:
         self.scattering = scattering
         self.lifetimes = jnp.asarray(lifetimes)
         self.mode_conductivity = jnp.asarray(
@@ -444,7 +447,7 @@ class ThreePhononRTAPlan(StrictModule, NonTrainableState):
         *,
         maximum_channels: int = 50_000_000,
         detailed_balance_tolerance: float = 1.0e-5,
-    ):
+    ) -> None:
         if not isinstance(ifc3, ThirdOrderForceConstants):
             raise TypeError("ifc3 must be canonical ThirdOrderForceConstants.")
         if not ifc3.source_kind.startswith("provider-"):
@@ -712,8 +715,8 @@ class ThreePhononRTAPlan(StrictModule, NonTrainableState):
 def evaluate_three_phonon_rta(
     prepared: ThreePhononRTAPlan,
     mode_vertices: ThreePhononModeVertices,
-    group_velocities,
-    heat_capacities,
+    group_velocities: ArrayLike,
+    heat_capacities: ArrayLike,
     /,
 ) -> ThreePhononRTAResult:
     if not isinstance(prepared, ThreePhononRTAPlan):

@@ -7,14 +7,14 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from numbers import Integral
 from typing import Any, Literal
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 import phydrax.ein as ein
@@ -50,6 +50,8 @@ from .._polynomial import evaluate_tensor_basis, PolynomialMultiIndexSet
 from .._sampling import RandomizedQMCDesign
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import positive_integer
+from ..typing import PRNGKey
 from ._distributions import Normal, Uniform
 
 
@@ -85,7 +87,7 @@ class PolynomialChaosBasis(StrictModule, NonTrainableState):
         *,
         maximum_features: int = 4096,
         maximum_storage_bytes: int = 64 * 1024**2,
-    ):
+    ) -> None:
         factor_values = (
             (factors,) if isinstance(factors, ProbabilityDomain) else tuple(factors)
         )
@@ -195,7 +197,7 @@ class PolynomialChaosExpansion(StrictModule):
     output_specs: tuple[_OutputLeafSpec, ...] = eqx.field(static=True)
     expansion_id: str = eqx.field(static=True)
 
-    def __init__(self, basis: PolynomialChaosBasis, coefficients: Any, /):
+    def __init__(self, basis: PolynomialChaosBasis, coefficients: Any, /) -> None:
         if not isinstance(basis, PolynomialChaosBasis):
             raise TypeError("basis must be a PolynomialChaosBasis.")
         leaves, tree = jax.tree_util.tree_flatten(
@@ -371,7 +373,7 @@ class PolynomialChaosFitResult(StrictModule):
         solver_diagnostics: Sequence[Any] = (),
         evidence: Mapping[str, Any],
         provenance: Mapping[str, Any],
-    ):
+    ) -> None:
         if not isinstance(expansion, PolynomialChaosExpansion):
             raise TypeError("expansion must be a PolynomialChaosExpansion.")
         statuses = tuple(
@@ -413,7 +415,7 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
         precision: IntegrationPrecisionPolicy | None = None,
         maximum_model_evaluations: int = _DEFAULT_MAXIMUM_MODEL_EVALUATIONS,
         maximum_basis_bytes: int = _DEFAULT_MAXIMUM_BASIS_BYTES,
-    ):
+    ) -> None:
         if not isinstance(basis, PolynomialChaosBasis):
             raise TypeError("basis must be a PolynomialChaosBasis.")
         if not isinstance(integration_plan, ProductIntegrationPlan):
@@ -421,10 +423,8 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
         precision_ = IntegrationPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, IntegrationPrecisionPolicy):
             raise TypeError("precision must be an IntegrationPrecisionPolicy.")
-        maximum = _positive_integer(
-            maximum_model_evaluations, "maximum_model_evaluations"
-        )
-        maximum_basis = _positive_integer(maximum_basis_bytes, "maximum_basis_bytes")
+        maximum = positive_integer(maximum_model_evaluations, "maximum_model_evaluations")
+        maximum_basis = positive_integer(maximum_basis_bytes, "maximum_basis_bytes")
         covered = tuple(label for group in integration_plan.plans for label in group)
         if len(covered) != len(set(covered)) or set(covered) != set(basis.labels):
             raise ValueError(
@@ -457,7 +457,7 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
         model: Callable[..., Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
     ) -> PolynomialChaosFitResult:
         """Evaluate and orthogonally project a deterministic pointwise model."""
         if not callable(model):
@@ -660,7 +660,7 @@ class PolynomialChaosRegressionPlan(StrictModule, NonTrainableState):
         least_squares_policy: LinearSolvePolicy | None = None,
         maximum_samples: int = _DEFAULT_MAXIMUM_SAMPLES,
         maximum_design_bytes: int = _DEFAULT_MAXIMUM_DESIGN_BYTES,
-    ):
+    ) -> None:
         if not isinstance(basis, PolynomialChaosBasis):
             raise TypeError("basis must be a PolynomialChaosBasis.")
         exact = LinearSolvePolicy(DenseLU()) if exact_policy is None else exact_policy
@@ -673,8 +673,8 @@ class PolynomialChaosRegressionPlan(StrictModule, NonTrainableState):
             raise TypeError("exact_policy must be a LinearSolvePolicy.")
         if not isinstance(least_squares, LinearSolvePolicy):
             raise TypeError("least_squares_policy must be a LinearSolvePolicy.")
-        maximum_samples_ = _positive_integer(maximum_samples, "maximum_samples")
-        maximum_bytes = _positive_integer(maximum_design_bytes, "maximum_design_bytes")
+        maximum_samples_ = positive_integer(maximum_samples, "maximum_samples")
+        maximum_bytes = positive_integer(maximum_design_bytes, "maximum_design_bytes")
         self.basis = basis
         self.exact_policy = exact
         self.least_squares_policy = least_squares
@@ -1073,15 +1073,6 @@ def _point_leading_dims(
             "Labeled Field coordinate dimensions do not match their broadcast rank."
         )
     return expected
-
-
-def _positive_integer(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
-    result = int(value)
-    if result < 1:
-        raise ValueError(f"{name} must be positive.")
-    return result
 
 
 def _restore_coefficients(

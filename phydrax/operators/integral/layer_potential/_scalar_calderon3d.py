@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Literal, NoReturn, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -27,6 +28,7 @@ from ....linalg import (
     OperatorProperties,
 )
 from ....linalg._operators import _AbstractCostedLinearOperator
+from ....typing import parse
 from ._galerkin3d import LaplaceSingleLayerDP0GalerkinPolicy3D
 from ._galerkin_quadrature3d import (
     _diameter,
@@ -51,7 +53,9 @@ from ._surface3d import SurfacePanelization3D
 from ._surface_fem3d import _SurfaceFEMBinding3D
 
 
-ScalarKernelName3D = Literal["laplace", "modified-helmholtz", "outgoing-helmholtz"]
+ScalarKernelName3D: TypeAlias = Literal[
+    "laplace", "modified-helmholtz", "outgoing-helmholtz"
+]
 
 
 class ScalarKernelFamily3D(StrictModule, NonTrainableState):
@@ -78,13 +82,8 @@ class ScalarKernelFamily3D(StrictModule, NonTrainableState):
         /,
         *,
         parameter: float = 0.0,
-    ):
-        if family not in (
-            "laplace",
-            "modified-helmholtz",
-            "outgoing-helmholtz",
-        ):
-            raise ValueError("Unsupported three-dimensional scalar kernel family.")
+    ) -> None:
+        family = parse(family, ScalarKernelName3D, "family")
         value = float(parameter)
         if family == "laplace":
             if value != 0.0:
@@ -198,7 +197,7 @@ class _BlockedScalarWeakOperator3D(_AbstractCostedLinearOperator):
         target_block_size: int,
         source_block_size: int,
         operator_id: str,
-    ):
+    ) -> None:
         values = jnp.asarray(exception_values)
         if values.shape != pair_data.values.shape:
             raise ValueError("Exception values must match classified surface pairs.")
@@ -372,7 +371,7 @@ class _WeakTransposeScalarOperator3D(_AbstractCostedLinearOperator):
         /,
         *,
         operator_id: str,
-    ):
+    ) -> None:
         self.operator = operator
         self.source = operator.source
         self.target = operator.target
@@ -420,7 +419,7 @@ class _StrongScalarOperator3D(_AbstractCostedLinearOperator):
         transposed_weak_action: bool,
         action_workspace_bytes: int,
         operator_id: str,
-    ):
+    ) -> None:
         self.weak = weak
         self.inverse_areas = jnp.reciprocal(jnp.asarray(areas))
         self.diagonal = jnp.asarray(diagonal)
@@ -507,7 +506,9 @@ class ScalarCalderonDP0Galerkin3D(StrictModule, NonTrainableState):
     def component_count(self) -> int:
         return self._binding.component_count
 
-    def single_layer_potential(self, coefficients: ArrayLike, /):
+    def single_layer_potential(
+        self, coefficients: ArrayLike, /
+    ) -> LaplaceLayerPotential3D | HelmholtzLayerPotential3D:
         values = self.space.validate(coefficients)
         density = jnp.repeat(values, self.panelization.nodes_per_panel)
         if self.kernel.family == "laplace":
@@ -525,7 +526,9 @@ class ScalarCalderonDP0Galerkin3D(StrictModule, NonTrainableState):
             "Modified Helmholtz off-surface reconstruction is not provided by the current layer-potential substrate."
         )
 
-    def double_layer_potential(self, coefficients: ArrayLike, /):
+    def double_layer_potential(
+        self, coefficients: ArrayLike, /
+    ) -> LaplaceLayerPotential3D | HelmholtzLayerPotential3D:
         values = self.space.validate(coefficients)
         density = jnp.repeat(values, self.panelization.nodes_per_panel)
         if self.kernel.family == "laplace":
@@ -602,7 +605,7 @@ def _regular_scalar_pair(
     layer_kind: Literal["single", "double"],
     order: int,
     /,
-):
+) -> complex:
     points, weights = _regular_rule(order)
     target_points = _map_triangle(test_triangle, points)
     source_points = _map_triangle(source_triangle, points)
@@ -630,7 +633,7 @@ def _singular_scalar_pair(
     layer_kind: Literal["single", "double"],
     order: int,
     /,
-):
+) -> complex:
     if target == source and layer_kind == "double":
         return 0.0
     target_reference, source_reference, weights = _duffy_rule(order, adjacency)
@@ -682,7 +685,7 @@ def _near_scalar_pair(
     absolute_tolerance: float,
     relative_tolerance: float,
     depth: int = 0,
-):
+) -> tuple[complex, float, int]:
     low = _regular_scalar_pair(
         test_triangle, source_triangle, kernel, layer_kind, low_order
     )
@@ -752,7 +755,7 @@ def _scalar_exception_values(
     high_regular = policy.regular_order + 2
     high_singular = policy.singular_order + 2
     high_near = policy.near_order + 2
-    names = ("single", "double")
+    names: tuple[Literal["single", "double"], ...] = ("single", "double")
     for target in range(faces.shape[0]):
         for source in range(faces.shape[0]):
             key = target * faces.shape[0] + source
@@ -1112,7 +1115,7 @@ def prepare_scalar_hypersingular_dp0_3d(
     /,
     *,
     numeric_version: str = "0",
-):
+) -> NoReturn:
     """Reject W before geometry/FEM preparation: DP0 is not H1/2 conforming."""
     del region, numeric_version
     raise UnsupportedScalarBoundarySpaceError(

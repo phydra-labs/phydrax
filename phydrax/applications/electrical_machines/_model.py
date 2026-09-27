@@ -18,7 +18,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._strict import StrictModule
 from phydrax.discretization import (
@@ -56,7 +57,7 @@ class LinearMagneticRegion(StrictModule):
         remanence: ArrayLike | Sequence[float] = (0.0, 0.0),
         winding_turn_density: ArrayLike | Sequence[float] = (),
         rotating: bool = False,
-    ):
+    ) -> None:
         mu = float(relative_permeability)
         br = np.asarray(remanence, dtype=np.float64)
         winding = np.asarray(winding_turn_density, dtype=np.float64)
@@ -123,7 +124,7 @@ class PlanarMachine(StrictModule):
         axial_length: float = 0.1,
         contour_edges: ArrayLike | Sequence[Sequence[int]] = (),
         contour_cells: ArrayLike | Sequence[Sequence[int]] = (),
-    ):
+    ) -> None:
         if (
             not isinstance(mesh, CellMesh)
             or mesh.ambient_dimension != 2
@@ -492,7 +493,7 @@ def polar_machine(
     )
     cells, ids, air = [], [], []
 
-    def rotor_region(sector):
+    def rotor_region(sector: int) -> int:
         body_sector = (sector - shift) % n
         return 1 if salient and abs(np.cos(mid_phi[body_sector])) < np.sqrt(0.5) else 0
 

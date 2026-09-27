@@ -11,11 +11,13 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ..._strict import StrictModule
+from ...typing import parse
 from ._base import (
     _broadcast_full,
     _nan_where_invalid,
@@ -59,7 +61,7 @@ class PrecisionRecallFScoreResult(StrictModule):
         status: ArrayLike,
         effective_weight: ArrayLike,
         average: Average,
-    ):
+    ) -> None:
         self.precision = jnp.asarray(precision)
         self.recall = jnp.asarray(recall)
         self.fscore = jnp.asarray(fscore)
@@ -453,8 +455,7 @@ def precision_recall_fscore(
     if beta <= 0.0:
         raise ValueError("beta must be positive.")
     classes = int(num_classes)
-    if average not in {"binary", "micro", "macro", "weighted", "none"}:
-        raise ValueError(f"Unsupported average {average!r}.")
+    average = parse(average, Average, "average")
     if average == "binary" and not 0 <= int(positive_class) < classes:
         raise ValueError("positive_class is outside the class range.")
     confusion, mass, invalid, _ = _hard_confusion_components(
@@ -769,7 +770,12 @@ def _binary_score_inputs(
     return true.astype(jnp.int32), score, weights, invalid, mass
 
 
-def _map_binary_cases(true: Array, score: Array, weights: Array, function):
+def _map_binary_cases(
+    true: Array,
+    score: Array,
+    weights: Array,
+    function: Callable[[Array, Array, Array], Array],
+) -> Array:
     case_shape = true.shape[:-1]
     sample_count = true.shape[-1]
     count = prod(case_shape)
@@ -800,7 +806,7 @@ def roc_auc_score(
         metric="roc_auc_score",
     )
 
-    def one_case(labels, scores, weight):
+    def one_case(labels: Array, scores: Array, weight: Array) -> Array:
         order = jnp.argsort(scores, stable=True)
         labels = labels[order]
         scores = scores[order]
@@ -851,7 +857,7 @@ def pr_auc_score(
         metric="pr_auc_score",
     )
 
-    def one_case(labels, scores, weight):
+    def one_case(labels: Array, scores: Array, weight: Array) -> Array:
         order = jnp.argsort(-scores, stable=True)
         labels = labels[order]
         scores = scores[order]
@@ -998,8 +1004,7 @@ def smooth_precision_recall_fscore(
     """Expected-count precision/recall/F-beta, smooth in class probabilities."""
     if beta <= 0.0:
         raise ValueError("beta must be positive.")
-    if average not in {"binary", "micro", "macro", "weighted", "none"}:
-        raise ValueError(f"Unsupported average {average!r}.")
+    average = parse(average, Average, "average")
     matrix_result = smooth_confusion_matrix(
         y_true,
         y_probability,

@@ -2,17 +2,22 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from typing import Any
+from __future__ import annotations
+
+from typing import Any, NoReturn
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import PRNGKey
+from ._domain import Domain
 from ._evaluation import BatchEvaluator
 from ._function import DomainFunction
 from ._structure import PointBatch
@@ -23,12 +28,12 @@ class _IndexedFieldEvaluator(StrictModule, BatchEvaluator, NonTrainableState):
     index_key: str
     owner: str
 
-    def __init__(self, values: Array, index_key: str, owner: str, /):
+    def __init__(self, values: Array, index_key: str, owner: str, /) -> None:
         self.values = jax.lax.stop_gradient(jnp.asarray(values))
         self.index_key = str(index_key)
         self.owner = str(owner)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> NoReturn:
         del args, key, kwargs
         raise TypeError(f"{self.owner} requires structured batch evaluation.")
 
@@ -37,7 +42,7 @@ class _IndexedFieldEvaluator(StrictModule, BatchEvaluator, NonTrainableState):
         batch: PointBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         del key, kwargs
@@ -53,7 +58,7 @@ class _IndexedFieldEvaluator(StrictModule, BatchEvaluator, NonTrainableState):
 
 
 def indexed_field(
-    domain,
+    domain: Domain,
     values: ArrayLike,
     /,
     *,

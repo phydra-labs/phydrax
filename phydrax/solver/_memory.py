@@ -11,7 +11,9 @@ from typing import Any, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+import numpy as np
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
@@ -24,18 +26,19 @@ VolterraVectorField: TypeAlias = Callable[[Array, Array, Any], ArrayLike]
 VolterraKernel: TypeAlias = Callable[[Array, Array, Any], ArrayLike]
 VolterraFreeTerm: TypeAlias = Callable[[Array, Any], ArrayLike]
 ConvolutionKernel: TypeAlias = Callable[[Array, Any], ArrayLike]
+_VolterraAccumulators: TypeAlias = tuple[Array, Array]
 
 
 class _ConstantFreeTerm(StrictModule):
     value: Array
 
-    def __call__(self, time, args):
+    def __call__(self, time: Array, args: object) -> Array:
         del time, args
         return self.value
 
 
 class _UnitVolterraKernel(StrictModule):
-    def __call__(self, target, source, args):
+    def __call__(self, target: Array, source: Array, args: object) -> Array:
         del target, source, args
         return jnp.asarray(1.0)
 
@@ -43,12 +46,12 @@ class _UnitVolterraKernel(StrictModule):
 class _ConvolutionKernelAdapter(StrictModule):
     kernel: ConvolutionKernel
 
-    def __call__(self, target, source, args):
+    def __call__(self, target: Array, source: Array, args: object) -> ArrayLike:
         return self.kernel(target - source, args)
 
 
 class _UnitConvolutionKernel(StrictModule):
-    def __call__(self, lag, args):
+    def __call__(self, lag: Array, args: object) -> Array:
         del lag, args
         return jnp.asarray(1.0)
 
@@ -91,7 +94,7 @@ class StochasticVolterraProblem(StrictModule):
         free_term: VolterraFreeTerm | None = None,
         args: Any = None,
         problem_id: str = "stochastic-volterra-problem",
-    ):
+    ) -> None:
         if not callable(drift):
             raise TypeError("drift must be callable.")
         if diffusion is not None and not callable(diffusion):
@@ -219,7 +222,7 @@ class ConvolutionVolterraProblem(StrictModule):
         free_term: VolterraFreeTerm | None = None,
         args: Any = None,
         problem_id: str = "convolution-volterra-problem",
-    ):
+    ) -> None:
         if kernel is not None and not callable(kernel):
             raise TypeError("kernel must be callable or None.")
         if diffusion_kernel is not None and not callable(diffusion_kernel):
@@ -330,7 +333,7 @@ class MemoryEquationSolution(StrictModule):
         resolved_method: str | None = None,
         metadata: Mapping[str, Any] | None = None,
         continuation: Any = None,
-    ):
+    ) -> None:
         if realization is not None and not isinstance(realization, WienerRealization):
             raise TypeError("realization must be a WienerRealization or None.")
         sample_shape = () if realization is None else realization.sample_shape
@@ -491,7 +494,7 @@ def _wiener_increments(
     t1: Array,
     times: Array,
     realization: WienerRealization | None,
-    dtype,
+    dtype: np.dtype,
 ) -> tuple[Array, tuple[int, ...]]:
     if not stochastic:
         if realization is not None:
@@ -545,21 +548,23 @@ def solve_stochastic_volterra(
     num_steps = num_times - 1
     step_sizes = jnp.diff(grid)
 
-    def one_path(path_increments):
+    def one_path(path_increments: Array) -> Array:
         states = jnp.zeros(
             (num_times,) + problem.state_shape, dtype=problem.initial_state.dtype
         )
         states = states.at[0].set(problem.initial_state)
 
-        def outer(index, state_buffer):
+        def outer(index: Array, state_buffer: Array) -> Array:
             target = grid[index]
             drift_initial = jnp.zeros(
                 problem.state_shape, dtype=problem.initial_state.dtype
             )
             noise_initial = jnp.zeros_like(drift_initial)
 
-            def inner(source_index, accumulators):
-                def contribute(values):
+            def inner(
+                source_index: Array, accumulators: _VolterraAccumulators
+            ) -> _VolterraAccumulators:
+                def contribute(values: _VolterraAccumulators) -> _VolterraAccumulators:
                     drift_sum, noise_sum = values
                     source = grid[source_index]
                     state = state_buffer[source_index]

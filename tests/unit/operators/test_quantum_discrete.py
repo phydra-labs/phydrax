@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 
@@ -8,17 +10,17 @@ class _TableAmplitude(eqx.Module):
     log_abs: jnp.ndarray
     phase: jnp.ndarray
 
-    def __call__(self, configuration):
+    def __call__(self, configuration: Any) -> Any:
         bits = (configuration > 0).astype(jnp.int32)
         index = 2 * bits[0] + bits[1]
         return phx.operators.LogAmplitude(self.log_abs[index], self.phase[index])
 
 
-def _ising_operator(coupling=0.7, field=0.4):
-    def diagonal(configurations):
+def _ising_operator(coupling: Any = 0.7, field: Any = 0.4) -> Any:
+    def diagonal(configurations: Any) -> Any:
         return -coupling * configurations[..., 0] * configurations[..., 1]
 
-    def connections(configurations):
+    def connections(configurations: Any) -> Any:
         first = configurations.at[..., 0].multiply(-1)
         second = configurations.at[..., 1].multiply(-1)
         connected = jnp.stack((first, second), axis=-2)
@@ -38,11 +40,11 @@ def _ising_operator(coupling=0.7, field=0.4):
     )
 
 
-def _configurations():
+def _configurations() -> Any:
     return jnp.asarray([[-1, -1], [-1, 1], [1, -1], [1, 1]], dtype=jnp.int32)
 
 
-def test_connected_local_estimator_matches_dense_complex_hamiltonian():
+def test_connected_local_estimator_matches_dense_complex_hamiltonian() -> None:
     configurations = _configurations()
     amplitudes = jnp.asarray([1.0 + 0.0j, 0.7 + 0.2j, -0.3 + 0.9j, 1.2 - 0.4j])
     model = _TableAmplitude(
@@ -73,14 +75,14 @@ def test_connected_local_estimator_matches_dense_complex_hamiltonian():
     assert jnp.allclose(local.value, expected)
 
 
-def test_padded_connections_do_not_change_local_estimate():
+def test_padded_connections_do_not_change_local_estimate() -> None:
     configurations = _configurations()
     model = _TableAmplitude(jnp.zeros((4,)), jnp.ones((4,), dtype="complex128"))
 
-    def diagonal(values):
+    def diagonal(values: Any) -> Any:
         return jnp.zeros(values.shape[:-1])
 
-    def connections(values):
+    def connections(values: Any) -> Any:
         first = values.at[..., 0].multiply(-1)
         padding = jnp.zeros_like(values)
         connected = jnp.stack((first, padding), axis=-2)
@@ -116,7 +118,7 @@ def test_padded_connections_do_not_change_local_estimate():
     assert jnp.all(jnp.isfinite(gradient.phase))
 
 
-def test_zero_current_amplitude_invalidates_local_estimator():
+def test_zero_current_amplitude_invalidates_local_estimator() -> None:
     configurations = _configurations()
     model = _TableAmplitude(
         jnp.asarray([-jnp.inf, 0.0, 0.0, 0.0]),

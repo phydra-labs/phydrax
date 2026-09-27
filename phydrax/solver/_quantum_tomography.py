@@ -9,7 +9,8 @@ from math import isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -44,7 +45,7 @@ class QuantumTomographyProblem(StrictModule):
         problem_id: str = "quantum-tomography",
         precision: GeometryPrecisionPolicy | None = None,
         hermitian_precision: HermitianPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(povm, QuantumPOVM) or not isinstance(
             data, QuantumTomographyData
         ):
@@ -100,7 +101,7 @@ class QuantumTomographyPolicy(StrictModule):
         maximum_backtracks: int = 8,
         contraction: float = 0.5,
         likelihood_tolerance: float = 1e-9,
-    ):
+    ) -> None:
         if (
             isinstance(iterations, bool)
             or not isinstance(iterations, int)
@@ -158,7 +159,7 @@ class QuantumTomographyResult(StrictModule):
         problem_id: str,
         precision_evidence: PrecisionEvidenceEnvelope,
         hermitian_precision_evidence: PrecisionEvidenceEnvelope,
-    ):
+    ) -> None:
         self.density = jnp.asarray(density)
         self.log_likelihood_history = jnp.asarray(log_likelihood_history)
         self.minimum_eigenvalue_history = jnp.asarray(minimum_eigenvalue_history)
@@ -204,7 +205,7 @@ class QuantumTomographyArtifact(StrictModule):
         hermitian_precision_evidence: PrecisionEvidenceEnvelope,
         precision_policy_id: str,
         hermitian_precision_policy_id: str,
-    ):
+    ) -> None:
         self.density = jnp.asarray(density)
         self.povm_id = str(povm_id)
         self.data_id = str(data_id)

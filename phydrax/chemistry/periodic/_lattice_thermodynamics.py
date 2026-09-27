@@ -11,7 +11,9 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -37,20 +39,20 @@ class HarmonicThermodynamicsResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        temperatures,
-        free,
-        internal,
-        entropy,
-        heat,
-        zero,
-        identity,
-        x_min,
-        x_max,
-        asymptotic_count,
-        successful,
-        unit_system_id,
+        temperatures: ArrayLike,
+        free: ArrayLike,
+        internal: ArrayLike,
+        entropy: ArrayLike,
+        heat: ArrayLike,
+        zero: ArrayLike,
+        identity: ArrayLike,
+        x_min: ArrayLike,
+        x_max: ArrayLike,
+        asymptotic_count: ArrayLike,
+        successful: ArrayLike,
+        unit_system_id: str,
         /,
-    ):
+    ) -> None:
         self.temperatures = jnp.asarray(temperatures)
         dtype = self.temperatures.dtype
         self.free_energy = jnp.asarray(free, dtype=dtype)
@@ -105,7 +107,7 @@ class HarmonicThermodynamicsPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_scalar_evaluations: int = 2_000_000_000,
-    ):
+    ) -> None:
         weights = np.asarray(qpoint_weights, dtype=np.float64)
         temperature = np.asarray(temperatures, dtype=np.float64)
         if (
@@ -219,18 +221,18 @@ class QuasiHarmonicResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        temperatures,
-        volumes,
-        raw_free,
-        equilibrium,
-        minimum_free,
-        curvature,
-        expansion,
-        brackets,
-        interpolation,
-        successful,
+        temperatures: npt.ArrayLike,
+        volumes: npt.ArrayLike,
+        raw_free: npt.ArrayLike,
+        equilibrium: npt.ArrayLike,
+        minimum_free: npt.ArrayLike,
+        curvature: npt.ArrayLike,
+        expansion: npt.ArrayLike,
+        brackets: npt.ArrayLike,
+        interpolation: npt.ArrayLike,
+        successful: npt.ArrayLike,
         /,
-    ):
+    ) -> None:
         self.temperatures = jnp.asarray(temperatures)
         self.volumes = jnp.asarray(volumes, dtype=self.temperatures.dtype)
         self.raw_free_energies = jnp.asarray(raw_free, dtype=self.temperatures.dtype)
@@ -283,7 +285,7 @@ class QuasiHarmonicPlan(StrictModule, NonTrainableState):
         /,
         *,
         minimum_boundary_margin: float = 0.0,
-    ):
+    ) -> None:
         volume = np.asarray(volumes, dtype=np.float64)
         static = np.asarray(static_energies, dtype=np.float64)
         frequency = np.asarray(frequencies_by_volume, dtype=np.float64)
@@ -419,7 +421,7 @@ class LatticeConvergenceReport(StrictModule, NonTrainableState):
         refinement_axis: str,
         absolute_tolerance: float,
         relative_tolerance: float,
-    ):
+    ) -> None:
         first = np.asarray(coarse)
         second = np.asarray(refined)
         if (

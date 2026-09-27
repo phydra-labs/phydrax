@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -11,7 +12,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _case(depth: int):
+def _case(depth: int) -> Any:
     grid = phx.discretization.AdaptiveDyadicGridPlan(
         phx.discretization.MortonAddressPlan((0.0, 0.0), (1.0, 1.0), depth),
         cell_capacity=4096,

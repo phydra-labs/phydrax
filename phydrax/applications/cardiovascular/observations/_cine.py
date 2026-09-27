@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -142,7 +143,7 @@ class PreparedCineTiming(StrictModule, NonTrainableState):
         timebase_id: str,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         times = jax.lax.stop_gradient(jnp.asarray(sample_times_ms))
         phase_ = jax.lax.stop_gradient(jnp.asarray(phase, dtype=times.dtype))
         duration = jax.lax.stop_gradient(

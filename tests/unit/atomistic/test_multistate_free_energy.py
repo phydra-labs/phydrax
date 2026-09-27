@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -12,14 +13,20 @@ import phydrax as phx
 sampling = phx.atomistic.sampling
 
 
-def _prepared_runtime(temperatures, replica_count, *, exchange=False, sams=False):
+def _prepared_runtime(
+    temperatures: Any, replica_count: Any, *, exchange: Any = False, sams: Any = False
+) -> Any:
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     topology = phx.atomistic.MolecularTopologyPlan(bonds=[[10, 20]])
     system = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [10, 20],
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         units,
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0],
         topology=topology,
     ).prepare()
@@ -27,6 +34,7 @@ def _prepared_runtime(temperatures, replica_count, *, exchange=False, sams=False
         system.particles
     )
     potential = phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.HarmonicBondPotential([100.0], [1.0])]
     ).prepare(system)
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
@@ -71,7 +79,7 @@ def _prepared_runtime(temperatures, replica_count, *, exchange=False, sams=False
     return dynamics, table, plan.prepare(dynamics)
 
 
-def _initial_states(dynamics, table, positions):
+def _initial_states(dynamics: Any, table: Any, positions: Any) -> Any:
     return tuple(
         dynamics.initialize_state(
             position,
@@ -84,7 +92,7 @@ def _initial_states(dynamics, table, positions):
     )
 
 
-def test_compiled_thermodynamic_rows_gather_numerically_under_jit():
+def test_compiled_thermodynamic_rows_gather_numerically_under_jit() -> None:
     dynamics, table, runtime = _prepared_runtime([1.0, 2.0, 4.0], 2, sams=True)
     rows = eqx.filter_jit(table.state_at_replica)(jnp.asarray([2, 0]))
 
@@ -114,6 +122,7 @@ def test_compiled_thermodynamic_rows_gather_numerically_under_jit():
     with pytest.raises(ValueError, match="another dynamics/table target"):
         sampling.AtomisticMultistatePlan(
             table,
+            # ty: ignore[invalid-argument-type]
             [100, 200],
             qualification=wrong_qualification,
             exchange=sampling.AtomisticReplicaExchangePlan(1),
@@ -121,15 +130,17 @@ def test_compiled_thermodynamic_rows_gather_numerically_under_jit():
         )
 
 
-def test_exchange_ladder_dependence_and_rng_are_bound_to_run_identity():
+def test_exchange_ladder_dependence_and_rng_are_bound_to_run_identity() -> None:
     dynamics, table, runtime = _prepared_runtime([1.0, 2.0], 2, exchange=True)
     np.testing.assert_array_equal(runtime.plan.dependence_group_indices, [0, 0])
     with pytest.raises(ValueError, match="dependence group"):
         sampling.AtomisticMultistatePlan(
             table,
+            # ty: ignore[invalid-argument-type]
             [100, 200],
             qualification=runtime.plan.qualification,
             exchange=sampling.AtomisticReplicaExchangePlan(1),
+            # ty: ignore[invalid-argument-type]
             dependence_group_indices=[0, 1],
             run_id="split-exchange-ladder",
         )
@@ -138,12 +149,14 @@ def test_exchange_ladder_dependence_and_rng_are_bound_to_run_identity():
     first = runtime.initialize(lanes, [0, 1], jax.random.key(15))
     other = sampling.AtomisticMultistatePlan(
         table,
+        # ty: ignore[invalid-argument-type]
         [100, 200],
         qualification=runtime.plan.qualification,
         exchange=sampling.AtomisticReplicaExchangePlan(1),
         repeat_index=1,
         run_id="other-run-identity",
     ).prepare(dynamics)
+    # ty: ignore[invalid-argument-type]
     second = other.initialize(lanes, [0, 1], jax.random.key(15))
     assert not bool(jnp.array_equal(first.root_key, second.root_key))
     assert not bool(
@@ -151,7 +164,7 @@ def test_exchange_ladder_dependence_and_rng_are_bound_to_run_identity():
     )
 
 
-def test_unbound_bias_and_missing_constraint_executor_are_rejected():
+def test_unbound_bias_and_missing_constraint_executor_are_rejected() -> None:
     dynamics, _, _ = _prepared_runtime([1.0, 2.0], 2, exchange=True)
     measure = sampling.AtomisticPhaseSpaceMeasurePlan(dynamics.system)
     with pytest.raises(ValueError, match="bias cross-evaluation"):
@@ -167,10 +180,14 @@ def test_unbound_bias_and_missing_constraint_executor_are_rejected():
         constraints=[[10, 20]], constraint_distances=[1.0]
     )
     system = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [10, 20],
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         units,
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0],
         topology=topology,
     ).prepare()
@@ -178,6 +195,7 @@ def test_unbound_bias_and_missing_constraint_executor_are_rejected():
         system.particles
     )
     potential = phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.LennardJonesPotential([0.1], [0.8], 2.0)]
     ).prepare(system)
     unconstrained = phx.atomistic.AtomisticDynamicsPlan(
@@ -192,7 +210,7 @@ def test_unbound_bias_and_missing_constraint_executor_are_rejected():
         ).prepare(unconstrained)
 
 
-def test_sams_adaptation_draws_are_not_equilibrium_samples():
+def test_sams_adaptation_draws_are_not_equilibrium_samples() -> None:
     dynamics, table, runtime = _prepared_runtime([1.0, 2.0, 3.0], 2, sams=True)
     position = jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     initial = runtime.initialize(
@@ -221,7 +239,7 @@ def test_sams_adaptation_draws_are_not_equilibrium_samples():
     assert result.sampling_bias_bound == 1.0
 
 
-def test_valid_rejected_exchange_consumes_counter_and_rebases_ledgers():
+def test_valid_rejected_exchange_consumes_counter_and_rebases_ledgers() -> None:
     dynamics, table, runtime = _prepared_runtime([1.0, 2.0], 2, exchange=True)
     positions = (
         jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]),
@@ -254,7 +272,7 @@ def test_valid_rejected_exchange_consumes_counter_and_rebases_ledgers():
     )
 
 
-def test_accepted_temperature_swap_rescales_momenta_and_keeps_force_current():
+def test_accepted_temperature_swap_rescales_momenta_and_keeps_force_current() -> None:
     dynamics, table, runtime = _prepared_runtime([1.0, 2.0], 2, exchange=True)
     position = jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     velocity = jnp.asarray([[0.2, 0.0, 0.0], [0.2, 0.0, 0.0]])
@@ -297,7 +315,7 @@ def test_accepted_temperature_swap_rescales_momenta_and_keeps_force_current():
     )
 
 
-def test_invalid_iteration_rolls_back_every_action_counter():
+def test_invalid_iteration_rolls_back_every_action_counter() -> None:
     dynamics, table, runtime = _prepared_runtime([1.0, 2.0], 2, exchange=True)
     position = jnp.asarray([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0]])
     initial = runtime.initialize(
@@ -331,7 +349,7 @@ def test_invalid_iteration_rolls_back_every_action_counter():
 
 def test_r_and_k_are_distinct_and_failed_segment_padding_is_canonical(
     tmp_path: Path,
-):
+) -> None:
     dynamics, table, runtime = _prepared_runtime([1.0, 2.0, 3.0], 2, sams=True)
     position = jnp.asarray([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0]])
     initial = runtime.initialize(
@@ -390,7 +408,7 @@ def test_r_and_k_are_distinct_and_failed_segment_padding_is_canonical(
         segment_plan.run(restored.state)
 
 
-def test_multistate_segment_is_jittable_and_matches_eager():
+def test_multistate_segment_is_jittable_and_matches_eager() -> None:
     dynamics, table, runtime = _prepared_runtime([1.0, 2.0], 2, exchange=True)
     position = jnp.asarray([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0]])
     initial = runtime.initialize(

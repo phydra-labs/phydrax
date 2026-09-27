@@ -11,7 +11,8 @@ from collections.abc import Mapping, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -91,7 +92,7 @@ class GaussianBasisPlan(StrictModule, NonTrainableState):
         source_id: str,
         source_artifact_id: str | None = None,
         role: str = "orbital",
-    ):
+    ) -> None:
         shells_ = tuple(shells)
         if not shells_ or any(
             not isinstance(value, GaussianShellPlan) for value in shells_
@@ -260,7 +261,7 @@ class PreparedGaussianBasis(StrictModule, NonTrainableState):
     system_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: GaussianBasisPlan, system: AtomisticSystemPlan, /):
+    def __init__(self, plan: GaussianBasisPlan, system: AtomisticSystemPlan, /) -> None:
         if not isinstance(plan, GaussianBasisPlan):
             raise TypeError("plan must be GaussianBasisPlan.")
         if not isinstance(system, AtomisticSystemPlan):

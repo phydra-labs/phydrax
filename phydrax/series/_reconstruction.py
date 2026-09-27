@@ -4,14 +4,16 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from .._dtype_names import inexact_result_type
 from .._interpolation import (
     BoundsMode,
     cubic_hermite_segment,
@@ -19,8 +21,8 @@ from .._interpolation import (
     local_cubic_slope,
     NearestTiePolicy,
 )
-from .._precision import inexact_result_type
 from .._strict import StrictModule
+from ..typing import parse
 from ._sampled import SampledSeries
 from ._types import (
     SeriesEvaluation,
@@ -29,7 +31,7 @@ from ._types import (
 )
 
 
-NodeSide = Literal["left", "right"]
+NodeSide: TypeAlias = Literal["left", "right"]
 
 
 def _capabilities(method: SeriesInterpolation, /) -> SeriesReconstructionCapabilities:
@@ -96,25 +98,17 @@ class SampledSeriesReconstruction(StrictModule):
         node_side: NodeSide = "right",
         snap_tolerance: float = 0.0,
         fill_value: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(series, SampledSeries):
             raise TypeError("series must be a SampledSeries.")
-        if interpolation not in (
-            "nearest",
-            "previous",
-            "linear",
-            "cubic_hermite",
-            "interval_hold",
-        ):
-            raise ValueError("Unsupported sampled-series interpolation method.")
+        interpolation = parse(interpolation, SeriesInterpolation, "interpolation")
         if bounds not in ("clip", "error", "extrapolate", "fill"):
             raise ValueError("bounds must be 'clip', 'error', 'extrapolate', or 'fill'.")
         if nearest_tie_policy not in ("lower", "round_even", "upper"):
             raise ValueError(
                 "nearest_tie_policy must be 'lower', 'round_even', or 'upper'."
             )
-        if node_side not in ("left", "right"):
-            raise ValueError("node_side must be 'left' or 'right'.")
+        node_side = parse(node_side, NodeSide, "node_side")
         tolerance = float(snap_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("snap_tolerance must be finite and non-negative.")
@@ -443,11 +437,12 @@ class SampledSeriesReconstruction(StrictModule):
             values = jax.tree_util.tree_map(node_value, rows_tree)
         else:
             values = jax.tree_util.tree_map(discrete_value, rows_tree)
-        if self.bounds == "fill" and self.fill_value is not None:
+        fill_value = self.fill_value
+        if self.bounds == "fill" and fill_value is not None:
             values = jax.tree_util.tree_map(
                 lambda value: jnp.where(
                     _expand(outside.reshape(query_shape), value),
-                    self.fill_value.astype(value.dtype),
+                    fill_value.astype(value.dtype),
                     value,
                 ),
                 values,

@@ -1,6 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 """Bounded model-level quantum regressions; no atomistic or foundry claim."""
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -17,7 +19,7 @@ HBAR = 1.054571817e-34
 REFERENCE = "advanced quantum synthetic datum"
 
 
-def _resources():
+def _resources() -> Any:
     return sq.QuantumResources(
         max_nodes=512,
         max_evaluations=20_000,
@@ -26,7 +28,7 @@ def _resources():
     )
 
 
-def _lead(*, onsite=2.0, mu=2.0):
+def _lead(*, onsite: Any = 2.0, mu: Any = 2.0) -> Any:
     return sq.SemiInfiniteLead(
         onsite * Q,
         -Q,
@@ -37,7 +39,7 @@ def _lead(*, onsite=2.0, mu=2.0):
     )
 
 
-def _device(*, onsite=2.0, mu=2.0):
+def _device(*, onsite: Any = 2.0, mu: Any = 2.0) -> Any:
     hamiltonian = sq.ChainHamiltonian(
         jnp.asarray([onsite * Q]),
         jnp.zeros((0,)),
@@ -53,7 +55,7 @@ def _device(*, onsite=2.0, mu=2.0):
     )
 
 
-def test_optical_phonon_scba_closes_kms_particle_and_energy_ledgers():
+def test_optical_phonon_scba_closes_kms_particle_and_energy_ledgers() -> None:
     device = _device()
     bath = sq.OpticalPhononBath(
         0.5 * Q, 0.03 * Q, 300.0, bath_id="synthetic weak optical phonon"
@@ -79,7 +81,7 @@ def test_optical_phonon_scba_closes_kms_particle_and_energy_ledgers():
     np.testing.assert_allclose(jnp.sum(result.terminal_currents), 0.0, atol=2e-18)
 
 
-def test_unitary_lead_dilation_is_causal_conservative_and_refinable():
+def test_unitary_lead_dilation_is_causal_conservative_and_refinable() -> None:
     device = _device()
     times = jnp.asarray([0.0, 1e-17, 2e-17])
     pulse = sq.QuantumPulse(times, jnp.zeros((2, 1)), jnp.zeros((2, 2)))
@@ -102,7 +104,7 @@ def test_unitary_lead_dilation_is_causal_conservative_and_refinable():
     assert np.isfinite(np.asarray(kernel[1:])).all()
 
 
-def test_coherent_noise_and_screened_ac_report_independent_physical_gates():
+def test_coherent_noise_and_screened_ac_report_independent_physical_gates() -> None:
     device = _device()
     noise = sq.coherent_low_frequency_noise(device, tolerance=2e-5)
     assert bool(noise.successful)
@@ -126,7 +128,7 @@ def test_coherent_noise_and_screened_ac_report_independent_physical_gates():
     assert float(response.evidence.recurrence_tail_bound) < 0.18
 
 
-def test_stationary_hybrid_interface_matches_one_disjoint_reservoir():
+def test_stationary_hybrid_interface_matches_one_disjoint_reservoir() -> None:
     bands = sc.BandThermodynamics(
         "hybrid-classical-bands",
         conduction_band_edge=0.56 * Q,
@@ -166,6 +168,7 @@ def test_stationary_hybrid_interface_matches_one_disjoint_reservoir():
         "left",
         classical_region_id="classical-segment",
         quantum_region_id="quantum-segment",
+        # ty: ignore[invalid-argument-type]
         voltage_bounds=(-0.01, 0.01),
         current_tolerance=1e-10,
         heat_tolerance=1e-10,

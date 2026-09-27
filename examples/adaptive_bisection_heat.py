@@ -29,6 +29,7 @@ Run from the repository root::
 
 import itertools
 import json
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -42,7 +43,7 @@ FRONT_RADIUS = 0.7
 FRONT_CENTER = -0.05
 
 
-def front(points):
+def front(points: Any) -> Any:
     """Radius, profile argument, and first two radial derivatives of u."""
     offset = points - FRONT_CENTER
     radius = jnp.sqrt(jnp.sum(offset * offset, axis=-1))
@@ -52,22 +53,22 @@ def front(points):
     return offset, radius, argument, first, second
 
 
-def exact_solution(points):
+def exact_solution(points: Any) -> Any:
     return jnp.arctan(front(points)[2])
 
 
-def exact_gradient(points):
+def exact_gradient(points: Any) -> Any:
     offset, radius, _, first, _ = front(points)
     return (first / radius)[..., None] * offset
 
 
-def heat_source(points):
+def heat_source(points: Any) -> Any:
     """f = -Δu = -(u'' + (d - 1) u' / r) for the radial profile u(r)."""
     _, radius, _, first, second = front(points)
     return -(second + (points.shape[-1] - 1) * first / radius)
 
 
-def unit_square(count):
+def unit_square(count: Any) -> Any:
     axis = np.linspace(0.0, 1.0, count + 1)
     points = np.stack(np.meshgrid(axis, axis, indexing="ij"), axis=-1).reshape((-1, 2))
     index = np.arange((count + 1) ** 2, dtype=np.int32).reshape((count + 1, count + 1))
@@ -79,7 +80,7 @@ def unit_square(count):
     return phx.discretization.CellMesh.from_triangles(points, triangles)
 
 
-def unit_cube(count):
+def unit_cube(count: Any) -> Any:
     """Kuhn tetrahedra: six per lattice cube along the monotone vertex paths."""
     axis = np.linspace(0.0, 1.0, count + 1)
     points = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1)
@@ -97,7 +98,7 @@ def unit_cube(count):
     return phx.discretization.CellMesh.from_tetrahedra(points, cells)
 
 
-def solve(mesh):
+def solve(mesh: Any) -> Any:
     """P1 solve of -Δu = f with the exact Dirichlet data on every boundary vertex."""
     kind = mesh.blocks[0].cell_kind
     field = phx.discretization.FiniteElementFieldSpec(
@@ -130,7 +131,7 @@ def solve(mesh):
     return space, problem.expand(solved.value)
 
 
-def energy_error(space, values):
+def energy_error(space: Any, values: Any) -> Any:
     """True ||∇(u - u_h)||_L2 with a Duffy-mapped Gauss rule of 5^d points."""
     kind = space.mesh.blocks[0].cell_kind
     rule = (
@@ -150,7 +151,7 @@ def energy_error(space, values):
     )
 
 
-def adapt(source, refine, coarsen, hierarchy):
+def adapt(source: Any, refine: Any, coarsen: Any, hierarchy: Any) -> Any:
     return phx.meshing.execute_mesh_adaptation(
         phx.meshing.prepare_mesh_adaptation(
             source,
@@ -162,7 +163,7 @@ def adapt(source, refine, coarsen, hierarchy):
     )
 
 
-def adaptive_run(mesh, cycles):
+def adaptive_run(mesh: Any, cycles: Any) -> Any:
     initial = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
     current, hierarchy = initial, None
     slope = np.linspace(0.5, 1.5, mesh.ambient_dimension)

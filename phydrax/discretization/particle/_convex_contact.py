@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -34,7 +35,7 @@ class ConvexShapePlan(StrictModule, NonTrainableState):
         *,
         volume_tolerance: float = 1.0e-14,
         shape_id: str | None = None,
-    ):
+    ) -> None:
         vertices_ = np.asarray(vertices)
         triangles_ = np.asarray(triangles)
         material = int(material_id)
@@ -104,7 +105,7 @@ class PreparedConvexShape(StrictModule, NonTrainableState):
     bounding_radius: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ConvexShapePlan, /):
+    def __init__(self, plan: ConvexShapePlan, /) -> None:
         faces = plan.vertices[plan.triangles]
         cross = jnp.cross(faces[:, 1] - faces[:, 0], faces[:, 2] - faces[:, 0])
         normals = cross / jnp.linalg.norm(cross, axis=-1, keepdims=True)
@@ -125,7 +126,9 @@ class ConvexContactResult(StrictModule):
     successful: Array
 
 
-def _world_shape(shape: PreparedConvexShape, position: Array, orientation: Array, /):
+def _world_shape(
+    shape: PreparedConvexShape, position: Array, orientation: Array, /
+) -> tuple[Array, Array, Array, Array]:
     rotation = quaternion_rotation_matrix(orientation[None, :])[0]
     vertices = contract("ij,kj->ki", rotation, shape.plan.vertices) + position
     normals = contract("ij,kj->ki", rotation, shape.face_normals)

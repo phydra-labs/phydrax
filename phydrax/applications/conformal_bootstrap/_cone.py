@@ -9,8 +9,9 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax import lax
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array, lax
+from jax.typing import ArrayLike
 
 from phydrax.linalg import DenseLinearOperator
 
@@ -34,13 +35,13 @@ class CrossingConePlan(StrictModule):
         self,
         identity_vector: ArrayLike,
         block_vectors: ArrayLike,
-        scaling_dimensions: ArrayLike,
+        scaling_dimensions: npt.ArrayLike,
         /,
         *,
         maximum_iterations: int = 4096,
         residual_tolerance: float = 1e-8,
         maximum_matrix_entries: int = 1_000_000,
-    ):
+    ) -> None:
         identity = np.asarray(identity_vector, dtype=np.float64)
         blocks = np.asarray(block_vectors, dtype=np.float64)
         dimensions = np.asarray(scaling_dimensions, dtype=np.float64)
@@ -187,7 +188,7 @@ def solve_crossing_cone(prepared: PreparedCrossingCone, /) -> CrossingConicEvide
         (plan.block_vectors.shape[1],), dtype=plan.block_vectors.dtype
     )
 
-    def projected_step(_, current):
+    def projected_step(_: Array, current: Array) -> Array:
         residual = plan.identity_vector + prepared.operator.mv(current)
         gradient = prepared.operator.adjoint_mv(residual)
         return jnp.maximum(0.0, current - prepared.step_size * gradient)

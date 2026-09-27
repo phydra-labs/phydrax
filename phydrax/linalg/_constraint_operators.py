@@ -10,13 +10,16 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._constraints import ConstraintMap
 from ._costs import _array_tree_storage_bytes
 from ._factorizations import (
@@ -91,7 +94,7 @@ class ConstraintOperatorEvidence(StrictModule, NonTrainableState):
         setup_matvec_count: int,
         factorization_id: str,
         plan_id: str,
-    ):
+    ) -> None:
         singular_values_ = jnp.asarray(singular_values)
         scalars = tuple(
             jnp.asarray(value)
@@ -123,8 +126,7 @@ class ConstraintOperatorEvidence(StrictModule, NonTrainableState):
             raise ValueError("Constraint rank is outside its dimensional bounds.")
         if nullity_ != source_ - rank_:
             raise ValueError("Constraint nullity must equal source dimension minus rank.")
-        if operator_kind not in ("dense", "structured", "matrix-free"):
-            raise ValueError("Unknown constraint operator kind.")
+        operator_kind = parse(operator_kind, ConstraintOperatorKind, "operator_kind")
         if factorization_kind not in ("svd", "qr"):
             raise ValueError("Unknown constraint factorization kind.")
         resources = tuple(
@@ -222,7 +224,7 @@ class ConstraintOperatorPlan(StrictModule, NonTrainableState):
         resources: SolveResourcePolicy | None = None,
         materialization: MaterializationPolicy | None = None,
         factorization_kind: ConstraintFactorizationKind = "auto",
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape:
@@ -248,8 +250,9 @@ class ConstraintOperatorPlan(StrictModule, NonTrainableState):
             raise TypeError("resources must be a SolveResourcePolicy or None.")
         if not isinstance(materialization_, MaterializationPolicy):
             raise TypeError("materialization must be a MaterializationPolicy or None.")
-        if factorization_kind not in ("auto", "svd", "qr"):
-            raise ValueError("factorization_kind must be 'auto', 'svd', or 'qr'.")
+        factorization_kind = parse(
+            factorization_kind, ConstraintFactorizationKind, "factorization_kind"
+        )
         if factorization_kind == "qr" and (
             not require_full_row_rank or operator.source.size != operator.target.size
         ):
@@ -312,7 +315,7 @@ class PreparedConstraintOperator(StrictModule, NonTrainableState):
         nullspace_operator: AbstractLinearOperator,
         evidence: ConstraintOperatorEvidence,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, ConstraintOperatorPlan):
             raise TypeError("plan must be a ConstraintOperatorPlan.")
         if not isinstance(operator, AbstractLinearOperator):
@@ -751,6 +754,12 @@ def _bind_prepared_constraint(
         if factorization.capabilities.singular_values
         else jnp.empty((0,), dtype=matrix.real.dtype)
     )
+    factorization_kind = factorization.policy.kind
+    # Constraint factorizations are only built with an explicit "svd" or "qr" kind.
+    if not (factorization_kind == "svd" or factorization_kind == "qr"):
+        raise RuntimeError(
+            "Internal invariant failed: factorization_kind == 'svd' or factorization_kind == 'qr'."
+        )
     evidence = ConstraintOperatorEvidence(
         singular_values=singular_values,
         generalized_right_inverse_residual_norm=generalized_norm,
@@ -767,7 +776,7 @@ def _bind_prepared_constraint(
         full_row_rank=full_row_rank,
         full_column_rank=rank == columns,
         operator_kind=operator_kind,
-        factorization_kind=factorization.policy.kind,
+        factorization_kind=factorization_kind,
         operator_matrix_bytes=matrix.nbytes,
         factorization_bytes=_array_tree_storage_bytes(factorization.prepared_solve.state),
         right_inverse_bytes=right_matrix.nbytes,

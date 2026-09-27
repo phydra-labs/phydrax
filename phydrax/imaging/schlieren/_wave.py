@@ -7,12 +7,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import cast
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -139,7 +141,7 @@ class WaveSchlierenPlan(StrictModule, NonTrainableState):
         detector_distance: float,
         padding: int,
         maximum_leakage_fraction: float = 1.0e-5,
-    ):
+    ) -> None:
         if object_screen.space.space_id != filter_transmission.space.space_id:
             raise ValueError(
                 "Object and filter must use the same prepared plane support."
@@ -217,7 +219,9 @@ class WaveSchlierenPlan(StrictModule, NonTrainableState):
             successful,
             self.plan_id,
         )
-        return WaveSchlierenResult(at_detector.field, intensity, evidence)
+        # Scalar thin masks and angular-spectrum propagation preserve scalar fields.
+        detector_field = cast(ScalarPlaneField, at_detector.field)
+        return WaveSchlierenResult(detector_field, intensity, evidence)
 
 
 class MultisliceEvidence(StrictModule, NonTrainableState):
@@ -253,7 +257,7 @@ class MultisliceRefractivePlan(StrictModule, NonTrainableState):
         padding: int,
         maximum_phase_per_slice: float = np.pi / 2.0,
         maximum_leakage_fraction: float = 1.0e-5,
-    ):
+    ) -> None:
         thicknesses = np.asarray(slice_thicknesses, dtype=np.float64)
         if (
             thicknesses.ndim != 1
@@ -297,7 +301,9 @@ class MultisliceRefractivePlan(StrictModule, NonTrainableState):
             raise ValueError(f"refractive_index_perturbation must have shape {expected}.")
         input_power = jnp.sum(jnp.abs(incident.values) ** 2 * incident.space.area_weights)
 
-        def step(field, inputs):
+        def step(
+            field: ScalarPlaneField, inputs: tuple[Array, Array]
+        ) -> tuple[ScalarPlaneField, tuple[Array, Array, Array]]:
             delta_n, thickness = inputs
             half = self.propagation.execute(
                 field, 0.5 * thickness, self.medium_wavenumber
@@ -319,7 +325,9 @@ class MultisliceRefractivePlan(StrictModule, NonTrainableState):
             successful = (
                 half.successful & output.successful & jnp.all(jnp.isfinite(phase))
             )
-            return output.field, (jnp.max(jnp.abs(phase)), leakage, successful)
+            # Angular-spectrum propagation preserves the scalar field kind.
+            output_field = cast(ScalarPlaneField, output.field)
+            return output_field, (jnp.max(jnp.abs(phase)), leakage, successful)
 
         output, records = jax.lax.scan(
             step, incident, (perturbation, self.slice_thicknesses)
@@ -380,7 +388,7 @@ class ScalarHelmholtzContinuationPlan(StrictModule, NonTrainableState):
         damping: float,
         iteration_count: int,
         relative_tolerance: float = 1.0e-5,
-    ):
+    ) -> None:
         if space.topology != "periodic-cell":
             raise ValueError(
                 "The initial Helmholtz continuation route requires periodic-cell support."
@@ -427,12 +435,12 @@ class ScalarHelmholtzContinuationPlan(StrictModule, NonTrainableState):
         if source_.shape != self.space.shape or susceptibility_.shape != self.space.shape:
             raise ValueError("source and susceptibility must match the Helmholtz space.")
 
-        def apply_green(value):
+        def apply_green(value: Array) -> Array:
             return jnp.fft.ifft2(jnp.fft.fft2(value) * self.green_symbol)
 
         incident = apply_green(source_)
 
-        def step(field, _):
+        def step(field: Array, _: None) -> tuple[Array, None]:
             return incident - apply_green(
                 (self.background_wavenumber**2) * susceptibility_ * field
             ), None

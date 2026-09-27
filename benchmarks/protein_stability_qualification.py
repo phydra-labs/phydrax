@@ -9,6 +9,8 @@ identity are all caller inputs.
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from dataclasses import asdict
@@ -108,7 +110,7 @@ def run_campaign(
         raise ValueError("Feature source manifests must have unique content identities.")
     feature_requested_use = declaration["feature_requested_use"]
 
-    def admitted_feature_manifests(source_ids):
+    def admitted_feature_manifests(source_ids: Any) -> Any:
         ids = tuple(source_ids)
         if not ids or any(value not in feature_manifest_by_id for value in ids):
             raise ValueError(

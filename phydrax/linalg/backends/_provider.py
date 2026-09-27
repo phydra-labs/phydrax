@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import abc
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from ..._iteration import (
     IterationCapabilities,
@@ -36,6 +36,23 @@ from ._spineax import (
     release_spineax,
     solve_spineax,
 )
+
+
+if TYPE_CHECKING:
+    from ._jax_dense import DenseBackendOutput
+    from ._jax_sparse import SparseBackendOutput
+    from ._jax_structured import StructuredBackendOutput, StructuredState
+    from ._lineax import LineaxBackendOutput, LineaxState
+    from ._native_block_krylov import (
+        NativeBlockKrylovBackendOutput,
+        NativeBlockKrylovState,
+    )
+    from ._native_krylov import NativeKrylovBackendOutput, NativeKrylovState
+    from ._spineax import (
+        SpineaxBackendOutput,
+        SpineaxFactorState,
+        SpineaxSymbolicState,
+    )
 
 
 class AbstractLinearProvider(abc.ABC):
@@ -125,7 +142,15 @@ class _StructuredProvider(AbstractLinearProvider):
     backends = ("jax-structured",)
     supports_implicit_differentiation = True
 
-    def bind(self, symbolic_state, problem, plan, /, *, preconditioner=None):
+    def bind(
+        self,
+        symbolic_state: Any,
+        problem: Any,
+        plan: LinearSolvePlan,
+        /,
+        *,
+        preconditioner: AbstractPreconditioner | None = None,
+    ) -> StructuredState:
         del symbolic_state
         if preconditioner is not None:
             raise ValueError("Structured direct binding rejects preconditioning.")
@@ -133,16 +158,16 @@ class _StructuredProvider(AbstractLinearProvider):
 
     def solve(
         self,
-        state,
-        rhs,
-        plan,
+        state: Any,
+        rhs: Any,
+        plan: LinearSolvePlan,
         /,
         *,
-        initial_guess=None,
-        control=None,
-        iteration=None,
-        iteration_state=None,
-    ):
+        initial_guess: Any = None,
+        control: LinearSolveControl | None = None,
+        iteration: IterationPlan | None = None,
+        iteration_state: IterationRuntimeState | None = None,
+    ) -> StructuredBackendOutput:
         del iteration, iteration_state
         return solve_structured(state, rhs, plan)
 
@@ -151,7 +176,15 @@ class _DenseProvider(AbstractLinearProvider):
     backends = ("jax-dense",)
     supports_implicit_differentiation = True
 
-    def bind(self, symbolic_state, problem, plan, /, *, preconditioner=None):
+    def bind(
+        self,
+        symbolic_state: Any,
+        problem: Any,
+        plan: LinearSolvePlan,
+        /,
+        *,
+        preconditioner: AbstractPreconditioner | None = None,
+    ) -> Any:
         del symbolic_state
         if preconditioner is not None:
             raise ValueError("Dense binding rejects preconditioning.")
@@ -159,20 +192,20 @@ class _DenseProvider(AbstractLinearProvider):
 
     def solve(
         self,
-        state,
-        rhs,
-        plan,
+        state: Any,
+        rhs: Any,
+        plan: LinearSolvePlan,
         /,
         *,
-        initial_guess=None,
-        control=None,
-        iteration=None,
-        iteration_state=None,
-    ):
+        initial_guess: Any = None,
+        control: LinearSolveControl | None = None,
+        iteration: IterationPlan | None = None,
+        iteration_state: IterationRuntimeState | None = None,
+    ) -> DenseBackendOutput:
         del iteration, iteration_state
         return solve_dense(state, rhs, plan)
 
-    def supports_transformed(self, state, /) -> bool:
+    def supports_transformed(self, state: Any, /) -> bool:
         from ._jax_dense import (
             DenseCholeskyState,
             DenseLUState,
@@ -184,7 +217,9 @@ class _DenseProvider(AbstractLinearProvider):
             (DenseLUState, DenseMixedPrecisionLUState, DenseCholeskyState),
         )
 
-    def solve_transformed(self, state, rhs, plan, /, *, adjoint):
+    def solve_transformed(
+        self, state: Any, rhs: Any, plan: LinearSolvePlan, /, *, adjoint: bool
+    ) -> DenseBackendOutput:
         return solve_dense_transformed(state, rhs, plan, adjoint=adjoint)
 
 
@@ -192,7 +227,15 @@ class _SparseProvider(AbstractLinearProvider):
     backends = ("jax-sparse", "host-sparse")
     supports_implicit_differentiation = True
 
-    def bind(self, symbolic_state, problem, plan, /, *, preconditioner=None):
+    def bind(
+        self,
+        symbolic_state: Any,
+        problem: Any,
+        plan: LinearSolvePlan,
+        /,
+        *,
+        preconditioner: AbstractPreconditioner | None = None,
+    ) -> Any:
         del symbolic_state
         if preconditioner is not None:
             raise ValueError("Sparse direct binding rejects preconditioning.")
@@ -200,23 +243,25 @@ class _SparseProvider(AbstractLinearProvider):
 
     def solve(
         self,
-        state,
-        rhs,
-        plan,
+        state: Any,
+        rhs: Any,
+        plan: LinearSolvePlan,
         /,
         *,
-        initial_guess=None,
-        control=None,
-        iteration=None,
-        iteration_state=None,
-    ):
+        initial_guess: Any = None,
+        control: LinearSolveControl | None = None,
+        iteration: IterationPlan | None = None,
+        iteration_state: IterationRuntimeState | None = None,
+    ) -> SparseBackendOutput:
         del iteration, iteration_state
         return solve_sparse(state, rhs, plan)
 
-    def supports_transformed(self, state, /) -> bool:
+    def supports_transformed(self, state: Any, /) -> bool:
         return isinstance(state, HostSparseState)
 
-    def solve_transformed(self, state, rhs, plan, /, *, adjoint):
+    def solve_transformed(
+        self, state: Any, rhs: Any, plan: LinearSolvePlan, /, *, adjoint: bool
+    ) -> SparseBackendOutput:
         if not isinstance(state, HostSparseState):
             return super().solve_transformed(state, rhs, plan, adjoint=adjoint)
         return solve_host_sparse_transformed(state, rhs, adjoint=adjoint)
@@ -226,51 +271,61 @@ class _SpineaxProvider(AbstractLinearProvider):
     backends = ("spineax-cudss",)
     supports_implicit_differentiation = True
 
-    def analyze(self, problem, plan, /):
+    def analyze(self, problem: Any, plan: LinearSolvePlan, /) -> SpineaxSymbolicState:
         return analyze_spineax(problem, plan)
 
-    def bind(self, symbolic_state, problem, plan, /, *, preconditioner=None):
+    def bind(
+        self,
+        symbolic_state: Any,
+        problem: Any,
+        plan: LinearSolvePlan,
+        /,
+        *,
+        preconditioner: AbstractPreconditioner | None = None,
+    ) -> SpineaxFactorState:
         if preconditioner is not None:
             raise ValueError("Spineax direct binding rejects preconditioning.")
         return bind_spineax(symbolic_state, problem, plan)
 
     def refresh(
         self,
-        symbolic_state,
-        previous_state,
-        problem,
-        plan,
+        symbolic_state: Any,
+        previous_state: Any,
+        problem: Any,
+        plan: LinearSolvePlan,
         /,
         *,
-        preconditioner=None,
-    ):
+        preconditioner: AbstractPreconditioner | None = None,
+    ) -> SpineaxFactorState:
         if preconditioner is not None:
             raise ValueError("Spineax direct refresh rejects preconditioning.")
         return refresh_spineax(symbolic_state, previous_state, problem, plan)
 
     def solve(
         self,
-        state,
-        rhs,
-        plan,
+        state: Any,
+        rhs: Any,
+        plan: LinearSolvePlan,
         /,
         *,
-        initial_guess=None,
-        control=None,
-        iteration=None,
-        iteration_state=None,
-    ):
+        initial_guess: Any = None,
+        control: LinearSolveControl | None = None,
+        iteration: IterationPlan | None = None,
+        iteration_state: IterationRuntimeState | None = None,
+    ) -> SpineaxBackendOutput:
         del iteration, iteration_state
         return solve_spineax(state, rhs, plan)
 
-    def supports_transformed(self, state, /) -> bool:
+    def supports_transformed(self, state: Any, /) -> bool:
         return True
 
-    def solve_transformed(self, state, rhs, plan, /, *, adjoint):
+    def solve_transformed(
+        self, state: Any, rhs: Any, plan: LinearSolvePlan, /, *, adjoint: bool
+    ) -> SpineaxBackendOutput:
         del adjoint
         return solve_spineax(state, rhs, plan)
 
-    def release(self, state, /) -> bool:
+    def release(self, state: Any, /) -> bool:
         return release_spineax(state)
 
 
@@ -284,7 +339,15 @@ class _NativeBlockKrylovProvider(AbstractLinearProvider):
         mapped_records=True,
     )
 
-    def bind(self, symbolic_state, problem, plan, /, *, preconditioner=None):
+    def bind(
+        self,
+        symbolic_state: Any,
+        problem: Any,
+        plan: LinearSolvePlan,
+        /,
+        *,
+        preconditioner: AbstractPreconditioner | None = None,
+    ) -> NativeBlockKrylovState:
         del symbolic_state
         return prepare_native_block_krylov(
             problem,
@@ -294,16 +357,16 @@ class _NativeBlockKrylovProvider(AbstractLinearProvider):
 
     def solve(
         self,
-        state,
-        rhs,
-        plan,
+        state: Any,
+        rhs: Any,
+        plan: LinearSolvePlan,
         /,
         *,
-        initial_guess=None,
-        control=None,
-        iteration=None,
-        iteration_state=None,
-    ):
+        initial_guess: Any = None,
+        control: LinearSolveControl | None = None,
+        iteration: IterationPlan | None = None,
+        iteration_state: IterationRuntimeState | None = None,
+    ) -> NativeBlockKrylovBackendOutput:
         return solve_native_block_krylov(
             state,
             rhs,
@@ -324,7 +387,15 @@ class _NativeKrylovProvider(AbstractLinearProvider):
         mapped_records=True,
     )
 
-    def bind(self, symbolic_state, problem, plan, /, *, preconditioner=None):
+    def bind(
+        self,
+        symbolic_state: Any,
+        problem: Any,
+        plan: LinearSolvePlan,
+        /,
+        *,
+        preconditioner: AbstractPreconditioner | None = None,
+    ) -> NativeKrylovState:
         del symbolic_state
         return prepare_native_krylov(
             problem,
@@ -334,16 +405,16 @@ class _NativeKrylovProvider(AbstractLinearProvider):
 
     def solve(
         self,
-        state,
-        rhs,
-        plan,
+        state: Any,
+        rhs: Any,
+        plan: LinearSolvePlan,
         /,
         *,
-        initial_guess=None,
-        control=None,
-        iteration=None,
-        iteration_state=None,
-    ):
+        initial_guess: Any = None,
+        control: LinearSolveControl | None = None,
+        iteration: IterationPlan | None = None,
+        iteration_state: IterationRuntimeState | None = None,
+    ) -> NativeKrylovBackendOutput:
         return solve_native_krylov(
             state,
             rhs,
@@ -360,22 +431,30 @@ class _LineaxProvider(AbstractLinearProvider):
     supports_implicit_differentiation = True
     accepts_initial_guess = True
 
-    def bind(self, symbolic_state, problem, plan, /, *, preconditioner=None):
+    def bind(
+        self,
+        symbolic_state: Any,
+        problem: Any,
+        plan: LinearSolvePlan,
+        /,
+        *,
+        preconditioner: AbstractPreconditioner | None = None,
+    ) -> LineaxState:
         del symbolic_state
         return prepare_lineax(problem, plan, preconditioner=preconditioner)
 
     def solve(
         self,
-        state,
-        rhs,
-        plan,
+        state: Any,
+        rhs: Any,
+        plan: LinearSolvePlan,
         /,
         *,
-        initial_guess=None,
-        control=None,
-        iteration=None,
-        iteration_state=None,
-    ):
+        initial_guess: Any = None,
+        control: LinearSolveControl | None = None,
+        iteration: IterationPlan | None = None,
+        iteration_state: IterationRuntimeState | None = None,
+    ) -> LineaxBackendOutput:
         del iteration, iteration_state
         return solve_lineax(state, rhs, plan, initial_guess=initial_guess)
 

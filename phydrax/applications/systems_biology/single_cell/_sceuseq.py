@@ -7,10 +7,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax.interchange import AdapterReport, AdapterStatus
@@ -172,7 +174,8 @@ def import_sceu_seq_arrays(
             "scEU-seq requested use is not admitted: "
             + ";".join(prerequisites.rights_refusals)
         )
-    admitted = tuple(manifests)
+    # Admission above reports every absent channel manifest as missing.
+    admitted = cast(tuple[ReferenceArtifactManifest, ...], tuple(manifests))
     arrays = tuple(
         np.asarray(value)
         for value in (

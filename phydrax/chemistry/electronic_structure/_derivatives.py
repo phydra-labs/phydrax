@@ -11,7 +11,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -19,7 +20,10 @@ from ..._trainable import NonTrainableState
 from ...atomistic import AtomicStructure, AtomisticSystemPlan, AtomisticUnitSystem
 from ...execution import HostTaskExecutor, InlineTaskExecutor
 from .._optimization import _require_structure_matches_system
-from .._surface import AbstractPreparedPotentialEnergySurface
+from .._surface import (
+    AbstractPreparedPotentialEnergySurface,
+    PotentialEnergySurfaceEvaluation,
+)
 from .._units import hessian_unit
 
 
@@ -38,18 +42,18 @@ class MolecularHessianResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        raw_hessian,
-        hessian,
-        antisymmetry_residual,
+        raw_hessian: ArrayLike,
+        hessian: ArrayLike,
+        antisymmetry_residual: ArrayLike,
         evaluation_count: int,
-        successful,
+        successful: ArrayLike,
         units: AtomisticUnitSystem,
         system_id: str,
         geometry_id: str,
         source_result_ids: tuple[str, ...],
         plan_id: str,
         /,
-    ):
+    ) -> None:
         raw = jnp.asarray(raw_hessian)
         symmetric = jnp.asarray(hessian, dtype=raw.dtype)
         if raw.ndim != 4 or raw.shape != symmetric.shape or raw.shape[1::2] != (3, 3):
@@ -112,7 +116,7 @@ class MolecularHessianPlan(StrictModule, NonTrainableState):
         *,
         displacement: float = 1.0e-3,
         antisymmetry_tolerance: float = 1.0e-5,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         if not isinstance(surface, AbstractPreparedPotentialEnergySurface):
@@ -179,7 +183,9 @@ class MolecularHessianPlan(StrictModule, NonTrainableState):
                 InlineTaskExecutor() if executor is None else executor
             )
 
-            def displaced(atom: int, component: int, direction: int):
+            def displaced(
+                atom: int, component: int, direction: int
+            ) -> PotentialEnergySurfaceEvaluation:
                 candidate = positions.copy()
                 candidate[atom, component] += direction * self.displacement
                 return self.surface.evaluate(candidate, cell)

@@ -10,7 +10,8 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._strict import StrictModule
 from phydrax.ein import contract
@@ -18,6 +19,7 @@ from phydrax.ein import contract
 from ...._fingerprint import canonical_fingerprint
 from ...._model import TRIAL_SPACE_CERTIFICATE_KEY
 from ....equations.trefftz._core import _AbstractTrialSpaceField, TrialSpaceCertificate
+from ....typing import PRNGKey
 from ._core import LayerDiscretizationReport
 from ._surface3d import SurfacePanelization3D
 
@@ -28,7 +30,7 @@ class HelmholtzLayerKernel3D(StrictModule):
     wavenumber: float = eqx.field(static=True)
     _kernel_id: str = eqx.field(static=True)
 
-    def __init__(self, wavenumber: float):
+    def __init__(self, wavenumber: float) -> None:
         value = float(wavenumber)
         if not jnp.isfinite(value) or value <= 0.0:
             raise ValueError("Helmholtz wavenumber must be finite and positive.")
@@ -95,7 +97,7 @@ class HelmholtzLayerPotential3D(_AbstractTrialSpaceField):
         *,
         kind: Literal["single", "double"] = "single",
         density: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(panelization, SurfacePanelization3D):
             raise TypeError("panelization must be SurfacePanelization3D.")
         if kind not in ("single", "double"):
@@ -153,7 +155,7 @@ class HelmholtzLayerPotential3D(_AbstractTrialSpaceField):
             raise ValueError("Replacement density must preserve source-node shape.")
         return eqx.tree_at(lambda potential: potential.density, self, values)
 
-    def __call__(self, target: Array, /, *, key=None) -> Array:
+    def __call__(self, target: Array, /, *, key: PRNGKey | None = None) -> Array:
         del key
         value = jnp.asarray(target, dtype=jnp.float64)
         if value.shape != (3,):
@@ -215,7 +217,7 @@ class HelmholtzCombinedField3D(_AbstractTrialSpaceField):
         /,
         *,
         eta: float,
-    ):
+    ) -> None:
         if not isinstance(panelization, SurfacePanelization3D):
             raise TypeError("panelization must be SurfacePanelization3D.")
         coupling = float(eta)
@@ -266,7 +268,7 @@ class HelmholtzCombinedField3D(_AbstractTrialSpaceField):
             trace_policy="three-dimensional-brakhage-werner-combined",
         )
 
-    def __call__(self, target: Array, /, *, key=None) -> Array:
+    def __call__(self, target: Array, /, *, key: PRNGKey | None = None) -> Array:
         del key
         value = jnp.asarray(target, dtype=jnp.float64)
         differences = value[None, :] - self.panelization.points

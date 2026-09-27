@@ -8,7 +8,8 @@ from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...discretization.spectral import LatticeHarmonicDiscretization
@@ -30,7 +31,7 @@ class TangentialElectromagneticPlane(StrictModule):
         /,
         *,
         source_kind: Literal["fourier-modal", "periodic-window"],
-    ):
+    ) -> None:
         if not isinstance(electric, TangentialPlaneField) or not isinstance(
             magnetic, TangentialPlaneField
         ):
@@ -181,7 +182,7 @@ def fourier_modal_field_to_tangential_plane(
         raise ValueError("The plane adapter requires a two-dimensional lattice.")
     if space.topology != "periodic-cell":
         raise ValueError("Fourier-modal fields can only enter a periodic-cell space.")
-    sample_shape = lattice.sample_shape
+    sample_shape = (lattice.sample_shape[0], lattice.sample_shape[1])
     if space.shape != sample_shape:
         raise ValueError(
             f"Plane shape {space.shape} must equal lattice sample shape {sample_shape}."

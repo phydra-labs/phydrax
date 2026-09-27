@@ -3,6 +3,8 @@
 #
 
 
+from typing import Any
+
 import jax.random as jr
 import pytest
 
@@ -11,7 +13,7 @@ from phydrax.domain import SampleLayout
 
 
 @pytest.fixture
-def box3d():
+def box3d() -> Any:
     return phx.domain.GeometryDomain(
         phx.geometry.Box(
             center=(0.0, 0.0, 0.0),
@@ -22,8 +24,16 @@ def box3d():
 
 
 @pytest.fixture
-def sample_batch():
-    def _sample(component, /, *, blocks, num_points, key=0, sampler="latin_hypercube"):
+def sample_batch() -> Any:
+    def _sample(
+        component: Any,
+        /,
+        *,
+        blocks: Any,
+        num_points: Any,
+        key: Any = 0,
+        sampler: Any = "latin_hypercube",
+    ) -> Any:
         structure = SampleLayout(blocks=blocks)
         return component.sample(
             phx.domain.PointSampling(num_points, layout=structure, design=sampler),
@@ -34,17 +44,17 @@ def sample_batch():
 
 
 @pytest.fixture
-def sample_grid():
+def sample_grid() -> Any:
     def _sample(
-        component,
-        coord_separable,
+        component: Any,
+        coord_separable: Any,
         /,
         *,
-        num_points=(),
-        dense_blocks=(),
-        key=0,
-        sampler="latin_hypercube",
-    ):
+        num_points: Any = (),
+        dense_blocks: Any = (),
+        key: Any = 0,
+        sampler: Any = "latin_hypercube",
+    ) -> Any:
         dense_structure = (
             SampleLayout(blocks=dense_blocks) if dense_blocks is not None else None
         )

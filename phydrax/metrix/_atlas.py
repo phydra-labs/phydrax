@@ -8,7 +8,8 @@ from collections.abc import Callable, Sequence
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._chart import ChartTransition, CoordinateChart
@@ -27,7 +28,7 @@ class CoordinateAtlas(StrictModule):
         charts: Sequence[CoordinateChart],
         transitions: Sequence[ChartTransition],
         /,
-    ):
+    ) -> None:
         charts_ = tuple(charts)
         if not charts_ or any(
             not isinstance(chart, CoordinateChart) for chart in charts_
@@ -127,7 +128,7 @@ class AtlasValidationReport(StrictModule):
         finite: ArrayLike,
         maximum_inverse_residual: ArrayLike,
         maximum_jacobian_inverse_residual: ArrayLike,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.maximum_inverse_residual = jnp.asarray(maximum_inverse_residual)
@@ -206,7 +207,7 @@ class PatchwiseScalarField(StrictModule):
         atlas: CoordinateAtlas,
         local_fields: Sequence[Callable[[Array], Array]],
         /,
-    ):
+    ) -> None:
         if not isinstance(atlas, CoordinateAtlas):
             raise TypeError("PatchwiseScalarField requires a CoordinateAtlas.")
         fields = tuple(local_fields)
@@ -227,9 +228,11 @@ class PatchwiseScalarField(StrictModule):
         /,
     ) -> Array:
         transition = self.atlas.transition(source, target)
-        source_value = jnp.asarray(self.local_fields[int(source)](coordinates))
+        source_value = jnp.asarray(
+            self.local_fields[int(source)](jnp.asarray(coordinates))
+        )
         target_value = jnp.asarray(
-            self.local_fields[int(target)](transition(coordinates))
+            self.local_fields[int(target)](transition(jnp.asarray(coordinates)))
         )
         return jnp.max(jnp.abs(source_value - target_value))
 
@@ -245,7 +248,7 @@ class ComplexAtlasStructure(StrictModule):
         atlas: CoordinateAtlas,
         local_structures: Sequence[AlmostComplexStructure],
         /,
-    ):
+    ) -> None:
         if not isinstance(atlas, CoordinateAtlas):
             raise TypeError("ComplexAtlasStructure requires a CoordinateAtlas.")
         structures = tuple(local_structures)

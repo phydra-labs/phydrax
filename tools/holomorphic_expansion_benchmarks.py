@@ -24,6 +24,7 @@ def run_holomorphic_expansion_benchmarks() -> dict[str, Any]:
         phx.equations.HolomorphicPointFunctional.value(1.0),
         phx.equations.HolomorphicPointFunctional.normal_derivative(
             0.0,
+            # ty: ignore[invalid-argument-type]
             (1.0, 0.0),
         ),
     )
@@ -166,6 +167,7 @@ def run_holomorphic_expansion_benchmarks() -> dict[str, Any]:
     multijet_error = float(
         jnp.max(jnp.abs(multijet.derivative((1, 1)) - hessian[:, 0, 1]))
     )
+    # ty: ignore[invalid-argument-type]
     pluriharmonic = phx.equations.PluriharmonicPotential(multivariable)
     real_point = jnp.asarray([0.15, -0.2, 0.1, 0.25])
     laplacian_residual = float(jnp.abs(pluriharmonic.laplacian(real_point)))
@@ -173,6 +175,7 @@ def run_holomorphic_expansion_benchmarks() -> dict[str, Any]:
     poles = phx.equations.PoleSet(jnp.asarray([2.0 + 0.1j]), (1,))
     meromorphic_frame = phx.equations.MeromorphicLinearFrame(2, poles)
     meromorphic_operator = phx.equations.HolomorphicConstraintOperatorPlan(
+        # ty: ignore[invalid-argument-type]
         meromorphic_frame,
         functionals[:2],
     ).prepare()

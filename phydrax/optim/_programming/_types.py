@@ -9,7 +9,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
 
@@ -76,7 +76,7 @@ class ConvexProgramCapabilities(StrictModule):
         infeasibility_certificates: bool,
         implicit_differentiation: bool,
         algorithmic_differentiation: bool,
-    ):
+    ) -> None:
         self.linear_program = bool(linear_program)
         self.quadratic_program = bool(quadratic_program)
         self.conic_program = bool(conic_program)
@@ -119,7 +119,7 @@ class ConvexProgramCertificate(StrictModule):
         dual_ray_objective: Any,
         primal_ray_valid: Any,
         dual_ray_valid: Any,
-    ):
+    ) -> None:
         self.primal_ray = jnp.asarray(primal_ray)
         self.equality_dual_ray = jnp.asarray(equality_dual_ray)
         self.inequality_dual_ray = jnp.asarray(inequality_dual_ray)
@@ -154,7 +154,7 @@ class ConvexWarmStart(StrictModule):
         lower_bound_dual: Any,
         upper_bound_dual: Any,
         structure_id: str,
-    ):
+    ) -> None:
         identifier = str(structure_id)
         if not identifier:
             raise ValueError("structure_id must be non-empty.")
@@ -232,7 +232,7 @@ class ConvexProgramProvenance(StrictModule):
         convexity_evidence: str,
         regularization: float,
         numeric_binding_id: str = "unbound",
-    ):
+    ) -> None:
         version = jnp.asarray(numeric_version, dtype=jnp.int32)
         if version.shape != ():
             raise ValueError("numeric_version must be scalar.")

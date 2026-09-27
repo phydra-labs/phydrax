@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -19,7 +22,7 @@ from phydrax.domain import (
 from phydrax.solver import FunctionalSolver
 
 
-def _sample_batch(domain: Interval1d):
+def _sample_batch(domain: Interval1d) -> Any:
     layout = phx.domain.SampleLayout((("x",),))
     return domain.component().sample(
         phx.domain.PointSampling(5, layout=layout),
@@ -27,12 +30,12 @@ def _sample_batch(domain: Interval1d):
     )
 
 
-def _trainable_arrays(tree):
+def _trainable_arrays(tree: Any) -> Any:
     parameters, _, _ = phx.partition_parameters(tree)
     return tuple(jax.tree_util.tree_leaves(parameters))
 
 
-def test_field_transforms_preserve_values_axes_and_semantics():
+def test_field_transforms_preserve_values_axes_and_semantics() -> None:
     domain = Interval1d(0.0, 1.0)
     batch = _sample_batch(domain)
 
@@ -74,7 +77,7 @@ def test_field_transforms_preserve_values_axes_and_semantics():
     assert expected_value.metadata == vector_logits.metadata
 
 
-def test_field_transforms_are_differentiable():
+def test_field_transforms_are_differentiable() -> None:
     domain = Interval1d(0.0, 1.0)
     scalar = sigmoid_field(domain.Function("x")(lambda x: x[0] ** 2 - 0.25))
     vector = expectation_field(
@@ -91,7 +94,7 @@ def test_field_transforms_are_differentiable():
 
     vector_grad = jax.grad(lambda value: vector.func(jnp.asarray([value]), key=key))(0.4)
 
-    def reference(value):
+    def reference(value: Any) -> Any:
         probabilities = jax.nn.softmax(
             jnp.asarray([value, -2.0 * value, 0.5 + value]), axis=-1
         )
@@ -100,38 +103,41 @@ def test_field_transforms_are_differentiable():
     assert jnp.allclose(vector_grad, jax.grad(reference)(0.4))
 
 
-def test_softmax_rejects_nonterminal_axis():
+def test_softmax_rejects_nonterminal_axis() -> None:
     domain = Interval1d(0.0, 1.0)
     field = domain.Function("x")(lambda x: jnp.asarray([x[0], -x[0]]))
     with pytest.raises(ValueError, match="terminal output axis"):
         softmax_field(field, axis=0)
 
 
-def test_expectation_validates_values_axis_and_runtime_class_count():
+def test_expectation_validates_values_axis_and_runtime_class_count() -> None:
     domain = Interval1d(0.0, 1.0)
     field = softmax_field(domain.Function("x")(lambda x: jnp.asarray([x[0], -x[0]])))
 
     with pytest.raises(ValueError, match="terminal output axis"):
+        # ty: ignore[invalid-argument-type]
         expectation_field(field, [0.0, 1.0], axis=0)
     with pytest.raises(ValueError, match="one-dimensional"):
         expectation_field(field, 1.0)
     with pytest.raises(ValueError, match="one-dimensional"):
         expectation_field(field, jnp.empty((0,)))
     with pytest.raises(ValueError, match="finite"):
+        # ty: ignore[invalid-argument-type]
         expectation_field(field, [0.0, jnp.inf])
     with pytest.raises(ValueError, match="length must match"):
+        # ty: ignore[invalid-argument-type]
         expectation_field(field, [0.0, 1.0, 2.0])(_sample_batch(domain))
 
 
 class _LinearLogits(eqx.Module):
     weight: jax.Array = phx.parameter_field()
 
-    def __call__(self, inputs, *, key):
+    def __call__(self, inputs: Any, *, key: Any) -> Any:
         del key
         return self.weight * inputs[0]
 
 
-def test_derived_views_reuse_one_model_without_new_trainable_leaves():
+def test_derived_views_reuse_one_model_without_new_trainable_leaves() -> None:
     domain = Interval1d(0.0, 1.0)
     model = _LinearLogits(jnp.asarray([1.0, -0.5, 0.25]))
     logits = domain.Model(
@@ -139,9 +145,12 @@ def test_derived_views_reuse_one_model_without_new_trainable_leaves():
         binding=ModelBinding.pointwise(),
     )(model).with_metadata(quantity="logits")
     probabilities = softmax_field(logits)
+    # ty: ignore[invalid-argument-type]
     expected_value = expectation_field(probabilities, [-1.0, 0.0, 2.0])
 
+    # ty: ignore[unresolved-attribute]
     assert probabilities.func.func is logits.func
+    # ty: ignore[unresolved-attribute]
     assert expected_value.func.func is probabilities.func
     assert len(_trainable_arrays(logits)) == 1
     assert len(_trainable_arrays(probabilities)) == 1
@@ -149,11 +158,13 @@ def test_derived_views_reuse_one_model_without_new_trainable_leaves():
 
     solver = FunctionalSolver(functions={"logits": logits}, terms=())
     assert tuple(solver.functions) == ("logits",)
+    # ty: ignore[unresolved-attribute]
     assert solver.functions["logits"].func.raw_model is model
     assert len(_trainable_arrays(solver.functions)) == 1
 
     derived = expectation_field(
         softmax_field(solver.functions["logits"]),
+        # ty: ignore[invalid-argument-type]
         [-1.0, 0.0, 2.0],
     )
     batch = _sample_batch(domain)

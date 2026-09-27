@@ -7,21 +7,26 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
+from typing import get_args, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_signature, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
-MarkerFlowArtifactKind = Literal["checkpoint", "trajectory", "output", "benchmark"]
-MarkerFlowStepLimiter = Literal[
+MarkerFlowArtifactKind: TypeAlias = Literal[
+    "checkpoint", "trajectory", "output", "benchmark"
+]
+MarkerFlowStepLimiter: TypeAlias = Literal[
     "advection",
     "diffusion",
     "marker",
@@ -94,7 +99,7 @@ class HydrodynamicLoadPlan(StrictModule, NonTrainableState):
         topology_epoch_id: str,
         reference_point_id: str,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         ids = np.asarray(body_ids)
         dimension = int(ambient_dimension)
         tolerance_ = float(tolerance)
@@ -368,16 +373,7 @@ class MarkerFlowStepRestriction(StrictModule):
 
     @property
     def limiter(self) -> MarkerFlowStepLimiter:
-        names: tuple[MarkerFlowStepLimiter, ...] = (
-            "advection",
-            "diffusion",
-            "marker",
-            "contact",
-            "lubrication",
-            "geometry",
-            "stochastic",
-            "maximum",
-        )
+        names: tuple[MarkerFlowStepLimiter, ...] = get_args(MarkerFlowStepLimiter)
         return names[int(self.limiter_index)]
 
 
@@ -394,7 +390,7 @@ class MarkerFlowAdaptiveStepPlan(StrictModule, NonTrainableState):
         safety: float = 0.8,
         minimum_step: float = 1.0e-12,
         maximum_step: float = 1.0,
-    ):
+    ) -> None:
         safety_ = float(safety)
         minimum = float(minimum_step)
         maximum = float(maximum_step)
@@ -466,18 +462,20 @@ class MarkerFlowTrajectoryResult(StrictModule):
 class MarkerFlowTrajectoryAdapter(StrictModule, NonTrainableState):
     """Adapter from accepted marker-flow steps to replayable trajectory arrays."""
 
-    step: Callable = eqx.field(static=True)
-    observe: Callable = eqx.field(static=True)
+    step: Callable[[PyTree, Array, Array, Array, Array], tuple[PyTree, Array, Array]] = (
+        eqx.field(static=True)
+    )
+    observe: Callable[[Array, PyTree], PyTree] = eqx.field(static=True)
     adapter_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        step: Callable,
-        observe: Callable,
+        step: Callable[[PyTree, Array, Array, Array, Array], tuple[PyTree, Array, Array]],
+        observe: Callable[[Array, PyTree], PyTree],
         /,
         *,
         adapter_id: str,
-    ):
+    ) -> None:
         if not callable(step) or not callable(observe):
             raise TypeError("Trajectory step and observation must be callable.")
         identifier = str(adapter_id)
@@ -489,7 +487,7 @@ class MarkerFlowTrajectoryAdapter(StrictModule, NonTrainableState):
 
     def rollout(
         self,
-        initial_state,
+        initial_state: PyTree,
         initial_time: ArrayLike,
         step_size: ArrayLike,
         event_parameter: ArrayLike,
@@ -592,8 +590,7 @@ def marker_flow_artifact_reference(
     /,
 ) -> MarkerFlowArtifactReference:
     target = Path(path)
-    if kind not in ("checkpoint", "trajectory", "output", "benchmark"):
-        raise ValueError("Unknown marker-flow artifact kind.")
+    kind = parse(kind, MarkerFlowArtifactKind, "kind")
     identifier = str(identity)
     if not identifier or not target.is_file():
         raise ValueError("Marker-flow artifact identity/path is invalid.")
@@ -635,13 +632,13 @@ class MarkerFlowCompiledExportPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        state_template,
+        state_template: PyTree,
         /,
         *,
         fixed_routes: bool,
         fixed_topology: bool,
         fixed_random_schedule: bool,
-    ):
+    ) -> None:
         signature = array_tree_signature(state_template)
         self.state_signature = signature
         self.fixed_routes = bool(fixed_routes)
@@ -657,7 +654,7 @@ class MarkerFlowCompiledExportPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def validate(self, state, /) -> MarkerFlowCompiledExportReport:
+    def validate(self, state: PyTree, /) -> MarkerFlowCompiledExportReport:
         matches = array_tree_signature(state) == self.state_signature
         exportable = (
             matches

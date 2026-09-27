@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -19,19 +22,23 @@ from phydrax.applications.skeletal_muscle.fibers import (
 )
 
 
-def _source(nodes=17, *, radius=25.0e-6, radial_position=0.015):
+def _source(
+    nodes: Any = 17, *, radius: Any = 25.0e-6, radial_position: Any = 0.015
+) -> Any:
     schedule = PrescribedFiberStimulusSchedule(
         jnp.zeros((0,)),
         jnp.zeros((0,)),
         jnp.zeros((0,)),
         jnp.zeros((0, 1, nodes), dtype="bool"),
     )
+    # ty: ignore[invalid-argument-type]
     fiber = SkeletalFiberBundlePlan(("f0",), nodes, [40.0], [0.05], schedule).prepare()
     positions = jnp.zeros((1, nodes, 3)).at[..., 0].set(radial_position)
     positions = positions.at[0, :, 2].set(jnp.linspace(-0.02, 0.02, nodes))
     source = PereiraBotelho2019FiberCurrentPlan(
         ("f0",),
         positions,
+        # ty: ignore[invalid-argument-type]
         [radius],
         geometry_source_id="manufactured-straight-fiber",
         geometry_license="CC0-1.0 manufactured numerical fixture",
@@ -42,7 +49,7 @@ def _source(nodes=17, *, radius=25.0e-6, radial_position=0.015):
     return fiber, source, state
 
 
-def _observe(source, state):
+def _observe(source: Any, state: Any) -> Any:
     prior = source.initialize()
     candidate = source.propose(
         prior,
@@ -54,12 +61,23 @@ def _observe(source, state):
     return candidate.commit(prior, state)
 
 
-def _cylinder(source, *, sigma=(0.2, 0.2, 0.2, 0.2), angular=2, axial=3, sizes=None):
+def _cylinder(
+    source: Any,
+    *,
+    sigma: Any = (0.2, 0.2, 0.2, 0.2),
+    angular: Any = 2,
+    axial: Any = 3,
+    sizes: Any = None,
+) -> Any:
     return Farina2004CylindricalConductorPlan(
+        # ty: ignore[invalid-argument-type]
         [0.03, 0.035, 0.04],
         sigma,
+        # ty: ignore[invalid-argument-type]
         [[0.0, -0.006], [0.1, 0.009]],
+        # ty: ignore[invalid-argument-type]
         [[0.002, 0.003], [0.002, 0.003]] if sizes is None else sizes,
+        # ty: ignore[invalid-argument-type]
         [[1.0, -1.0]],
         ("e0", "e1"),
         ("bipolar",),
@@ -72,7 +90,7 @@ def _cylinder(source, *, sigma=(0.2, 0.2, 0.2, 0.2), angular=2, axial=3, sizes=N
     ).prepare(source, coordinate_frame_id="manufactured-cylinder-z")
 
 
-def test_source_cosine_has_correct_sign_si_scale_and_sealed_terminal_balance():
+def test_source_cosine_has_correct_sign_si_scale_and_sealed_terminal_balance() -> None:
     _, source, state = _source()
     accepted = _observe(source, state)
     z = np.asarray(source.plan.positions_m[0, :, 2])
@@ -99,7 +117,7 @@ def test_source_cosine_has_correct_sign_si_scale_and_sealed_terminal_balance():
     )
 
 
-def test_current_transaction_rejects_nonfinite_foreign_and_stale_voltage():
+def test_current_transaction_rejects_nonfinite_foreign_and_stale_voltage() -> None:
     _, source, state = _source()
     prior = source.initialize()
     candidate = source.propose(
@@ -136,7 +154,7 @@ def test_current_transaction_rejects_nonfinite_foreign_and_stale_voltage():
     assert int(replay.accepted_observations) == 1
 
 
-def test_source_metric_and_duplicate_ownership_are_not_inferred():
+def test_source_metric_and_duplicate_ownership_are_not_inferred() -> None:
     fiber, source, _ = _source()
     with pytest.raises(ValueError, match="monodomain metric"):
         PereiraBotelho2019FiberCurrentPlan(
@@ -150,13 +168,14 @@ def test_source_metric_and_duplicate_ownership_are_not_inferred():
         PereiraBotelho2019FiberCurrentPlan(
             ("f0", "f0"),
             jnp.repeat(source.plan.positions_m, 2, axis=0),
+            # ty: ignore[invalid-argument-type]
             [1e-5, 1e-5],
             geometry_source_id="duplicated",
             geometry_license="CC0-1.0",
         )
 
 
-def test_cylinder_matches_homogeneous_neumann_green_function_and_aperture():
+def test_cylinder_matches_homogeneous_neumann_green_function_and_aperture() -> None:
     _, source, state = _source()
     cylinder = _cylinder(source)
     n = np.arange(-2, 3)[:, None]
@@ -197,7 +216,7 @@ def test_cylinder_matches_homogeneous_neumann_green_function_and_aperture():
     )
 
 
-def test_cylinder_rejects_non_neutral_current_and_stale_geometry():
+def test_cylinder_rejects_non_neutral_current_and_stale_geometry() -> None:
     _, source, state = _source()
     cylinder = _cylinder(source)
     accepted = _observe(source, state)
@@ -221,7 +240,7 @@ def test_cylinder_rejects_non_neutral_current_and_stale_geometry():
         cylinder.plan.prepare(source, coordinate_frame_id="new-committed-geometry-frame")
 
 
-def test_cylinder_runtime_jit_and_aperture_suppression():
+def test_cylinder_runtime_jit_and_aperture_suppression() -> None:
     _, source, state = _source()
     cylinder = _cylinder(source)
     accepted = _observe(source, state)
@@ -238,7 +257,7 @@ def test_cylinder_runtime_jit_and_aperture_suppression():
     )
 
 
-def test_cylinder_rejects_collinear_fiber_foldback():
+def test_cylinder_rejects_collinear_fiber_foldback() -> None:
     fiber, source, _ = _source(nodes=3)
     folded = source.plan.positions_m.at[0, :, 2].set(jnp.asarray([0.0, 0.02, 0.0]))
     folded_source = PereiraBotelho2019FiberCurrentPlan(

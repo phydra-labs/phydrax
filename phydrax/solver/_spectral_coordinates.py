@@ -9,7 +9,9 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -116,7 +118,7 @@ class HermitianCoordinateEvolution(AbstractDifferentiableEvolution):
         evolution: AbstractDifferentiableEvolution,
         coordinates: HermitianSpectralCoordinates,
         /,
-    ):
+    ) -> None:
         if not isinstance(evolution, AbstractDifferentiableEvolution):
             raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
         if not isinstance(coordinates, HermitianSpectralCoordinates):
@@ -318,13 +320,13 @@ class HermitianCoordinateEvolution(AbstractDifferentiableEvolution):
         )
         coordinate_space = ArraySpace(coordinates.shape, dtype=coordinates.dtype)
 
-        def from_coordinates(value):
+        def from_coordinates(value: ArrayLike) -> Array:
             return self.coordinates.from_real_coordinates(value)
 
-        def to_coordinates(value):
+        def to_coordinates(value: ArrayLike) -> Array:
             return self.coordinates.to_real_coordinates(self.coordinates.project(value))
 
-        def pushforward(tangent):
+        def pushforward(tangent: Array) -> Array:
             return to_coordinates(inner.jvp(from_coordinates(tangent)))
 
         output_transpose = jax.linear_transpose(
@@ -336,7 +338,7 @@ class HermitianCoordinateEvolution(AbstractDifferentiableEvolution):
             coordinate_space.zeros(),
         )
 
-        def pullback(cotangent):
+        def pullback(cotangent: Array) -> Array:
             full_output = output_transpose(cotangent)[0]
             full_input = inner.vjp(full_output)
             return input_transpose(full_input)[0]
@@ -374,10 +376,10 @@ class HermitianCoordinateEvolution(AbstractDifferentiableEvolution):
             args,
         )
 
-        def to_coordinates(value):
+        def to_coordinates(value: ArrayLike) -> Array:
             return self.coordinates.to_real_coordinates(self.coordinates.project(value))
 
-        def pushforward(tangent):
+        def pushforward(tangent: PyTree[Any]) -> Array:
             return to_coordinates(inner.jvp(tangent))
 
         coordinate_transpose = jax.linear_transpose(
@@ -385,7 +387,7 @@ class HermitianCoordinateEvolution(AbstractDifferentiableEvolution):
             jnp.zeros_like(inner.primal),
         )
 
-        def pullback(cotangent):
+        def pullback(cotangent: Array) -> PyTree[Array]:
             return inner.vjp(coordinate_transpose(cotangent)[0])
 
         primal = to_coordinates(inner.primal)

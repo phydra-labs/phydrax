@@ -14,7 +14,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -26,6 +27,7 @@ from ...lifecycle import (
     read_typed_array_artifact,
     write_typed_array_artifact,
 )
+from ...typing import parse
 
 
 CoupledEnvelopeMethod: TypeAlias = Literal["fixed-symmetric", "adaptive-step-doubling"]
@@ -80,7 +82,7 @@ class CoupledEnvelopePlan(StrictModule):
         minimum_step_size: float = 1e-8,
         maximum_steps: int = 100_000,
         maximum_workspace_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         time = np.asarray(time_points, dtype=np.float64)
         x = np.asarray(x_points, dtype=np.float64)
         y = np.asarray(y_points, dtype=np.float64)
@@ -131,8 +133,7 @@ class CoupledEnvelopePlan(StrictModule):
         minimum_step = float(minimum_step_size)
         maximum = int(maximum_steps)
         workspace = int(maximum_workspace_bytes)
-        if method not in ("fixed-symmetric", "adaptive-step-doubling"):
-            raise ValueError("Unknown coupled-envelope method.")
+        method = parse(method, CoupledEnvelopeMethod, "method")
         if (
             not 0.0 <= fraction <= 1.0
             or distance <= 0.0
@@ -249,7 +250,7 @@ class CoupledEnvelopeRun(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
-def _frequency_axes(plan: CoupledEnvelopePlan, /):
+def _frequency_axes(plan: CoupledEnvelopePlan, /) -> tuple[Array, Array, Array]:
     dt = float(plan.time_points[1] - plan.time_points[0])
     frequency = 2.0 * jnp.pi * jnp.fft.fftfreq(plan.time_points.size, d=dt)
     if plan.x_points.size > 1:

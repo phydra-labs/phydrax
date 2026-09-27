@@ -5,14 +5,14 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Mapping
-from typing import Any, Literal, Protocol, TYPE_CHECKING
+from collections.abc import Callable, Mapping
+from typing import Any, Literal, Protocol, TYPE_CHECKING, TypeAlias
 
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.tree_util as jtu
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.axes as cx
 from phydrax.domain import GridBatch, GridSampling, PointBatch, PointSampling
@@ -21,6 +21,7 @@ from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
 from ..._sampling import DesignLike, resolve_design, UnitDesign
 from ..._strict import StrictModule
+from ...typing import parse, PRNGKey
 
 
 if TYPE_CHECKING:
@@ -39,7 +40,7 @@ class PointwiseSamplingTerm(Protocol):
     @property
     def policy(self) -> AbstractCollocationPolicy: ...
 
-    def sample(self, *, key: Key[Array, ""]) -> PointBatch | GridBatch: ...
+    def sample(self, *, key: PRNGKey) -> PointBatch | GridBatch: ...
 
     def pointwise_score(
         self,
@@ -47,7 +48,7 @@ class PointwiseSamplingTerm(Protocol):
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         **kwargs: Any,
     ) -> cx.AxisArray: ...
 
@@ -120,7 +121,7 @@ def _normalized_importance(
     )
 
 
-CollocationAlgorithm = Literal["periodic", "r3", "rar_d"]
+CollocationAlgorithm: TypeAlias = Literal["periodic", "r3", "rar_d"]
 
 
 class AbstractCollocationPolicy(StrictModule):
@@ -134,7 +135,7 @@ class AbstractCollocationPolicy(StrictModule):
         constraint: PointwiseSamplingTerm,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Any:
         raise NotImplementedError
 
@@ -156,7 +157,7 @@ class AbstractCollocationPolicy(StrictModule):
         population: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array,
     ) -> Any:
         raise NotImplementedError
@@ -195,7 +196,7 @@ class CollocationPopulation(StrictModule):
         refresh_count: int | Array = 0,
         last_refresh: int | Array = 0,
         diagnostics: Any | None = None,
-    ):
+    ) -> None:
         axis, n = _single_axis_and_size(batch)
         if active is not None:
             _validate_axis_field(active, axis=axis, size=n, name="active")
@@ -263,9 +264,8 @@ class CollocationPolicy(AbstractCollocationPolicy):
         initial_active_fraction: float = 0.5,
         refinement_fraction: float = 0.05,
         epsilon: float = 1e-12,
-    ):
-        if algorithm not in ("periodic", "r3", "rar_d"):
-            raise ValueError(f"Unsupported collocation algorithm {algorithm!r}.")
+    ) -> None:
+        algorithm = parse(algorithm, CollocationAlgorithm, "algorithm")
         if int(refresh_every) <= 0:
             raise ValueError("refresh_every must be positive.")
         if int(candidate_multiplier) <= 0:
@@ -309,7 +309,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
         constraint: PointwiseSamplingTerm,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> CollocationPopulation:
         _point_sampling(constraint)
         batch = constraint.sample(key=key)
@@ -361,7 +361,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
         population: CollocationPopulation,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array,
     ) -> CollocationPopulation:
         step = jnp.asarray(iter_, dtype=jnp.int32)
@@ -389,7 +389,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
         batch: PointBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> cx.AxisArray:
         score = constraint.pointwise_score(functions, batch, key=key)
         axis, n = _single_axis_and_size(batch)
@@ -403,7 +403,14 @@ class CollocationPolicy(AbstractCollocationPolicy):
         )
         return cx.AxisArray(jnp.maximum(data, 0.0), dims=score.dims)
 
-    def _refresh_r3(self, constraint, functions, population, *, key):
+    def _refresh_r3(
+        self,
+        constraint: PointwiseSamplingTerm,
+        functions: Mapping[str, DomainFunction],
+        population: CollocationPopulation,
+        *,
+        key: PRNGKey,
+    ) -> CollocationPopulation:
         sampling = _point_sampling(constraint)
         axis, n = _single_axis_and_size(population.batch)
         scores = self._scores(
@@ -447,7 +454,14 @@ class CollocationPolicy(AbstractCollocationPolicy):
         )
         return CollocationPopulation(batch, age=age)
 
-    def _refresh_rar_d(self, constraint, functions, population, *, key):
+    def _refresh_rar_d(
+        self,
+        constraint: PointwiseSamplingTerm,
+        functions: Mapping[str, DomainFunction],
+        population: CollocationPopulation,
+        *,
+        key: PRNGKey,
+    ) -> CollocationPopulation:
         sampling = _point_sampling(constraint)
         if population.active is None:
             raise ValueError("RAR-D population requires an active mask.")
@@ -545,7 +559,7 @@ def _validate_axis_field(field: cx.AxisArray, *, axis: str, size: int, name: str
         raise ValueError(f"{name} must have shape ({size},), got {field.data.shape}.")
 
 
-def _map_batch_fields(batch: PointBatch, fn) -> PointBatch:
+def _map_batch_fields(batch: PointBatch, fn: Callable[[object], object]) -> PointBatch:
     points = jtu.tree_map(fn, batch.points, is_leaf=lambda x: isinstance(x, cx.AxisArray))
     metadata = jtu.tree_map(
         fn,
@@ -558,7 +572,7 @@ def _map_batch_fields(batch: PointBatch, fn) -> PointBatch:
 def _take_batch(batch: PointBatch, indices: Array) -> PointBatch:
     axis, _ = _single_axis_and_size(batch)
 
-    def take(field):
+    def take(field: object) -> object:
         if not isinstance(field, cx.AxisArray) or axis not in field.named_dims:
             return field
         pos = field.dims.index(axis)
@@ -572,7 +586,7 @@ def _concat_batches(left: PointBatch, right: PointBatch) -> PointBatch:
         raise ValueError("Cannot concatenate batches with different structures.")
     axis, _ = _single_axis_and_size(right)
 
-    def concat(a, b):
+    def concat(a: object, b: object) -> object:
         if not isinstance(a, cx.AxisArray) or not isinstance(b, cx.AxisArray):
             if a != b:
                 raise ValueError("Fixed batch leaves differ during concatenation.")
@@ -606,7 +620,7 @@ def _concat_batches(left: PointBatch, right: PointBatch) -> PointBatch:
 def _set_batch_rows(target: PointBatch, indices: Array, source: PointBatch) -> PointBatch:
     axis, _ = _single_axis_and_size(target)
 
-    def set_rows(a, b):
+    def set_rows(a: object, b: object) -> object:
         if not isinstance(a, cx.AxisArray) or not isinstance(b, cx.AxisArray):
             return a
         if axis not in a.named_dims:

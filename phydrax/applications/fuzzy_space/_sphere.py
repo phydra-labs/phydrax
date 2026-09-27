@@ -12,7 +12,7 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -23,6 +23,7 @@ from ...operators.quantum.lattice import (
     SU2SectorResourcePolicy,
 )
 from ...tensor_network import su2_fusion
+from ...typing import parse
 
 
 FuzzyParticleStatistics: TypeAlias = Literal["boson", "fermion"]
@@ -46,14 +47,14 @@ class FuzzySphereTwoParticlePlan(StrictModule):
         pseudopotentials: Mapping[int, float],
         resources: SU2SectorResourcePolicy,
         /,
-    ):
+    ) -> None:
         flux = int(twice_monopole_flux)
-        statistics_value = str(statistics)
         values = tuple(
             sorted((int(spin), float(value)) for spin, value in pseudopotentials.items())
         )
-        if flux < 1 or statistics_value not in {"boson", "fermion"}:
+        if flux < 1:
             raise ValueError("Fuzzy-sphere flux/statistics are invalid.")
+        statistics_value = parse(statistics, FuzzyParticleStatistics, "statistics")
         if not isinstance(resources, SU2SectorResourcePolicy):
             raise TypeError("resources must be SU2SectorResourcePolicy.")
         all_spins = su2_fusion(flux, flux)

@@ -9,7 +9,8 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -38,7 +39,7 @@ class NormalShockReferencePlan(StrictModule, NonTrainableState):
     gamma: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, gamma: float = 1.4, /):
+    def __init__(self, gamma: float = 1.4, /) -> None:
         gamma_ = float(gamma)
         if not np.isfinite(gamma_) or gamma_ <= 1.0:
             raise ValueError("Normal-shock gamma must be finite and greater than one.")
@@ -111,7 +112,7 @@ class ObliqueShockReferencePlan(StrictModule, NonTrainableState):
         /,
         *,
         scan_points: int = 2048,
-    ):
+    ) -> None:
         gamma_ = float(gamma)
         points = int(scan_points)
         if (
@@ -231,7 +232,7 @@ class PrandtlMeyerReferencePlan(StrictModule, NonTrainableState):
     maximum_mach: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, gamma: float = 1.4, /, *, maximum_mach: float = 100.0):
+    def __init__(self, gamma: float = 1.4, /, *, maximum_mach: float = 100.0) -> None:
         gamma_ = float(gamma)
         maximum = float(maximum_mach)
         if (

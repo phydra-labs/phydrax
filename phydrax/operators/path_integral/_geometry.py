@@ -7,15 +7,21 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy.special as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+
+
+if TYPE_CHECKING:
+    from ...geometry import CompiledGeometry
+    from ...solver._hybrid_schedule import HybridSchedulePlan
 
 
 class PreparedGeometryPathKernel(StrictModule):
@@ -38,7 +44,7 @@ class PreparedGeometryPathKernel(StrictModule):
         behavior: Literal["absorbing", "reflecting"],
         diffusion: float = 1.0,
         image_capacity: int,
-    ):
+    ) -> None:
         low = jnp.asarray(lower, dtype=jnp.float64)
         high = jnp.asarray(upper, dtype=jnp.float64)
         if low.shape != () or high.shape != ():
@@ -177,7 +183,7 @@ def killed_path_mask(boundary_values: ArrayLike, /) -> Array:
 
 
 def prepare_path_boundary_schedule(
-    geometry,
+    geometry: CompiledGeometry,
     behavior: Literal["absorbing", "specular"],
     vector_field: Callable[[Array, Array, Any], Array],
     /,
@@ -186,7 +192,7 @@ def prepare_path_boundary_schedule(
     plan_id: str,
     grazing_tolerance: float = 1e-8,
     event_tolerance: float = 1e-10,
-):
+) -> HybridSchedulePlan:
     """Build the canonical DCD schedule from one compiled GTA boundary field."""
     from ...geometry import CompiledGeometry, GeometryCapability
     from ...solver._hybrid_event import HybridEventPlan, HybridGuardPlan
@@ -203,11 +209,11 @@ def prepare_path_boundary_schedule(
         geometry.require(GeometryCapability.BOUNDARY_NORMAL)
     dimension = geometry.ambient_dimension
 
-    def guard(time, state, args):
+    def guard(time: Array, state: Array, args: Any) -> Array:
         del time, args
         return jnp.asarray(geometry.boundary_field(state[:dimension])).reshape(())
 
-    def reset(time, state, args):
+    def reset(time: Array, state: Array, args: Any) -> Array:
         del time, args
         if behavior == "absorbing":
             return state

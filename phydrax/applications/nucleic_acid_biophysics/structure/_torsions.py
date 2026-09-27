@@ -1,11 +1,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 from __future__ import annotations
 
+from typing import cast
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -14,6 +18,7 @@ from ....atomistic import PreparedAtomisticSystem
 from ....atomistic.sampling import CollectiveVariableKind, CollectiveVariablePlan
 from ....series import SampledSeries
 from .._binding import NucleotideAtomMapping, prepare_nucleotide_binding
+from .._construct import NucleotideKey
 
 
 class NucleotideTorsionEvaluation(StrictModule):
@@ -63,9 +68,9 @@ class NucleotideTorsionProgram(StrictModule, NonTrainableState):
         mapping: NucleotideAtomMapping,
         system: PreparedAtomisticSystem,
         *,
-        coordinate_mask=None,
-        image_policy="nonperiodic",
-    ):
+        coordinate_mask: npt.ArrayLike | None = None,
+        image_policy: str = "nonperiodic",
+    ) -> None:
         if image_policy not in ("nonperiodic", "unwrapped") or (
             system.cell is not None and image_policy != "unwrapped"
         ):
@@ -73,7 +78,8 @@ class NucleotideTorsionProgram(StrictModule, NonTrainableState):
         binding = prepare_nucleotide_binding(
             mapping, system, coordinate_mask=coordinate_mask
         )
-        lookup = {
+        # Recipes probe strand-end neighbours, so lookups may carry a None key.
+        lookup: dict[tuple[NucleotideKey | None, str], int] = {
             (key, name): int(row)
             for key, name, row, available in zip(
                 mapping.nucleotide_keys,
@@ -132,7 +138,7 @@ class NucleotideTorsionProgram(StrictModule, NonTrainableState):
             }
         )
 
-    def evaluate(self, positions) -> NucleotideTorsionEvaluation:
+    def evaluate(self, positions: ArrayLike) -> NucleotideTorsionEvaluation:
         shape = (self.nucleotide_count * 12,)
         values, valid, margin = jnp.zeros(shape), jnp.zeros(shape, bool), jnp.zeros(shape)
         for index, variable in zip(self.output_indices, self.variables, strict=True):
@@ -175,7 +181,10 @@ class NucleotideTorsionProgram(StrictModule, NonTrainableState):
         torsions = self.observe_series(coordinates)
         result = sugar_pseudorotation(
             NucleotideTorsionEvaluation(
-                torsions.values, torsions.value_valid, jnp.zeros_like(torsions.values)
+                torsions.values,
+                # observe_series always attaches its per-coordinate validity mask.
+                cast(Array, torsions.value_valid),
+                jnp.zeros_like(torsions.values),
             )
         )
         values = jnp.stack(

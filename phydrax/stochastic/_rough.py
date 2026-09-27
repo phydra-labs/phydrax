@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -113,7 +114,7 @@ class GeometricRoughPath(AbstractRoughControl):
         sample_shape: Sequence[int] = (),
         realization: FractionalGaussianRealization | None = None,
         driver_id: str | None = None,
-    ):
+    ) -> None:
         nodes = jnp.asarray(times, dtype=jnp.float64)
         if nodes.ndim != 1 or nodes.size < 2:
             raise ValueError("times must contain at least two partition nodes.")
@@ -245,8 +246,10 @@ class GeometricRoughPath(AbstractRoughControl):
         flat_first = first.reshape((-1, end - start, self.dimension))
         flat_second = second.reshape((-1, end - start, self.dimension, self.dimension))
 
-        def one_path(path_first, path_second):
-            def combine(carry, item):
+        def one_path(path_first: Array, path_second: Array) -> tuple[Array, Array]:
+            def combine(
+                carry: tuple[Array, Array], item: tuple[Array, Array]
+            ) -> tuple[tuple[Array, Array], None]:
                 return compose_rough_path_segments(*carry, *item), None
 
             initial = (

@@ -7,13 +7,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from itertools import product
 from string import ascii_lowercase
-from typing import cast, Literal
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity
@@ -46,9 +46,11 @@ from phydrax.nn.operator.data import OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 from phydrax.signal import fourier_resample as _fourier_resample
 
+from .....typing import parse, PRNGKey
 
-AliasingPolicy = Literal["collocation", "dealiased"]
-SpectralChannelMixing = Literal["depthwise", "dense"]
+
+AliasingPolicy: TypeAlias = Literal["collocation", "dealiased"]
+SpectralChannelMixing: TypeAlias = Literal["depthwise", "dense"]
 
 
 def _dealiased_spectral_resample(
@@ -61,7 +63,7 @@ def _dealiased_spectral_resample(
     return _fourier_resample(values, output_shape, axes=axes)
 
 
-def _complex_normal(key: Key[Array, ""], shape: tuple[int, ...], scale: float) -> Array:
+def _complex_normal(key: PRNGKey, shape: tuple[int, ...], scale: float) -> Array:
     real_key, imaginary_key = jr.split(key)
     return scale * (
         jr.normal(real_key, shape=shape) + 1j * jr.normal(imaginary_key, shape=shape)
@@ -81,8 +83,8 @@ class _DepthwiseSpectralConvND(StrictModule):
         *,
         channels: int,
         n_modes: int | Sequence[int],
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.channels = int(channels)
         self.n_modes = _mode_tuple(n_modes)
         self.active_modes = self.n_modes
@@ -177,8 +179,8 @@ class _ProjectedProductFourierMixer(StrictModule):
         factor_bias: bool,
         spectral_channel_mixing: SpectralChannelMixing,
         aliasing: AliasingPolicy,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.channels = int(channels)
         self.n_modes = _mode_tuple(n_modes)
         self.interaction_order = int(interaction_order)
@@ -187,10 +189,10 @@ class _ProjectedProductFourierMixer(StrictModule):
         self.aliasing = aliasing
         if self.channels <= 0 or self.interaction_order <= 0:
             raise ValueError("channels and interaction_order must be positive.")
-        if spectral_channel_mixing not in ("depthwise", "dense"):
-            raise ValueError("spectral_channel_mixing must be 'depthwise' or 'dense'.")
-        if aliasing not in ("collocation", "dealiased"):
-            raise ValueError("aliasing must be 'collocation' or 'dealiased'.")
+        spectral_channel_mixing = parse(
+            spectral_channel_mixing, SpectralChannelMixing, "spectral_channel_mixing"
+        )
+        aliasing = parse(aliasing, AliasingPolicy, "aliasing")
 
         projection_key, spectral_key = jr.split(key)
         self.projection = Linear(
@@ -282,7 +284,7 @@ class _RMSNorm(StrictModule):
     scale: Array
     eps: float
 
-    def __init__(self, channels: int, /, *, eps: float):
+    def __init__(self, channels: int, /, *, eps: float) -> None:
         self.scale = jnp.ones((int(channels),), dtype=jnp.float64)
         self.eps = float(eps)
         if self.eps <= 0.0:
@@ -314,8 +316,8 @@ class _HigherOrderFeedForward(StrictModule):
         expansion: int,
         activation: Activation,
         dropout: float,
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         hidden_channels = int(channels) * int(expansion)
         if hidden_channels <= 0:
             raise ValueError("ffn_expansion must be positive.")
@@ -376,8 +378,8 @@ class _HigherOrderFNOBlock(StrictModule):
         norm_epsilon: float,
         dropout: float,
         residual: bool,
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         mixer_key, feedforward_key = jr.split(key)
         self.spectral = _ProjectedProductFourierMixer(
             channels=channels,
@@ -427,7 +429,7 @@ class _HigherOrderFNOBlock(StrictModule):
         return compose_regularity(mixer, feedforward)
 
 
-def _hofno_contract_configuration(model):
+def _hofno_contract_configuration(model: HOFNO) -> tuple[tuple[str, object], ...]:
     return (
         ("n_modes", model.n_modes),
         ("width", model.width),
@@ -502,8 +504,8 @@ class HOFNO(AbstractOperatorModel):
         dropout: float | Sequence[float] = 0.0,
         source_key: str | None = None,
         scan: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.in_size = in_channels
         self.out_size = out_channels
         self.n_modes = _mode_tuple(n_modes)
@@ -545,12 +547,11 @@ class HOFNO(AbstractOperatorModel):
             raise ValueError("ffn_expansion must be positive.")
         if self.norm_epsilon <= 0.0:
             raise ValueError("norm_epsilon must be positive.")
-        if activation not in ("gelu", "silu", "tanh"):
-            raise ValueError("activation must be 'gelu', 'silu', or 'tanh'.")
-        if spectral_channel_mixing not in ("depthwise", "dense"):
-            raise ValueError("spectral_channel_mixing must be 'depthwise' or 'dense'.")
-        if aliasing not in ("collocation", "dealiased"):
-            raise ValueError("aliasing must be 'collocation' or 'dealiased'.")
+        activation = parse(activation, Activation, "activation")
+        spectral_channel_mixing = parse(
+            spectral_channel_mixing, SpectralChannelMixing, "spectral_channel_mixing"
+        )
+        aliasing = parse(aliasing, AliasingPolicy, "aliasing")
 
         in_count = _get_size(in_channels)
         out_count = _get_size(out_channels)

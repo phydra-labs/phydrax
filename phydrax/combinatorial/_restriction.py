@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -49,7 +50,7 @@ class CombinatorialFeatureRestriction(StrictModule, NonTrainableState):
         *,
         lower: Any | None = None,
         upper: Any | None = None,
-    ):
+    ) -> None:
         if not isinstance(space, AbstractBoundableCombinatorialSpace):
             raise TypeError("space must be an AbstractBoundableCombinatorialSpace.")
         specification = space.feature_spec()

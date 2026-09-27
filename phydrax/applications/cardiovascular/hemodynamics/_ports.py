@@ -10,7 +10,8 @@ from typing import TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -54,7 +55,7 @@ class TerminalFace(StrictModule, NonTrainableState):
         side: str,
         direction: TerminalDirection,
         /,
-    ):
+    ) -> None:
         axis_ = str(axis)
         side_ = str(side)
         if not axis_ or side_ not in ("lower", "upper"):
@@ -92,7 +93,7 @@ class CirculationPortBinding(StrictModule, NonTrainableState):
         component: PressureFlowComponent,
         component_port_name: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(component, PressureFlowComponent):
             raise TypeError("component must be a circulation PressureFlowComponent.")
         port_name = str(component_port_name)
@@ -136,7 +137,7 @@ class PressureTerminalPort(StrictModule, NonTrainableState):
         /,
         *,
         pressure_reference_kpa: float = 0.0,
-    ):
+    ) -> None:
         identifier = str(terminal_id)
         reference = float(pressure_reference_kpa)
         if not identifier:
@@ -181,7 +182,7 @@ class FlowTerminalPort(StrictModule, NonTrainableState):
         /,
         *,
         pressure_reference_kpa: float = 0.0,
-    ):
+    ) -> None:
         identifier = str(terminal_id)
         reference = float(pressure_reference_kpa)
         if not identifier:
@@ -229,7 +230,7 @@ class PressureMeasurementDefinition(StrictModule, NonTrainableState):
         /,
         *,
         pressure_reference_kpa: float,
-    ):
+    ) -> None:
         weights = np.asarray(cell_weights_mm2, dtype=np.float64)
         reference = float(pressure_reference_kpa)
         identifier = str(terminal_id)
@@ -285,7 +286,7 @@ class FlowMeasurementDefinition(StrictModule, NonTrainableState):
         outward_normal: ArrayLike,
         direction: TerminalDirection,
         /,
-    ):
+    ) -> None:
         weights = np.asarray(cell_weights_mm2, dtype=np.float64)
         normal = np.asarray(outward_normal, dtype=np.float64)
         identifier = str(terminal_id)
@@ -353,7 +354,7 @@ class TerminalPortValues(StrictModule):
         pressure_kpa: ArrayLike,
         directed_flow_mm3_per_ms: ArrayLike,
         /,
-    ):
+    ) -> None:
         pressure = jnp.asarray(pressure_kpa)
         flow = jnp.asarray(directed_flow_mm3_per_ms, dtype=pressure.dtype)
         if pressure.ndim != 1 or flow.shape != pressure.shape:
@@ -380,7 +381,7 @@ class PreparedTerminalMeasurements(StrictModule, NonTrainableState):
         flow_definitions: tuple[FlowMeasurementDefinition, ...],
         circulation_port_ids: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         if not pressure_definitions or len(pressure_definitions) != len(flow_definitions):
             raise ValueError("Prepared terminal measurements require paired definitions.")
         terminal_ids = tuple(value.terminal_id for value in pressure_definitions)
@@ -633,7 +634,7 @@ def prepare_terminal_measurements(
         axis = axis_names.index(face.axis)
         if discretization.periodic[axis]:
             raise ValueError("A periodic grid face cannot be a cardiovascular terminal.")
-        face_slice: list[object] = [slice(None)] * 3
+        face_slice: list[int | slice] = [slice(None)] * 3
         face_slice[axis] = 0 if face.side == "lower" else -1
         region = np.zeros(discretization.grid.shape, dtype=np.bool_)
         region[tuple(face_slice)] = mask[tuple(face_slice)]

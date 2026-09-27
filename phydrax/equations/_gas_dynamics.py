@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -60,7 +61,10 @@ def _implicit_density_energy_temperature(
 
 
 @_implicit_density_energy_temperature.defjvp
-def _implicit_density_energy_temperature_jvp(primals, tangents):
+def _implicit_density_energy_temperature_jvp(
+    primals: tuple[Array, Array, Array, Array],
+    tangents: tuple[Array, Array, Array, Array],
+) -> tuple[Array, Array]:
     (
         temperature,
         internal_energy_density,
@@ -209,7 +213,7 @@ class HomogeneousMixtureEulerSystem(
     ) -> Array:
         variables = jnp.concatenate((species_density, temperature[..., None]), axis=-1)
 
-        def internal_energy_density(arguments):
+        def internal_energy_density(arguments: Array) -> Array:
             density = arguments[: self.species_count]
             evaluation = self.thermodynamics.evaluate_density_temperature(
                 density, arguments[-1]
@@ -395,7 +399,7 @@ class HomogeneousMixtureEulerSystem(
         if axis_value < 0 or axis_value >= self.dimension:
             raise ValueError("axis is outside the physical dimension.")
 
-        def bounds(state):
+        def bounds(state: Array) -> tuple[Array, Array]:
             value = self._check_state(state, "Interface state")
             velocity = value[..., self.species_count + axis_value] / jnp.maximum(
                 self.density(value), self.density_floor
@@ -494,7 +498,7 @@ class HomogeneousMixtureEulerSystem(
             (species_density, temperature[None]), axis=0
         )
 
-        def pressure_of(arguments):
+        def pressure_of(arguments: Array) -> Array:
             return self.thermodynamics.evaluate_density_temperature(
                 arguments[: self.species_count], arguments[-1]
             ).pressure
@@ -864,6 +868,10 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
     def pressure_floor(self) -> float:
         return self.inviscid.pressure_floor
 
+    @property
+    def maximum_thermal_iterations(self) -> int:
+        return self.inviscid.maximum_thermal_iterations
+
     def _check_state(self, state: ArrayLike, name: str, /) -> Array:
         value = jnp.asarray(state)
         if value.ndim < 1 or value.shape[-1] != self.component_count:
@@ -1052,8 +1060,8 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
         flat_density = evaluation.molar_density.reshape((-1,))
         flat_composition = evaluation.mole_fraction.reshape((-1, self.species_count))
 
-        def point(temperature, molar_density, composition):
-            def chemical_at(temperature_value, density_value):
+        def point(temperature: Array, molar_density: Array, composition: Array) -> Array:
+            def chemical_at(temperature_value: Array, density_value: Array) -> Array:
                 return self.thermodynamics.evaluate_chemical(
                     temperature_value, density_value, composition
                 ).chemical_potential
@@ -1657,7 +1665,7 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
         if axis_value < 0 or axis_value >= self.dimension:
             raise ValueError("axis is outside the physical dimension.")
 
-        def bounds(state):
+        def bounds(state: Array) -> tuple[Array, Array]:
             value = self._validated_favre_conserved_state(
                 self._check_state(state, "Interface state")
             )
@@ -1684,7 +1692,7 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
         if normal_value.ndim == 0 or normal_value.shape[-1] != self.dimension:
             raise ValueError("normal must end in the physical dimension.")
 
-        def bounds(state):
+        def bounds(state: Array) -> tuple[Array, Array]:
             value = self._validated_favre_conserved_state(
                 self._check_state(state, "Interface state")
             )
@@ -1769,7 +1777,7 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
             (species_density, temperature[None], specific_sgs_energy[None])
         )
 
-        def total_pressure(arguments):
+        def total_pressure(arguments: Array) -> Array:
             local_species = arguments[: self.species_count]
             gas_pressure = self.thermodynamics.evaluate_density_temperature(
                 local_species, arguments[self.species_count]

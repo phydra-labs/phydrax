@@ -109,7 +109,7 @@ class QueryGraphOperator(StrictModule):
         source_measure_key: str | None = None,
         source_measure: Any | None = None,
         normalize: bool = True,
-    ):
+    ) -> None:
         self.query = query
         self.source_key = source_key
         self.source_indices = (
@@ -170,7 +170,7 @@ class GraphFieldProcessor(StrictModule):
         coordinates: Sequence[Any] = (),
         input_key: str = "latent",
         output_key: str = "latent",
-    ):
+    ) -> None:
         self.model = model
         self.node_indices = jnp.asarray(node_indices, dtype=jnp.int32)
         self.spatial_shape = tuple(spatial_shape)
@@ -236,7 +236,7 @@ class RegionalGraphProcessor(StrictModule):
         steps: int,
         input_key: str = "latent",
         output_key: str = "latent",
-    ):
+    ) -> None:
         self.regional_graph = ensure_graph(regional_graph, validate=False)
         self.block = block
         self.latent_indices = jnp.asarray(latent_indices, dtype=jnp.int32)
@@ -293,7 +293,7 @@ class GraphEncodeProcessDecode(StrictModule):
         /,
         *,
         processor: Callable[[GraphIR], GraphIR] | None = None,
-    ):
+    ) -> None:
         self.encoder = encoder
         self.processor = processor
         self.decoder = decoder

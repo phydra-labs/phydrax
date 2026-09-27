@@ -2,6 +2,7 @@
 """Staged initial-lesion contracts; fixtures contain no transport or gel corpus."""
 
 import hashlib
+from typing import Any
 
 import numpy as np
 
@@ -84,10 +85,14 @@ def _profile(*, hit_count: int = 2) -> TimedRadiationHistoryProfile:
         source,
         histories,
         physical_tuple_ids=("tuple-zero", "tuple-hit", "tuple-unreported"),
+        # ty: ignore[invalid-argument-type]
         physical_event_counts=[0, hit_count, 0],
+        # ty: ignore[invalid-argument-type]
         dose_gy=[0.0, 1.0, 0.0],
+        # ty: ignore[invalid-argument-type]
         dose_standard_errors_gy=[0.01, 0.05, 0.01],
         species_ids=("OH",),
+        # ty: ignore[invalid-argument-type]
         sample_times=[0.0, 1.0],
         species_counts=np.asarray([[[0, 0]], [[hit_count, 0]], [[99, 99]]]),
         species_valid=np.asarray([[[True, True]], [[True, True]], [[False, False]]]),
@@ -181,17 +186,20 @@ def _gel(
     label: str,
     *,
     lane_gain_uncertainty: bool = True,
-    intensities=((10.0, 0.0, 0.0),),
-    observation_covariance=None,
+    intensities: Any = ((10.0, 0.0, 0.0),),
+    observation_covariance: Any = None,
 ) -> rad.PlasmidGelObservations:
     return rad.PlasmidGelObservations(
         (f"lane-{label}",),
         (day,),
         (physical_tuple,),
         preparation_ids=(f"preparation-{label}",),
+        # ty: ignore[invalid-argument-type]
         lane_gain=[10.0],
+        # ty: ignore[invalid-argument-type]
         lane_gain_standard_errors=[2.0] if lane_gain_uncertainty else None,
         intensities=intensities,
+        # ty: ignore[invalid-argument-type]
         standard_errors=[[1.0, 1.0, 1.0]],
         observation_covariance=observation_covariance,
         source=_reference(f"gel-{label}"),
@@ -212,6 +220,7 @@ def _form_prediction(
     return rad.PlasmidFormPrediction(
         profile,
         observations.physical_tuple_ids,
+        # ty: ignore[invalid-argument-type]
         [[1.0, 0.0, 0.0]],
         campaign_id=_claim().campaign_id,
         model_id="radiation-form-model",
@@ -226,7 +235,9 @@ def _form_prediction(
     )
 
 
-def test_history_coverage_preserves_reported_zeros_without_inventing_missing_zeros():
+def test_history_coverage_preserves_reported_zeros_without_inventing_missing_zeros() -> (
+    None
+):
     profile = _profile()
     coverage = profile.coverage(("OH",), (0.0, 1.0))
 
@@ -237,7 +248,9 @@ def test_history_coverage_preserves_reported_zeros_without_inventing_missing_zer
     assert not coverage.complete
 
 
-def test_gel_observation_law_propagates_calibration_and_rejects_nonprobabilities():
+def test_gel_observation_law_propagates_calibration_and_rejects_nonprobabilities() -> (
+    None
+):
     profile = _profile()
     assay = rad.PlasmidGelAssay(
         np.eye(3),
@@ -267,8 +280,10 @@ def test_gel_observation_law_propagates_calibration_and_rejects_nonprobabilities
     )
     calibration_covariance = np.asarray(
         assay.calibration_intensity_covariance(
+            # ty: ignore[invalid-argument-type]
             [[1.0, 0.0, 0.0]],
             observations.lane_gain,
+            # ty: ignore[invalid-argument-type]
             observations.lane_gain_standard_errors,
         )
     )
@@ -309,6 +324,7 @@ def test_gel_observation_law_propagates_calibration_and_rejects_nonprobabilities
         singular_evaluation.uncertainty_limitations
     )
     try:
+        # ty: ignore[invalid-argument-type]
         rad.evaluate_plasmid_gel(assay, observations, [[1.0, 0.0, 0.0]])
     except TypeError as error:
         assert "profile-bound" in str(error)
@@ -317,6 +333,7 @@ def test_gel_observation_law_propagates_calibration_and_rejects_nonprobabilities
     leaked_prediction = rad.PlasmidFormPrediction(
         profile,
         observations.physical_tuple_ids,
+        # ty: ignore[invalid-argument-type]
         [[1.0, 0.0, 0.0]],
         campaign_id=_claim().campaign_id,
         model_id="leaked-model",
@@ -336,6 +353,7 @@ def test_gel_observation_law_propagates_calibration_and_rejects_nonprobabilities
     preparation_leaked_prediction = rad.PlasmidFormPrediction(
         profile,
         observations.physical_tuple_ids,
+        # ty: ignore[invalid-argument-type]
         [[1.0, 0.0, 0.0]],
         campaign_id=_claim().campaign_id,
         model_id="preparation-leaked-model",
@@ -353,6 +371,7 @@ def test_gel_observation_law_propagates_calibration_and_rejects_nonprobabilities
     else:
         raise AssertionError("Locked gel preparations were reused by the fitted model.")
     try:
+        # ty: ignore[invalid-argument-type]
         assay.expected_intensity([[0.8, 0.8, 0.0]], [1.0])
     except ValueError as error:
         assert "probability rows" in str(error)
@@ -360,7 +379,9 @@ def test_gel_observation_law_propagates_calibration_and_rejects_nonprobabilities
         raise AssertionError("Non-normalized plasmid fractions were admitted.")
 
 
-def test_staged_assessment_binds_history_and_blocks_missing_calibration_uncertainty():
+def test_staged_assessment_binds_history_and_blocks_missing_calibration_uncertainty() -> (
+    None
+):
     profile = _profile()
     assay = rad.PlasmidGelAssay(
         np.eye(3),
@@ -483,7 +504,9 @@ def test_staged_assessment_binds_history_and_blocks_missing_calibration_uncertai
     assert "irradiation-day-leakage" in failed.failed_checks
 
 
-def test_domain_stage_evidence_requires_profile_lineage_and_requested_use_rights():
+def test_domain_stage_evidence_requires_profile_lineage_and_requested_use_rights() -> (
+    None
+):
     profile = _profile()
     assay = rad.PlasmidGelAssay(
         np.eye(3),

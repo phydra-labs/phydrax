@@ -30,7 +30,7 @@ class QualificationRuntimeIdentity(StrictModule, NonTrainableState):
         topology: str,
         precision: str,
         /,
-    ):
+    ) -> None:
         values = {
             "build_id": canonical_identifier(build_id, "build_id"),
             "environment_id": canonical_identifier(environment_id, "environment_id"),

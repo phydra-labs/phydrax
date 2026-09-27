@@ -217,7 +217,7 @@ class DAFoamResult:
 
 
 class DAFoamConvergenceError(RuntimeError):
-    def __init__(self, result: DAFoamResult):
+    def __init__(self, result: DAFoamResult) -> None:
         self.result = result
         super().__init__(result.failure_reason or "DAFoam acceptance failed.")
 
@@ -564,7 +564,7 @@ class DAFoamAdjointAction(ExternalAdjointAction):
         timeout: float = 1800,
         max_output_bytes: int = 128 * 1024 * 1024,
         environment: Mapping[str, str] | None = None,
-    ):
+    ) -> None:
         _host_only(case_files, options, design_shapes, timeout)
         if not isinstance(runtime, DAFoamRuntime):
             raise TypeError("runtime must be a DAFoamRuntime.")

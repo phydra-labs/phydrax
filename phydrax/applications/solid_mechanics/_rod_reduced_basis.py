@@ -6,18 +6,20 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import isfinite
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._rod_dynamics import PreparedRod
 
 
@@ -178,7 +180,7 @@ class RodStrainBasisPlan(StrictModule, NonTrainableState):
         maximum_condition_number: float = 1.0e8,
         basis_kind: RodStrainBasisKind = "explicit",
         label: str | None = None,
-    ):
+    ) -> None:
         dimension_ = _dimension(dimension)
         indices = _component_indices(dimension_, components)
         raw_coefficients = np.asarray(polynomial_coefficients)
@@ -225,12 +227,7 @@ class RodStrainBasisPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Basis rank tolerance and maximum condition number must be finite and positive."
             )
-        if basis_kind not in (
-            "explicit",
-            "piecewise_constant",
-            "shifted_legendre",
-        ):
-            raise ValueError("Unknown rod strain basis kind.")
+        basis_kind = parse(basis_kind, RodStrainBasisKind, "basis_kind")
         arrays = {
             "breakpoints": points,
             "polynomial_coefficients": coefficients,
@@ -682,14 +679,14 @@ def prepare_rod_strain_basis(
 
 
 def piecewise_constant_rod_strain_basis(
-    breakpoints: ArrayLike, **kwargs
+    breakpoints: ArrayLike, **kwargs: Any
 ) -> RodStrainBasisPlan:
     """Functional constructor for :meth:`RodStrainBasisPlan.piecewise_constant`."""
     return RodStrainBasisPlan.piecewise_constant(breakpoints, **kwargs)
 
 
 def shifted_legendre_rod_strain_basis(
-    degree: int | Sequence[int], **kwargs
+    degree: int | Sequence[int], **kwargs: Any
 ) -> RodStrainBasisPlan:
     """Functional constructor for :meth:`RodStrainBasisPlan.shifted_legendre`."""
     return RodStrainBasisPlan.shifted_legendre(degree, **kwargs)
@@ -698,7 +695,7 @@ def shifted_legendre_rod_strain_basis(
 def explicit_rod_strain_basis(
     breakpoints: ArrayLike,
     polynomial_coefficients: ArrayLike,
-    **kwargs,
+    **kwargs: Any,
 ) -> RodStrainBasisPlan:
     """Functional constructor for :meth:`RodStrainBasisPlan.explicit`."""
     return RodStrainBasisPlan.explicit(breakpoints, polynomial_coefficients, **kwargs)

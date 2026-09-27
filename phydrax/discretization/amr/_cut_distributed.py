@@ -12,9 +12,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from ..._execution_runtime import ExecutionGroup
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -63,7 +64,7 @@ class PreparedDistributedCutCellComplex(StrictModule, NonTrainableState):
         /,
         *,
         costs: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(complex_, MultivaluedCutCellComplex) or not isinstance(
             group, ExecutionGroup
         ):
@@ -353,7 +354,7 @@ class DistributedCutCellPartitionPlan(StrictModule, NonTrainableState):
     local_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, group: ExecutionGroup, local_capacity: int, /):
+    def __init__(self, group: ExecutionGroup, local_capacity: int, /) -> None:
         capacity = int(local_capacity)
         if not isinstance(group, ExecutionGroup) or capacity <= 0:
             raise ValueError("Distributed cut-cell partition plan is invalid.")

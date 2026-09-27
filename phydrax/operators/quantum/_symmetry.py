@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -36,7 +37,7 @@ class FiniteSignedPermutationSymmetry(StrictModule):
         /,
         *,
         symmetry_id: str | None = None,
-    ):
+    ) -> None:
         permutations_host = np.asarray(permutations)
         signs_host = np.asarray(signs)
         characters_host = np.asarray(characters, dtype=np.complex128)
@@ -135,7 +136,7 @@ class SymmetryProjectedAmplitude(StrictModule):
     model: Any
     symmetry: FiniteSignedPermutationSymmetry
 
-    def __init__(self, model: Any, symmetry: FiniteSignedPermutationSymmetry, /):
+    def __init__(self, model: Any, symmetry: FiniteSignedPermutationSymmetry, /) -> None:
         if not callable(model):
             raise TypeError("model must be callable.")
         if not isinstance(symmetry, FiniteSignedPermutationSymmetry):

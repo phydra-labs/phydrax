@@ -6,7 +6,7 @@ import pytest
 from phydrax.applications import functional_rg as frg
 
 
-def test_regulator_threshold_and_truncation_identities():
+def test_regulator_threshold_and_truncation_identities() -> None:
     regulator = frg.Regulator.optimized()
     quadrature = frg.ThresholdQuadraturePlan(3.0, quadrature_order=16, momentum_upper=8.0)
     masses = jnp.asarray([0.0, 0.5, 2.0])
@@ -51,7 +51,7 @@ def test_regulator_threshold_and_truncation_identities():
     assert bool(gross_neveu.truncation_identity(gross_state, 0.2).satisfied)
 
 
-def test_wilson_fisher_like_fixed_point_and_critical_exponents():
+def test_wilson_fisher_like_fixed_point_and_critical_exponents() -> None:
     regulator = frg.Regulator.optimized()
     quadrature = frg.ThresholdQuadraturePlan(3.0, quadrature_order=16, momentum_upper=8.0)
     flow = frg.PolynomialONFlowPlan(1, 3.0, regulator, quadrature, coupling_count=2)
@@ -70,7 +70,7 @@ def test_wilson_fisher_like_fixed_point_and_critical_exponents():
     assert fixed_point.critical_exponents[1] < 0.0
 
 
-def test_scheme_refinement_and_vertex_grid_evidence():
+def test_scheme_refinement_and_vertex_grid_evidence() -> None:
     regulator = frg.Regulator.exponential()
     coarse_rule = frg.ThresholdQuadraturePlan(
         3.0, quadrature_order=8, momentum_upper=12.0
@@ -108,7 +108,7 @@ def test_scheme_refinement_and_vertex_grid_evidence():
     assert evaluation.beta_four_point_vertex.shape == momentum.shape
 
 
-def test_fixed_resource_guards_fail_before_large_allocations():
+def test_fixed_resource_guards_fail_before_large_allocations() -> None:
     with pytest.raises(ValueError, match="node budget"):
         frg.ThresholdQuadraturePlan(3.0, quadrature_order=64, maximum_nodes=16)
     rule = frg.ThresholdQuadraturePlan(3.0, quadrature_order=8)

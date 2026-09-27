@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -14,7 +17,7 @@ from phydrax.discretization.particle._rigid_body import (
 )
 
 
-def _prepared_state(dimension):
+def _prepared_state(dimension: Any) -> Any:
     capacity = 2
     particles = ParticleSetPlan(
         jnp.arange(capacity, dtype=jnp.int64),
@@ -53,7 +56,7 @@ def _prepared_state(dimension):
     return bodies, state
 
 
-def _assert_tree_allclose(left, right, *, atol=1.0e-10):
+def _assert_tree_allclose(left: Any, right: Any, *, atol: Any = 1.0e-10) -> None:
     for left_leaf, right_leaf in zip(
         jax.tree.leaves(left),
         jax.tree.leaves(right),
@@ -62,7 +65,7 @@ def _assert_tree_allclose(left, right, *, atol=1.0e-10):
         assert jnp.allclose(left_leaf, right_leaf, atol=atol)
 
 
-def test_rigid_quaternion_geometry_uses_physical_angular_four_spaces():
+def test_rigid_quaternion_geometry_uses_physical_angular_four_spaces() -> None:
     bodies, state = _prepared_state(3)
     geometry = RigidBodyStateGeometry(bodies)
     local = geometry.local_space.unflatten(
@@ -122,7 +125,7 @@ def test_rigid_quaternion_geometry_uses_physical_angular_four_spaces():
     assert geometry.supports_isometric_transport
 
 
-def test_planar_rigid_geometry_keeps_equal_sized_angle_roles_exact():
+def test_planar_rigid_geometry_keeps_equal_sized_angle_roles_exact() -> None:
     bodies, state = _prepared_state(2)
     geometry = RigidBodyStateGeometry(bodies)
     local = geometry.local_space.unflatten(

@@ -7,7 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -31,7 +31,7 @@ class PreparedRingSheetField3D(StrictModule):
     state: VortexRingSheetState
     evaluator_id: str = eqx.field(static=True)
 
-    def __init__(self, state: VortexRingSheetState, /):
+    def __init__(self, state: VortexRingSheetState, /) -> None:
         if not isinstance(state, VortexRingSheetState):
             raise TypeError("state must be VortexRingSheetState.")
         self.state = state
@@ -59,21 +59,21 @@ class PreparedRingSheetField3D(StrictModule):
             raise ValueError("Ring-sheet field targets must be three-dimensional.")
         velocity_all = self._velocity(target.positions)
         gradient_all = None
+        vorticity_all = None
         if request.velocity_gradient or request.vorticity:
-            gradient_all = jax.vmap(
+            jacobian = jax.vmap(
                 jax.jacfwd(lambda point: self._velocity(point[None, :])[0])
             )(target.positions)
-        if request.vorticity:
-            vorticity_all = jnp.stack(
-                (
-                    gradient_all[:, 2, 1] - gradient_all[:, 1, 2],
-                    gradient_all[:, 0, 2] - gradient_all[:, 2, 0],
-                    gradient_all[:, 1, 0] - gradient_all[:, 0, 1],
-                ),
-                axis=-1,
-            )
-        else:
-            vorticity_all = None
+            gradient_all = jacobian
+            if request.vorticity:
+                vorticity_all = jnp.stack(
+                    (
+                        jacobian[:, 2, 1] - jacobian[:, 1, 2],
+                        jacobian[:, 0, 2] - jacobian[:, 2, 0],
+                        jacobian[:, 1, 0] - jacobian[:, 0, 1],
+                    ),
+                    axis=-1,
+                )
         finite = jnp.all(jnp.isfinite(velocity_all))
         if gradient_all is not None:
             finite = finite & jnp.all(jnp.isfinite(gradient_all))

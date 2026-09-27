@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -18,7 +21,7 @@ from phydrax.applications.contact._articulated import (
 )
 
 
-def _robot_plan():
+def _robot_plan() -> Any:
     return phx.discretization.CollisionSurfacePlan(
         jnp.asarray((0,), dtype=jnp.int64),
         ambient_dimension=2,
@@ -32,7 +35,7 @@ def _robot_plan():
     )
 
 
-def _ground_plan():
+def _ground_plan() -> Any:
     return phx.discretization.CollisionSurfacePlan(
         jnp.asarray((1, 2), dtype=jnp.int64),
         ambient_dimension=2,
@@ -47,21 +50,21 @@ def _ground_plan():
     )
 
 
-def _articulated_case():
+def _articulated_case() -> Any:
     configuration_space = phx.linalg.ArraySpace((1,), dtype=np.float64)
     tangent_space = phx.linalg.ArraySpace((2,), dtype=np.float64)
     plan = _robot_plan()
 
-    def positions(configuration):
+    def positions(configuration: Any) -> Any:
         return jnp.stack((jnp.asarray(0.0, dtype=configuration.dtype), configuration[0]))[
             None, :
         ]
 
-    def velocities(configuration, velocity):
+    def velocities(configuration: Any, velocity: Any) -> Any:
         del configuration
         return jnp.stack((jnp.asarray(0.0, dtype=velocity.dtype), velocity[0]))[None, :]
 
-    def effort_pullback(configuration, surface_effort):
+    def effort_pullback(configuration: Any, surface_effort: Any) -> Any:
         del configuration
         return jnp.asarray((surface_effort[0, 1], 0.0), dtype=surface_effort.dtype)
 
@@ -127,11 +130,11 @@ def _articulated_case():
     )
 
 
-def test_function_participant_uses_explicit_equal_spaces_and_true_efforts():
+def test_function_participant_uses_explicit_equal_spaces_and_true_efforts() -> None:
     plan = _robot_plan()
     space = phx.linalg.ArraySpace((1, 2), dtype=np.float64)
 
-    def identity_positions(configuration):
+    def identity_positions(configuration: Any) -> Any:
         return configuration
 
     participant = phx.discretization.FunctionContactParticipant(
@@ -161,7 +164,7 @@ def test_function_participant_uses_explicit_equal_spaces_and_true_efforts():
         )
 
 
-def test_distinct_configuration_and_tangent_spaces_validate_velocity_and_effort():
+def test_distinct_configuration_and_tangent_spaces_validate_velocity_and_effort() -> None:
     participant, configuration, velocity, _, _, _ = _articulated_case()
     world_velocity = participant.velocities(configuration, velocity)
     surface_effort = jnp.asarray(((0.0, 2.0),), dtype=jnp.float64)
@@ -176,7 +179,7 @@ def test_distinct_configuration_and_tangent_spaces_validate_velocity_and_effort(
         participant.velocities(configuration, jnp.zeros((1,), dtype=jnp.float64))
 
 
-def test_delassus_composition_matches_dense_g_minv_g_dual_transpose():
+def test_delassus_composition_matches_dense_g_minv_g_dual_transpose() -> None:
     participant, configuration, _, kinematics, _, inverse_mass = _articulated_case()
     velocity_operator = build_contact_velocity_operator(
         participant, configuration, kinematics
@@ -201,7 +204,9 @@ def test_delassus_composition_matches_dense_g_minv_g_dual_transpose():
         build_delassus_operator(velocity_operator, wrong_inverse_mass)
 
 
-def test_frictionless_articulated_impact_applies_constrained_generalized_impulse():
+def test_frictionless_articulated_impact_applies_constrained_generalized_impulse() -> (
+    None
+):
     participant, configuration, free, kinematics, materials, inverse_mass = (
         _articulated_case()
     )
@@ -232,7 +237,7 @@ def test_frictionless_articulated_impact_applies_constrained_generalized_impulse
     )
 
 
-def test_unsuccessful_articulated_cone_solve_fails_closed():
+def test_unsuccessful_articulated_cone_solve_fails_closed() -> None:
     participant, configuration, free, kinematics, materials, inverse_mass = (
         _articulated_case()
     )
@@ -258,7 +263,9 @@ def test_unsuccessful_articulated_cone_solve_fails_closed():
 
 
 @pytest.mark.parametrize("material_id", (-1, 1))
-def test_active_route_without_in_range_mechanical_material_fails_closed(material_id):
+def test_active_route_without_in_range_mechanical_material_fails_closed(
+    material_id: Any,
+) -> None:
     participant, configuration, free, kinematics, materials, inverse_mass = (
         _articulated_case()
     )
@@ -284,7 +291,7 @@ def test_active_route_without_in_range_mechanical_material_fails_closed(material
     np.testing.assert_array_equal(result.post_velocity, free)
 
 
-def test_out_of_range_material_is_allowed_only_on_padding():
+def test_out_of_range_material_is_allowed_only_on_padding() -> None:
     participant, configuration, free, kinematics, materials, inverse_mass = (
         _articulated_case()
     )
@@ -315,7 +322,7 @@ def test_out_of_range_material_is_allowed_only_on_padding():
     np.testing.assert_array_equal(result.post_velocity, free)
 
 
-def test_active_route_with_unavailable_mechanical_law_fails_closed():
+def test_active_route_with_unavailable_mechanical_law_fails_closed() -> None:
     participant, configuration, free, kinematics, materials, inverse_mass = (
         _articulated_case()
     )
@@ -341,7 +348,7 @@ def test_active_route_with_unavailable_mechanical_law_fails_closed():
     np.testing.assert_array_equal(result.post_velocity, free)
 
 
-def test_indefinite_delassus_is_spectrally_rejected_and_rolls_back():
+def test_indefinite_delassus_is_spectrally_rejected_and_rolls_back() -> None:
     participant, configuration, free, kinematics, materials, _ = _articulated_case()
     inverse_mass = phx.linalg.DenseLinearOperator(
         jnp.asarray(((-0.5, 0.0), (0.0, 0.0)), dtype=jnp.float64),
@@ -366,7 +373,7 @@ def test_indefinite_delassus_is_spectrally_rejected_and_rolls_back():
     np.testing.assert_array_equal(result.post_velocity, free)
 
 
-def test_stale_cone_numeric_revision_cannot_apply():
+def test_stale_cone_numeric_revision_cannot_apply() -> None:
     participant, configuration, free, kinematics, materials, inverse_mass = (
         _articulated_case()
     )
@@ -395,13 +402,13 @@ def test_stale_cone_numeric_revision_cannot_apply():
 
 
 def _single_contact_program(
-    tangential_velocity,
+    tangential_velocity: Any,
     *,
-    static_friction,
-    dynamic_friction,
-    effective_normal=1.0,
-    restitution=0.0,
-):
+    static_friction: Any,
+    dynamic_friction: Any,
+    effective_normal: Any = 1.0,
+    restitution: Any = 0.0,
+) -> Any:
     return phx.applications.contact.ContactConeProgram(
         jnp.asarray(((-1.0, tangential_velocity),), dtype=jnp.float64),
         jnp.asarray(((effective_normal, 0.0), (0.0, 1.0)), dtype=jnp.float64),
@@ -416,7 +423,7 @@ def _single_contact_program(
     )
 
 
-def test_signorini_and_coulomb_evidence_use_one_static_and_sliding_law():
+def test_signorini_and_coulomb_evidence_use_one_static_and_sliding_law() -> None:
     sticking = phx.applications.contact.solve_contact_cone(
         _single_contact_program(0.2, static_friction=0.5, dynamic_friction=0.3)
     )
@@ -438,7 +445,7 @@ def test_signorini_and_coulomb_evidence_use_one_static_and_sliding_law():
     assert bool(sliding.evidence.dissipative)
 
 
-def test_unequal_mass_frictionless_impact_and_singular_psd_route_are_supported():
+def test_unequal_mass_frictionless_impact_and_singular_psd_route_are_supported() -> None:
     inverse_effective_mass = 1.0 / 2.0 + 1.0 / 3.0
     restitution = 0.25
     closing_velocity = -1.2
@@ -468,13 +475,13 @@ def test_unequal_mass_frictionless_impact_and_singular_psd_route_are_supported()
     np.testing.assert_allclose(result.contact_law_velocity, 0.0, atol=1.0e-8)
 
 
-def test_fixed_route_cone_jit_and_vmap_match_eager():
+def test_fixed_route_cone_jit_and_vmap_match_eager() -> None:
     program = _single_contact_program(0.2, static_friction=0.5, dynamic_friction=0.3)
     eager = phx.applications.contact.solve_contact_cone(program)
     compiled = jax.jit(phx.applications.contact.solve_contact_cone)(program)
     free_batch = jnp.asarray((((-1.0, 0.2),), ((-1.0, 1.0),)), dtype=jnp.float64)
 
-    def solve_free(free_velocity):
+    def solve_free(free_velocity: Any) -> Any:
         changed = eqx.tree_at(lambda value: value.free_velocity, program, free_velocity)
         return phx.applications.contact.solve_contact_cone(changed).impulse
 

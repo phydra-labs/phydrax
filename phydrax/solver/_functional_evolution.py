@@ -13,6 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jaxtyping import PyTree
 
 from .._frozendict import frozendict
 from .._iteration import IterationSession
@@ -48,6 +49,7 @@ from ._functional_kernel import (
     functional_training_tree,
 )
 from ._functional_objective import (
+    _PreparedObjective,
     evaluate_prepared_objective,
     prepared_data_metrics,
 )
@@ -124,11 +126,15 @@ def _solve_distribution_evolution(
     model_loss_names = function_model_loss_labels(self.functions)
     evaluation_term_names = tuple(_term_label(c) for c in self.evaluation_terms)
 
-    def _values_for_params(p, held_, prepared_):
+    def _values_for_params(
+        p: PyTree[Any], held_: PyTree[Any], prepared_: _PreparedObjective
+    ) -> Any:
         functions = eqx.combine(p, held_)
         return evaluate_prepared_objective(prepared_, functions).flat_values
 
-    def _evaluation_term_values_for_params(p, held_, prepared_):
+    def _evaluation_term_values_for_params(
+        p: PyTree[Any], held_: PyTree[Any], prepared_: _PreparedObjective
+    ) -> Any:
         functions = eqx.combine(p, held_)
         return evaluate_prepared_objective(
             prepared_,
@@ -136,7 +142,9 @@ def _solve_distribution_evolution(
             include_model_losses=False,
         ).term_values
 
-    def _data_metrics_for_terms(p, held_, prepared_):
+    def _data_metrics_for_terms(
+        p: PyTree[Any], held_: PyTree[Any], prepared_: _PreparedObjective
+    ) -> tuple[dict[str, Any], ...]:
         functions = eqx.combine(p, held_)
         return prepared_data_metrics(prepared_, functions)
 

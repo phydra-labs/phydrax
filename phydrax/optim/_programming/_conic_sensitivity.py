@@ -5,12 +5,15 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Callable, Literal
+from collections.abc import Callable
+from typing import cast, Literal, TYPE_CHECKING, TypeVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 
@@ -21,19 +24,31 @@ from ...linalg import (
     DenseLinearOperator,
     DenseSVD,
     DifferentiationPolicy,
+    FailureMode,
     FailurePolicy,
     GeneralizedLSMR,
+    JacobianLinearOperator,
     LeastSquaresProblem,
     LinearSolveDiagnostics,
     LinearSolvePolicy,
+    LinearSolveResult,
     LSMR,
     RankPolicy,
     solve as solve_linear,
+    StabilityLowerBound,
 )
 from ...sparse import SparseCoordinateOperator, SparseLinearMap
 from ._cones import AbstractConvexCone, NonnegativeCone, ProductCone, ZeroCone
 from ._lifecycle import ConvexProgramExecution, PreparedConvexProgram
+from ._policy import ConicGeneralizedDerivativePolicy
 from ._problem import _conic_bound_indices, ConicProgram
+
+
+if TYPE_CHECKING:
+    from ._matrix_free_conic_sensitivity import PreparedMatrixFreeConicSensitivity
+
+
+_T = TypeVar("_T")
 
 
 class ConicProgramData(StrictModule):
@@ -55,7 +70,7 @@ class ConicProgramData(StrictModule):
         lower_bounds: ArrayLike,
         upper_bounds: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.quadratic = (
             quadratic
             if isinstance(quadratic, AbstractSparseLinearOperator)
@@ -80,7 +95,9 @@ class ConicProgramData(StrictModule):
         if not isinstance(program, ConicProgram):
             raise TypeError("program must be a ConicProgram.")
 
-        def zero_numeric(value):
+        def zero_numeric(
+            value: Array | AbstractSparseLinearOperator,
+        ) -> Array | AbstractSparseLinearOperator:
             if isinstance(value, (SparseLinearMap, SparseCoordinateOperator)):
                 return eqx.tree_at(
                     lambda operator: operator.coefficients,
@@ -163,7 +180,9 @@ def _max_abs(value: Array, /) -> Array:
     return jnp.max(jnp.abs(value), axis=-1)
 
 
-def _linear_policy(linear: LinearSolvePolicy | None, /) -> tuple[LinearSolvePolicy, str]:
+def _linear_policy(
+    linear: LinearSolvePolicy | None, /
+) -> tuple[LinearSolvePolicy, FailureMode]:
     selected = LinearSolvePolicy(DenseSVD()) if linear is None else linear
     if not isinstance(selected, LinearSolvePolicy):
         raise TypeError("linear must be a LinearSolvePolicy or None.")
@@ -200,7 +219,7 @@ def _linear_policy(linear: LinearSolvePolicy | None, /) -> tuple[LinearSolvePoli
 
 def _matrix_free_linear_policy(
     linear: LinearSolvePolicy, /
-) -> tuple[LinearSolvePolicy, str]:
+) -> tuple[LinearSolvePolicy, FailureMode]:
     if not isinstance(linear, LinearSolvePolicy):
         raise TypeError("linear must be a LinearSolvePolicy.")
     if not isinstance(linear.method, (LSMR, GeneralizedLSMR)):
@@ -237,7 +256,7 @@ def _restore_cases(value: Array, batch_shape: tuple[int, ...], /) -> Array:
     return value.reshape(batch_shape + value.shape[1:])
 
 
-def _restore_tree_cases(value: PyTree[Array], batch_shape: tuple[int, ...], /):
+def _restore_tree_cases(value: _T, batch_shape: tuple[int, ...], /) -> _T:
     return jax.tree.map(lambda leaf: _restore_cases(leaf, batch_shape), value)
 
 
@@ -300,7 +319,7 @@ def _jvp_case(
     cone: AbstractConvexCone,
     num_variables: int,
     linear_policy: LinearSolvePolicy,
-):
+) -> LinearSolveResult:
     operator = DenseLinearOperator(state_jacobian)
     _, data_action = jax.jvp(
         lambda p, q, a, b: _data_residual(
@@ -334,7 +353,7 @@ def _vjp_case(
     cone: AbstractConvexCone,
     num_variables: int,
     linear_policy: LinearSolvePolicy,
-):
+) -> tuple[LinearSolveResult, tuple[Array, Array, Array, Array]]:
     operator = DenseLinearOperator(state_jacobian)
     state_cotangent = jnp.concatenate(
         (cotangent, jnp.zeros(state.shape[0] - num_variables, dtype=state.dtype))
@@ -366,7 +385,9 @@ def _vjp_case(
     return linear_result, gradients
 
 
-def _result_regularity(prepared: PreparedConicSensitivity, linear_result, /) -> Array:
+def _result_regularity(
+    prepared: PreparedConicSensitivity, linear_result: LinearSolveResult, /
+) -> Array:
     diagnostics = linear_result.diagnostics
     condition = diagnostics.condition_estimate
     condition_ok = jnp.isfinite(condition)
@@ -389,7 +410,7 @@ def _result_regularity(prepared: PreparedConicSensitivity, linear_result, /) -> 
     )
 
 
-def _guard_result(value: PyTree[Array], regular: Array, message: str, /):
+def _guard_result(value: _T, regular: Array, message: str, /) -> _T:
     leaves, structure = jax.tree.flatten(value)
     leaves[0] = eqx.error_if(leaves[0], jnp.any(~regular), message)
     return jax.tree.unflatten(structure, leaves)
@@ -405,15 +426,24 @@ def _validate_tangent(
     original = prepared.original_data
     if prepared.quadratic_present != (tangent.quadratic is not None):
         raise ValueError("Tangent quadratic presence must match the conic program.")
+    tangent_quadratic = tangent.quadratic
+    tangent_matrix = tangent.constraint_matrix
+    if isinstance(tangent_quadratic, AbstractSparseLinearOperator) or isinstance(
+        tangent_matrix, AbstractSparseLinearOperator
+    ):
+        raise TypeError("Dense conic sensitivity requires dense tangent data.")
+    # Dense preparation rejects sparse programs, so the original data is dense.
+    original_quadratic = cast("Array | None", original.quadratic)
+    original_matrix = cast("Array", original.constraint_matrix)
     pairs = (
         (tangent.linear, original.linear, "linear"),
-        (tangent.constraint_matrix, original.constraint_matrix, "constraint_matrix"),
+        (tangent_matrix, original_matrix, "constraint_matrix"),
         (tangent.constraint_rhs, original.constraint_rhs, "constraint_rhs"),
         (tangent.lower_bounds, original.lower_bounds, "lower_bounds"),
         (tangent.upper_bounds, original.upper_bounds, "upper_bounds"),
     )
-    if tangent.quadratic is not None and original.quadratic is not None:
-        pairs = ((tangent.quadratic, original.quadratic, "quadratic"), *pairs)
+    if tangent_quadratic is not None and original_quadratic is not None:
+        pairs = ((tangent_quadratic, original_quadratic, "quadratic"), *pairs)
     for value, reference, name in pairs:
         if value.shape != reference.shape:
             raise ValueError(
@@ -452,19 +482,20 @@ def _lower_tangent(
     fixed = jnp.asarray(prepared.fixed_indices, dtype=jnp.int32)
     lower = jnp.asarray(prepared.lower_indices, dtype=jnp.int32)
     upper = jnp.asarray(prepared.upper_indices, dtype=jnp.int32)
-    if tangent.quadratic is None:
+    # _validate_tangent rejects sparse tangent operators.
+    validated_quadratic = cast("Array | None", tangent.quadratic)
+    validated_matrix = cast("Array", tangent.constraint_matrix)
+    if validated_quadratic is None:
         tangent_quadratic = jnp.zeros(
             (count, variables, variables), dtype=prepared.quadratic.dtype
         )
     else:
-        tangent_quadratic = tangent.quadratic.reshape((count, variables, variables))
+        tangent_quadratic = validated_quadratic.reshape((count, variables, variables))
         tangent_quadratic = 0.5 * tangent_quadratic + 0.5 * jnp.swapaxes(
             tangent_quadratic, -1, -2
         )
     tangent_linear = tangent.linear.reshape((count, variables))
-    tangent_matrix = tangent.constraint_matrix.reshape(
-        (count, original_constraints, variables)
-    )
+    tangent_matrix = validated_matrix.reshape((count, original_constraints, variables))
     zero_bound_rows = jnp.zeros(
         (
             count,
@@ -540,10 +571,10 @@ def prepare_conic_sensitivity(
     *,
     linear: LinearSolvePolicy | None = None,
     representation: Literal["dense", "matrix-free"] = "dense",
-    stability: Callable[[Any], Any] | None = None,
-    generalized: Any = None,
+    stability: Callable[[JacobianLinearOperator], StabilityLowerBound] | None = None,
+    generalized: ConicGeneralizedDerivativePolicy | None = None,
     regularity_tolerance: float = 1e-7,
-) -> PreparedConicSensitivity:
+) -> PreparedConicSensitivity | PreparedMatrixFreeConicSensitivity:
     """Bind an audited conic execution to a reusable projection-KKT derivative."""
 
     if not isinstance(prepared, PreparedConvexProgram):
@@ -596,7 +627,11 @@ def prepare_conic_sensitivity(
             failure_mode=failure_mode,
         )
     linear_policy, failure_mode = _linear_policy(linear)
-    if program.constraint_is_sparse or program.quadratic_is_sparse:
+    constraint_matrix = program.constraint_matrix
+    program_quadratic = program.quadratic
+    if isinstance(constraint_matrix, AbstractSparseLinearOperator) or isinstance(
+        program_quadratic, AbstractSparseLinearOperator
+    ):
         raise ValueError(
             "Sparse conic sensitivity requires representation='matrix-free'."
         )
@@ -645,7 +680,7 @@ def prepare_conic_sensitivity(
         bound_matrix,
         (count, bound_matrix.shape[0], variables),
     )
-    matrix = program.constraint_matrix.reshape((count, original_constraints, variables))
+    matrix = constraint_matrix.reshape((count, original_constraints, variables))
     matrix = jnp.concatenate((matrix, bound_matrix), axis=1)
     lower_values = program.lower_bounds.reshape((count, variables))
     upper_values = program.upper_bounds.reshape((count, variables))
@@ -660,11 +695,11 @@ def prepare_conic_sensitivity(
         axis=1,
     )
     linear_values = program.linear.reshape((count, variables))
-    quadratic_present = program.quadratic is not None
+    quadratic_present = program_quadratic is not None
     quadratic = (
         jnp.zeros((count, variables, variables), dtype=dtype)
-        if program.quadratic is None
-        else program.quadratic.reshape((count, variables, variables))
+        if program_quadratic is None
+        else program_quadratic.reshape((count, variables, variables))
     )
     regularization = prepared.plan.policy.regularization
     quadratic = quadratic + regularization * jnp.eye(variables, dtype=dtype)
@@ -787,7 +822,7 @@ def prepare_conic_sensitivity(
 
 @eqx.filter_jit
 def conic_primal_jvp(
-    prepared: PreparedConicSensitivity,
+    prepared: PreparedConicSensitivity | PreparedMatrixFreeConicSensitivity,
     tangent: ConicProgramData,
     /,
 ) -> ConicSensitivityResult:
@@ -865,7 +900,7 @@ def conic_primal_jvp(
 
 @eqx.filter_jit
 def conic_primal_vjp(
-    prepared: PreparedConicSensitivity,
+    prepared: PreparedConicSensitivity | PreparedMatrixFreeConicSensitivity,
     cotangent: ArrayLike,
     /,
 ) -> ConicSensitivityResult:

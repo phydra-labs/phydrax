@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -57,7 +58,7 @@ class NonisothermalGrandPotentialPhase(StrictModule, NonTrainableState):
         susceptibility: ArrayLike,
         heat_capacity: ArrayLike,
         thermal_conductivity: ArrayLike,
-    ):
+    ) -> None:
         identifier = str(phase_id)
         scalars = tuple(
             np.asarray(value)
@@ -195,7 +196,7 @@ class NonisothermalMaterialCatalog(StrictModule, NonTrainableState):
     component_count: int = eqx.field(static=True)
     catalog_id: str = eqx.field(static=True)
 
-    def __init__(self, phases: Sequence[NonisothermalGrandPotentialPhase], /):
+    def __init__(self, phases: Sequence[NonisothermalGrandPotentialPhase], /) -> None:
         values = tuple(phases)
         if (
             len(values) < 2
@@ -241,7 +242,7 @@ class NonisothermalSolidificationModel(StrictModule, NonTrainableState):
         /,
         *,
         barrier_scale: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(catalog, NonisothermalMaterialCatalog):
             raise TypeError("catalog must be NonisothermalMaterialCatalog.")
         barrier = np.asarray(barrier_scale)
@@ -369,7 +370,7 @@ class NonisothermalSolidificationPlan(StrictModule, NonTrainableState):
         *,
         absolute_tolerance: float = 1.0e-10,
         maximum_iterations: int = 32,
-    ):
+    ) -> None:
         if not isinstance(model, NonisothermalSolidificationModel):
             raise TypeError("model must be NonisothermalSolidificationModel.")
         tolerance = float(absolute_tolerance)

@@ -10,7 +10,8 @@ from typing import Any, Literal
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 import phydrax.axes as cx
 
@@ -95,8 +96,8 @@ def sample_observations_from_position_samples(
     names = tuple(templates)
     parts: dict[str, list[Array]] = {name: [] for name in names}
 
-    def evaluate(position, draw_keys):
-        def draw(draw_key):
+    def evaluate(position: PyTree[Array], draw_keys: Array) -> tuple[Array, ...]:
+        def draw(draw_key: Array) -> tuple[Array, ...]:
             result, result_single = _prediction_mapping(
                 problem.sample_observation(
                     draw_key,
@@ -167,7 +168,7 @@ def _evaluate_position_callback(
     names = tuple(templates)
     parts: dict[str, list[Array]] = {name: [] for name in names}
 
-    def evaluate(position):
+    def evaluate(position: PyTree[Array]) -> tuple[Array, ...]:
         result, result_single = _prediction_mapping(callback(position))
         if result_single != single or tuple(result) != names:
             raise ValueError(f"{owner} structure changed between draws.")

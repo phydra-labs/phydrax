@@ -5,17 +5,28 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any
+from collections.abc import Callable, Iterable
+from typing import Any, Protocol
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._probability import AbstractProbabilityLaw
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...typing import PRNGKey
+
+
+class _LatentEncoder(Protocol):
+    def __call__(self, value: ArrayLike, /, *, key: PRNGKey) -> object: ...
+
+
+class _LatentDecoder(Protocol):
+    def __call__(self, latent: Array, /, *, key: PRNGKey) -> object: ...
 
 
 class LatentPosterior(StrictModule):
@@ -39,11 +50,11 @@ class AbstractLatentRepresentation(StrictModule, ParameterOwner):
     density_capability: eqx.AbstractVar[str]
 
     @abstractmethod
-    def encode(self, value: ArrayLike, /, *, key: Key[Array, ""]) -> LatentPosterior:
+    def encode(self, value: ArrayLike, /, *, key: PRNGKey) -> LatentPosterior:
         raise NotImplementedError
 
     @abstractmethod
-    def decode(self, latent: ArrayLike, /, *, key: Key[Array, ""]) -> DecodedDistribution:
+    def decode(self, latent: ArrayLike, /, *, key: PRNGKey) -> DecodedDistribution:
         raise NotImplementedError
 
 
@@ -59,15 +70,15 @@ class CallableLatentRepresentation(AbstractLatentRepresentation):
 
     def __init__(
         self,
-        encoder,
-        decoder,
+        encoder: _LatentEncoder,
+        decoder: _LatentDecoder,
         /,
         *,
-        data_event_shape,
-        latent_event_shape,
+        data_event_shape: Iterable[int],
+        latent_event_shape: Iterable[int],
         representation_id: str,
         density_capability: str = "decoder-likelihood",
-    ):
+    ) -> None:
         if not callable(encoder) or not callable(decoder):
             raise TypeError("encoder and decoder must be callable.")
         data_shape = tuple(data_event_shape)
@@ -85,7 +96,7 @@ class CallableLatentRepresentation(AbstractLatentRepresentation):
         self.representation_id = representation_id
         self.density_capability = density_capability
 
-    def encode(self, value, /, *, key):
+    def encode(self, value: ArrayLike, /, *, key: PRNGKey) -> LatentPosterior:
         result = self.encoder(value, key=key)
         if not isinstance(result, LatentPosterior):
             raise TypeError("encoder must return LatentPosterior.")
@@ -93,7 +104,7 @@ class CallableLatentRepresentation(AbstractLatentRepresentation):
             raise ValueError("Encoder posterior latent event shape is incompatible.")
         return result
 
-    def decode(self, latent, /, *, key):
+    def decode(self, latent: ArrayLike, /, *, key: PRNGKey) -> DecodedDistribution:
         value = jnp.asarray(latent)
         if value.shape[-len(self.latent_event_shape) :] != self.latent_event_shape:
             raise ValueError("Latent value has an incompatible event shape.")
@@ -141,12 +152,12 @@ class LatentDiffusion(StrictModule):
     def __init__(
         self,
         representation: AbstractLatentRepresentation,
-        latent_sampler,
+        latent_sampler: Callable[[PRNGKey, tuple[int, ...]], ArrayLike],
         /,
         *,
         latent_sampler_id: str,
         model_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(representation, AbstractLatentRepresentation):
             raise TypeError("representation must implement AbstractLatentRepresentation.")
         if not callable(latent_sampler) or not latent_sampler_id:
@@ -163,7 +174,9 @@ class LatentDiffusion(StrictModule):
         self.latent_sampler_id = latent_sampler_id
         self.model_id = identifier
 
-    def sample(self, key: Key[Array, ""], sample_shape, /) -> LatentDiffusionSample:
+    def sample(
+        self, key: PRNGKey, sample_shape: Iterable[int], /
+    ) -> LatentDiffusionSample:
         samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
             raise ValueError("sample_shape dimensions must be positive.")
@@ -193,7 +206,7 @@ class LatentDiffusion(StrictModule):
 def latent_reconstruction_loss(
     representation: AbstractLatentRepresentation,
     value: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> Array:
     encode_key, latent_key, decode_key = jax.random.split(key, 3)

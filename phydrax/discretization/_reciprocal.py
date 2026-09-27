@@ -12,7 +12,9 @@ from math import isfinite, prod
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -56,7 +58,7 @@ class ReciprocalMeshPlan(StrictModule, NonTrainableState):
         shift: tuple[float, ...],
         mesh_indices: ArrayLike | None = None,
         uniqueness_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         cell_ = _require_cell(cell)
         points = np.asarray(fractional_points)
         weights_ = np.asarray(weights)
@@ -157,7 +159,7 @@ class ReciprocalMeshPlan(StrictModule, NonTrainableState):
         /,
         *,
         shift: tuple[float, ...] | None = None,
-        dtype=np.float64,
+        dtype: npt.DTypeLike = np.float64,
         maximum_points: int = 1_000_000,
     ) -> "ReciprocalMeshPlan":
         cell_ = _require_cell(cell)
@@ -219,7 +221,7 @@ class ReciprocalPathPlan(StrictModule, NonTrainableState):
         *,
         labels: tuple[str, ...] | None = None,
         maximum_points: int = 1_000_000,
-    ):
+    ) -> None:
         cell_ = _require_cell(cell)
         points = np.asarray(fractional_points)
         if points.ndim != 2 or points.shape[1] != cell_.rank or points.shape[0] < 2:
@@ -292,7 +294,7 @@ class ReciprocalConnectivityPlan(StrictModule, NonTrainableState):
         maximum_edges: int = 4_000_000,
         maximum_plaquettes: int = 2_000_000,
         closure_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         if not isinstance(mesh, ReciprocalMeshPlan):
             raise TypeError("mesh must be ReciprocalMeshPlan.")
         source = np.asarray(source_indices, dtype=np.int64)
@@ -489,10 +491,10 @@ class ReciprocalConnectivityPlan(StrictModule, NonTrainableState):
             )
         return cls(
             mesh,
-            sources,
-            targets,
-            shifts,
-            reverse,
+            np.asarray(sources, dtype=np.int64),
+            np.asarray(targets, dtype=np.int64),
+            np.asarray(shifts),
+            np.asarray(reverse, dtype=np.int64),
             plaquette_edges=np.asarray(plaquettes, dtype=np.int32).reshape((-1, 4)),
             maximum_edges=maximum_edges,
             maximum_plaquettes=maximum_plaquettes,
@@ -510,7 +512,7 @@ class PreparedReciprocalConnectivity(StrictModule, NonTrainableState):
     cartesian_displacements: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ReciprocalConnectivityPlan, /):
+    def __init__(self, plan: ReciprocalConnectivityPlan, /) -> None:
         if not isinstance(plan, ReciprocalConnectivityPlan):
             raise TypeError("plan must be ReciprocalConnectivityPlan.")
         points = plan.mesh.fractional_points

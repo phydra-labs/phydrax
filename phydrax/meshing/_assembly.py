@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._physical import SpatialCoordinateContract
@@ -61,7 +62,7 @@ class MeshPart(StrictModule, NonTrainableState):
         /,
         *,
         coordinate_contract: SpatialCoordinateContract | None = None,
-    ):
+    ) -> None:
         name_ = str(name).strip()
         if not name_:
             raise ValueError("Mesh part names must be non-empty.")
@@ -240,7 +241,7 @@ class MeshAssembly(StrictModule, NonTrainableState):
 
     def __init__(
         self, parts: tuple[MeshPart, ...], /, *, couplings: tuple[MeshCoupling, ...] = ()
-    ):
+    ) -> None:
         from ._coupling import MeshCoupling, OversetCoupling
 
         values = tuple(parts)

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -18,12 +21,12 @@ from phydrax.geometry.polynomial_image import (
 
 
 def _map(
-    variable_labels,
-    equation_labels,
-    equation_indices,
-    exponents,
-    coefficients,
-):
+    variable_labels: Any,
+    equation_labels: Any,
+    equation_indices: Any,
+    exponents: Any,
+    coefficients: Any,
+) -> Any:
     system = SparsePolynomialSystem.from_coo(
         variable_labels,
         equation_labels,
@@ -34,7 +37,7 @@ def _map(
     return SparsePolynomialMap(system)
 
 
-def _discovery_policy(**overrides):
+def _discovery_policy(**overrides: Any) -> Any:
     values = {
         "rank_relative_tolerance": 1.0e-5,
         "rank_ambiguity_factor": 8.0,
@@ -42,10 +45,11 @@ def _discovery_policy(**overrides):
         "heldout_relative_tolerance": 2.0e-5,
     }
     values.update(overrides)
+    # ty: ignore[invalid-argument-type]
     return PolynomialImageAnalysisPolicy(**values)
 
 
-def _total_degree_support(labels, maximum_degree):
+def _total_degree_support(labels: Any, maximum_degree: Any) -> Any:
     if len(labels) == 2:
         exponents = [
             (first, second)
@@ -61,10 +65,11 @@ def _total_degree_support(labels, maximum_degree):
         ]
     else:
         raise ValueError("Test support helper only covers two or three variables.")
+    # ty: ignore[invalid-argument-type]
     return TargetMonomialSupport(labels, exponents)
 
 
-def test_twisted_cubic_discovers_three_quadratic_relations_and_dimension_one():
+def test_twisted_cubic_discovers_three_quadratic_relations_and_dimension_one() -> None:
     polynomial_map = _map(
         ("t",),
         ("x", "y", "z"),
@@ -105,7 +110,7 @@ def test_twisted_cubic_discovers_three_quadratic_relations_and_dimension_one():
     assert result.claims.topology is EvidenceDisposition.NOT_ASSESSED
 
 
-def test_veronese_discovers_quadratic_relation_and_generic_dimension_two():
+def test_veronese_discovers_quadratic_relation_and_generic_dimension_two() -> None:
     polynomial_map = _map(
         ("s", "t"),
         ("x", "y", "z"),
@@ -115,6 +120,7 @@ def test_veronese_discovers_quadratic_relation_and_generic_dimension_two():
     )
     support = TargetMonomialSupport(
         ("x", "y", "z"),
+        # ty: ignore[invalid-argument-type]
         (
             (2, 0, 0),
             (1, 1, 0),
@@ -141,7 +147,7 @@ def test_veronese_discovers_quadratic_relation_and_generic_dimension_two():
     assert result.relations.relation_count == 1
 
 
-def test_rank_deficiency_is_resolved_but_near_cutoff_rank_is_ambiguous():
+def test_rank_deficiency_is_resolved_but_near_cutoff_rank_is_ambiguous() -> None:
     deficient = _map(
         ("u", "v"),
         ("x", "y"),
@@ -149,6 +155,7 @@ def test_rank_deficiency_is_resolved_but_near_cutoff_rank_is_ambiguous():
         ((1, 0), (1, 0)),
         (1.0, 1.0),
     )
+    # ty: ignore[invalid-argument-type]
     support = TargetMonomialSupport(("x", "y"), ((0, 0), (1, 0), (0, 1)))
     resolved = (
         plan_polynomial_image_analysis(
@@ -192,7 +199,7 @@ def test_rank_deficiency_is_resolved_but_near_cutoff_rank_is_ambiguous():
     assert ambiguous.status is PolynomialImageAnalysisStatus.JACOBIAN_RANK_AMBIGUOUS
 
 
-def test_insufficient_samples_and_resource_limits_return_typed_results():
+def test_insufficient_samples_and_resource_limits_return_typed_results() -> None:
     polynomial_map = _map(
         ("t",),
         ("x",),
@@ -200,6 +207,7 @@ def test_insufficient_samples_and_resource_limits_return_typed_results():
         ((1,),),
         (1.0,),
     )
+    # ty: ignore[invalid-argument-type]
     support = TargetMonomialSupport(("x",), ((0,), (1,), (2,)))
     insufficient = (
         plan_polynomial_image_analysis(
@@ -235,7 +243,9 @@ def test_insufficient_samples_and_resource_limits_return_typed_results():
     assert limited.resources.limiting_resource == "maximum_design_entries"
 
 
-def test_heldout_samples_reject_relation_created_by_nonrepresentative_discovery_points():
+def test_heldout_samples_reject_relation_created_by_nonrepresentative_discovery_points() -> (
+    None
+):
     polynomial_map = _map(
         ("t",),
         ("y",),
@@ -243,6 +253,7 @@ def test_heldout_samples_reject_relation_created_by_nonrepresentative_discovery_
         ((2,),),
         (1.0,),
     )
+    # ty: ignore[invalid-argument-type]
     support = TargetMonomialSupport(("y",), ((0,), (1,)))
     plan = plan_polynomial_image_analysis(
         polynomial_map,
@@ -263,7 +274,7 @@ def test_heldout_samples_reject_relation_created_by_nonrepresentative_discovery_
     assert result.claims.numerical_discovery is EvidenceDisposition.REJECTED
 
 
-def test_affine_sampling_is_replayable_and_refresh_preserves_samples():
+def test_affine_sampling_is_replayable_and_refresh_preserves_samples() -> None:
     polynomial_map = _map(
         ("s", "t"),
         ("x", "y"),
@@ -271,6 +282,7 @@ def test_affine_sampling_is_replayable_and_refresh_preserves_samples():
         ((1, 0), (0, 1)),
         (1.0, 1.0),
     )
+    # ty: ignore[invalid-argument-type]
     support = TargetMonomialSupport(("x", "y"), ((0, 0), (1, 0), (0, 1)))
     plan = plan_polynomial_image_analysis(
         polynomial_map,

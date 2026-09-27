@@ -29,7 +29,7 @@ class _LinearField(eqx.Module):
     matrix: jnp.ndarray
     shift: jnp.ndarray
 
-    def __init__(self, matrix, shift=None):
+    def __init__(self, matrix: Any, shift: Any = None) -> None:
         self.matrix = jnp.asarray(matrix, dtype="float64")
         self.shift = (
             jnp.zeros((self.matrix.shape[0],))
@@ -37,20 +37,21 @@ class _LinearField(eqx.Module):
             else jnp.asarray(shift, dtype="float64")
         )
 
-    def __call__(self, time, state, args):
+    def __call__(self, time: Any, state: Any, args: Any) -> Any:
         del time, args
         return self.matrix @ state + self.shift
 
 
 class _EndpointVelocity(eqx.Module):
-    def __call__(self, state, time):
+    def __call__(self, state: Any, time: Any) -> Any:
         del time
         return state
 
 
-def _timings(function, arguments, *, repetitions: int):
+def _timings(function: Any, arguments: Any, *, repetitions: int) -> Any:
     jitted = eqx.filter_jit(function)
     compiled, compilation = measure_lower_and_compile(
+        # ty: ignore[unresolved-attribute]
         lambda: jitted.lower(*arguments),
         lambda lowered: lowered.compile(),
     )
@@ -68,7 +69,7 @@ def _timings(function, arguments, *, repetitions: int):
     }
 
 
-def _normal(dimension: int, *, location=None, covariance=None):
+def _normal(dimension: int, *, location: Any = None, covariance: Any = None) -> Any:
     family = phx.uq.MultivariateNormalFamily(dimension)
     resolved_location = (
         jnp.zeros((dimension,)) if location is None else jnp.asarray(location)
@@ -79,7 +80,7 @@ def _normal(dimension: int, *, location=None, covariance=None):
     return family.law_from_location_covariance(resolved_location, resolved_covariance)
 
 
-def _flow(matrix, *, shift=None):
+def _flow(matrix: Any, *, shift: Any = None) -> Any:
     matrix = jnp.asarray(matrix, dtype="float64")
     dimension = matrix.shape[0]
     system = phx.dynamics.ContinuousSystem(
@@ -231,7 +232,7 @@ def benchmark_endpoint_physics_case(*, repetitions: int) -> dict[str, Any]:
         batch_id="analytic-exponential-endpoint",
     )
 
-    def term(steps):
+    def term(steps: Any) -> Any:
         return phx.terms.PhysicsFlowMatchingTerm(
             "velocity",
             endpoints,
@@ -240,7 +241,7 @@ def benchmark_endpoint_physics_case(*, repetitions: int) -> dict[str, Any]:
             phx.terms.FlowEndpointRolloutPolicy(steps, rematerialize=steps > 1),
         )
 
-    def physics_objective(current, function, materialized):
+    def physics_objective(current: Any, function: Any, materialized: Any) -> Any:
         return current.objective_components(
             {"velocity": function},
             batch=materialized,

@@ -6,7 +6,7 @@ from phydrax._fingerprint import canonical_json
 from tools.operator_correction_benchmarks import run_quick
 
 
-def test_quick_operator_correction_benchmark_certifies_original_residuals():
+def test_quick_operator_correction_benchmark_certifies_original_residuals() -> None:
     report = run_quick(size=9, modes=2, warmup=0, repeats=1)
 
     assert report["benchmark"] == "operator-correction-quick"

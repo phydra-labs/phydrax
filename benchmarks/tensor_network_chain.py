@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -22,7 +24,7 @@ import phydrax as phx
 from phydrax.tensor_network._observables import finite_correlation_matrix
 
 
-def _random_mps(key, sites: int, physical: int, bond: int):
+def _random_mps(key: Any, sites: int, physical: int, bond: int) -> Any:
     keys = jax.random.split(key, sites)
     tensors = []
     for site, local_key in enumerate(keys):
@@ -34,7 +36,7 @@ def _random_mps(key, sites: int, physical: int, bond: int):
     return phx.tensor_network.MatrixProductState(tuple(tensors)).normalized()
 
 
-def _random_mpo(key, sites: int, physical: int, bond: int):
+def _random_mpo(key: Any, sites: int, physical: int, bond: int) -> Any:
     keys = jax.random.split(key, sites)
     tensors = []
     for site, local_key in enumerate(keys):
@@ -48,7 +50,7 @@ def _random_mpo(key, sites: int, physical: int, bond: int):
     return phx.tensor_network.MatrixProductOperator(tuple(tensors))
 
 
-def _case(sites: int, physical: int, bond: int, repeats: int):
+def _case(sites: int, physical: int, bond: int, repeats: int) -> Any:
     key = jax.random.key(20260901 + sites + bond)
     state = _random_mps(key, sites, physical, bond)
     operator = _random_mpo(jax.random.fold_in(key, 1), sites, physical, bond)

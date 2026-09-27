@@ -1,11 +1,12 @@
 import json
+from typing import Any
 
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def residual(value):
+def residual(value: Any) -> Any:
     product, recycle = value
     return jnp.asarray((product + recycle - 10.0, recycle - 0.25 * product))
 

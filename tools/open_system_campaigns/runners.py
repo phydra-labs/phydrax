@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -82,13 +84,13 @@ from .contracts import (
 class _CampaignTableAmplitude(eqx.Module):
     parameters: jax.Array = parameter_field()
 
-    def __call__(self, configuration):
+    def __call__(self, configuration: Any) -> Any:
         index = (configuration[0] > 0).astype(jnp.int32)
         value = self.parameters[index]
         return LogAmplitude(jnp.real(value), jnp.exp(1j * jnp.imag(value)))
 
 
-def _precision(dtype, domain, children=None):
+def _precision(dtype: Any, domain: Any, children: Any = None) -> Any:
     name = jnp.dtype(dtype).name
     real = "float64" if name in ("float64", "complex128") else "float32"
     return CampaignPrecisionBundle(
@@ -105,7 +107,7 @@ def _precision(dtype, domain, children=None):
     )
 
 
-def _replay(*, event=0.0, disagreement=0.0, observable=0.0):
+def _replay(*, event: Any = 0.0, disagreement: Any = 0.0, observable: Any = 0.0) -> Any:
     return SemanticReplayEvidence(
         independently_replayed=False,
         variates_equal=False,
@@ -120,20 +122,20 @@ def _replay(*, event=0.0, disagreement=0.0, observable=0.0):
 
 
 def _record(
-    campaign_id,
-    representation_id,
-    axes,
-    quantities,
-    physicality,
-    precision,
-    replay,
-    execution,
+    campaign_id: Any,
+    representation_id: Any,
+    axes: Any,
+    quantities: Any,
+    physicality: Any,
+    precision: Any,
+    replay: Any,
+    execution: Any,
     *,
-    artifact_arrays,
-    work,
-    capacity_evidence,
-    unsupported=(),
-):
+    artifact_arrays: Any,
+    work: Any,
+    capacity_evidence: Any,
+    unsupported: Any = (),
+) -> Any:
     approximation = OpenSystemApproximationEvidence(
         representation_id,
         tuple(axes),
@@ -157,7 +159,7 @@ def _record(
     )
 
 
-def gaussian_campaign():
+def gaussian_campaign() -> Any:
     gamma = 0.4
     hbar = 2.0
     occupation = 1.0
@@ -225,7 +227,7 @@ def gaussian_campaign():
     )
 
 
-def dense_trajectory_campaign(root_seed: int = 3):
+def dense_trajectory_campaign(root_seed: int = 3) -> Any:
     lowering = jnp.asarray([[0, 1], [0, 0]], dtype="complex128")
     raising = jnp.conj(lowering.T)
     down = StateVectorOperator.from_matrix(lowering, operator_id="thermal-down")
@@ -267,7 +269,7 @@ def dense_trajectory_campaign(root_seed: int = 3):
         atol=1e-9,
     )
 
-    def empirical(solution):
+    def empirical(solution: Any) -> Any:
         final = solution.states[:, -1, :]
         state = final[:, :2] + 1j * final[:, 2:]
         return jnp.mean(
@@ -352,7 +354,7 @@ def dense_trajectory_campaign(root_seed: int = 3):
     )
 
 
-def mps_campaign(root_seed: int = 5):
+def mps_campaign(root_seed: int = 5) -> Any:
     state = product_mps(jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype="complex128"))
     hamiltonian = NearestNeighborHamiltonian(
         (jnp.zeros((4, 4), dtype="complex128"),),
@@ -465,7 +467,7 @@ def mps_campaign(root_seed: int = 5):
     )
 
 
-def lpdo_campaign():
+def lpdo_campaign() -> Any:
     coarse_problem = boundary_driven_xxz_problem(2, half_step=0.01, boundary_rate=0.2)
     fine_problem = boundary_driven_xxz_problem(2, half_step=0.005, boundary_rate=0.2)
     coarse = solve_purified_strang(
@@ -585,7 +587,7 @@ def lpdo_campaign():
     )
 
 
-def heom_campaign():
+def heom_campaign() -> Any:
     density = jnp.asarray([[0.6 + 0j, 0j], [0j, 0.4 + 0j]])
     expansion1 = drude_lorentz_pade(0.01, 1.0, 2.0, 1)
     expansion2 = drude_lorentz_pade(0.01, 1.0, 2.0, 2)
@@ -753,7 +755,7 @@ def heom_campaign():
     )
 
 
-def memory_campaign():
+def memory_campaign() -> Any:
     density = jnp.asarray([[0.6 + 0j, 0j], [0j, 0.4 + 0j]])
     coarse_problem = exponential_memory_qubit_problem(0.01, 1.0, density)
     fine_problem = exponential_memory_qubit_problem(0.01, 1.0, density)
@@ -841,7 +843,7 @@ def memory_campaign():
     )
 
 
-def process_recovery_campaign(root_seed: int = 0):
+def process_recovery_campaign(root_seed: int = 0) -> Any:
     spec = CombLegSpec(2, 1, 1)
     angle = 0.15
     source_isometry = jnp.asarray(
@@ -984,8 +986,8 @@ def process_recovery_campaign(root_seed: int = 0):
     )
 
 
-def distillation_campaign(root_seed: int = 0):
-    def swap_with_first_memory(memory_dimension):
+def distillation_campaign(root_seed: int = 0) -> Any:
+    def swap_with_first_memory(memory_dimension: Any) -> Any:
         matrix = jnp.zeros(
             (2 * memory_dimension, 2 * memory_dimension), dtype="complex128"
         )
@@ -1006,7 +1008,7 @@ def distillation_campaign(root_seed: int = 0):
                     matrix = matrix.at[target_index, source_index].set(1.0)
         return matrix
 
-    def controlled_phase(memory_dimension):
+    def controlled_phase(memory_dimension: Any) -> Any:
         diagonal = []
         spectator_dimension = memory_dimension // 2
         for system in range(2):
@@ -1144,10 +1146,10 @@ def distillation_campaign(root_seed: int = 0):
     )
 
 
-def neural_campaign(root_seed: int = 0):
+def neural_campaign(root_seed: int = 0) -> Any:
     gamma = 1.0
 
-    def connected(configurations, matrix_elements, valid):
+    def connected(configurations: Any, matrix_elements: Any, valid: Any) -> Any:
         return ConnectedConfigurations(
             (-configurations)[..., None, :],
             matrix_elements[..., None],
@@ -1193,11 +1195,11 @@ def neural_campaign(root_seed: int = 0):
         problem_id="enumerable-neural-amplitude-damping",
     )
 
-    def project_jump(channel, current_model, coordinates):
+    def project_jump(channel: Any, current_model: Any, coordinates: Any) -> Any:
         del channel, current_model
         return jnp.asarray([0.0, -20.0, 0.0, 0.0], dtype=coordinates.dtype)
 
-    def projection_residual(channel, source_model, projected_model):
+    def projection_residual(channel: Any, source_model: Any, projected_model: Any) -> Any:
         del channel, source_model
         weights = jnp.exp(2.0 * jnp.real(projected_model.parameters))
         return weights[1] / jnp.sum(weights)

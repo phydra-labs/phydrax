@@ -8,11 +8,12 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
-from ._models import AbstractScatteringComponent
+from ._models import AbstractScatteringComponent, ScatteringResponse
 from ._ports import WavePort
 
 
@@ -22,7 +23,7 @@ class InstancePort(StrictModule):
     instance_id: str = eqx.field(static=True)
     port_id: str = eqx.field(static=True)
 
-    def __init__(self, instance_id: str, port_id: str, /):
+    def __init__(self, instance_id: str, port_id: str, /) -> None:
         instance = str(instance_id)
         port = str(port_id)
         if not instance or not port:
@@ -42,7 +43,7 @@ class ScatteringInstance(StrictModule):
         instance_id: str,
         component: AbstractScatteringComponent | ScatteringNetwork,
         /,
-    ):
+    ) -> None:
         identifier = str(instance_id)
         if not identifier:
             raise ValueError("instance_id must be non-empty.")
@@ -66,7 +67,7 @@ class WaveConnectionMap(StrictModule):
         *,
         reverse: ArrayLike | None = None,
         map_id: str | None = None,
-    ):
+    ) -> None:
         forward_ = jnp.asarray(forward)
         if (
             forward_.ndim != 2
@@ -128,7 +129,7 @@ class WaveConnection(StrictModule):
         /,
         *,
         mapping: WaveConnectionMap | None = None,
-    ):
+    ) -> None:
         if not isinstance(first, InstancePort) or not isinstance(second, InstancePort):
             raise TypeError("WaveConnection endpoints must be InstancePort values.")
         if first.instance_id == second.instance_id and first.port_id == second.port_id:
@@ -144,7 +145,7 @@ class WaveProbe(StrictModule):
     port: InstancePort
     probe_id: str = eqx.field(static=True)
 
-    def __init__(self, probe_id: str, port: InstancePort, /):
+    def __init__(self, probe_id: str, port: InstancePort, /) -> None:
         identifier = str(probe_id)
         if not identifier:
             raise ValueError("probe_id must be non-empty.")
@@ -174,7 +175,7 @@ class ScatteringNetwork(AbstractScatteringComponent):
         external_port_ids: Sequence[str] | None = None,
         probes: Sequence[WaveProbe] = (),
         network_id: str = "scattering-network",
-    ):
+    ) -> None:
         instance_tuple = tuple(instances)
         connection_tuple = tuple(connections)
         external_tuple = tuple(external_ports)
@@ -252,13 +253,11 @@ class ScatteringNetwork(AbstractScatteringComponent):
             )
         )
 
-    def evaluate(self, angular_frequency, /):
+    def evaluate(self, angular_frequency: ArrayLike, /) -> ScatteringResponse:
         from ._network import full_scattering_matrix, prepare_scattering_network
 
         prepared = prepare_scattering_network(self, angular_frequency)
         matrix = full_scattering_matrix(prepared)
-        from ._models import ScatteringResponse
-
         return ScatteringResponse(
             matrix,
             tuple(reference for port in self.ports for reference in port.references),

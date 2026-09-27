@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -12,7 +15,7 @@ s = phx.solver
 q = phx.operators.quantum
 
 
-def _device(*, shared=False, coupling=0.0):
+def _device(*, shared: Any = False, coupling: Any = 0.0) -> Any:
     topology = phx.graph.GraphIR(
         n_node=jnp.asarray([2]),
         n_edge=jnp.asarray([1]),
@@ -38,13 +41,13 @@ def _device(*, shared=False, coupling=0.0):
     return s.prepare_circuit_qed_device(spec, parameters), spec
 
 
-def _labels():
+def _labels() -> Any:
     return tuple(
         s.DressedStateLabel(levels) for levels in ((0, 0), (0, 1), (1, 0), (1, 1))
     )
 
 
-def test_dressed_spectrum_maps_product_labels_one_to_one_and_static_zz_is_zero():
+def test_dressed_spectrum_maps_product_labels_one_to_one_and_static_zz_is_zero() -> None:
     device, _ = _device(coupling=0.0)
     dressed = s.prepare_dressed_spectrum(device, labels=_labels())
     zeta = (
@@ -63,7 +66,7 @@ def test_dressed_spectrum_maps_product_labels_one_to_one_and_static_zz_is_zero()
     )
 
 
-def test_dressed_spectrum_refresh_preserves_labels_and_builds_selected_subspace():
+def test_dressed_spectrum_refresh_preserves_labels_and_builds_selected_subspace() -> None:
     device, spec = _device(coupling=0.0)
     dressed = s.prepare_dressed_spectrum(device, labels=_labels())
     refreshed_device = s.refresh_circuit_qed_device(
@@ -86,7 +89,7 @@ def test_dressed_spectrum_refresh_preserves_labels_and_builds_selected_subspace(
     assert logical.logical_dimension == 4
 
 
-def test_dressed_spectrum_reports_a_split_reference_degeneracy():
+def test_dressed_spectrum_reports_a_split_reference_degeneracy() -> None:
     device, _ = _device(shared=True, coupling=0.0)
     dressed = s.prepare_dressed_spectrum(device, labels=_labels())
     split_device = s.refresh_circuit_qed_device(
@@ -101,7 +104,7 @@ def test_dressed_spectrum_reports_a_split_reference_degeneracy():
     assert not bool(split.diagnostics.valid)
 
 
-def test_dressed_spectrum_enforces_dense_resources_and_label_bounds():
+def test_dressed_spectrum_enforces_dense_resources_and_label_bounds() -> None:
     device, _ = _device()
     with pytest.raises(ValueError, match="dense resource"):
         s.plan_dressed_spectrum(

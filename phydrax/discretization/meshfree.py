@@ -13,9 +13,11 @@ from typing import Literal, TypeAlias
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from ..typing import parse
 
 
 MeshfreeOperatorKind: TypeAlias = Literal["value", "gradient", "laplacian"]
@@ -30,7 +32,9 @@ def _multiindices(dimension: int, degree: int, /) -> tuple[tuple[int, ...], ...]
     )
 
 
-def _monomial_matrix(offsets: np.ndarray, exponents, /) -> np.ndarray:
+def _monomial_matrix(
+    offsets: np.ndarray, exponents: tuple[tuple[int, ...], ...], /
+) -> np.ndarray:
     return np.stack(
         [
             np.prod(offsets ** np.asarray(exponent)[None, :], axis=1)
@@ -40,7 +44,9 @@ def _monomial_matrix(offsets: np.ndarray, exponents, /) -> np.ndarray:
     )
 
 
-def _operator_moments(exponents, kind, axis, /) -> np.ndarray:
+def _operator_moments(
+    exponents: tuple[tuple[int, ...], ...], kind: MeshfreeOperatorKind, axis: int, /
+) -> np.ndarray:
     values = []
     for exponent in exponents:
         if kind == "value":
@@ -75,7 +81,9 @@ def _operator_moments(exponents, kind, axis, /) -> np.ndarray:
     return np.asarray(values, dtype=np.float64)
 
 
-def _rbf_rhs(offsets: np.ndarray, power: int, kind, axis, /) -> np.ndarray:
+def _rbf_rhs(
+    offsets: np.ndarray, power: int, kind: MeshfreeOperatorKind, axis: int, /
+) -> np.ndarray:
     radius = np.linalg.norm(offsets, axis=1)
     if kind == "value":
         return radius**power
@@ -104,7 +112,7 @@ class MeshfreeStencilPlan:
         *,
         stencil_size: int,
         polynomial_degree: int = 2,
-    ):
+    ) -> None:
         points = np.asarray(coordinates, dtype=np.float64)
         if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] == 0:
             raise ValueError("coordinates must have shape (points, dimensions).")
@@ -194,10 +202,8 @@ def prepare_meshfree_operator(
 ) -> PreparedMeshfreeOperator:
     if not isinstance(plan, MeshfreeStencilPlan):
         raise TypeError("plan must be MeshfreeStencilPlan.")
-    if kind not in ("value", "gradient", "laplacian"):
-        raise ValueError("Unknown meshfree operator kind.")
-    if method not in ("rbf-fd", "gmls"):
-        raise ValueError("Unknown meshfree method.")
+    kind = parse(kind, MeshfreeOperatorKind, "kind")
+    method = parse(method, MeshfreeMethod, "method")
     dimension = plan.coordinates.shape[1]
     axis_ = 0 if axis is None else int(axis)
     if kind == "gradient" and not 0 <= axis_ < dimension:

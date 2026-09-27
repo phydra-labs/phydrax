@@ -9,7 +9,8 @@ from enum import IntEnum
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -74,7 +75,7 @@ class ConstructionStage(StrictModule, NonTrainableState):
         load_factor: float = 1.0,
         require_tangent_stability: bool = False,
         stage_id: str,
-    ):
+    ) -> None:
         rules = jnp.asarray(installation_rule, dtype=jnp.int32)
         count = problem.definition.structure.member_count
         if rules.shape != (count,) or bool(

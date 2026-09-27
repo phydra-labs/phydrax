@@ -6,7 +6,8 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import optax
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 import phydrax as phx
 import phydrax.solver._functional_objective as functional_objective
@@ -17,7 +18,7 @@ class _NestedSampledObjective(phx.terms.AbstractSamplingTerm):
     target_shift: float = eqx.field(static=True)
     label: str | None = eqx.field(static=True)
 
-    def sample(self, *, key: Key[Array, ""] = jr.key(0)):
+    def sample(self, *, key: Key[Array, ""] = jr.key(0)) -> Any:
         self.recorder(key)
         return {
             "target": (
@@ -32,10 +33,10 @@ class _NestedSampledObjective(phx.terms.AbstractSamplingTerm):
         /,
         *,
         key: Key[Array, ""] = jr.key(0),
-        iter_=None,
+        iter_: Any = None,
         batch: Any = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> Any:
         del key, iter_, kwargs
         if batch is None:
             raise AssertionError("Sampled objective batch was not materialized.")
@@ -44,7 +45,7 @@ class _NestedSampledObjective(phx.terms.AbstractSamplingTerm):
         return metadata["scale"] * (value - target) ** 2
 
 
-def _solver(*objectives):
+def _solver(*objectives: Any) -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     return phx.solver.FunctionalSolver(
         functions={"u": domain.Parameter(1.0)},
@@ -52,14 +53,14 @@ def _solver(*objectives):
     )
 
 
-def _key_recorder(store):
-    def record(key):
+def _key_recorder(store: Any) -> Any:
+    def record(key: Any) -> None:
         store.append(tuple(np.asarray(jr.key_data(key), dtype=np.uint32).tolist()))
 
     return record
 
 
-def test_optax_materializes_each_sampled_objective_once_per_update():
+def test_optax_materializes_each_sampled_objective_once_per_update() -> None:
     sampled_keys = []
     objective = _NestedSampledObjective(
         label="sampled",
@@ -80,8 +81,8 @@ def test_optax_materializes_each_sampled_objective_once_per_update():
 
 
 def test_optax_materializes_each_integration_realization_once_per_update(
-    monkeypatch,
-):
+    monkeypatch: Any,
+) -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     component = domain.component()
     condition = phx.conditions.Residual("u", component, lambda value: value)
@@ -99,7 +100,7 @@ def test_optax_materializes_each_integration_realization_once_per_update(
     materialization_keys = []
     resolve_integration = functional_objective.resolve_integration
 
-    def record_materialization(source_, /, **kwargs):
+    def record_materialization(source_: Any, /, **kwargs: Any) -> Any:
         materialization_keys.append(
             tuple(np.asarray(jr.key_data(kwargs["key"]), dtype=np.uint32).tolist())
         )
@@ -123,7 +124,7 @@ def test_optax_materializes_each_integration_realization_once_per_update(
     assert len(set(materialization_keys)) == 3
 
 
-def test_selection_reuses_the_optimizer_update_batch():
+def test_selection_reuses_the_optimizer_update_batch() -> None:
     sampled_keys = []
     objective = _NestedSampledObjective(
         label="sampled",
@@ -143,7 +144,7 @@ def test_selection_reuses_the_optimizer_update_batch():
     assert len(sampled_keys) == 3
 
 
-def test_nested_batches_and_multiple_objectives_use_distinct_subkeys():
+def test_nested_batches_and_multiple_objectives_use_distinct_subkeys() -> None:
     first_keys = []
     second_keys = []
     objectives = (

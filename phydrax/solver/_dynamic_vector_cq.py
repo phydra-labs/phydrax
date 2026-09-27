@@ -5,10 +5,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Literal
+from typing import Literal, TypeVar
 
 import equinox as eqx
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -47,10 +47,10 @@ class PreparedDynamicVectorFEMBEM3D(StrictModule, NonTrainableState):
         return self.cq.apply(history)
 
     def transpose_apply(self, history: ArrayLike, /) -> ConvolutionQuadratureResult:
-        return self.cq.transpose_apply(history)
+        return self.cq.transpose(history)
 
     def adjoint_apply(self, history: ArrayLike, /) -> ConvolutionQuadratureResult:
-        return self.cq.adjoint_apply(history)
+        return self.cq.adjoint(history)
 
 
 class PreparedDynamicElasticityFEMBEM3D(PreparedDynamicVectorFEMBEM3D):
@@ -61,7 +61,11 @@ class PreparedDynamicMaxwellFEMBEM3D(PreparedDynamicVectorFEMBEM3D):
     """Prepared fixed-history isotropic Maxwell FEM-BEM product."""
 
 
+_PreparedVector = TypeVar("_PreparedVector", bound=PreparedDynamicVectorFEMBEM3D)
+
+
 def _prepare_dynamic_vector(
+    prepared_type: type[_PreparedVector],
     family: DynamicVectorFamily3D,
     prepare_node: NodeFamilyPreparation3D,
     dimension: int,
@@ -75,7 +79,7 @@ def _prepare_dynamic_vector(
     contour_policy: ConvolutionQuadratureContourPolicy | None,
     conjugate_symmetric: bool,
     precision: str,
-) -> PreparedDynamicVectorFEMBEM3D:
+) -> _PreparedVector:
     family_id = str(node_family_id)
     if not family_id:
         raise ValueError("node_family_id must bind the exact FEM-BEM resolvent family.")
@@ -114,11 +118,6 @@ def _prepare_dynamic_vector(
         contour_policy=contour_policy,
         conjugate_symmetric=conjugate_symmetric,
     )
-    prepared_type = (
-        PreparedDynamicElasticityFEMBEM3D
-        if family == "elasticity"
-        else PreparedDynamicMaxwellFEMBEM3D
-    )
     return prepared_type(
         cq=cq,
         family=family,
@@ -151,6 +150,7 @@ def prepare_dynamic_elasticity_fem_bem_cq_3d(
 ) -> PreparedDynamicElasticityFEMBEM3D:
     """Prepare bounded elastodynamic FEM-BEM CQ from exact complex node products."""
     return _prepare_dynamic_vector(
+        PreparedDynamicElasticityFEMBEM3D,
         "elasticity",
         prepare_node,
         dimension,
@@ -181,6 +181,7 @@ def prepare_dynamic_maxwell_fem_bem_cq_3d(
 ) -> PreparedDynamicMaxwellFEMBEM3D:
     """Prepare bounded Maxwell FEM-BEM CQ from exact complex node products."""
     return _prepare_dynamic_vector(
+        PreparedDynamicMaxwellFEMBEM3D,
         "maxwell",
         prepare_node,
         dimension,

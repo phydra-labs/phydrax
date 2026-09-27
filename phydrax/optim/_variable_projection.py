@@ -9,7 +9,8 @@ from typing import Any, Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._bounds import Bounds
 from .._nonlinear_precision import NonlinearPrecisionPolicy
@@ -61,7 +62,7 @@ class VariableProjectionProblem(StrictModule):
         problem_id: str = "variable-projection",
         linear: LinearSolvePolicy | None = None,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not callable(design_matrix):
             raise TypeError("design_matrix must be callable.")
         if offset is not None and not callable(offset):
@@ -98,7 +99,9 @@ class VariableProjectionProblem(StrictModule):
         self.linear = linear_
         self.precision = precision_
 
-    def linear_solution(self, nonlinear_parameters, args=None, /):
+    def linear_solution(
+        self, nonlinear_parameters: PyTree[Any], args: Any = None, /
+    ) -> tuple[Array, Array, Array, Array]:
         matrix = self.precision.accumulation(
             self.design_matrix(nonlinear_parameters, args)
         )
@@ -144,15 +147,15 @@ class VariableProjectionResult(StrictModule):
     singular_values: Array
 
     @property
-    def successful(self):
+    def successful(self) -> Array:
         return self.nonlinear_result.successful
 
     @property
-    def nonlinear_parameters(self):
+    def nonlinear_parameters(self) -> PyTree[Array]:
         return self.nonlinear_result.parameters
 
     @property
-    def objective(self):
+    def objective(self) -> Array:
         return self.nonlinear_result.objective
 
 
@@ -172,7 +175,7 @@ def variable_projection(
         name="initial_nonlinear_parameters",
     )
 
-    def reduced_residual(parameters, current_args):
+    def reduced_residual(parameters: PyTree[Any], current_args: Any) -> Array:
         return problem.linear_solution(parameters, current_args)[1]
 
     reduced = NonlinearLeastSquaresProblem(

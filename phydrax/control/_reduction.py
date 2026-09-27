@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -96,7 +97,7 @@ def balanced_truncation(
     if not bool(np.asarray(valid)):
         raise ValueError("Balanced truncation requires stable converged PSD Gramians.")
 
-    def factor(value):
+    def factor(value: Array) -> Array:
         eigenvalues, eigenvectors = jnp.linalg.eigh(0.5 * (value + jnp.conj(value.T)))
         order = jnp.argsort(eigenvalues)[::-1]
         eigenvalues = jnp.maximum(eigenvalues[order], 0.0)

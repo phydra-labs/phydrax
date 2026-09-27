@@ -8,7 +8,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.linalg as la
 
@@ -43,7 +43,7 @@ class SpectralElementWavePlan(StrictModule):
         time_step_s: float,
         maximum_angular_frequency: float,
         /,
-    ):
+    ) -> None:
         if not isinstance(mass, la.AbstractLinearOperator) or not isinstance(
             stiffness, la.AbstractLinearOperator
         ):
@@ -149,7 +149,7 @@ class SeismicAMRTransition(StrictModule, NonTrainableState):
         source_plan_id: str,
         target_plan_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(displacement, TopologyEpochTransition) or not isinstance(
             velocity, TopologyEpochTransition
         ):

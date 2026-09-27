@@ -5,12 +5,12 @@
 from __future__ import annotations
 
 import abc
-from typing import Any, Callable, Literal, TypeAlias
+from typing import Any, Callable, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._iteration import IterationPlan
 from .._strict import StrictModule
@@ -63,7 +63,7 @@ class ScalarRootProblem(StrictModule):
         second_derivative: Callable[[Array, Any], Any] | None = None,
         validity: Callable[[Array, Array, Any], Any] | None = None,
         problem_id: str = "scalar-root",
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         if derivative is not None and not callable(derivative):
@@ -170,8 +170,10 @@ class _BracketRun(StrictModule):
     status: Array
 
 
-def _inverse_quadratic(a, fa, b, fb, c, fc):
-    def safe(value):
+def _inverse_quadratic(
+    a: Array, fa: Array, b: Array, fb: Array, c: Array, fc: Array
+) -> Array:
+    def safe(value: Array) -> Array:
         return jnp.where(
             jnp.abs(value) < 1e-30,
             jnp.where(value < 0.0, -1e-30, 1e-30),
@@ -184,7 +186,7 @@ def _inverse_quadratic(a, fa, b, fb, c, fc):
     return first + second + third
 
 
-def _safe_candidate(candidate, lower, upper):
+def _safe_candidate(candidate: Array, lower: Array, upper: Array) -> Array:
     width = upper - lower
     interior_lower = lower + 0.05 * width
     interior_upper = upper - 0.05 * width
@@ -198,7 +200,7 @@ def _safe_candidate(candidate, lower, upper):
     )
 
 
-def _bracket_candidate(kind, run):
+def _bracket_candidate(kind: BracketMethod, run: _BracketRun) -> Array:
     midpoint = 0.5 * (run.lower + run.upper)
     if kind == "bisection":
         return midpoint
@@ -224,7 +226,13 @@ def _bracket_candidate(kind, run):
     return _safe_candidate(candidate, run.lower, run.upper)
 
 
-def _update_bracket(run, candidate, value, precision, /):
+def _update_bracket(
+    run: _BracketRun,
+    candidate: Array,
+    value: Array,
+    precision: NonlinearPrecisionPolicy,
+    /,
+) -> tuple[Array, Array, Array, Array, Array, Array]:
     replace_upper = _sign_product(run.lower_value, value, precision) <= 0.0
     lower = jnp.where(replace_upper, run.lower, candidate)
     lower_value = jnp.where(replace_upper, run.lower_value, value)
@@ -309,7 +317,7 @@ def _solve_bracketed(
         ).astype(jnp.int32),
     )
 
-    def condition(current):
+    def condition(current: _BracketRun) -> Array:
         within_evaluations = (
             jnp.asarray(True)
             if termination.maximum_evaluations is None
@@ -323,7 +331,7 @@ def _solve_bracketed(
             & within_evaluations
         )
 
-    def one_candidate(current, candidate):
+    def one_candidate(current: _BracketRun, candidate: Array) -> _BracketRun:
         candidate = precision.state(candidate)
         value = precision.residual(problem.evaluate(candidate, args))
         valid = problem.valid(candidate, value, args)
@@ -363,7 +371,7 @@ def _solve_bracketed(
             ).astype(jnp.int32),
         )
 
-    def body(current):
+    def body(current: _BracketRun) -> _BracketRun:
         if kind == "ridder":
             midpoint = 0.5 * (current.lower + current.upper)
             midpoint_value = precision.residual(problem.evaluate(midpoint, args))
@@ -501,7 +509,15 @@ class AbstractBracketedScalarRoot(AbstractScalarRootMethod):
     def kind(self) -> BracketMethod:
         raise NotImplementedError
 
-    def solve(self, problem, /, *, termination, args=None, precision=None):
+    def solve(
+        self,
+        problem: ScalarRootProblem,
+        /,
+        *,
+        termination: NonlinearTermination,
+        args: Any = None,
+        precision: NonlinearPrecisionPolicy | None = None,
+    ) -> ScalarRootResult:
         precision_ = NonlinearPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, NonlinearPrecisionPolicy):
             raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
@@ -517,41 +533,41 @@ class AbstractBracketedScalarRoot(AbstractScalarRootMethod):
 
 class Bisection(AbstractBracketedScalarRoot):
     @property
-    def method_id(self):
+    def method_id(self) -> str:
         return "bisection"
 
     @property
-    def kind(self):
+    def kind(self) -> BracketMethod:
         return "bisection"
 
 
 class Brent(AbstractBracketedScalarRoot):
     @property
-    def method_id(self):
+    def method_id(self) -> str:
         return "brent-dekker"
 
     @property
-    def kind(self):
+    def kind(self) -> BracketMethod:
         return "brent"
 
 
 class Ridder(AbstractBracketedScalarRoot):
     @property
-    def method_id(self):
+    def method_id(self) -> str:
         return "ridder"
 
     @property
-    def kind(self):
+    def kind(self) -> BracketMethod:
         return "ridder"
 
 
 class TOMS748(AbstractBracketedScalarRoot):
     @property
-    def method_id(self):
+    def method_id(self) -> str:
         return "toms748"
 
     @property
-    def kind(self):
+    def kind(self) -> BracketMethod:
         return "toms748"
 
 
@@ -574,7 +590,7 @@ class _OpenRun(StrictModule):
 class AbstractSafeguardedDerivativeRoot(AbstractScalarRootMethod):
     order: int = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.order = self.derivative_order
 
     @property
@@ -583,10 +599,18 @@ class AbstractSafeguardedDerivativeRoot(AbstractScalarRootMethod):
         raise NotImplementedError
 
     @property
-    def method_id(self):
+    def method_id(self) -> str:
         return "safeguarded-halley" if self.order == 2 else "safeguarded-newton"
 
-    def solve(self, problem, /, *, termination, args=None, precision=None):
+    def solve(
+        self,
+        problem: ScalarRootProblem,
+        /,
+        *,
+        termination: NonlinearTermination,
+        args: Any = None,
+        precision: NonlinearPrecisionPolicy | None = None,
+    ) -> ScalarRootResult:
         precision_ = NonlinearPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, NonlinearPrecisionPolicy):
             raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
@@ -655,7 +679,7 @@ class AbstractSafeguardedDerivativeRoot(AbstractScalarRootMethod):
             ).astype(jnp.int32),
         )
 
-        def condition(value):
+        def condition(value: _OpenRun) -> Array:
             within_evaluations = (
                 jnp.asarray(True)
                 if termination.maximum_evaluations is None
@@ -667,7 +691,7 @@ class AbstractSafeguardedDerivativeRoot(AbstractScalarRootMethod):
                 & within_evaluations
             )
 
-        def body(value):
+        def body(value: _OpenRun) -> _OpenRun:
             first = precision_.direction(derivative(value.current, args))
             first_ = precision_.accumulation(first)
             residual_ = precision_.accumulation(value.current_value)
@@ -815,12 +839,18 @@ class AbstractSafeguardedDerivativeRoot(AbstractScalarRootMethod):
 
 
 class SafeguardedNewton(AbstractSafeguardedDerivativeRoot):
+    if TYPE_CHECKING:
+        __init__ = AbstractSafeguardedDerivativeRoot.__init__
+
     @property
     def derivative_order(self) -> int:
         return 1
 
 
 class SafeguardedHalley(AbstractSafeguardedDerivativeRoot):
+    if TYPE_CHECKING:
+        __init__ = AbstractSafeguardedDerivativeRoot.__init__
+
     @property
     def derivative_order(self) -> int:
         return 2

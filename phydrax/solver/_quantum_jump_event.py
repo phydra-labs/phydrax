@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -42,7 +43,7 @@ class QuantumJumpEventTable(StrictModule):
         thresholds: ArrayLike,
         active: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.times = jnp.asarray(times)
         self.channels = jnp.asarray(channels, dtype=jnp.int32)
         self.root_residuals = jnp.asarray(root_residuals)
@@ -74,7 +75,7 @@ class EventDrivenQuantumJumpResult(StrictModule):
         status: int | Array = int(QuantumTrajectoryStatus.SUCCESS),
         saturated: bool = False,
         successful: bool = True,
-    ):
+    ) -> None:
         self.states = jnp.asarray(states)
         self.times = jnp.asarray(times)
         self.events = events

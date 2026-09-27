@@ -7,22 +7,22 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Sequence
 from math import prod
-from typing import Any, cast, Literal
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from .._dtype_names import precision_dtype_name, real_precision_dtype_name
 from .._precision import (
-    precision_dtype_name,
     precision_itemsize,
     PrecisionEvidenceEnvelope,
     PrecisionRequest,
     PrecisionResolution,
-    real_precision_dtype_name,
 )
 from .._strict import StrictModule
 from ..discretization._tensor import AbstractStrongFormDiscretization
@@ -34,6 +34,7 @@ from ..linalg._low_rank_approximation import (
     pivoted_cholesky_factor,
     randomized_nystrom_factor,
 )
+from ..typing import parse
 
 
 def _point_value_basis_metadata(
@@ -115,12 +116,12 @@ def _basis_digest(
     return digest.hexdigest()
 
 
-_ApproximationMethod = Literal[
+_ApproximationMethod: TypeAlias = Literal[
     "dense_eigh",
     "pivoted_cholesky",
     "randomized_nystrom",
 ]
-_ResidualKind = Literal["relative_frobenius", "relative_trace"]
+_ResidualKind: TypeAlias = Literal["relative_frobenius", "relative_trace"]
 
 
 class SpatialNoiseApproximation(StrictModule):
@@ -151,13 +152,8 @@ class SpatialNoiseApproximation(StrictModule):
         tolerance: float,
         seed: Sequence[int] | None = None,
         sketch_size: int | None = None,
-    ):
-        if method not in (
-            "dense_eigh",
-            "pivoted_cholesky",
-            "randomized_nystrom",
-        ):
-            raise ValueError(f"Unknown spatial-noise approximation method {method!r}.")
+    ) -> None:
+        method = parse(method, _ApproximationMethod, "method")
         size = int(matrix_size)
         requested = int(requested_rank)
         retained = int(retained_rank)
@@ -167,8 +163,7 @@ class SpatialNoiseApproximation(StrictModule):
             raise ValueError("requested_rank must lie within the matrix size.")
         if retained <= 0 or retained > requested:
             raise ValueError("retained_rank must lie in [1, requested_rank].")
-        if residual_kind not in ("relative_frobenius", "relative_trace"):
-            raise ValueError(f"Unknown residual kind {residual_kind!r}.")
+        residual_kind = parse(residual_kind, _ResidualKind, "residual_kind")
         residual = float(residual_estimate)
         absolute = float(absolute_residual_estimate)
         threshold = float(tolerance)
@@ -254,7 +249,7 @@ class SpatialNoisePrecisionPolicy(StrictModule):
         basis_storage_dtype: Any | None = None,
         runtime_dtype: Any | None = None,
         certification_dtype: Any | None = None,
-    ):
+    ) -> None:
         construction = real_precision_dtype_name(construction_dtype)
         basis = (
             construction
@@ -354,7 +349,7 @@ class SpatialNoiseBasis(StrictModule):
         orthonormal_rtol: float = 1e-6,
         orthonormal_atol: float = 1e-7,
         precision: SpatialNoisePrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = SpatialNoisePrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, SpatialNoisePrecisionPolicy):
             raise TypeError("precision must be a SpatialNoisePrecisionPolicy.")
@@ -626,7 +621,7 @@ class SpatialNoiseBasis(StrictModule):
             raise ValueError(f"rank must lie in [1, {count}].")
         tolerance = max(
             float(psd_tolerance),
-            256.0 * np.finfo(np.dtype(precision_.construction_dtype)).eps,
+            256.0 * float(np.finfo(np.dtype(precision_.construction_dtype)).eps),
         )
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("psd_tolerance must be finite and non-negative.")
@@ -727,7 +722,7 @@ class SpatialNoiseBasis(StrictModule):
             raise ValueError(f"rank must lie in [1, {count}].")
         threshold = max(
             float(tolerance),
-            256.0 * np.finfo(np.dtype(precision_.construction_dtype)).eps,
+            256.0 * float(np.finfo(np.dtype(precision_.construction_dtype)).eps),
         )
         if not np.isfinite(threshold) or threshold < 0.0:
             raise ValueError("tolerance must be finite and non-negative.")
@@ -767,7 +762,7 @@ class SpatialNoiseBasis(StrictModule):
         if not bool(jnp.isfinite(sample)):
             raise ValueError("kernel must return finite covariance values.")
 
-        def matrix_element(left_index, right_index):
+        def matrix_element(left_index: Array, right_index: Array) -> Array:
             value = jnp.asarray(
                 kernel(point_array[left_index], point_array[right_index]),
                 dtype=precision_.construction_dtype,
@@ -880,7 +875,7 @@ class SpatialNoiseBasis(StrictModule):
         probes_count = min(count, probes_count)
         threshold = max(
             float(tolerance),
-            256.0 * np.finfo(np.dtype(precision_.construction_dtype)).eps,
+            256.0 * float(np.finfo(np.dtype(precision_.construction_dtype)).eps),
         )
         if not np.isfinite(threshold) or threshold < 0.0:
             raise ValueError("tolerance must be finite and non-negative.")
@@ -896,7 +891,7 @@ class SpatialNoiseBasis(StrictModule):
             raise ValueError("Quadrature weights must be finite and positive.")
         root = jnp.sqrt(jnp.asarray(weights_host).reshape((-1,)))
 
-        def weighted_matvec(vector):
+        def weighted_matvec(vector: Array) -> Array:
             state = (root * vector).reshape(basis_shape)
             result = jnp.asarray(
                 covariance_operator(state),

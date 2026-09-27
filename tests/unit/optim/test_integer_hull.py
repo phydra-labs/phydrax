@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import itertools
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -10,11 +12,11 @@ import numpy as np
 import phydrax as phx
 
 
-def _quadratic_value(features, target):
+def _quadratic_value(features: Any, target: Any) -> Any:
     return 0.5 * jnp.sum((features - target) ** 2)
 
 
-def test_integer_hull_quadratic_matches_exhaustive_cardinality_search():
+def test_integer_hull_quadratic_matches_exhaustive_cardinality_search() -> None:
     target = jnp.asarray([0.2, 0.8, 0.0, 0.4])
     space = phx.combinatorial.CardinalitySpace(4, 2)
     problem = phx.optim.IntegerHullProblem(
@@ -52,7 +54,7 @@ def test_integer_hull_quadratic_matches_exhaustive_cardinality_search():
     assert result.work.fw_steps > 0
 
 
-def test_integer_hull_root_with_integral_relaxation_finishes_without_branching():
+def test_integer_hull_root_with_integral_relaxation_finishes_without_branching() -> None:
     target = jnp.asarray([1.0, 0.0, 0.0])
     space = phx.combinatorial.CardinalitySpace(3, 1)
     problem = phx.optim.IntegerHullProblem(

@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -18,7 +19,7 @@ from phydrax._polynomial._gegenbauer import (
 from phydrax._polynomial._orthogonal import OrthogonalRuleData
 
 
-def test_standard_monic_and_orthonormal_scales_have_declared_meaning():
+def test_standard_monic_and_orthonormal_scales_have_declared_meaning() -> None:
     alpha = 0.8
     degree = 8
     standard = np.asarray(_gegenbauer_standard_scales(alpha, degree))
@@ -45,7 +46,7 @@ def test_standard_monic_and_orthonormal_scales_have_declared_meaning():
     np.testing.assert_allclose(gram, np.eye(degree + 1), rtol=3e-12, atol=4e-13)
 
 
-def test_alpha_zero_scales_preserve_standard_collapse_and_limit_bases():
+def test_alpha_zero_scales_preserve_standard_collapse_and_limit_bases() -> None:
     degree = 7
     standard = np.asarray(_gegenbauer_standard_scales(0.0, degree))
     orthonormal = np.asarray(_gegenbauer_orthonormal_scales(0.0, degree))
@@ -63,7 +64,7 @@ def test_alpha_zero_scales_preserve_standard_collapse_and_limit_bases():
 
 
 @pytest.mark.parametrize("alpha", (-0.49, 0.0, 0.4, 2.5))
-def test_gauss_gegenbauer_rule_has_exact_weighted_moments(alpha):
+def test_gauss_gegenbauer_rule_has_exact_weighted_moments(alpha: Any) -> None:
     count = 9
     rule = gauss_gegenbauer_rule_data(count, alpha)
 
@@ -81,7 +82,7 @@ def test_gauss_gegenbauer_rule_has_exact_weighted_moments(alpha):
         assert observed == pytest.approx(expected, rel=4e-12, abs=4e-12)
 
 
-def test_shifted_differentiation_matches_same_standard_series():
+def test_shifted_differentiation_matches_same_standard_series() -> None:
     alpha = 0.37
     degree = 9
     order = 2
@@ -94,7 +95,7 @@ def test_shifted_differentiation_matches_same_standard_series():
         @ derivative_coefficients
     )
 
-    def series_value(point):
+    def series_value(point: Any) -> Any:
         return phx.special.gegenbauer_vander(alpha, point, degree) @ coefficients
 
     direct = jax.vmap(jax.grad(jax.grad(series_value)))(points)
@@ -110,7 +111,7 @@ def test_shifted_differentiation_matches_same_standard_series():
     )
 
 
-def _normalized_vander(alpha, points, degree, normalization):
+def _normalized_vander(alpha: Any, points: Any, degree: Any, normalization: Any) -> Any:
     standard_values = np.asarray(phx.special.gegenbauer_vander(alpha, points, degree))
     standard_scales = np.asarray(_gegenbauer_standard_scales(alpha, degree))
     if normalization == "standard":
@@ -123,7 +124,7 @@ def _normalized_vander(alpha, points, degree, normalization):
 
 
 @pytest.mark.parametrize("normalization", ("standard", "monic", "orthonormal"))
-def test_alpha_to_beta_connection_preserves_polynomial_values(normalization):
+def test_alpha_to_beta_connection_preserves_polynomial_values(normalization: Any) -> None:
     alpha = 0.3
     beta = 1.6
     degree = 8
@@ -148,7 +149,7 @@ def test_alpha_to_beta_connection_preserves_polynomial_values(normalization):
     )
 
 
-def test_monic_connections_remain_complete_at_alpha_zero():
+def test_monic_connections_remain_complete_at_alpha_zero() -> None:
     degree = 9
     forward = gegenbauer_connection_data(0.0, 0.7, degree, normalization="monic")
     reverse = gegenbauer_connection_data(0.7, 0.0, degree, normalization="monic")
@@ -161,7 +162,7 @@ def test_monic_connections_remain_complete_at_alpha_zero():
     )
 
 
-def test_connection_identity_and_byte_evidence_are_deterministic():
+def test_connection_identity_and_byte_evidence_are_deterministic() -> None:
     degree = 10
     count = degree + 1
     data = gegenbauer_connection_data(0.4, 1.2, degree, dtype=jnp.float32)
@@ -182,7 +183,7 @@ def test_connection_identity_and_byte_evidence_are_deterministic():
         )
 
 
-def test_polynomial_construction_boundaries_are_rejected():
+def test_polynomial_construction_boundaries_are_rejected() -> None:
     with pytest.raises(TypeError, match="num_nodes must be an integer"):
         gauss_gegenbauer_rule_data(True, 0.3)
     with pytest.raises(ValueError, match="num_nodes must be positive"):
@@ -192,6 +193,7 @@ def test_polynomial_construction_boundaries_are_rejected():
     with pytest.raises(ValueError, match="degenerate at beta=0"):
         gegenbauer_connection_data(0.5, 0.0, 4)
     with pytest.raises(ValueError, match="normalization"):
+        # ty: ignore[invalid-argument-type]
         gegenbauer_connection_data(0.5, 1.0, 4, normalization="unknown")
     with pytest.raises(ValueError, match="order must be nonnegative"):
         gegenbauer_differentiation_matrix(0.5, 4, -1)

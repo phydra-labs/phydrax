@@ -21,7 +21,8 @@ from math import prod
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -93,7 +94,7 @@ class MeshPartitionPolicy(StrictModule, NonTrainableState):
         maximum_imbalance: float = 1.05,
         curve_depth: int = 16,
         graph_seed: int = 0,
-    ):
+    ) -> None:
         if not isinstance(kind, MeshPartitionKind):
             raise TypeError("kind must be MeshPartitionKind.")
         counts = (part_count, halo_width, curve_depth, graph_seed)
@@ -156,7 +157,7 @@ class MeshPartitionEvidence(StrictModule, NonTrainableState):
         kind: MeshPartitionKind,
         provenance: str,
         /,
-    ):
+    ) -> None:
         part_weights = np.bincount(owner, weights=weights, minlength=part_count)
         imbalance = np.max(part_weights) / np.mean(part_weights)
         pairs = adjacency.undirected_pairs()
@@ -359,7 +360,7 @@ class MeshDistribution(StrictModule, NonTrainableState):
         cell_weights: ArrayLike | None = None,
         partition_kind: MeshPartitionKind = MeshPartitionKind.PROVIDER,
         partition_provenance: str = "supplied-ownership",
-    ):
+    ) -> None:
         if not isinstance(part, MeshPart) or not isinstance(partition, CellPartition):
             raise TypeError("Mesh distribution requires MeshPart and CellPartition.")
         if not isinstance(partition_kind, MeshPartitionKind):
@@ -893,7 +894,7 @@ class MeshDistributionTransition(StrictModule, NonTrainableState):
         /,
         *,
         rebalanced: bool,
-    ):
+    ) -> None:
         if not isinstance(source, MeshDistribution) or not isinstance(
             target, MeshDistribution
         ):

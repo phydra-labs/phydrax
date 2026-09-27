@@ -8,7 +8,8 @@ from enum import IntEnum
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -35,7 +36,7 @@ class ContactRouteStateDefaults(StrictModule, NonTrainableState):
         mode: ContactRouteMode = ContactRouteMode.OPEN,
         rate_state: float = 1.0,
         film_thickness: float = 0.0,
-    ):
+    ) -> None:
         rate = float(rate_state)
         film = float(film_thickness)
         if rate <= 0.0 or film < 0.0:
@@ -72,7 +73,7 @@ class ContactRouteState(StrictModule, NonTrainableState):
         closure_id: str,
         /,
         *,
-        dtype=jnp.float64,
+        dtype: DTypeLike = jnp.float64,
         defaults: ContactRouteStateDefaults | None = None,
     ) -> ContactRouteState:
         count = int(capacity)
@@ -198,7 +199,7 @@ def remap_contact_route_state(
     duplicate_old_match = jnp.sum(equality, axis=1) > 1
     duplicate = duplicate_new | duplicate_old_match
 
-    def inherited(old, default):
+    def inherited(old: Array, default: ArrayLike) -> Array:
         selected = old[safe_source]
         default_value = jnp.broadcast_to(
             jnp.asarray(default, dtype=selected.dtype), selected.shape

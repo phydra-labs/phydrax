@@ -6,12 +6,13 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jaxtyping import PyTree
 
 import phydrax.axes as cx
 
@@ -41,6 +42,7 @@ from ..linalg._constraint_operators import (
 )
 from ..linalg._operators import BlockLinearOperator, FunctionLinearOperator
 from ..linalg._spaces import AbstractVectorSpace, ArraySpace, BlockSpace
+from ..typing import parse
 from ._lifecycle import (
     RealizationLifecyclePhase,
     RealizationLifecycleState,
@@ -54,8 +56,8 @@ from ._realization import (
 )
 
 
-AffineCompatibility = Literal["strict", "generalized"]
-AffineExactnessScope = Literal["continuum", "realization"]
+AffineCompatibility: TypeAlias = Literal["strict", "generalized"]
+AffineExactnessScope: TypeAlias = Literal["continuum", "realization"]
 
 
 def _identifier(value: str | None, payload: Mapping[str, Any], name: str, /) -> str:
@@ -235,11 +237,9 @@ class AffineProjectionPolicy(StrictModule):
         absolute_tolerance: Any = 1e-10,
         relative_tolerance: Any = 1e-8,
         verify_projection: bool = True,
-    ):
-        if compatibility not in ("strict", "generalized"):
-            raise ValueError("compatibility must be 'strict' or 'generalized'.")
-        if exactness_scope not in ("continuum", "realization"):
-            raise ValueError("exactness_scope must be 'continuum' or 'realization'.")
+    ) -> None:
+        compatibility = parse(compatibility, AffineCompatibility, "compatibility")
+        exactness_scope = parse(exactness_scope, AffineExactnessScope, "exactness_scope")
         absolute = jnp.asarray(absolute_tolerance)
         relative = jnp.asarray(relative_tolerance)
         if absolute.shape or relative.shape or bool(absolute < 0) or bool(relative < 0):
@@ -288,7 +288,7 @@ class LinearCorrectionEvidence(StrictModule):
         has_adjoint: bool = False,
         has_derivative: bool = False,
         solve_evidence: Any = None,
-    ):
+    ) -> None:
         identity = jnp.asarray(identity_defect)
         range_ = jnp.asarray(range_defect)
         version = int(numeric_version)
@@ -319,12 +319,18 @@ class _ConditionBlockAction(StrictModule):
     kwargs: frozendict[str, Any]
     source_name: str = eqx.field(static=True)
 
-    def __init__(self, bound, source_name, kwargs, /):
+    def __init__(
+        self,
+        bound: BoundCondition,
+        source_name: str,
+        kwargs: Mapping[str, Any],
+        /,
+    ) -> None:
         self.bound = bound
         self.source_name = str(source_name)
         self.kwargs = frozendict(kwargs)
 
-    def __call__(self, value, /):
+    def __call__(self, value: Any, /) -> Any:
         local = {}
         for field in self.bound.condition.fields.fields:
             local[field.name] = (
@@ -345,12 +351,18 @@ class _ConditionBlockTranspose(StrictModule):
     kwargs: frozendict[str, Any]
     local_name: str = eqx.field(static=True)
 
-    def __init__(self, bound, local_name, kwargs, /):
+    def __init__(
+        self,
+        bound: BoundCondition,
+        local_name: str,
+        kwargs: Mapping[str, Any],
+        /,
+    ) -> None:
         self.bound = bound
         self.local_name = str(local_name)
         self.kwargs = frozendict(kwargs)
 
-    def __call__(self, value, /):
+    def __call__(self, value: Any, /) -> Any:
         return self.bound.adjoint_action(value, **self.kwargs)[self.local_name]
 
 
@@ -377,7 +389,7 @@ class AffineBlockAssembly(StrictModule):
         *,
         realizations: Mapping[str, Any] = frozendict(),
         exactness_scope: AffineExactnessScope = "continuum",
-    ):
+    ) -> None:
         conditions = tuple(bound_conditions)
         names = _field_names(correction_fields)
         if not conditions or any(
@@ -563,16 +575,20 @@ class AffineBlockAssembly(StrictModule):
         values = tuple(actions)
         if len(values) != len(self.bound_conditions):
             raise ValueError("Action count does not match the joint condition count.")
-        return tuple(
-            validate_codomain_value(
-                bound.codomain,
-                bound.relation.target,
-                path=f"condition {bound.condition_id!r} target",
+        targets: list[Any] = []
+        for bound, action in zip(self.bound_conditions, values, strict=True):
+            # __init__ rejects every relation that is not an Equality.
+            relation = cast(Equality, bound.relation)
+            targets.append(
+                validate_codomain_value(
+                    bound.codomain,
+                    relation.target,
+                    path=f"condition {bound.condition_id!r} target",
+                )
+                if relation.has_target
+                else _tree_zero(action)
             )
-            if bound.relation.has_target
-            else _tree_zero(action)
-            for bound, action in zip(self.bound_conditions, values, strict=True)
-        )
+        return tuple(targets)
 
     def residual(
         self,
@@ -637,7 +653,7 @@ class PreparedLinearCorrection(StrictModule):
         adjoint_action: Callable | None = None,
         derivative_action: Callable | None = None,
         operator: PreparedConstraintOperator | None = None,
-    ):
+    ) -> None:
         if not callable(lift_action):
             raise TypeError("lift_action must be callable.")
         if adjoint_action is not None and not callable(adjoint_action):
@@ -753,10 +769,10 @@ class _ConstraintLift(StrictModule):
     operator: PreparedConstraintOperator
     strict: bool = eqx.field(static=True)
 
-    def __init__(self, operator, strict, /):
+    def __init__(self, operator: PreparedConstraintOperator, strict: bool, /) -> None:
         self.operator, self.strict = operator, bool(strict)
 
-    def __call__(self, residual, /):
+    def __call__(self, residual: PyTree[Any], /) -> PyTree[Array]:
         if self.strict:
             return self.operator.strict_right_inverse(residual)
         return self.operator.minimum_norm_lift(residual, check_compatibility=True)
@@ -765,7 +781,7 @@ class _ConstraintLift(StrictModule):
 class _ConstraintAdjoint(StrictModule):
     operator: PreparedConstraintOperator
 
-    def __call__(self, value, /):
+    def __call__(self, value: PyTree[Any], /) -> PyTree[Array]:
         return self.operator.right_inverse_adjoint(value)
 
 
@@ -781,7 +797,7 @@ class ConstraintLinearCorrectionProvider(AbstractLinearCorrectionProvider):
         /,
         *,
         provider_id: str | None = None,
-    ):
+    ) -> None:
         if plan is not None and not isinstance(plan, ConstraintOperatorPlan):
             raise TypeError("plan must be a ConstraintOperatorPlan or None.")
         self.plan = plan
@@ -834,14 +850,14 @@ class ConstraintLinearCorrectionProvider(AbstractLinearCorrectionProvider):
 
     def prepare(
         self,
-        bound_conditions,
-        assembly,
+        bound_conditions: Sequence[BoundCondition],
+        assembly: AffineBlockAssembly,
         /,
         *,
-        correction_fields,
-        realizations,
-        policy,
-        numeric_version,
+        correction_fields: Sequence[str],
+        realizations: Mapping[str, Any],
+        policy: AffineProjectionPolicy,
+        numeric_version: int,
     ) -> PreparedLinearCorrection:
         del bound_conditions, correction_fields, realizations
         if assembly.operator is None:
@@ -866,15 +882,15 @@ class ConstraintLinearCorrectionProvider(AbstractLinearCorrectionProvider):
 
     def refresh(
         self,
-        previous,
-        bound_conditions,
-        assembly,
+        previous: PreparedLinearCorrection,
+        bound_conditions: Sequence[BoundCondition],
+        assembly: AffineBlockAssembly,
         /,
         *,
-        correction_fields,
-        realizations,
-        policy,
-        numeric_version,
+        correction_fields: Sequence[str],
+        realizations: Mapping[str, Any],
+        policy: AffineProjectionPolicy,
+        numeric_version: int,
     ) -> PreparedLinearCorrection:
         del bound_conditions, correction_fields, realizations
         if previous.operator is None or assembly.operator is None:
@@ -908,7 +924,16 @@ class PreparedAffineProjector(AbstractFieldRealization):
     prepared_id: str = eqx.field(static=True)
     numeric_version: int = eqx.field(static=True)
 
-    def __init__(self, assembly, correction, provider, policy, /, *, numeric_version):
+    def __init__(
+        self,
+        assembly: AffineBlockAssembly,
+        correction: PreparedLinearCorrection,
+        provider: AbstractLinearCorrectionProvider,
+        policy: AffineProjectionPolicy,
+        /,
+        *,
+        numeric_version: int,
+    ) -> None:
         if not isinstance(assembly, AffineBlockAssembly):
             raise TypeError("assembly must be an AffineBlockAssembly.")
         if not isinstance(correction, PreparedLinearCorrection):
@@ -1087,7 +1112,7 @@ class ExactAffineProjector(AbstractFieldRealization):
 
     prepared: PreparedAffineProjector
 
-    def __init__(self, prepared: PreparedAffineProjector, /):
+    def __init__(self, prepared: PreparedAffineProjector, /) -> None:
         if not isinstance(prepared, PreparedAffineProjector):
             raise TypeError("ExactAffineProjector requires a PreparedAffineProjector.")
         if not prepared.correction.evidence.exact:
@@ -1100,13 +1125,21 @@ class ExactAffineProjector(AbstractFieldRealization):
     def evidence(self) -> AffineProjectorEvidence:
         return self.prepared.evidence
 
-    def apply(self, fields, /, **kwargs):
+    def apply(self, fields: Mapping[str, Any], /, **kwargs: Any) -> frozendict[str, Any]:
         return self.prepared.apply(fields, **kwargs)
 
-    def constraint_defect(self, fields, /, **kwargs):
+    def constraint_defect(
+        self, fields: Mapping[str, Any], /, **kwargs: Any
+    ) -> Array | None:
         return self.prepared.constraint_defect(fields, **kwargs)
 
-    def realize(self, fields, state=None, *, context):
+    def realize(
+        self,
+        fields: Mapping[str, Any],
+        state: RealizationLifecycleState | None = None,
+        *,
+        context: ConditionEvaluationContext,
+    ) -> FieldRealizationResult:
         return self.prepared.realize(fields, state, context=context)
 
 

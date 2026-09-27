@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -18,7 +21,7 @@ from phydrax.equations.fem._moving_conservation import (
 )
 
 
-def _discretization():
+def _discretization() -> Any:
     points = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
     mesh = CellMesh(
         points,
@@ -32,7 +35,7 @@ def _discretization():
     ).prepare()
 
 
-def test_uniform_translation_satisfies_temporal_gcl_and_ale_flux():
+def test_uniform_translation_satisfies_temporal_gcl_and_ale_flux() -> None:
     discretization = _discretization()
     coordinates = discretization.default_runtime.coordinates
     velocity = jnp.broadcast_to(jnp.asarray((0.2, -0.1)), coordinates.shape)
@@ -61,7 +64,7 @@ def test_uniform_translation_satisfies_temporal_gcl_and_ale_flux():
     )
 
 
-def test_conservative_remap_and_quality_recovery_preserve_valid_state():
+def test_conservative_remap_and_quality_recovery_preserve_valid_state() -> None:
     mass = jnp.asarray(((2.0, 0.5), (0.5, 1.5)))
     remap = ConservativeRemapPlan(mass, mass, mass)
     state = jnp.asarray(((1.0, 2.0), (3.0, 4.0)))

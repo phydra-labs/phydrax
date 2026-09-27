@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import opt_einsum as oe
@@ -9,7 +12,7 @@ import opt_einsum as oe
 import phydrax as phx
 
 
-def _periodic_grid(shape):
+def _periodic_grid(shape: Any) -> Any:
     return phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(count, periodic=True)
@@ -19,7 +22,7 @@ def _periodic_grid(shape):
     ).prepare(jnp.stack((jnp.zeros(len(shape)), jnp.ones(len(shape)))))
 
 
-def test_roe_wave_fluctuations_sum_to_roe_flux_jump():
+def test_roe_wave_fluctuations_sum_to_roe_flux_jump() -> None:
     system = phx.equations.EulerSystem()
     left = system.primitive_to_conserved(jnp.asarray([[1.0, 0.2, 1.0]]))
     right = system.primitive_to_conserved(jnp.asarray([[0.8, -0.1, 0.7]]))
@@ -42,7 +45,7 @@ def test_roe_wave_fluctuations_sum_to_roe_flux_jump():
     )
 
 
-def test_wave_family_limiter_preserves_wave_and_fluctuation_shapes():
+def test_wave_family_limiter_preserves_wave_and_fluctuation_shapes() -> None:
     system = phx.equations.EulerSystem()
     primitive = jnp.asarray(
         [[1.0, 0.2, 1.0], [0.9, 0.1, 0.9], [0.8, -0.1, 0.8], [1.1, 0.0, 1.2]]
@@ -58,7 +61,7 @@ def test_wave_family_limiter_preserves_wave_and_fluctuation_shapes():
     assert jnp.all(jnp.isfinite(limited.waves))
 
 
-def test_capacity_scales_hyperbolic_stable_step():
+def test_capacity_scales_hyperbolic_stable_step() -> None:
     grid = _periodic_grid((24,))
     discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
     system = phx.equations.ScalarConservationSystem(
@@ -87,7 +90,7 @@ def test_capacity_scales_hyperbolic_stable_step():
     )
 
 
-def test_split_and_unsplit_steppers_preserve_constant_multidimensional_state():
+def test_split_and_unsplit_steppers_preserve_constant_multidimensional_state() -> None:
     grid = _periodic_grid((8, 6))
     system = phx.equations.ScalarConservationSystem(
         2,
@@ -110,18 +113,21 @@ def test_split_and_unsplit_steppers_preserve_constant_multidimensional_state():
     )
     compiled = phx.equations.compile_conservation_problem(problem, discretization, method)
     state = jnp.ones(discretization.state_shape)
+    # ty: ignore[invalid-argument-type]
     unsplit = phx.solver.UnsplitFiniteVolumeSSPRK3Plan(compiled.dynamics).advance(
         0.0, state, 0.01
     )
     split = phx.solver.DirectionalSplitFiniteVolumePlan(
-        compiled.dynamics, splitting="strang"
+        # ty: ignore[invalid-argument-type]
+        compiled.dynamics,
+        splitting="strang",
     ).advance(0.0, state, 0.01)
 
     np.testing.assert_allclose(unsplit.state, state, atol=1e-13)
     np.testing.assert_allclose(split.state, state, atol=1e-13)
 
 
-def test_transverse_solver_returns_finite_opposite_direction_splits():
+def test_transverse_solver_returns_finite_opposite_direction_splits() -> None:
     system = phx.equations.EulerSystem(2)
     left = system.primitive_to_conserved(jnp.asarray([[1.0, 0.2, 0.1, 1.0]]))
     right = system.primitive_to_conserved(jnp.asarray([[0.9, -0.1, 0.0, 0.9]]))

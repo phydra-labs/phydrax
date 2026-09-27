@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -33,7 +35,7 @@ def _case(batch_size: int, samples: int, repetitions: int) -> dict[str, object]:
     source = prepared.initial_state()
     velocity = jnp.asarray(((0.12, -0.04, 0.17), (-0.03, 0.08, -0.11)))
 
-    def advance(endpoints):
+    def advance(endpoints: Any) -> Any:
         candidate = prepared.propose(source, endpoints)
         state = prepared.commit(candidate, source)
         loads, power = prepared.tensile_force_pullback(

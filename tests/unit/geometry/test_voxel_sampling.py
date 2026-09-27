@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -8,7 +10,7 @@ import pytest
 import phydrax as phx
 
 
-def _grid():
+def _grid() -> Any:
     address = phx.discretization.MortonAddressPlan((-1.0, -1.0, -1.0), (1.0, 1.0, 1.0), 3)
     coordinates = np.stack(
         np.meshgrid(np.arange(8), np.arange(8), np.arange(8), indexing="ij"),

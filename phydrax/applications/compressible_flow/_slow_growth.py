@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 import phydrax.linalg as la
@@ -23,10 +24,11 @@ from ...equations._gas_dynamics import (
     HomogeneousMixtureCompressibleNavierStokesSystem,
     HomogeneousMixtureEulerSystem,
 )
+from ...typing import parse
 from ._contracts import CompressibleFlowCaseSpec
 
 
-WallThermalMode = Literal["adiabatic", "isothermal"]
+WallThermalMode: TypeAlias = Literal["adiabatic", "isothermal"]
 SlowGrowthCoordinate = Literal["temporal", "modeled-spatial"]
 
 
@@ -107,6 +109,26 @@ def _integral_thickness_rates(
     return rates[0], rates[1]
 
 
+def _one_temperature_system(
+    case: CompressibleFlowCaseSpec,
+) -> HomogeneousMixtureEulerSystem | HomogeneousMixtureCompressibleNavierStokesSystem:
+    system = case.system
+    # CompressiblePlaneBaseflowPlan admits only one-temperature canonical systems.
+    if not (
+        isinstance(
+            system,
+            (
+                HomogeneousMixtureEulerSystem,
+                HomogeneousMixtureCompressibleNavierStokesSystem,
+            ),
+        )
+    ):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(system, (HomogeneousMixtureEulerSystem, HomogeneousMixtureCompressibleNavierStokesSystem))."
+        )
+    return system
+
+
 def _thermal_rates(
     case: CompressibleFlowCaseSpec,
     primitive: Array,
@@ -114,16 +136,17 @@ def _thermal_rates(
     /,
 ) -> tuple[Array, Array, Array, Array]:
     species_count = case.species_count
+    thermodynamics = _one_temperature_system(case).thermodynamics
 
-    def thermal_state(value):
+    def thermal_state(value: Array) -> tuple[Array, Array]:
         species_density = value[..., :species_count]
         density = jnp.sum(species_density, axis=-1)
         temperature = value[..., -1]
-        evaluation = case.thermodynamics.evaluate_density_temperature(
+        evaluation = thermodynamics.evaluate_density_temperature(
             species_density, temperature
         )
         molar_density = jnp.sum(
-            species_density / case.thermodynamics.schema.molar_masses.astype(value.dtype),
+            species_density / thermodynamics.schema.molar_masses.astype(value.dtype),
             axis=-1,
         )
         specific_internal_energy = (
@@ -325,7 +348,7 @@ class CompressiblePlaneBaseflowPlan(StrictModule):
         *,
         wall_normal_axis: int = 0,
         homogeneous_axes: Sequence[int] | None = None,
-    ):
+    ) -> None:
         if not isinstance(case, CompressibleFlowCaseSpec):
             raise TypeError(
                 "Compressible baseflow preparation requires a case specification."
@@ -416,7 +439,7 @@ class CompressiblePlaneBaseflowPlan(StrictModule):
             ...,
             self.case.species_count : self.case.species_count + self.dimension,
         ]
-        system = self.case.system
+        system = _one_temperature_system(self.case)
         recovered = system.recover_thermodynamics(state)
         pressure = recovered.state.pressure
         temperature = recovered.state.temperature
@@ -698,7 +721,7 @@ class PreparedSlowGrowthSource(StrictModule):
             self.snapshot.case, primitive, primitive_source
         )
         species_count = self.snapshot.case.species_count
-        system = self.snapshot.case.system
+        system = _one_temperature_system(self.snapshot.case)
         species_density = primitive[..., :species_count]
         density = jnp.sum(species_density, axis=-1)
         velocity = primitive[..., species_count : species_count + self.snapshot.dimension]
@@ -944,7 +967,7 @@ class SlowGrowthContinuation(StrictModule):
         accepted_step: int = 0,
         accepted_time: float = 0.0,
         continuation_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(snapshot, CompressiblePlaneBaseflowSnapshot):
             raise TypeError("Slow-growth continuation requires a baseflow snapshot.")
         step = int(accepted_step)
@@ -1089,9 +1112,9 @@ def _model_options(
     scalars = tuple(
         value for value in (displacement, momentum, tolerance) if value is not None
     )
+    wall_thermal_mode = parse(wall_thermal_mode, WallThermalMode, "wall_thermal_mode")
     if (
-        wall_thermal_mode not in ("adiabatic", "isothermal")
-        or len(set(indices)) != len(indices)
+        len(set(indices)) != len(indices)
         or any(index not in (0, -1) for index in indices)
         or any(not np.isfinite(value) for value in scalars)
         or tolerance <= 0.0
@@ -1207,7 +1230,7 @@ class TemporalSlowGrowthModelPlan(StrictModule, NonTrainableState):
         displacement_thickness_rate: float | None = None,
         momentum_thickness_rate: float | None = None,
         evidence_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         rate = float(growth_rate)
         if not np.isfinite(rate):
             raise ValueError("Temporal slow-growth rate must be finite.")
@@ -1301,7 +1324,7 @@ class SpatialSlowGrowthModelPlan(StrictModule, NonTrainableState):
         displacement_thickness_rate: float | None = None,
         momentum_thickness_rate: float | None = None,
         evidence_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         velocity = float(streamwise_convection_velocity)
         if not np.isfinite(velocity):
             raise ValueError("Modeled-spatial convection velocity must be finite.")

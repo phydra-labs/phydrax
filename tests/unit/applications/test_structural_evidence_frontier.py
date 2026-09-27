@@ -12,7 +12,7 @@ mn = sm.member_network
 std = sm.standards
 
 
-def test_precedence_branch_and_bound_finds_exact_sequence():
+def test_precedence_branch_and_bound_finds_exact_sequence() -> None:
     operations = (
         phx.optim.PrecedenceOperation("foundation"),
         phx.optim.PrecedenceOperation("frame", predecessors=("foundation",)),
@@ -34,7 +34,7 @@ def test_precedence_branch_and_bound_finds_exact_sequence():
     assert result.objective == pytest.approx(10.0)
 
 
-def test_generic_standard_retains_clause_and_applicability():
+def test_generic_standard_retains_clause_and_applicability() -> None:
     combination = std.LoadCombination(
         "ultimate",
         {"dead": 1.2, "live": 1.6},
@@ -64,7 +64,7 @@ def test_generic_standard_retains_clause_and_applicability():
     assert not outside.successful
 
 
-def test_reliability_form_and_monte_carlo_match_normal_limit_state():
+def test_reliability_form_and_monte_carlo_match_normal_limit_state() -> None:
     model = mn.StructuralRandomModel(
         jnp.asarray((0.0,)), jnp.asarray(((1.0,),)), ("load",)
     )
@@ -78,7 +78,7 @@ def test_reliability_form_and_monte_carlo_match_normal_limit_state():
     assert monte_carlo.failure_probability == pytest.approx(0.1587, abs=0.015)
 
 
-def test_calibration_identifiability_and_evidence_graph():
+def test_calibration_identifiability_and_evidence_graph() -> None:
     observation = mn.StructuralObservationModel(
         lambda parameter, _: jnp.asarray((2.0 * parameter[0],)),
         jnp.asarray((4.0,)),

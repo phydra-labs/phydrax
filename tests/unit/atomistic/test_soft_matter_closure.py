@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -23,9 +26,10 @@ from phydrax.atomistic._soft_matter import (
 )
 
 
-def test_static_structure_factor_resolves_forward_peak_and_extinction():
+def test_static_structure_factor_resolves_forward_peak_and_extinction() -> None:
     positions = jnp.asarray([[[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]]])
     plan = StaticStructureFactorPlan(
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0], [2.0 * jnp.pi, 0.0, 0.0]],
         maximum_frames=2,
         maximum_particles=2,
@@ -39,7 +43,7 @@ def test_static_structure_factor_resolves_forward_peak_and_extinction():
         static_structure_factor(plan, jnp.zeros((3, 2, 3)))
 
 
-def test_unwrapped_all_origin_msd_and_vacf_are_lag_resolved():
+def test_unwrapped_all_origin_msd_and_vacf_are_lag_resolved() -> None:
     times = jnp.asarray([0.0, 1.0, 2.0])
     positions = jnp.asarray(
         [
@@ -50,6 +54,7 @@ def test_unwrapped_all_origin_msd_and_vacf_are_lag_resolved():
     )
     velocities = jnp.asarray([[[0.2, 0.0, 0.0]]] * 3)
     plan = LaggedCorrelationPlan(
+        # ty: ignore[invalid-argument-type]
         [0, 1, 2],
         maximum_frames=3,
         maximum_particles=1,
@@ -63,7 +68,7 @@ def test_unwrapped_all_origin_msd_and_vacf_are_lag_resolved():
     np.testing.assert_array_equal(result.origin_counts, [3, 2, 1])
 
 
-def test_diffusion_fit_retains_einstein_and_green_kubo_evidence():
+def test_diffusion_fit_retains_einstein_and_green_kubo_evidence() -> None:
     diffusion = 0.2
     lag_times = jnp.arange(5.0)
     msd = 6.0 * diffusion * lag_times
@@ -95,16 +100,22 @@ def test_diffusion_fit_retains_einstein_and_green_kubo_evidence():
     assert evidence.einstein_green_kubo_relative_error <= 1.0e-12
 
 
-def _colloid_dynamics(*, shift_energy_at_cutoff=True):
+def _colloid_dynamics(*, shift_energy_at_cutoff: Any = True) -> Any:
     cell = phx.discretization.PeriodicCell(jnp.eye(3) * 10.0)
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     system = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [10, 20],
+        # ty: ignore[invalid-argument-type]
         [0, 0],
+        # ty: ignore[invalid-argument-type]
         [1.0, 2.0],
         units,
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0],
+        # ty: ignore[invalid-argument-type]
         element_mask=[False, False],
+        # ty: ignore[invalid-argument-type]
         molecule_ids=[0, 1],
         cell=cell,
     ).prepare()
@@ -112,7 +123,9 @@ def _colloid_dynamics(*, shift_energy_at_cutoff=True):
     potential = phx.atomistic.AtomisticPotentialProgram(
         [
             phx.atomistic.LennardJonesPotential(
+                # ty: ignore[invalid-argument-type]
                 [1.0],
+                # ty: ignore[invalid-argument-type]
                 [1.0],
                 cutoff,
                 shift_energy_at_cutoff=shift_energy_at_cutoff,
@@ -136,7 +149,7 @@ def _colloid_dynamics(*, shift_energy_at_cutoff=True):
     return dynamics, thermodynamic
 
 
-def test_langevin_colloid_protocol_binds_existing_runtime_and_fdt_identity():
+def test_langevin_colloid_protocol_binds_existing_runtime_and_fdt_identity() -> None:
     dynamics, thermodynamic = _colloid_dynamics()
     protocol = SoftMatterAtomisticProtocol(
         dynamics,

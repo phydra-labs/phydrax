@@ -10,7 +10,8 @@ from typing import TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._identity import callable_payload
@@ -76,7 +77,7 @@ class GRRayEventSurfaces(StrictModule, NonTrainableState):
         escape_margin_numeric_id: str | None = None,
         domain_margin_semantic_id: str | None = None,
         domain_margin_numeric_id: str | None = None,
-    ):
+    ) -> None:
         margins = (capture_margin, escape_margin, domain_margin)
         if any(margin is not None and not callable(margin) for margin in margins):
             raise TypeError("GR ray event margins must be callable or None.")
@@ -171,7 +172,7 @@ class GRRayEventLedger(StrictModule, NonTrainableState):
         /,
         *,
         ledger_id: str,
-    ):
+    ) -> None:
         code = jnp.asarray(event_code, dtype=jnp.int32)
         affine = jnp.asarray(affine_parameter)
         index = jnp.asarray(history_index, dtype=jnp.int32)

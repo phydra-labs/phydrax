@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -9,10 +9,11 @@ import jax.tree_util as jtu
 
 from phydrax._strict import StrictModule
 
+from ..typing import parse
 from ._ir import GraphIR
 
 
-GraphFeatureName = Literal["nodes", "edges", "globals"]
+GraphFeatureName: TypeAlias = Literal["nodes", "edges", "globals"]
 GraphRolloutReduction = Literal["mean", "sum"]
 
 
@@ -43,7 +44,7 @@ def _tree_axpy(
             return out
         return jtu.tree_map(lambda y: _expand_mask(mask, y).astype(y.dtype) * y, out)
 
-    def _leaf(x, d):
+    def _leaf(x: jnp.ndarray, d: jnp.ndarray) -> jnp.ndarray:
         y = x + scale * d
         if mask is None:
             return y
@@ -139,7 +140,9 @@ class EulerGraphStepper(StrictModule):
     vector_field: Callable[[GraphIR], GraphIR]
     dt: float = eqx.field(static=True)
 
-    def __init__(self, vector_field: Callable[[GraphIR], GraphIR], /, *, dt: float):
+    def __init__(
+        self, vector_field: Callable[[GraphIR], GraphIR], /, *, dt: float
+    ) -> None:
         self.vector_field = vector_field
         self.dt = float(dt)
 
@@ -153,7 +156,9 @@ class RK4GraphStepper(StrictModule):
     vector_field: Callable[[GraphIR], GraphIR]
     dt: float = eqx.field(static=True)
 
-    def __init__(self, vector_field: Callable[[GraphIR], GraphIR], /, *, dt: float):
+    def __init__(
+        self, vector_field: Callable[[GraphIR], GraphIR], /, *, dt: float
+    ) -> None:
         self.vector_field = vector_field
         self.dt = float(dt)
 
@@ -193,8 +198,7 @@ def rollout_features(
     include_initial: bool = True,
 ) -> Any:
     """Stack one feature payload from an autoregressive graph rollout."""
-    if feature not in ("nodes", "edges", "globals"):
-        raise ValueError("feature must be 'nodes', 'edges', or 'globals'.")
+    feature = parse(feature, GraphFeatureName, "feature")
     states = rollout(stepper, graph, steps=steps, include_initial=include_initial)
     payloads = [getattr(state, feature) for state in states]
     if any(payload is None for payload in payloads):
@@ -277,7 +281,7 @@ class AutoregressiveGraphRollout(StrictModule):
         *,
         steps: int,
         include_initial: bool = True,
-    ):
+    ) -> None:
         self.stepper = stepper
         self.steps = int(steps)
         self.include_initial = bool(include_initial)

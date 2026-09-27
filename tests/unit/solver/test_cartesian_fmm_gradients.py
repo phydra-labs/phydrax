@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -10,7 +12,7 @@ from phydrax.solver import (
 )
 
 
-def _fixture():
+def _fixture() -> Any:
     positions = jnp.asarray(
         [
             [0.10, 0.10, 0.10],
@@ -41,11 +43,11 @@ def test_whole_fmm_position_and_mass_gradients_track_direct_force() -> None:
     positions, masses, weights, tree_plan, fmm = _fixture()
     softening = fmm.softening
 
-    def fmm_loss(position, mass):
+    def fmm_loss(position: Any, mass: Any) -> Any:
         tree = tree_plan.prepare(position, mass)
         return jnp.sum(fmm.evaluate(tree).acceleration * weights)
 
-    def direct_loss(position, mass):
+    def direct_loss(position: Any, mass: Any) -> Any:
         displacement = position[None, :, :] - position[:, None, :]
         radius_squared = jnp.sum(displacement * displacement, axis=-1) + softening**2
         valid = ~jnp.eye(position.shape[0], dtype="bool")

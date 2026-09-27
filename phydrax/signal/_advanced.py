@@ -8,18 +8,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from numbers import Integral, Real
-from typing import Literal, TypeAlias
+from typing import assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import scipy.signal as scipy_signal
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._interpolation import linear_interpolate
 from .._strict import StrictModule
+from .._validation import nonnegative_integer
+from ..typing import parse
 
 
 IIRDesignKind: TypeAlias = Literal["butterworth", "chebyshev1", "chebyshev2", "elliptic"]
@@ -31,15 +34,6 @@ def _positive_static_int(value: int, name: str, /) -> int:
     resolved = int(value)
     if resolved <= 0:
         raise ValueError(f"{name} must be positive.")
-    return resolved
-
-
-def _nonnegative_static_int(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
-    resolved = int(value)
-    if resolved < 0:
-        raise ValueError(f"{name} must be nonnegative.")
     return resolved
 
 
@@ -92,7 +86,7 @@ class SOSFilterPlan:
     sections: Array
     plan_id: str
 
-    def __init__(self, sections: ArrayLike, /):
+    def __init__(self, sections: ArrayLike, /) -> None:
         sections_ = np.asarray(sections, dtype=np.float64)
         if sections_.ndim != 2 or sections_.shape[1] != 6 or sections_.shape[0] == 0:
             raise ValueError("sections must have shape (section, 6).")
@@ -141,7 +135,7 @@ class SOSFilterPlan:
         if state_.delays.dtype != dtype:
             raise TypeError("SOS state dtype does not match the promoted signal dtype.")
 
-        def sample_step(delays, sample):
+        def sample_step(delays: Array, sample: Array) -> tuple[Array, Array]:
             output = sample
             updated = []
             for index in range(self.sections.shape[0]):
@@ -180,22 +174,24 @@ def design_iir_sos(
     """Design a normalized-digital IIR filter and return one stable SOS plan."""
 
     order_ = _positive_static_int(order, "IIR order")
-    if kind == "butterworth":
-        sections = scipy_signal.butter(order_, cutoff, btype=btype, output="sos")
-    elif kind == "chebyshev1":
-        sections = scipy_signal.cheby1(
-            order_, ripple_db, cutoff, btype=btype, output="sos"
-        )
-    elif kind == "chebyshev2":
-        sections = scipy_signal.cheby2(
-            order_, attenuation_db, cutoff, btype=btype, output="sos"
-        )
-    elif kind == "elliptic":
-        sections = scipy_signal.ellip(
-            order_, ripple_db, attenuation_db, cutoff, btype=btype, output="sos"
-        )
-    else:
-        raise ValueError(f"Unknown IIR design kind {kind!r}.")
+    kind = parse(kind, IIRDesignKind, "kind")
+    match kind:
+        case "butterworth":
+            sections = scipy_signal.butter(order_, cutoff, btype=btype, output="sos")
+        case "chebyshev1":
+            sections = scipy_signal.cheby1(
+                order_, ripple_db, cutoff, btype=btype, output="sos"
+            )
+        case "chebyshev2":
+            sections = scipy_signal.cheby2(
+                order_, attenuation_db, cutoff, btype=btype, output="sos"
+            )
+        case "elliptic":
+            sections = scipy_signal.ellip(
+                order_, ripple_db, attenuation_db, cutoff, btype=btype, output="sos"
+            )
+        case _:
+            assert_never(kind)
     return SOSFilterPlan(sections)
 
 
@@ -224,7 +220,7 @@ class STFTPlan:
 
     def __init__(
         self, window: ArrayLike, hop_size: int, /, *, fft_size: int | None = None
-    ):
+    ) -> None:
         window_ = np.asarray(window, dtype=np.float64)
         hop = _positive_static_int(hop_size, "hop_size")
         fft = (
@@ -279,7 +275,7 @@ class STFTPlan:
         reconstructed = output / safe
         if length is None:
             return reconstructed
-        output_size = _nonnegative_static_int(length, "length")
+        output_size = nonnegative_integer(length, "length")
         return reconstructed[:output_size]
 
 
@@ -295,7 +291,7 @@ class StreamingFFTConvolutionPlan:
     fft_size: int
     plan_id: str
 
-    def __init__(self, kernel: ArrayLike, block_size: int, /):
+    def __init__(self, kernel: ArrayLike, block_size: int, /) -> None:
         raw_kernel = np.asarray(kernel)
         if np.iscomplexobj(raw_kernel):
             raise TypeError("Streaming convolution kernel must be real-valued.")
@@ -322,7 +318,9 @@ class StreamingFFTConvolutionPlan:
             self.plan_id,
         )
 
-    def apply(self, block: ArrayLike, state: FFTConvolutionState, /):
+    def apply(
+        self, block: ArrayLike, state: FFTConvolutionState, /
+    ) -> tuple[Array, FFTConvolutionState]:
         values = jnp.asarray(block)
         if values.shape != (self.block_size,):
             raise ValueError("Streaming block shape does not match the plan.")
@@ -393,7 +391,7 @@ def cross_spectrum_and_coherence(
     time_bandwidth: float = 3.5,
     taper_count: int | None = None,
     sample_spacing: float = 1.0,
-):
+) -> tuple[Array, Array, Array]:
     left_ = jnp.asarray(left)
     right_ = jnp.asarray(right)
     if left_.shape != right_.shape or left_.ndim != 1 or left_.size < 2:

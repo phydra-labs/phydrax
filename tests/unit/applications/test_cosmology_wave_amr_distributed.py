@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -19,7 +21,7 @@ from phydrax.solver._distributed_wave_amr import (
 )
 
 
-def _prepared(*, cells: int = 8, adaptive: bool = False):
+def _prepared(*, cells: int = 8, adaptive: bool = False) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(cells, periodic=True),),
         axis_names=("x",),
@@ -96,7 +98,7 @@ def _prepared(*, cells: int = 8, adaptive: bool = False):
     return hierarchy, prepared, prepared.initialize(tuple(values), 1.0)
 
 
-def test_single_part_distributed_entry_is_exact_local_authority():
+def test_single_part_distributed_entry_is_exact_local_authority() -> None:
     hierarchy, prepared, state = _prepared()
     distributed = prepared.prepare_distributed(
         phx.discretization.BlockAMRPartitionPlan(hierarchy, 1),
@@ -118,7 +120,9 @@ def test_single_part_distributed_entry_is_exact_local_authority():
         np.testing.assert_array_equal(actual.values, expected.values)
 
 
-def test_two_part_metadata_prepares_exact_composite_and_fillpatch_routes_without_devices():
+def test_two_part_metadata_prepares_exact_composite_and_fillpatch_routes_without_devices() -> (
+    None
+):
     hierarchy, prepared, _ = _prepared()
     distributed = prepared.prepare_distributed(
         phx.discretization.BlockAMRPartitionPlan(hierarchy, 2),
@@ -139,11 +143,13 @@ def test_two_part_metadata_prepares_exact_composite_and_fillpatch_routes_without
     assert "ExecutionGroup mesh" in distributed.reason
 
 
-def test_resource_preflight_rejects_before_any_route_or_operator_allocation(monkeypatch):
+def test_resource_preflight_rejects_before_any_route_or_operator_allocation(
+    monkeypatch: Any,
+) -> None:
     hierarchy, prepared, _ = _prepared()
     partition = phx.discretization.BlockAMRPartitionPlan(hierarchy, 2)
 
-    def forbidden_prepare(*args, **kwargs):
+    def forbidden_prepare(*args: Any, **kwargs: Any) -> None:
         del args, kwargs
         raise AssertionError("route construction happened before resource admission")
 
@@ -158,7 +164,7 @@ def test_resource_preflight_rejects_before_any_route_or_operator_allocation(monk
     assert rejected.required_bytes > rejected.maximum_bytes
 
 
-def test_accepted_boundary_repartition_uses_stable_block_identity_routes():
+def test_accepted_boundary_repartition_uses_stable_block_identity_routes() -> None:
     hierarchy, prepared, state = _prepared(cells=16)
     partition = phx.discretization.BlockAMRPartitionPlan(hierarchy, 2)
     source = prepared.prepare_distributed(partition, maximum_bytes=20_000_000)
@@ -199,7 +205,9 @@ def test_accepted_boundary_repartition_uses_stable_block_identity_routes():
         prepared.migrate_distributed_state(source, rejected, target)
 
 
-def test_checkpoint_contract_binds_every_continuation_array_and_partition_identity():
+def test_checkpoint_contract_binds_every_continuation_array_and_partition_identity() -> (
+    None
+):
     hierarchy, prepared, _ = _prepared()
     distributed = prepared.prepare_distributed(
         phx.discretization.BlockAMRPartitionPlan(hierarchy, 2),
@@ -221,7 +229,7 @@ def test_checkpoint_contract_binds_every_continuation_array_and_partition_identi
     )
 
 
-def test_topology_successor_route_algebra_is_available_without_two_devices():
+def test_topology_successor_route_algebra_is_available_without_two_devices() -> None:
     hierarchy, prepared, state = _prepared(cells=16, adaptive=True)
     proposal = prepared.propose_topology(state)
     assert proposal.successful and proposal.compilation.status.changed
@@ -271,7 +279,7 @@ def test_topology_successor_route_algebra_is_available_without_two_devices():
     assert owner.halo.permutations
 
 
-def test_packed_state_validation_rejects_invalid_physics_and_storage():
+def test_packed_state_validation_rejects_invalid_physics_and_storage() -> None:
     hierarchy, prepared, state = _prepared()
     distributed = prepared.prepare_distributed(
         phx.discretization.BlockAMRPartitionPlan(hierarchy, 2),
@@ -309,8 +317,8 @@ def test_packed_state_validation_rejects_invalid_physics_and_storage():
 
 
 def test_process_checkpoint_accepts_local_path_subset_but_manifest_requires_inventory(
-    monkeypatch,
-):
+    monkeypatch: Any,
+) -> None:
     hierarchy, prepared, state = _prepared()
     distributed = prepared.prepare_distributed(
         phx.discretization.BlockAMRPartitionPlan(hierarchy, 2),
@@ -356,7 +364,7 @@ def test_process_checkpoint_accepts_local_path_subset_but_manifest_requires_inve
         execution._validate_checkpoint_manifest(incomplete, execution)
 
 
-def test_single_part_topology_transition_matches_local_authority_at_wave_node():
+def test_single_part_topology_transition_matches_local_authority_at_wave_node() -> None:
     hierarchy, prepared, state = _prepared(cells=16, adaptive=True)
     values = list(prepared.layout.bind_state(state.psi))
     for level, mask in enumerate(prepared.layout.leaf_mask):

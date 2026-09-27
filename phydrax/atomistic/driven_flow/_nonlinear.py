@@ -9,7 +9,8 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -31,7 +32,7 @@ class ShearRheologyPlan(StrictModule):
         steady_fraction: float = 0.25,
         minimum_samples: int = 16,
         maximum_relative_standard_error: float = 0.1,
-    ):
+    ) -> None:
         flow = int(flow_axis)
         gradient = int(gradient_axis)
         fraction = float(steady_fraction)
@@ -168,7 +169,7 @@ class LAOSAnalysisPlan(StrictModule):
         discard_cycles: int = 1,
         minimum_analysis_cycles: int = 2,
         closure_tolerance: float = 1.0e-3,
-    ):
+    ) -> None:
         amplitude = float(strain_amplitude)
         frequency = float(angular_frequency)
         harmonics = int(harmonic_count)

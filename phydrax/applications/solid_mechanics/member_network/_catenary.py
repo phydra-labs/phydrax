@@ -10,7 +10,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -24,6 +25,7 @@ from ....nonlinear import (
     NonlinearTermination,
 )
 from ._blocks import AbstractMemberBlock, MemberBlockEvaluation
+from ._reference import MemberKinematics, MemberNetworkDefinition
 
 
 class CatenaryRegime(IntEnum):
@@ -51,7 +53,7 @@ class ElasticCatenaryReference(StrictModule, NonTrainableState):
         *,
         thermal_strain: ArrayLike = 0.0,
         reference_id: str | None = None,
-    ):
+    ) -> None:
         length = jnp.asarray(unstretched_length)
         rigidity = jnp.asarray(axial_rigidity, dtype=length.dtype)
         load = jnp.asarray(distributed_load, dtype=length.dtype)
@@ -104,7 +106,7 @@ class CatenarySolvePolicy(StrictModule, NonTrainableState):
         relative_residual: float = 1.0e-10,
         minimum_tension: float = 1.0e-10,
         straight_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         if int(quadrature_order) < 4:
             raise ValueError("quadrature_order must be at least four.")
         values = (
@@ -152,7 +154,7 @@ class ElasticCatenaryBlock(AbstractMemberBlock):
         *,
         policy: CatenarySolvePolicy | None = None,
         block_id: str | None = None,
-    ):
+    ) -> None:
         indices = jnp.asarray(member_indices, dtype=jnp.int32)
         references_ = tuple(references)
         if indices.ndim != 1 or len(references_) != indices.size:
@@ -162,7 +164,9 @@ class ElasticCatenaryBlock(AbstractMemberBlock):
         self.policy = CatenarySolvePolicy() if policy is None else policy
         self.block_id = str(block_id or "elastic-catenary-block")
 
-    def evaluate(self, definition, kinematics, /):
+    def evaluate(
+        self, definition: MemberNetworkDefinition, kinematics: MemberKinematics, /
+    ) -> MemberBlockEvaluation:
         states = []
         for member, reference in zip(
             np.asarray(self.member_indices), self.references, strict=True
@@ -204,7 +208,7 @@ class ElasticCatenaryBlock(AbstractMemberBlock):
         )
 
 
-def _quadrature(policy: CatenarySolvePolicy, dtype) -> tuple[Array, Array]:
+def _quadrature(policy: CatenarySolvePolicy, dtype: DTypeLike) -> tuple[Array, Array]:
     points, weights = np.polynomial.legendre.leggauss(policy.quadrature_order)
     return jnp.asarray(points, dtype=dtype), jnp.asarray(weights, dtype=dtype)
 
@@ -278,7 +282,7 @@ def solve_elastic_catenary(
         elastic_force * unit_chord + 0.5 * effective_length * reference.distributed_load
     )
 
-    def residual(force, args):
+    def residual(force: Array, args: object) -> Array:
         del args
         displacement, _, _, _, _ = _integrated_geometry(force, reference, policy_)
         return displacement - chord

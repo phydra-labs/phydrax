@@ -36,7 +36,7 @@ class CoverAdapterEvidence(StrictModule, NonTrainableState):
         patch_count: int,
         relation_count: int,
         verified: bool,
-    ):
+    ) -> None:
         self.adapter_kind = str(adapter_kind)
         self.source_id = str(source_id)
         self.cover_id = str(cover_id)

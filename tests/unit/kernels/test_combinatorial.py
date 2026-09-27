@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import itertools
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -12,14 +14,14 @@ import pytest
 import phydrax as phx
 
 
-def _hamming_points(dimension, alphabet_size):
+def _hamming_points(dimension: Any, alphabet_size: Any) -> Any:
     return jnp.asarray(
         tuple(itertools.product(range(alphabet_size), repeat=dimension)),
         dtype=jnp.int32,
     )
 
 
-def _hamming_laplacian(points):
+def _hamming_laplacian(points: Any) -> Any:
     distance = np.sum(
         np.asarray(points)[:, None, :] != np.asarray(points)[None, :, :], axis=-1
     )
@@ -27,7 +29,7 @@ def _hamming_laplacian(points):
     return np.diag(np.sum(adjacency, axis=1)) - adjacency
 
 
-def test_hamming_heat_kernel_matches_explicit_full_laplacian_spectrum():
+def test_hamming_heat_kernel_matches_explicit_full_laplacian_spectrum() -> None:
     points = _hamming_points(2, 3)
     diffusion_time = 0.23
     kernel = phx.kernels.HammingSpectralKernel(
@@ -46,7 +48,7 @@ def test_hamming_heat_kernel_matches_explicit_full_laplacian_spectrum():
     assert jnp.allclose(kernel.diagonal(points), 1.0)
 
 
-def test_hypercube_is_exact_binary_hamming_specialization():
+def test_hypercube_is_exact_binary_hamming_specialization() -> None:
     points = _hamming_points(4, 2)
     multiplier = phx.kernels.MaternSpectralMultiplier(0.7, 1.3)
     hamming = phx.kernels.HammingSpectralKernel(4, 2, multiplier, max_level=3)
@@ -55,7 +57,7 @@ def test_hypercube_is_exact_binary_hamming_specialization():
     assert jnp.allclose(hamming.matrix(points, points), hypercube.matrix(points, points))
 
 
-def test_hamming_kernel_is_invariant_to_coordinate_and_symbol_permutations():
+def test_hamming_kernel_is_invariant_to_coordinate_and_symbol_permutations() -> None:
     points = _hamming_points(3, 3)
     kernel = phx.kernels.HammingSpectralKernel(
         3,
@@ -71,7 +73,7 @@ def test_hamming_kernel_is_invariant_to_coordinate_and_symbol_permutations():
     )
 
 
-def test_truncated_hamming_levels_remain_positive_semidefinite():
+def test_truncated_hamming_levels_remain_positive_semidefinite() -> None:
     points = _hamming_points(4, 3)
     kernel = phx.kernels.HammingSpectralKernel(
         4,
@@ -85,7 +87,7 @@ def test_truncated_hamming_levels_remain_positive_semidefinite():
     assert np.allclose(np.diag(matrix), 1.0)
 
 
-def test_high_dimensional_hamming_recurrence_and_gradients_are_finite():
+def test_high_dimensional_hamming_recurrence_and_gradients_are_finite() -> None:
     points = jnp.stack(
         (
             jnp.zeros((256,), dtype=jnp.int32),
@@ -94,7 +96,7 @@ def test_high_dimensional_hamming_recurrence_and_gradients_are_finite():
         )
     )
 
-    def objective(length_scale, smoothness):
+    def objective(length_scale: Any, smoothness: Any) -> Any:
         kernel = phx.kernels.HammingSpectralKernel(
             256,
             7,
@@ -110,7 +112,7 @@ def test_high_dimensional_hamming_recurrence_and_gradients_are_finite():
     assert jnp.all(jnp.isfinite(jnp.asarray(gradients)))
 
 
-def test_hamming_kernel_rejects_invalid_symbols_and_level_cutoffs():
+def test_hamming_kernel_rejects_invalid_symbols_and_level_cutoffs() -> None:
     multiplier = phx.kernels.HeatSpectralMultiplier(0.2)
     with pytest.raises(ValueError, match="max_level"):
         phx.kernels.HammingSpectralKernel(3, 2, multiplier, max_level=4)
@@ -126,7 +128,7 @@ def test_hamming_kernel_rejects_invalid_symbols_and_level_cutoffs():
         kernel.pairwise(jnp.asarray([[0, 0, 0], [1, 1, 1]]), jnp.zeros((3,)))
 
 
-def test_hamming_kernel_rejects_complex_coordinates_before_integer_projection():
+def test_hamming_kernel_rejects_complex_coordinates_before_integer_projection() -> None:
     kernel = phx.kernels.HammingSpectralKernel(
         2,
         3,

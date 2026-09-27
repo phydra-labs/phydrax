@@ -14,7 +14,8 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -392,7 +393,7 @@ class EigenbasisDiscretization(AbstractStrongFormDiscretization):
         key: DiscretizationKey | None = None,
         numeric_version: str = "0",
         dtype: Any = jnp.float64,
-    ):
+    ) -> None:
         if not isinstance(plan, SpectralDecomposition):
             raise TypeError("plan must be a SpectralDecomposition.")
         fields = tuple(str(name) for name in field_names)

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 from jax.sharding import PartitionSpec
@@ -9,7 +12,7 @@ from jax.sharding import PartitionSpec
 import phydrax as phx
 
 
-def _hierarchy():
+def _hierarchy() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(4),),
         axis_names=("x",),
@@ -29,7 +32,7 @@ def _hierarchy():
     return phx.discretization.canonicalize_patch_hierarchy(topology)
 
 
-def test_signature_policy_generates_aligned_finite_envelopes():
+def test_signature_policy_generates_aligned_finite_envelopes() -> None:
     policy = phx.discretization.PatchSignaturePolicy(
         (2, 2),
         (16, 16),
@@ -43,7 +46,7 @@ def test_signature_policy_generates_aligned_finite_envelopes():
     assert signature.admits((6, 4))
 
 
-def test_executable_cache_compiles_then_reuses_exact_signature():
+def test_executable_cache_compiles_then_reuses_exact_signature() -> None:
     resources = phx.discretization.BlockAMRResourcePlan(
         maximum_components_per_cell=2,
     )
@@ -52,14 +55,15 @@ def test_executable_cache_compiles_then_reuses_exact_signature():
         _hierarchy(),
         physical_component_count=3,
         method_id="cache-kernel",
+        # ty: ignore[invalid-argument-type]
         dtype=np.float64,
     )
 
-    def kernel_factory(signature):
+    def kernel_factory(signature: Any) -> Any:
         scale = jnp.asarray(2.0, dtype=jnp.dtype(signature.dtype))
         return lambda values: scale * values
 
-    def sample_factory(signature):
+    def sample_factory(signature: Any) -> Any:
         return ((jnp.zeros(signature.state_shape, dtype=signature.dtype),), {})
 
     initial = phx.discretization.PatchExecutableCacheState()
@@ -81,7 +85,7 @@ def test_executable_cache_compiles_then_reuses_exact_signature():
     np.testing.assert_allclose(executable(values), 2.0)
 
 
-def _cut_complex():
+def _cut_complex() -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(1) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -117,7 +121,7 @@ def _cut_complex():
     ).prepare()
 
 
-def test_cut_cell_partition_uses_live_execution_group_sharding():
+def test_cut_cell_partition_uses_live_execution_group_sharding() -> None:
     complex_ = _cut_complex()
     group = phx.execution.ExecutionRuntime.current().root_group
     partition = phx.discretization.DistributedCutCellPartitionPlan(
@@ -152,7 +156,7 @@ def test_cut_cell_partition_uses_live_execution_group_sharding():
     assert partition.collective_accept(jnp.asarray(True))
 
 
-def test_frozen_cut_transition_jvp_and_vjp_are_exact_pair():
+def test_frozen_cut_transition_jvp_and_vjp_are_exact_pair() -> None:
     complex_ = _cut_complex()
     transition = phx.discretization.MultivaluedCutCellTransition(
         complex_,
@@ -177,7 +181,7 @@ def test_frozen_cut_transition_jvp_and_vjp_are_exact_pair():
     )
 
 
-def test_relaxed_hierarchy_derivative_is_explicit_smooth_surrogate():
+def test_relaxed_hierarchy_derivative_is_explicit_smooth_surrogate() -> None:
     plan = phx.discretization.RelaxedHierarchyBlendPlan(
         phx.discretization.BlockAMRDerivativePolicy(
             "relaxed",

@@ -6,10 +6,13 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -21,6 +24,10 @@ from ._surface import (
     WetSlabPlan,
     WetSlabState,
 )
+
+
+if TYPE_CHECKING:
+    from ._global import GlobalAtmosphereView
 
 
 class GlobalSurfaceFluxes(StrictModule):
@@ -67,7 +74,7 @@ class GlobalSurfacePhysics(StrictModule):
         solar_p2: float = -0.48,
         subgrid_wind_speed: float = 5.0,
         measurement_height: float = 10.0,
-    ):
+    ) -> None:
         if not isinstance(slab, WetSlabPlan):
             raise TypeError("slab must be WetSlabPlan.")
         if not isinstance(surface_exchange, BulkSurfaceExchangePlan):
@@ -110,21 +117,35 @@ class GlobalSurfacePhysics(StrictModule):
             }
         )
 
-    def initialize(self, surface_temperature, surface_water) -> WetSlabState:
+    def initialize(
+        self, surface_temperature: ArrayLike, surface_water: ArrayLike
+    ) -> WetSlabState:
         """Return values to place in the global state's existing two reservoirs."""
         return self.slab.initialize(surface_temperature, surface_water)
 
-    def admissible(self, surface_water, surface_energy, thermodynamics) -> Array:
+    def admissible(
+        self,
+        surface_water: Array,
+        surface_energy: Array,
+        thermodynamics: MoistThermodynamicPlan,
+    ) -> Array:
         return self.slab.admissible(
             WetSlabState(surface_water, surface_energy), thermodynamics
         )
 
-    def temperature(self, surface_water, surface_energy, thermodynamics) -> Array:
+    def temperature(
+        self,
+        surface_water: Array,
+        surface_energy: Array,
+        thermodynamics: MoistThermodynamicPlan,
+    ) -> Array:
         return self.slab.temperature(
             WetSlabState(surface_water, surface_energy), thermodynamics
         )
 
-    def solar_forcing(self, colatitude, surface_shape) -> Array:
+    def solar_forcing(
+        self, colatitude: ArrayLike, surface_shape: tuple[int, ...]
+    ) -> Array:
         p2 = 0.5 * (3.0 * jnp.cos(colatitude) ** 2 - 1.0)
         return jnp.broadcast_to(
             (0.25 * self.solar_constant * (1.0 + self.solar_p2 * p2))[:, None],
@@ -134,10 +155,10 @@ class GlobalSurfacePhysics(StrictModule):
     def evaluate(
         self,
         thermodynamics: MoistThermodynamicPlan,
-        view,
-        surface_water,
-        surface_energy,
-        solar_down,
+        view: GlobalAtmosphereView,
+        surface_water: Array,
+        surface_energy: Array,
+        solar_down: ArrayLike,
     ) -> GlobalSurfaceFluxes:
         temperature = self.temperature(surface_water, surface_energy, thermodynamics)
         mass = view.layer_mass

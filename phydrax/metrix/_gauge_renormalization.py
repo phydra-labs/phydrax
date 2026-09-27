@@ -9,7 +9,9 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 
@@ -33,7 +35,7 @@ class GaugeRenormalizationEvidence(StrictModule):
         finite: ArrayLike,
         valid: ArrayLike,
         gauge_kind: str,
-    ):
+    ) -> None:
         self.inverse_residual = jnp.asarray(inverse_residual)
         self.function_residual = jnp.asarray(function_residual)
         self.operator_residual = jnp.asarray(operator_residual)
@@ -71,7 +73,7 @@ class GaugeRenormalizationPlan(StrictModule):
         gauge_kind: str,
         tolerance: float = 1e-8,
         plan_id: str,
-    ):
+    ) -> None:
         supported = (
             "complex_scalar",
             "quaternion_unit",

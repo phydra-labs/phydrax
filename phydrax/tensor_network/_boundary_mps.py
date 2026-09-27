@@ -9,7 +9,7 @@ from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -35,7 +35,7 @@ class BoundaryMPSPolicy(StrictModule):
         singular_value_cutoff: float = 0.0,
         maximum_tensor_elements: int = 100_000_000,
         maximum_workspace_bytes: int = 2**31,
-    ):
+    ) -> None:
         if any(
             not isinstance(value, Integral) or isinstance(value, bool)
             for value in (

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -31,12 +34,12 @@ _OUTSIDE = int(FieldQueryStatus.OUTSIDE_SUPPORT)
 _SIDE_REQUIRED = int(FieldQueryStatus.SIDE_REQUIRED)
 
 
-def _view(reconstruction, coefficients):
+def _view(reconstruction: Any, coefficients: Any) -> Any:
     domain = phx.domain.GeometryDomain(reconstruction.support_geometry, label="x")
     return DiscreteFieldFunctionView(reconstruction, coefficients, domain, variable="x")
 
 
-def _structured_fv(shape=(4, 2)):
+def _structured_fv(shape: Any = (4, 2)) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(count) for count in shape),
         axis_names=tuple("xyz"[: len(shape)]),
@@ -46,7 +49,7 @@ def _structured_fv(shape=(4, 2)):
     ).prepare()
 
 
-def _triangulated_square(resolution=4):
+def _triangulated_square(resolution: Any = 4) -> Any:
     vertices = np.asarray(
         [
             (i / resolution, j / resolution)
@@ -65,7 +68,7 @@ def _triangulated_square(resolution=4):
     ).prepare()
 
 
-def _cell_averages(discretization, function):
+def _cell_averages(discretization: Any, function: Any) -> Any:
     values = function(discretization.cell_quadrature_points)
     averages = (
         jnp.sum(discretization.cell_quadrature_weights * values, axis=1)
@@ -74,12 +77,12 @@ def _cell_averages(discretization, function):
     return averages[:, None]
 
 
-def _quadratic(points):
+def _quadratic(points: Any) -> Any:
     x, y = points[..., 0], points[..., 1]
     return 1.0 + 2.0 * x - y + 0.5 * x * y + y**2
 
 
-def test_cell_average_view_returns_the_containing_cell_average():
+def test_cell_average_view_returns_the_containing_cell_average() -> None:
     discretization = _structured_fv()
     reconstruction = prepare_finite_volume_field_reconstruction(
         discretization, phx.discretization.PiecewiseConstantReconstruction()
@@ -107,7 +110,7 @@ def test_cell_average_view_returns_the_containing_cell_average():
     )
 
 
-def test_cell_average_views_refuse_coordinate_derivatives():
+def test_cell_average_views_refuse_coordinate_derivatives() -> None:
     discretization = _structured_fv()
     reconstruction = prepare_finite_volume_field_reconstruction(
         discretization, phx.discretization.PiecewiseConstantReconstruction()
@@ -127,7 +130,7 @@ def test_cell_average_views_refuse_coordinate_derivatives():
         )
 
 
-def test_structured_face_traces_follow_positive_axis_orientation():
+def test_structured_face_traces_follow_positive_axis_orientation() -> None:
     discretization = _structured_fv()
     reconstruction = prepare_finite_volume_field_reconstruction(
         discretization, phx.discretization.PiecewiseConstantReconstruction()
@@ -153,7 +156,7 @@ def test_structured_face_traces_follow_positive_axis_orientation():
         view.trace(jnp.asarray(((1.5, 0.5),)), side="average")
 
 
-def test_unstructured_face_traces_use_the_mesh_face_orientation():
+def test_unstructured_face_traces_use_the_mesh_face_orientation() -> None:
     discretization = _triangulated_square(2)
     reconstruction = prepare_finite_volume_field_reconstruction(
         discretization, phx.discretization.PiecewiseConstantReconstruction()
@@ -178,7 +181,7 @@ def test_unstructured_face_traces_use_the_mesh_face_orientation():
     )
 
 
-def test_cell_polynomial_view_is_k_exact_with_exact_derivatives_and_transpose():
+def test_cell_polynomial_view_is_k_exact_with_exact_derivatives_and_transpose() -> None:
     discretization = _triangulated_square()
     polynomial = phx.discretization.CellPolynomialReconstructionPlan(2).prepare(
         discretization
@@ -221,7 +224,7 @@ def test_cell_polynomial_view_is_k_exact_with_exact_derivatives_and_transpose():
     )
 
 
-def test_weno_view_is_nonlinear_and_refuses_an_algebraic_transpose():
+def test_weno_view_is_nonlinear_and_refuses_an_algebraic_transpose() -> None:
     discretization = _triangulated_square()
     weno = phx.discretization.UnstructuredWENOZReconstructionPlan(
         2, limiter="none"
@@ -253,7 +256,7 @@ def test_weno_view_is_nonlinear_and_refuses_an_algebraic_transpose():
         prepare_finite_volume_field_reconstruction(discretization, limited)
 
 
-def test_structured_views_bind_only_to_an_equivalent_box():
+def test_structured_views_bind_only_to_an_equivalent_box() -> None:
     discretization = _structured_fv()
     square = phx.geometry.Rectangle((0.5, 0.5), (1.0, 1.0)).compile()
     reconstruction = prepare_finite_volume_field_reconstruction(
@@ -280,7 +283,7 @@ def test_structured_views_bind_only_to_an_equivalent_box():
         )
 
 
-def _finite_difference(shape=(9, 7), periodic=(False, False)):
+def _finite_difference(shape: Any = (9, 7), periodic: Any = (False, False)) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformAxisSpec(count, periodic=flag, endpoint=not flag)
@@ -301,7 +304,7 @@ def _finite_difference(shape=(9, 7), periodic=(False, False)):
     ).prepare()
 
 
-def _nodal(discretization, function):
+def _nodal(discretization: Any, function: Any) -> Any:
     x, y = discretization.grid.primary_entity_layout.coordinates_by_axis
     return function(x[:, None], y[None, :])
 
@@ -309,7 +312,7 @@ def _nodal(discretization, function):
 _FD_POINTS = jnp.asarray(((0.13, 0.37), (0.5, 1.9), (0.99, 0.01)))
 
 
-def test_multilinear_grid_view_matches_the_native_rectilinear_interpolant():
+def test_multilinear_grid_view_matches_the_native_rectilinear_interpolant() -> None:
     discretization = _finite_difference()
     reconstruction = prepare_finite_difference_field_reconstruction(
         discretization, interpolation=MultilinearGridInterpolation()
@@ -342,13 +345,13 @@ def test_multilinear_grid_view_matches_the_native_rectilinear_interpolant():
     )
 
 
-def test_bspline_grid_view_interpolates_and_reproduces_tensor_polynomials():
+def test_bspline_grid_view_interpolates_and_reproduces_tensor_polynomials() -> None:
     discretization = _finite_difference()
     reconstruction = prepare_finite_difference_field_reconstruction(
         discretization, interpolation=BSplineGridInterpolation(3)
     )
 
-    def cubic(x, y):
+    def cubic(x: Any, y: Any) -> Any:
         return 1.0 + x - 2.0 * y + 3.0 * x * y + x**2 * y - 0.5 * y**3 + x**3
 
     values = _nodal(discretization, cubic)
@@ -403,7 +406,7 @@ def test_bspline_grid_view_interpolates_and_reproduces_tensor_polynomials():
         )
 
 
-def test_periodic_multilinear_view_wraps_inside_the_periodic_cell_only():
+def test_periodic_multilinear_view_wraps_inside_the_periodic_cell_only() -> None:
     discretization = _finite_difference((8, 5), periodic=(True, False))
     reconstruction = prepare_finite_difference_field_reconstruction(
         discretization, interpolation=MultilinearGridInterpolation()
@@ -420,7 +423,7 @@ def test_periodic_multilinear_view_wraps_inside_the_periodic_cell_only():
     assert result.evidence.status.tolist() == [_VALID, _OUTSIDE]
 
 
-def _point_cloud(points):
+def _point_cloud(points: Any) -> Any:
     weights = np.full(points.shape[0], 1.0 / points.shape[0])
     return phx.discretization.PointCloudPlan(points, weights, degree=2).prepare()
 
@@ -428,7 +431,7 @@ def _point_cloud(points):
 _UNIT_SQUARE = phx.geometry.Rectangle((0.5, 0.5), (1.0, 1.0))
 
 
-def test_point_cloud_view_reports_conditioning_and_support_evidence():
+def test_point_cloud_view_reports_conditioning_and_support_evidence() -> None:
     random = np.random.default_rng(0)
     scattered = random.uniform(0.0, 1.0, (200, 2))
     # Only collinear points lie within the radius of (0.17, 0.1); the cloud's own
@@ -480,7 +483,7 @@ def test_point_cloud_view_reports_conditioning_and_support_evidence():
     ]
 
 
-def test_point_cloud_views_refuse_domain_functions_without_coverage():
+def test_point_cloud_views_refuse_domain_functions_without_coverage() -> None:
     points = np.random.default_rng(1).uniform(0.0, 1.0, (40, 2))
     discretization = _point_cloud(points)
     square = _UNIT_SQUARE.compile()

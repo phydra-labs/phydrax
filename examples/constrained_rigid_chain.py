@@ -4,6 +4,8 @@
 
 """Advance a fixed-topology ball-and-hinge rigid-body chain."""
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +13,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def main():
+def main() -> None:
     body_ids = jnp.asarray([100, 101, 102], dtype=jnp.int64)
     masses = jnp.asarray([1.0, 1.0, 1.0])
     particles = phx.discretization.ParticleSetPlan(
@@ -48,7 +50,7 @@ def main():
         ),
     )
 
-    def gravity(time, kinematics, args):
+    def gravity(time: Any, kinematics: Any, args: Any) -> Any:
         del time, args
         return phx.discretization.RigidBodyLoad(
             masses[:, None] * jnp.asarray([0.0, -9.81, 0.0]),
@@ -70,8 +72,8 @@ def main():
     step_size = jnp.asarray(1.0e-3)
 
     @eqx.filter_jit
-    def rollout(state):
-        def advance(current, index):
+    def rollout(state: Any) -> Any:
+        def advance(current: Any, index: Any) -> Any:
             result = dynamics.step(
                 current,
                 step_size * index,

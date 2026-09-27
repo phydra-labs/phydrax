@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -8,12 +10,12 @@ import phydrax as phx
 mn = phx.applications.solid_mechanics.member_network
 
 
-def _beam_section():
+def _beam_section() -> Any:
     base = mn.BeamSection(1.0, 2.0, 1.0, 0.5, 0.8, 0.8)
     return mn.WarpingBeamSection(base, 0.1, 0.0, 3.0)
 
 
-def test_warping_beam_and_bracing_energy():
+def test_warping_beam_and_bracing_energy() -> None:
     section = _beam_section()
     state = mn.evaluate_warping_beam(
         2.0,
@@ -39,7 +41,7 @@ def test_warping_beam_and_bracing_energy():
     assert brace.total_reaction > 0.0
 
 
-def test_fiber_section_elastic_plastic_transaction():
+def test_fiber_section_elastic_plastic_transaction() -> None:
     geometry = mn.FiberSectionGeometry(
         jnp.asarray(((-0.5, 0.0), (0.5, 0.0))),
         jnp.asarray((0.5, 0.5)),
@@ -65,7 +67,7 @@ def test_fiber_section_elastic_plastic_transaction():
     )
 
 
-def test_gbt_finite_strip_shell_hierarchy():
+def test_gbt_finite_strip_shell_hierarchy() -> None:
     section = mn.ThinWalledSection(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 0.2))),
         jnp.asarray(((0, 1), (1, 2)), dtype=jnp.int32),
@@ -94,7 +96,7 @@ def test_gbt_finite_strip_shell_hierarchy():
     assert shell.governing_factor > 0.0
 
 
-def test_collapse_and_dynamic_evidence():
+def test_collapse_and_dynamic_evidence() -> None:
     collapse = mn.classify_collapse(
         1.5,
         jnp.asarray((-0.1, 2.0)),

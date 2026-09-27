@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -44,7 +45,7 @@ class RigidBodySetPlan(StrictModule, NonTrainableState):
         fixed_mask: ArrayLike | None = None,
         name: str = "rigid-bodies",
         plan_id: str | None = None,
-    ):
+    ) -> None:
         material = np.asarray(material_ids)
         inertia = np.asarray(inertia_com)
         if (
@@ -133,7 +134,7 @@ class RigidBodyMassProperties(StrictModule, NonTrainableState):
         plan: RigidBodySetPlan,
         particles: ParticleDiscretization,
         /,
-    ):
+    ) -> None:
         dimension = particles.ambient_dimension
         expected = (particles.capacity,) if dimension == 2 else (particles.capacity, 3, 3)
         if dimension not in (2, 3) or plan.inertia_com.shape != expected:
@@ -186,7 +187,9 @@ class PreparedRigidBodySet(StrictModule, NonTrainableState):
     preparation: PreparationReport
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: RigidBodySetPlan, particles: ParticleDiscretization, /):
+    def __init__(
+        self, plan: RigidBodySetPlan, particles: ParticleDiscretization, /
+    ) -> None:
         if not isinstance(plan, RigidBodySetPlan):
             raise TypeError("plan must be a RigidBodySetPlan.")
         if not isinstance(particles, ParticleDiscretization):
@@ -321,7 +324,7 @@ class RigidBodyReferenceFrameRebase(StrictModule, NonTrainableState):
         target_bodies: RigidBodySetPlan,
         center_of_mass_offsets: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, PreparedRigidBodySet):
             raise TypeError("source must be a PreparedRigidBodySet.")
         if not isinstance(target_particles, ParticleSetPlan):
@@ -765,7 +768,7 @@ class RigidBodyStateGeometry(AbstractStateGeometry):
     supports_isometric_transport: bool = eqx.field(static=True)
     supports_commutator_free: bool = eqx.field(static=True)
 
-    def __init__(self, bodies: PreparedRigidBodySet, /):
+    def __init__(self, bodies: PreparedRigidBodySet, /) -> None:
         if not isinstance(bodies, PreparedRigidBodySet):
             raise TypeError("bodies must be a PreparedRigidBodySet.")
         identifier = f"state-geometry:rigid-body:{bodies.prepared_id}"
@@ -815,7 +818,7 @@ class RigidBodyStateGeometry(AbstractStateGeometry):
         self.supports_isometric_transport = True
         self.supports_commutator_free = True
 
-    def _point(self, value, name, /):
+    def _point(self, value: object, name: str, /) -> RigidBodyKinematics:
         if not isinstance(value, RigidBodyKinematics):
             raise TypeError(f"{name} must be RigidBodyKinematics.")
         position = jnp.asarray(value.position)
@@ -844,7 +847,7 @@ class RigidBodyStateGeometry(AbstractStateGeometry):
             angular_velocity,
         )
 
-    def contains(self, state, /):
+    def contains(self, state: object, /) -> Array:
         if not isinstance(state, RigidBodyKinematics):
             return jnp.asarray(False)
         linear_shape = (self.bodies.capacity, self.bodies.ambient_dimension)
@@ -869,7 +872,9 @@ class RigidBodyStateGeometry(AbstractStateGeometry):
             finite = finite & jnp.all(jnp.abs(norm - 1.0) <= 1.0e-8)
         return finite
 
-    def project_tangent(self, state, vector, /):
+    def project_tangent(
+        self, state: RigidBodyKinematics, vector: RigidBodyKinematics, /
+    ) -> RigidBodyKinematics:
         point = self._point(state, "Rigid-body state")
         ambient = self._point(vector, "Ambient rigid-body tangent")
         if self.orientation_geometry is None:
@@ -888,7 +893,9 @@ class RigidBodyStateGeometry(AbstractStateGeometry):
             )
         )
 
-    def retract(self, state, local_tangent, /):
+    def retract(
+        self, state: RigidBodyKinematics, local_tangent: RigidBodyKinematics, /
+    ) -> RigidBodyKinematics:
         point = self._point(state, "Rigid-body state")
         local = self.local_space.validate(local_tangent)
         if self.orientation_geometry is None:
@@ -905,7 +912,9 @@ class RigidBodyStateGeometry(AbstractStateGeometry):
             point.angular_velocity + local.angular_velocity,
         )
 
-    def inverse_retract(self, state, point, /):
+    def inverse_retract(
+        self, state: RigidBodyKinematics, point: RigidBodyKinematics, /
+    ) -> RigidBodyKinematics:
         anchor = self._point(state, "Rigid-body chart anchor")
         target = self._point(point, "Rigid-body chart point")
         if self.orientation_geometry is None:
@@ -926,11 +935,11 @@ class RigidBodyStateGeometry(AbstractStateGeometry):
 
     def retraction_jvp(
         self,
-        state,
-        local_tangent,
-        local_velocity,
+        state: RigidBodyKinematics,
+        local_tangent: RigidBodyKinematics,
+        local_velocity: RigidBodyKinematics,
         /,
-    ):
+    ) -> RigidBodyKinematics:
         point = self._point(state, "Rigid-body state")
         local = self.local_space.validate(local_tangent)
         direction = self.local_space.validate(local_velocity)
@@ -953,11 +962,11 @@ class RigidBodyStateGeometry(AbstractStateGeometry):
 
     def retraction_inverse_jvp(
         self,
-        state,
-        point,
-        tangent,
+        state: RigidBodyKinematics,
+        point: RigidBodyKinematics,
+        tangent: RigidBodyKinematics,
         /,
-    ):
+    ) -> RigidBodyKinematics:
         anchor = self._point(state, "Rigid-body chart anchor")
         target = self._point(point, "Rigid-body chart point")
         physical = self.tangent_space.validate(tangent)
@@ -980,11 +989,11 @@ class RigidBodyStateGeometry(AbstractStateGeometry):
 
     def retraction_vjp(
         self,
-        state,
-        local_tangent,
-        cotangent,
+        state: RigidBodyKinematics,
+        local_tangent: RigidBodyKinematics,
+        cotangent: RigidBodyKinematics,
         /,
-    ):
+    ) -> RigidBodyKinematics:
         point = self._point(state, "Rigid-body state")
         local = self.local_space.validate(local_tangent)
         physical = self.cotangent_space.validate(cotangent)
@@ -1005,7 +1014,13 @@ class RigidBodyStateGeometry(AbstractStateGeometry):
             )
         )
 
-    def transport_tangent(self, state, point, tangent, /):
+    def transport_tangent(
+        self,
+        state: RigidBodyKinematics,
+        point: RigidBodyKinematics,
+        tangent: RigidBodyKinematics,
+        /,
+    ) -> RigidBodyKinematics:
         anchor = self._point(state, "Rigid-body transport source")
         target = self._point(point, "Rigid-body transport target")
         physical = self.tangent_space.validate(tangent)
@@ -1028,11 +1043,11 @@ class RigidBodyStateGeometry(AbstractStateGeometry):
 
     def transport_cotangent_pullback(
         self,
-        state,
-        point,
-        cotangent,
+        state: RigidBodyKinematics,
+        point: RigidBodyKinematics,
+        cotangent: RigidBodyKinematics,
         /,
-    ):
+    ) -> RigidBodyKinematics:
         anchor = self._point(state, "Rigid-body transport source")
         target = self._point(point, "Rigid-body transport target")
         physical = self.cotangent_space.validate(cotangent)
@@ -1055,7 +1070,9 @@ class RigidBodyStateGeometry(AbstractStateGeometry):
             )
         )
 
-    def cut_locus_margin(self, state, point, /):
+    def cut_locus_margin(
+        self, state: RigidBodyKinematics, point: RigidBodyKinematics, /
+    ) -> Array:
         anchor = self._point(state, "Rigid-body chart anchor")
         target = self._point(point, "Rigid-body chart point")
         if self.orientation_geometry is None:

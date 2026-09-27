@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -25,7 +28,7 @@ from phydrax.nn.models import LatentContractionModel
 from phydrax.terms import RaggedTimeSeriesDataTerm
 
 
-def _as_scalar(x):
+def _as_scalar(x: Any) -> Any:
     arr = jnp.asarray(x)
     if arr.ndim == 0:
         return arr
@@ -44,7 +47,7 @@ class AffineScalarLatent(_AbstractBaseModel):
         self.out_size = 2
         self.offset = jnp.asarray(offset)
 
-    def __call__(self, x, /, *, key=jr.key(0)):
+    def __call__(self, x: Any, /, *, key: Any = jr.key(0)) -> Any:
         del key
         x = _as_scalar(x)
         return jnp.stack([x + self.offset, jnp.array(1.0)], axis=-1)
@@ -58,7 +61,7 @@ class DataPlusOneLatent(_AbstractBaseModel):
         self.in_size = "scalar"
         self.out_size = 2
 
-    def __call__(self, x, /, *, key=jr.key(0)):
+    def __call__(self, x: Any, /, *, key: Any = jr.key(0)) -> Any:
         del key
         data = _as_scalar(x)
         return jnp.stack([data, jnp.array(1.0)], axis=-1)
@@ -72,13 +75,13 @@ class OnePlusTimeLatent(_AbstractBaseModel):
         self.in_size = "scalar"
         self.out_size = 2
 
-    def __call__(self, x, /, *, key=jr.key(0)):
+    def __call__(self, x: Any, /, *, key: Any = jr.key(0)) -> Any:
         del key
         t = _as_scalar(x)
         return jnp.stack([jnp.array(1.0), t], axis=-1)
 
 
-def test_axis_contraction_plan_supports_multi_term_and_gather():
+def test_axis_contraction_plan_supports_multi_term_and_gather() -> None:
     case = AxisFactor(
         "case",
         jnp.asarray([[[1.0], [2.0]], [[3.0], [4.0]]]),
@@ -112,7 +115,7 @@ def test_axis_contraction_plan_supports_multi_term_and_gather():
     assert jnp.allclose(out.data[:, 0], expected)
 
 
-def test_latent_contraction_axis_batch_matches_product_grid_and_grad():
+def test_latent_contraction_axis_batch_matches_product_grid_and_grad() -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=2,
@@ -137,7 +140,7 @@ def test_latent_contraction_axis_batch_matches_product_grid_and_grad():
     )
     assert jnp.allclose(jnp.asarray(out.data), expected)
 
-    def total(scale):
+    def total(scale: Any) -> Any:
         scaled = LatentContractionModel(
             latent_size=2,
             out_size="scalar",
@@ -151,7 +154,7 @@ def test_latent_contraction_axis_batch_matches_product_grid_and_grad():
     assert jnp.isfinite(grad)
 
 
-def test_irregular_ragged_constraint_uses_case_major_axis_batch():
+def test_irregular_ragged_constraint_uses_case_major_axis_batch() -> None:
     inputs = jnp.asarray([[0.0], [1.0], [2.0]])
     times = jnp.asarray(
         [

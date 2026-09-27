@@ -23,6 +23,7 @@ urdf = """
   </joint>
 </robot>
 """
+# ty: ignore[missing-argument]
 adaptation = parse_urdf_text(urdf)
 particles = adaptation.particles.prepare()
 bodies = adaptation.bodies.prepare(particles)

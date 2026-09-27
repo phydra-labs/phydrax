@@ -9,7 +9,8 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ._projective import ComplexProjectiveAtlas
@@ -32,7 +33,7 @@ class ProjectiveHypersurface(StrictModule):
         /,
         *,
         hypersurface_id: str,
-    ):
+    ) -> None:
         if not callable(polynomial):
             raise TypeError("polynomial must be callable.")
         dimension = int(projective_dimension)

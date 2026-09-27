@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -259,7 +260,7 @@ class CochainPartition(StrictModule, NonTrainableState):
     partition_count: int = eqx.field(static=True)
     partition_id: str = eqx.field(static=True)
 
-    def __init__(self, owners: Sequence[ArrayLike], partition_count: int, /):
+    def __init__(self, owners: Sequence[ArrayLike], partition_count: int, /) -> None:
         count = int(partition_count)
         arrays = tuple(jnp.asarray(value, dtype=jnp.int32) for value in owners)
         if count <= 0 or not arrays:
@@ -291,7 +292,7 @@ class CochainHaloExchange(StrictModule, NonTrainableState):
         partition: CochainPartition,
         degree: int,
         /,
-    ):
+    ) -> None:
         degree_ = int(degree)
         if len(partition.owners) != len(cochain.cell_counts):
             raise ValueError("Partition must cover every cochain degree.")
@@ -341,7 +342,7 @@ class UnstructuredMaxwellPlan(StrictModule):
         /,
         *,
         courant_factor: float = 0.9,
-    ):
+    ) -> None:
         if not isinstance(cochain, CochainDiscretization) or cochain.max_degree != 3:
             raise TypeError("Unstructured Maxwell requires a 3-D CochainDiscretization.")
         if not isinstance(constitutive, AbstractMaxwellConstitutivePlan):
@@ -379,7 +380,7 @@ class PreparedUnstructuredMaxwell(StrictModule):
     stable_dt: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: UnstructuredMaxwellPlan, /):
+    def __init__(self, plan: UnstructuredMaxwellPlan, /) -> None:
         constitutive = plan.constitutive.prepare(plan.cochain, plan.layout)
         if not constitutive.capabilities.reversible:
             raise ValueError(

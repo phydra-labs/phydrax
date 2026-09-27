@@ -2,17 +2,20 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 from phydrax.ml import metrics
 
 
-def _points(result, value):
+def _points(result: Any, value: Any) -> Any:
     return value[result.point_mask]
 
 
-def test_weighted_selective_curve_uses_attainable_tie_endpoints_and_mass_aurc():
+def test_weighted_selective_curve_uses_attainable_tie_endpoints_and_mass_aurc() -> None:
     loss = jnp.array([1.0, 4.0, 2.0, jnp.nan])
     score = jnp.array([3.0, 1.0, 2.0, jnp.nan])
     weight = jnp.array([1.0, 2.0, 1.0, 20.0])
@@ -40,7 +43,7 @@ def test_weighted_selective_curve_uses_attainable_tie_endpoints_and_mass_aurc():
     assert float(oracle.aurc) < float(result.aurc)
 
 
-def test_complete_score_ties_are_indivisible_and_permutation_invariant():
+def test_complete_score_ties_are_indivisible_and_permutation_invariant() -> None:
     loss = jnp.array([1.0, 4.0, 2.0, 7.0])
     score = jnp.array([1.0, 1.0, 2.0, 2.0])
     weight = jnp.array([1.0, 2.0, 1.0, 3.0])
@@ -71,7 +74,7 @@ def test_complete_score_ties_are_indivisible_and_permutation_invariant():
     assert jnp.allclose(complete_tie.aurc, jnp.mean(loss))
 
 
-def test_selective_and_spearman_masks_follow_metric_status_semantics():
+def test_selective_and_spearman_masks_follow_metric_status_semantics() -> None:
     loss = jnp.array([1.0, 2.0, jnp.nan])
     score = jnp.array([1.0, 2.0, jnp.nan])
     mask = jnp.array([True, True, False])
@@ -110,7 +113,7 @@ def test_selective_and_spearman_masks_follow_metric_status_semantics():
         assert jnp.all(jnp.isnan(values[~masked.point_mask]))
 
 
-def test_weighted_spearman_midranks_match_literal_integer_replication():
+def test_weighted_spearman_midranks_match_literal_integer_replication() -> None:
     first = jnp.array([0.0, 1.0, 2.0])
     second = jnp.array([2.0, 0.0, 1.0])
     frequency = jnp.array([1.0, 2.0, 3.0])
@@ -125,7 +128,7 @@ def test_weighted_spearman_midranks_match_literal_integer_replication():
     assert jnp.allclose(weighted.effective_weight, 6.0)
 
 
-def test_selective_metrics_are_jittable_case_batched_and_hard_ranked():
+def test_selective_metrics_are_jittable_case_batched_and_hard_ranked() -> None:
     loss = jnp.array([[1.0, 4.0, 2.0], [3.0, 1.0, 5.0]])
     score = jnp.array([[3.0, 1.0, 2.0], [2.0, 3.0, 1.0]])
 
@@ -155,7 +158,7 @@ def test_selective_metrics_are_jittable_case_batched_and_hard_ranked():
     assert jnp.any(jnp.abs(loss_gradient) > 0.0)
 
 
-def test_identical_paired_losses_have_exact_zero_effect_and_bounds():
+def test_identical_paired_losses_have_exact_zero_effect_and_bounds() -> None:
     plan = metrics.PairedLossComparisonPlan(
         confidence=0.8, resamples=32, noninferiority_margin=0.0
     )
@@ -174,7 +177,7 @@ def test_identical_paired_losses_have_exact_zero_effect_and_bounds():
     assert bool(result.noninferior)
 
 
-def test_grouped_paired_bootstrap_resamples_whole_groups_and_replays():
+def test_grouped_paired_bootstrap_resamples_whole_groups_and_replays() -> None:
     reference = jnp.array([1_000.0, 2_000.0, 3_000.0, 4_000.0])
     candidate = reference + jnp.array([0.0, 2.0, 3.0, 5.0])
     weight = jnp.array([1.0, 3.0, 2.0, 2.0])
@@ -213,7 +216,7 @@ def test_grouped_paired_bootstrap_resamples_whole_groups_and_replays():
     assert jnp.allclose(first.effect, 2.75)
 
 
-def test_paired_central_and_one_sided_quantiles_are_distinct_contracts():
+def test_paired_central_and_one_sided_quantiles_are_distinct_contracts() -> None:
     reference = jnp.zeros(8)
     candidate = jnp.arange(8.0)
     plan = metrics.PairedLossComparisonPlan(
@@ -239,7 +242,7 @@ def test_paired_central_and_one_sided_quantiles_are_distinct_contracts():
     )
 
 
-def test_paired_comparison_reports_independent_unit_insufficiency():
+def test_paired_comparison_reports_independent_unit_insufficiency() -> None:
     plan = metrics.PairedLossComparisonPlan(resamples=8)
     one_case = metrics.compare_paired_losses(
         jnp.array([1.0]),

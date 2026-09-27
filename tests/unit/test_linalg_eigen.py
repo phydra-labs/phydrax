@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -14,7 +17,7 @@ la = phx.linalg
 eigen = la.eigen
 
 
-def _self_adjoint_properties(*, positive_definite=False):
+def _self_adjoint_properties(*, positive_definite: Any = False) -> Any:
     evidence = {"self_adjoint": "construction"}
     if positive_definite:
         evidence.update(
@@ -26,11 +29,12 @@ def _self_adjoint_properties(*, positive_definite=False):
     return la.OperatorProperties(
         self_adjoint=True,
         positive_definite=positive_definite,
+        # ty: ignore[invalid-argument-type]
         evidence=evidence,
     )
 
 
-def test_lobpcg_standard_eigenpairs_are_jittable_and_resource_checked():
+def test_lobpcg_standard_eigenpairs_are_jittable_and_resource_checked() -> None:
     diagonal = jnp.asarray([1.0, 2.0, 4.0, 8.0])
     operator = la.DiagonalLinearOperator(
         diagonal,
@@ -76,7 +80,7 @@ def test_lobpcg_standard_eigenpairs_are_jittable_and_resource_checked():
         )
 
 
-def test_generalized_eigenproblem_honors_metric_and_constraint_subspace():
+def test_generalized_eigenproblem_honors_metric_and_constraint_subspace() -> None:
     space = la.ArraySpace((3,), dtype=jnp.float64)
     operator = la.DiagonalLinearOperator(
         jnp.asarray([2.0, 6.0, 12.0]),
@@ -117,7 +121,7 @@ def test_generalized_eigenproblem_honors_metric_and_constraint_subspace():
     )
 
 
-def test_restarted_lanczos_supports_magnitude_targets_and_refresh():
+def test_restarted_lanczos_supports_magnitude_targets_and_refresh() -> None:
     diagonal = jnp.asarray([-5.0, 1.0, 2.0, 4.0])
     operator = la.DiagonalLinearOperator(
         diagonal,
@@ -158,7 +162,7 @@ def test_restarted_lanczos_supports_magnitude_targets_and_refresh():
     )
 
 
-def test_isolated_eigenvalue_gradient_uses_mathematical_derivative():
+def test_isolated_eigenvalue_gradient_uses_mathematical_derivative() -> None:
     properties = _self_adjoint_properties()
     policy = eigen.EigenSolvePolicy(
         eigen.LOBPCG(block_dimension=2),
@@ -167,7 +171,7 @@ def test_isolated_eigenvalue_gradient_uses_mathematical_derivative():
         differentiation="eigenvalues",
     )
 
-    def smallest_eigenvalue(coefficient):
+    def smallest_eigenvalue(coefficient: Any) -> Any:
         operator = la.DiagonalLinearOperator(
             jnp.stack((coefficient, jnp.asarray(3.0))),
             properties=properties,
@@ -180,7 +184,7 @@ def test_isolated_eigenvalue_gradient_uses_mathematical_derivative():
     assert jnp.allclose(jax.grad(smallest_eigenvalue)(1.25), 1.0, atol=1e-8)
 
 
-def test_matrix_free_eigenvalue_gradient_supports_closure_converted_operator():
+def test_matrix_free_eigenvalue_gradient_supports_closure_converted_operator() -> None:
     properties = _self_adjoint_properties()
     policy = eigen.EigenSolvePolicy(
         eigen.LOBPCG(block_dimension=2),
@@ -189,7 +193,7 @@ def test_matrix_free_eigenvalue_gradient_supports_closure_converted_operator():
         differentiation="eigenvalues",
     )
 
-    def smallest_eigenvalue(coefficient):
+    def smallest_eigenvalue(coefficient: Any) -> Any:
         diagonal = jnp.stack((coefficient, jnp.asarray(3.0)))
         space = la.ArraySpace((2,), dtype=diagonal.dtype)
         operator = la.FunctionLinearOperator(
@@ -208,7 +212,7 @@ def test_matrix_free_eigenvalue_gradient_supports_closure_converted_operator():
     assert jnp.allclose(gradient, 1.0, atol=1e-8)
 
 
-def test_lobpcg_repairs_rank_deficient_initial_basis_deterministically():
+def test_lobpcg_repairs_rank_deficient_initial_basis_deterministically() -> None:
     operator = la.DiagonalLinearOperator(
         jnp.asarray([1.0, 2.0, 3.0, 4.0]),
         properties=_self_adjoint_properties(),
@@ -239,7 +243,7 @@ def test_lobpcg_repairs_rank_deficient_initial_basis_deterministically():
     assert jnp.allclose(first.eigenvectors, second.eigenvectors, atol=0.0)
 
 
-def test_lobpcg_uses_preconditioner_and_reports_partial_convergence():
+def test_lobpcg_uses_preconditioner_and_reports_partial_convergence() -> None:
     properties = _self_adjoint_properties()
     diagonal = jnp.asarray([1.0, 2.0, 4.0, 8.0])
     operator = la.DiagonalLinearOperator(diagonal, properties=properties)
@@ -299,7 +303,7 @@ def test_lobpcg_uses_preconditioner_and_reports_partial_convergence():
     assert partial.iterations == 1
 
 
-def test_dense_eigh_auto_full_spectrum_is_jittable_and_refreshable():
+def test_dense_eigh_auto_full_spectrum_is_jittable_and_refreshable() -> None:
     matrix = jnp.asarray([[2.0, 1.0, 0.0], [1.0, 3.0, 0.5], [0.0, 0.5, 4.0]])
     operator = la.DenseLinearOperator(
         matrix,
@@ -347,7 +351,7 @@ def test_dense_eigh_auto_full_spectrum_is_jittable_and_refreshable():
         )
 
 
-def test_dense_generalized_eigh_respects_non_euclidean_pairing():
+def test_dense_generalized_eigh_respects_non_euclidean_pairing() -> None:
     pairing_weights = jnp.asarray([2.0, 3.0, 4.0])
     space = la.ArraySpace(
         (3,),
@@ -378,6 +382,7 @@ def test_dense_generalized_eigh_respects_non_euclidean_pairing():
     assert bool(result.successful)
     assert jnp.allclose(
         result.eigenvalues,
+        # ty: ignore[deprecated]
         spla.eigh(pairing_weights[:, None] * operator.matrix, paired_metric)[0],
     )
     assert jnp.allclose(
@@ -388,7 +393,7 @@ def test_dense_generalized_eigh_respects_non_euclidean_pairing():
     assert jnp.max(result.residual_norms) < 1e-12
 
 
-def test_dense_eigenvalue_derivatives_require_isolated_modes():
+def test_dense_eigenvalue_derivatives_require_isolated_modes() -> None:
     properties = _self_adjoint_properties()
     policy = eigen.EigenSolvePolicy(
         eigen.DenseEigh(),
@@ -396,7 +401,7 @@ def test_dense_eigenvalue_derivatives_require_isolated_modes():
         differentiation="eigenvalues",
     )
 
-    def spectral_sum(diagonal):
+    def spectral_sum(diagonal: Any) -> Any:
         problem = eigen.Eigenproblem(
             la.DiagonalLinearOperator(diagonal, properties=properties)
         )

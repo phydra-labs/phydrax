@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._model import AbstractArrayModel
 from ..._model._component import ModelExecutionContract
@@ -32,7 +32,7 @@ class OrdinalCumulativeLinkHead(AbstractArrayModel):
         location_model: AbstractArrayModel,
         cutpoints: OrderedOrdinalCutpoints,
         /,
-    ):
+    ) -> None:
         if not isinstance(location_model, AbstractArrayModel):
             raise TypeError("location_model must be an AbstractArrayModel.")
         if not isinstance(cutpoints, OrderedOrdinalCutpoints):

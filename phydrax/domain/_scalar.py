@@ -9,10 +9,13 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, Bool, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._doc import DOC_KEY0
 from .._sampling import host_design_factory, seed_from_key
+from ..typing import Bool, PRNGKey
+from ._base import _PointDim
 from ._coordinate import CoordinateSpec
 from ._domain import JointFactor
 from ._factor_component import FactorComponent
@@ -76,7 +79,7 @@ class AbstractScalarDomain(JointFactor):
         num_points: int,
         *,
         sampler: str,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> Array:
         raise NotImplementedError
 
@@ -106,7 +109,7 @@ class ScalarInterval(AbstractScalarDomain):
         end: float,
         *,
         label: str = "t",
-    ):
+    ) -> None:
         start_arr = jnp.asarray(start, dtype=jnp.float64).reshape(())
         end_arr = jnp.asarray(end, dtype=jnp.float64).reshape(())
         if bool(start_arr >= end_arr):
@@ -184,9 +187,14 @@ class ScalarInterval(AbstractScalarDomain):
         *,
         sampler: str = "latin_hypercube",
         where: Callable | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
-        def _sample_host(num_points, sampler, where, key):
+        def _sample_host(
+            num_points: int,
+            sampler: str,
+            where: Callable[..., object] | None,
+            key: ArrayLike,
+        ) -> np.ndarray:
             rng = np.random.default_rng(seed_from_key(key))
             sampler_fn = host_design_factory(sampler, dimension=1, seed=rng)
             samples = np.empty((0, 1), dtype=np.float64)
@@ -224,5 +232,5 @@ class ScalarInterval(AbstractScalarDomain):
         sampled = sampled * (self.end - self.start) + self.start
         return sampled
 
-    def _contains(self, points: Array) -> Bool[Array, " num_points"]:
+    def _contains(self, points: Array) -> Bool[_PointDim]:
         return (self.start <= points) & (points <= self.end)

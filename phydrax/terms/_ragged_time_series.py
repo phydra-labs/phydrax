@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 from phydrax.domain import (
@@ -34,6 +35,7 @@ from .._interpolation import (
 from .._sampling import design_name
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
+from ..typing import parse, PRNGKey
 from ._data_metrics import (
     reduce_supervised_loss,
     sample_case_indices as _sample_case_indices,
@@ -43,12 +45,12 @@ from ._data_metrics import (
 )
 
 
-RaggedTimeSeriesSampling = Literal[
+RaggedTimeSeriesSampling: TypeAlias = Literal[
     "observation_uniform",
     "case_uniform",
     "case_time_uniform",
 ]
-RaggedTimeSeriesInterpolation = Literal["nearest", "linear"]
+RaggedTimeSeriesInterpolation: TypeAlias = Literal["nearest", "linear"]
 
 
 class RaggedTimeSeriesBatch(StrictModule):
@@ -68,7 +70,7 @@ class RaggedTimeSeriesBatch(StrictModule):
         case_indices: ArrayLike,
         time_indices: ArrayLike,
         times: ArrayLike,
-    ):
+    ) -> None:
         self.points = points
         self.target = jnp.asarray(target)
         self.case_indices = jnp.asarray(case_indices, dtype=jnp.int32)
@@ -230,7 +232,7 @@ def _grid_points_from_case_time(
 
     data_samples = domain.input_rows(case_idx)
 
-    def _to_data_field(v: ArrayLike):
+    def _to_data_field(v: ArrayLike) -> cx.AxisArray:
         arr = jnp.asarray(v)
         if arr.ndim == 0:
             raise ValueError("Trajectory input rows must retain a case axis.")
@@ -371,7 +373,7 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
         case_indices: ArrayLike | None = None,
         label: str | None = None,
         data_accuracy_eps: float = 1e-12,
-    ):
+    ) -> None:
         """Create a supervised ragged time-series data constraint.
 
         Parameters:
@@ -397,31 +399,10 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
             )
         sampling_ = _normalize_sampling(sampling, component.domain)
 
-        sampling_str = str(selection)
-        if sampling_str not in (
-            "observation_uniform",
-            "case_uniform",
-            "case_time_uniform",
-        ):
-            raise ValueError(
-                "selection must be 'observation_uniform', 'case_uniform', or 'case_time_uniform'."
-            )
-        sampling_value: RaggedTimeSeriesSampling
-        if sampling_str == "observation_uniform":
-            sampling_value = "observation_uniform"
-        elif sampling_str == "case_uniform":
-            sampling_value = "case_uniform"
-        else:
-            sampling_value = "case_time_uniform"
-
-        interpolation_str = str(interpolation)
-        if interpolation_str not in ("nearest", "linear"):
-            raise ValueError("interpolation must be either 'nearest' or 'linear'.")
-        interpolation_value: RaggedTimeSeriesInterpolation
-        if interpolation_str == "nearest":
-            interpolation_value = "nearest"
-        else:
-            interpolation_value = "linear"
+        sampling_value = parse(str(selection), RaggedTimeSeriesSampling, "selection")
+        interpolation_value = parse(
+            str(interpolation), RaggedTimeSeriesInterpolation, "interpolation"
+        )
 
         reduction_str = str(reduction)
         if reduction_str not in ("mean", "sum"):
@@ -477,7 +458,7 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
     def sample(
         self,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Any:
         """Draw a ragged trajectory mini-batch and aligned target values."""
         domain = self.domain
@@ -564,7 +545,7 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
         domain: TrajectoryDatasetDomain | IrregularTrajectoryDatasetDomain,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> RaggedTimeSeriesBatch:
         count = self.sampling.count
         if not isinstance(count, tuple):
@@ -654,7 +635,7 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
         batch: RaggedTimeSeriesBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         var = self.fields[0]
@@ -670,7 +651,7 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: RaggedTimeSeriesBatch | None = None,
         **kwargs: Any,
     ) -> dict[str, Array]:
@@ -693,7 +674,7 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: RaggedTimeSeriesBatch | None = None,
         **kwargs: Any,

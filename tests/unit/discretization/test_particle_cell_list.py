@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _particles(ids, dimension=1, *, active_mask=None):
+def _particles(ids: Any, dimension: Any = 1, *, active_mask: Any = None) -> Any:
     count = len(ids)
     masses = np.ones((count,))
     if active_mask is not None:
@@ -23,15 +26,16 @@ def _particles(ids, dimension=1, *, active_mask=None):
     ).prepare()
 
 
-def _stable_pairs(state):
+def _stable_pairs(state: Any) -> Any:
     valid = np.asarray(state.pair_relation.valid, dtype="bool")
     left = np.asarray(state.pair_relation.left_particle_ids)[valid]
     right = np.asarray(state.pair_relation.right_particle_ids)[valid]
     return set(zip(left.tolist(), right.tolist(), strict=True))
 
 
-def test_cell_list_prepares_sparse_occupied_cell_resources():
+def test_cell_list_prepares_sparse_occupied_cell_resources() -> None:
     particles = _particles(range(6))
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     prepared = phx.discretization.CellListParticleNeighborhoodPlan(
         0.26,
@@ -63,8 +67,9 @@ def test_cell_list_prepares_sparse_occupied_cell_resources():
     assert dict(one_cell.preparation.resource_counts)["dense_cell_slots"] == 0
 
 
-def test_cell_list_sorting_preserves_logical_identity_and_matches_brute_pairs():
+def test_cell_list_sorting_preserves_logical_identity_and_matches_brute_pairs() -> None:
     particles = _particles([40, 10, 30, 20])
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     prepared = phx.discretization.CellListParticleNeighborhoodPlan(
         0.3,
@@ -92,10 +97,12 @@ def test_cell_list_sorting_preserves_logical_identity_and_matches_brute_pairs():
     )
 
 
-def test_cell_list_handles_periodic_seams_and_nonperiodic_domain_status():
+def test_cell_list_handles_periodic_seams_and_nonperiodic_domain_status() -> None:
     particles = _particles([0, 1], dimension=2)
     box = phx.discretization.ParticleBox(
+        # ty: ignore[invalid-argument-type]
         [0.0, 0.0],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         periodic_axes=(True, False),
     )
@@ -120,7 +127,7 @@ def test_cell_list_handles_periodic_seams_and_nonperiodic_domain_status():
     assert not upper_boundary.successful
 
 
-def test_cell_list_supports_bounded_four_dimensional_neighborhoods():
+def test_cell_list_supports_bounded_four_dimensional_neighborhoods() -> None:
     particles = _particles([0, 1, 2], dimension=4)
     box = phx.discretization.ParticleBox(jnp.zeros((4,)), jnp.ones((4,)))
     prepared = phx.discretization.CellListParticleNeighborhoodPlan(
@@ -144,8 +151,9 @@ def test_cell_list_supports_bounded_four_dimensional_neighborhoods():
     assert _stable_pairs(state) == {(0, 1)}
 
 
-def test_cell_and_pair_overflow_are_independent_and_fail_closed():
+def test_cell_and_pair_overflow_are_independent_and_fail_closed() -> None:
     particles = _particles(range(4))
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     clustered = jnp.asarray([[0.10], [0.11], [0.12], [0.13]])
 
@@ -193,8 +201,9 @@ def test_cell_and_pair_overflow_are_independent_and_fail_closed():
         compiled.dynamics.density(clustered).block_until_ready()
 
 
-def test_cell_list_enforces_candidate_resource_guard_before_runtime():
+def test_cell_list_enforces_candidate_resource_guard_before_runtime() -> None:
     particles = _particles(range(8), dimension=2)
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0, 0.0], [1.0, 1.0])
     plan = phx.discretization.CellListParticleNeighborhoodPlan(
         0.2,
@@ -207,8 +216,9 @@ def test_cell_list_enforces_candidate_resource_guard_before_runtime():
         plan.prepare(particles)
 
 
-def test_cell_list_runtime_build_is_filter_jittable():
+def test_cell_list_runtime_build_is_filter_jittable() -> None:
     particles = _particles(range(8))
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     prepared = phx.discretization.CellListParticleNeighborhoodPlan(
         0.3,

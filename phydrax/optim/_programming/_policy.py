@@ -13,12 +13,13 @@ import equinox as eqx
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...backends.clarabel import ClarabelPlan
-from ...backends.mpax import MPAXPlan
+from ...backends.mpax import MPAXPlan, MPAXRepresentation
 from ...linalg import (
     FailurePolicy,
     MaterializationPolicy,
     SolveResourcePolicy,
 )
+from ...typing import parse
 from ._types import ConvexProgramCapabilities
 
 
@@ -44,7 +45,7 @@ class ConvexTermination(StrictModule):
         primal_infeasible: float = 1e-8,
         dual_infeasible: float = 1e-8,
         maximum_steps: int = 100,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (absolute, relative, primal_infeasible, dual_infeasible)
@@ -101,7 +102,7 @@ class NativeHomogeneousConic(AbstractConvexProgramMethod):
         primal_step: float = 1e-2,
         dual_step: float = 1e-2,
         extrapolation: float = 1.0,
-    ):
+    ) -> None:
         primal = float(primal_step)
         dual = float(dual_step)
         extrapolation_ = float(extrapolation)
@@ -157,7 +158,7 @@ class DensePrimalDualQP(AbstractConvexProgramMethod):
         *,
         step_fraction: float = 0.995,
         max_kkt_dimension: int = 512,
-    ):
+    ) -> None:
         fraction = float(step_fraction)
         dimension = int(max_kkt_dimension)
         if not isfinite(fraction) or not 0.0 < fraction < 1.0:
@@ -207,12 +208,12 @@ class MPAXraPDHG(AbstractConvexProgramMethod):
     def __init__(
         self,
         *,
-        representation: str = "dense",
+        representation: MPAXRepresentation = "dense",
         warm_start: bool = False,
         feasibility_polishing: bool = False,
         unroll: bool = False,
         iteration_limit: int = 10_000,
-    ):
+    ) -> None:
         self.plan = MPAXPlan(
             "rapdhg",
             representation=representation,
@@ -259,12 +260,12 @@ class MPAXr2HPDHG(AbstractConvexProgramMethod):
     def __init__(
         self,
         *,
-        representation: str = "dense",
+        representation: MPAXRepresentation = "dense",
         warm_start: bool = False,
         feasibility_polishing: bool = False,
         unroll: bool = False,
         iteration_limit: int = 10_000,
-    ):
+    ) -> None:
         self.plan = MPAXPlan(
             "r2hpdhg",
             representation=representation,
@@ -308,7 +309,7 @@ class ClarabelInteriorPoint(AbstractConvexProgramMethod):
 
     plan: ClarabelPlan
 
-    def __init__(self, *, presolve: bool = True, verbose: bool = False):
+    def __init__(self, *, presolve: bool = True, verbose: bool = False) -> None:
         self.plan = ClarabelPlan(presolve=presolve, verbose=verbose)
 
     @property
@@ -361,7 +362,7 @@ class ConvexSolvePolicy(StrictModule):
         materialization: MaterializationPolicy | None = None,
         resources: SolveResourcePolicy | None = None,
         failure: FailurePolicy | None = None,
-    ):
+    ) -> None:
         method_ = DensePrimalDualQP() if method is None else method
         termination_ = ConvexTermination() if termination is None else termination
         materialization_ = (
@@ -430,7 +431,7 @@ class ConicGeneralizedDerivativePolicy(StrictModule):
         orthant_zero_value: float = 0.5,
         approach_direction: tuple[float, ...] = (),
         approach_scale: float = 1e-6,
-    ):
+    ) -> None:
         zero = float(orthant_zero_value)
         scale = float(approach_scale)
         direction = tuple(float(value) for value in approach_direction)
@@ -465,9 +466,8 @@ class ConvexDifferentiationPolicy(StrictModule):
         barrier: float | None = None,
         centering_tolerance: float = 1e-8,
         maximum_centering_steps: int = 32,
-    ):
-        if mode not in ("active-set-kkt", "barrier-kkt", "algorithmic", "none"):
-            raise ValueError("Unknown convex-program differentiation mode.")
+    ) -> None:
+        mode = parse(mode, ConvexDifferentiationMode, "mode")
         active = float(active_tolerance)
         strict = float(strict_complementarity_tolerance)
         centering = float(centering_tolerance)

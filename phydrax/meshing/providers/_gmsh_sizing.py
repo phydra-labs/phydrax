@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -44,7 +45,7 @@ _LIST_NAMES = {
 }
 
 
-def _size_values(specification: SurfaceMeshingSpec | VolumeMeshingSpec, /):
+def _size_values(specification: SurfaceMeshingSpec | VolumeMeshingSpec, /) -> Any:
     top_scope = (
         specification.scope
         if isinstance(specification, SurfaceMeshingSpec)
@@ -100,9 +101,9 @@ def _size_values(specification: SurfaceMeshingSpec | VolumeMeshingSpec, /):
 
 
 def _uniform_size_fields(
-    gmsh,
+    gmsh: Any,
     source: BRepModel,
-    shape,
+    shape: Any,
     specification: SurfaceMeshingSpec | VolumeMeshingSpec,
     cad_entities: _CadEntityMap | None,
     outside_size: float,
@@ -174,9 +175,11 @@ def _uniform_size_fields(
                 groups.append((control.target_size, tags, dimension))
     fields = []
     if semantic_volume:
+        # ty: ignore[invalid-assignment]
         grouped = tuple((value, tags, dimension) for value, tags in groups)
     else:
         grouped = tuple(groups)
+    # ty: ignore[invalid-assignment]
     for value, tags, entity_dimension in grouped:
         field = gmsh.model.mesh.field.add("Constant")
         gmsh.model.mesh.field.setNumber(field, "VIn", value)
@@ -197,7 +200,7 @@ class _ProximityField:
 
 
 def _chord_is_normal(
-    gmsh, dimension: int, tag: int, point: np.ndarray, chord: np.ndarray, /
+    gmsh: Any, dimension: int, tag: int, point: np.ndarray, chord: np.ndarray, /
 ) -> bool:
     parameters = gmsh.model.getParametrization(dimension, tag, point.tolist())
     if dimension == 1:
@@ -210,7 +213,7 @@ def _chord_is_normal(
 
 
 def _proximity_gap(
-    gmsh,
+    gmsh: Any,
     dimension: int,
     sources: tuple[int, ...],
     targets: tuple[int, ...],
@@ -232,6 +235,7 @@ def _proximity_gap(
                     target,
                     np.asarray(coordinates, dtype=np.float64).reshape((2, 3)),
                 )
+    # ty: ignore[not-iterable]
     gap, source, target, points = best
     if not np.isfinite(gap) or gap <= tolerance:
         raise MeshingFailure(
@@ -253,7 +257,7 @@ def _proximity_gap(
 
 
 def _proximity_field(
-    gmsh, source: BRepModel, shape, control: ProximitySizeControl, /
+    gmsh: Any, source: BRepModel, shape: Any, control: ProximitySizeControl, /
 ) -> _ProximityField:
     """Local gap width is the sum of distances to both walls; size is gap / count."""
     dimension = control.source_scope.entity_dimension
@@ -294,7 +298,7 @@ class _BackgroundView:
     field: int
 
 
-def _background_view(gmsh, control: BackgroundMetricControl, /) -> _BackgroundView:
+def _background_view(gmsh: Any, control: BackgroundMetricControl, /) -> _BackgroundView:
     """Lower a vertex metric to a Gmsh list-data post-processing view."""
     mesh = control.mesh
     coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
@@ -335,9 +339,9 @@ class _SizeFields:
 
 
 def _apply_size_fields(
-    gmsh,
+    gmsh: Any,
     source: BRepModel,
-    shape,
+    shape: Any,
     specification: SurfaceMeshingSpec | VolumeMeshingSpec,
     cad_entities: _CadEntityMap | None,
     outside_size: float,
@@ -350,6 +354,7 @@ def _apply_size_fields(
     it only as the sole field, with every uniform target dominated by it.
     """
     view = None if background is None else _background_view(gmsh, background)
+    # ty: ignore[unresolved-attribute]
     if view is not None and background.mode is BackgroundMetricMode.ANISOTROPIC:
         gmsh.model.mesh.field.setAsBackgroundMesh(view.field)
         return _SizeFields((view.field,), (), view)
@@ -492,7 +497,9 @@ def _unique_edges(edges: np.ndarray, /) -> np.ndarray:
     return np.unique(np.sort(np.asarray(edges, dtype=np.int64), axis=1), axis=0)
 
 
-def _wall_distance(gmsh, dimension: int, tags, points: np.ndarray, /) -> np.ndarray:
+def _wall_distance(
+    gmsh: Any, dimension: int, tags: Any, points: np.ndarray, /
+) -> np.ndarray:
     distance = np.full((points.shape[0],), np.inf)
     for tag in tags:
         closest, _ = gmsh.model.getClosestPoint(dimension, tag, points.reshape(-1))
@@ -506,7 +513,7 @@ def _wall_distance(gmsh, dimension: int, tags, points: np.ndarray, /) -> np.ndar
 
 
 def _proximity_evidence(
-    gmsh,
+    gmsh: Any,
     fields: tuple[_ProximityField, ...],
     edges: np.ndarray,
     points: np.ndarray,
@@ -563,7 +570,7 @@ def _proximity_evidence(
 
 
 def _background_metric_evidence(
-    gmsh,
+    gmsh: Any,
     view: _BackgroundView | None,
     edges: np.ndarray,
     points: np.ndarray,

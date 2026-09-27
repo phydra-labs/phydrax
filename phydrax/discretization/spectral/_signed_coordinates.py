@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._trainable import NonTrainableState
@@ -35,6 +36,7 @@ class SignedHermitianSpectralCoordinates(AbstractRealCoordinateMap, NonTrainable
     fixed_signs: Array
     representative_indices: Array
     partner_indices: Array
+    source_space: ArraySpace
     coordinate_space: ArraySpace
     mode_shape: tuple[int, ...] = eqx.field(static=True)
     component_shape: tuple[int, ...] = eqx.field(static=True)
@@ -61,7 +63,7 @@ class SignedHermitianSpectralCoordinates(AbstractRealCoordinateMap, NonTrainable
         layout_id: str,
         reality_tolerance: float = 1e-10,
         maximum_coordinate_size: int = 10_000_000,
-    ):
+    ) -> None:
         if any(isinstance(size, bool) for size in (*mode_shape, *component_shape)):
             raise TypeError("Mode and component dimensions must be integers.")
         modes = tuple(index(size) for size in mode_shape)

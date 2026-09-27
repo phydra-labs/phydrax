@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from dataclasses import asdict
@@ -27,7 +29,7 @@ from phydrax.linalg import (
 )
 
 
-def _measure(function, arguments, warmup, repeats):
+def _measure(function: Any, arguments: Any, warmup: Any, repeats: Any) -> Any:
     compiled, compilation = measure_lower_and_compile(
         lambda: jax.jit(function).lower(*arguments), lambda lowered: lowered.compile()
     )
@@ -48,7 +50,7 @@ def _measure(function, arguments, warmup, repeats):
     }
 
 
-def _case(count, topology, scheme, args):
+def _case(count: Any, topology: Any, scheme: Any, args: Any) -> Any:
     compartments = tuple(
         ep.CompartmentSpec(
             f"c{index}",
@@ -74,8 +76,8 @@ def _case(count, topology, scheme, args):
     mask = jnp.zeros((count,), dtype="bool").at[0].set(count > 1)
     inputs = ep.CableStepInputs(injected, zeros, zeros, mask, jnp.full((count,), -65.0))
 
-    def run(initial):
-        def step(carry, _):
+    def run(initial: Any) -> Any:
+        def step(carry: Any, _: Any) -> Any:
             previous, successful, max_residual, max_kirchhoff = carry
             result = ep.step_cable(cable, previous, inputs)
             return (
@@ -93,13 +95,13 @@ def _case(count, topology, scheme, args):
     result, primal = _measure(run, (state,), args.warmup, args.repeats)
     final_state, successful, max_residual, max_kirchhoff = result
 
-    def one_step(current):
+    def one_step(current: Any) -> Any:
         varying_inputs = ep.CableStepInputs(
             current, zeros, zeros, mask, inputs.voltage_clamp_target_mV
         )
         return ep.step_cable(cable, state, varying_inputs)
 
-    def objective(current):
+    def objective(current: Any) -> Any:
         advanced = one_step(current)
         return jnp.mean(advanced.state.voltage_mV) + jnp.mean(
             advanced.state.membrane.gates[1]
@@ -169,7 +171,7 @@ def _case(count, topology, scheme, args):
         operator, right, _, _ = ep.assemble_cable_system(cable, state, evaluation, inputs)
         matrix = materialize(operator, MaterializationPolicy(max_entries=count * count))
 
-        def dense_reference(coefficients, rhs):
+        def dense_reference(coefficients: Any, rhs: Any) -> Any:
             return solve(
                 LinearSystem(DenseLinearOperator(coefficients)),
                 rhs,

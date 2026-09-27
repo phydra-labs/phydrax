@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import math
 from collections.abc import Hashable, Iterable, Sequence
 from typing import Any, Literal, Self, TypeAlias
@@ -22,6 +21,8 @@ from .._model._array import native_parameter_precision
 from .._model._component import ModelExecutionContract, RandomnessContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._typing_plan import validate_tree
+from ..typing import parse
 from ..units._dimension import DimensionSignature
 
 
@@ -83,18 +84,20 @@ class FeatureSchema(StrictModule, NonTrainableState):
         layout_id: str = "",
         dimensions: Iterable[DimensionSignature] | None = None,
         ports: Iterable[ValuePort] | None = None,
-    ):
+    ) -> None:
         names_ = tuple(str(name) for name in names)
         if not names_ or any(not name for name in names_):
             raise ValueError("Feature names must be non-empty strings.")
         if len(set(names_)) != len(names_):
             raise ValueError("Feature names must be unique.")
-        kinds_ = ("continuous",) * len(names_) if kinds is None else tuple(kinds)
-        valid_kinds = {"continuous", "ordinal", "categorical", "boolean"}
-        if len(kinds_) != len(names_) or any(kind not in valid_kinds for kind in kinds_):
+        kinds_: tuple[FeatureKind, ...] = (
+            ("continuous",) * len(names_) if kinds is None else tuple(kinds)
+        )
+        if len(kinds_) != len(names_):
             raise ValueError(
                 "Feature kinds must align with names and use supported values."
             )
+        kinds_ = tuple(parse(kind, FeatureKind, "kinds") for kind in kinds_)
         dimensions_ = _dimensions(dimensions, len(names_), "Feature")
         ports_ = None if ports is None else _port_values(ports)
         if ports_ is not None:
@@ -205,18 +208,8 @@ class TargetSchema(StrictModule, NonTrainableState):
         class_labels: Sequence[object] = (),
         dimensions: Iterable[DimensionSignature] | None = None,
         port: ValuePort | None = None,
-    ):
-        valid = {
-            "continuous",
-            "binary",
-            "multiclass",
-            "multilabel",
-            "ordinal",
-            "count",
-            "ranking",
-        }
-        if kind not in valid:
-            raise ValueError(f"Unsupported target kind {kind!r}.")
+    ) -> None:
+        kind = parse(kind, TargetKind, "kind")
         names_ = tuple(str(name) for name in names)
         if any(not name for name in names_) or len(set(names_)) != len(names_):
             raise ValueError("Target names must be non-empty and unique.")
@@ -358,7 +351,7 @@ def schema_port(
     raise TypeError("schema must be a FeatureSchema or TargetSchema.")
 
 
-def _size_shape(size: int | tuple[int, ...] | str, /) -> tuple[int, ...]:
+def _size_shape(size: int | tuple[int, ...] | Literal["scalar"], /) -> tuple[int, ...]:
     if size == "scalar":
         return ()
     if isinstance(size, int):
@@ -413,13 +406,14 @@ class AbstractFittedModel(AbstractArrayModel):
             changes["target_schema"] = target_schema
         if not changes:
             return self
-        bound = object.__new__(type(self))
-        for field in dataclasses.fields(self):
-            object.__setattr__(
-                bound,
-                field.name,
-                changes.get(field.name, object.__getattribute__(self, field.name)),
-            )
+        names = tuple(changes)
+        bound = eqx.tree_at(
+            lambda model: tuple(getattr(model, name) for name in names),
+            self,
+            tuple(changes[name] for name in names),
+            is_leaf=lambda node: node is None,
+        )
+        validate_tree(bound)
         return bound
 
     def output_ports(self) -> tuple[ValuePort, ...]:

@@ -9,16 +9,12 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
 
+from ..._dtype_names import real_precision_dtype_name, RealPrecisionDType
 from ..._fingerprint import canonical_fingerprint
-from ..._numerics._compensated import compensated_sum
-from ..._precision import (
-    PrecisionEvidenceEnvelope,
-    PrecisionRequest,
-    PrecisionResolution,
-    real_precision_dtype_name,
-    RealPrecisionDType,
-)
+from ..._numerics._compensated import Axis, compensated_sum
+from ..._precision import PrecisionEvidenceEnvelope, PrecisionRequest, PrecisionResolution
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
@@ -43,7 +39,7 @@ class FiniteElementPrecisionPolicy(StrictModule, NonTrainableState):
         accumulation_dtype: Any | None = None,
         output_dtype: Any | None = None,
         compensated_accumulation: bool = True,
-    ):
+    ) -> None:
         geometry = real_precision_dtype_name(geometry_dtype)
         evaluation = real_precision_dtype_name(evaluation_dtype)
         accumulation = real_precision_dtype_name(
@@ -86,22 +82,22 @@ class FiniteElementPrecisionPolicy(StrictModule, NonTrainableState):
             },
         )
 
-    def storage(self, value: Any, /):
+    def storage(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=self.storage_dtype)
 
-    def geometry(self, value: Any, /):
+    def geometry(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=self.geometry_dtype)
 
-    def evaluation(self, value: Any, /):
+    def evaluation(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=self.evaluation_dtype)
 
-    def accumulation(self, value: Any, /):
+    def accumulation(self, value: Any, /) -> Array:
         array = jnp.asarray(value)
         if not jnp.issubdtype(array.dtype, jnp.inexact):
             return array
         return array.astype(self.accumulation_dtype)
 
-    def output(self, value: Any, /):
+    def output(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=self.output_dtype)
 
     def evidence(self) -> PrecisionEvidenceEnvelope:
@@ -121,7 +117,7 @@ class FiniteElementPrecisionPolicy(StrictModule, NonTrainableState):
             dict(resolution.effective),
         )
 
-    def sum(self, value: Any, /, *, axis=None):
+    def sum(self, value: Any, /, *, axis: Axis = None) -> Array:
         array = self.accumulation(value)
         if self.compensated_accumulation:
             return compensated_sum(array, axis=axis)

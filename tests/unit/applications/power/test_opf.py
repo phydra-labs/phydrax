@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -25,7 +28,7 @@ from phydrax.applications.power import (
 TWO_BUS_STUDY = PowerStudy((BusControl("r", "reference"), BusControl("d")))
 
 
-def _congested(*, quadratic=0.0, q_load=0.0):
+def _congested(*, quadratic: Any = 0.0, q_load: Any = 0.0) -> Any:
     return PowerNetwork(
         (Bus("r", v_min=0.95, v_max=1.05), Bus("d", v_min=0.95, v_max=1.05)),
         (Branch("line", "r", "d", 0.0, 0.1, rate=0.4),),
@@ -55,7 +58,7 @@ def _congested(*, quadratic=0.0, q_load=0.0):
     )
 
 
-def test_dc_phase_shift_and_lossless_injection_signs():
+def test_dc_phase_shift_and_lossless_injection_signs() -> None:
     network = PowerNetwork(
         (Bus("r"), Bus("d")),
         (Branch("t", "r", "d", 0, 0.1, tap=1.1, phase=0.2),),
@@ -70,7 +73,9 @@ def test_dc_phase_shift_and_lossless_injection_signs():
 
 
 @pytest.mark.parametrize("quadratic", [0.0, 0.1])
-def test_dc_native_lp_and_qp_respect_congestion_and_original_balance(quadratic):
+def test_dc_native_lp_and_qp_respect_congestion_and_original_balance(
+    quadratic: Any,
+) -> None:
     result = solve_dc_opf(_congested(quadratic=quadratic), study=TWO_BUS_STUDY)
     assert bool(result.converged)
     np.testing.assert_allclose(result.generator_power, [0.4, 0.6], atol=2e-6)
@@ -78,7 +83,7 @@ def test_dc_native_lp_and_qp_respect_congestion_and_original_balance(quadratic):
     assert float(result.original_feasibility) < 1e-6
 
 
-def test_ac_opf_honours_both_end_mva_limits_and_original_equations():
+def test_ac_opf_honours_both_end_mva_limits_and_original_equations() -> None:
     compilation = compile_ac_opf(_congested(q_load=0.1), study=TWO_BUS_STUDY)
     result = solve_ac_opf(
         compilation,
@@ -96,7 +101,7 @@ def test_ac_opf_honours_both_end_mva_limits_and_original_equations():
     np.testing.assert_allclose(result.total_balance, 0, atol=1e-6)
 
 
-def test_infeasible_dc_generation_is_not_reported_as_success():
+def test_infeasible_dc_generation_is_not_reported_as_success() -> None:
     network = PowerNetwork(
         (Bus("r"),),
         (),

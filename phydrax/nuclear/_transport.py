@@ -11,7 +11,8 @@ from numbers import Integral
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from numpy.polynomial.legendre import leggauss
 
 from .._fingerprint import canonical_fingerprint
@@ -43,7 +44,7 @@ class SlabSNTransportPlan:
         ordinates: int = 8,
         maximum_iterations: int = 512,
         relative_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         widths = np.asarray(cell_widths, dtype=np.float64)
         total = np.asarray(total_cross_section, dtype=np.float64)
         scatter = np.asarray(scattering_cross_section, dtype=np.float64)
@@ -297,7 +298,7 @@ class BatemanDepletionPlan:
         /,
         *,
         conserved_weights: ArrayLike | None = None,
-    ):
+    ) -> None:
         matrix = np.asarray(transition_matrix, dtype=np.float64)
         if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1] or matrix.shape[0] == 0:
             raise ValueError("Depletion transition matrix must be non-empty and square.")

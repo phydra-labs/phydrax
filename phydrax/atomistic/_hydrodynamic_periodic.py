@@ -10,13 +10,19 @@ from itertools import product
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from ..linalg import ArraySpace, DenseLinearOperator, OperatorProperties
+from ..linalg import (
+    ArraySpace,
+    DenseLinearOperator,
+    OperatorProperties,
+    PropertyEvidence,
+)
 from ._hydrodynamic_mobility import (
     _active_slots,
     AbstractHydrodynamicMobilityPlan,
@@ -75,7 +81,7 @@ def _dense_matrix(blocks: Array) -> Array:
 
 
 def _positive_properties(*, definite: bool) -> OperatorProperties:
-    evidence = {
+    evidence: dict[str, PropertyEvidence] = {
         "self_adjoint": "construction",
         "positive_semidefinite": "construction",
     }
@@ -120,7 +126,7 @@ class DirectPeriodicRPYMobilityPlan(AbstractHydrodynamicMobilityPlan):
         maximum_particles: int,
         maximum_modes: int = 100_000,
         convergence_tolerance: float = 5.0e-3,
-    ):
+    ) -> None:
         radius = float(hydrodynamic_radius)
         viscosity = float(dynamic_viscosity)
         extent = int(reciprocal_extent)
@@ -182,7 +188,7 @@ class PreparedDirectPeriodicRPYMobility(AbstractPreparedHydrodynamicMobility):
         system: PreparedAtomisticSystem,
         active_slots: ArrayLike,
         /,
-    ):
+    ) -> None:
         if system.cell is None or not system.cell.fully_periodic or system.cell.rank != 3:
             raise ValueError("Direct periodic RPY requires a fully periodic 3-D cell.")
         slots = _active_slots(plan.maximum_particles, system, active_slots)
@@ -335,7 +341,7 @@ class PositiveSplitPeriodicRPYMobilityPlan(AbstractHydrodynamicMobilityPlan):
         maximum_particles: int,
         maximum_modes: int = 100_000,
         convergence_tolerance: float = 5.0e-3,
-    ):
+    ) -> None:
         direct = DirectPeriodicRPYMobilityPlan(
             hydrodynamic_radius,
             dynamic_viscosity,
@@ -399,7 +405,7 @@ class PreparedPositiveSplitPeriodicRPYMobility(AbstractPreparedHydrodynamicMobil
         system: PreparedAtomisticSystem,
         active_slots: ArrayLike,
         /,
-    ):
+    ) -> None:
         direct_plan = DirectPeriodicRPYMobilityPlan(
             plan.hydrodynamic_radius,
             plan.dynamic_viscosity,

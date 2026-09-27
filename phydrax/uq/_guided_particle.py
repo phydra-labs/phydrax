@@ -14,7 +14,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..stochastic._state_space import (
@@ -25,6 +26,7 @@ from ..stochastic._state_space import (
     StateSpaceStepContext,
     TransitionSample,
 )
+from ..typing import parse, PRNGKey
 from ._covariance import _factor_and_solve_covariance_system
 from ._particle import (
     effective_sample_size,
@@ -64,7 +66,7 @@ class AbstractParticleProposal(StrictModule):
     @abstractmethod
     def propose(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         problem: StateSpaceProblem,
         previous_state: ArrayLike,
         t0: ArrayLike,
@@ -97,7 +99,7 @@ class BootstrapParticleProposal(AbstractParticleProposal):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     proposal_id: str = eqx.field(static=True)
 
-    def __init__(self, state_shape: tuple[int, ...], /):
+    def __init__(self, state_shape: tuple[int, ...], /) -> None:
         shape = tuple(state_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("state_shape dimensions must be positive.")
@@ -106,14 +108,14 @@ class BootstrapParticleProposal(AbstractParticleProposal):
 
     def propose(
         self,
-        key,
-        problem,
-        previous_state,
-        t0,
-        t1,
-        observation,
-        mask,
-        context,
+        key: PRNGKey,
+        problem: StateSpaceProblem,
+        previous_state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        observation: ArrayLike,
+        mask: ArrayLike,
+        context: StateSpaceStepContext,
         /,
     ) -> ParticleProposalSample:
         del observation, mask
@@ -132,13 +134,13 @@ class BootstrapParticleProposal(AbstractParticleProposal):
 
     def lookahead_log_weight(
         self,
-        problem,
-        previous_state,
-        t0,
-        t1,
-        observation,
-        mask,
-        context,
+        problem: StateSpaceProblem,
+        previous_state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        observation: ArrayLike,
+        mask: ArrayLike,
+        context: StateSpaceStepContext,
         /,
     ) -> Array:
         del previous_state, t0, t1, observation, mask, context
@@ -171,7 +173,7 @@ class CallableGuidedParticleProposal(AbstractParticleProposal):
         state_shape: tuple[int, ...],
         lookahead: Callable[..., ArrayLike] | None = None,
         proposal_id: str = "guided",
-    ):
+    ) -> None:
         if not callable(sample) or not callable(log_prob):
             raise TypeError("sample and log_prob must be callable.")
         if lookahead is not None and not callable(lookahead):
@@ -189,14 +191,14 @@ class CallableGuidedParticleProposal(AbstractParticleProposal):
 
     def propose(
         self,
-        key,
-        problem,
-        previous_state,
-        t0,
-        t1,
-        observation,
-        mask,
-        context,
+        key: PRNGKey,
+        problem: StateSpaceProblem,
+        previous_state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        observation: ArrayLike,
+        mask: ArrayLike,
+        context: StateSpaceStepContext,
         /,
     ) -> ParticleProposalSample:
         _validate_problem_shape(problem, self.state_shape)
@@ -251,13 +253,13 @@ class CallableGuidedParticleProposal(AbstractParticleProposal):
 
     def lookahead_log_weight(
         self,
-        problem,
-        previous_state,
-        t0,
-        t1,
-        observation,
-        mask,
-        context,
+        problem: StateSpaceProblem,
+        previous_state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        observation: ArrayLike,
+        mask: ArrayLike,
+        context: StateSpaceStepContext,
         /,
     ) -> Array:
         _validate_problem_shape(problem, self.state_shape)
@@ -282,7 +284,7 @@ class LinearGaussianGuidedParticleProposal(AbstractParticleProposal):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     proposal_id: str = eqx.field(static=True)
 
-    def __init__(self, state_shape: tuple[int, ...], /):
+    def __init__(self, state_shape: tuple[int, ...], /) -> None:
         shape = tuple(state_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("state_shape dimensions must be positive.")
@@ -291,14 +293,14 @@ class LinearGaussianGuidedParticleProposal(AbstractParticleProposal):
 
     def propose(
         self,
-        key,
-        problem,
-        previous_state,
-        t0,
-        t1,
-        observation,
-        mask,
-        context,
+        key: PRNGKey,
+        problem: StateSpaceProblem,
+        previous_state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        observation: ArrayLike,
+        mask: ArrayLike,
+        context: StateSpaceStepContext,
         /,
     ) -> ParticleProposalSample:
         mean, covariance, lookahead, valid = _linear_gaussian_condition(
@@ -332,13 +334,13 @@ class LinearGaussianGuidedParticleProposal(AbstractParticleProposal):
 
     def lookahead_log_weight(
         self,
-        problem,
-        previous_state,
-        t0,
-        t1,
-        observation,
-        mask,
-        context,
+        problem: StateSpaceProblem,
+        previous_state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        observation: ArrayLike,
+        mask: ArrayLike,
+        context: StateSpaceStepContext,
         /,
     ) -> Array:
         _, _, lookahead, valid = _linear_gaussian_condition(
@@ -524,12 +526,11 @@ def _configuration(
     count = int(num_particles)
     if count < 1:
         raise ValueError("num_particles must be positive.")
-    if auxiliary_policy not in ("always", "ess", "never"):
-        raise ValueError("Unknown auxiliary_resampling_policy.")
-    if method not in ("systematic", "stratified", "multinomial", "residual"):
-        raise ValueError("Unknown resampling_method.")
-    if policy not in ("ess", "always", "never"):
-        raise ValueError("Unknown resampling_policy.")
+    auxiliary_policy = parse(
+        auxiliary_policy, AuxiliaryResamplingPolicy, "auxiliary_resampling_policy"
+    )
+    method = parse(method, ResamplingMethod, "resampling_method")
+    policy = parse(policy, ResamplingPolicy, "resampling_policy")
     level = float(threshold)
     if not np.isfinite(level) or not 0.0 < level <= 1.0:
         raise ValueError("resampling_threshold must lie in (0, 1].")
@@ -547,7 +548,7 @@ def _resampling_decision(
 
 
 def guided_particle_filter(
-    key: Key[Array, ""],
+    key: PRNGKey,
     problem: StateSpaceProblem,
     proposal: AbstractParticleProposal,
     /,

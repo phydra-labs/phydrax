@@ -5,6 +5,7 @@
 """Reference restitution/timestep campaign for spherical DEM qualification."""
 
 import json
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -12,7 +13,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _compiled(restitution):
+def _compiled(restitution: Any) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0, 1]), jnp.ones((2,)), ambient_dimension=2
     ).prepare()
@@ -43,7 +44,7 @@ def _compiled(restitution):
     )
 
 
-def _case(restitution, step_size):
+def _case(restitution: Any, step_size: Any) -> Any:
     compiled = _compiled(restitution)
     initial = compiled.initialize_state(
         0.0,
@@ -85,7 +86,7 @@ def _case(restitution, step_size):
     }
 
 
-def main():
+def main() -> None:
     cases = [
         _case(restitution, step_size)
         for restitution in (0.2, 0.5, 0.8, 0.95)

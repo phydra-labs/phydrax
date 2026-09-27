@@ -10,7 +10,8 @@ from typing import Any, Protocol, TYPE_CHECKING
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 
@@ -63,7 +64,7 @@ class SampledControlLoss(StrictModule):
         case_shape: tuple[int, ...],
         num_steps: int,
         method_id: str,
-    ):
+    ) -> None:
         samples = jnp.asarray(running_samples)
         integral = jnp.asarray(running_integral)
         terminal_ = jnp.asarray(terminal)

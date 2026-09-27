@@ -10,18 +10,20 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from OCP.BRepAdaptor import BRepAdaptor_Curve  # ty: ignore[unresolved-import]
-from OCP.BRepAlgoAPI import BRepAlgoAPI_Common  # ty: ignore[unresolved-import]
-from OCP.BRepGProp import BRepGProp  # ty: ignore[unresolved-import]
-from OCP.GeomAbs import GeomAbs_Line  # ty: ignore[unresolved-import]
-from OCP.GProp import GProp_GProps  # ty: ignore[unresolved-import]
-from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE  # ty: ignore[unresolved-import]
-from OCP.TopoDS import TopoDS  # ty: ignore[unresolved-import]
+from OCP.BRepAdaptor import BRepAdaptor_Curve
+from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
+from OCP.BRepGProp import BRepGProp
+from OCP.GeomAbs import GeomAbs_Line
+from OCP.GProp import GProp_GProps
+from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
+from OCP.TopoDS import TopoDS
 
 from .._fingerprint import canonical_fingerprint
 from ..geometry._cad_revision import CADSelectionSet
 from ..geometry.brep import (
     BRepEntityId,
+    BRepImportReport,
+    BRepModel,
     BRepPartitionPatch,
     BRepPartitionPolicy,
     BRepPartitionRegion,
@@ -65,7 +67,7 @@ class PlanarBandControl:
         side_schedules: Mapping[str, LayerSchedule] | Sequence[tuple[str, LayerSchedule]],
         tangential_target: float,
         /,
-    ):
+    ) -> None:
         patch = _text(patch_name, "patch_name")
         if isinstance(side_schedules, Mapping):
             entries = tuple(side_schedules.items())
@@ -247,11 +249,11 @@ class PlanarBandResult:
         )
 
     @property
-    def model(self):
+    def model(self) -> BRepModel:
         return self.partition.model
 
     @property
-    def report(self):
+    def report(self) -> BRepImportReport:
         return self.partition.model.report
 
 
@@ -302,6 +304,7 @@ def _rectangle(
     )
     if signed_area < 0.0:
         points = points[[0, 3, 2, 1]]
+    # ty: ignore[invalid-argument-type]
     return PlanarMeshRegion(points, ((0, 1, 2, 3),), feature_id=feature_id)
 
 
@@ -319,7 +322,9 @@ def _common_area(first: Any, second: Any, /) -> float:
     return _surface_area(operation.Shape())
 
 
-def _selection(partition: BRepPartitionResult, face_indices: tuple[int, ...], /):
+def _selection(
+    partition: BRepPartitionResult, face_indices: tuple[int, ...], /
+) -> CADSelectionSet:
     revision = cad_revision_from_brep_model(partition.model)
     return CADSelectionSet.from_revision(
         revision, tuple(f"face:{index}" for index in face_indices)
@@ -366,7 +371,7 @@ def _rectangles_overlap(
 def _edge_segments(shape: Any, embedding: PlanarEmbedding, /) -> tuple[np.ndarray, ...]:
     return tuple(
         _curve_segment(edge, embedding)
-        for edge in _explore_unique(shape, TopAbs_EDGE, TopoDS.Edge_s)
+        for edge in _explore_unique(shape, TopAbs_EDGE, TopoDS.Edge)
     )
 
 
@@ -477,8 +482,8 @@ def prepare_planar_bands(
         or source_digest != source.model.report.source_digest
     ):
         raise ValueError("The planar-band source bytes changed after partitioning.")
-    faces = _explore_unique(shape, TopAbs_FACE, TopoDS.Face_s)
-    edges = _explore_unique(shape, TopAbs_EDGE, TopoDS.Edge_s)
+    faces = _explore_unique(shape, TopAbs_FACE, TopoDS.Face)
+    edges = _explore_unique(shape, TopAbs_EDGE, TopoDS.Edge)
     if (
         len(faces) != source.model.topology.num_faces
         or len(edges) != source.model.topology.num_edges
@@ -489,7 +494,7 @@ def prepare_planar_bands(
         1.0,
         float(np.max(np.abs(np.asarray(source.model.mesh_vertices)), initial=0.0)),
     )
-    tolerance = 4096.0 * np.finfo(np.float64).eps * scale
+    tolerance = float(4096.0 * np.finfo(np.float64).eps * scale)
     region_by_face = {
         entity.index: region.name
         for region in source.regions
@@ -676,9 +681,9 @@ def prepare_planar_bands(
                 cumulative,
                 face_ids,
                 front_name,
-                tuple(float(value) for value in tangent),
-                tuple(float(value) for value in inward),
-                tuple(float(value) for value in origin),
+                (float(tangent[0]), float(tangent[1])),
+                (float(inward[0]), float(inward[1])),
+                (float(origin[0]), float(origin[1])),
                 float(
                     np.linalg.norm(
                         front_segments[front_name][1] - front_segments[front_name][0]

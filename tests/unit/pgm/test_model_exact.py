@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -6,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def _binary_pair(log_potentials=None):
+def _binary_pair(log_potentials: Any = None) -> Any:
     variables = phx.pgm.DiscreteVariableGroup("x", shape=(2,), num_states=2)
     values = (
         jnp.asarray([[[0.0, -1.0], [-1.0, 0.0]]])
@@ -23,7 +25,7 @@ def _binary_pair(log_potentials=None):
     return phx.pgm.DiscreteFactorGraph((variables,), (factor,))
 
 
-def test_factor_graph_log_score_pack_and_topology_are_stable():
+def test_factor_graph_log_score_pack_and_topology_are_stable() -> None:
     graph = _binary_pair()
     assignments = phx.pgm.pack_assignments(
         graph,
@@ -53,7 +55,7 @@ def test_factor_graph_log_score_pack_and_topology_are_stable():
     )
 
 
-def test_exact_enumeration_returns_normalizer_marginals_and_deterministic_map():
+def test_exact_enumeration_returns_normalizer_marginals_and_deterministic_map() -> None:
     graph = _binary_pair()
     result = phx.pgm.enumerate_factor_graph(graph)
     expected_log_normalizer = jnp.log(2.0 + 2.0 * jnp.exp(-1.0))
@@ -68,7 +70,7 @@ def test_exact_enumeration_returns_normalizer_marginals_and_deterministic_map():
     assert result.factor_probabilities[0].shape == (1, 2, 2)
 
 
-def test_exact_mixed_cardinality_and_hard_support_match_independent_reference():
+def test_exact_mixed_cardinality_and_hard_support_match_independent_reference() -> None:
     variables = phx.pgm.DiscreteVariableGroup(
         "x",
         shape=(2,),
@@ -94,7 +96,7 @@ def test_exact_mixed_cardinality_and_hard_support_match_independent_reference():
     assert result.variable_probabilities.values.shape == (5,)
 
 
-def test_infeasible_graph_and_resource_cap_fail_closed():
+def test_infeasible_graph_and_resource_cap_fail_closed() -> None:
     graph = _binary_pair(jnp.full((1, 2, 2), -jnp.inf))
     result = phx.pgm.enumerate_factor_graph(graph)
 
@@ -107,7 +109,7 @@ def test_infeasible_graph_and_resource_cap_fail_closed():
         phx.pgm.enumerate_factor_graph(_binary_pair(), max_configurations=3)
 
 
-def test_factor_graph_rejects_duplicate_scope_and_numerical_contract_violations():
+def test_factor_graph_rejects_duplicate_scope_and_numerical_contract_violations() -> None:
     variables = phx.pgm.DiscreteVariableGroup("x", shape=(2,), num_states=2)
     with pytest.raises(ValueError, match="repeat a variable"):
         phx.pgm.DiscreteFactorGraph(
@@ -129,7 +131,7 @@ def test_factor_graph_rejects_duplicate_scope_and_numerical_contract_violations(
         )
 
 
-def test_normalized_law_rejects_nonintegral_states_before_indexing():
+def test_normalized_law_rejects_nonintegral_states_before_indexing() -> None:
     graph = _binary_pair()
     plan = phx.pgm.plan_variable_elimination(graph)
     law = phx.pgm.NormalizedFactorGraphLaw(plan)
@@ -137,7 +139,7 @@ def test_normalized_law_rejects_nonintegral_states_before_indexing():
     assert jnp.isneginf(law.log_prob(jnp.asarray([0.9, 0.0])))
 
 
-def test_ising_weights_must_be_finite():
+def test_ising_weights_must_be_finite() -> None:
     variables = phx.pgm.DiscreteVariableGroup("x", shape=(1,), num_states=2)
     with pytest.raises(ValueError, match="finite"):
         phx.pgm.IsingFactorGroup(
@@ -146,7 +148,7 @@ def test_ising_weights_must_be_finite():
         )
 
 
-def test_empty_factor_graph_has_a_valid_empty_junction_tree():
+def test_empty_factor_graph_has_a_valid_empty_junction_tree() -> None:
     graph = phx.pgm.DiscreteFactorGraph(())
     plan = phx.pgm.plan_variable_elimination(graph)
     junction = phx.pgm.plan_junction_tree(plan)

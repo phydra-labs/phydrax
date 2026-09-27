@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...ein import contract
@@ -20,6 +23,10 @@ from ...nonlinear import (
 from ._reactions import MineralKinetics
 from ._speciation import MassActionSystem
 from ._transport import ComponentTransport, TransportBoundary
+
+
+# (old inventory, water volume, face water rate, dt, source, old mineral, area).
+_ReactiveArgs: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 
 class MonolithicReactiveTransportResult(StrictModule):
@@ -46,7 +53,7 @@ class MonolithicReactiveTransportPlan(StrictModule):
         /,
         *,
         minerals: MineralKinetics | None = None,
-    ):
+    ) -> None:
         if not isinstance(transport, ComponentTransport) or not isinstance(
             chemistry, MassActionSystem
         ):
@@ -143,7 +150,9 @@ class MonolithicReactiveTransportPlan(StrictModule):
             extent_initial = jnp.zeros_like(mineral_old)
         scale = jnp.maximum(jnp.max(jnp.abs(old), axis=0), 1.0)
 
-        def residual(state, args):
+        def residual(
+            state: tuple[Array, Array], args: _ReactiveArgs
+        ) -> tuple[Array, Array, Array]:
             logs, extent = state
             old_, volume_, water_, time_, source_, mineral_, area_ = args
             concentrations = self.chemistry.reference_concentration * jnp.exp(logs)
@@ -180,7 +189,7 @@ class MonolithicReactiveTransportPlan(StrictModule):
                 mineral_residual,
             )
 
-        def flat_residual(flat, args):
+        def flat_residual(flat: Array, args: _ReactiveArgs) -> Array:
             logs = flat[: cells * species].reshape((cells, species))
             extent = flat[cells * species :].reshape((cells, mineral_count))
             transport_residual, equilibrium, mineral_residual = residual(
@@ -194,7 +203,9 @@ class MonolithicReactiveTransportPlan(StrictModule):
                 )
             )
 
-        def valid(flat, residual_value, auxiliary, args):
+        def valid(
+            flat: Array, residual_value: object, auxiliary: object, args: object
+        ) -> Array:
             del residual_value, auxiliary, args
             logs = flat[: cells * species].reshape((cells, species))
             extent = flat[cells * species :].reshape((cells, mineral_count))

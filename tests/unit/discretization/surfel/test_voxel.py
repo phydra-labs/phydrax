@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -8,7 +10,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _dense_grid():
+def _dense_grid() -> Any:
     address = phx.discretization.MortonAddressPlan((-1.0, -1.0, -1.0), (1.0, 1.0, 1.0), 3)
     coordinates = np.stack(
         np.meshgrid(np.arange(8), np.arange(8), np.arange(8), indexing="ij"),
@@ -19,7 +21,7 @@ def _dense_grid():
     ).prepare(coordinates)
 
 
-def _plane_geometry(normals=None):
+def _plane_geometry(normals: Any = None) -> Any:
     positions = jnp.asarray(((0.0, 0.0, 0.0),))
     prepared = phx.discretization.SurfelSetPlan(
         jnp.asarray((0,)), positions, jnp.asarray((1.0,))
@@ -159,7 +161,7 @@ def test_surfel_voxel_projection_jits_and_has_fixed_route_gradient() -> None:
     assert bool(reference.successful)
     fixed_support = reference.supported
 
-    def objective(offset):
+    def objective(offset: Any) -> Any:
         moved = eqx.tree_at(
             lambda value: value.position,
             geometry,

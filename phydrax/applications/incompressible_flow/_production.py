@@ -7,13 +7,14 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -39,6 +40,7 @@ from ...solver._etdrk import (
 from ...solver._fixed_step import (
     AbstractFixedStepMethod,
     FixedStepResult,
+    RetriedFixedStepResult,
     RobustRetryPolicy,
 )
 from ...solver._production_runtime import (
@@ -61,6 +63,7 @@ from ...solver._runtime_lifecycle import (
 )
 from ...solver._semilinear_drift import SemilinearDrift
 from ...stochastic import OrnsteinUhlenbeckRealization
+from ...typing import parse
 from ._forcing import (
     ConstantPowerFourierForcingPlan,
     SolenoidalOUForcingPlan,
@@ -77,7 +80,7 @@ from ._statistics import (
 
 
 StatisticsWeighting = Literal["sample", "time"]
-ConstantPowerWiring = Literal["compiled", "adapter"]
+ConstantPowerWiring: TypeAlias = Literal["compiled", "adapter"]
 
 
 def _required_identifier(value: str, role: str, /) -> str:
@@ -105,7 +108,7 @@ class PeriodicSpectralProductionCase(StrictModule, NonTrainableState):
         /,
         *,
         case_id: str,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledIncompressibleSpectralDynamics):
             raise TypeError("dynamics must be CompiledIncompressibleSpectralDynamics.")
         label = _required_identifier(case_id, "case_id")
@@ -275,7 +278,7 @@ class _ConstantPowerPeriodicNonlinearDrift(StrictModule):
         base: SemilinearDrift,
         forcing: ConstantPowerFourierForcingPlan,
         /,
-    ):
+    ) -> None:
         self.base = base
         self.forcing = forcing
         self.forcing_id = forcing.forcing_id
@@ -309,7 +312,7 @@ class _PreparedConstantPowerPeriodicMethod(AbstractFixedStepMethod, NonTrainable
         base_method: PreparedETDRKMethod,
         forcing: ConstantPowerFourierForcingPlan,
         /,
-    ):
+    ) -> None:
         self.base_method = base_method
         self.forcing = forcing
         self.method_id = canonical_fingerprint(
@@ -417,7 +420,7 @@ class PreparedOUForcedETDRKMethod(AbstractFixedStepMethod, NonTrainableState):
         forcing: SolenoidalOUForcingPlan,
         realization: OrnsteinUhlenbeckRealization,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             base, (PreparedETDRKMethod, PreparedLESStabilityGuardedETDRKMethod)
         ):
@@ -701,7 +704,7 @@ class PreparedPeriodicDynamicETDRKMethod(AbstractFixedStepMethod, NonTrainableSt
         /,
         *,
         safety_factor: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(base_method, PreparedETDRKMethod):
             raise TypeError("base_method must be PreparedETDRKMethod.")
         if not isinstance(dynamics, CompiledIncompressibleSpectralDynamics):
@@ -859,7 +862,7 @@ class PreparedMACDynamicExplicitMethod(AbstractFixedStepMethod, NonTrainableStat
         /,
         *,
         safety_factor: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
             raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
         if dynamics.dynamic_les is None:
@@ -1012,7 +1015,7 @@ class MACConstantPressureGradientForcing(StrictModule, NonTrainableState):
         /,
         *,
         density: float,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         gradient = np.asarray(pressure_gradient, dtype=np.float64)
@@ -1070,7 +1073,7 @@ class _PeriodicStatisticsEvaluator(StrictModule):
         forcing: ConstantPowerFourierForcingPlan | None,
         ou_forcing: SolenoidalOUForcingPlan | None,
         /,
-    ):
+    ) -> None:
         self.method = method
         self.statistics = statistics
         self.forcing = forcing
@@ -1250,7 +1253,7 @@ class _ChannelStatisticsEvaluator(StrictModule):
     evaluator_id: str = eqx.field(static=True)
     value_size: int = eqx.field(static=True)
 
-    def __init__(self, statistics: SpectralChannelStatisticsPlan, /):
+    def __init__(self, statistics: SpectralChannelStatisticsPlan, /) -> None:
         self.statistics = statistics
         count = statistics.wall_normal_coordinates.size
         self.value_size = 15 * count + 9
@@ -1315,7 +1318,7 @@ class _MACStatisticsEvaluator(StrictModule):
         statistics: MACPlaneWallStatisticsPlan,
         pressure_gradient: MACConstantPressureGradientForcing | None,
         /,
-    ):
+    ) -> None:
         self.dynamics = dynamics
         self.statistics = statistics
         self.pressure_gradient = pressure_gradient
@@ -1382,6 +1385,8 @@ class _MACStatisticsEvaluator(StrictModule):
 
 
 class _PreparedProductionRoute:
+    _prepared_kind: ClassVar[str]
+
     def _bind_runtime(
         self,
         plan: Any,
@@ -1441,7 +1446,9 @@ class _PreparedProductionRoute:
     def resume(self, template: ProductionRunState, /) -> ProductionRunState:
         return self.runtime.resume(template)
 
-    def step(self, state: ProductionRunState, /):
+    def step(
+        self, state: ProductionRunState, /
+    ) -> tuple[ProductionRunState, RetriedFixedStepResult]:
         return self.runtime.step(state)
 
     def checkpoint(self, state: ProductionRunState, /) -> ProductionRunState:
@@ -1499,7 +1506,7 @@ class PeriodicSpectralProductionPlan(StrictModule):
         statistics_window_end: float | None = None,
         statistics_batch_duration: float | None = None,
         maximum_statistics_batches: int = 0,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledIncompressibleSpectralDynamics):
             raise TypeError("dynamics must be CompiledIncompressibleSpectralDynamics.")
         if not isinstance(
@@ -1527,8 +1534,9 @@ class PeriodicSpectralProductionPlan(StrictModule):
             ou_realization, OrnsteinUhlenbeckRealization
         ):
             raise TypeError("ou_realization has the wrong type.")
-        if constant_power_wiring not in ("compiled", "adapter"):
-            raise ValueError("constant_power_wiring must be 'compiled' or 'adapter'.")
+        constant_power_wiring = parse(
+            constant_power_wiring, ConstantPowerWiring, "constant_power_wiring"
+        )
         if forcing is None and constant_power_wiring != "compiled":
             raise ValueError(
                 "constant_power_wiring='adapter' requires constant_power_forcing."
@@ -1777,7 +1785,7 @@ class PreparedPeriodicSpectralProduction(_PreparedProductionRoute):
         args: Any = None,
         args_id: str | None = None,
         publisher: ByteBoundedAsyncPublisher | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, PeriodicSpectralProductionPlan):
             raise TypeError("plan must be PeriodicSpectralProductionPlan.")
         self._bind_runtime(
@@ -1891,7 +1899,7 @@ class SpectralChannelProductionPlan(StrictModule):
         statistics_window_end: float | None = None,
         statistics_batch_duration: float | None = None,
         maximum_statistics_batches: int = 0,
-    ):
+    ) -> None:
         if not isinstance(method, PreparedChannelSBDF2Method):
             raise TypeError("method must be PreparedChannelSBDF2Method.")
         if not isinstance(velocity_coordinates, HermitianSpectralCoordinates):
@@ -2057,7 +2065,7 @@ class PreparedSpectralChannelProduction(_PreparedProductionRoute):
         args: Any = None,
         args_id: str | None = None,
         publisher: ByteBoundedAsyncPublisher | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, SpectralChannelProductionPlan):
             raise TypeError("plan must be SpectralChannelProductionPlan.")
         self._bind_runtime(
@@ -2137,7 +2145,7 @@ class StructuredMACProductionPlan(StrictModule):
         statistics_window_end: float | None = None,
         statistics_batch_duration: float | None = None,
         maximum_statistics_batches: int = 0,
-    ):
+    ) -> None:
         if not isinstance(method, AbstractFixedStepMethod):
             raise TypeError("method must be AbstractFixedStepMethod.")
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
@@ -2297,7 +2305,7 @@ class PreparedStructuredMACProduction(_PreparedProductionRoute):
         args: Any = None,
         args_id: str | None = None,
         publisher: ByteBoundedAsyncPublisher | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, StructuredMACProductionPlan):
             raise TypeError("plan must be StructuredMACProductionPlan.")
         self._bind_runtime(

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import itertools
+from typing import Any
 
 import numpy as np
 import pytest
@@ -12,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _grid_triangles(rng, count):
+def _grid_triangles(rng: Any, count: Any) -> Any:
     axis = np.linspace(0.0, 1.0, count + 1)
     coordinates = np.stack(np.meshgrid(axis, axis, indexing="xy"), axis=-1).reshape(
         (-1, 2)
@@ -29,12 +30,12 @@ def _grid_triangles(rng, count):
     return coordinates, np.asarray(cells, dtype=np.int32)
 
 
-def _kuhn_tetrahedra(count):
+def _kuhn_tetrahedra(count: Any) -> Any:
     axis = np.linspace(0.0, 1.0, count + 1)
     grid = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1)
     coordinates = grid.transpose(2, 1, 0, 3).reshape((-1, 3))
 
-    def vertex(x, y, z):
+    def vertex(x: Any, y: Any, z: Any) -> Any:
         return (z * (count + 1) + y) * (count + 1) + x
 
     cells = []
@@ -49,7 +50,7 @@ def _kuhn_tetrahedra(count):
     return coordinates, np.asarray(cells, dtype=np.int32)
 
 
-def _randomly_oriented_mesh(cell_kind, seed):
+def _randomly_oriented_mesh(cell_kind: Any, seed: Any) -> Any:
     """Relabel vertices and permute every cell's local vertex order at random."""
 
     rng = np.random.default_rng(seed)
@@ -75,7 +76,7 @@ def _randomly_oriented_mesh(cell_kind, seed):
     return phx.discretization.CellMesh.from_tetrahedra(relabeled, cells)
 
 
-def _affine_points(mesh, reference_points):
+def _affine_points(mesh: Any, reference_points: Any) -> Any:
     corners = np.asarray(mesh.coordinates)[np.asarray(mesh.blocks[0].vertices)]
     jacobians = np.swapaxes(corners[:, 1:] - corners[:, :1], 1, 2)
     return corners[:, None, 0] + np.matmul(
@@ -83,7 +84,7 @@ def _affine_points(mesh, reference_points):
     ).squeeze(-1)
 
 
-def _routed_dof_points(mesh, element):
+def _routed_dof_points(mesh: Any, element: Any) -> Any:
     dof_map = phx.discretization.FiniteElementDofMap(mesh, (element,))
     routes = np.asarray(dof_map.cell_dofs[0])
     local_points = _affine_points(mesh, element.reference_nodes)
@@ -95,7 +96,7 @@ def _routed_dof_points(mesh, element):
     return routes, local_points, totals / counts[:, None], counts
 
 
-def _cubic(points):
+def _cubic(points: Any) -> Any:
     x, y = points[..., 0], points[..., 1]
     value = 1.0 + x - 2.0 * y + x**2 * y - x**3 + 3.0 * y**3 - 0.5 * x * y**2
     if points.shape[-1] == 3:
@@ -108,8 +109,8 @@ def _cubic(points):
 @pytest.mark.parametrize("order", (3, 4))
 @pytest.mark.parametrize("seed", (0, 1))
 def test_randomly_oriented_simplex_dofs_route_to_one_physical_point(
-    cell_kind, order, seed
-):
+    cell_kind: Any, order: Any, seed: Any
+) -> None:
     mesh = _randomly_oriented_mesh(cell_kind, seed)
     element = phx.discretization.lagrange_element(cell_kind, order)
 
@@ -123,7 +124,7 @@ def test_randomly_oriented_simplex_dofs_route_to_one_physical_point(
 
 
 @pytest.mark.parametrize("cell_kind", ("triangle", "tetrahedron"))
-def test_p3_interpolation_of_cubic_is_exact_and_continuous(cell_kind):
+def test_p3_interpolation_of_cubic_is_exact_and_continuous(cell_kind: Any) -> None:
     mesh = _randomly_oriented_mesh(cell_kind, 3)
     element = phx.discretization.lagrange_element(cell_kind, 3)
     routes, _local_points, global_points, _counts = _routed_dof_points(mesh, element)

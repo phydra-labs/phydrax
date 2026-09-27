@@ -2,8 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
 import zipfile
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -26,19 +28,19 @@ from phydrax.ml.artifacts import (
 )
 
 
-def _first_recipe_key():
+def _first_recipe_key() -> Any:
     return None
 
 
-def _second_recipe_key():
+def _second_recipe_key() -> Any:
     return None
 
 
-def _dimension(axis):
+def _dimension(axis: Any) -> Any:
     return phx.units.DimensionSignature({axis: 1})
 
 
-def _schema_bound_fit():
+def _schema_bound_fit() -> Any:
     features = jr.normal(jr.key(3), (24, 2))
     targets = features @ jnp.asarray([[1.5], [-0.5]]) + 0.25
     feature_schema = phx.ml.FeatureSchema(
@@ -60,8 +62,8 @@ def _schema_bound_fit():
 
 
 def test_fitted_executable_retains_schemas_and_ports_through_jit_and_artifacts(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     result, feature_schema, target_schema = _schema_bound_fit()
     executable = result.as_trainable()
     ports = result.model_ports()
@@ -90,7 +92,7 @@ def test_fitted_executable_retains_schemas_and_ports_through_jit_and_artifacts(
     assert jnp.allclose(loaded(points), executable(points))
 
 
-def _owner_ports():
+def _owner_ports() -> Any:
     position = phx.ValuePort(
         "position",
         event_shape=(2,),
@@ -112,7 +114,7 @@ def _owner_ports():
     return position, time, speed
 
 
-def test_port_backed_schemas_declare_owner_ports_through_artifacts(tmp_path):
+def test_port_backed_schemas_declare_owner_ports_through_artifacts(tmp_path: Any) -> None:
     position, time, speed = _owner_ports()
     feature_schema = phx.ml.FeatureSchema.from_ports((position, time))
     target_schema = phx.ml.TargetSchema.from_port(speed)
@@ -139,7 +141,7 @@ def test_port_backed_schemas_declare_owner_ports_through_artifacts(tmp_path):
     assert artifact.model.as_trainable().model_ports() == ports
 
 
-def test_port_backed_schemas_reject_contradicting_declarations():
+def test_port_backed_schemas_reject_contradicting_declarations() -> None:
     position, time, speed = _owner_ports()
 
     with pytest.raises(ValueError, match="component IDs in port order"):
@@ -172,7 +174,7 @@ def test_port_backed_schemas_reject_contradicting_declarations():
         scalar_target.model_ports()
 
 
-def test_ml_artifact_round_trip_preserves_contract_and_identity(tmp_path):
+def test_ml_artifact_round_trip_preserves_contract_and_identity(tmp_path: Any) -> None:
     result, feature_schema, target_schema = _schema_bound_fit()
     executable = result.as_trainable()
     destination = tmp_path / "linear.phxml"
@@ -189,6 +191,7 @@ def test_ml_artifact_round_trip_preserves_contract_and_identity(tmp_path):
     semantic, numeric, signature = executable_identity(executable)
 
     assert manifest.derivative_contract == result.derivative_contract
+    # ty: ignore[unresolved-attribute]
     assert manifest.derivative_contract.contract_id == (
         result.derivative_contract.contract_id
     )
@@ -197,13 +200,15 @@ def test_ml_artifact_round_trip_preserves_contract_and_identity(tmp_path):
     assert manifest.executable_signature.signature_id == signature.signature_id
     assert manifest.feature_schema == feature_schema
     assert manifest.target_schema == target_schema
+    # ty: ignore[unresolved-attribute]
     assert manifest.ports.ports_id == result.model_ports().ports_id
+    # ty: ignore[not-subscriptable]
     assert manifest.fit["method"] == result.method
     assert manifest.provenance == {"revision": 3, "source": "native"}
     assert manifest.licenses == ("PNPL-2.2",)
 
 
-def test_ml_artifact_identity_distinguishes_numeric_revisions():
+def test_ml_artifact_identity_distinguishes_numeric_revisions() -> None:
     result, _, _ = _schema_bound_fit()
     executable = result.as_trainable()
     shifted = eqx.tree_at(
@@ -234,8 +239,8 @@ def test_ml_artifact_identity_distinguishes_numeric_revisions():
     ],
 )
 def test_ml_artifact_rejects_records_inconsistent_with_executable(
-    tmp_path, mutate, message
-):
+    tmp_path: Any, mutate: Any, message: Any
+) -> None:
     result, _, _ = _schema_bound_fit()
     destination = tmp_path / "tampered.phxml"
     save_ml_artifact(destination, result.as_trainable(), fit_result=result)
@@ -245,12 +250,12 @@ def test_ml_artifact_rejects_records_inconsistent_with_executable(
         read_ml_artifact(destination)
 
 
-def test_ml_artifact_refuses_previous_format_record(tmp_path):
+def test_ml_artifact_refuses_previous_format_record(tmp_path: Any) -> None:
     result, _, _ = _schema_bound_fit()
     destination = tmp_path / "previous.phxml"
     save_ml_artifact(destination, result.as_trainable(), fit_result=result)
 
-    def previous_format(manifest):
+    def previous_format(manifest: Any) -> None:
         for field in ("ports", "derivative_contract", "identity"):
             del manifest[field]
         manifest["fit"]["gradient_contract"] = {"fit_mode": "direct"}
@@ -261,7 +266,7 @@ def test_ml_artifact_refuses_previous_format_record(tmp_path):
         read_ml_artifact(destination)
 
 
-def test_ml_artifact_rejects_checksum_corruption(tmp_path):
+def test_ml_artifact_rejects_checksum_corruption(tmp_path: Any) -> None:
     model = phx.nn.layers.Linear(
         in_size=1,
         out_size=1,
@@ -278,7 +283,7 @@ def test_ml_artifact_rejects_checksum_corruption(tmp_path):
         read_ml_artifact(destination)
 
 
-def test_quantum_feature_artifact_round_trip_preserves_execution(tmp_path):
+def test_quantum_feature_artifact_round_trip_preserves_execution(tmp_path: Any) -> None:
     layout = phx.operators.quantum.HilbertRegisterLayout(("q",), (2,))
     model = phx.ml.quantum.projected_iqp_feature_map(layout, axes=("Z",))
     destination = tmp_path / "quantum-feature.phxml"
@@ -290,7 +295,7 @@ def test_quantum_feature_artifact_round_trip_preserves_execution(tmp_path):
     assert jnp.allclose(restored.model(point), model(point))
 
 
-def _rewrite_archive_manifest(path, mutate):
+def _rewrite_archive_manifest(path: Any, mutate: Any) -> None:
     with zipfile.ZipFile(path, mode="r") as source:
         members = {
             information.filename: source.read(information)
@@ -309,9 +314,9 @@ def _rewrite_archive_manifest(path, mutate):
 
 
 def test_ml_artifact_rejects_billion_element_recipe_before_device_allocation(
-    tmp_path,
-    monkeypatch,
-):
+    tmp_path: Any,
+    monkeypatch: Any,
+) -> None:
     model = phx.nn.layers.Linear(
         in_size=1,
         out_size=1,
@@ -321,7 +326,7 @@ def test_ml_artifact_rejects_billion_element_recipe_before_device_allocation(
     destination = tmp_path / "oversized-recipe.phxml"
     save_ml_artifact(destination, model)
 
-    def mutate(manifest):
+    def mutate(manifest: Any) -> None:
         pending = [manifest["model_recipe"]]
         while pending:
             node = pending.pop()
@@ -348,7 +353,9 @@ def test_ml_artifact_rejects_billion_element_recipe_before_device_allocation(
         read_ml_artifact(destination)
 
 
-def test_ml_artifact_rejects_nonmapping_optional_metadata_as_corruption(tmp_path):
+def test_ml_artifact_rejects_nonmapping_optional_metadata_as_corruption(
+    tmp_path: Any,
+) -> None:
     model = phx.nn.layers.Linear(
         in_size=1,
         out_size=1,
@@ -367,9 +374,9 @@ def test_ml_artifact_rejects_nonmapping_optional_metadata_as_corruption(tmp_path
 
 
 def test_ml_artifact_binds_recipe_shape_to_exact_leaf_inventory(
-    tmp_path,
-    monkeypatch,
-):
+    tmp_path: Any,
+    monkeypatch: Any,
+) -> None:
     model = phx.nn.layers.Linear(
         in_size=1,
         out_size=1,
@@ -379,7 +386,7 @@ def test_ml_artifact_binds_recipe_shape_to_exact_leaf_inventory(
     destination = tmp_path / "mismatched-leaf.phxml"
     save_ml_artifact(destination, model)
 
-    def mutate(manifest):
+    def mutate(manifest: Any) -> None:
         pending = [manifest["model_recipe"]]
         while pending:
             node = pending.pop()
@@ -407,7 +414,7 @@ def test_ml_artifact_binds_recipe_shape_to_exact_leaf_inventory(
         read_ml_artifact(destination)
 
 
-def test_native_ml_artifact_refuses_registered_nonmodel_recipes(tmp_path):
+def test_native_ml_artifact_refuses_registered_nonmodel_recipes(tmp_path: Any) -> None:
     with pytest.raises(TypeError, match="AbstractArrayModel"):
         save_ml_artifact(
             tmp_path / "recipe.phxml",
@@ -415,7 +422,7 @@ def test_native_ml_artifact_refuses_registered_nonmodel_recipes(tmp_path):
         )
 
 
-def test_model_recipe_orders_set_and_mapping_keys_by_canonical_encoding():
+def test_model_recipe_orders_set_and_mapping_keys_by_canonical_encoding() -> None:
     register_artifact_value("test.recipe:z-key", _first_recipe_key)
     register_artifact_value("test.recipe:a-key", _second_recipe_key)
 
@@ -434,7 +441,9 @@ def test_model_recipe_orders_set_and_mapping_keys_by_canonical_encoding():
     ]
 
 
-def test_model_recipe_rejects_malformed_prng_key_before_allocation(monkeypatch):
+def test_model_recipe_rejects_malformed_prng_key_before_allocation(
+    monkeypatch: Any,
+) -> None:
     monkeypatch.setattr(
         structure_module.jnp,
         "zeros",

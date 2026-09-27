@@ -7,9 +7,10 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 
 
 def _nodes(nodes: ArrayLike, name: str, /) -> Array:

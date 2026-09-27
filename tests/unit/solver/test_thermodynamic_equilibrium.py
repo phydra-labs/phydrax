@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -11,7 +14,7 @@ import phydrax as phx
 R = phx.equations.UNIVERSAL_GAS_CONSTANT
 
 
-def _ideal_model(reference_energy=(0.0, -5000.0)):
+def _ideal_model(reference_energy: Any = (0.0, -5000.0)) -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (phx.equations.ChemicalPhaseKind.GAS,) * 2,
@@ -35,7 +38,7 @@ def _ideal_model(reference_energy=(0.0, -5000.0)):
     )
 
 
-def _pr_model():
+def _pr_model() -> Any:
     ideal_model = _ideal_model()
     parameters = phx.equations.PengRobinsonParameters(
         ideal_model.schema.catalog,
@@ -55,7 +58,7 @@ def _pr_model():
     )
 
 
-def test_chemical_equilibrium_conserves_elements_and_decreases_gibbs():
+def test_chemical_equilibrium_conserves_elements_and_decreases_gibbs() -> None:
     plan = phx.solver.ChemicalEquilibriumPlan(
         _ideal_model(), phx.solver.ChemicalEquilibriumEnsemble.TP
     )
@@ -69,7 +72,7 @@ def test_chemical_equilibrium_conserves_elements_and_decreases_gibbs():
     assert result.evidence.objective_change <= 1.0e-8
 
 
-def test_all_chemical_equilibrium_ensembles_retain_their_declared_constraint():
+def test_all_chemical_equilibrium_ensembles_retain_their_declared_constraint() -> None:
     model = _ideal_model(reference_energy=(0.0, 0.0))
     initial = jnp.asarray((0.5, 0.5))
     for ensemble in phx.solver.ChemicalEquilibriumEnsemble:
@@ -84,7 +87,7 @@ def test_all_chemical_equilibrium_ensembles_retain_their_declared_constraint():
         )
 
 
-def test_tpd_and_flash_return_fixed_shape_evidence():
+def test_tpd_and_flash_return_fixed_shape_evidence() -> None:
     model = _pr_model()
     feed = jnp.asarray((0.5, 0.5))
     stability = phx.solver.TPDSearchPlan(model, maximum_steps=40, tolerance=1.0e-6).solve(

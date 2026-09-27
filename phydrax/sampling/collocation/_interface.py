@@ -5,18 +5,22 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.axes as cx
 
-from ...domain import DomainFunction, GridBatch, PointBatch
+from ..._doc import DOC_KEY0
+from ...domain import DomainFunction, GridBatch, GridSampling, PointBatch, PointSampling
 from ...operators.differential import regularized_delta
+from ...typing import PRNGKey
 from ._adaptive import (
     AbstractCollocationPolicy,
     CollocationPolicy,
+    CollocationPopulation,
     PointwiseSamplingTerm,
 )
 
@@ -24,26 +28,34 @@ from ._adaptive import (
 class _NarrowBandTermProxy:
     def __init__(
         self, term: PointwiseSamplingTerm, policy: "NarrowBandCollocationPolicy"
-    ):
+    ) -> None:
         self.term = term
         self.narrow_band_policy = policy
 
     @property
-    def sampling(self):
+    def sampling(self) -> PointSampling | GridSampling:
         return self.term.sampling
 
     @property
-    def component(self):
+    def component(self) -> Any:
         return self.term.component
 
     @property
-    def policy(self):
+    def policy(self) -> NarrowBandCollocationPolicy:
         return self.narrow_band_policy
 
-    def sample(self, *, key):
+    def sample(self, *, key: PRNGKey) -> PointBatch | GridBatch:
         return self.term.sample(key=key)
 
-    def pointwise_score(self, functions, batch, /, *, key, **kwargs):
+    def pointwise_score(
+        self,
+        functions: Mapping[str, DomainFunction],
+        batch: PointBatch | GridBatch,
+        /,
+        *,
+        key: PRNGKey,
+        **kwargs: Any,
+    ) -> cx.AxisArray:
         residual = self.term.pointwise_score(functions, batch, key=key, **kwargs)
         name = self.narrow_band_policy.level_set_field
         if name not in functions:
@@ -90,7 +102,7 @@ class NarrowBandCollocationPolicy(AbstractCollocationPolicy):
         band_strength: float = 1.0,
         residual_strength: float = 1.0,
         normalization_epsilon: float = 1.0e-12,
-    ):
+    ) -> None:
         name = str(level_set_field)
         width = float(band_width)
         band = float(band_strength)
@@ -119,13 +131,21 @@ class NarrowBandCollocationPolicy(AbstractCollocationPolicy):
         self.normalization_epsilon = jnp.asarray(epsilon)
         self.refresh_every = base.refresh_every
 
-    def initialize(self, constraint: PointwiseSamplingTerm, /, *, key):
+    def initialize(
+        self,
+        constraint: PointwiseSamplingTerm,
+        /,
+        *,
+        key: PRNGKey = DOC_KEY0,
+    ) -> CollocationPopulation:
         return self.base_policy.initialize(constraint, key=key)
 
-    def should_refresh(self, population, iter_):
+    def should_refresh(
+        self, population: CollocationPopulation, iter_: int | Array
+    ) -> Array:
         return self.base_policy.should_refresh(population, iter_)
 
-    def data_metrics(self, population, /):
+    def data_metrics(self, population: CollocationPopulation, /) -> dict[str, Array]:
         metrics = self.base_policy.data_metrics(population)
         metrics["narrow_band_width"] = jnp.asarray(self.band_width)
         metrics["narrow_band_strength"] = self.band_strength
@@ -135,12 +155,12 @@ class NarrowBandCollocationPolicy(AbstractCollocationPolicy):
         self,
         constraint: PointwiseSamplingTerm,
         functions: Mapping[str, DomainFunction],
-        population,
+        population: CollocationPopulation,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array,
-    ):
+    ) -> CollocationPopulation:
         proxy = _NarrowBandTermProxy(constraint, self)
         return self.base_policy.refresh(
             proxy,
@@ -152,12 +172,12 @@ class NarrowBandCollocationPolicy(AbstractCollocationPolicy):
 
     def loss_batch_and_weight(
         self,
-        population,
+        population: CollocationPopulation,
         /,
     ) -> tuple[PointBatch | GridBatch, cx.AxisArray | None]:
         return self.base_policy.loss_batch_and_weight(population)
 
-    def refresh_residual_evaluations(self, population, /) -> int:
+    def refresh_residual_evaluations(self, population: CollocationPopulation, /) -> int:
         return self.base_policy.refresh_residual_evaluations(population)
 
 

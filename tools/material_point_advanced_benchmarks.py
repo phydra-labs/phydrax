@@ -8,6 +8,7 @@ import argparse
 import json
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -15,7 +16,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _time(function, *arguments, repetitions=3):
+def _time(function: Any, *arguments: Any, repetitions: Any = 3) -> Any:
     compiled = jax.jit(function)
     started = perf_counter()
     result = compiled(*arguments)
@@ -29,7 +30,7 @@ def _time(function, *arguments, repetitions=3):
     return first, steady
 
 
-def _base(schedule=None, assignment=None):
+def _base(schedule: Any = None, assignment: Any = None) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformAxisSpec(16, periodic=True, endpoint=False)
@@ -77,7 +78,7 @@ def _base(schedule=None, assignment=None):
     return compiled, arguments, state
 
 
-def run(output: Path):
+def run(output: Path) -> None:
     metrics = {}
     for schedule in (
         phx.discretization.USLMPMSchedule(),
@@ -193,7 +194,7 @@ def run(output: Path):
         raise SystemExit(1)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Benchmark advanced MPM capabilities.")
     parser.add_argument(
         "--output",

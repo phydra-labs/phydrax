@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -16,7 +19,7 @@ class _WrappedParameters(eqx.Module):
     scale: float = eqx.field(static=True)
 
 
-def _termination(*, maximum_steps=30, maximum_evaluations=None):
+def _termination(*, maximum_steps: Any = 30, maximum_evaluations: Any = None) -> Any:
     return phx.optim.OptimizationTermination(
         absolute_optimality=1e-10,
         relative_optimality=0.0,
@@ -25,14 +28,14 @@ def _termination(*, maximum_steps=30, maximum_evaluations=None):
     )
 
 
-def test_newton_krylov_eager_and_compiled_results_agree():
+def test_newton_krylov_eager_and_compiled_results_agree() -> None:
     problem = phx.optim.MinimizationProblem(
         lambda parameters, target: jnp.sum((parameters - target) ** 2)
     )
     method = phx.optim.NewtonKrylov()
     termination = _termination()
 
-    def solve(target):
+    def solve(target: Any) -> Any:
         return phx.optim.minimize(
             problem,
             jnp.array([-2.0, 4.0]),
@@ -57,11 +60,11 @@ def test_newton_krylov_eager_and_compiled_results_agree():
     )
 
 
-def test_native_methods_compile_with_nested_parameters():
+def test_native_methods_compile_with_nested_parameters() -> None:
     initial = {"left": jnp.array([-1.0]), "right": (jnp.array([3.0]),)}
     target = {"left": jnp.array([2.0]), "right": (jnp.array([-4.0]),)}
 
-    def objective(parameters, desired):
+    def objective(parameters: Any, desired: Any) -> Any:
         return jnp.sum((parameters["left"] - desired["left"]) ** 2) + jnp.sum(
             (parameters["right"][0] - desired["right"][0]) ** 2
         )
@@ -85,11 +88,11 @@ def test_native_methods_compile_with_nested_parameters():
     )
 
 
-def test_native_solver_compiles_with_partitioned_equinox_parameters():
+def test_native_solver_compiles_with_partitioned_equinox_parameters() -> None:
     wrapped = _WrappedParameters(jnp.array([0.0]), 2.0)
     initial, static = eqx.partition(wrapped, eqx.is_inexact_array)
 
-    def objective(parameters, target):
+    def objective(parameters: Any, target: Any) -> Any:
         model = eqx.combine(parameters, static)
         return jnp.sum((model.scale * model.weight - target) ** 2)
 
@@ -108,7 +111,7 @@ def test_native_solver_compiles_with_partitioned_equinox_parameters():
     assert int(result.status) == int(phx.optim.OptimizationStatus.SUCCESS)
 
 
-def test_gauss_newton_and_lm_compile_with_dynamic_data():
+def test_gauss_newton_and_lm_compile_with_dynamic_data() -> None:
     problem = phx.optim.NonlinearLeastSquaresProblem(
         lambda parameters, target: jnp.array(
             [parameters[0] - target, 2.0 * parameters[0] - 2.0 * target]
@@ -130,7 +133,7 @@ def test_gauss_newton_and_lm_compile_with_dynamic_data():
         assert int(result.status) == int(phx.optim.OptimizationStatus.SUCCESS)
 
 
-def test_native_solvers_vmap_over_dynamic_problem_data():
+def test_native_solvers_vmap_over_dynamic_problem_data() -> None:
     scalar_problem = phx.optim.MinimizationProblem(
         lambda parameters, target: jnp.sum((parameters - target) ** 2)
     )
@@ -170,7 +173,7 @@ def test_native_solvers_vmap_over_dynamic_problem_data():
     np.testing.assert_allclose(residual, targets, atol=1e-8)
 
 
-def test_native_solvers_jvp_matches_dynamic_solution_map():
+def test_native_solvers_jvp_matches_dynamic_solution_map() -> None:
     termination = _termination()
     scalar_problem = phx.optim.MinimizationProblem(
         lambda parameters, target: jnp.sum((parameters - target) ** 2)
@@ -206,7 +209,7 @@ def test_native_solvers_jvp_matches_dynamic_solution_map():
         np.testing.assert_allclose(derivative, tangent, atol=1e-8)
 
 
-def test_compiled_termination_statuses_are_array_driven():
+def test_compiled_termination_statuses_are_array_driven() -> None:
     problem = phx.optim.MinimizationProblem(
         lambda parameters, _: jnp.sum((parameters - 3.0) ** 4)
     )
@@ -223,7 +226,7 @@ def test_compiled_termination_statuses_are_array_driven():
     assert int(result.diagnostics.iterations) == 1
 
 
-def test_compiled_nonfinite_input_is_reported_without_tracer_conversion():
+def test_compiled_nonfinite_input_is_reported_without_tracer_conversion() -> None:
     problem = phx.optim.MinimizationProblem(lambda parameters, _: jnp.sum(parameters**2))
     result = eqx.filter_jit(
         lambda initial: phx.optim.minimize(
@@ -238,7 +241,7 @@ def test_compiled_nonfinite_input_is_reported_without_tracer_conversion():
     assert int(result.diagnostics.iterations) == 0
 
 
-def test_lm_rejected_trials_preserve_the_last_accepted_parameters():
+def test_lm_rejected_trials_preserve_the_last_accepted_parameters() -> None:
     problem = phx.optim.NonlinearLeastSquaresProblem(
         lambda parameters, _: jnp.where(
             parameters[0] > 0.0,
@@ -261,7 +264,7 @@ def test_lm_rejected_trials_preserve_the_last_accepted_parameters():
     assert int(result.diagnostics.rejected_steps) == 1
 
 
-def test_least_squares_initial_setup_respects_evaluation_budget_status():
+def test_least_squares_initial_setup_respects_evaluation_budget_status() -> None:
     problem = phx.optim.NonlinearLeastSquaresProblem(
         lambda parameters, _: parameters - 2.0
     )
@@ -284,7 +287,7 @@ def test_least_squares_initial_setup_respects_evaluation_budget_status():
     assert int(result.diagnostics.accepted_steps) == 0
 
 
-def test_native_curvature_methods_report_observed_prepared_refresh_reuse():
+def test_native_curvature_methods_report_observed_prepared_refresh_reuse() -> None:
     methods = (
         phx.optim.NewtonKrylov(),
         phx.optim.GaussNewton(),
@@ -297,7 +300,7 @@ def test_native_curvature_methods_report_observed_prepared_refresh_reuse():
     assert all(method.capabilities.implicit_differentiation for method in methods[:3])
 
 
-def test_prepared_refresh_diagnostics_match_linear_solve_lifecycle():
+def test_prepared_refresh_diagnostics_match_linear_solve_lifecycle() -> None:
     termination = _termination()
     scalar = phx.optim.minimize(
         lambda parameters, _: jnp.sum((parameters - 2.0) ** 2),
@@ -333,7 +336,7 @@ def test_prepared_refresh_diagnostics_match_linear_solve_lifecycle():
         )
 
 
-def test_callable_preconditioner_stays_outside_staged_refresh_carries():
+def test_callable_preconditioner_stays_outside_staged_refresh_carries() -> None:
     parameters = jnp.array([0.0])
     space = la.PyTreeSpace(parameters)
     inverse = la.FunctionLinearOperator(
@@ -391,7 +394,7 @@ def test_callable_preconditioner_stays_outside_staged_refresh_carries():
         )
 
 
-def test_native_prepared_methods_preserve_float32_parameter_carries():
+def test_native_prepared_methods_preserve_float32_parameter_carries() -> None:
     initial = jnp.array([0.0], dtype=jnp.float32)
     target = jnp.array([2.0], dtype=jnp.float32)
     termination = _termination(maximum_steps=12)

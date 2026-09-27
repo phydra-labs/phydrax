@@ -9,7 +9,8 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..linalg import PyTreeSpace
@@ -54,7 +55,7 @@ class IncrementalResidualGraph(StrictModule):
         /,
         *,
         relinearization_threshold: float,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedResidualGraph):
             raise TypeError("prepared must be PreparedResidualGraph.")
         threshold = float(relinearization_threshold)

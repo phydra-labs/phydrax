@@ -7,7 +7,8 @@ from __future__ import annotations
 from enum import IntEnum
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from ._cross_section import ThinWalledSection
@@ -39,7 +40,7 @@ class FiniteStripBucklingProblem(StrictModule):
         /,
         *,
         problem_id: str = "finite-strip-buckling",
-    ):
+    ) -> None:
         young = jnp.asarray(young_modulus)
         poisson = jnp.asarray(poisson_ratio, dtype=young.dtype)
         stress = jnp.asarray(segment_stress, dtype=young.dtype)

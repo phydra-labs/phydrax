@@ -1,3 +1,5 @@
+from typing import Any
+
 import diffrax as dfx
 import equinox as eqx
 import jax
@@ -17,11 +19,11 @@ class _LinearInterpolation(dfx.AbstractLocalInterpolation):
     y0: jax.Array
     y1: jax.Array
 
-    def evaluate(self, t0, t1=None, left=True):
+    def evaluate(self, t0: Any, t1: Any = None, left: Any = True) -> Any:
         del left
         start = jnp.asarray(t0)
 
-        def value(time):
+        def value(time: Any) -> Any:
             fraction = (time - self.t0) / (self.t1 - self.t0)
             return self.y0 + fraction * (self.y1 - self.y0)
 
@@ -30,12 +32,18 @@ class _LinearInterpolation(dfx.AbstractLocalInterpolation):
         return value(jnp.asarray(t1)) - value(start)
 
 
-def _problem(*, t1=2.0, delay=0.5, rate=0.2, problem_id="segmented-test"):
-    def history(time, args):
+def _problem(
+    *,
+    t1: Any = 2.0,
+    delay: Any = 0.5,
+    rate: Any = 0.2,
+    problem_id: Any = "segmented-test",
+) -> Any:
+    def history(time: Any, args: Any) -> Any:
         del args
         return jnp.exp(rate * time) * jnp.ones((1,))
 
-    def drift(time, state, memory, args):
+    def drift(time: Any, state: Any, memory: Any, args: Any) -> Any:
         del time, state, args
         return rate * jnp.exp(rate * delay) * memory["past"]
 
@@ -49,7 +57,7 @@ def _problem(*, t1=2.0, delay=0.5, rate=0.2, problem_id="segmented-test"):
     )
 
 
-def _fixed_segmented(problem, times, **kwargs):
+def _fixed_segmented(problem: Any, times: Any, **kwargs: Any) -> Any:
     return phx.solver.solve_diffrax_delay_segmented(
         problem,
         save_times=times,
@@ -61,7 +69,7 @@ def _fixed_segmented(problem, times, **kwargs):
     )
 
 
-def test_segmented_and_one_shot_fixed_solves_are_equivalent():
+def test_segmented_and_one_shot_fixed_solves_are_equivalent() -> None:
     problem = _problem(t1=3.0)
     times = jnp.linspace(0.0, 3.0, 31)
     one_shot = phx.solver.solve_diffrax_delay(
@@ -81,7 +89,7 @@ def test_segmented_and_one_shot_fixed_solves_are_equivalent():
     assert segmented.stats["controller_mode"] == "fixed"
 
 
-def test_active_history_bytes_plateau_with_horizon():
+def test_active_history_bytes_plateau_with_horizon() -> None:
     short = _fixed_segmented(_problem(t1=2.0), jnp.asarray([2.0]))
     long = _fixed_segmented(_problem(t1=8.0), jnp.asarray([8.0]))
 
@@ -91,7 +99,7 @@ def test_active_history_bytes_plateau_with_horizon():
     assert int(long.stats["num_segments"]) > int(short.stats["num_segments"])
 
 
-def test_rolling_history_wrap_preserves_logical_lookup_order():
+def test_rolling_history_wrap_preserves_logical_lookup_order() -> None:
     structure = {
         "y0": jax.ShapeDtypeStruct((1,), jnp.float64),
         "y1": jax.ShapeDtypeStruct((1,), jnp.float64),
@@ -118,7 +126,7 @@ def test_rolling_history_wrap_preserves_logical_lookup_order():
     )
 
 
-def test_rejected_candidate_history_is_functionally_isolated():
+def test_rejected_candidate_history_is_functionally_isolated() -> None:
     structure = {
         "y0": jax.ShapeDtypeStruct((1,), jnp.float64),
         "y1": jax.ShapeDtypeStruct((1,), jnp.float64),
@@ -146,7 +154,7 @@ def test_rejected_candidate_history_is_functionally_isolated():
     assert jnp.allclose(candidate.evaluate(jnp.asarray(0.5)), jnp.asarray([10.0]))
 
 
-def test_rejected_diffrax_candidates_never_enter_rolling_history():
+def test_rejected_diffrax_candidates_never_enter_rolling_history() -> None:
     solution = phx.solver.solve_diffrax_delay_segmented(
         _problem(t1=0.5, delay=1.0),
         save_times=jnp.asarray([0.5]),
@@ -165,7 +173,7 @@ def test_rejected_diffrax_candidates_never_enter_rolling_history():
     assert jnp.all(jnp.diff(starts) > 0.0)
 
 
-def test_segmented_event_stops_archive_at_root_boundary():
+def test_segmented_event_stops_archive_at_root_boundary() -> None:
     problem = phx.solver.DelayDifferentialProblem(
         lambda time, state, memory, args: jnp.ones_like(state),
         lambda time, args: jnp.zeros((1,)),
@@ -213,7 +221,7 @@ def test_segmented_event_stops_archive_at_root_boundary():
 
 
 @pytest.mark.filterwarnings("error:invalid value encountered in cast:RuntimeWarning")
-def test_scalar_stochastic_segments_replay_one_realization():
+def test_scalar_stochastic_segments_replay_one_realization() -> None:
     problem = phx.solver.DelayDifferentialProblem(
         lambda time, state, memory, args: 0.3 * memory["past"],
         lambda time, args: jnp.ones((1,)),
@@ -270,7 +278,7 @@ def test_scalar_stochastic_segments_replay_one_realization():
     assert jnp.allclose(segmented.states, one_shot.states, rtol=1e-7, atol=1e-9)
 
 
-def test_continuation_restart_matches_uninterrupted_segments():
+def test_continuation_restart_matches_uninterrupted_segments() -> None:
     problem = _problem(t1=2.0, problem_id="restartable")
     full = _fixed_segmented(problem, jnp.asarray([2.0]))
     partial = _fixed_segmented(
@@ -290,7 +298,7 @@ def test_continuation_restart_matches_uninterrupted_segments():
     assert int(restarted.stats["num_segments"]) == int(full.stats["num_segments"])
 
 
-def test_adaptive_history_overflow_is_an_explicit_result():
+def test_adaptive_history_overflow_is_an_explicit_result() -> None:
     problem = _problem(t1=1.0)
     solution = phx.solver.solve_diffrax_delay_segmented(
         problem,
@@ -316,7 +324,7 @@ def test_adaptive_history_overflow_is_an_explicit_result():
         )
 
 
-def test_segmented_requires_maximum_lag_and_adaptive_capacity():
+def test_segmented_requires_maximum_lag_and_adaptive_capacity() -> None:
     state_dependent = phx.solver.DelayDifferentialProblem(
         lambda time, state, memory, args: memory["past"],
         lambda time, args: jnp.ones((1,)),
@@ -345,7 +353,7 @@ def test_segmented_requires_maximum_lag_and_adaptive_capacity():
         )
 
 
-def test_segmented_state_dependent_and_neutral_delays_match_whole_solve():
+def test_segmented_state_dependent_and_neutral_delays_match_whole_solve() -> None:
     bounded_state_dependent = phx.solver.DelayDifferentialProblem(
         lambda time, state, memory, args: memory["past"],
         lambda time, args: jnp.ones((1,)),
@@ -398,7 +406,7 @@ def test_segmented_state_dependent_and_neutral_delays_match_whole_solve():
     assert neutral_segmented.stats["num_segments"] > 1
 
 
-def test_segmented_distributed_delay_matches_whole_solve():
+def test_segmented_distributed_delay_matches_whole_solve() -> None:
     term = phx.solver.DistributedDelay(
         "spread",
         lambda time, lag, state, args: jnp.asarray(5.0),
@@ -433,11 +441,11 @@ def test_segmented_distributed_delay_matches_whole_solve():
     assert segmented.stats["num_segments"] > 1
 
 
-def test_whole_solve_jit_is_rejected_as_host_dynamic():
+def test_whole_solve_jit_is_rejected_as_host_dynamic() -> None:
     problem = _problem(t1=0.5)
 
     @jax.jit
-    def run(t1):
+    def run(t1: Any) -> Any:
         traced = phx.solver.DelayDifferentialProblem(
             problem.drift,
             problem.history,

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,7 +15,7 @@ import pytest
 import phydrax as phx
 
 
-def _termination(*, maximum_steps=60):
+def _termination(*, maximum_steps: Any = 60) -> Any:
     return phx.optim.OptimizationTermination(
         absolute_optimality=1e-10,
         relative_optimality=0.0,
@@ -20,10 +23,10 @@ def _termination(*, maximum_steps=60):
     )
 
 
-def test_implicit_minimize_quadratic_jacobian_matches_inverse_hessian():
+def test_implicit_minimize_quadratic_jacobian_matches_inverse_hessian() -> None:
     hessian = jnp.array([[4.0, 1.0], [1.0, 3.0]])
 
-    def solution(linear):
+    def solution(linear: Any) -> Any:
         return phx.optim.implicit_minimize(
             lambda parameters, rhs: (
                 0.5 * parameters @ hessian @ parameters - rhs @ parameters
@@ -43,8 +46,8 @@ def test_implicit_minimize_quadratic_jacobian_matches_inverse_hessian():
     )
 
 
-def test_implicit_minimize_nonlinear_solution_uses_stationarity_derivative():
-    def solution(parameter):
+def test_implicit_minimize_nonlinear_solution_uses_stationarity_derivative() -> None:
+    def solution(parameter: Any) -> Any:
         return phx.optim.implicit_minimize(
             lambda state, value: 0.5 * (state[0] ** 2 - value) ** 2,
             jnp.array([1.5]),
@@ -62,8 +65,8 @@ def test_implicit_minimize_nonlinear_solution_uses_stationarity_derivative():
     )
 
 
-def test_implicit_least_squares_differentiates_nonzero_residual_solution():
-    def solution(parameter):
+def test_implicit_least_squares_differentiates_nonzero_residual_solution() -> None:
+    def solution(parameter: Any) -> Any:
         return phx.optim.implicit_least_squares(
             lambda state, value: jnp.array([state[0] - value, 2.0 * state[0] + 1.0]),
             jnp.array([0.0]),
@@ -77,10 +80,10 @@ def test_implicit_least_squares_differentiates_nonzero_residual_solution():
     np.testing.assert_allclose(jax.grad(solution)(parameter), 0.2, atol=1e-7)
 
 
-def test_implicit_least_squares_exact_fit_has_exact_sensitivity():
+def test_implicit_least_squares_exact_fit_has_exact_sensitivity() -> None:
     design = jnp.array([[1.0, 2.0], [2.0, -1.0], [1.0, 1.0]])
 
-    def solution(target):
+    def solution(target: Any) -> Any:
         return phx.optim.implicit_least_squares(
             lambda parameters, data: design @ parameters - data,
             jnp.zeros(2),
@@ -99,16 +102,16 @@ def test_implicit_least_squares_exact_fit_has_exact_sensitivity():
     )
 
 
-def test_implicit_minimize_supports_nested_parameters_and_dynamic_args():
+def test_implicit_minimize_supports_nested_parameters_and_dynamic_args() -> None:
     initial = {"position": jnp.array([0.0, 0.0]), "scale": (jnp.array(0.0),)}
 
-    def objective(parameters, target):
+    def objective(parameters: Any, target: Any) -> Any:
         return (
             jnp.sum((parameters["position"] - target["position"]) ** 2)
             + (parameters["scale"][0] - target["scale"]) ** 2
         )
 
-    def summed_solution(target):
+    def summed_solution(target: Any) -> Any:
         solution = phx.optim.implicit_minimize(
             objective,
             initial,
@@ -125,8 +128,8 @@ def test_implicit_minimize_supports_nested_parameters_and_dynamic_args():
     np.testing.assert_allclose(derivative, -0.25, atol=1e-8)
 
 
-def test_implicit_apis_compose_with_jit_jvp_and_vmap():
-    def solution(parameter):
+def test_implicit_apis_compose_with_jit_jvp_and_vmap() -> None:
+    def solution(parameter: Any) -> Any:
         return phx.optim.implicit_minimize(
             lambda state, target: jnp.sum((state - target) ** 2),
             jnp.array([0.0]),
@@ -143,8 +146,8 @@ def test_implicit_apis_compose_with_jit_jvp_and_vmap():
     np.testing.assert_allclose(batched, jnp.array([1.0, 2.0, 3.0]), atol=1e-8)
 
 
-def test_initial_guess_has_zero_implicit_sensitivity_on_fixed_branch():
-    def solution(initial):
+def test_initial_guess_has_zero_implicit_sensitivity_on_fixed_branch() -> None:
+    def solution(initial: Any) -> Any:
         return phx.optim.implicit_minimize(
             lambda state, target: jnp.sum((state - target) ** 2),
             initial,
@@ -159,8 +162,8 @@ def test_initial_guess_has_zero_implicit_sensitivity_on_fixed_branch():
     )
 
 
-def test_implicit_derivative_matches_centered_finite_difference():
-    def solution(parameter):
+def test_implicit_derivative_matches_centered_finite_difference() -> None:
+    def solution(parameter: Any) -> Any:
         return phx.optim.implicit_minimize(
             lambda state, value: 0.5 * (state[0] ** 2 - value) ** 2,
             jnp.array([1.2]),
@@ -181,11 +184,11 @@ def test_implicit_derivative_matches_centered_finite_difference():
     )
 
 
-def test_native_implicit_derivative_agrees_with_optimistix():
-    def objective(state, target):
+def test_native_implicit_derivative_agrees_with_optimistix() -> None:
+    def objective(state: Any, target: Any) -> Any:
         return jnp.sum((state - target) ** 2)
 
-    def native(target):
+    def native(target: Any) -> Any:
         return phx.optim.implicit_minimize(
             objective,
             jnp.array([0.0]),
@@ -193,7 +196,7 @@ def test_native_implicit_derivative_agrees_with_optimistix():
             termination=_termination(),
         )[0]
 
-    def upstream(target):
+    def upstream(target: Any) -> Any:
         return optx.minimise(
             objective,
             optx.BFGS(rtol=1e-10, atol=1e-10),
@@ -209,8 +212,8 @@ def test_native_implicit_derivative_agrees_with_optimistix():
     np.testing.assert_allclose(jax.grad(native)(target), jax.grad(upstream)(target))
 
 
-def test_derivative_is_stable_when_iteration_budget_changes():
-    def solution(parameter, maximum_steps):
+def test_derivative_is_stable_when_iteration_budget_changes() -> None:
+    def solution(parameter: Any, maximum_steps: Any) -> Any:
         return phx.optim.implicit_minimize(
             lambda state, value: 0.5 * (state[0] ** 2 - value) ** 2,
             jnp.array([1.4]),
@@ -223,7 +226,7 @@ def test_derivative_is_stable_when_iteration_budget_changes():
     np.testing.assert_allclose(short, long, atol=1e-8)
 
 
-def test_implicit_minimize_rejects_unsuccessful_primal_solve():
+def test_implicit_minimize_rejects_unsuccessful_primal_solve() -> None:
     solve = eqx.filter_jit(
         lambda target: phx.optim.implicit_minimize(
             lambda state, value: jnp.sum((state - value) ** 4),
@@ -237,7 +240,7 @@ def test_implicit_minimize_rejects_unsuccessful_primal_solve():
         solve(jnp.array([3.0]))
 
 
-def test_implicit_minimize_rejects_singular_hessian():
+def test_implicit_minimize_rejects_singular_hessian() -> None:
     solve = eqx.filter_jit(
         lambda parameter: phx.optim.implicit_minimize(
             lambda state, value: state[0] ** 4 + value * state[0],
@@ -251,7 +254,7 @@ def test_implicit_minimize_rejects_singular_hessian():
         solve(jnp.array(0.0))
 
 
-def test_implicit_least_squares_rejects_rank_deficient_stationarity():
+def test_implicit_least_squares_rejects_rank_deficient_stationarity() -> None:
     solve = eqx.filter_jit(
         lambda target: phx.optim.implicit_least_squares(
             lambda state, value: jnp.array([state[0] + state[1] - value]),
@@ -265,7 +268,7 @@ def test_implicit_least_squares_rejects_rank_deficient_stationarity():
         solve(jnp.array(1.0))
 
 
-def test_implicit_minimize_rejects_nonfinite_solution_data():
+def test_implicit_minimize_rejects_nonfinite_solution_data() -> None:
     solve = eqx.filter_jit(
         lambda target: phx.optim.implicit_minimize(
             lambda state, value: jnp.sum((state - value) ** 2),

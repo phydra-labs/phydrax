@@ -8,7 +8,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -32,7 +32,7 @@ class TriangleViscousFluxPlan(StrictModule, NonTrainableState):
     gradient: PreparedTriangleWLSQ
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, gradient: PreparedTriangleWLSQ, /):
+    def __init__(self, gradient: PreparedTriangleWLSQ, /) -> None:
         if not isinstance(gradient, PreparedTriangleWLSQ):
             raise TypeError("gradient must be PreparedTriangleWLSQ.")
         self.gradient = gradient

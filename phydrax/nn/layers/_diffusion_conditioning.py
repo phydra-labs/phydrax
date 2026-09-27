@@ -9,10 +9,13 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState, ParameterOwner
+
+from ...typing import PRNGKey
 
 
 class SinusoidalTimeEmbedding(StrictModule, NonTrainableState):
@@ -22,7 +25,7 @@ class SinusoidalTimeEmbedding(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     maximum_frequency: float = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /, *, maximum_frequency: float = 10_000.0):
+    def __init__(self, dimension: int, /, *, maximum_frequency: float = 10_000.0) -> None:
         size = int(dimension)
         maximum = float(maximum_frequency)
         if size <= 0 or size % 2:
@@ -48,7 +51,9 @@ class TimeConditionedVectorModel(StrictModule, ParameterOwner):
     embedding: SinusoidalTimeEmbedding
     state_dimension: int = eqx.field(static=True)
 
-    def __init__(self, model: Any, state_dimension: int, embedding_dimension: int, /):
+    def __init__(
+        self, model: Any, state_dimension: int, embedding_dimension: int, /
+    ) -> None:
         size = int(state_dimension)
         if size <= 0 or not callable(model):
             raise ValueError("model must be callable and state_dimension positive.")
@@ -56,7 +61,14 @@ class TimeConditionedVectorModel(StrictModule, ParameterOwner):
         self.embedding = SinusoidalTimeEmbedding(embedding_dimension)
         self.state_dimension = size
 
-    def __call__(self, state: ArrayLike, time: ArrayLike, /, *, key=None) -> Array:
+    def __call__(
+        self,
+        state: ArrayLike,
+        time: ArrayLike,
+        /,
+        *,
+        key: PRNGKey | None = None,
+    ) -> Array:
         value = jnp.asarray(state)
         if value.shape[-1:] != (self.state_dimension,):
             raise ValueError("State does not match the conditioned model dimension.")

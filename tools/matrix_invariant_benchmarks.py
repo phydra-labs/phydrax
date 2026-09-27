@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -43,12 +44,12 @@ REPEATS = 10
 
 
 @jax.jit
-def _evaluate_pfaffian(matrix):
+def _evaluate_pfaffian(matrix: Any) -> Any:
     return phx.linalg.evaluate_pfaffian(matrix)
 
 
 @jax.jit
-def _propose_row_update(sequence, update):
+def _propose_row_update(sequence: Any, update: Any) -> Any:
     proposal = phx.linalg.propose_low_rank_update(sequence, update)
     return (
         proposal.log_abs,
@@ -60,31 +61,31 @@ def _propose_row_update(sequence, update):
 
 
 @jax.jit
-def _skew_determinant_log_abs(matrix):
+def _skew_determinant_log_abs(matrix: Any) -> Any:
     return 0.5 * jnp.linalg.slogdet(matrix)[1]
 
 
 @jax.jit
-def _full_row_update(matrix, index, row_delta, base_log_abs):
+def _full_row_update(matrix: Any, index: Any, row_delta: Any, base_log_abs: Any) -> Any:
     # Intentional dense reference route for the benchmark comparison.
     updated = matrix.at[index, :].add(row_delta)
     return jnp.linalg.slogdet(updated)[1] - base_log_abs
 
 
 @eqx.filter_jit
-def _markov_step(target, kernel, state, key):
+def _markov_step(target: Any, kernel: Any, state: Any, key: Any) -> Any:
     return kernel.step(target, state, key)
 
 
-def _plain_executable(compiled):
+def _plain_executable(compiled: Any) -> Any:
     return compiled
 
 
-def _filtered_executable(compiled):
+def _filtered_executable(compiled: Any) -> Any:
     return compiled.compiled
 
 
-def _compiler_record(compiled) -> dict[str, object]:
+def _compiler_record(compiled: Any) -> dict[str, object]:
     evidence = compiler_evidence(
         compiled.cost_analysis(),
         compiled.memory_analysis(),
@@ -97,12 +98,12 @@ def _compiler_record(compiled) -> dict[str, object]:
 
 
 def _measure(
-    compiled_function,
-    arguments,
-    summarize,
+    compiled_function: Any,
+    arguments: Any,
+    summarize: Any,
     *,
-    executable_view=_plain_executable,
-):
+    executable_view: Any = _plain_executable,
+) -> Any:
     jax.clear_caches()
     compiled, compilation = measure_lower_and_compile(
         lambda: compiled_function.lower(*arguments),
@@ -125,7 +126,7 @@ def _measure(
     }
 
 
-def _skew_batch(dimension, batch_size, seed):
+def _skew_batch(dimension: Any, batch_size: Any, seed: Any) -> Any:
     generator = np.random.default_rng(seed)
     raw = generator.normal(size=(batch_size, dimension, dimension))
     skew = raw - np.swapaxes(raw, -1, -2)
@@ -136,7 +137,7 @@ def _skew_batch(dimension, batch_size, seed):
     return jnp.asarray(skew + 0.25 * regularizer)
 
 
-def _pfaffian_summary(result):
+def _pfaffian_summary(result: Any) -> Any:
     return {
         "sign": np.asarray(result.sign).tolist(),
         "log_abs": np.asarray(result.log_abs).tolist(),
@@ -147,11 +148,11 @@ def _pfaffian_summary(result):
     }
 
 
-def _array_summary(result):
+def _array_summary(result: Any) -> Any:
     return {"value": np.asarray(result).tolist()}
 
 
-def _pfaffian_record(dimension, batch_size):
+def _pfaffian_record(dimension: Any, batch_size: Any) -> Any:
     matrix = _skew_batch(dimension, batch_size, 1000 + dimension + batch_size)
     argument = matrix[0] if batch_size == 1 else matrix
     pfaffian = _measure(_evaluate_pfaffian, (argument,), _pfaffian_summary)
@@ -175,7 +176,7 @@ def _pfaffian_record(dimension, batch_size):
     }
 
 
-def _sequence(dimension, capacity, seed):
+def _sequence(dimension: Any, capacity: Any, seed: Any) -> Any:
     generator = np.random.default_rng(seed)
     raw = generator.normal(size=(dimension, dimension))
     matrix = jnp.asarray(raw @ raw.T + dimension * np.eye(dimension))
@@ -202,7 +203,7 @@ def _sequence(dimension, capacity, seed):
     return matrix, index, row_delta[0], base_log_abs, sequence, update
 
 
-def _proposal_summary(result):
+def _proposal_summary(result: Any) -> Any:
     log_abs, status, compact_condition, aggregate_condition, candidate = result
     successful = status == int(phx.linalg.LowRankDeterminantStatus.SUCCESS)
     return {
@@ -217,7 +218,7 @@ def _proposal_summary(result):
     }
 
 
-def _low_rank_record(dimension, capacity):
+def _low_rank_record(dimension: Any, capacity: Any) -> Any:
     matrix, index, row_delta, base_log_abs, sequence, update = _sequence(
         dimension,
         capacity,
@@ -243,7 +244,7 @@ def _low_rank_record(dimension, capacity):
     }
 
 
-def _local_pairing_matrix(coordinates):
+def _local_pairing_matrix(coordinates: Any) -> Any:
     particle_count = coordinates.shape[0]
     even = jnp.arange(0, particle_count, 2)
     odd = even + 1
@@ -254,15 +255,15 @@ def _local_pairing_matrix(coordinates):
     return base + 0.01 * (coordinate[:, None] - coordinate[None, :])
 
 
-def _zero_jastrow(coordinates):
+def _zero_jastrow(coordinates: Any) -> Any:
     return jnp.zeros((), dtype=coordinates.dtype)
 
 
-def _model_log_target(model, position):
+def _model_log_target(model: Any, position: Any) -> Any:
     return 2.0 * model(position).log_abs
 
 
-def _incremental_step_summary(result):
+def _incremental_step_summary(result: Any) -> Any:
     state, info = result
     return {
         "accepted": np.asarray(info.accepted).tolist(),
@@ -273,7 +274,7 @@ def _incremental_step_summary(result):
     }
 
 
-def _full_step_summary(result):
+def _full_step_summary(result: Any) -> Any:
     state, info = result
     return {
         "accepted": np.asarray(info.accepted).tolist(),
@@ -282,7 +283,9 @@ def _full_step_summary(result):
     }
 
 
-def _target_step_record(particle_count=16, chain_count=4, capacity=4):
+def _target_step_record(
+    particle_count: Any = 16, chain_count: Any = 4, capacity: Any = 4
+) -> Any:
     model = phx.nn.quantum.PfaffianJastrowAmplitude(
         _local_pairing_matrix,
         _zero_jastrow,
@@ -345,7 +348,7 @@ def _target_step_record(particle_count=16, chain_count=4, capacity=4):
     }
 
 
-def main():
+def main() -> None:
     records = [
         *(_pfaffian_record(dimension, batch) for dimension, batch in PFAFFIAN_CASES),
         *(

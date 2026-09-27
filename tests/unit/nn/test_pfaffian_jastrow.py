@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -24,17 +26,17 @@ from phydrax.sampling import (
 )
 
 
-def _policy(**updates):
+def _policy(**updates: Any) -> Any:
     return PfaffianPolicy(**updates)
 
 
-def _two_particle_pairing(coordinates):
+def _two_particle_pairing(coordinates: Any) -> Any:
     pair = coordinates[1, 0] - coordinates[0, 0]
     zero = jnp.zeros((), dtype=pair.dtype)
     return jnp.stack((jnp.stack((zero, pair)), jnp.stack((-pair, zero))))
 
 
-def _equivariant_pairing(coordinates):
+def _equivariant_pairing(coordinates: Any) -> Any:
     coordinate = coordinates[:, 0]
     features = jnp.stack(
         (
@@ -53,7 +55,9 @@ def _equivariant_pairing(coordinates):
     )
 
 
-def _amplitude(pairing=_two_particle_pairing, jastrow=lambda coordinates: 0.0):
+def _amplitude(
+    pairing: Any = _two_particle_pairing, jastrow: Any = lambda coordinates: 0.0
+) -> Any:
     return PfaffianJastrowAmplitude(
         pairing,
         jastrow,
@@ -65,7 +69,7 @@ def _amplitude(pairing=_two_particle_pairing, jastrow=lambda coordinates: 0.0):
     )
 
 
-def _update_policy(*, condition_limit=1.0e12):
+def _update_policy(*, condition_limit: Any = 1.0e12) -> Any:
     status = FailurePolicy("status")
     return LowRankSolvePolicy(
         LinearSolvePolicy(DenseLU(), failure=status),
@@ -75,7 +79,7 @@ def _update_policy(*, condition_limit=1.0e12):
     )
 
 
-def _local_four_particle_pairing(coordinates):
+def _local_four_particle_pairing(coordinates: Any) -> Any:
     coordinate = coordinates[:, 0]
     base = jnp.asarray(
         [
@@ -90,11 +94,11 @@ def _local_four_particle_pairing(coordinates):
     return (base + local).astype(jnp.complex64) * jnp.exp(0.2j)
 
 
-def _complex_four_particle_jastrow(coordinates):
+def _complex_four_particle_jastrow(coordinates: Any) -> Any:
     return 0.03 * jnp.sum(coordinates**2) + 0.07j * jnp.sum(coordinates)
 
 
-def _incremental_amplitude(pairing=_local_four_particle_pairing):
+def _incremental_amplitude(pairing: Any = _local_four_particle_pairing) -> Any:
     return PfaffianJastrowAmplitude(
         pairing,
         _complex_four_particle_jastrow,
@@ -106,7 +110,9 @@ def _incremental_amplitude(pairing=_local_four_particle_pairing):
     )
 
 
-def _incremental_target(model, *, capacity=4, refresh_cadence=32, tolerance=1e-5):
+def _incremental_target(
+    model: Any, *, capacity: Any = 4, refresh_cadence: Any = 32, tolerance: Any = 1e-5
+) -> Any:
     return pfaffian_jastrow_incremental_target(
         model,
         capacity=capacity,
@@ -117,19 +123,19 @@ def _incremental_target(model, *, capacity=4, refresh_cadence=32, tolerance=1e-5
     )
 
 
-def _coordinates():
+def _coordinates() -> Any:
     return jnp.asarray([[0.0], [0.8], [1.7], [2.6]])
 
 
-def _payload(index, displacement):
+def _payload(index: Any, displacement: Any) -> Any:
     return SingleCoordinateProposalPayload(
         index=jnp.asarray(index, dtype=jnp.int32),
         displacement=jnp.asarray(displacement),
     )
 
 
-def test_equivariant_pairing_is_antisymmetric_under_particle_exchange():
-    def symmetric_jastrow(coordinates):
+def test_equivariant_pairing_is_antisymmetric_under_particle_exchange() -> None:
+    def symmetric_jastrow(coordinates: Any) -> Any:
         return 0.05 * jnp.sum(coordinates**2) + 0.2j * jnp.sum(coordinates)
 
     amplitude = PfaffianJastrowAmplitude(
@@ -153,13 +159,13 @@ def test_equivariant_pairing_is_antisymmetric_under_particle_exchange():
     assert jnp.allclose(exchanged.phase, -value.phase)
 
 
-def test_complex_pfaffian_phase_and_jastrow_log_compose_without_phase_loss():
+def test_complex_pfaffian_phase_and_jastrow_log_compose_without_phase_loss() -> None:
     pairing_phase = jnp.exp(0.35j)
 
-    def complex_pairing(coordinates):
+    def complex_pairing(coordinates: Any) -> Any:
         return _two_particle_pairing(coordinates).astype(jnp.complex64) * pairing_phase
 
-    def complex_jastrow(_coordinates):
+    def complex_jastrow(_coordinates: Any) -> Any:
         return jnp.asarray(0.3 + 0.2j)
 
     amplitude = _amplitude(complex_pairing, complex_jastrow)
@@ -173,10 +179,11 @@ def test_complex_pfaffian_phase_and_jastrow_log_compose_without_phase_loss():
     assert jnp.allclose(value.phase, jnp.exp(0.55j))
 
 
-def test_constructor_and_callable_outputs_require_exact_finite_shapes():
+def test_constructor_and_callable_outputs_require_exact_finite_shapes() -> None:
     with pytest.raises(ValueError, match="positive and even"):
         PfaffianJastrowAmplitude(
             _two_particle_pairing,
+            # ty: ignore[invalid-argument-type]
             lambda coordinates: 0.0,
             particle_count=3,
             spatial_dimension=1,
@@ -202,7 +209,7 @@ def test_constructor_and_callable_outputs_require_exact_finite_shapes():
         wrong_jastrow(jnp.asarray([[0.0], [1.0]]))
 
 
-def test_incremental_target_rejects_unsupported_mixed_precision_lu():
+def test_incremental_target_rejects_unsupported_mixed_precision_lu() -> None:
     status = FailurePolicy("status")
     update_policy = LowRankSolvePolicy(
         LinearSolvePolicy(
@@ -226,13 +233,14 @@ def test_incremental_target_rejects_unsupported_mixed_precision_lu():
         )
 
 
-def test_required_skew_policy_failure_propagates_to_amplitude_validity():
-    def non_skew_pairing(coordinates):
+def test_required_skew_policy_failure_propagates_to_amplitude_validity() -> None:
+    def non_skew_pairing(coordinates: Any) -> Any:
         scale = coordinates[1, 0] - coordinates[0, 0]
         return jnp.asarray([[0.0, 1.0], [-0.9, 0.0]]) * scale
 
     amplitude = PfaffianJastrowAmplitude(
         non_skew_pairing,
+        # ty: ignore[invalid-argument-type]
         lambda coordinates: 0.0,
         particle_count=2,
         spatial_dimension=1,
@@ -246,7 +254,7 @@ def test_required_skew_policy_failure_propagates_to_amplitude_validity():
     assert not value.nonzero
 
 
-def test_pfaffian_node_is_an_invalid_zero_amplitude():
+def test_pfaffian_node_is_an_invalid_zero_amplitude() -> None:
     amplitude = _amplitude(lambda coordinates: jnp.zeros((2, 2)))
     value = amplitude(jnp.asarray([[0.0], [1.0]]))
 
@@ -255,7 +263,9 @@ def test_pfaffian_node_is_an_invalid_zero_amplitude():
     assert jnp.isneginf(value.log_abs)
 
 
-def test_incremental_target_rejects_a_pfaffian_node_without_singular_solve_state():
+def test_incremental_target_rejects_a_pfaffian_node_without_singular_solve_state() -> (
+    None
+):
     model = _amplitude(_two_particle_pairing)
     target = pfaffian_jastrow_incremental_target(
         model,
@@ -275,7 +285,7 @@ def test_incremental_target_rejects_a_pfaffian_node_without_singular_solve_state
     assert jnp.isneginf(proposal.proposed_cache.log_abs)
 
 
-def test_external_vmap_and_jit_preserve_canonical_batch_shape():
+def test_external_vmap_and_jit_preserve_canonical_batch_shape() -> None:
     amplitude = _amplitude(
         _two_particle_pairing,
         lambda coordinates: 0.1 * jnp.sum(coordinates),
@@ -299,10 +309,10 @@ def test_external_vmap_and_jit_preserve_canonical_batch_shape():
     assert jnp.allclose(values.phase, jnp.ones((3,), dtype=values.phase.dtype))
 
 
-def test_coordinate_first_and_second_derivatives_match_away_from_nodes():
+def test_coordinate_first_and_second_derivatives_match_away_from_nodes() -> None:
     quadratic_coefficient = 0.2
 
-    def jastrow(coordinates):
+    def jastrow(coordinates: Any) -> Any:
         return quadratic_coefficient * jnp.sum(coordinates**2) + 0.17j * jnp.sum(
             coordinates
         )
@@ -310,7 +320,7 @@ def test_coordinate_first_and_second_derivatives_match_away_from_nodes():
     amplitude = _amplitude(_two_particle_pairing, jastrow)
     coordinates = jnp.asarray([[0.3], [1.7]])
 
-    def log_abs(flat_coordinates):
+    def log_abs(flat_coordinates: Any) -> Any:
         return amplitude(flat_coordinates.reshape(2, 1)).log_abs
 
     flat = coordinates.reshape(-1)
@@ -338,7 +348,9 @@ def test_coordinate_first_and_second_derivatives_match_away_from_nodes():
     assert jnp.allclose(hessian, expected_hessian, rtol=2e-5, atol=2e-6)
 
 
-def test_incremental_target_compact_ratio_phase_and_acceptance_selection_are_exact():
+def test_incremental_target_compact_ratio_phase_and_acceptance_selection_are_exact() -> (
+    None
+):
     model = _incremental_amplitude()
     target = _incremental_target(model)
     current = _coordinates()
@@ -376,7 +388,7 @@ def test_incremental_target_compact_ratio_phase_and_acceptance_selection_are_exa
     assert jnp.allclose(accepted.log_target, 2.0 * exact_proposed.log_abs)
 
 
-def test_incremental_target_nonlocal_pairing_change_takes_exact_full_rebase():
+def test_incremental_target_nonlocal_pairing_change_takes_exact_full_rebase() -> None:
     global_skew = jnp.asarray(
         [
             [0.0, 0.2, -0.3, 0.4],
@@ -386,7 +398,7 @@ def test_incremental_target_nonlocal_pairing_change_takes_exact_full_rebase():
         ]
     )
 
-    def nonlocal_pairing(coordinates):
+    def nonlocal_pairing(coordinates: Any) -> Any:
         return _local_four_particle_pairing(coordinates) + (
             0.05 * jnp.sum(coordinates) * global_skew
         )
@@ -413,7 +425,7 @@ def test_incremental_target_nonlocal_pairing_change_takes_exact_full_rebase():
     assert jnp.allclose(proposal.proposed_cache.phase, exact.phase)
 
 
-def test_incremental_target_never_approximates_weak_nonlocal_pairing_changes():
+def test_incremental_target_never_approximates_weak_nonlocal_pairing_changes() -> None:
     global_skew = jnp.asarray(
         [
             [0.0, 0.2, -0.3, 0.4],
@@ -423,7 +435,7 @@ def test_incremental_target_never_approximates_weak_nonlocal_pairing_changes():
         ]
     )
 
-    def weakly_nonlocal_pairing(coordinates):
+    def weakly_nonlocal_pairing(coordinates: Any) -> Any:
         return _local_four_particle_pairing(coordinates) + (
             1.0e-9 * jnp.sum(coordinates) * global_skew
         )
@@ -447,7 +459,7 @@ def test_incremental_target_never_approximates_weak_nonlocal_pairing_changes():
     )
 
 
-def test_incremental_target_rebases_when_fixed_capacity_is_exhausted():
+def test_incremental_target_rebases_when_fixed_capacity_is_exhausted() -> None:
     model = _incremental_amplitude()
     target = _incremental_target(model, capacity=2)
     current = _coordinates()
@@ -473,7 +485,9 @@ def test_incremental_target_rebases_when_fixed_capacity_is_exhausted():
     assert jnp.allclose(second.proposed_cache.phase, exact.phase)
 
 
-def test_incremental_target_jit_vmap_matches_full_evaluation_for_multiple_chains():
+def test_incremental_target_jit_vmap_matches_full_evaluation_for_multiple_chains() -> (
+    None
+):
     model = _incremental_amplitude()
     target = _incremental_target(model)
     positions = jnp.stack((_coordinates(), _coordinates() + 0.25))
@@ -481,11 +495,17 @@ def test_incremental_target_jit_vmap_matches_full_evaluation_for_multiple_chains
     displacements = jnp.asarray([0.11, -0.09])
     proposed = positions.at[jnp.arange(2), indices, 0].add(displacements)
 
-    def initialize_many(bound_target, values):
+    def initialize_many(bound_target: Any, values: Any) -> Any:
         return jax.vmap(bound_target.initialize)(values)
 
-    def propose_many(bound_target, states_, positions_, indices_, displacements_):
-        def propose_one(state, position, index, displacement):
+    def propose_many(
+        bound_target: Any,
+        states_: Any,
+        positions_: Any,
+        indices_: Any,
+        displacements_: Any,
+    ) -> Any:
+        def propose_one(state: Any, position: Any, index: Any, displacement: Any) -> Any:
             return bound_target.propose(
                 state,
                 position,
@@ -525,7 +545,7 @@ def test_incremental_target_jit_vmap_matches_full_evaluation_for_multiple_chains
     )
 
 
-def test_incremental_target_scheduled_exact_refresh_rebases_compact_history():
+def test_incremental_target_scheduled_exact_refresh_rebases_compact_history() -> None:
     model = _incremental_amplitude()
     target = _incremental_target(model, capacity=4, refresh_cadence=2)
     current = _coordinates()
@@ -547,11 +567,13 @@ def test_incremental_target_scheduled_exact_refresh_rebases_compact_history():
 class _ScaledPairing(eqx.Module):
     scale: jax.Array
 
-    def __call__(self, coordinates):
+    def __call__(self, coordinates: Any) -> Any:
         return self.scale * _local_four_particle_pairing(coordinates)
 
 
-def test_model_bound_target_factory_rebinds_parameter_changes_with_stable_identity():
+def test_model_bound_target_factory_rebinds_parameter_changes_with_stable_identity() -> (
+    None
+):
     policy = _update_policy()
     factory = eqx.Partial(
         pfaffian_jastrow_incremental_target,

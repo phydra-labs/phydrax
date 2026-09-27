@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def run():
+def run() -> Any:
     triangle = phx.discretization.fem.SimplexNodalFamily("triangle", 4)
     prism = phx.discretization.fem.HybridReferenceFamily("prism", 3)
     mortar = phx.discretization.fem.HybridMortarPlan(

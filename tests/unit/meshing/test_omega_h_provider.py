@@ -4,6 +4,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from typing import Any
 
 import numpy as np
 import pytest
@@ -36,7 +37,7 @@ def _mpi_launcher() -> tuple[str, ...] | None:
     return launcher if probe.returncode == 0 else None
 
 
-def requires_worker(test):
+def requires_worker(test: Any) -> Any:
     """Mark a test that runs the real worker; skip when it is not built."""
     skip = pytest.mark.skipif(
         _worker() is None, reason="phydrax-omega-h-worker is not built"
@@ -68,7 +69,7 @@ def _grid(n: int) -> phx.discretization.CellMesh:
     )
 
 
-def _scope(mesh, dimension: int, ids) -> M.MeshingScope:
+def _scope(mesh: Any, dimension: int, ids: Any) -> M.MeshingScope:
     return M.MeshingScope(
         mesh.mesh_id,
         mesh.numeric_version,
@@ -79,7 +80,7 @@ def _scope(mesh, dimension: int, ids) -> M.MeshingScope:
     )
 
 
-def _cells(mesh) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _cells(mesh: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """(global IDs, areas, centroids) of every triangle."""
     coordinates = np.asarray(mesh.coordinates)
     vertices = np.concatenate([np.asarray(block.vertices) for block in mesh.blocks])
@@ -89,7 +90,7 @@ def _cells(mesh) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return ids, areas, corners.mean(axis=1)
 
 
-def _regions(mesh):
+def _regions(mesh: Any) -> Any:
     """Certified source with left/right region zones and an inlet patch at x=0."""
     ids, _, centroids = _cells(mesh)
     left = M.MeshZone(
@@ -110,7 +111,7 @@ def _regions(mesh):
     )
 
 
-def _metric(mesh, size) -> M.MeshMetricField:
+def _metric(mesh: Any, size: Any) -> M.MeshMetricField:
     """Isotropic metric of edge length ``size(x)`` at vertices in sorted-ID order."""
     order = np.argsort(np.asarray(mesh.vertex_global_ids))
     sizes = np.asarray(size(np.asarray(mesh.coordinates)[order]), dtype=np.float64)
@@ -123,12 +124,12 @@ def _metric(mesh, size) -> M.MeshMetricField:
     )
 
 
-def _uniform(size: float):
+def _uniform(size: float) -> Any:
     return lambda points: np.full(len(points), size)
 
 
 @requires_worker
-def test_real_omega_h_refines_and_preserves_domain_measure():
+def test_real_omega_h_refines_and_preserves_domain_measure() -> None:
     mesh = _grid(2)
     source = M.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
     options = M.OmegaHOptions(
@@ -138,12 +139,15 @@ def test_real_omega_h_refines_and_preserves_domain_measure():
     with M.OmegaHProvider(_worker()) as provider:
         result = provider.execute(source, _metric(mesh, _uniform(0.1)), options=options)
 
+    # ty: ignore[unresolved-attribute]
     _, areas, _ = _cells(result.target.mesh)
     assert np.all(areas > 0.0)
     assert np.sum(areas) == pytest.approx(1.0, abs=1e-12)
     assert areas.size > 8
+    # ty: ignore[unresolved-attribute]
     assert result.target.audit.passed
     assert result.lineage_status == "unknown"
+    # ty: ignore[unresolved-attribute]
     runtime = result.target.runtime
     assert "aggregate_output_bytes" in runtime.enforced_limits
     assert {"worker_address_space", "worker_peak_resident_audit"} & set(
@@ -158,19 +162,21 @@ def test_real_omega_h_refines_and_preserves_domain_measure():
     assert 0.0 < evidence.minimum_length <= evidence.maximum_length
     assert len(result.partitions) == 1
     assert bool(np.all(result.partitions[0].cell_owned))
+    # ty: ignore[unresolved-attribute]
     assert np.all(np.linalg.eigvalsh(np.asarray(result.metric.values)) > 0.0)
 
 
-def test_omega_h_options_refuse_inconsistent_targets():
+def test_omega_h_options_refuse_inconsistent_targets() -> None:
     with pytest.raises(ValueError):
         M.OmegaHOptions(min_length_desired=2.0, max_length_desired=1.0)
     with pytest.raises(ValueError):
         M.OmegaHOptions(min_quality_allowed=0.5, min_quality_desired=0.4)
     with pytest.raises(TypeError):
+        # ty: ignore[invalid-argument-type]
         M.OmegaHOptions(should_swap=1)
 
 
-def test_omega_h_refuses_entity_budget_before_native_launch():
+def test_omega_h_refuses_entity_budget_before_native_launch() -> None:
     mesh = _grid(1)
     source = M.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
@@ -184,7 +190,7 @@ def test_omega_h_refuses_entity_budget_before_native_launch():
     assert failure.value.category is M.MeshingFailureCategory.RESOURCE_EXHAUSTED
 
 
-def test_omega_h_refuses_metric_of_another_revision_before_native_launch():
+def test_omega_h_refuses_metric_of_another_revision_before_native_launch() -> None:
     mesh = _grid(2)
     source = M.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
     moved = mesh.with_coordinates(
@@ -197,7 +203,7 @@ def test_omega_h_refuses_metric_of_another_revision_before_native_launch():
         )
 
 
-def test_omega_h_distributed_run_without_launcher_is_refused_before_launch():
+def test_omega_h_distributed_run_without_launcher_is_refused_before_launch() -> None:
     mesh = _grid(1)
     source = M.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
@@ -211,7 +217,7 @@ def test_omega_h_distributed_run_without_launcher_is_refused_before_launch():
 
 @requires_worker
 @pytest.mark.parametrize("ranks", [1, 2])
-def test_omega_h_rank_outputs_share_one_aggregate_byte_budget(ranks):
+def test_omega_h_rank_outputs_share_one_aggregate_byte_budget(ranks: Any) -> None:
     launcher = _launcher_or_skip() if ranks > 1 else ("mpiexec",)
     mesh = _grid(2)
     source = M.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
@@ -229,7 +235,7 @@ def test_omega_h_rank_outputs_share_one_aggregate_byte_budget(ranks):
 
 
 @requires_worker
-def test_omega_h_reuses_one_worker_session():
+def test_omega_h_reuses_one_worker_session() -> None:
     mesh = _grid(2)
     source = M.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
@@ -246,7 +252,7 @@ def test_omega_h_reuses_one_worker_session():
 
 
 @requires_worker
-def test_omega_h_timeout_fails_and_next_call_relaunches():
+def test_omega_h_timeout_fails_and_next_call_relaunches() -> None:
     mesh = _grid(2)
     source = M.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
@@ -263,11 +269,12 @@ def test_omega_h_timeout_fails_and_next_call_relaunches():
 
     assert failure.value.category is M.MeshingFailureCategory.TIMED_OUT
     assert (timed_out_launches, launches) == (1, 2)
+    # ty: ignore[unresolved-attribute]
     assert recovered.target.audit.passed
 
 
 @requires_worker
-def test_omega_h_transfers_linear_and_conservative_fields():
+def test_omega_h_transfers_linear_and_conservative_fields() -> None:
     mesh = _grid(8)
     source = _regions(mesh)
     vertex_ids = np.sort(np.asarray(mesh.vertex_global_ids))
@@ -293,6 +300,7 @@ def test_omega_h_transfers_linear_and_conservative_fields():
     with M.OmegaHProvider(_worker()) as provider:
         result = provider.execute(source, metric, fields=(linear, conserved))
 
+    # ty: ignore[unresolved-attribute]
     target = result.target.mesh
     temperature, transferred = result.fields
     target_points = np.asarray(target.coordinates)[
@@ -330,14 +338,18 @@ def test_omega_h_transfers_linear_and_conservative_fields():
         "density": "OMEGA_H_CONSERVE",
     }
     density_evidence = result.evidence.fields[1]
+    # ty: ignore[not-subscriptable]
     assert float(density_evidence.integral_after[0]) == pytest.approx(
-        float(density_evidence.integral_before[0]), rel=1e-12
+        # ty: ignore[not-subscriptable]
+        float(density_evidence.integral_before[0]),
+        rel=1e-12,
     )
+    # ty: ignore[not-subscriptable]
     assert float(density_evidence.integral_before[0]) == pytest.approx(before, rel=1e-12)
 
 
 @requires_worker
-def test_omega_h_retains_regions_and_patches_by_class():
+def test_omega_h_retains_regions_and_patches_by_class() -> None:
     mesh = _grid(8)
     source = _regions(mesh)
     # A coarser metric forces collapses next to the region interface and inlet.
@@ -347,7 +359,9 @@ def test_omega_h_retains_regions_and_patches_by_class():
         result = provider.execute(source, metric)
 
     target = result.target
+    # ty: ignore[unresolved-attribute]
     ids, areas, centroids = _cells(target.mesh)
+    # ty: ignore[unresolved-attribute]
     zones = {zone.name: zone for zone in target.zones}
     assert set(zones) == {"left", "right"}
     for name, inside in (
@@ -357,18 +371,23 @@ def test_omega_h_retains_regions_and_patches_by_class():
         members = np.isin(ids, np.asarray(zones[name].scope.entity_ids))
         assert np.array_equal(members, inside)
         assert np.sum(areas[members]) == pytest.approx(0.5, abs=1e-12)
+    # ty: ignore[unresolved-attribute]
     (inlet,) = target.patches
+    # ty: ignore[unresolved-attribute]
     edges = np.asarray(target.mesh.connectivity.edges)
     patch_edges = edges[
         np.isin(
+            # ty: ignore[unresolved-attribute]
             np.asarray(target.mesh.entity_set(1).entity_ids),
             np.asarray(inlet.scope.entity_ids),
         )
     ]
+    # ty: ignore[unresolved-attribute]
     endpoints = np.asarray(target.mesh.coordinates)[patch_edges]
     assert np.all(endpoints[:, :, 0] == 0.0)
     assert np.sum(np.abs(endpoints[:, 1, 1] - endpoints[:, 0, 1])) == pytest.approx(1.0)
     assert inlet.adjacent_zone_ids == (zones["left"].zone_id,)
+    # ty: ignore[unresolved-attribute]
     assert target.audit.passed
     assert areas.size < 128
     classification = result.classification
@@ -377,7 +396,7 @@ def test_omega_h_retains_regions_and_patches_by_class():
 
 
 @requires_worker
-def test_omega_h_distributed_partitions_and_gathered_carrier():
+def test_omega_h_distributed_partitions_and_gathered_carrier() -> None:
     launcher = _launcher_or_skip()
     mesh = _grid(4)
     source = _regions(mesh)
@@ -419,12 +438,17 @@ def test_omega_h_distributed_partitions_and_gathered_carrier():
         )
 
     target = gathered.target
+    # ty: ignore[unresolved-attribute]
     assert target.audit.passed
+    # ty: ignore[unresolved-attribute]
     _, areas, _ = _cells(target.mesh)
     assert np.sum(areas) == pytest.approx(1.0, abs=1e-12)
+    # ty: ignore[unresolved-attribute]
     assert {zone.name for zone in target.zones} == {"left", "right"}
     distribution = gathered.distribution
+    # ty: ignore[unresolved-attribute]
     assert distribution.partition.part_count == 2
+    # ty: ignore[unresolved-attribute]
     for part, halo in zip(gathered.partitions, distribution.halo_global_ids, strict=True):
         ghost_ids = np.asarray(part.cell_global_ids)[np.asarray(part.cell_ghosts)]
         assert np.array_equal(np.sort(ghost_ids), np.asarray(halo))

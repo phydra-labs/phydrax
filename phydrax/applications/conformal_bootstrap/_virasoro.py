@@ -13,10 +13,12 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import parse
 
 
 IsingSigmaChannel: TypeAlias = Literal["identity", "energy"]
@@ -43,7 +45,7 @@ def _hyp2f1_series(
         jnp.ones(points.shape, dtype=jnp.complex128),
     )
 
-    def body(index, carry):
+    def body(index: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
         term, value = carry
         denominator = (c + index) * (index + 1.0)
         denominator = eqx.error_if(
@@ -110,7 +112,7 @@ class BPZVirasoroBlockPlan(StrictModule):
         pole_tolerance: float = 1e-12,
         branch_id: str,
         derivation_source_id: str,
-    ):
+    ) -> None:
         points = np.asarray(cross_ratios, dtype=np.float64)
         charge = float(central_charge)
         weights = tuple(float(value) for value in external_weights)
@@ -244,15 +246,13 @@ class IsingSigmaVirasoroPlan(StrictModule):
     channel: IsingSigmaChannel = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, cross_ratios: ArrayLike, channel: IsingSigmaChannel, /):
+    def __init__(self, cross_ratios: ArrayLike, channel: IsingSigmaChannel, /) -> None:
         points = np.asarray(cross_ratios, dtype=np.float64)
-        channel_value = str(channel)
         if points.ndim != 1 or points.size == 0 or not np.all(np.isfinite(points)):
             raise ValueError("cross_ratios must be one nonempty finite vector.")
         if np.any((points <= 0.0) | (points >= 1.0)):
             raise ValueError("Ising sigma cross ratios must lie in (0, 1).")
-        if channel_value not in {"identity", "energy"}:
-            raise ValueError("Ising sigma channel must be identity or energy.")
+        channel_value = parse(channel, IsingSigmaChannel, "channel")
         self.cross_ratios = jnp.asarray(points)
         self.channel = channel_value
         self.plan_id = canonical_fingerprint(

@@ -10,7 +10,8 @@ from enum import IntEnum
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ._amplitude import LogAmplitude
@@ -60,7 +61,7 @@ class LocalOperatorEstimate(StrictModule):
         estimator_variance: ArrayLike | None = None,
         estimator_count: ArrayLike | None = None,
         estimator_method: str = "deterministic",
-    ):
+    ) -> None:
         values = jnp.asarray(value)
         validity = jnp.asarray(valid, dtype=jnp.bool_)
         statuses = jnp.asarray(status, dtype=jnp.int32)

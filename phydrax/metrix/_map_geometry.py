@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -73,7 +74,7 @@ class RiemannianMapGeometry(StrictModule):
         source_metric: RiemannianMetric,
         target_metric: RiemannianMetric,
         /,
-    ):
+    ) -> None:
         if not isinstance(map, (DifferentiableMap, Immersion, ChartTransition)):
             raise TypeError("map must be a differentiable coordinate map.")
         if not isinstance(source_metric, RiemannianMetric) or not isinstance(

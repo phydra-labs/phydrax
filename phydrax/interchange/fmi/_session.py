@@ -104,7 +104,8 @@ def _xml_description(data: bytes, digest: str) -> FMIModelDescription:
                 raise ValueError("FMU model description exceeds XML structural bounds.")
         else:
             depth -= 1
-    root = parser.root
+    # typeshed omits the `root` attribute CPython sets on exhausted iterparse iterators.
+    root = parser.root  # ty: ignore[unresolved-attribute]
     if root.tag != "fmiModelDescription" or root.get("fmiVersion") != "2.0":
         raise ValueError("Only FMI 2.0 synchronous Co-Simulation is supported.")
     co_simulation = root.find("CoSimulation")
@@ -269,7 +270,7 @@ class FMICoSimulationSession:
         max_archive_bytes: int = 64 * 1024 * 1024,
         max_unpacked_bytes: int = 256 * 1024 * 1024,
         max_files: int = 4096,
-    ):
+    ) -> None:
         _host_only(start_time, stop_time, start_values)
         if not license_id.strip():
             raise ValueError("An explicit FMU license_id is required.")

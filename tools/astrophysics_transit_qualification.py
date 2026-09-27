@@ -1,6 +1,7 @@
 """Qualification evidence for occultation and photon-counting observations."""
 
 import json
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -8,7 +9,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def main():
+def main() -> Any:
     physics = phx.applications.astrophysics
     disk = physics.PolynomialLimbDarkenedDisk(jnp.asarray([0.3, 0.2]))
     reference = physics.CircularOccultationPlan(disk, quadrature_order=512)

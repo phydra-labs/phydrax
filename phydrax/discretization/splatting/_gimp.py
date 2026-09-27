@@ -5,16 +5,20 @@
 from __future__ import annotations
 
 from math import ceil
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from .._tensor_entities import StructuredAxis, TensorEntityLayout
+from .._tensor_index import TensorIndexLayout
 from ._assignment import (
     _basis_and_derivative,
     _tensor_product_state,
@@ -28,7 +32,7 @@ from ._assignment import (
 class GIMPAssignmentInput(StrictModule):
     half_widths: Array
 
-    def __init__(self, half_widths: ArrayLike, /):
+    def __init__(self, half_widths: ArrayLike, /) -> None:
         value = jnp.asarray(half_widths)
         if value.ndim != 2:
             raise ValueError("GIMP half widths must have shape (particles, dimension).")
@@ -46,15 +50,15 @@ def _hat_antiderivative(value: Array, /) -> Array:
 
 
 def _gimp_axis_stencil(
-    coordinates,
-    bounds,
-    periodic,
-    position,
-    half_width,
-    active,
-    route_axis_width,
-    maximum_half_width_cells,
-):
+    coordinates: Array,
+    bounds: tuple[float, float],
+    periodic: bool,
+    position: Array,
+    half_width: Array,
+    active: Array,
+    route_axis_width: int,
+    maximum_half_width_cells: float,
+) -> tuple[Array, Array, Array, Array, Array, Array]:
     count = coordinates.size
     spacing_value = _uniform_spacing(coordinates, bounds, periodic)
     spacing = jnp.asarray(spacing_value, dtype=position.dtype)
@@ -117,7 +121,7 @@ class UniformGIMPSplatAssignment(AbstractStructuredSplatAssignment):
         *,
         maximum_half_width_cells: float = 1.0,
         evolving: bool = False,
-    ):
+    ) -> None:
         widths = np.asarray(reference_half_widths, dtype=np.float64)
         maximum = float(maximum_half_width_cells)
         if (
@@ -158,7 +162,12 @@ class UniformGIMPSplatAssignment(AbstractStructuredSplatAssignment):
         axis_width = 2 * ceil(1.0 + self.maximum_half_width_cells) + 1
         return axis_width ** int(dimension)
 
-    def validate(self, layout, axes, /) -> None:
+    def validate(
+        self,
+        layout: TensorEntityLayout | TensorIndexLayout,
+        axes: tuple[StructuredAxis, ...],
+        /,
+    ) -> None:
         if tuple(layout.axis_entities) != ("point",) * len(axes):
             raise ValueError("GIMP requires a nodal tensor-grid target.")
         if self.reference_half_widths.shape[1] != len(axes):
@@ -166,11 +175,16 @@ class UniformGIMPSplatAssignment(AbstractStructuredSplatAssignment):
         for coordinates, axis in zip(layout.coordinates_by_axis, axes, strict=True):
             _uniform_spacing(
                 coordinates,
-                tuple(float(value) for value in np.asarray(axis.bounds)),
+                (
+                    float(np.asarray(axis.bounds)[0]),
+                    float(np.asarray(axis.bounds)[1]),
+                ),
                 axis.periodic,
             )
 
-    def validate_input(self, assignment_input, source_count, dimension, /) -> None:
+    def validate_input(
+        self, assignment_input: object, source_count: int, dimension: int, /
+    ) -> None:
         if self.reference_half_widths.shape != (source_count, dimension):
             raise ValueError("GIMP reference widths must match prepared particles.")
         if self.evolving:
@@ -181,7 +195,13 @@ class UniformGIMPSplatAssignment(AbstractStructuredSplatAssignment):
         elif assignment_input is not None:
             raise ValueError("uGIMP owns fixed prepared widths and accepts no input.")
 
-    def update_input(self, position, deformation_gradient, committed_input, /):
+    def update_input(
+        self,
+        position: Array,
+        deformation_gradient: Array,
+        committed_input: object,
+        /,
+    ) -> GIMPAssignmentInput | None:
         del position, committed_input
         if not self.evolving:
             return None
@@ -192,17 +212,18 @@ class UniformGIMPSplatAssignment(AbstractStructuredSplatAssignment):
 
     def build(
         self,
-        layout,
-        axes,
-        axis_bounds,
-        position,
-        active,
+        layout: TensorEntityLayout | TensorIndexLayout,
+        axes: tuple[StructuredAxis, ...],
+        axis_bounds: tuple[tuple[float, float], ...],
+        position: Array,
+        active: Array,
         *,
-        assignment_input=None,
+        assignment_input: object = None,
     ) -> SplatAssignmentState:
         self.validate_input(assignment_input, position.shape[0], position.shape[1])
         widths = (
-            assignment_input.half_widths
+            # validate_input requires GIMPAssignmentInput whenever evolving.
+            cast(GIMPAssignmentInput, assignment_input).half_widths
             if self.evolving
             else self.reference_half_widths.astype(position.dtype)
         )

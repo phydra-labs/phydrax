@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -21,18 +22,18 @@ class _SelectedQuadratic(phx.rom.AbstractSampledNonlinearProvider):
     support_id: str = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.provider_id = "qualification-selected-quadratic"
         self.support_id = "qualification-support"
         self.geometry_id = "qualification-geometry"
 
-    def evaluate_selected(self, state, node_indices, inputs, /):
+    def evaluate_selected(self, state: Any, node_indices: Any, inputs: Any, /) -> Any:
         del inputs
         values = jnp.asarray([state[0] ** 2, state[1] ** 2, 0.0])
         return values[node_indices]
 
 
-def _basis(space, matrix, *, role, source):
+def _basis(space: Any, matrix: Any, *, role: Any, source: Any) -> Any:
     return phx.rom.ReducedBasisArtifact(
         phx.linalg.LinearSubspace(
             space,

@@ -19,13 +19,15 @@ from math import prod
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
+from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
+from ..._validation import positive_finite_float
 from ...linalg import (
     DenseLinearOperator,
     DenseLU,
@@ -135,7 +137,7 @@ class ConstrainedFeedbackGameProblem(StrictModule):
         *,
         variational: bool = False,
         problem_id: str = "constrained-feedback-quasi-nash",
-    ):
+    ) -> None:
         if not isinstance(suggestion, LocalAffineGameSuggestion):
             raise TypeError("suggestion must be a LocalAffineGameSuggestion.")
         if not isinstance(constraints, OpenLoopGameConstraints):
@@ -322,8 +324,8 @@ class FeedbackQuasiNashPlan(StrictModule):
         rank_relative_tolerance: float = 1.0e-10,
         rank_absolute_tolerance: float = 0.0,
         maximum_condition: float | None = None,
-    ):
-        residual = _positive(residual_tolerance, "residual_tolerance")
+    ) -> None:
+        residual = positive_finite_float(residual_tolerance, "residual_tolerance")
         feasibility = _nonnegative(feasibility_tolerance, "feasibility_tolerance")
         strict = _nonnegative(
             strict_complementarity_tolerance,
@@ -470,7 +472,7 @@ def _optional_array(
     name: str,
     /,
     *,
-    default_dtype,
+    default_dtype: DTypeLike,
 ) -> Array:
     if value is None:
         return jnp.zeros(shape, dtype=default_dtype)
@@ -480,13 +482,6 @@ def _optional_array(
     if tuple(array.shape) != shape:
         raise ValueError(f"{name} must have shape {shape}; got {array.shape}.")
     return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
-
-
-def _positive(value: float, name: str, /) -> float:
-    result = float(value)
-    if not math.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
 
 
 def _nonnegative(value: float, name: str, /) -> float:

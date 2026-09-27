@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -62,7 +63,7 @@ class ScaleBVPPlan(StrictModule):
         maximum_backtracks: int = 12,
         residual_tolerance: float = 1e-10,
         source_ids: Sequence[str],
-    ):
+    ) -> None:
         labels = tuple(str(value).strip() for value in parameter_labels)
         sources = tuple(sorted(str(value).strip() for value in source_ids))
         low_count = int(low_residual_count)
@@ -220,7 +221,7 @@ def solve_scale_bvp(
     converged = False
     evaluation = evaluate_scale_bvp(plan, parameters)
 
-    def residual_function(value):
+    def residual_function(value: Array) -> Array:
         return evaluate_scale_bvp(plan, value).residual
 
     for _ in range(plan.maximum_newton_steps):

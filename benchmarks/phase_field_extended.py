@@ -26,7 +26,7 @@ from benchmarks._runtime import (
 )
 
 
-def _square_mesh():
+def _square_mesh() -> Any:
     return phx.discretization.CellMesh.from_triangles(
         jnp.asarray(
             ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)),
@@ -36,7 +36,7 @@ def _square_mesh():
     )
 
 
-def _compiler_report(executable) -> dict[str, object]:
+def _compiler_report(executable: Any) -> dict[str, object]:
     cost = executable.compiled.cost_analysis()
     memory = executable.compiled.memory_analysis()
     evidence = compiler_evidence(
@@ -53,7 +53,7 @@ def _compiler_report(executable) -> dict[str, object]:
     }
 
 
-def _compiled_step_case(method, state, step_size, repeats: int, /):
+def _compiled_step_case(method: Any, state: Any, step_size: Any, repeats: int, /) -> Any:
     arguments = (
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(0.0, dtype=jnp.float64),

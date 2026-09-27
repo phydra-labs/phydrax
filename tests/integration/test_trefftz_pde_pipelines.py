@@ -8,10 +8,12 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_four_dimensional_harmonic_boundary_fit_and_interior_audit():
+def test_four_dimensional_harmonic_boundary_fit_and_interior_audit() -> None:
     dimension = 4
     domain = phx.domain.HyperRectangle(
+        # ty: ignore[invalid-argument-type]
         (-1.0,) * dimension,
+        # ty: ignore[invalid-argument-type]
         (1.0,) * dimension,
     )
     field = domain.Model("x")(
@@ -40,6 +42,7 @@ def test_four_dimensional_harmonic_boundary_fit_and_interior_audit():
     assert float(result.final_residual_norm) < 1e-9
 
     batch = domain.component().sample(phx.domain.PointSampling(32), key=jr.key(12))
+    # ty: ignore[invalid-argument-type]
     audit = phx.equations.audit_trial_space(result.solver["u"], batch)
     assert bool(audit.valid)
     predicted = jnp.asarray(result.solver["u"](batch).data)
@@ -47,7 +50,8 @@ def test_four_dimensional_harmonic_boundary_fit_and_interior_audit():
     assert jnp.allclose(predicted, expected, atol=1e-9, rtol=1e-9)
 
 
-def test_five_dimensional_almansi_and_eight_dimensional_helmholtz_audits():
+def test_five_dimensional_almansi_and_eight_dimensional_helmholtz_audits() -> None:
+    # ty: ignore[invalid-argument-type]
     poly_domain = phx.domain.HyperRectangle((-1.0,) * 5, (1.0,) * 5)
     poly_field = poly_domain.Model("x")(
         phx.equations.LinearTrefftzField(
@@ -59,9 +63,11 @@ def test_five_dimensional_almansi_and_eight_dimensional_helmholtz_audits():
     poly_batch = poly_domain.component().sample(
         phx.domain.PointSampling(12), key=jr.key(14)
     )
+    # ty: ignore[invalid-argument-type]
     assert bool(phx.equations.audit_trial_space(poly_field, poly_batch).valid)
 
     dimension = 8
+    # ty: ignore[invalid-argument-type]
     wave_domain = phx.domain.HyperRectangle((-0.5,) * dimension, (0.5,) * dimension)
     directions = jnp.eye(dimension)
     wave_field = wave_domain.Model("x")(
@@ -78,4 +84,5 @@ def test_five_dimensional_almansi_and_eight_dimensional_helmholtz_audits():
     wave_batch = wave_domain.component().sample(
         phx.domain.PointSampling(12), key=jr.key(16)
     )
+    # ty: ignore[invalid-argument-type]
     assert bool(phx.equations.audit_trial_space(wave_field, wave_batch).valid)

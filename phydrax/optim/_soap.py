@@ -6,12 +6,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from math import isfinite
-from typing import Any, NamedTuple
+from typing import Any, cast, NamedTuple, Self
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import optax
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
+from jaxtyping import PyTree
 
 
 PreconditionerMatrix = Array | None
@@ -25,14 +28,16 @@ class SOAPPreconditioner:
 
     matrices: tuple[PreconditionerMatrix, ...]
 
-    def __init__(self, matrices: Iterable[PreconditionerMatrix], /):
+    def __init__(self, matrices: Iterable[PreconditionerMatrix], /) -> None:
         self.matrices = tuple(matrices)
 
-    def tree_flatten(self):
+    def tree_flatten(self) -> tuple[tuple[PreconditionerMatrix, ...], None]:
         return self.matrices, None
 
     @classmethod
-    def tree_unflatten(cls, auxiliary, children):
+    def tree_unflatten(
+        cls, auxiliary: None, children: Iterable[PreconditionerMatrix]
+    ) -> Self:
         del auxiliary
         return cls(children)
 
@@ -58,14 +63,16 @@ def _is_preconditioner(value: object, /) -> bool:
     return isinstance(value, SOAPPreconditioner)
 
 
-def _real_floating_dtype(value: Any, /):
+def _real_floating_dtype(value: ArrayLike, /) -> np.dtype:
     array = jnp.asarray(value)
     if not jnp.issubdtype(array.dtype, jnp.floating):
         raise TypeError("SOAP requires real floating-point parameter leaves.")
     return array.dtype
 
 
-def _state_dtype(parameter_dtype: Any, requested_dtype: Any, /):
+def _state_dtype(
+    parameter_dtype: DTypeLike, requested_dtype: DTypeLike | None, /
+) -> np.dtype:
     dtype = jnp.dtype(parameter_dtype if requested_dtype is None else requested_dtype)
     if not jnp.issubdtype(dtype, jnp.floating):
         raise TypeError("SOAP state dtypes must be real floating-point dtypes.")
@@ -73,12 +80,12 @@ def _state_dtype(parameter_dtype: Any, requested_dtype: Any, /):
 
 
 def _initialize_preconditioner(
-    parameter: Any,
+    parameter: ArrayLike,
     /,
     *,
     maximum_size: int,
     precondition_1d: bool,
-    dtype: Any,
+    dtype: DTypeLike | None,
 ) -> SOAPPreconditioner:
     array = jnp.asarray(parameter)
     _real_floating_dtype(array)
@@ -236,8 +243,8 @@ def scale_by_soap(
     max_preconditioner_size: int = 10_000,
     precondition_1d: bool = False,
     precision: jax.lax.PrecisionLike = jax.lax.Precision.HIGHEST,
-    moment_dtype: Any = None,
-    preconditioner_dtype: Any = None,
+    moment_dtype: DTypeLike | None = None,
+    preconditioner_dtype: DTypeLike | None = None,
 ) -> optax.GradientTransformation:
     """Scale gradients with SOAP's Adam moments in adaptive eigenbases.
 
@@ -272,16 +279,16 @@ def scale_by_soap(
                 "preconditioner_dtype must provide at least 32-bit precision."
             )
 
-    def initialize(parameters):
-        def zero_moment(parameter):
+    def initialize(params: optax.Params) -> SOAPState:
+        def zero_moment(parameter: ArrayLike) -> Array:
             dtype = _state_dtype(
                 _real_floating_dtype(parameter),
                 moment_dtype,
             )
             return jnp.zeros_like(jnp.asarray(parameter), dtype=dtype)
 
-        first_moment = jax.tree.map(zero_moment, parameters)
-        second_moment = jax.tree.map(zero_moment, parameters)
+        first_moment = jax.tree.map(zero_moment, params)
+        second_moment = jax.tree.map(zero_moment, params)
         covariance = jax.tree.map(
             lambda parameter: _initialize_preconditioner(
                 parameter,
@@ -289,7 +296,7 @@ def scale_by_soap(
                 precondition_1d=bool(precondition_1d),
                 dtype=preconditioner_dtype,
             ),
-            parameters,
+            params,
         )
         basis = jax.tree.map(
             lambda conditioner: conditioner.map(
@@ -306,7 +313,9 @@ def scale_by_soap(
             basis=basis,
         )
 
-    def initialize_basis(gradients, state):
+    def initialize_basis(
+        gradients: optax.Updates, state: SOAPState
+    ) -> tuple[optax.Updates, SOAPState]:
         covariance = jax.tree.map(
             lambda gradient, conditioner: _update_covariance(
                 gradient,
@@ -331,7 +340,9 @@ def scale_by_soap(
             basis,
         )
 
-    def optimizer_step(gradients, state):
+    def optimizer_step(
+        gradients: optax.Updates, state: SOAPState
+    ) -> tuple[optax.Updates, SOAPState]:
         projected = jax.tree.map(
             lambda gradient, basis: _project(
                 gradient,
@@ -394,7 +405,7 @@ def scale_by_soap(
             is_leaf=_is_preconditioner,
         )
 
-        def refresh():
+        def refresh() -> tuple[PyTree[SOAPPreconditioner], PyTree[Array], PyTree[Array]]:
             basis_and_second = jax.tree.map(
                 lambda conditioner, basis, second: _refresh_parameter_basis(
                     conditioner,
@@ -430,7 +441,7 @@ def scale_by_soap(
             )
             return basis, reordered_second, rotated_first
 
-        def retain():
+        def retain() -> tuple[PyTree[SOAPPreconditioner], PyTree[Array], PyTree[Array]]:
             return state.basis, second_moment, first_moment
 
         basis, second_moment, first_moment = jax.lax.cond(
@@ -446,14 +457,20 @@ def scale_by_soap(
             basis,
         )
 
-    def update(gradients, state, parameters=None):
-        del parameters
-        count = optax.safe_int32_increment(state.count)
-        counted = state._replace(count=count)
+    def update(
+        updates: optax.Updates,
+        state: optax.OptState,
+        params: optax.Params | None = None,
+    ) -> tuple[optax.Updates, optax.OptState]:
+        del params
+        # Optax only passes back the state produced by ``initialize``.
+        soap_state = cast(SOAPState, state)
+        count = jnp.asarray(optax.safe_int32_increment(soap_state.count))
+        counted = soap_state._replace(count=count)
         return jax.lax.cond(
             count == 1,
-            lambda: initialize_basis(gradients, counted),
-            lambda: optimizer_step(gradients, counted),
+            lambda: initialize_basis(updates, counted),
+            lambda: optimizer_step(updates, counted),
         )
 
     return optax.GradientTransformation(initialize, update)
@@ -484,8 +501,8 @@ def soap(
     max_preconditioner_size: int = 10_000,
     precondition_1d: bool = False,
     precision: jax.lax.PrecisionLike = jax.lax.Precision.HIGHEST,
-    moment_dtype: Any = None,
-    preconditioner_dtype: Any = None,
+    moment_dtype: DTypeLike | None = None,
+    preconditioner_dtype: DTypeLike | None = None,
 ) -> optax.GradientTransformation:
     """Construct the Phydrax-native SOAP optimizer.
 
@@ -519,16 +536,22 @@ def soap(
         preconditioner_dtype=preconditioner_dtype,
     )
 
-    def initialize(parameters):
-        return core.init(parameters)
+    def initialize(params: optax.Params) -> optax.OptState:
+        return core.init(params)
 
-    def update(gradients, state, parameters=None):
-        directions, next_state = core.update(gradients, state, parameters)
-        schedule_step = jnp.maximum(next_state.count - 2, 0)
+    def update(
+        updates: optax.Updates,
+        state: optax.OptState,
+        params: optax.Params | None = None,
+    ) -> tuple[optax.Updates, optax.OptState]:
+        directions, next_state = core.update(updates, state, params)
+        # ``core`` is ``scale_by_soap``, whose update always returns a SOAPState.
+        count = cast(SOAPState, next_state).count
+        schedule_step = jnp.maximum(count - 2, 0)
         rate = _resolve_learning_rate(learning_rate, schedule_step)
-        active = next_state.count > 1
+        active = count > 1
         if decay == 0.0:
-            updates = jax.tree.map(
+            scaled_updates = jax.tree.map(
                 lambda direction: jnp.where(
                     active,
                     -jnp.asarray(rate, dtype=direction.dtype) * direction,
@@ -537,9 +560,9 @@ def soap(
                 directions,
             )
         else:
-            if parameters is None:
+            if params is None:
                 raise ValueError("SOAP weight decay requires current parameters.")
-            updates = jax.tree.map(
+            scaled_updates = jax.tree.map(
                 lambda direction, parameter: jnp.where(
                     active,
                     -jnp.asarray(rate, dtype=direction.dtype)
@@ -547,9 +570,9 @@ def soap(
                     jnp.zeros_like(direction),
                 ),
                 directions,
-                parameters,
+                params,
             )
-        return updates, next_state
+        return scaled_updates, next_state
 
     return optax.GradientTransformation(initialize, update)
 

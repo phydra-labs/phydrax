@@ -12,11 +12,12 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._axis import AxisDiscretization, AxisPrimaryEntity
 
 
@@ -39,7 +40,7 @@ class StructuredAxis(StrictModule, NonTrainableState):
     upper_endpoint_included: bool = eqx.field(static=True)
     axis_id: str = eqx.field(static=True)
 
-    def __init__(self, axis: AxisDiscretization, /):
+    def __init__(self, axis: AxisDiscretization, /) -> None:
         if not isinstance(axis, AxisDiscretization):
             raise TypeError("axis must be an AxisDiscretization.")
         nodes = np.asarray(axis.nodes, dtype=np.float64)
@@ -197,17 +198,15 @@ class TensorEntityLayout(StrictModule, NonTrainableState):
         axes: Sequence[StructuredAxis],
         axis_entities: Sequence[AxisEntityKind],
         /,
-    ):
+    ) -> None:
         names = tuple(str(name) for name in axis_names)
         axes_ = tuple(axes)
         entities = tuple(axis_entities)
-        if (
-            not names
-            or len(axes_) != len(names)
-            or len(entities) != len(names)
-            or any(entity not in ("point", "interval") for entity in entities)
-        ):
+        if not names or len(axes_) != len(names) or len(entities) != len(names):
             raise ValueError("Tensor entity layout factors must align with axes.")
+        entities = tuple(
+            parse(entity, AxisEntityKind, "axis_entities") for entity in entities
+        )
         shape = tuple(
             axis.count(entity) for axis, entity in zip(axes_, entities, strict=True)
         )

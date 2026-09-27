@@ -16,7 +16,11 @@ from .._strict import StrictModule
 
 
 if TYPE_CHECKING:
-    from phydrax.conditions import Condition, ConditionRealizationStamp
+    from phydrax.conditions import (
+        Condition,
+        ConditionQuantifier,
+        ConditionRealizationStamp,
+    )
 
     from ._lifecycle import RealizationLifecycleState
 
@@ -75,7 +79,7 @@ class ConditionEvaluationContext(StrictModule):
         adaptive_sources: frozenset[str] = frozenset(),
         prng_key: Any = None,
         exact_required: bool = False,
-    ):
+    ) -> None:
         step = int(accepted_step)
         attempt_ = int(attempt)
         revision = int(parameter_revision)
@@ -104,7 +108,7 @@ class ConditionEvaluationContext(StrictModule):
         return self.condition.condition_id
 
     @property
-    def quantifier(self):
+    def quantifier(self) -> ConditionQuantifier:
         return self.condition.quantifier
 
 
@@ -128,7 +132,7 @@ class FieldRealizationResult(StrictModule):
         stamp: ConditionRealizationStamp | None = None,
         evidence: Any = None,
         message: str = "",
-    ):
+    ) -> None:
         if not isinstance(status, RealizationStatus):
             raise TypeError("Field realization status must be a RealizationStatus.")
         successful = status.successful

@@ -6,11 +6,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, cast, Literal
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ...._fingerprint import canonical_fingerprint
 from ....data_utils import (
@@ -38,7 +38,7 @@ class OperatorSplitPolicy:
     order_by: str | None = None
     seed: int = 0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.group_by != "all":
             keys = tuple(str(key) for key in self.group_by)
             if len(set(keys)) != len(keys) or any(not key for key in keys):
@@ -62,7 +62,7 @@ class OperatorDataset:
     case_log_weights: Array | None = None
     case_mask: Array | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if len(self.batch.case_shape) != 1:
             raise ValueError("OperatorDataset requires exactly one case axis.")
         if not isinstance(self.targets, OperatorTargetBatch):
@@ -113,6 +113,10 @@ class OperatorDataset:
         if index.ndim != 1:
             raise ValueError("Dataset indices must be one-dimensional.")
         assert self.provenance is not None
+        if not (self.case_log_weights is not None and self.case_mask is not None):
+            raise RuntimeError(
+                "Internal invariant failed: self.case_log_weights is not None and self.case_mask is not None."
+            )
         return OperatorDataset(
             slice_operator_batch(self.batch, index, axis=0),
             self.targets.take(index, axis=0),
@@ -462,8 +466,9 @@ def operator_dataset_from_cases(
         stacked_batch,
         stacked_targets,
         None if provenance is None else tuple(provenance),
-        case_log_weights=case_log_weights,
-        case_mask=case_mask,
+        # OperatorDataset.__post_init__ canonicalizes sequences with jnp.asarray.
+        case_log_weights=cast(Array | None, case_log_weights),
+        case_mask=cast(Array | None, case_mask),
     )
 
 

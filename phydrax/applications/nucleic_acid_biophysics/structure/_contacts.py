@@ -5,7 +5,8 @@ from dataclasses import dataclass
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from ....ein import contract
@@ -25,7 +26,7 @@ class GeometricContactCriteria:
     stacking_height: tuple[float, float]
     stacking_lateral_radius: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         numbers = (
             self.maximum_distance,
             self.minimum_abs_normal_cosine,
@@ -58,7 +59,9 @@ class GeometricContactEvaluation(StrictModule):
 
 
 def geometric_contacts(
-    positions, descriptor: NucleotideGDescriptor, criteria: GeometricContactCriteria
+    positions: ArrayLike,
+    descriptor: NucleotideGDescriptor,
+    criteria: GeometricContactCriteria,
 ) -> GeometricContactEvaluation:
     frames = base_frames(
         positions, descriptor.binding, image_policy=descriptor.image_policy
@@ -91,7 +94,11 @@ def geometric_contacts(
 
 
 def contact_interaction_graph(
-    result, descriptor, criteria, *, source_id: str
+    result: GeometricContactEvaluation,
+    descriptor: NucleotideGDescriptor,
+    criteria: GeometricContactCriteria,
+    *,
+    source_id: str,
 ) -> BaseInteractionGraph:
     """Host annotation retaining directed contact support, not canonical pairing."""
     keys = descriptor.binding.construct.nucleotide_keys

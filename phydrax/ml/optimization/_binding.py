@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ...optim._programming._mixed_integer import MixedIntegerProgram
 from ...optim._programming._problem import LinearProgram

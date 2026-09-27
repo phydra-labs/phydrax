@@ -5,16 +5,18 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, Self, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._assembly import ParticleInteractionLedger
 from ._bipartite_neighborhood import BipartiteNeighborhoodState
 from ._core import ParticleDiscretization, ParticleSetPlan
@@ -60,7 +62,7 @@ class WallParticleGenerationPlan(StrictModule, NonTrainableState):
         /,
         *,
         layers: int = 2,
-    ):
+    ) -> None:
         spacing_ = float(spacing)
         smoothing = float(smoothing_length)
         layers_ = int(layers)
@@ -184,12 +186,12 @@ class PrescribedWallMotion(StrictModule, NonTrainableState):
     motion_id: str = eqx.field(static=True)
 
     @classmethod
-    def stationary(cls) -> "PrescribedWallMotion":
-        def position(time, reference, args):
+    def stationary(cls) -> Self:
+        def position(time: Array, reference: Array, args: Any) -> Array:
             del time, args
             return reference
 
-        def zero(time, reference, args):
+        def zero(time: Array, reference: Array, args: Any) -> Array:
             del time, args
             return jnp.zeros_like(reference)
 
@@ -211,9 +213,8 @@ class AdamiWallBoundaryPlan(StrictModule, NonTrainableState):
         slip: WallSlipPolicy = "no-slip",
         atmospheric_pressure: float = 0.0,
         kinematic_viscosity: float = 0.0,
-    ):
-        if slip not in ("no-slip", "free-slip"):
-            raise ValueError("Wall slip policy must be 'no-slip' or 'free-slip'.")
+    ) -> None:
+        slip = parse(slip, WallSlipPolicy, "slip")
         if (
             not np.isfinite(atmospheric_pressure)
             or not np.isfinite(kinematic_viscosity)

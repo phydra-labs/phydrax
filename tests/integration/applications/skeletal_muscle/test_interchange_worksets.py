@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -127,7 +129,7 @@ def test_verified_signed_provider_force_routes_identically_through_worksets() ->
     ).prepare()
     signed_provider_force = jnp.asarray([[-10.0], [-20.0], [-30.0]])
 
-    def route_force(signature_, item, key, semantic_index):
+    def route_force(signature_: Any, item: Any, key: Any, semantic_index: Any) -> Any:
         del signature_, key, semantic_index
         return prepared_descriptor.sensor_to_phydrax(item)
 

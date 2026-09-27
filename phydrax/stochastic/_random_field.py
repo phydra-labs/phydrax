@@ -6,15 +6,21 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable, Sequence
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import parse, PRNGKey
+
+
+if TYPE_CHECKING:
+    from ..nn.operator import OperatorCaseProvenance
 
 
 RandomFieldRole: TypeAlias = Literal[
@@ -35,21 +41,6 @@ def _digest(namespace: str, *parts: Any) -> str:
         digest.update(repr(part).encode("utf-8"))
         digest.update(b"\0")
     return digest.hexdigest()
-
-
-def _validate_role(role: str, /) -> RandomFieldRole:
-    if role not in (
-        "input",
-        "initial_condition",
-        "coefficient",
-        "boundary_data",
-        "forcing",
-        "observation",
-    ):
-        raise ValueError(
-            "role must be 'input', 'initial_condition', 'coefficient', 'boundary_data', 'forcing', or 'observation'."
-        )
-    return role
 
 
 def _validate_mode_ids(mode_ids: Sequence[str], /) -> tuple[str, ...]:
@@ -76,7 +67,7 @@ class GaussianCoefficientRealization(StrictModule):
     def __init__(
         self,
         coefficients: ArrayLike,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         /,
         *,
         mode_ids: Sequence[str],
@@ -84,7 +75,7 @@ class GaussianCoefficientRealization(StrictModule):
         realization_id: str | None = None,
         parent_realization_id: str | None = None,
         label: str | None = None,
-    ):
+    ) -> None:
         identifiers = _validate_mode_ids(mode_ids)
         values = jnp.asarray(coefficients, dtype=jnp.float64)
         if values.ndim < 1 or values.shape[-1] != len(identifiers):
@@ -126,7 +117,7 @@ class GaussianCoefficientRealization(StrictModule):
     @classmethod
     def sample(
         cls,
-        key: Key[Array, ""],
+        key: PRNGKey,
         mode_ids: Sequence[str],
         /,
         *,
@@ -207,7 +198,7 @@ class SpatialBasisSynthesis(StrictModule):
         basis_id: str,
         discretization_id: str | None = None,
         mean: ArrayLike = 0.0,
-    ):
+    ) -> None:
         mode_array = jnp.asarray(modes, dtype=jnp.float64)
         if mode_array.ndim < 2:
             raise ValueError("modes must have shape spatial_shape + (rank,).")
@@ -353,7 +344,7 @@ class RandomFieldSample(StrictModule):
         coefficient_realization_id: str,
         coupling_id: str,
         transform_id: str | None = None,
-    ):
+    ) -> None:
         array = jnp.asarray(values)
         sample = tuple(sample_shape)
         spatial = tuple(spatial_shape)
@@ -362,7 +353,7 @@ class RandomFieldSample(StrictModule):
         self.values = array
         self.sample_shape = sample
         self.spatial_shape = spatial
-        self.role = _validate_role(role)
+        self.role = parse(role, RandomFieldRole, "role")
         self.source = source
         self.field_id = field_id
         self.basis_id = basis_id
@@ -384,7 +375,7 @@ class RandomFieldSample(StrictModule):
         """Return a case-first view accepted by operator-dataset array adapters."""
         return self.values.reshape((self.num_samples, *self.spatial_shape))
 
-    def operator_case_provenance(self):
+    def operator_case_provenance(self) -> tuple[OperatorCaseProvenance, ...]:
         """Return one leakage-safe operator provenance record per latent draw."""
         from ..nn.operator import OperatorCaseProvenance
 
@@ -423,10 +414,10 @@ class StaticGaussianRandomField(StrictModule):
         *,
         role: RandomFieldRole = "input",
         source: str = "latent",
-    ):
+    ) -> None:
         if not isinstance(synthesis, SpatialBasisSynthesis):
             raise TypeError("synthesis must be a SpatialBasisSynthesis.")
-        resolved_role = _validate_role(role)
+        resolved_role = parse(role, RandomFieldRole, "role")
         if not isinstance(source, str) or not source:
             raise ValueError("source must be a non-empty string.")
         self.synthesis = synthesis
@@ -445,7 +436,7 @@ class StaticGaussianRandomField(StrictModule):
 
     def realize(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
         *,
         sample_shape: Sequence[int] = (),
@@ -507,7 +498,7 @@ class TransformedRandomField(StrictModule):
         /,
         *,
         transform_id: str,
-    ):
+    ) -> None:
         if not isinstance(base, StaticGaussianRandomField):
             raise TypeError("base must be a StaticGaussianRandomField.")
         if not callable(transform_function):
@@ -533,7 +524,7 @@ class TransformedRandomField(StrictModule):
 
     def realize(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
         *,
         sample_shape: Sequence[int] = (),
@@ -591,7 +582,7 @@ class GaussianFieldCoupling(StrictModule):
         /,
         *,
         label: str | None = None,
-    ):
+    ) -> None:
         resolved = tuple(fields)
         if len(resolved) < 2:
             raise ValueError("A GaussianFieldCoupling requires at least two fields.")
@@ -629,7 +620,7 @@ class GaussianFieldCoupling(StrictModule):
 
     def realize(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
         *,
         sample_shape: Sequence[int] = (),

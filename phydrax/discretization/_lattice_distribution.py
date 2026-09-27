@@ -8,19 +8,21 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from math import prod
-from typing import Literal, TypeAlias
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._distributed_field import DistributedHaloPlan
 
 
@@ -359,9 +361,9 @@ class LatticeHaloPlan(StrictModule, NonTrainableState):
         return len(self.distributed.permutations)
 
     def _parity(self, parity: LatticeParity | None, /) -> int:
-        if parity is not None and parity not in (0, 1):
-            raise ValueError("parity must be zero, one, or None.")
-        return -1 if parity is None else int(parity)
+        if parity is None:
+            return -1
+        return parse(parity, LatticeParity, "parity")
 
     def pack(
         self,
@@ -946,7 +948,9 @@ class LatticeDecompositionPlan(StrictModule, NonTrainableState):
                     neighbors[global_id, axis, orientation] = neighbor_id
                     neighbor_valid[global_id, axis, orientation] = True
                     if neighbor_id != global_id:
-                        adjacency.add(tuple(sorted((global_id, neighbor_id))))
+                        adjacency.add(
+                            (min(global_id, neighbor_id), max(global_id, neighbor_id))
+                        )
         adjacency_array = np.asarray(sorted(adjacency), dtype=np.int32).reshape((-1, 2))
         halo_sets: list[set[int]] = [set() for _ in range(part_count)]
         for left, right in adjacency_array:
@@ -1170,7 +1174,8 @@ class PreparedLatticeStencilExecution(StrictModule, NonTrainableState):
         )
 
     def pack(self, local_owned: ArrayLike, /) -> PackedLatticeHalo:
-        parity = None if self.plan.parity < 0 else self.plan.parity
+        # Plan parity is normalized by LatticeHaloPlan._parity to -1, 0, or 1.
+        parity = None if self.plan.parity < 0 else cast(LatticeParity, self.plan.parity)
         return self.plan.decomposition.halo.pack(local_owned, parity=parity)
 
     def pack_rank(
@@ -1179,7 +1184,8 @@ class PreparedLatticeStencilExecution(StrictModule, NonTrainableState):
         partition: ArrayLike,
         /,
     ) -> PackedLatticeHalo:
-        parity = None if self.plan.parity < 0 else self.plan.parity
+        # Plan parity is normalized by LatticeHaloPlan._parity to -1, 0, or 1.
+        parity = None if self.plan.parity < 0 else cast(LatticeParity, self.plan.parity)
         return self.plan.decomposition.halo.pack_rank(
             local_owned,
             partition,

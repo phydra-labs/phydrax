@@ -13,7 +13,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -39,7 +39,7 @@ class BranchAndBoundPolicy(StrictModule, NonTrainableState):
         maximum_nodes: int = 100_000,
         absolute_gap: float = 0.0,
         relative_gap: float = 0.0,
-    ):
+    ) -> None:
         if int(maximum_nodes) <= 0:
             raise ValueError("maximum_nodes must be positive.")
         if absolute_gap < 0.0 or relative_gap < 0.0:
@@ -63,7 +63,7 @@ class BranchBoundEvidence(StrictModule, NonTrainableState):
         *,
         certified: bool,
         certificate_id: str = "",
-    ):
+    ) -> None:
         value_ = float(value)
         if not isfinite(value_) and value_ != -inf:
             raise ValueError("A node lower bound must be finite or negative infinity.")
@@ -89,7 +89,7 @@ class BranchCandidate(StrictModule, NonTrainableState):
         /,
         *,
         certificate_id: str,
-    ):
+    ) -> None:
         objective_ = float(objective)
         if not isfinite(objective_):
             raise ValueError("A branch-and-bound candidate objective must be finite.")
@@ -107,7 +107,7 @@ class BranchNodeFailure(StrictModule, NonTrainableState):
     kind: str = eqx.field(static=True)
     message: str = eqx.field(static=True)
 
-    def __init__(self, kind: str, message: str, /):
+    def __init__(self, kind: str, message: str, /) -> None:
         kind_ = str(kind)
         if not kind_:
             raise ValueError("A branch node failure requires a nonempty kind.")
@@ -138,7 +138,7 @@ class BranchNodeEvaluation(StrictModule, NonTrainableState):
         certificate_id: str = "",
         failure: BranchNodeFailure | None = None,
         state: Any = None,
-    ):
+    ) -> None:
         if lower_bound is not None and not isinstance(lower_bound, BranchBoundEvidence):
             raise TypeError("lower_bound must be BranchBoundEvidence or None.")
         if candidate is not None and not isinstance(candidate, BranchCandidate):
@@ -330,6 +330,9 @@ def branch_and_bound(
                     incumbent = candidate.candidate
                     incumbent_value = candidate.objective
 
+        # Counted entries are only re-queued after their evaluation succeeded.
+        if not (evaluation is not None):
+            raise RuntimeError("Internal invariant failed: evaluation is not None.")
         if evaluation.failure is not None:
             failure = evaluation.failure
             unresolved_bound = inherited_bound

@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from phydrax.domain import DomainFunction
 

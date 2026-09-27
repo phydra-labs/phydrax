@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -46,7 +47,7 @@ from phydrax.sparse import EdgeRelation
 from phydrax.units import ANGSTROM
 
 
-def _constant_family(matrix, *, hermitian):
+def _constant_family(matrix: Any, *, hermitian: Any) -> Any:
     value = np.asarray(matrix, dtype="complex128")
     count = value.shape[0]
     target = np.repeat(np.arange(count), count)
@@ -65,7 +66,7 @@ def _constant_family(matrix, *, hermitian):
     return prepare_periodic_translation_family(plan, state)
 
 
-def _soc_residuals():
+def _soc_residuals() -> Any:
     basis = PeriodicOrbitalBasisPlan(
         PeriodicCell(np.eye(3)),
         ("px", "py", "pz"),
@@ -97,13 +98,17 @@ def _soc_residuals():
     }
 
 
-def _lswt_residuals():
+def _lswt_residuals() -> Any:
+    # ty: ignore[invalid-argument-type]
     reference = SpinWaveReferenceState([[0.0, 0.0, 1.0]], [1.0])
+    # ty: ignore[invalid-argument-type]
     mesh = ReciprocalMeshPlan.monkhorst_pack(PeriodicCell([[1.0]]), (1,))
     plan = LinearSpinWavePlan(
         reference,
         mesh,
+        # ty: ignore[invalid-argument-type]
         [0],
+        # ty: ignore[invalid-argument-type]
         [0],
         energy_unit="reduced-energy",
         maximum_site_count=1,
@@ -113,6 +118,7 @@ def _lswt_residuals():
             plan,
             _constant_family([[1.5]], hermitian=True),
             _constant_family([[0.0]], hermitian=False),
+            # ty: ignore[invalid-argument-type]
             [[0.0, 0.0, 0.0]],
         )
     )
@@ -124,13 +130,15 @@ def _lswt_residuals():
     }
 
 
-def _bdg_residuals():
+def _bdg_residuals() -> Any:
     order = FermionModeOrder(("up", "down"))
     plan = FermionicBdGPlan(
         NambuConvention(order),
         FermionicPairingPlan(
             order,
+            # ty: ignore[invalid-argument-type]
             [0],
+            # ty: ignore[invalid-argument-type]
             [1.0],
             mesh_id="analytic-gamma",
             energy_unit="reduced-energy",
@@ -140,7 +148,9 @@ def _bdg_residuals():
     result = evaluate_bdg_spectrum(
         prepare_fermionic_bdg(
             plan,
+            # ty: ignore[invalid-argument-type]
             [[[0.1, 0.0], [0.0, 0.1]]],
+            # ty: ignore[invalid-argument-type]
             [[[0.0, 0.5], [-0.5, 0.0]]],
             chemical_potential=0.0,
             normal_family_id="analytic-normal",

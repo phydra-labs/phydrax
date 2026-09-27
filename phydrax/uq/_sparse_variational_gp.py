@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
@@ -12,7 +13,9 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
 import optax
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 
@@ -28,6 +31,7 @@ from .._training_kernel import (
     run_training_attempt,
     TrainingKernelSpec,
     TrainingKernelState,
+    TrainingKeys,
     TrainingRejectionBudgetError,
 )
 from .._training_objective import _ObjectiveContribution
@@ -56,7 +60,7 @@ class SparseVariationalGaussianState(StrictModule, ParameterOwner):
         mean: ArrayLike,
         unconstrained_lower: ArrayLike,
         /,
-    ):
+    ) -> None:
         inducing = jnp.asarray(inducing_points)
         mean_array = jnp.asarray(mean)
         lower = jnp.asarray(unconstrained_lower)
@@ -135,7 +139,7 @@ class SparseVariationalGaussianProcessELBO(StrictModule):
         *,
         regularization: ArrayLike = 0.0,
         likelihood_samples: int = 8,
-    ):
+    ) -> None:
         if not isinstance(kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("kernel must be an AbstractPositiveDefiniteKernel.")
         if not isinstance(observation_factor, AbstractObservationFactor):
@@ -247,7 +251,7 @@ class SparseVariationalGaussianProcessResult(StrictModule):
         final_step: int,
         source_fingerprint: str,
         training_checkpoint_id: str,
-    ):
+    ) -> None:
         trace = jnp.asarray(objective_trace, dtype=jnp.float64)
         if trace.ndim != 1 or trace.size == 0:
             raise ValueError("objective_trace must be a nonempty vector.")
@@ -269,7 +273,13 @@ class SparseVariationalGaussianProcessResult(StrictModule):
         return elbo.predict(self.state, query_points)
 
 
-def _negative_elbo(parameters, model_state, fixed, payload, keys):
+def _negative_elbo(
+    parameters: PyTree[Any],
+    model_state: PyTree[Any],
+    fixed: PyTree[Any],
+    payload: tuple[Callable[..., Array], LikelihoodBatch],
+    keys: TrainingKeys,
+) -> tuple[_ObjectiveContribution, PyTree[Any], tuple[()]]:
     """Negative SVGP ELBO; the payload is `(elbo, batch)`."""
     elbo, batch = payload
     complete = combine_parameters(parameters, model_state, fixed)
@@ -313,7 +323,8 @@ def fit_sparse_variational_gaussian_process(
         )
         rule_id = (
             "svgp-clipped-adam:"
-            f"{configuration.gradient_clip.hex()}:{configuration.learning_rate.hex()}"
+            f"{float(configuration.gradient_clip).hex()}:"
+            f"{float(configuration.learning_rate).hex()}"
         )
     else:
         transformation = optimizer

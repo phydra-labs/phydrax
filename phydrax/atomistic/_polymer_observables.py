@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -36,7 +37,7 @@ class PolymerChainLayoutPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_frames: int,
-    ):
+    ) -> None:
         indices = np.asarray(particle_indices, dtype=np.int32)
         mask = np.asarray(chain_mask, dtype=np.bool_)
         frames = int(maximum_frames)
@@ -155,7 +156,7 @@ class PolymerContourStatisticsPlan(StrictModule, NonTrainableState):
         maximum_separation: int,
         contact_distance: float,
         /,
-    ):
+    ) -> None:
         separation = int(maximum_separation)
         contact = float(contact_distance)
         if (
@@ -271,7 +272,7 @@ class DebyeScatteringPlan(StrictModule, NonTrainableState):
         maximum_frames: int,
         maximum_particles: int,
         block_size: int = 64,
-    ):
+    ) -> None:
         wave = np.asarray(wave_numbers, dtype=np.float64)
         frames = int(maximum_frames)
         particles = int(maximum_particles)
@@ -362,14 +363,14 @@ def debye_scattering(
     wave = plan.wave_numbers.astype(values.dtype)
     initial = jnp.zeros((frame_count, wave.size), dtype=values.dtype)
 
-    def accumulate_left(left_block, total):
+    def accumulate_left(left_block: int | Array, total: Array) -> Array:
         left_start = left_block * block
         left_positions = jax.lax.dynamic_slice(
             padded_positions, (0, left_start, 0), (frame_count, block, 3)
         )
         left_weights = jax.lax.dynamic_slice(padded_weights, (left_start,), (block,))
 
-        def accumulate_right(right_block, subtotal):
+        def accumulate_right(right_block: int | Array, subtotal: Array) -> Array:
             right_start = right_block * block
             right_positions = jax.lax.dynamic_slice(
                 padded_positions, (0, right_start, 0), (frame_count, block, 3)
@@ -430,7 +431,7 @@ class PartialStructureFactorPlan(StrictModule, NonTrainableState):
         *,
         maximum_frames: int,
         maximum_particles: int,
-    ):
+    ) -> None:
         vectors = np.asarray(wave_vectors, dtype=np.float64)
         types = int(site_type_count)
         frames = int(maximum_frames)

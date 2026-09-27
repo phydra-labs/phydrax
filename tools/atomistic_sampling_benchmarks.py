@@ -9,7 +9,13 @@ import phydrax as phx
 
 
 system = phx.atomistic.AtomisticSystemPlan(
-    list(range(64)), [1] * 64, [1.0] * 64, phx.atomistic.AtomisticUnitSystem.reduced()
+    # ty: ignore[invalid-argument-type]
+    list(range(64)),
+    # ty: ignore[invalid-argument-type]
+    [1] * 64,
+    # ty: ignore[invalid-argument-type]
+    [1.0] * 64,
+    phx.atomistic.AtomisticUnitSystem.reduced(),
 ).prepare()
 positions = jnp.reshape(jnp.arange(192, dtype=jnp.float32), (64, 3)) * 0.01
 cv = phx.atomistic.sampling.CollectiveVariablePlan(

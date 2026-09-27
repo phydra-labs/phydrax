@@ -13,7 +13,7 @@ from math import floor, isclose, isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -66,7 +66,7 @@ class CurrentSynapse(StrictModule, NonTrainableState):
     model_id: str = eqx.field(static=True)
     kind: int = eqx.field(static=True)
 
-    def __init__(self, time_constant_ms: float, current_scale_nA: float, /):
+    def __init__(self, time_constant_ms: float, current_scale_nA: float, /) -> None:
         tau = _positive(time_constant_ms, "time_constant_ms")
         if isinstance(current_scale_nA, bool):
             raise TypeError("current_scale_nA must be a real scalar, not bool.")
@@ -97,7 +97,7 @@ class ConductanceSynapse(StrictModule, NonTrainableState):
 
     def __init__(
         self, time_constant_ms: float, conductance_scale_uS: float, reversal_mV: float, /
-    ):
+    ) -> None:
         tau = _positive(time_constant_ms, "time_constant_ms")
         scale = _positive(conductance_scale_uS, "conductance_scale_uS", allow_zero=True)
         if isinstance(reversal_mV, bool):
@@ -148,7 +148,7 @@ class SynapseConnection(StrictModule, NonTrainableState):
         *,
         delay_ms: float = 0.0,
         weight: float = 1.0,
-    ):
+    ) -> None:
         identifier = _identifier(relation_id, "relation_id")
         indices = (pre_cell, pre_compartment, post_cell, post_compartment)
         if any(
@@ -209,7 +209,7 @@ class SynapseNetworkPlan(StrictModule, NonTrainableState):
         *,
         connections: Sequence[SynapseConnection] = (),
         execution: str = "clock",
-    ):
+    ) -> None:
         counts = tuple(compartment_counts)
         capacities = (*counts, synapse_capacity)
         if any(
@@ -298,7 +298,7 @@ class PreparedSynapseNetwork(StrictModule, NonTrainableState):
     plan: SynapseNetworkPlan
     runtime_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: SynapseNetworkPlan, /):
+    def __init__(self, plan: SynapseNetworkPlan, /) -> None:
         self.plan = plan
         self.runtime_id = canonical_fingerprint(
             {
@@ -408,7 +408,7 @@ class SynapseRelationEvent(StrictModule):
         /,
         *,
         event_id: str = "synapse-relation-event",
-    ):
+    ) -> None:
         integer_values = (
             kind,
             slot,
@@ -904,7 +904,7 @@ class PairSTDPPlan(StrictModule, NonTrainableState):
         pairing: str = "emission",
         weight_dependence: str = "additive",
         weight_exponent: float = 1.0,
-    ):
+    ) -> None:
         pre_tau = _positive(pre_time_constant_ms, "pre_time_constant_ms")
         post_tau = _positive(post_time_constant_ms, "post_time_constant_ms")
         plus = _positive(potentiation, "potentiation", allow_zero=True)
@@ -1191,7 +1191,7 @@ class EligibilitySTDPPlan(StrictModule, NonTrainableState):
         *,
         learning_rate: float = 1.0,
         eligibility_bound: float = 1.0e6,
-    ):
+    ) -> None:
         if not isinstance(pair_stdp, PairSTDPPlan):
             raise TypeError("pair_stdp must be a PairSTDPPlan.")
         self.pair_stdp = pair_stdp

@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -56,7 +57,7 @@ _ALE_VALIDITY = MotionValidityPolicy(
 )
 
 
-def _boundary_patches(plan: UnstructuredFiniteVolumePlan, /):
+def _boundary_patches(plan: UnstructuredFiniteVolumePlan, /) -> Any:
     connectivity = (
         polygonal_connectivity(
             plan.triangles, plan.quadrilaterals, plan.vertices.shape[0]
@@ -189,7 +190,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         consistency_policy: ALEGeometryConsistencyPolicy | None = None,
         motion_policy: FiniteElementMeshMotionPolicy | None = None,
         monitor: TimeMeshMonitor | None = None,
-    ):
+    ) -> None:
         if not isinstance(base_plan, UnstructuredFiniteVolumePlan):
             raise TypeError("base_plan must be UnstructuredFiniteVolumePlan.")
         if not callable(motion):
@@ -426,8 +427,10 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         monitor = (
             None
             if self.monitor is None
+            # ty: ignore[call-non-callable]
             else lambda points: self.monitor(time, points, args)
         )
+        # ty: ignore[invalid-argument-type]
         routed = extension.extend(boundary - boundary_reference, monitor=monitor)
         return reference + routed.displacement, routed.successful
 
@@ -457,7 +460,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         args: Any,
         /,
     ) -> _InstantaneousALEGeometry:
-        def evaluate_vertices(value):
+        def evaluate_vertices(value: Any) -> Any:
             return self._vertices(value, args)
 
         vertices, vertex_velocity, route_successful = jax.jvp(
@@ -478,7 +481,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(vertex_velocity))
         )
 
-        def evaluate_geometry(points):
+        def evaluate_geometry(points: Any) -> Any:
             return evaluate_unstructured_fv_geometry(
                 points,
                 self.base_plan.triangles,
@@ -587,7 +590,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         )
         finite_limit = jnp.sqrt(jnp.asarray(jnp.finfo(dtype).max, dtype=dtype)) / 8.0
 
-        def bounded(values):
+        def bounded(values: Any) -> Any:
             array = jnp.asarray(values, dtype=dtype)
             return jnp.clip(
                 jnp.nan_to_num(

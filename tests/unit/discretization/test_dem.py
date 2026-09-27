@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,14 +15,14 @@ import phydrax as phx
 
 def _compiled_dem(
     *,
-    barriers=(),
-    friction=0.5,
-    restitution=0.8,
-    fixed_mask=None,
-    gravity=None,
-    neighborhood=None,
-    execution=None,
-):
+    barriers: Any = (),
+    friction: Any = 0.5,
+    restitution: Any = 0.8,
+    fixed_mask: Any = None,
+    gravity: Any = None,
+    neighborhood: Any = None,
+    execution: Any = None,
+) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0, 1]),
         jnp.asarray([1.0, 1.0]),
@@ -64,7 +67,7 @@ def _compiled_dem(
     )
 
 
-def _dem_role_value(state, scale):
+def _dem_role_value(state: Any, scale: Any) -> Any:
     return jax.tree.map(
         lambda leaf: (
             jnp.full_like(leaf, scale)
@@ -75,7 +78,7 @@ def _dem_role_value(state, scale):
     )
 
 
-def _dem_tree_pair(reference, covector, vector):
+def _dem_tree_pair(reference: Any, covector: Any, vector: Any) -> Any:
     products = (
         jnp.vdot(covector_leaf, vector_leaf)
         for base, covector_leaf, vector_leaf in zip(
@@ -89,7 +92,7 @@ def _dem_tree_pair(reference, covector, vector):
     return sum(products, start=jnp.asarray(0.0))
 
 
-def test_dem_state_geometry_certifies_four_spaces_and_frozen_routes():
+def test_dem_state_geometry_certifies_four_spaces_and_frozen_routes() -> None:
     compiled = _compiled_dem()
     state = compiled.initialize_state(
         0.0,
@@ -146,7 +149,7 @@ def test_dem_state_geometry_certifies_four_spaces_and_frozen_routes():
         geometry.inverse_retract(state, incompatible)
 
 
-def test_linear_sphere_contact_has_action_reaction_and_torque_balance():
+def test_linear_sphere_contact_has_action_reaction_and_torque_balance() -> None:
     compiled = _compiled_dem()
     state = compiled.initialize_state(
         0.0,
@@ -164,7 +167,7 @@ def test_linear_sphere_contact_has_action_reaction_and_torque_balance():
     assert jnp.isclose(diagnostics.maximum_overlap_fraction, 0.2)
 
 
-def test_cundall_strack_history_advances_and_respects_coulomb_limit():
+def test_cundall_strack_history_advances_and_respects_coulomb_limit() -> None:
     compiled = _compiled_dem(friction=0.2)
     state = compiled.initialize_state(
         0.0,
@@ -193,7 +196,7 @@ def test_cundall_strack_history_advances_and_respects_coulomb_limit():
     assert response.friction_defect[0] <= 1.0e-10
 
 
-def test_exact_sdf_container_returns_equal_opposite_wall_reaction():
+def test_exact_sdf_container_returns_equal_opposite_wall_reaction() -> None:
     barrier = phx.discretization.ImplicitDEMBarrier(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(),
         phx.discretization.DEMBarrierSide.INTERIOR,
@@ -220,7 +223,7 @@ def test_exact_sdf_container_returns_equal_opposite_wall_reaction():
     )
 
 
-def test_dem_qualification_uses_contact_specific_residuals_and_margins():
+def test_dem_qualification_uses_contact_specific_residuals_and_margins() -> None:
     compiled = _compiled_dem()
     state = compiled.initialize_state(
         0.0,
@@ -239,7 +242,7 @@ def test_dem_qualification_uses_contact_specific_residuals_and_margins():
     assert margins.route_capacity_successful
 
 
-def test_periodic_dense_and_cell_contacts_have_identical_force_and_history():
+def test_periodic_dense_and_cell_contacts_have_identical_force_and_history() -> None:
     box = phx.discretization.ParticleBox(
         jnp.asarray([0.0, -1.0]),
         jnp.asarray([2.0, 1.0]),
@@ -290,7 +293,7 @@ def test_periodic_dense_and_cell_contacts_have_identical_force_and_history():
     )
 
 
-def test_cell_occupancy_overflow_rejects_initial_dem_state():
+def test_cell_occupancy_overflow_rejects_initial_dem_state() -> None:
     box = phx.discretization.ParticleBox(
         jnp.asarray([-1.0, -1.0]),
         jnp.asarray([1.0, 1.0]),
@@ -313,7 +316,7 @@ def test_cell_occupancy_overflow_rejects_initial_dem_state():
         )
 
 
-def test_fixed_sphere_retains_reaction_while_mobile_sphere_follows_gravity():
+def test_fixed_sphere_retains_reaction_while_mobile_sphere_follows_gravity() -> None:
     compiled = _compiled_dem(
         fixed_mask=jnp.asarray([True, False]),
         gravity=jnp.asarray([0.0, -1.0]),

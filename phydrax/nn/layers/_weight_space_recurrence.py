@@ -5,19 +5,20 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, ParameterOwner
+from ...typing import parse, PRNGKey
 from .._keys import EvalKey
 from ._recurrent import (
     AffineRecurrence,
@@ -27,8 +28,8 @@ from ._recurrent import (
 )
 
 
-WeightSpaceInputMode = Literal["value", "difference"]
-WeightSpaceExecution = Literal["serial", "associative"]
+WeightSpaceInputMode: TypeAlias = Literal["value", "difference"]
+WeightSpaceExecution: TypeAlias = Literal["serial", "associative"]
 
 
 class WeightSpaceState(StrictModule, NonTrainableState):
@@ -59,16 +60,14 @@ class WeightSpaceRecurrence(StrictModule, ParameterOwner):
         maximum_retention: float = 0.999,
         input_scale: float = 1e-2,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.input_size = int(input_size)
         self.parameter_size = int(parameter_size)
         self.maximum_retention = float(maximum_retention)
-        self.input_mode = input_mode
         if self.input_size <= 0 or self.parameter_size <= 0:
             raise ValueError("input_size and parameter_size must be positive.")
-        if input_mode not in ("value", "difference"):
-            raise ValueError("input_mode must be 'value' or 'difference'.")
+        self.input_mode = parse(input_mode, WeightSpaceInputMode, "input_mode")
         if (
             not math.isfinite(self.maximum_retention)
             or not 0.0 < self.maximum_retention < 1.0
@@ -159,7 +158,9 @@ class WeightSpaceRecurrence(StrictModule, ParameterOwner):
         scan_valid = jnp.moveaxis(batch.valid, -1, 0)
         scan_reset = jnp.moveaxis(batch.reset, -1, 0)
 
-        def step(previous: Array, step_inputs: tuple[Array, Array, Array]):
+        def step(
+            previous: Array, step_inputs: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array]:
             inputs, valid, reset = step_inputs
             reference = jnp.where(
                 (valid & reset)[..., None],

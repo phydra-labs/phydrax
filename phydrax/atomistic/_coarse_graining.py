@@ -4,16 +4,20 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import PRNGKey
 from ._graph import AtomisticGraphExecutionPlan
 from ._potential import AbstractAtomisticPotential, AtomisticSpeciesKind
 from ._system import AtomisticSystemPlan, PreparedAtomisticSystem
@@ -44,7 +48,7 @@ class MolecularCoarseMapPlan(StrictModule, NonTrainableState):
         *,
         topology: MolecularTopologyPlan | None = None,
         name: str = "molecular-coarse-map",
-    ):
+    ) -> None:
         bead_ids = np.asarray(bead_particle_ids)
         bead_types = np.asarray(bead_type_ids)
         membership = np.asarray(particle_to_bead)
@@ -121,7 +125,9 @@ class PreparedMolecularCoarseMap(StrictModule, NonTrainableState):
     anchor_indices: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MolecularCoarseMapPlan, system: PreparedAtomisticSystem, /):
+    def __init__(
+        self, plan: MolecularCoarseMapPlan, system: PreparedAtomisticSystem, /
+    ) -> None:
         if not isinstance(plan, MolecularCoarseMapPlan):
             raise TypeError("plan must be MolecularCoarseMapPlan.")
         if not isinstance(system, PreparedAtomisticSystem):
@@ -258,7 +264,7 @@ class PreparedMolecularCoarseMap(StrictModule, NonTrainableState):
         )
         force_residual = (
             jnp.asarray(jnp.nan, dtype=position.dtype)
-            if coarse_force is None
+            if coarse_force is None or force is None
             else jnp.max(
                 jnp.abs(
                     jnp.sum(coarse_force, axis=0)
@@ -271,7 +277,7 @@ class PreparedMolecularCoarseMap(StrictModule, NonTrainableState):
         )
         momentum_residual = (
             jnp.asarray(jnp.nan, dtype=position.dtype)
-            if coarse_momentum is None
+            if coarse_momentum is None or momentum is None
             else jnp.max(
                 jnp.abs(
                     jnp.sum(coarse_momentum, axis=0)
@@ -335,7 +341,7 @@ class CoarseForceMatchingProblem(StrictModule, NonTrainableState):
         validation_batch: AtomisticBatch | None = None,
         validation_fine_forces: ArrayLike | None = None,
         validation_prior_forces: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(mapping, PreparedMolecularCoarseMap):
             raise TypeError("mapping must be PreparedMolecularCoarseMap.")
         if not isinstance(fine_batch, AtomisticBatch):
@@ -349,7 +355,9 @@ class CoarseForceMatchingProblem(StrictModule, NonTrainableState):
         if force.shape != fine_batch.positions.shape:
             raise ValueError("fine_forces must match fine_batch positions.")
 
-        def mapped_batch(batch: AtomisticBatch, labels: Array):
+        def mapped_batch(
+            batch: AtomisticBatch, labels: Array
+        ) -> tuple[AtomisticBatch, Array]:
             evaluations = tuple(
                 mapping.evaluate(batch.positions[index], forces=labels[index])
                 for index in range(batch.case_count)
@@ -359,7 +367,11 @@ class CoarseForceMatchingProblem(StrictModule, NonTrainableState):
                     "A fine configuration could not be mapped unambiguously."
                 )
             positions = jnp.stack(tuple(value.positions for value in evaluations))
-            projected = jnp.stack(tuple(value.forces for value in evaluations))
+            # Mapping with supplied forces always returns projected forces.
+            mapped_forces = cast(
+                tuple[Array, ...], tuple(value.forces for value in evaluations)
+            )
+            projected = jnp.stack(mapped_forces)
             count = batch.case_count
             coarse = mapping.coarse_system.plan
             cells = None
@@ -471,7 +483,7 @@ def fit_coarse_potential(
     potential: AbstractAtomisticPotential,
     problem: CoarseForceMatchingProblem,
     policy: AtomisticTrainingPolicy,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> CoarseForceMatchingResult:
     if not isinstance(potential, AbstractAtomisticPotential):

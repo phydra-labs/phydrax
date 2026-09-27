@@ -6,16 +6,17 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from enum import IntEnum
-from typing import Any, Literal, TypeAlias
+from typing import Any, get_args, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...backends._types import BackendUnavailableError
+from ...typing import parse
 
 
 RoboticsOperation: TypeAlias = Literal[
@@ -45,18 +46,7 @@ ObservationFreshness: TypeAlias = Literal[
     "state-current", "pre-step", "post-step-refreshed"
 ]
 
-ROBOTICS_OPERATIONS: tuple[RoboticsOperation, ...] = (
-    "forward-kinematics",
-    "smooth-dynamics",
-    "contact",
-    "step",
-    "sensors",
-    "model-batching",
-    "jit",
-    "vmap",
-    "jvp",
-    "vjp",
-)
+ROBOTICS_OPERATIONS: tuple[RoboticsOperation, ...] = get_args(RoboticsOperation)
 _DIFFERENTIABILITY_RANK = {"none": 0, "conditional": 1, "guaranteed": 2}
 
 
@@ -83,10 +73,7 @@ def _normalized_values(
 
 
 def _operation(value: str, /) -> RoboticsOperation:
-    operation = str(value)
-    if operation not in ROBOTICS_OPERATIONS:
-        raise ValueError(f"Unknown robotics backend operation {operation!r}.")
-    return operation  # type: ignore[return-value]
+    return parse(value, RoboticsOperation, "operation")
 
 
 class RoboticsOperationStatus(IntEnum):
@@ -126,7 +113,7 @@ class RoboticsOperationCapability(StrictModule, NonTrainableState):
         solvers: Sequence[str] = (),
         contact_features: Sequence[str] = (),
         reason: str = "",
-    ):
+    ) -> None:
         operation_ = _operation(operation)
         implementation_ = _identifier(implementation, "implementation")
         devices_ = _normalized_values(devices, "devices")
@@ -213,7 +200,7 @@ class RoboticsOperationRequirement(StrictModule, NonTrainableState):
         minimum_differentiability: RoboticsDifferentiability = "none",
         solver: str | None = None,
         contact_feature: str | None = None,
-    ):
+    ) -> None:
         if minimum_differentiability not in _DIFFERENTIABILITY_RANK:
             raise ValueError("Unknown minimum differentiability level.")
         device_ = None if device is None else _identifier(device, "device").lower()
@@ -243,7 +230,7 @@ class RoboticsRequirementRejection(StrictModule, NonTrainableState):
     requirement: RoboticsOperationRequirement
     reason: str = eqx.field(static=True)
 
-    def __init__(self, requirement: RoboticsOperationRequirement, reason: str, /):
+    def __init__(self, requirement: RoboticsOperationRequirement, reason: str, /) -> None:
         if not isinstance(requirement, RoboticsOperationRequirement):
             raise TypeError("requirement must be RoboticsOperationRequirement.")
         self.requirement = requirement
@@ -264,7 +251,7 @@ class RoboticsCapabilityNegotiation(StrictModule, NonTrainableState):
         backend: str,
         requirements: Sequence[RoboticsOperationRequirement],
         rejections: Sequence[RoboticsRequirementRejection],
-    ):
+    ) -> None:
         requirements_ = tuple(requirements)
         rejections_ = tuple(rejections)
         if any(
@@ -315,7 +302,7 @@ class RoboticsBackendProfile(StrictModule, NonTrainableState):
         backend: str,
         implementation: str,
         operations: Sequence[RoboticsOperationCapability],
-    ):
+    ) -> None:
         operations_ = tuple(operations)
         if not operations_ or any(
             not isinstance(operation, RoboticsOperationCapability)
@@ -394,7 +381,7 @@ class RoboticsIndexEntry(StrictModule, NonTrainableState):
     start: int = eqx.field(static=True)
     stop: int = eqx.field(static=True)
 
-    def __init__(self, name: str, start: int, stop: int, /):
+    def __init__(self, name: str, start: int, stop: int, /) -> None:
         start_ = int(start)
         stop_ = int(stop)
         if start_ < 0 or stop_ <= start_:
@@ -431,7 +418,7 @@ class RoboticsProjectionProvenance(StrictModule, NonTrainableState):
         asset: str,
         unit_system: str,
         frame_convention: str,
-    ):
+    ) -> None:
         self.model = _identifier(model, "model")
         self.compiler = _identifier(compiler, "compiler")
         self.provider = _identifier(provider, "provider")
@@ -467,18 +454,8 @@ class RoboticsProjectionMap(StrictModule, NonTrainableState):
         entries: Sequence[RoboticsIndexEntry],
         provenance: RoboticsProjectionProvenance,
         /,
-    ):
-        if kind not in (
-            "qpos",
-            "qvel",
-            "control",
-            "observation",
-            "activation",
-            "length",
-            "velocity",
-            "raw-force",
-        ):
-            raise ValueError(f"Unknown robotics projection kind {kind!r}.")
+    ) -> None:
+        kind = parse(kind, RoboticsProjectionKind, "kind")
         size_ = int(size)
         entries_ = tuple(entries)
         if size_ < 0:
@@ -552,7 +529,7 @@ class RoboticsProjection(StrictModule, NonTrainableState):
         *,
         state_epoch: Any | None = None,
         sample_epoch: Any | None = None,
-    ):
+    ) -> None:
         if not isinstance(index_map, RoboticsProjectionMap):
             raise TypeError("index_map must be RoboticsProjectionMap.")
         shape = jnp.shape(values)
@@ -646,7 +623,7 @@ class RoboticsOperationEvidence(StrictModule, NonTrainableState):
         device: str,
         dtype: Any,
         detail: str,
-    ):
+    ) -> None:
         status_ = jnp.asarray(status, dtype=jnp.int32)
         finite_ = jnp.asarray(finite, dtype=jnp.bool_)
         if status_.shape != finite_.shape:

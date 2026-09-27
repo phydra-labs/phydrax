@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -26,7 +28,7 @@ from phydrax.applications.power._power_flow import solve_power_flow
 from phydrax.solver import DAEAdaptivePolicy, DAEConsistencyPolicy, DAESolvePolicy
 
 
-def _network():
+def _network() -> Any:
     return compile_network(
         PowerNetwork(
             buses=(Bus("grid"), Bus("machine")),
@@ -47,7 +49,7 @@ def _network():
     )
 
 
-def _classical():
+def _classical() -> Any:
     return ClassicalMachine(
         "unit",
         inertia=3.5,
@@ -58,7 +60,7 @@ def _classical():
     )
 
 
-def _order4(generator="unit"):
+def _order4(generator: Any = "unit") -> Any:
     return Order4Machine(
         generator,
         inertia=3.5,
@@ -77,7 +79,9 @@ def _order4(generator="unit"):
 
 
 @pytest.mark.parametrize("machine", (_classical(), _order4()))
-def test_machine_equilibrium_preserves_pf_power_on_unequal_mva_bases(machine):
+def test_machine_equilibrium_preserves_pf_power_on_unequal_mva_bases(
+    machine: Any,
+) -> None:
     compiled = _network()
     pf = solve_power_flow(compiled)
     initialized = initialize_smib(compiled, pf, machine, infinite_bus="grid")
@@ -107,7 +111,7 @@ def test_machine_equilibrium_preserves_pf_power_on_unequal_mva_bases(machine):
     assert jnp.allclose(result.final_state, state, rtol=1e-6, atol=1e-7)
 
 
-def test_multimachine_equilibrium_has_no_implicit_infinite_bus():
+def test_multimachine_equilibrium_has_no_implicit_infinite_bus() -> None:
     compiled = compile_network(
         PowerNetwork(
             buses=(Bus("reference"), Bus("plant")),
@@ -150,7 +154,7 @@ def test_multimachine_equilibrium_has_no_implicit_infinite_bus():
     assert jnp.allclose(result.final_state, initialized.problem.initial_state, atol=1e-7)
 
 
-def test_fault_clear_and_breakers_reconstruct_voltage_without_state_jumps():
+def test_fault_clear_and_breakers_reconstruct_voltage_without_state_jumps() -> None:
     compiled = _network()
     initialized = initialize_smib(
         compiled, solve_power_flow(compiled), _classical(), infinite_bus="grid"
@@ -176,12 +180,19 @@ def test_fault_clear_and_breakers_reconstruct_voltage_without_state_jumps():
             event.differential_jump, jnp.zeros(model.differential_size)
         )
         assert jnp.max(jnp.abs(event.residual_after)) < 1e-7
+        # ty: ignore[unresolved-attribute]
         assert event.scheduled.event_count == 1
+        # ty: ignore[unresolved-attribute]
         assert jnp.allclose(event.scheduled.event_times[0], event.event.time, atol=1e-12)
+        # ty: ignore[unresolved-attribute]
         assert jnp.array_equal(result.segments[index].solution.states[-1], event.before)
         assert jnp.allclose(
-            result.segments[index + 1].solution.states[0], event.after, atol=1e-8
+            # ty: ignore[unresolved-attribute]
+            result.segments[index + 1].solution.states[0],
+            event.after,
+            atol=1e-8,
         )
+        # ty: ignore[unresolved-attribute]
         assert result.segments[index + 1].solution.step_history.orders[0] == 1
     assert not trip.topology_after.branch_closed[0]
     assert reclose.topology_after.branch_closed[0]
@@ -193,7 +204,7 @@ def test_fault_clear_and_breakers_reconstruct_voltage_without_state_jumps():
     assert abs(result.final_state[0] - initialized.problem.initial_state[0]) > 1e-6
 
 
-def test_inadmissible_restart_is_not_adopted_and_later_work_is_not_run():
+def test_inadmissible_restart_is_not_adopted_and_later_work_is_not_run() -> None:
     compiled = _network()
     initialized = initialize_smib(
         compiled, solve_power_flow(compiled), _classical(), infinite_bus="grid"
@@ -211,7 +222,9 @@ def test_inadmissible_restart_is_not_adopted_and_later_work_is_not_run():
     assert result.status == "event_failed"
     failed, skipped = result.events
     assert not failed.applied
+    # ty: ignore[unresolved-attribute]
     assert not failed.consistency.admissible
+    # ty: ignore[unresolved-attribute]
     assert failed.consistency.state_correction_norm > 0
     assert skipped.status == "not_run"
     assert all(segment.status == "not_run" for segment in result.segments[1:])
@@ -219,7 +232,7 @@ def test_inadmissible_restart_is_not_adopted_and_later_work_is_not_run():
     assert jnp.allclose(result.final_time, 0.02)
 
 
-def test_source_free_island_failure_is_explicit():
+def test_source_free_island_failure_is_explicit() -> None:
     compiled = compile_network(
         PowerNetwork(
             buses=(Bus("grid"), Bus("machine"), Bus("load")),
@@ -253,7 +266,7 @@ def test_source_free_island_failure_is_explicit():
     assert jnp.array_equal(result.final_state, result.events[0].before)
 
 
-def test_unsupported_machine_coverage_and_controller_limits_fail_closed():
+def test_unsupported_machine_coverage_and_controller_limits_fail_closed() -> None:
     compiled = _network()
     pf = solve_power_flow(compiled)
     with pytest.raises(ValueError, match="unknown generator"):
@@ -273,7 +286,7 @@ def test_unsupported_machine_coverage_and_controller_limits_fail_closed():
         PowerEvent(0.0, "fault", "machine", admittance=complex(float("inf")))
 
 
-def test_external_reference_is_explicit_and_pf_must_balance_this_network():
+def test_external_reference_is_explicit_and_pf_must_balance_this_network() -> None:
     compiled = _network()
     pf = solve_power_flow(compiled)
     with pytest.raises(ValueError, match="explicit infinite bus"):
@@ -294,7 +307,9 @@ def test_external_reference_is_explicit_and_pf_must_balance_this_network():
         initialize_smib(changed, pf, _classical(), infinite_bus="grid")
 
 
-def test_load_fidelity_preserves_pq_by_default_and_impedance_only_when_requested():
+def test_load_fidelity_preserves_pq_by_default_and_impedance_only_when_requested() -> (
+    None
+):
     compiled = _network()
     pf = solve_power_flow(compiled)
     pq = initialize_smib(compiled, pf, _classical(), infinite_bus="grid")
@@ -320,7 +335,7 @@ def test_load_fidelity_preserves_pq_by_default_and_impedance_only_when_requested
     assert result.load_model == "constant_impedance"
 
 
-def test_fault_without_constant_power_solution_reports_native_restart_failure():
+def test_fault_without_constant_power_solution_reports_native_restart_failure() -> None:
     compiled = _network()
     initialized = initialize_smib(
         compiled, solve_power_flow(compiled), _classical(), infinite_bus="grid"
@@ -335,13 +350,16 @@ def test_fault_without_constant_power_solution_reports_native_restart_failure():
     assert not result.valid
     assert result.load_model == "constant_power"
     assert result.status == "event_failed"
+    # ty: ignore[unresolved-attribute]
     assert not result.events[0].consistency.initialization.valid
     assert not result.events[0].applied
     assert result.segments[0].status == "not_run"
     assert jnp.array_equal(result.final_state, initialized.problem.initial_state)
 
 
-def test_off_grid_events_preserve_requested_samples_with_native_adaptive_default():
+def test_off_grid_events_preserve_requested_samples_with_native_adaptive_default() -> (
+    None
+):
     compiled = _network()
     initialized = initialize_smib(
         compiled, solve_power_flow(compiled), _classical(), infinite_bus="grid"
@@ -354,6 +372,7 @@ def test_off_grid_events_preserve_requested_samples_with_native_adaptive_default
     result = simulate_power_dynamics(initialized, requested, events=events)
     assert result.valid
     samples = np.concatenate(
+        # ty: ignore[unresolved-attribute]
         [np.asarray(segment.solution.times) for segment in result.segments]
     )
     for time in (*requested, *(event.time for event in events)):
@@ -366,7 +385,7 @@ def test_off_grid_events_preserve_requested_samples_with_native_adaptive_default
         )
 
 
-def test_equilibrium_and_fault_satisfy_unchanged_native_constraint_certificate():
+def test_equilibrium_and_fault_satisfy_unchanged_native_constraint_certificate() -> None:
     compiled = compile_network(
         PowerNetwork(
             (Bus("grid", 110), Bus("machine", 110)),
@@ -404,12 +423,22 @@ def test_equilibrium_and_fault_satisfy_unchanged_native_constraint_certificate()
     )
     for segment in result.segments:
         solution = segment.solution
+        # ty: ignore[unresolved-attribute]
         assert jnp.all(solution.valid)
+        # ty: ignore[unresolved-attribute]
         assert jnp.all(solution.constraint_norm <= native_acceptance.constraint_tolerance)
+        # ty: ignore[unresolved-attribute]
         assert jnp.all(solution.residual_norm <= native_acceptance.residual_tolerance)
+        # ty: ignore[unresolved-attribute]
         problem = initialized.model.problem(solution.states[0], topology=segment.topology)
         for time, state, rate in zip(
-            solution.times, solution.states, solution.state_rates, strict=True
+            # ty: ignore[unresolved-attribute]
+            solution.times,
+            # ty: ignore[unresolved-attribute]
+            solution.states,
+            # ty: ignore[unresolved-attribute]
+            solution.state_rates,
+            strict=True,
         ):
             physical = np.asarray(problem.system.evaluate(time, state, rate))
             constraint_rms = np.sqrt(np.mean(np.square(physical[algebraic])))

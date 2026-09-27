@@ -5,17 +5,20 @@
 from __future__ import annotations
 
 from math import prod
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._sampling import AbstractChainSampleResult, derive_key, SampleAddress
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._kernel import (
     FactorExecutionEvidence,
     FactorGraphPrecisionPolicy,
@@ -44,13 +47,18 @@ _GIBBS_ADDRESS = SampleAddress(
 )
 
 
+# Per-draw scan output: positions, log score, validity, invalid conditionals,
+# state-change fraction.
+_GibbsDrawOutput: TypeAlias = tuple[Array, Array, Array, Array, Array]
+
+
 class ChromaticGibbs(StrictModule):
     """Deterministic strong-color schedule for exact scalar conditional updates."""
 
     colors: Array | None
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, colors: ArrayLike | None = None):
+    def __init__(self, colors: ArrayLike | None = None) -> None:
         if colors is None:
             resolved = None
         else:
@@ -75,7 +83,7 @@ class GibbsSchedule(StrictModule):
         warmup_sweeps: int = 0,
         num_draws: int,
         sweeps_per_draw: int = 1,
-    ):
+    ) -> None:
         warmup = int(warmup_sweeps)
         draws = int(num_draws)
         sweeps = int(sweeps_per_draw)
@@ -105,8 +113,8 @@ class GibbsState(StrictModule):
         /,
         *,
         valid: ArrayLike | None = None,
-        sweep_index: int | Array = 0,
-    ):
+        sweep_index: ArrayLike = 0,
+    ) -> None:
         states = jnp.asarray(positions)
         if states.ndim != 2 or not jnp.issubdtype(states.dtype, jnp.integer):
             raise ValueError(
@@ -188,7 +196,7 @@ class GibbsSampleResult(AbstractChainSampleResult):
         method_id: str,
         warmup_sweeps: int,
         sweeps_per_draw: int,
-    ):
+    ) -> None:
         values = jnp.asarray(samples)
         scores = jnp.asarray(log_score)
         if values.ndim != 3:
@@ -244,8 +252,8 @@ class GibbsSampleResult(AbstractChainSampleResult):
 
 def _automatic_colors(graph: DiscreteFactorGraph, /) -> np.ndarray:
     conflicts: list[set[int]] = [set() for _ in range(graph.num_variables)]
-    for scope in graph.factor_scopes:
-        for row in np.asarray(scope, dtype=np.int32):
+    for scope in graph._host_topology.factor_scopes:
+        for row in scope:
             for left_index, left in enumerate(row):
                 for right in row[left_index + 1 :]:
                     conflicts[int(left)].add(int(right))
@@ -272,8 +280,8 @@ def _validate_colors(graph: DiscreteFactorGraph, colors: np.ndarray, /) -> None:
     unique = np.unique(colors)
     if unique.size and not np.array_equal(unique, np.arange(unique.size)):
         raise ValueError("colors must be contiguous from zero.")
-    for scope in graph.factor_scopes:
-        for row in np.asarray(scope, dtype=np.int32):
+    for scope in graph._host_topology.factor_scopes:
+        for row in scope:
             selected = colors[row]
             if len({int(value) for value in selected}) != len(selected):
                 raise ValueError(
@@ -379,8 +387,8 @@ def prepare_chromatic_gibbs(
     incident_lists: list[list[tuple[int, int, int]]] = [
         [] for _ in range(graph.num_variables)
     ]
-    for group_index, scope in enumerate(graph.factor_scopes):
-        for factor, row in enumerate(np.asarray(scope, dtype=np.int32)):
+    for group_index, scope in enumerate(graph._host_topology.factor_scopes):
+        for factor, row in enumerate(scope):
             for position, variable in enumerate(row):
                 incident_lists[int(variable)].append((group_index, factor, position))
     incidents = tuple(tuple(values) for values in incident_lists)
@@ -463,7 +471,7 @@ def _conditional_logits(
     variable: int,
     /,
 ) -> Array:
-    cardinality = int(np.asarray(prepared.graph.cardinalities)[variable])
+    cardinality = int(prepared.graph._host_topology.cardinalities[variable])
     values: list[Array] = []
     for candidate in range(cardinality):
         score = jnp.asarray(0.0, dtype=prepared.precision.accumulation_dtype)
@@ -491,7 +499,7 @@ def _conditional_logits(
 def gibbs_sweep(
     prepared: PreparedChromaticGibbs,
     state: GibbsState,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     clamped: ArrayLike | None = None,
@@ -628,7 +636,7 @@ def sample_gibbs(
     state: GibbsState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     schedule: GibbsSchedule,
     clamped: ArrayLike | None = None,
 ) -> GibbsSampleResult:
@@ -657,7 +665,7 @@ def sample_gibbs(
     if clamp_mask.shape != (prepared.graph.num_variables,):
         raise ValueError("clamped must have one boolean per graph variable.")
 
-    def warmup_step(carry, sweep_index):
+    def warmup_step(carry: GibbsState, sweep_index: Array) -> tuple[GibbsState, None]:
         next_state, _info = gibbs_sweep(
             prepared,
             carry,
@@ -672,8 +680,12 @@ def sample_gibbs(
         xs=jnp.arange(schedule.warmup_sweeps, dtype=jnp.uint32),
     )
 
-    def collect_draw(carry, draw_index):
-        def transition_step(inner, transition_index):
+    def collect_draw(
+        carry: GibbsState, draw_index: Array
+    ) -> tuple[GibbsState, _GibbsDrawOutput]:
+        def transition_step(
+            inner: GibbsState, transition_index: Array
+        ) -> tuple[GibbsState, GibbsTransitionInfo]:
             sweep_index = (
                 schedule.warmup_sweeps
                 + draw_index * schedule.sweeps_per_draw

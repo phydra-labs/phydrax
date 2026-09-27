@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -36,7 +37,7 @@ class LiftingSurfacePlan(StrictModule, NonTrainableState):
     trailing_edge: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, leading_edge: ArrayLike, trailing_edge: ArrayLike, /):
+    def __init__(self, leading_edge: ArrayLike, trailing_edge: ArrayLike, /) -> None:
         leading = np.asarray(leading_edge, dtype=np.float64)
         trailing = np.asarray(trailing_edge, dtype=np.float64)
         if leading.ndim != 2 or leading.shape[1] != 3 or trailing.shape != leading.shape:

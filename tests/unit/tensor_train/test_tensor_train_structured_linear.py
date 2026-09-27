@@ -6,7 +6,7 @@ import pytest
 import phydrax.tensor_train as tt
 
 
-def test_structured_identity_shift_boundaries_and_dense_budgets():
+def test_structured_identity_shift_boundaries_and_dense_budgets() -> None:
     vector = jnp.arange(4, dtype=jnp.float32)
     train = tt.TensorTrain((vector[None, :, None],))
     identity = tt.cartesian_identity((4,))
@@ -34,7 +34,7 @@ def test_structured_identity_shift_boundaries_and_dense_budgets():
         train.to_dense(max_entries=3)
 
 
-def test_qtt_sampling_returns_physical_indices_without_quantum_semantics():
+def test_qtt_sampling_returns_physical_indices_without_quantum_semantics() -> None:
     layout = tt.QuanticsLayout.binary((4,), ordering="blocked")
     mass = jnp.asarray([1.0, 2.0, 3.0, 4.0])
     train = tt.qtt_digitize(mass, layout, max_ranks=2, relative_tolerance=0.0).tensor
@@ -50,7 +50,7 @@ def test_qtt_sampling_returns_physical_indices_without_quantum_semantics():
     assert jnp.all((samples >= 0) & (samples < 4))
 
 
-def test_tensor_train_linear_matches_dense_forward_and_exposes_compression():
+def test_tensor_train_linear_matches_dense_forward_and_exposes_compression() -> None:
     left = jnp.asarray([[1.0, -0.5], [0.25, 2.0]], dtype=jnp.float32)
     right = jnp.asarray([[2.0, 0.0], [1.0, 1.5]], dtype=jnp.float32)
     weight = jnp.asarray(np.kron(np.asarray(left), np.asarray(right)))

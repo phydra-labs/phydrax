@@ -5,10 +5,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
-from jaxtyping import Array, Key
 
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
@@ -26,16 +25,17 @@ from ...domain import (
 )
 from ...enforcement import EnforcementProgram
 from ...terms import ResidualPenalty
+from ...typing import parse, PRNGKey
 
 
 ScopeKind = Literal["patch", "pair", "global"]
-AssemblyKind = Literal["partition-of-unity", "broken"]
+AssemblyKind: TypeAlias = Literal["partition-of-unity", "broken"]
 
 
 class PatchScope(StrictModule):
     patch_id: str = eqx.field(static=True)
 
-    def __init__(self, patch_id: str, /):
+    def __init__(self, patch_id: str, /) -> None:
         value = str(patch_id)
         if not value:
             raise ValueError("patch_id must be non-empty.")
@@ -45,7 +45,7 @@ class PatchScope(StrictModule):
 class PairScope(StrictModule):
     pairing_id: str = eqx.field(static=True)
 
-    def __init__(self, pairing_id: str, /):
+    def __init__(self, pairing_id: str, /) -> None:
         value = str(pairing_id)
         if not value:
             raise ValueError("pairing_id must be non-empty.")
@@ -53,7 +53,7 @@ class PairScope(StrictModule):
 
 
 class GlobalScope(StrictModule):
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
 
@@ -66,7 +66,7 @@ class ScopedFunctionalTerm(StrictModule):
     term: AbstractScalarTerm
     scope: TermScope
 
-    def __init__(self, term: AbstractScalarTerm, scope: TermScope, /):
+    def __init__(self, term: AbstractScalarTerm, scope: TermScope, /) -> None:
         if not isinstance(term, AbstractScalarTerm):
             raise TypeError("term must be an AbstractScalarTerm.")
         if not isinstance(scope, (PatchScope, PairScope, GlobalScope)):
@@ -101,13 +101,15 @@ def _scoped_terms(
 class FunctionalDecompositionProblem(StrictModule):
     """Static functional problem over one local-field family and cover."""
 
+    __strict_contract__ = True
+
     cover: SubdomainCover
     family: LocalFieldFamily
     functions: frozendict[str, DomainFunction]
     terms: tuple[ScopedFunctionalTerm, ...]
     evaluation_terms: tuple[ScopedFunctionalTerm, ...]
     enforcement: EnforcementProgram | None
-    collocation_key: Key[Array, ""]
+    collocation_key: PRNGKey
     assembly: AssemblyKind = eqx.field(static=True)
     field_name: str = eqx.field(static=True)
 
@@ -127,16 +129,15 @@ class FunctionalDecompositionProblem(StrictModule):
         | ScopedFunctionalTerm
         | Sequence[AbstractScalarTerm | ScopedFunctionalTerm] = (),
         enforcement: EnforcementProgram | None = None,
-        collocation_key: Key[Array, ""] = DOC_KEY0,
-    ):
+        collocation_key: PRNGKey = DOC_KEY0,
+    ) -> None:
         if not isinstance(cover, SubdomainCover):
             raise TypeError("cover must be a SubdomainCover.")
         if not isinstance(family, LocalFieldFamily):
             raise TypeError("family must be a LocalFieldFamily.")
         if family.cover.cover_id != cover.cover_id:
             raise ValueError("family and problem cover identities must match.")
-        if assembly not in ("partition-of-unity", "broken"):
-            raise ValueError("Unknown decomposition field assembly.")
+        assembly = parse(assembly, AssemblyKind, "assembly")
         name = str(field_name)
         if not name:
             raise ValueError("field_name must be non-empty.")
@@ -178,7 +179,7 @@ class FunctionalDecompositionProblem(StrictModule):
         | ScopedFunctionalTerm
         | Sequence[AbstractScalarTerm | ScopedFunctionalTerm] = (),
         enforcement: EnforcementProgram | None = None,
-        collocation_key: Key[Array, ""] = DOC_KEY0,
+        collocation_key: PRNGKey = DOC_KEY0,
     ) -> FunctionalDecompositionProblem:
         if not isinstance(family, LocalFieldFamily):
             raise TypeError("family must be a LocalFieldFamily.")
@@ -212,7 +213,7 @@ class FunctionalDecompositionProblem(StrictModule):
         evaluation_terms: AbstractScalarTerm
         | ScopedFunctionalTerm
         | Sequence[AbstractScalarTerm | ScopedFunctionalTerm] = (),
-        collocation_key: Key[Array, ""] = DOC_KEY0,
+        collocation_key: PRNGKey = DOC_KEY0,
     ) -> FunctionalDecompositionProblem:
         if not isinstance(family, LocalFieldFamily):
             raise TypeError("family must be a LocalFieldFamily.")

@@ -11,7 +11,7 @@ from math import pi
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -34,7 +34,7 @@ class SL2CBoosterReferencePlan(StrictModule):
         radial_cutoff: float = 16.0,
         quadrature_order: int = 256,
         tolerance: float = 1e-10,
-    ):
+    ) -> None:
         cutoff = float(radial_cutoff)
         order = int(quadrature_order)
         tolerance_value = float(tolerance)

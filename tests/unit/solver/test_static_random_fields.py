@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -5,7 +7,8 @@ import pytest
 import phydrax as phx
 
 
-def _periodic_basis(size, mode_names):
+def _periodic_basis(size: Any, mode_names: Any) -> Any:
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.FourierAxisSpec(size).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     available = {
@@ -25,7 +28,8 @@ def _periodic_basis(size, mode_names):
     )
 
 
-def test_modal_spectral_noise_requires_point_value_random_field_basis():
+def test_modal_spectral_noise_requires_point_value_random_field_basis() -> None:
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.FourierAxisSpec(8).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     modal_basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
@@ -38,7 +42,7 @@ def test_modal_spectral_noise_requires_point_value_random_field_basis():
         phx.stochastic.SpatialBasisSynthesis.from_spatial_noise_basis(modal_basis)
 
 
-def test_gaussian_field_replays_and_matches_declared_weighted_covariance():
+def test_gaussian_field_replays_and_matches_declared_weighted_covariance() -> None:
     basis = _periodic_basis(12, ("constant", "cosine", "sine"))
     synthesis = phx.stochastic.SpatialBasisSynthesis.from_spatial_noise_basis(
         basis,
@@ -73,7 +77,7 @@ def test_gaussian_field_replays_and_matches_declared_weighted_covariance():
     assert diagnostics.replay_exact
 
 
-def test_default_gaussian_field_coupling_includes_root_key():
+def test_default_gaussian_field_coupling_includes_root_key() -> None:
     mode_ids = ("constant", "cosine")
     first = phx.stochastic.GaussianCoefficientRealization.sample(
         jr.key(20),
@@ -98,7 +102,7 @@ def test_default_gaussian_field_coupling_includes_root_key():
     assert explicit_first.coupling_id == explicit_second.coupling_id
 
 
-def test_transformed_random_field_is_explicit_and_preserves_latent_identity():
+def test_transformed_random_field_is_explicit_and_preserves_latent_identity() -> None:
     basis = _periodic_basis(8, ("constant", "cosine"))
     gaussian = phx.stochastic.StaticGaussianRandomField(
         phx.stochastic.SpatialBasisSynthesis.from_spatial_noise_basis(basis),
@@ -129,7 +133,7 @@ def test_transformed_random_field_is_explicit_and_preserves_latent_identity():
         malformed.sample(realization)
 
 
-def test_cross_resolution_coupling_aligns_modes_not_merely_keys():
+def test_cross_resolution_coupling_aligns_modes_not_merely_keys() -> None:
     coarse_basis = _periodic_basis(8, ("constant", "cosine"))
     fine_basis = _periodic_basis(16, ("constant", "cosine", "sine"))
     coarse = phx.stochastic.StaticGaussianRandomField(
@@ -176,7 +180,7 @@ def test_cross_resolution_coupling_aligns_modes_not_merely_keys():
         "observation",
     ),
 )
-def test_static_random_field_roles_are_explicit(role):
+def test_static_random_field_roles_are_explicit(role: Any) -> None:
     basis = _periodic_basis(8, ("constant",))
     field = phx.stochastic.StaticGaussianRandomField(
         phx.stochastic.SpatialBasisSynthesis.from_spatial_noise_basis(basis),
@@ -186,10 +190,11 @@ def test_static_random_field_roles_are_explicit(role):
     assert sample.role == role
 
 
-def test_static_random_field_rejects_implicit_or_unknown_semantics():
+def test_static_random_field_rejects_implicit_or_unknown_semantics() -> None:
     basis = _periodic_basis(8, ("constant",))
     synthesis = phx.stochastic.SpatialBasisSynthesis.from_spatial_noise_basis(basis)
-    with pytest.raises(ValueError, match="role must be"):
+    with pytest.raises(ValueError, match="role"):
+        # ty: ignore[invalid-argument-type]
         phx.stochastic.StaticGaussianRandomField(synthesis, role="process")
     field = phx.stochastic.StaticGaussianRandomField(synthesis)
     with pytest.raises(ValueError, match="transform_id"):

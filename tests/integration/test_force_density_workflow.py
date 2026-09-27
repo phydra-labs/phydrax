@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -10,7 +12,7 @@ import phydrax as phx
 fd = phx.applications.solid_mechanics
 
 
-def test_differentiable_cable_net_inverse_design_workflow():
+def test_differentiable_cable_net_inverse_design_workflow() -> None:
     edges = jnp.asarray(((4, 0), (4, 1), (4, 2), (4, 3)), dtype=jnp.int32)
     structure = fd.ForceDensityStructure.from_edges(
         edges,
@@ -40,7 +42,7 @@ def test_differentiable_cable_net_inverse_design_workflow():
     )
     plan = fd.plan_force_density(equilibrium_problem, sample)
 
-    def decode(design, external_load):
+    def decode(design: Any, external_load: Any) -> Any:
         load = loads.at[4, 2].set(external_load)
         return fd.ForceDensityInputs(
             jnp.repeat(design.reshape(()), 4),
@@ -77,7 +79,7 @@ def test_differentiable_cable_net_inverse_design_workflow():
 
     optimized_q = result.inputs.force_densities
 
-    def center_height(external_load):
+    def center_height(external_load: Any) -> Any:
         inputs = fd.ForceDensityInputs(
             optimized_q,
             sample.prescribed_values,

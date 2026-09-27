@@ -4,9 +4,12 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
@@ -17,6 +20,10 @@ from ._free_surface import FreeSurfaceState
 from ._pairwise import ParticlePairGeometry, ParticlePairRelation, scatter_pair_sum
 from ._precision import ParticleExecutionPolicy
 from ._smoothing import AbstractSPHSmoothingKernel
+
+
+if TYPE_CHECKING:
+    from ...equations import AbstractBarotropicMaterial
 
 
 class ShockViscositySensorPlan(StrictModule, NonTrainableState):
@@ -33,7 +40,7 @@ class ShockViscositySensorPlan(StrictModule, NonTrainableState):
         maximum_alpha: float = 1.0,
         decay_time: float = 0.1,
         trigger_scale: float = 1.0,
-    ):
+    ) -> None:
         if (
             not 0.0 <= minimum_alpha <= maximum_alpha
             or decay_time <= 0.0
@@ -168,7 +175,7 @@ class RenormalizationAudit(StrictModule):
 
 
 def audit_density_renormalization(
-    material,
+    material: AbstractBarotropicMaterial,
     mass: ArrayLike,
     before: ArrayLike,
     after: ArrayLike,
@@ -212,7 +219,7 @@ class ParticleShiftingPlan(StrictModule, NonTrainableState):
         target_spacing: float,
         maximum_shift: float,
         /,
-    ):
+    ) -> None:
         if velocity_scale < 0.0 or target_spacing <= 0.0 or maximum_shift <= 0.0:
             raise ValueError("Particle shifting parameters are invalid.")
         self.velocity_scale = float(velocity_scale)

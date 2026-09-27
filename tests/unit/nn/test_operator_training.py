@@ -16,7 +16,7 @@ import phydrax as phx
 from phydrax._training import TrainingIterationKind
 
 
-def _dataset(cases=10, resolution=8):
+def _dataset(cases: Any = 10, resolution: Any = 8) -> Any:
     axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, resolution),
@@ -32,14 +32,14 @@ def _dataset(cases=10, resolution=8):
     )
 
 
-def _targets(batch, values):
+def _targets(batch: Any, values: Any) -> Any:
     return phx.nn.operator.OperatorTargetBatch.from_arrays(
         {"solution": values},
         batch,
     )
 
 
-def test_normalization_is_training_only_invertible_and_persisted(tmp_path):
+def test_normalization_is_training_only_invertible_and_persisted(tmp_path: Any) -> None:
     dataset = _dataset()
     split = phx.nn.operator.training.split_operator_dataset(
         dataset,
@@ -84,7 +84,7 @@ def test_normalization_is_training_only_invertible_and_persisted(tmp_path):
     assert "format_version" not in policy.to_dict()
 
 
-def test_coordinate_normalization_rescales_explicit_tensor_grid_weights():
+def test_coordinate_normalization_rescales_explicit_tensor_grid_weights() -> None:
     axes = (
         phx.nn.operator.OperatorAxis("x", jnp.asarray([0.0, 2.0])),
         phx.nn.operator.OperatorAxis("y", jnp.asarray([-3.0, 0.0, 3.0])),
@@ -119,15 +119,17 @@ def test_coordinate_normalization_rescales_explicit_tensor_grid_weights():
     jacobian = jnp.prod(policy.input_coordinates["state"].scale)
 
     assert jnp.allclose(
+        # ty: ignore[invalid-argument-type]
         normalized.input("state").quadrature_weights,
         weights / jacobian,
     )
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(restored.input("state").quadrature_weights, weights)
     assert normalized.input("state").has_physical_quadrature
 
 
-def test_quadrature_normalization_is_invariant_to_sampling_density():
-    def sampled_batch(values, weights):
+def test_quadrature_normalization_is_invariant_to_sampling_density() -> None:
+    def sampled_batch(values: Any, weights: Any) -> Any:
         count = values.shape[0]
         coordinates = jnp.linspace(0.0, 1.0, count)[:, None]
         samples = phx.nn.operator.FunctionSamples(
@@ -189,7 +191,7 @@ def test_quadrature_normalization_is_invariant_to_sampling_density():
     )
 
 
-def test_dataset_splitting_and_variable_cardinality_adapter_are_deterministic():
+def test_dataset_splitting_and_variable_cardinality_adapter_are_deterministic() -> None:
     dataset = _dataset(cases=12)
     policy = phx.nn.operator.training.OperatorSplitPolicy(seed=3)
     first = phx.nn.operator.training.split_operator_dataset(dataset, policy=policy)
@@ -237,7 +239,7 @@ def test_dataset_splitting_and_variable_cardinality_adapter_are_deterministic():
     )
 
 
-def test_provenance_group_and_chronological_splits_prevent_leakage():
+def test_provenance_group_and_chronological_splits_prevent_leakage() -> None:
     base = _dataset(cases=12)
     grouped_provenance = tuple(
         phx.nn.operator.OperatorCaseProvenance(
@@ -291,7 +293,7 @@ def test_provenance_group_and_chronological_splits_prevent_leakage():
     assert max(ordered.validation_indices) < min(ordered.test_indices)
 
 
-def test_dataset_preserves_named_multi_query_target_contracts():
+def test_dataset_preserves_named_multi_query_target_contracts() -> None:
     axis = phx.nn.operator.OperatorAxis("x", jnp.linspace(0.0, 1.0, 3))
     batch = phx.nn.operator.OperatorBatch(
         inputs={
@@ -337,7 +339,7 @@ def test_dataset_preserves_named_multi_query_target_contracts():
     assert selected.targets.field("flux").spec.component_names == ("x", "y")
 
 
-def test_named_normalization_and_dtype_preserve_complex_fields(tmp_path):
+def test_named_normalization_and_dtype_preserve_complex_fields(tmp_path: Any) -> None:
     axis = phx.nn.operator.OperatorAxis("x", jnp.linspace(0.0, 1.0, 3))
     complex_values = jnp.arange(6.0).reshape(2, 3) + 1j * jnp.arange(6.0, 12.0).reshape(
         2, 3
@@ -407,12 +409,12 @@ def test_named_normalization_and_dtype_preserve_complex_fields(tmp_path):
     assert cast_wave.values.dtype == jnp.complex64
 
 
-def _stochastic_step(model, state, optimizer, key):
+def _stochastic_step(model: Any, state: Any, optimizer: Any, key: Any) -> Any:
     key, sample_key = jr.split(key)
     x = jr.normal(sample_key, (6, 1))
     y = 1.7 * x - 0.2
 
-    def loss(current):
+    def loss(current: Any) -> Any:
         prediction = jax.vmap(current)(x)
         return jnp.mean((prediction - y) ** 2)
 
@@ -421,14 +423,14 @@ def _stochastic_step(model, state, optimizer, key):
     return eqx.apply_updates(model, updates), state, key
 
 
-def _assert_trees_equal(left, right):
+def _assert_trees_equal(left: Any, right: Any) -> None:
     left_leaves = jax.tree_util.tree_leaves(eqx.filter(left, eqx.is_array))
     right_leaves = jax.tree_util.tree_leaves(eqx.filter(right, eqx.is_array))
     assert len(left_leaves) == len(right_leaves)
     assert all(jnp.array_equal(a, b) for a, b in zip(left_leaves, right_leaves))
 
 
-def test_checkpoint_restores_exact_optimizer_rng_and_policies(tmp_path):
+def test_checkpoint_restores_exact_optimizer_rng_and_policies(tmp_path: Any) -> None:
     model = _linear_model()
     optimizer = optax.adam(1e-2)
     state = optimizer.init(eqx.filter(model, eqx.is_array))
@@ -519,7 +521,7 @@ def test_checkpoint_restores_exact_optimizer_rng_and_policies(tmp_path):
         )
 
 
-def _linear_model():
+def _linear_model() -> Any:
     return phx.nn.models.EquinoxModel(
         eqx.nn.Linear(1, 1, key=jr.key(1)),
         in_size=1,
@@ -531,16 +533,16 @@ def _linear_model():
 class _StaticScale(phx.StrictModule):
     weight: jax.Array
 
-    def __call__(self, value):
+    def __call__(self, value: Any) -> Any:
         return self.weight * value
 
 
-def test_checkpoint_binding_separates_dynamic_and_static_weights(tmp_path):
+def test_checkpoint_binding_separates_dynamic_and_static_weights(tmp_path: Any) -> None:
     model = _linear_model()
     optimizer_state = optax.adam(1e-2).init(eqx.filter(model, eqx.is_array))
     scale = _StaticScale(jnp.asarray(2.0))
 
-    def save(name, current, static_scale):
+    def save(name: Any, current: Any, static_scale: Any) -> Any:
         path = phx.nn.operator.training.save_operator_training_checkpoint(
             tmp_path / name,
             current,
@@ -575,7 +577,7 @@ def test_checkpoint_binding_separates_dynamic_and_static_weights(tmp_path):
         != base["binding"]["executable_signature_id"]
     )
 
-    def load(path, static_scale):
+    def load(path: Any, static_scale: Any) -> Any:
         return phx.nn.operator.training.load_operator_training_checkpoint(
             path,
             model,
@@ -607,7 +609,7 @@ def test_checkpoint_binding_separates_dynamic_and_static_weights(tmp_path):
         load(base_path, scale)
 
 
-def test_dtype_and_prefetch_loader_apply_explicit_device_policy():
+def test_dtype_and_prefetch_loader_apply_explicit_device_policy() -> None:
     dataset = _dataset(cases=8)
     dtype_policy = phx.nn.operator.training.OperatorDTypePolicy(
         parameter_dtype="float32",
@@ -645,23 +647,23 @@ def test_dtype_and_prefetch_loader_apply_explicit_device_policy():
 
 
 def _prediction_energy(
-    prediction,
-    batch,
-    targets,
+    prediction: Any,
+    batch: Any,
+    targets: Any,
     *,
-    model,
-    key,
-    step,
-    training,
-    context,
-):
+    model: Any,
+    key: Any,
+    step: Any,
+    training: Any,
+    context: Any,
+) -> Any:
     del batch, targets, model, key, step, training
     values = prediction.field("output").values
     assert context.physical_batch.case_shape == values.shape[:1]
     return jnp.mean(values**2, axis=tuple(range(1, values.ndim)))
 
 
-def _fit_model(*, seed=0):
+def _fit_model(*, seed: Any = 0) -> Any:
     return phx.nn.operator.architectures.FNO(
         in_channels="scalar",
         out_channels="scalar",
@@ -672,7 +674,7 @@ def _fit_model(*, seed=0):
     )
 
 
-def test_fit_operator_compiles_accumulates_normalizes_and_composes_losses():
+def test_fit_operator_compiles_accumulates_normalizes_and_composes_losses() -> None:
     dataset = _dataset(cases=8)
     result = phx.nn.operator.training.fit_operator(
         _fit_model(),
@@ -706,7 +708,7 @@ def test_fit_operator_compiles_accumulates_normalizes_and_composes_losses():
     assert jnp.isfinite(result.final_loss)
 
 
-def _assert_operator_models_close(left, right):
+def _assert_operator_models_close(left: Any, right: Any) -> None:
     left_leaves = jax.tree_util.tree_leaves(left)
     right_leaves = jax.tree_util.tree_leaves(right)
     for left_leaf, right_leaf in zip(left_leaves, right_leaves, strict=True):
@@ -714,7 +716,7 @@ def _assert_operator_models_close(left, right):
             assert jnp.allclose(left_leaf, right_leaf, rtol=2e-5, atol=2e-6)
 
 
-def test_weighted_masked_accumulation_matches_one_logical_batch():
+def test_weighted_masked_accumulation_matches_one_logical_batch() -> None:
     base = _dataset(cases=4)
     dataset = phx.nn.operator.training.OperatorDataset(
         base.batch,
@@ -736,6 +738,7 @@ def test_weighted_masked_accumulation_matches_one_logical_batch():
         dataset,
         batch_size=4,
         gradient_accumulation=1,
+        # ty: ignore[invalid-argument-type]
         **common,
     )
     accumulated = phx.nn.operator.training.fit_operator(
@@ -743,6 +746,7 @@ def test_weighted_masked_accumulation_matches_one_logical_batch():
         dataset,
         batch_size=2,
         gradient_accumulation=2,
+        # ty: ignore[invalid-argument-type]
         **common,
     )
 
@@ -757,7 +761,7 @@ def test_weighted_masked_accumulation_matches_one_logical_batch():
     )
 
 
-def test_extreme_log_weights_and_uneven_tail_are_partition_invariant():
+def test_extreme_log_weights_and_uneven_tail_are_partition_invariant() -> None:
     base = _dataset(cases=3)
     dataset = phx.nn.operator.training.OperatorDataset(
         base.batch,
@@ -778,6 +782,7 @@ def test_extreme_log_weights_and_uneven_tail_are_partition_invariant():
         dataset,
         batch_size=3,
         gradient_accumulation=1,
+        # ty: ignore[invalid-argument-type]
         **common,
     )
     accumulated = phx.nn.operator.training.fit_operator(
@@ -785,6 +790,7 @@ def test_extreme_log_weights_and_uneven_tail_are_partition_invariant():
         dataset,
         batch_size=2,
         gradient_accumulation=2,
+        # ty: ignore[invalid-argument-type]
         **common,
     )
 
@@ -795,7 +801,7 @@ def test_extreme_log_weights_and_uneven_tail_are_partition_invariant():
     assert jnp.isfinite(accumulated.final_loss)
 
 
-def test_zero_support_window_skips_every_update_lifecycle_transition():
+def test_zero_support_window_skips_every_update_lifecycle_transition() -> None:
     base = _dataset(cases=4)
     dataset = phx.nn.operator.training.OperatorDataset(
         base.batch,
@@ -848,7 +854,7 @@ def test_zero_support_window_skips_every_update_lifecycle_transition():
         ),
     ),
 )
-def test_accumulation_rejects_nonadditive_operator_reductions(term):
+def test_accumulation_rejects_nonadditive_operator_reductions(term: Any) -> None:
     with pytest.raises(ValueError, match="case-additive mean"):
         phx.nn.operator.training.fit_operator(
             _fit_model(seed=14),
@@ -860,7 +866,7 @@ def test_accumulation_rejects_nonadditive_operator_reductions(term):
         )
 
 
-def test_single_batch_sum_reduction_remains_supported():
+def test_single_batch_sum_reduction_remains_supported() -> None:
     result = phx.nn.operator.training.fit_operator(
         _fit_model(seed=15),
         _dataset(cases=2),
@@ -875,7 +881,9 @@ def test_single_batch_sum_reduction_remains_supported():
     assert jnp.isfinite(result.final_loss)
 
 
-def test_fit_operator_resume_is_bitwise_exact_with_shuffle_and_accumulation(tmp_path):
+def test_fit_operator_resume_is_bitwise_exact_with_shuffle_and_accumulation(
+    tmp_path: Any,
+) -> None:
     dataset = _dataset(cases=8)
     model = _fit_model(seed=2)
     common: dict[str, Any] = {
@@ -920,7 +928,7 @@ def test_fit_operator_resume_is_bitwise_exact_with_shuffle_and_accumulation(tmp_
     assert resumed.history == uninterrupted.history
 
 
-def test_fit_operator_alignment_statistics_resume_exactly(tmp_path):
+def test_fit_operator_alignment_statistics_resume_exactly(tmp_path: Any) -> None:
     dataset = _dataset(cases=4)
     model = _fit_model(seed=22)
     common: dict[str, Any] = {
@@ -975,6 +983,7 @@ def test_fit_operator_alignment_statistics_resume_exactly(tmp_path):
             steps=2,
             checkpoint_path=checkpoint,
             resume=True,
+            # ty: ignore[invalid-argument-type]
             **(
                 common
                 | {
@@ -986,7 +995,7 @@ def test_fit_operator_alignment_statistics_resume_exactly(tmp_path):
         )
 
 
-def test_fit_operator_returns_task_bound_physical_operator():
+def test_fit_operator_returns_task_bound_physical_operator() -> None:
     dataset = _dataset(cases=4)
     task = phx.nn.operator.OperatorTask(
         "scaled-map",
@@ -1062,10 +1071,10 @@ def test_fit_operator_returns_task_bound_physical_operator():
     )
 
 
-def test_fit_operator_host_control_stops_at_an_update_boundary():
+def test_fit_operator_host_control_stops_at_an_update_boundary() -> None:
     events = []
 
-    def kind(event):
+    def kind(event: Any) -> Any:
         return TrainingIterationKind(int(event.record.metrics.kind))
 
     session = phx.execution.IterationSession(

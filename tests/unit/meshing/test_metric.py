@@ -1,3 +1,7 @@
+from typing import Any
+
+import equinox as eqx
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -7,7 +11,7 @@ import phydrax as phx
 meshing = phx.meshing
 
 
-def _scope(count):
+def _scope(count: Any) -> Any:
     return meshing.MeshingScope(
         "mesh",
         "r1",
@@ -18,7 +22,7 @@ def _scope(count):
     )
 
 
-def _grid(count):
+def _grid(count: Any) -> Any:
     axis = np.linspace(0.0, 1.0, count)
     first, second = np.meshgrid(axis, axis, indexing="ij")
     points = np.stack((first.ravel(), second.ravel()), axis=1)
@@ -33,7 +37,7 @@ def _grid(count):
     return points, edges
 
 
-def _anisotropic_metrics(count, seed):
+def _anisotropic_metrics(count: Any, seed: Any) -> Any:
     generator = np.random.default_rng(seed)
     angles = generator.uniform(0.0, np.pi, count)
     sizes = generator.uniform(0.05, 0.4, count)
@@ -49,12 +53,39 @@ def _anisotropic_metrics(count, seed):
     return (rotation * eigenvalues[:, None, :]) @ np.swapaxes(rotation, -1, -2)
 
 
-def _determinant_sizes(values):
+def _determinant_sizes(values: Any) -> Any:
     return np.linalg.det(values) ** (-1.0 / (2 * values.shape[-1]))
 
 
+def test_metric_structural_contract_refuses_transformed_shape_and_dtype() -> None:
+    scope = _scope(3)
+    field = meshing.MeshMetricField(
+        scope,
+        np.broadcast_to(np.eye(2), (3, 2, 2)),
+        minimum_size=0.5,
+        maximum_size=2.0,
+    )
+    phx.typing.validate(field)
+
+    nonsquare = eqx.tree_at(
+        lambda value: value.values,
+        field,
+        jnp.ones((3, 2, 3), dtype=jnp.float64),
+    )
+    with pytest.raises(ValueError, match="values"):
+        phx.typing.validate(nonsquare)
+
+    wrong_dtype = eqx.tree_at(
+        lambda value: value.values,
+        field,
+        field.values.astype(jnp.float32),
+    )
+    with pytest.raises(TypeError, match="values"):
+        phx.typing.validate(wrong_dtype)
+
+
 @pytest.mark.parametrize("kind", tuple(meshing.MetricGradationKind))
-def test_scalar_gradation_bounds_every_edge_and_ignores_numbering(kind):
+def test_scalar_gradation_bounds_every_edge_and_ignores_numbering(kind: Any) -> None:
     points, edges = _grid(7)
     count = points.shape[0]
     values = _anisotropic_metrics(count, 0)
@@ -97,7 +128,7 @@ def test_scalar_gradation_bounds_every_edge_and_ignores_numbering(kind):
     )
 
 
-def test_anisotropic_gradation_converges_and_certifies_every_edge():
+def test_anisotropic_gradation_converges_and_certifies_every_edge() -> None:
     points, edges = _grid(6)
     count = points.shape[0]
     field = meshing.MeshMetricField(
@@ -129,7 +160,7 @@ def test_anisotropic_gradation_converges_and_certifies_every_edge():
     assert stalled_evidence.maximum_violation > 1.0e-9
 
 
-def test_anisotropic_gradation_withholds_growth_beyond_hard_bounds():
+def test_anisotropic_gradation_withholds_growth_beyond_hard_bounds() -> None:
     points, edges = _grid(6)
     count = points.shape[0]
     angles = np.random.default_rng(0).uniform(0.0, np.pi, count)
@@ -185,7 +216,9 @@ def test_anisotropic_gradation_withholds_growth_beyond_hard_bounds():
         ((1.0, 25.0), "maximum_anisotropy"),
     ),
 )
-def test_metric_field_rejects_tensors_outside_declared_bounds(eigenvalues, violated):
+def test_metric_field_rejects_tensors_outside_declared_bounds(
+    eigenvalues: Any, violated: Any
+) -> None:
     with pytest.raises(ValueError, match=violated):
         meshing.MeshMetricField(
             _scope(2),
@@ -196,7 +229,7 @@ def test_metric_field_rejects_tensors_outside_declared_bounds(eigenvalues, viola
         )
 
 
-def test_metric_field_admits_only_eigenvalue_roundoff_at_its_bounds():
+def test_metric_field_admits_only_eigenvalue_roundoff_at_its_bounds() -> None:
     angle = 0.3
     rotation = np.asarray(
         ((np.cos(angle), -np.sin(angle)), (np.sin(angle), np.cos(angle)))
@@ -212,7 +245,7 @@ def test_metric_field_admits_only_eigenvalue_roundoff_at_its_bounds():
         )
 
 
-def test_adaptation_routes_accept_only_certified_metric_fields():
+def test_adaptation_routes_accept_only_certified_metric_fields() -> None:
     mesh = phx.discretization.CellMesh.from_triangles(
         np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
         np.asarray(((0, 1, 2), (0, 2, 3))),
@@ -232,10 +265,14 @@ def test_adaptation_routes_accept_only_certified_metric_fields():
     )
     for request in (meshing.MetricMeshAdaptation, meshing.RelocationMeshAdaptation):
         with pytest.raises(TypeError, match="MeshMetricField"):
+            # ty: ignore[invalid-argument-type]
             request(samples)
     with pytest.raises(TypeError, match="MeshMetricField"):
         meshing.BackgroundMetricControl(
-            source.mesh, samples, phx.SpatialCoordinateContract.si()
+            source.mesh,
+            # ty: ignore[invalid-argument-type]
+            samples,
+            phx.SpatialCoordinateContract.si(),
         )
     with pytest.raises(TypeError, match="MeshMetricField"):
         meshing.MmgAdaptationPlan(
@@ -243,11 +280,12 @@ def test_adaptation_routes_accept_only_certified_metric_fields():
             meshing.MmgOptions(),
             meshing.MeshingLimits(),
             meshing.CellMeshAuditPolicy(),
+            # ty: ignore[invalid-argument-type]
             metric=samples,
         )
 
 
-def test_metric_combination_dominates_is_idempotent_and_order_independent():
+def test_metric_combination_dominates_is_idempotent_and_order_independent() -> None:
     count = 9
     first = meshing.MeshMetricField(
         _scope(count),
@@ -266,7 +304,9 @@ def test_metric_combination_dominates_is_idempotent_and_order_independent():
     same = meshing.combine_mesh_metrics((first, first))
 
     assert combined.successful and combined.evidence.passed
+    # ty: ignore[unresolved-attribute]
     values = np.asarray(combined.field.values)
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(values, np.asarray(reversed_.field.values))
     assert combined.evidence.evidence_id == reversed_.evidence.evidence_id
     assert combined.result_id == reversed_.result_id
@@ -275,14 +315,18 @@ def test_metric_combination_dominates_is_idempotent_and_order_independent():
         scale = np.max(np.abs(np.asarray(field.values)))
         assert np.all(np.linalg.eigvalsh(excess) >= -1.0e-9 * scale)
     np.testing.assert_allclose(
-        np.asarray(same.field.values), np.asarray(first.values), rtol=1.0e-10, atol=0.0
+        # ty: ignore[unresolved-attribute]
+        np.asarray(same.field.values),
+        np.asarray(first.values),
+        rtol=1.0e-10,
+        atol=0.0,
     )
     spectrum = np.linalg.eigvalsh(values)
     assert np.all(spectrum[:, 1] <= 0.005**-2 * (1.0 + 1.0e-12))
     assert np.all(spectrum[:, 0] >= 2.0**-2 * (1.0 - 1.0e-12))
 
 
-def test_conflicting_metric_combination_withholds_the_field():
+def test_conflicting_metric_combination_withholds_the_field() -> None:
     count = 9
     first = meshing.MeshMetricField(
         _scope(count),
@@ -326,7 +370,7 @@ def test_conflicting_metric_combination_withholds_the_field():
     assert incompatible.evidence.conflict_count == 1
 
 
-def test_log_euclidean_interpolation_is_spd_and_interpolates_determinants():
+def test_log_euclidean_interpolation_is_spd_and_interpolates_determinants() -> None:
     metrics = _anisotropic_metrics(8, 6).reshape(4, 2, 2, 2)
     weights = np.asarray(((0.5, 0.5), (0.25, 0.75), (1.0, 0.0), (0.1, 0.9)))
     mean = np.asarray(meshing.interpolate_mesh_metric(metrics, weights))
@@ -338,7 +382,7 @@ def test_log_euclidean_interpolation_is_spd_and_interpolates_determinants():
     np.testing.assert_allclose(mean[2], metrics[2, 0], rtol=1.0e-10)
 
 
-def test_normalization_meets_complexity_target_within_bounds():
+def test_normalization_meets_complexity_target_within_bounds() -> None:
     count = 25
     field = meshing.MeshMetricField(
         _scope(count),
@@ -379,7 +423,7 @@ def test_normalization_meets_complexity_target_within_bounds():
     assert not unreachable.passed
 
 
-def test_normalization_repairs_samples_only_when_the_policy_requests_it():
+def test_normalization_repairs_samples_only_when_the_policy_requests_it() -> None:
     count = 4
     raw = np.asarray((((-3.0, 4.0), (0.0, 2.0)),) * count)
     samples = meshing.MeshMetricSamples(_scope(count), raw)
@@ -398,7 +442,7 @@ def test_normalization_repairs_samples_only_when_the_policy_requests_it():
     assert np.all(np.linalg.eigvalsh(np.asarray(repaired.values)) >= 0.25 - 1.0e-12)
 
 
-def test_lp_hessian_metric_meets_complexity_and_reports_spectral_handling():
+def test_lp_hessian_metric_meets_complexity_and_reports_spectral_handling() -> None:
     count = 16
     hessian = np.zeros((count, 2, 2))
     hessian[:, 0, 0] = np.linspace(1.0, 4.0, count)
@@ -427,7 +471,7 @@ def test_lp_hessian_metric_meets_complexity_and_reports_spectral_handling():
     assert np.all(metric[2:, 0, 0] > metric[2:, 1, 1])
 
 
-def test_metric_edge_lengths_match_constant_metric_lengths():
+def test_metric_edge_lengths_match_constant_metric_lengths() -> None:
     points = np.asarray(((0.0, 0.0), (0.3, 0.4), (1.0, 0.0)))
     edges = np.asarray(((0, 1), (1, 2)), dtype=np.int32)
     metric = np.tile(np.diag((4.0, 9.0)), (3, 1, 1))

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import numpy as np
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -48,7 +49,7 @@ class EigenCostEstimate(StrictModule):
         accepted: bool,
         reason: str,
         /,
-    ):
+    ) -> None:
         component_, reason_ = str(component), str(reason)
         if not component_ or not reason_:
             raise ValueError("Eigen cost component and reason must be non-empty.")
@@ -105,7 +106,7 @@ class EigenSolvePlan(StrictModule):
         candidates: tuple[EigenCostEstimate, ...],
         rejections: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         if not isinstance(problem, (Eigenproblem, GeneralizedEigenproblem)):
             raise TypeError("problem must be an Eigenproblem or GeneralizedEigenproblem.")
         if not isinstance(policy, EigenSolvePolicy):
@@ -769,7 +770,7 @@ def _cost_estimate(
     )
 
 
-def _array_structure(value, /) -> dict[str, object] | None:
+def _array_structure(value: Array | None, /) -> dict[str, object] | None:
     if value is None:
         return None
     return {"shape": list(value.shape), "dtype": str(value.dtype)}

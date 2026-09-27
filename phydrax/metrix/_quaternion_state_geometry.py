@@ -10,7 +10,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._state_geometry import AbstractStateGeometry
 
@@ -221,7 +222,7 @@ class ScalarFirstQuaternionStateGeometry(AbstractStateGeometry):
         *,
         convention: QuaternionConvention = "body",
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         convention_ = _convention(convention)
         tolerance_ = _tolerance(tolerance)
         self.convention = convention_
@@ -378,7 +379,7 @@ class QuaternionPoseStateGeometry(AbstractStateGeometry):
         *,
         convention: QuaternionConvention = "body",
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         convention_ = _convention(convention)
         tolerance_ = _tolerance(tolerance)
         self.convention = convention_

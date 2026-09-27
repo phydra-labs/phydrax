@@ -10,7 +10,9 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -37,7 +39,7 @@ def _require_spd(value: np.ndarray, name: str, /) -> np.ndarray:
     return hermitian
 
 
-def _independent_rows(rows: np.ndarray, tolerance: float, /) -> np.ndarray:
+def _independent_rows(rows: np.ndarray, tolerance: float | np.floating, /) -> np.ndarray:
     if rows.shape[0] == 0:
         return rows
     retained: list[np.ndarray] = []
@@ -85,7 +87,7 @@ class SubstructuredSPDSystem(StrictModule, NonTrainableState):
         /,
         *,
         polynomial_degree: int = 1,
-    ):
+    ) -> None:
         matrices_host = tuple(
             _require_spd(np.asarray(value), f"local matrix {index}")
             for index, value in enumerate(local_matrices)
@@ -185,7 +187,7 @@ class PrimalConstraintPlan(StrictModule, NonTrainableState):
     global_dof_ids: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, global_dof_ids: ArrayLike = (), /):
+    def __init__(self, global_dof_ids: npt.ArrayLike = (), /) -> None:
         identifiers = np.asarray(global_dof_ids, dtype=np.int64)
         if identifiers.ndim != 1 or np.any(identifiers < 0):
             raise ValueError("Primal global DOF IDs must be one nonnegative vector.")
@@ -223,7 +225,7 @@ class DeluxeScalingPlan(StrictModule, NonTrainableState):
     multiplicity: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, system: SubstructuredSPDSystem, /):
+    def __init__(self, system: SubstructuredSPDSystem, /) -> None:
         if not isinstance(system, SubstructuredSPDSystem):
             raise TypeError("system must be SubstructuredSPDSystem.")
         maps = tuple(np.asarray(value) for value in system.local_to_global)
@@ -325,7 +327,7 @@ class AdaptiveSpectralCoarseSpace(StrictModule, NonTrainableState):
         threshold: float,
         maximum_modes: int,
         primal: PrimalConstraintPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(system, SubstructuredSPDSystem) or not isinstance(
             deluxe, DeluxeScalingPlan
         ):
@@ -590,7 +592,7 @@ class SPDSubstructuringPlan(StrictModule, NonTrainableState):
         primal: PrimalConstraintPlan | None = None,
         adaptive_threshold: float | None = None,
         maximum_adaptive_modes: int = 0,
-    ):
+    ) -> None:
         method_ = str(method).lower().replace("_", "-")
         if method_ not in ("bddc", "ieti-dp", "feti-dp"):
             raise ValueError("method must be 'bddc', 'ieti-dp', or 'feti-dp'.")
@@ -666,7 +668,7 @@ class InexactNewtonTangentPreconditioner(StrictModule, NonTrainableState):
         maximum_forcing: float = 0.9,
         forcing_power: float = 1.5,
         maximum_iterations: int = 32,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedSPDSubstructuring):
             raise TypeError("prepared must be PreparedSPDSubstructuring.")
         minimum = float(minimum_forcing)

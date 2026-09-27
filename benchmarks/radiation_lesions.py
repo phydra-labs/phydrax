@@ -11,6 +11,8 @@ No external transport, spatial chemistry or performance comparison is claimed.
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import hashlib
 import json
@@ -45,7 +47,7 @@ from phydrax.units import (
 )
 
 
-def manifest(payload, *, uncertainty=None):
+def manifest(payload: Any, *, uncertainty: Any=None) -> Any:
     return ReferenceArtifactManifest(
         "synthetic-radiation-benchmark",
         checksum_algorithm="sha256",
@@ -63,7 +65,7 @@ def manifest(payload, *, uncertainty=None):
     )
 
 
-def run(histories: int, repeats: int):
+def run(histories: int, repeats: int) -> Any:
     if histories < 2 or repeats < 1:
         raise ValueError("Benchmark requires at least two histories and one repeat.")
     physical = {
@@ -167,7 +169,7 @@ def run(histories: int, repeats: int):
         "synthetic-scavenging",
     )
 
-    def classify():
+    def classify() -> Any:
         candidates = rad.candidate_radiation_lesions(
             imported.physical, imported.chemical, mapping, geometry, policy
         )
@@ -232,7 +234,7 @@ def run(histories: int, repeats: int):
     )
     unit = derived_unit("Gy^-1", ((GRAY, -1),))
 
-    def data(prefix, pairs, offset):
+    def data(prefix: Any, pairs: Any, offset: Any) -> Any:
         supports = tuple(
             rad.LesionExpectationSupport((d,), (i,), 1.0, f"{prefix}:{row}")
             for row, (d, i) in enumerate(pairs)

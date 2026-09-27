@@ -15,7 +15,7 @@ from phydrax.equations.fem._moving_conservation import MovingTraceRoute
 from phydrax.equations.fem._trace_routes import PreparedDGTraceRoute
 
 
-def test_overset_transfer_preserves_constants_and_accounts_content():
+def test_overset_transfer_preserves_constants_and_accounts_content() -> None:
     connectivity = OversetConnectivity(
         jnp.asarray(((0, 1), (1, 2))),
         jnp.asarray((3, 4)),
@@ -44,7 +44,7 @@ def test_overset_transfer_preserves_constants_and_accounts_content():
     )
 
 
-def test_cut_cell_merge_and_sliding_mortar_are_exactly_conservative():
+def test_cut_cell_merge_and_sliding_mortar_are_exactly_conservative() -> None:
     cut = CutCellConservationPlan(
         jnp.asarray((0.02, 0.8, 1.0)),
         jnp.ones((3, 2)),

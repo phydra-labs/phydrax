@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -29,7 +31,7 @@ def _feature_graph() -> phx.graph.GraphIR:
     )
 
 
-def test_row_mlp_maps_rows():
+def test_row_mlp_maps_rows() -> None:
     mlp = phx.graph.RowMLP(2, 3, width_size=4, depth=2, key=jr.key(0))
 
     out = mlp(jnp.ones((5, 2)))
@@ -38,7 +40,7 @@ def test_row_mlp_maps_rows():
     assert jnp.all(jnp.isfinite(out))
 
 
-def test_mesh_graph_net_outputs_node_predictions():
+def test_mesh_graph_net_outputs_node_predictions() -> None:
     model = phx.graph.MeshGraphNet(
         node_in_size=2,
         edge_in_size=3,
@@ -56,7 +58,7 @@ def test_mesh_graph_net_outputs_node_predictions():
     assert jnp.all(jnp.isfinite(out.nodes))
 
 
-def test_mesh_graph_net_preserves_padding_masks():
+def test_mesh_graph_net_preserves_padding_masks() -> None:
     graph = phx.graph.GraphIR(
         nodes=jnp.array([[0.0], [1.0], [0.0]]),
         edges=jnp.array([[1.0], [0.0]]),
@@ -86,7 +88,7 @@ def test_mesh_graph_net_preserves_padding_masks():
     assert jnp.allclose(out.edges[1], jnp.zeros((4,)))
 
 
-def test_mesh_graph_net_wraps_as_domain_graph_model():
+def test_mesh_graph_net_wraps_as_domain_graph_model() -> None:
     graph = _feature_graph()
     domain = phx.domain.GraphDomain(graph)
     component = domain.component({"graph": phx.domain.Nodes()})
@@ -108,7 +110,7 @@ def test_mesh_graph_net_wraps_as_domain_graph_model():
     assert f(batch).data.shape == (4, 1)
 
 
-def test_pool_graph_by_cluster_coalesces_edges_and_means_features():
+def test_pool_graph_by_cluster_coalesces_edges_and_means_features() -> None:
     graph = phx.graph.GraphIR(
         nodes=jnp.array([[1.0], [3.0], [5.0], [7.0]]),
         edges=jnp.array([[1.0], [3.0], [9.0]]),
@@ -130,7 +132,7 @@ def test_pool_graph_by_cluster_coalesces_edges_and_means_features():
     assert jnp.allclose(coarse.receivers, jnp.array([1], dtype=jnp.int32))
 
 
-def test_graph_multiscale_block_unpools_coarse_update():
+def test_graph_multiscale_block_unpools_coarse_update() -> None:
     graph = phx.graph.GraphIR(
         nodes=jnp.array([[1.0], [3.0], [5.0], [7.0]]),
         edges=jnp.array([[1.0], [3.0]]),
@@ -140,7 +142,7 @@ def test_graph_multiscale_block_unpools_coarse_update():
         n_edge=jnp.array([2], dtype=jnp.int32),
     )
 
-    def coarse_shift(coarse):
+    def coarse_shift(coarse: Any) -> Any:
         return coarse.replace(nodes=coarse.nodes + 10.0, validate=False)
 
     block = phx.graph.GraphMultiscaleBlock(

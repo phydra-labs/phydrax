@@ -11,9 +11,11 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import parse
 from ._trajectory import StochasticTrajectory
 
 
@@ -29,19 +31,7 @@ def _identifier(value: str, name: str, /) -> str:
     return value
 
 
-def _direction(value: str, /) -> CrossingDirection:
-    if value not in ("up", "down", "either"):
-        raise ValueError("direction must be 'up', 'down', or 'either'.")
-    return value
-
-
-def _localization(value: str, /) -> EventLocalization:
-    if value not in ("linear", "discrete"):
-        raise ValueError("localization must be 'linear' or 'discrete'.")
-    return value
-
-
-def _call_path(function: Callable, times: Array, states: Array, /) -> Array:
+def _call_path(function: PathObservable, times: Array, states: Array, /) -> Array:
     values = jax.vmap(function)(times, states)
     result = jnp.asarray(values)
     if result.shape != times.shape:
@@ -111,7 +101,7 @@ class TerminalSetEvent(StrictModule):
         *,
         event_id: str,
         score: PathObservable | None = None,
-    ):
+    ) -> None:
         if not callable(predicate):
             raise TypeError("predicate must be callable.")
         if score is not None and not callable(score):
@@ -139,7 +129,7 @@ class ThresholdCrossingEvent(StrictModule):
         direction: CrossingDirection = "up",
         localization: EventLocalization = "linear",
         event_id: str,
-    ):
+    ) -> None:
         if not callable(observable):
             raise TypeError("observable must be callable.")
         value = float(threshold)
@@ -147,8 +137,8 @@ class ThresholdCrossingEvent(StrictModule):
             raise ValueError("threshold must be finite.")
         self.observable = observable
         self.threshold = value
-        self.direction = _direction(direction)
-        self.localization = _localization(localization)
+        self.direction = parse(direction, CrossingDirection, "direction")
+        self.localization = parse(localization, EventLocalization, "localization")
         self.event_id = _identifier(event_id, "event_id")
 
 
@@ -170,7 +160,7 @@ class AccumulatedPathEvent(StrictModule):
         direction: CrossingDirection = "up",
         localization: EventLocalization = "linear",
         event_id: str,
-    ):
+    ) -> None:
         if not callable(rate):
             raise TypeError("rate must be callable.")
         value = float(threshold)
@@ -178,8 +168,8 @@ class AccumulatedPathEvent(StrictModule):
             raise ValueError("threshold must be finite.")
         self.rate = rate
         self.threshold = value
-        self.direction = _direction(direction)
-        self.localization = _localization(localization)
+        self.direction = parse(direction, CrossingDirection, "direction")
+        self.localization = parse(localization, EventLocalization, "localization")
         self.event_id = _identifier(event_id, "event_id")
 
 
@@ -200,7 +190,7 @@ class CompetingPathEvents(StrictModule):
         /,
         *,
         event_id: str = "competing-events",
-    ):
+    ) -> None:
         resolved = tuple(events)
         if not resolved or any(
             not isinstance(
@@ -246,7 +236,7 @@ class PathEventResult(StrictModule):
         *,
         event_ids: Sequence[str],
         trajectory_ids: Sequence[str],
-    ):
+    ) -> None:
         occurrence = jnp.asarray(occurred, dtype=jnp.bool_)
         shape = occurrence.shape
         censoring = jnp.asarray(censored, dtype=jnp.bool_)
@@ -306,12 +296,13 @@ def path_event_scores(
 
     def atomic_scores(atomic: AtomicPathEvent) -> Array:
         if isinstance(atomic, TerminalSetEvent):
-            if atomic.score is None:
+            score = atomic.score
+            if score is None:
                 occurred = jax.vmap(lambda t, x: _call_path(atomic.predicate, t, x))(
                     times, states
                 )
                 return jnp.where(occurred, 0.0, -1.0)
-            values = jax.vmap(lambda t, x: _call_path(atomic.score, t, x))(times, states)
+            values = jax.vmap(lambda t, x: _call_path(score, t, x))(times, states)
             return values.astype("float64")
         if isinstance(atomic, ThresholdCrossingEvent):
             values = (

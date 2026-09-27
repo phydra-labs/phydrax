@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import pytest
 
 from phydrax.axes import AxisKey
@@ -12,17 +15,18 @@ from phydrax.linalg import ArraySpace, DualSpace
 _ROLES = ("point", "local", "tangent", "local_cotangent", "cotangent")
 
 
-def _layout(**overrides) -> StateLayout:
+def _layout(**overrides: Any) -> StateLayout:
     declaration = {
         "axes": ("site", "field"),
         "component_names": ("a0", "b0", "a1", "b1"),
         "layout_id": "pendulum-pair",
     }
     declaration.update(overrides)
+    # ty: ignore[invalid-argument-type]
     return StateLayout((2, 2), **declaration)
 
 
-def test_point_port_carries_layout_storage_axes_and_geometry():
+def test_point_port_carries_layout_storage_axes_and_geometry() -> None:
     layout = _layout()
     port = layout.value_port()
 
@@ -41,7 +45,7 @@ def test_point_port_carries_layout_storage_axes_and_geometry():
     assert port.representation == "state-point"
 
 
-def test_differential_ports_use_declared_role_spaces_and_variance():
+def test_differential_ports_use_declared_role_spaces_and_variance() -> None:
     local_space = ArraySpace((3,), space_id="chart")
     tangent_space = ArraySpace((3,), space_id="velocity")
     layout = StateLayout(
@@ -71,7 +75,7 @@ def test_differential_ports_use_declared_role_spaces_and_variance():
     assert local.representation == "space-coordinates"
 
 
-def test_every_state_role_has_a_distinct_port_even_with_default_spaces():
+def test_every_state_role_has_a_distinct_port_even_with_default_spaces() -> None:
     layout = StateLayout((3,))
     identifiers = {layout.value_port(role=role).port_id for role in _ROLES}
 
@@ -81,7 +85,7 @@ def test_every_state_role_has_a_distinct_port_even_with_default_spaces():
     )
 
 
-def test_state_ports_are_deterministic_and_follow_layout_declarations():
+def test_state_ports_are_deterministic_and_follow_layout_declarations() -> None:
     port = _layout().value_port()
 
     assert _layout().value_port().port_id == port.port_id
@@ -95,7 +99,7 @@ def test_state_ports_are_deterministic_and_follow_layout_declarations():
     )
 
 
-def test_scalar_state_point_port_has_one_component_and_no_axes():
+def test_scalar_state_point_port_has_one_component_and_no_axes() -> None:
     port = StateLayout((), layout_id="energy").value_port()
 
     assert port.event_shape == ()
@@ -103,12 +107,12 @@ def test_scalar_state_point_port_has_one_component_and_no_axes():
     assert port.axis_keys == ()
 
 
-def test_unknown_state_role_is_rejected():
+def test_unknown_state_role_is_rejected() -> None:
     with pytest.raises(ValueError, match="role must be"):
-        _layout().value_port(role="velocity")  # type: ignore[arg-type]
+        _layout().value_port(role="velocity")  # ty: ignore[invalid-argument-type]
 
 
-def test_input_port_carries_layout_components_and_axes():
+def test_input_port_carries_layout_components_and_axes() -> None:
     layout = InputLayout(
         (2,),
         axes=("actuator",),
@@ -128,7 +132,7 @@ def test_input_port_carries_layout_components_and_axes():
     assert port.representation == "input-array"
 
 
-def test_input_port_identity_follows_declared_roles_and_layout():
+def test_input_port_identity_follows_declared_roles_and_layout() -> None:
     control = InputLayout((2,), roles="control").value_port()
 
     assert InputLayout((2,), roles="control").value_port().port_id == control.port_id

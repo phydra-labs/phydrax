@@ -6,17 +6,21 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import positive_finite_float
 from ..applications.relativistic_scattering._unit_contract import (
     LocalRelativisticFramePlan,
 )
@@ -28,13 +32,6 @@ def _identifier(value: str, name: str, /) -> str:
     if not isinstance(value, str) or not value or value.strip() != value:
         raise ValueError(f"{name} must be a non-empty stripped string.")
     return value
-
-
-def _positive(value: float, name: str, /) -> float:
-    result = float(value)
-    if not np.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
 
 
 def _nonnegative(value: float, name: str, /) -> float:
@@ -132,7 +129,7 @@ class DarkRadiationFourForce(StrictModule, NonTrainableState):
         frame_id: str,
         unit_contract_id: str,
         frame_realization_id: str,
-    ):
+    ) -> None:
         radiation = jnp.asarray(radiation_four_force)
         matter = jnp.asarray(matter_four_force, dtype=radiation.dtype)
         time = jnp.asarray(endpoint_time, dtype=radiation.dtype)
@@ -281,7 +278,7 @@ class CosmologicalMultigroupM1System(StrictModule, NonTrainableState):
         reduced_light_speed: float | None = None,
         energy_floor: float = 1.0e-12,
         beam_risk_limit: float = 0.25,
-    ):
+    ) -> None:
         edges = jnp.asarray(group_edges)
         if edges.ndim != 1 or edges.size < 2:
             raise ValueError("Dark-radiation group_edges must be one dimensional.")
@@ -291,11 +288,11 @@ class CosmologicalMultigroupM1System(StrictModule, NonTrainableState):
             np.all(np.diff(np.asarray(edges)) > 0.0)
         ):
             raise ValueError("Dark-radiation group_edges must be finite and increasing.")
-        physical = _positive(physical_light_speed, "physical_light_speed")
+        physical = positive_finite_float(physical_light_speed, "physical_light_speed")
         reduced = (
             physical
             if reduced_light_speed is None
-            else _positive(reduced_light_speed, "reduced_light_speed")
+            else positive_finite_float(reduced_light_speed, "reduced_light_speed")
         )
         if reduced > physical:
             raise ValueError("Reduced light speed cannot exceed physical light speed.")
@@ -354,7 +351,7 @@ class CosmologicalMultigroupM1System(StrictModule, NonTrainableState):
     def primitive_to_conserved(self, primitive: Array, /) -> Array:
         return self.transport_system.primitive_to_conserved(primitive)
 
-    def physical_flux(self, state: Array, axis: int, args=None, /) -> Array:
+    def physical_flux(self, state: Array, axis: int, args: Any = None, /) -> Array:
         del args
         axis_ = int(axis)
         if not 0 <= axis_ < self.dimension:
@@ -370,11 +367,13 @@ class CosmologicalMultigroupM1System(StrictModule, NonTrainableState):
         )
         return output.reshape(jnp.asarray(state).shape)
 
-    def max_wave_speed(self, left: Array, right: Array, axis: int, args=None, /) -> Array:
+    def max_wave_speed(
+        self, left: Array, right: Array, axis: int, args: Any = None, /
+    ) -> Array:
         return self.transport_system.max_wave_speed(left, right, axis, args)
 
     def signal_bounds(
-        self, left: Array, right: Array, axis: int, args=None, /
+        self, left: Array, right: Array, axis: int, args: Any = None, /
     ) -> tuple[Array, Array]:
         return self.transport_system.signal_bounds(left, right, axis, args)
 
@@ -383,7 +382,7 @@ class CosmologicalMultigroupM1System(StrictModule, NonTrainableState):
         left: Array,
         right: Array,
         unit_normal: Array,
-        args=None,
+        args: Any = None,
         /,
     ) -> tuple[Array, Array]:
         return self.transport_system.normal_signal_bounds(left, right, unit_normal, args)
@@ -796,7 +795,7 @@ class DarkRadiationBoltzmannHierarchyPlan(StrictModule, NonTrainableState):
         closure_tolerance: float = 1.0e-3,
         self_interaction_rate: float = 0.0,
         frame: LocalRelativisticFramePlan,
-    ):
+    ) -> None:
         wave = jnp.asarray(wave_numbers)
         momentum = jnp.asarray(momentum_nodes, dtype=wave.dtype)
         weights = jnp.asarray(momentum_weights, dtype=wave.dtype)
@@ -1171,11 +1170,11 @@ class DarkRadiationVETPlan(StrictModule, NonTrainableState):
         *,
         maximum_iterations: int = 8,
         residual_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         direction = jnp.asarray(directions)
         weight = jnp.asarray(weights, dtype=direction.dtype)
         iterations = int(maximum_iterations)
-        tolerance = _positive(residual_tolerance, "residual_tolerance")
+        tolerance = positive_finite_float(residual_tolerance, "residual_tolerance")
         if direction.ndim != 2 or direction.shape[-1] != 3:
             raise ValueError("VET directions must have shape (angle, 3).")
         if weight.shape != direction.shape[:1] or iterations <= 0:
@@ -1242,7 +1241,7 @@ class DarkRadiationVETPlan(StrictModule, NonTrainableState):
             1.0 - attenuation[..., None]
         )
 
-        def iteration(_, carry):
+        def iteration(_: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             current, residuals = carry
             updated = 0.5 * (current + target)
             residual = jnp.max(jnp.abs(updated - current), axis=-1)
@@ -1320,7 +1319,7 @@ class DarkRadiationConversionReceipt(StrictModule, NonTrainableState):
         target_representation: str,
         operation: str,
         differentiation_policy: str,
-    ):
+    ) -> None:
         source = jnp.asarray(source_integral)
         target = jnp.asarray(target_integral, dtype=source.dtype)
         if source.shape != target.shape:

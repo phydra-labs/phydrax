@@ -7,11 +7,11 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 from ...._fingerprint import canonical_fingerprint
 from ...._frozendict import frozendict
@@ -32,6 +32,7 @@ from ....nn.operator.training._risk import (
     MechanicsCaseReduction,
     MechanicsCaseReductionResult,
 )
+from ....typing import parse, PRNGKey
 from ._cases import (
     MechanicsCaseBuilder,
     MechanicsOperatorCase,
@@ -40,7 +41,9 @@ from ._cases import (
 
 
 MechanicsOperatorFormulation = Literal["conservative", "residual", "mixed"]
-MechanicsCaseFunctionalKind = Literal["energy", "residual", "mixed_block", "gauge"]
+MechanicsCaseFunctionalKind: TypeAlias = Literal[
+    "energy", "residual", "mixed_block", "gauge"
+]
 
 
 class MechanicsCaseFunctional(StrictModule, NonTrainableState):
@@ -76,7 +79,7 @@ class MechanicsCaseFunctional(StrictModule, NonTrainableState):
         expected_measure_id: str | None = None,
         scale: float = 1.0,
         validity: Callable | None = None,
-    ):
+    ) -> None:
         resolved_name = str(name)
         resolved_query = str(query_name)
         identifier = str(functional_id)
@@ -84,8 +87,7 @@ class MechanicsCaseFunctional(StrictModule, NonTrainableState):
             raise ValueError(
                 "Mechanics functional names, query names, and IDs must be non-empty."
             )
-        if kind not in ("energy", "residual", "mixed_block", "gauge"):
-            raise ValueError("Unknown mechanics case functional kind.")
+        kind = parse(kind, MechanicsCaseFunctionalKind, "kind")
         if not callable(evaluator):
             raise TypeError("Mechanics case functional evaluators must be callable.")
         if validity is not None and not callable(validity):
@@ -443,7 +445,7 @@ class ConservativeMechanicsOperatorProblem(_MechanicsProblemView):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         problem = _MechanicsOperatorProblem.create(
             case_builder,
             (trial_fields,),
@@ -469,7 +471,7 @@ class MechanicsResidualOperatorProblem(_MechanicsProblemView):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         problem = _MechanicsOperatorProblem.create(
             case_builder,
             (trial_fields,),
@@ -497,7 +499,7 @@ class MixedMechanicsOperatorProblem(_MechanicsProblemView):
         *,
         problem_id: str,
         gauge_blocks: Sequence[MechanicsCaseFunctional] = (),
-    ):
+    ) -> None:
         problem = _MechanicsOperatorProblem.create(
             case_builder,
             (primal_fields, dual_fields),
@@ -541,7 +543,7 @@ class _MechanicsLossBase(AbstractOperatorLossTerm):
     weight: float
     expected_formulation: MechanicsOperatorFormulation
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         resolved = _unwrap_problem(self.problem)
         if resolved.formulation != self.expected_formulation:
             raise TypeError(
@@ -590,7 +592,7 @@ class _MechanicsLossBase(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -607,7 +609,7 @@ class _MechanicsLossBase(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -652,7 +654,7 @@ class ExpectedMechanicsEnergyLoss(_MechanicsLossBase):
         *,
         name: str = "expected_mechanics_energy",
         weight: float = 1.0,
-    ):
+    ) -> None:
         _initialize_loss(
             self,
             problem,
@@ -675,7 +677,7 @@ class MechanicsResidualLoss(_MechanicsLossBase):
         *,
         name: str = "mechanics_residual",
         weight: float = 1.0,
-    ):
+    ) -> None:
         _initialize_loss(
             self,
             problem,
@@ -698,7 +700,7 @@ class MixedMechanicsLoss(_MechanicsLossBase):
         *,
         name: str = "mixed_mechanics",
         weight: float = 1.0,
-    ):
+    ) -> None:
         _initialize_loss(
             self,
             problem,

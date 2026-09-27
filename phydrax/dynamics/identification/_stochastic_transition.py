@@ -7,11 +7,13 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from .._system import DiscreteStepContext
 
 
@@ -31,7 +33,7 @@ class LearnedMarginalTransition(StrictModule):
         *,
         event: Literal["next_state", "increment"] = "next_state",
         factor_scaling: Literal["covariance", "diffusion"] = "covariance",
-    ):
+    ) -> None:
         if not callable(model) or int(state_size) <= 0:
             raise ValueError(
                 "Marginal transition requires callable model and state size."
@@ -79,7 +81,7 @@ class LearnedMarginalTransition(StrictModule):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         context: DiscreteStepContext,
         state: ArrayLike,
         control: ArrayLike | None = None,
@@ -109,7 +111,7 @@ class LearnedPathwiseTransition(StrictModule):
         /,
         *,
         interpretation: Literal["ito", "stratonovich"] = "ito",
-    ):
+    ) -> None:
         if not callable(drift_model) or not callable(noise_model):
             raise TypeError("Pathwise transition models must be callable.")
         if min(int(state_size), int(noise_size)) <= 0 or interpretation not in (

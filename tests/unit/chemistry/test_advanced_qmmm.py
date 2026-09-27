@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -5,13 +7,17 @@ import numpy as np
 import phydrax as phx
 
 
-def _system():
+def _system() -> Any:
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     structure = phx.atomistic.AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         units.scale,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[11, 13],
     )
     system = phx.atomistic.AtomisticSystemPlan.from_structure(
@@ -20,8 +26,8 @@ def _system():
     return structure, system
 
 
-def _surface(system, energy_function, provider_id):
-    def evaluate(positions, _cell):
+def _surface(system: Any, energy_function: Any, provider_id: Any) -> Any:
+    def evaluate(positions: Any, _cell: Any) -> Any:
         coordinate = jnp.asarray(positions)
         energy = energy_function(coordinate)
         forces = -jax.grad(energy_function)(coordinate)
@@ -43,21 +49,24 @@ def _surface(system, energy_function, provider_id):
     )
 
 
-def test_boundary_multipoles_and_mutual_polarization_close_variational_energy():
+def test_boundary_multipoles_and_mutual_polarization_close_variational_energy() -> None:
     structure, system = _system()
     region = phx.chemistry.QuantumRegionPlan(system, [11], spin_multiplicity=2).prepare()
     multipoles = phx.atomistic.PermanentMultipoleSiteData(
+        # ty: ignore[invalid-argument-type]
         [0.0, 0.0],
         np.zeros((2, 3)),
         np.zeros((2, 3, 3)),
+        # ty: ignore[invalid-argument-type]
         [0.0, 1.0],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
     )
     permanent = phx.chemistry.multipole_embedding_for_region(
         region, structure.positions, multipoles
     )
 
-    def quantum(region_positions, embedding, induced):
+    def quantum(region_positions: Any, embedding: Any, induced: Any) -> Any:
         field = jnp.asarray([[0.2, 0.0, 0.0]])
         embedded = phx.chemistry.EmbeddedRegionEvaluation(
             -jnp.sum(jnp.asarray(induced) * field),
@@ -96,12 +105,14 @@ def test_boundary_multipoles_and_mutual_polarization_close_variational_energy():
     np.testing.assert_allclose(result.qmmm.total_energy, -0.02, atol=1.0e-10)
 
 
-def test_adaptive_partition_weights_add_exact_force_correction_and_epoch_identity():
+def test_adaptive_partition_weights_add_exact_force_correction_and_epoch_identity() -> (
+    None
+):
     structure, system = _system()
     zero = _surface(system, lambda positions: jnp.asarray(0.0), "partition-zero")
     one = _surface(system, lambda positions: jnp.asarray(1.0), "partition-one")
 
-    def weights(positions):
+    def weights(positions: Any) -> Any:
         logits = jnp.asarray([positions[0, 0], -positions[0, 0]])
         return jax.nn.softmax(logits)
 
@@ -118,7 +129,7 @@ def test_adaptive_partition_weights_add_exact_force_correction_and_epoch_identit
     np.testing.assert_allclose(result.evaluation.forces[0, 0], derivative, atol=1.0e-14)
 
 
-def test_periodic_multilevel_surface_combines_energy_and_force_ledgers():
+def test_periodic_multilevel_surface_combines_energy_and_force_ledgers() -> None:
     structure, system = _system()
     first = _surface(system, lambda positions: jnp.sum(positions**2), "level-one")
     second = _surface(system, lambda positions: 2.0 * jnp.sum(positions**2), "level-two")

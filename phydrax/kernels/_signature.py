@@ -10,7 +10,8 @@ from numbers import Integral
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._base import _as_input, _as_inputs, AbstractPositiveDefiniteKernel
 
@@ -36,7 +37,7 @@ class SignaturePDEKernel(AbstractPositiveDefiniteKernel):
         *,
         polynomial_order: int = 5,
         pair_block_size: int = 64,
-    ):
+    ) -> None:
         if not isinstance(static_kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("static_kernel must be a positive-definite kernel.")
         if static_kernel.input_ndim != 1:

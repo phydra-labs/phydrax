@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -31,12 +33,20 @@ from phydrax.atomistic._spin_dynamics import (
 from phydrax.stochastic import WienerRealization
 
 
-def _dimer():
+def _dimer() -> Any:
     units = AtomisticUnitSystem.reduced()
     positions = np.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+    # ty: ignore[invalid-argument-type]
     system = AtomisticSystemPlan([20, 10], [1, 1], [1.0, 1.0], units).prepare()
     structure = AtomicStructure(
-        [1, 1], positions, [1.0, 1.0], units.scale, particle_ids=[20, 10]
+        # ty: ignore[invalid-argument-type]
+        [1, 1],
+        positions,
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.0],
+        units.scale,
+        # ty: ignore[invalid-argument-type]
+        particle_ids=[20, 10],
     )
     graph = realize_atomistic_graph(
         AtomisticBatch.from_structure(structure),
@@ -52,12 +62,15 @@ def _dimer():
     )
 
 
-def test_once_per_bond_exchange_dmi_and_effective_field_signs():
+def test_once_per_bond_exchange_dmi_and_effective_field_signs() -> None:
     _, plan = _dimer()
     prepared = prepare_classical_spin_hamiltonian(
         plan,
+        # ty: ignore[invalid-argument-type]
         exchange=[2.0],
+        # ty: ignore[invalid-argument-type]
         dmi=[[0.0, 0.0, 3.0]],
+        # ty: ignore[invalid-argument-type]
         moments=[2.0, 4.0],
     )
     # Canonical orientation follows stable IDs: site 1 (ID 10) -> site 0 (ID 20).
@@ -92,20 +105,28 @@ def test_once_per_bond_exchange_dmi_and_effective_field_signs():
     )
 
 
-def test_anisotropy_zeeman_sign_and_rkmk_norm_preservation():
+def test_anisotropy_zeeman_sign_and_rkmk_norm_preservation() -> None:
     _, hamiltonian_plan = _dimer()
     hamiltonian = prepare_classical_spin_hamiltonian(
         hamiltonian_plan,
+        # ty: ignore[invalid-argument-type]
         anisotropy=[2.0, 2.0],
+        # ty: ignore[invalid-argument-type]
         anisotropy_axes=[[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+        # ty: ignore[invalid-argument-type]
         moments=[1.0, 1.0],
+        # ty: ignore[invalid-argument-type]
         magnetic_field=[[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
     )
     aligned = evaluate_classical_spin_hamiltonian(
-        hamiltonian, [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]]
+        hamiltonian,
+        # ty: ignore[invalid-argument-type]
+        [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
     )
     transverse = evaluate_classical_spin_hamiltonian(
-        hamiltonian, [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+        hamiltonian,
+        # ty: ignore[invalid-argument-type]
+        [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
     )
     assert jnp.allclose(aligned.total_energy, -6.0)
     assert aligned.total_energy < transverse.total_energy
@@ -113,12 +134,15 @@ def test_anisotropy_zeeman_sign_and_rkmk_norm_preservation():
     dynamics = prepare_llg_dynamics(
         LandauLifshitzGilbertPlan(
             hamiltonian,
+            # ty: ignore[invalid-argument-type]
             [1.0, 1.0],
+            # ty: ignore[invalid-argument-type]
             [0.1, 0.1],
             step_size=1.0e-3,
             maximum_steps=20,
         )
     )
+    # ty: ignore[invalid-argument-type]
     state = initial_spin_dynamics_state(dynamics, [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     trajectory = solve_llg_dynamics(dynamics, state, jnp.asarray([0.0, 0.01]))
     assert trajectory.evidence.interpretation == "deterministic"
@@ -128,23 +152,29 @@ def test_anisotropy_zeeman_sign_and_rkmk_norm_preservation():
     assert trajectory.directions[-1, 0, 2] > trajectory.directions[0, 0, 2]
 
 
-def test_thermal_llg_uses_stratonovich_srkmk_and_fdt_amplitude():
+def test_thermal_llg_uses_stratonovich_srkmk_and_fdt_amplitude() -> None:
     _, hamiltonian_plan = _dimer()
     hamiltonian = prepare_classical_spin_hamiltonian(
         hamiltonian_plan,
+        # ty: ignore[invalid-argument-type]
         moments=[1.0, 2.0],
+        # ty: ignore[invalid-argument-type]
         magnetic_field=[[0.0, 0.0, 0.2], [0.0, 0.0, 0.2]],
     )
     dynamics = prepare_llg_dynamics(
         LandauLifshitzGilbertPlan(
             hamiltonian,
+            # ty: ignore[invalid-argument-type]
             [1.0, 1.5],
+            # ty: ignore[invalid-argument-type]
             [0.1, 0.2],
+            # ty: ignore[invalid-argument-type]
             temperature=[0.5, 0.75],
             step_size=1.0e-3,
             maximum_steps=4,
         )
     )
+    # ty: ignore[invalid-argument-type]
     state = initial_spin_dynamics_state(dynamics, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
     realization = WienerRealization(
         jr.key(7),
@@ -164,20 +194,27 @@ def test_thermal_llg_uses_stratonovich_srkmk_and_fdt_amplitude():
     assert trajectory.evidence.maximum_norm_residual < 1.0e-8
 
 
-def test_spin_checkpoint_roundtrip_preserves_runtime_identity(tmp_path):
+def test_spin_checkpoint_roundtrip_preserves_runtime_identity(tmp_path: Any) -> None:
     _, hamiltonian_plan = _dimer()
     hamiltonian = prepare_classical_spin_hamiltonian(
-        hamiltonian_plan, exchange=[1.0], moments=[1.0, 1.0]
+        hamiltonian_plan,
+        # ty: ignore[invalid-argument-type]
+        exchange=[1.0],
+        # ty: ignore[invalid-argument-type]
+        moments=[1.0, 1.0],
     )
     dynamics = prepare_llg_dynamics(
         LandauLifshitzGilbertPlan(
             hamiltonian,
+            # ty: ignore[invalid-argument-type]
             [1.0, 1.0],
+            # ty: ignore[invalid-argument-type]
             [0.0, 0.0],
             step_size=0.01,
             maximum_steps=2,
         )
     )
+    # ty: ignore[invalid-argument-type]
     state = initial_spin_dynamics_state(dynamics, [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]])
     plan = AtomisticSpinCheckpointPlan(dynamics, scope_id="spin-restart")
     written = write_atomistic_spin_checkpoint(tmp_path / "spin.npz", plan, state)
@@ -188,20 +225,27 @@ def test_spin_checkpoint_roundtrip_preserves_runtime_identity(tmp_path):
     assert restored.state.prepared_dynamics_id == dynamics.prepared_id
 
 
-def test_failed_spin_state_is_not_restartable_or_checkpointable(tmp_path):
+def test_failed_spin_state_is_not_restartable_or_checkpointable(tmp_path: Any) -> None:
     _, hamiltonian_plan = _dimer()
     hamiltonian = prepare_classical_spin_hamiltonian(
-        hamiltonian_plan, exchange=[1.0], moments=[1.0, 1.0]
+        hamiltonian_plan,
+        # ty: ignore[invalid-argument-type]
+        exchange=[1.0],
+        # ty: ignore[invalid-argument-type]
+        moments=[1.0, 1.0],
     )
     dynamics = prepare_llg_dynamics(
         LandauLifshitzGilbertPlan(
             hamiltonian,
+            # ty: ignore[invalid-argument-type]
             [1.0, 1.0],
+            # ty: ignore[invalid-argument-type]
             [0.0, 0.0],
             step_size=0.01,
             maximum_steps=2,
         )
     )
+    # ty: ignore[invalid-argument-type]
     state = initial_spin_dynamics_state(dynamics, [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]])
     failed = eqx.tree_at(lambda value: value.successful, state, jnp.asarray(False))
     plan = AtomisticSpinCheckpointPlan(dynamics, scope_id="failed-spin")

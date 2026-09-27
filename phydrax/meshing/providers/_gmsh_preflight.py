@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 
 from ...geometry.brep import BRepModel, BRepSource
@@ -79,8 +81,10 @@ def _sweep_preflight_issues(
     controlled: dict[int, tuple[int, BoundaryLayerControl]] = {}
     face_roles: dict[tuple[int, int], str] = {}
     for control_index, control in enumerate(controls):
+        # ty: ignore[invalid-argument-type]
         volume_ids = _scope_indices(source, control.volume_scope, 3)
         source_faces = _scope_indices(source, control.wall_scope, 2)
+        # ty: ignore[invalid-argument-type]
         target_faces = _scope_indices(source, control.cap_scope, 2)
         if volume_ids is None or not volume_ids.size:
             issues.append("EXACT_SWEEP volume scope is not a nonempty solid scope")
@@ -525,13 +529,13 @@ def _semantic_region_issues(
 
 
 def _validate_gmsh_semantics(
-    source,
-    specification,
-    model,
+    source: Any,
+    specification: Any,
+    model: Any,
     descriptor: MeshingSourceDescriptor,
-    target,
+    target: Any,
     requested: set[str],
-    layers,
+    layers: Any,
     unsupported: list[str],
     /,
 ) -> bool:
@@ -618,7 +622,9 @@ def _validate_gmsh_semantics(
     return semantic_volume
 
 
-def _validate_gmsh_periodicity(specification, model, unsupported: list[str], /) -> None:
+def _validate_gmsh_periodicity(
+    specification: Any, model: Any, unsupported: list[str], /
+) -> None:
     for constraint in specification.periodic_constraints:
         scopes = (constraint.source_scope, constraint.target_scope)
         if any(
@@ -642,7 +648,7 @@ def _validate_gmsh_periodicity(specification, model, unsupported: list[str], /) 
 
 
 def _proximity_issues(
-    model: BRepModel, specification, control: ProximitySizeControl, /
+    model: BRepModel, specification: Any, control: ProximitySizeControl, /
 ) -> list[str]:
     dimension = control.source_scope.entity_dimension
     if dimension not in (1, 2):
@@ -662,9 +668,9 @@ def _proximity_issues(
 
 
 def _validate_gmsh_size_controls(
-    specification,
-    model,
-    scope,
+    specification: Any,
+    model: Any,
+    scope: Any,
     semantic_volume: bool,
     unsupported: list[str],
     /,
@@ -788,7 +794,7 @@ _FEATURE_DIMENSIONS = {
 
 def _protected_feature_issues(
     model: BRepModel,
-    specification,
+    specification: Any,
     semantic: bool,
     /,
 ) -> list[str]:
@@ -844,9 +850,9 @@ def _protected_feature_issues(
 
 
 def _background_metric_issues(
-    options,
+    options: Any,
     model: BRepModel,
-    specification,
+    specification: Any,
     background: BackgroundMetricControl,
     local_sizing: bool,
     /,
@@ -913,7 +919,7 @@ def _background_metric_issues(
     return issues
 
 
-def _generation_option_issues(options, specification, /) -> list[str]:
+def _generation_option_issues(options: Any, specification: Any, /) -> list[str]:
     issues = []
     volume = isinstance(specification, VolumeMeshingSpec)
     layers = volume and bool(specification.layer_controls)
@@ -934,8 +940,8 @@ def _generation_option_issues(options, specification, /) -> list[str]:
 
 
 def _brep_support_issues(
-    options,
-    source,
+    options: Any,
+    source: Any,
     model: BRepModel,
     descriptor: MeshingSourceDescriptor,
     specification: SurfaceMeshingSpec | VolumeMeshingSpec,
@@ -1048,7 +1054,7 @@ def _brep_support_issues(
 
 
 def _remeshing_support_issues(
-    options,
+    options: Any,
     source: SurfaceModel,
     specification: SurfaceRemeshingSpec,
     background: BackgroundMetricControl | None,

@@ -14,7 +14,7 @@ from phydrax.tensor_network._gauge_models import (
 )
 
 
-def test_fusion_mps_and_projector_mpo_match_dense_sector():
+def test_fusion_mps_and_projector_mpo_match_dense_sector() -> None:
     basis = AbelianFusionBasis(((-1, 0, 1), (-1, 0, 1)))
     state = build_gauge_invariant_mps(basis)
     projector = build_gauge_projector_mpo(basis)
@@ -38,7 +38,7 @@ def test_fusion_mps_and_projector_mpo_match_dense_sector():
     assert structural.evidence.verification_method == "deterministic-charge-flow"
 
 
-def test_su2_fusion_basis_constructs_exact_singlet_multiplicities():
+def test_su2_fusion_basis_constructs_exact_singlet_multiplicities() -> None:
     basis = SU2FusionBasis((1, 1, 1, 1), 0)
     state = basis.state(jnp.ones((len(basis.fusion_paths),)))
     assert len(basis.fusion_paths) == 2
@@ -46,7 +46,7 @@ def test_su2_fusion_basis_constructs_exact_singlet_multiplicities():
     assert all(path[-1] == 0 for path in basis.fusion_paths)
 
 
-def test_peps_local_tensors_have_only_zero_gauss_residual_entries():
+def test_peps_local_tensors_have_only_zero_gauss_residual_entries() -> None:
     tensor = gauge_invariant_peps_tensor(
         (-1, 0, 1),
         (-1, 0, 1),

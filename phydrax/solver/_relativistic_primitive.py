@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax import ein
 
@@ -70,7 +71,7 @@ class AtmosphereFloorPolicy(StrictModule, NonTrainableState):
         maximum_mass_addition: float = 1.0e30,
         maximum_energy_addition: float = 1.0e30,
         replace_failed_recovery: bool = True,
-    ):
+    ) -> None:
         density = float(rest_mass_density)
         energy = float(specific_internal_energy)
         activation = density if activation_density is None else float(activation_density)
@@ -108,7 +109,7 @@ class AtmosphereFloorPolicy(StrictModule, NonTrainableState):
             }
         )
 
-    def primitive(self, leading_shape: tuple[int, ...], dtype, /) -> Array:
+    def primitive(self, leading_shape: tuple[int, ...], dtype: DTypeLike, /) -> Array:
         density = jnp.full(leading_shape + (1,), self.rest_mass_density, dtype=dtype)
         energy = jnp.full(
             leading_shape + (1,), self.specific_internal_energy, dtype=dtype
@@ -233,7 +234,7 @@ class GRHDC2PPolicy(StrictModule, NonTrainableState):
         relative_tolerance: float = 1.0e-9,
         recomposition_tolerance: float = 1.0e-8,
         implicit_differentiation: bool = False,
-    ):
+    ) -> None:
         if not isinstance(system, ValenciaGRHDSystem):
             raise TypeError("system must be a ValenciaGRHDSystem.")
         atmosphere_ = AtmosphereFloorPolicy() if atmosphere is None else atmosphere
@@ -356,7 +357,7 @@ class GRHDC2PPolicy(StrictModule, NonTrainableState):
         )
         upper_value = self._raw_residual(upper, arguments)
 
-        def expand(_, carry):
+        def expand(_: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             bound, value = carry
             same_sign = jnp.signbit(value) == jnp.signbit(lower_value)
             proposed = 2.0 * bound + 1.0
@@ -374,7 +375,9 @@ class GRHDC2PPolicy(StrictModule, NonTrainableState):
             & (jnp.signbit(lower_value) != jnp.signbit(upper_value))
         )
 
-        def bisect(_, carry):
+        def bisect(
+            _: Array, carry: tuple[Array, Array, Array, Array]
+        ) -> tuple[Array, Array, Array, Array]:
             left, right, left_value, right_value = carry
             middle = 0.5 * (left + right)
             middle_value = self._raw_residual(middle, arguments)

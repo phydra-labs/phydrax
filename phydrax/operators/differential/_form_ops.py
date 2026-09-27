@@ -5,10 +5,10 @@
 from __future__ import annotations
 
 from math import comb
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax.domain import AbstractGeometry, DomainFunction
@@ -21,6 +21,10 @@ from ...metrix import (
 )
 from ...metrix._exterior_basis import exterior_indices, wedge_sign
 from ._domain_ops import _factor_and_dim, _resolve_var, grad
+
+
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
 
 
 def _positions(deps: tuple[str, ...], function: DomainFunction, /) -> tuple[int, ...]:
@@ -49,7 +53,7 @@ def _evaluate(
     coefficient_count: int,
     /,
     *,
-    key: Any,
+    key: EvalKey,
     kwargs: dict[str, Any],
 ) -> Array:
     values = jnp.asarray(
@@ -85,7 +89,7 @@ class DomainDifferentialForm(StrictModule):
         chart: CoordinateChart,
         degree: int,
         var: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(coefficients, DomainFunction):
             raise TypeError("coefficients must be a DomainFunction.")
         if not isinstance(chart, CoordinateChart):
@@ -127,7 +131,7 @@ class DomainMaxwellResiduals(StrictModule):
         homogeneous: DomainDifferentialForm,
         inhomogeneous: DomainDifferentialForm,
         /,
-    ):
+    ) -> None:
         self.field_strength = field_strength
         self.homogeneous = homogeneous
         self.inhomogeneous = inhomogeneous
@@ -150,7 +154,7 @@ class _DomainWedgeCallable(StrictModule):
         right: DomainDifferentialForm,
         deps: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         output = exterior_indices(left.chart.dimension, left.degree + right.degree)
         lookup = {index: position for position, index in enumerate(output)}
         left_terms: list[int] = []
@@ -175,7 +179,7 @@ class _DomainWedgeCallable(StrictModule):
         self.signs = jnp.asarray(signs)
         self.output_count = len(output)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         args_tuple = tuple(args)
         left = _evaluate(
             self.left.coefficients,
@@ -219,7 +223,7 @@ class _DomainExteriorCallable(StrictModule):
         derivative: DomainFunction,
         deps: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         output = exterior_indices(form.chart.dimension, form.degree + 1)
         lookup = {index: position for position, index in enumerate(form.indices)}
         source_terms: list[int] = []
@@ -243,7 +247,7 @@ class _DomainExteriorCallable(StrictModule):
         self.signs = jnp.asarray(signs)
         self.output_count = len(output)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         derivative = jnp.asarray(
             self.derivative.func(
                 *[args[position] for position in self.derivative_positions],
@@ -288,7 +292,7 @@ class _DomainInteriorCallable(StrictModule):
         form: DomainDifferentialForm,
         deps: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         output = exterior_indices(form.chart.dimension, form.degree - 1)
         lookup = {index: position for position, index in enumerate(form.indices)}
         vector_terms: list[int] = []
@@ -315,7 +319,7 @@ class _DomainInteriorCallable(StrictModule):
         self.signs = jnp.asarray(signs)
         self.output_count = len(output)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         vector = jnp.asarray(
             self.vector.func(
                 *[args[position] for position in self.vector_positions],
@@ -364,7 +368,7 @@ class _DomainHodgeCallable(StrictModule):
         deps: tuple[str, ...],
         orientation: int,
         /,
-    ):
+    ) -> None:
         output = exterior_indices(
             form.chart.dimension, form.chart.dimension - form.degree
         )
@@ -386,7 +390,7 @@ class _DomainHodgeCallable(StrictModule):
         self.output_count = len(output)
         self.orientation = int(orientation)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         coefficients = _evaluate(
             self.form.coefficients,
             self.form_positions,
@@ -422,7 +426,9 @@ class _DomainHodgeCallable(StrictModule):
 
 
 class _ZeroFormCallable(StrictModule):
-    def __call__(self, coordinates: Array, /, *, key=None, **kwargs: Any) -> Array:
+    def __call__(
+        self, coordinates: Array, /, *, key: EvalKey = None, **kwargs: Any
+    ) -> Array:
         del key, kwargs
         return jnp.zeros(coordinates.shape[:-1] + (1,), dtype=coordinates.dtype)
 
@@ -431,11 +437,11 @@ class _ScaleCallable(StrictModule):
     function: DomainFunction
     scale: float
 
-    def __init__(self, function: DomainFunction, scale: float, /):
+    def __init__(self, function: DomainFunction, scale: float, /) -> None:
         self.function = function
         self.scale = float(scale)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         return self.scale * self.function.func(*args, key=key, **kwargs)
 
 

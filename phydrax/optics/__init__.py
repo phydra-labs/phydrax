@@ -5,6 +5,7 @@
 """Immutable geometric, wave, transport, and guided-coupling optics."""
 
 from importlib import import_module
+from typing import Any
 
 from . import (
     beamlets as beamlets,
@@ -32,7 +33,7 @@ _FACADE_EXPORT_MODULES = (
 )
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     for module_name in reversed(_FACADE_EXPORT_MODULES):
         module = import_module(module_name, __package__)
         if name in module.__all__:

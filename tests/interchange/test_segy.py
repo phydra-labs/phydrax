@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import struct
+from typing import Any
 
 import numpy as np
 import pytest
@@ -18,16 +20,16 @@ from phydrax.interchange._report import AdapterStatus
 from phydrax.units import PASCAL
 
 
-def _limits(*, max_bytes=100_000, max_nodes=1000):
+def _limits(*, max_bytes: Any = 100_000, max_nodes: Any = 1000) -> Any:
     return ResourceLimits(max_bytes, 4, max_nodes, 1000, 20)
 
 
 def _segy(
     *,
-    sequences=(1, 3),
-    identifications=(1, 2),
-    samples=((1.0, -2.0, 3.0), (4.0, 5.0, 6.0)),
-):
+    sequences: Any = (1, 3),
+    identifications: Any = (1, 2),
+    samples: Any = ((1.0, -2.0, 3.0), (4.0, 5.0, 6.0)),
+) -> Any:
     text = bytearray(b" " * 3200)
     label = b"C01 PHYDRAX EXPLICIT REV1 IEEE PRESSURE PROFILE"
     text[: len(label)] = label
@@ -66,7 +68,9 @@ def _segy(
     return bytes(text + binary) + b"".join(records)
 
 
-def test_explicit_rev1_profile_preserves_trace_gaps_clock_geometry_and_dead_validity():
+def test_explicit_rev1_profile_preserves_trace_gaps_clock_geometry_and_dead_validity() -> (
+    None
+):
     data = _segy()
     result = decode_segy_bytes(
         data,
@@ -94,7 +98,7 @@ def test_explicit_rev1_profile_preserves_trace_gaps_clock_geometry_and_dead_vali
     np.testing.assert_array_equal(result.series.sample_valid, [[True] * 3, [False] * 3])
 
 
-def test_profile_rejects_byte_order_calibration_and_clock_ambiguity():
+def test_profile_rejects_byte_order_calibration_and_clock_ambiguity() -> None:
     data = _segy(sequences=(1,), identifications=(1,), samples=((1.0, 2.0, 3.0),))
     with pytest.raises(SEGYDecodeError, match="revision"):
         decode_segy_bytes(
@@ -127,7 +131,9 @@ def test_profile_rejects_byte_order_calibration_and_clock_ambiguity():
         )
 
 
-def test_decoder_accounts_before_allocation_and_file_reader_stays_under_root(tmp_path):
+def test_decoder_accounts_before_allocation_and_file_reader_stays_under_root(
+    tmp_path: Any,
+) -> None:
     data = _segy(sequences=(1,), identifications=(1,), samples=((1.0, 2.0, 3.0),))
     profile = SEGYRev1IEEEProfile(
         byte_order="big", text_encoding="ascii", pressure_polarity="positive"

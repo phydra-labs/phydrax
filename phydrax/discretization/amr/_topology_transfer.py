@@ -12,12 +12,19 @@ from math import prod
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import DTypeLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import adjoint, ArraySpace, DiagonalPairing, transpose
+from ...linalg import (
+    AbstractVectorSpace,
+    adjoint,
+    ArraySpace,
+    DiagonalPairing,
+    transpose,
+)
 from ...sparse import EdgeRelation, SparseCoordinateOperator
 from .._spaces import DiscreteFieldSpace, EntityDofLayout
 from .._topology_epoch import TopologyEpochTransition
@@ -76,7 +83,7 @@ class BlockCellOverlapRoutes(StrictModule, NonTrainableState):
         source_count: int,
         target_count: int,
         /,
-    ):
+    ) -> None:
         source = np.asarray(source_indices, dtype=np.int32)
         target = np.asarray(target_indices, dtype=np.int32)
         weights = np.asarray(target_weights, dtype=np.float64)
@@ -374,7 +381,7 @@ def _field_space(
     field_name: str,
     count: int,
     measures: np.ndarray,
-    dtype,
+    dtype: DTypeLike,
 ) -> DiscreteFieldSpace:
     entity_id = canonical_fingerprint(
         {
@@ -400,8 +407,8 @@ def _field_space(
 
 def _route_operator(
     routes: BlockCellOverlapRoutes,
-    source,
-    target,
+    source: AbstractVectorSpace,
+    target: AbstractVectorSpace,
     /,
 ) -> SparseCoordinateOperator:
     return SparseCoordinateOperator(
@@ -453,8 +460,8 @@ class BlockFieldTopologyTransition(StrictModule, NonTrainableState):
         /,
         *,
         component_shape: Sequence[int] = (),
-        dtype=jnp.float64,
-    ):
+        dtype: DTypeLike = jnp.float64,
+    ) -> None:
         if not isinstance(source, BlockHierarchyTopology) or not isinstance(
             target, BlockHierarchyTopology
         ):

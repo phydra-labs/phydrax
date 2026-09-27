@@ -13,11 +13,12 @@ import math
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, final, Literal, TYPE_CHECKING
+from typing import Any, final, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import numpy as np
+from jax import core as jax_core
 
 from ..._fingerprint import canonical_fingerprint, canonical_json
 from ..._strict import StrictModule
@@ -28,6 +29,7 @@ from ...backends import (
     BackendAvailability,
     BackendCapabilities,
 )
+from ...typing import parse
 from .._report import (
     AdapterCapability,
     AdapterError,
@@ -39,7 +41,7 @@ from .._report import (
 )
 
 
-_AnalysisName = Literal["cardinal-points", "surface-data", "system-data"]
+_AnalysisName: TypeAlias = Literal["cardinal-points", "surface-data", "system-data"]
 if TYPE_CHECKING:
     from ...optics.geometric import SequentialOpticsPlan
 
@@ -113,7 +115,7 @@ class _OpticStudioUnsupportedFeatureError(AdapterError):
     report: AdapterReport
     features: tuple[str, ...]
 
-    def __init__(self, report: AdapterReport, features: Sequence[str], /):
+    def __init__(self, report: AdapterReport, features: Sequence[str], /) -> None:
         self.report = report
         self.features = tuple(sorted(str(feature) for feature in features))
         super().__init__(
@@ -143,7 +145,7 @@ class OpticStudioBackend(AbstractExternalBackend, NonTrainableState):
         zosapi_nethelper: str | None = None,
         opticstudio_directory: str | None = None,
         license_id: str = "LicenseRef-OpticStudio-Proprietary",
-    ):
+    ) -> None:
         nethelper = _optional_nonempty_text(zosapi_nethelper, "zosapi_nethelper")
         directory = _optional_nonempty_text(
             opticstudio_directory, "opticstudio_directory"
@@ -227,8 +229,13 @@ class OpticStudioSession:
         "__system",
         "__zospy",
     )
+    # Opaque ZOSPy vendor handles (the ``_open`` boundary is ``Any``); ``None``
+    # only after ``close``, which every operation rejects via ``__require_open``.
+    __connection: Any
+    __system: Any
+    __zospy: Any
 
-    def __init__(self, *args: Any, **kwargs: Any):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         del args, kwargs
         raise TypeError("OpticStudioSession values are created by OpticStudioBackend.")
 
@@ -350,13 +357,13 @@ class OpticStudioAnalysisRequest(StrictModule, NonTrainableState):
         /,
         *,
         settings: Mapping[str, object] | None = None,
-    ):
+    ) -> None:
         settings_input: Mapping[str, object] = {} if settings is None else settings
-        analysis_ = str(analysis).strip().lower().replace("_", "-")
-        if analysis_ not in ("cardinal-points", "surface-data", "system-data"):
-            raise ValueError("Unsupported OpticStudio analysis request.")
+        analysis_ = parse(
+            str(analysis).strip().lower().replace("_", "-"), _AnalysisName, "analysis"
+        )
         settings_ = _normalize_analysis_settings(analysis_, settings_input)
-        self.analysis = analysis_  # type: ignore[assignment]
+        self.analysis = analysis_
         self.settings = settings_
         self.request_id = canonical_fingerprint(
             {
@@ -384,7 +391,7 @@ class OpticStudioRunResult(StrictModule, NonTrainableState):
         report: AdapterReport,
         artifact: ScientificArtifactEnvelope,
         /,
-    ):
+    ) -> None:
         if not isinstance(request, OpticStudioAnalysisRequest):
             raise TypeError("request must be an OpticStudioAnalysisRequest.")
         if not isinstance(report, AdapterReport):
@@ -857,12 +864,14 @@ def _normalize_analysis_settings(
         if "orientation" in values and values["orientation"] not in ("X-Z", "Y-Z"):
             raise ValueError("Cardinal-points orientation must be 'X-Z' or 'Y-Z'.")
         for key in ("surface_1", "wavelength"):
-            if key in values and (
-                not isinstance(values[key], int)
-                or isinstance(values[key], bool)
-                or values[key] < 1
-            ):
-                raise ValueError(f"Cardinal-points {key} must be a positive integer.")
+            if key in values:
+                setting = values[key]
+                if (
+                    not isinstance(setting, int)
+                    or isinstance(setting, bool)
+                    or setting < 1
+                ):
+                    raise ValueError(f"Cardinal-points {key} must be a positive integer.")
         if "surface_2" in values:
             second = values["surface_2"]
             if second != "Image" and (
@@ -914,7 +923,7 @@ def _canonical_result_json(payload: str, /) -> str:
 
 def _reject_traced_values(value: object, owner: str, /) -> None:
     for leaf in jax.tree_util.tree_leaves(value):
-        if isinstance(leaf, jax.core.Tracer):
+        if isinstance(leaf, jax_core.Tracer):
             raise _OpticStudioBoundaryError(
                 f"{owner} contains a traced value at the host-only, non-differentiable OpticStudio boundary."
             )

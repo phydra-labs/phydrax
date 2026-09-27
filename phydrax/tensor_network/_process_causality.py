@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -19,7 +20,7 @@ class ProcessCombCausalityReport(StrictModule):
     finite: Array
     valid: Array
 
-    def __init__(self, slot_residuals: ArrayLike, /, *, tolerance: float):
+    def __init__(self, slot_residuals: ArrayLike, /, *, tolerance: float) -> None:
         self.slot_residuals = jnp.asarray(slot_residuals)
         self.maximum_residual = jnp.max(self.slot_residuals)
         self.finite = jnp.all(jnp.isfinite(self.slot_residuals))
@@ -51,7 +52,7 @@ class ProcessSequenceLikelihood(StrictModule):
     normalization_residual: Array
     valid: Array
 
-    def __init__(self, probabilities: ArrayLike, counts: ArrayLike, /):
+    def __init__(self, probabilities: ArrayLike, counts: ArrayLike, /) -> None:
         values = jnp.asarray(probabilities)
         counts_ = jnp.asarray(counts)
         if values.shape != counts_.shape:

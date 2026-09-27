@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._physical import RelativityScaleContract
@@ -21,6 +22,7 @@ from ..metrix._adm_exchange import (
     StressEnergyProjection,
 )
 from ..metrix._spacetime_conventions import RelativityConvention
+from ..typing import parse
 from ._relativistic_multigroup_radiation import (
     GRMultigroupM1ClosureEvaluation,
     GRMultigroupM1RadiationSystem,
@@ -29,8 +31,9 @@ from ._relativistic_multigroup_radiation import (
 )
 
 
-NeutrinoSpecies = Literal["electron_neutrino", "electron_antineutrino", "heavy_lepton"]
-_VALID_SPECIES = frozenset(("electron_neutrino", "electron_antineutrino", "heavy_lepton"))
+NeutrinoSpecies: TypeAlias = Literal[
+    "electron_neutrino", "electron_antineutrino", "heavy_lepton"
+]
 _LEPTON_SIGN = {
     "electron_neutrino": 1.0,
     "electron_antineutrino": -1.0,
@@ -77,12 +80,9 @@ class GRNeutrinoM1System(StrictModule, NonTrainableState):
         metric_tolerance: float = 1.0e-9,
     ) -> None:
         names = tuple(species)
-        if (
-            not names
-            or len(set(names)) != len(names)
-            or any(value not in _VALID_SPECIES for value in names)
-        ):
+        if not names or len(set(names)) != len(names):
             raise ValueError("Neutrino species must be unique supported names.")
+        names = tuple(parse(value, NeutrinoSpecies, "species") for value in names)
         systems = tuple(
             GRMultigroupM1RadiationSystem(
                 scale,

@@ -11,7 +11,8 @@ from math import isfinite, pi
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -53,7 +54,7 @@ class PeriodicTimeReversalPlan(StrictModule, NonTrainableState):
         /,
         *,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(pencil, PreparedPeriodicOrbitalPencil):
             raise TypeError("pencil must be PreparedPeriodicOrbitalPencil.")
         if not isinstance(mesh, ReciprocalMeshPlan):
@@ -186,7 +187,7 @@ class PeriodicZ2Plan(StrictModule, NonTrainableState):
         loop_axis: int = 0,
         transverse_axis: int = 1,
         endpoint_tolerance: float = 1.0e-5,
-    ):
+    ) -> None:
         if not isinstance(bundle, PeriodicOverlapBundle):
             raise TypeError("bundle must be PeriodicOverlapBundle.")
         if not isinstance(time_reversal, PeriodicTimeReversalEvidence):

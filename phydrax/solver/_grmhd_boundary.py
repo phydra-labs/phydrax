@@ -9,7 +9,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -17,6 +18,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..metrix._adm_exchange import ADMGridGeometry
+from ..typing import parse
 
 
 GRMHDBoundaryKind: TypeAlias = Literal[
@@ -48,14 +50,7 @@ class GRMHDBoundaryCondition(StrictModule, NonTrainableState):
         *,
         prescribed_primitive: ArrayLike | None = None,
     ) -> None:
-        if kind not in (
-            "outflow",
-            "horizon_outflow",
-            "reflective",
-            "conducting",
-            "prescribed",
-        ):
-            raise ValueError("Unknown GRMHD boundary kind.")
+        kind = parse(kind, GRMHDBoundaryKind, "kind")
         if kind == "prescribed":
             if prescribed_primitive is None:
                 raise ValueError("A prescribed GRMHD boundary requires primitives.")

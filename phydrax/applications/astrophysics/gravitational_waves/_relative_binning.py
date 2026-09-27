@@ -11,7 +11,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ._approximation import (
@@ -20,14 +21,14 @@ from ._approximation import (
     qualify_likelihood,
 )
 from ._data import DetectorNetworkData
-from ._detector import DetectorResponsePlan
+from ._detector import DetectorResponsePlan, DetectorResponseResult
 from ._likelihood import (
     AbstractGravitationalWaveLikelihood,
     GravitationalWaveLikelihoodEvaluation,
     GravitationalWaveLikelihoodPlan,
 )
 from ._status import GravitationalWaveStatus
-from ._waveform import AbstractFrequencyDomainWaveform
+from ._waveform import AbstractFrequencyDomainWaveform, FrequencyDomainPolarizations
 
 
 class _RelativeBinningLikelihood(AbstractGravitationalWaveLikelihood):
@@ -54,7 +55,7 @@ class _RelativeBinningLikelihood(AbstractGravitationalWaveLikelihood):
         /,
         *,
         num_bins: int,
-    ):
+    ) -> None:
         if not isinstance(base, GravitationalWaveLikelihoodPlan):
             raise TypeError("base must be GravitationalWaveLikelihoodPlan.")
         if not base.waveform.capabilities.arbitrary_frequencies:
@@ -154,7 +155,7 @@ class _RelativeBinningLikelihood(AbstractGravitationalWaveLikelihood):
 
     def detector_signal(
         self, parameters: PyTree[Any], /, *, frequency: Array | None = None
-    ):
+    ) -> tuple[Array, DetectorResponseResult, FrequencyDomainPolarizations]:
         return self.base.detector_signal(parameters, frequency=frequency)
 
     def evaluate(

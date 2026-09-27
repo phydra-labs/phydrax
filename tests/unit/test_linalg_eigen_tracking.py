@@ -13,7 +13,7 @@ import phydrax as phx
 track = phx.linalg.eigen
 
 
-def test_eigenspace_tracking_recovers_permutation_and_complex_phase():
+def test_eigenspace_tracking_recovers_permutation_and_complex_phase() -> None:
     reference_values = jnp.asarray([1.0, 2.0, 4.0])
     reference_vectors = jnp.eye(3, dtype=jnp.complex128)
     permutation = jnp.asarray([2, 0, 1])
@@ -36,7 +36,7 @@ def test_eigenspace_tracking_recovers_permutation_and_complex_phase():
     assert float(result.diagnostics.assignment_margin) > 0.99
 
 
-def test_eigenspace_tracking_aligns_a_degenerate_rotated_subspace():
+def test_eigenspace_tracking_aligns_a_degenerate_rotated_subspace() -> None:
     reference_values = jnp.asarray([0.0, 0.0, 3.0])
     reference_vectors = jnp.eye(3, dtype=jnp.complex128)
     angle = jnp.asarray(0.37)
@@ -63,7 +63,7 @@ def test_eigenspace_tracking_aligns_a_degenerate_rotated_subspace():
     assert jnp.all(result.diagnostics.cluster_minimum_overlaps > 1.0 - 1e-12)
 
 
-def test_eigenspace_tracking_reports_ambiguous_nondegenerate_matching():
+def test_eigenspace_tracking_reports_ambiguous_nondegenerate_matching() -> None:
     reference_values = jnp.asarray([0.0, 1.0])
     reference_vectors = jnp.eye(2)
     candidate_vectors = jnp.asarray(
@@ -83,7 +83,7 @@ def test_eigenspace_tracking_reports_ambiguous_nondegenerate_matching():
     assert float(result.diagnostics.assignment_margin) == pytest.approx(0.0)
 
 
-def test_eigenspace_tracking_rejects_cluster_change_and_bad_shapes():
+def test_eigenspace_tracking_rejects_cluster_change_and_bad_shapes() -> None:
     reference_values = jnp.asarray([0.0, 0.0, 2.0])
     reference_vectors = jnp.eye(3)
     plan = track.plan_hermitian_eigenspace_tracking(reference_values)

@@ -9,7 +9,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -19,6 +20,7 @@ from ...solver._particle_gravity import (
     ParticleOctreePlan3D,
     PreparedParticleOctree3D,
 )
+from ...typing import parse
 from ._status import AstrodynamicsStatus
 
 
@@ -33,15 +35,14 @@ class CloseEncounterPolicy(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        encounter_distance,
-        collision_distance,
+        encounter_distance: ArrayLike,
+        collision_distance: ArrayLike,
         /,
         *,
-        collision_mode="fail",
-        restitution=1.0,
-    ):
-        if collision_mode not in ("fail", "merge", "bounce"):
-            raise ValueError("Unknown collision mode.")
+        collision_mode: CollisionMode = "fail",
+        restitution: ArrayLike = 1.0,
+    ) -> None:
+        collision_mode = parse(collision_mode, CollisionMode, "collision_mode")
         self.encounter_distance = jnp.asarray(encounter_distance).reshape(())
         self.collision_distance = jnp.asarray(collision_distance).reshape(())
         self.collision_mode = collision_mode
@@ -112,9 +113,9 @@ class PreparedOctree3D(StrictModule, NonTrainableState):
         masses: ArrayLike,
         /,
         *,
-        leaf_capacity=8,
-        maximum_depth=24,
-    ):
+        leaf_capacity: int = 8,
+        maximum_depth: int = 24,
+    ) -> None:
         for name, value in (
             ("leaf_capacity", leaf_capacity),
             ("maximum_depth", maximum_depth),
@@ -141,7 +142,8 @@ class PreparedOctree3D(StrictModule, NonTrainableState):
         extent = max(float(np.max(maximum - minimum)), np.finfo(np.float64).eps)
         padding = 16.0 * np.finfo(np.float64).eps * max(abs(extent), 1.0)
         origin = minimum - padding
-        box = (float(extent + 2.0 * padding),) * 3
+        side = float(extent + 2.0 * padding)
+        box = (side, side, side)
         local = positions - origin[None, :]
         plan = ParticleOctreePlan3D(box, depth)
         prepared = plan.prepare(local, mass_values)
@@ -181,14 +183,14 @@ class BarnesHutGravityPlan3D(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        tree,
-        masses,
+        tree: PreparedOctree3D,
+        masses: ArrayLike,
         /,
         *,
-        gravitational_constant=1.0,
-        opening_angle=0.5,
-        softening=1.0e-15,
-    ):
+        gravitational_constant: float = 1.0,
+        opening_angle: float = 0.5,
+        softening: float = 1.0e-15,
+    ) -> None:
         if not isinstance(tree, PreparedOctree3D):
             raise TypeError("tree must be PreparedOctree3D.")
         mass = jnp.asarray(masses)

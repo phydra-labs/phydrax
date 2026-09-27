@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -27,7 +29,7 @@ _ARRAY_FIELDS = (
 )
 
 
-def _problem(*, num_steps=9, failed=False):
+def _problem(*, num_steps: Any = 9, failed: Any = False) -> Any:
     base_times = jnp.cumsum(jnp.linspace(0.05, 0.2, num_steps))
     times = jnp.stack((base_times, base_times * 1.13))
     valid_count = max(num_steps - 3, 1)
@@ -91,7 +93,9 @@ def _problem(*, num_steps=9, failed=False):
     )
 
 
-def _assert_filter_equivalent(sequential, parallel, *, tolerance=2e-9):
+def _assert_filter_equivalent(
+    sequential: Any, parallel: Any, *, tolerance: Any = 2e-9
+) -> None:
     for field in _ARRAY_FIELDS:
         assert jnp.allclose(
             getattr(sequential, field),
@@ -120,7 +124,7 @@ def _assert_filter_equivalent(sequential, parallel, *, tolerance=2e-9):
     )
 
 
-def test_parallel_filter_matches_irregular_masked_padded_batch():
+def test_parallel_filter_matches_irregular_masked_padded_batch() -> None:
     problem = _problem()
     sequential = phx.uq.kalman_filter(problem, method="sequential")
     parallel = phx.uq.kalman_filter(problem, method="parallel")
@@ -130,7 +134,7 @@ def test_parallel_filter_matches_irregular_masked_padded_batch():
     assert jnp.array_equal(parallel.filtered_means[1, -1], parallel.filtered_means[1, -2])
 
 
-def test_parallel_filter_preserves_multidimensional_case_batches():
+def test_parallel_filter_preserves_multidimensional_case_batches() -> None:
     case_shape = (2, 2)
     num_steps = 5
     observations = phx.stochastic.ObservationSequence(
@@ -169,7 +173,7 @@ def test_parallel_filter_preserves_multidimensional_case_batches():
     assert parallel.filtered_means.shape == case_shape + (num_steps, 1)
 
 
-def test_parallel_filter_freezes_failed_cases_exactly():
+def test_parallel_filter_freezes_failed_cases_exactly() -> None:
     problem = _problem(failed=True)
     sequential = phx.uq.kalman_filter(problem, method="sequential")
     parallel = phx.uq.kalman_filter(problem, method="parallel")
@@ -181,7 +185,9 @@ def test_parallel_filter_freezes_failed_cases_exactly():
 
 @pytest.mark.parametrize("method", ("sequential", "parallel", "auto"))
 @pytest.mark.parametrize("regularization", (-1.0, jnp.nan))
-def test_filter_methods_share_regularization_validation(method, regularization):
+def test_filter_methods_share_regularization_validation(
+    method: Any, regularization: Any
+) -> None:
     with pytest.raises(ValueError, match="must be finite and nonnegative"):
         phx.uq.kalman_filter(
             _problem(),
@@ -190,7 +196,9 @@ def test_filter_methods_share_regularization_validation(method, regularization):
         )
 
 
-def test_parallel_smoother_and_coherent_samples_are_equivalent_and_prefix_stable():
+def test_parallel_smoother_and_coherent_samples_are_equivalent_and_prefix_stable() -> (
+    None
+):
     problem = _problem()
     filtered = phx.uq.kalman_filter(problem, method="parallel")
     sequential = phx.uq.rts_smoother(filtered, method="sequential")
@@ -227,7 +235,7 @@ def test_parallel_smoother_and_coherent_samples_are_equivalent_and_prefix_stable
     assert jnp.any(jnp.abs(increments) > 0.0)
 
 
-def test_auto_policy_is_conservative_and_execution_is_archived(tmp_path):
+def test_auto_policy_is_conservative_and_execution_is_archived(tmp_path: Any) -> None:
     short = phx.uq.kalman_filter(_problem(num_steps=9), method="auto")
     long_problem = _problem(num_steps=80)
     long = phx.uq.kalman_filter(long_problem, method="auto")
@@ -249,7 +257,7 @@ def test_auto_policy_is_conservative_and_execution_is_archived(tmp_path):
     )
 
 
-def test_parallel_filter_matches_float32_execution():
+def test_parallel_filter_matches_float32_execution() -> None:
     with jax.enable_x64(False):
         problem = _problem(num_steps=12)
         sequential = phx.uq.kalman_filter(problem, method="sequential")
@@ -258,7 +266,7 @@ def test_parallel_filter_matches_float32_execution():
         assert parallel.filtered_means.dtype == jnp.float32
 
 
-def test_exact_state_space_threads_temporal_execution_separately():
+def test_exact_state_space_threads_temporal_execution_separately() -> None:
     problem = _problem()
     likelihood = phx.uq.exact_state_space_log_likelihood(
         problem, method="kalman", temporal_method="parallel"
@@ -268,7 +276,7 @@ def test_exact_state_space_threads_temporal_execution_separately():
     assert likelihood.backend.execution_method == "parallel"
 
 
-def _markov_marginals(*, node_count=6, padded=False):
+def _markov_marginals(*, node_count: Any = 6, padded: Any = False) -> Any:
     mean = jnp.asarray([0.25, -0.4])
     covariance = jnp.asarray([[0.7, 0.12], [0.12, 0.45]])
     means = [mean]
@@ -297,7 +305,7 @@ def _markov_marginals(*, node_count=6, padded=False):
     )
 
 
-def _dense_information_moments(information):
+def _dense_information_moments(information: Any) -> Any:
     node_count = information.num_nodes
     state_size = information.state_size
     precision = np.zeros((node_count * state_size, node_count * state_size))
@@ -322,7 +330,7 @@ def _dense_information_moments(information):
     return mean, covariance, log_normalizer
 
 
-def test_information_chain_round_trip_matches_dense_and_parallel_algebra():
+def test_information_chain_round_trip_matches_dense_and_parallel_algebra() -> None:
     reference = _markov_marginals()
     information = phx.uq.gaussian_markov_information_from_moments(reference)
     sequential = phx.uq.gaussian_markov_moments(information, method="sequential")
@@ -384,7 +392,7 @@ def test_information_chain_round_trip_matches_dense_and_parallel_algebra():
     )
 
 
-def test_information_chain_source_target_orientation_and_padding_are_explicit():
+def test_information_chain_source_target_orientation_and_padding_are_explicit() -> None:
     reference = _markov_marginals(padded=True)
     information = phx.uq.gaussian_markov_information_from_moments(reference)
     recovered = phx.uq.gaussian_markov_moments(information, method="parallel")
@@ -415,7 +423,7 @@ def test_information_chain_source_target_orientation_and_padding_are_explicit():
     )
 
 
-def test_information_chain_statuses_never_repair_invalid_inputs():
+def test_information_chain_statuses_never_repair_invalid_inputs() -> None:
     reference = _markov_marginals(node_count=3)
     information = phx.uq.gaussian_markov_information_from_moments(reference)
     nonhermitian = phx.uq.GaussianMarkovInformation(
@@ -445,7 +453,7 @@ def test_information_chain_statuses_never_repair_invalid_inputs():
     assert invalid_mask_result.status == phx.uq.GAUSSIAN_MARKOV_INVALID_NODE_MASK
 
 
-def test_information_chain_is_jittable_and_coherent_samples_recover_lag_moments():
+def test_information_chain_is_jittable_and_coherent_samples_recover_lag_moments() -> None:
     reference = _markov_marginals(node_count=4)
     information = phx.uq.gaussian_markov_information_from_moments(reference)
     recovered = jax.jit(

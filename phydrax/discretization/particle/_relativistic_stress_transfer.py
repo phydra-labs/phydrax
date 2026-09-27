@@ -11,7 +11,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
@@ -23,6 +24,7 @@ from ...applications.relativistic_scattering._unit_contract import (
     RelativisticUnitContract,
 )
 from ...metrix import StressEnergyProjection
+from .._measure import DiscreteMeasure
 from ..splatting import ParticleGridSplatState, PreparedParticleGridSplat
 
 
@@ -39,7 +41,7 @@ def _real(value: ArrayLike, name: str, /) -> Array:
     return array
 
 
-def _integer(value: ArrayLike, name: str, /, *, dtype) -> Array:
+def _integer(value: ArrayLike, name: str, /, *, dtype: DTypeLike) -> Array:
     array = jnp.asarray(value)
     if not jnp.issubdtype(array.dtype, jnp.integer):
         raise TypeError(f"{name} must have an integer dtype.")
@@ -94,7 +96,7 @@ class RelativisticParticleState(StrictModule):
         frame_id: str,
         topology_id: str,
         frame_lineage_id: str,
-    ):
+    ) -> None:
         particle_ids_ = _integer(particle_ids, "particle_ids", dtype=jnp.int64)
         if particle_ids_.ndim != 1 or particle_ids_.size == 0:
             raise ValueError("particle_ids must be a non-empty rank-one array.")
@@ -293,7 +295,7 @@ class RelativisticStressDepositPlan(StrictModule, NonTrainableState):
         mass_shell_relative_tolerance: float = 1.0e-8,
         conservation_tolerance: float = 1.0e-8,
         frame_momentum_relative_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(transfer, PreparedParticleGridSplat):
             raise TypeError("transfer must be a PreparedParticleGridSplat.")
         if not isinstance(units, RelativisticUnitContract):
@@ -864,7 +866,13 @@ class RelativisticStressDepositPlan(StrictModule, NonTrainableState):
             topology_id=frame.geometry.topology_id,
             projection_id=projection_id,
         )
-        coordinate_measure = self.transfer.target_measure.weights.reshape(
+        target_measure = self.transfer.target_measure
+        # deposit_content above already rejected non-materialized target measures.
+        if not (isinstance(target_measure, DiscreteMeasure)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(target_measure, DiscreteMeasure)."
+            )
+        coordinate_measure = target_measure.weights.reshape(
             self.transfer.target_shape
         ).astype(energy.dtype)
         proper_measure = coordinate_measure * sqrt_det

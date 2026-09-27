@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _euler_states(count, *, seed=0):
+def _euler_states(count: Any, *, seed: Any = 0) -> Any:
     system = phx.equations.EulerSystem(2)
     rng = np.random.default_rng(seed)
     primitive = np.stack(
@@ -26,12 +29,12 @@ def _euler_states(count, *, seed=0):
     return system, system.primitive_to_conserved(jnp.asarray(primitive))
 
 
-def _unit_normals(count, *, seed=1):
+def _unit_normals(count: Any, *, seed: Any = 1) -> Any:
     angles = np.random.default_rng(seed).uniform(0.0, 2.0 * np.pi, count)
     return jnp.stack((jnp.cos(angles), jnp.sin(angles)), axis=-1)
 
 
-def _context(normal, *, measure=None, velocity=None):
+def _context(normal: Any, *, measure: Any = None, velocity: Any = None) -> Any:
     batch = normal.shape[:-1]
     return phx.discretization.FaceFluxContext(
         normal,
@@ -41,12 +44,12 @@ def _context(normal, *, measure=None, velocity=None):
     )
 
 
-def _rotate(values, rotation):
+def _rotate(values: Any, rotation: Any) -> Any:
     momentum = values[..., 1:3] @ rotation.T
     return values.at[..., 1:3].set(momentum)
 
 
-def _rotation(angle):
+def _rotation(angle: Any) -> Any:
     return jnp.asarray(((np.cos(angle), -np.sin(angle)), (np.sin(angle), np.cos(angle))))
 
 
@@ -55,7 +58,15 @@ class _NetworkGenerator(phx.StrictModule):
 
     network: phx.nn.models.MLP
 
-    def __call__(self, system, left, right, baseline, context, args=None):
+    def __call__(
+        self,
+        system: Any,
+        left: Any,
+        right: Any,
+        baseline: Any,
+        context: Any,
+        args: Any = None,
+    ) -> Any:
         del system, baseline, args
         features = jnp.concatenate((left, right, context.unit_normal), axis=-1)
         flat = features.reshape((-1, features.shape[-1]))
@@ -63,7 +74,7 @@ class _NetworkGenerator(phx.StrictModule):
         return 0.05 * output
 
 
-def _network_generator(key=0, components=4, dimension=2):
+def _network_generator(key: Any = 0, components: Any = 4, dimension: Any = 2) -> Any:
     return _NetworkGenerator(
         phx.nn.models.MLP(
             in_size=2 * components + dimension,
@@ -75,7 +86,7 @@ def _network_generator(key=0, components=4, dimension=2):
     )
 
 
-def _learned_closure(key=0, **options):
+def _learned_closure(key: Any = 0, **options: Any) -> Any:
     return phx.discretization.ArbitraryNormalFaceClosurePlan(
         phx.discretization.SymmetrizedFaceClosure(_network_generator(key)),
         closure_id="learned-symmetrized-face-closure",
@@ -83,7 +94,9 @@ def _learned_closure(key=0, **options):
     )
 
 
-def test_symmetrized_learned_closure_is_consistent_and_orientation_antisymmetric():
+def test_symmetrized_learned_closure_is_consistent_and_orientation_antisymmetric() -> (
+    None
+):
     system, left = _euler_states(6)
     _, right = _euler_states(6, seed=3)
     normal = _unit_normals(6)
@@ -107,7 +120,7 @@ def test_symmetrized_learned_closure_is_consistent_and_orientation_antisymmetric
     )
 
 
-def test_declared_closure_contract_rejects_inconsistent_nonfinite_and_mistyped():
+def test_declared_closure_contract_rejects_inconsistent_nonfinite_and_mistyped() -> None:
     system, left = _euler_states(3)
     normal = _unit_normals(3)
     baseline = jnp.zeros_like(left)
@@ -140,7 +153,9 @@ def test_declared_closure_contract_rejects_inconsistent_nonfinite_and_mistyped()
         single.apply(system, left, left + 1.0, baseline, _context(normal))
 
 
-def test_face_flux_context_requires_unit_normal_positive_measure_and_axis_identity():
+def test_face_flux_context_requires_unit_normal_positive_measure_and_axis_identity() -> (
+    None
+):
     normal = _unit_normals(4)
     with pytest.raises(Exception, match="finite unit normals"):
         _context(2.0 * normal)
@@ -161,19 +176,21 @@ def test_face_flux_context_requires_unit_normal_positive_measure_and_axis_identi
     assert not bool(jnp.any(inactive.active))
 
 
-def test_normal_frame_closure_is_rotation_covariant_and_requires_capability():
+def test_normal_frame_closure_is_rotation_covariant_and_requires_capability() -> None:
     system, left = _euler_states(5)
     _, right = _euler_states(5, seed=7)
     normal = _unit_normals(5)
     rusanov = phx.discretization.RusanovFluxPlan()
 
-    def anisotropic(system, left, right, baseline, context, args):
+    def anisotropic(
+        system: Any, left: Any, right: Any, baseline: Any, context: Any, args: Any
+    ) -> Any:
         # Deliberately frame-dependent: it weights only the first momentum slot.
         return (right - left) * jnp.asarray((0.01, 0.05, 0.0, 0.02))
 
     rotation = _rotation(0.83)
 
-    def corrected(closure, rotate):
+    def corrected(closure: Any, rotate: Any) -> Any:
         a = _rotate(left, rotation) if rotate else left
         b = _rotate(right, rotation) if rotate else right
         n = normal @ rotation.T if rotate else normal
@@ -206,7 +223,7 @@ def test_normal_frame_closure_is_rotation_covariant_and_requires_capability():
         normal_frame.admit_system(scalar)
 
 
-def test_normal_frame_transforms_are_inverse_and_scalar_preserving():
+def test_normal_frame_transforms_are_inverse_and_scalar_preserving() -> None:
     system, state = _euler_states(4)
     normal = _unit_normals(4)
     local = system.rotate_state_to_normal_frame(state, normal)
@@ -223,27 +240,29 @@ def test_normal_frame_transforms_are_inverse_and_scalar_preserving():
     )
 
 
-def test_face_closure_refuses_magnetic_systems():
+def test_face_closure_refuses_magnetic_systems() -> None:
     closure = _learned_closure()
     with pytest.raises(ValueError, match="constrained MHD"):
         closure.admit_system(phx.equations.IdealMHDSystem(2))
 
 
-def _grid(shape):
+def _grid(shape: Any) -> Any:
     return phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(count) for count in shape),
         axis_names=tuple("xy"[: len(shape)]),
     ).prepare(jnp.stack((jnp.zeros(len(shape)), jnp.ones(len(shape)))))
 
 
-def _extrapolation_pair():
+def _extrapolation_pair() -> Any:
     return phx.discretization.FiniteVolumeBoundaryPair(
         phx.discretization.ExtrapolationBoundary(),
         phx.discretization.ExtrapolationBoundary(),
     )
 
 
-def _structured(system, mapped, closure, interface_solver=None):
+def _structured(
+    system: Any, mapped: Any, closure: Any, interface_solver: Any = None
+) -> Any:
     discretization = phx.discretization.FiniteVolumePlan(
         _grid((4, 3)), component_names=system.component_names
     ).prepare()
@@ -271,7 +290,7 @@ def _structured(system, mapped, closure, interface_solver=None):
     ).dynamics
 
 
-def _state(system, shape):
+def _state(system: Any, shape: Any) -> Any:
     x = jnp.linspace(0.0, 1.0, int(np.prod(shape))).reshape(shape)
     primitive = jnp.stack(
         (1.0 + 0.2 * jnp.sin(3.0 * x), 0.2 * x, -0.1 * x**2, 1.0 + 0.1 * x), axis=-1
@@ -279,21 +298,27 @@ def _state(system, shape):
     return system.primitive_to_conserved(primitive)
 
 
-def test_mapped_geometry_admits_custom_arbitrary_normal_flux_and_refuses_axis_only():
+def test_mapped_geometry_admits_custom_arbitrary_normal_flux_and_refuses_axis_only() -> (
+    None
+):
     system = phx.equations.EulerSystem(2)
 
     class _CentralFlux(phx.discretization.AbstractArbitraryNormalNumericalFluxPlan):
-        def __init__(self):
+        def __init__(self) -> None:
             self.flux_id = "custom-central-dissipative"
             self.differentiability = phx.BranchDifferentiationPolicy.SMOOTH
 
-        def face_flux(self, system, left, right, axis, args=None, /):
+        def face_flux(
+            self, system: Any, left: Any, right: Any, axis: Any, args: Any = None, /
+        ) -> Any:
             normal = jnp.zeros((system.dimension,)).at[axis].set(1.0)
             return self.normal_face_flux(
                 system, left, right, jnp.broadcast_to(normal, left.shape[:-1] + (2,))
             )
 
-        def normal_face_flux(self, system, left, right, normal, args=None, /):
+        def normal_face_flux(
+            self, system: Any, left: Any, right: Any, normal: Any, args: Any = None, /
+        ) -> Any:
             central = 0.5 * (
                 system.physical_normal_flux(left, normal)
                 + system.physical_normal_flux(right, normal)
@@ -311,7 +336,7 @@ def test_mapped_geometry_admits_custom_arbitrary_normal_flux_and_refuses_axis_on
         _structured(system, True, None, phx.discretization.RoeFluxPlan())
 
 
-def test_triangle_closure_is_applied_at_every_face_and_conserves():
+def test_triangle_closure_is_applied_at_every_face_and_conserves() -> None:
     system = phx.equations.EulerSystem(2)
     x = np.linspace(0.0, 1.0, 4)
     vertices = np.asarray([(xi, yi) for yi in x for xi in x])
@@ -337,7 +362,7 @@ def test_triangle_closure_is_applied_at_every_face_and_conserves():
         "closure-triangle", "state", system, boundaries
     )
 
-    def compiled(closure):
+    def compiled(closure: Any) -> Any:
         return phx.equations.compile_conservation_problem(
             problem,
             discretization,

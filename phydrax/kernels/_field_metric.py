@@ -7,18 +7,20 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from math import prod
 from numbers import Integral
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..conditions._ir import ArrayCodomain, FieldCodomain, ProductFieldSpec
+from ..typing import parse
 from ._base import AbstractPositiveDefiniteKernel
 from ._finite_feature import kernel_feature_rank, kernel_features
 from ._operator_valued import (
@@ -28,8 +30,8 @@ from ._operator_valued import (
 )
 
 
-KernelMetricMode = Literal["independent", "coupled"]
-KernelFunctionalExactness = Literal[
+KernelMetricMode: TypeAlias = Literal["independent", "coupled"]
+KernelFunctionalExactness: TypeAlias = Literal[
     "analytic", "finite-feature", "fixed-realization", "selected-section"
 ]
 
@@ -53,7 +55,7 @@ class KernelInputAdapter(StrictModule):
         *,
         adapter_id: str = "identity",
         output_ndim: int = 1,
-    ):
+    ) -> None:
         function_ = _IdentityInput() if function is None else function
         if not callable(function_):
             raise TypeError("Kernel input adapters must be callable.")
@@ -87,7 +89,7 @@ class KernelFunctionalTerm(StrictModule):
         derivative_orders: Sequence[Sequence[int]],
         coefficients: ArrayLike,
         /,
-    ):
+    ) -> None:
         field = str(field_name)
         point_array = jnp.asarray(points)
         coefficient_array = jnp.asarray(coefficients)
@@ -165,7 +167,7 @@ class KernelFunctional(StrictModule):
         functional_id: str,
         exactness: KernelFunctionalExactness = "analytic",
         realization_id: str | None = None,
-    ):
+    ) -> None:
         terms_ = tuple(terms)
         identifier = str(functional_id)
         if not terms_ or any(
@@ -176,13 +178,7 @@ class KernelFunctional(StrictModule):
             raise ValueError("Every functional term must have the same row count.")
         if not identifier:
             raise ValueError("functional_id must be nonempty.")
-        if exactness not in (
-            "analytic",
-            "finite-feature",
-            "fixed-realization",
-            "selected-section",
-        ):
-            raise ValueError("Unknown kernel functional exactness.")
+        exactness = parse(exactness, KernelFunctionalExactness, "exactness")
         realization = None if realization_id is None else str(realization_id)
         if realization_id is not None and not realization:
             raise ValueError("realization_id must be nonempty when supplied.")
@@ -223,7 +219,7 @@ class KernelGramEvidence(StrictModule):
         minimum_diagonal: Any,
         finite: Any,
         positive_semidefinite: Any,
-    ):
+    ) -> None:
         self.left_id = str(left_id)
         self.right_id = str(right_id)
         self.metric_id = str(metric_id)
@@ -239,7 +235,7 @@ class KernelGram(StrictModule):
     matrix: Array
     evidence: KernelGramEvidence
 
-    def __init__(self, matrix: ArrayLike, evidence: KernelGramEvidence, /):
+    def __init__(self, matrix: ArrayLike, evidence: KernelGramEvidence, /) -> None:
         if not isinstance(evidence, KernelGramEvidence):
             raise TypeError("evidence must be KernelGramEvidence.")
         matrix_ = jnp.asarray(matrix)
@@ -273,14 +269,13 @@ class ProductFieldKernelMetric(StrictModule):
         mode: KernelMetricMode,
         geometry_revision_id: str = "fixed",
         numeric_version: Any = 0,
-    ):
+    ) -> None:
         if not isinstance(field_spec, ProductFieldSpec):
             raise TypeError("field_spec must be a ProductFieldSpec.")
         kernels_ = tuple(kernels)
         adapters_ = tuple(adapters)
         channels_ = tuple(tuple(item) for item in channel_indices)
-        if mode not in ("independent", "coupled"):
-            raise ValueError("Kernel metric mode must be independent or coupled.")
+        mode = parse(mode, KernelMetricMode, "mode")
         expected_kernels = len(field_spec.fields) if mode == "independent" else 1
         if len(kernels_) != expected_kernels:
             raise ValueError("Kernel count does not match the product metric mode.")
@@ -767,7 +762,7 @@ class KernelSection(StrictModule):
         functional: KernelFunctional,
         field_name: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(metric, ProductFieldKernelMetric):
             raise TypeError("metric must be a ProductFieldKernelMetric.")
         if not isinstance(functional, KernelFunctional):

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -12,21 +15,31 @@ class IntervalGeometry:
     bounds = jnp.asarray([[0.0], [1.0]])
 
     @staticmethod
-    def signed_distance(points):
+    def signed_distance(points: Any) -> Any:
         x = points[:, 0]
         return jnp.minimum(x, 1.0 - x)
 
     @staticmethod
-    def boundary_normal(points):
+    def boundary_normal(points: Any) -> Any:
         return jnp.where(points[:, :1] < 0.5, -1.0, 1.0)
 
 
-def test_particle_assembly_and_bipartite_relations_preserve_population_identity():
+def test_particle_assembly_and_bipartite_relations_preserve_population_identity() -> None:
     fluid = phx.discretization.ParticleSetPlan(
-        [0, 1], [0.5, 0.5], ambient_dimension=1, name="fluid"
+        # ty: ignore[invalid-argument-type]
+        [0, 1],
+        # ty: ignore[invalid-argument-type]
+        [0.5, 0.5],
+        ambient_dimension=1,
+        name="fluid",
     ).prepare()
     wall = phx.discretization.ParticleSetPlan(
-        [0, 1, 2], [1.0, 1.0, 1.0], ambient_dimension=1, name="wall"
+        # ty: ignore[invalid-argument-type]
+        [0, 1, 2],
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.0, 1.0],
+        ambient_dimension=1,
+        name="wall",
     ).prepare()
     fluid_population = phx.discretization.ParticlePopulation(
         "fluid",
@@ -61,13 +74,17 @@ def test_particle_assembly_and_bipartite_relations_preserve_population_identity(
     assert state.relation.source_population_id == wall_population.population_id
 
 
-def test_wall_generation_volume_and_adami_reaction_are_finite_and_reciprocal():
+def test_wall_generation_volume_and_adami_reaction_are_finite_and_reciprocal() -> None:
     kernel = phx.discretization.WendlandC2SPHKernel(1)
     wall = phx.discretization.WallParticleGenerationPlan(
         IntervalGeometry(), kernel, 0.25, 0.3, layers=1
     ).prepare()
     fluid = phx.discretization.ParticleSetPlan(
-        [0, 1], [0.5, 0.5], ambient_dimension=1
+        # ty: ignore[invalid-argument-type]
+        [0, 1],
+        # ty: ignore[invalid-argument-type]
+        [0.5, 0.5],
+        ambient_dimension=1,
     ).prepare()
     relation = (
         phx.discretization.DenseBipartiteParticleNeighborhoodPlan(
@@ -106,7 +123,7 @@ def test_wall_generation_volume_and_adami_reaction_are_finite_and_reciprocal():
     )
 
 
-def test_free_surface_detection_marks_truncated_support_and_pressure_correction():
+def test_free_surface_detection_marks_truncated_support_and_pressure_correction() -> None:
     particles = phx.discretization.ParticleSetPlan(
         np.arange(5), np.full((5,), 0.1), ambient_dimension=1
     ).prepare()

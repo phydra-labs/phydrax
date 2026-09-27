@@ -10,7 +10,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite
@@ -75,7 +76,7 @@ class FunctionLeftNonlinearPreconditioner(AbstractLeftNonlinearPreconditioner):
         source: AbstractVectorSpace,
         target: AbstractVectorSpace,
         preconditioner_id: str = "function-left-nonlinear-preconditioner",
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         if not all(
@@ -138,7 +139,7 @@ class FunctionRightNonlinearPreconditioner(AbstractRightNonlinearPreconditioner)
         source: AbstractVectorSpace,
         target: AbstractVectorSpace,
         preconditioner_id: str = "function-right-nonlinear-preconditioner",
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         if not isinstance(source, AbstractVectorSpace) or not isinstance(
@@ -168,7 +169,7 @@ class _TransformationEvaluation(StrictModule):
         residual: PyTree[Array],
         auxiliary: Any,
         /,
-    ):
+    ) -> None:
         self.state = state
         self.residual = residual
         self.auxiliary = auxiliary
@@ -347,7 +348,7 @@ class LeftPreconditionedSystem(AbstractNonlinearSystemTransformation):
         problem: NonlinearSystemProblem,
         preconditioner: AbstractLeftNonlinearPreconditioner,
         /,
-    ):
+    ) -> None:
         if not isinstance(problem, NonlinearSystemProblem):
             raise TypeError("problem must be a NonlinearSystemProblem.")
         if not isinstance(preconditioner, AbstractLeftNonlinearPreconditioner):
@@ -361,12 +362,19 @@ class LeftPreconditionedSystem(AbstractNonlinearSystemTransformation):
             problem.residual_space, preconditioner.source, "residual_space"
         )
 
-        def residual(state, args):
+        def residual(
+            state: PyTree[Any], args: Any
+        ) -> tuple[PyTree[Array], _TransformationEvaluation]:
             physical, auxiliary = problem.evaluate(state, args)
             transformed = preconditioner.apply(state, physical, args)
             return transformed, _TransformationEvaluation(state, physical, auxiliary)
 
-        def valid(_, __, payload, args):
+        def valid(
+            _: PyTree[Array],
+            __: PyTree[Array],
+            payload: _TransformationEvaluation,
+            args: Any,
+        ) -> Array:
             return problem.valid(payload.state, payload.residual, payload.auxiliary, args)
 
         self.original = problem
@@ -419,7 +427,7 @@ class RightPreconditionedSystem(AbstractNonlinearSystemTransformation):
         problem: NonlinearSystemProblem,
         preconditioner: AbstractRightNonlinearPreconditioner,
         /,
-    ):
+    ) -> None:
         if not isinstance(problem, NonlinearSystemProblem):
             raise TypeError("problem must be a NonlinearSystemProblem.")
         if not isinstance(preconditioner, AbstractRightNonlinearPreconditioner):
@@ -430,12 +438,19 @@ class RightPreconditionedSystem(AbstractNonlinearSystemTransformation):
             problem.state_space, preconditioner.target, "state_space"
         )
 
-        def residual(latent, args):
+        def residual(
+            latent: PyTree[Any], args: Any
+        ) -> tuple[PyTree[Array], _TransformationEvaluation]:
             state = preconditioner.reconstruct(latent, args)
             physical, auxiliary = problem.evaluate(state, args)
             return physical, _TransformationEvaluation(state, physical, auxiliary)
 
-        def valid(_, __, payload, args):
+        def valid(
+            _: PyTree[Array],
+            __: PyTree[Array],
+            payload: _TransformationEvaluation,
+            args: Any,
+        ) -> Array:
             return problem.valid(payload.state, payload.residual, payload.auxiliary, args)
 
         self.original = problem

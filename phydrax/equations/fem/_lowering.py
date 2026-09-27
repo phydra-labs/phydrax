@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, cast, TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
@@ -24,14 +24,38 @@ from ...discretization.fem._mortar import (
     FiniteElementMortarMetricData,
     FiniteElementMortarPlan,
 )
-from ...discretization.fem._reference_operator import PreparedFiniteElementReference
-from ._ir import FieldSlot, FiniteElementActionIR, LocalActionIR, RegionIR
+from ...discretization.fem._reference_operator import (
+    PreparedFiniteElementReference,
+    ReferenceAction,
+)
+from ._ir import (
+    ActionKind,
+    DifferentialOperator,
+    FieldSlot,
+    FiniteElementActionIR,
+    LocalActionIR,
+    RegionIR,
+    RegionKind,
+)
 from ._kernels import KernelBinding, KernelTable
 from ._selection import select_prepared_local_execution
 from ._worksets import CompiledWorkset, WorksetProgram, WorksetSignature
 
 
-def _descriptor(action):
+if TYPE_CHECKING:
+    from ...discretization._cell_mesh import CellBlock, CellMesh, PolyhedralBlock
+    from ...discretization.fem import FiniteElementSpec, IntegrationDomain
+    from ...discretization.fem._precision import FiniteElementPrecisionPolicy
+    from ...integration import (
+        ReferenceIntervalRule,
+        ReferenceQuadrilateralRule,
+        ReferenceTriangleRule,
+    )
+    from .._finite_element_variational import FiniteElementAction
+    from .._variational import VariationalActionDescriptor
+
+
+def _descriptor(action: FiniteElementAction) -> VariationalActionDescriptor:
     try:
         descriptor = action.descriptor
     except AttributeError as error:
@@ -41,37 +65,42 @@ def _descriptor(action):
     return descriptor
 
 
-def _domain_for_action(action, discretization: AbstractPreparedLocalDiscretization):
+def _domain_for_action(
+    action: FiniteElementAction, discretization: AbstractPreparedLocalDiscretization
+) -> IntegrationDomain:
     if action.domain is not None:
         return action.domain
     return discretization.integration_domain(_descriptor(action).default_domain_kind)
 
 
-def _action_kind(action) -> str:
+def _action_kind(action: FiniteElementAction) -> str:
     return _descriptor(action).action_kind
 
 
-def _output_fields(action) -> tuple[str, ...]:
+def _output_fields(action: FiniteElementAction) -> tuple[str, ...]:
     return _descriptor(action).output_fields
 
 
-def _input_fields(action) -> tuple[str, ...]:
+def _input_fields(action: FiniteElementAction) -> tuple[str, ...]:
     return _descriptor(action).input_fields
 
 
-def _operators(action) -> tuple[tuple[str, str], ...]:
+def _operators(action: FiniteElementAction) -> tuple[tuple[str, str], ...]:
     return _descriptor(action).operators
 
 
-def _region_kind(kind: str) -> str:
-    return {
+def _region_kind(kind: str) -> RegionKind:
+    kinds: dict[str, RegionKind] = {
         "cell": "cell",
         "exterior_facet": "exterior-facet",
         "interior_facet": "interior-facet",
-    }[kind]
+    }
+    return kinds[kind]
 
 
-def _default_facet_rule(cell_kind: str):
+def _default_facet_rule(
+    cell_kind: str,
+) -> ReferenceIntervalRule | ReferenceTriangleRule | ReferenceQuadrilateralRule:
     from .._finite_element_variational import (
         _interval_rule,
         _quadrilateral_rule,
@@ -87,7 +116,9 @@ def _default_facet_rule(cell_kind: str):
     raise ValueError(f"No facet rule exists for cell kind {cell_kind!r}.")
 
 
-def _rule_ids(action, discretization: AbstractPreparedLocalDiscretization):
+def _rule_ids(
+    action: FiniteElementAction, discretization: AbstractPreparedLocalDiscretization
+) -> tuple[tuple[str, str], ...]:
     from .._finite_element_variational import _action_rule, _rule_id
 
     domain = _domain_for_action(action, discretization)
@@ -104,16 +135,16 @@ def _rule_ids(action, discretization: AbstractPreparedLocalDiscretization):
     return tuple((str(name), _rule_id(rule)) for name, rule in action.rules)
 
 
-def _action_coefficients(action) -> tuple[Any, ...]:
+def _action_coefficients(action: FiniteElementAction) -> tuple[Any, ...]:
     return _descriptor(action).coefficient_values
 
 
-def _coefficient_layout_ids(action) -> tuple[str, ...]:
+def _coefficient_layout_ids(action: FiniteElementAction) -> tuple[str, ...]:
     return tuple(sorted(value.layout_id for value in _action_coefficients(action)))
 
 
 def _coefficient_fields(
-    action, discretization: AbstractPreparedLocalDiscretization
+    action: FiniteElementAction, discretization: AbstractPreparedLocalDiscretization
 ) -> tuple[str, ...]:
     requested = {
         value.field_space_id
@@ -129,7 +160,7 @@ def _coefficient_fields(
     return tuple(fields)
 
 
-def _tensor_family(element) -> ReferenceNodalFamily | None:
+def _tensor_family(element: FiniteElementSpec) -> ReferenceNodalFamily | None:
     if element.cell_kind not in ("quadrilateral", "hexahedron"):
         return None
     if (
@@ -156,7 +187,13 @@ def _tensor_family(element) -> ReferenceNodalFamily | None:
     return None
 
 
-def _prepared_reference(action, block, element, precision, domain_kind: str):
+def _prepared_reference(
+    action: FiniteElementAction,
+    block: CellBlock | PolyhedralBlock,
+    element: FiniteElementSpec,
+    precision: FiniteElementPrecisionPolicy,
+    domain_kind: str,
+) -> tuple[PreparedFiniteElementReference | None, str]:
     if (
         block.cell_kind not in ("triangle", "quadrilateral", "tetrahedron", "hexahedron")
         or element.representation != "point_value"
@@ -234,7 +271,7 @@ def _prepared_reference(action, block, element, precision, domain_kind: str):
         "hexahedron": 6,
     }[block.cell_kind]
     actions = {operation for _, operation in _operators(action)}
-    prepared_actions = {"interpolate", "interpolate_transpose"}
+    prepared_actions: set[ReferenceAction] = {"interpolate", "interpolate_transpose"}
     if "grad" in actions or "normal-trace" in actions:
         prepared_actions.update(("gradient", "gradient_transpose"))
     if domain_kind != "cell":
@@ -250,7 +287,9 @@ def _prepared_reference(action, block, element, precision, domain_kind: str):
     return reference, reference.prepared_id
 
 
-def _rule_ids_for_block(action, block) -> tuple[str, ...]:
+def _rule_ids_for_block(
+    action: FiniteElementAction, block: CellBlock | PolyhedralBlock
+) -> tuple[str, ...]:
     from .._finite_element_variational import _action_rule, _rule_id
 
     domain_kind = (
@@ -278,7 +317,7 @@ def _collocated(reference: PreparedFiniteElementReference | None) -> bool:
 def _select_local_kernel(
     requested: str,
     realization: str,
-    action,
+    action: FiniteElementAction,
     domain_kind: str,
     reference: PreparedFiniteElementReference | None,
 ) -> str:
@@ -356,10 +395,12 @@ def lower_finite_element_form(
         )
         actions.append(
             FiniteElementActionIR(
-                _action_kind(action),
+                # VariationalActionDescriptor.__init__ admits only IR action kinds.
+                cast(ActionKind, _action_kind(action)),
                 _output_fields(action),
                 _input_fields(action),
-                _operators(action),
+                # Finite-element action descriptors declare only IR operator names.
+                cast(tuple[tuple[str, DifferentialOperator], ...], _operators(action)),
                 region,
                 action.action_id,
             )
@@ -367,7 +408,13 @@ def lower_finite_element_form(
     return LocalActionIR(slots, actions)
 
 
-def _facet_permutations(mesh, owner_cells, neighbor_cells, owner_local, neighbor_local):
+def _facet_permutations(
+    mesh: CellMesh,
+    owner_cells: np.ndarray,
+    neighbor_cells: np.ndarray,
+    owner_local: np.ndarray,
+    neighbor_local: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
     connectivity = mesh.connectivity
     count = owner_cells.size
     if isinstance(connectivity, PolygonalConnectivity):
@@ -739,7 +786,7 @@ def compile_workset_program(
                 discretization.precision_policy,
                 domain.kind,
             )
-            if neighbor_block is None:
+            if neighbor_block is None or neighbor_block_index is None:
                 neighbor_reference = None
                 reference_ids = (reference_id,)
             else:
@@ -753,9 +800,14 @@ def compile_workset_program(
                     discretization.precision_policy,
                     domain.kind,
                 )
-                if tuple(
-                    facet.points.shape[0] for facet in neighbor_reference.facets
-                ) != tuple(facet.points.shape[0] for facet in reference.facets):
+                if (
+                    reference is not None
+                    and neighbor_reference is not None
+                    and tuple(
+                        facet.points.shape[0] for facet in neighbor_reference.facets
+                    )
+                    != tuple(facet.points.shape[0] for facet in reference.facets)
+                ):
                     raise ValueError(
                         "Cross-block tensor facets require matching trace quadrature; use a mortar for nonmatching traces."
                     )
@@ -847,7 +899,7 @@ def compile_finite_element_hp_mortar_workset(
     owner_element = discretization.elements[field_index][owner_block_index]
     neighbor_element = discretization.elements[field_index][neighbor_block_index]
 
-    def trace_indices(element, local_facet):
+    def trace_indices(element: FiniteElementSpec, local_facet: int) -> np.ndarray:
         nodes = np.asarray(element.reference_nodes)
         if element.cell_kind == "quadrilateral":
             axis_side = ((1, 0), (0, 1), (1, 1), (0, 0))

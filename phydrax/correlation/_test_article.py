@@ -12,7 +12,7 @@ class SensorChannel:
     sample_rate_hz: float
     unit: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             not isinstance(self.channel_id, str)
             or not self.channel_id
@@ -31,7 +31,7 @@ class TestArticle:
     article_id: str
     channels: tuple[SensorChannel, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.article_id, str) or not self.article_id:
             raise ValueError("Test article identifier must be nonempty.")
         if not self.channels or any(

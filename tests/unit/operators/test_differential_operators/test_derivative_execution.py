@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 
 from phydrax.domain import CallbackDerivativeRule, Interval1d
@@ -9,7 +11,7 @@ from phydrax.operators.differential import (
 )
 
 
-def test_derivative_execution_plan_preserves_exact_strategy_boundaries():
+def test_derivative_execution_plan_preserves_exact_strategy_boundaries() -> None:
     first = (DerivativeRequest("u", "x", (0,)),)
     laplacian = (DerivativeRequest("u", "x", (), laplacian_count=1),)
     high_order = (DerivativeRequest("u", "x", (0, 0, 0)),)
@@ -44,10 +46,10 @@ def test_derivative_execution_plan_preserves_exact_strategy_boundaries():
     assert plan_derivative_execution(mixed).variable_count == 2
 
 
-def test_fused_coordinate_derivatives_match_analytic_vector_derivatives():
+def test_fused_coordinate_derivatives_match_analytic_vector_derivatives() -> None:
     point = jnp.asarray([2.0, 0.5])
 
-    def function(value):
+    def function(value: Any) -> Any:
         x, y = value
         return jnp.asarray([x**2 * y, jnp.sin(y)])
 
@@ -77,11 +79,11 @@ def test_fused_coordinate_derivatives_match_analytic_vector_derivatives():
     assert evaluated.plan.directional
 
 
-def test_partial_n_dispatches_the_complete_order_to_the_original_rule():
+def test_partial_n_dispatches_the_complete_order_to_the_original_rule() -> None:
     domain = Interval1d(-1.0, 1.0)
     requested_orders = []
 
-    def derive(**request):
+    def derive(**request: Any) -> Any:
         requested_orders.append(request["order"])
         return domain.Function()(jnp.asarray(7.0))
 

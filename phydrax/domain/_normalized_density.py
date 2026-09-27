@@ -9,7 +9,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 
@@ -17,6 +18,8 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..integration._api import IntegrationRealization, reduce
 from ..integration._estimates import IntegrationEstimate
+from ..metrix import RiemannianMetric, WeightedRiemannianMeasure
+from ..typing import PRNGKey
 from ._function import DomainFunction
 from ._referenced_density import DensityReference, ReferencedDensityField
 
@@ -24,7 +27,7 @@ from ._referenced_density import DensityReference, ReferencedDensityField
 class _ExponentialFieldEvaluator(StrictModule):
     log_evaluator: Any
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         values = self.log_evaluator(*args, key=key, **kwargs)
         return jnp.exp(values)
 
@@ -34,7 +37,7 @@ class _NormalizedFieldEvaluator(StrictModule):
     log_normalizer: Array
     target_mass: Array
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         values = self.log_evaluator(*args, key=key, **kwargs)
         return self.target_mass * jnp.exp(values - self.log_normalizer)
 
@@ -62,7 +65,9 @@ class NormalizedDensityField(StrictModule):
     def state_var(self) -> str:
         return self.referenced.state_var
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(
+        self, *args: Any, key: PRNGKey | None = None, **kwargs: Any
+    ) -> cx.AxisArray:
         return self.field(*args, key=key, **kwargs)
 
 
@@ -94,8 +99,8 @@ def normalize_density_field(
     target_mass: ArrayLike = 1.0,
     reference: DensityReference = "coordinate",
     state_var: str = "x",
-    metric=None,
-    measure=None,
+    metric: RiemannianMetric | None = None,
+    measure: WeightedRiemannianMeasure | None = None,
 ) -> NormalizedDensityField:
     """Exponentiate and normalize a log field on a frozen realization.
 

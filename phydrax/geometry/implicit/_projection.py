@@ -10,7 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._admissibility import guard_derivative_validity
 from ..._fingerprint import canonical_fingerprint
@@ -29,7 +29,7 @@ def _field_and_gradient(
     state: DesignState,
     points: Array,
 ) -> tuple[Array, Array]:
-    def field(point):
+    def field(point: Array) -> Array:
         return kernel.boundary_field(state, point[None, :])[0]
 
     values = kernel.boundary_field(state, points)
@@ -50,11 +50,16 @@ def _attach_normal_gauge(
 
 
 @_attach_normal_gauge.def_jvp
-def _attach_normal_gauge_jvp(primals, tangents):
+def _attach_normal_gauge_jvp(
+    primals: tuple[GeometryKernel, DesignState, Array, float],
+    tangents: tuple[GeometryKernel | None, DesignState | None, object, object],
+) -> tuple[Array, Array]:
     kernel, state, points, minimum_gradient_norm = primals
     kernel_tangent, state_tangent, _, _ = tangents
 
-    def parameter_field(current_kernel, current_state):
+    def parameter_field(
+        current_kernel: GeometryKernel, current_state: DesignState
+    ) -> Array:
         return current_kernel.boundary_field(current_state, points)
 
     _, field_tangent = eqx.filter_jvp(
@@ -105,7 +110,7 @@ class ImplicitPointProjectionEvidence(StrictModule):
         finite: Any,
         status: Any,
         plan_id: str,
-    ):
+    ) -> None:
         if not isinstance(geometry, GeometryValidityEvidence):
             raise TypeError("geometry must be GeometryValidityEvidence.")
         self.geometry = geometry
@@ -148,7 +153,7 @@ class ImplicitPointProjectionResult(StrictModule):
         normals: Array,
         evidence: ImplicitPointProjectionEvidence,
         /,
-    ):
+    ) -> None:
         proposed = jnp.asarray(proposed_points, dtype=jnp.float64)
         safe = jnp.asarray(points, dtype=proposed.dtype)
         normals_ = jnp.asarray(normals, dtype=proposed.dtype)
@@ -196,7 +201,7 @@ class ImplicitPointProjectionPlan(StrictModule):
         policy: ImplicitProjectionPolicy = _DEFAULT_PROJECTION_POLICY,
         source_id: str,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(geometry, CompiledGeometry):
             raise TypeError("geometry must be CompiledGeometry.")
         if not isinstance(policy, ImplicitProjectionPolicy):
@@ -273,7 +278,7 @@ class ImplicitPointProjectionPlan(StrictModule):
         policy = self.policy
         minimum_squared = float(policy.minimum_gradient_norm) ** 2
 
-        def step(_, carry):
+        def step(_: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             points, trust_hit = carry
             values, gradient = _field_and_gradient(self.kernel, state, points)
             squared_norm = jnp.sum(gradient * gradient, axis=-1)

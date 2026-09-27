@@ -13,10 +13,10 @@ from typing import Any, Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
+from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...stochastic import EmpiricalMeanField
 from ._mean_field import (
@@ -103,7 +103,7 @@ class MeanFieldGameFixedPointProblem(StrictModule):
         induced_flow_id: str,
         law_distance_id: str,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(initial_flow, EmpiricalMeanField):
             raise TypeError("initial_flow must be an EmpiricalMeanField.")
         for owner, callback in (
@@ -151,7 +151,7 @@ class MeanFieldGameFixedPointPlan(StrictModule):
         damping: float = 1.0,
         minimum_effective_sample_size: float = 2.0,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(maximum_iterations, int) or maximum_iterations <= 0:
             raise ValueError("maximum_iterations must be a positive integer.")
         tolerance = float(consistency_tolerance)

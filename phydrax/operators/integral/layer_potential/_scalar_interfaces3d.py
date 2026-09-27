@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -20,11 +21,12 @@ from ....linalg import (
     estimate_operator_action_cost,
     IdentityLinearOperator,
 )
+from ....typing import parse
 from ._scalar_calderon3d import ScalarCalderonDP0Galerkin3D
 
 
-ScalarTransmissionSide3D = Literal["minus", "plus"]
-ScalarTransmissionOrientation3D = Literal["calderon", "reversed"]
+ScalarTransmissionSide3D: TypeAlias = Literal["minus", "plus"]
+ScalarTransmissionOrientation3D: TypeAlias = Literal["calderon", "reversed"]
 
 
 class ScalarTransmissionMaterial3D(StrictModule, NonTrainableState):
@@ -47,7 +49,7 @@ class ScalarTransmissionMaterial3D(StrictModule, NonTrainableState):
         /,
         *,
         flux_coefficient: float = 1.0,
-    ):
+    ) -> None:
         name_ = str(name)
         coefficient = float(flux_coefficient)
         if not name_:
@@ -92,9 +94,10 @@ class ScalarTransmissionSideConvention3D(StrictModule, NonTrainableState):
 
     def __init__(
         self, normal_orientation: ScalarTransmissionOrientation3D = "calderon", /
-    ):
-        if normal_orientation not in ("calderon", "reversed"):
-            raise ValueError("normal_orientation must be 'calderon' or 'reversed'.")
+    ) -> None:
+        normal_orientation = parse(
+            normal_orientation, ScalarTransmissionOrientation3D, "normal_orientation"
+        )
         sign = 1 if normal_orientation == "calderon" else -1
         unbounded: ScalarTransmissionSide3D = (
             "plus" if normal_orientation == "calderon" else "minus"
@@ -147,9 +150,8 @@ class ScalarCauchyTraceBundle3D(StrictModule, NonTrainableState):
         *,
         side: ScalarTransmissionSide3D,
         material_id: str,
-    ):
-        if side not in ("minus", "plus"):
-            raise ValueError("Cauchy bundle side must be 'minus' or 'plus'.")
+    ) -> None:
+        side = parse(side, ScalarTransmissionSide3D, "side")
         material = str(material_id)
         if not material:
             raise ValueError("Cauchy bundles require a material identity.")
@@ -186,7 +188,7 @@ class ScalarTransmissionData3D(StrictModule, NonTrainableState):
         dirichlet_jump: ArrayLike,
         weighted_flux_jump: ArrayLike,
         /,
-    ):
+    ) -> None:
         dtype = jnp.result_type(
             minus_calderon,
             plus_calderon,

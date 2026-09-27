@@ -7,7 +7,8 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._algebra import AmplitudeKernel, SumKernel
 from ._base import AbstractPositiveDefiniteKernel
@@ -38,7 +39,7 @@ class CochainHodgeSpectralKernel(AbstractFiniteFeatureKernel):
         exact_amplitude: ArrayLike = 1.0,
         coexact_amplitude: ArrayLike = 1.0,
         normalize_sectors: bool = True,
-    ):
+    ) -> None:
         from ..graph._cochain_spectrum import CochainHodgeSectorSpectra
 
         if not isinstance(spectra, CochainHodgeSectorSpectra):

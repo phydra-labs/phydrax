@@ -6,12 +6,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from enum import IntFlag
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._sharp_measures import QualifiedSharpGeometry
@@ -36,6 +37,7 @@ from ..linalg import (
     solve,
     TolerancePolicy,
 )
+from ..typing import parse
 
 
 class MACSharpInterfaceStatus(IntFlag):
@@ -87,7 +89,7 @@ class MACSharpInterfaceProjectionResult(StrictModule):
 
 
 class _UnionFind:
-    def __init__(self, size: int):
+    def __init__(self, size: int) -> None:
         self.parent = list(range(size))
 
     def find(self, value: int) -> int:
@@ -211,7 +213,7 @@ class MACSharpInterfaceProjectionPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-9,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         if not isinstance(boundaries, PreparedMACBoundaryPlan):
@@ -625,10 +627,10 @@ class MACSharpInterfaceProjectionPlan(StrictModule, NonTrainableState):
             )
         )
 
-        def action(value):
+        def action(value: Array) -> Array:
             return self._gauged_action(value, inverse, stage)
 
-        def transpose_action(value):
+        def transpose_action(value: Array) -> Array:
             return self._transpose_action(value, inverse, stage)
 
         operator = FunctionLinearOperator(
@@ -786,7 +788,7 @@ class MACMovingSharpInterfaceEpochPlan(StrictModule, NonTrainableState):
         *,
         geometry_family_id: str,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not callable(provider):
             raise TypeError("provider must be callable.")
         identifier = str(geometry_family_id)
@@ -899,7 +901,7 @@ class MACImmersedInterfaceProjectionPlan(StrictModule, NonTrainableState):
         /,
         *,
         jump_id: str,
-    ):
+    ) -> None:
         if not isinstance(sharp, MACSharpInterfaceProjectionPlan):
             raise TypeError("sharp must be MACSharpInterfaceProjectionPlan.")
         if not callable(jump_source):
@@ -949,7 +951,7 @@ class MACImmersedInterfaceProjectionPlan(StrictModule, NonTrainableState):
         )
 
 
-MACInterfaceEnforcement = Literal[
+MACInterfaceEnforcement: TypeAlias = Literal[
     "regularized-delta", "divergence-free", "sharp", "immersed-interface"
 ]
 
@@ -966,14 +968,8 @@ class MACInterfaceMethodSelector(StrictModule, NonTrainableState):
         method: MACInterfaceEnforcement,
         plan: object,
         /,
-    ):
-        if method not in (
-            "regularized-delta",
-            "divergence-free",
-            "sharp",
-            "immersed-interface",
-        ):
-            raise ValueError("Unknown MAC interface enforcement family.")
+    ) -> None:
+        method = parse(method, MACInterfaceEnforcement, "method")
         from ._mac_dfib import MACDFIBProjectionPlan
         from ._mac_immersed_boundary import MACImmersedBoundaryProjectionPlan
 

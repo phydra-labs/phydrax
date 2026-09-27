@@ -8,7 +8,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .. import ein
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -40,7 +41,7 @@ class UniformSquareTensor(StrictModule):
         *,
         precision: TensorNetworkPrecisionPolicy | None = None,
         numeric_version: ArrayLike = 0,
-    ):
+    ) -> None:
         array = jnp.asarray(value)
         if array.ndim != 4:
             raise ValueError(
@@ -119,7 +120,9 @@ def _hermitian_precision(
     )
 
 
-def _matrix_residual(value: Array, reference: Array, precision, /) -> Array:
+def _matrix_residual(
+    value: Array, reference: Array, precision: TensorNetworkPrecisionPolicy, /
+) -> Array:
     numerator = precision.norm(value - reference)
     denominator = jnp.maximum(precision.norm(reference), precision.decision(1.0))
     return precision.decision(numerator / denominator)

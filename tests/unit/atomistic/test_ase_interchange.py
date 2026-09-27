@@ -1,5 +1,6 @@
 import gc
 import weakref
+from typing import Any
 
 import numpy as np
 import pytest
@@ -13,11 +14,11 @@ SCALE = phx.atomistic.AtomisticScaleContract(ANGSTROM, ELECTRONVOLT)
 
 
 @pytest.fixture
-def ase():
+def ase() -> Any:
     return pytest.importorskip("ase")
 
 
-def _identified_atoms(ase, *, cell=None, pbc=False):
+def _identified_atoms(ase: Any, *, cell: Any = None, pbc: Any = False) -> Any:
     atoms = ase.Atoms(
         numbers=[8, 1, 6],
         positions=[[0.1, 0.2, 0.3], [1.2, -0.4, 0.5], [-0.2, 1.1, 0.7]],
@@ -33,7 +34,9 @@ def _identified_atoms(ase, *, cell=None, pbc=False):
     return atoms
 
 
-def test_nonperiodic_structure_roundtrip_preserves_content_and_provenance(ase):
+def test_nonperiodic_structure_roundtrip_preserves_content_and_provenance(
+    ase: Any,
+) -> None:
     cell = np.asarray([[7.0, 0.0, 0.0], [0.2, 8.0, 0.0], [0.1, 0.3, 9.0]])
     source = _identified_atoms(ase, cell=cell, pbc=False)
 
@@ -74,7 +77,7 @@ def test_nonperiodic_structure_roundtrip_preserves_content_and_provenance(ase):
     assert roundtripped.structure_id == structure.structure_id
 
 
-def test_triclinic_periodic_cell_is_preserved_exactly(ase):
+def test_triclinic_periodic_cell_is_preserved_exactly(ase: Any) -> None:
     cell = np.asarray([[4.1, 0.0, 0.0], [1.2, 3.7, 0.0], [-0.4, 0.8, 5.3]])
     source = _identified_atoms(ase, cell=cell, pbc=True)
 
@@ -88,7 +91,7 @@ def test_triclinic_periodic_cell_is_preserved_exactly(ase):
     np.testing.assert_array_equal(restored.pbc, [True, True, True])
 
 
-def test_partial_periodicity_accepts_independent_periodic_vectors(ase):
+def test_partial_periodicity_accepts_independent_periodic_vectors(ase: Any) -> None:
     cell = np.asarray([[3.0, 0.0, 0.0], [0.7, 2.6, 0.0], [0.0, 0.0, 0.0]])
     source = _identified_atoms(ase, cell=cell, pbc=[True, True, False])
 
@@ -102,7 +105,7 @@ def test_partial_periodicity_accepts_independent_periodic_vectors(ase):
     np.testing.assert_array_equal(restored.pbc, [True, True, False])
 
 
-def test_default_ids_are_deterministic_and_declared_as_synthesized(ase):
+def test_default_ids_are_deterministic_and_declared_as_synthesized(ase: Any) -> None:
     source = ase.Atoms(
         "H2O",
         positions=[[0.0, 0.0, 0.0], [0.8, 0.0, 0.0], [0.0, 0.7, 0.0]],
@@ -135,7 +138,7 @@ def test_default_ids_are_deterministic_and_declared_as_synthesized(ase):
     assert error.value.status == AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
 
 
-def test_explicit_ids_follow_exact_atom_reordering(ase):
+def test_explicit_ids_follow_exact_atom_reordering(ase: Any) -> None:
     source = _identified_atoms(ase)
     original, original_report = phx.atomistic.interchange.from_ase_atoms(source, SCALE)
     order = np.asarray([2, 0, 1])
@@ -157,7 +160,9 @@ def test_explicit_ids_follow_exact_atom_reordering(ase):
     assert reordered.structure_id != original.structure_id
 
 
-def test_explicit_source_provenance_is_preserved_and_conflicts_are_rejected(ase):
+def test_explicit_source_provenance_is_preserved_and_conflicts_are_rejected(
+    ase: Any,
+) -> None:
     source = _identified_atoms(ase)
     source.info.pop(phx.atomistic.interchange.ASE_SOURCE_ID_INFO)
 
@@ -174,7 +179,10 @@ def test_explicit_source_provenance_is_preserved_and_conflicts_are_rejected(ase)
     assert error.value.status == AdapterStatus.INCONSISTENT_SOURCE
 
 
-def test_unsupported_state_is_fully_declared_and_require_lossless_rejects(ase):
+def test_unsupported_state_is_fully_declared_and_require_lossless_rejects(
+    ase: Any,
+) -> None:
+    # ty: ignore[unresolved-import]
     from ase.constraints import FixAtoms
 
     source = _identified_atoms(ase)
@@ -208,7 +216,9 @@ def test_unsupported_state_is_fully_declared_and_require_lossless_rejects(ase):
         ("array", "spins"),
     ],
 )
-def test_required_unsupported_semantics_are_rejected(ase, location, name):
+def test_required_unsupported_semantics_are_rejected(
+    ase: Any, location: Any, name: Any
+) -> None:
     source = _identified_atoms(ase)
     if location == "info":
         source.info[name] = {"opaque": object()}
@@ -224,7 +234,7 @@ def test_required_unsupported_semantics_are_rejected(ase, location, name):
     )
 
 
-def test_incompatible_units_and_malformed_periodic_cells_are_rejected(ase):
+def test_incompatible_units_and_malformed_periodic_cells_are_rejected(ase: Any) -> None:
     source = _identified_atoms(
         ase,
         cell=[[2.0, 0.0, 0.0], [4.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
@@ -241,7 +251,8 @@ def test_incompatible_units_and_malformed_periodic_cells_are_rejected(ase):
     assert units.value.status == AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
 
 
-def test_calculator_state_is_reported_but_never_retained(ase):
+def test_calculator_state_is_reported_but_never_retained(ase: Any) -> None:
+    # ty: ignore[unresolved-import]
     from ase.calculators.singlepoint import SinglePointCalculator
 
     source = _identified_atoms(ase)
@@ -261,7 +272,7 @@ def test_calculator_state_is_reported_but_never_retained(ase):
     assert calculator_reference() is None
 
 
-def test_optional_dependency_failure_and_public_exports(monkeypatch):
+def test_optional_dependency_failure_and_public_exports(monkeypatch: Any) -> None:
     import phydrax.atomistic.interchange._ase as ase_adapter
 
     monkeypatch.setattr(ase_adapter.importlib.util, "find_spec", lambda name: None)

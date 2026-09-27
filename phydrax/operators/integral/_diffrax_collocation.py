@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from jaxtyping import Array, Key
-
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ...integration import (
@@ -17,6 +15,7 @@ from ...integration import (
     IntegrationPrecisionPolicy,
     materialize_diffrax_collocation,
 )
+from ...typing import PRNGKey
 
 
 class DiffraxCollocationIntegralOperator(StrictModule):
@@ -31,7 +30,7 @@ class DiffraxCollocationIntegralOperator(StrictModule):
         target: ComponentTarget | DensityTarget,
         plan: DiffraxCollocationQuadraturePlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, DiffraxCollocationQuadraturePlan):
             raise TypeError("plan must be CID DiffraxCollocationQuadraturePlan.")
         self.target = target
@@ -43,7 +42,7 @@ class DiffraxCollocationIntegralOperator(StrictModule):
         integrand: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         kwargs: dict[str, Any] | None = None,
         precision: IntegrationPrecisionPolicy | None = None,
     ) -> IntegrationEstimate:

@@ -243,8 +243,8 @@ def _patch_record(record: Record) -> None:
         "context": normalized_context,
         "event": event,
         "fields": normalized_fields,
-        "nonfinite_fields": nonfinite,
-        "omitted_fields": omitted,
+        "nonfinite_fields": [*nonfinite],
+        "omitted_fields": [*omitted],
     }
     if len(_canonical_json(payload).encode("utf8")) > _MAX_EVENT_BYTES:
         payload["fields"] = {"event_too_large": True}

@@ -13,7 +13,8 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -51,6 +52,7 @@ from ._mean_field import (
     InitialGuessKind,
     InitialGuessPlan,
     mean_field_owner_id,
+    MeanFieldState,
     RestrictedMeanFieldState,
     SCFAccelerationKind,
     SCFAccelerationPlan,
@@ -337,7 +339,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
         linear_dependence_tolerance: float = 1.0e-9,
         factorized_eri: FactorizedERITensor | None = None,
         direct_jk: PreparedDirectJK | None = None,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         if (
@@ -437,7 +439,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _integrals(self, positions: Array, /):
+    def _integrals(self, positions: Array, /) -> tuple[Array, Array, Array, Array | None]:
         charges = jnp.asarray(self.system.atomic_numbers, dtype=positions.dtype)
         overlap = overlap_matrix(self.basis, positions)
         core = kinetic_matrix(self.basis, positions) + nuclear_attraction_matrix(
@@ -451,7 +453,9 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
         )
         return overlap, core, nuclear, dense
 
-    def _jk(self, positions: Array, density: Array, dense: Array | None, /):
+    def _jk(
+        self, positions: Array, density: Array, dense: Array | None, /
+    ) -> tuple[Array, Array, Array]:
         if self.factorized_eri is not None:
             return (
                 self.factorized_eri.coulomb(density),
@@ -475,7 +479,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
         overlap: Array,
         orthogonalizer: Array,
         /,
-    ):
+    ) -> tuple[Array, Array]:
         guess_kind = self.guess.kind
         if guess_kind in (
             InitialGuessKind.CORE,
@@ -523,7 +527,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
         /,
         *,
         initial_guess: ElectronicInitialGuessState | None = None,
-    ):
+    ) -> MeanFieldState:
         coordinate = jnp.asarray(positions)
         guess_density = self._validated_initial_guess(initial_guess)
         overlap, core, nuclear, dense = self._integrals(coordinate)
@@ -610,8 +614,15 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
         )
 
     def _solve_restricted(
-        self, positions, overlap, core, nuclear, dense, orthogonalizer, guess_density
-    ):
+        self,
+        positions: Array,
+        overlap: Array,
+        core: Array,
+        nuclear: Array,
+        dense: Array | None,
+        orthogonalizer: Array,
+        guess_density: Array | None,
+    ) -> RestrictedMeanFieldState:
         energies, coefficients = self._initial_coefficients(core, overlap, orthogonalizer)
         occupations, _, entropy = _occupations(
             self.occupations, energies, self.sector.electron_count, 2.0
@@ -731,8 +742,15 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
         )
 
     def _solve_unrestricted(
-        self, positions, overlap, core, nuclear, dense, orthogonalizer, guess_density
-    ):
+        self,
+        positions: Array,
+        overlap: Array,
+        core: Array,
+        nuclear: Array,
+        dense: Array | None,
+        orthogonalizer: Array,
+        guess_density: Array | None,
+    ) -> UnrestrictedMeanFieldState:
         alpha_energies, alpha_coefficients = self._initial_coefficients(
             core, overlap, orthogonalizer
         )
@@ -950,8 +968,15 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
         )
 
     def _solve_rohf(
-        self, positions, overlap, core, nuclear, dense, orthogonalizer, guess_density
-    ):
+        self,
+        positions: Array,
+        overlap: Array,
+        core: Array,
+        nuclear: Array,
+        dense: Array | None,
+        orthogonalizer: Array,
+        guess_density: Array | None,
+    ) -> UnrestrictedMeanFieldState:
         if self.occupations.kind is not ElectronicOccupationKind.INTEGER:
             raise ValueError("ROHF currently requires integer alpha/beta occupations.")
         _, coefficients = self._initial_coefficients(core, overlap, orthogonalizer)
@@ -1149,8 +1174,15 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
         )
 
     def _solve_generalized(
-        self, positions, overlap, core, nuclear, dense, orthogonalizer, guess_density
-    ):
+        self,
+        positions: Array,
+        overlap: Array,
+        core: Array,
+        nuclear: Array,
+        dense: Array | None,
+        orthogonalizer: Array,
+        guess_density: Array | None,
+    ) -> GeneralizedMeanFieldState:
         count = core.shape[0]
         zero = jnp.zeros_like(core)
         spin_overlap = jnp.block([[overlap, zero], [zero, overlap]])
@@ -1348,7 +1380,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
         orbital_count = state.coefficients.shape[1]
         jnp.eye(orbital_count, dtype=state.coefficients.dtype)
 
-        def rotation(parameters, sign=1.0):
+        def rotation(parameters: Array, sign: float = 1.0) -> Array:
             generator = jnp.zeros(
                 (orbital_count, orbital_count), dtype=state.coefficients.dtype
             )
@@ -1358,7 +1390,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
                 generator = generator.at[occupied_, virtual_].set(-jnp.conj(value))
             return jsp.linalg.expm(generator)
 
-        def restricted_energy(parameters):
+        def restricted_energy(parameters: Array) -> Array:
             coefficients = state.coefficients @ rotation(parameters)
             occupied_coefficients = coefficients[:, : len(occupied)]
             density = 2.0 * occupied_coefficients @ jnp.conj(occupied_coefficients.T)
@@ -1369,7 +1401,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
                 + 0.5 * contract("ab,ab->", density, coulomb - 0.5 * exchange)
             )
 
-        def unrestricted_energy(parameters):
+        def unrestricted_energy(parameters: Array) -> Array:
             alpha_coefficients = state.coefficients @ rotation(parameters, 1.0)
             beta_coefficients = state.coefficients @ rotation(parameters, -1.0)
             alpha_occupied = alpha_coefficients[:, : len(occupied)]
@@ -1411,7 +1443,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
         )
 
     def analytic_gradient_atomic_units(
-        self, positions: ArrayLike, state, /
+        self, positions: ArrayLike, state: MeanFieldState, /
     ) -> MolecularGradientResult:
         coordinate = jnp.asarray(positions)
         if state.owner_id != mean_field_owner_id(self.plan_id, coordinate):
@@ -1486,7 +1518,7 @@ class MolecularHartreeFockPlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
-    def evaluate(self, positions: ArrayLike, /):
+    def evaluate(self, positions: ArrayLike, /) -> tuple[MeanFieldState, Array]:
         coordinate = jnp.asarray(positions)
         length_to_bohr = float(
             conversion_factor(self.system.units.scale.length_unit, BOHR)

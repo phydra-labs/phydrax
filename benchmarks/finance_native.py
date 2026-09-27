@@ -167,7 +167,7 @@ def _execution() -> Callable[[], jax.Array]:
     return solve
 
 
-def _finite_target(points: Sequence[float], weights: Sequence[float], provenance: str):
+def _finite_target(points: Sequence[float], weights: Sequence[float], provenance: str) -> Any:
     return phx.integration.discrete(
         jnp.asarray(points),
         cx.Field(jnp.asarray(weights), dims=("atom",)),

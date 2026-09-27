@@ -41,6 +41,7 @@ _MODEL = """
 
 
 def qualify(steps: int) -> dict[str, object]:
+    # ty: ignore[unresolved-import]
     import mujoco
 
     model = mujoco.MjModel.from_xml_string(_MODEL)

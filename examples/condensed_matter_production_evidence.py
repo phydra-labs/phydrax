@@ -35,7 +35,9 @@ from phydrax.sparse import EdgeRelation
 
 def main() -> None:
     relation = EdgeRelation(
+        # ty: ignore[invalid-argument-type]
         [0, 0, 0],
+        # ty: ignore[invalid-argument-type]
         [0, 0, 0],
         source_size=1,
         target_size=1,
@@ -45,6 +47,7 @@ def main() -> None:
         [[-1], [0], [1]],
         [2, 1, 0],
     )
+    # ty: ignore[invalid-argument-type]
     state = PeriodicTranslationFamilyState(plan, [[[-1.0]], [[0.25]], [[-1.0]]])
     prepared = prepare_periodic_translation_family(plan, state)
     points = jnp.asarray([[0.0], [0.25], [0.5]])

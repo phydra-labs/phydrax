@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -26,7 +28,7 @@ def test_sparse_vortex_fmm_strength_gradient_is_finite() -> None:
     )
     target = phx.discretization.VortexTargetState(target_position)
 
-    def objective(strength):
+    def objective(strength: Any) -> Any:
         source = phx.discretization.VortexSourceState(
             position, strength, core_radius=core
         )
@@ -68,7 +70,7 @@ def test_plane_vortex_fmm_strength_gradient_and_jit_are_finite() -> None:
     )
     target = phx.discretization.VortexTargetState(target_position)
 
-    def objective(strength):
+    def objective(strength: Any) -> Any:
         source = phx.discretization.VortexSourceState(
             position,
             strength,

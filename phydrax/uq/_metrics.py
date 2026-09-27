@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._likelihoods import AbstractLikelihood
 from .._strict import StrictModule
@@ -27,7 +28,7 @@ def negative_log_likelihood(
     reduction: Reduction = "mean",
     mask: ArrayLike | None = None,
     weights: ArrayLike | None = None,
-    **parameters,
+    **parameters: Any,
 ) -> Array:
     values = -likelihood.log_prob(location, target, **parameters)
     return _reduce(values, reduction=reduction, mask=mask, weights=weights)
@@ -343,7 +344,7 @@ class GaussianScaleCalibrator(StrictModule):
 
     scale_multiplier: Array
 
-    def __init__(self, scale_multiplier: ArrayLike):
+    def __init__(self, scale_multiplier: ArrayLike) -> None:
         multiplier = jnp.asarray(scale_multiplier, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(multiplier)) or not bool(multiplier > 0.0):
             raise ValueError("scale_multiplier must be finite and positive.")

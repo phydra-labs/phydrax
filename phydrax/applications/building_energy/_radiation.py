@@ -5,17 +5,23 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping, Sequence
+from typing import Self, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...ein import contract
 from ...units import ONE, UnitDefinition
 from ._model import _text
+
+
+if TYPE_CHECKING:
+    from ..._external_runtime import EnergyRunResult, PinnedExecutable
 
 
 class RadiativeBasis(StrictModule):
@@ -32,10 +38,10 @@ class RadiativeBasis(StrictModule):
         *,
         basis_id: str,
         measure: str,
-        weights: ArrayLike,
+        weights: ArrayLike | Sequence[float],
         measure_unit: UnitDefinition = ONE,
         channels: Sequence[str] = ("red", "green", "blue"),
-    ):
+    ) -> None:
         labels_, channels_ = tuple(labels), tuple(channels)
         if (
             not labels_
@@ -83,7 +89,7 @@ class RadiativeOperator(StrictModule):
         input_unit: UnitDefinition,
         output_unit: UnitDefinition,
         provenance: Sequence[str] = (),
-    ):
+    ) -> None:
         x = jnp.asarray(values)
         shape = (len(target.labels), len(source.labels), len(source.channels))
         if source.channels != target.channels or x.shape != shape:
@@ -99,11 +105,23 @@ class RadiativeOperator(StrictModule):
 
     @classmethod
     def from_kernel(
-        cls, kernel: ArrayLike, source: RadiativeBasis, target: RadiativeBasis, **kwargs
-    ):
+        cls,
+        kernel: ArrayLike,
+        source: RadiativeBasis,
+        target: RadiativeBasis,
+        *,
+        input_unit: UnitDefinition,
+        output_unit: UnitDefinition,
+        provenance: Sequence[str] = (),
+    ) -> Self:
         """Discretize an integral kernel using the source basis' explicit measure."""
         return cls(
-            jnp.asarray(kernel) * source.weights[None, :, None], source, target, **kwargs
+            jnp.asarray(kernel) * source.weights[None, :, None],
+            source,
+            target,
+            input_unit=input_unit,
+            output_unit=output_unit,
+            provenance=provenance,
         )
 
     def apply(self, coefficients: ArrayLike) -> Array:
@@ -120,7 +138,7 @@ class RadiativeComposition(StrictModule):
 
     factors: tuple[RadiativeOperator, ...]
 
-    def __init__(self, factors: Sequence[RadiativeOperator]):
+    def __init__(self, factors: Sequence[RadiativeOperator]) -> None:
         factors_ = tuple(factors)
         if not factors_:
             raise ValueError("Radiative composition needs at least one factor.")
@@ -216,7 +234,7 @@ def import_radiance_matrix(
 
 
 def produce_radiance_matrix(
-    executable,
+    executable: PinnedExecutable,
     args: Sequence[str],
     source: RadiativeBasis,
     target: RadiativeBasis,
@@ -228,7 +246,7 @@ def produce_radiance_matrix(
     output_path: str | None = None,
     timeout: float = 120,
     environment: Mapping[str, str] | None = None,
-):
+) -> tuple[RadiativeOperator, EnergyRunResult]:
     """Run a pinned bounded Radiance (or Frads CLI) matrix producer and import bytes.
 
     Producer arguments/scenes are explicit; no shell or implicit binary search.
@@ -259,8 +277,12 @@ def produce_radiance_matrix(
 
 
 def produce_uniform_sky_reference(
-    oconv, rtrace, *, environment: Mapping[str, str] | None = None, timeout: float = 120
-):
+    oconv: PinnedExecutable,
+    rtrace: PinnedExecutable,
+    *,
+    environment: Mapping[str, str] | None = None,
+    timeout: float = 120,
+) -> tuple[RadiativeOperator, tuple[EnergyRunResult, EnergyRunResult]]:
     """Measure an upward irradiance sensor under a uniform unit-radiance hemisphere.
 
     The analytic result is π per RGB channel. Returned coefficients are actual

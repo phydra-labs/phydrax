@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from typing import Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._bvh import BVHBuildPolicy, PackedBVH, prepare_bvh, refit_packed_bvh_bounds
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -33,7 +34,7 @@ _PROJECTION_AXES = ((1, 2), (2, 0), (0, 1))
 
 
 def _projected_areas(
-    triangle_vertices, mode: PredicateMode, /
+    triangle_vertices: Any, mode: PredicateMode, /
 ) -> tuple[PredicateResult, ...]:
     return tuple(
         orient2d(
@@ -94,7 +95,7 @@ class TriangleRayQueryPlan(StrictModule, NonTrainableState):
         barycentric_tolerance: float = 1e-10,
         forward_tolerance: float = 1e-9,
         tie_tolerance: float = 1e-9,
-    ):
+    ) -> None:
         vertices_host = np.asarray(vertices)
         triangles_host = np.asarray(triangles)
         if vertices_host.ndim != 2 or vertices_host.shape[1:] != (3,):
@@ -572,6 +573,14 @@ def _query_exhaustive_one(
     )
 
 
+# (stack, stack size, candidate, steps, tests, exhausted)
+_RayTraversalState: TypeAlias = tuple[
+    Array, Array, tuple[Array, ...], Array, Array, Array
+]
+# (stack, stack size, candidate, tests, exhausted)
+_RayNodeState: TypeAlias = tuple[Array, Array, tuple[Array, ...], Array, Array]
+
+
 def _query_bvh_one(
     prepared: PreparedTriangleRayQuery,
     geometry: TriangleRayGeometryState,
@@ -589,10 +598,10 @@ def _query_bvh_one(
         jnp.asarray(False),
     )
 
-    def body(_, state):
+    def body(_: Array, state: _RayTraversalState) -> _RayTraversalState:
         stack_, size, candidate, steps, tests, exhausted = state
 
-        def visit(active_state):
+        def visit(active_state: _RayTraversalState) -> _RayTraversalState:
             stack__, size_, candidate_, steps_, tests_, exhausted_ = active_state
             next_size = size_ - 1
             node = stack__[next_size]
@@ -607,11 +616,11 @@ def _query_bvh_one(
                 prepared.tie_tolerance,
             )
 
-            def inspect_node(node_state):
+            def inspect_node(node_state: _RayNodeState) -> _RayNodeState:
                 stack___, size__, candidate__, tests__, exhausted__ = node_state
                 leaf = prepared.bvh.leaf_id[node]
 
-                def inspect_leaf(leaf_state):
+                def inspect_leaf(leaf_state: _RayNodeState) -> _RayNodeState:
                     stack____, size___, candidate___, tests___, exhausted___ = leaf_state
                     merged, tested = _merge_for_ray(
                         prepared,
@@ -623,7 +632,7 @@ def _query_bvh_one(
                     )
                     return stack____, size___, merged, tests___ + tested, exhausted___
 
-                def inspect_branch(branch_state):
+                def inspect_branch(branch_state: _RayNodeState) -> _RayNodeState:
                     stack____, size___, candidate___, tests___, exhausted___ = (
                         branch_state
                     )

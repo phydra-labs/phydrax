@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -9,7 +12,7 @@ import phydrax as phx
 import tools.open_system_campaigns as campaigns
 
 
-def test_artifact_is_exactly_reconstructed_and_verified(tmp_path):
+def test_artifact_is_exactly_reconstructed_and_verified(tmp_path: Any) -> None:
     record = campaigns.gaussian_campaign()
     path = tmp_path / "campaign.zip"
     campaigns.write_open_system_artifact(
@@ -41,7 +44,7 @@ def test_artifact_is_exactly_reconstructed_and_verified(tmp_path):
     assert bool(verified.valid)
 
 
-def test_evidence_contracts_reject_malformed_values():
+def test_evidence_contracts_reject_malformed_values() -> None:
     with pytest.raises(ValueError, match="non-negative"):
         phx.operators.quantum.ApproximationQuantity(
             "negative-error",
@@ -85,10 +88,11 @@ def test_evidence_contracts_reject_malformed_values():
             observable_tolerance=1.0,
         )
     with pytest.raises(TypeError, match="must be integers"):
+        # ty: ignore[invalid-argument-type]
         campaigns.CampaignCapacityEvidence("work", 1.5, 2)
 
 
-def test_promotion_requires_named_physicality_and_verified_archive(tmp_path):
+def test_promotion_requires_named_physicality_and_verified_archive(tmp_path: Any) -> None:
     record = campaigns.gaussian_campaign()
     policy = phx.operators.quantum.OpenSystemPromotionPolicy(
         ("time-step",),
@@ -122,7 +126,7 @@ def test_promotion_requires_named_physicality_and_verified_archive(tmp_path):
     assert not verified.missing_physicality
 
 
-def test_connected_vmc_campaign_separates_projection_audit_from_stochastic_jump():
+def test_connected_vmc_campaign_separates_projection_audit_from_stochastic_jump() -> None:
     record = campaigns.neural_campaign()
     arrays = dict(zip(record.artifact_names, record.artifact_arrays, strict=True))
     assert bool(record.execution_success)
@@ -133,7 +137,7 @@ def test_connected_vmc_campaign_separates_projection_audit_from_stochastic_jump(
     assert "forced-first-projected-jump" not in arrays
 
 
-def test_intervention_complete_process_design_identifies_physical_quotient():
+def test_intervention_complete_process_design_identifies_physical_quotient() -> None:
     spec = phx.tensor_network.CombLegSpec(2, 1, 1)
     model = phx.tensor_network.SequentialStinespringProcess(
         spec,
@@ -156,7 +160,7 @@ def test_intervention_complete_process_design_identifies_physical_quotient():
     assert result.singular_values.ndim == 1
 
 
-def test_mps_campaign_exercises_event_root_and_capacity_evidence():
+def test_mps_campaign_exercises_event_root_and_capacity_evidence() -> None:
     record = campaigns.mps_campaign()
     arrays = dict(zip(record.artifact_names, record.artifact_arrays, strict=True))
     assert bool(record.execution_success)
@@ -167,7 +171,7 @@ def test_mps_campaign_exercises_event_root_and_capacity_evidence():
     assert not bool(record.capacity_exhausted)
 
 
-def test_adaptive_heom_accepts_steps_and_reaches_final_time():
+def test_adaptive_heom_accepts_steps_and_reaches_final_time() -> None:
     density = jnp.asarray([[0.6 + 0j, 0j], [0j, 0.4 + 0j]])
     expansion = phx.operators.quantum.drude_lorentz_matsubara(0.01, 1.0, 2.0, 1)
     problem = phx.solver.HEOMProblem(
@@ -190,7 +194,7 @@ def test_adaptive_heom_accepts_steps_and_reaches_final_time():
     assert jnp.isclose(result.solution.times[-1], 0.002)
 
 
-def test_tomography_setting_fingerprint_canonicalizes_kraus_gauge():
+def test_tomography_setting_fingerprint_canonicalizes_kraus_gauge() -> None:
     identity = jnp.eye(2, dtype="complex128")
     phase = jnp.exp(0.37j) * identity
     first = phx.tensor_network.QuantumInstrument(
@@ -227,7 +231,7 @@ def test_tomography_setting_fingerprint_canonicalizes_kraus_gauge():
     )
 
 
-def test_inactive_instrument_outcome_is_rejected_everywhere():
+def test_inactive_instrument_outcome_is_rejected_everywhere() -> None:
     identity = jnp.eye(2, dtype="complex128")
     instrument = phx.tensor_network.QuantumInstrument(
         jnp.stack((identity, identity))[:, None, ...],
@@ -254,7 +258,7 @@ def test_inactive_instrument_outcome_is_rejected_everywhere():
         process.contract((instrument,), (1,))
 
 
-def test_analytic_pade_poles_are_stable_and_improve_with_order():
+def test_analytic_pade_poles_are_stable_and_improve_with_order() -> None:
     first = phx.operators.quantum.drude_lorentz_pade(0.01, 1.0, 2.0, 1)
     second = phx.operators.quantum.drude_lorentz_pade(0.01, 1.0, 2.0, 2)
     assert bool(first.valid)
@@ -263,7 +267,7 @@ def test_analytic_pade_poles_are_stable_and_improve_with_order():
     assert second.fit_residual <= first.fit_residual
 
 
-def test_direct_memory_map_certification_checks_cp_and_tp():
+def test_direct_memory_map_certification_checks_cp_and_tp() -> None:
     initial = jnp.asarray([[0.6 + 0j, 0j], [0j, 0.4 + 0j]])
     problem = phx.solver.exponential_memory_qubit_problem(0.01, 1.0, initial)
     result = phx.solver.certify_memory_kernel_map(
@@ -275,7 +279,7 @@ def test_direct_memory_map_certification_checks_cp_and_tp():
     assert bool(result.valid)
 
 
-def test_mps_dense_materialization_is_capacity_bounded():
+def test_mps_dense_materialization_is_capacity_bounded() -> None:
     state = phx.tensor_network.product_mps(
         jnp.asarray([[1.0, 0.0], [0.0, 1.0]], dtype="complex128")
     )

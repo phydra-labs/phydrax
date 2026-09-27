@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _acceptance_policy():
+def _acceptance_policy() -> Any:
     return phx.optim.StateAcceptancePolicy(
         state_relative_tolerance=0.0,
         state_absolute_tolerance=1.0e-6,
@@ -20,7 +23,7 @@ def _acceptance_policy():
     )
 
 
-def _state_design_problem(*, bounds=None):
+def _state_design_problem(*, bounds: Any = None) -> Any:
     return phx.optim.StateDesignProblem(
         lambda state, design, _: state - design,
         lambda state, design, _: jnp.sum((state - 2.0) ** 2) + 0.1 * jnp.sum(design**2),
@@ -30,7 +33,7 @@ def _state_design_problem(*, bounds=None):
     )
 
 
-def _termination(*, tolerance=1e-6, steps=30):
+def _termination(*, tolerance: Any = 1e-6, steps: Any = 30) -> Any:
     return phx.optim.OptimizationTermination(
         absolute_optimality=tolerance,
         relative_optimality=0.0,
@@ -38,7 +41,7 @@ def _termination(*, tolerance=1e-6, steps=30):
     )
 
 
-def test_least_squares_state_solver_satisfies_frozen_state_equation():
+def test_least_squares_state_solver_satisfies_frozen_state_equation() -> None:
     problem = _state_design_problem()
     result = problem.solve_state(jnp.array([1.25]), jnp.array([0.0]))
 
@@ -52,7 +55,7 @@ def test_least_squares_state_solver_satisfies_frozen_state_equation():
     "method",
     [phx.optim.ReducedAdjoint(), phx.optim.SimultaneousKKT()],
 )
-def test_state_design_methods_recover_analytic_kkt_solution(method):
+def test_state_design_methods_recover_analytic_kkt_solution(method: Any) -> None:
     result = phx.optim.solve_state_design(
         _state_design_problem(),
         jnp.array([0.0]),
@@ -71,7 +74,7 @@ def test_state_design_methods_recover_analytic_kkt_solution(method):
     assert result.provenance.matrix_free
 
 
-def test_reduced_adjoint_projects_bound_constrained_design():
+def test_reduced_adjoint_projects_bound_constrained_design() -> None:
     problem = _state_design_problem(bounds=phx.optim.Bounds(0.0, 1.0))
     result = phx.optim.solve_state_design(
         problem,
@@ -87,7 +90,7 @@ def test_reduced_adjoint_projects_bound_constrained_design():
     assert result.diagnostics.primal_feasibility < 1e-6
 
 
-def test_simultaneous_kkt_rejects_unmodeled_bound_complementarity():
+def test_simultaneous_kkt_rejects_unmodeled_bound_complementarity() -> None:
     with pytest.raises(ValueError, match="unconstrained design"):
         phx.optim.solve_state_design(
             _state_design_problem(bounds=phx.optim.Bounds(0.0, 1.0)),
@@ -98,11 +101,11 @@ def test_simultaneous_kkt_rejects_unmodeled_bound_complementarity():
         )
 
 
-def _nested_state_design_problem():
-    def residual(state, design, _):
+def _nested_state_design_problem() -> Any:
+    def residual(state: Any, design: Any, _: Any) -> Any:
         return {"field": state["field"] - design["controls"][0]}
 
-    def objective(state, design, target):
+    def objective(state: Any, design: Any, target: Any) -> Any:
         return jnp.sum((state["field"] - target) ** 2) + 0.1 * jnp.sum(
             design["controls"][0] ** 2
         )
@@ -123,13 +126,15 @@ def _nested_state_design_problem():
         phx.optim.ReducedNewtonKrylov(),
     ],
 )
-def test_state_design_methods_eager_and_jit_agree_with_large_static_budget(method):
+def test_state_design_methods_eager_and_jit_agree_with_large_static_budget(
+    method: Any,
+) -> None:
     problem = _nested_state_design_problem()
     initial_state = {"field": jnp.array([0.0])}
     initial_design = {"controls": (jnp.array([0.0]),)}
     termination = _termination(tolerance=1e-7, steps=100_000)
 
-    def solve(target):
+    def solve(target: Any) -> Any:
         return phx.optim.solve_state_design(
             problem,
             initial_state,
@@ -177,13 +182,13 @@ def test_state_design_methods_eager_and_jit_agree_with_large_static_budget(metho
         phx.optim.ReducedNewtonKrylov(),
     ],
 )
-def test_state_design_methods_support_jvp_vmap_and_nested_pytrees(method):
+def test_state_design_methods_support_jvp_vmap_and_nested_pytrees(method: Any) -> None:
     problem = _nested_state_design_problem()
     initial_state = {"field": jnp.array([0.0])}
     initial_design = {"controls": (jnp.array([0.0]),)}
     termination = _termination(tolerance=1e-7, steps=40)
 
-    def solution(target):
+    def solution(target: Any) -> Any:
         result = phx.optim.solve_state_design(
             problem,
             initial_state,
@@ -207,7 +212,7 @@ def test_state_design_methods_support_jvp_vmap_and_nested_pytrees(method):
     np.testing.assert_allclose(derivative, 0.25 / 1.1, atol=2e-5)
 
 
-def test_reduced_adjoint_rejected_trial_preserves_last_accepted_pair():
+def test_reduced_adjoint_rejected_trial_preserves_last_accepted_pair() -> None:
     problem = _state_design_problem()
     result = phx.optim.solve_state_design(
         problem,
@@ -231,7 +236,7 @@ def test_reduced_adjoint_rejected_trial_preserves_last_accepted_pair():
     assert float(result.diagnostics.final_step_norm) == 0.0
 
 
-def test_reduced_adjoint_evaluation_budget_gates_whole_outer_iterations():
+def test_reduced_adjoint_evaluation_budget_gates_whole_outer_iterations() -> None:
     termination = phx.optim.OptimizationTermination(
         absolute_optimality=1e-7,
         relative_optimality=0.0,
@@ -261,7 +266,9 @@ def test_reduced_adjoint_evaluation_budget_gates_whole_outer_iterations():
     assert int(result.diagnostics.objective_evaluations) > 1
 
 
-def test_state_and_adjoint_acceptance_use_measured_defects_not_solver_status_alone():
+def test_state_and_adjoint_acceptance_use_measured_defects_not_solver_status_alone() -> (
+    None
+):
     policy = phx.optim.StateAcceptancePolicy(
         state_relative_tolerance=0.0,
         state_absolute_tolerance=1e-6,

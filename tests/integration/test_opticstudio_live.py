@@ -15,7 +15,7 @@ from phydrax.interchange.opticstudio import (
 
 
 @pytest.mark.opticstudio_live
-def test_live_opticstudio_session_and_system_data_analysis():
+def test_live_opticstudio_session_and_system_data_analysis() -> None:
     availability = opticstudio_availability()
     if not availability.available:
         pytest.skip(f"OpticStudio unavailable: {availability.reason}")

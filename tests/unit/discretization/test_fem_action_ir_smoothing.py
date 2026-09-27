@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _tri_mesh():
+def _tri_mesh() -> Any:
     vertices = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [0.5, 0.5]])
     cells = jnp.asarray(
         [[0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4]],
@@ -18,7 +21,7 @@ def _tri_mesh():
     return phx.discretization.CellMesh.from_triangles(vertices, cells)
 
 
-def test_finite_element_form_lowers_to_typed_actions_and_worksets():
+def test_finite_element_form_lowers_to_typed_actions_and_worksets() -> None:
     mesh = _tri_mesh()
     field = phx.discretization.FiniteElementFieldSpec(
         "u", phx.discretization.lagrange_element("triangle", 1)
@@ -43,7 +46,7 @@ def test_finite_element_form_lowers_to_typed_actions_and_worksets():
     assert sum(workset.action_indices.size for workset in workset_program.worksets) == 2
 
 
-def test_high_order_tensor_family_partition_unity_and_sum_factorization():
+def test_high_order_tensor_family_partition_unity_and_sum_factorization() -> None:
     family = phx.discretization.fem.ReferenceNodalFamily(
         "quadrilateral", 3, node_set="gauss-lobatto"
     )
@@ -68,7 +71,7 @@ def test_high_order_tensor_family_partition_unity_and_sum_factorization():
     )
 
 
-def test_edge_and_node_smoothing_partition_patch_and_rigid_modes():
+def test_edge_and_node_smoothing_partition_patch_and_rigid_modes() -> None:
     mesh = _tri_mesh()
     smoothing = phx.discretization.fem.smoothing
     constitutive = smoothing.plane_stress_matrix(1.0, 0.3)
@@ -104,7 +107,7 @@ def test_edge_and_node_smoothing_partition_patch_and_rigid_modes():
     assert jnp.max(shifted.affine_reproduction_defect) > 1.0e-3
 
 
-def test_q4_plate_smoothing_keeps_channel_partitions_independent():
+def test_q4_plate_smoothing_keeps_channel_partitions_independent() -> None:
     vertices = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
     block = phx.discretization.CellBlock(
         "quads", "quadrilateral", jnp.asarray([[0, 1, 2, 3]], dtype=jnp.int32)
@@ -119,7 +122,7 @@ def test_q4_plate_smoothing_keeps_channel_partitions_independent():
     assert channels.nonlinear_gradient.shape == (3, 4, 2)
 
 
-def test_fully_smoothed_axisymmetric_stiffness_and_mass_are_symmetric():
+def test_fully_smoothed_axisymmetric_stiffness_and_mass_are_symmetric() -> None:
     vertices = jnp.asarray([[1.0, 0.0], [2.0, 0.0], [2.0, 1.0], [1.0, 1.0]])
     block = phx.discretization.CellBlock(
         "quads", "quadrilateral", jnp.asarray([[0, 1, 2, 3]], dtype=jnp.int32)
@@ -138,7 +141,7 @@ def test_fully_smoothed_axisymmetric_stiffness_and_mass_are_symmetric():
     assert jnp.all(jnp.linalg.eigvalsh(mass) >= -1.0e-12)
 
 
-def test_local_implicit_material_uses_implicit_jvp():
+def test_local_implicit_material_uses_implicit_jvp() -> None:
     material = phx.equations.fem.LocalImplicitMaterial(
         lambda state, target: state**2 - target,
         lambda state, target: phx.equations.ConstitutiveResponse(state, state),
@@ -157,7 +160,7 @@ def test_local_implicit_material_uses_implicit_jvp():
     assert jnp.allclose(tangent, 0.25, atol=1.0e-8)
 
 
-def _bisect_all(source, hierarchy=None):
+def _bisect_all(source: Any, hierarchy: Any = None) -> Any:
     return phx.meshing.execute_mesh_adaptation(
         phx.meshing.prepare_mesh_adaptation(
             source,
@@ -171,10 +174,10 @@ def _bisect_all(source, hierarchy=None):
     )
 
 
-def test_time_law_schedule_and_uniform_bisection_are_transactional():
+def test_time_law_schedule_and_uniform_bisection_are_transactional() -> None:
     law = phx.solver.TimeLaw.ramp(0.0, 1.0, 0.0, 1.0)
 
-    def solve(state, start, end, time_law, args):
+    def solve(state: Any, start: Any, end: Any, time_law: Any, args: Any) -> Any:
         return phx.solver.ScheduleStepResult(
             state=state + time_law.value(end),
             accepted=jnp.asarray(True),
@@ -192,6 +195,7 @@ def test_time_law_schedule_and_uniform_bisection_are_transactional():
     second = _bisect_all(first.target, first.hierarchy)
     cells = second.lineage.entity_lineage(2)
 
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(final_state, 1.0)
     assert bool(results[0].accepted)
     assert first.target.mesh.blocks[0].cell_count == 8
@@ -201,7 +205,7 @@ def test_time_law_schedule_and_uniform_bisection_are_transactional():
     )
 
 
-def test_element_partial_and_p_transfer_operators_are_consistent():
+def test_element_partial_and_p_transfer_operators_are_consistent() -> None:
     local_matrix = jnp.asarray([[[2.0, -1.0], [-1.0, 2.0]], [[2.0, -1.0], [-1.0, 2.0]]])
     gathers = jnp.asarray([[0, 1], [1, 2]], dtype=jnp.int32)
     element = phx.sparse.ElementTensorOperator(local_matrix, gathers, gathers, 3, 3)
@@ -237,7 +241,7 @@ def test_element_partial_and_p_transfer_operators_are_consistent():
     assert jnp.allclose(transfer.prolong(constant), 1.0)
 
 
-def test_application_model_primitives_are_executable():
+def test_application_model_primitives_are_executable() -> None:
     cpfem = phx.applications.crystal_plasticity
     material = cpfem.CrystalPlasticityModel(
         (
@@ -268,7 +272,7 @@ def test_application_model_primitives_are_executable():
     assert force_magnitude > 0.0
 
 
-def test_partition_and_local_adaptation_have_stable_routes():
+def test_partition_and_local_adaptation_have_stable_routes() -> None:
     mesh = _tri_mesh()
     partition = phx.discretization.partition_cells_contiguous(mesh, 2)
     marked = phx.discretization.fem.maximum_mark(
@@ -289,7 +293,9 @@ def test_partition_and_local_adaptation_have_stable_routes():
     refined = adaptation.target.mesh
     transfer = adaptation.transfer
     parents = np.unique(
+        # ty: ignore[unresolved-attribute]
         np.asarray(adaptation.lineage.entity_lineage(2).source_global_ids)[
+            # ty: ignore[unresolved-attribute]
             np.asarray(adaptation.lineage.entity_lineage(2).relation_kinds)
             == int(phx.meshing.EntityLineageKind.REFINED_FROM)
         ]
@@ -297,6 +303,8 @@ def test_partition_and_local_adaptation_have_stable_routes():
 
     assert set(partition.cell_owner.tolist()) == {0, 1}
     assert parents.shape == (1,)
+    # ty: ignore[unresolved-attribute]
     assert transfer.target_size == refined.coordinates.shape[0]
+    # ty: ignore[unresolved-attribute]
     assert transfer.source_size == mesh.coordinates.shape[0]
     assert refined.blocks[0].cell_count == 5

@@ -1,9 +1,12 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+from collections.abc import Iterable
 from dataclasses import dataclass
 from math import isfinite
-from typing import Literal, TypeAlias
+from typing import Literal, Self, TypeAlias
+
+from ..typing import parse
 
 
 VariableKind: TypeAlias = Literal["across", "through"]
@@ -15,9 +18,10 @@ class ConnectorVariable:
     kind: VariableKind
     unit: str
 
-    def __post_init__(self):
-        if not self.name or not self.unit or self.kind not in ("across", "through"):
+    def __post_init__(self) -> None:
+        if not self.name or not self.unit:
             raise ValueError("Connector variable invalid.")
+        object.__setattr__(self, "kind", parse(self.kind, VariableKind, "kind"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,10 +30,10 @@ class ConnectorType:
     variables: tuple[ConnectorVariable, ...]
 
     @classmethod
-    def create(cls, identifier, variables):
+    def create(cls, identifier: str, variables: Iterable[ConnectorVariable]) -> Self:
         return cls(str(identifier), tuple(variables))
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             not self.connector_type_id
             or not self.variables
@@ -44,7 +48,7 @@ class Connector:
     connector_type: ConnectorType
     orientation: float = 1.0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.connector_id, str) or not self.connector_id:
             raise ValueError("Connector identifier must be a non-empty string.")
         if not isinstance(self.connector_type, ConnectorType):

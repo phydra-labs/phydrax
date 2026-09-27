@@ -9,11 +9,13 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._dataset import (
     ClosureSample,
     ClosureSampleKey,
@@ -101,7 +103,7 @@ class SmoothCompressibleRolloutSchema(StrictModule, NonTrainableState):
         dt: float,
         boundary_schedule_id: str | None = None,
         force_schedule_id: str | None = None,
-    ):
+    ) -> None:
         shape = _spatial_shape(spatial_shape)
         dtype_ = jnp.dtype(dtype)
         if not jnp.issubdtype(dtype_, jnp.floating):
@@ -199,7 +201,7 @@ class SmoothCompressibleRolloutTrajectory(StrictModule, NonTrainableState):
         trajectory_id: str,
         realization_id: str,
         time_block_id: str,
-    ):
+    ) -> None:
         if not isinstance(schema, SmoothCompressibleRolloutSchema):
             raise TypeError("schema must be a SmoothCompressibleRolloutSchema.")
         f_ = jnp.asarray(f)
@@ -287,7 +289,7 @@ class SmoothCompressibleRolloutWindowPlan(StrictModule, NonTrainableState):
         stride: int = 1,
         maximum_windows_per_trajectory: int | None = None,
         selection_salt: str = "smooth-compressible-rollout",
-    ):
+    ) -> None:
         history = _positive_integer(history_steps, "history_steps")
         horizon = _positive_integer(horizon_steps, "horizon_steps")
         stride_ = _positive_integer(stride, "stride")
@@ -393,14 +395,13 @@ class SmoothCompressibleRolloutWindow(StrictModule, NonTrainableState):
         /,
         *,
         split: DatasetSplit,
-    ):
+    ) -> None:
         if not isinstance(trajectory, SmoothCompressibleRolloutTrajectory):
             raise TypeError("trajectory must be a SmoothCompressibleRolloutTrajectory.")
         if not isinstance(plan, SmoothCompressibleRolloutWindowPlan):
             raise TypeError("plan must be a SmoothCompressibleRolloutWindowPlan.")
         split_ = str(split).strip()
-        if split_ not in ("train", "validation", "test"):
-            raise ValueError("Unknown rollout dataset split.")
+        split_ = parse(split_, DatasetSplit, "split_")
         anchor_ = plan.validate_anchor(trajectory, anchor)
         history_start = anchor_ - plan.history_steps
         target_stop = anchor_ + plan.horizon_steps
@@ -467,7 +468,7 @@ class SmoothCompressibleRolloutStatistics(StrictModule, NonTrainableState):
         partition_id: str,
         schema_id: str,
         epsilon: float,
-    ):
+    ) -> None:
         arrays = tuple(
             jnp.asarray(value)
             for value in (f_mean, f_scale, g_mean, g_scale, U_mean, U_scale)
@@ -613,7 +614,7 @@ class PreparedSmoothCompressibleRolloutDataset(StrictModule, NonTrainableState):
         window_plan: SmoothCompressibleRolloutWindowPlan,
         statistics: SmoothCompressibleRolloutStatistics,
         /,
-    ):
+    ) -> None:
         parents = tuple(trajectories)
         samples = tuple(parent_samples)
         windows_ = tuple(windows)

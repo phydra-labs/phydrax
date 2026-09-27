@@ -11,12 +11,14 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PRNGKeyArray
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import PRNGKey
 from ._base import _as_real_array
 from ._finite_feature import AbstractFiniteFeatureKernel
 
@@ -65,7 +67,7 @@ class NoncompactFeatureProposal(StrictModule, NonTrainableState):
         geometry_id: str,
         proposal_id: str,
         proposal_scale: float,
-    ):
+    ) -> None:
         frequency_array = jnp.asarray(frequencies, dtype=jnp.float64)
         direction_array = jnp.asarray(directions, dtype=jnp.float64)
         phase_array = jnp.asarray(phases, dtype=jnp.float64)
@@ -150,7 +152,7 @@ class ImportanceFeatureDiagnostics(StrictModule):
         /,
         *,
         finite_importance_variance: ArrayLike = True,
-    ):
+    ) -> None:
         log_weights = jnp.asarray(log_importance_weights, dtype=jnp.float64)
         if log_weights.ndim != 1 or log_weights.shape[0] == 0:
             raise ValueError("log_importance_weights must be a nonempty vector.")
@@ -208,7 +210,7 @@ def _multivariate_cauchy_log_density(frequencies: Array, scale: float, /) -> Arr
 
 
 def hyperbolic_feature_proposal(
-    key: PRNGKeyArray,
+    key: PRNGKey,
     dimension: int,
     sample_count: int,
     /,
@@ -246,10 +248,10 @@ def hyperbolic_feature_proposal(
     )
 
 
-def _orthogonal_frames(key: PRNGKeyArray, sample_count: int, dimension: int, /) -> Array:
+def _orthogonal_frames(key: PRNGKey, sample_count: int, dimension: int, /) -> Array:
     raw = jax.random.normal(key, (sample_count, dimension, dimension))
 
-    def orthogonal(matrix):
+    def orthogonal(matrix: Array) -> Array:
         frame, triangular = jnp.linalg.qr(matrix)
         signs = jnp.where(jnp.diag(triangular) < 0.0, -1.0, 1.0)
         return frame * signs[None, :]
@@ -258,7 +260,7 @@ def _orthogonal_frames(key: PRNGKeyArray, sample_count: int, dimension: int, /) 
 
 
 def spd_feature_proposal(
-    key: PRNGKeyArray,
+    key: PRNGKey,
     matrix_dimension: int,
     sample_count: int,
     /,
@@ -393,7 +395,7 @@ class HyperbolicRandomFeatureKernel(AbstractFiniteFeatureKernel):
         length_scale: ArrayLike,
         smoothness: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             proposal, NoncompactFeatureProposal
         ) or not proposal.geometry_id.startswith("hyperbolic-H"):
@@ -471,7 +473,7 @@ class HyperbolicRandomFeatureKernel(AbstractFiniteFeatureKernel):
         features = self.features(points)
         return jnp.sum(features * features, axis=-1)
 
-    def resample(self, key: PRNGKeyArray, /) -> HyperbolicRandomFeatureKernel:
+    def resample(self, key: PRNGKey, /) -> HyperbolicRandomFeatureKernel:
         """Return the same kernel parameters with an explicitly new proposal."""
         proposal = hyperbolic_feature_proposal(
             key,
@@ -532,7 +534,7 @@ class SPDRandomFeatureKernel(AbstractFiniteFeatureKernel):
         length_scale: ArrayLike,
         smoothness: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             proposal, NoncompactFeatureProposal
         ) or not proposal.geometry_id.startswith("spd-SPD"):
@@ -579,8 +581,8 @@ class SPDRandomFeatureKernel(AbstractFiniteFeatureKernel):
         )
 
     def _horospherical_coordinates(self, points: Array, /) -> Array:
-        def point_coordinates(point):
-            def flag_coordinates(frame):
+        def point_coordinates(point: Array) -> Array:
+            def flag_coordinates(frame: Array) -> Array:
                 rotated = frame.T @ point @ frame
                 cholesky = jnp.linalg.cholesky(rotated)
                 return 2.0 * jnp.log(jnp.diag(cholesky))
@@ -623,7 +625,7 @@ class SPDRandomFeatureKernel(AbstractFiniteFeatureKernel):
         features = self.features(points)
         return jnp.sum(features * features, axis=-1)
 
-    def resample(self, key: PRNGKeyArray, /) -> SPDRandomFeatureKernel:
+    def resample(self, key: PRNGKey, /) -> SPDRandomFeatureKernel:
         """Return the same kernel parameters with an explicitly new proposal."""
         proposal = spd_feature_proposal(
             key,

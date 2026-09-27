@@ -16,7 +16,7 @@ from phydrax.interchange import (
 )
 
 
-def test_host_inspection_is_an_immutable_non_pytree_host_record():
+def test_host_inspection_is_an_immutable_non_pytree_host_record() -> None:
     source = np.arange(6.0).reshape((3, 2))
     field = HostInspectionField(
         "velocity",
@@ -64,7 +64,7 @@ def test_host_inspection_is_an_immutable_non_pytree_host_record():
     assert len(leaves) == 1 and leaves[0] is frame
 
 
-def test_host_inspection_rejects_ambiguous_field_and_frame_layouts():
+def test_host_inspection_rejects_ambiguous_field_and_frame_layouts() -> None:
     with pytest.raises(ValueError, match="validity"):
         HostInspectionField(
             "alpha",

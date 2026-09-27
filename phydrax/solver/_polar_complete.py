@@ -10,7 +10,8 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -50,7 +51,7 @@ class MultiAxisAirfoilPolar(StrictModule, NonTrainableState):
         /,
         *,
         endpoint: str = "error",
-    ):
+    ) -> None:
         axes = tuple(
             np.asarray(axis, dtype=np.float64)
             for axis in (angle_axis, reynolds_axis, mach_axis, flap_axis)
@@ -139,7 +140,7 @@ class MultiAxisAirfoilPolar(StrictModule, NonTrainableState):
                 for query in queries
             )
 
-        def interpolate(table):
+        def interpolate(table: Array) -> Array:
             value = jnp.zeros(shape, dtype=table.dtype)
             for corner in itertools.product((0, 1), repeat=4):
                 weight = jnp.ones(shape, dtype=table.dtype)
@@ -195,7 +196,7 @@ class DynamicStallPlan(StrictModule, NonTrainableState):
         stall_angle: float,
         separation_time_scale: float,
         /,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (angle_time_scale, lift_time_scale, separation_time_scale)
@@ -288,7 +289,7 @@ class CompressibilityCorrectionPlan(StrictModule, NonTrainableState):
     model: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, model: str = "prandtl-glauert", /):
+    def __init__(self, model: str = "prandtl-glauert", /) -> None:
         if model not in ("prandtl-glauert", "karman-tsien"):
             raise ValueError("Compressibility model is unsupported.")
         self.model = model

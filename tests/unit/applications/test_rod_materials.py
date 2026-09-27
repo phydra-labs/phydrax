@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -17,7 +19,7 @@ from phydrax.applications.solid_mechanics._rod_materials import (
 )
 
 
-def _planar_rod():
+def _planar_rod() -> Any:
     return prepare_rod(
         RodPlan(
             jnp.asarray(((0, 1), (1, 2)), dtype=jnp.int32),
@@ -36,7 +38,7 @@ def _planar_rod():
     )
 
 
-def test_prepared_rod_owns_content_derived_native_sites_measures_and_inertia():
+def test_prepared_rod_owns_content_derived_native_sites_measures_and_inertia() -> None:
     first = _planar_rod()
     second = _planar_rod()
 
@@ -63,7 +65,7 @@ def test_prepared_rod_owns_content_derived_native_sites_measures_and_inertia():
     assert first.bend_twist_workset.workset_id == second.bend_twist_workset.workset_id
 
 
-def test_lowered_linear_material_reproduces_current_resultants_and_energy():
+def test_lowered_linear_material_reproduces_current_resultants_and_energy() -> None:
     rod = _planar_rod()
     rest = rod.initialize_state()
     state = RodState(
@@ -125,7 +127,7 @@ def test_lowered_linear_material_reproduces_current_resultants_and_energy():
     )
 
 
-def test_kelvin_voigt_trial_is_zero_history_nonmutating_and_dissipative():
+def test_kelvin_voigt_trial_is_zero_history_nonmutating_and_dissipative() -> None:
     rod = _planar_rod()
     stiffness = rod.plan.stretch_shear_stiffness
     viscosity = jnp.asarray(

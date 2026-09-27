@@ -4,21 +4,23 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._regulators import FunctionalRGStatus
 from ._wetterich import _volume_factor
 
 
-FermionBosonRepresentation = Literal["gross-neveu", "yukawa", "mixed"]
+FermionBosonRepresentation: TypeAlias = Literal["gross-neveu", "yukawa", "mixed"]
 
 
 class FiniteTemperatureThresholds(StrictModule):
@@ -44,7 +46,7 @@ class MatsubaraThresholdPlan(StrictModule, NonTrainableState):
     maximum_terms: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, maximum_mode: int, /, *, maximum_terms: int = 4096):
+    def __init__(self, maximum_mode: int, /, *, maximum_terms: int = 4096) -> None:
         mode = int(maximum_mode)
         capacity = int(maximum_terms)
         term_count = (2 * mode + 1) + 2 * mode
@@ -163,7 +165,7 @@ class FermionBosonTruncationState(StrictModule):
         yukawa_squared: ArrayLike,
         four_fermion: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value).reshape(())
             for value in (
@@ -230,19 +232,17 @@ class GrossNeveuYukawaFlowPlan(StrictModule, NonTrainableState):
         /,
         *,
         representation: FermionBosonRepresentation = "yukawa",
-    ):
+    ) -> None:
         flavors = int(fermion_flavors)
         scalars = int(scalar_components)
         dimension_ = float(dimension)
         if not isinstance(matsubara, MatsubaraThresholdPlan):
             raise TypeError("matsubara must be MatsubaraThresholdPlan.")
-        if (
-            flavors <= 0
-            or scalars <= 0
-            or not 2.0 < dimension_ <= 4.0
-            or representation not in ("gross-neveu", "yukawa", "mixed")
-        ):
+        if flavors <= 0 or scalars <= 0 or not 2.0 < dimension_ <= 4.0:
             raise ValueError("Gross--Neveu/Yukawa truncation data are invalid.")
+        representation = parse(
+            representation, FermionBosonRepresentation, "representation"
+        )
         self.matsubara = matsubara
         self.fermion_flavors = flavors
         self.scalar_components = scalars

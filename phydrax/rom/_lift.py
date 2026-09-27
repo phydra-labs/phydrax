@@ -9,7 +9,9 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from phydrax.ein import contract
 
@@ -46,7 +48,7 @@ class ReducedLiftArtifact(StrictModule, NonTrainableState):
         term_ids: Sequence[str],
         evidence_ids: Sequence[str],
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(reduction, TrialTestReduction):
             raise TypeError("reduction must be a TrialTestReduction.")
         if not isinstance(trace_operator, AbstractLinearOperator):
@@ -111,7 +113,7 @@ class ReducedLiftArtifact(StrictModule, NonTrainableState):
             }
         )
 
-    def evaluate(self, coefficients: ArrayLike, /):
+    def evaluate(self, coefficients: ArrayLike, /) -> Array:
         values = jnp.asarray(coefficients)
         if values.shape[-1:] != (len(self.term_ids),):
             raise ValueError("Lift coefficients must end in the lift-term axis.")

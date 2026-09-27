@@ -13,12 +13,14 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState, parameter_field
 from ....dynamics import (
+    DiscreteStepContext,
     DiscreteSystem,
     DiscreteTransitionResult,
     InputLayout,
@@ -109,7 +111,7 @@ class PotvinFuglevand2017Parameters(StrictModule):
         adaptation_scale: ArrayLike,
         adaptation_time_constant_s: ArrayLike,
         contraction_time_change_ratio: ArrayLike,
-    ):
+    ) -> None:
         vectors = (
             _vector(recruitment_threshold, "recruitment_threshold"),
             _vector(rested_twitch_force, "rested_twitch_force"),
@@ -165,7 +167,7 @@ class PotvinFuglevand2017State(StrictModule, NonTrainableState):
         recruitment_duration_s: ArrayLike,
         current_twitch_force: ArrayLike,
         /,
-    ):
+    ) -> None:
         duration = _vector(recruitment_duration_s, "recruitment_duration_s")
         capacity = _vector(current_twitch_force, "current_twitch_force")
         if duration.shape != capacity.shape:
@@ -255,7 +257,7 @@ class PotvinFuglevand2017Plan(StrictModule, NonTrainableState):
         peripheral_fatigue: bool = True,
         maximum_step_s: float = 0.1,
         dtype: Any = np.float64,
-    ):
+    ) -> None:
         if isinstance(unit_count, bool) or not isinstance(unit_count, int):
             raise TypeError("unit_count must be an integer.")
         if unit_count < 2:
@@ -328,7 +330,12 @@ class PotvinFuglevand2017Plan(StrictModule, NonTrainableState):
         """Return the canonical one-population array-state dynamics view."""
         plan = self
 
-        def transition(context, packed_state, inputs, parameters):
+        def transition(
+            context: DiscreteStepContext,
+            packed_state: Array,
+            inputs: Array,
+            parameters: object,
+        ) -> DiscreteTransitionResult:
             if not isinstance(parameters, PotvinFuglevand2017Parameters):
                 raise TypeError(
                     "Potvin--Fuglevand DiscreteSystem args must be model parameters."
@@ -369,7 +376,7 @@ class PreparedPotvinFuglevand2017(StrictModule):
         plan: PotvinFuglevand2017Plan,
         parameters: PotvinFuglevand2017Parameters,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, PotvinFuglevand2017Plan):
             raise TypeError("plan must be PotvinFuglevand2017Plan.")
         if not isinstance(parameters, PotvinFuglevand2017Parameters):

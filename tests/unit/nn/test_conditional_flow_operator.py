@@ -9,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def _dataset(*, cases=6, size=4):
+def _dataset(*, cases: Any = 6, size: Any = 4) -> Any:
     nodes = jnp.linspace(0.0, 1.0, size, endpoint=False)
     axis = phx.nn.operator.OperatorAxis(
         "x",
@@ -28,7 +28,7 @@ def _dataset(*, cases=6, size=4):
     )
 
 
-def _model(dataset, *, seed=0):
+def _model(dataset: Any, *, seed: Any = 0) -> Any:
     batch = dataset.batch
     size = batch.require_single_query().sample_shape[0]
     location = phx.nn.operator.architectures.FNO(
@@ -67,7 +67,9 @@ def _model(dataset, *, seed=0):
     )
 
 
-def test_native_flow_operator_distribution_batches_samples_logs_and_differentiates():
+def test_native_flow_operator_distribution_batches_samples_logs_and_differentiates() -> (
+    None
+):
     dataset = _dataset()
     model = _model(dataset)
     batch = dataset.batch
@@ -117,7 +119,7 @@ def test_native_flow_operator_distribution_batches_samples_logs_and_differentiat
     assert model.operator_contract.capabilities.topology == "unused"
 
 
-def test_native_flow_fixed_masks_and_positive_scale_survive_trainable_updates():
+def test_native_flow_fixed_masks_and_positive_scale_survive_trainable_updates() -> None:
     layer = phx.nn.flows.AffineCouplingLayer(
         2,
         0,
@@ -152,7 +154,9 @@ def test_native_flow_fixed_masks_and_positive_scale_survive_trainable_updates():
     assert jnp.isfinite(updated.log_prob(updated.location))
 
 
-def test_native_flow_fixed_query_accepts_loader_broadcast_but_rejects_changed_geometry():
+def test_native_flow_fixed_query_accepts_loader_broadcast_but_rejects_changed_geometry() -> (
+    None
+):
     dataset = _dataset()
     model = _model(dataset)
     loader = phx.nn.operator.training.OperatorBatchLoader(
@@ -180,7 +184,7 @@ def test_native_flow_fixed_query_accepts_loader_broadcast_but_rejects_changed_ge
         jax.block_until_ready(model.distribution(changed).location)
 
 
-def test_native_flow_operator_trains_through_fit_operator():
+def test_native_flow_operator_trains_through_fit_operator() -> None:
     dataset = _dataset()
     result = phx.nn.operator.training.fit_operator(
         _model(dataset),
@@ -203,7 +207,7 @@ def test_native_flow_operator_trains_through_fit_operator():
     )
 
 
-def test_native_flow_fit_checkpoint_resume_is_bitwise_exact(tmp_path):
+def test_native_flow_fit_checkpoint_resume_is_bitwise_exact(tmp_path: Any) -> None:
     dataset = _dataset(cases=4)
     model = _model(dataset, seed=20)
     common: dict[str, Any] = {

@@ -8,14 +8,17 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....solver.maxwell import (
     CompatibleMaxwellRunResult,
+    CompatibleMaxwellState,
     PreparedCompatibleMaxwell,
+    PreparedMaxwellSource,
     solve_compatible_maxwell,
 )
 
@@ -27,7 +30,7 @@ class GaussianDerivativeWaveform(StrictModule, NonTrainableState):
 
     def __init__(
         self, center_frequency_Hz: float, delay_s: float, amplitude: float = 1.0, /
-    ):
+    ) -> None:
         frequency, delay, amplitude_ = (
             float(center_frequency_Hz),
             float(delay_s),
@@ -76,7 +79,7 @@ class DispersiveFullWaveGPRPlan(StrictModule, NonTrainableState):
         step_size_s: ArrayLike,
         step_count: int,
         /,
-    ):
+    ) -> None:
         if not isinstance(runtime, PreparedCompatibleMaxwell):
             raise TypeError("GPR requires a prepared compatible Maxwell runtime.")
         if not runtime.capabilities.dispersive or not runtime.capabilities.passive:
@@ -85,7 +88,10 @@ class DispersiveFullWaveGPRPlan(StrictModule, NonTrainableState):
             raise ValueError("Full-wave GPR requires prepared Maxwell CPML.")
         if not runtime.observers or not runtime.sources:
             raise ValueError("GPR runtime requires explicit sources and observers.")
-        if any(source.envelope is None for source in runtime.sources):
+        if any(
+            not isinstance(source, PreparedMaxwellSource) or source.envelope is None
+            for source in runtime.sources
+        ):
             raise ValueError("GPR sources require explicit real transient envelopes.")
         step = jnp.asarray(step_size_s)
         steps = int(step_count)
@@ -113,7 +119,7 @@ class DispersiveFullWaveGPRPlan(StrictModule, NonTrainableState):
         args: object = None,
         /,
         *,
-        initial_state=None,
+        initial_state: CompatibleMaxwellState | None = None,
         start_time_s: ArrayLike = 0.0,
     ) -> GPRResult:
         start = jnp.asarray(start_time_s)

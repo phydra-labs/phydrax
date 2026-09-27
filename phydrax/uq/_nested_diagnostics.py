@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 
@@ -52,7 +53,7 @@ class NestedSamplingDiagnostics(StrictModule):
         covariance_rank: Array,
         covariance_condition: Array,
         failures: tuple[str, ...],
-    ):
+    ) -> None:
         self.insertion_ranks = jnp.asarray(insertion_ranks, dtype=jnp.int32)
         self.insertion_rank_pvalue = jnp.asarray(insertion_rank_pvalue)
         self.rolling_insertion_rank_pvalues = jnp.asarray(rolling_insertion_rank_pvalues)

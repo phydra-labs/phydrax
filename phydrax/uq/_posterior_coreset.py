@@ -10,12 +10,14 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, ArrayLike, Key
+from jax.typing import ArrayLike
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._diagnostics import MCMCDiagnostics
 from ._mcmc import MCMCResult
 from ._posterior import PosteriorProblem
@@ -42,7 +44,7 @@ class SteinThinning(StrictModule):
         beta: float = -0.5,
         offset: float = 1.0,
         length_scale: ArrayLike | None = None,
-    ):
+    ) -> None:
         count = int(num_points)
         if count <= 0:
             raise ValueError("num_points must be positive.")
@@ -131,7 +133,7 @@ def thin_posterior(
     method: SteinThinning,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> PosteriorCoreset:
     """Compress each MCMC chain without changing the source result's semantics."""
     if not isinstance(result, MCMCResult):
@@ -260,7 +262,7 @@ def _thin_chain(
     scores: Array,
     method: SteinThinning,
     precision: Array,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> tuple[Array, Array]:
     num_draws = points.shape[0]
@@ -277,7 +279,9 @@ def _thin_chain(
     indices = jnp.zeros((method.num_points,), dtype=jnp.int32)
     penalty = jnp.zeros((num_draws,), dtype=points.dtype)
 
-    def body(iteration, state):
+    def body(
+        iteration: int | Array, state: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
         chosen, used, accumulated = state
         objective = diagonal + 2.0 * accumulated
         minimum = jnp.min(jnp.where(~used, objective, jnp.inf))

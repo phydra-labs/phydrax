@@ -10,11 +10,13 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._boundary_open import (
     apply_open_boundaries,
     LatticeBoltzmannBoundaryState,
@@ -61,7 +63,7 @@ class LatticeBoltzmannGeometrySnapshot(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, LatticeBoltzmannDiscretization):
             raise TypeError("Geometry snapshot requires an LBM discretization.")
         mask = np.asarray(fluid_mask, dtype=np.bool_)
@@ -122,7 +124,7 @@ class LatticeBoltzmannBoundaryPlan(StrictModule, NonTrainableState):
         *,
         geometry: LatticeBoltzmannGeometrySnapshot | None = None,
         moving_faces: Sequence[WallFace] = (),
-    ):
+    ) -> None:
         if geometry is not None and not isinstance(
             geometry, LatticeBoltzmannGeometrySnapshot
         ):
@@ -130,11 +132,11 @@ class LatticeBoltzmannBoundaryPlan(StrictModule, NonTrainableState):
         faces_list: list[WallFace] = []
         for axis, side in moving_faces:
             axis_ = str(axis)
-            if not axis_ or side not in ("lower", "upper"):
+            if not axis_:
                 raise ValueError(
                     "Moving wall faces require an axis and lower/upper side."
                 )
-            faces_list.append((axis_, side))
+            faces_list.append((axis_, parse(side, WallSide, "side")))
         faces = tuple(faces_list)
         if len(set(faces)) != len(faces):
             raise ValueError("Moving wall faces must be unique.")
@@ -170,7 +172,7 @@ class PreparedLatticeBoltzmannBoundary(StrictModule, NonTrainableState):
         discretization: LatticeBoltzmannDiscretization,
         plan: LatticeBoltzmannBoundaryPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(discretization, LatticeBoltzmannDiscretization):
             raise TypeError("Boundary preparation requires an LBM discretization.")
         if not isinstance(plan, LatticeBoltzmannBoundaryPlan):
@@ -313,7 +315,7 @@ class LatticeBoltzmannBoundaryParameters(StrictModule):
         body_linear_velocities: ArrayLike | None = None,
         body_angular_velocities: ArrayLike | None = None,
         time_step: ArrayLike = 1.0,
-    ):
+    ) -> None:
         self.halo_populations = (
             None if halo_populations is None else jnp.asarray(halo_populations)
         )
@@ -369,7 +371,7 @@ class StagedLatticeBoltzmannBoundaryPlan(StrictModule, NonTrainableState):
         velocity_parameter_ids: Sequence[str] = (),
         pressure_parameter_ids: Sequence[str] = (),
         convective_parameter_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(topology, CompiledLatticeBoltzmannLinkTopology):
             raise TypeError("topology must be CompiledLatticeBoltzmannLinkTopology.")
         self.topology = topology
@@ -757,7 +759,7 @@ class PreparedStagedLatticeBoltzmannBoundary(StrictModule, NonTrainableState):
         velocity_parameter_ids: Sequence[str] = (),
         pressure_parameter_ids: Sequence[str] = (),
         convective_parameter_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(discretization, LatticeBoltzmannDiscretization):
             raise TypeError("discretization must be LatticeBoltzmannDiscretization.")
         if not isinstance(topology, CompiledLatticeBoltzmannLinkTopology):

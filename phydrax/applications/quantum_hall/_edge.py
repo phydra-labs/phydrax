@@ -11,7 +11,7 @@ from math import isfinite, pi
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -62,7 +62,7 @@ class HallRibbonPlan(StrictModule, NonTrainableState):
         open_axis: int = 0,
         twist_count: int = 81,
         residual_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(pencil, PreparedPeriodicOrbitalPencil):
             raise TypeError("pencil must be PreparedPeriodicOrbitalPencil.")
         width_ = int(width)

@@ -11,13 +11,14 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._holomorphic import HolomorphicPotentialProvider
 from ..._model import TRIAL_SPACE_CERTIFICATE_KEY
 from ..._strict import StrictModule
 from ..._trainable import ArrayRole, NonTrainableState, resolve_array_roles
+from ...typing import PRNGKey
 from ._core import _AbstractTrialSpaceField, TrialSpaceCertificate
 
 
@@ -83,7 +84,9 @@ class HarmonicPotential2D(_AbstractTrialSpaceField):
     out_size: Literal["scalar"] = eqx.field(static=True)
     _certificate: TrialSpaceCertificate
 
-    def __init__(self, potential: HolomorphicPotentialProvider, /, *, branch: int = 0):
+    def __init__(
+        self, potential: HolomorphicPotentialProvider, /, *, branch: int = 0
+    ) -> None:
         if not isinstance(potential, HolomorphicPotentialProvider):
             raise TypeError("potential must implement HolomorphicPotentialProvider.")
         certificate = potential.holomorphic_certificate()
@@ -116,7 +119,7 @@ class HarmonicPotential2D(_AbstractTrialSpaceField):
             representation_id=representation_id,
         )
 
-    def __call__(self, coordinates: Array, /, *, key=None) -> Array:
+    def __call__(self, coordinates: Array, /, *, key: PRNGKey | None = None) -> Array:
         del key
         value = self.potential(_complex_coordinate(coordinates))[self.branch]
         return jnp.real(value)
@@ -142,7 +145,7 @@ class BiharmonicPotential2D(_AbstractTrialSpaceField):
         *,
         phi_branch: int = 0,
         psi_branch: int = 1,
-    ):
+    ) -> None:
         if not isinstance(potential, HolomorphicPotentialProvider):
             raise TypeError("potential must implement HolomorphicPotentialProvider.")
         holomorphic = potential.holomorphic_certificate()
@@ -183,7 +186,7 @@ class BiharmonicPotential2D(_AbstractTrialSpaceField):
             representation_id=representation_id,
         )
 
-    def __call__(self, coordinates: Array, /, *, key=None) -> Array:
+    def __call__(self, coordinates: Array, /, *, key: PRNGKey | None = None) -> Array:
         del key
         z = _complex_coordinate(coordinates)
         values = self.potential(z)
@@ -212,7 +215,7 @@ class PlaneIsotropicMaterial(StrictModule, NonTrainableState):
         /,
         *,
         hypothesis: Literal["plane_strain", "plane_stress"] = "plane_strain",
-    ):
+    ) -> None:
         lambda_value = float(lambda_)
         mu_value = float(mu)
         if hypothesis not in ("plane_strain", "plane_stress"):
@@ -269,7 +272,7 @@ class PlaneElasticityPotential2D(_AbstractTrialSpaceField):
         phi_branch: int = 0,
         psi_branch: int = 1,
         output: Literal["mixed", "stress"] = "mixed",
-    ):
+    ) -> None:
         if not isinstance(potential, HolomorphicPotentialProvider):
             raise TypeError("potential must implement HolomorphicPotentialProvider.")
         if not isinstance(material, PlaneIsotropicMaterial):
@@ -323,7 +326,7 @@ class PlaneElasticityPotential2D(_AbstractTrialSpaceField):
             representation_id=representation_id,
         )
 
-    def __call__(self, coordinates: Array, /, *, key=None) -> Array:
+    def __call__(self, coordinates: Array, /, *, key: PRNGKey | None = None) -> Array:
         del key
         z = _complex_coordinate(coordinates)
         jet = self.potential.jet(z, 2)

@@ -8,7 +8,8 @@ from collections.abc import Callable
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -26,7 +27,7 @@ class _MinkowskiMetricMap(StrictModule):
         dimension: int,
         convention: LorentzianConvention,
         /,
-    ):
+    ) -> None:
         self.dimension = int(dimension)
         self.convention = convention
 
@@ -48,7 +49,7 @@ class _FLRWMetricMap(StrictModule):
         spatial_curvature: int,
         convention: LorentzianConvention,
         /,
-    ):
+    ) -> None:
         self.scale_factor = scale_factor
         self.spatial_curvature = int(spatial_curvature)
         self.convention = convention
@@ -119,7 +120,7 @@ class _ADMMetricMap(StrictModule):
         spatial_dimension: int,
         convention: LorentzianConvention,
         /,
-    ):
+    ) -> None:
         self.lapse = lapse
         self.shift = shift
         self.spatial_metric = spatial_metric
@@ -160,7 +161,7 @@ class _SchwarzschildMetricMap(StrictModule):
     mass: Array
     convention: LorentzianConvention = eqx.field(static=True)
 
-    def __init__(self, mass: ArrayLike, convention: LorentzianConvention, /):
+    def __init__(self, mass: ArrayLike, convention: LorentzianConvention, /) -> None:
         mass_array = jnp.asarray(mass)
         if mass_array.shape != ():
             raise ValueError("Schwarzschild mass must be scalar.")

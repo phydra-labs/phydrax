@@ -4,16 +4,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from math import isfinite
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._tree_math import (
@@ -49,6 +52,17 @@ from ._programming import (
     QuadraticProgram,
     solve_quadratic_program,
 )
+
+
+_Unravel: TypeAlias = Callable[[Array], PyTree[Any]]
+_BoundMetadata: TypeAlias = (
+    tuple[tuple[tuple[int, ...], str, tuple[Any, ...]], ...] | None
+)
+# (trial, rate, evaluations, derivative evaluations, accepted, parameters, value,
+#  violation, accepted rate, finite seen, correction used)
+_FilterCarry: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +103,9 @@ def _constraint_layout(
     args: Any,
     /,
 ) -> _ConstraintLayout:
-    def materialize_dynamic(bound, template, *, name):
+    def materialize_dynamic(
+        bound: PyTree[Any], template: PyTree[jax.ShapeDtypeStruct], *, name: str
+    ) -> Array:
         template_structure = jax.tree.structure(template)
         if jax.tree.structure(bound) == template_structure:
             bound_leaves = jax.tree.leaves(bound)
@@ -115,7 +131,13 @@ def _constraint_layout(
             raise ValueError("A constrained value must contain at least one array leaf.")
         return jnp.concatenate(arrays)
 
-    def materialize_metadata(metadata, bound, template, *, name):
+    def materialize_metadata(
+        metadata: _BoundMetadata,
+        bound: PyTree[Any],
+        template: PyTree[jax.ShapeDtypeStruct],
+        *,
+        name: str,
+    ) -> np.ndarray | None:
         if metadata is None:
             return None
         metadata_leaves = [
@@ -155,16 +177,16 @@ def _constraint_layout(
     offset = 0
 
     def append_bounds(
-        lower,
-        upper,
-        lower_metadata,
-        upper_metadata,
-        template,
-        segment_sources,
+        lower: PyTree[Any],
+        upper: PyTree[Any],
+        lower_metadata: _BoundMetadata,
+        upper_metadata: _BoundMetadata,
+        template: PyTree[jax.ShapeDtypeStruct],
+        segment_sources: tuple[str, ...],
         *,
-        lower_name,
-        upper_name,
-    ):
+        lower_name: str,
+        upper_name: str,
+    ) -> None:
         nonlocal offset
         lower_flat = materialize_dynamic(lower, template, name=lower_name)
         upper_flat = materialize_dynamic(upper, template, name=upper_name)
@@ -333,13 +355,13 @@ def _derivatives(
     parameters: PyTree[Any],
     args: Any,
     /,
-):
+) -> tuple[Array, _Unravel, Array, Array, Array, Array, Array, Array]:
     flat_parameters, unravel = ravel_pytree(parameters)
 
-    def flat_value(candidate):
+    def flat_value(candidate: Array) -> Array:
         return problem.value(unravel(candidate), args)[0]
 
-    def flat_constraints(candidate):
+    def flat_constraints(candidate: Array) -> tuple[Array, Array]:
         return _canonical_constraints(problem, layout, unravel(candidate), args)
 
     value, gradient = jax.value_and_grad(flat_value)(flat_parameters)
@@ -379,7 +401,7 @@ def _stationarity_norm(lagrangian_gradient: Array, /) -> Array:
 def _kkt_metrics(
     problem: MinimizationProblem,
     parameters: PyTree[Any],
-    unravel,
+    unravel: _Unravel,
     objective_gradient: Array,
     equality: Array,
     inequality: Array,
@@ -424,7 +446,7 @@ def _active_constraint_count(
 
 def _constraint_certificate(
     layout: _ConstraintLayout,
-    unravel,
+    unravel: _Unravel,
     lagrangian_gradient: Array,
     equality_multipliers: Array,
     inequality_multipliers: Array,
@@ -466,7 +488,7 @@ class FilterGlobalization(StrictModule):
         violation_margin: float = 1e-4,
         correction_regularization: float = 1e-10,
         correction_limit: float = 2.0,
-    ):
+    ) -> None:
         objective = float(objective_margin)
         violation = float(violation_margin)
         regularization = float(correction_regularization)
@@ -537,7 +559,7 @@ class AugmentedLagrangian(AbstractMinimizationMethod):
         required_feasibility_reduction: float = 0.25,
         maximum_outer_steps: int = 20,
         inner_maximum_steps: int = 100,
-    ):
+    ) -> None:
         penalty = float(initial_penalty)
         increase = float(penalty_increase)
         maximum = float(maximum_penalty)
@@ -630,7 +652,7 @@ class SQP(AbstractMinimizationMethod):
         max_dense_dimension: int = 512,
         active_tolerance: float = 1e-8,
         hessian_update: Literal["bfgs", "sr1", "exact"] = "bfgs",
-    ):
+    ) -> None:
         search = ArmijoLineSearch() if line_search is None else line_search
         scalars = tuple(
             float(value)
@@ -788,7 +810,9 @@ def _solve_augmented_lagrangian(
         maximum_evaluations=inner_evaluation_budget,
     )
 
-    def augmented_objective(candidate, augmented_args):
+    def augmented_objective(
+        candidate: PyTree[Any], augmented_args: tuple[Any, Array, Array, Array]
+    ) -> Array:
         (
             dynamic_args,
             equality_multipliers,
@@ -861,7 +885,7 @@ def _solve_augmented_lagrangian(
         0 if inner_evaluation_budget is None else inner_evaluation_budget + 1
     )
 
-    def condition(state):
+    def condition(state: _AugmentedLagrangianState) -> Array:
         within_evaluations = (
             jnp.asarray(True)
             if termination.maximum_evaluations is None
@@ -874,7 +898,7 @@ def _solve_augmented_lagrangian(
             & within_evaluations
         )
 
-    def body(state):
+    def body(state: _AugmentedLagrangianState) -> _AugmentedLagrangianState:
         inner = inner_method.solve(
             inner_problem,
             state.parameters,
@@ -888,7 +912,7 @@ def _solve_augmented_lagrangian(
         )
         inner_diagnostics = inner.diagnostics
 
-        def observed(count):
+        def observed(count: ArrayLike) -> Array:
             return jnp.maximum(jnp.asarray(count, dtype=jnp.int32), 0)
 
         objective_evaluations = state.objective_evaluations + observed(
@@ -939,7 +963,7 @@ def _solve_augmented_lagrangian(
             | (inner_status == int(OptimizationStatus.DIVERGENCE))
         )
 
-        def reject_inner(_):
+        def reject_inner(_: None) -> _AugmentedLagrangianState:
             return _AugmentedLagrangianState(
                 outer=state.outer + 1,
                 iterations=state.iterations,
@@ -972,7 +996,7 @@ def _solve_augmented_lagrangian(
                 initial_optimality=state.initial_optimality,
             )
 
-        def accept_inner(_):
+        def accept_inner(_operand: None) -> _AugmentedLagrangianState:
             candidate_parameters = inner.parameters
             final_step_norm = _tree_norm(
                 jax.tree.map(
@@ -1273,7 +1297,7 @@ def _exact_lagrangian_hessian(
 ) -> Array:
     coordinates, unflatten = ravel_pytree(parameters)
 
-    def lagrangian(value):
+    def lagrangian(value: Array) -> Array:
         point = unflatten(value)
         objective = problem.value(point, args)[0]
         equality, inequality = _canonical_constraints(
@@ -1306,7 +1330,7 @@ class _FilterSearchResult(StrictModule):
 def _filter_backtracking(
     problem: MinimizationProblem,
     layout: _ConstraintLayout,
-    unravel,
+    unravel: _Unravel,
     flat_parameters: Array,
     value: Array,
     equality: Array,
@@ -1339,7 +1363,9 @@ def _filter_backtracking(
     local_size = jnp.minimum(filter_size + 1, filter_objectives.size)
     initial_rate = jnp.asarray(line_search.initial_rate, dtype=flat_parameters.dtype)
 
-    def evaluate(candidate, candidate_rate):
+    def evaluate(
+        candidate: Array, candidate_rate: Array
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
         candidate_parameters = unravel(candidate)
         candidate_value = problem.value(candidate_parameters, args)[0]
         candidate_equality, candidate_inequality = _canonical_constraints(
@@ -1392,7 +1418,7 @@ def _filter_backtracking(
             acceptable,
         )
 
-    def condition(carry):
+    def condition(carry: _FilterCarry) -> Array:
         trial, rate, _, _, accepted, *_ = carry
         return (
             (trial < line_search.maximum_steps)
@@ -1400,7 +1426,7 @@ def _filter_backtracking(
             & (rate >= line_search.minimum_rate)
         )
 
-    def body(carry):
+    def body(carry: _FilterCarry) -> _FilterCarry:
         (
             trial,
             rate,
@@ -1426,7 +1452,7 @@ def _filter_backtracking(
 
         if second_order_correction:
 
-            def canonical(vector):
+            def canonical(vector: Array) -> tuple[Array, Array]:
                 return _canonical_constraints(
                     problem,
                     layout,
@@ -1681,7 +1707,7 @@ def _solve_sqp(
         initial_optimality=jnp.asarray(jnp.nan, dtype=flat_parameters.dtype),
     )
 
-    def condition(state):
+    def condition(state: _SQPState) -> Array:
         within_evaluations = (
             jnp.asarray(True)
             if termination.maximum_evaluations is None
@@ -1693,7 +1719,7 @@ def _solve_sqp(
             & within_evaluations
         )
 
-    def body(state):
+    def body(state: _SQPState) -> _SQPState:
         (
             flat_parameters,
             unravel,
@@ -1733,7 +1759,7 @@ def _solve_sqp(
         )
         converged = optimality <= termination.optimality_threshold(initial_optimality)
 
-        def finish_model(_):
+        def finish_model(_: None) -> _SQPState:
             return _SQPState(
                 iteration=state.iteration,
                 iterations=state.iterations,
@@ -1762,7 +1788,7 @@ def _solve_sqp(
                 initial_optimality=initial_optimality,
             )
 
-        def take_step(_):
+        def take_step(_operand: None) -> _SQPState:
             qp = QuadraticProgram(
                 state.hessian,
                 gradient,
@@ -1818,7 +1844,7 @@ def _solve_sqp(
                 jnp.zeros_like(flat_parameters),
             )
 
-            def merit(candidate):
+            def merit(candidate: Array) -> Array:
                 candidate_parameters = unravel(candidate)
                 candidate_value = problem.value(candidate_parameters, args)[0]
                 candidate_equality, candidate_inequality = _canonical_constraints(
@@ -1880,7 +1906,7 @@ def _solve_sqp(
                 )
             )
 
-            def reject_direction(_):
+            def reject_direction(_: None) -> _SQPState:
                 return _SQPState(
                     iteration=state.iteration,
                     iterations=state.iterations,
@@ -1908,7 +1934,7 @@ def _solve_sqp(
                     initial_optimality=initial_optimality,
                 )
 
-            def globalize(_):
+            def globalize(_: None) -> _SQPState:
                 if method.filter_globalization is None:
                     search = armijo_backtracking(
                         merit,
@@ -1953,7 +1979,7 @@ def _solve_sqp(
                 globalization_evaluations = state.globalization_evaluations + evaluations
                 final_step_norm = jnp.linalg.norm(search.parameters - flat_parameters)
 
-                def reject_search(_):
+                def reject_search(_: None) -> _SQPState:
                     return _SQPState(
                         iteration=state.iteration + 1,
                         iterations=state.iteration + 1,
@@ -1982,7 +2008,7 @@ def _solve_sqp(
                         initial_optimality=initial_optimality,
                     )
 
-                def accept_search(_):
+                def accept_search(_operand: None) -> _SQPState:
                     previous_lagrangian_gradient = _lagrangian_gradient(
                         gradient,
                         equality_jacobian,
@@ -2057,6 +2083,11 @@ def _solve_sqp(
                         accepted_filter_violations = state.filter_violations
                         accepted_filter_size = state.filter_size
                     else:
+                        # The filter branch above produced this search result.
+                        if not (isinstance(search, _FilterSearchResult)):
+                            raise RuntimeError(
+                                "Internal invariant failed: isinstance(search, _FilterSearchResult)."
+                            )
                         filter_insertion = jnp.minimum(
                             state.filter_size,
                             state.filter_objectives.size - 1,

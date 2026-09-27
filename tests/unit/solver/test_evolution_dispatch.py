@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from typing import cast
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -38,7 +38,9 @@ class _Mean(StrictModule):
     weight: jax.Array = parameter_field()
 
 
-def _finite_only_at_anchor(parameters, model_state, fixed, payload, keys):
+def _finite_only_at_anchor(
+    parameters: Any, model_state: Any, fixed: Any, payload: Any, keys: Any
+) -> Any:
     del fixed, keys
     at_anchor = jnp.all(parameters.weight == payload.objective)
     value = jnp.where(at_anchor, jnp.sum(parameters.weight**2), jnp.nan)
@@ -73,12 +75,12 @@ def _scalar_training_solver() -> FunctionalSolver:
     return FunctionalSolver(functions={"u": field}, terms=(term,))
 
 
-def test_native_evolution_strategy_requires_antithetic_population():
+def test_native_evolution_strategy_requires_antithetic_population() -> None:
     with pytest.raises(ValueError, match="even integer"):
         phx.optim.OpenEvolutionStrategy(3)
 
 
-def test_unrelated_optimizer_object_is_rejected_before_training():
+def test_unrelated_optimizer_object_is_rejected_before_training() -> None:
     with pytest.raises(TypeError, match="Optax transformation"):
         solve(
             _DUMMY_SOLVER,
@@ -87,7 +89,7 @@ def test_unrelated_optimizer_object_is_rejected_before_training():
         )
 
 
-def test_evaluation_parameters_remains_optax_only_for_evolution():
+def test_evaluation_parameters_remains_optax_only_for_evolution() -> None:
     algorithm = phx.optim.OpenEvolutionStrategy(8)
 
     with pytest.raises(ValueError, match="only for Optax"):
@@ -101,7 +103,7 @@ def test_evaluation_parameters_remains_optax_only_for_evolution():
         )
 
 
-def test_distribution_evolution_delivers_cadenced_session_metrics():
+def test_distribution_evolution_delivers_cadenced_session_metrics() -> None:
     solver = _scalar_training_solver()
     events = []
     session = phx.execution.IterationSession(
@@ -136,7 +138,7 @@ def test_distribution_evolution_delivers_cadenced_session_metrics():
     assert "train/loss" in events[1].record.metrics.metric_names
 
 
-def test_distribution_evolution_generation_without_finite_fitness_rolls_back():
+def test_distribution_evolution_generation_without_finite_fitness_rolls_back() -> None:
     tree = _Mean(jnp.asarray([1.0, -2.0]))
     kernel = prepare_training_kernel(
         tree,

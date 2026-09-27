@@ -5,15 +5,16 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
+from .._dtype_names import inexact_result_type
 from .._fingerprint import canonical_fingerprint
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
@@ -28,6 +29,10 @@ from ._unstructured_incompressible import (
     UnstructuredPressureProjectionPlan,
     UnstructuredPressureProjectionResult,
 )
+
+
+if TYPE_CHECKING:
+    from ..discretization.finite_volume import UnstructuredFiniteVolumeDiscretization
 
 
 UNSTRUCTURED_LES_SUCCESS = 0
@@ -57,7 +62,7 @@ class UnstructuredLowMachLESStepInputs(StrictModule):
         molecular_thermal_conductivity: ArrayLike,
         molecular_scalar_diffusivities: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.temperature = _real_inexact(temperature, "temperature")
         self.specific_heat_capacity_pressure = _real_inexact(
             specific_heat_capacity_pressure, "specific_heat_capacity_pressure"
@@ -97,7 +102,7 @@ class UnstructuredLowMachLESRestartState(StrictModule):
         pressure_increment: ArrayLike,
         accepted_steps: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(conservative, UnstructuredLowMachLESState):
             raise TypeError("conservative must be UnstructuredLowMachLESState.")
         enthalpy = _real_inexact(enthalpy_density, "enthalpy_density")
@@ -215,7 +220,7 @@ class UnstructuredLowMachLESFixedStepMethod(AbstractFixedStepMethod, NonTrainabl
         pressure_tolerance: float = 1.0e-9,
         pressure_iterations: int = 200,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedUnstructuredLowMachLES):
             raise TypeError("dynamics must be PreparedUnstructuredLowMachLES.")
         raw_step = np.asarray(step_size)
@@ -1107,7 +1112,7 @@ def _step_status(evidence: UnstructuredLowMachLESStepEvidence, /) -> Array:
     )
 
 
-def _frequency_step(frequency: Array, limit: float, dtype, /) -> Array:
+def _frequency_step(frequency: Array, limit: float, dtype: DTypeLike, /) -> Array:
     return jnp.where(
         frequency > 0.0,
         jnp.asarray(limit, dtype=dtype) / frequency,
@@ -1146,7 +1151,9 @@ def _transition_balance(
     return state_change + step * boundary_flux
 
 
-def _negative_divergence(face_flux: Array, discretization, /) -> Array:
+def _negative_divergence(
+    face_flux: Array, discretization: UnstructuredFiniteVolumeDiscretization, /
+) -> Array:
     owner = discretization.owner_cells
     neighbor = discretization.neighbor_cells
     interior = neighbor >= 0

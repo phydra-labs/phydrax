@@ -6,7 +6,7 @@ import phydrax as phx
 tn = phx.tensor_network
 
 
-def test_mps_mpo_environments_and_expectation_match_dense_reference():
+def test_mps_mpo_environments_and_expectation_match_dense_reference() -> None:
     identity = jnp.eye(2, dtype=jnp.complex128)
     pauli_z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=jnp.complex128)
     operator = tn.product_mpo(jnp.stack((pauli_z, identity)))
@@ -22,7 +22,7 @@ def test_mps_mpo_environments_and_expectation_match_dense_reference():
     assert jnp.allclose(tn.mps_mpo_inner(state, operator, state), expected)
 
 
-def test_mpo_inner_norm_and_hermiticity_are_network_native():
+def test_mpo_inner_norm_and_hermiticity_are_network_native() -> None:
     identity = jnp.eye(2, dtype=jnp.complex128)
     pauli_x = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128)
     lowering = jnp.asarray([[0.0, 1.0], [0.0, 0.0]], dtype=jnp.complex128)

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -13,13 +16,13 @@ la = phx.linalg
 eig = la.eigen
 
 
-def _problem(matrix, operator_id):
+def _problem(matrix: Any, operator_id: Any) -> Any:
     return eig.SchurEigenproblem(
         la.DenseLinearOperator(jnp.asarray(matrix), operator_id=operator_id)
     )
 
 
-def test_schur_observables_distinguish_spectral_and_numerical_abscissae():
+def test_schur_observables_distinguish_spectral_and_numerical_abscissae() -> None:
     matrix = jnp.asarray([[-2.0, 10.0], [0.0, -1.0]])
     observables = eig.schur_spectral_observables(
         _problem(matrix, "nonnormal-observables")
@@ -41,7 +44,7 @@ def test_schur_observables_distinguish_spectral_and_numerical_abscissae():
     assert observables.departure_from_normality > 0.9
 
 
-def test_spectral_algebraic_observables_match_dense_invariants():
+def test_spectral_algebraic_observables_match_dense_invariants() -> None:
     matrix = jnp.asarray(
         [
             [1.0 + 1.0j, 2.0, 0.0],
@@ -67,7 +70,7 @@ def test_spectral_algebraic_observables_match_dense_invariants():
     assert observables.spectral_centroid == pytest.approx(complex(jnp.trace(matrix) / 3))
 
 
-def test_singular_spectrum_has_exact_phase_and_log_determinant_semantics():
+def test_singular_spectrum_has_exact_phase_and_log_determinant_semantics() -> None:
     matrix = jnp.diag(jnp.asarray([0.0, 0.5, 2.0]))
     observables = eig.schur_spectral_observables(_problem(matrix, "singular-observables"))
 
@@ -82,7 +85,7 @@ def test_singular_spectrum_has_exact_phase_and_log_determinant_semantics():
     )
 
 
-def test_stability_tolerance_defines_marginal_bands():
+def test_stability_tolerance_defines_marginal_bands() -> None:
     continuous_matrix = jnp.diag(jnp.asarray([-1e-4, -0.5]))
     continuous = eig.schur_spectral_observables(
         _problem(continuous_matrix, "continuous-marginal-observables"),
@@ -106,7 +109,7 @@ def test_stability_tolerance_defines_marginal_bands():
         )
 
 
-def test_observables_propagate_source_tolerance_failure_without_hiding_values():
+def test_observables_propagate_source_tolerance_failure_without_hiding_values() -> None:
     matrix = jnp.asarray([[1.0, 8.0, 0.0], [-2.0, 1.0, 3.0], [0.0, 0.0, 4.0]])
     policy = eig.SchurSolvePolicy(
         tolerance=eig.SchurTolerancePolicy(relative=0.0, absolute=0.0)
@@ -123,7 +126,7 @@ def test_observables_propagate_source_tolerance_failure_without_hiding_values():
     assert jnp.isfinite(observables.spectral_radius)
 
 
-def test_prepared_observables_are_jittable_and_preserve_provenance():
+def test_prepared_observables_are_jittable_and_preserve_provenance() -> None:
     problem = _problem(jnp.asarray([[-0.5, 2.0], [0.0, -0.25]]), "jit-observables")
     prepared = eig.prepare_schur_eigensolve(problem)
     compiled = jax.jit(eig.schur_spectral_observables)

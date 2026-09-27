@@ -9,7 +9,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -36,7 +37,7 @@ class PeriodicHubbardMeanFieldPlan(StrictModule, NonTrainableState):
         ionic_energy: ArrayLike,
         energy_unit: UnitDefinition,
         /,
-    ):
+    ) -> None:
         if not isinstance(basis, PeriodicOrbitalBasisPlan):
             raise TypeError("basis must be PeriodicOrbitalBasisPlan.")
         hubbard = np.asarray(onsite_hubbard)

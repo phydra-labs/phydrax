@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -19,7 +22,7 @@ class _ConditionedTransition(eqx.Module):
     rate: jax.Array
     exact: bool = eqx.field(static=True)
 
-    def __call__(self, batch, *, key=None):
+    def __call__(self, batch: Any, *, key: Any = None) -> Any:
         del key
         state = jnp.asarray(batch.input("state").values)
         duration = jnp.asarray(batch.input("duration").values)
@@ -33,7 +36,7 @@ class _ConditionedTransition(eqx.Module):
 
 
 class _KeyedTransition(eqx.Module):
-    def __call__(self, batch, *, key=None):
+    def __call__(self, batch: Any, *, key: Any = None) -> Any:
         assert key is not None
         state = jnp.asarray(batch.input("state").values)
         duration = jnp.asarray(batch.input("duration").values)
@@ -41,7 +44,7 @@ class _KeyedTransition(eqx.Module):
         return state + duration * draw
 
 
-def _batch(*, channels=None):
+def _batch(*, channels: Any = None) -> Any:
     cases = 3
     points = 4
     axis = phx.nn.operator.OperatorAxis(
@@ -71,7 +74,7 @@ def _batch(*, channels=None):
     )
 
 
-def _condition(batch, duration):
+def _condition(batch: Any, duration: Any) -> Any:
     values = jnp.broadcast_to(
         jnp.asarray(duration).reshape(batch.case_shape + (1,)),
         batch.case_shape + batch.input("duration").sample_shape,
@@ -83,7 +86,7 @@ def _condition(batch, duration):
     )
 
 
-def _advance(batch, prediction):
+def _advance(batch: Any, prediction: Any) -> Any:
     return eqx.tree_at(
         lambda current: current.inputs["state"].values,
         batch,
@@ -91,7 +94,7 @@ def _advance(batch, prediction):
     )
 
 
-def test_exact_semigroup_has_zero_loss_with_batched_conditions():
+def test_exact_semigroup_has_zero_loss_with_batched_conditions() -> None:
     batch = _batch()
     dt1 = jnp.asarray([0.1, 0.2, 0.3])
     dt2 = jnp.asarray([0.4, 0.3, 0.2])
@@ -110,7 +113,7 @@ def test_exact_semigroup_has_zero_loss_with_batched_conditions():
     assert jnp.allclose(loss, 0.0, atol=1e-12)
 
 
-def test_violating_channel_transition_is_positive_and_respects_query_measure():
+def test_violating_channel_transition_is_positive_and_respects_query_measure() -> None:
     batch = _batch(channels=2)
     model = _ConditionedTransition(jnp.asarray(0.8), exact=False)
     dt1 = jnp.asarray([0.2, 0.3, 0.4])
@@ -144,7 +147,7 @@ def test_violating_channel_transition_is_positive_and_respects_query_measure():
     assert jnp.allclose(summed, 2.5 * mean * query_mass * channel_count)
 
 
-def test_violating_semigroup_objective_backpropagates_to_transition_parameters():
+def test_violating_semigroup_objective_backpropagates_to_transition_parameters() -> None:
     batch = _batch()
     model = _ConditionedTransition(jnp.asarray(0.6), exact=False)
 
@@ -164,7 +167,7 @@ def test_violating_semigroup_objective_backpropagates_to_transition_parameters()
     assert jnp.abs(gradient.rate) > 0.0
 
 
-def test_semigroup_objective_rejects_non_case_condition_shapes():
+def test_semigroup_objective_rejects_non_case_condition_shapes() -> None:
     batch = _batch()
 
     with pytest.raises(ValueError, match="dt1 must be scalar or"):
@@ -179,7 +182,7 @@ def test_semigroup_objective_rejects_non_case_condition_shapes():
 
 
 @pytest.mark.parametrize("key_mode", ["fold_in", "split"])
-def test_semigroup_evaluation_key_modes_are_deterministic(key_mode):
+def test_semigroup_evaluation_key_modes_are_deterministic(key_mode: Any) -> None:
     batch = _batch()
     objective = ConditionedSemigroupObjective(key_mode=key_mode)
     root = jr.key(23)
@@ -206,7 +209,7 @@ def test_semigroup_evaluation_key_modes_are_deterministic(key_mode):
     assert jnp.array_equal(first, repeated)
 
 
-def test_semigroup_public_exports_are_available_from_nn_namespace():
+def test_semigroup_public_exports_are_available_from_nn_namespace() -> None:
     assert (
         phx.nn.operator.training.ConditionedSemigroupObjective
         is ConditionedSemigroupObjective

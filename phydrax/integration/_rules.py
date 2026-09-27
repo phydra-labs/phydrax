@@ -9,7 +9,7 @@ from typing import NamedTuple, Sequence, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._numerics import (
     AdaptiveCubatureRuleData,
@@ -62,7 +62,7 @@ class CubatureRule(StrictModule):
         *,
         allow_duffy_fallback: bool = True,
         maximum_rule_bytes: int = 64 * 1024**2,
-    ):
+    ) -> None:
         prepared = cubature_rule_data(
             reference,
             degree,
@@ -129,7 +129,7 @@ class GaussianCubatureRule(StrictModule):
         family: GaussianCubatureFamily = "auto",
         maximum_points: int = 65_536,
         maximum_rule_bytes: int = 64 * 1024**2,
-    ):
+    ) -> None:
         self.prepared = gaussian_cubature_rule_data(
             dimension,
             degree,
@@ -182,7 +182,7 @@ class GenzMalikRule(StrictModule):
         *,
         maximum_points: int = 65_536,
         maximum_rule_bytes: int = 64 * 1024**2,
-    ):
+    ) -> None:
         self.prepared = genz_malik_rule_data(
             dimension,
             degree,
@@ -241,7 +241,7 @@ class GaussLegendreRule(StrictModule):
 
     order: int = eqx.field(static=True)
 
-    def __init__(self, order: int = 32):
+    def __init__(self, order: int = 32) -> None:
         order_ = int(order)
         gauss_legendre_data(order_)
         self.order = order_
@@ -259,7 +259,7 @@ class GaussLobattoLegendreRule(StrictModule):
 
     order: int = eqx.field(static=True)
 
-    def __init__(self, order: int = 8):
+    def __init__(self, order: int = 8) -> None:
         order_ = int(order)
         legendre_rule_data(order_, "lobatto")
         self.order = order_
@@ -283,7 +283,7 @@ class GaussHermiteRule(StrictModule):
 
     order: int = eqx.field(static=True)
 
-    def __init__(self, order: int = 16):
+    def __init__(self, order: int = 16) -> None:
         data = standard_normal_hermite_rule_data(order)
         self.order = data.nodes.shape[0]
 
@@ -296,7 +296,7 @@ class GaussKronrodRule(StrictModule):
 
     order: int = eqx.field(static=True)
 
-    def __init__(self, order: int = 21):
+    def __init__(self, order: int = 21) -> None:
         order_ = int(order)
         gauss_kronrod_data(order_)
         self.order = order_
@@ -319,7 +319,7 @@ class TensorProductCubatureRule(StrictModule):
         dimension: int | None = None,
         maximum_points: int = 65_536,
         maximum_rule_bytes: int = 64 * 1024**2,
-    ):
+    ) -> None:
         if isinstance(rules, GaussKronrodRule):
             if dimension is None:
                 raise ValueError(
@@ -400,7 +400,7 @@ class ClenshawCurtisRule(StrictModule):
 
     level: int = eqx.field(static=True)
 
-    def __init__(self, level: int = 5):
+    def __init__(self, level: int = 5) -> None:
         level_ = int(level)
         if level_ < 1:
             raise ValueError("Clenshaw--Curtis level must be positive.")
@@ -419,7 +419,7 @@ class TanhSinhRule(StrictModule):
 
     level: int = eqx.field(static=True)
 
-    def __init__(self, level: int = 3):
+    def __init__(self, level: int = 3) -> None:
         level_ = int(level)
         if level_ < 1:
             raise ValueError("Tanh--sinh level must be positive.")
@@ -482,7 +482,7 @@ class ReferenceIntervalRule(StrictModule):
 
     rule: IntervalRule
 
-    def __init__(self, rule: IntervalRule | None = None):
+    def __init__(self, rule: IntervalRule | None = None) -> None:
         self.rule = GaussLegendreRule() if rule is None else rule
 
     def materialize(self) -> ReferenceCellData:
@@ -495,7 +495,7 @@ class ReferenceTriangleRule(StrictModule):
 
     rule: IntervalRule
 
-    def __init__(self, rule: IntervalRule | None = None):
+    def __init__(self, rule: IntervalRule | None = None) -> None:
         self.rule = GaussLegendreRule(8) if rule is None else rule
 
     def materialize(self) -> ReferenceCellData:
@@ -513,7 +513,7 @@ class ReferenceQuadrilateralRule(StrictModule):
 
     rule: IntervalRule
 
-    def __init__(self, rule: IntervalRule | None = None):
+    def __init__(self, rule: IntervalRule | None = None) -> None:
         self.rule = GaussLegendreRule(8) if rule is None else rule
 
     def materialize(self) -> ReferenceCellData:
@@ -531,7 +531,7 @@ class ReferenceTetrahedronRule(StrictModule):
 
     rule: IntervalRule
 
-    def __init__(self, rule: IntervalRule | None = None):
+    def __init__(self, rule: IntervalRule | None = None) -> None:
         self.rule = GaussLegendreRule(6) if rule is None else rule
 
     def materialize(self) -> ReferenceCellData:
@@ -564,7 +564,7 @@ class ReferencePrismRule(StrictModule):
 
     rule: IntervalRule
 
-    def __init__(self, rule: IntervalRule | None = None):
+    def __init__(self, rule: IntervalRule | None = None) -> None:
         self.rule = GaussLegendreRule(6) if rule is None else rule
 
     def materialize(self) -> ReferenceCellData:
@@ -595,7 +595,7 @@ class ReferencePyramidRule(StrictModule):
 
     rule: IntervalRule
 
-    def __init__(self, rule: IntervalRule | None = None):
+    def __init__(self, rule: IntervalRule | None = None) -> None:
         self.rule = GaussLegendreRule(8) if rule is None else rule
 
     def materialize(self) -> ReferenceCellData:
@@ -626,7 +626,7 @@ class ReferenceHexahedronRule(StrictModule):
 
     rule: IntervalRule
 
-    def __init__(self, rule: IntervalRule | None = None):
+    def __init__(self, rule: IntervalRule | None = None) -> None:
         self.rule = GaussLegendreRule(6) if rule is None else rule
 
     def materialize(self) -> ReferenceCellData:

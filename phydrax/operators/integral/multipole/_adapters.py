@@ -7,7 +7,8 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._laplace3d import (
     LaplaceMultipoleEvaluation3D,
@@ -21,7 +22,7 @@ def _weighted_strengths(
     source_weights: ArrayLike,
     source_count: int,
     /,
-):
+) -> Array:
     density = jnp.asarray(source_density)
     weights = jnp.asarray(source_weights, dtype=jnp.real(density).dtype)
     if density.ndim < 1 or density.shape[0] != source_count:
@@ -51,6 +52,7 @@ def evaluate_laplace_layer_multipole_3d(
         source_weights,
         prepared.plan.source_capacity,
     )
+    # ty: ignore[invalid-return-type]
     return prepared.evaluate(
         source_positions,
         strengths,

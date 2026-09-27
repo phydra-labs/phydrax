@@ -10,6 +10,7 @@ import equinox as eqx
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._availability import import_backend_module, probe_backend
 from ._types import AbstractExternalBackend, BackendAvailability, BackendCapabilities
 
@@ -84,11 +85,9 @@ class MPAXPlan(StrictModule):
         warm_start: bool = False,
         feasibility_polishing: bool = False,
         unroll: bool = False,
-    ):
-        if algorithm not in ("rapdhg", "r2hpdhg"):
-            raise ValueError("algorithm must be 'rapdhg' or 'r2hpdhg'.")
-        if representation not in ("dense", "sparse"):
-            raise ValueError("representation must be 'dense' or 'sparse'.")
+    ) -> None:
+        algorithm = parse(algorithm, MPAXAlgorithm, "algorithm")
+        representation = parse(representation, MPAXRepresentation, "representation")
         values = tuple(
             float(value)
             for value in (
@@ -141,7 +140,7 @@ class PreparedMPAX(StrictModule):
     solver: Any
     backend_version: str = eqx.field(static=True)
 
-    def __init__(self, plan: MPAXPlan, solver: Any, /, *, backend_version: str):
+    def __init__(self, plan: MPAXPlan, solver: Any, /, *, backend_version: str) -> None:
         if not isinstance(plan, MPAXPlan):
             raise TypeError("plan must be an MPAXPlan.")
         version = str(backend_version)
@@ -195,7 +194,7 @@ def solve_mpax(
     *,
     initial_primal_solution: Any = None,
     initial_dual_solution: Any = None,
-):
+) -> Any:
     """Execute MPAX on one already converted LP/QP model."""
 
     if not isinstance(prepared, PreparedMPAX):

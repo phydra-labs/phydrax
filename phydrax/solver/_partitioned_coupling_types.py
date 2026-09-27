@@ -12,7 +12,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -25,6 +25,7 @@ from ..nonlinear import (
     ImplicitRootDerivativePolicy,
     NonlinearTermination,
 )
+from ..typing import parse
 from ..units import UnitDefinition
 
 
@@ -116,7 +117,7 @@ class CouplingSubsystemCapabilities(StrictModule):
         supports_endpoint: bool = True,
         supports_waveform: bool = False,
         counts_complete: bool = True,
-    ):
+    ) -> None:
         self.jit = bool(jit)
         self.differentiable = bool(differentiable)
         self.deterministic_replay = bool(deterministic_replay)
@@ -148,7 +149,7 @@ class CouplingQuantity(StrictModule, NonTrainableState):
         *,
         reference_configuration: str = "absolute",
         sign_convention: str = "positive",
-    ):
+    ) -> None:
         if not isinstance(unit, UnitDefinition):
             raise TypeError("Coupling quantity unit must be UnitDefinition.")
         self.unit = unit
@@ -240,9 +241,8 @@ class CouplingPort(StrictModule, NonTrainableState):
         temporal_kind: Literal["instantaneous", "interval_integral"] = "instantaneous",
         frame: str = "scalar",
         reference_scale: float,
-    ):
-        if direction not in ("input", "output"):
-            raise ValueError("Coupling port direction must be 'input' or 'output'.")
+    ) -> None:
+        direction = parse(direction, CouplingDirection, "direction")
         if not isinstance(space, AbstractVectorSpace):
             raise TypeError("Coupling port space must be an AbstractVectorSpace.")
         if field_space is not None:
@@ -334,7 +334,7 @@ class CouplingTransferRequirement(StrictModule, NonTrainableState):
         adjoint_paired: bool = False,
         frame_action: Literal["preserve", "transform"] = "preserve",
         minimum_exactness_degree: int | None = None,
-    ):
+    ) -> None:
         degree = (
             None if minimum_exactness_degree is None else int(minimum_exactness_degree)
         )
@@ -381,7 +381,7 @@ class CouplingExchange(StrictModule, NonTrainableState):
         transfer: FieldTransfer | None = None,
         use_adjoint: bool = False,
         requirement: CouplingTransferRequirement | None = None,
-    ):
+    ) -> None:
         if transfer is not None and not isinstance(transfer, FieldTransfer):
             raise TypeError("Coupling exchange transfer must be a FieldTransfer or None.")
         if transfer is None and use_adjoint:
@@ -417,7 +417,7 @@ class CouplingTolerance(StrictModule, NonTrainableState):
         *,
         absolute: float,
         relative: float = 0.0,
-    ):
+    ) -> None:
         absolute_ = float(absolute)
         relative_ = float(relative)
         if (
@@ -456,9 +456,8 @@ class CouplingSweep(StrictModule, NonTrainableState):
         /,
         *,
         subsystem_order: tuple[str, ...] = (),
-    ):
-        if kind not in ("jacobi", "gauss-seidel"):
-            raise ValueError("Coupling sweep kind must be 'jacobi' or 'gauss-seidel'.")
+    ) -> None:
+        kind = parse(kind, CouplingSweepKind, "kind")
         order = tuple(
             _identifier(value, "sweep subsystem ID") for value in subsystem_order
         )
@@ -485,7 +484,7 @@ class ExplicitCouplingPolicy(AbstractCouplingPolicy):
     sweep: CouplingSweep
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, sweep: CouplingSweep, /):
+    def __init__(self, sweep: CouplingSweep, /) -> None:
         if not isinstance(sweep, CouplingSweep):
             raise TypeError("Explicit coupling requires a CouplingSweep.")
         self.sweep = sweep
@@ -513,7 +512,7 @@ class ImplicitCouplingPolicy(AbstractCouplingPolicy):
         *,
         fixed_point_sweep: CouplingSweep | None = None,
         derivative_policy: ImplicitRootDerivativePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(method, (FixedPointIteration, AbstractNonlinearMethod)):
             raise TypeError(
                 "Implicit coupling method must be FixedPointIteration or AbstractNonlinearMethod."
@@ -604,11 +603,8 @@ class CouplingDifferentiationPolicy(StrictModule, NonTrainableState):
     mode: CouplingDifferentiationMode = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, mode: CouplingDifferentiationMode = "none", /):
-        if mode not in ("none", "algorithmic", "implicit"):
-            raise ValueError(
-                "Coupling differentiation mode must be 'none', 'algorithmic', or 'implicit'."
-            )
+    def __init__(self, mode: CouplingDifferentiationMode = "none", /) -> None:
+        mode = parse(mode, CouplingDifferentiationMode, "mode")
         self.mode = mode
         self.policy_id = f"coupling-differentiation:{mode}"
 
@@ -620,7 +616,7 @@ class CouplingWindow(StrictModule, NonTrainableState):
     start: Array
     end: Array
 
-    def __init__(self, index: Any, start: Any, end: Any, /):
+    def __init__(self, index: Any, start: Any, end: Any, /) -> None:
         start_ = _scalar(start, "Coupling window start")
         end_ = _scalar(end, "Coupling window end", dtype=start_.dtype)
         index_ = _scalar(index, "Coupling window index", dtype=jnp.int32)
@@ -653,7 +649,7 @@ class CouplingWindowErrorEstimate(StrictModule):
         order: Any,
         reliable: Any,
         /,
-    ):
+    ) -> None:
         error = _scalar(error_norm, "coupling error_norm")
         reference = _scalar(reference_norm, "coupling reference_norm", dtype=error.dtype)
         order_ = _scalar(order, "coupling error order", dtype=jnp.int32)
@@ -704,7 +700,7 @@ class CouplingSubsystemResult(StrictModule):
         error_estimate: CouplingWindowErrorEstimate | None = None,
         work: Any = 0,
         auxiliary: Any = None,
-    ):
+    ) -> None:
         self.candidate_state = _array_tree(candidate_state, "candidate_state")
         self.outputs = tuple(outputs)
         self.successful = _scalar(successful, "participant successful", dtype=jnp.bool_)
@@ -763,7 +759,7 @@ class CallableCouplingSubsystem(AbstractCouplingSubsystem, NonTrainableState):
         output_ports: tuple[CouplingPort, ...] = (),
         capabilities: CouplingSubsystemCapabilities,
         discretization_bundle_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(advance):
             raise TypeError("Callable coupling subsystem advance must be callable.")
         inputs = tuple(input_ports)
@@ -831,7 +827,7 @@ class CouplingState(StrictModule):
         exchange_ids: tuple[str, ...],
         cumulative_exchange_budget: Any | None = None,
         graph_id: str | None = None,
-    ):
+    ) -> None:
         states = tuple(
             _array_tree(value, f"participant_states[{index}]")
             for index, value in enumerate(participant_states)

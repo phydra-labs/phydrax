@@ -4,7 +4,8 @@
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -18,7 +19,14 @@ class ProcessHistory(StrictModule, NonTrainableState):
     active_measure: Array
     history_id: str = eqx.field(static=True)
 
-    def __init__(self, times_s, deposited_mass_kg, supplied_energy_j, active_measure, /):
+    def __init__(
+        self,
+        times_s: ArrayLike,
+        deposited_mass_kg: ArrayLike,
+        supplied_energy_j: ArrayLike,
+        active_measure: ArrayLike,
+        /,
+    ) -> None:
         t = np.asarray(times_s, float)
         m = np.asarray(deposited_mass_kg, float)
         e = np.asarray(supplied_energy_j, float)

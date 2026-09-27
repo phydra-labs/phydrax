@@ -8,6 +8,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...ml.metrics import (
@@ -19,6 +20,7 @@ from ...ml.metrics import (
     MetricResult,
     root_mean_squared_error,
 )
+from ...units import UnitDefinition
 from ._quantities import GeophysicalQuantity
 
 
@@ -29,7 +31,7 @@ class GeophysicalClimatology:
     training_case_ids: tuple[str, ...]
     source_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         object.__setattr__(self, "values", jnp.asarray(self.values))
         object.__setattr__(self, "quantity_ids", tuple(self.quantity_ids))
         object.__setattr__(self, "training_case_ids", tuple(self.training_case_ids))
@@ -51,7 +53,7 @@ class GeophysicalClimatology:
             )
 
     @property
-    def climatology_id(self):
+    def climatology_id(self) -> str:
         return canonical_fingerprint(
             {
                 "source": self.source_id,
@@ -111,7 +113,7 @@ class GeophysicalFieldMetrics:
     drift_per_second: MetricResult | None
 
     @property
-    def error_unit(self):
+    def error_unit(self) -> UnitDefinition:
         """RMSE and CRPS have the field unit, not the squared-error unit."""
         return self.quantity.unit
 
@@ -126,7 +128,9 @@ class GeophysicalForecastMetrics:
     multivariate_scales: tuple[float, ...] | None
 
 
-def _diagnostic(value, reference: MetricResult, *, defined=None):
+def _diagnostic(
+    value: Array, reference: MetricResult, *, defined: Array | None = None
+) -> MetricResult:
     defined = jnp.ones_like(reference.valid) if defined is None else defined
     valid = reference.valid & defined
     return MetricResult(

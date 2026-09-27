@@ -9,7 +9,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -30,7 +31,7 @@ class SectionalPopulationPlan(StrictModule, NonTrainableState):
     widths: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, edges: ArrayLike, /):
+    def __init__(self, edges: ArrayLike, /) -> None:
         values = np.asarray(edges, dtype=np.float64)
         if (
             values.ndim != 1
@@ -193,7 +194,7 @@ class SectionalPopulationPlan(StrictModule, NonTrainableState):
         )
         return daughters @ (rate_ * density) - rate_ * density
 
-    def realizable(self, number_density: ArrayLike, /) -> Array:
+    def realizable(self, number_density: ArrayLike, /) -> Array | bool:
         density = jnp.asarray(number_density)
         return density.shape == self.centers.shape and jnp.all(
             jnp.isfinite(density)

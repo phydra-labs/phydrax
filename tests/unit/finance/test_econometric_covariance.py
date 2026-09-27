@@ -36,7 +36,7 @@ def _factor_returns() -> ReturnResult:
     )
 
 
-def test_shrinkage_factor_and_rmt_results_retain_psd_rank_condition_and_trace():
+def test_shrinkage_factor_and_rmt_results_retain_psd_rank_condition_and_trace() -> None:
     returns = _factor_returns()
     law = PhysicalLaw("observed", "synthetic", "four-assets", "historical")
 

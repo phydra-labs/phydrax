@@ -44,7 +44,7 @@ class AtomisticMultistateCheckpointPlan(StrictModule, NonTrainableState):
         /,
         *,
         scope_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(runtime, PreparedAtomisticMultistate):
             raise TypeError("runtime must be PreparedAtomisticMultistate.")
         capacity = int(segment_capacity)

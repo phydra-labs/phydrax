@@ -12,7 +12,7 @@ import json
 import math
 import os
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 import jax.numpy as jnp
 
@@ -64,7 +64,7 @@ def content_address(value: object, /) -> str:
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
-def _identified(kind: str, fields: Mapping[str, object], id_key: str, /):
+def _identified(kind: str, fields: Mapping[str, object], id_key: str, /) -> Any:
     core = _json_ready({"kind": kind, **dict(fields)})
     assert isinstance(core, dict)
     return {**core, id_key: content_address(core)}
@@ -367,7 +367,7 @@ def assemble_candidate_profile(
     return {**core, "candidate_id": content_address(core)}
 
 
-def _periodic_space(count: int):
+def _periodic_space(count: int) -> Any:
     return phx.discretization.TensorSpectralPlan(
         (
             phx.discretization.FourierBasisPlan(count),
@@ -383,12 +383,14 @@ def _periodic_space(count: int):
     )
 
 
-def _taylor_green(space):
+def _taylor_green(space: Any) -> Any:
     x, y = jnp.meshgrid(space.axes[0].nodes, space.axes[1].nodes, indexing="ij")
     return jnp.stack((jnp.sin(x) * jnp.cos(y), -jnp.cos(x) * jnp.sin(y)), axis=-1)
 
 
-def _periodic_compile(space, viscosity, *, forcing=None, forcing_id=None):
+def _periodic_compile(
+    space: Any, viscosity: Any, *, forcing: Any = None, forcing_id: Any = None
+) -> Any:
     problem = phx.equations.IncompressibleFlowProblem(
         2, viscosity, forcing=forcing, forcing_id=forcing_id
     )
@@ -402,7 +404,7 @@ def _periodic_compile(space, viscosity, *, forcing=None, forcing_id=None):
     )
 
 
-def _etdrk_solve(dynamics, initial, step, steps):
+def _etdrk_solve(dynamics: Any, initial: Any, step: Any, steps: Any) -> Any:
     method = phx.solver.ETDRKMethod(4)
     times = jnp.arange(steps + 1, dtype="float64") * step
     result = phx.solver.solve_etdrk(method, dynamics.semilinear_drift, initial, times)
@@ -437,7 +439,7 @@ def periodic_spectral_qualification(
     decay_diagnostics = decay_dynamics.diagnostics(final_time, decay.states[-1])
     base_modal = space.project(base)
 
-    def forcing(time, state, args):
+    def forcing(time: Any, state: Any, args: Any) -> Any:
         del state, args
         amplitude = 1.0 + 0.1 * jnp.sin(time)
         return (0.1 * jnp.cos(time) + 2.0 * nu * amplitude) * base_modal
@@ -596,7 +598,7 @@ def periodic_spectral_qualification(
     )
 
 
-def _channel_space(shape):
+def _channel_space(shape: Any) -> Any:
     nx, ny, nz = shape
     return phx.discretization.TensorSpectralPlan(
         (
@@ -615,12 +617,13 @@ def _channel_space(shape):
     )
 
 
-def _channel_restart(dynamics, initial, dt, steps):
+def _channel_restart(dynamics: Any, initial: Any, dt: Any, steps: Any) -> Any:
     method = phx.solver.ChannelSBDF2Method()
     prepared = method.prepare(dynamics, dt)
     state = prepared.initialize(initial, 0.0, None)
     midpoint = None
     for step in range(steps):
+        # ty: ignore[invalid-argument-type]
         state = prepared.step(step, step * dt, state, dt, None).accepted_state
         if step + 1 == steps // 2:
             midpoint = state
@@ -629,7 +632,12 @@ def _channel_restart(dynamics, initial, dt, steps):
     restarted = midpoint
     for step in range(steps // 2, steps):
         restarted = restarted_prepared.step(
-            step, step * dt, restarted, dt, None
+            # ty: ignore[invalid-argument-type]
+            step,
+            step * dt,
+            restarted,
+            dt,
+            None,
         ).accepted_state
     return method, prepared, state, restarted
 
@@ -693,7 +701,7 @@ def spectral_channel_qualification(
     constant = jnp.zeros_like(base).at[..., 0].set(1.0)
     constant_modal = space.project(constant)
 
-    def forcing(time, state, args):
+    def forcing(time: Any, state: Any, args: Any) -> Any:
         del state, args
         amplitude = 1.0 + 0.1 * jnp.sin(time)
         return 0.1 * jnp.cos(time) * base_modal + 2.0 * nu * amplitude * constant_modal
@@ -879,11 +887,11 @@ def spectral_channel_qualification(
     )
 
 
-def _maximum_abs(values):
+def _maximum_abs(values: Any) -> Any:
     return max(float(jnp.max(jnp.abs(value))) for value in values)
 
 
-def _mac_route(plan, result):
+def _mac_route(plan: Any, result: Any) -> Any:
     linear, transform, hybrid = result.linear, result.transform, result.hybrid
     return {
         "requested_solve_method": plan.solve_method,
@@ -1257,7 +1265,7 @@ def mac_qualification(
     )
 
 
-def _json_object(text: str | None, name: str):
+def _json_object(text: str | None, name: str) -> Any:
     if text is None:
         return None
     value = json.loads(text)
@@ -1266,7 +1274,7 @@ def _json_object(text: str | None, name: str):
     return value
 
 
-def _external(arguments):
+def _external(arguments: Any) -> Any:
     return external_reference_input(
         path=arguments.external_reference_path,
         checksum=arguments.external_reference_checksum,
@@ -1277,14 +1285,14 @@ def _external(arguments):
     )
 
 
-def _add_external(parser):
+def _add_external(parser: Any) -> None:
     parser.add_argument("--external-reference-path")
     parser.add_argument("--external-reference-checksum")
     parser.add_argument("--external-nondimensionalization")
     parser.add_argument("--external-uncertainty")
 
 
-def _write(payload, output):
+def _write(payload: Any, output: Any) -> None:
     text = json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n"
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix(output.suffix + ".tmp")

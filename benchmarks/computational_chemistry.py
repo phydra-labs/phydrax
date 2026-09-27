@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import statistics
@@ -17,7 +19,7 @@ import phydrax as phx
 from benchmarks._runtime import capture_environment
 
 
-def _case(repetitions: int):
+def _case(repetitions: int) -> Any:
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     structure = phx.atomistic.AtomicStructure(
         [29, 29],
@@ -76,7 +78,7 @@ def _case(repetitions: int):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument(

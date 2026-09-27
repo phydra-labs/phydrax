@@ -4,8 +4,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import Any
+
 import equinox as eqx
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._strict import StrictModule
 from ...discretization.contact._kinematics import (
@@ -63,8 +68,8 @@ class CrossDiscretizationContactResult(StrictModule):
 
 def evaluate_cross_discretization_contact(
     scene: ContactParticipantScene,
-    states,
-    rates,
+    states: Sequence[PyTree[Any]],
+    rates: Sequence[PyTree[Any]],
     search: DenseContactSearchPlan | SweepAndPruneContactSearchPlan,
     closure_plan: ContactClosurePlan,
     route_state: ContactRouteState,

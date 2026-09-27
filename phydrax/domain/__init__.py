@@ -39,6 +39,8 @@ broadcasting.
     ```
 """
 
+from typing import Any
+
 from .._model import ModelBinding, ModelEvaluator
 from . import graph
 from ._base import (
@@ -99,6 +101,7 @@ from ._ragged_series_dataset import (
     RAGGED_SERIES_INDEX_KEY,
     RaggedSeriesDatasetDomain,
     RaggedSeriesSampling,
+    RaggedSeriesWindowSampling,
 )
 from ._reference import reference_transport
 from ._referenced_density import DensityReference, ReferencedDensityField
@@ -213,7 +216,7 @@ _NORMALIZED_DENSITY_EXPORTS = frozenset(
 )
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name in _DECOMPOSITION_EXPORTS:
         from importlib import import_module
 
@@ -323,6 +326,7 @@ __all__ = [
     "RAGGED_SERIES_INDEX_KEY",
     "RaggedSeriesDatasetDomain",
     "RaggedSeriesSampling",
+    "RaggedSeriesWindowSampling",
     "TrajectoryDatasetDomain",
     "TRAJECTORY_CASE_INDEX_KEY",
     "TRAJECTORY_TIME_INDEX_KEY",

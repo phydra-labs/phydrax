@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import meshio
 import numpy as np
@@ -24,7 +27,7 @@ from phydrax.equations.fem._nodal_conservation import (
 )
 
 
-def test_meshio_quadratic_triangle_preserves_coordinate_dofs(tmp_path):
+def test_meshio_quadratic_triangle_preserves_coordinate_dofs(tmp_path: Any) -> None:
     points = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -46,6 +49,7 @@ def test_meshio_quadratic_triangle_preserves_coordinate_dofs(tmp_path):
     assert routes.shape == (1, 6)
     coordinate_element = imported.coordinate_spec.elements[0]
     physical_nodes = np.asarray(imported.coordinate_spec.coordinates)[routes[0]]
+    # ty: ignore[unresolved-attribute]
     reference_nodes = np.asarray(coordinate_element.reference_nodes)
     curved_index = int(np.argmin(np.sum((reference_nodes - (0.5, 0.0)) ** 2, axis=1)))
     np.testing.assert_allclose(physical_nodes[curved_index], (0.5, -0.1))
@@ -68,6 +72,7 @@ def test_meshio_quadratic_triangle_preserves_coordinate_dofs(tmp_path):
         discretization,
         NodalDGConservationMethodPlan(RusanovFluxPlan()),
     )
+    # ty: ignore[unresolved-attribute]
     quality = compiled.dynamics.geometry_quality
     assert quality.passed
     assert quality.certificate.all_certified
@@ -77,11 +82,14 @@ def test_meshio_quadratic_triangle_preserves_coordinate_dofs(tmp_path):
         system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 1.0))),
         discretization.field_spaces[0].vector_space.shape,
     )
+    # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=3.0e-9)
     assert discretization.coordinate_elements[0].degree == 2
 
 
-def test_curved_mixed_mortar_uses_both_high_order_coordinate_traces(tmp_path):
+def test_curved_mixed_mortar_uses_both_high_order_coordinate_traces(
+    tmp_path: Any,
+) -> None:
     points = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -103,6 +111,7 @@ def test_curved_mixed_mortar_uses_both_high_order_coordinate_traces(tmp_path):
         ("quad9", np.asarray(((1, 6, 7, 2, 8, 9, 10, 4, 11),), dtype=np.int32)),
     ]
     path = tmp_path / "curved-mixed.vtu"
+    # ty: ignore[invalid-argument-type]
     meshio.write(path, meshio.Mesh(points, cells))
     imported = read_finite_element_mesh(path)
     system = EulerSystem(2)
@@ -128,19 +137,26 @@ def test_curved_mixed_mortar_uses_both_high_order_coordinate_traces(tmp_path):
         discretization,
         NodalDGConservationMethodPlan(RusanovFluxPlan()),
     )
+    # ty: ignore[unresolved-attribute]
     assert len(compiled.dynamics.mortar_routes) == 1
+    # ty: ignore[unresolved-attribute]
     mortar = compiled.dynamics.mortar_routes[0].mortar
+    # ty: ignore[unresolved-attribute]
     assert mortar.evidence.coordinates_compatible
+    # ty: ignore[unresolved-attribute]
     assert float(jnp.max(mortar.physical_coordinates[:, 0])) > 1.05
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 1.0))),
         discretization.field_spaces[0].vector_space.shape,
     )
+    # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=5.0e-9)
 
 
 @pytest.mark.parametrize("cell_type", ("hexahedron27", "wedge18", "pyramid14"))
-def test_meshio_quadratic_hybrid_cells_preserve_all_geometry_nodes(tmp_path, cell_type):
+def test_meshio_quadratic_hybrid_cells_preserve_all_geometry_nodes(
+    tmp_path: Any, cell_type: Any
+) -> None:
     points = meshio_reference_nodes(cell_type)
     path = tmp_path / f"{cell_type}.msh"
     meshio.write(
@@ -154,6 +170,7 @@ def test_meshio_quadratic_hybrid_cells_preserve_all_geometry_nodes(tmp_path, cel
     routes = np.asarray(imported.coordinate_spec.geometry_dofs[0])
     assert routes.shape == (1, points.shape[0])
     element = imported.coordinate_spec.elements[0]
+    # ty: ignore[unresolved-attribute]
     basis = np.asarray(element.tabulate(element.reference_nodes)[0])
     physical = basis @ np.asarray(imported.coordinate_spec.coordinates)[routes[0]]
     np.testing.assert_allclose(

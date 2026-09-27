@@ -60,14 +60,14 @@ class _LabelArrayModel(Protocol):
     labels: jax.Array
 
 
-def _configuration(result):
+def _configuration(result: Any) -> Any:
     return {
         name: ast.literal_eval(value) for name, value in result.provenance.configuration
     }
 
 
 @pytest.fixture(scope="module")
-def sk():
+def sk() -> Any:
     sklearn = pytest.importorskip("sklearn")
     from sklearn import (
         cluster,
@@ -97,10 +97,16 @@ def sk():
     )
 
 
-def _guard_sklearn_import(monkeypatch):
+def _guard_sklearn_import(monkeypatch: Any) -> None:
     original_import = builtins.__import__
 
-    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+    def guarded_import(
+        name: Any,
+        globals: Any = None,
+        locals: Any = None,
+        fromlist: Any = (),
+        level: Any = 0,
+    ) -> Any:
         if name == "sklearn" or name.startswith("sklearn."):
             raise AssertionError(
                 "Importing the converter module must not import sklearn."
@@ -110,7 +116,7 @@ def _guard_sklearn_import(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", guarded_import)
 
 
-def test_converter_module_import_is_lazy(monkeypatch):
+def test_converter_module_import_is_lazy(monkeypatch: Any) -> None:
     from phydrax.ml.interop import _sklearn
 
     _guard_sklearn_import(monkeypatch)
@@ -134,7 +140,7 @@ def test_converter_module_import_is_lazy(monkeypatch):
         ),
     ],
 )
-def test_supported_scalers_match_transform(sk, class_name, kwargs):
+def test_supported_scalers_match_transform(sk: Any, class_name: Any, kwargs: Any) -> None:
     values = np.array(
         [[-4.0, 1.0, 10.0], [-1.0, 3.0, 10.0], [2.0, 8.0, 10.0], [7.0, 20.0, 10.0]]
     )
@@ -160,7 +166,7 @@ def test_supported_scalers_match_transform(sk, class_name, kwargs):
         )
 
 
-def test_simple_imputer_matches_numeric_nan_and_finite_sentinels(sk):
+def test_simple_imputer_matches_numeric_nan_and_finite_sentinels(sk: Any) -> None:
     cases = [
         (np.nan, np.array([[1.0, np.nan], [3.0, 5.0], [np.nan, 7.0]])),
         (-999.0, np.array([[1.0, -999.0], [3.0, 5.0], [-999.0, 7.0]])),
@@ -178,7 +184,7 @@ def test_simple_imputer_matches_numeric_nan_and_finite_sentinels(sk):
         )
 
 
-def test_dense_numeric_one_hot_encoder_matches_source_blocks(sk):
+def test_dense_numeric_one_hot_encoder_matches_source_blocks(sk: Any) -> None:
     values = np.array([[0, 10], [1, 20], [2, 10], [1, 30]], dtype=np.int64)
     estimator = sk.preprocessing.OneHotEncoder(
         handle_unknown="error", drop=None, sparse_output=False, dtype=np.float64
@@ -191,7 +197,7 @@ def test_dense_numeric_one_hot_encoder_matches_source_blocks(sk):
     assert cast(_OffsetModel, result.model.model).offsets == (0, 3, 6)
 
 
-def test_numeric_ordinal_encoder_matches_source_category_order(sk):
+def test_numeric_ordinal_encoder_matches_source_category_order(sk: Any) -> None:
     values = np.array([[3, 10], [1, 30], [2, 20], [3, 20]], dtype=np.int64)
     estimator = sk.preprocessing.OrdinalEncoder(
         handle_unknown="error", dtype=np.int32
@@ -214,7 +220,7 @@ def test_numeric_ordinal_encoder_matches_source_category_order(sk):
         "MultiTaskElasticNet",
     ],
 )
-def test_supported_linear_regressors_match_predict(sk, class_name):
+def test_supported_linear_regressors_match_predict(sk: Any, class_name: Any) -> None:
     features = np.array(
         [
             [-2.0, 0.0, 1.0],
@@ -252,7 +258,9 @@ def test_supported_linear_regressors_match_predict(sk, class_name):
 
 
 @pytest.mark.parametrize("classes", [2, 3])
-def test_logistic_regression_preserves_binary_and_multinomial_conventions(sk, classes):
+def test_logistic_regression_preserves_binary_and_multinomial_conventions(
+    sk: Any, classes: Any
+) -> None:
     features = np.array(
         [
             [-3.0, -1.0],
@@ -299,7 +307,7 @@ def test_logistic_regression_preserves_binary_and_multinomial_conventions(sk, cl
         ("TweedieRegressor", {"power": 0.0, "link": "identity", "alpha": 0.1}),
     ],
 )
-def test_supported_glm_links_match_predict(sk, class_name, kwargs):
+def test_supported_glm_links_match_predict(sk: Any, class_name: Any, kwargs: Any) -> None:
     features = np.linspace(0.0, 2.0, 12)[:, None]
     if kwargs.get("link") == "identity":
         target = 1.0 + 0.3 * features[:, 0]
@@ -319,7 +327,7 @@ def test_supported_glm_links_match_predict(sk, class_name, kwargs):
 
 
 @pytest.mark.parametrize("class_name", ["PCA", "TruncatedSVD"])
-def test_decomposition_transform_and_inverse_match(sk, class_name):
+def test_decomposition_transform_and_inverse_match(sk: Any, class_name: Any) -> None:
     values = np.array(
         [
             [1.0, 0.0, 2.0, 1.0],
@@ -345,7 +353,7 @@ def test_decomposition_transform_and_inverse_match(sk, class_name):
     )
 
 
-def test_kmeans_preserves_center_order_ties_and_predictions(sk):
+def test_kmeans_preserves_center_order_ties_and_predictions(sk: Any) -> None:
     values = np.array([[-3.0, 0.0], [-2.0, 0.0], [2.0, 0.0], [3.0, 0.0]])
     estimator = sk.cluster.KMeans(
         n_clusters=2, n_init=1, random_state=3, algorithm="lloyd"
@@ -365,7 +373,9 @@ def test_kmeans_preserves_center_order_ties_and_predictions(sk):
 
 
 @pytest.mark.parametrize("covariance_type", ["full", "tied", "diag", "spherical"])
-def test_gaussian_mixture_geometry_probabilities_and_scores_match(sk, covariance_type):
+def test_gaussian_mixture_geometry_probabilities_and_scores_match(
+    sk: Any, covariance_type: Any
+) -> None:
     values = np.array(
         [
             [-3.0, -1.0],
@@ -413,7 +423,7 @@ def test_gaussian_mixture_geometry_probabilities_and_scores_match(sk, covariance
         ("cosine", {}),
     ],
 )
-def test_kernel_ridge_fixed_kernels_match(sk, kernel, kwargs):
+def test_kernel_ridge_fixed_kernels_match(sk: Any, kernel: Any, kwargs: Any) -> None:
     features = np.array([[-2.0, 1.0], [-1.0, 0.5], [0.0, 1.0], [1.0, 2.0], [2.0, 1.5]])
     target = np.stack((features[:, 0] ** 2, features[:, 1] - features[:, 0]), axis=-1)
     estimator = sk.kernel_ridge.KernelRidge(alpha=0.2, kernel=kernel, **kwargs).fit(
@@ -430,7 +440,9 @@ def test_kernel_ridge_fixed_kernels_match(sk, kernel, kwargs):
 
 
 @pytest.mark.parametrize("class_name", ["SVC", "NuSVC"])
-def test_binary_svc_variants_preserve_decision_and_labels(sk, class_name):
+def test_binary_svc_variants_preserve_decision_and_labels(
+    sk: Any, class_name: Any
+) -> None:
     features = np.array([[-3.0], [-2.0], [-1.0], [1.0], [2.0], [3.0]])
     target = np.array([10, 10, 10, 20, 20, 20])
     kwargs = {"kernel": "rbf", "gamma": 0.6, "probability": False}
@@ -452,7 +464,7 @@ def test_binary_svc_variants_preserve_decision_and_labels(sk, class_name):
 
 
 @pytest.mark.parametrize("class_name", ["SVR", "NuSVR"])
-def test_svr_variants_preserve_dense_support_expansion(sk, class_name):
+def test_svr_variants_preserve_dense_support_expansion(sk: Any, class_name: Any) -> None:
     features = np.linspace(-2.0, 2.0, 10)[:, None]
     target = np.sin(features[:, 0])
     kwargs = {"kernel": "poly", "gamma": 0.5, "degree": 3, "coef0": 0.2}
@@ -480,7 +492,9 @@ def test_svr_variants_preserve_dense_support_expansion(sk, class_name):
         ("ExtraTreeClassifier", True),
     ],
 )
-def test_single_hard_tree_classes_match(sk, class_name, classifier):
+def test_single_hard_tree_classes_match(
+    sk: Any, class_name: Any, classifier: Any
+) -> None:
     features = np.array([[-3.0], [-2.0], [-1.0], [1.0], [2.0], [3.0]])
     target = (
         np.array([0, 0, 0, 1, 1, 1])
@@ -521,7 +535,9 @@ def test_single_hard_tree_classes_match(sk, class_name, classifier):
         ("ExtraTreesClassifier", True),
     ],
 )
-def test_random_and_extra_forests_match_mean_aggregation(sk, class_name, classifier):
+def test_random_and_extra_forests_match_mean_aggregation(
+    sk: Any, class_name: Any, classifier: Any
+) -> None:
     features = np.array([[-3.0], [-2.0], [-1.0], [1.0], [2.0], [3.0], [4.0]])
     target = (
         np.array([0, 0, 0, 1, 1, 1, 1])
@@ -553,7 +569,7 @@ def test_random_and_extra_forests_match_mean_aggregation(sk, class_name, classif
         )
 
 
-def test_tree_missing_routing_is_copied(sk):
+def test_tree_missing_routing_is_copied(sk: Any) -> None:
     features = np.array([[-2.0], [-1.0], [1.0], [2.0], [np.nan]])
     target = np.array([-2.0, -1.0, 1.0, 2.0, 7.0])
     estimator = sk.tree.DecisionTreeRegressor(max_depth=2, random_state=0).fit(
@@ -575,7 +591,7 @@ def test_tree_missing_routing_is_copied(sk):
     )
 
 
-def test_adaboost_classifier_samme_probabilities_and_votes_match(sk):
+def test_adaboost_classifier_samme_probabilities_and_votes_match(sk: Any) -> None:
     features = np.array([[-3.0], [-2.0], [-1.0], [0.0], [1.0], [2.0], [3.0], [4.0]])
     target = np.array([0, 0, 1, 1, 2, 2, 2, 1])
     estimator = sk.ensemble.AdaBoostClassifier(
@@ -595,7 +611,7 @@ def test_adaboost_classifier_samme_probabilities_and_votes_match(sk):
     )
 
 
-def test_adaboost_regressor_weighted_median_matches(sk):
+def test_adaboost_regressor_weighted_median_matches(sk: Any) -> None:
     features = np.linspace(-3.0, 3.0, 16)[:, None]
     target = features[:, 0] ** 2 + 0.2 * features[:, 0]
     estimator = sk.ensemble.AdaBoostRegressor(
@@ -611,7 +627,9 @@ def test_adaboost_regressor_weighted_median_matches(sk):
     )
 
 
-def test_gradient_boosting_squared_error_matches_constant_init_and_stage_sum(sk):
+def test_gradient_boosting_squared_error_matches_constant_init_and_stage_sum(
+    sk: Any,
+) -> None:
     features = np.linspace(-2.0, 2.0, 14)[:, None]
     target = features[:, 0] ** 2 - 0.3 * features[:, 0]
     estimator = sk.ensemble.GradientBoostingRegressor(
@@ -632,7 +650,9 @@ def test_gradient_boosting_squared_error_matches_constant_init_and_stage_sum(sk)
 
 
 @pytest.mark.parametrize("classes", [2, 3])
-def test_gradient_boosting_log_loss_matches_binary_and_multiclass_links(sk, classes):
+def test_gradient_boosting_log_loss_matches_binary_and_multiclass_links(
+    sk: Any, classes: Any
+) -> None:
     features = np.array(
         [[-3.0], [-2.0], [-1.0], [0.0], [1.0], [2.0], [3.0], [4.0], [5.0]]
     )
@@ -657,7 +677,7 @@ def test_gradient_boosting_log_loss_matches_binary_and_multiclass_links(sk, clas
     )
 
 
-def test_exact_class_dispatch_rejects_subclasses(sk):
+def test_exact_class_dispatch_rejects_subclasses(sk: Any) -> None:
     class DerivedLinearRegression(sk.linear_model.LinearRegression):
         pass
 
@@ -686,7 +706,9 @@ def test_exact_class_dispatch_rejects_subclasses(sk):
         ("ensemble", "GradientBoostingRegressor", {}),
     ],
 )
-def test_supported_unfitted_classes_fail_closed(sk, module_name, class_name, kwargs):
+def test_supported_unfitted_classes_fail_closed(
+    sk: Any, module_name: Any, class_name: Any, kwargs: Any
+) -> None:
     module = getattr(sk, module_name)
     estimator = getattr(module, class_name)(**kwargs)
     with pytest.raises(ConversionError, match="not fitted"):
@@ -719,7 +741,7 @@ def test_supported_unfitted_classes_fail_closed(sk, module_name, class_name, kwa
         "hist_gradient_boosting",
     ],
 )
-def test_unsupported_prediction_semantics_are_rejected(sk, case):
+def test_unsupported_prediction_semantics_are_rejected(sk: Any, case: Any) -> None:
     x = np.array([[-2.0], [-1.0], [1.0], [2.0]])
     y_reg = np.array([-2.0, -1.0, 1.0, 2.0])
     y_binary = np.array([0, 0, 1, 1])
@@ -815,7 +837,9 @@ def test_unsupported_prediction_semantics_are_rejected(sk, case):
     "mutation",
     ["nonfinite_coefficient", "wrong_coefficient_shape", "zero_scale", "center_count"],
 )
-def test_malformed_supported_state_raises_conversion_error(sk, mutation):
+def test_malformed_supported_state_raises_conversion_error(
+    sk: Any, mutation: Any
+) -> None:
     if mutation in {"nonfinite_coefficient", "wrong_coefficient_shape"}:
         estimator = sk.linear_model.LinearRegression().fit(
             np.array([[0.0, 1.0], [1.0, 2.0], [2.0, 4.0]]),
@@ -839,7 +863,7 @@ def test_malformed_supported_state_raises_conversion_error(sk, mutation):
         from_sklearn(estimator)
 
 
-def test_version_schema_rejects_unknown_and_future_versions():
+def test_version_schema_rejects_unknown_and_future_versions() -> None:
     from phydrax.ml.interop import _sklearn
 
     with pytest.raises(UnsupportedConversionError, match="Unrecognized"):
@@ -850,7 +874,7 @@ def test_version_schema_rejects_unknown_and_future_versions():
         _sklearn._parse_version("1.11.dev0")
 
 
-def test_conversion_is_immutable_source_free_and_provenance_is_complete(sk):
+def test_conversion_is_immutable_source_free_and_provenance_is_complete(sk: Any) -> None:
     features = np.array([[-2.0, 1.0], [-1.0, 0.0], [1.0, 2.0], [2.0, 3.0]])
     target = np.array([-1.0, -0.5, 2.0, 3.0])
     estimator = sk.linear_model.LinearRegression().fit(features, target)
@@ -883,7 +907,7 @@ def test_conversion_is_immutable_source_free_and_provenance_is_complete(sk):
     assert any(isinstance(leaf, jax.Array) for leaf in leaves)
 
 
-def test_feature_names_and_numeric_class_order_are_preserved(sk):
+def test_feature_names_and_numeric_class_order_are_preserved(sk: Any) -> None:
     pandas = pytest.importorskip("pandas")
     features = pandas.DataFrame(
         {"temperature": [-2.0, -1.0, 1.0, 2.0], "pressure": [0.0, 1.0, 1.0, 2.0]}

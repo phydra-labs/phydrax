@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -48,7 +49,7 @@ class LandauTellerRelaxationPlan(StrictModule, NonTrainableState):
     relaxation_times: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, relaxation_times: ArrayLike, /):
+    def __init__(self, relaxation_times: ArrayLike, /) -> None:
         times = jnp.asarray(relaxation_times)
         host = np.asarray(times)
         if (
@@ -140,7 +141,7 @@ class ThermochemicalNonequilibriumProcessPlan(AbstractBalanceLawProcessPlan):
         subcycles: int = 8,
         nonlinear_iterations: int = 8,
         chemistry_temperature: Literal["heavy", "geometric-mean"] = "geometric-mean",
-    ):
+    ) -> None:
         subcycles_ = int(subcycles)
         iterations = int(nonlinear_iterations)
         if (
@@ -188,7 +189,7 @@ class PreparedThermochemicalNonequilibriumProcess(AbstractPreparedBalanceLawProc
         plan: ThermochemicalNonequilibriumProcessPlan,
         transport: AbstractPreparedBalanceLawTransport,
         /,
-    ):
+    ) -> None:
         system = transport.dynamics.system
         if not isinstance(
             system,
@@ -227,7 +228,9 @@ class PreparedThermochemicalNonequilibriumProcess(AbstractPreparedBalanceLawProc
         )
 
     @property
-    def system(self):
+    def system(
+        self,
+    ) -> TwoTemperatureMixtureEulerSystem | TwoTemperatureMixtureNavierStokesSystem:
         return self.transport.dynamics.system
 
     def initialize(
@@ -305,13 +308,13 @@ class PreparedThermochemicalNonequilibriumProcess(AbstractPreparedBalanceLawProc
         step = (end_time - start_time) / self.plan.subcycles
         runtime = args if isinstance(args, ChemicalRateRuntime) else None
 
-        def subcycle(_, carry):
+        def subcycle(_: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             candidate, chemistry_success = carry
             mass_rate, rate_success = self._chemistry_rate(candidate, runtime)
             candidate = candidate.at[..., self.species_indices].add(step * mass_rate)
             mode_start = candidate[..., self.mode_indices]
 
-            def relaxation_iteration(_, current):
+            def relaxation_iteration(_: Array, current: Array) -> Array:
                 relaxation = self.plan.relaxation.evaluate(self.system, current)
                 fraction = -jnp.expm1(
                     -step / relaxation.relaxation_times.astype(current.dtype)

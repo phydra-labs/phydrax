@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -38,7 +39,7 @@ class SpectralField(StrictModule):
         coordinate_unit: str,
         value_unit: str,
         field_id: str,
-    ):
+    ) -> None:
         coordinate_ = jnp.asarray(coordinate)
         values_ = jnp.asarray(values)
         if coordinate_.ndim != 1 or values_.shape[-1:] != coordinate_.shape:
@@ -64,7 +65,7 @@ class BinnedResponsePlan(StrictModule, NonTrainableState):
     response: LinearObservationPlan
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, matrix: ArrayLike, /, *, response_id: str):
+    def __init__(self, matrix: ArrayLike, /, *, response_id: str) -> None:
         host = np.asarray(matrix, dtype=np.float64)
         if host.ndim != 2 or np.any(~np.isfinite(host)) or np.any(host < 0.0):
             raise ValueError("Binned response must be a finite non-negative matrix.")
@@ -124,7 +125,7 @@ class ImageResponsePlan(StrictModule, NonTrainableState):
     point_spread_function: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, point_spread_function: ArrayLike, /, *, response_id: str):
+    def __init__(self, point_spread_function: ArrayLike, /, *, response_id: str) -> None:
         host = np.asarray(point_spread_function, dtype=np.float64)
         if host.ndim != 2 or np.any(~np.isfinite(host)) or np.any(host < 0.0):
             raise ValueError("Point-spread function must be a finite non-negative image.")
@@ -168,7 +169,9 @@ class StaticFieldOperatorSequence(StrictModule, NonTrainableState):
     operator_ids: tuple[str, ...] = eqx.field(static=True)
     sequence_id: str = eqx.field(static=True)
 
-    def __init__(self, operators: tuple[Callable, ...], operator_ids: tuple[str, ...], /):
+    def __init__(
+        self, operators: tuple[Callable, ...], operator_ids: tuple[str, ...], /
+    ) -> None:
         items = tuple(operators)
         identifiers = tuple(str(value) for value in operator_ids)
         if (

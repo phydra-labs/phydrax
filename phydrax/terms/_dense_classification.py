@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any, Literal
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 from phydrax.discretization import AbstractAxisSpec, TensorGridPlan
@@ -27,11 +28,12 @@ from phydrax.domain import (
 
 from .._classification import (
     classification_probabilities,
+    ClassificationKind,
     pointwise_classification_loss,
 )
 from .._doc import DOC_KEY0
+from .._dtype_names import inexact_result_type
 from .._frozendict import frozendict
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..integration._lowering import _coord_weights, component_factor_fields
@@ -41,6 +43,7 @@ from ..ml._overlap import (
     reduce_overlap_score,
 )
 from ..ml._schema import TargetSchema
+from ..typing import parse, PRNGKey
 from ._data_metrics import (
     configured_case_indices,
     sample_case_indices,
@@ -49,8 +52,8 @@ from ._data_metrics import (
 )
 
 
-SiteReduction = Literal["mean", "integral"]
-SupportMeasure = Literal["statistical", "physical"]
+SiteReduction: TypeAlias = Literal["mean", "integral"]
+SupportMeasure: TypeAlias = Literal["statistical", "physical"]
 
 
 class DenseSiteClassificationBatch(StrictModule):
@@ -75,7 +78,7 @@ class DenseSiteClassificationBatch(StrictModule):
         sample_weight: ArrayLike | None = None,
         case_axis: str,
         site_axes: tuple[str, ...],
-    ):
+    ) -> None:
         if not isinstance(points, GridBatch):
             raise TypeError("points must be a GridBatch.")
         index_array = jnp.asarray(indices, dtype=jnp.int32).reshape((-1,))
@@ -202,6 +205,11 @@ def _class_count(schema: TargetSchema, /) -> int | None:
             raise ValueError("Multilabel schemas require named label coordinates.")
         return count
     return None
+
+
+def _classification_kind(schema: TargetSchema, /) -> ClassificationKind:
+    # Dense classification constructors admit only classification schema kinds.
+    return cast(ClassificationKind, schema.kind)
 
 
 def _objective_alpha(objective: ClassificationObjective, /) -> ArrayLike | float | None:
@@ -375,16 +383,12 @@ class _AbstractDenseClassificationTerm(AbstractSamplingTerm):
         indices: ArrayLike | None = None,
         weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(component, DomainComponent):
             raise TypeError("component must be a DomainComponent.")
-        if not isinstance(target_schema, TargetSchema) or target_schema.kind not in (
-            "binary",
-            "multiclass",
-            "multilabel",
-            "ordinal",
-        ):
+        if not isinstance(target_schema, TargetSchema):
             raise TypeError("target_schema must declare a classification target kind.")
+        parse(target_schema.kind, ClassificationKind, "target_schema.kind")
         dataset = _dataset_factor(component)
         template, case_count, case_axis, site_labels = _normalize_grid_sampling(
             component, dataset, sampling
@@ -511,7 +515,7 @@ class _AbstractDenseClassificationTerm(AbstractSamplingTerm):
             site_axes=self._site_axes,
         )
 
-    def sample(self, *, key: Key[Array, ""] = DOC_KEY0) -> DenseSiteClassificationBatch:
+    def sample(self, *, key: PRNGKey = DOC_KEY0) -> DenseSiteClassificationBatch:
         indices = sample_case_indices(
             size=self.dataset.size,
             num_samples=self._case_count,
@@ -520,9 +524,7 @@ class _AbstractDenseClassificationTerm(AbstractSamplingTerm):
         )
         return self._batch_from_indices(indices)
 
-    def observed_batch(
-        self, *, key: Key[Array, ""] = DOC_KEY0
-    ) -> DenseSiteClassificationBatch:
+    def observed_batch(self, *, key: PRNGKey = DOC_KEY0) -> DenseSiteClassificationBatch:
         """Materialize every configured case once on the fixed site grid."""
         del key
         indices = (
@@ -538,7 +540,7 @@ class _AbstractDenseClassificationTerm(AbstractSamplingTerm):
         batch: DenseSiteClassificationBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         **kwargs: Any,
     ) -> cx.AxisArray:
         function = functions[self.field]
@@ -559,7 +561,7 @@ class _AbstractDenseClassificationTerm(AbstractSamplingTerm):
         reference: cx.AxisArray,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         physical: bool,
         target_observed: Array,
         **kwargs: Any,
@@ -644,12 +646,11 @@ class DenseSiteClassificationTerm(_AbstractDenseClassificationTerm):
         indices: ArrayLike | None = None,
         weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         objective_ = ClassificationObjective.nll() if objective is None else objective
         if not isinstance(objective_, ClassificationObjective):
             raise TypeError("objective must be a ClassificationObjective.")
-        if site_reduction not in ("mean", "integral"):
-            raise ValueError("site_reduction must be 'mean' or 'integral'.")
+        site_reduction = parse(site_reduction, SiteReduction, "site_reduction")
         super().__init__(
             field,
             component,
@@ -677,7 +678,7 @@ class DenseSiteClassificationTerm(_AbstractDenseClassificationTerm):
         batch: DenseSiteClassificationBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         **kwargs: Any,
     ) -> tuple[Array, Array]:
         value = self._logits(functions, batch, key=key, **kwargs)
@@ -728,7 +729,7 @@ class DenseSiteClassificationTerm(_AbstractDenseClassificationTerm):
         pointwise = pointwise_classification_loss(
             safe_logits,
             safe_target,
-            kind=self.target_schema.kind,
+            kind=_classification_kind(self.target_schema),
             objective=self.objective.kind,
             class_count=self.class_count,
             target_mask=(
@@ -757,7 +758,7 @@ class DenseSiteClassificationTerm(_AbstractDenseClassificationTerm):
         batch: DenseSiteClassificationBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         **kwargs: Any,
     ) -> Array:
         return self._per_case_loss_and_support(
@@ -772,7 +773,7 @@ class DenseSiteClassificationTerm(_AbstractDenseClassificationTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: DenseSiteClassificationBatch | None = None,
         **kwargs: Any,
@@ -895,11 +896,10 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
         indices: ArrayLike | None = None,
         weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(score, OverlapScoreConfig):
             raise TypeError("score must be an OverlapScoreConfig.")
-        if support_measure not in ("statistical", "physical"):
-            raise ValueError("support_measure must be 'statistical' or 'physical'.")
+        support_measure = parse(support_measure, SupportMeasure, "support_measure")
         objective_ = ClassificationObjective.nll() if objective is None else objective
         if not isinstance(objective_, ClassificationObjective):
             raise TypeError("objective must be a ClassificationObjective.")
@@ -930,7 +930,7 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
         batch: DenseSiteClassificationBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         **kwargs: Any,
     ) -> tuple[Array, Array]:
         value = self._logits(functions, batch, key=key, **kwargs)
@@ -981,7 +981,7 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
         safe_logits = jnp.where(logit_mask, logits, 0.0)
         probability = classification_probabilities(
             safe_logits,
-            kind=self.target_schema.kind,
+            kind=_classification_kind(self.target_schema),
             class_count=self.class_count,
             thresholds=self.objective.thresholds,
         )
@@ -1026,7 +1026,7 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
         batch: DenseSiteClassificationBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         **kwargs: Any,
     ) -> Array:
         return self._per_case_score_and_support(
@@ -1041,7 +1041,7 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: DenseSiteClassificationBatch | None = None,
         **kwargs: Any,

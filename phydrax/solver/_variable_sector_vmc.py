@@ -14,12 +14,13 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
+from .._dtype_names import inexact_result_type
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import DenseLinearOperator, LinearSystem, solve
@@ -31,6 +32,7 @@ from ..operators.quantum.variable_sector import (
     VariableSectorProposal,
     VariableSectorSpace,
 )
+from ..typing import parse, PRNGKey
 
 
 VariableSectorVMCStatus: TypeAlias = Literal[0, 1, 2, 3, 4]
@@ -39,6 +41,11 @@ VARIABLE_SECTOR_VMC_INVALID_CHAIN: VariableSectorVMCStatus = 1
 VARIABLE_SECTOR_VMC_INVALID_LOCAL_ENERGY: VariableSectorVMCStatus = 2
 VARIABLE_SECTOR_VMC_INSUFFICIENT_TAIL_SAMPLES: VariableSectorVMCStatus = 3
 VARIABLE_SECTOR_VMC_CUTOFF_TAIL_REFUSED: VariableSectorVMCStatus = 4
+# coordinates, active mask, species, log target, valid, accepted, log ratio,
+# proposal valid
+_ChainTransition: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 def variable_sector_vmc_status_name(status: int | Array, /) -> str:
@@ -77,7 +84,7 @@ class VariableSectorVMCPlan(StrictModule, NonTrainableState):
         minimum_tail_samples: int = 128,
         tail_probability_tolerance: float = 1e-3,
         tail_standard_error_multiplier: float = 3.0,
-    ):
+    ) -> None:
         chains, draws, transitions, warmup, minimum = map(
             int,
             (
@@ -146,7 +153,7 @@ class PreparedVariableSectorVMC(StrictModule):
         measure: VariableSectorMeasure,
         initial_configurations: Sequence[VariableParticleConfiguration],
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, VariableSectorVMCPlan):
             raise TypeError("plan must be VariableSectorVMCPlan.")
         if not callable(model):
@@ -216,7 +223,7 @@ class PreparedVariableSectorVMC(StrictModule):
             }
         )
 
-    def initial_state(self, *, key: Key[Array, ""] = jr.key(0)) -> VariableSectorVMCState:
+    def initial_state(self, *, key: PRNGKey = jr.key(0)) -> VariableSectorVMCState:
         log_target, valid = _batched_log_target(
             self,
             self.initial_coordinates,
@@ -354,7 +361,7 @@ def _batched_log_target(
     species: Array,
     /,
 ) -> tuple[Array, Array]:
-    def evaluate(coordinate, active, labels):
+    def evaluate(coordinate: Array, active: Array, labels: Array) -> tuple[Array, Array]:
         return _one_log_target(
             prepared, VariableParticleConfiguration(coordinate, active, labels)
         )
@@ -375,7 +382,14 @@ def _transition(
         chain_indices
     )
 
-    def one(coordinate, active, labels, current_log_target, current_valid, key):
+    def one(
+        coordinate: Array,
+        active: Array,
+        labels: Array,
+        current_log_target: Array,
+        current_valid: Array,
+        key: PRNGKey,
+    ) -> _ChainTransition:
         proposal_key, acceptance_key = jr.split(key)
         current = VariableParticleConfiguration(coordinate, active, labels)
         proposed = prepared.proposal.sample(proposal_key, current)
@@ -564,7 +578,9 @@ def run_variable_sector_vmc(
     ratios = jnp.stack(ratio_draws, axis=1)
     proposal_valid = jnp.stack(proposal_valid_draws, axis=1)
 
-    def local_energy(coordinate, active, labels):
+    def local_energy(
+        coordinate: Array, active: Array, labels: Array
+    ) -> tuple[Array, Array]:
         result = prepared.operator.local_value(
             prepared.model, VariableParticleConfiguration(coordinate, active, labels)
         )
@@ -610,8 +626,8 @@ def run_variable_sector_vmc(
     )
 
 
-ParameterMode = Literal["real", "holomorphic"]
-EvolutionKind = Literal["imaginary-time", "real-time"]
+ParameterMode: TypeAlias = Literal["real", "holomorphic"]
+EvolutionKind: TypeAlias = Literal["imaginary-time", "real-time"]
 
 
 class StochasticReconfigurationResult(StrictModule):
@@ -650,10 +666,8 @@ def solve_stochastic_reconfiguration(
         raise ValueError("SR requires at least two samples and one parameter.")
     if not np.isfinite(damping_) or damping_ <= 0:
         raise ValueError("damping must be finite and positive.")
-    if parameter_mode not in ("real", "holomorphic"):
-        raise ValueError("parameter_mode must be 'real' or 'holomorphic'.")
-    if evolution not in ("imaginary-time", "real-time"):
-        raise ValueError("evolution must be 'imaginary-time' or 'real-time'.")
+    parameter_mode = parse(parameter_mode, ParameterMode, "parameter_mode")
+    evolution = parse(evolution, EvolutionKind, "evolution")
     count = derivatives.shape[0]
     centered_derivatives = derivatives - jnp.mean(derivatives, axis=0)
     centered_energy = energies - jnp.mean(energies)
@@ -732,12 +746,11 @@ class VariableSectorTDVPPlan(StrictModule, NonTrainableState):
         /,
         *,
         evolution: EvolutionKind,
-    ):
+    ) -> None:
         step, count = float(time_step), int(step_count)
         if not np.isfinite(step) or step <= 0 or count < 1:
             raise ValueError("TDVP time_step/step_count must be finite and positive.")
-        if evolution not in ("imaginary-time", "real-time"):
-            raise ValueError("evolution must be 'imaginary-time' or 'real-time'.")
+        evolution = parse(evolution, EvolutionKind, "evolution")
         self.time_step = step
         self.step_count = count
         self.evolution = evolution

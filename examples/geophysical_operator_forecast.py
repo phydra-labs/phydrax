@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import perf_counter
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -30,7 +31,7 @@ from phydrax.applications.geophysics import (
 )
 
 
-def _provenance(size):
+def _provenance(size: Any) -> Any:
     return tuple(
         phx.nn.operator.OperatorCaseProvenance(
             f"case:{i}",
@@ -45,11 +46,11 @@ def _provenance(size):
     )
 
 
-def _dimension_basis(quantity):
+def _dimension_basis(quantity: Any) -> Any:
     return tuple(name for name, _, _ in quantity.unit.dimension.terms)
 
 
-def run_example(*, steps=40, artifact_directory=None):
+def run_example(*, steps: Any = 40, artifact_directory: Any = None) -> Any:
     started = perf_counter()
     op, training = phx.nn.operator, phx.nn.operator.training
     quantity = GeophysicalQuantity(
@@ -136,7 +137,7 @@ def run_example(*, steps=40, artifact_directory=None):
     if trained is None:
         raise RuntimeError("Spherical operator fit did not produce a trained operator")
 
-    def artifact_roundtrip(directory):
+    def artifact_roundtrip(directory: Any) -> Any:
         training.save_operator_artifact(directory, trained)
         return training.load_trained_operator(directory)
 

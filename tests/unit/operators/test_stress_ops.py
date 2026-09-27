@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -27,7 +30,7 @@ from phydrax.operators.differential import (
 )
 
 
-def test_deviatoric_and_hydrostatic():
+def test_deviatoric_and_hydrostatic() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -36,7 +39,7 @@ def test_deviatoric_and_hydrostatic():
     p = 3.0
 
     @geom.Function("x")
-    def sigma_const(x):
+    def sigma_const(x: Any) -> Any:
         return jnp.array([[p, 0.0], [0.0, p]])
 
     dev = deviatoric_stress(sigma_const)
@@ -65,7 +68,7 @@ def test_deviatoric_and_hydrostatic():
     )
 
 
-def test_viscous_stress_symmetry():
+def test_viscous_stress_symmetry() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -73,7 +76,7 @@ def test_viscous_stress_symmetry():
     a, b = 0.1, -0.2
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([a * x[0], b * x[1]])
 
     tau = viscous_stress(u, mu=mu)
@@ -83,14 +86,14 @@ def test_viscous_stress_symmetry():
     assert jnp.allclose(t, jnp.swapaxes(jnp.asarray(t), -1, -2))
 
 
-def test_maxwell_stress_E_only():
+def test_maxwell_stress_E_only() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
     eps = 2.0
 
     @geom.Function("x")
-    def E(x):
+    def E(x: Any) -> Any:
         return jnp.array([1.0, 0.0])
 
     T = maxwell_stress(E=E, epsilon=eps)
@@ -101,7 +104,7 @@ def test_maxwell_stress_E_only():
     assert jnp.allclose(T0, jnp.array([[0.5 * eps, 0.0], [0.0, -0.5 * eps]]))
 
 
-def test_maxwell_stress_broadcasts_material_fields_over_matrix_axes():
+def test_maxwell_stress_broadcasts_material_fields_over_matrix_axes() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(
             center=(0.0, 0.0),
@@ -126,7 +129,7 @@ def test_maxwell_stress_broadcasts_material_fields_over_matrix_axes():
     assert jnp.allclose(values, expected)
 
 
-def test_linear_isotropic_plane_stress_simple():
+def test_linear_isotropic_plane_stress_simple() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -134,7 +137,7 @@ def test_linear_isotropic_plane_stress_simple():
     a, b = 0.1, -0.2
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([a * x[0], b * x[1]])
 
     sigma2d = linear_elastic_cauchy_stress_2d(u, E=E, nu=nu, mode2d="plane_stress")
@@ -146,7 +149,7 @@ def test_linear_isotropic_plane_stress_simple():
     assert s.shape == (2, 2)
 
 
-def test_orthotropic_reduces_isotropic():
+def test_orthotropic_reduces_isotropic() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -156,7 +159,7 @@ def test_orthotropic_reduces_isotropic():
     a, b = 0.1, -0.2
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([a * x[0], b * x[1]])
 
     sig_iso = linear_elastic_cauchy_stress_2d(u, E=E, nu=nu, mode2d="plane_stress")
@@ -171,7 +174,7 @@ def test_orthotropic_reduces_isotropic():
     )
 
 
-def test_dimension_declared_elasticity_and_equivalent_stress_are_explicit():
+def test_dimension_declared_elasticity_and_equivalent_stress_are_explicit() -> None:
     geom = phx.domain.GeometryDomain(phx.geometry.Ball(jnp.zeros((4,)), 1.0).compile())
     material = phx.operators.LinearElasticityTensor.isotropic(
         4,
@@ -180,7 +183,7 @@ def test_dimension_declared_elasticity_and_equivalent_stress_are_explicit():
     )
 
     @geom.Function("x")
-    def displacement(x):
+    def displacement(x: Any) -> Any:
         return jnp.asarray((x[0], 0.0, 0.0, 0.0))
 
     stress = linear_elastic_stress(displacement, material)
@@ -188,7 +191,7 @@ def test_dimension_declared_elasticity_and_equivalent_stress_are_explicit():
     stress_value = jnp.asarray(stress(point).data)
 
     @geom.Function("x")
-    def uniaxial(x):
+    def uniaxial(x: Any) -> Any:
         del x
         return jnp.diag(jnp.asarray((5.0, 0.0, 0.0, 0.0)))
 
@@ -200,14 +203,14 @@ def test_dimension_declared_elasticity_and_equivalent_stress_are_explicit():
         von_mises_stress(uniaxial)
 
 
-def test_finite_strain_shapes_zero_disp():
+def test_finite_strain_shapes_zero_disp() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     # At zero displacement, F=I, E=0 => SVK S=0; Neo-Hookean Cauchy σ=0
     @geom.Function("x")
-    def uz(x):
+    def uz(x: Any) -> Any:
         return jnp.array([0.0, 0.0])
 
     mu, lam = 2.0, 3.0
@@ -224,7 +227,7 @@ def test_finite_strain_shapes_zero_disp():
     assert jnp.allclose(sig, jnp.zeros((2, 2)))
 
 
-def test_neo_hookean_field_energy_and_stresses_match_plane_strain_array_model():
+def test_neo_hookean_field_energy_and_stresses_match_plane_strain_array_model() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -234,7 +237,7 @@ def test_neo_hookean_field_energy_and_stresses_match_plane_strain_array_model():
     lambda_ = 9.0
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return displacement_gradient @ x
 
     point = frozendict({"x": cx.AxisArray(jnp.asarray((0.2, -0.4)), dims=(None,))})
@@ -259,17 +262,17 @@ def test_neo_hookean_field_energy_and_stresses_match_plane_strain_array_model():
     np.testing.assert_allclose(cauchy, expected_cauchy, rtol=2e-11, atol=2e-11)
 
 
-def test_neo_hookean_field_supports_heterogeneous_scalar_materials():
+def test_neo_hookean_field_supports_heterogeneous_scalar_materials() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.asarray((0.05 * x[0], -0.02 * x[1]))
 
     @geom.Function("x")
-    def mu(x):
+    def mu(x: Any) -> Any:
         return 2.0 + 0.5 * x[0]
 
     point_value = jnp.asarray((0.4, -0.3))
@@ -293,13 +296,15 @@ def test_neo_hookean_field_supports_heterogeneous_scalar_materials():
         (jnp.nan, 3.0),
     ],
 )
-def test_neo_hookean_field_marks_invalid_materials_nonfinite(mu, lambda_):
+def test_neo_hookean_field_marks_invalid_materials_nonfinite(
+    mu: Any, lambda_: Any
+) -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.asarray((0.0, 0.0))
 
     point = frozendict({"x": cx.AxisArray(jnp.zeros(2), dims=(None,))})
@@ -307,13 +312,13 @@ def test_neo_hookean_field_marks_invalid_materials_nonfinite(mu, lambda_):
     assert not bool(jnp.isfinite(value))
 
 
-def test_neo_hookean_field_marks_nonpositive_jacobian_nonfinite():
+def test_neo_hookean_field_marks_nonpositive_jacobian_nonfinite() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def inverted(x):
+    def inverted(x: Any) -> Any:
         return jnp.asarray((-2.0 * x[0], 0.0))
 
     point = frozendict({"x": cx.AxisArray(jnp.asarray((0.2, 0.1)), dims=(None,))})
@@ -326,13 +331,15 @@ def test_neo_hookean_field_marks_nonpositive_jacobian_nonfinite():
 
 
 @pytest.mark.parametrize("components", [1, 3])
-def test_deformation_gradient_rejects_displacement_dimension_mismatch(components):
+def test_deformation_gradient_rejects_displacement_dimension_mismatch(
+    components: Any,
+) -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def displacement(x):
+    def displacement(x: Any) -> Any:
         return jnp.zeros((components,))
 
     gradient = deformation_gradient(displacement)
@@ -341,14 +348,15 @@ def test_deformation_gradient_rejects_displacement_dimension_mismatch(components
         gradient(point)
 
 
-def test_neo_hookean_field_rejects_retired_kappa_keyword():
+def test_neo_hookean_field_rejects_retired_kappa_keyword() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.asarray((0.0, 0.0))
 
     with pytest.raises(TypeError, match="kappa"):
+        # ty: ignore[missing-argument, unknown-argument]
         neo_hookean_cauchy(u, mu=2.0, kappa=3.0)

@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from enum import IntEnum
 from numbers import Integral
 
@@ -15,7 +15,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -61,11 +62,14 @@ class DarkHadronPairChannel(StrictModule, NonTrainableState):
         /,
         *,
         spectrum_label: str,
-    ):
+    ) -> None:
         raw_identifiers = tuple(pdg_ids)
         if len(raw_identifiers) != 2:
             raise ValueError("A hadron-pair channel requires exactly two species.")
-        identifiers = tuple(_pdg_id(value, "hadron pdg_id") for value in raw_identifiers)
+        identifiers = (
+            _pdg_id(raw_identifiers[0], "hadron pdg_id"),
+            _pdg_id(raw_identifiers[1], "hadron pdg_id"),
+        )
         weight = float(relative_weight)
         label = str(spectrum_label).strip()
         if not math.isfinite(weight) or weight <= 0.0 or not label:
@@ -97,7 +101,7 @@ class DarkClusterFissionChannel(StrictModule, NonTrainableState):
         daughter_charges: tuple[float, float],
         relative_weight: float,
         /,
-    ):
+    ) -> None:
         masses = tuple(float(value) for value in daughter_rest_energies)
         charges = tuple(float(value) for value in daughter_charges)
         weight = float(relative_weight)
@@ -124,14 +128,14 @@ class DarkClusterFissionChannel(StrictModule, NonTrainableState):
 
 
 def _validate_common(
-    runtime_plan,
-    species,
-    units,
-    frame,
-    channels,
-    labels,
-    evidence_ids,
-):
+    runtime_plan: DarkSectorEpochPlan,
+    species: ParticleSpeciesTable,
+    units: RelativisticUnitContract,
+    frame: LocalRelativisticFramePlan,
+    channels: Sequence[DarkHadronPairChannel],
+    labels: Sequence[str],
+    evidence_ids: Sequence[str],
+) -> tuple[tuple[DarkHadronPairChannel, ...], tuple[str, ...], tuple[str, ...]]:
     if not isinstance(runtime_plan, DarkSectorEpochPlan):
         raise TypeError("runtime_plan must be DarkSectorEpochPlan.")
     if not isinstance(species, ParticleSpeciesTable):
@@ -219,7 +223,7 @@ class DarkStringFragmentationPlan(StrictModule, NonTrainableState):
         string_tension: float,
         longitudinal_shape: tuple[float, float],
         production_evidence_ids: Sequence[str],
-    ):
+    ) -> None:
         channels_, labels, evidence = _validate_common(
             runtime_plan,
             species,
@@ -317,7 +321,7 @@ class DarkClusterHadronizationPlan(StrictModule, NonTrainableState):
         tune_id: str,
         fission_threshold: float,
         production_evidence_ids: Sequence[str],
-    ):
+    ) -> None:
         decays, labels, evidence = _validate_common(
             runtime_plan,
             species,
@@ -418,7 +422,9 @@ class DarkClusterFissionResult(StrictModule, NonTrainableState):
         return self.status == int(DarkHadronizationStatus.SUCCESS)
 
 
-def _species_arrays(table: ParticleSpeciesTable, channels):
+def _species_arrays(
+    table: ParticleSpeciesTable, channels: Sequence[DarkHadronPairChannel]
+) -> tuple[Array, Array, Array, Array]:
     ids = np.asarray(table.pdg_ids)
     masses = np.asarray(table.rest_energies)
     charges = np.asarray(table.charges)
@@ -442,7 +448,13 @@ def _species_arrays(table: ParticleSpeciesTable, channels):
     )
 
 
-def _two_body_momenta(units, parent, masses, azimuth_uniform, polar_uniform):
+def _two_body_momenta(
+    units: RelativisticUnitContract,
+    parent: Array,
+    masses: Array,
+    azimuth_uniform: Array,
+    polar_uniform: Array,
+) -> tuple[Array, Array, Array]:
     invariant_squared = units.lorentz_scalar(parent, parent)
     positive_energy = parent[0] > 0.0
     timelike = invariant_squared > 0.0
@@ -468,7 +480,7 @@ def _two_body_momenta(units, parent, masses, azimuth_uniform, polar_uniform):
     boost_valid = beta_squared < 1.0
     gamma = safe_parent_energy / invariant_mass
 
-    def boost(energy, spatial):
+    def boost(energy: Array, spatial: Array) -> Array:
         projection = jnp.sum(beta * spatial)
         coefficient = jnp.where(
             beta_squared > 0.0,
@@ -489,8 +501,14 @@ def _two_body_momenta(units, parent, masses, azimuth_uniform, polar_uniform):
 
 
 def _pair_probabilities(
-    units, parent, masses, charges, weights, parent_charge, suppression
-):
+    units: RelativisticUnitContract,
+    parent: Array,
+    masses: Array,
+    charges: Array,
+    weights: Array,
+    parent_charge: float | Array,
+    suppression: Callable[[Array], Array],
+) -> tuple[Array, Array, Array]:
     invariant_squared = units.lorentz_scalar(parent, parent)
     invariant_mass = jnp.sqrt(jnp.maximum(invariant_squared, 0.0))
     threshold = masses[:, 0] + masses[:, 1]
@@ -510,22 +528,22 @@ def _pair_probabilities(
     return jnp.where(total > 0.0, raw / total, 0.0), charge_match, open_channel
 
 
-def _select(probabilities, uniform):
+def _select(probabilities: Array, uniform: Array) -> Array:
     total = jnp.sum(probabilities)
     return jnp.argmax(jnp.cumsum(probabilities) > uniform * total).astype(jnp.int32)
 
 
 def _fragment_dark_string_total(
-    plan,
-    parent,
-    parent_charge,
-    color_singlet,
-    random,
-    parent_id,
-    finite_input,
-    species_valid,
-    draw_id,
-):
+    plan: DarkStringFragmentationPlan,
+    parent: Array,
+    parent_charge: float | Array,
+    color_singlet: Array,
+    random: Array,
+    parent_id: str,
+    finite_input: Array,
+    species_valid: Array,
+    draw_id: str,
+) -> DarkHadronizationEvidence:
     channel_ids, masses, charges, weights = _species_arrays(plan.species, plan.channels)
     invariant_mass = jnp.sqrt(jnp.maximum(plan.units.lorentz_scalar(parent, parent), 0.0))
     shape_a, shape_b = plan.longitudinal_shape
@@ -744,7 +762,7 @@ def fragment_dark_string_chain(
     root = jnp.argmax(active)
     reached = jnp.arange(active.shape[0]) == root
 
-    def connect(_, current):
+    def connect(_: Array, current: Array) -> Array:
         return current | jnp.any(current[:, None] & adjacency, axis=0)
 
     reached = jax.lax.fori_loop(0, active.shape[0], connect, reached)

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import zipfile
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -134,7 +135,9 @@ def _piv_result() -> PIVResult:
     )
 
 
-def test_native_piv_archive_round_trip_preserves_all_stages_and_invalid_payload(tmp_path):
+def test_native_piv_archive_round_trip_preserves_all_stages_and_invalid_payload(
+    tmp_path: Any,
+) -> None:
     result = _piv_result()
     path = tmp_path / "result.phxv"
     write_velocimetry_archive(
@@ -168,7 +171,9 @@ def test_native_piv_archive_round_trip_preserves_all_stages_and_invalid_payload(
     assert "version" not in manifest
 
 
-def test_native_archive_rejects_duplicate_or_corrupt_payload_member(tmp_path):
+def test_native_archive_rejects_duplicate_or_corrupt_payload_member(
+    tmp_path: Any,
+) -> None:
     path = tmp_path / "result.phxv"
     write_velocimetry_archive(path, _piv_result(), value_kind="piv-result")
     with zipfile.ZipFile(path, mode="a", compression=zipfile.ZIP_STORED) as archive:
@@ -178,7 +183,7 @@ def test_native_archive_rejects_duplicate_or_corrupt_payload_member(tmp_path):
         read_velocimetry_archive(path)
 
 
-def test_learned_artifact_restores_prediction_identity(tmp_path):
+def test_learned_artifact_restores_prediction_identity(tmp_path: Any) -> None:
     plan = LearnedDensePIVPlan(
         (8, 8),
         level_count=2,
@@ -226,7 +231,7 @@ def test_learned_artifact_restores_prediction_identity(tmp_path):
     assert artifact.manifest.plan_id == model.plan.plan_id
 
 
-def test_learned_artifact_registration_refuses_unrelated_types(tmp_path):
+def test_learned_artifact_registration_refuses_unrelated_types(tmp_path: Any) -> None:
     with pytest.raises(TypeError, match="AbstractDensePIVModel"):
         register_learned_piv_model("unrelated", dict)
     with pytest.raises(TypeError, match="AbstractDensePIVModel"):

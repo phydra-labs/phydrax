@@ -4,12 +4,14 @@
 
 """Exercise rigid friction and sharp/diffuse fracture state contracts."""
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def run():
+def run() -> Any:
     contact = phx.discretization.RigidMPMContactPlan(
         phx.geometry.Circle((0.0, 0.0), 0.5).compile(),
         phx.discretization.SharpCoulombMPMFrictionPlan(0.25),

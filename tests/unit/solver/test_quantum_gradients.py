@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -22,7 +25,7 @@ from phydrax.solver import (
 )
 
 
-def _one_qubit_problem(*, occurrences=1):
+def _one_qubit_problem(*, occurrences: Any = 1) -> Any:
     layout = HilbertRegisterLayout(("q",), (2,))
     template = QuantumProgramTemplate(
         layout,
@@ -42,7 +45,7 @@ def _one_qubit_problem(*, occurrences=1):
     return template, prepared, observable_plan, state
 
 
-def test_template_materialization_preserves_program_schema():
+def test_template_materialization_preserves_program_schema() -> None:
     template, prepared, _observable_plan, state = _one_qubit_problem()
     first = materialize_quantum_program(template, jnp.asarray([0.1]))
     second = materialize_quantum_program(template, jnp.asarray([0.7]))
@@ -63,7 +66,7 @@ def test_template_materialization_preserves_program_schema():
     assert int(second_result.numeric_version) == 1
 
 
-def test_parameter_shift_matches_analytic_and_autodiff_derivatives():
+def test_parameter_shift_matches_analytic_and_autodiff_derivatives() -> None:
     _template, prepared, observable_plan, state = _one_qubit_problem()
     shift_plan = plan_parameter_shift(prepared.template)
     theta = jnp.asarray([0.37], dtype=jnp.float64)
@@ -75,7 +78,7 @@ def test_parameter_shift_matches_analytic_and_autodiff_derivatives():
         state,
     )
 
-    def expectation(angle):
+    def expectation(angle: Any) -> Any:
         program_result = execute_dense_quantum_template(prepared, angle, state)
         from phydrax.solver import evaluate_dense_quantum_observables
 
@@ -91,7 +94,7 @@ def test_parameter_shift_matches_analytic_and_autodiff_derivatives():
     assert jnp.allclose(shifted.jacobian[0, 0], autodiff)
 
 
-def test_parameter_shift_sums_shared_angle_occurrences():
+def test_parameter_shift_sums_shared_angle_occurrences() -> None:
     _template, prepared, observable_plan, state = _one_qubit_problem(occurrences=2)
     shift_plan = plan_parameter_shift(prepared.template)
     theta = jnp.asarray([0.23], dtype=jnp.float64)
@@ -112,7 +115,7 @@ def test_parameter_shift_sums_shared_angle_occurrences():
     )
 
 
-def test_template_validation_rejects_invalid_bindings_and_qudit_rotations():
+def test_template_validation_rejects_invalid_bindings_and_qudit_rotations() -> None:
     layout = HilbertRegisterLayout(("q",), (2,))
     with pytest.raises(ValueError, match="contiguous"):
         QuantumProgramTemplate(

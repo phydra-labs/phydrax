@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ._observation_covariance import (
@@ -72,25 +73,29 @@ class NuisanceProjectionResult(StrictModule):
     successful: Array
 
 
-def _whiten(covariance, value):
-    if isinstance(
-        covariance,
-        (
-            CholeskyCovarianceAction,
-            DiagonalCovarianceAction,
-            KroneckerCholeskyCovarianceAction,
-            CirculantCovarianceAction,
-        ),
-    ):
-        if value.ndim == 1:
-            return covariance.whiten(value)
-        return jax.vmap(covariance.whiten, in_axes=1, out_axes=1)(value)
-    return None
+_WHITENING_ACTIONS = (
+    CholeskyCovarianceAction,
+    DiagonalCovarianceAction,
+    KroneckerCholeskyCovarianceAction,
+    CirculantCovarianceAction,
+)
 
 
-def _precision_apply(covariance, value):
-    whitened = _whiten(covariance, value)
-    if whitened is not None:
+def _whiten(
+    covariance: CholeskyCovarianceAction
+    | DiagonalCovarianceAction
+    | KroneckerCholeskyCovarianceAction
+    | CirculantCovarianceAction,
+    value: Array,
+) -> Array:
+    if value.ndim == 1:
+        return covariance.whiten(value)
+    return jax.vmap(covariance.whiten, in_axes=1, out_axes=1)(value)
+
+
+def _precision_apply(covariance: _CovarianceProtocol, value: Array) -> Array:
+    if isinstance(covariance, _WHITENING_ACTIONS):
+        whitened = _whiten(covariance, value)
         if value.ndim == 1:
             # WᴴW action is obtained without materializing W.
             _, pullback = jax.vjp(covariance.whiten, jnp.zeros_like(value))
@@ -142,7 +147,7 @@ class LinearNuisancePlan(StrictModule, NonTrainableState):
         *,
         prior_precision: ArrayLike | None = None,
         prior_mean: ArrayLike | None = None,
-    ):
+    ) -> None:
         matrix = jnp.asarray(design)
         if matrix.ndim != 2 or matrix.shape[0] != layout.size or matrix.shape[1] == 0:
             raise ValueError(

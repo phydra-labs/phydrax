@@ -11,6 +11,7 @@ import argparse
 import json
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -80,7 +81,7 @@ def tetrahedral_slab(cube_count: int, /) -> tuple[jnp.ndarray, jnp.ndarray]:
     return jnp.asarray(coordinates), jnp.asarray(tetrahedra, dtype=jnp.int32)
 
 
-def prepared_slab(cube_count: int, dt_ms: float, pulse_ms: float, /):
+def prepared_slab(cube_count: int, dt_ms: float, pulse_ms: float, /) -> Any:
     coordinates, tetrahedra = tetrahedral_slab(cube_count)
     mesh = CellMesh.from_tetrahedra(coordinates, tetrahedra)
     discretization = FiniteElementPlan(
@@ -141,6 +142,7 @@ def qualify(cube_count: int, dt_ms: float, step_count: int, pulse_ms: float, /) 
         archive = write_monodomain_checkpoint(runtime, prefix.state, checkpoint_path)
         restored = read_monodomain_checkpoint(runtime, checkpoint_path)
         resumed = run_monodomain_steps(runtime, restored, step_count - split)
+        # ty: ignore[unresolved-attribute]
         checkpoint_id = archive.manifest.checkpoint_id
     replay_identical = (
         bool(uninterrupted.successful)

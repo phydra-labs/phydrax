@@ -12,7 +12,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
@@ -42,6 +43,7 @@ from ..nonlinear._types import (
     NonlinearTermination,
 )
 from ..optim._programming._cones import SecondOrderCone
+from ..typing import parse
 from ._feasibility import PositiveSemidefiniteProjection, SimplexProjection
 from ._lifecycle import (
     AbstractRealizationSource,
@@ -94,7 +96,7 @@ class AdditiveCorrectionChart(AbstractCorrectionChart):
         /,
         *,
         chart_id: str | None = None,
-    ):
+    ) -> None:
         names = (
             (field_names,)
             if isinstance(field_names, str)
@@ -159,7 +161,7 @@ class CallableCorrectionChart(AbstractCorrectionChart):
         /,
         *,
         chart_id: str,
-    ):
+    ) -> None:
         if not callable(origin) or not callable(retraction):
             raise TypeError("Correction-chart origin and retraction must be callable.")
         identifier = str(chart_id)
@@ -239,15 +241,14 @@ class NonlinearFieldRetraction(AbstractFieldRealization):
         refresh_validator: RefreshValidator | None = None,
         certification_tolerance: float = 1e-8,
         provider_id: str | None = None,
-    ):
+    ) -> None:
         method_ = NewtonKrylov() if method is None else method
         termination_ = NonlinearTermination() if termination is None else termination
         sources_ = tuple(sources)
         tolerance = float(certification_tolerance)
         if not isinstance(chart, AbstractCorrectionChart):
             raise TypeError("chart must be an AbstractCorrectionChart.")
-        if objective not in ("local-root", "minimum-distance"):
-            raise ValueError("Unknown nonlinear retraction objective.")
+        objective = parse(objective, RetractionObjective, "objective")
         if not isinstance(method_, AbstractNonlinearMethod):
             raise TypeError("method must be an AbstractNonlinearMethod or None.")
         if not isinstance(termination_, NonlinearTermination):
@@ -367,7 +368,7 @@ class NonlinearFieldRetraction(AbstractFieldRealization):
         origin = self.chart.origin(field_values)
         source_arguments = dict(ready.values)
 
-        def physical_residual(coordinates, _args):
+        def physical_residual(coordinates: PyTree[Array], _args: object) -> PyTree[Array]:
             candidate = self.chart.retract(field_values, coordinates)
             bound = self._bound(context.condition, candidate)
             value = bound.apply(key=context.prng_key, **source_arguments)
@@ -390,7 +391,9 @@ class NonlinearFieldRetraction(AbstractFieldRealization):
         else:
             multiplier_origin = jax.tree.map(jnp.zeros_like, initial_residual)
 
-            def kkt_residual(kkt_state, _args):
+            def kkt_residual(
+                kkt_state: tuple[PyTree[Array], PyTree[Array]], _args: object
+            ) -> tuple[PyTree[Array], PyTree[Array]]:
                 coordinates_, multipliers_ = kkt_state
                 residual_, pullback = jax.vjp(
                     lambda value: physical_residual(value, None), coordinates_
@@ -530,7 +533,7 @@ class LocalNonlinearRetraction(AbstractFieldRealization):
 
     realization: NonlinearFieldRetraction
 
-    def __init__(self, chart: AbstractCorrectionChart, /, **kwargs: Any):
+    def __init__(self, chart: AbstractCorrectionChart, /, **kwargs: Any) -> None:
         self.realization = NonlinearFieldRetraction(
             chart, objective="local-root", **kwargs
         )
@@ -550,7 +553,7 @@ class MinimumDistanceRetraction(AbstractFieldRealization):
 
     realization: NonlinearFieldRetraction
 
-    def __init__(self, chart: AbstractCorrectionChart, /, **kwargs: Any):
+    def __init__(self, chart: AbstractCorrectionChart, /, **kwargs: Any) -> None:
         self.realization = NonlinearFieldRetraction(
             chart, objective="minimum-distance", **kwargs
         )

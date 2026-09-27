@@ -10,7 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -54,7 +56,7 @@ class FastDiagonalizationEligibility(StrictModule):
         reasons: tuple[str, ...],
         axis_sizes: tuple[int, ...],
         /,
-    ):
+    ) -> None:
         reasons_ = tuple(str(reason) for reason in reasons)
         sizes = tuple(axis_sizes)
         if any(not reason for reason in reasons_) or any(size < 1 for size in sizes):
@@ -97,7 +99,7 @@ class TensorFastDiagonalizationPreconditioner(
         eligibility: FastDiagonalizationEligibility,
         builder_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedLinearSolve):
             raise TypeError("prepared must be a PreparedLinearSolve.")
         structured_operator = prepared.problem.operator
@@ -156,7 +158,7 @@ class TensorFastDiagonalizationPreconditioner(
         /,
         *,
         iteration: ArrayLike | None = None,
-    ):
+    ) -> PyTree[Array]:
         del iteration
         coordinates = self.space.flatten(self.space.validate(residual))
         structured = self.prepared.problem.operator.source
@@ -188,7 +190,7 @@ class TensorFastDiagonalizationBuilder(AbstractPreconditionerBuilder):
         *,
         diffusion: tuple[float, ...] | None = None,
         reaction: float = 0.0,
-    ):
+    ) -> None:
         masses = tuple(mass_operators)
         stiffnesses = tuple(stiffness_operators)
         if len(masses) not in (2, 3) or len(stiffnesses) != len(masses):

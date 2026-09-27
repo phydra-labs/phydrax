@@ -16,7 +16,7 @@ import equinox as eqx
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
@@ -30,6 +30,7 @@ from phydrax.graph._cochain_ops import (
 from phydrax.graph._ir import GraphIR
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
+from phydrax.nn.operator.capabilities import ConfiguredOperatorContract
 from phydrax.nn.operator.data import (
     OperatorBatch,
     OperatorFieldBatch,
@@ -42,6 +43,8 @@ from phydrax.nn.operator.topology import (
     materialize_operator_fields,
 )
 
+from .....typing import PRNGKey
+
 
 _ROUTE_ORDER = (
     "self",
@@ -53,12 +56,12 @@ _ROUTE_ORDER = (
 )
 
 
-def _named_key(key: Key[Array, ""], label: str, /) -> Key[Array, ""]:
+def _named_key(key: PRNGKey, label: str, /) -> PRNGKey:
     digest = hashlib.sha256(label.encode("utf-8")).digest()
     return jr.fold_in(key, int.from_bytes(digest[:4], "little"))
 
 
-def _channel_matrix(key: Key[Array, ""], in_channels: int, out_channels: int, /) -> Array:
+def _channel_matrix(key: PRNGKey, in_channels: int, out_channels: int, /) -> Array:
     scale = 1.0 / jnp.sqrt(float(max(1, in_channels)))
     return scale * jr.normal(key, (int(in_channels), int(out_channels)))
 
@@ -98,7 +101,7 @@ class TopologicalRouteConfig(StrictModule):
         lower_laplacian: bool = True,
         upper_laplacian: bool = True,
         harmonic: bool = False,
-    ):
+    ) -> None:
         values = (
             bool(self_route),
             bool(exterior_derivative),
@@ -160,8 +163,8 @@ class TopologicalCochainBlock(StrictModule):
         boundary_policy: CochainBoundaryKind = "absolute",
         norm_epsilon: float = 1e-6,
         residual_scale: float = 0.25,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         resolved_width = int(width)
         degrees = tuple(sorted({int(value) for value in active_degrees}))
         if resolved_width <= 0:
@@ -307,7 +310,9 @@ def _predict_cochain_operator(
     )
 
 
-def _cochain_operator_contract(model):
+def _cochain_operator_contract(
+    model: CochainNeuralOperator,
+) -> ConfiguredOperatorContract:
     from phydrax.nn.operator.catalog import operator_architecture_contract
 
     return replace(
@@ -356,8 +361,8 @@ class CochainNeuralOperator(AbstractOperatorModel):
         boundary_policy: CochainBoundaryKind = "absolute",
         default_target: str | None = None,
         norm_epsilon: float = 1e-6,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         specs = tuple(fields)
         if not specs or any(not isinstance(field, OperatorFieldSpec) for field in specs):
             raise TypeError("CochainNeuralOperator requires OperatorFieldSpec fields.")

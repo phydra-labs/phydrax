@@ -13,7 +13,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -54,7 +55,7 @@ class ComputationAwareSparseVariationalGaussianProcessELBO(StrictModule):
         *,
         regularization: ArrayLike = 1e-8,
         likelihood_samples: int = 8,
-    ):
+    ) -> None:
         if not isinstance(state, GaussianProcessLikelihoodState):
             raise TypeError("state must be a GaussianProcessLikelihoodState.")
         points = jnp.asarray(observation_points)

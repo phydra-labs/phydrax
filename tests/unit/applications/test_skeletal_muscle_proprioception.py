@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -14,11 +17,17 @@ from phydrax.applications.skeletal_muscle.proprioception import (
 )
 
 
-def _input(length=1.0, velocity=0.0, acceleration=0.0, dynamic=0.0, static=0.0):
+def _input(
+    length: Any = 1.0,
+    velocity: Any = 0.0,
+    acceleration: Any = 0.0,
+    dynamic: Any = 0.0,
+    static: Any = 0.0,
+) -> Any:
     return MileusnicSpindleInput(length, velocity, acceleration, dynamic, static)
 
 
-def test_published_feline_parameters_and_equilibrium_initialization():
+def test_published_feline_parameters_and_equilibrium_initialization() -> None:
     runtime = MileusnicSpindle2006Plan().prepare()
     state = runtime.initialize(_input())
     rates = runtime.rates(state, _input())
@@ -36,7 +45,7 @@ def test_published_feline_parameters_and_equilibrium_initialization():
     assert output.secondary_afferent_pps >= 0.0
 
 
-def test_dynamic_and_static_gamma_drive_distinct_branches():
+def test_dynamic_and_static_gamma_drive_distinct_branches() -> None:
     runtime = MileusnicSpindle2006Plan().prepare()
     runtime.initialize(_input())
     dynamic = runtime._fusimotor_targets(_input(dynamic=70.0))
@@ -56,7 +65,7 @@ def test_dynamic_and_static_gamma_drive_distinct_branches():
     assert driven.secondary_afferent_pps > 0.0
 
 
-def test_ramp_stretch_increases_primary_afferent_and_is_jittable():
+def test_ramp_stretch_increases_primary_afferent_and_is_jittable() -> None:
     runtime = MileusnicSpindle2006Plan().prepare()
     resting_input = _input()
     state = runtime.initialize(resting_input)
@@ -64,7 +73,7 @@ def test_ramp_stretch_increases_primary_afferent_and_is_jittable():
     ramp = _input(length=1.02, velocity=0.1, dynamic=70.0)
 
     @eqx.filter_jit
-    def advance(value):
+    def advance(value: Any) -> Any:
         candidate = runtime.candidate(value, ramp, 1.0e-4)
         return candidate.commit(), candidate.evidence.successful
 
@@ -83,7 +92,7 @@ def test_ramp_stretch_increases_primary_afferent_and_is_jittable():
     assert jnp.isfinite(derivative)
 
 
-def test_invalid_input_and_step_roll_back_whole_state():
+def test_invalid_input_and_step_roll_back_whole_state() -> None:
     runtime = MileusnicSpindle2006Plan().prepare()
     state = runtime.initialize(_input())
     invalid_input = runtime.candidate(state, _input(length=-1.0), 1.0e-4)

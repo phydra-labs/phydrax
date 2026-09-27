@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -39,7 +40,7 @@ class HybridGuardPlan(StrictModule, NonTrainableState):
         priority: int = 0,
         terminal: bool = False,
         guard_id: str,
-    ):
+    ) -> None:
         if not callable(guard):
             raise TypeError("Hybrid guard must be callable.")
         if direction not in (-1, 0, 1):
@@ -84,9 +85,9 @@ class HybridEventPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         guard_plan: HybridGuardPlan,
-        reset,
-        vector_field_before,
-        vector_field_after,
+        reset: Callable[[Array, Array, Any], Array],
+        vector_field_before: Callable[[Array, Array, Any], Array],
+        vector_field_after: Callable[[Array, Array, Any], Array],
         /,
         *,
         competing_guards: Sequence[Callable[[Array, Array, Any], Array]] = (),
@@ -96,7 +97,7 @@ class HybridEventPlan(StrictModule, NonTrainableState):
         dense_diagnostics: bool = False,
         max_dense_dimension: int = 32,
         plan_id: str,
-    ):
+    ) -> None:
         if not isinstance(guard_plan, HybridGuardPlan):
             raise TypeError("guard_plan must be a HybridGuardPlan.")
         callables = (reset, vector_field_before, vector_field_after)
@@ -166,7 +167,7 @@ class HybridReplayPolicy(StrictModule, NonTrainableState):
         simultaneous_tolerance: float = 1.0e-10,
         event_tolerance: float = 1.0e-10,
         failure: int = -1,
-    ):
+    ) -> None:
         if not isinstance(maximum_events, int) or isinstance(maximum_events, bool):
             raise TypeError("maximum_events must be an integer.")
         if maximum_events < 0:
@@ -494,7 +495,7 @@ def localize_numerical_event(
     if left.shape != () or right.shape != ():
         raise ValueError("Event bracket bounds must be scalars.")
 
-    def residual(time):
+    def residual(time: Array) -> Array:
         value = jnp.asarray(guard(time, state_at_time(time)))
         if value.shape != ():
             raise ValueError("Event guard must return a scalar.")
@@ -514,10 +515,12 @@ def localize_numerical_event(
         )
     )
 
-    def solve(function, initial):
+    def solve(function: Callable[[Array], Array], initial: Array) -> Array:
         del initial
 
-        def iteration(_, carry):
+        def iteration(
+            _: Array, carry: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array, Array]:
             lower, upper, lower_guard = carry
             midpoint = lower + 0.5 * (upper - lower)
             midpoint_guard = function(midpoint)
@@ -544,7 +547,7 @@ def localize_numerical_event(
         & _tree_finite(state_at_time(primal_time))
     )
 
-    def tangent_solve(linearized, rhs):
+    def tangent_solve(linearized: Callable[[Array], Array], rhs: Array) -> Array:
         slope = linearized(jnp.ones_like(rhs))
         valid = primal_valid & jnp.isfinite(slope) & (jnp.abs(slope) > grazing_tolerance)
         return rhs / jnp.where(valid, slope, jnp.nan)
@@ -597,7 +600,9 @@ def _event_directional_data(
     return state_after, after - reset_flow, denominator
 
 
-def _simultaneous_event(plan, time, state, args):
+def _simultaneous_event(
+    plan: HybridEventPlan, time: Array, state: Array, args: Any, /
+) -> Array:
     simultaneous = jnp.asarray(False)
     for competing in plan.competing_guards:
         simultaneous = simultaneous | (
@@ -874,7 +879,7 @@ def hybrid_event_vjp(
     finite = finite & _tree_finite(cotangents)
     successful = valid & finite
 
-    def qualify(value):
+    def qualify(value: Array) -> Array:
         if value.dtype == jax.dtypes.float0:
             return value
         return jnp.where(successful, value, jnp.nan)
@@ -921,11 +926,13 @@ def replay_hybrid_events(
         for plan in plans
     )
 
-    def body(index: int, carry: tuple[Array, Array, Array]):
+    def body(
+        index: Array, carry: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
         state, valid, count = carry
         active = tape.active[index]
 
-        def apply(_: None):
+        def apply(_: None) -> tuple[Array, Array, Array]:
             event_index = tape.event_indices[index]
             index_valid = (event_index >= 0) & (event_index < len(plans))
             safe_index = jnp.clip(event_index, 0, len(plans) - 1)

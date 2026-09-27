@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -6,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def _block_network():
+def _block_network() -> Any:
     reference = phx.circuit.ElectricalWaveReference(50.0)
     coordinates = ("a", "b")
     left = phx.circuit.WavePort(
@@ -34,7 +36,7 @@ def _block_network():
     )
 
 
-def _rc_circuit():
+def _rc_circuit() -> Any:
     reference = phx.circuit.ElectricalWaveReference(50.0)
     source = phx.circuit.CircuitElement(
         phx.circuit.IndependentCurrentSourceLaw(1.0),
@@ -56,7 +58,7 @@ def _rc_circuit():
     )
 
 
-def _driven_behavioral_circuit():
+def _driven_behavioral_circuit() -> Any:
     reference = phx.circuit.ElectricalWaveReference(50.0)
     source = phx.circuit.compile_behavioral_current(
         "u_z + 10.0 * u_a",
@@ -71,7 +73,7 @@ def _driven_behavioral_circuit():
     )
 
 
-def test_circuit_input_layout_bindings_policies_and_jit_are_typed():
+def test_circuit_input_layout_bindings_policies_and_jit_are_typed() -> None:
     circuit = _driven_behavioral_circuit()
     prepared = phx.circuit.prepare_circuit_dae(circuit)
     layout = prepared.system.input_layout
@@ -97,6 +99,7 @@ def test_circuit_input_layout_bindings_policies_and_jit_are_typed():
     callable_problem = phx.circuit.circuit_dae_problem(
         prepared, state, args=2.0, input_policy=callable_policy
     )
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(callable_problem.input_policy.evaluate(0.0, state, 2.0), inputs)
 
     held_policy = phx.dynamics.HeldInputPolicy(
@@ -108,6 +111,7 @@ def test_circuit_input_layout_bindings_policies_and_jit_are_typed():
     held_problem = phx.circuit.circuit_dae_problem(
         prepared, state, input_policy=held_policy
     )
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(held_problem.input_policy.evaluate(0.5, state, None), inputs)
 
     reversed_layout = phx.dynamics.InputLayout(
@@ -139,7 +143,7 @@ def test_circuit_input_layout_bindings_policies_and_jit_are_typed():
         phx.circuit.circuit_dae_problem(prepared, state, input_policy=mismatched)
 
 
-def test_circuit_element_scales_propagate_to_native_dae():
+def test_circuit_element_scales_propagate_to_native_dae() -> None:
     law = phx.circuit.IndependentVoltageSourceLaw(1.0)
     law = eqx.tree_at(
         lambda value: value.state_layout,
@@ -165,7 +169,7 @@ def test_circuit_element_scales_propagate_to_native_dae():
     assert jnp.array_equal(prepared.system.residual_scale, jnp.asarray([1.0, 4.0]))
 
 
-def test_block_ports_action_runtime_case_batch_and_connection_map():
+def test_block_ports_action_runtime_case_batch_and_connection_map() -> None:
     network = _block_network()
     assert tuple(port.size for port in network.ports) == (2, 2)
     dense = phx.circuit.full_scattering_matrix(
@@ -192,7 +196,7 @@ def test_block_ports_action_runtime_case_batch_and_connection_map():
     assert jnp.all(batched.status == 0)
 
 
-def test_relation_graph_sparse_action_and_bounded_materialization():
+def test_relation_graph_sparse_action_and_bounded_materialization() -> None:
     from phydrax.circuit._relation_graph import bind_linear_relation, plan_linear_routes
 
     plan = plan_linear_routes(2, 2, (0, 1, 0), (0, 1, 1))
@@ -203,7 +207,7 @@ def test_relation_graph_sparse_action_and_bounded_materialization():
     )
 
 
-def test_circuit_dae_operating_point_descriptor_and_periodic_contracts():
+def test_circuit_dae_operating_point_descriptor_and_periodic_contracts() -> None:
     prepared = phx.circuit.prepare_circuit_dae(_rc_circuit())
     assert prepared.plan.layout.roles == ("differential",)
     state = prepared.initialize(node_voltages=jnp.asarray([0.0]))
@@ -235,7 +239,7 @@ def test_circuit_dae_operating_point_descriptor_and_periodic_contracts():
     assert bool(floquet.stable)
 
 
-def test_rational_realization_noise_metrology_and_identifiability():
+def test_rational_realization_noise_metrology_and_identifiability() -> None:
     poles = jnp.asarray([-1.0 + 0.0j, -3.0 + 0.0j])
     residues = jnp.asarray([[[2.0 + 0.0j]], [[0.5 + 0.0j]]])
     model = phx.circuit.RationalMatrixModel(
@@ -301,7 +305,7 @@ def test_rational_realization_noise_metrology_and_identifiability():
     assert bool(identifiability.identifiable)
 
 
-def test_spice_behavioral_learned_and_electrothermal_adapters():
+def test_spice_behavioral_learned_and_electrothermal_adapters() -> None:
     reference = phx.circuit.ElectricalWaveReference(50.0)
     imported = phx.circuit.read_spice_netlist(
         "R1 n 0 1k\nC1 n 0 1u\nV1 n 0 1\nG1 n 0 n 0 2",
@@ -336,6 +340,7 @@ def test_spice_behavioral_learned_and_electrothermal_adapters():
         None,
     )
     assert learned_evaluation.terminal_currents[0] > 0.0
+    # ty: ignore[unresolved-attribute]
     assert learned.implicit_law.evidence.passive_by_construction
 
     circuit = phx.circuit.prepare_circuit_dae(_rc_circuit())

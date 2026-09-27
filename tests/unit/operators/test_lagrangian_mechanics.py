@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import opt_einsum as oe
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _oscillator_objects(*, dimension=1):
+def _oscillator_objects(*, dimension: Any = 1) -> Any:
     lower = [-2.0] * dimension
     upper = [2.0] * dimension
     q_space = phx.domain.HyperRectangle(lower, upper, label="q")
@@ -19,18 +22,18 @@ def _oscillator_objects(*, dimension=1):
     return q_space, v_space, tangent, time
 
 
-def test_canonical_momentum_and_euler_lagrange_harmonic_oscillator():
+def test_canonical_momentum_and_euler_lagrange_harmonic_oscillator() -> None:
     _q_space, _v_space, tangent, time = _oscillator_objects()
     mass = 2.0
     stiffness = 8.0
     omega = jnp.sqrt(stiffness / mass)
 
     @tangent.Function("q", "v")
-    def lagrangian(q, v):
+    def lagrangian(q: Any, v: Any) -> Any:
         return 0.5 * mass * jnp.dot(v, v) - 0.5 * stiffness * jnp.dot(q, q)
 
     @time.Function("t")
-    def trajectory(t):
+    def trajectory(t: Any) -> Any:
         return jnp.asarray([jnp.cos(omega * t)])
 
     momentum = phx.operators.canonical_momentum(lagrangian)
@@ -44,31 +47,31 @@ def test_canonical_momentum_and_euler_lagrange_harmonic_oscillator():
     assert jnp.allclose(residual.func(0.37), jnp.zeros((1,)), atol=1e-10)
 
 
-def test_euler_lagrange_matches_coupled_matrix_equation():
+def test_euler_lagrange_matches_coupled_matrix_equation() -> None:
     _q_space, _v_space, tangent, time = _oscillator_objects(dimension=2)
     stiffness = jnp.asarray([[2.0, 0.0], [0.0, 3.0]])
 
     @tangent.Function("q", "v")
-    def lagrangian(q, v):
+    def lagrangian(q: Any, v: Any) -> Any:
         return 0.5 * jnp.dot(v, v) - 0.5 * oe.contract("i,ij,j->", q, stiffness, q)
 
     @time.Function("t")
-    def trajectory(t):
+    def trajectory(t: Any) -> Any:
         return jnp.asarray([jnp.cos(jnp.sqrt(2.0) * t), jnp.sin(jnp.sqrt(3.0) * t)])
 
     residual = phx.operators.euler_lagrange(trajectory, lagrangian)
     assert jnp.allclose(residual.func(0.41), jnp.zeros((2,)), atol=1e-10)
 
 
-def test_euler_lagrange_generalized_force_sign():
+def test_euler_lagrange_generalized_force_sign() -> None:
     _q_space, _v_space, tangent, time = _oscillator_objects()
 
     @tangent.Function("q", "v")
-    def lagrangian(q, v):
+    def lagrangian(q: Any, v: Any) -> Any:
         return 0.5 * jnp.dot(v, v)
 
     @time.Function("t")
-    def trajectory(t):
+    def trajectory(t: Any) -> Any:
         return jnp.asarray([t])
 
     residual = phx.operators.euler_lagrange(
@@ -79,18 +82,20 @@ def test_euler_lagrange_generalized_force_sign():
     assert jnp.allclose(residual.func(0.5), jnp.asarray([-2.0]))
 
 
-def test_euler_lagrange_rejects_mismatched_state_dimensions():
+def test_euler_lagrange_rejects_mismatched_state_dimensions() -> None:
+    # ty: ignore[invalid-argument-type]
     q_space = phx.domain.HyperRectangle([-1.0], [1.0], label="q")
+    # ty: ignore[invalid-argument-type]
     v_space = phx.domain.HyperRectangle([-1.0, -1.0], [1.0, 1.0], label="v")
     tangent = phx.domain.ProductDomain(q_space, v_space)
     time = phx.domain.TimeInterval(0.0, 1.0)
 
     @tangent.Function("q", "v")
-    def lagrangian(q, v):
+    def lagrangian(q: Any, v: Any) -> Any:
         return jnp.sum(q) + jnp.sum(v)
 
     @time.Function("t")
-    def trajectory(t):
+    def trajectory(t: Any) -> Any:
         return jnp.asarray([t])
 
     with pytest.raises(ValueError, match="canonical dimensions must match"):

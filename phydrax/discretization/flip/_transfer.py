@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._interpolation import GatherStencil
 from ..._sharp_measures import QualifiedSharpGeometry
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from .._tensor_entities import TensorEntityLayout
 from ..finite_volume import FaceVelocity, PreparedMACOperators
 from ..particle import ParticleDiscretization, ParticlePrecisionPolicy
 from ..splatting import (
@@ -50,7 +51,7 @@ class FLIPParticleTransferPlan(StrictModule, NonTrainableState):
         execution: SplatExecutionPolicy | None = None,
         precision: ParticlePrecisionPolicy | None = None,
         budget: ParticleGridSplatBudget | None = None,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         assignment_ = (
@@ -92,7 +93,7 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
 
     def __init__(
         self, plan: FLIPParticleTransferPlan, particles: ParticleDiscretization, /
-    ):
+    ) -> None:
         if not isinstance(plan, FLIPParticleTransferPlan):
             raise TypeError("plan must be FLIPParticleTransferPlan.")
         if not isinstance(particles, ParticleDiscretization):
@@ -102,7 +103,7 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
             raise ValueError("FLIP particles and MAC grid dimensions must match.")
         grid = operators.discretization.grid
 
-        def prepared_for(layout):
+        def prepared_for(layout: TensorEntityLayout) -> PreparedParticleGridSplat:
             return ParticleGridSplatPlan(
                 grid,
                 location=grid.location(layout.offsets),
@@ -168,7 +169,7 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
     def _solid_aware_state(
         self,
         state: ParticleGridSplatState,
-        target_open_fraction,
+        target_open_fraction: ArrayLike,
         /,
     ) -> ParticleGridSplatState:
         fraction = jnp.asarray(target_open_fraction)

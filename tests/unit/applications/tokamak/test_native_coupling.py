@@ -1,9 +1,11 @@
+from typing import Any
+
 import numpy as np
 
 import phydrax as phx
 
 
-def _manufactured_equilibrium_plan(count=9):
+def _manufactured_equilibrium_plan(count: Any = 9) -> Any:
     r = np.linspace(1.0, 3.0, count)
     z = np.linspace(-1.0, 1.0, count)
     return phx.applications.tokamak.FixedBoundaryGradShafranovPlan(
@@ -15,7 +17,7 @@ def _manufactured_equilibrium_plan(count=9):
     ).prepare()
 
 
-def _manufactured_current_boundary(plan):
+def _manufactured_current_boundary(plan: Any) -> Any:
     rr, zz = np.meshgrid(np.asarray(plan.r_m), np.asarray(plan.z_m))
     psi = (rr - 2.0) ** 2 + zz**2
     current = np.zeros_like(psi)
@@ -29,7 +31,7 @@ def _manufactured_current_boundary(plan):
     return current, boundary
 
 
-def test_free_boundary_step_couples_circuit_boundary_and_equilibrium():
+def test_free_boundary_step_couples_circuit_boundary_and_equilibrium() -> None:
     equilibrium = _manufactured_equilibrium_plan()
     current, boundary = _manufactured_current_boundary(equilibrium)
     circuit = phx.circuit.CoupledInductancePlan(
@@ -47,6 +49,7 @@ def test_free_boundary_step_couples_circuit_boundary_and_equilibrium():
     free = phx.applications.tokamak.FreeBoundaryTokamakPlan(
         equilibrium, circuit, response
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     result = free.step(free.state([0.0]), [0.0], current, boundary, 0.1)
 
     assert bool(result.successful)
@@ -54,7 +57,7 @@ def test_free_boundary_step_couples_circuit_boundary_and_equilibrium():
     assert result.equilibrium.pde_residual_norm < 1.0e-6
 
 
-def test_filament_green_response_is_finite_reciprocal_boundary_data():
+def test_filament_green_response_is_finite_reciprocal_boundary_data() -> None:
     equilibrium = _manufactured_equilibrium_plan()
     response = phx.applications.tokamak.AxisymmetricCoilResponsePlan.from_filament_coils(
         equilibrium.r_m,
@@ -72,7 +75,7 @@ def test_filament_green_response_is_finite_reciprocal_boundary_data():
     assert response.winding_ids == ("pf",)
 
 
-def test_current_diffusion_preserves_flux_without_source_or_boundary_rate():
+def test_current_diffusion_preserves_flux_without_source_or_boundary_rate() -> None:
     theta = 2.0 * np.pi * np.arange(16) / 16
     contours = np.zeros((3, 16, 2))
     contours[0, :, 0] = 2.0
@@ -90,6 +93,7 @@ def test_current_diffusion_preserves_flux_without_source_or_boundary_rate():
         "synthetic-equilibrium",
     )
     prepared = phx.applications.tokamak.CurrentDiffusionPlan(geometry).prepare()
+    # ty: ignore[invalid-argument-type]
     state = phx.applications.tokamak.CurrentDiffusionState([0.1, 0.2])
     result = prepared.step(state, 0.1, np.zeros(3), np.zeros(2), 0.0)
 

@@ -8,7 +8,8 @@ import abc
 from typing import Any
 
 import equinox as eqx
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -32,7 +33,7 @@ class VortexFieldRequest(StrictModule, NonTrainableState):
         velocity: bool = True,
         velocity_gradient: bool = False,
         vorticity: bool = False,
-    ):
+    ) -> None:
         velocity_ = bool(velocity)
         gradient_ = bool(velocity_gradient)
         vorticity_ = bool(vorticity)

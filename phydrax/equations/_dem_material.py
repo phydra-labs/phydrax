@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -34,7 +35,7 @@ class DEMMaterialTable(StrictModule):
         *,
         rolling_friction: ArrayLike | None = None,
         material_id: str | None = None,
-    ):
+    ) -> None:
         young = np.asarray(young_modulus)
         poisson = np.asarray(poisson_ratio)
         restitution_ = np.asarray(restitution)

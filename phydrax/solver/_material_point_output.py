@@ -9,9 +9,12 @@ from collections import deque
 from importlib import import_module
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import ModuleType
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
+import numpy.typing as npt
 
 from .._fingerprint import canonical_fingerprint
 from .._mesh_file_profiles import resolve_mesh_file_profile
@@ -22,7 +25,11 @@ from ..discretization.mpm import MPMRuntimeState
 from ..equations import CompiledMaterialPointProblem
 
 
-def _h5py():
+if TYPE_CHECKING:
+    import h5py
+
+
+def _h5py() -> ModuleType:
     return import_module("h5py")
 
 
@@ -45,7 +52,7 @@ class MPMOutputPlan(StrictModule):
         compiled: CompiledMaterialPointProblem,
         target: str | Path,
         /,
-    ):
+    ) -> None:
         if not isinstance(compiled, CompiledMaterialPointProblem):
             raise TypeError("compiled must be CompiledMaterialPointProblem.")
         path = Path(target)
@@ -61,7 +68,7 @@ class MPMOutputPlan(StrictModule):
             }
         )
 
-    def initialize(self):
+    def initialize(self) -> None:
         h5py = _h5py()
         path = Path(self.hdf5_path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -72,14 +79,14 @@ class MPMOutputPlan(StrictModule):
             handle.create_group("steps")
         self._write_xdmf()
 
-    def _validate(self, handle):
+    def _validate(self, handle: h5py.File) -> None:
         if (
             handle.attrs.get("output_id") != self.output_id
             or handle.attrs.get("compilation_id") != self.compiled.compilation_id
         ):
             raise ValueError("MPM output archive identity is incompatible.")
 
-    def append(self, state: MPMRuntimeState, /):
+    def append(self, state: MPMRuntimeState, /) -> str:
         if not isinstance(state, MPMRuntimeState):
             raise TypeError("state must be MPMRuntimeState.")
         h5py = _h5py()
@@ -139,7 +146,7 @@ class MPMOutputPlan(StrictModule):
         self._write_xdmf()
         return name
 
-    def manifest(self):
+    def manifest(self) -> MPMOutputManifest:
         h5py = _h5py()
         with h5py.File(self.hdf5_path, "r") as handle:
             self._validate(handle)
@@ -167,7 +174,7 @@ class MPMOutputPlan(StrictModule):
             identifier,
         )
 
-    def _write_xdmf(self):
+    def _write_xdmf(self) -> None:
         hdf5 = Path(self.hdf5_path)
         if not hdf5.exists():
             return
@@ -228,13 +235,12 @@ class MPMOutputPlan(StrictModule):
             mode="atomic_replace",
         )
 
-    def write_vtk_snapshot(self, path: str | Path, state: MPMRuntimeState, /):
+    def write_vtk_snapshot(self, path: str | Path, state: MPMRuntimeState, /) -> Path:
         meshio = import_module("meshio")
         points = np.asarray(state.particles.position)
         if points.shape[1] < 3:
             points = np.pad(points, ((0, 0), (0, 3 - points.shape[1])))
-        cells = [("vertex", np.arange(points.shape[0], dtype=np.int32)[:, None])]
-        point_data = {
+        point_data: dict[str, npt.ArrayLike] = {
             "velocity": np.pad(
                 np.asarray(state.particles.velocity),
                 ((0, 0), (0, 3 - state.particles.velocity.shape[1])),
@@ -247,7 +253,11 @@ class MPMOutputPlan(StrictModule):
         profile = resolve_mesh_file_profile(destination, None, direction="write")
         if profile.carrier != "single-file":
             raise ValueError("MPM VTK snapshot requires a single-file profile.")
-        mesh = meshio.Mesh(points, cells, point_data=point_data)
+        mesh = meshio.Mesh(
+            points,
+            [("vertex", np.arange(points.shape[0], dtype=np.int32)[:, None])],
+            point_data=point_data,
+        )
         with TemporaryDirectory(prefix="phydrax-mpm-vtk-") as temporary:
             staged = Path(temporary) / destination.name
             meshio.write(staged, mesh, file_format=profile.meshio_format)
@@ -267,28 +277,28 @@ class MPMOutputPlan(StrictModule):
 class MPMBoundedOutputBuffer:
     """Host-side accepted-output buffer with explicit backpressure."""
 
-    def __init__(self, maximum_items: int):
+    def __init__(self, maximum_items: int) -> None:
         maximum = int(maximum_items)
         if maximum <= 0:
             raise ValueError("maximum_items must be positive.")
         self.maximum_items = maximum
-        self._queue = deque()
+        self._queue: deque[MPMRuntimeState] = deque()
 
     @property
-    def size(self):
+    def size(self) -> int:
         return len(self._queue)
 
-    def push(self, state: MPMRuntimeState):
+    def push(self, state: MPMRuntimeState) -> None:
         if len(self._queue) >= self.maximum_items:
             raise BufferError("MPM output backpressure capacity reached.")
         self._queue.append(state)
 
-    def pop(self):
+    def pop(self) -> MPMRuntimeState:
         if not self._queue:
             raise IndexError("MPM output buffer is empty.")
         return self._queue.popleft()
 
-    def manifest(self):
+    def manifest(self) -> str:
         return json.dumps(
             {
                 "maximum_items": self.maximum_items,

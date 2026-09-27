@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _polynomial_data(coordinates, *, reset_mask=None):
+def _polynomial_data(coordinates: Any, *, reset_mask: Any = None) -> Any:
     time = jnp.asarray(coordinates)
     states = jnp.stack((time**2 + 2.0 * time, -0.5 * time**2), axis=-1)
     return phx.dynamics.TrajectoryData(
@@ -23,7 +26,7 @@ def _polynomial_data(coordinates, *, reset_mask=None):
     )
 
 
-def test_finite_difference_is_exact_for_quadratic_on_irregular_interior():
+def test_finite_difference_is_exact_for_quadratic_on_irregular_interior() -> None:
     time = jnp.asarray([0.0, 0.15, 0.6, 1.4, 2.0])
     data = _polynomial_data(time)
 
@@ -47,7 +50,7 @@ def test_finite_difference_is_exact_for_quadratic_on_irregular_interior():
     assert attached.source_id.endswith("finite-difference:invalid")
 
 
-def test_local_polynomial_is_exact_and_never_crosses_a_reset():
+def test_local_polynomial_is_exact_and_never_crosses_a_reset() -> None:
     time = jnp.arange(7.0)
     data = _polynomial_data(
         time,
@@ -68,7 +71,7 @@ def test_local_polynomial_is_exact_and_never_crosses_a_reset():
     )
 
 
-def test_local_polynomial_reports_underdetermined_segment_as_invalid():
+def test_local_polynomial_reports_underdetermined_segment_as_invalid() -> None:
     time = jnp.arange(6.0)
     data = _polynomial_data(
         time,
@@ -85,7 +88,7 @@ def test_local_polynomial_reports_underdetermined_segment_as_invalid():
     assert bool(jnp.all(jnp.isnan(estimate.values[:2])))
 
 
-def test_bspline_derivative_fits_each_segment_independently():
+def test_bspline_derivative_fits_each_segment_independently() -> None:
     time = jnp.linspace(0.0, 2.0, 8)
     values = jnp.stack((time**3, 2.0 * time**3 - time), axis=-1)
     data = phx.dynamics.TrajectoryData(
@@ -105,7 +108,7 @@ def test_bspline_derivative_fits_each_segment_independently():
     )
 
 
-def test_bspline_derivative_preserves_complex_state_components():
+def test_bspline_derivative_preserves_complex_state_components() -> None:
     time = jnp.linspace(0.0, 1.0, 8)
     values = (time**3 + 1j * 2.0 * time**3)[:, None]
     data = phx.dynamics.TrajectoryData(

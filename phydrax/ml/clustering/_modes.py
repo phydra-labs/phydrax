@@ -9,7 +9,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -19,6 +19,7 @@ from ..._differentiation import (
     GradientLevel,
     SurfaceDerivative,
 )
+from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -65,14 +66,13 @@ class MeanShift(AbstractRecipe):
         tolerance: float = 1e-4,
         initialization: ClusterInitialization = "first",
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         resolved_merge_tolerance = (
             0.5 * jnp.asarray(bandwidth) if merge_tolerance is None else merge_tolerance
         )
         if center_capacity <= 0 or max_iterations <= 0:
             raise ValueError("center_capacity and max_iterations must be positive.")
-        if initialization not in ("random", "first", "k-means++"):
-            raise ValueError("unsupported mean-shift initialization.")
+        initialization = parse(initialization, ClusterInitialization, "initialization")
         self.center_capacity = int(center_capacity)
         self.bandwidth = positive_scalar(bandwidth, "bandwidth")
         self.merge_tolerance = positive_scalar(
@@ -90,7 +90,7 @@ class MeanShift(AbstractRecipe):
         centers = initialize_centers(x, w, self.center_capacity, self.initialization, key)
         delta = jnp.full(batch.case_shape, jnp.inf, dtype=w.dtype)
 
-        def step(_, state):
+        def step(_: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
             centers, delta = state
             distance = distances_to_centers(
                 x, centers, "squared-euclidean", batch.case_shape
@@ -220,7 +220,7 @@ class AffinityPropagation(AbstractRecipe):
         max_iterations: int = 128,
         tolerance: float = 1e-4,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if exemplar_capacity <= 0 or max_iterations <= 0:
             raise ValueError("exemplar_capacity and max_iterations must be positive.")
         self.exemplar_capacity = int(exemplar_capacity)
@@ -275,7 +275,9 @@ class AffinityPropagation(AbstractRecipe):
         delta = jnp.full(batch.case_shape, jnp.inf, dtype=w.dtype)
         identity = jnp.eye(n, dtype=jnp.bool_)
 
-        def step(_, state):
+        def step(
+            _: Array, state: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array, Array]:
             availability, responsibility, delta = state
             combined = availability + similarity
             best_index = jnp.argmax(combined, axis=-1)

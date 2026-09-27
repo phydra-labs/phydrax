@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import IntEnum
 from math import isfinite
 from typing import Literal, TypeAlias
@@ -11,7 +12,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jax.typing import DTypeLike
 
 import phydrax.ein as ein
 
@@ -22,6 +24,7 @@ from ..linalg import (
     FunctionLinearOperator,
     matrix_exponential_action,
     MatrixFunctionPolicy,
+    MatrixFunctionResult,
     OperatorProperties,
 )
 from ..tensor_network._canonical import canonicalize_mps
@@ -39,10 +42,12 @@ from ..tensor_network._environments import (
 )
 from ..tensor_network._models import FixedStructureMPOCoefficients
 from ..tensor_network._split import truncated_svd
+from ..typing import parse
 
 
 FiniteTDVPMode: TypeAlias = Literal["real-time", "imaginary-time"]
 FiniteTDVPAlgorithm: TypeAlias = Literal["one-site", "two-site"]
+_TDVPSweep: TypeAlias = tuple[MatrixProductState, Array, Array, Array, Array]
 
 
 class FiniteTDVPStatus(IntEnum):
@@ -66,7 +71,7 @@ class FiniteTDVPProblem(StrictModule):
         /,
         *,
         problem_id: str = "finite-matrix-product-tdvp",
-    ):
+    ) -> None:
         if not isinstance(initial_state, MatrixProductState):
             raise TypeError("initial_state must be a MatrixProductState.")
         if not isinstance(
@@ -132,11 +137,9 @@ class FiniteTDVPPolicy(StrictModule):
         maximum_local_elements: int = 10_000_000,
         maximum_history_elements: int = 10_000_000,
         integrator: MatrixFunctionPolicy | None = None,
-    ):
-        if mode not in ("real-time", "imaginary-time"):
-            raise ValueError("Unknown finite TDVP mode.")
-        if algorithm not in ("one-site", "two-site"):
-            raise ValueError("Unknown finite TDVP algorithm.")
+    ) -> None:
+        mode = parse(mode, FiniteTDVPMode, "mode")
+        algorithm = parse(algorithm, FiniteTDVPAlgorithm, "algorithm")
         step = float(step_size)
         count = int(steps)
         bond = int(maximum_bond_dimension)
@@ -405,7 +408,12 @@ def refresh_finite_tdvp(
     )
 
 
-def _self_adjoint_operator(action, shape, dtype, identifier):
+def _self_adjoint_operator(
+    action: Callable[[Array], Array],
+    shape: tuple[int, ...],
+    dtype: DTypeLike,
+    identifier: str,
+) -> FunctionLinearOperator:
     space = ArraySpace(shape, dtype=dtype)
     return FunctionLinearOperator(
         action,
@@ -418,17 +426,27 @@ def _self_adjoint_operator(action, shape, dtype, identifier):
     )
 
 
-def _evolve(action, vector, scale, policy, identifier):
+def _evolve(
+    action: Callable[[Array], Array],
+    vector: Array,
+    scale: Array,
+    policy: FiniteTDVPPolicy,
+    identifier: str,
+) -> MatrixFunctionResult:
     operator = _self_adjoint_operator(action, vector.shape, vector.dtype, identifier)
     return matrix_exponential_action(operator, vector, scale, policy=policy.integrator)
 
 
-def _step_scale(policy: FiniteTDVPPolicy, dtype):
+def _step_scale(policy: FiniteTDVPPolicy, dtype: DTypeLike) -> Array:
     step = jnp.asarray(policy.step_size, dtype=jnp.dtype(dtype).type(0).real.dtype)
     return -1j * step if policy.mode == "real-time" else -step
 
 
-def _one_site_step(state, hamiltonian, policy):
+def _one_site_step(
+    state: MatrixProductState,
+    hamiltonian: MatrixProductOperator,
+    policy: FiniteTDVPPolicy,
+) -> _TDVPSweep:
     precision = state.precision
     base_scale = _step_scale(policy, state.tensors[0].dtype)
     errors = []
@@ -583,7 +601,11 @@ def _one_site_step(state, hamiltonian, policy):
     )
 
 
-def _two_site_step(state, hamiltonian, policy):
+def _two_site_step(
+    state: MatrixProductState,
+    hamiltonian: MatrixProductOperator,
+    policy: FiniteTDVPPolicy,
+) -> _TDVPSweep:
     precision = state.precision
     half_scale = 0.5 * _step_scale(policy, state.tensors[0].dtype)
     errors = []

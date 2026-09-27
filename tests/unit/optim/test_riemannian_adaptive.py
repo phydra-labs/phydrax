@@ -13,14 +13,14 @@ import pytest
 import phydrax as phx
 
 
-def _sphere_geometry(parameters):
+def _sphere_geometry(parameters: Any) -> Any:
     return phx.optim.ParameterGeometry.from_leaf_paths(
         parameters,
         {"['point']": phx.metrix.SphereManifold(3)},
     )
 
 
-def test_riemannian_adam_matches_optax_adam_with_pointwise_euclidean_factors():
+def test_riemannian_adam_matches_optax_adam_with_pointwise_euclidean_factors() -> None:
     parameters = {
         "free": jnp.array([1.5, -2.0]),
         "point": jnp.array([1.0, 0.0, 0.0]),
@@ -76,7 +76,7 @@ def test_riemannian_adam_matches_optax_adam_with_pointwise_euclidean_factors():
     assert "riemannian_adam" in phx.optim.__all__
 
 
-def test_riemannian_adam_is_equivariant_under_ambient_orthogonal_changes():
+def test_riemannian_adam_is_equivariant_under_ambient_orthogonal_changes() -> None:
     angle = jnp.asarray(0.43)
     rotation = jnp.array(
         [
@@ -112,10 +112,10 @@ def test_riemannian_adam_is_equivariant_under_ambient_orthogonal_changes():
     state = optimizer.init(parameters)
     transformed_state = transformed_optimizer.init(transformed_parameters)
 
-    def objective(tree):
+    def objective(tree: Any) -> Any:
         return jnp.sum((tree["point"] - target) ** 2)
 
-    def transformed_objective(tree):
+    def transformed_objective(tree: Any) -> Any:
         return jnp.sum((tree["point"] - transformed_target) ** 2)
 
     for _ in range(6):
@@ -147,7 +147,7 @@ def test_riemannian_adam_is_equivariant_under_ambient_orthogonal_changes():
     )
 
 
-def test_riemannian_amsgrad_tracks_monotone_factor_moments_and_tangent_momentum():
+def test_riemannian_amsgrad_tracks_monotone_factor_moments_and_tangent_momentum() -> None:
     parameters = {
         "point": jnp.array(
             [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
@@ -187,7 +187,7 @@ def test_riemannian_amsgrad_tracks_monotone_factor_moments_and_tangent_momentum(
     assert metrics.transported_tangent_residual < 2e-6
 
 
-def test_riemannian_adam_eager_and_jit_updates_agree():
+def test_riemannian_adam_eager_and_jit_updates_agree() -> None:
     parameters = {
         "offset": jnp.array([0.2, -0.3]),
         "point": jnp.array([1.0, 0.0, 0.0]),
@@ -236,7 +236,7 @@ def test_riemannian_adam_eager_and_jit_updates_agree():
     )
 
 
-def test_riemannian_adam_rejects_invalid_configuration_and_state():
+def test_riemannian_adam_rejects_invalid_configuration_and_state() -> None:
     parameters = {"point": jnp.array([1.0, 0.0, 0.0])}
     geometry = _sphere_geometry(parameters)
     invalid_amsgrad: Any = 1

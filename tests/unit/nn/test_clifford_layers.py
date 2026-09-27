@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -14,7 +17,7 @@ import phydrax as phx
 cl = phx.metrix.clifford
 
 
-def _euclidean_actions(algebra):
+def _euclidean_actions(algebra: Any) -> Any:
     angle = 0.37
     rotation = jnp.asarray(
         [
@@ -32,7 +35,7 @@ def _euclidean_actions(algebra):
     )
 
 
-def test_clifford_grade_representation_round_trip_and_field_schema():
+def test_clifford_grade_representation_round_trip_and_field_schema() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1))
     representation = phx.nn.operator.representations.CliffordGradeRepresentation(
         algebra,
@@ -77,7 +80,7 @@ def test_clifford_grade_representation_round_trip_and_field_schema():
         )
 
 
-def test_grade_linear_matches_explicit_channel_mixing_with_leading_axes():
+def test_grade_linear_matches_explicit_channel_mixing_with_leading_axes() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1))
     input_representation = phx.nn.operator.representations.CliffordGradeRepresentation(
         algebra,
@@ -132,7 +135,7 @@ def test_grade_linear_matches_explicit_channel_mixing_with_leading_axes():
     np.testing.assert_allclose(jax.jit(layer)(values), expected)
 
 
-def test_grade_linear_and_gate_are_euclidean_equivariant():
+def test_grade_linear_and_gate_are_euclidean_equivariant() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1))
     representation = phx.nn.operator.representations.CliffordGradeRepresentation(
         algebra,
@@ -170,7 +173,7 @@ def test_grade_linear_and_gate_are_euclidean_equivariant():
     assert sum(leaf.size for leaf in jax.tree.leaves(trainable)) > 0
 
 
-def test_geometric_product_layer_is_equivariant_and_transformable():
+def test_geometric_product_layer_is_equivariant_and_transformable() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1))
     representation = phx.nn.operator.representations.CliffordGradeRepresentation(
         algebra,
@@ -197,7 +200,7 @@ def test_geometric_product_layer_is_equivariant_and_transformable():
     )
 
 
-def test_indefinite_gate_and_nonuniform_product_channels_are_rejected():
+def test_indefinite_gate_and_nonuniform_product_channels_are_rejected() -> None:
     indefinite = phx.nn.operator.representations.CliffordGradeRepresentation(
         cl.CliffordAlgebraSpec((1, -1)),
         (1, 1, 1),
@@ -216,7 +219,7 @@ def test_indefinite_gate_and_nonuniform_product_channels_are_rejected():
         phx.nn.operator.layers.CliffordGeometricProductLayer(nonuniform)
 
 
-def test_finite_metric_group_cannot_substitute_for_sampled_boost_set():
+def test_finite_metric_group_cannot_substitute_for_sampled_boost_set() -> None:
     algebra = cl.CliffordAlgebraSpec((1, -1))
     boost = cl.lorentz_boost_action(algebra, 1, 0.2)
     audit_set = cl.MetricIsometryAuditSet(algebra, (boost, boost.inverse()))

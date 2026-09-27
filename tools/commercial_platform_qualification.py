@@ -371,7 +371,7 @@ class FaultCase:
         /,
         *,
         allowed_effects: Sequence[str] = (),
-    ):
+    ) -> None:
         boundary = _identifier(boundary_id, "fault boundary ID")
         gate_ = _identifier(gate, "fault gate")
         if gate_ not in ("operational", "security"):
@@ -430,7 +430,7 @@ class FaultObservation:
         /,
         *,
         declared_effects: Sequence[str] = (),
-    ):
+    ) -> None:
         self.facts = _json_object(facts, "fault observation facts")
         self.declared_effects = _identifiers(
             declared_effects, "declared effect IDs", allow_empty=True
@@ -472,7 +472,7 @@ class FaultMatrix:
         support_dependency_id: str,
         cases: Sequence[FaultCase],
         /,
-    ):
+    ) -> None:
         route_ = _identifier(route, "route")
         if route_ not in ROUTE_BOUNDARIES:
             raise ValueError(f"Unknown commercial platform route {route_!r}.")
@@ -592,7 +592,7 @@ class QualificationContext:
         issued_at: int,
         expires_at: int,
         evaluated_at: int,
-    ):
+    ) -> None:
         self.build_id = _identifier(build_id, "build ID")
         self.environment_id = _identifier(environment_id, "environment ID")
         self.backend = _identifier(backend, "backend")
@@ -766,7 +766,9 @@ def _observation_record(
             "boundary_id": case.boundary_id,
             "gate": case.gate,
             "facts": facts,
+            # ty: ignore[invalid-argument-type]
             "declared_effects": list(declared_record),
+            # ty: ignore[invalid-argument-type]
             "observed_effects": list(observed_record),
             "effect_log_append_only": log_is_append_only,
             "initial_effects_clean": initial_effects_clean,
@@ -976,8 +978,8 @@ def _verify_content_address(
 
 
 def _verify_provider_observations(
-    observations,
-    case_by_id,
+    observations: Any,
+    case_by_id: Any,
     route: str,
     provider_id: str,
     deployment_id: str,
@@ -1075,11 +1077,11 @@ def _verify_provider_observations(
 
 
 def _verify_provider_gates(
-    gates,
-    context,
-    generated,
-    resolved,
-    source,
+    gates: Any,
+    context: Any,
+    generated: Any,
+    resolved: Any,
+    source: Any,
     outcomes: dict[str, Any],
     gate_names: list[str],
     /,
@@ -1131,6 +1133,7 @@ def _verify_provider_gates(
             or gate.get("outcome") != evaluated.outcome
         ):
             raise ValueError("Serialized gate coverage does not match exact evidence.")
+        # ty: ignore[unresolved-attribute]
         outcomes.append(evaluated.outcome)
         gate_names.append(name)
 
@@ -1358,6 +1361,7 @@ def verify_provider_qualification(record: Mapping[str, object], /) -> None:
         generated,
         resolved,
         source,
+        # ty: ignore[invalid-argument-type]
         outcomes,
         gate_names,
     )

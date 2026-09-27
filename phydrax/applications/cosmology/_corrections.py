@@ -8,15 +8,18 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._differentiation import DerivativeContract, DerivativeRoute, DerivativeSurface
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._products import (
     CosmologyProductProvenance,
     MatterPowerDescriptor,
+    MatterPowerStage,
     MatterPowerTable,
 )
 
@@ -28,8 +31,8 @@ class CorrectionModelCard(StrictModule, NonTrainableState):
     model_version: str = eqx.field(static=True)
     source_reference: str = eqx.field(static=True)
     calibration_id: str = eqx.field(static=True)
-    denominator_stage: str = eqx.field(static=True)
-    output_stage: str = eqx.field(static=True)
+    denominator_stage: MatterPowerStage = eqx.field(static=True)
+    output_stage: MatterPowerStage = eqx.field(static=True)
     minimum_scale_factor: float = eqx.field(static=True)
     maximum_scale_factor: float = eqx.field(static=True)
     minimum_wavenumber: float = eqx.field(static=True)
@@ -45,13 +48,17 @@ class CorrectionModelCard(StrictModule, NonTrainableState):
         model_version: str,
         source_reference: str,
         calibration_id: str,
-        denominator_stage: str,
-        output_stage: str,
+        denominator_stage: MatterPowerStage,
+        output_stage: MatterPowerStage,
         scale_factor_domain: tuple[float, float],
         wavenumber_domain: tuple[float, float],
         expected_error: str,
         license_id: str,
-    ):
+    ) -> None:
+        denominator_stage = parse(
+            denominator_stage, MatterPowerStage, "denominator_stage"
+        )
+        output_stage = parse(output_stage, MatterPowerStage, "output_stage")
         strings = tuple(
             str(value).strip()
             for value in (
@@ -67,11 +74,6 @@ class CorrectionModelCard(StrictModule, NonTrainableState):
         )
         if any(not value for value in strings):
             raise ValueError("Correction model-card strings must be non-empty.")
-        if denominator_stage not in ("linear", "nonlinear") or output_stage not in (
-            "linear",
-            "nonlinear",
-        ):
-            raise ValueError("Correction stages must be linear or nonlinear.")
         a_min, a_max = (float(value) for value in scale_factor_domain)
         k_min, k_max = (float(value) for value in wavenumber_domain)
         if (
@@ -90,11 +92,13 @@ class CorrectionModelCard(StrictModule, NonTrainableState):
             self.model_version,
             self.source_reference,
             self.calibration_id,
-            self.denominator_stage,
-            self.output_stage,
+            _,
+            _,
             self.expected_error,
             self.license_id,
         ) = strings
+        self.denominator_stage = denominator_stage
+        self.output_stage = output_stage
         self.minimum_scale_factor = a_min
         self.maximum_scale_factor = a_max
         self.minimum_wavenumber = k_min
@@ -153,7 +157,7 @@ class MultiplicativeMatterPowerCorrectionPlan(StrictModule, NonTrainableState):
         differentiation: DerivativeContract = DerivativeContract(
             route=DerivativeRoute.DIRECT
         ),
-    ):
+    ) -> None:
         if not isinstance(card, CorrectionModelCard):
             raise TypeError("card must be CorrectionModelCard.")
         if not isinstance(differentiation, DerivativeContract):

@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from math import pi
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -44,7 +46,7 @@ from phydrax.solver._thermal_pure_quantum import (
 )
 
 
-def _response_case():
+def _response_case() -> Any:
     order = FermionModeOrder(("a", "b"))
     spaces = tuple(LocalSpacePlan.fermion(label, label) for label in order.labels)
     create_matrix = np.asarray(((0.0, 0.0), (1.0, 0.0)))
@@ -101,7 +103,7 @@ def _response_case():
     return source, target, probe
 
 
-def _shifted_policy():
+def _shifted_policy() -> Any:
     return ShiftedSolvePolicy(
         "lanczos",
         max_dimension=2,
@@ -115,7 +117,7 @@ def _shifted_policy():
     )
 
 
-def test_zero_temperature_shifted_response_has_exact_moments_and_positive_line():
+def test_zero_temperature_shifted_response_has_exact_moments_and_positive_line() -> None:
     source, target, probe = _response_case()
     frequencies = jnp.asarray((-1.0, 0.0, 1.0, 2.0, 3.0))
     eta = 0.2
@@ -143,7 +145,7 @@ def test_zero_temperature_shifted_response_has_exact_moments_and_positive_line()
     assert bool(result.evidence.valid)
 
 
-def _tpq(hamiltonian, beta):
+def _tpq(hamiltonian: Any, beta: Any) -> Any:
     plan = ThermalPureQuantumPlan(
         beta,
         probe_count=2,
@@ -162,11 +164,14 @@ def _tpq(hamiltonian, beta):
     )
 
 
-def test_finite_temperature_response_records_source_target_kms_and_positivity():
+def test_finite_temperature_response_records_source_target_kms_and_positivity() -> None:
     source, target, probe = _response_case()
     plan = FiniteTemperatureResponsePlan(
+        # ty: ignore[invalid-argument-type]
         (-pi, -pi / 2.0, 0.0, pi / 2.0, pi),
+        # ty: ignore[invalid-argument-type]
         (-1.0, 0.0, 1.0),
+        # ty: ignore[invalid-argument-type]
         (1.0, 1.0, 1.0, 1.0, 1.0),
         moment_count=2,
         matrix_function=MatrixFunctionPolicy(
@@ -192,9 +197,12 @@ def test_finite_temperature_response_records_source_target_kms_and_positivity():
     assert bool(result.evidence.valid)
 
 
-def test_response_plans_refuse_missing_resources_uncovered_or_asymmetric_windows():
+def test_response_plans_refuse_missing_resources_uncovered_or_asymmetric_windows() -> (
+    None
+):
     with pytest.raises(ValueError, match="explicit shifted-solve"):
         ZeroTemperatureResponsePlan(
+            # ty: ignore[invalid-argument-type]
             (0.0, 1.0),
             0.1,
             moment_count=1,
@@ -206,6 +214,7 @@ def test_response_plans_refuse_missing_resources_uncovered_or_asymmetric_windows
         )
     with pytest.raises(ValueError, match="cover"):
         ZeroTemperatureResponsePlan(
+            # ty: ignore[invalid-argument-type]
             (0.0, 1.0),
             0.1,
             moment_count=1,
@@ -216,8 +225,11 @@ def test_response_plans_refuse_missing_resources_uncovered_or_asymmetric_windows
         )
     with pytest.raises(ValueError, match="symmetric"):
         FiniteTemperatureResponsePlan(
+            # ty: ignore[invalid-argument-type]
             (-1.0, 0.0, 2.0),
+            # ty: ignore[invalid-argument-type]
             (-1.0, 0.0, 1.0),
+            # ty: ignore[invalid-argument-type]
             (1.0, 1.0, 1.0),
             moment_count=1,
             matrix_function=MatrixFunctionPolicy(

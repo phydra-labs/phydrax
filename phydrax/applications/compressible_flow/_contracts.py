@@ -10,7 +10,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -20,12 +21,15 @@ from ...equations._gas_dynamics import (
     HomogeneousMixtureCompressibleNavierStokesSystem,
     HomogeneousMixtureEulerSystem,
 )
+from ...equations._homogeneous_thermodynamics import HomogeneousHelmholtzPlan
 from ...equations._nonequilibrium_gas import (
     TwoTemperatureMixtureEulerSystem,
     TwoTemperatureMixtureNavierStokesSystem,
+    TwoTemperatureThermodynamicsPlan,
 )
 from ...equations._spalart_allmaras import SpalartAllmarasCompressibleSystem
 from ...qualification._evidence import QualificationEvidence, SupportDependency
+from ...typing import parse
 
 
 CompressibleEquation: TypeAlias = Literal["euler", "navier_stokes"]
@@ -62,7 +66,7 @@ class FiniteXBoundaryLayerInflowPlan(StrictModule, NonTrainableState):
         boundary_layer_thickness: float,
         velocity_exponent: float = 1.0,
         wall_temperature: float | None = None,
-    ):
+    ) -> None:
         density = float(free_stream_density)
         mass_fractions = tuple(float(value) for value in free_stream_mass_fractions)
         velocity = float(free_stream_velocity)
@@ -184,7 +188,7 @@ class FiniteXBoundaryLayerCaseSpec(StrictModule, NonTrainableState):
         spanwise_bounds: Sequence[float] | None = None,
         outflow_kind: str = "characteristic-nonreflecting",
         wall_kind: str = "no-slip-thermal",
-    ):
+    ) -> None:
         x = tuple(float(value) for value in x_bounds)
         wall_normal = tuple(float(value) for value in wall_normal_bounds)
         spanwise = (
@@ -272,44 +276,35 @@ class CompressibleFlowCaseSpec(StrictModule):
         reference_velocity: float = 1.0,
         fidelity: CompressibleFidelity = "unqualified",
         boundary_layer: FiniteXBoundaryLayerCaseSpec | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         length = float(characteristic_length)
         density = float(reference_density)
         velocity = float(reference_velocity)
-        if (
-            not name_
-            or not isinstance(
-                system,
-                (
-                    HomogeneousMixtureEulerSystem,
-                    HomogeneousMixtureCompressibleNavierStokesSystem,
-                    SpalartAllmarasCompressibleSystem,
-                    TwoTemperatureMixtureEulerSystem,
-                    TwoTemperatureMixtureNavierStokesSystem,
-                ),
-            )
-            or route
-            not in (
-                "tensor-dgsem",
-                "nodal-dg-ldg",
-                "structured-fv",
-                "mapped-fv",
-            )
-            or any(
-                not np.isfinite(value) or value <= 0.0
-                for value in (length, density, velocity)
-            )
-            or fidelity not in ("unqualified", "dns-candidate")
-            or (
-                boundary_layer is not None
-                and (
-                    not isinstance(boundary_layer, FiniteXBoundaryLayerCaseSpec)
-                    or boundary_layer.dimension != system.dimension
-                )
-            )
+        invalid = "Compressible-flow case specification is invalid."
+        if not name_ or not isinstance(
+            system,
+            (
+                HomogeneousMixtureEulerSystem,
+                HomogeneousMixtureCompressibleNavierStokesSystem,
+                SpalartAllmarasCompressibleSystem,
+                TwoTemperatureMixtureEulerSystem,
+                TwoTemperatureMixtureNavierStokesSystem,
+            ),
         ):
-            raise ValueError("Compressible-flow case specification is invalid.")
+            raise ValueError(invalid)
+        route = parse(route, CompressibleRoute, "route")
+        if any(
+            not np.isfinite(value) or value <= 0.0
+            for value in (length, density, velocity)
+        ):
+            raise ValueError(invalid)
+        fidelity = parse(fidelity, CompressibleFidelity, "fidelity")
+        if boundary_layer is not None and (
+            not isinstance(boundary_layer, FiniteXBoundaryLayerCaseSpec)
+            or boundary_layer.dimension != system.dimension
+        ):
+            raise ValueError(invalid)
         if boundary_layer is not None and route not in (
             "tensor-dgsem",
             "structured-fv",
@@ -341,7 +336,9 @@ class CompressibleFlowCaseSpec(StrictModule):
         )
 
     @property
-    def thermodynamics(self):
+    def thermodynamics(
+        self,
+    ) -> HomogeneousHelmholtzPlan | TwoTemperatureThermodynamicsPlan:
         return self.system.thermodynamics
 
     @property
@@ -407,7 +404,7 @@ class AllSpeedCompressiblePolicy(StrictModule, NonTrainableState):
         *,
         minimum_mach: float = 0.0,
         scaling: str = "linear-local-mach",
-    ):
+    ) -> None:
         reference = float(reference_mach)
         minimum = float(minimum_mach)
         if (
@@ -482,13 +479,13 @@ class ShockResolvingPolicy(StrictModule, NonTrainableState):
         sensor_threshold: float = 0.05,
         all_speed: AllSpeedCompressiblePolicy | None = None,
         fallback_flux: HLLFluxPlan | None = None,
-    ):
+    ) -> None:
         threshold = float(sensor_threshold)
         all_speed_ = AllSpeedCompressiblePolicy() if all_speed is None else all_speed
         fallback = HLLFluxPlan() if fallback_flux is None else fallback_flux
+        reconstruction = parse(reconstruction, ShockReconstruction, "reconstruction")
         if (
-            reconstruction not in ("weno_z", "teno", "mp5")
-            or not np.isfinite(threshold)
+            not np.isfinite(threshold)
             or threshold <= 0.0
             or not isinstance(all_speed_, AllSpeedCompressiblePolicy)
             or not isinstance(fallback, HLLFluxPlan)
@@ -588,7 +585,7 @@ class CompressibleQualificationEvidence(StrictModule, NonTrainableState):
         method_id: str,
         checks: Sequence[tuple[str, bool]],
         /,
-    ):
+    ) -> None:
         case = str(case_id)
         route = str(route_label)
         method = str(method_id)

@@ -9,7 +9,8 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 
@@ -26,7 +27,7 @@ class ElectricalWaveReference(StrictModule):
 
     def __init__(
         self, z0: ArrayLike, /, *, convention: WaveConvention = "kurokawa-power"
-    ):
+    ) -> None:
         if convention != "kurokawa-power":
             raise ValueError("Only the 'kurokawa-power' convention is supported.")
         impedance = jnp.asarray(z0)
@@ -64,7 +65,7 @@ class ModalWaveReference(StrictModule):
         normalization: str = "unit-flux",
         orientation: str = "into-component",
         reference_plane: ArrayLike = 0.0,
-    ):
+    ) -> None:
         identities = {
             "basis_id": str(basis_id),
             "mode_id": str(mode_id),
@@ -99,7 +100,7 @@ class WaveChannelAddress(StrictModule):
     port_id: PortId = eqx.field(static=True)
     coordinate_id: str = eqx.field(static=True)
 
-    def __init__(self, port_id: PortId, coordinate_id: str, /):
+    def __init__(self, port_id: PortId, coordinate_id: str, /) -> None:
         port, coordinate = str(port_id), str(coordinate_id)
         if not port or not coordinate:
             raise ValueError("Wave channel address IDs must be non-empty.")
@@ -120,7 +121,7 @@ class WavePort(StrictModule):
         /,
         *,
         coordinate_ids: Sequence[str] | None = None,
-    ):
+    ) -> None:
         identifier = str(port_id)
         if not identifier:
             raise ValueError("port_id must be non-empty.")
@@ -186,7 +187,9 @@ def references_compatible(
     """Return exact-static and tolerance-qualified dynamic link compatibility."""
     if type(first) is not type(second):
         return jnp.asarray(False)
-    if isinstance(first, ElectricalWaveReference):
+    if isinstance(first, ElectricalWaveReference) and isinstance(
+        second, ElectricalWaveReference
+    ):
         return jnp.asarray(first.convention == second.convention) & jnp.allclose(
             first.z0, second.z0, rtol=rtol, atol=atol
         )
@@ -216,7 +219,9 @@ def transformed_references_compatible(
     """Check physical chart compatibility when an explicit lossless map is supplied."""
     if type(first) is not type(second):
         return jnp.asarray(False)
-    if isinstance(first, ElectricalWaveReference):
+    if isinstance(first, ElectricalWaveReference) and isinstance(
+        second, ElectricalWaveReference
+    ):
         return jnp.asarray(first.convention == second.convention) & jnp.allclose(
             first.z0, second.z0, rtol=rtol, atol=atol
         )

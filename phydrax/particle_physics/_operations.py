@@ -10,7 +10,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+import numpy.typing as npt
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -50,12 +51,12 @@ class BeamConditionSnapshot(StrictModule, NonTrainableState):
         beam_energies: tuple[float, float],
         bunch_intensities: tuple[float, float],
         crossing_angle: float,
-        beam_spot_mean,
-        beam_spot_covariance,
+        beam_spot_mean: npt.ArrayLike,
+        beam_spot_covariance: npt.ArrayLike,
         energy_unit: UnitDefinition,
         length_unit: UnitDefinition,
         source_id: str,
-    ):
+    ) -> None:
         int32 = np.iinfo(np.int32)
         if len(species_pdg_ids) != 2 or any(
             isinstance(value, bool)
@@ -148,7 +149,7 @@ class HEPRunContext(StrictModule, NonTrainableState):
         *,
         campaign_id: str,
         stream_id: str,
-    ):
+    ) -> None:
         if not isinstance(coordinate, OperationalCoordinate):
             raise TypeError("coordinate must be OperationalCoordinate.")
         if not isinstance(beam, BeamConditionSnapshot):
@@ -229,7 +230,7 @@ class ProcessNormalization(StrictModule, NonTrainableState):
         cross_section_uncertainty: float,
         cross_section_unit_id: str,
         provider_id: str,
-    ):
+    ) -> None:
         counts = tuple(
             map(
                 int,

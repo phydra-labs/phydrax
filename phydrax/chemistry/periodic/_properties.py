@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -33,7 +34,15 @@ class PeriodicEnergyDerivativeResult(StrictModule, NonTrainableState):
     provider_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
-    def __init__(self, energy, forces, stress, successful, provider_id, /):
+    def __init__(
+        self,
+        energy: ArrayLike,
+        forces: ArrayLike,
+        stress: ArrayLike,
+        successful: ArrayLike,
+        provider_id: str,
+        /,
+    ) -> None:
         energy_ = jnp.asarray(energy).reshape(())
         force = jnp.asarray(forces, dtype=energy_.dtype)
         stress_ = jnp.asarray(stress, dtype=energy_.dtype)
@@ -81,7 +90,9 @@ class PeriodicEnergyDerivativePlan(StrictModule, NonTrainableState):
     provider_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, energy_function: PeriodicEnergyFunction, provider_id: str, /):
+    def __init__(
+        self, energy_function: PeriodicEnergyFunction, provider_id: str, /
+    ) -> None:
         if not callable(energy_function):
             raise TypeError("energy_function must be differentiable and callable.")
         provider = str(provider_id).strip()
@@ -105,7 +116,7 @@ class PeriodicEnergyDerivativePlan(StrictModule, NonTrainableState):
         )(coordinate)
         volume = jnp.abs(jnp.dot(cell[0], jnp.cross(cell[1], cell[2])))
 
-        def strained_energy(strain):
+        def strained_energy(strain: Array) -> Array:
             deformation = jnp.eye(3, dtype=cell.dtype) + strain
             return self.energy_function(
                 coordinate @ deformation.T,

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 
 from phydrax.finance.contracts._exercise import SettlementTerms
@@ -11,7 +13,7 @@ from phydrax.finance.core._identifiers import FinancialIdentifier
 from phydrax.finance.core._time import BusinessDayRule, FinanceDate
 
 
-def _settlement(currency):
+def _settlement(currency: Any) -> Any:
     return SettlementTerms(
         currency,
         calendar_id="NYC",
@@ -19,7 +21,7 @@ def _settlement(currency):
     )
 
 
-def test_exact_contract_terms_lower_to_typed_device_payoffs():
+def test_exact_contract_terms_lower_to_typed_device_payoffs() -> None:
     usd = Currency("USD", 2)
     underlying = FinancialIdentifier("ticker", "XYZ")
     option = EuropeanOption(
@@ -35,7 +37,7 @@ def test_exact_contract_terms_lower_to_typed_device_payoffs():
     assert jnp.isclose(payoff.notional, 3.0)
 
 
-def test_basket_contract_rejects_weight_underlying_shape_mismatch():
+def test_basket_contract_rejects_weight_underlying_shape_mismatch() -> None:
     usd = Currency("USD", 2)
     first = FinancialIdentifier("ticker", "AAA")
     second = FinancialIdentifier("ticker", "BBB")

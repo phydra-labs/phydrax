@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 
@@ -22,6 +23,8 @@ from ..._interpolation import (
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...graph import GraphIR
+from ...typing import parse, PRNGKey
 from .._evaluation import BatchEvaluator
 from .._function import DomainFunction
 from ._batch import GRAPH_ENTITY_INDEX_KEY, GraphBatch
@@ -37,20 +40,19 @@ from ._trajectory import (
 )
 
 
-GraphTargetInterpolation = Literal["nearest", "linear"]
-GraphClassificationTargetEncoding = Literal["hard", "soft"]
+GraphTargetInterpolation: TypeAlias = Literal["nearest", "linear"]
+GraphClassificationTargetEncoding: TypeAlias = Literal["hard", "soft"]
 
 
 def _classification_array(
     name: str,
-    value: ArrayLike,
+    value: ArrayLike | Sequence[ArrayLike],
     encoding: GraphClassificationTargetEncoding,
     /,
     *,
     require_boolean: bool = False,
 ) -> Array:
-    if encoding not in ("hard", "soft"):
-        raise ValueError("target_encoding must be 'hard' or 'soft'.")
+    encoding = parse(encoding, GraphClassificationTargetEncoding, "target_encoding")
     try:
         arr = jnp.asarray(value)
     except (TypeError, ValueError, OverflowError) as error:
@@ -123,7 +125,7 @@ def _classification_case_arrays(
     return tuple(arr[i] for i in range(n))
 
 
-def _size_for_kind(graph, kind: GraphComponentKind, /) -> int:
+def _size_for_kind(graph: GraphIR, kind: GraphComponentKind, /) -> int:
     if kind == "nodes":
         return int(graph.num_nodes)
     if kind == "edges":
@@ -240,8 +242,7 @@ def _validate_graph_classification_case_arrays(
     *,
     require_boolean: bool = False,
 ) -> tuple[Array, Array]:
-    if kind not in ("nodes", "edges", "globals"):
-        raise ValueError("component_kind must be 'nodes', 'edges', or 'globals'.")
+    kind = parse(kind, GraphComponentKind, "kind")
     cases = _classification_case_arrays(
         values,
         domain.size,
@@ -286,8 +287,7 @@ def _validate_graph_trajectory_classification_case_arrays(
     *,
     require_boolean: bool = False,
 ) -> tuple[Array, Array, Array, Array]:
-    if kind not in ("nodes", "edges", "globals"):
-        raise ValueError("component_kind must be 'nodes', 'edges', or 'globals'.")
+    kind = parse(kind, GraphComponentKind, "kind")
     cases = _classification_case_arrays(
         values,
         domain.size,
@@ -383,12 +383,14 @@ class _GraphTargetCallable(StrictModule, BatchEvaluator, NonTrainableState):
     offsets: Array
     kind: GraphComponentKind
 
-    def __init__(self, *, values: Array, offsets: Array, kind: GraphComponentKind):
+    def __init__(
+        self, *, values: Array, offsets: Array, kind: GraphComponentKind
+    ) -> None:
         self.values = jax.lax.stop_gradient(jnp.asarray(values, dtype=jnp.float64))
         self.offsets = jnp.asarray(offsets, dtype=jnp.int32)
         self.kind = kind
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         del args, key, kwargs
         raise TypeError("GraphTarget requires GraphBatch evaluation.")
 
@@ -397,7 +399,7 @@ class _GraphTargetCallable(StrictModule, BatchEvaluator, NonTrainableState):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         del key, kwargs
@@ -432,7 +434,7 @@ class _GraphTrajectorySignalCallable(StrictModule, BatchEvaluator, NonTrainableS
         entity_sizes: Array,
         kind: GraphComponentKind,
         interpolation: GraphTargetInterpolation,
-    ):
+    ) -> None:
         self.domain = domain
         self.values = jax.lax.stop_gradient(jnp.asarray(values, dtype=jnp.float64))
         self.offsets = jnp.asarray(offsets, dtype=jnp.int32)
@@ -441,7 +443,7 @@ class _GraphTrajectorySignalCallable(StrictModule, BatchEvaluator, NonTrainableS
         self.kind = kind
         self.interpolation = interpolation
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         del args, key, kwargs
         raise TypeError("GraphTrajectorySignal requires GraphBatch evaluation.")
 
@@ -453,7 +455,7 @@ class _GraphTrajectorySignalCallable(StrictModule, BatchEvaluator, NonTrainableS
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         del key, kwargs
@@ -561,12 +563,7 @@ def GraphTrajectorySignal(
     """
     if not isinstance(domain, GraphTrajectoryDatasetDomain):
         raise TypeError("GraphTrajectorySignal requires a GraphTrajectoryDatasetDomain.")
-    interpolation_str = str(interpolation)
-    if interpolation_str not in ("nearest", "linear"):
-        raise ValueError("interpolation must be 'nearest' or 'linear'.")
-    interpolation_value: GraphTargetInterpolation = (
-        "linear" if interpolation_str == "linear" else "nearest"
-    )
+    interpolation_value = parse(interpolation, GraphTargetInterpolation, "interpolation")
     values_flat, offsets, lengths, entity_sizes = _validate_graph_trajectory_case_arrays(
         domain,
         values,
@@ -593,12 +590,14 @@ class _GraphClassificationTargetCallable(StrictModule, BatchEvaluator, NonTraina
     offsets: Array
     kind: GraphComponentKind
 
-    def __init__(self, *, values: Array, offsets: Array, kind: GraphComponentKind):
+    def __init__(
+        self, *, values: Array, offsets: Array, kind: GraphComponentKind
+    ) -> None:
         self.values = jax.lax.stop_gradient(jnp.asarray(values))
         self.offsets = jnp.asarray(offsets, dtype=jnp.int32)
         self.kind = kind
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         del args, key, kwargs
         raise TypeError("GraphClassificationTarget requires GraphBatch evaluation.")
 
@@ -607,7 +606,7 @@ class _GraphClassificationTargetCallable(StrictModule, BatchEvaluator, NonTraina
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         del key, kwargs
@@ -646,7 +645,7 @@ class _GraphTrajectoryClassificationSignalCallable(
         kind: GraphComponentKind,
         interpolation: GraphTargetInterpolation,
         logical_interpolation: bool = False,
-    ):
+    ) -> None:
         self.domain = domain
         self.values = jax.lax.stop_gradient(jnp.asarray(values))
         self.offsets = jnp.asarray(offsets, dtype=jnp.int32)
@@ -656,7 +655,7 @@ class _GraphTrajectoryClassificationSignalCallable(
         self.interpolation = interpolation
         self.logical_interpolation = bool(logical_interpolation)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         del args, key, kwargs
         raise TypeError(
             "GraphTrajectoryClassificationSignal requires GraphBatch evaluation."
@@ -670,7 +669,7 @@ class _GraphTrajectoryClassificationSignalCallable(
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         del key, kwargs
@@ -803,8 +802,7 @@ def _graph_trajectory_classification_signal(
         raise TypeError(
             "GraphTrajectoryClassificationSignal requires a GraphTrajectoryDatasetDomain."
         )
-    if interpolation not in ("nearest", "linear"):
-        raise ValueError("interpolation must be 'nearest' or 'linear'.")
+    interpolation = parse(interpolation, GraphTargetInterpolation, "interpolation")
     if target_encoding == "hard" and interpolation != "nearest" and not require_boolean:
         raise ValueError(
             "Hard graph trajectory classification targets require nearest interpolation."

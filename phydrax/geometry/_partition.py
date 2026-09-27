@@ -8,10 +8,11 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, Key
+from jax import Array
 
 from .._numerics._quadrature_rules import gauss_legendre_data
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._atlas import BoundaryAtlas
 
 
@@ -33,7 +34,7 @@ class GeometryMeasurePartition(StrictModule):
         measures: Array,
         *,
         kind: Literal["segment", "triangle"],
-    ):
+    ) -> None:
         vertices_ = jnp.asarray(vertices, dtype=jnp.float64)
         measures_ = jnp.asarray(measures, dtype=jnp.float64).reshape((-1,))
         simplex_size = 2 if kind == "segment" else 3
@@ -66,7 +67,7 @@ class GeometryMeasurePartition(StrictModule):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         stratum_weights: Array | None = None,
         minimum_per_stratum: int = 0,
     ) -> tuple[Array, Array, Array]:
@@ -156,7 +157,7 @@ class BoundaryAtlasPartition(StrictModule):
         quadrature_order: int = 12,
         candidate_count: int = 64,
         maximum_quadrature_points: int = 1_000_000,
-    ):
+    ) -> None:
         if not isinstance(atlas, BoundaryAtlas):
             raise TypeError("atlas must be a BoundaryAtlas.")
         if quadrature_order < 2 or candidate_count < 2:
@@ -235,7 +236,7 @@ class BoundaryAtlasPartition(StrictModule):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         stratum_weights: Array | None = None,
         minimum_per_stratum: int = 0,
     ) -> tuple[Array, Array, Array]:

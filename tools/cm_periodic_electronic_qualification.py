@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -17,18 +18,18 @@ from benchmarks._runtime import capture_environment
 periodic = phx.chemistry.periodic
 
 
-def _cell():
+def _cell() -> Any:
     return phx.discretization.PeriodicCell(
         np.asarray([[5.0, 0.0, 0.0], [0.6, 4.8, 0.0], [0.3, 0.2, 5.2]]),
         periodic_axes=(True, True, True),
     )
 
 
-def _units():
+def _units() -> Any:
     return phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
 
 
-def _manifest(source_id: str):
+def _manifest(source_id: str) -> Any:
     return periodic.PeriodicProvenanceManifest.for_bytes(
         f"{source_id}:qualification".encode(),
         source_id,
@@ -36,18 +37,21 @@ def _manifest(source_id: str):
     )
 
 
-def _spin_case(reference_kind: str, smearing: float, magnetization: float):
+def _spin_case(reference_kind: str, smearing: float, magnetization: float) -> Any:
     cell = _cell()
     basis = phx.operators.periodic.PeriodicOrbitalBasisPlan(
         cell,
         ("lower", "upper"),
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0], [0.25, 0.0, 0.0]],
         phx.units.ANGSTROM,
         phx.operators.periodic.PeriodicBlochGauge("lattice"),
     )
     blocks = np.asarray([np.diag([-1.0, 0.8])]).reshape((1, 2, 1, 2, 1))
     family = phx.operators.periodic.periodic_translation_family_from_dense_blocks(
-        [[0, 0, 0]], blocks
+        # ty: ignore[invalid-argument-type]
+        [[0, 0, 0]],
+        blocks,
     )
     pencil = phx.operators.periodic.PeriodicOrbitalPencilPlan.orthonormal(
         basis,
@@ -94,14 +98,14 @@ def _spin_case(reference_kind: str, smearing: float, magnetization: float):
     }
 
 
-def _derivative_case():
-    def orbital(positions, vectors):
+def _derivative_case() -> Any:
+    def orbital(positions: Any, vectors: Any) -> Any:
         return 0.5 * jnp.sum(positions**2) + 0.02 * jnp.linalg.det(vectors)
 
-    def pulay(positions, vectors):
+    def pulay(positions: Any, vectors: Any) -> Any:
         return 0.1 * jnp.sum(positions) + 0.0 * jnp.sum(vectors)
 
-    def zero(positions, vectors):
+    def zero(positions: Any, vectors: Any) -> Any:
         return 0.0 * (jnp.sum(positions) + jnp.sum(vectors))
 
     components = (
@@ -144,7 +148,7 @@ def _derivative_case():
     }
 
 
-def _provider_case():
+def _provider_case() -> Any:
     units = _units()
     cell = _cell()
     system = phx.atomistic.AtomisticSystemPlan(
@@ -163,6 +167,7 @@ def _provider_case():
         ),
         basis=phx.chemistry.BasisSetReference("periodic-fixture", "qualification"),
     )
+    # ty: ignore[invalid-argument-type]
     task = phx.chemistry.BandStructureTaskPlan([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]])
     calculation = phx.chemistry.ElectronicCalculationPlan(
         system,
@@ -186,12 +191,13 @@ def _provider_case():
         ),
     )
 
-    def evaluate(plan, positions, cell_vectors):
+    def evaluate(plan: Any, positions: Any, cell_vectors: Any) -> Any:
         return phx.chemistry.make_electronic_evaluation(
             plan,
             "qualification-periodic-provider",
             positions,
             -1.0,
+            # ty: ignore[invalid-argument-type]
             band_energies=[[-1.0, 0.5], [-0.8, 0.7]],
             cell_vectors=cell_vectors,
             artifact_ids=(provenance.manifest_id,),
@@ -219,7 +225,7 @@ def _provider_case():
     }
 
 
-def qualification():
+def qualification() -> Any:
     positions = np.asarray([[0.2, 0.3, 0.4], [1.2, 0.3, 0.4]])
     neutral = (
         periodic.PeriodicEwaldPlan(
@@ -257,7 +263,11 @@ def qualification():
         [[-1.0]],
         [[1.0]],
         phx.operators.quantum.gaussian.FactorizedERITensor(
-            [[[0.5]]], 0.0, gdf_manifest.source_id, "gdf"
+            # ty: ignore[invalid-argument-type]
+            [[[0.5]]],
+            0.0,
+            gdf_manifest.source_id,
+            "gdf",
         ),
         2.0,
         0.0,
@@ -384,6 +394,7 @@ def main() -> None:
         default=Path("benchmarks/cm_periodic_electronic_qualification.json"),
     )
     arguments = parser.parse_args()
+    # ty: ignore[unresolved-attribute]
     if not jax.config.x64_enabled:
         raise ValueError("Periodic electronic qualification requires JAX_ENABLE_X64=1.")
     payload = qualification()

@@ -8,6 +8,7 @@ import argparse
 import json
 import math
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -24,7 +25,7 @@ def _rectangle_mesh(
     *,
     x_bounds: tuple[float, float] = (0.0, 1.0),
     y_bounds: tuple[float, float] = (0.0, 1.0),
-):
+) -> Any:
     nx = int(x_cells)
     ny = int(y_cells)
     if nx < 1 or ny < 1:
@@ -51,7 +52,7 @@ def _rectangle_mesh(
     )
 
 
-def _model(gradient_coefficient: float):
+def _model(gradient_coefficient: float) -> Any:
     return phx.applications.phase_field.BinaryPhaseFieldModel(
         phx.equations.BinaryThermodynamicParameters(
             jnp.asarray(1.0, dtype=jnp.float64),
@@ -61,13 +62,13 @@ def _model(gradient_coefficient: float):
 
 
 def _allen_cahn(
-    mesh,
-    model,
+    mesh: Any,
+    model: Any,
     /,
     *,
-    execution_policy=None,
-    termination=None,
-):
+    execution_policy: Any = None,
+    termination: Any = None,
+) -> Any:
     element = phx.discretization.lagrange_element("triangle", 1)
     discretization = phx.discretization.FiniteElementPlan(
         mesh,
@@ -82,13 +83,13 @@ def _allen_cahn(
 
 
 def _cahn_hilliard(
-    mesh,
-    model,
+    mesh: Any,
+    model: Any,
     /,
     *,
-    execution_policy=None,
-    termination=None,
-):
+    execution_policy: Any = None,
+    termination: Any = None,
+) -> Any:
     element = phx.discretization.lagrange_element("triangle", 1)
     discretization = phx.discretization.FiniteElementPlan(
         mesh,
@@ -105,7 +106,9 @@ def _cahn_hilliard(
     ).prepare(discretization, "c", "mu")
 
 
-def _advance_allen_cahn(method, initial, step_size: float, end_time: float, /):
+def _advance_allen_cahn(
+    method: Any, initial: Any, step_size: float, end_time: float, /
+) -> Any:
     count = int(round(end_time / step_size))
     state = initial
     successful = True
@@ -133,7 +136,9 @@ def _advance_allen_cahn(method, initial, step_size: float, end_time: float, /):
     return state, successful, maximum_energy_excess
 
 
-def _advance_cahn_hilliard(method, initial, step_size: float, end_time: float, /):
+def _advance_cahn_hilliard(
+    method: Any, initial: Any, step_size: float, end_time: float, /
+) -> Any:
     count = int(round(end_time / step_size))
     state = initial
     successful = True
@@ -171,7 +176,7 @@ def _advance_cahn_hilliard(method, initial, step_size: float, end_time: float, /
     )
 
 
-def _rms_error(left, right, /) -> float:
+def _rms_error(left: Any, right: Any, /) -> float:
     difference = np.asarray(left) - np.asarray(right)
     return float(np.sqrt(np.mean(difference * difference)))
 

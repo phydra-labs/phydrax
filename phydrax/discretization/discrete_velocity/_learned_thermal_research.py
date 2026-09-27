@@ -19,7 +19,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 from phydrax.linalg import SmallLinearSolvePlan, solve_small_linear
@@ -145,7 +146,7 @@ class PressureExtendedParticleEquilibriumPlan(StrictModule, NonTrainableState):
     linear_solve: SmallLinearSolvePlan
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, quadrature: CertifiedDiscreteVelocityQuadrature, /):
+    def __init__(self, quadrature: CertifiedDiscreteVelocityQuadrature, /) -> None:
         if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
             raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         _require_standard_d2q9(quadrature, owner="The pressure-extended research plan")
@@ -488,7 +489,7 @@ class PositiveLearnedThermalEnergyPlan(StrictModule, NonTrainableState):
         maximum_absolute_natural_parameter: float = 1.0e3,
         maximum_logit_span: float = 80.0,
         constant_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
             raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         count = int(statistic_count)
@@ -784,7 +785,7 @@ class MatchedThermalCrossRelaxationPlan(StrictModule, NonTrainableState):
         /,
         *,
         conservation_tolerance: float = 1.0e-11,
-    ):
+    ) -> None:
         if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
             raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         _require_standard_d2q9(quadrature, owner="The matched thermal plan")
@@ -1241,7 +1242,7 @@ class IntegerVelocityFrameShiftPlan(StrictModule, NonTrainableState):
         /,
         *,
         minimum_interior_margin: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
             raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         if quadrature.dimension != 2:

@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -36,7 +37,9 @@ class FreeSpaceVortexFFTPlan(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, shape: tuple[int, ...], lower: ArrayLike, upper: ArrayLike, /):
+    def __init__(
+        self, shape: tuple[int, ...], lower: ArrayLike, upper: ArrayLike, /
+    ) -> None:
         shape_ = tuple(shape)
         lower_, upper_ = (
             np.asarray(lower, dtype=np.float64),
@@ -135,8 +138,8 @@ class FreeSpaceVortexFFTPlan(StrictModule, NonTrainableState):
         circulation = jnp.sum(omega, axis=tuple(range(self.dimension))) * cell_measure
         boundary_mask = jnp.zeros(self.shape, dtype=jnp.bool_)
         for axis in range(self.dimension):
-            lower_index = [slice(None)] * self.dimension
-            upper_index = [slice(None)] * self.dimension
+            lower_index: list[slice | int] = [slice(None)] * self.dimension
+            upper_index: list[slice | int] = [slice(None)] * self.dimension
             lower_index[axis], upper_index[axis] = 0, self.shape[axis] - 1
             boundary_mask = boundary_mask.at[tuple(lower_index)].set(True)
             boundary_mask = boundary_mask.at[tuple(upper_index)].set(True)

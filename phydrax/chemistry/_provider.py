@@ -8,15 +8,16 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable, Sequence
-from typing import Literal, TYPE_CHECKING
+from typing import Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._context import ElectronicEvaluationContext
 from ._model import ElectronicMethodFamily, ElectronicReferenceKind
 from ._result import (
@@ -39,8 +40,10 @@ if TYPE_CHECKING:
     from ._calculation import ElectronicCalculationPlan
 
 
-ElectronicExecutionKind = Literal["host", "device"]
-ElectronicConcurrencyKind = Literal["serial", "thread-safe", "process-isolated"]
+ElectronicExecutionKind: TypeAlias = Literal["host", "device"]
+ElectronicConcurrencyKind: TypeAlias = Literal[
+    "serial", "thread-safe", "process-isolated"
+]
 
 
 class ElectronicProviderUnavailableError(RuntimeError):
@@ -77,7 +80,7 @@ class ElectronicTheoryCapabilities(StrictModule, NonTrainableState):
         spin_multiplicity: bool = True,
         spinor: bool = False,
         spatial_symmetry: bool = False,
-    ):
+    ) -> None:
         families_ = _enum_tuple(families, ElectronicMethodFamily, "method families")
         references_ = _enum_tuple(references, ElectronicReferenceKind, "reference kinds")
         self.families = families_
@@ -114,7 +117,7 @@ class ElectronicGeometryCapabilities(StrictModule, NonTrainableState):
         periodic_ranks: Sequence[int] = (),
         variable_cell: bool = False,
         low_dimensional_coulomb: bool = False,
-    ):
+    ) -> None:
         ranks = tuple(sorted(set(int(value) for value in periodic_ranks)))
         if any(value not in (1, 2, 3) for value in ranks):
             raise ValueError("Periodic geometry ranks must be one, two, or three.")
@@ -154,7 +157,7 @@ class ElectronicObservableCapabilities(StrictModule, NonTrainableState):
         *,
         derivative_orders: Sequence[int] = (),
         gauges: Sequence[str] = ("length",),
-    ):
+    ) -> None:
         tasks_ = _enum_tuple(tasks, ElectronicTaskKind, "electronic tasks")
         properties_ = _enum_tuple(properties, ElectronicProperty, "electronic properties")
         orders = tuple(sorted(set(int(value) for value in derivative_orders)))
@@ -202,7 +205,7 @@ class ElectronicEmbeddingCapabilities(StrictModule, NonTrainableState):
         permanent_multipoles: bool = False,
         polarizable: bool = False,
         stress: bool = False,
-    ):
+    ) -> None:
         if point_charge_forces and not point_charges:
             raise ValueError("Point-charge forces require point-charge embedding.")
         if polarizable and not (point_charges or permanent_multipoles):
@@ -245,11 +248,9 @@ class ElectronicExecutionCapabilities(StrictModule, NonTrainableState):
         checkpointing: bool = False,
         execution: ElectronicExecutionKind = "host",
         concurrency: ElectronicConcurrencyKind = "serial",
-    ):
-        if execution not in ("host", "device"):
-            raise ValueError("execution must be host or device.")
-        if concurrency not in ("serial", "thread-safe", "process-isolated"):
-            raise ValueError("Unknown electronic provider concurrency model.")
+    ) -> None:
+        execution = parse(execution, ElectronicExecutionKind, "execution")
+        concurrency = parse(concurrency, ElectronicConcurrencyKind, "concurrency")
         self.conservative_forces = bool(conservative_forces)
         self.differentiable = bool(differentiable)
         self.batching = bool(batching)
@@ -288,7 +289,7 @@ class ElectronicProviderCapabilities(StrictModule, NonTrainableState):
         *,
         embedding: ElectronicEmbeddingCapabilities | None = None,
         execution: ElectronicExecutionCapabilities | None = None,
-    ):
+    ) -> None:
         if not isinstance(theory, ElectronicTheoryCapabilities):
             raise TypeError("theory must be ElectronicTheoryCapabilities.")
         if not isinstance(geometry, ElectronicGeometryCapabilities):
@@ -592,7 +593,7 @@ class CallablePreparedElectronicCalculation(AbstractPreparedElectronicCalculatio
         evaluator: ElectronicEvaluator,
         provider_id: str,
         /,
-    ):
+    ) -> None:
         from ._calculation import ElectronicCalculationPlan
 
         if not isinstance(calculation, ElectronicCalculationPlan):
@@ -695,7 +696,7 @@ class CallableElectronicProvider(AbstractElectronicProvider):
         provider_id: str,
         capabilities: ElectronicProviderCapabilities,
         /,
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         identifier = str(provider_id).strip()

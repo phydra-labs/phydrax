@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -70,7 +71,7 @@ class PreparedConservativeFiniteVolumeDVM(StrictModule):
         declared_moment_names: tuple[str, ...],
         prepared_id: str,
         /,
-    ):
+    ) -> None:
         self.quadrature = quadrature
         self.system = system
         self.dynamics = dynamics
@@ -139,7 +140,7 @@ class ConservativeFiniteVolumeDVMPlan(StrictModule):
         source: AbstractConservativeDVMSource | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
         population_floor: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(quadrature, CertifiedDiscreteVelocityQuadrature):
             raise TypeError("quadrature must be a CertifiedDiscreteVelocityQuadrature.")
         if not isinstance(
@@ -220,7 +221,9 @@ class ConservativeFiniteVolumeDVMPlan(StrictModule):
         else:
             source_plan = self.source
 
-            def evaluate_source(time, state, coordinates, args):
+            def evaluate_source(
+                time: Array, state: Array, coordinates: Array, args: Any
+            ) -> Array:
                 return source_plan(time, state, coordinates, args)
 
             source_function = evaluate_source

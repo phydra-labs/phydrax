@@ -9,7 +9,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
@@ -19,6 +19,7 @@ from ..linalg import (
     DenseSVD,
     LeastSquaresProblem,
     LinearSolvePolicy,
+    LinearSolveResult,
     prepare as prepare_linear,
     solve as solve_linear,
     solve_many as solve_linear_many,
@@ -114,7 +115,7 @@ class InterpolationSet(StrictModule):
         /,
         *,
         evaluations: Any,
-    ):
+    ) -> None:
         points_ = jnp.asarray(points)
         residuals_ = jnp.asarray(residuals)
         center_ = jnp.asarray(center)
@@ -141,7 +142,7 @@ def _fit_design(
     precision: NonlinearPrecisionPolicy,
     linear: LinearSolvePolicy | None,
     /,
-):
+) -> LinearSolveResult:
     linear_ = (
         LinearSolvePolicy(DenseSVD(damping=regularization**0.5))
         if linear is None

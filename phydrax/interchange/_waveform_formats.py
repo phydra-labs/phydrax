@@ -76,7 +76,7 @@ class StationXMLMetadata(StrictModule, NonTrainableState):
     metadata_id: str = eqx.field(static=True)
 
 
-def _obspy():
+def _obspy() -> Any:
     try:
         return cast(Any, import_module("obspy"))
     except ImportError as error:
@@ -85,7 +85,7 @@ def _obspy():
         ) from error
 
 
-def _pymseed():
+def _pymseed() -> Any:
     try:
         return cast(Any, import_module("pymseed"))
     except ImportError as error:
@@ -154,7 +154,13 @@ def _qualified_trace(
     )
 
 
-def _trace_record(trace, contract, sample_unit, resource_id, row):
+def _trace_record(
+    trace: Any,
+    contract: TimeReferenceContract,
+    sample_unit: UnitDefinition,
+    resource_id: str,
+    row: int,
+) -> QualifiedWaveformTrace:
     values = np.asanyarray(trace.data)
     if np.ma.isMaskedArray(values):
         valid = ~np.ma.getmaskarray(values)

@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -53,7 +54,7 @@ class VirtualSiteRule(StrictModule, NonTrainableState):
         parent_ids: ArrayLike,
         coefficients: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(kind, VirtualSiteKind):
             raise TypeError("kind must be VirtualSiteKind.")
         parents = np.asarray(parent_ids)
@@ -119,7 +120,7 @@ class AtomisticInteractionSitePlan(StrictModule, NonTrainableState):
         element_mask: ArrayLike | None = None,
         physical_mask: ArrayLike | None = None,
         output_mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         ids = np.asarray(site_ids)
         numbers = np.asarray(atomic_numbers)
         types = np.asarray(site_type_ids)
@@ -234,7 +235,7 @@ class AtomisticCoordinateMapPlan(AbstractAtomisticCoordinateMapPlan):
         /,
         *,
         virtual_rules: tuple[VirtualSiteRule, ...] = (),
-    ):
+    ) -> None:
         dof_ids = np.asarray(dof_particle_ids)
         physical = np.asarray(physical_dof_indices)
         if dof_ids.ndim != 1 or not np.issubdtype(dof_ids.dtype, np.integer):
@@ -337,7 +338,7 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
 
     def __init__(
         self, plan: AtomisticCoordinateMapPlan, particles: ParticleDiscretization, /
-    ):
+    ) -> None:
         if not isinstance(plan, AtomisticCoordinateMapPlan):
             raise TypeError("plan must be AtomisticCoordinateMapPlan.")
         if not isinstance(particles, ParticleDiscretization):
@@ -436,6 +437,7 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
             )
         if dynamic_fractional is not None and (
             cell is None
+            or dynamic_vectors is None
             or dynamic_fractional.shape != expected
             or dynamic_vectors.shape != (3, 3)
         ):
@@ -455,7 +457,11 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
             )
             if rule.kind is VirtualSiteKind.WEIGHTED:
                 anchor = parents[0]
-                if dynamic_parents is not None:
+                if (
+                    dynamic_parents is not None
+                    and cell is not None
+                    and dynamic_vectors is not None
+                ):
                     relative_fractional = dynamic_parents - dynamic_parents[0]
                     central = jax.lax.stop_gradient(
                         jnp.round(relative_fractional).astype(jnp.int32)
@@ -479,7 +485,11 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
                 )
             else:
                 origin = parents[0]
-                if dynamic_parents is not None:
+                if (
+                    dynamic_parents is not None
+                    and cell is not None
+                    and dynamic_vectors is not None
+                ):
                     relative_fractional = dynamic_parents[1:3] - dynamic_parents[0]
                     central = jax.lax.stop_gradient(
                         jnp.round(relative_fractional).astype(jnp.int32)

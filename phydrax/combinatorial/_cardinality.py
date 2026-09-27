@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -52,7 +53,7 @@ class CardinalitySpace(AbstractBoundableCombinatorialSpace):
     valid_count: int = eqx.field(static=True)
     _structure_id: str = eqx.field(static=True)
 
-    def __init__(self, size: int, count: int, /, *, valid: Any | None = None):
+    def __init__(self, size: int, count: int, /, *, valid: Any | None = None) -> None:
         if isinstance(size, bool) or not isinstance(size, Integral):
             raise TypeError("size must be a positive integer.")
         if isinstance(count, bool) or not isinstance(count, Integral):
@@ -88,8 +89,11 @@ class CardinalitySpace(AbstractBoundableCombinatorialSpace):
     def structure_id(self) -> str:
         return self._structure_id
 
-    def decision_spec(self, /) -> CardinalityDecision:
-        return CardinalityDecision(jax.ShapeDtypeStruct((self.count,), jnp.int32))
+    def decision_spec(self, /) -> PyTree[jax.ShapeDtypeStruct]:
+        count = self.count
+        return jax.eval_shape(
+            lambda: CardinalityDecision(jnp.zeros((count,), dtype=jnp.int32))
+        )
 
     def feature_spec(self, /) -> jax.ShapeDtypeStruct:
         return jax.ShapeDtypeStruct((self.size,), jnp.float32)
@@ -157,7 +161,7 @@ class StableCardinalityOracle(AbstractBoundableLinearCombinatorialMethod):
 
     maximum_items: int = eqx.field(static=True)
 
-    def __init__(self, *, maximum_items: int = 10_000_000):
+    def __init__(self, *, maximum_items: int = 10_000_000) -> None:
         if isinstance(maximum_items, bool) or not isinstance(maximum_items, Integral):
             raise TypeError("maximum_items must be a positive integer.")
         if int(maximum_items) <= 0:
@@ -222,6 +226,7 @@ class StableCardinalityOracle(AbstractBoundableLinearCombinatorialMethod):
         lower, upper = space.feature_bounds()
         return self._solve_bounds(
             problem,
+            space,
             plan,
             lower,
             upper,
@@ -250,6 +255,7 @@ class StableCardinalityOracle(AbstractBoundableLinearCombinatorialMethod):
         optional_count = int(np.count_nonzero(optional))
         return self._solve_bounds(
             problem,
+            space,
             plan,
             lower,
             upper,
@@ -263,16 +269,16 @@ class StableCardinalityOracle(AbstractBoundableLinearCombinatorialMethod):
 
     def _solve_bounds(
         self,
-        problem,
-        plan,
-        lower,
-        upper,
+        problem: LinearCombinatorialProblem,
+        space: CardinalitySpace,
+        plan: CombinatorialPlan,
+        lower: Array,
+        upper: Array,
         *,
-        required_count,
-        optional_count,
-        structurally_feasible,
-    ):
-        space = problem.space
+        required_count: int,
+        optional_count: int,
+        structurally_feasible: bool,
+    ) -> CombinatorialResult:
         costs = jax.tree_util.tree_leaves(problem.costs)[0]
         batch_shape = problem.batch_shape
         finite = jnp.all(jnp.isfinite(costs), axis=-1)

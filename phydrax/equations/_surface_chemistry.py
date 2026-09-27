@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -37,7 +38,7 @@ class SurfaceSpeciesSchema(StrictModule, NonTrainableState):
         /,
         *,
         site_capacity: float,
-    ):
+    ) -> None:
         names_ = tuple(str(value) for value in names)
         elements = np.asarray(element_composition, dtype=np.float64)
         charges_ = np.asarray(charges, dtype=np.float64)
@@ -109,7 +110,7 @@ class GasSurfaceReactionSpec(StrictModule, NonTrainableState):
         gas_orders: ArrayLike | None = None,
         surface_orders: ArrayLike | None = None,
         reaction_heat: float = 0.0,
-    ):
+    ) -> None:
         name_ = str(name)
         gas = np.asarray(gas_stoichiometry, dtype=np.float64)
         surface = np.asarray(surface_stoichiometry, dtype=np.float64)
@@ -194,7 +195,7 @@ class PreparedGasSurfaceMechanism(StrictModule, NonTrainableState):
         surface_schema: SurfaceSpeciesSchema,
         reactions: Sequence[GasSurfaceReactionSpec],
         /,
-    ):
+    ) -> None:
         reactions_ = tuple(reactions)
         if (
             not isinstance(gas_schema, ChemicalSpeciesSchema)

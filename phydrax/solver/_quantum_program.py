@@ -11,7 +11,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._model import register_artifact_value
@@ -26,6 +27,7 @@ from ..operators.quantum._propagation import (
     unitarity_residual,
 )
 from ..operators.quantum._register import HilbertRegisterLayout
+from ..typing import parse
 
 
 DensityPositivityAudit: TypeAlias = Literal["full", "construction"]
@@ -70,7 +72,7 @@ class DenseQuantumProgramPolicy(StrictModule):
         hermiticity_tolerance: float = 1e-6,
         positivity_tolerance: float = 1e-8,
         density_positivity_audit: DensityPositivityAudit = "full",
-    ):
+    ) -> None:
         limits = (
             int(maximum_state_bytes),
             int(maximum_operation_bytes),
@@ -93,8 +95,9 @@ class DenseQuantumProgramPolicy(StrictModule):
             raise ValueError(
                 "Dense quantum-program tolerances must be finite and non-negative."
             )
-        if density_positivity_audit not in ("full", "construction"):
-            raise ValueError("Unknown density positivity-audit policy.")
+        density_positivity_audit = parse(
+            density_positivity_audit, DensityPositivityAudit, "density_positivity_audit"
+        )
         self.maximum_state_bytes = limits[0]
         self.maximum_operation_bytes = limits[1]
         self.maximum_workspace_bytes = limits[2]

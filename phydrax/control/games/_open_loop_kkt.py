@@ -14,19 +14,21 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from enum import IntEnum
-from math import isfinite, prod
-from typing import Any
+from math import prod
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ..._bounds import Bounds
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ..._validation import positive_finite_float
 from ...dynamics import DiscreteStepContext, TimeGrid
 from ...nonlinear import (
     NonlinearTermination,
@@ -58,6 +60,10 @@ LOCAL_NOMINAL_GNE_STATIONARY = "LOCAL_NOMINAL_GNE_STATIONARY"
 _UNSET = object()
 _METHOD_ID = "control:game:nonlinear-open-loop-private-kkt:single-shooting"
 _STAGE_COST_SEMANTICS = "unweighted-discrete-stage-sum"
+
+_KKTState: TypeAlias = tuple[Array, Array, Array]
+_KKTAuxiliary: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
+_CaseValues: TypeAlias = tuple[Array, tuple[Array, Array, Array]]
 
 
 class OpenLoopGameKKTStatus(IntEnum):
@@ -111,7 +117,7 @@ class NonlinearOpenLoopGameProblem(StrictModule):
         constraints: OpenLoopGameConstraints | None = None,
         args: Any = None,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(dynamics, DiscreteControlDynamics):
             raise TypeError("dynamics must be DiscreteControlDynamics.")
         if not isinstance(time_grid, TimeGrid):
@@ -313,13 +319,6 @@ def _identifier(value: str, name: str, /) -> str:
     return value
 
 
-def _positive_tolerance(value: float, name: str, /) -> float:
-    result = float(value)
-    if not isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
-
-
 def _real_array(value: ArrayLike, name: str, /) -> Array:
     array = jnp.asarray(value)
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
@@ -424,9 +423,9 @@ def plan_open_loop_game_kkt(
     if not isinstance(problem, NonlinearOpenLoopGameProblem):
         raise TypeError("problem must be NonlinearOpenLoopGameProblem.")
     tolerances = (
-        _positive_tolerance(feasibility_tolerance, "feasibility_tolerance"),
-        _positive_tolerance(kkt_tolerance, "kkt_tolerance"),
-        _positive_tolerance(
+        positive_finite_float(feasibility_tolerance, "feasibility_tolerance"),
+        positive_finite_float(kkt_tolerance, "kkt_tolerance"),
+        positive_finite_float(
             constraint_qualification_tolerance,
             "constraint_qualification_tolerance",
         ),
@@ -555,7 +554,9 @@ def _rollout_and_costs_single(
     controls: Array,
     /,
 ) -> tuple[Array, Array]:
-    def step(state: Array, stage_data: tuple[Array, Array]):
+    def step(
+        state: Array, stage_data: tuple[Array, Array]
+    ) -> tuple[Array, tuple[Array, Array]]:
         step_index, control = stage_data
         context = DiscreteStepContext(
             problem.time_grid.times[step_index],
@@ -610,7 +611,7 @@ def _single_case_values(
     initial_state: Array,
     flat_controls: Array,
     /,
-):
+) -> _CaseValues:
     controls = flat_controls.reshape((problem.horizon, problem.control_size))
     states, costs = _rollout_and_costs_single(problem, initial_state, controls)
     trajectory = TrajectoryOptimizationView(
@@ -656,7 +657,7 @@ def _differentiate_candidate(
     initial = problem.initial_state.reshape((count, problem.state_size))
     controls = flat_controls.reshape((count, -1))
 
-    def evaluate_case(case_initial: Array, case_controls: Array):
+    def evaluate_case(case_initial: Array, case_controls: Array) -> _CaseValues:
         return _single_case_values(
             problem,
             constraint_args,
@@ -682,10 +683,10 @@ def _differentiate_candidate(
 
 
 def _kkt_quantities(
-    state: tuple[Array, Array, Array],
+    state: _KKTState,
     arguments: _KKTArguments,
     /,
-):
+) -> tuple[_KKTState, _KKTAuxiliary]:
     controls, equality_variables, inequality_variables = state
     plan = arguments.plan
     costs, raw, jacobian, states, block_finite = _differentiate_candidate(
@@ -760,7 +761,7 @@ def _kkt_quantities(
     )
 
 
-def _kkt_operator(state, arguments, /):
+def _kkt_operator(state: _KKTState, arguments: _KKTArguments, /) -> _KKTState:
     operator, _ = _kkt_quantities(state, arguments)
     return operator
 
@@ -773,7 +774,7 @@ def _vi_problem_and_state(
     inequality_multipliers: Array,
     constraint_args: Any,
     /,
-):
+) -> tuple[VariationalInequalityProblem, _KKTState, _KKTArguments]:
     flat_controls = controls.reshape(plan.case_shape + (plan.num_control_variables,))
     equality_variables = (
         equality_multipliers

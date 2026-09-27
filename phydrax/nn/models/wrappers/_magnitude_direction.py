@@ -5,7 +5,7 @@
 from typing import Literal
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ...._differentiation import DerivativeRegularity
 from ...._doc import DOC_KEY0
@@ -41,7 +41,7 @@ class MagnitudeDirectionModel(_AbstractStructuredInputModel):
         magnitude_model: _AbstractBaseModel,
         direction_model: _AbstractBaseModel,
         /,
-    ):
+    ) -> None:
         if magnitude_model.in_size != direction_model.in_size:
             raise ValueError(
                 "Magnitude and direction models must share the same in_size."

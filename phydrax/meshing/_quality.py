@@ -14,13 +14,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import cache
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -71,7 +72,7 @@ class CellQualityEvaluation(StrictModule):
     evaluation_id: str = eqx.field(static=True)
 
 
-def _nan_extreme(values: np.ndarray, reducer, /) -> float:
+def _nan_extreme(values: np.ndarray, reducer: Any, /) -> float:
     finite = values[~np.isnan(values)]
     return float(reducer(finite)) if finite.size else float("nan")
 
@@ -92,7 +93,7 @@ class CellQualityReport(StrictModule, NonTrainableState):
     worst_cell_global_ids: tuple[int, ...] = eqx.field(static=True)
     report_id: str = eqx.field(static=True)
 
-    def __init__(self, evaluation: CellQualityEvaluation, /):
+    def __init__(self, evaluation: CellQualityEvaluation, /) -> None:
         if not isinstance(evaluation, CellQualityEvaluation):
             raise TypeError("evaluation must be CellQualityEvaluation.")
         measures = np.asarray(evaluation.measures, dtype=np.float64)
@@ -213,7 +214,7 @@ def _edges(kind: str, arity: int, /) -> tuple[tuple[int, int], ...]:
     )
 
 
-def _square_determinant(matrix, /):
+def _square_determinant(matrix: Any, /) -> Any:
     size = matrix.shape[-1]
     if size == 1:
         return matrix[..., 0, 0]
@@ -231,7 +232,7 @@ def _square_determinant(matrix, /):
     )
 
 
-def _adjugate_trace(matrix, /):
+def _adjugate_trace(matrix: Any, /) -> Any:
     if matrix.shape[-1] == 2:
         return matrix[..., 0, 0] + matrix[..., 1, 1]
     return (
@@ -303,7 +304,7 @@ def _dihedral_table(kind: str, /) -> _DihedralTable:
     return _DihedralTable(np.asarray(samples))
 
 
-def _first_order_space(kind: str, points: np.ndarray, /):
+def _first_order_space(kind: str, points: np.ndarray, /) -> Any:
     """Values and gradients of a spanning set of the first-order geometry space."""
     x, y, z = points[:, 0], points[:, 1], points[:, 2]
     one, zero = np.ones_like(x), np.zeros_like(x)
@@ -410,6 +411,7 @@ def _measure_rule(kind: str, /) -> _MeasureRule:
 
 
 def _tiny(values: Array, /) -> Array:
+    # ty: ignore[invalid-return-type]
     return jnp.finfo(values.dtype).tiny
 
 
@@ -576,7 +578,9 @@ def _surface_quality(kind: str, points: Array, metric: Array | None, /) -> _Bloc
         following = jnp.roll(shifted, -1, axis=1)
         if embedded:
             star = jnp.sum(
-                jnp.cross(shifted, following) * unit_normal[:, None, :], axis=-1
+                # ty: ignore[not-subscriptable]
+                jnp.cross(shifted, following) * unit_normal[:, None, :],
+                axis=-1,
             )
         else:
             star = (
@@ -623,7 +627,7 @@ def _volume_measure(kind: str, points: Array, /) -> Array:
     return jnp.sum(_square_determinant(jacobian) * rule.weights, axis=1)
 
 
-def _tetrahedron_shape(points: Array, volume: Array, lengths: Array, /):
+def _tetrahedron_shape(points: Array, volume: Array, lengths: Array, /) -> Any:
     faces = np.asarray(reference_cell_topology("tetrahedron").entities[2])
     face_areas = 0.5 * jnp.linalg.norm(
         jnp.cross(
@@ -842,6 +846,7 @@ def evaluate_cell_quality(
         raise ValueError("Quality coordinates must preserve the mesh coordinate shape.")
     vertex_metric = _vertex_metric(mesh, metric)
     tables = (
+        # ty: ignore[invalid-argument-type]
         polyhedral_star_tables(mesh.connectivity)
         if any(block.cell_kind == "polyhedron" for block in mesh.blocks)
         else None
@@ -856,8 +861,10 @@ def evaluate_cell_quality(
             cell_metric = (
                 None
                 if vertex_metric is None
+                # ty: ignore[invalid-argument-type]
                 else _polyhedral_cell_metric(vertex_metric, tables, cells)
             )
+            # ty: ignore[invalid-argument-type]
             blocks.append(_polyhedral_quality(tables, cells, points, cell_metric))
         else:
             rows = np.asarray(block.vertices, dtype=np.int32)
@@ -1076,6 +1083,7 @@ def _block_centroids(kind: str, points: Array, /) -> tuple[Array, Array]:
         volumes.append(volume)
         moments.append(jnp.sum(volume[..., None] * centroid, axis=1))
     total = jnp.sum(jnp.concatenate(volumes, axis=1), axis=1)
+    # ty: ignore[invalid-return-type]
     return sum(moments), total
 
 
@@ -1190,7 +1198,10 @@ def evaluate_finite_volume_quality(mesh: CellMesh, /) -> FiniteVolumeQualityEval
     for block in mesh.blocks:
         if block.cell_kind == "polyhedron":
             moment, volume = _polyhedral_centroids(
-                tables, np.arange(cursor, cursor + block.cell_count), points
+                # ty: ignore[invalid-argument-type]
+                tables,
+                np.arange(cursor, cursor + block.cell_count),
+                points,
             )
         else:
             moment, volume = _block_centroids(

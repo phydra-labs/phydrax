@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _flow(count=6):
+def _flow(count: Any = 6) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(count, periodic=True) for _ in range(2)
@@ -30,7 +33,7 @@ def _flow(count=6):
     return finite_volume, operators, boundaries, dynamics, zero
 
 
-def test_free_rigid_projection_preserves_zero_coupled_state():
+def test_free_rigid_projection_preserves_zero_coupled_state() -> None:
     finite_volume, operators, _, dynamics, zero = _flow()
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0]), jnp.asarray([1.0]), ambient_dimension=2
@@ -75,7 +78,7 @@ def test_free_rigid_projection_preserves_zero_coupled_state():
         position_stabilization=0.0,
     ).prepare(bodies)
 
-    def separated_geometry(_kinematics):
+    def separated_geometry(_kinematics: Any) -> Any:
         normal = jnp.asarray([[0.0, 1.0]])
         zero_vector = jnp.zeros((1, 2))
         zero_scalar = jnp.zeros((1,))
@@ -128,7 +131,7 @@ def test_free_rigid_projection_preserves_zero_coupled_state():
     assert jnp.linalg.norm(midpoint.projection.marker_slip) < 1.0e-8
 
 
-def test_deformable_backward_euler_preserves_zero_state_and_energy():
+def test_deformable_backward_euler_preserves_zero_state_and_energy() -> None:
     finite_volume, operators, boundaries, dynamics, zero = _flow()
     marker_position = jnp.asarray([[0.35, 0.5], [0.65, 0.5]])
     markers = phx.discretization.LagrangianMarkerSetPlan(

@@ -10,7 +10,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ._semantics import (
@@ -40,7 +41,7 @@ class ExecutionPolicyEvaluationPlan(StrictModule):
     replay_tolerance: float = eqx.field(static=True)
     evaluation_id: str = eqx.field(static=True)
 
-    def __init__(self, *, replay_tolerance: float, evaluation_id: str):
+    def __init__(self, *, replay_tolerance: float, evaluation_id: str) -> None:
         tolerance = float(replay_tolerance)
         if not isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("replay_tolerance must be finite and nonnegative.")

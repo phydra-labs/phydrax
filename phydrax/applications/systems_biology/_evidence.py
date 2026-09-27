@@ -12,7 +12,7 @@ from typing import TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -59,7 +59,7 @@ class BiologicalReference(StrictModule, NonTrainableState):
     locator: str = eqx.field(static=True)
     reference_id: str = eqx.field(static=True)
 
-    def __init__(self, namespace: str, identifier: str, locator: str, /):
+    def __init__(self, namespace: str, identifier: str, locator: str, /) -> None:
         namespace_value = _key_segment(namespace, "Reference namespace")
         identifier_value = _key_segment(identifier, "Reference identifier")
         locator_value = _identifier(locator, "Reference locator")
@@ -88,7 +88,7 @@ class BiologicalCondition(StrictModule, NonTrainableState):
     value: BiologicalValue = eqx.field(static=True)
     condition_id: str = eqx.field(static=True)
 
-    def __init__(self, namespace: str, name: str, value: BiologicalValue, /):
+    def __init__(self, namespace: str, name: str, value: BiologicalValue, /) -> None:
         namespace_value = _key_segment(namespace, "Condition namespace")
         name_value = _key_segment(name, "Condition name")
         normalized = _value(value, "Condition value")
@@ -127,7 +127,7 @@ class BiologicalFact(StrictModule, NonTrainableState):
         unit: str,
         reference: BiologicalReference,
         /,
-    ):
+    ) -> None:
         if not isinstance(reference, BiologicalReference):
             raise TypeError("reference must be BiologicalReference.")
         namespace_value = _key_segment(namespace, "Fact namespace")
@@ -171,7 +171,7 @@ class PlanFieldAssertion(StrictModule, NonTrainableState):
         *,
         condition_key: str | None = None,
         absolute_tolerance: float = 0.0,
-    ):
+    ) -> None:
         fact_value = _identifier(fact_key, "Assertion fact key")
         field_value = _identifier(field_path, "Assertion field path")
         condition_value = (

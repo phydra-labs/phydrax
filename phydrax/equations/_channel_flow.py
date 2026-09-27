@@ -8,7 +8,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._geometry_precision import GeometryPrecisionPolicy
@@ -18,6 +19,7 @@ from ..discretization.spectral import (
     PreparedChannelStokesSolver,
     PreparedPseudospectralMethod,
     PseudospectralMethodPlan,
+    TensorSpectralDiscretization,
 )
 from ._incompressible import IncompressibleFlowProblem
 
@@ -49,7 +51,7 @@ class CompiledChannelFlowDynamics(StrictModule):
         stokes_plan: ChannelStokesPlan,
         spatial_method: PreparedPseudospectralMethod,
         /,
-    ):
+    ) -> None:
         if not isinstance(problem, IncompressibleFlowProblem):
             raise TypeError("problem must be an IncompressibleFlowProblem.")
         if problem.spatial_dimension != 3:
@@ -88,7 +90,7 @@ class CompiledChannelFlowDynamics(StrictModule):
         self.source_hash = problem.problem_id
 
     @property
-    def discretization(self):
+    def discretization(self) -> TensorSpectralDiscretization:
         return self.stokes_plan.discretization
 
     def validate_state(
@@ -178,6 +180,11 @@ class CompiledChannelFlowDynamics(StrictModule):
         value = self.admissible_modes(state)
         dealiasing = self.spatial_method.dealiasing
         evaluation = dealiasing.evaluation
+        # Dealiasing keeps the tensor family of the channel discretization.
+        if not (isinstance(evaluation, TensorSpectralDiscretization)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(evaluation, TensorSpectralDiscretization)."
+            )
         padded = dealiasing.embed(value)
         velocity = evaluation.reconstruct(padded)
         derivatives = tuple(

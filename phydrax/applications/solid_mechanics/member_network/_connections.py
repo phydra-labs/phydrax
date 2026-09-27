@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax._strict import StrictModule
 
@@ -14,7 +15,9 @@ from ._blocks import AbstractMemberBlock, MemberBlockEvaluation
 from ._reference import MemberKinematics, MemberNetworkDefinition
 
 
-def _empty_evaluation(energy: Array, valid: Array, dtype, dimension: int):
+def _empty_evaluation(
+    energy: Array, valid: Array, dtype: DTypeLike, dimension: int
+) -> MemberBlockEvaluation:
     empty = jnp.empty((0,), dtype=dtype)
     return MemberBlockEvaluation(
         energy,
@@ -49,7 +52,7 @@ class LinearConnectionSpringBlock(AbstractMemberBlock):
         rest_translation: ArrayLike | None = None,
         rest_rotation: ArrayLike | None = None,
         block_id: str | None = None,
-    ):
+    ) -> None:
         pairs = jnp.asarray(node_pairs, dtype=jnp.int32)
         translation = jnp.asarray(translation_stiffness)
         rotation = jnp.asarray(rotation_stiffness, dtype=translation.dtype)
@@ -143,7 +146,7 @@ class NonlinearMomentRotationBlock(AbstractMemberBlock):
         /,
         *,
         block_id: str | None = None,
-    ):
+    ) -> None:
         pairs = jnp.asarray(node_pairs, dtype=jnp.int32)
         axis_ = jnp.asarray(axis)
         stiffness = jnp.asarray(elastic_stiffness, dtype=axis_.dtype)
@@ -175,7 +178,9 @@ class NonlinearMomentRotationBlock(AbstractMemberBlock):
         self.member_indices = jnp.empty((0,), dtype=jnp.int32)
         self.block_id = str(block_id or "nonlinear-moment-rotation")
 
-    def evaluate(self, definition, kinematics, /):
+    def evaluate(
+        self, definition: MemberNetworkDefinition, kinematics: MemberKinematics, /
+    ) -> MemberBlockEvaluation:
         first, second = self.node_pairs[:, 0], self.node_pairs[:, 1]
         delta = kinematics.rotation_vectors[second] - kinematics.rotation_vectors[first]
         rotation = jnp.sum(delta * self.axis, axis=-1)

@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -8,19 +10,19 @@ import phydrax as phx
 
 def _runtime(
     *,
-    capillary=False,
-    surface_tension=0.0,
-    embedded=False,
-    embedded_field=None,
-    embedded_field_id=None,
-    contact_angle=np.pi / 2.0,
-    contact_tolerance=1.0e-8,
-    phase_change=False,
-    phase_change_law=None,
-    thermal_diffusion=False,
-    motion=None,
-    boundary_primitive=None,
-):
+    capillary: Any = False,
+    surface_tension: Any = 0.0,
+    embedded: Any = False,
+    embedded_field: Any = None,
+    embedded_field_id: Any = None,
+    contact_angle: Any = np.pi / 2.0,
+    contact_tolerance: Any = 1.0e-8,
+    phase_change: Any = False,
+    phase_change_law: Any = None,
+    thermal_diffusion: Any = False,
+    motion: Any = None,
+    boundary_primitive: Any = None,
+) -> Any:
     vertices = np.asarray(
         [(i / 4.0, j / 2.0) for j in range(3) for i in range(5)], dtype="float64"
     )
@@ -167,6 +169,7 @@ def _runtime(
         problem, discretization, method, coupling=coupling
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(
             fallback_flux=phx.discretization.RusanovFluxPlan()
@@ -175,7 +178,7 @@ def _runtime(
     return system, discretization, runtime
 
 
-def test_two_material_vof_runtime_reconstructs_each_stage_and_advances():
+def test_two_material_vof_runtime_reconstructs_each_stage_and_advances() -> None:
     system, discretization, runtime = _runtime()
     alpha = jnp.where(discretization.cell_centers[:, 0] < 0.5, 0.8, 0.2)
     primitive = jnp.stack(
@@ -202,7 +205,7 @@ def test_two_material_vof_runtime_reconstructs_each_stage_and_advances():
     np.testing.assert_allclose(jitted.runtime_state.cell_average(), average)
 
 
-def test_two_material_vof_runtime_couples_conservative_phase_transfer_and_heat():
+def test_two_material_vof_runtime_couples_conservative_phase_transfer_and_heat() -> None:
     system, discretization, runtime = _runtime(phase_change=True, thermal_diffusion=True)
     alpha = jnp.full((discretization.cell_count,), 0.6, dtype=jnp.float32)
     primitive = jnp.stack(
@@ -239,7 +242,7 @@ def test_two_material_vof_runtime_couples_conservative_phase_transfer_and_heat()
     )
 
 
-def test_two_material_vof_strang_source_step_is_transactional():
+def test_two_material_vof_strang_source_step_is_transactional() -> None:
     system, discretization, runtime = _runtime()
     vof = runtime.dynamics.coupling.vof
     assert vof is not None
@@ -283,8 +286,8 @@ def test_two_material_vof_strang_source_step_is_transactional():
     assert rejected.runtime_state.time == oversized.time
 
 
-def test_two_material_vof_runtime_reconstructs_plic_on_moved_stage_geometry():
-    def deform(time, vertices, args):
+def test_two_material_vof_runtime_reconstructs_plic_on_moved_stage_geometry() -> None:
+    def deform(time: Any, vertices: Any, args: Any) -> Any:
         del args
         interior = (
             (vertices[:, 0] > 0.0)
@@ -320,7 +323,7 @@ def test_two_material_vof_runtime_reconstructs_plic_on_moved_stage_geometry():
     assert jnp.all((average[:, system.alpha_index] <= 1.0))
 
 
-def test_stefan_heat_flux_uses_two_sided_stage_plic_reconstruction():
+def test_stefan_heat_flux_uses_two_sided_stage_plic_reconstruction() -> None:
     system, discretization, runtime = _runtime()
     vof = runtime.dynamics.coupling.vof
     assert vof is not None
@@ -399,7 +402,7 @@ def test_stefan_heat_flux_uses_two_sided_stage_plic_reconstruction():
     )
 
 
-def test_vof_stage_alpha_changes_stage_apertures():
+def test_vof_stage_alpha_changes_stage_apertures() -> None:
     system, discretization, runtime = _runtime()
     vof = runtime.dynamics.coupling.vof
     assert vof is not None
@@ -414,7 +417,7 @@ def test_vof_stage_alpha_changes_stage_apertures():
     assert jnp.all(second.interface_evidence)
 
 
-def test_zero_surface_tension_capillary_runtime_matches_vof_runtime():
+def test_zero_surface_tension_capillary_runtime_matches_vof_runtime() -> None:
     system, discretization, plain = _runtime(capillary=False)
     _, _, capillary = _runtime(capillary=True)
     alpha = jnp.where(discretization.cell_centers[:, 0] < 0.5, 0.8, 0.2)
@@ -441,7 +444,9 @@ def test_zero_surface_tension_capillary_runtime_matches_vof_runtime():
     )
 
 
-def test_positive_surface_tension_pure_phases_are_unchanged_eager_and_filter_jit():
+def test_positive_surface_tension_pure_phases_are_unchanged_eager_and_filter_jit() -> (
+    None
+):
     for pure_alpha in (0.0, 1.0):
         system, discretization, runtime = _runtime(
             capillary=True, surface_tension=1.0e8, embedded=True
@@ -491,7 +496,7 @@ def test_positive_surface_tension_pure_phases_are_unchanged_eager_and_filter_jit
         )
 
 
-def test_capillary_dominated_candidate_preserves_limit_and_hyperbolic_evidence():
+def test_capillary_dominated_candidate_preserves_limit_and_hyperbolic_evidence() -> None:
     system, discretization, runtime = _runtime(
         capillary=True, surface_tension=1.0e4, embedded=True
     )
@@ -555,7 +560,7 @@ def test_capillary_dominated_candidate_preserves_limit_and_hyperbolic_evidence()
     )
 
 
-def test_embedded_vof_contact_angle_stage_runtime_is_explicit_and_finite():
+def test_embedded_vof_contact_angle_stage_runtime_is_explicit_and_finite() -> None:
     system, discretization, _ = _runtime()
     gradient = phx.discretization.CellPolynomialReconstructionPlan(1).prepare(
         discretization
@@ -610,6 +615,7 @@ def test_embedded_vof_contact_angle_stage_runtime_is_explicit_and_finite():
         problem, discretization, method, coupling=coupling
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(
             fallback_flux=phx.discretization.RusanovFluxPlan()
@@ -639,7 +645,7 @@ def test_embedded_vof_contact_angle_stage_runtime_is_explicit_and_finite():
     )
 
 
-def test_boundary_inflow_uses_exterior_composition_and_outflow_uses_owner_plic():
+def test_boundary_inflow_uses_exterior_composition_and_outflow_uses_owner_plic() -> None:
     velocity = 0.2
     system, discretization, runtime = _runtime(
         boundary_primitive=(1.0, 1.0, velocity, 0.0, 2.5, 1.0)
@@ -745,8 +751,10 @@ def test_boundary_inflow_uses_exterior_composition_and_outflow_uses_owner_plic()
         )
 
 
-def test_active_rotated_contact_failure_rejects_eager_and_filter_jit_before_flux():
-    def rotated_wall(points, args):
+def test_active_rotated_contact_failure_rejects_eager_and_filter_jit_before_flux() -> (
+    None
+):
+    def rotated_wall(points: Any, args: Any) -> Any:
         del args
         return 0.3 * points[:, 0] + 0.7 * points[:, 1] - 0.35
 

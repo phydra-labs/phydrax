@@ -11,11 +11,14 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._precision import FDExecutionPrecisionPolicy
 
 
@@ -34,7 +37,7 @@ class FDAdjointIdentityReport(StrictModule, NonTrainableState):
         tolerance: float,
         subject_id: str,
         /,
-    ):
+    ) -> None:
         residual_ = float(residual)
         tolerance_ = float(tolerance)
         if not np.isfinite(residual_) or not np.isfinite(tolerance_) or tolerance_ <= 0.0:
@@ -66,7 +69,7 @@ class FDActionAdjointPlan(StrictModule):
         *,
         action_id: str | None = None,
         precision: FDExecutionPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not callable(action):
             raise TypeError("FD adjoint action must be callable.")
         precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
@@ -163,18 +166,11 @@ class CheckpointedFDAdjointPlan(StrictModule):
         *,
         checkpointing: FDCheckpointingMode = "recompute",
         precision: FDExecutionPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         count = int(steps)
-        if (
-            not callable(step)
-            or count <= 0
-            or checkpointing
-            not in (
-                "full",
-                "recompute",
-            )
-        ):
-            raise ValueError("FD adjoint step/count/checkpointing is invalid.")
+        if not callable(step) or count <= 0:
+            raise ValueError("FD adjoint step/count is invalid.")
+        checkpointing = parse(checkpointing, FDCheckpointingMode, "checkpointing")
         precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, FDExecutionPrecisionPolicy):
             raise TypeError("precision must be an FDExecutionPrecisionPolicy.")
@@ -205,7 +201,7 @@ class CheckpointedFDAdjointPlan(StrictModule):
         dt = jnp.asarray(step_size)
         indices = jnp.arange(self.steps)
 
-        def body(state: Array, index: Array):
+        def body(state: Array, index: Array) -> tuple[Array, None]:
             next_state = self.precision.field(
                 self.step(time_ + index * dt, state, dt, parameters)
             )
@@ -229,7 +225,7 @@ class CheckpointedFDAdjointPlan(StrictModule):
         if not callable(loss):
             raise TypeError("FD adjoint loss must be callable.")
 
-        def objective(initial, parameter_values):
+        def objective(initial: Array, parameter_values: PyTree) -> tuple[Array, Array]:
             final = self.evolve(
                 initial,
                 parameter_values,

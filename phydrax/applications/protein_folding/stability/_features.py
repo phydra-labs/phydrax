@@ -11,7 +11,9 @@ from collections.abc import Mapping, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -95,7 +97,7 @@ class AminoAcidScalarDefinition(StrictModule, NonTrainableState):
         *,
         source_manifests: Sequence[ReferenceArtifactManifest],
         requested_use: Mapping[str, bool],
-    ):
+    ) -> None:
         for values, name in (
             (volume, "volume"),
             (charge, "charge"),
@@ -178,7 +180,7 @@ class ProteinResidueEnvironment(StrictModule, NonTrainableState):
         residue_mapping_id: str,
         source_manifests: Sequence[ReferenceArtifactManifest],
         requested_use: Mapping[str, bool],
-    ):
+    ) -> None:
         if isinstance(residue_position, bool) or not isinstance(residue_position, int):
             raise TypeError("residue_position must be a one-based integer.")
         if residue_position < 1:
@@ -224,11 +226,13 @@ class ProteinResidueEnvironment(StrictModule, NonTrainableState):
                 "kind": "protein-residue-environment",
                 "position": residue_position,
                 "secondary_structure": secondary_structure,
-                "relative_solvent_exposure": exposure.hex(),
-                "neighborhood_density": density.hex(),
-                "contact_counts": [(name, value.hex()) for name, value in contacts],
-                "phi_radians": phi.hex(),
-                "psi_radians": psi.hex(),
+                "relative_solvent_exposure": float(exposure).hex(),
+                "neighborhood_density": float(density).hex(),
+                "contact_counts": [
+                    (name, float(value).hex()) for name, value in contacts
+                ],
+                "phi_radians": float(phi).hex(),
+                "psi_radians": float(psi).hex(),
                 "hypothesis_id": self.hypothesis_id,
                 "residue_mapping_id": self.residue_mapping_id,
                 "source_manifest_ids": list(self.source_manifest_ids),
@@ -262,7 +266,7 @@ class ProteinMutationFeatures(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        values: ArrayLike,
+        values: npt.ArrayLike,
         /,
         *,
         measurement_id: str,
@@ -284,7 +288,7 @@ class ProteinMutationFeatures(StrictModule, NonTrainableState):
         source_measurement_manifest_id: str,
         source_manifests: Sequence[ReferenceArtifactManifest],
         requested_use: Mapping[str, bool],
-    ):
+    ) -> None:
         array = np.asarray(values, dtype=np.float64)
         names = tuple(_identifier(value, "feature name") for value in feature_names)
         if array.ndim != 1 or array.shape != (len(names),) or not names:
@@ -399,7 +403,7 @@ class ProteinFeatureTransform(StrictModule, NonTrainableState):
         cohort_id: str,
         source_id: str,
         constant_feature_names: Sequence[str] = (),
-    ):
+    ) -> None:
         mean_array = np.asarray(mean, dtype=np.float64)
         scale_array = np.asarray(scale, dtype=np.float64)
         names = tuple(feature_names)
@@ -681,7 +685,7 @@ class DoubleMutationFeatures(StrictModule, NonTrainableState):
         pair_unit_id: str,
         pair_distance: float,
         pair_context_id: str,
-    ):
+    ) -> None:
         if not isinstance(first, ProteinMutationFeatures) or not isinstance(
             second, ProteinMutationFeatures
         ):

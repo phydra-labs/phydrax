@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from typing import Any, Literal, TypeAlias
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -14,10 +14,12 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
 import scipy.linalg as scipy_linalg
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import parse
 from .._materialization import MaterializationPolicy, materialize
 from .._operators import AbstractLinearOperator
 from .._policies import FailurePolicy
@@ -75,9 +77,8 @@ class SpectralSelection(StrictModule):
         boundary_tolerance: float = 1e-8,
         expected_dimension: int | None = None,
         selection_id: str | None = None,
-    ):
-        if kind not in ("real-below", "real-above", "disk", "exterior-disk"):
-            raise ValueError("Unknown spectral selection kind.")
+    ) -> None:
+        kind = parse(kind, SpectralSelectionKind, "kind")
         threshold_ = float(threshold)
         center_ = complex(center)
         radius_ = float(radius)
@@ -121,11 +122,11 @@ class SpectralSelection(StrictModule):
         self.selection_id = identifier
 
     @classmethod
-    def real_below(cls, threshold: float = 0.0, /, **kwargs) -> "SpectralSelection":
+    def real_below(cls, threshold: float = 0.0, /, **kwargs: Any) -> "SpectralSelection":
         return cls("real-below", threshold=threshold, **kwargs)
 
     @classmethod
-    def real_above(cls, threshold: float = 0.0, /, **kwargs) -> "SpectralSelection":
+    def real_above(cls, threshold: float = 0.0, /, **kwargs: Any) -> "SpectralSelection":
         return cls("real-above", threshold=threshold, **kwargs)
 
     @classmethod
@@ -134,7 +135,7 @@ class SpectralSelection(StrictModule):
         center: complex,
         radius: float,
         /,
-        **kwargs,
+        **kwargs: Any,
     ) -> "SpectralSelection":
         return cls("disk", center=center, radius=radius, **kwargs)
 
@@ -144,7 +145,7 @@ class SpectralSelection(StrictModule):
         center: complex,
         radius: float,
         /,
-        **kwargs,
+        **kwargs: Any,
     ) -> "SpectralSelection":
         return cls("exterior-disk", center=center, radius=radius, **kwargs)
 
@@ -157,24 +158,30 @@ class SpectralSelection(StrictModule):
         return jnp.abs(self._signed_distance(jnp.asarray(eigenvalues)))
 
     def _signed_distance(self, values: Array, /) -> Array:
-        if self.kind == "real-below":
-            return self.threshold - jnp.real(values)
-        if self.kind == "real-above":
-            return jnp.real(values) - self.threshold
-        radial = jnp.abs(values - self.center)
-        if self.kind == "disk":
-            return self.radius - radial
-        return radial - self.radius
+        match self.kind:
+            case "real-below":
+                return self.threshold - jnp.real(values)
+            case "real-above":
+                return jnp.real(values) - self.threshold
+            case "disk":
+                return self.radius - jnp.abs(values - self.center)
+            case "exterior-disk":
+                return jnp.abs(values - self.center) - self.radius
+            case _:
+                assert_never(self.kind)
 
     def _matches_scalar(self, value: complex, /) -> bool:
-        if self.kind == "real-below":
-            signed = self.threshold - value.real
-        elif self.kind == "real-above":
-            signed = value.real - self.threshold
-        elif self.kind == "disk":
-            signed = self.radius - abs(value - self.center)
-        else:
-            signed = abs(value - self.center) - self.radius
+        match self.kind:
+            case "real-below":
+                signed = self.threshold - value.real
+            case "real-above":
+                signed = value.real - self.threshold
+            case "disk":
+                signed = self.radius - abs(value - self.center)
+            case "exterior-disk":
+                signed = abs(value - self.center) - self.radius
+            case _:
+                assert_never(self.kind)
         return signed >= 0 if self.inclusive else signed > 0
 
 
@@ -193,7 +200,7 @@ class SpectralSubspaceResourcePolicy(StrictModule):
         max_retained_bytes: int = 512 * 1024 * 1024,
         max_workspace_bytes: int = 1024 * 1024 * 1024,
         max_separation_entries: int = 1_000_000,
-    ):
+    ) -> None:
         values = tuple(
             (
                 max_dimension,
@@ -237,7 +244,7 @@ class SpectralSubspacePolicy(StrictModule):
         minimum_eigenvalue_gap: float = 0.0,
         require_exact_separation: bool = False,
         failure: FailurePolicy | None = None,
-    ):
+    ) -> None:
         materialization_ = (
             MaterializationPolicy() if materialization is None else materialization
         )
@@ -649,7 +656,9 @@ def _prepare_numeric(
 ) -> PreparedSpectralSubspace:
     matrix = jnp.asarray(materialize(problem.operator, plan.policy.materialization))
     matrix_numpy = np.asarray(matrix)
-    schur_form_numpy, schur_vectors_numpy, selected_count = scipy_linalg.schur(
+    # scipy-stubs types `sort` as (real, imag) -> bool, but complex output calls it
+    # with one complex eigenvalue (documented SciPy behavior).
+    schur_form_numpy, schur_vectors_numpy, selected_count = scipy_linalg.schur(  # ty: ignore[no-matching-overload]
         matrix_numpy,
         output="complex",
         sort=plan.selection._matches_scalar,
@@ -677,7 +686,8 @@ def _prepare_numeric(
     selected_form_numpy = schur_form_numpy[:selected_count, :selected_count]
     complement_form_numpy = schur_form_numpy[selected_count:, selected_count:]
     coupling_numpy = schur_form_numpy[:selected_count, selected_count:]
-    coupling_solution_numpy = scipy_linalg.solve_sylvester(
+    # ty selects scipy-stubs' deprecated bool/float16 overload for complex input.
+    coupling_solution_numpy = scipy_linalg.solve_sylvester(  # ty: ignore[deprecated]
         selected_form_numpy,
         -complement_form_numpy,
         coupling_numpy,
@@ -875,7 +885,7 @@ def _solve_triangular_sylvester(
     identity = jnp.eye(left.shape[0], dtype=left.dtype)
     indices = jnp.arange(columns)
 
-    def body(index, solution):
+    def body(index: Array, solution: Array) -> Array:
         previous = jnp.where(indices < index, right[:, index], 0)
         right_hand_side = forcing[:, index] + solution @ previous
         column = jsp.linalg.solve_triangular(

@@ -5,13 +5,16 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Iterable
 from enum import StrEnum
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -19,6 +22,7 @@ from ... import linalg as la
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...discretization import PeriodicCell
 from .._sites import AtomisticSiteDomain
 from .._system import PreparedAtomisticSystem
 
@@ -43,7 +47,7 @@ class CollectiveVariableMetric(StrictModule, NonTrainableState):
     period: float | None = eqx.field(static=True)
     metric_id: str = eqx.field(static=True)
 
-    def __init__(self, /, *, period: float | None = None):
+    def __init__(self, /, *, period: float | None = None) -> None:
         period_ = None if period is None else float(period)
         if period_ is not None and (not np.isfinite(period_) or period_ <= 0.0):
             raise ValueError("CV period must be finite and positive.")
@@ -82,7 +86,14 @@ class AbstractCollectiveVariableProgram(StrictModule):
     program_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
-    def evaluate(self, positions: ArrayLike, /, **kwargs):
+    def evaluate(
+        self,
+        positions: ArrayLike,
+        /,
+        *,
+        cell: PeriodicCell | None = None,
+        cell_vectors: ArrayLike | None = None,
+    ) -> tuple[Array, Array]:
         raise NotImplementedError
 
 
@@ -98,14 +109,14 @@ class CollectiveVariablePlan(AbstractCollectiveVariablePlan):
     def __init__(
         self,
         kind: CollectiveVariableKind,
-        indices: ArrayLike,
+        indices: npt.ArrayLike,
         /,
         *,
-        parameters: ArrayLike = (),
-        reference: ArrayLike = (),
+        parameters: npt.ArrayLike = (),
+        reference: npt.ArrayLike = (),
         domain: AtomisticSiteDomain = AtomisticSiteDomain.DOF_ATOMS,
         metric: CollectiveVariableMetric | None = None,
-    ):
+    ) -> None:
         if not isinstance(kind, CollectiveVariableKind):
             raise TypeError("kind must be CollectiveVariableKind.")
         index = np.asarray(indices)
@@ -228,7 +239,9 @@ class PreparedCollectiveVariable(StrictModule, NonTrainableState):
     system: PreparedAtomisticSystem
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, system, /):
+    def __init__(
+        self, plan: CollectiveVariablePlan, system: PreparedAtomisticSystem, /
+    ) -> None:
         self.plan = plan
         self.system = system
         self.prepared_id = canonical_fingerprint(
@@ -236,14 +249,19 @@ class PreparedCollectiveVariable(StrictModule, NonTrainableState):
         )
 
     def evaluate(
-        self, positions: ArrayLike, /, *, cell=None, cell_vectors=None
+        self,
+        positions: ArrayLike,
+        /,
+        *,
+        cell: PeriodicCell | None = None,
+        cell_vectors: ArrayLike | None = None,
     ) -> CollectiveVariableEvaluation:
         dof = jnp.asarray(positions, dtype=self.system.plan.coordinate_dtype)
         site_state = None
         if self.plan.domain is AtomisticSiteDomain.INTERACTION_SITES:
             fractional = (
                 None
-                if cell_vectors is None
+                if cell is None or cell_vectors is None
                 else cell.fractional_with_vectors(dof, cell_vectors)
             )
             site_state = self.system.coordinate_map.realize(
@@ -256,7 +274,7 @@ class PreparedCollectiveVariable(StrictModule, NonTrainableState):
         else:
             coordinates = dof
 
-        def minimum_image(vector):
+        def minimum_image(vector: Array) -> Array:
             if cell is None:
                 return vector
             if cell_vectors is None:
@@ -370,23 +388,25 @@ class PreparedCollectiveVariable(StrictModule, NonTrainableState):
             margin = jnp.min(result.singular_values)
             success = result.successful
         elif kind is CollectiveVariableKind.CELL_VOLUME:
+            system_cell = self.system.cell
             vectors = (
-                None
-                if self.system.cell is None and cell_vectors is None
-                else self.system.cell.vectors
-                if cell_vectors is None
-                else jnp.asarray(cell_vectors)
+                jnp.asarray(cell_vectors)
+                if cell_vectors is not None
+                else None
+                if system_cell is None
+                else system_cell.vectors
             )
             if vectors is None:
                 raise ValueError("Cell-volume CV requires cell vectors.")
             value = jnp.abs(jnp.sum(vectors[0] * jnp.cross(vectors[1], vectors[2])))
         elif kind is CollectiveVariableKind.DENSITY:
+            system_cell = self.system.cell
             vectors = (
-                None
-                if self.system.cell is None and cell_vectors is None
-                else self.system.cell.vectors
-                if cell_vectors is None
-                else jnp.asarray(cell_vectors)
+                jnp.asarray(cell_vectors)
+                if cell_vectors is not None
+                else None
+                if system_cell is None
+                else system_cell.vectors
             )
             if vectors is None:
                 raise ValueError("Density CV requires cell vectors.")
@@ -435,7 +455,13 @@ class CollectiveVariableProgram(AbstractCollectiveVariableProgram, NonTrainableS
     metrics: tuple[CollectiveVariableMetric, ...]
     program_id: str = eqx.field(static=True)
 
-    def __init__(self, variables, /, *, names=None):
+    def __init__(
+        self,
+        variables: Iterable[PreparedCollectiveVariable],
+        /,
+        *,
+        names: Iterable[str] | None = None,
+    ) -> None:
         values = tuple(variables)
         if not values or any(
             not isinstance(value, PreparedCollectiveVariable) for value in values
@@ -464,9 +490,17 @@ class CollectiveVariableProgram(AbstractCollectiveVariableProgram, NonTrainableS
             }
         )
 
-    def evaluate(self, positions, /, **kwargs):
+    def evaluate(
+        self,
+        positions: ArrayLike,
+        /,
+        *,
+        cell: PeriodicCell | None = None,
+        cell_vectors: ArrayLike | None = None,
+    ) -> tuple[Array, Array]:
         evaluations = tuple(
-            value.evaluate(positions, **kwargs) for value in self.variables
+            value.evaluate(positions, cell=cell, cell_vectors=cell_vectors)
+            for value in self.variables
         )
         return jnp.stack(tuple(value.value for value in evaluations)), jnp.all(
             jnp.stack(tuple(value.successful for value in evaluations))

@@ -9,7 +9,8 @@ from collections.abc import Callable
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -40,7 +41,7 @@ class CallableBornOppenheimerProvider(AbstractExternalAtomisticProvider):
         *,
         conservative: bool = True,
         differentiable: bool = False,
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         identifier = str(provider_id).strip()
@@ -105,7 +106,7 @@ class BornOppenheimerVelocityVerletPlan(StrictModule, NonTrainableState):
         provider: AbstractExternalAtomisticProvider,
         step_size: float,
         /,
-    ):
+    ) -> None:
         if not isinstance(system, PreparedAtomisticSystem):
             raise TypeError("system must be PreparedAtomisticSystem.")
         if not isinstance(provider, AbstractExternalAtomisticProvider):

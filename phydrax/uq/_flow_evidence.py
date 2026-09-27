@@ -11,8 +11,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
@@ -41,19 +43,19 @@ class FlowNUTSEvidenceResult(StrictModule):
     def __init__(
         self,
         *,
-        log_evidence: Array,
-        bridge_residual: Array,
-        posterior_overlap_ess: Array,
-        proposal_overlap_ess: Array,
-        jackknife_standard_error: Array,
-        nonfinite_count: Array,
-        iterations: int,
-        valid: Array,
+        log_evidence: ArrayLike,
+        bridge_residual: ArrayLike,
+        posterior_overlap_ess: ArrayLike,
+        proposal_overlap_ess: ArrayLike,
+        jackknife_standard_error: ArrayLike,
+        nonfinite_count: ArrayLike,
+        iterations: ArrayLike,
+        valid: ArrayLike,
         status: str,
         block_length: int,
         num_posterior_samples: int,
         num_proposal_samples: int,
-    ):
+    ) -> None:
         self.log_evidence = jnp.asarray(log_evidence).reshape(())
         self.bridge_residual = jnp.asarray(bridge_residual).reshape(())
         self.posterior_overlap_ess = jnp.asarray(posterior_overlap_ess).reshape(())
@@ -89,7 +91,7 @@ class FlowNUTSModeInitialization(StrictModule):
         selected_indices: Array,
         selected_weights: Array,
         nearest_selected_distances: Array,
-    ):
+    ) -> None:
         indices = jnp.asarray(selected_indices, dtype=jnp.int32)
         self.initial_positions = initial_positions
         self.selected_indices = indices

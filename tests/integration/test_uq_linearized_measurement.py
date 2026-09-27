@@ -10,7 +10,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_linearized_eiv_posterior_matches_explicit_latent_input_nuts_reference():
+def test_linearized_eiv_posterior_matches_explicit_latent_input_nuts_reference() -> None:
     true_slope = 2.0
     input_scale = 0.5
     observation_scale = 0.12

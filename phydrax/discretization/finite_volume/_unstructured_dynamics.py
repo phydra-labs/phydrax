@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 import phydrax.linalg as la
@@ -86,7 +87,7 @@ class UnstructuredFiniteVolumeBoundarySet(StrictModule, NonTrainableState):
         patch_names: tuple[str, ...],
         boundaries: Mapping[str, AbstractConservationBoundary],
         /,
-    ):
+    ) -> None:
         names = tuple(patch_names)
         if set(boundaries) != set(names):
             raise ValueError(
@@ -135,7 +136,7 @@ class UnstructuredFiniteVolumeMethodPlan(StrictModule):
         /,
         *,
         closure: AbstractFaceClosurePlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(
             reconstruction,
             (
@@ -231,7 +232,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         source_id: str | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
         coupling: PreparedUnstructuredFiniteVolumeCoupling | None = None,
-    ):
+    ) -> None:
         if not isinstance(
             discretization,
             (UnstructuredFiniteVolumeDiscretization, DyadicFiniteVolumeDiscretization),
@@ -598,6 +599,10 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
     def make_fallback_dynamics(
         self, fallback_flux: AbstractNumericalFluxPlan, /
     ) -> "PreparedUnstructuredFiniteVolumeDynamics":
+        if not isinstance(fallback_flux, AbstractArbitraryNormalNumericalFluxPlan):
+            raise TypeError(
+                "Unstructured FV requires an arbitrary-normal numerical flux."
+            )
         return PreparedUnstructuredFiniteVolumeDynamics(
             self.system,
             self.discretization,
@@ -2060,7 +2065,13 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             jnp.where(maximum > 0.0, float(cfl) / maximum, jnp.inf)
         )
 
-    def linearize(self, time: Array, state: Array, args: Any = None, /):
+    def linearize(
+        self, time: Array, state: Array, args: Any = None, /
+    ) -> tuple[
+        PyTree[Array],
+        Callable[[PyTree[Any]], PyTree[Array]],
+        Callable[[PyTree[Any]], tuple[PyTree[Array]]],
+    ]:
         linearization = la.prepare_linearization(
             lambda value: self(time, value, args), state
         )

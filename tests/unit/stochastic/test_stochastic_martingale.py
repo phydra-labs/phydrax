@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -5,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _deterministic_trajectory():
+def _deterministic_trajectory() -> Any:
     times = jnp.linspace(0.0, 1.0, 5)
     states = jnp.broadcast_to(times[None, :, None], (3, 5, 1))
     realization = phx.stochastic.WienerRealization(
@@ -21,7 +23,7 @@ def _deterministic_trajectory():
     )
 
 
-def test_martingale_increments_match_exact_compensator_and_stop():
+def test_martingale_increments_match_exact_compensator_and_stop() -> None:
     trajectory = _deterministic_trajectory()
     problem = phx.stochastic.MartingaleProblem(
         lambda state: state,
@@ -44,7 +46,7 @@ def test_martingale_increments_match_exact_compensator_and_stop():
     assert jnp.allclose(phx.stochastic.predictable_bracket_increments(residuals), 0.0)
 
 
-def test_quadratic_covariation_and_moment_loss_preserve_event_shape():
+def test_quadratic_covariation_and_moment_loss_preserve_event_shape() -> None:
     trajectory = _deterministic_trajectory()
     problem = phx.stochastic.MartingaleProblem(
         lambda state: jnp.concatenate((state, state**2)),
@@ -65,7 +67,7 @@ def test_quadratic_covariation_and_moment_loss_preserve_event_shape():
     assert jnp.allclose(loss, 0.0, atol=1e-12)
 
 
-def test_combined_generator_and_carre_du_champ():
+def test_combined_generator_and_carre_du_champ() -> None:
     generator = phx.stochastic.combined_generator_observable(
         lambda state, time: state,
         lambda state, time: 2.0 * state,
@@ -74,7 +76,7 @@ def test_combined_generator_and_carre_du_champ():
         generator(jnp.asarray([2.0]), jnp.asarray(0.0)), jnp.asarray([6.0])
     )
 
-    def brownian_generator(observable, state, time):
+    def brownian_generator(observable: Any, state: Any, time: Any) -> Any:
         return 0.5 * jax_hessian_scalar(observable, state)
 
     gamma = phx.stochastic.carre_du_champ(
@@ -83,13 +85,13 @@ def test_combined_generator_and_carre_du_champ():
     assert jnp.allclose(gamma, 1.0)
 
 
-def jax_hessian_scalar(function, state):
+def jax_hessian_scalar(function: Any, state: Any) -> Any:
     import jax
 
     return jax.hessian(lambda value: function(value))(state)[0, 0]
 
 
-def test_martingale_formulation_checks_spde_solution_concept():
+def test_martingale_formulation_checks_spde_solution_concept() -> None:
     trajectory = _deterministic_trajectory()
     trajectory = phx.stochastic.StochasticTrajectory(
         trajectory.times,

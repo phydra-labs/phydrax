@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -58,7 +59,7 @@ class SchwingerChainModel(StrictModule, NonTrainableState):
         gauge_coupling: float,
         left_boundary_flux: float = 0.0,
         external_flux: ArrayLike | None = None,
-    ):
+    ) -> None:
         sites = int(site_count)
         spacing = float(lattice_spacing)
         mass_ = float(mass)
@@ -218,7 +219,7 @@ def schwinger_observables(
     )
 
 
-def _electric_coefficients(model: SchwingerChainModel, /):
+def _electric_coefficients(model: SchwingerChainModel, /) -> tuple[Array, Array, Array]:
     links = model.site_count - 1
     offsets = model.left_boundary_flux + model.external_flux
     suffix_count = jnp.arange(links, 0, -1, dtype=offsets.dtype)

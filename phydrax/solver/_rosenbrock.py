@@ -5,13 +5,12 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax import lax
-from jaxtyping import Array
+from jax import Array, lax
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -39,6 +38,7 @@ from ._temporal_precision import TemporalPrecisionPolicy
 
 
 _DEFAULT_ARGS = object()
+_RosenbrockStepOutputs: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class RosenbrockWMethod(StrictModule, NonTrainableState):
@@ -51,7 +51,7 @@ class RosenbrockWMethod(StrictModule, NonTrainableState):
     embedded_weights: tuple[float, ...] = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.propagation = (
             (0.0, 0.0, 0.0, 0.0),
             (8.7173304301691801e-01, 0.0, 0.0, 0.0),
@@ -133,7 +133,7 @@ class RosenbrockAdaptivePolicy(StrictModule, NonTrainableState):
         maximum_factor: float = 5.0,
         maximum_accepted_steps: int = 4096,
         maximum_attempts: int = 8192,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -214,7 +214,9 @@ class _ShiftedJacobianAction(StrictModule):
         return direction - self.scale * self.jacobian(direction)
 
 
-def _time_derivative(problem: DifferentialProblem, time: Array, state: Array, args: Any):
+def _time_derivative(
+    problem: DifferentialProblem, time: Array, state: Array, args: Any
+) -> Array:
     return jax.jvp(
         lambda value: jnp.asarray(problem.drift(value, state, args)),
         (time,),
@@ -411,11 +413,13 @@ def _solve_rosenbrock_fixed(
     runtime_args = problem.args if args is _DEFAULT_ARGS else args
     space = ArraySpace(problem.initial_state.shape, dtype=problem.initial_state.dtype)
 
-    def advance(carry, values):
+    def advance(
+        carry: tuple[Array, Array], values: tuple[Array, Array]
+    ) -> tuple[tuple[Array, Array], _RosenbrockStepOutputs]:
         state, prior_valid = carry
         time, step_size = values
 
-        def solve_step(_):
+        def solve_step(_: None) -> _RosenbrockStepOutputs:
             result = _rosenbrock_step(
                 problem,
                 selected,
@@ -434,7 +438,7 @@ def _solve_rosenbrock_fixed(
                 jnp.sum(result.iterations, dtype=jnp.int32),
             )
 
-        def skip_step(_):
+        def skip_step(_: None) -> _RosenbrockStepOutputs:
             return (
                 jnp.full_like(state, jnp.nan),
                 jnp.asarray(False),

@@ -10,7 +10,9 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._probability import AbstractProbabilityLaw
@@ -121,7 +123,12 @@ def default_extrinsic_parameters(
     required = ("right_ascension", "declination", "polarization", "geocent_time")
     if any(name not in parameters for name in required):
         raise KeyError(f"Extrinsic parameters require {required}.")
-    return tuple(jnp.asarray(parameters[name]).reshape(()) for name in required)  # type: ignore[return-value]
+    return (
+        jnp.asarray(parameters["right_ascension"]).reshape(()),
+        jnp.asarray(parameters["declination"]).reshape(()),
+        jnp.asarray(parameters["polarization"]).reshape(()),
+        jnp.asarray(parameters["geocent_time"]).reshape(()),
+    )
 
 
 class GravitationalWaveParameterPlan(StrictModule):
@@ -156,7 +163,7 @@ class GravitationalWaveParameterPlan(StrictModule):
         ] = default_extrinsic_parameters,
         derived_parameters: Callable[[PyTree[Any]], Mapping[str, ArrayLike]]
         | None = None,
-    ):
+    ) -> None:
         if not callable(waveform_parameters) or not callable(extrinsic_parameters):
             raise TypeError("Parameter extraction functions must be callable.")
         identity = str(parameterization_id).strip()

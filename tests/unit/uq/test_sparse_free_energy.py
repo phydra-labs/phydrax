@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -5,7 +7,9 @@ import pytest
 import phydrax as phx
 
 
-def _sparse_dataset(state_count, edge_specs, *, omit_reverse_cross=False):
+def _sparse_dataset(
+    state_count: Any, edge_specs: Any, *, omit_reverse_cross: Any = False
+) -> Any:
     per_direction = 8
     sample_count = 2 * per_direction * len(edge_specs)
     values = np.zeros((state_count, sample_count), dtype="float64")
@@ -59,7 +63,7 @@ def _sparse_dataset(state_count, edge_specs, *, omit_reverse_cross=False):
     )
 
 
-def test_sparse_pairwise_bar_builds_connected_network_from_disjoint_groups():
+def test_sparse_pairwise_bar_builds_connected_network_from_disjoint_groups() -> None:
     dataset = _sparse_dataset(3, ((0, 1, 1.0, 0), (1, 2, 2.0, 1)))
     result = phx.uq.sparse_pairwise_free_energy_network(
         dataset,
@@ -71,7 +75,7 @@ def test_sparse_pairwise_bar_builds_connected_network_from_disjoint_groups():
     assert bool(result.successful)
 
 
-def test_sparse_pairwise_network_reports_disconnected_explicit_graph():
+def test_sparse_pairwise_network_reports_disconnected_explicit_graph() -> None:
     dataset = _sparse_dataset(4, ((0, 1, 1.0, 0), (2, 3, 1.5, 1)))
     result = phx.uq.sparse_pairwise_free_energy_network(
         dataset,
@@ -84,7 +88,7 @@ def test_sparse_pairwise_network_reports_disconnected_explicit_graph():
     assert not bool(result.successful)
 
 
-def test_sparse_pairwise_bar_rejects_missing_reverse_cross_coverage():
+def test_sparse_pairwise_bar_rejects_missing_reverse_cross_coverage() -> None:
     dataset = _sparse_dataset(
         2,
         ((0, 1, 1.0, 0),),
@@ -98,7 +102,7 @@ def test_sparse_pairwise_bar_rejects_missing_reverse_cross_coverage():
         )
 
 
-def test_sparse_pairwise_network_rejects_shared_dependence_groups():
+def test_sparse_pairwise_network_rejects_shared_dependence_groups() -> None:
     dataset = _sparse_dataset(3, ((0, 1, 1.0, 0), (1, 2, 2.0, 0)))
     with pytest.raises(ValueError, match="share dependence groups"):
         phx.uq.sparse_pairwise_free_energy_network(

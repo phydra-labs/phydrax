@@ -2,18 +2,21 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _rotation_map(angle):
+def _rotation_map(angle: Any) -> Any:
     cosine = jnp.cos(angle)
     sine = jnp.sin(angle)
     return jnp.asarray([[cosine, sine], [-sine, cosine]])
 
 
-def test_ring_map_optics_tracking_and_wake_are_bounded():
+def test_ring_map_optics_tracking_and_wake_are_bounded() -> None:
     accelerator = phx.applications.accelerator
     convention = accelerator.AcceleratorConvention()
     matrix = jnp.zeros((6, 6))
@@ -66,7 +69,7 @@ def test_ring_map_optics_tracking_and_wake_are_bounded():
     assert jnp.any(wake.kicks != 0.0)
 
 
-def test_qcd_transport_and_flow_observables_preserve_physics_contracts():
+def test_qcd_transport_and_flow_observables_preserve_physics_contracts() -> None:
     qcd = phx.applications.lattice_field
     table = qcd.QCDTransportTable(
         jnp.asarray([0.15, 0.25]),

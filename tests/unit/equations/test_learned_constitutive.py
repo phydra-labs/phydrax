@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -19,7 +21,7 @@ _DIMENSIONLESS = phx.units.parse_unit("1").dimension
 _PASCAL = phx.units.parse_unit("Pa").dimension
 
 
-def _port(name, size, dimension):
+def _port(name: Any, size: Any, dimension: Any) -> Any:
     return phx.ValuePort(
         f"test.{name}",
         event_shape=(size,),
@@ -38,7 +40,7 @@ class _Cubic(phx.AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, modulus, stiffening, *, precision=None):
+    def __init__(self, modulus: Any, stiffening: Any, *, precision: Any = None) -> None:
         self.modulus = jnp.asarray(modulus)
         self.stiffening = jnp.asarray(stiffening)
         self.precision = (
@@ -49,10 +51,10 @@ class _Cubic(phx.AbstractArrayModel):
         self.in_size = 1
         self.out_size = 1
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         return self.modulus * x + self.stiffening * x**3
 
-    def model_execution_contract(self):
+    def model_execution_contract(self) -> Any:
         return phx.ModelExecutionContract(
             derivative=phx.DerivativeContract.smooth(
                 (phx.DerivativeSurface.INPUT, phx.DerivativeSurface.MODEL_PARAMETER)
@@ -63,7 +65,7 @@ class _Cubic(phx.AbstractArrayModel):
         )
 
 
-def _mlp(activation, in_size, out_size):
+def _mlp(activation: Any, in_size: Any, out_size: Any) -> Any:
     return phx.nn.models.MLP(
         in_size=in_size,
         out_size=out_size,
@@ -74,35 +76,39 @@ def _mlp(activation, in_size, out_size):
     )
 
 
-def _stateful_law(model):
+def _stateful_law(model: Any) -> Any:
     return phx.equations.LearnedConstitutiveModel(
         model,
         _port("strain", 2, _DIMENSIONLESS),
         _port("stress", 2, _PASCAL),
+        # ty: ignore[invalid-argument-type]
         lower=[-1.0, -1.0, -1.0],
+        # ty: ignore[invalid-argument-type]
         upper=[1.0, 1.0, 1.0],
         state_port=_port("history", 1, _DIMENSIONLESS),
         model_id="learned-history-law",
     )
 
 
-def _uniaxial_law(model):
+def _uniaxial_law(model: Any) -> Any:
     return phx.equations.LearnedConstitutiveModel(
         model,
         _port("strain", 1, _DIMENSIONLESS),
         _port("stress", 1, _PASCAL),
+        # ty: ignore[invalid-argument-type]
         lower=[-0.2],
+        # ty: ignore[invalid-argument-type]
         upper=[0.2],
         model_id="learned-uniaxial-law",
     )
 
 
-def _parameter_leaves(tree):
+def _parameter_leaves(tree: Any) -> Any:
     parameters, _, _ = phx.partition_parameters(tree)
     return jax.tree_util.tree_leaves(parameters)
 
 
-def test_integration_plan_trains_only_the_learned_law():
+def test_integration_plan_trains_only_the_learned_law() -> None:
     fixed = phx.equations.ConstitutiveModel(
         lambda strain, state, parameters, time, dt: phx.equations.ConstitutiveResponse(
             parameters * strain, state
@@ -127,16 +133,17 @@ def test_integration_plan_trains_only_the_learned_law():
     )
     with pytest.raises(TypeError, match="AbstractConstitutiveModel"):
         phx.equations.MaterialIntegrationPlan(
+            # ty: ignore[invalid-argument-type]
             ((phx.equations.MaterialSiteId("raw"), _Cubic(1.0, 0.0)),)
         )
 
 
-def test_learned_law_tangent_agrees_with_jvp_and_vjp():
+def test_learned_law_tangent_agrees_with_jvp_and_vjp() -> None:
     law = _stateful_law(_mlp(jnp.tanh, 3, 3))
     strain = jnp.asarray([[0.1, -0.2], [0.3, 0.05]])
     history = jnp.asarray([[0.2], [-0.1]])
 
-    def stress(value):
+    def stress(value: Any) -> Any:
         return law.evaluate(value, history, None, 0.0, 1.0).response
 
     response = law.evaluate(strain, history, None, 0.0, 1.0)
@@ -163,7 +170,7 @@ def test_learned_law_tangent_agrees_with_jvp_and_vjp():
     )
 
 
-def test_out_of_support_site_keeps_primal_but_poisons_its_derivatives():
+def test_out_of_support_site_keeps_primal_but_poisons_its_derivatives() -> None:
     law = _uniaxial_law(_Cubic(2.0, 0.5))
     strain = jnp.asarray([[0.1], [0.5]])
     state = jnp.zeros((2, 0))
@@ -185,7 +192,7 @@ def test_out_of_support_site_keeps_primal_but_poisons_its_derivatives():
     assert bool(jnp.isfinite(jacobian[0]).all())
     assert bool(jnp.isnan(jacobian[1]).all())
 
-    def site_stress(model, site):
+    def site_stress(model: Any, site: Any) -> Any:
         law = _uniaxial_law(model)
         return law.evaluate(strain[site : site + 1], state[:1], None, 0.0, 1.0).response[
             0, 0
@@ -197,7 +204,7 @@ def test_out_of_support_site_keeps_primal_but_poisons_its_derivatives():
     assert bool(jnp.isnan(invalid_gradient.modulus))
 
 
-def test_learned_law_admission_requires_c1_regularity_and_declared_units():
+def test_learned_law_admission_requires_c1_regularity_and_declared_units() -> None:
     with pytest.raises(ValueError, match="implicit-requires-c1"):
         _uniaxial_law(_mlp(jax.nn.relu, 1, 1))
     with pytest.raises(ValueError, match="regularity-undeclared"):
@@ -213,22 +220,24 @@ def test_learned_law_admission_requires_c1_regularity_and_declared_units():
             _Cubic(1.0, 0.0),
             _port("strain", 1, _DIMENSIONLESS),
             unitless,
+            # ty: ignore[invalid-argument-type]
             lower=[-1.0],
+            # ty: ignore[invalid-argument-type]
             upper=[1.0],
             model_id="unitless",
         )
 
 
-def _inverse_residual(model, state, target):
+def _inverse_residual(model: Any, state: Any, target: Any) -> Any:
     return model(state) - target
 
 
-def _identity_response(model, state, target):
+def _identity_response(model: Any, state: Any, target: Any) -> Any:
     del model, target
     return phx.equations.ConstitutiveResponse(state, state)
 
 
-def _root_material(model, **options):
+def _root_material(model: Any, **options: Any) -> Any:
     return phx.equations.fem.LearnedLocalImplicitMaterial(
         model,
         _inverse_residual,
@@ -239,7 +248,7 @@ def _root_material(model, **options):
     )
 
 
-def test_learned_local_root_converges_with_finite_difference_parameter_gradient():
+def test_learned_local_root_converges_with_finite_difference_parameter_gradient() -> None:
     target = jnp.asarray([0.5])
     material = _root_material(_Cubic(1.0, 2.0))
     result = material.evaluate(jnp.zeros(1), target)
@@ -248,7 +257,7 @@ def test_learned_local_root_converges_with_finite_difference_parameter_gradient(
     root = result.response[0]
     assert abs(float(root + 2.0 * root**3 - 0.5)) <= 1e-10
 
-    def root_of(parameters):
+    def root_of(parameters: Any) -> Any:
         model = _Cubic(parameters[0], parameters[1])
         return _root_material(model).evaluate(jnp.zeros(1), target).response[0]
 
@@ -266,8 +275,8 @@ def test_learned_local_root_converges_with_finite_difference_parameter_gradient(
     assert len(_parameter_leaves(material)) == 2
 
 
-def test_unresolved_learned_local_root_is_invalid_and_poisons_its_derivative():
-    def root_of(parameters):
+def test_unresolved_learned_local_root_is_invalid_and_poisons_its_derivative() -> None:
+    def root_of(parameters: Any) -> Any:
         model = _Cubic(parameters[0], parameters[1])
         material = _root_material(model, max_steps=1)
         return material.evaluate(jnp.zeros(1), jnp.asarray([0.5]))
@@ -282,7 +291,7 @@ def test_unresolved_learned_local_root_is_invalid_and_poisons_its_derivative():
     assert bool(jnp.isnan(gradient).all())
 
 
-def test_learned_local_root_tolerance_respects_the_declared_error_floor():
+def test_learned_local_root_tolerance_respects_the_declared_error_floor() -> None:
     coarse = phx.ComponentPrecisionContract(
         input_dtype="float64",
         parameter_dtype="float64",
@@ -297,7 +306,7 @@ def test_learned_local_root_tolerance_respects_the_declared_error_floor():
     assert bool(material.evaluate(jnp.zeros(1), jnp.asarray([0.5])).valid)
 
 
-def test_learned_local_root_relative_floor_requires_a_declared_residual_scale():
+def test_learned_local_root_relative_floor_requires_a_declared_residual_scale() -> None:
     relative = phx.ComponentPrecisionContract(
         input_dtype="float64",
         parameter_dtype="float64",
@@ -325,16 +334,16 @@ class _PortedCubic(phx.AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, cubic, ports):
+    def __init__(self, cubic: Any, ports: Any) -> None:
         self.cubic = cubic
         self.ports = ports
         self.in_size = cubic.in_size
         self.out_size = cubic.out_size
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         return self.cubic(x, key=key)
 
-    def model_execution_contract(self):
+    def model_execution_contract(self) -> Any:
         contract = self.cubic.model_execution_contract()
         return phx.ModelExecutionContract(
             derivative=contract.derivative,
@@ -344,11 +353,11 @@ class _PortedCubic(phx.AbstractArrayModel):
             ports=self.ports,
         )
 
-    def model_ports(self):
+    def model_ports(self) -> Any:
         return self.ports
 
 
-def test_learned_local_root_binds_port_declaring_models_only_through_ports():
+def test_learned_local_root_binds_port_declaring_models_only_through_ports() -> None:
     ports = phx.ModelPorts(
         inputs=(_port("state", 1, _DIMENSIONLESS),),
         outputs=(_port("response", 1, _PASCAL),),
@@ -358,7 +367,9 @@ def test_learned_local_root_binds_port_declaring_models_only_through_ports():
         _root_material(model)
 
     mapping = phx.PortMapping(
+        # ty: ignore[invalid-argument-type]
         inputs=[(ports.inputs[0].port_id,) * 2],
+        # ty: ignore[invalid-argument-type]
         outputs=[(ports.outputs[0].port_id,) * 2],
     )
     material = _root_material(model, ports=ports, port_mapping=mapping)

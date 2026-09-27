@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -129,7 +130,7 @@ class _ReducedArticulationStateGeometry(AbstractStateGeometry):
         hinge_dof_indices: tuple[int, ...],
         geometry_id: str,
         /,
-    ):
+    ) -> None:
         state_size_ = int(state_size)
         nq_ = int(nq)
         hinge_indices = tuple(hinge_dof_indices)
@@ -292,7 +293,7 @@ class ReducedArticulationPlan(StrictModule, NonTrainableState):
         /,
         *,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if isinstance(root_body_id, bool) or not isinstance(root_body_id, Integral):
             raise TypeError("root_body_id must be an integer body ID.")
         joints = _integer_vector(joint_ids, "joint_ids")
@@ -388,7 +389,7 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
         graph: PreparedRigidJointGraph,
         reference: RigidBodyKinematics,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, ReducedArticulationPlan):
             raise TypeError("plan must be a ReducedArticulationPlan.")
         if not isinstance(graph, PreparedRigidJointGraph):
@@ -1047,7 +1048,7 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
             (self.graph.bodies.capacity, 6), dtype=configuration_array.dtype
         )
 
-        def action(generalized_velocity):
+        def action(generalized_velocity: Array) -> Array:
             return self._body_velocity_from_poses(
                 generalized_velocity, position, orientation
             )
@@ -1082,7 +1083,7 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
         source = ArraySpace((self.nv,), dtype=configuration_array.dtype)
         target = ArraySpace((6,), dtype=configuration_array.dtype)
 
-        def action(generalized_velocity):
+        def action(generalized_velocity: Array) -> Array:
             body_velocity = self._body_velocity_from_poses(
                 generalized_velocity, position, orientation
             )[index]
@@ -1117,7 +1118,7 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
         wrench = jnp.concatenate((force, torque), axis=-1)
         position, orientation = self._poses(configuration_array)
 
-        def velocity_action(value):
+        def velocity_action(value: Array) -> Array:
             return self._body_velocity_from_poses(value, position, orientation)
 
         body_velocity = velocity_action(velocity_array)

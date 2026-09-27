@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_thermal_potential_and_trapped_particle_reflection():
+def test_thermal_potential_and_trapped_particle_reflection() -> None:
     phase = phx.applications.cosmology.phase_transitions
     potential = phase.ThermalQuarticPotential(
         quadratic_coefficient=1.0,
@@ -44,7 +44,7 @@ def test_thermal_potential_and_trapped_particle_reflection():
     assert not bool(stepped.derivative_valid[0])
 
 
-def test_fixed_target_decay_volume_acceptance_is_physical():
+def test_fixed_target_decay_volume_acceptance_is_physical() -> None:
     fixed_target = phx.applications.fixed_target
     plan = fixed_target.DecayVolumePlan(10.0, 20.0, 2.0, length_unit_id="m")
     accepted = fixed_target.long_lived_particle_acceptance(

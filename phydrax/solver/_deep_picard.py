@@ -13,7 +13,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.domain import DomainFunction
 
@@ -34,6 +35,7 @@ from ..stochastic._feynman_kac import (
     trajectory_node_feynman_kac_labels,
 )
 from ..terms._feynman_kac import FeynmanKacRegressionTerm
+from ..typing import parse, PRNGKey
 from ._functional_solver import FunctionalSolver
 
 
@@ -130,7 +132,7 @@ class StructuredPicardSource(StrictModule):
         /,
         *,
         source_id: str,
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         if not isinstance(source_id, str) or not source_id:
@@ -193,14 +195,16 @@ def _source_problem(
     source_builder: StructuredSourceBuilder,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> BSDEProblem:
     context = PicardSourceContext(predictor, problem, key)
     source = source_builder(context)
     if not isinstance(source, StructuredPicardSource):
         raise TypeError("source_builder must return StructuredPicardSource.")
 
-    def generator(time, state, value, control, args):
+    def generator(
+        time: Array, state: Array, value: Array, control: Array, args: Any
+    ) -> Array:
         del value, control
         output = source(time, state, context, args)
         if output.shape != problem.output_shape:
@@ -235,9 +239,9 @@ def _iteration_labels(
     query_times: ArrayLike | None,
     query_states: ArrayLike | None,
     query_weights: ArrayLike | None,
-    query_sampler: Callable[[Key[Array, ""]], Any] | None,
+    query_sampler: Callable[[PRNGKey], Any] | None,
     paths: BSDEPathBatch | None,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> FeynmanKacLabelBatch:
     label_problem = problem
     label_value = source_value
@@ -286,7 +290,7 @@ def _model_predictions(
     *,
     value_name: str,
     control_name: str | None,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> tuple[Array, Array | None]:
     functions = solver.ansatz_functions()
     if value_name not in functions:
@@ -333,7 +337,7 @@ def _damped_labels(
     value_name: str,
     control_name: str | None,
     damping: float,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> FeynmanKacLabelBatch:
     if damping == 1.0:
         return labels
@@ -389,8 +393,8 @@ def _validation_queries(
     query_times: ArrayLike | None,
     query_states: ArrayLike | None,
     query_weights: ArrayLike | None,
-    query_sampler: Callable[[Key[Array, ""]], Any] | None,
-    key: Key[Array, ""],
+    query_sampler: Callable[[PRNGKey], Any] | None,
+    key: PRNGKey,
 ) -> tuple[Array | None, Array | None, Array | None]:
     if plan.sampling_mode == "trajectory_nodes":
         return None, None, None
@@ -420,11 +424,11 @@ def solve_deep_picard(
     query_times: ArrayLike | None = None,
     query_states: ArrayLike | None = None,
     query_weights: ArrayLike | None = None,
-    query_sampler: Callable[[Key[Array, ""]], Any] | None = None,
+    query_sampler: Callable[[PRNGKey], Any] | None = None,
     validation_query_times: ArrayLike | None = None,
     validation_query_states: ArrayLike | None = None,
     validation_query_weights: ArrayLike | None = None,
-    validation_query_sampler: Callable[[Key[Array, ""]], Any] | None = None,
+    validation_query_sampler: Callable[[PRNGKey], Any] | None = None,
     source_builder: StructuredSourceBuilder | None = None,
     initial_source: DeepPicardInitialSource = "zero",
     target_damping: float = 1.0,
@@ -452,8 +456,7 @@ def solve_deep_picard(
         raise ValueError("Picard and inner iteration counts must be positive.")
     if minimum_steps < 1 or minimum_steps > outer_steps:
         raise ValueError("minimum_picard_steps must lie in [1, num_picard_steps].")
-    if initial_source not in ("zero", "current"):
-        raise ValueError("initial_source must be 'zero' or 'current'.")
+    initial_source = parse(initial_source, DeepPicardInitialSource, "initial_source")
     damping = float(target_damping)
     absolute_tolerance = float(convergence_tolerance)
     relative_tolerance_value = float(relative_tolerance)

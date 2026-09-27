@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -13,13 +13,14 @@ from phydrax._strict import StrictModule
 
 from ..discretization._spectral import SpectralDecomposition
 from ..sparse import linear_apply, route_reduce
+from ..typing import parse
 from ._graph import ensure_graph
 from ._ir import GraphIR
+from ._typed import GraphFlow
 
 
-GraphFilterOperator = Literal["laplacian", "adjacency"]
-GraphFlow = Literal["source_to_target", "target_to_source"]
-GraphLaplacianNormalization = Literal["none", "random_walk", "symmetric"]
+GraphFilterOperator: TypeAlias = Literal["laplacian", "adjacency"]
+GraphLaplacianNormalization: TypeAlias = Literal["none", "random_walk", "symmetric"]
 
 
 def _tree_leading_size(tree: Any, /) -> int:
@@ -151,8 +152,7 @@ def graph_adjacency_apply(
 ) -> Any:
     """Apply sparse weighted adjacency to node features."""
     graph = ensure_graph(graph, validate=False)
-    if normalization not in ("none", "random_walk", "symmetric"):
-        raise ValueError("normalization must be 'none', 'random_walk', or 'symmetric'.")
+    normalization = parse(normalization, GraphLaplacianNormalization, "normalization")
     x = graph.nodes if nodes is None else nodes
     if x is None:
         raise ValueError("graph_adjacency_apply requires node features.")
@@ -192,8 +192,7 @@ def graph_laplacian_apply(
 ) -> Any:
     """Apply a sparse graph Laplacian to node features."""
     graph = ensure_graph(graph, validate=False)
-    if normalization not in ("none", "random_walk", "symmetric"):
-        raise ValueError("normalization must be 'none', 'random_walk', or 'symmetric'.")
+    normalization = parse(normalization, GraphLaplacianNormalization, "normalization")
     x = graph.nodes if nodes is None else nodes
     if x is None:
         raise ValueError("graph_laplacian_apply requires node features.")
@@ -308,7 +307,7 @@ class GraphLaplacianOperator(StrictModule):
         output_key: str | None = None,
         flow: GraphFlow = "source_to_target",
         normalization: GraphLaplacianNormalization = "symmetric",
-    ):
+    ) -> None:
         self.weight = weight
         self.weight_key = weight_key
         self.input_key = input_key
@@ -355,7 +354,7 @@ class GraphPolynomialFilter(StrictModule):
         operator: GraphFilterOperator = "laplacian",
         flow: GraphFlow = "source_to_target",
         normalization: GraphLaplacianNormalization = "symmetric",
-    ):
+    ) -> None:
         coeff_leaves = jtu.tree_leaves(coefficients)
         if not coeff_leaves:
             raise ValueError("GraphPolynomialFilter coefficients must be non-empty.")
@@ -422,7 +421,7 @@ class GraphChebyshevFilter(StrictModule):
         flow: GraphFlow = "source_to_target",
         normalization: GraphLaplacianNormalization = "symmetric",
         lambda_max: float = 2.0,
-    ):
+    ) -> None:
         coeff_leaves = jtu.tree_leaves(coefficients)
         if not coeff_leaves:
             raise ValueError("GraphChebyshevFilter coefficients must be non-empty.")

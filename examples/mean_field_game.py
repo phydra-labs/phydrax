@@ -1,5 +1,7 @@
 """Evaluate a frozen-law response and an independently induced-law fixed point."""
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -26,13 +28,13 @@ initial_flow = phx.stochastic.EmpiricalMeanField(
 )
 
 
-def law_means(flow):
+def law_means(flow: Any) -> Any:
     """Return the weighted mean at every represented time node."""
 
     return jax.vmap(lambda time: flow.snapshot(time).mean)(flow.times)
 
 
-def frozen_response(flow, args):
+def frozen_response(flow: Any, args: Any) -> Any:
     """Evaluate one candidate response against exactly ``flow``."""
 
     del args
@@ -83,7 +85,7 @@ def frozen_response(flow, args):
     )
 
 
-def independently_induced_flow(response, args):
+def independently_induced_flow(response: Any, args: Any) -> Any:
     """Construct a new forward-law sample rather than returning the frozen input."""
 
     del args
@@ -101,7 +103,7 @@ def independently_induced_flow(response, args):
     )
 
 
-def maximum_mean_distance(current, induced, args):
+def maximum_mean_distance(current: Any, induced: Any, args: Any) -> Any:
     del args
     return jnp.max(jnp.abs(law_means(current) - law_means(induced)))
 

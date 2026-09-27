@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -25,7 +26,7 @@ class HistogramPlan(StrictModule, NonTrainableState):
     bin_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, edges: ArrayLike, /, *, observable_id: str, unit_id: str):
+    def __init__(self, edges: ArrayLike, /, *, observable_id: str, unit_id: str) -> None:
         edges_ = np.asarray(edges, dtype=np.float64)
         observable = str(observable_id).strip()
         unit = str(unit_id).strip()

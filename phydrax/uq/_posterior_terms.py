@@ -11,7 +11,9 @@ from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.axes as cx
 
@@ -79,7 +81,7 @@ class FixedObservationLikelihood(AbstractPosteriorTerm):
         parameters: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.AxisArray]]
         | None = None,
         label: str = "observation",
-    ):
+    ) -> None:
         if not callable(predict):
             raise TypeError("predict must be callable.")
         if not isinstance(likelihood, AbstractLikelihood):
@@ -132,7 +134,7 @@ class FixedResidualLikelihood(AbstractPosteriorTerm):
         parameters: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.AxisArray]]
         | None = None,
         label: str = "residual",
-    ):
+    ) -> None:
         if not callable(residual):
             raise TypeError("residual must be callable.")
         if not isinstance(likelihood, AbstractLikelihood):
@@ -170,7 +172,7 @@ class _ActiveResidual(StrictModule):
         residual: Callable[[PyTree[Any]], Any],
         active_indices: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.residual_fn = residual
         self.active_indices = jnp.asarray(active_indices, dtype=jnp.int32)
 
@@ -201,7 +203,7 @@ class ResidualPenaltyNoiseModel(StrictModule):
         penalty_scale: ArrayLike,
         field: Literal["real", "proper_complex"],
         interpretation_id: str,
-    ):
+    ) -> None:
         coefficient_array = jnp.asarray(coefficients, dtype=jnp.float64).reshape((-1,))
         scale_array = jnp.asarray(penalty_scale, dtype=jnp.float64).reshape(())
         if (
@@ -342,7 +344,7 @@ class GaussianProcessMarginalLikelihood(AbstractPosteriorTerm):
         *,
         state: Callable[[PyTree[Any]], GaussianProcessLikelihoodState],
         label: str = "gp_discrepancy",
-    ):
+    ) -> None:
         from ._gp_scalar import (
             ExactGaussianProcessDiscrepancy,
             SparseGaussianProcessDiscrepancy,
@@ -405,7 +407,7 @@ class ComputationAwareGaussianProcessELBO(AbstractPosteriorTerm):
         | Callable[[PyTree[Any]], AbstractGaussianProcessActionPolicy],
         computation: GaussianProcessComputationPolicy | None = None,
         label: str = "computation_aware_gp",
-    ):
+    ) -> None:
         from ._gp_actions import AbstractGaussianProcessActionPolicy
         from ._gp_computation_aware import (
             ComputationAwareGaussianProcessDiscrepancy,
@@ -486,7 +488,7 @@ class FixedSupervisedLikelihood(AbstractPosteriorTerm):
         *,
         batch: SupervisedDatasetBatch | None = None,
         label: str | None = None,
-    ):
+    ) -> None:
         from ..terms._likelihood import _AbstractSupervisedLikelihoodTerm
         from ..terms._supervised_dataset import SupervisedDatasetBatch
 
@@ -517,7 +519,7 @@ class CompositePosteriorLikelihood(StrictModule):
     terms: tuple[AbstractPosteriorTerm, ...]
     labels: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self, terms: Sequence[AbstractPosteriorTerm], /):
+    def __init__(self, terms: Sequence[AbstractPosteriorTerm], /) -> None:
         values = tuple(terms)
         if not values:
             raise ValueError("CompositePosteriorLikelihood requires at least one term.")

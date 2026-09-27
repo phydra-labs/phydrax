@@ -10,6 +10,7 @@ import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -44,7 +45,7 @@ class OperatorSpectralResidualBenchmarkRecord:
         )
 
 
-def _space(count: int):
+def _space(count: int) -> Any:
     return phx.discretization.TensorSpectralPlan(
         (phx.discretization.FourierBasisPlan(count),),
         axis_names=("x",),
@@ -52,7 +53,7 @@ def _space(count: int):
     ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
 
 
-def _poisson_problem():
+def _poisson_problem() -> Any:
     x = phx.equations.PDECoordinate(
         "x",
         "space",
@@ -77,7 +78,7 @@ def _poisson_problem():
     )
 
 
-def _quadratic_problem():
+def _quadratic_problem() -> Any:
     x = phx.equations.PDECoordinate(
         "x",
         "space",
@@ -99,7 +100,7 @@ def _quadratic_problem():
     )
 
 
-def _mixed_space_time_problem():
+def _mixed_space_time_problem() -> Any:
     t = phx.equations.PDECoordinate("t", "time", bounds=(0.0, 1.0))
     x = phx.equations.PDECoordinate(
         "x",
@@ -122,7 +123,7 @@ def _mixed_space_time_problem():
     )
 
 
-def _measure(function, argument, repeats: int):
+def _measure(function: Any, argument: Any, repeats: int) -> Any:
     compiled = jax.jit(function)
     start = time.perf_counter()
     value = jax.block_until_ready(compiled(argument))
@@ -154,12 +155,16 @@ def run_operator_spectral_residual_benchmark(
     )
     exact = jnp.sin(2.0 * jnp.pi * x)
     source = (2.0 * jnp.pi) ** 2 * exact
+    # ty: ignore[unresolved-attribute]
     state = poisson.project_state(exact)
     args = {"source": source}
+    # ty: ignore[unresolved-attribute]
     poisson_energy = poisson.residual_energy(state, args)
+    # ty: ignore[unresolved-attribute]
     gradient = jax.grad(lambda value: poisson.residual_energy(value, args))(state)
     gradient_norm = jnp.sqrt(jnp.real(jnp.vdot(gradient, gradient)))
     _, first, steady = _measure(
+        # ty: ignore[unresolved-attribute]
         lambda value: poisson.residual_energy(value, args),
         state,
         repeats,
@@ -186,6 +191,7 @@ def run_operator_spectral_residual_benchmark(
         mixed_space.axes[0].nodes[:, None]
         + jnp.sin(2.0 * jnp.pi * mixed_space.axes[1].nodes)[None, :]
     )
+    # ty: ignore[unresolved-attribute]
     mixed_energy = mixed.residual_energy(mixed.project_state(mixed_values))
 
     wave_number = count // 2 - 1
@@ -206,7 +212,9 @@ def run_operator_spectral_residual_benchmark(
             dealiasing=phx.discretization.PolynomialClosureDealiasingPlan(2),
         ),
     )
+    # ty: ignore[unresolved-attribute]
     retained_energy = retained.residual_energy(high_state)
+    # ty: ignore[unresolved-attribute]
     full_energy = full.residual_energy(high_state)
     expected = jnp.asarray(0.125, dtype=full_energy.dtype)
     values = jnp.asarray(
@@ -222,6 +230,7 @@ def run_operator_spectral_residual_benchmark(
     finite = bool(jnp.all(jnp.isfinite(values)))
     return OperatorSpectralResidualBenchmarkRecord(
         mode_count=count,
+        # ty: ignore[unresolved-attribute]
         closure_count=full.evaluation.num_modes,
         poisson_residual_energy=float(poisson_energy),
         poisson_gradient_norm=float(gradient_norm),

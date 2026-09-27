@@ -9,7 +9,8 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -23,7 +24,7 @@ from ..geometry._polygon import (
 )
 
 
-def _cross_2d(left, right):
+def _cross_2d(left: Array, right: Array) -> Array:
     return left[..., 0] * right[..., 1] - left[..., 1] * right[..., 0]
 
 
@@ -48,7 +49,14 @@ def _remove_collinear(points: np.ndarray, indices: list[int], /) -> list[int]:
     return result
 
 
-def _inside_triangle(point, a, b, c, tolerance: float, /) -> bool:
+def _inside_triangle(
+    point: np.ndarray,
+    a: np.ndarray,
+    b: np.ndarray,
+    c: np.ndarray,
+    tolerance: float | np.floating,
+    /,
+) -> bool | np.bool_:
     return (
         _orientation(a, b, point) >= -tolerance
         and _orientation(b, c, point) >= -tolerance
@@ -88,7 +96,7 @@ def _ear_clip(points: np.ndarray, /) -> tuple[tuple[int, int, int], ...]:
         if not clipped:
             raise ValueError("Polygon triangulation could not identify a valid ear.")
     if len(remaining) == 3:
-        triangles.append(tuple(remaining))
+        triangles.append((remaining[0], remaining[1], remaining[2]))
     if not triangles:
         raise ValueError("Polygon triangulation produced no positive triangles.")
     return tuple(triangles)
@@ -101,7 +109,7 @@ def _clip_half_plane(
         return []
     edge = stop - start
 
-    def signed(point):
+    def signed(point: np.ndarray) -> float:
         return _orientation(start, stop, point)
 
     result: list[np.ndarray] = []
@@ -170,7 +178,7 @@ class PolygonAdmissibilityPolicy(StrictModule, NonTrainableState):
         *,
         minimum_star_margin: float = 1.0e-8,
         minimum_edge_ratio: float = 1.0e-10,
-    ):
+    ) -> None:
         star = float(minimum_star_margin)
         edge = float(minimum_edge_ratio)
         if star < 0.0 or edge < 0.0:

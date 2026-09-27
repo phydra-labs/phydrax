@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _periodic_spaces(dimension, count):
+def _periodic_spaces(dimension: Any, count: Any) -> Any:
     names = tuple("xyz"[:dimension])
     grid = phx.discretization.TensorGridPlan(
         tuple(
@@ -31,7 +34,7 @@ def _periodic_spaces(dimension, count):
     return grid, spectral
 
 
-def test_periodic_vic_conserves_deposition_and_returns_divergence_free_velocity():
+def test_periodic_vic_conserves_deposition_and_returns_divergence_free_velocity() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(2),
         jnp.ones((2,)),
@@ -74,7 +77,7 @@ def test_periodic_vic_conserves_deposition_and_returns_divergence_free_velocity(
     assert bool(evaluation.successful)
 
 
-def test_periodic_vic_rejects_nonzero_total_vorticity():
+def test_periodic_vic_rejects_nonzero_total_vorticity() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(2),
         jnp.ones((2,)),
@@ -102,7 +105,7 @@ def test_periodic_vic_rejects_nonzero_total_vorticity():
         prepared.evaluate(source, target)
 
 
-def test_periodic_three_dimensional_vic_returns_velocity_gradient():
+def test_periodic_three_dimensional_vic_returns_velocity_gradient() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(2),
         jnp.ones((2,)),

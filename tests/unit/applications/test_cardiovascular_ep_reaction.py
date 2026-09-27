@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -127,7 +129,9 @@ def _ord_plateau(model: ORdVentricularModel) -> jax.Array:
     )
 
 
-def test_model_specific_named_layouts_have_no_padded_union(tp06, ord_model):
+def test_model_specific_named_layouts_have_no_padded_union(
+    tp06: Any, ord_model: Any
+) -> None:
     assert isinstance(tp06, CardiacReactionModel)
     assert isinstance(ord_model, CardiacReactionModel)
     assert tp06.state_layout.state_count == 19
@@ -149,8 +153,8 @@ def test_model_specific_named_layouts_have_no_padded_union(tp06, ord_model):
     ],
 )
 def test_models_are_jittable_over_fixed_homogeneous_blocks(
-    model, cell_count, current_count
-):
+    model: Any, cell_count: Any, current_count: Any
+) -> None:
     state = model.initialize((cell_count,), dtype=jnp.float64)
     evaluation = jax.jit(model.evaluate)(state)
     assert evaluation.state_rate.shape == state.shape
@@ -170,7 +174,7 @@ def test_models_are_jittable_over_fixed_homogeneous_blocks(
     )
 
 
-def test_tp06_rest_and_plateau_rate_reference_fixtures(tp06):
+def test_tp06_rest_and_plateau_rate_reference_fixtures(tp06: Any) -> None:
     rest = tp06.evaluate(tp06.initialize(dtype=jnp.float64))
     np.testing.assert_allclose(
         np.asarray(
@@ -215,7 +219,7 @@ def test_tp06_rest_and_plateau_rate_reference_fixtures(tp06):
     )
 
 
-def test_ord_rest_and_plateau_rate_reference_fixtures(ord_model):
+def test_ord_rest_and_plateau_rate_reference_fixtures(ord_model: Any) -> None:
     rest = ord_model.evaluate(ord_model.initialize(dtype=jnp.float64))
     np.testing.assert_allclose(
         np.asarray(
@@ -260,7 +264,7 @@ def test_ord_rest_and_plateau_rate_reference_fixtures(ord_model):
     )
 
 
-def test_ord_nca_relaxation_uses_jca_as_the_backward_rate(ord_model):
+def test_ord_nca_relaxation_uses_jca_as_the_backward_rate(ord_model: Any) -> None:
     state = _ord_plateau(ord_model)
     evaluation = ord_model.evaluate(state)
     jca = state[ord_model.state_layout.index("j_ca")]
@@ -283,7 +287,7 @@ def test_ord_nca_relaxation_uses_jca_as_the_backward_rate(ord_model):
     )
 
 
-def test_ord_epicardial_delta_scales_both_transient_outward_inactivation_times():
+def test_ord_epicardial_delta_scales_both_transient_outward_inactivation_times() -> None:
     endocardial = ORdVentricularModel(VentricularCellPhenotype.ENDOCARDIAL)
     epicardial = ORdVentricularModel(VentricularCellPhenotype.EPICARDIAL)
     state = endocardial.initialize(dtype=jnp.float64).at[0].set(-60.0)
@@ -306,8 +310,8 @@ def test_ord_epicardial_delta_scales_both_transient_outward_inactivation_times()
     ],
 )
 def test_ord_release_gain_and_time_constant_include_bt_and_m_cell_factor(
-    phenotype, release_factor
-):
+    phenotype: Any, release_factor: Any
+) -> None:
     model = ORdVentricularModel(phenotype)
     state = _ord_plateau(model)
     evaluation = model.evaluate(state)
@@ -364,8 +368,8 @@ def test_ord_release_gain_and_time_constant_include_bt_and_m_cell_factor(
     ],
 )
 def test_fast_sodium_current_has_independent_direct_formula(
-    model, state_factory, sodium_gate
-):
+    model: Any, state_factory: Any, sodium_gate: Any
+) -> None:
     state = state_factory(model)
     evaluation = model.evaluate(state)
     parameters = np.asarray(model.default_parameters)
@@ -406,10 +410,12 @@ def test_fast_sodium_current_has_independent_direct_formula(
         (ORdVentricularModel(), _ord_plateau(ORdVentricularModel()), 0.0),
     ],
 )
-def test_ghk_singular_voltage_is_value_and_gradient_safe(model, state, voltage):
+def test_ghk_singular_voltage_is_value_and_gradient_safe(
+    model: Any, state: Any, voltage: Any
+) -> None:
     state = state.at[0].set(voltage)
 
-    def calcium_current(v):
+    def calcium_current(v: Any) -> Any:
         candidate = state.at[0].set(v)
         return model.evaluate(candidate).current("I_CaL")
 
@@ -420,7 +426,7 @@ def test_ghk_singular_voltage_is_value_and_gradient_safe(model, state, voltage):
 
 
 @pytest.mark.parametrize("model", [TenTusscherPanfilov2006Model(), ORdVentricularModel()])
-def test_exact_gate_update_matches_reported_affine_solution(model):
+def test_exact_gate_update_matches_reported_affine_solution(model: Any) -> None:
     state = model.initialize((2,), dtype=jnp.float64)
     state = state.at[1, 0].set(state[1, 0] + 5.0)
     evaluation = model.evaluate(state)
@@ -444,7 +450,9 @@ def test_exact_gate_update_matches_reported_affine_solution(model):
 
 
 @pytest.mark.parametrize("model", [TenTusscherPanfilov2006Model(), ORdVentricularModel()])
-def test_invalid_concentration_fails_closed_and_host_validation_refuses(model):
+def test_invalid_concentration_fails_closed_and_host_validation_refuses(
+    model: Any,
+) -> None:
     state = model.initialize(dtype=jnp.float64)
     invalid = state.at[model.state_layout.index("calcium_i_mM")].set(0.0)
     evaluation = model.evaluate(invalid)
@@ -459,8 +467,9 @@ def test_invalid_concentration_fails_closed_and_host_validation_refuses(model):
         model.validate_state(state, bad_parameters)
 
 
-def test_typed_phenotype_routes_refuse_runtime_strings():
+def test_typed_phenotype_routes_refuse_runtime_strings() -> None:
     with pytest.raises(TypeError, match="VentricularCellPhenotype"):
+        # ty: ignore[invalid-argument-type]
         TenTusscherPanfilov2006Model(phenotype="epicardial")
     epicardial = ORdVentricularModel(VentricularCellPhenotype.EPICARDIAL)
     endocardial = ORdVentricularModel(VentricularCellPhenotype.ENDOCARDIAL)
@@ -470,7 +479,9 @@ def test_typed_phenotype_routes_refuse_runtime_strings():
     )
 
 
-def test_charge_evidence_closes_with_outward_current_and_stimulus(tp06, ord_model):
+def test_charge_evidence_closes_with_outward_current_and_stimulus(
+    tp06: Any, ord_model: Any
+) -> None:
     for model in (tp06, ord_model):
         stimulus = jnp.asarray(0.003, dtype=jnp.float64)
         evaluation = model.evaluate(
@@ -486,7 +497,7 @@ def test_charge_evidence_closes_with_outward_current_and_stimulus(tp06, ord_mode
         assert np.isfinite(float(evaluation.calcium_sr_flux_mM_per_ms))
 
 
-def test_membrane_scaling_has_exact_kernel_and_si_factors():
+def test_membrane_scaling_has_exact_kernel_and_si_factors() -> None:
     scaling = CardiacMembraneScaling(140.0, 0.01)
     assert scaling.volumetric_capacitance_uF_per_mm3 == pytest.approx(1.4)
     assert scaling.membrane_surface_to_volume_per_m == 140_000.0
@@ -505,7 +516,7 @@ def test_membrane_scaling_has_exact_kernel_and_si_factors():
         CardiacMembraneScaling(0.0, 0.01)
 
 
-def test_prepared_reaction_exposes_pinned_split_block_contract(tp06):
+def test_prepared_reaction_exposes_pinned_split_block_contract(tp06: Any) -> None:
     plan = plan_reaction(tp06, 5, dtype=np.float64)
     prepared = prepare_reaction(plan)
     voltage, local = prepared.initialize()
@@ -530,7 +541,7 @@ def test_prepared_reaction_exposes_pinned_split_block_contract(tp06):
         prepared.initialize(node_count=4)
 
 
-def test_reaction_ir_compiler_matches_independent_tree_interpreter():
+def test_reaction_ir_compiler_matches_independent_tree_interpreter() -> None:
     x = ReactionIRInput(0)
     threshold = ReactionIRLiteral(0.0)
     positive = ReactionIRBinary(
@@ -569,7 +580,7 @@ def test_reaction_ir_compiler_matches_independent_tree_interpreter():
 
 
 @pytest.mark.parametrize("model", [TenTusscherPanfilov2006Model(), ORdVentricularModel()])
-def test_model_pinned_ir_is_an_independent_ohmic_current_route(model):
+def test_model_pinned_ir_is_an_independent_ohmic_current_route(model: Any) -> None:
     conductance = jnp.asarray((0.1, 0.3))
     gate = jnp.asarray((0.4, 0.8))
     voltage = jnp.asarray((-80.0, 20.0))

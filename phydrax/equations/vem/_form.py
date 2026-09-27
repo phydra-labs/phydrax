@@ -4,11 +4,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -19,6 +20,7 @@ from ...discretization.vem import (
     VirtualElementStabilizationPolicy,
 )
 from ...linalg import OperatorProperties
+from ...sparse import RelationAccumulation
 from .._variational import (
     BoundaryLoadAction,
     coefficient,
@@ -39,13 +41,15 @@ class VirtualElementRobinAction(StrictModule, NonTrainableState):
     def __init__(
         self,
         field_name: str,
-        coefficient_value,
-        value,
+        coefficient_value: VariationalCoefficient
+        | ArrayLike
+        | Callable[[Array, object], ArrayLike],
+        value: VariationalCoefficient | ArrayLike | Callable[[Array, object], ArrayLike],
         domain: IntegrationDomain,
         /,
         *,
         action_id: str = "robin",
-    ):
+    ) -> None:
         field = str(field_name)
         identifier = str(action_id)
         if not field or not identifier:
@@ -90,7 +94,7 @@ class VirtualElementForm(StrictModule, NonTrainableState):
         /,
         *,
         properties: OperatorProperties | None = None,
-    ):
+    ) -> None:
         identifier = str(form_id)
         field = str(field_name)
         actions_ = tuple(actions)
@@ -140,7 +144,7 @@ class VirtualElementForm(StrictModule, NonTrainableState):
 
 class VirtualElementExecutionPolicy(StrictModule, NonTrainableState):
     realization: str = eqx.field(static=True)
-    accumulation: str = eqx.field(static=True)
+    accumulation: RelationAccumulation = eqx.field(static=True)
     quadrature_degree_offset: int = eqx.field(static=True)
     stiffness_stabilization: VirtualElementStabilizationPolicy
     mass_stabilization: VirtualElementStabilizationPolicy
@@ -154,7 +158,7 @@ class VirtualElementExecutionPolicy(StrictModule, NonTrainableState):
         quadrature_degree_offset: int = 2,
         stiffness_stabilization: VirtualElementStabilizationPolicy | None = None,
         mass_stabilization: VirtualElementStabilizationPolicy | None = None,
-    ):
+    ) -> None:
         realization_ = str(realization)
         accumulation_ = str(accumulation)
         offset = int(quadrature_degree_offset)
@@ -207,7 +211,7 @@ class VirtualElementExecutionContext(StrictModule):
         lift: object = None,
         lift_rate: object = None,
         user_args: object = None,
-    ):
+    ) -> None:
         if not isinstance(runtime, VirtualElementRuntimeData):
             raise TypeError("runtime must be VirtualElementRuntimeData.")
         self.runtime = runtime

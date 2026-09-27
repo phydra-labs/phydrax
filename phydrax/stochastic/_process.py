@@ -14,13 +14,15 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from .._probability import _leading_shape, DiagonalNormalLaw
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import PRNGKey
 from ._trajectory import _TrajectoryRecord, StochasticTrajectory
 from ._wiener import WienerRealization
 
@@ -110,7 +112,7 @@ class AbstractProcessDistribution(StrictModule):
     @abstractmethod
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         raise NotImplementedError
@@ -150,7 +152,7 @@ class GaussianProcessDistribution(AbstractProcessDistribution):
         /,
         *,
         event_shape: Sequence[int],
-    ):
+    ) -> None:
         events = _positive_shape(event_shape, name="event_shape")
         size = prod(events)
         mean_array = jnp.asarray(mean)
@@ -195,7 +197,7 @@ class GaussianProcessDistribution(AbstractProcessDistribution):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         samples = _positive_shape(sample_shape, name="sample_shape")
@@ -242,7 +244,7 @@ class DiagonalGaussianProcessDistribution(AbstractProcessDistribution):
         /,
         *,
         event_shape: Sequence[int],
-    ):
+    ) -> None:
         law = DiagonalNormalLaw(mean, scale, event_shape=event_shape)
         self.law = law
         self.event_shape = law.event_shape
@@ -267,7 +269,7 @@ class DiagonalGaussianProcessDistribution(AbstractProcessDistribution):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         return self.law.sample(key, sample_shape)
@@ -345,7 +347,7 @@ class ProcessRealization(StrictModule):
         *,
         state_shape: Sequence[int],
         process_id: str,
-    ):
+    ) -> None:
         states = _positive_shape(state_shape, name="state_shape")
         initial = jnp.asarray(initial_state)
         if initial.shape != states:
@@ -438,7 +440,7 @@ class LatentGaussianCoefficientProcess(
         *,
         label: str | None = None,
         process_id: str | None = None,
-    ):
+    ) -> None:
         drift_array = jnp.asarray(drift)
         if drift_array.ndim < 1 or any(size <= 0 for size in drift_array.shape):
             raise ValueError(
@@ -570,7 +572,7 @@ class LatentGaussianCoefficientProcess(
 
     def realize(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         initial_state: ArrayLike,
         /,
         *,
@@ -828,7 +830,7 @@ def semigroup_objective(
     t0: ArrayLike,
     tmid: ArrayLike,
     t1: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_samples: int = 256,
     observable: Callable[[Array], Array] | None = None,
     reduction: ProcessReduction = "mean",

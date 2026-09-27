@@ -5,18 +5,20 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import parse
 
 
-MechanicsCaseReductionKind = Literal["weighted_mean", "mean", "cvar", "max"]
+MechanicsCaseReductionKind: TypeAlias = Literal["weighted_mean", "mean", "cvar", "max"]
 
 
 class MechanicsCaseReductionResult(StrictModule):
@@ -53,11 +55,8 @@ class MechanicsCaseReduction(StrictModule, NonTrainableState):
         /,
         *,
         alpha: float = 0.95,
-    ):
-        if kind not in ("weighted_mean", "mean", "cvar", "max"):
-            raise ValueError(
-                "Mechanics case reduction must be 'weighted_mean', 'mean', 'cvar', or 'max'."
-            )
+    ) -> None:
+        kind = parse(kind, MechanicsCaseReductionKind, "kind")
         level = float(alpha)
         if not math.isfinite(level) or level < 0.0 or level >= 1.0:
             raise ValueError("CVaR alpha must be finite and lie in [0, 1).")

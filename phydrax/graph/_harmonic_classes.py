@@ -7,7 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -40,7 +40,7 @@ class HarmonicClassFrame(StrictModule, NonTrainableState):
         *,
         degree: int,
         complex_fingerprint: str,
-    ):
+    ) -> None:
         self.exact_basis = exact_basis
         self.harmonic_subspace = harmonic_subspace
         self.harmonic_basis = jnp.asarray(harmonic_basis)
@@ -167,7 +167,7 @@ class CochainTransferCertificate(StrictModule, NonTrainableState):
         source_frame_id: str,
         target_frame_id: str,
         tolerance: float,
-    ):
+    ) -> None:
         commutator = jnp.asarray(commutator_residual)
         period = jnp.asarray(period_residual)
         self.commutator_residual = commutator

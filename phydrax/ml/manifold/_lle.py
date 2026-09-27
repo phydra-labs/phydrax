@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Literal
+from typing import Any, assert_never, ClassVar, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -22,6 +23,7 @@ from ..._differentiation import (
 )
 from ..._model import ModelBinding
 from ..._trainable import fixed_field
+from ...typing import parse
 from .._batch import MLBatch
 from .._contracts import AbstractRecipe, FitResult, prediction_fit_contract
 from .._schema import AbstractFittedModel
@@ -42,7 +44,7 @@ from ._common import (
 )
 
 
-LLEVariant = Literal["standard", "modified", "hessian", "ltsa"]
+LLEVariant: TypeAlias = Literal["standard", "modified", "hessian", "ltsa"]
 
 
 def _reconstruction_weights_one(
@@ -102,45 +104,50 @@ def _lle_alignment_one(
     if variant != "standard":
         neighbors = x[indices]
         centered = neighbors - jnp.mean(neighbors, axis=1, keepdims=True)
-    if variant == "modified":
-        nullity = max(1, k - dimensions - 1)
-        _evals, local_vectors = _stable_hermitian_eigh(
-            ein.contract("nki,nli->nkl", centered, jnp.conj(centered))
-        )
-        null_basis = local_vectors[:, :, :nullity]
-        ones = jnp.ones((k, 1), dtype=null_basis.dtype) / jnp.sqrt(float(k))
-        coefficient = ein.contract("ki,nkj->nij", jnp.conj(ones), null_basis)
-        null_basis = null_basis - ones[None, :, :] * coefficient
-        projector = null_basis @ jnp.conj(jnp.swapaxes(null_basis, -1, -2))
-        alignment = alignment + _scatter_local(indices, projector, weights)
-    elif variant == "hessian":
-        u, _singular, _vh = jnp.linalg.svd(centered, full_matrices=False)
-        tangent = u[:, :, :dimensions]
-        columns = [jnp.ones((n, k, 1), dtype=tangent.dtype), tangent]
-        quadratic = []
-        for left in range(dimensions):
-            for right in range(left, dimensions):
-                factor = jnp.sqrt(2.0) if left != right else 1.0
-                quadratic.append(
-                    (factor * tangent[:, :, left] * tangent[:, :, right])[:, :, None]
-                )
-        design = jnp.concatenate(columns + quadratic, axis=-1)
-        orthogonal, _r = jnp.linalg.qr(design, mode="reduced")
-        hessian = orthogonal[:, :, 1 + dimensions :]
-        projector = hessian @ jnp.conj(jnp.swapaxes(hessian, -1, -2))
-        alignment = _scatter_local(indices, projector, weights)
-    elif variant == "ltsa":
-        u, _singular, _vh = jnp.linalg.svd(centered, full_matrices=False)
-        tangent = u[:, :, :dimensions]
-        design = jnp.concatenate(
-            [jnp.ones((n, k, 1), dtype=tangent.dtype) / jnp.sqrt(float(k)), tangent],
-            axis=-1,
-        )
-        orthogonal, _r = jnp.linalg.qr(design, mode="reduced")
-        projector = jnp.eye(k, dtype=orthogonal.dtype)[
-            None, :, :
-        ] - orthogonal @ jnp.conj(jnp.swapaxes(orthogonal, -1, -2))
-        alignment = _scatter_local(indices, projector, weights)
+    match variant:
+        case "standard":
+            pass
+        case "modified":
+            nullity = max(1, k - dimensions - 1)
+            _evals, local_vectors = _stable_hermitian_eigh(
+                ein.contract("nki,nli->nkl", centered, jnp.conj(centered))
+            )
+            null_basis = local_vectors[:, :, :nullity]
+            ones = jnp.ones((k, 1), dtype=null_basis.dtype) / jnp.sqrt(float(k))
+            coefficient = ein.contract("ki,nkj->nij", jnp.conj(ones), null_basis)
+            null_basis = null_basis - ones[None, :, :] * coefficient
+            projector = null_basis @ jnp.conj(jnp.swapaxes(null_basis, -1, -2))
+            alignment = alignment + _scatter_local(indices, projector, weights)
+        case "hessian":
+            u, _singular, _vh = jnp.linalg.svd(centered, full_matrices=False)
+            tangent = u[:, :, :dimensions]
+            columns = [jnp.ones((n, k, 1), dtype=tangent.dtype), tangent]
+            quadratic = []
+            for left in range(dimensions):
+                for right in range(left, dimensions):
+                    factor = jnp.sqrt(2.0) if left != right else 1.0
+                    quadratic.append(
+                        (factor * tangent[:, :, left] * tangent[:, :, right])[:, :, None]
+                    )
+            design = jnp.concatenate(columns + quadratic, axis=-1)
+            orthogonal, _r = jnp.linalg.qr(design, mode="reduced")
+            hessian = orthogonal[:, :, 1 + dimensions :]
+            projector = hessian @ jnp.conj(jnp.swapaxes(hessian, -1, -2))
+            alignment = _scatter_local(indices, projector, weights)
+        case "ltsa":
+            u, _singular, _vh = jnp.linalg.svd(centered, full_matrices=False)
+            tangent = u[:, :, :dimensions]
+            design = jnp.concatenate(
+                [jnp.ones((n, k, 1), dtype=tangent.dtype) / jnp.sqrt(float(k)), tangent],
+                axis=-1,
+            )
+            orthogonal, _r = jnp.linalg.qr(design, mode="reduced")
+            projector = jnp.eye(k, dtype=orthogonal.dtype)[
+                None, :, :
+            ] - orthogonal @ jnp.conj(jnp.swapaxes(orthogonal, -1, -2))
+            alignment = _scatter_local(indices, projector, weights)
+        case _:
+            assert_never(variant)
 
     inactive = ~active
     alignment = jnp.where(inactive[:, None] | inactive[None, :], 0.0, alignment)
@@ -191,7 +198,7 @@ class LocallyLinearEmbeddingModel(AbstractFittedModel):
         n_neighbors: int,
         variant: LLEVariant,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         x = jnp.asarray(training_features)
         embedding = jnp.asarray(training_embedding)
         self.training_features = x
@@ -230,7 +237,9 @@ class LocallyLinearEmbeddingModel(AbstractFittedModel):
         )
         active = self.active.reshape((cases, self.active.shape[-1]))
 
-        def transform_one(query, train_, embedding_, active_):
+        def transform_one(
+            query: Array, train_: Array, embedding_: Array, active_: Array
+        ) -> Array:
             distances = _euclidean_distances(query, train_)
             ranked = jnp.where(active_[None, :], distances, jnp.inf)
             _negative, indices = jax.lax.top_k(-ranked, self.n_neighbors)
@@ -280,15 +289,14 @@ class LocallyLinearEmbeddingRecipe(AbstractRecipe):
         n_neighbors: int = 8,
         regularization: float = 1e-3,
         variant: LLEVariant = "standard",
-    ):
+    ) -> None:
         if int(n_components) <= 0:
             raise ValueError("n_components must be positive.")
         if int(n_neighbors) <= 0:
             raise ValueError("n_neighbors must be positive.")
         if float(regularization) <= 0.0:
             raise ValueError("regularization must be positive.")
-        if variant not in ("standard", "modified", "hessian", "ltsa"):
-            raise ValueError(f"Unsupported LLE variant {variant!r}.")
+        variant = parse(variant, LLEVariant, "variant")
         self.n_components = int(n_components)
         self.n_neighbors = int(n_neighbors)
         self.regularization = float(regularization)

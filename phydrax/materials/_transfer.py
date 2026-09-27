@@ -2,10 +2,13 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
-def transfer_material_field(transfer_matrix: ArrayLike, source_field: ArrayLike, /):
+def transfer_material_field(
+    transfer_matrix: ArrayLike, source_field: ArrayLike, /
+) -> Array:
     matrix = jnp.asarray(transfer_matrix)
     field = jnp.asarray(source_field)
     if matrix.shape[-1] != field.shape[0]:
@@ -15,7 +18,7 @@ def transfer_material_field(transfer_matrix: ArrayLike, source_field: ArrayLike,
 
 def conservative_transfer_error(
     transfer_matrix: ArrayLike, source_weights: ArrayLike, target_weights: ArrayLike, /
-):
+) -> Array:
     matrix = jnp.asarray(transfer_matrix)
     source = jnp.asarray(source_weights)
     target = jnp.asarray(target_weights)

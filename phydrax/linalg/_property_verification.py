@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._properties import OperatorProperties
@@ -27,7 +28,7 @@ class DensePropertyVerificationPolicy(StrictModule):
         require_positive_definite: bool = False,
         relative_tolerance: float = 64.0,
         absolute_tolerance: float = 0.0,
-    ):
+    ) -> None:
         if require_positive_definite:
             require_positive_semidefinite = True
         if relative_tolerance < 0.0 or absolute_tolerance < 0.0:

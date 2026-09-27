@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -27,7 +30,7 @@ class PMJAttachmentEpoch(StrictModule, NonTrainableState):
         graph_geometry: int | ArrayLike,
         myocardial_geometry: int | ArrayLike,
         /,
-    ):
+    ) -> None:
         graph_host = np.asarray(graph_geometry)
         myocardial_host = np.asarray(myocardial_geometry)
         if graph_host.shape != () or myocardial_host.shape != ():
@@ -89,7 +92,7 @@ class PurkinjeAttachmentPlan(StrictModule, NonTrainableState):
         /,
         *,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         capacity = int(pmj_capacity)
         maximum_distance = float(maximum_distance_mm)
         if capacity <= 0:
@@ -231,7 +234,7 @@ class PreparedPurkinjeAttachment(StrictModule, NonTrainableState):
         myocardial_geometry_id: str,
         prepared_epoch: PMJAttachmentEpoch,
         attachment_id: str,
-    ):
+    ) -> None:
         if not isinstance(plan, PurkinjeAttachmentPlan):
             raise TypeError("plan must be a PurkinjeAttachmentPlan.")
         graph_capacity = int(graph_point_capacity)
@@ -437,7 +440,7 @@ def _host_mask(values: ArrayLike | None, size: int, name: str, /) -> np.ndarray:
     return mask.copy()
 
 
-def _resolved_id(name: str, value: str | None, payload: dict[str, object], /) -> str:
+def _resolved_id(name: str, value: str | None, payload: Mapping[str, object], /) -> str:
     if value is None:
         return canonical_fingerprint(payload)
     identifier = str(value)

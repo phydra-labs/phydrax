@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -24,9 +25,12 @@ from phydrax.applications.atmosphere._dry import (
 )
 
 
-def _rest(family):
+def _rest(family: Any) -> Any:
     prepared = DryAtmospherePlan(
-        (8,), ((0.0,), (8000.0,)), reference=DryHydrostaticReference(family)
+        (8,),
+        # ty: ignore[invalid-argument-type]
+        ((0.0,), (8000.0,)),
+        reference=DryHydrostaticReference(family),
     ).prepare()
     initial = prepared.initial_state()
     evaluate = eqx.filter_jit(prepared.balance.evaluate)
@@ -48,13 +52,14 @@ def _rest(family):
     }
 
 
-def manufactured_shear_error(nz):
+def manufactured_shear_error(nz: Any) -> Any:
     """An exact steady Euler solution: arbitrary u(z), w=0, hydrostatic p/rho.
 
     Errors are volume-mean absolute residuals normalized by fixed physical
     scales. Refinement tests the actual nonlinear numerical operator, with no
     source chosen to cancel its discrete residual.
     """
+    # ty: ignore[invalid-argument-type]
     prepared = DryAtmospherePlan((4, nz), ((0.0, 0.0), (4000.0, 8000.0))).prepare()
     z = prepared.balance.discretization.cell_centers[..., 1]
     u = 5.0 * jnp.sin(jnp.pi * z / 8000.0) ** 2
@@ -67,7 +72,7 @@ def manufactured_shear_error(nz):
     return float(error)
 
 
-def _dynamics(case, nx, nz, steps):
+def _dynamics(case: Any, nx: Any, nz: Any, steps: Any) -> Any:
     start = time.perf_counter()
     prepared, initial = build_case(case, nx=nx, nz=nz)
     step_size = 0.35 * eqx.filter_jit(prepared.stable_step)(initial)
@@ -134,7 +139,7 @@ def _dynamics(case, nx, nz, steps):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--nx", type=int, default=16)
     parser.add_argument("--nz", type=int, default=12)
@@ -152,6 +157,7 @@ def main():
     ]
     report = {
         "scope": "fixed-Cartesian inviscid dry column and slice; not global atmospheric qualification",
+        # ty: ignore[unresolved-attribute]
         "x64_enabled": bool(jax.config.jax_enable_x64),
         "rest": rests,
         "manufactured_steady_shear": {
@@ -177,6 +183,7 @@ def main():
         and item["unstable_step_rejected_atomically"]
         for item in cases
     )
+    # ty: ignore[unresolved-attribute]
     if not (jax.config.jax_enable_x64 and rest_ok and refinement_ok and cases_ok):
         raise RuntimeError(
             "Dry atmospheric qualification failed; inspect measured evidence above."

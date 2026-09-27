@@ -8,7 +8,7 @@ carrier amount, never a state-of-charge fraction. Compilation is a host operatio
 from __future__ import annotations
 
 from math import isfinite
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import numpy as np
@@ -42,7 +42,7 @@ class Carrier(StrictModule):
     energy_content: float | None = None
     environmental: bool = eqx.field(static=True, default=False)
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         if not self.name or not isinstance(self.unit, UnitDefinition):
             raise ValueError(
                 "A carrier requires a name and a UnitDefinition amount unit."
@@ -104,7 +104,7 @@ class InventoryBoundary(StrictModule):
     target: float | None = 0.0
     link: str | None = eqx.field(static=True, default=None)
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         if self.terminal not in ("fixed", "free", "periodic", "linked"):
             raise ValueError("terminal must be fixed, free, periodic, or linked.")
         if self.initial is not None:
@@ -174,7 +174,7 @@ class ScenarioNode(StrictModule):
 class ScenarioTree(StrictModule):
     nodes: tuple[ScenarioNode, ...]
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         lookup = {node.name: node for node in self.nodes}
         if not self.nodes or len(lookup) != len(self.nodes):
             raise ValueError("Scenario node names must be nonempty and unique.")
@@ -233,7 +233,7 @@ class Horizon(StrictModule):
     representative: str = eqx.field(static=True, default="chronological")
     stage_start: int = eqx.field(static=True, default=0)
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         values = np.asarray(self.durations)
         if (
             not self.name
@@ -263,7 +263,7 @@ class Chronology(StrictModule):
     financial_years: tuple[int, ...] = eqx.field(static=True, default=())
     scenario_tree: ScenarioTree | None = None
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         if not self.horizons or len({h.name for h in self.horizons}) != len(
             self.horizons
         ):
@@ -312,7 +312,8 @@ class Chronology(StrictModule):
                     )
                 known = {}
                 for h in members:
-                    path = tree.ancestors(h.scenario)
+                    # The horizon loop above rejected scenario-tree horizons without a scenario.
+                    path = tree.ancestors(cast(str, h.scenario))
                     for t, duration in enumerate(h.durations):
                         key = (path[min(h.stage_start + t, len(path) - 1)], t)
                         value = (float(duration), h.multiplicity)
@@ -403,7 +404,7 @@ class Investment(StrictModule):
     fixed_build_cost: float = 0.0
     scenario_node: str | None = eqx.field(static=True, default=None)
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         if self.technical_lifetime < 1 or self.financial_lifetime < 1:
             raise ValueError("Technical and financial lifetimes must be positive years.")
         for name, value in (
@@ -430,8 +431,10 @@ class Investment(StrictModule):
             return False
         if self.scenario_node is None:
             return True
-        tree = chronology.scenario_tree
-        if self.scenario_node not in tree.ancestors(horizon.scenario):
+        # EnergySystem validation requires a tree (and horizon scenarios) for scenario
+        # investments.
+        tree = cast(ScenarioTree, chronology.scenario_tree)
+        if self.scenario_node not in tree.ancestors(cast(str, horizon.scenario)):
             return False
         decision_stage = next(
             node.stage for node in tree.nodes if node.name == self.scenario_node
@@ -451,7 +454,10 @@ class Investment(StrictModule):
         probability = (
             1.0
             if self.scenario_node is None
-            else chronology.scenario_tree.probability(self.scenario_node)
+            # EnergySystem validation requires a tree for scenario investments.
+            else cast(ScenarioTree, chronology.scenario_tree).probability(
+                self.scenario_node
+            )
         )
         return (
             self.capital_cost
@@ -470,7 +476,7 @@ class EnergyPolicy(StrictModule):
     carbon_price: float = 0.0
     investment_budget: float | None = None
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         for name, value in (
             ("emissions_limit", self.emissions_limit),
             ("investment_budget", self.investment_budget),
@@ -491,7 +497,7 @@ class EnergySystem(StrictModule):
     investments: tuple[Investment, ...] = ()
     policy: EnergyPolicy = eqx.field(default_factory=EnergyPolicy)
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         n = self.chronology.size
         for label, records in (
             ("carrier", self.carriers),

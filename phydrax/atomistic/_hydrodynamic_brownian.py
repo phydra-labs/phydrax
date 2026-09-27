@@ -12,7 +12,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax.ein import contract
 
@@ -20,11 +21,14 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import ParticleNeighborhoodState
+from ..linalg import AbstractLinearOperator
+from ..typing import parse, PRNGKey
 from ._dynamics import PreparedAtomisticDynamics
 from ._hydrodynamic_mobility import (
     AbstractHydrodynamicMobilityPlan,
     AbstractPreparedHydrodynamicMobility,
 )
+from ._potential_program import AtomisticHamiltonianEvaluation
 
 
 HydrodynamicDifferentiationPolicy: TypeAlias = Literal["pathwise", "weak"]
@@ -33,7 +37,7 @@ HydrodynamicDifferentiationPolicy: TypeAlias = Literal["pathwise", "weak"]
 class _HydrodynamicMobilityProvider(StrictModule, NonTrainableState):
     mobility: AbstractPreparedHydrodynamicMobility
 
-    def __call__(self, positions: ArrayLike, /):
+    def __call__(self, positions: ArrayLike, /) -> AbstractLinearOperator:
         return self.mobility.operator(positions)
 
 
@@ -56,7 +60,7 @@ class HydrodynamicBrownianPlan(StrictModule, NonTrainableState):
         differentiation: HydrodynamicDifferentiationPolicy = "pathwise",
         realization_id: int = 0,
         maximum_displacement: float | None = None,
-    ):
+    ) -> None:
         step = float(step_size)
         thermal = float(temperature)
         epsilon = float(drift_epsilon)
@@ -69,12 +73,14 @@ class HydrodynamicBrownianPlan(StrictModule, NonTrainableState):
             or thermal < 0.0
             or not math.isfinite(epsilon)
             or epsilon <= 0.0
-            or differentiation not in ("pathwise", "weak")
             or realization < 0
             or realization > np.iinfo(np.uint32).max
             or (maximum is not None and (not math.isfinite(maximum) or maximum <= 0.0))
         ):
             raise ValueError("Hydrodynamic Brownian controls are invalid.")
+        differentiation = parse(
+            differentiation, HydrodynamicDifferentiationPolicy, "differentiation"
+        )
         self.step_size = step
         self.temperature = thermal
         self.drift_epsilon = epsilon
@@ -141,7 +147,7 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
         dynamics: PreparedAtomisticDynamics,
         mobility: AbstractHydrodynamicMobilityPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, HydrodynamicBrownianPlan):
             raise TypeError("plan must be HydrodynamicBrownianPlan.")
         if not isinstance(dynamics, PreparedAtomisticDynamics):
@@ -177,7 +183,7 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
             }
         )
 
-    def _initial_cell_vectors(self, dtype) -> Array:
+    def _initial_cell_vectors(self, dtype: DTypeLike) -> Array:
         cell = self.dynamics.system.cell
         return (
             jnp.zeros((0, 3), dtype=dtype) if cell is None else cell.vectors.astype(dtype)
@@ -204,7 +210,7 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
         image_counts: Array,
         cell_vectors: Array,
         /,
-    ):
+    ) -> tuple[ParticleNeighborhoodState, AtomisticHamiltonianEvaluation]:
         neighborhood = self.dynamics.neighborhood.build(positions)
         unwrapped = self._unwrapped(positions, image_counts, cell_vectors)
         kwargs = {
@@ -226,7 +232,7 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
         positions: ArrayLike,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> HydrodynamicBrownianState:
         value = jnp.asarray(positions, dtype=self.dynamics.system.plan.coordinate_dtype)
         expected = (self.dynamics.system.capacity, 3)

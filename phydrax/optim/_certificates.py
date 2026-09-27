@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.flatten_util import ravel_pytree
 
 from .._nonlinear_precision import NonlinearPrecisionPolicy
@@ -16,6 +17,7 @@ from ..linalg import (
     DenseSVD,
     LeastSquaresProblem,
     LinearSolvePolicy,
+    LinearSolveResult,
     solve as solve_linear,
 )
 from ._constrained_model import PreparedConstrainedModel
@@ -30,12 +32,12 @@ from ._iterative import (
 
 
 def _least_squares_solve(
-    matrix,
-    right_hand_side,
+    matrix: Array,
+    right_hand_side: Array,
     precision: NonlinearPrecisionPolicy,
     linear: LinearSolvePolicy | None,
     /,
-):
+) -> LinearSolveResult:
     linear_ = LinearSolvePolicy(DenseSVD()) if linear is None else linear
     if not isinstance(linear_, LinearSolvePolicy):
         raise TypeError("linear must be LinearSolvePolicy or None.")
@@ -111,7 +113,7 @@ def _least_squares_objective(
     args: Any,
     /,
     precision: NonlinearPrecisionPolicy,
-):
+) -> Array:
     residual, _ = problem.value(parameters, args)
     flat = precision.accumulation(ravel_pytree(residual)[0])
     return precision.decision(0.5 * jnp.real(jnp.sum(jnp.conj(flat) * flat)))
@@ -294,13 +296,13 @@ def certify_least_squares_physical(
 
 
 def _independent_active_multipliers(
-    gradient,
-    equality_jacobian,
-    inequality_jacobian,
-    active_mask,
-    precision,
-    linear,
-):
+    gradient: Array,
+    equality_jacobian: Array,
+    inequality_jacobian: Array,
+    active_mask: Array,
+    precision: NonlinearPrecisionPolicy,
+    linear: LinearSolvePolicy | None,
+) -> tuple[Array, Array]:
     active_indices = [
         int(index) for index in jax.device_get(jnp.where(active_mask)[0]).tolist()
     ]

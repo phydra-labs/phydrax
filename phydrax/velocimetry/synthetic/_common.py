@@ -56,7 +56,7 @@ class SyntheticEvidence(StrictModule, NonTrainableState):
         finite: bool,
         status: str,
         source_id: str,
-    ):
+    ) -> None:
         capacity_ = int(capacity)
         count = int(generated_count)
         status_ = str(status)

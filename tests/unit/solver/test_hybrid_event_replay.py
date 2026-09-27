@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -20,7 +22,7 @@ from phydrax.solver._hybrid_schedule import (
 )
 
 
-def _event():
+def _event() -> Any:
     guard = HybridGuardPlan(
         lambda time, state, args: state[0] - 0.5,
         guard_id="scale-guard",
@@ -35,7 +37,7 @@ def _event():
     )
 
 
-def test_prepared_schedule_emits_replayable_log_jacobian_tape():
+def test_prepared_schedule_emits_replayable_log_jacobian_tape() -> None:
     schedule = HybridSchedulePlan(
         (ScheduledHybridGuard(_event().guard_plan, event=_event()),),
         maximum_events=2,
@@ -59,7 +61,7 @@ def test_prepared_schedule_emits_replayable_log_jacobian_tape():
     assert jnp.isclose(result.tape.total_log_abs_determinant, jnp.log(3.0))
 
 
-def test_full_hybrid_tape_preserves_last_committed_event():
+def test_full_hybrid_tape_preserves_last_committed_event() -> None:
     event = _event()
     policy = HybridReplayPolicy(1)
     localized = localize_hybrid_event(
@@ -86,7 +88,7 @@ def test_full_hybrid_tape_preserves_last_committed_event():
     assert jnp.array_equal(committed.event_indices, overflowed.event_indices)
 
 
-def test_matrix_free_hybrid_jvp_vjp_are_transposes():
+def test_matrix_free_hybrid_jvp_vjp_are_transposes() -> None:
     plan = _event()
     state = jnp.asarray([0.5])
     tangent = jnp.asarray([0.3])
@@ -103,7 +105,7 @@ def test_matrix_free_hybrid_jvp_vjp_are_transposes():
     )
 
 
-def _timed_event(root, reset_shift, plan_id, *, priority=0):
+def _timed_event(root: Any, reset_shift: Any, plan_id: Any, *, priority: Any = 0) -> Any:
     guard = HybridGuardPlan(
         lambda time, state, args: state[0] - root,
         priority=priority,
@@ -118,7 +120,7 @@ def _timed_event(root, reset_shift, plan_id, *, priority=0):
     )
 
 
-def test_schedule_selects_earliest_root_before_priority_and_applies_its_reset():
+def test_schedule_selects_earliest_root_before_priority_and_applies_its_reset() -> None:
     late_event = _timed_event(0.75, 20.0, "late-high-priority", priority=100)
     late = ScheduledHybridGuard(late_event.guard_plan, event=late_event)
     early_event = _timed_event(0.25, 10.0, "early-low-priority", priority=-100)
@@ -138,7 +140,7 @@ def test_schedule_selects_earliest_root_before_priority_and_applies_its_reset():
     assert jnp.allclose(result.event_states_after[0], jnp.asarray([10.25]))
 
 
-def test_schedule_uses_priority_to_resolve_simultaneous_roots():
+def test_schedule_uses_priority_to_resolve_simultaneous_roots() -> None:
     low_event = _timed_event(0.5, 10.0, "simultaneous-low-priority", priority=0)
     low = ScheduledHybridGuard(low_event.guard_plan, event=low_event)
     high_event = _timed_event(0.5, 20.0, "simultaneous-high-priority", priority=1)

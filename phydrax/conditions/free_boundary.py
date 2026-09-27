@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from phydrax.domain import DomainComponent, DomainFunction
 
@@ -62,7 +62,9 @@ def InterfaceFluxJump(
 
     target = _condition_value(jump, on, 0.0)
 
-    def residual(inside, outside, level_set):
+    def residual(
+        inside: DomainFunction, outside: DomainFunction, level_set: DomainFunction
+    ) -> DomainFunction:
         normal = level_set_normal(
             level_set,
             var=spatial_var,
@@ -81,8 +83,8 @@ def InterfaceFluxJump(
             var=spatial_var,
             mode=mode,
         )
-        inside_flux = -inside_conductivity * inside_normal
-        outside_flux = -outside_conductivity * outside_normal
+        inside_flux = -(inside_conductivity * inside_normal)
+        outside_flux = -(outside_conductivity * outside_normal)
         return outside_flux - inside_flux - target
 
     return Residual(
@@ -106,7 +108,9 @@ def InterfaceKinematic(
 ) -> Residual:
     """Enforce ``partial_t(phi) + V_n |grad(phi)| = 0``."""
 
-    def residual(level_set, normal_speed):
+    def residual(
+        level_set: DomainFunction, normal_speed: DomainFunction
+    ) -> DomainFunction:
         return dt(level_set, var=time_var, mode=mode) + normal_speed * (
             level_set_gradient_norm(level_set, var=spatial_var, mode=mode)
         )
@@ -140,7 +144,9 @@ def StefanBalance(
     The residual is ``rho_L V_n + k_in d_n T_in - k_out d_n T_out``.
     """
 
-    def residual(inside, outside, level_set):
+    def residual(
+        inside: DomainFunction, outside: DomainFunction, level_set: DomainFunction
+    ) -> DomainFunction:
         normal = level_set_normal(
             level_set,
             var=spatial_var,
@@ -195,7 +201,9 @@ def YoungLaplaceJump(
 ) -> Residual:
     """Enforce ``p_inside - p_outside = surface_tension * curvature``."""
 
-    def residual(inside, outside, level_set):
+    def residual(
+        inside: DomainFunction, outside: DomainFunction, level_set: DomainFunction
+    ) -> DomainFunction:
         curvature = level_set_curvature(
             level_set,
             var=spatial_var,
@@ -229,7 +237,9 @@ def GibbsThomson(
 
     target = _condition_value(melting_temperature, on, 0.0)
 
-    def residual(temperature, level_set):
+    def residual(
+        temperature: DomainFunction, level_set: DomainFunction
+    ) -> DomainFunction:
         curvature = level_set_curvature(
             level_set,
             var=spatial_var,
@@ -263,7 +273,9 @@ def InterfaceTractionJump(
 
     target = _condition_value(surface_force, on, 0.0)
 
-    def residual(inside, outside, level_set):
+    def residual(
+        inside: DomainFunction, outside: DomainFunction, level_set: DomainFunction
+    ) -> DomainFunction:
         normal = level_set_normal(
             level_set,
             var=spatial_var,

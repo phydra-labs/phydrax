@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -10,7 +12,7 @@ from phydrax.nn.operator.representations import (
 )
 
 
-def _mixed_layout(dimension=2):
+def _mixed_layout(dimension: Any = 2) -> Any:
     return TensorFieldLayout(
         (
             TensorFieldBlock(
@@ -30,7 +32,7 @@ def _mixed_layout(dimension=2):
     )
 
 
-def test_tensor_layout_round_trips_packed_fields_and_schema():
+def test_tensor_layout_round_trips_packed_fields_and_schema() -> None:
     layout = _mixed_layout()
     values = jnp.arange(5 * layout.channel_count, dtype="float64").reshape(
         5, layout.channel_count
@@ -48,7 +50,7 @@ def test_tensor_layout_round_trips_packed_fields_and_schema():
     assert TensorFieldLayout.from_dict(layout.to_dict()).to_dict() == layout.to_dict()
 
 
-def test_tensor_actions_respect_variance_rank_and_reflection_parity():
+def test_tensor_actions_respect_variance_rank_and_reflection_parity() -> None:
     reflection = jnp.diag(jnp.array([1.0, -1.0]))
     vector = TensorType(("contravariant",), dimension=2)
     covector = TensorType(("covariant",), dimension=2)
@@ -70,7 +72,9 @@ def test_tensor_actions_respect_variance_rank_and_reflection_parity():
     assert jnp.array_equal(rank_two.transform(matrix, reflection), expected)
 
 
-def test_tensor_normalization_contract_rejects_non_equivariant_affine_statistics():
+def test_tensor_normalization_contract_rejects_non_equivariant_affine_statistics() -> (
+    None
+):
     layout = _mixed_layout()
     valid_scale = (2.0, 3.0, 4.0, 4.0, 5.0)
     valid_offset = (1.0, -2.0, 0.0, 0.0, 0.0)
@@ -97,7 +101,9 @@ def test_tensor_normalization_contract_rejects_non_equivariant_affine_statistics
         (FiniteOrthogonalGroup.cube_orthogonal, 48, False),
     ),
 )
-def test_builtin_finite_groups_have_exact_group_metadata(construct, order, proper):
+def test_builtin_finite_groups_have_exact_group_metadata(
+    construct: Any, order: Any, proper: Any
+) -> None:
     group = construct()
     assert group.order == order
     assert group.is_proper is proper
@@ -113,7 +119,7 @@ def test_builtin_finite_groups_have_exact_group_metadata(construct, order, prope
     assert restored.fingerprint == group.fingerprint
 
 
-def test_finite_group_field_actions_compose_for_mixed_tensor_fields_under_jit():
+def test_finite_group_field_actions_compose_for_mixed_tensor_fields_under_jit() -> None:
     group = FiniteOrthogonalGroup.d4()
     layout = _mixed_layout()
     values = jnp.arange(5 * 5 * layout.channel_count, dtype="float64").reshape(

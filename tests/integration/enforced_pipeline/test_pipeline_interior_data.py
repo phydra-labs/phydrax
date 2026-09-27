@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax.axes as cx
@@ -10,7 +13,7 @@ from phydrax.domain import Interval1d, PointBatch, SampleLayout, TimeInterval
 from phydrax.enforcement import EnforcementProgram, InteriorAnchors
 
 
-def _paired_batch(domain, xs, ts):
+def _paired_batch(domain: Any, xs: Any, ts: Any) -> Any:
     structure = SampleLayout((("x", "t"),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
@@ -28,13 +31,13 @@ def _paired_batch(domain, xs, ts):
     return PointBatch(points=points, structure=structure)
 
 
-def test_unified_interior_data_tracks_and_scattered():
+def test_unified_interior_data_tracks_and_scattered() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return x[0] * 0.0 + t * 0.0
 
     scattered = InteriorAnchors(
@@ -70,13 +73,13 @@ def test_unified_interior_data_tracks_and_scattered():
     assert jnp.allclose(out, expected, atol=1e-3)
 
 
-def test_enforced_interior_data_hermite_track_matches_curve():
+def test_enforced_interior_data_hermite_track_matches_curve() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return x[0] * 0.0 + t * 0.0
 
     tracks = InteriorAnchors(

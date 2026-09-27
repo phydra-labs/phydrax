@@ -8,7 +8,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._trainable import NonTrainableState
@@ -22,7 +22,7 @@ class LatticeBoltzmannFixedStepMethod(AbstractFixedStepMethod, NonTrainableState
     dynamics: PreparedLatticeBoltzmannDynamics
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, dynamics: PreparedLatticeBoltzmannDynamics, /):
+    def __init__(self, dynamics: PreparedLatticeBoltzmannDynamics, /) -> None:
         if not isinstance(dynamics, PreparedLatticeBoltzmannDynamics):
             raise TypeError("dynamics must be PreparedLatticeBoltzmannDynamics.")
         self.dynamics = dynamics

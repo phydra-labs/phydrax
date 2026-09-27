@@ -5,13 +5,14 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..linalg import (
     ArraySpace,
     DenseLinearOperator,
     DenseLU,
     LinearSolvePolicy,
+    LinearSolveResult,
     LinearSystem,
     solve,
 )
@@ -19,7 +20,7 @@ from ..linalg import (
 
 def gauss_newton_update(
     jacobian: ArrayLike, residual: ArrayLike, regularization: float = 0.0, /
-):
+) -> LinearSolveResult:
     j = jnp.asarray(jacobian)
     r = jnp.asarray(residual)
     if not isfinite(regularization) or regularization < 0:

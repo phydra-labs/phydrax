@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -52,7 +53,7 @@ class DetectorConditions(StrictModule, NonTrainableState):
         alignment_id: str,
         calibration_id: str,
         validity_interval: tuple[int, int],
-    ):
+    ) -> None:
         magnetic = jnp.asarray(magnetic_field)
         electric = jnp.asarray(electric_field, dtype=magnetic.dtype)
         if magnetic.shape != (3,) or electric.shape != (3,):
@@ -127,7 +128,7 @@ class DetectorResourcePlan(StrictModule, NonTrainableState):
         hit_capacity: int,
         channel_capacity: int,
         maximum_storage_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         capacities = tuple(
             map(
                 int,
@@ -190,7 +191,7 @@ class TransportTrackBank(StrictModule, NonTrainableState):
         charges: ArrayLike,
         active: ArrayLike,
         conditions_id: str,
-    ):
+    ) -> None:
         event_ids_ = jnp.asarray(event_ids)
         tracks = jnp.asarray(track_ids, dtype=jnp.int32)
         parents = jnp.asarray(parent_track_ids, dtype=jnp.int32)
@@ -266,7 +267,7 @@ class TruthStepBank(StrictModule, NonTrainableState):
         deposited_energy: ArrayLike,
         active: ArrayLike,
         conditions_id: str,
-    ):
+    ) -> None:
         event_ids_ = jnp.asarray(event_ids)
         tracks = jnp.asarray(track_indices, dtype=jnp.int32)
         elements = jnp.asarray(detector_element_ids, dtype=jnp.int32)
@@ -345,7 +346,7 @@ class SensitiveHitBank(StrictModule, NonTrainableState):
         energies: ArrayLike,
         active: ArrayLike,
         conditions_id: str,
-    ):
+    ) -> None:
         event_ids_ = jnp.asarray(event_ids)
         hit_ids_ = jnp.asarray(hit_ids, dtype=jnp.int32)
         elements = jnp.asarray(detector_element_ids, dtype=jnp.int32)
@@ -413,7 +414,7 @@ class DigitBank(StrictModule, NonTrainableState):
         active: ArrayLike,
         saturated: ArrayLike,
         conditions_id: str,
-    ):
+    ) -> None:
         event_ids_ = jnp.asarray(event_ids)
         digits = jnp.asarray(digit_ids, dtype=jnp.int32)
         channels = jnp.asarray(channel_ids, dtype=jnp.int32)

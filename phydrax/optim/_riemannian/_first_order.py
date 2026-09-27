@@ -12,7 +12,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ..._strict import StrictModule
 from ._parameter_geometry import ParameterGeometry
@@ -64,7 +65,7 @@ class RiemannianStepMetrics(StrictModule):
         pair_accepted: Array | None = None,
         adaptive_denominator_minimum: Array | None = None,
         adaptive_denominator_maximum: Array | None = None,
-    ):
+    ) -> None:
         zero = jnp.zeros_like(jnp.asarray(gradient_norm))
         self.learning_rate = learning_rate
         self.gradient_norm = gradient_norm
@@ -126,7 +127,7 @@ class RiemannianSGDState(StrictModule):
         self,
         step: Array,
         metrics: RiemannianStepMetrics,
-    ):
+    ) -> None:
         self.step = step
         self.metrics = metrics
 
@@ -141,7 +142,7 @@ class RiemannianMomentumState(StrictModule):
         step: Array,
         momentum: PyTree[Array],
         metrics: RiemannianStepMetrics,
-    ):
+    ) -> None:
         self.step = step
         self.momentum = momentum
         self.metrics = metrics
@@ -187,7 +188,7 @@ class RiemannianSGD(AbstractRiemannianOptimizer):
         *,
         learning_rate: LearningRate = 1e-2,
         max_gradient_norm: float | None = None,
-    ):
+    ) -> None:
         if not isinstance(parameter_geometry, ParameterGeometry):
             raise TypeError("parameter_geometry must be a ParameterGeometry.")
         if isinstance(learning_rate, (int, float)):
@@ -327,7 +328,7 @@ class RiemannianMomentum(AbstractRiemannianOptimizer):
         learning_rate: LearningRate = 1e-2,
         momentum: float = 0.9,
         max_gradient_norm: float | None = None,
-    ):
+    ) -> None:
         if not isinstance(parameter_geometry, ParameterGeometry):
             raise TypeError("parameter_geometry must be a ParameterGeometry.")
         if isinstance(learning_rate, (int, float)):

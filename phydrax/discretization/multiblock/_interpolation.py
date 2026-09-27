@@ -9,7 +9,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -48,7 +49,7 @@ class NormCompatibleInterpolationPlan(StrictModule, NonTrainableState):
         /,
         *,
         interpolation_order: int = 4,
-    ):
+    ) -> None:
         left_x = np.asarray(left_coordinates, dtype=np.float64).reshape((-1,))
         right_x = np.asarray(right_coordinates, dtype=np.float64).reshape((-1,))
         left_h = np.asarray(left_weights, dtype=np.float64).reshape((-1,))

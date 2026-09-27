@@ -9,11 +9,14 @@ from typing import Any, cast, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field
+from ..typing import parse
 from ._costs import PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
 from ._operators import AbstractLinearOperator, AdjointLinearOperator
@@ -63,7 +66,7 @@ class SubspaceCorrectionTerm(StrictModule):
         prolongation: AbstractLinearOperator,
         local_solver: PreconditionerSource,
         /,
-    ):
+    ) -> None:
         if not isinstance(restriction, AbstractLinearOperator) or not isinstance(
             prolongation, AbstractLinearOperator
         ):
@@ -360,7 +363,7 @@ class AdditiveSubspaceCorrectionPreconditioner(AbstractPreconditioner):
         properties: PreconditionerProperties | None = None,
         builder_id: str | None = None,
         preconditioner_id: str | None = None,
-    ):
+    ) -> None:
         terms_ = _validate_terms(terms)
         local_operators = _local_setup_operators(terms_, setup_operator)
         _validate_prepared_terms(terms_, local_operators)
@@ -448,9 +451,8 @@ class MultiplicativeSubspaceCorrectionPreconditioner(AbstractPreconditioner):
         properties: PreconditionerProperties | None = None,
         builder_id: str | None = None,
         preconditioner_id: str | None = None,
-    ):
-        if sweep not in ("forward", "backward", "symmetric"):
-            raise ValueError("sweep must be 'forward', 'backward', or 'symmetric'.")
+    ) -> None:
+        sweep = parse(sweep, SubspaceCorrectionSweep, "sweep")
         terms_ = _validate_terms(terms)
         local_operators = _local_setup_operators(terms_, setup_operator)
         _validate_prepared_terms(terms_, local_operators)
@@ -640,7 +642,7 @@ class AdditiveSubspaceCorrectionBuilder(AbstractPreconditionerBuilder):
         /,
         *,
         properties: PreconditionerProperties | None = None,
-    ):
+    ) -> None:
         terms_ = _validate_terms(terms)
         if properties is not None and not isinstance(
             properties, PreconditionerProperties
@@ -762,9 +764,8 @@ class MultiplicativeSubspaceCorrectionBuilder(AbstractPreconditionerBuilder):
         *,
         sweep: SubspaceCorrectionSweep = "forward",
         properties: PreconditionerProperties | None = None,
-    ):
-        if sweep not in ("forward", "backward", "symmetric"):
-            raise ValueError("sweep must be 'forward', 'backward', or 'symmetric'.")
+    ) -> None:
+        sweep = parse(sweep, SubspaceCorrectionSweep, "sweep")
         terms_ = _validate_terms(terms)
         if properties is not None and not isinstance(
             properties, PreconditionerProperties

@@ -14,8 +14,9 @@ import jax.numpy as jnp
 import numpy as np
 from jax.extend import core as jax_core
 
+from ._dtype_names import precision_dtype_name, ScalarPrecisionDType
 from ._fingerprint import canonical_fingerprint
-from ._precision import precision_dtype_name, ScalarPrecisionDType
+from .typing import parse
 
 
 RewritePrimitive: TypeAlias = Literal[
@@ -99,15 +100,8 @@ class PrecisionRewriteRule:
         accumulator_dtype: Any,
         output_dtype: Any,
         precision: Literal["default", "high", "highest"] = "high",
-    ):
-        if primitive not in (
-            "dot_general",
-            "conv_general_dilated",
-            "reduce_sum",
-            "reduce_prod",
-            "elementwise",
-        ):
-            raise ValueError(f"Unsupported rewrite primitive family {primitive!r}.")
+    ) -> None:
+        primitive = parse(primitive, RewritePrimitive, "primitive")
         if precision not in ("default", "high", "highest"):
             raise ValueError("precision must be default, high, or highest.")
         object.__setattr__(self, "primitive", primitive)
@@ -127,7 +121,7 @@ class PrecisionRewritePolicy:
         self,
         rules: Sequence[PrecisionRewriteRule],
         unsupported: Literal["error", "recorded-pass-through"] = "error",
-    ):
+    ) -> None:
         rules_ = tuple(rules)
         if not rules_ or not all(
             isinstance(rule, PrecisionRewriteRule) for rule in rules_
@@ -188,7 +182,7 @@ class PrecisionSelectionPolicy:
         absolute_tolerance: float = 1e-6,
         warmups: int = 1,
         repeats: int = 3,
-    ):
+    ) -> None:
         candidates_ = tuple(candidates)
         if mode not in ("compatible", "calibrated"):
             raise ValueError("Selection mode must be compatible or calibrated.")
@@ -289,7 +283,7 @@ def _rewrite_jaxpr(
     /,
     *,
     allow_boundary_dtype_change: bool,
-):
+) -> tuple[Any, tuple[tuple[str, str], ...]]:
     rules = _rule_map(policy)
     equations = []
     records: list[tuple[str, str]] = []
@@ -476,14 +470,14 @@ def _execute_jaxpr(
     environment: dict[Any, Any] = {}
     rule_map = {rule.primitive: rule for rule in rules}
 
-    def read(variable):
+    def read(variable: object) -> Any:
         if isinstance(variable, jax_core.Literal):
             return variable.val
         if type(variable) is not jax_core.Var:
             raise TypeError("Precision JAXPR inputs must be Literal or Var atoms.")
         return environment[variable]
 
-    def write(variable, value):
+    def write(variable: object, value: Any) -> None:
         if type(variable) is jax_core.Var:
             environment[variable] = value
         elif not isinstance(variable, jax_core.Var):
@@ -528,7 +522,7 @@ def _execute_jaxpr(
     return [read(variable) for variable in closed_jaxpr.jaxpr.outvars]
 
 
-def execute_precision_rewrite(plan: PrecisionRewritePlan, *args: Any):
+def execute_precision_rewrite(plan: PrecisionRewritePlan, *args: Any) -> Any:
     """Execute one prepared rewrite after exact input/device validation."""
     if not isinstance(plan, PrecisionRewritePlan):
         raise TypeError("plan must be a PrecisionRewritePlan.")

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -24,8 +27,9 @@ from phydrax.metrix import (
 )
 
 
-def test_complex_structure_family_preserves_pivot_and_evaluates_deformations():
+def test_complex_structure_family_preserves_pivot_and_evaluates_deformations() -> None:
     base = TrainableHomogeneousHypersurface(
+        # ty: ignore[invalid-argument-type]
         ((2, 0), (1, 1), (0, 2)),
         jnp.asarray((1.0 + 0.0j, 0.0j, 1.0 + 0.0j)),
         pivot=0,
@@ -34,6 +38,7 @@ def test_complex_structure_family_preserves_pivot_and_evaluates_deformations():
     family = ComplexStructureFamilyPlan(
         base,
         ("cross-term",),
+        # ty: ignore[invalid-argument-type]
         ((0.0, 1.0, 0.0),),
     )
     evidence = assess_complex_structure_family(family)
@@ -44,7 +49,7 @@ def test_complex_structure_family_preserves_pivot_and_evaluates_deformations():
     np.testing.assert_allclose(deformed.coefficients, (1.0, 0.25, 1.0))
 
 
-def test_chern_character_form_and_sampled_number_use_explicit_convention():
+def test_chern_character_form_and_sampled_number_use_explicit_convention() -> None:
     curvature = jnp.asarray(
         [
             [[[-2.0j * np.pi]]],
@@ -81,7 +86,7 @@ def test_chern_character_form_and_sampled_number_use_explicit_convention():
     np.testing.assert_allclose(second_character.coefficients[0, 0], 1.0, atol=1e-12)
 
 
-def _measure():
+def _measure() -> Any:
     points = jnp.asarray(
         (
             (1.0 + 0.0j, 0.0j),
@@ -92,12 +97,16 @@ def _measure():
     )
     samples = ProjectiveLineSamples(
         homogeneous_points=points,
+        # ty: ignore[invalid-argument-type]
         chart_indices=(0, 1, 0, 0),
+        # ty: ignore[invalid-argument-type]
         pivot_indices=(1, 0, 1, 1),
         polynomial_residuals=jnp.zeros((4,)),
         smoothness_margins=jnp.ones((4,)),
         valid=jnp.ones((4,), dtype="bool"),
+        # ty: ignore[invalid-argument-type]
         line_ids=(0, 1, 2, 3),
+        # ty: ignore[invalid-argument-type]
         root_ids=(0, 0, 0, 0),
     )
     return ProjectiveMeasureTarget(
@@ -107,7 +116,7 @@ def _measure():
     )
 
 
-def test_sampled_harmonic_moduli_observables_report_wp_yukawa_and_batch_errors():
+def test_sampled_harmonic_moduli_observables_report_wp_yukawa_and_batch_errors() -> None:
     measure = _measure()
     representatives = jnp.asarray(
         (
@@ -138,7 +147,7 @@ def test_sampled_harmonic_moduli_observables_report_wp_yukawa_and_batch_errors()
     assert bool(result.authoritative)
 
 
-def test_algebraic_representatives_never_promote_to_harmonic_authority():
+def test_algebraic_representatives_never_promote_to_harmonic_authority() -> None:
     measure = _measure()
     representatives = jnp.ones((4, 1, 1), dtype=jnp.complex128)
     yukawa = jnp.ones((4, 1, 1, 1), dtype=jnp.complex128)
@@ -156,7 +165,7 @@ def test_algebraic_representatives_never_promote_to_harmonic_authority():
     assert "not-harmonic" in result.claim
 
 
-def test_projective_integral_masks_invalid_sample_values_before_reduction():
+def test_projective_integral_masks_invalid_sample_values_before_reduction() -> None:
     points = jnp.asarray(
         (
             (1.0 + 0.0j, 0.0j),
@@ -166,12 +175,16 @@ def test_projective_integral_masks_invalid_sample_values_before_reduction():
     )
     samples = ProjectiveLineSamples(
         homogeneous_points=points,
+        # ty: ignore[invalid-argument-type]
         chart_indices=(0, 1, 0),
+        # ty: ignore[invalid-argument-type]
         pivot_indices=(1, 0, 1),
         polynomial_residuals=jnp.zeros((3,)),
         smoothness_margins=jnp.ones((3,)),
         valid=jnp.asarray((True, False, True)),
+        # ty: ignore[invalid-argument-type]
         line_ids=(0, 1, 2),
+        # ty: ignore[invalid-argument-type]
         root_ids=(0, 0, 0),
     )
     target = ProjectiveMeasureTarget(

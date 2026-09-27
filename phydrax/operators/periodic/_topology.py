@@ -11,7 +11,9 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -38,11 +40,11 @@ class PeriodicBandManifold(StrictModule, NonTrainableState):
     def __init__(
         self,
         spectrum: PeriodicSpectrumResult,
-        band_indices: ArrayLike,
+        band_indices: npt.ArrayLike,
         /,
         *,
         gap_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(spectrum, PeriodicSpectrumResult):
             raise TypeError("spectrum must be PeriodicSpectrumResult.")
         if not bool(spectrum.successful):
@@ -117,7 +119,7 @@ class PeriodicCrossKConnection(StrictModule, NonTrainableState):
         *,
         reverse_tolerance: float = 1.0e-10,
         maximum_matrix_entries: int = 8_000_000,
-    ):
+    ) -> None:
         if not isinstance(connectivity, PreparedReciprocalConnectivity):
             raise TypeError("connectivity must be PreparedReciprocalConnectivity.")
         matrix = np.asarray(matrices)
@@ -188,7 +190,7 @@ class PeriodicOverlapBundle(StrictModule, NonTrainableState):
         raw_overlaps: ArrayLike | None = None,
         source_id: str | None = None,
         link_singular_value_floor: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(manifold, PeriodicBandManifold):
             raise TypeError("Overlap bundle requires PeriodicBandManifold.")
         connection: PeriodicCrossKConnection | None
@@ -322,7 +324,7 @@ class PeriodicWilsonPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_links: int = 1_000_000,
-    ):
+    ) -> None:
         if not isinstance(bundle, PeriodicOverlapBundle):
             raise TypeError("bundle must be PeriodicOverlapBundle.")
         edges = np.asarray(ordered_edges)
@@ -407,7 +409,7 @@ class PeriodicChernRefinementEvidence(StrictModule, NonTrainableState):
         fine_chern: float,
         tolerance: float,
         /,
-    ):
+    ) -> None:
         coarse_shape = tuple(coarse_mesh_shape)
         fine_shape = tuple(fine_mesh_shape)
         coarse = float(coarse_chern)
@@ -473,7 +475,7 @@ class PeriodicChernPlan(StrictModule, NonTrainableState):
         refinement: PeriodicChernRefinementEvidence | None = None,
         require_refinement: bool = False,
         quantization_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         if not isinstance(bundle, PeriodicOverlapBundle):
             raise TypeError("bundle must be PeriodicOverlapBundle.")
         if bundle.connectivity.plaquette_count == 0:

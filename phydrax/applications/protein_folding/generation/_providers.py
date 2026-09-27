@@ -3,17 +3,24 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Unpack
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
+from ....artifacts import ScientificArtifactEnvelope
 from ....atomistic import AtomisticBatch
 from ....qualification import ReferenceArtifactManifest
-from ....units import conversion_factor
+from ....typing import PRNGKey
+from ....units import conversion_factor, UnitDefinition
 from ..._coordinate_generation._native import (
     CoordinateFitResult,
     sample_coordinate_proposals,
@@ -23,11 +30,14 @@ from ..._coordinate_generation._support import (
     CoordinateGeometryPolicy,
     CoordinateResourcePolicy,
     prepare_coordinate_support,
+    PreparedCoordinateSupport,
 )
+from .._binding import PreparedProteinBinding
 from .._construct import ProteinAtomKey, ProteinConstruct
-from .._hypotheses import ProteinStructureHypothesis
+from .._hypotheses import ProteinSourceAtom, ProteinStructureHypothesis
 from .._qualification import PreparedProteinQualification, ProteinGeometryEvidence
 from ._internal_coordinates import (
+    _InternalCoordinateOptions,
     prepare_protein_coordinate_decoder,
     PreparedProteinCoordinateDecoder,
     ProteinDecodedCoordinates,
@@ -41,20 +51,20 @@ class ProteinProviderHypotheses:
 
 
 def import_protein_hypotheses(
-    construct,
-    source_atoms,
-    positions,
-    length_unit,
-    sources,
+    construct: ProteinConstruct,
+    source_atoms: Iterable[ProteinSourceAtom],
+    positions: npt.ArrayLike,
+    length_unit: UnitDefinition,
+    sources: Iterable[ScientificArtifactEnvelope],
     *,
-    provenance,
-    confidence=None,
-    resources=CoordinateResourcePolicy(),
-    commercial_use=False,
-    training_use=False,
-    redistribution=False,
-    export=False,
-):
+    provenance: CoordinateProviderProvenance,
+    confidence: Iterable[Iterable[tuple[str, float]]] | None = None,
+    resources: CoordinateResourcePolicy = CoordinateResourcePolicy(),
+    commercial_use: bool = False,
+    training_use: bool = False,
+    redistribution: bool = False,
+    export: bool = False,
+) -> ProteinProviderHypotheses:
     """Import all explicitly mapped user-supplied outputs; confidence stays provider-specific."""
     rights = provenance.admit(
         commercial_use=commercial_use,
@@ -102,14 +112,14 @@ def import_protein_hypotheses(
 
 
 def prepare_protein_coordinate_support(
-    construct,
-    template,
-    atom_ids,
+    construct: ProteinConstruct,
+    template: AtomisticBatch,
+    atom_ids: Mapping[ProteinAtomKey, int],
     *,
-    gauge_atom_ids,
-    geometry,
-    resources=CoordinateResourcePolicy(),
-):
+    gauge_atom_ids: Sequence[int],
+    geometry: CoordinateGeometryPolicy,
+    resources: CoordinateResourcePolicy = CoordinateResourcePolicy(),
+) -> PreparedCoordinateSupport:
     """Bind real residue/atom tokens to existing stable atomistic IDs."""
     if not isinstance(construct, ProteinConstruct):
         raise TypeError("Protein generation requires an explicit ProteinConstruct.")
@@ -135,9 +145,13 @@ def prepare_protein_coordinate_support(
     tokens, names = [], []
     lookup = {key: index for index, key in enumerate(keys)}
     for atom_id, mask in zip(ids, active, strict=True):
-        key = reverse[int(atom_id)] if mask else None
-        tokens.append(lookup[key.residue] if mask else -1)
-        names.append(key.atom_name if mask else "")
+        if mask:
+            key = reverse[int(atom_id)]
+            tokens.append(lookup[key.residue])
+            names.append(key.atom_name)
+        else:
+            tokens.append(-1)
+            names.append("")
     labels = tuple(
         "protein:" + amino for sequence in construct.sequences for amino in sequence
     )
@@ -154,8 +168,13 @@ def prepare_protein_coordinate_support(
 
 
 def map_protein_hypothesis(
-    hypothesis, support, atom_ids, *, training_use=False, commercial_use=False
-):
+    hypothesis: ProteinStructureHypothesis,
+    support: PreparedCoordinateSupport,
+    atom_ids: Mapping[ProteinAtomKey, int],
+    *,
+    training_use: bool = False,
+    commercial_use: bool = False,
+) -> Array:
     """Map a full raw hypothesis into the model ABI without changing the raw object."""
     hypothesis.require_rights(training_use=training_use, commercial_use=commercial_use)
     if hypothesis.construct.fingerprint() != support.construct_id:
@@ -199,12 +218,12 @@ def map_protein_hypothesis(
 
 
 def prepare_bound_protein_coordinate_generation(
-    binding,
-    qualification,
+    binding: PreparedProteinBinding,
+    qualification: PreparedProteinQualification,
     *,
-    resources=CoordinateResourcePolicy(),
-    **decoder_options,
-):
+    resources: CoordinateResourcePolicy = CoordinateResourcePolicy(),
+    **decoder_options: Unpack[_InternalCoordinateOptions],
+) -> tuple[PreparedCoordinateSupport, PreparedProteinCoordinateDecoder]:
     """Bind sparse support and internal decoding to one full protein qualification."""
     if not isinstance(qualification, PreparedProteinQualification):
         raise TypeError("Full PreparedProteinQualification evidence is required.")
@@ -227,7 +246,7 @@ def prepare_bound_protein_coordinate_generation(
     bond_rows = np.asarray(qualification.bond_indices)
     chiral_rows = np.asarray(qualification.chirality_indices)
     geometry = CoordinateGeometryPolicy(
-        tuple(tuple(int(ids[index]) for index in row) for row in bond_rows),
+        tuple((int(ids[left]), int(ids[right])) for left, right in bond_rows),
         tuple(
             (float(lower), float(upper))
             for lower, upper in zip(
@@ -236,7 +255,10 @@ def prepare_bound_protein_coordinate_generation(
                 strict=True,
             )
         ),
-        tuple(tuple(int(ids[index]) for index in row) for row in chiral_rows),
+        tuple(
+            (int(ids[a]), int(ids[b]), int(ids[c]), int(ids[d]))
+            for a, b, c, d in chiral_rows
+        ),
         (1,) * len(chiral_rows),
         qualification.minimum_chiral_volume,
         "full-protein-qualification-sparse-binding:" + qualification.qualification_id,
@@ -307,17 +329,17 @@ class ProteinCoordinateProposalBatch:
 
 
 def sample_protein_coordinate_proposals(
-    fit,
-    key,
-    conditions,
-    qualification,
+    fit: CoordinateFitResult,
+    key: PRNGKey,
+    conditions: ArrayLike,
+    qualification: PreparedProteinQualification,
     *,
-    commercial_use=False,
-    export=False,
-    rtol=1e-5,
-    atol=1e-7,
-    max_steps=1024,
-):
+    commercial_use: bool = False,
+    export: bool = False,
+    rtol: float = 1e-5,
+    atol: float = 1e-7,
+    max_steps: int = 1024,
+) -> ProteinCoordinateProposalBatch:
     """Sample once per request and retain raw, decoded, and every failure gate."""
     if not isinstance(fit, CoordinateFitResult) or not isinstance(
         qualification, PreparedProteinQualification

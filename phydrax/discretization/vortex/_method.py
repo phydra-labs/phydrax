@@ -9,7 +9,9 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.linalg as la
 
@@ -32,6 +34,7 @@ from ._interfaces import (
     VortexDiffusionDiagnostics,
     VortexDiffusionEvaluation,
     VortexFieldRequest,
+    VortexVelocityEvaluation,
 )
 from ._particle import VortexParticleProperties, VortexParticleStateLayout
 from ._source import VortexSourceState, VortexTargetState
@@ -47,7 +50,7 @@ class InviscidVortexDiffusionPlan(AbstractVortexDiffusionPlan):
     plan_id: str = eqx.field(static=True)
     capabilities: VortexDiffusionCapabilities
 
-    def __init__(self, dimension: int, /):
+    def __init__(self, dimension: int, /) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (2, 3):
             raise ValueError("Inviscid vortex diffusion requires dimension 2 or 3.")
@@ -77,7 +80,7 @@ class PreparedInviscidVortexDiffusion(AbstractPreparedVortexDiffusion):
     prepared_id: str = eqx.field(static=True)
     capabilities: VortexDiffusionCapabilities
 
-    def __init__(self, plan: InviscidVortexDiffusionPlan, capacity: int, /):
+    def __init__(self, plan: InviscidVortexDiffusionPlan, capacity: int, /) -> None:
         capacity_ = int(capacity)
         if capacity_ <= 0:
             raise ValueError("Vortex diffusion capacity must be positive.")
@@ -160,7 +163,7 @@ class VortexParticleMethodPlan(StrictModule, NonTrainableState):
         advective_cfl: float = 0.25,
         diffusive_cfl: float = 0.125,
         name: str = "vortex-particle-method",
-    ):
+    ) -> None:
         if not isinstance(velocity, AbstractVortexVelocityPlan):
             raise TypeError("velocity must be an AbstractVortexVelocityPlan.")
         diffusion_ = (
@@ -260,7 +263,7 @@ class PreparedVortexParticleDynamics(StrictModule, NonTrainableState):
         precision: ParticlePrecisionPolicy | None = None,
         background_velocity: BackgroundVortexVelocity | None = None,
         background_velocity_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(particles, ParticleDiscretization):
             raise TypeError("particles must be a ParticleDiscretization.")
         if not isinstance(properties, VortexParticleProperties):
@@ -405,7 +408,17 @@ class PreparedVortexParticleDynamics(StrictModule, NonTrainableState):
         )
         return jnp.where(active, value, 0.0)
 
-    def evaluate(self, time: ArrayLike, state: ArrayLike, args: Any = None, /):
+    def evaluate(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None, /
+    ) -> tuple[
+        Array,
+        Array,
+        Array,
+        Array,
+        Array | None,
+        VortexVelocityEvaluation,
+        VortexDiffusionEvaluation,
+    ]:
         unpacked = self.state_layout.unpack(state)
         active = self.particles.active_mask
         source = VortexSourceState(
@@ -615,7 +628,13 @@ class PreparedVortexParticleDynamics(StrictModule, NonTrainableState):
             advective, diffusive, jnp.minimum(advective, diffusive)
         )
 
-    def linearize(self, time: Array, state: Array, args: Any = None, /):
+    def linearize(
+        self, time: Array, state: Array, args: Any = None, /
+    ) -> tuple[
+        PyTree[Array],
+        Callable[[PyTree[Any]], PyTree[Array]],
+        Callable[[PyTree[Any]], tuple[PyTree[Array]]],
+    ]:
         linearization = la.prepare_linearization(
             lambda current: self(time, current, args), state
         )

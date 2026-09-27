@@ -16,7 +16,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._interpolation import linear_interpolate
 
@@ -144,7 +145,7 @@ class DelayAndSumBeamformingPlan(StrictModule, NonTrainableState):
     image_points: Array
     delays: Array
 
-    def __init__(self, acquisition: SonarAcquisition, image_points: ArrayLike, /):
+    def __init__(self, acquisition: SonarAcquisition, image_points: ArrayLike, /) -> None:
         if not isinstance(acquisition, SonarAcquisition):
             raise TypeError("acquisition must be SonarAcquisition.")
         points = np.asarray(image_points, dtype=np.float64)

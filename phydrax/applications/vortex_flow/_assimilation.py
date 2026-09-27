@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -36,7 +37,7 @@ class VortexObservationSet(StrictModule, NonTrainableState):
         /,
         *,
         kind: str,
-    ):
+    ) -> None:
         matrix, value, deviation = (
             jnp.asarray(operator),
             jnp.asarray(values),
@@ -90,7 +91,7 @@ class VortexDataAssimilationPlan(StrictModule, NonTrainableState):
         /,
         *,
         policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not observations or any(
             not isinstance(observation, VortexObservationSet)
             for observation in observations

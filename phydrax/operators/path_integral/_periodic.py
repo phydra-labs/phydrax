@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 
@@ -42,7 +43,7 @@ class PeriodicPathPlan(StrictModule):
         zero_mode: Literal["confining-potential", "periodic-cell", "fixed-centroid"],
         periodic_cell_lengths: tuple[float, ...] | None = None,
         fixed_centroid: tuple[float, ...] | None = None,
-    ):
+    ) -> None:
         beads = int(bead_count)
         beta, mass_, hbar_ = float(inverse_temperature), float(mass), float(hbar)
         if beads < 2 or any(not np.isfinite(v) or v <= 0.0 for v in (beta, mass_, hbar_)):

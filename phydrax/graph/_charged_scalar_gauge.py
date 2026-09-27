@@ -9,7 +9,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -46,7 +47,7 @@ class ChargedScalarGaugePlan(StrictModule, NonTrainableState):
         /,
         *,
         coupling: float,
-    ):
+    ) -> None:
         vertices_ = np.asarray(vertices, dtype=np.float64)
         faces_ = np.asarray(faces, dtype=np.int32)
         edges_ = np.asarray(edges, dtype=np.int32)

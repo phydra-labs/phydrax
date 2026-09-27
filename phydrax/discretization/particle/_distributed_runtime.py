@@ -7,14 +7,15 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -23,6 +24,25 @@ from ..._trainable import NonTrainableState
 
 if TYPE_CHECKING:
     from ...solver._particle_gravity import DistributedParticleLayout
+
+
+_MigrationOutputs: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+_GhostOutputs: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
 
 
 class DistributedParticleState(StrictModule):
@@ -91,7 +111,7 @@ class DistributedParticleRuntimePlan(StrictModule, NonTrainableState):
         receive_capacity: int | None = None,
         ghost_capacity: int | None = None,
         ghost_width: float = 0.0,
-    ):
+    ) -> None:
         # DistributedParticleLayout lives in the solver layer. Keep this
         # discretization owner structurally typed to avoid a solver import cycle.
         lengths = tuple(float(value) for value in box_size)
@@ -165,7 +185,7 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
 
     def __init__(
         self, plan: DistributedParticleRuntimePlan, mesh: Mesh, axis_name: str, /
-    ):
+    ) -> None:
         if not isinstance(plan, DistributedParticleRuntimePlan):
             raise TypeError("plan must be DistributedParticleRuntimePlan.")
         if not isinstance(mesh, Mesh):
@@ -266,7 +286,7 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
         sentinel = self.total_capacity
         target = jnp.where(valid, target, sentinel)
 
-        def pack(value, fill):
+        def pack(value: Array, fill: ArrayLike) -> Array:
             output = jnp.full(
                 (self.total_capacity + 1,) + value.shape[1:], fill, value.dtype
             )
@@ -363,18 +383,18 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
         key_boundaries = self.plan.layout.key_boundaries
 
         def exchange(
-            old_position,
-            old_momentum,
-            old_mass,
-            old_ids,
-            old_slots,
-            old_active,
-            old_rng,
-            old_owner,
-            new_position,
-            new_momentum,
-            new_rng,
-        ):
+            old_position: Array,
+            old_momentum: Array,
+            old_mass: Array,
+            old_ids: Array,
+            old_slots: Array,
+            old_active: Array,
+            old_rng: Array,
+            old_owner: Array,
+            new_position: Array,
+            new_momentum: Array,
+            new_rng: Array,
+        ) -> _MigrationOutputs:
             del old_owner
             length = jnp.asarray(box_length, dtype=new_position.dtype)
             finite_particle = (
@@ -400,7 +420,7 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
             sentinel = p * s
             target = jnp.where(valid & (rank < s), target, sentinel)
 
-            def send_buffer(value, fill):
+            def send_buffer(value: Array, fill: ArrayLike) -> Array:
                 buffer = jnp.full((p * s + 1,) + value.shape[1:], fill, value.dtype)
                 buffer = buffer.at[target].set(value)
                 return buffer[: p * s].reshape((p, s) + value.shape[1:])
@@ -413,7 +433,7 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
             send_rng = send_buffer(new_rng, 0)
             send_valid = send_buffer(valid, False)
 
-            def route(value):
+            def route(value: Array) -> Array:
                 return jax.lax.all_to_all(
                     value,
                     axis,
@@ -442,7 +462,7 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
                 jnp.where(padded_valid, padded_ids, maximum_id), stable=True
             )[:c]
 
-            def compact(value, fill):
+            def compact(value: Array, fill: ArrayLike) -> Array:
                 padding = jnp.full((c,) + value.shape[1:], fill, value.dtype)
                 return jnp.concatenate((value, padding), axis=0)[order]
 
@@ -464,7 +484,7 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
                 candidate_active, audit_destination * c + audit_rank, p * c
             )
 
-            def audit_buffer(value, fill):
+            def audit_buffer(value: Array, fill: ArrayLike) -> Array:
                 buffer = jnp.full((p * c + 1,), fill, value.dtype)
                 return buffer.at[audit_target].set(value)[: p * c].reshape((p, c))
 
@@ -498,7 +518,7 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
                 == 1
             )
 
-            def commit(candidate, previous):
+            def commit(candidate: Array, previous: Array) -> Array:
                 mask = successful.reshape((1,) * candidate.ndim)
                 return jnp.where(mask, candidate, previous)
 
@@ -624,7 +644,9 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
         left_permutation = tuple((source, (source - 1) % p) for source in range(p))
         right_permutation = tuple((source, (source + 1) % p) for source in range(p))
 
-        def exchange(position, mass, ids, active):
+        def exchange(
+            position: Array, mass: Array, ids: Array, active: Array
+        ) -> _GhostOutputs:
             owner = jax.lax.axis_index(axis).astype(jnp.int32)
             maximum = jnp.asarray(np.iinfo(np.uint32).max, dtype=position.dtype)
             lower = (
@@ -645,7 +667,7 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
             right_mask = active & ((upper - x) <= tolerance)
             maximum_id = jnp.iinfo(ids.dtype).max
 
-            def pack(mask, values, fill):
+            def pack(mask: Array, values: Array, fill: ArrayLike) -> Array:
                 order = jnp.argsort(jnp.where(mask, ids, maximum_id), stable=True)[:g]
                 selected = values[order]
                 selected_mask = mask[order]
@@ -726,7 +748,7 @@ class PreparedDistributedParticleRuntime(StrictModule, NonTrainableState):
         sentinel = n
         index = jnp.where(state.active_mask, state.logical_slots, sentinel)
 
-        def scatter(values, fill):
+        def scatter(values: Array, fill: ArrayLike) -> Array:
             target = jnp.full((n + 1,) + values.shape[1:], fill, values.dtype)
             target = target.at[index].set(values)
             return target[:n]

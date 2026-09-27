@@ -14,7 +14,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -94,7 +95,7 @@ class WaveAMRPhysicsPlan(StrictModule, NonTrainableState):
         reduced_planck_constant: float = 1.0,
         scale: CosmologyScaleContract = CODE_COSMOLOGY_SCALE,
         dtype: Any = np.complex128,
-    ):
+    ) -> None:
         mass = float(boson_mass)
         gravity = float(gravitational_constant)
         hbar = float(reduced_planck_constant)
@@ -160,7 +161,7 @@ class WaveAMRAdaptivityPlan(StrictModule, NonTrainableState):
         current_absolute_tolerance: float = 1.0e-10,
         phase_defect_tolerance: float = 0.75,
         winding_absolute_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -247,7 +248,7 @@ class WaveAMRDiscretizationPlan(StrictModule, NonTrainableState):
         norm_relative_tolerance: float = 1.0e-8,
         self_adjoint_tolerance: float = 1.0e-10,
         maximum_phase_radians: float = 0.75,
-    ):
+    ) -> None:
         if not isinstance(hierarchy, PreparedFDAMRHierarchy):
             raise TypeError("hierarchy must be PreparedFDAMRHierarchy.")
         boundary_ = PeriodicWaveBoundaryDescriptor() if boundary is None else boundary
@@ -490,7 +491,7 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
         topology: BlockHierarchyTopology,
         background: FLRWBackground,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, WaveAMRDiscretizationPlan):
             raise TypeError("plan must be WaveAMRDiscretizationPlan.")
         if not isinstance(physics, WaveAMRPhysicsPlan):
@@ -1217,13 +1218,15 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
                     )
         return count
 
-    def _leaf_node_count(self, values: tuple[Array, ...], /) -> Array:
+    def _leaf_node_count(
+        self, values: tuple[Array, ...], adaptivity: WaveAMRAdaptivityPlan, /
+    ) -> Array:
         power = jnp.abs(self.layout.flatten_cells(values)[:, 0]) ** 2
         leaf_power = jnp.where(self.layout.flat_leaf_mask, power, 0.0)
         maximum = jnp.max(leaf_power)
         return jnp.sum(
             self.layout.flat_leaf_mask
-            & (power <= self.plan.adaptivity.relative_node_floor * maximum)
+            & (power <= adaptivity.relative_node_floor * maximum)
         ).astype(jnp.int32)
 
     def _cell_centers(
@@ -1278,12 +1281,16 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
             )
         if not proposal.successful or not proposal.compilation.status.successful:
             raise ValueError("Cannot transition an unsuccessful Wave AMR proposal.")
+        adaptivity = self.plan.adaptivity
+        # Bound proposals come only from propose_topology, which requires adaptivity.
+        if not (adaptivity is not None):
+            raise RuntimeError("Internal invariant failed: adaptivity is not None.")
         if not proposal.compilation.status.changed:
             values = self.layout.bind_state(checked.psi)
             probability = self.layout.probability(values)
             current = self._integrated_current(values)
             winding = self._phase_winding(values)
-            nodes = self._leaf_node_count(values)
+            nodes = self._leaf_node_count(values, adaptivity)
             vortices = self._leaf_vortex_count(values)
             evidence = WaveAMRTransferEvidence(
                 probability,
@@ -1548,7 +1555,7 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
         physical_density = jnp.where(target_leaf, target_density, 0.0)
         maximum_density = jnp.max(physical_density)
         occupied = target_leaf & (
-            target_density > self.plan.adaptivity.relative_node_floor * maximum_density
+            target_density > adaptivity.relative_node_floor * maximum_density
         )
         density_phase_candidate = jnp.sqrt(
             jnp.where(physical_density >= 0.0, physical_density, jnp.nan)
@@ -1609,14 +1616,14 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
             ein.contract("i,i->", current_delta, current_delta)
         )
         current_defect = jnp.where(
-            source_current_norm > self.plan.adaptivity.current_absolute_tolerance,
+            source_current_norm > adaptivity.current_absolute_tolerance,
             current_absolute_defect / source_current_norm,
             0.0,
         )
         source_winding = self._phase_winding(source_values)
         target_winding = target_prepared._phase_winding(target_arrays_tuple)
         winding_defect = jnp.max(jnp.abs(target_winding - source_winding))
-        source_nodes = self._leaf_node_count(source_values)
+        source_nodes = self._leaf_node_count(source_values, adaptivity)
         target_nodes = jnp.sum(target_leaf & ~occupied).astype(jnp.int32)
         source_vortices = self._leaf_vortex_count(source_values)
         target_vortices = target_prepared._leaf_vortex_count(target_arrays_tuple)
@@ -1633,22 +1640,22 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(target_flat))
         )
         probability_preserved = (
-            probability_defect <= self.plan.adaptivity.probability_relative_tolerance
+            probability_defect <= adaptivity.probability_relative_tolerance
         )
         current_preserved = jnp.where(
-            source_current_norm > self.plan.adaptivity.current_absolute_tolerance,
-            current_defect <= self.plan.adaptivity.current_relative_tolerance,
-            current_absolute_defect <= self.plan.adaptivity.current_absolute_tolerance,
+            source_current_norm > adaptivity.current_absolute_tolerance,
+            current_defect <= adaptivity.current_relative_tolerance,
+            current_absolute_defect <= adaptivity.current_absolute_tolerance,
         )
-        winding_preserved = (
-            winding_defect <= self.plan.adaptivity.winding_absolute_tolerance
-        ) & (source_vortices == target_vortices)
+        winding_preserved = (winding_defect <= adaptivity.winding_absolute_tolerance) & (
+            source_vortices == target_vortices
+        )
         successful = (
             finite
             & probability_preserved
             & current_preserved
             & winding_preserved
-            & (phase_defect <= self.plan.adaptivity.phase_defect_tolerance)
+            & (phase_defect <= adaptivity.phase_defect_tolerance)
         )
         evidence = WaveAMRTransferEvidence(
             source_probability,
@@ -1773,7 +1780,7 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
                 probability = self.layout.probability(authority_values)
                 current = self._integrated_current(authority_values)
                 winding = self._phase_winding(authority_values)
-                node_count = self._leaf_node_count(authority_values)
+                node_count = self._leaf_node_count(authority_values, adaptivity)
                 vortex_count = self._leaf_vortex_count(authority_values)
                 finite = (
                     jnp.isfinite(probability)
@@ -2348,7 +2355,7 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
             tuple(jnp.asarray(value, dtype=self.physics.dtype) for value in tangent)
         )
 
-        def action(values):
+        def action(values: tuple[Array, ...]) -> tuple[Array, ...]:
             hierarchy = self._hierarchy(values)
             result = self.step(
                 WaveAMRState(hierarchy, checked.scale_factor, jnp.asarray(True)),

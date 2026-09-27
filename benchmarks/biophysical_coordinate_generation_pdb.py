@@ -15,6 +15,8 @@ python -m benchmarks.biophysical_coordinate_generation_pdb \
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import hashlib
 import json
@@ -81,7 +83,7 @@ _RESIDUES = (
 )
 
 
-def prepare_pdb_reconstruction_data(pdb_path, source_path):
+def prepare_pdb_reconstruction_data(pdb_path: Any, source_path: Any) -> Any:
     """Consume neutral records with an exact, source-pinned 1L2Y identity profile."""
     payload = Path(pdb_path).read_bytes()
     source = json.loads(Path(source_path).read_text())
@@ -145,7 +147,7 @@ def prepare_pdb_reconstruction_data(pdb_path, source_path):
                 )
         model_rows.append(selected)
 
-    def atom_key(row):
+    def atom_key(row: Any) -> Any:
         return ProteinAtomKey(
             construct.residue_keys[int(row.author_residue_number) - 1], row.atom_name
         )
@@ -166,7 +168,7 @@ def prepare_pdb_reconstruction_data(pdb_path, source_path):
         particle_ids=np.array([[atom_ids[atom_key(row)] for row in first]]),
     )
 
-    def atom(residue, name):
+    def atom(residue: Any, name: Any) -> Any:
         return atom_ids[ProteinAtomKey(residue, name)]
 
     bonds, chiral = [], []
@@ -267,7 +269,7 @@ def prepare_pdb_reconstruction_data(pdb_path, source_path):
     )
 
 
-def run(pdb_path, source_path, *, steps=200, repeats=3):
+def run(pdb_path: Any, source_path: Any, *, steps: Any=200, repeats: Any=3) -> Any:
     data = prepare_pdb_reconstruction_data(pdb_path, source_path)
     fit, fit_seconds = measure_synchronized(
         lambda: fit_coordinate_model(

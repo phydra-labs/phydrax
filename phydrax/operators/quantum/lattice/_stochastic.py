@@ -9,7 +9,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -41,7 +42,7 @@ class SignFreeStochasticCandidatePlan(StrictModule):
         sign_tolerance: float,
         maximum_raw_bytes: int,
         method_id: str,
-    ):
+    ) -> None:
         chains = int(chain_count)
         draws = int(draw_count)
         state_width = int(chain_state_width)

@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Protocol, runtime_checkable, TYPE_CHECKING
+from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
@@ -46,7 +46,7 @@ def _brep_model(source: _BRepMeshingSource, /) -> BRepModel:
     )
 
 
-def _entity_scope(source: BRepModel, dimension: int, identifiers, /) -> MeshingScope:
+def _entity_scope(source: BRepModel, dimension: int, identifiers: Any, /) -> MeshingScope:
     return MeshingScope(
         source.report.source_id,
         source.report.source_revision,
@@ -81,7 +81,7 @@ class _CadImportCache:
     and Gmsh imports the verified snapshot rather than the mutable source path.
     """
 
-    def __init__(self, capacity: int, /):
+    def __init__(self, capacity: int, /) -> None:
         self._capacity = capacity
         self._entries: OrderedDict[tuple[str, str], _CadImport] = OrderedDict()
         self._workspace = TemporaryDirectory(prefix="phydrax-gmsh-cad-")
@@ -141,7 +141,7 @@ class _CadImportCache:
             self._evict(next(iter(self._entries)))
         return entry
 
-    def import_shapes(self, gmsh, entry: _CadImport, /) -> None:
+    def import_shapes(self, gmsh: Any, entry: _CadImport, /) -> None:
         # Free curves and points must survive import so protection can embed them.
         gmsh.model.occ.importShapes(str(entry.snapshot), highestDimOnly=False)
         gmsh.model.occ.synchronize()
@@ -182,7 +182,7 @@ class _TopoDSEdgeCaster(Protocol):
 
 
 def _scope_samples(
-    source: BRepModel, shape, scope: MeshingScope, /
+    source: BRepModel, shape: Any, scope: MeshingScope, /
 ) -> tuple[np.ndarray, ...]:
     """Sample stable source entities independently of Gmsh's import tag numbering."""
     ids = np.asarray(scope.entity_ids, dtype=np.int64)
@@ -225,6 +225,7 @@ def _scope_samples(
     from OCP.TopoDS import TopoDS
 
     if scope.entity_dimension == 0:
+        # ty: ignore[unresolved-attribute]
         vertices = _explore_unique(shape, TopAbs_VERTEX, TopoDS.Vertex_s)
         result = []
         for vertex in ids:
@@ -247,7 +248,7 @@ def _scope_samples(
 
 
 def _match_entities(
-    gmsh, dimension: int, samples, candidates, tolerance: float, /
+    gmsh: Any, dimension: int, samples: Any, candidates: Any, tolerance: float, /
 ) -> tuple[int, ...]:
     result = []
     for points in samples:
@@ -276,7 +277,9 @@ def _match_entities(
     return tuple(result)
 
 
-def _resolve_entities(gmsh, source, shape, scope, /) -> tuple[int, ...]:
+def _resolve_entities(
+    gmsh: Any, source: Any, shape: Any, scope: Any, /
+) -> tuple[int, ...]:
     samples = _scope_samples(source, shape, scope)
     return _match_entities(
         gmsh,
@@ -294,7 +297,7 @@ class _CadEntityMap:
     edge_to_curve: tuple[int, ...] = ()
 
 
-def _validate_source_solids(source: BRepModel, shape, /) -> tuple:
+def _validate_source_solids(source: BRepModel, shape: Any, /) -> tuple:
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
     from OCP.BRepCheck import BRepCheck_Analyzer
     from OCP.BRepExtrema import BRepExtrema_DistShapeShape
@@ -326,6 +329,7 @@ def _validate_source_solids(source: BRepModel, shape, /) -> tuple:
             "Source solids require nonempty manifold boundaries with opposite shared-face orientations.",
             stage=MeshingStageKind.SOURCE_INSPECTION.value,
         )
+    # ty: ignore[unresolved-attribute]
     solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid_s)
     if len(solids) != topology.num_solids or any(
         not BRepCheck_Analyzer(solid).IsValid() for solid in solids
@@ -374,10 +378,13 @@ def _validate_source_solids(source: BRepModel, shape, /) -> tuple:
                     "BRep solid interiors overlap; provider-side ownership fragmentation is prohibited.",
                     stage=MeshingStageKind.SOURCE_INSPECTION.value,
                 )
+    # ty: ignore[invalid-return-type]
     return solids
 
 
-def _resolve_planar_cad_entity_map(gmsh, source: BRepModel, shape, /) -> _CadEntityMap:
+def _resolve_planar_cad_entity_map(
+    gmsh: Any, source: BRepModel, shape: Any, /
+) -> _CadEntityMap:
     if source.topology.num_solids:
         raise MeshingFailure(
             MeshingFailureCategory.INVALID_SOURCE,
@@ -434,7 +441,7 @@ def _resolve_planar_cad_entity_map(gmsh, source: BRepModel, shape, /) -> _CadEnt
 
 
 def _volume_boundaries(
-    gmsh, volume_tags: tuple[int, ...], /
+    gmsh: Any, volume_tags: tuple[int, ...], /
 ) -> tuple[dict[int, frozenset[int]], dict[tuple[int, int], int]]:
     boundary_faces: dict[int, frozenset[int]] = {}
     boundary_orientations: dict[tuple[int, int], int] = {}
@@ -465,7 +472,7 @@ def _volume_boundaries(
     return boundary_faces, boundary_orientations
 
 
-def _resolve_cad_entity_map(gmsh, source: BRepModel, shape, /) -> _CadEntityMap:
+def _resolve_cad_entity_map(gmsh: Any, source: BRepModel, shape: Any, /) -> _CadEntityMap:
     _validate_source_solids(source, shape)
     face_tags = _resolve_entities(
         gmsh,

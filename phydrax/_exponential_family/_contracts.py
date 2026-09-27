@@ -10,11 +10,13 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._probability import AbstractProbabilityLaw
 from .._strict import StrictModule
 from ..domain._measure import MeasureKind
+from ..typing import parse, PRNGKey
 
 
 ExponentialFamilyStatus: TypeAlias = Literal[0, 1, 2, 3, 4, 5, 6, 7]
@@ -64,7 +66,7 @@ class ExponentialFamilySignature(StrictModule):
         density_measure_kind: MeasureKind,
         support_id: str,
         coordinate_chart_id: str,
-    ):
+    ) -> None:
         dimensions = int(dimension)
         events = tuple(event_shape)
         if not family_id or not support_id or not coordinate_chart_id:
@@ -73,17 +75,9 @@ class ExponentialFamilySignature(StrictModule):
             raise ValueError("Exponential-family coordinate dimension must be positive.")
         if any(size < 0 for size in events):
             raise ValueError("Exponential-family event dimensions must be non-negative.")
-        if density_measure_kind not in (
-            "lebesgue",
-            "hausdorff",
-            "probability",
-            "counting",
-            "dirac",
-            "trajectory",
-            "riemannian",
-            "external",
-        ):
-            raise ValueError(f"Unknown density measure kind {density_measure_kind!r}.")
+        density_measure_kind = parse(
+            density_measure_kind, MeasureKind, "density_measure_kind"
+        )
         self.family_id = str(family_id)
         self.dimension = dimensions
         self.event_shape = events
@@ -135,7 +129,7 @@ class NaturalCoordinates(StrictModule):
     values: Array
     signature: ExponentialFamilySignature = eqx.field(static=True)
 
-    def __init__(self, values: ArrayLike, signature: ExponentialFamilySignature):
+    def __init__(self, values: ArrayLike, signature: ExponentialFamilySignature) -> None:
         if not isinstance(signature, ExponentialFamilySignature):
             raise TypeError("signature must be an ExponentialFamilySignature.")
         self.values = _coordinate_array(values, signature)
@@ -152,7 +146,7 @@ class MeanCoordinates(StrictModule):
     values: Array
     signature: ExponentialFamilySignature = eqx.field(static=True)
 
-    def __init__(self, values: ArrayLike, signature: ExponentialFamilySignature):
+    def __init__(self, values: ArrayLike, signature: ExponentialFamilySignature) -> None:
         if not isinstance(signature, ExponentialFamilySignature):
             raise TypeError("signature must be an ExponentialFamilySignature.")
         self.values = _coordinate_array(values, signature)
@@ -175,7 +169,7 @@ class StatisticBatch(StrictModule):
         values: ArrayLike,
         valid: ArrayLike,
         signature: ExponentialFamilySignature,
-    ):
+    ) -> None:
         if not isinstance(signature, ExponentialFamilySignature):
             raise TypeError("signature must be an ExponentialFamilySignature.")
         statistics = _coordinate_array(values, signature)
@@ -206,7 +200,7 @@ class ExponentialFamilyDomainResult(StrictModule):
         status: ArrayLike,
         signature: ExponentialFamilySignature,
         domain_id: str,
-    ):
+    ) -> None:
         interior_array = jnp.asarray(interior, dtype=jnp.bool_)
         shape = interior_array.shape
         if not domain_id:
@@ -240,7 +234,7 @@ class ExponentialFamilyConversionResult(StrictModule):
         residual: ArrayLike,
         iterations: ArrayLike,
         method_id: str,
-    ):
+    ) -> None:
         _require_signature(natural.signature, mean.signature)
         if natural.batch_shape != mean.batch_shape:
             raise ValueError("Mean and natural coordinate batch shapes must match.")
@@ -361,7 +355,7 @@ class AbstractExponentialFamily(StrictModule):
     @abstractmethod
     def _sample(
         self,
-        key,
+        key: PRNGKey,
         natural_values: Array,
         sample_shape: tuple[int, ...],
         /,
@@ -493,7 +487,7 @@ class AbstractExponentialFamily(StrictModule):
 
     def sample(
         self,
-        key,
+        key: PRNGKey,
         natural: NaturalCoordinates,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
@@ -560,7 +554,7 @@ class ExponentialFamilyLaw(AbstractProbabilityLaw):
         self,
         family: AbstractExponentialFamily,
         natural: NaturalCoordinates,
-    ):
+    ) -> None:
         if not isinstance(family, AbstractExponentialFamily):
             raise TypeError("family must implement AbstractExponentialFamily.")
         _require_signature(natural.signature, family.signature)
@@ -597,7 +591,7 @@ class ExponentialFamilyLaw(AbstractProbabilityLaw):
     def log_prob(self, value: ArrayLike, /) -> Array:
         return self.family.log_prob(self.natural, value)
 
-    def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         return self.family.sample(key, self.natural, tuple(sample_shape))
 
     def kl_divergence(self, other: "ExponentialFamilyLaw", /) -> Array:

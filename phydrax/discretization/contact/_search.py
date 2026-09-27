@@ -12,7 +12,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -23,7 +24,7 @@ from ._stencils import (
     ContactStencilBatch,
     ContactStencilKind,
 )
-from ._surface import PreparedCollisionScene
+from ._surface import ContactPairPolicy, PreparedCollisionScene
 
 
 ContactSearchScene = PreparedCollisionScene | ContactParticipantScene
@@ -48,7 +49,7 @@ class ContactSearchLimits(StrictModule, NonTrainableState):
         maximum_candidates: int | None = None,
         maximum_memory_bytes: int | None = None,
         maximum_time_seconds: float | None = None,
-    ):
+    ) -> None:
         candidates = None if maximum_candidates is None else int(maximum_candidates)
         memory = None if maximum_memory_bytes is None else int(maximum_memory_bytes)
         seconds = None if maximum_time_seconds is None else float(maximum_time_seconds)
@@ -116,7 +117,7 @@ class _AbstractContactSearchPlan(StrictModule, NonTrainableState):
         envelope_radius: float = 0.0,
         limits: ContactSearchLimits | None = None,
         method: str,
-    ):
+    ) -> None:
         capacities = tuple(
             (
                 edge_vertex_capacity,
@@ -188,7 +189,7 @@ class DenseContactSearchPlan(_AbstractContactSearchPlan):
         activation_distance: float,
         envelope_radius: float = 0.0,
         limits: ContactSearchLimits | None = None,
-    ):
+    ) -> None:
         super().__init__(
             edge_vertex_capacity=edge_vertex_capacity,
             edge_edge_capacity=edge_edge_capacity,
@@ -215,7 +216,7 @@ class SweepAndPruneContactSearchPlan(_AbstractContactSearchPlan):
         activation_distance: float,
         envelope_radius: float = 0.0,
         limits: ContactSearchLimits | None = None,
-    ):
+    ) -> None:
         super().__init__(
             edge_vertex_capacity=edge_vertex_capacity,
             edge_edge_capacity=edge_edge_capacity,
@@ -368,7 +369,7 @@ def _primitive_allowed(
     right_feature: int,
     static: np.ndarray,
     participants: np.ndarray,
-    pair_policy,
+    pair_policy: ContactPairPolicy,
     exclusions: set[tuple[int, int]],
     /,
 ) -> bool:

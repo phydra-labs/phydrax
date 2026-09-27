@@ -118,7 +118,7 @@ class ClinicalResearchContext:
         contains_phi: bool = False,
         clinical_decision_use: bool = False,
         regulated_claim: bool = False,
-    ):
+    ) -> None:
         if bool(contains_phi):
             raise ValueError(
                 "ClinicalResearchContext refuses protected health information."
@@ -199,7 +199,7 @@ class ClinicalResearchValidationPlan:
         ood_definition: str,
         failure_analysis_plan: str,
         acceptance_criteria: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(context, ClinicalResearchContext):
             raise TypeError("context must be a ClinicalResearchContext.")
         training = _text(training_cohort_id, "training_cohort_id")
@@ -286,7 +286,7 @@ class ClinicalResearchValidationRecord:
         contains_phi: bool = False,
         clinical_decision_claim: bool = False,
         regulated_claim: bool = False,
-    ):
+    ) -> None:
         if not isinstance(plan, ClinicalResearchValidationPlan):
             raise TypeError("plan must be a ClinicalResearchValidationPlan.")
         if bool(contains_phi):

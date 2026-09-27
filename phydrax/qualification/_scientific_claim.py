@@ -8,19 +8,23 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from numbers import Real
-from typing import Literal
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import canonical_identifier
+from ..typing import parse
 from ._evidence import QualificationEvidence, QualificationMatrix
 from ._registry import SupportTuple
 
 
-MetricDirection = Literal["at_most", "at_least", "between"]
-MetricAggregation = Literal["pooled", "independent_unit_macro", "worst_stratum"]
+MetricDirection: TypeAlias = Literal["at_most", "at_least", "between"]
+MetricAggregation: TypeAlias = Literal[
+    "pooled", "independent_unit_macro", "worst_stratum"
+]
 _STAGE_IDS = frozenset(
     (
         "source-admission",
@@ -34,16 +38,6 @@ _STAGE_IDS = frozenset(
         "prospective-intervention",
     )
 )
-_DIRECTIONS = frozenset(("at_most", "at_least", "between"))
-_AGGREGATIONS = frozenset(("pooled", "independent_unit_macro", "worst_stratum"))
-
-
-def _identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    if not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty canonical identifier.")
-    return value
 
 
 def _identifiers(
@@ -55,7 +49,7 @@ def _identifiers(
 ) -> tuple[str, ...]:
     if not isinstance(values, Sequence) or isinstance(values, str):
         raise TypeError(f"{name} must be a sequence of identifiers.")
-    normalized = tuple(_identifier(value, name) for value in values)
+    normalized = tuple(canonical_identifier(value, name) for value in values)
     if not allow_empty and not normalized:
         raise ValueError(f"{name} must not be empty.")
     if len(set(normalized)) != len(normalized):
@@ -87,16 +81,12 @@ class ScientificMetricCriterion:
     criterion_id: str = field(init=False)
 
     def __post_init__(self) -> None:
-        metric_id = _identifier(self.metric_id, "metric_id")
-        direction = _identifier(self.direction, "metric direction")
-        unit_id = _identifier(self.unit_id, "unit_id")
-        aggregation = _identifier(self.aggregation, "metric aggregation")
-        if direction not in _DIRECTIONS:
-            raise ValueError("Metric direction must be at_most, at_least, or between.")
-        if aggregation not in _AGGREGATIONS:
-            raise ValueError(
-                "Metric aggregation must be pooled, independent_unit_macro, or worst_stratum."
-            )
+        metric_id = canonical_identifier(self.metric_id, "metric_id")
+        direction = canonical_identifier(self.direction, "metric direction")
+        unit_id = canonical_identifier(self.unit_id, "unit_id")
+        aggregation = canonical_identifier(self.aggregation, "metric aggregation")
+        direction = parse(direction, MetricDirection, "direction")
+        aggregation = parse(aggregation, MetricAggregation, "aggregation")
         lower = _bound(self.lower, "metric lower bound")
         upper = _bound(self.upper, "metric upper bound")
         if direction == "at_most" and (lower is not None or upper is None):
@@ -121,11 +111,21 @@ class ScientificMetricCriterion:
 
     def passes(self, value: float, /) -> bool:
         """Return whether one finite value satisfies this criterion."""
+        # __post_init__ guarantees the bounds required by each direction.
+        lower, upper = self.lower, self.upper
         if self.direction == "at_most":
-            return value <= self.upper
+            if not (upper is not None):
+                raise RuntimeError("Internal invariant failed: upper is not None.")
+            return value <= upper
         if self.direction == "at_least":
-            return value >= self.lower
-        return self.lower <= value <= self.upper
+            if not (lower is not None):
+                raise RuntimeError("Internal invariant failed: lower is not None.")
+            return value >= lower
+        if not (lower is not None and upper is not None):
+            raise RuntimeError(
+                "Internal invariant failed: lower is not None and upper is not None."
+            )
+        return lower <= value <= upper
 
     def _content_record(self) -> dict[str, object]:
         return {
@@ -143,7 +143,7 @@ class ScientificMetricCriterion:
         return {**self._content_record(), "criterion_id": self.criterion_id}
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> ScientificMetricCriterion:
+    def from_record(cls, record: Mapping[str, Any], /) -> ScientificMetricCriterion:
         """Reconstruct a scientific metric criterion."""
         if not isinstance(record, Mapping):
             raise TypeError("Scientific-metric criterion record must be a mapping.")
@@ -151,11 +151,12 @@ class ScientificMetricCriterion:
         upper = record["upper"]
         value = cls(
             str(record["metric_id"]),
-            str(record["direction"]),
+            # __post_init__ rejects directions and aggregations outside the literals.
+            cast(MetricDirection, str(record["direction"])),
             None if lower is None else float(lower),
             None if upper is None else float(upper),
             str(record["unit_id"]),
-            str(record["aggregation"]),
+            cast(MetricAggregation, str(record["aggregation"])),
         )
         recorded_id = record.get("criterion_id")
         if recorded_id is not None and str(recorded_id) != value.criterion_id:
@@ -194,15 +195,15 @@ class ScientificClaimProfile(StrictModule, NonTrainableState):
         /,
         *,
         frozen_criteria_ids: Sequence[str],
-    ):
-        capability = _identifier(capability_name, "capability_name")
+    ) -> None:
+        capability = canonical_identifier(capability_name, "capability_name")
         if not isinstance(support, SupportTuple):
             raise TypeError("support must be a SupportTuple.")
         if support.capability != capability:
             raise ValueError("Claim capability_name must match support.capability.")
         observables = _identifiers(observable_ids, "observable_ids")
         conditions = _identifiers(condition_domain_ids, "condition_domain_ids")
-        campaign = _identifier(campaign_id, "campaign_id")
+        campaign = canonical_identifier(campaign_id, "campaign_id")
         stages = _identifiers(required_stage_ids, "required_stage_ids")
         unknown_stages = set(stages) - _STAGE_IDS
         if unknown_stages:
@@ -236,7 +237,7 @@ class ScientificClaimProfile(StrictModule, NonTrainableState):
                 "Scientific claim criteria must be frozen in campaign criteria_ids: "
                 + ", ".join(unfrozen_criteria)
             )
-        abstention = _identifier(abstention_policy_id, "abstention_policy_id")
+        abstention = canonical_identifier(abstention_policy_id, "abstention_policy_id")
         triggers = _identifiers(invalidation_triggers, "invalidation_triggers")
 
         self.capability_name = capability
@@ -271,7 +272,7 @@ class ScientificClaimProfile(StrictModule, NonTrainableState):
         return {**self._content_record(), "claim_id": self.claim_id}
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> ScientificClaimProfile:
+    def from_record(cls, record: Mapping[str, Any], /) -> ScientificClaimProfile:
         """Reconstruct and content-verify a serialized scientific claim."""
         if not isinstance(record, Mapping):
             raise TypeError("Scientific-claim profile record must be a mapping.")

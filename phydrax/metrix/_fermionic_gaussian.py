@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..linalg import HermitianSpectrum
@@ -26,7 +27,7 @@ class FermionicGaussianState(StrictModule):
         /,
         *,
         tolerance: float = 1e-9,
-    ):
+    ) -> None:
         raw = jnp.asarray(covariance)
         if jnp.iscomplexobj(raw):
             raise TypeError("Majorana covariance must be real-valued.")

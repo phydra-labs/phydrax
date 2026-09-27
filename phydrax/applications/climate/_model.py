@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -21,6 +22,7 @@ from ...solver import (
     AbstractFixedStepMethod,
     FixedStepProblem,
     FixedStepResult,
+    FixedStepRetentionPolicy,
     FixedStepRolloutPlan,
     FixedStepRolloutResult,
 )
@@ -50,7 +52,7 @@ class ClimateDrivers(StrictModule):
         concentrations: ArrayLike,
         gas_forcing: ArrayLike,
         external_forcing: ArrayLike,
-    ):
+    ) -> None:
         self.emissions = jnp.asarray(emissions)
         self.concentrations = jnp.asarray(concentrations)
         self.gas_forcing = jnp.asarray(gas_forcing)
@@ -110,7 +112,7 @@ class ReducedClimatePlan(StrictModule):
         *,
         roles: tuple[str, ...] = ("emissions", "emissions", "emissions"),
         budget_tolerance: float = 1.0e-5,
-    ):
+    ) -> None:
         gases_ = GasBoxModel() if gases is None else gases
         energy_ = MultilayerEnergyBalance() if energy is None else energy
         forcing_ = Myhre1998Forcing() if forcing is None else forcing
@@ -177,7 +179,7 @@ class PreparedReducedClimate(StrictModule):
         *,
         time_spec: GeophysicalTimeSpec | None = None,
         seconds_per_time_unit: float | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, ReducedClimatePlan) or not isinstance(grid, TimeGrid):
             raise TypeError(
                 "Preparation requires ReducedClimatePlan and native TimeGrid."
@@ -188,8 +190,11 @@ class PreparedReducedClimate(StrictModule):
             )
         if time_spec is not None and not isinstance(time_spec, GeophysicalTimeSpec):
             raise TypeError("time_spec must be GeophysicalTimeSpec.")
+        # Exactly one clock source is bound (validated above).
         scale = float(
-            seconds_per_time_unit if time_spec is None else time_spec.seconds_per_unit
+            cast(float, seconds_per_time_unit)
+            if time_spec is None
+            else time_spec.seconds_per_unit
         )
         if not np.isfinite(scale) or scale <= 0.0:
             raise ValueError(
@@ -428,7 +433,7 @@ class PreparedReducedClimate(StrictModule):
         *,
         start_step: int = 0,
         stop_step: int | None = None,
-        retention: str = "trajectory",
+        retention: FixedStepRetentionPolicy = "trajectory",
     ) -> FixedStepRolloutResult:
         return FixedStepRolloutPlan(retention=retention).rollout(
             self.problem(
@@ -442,7 +447,7 @@ class ReducedClimateFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
     start_step: int = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, climate: PreparedReducedClimate, start_step: int = 0, /):
+    def __init__(self, climate: PreparedReducedClimate, start_step: int = 0, /) -> None:
         self.climate = climate
         self.start_step = int(start_step)
         self.method_id = canonical_fingerprint(

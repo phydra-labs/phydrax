@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -72,7 +73,7 @@ class CompletePanelFlowPlan2D(StrictModule, NonTrainableState):
         density: float = 1.0,
         policy: LinearSolvePolicy | None = None,
         compressibility: PanelCompressibilityPolicy | None = None,
-    ):
+    ) -> None:
         if (
             not isinstance(geometry, NativePanelGeometry2D)
             or formulation not in ("source", "vortex", "source-vortex", "doublet")
@@ -129,7 +130,7 @@ class CompletePanelFlowPlan2D(StrictModule, NonTrainableState):
         *,
         body_velocity: ArrayLike | None = None,
         prescribed_circulation: ArrayLike = 0.0,
-        reference_point: ArrayLike = (0.0, 0.0),
+        reference_point: ArrayLike | tuple[float, float] = (0.0, 0.0),
         previous_impulse: ArrayLike | None = None,
         time_step: ArrayLike | None = None,
     ) -> CompletePanelResult2D:

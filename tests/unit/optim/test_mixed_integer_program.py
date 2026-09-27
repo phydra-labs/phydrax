@@ -3,13 +3,15 @@
 #
 
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 from phydrax.optim._programming import _mixed_integer_native as mip_native
 
 
-def _binary_implications(power_limit):
+def _binary_implications(power_limit: Any) -> Any:
     return phx.optim.MixedIntegerProgram(
         phx.optim.LinearProgram(
             jnp.asarray([0.0, 0.0, 1.0]),
@@ -30,7 +32,7 @@ def _binary_implications(power_limit):
     )
 
 
-def test_binary_implication_contradiction_has_original_coordinate_farkas_proof():
+def test_binary_implication_contradiction_has_original_coordinate_farkas_proof() -> None:
     program = _binary_implications(0.0)
     certificate = mip_native._linear_bound_certificate(
         program.relaxation.as_quadratic_program(),
@@ -45,7 +47,7 @@ def test_binary_implication_contradiction_has_original_coordinate_farkas_proof()
     assert not result.successful
 
 
-def test_near_feasible_binary_implications_are_not_pruned_without_a_proof():
+def test_near_feasible_binary_implications_are_not_pruned_without_a_proof() -> None:
     program = _binary_implications(0.5 + 1e-6)
     assert (
         mip_native._linear_bound_certificate(
@@ -59,7 +61,7 @@ def test_near_feasible_binary_implications_are_not_pruned_without_a_proof():
     assert jnp.allclose(result.primal, jnp.asarray([1.0, 1.0, 0.5]), atol=2e-6)
 
 
-def test_mixed_integer_preserves_linear_identity_and_refreshes_numeric_data():
+def test_mixed_integer_preserves_linear_identity_and_refreshes_numeric_data() -> None:
     first = phx.optim.MixedIntegerProgram(
         phx.optim.LinearProgram(
             jnp.asarray([-1.0]),
@@ -89,7 +91,7 @@ def test_mixed_integer_preserves_linear_identity_and_refreshes_numeric_data():
     assert jnp.array_equal(result.primal, jnp.asarray([0.0]))
 
 
-def test_invalid_supplied_candidate_cannot_become_an_incumbent():
+def test_invalid_supplied_candidate_cannot_become_an_incumbent() -> None:
     program = phx.optim.MixedIntegerProgram(
         phx.optim.LinearProgram(
             jnp.asarray([-1.0]),

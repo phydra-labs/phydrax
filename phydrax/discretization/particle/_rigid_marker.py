@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -58,7 +59,7 @@ class RigidMarkerMapPlan(StrictModule, NonTrainableState):
         bodies: PreparedRigidBodySet,
         marker_owner: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(markers, LagrangianMarkerDiscretization):
             raise TypeError("markers must be LagrangianMarkerDiscretization.")
         if not isinstance(bodies, PreparedRigidBodySet):
@@ -103,7 +104,7 @@ class PreparedRigidMarkerMap(StrictModule, NonTrainableState):
     generalized_velocity_space: PyTreeSpace
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: RigidMarkerMapPlan, /):
+    def __init__(self, plan: RigidMarkerMapPlan, /) -> None:
         if not isinstance(plan, RigidMarkerMapPlan):
             raise TypeError("plan must be RigidMarkerMapPlan.")
         active_body = np.asarray(plan.bodies.particles.active_mask)
@@ -171,7 +172,7 @@ class PreparedRigidMarkerMap(StrictModule, NonTrainableState):
         mobile_marker = slots >= 0
         safe_slots = jnp.maximum(slots, 0)
 
-        def action(value: RigidGeneralizedVelocity):
+        def action(value: RigidGeneralizedVelocity) -> Array:
             value = self.generalized_velocity_space.validate(value)
             if self.mobile_indices.shape[0] == 0:
                 return jnp.zeros_like(offset)
@@ -206,21 +207,21 @@ class PreparedRigidMarkerMap(StrictModule, NonTrainableState):
         if self.bodies.ambient_dimension == 2:
             mobile_inertia = self.bodies.inertia_body[self.mobile_indices]
 
-            def angular_action(rotation):
+            def angular_action(rotation: Array) -> Array:
                 return mobile_inertia[:, None] * rotation
 
         else:
             inertia, _ = rigid_body_world_inertia(self.bodies, kinematics.orientation)
             mobile_inertia = inertia[self.mobile_indices]
 
-            def angular_action(rotation):
+            def angular_action(rotation: Array) -> Array:
                 return contract(
                     "...ij,...j->...i",
                     mobile_inertia,
                     rotation,
                 )
 
-        def action(value: RigidGeneralizedVelocity):
+        def action(value: RigidGeneralizedVelocity) -> RigidGeneralizedVelocity:
             value = self.generalized_velocity_space.validate(value)
             return RigidGeneralizedVelocity(
                 inverse * masses[:, None] * value.translation,
@@ -328,7 +329,13 @@ class PreparedRigidSiteForceBinding(StrictModule, NonTrainableState):
     source_to_marker: Array
     binding_id: str = eqx.field(static=True)
 
-    def __init__(self, marker_map, site_ids, body_ids, /):
+    def __init__(
+        self,
+        marker_map: PreparedRigidMarkerMap,
+        site_ids: ArrayLike,
+        body_ids: ArrayLike,
+        /,
+    ) -> None:
         sites, bodies = np.asarray(site_ids), np.asarray(body_ids)
         if sites.ndim != 1 or bodies.shape != sites.shape:
             raise ValueError("site_ids and body_ids must be equally sized vectors.")
@@ -363,7 +370,9 @@ class PreparedRigidSiteForceBinding(StrictModule, NonTrainableState):
             }
         )
 
-    def evaluate(self, kinematics, forces, /) -> RigidMarkerLoadResult:
+    def evaluate(
+        self, kinematics: RigidBodyKinematics, forces: ArrayLike, /
+    ) -> RigidMarkerLoadResult:
         forces = jnp.asarray(forces, dtype=kinematics.position.dtype)
         if forces.shape != (
             self.source_to_marker.shape[0],

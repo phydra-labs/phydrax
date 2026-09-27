@@ -10,8 +10,9 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ._parameterized_state_space import ParameterizedStateSpaceProblem
@@ -85,11 +86,11 @@ def parameterized_particle_genealogical_score(
     )
     initial_log_prob_function = parameterized.initial_log_prob_function
 
-    def initial_vector(particle):
+    def initial_vector(particle: Array) -> Array:
         if initial_log_prob_function is None:
             return jnp.zeros_like(flat_position)
 
-        def initial_log_density(current_position):
+        def initial_log_density(current_position: PyTree[Any]) -> Array:
             physical = parameterized.parameter_space.constrain(current_position)
             return jnp.sum(initial_log_prob_function(physical, particle))
 
@@ -130,8 +131,8 @@ def parameterized_particle_genealogical_score(
                 next_state = predicted[case_index, step_index, particle_index]
                 previous_state = previous_particles[particle_index]
 
-                def active_score(_):
-                    def local_log_density(current_position):
+                def active_score(_: None) -> Array:
+                    def local_log_density(current_position: PyTree[Any]) -> Array:
                         physical = parameterized.parameter_space.constrain(
                             current_position
                         )

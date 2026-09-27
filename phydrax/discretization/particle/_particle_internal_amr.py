@@ -4,17 +4,29 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_where
-from ..finite_volume import UnstructuredAMRFluxRegister, UnstructuredAMRHierarchyPlan
+from ..finite_volume import (
+    UnstructuredAMRFluxRegister,
+    UnstructuredAMRHierarchyPlan,
+    UnstructuredAMRSelection,
+)
+
+
+_RemappedContent: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class ParticleInternalAdaptationPolicy(StrictModule, NonTrainableState):
@@ -32,7 +44,7 @@ class ParticleInternalAdaptationPolicy(StrictModule, NonTrainableState):
         *,
         minimum_dwell_windows: int = 1,
         balance_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         refine = float(refine_threshold)
         coarsen = float(coarsen_threshold)
         dwell = int(minimum_dwell_windows)
@@ -164,7 +176,13 @@ def initialize_particle_internal_amr(
     )
 
 
-def _composite_content(hierarchy, coarse, fine, refined, fine_active):
+def _composite_content(
+    hierarchy: UnstructuredAMRHierarchyPlan,
+    coarse: Array,
+    fine: Array,
+    refined: Array,
+    fine_active: Array,
+) -> Array:
     coarse_mask = ~refined
     coarse_total = jnp.sum(
         jnp.where(
@@ -205,7 +223,7 @@ def adapt_particle_internal_mesh(
     if values.shape != (particle_count, coarse_count):
         raise ValueError("indicator must have particle-coarse-cell shape.")
 
-    def select_one(value, active):
+    def select_one(value: Array, active: Array) -> UnstructuredAMRSelection:
         return hierarchy.select(
             value,
             policy.refine_threshold,
@@ -250,23 +268,23 @@ def adapt_particle_internal_mesh(
     )
 
     def remap_one(
-        coarse_energy,
-        fine_energy,
-        coarse_species,
-        fine_species,
-        coarse_pore,
-        fine_pore,
-        coarse_area,
-        fine_area,
-        coarse_progress,
-        fine_progress,
-        previous_refined,
-        previous_fine_active,
-        next_refined,
-        next_fine_active,
-        refine_mask,
-        coarsen_mask,
-    ):
+        coarse_energy: Array,
+        fine_energy: Array,
+        coarse_species: Array,
+        fine_species: Array,
+        coarse_pore: Array,
+        fine_pore: Array,
+        coarse_area: Array,
+        fine_area: Array,
+        coarse_progress: Array,
+        fine_progress: Array,
+        previous_refined: Array,
+        previous_fine_active: Array,
+        next_refined: Array,
+        next_fine_active: Array,
+        refine_mask: Array,
+        coarsen_mask: Array,
+    ) -> _RemappedContent:
         restricted_energy = hierarchy.restrict_content(
             fine_energy, fine_active_mask=previous_fine_active
         )

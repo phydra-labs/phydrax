@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
@@ -25,6 +26,7 @@ from ...linalg import (
     OperatorCapabilities,
     OperatorProperties,
 )
+from ...typing import parse
 from .._tensor_support import PreparedTensorGrid
 from ..finite_difference._certification import FDConservationReport, FDStabilityReport
 from ._precision import FiniteVolumePrecisionPolicy
@@ -51,9 +53,8 @@ class ConservativeBoundaryCondition(StrictModule, NonTrainableState):
         *,
         alpha: float | None = None,
         beta: float | None = None,
-    ):
-        if kind not in ("periodic", "dirichlet", "neumann", "robin"):
-            raise ValueError("Unknown conservative boundary kind.")
+    ) -> None:
+        kind = parse(kind, ConservativeBoundaryKind, "kind")
         alpha_ = (
             1.0
             if kind in ("dirichlet", "robin") and alpha is None
@@ -85,7 +86,9 @@ class ConservativeBoundaryCondition(StrictModule, NonTrainableState):
         )
 
 
-def _condition(value: ConservativeBoundaryCondition | ConservativeBoundaryKind, /):
+def _condition(
+    value: ConservativeBoundaryCondition | ConservativeBoundaryKind, /
+) -> ConservativeBoundaryCondition:
     return (
         value
         if isinstance(value, ConservativeBoundaryCondition)
@@ -165,11 +168,10 @@ class FaceCoefficientPlan(StrictModule, NonTrainableState):
         kind: FaceInterpolationKind = "harmonic",
         function: Callable[[Array, Array, Array | None], Array] | None = None,
         function_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("Face coefficient plan requires PreparedTensorGrid.")
-        if kind not in ("arithmetic", "harmonic", "upwind", "callable"):
-            raise ValueError("Unknown face interpolation kind.")
+        kind = parse(kind, FaceInterpolationKind, "kind")
         if (kind == "callable") != (function is not None):
             raise ValueError("Callable face interpolation requires exactly one function.")
         function_identifier = None if function_id is None else str(function_id)
@@ -314,7 +316,7 @@ class ConservativeDiffusionPlan(StrictModule, NonTrainableState):
         | None = None,
         interpolation: FaceInterpolationKind = "harmonic",
         precision: FiniteVolumePrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = FiniteVolumePrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, FiniteVolumePrecisionPolicy):
             raise TypeError("precision must be a FiniteVolumePrecisionPolicy.")
@@ -361,7 +363,7 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
         plan: ConservativeDiffusionPlan,
         coefficient: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, ConservativeDiffusionPlan):
             raise TypeError("plan must be ConservativeDiffusionPlan.")
         coefficient_ = plan.precision.flux(
@@ -864,15 +866,13 @@ class ConservativeAdvectionPlan(StrictModule, NonTrainableState):
         ]
         | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("Conservative advection requires PreparedTensorGrid.")
         if grid.primary_entity_layout.layout_id != grid.cells().layout_id:
             raise ValueError("Conservative advection requires an interval-primary grid.")
-        if form not in ("advective", "conservative", "skew", "split_energy"):
-            raise ValueError("Unknown advection form.")
-        if reconstruction not in ("arithmetic", "upwind"):
-            raise ValueError("Unknown advection reconstruction.")
+        form = parse(form, AdvectionForm, "form")
+        reconstruction = parse(reconstruction, AdvectionReconstruction, "reconstruction")
         precision_ = FiniteVolumePrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, FiniteVolumePrecisionPolicy):
             raise TypeError("precision must be a FiniteVolumePrecisionPolicy.")
@@ -896,7 +896,9 @@ class ConservativeAdvectionPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def prepare(self, velocity: ArrayLike | Sequence[ArrayLike], /):
+    def prepare(
+        self, velocity: ArrayLike | Sequence[ArrayLike], /
+    ) -> PreparedConservativeAdvection:
         return PreparedConservativeAdvection(self, velocity)
 
 
@@ -913,7 +915,7 @@ class PreparedConservativeAdvection(StrictModule):
         plan: ConservativeAdvectionPlan,
         velocity: ArrayLike | Sequence[ArrayLike],
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, ConservativeAdvectionPlan):
             raise TypeError("plan must be ConservativeAdvectionPlan.")
         faces = self._prepare_velocity(plan, velocity)

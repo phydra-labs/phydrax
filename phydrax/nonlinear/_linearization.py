@@ -11,7 +11,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..linalg import (
@@ -30,6 +31,7 @@ from ..sparse import (
     PreparedSparseDerivative,
     SparseDerivativePlan,
 )
+from ..typing import parse
 from ._types import _guarded_call, NonlinearSystemProblem
 
 
@@ -54,14 +56,8 @@ class JacobianPolicy(StrictModule):
         sparse_plan: SparseDerivativePlan | None = None,
         operator: Callable[[PyTree[Any], Any], AbstractLinearOperator] | None = None,
         finite_difference_step: float = 1e-6,
-    ):
-        if mode not in (
-            "autodiff",
-            "sparse",
-            "directional-finite-difference",
-            "explicit",
-        ):
-            raise ValueError("Unknown Jacobian mode.")
+    ) -> None:
+        mode = parse(mode, JacobianMode, "mode")
         if mode == "sparse" and not isinstance(sparse_plan, SparseDerivativePlan):
             raise TypeError("Sparse Jacobian mode requires a SparseDerivativePlan.")
         if mode != "sparse" and sparse_plan is not None:
@@ -103,7 +99,7 @@ class PreparedJacobian(StrictModule):
         sparse_derivative: PreparedSparseDerivative | None = None,
         derivative_id: str,
         residual_evaluations: int = 1,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if sparse_derivative is not None and not isinstance(
@@ -130,7 +126,7 @@ class _CoordinateRebasedLinearOperator(AbstractLinearOperator):
     operator: AbstractLinearOperator
     coordinate_space: ArraySpace
 
-    def __init__(self, operator: AbstractLinearOperator, /):
+    def __init__(self, operator: AbstractLinearOperator, /) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if operator.batch_shape:
@@ -271,14 +267,16 @@ def prepare_jacobian(
         )
 
     if policy.mode == "sparse":
-        assert policy.sparse_plan is not None
+        sparse_plan = policy.sparse_plan
+        if not (sparse_plan is not None):
+            raise RuntimeError("Internal invariant failed: sparse_plan is not None.")
         sparse = (
-            prepare_sparse_linearization(policy.sparse_plan, state, args)
+            prepare_sparse_linearization(sparse_plan, state, args)
             if problem.trial_validity_function is None
             else _guarded_call(
                 problem.trial_valid(state, args),
                 lambda candidate, arguments: prepare_sparse_linearization(
-                    policy.sparse_plan, candidate, arguments
+                    sparse_plan, candidate, arguments
                 ),
                 state,
                 args,
@@ -303,7 +301,7 @@ def prepare_jacobian(
             sparse.operator,
             auxiliary=auxiliary,
             sparse_derivative=sparse,
-            derivative_id=f"sparse:{policy.sparse_plan.plan_id}",
+            derivative_id=f"sparse:{sparse_plan.plan_id}",
             residual_evaluations=1 + int(problem.has_aux),
         )
 
@@ -344,7 +342,7 @@ def prepare_jacobian(
         policy.finite_difference_step, dtype=source.flatten(state).real.dtype
     )
 
-    def action(tangent):
+    def action(tangent: PyTree[Array]) -> PyTree[Array]:
         candidate = jax.tree.map(
             lambda value, delta: value + step * delta, state, tangent
         )

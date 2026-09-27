@@ -7,7 +7,7 @@ from __future__ import annotations
 from enum import IntEnum
 
 import equinox as eqx
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from ._model import VariableStateValues
@@ -60,7 +60,7 @@ class FactorGraphProvenance(StrictModule):
         implementation: str,
         exact: bool,
         configuration: tuple[tuple[str, str], ...] = (),
-    ):
+    ) -> None:
         for name, value in (
             ("structure_id", structure_id),
             ("plan_id", plan_id),

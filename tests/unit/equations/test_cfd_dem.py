@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _compiled_dem():
+def _compiled_dem() -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0, 1]), jnp.asarray([1.0, 1.0]), ambient_dimension=2
     ).prepare()
@@ -76,7 +79,7 @@ def _compiled_dem():
     return compiled, state, transfer
 
 
-def test_particle_grid_transfer_and_unresolved_coupling_conserve_content():
+def test_particle_grid_transfer_and_unresolved_coupling_conserve_content() -> None:
     compiled, state, transfer = _compiled_dem()
     relation = transfer.routes(state.kinematics.position, state.body_properties.active)
     content = jnp.asarray([2.0, 3.0])
@@ -112,7 +115,7 @@ def test_particle_grid_transfer_and_unresolved_coupling_conserve_content():
     assert jnp.allclose(evaluation.momentum_residual, 0.0)
 
 
-def test_multirate_window_commits_equal_opposite_impulses_atomically():
+def test_multirate_window_commits_equal_opposite_impulses_atomically() -> None:
     compiled, state, transfer = _compiled_dem()
     coupling = phx.equations.UnresolvedCFDEMCouplingPlan(
         compiled.dynamics,
@@ -145,7 +148,7 @@ def test_multirate_window_commits_equal_opposite_impulses_atomically():
     assert result.accepted_state.accepted_windows == 1
 
 
-def test_mac_penalty_ib_window_preserves_zero_load_and_projection():
+def test_mac_penalty_ib_window_preserves_zero_load_and_projection() -> None:
     dem, dem_state, _ = _compiled_dem()
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(6, periodic=True) for _ in range(2)),

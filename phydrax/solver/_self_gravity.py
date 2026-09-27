@@ -5,17 +5,20 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, cast
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import DTypeLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..discretization.finite_difference import (
     diagonalize_fd_laplacian,
+    FDBoundaryKind,
+    FDBoundaryPair,
     FDLaplacianSolvePlan,
 )
 from ..discretization.finite_volume import (
@@ -66,7 +69,7 @@ class ConservativeGravityEnergyCoupling(AbstractPreparedAcceptedStepCoupling):
 
     gravity: PreparedNewtonianSelfGravity
 
-    def __init__(self, gravity: PreparedNewtonianSelfGravity, /):
+    def __init__(self, gravity: PreparedNewtonianSelfGravity, /) -> None:
         if not isinstance(gravity, PreparedNewtonianSelfGravity):
             raise TypeError("gravity must be PreparedNewtonianSelfGravity.")
         self.gravity = gravity
@@ -130,7 +133,9 @@ class NewtonianSelfGravityPlan(AbstractBalanceLawProcessPlan):
     gravitational_constant: float = eqx.field(static=True)
     gravity_argument: str | None = eqx.field(static=True)
     freefall_fraction: float = eqx.field(static=True)
-    boundaries: tuple[tuple[str, str, str], ...] = eqx.field(static=True)
+    boundaries: tuple[tuple[str, FDBoundaryKind, FDBoundaryKind], ...] = eqx.field(
+        static=True
+    )
 
     def __init__(
         self,
@@ -139,15 +144,8 @@ class NewtonianSelfGravityPlan(AbstractBalanceLawProcessPlan):
         *,
         gravity_argument: str | None = None,
         freefall_fraction: float = 0.25,
-        boundaries: Mapping[
-            str,
-            tuple[
-                Literal["periodic", "dirichlet", "neumann"],
-                Literal["periodic", "dirichlet", "neumann"],
-            ],
-        ]
-        | None = None,
-    ):
+        boundaries: Mapping[str, FDBoundaryPair] | None = None,
+    ) -> None:
         coupling = float(gravitational_constant)
         fraction = float(freefall_fraction)
         argument = None if gravity_argument is None else str(gravity_argument)
@@ -175,7 +173,10 @@ class NewtonianSelfGravityPlan(AbstractBalanceLawProcessPlan):
         self.gravitational_constant = coupling
         self.gravity_argument = argument
         self.freefall_fraction = fraction
-        self.boundaries = boundary_items
+        # Every boundary kind was validated against FDBoundaryKind above.
+        self.boundaries = cast(
+            tuple[tuple[str, FDBoundaryKind, FDBoundaryKind], ...], boundary_items
+        )
         self.process_id = canonical_fingerprint(
             {
                 "kind": "newtonian-self-gravity",
@@ -208,7 +209,7 @@ class PreparedNewtonianSelfGravity(AbstractPreparedBalanceLawProcess):
         plan: NewtonianSelfGravityPlan,
         transport: AbstractPreparedBalanceLawTransport,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, NewtonianSelfGravityPlan):
             raise TypeError("plan must be NewtonianSelfGravityPlan.")
         if not isinstance(
@@ -240,7 +241,7 @@ class PreparedNewtonianSelfGravity(AbstractPreparedBalanceLawProcess):
         if len(momentum_indices) != dynamics.system.dimension:
             raise RuntimeError("Gravity system momentum layout is inconsistent.")
         energy_index = names.index("total_energy")
-        boundaries = {
+        boundaries: dict[str, FDBoundaryPair] = {
             name: supplied_boundaries.get(
                 name,
                 ("periodic", "periodic") if axis.periodic else ("neumann", "neumann"),
@@ -305,7 +306,7 @@ class PreparedNewtonianSelfGravity(AbstractPreparedBalanceLawProcess):
         del source_view, args
         return BalanceLawProcessState.empty(self.process_id)
 
-    def _gravity(self, args: Any, dtype, /) -> Array:
+    def _gravity(self, args: Any, dtype: DTypeLike, /) -> Array:
         value = (
             self.plan.gravitational_constant
             if self.plan.gravity_argument is None

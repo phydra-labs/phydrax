@@ -38,7 +38,7 @@ class Initial(AbstractResidualCondition):
         mode: Literal["reverse", "forward"] = "reverse",
         backend: Literal["ad", "jet"] = "ad",
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(on, DomainComponent):
             raise TypeError("Initial conditions require one DomainComponent.")
         if evolution_var not in on.domain.labels:

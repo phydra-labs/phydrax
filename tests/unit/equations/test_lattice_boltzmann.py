@@ -2,13 +2,18 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _compiled_flow(*, collision=None, acceleration=None, fluid_mask=None):
+def _compiled_flow(
+    *, collision: Any = None, acceleration: Any = None, fluid_mask: Any = None
+) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(12, periodic=True),
@@ -45,7 +50,7 @@ def _compiled_flow(*, collision=None, acceleration=None, fluid_mask=None):
     )
 
 
-def test_compiler_initializes_and_reconstructs_forced_macroscopic_state():
+def test_compiler_initializes_and_reconstructs_forced_macroscopic_state() -> None:
     compiled = _compiled_flow(
         acceleration=lambda time, coordinates, parameters: parameters
     )
@@ -62,7 +67,7 @@ def test_compiler_initializes_and_reconstructs_forced_macroscopic_state():
     assert compiled.discretization_bundle.record(compiled.discretization.key)
 
 
-def test_uniform_guo_acceleration_preserves_mass_and_updates_momentum():
+def test_uniform_guo_acceleration_preserves_mass_and_updates_momentum() -> None:
     acceleration = jnp.asarray((0.005, 0.0))
     compiled = _compiled_flow(
         collision=phx.discretization.TRTCollisionPlan(),
@@ -95,7 +100,7 @@ def test_uniform_guo_acceleration_preserves_mass_and_updates_momentum():
     )
 
 
-def test_compiled_dynamics_keeps_frozen_solid_populations_inert():
+def test_compiled_dynamics_keeps_frozen_solid_populations_inert() -> None:
     fluid = np.ones((12, 12), dtype="bool")
     fluid[4, 5] = False
     compiled = _compiled_flow(fluid_mask=fluid)

@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -35,12 +36,13 @@ from ...optim import (
     OptimizationStatus,
     OptimizationTermination,
 )
+from ...typing import parse
 from ._model import CameraModel, project_points
 from ._rig import CameraRig
 
 
 CAMERA_PARAMETER_COUNT = 16
-CalibrationGauge = Literal["world-points", "reference-camera"]
+CalibrationGauge: TypeAlias = Literal["world-points", "reference-camera"]
 
 
 class CameraCalibrationStatus(IntEnum):
@@ -73,7 +75,7 @@ class CameraCalibrationProblem(StrictModule, NonTrainableState):
         *,
         observation_weights: ArrayLike | None = None,
         holdout: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(initial_rig, CameraRig):
             raise TypeError("initial_rig must be a CameraRig.")
         points_host = np.asarray(world_points, dtype=np.float64)
@@ -162,15 +164,14 @@ class CameraCalibrationPlan(StrictModule, NonTrainableState):
         maximum_steps: int = 64,
         rank_tolerance: float = 1e-8,
         maximum_condition: float = 1e10,
-    ):
+    ) -> None:
         mask_host = np.asarray(free_parameter_mask, dtype=np.bool_)
         if mask_host.ndim != 2 or mask_host.shape[1:] != (CAMERA_PARAMETER_COUNT,):
             raise ValueError("free_parameter_mask must have shape (camera_capacity, 16).")
         camera_capacity = mask_host.shape[0]
         if camera_capacity < 1 or not np.any(mask_host):
             raise ValueError("At least one calibration parameter must be free.")
-        if gauge not in ("world-points", "reference-camera"):
-            raise ValueError("gauge must be 'world-points' or 'reference-camera'.")
+        gauge = parse(gauge, CalibrationGauge, "gauge")
         if gauge == "reference-camera":
             if reference_camera is None:
                 raise ValueError("reference-camera gauge requires reference_camera.")
@@ -408,7 +409,7 @@ def _calibration_evidence(
     training_rms = _masked_rms(residual, training)
     holdout_rms = _masked_rms(residual, holdout)
 
-    def raw_training(candidate):
+    def raw_training(candidate: Array) -> Array:
         raw, _ = _pixel_residuals(problem, plan, candidate)
         return jnp.where(training[..., None], raw, 0.0).reshape(-1)
 
@@ -526,7 +527,7 @@ def calibrate_camera_rig(
             None,
         )
 
-    def residual_function(candidate, _):
+    def residual_function(candidate: Array, _: object) -> Array:
         return _training_residual(problem, plan, candidate)
 
     optimization = least_squares(

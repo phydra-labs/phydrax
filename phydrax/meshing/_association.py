@@ -31,12 +31,13 @@ transfer and projection (:func:`rederive_association`).
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import final, NamedTuple, TYPE_CHECKING
+from typing import Any, final, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -81,7 +82,7 @@ def _unclassified_id(source_revision: str, /) -> str:
     return f"{source_revision}:unclassified"
 
 
-def _rows_or(value: ArrayLike | None, fill, shape, dtype, /) -> np.ndarray:
+def _rows_or(value: ArrayLike | None, fill: Any, shape: Any, dtype: Any, /) -> np.ndarray:
     return (
         np.full(shape, fill, dtype=dtype) if value is None else np.asarray(value, dtype)
     )
@@ -143,7 +144,7 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         parent_ids: ArrayLike | None = None,
         parent_association_id: str | None = None,
         provenance: GeometryAssociationProvenance = GeometryAssociationProvenance.PROVIDER,
-    ):
+    ) -> None:
         if not isinstance(association_kind, GeometryAssociationKind):
             raise TypeError("association_kind must be GeometryAssociationKind.")
         if not isinstance(provenance, GeometryAssociationProvenance):
@@ -369,7 +370,7 @@ class AssociationPropagationPolicy(StrictModule, NonTrainableState):
         *,
         classification_tolerance: float = 1.0e-6,
         maximum_residual: float | None = None,
-    ):
+    ) -> None:
         tolerance = float(classification_tolerance)
         maximum = None if maximum_residual is None else float(maximum_residual)
         if not np.isfinite(tolerance) or tolerance <= 0.0:
@@ -390,7 +391,7 @@ class AssociationPropagationPolicy(StrictModule, NonTrainableState):
 class AssociationPropagationError(ValueError):
     """A topology change violates the B-Rep classification rules."""
 
-    def __init__(self, message: str, target_ids: ArrayLike, /):
+    def __init__(self, message: str, target_ids: ArrayLike, /) -> None:
         super().__init__(message)
         self.target_ids = np.asarray(target_ids, dtype=np.int64)
 
@@ -436,6 +437,7 @@ def _incidence_pairs(mesh: CellMesh, low: int, high: int, /) -> np.ndarray:
             axis=1,
         )
         pairs = step if pairs is None else _compose(pairs, step)
+    # ty: ignore[no-matching-overload]
     return np.unique(pairs, axis=0).reshape(-1, 2)
 
 
@@ -889,7 +891,7 @@ def _brep_association(
     )
 
 
-def _scatter(rows: np.ndarray, values: np.ndarray, shape: tuple[int, ...], /):
+def _scatter(rows: np.ndarray, values: np.ndarray, shape: tuple[int, ...], /) -> Any:
     output = np.full(shape, np.nan)
     output[rows] = values
     return output
@@ -1490,7 +1492,7 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
         /,
         *,
         policy: AssociationPropagationPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(projection, PreparedBRepProjection):
             raise TypeError("projection must be PreparedBRepProjection.")
         policy_ = AssociationPropagationPolicy() if policy is None else _policy(policy)

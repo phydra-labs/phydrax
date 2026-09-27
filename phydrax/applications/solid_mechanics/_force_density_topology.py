@@ -10,7 +10,8 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -203,7 +204,7 @@ class ForceDensityStructure(StrictModule, NonTrainableState):
         member_ids: Sequence[Any] | None = None,
         affine_prolongation: ArrayLike | None = None,
         affine_prescribed_map: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(graph, GraphIR):
             raise TypeError("graph must be a GraphIR.")
         graph.validate()
@@ -305,7 +306,7 @@ class ForceDensityStructure(StrictModule, NonTrainableState):
             node_valid,
             member_valid,
         )
-        if affine:
+        if prescribed_map is not None:
             translation_modes = np.zeros(
                 (node_count * resolved_dimension, component_count * resolved_dimension)
             )

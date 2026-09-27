@@ -15,7 +15,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -127,7 +128,7 @@ class GameConstraintBlock(StrictModule):
         time_dependent: bool,
         state_dependent: bool,
         control_dependencies: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(scope, GameConstraintScope):
             raise TypeError("scope must be a GameConstraintScope.")
         if not isinstance(site, GameConstraintSite):
@@ -217,7 +218,7 @@ class OpenLoopGameConstraints(StrictModule):
         partition: PlayerControlPartition,
         blocks: Sequence[GameConstraintBlock] = (),
         /,
-    ):
+    ) -> None:
         if not isinstance(partition, PlayerControlPartition):
             raise TypeError("partition must be a PlayerControlPartition.")
         if isinstance(blocks, (str, bytes)):
@@ -301,7 +302,7 @@ class GameConstraintLayout(StrictModule):
         /,
         *,
         num_path_sites: int,
-    ):
+    ) -> None:
         if not isinstance(constraints, OpenLoopGameConstraints):
             raise TypeError("constraints must be OpenLoopGameConstraints.")
         if isinstance(num_path_sites, bool):
@@ -392,7 +393,7 @@ class GameMultiplierLayout(StrictModule):
         /,
         *,
         variational: bool,
-    ):
+    ) -> None:
         if not isinstance(constraint_layout, GameConstraintLayout):
             raise TypeError("constraint_layout must be a GameConstraintLayout.")
         if not isinstance(variational, bool):
@@ -504,7 +505,7 @@ class GameFeasibilityEvidence(StrictModule):
         status: ArrayLike,
         case_shape: Sequence[int],
         tolerance: float,
-    ):
+    ) -> None:
         if not isinstance(layout, GameConstraintLayout):
             raise TypeError("layout must be a GameConstraintLayout.")
         cases = tuple(index(size) for size in case_shape)
@@ -656,10 +657,16 @@ def _evaluate_path_block(
     controls = trajectory.controls.reshape(
         (count, trajectory.num_intervals) + trajectory.control_shape
     )
+    constraint = block.constraint
+    # GameConstraintBlock.__init__ requires a BoundedPathConstraint for PATH blocks.
+    if not (isinstance(constraint, BoundedPathConstraint)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(constraint, BoundedPathConstraint)."
+        )
 
     def evaluate_case(case_states: Array, case_controls: Array) -> Array:
         return jax.vmap(
-            lambda time, state, control: block.constraint(
+            lambda time, state, control: constraint(
                 time,
                 state,
                 control,
@@ -685,7 +692,13 @@ def _evaluate_trajectory_block(
     args: Any,
     /,
 ) -> Array:
-    values = jnp.asarray(block.constraint(trajectory, args))
+    constraint = block.constraint
+    # GameConstraintBlock.__init__ requires a BoundedTrajectoryConstraint off PATH.
+    if not (isinstance(constraint, BoundedTrajectoryConstraint)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(constraint, BoundedTrajectoryConstraint)."
+        )
+    values = jnp.asarray(constraint(trajectory, args))
     expected = trajectory.case_shape + block.residual_shape
     if values.shape != expected:
         raise ValueError(

@@ -8,7 +8,8 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -41,7 +42,7 @@ class FiniteElementHPCondensationPlan(StrictModule, NonTrainableState):
         bucket_degrees: Sequence[tuple[int, ...]],
         eliminations: Sequence[LocalEliminationPlan],
         /,
-    ):
+    ) -> None:
         degrees = tuple(tuple(degree) for degree in bucket_degrees)
         plans = tuple(eliminations)
         if (
@@ -137,7 +138,7 @@ class FiniteElementHPSkeletonPlan(StrictModule, NonTrainableState):
         epoch: FiniteElementHPEpoch,
         condensation: FiniteElementHPCondensationPlan,
         /,
-    ):
+    ) -> None:
         constraints = tuple(
             value.plan_id
             for _, value in epoch.constraints
@@ -182,7 +183,7 @@ class FiniteElementHPMultigridPlan(StrictModule, NonTrainableState):
         epochs: Sequence[FiniteElementHPEpoch],
         transfers: Sequence[FiniteElementHPTransferPlan],
         /,
-    ):
+    ) -> None:
         levels = tuple(epochs)
         transfers_ = tuple(transfers)
         if len(levels) < 2 or len(transfers_) != len(levels) - 1:
@@ -238,7 +239,7 @@ class FiniteElementHPSolverRefreshPlan(StrictModule, NonTrainableState):
         accepted: FiniteElementHPEpoch,
         candidate: FiniteElementHPEpoch,
         /,
-    ):
+    ) -> None:
         accepted_signatures = {
             canonical_fingerprint(
                 {
@@ -301,7 +302,7 @@ class FiniteElementHPMultigridPreconditionerBuilder(AbstractPreconditionerBuilde
     coarse_builder: DenseInversePreconditionerBuilder
     _builder_id: str = eqx.field(static=True)
 
-    def __init__(self, hierarchy: FiniteElementHPMultigridPlan, /):
+    def __init__(self, hierarchy: FiniteElementHPMultigridPlan, /) -> None:
         if not isinstance(hierarchy, FiniteElementHPMultigridPlan):
             raise TypeError("hierarchy must be FiniteElementHPMultigridPlan.")
         self.hierarchy = hierarchy

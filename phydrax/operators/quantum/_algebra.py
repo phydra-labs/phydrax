@@ -4,10 +4,11 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.domain import DomainFunction
 
@@ -18,6 +19,10 @@ from ._validation import (
     join_function_arguments,
     validate_matrix_value,
 )
+
+
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
 
 
 class _BinaryMatrixCallable(StrictModule):
@@ -34,14 +39,14 @@ class _BinaryMatrixCallable(StrictModule):
         left_positions: tuple[int, ...],
         right_positions: tuple[int, ...],
         operation: Literal["commutator", "anticommutator"],
-    ):
+    ) -> None:
         self.left = left
         self.right = right
         self.left_positions = left_positions
         self.right_positions = right_positions
         self.operation = operation
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         left_args = tuple(args[index] for index in self.left_positions)
         right_args = tuple(args[index] for index in self.right_positions)
         left = validate_matrix_value(
@@ -68,10 +73,10 @@ class _BinaryMatrixCallable(StrictModule):
 class _UnitTraceCallable(StrictModule):
     density: DomainFunction
 
-    def __init__(self, density: DomainFunction):
+    def __init__(self, density: DomainFunction) -> None:
         self.density = density
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         density = validate_matrix_value(
             self.density.func(*args, key=key, **kwargs),
             role="density operator",

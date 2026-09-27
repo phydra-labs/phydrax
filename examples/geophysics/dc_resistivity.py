@@ -1,5 +1,7 @@
 """Finite-patch three-dimensional DC voltage and log-conductivity gradient."""
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -20,8 +22,10 @@ def main() -> None:
         ),
         np.asarray(((0, 1, 2, 3), (0, 2, 1, 4))),
     )
+    # ty: ignore[unresolved-attribute]
     exterior = np.flatnonzero(np.asarray(mesh.connectivity.boundary_faces))
     patches = tuple(
+        # ty: ignore[invalid-argument-type]
         phx.applications.geophysics.ElectrodePatch(f"E{index}", (int(face),))
         for index, face in enumerate(exterior[:4])
     )
@@ -34,7 +38,7 @@ def main() -> None:
     prepared = phx.applications.geophysics.FinitePatchDCPlan(mesh, survey).prepare()
     parameterization = phx.applications.geophysics.LogConductivity(jnp.ones(2))
 
-    def response(log_conductivity):
+    def response(log_conductivity: Any) -> Any:
         return prepared.predict(parameterization(log_conductivity))[0]
 
     parameters = jnp.asarray((0.1, -0.2))

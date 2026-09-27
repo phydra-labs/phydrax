@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -19,7 +22,7 @@ ct = phx.continuation
 nl = phx.nonlinear
 
 
-def _geometry(problem, state, parameter, state_space):
+def _geometry(problem: Any, state: Any, parameter: Any, state_space: Any) -> Any:
     residual = problem.residual(state, parameter)
     return ct.ContinuationGeometry.resolve(
         state,
@@ -30,15 +33,17 @@ def _geometry(problem, state, parameter, state_space):
 
 
 def _nullspace_analyzer(
-    right,
-    left,
-    singular_values,
+    right: Any,
+    left: Any,
+    singular_values: Any,
     *,
-    full_spectrum=True,
-    source_success=True,
-    analyzer_id="deterministic-nullspace",
-):
-    def analyze(problem, state, parameter, geometry, args):
+    full_spectrum: Any = True,
+    source_success: Any = True,
+    analyzer_id: Any = "deterministic-nullspace",
+) -> Any:
+    def analyze(
+        problem: Any, state: Any, parameter: Any, geometry: Any, args: Any
+    ) -> Any:
         return ct.evaluate_nullspace(
             problem,
             state,
@@ -56,8 +61,8 @@ def _nullspace_analyzer(
     return ct.CallableNullspaceAnalyzer(analyze, analyzer_id=analyzer_id)
 
 
-def _successful_linear_solve(solution_function, *, condition=1.0):
-    def solve(action, right_hand_side, system_id):
+def _successful_linear_solve(solution_function: Any, *, condition: Any = 1.0) -> Any:
+    def solve(action: Any, right_hand_side: Any, system_id: Any) -> Any:
         solution = solution_function(action, right_hand_side, system_id)
         difference = jax.tree.map(
             lambda left, right: left - right,
@@ -84,7 +89,7 @@ def _successful_linear_solve(solution_function, *, condition=1.0):
     )
 
 
-def test_fold_extended_system_exposes_blocks_and_requires_certificate():
+def test_fold_extended_system_exposes_blocks_and_requires_certificate() -> None:
     dtype = jnp.float32
     state_space = phx.linalg.PyTreeSpace({"x": jnp.asarray(0.0, dtype=dtype)})
     problem = ct.ParameterContinuationProblem(
@@ -128,6 +133,7 @@ def test_fold_extended_system_exposes_blocks_and_requires_certificate():
         problem,
         result.state.physical_state,
         result.state.parameter,
+        # ty: ignore[invalid-argument-type]
         certificate.geometry,
         certificate.evidence.nullspace,
     )
@@ -137,11 +143,11 @@ def test_fold_extended_system_exposes_blocks_and_requires_certificate():
     np.testing.assert_allclose(float(normal_form.coefficient), 1.0, rtol=1e-6)
 
 
-def test_hopf_extended_system_and_spectral_certificate_are_distinct():
+def test_hopf_extended_system_and_spectral_certificate_are_distinct() -> None:
     dtype = jnp.float32
     state_space = phx.linalg.ArraySpace((2,), dtype=dtype)
 
-    def vector_field(state, parameter, args):
+    def vector_field(state: Any, parameter: Any, args: Any) -> Any:
         x, y = state
         radius_squared = x**2 + y**2
         return jnp.asarray(
@@ -177,7 +183,9 @@ def test_hopf_extended_system_and_spectral_certificate_are_distinct():
     assert bool(result.candidate_converged)
     assert float(jnp.max(result.convergence.block_norms)) <= 1e-6
 
-    def spectral_analysis(problem, candidate, state_space, args):
+    def spectral_analysis(
+        problem: Any, candidate: Any, state_space: Any, args: Any
+    ) -> Any:
         return ct.HopfEigenEvidence(
             eigenvalues=jnp.asarray([1j, -1j], dtype=jnp.complex64),
             critical_pair_residual=0.0,
@@ -208,7 +216,7 @@ def test_hopf_extended_system_and_spectral_certificate_are_distinct():
 
     matrix = jnp.asarray([[0.0, -1.0], [1.0, 0.0]], dtype=jnp.complex64)
 
-    def harmonic_solution(action, right_hand_side, system_id):
+    def harmonic_solution(action: Any, right_hand_side: Any, system_id: Any) -> Any:
         operator = matrix if "zero-harmonic" in system_id else 2j * jnp.eye(2) - matrix
         return jnp.linalg.solve(operator, right_hand_side)
 
@@ -229,7 +237,7 @@ def test_hopf_extended_system_and_spectral_certificate_are_distinct():
     assert float(normal_form.first_lyapunov_coefficient) < 0.0
 
 
-def test_pitchfork_certificate_drives_two_automatic_switches():
+def test_pitchfork_certificate_drives_two_automatic_switches() -> None:
     dtype = jnp.float32
     state_space = phx.linalg.ArraySpace((), dtype=dtype)
     problem = ct.ParameterContinuationProblem(
@@ -294,7 +302,7 @@ def test_pitchfork_certificate_drives_two_automatic_switches():
     np.testing.assert_allclose(float(seeds[1][0]), -0.05, rtol=1e-6)
 
 
-def test_transcritical_certificate_requires_two_nondegenerate_reduced_terms():
+def test_transcritical_certificate_requires_two_nondegenerate_reduced_terms() -> None:
     dtype = jnp.float32
     state_space = phx.linalg.ArraySpace((), dtype=dtype)
     problem = ct.ParameterContinuationProblem(
@@ -355,7 +363,7 @@ def test_transcritical_certificate_requires_two_nondegenerate_reduced_terms():
     assert bool(certificate.certified)
 
 
-def test_incomplete_or_ill_conditioned_evidence_never_certifies():
+def test_incomplete_or_ill_conditioned_evidence_never_certifies() -> None:
     dtype = jnp.float32
     state_space = phx.linalg.ArraySpace((), dtype=dtype)
     problem = ct.ParameterContinuationProblem(
@@ -418,7 +426,7 @@ def test_incomplete_or_ill_conditioned_evidence_never_certifies():
     assert int(ill_conditioned.status) == int(ct.NormalFormStatus.ILL_CONDITIONED)
 
 
-def test_linear_and_parameter_homotopies_have_exact_endpoints():
+def test_linear_and_parameter_homotopies_have_exact_endpoints() -> None:
     dtype = jnp.float32
     start = nl.NonlinearSystemProblem(
         lambda state, args: state - 1.0,
@@ -460,7 +468,7 @@ def test_linear_and_parameter_homotopies_have_exact_endpoints():
     )
 
 
-def test_metric_deflation_rejects_known_root_and_preserves_other_root():
+def test_metric_deflation_rejects_known_root_and_preserves_other_root() -> None:
     dtype = jnp.float32
     problem = nl.NonlinearSystemProblem(
         lambda state, args: state * (state - 1.0),
@@ -510,7 +518,7 @@ def test_metric_deflation_rejects_known_root_and_preserves_other_root():
     assert float(other.minimum_known_root_distance) == pytest.approx(2.0)
 
 
-def test_public_continuation_namespace_owns_workflows():
+def test_public_continuation_namespace_owns_workflows() -> None:
     names = (
         "FoldProblem",
         "HopfProblem",
@@ -525,7 +533,7 @@ def test_public_continuation_namespace_owns_workflows():
     assert not hasattr(phx.dynamics.analysis, "branch_switch_seed")
 
 
-def test_nullspace_evidence_respects_distinct_state_and_residual_spaces():
+def test_nullspace_evidence_respects_distinct_state_and_residual_spaces() -> None:
     state_space = phx.linalg.PyTreeSpace(
         {"x": jnp.zeros((1,), dtype=jnp.float64)},
         space_id="nullspace-state",
@@ -567,7 +575,7 @@ def test_nullspace_evidence_respects_distinct_state_and_residual_spaces():
     assert float(evidence.left_norm) == 1.0
 
 
-def test_linear_homotopy_preserves_and_validates_declared_spaces():
+def test_linear_homotopy_preserves_and_validates_declared_spaces() -> None:
     space = phx.linalg.ArraySpace((), dtype=jnp.float64)
     start = nl.NonlinearSystemProblem(
         lambda state, args: state - 1.0,
@@ -584,7 +592,9 @@ def test_linear_homotopy_preserves_and_validates_declared_spaces():
     homotopy = ct.linear_homotopy(start, target)
     state_space, residual_space = homotopy.continuation_problem.declared_spaces()
 
+    # ty: ignore[unresolved-attribute]
     assert state_space.space_id == space.space_id
+    # ty: ignore[unresolved-attribute]
     assert residual_space.space_id == space.space_id
 
     incompatible = nl.NonlinearSystemProblem(
@@ -597,7 +607,7 @@ def test_linear_homotopy_preserves_and_validates_declared_spaces():
         ct.linear_homotopy(start, incompatible)
 
 
-def test_deflation_preserves_original_domain_and_acceptance_guards():
+def test_deflation_preserves_original_domain_and_acceptance_guards() -> None:
     space = phx.linalg.ArraySpace((), dtype=jnp.float64)
     problem = nl.NonlinearSystemProblem(
         lambda state, args: jnp.log(state),

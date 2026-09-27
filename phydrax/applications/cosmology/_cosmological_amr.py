@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -103,7 +104,7 @@ class BlockAMRParticleRoutingPlan(StrictModule, NonTrainableState):
         /,
         *,
         dtype: Any = np.float64,
-    ):
+    ) -> None:
         if not isinstance(topology, BlockHierarchyTopology):
             raise TypeError("topology must be BlockHierarchyTopology.")
         axes = topology.plan.grid.structured_axes
@@ -408,7 +409,7 @@ class BlockAMRGravityPlan(StrictModule, NonTrainableState):
         gravitational_constant: float = 1.0,
         gravity_argument: str | None = None,
         solve_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(operator, PreparedCompositeAMRDiffusion):
             raise TypeError("operator must be PreparedCompositeAMRDiffusion.")
         if not isinstance(routing, BlockAMRParticleRoutingPlan):
@@ -656,7 +657,7 @@ class BlockAMREpochPlan(StrictModule):
         runtime: PreparedBlockAMRRuntime,
         routing: BlockAMRParticleRoutingPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(runtime, PreparedBlockAMRRuntime):
             raise TypeError("runtime must be PreparedBlockAMRRuntime.")
         if not isinstance(routing, BlockAMRParticleRoutingPlan):

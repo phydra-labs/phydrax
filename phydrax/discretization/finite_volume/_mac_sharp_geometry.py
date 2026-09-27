@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._sharp_measures import (
@@ -128,7 +129,7 @@ class MACExactSDFMeasurePlan(StrictModule, NonTrainableState):
         wall_velocity: WallVelocityProvider | None = None,
         swept_cell_measure_rate: SweptMeasureRateProvider | None = None,
         gcl_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         if not callable(signed_distance):

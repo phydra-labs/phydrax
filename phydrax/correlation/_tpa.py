@@ -2,10 +2,13 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
-def transfer_path_contributions(transfer_functions: ArrayLike, path_forces: ArrayLike, /):
+def transfer_path_contributions(
+    transfer_functions: ArrayLike, path_forces: ArrayLike, /
+) -> Array:
     return jnp.asarray(transfer_functions) * jnp.asarray(path_forces)
 
 

@@ -73,7 +73,7 @@ class DecimalInterval:
         /,
         *,
         precision: int = 80,
-    ):
+    ) -> None:
         lower_ = _decimal(lower)
         upper_ = lower_ if upper is None else _decimal(upper)
         precision_ = int(precision)

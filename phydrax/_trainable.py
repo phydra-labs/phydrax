@@ -129,7 +129,7 @@ class RoleResolution(StrictModule):
         paths: tuple[str, ...],
         roles: tuple[ArrayRole | None, ...],
         violations: tuple[tuple[str, str, str], ...],
-    ):
+    ) -> None:
         if not isinstance(treedef, jax.tree_util.PyTreeDef):
             raise TypeError("treedef must be a jax.tree_util.PyTreeDef.")
         if not len(paths) == len(roles) == treedef.num_leaves:
@@ -717,7 +717,7 @@ class LaneLayout(StrictModule):
     kind: LaneKind = eqx.field(static=True)
     mapped_paths: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self, kind: LaneKind, mapped_paths: Iterable[str]):
+    def __init__(self, kind: LaneKind, mapped_paths: Iterable[str]) -> None:
         match kind:
             case "item" | "case" | "member":
                 pass

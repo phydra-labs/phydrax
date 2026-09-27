@@ -10,7 +10,7 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._identity import NumericRevision, SemanticProvenance
@@ -18,6 +18,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import ArraySpace, DiagonalPairing, LinearSubspace
 from ..ml.decomposition import SubspaceModel
+from ..typing import parse
 
 
 BasisRole: TypeAlias = Literal["state", "nonlinear-term", "residual", "roq"]
@@ -57,13 +58,12 @@ class ReducedBasisArtifact(StrictModule, NonTrainableState):
         geometry_id: str,
         source_artifact_ids: Sequence[str],
         evidence_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(subspace, LinearSubspace):
             raise TypeError("subspace must be a LinearSubspace.")
         if subspace.batch_shape:
             raise ValueError("Reduced basis artifacts require one unbatched subspace.")
-        if role not in ("state", "nonlinear-term", "residual", "roq"):
-            raise ValueError("role must identify one supported basis role.")
+        role = parse(role, BasisRole, "role")
         rank = int(np.asarray(subspace.dimension))
         if rank <= 0:
             raise ValueError("Reduced basis artifacts require positive active rank.")

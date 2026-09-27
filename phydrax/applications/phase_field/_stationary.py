@@ -9,7 +9,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._phase_field import DoubleWellFreeEnergy
@@ -38,7 +39,7 @@ class DoubleWellKinkPlan(StrictModule):
         maximum_backtracks: int = 12,
         residual_tolerance: float = 1e-10,
         maximum_matrix_elements: int = 10_000_000,
-    ):
+    ) -> None:
         points = np.asarray(coordinates, dtype=np.float64)
         if not isinstance(free_energy, DoubleWellFreeEnergy):
             raise TypeError("free_energy must be DoubleWellFreeEnergy.")

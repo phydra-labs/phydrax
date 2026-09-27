@@ -9,13 +9,15 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
 from ..discretization import AbstractPreparedParticleNeighborhood
+from ..typing import PRNGKey
 from ._potential_program import PreparedAtomisticPotentialProgram
 from ._thermal import stable_particle_normals
 
@@ -35,7 +37,7 @@ class RingPolymerPlan(StrictModule, NonTrainableState):
         /,
         *,
         centroid_friction: float = 1.0,
-    ):
+    ) -> None:
         beads = int(bead_count)
         thermal = float(temperature)
         step = float(step_size)
@@ -105,7 +107,7 @@ class PreparedRingPolymerDynamics(StrictModule):
         potential: PreparedAtomisticPotentialProgram,
         neighborhood: AbstractPreparedParticleNeighborhood,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, RingPolymerPlan):
             raise TypeError("plan must be RingPolymerPlan.")
         if not isinstance(potential, PreparedAtomisticPotentialProgram):
@@ -139,7 +141,7 @@ class PreparedRingPolymerDynamics(StrictModule):
         )
 
     def _physical(self, positions: Array, /) -> tuple[Array, Array, Array]:
-        def evaluate_bead(bead_positions):
+        def evaluate_bead(bead_positions: Array) -> tuple[Array, Array, Array]:
             neighborhood = self.neighborhood.build(bead_positions)
             evaluation = self.potential.evaluate(
                 bead_positions,
@@ -175,7 +177,7 @@ class PreparedRingPolymerDynamics(StrictModule):
         *,
         velocity: ArrayLike | None = None,
         momentum: ArrayLike | None = None,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> RingPolymerState:
         base = jnp.asarray(positions, dtype=self.potential.system.plan.coordinate_dtype)
         expected = (self.potential.system.capacity, 3)

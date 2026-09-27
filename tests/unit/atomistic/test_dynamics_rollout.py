@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -7,15 +8,24 @@ import numpy as np
 import phydrax as phx
 
 
-def _dynamics():
+def _dynamics() -> Any:
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     system = phx.atomistic.AtomisticSystemPlan(
-        [0, 1], [1, 1], [1.0, 1.0], units, atom_type_ids=[0, 0]
+        # ty: ignore[invalid-argument-type]
+        [0, 1],
+        # ty: ignore[invalid-argument-type]
+        [1, 1],
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.0],
+        units,
+        # ty: ignore[invalid-argument-type]
+        atom_type_ids=[0, 0],
     ).prepare()
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
         system.particles
     )
     potential = phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.LennardJonesPotential([1.0], [1.0], 2.5)]
     ).prepare(system)
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
@@ -30,7 +40,7 @@ def _dynamics():
     return dynamics, thermodynamic
 
 
-def test_bounded_rollout_retains_only_planned_samples_and_replays():
+def test_bounded_rollout_retains_only_planned_samples_and_replays() -> None:
     dynamics, thermodynamic = _dynamics()
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]])
     initial = dynamics.initialize_state(
@@ -69,7 +79,7 @@ def test_bounded_rollout_retains_only_planned_samples_and_replays():
     )
 
 
-def test_checkpoint_roundtrip_continues_exact_state(tmp_path: Path):
+def test_checkpoint_roundtrip_continues_exact_state(tmp_path: Path) -> None:
     dynamics, thermodynamic = _dynamics()
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]])
     initial = dynamics.initialize_state(

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -45,7 +48,7 @@ from phydrax.discretization.lattice_boltzmann._thermal import (
 from phydrax.qualification._evidence import QualificationEvidence, SupportDependency
 
 
-def _point(**updates):
+def _point(**updates: Any) -> Any:
     values = {
         "mach_number": 0.05,
         "knudsen_number": 0.005,
@@ -65,7 +68,7 @@ def _point(**updates):
     return LatticeBoltzmannOperatingPoint(**values)
 
 
-def _interface_point(**updates):
+def _interface_point(**updates: Any) -> Any:
     values = {
         "mach_number": 0.05,
         "knudsen_number": 0.005,
@@ -86,14 +89,14 @@ def _interface_point(**updates):
 
 
 def _deployment(
-    profile,
+    profile: Any,
     *,
-    host_count=None,
-    devices_per_host=None,
-    restart_topology="topology-a",
-    relation=None,
-    parity_evidence_ids=("parity-evidence",),
-):
+    host_count: Any = None,
+    devices_per_host: Any = None,
+    restart_topology: Any = "topology-a",
+    relation: Any = None,
+    parity_evidence_ids: Any = ("parity-evidence",),
+) -> Any:
     return LatticeBoltzmannDeploymentRecord(
         "sharded",
         "array-archive",
@@ -116,7 +119,7 @@ def _deployment(
     )
 
 
-def _evidence(profile, *, at_time=10):
+def _evidence(profile: Any, *, at_time: Any = 10) -> Any:
     scientific = tuple(
         claim.value
         for claim in profile.required_claims
@@ -166,7 +169,7 @@ def _evidence(profile, *, at_time=10):
     )
 
 
-def test_c0_exact_support_and_envelope_admission_refusal():
+def test_c0_exact_support_and_envelope_admission_refusal() -> None:
     profiles = c0_guo_baseline_profiles()
     assert len(profiles) == 4
     assert {
@@ -211,15 +214,15 @@ def test_c0_exact_support_and_envelope_admission_refusal():
     ),
 )
 def test_binary_interface_envelope_refuses_each_bounded_axis(
-    coordinate, outside, failed_check
-):
+    coordinate: Any, outside: Any, failed_check: Any
+) -> None:
     profile = c2_binary_interface_profiles()[0]
     admission = profile.envelope.evaluate(_interface_point(**{coordinate: outside}))
     assert not bool(admission.header.globally_eligible)
     assert failed_check in admission.failed_checks()
 
 
-def test_resource_preflight_precedes_preparation_and_fails_closed():
+def test_resource_preflight_precedes_preparation_and_fails_closed() -> None:
     profile = c0_guo_baseline_profiles()[0]
     estimate = profile.envelope.preflight(
         local_cell_count=64,
@@ -248,7 +251,9 @@ def test_resource_preflight_precedes_preparation_and_fails_closed():
         constrained.envelope.prepare(local_cell_count=64)
 
 
-def test_c1_collision_native_guo_conserves_mass_and_applies_exact_force_momentum():
+def test_c1_collision_native_guo_conserves_mass_and_applies_exact_force_momentum() -> (
+    None
+):
     profile = c1_collision_native_forcing_profile()
     assert profile.tier is LatticeBoltzmannCommercialTier.C1
     support = dict(profile.support_tuple.attributes)
@@ -282,7 +287,7 @@ def test_c1_collision_native_guo_conserves_mass_and_applies_exact_force_momentum
     np.testing.assert_allclose(result.diagnostics.momentum_error, 0.0, atol=2e-12)
 
 
-def test_c2_profiles_bind_interface_laplace_capillary_droplet_and_wetting_gates():
+def test_c2_profiles_bind_interface_laplace_capillary_droplet_and_wetting_gates() -> None:
     wetting = ConstitutiveDynamicWettingPlan(
         np.deg2rad(90.0),
         np.deg2rad(30.0),
@@ -329,7 +334,7 @@ def test_c2_profiles_bind_interface_laplace_capillary_droplet_and_wetting_gates(
     np.testing.assert_allclose(np.linalg.norm(normal, axis=-1), 1.0)
 
 
-def test_c3_profiles_distinguish_passive_thermal_species_and_reactive_splitting():
+def test_c3_profiles_distinguish_passive_thermal_species_and_reactive_splitting() -> None:
     profiles = c3_passive_transport_profiles()
     by_physics = {profile.envelope.physics_model: profile for profile in profiles}
     assert set(by_physics) == {
@@ -353,7 +358,7 @@ def test_c3_profiles_distinguish_passive_thermal_species_and_reactive_splitting(
     assert dict(reactive.support_tuple.attributes)["splitting"] == "symmetric-strang"
 
 
-def test_conjugate_thermal_has_solid_state_and_conservative_interface_flux():
+def test_conjugate_thermal_has_solid_state_and_conservative_interface_flux() -> None:
     fluid = ThermalLatticeBoltzmannPlan(2.0, 4.0, reference_temperature=300.0)
     plan = ConjugateThermalPlan(
         fluid,
@@ -393,6 +398,7 @@ def test_conjugate_thermal_has_solid_state_and_conservative_interface_flux():
     )
 
     profile = conjugate_thermal_qualification_profile(plan)
+    # ty: ignore[unresolved-attribute]
     assert profile.conjugate_thermal.plan_id == plan.plan_id
     assert (
         LatticeBoltzmannQualificationClaim.CONJUGATE_THERMAL_CONSERVATION
@@ -401,7 +407,7 @@ def test_conjugate_thermal_has_solid_state_and_conservative_interface_flux():
     assert dict(profile.support_tuple.attributes)["solid_energy_state"] is True
 
 
-def test_commercial_gate_requires_all_scientific_and_execution_evidence():
+def test_commercial_gate_requires_all_scientific_and_execution_evidence() -> None:
     profile = c0_guo_baseline_profiles()[0]
     evidence = _evidence(profile)
     result = profile.evaluate(
@@ -436,7 +442,7 @@ def test_commercial_gate_requires_all_scientific_and_execution_evidence():
     }
 
 
-def test_commercial_gate_requires_exact_support_dependencies():
+def test_commercial_gate_requires_exact_support_dependencies() -> None:
     baseline = c0_guo_baseline_profiles()[0]
     dependency = SupportDependency("chemistry-profile", "chemistry-support-tuple")
     profile = LatticeBoltzmannQualificationProfile(
@@ -476,7 +482,7 @@ def test_commercial_gate_requires_exact_support_dependencies():
     qualified.require()
 
 
-def test_multi_host_output_checkpoint_and_restart_topology_are_exact():
+def test_multi_host_output_checkpoint_and_restart_topology_are_exact() -> None:
     hardware = reference_lattice_boltzmann_hardware(host_count=2, devices_per_host=4)
     profile = c0_guo_baseline_profiles(hardware=hardware)[0]
     compatible = profile.deployment_compatibility(
@@ -498,7 +504,7 @@ def test_multi_host_output_checkpoint_and_restart_topology_are_exact():
     assert "restart-topology-relation" in missing_relation.failed_checks
 
 
-def test_profiles_cover_named_benchmarks_and_do_not_claim_a_continuum_method():
+def test_profiles_cover_named_benchmarks_and_do_not_claim_a_continuum_method() -> None:
     profile = c0_guo_baseline_profiles()[0]
     assert {
         LatticeBoltzmannQualificationClaim.SHEAR_WAVE_DECAY,

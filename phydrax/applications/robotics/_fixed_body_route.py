@@ -14,7 +14,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -54,7 +55,7 @@ class FixedBodyRoutePlan(StrictModule):
         *,
         route_mask: Sequence[bool] | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         names = tuple(_identifier(name, "route name") for name in route_names)
         if not names or len(set(names)) != len(names):
             raise ValueError("route_names must be non-empty and unique.")
@@ -193,7 +194,7 @@ class PreparedFixedBodyRoute(StrictModule):
         /,
         *,
         minimum_segment_length_m: float,
-    ):
+    ) -> None:
         if not isinstance(plan, FixedBodyRoutePlan):
             raise TypeError("plan must be FixedBodyRoutePlan.")
         if not isinstance(articulation, PreparedReducedArticulation):
@@ -322,10 +323,10 @@ class PreparedFixedBodyRoute(StrictModule):
         source = ArraySpace((self.articulation.nv,), dtype=point.dtype)
         target = ArraySpace((self.route_capacity,), dtype=point.dtype)
 
-        def action(generalized_velocity):
+        def action(generalized_velocity: Array) -> Array:
             return jax.jvp(self.lengths, (point,), (generalized_velocity,))[1]
 
-        def transpose_action(route_covector):
+        def transpose_action(route_covector: Array) -> Array:
             return jax.linear_transpose(
                 action, jnp.zeros((self.articulation.nv,), dtype=point.dtype)
             )(route_covector)[0]

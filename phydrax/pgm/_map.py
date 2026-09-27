@@ -11,12 +11,13 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
-import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..graph import segment_sum
+from ..typing import PRNGKey
 from ._belief_propagation import _broadcast_message, PreparedBeliefPropagation
 from ._elimination import _eliminate, VariableEliminationPlan
 from ._model import (
@@ -41,7 +42,7 @@ class SmoothDualLP(StrictModule):
         num_steps: int = 1000,
         learning_rate: float = 0.05,
         temperature: float = 0.1,
-    ):
+    ) -> None:
         steps = int(num_steps)
         rate = float(learning_rate)
         temp = float(temperature)
@@ -83,7 +84,9 @@ class PerturbAndMAPResult(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
-def _smooth_max(values: Array, temperature: float, /, *, axis=None) -> Array:
+def _smooth_max(
+    values: Array, temperature: float, /, *, axis: int | tuple[int, ...] | None = None
+) -> Array:
     if temperature == 0.0:
         return jnp.max(values, axis=axis)
     return temperature * jsp.special.logsumexp(values / temperature, axis=axis)
@@ -103,7 +106,7 @@ def _dual_objective(
         indices,
         prepared.state_variable_indices.shape[0],
     )
-    offsets = np.asarray(graph.variable_state_offsets)
+    offsets = graph._host_topology.state_offsets
     objective = jnp.asarray(0.0, dtype=variable_scores.dtype)
     for variable in range(graph.num_variables):
         objective = objective + _smooth_max(
@@ -169,7 +172,7 @@ def solve_smooth_dual_lp(
         prepared, evidence_values, values, method.temperature
     )
 
-    def step(values, _):
+    def step(values: Array, _: None) -> tuple[Array, Array]:
         current, gradient = jax.value_and_grad(objective)(values)
         updated = values - method.learning_rate * gradient
         return updated, current
@@ -181,7 +184,7 @@ def solve_smooth_dual_lp(
         prepared.message_variable_state_indices,
         prepared.state_variable_indices.shape[0],
     )
-    offsets = np.asarray(graph.variable_state_offsets)
+    offsets = graph._host_topology.state_offsets
     assignment = jnp.stack(
         [
             jnp.argmax(variable_scores[offsets[index] : offsets[index + 1]])
@@ -222,7 +225,7 @@ def perturb_and_map_log_normalizer(
     plan: VariableEliminationPlan,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_samples: int,
     evidence: ArrayLike | None = None,
 ) -> PerturbAndMAPResult:
@@ -241,7 +244,7 @@ def perturb_and_map_log_normalizer(
     keys = jr.split(key, count)
     euler_gamma = jnp.asarray(0.5772156649015329, dtype=base.dtype)
 
-    def one(sample_key):
+    def one(sample_key: PRNGKey) -> Array:
         uniform = jr.uniform(
             sample_key,
             (graph.num_variable_states,),

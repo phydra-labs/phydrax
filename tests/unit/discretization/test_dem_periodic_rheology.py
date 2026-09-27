@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _compile_periodic(control, radii):
+def _compile_periodic(control: Any, radii: Any) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([10, 20]), jnp.ones((2,)), ambient_dimension=2
     ).prepare()
@@ -42,7 +45,9 @@ def _compile_periodic(control, radii):
     )
 
 
-def test_prescribed_deforming_cell_preserves_fractional_positions_and_work_ledger():
+def test_prescribed_deforming_cell_preserves_fractional_positions_and_work_ledger() -> (
+    None
+):
     control = phx.discretization.DEMPeriodicCellControlPlan(
         jnp.asarray([[0.0, 0.2], [0.0, 0.0]]),
         strain_rate_mask=jnp.asarray([[False, True], [False, False]]),
@@ -84,7 +89,7 @@ def test_prescribed_deforming_cell_preserves_fractional_positions_and_work_ledge
     assert detail.evaluation.bulk_stress.successful
 
 
-def test_mixed_stress_strain_control_uses_periodic_contact_stress():
+def test_mixed_stress_strain_control_uses_periodic_contact_stress() -> None:
     control = phx.discretization.DEMPeriodicCellControlPlan(
         jnp.asarray([[0.0, 0.1], [0.0, 0.0]]),
         strain_rate_mask=jnp.asarray([[False, True], [False, False]]),
@@ -126,7 +131,7 @@ def test_mixed_stress_strain_control_uses_periodic_contact_stress():
         )
 
 
-def test_cell_control_failure_rolls_back_atomically():
+def test_cell_control_failure_rolls_back_atomically() -> None:
     control = phx.discretization.DEMPeriodicCellControlPlan(
         jnp.asarray([[0.0, 100.0], [0.0, 0.0]]),
         strain_rate_mask=jnp.asarray([[False, True], [False, False]]),
@@ -155,7 +160,7 @@ def test_cell_control_failure_rolls_back_atomically():
     )
 
 
-def test_periodic_envelope_and_explicit_bulk_stress_terms_are_auditable():
+def test_periodic_envelope_and_explicit_bulk_stress_terms_are_auditable() -> None:
     envelope = phx.discretization.PeriodicNeighborhoodEnvelope(
         jnp.eye(2),
         minimum_singular_value=0.8,
@@ -186,7 +191,9 @@ def test_periodic_envelope_and_explicit_bulk_stress_terms_are_auditable():
 
 
 @pytest.mark.parametrize("inactive_mass", [jnp.nan, jnp.inf])
-def test_bulk_stress_ignores_nonfinite_inactive_particle_slots(inactive_mass):
+def test_bulk_stress_ignores_nonfinite_inactive_particle_slots(
+    inactive_mass: Any,
+) -> None:
     plan = phx.discretization.DEMBulkStressPlan(
         jnp.asarray((0.25, -0.5)),
         include_contact=False,
@@ -247,7 +254,7 @@ def test_bulk_stress_ignores_nonfinite_inactive_particle_slots(inactive_mass):
 
 
 @pytest.mark.parametrize("active_mass", [jnp.nan, jnp.inf])
-def test_bulk_stress_fails_closed_for_nonfinite_active_mass(active_mass):
+def test_bulk_stress_fails_closed_for_nonfinite_active_mass(active_mass: Any) -> None:
     stress = phx.discretization.DEMBulkStressPlan(
         jnp.zeros((2,)),
         include_contact=False,

@@ -13,10 +13,11 @@ from typing import Any, TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, Key
+from jax import Array
 
 from .._mass import ExactMass, known_mass_value, Mass
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._capabilities import (
     ClosestPointProvider,
     ContactCurvatureProvider,
@@ -58,7 +59,7 @@ class GeometryTolerance:
     absolute: float = 1e-10
     relative: float = 1e-8
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not np.isfinite(self.absolute) or self.absolute < 0.0:
             raise ValueError(
                 "GeometryTolerance.absolute must be finite and non-negative."
@@ -107,7 +108,7 @@ class ClosestPointResult(StrictModule):
         physical_geometry_id: str | None = None,
         exact_to_physical: bool = False,
         normal_coordinate_valid: Array | None = None,
-    ):
+    ) -> None:
         point = jnp.asarray(closest_point, dtype=jnp.float64)
         normal = jnp.asarray(oriented_normal, dtype=point.dtype)
         coordinate = jnp.asarray(normal_coordinate, dtype=point.dtype)
@@ -194,7 +195,7 @@ class ContactCurvatureResult(StrictModule):
         /,
         *,
         ambient_dimension: int,
-    ):
+    ) -> None:
         if ambient_dimension <= 0:
             raise ValueError("ambient_dimension must be positive.")
         curvature = jnp.asarray(principal_curvatures)
@@ -285,7 +286,7 @@ class AbstractGeometryKernel(StrictModule):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         del state, num_points, key, plan
@@ -300,7 +301,7 @@ class AbstractGeometryKernel(StrictModule):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> SamplingResult:
         del state, num_points, key
         raise NotImplementedError(
@@ -312,6 +313,14 @@ class AbstractGeometryKernel(StrictModule):
         del state
         raise NotImplementedError(
             f"{type(self).__name__} does not provide a boundary atlas."
+        )
+
+    def cubature_atlas(
+        self, state: DesignState, component: CubatureComponent, /
+    ) -> CubatureAtlas:
+        del state, component
+        raise NotImplementedError(
+            f"{type(self).__name__} does not provide a cubature atlas."
         )
 
 
@@ -329,7 +338,7 @@ class CompiledGeometry(StrictModule):
         state: DesignState,
         *,
         tolerance: GeometryTolerance = GeometryTolerance(),
-    ):
+    ) -> None:
         self.kernel = kernel
         self.state = state
         self.schema = state.schema
@@ -471,7 +480,7 @@ class CompiledGeometry(StrictModule):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         self.require(GeometryCapability.INTERIOR_SAMPLING)
@@ -487,7 +496,7 @@ class CompiledGeometry(StrictModule):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> SamplingResult:
         self.require(GeometryCapability.BOUNDARY_SAMPLING)
         return self.kernel.sample_boundary(self.state, num_points, key=key)

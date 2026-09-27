@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from typing import Literal
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ...._differentiation import DerivativeRegularity
 from ...._doc import DOC_KEY0
@@ -35,7 +35,7 @@ class ConcatenatedModel(_AbstractStructuredInputModel):
     in_size: int | tuple[int, ...] | Literal["scalar"]
     out_size: int | tuple[int, ...] | Literal["scalar"]
 
-    def __init__(self, models: Sequence[_AbstractBaseModel], *, axis: int = -1):
+    def __init__(self, models: Sequence[_AbstractBaseModel], *, axis: int = -1) -> None:
         if not models:
             raise ValueError("ConcatenatedModel requires at least one model.")
         first_in_size = models[0].in_size

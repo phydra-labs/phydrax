@@ -6,12 +6,13 @@ from __future__ import annotations
 
 from math import ceil, isfinite
 from numbers import Integral
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -27,11 +28,12 @@ from ..linalg import (
     OperatorProperties,
     solve,
 )
+from ..typing import parse
 from ._bspline import bspline_stencil
 from ._bspline_grid import BSplineGrid
 
 
-ProjectionMethod = Literal["auto", "exact", "l2"]
+ProjectionMethod: TypeAlias = Literal["auto", "exact", "l2"]
 
 
 def _validate_common_interval(old_grid: BSplineGrid, new_grid: BSplineGrid) -> None:
@@ -215,8 +217,7 @@ def bspline_projection_matrix(
     method: ProjectionMethod = "auto",
 ) -> Array:
     """Return the old-to-new coefficient map using exact insertion or L2 projection."""
-    if method not in ("auto", "exact", "l2"):
-        raise ValueError(f"Unknown B-spline projection method: {method!r}.")
+    method = parse(method, ProjectionMethod, "method")
     _validate_common_interval(old_grid, new_grid)
     if method != "l2":
         exact = _exact_refinement_matrix(old_grid, new_grid)
@@ -249,7 +250,7 @@ class BSplineGridTransfer(StrictModule, NonTrainableState):
         *,
         method: ProjectionMethod = "auto",
         maximum_condition: float = 1.0e12,
-    ):
+    ) -> None:
         if not isfinite(maximum_condition) or maximum_condition <= 1.0:
             raise ValueError("maximum_condition must be finite and greater than one.")
         _validate_common_interval(old_grid, new_grid)
@@ -258,8 +259,7 @@ class BSplineGridTransfer(StrictModule, NonTrainableState):
             raise ValueError(
                 "Exact transfer requires equal degrees and a nested knot vector."
             )
-        if method not in ("auto", "exact", "l2"):
-            raise ValueError(f"Unknown B-spline projection method: {method!r}.")
+        method = parse(method, ProjectionMethod, "method")
 
         mass = bspline_mass_matrix(new_grid)
         condition = float(np.linalg.cond(np.asarray(mass)))

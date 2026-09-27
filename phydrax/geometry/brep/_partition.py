@@ -12,15 +12,15 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from OCP.BOPAlgo import BOPAlgo_CellsBuilder  # ty: ignore[unresolved-import]
-from OCP.TopAbs import (  # ty: ignore[unresolved-import]
+from OCP.BOPAlgo import BOPAlgo_CellsBuilder
+from OCP.TopAbs import (
     TopAbs_EDGE,
     TopAbs_FACE,
     TopAbs_SOLID,
 )
-from OCP.TopExp import TopExp_Explorer  # ty: ignore[unresolved-import]
-from OCP.TopoDS import TopoDS, TopoDS_Shape  # ty: ignore[unresolved-import]
-from OCP.TopTools import TopTools_ListOfShape  # ty: ignore[unresolved-import]
+from OCP.TopExp import TopExp_Explorer
+from OCP.TopoDS import TopoDS, TopoDS_Shape
+from OCP.TopTools import TopTools_ListOfShape
 
 from ..._fingerprint import canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
@@ -245,6 +245,14 @@ class BRepPartitionOperand:
         object.__setattr__(self, "target_region_ids", target_region_ids)
 
 
+def _operand_selection(operand: BRepPartitionOperand) -> CADSelectionSet:
+    selection = operand.selection
+    # BRepPartitionOperand.__post_init__ replaces a None selection with all solids.
+    if not (selection is not None):
+        raise RuntimeError("Internal invariant failed: selection is not None.")
+    return selection
+
+
 @dataclass(frozen=True, slots=True)
 class BRepPartitionPolicy:
     """Total region precedence and publication behavior for exact cell selection."""
@@ -322,7 +330,7 @@ class BRepPartitionPlan:
                     (
                         value.operand_id,
                         value.model.model_id,
-                        value.selection.selection_id,
+                        _operand_selection(value).selection_id,
                         value.role.value,
                         sorted(value.target_region_ids),
                     )
@@ -740,7 +748,7 @@ def _shape_index(entities: Sequence[Any], candidate: Any) -> int:
 def _oriented_face(solid: Any, face: Any) -> Any:
     explorer = TopExp_Explorer(solid, TopAbs_FACE)
     while explorer.More():
-        candidate = TopoDS.Face_s(explorer.Current())
+        candidate = TopoDS.Face(explorer.Current())
         if candidate.IsSame(face):
             return candidate
         explorer.Next()
@@ -763,7 +771,7 @@ def _members(
 ) -> frozenset[int]:
     builder.RemoveAllFromResult()
     builder.AddToResult(_shape_list((shape,)), TopTools_ListOfShape())
-    selected = _explore_unique(builder.Shape(), TopAbs_SOLID, TopoDS.Solid_s)
+    selected = _explore_unique(builder.Shape(), TopAbs_SOLID, TopoDS.Solid)
     return frozenset(_shape_index(atoms, value) for value in selected)
 
 
@@ -826,9 +834,9 @@ def _load_model(model: BRepModel) -> _LoadedModel:
     shape, source_format, source_digest = read_occt_shape(source)
     if source_format != "brep" or source_digest != model.source_digest:
         raise ValueError("Persisted partition operand identity has changed.")
-    solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid_s)
-    faces = _explore_unique(shape, TopAbs_FACE, TopoDS.Face_s)
-    edges = _explore_unique(shape, TopAbs_EDGE, TopoDS.Edge_s)
+    solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid)
+    faces = _explore_unique(shape, TopAbs_FACE, TopoDS.Face)
+    edges = _explore_unique(shape, TopAbs_EDGE, TopoDS.Edge)
     if (
         len(solids) != model.topology.num_solids
         or len(faces) != len(model.face_ids)
@@ -861,7 +869,7 @@ def _composite_sources(
     for operand in sorted(plan.operands, key=lambda value: value.operand_id):
         item = loaded[(operand.model.source_id, operand.model.source_digest)]
         selected_shapes: list[Any] = []
-        for selector in operand.selection.selectors:
+        for selector in _operand_selection(operand).selectors:
             source_solid_index = next(
                 index
                 for index in range(len(item.solids))
@@ -1000,7 +1008,7 @@ def _final_solid_owners(
     atom_owners: tuple[str | None, ...],
 ) -> tuple[str, ...]:
     oriented_atom_faces = tuple(
-        (owner, _explore_unique(atom, TopAbs_FACE, TopoDS.Face_s))
+        (owner, _explore_unique(atom, TopAbs_FACE, TopoDS.Face))
         for atom, owner in zip(atoms, atom_owners, strict=True)
         if owner is not None
     )
@@ -1009,7 +1017,7 @@ def _final_solid_owners(
         evidence: set[str] = set()
         explorer = TopExp_Explorer(solid, TopAbs_FACE)
         while explorer.More():
-            final_face = TopoDS.Face_s(explorer.Current())
+            final_face = TopoDS.Face(explorer.Current())
             for owner, faces in oriented_atom_faces:
                 if any(final_face.IsEqual(face) for face in faces):
                     evidence.add(owner)
@@ -1053,10 +1061,10 @@ def _verify_roundtrip(
     reopened_shape: Any,
     model: BRepModel,
 ) -> tuple[tuple[Any, ...], tuple[Any, ...], tuple[int, ...], tuple[int, ...]]:
-    original_solids = _explore_unique(original_shape, TopAbs_SOLID, TopoDS.Solid_s)
-    original_faces = _explore_unique(original_shape, TopAbs_FACE, TopoDS.Face_s)
-    reopened_solids = _explore_unique(reopened_shape, TopAbs_SOLID, TopoDS.Solid_s)
-    reopened_faces = _explore_unique(reopened_shape, TopAbs_FACE, TopoDS.Face_s)
+    original_solids = _explore_unique(original_shape, TopAbs_SOLID, TopoDS.Solid)
+    original_faces = _explore_unique(original_shape, TopAbs_FACE, TopoDS.Face)
+    reopened_solids = _explore_unique(reopened_shape, TopAbs_SOLID, TopoDS.Solid)
+    reopened_faces = _explore_unique(reopened_shape, TopAbs_FACE, TopoDS.Face)
     solid_map = _exact_roundtrip_map(original_solids, reopened_solids, "solid")
     face_map = _exact_roundtrip_map(original_faces, reopened_faces, "face")
     if (
@@ -1071,7 +1079,7 @@ def _verify_roundtrip(
         mapped_orientations: list[int] = []
         explorer = TopExp_Explorer(solid, TopAbs_FACE)
         while explorer.More():
-            face = TopoDS.Face_s(explorer.Current())
+            face = TopoDS.Face(explorer.Current())
             original_face_index = _shape_index(original_faces, face)
             mapped_faces.append(face_map[original_face_index])
             global_face = original_faces[original_face_index]
@@ -1219,7 +1227,7 @@ def _association_graph(
             source_solid.shape,
             final_solids,
             TopAbs_SOLID,
-            TopoDS.Solid_s,
+            TopoDS.Solid,
         )
         mapped_solids = tuple(solid_map[index] for index in solid_history.target_indices)
         evidence_rows.append(
@@ -1254,7 +1262,7 @@ def _association_graph(
                 source_face.shape,
                 final_faces,
                 TopAbs_FACE,
-                TopoDS.Face_s,
+                TopoDS.Face,
             )
             mapped_faces = tuple(face_map[index] for index in face_history.target_indices)
             evidence_rows.append(
@@ -1456,7 +1464,7 @@ def partition_brep(
         builder.Perform()
         if builder.HasErrors():
             raise RuntimeError("OCCT failed to construct the exact partition cells.")
-        atoms = _explore_unique(builder.GetAllParts(), TopAbs_SOLID, TopoDS.Solid_s)
+        atoms = _explore_unique(builder.GetAllParts(), TopAbs_SOLID, TopoDS.Solid)
         if not atoms:
             raise RuntimeError("OCCT produced no solid partition cells.")
         operand_members = {
@@ -1469,8 +1477,8 @@ def partition_brep(
         }
         final_shape = _build_final_shape(plan, builder, operand_shapes)
     atom_owners = _classify_atoms(plan, operand_members, len(atoms))
-    final_solids = _explore_unique(final_shape, TopAbs_SOLID, TopoDS.Solid_s)
-    final_faces = _explore_unique(final_shape, TopAbs_FACE, TopoDS.Face_s)
+    final_solids = _explore_unique(final_shape, TopAbs_SOLID, TopoDS.Solid)
+    final_faces = _explore_unique(final_shape, TopAbs_FACE, TopoDS.Face)
     if not final_solids or not final_faces:
         raise RuntimeError("OCCT produced an incomplete partition result.")
     original_owners = _final_solid_owners(final_solids, atoms, atom_owners)
@@ -1504,7 +1512,7 @@ def partition_brep(
             solid_map,
             face_map,
         ) = _verify_roundtrip(final_shape, reopened_shape, staged_model)
-        if identity_partition:
+        if builder is None:
             association_graph, history_certificate_id = _identity_association_graph(
                 plan,
                 source_revision,

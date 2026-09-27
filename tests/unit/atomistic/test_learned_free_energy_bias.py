@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -16,26 +19,35 @@ class _QuadraticFreeEnergy(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, stiffness, offset=0.0):
+    def __init__(self, stiffness: Any, offset: Any = 0.0) -> None:
         self.stiffness = jnp.asarray(stiffness, dtype=jnp.float64)
         self.offset = jnp.asarray(offset, dtype=jnp.float64)
         self.in_size = 1
         self.out_size = 1
 
-    def __call__(self, value, /, *, key=None):
+    def __call__(self, value: Any, /, *, key: Any = None) -> Any:
         del key
         return jnp.asarray([0.5 * self.stiffness * value[0] ** 2 + self.offset])
 
 
-def _runtime():
+def _runtime() -> Any:
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     system = phx.atomistic.AtomisticSystemPlan(
-        [10, 20], [1, 1], [1.0, 1.0], units, atom_type_ids=[0, 0]
+        # ty: ignore[invalid-argument-type]
+        [10, 20],
+        # ty: ignore[invalid-argument-type]
+        [1, 1],
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.0],
+        units,
+        # ty: ignore[invalid-argument-type]
+        atom_type_ids=[0, 0],
     ).prepare()
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
         system.particles
     )
     potential = phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.LennardJonesPotential([0.1], [1.0], 2.5)]
     ).prepare(system)
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
@@ -57,8 +69,9 @@ def _runtime():
     return system, dynamics, thermodynamic, state
 
 
-def test_restrained_mean_force_estimator_records_finite_stiffness_gradient():
+def test_restrained_mean_force_estimator_records_finite_stiffness_gradient() -> None:
     centers = jnp.asarray([[-1.0], [0.0], [1.0]])
+    # ty: ignore[invalid-argument-type]
     plan = phx.atomistic.sampling.RestrainedMeanForcePlan(centers, [10.0])
     samples = centers[:, None, :] + jnp.asarray(
         [[[-0.2], [-0.1], [-0.15]], [[0.0], [0.1], [-0.1]], [[0.2], [0.1], [0.15]]]
@@ -74,7 +87,7 @@ def test_restrained_mean_force_estimator_records_finite_stiffness_gradient():
     assert data.free_energy_gradients[2, 0] < 0.0
 
 
-def test_free_energy_gradient_training_selects_scalar_model():
+def test_free_energy_gradient_training_selects_scalar_model() -> None:
     centers = jnp.linspace(-1.5, 1.5, 21)[:, None]
     data = phx.atomistic.sampling.MeanForceData(
         centers,
@@ -97,7 +110,7 @@ def test_free_energy_gradient_training_selects_scalar_model():
     assert jnp.isfinite(result.model(jnp.asarray([0.4]))[0])
 
 
-def test_gauge_aligned_committee_produces_conservative_trusted_bias():
+def test_gauge_aligned_committee_produces_conservative_trusted_bias() -> None:
     system, dynamics, thermodynamic, state = _runtime()
     distance = phx.atomistic.sampling.CollectiveVariablePlan(
         phx.atomistic.sampling.CollectiveVariableKind.DISTANCE, [0, 1]
@@ -109,6 +122,7 @@ def test_gauge_aligned_committee_produces_conservative_trusted_bias():
         variables,
         (_QuadraticFreeEnergy(1.0, 3.0), _QuadraticFreeEnergy(1.0, -2.0)),
         model_ids=("quadratic-a", "quadratic-b"),
+        # ty: ignore[invalid-argument-type]
         reference=[1.0],
         trusted_uncertainty=1.0e-8,
         rejected_uncertainty=0.5,

@@ -10,7 +10,8 @@ from pathlib import Path
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._array_archive import read_array_archive, write_array_archive
 from .._fingerprint import canonical_fingerprint
@@ -72,7 +73,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         field_transfer: Callable | None = None,
         history_transfer: Callable | None = None,
         transaction_id: str = "finite-element-topology-transaction",
-    ):
+    ) -> None:
         if not callable(certify):
             raise TypeError("certify must be callable.")
         if material_transfer is not None and not callable(material_transfer):

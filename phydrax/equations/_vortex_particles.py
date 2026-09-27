@@ -8,7 +8,8 @@ from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -49,7 +50,7 @@ class VortexParticleFlowProblem(StrictModule, NonTrainableState):
         background_velocity: BackgroundVortexVelocity | None = None,
         background_velocity_id: str | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         dimension_ = int(dimension)
         viscosity = jnp.asarray(kinematic_viscosity, dtype=jnp.float64)
@@ -101,7 +102,7 @@ class CompiledVortexParticleFlow(StrictModule, NonTrainableState):
         dynamics: PreparedVortexParticleDynamics,
         bundle: DiscretizationBundle,
         /,
-    ):
+    ) -> None:
         self.problem = problem
         self.dynamics = dynamics
         self.discretization_bundle = bundle

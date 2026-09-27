@@ -8,6 +8,7 @@ import hashlib
 import os
 from dataclasses import FrozenInstanceError
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -24,7 +25,9 @@ def _limits(*, max_bytes: int = 1024, max_depth: int = 8) -> ResourceLimits:
     return ResourceLimits(max_bytes, max_depth, 32, 64, 8)
 
 
-def test_descriptor_relative_read_retains_exact_immutable_manifest(tmp_path: Path):
+def test_descriptor_relative_read_retains_exact_immutable_manifest(
+    tmp_path: Path,
+) -> None:
     nested = tmp_path / "nested"
     nested.mkdir()
     source = nested / "resource.bin"
@@ -45,17 +48,17 @@ def test_descriptor_relative_read_retains_exact_immutable_manifest(tmp_path: Pat
     assert accounted.manifest.observed_attributes == 5
     assert accounted.manifest.observed_losses == 1
     with pytest.raises(FrozenInstanceError):
-        accounted.manifest.size_bytes = 0  # type: ignore[misc]
+        accounted.manifest.size_bytes = 0  # ty: ignore[invalid-assignment]
 
 
 @pytest.mark.parametrize("path", ("../outside.bin", "nested/../../outside.bin"))
-def test_traversal_is_rejected_before_descriptor_walk(tmp_path: Path, path: str):
+def test_traversal_is_rejected_before_descriptor_walk(tmp_path: Path, path: str) -> None:
     with pytest.raises(ResourceReadError) as caught:
         read_bounded_resource(path, trusted_root=tmp_path, limits=_limits())
     assert caught.value.reason == "policy"
 
 
-def test_symlink_roots_components_and_files_are_rejected(tmp_path: Path):
+def test_symlink_roots_components_and_files_are_rejected(tmp_path: Path) -> None:
     real_root = tmp_path / "real"
     real_root.mkdir()
     outside = tmp_path / "outside"
@@ -78,7 +81,7 @@ def test_symlink_roots_components_and_files_are_rejected(tmp_path: Path):
         assert caught.value.reason == "policy"
 
 
-def test_special_file_and_oversize_resource_fail_closed(tmp_path: Path):
+def test_special_file_and_oversize_resource_fail_closed(tmp_path: Path) -> None:
     fifo = tmp_path / "stream"
     os.mkfifo(fifo)
     oversized = tmp_path / "large.bin"
@@ -95,7 +98,7 @@ def test_special_file_and_oversize_resource_fail_closed(tmp_path: Path):
     assert too_large.value.reason == "limit"
 
 
-def test_component_path_swap_is_detected(tmp_path: Path, monkeypatch):
+def test_component_path_swap_is_detected(tmp_path: Path, monkeypatch: Any) -> None:
     nested = tmp_path / "nested"
     nested.mkdir()
     (nested / "resource.bin").write_bytes(b"trusted")
@@ -106,7 +109,9 @@ def test_component_path_swap_is_detected(tmp_path: Path, monkeypatch):
     real_open = resource_module.os.open
     swapped = False
 
-    def swapping_open(path, flags, mode=0o777, *, dir_fd=None):
+    def swapping_open(
+        path: Any, flags: Any, mode: Any = 0o777, *, dir_fd: Any = None
+    ) -> Any:
         nonlocal swapped
         if dir_fd is None:
             descriptor = real_open(path, flags, mode)

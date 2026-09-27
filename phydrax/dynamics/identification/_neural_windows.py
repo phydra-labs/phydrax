@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from phydrax._strict import StrictModule
 
@@ -56,7 +56,7 @@ class _NeuralWindowSource:
         step_size: float,
         step_rtol: float,
         step_atol: float,
-    ):
+    ) -> None:
         if not isinstance(trajectory, TrajectoryData):
             raise TypeError("trajectory must be a TrajectoryData.")
         horizon = int(max_horizon)

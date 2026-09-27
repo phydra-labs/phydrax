@@ -8,7 +8,8 @@ from dataclasses import dataclass
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -43,7 +44,7 @@ class Guccione1991Parameters(StrictModule, NonTrainableState):
         transverse_exponent: ArrayLike,
         fiber_shear_exponent: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (
@@ -131,7 +132,7 @@ class Guccione1991Energy(StrictModule, NonTrainableState):
         cell_index: int | None = None,
         frame_tolerance: float = 1.0e-8,
         energy_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(parameters, Guccione1991Parameters):
             raise TypeError("parameters must be Guccione1991Parameters.")
         frame, identifier, selected_cell = resolve_material_frame(
@@ -216,7 +217,7 @@ class Guccione1991Energy(StrictModule, NonTrainableState):
             float(parameters.transverse_exponent),
             float(parameters.fiber_shear_exponent),
             tuple(
-                tuple(float(component) for component in row)
+                (float(row[0]), float(row[1]), float(row[2]))
                 for row in self.material_frame.tolist()
             ),
         )

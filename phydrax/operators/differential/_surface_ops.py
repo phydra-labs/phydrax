@@ -4,15 +4,20 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax.domain import AbstractScalarDomain, DomainComponent, DomainFunction
 
 from ...metrix import RiemannianMetric, tangent_projector_from_normal
 from ._domain_ops import _factor_and_dim, _resolve_var, curl, grad
+
+
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
 
 
 def tangential_component(
@@ -58,7 +63,7 @@ def tangential_component(
     w_pos = tuple(idx[lbl] for lbl in w2.deps)
     n_pos = tuple(idx[lbl] for lbl in n2.deps)
 
-    def _op(*args, key=None, **kwargs):
+    def _op(*args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         wv = jnp.asarray(w2.func(*[args[i] for i in w_pos], key=key, **kwargs))
         nv = jnp.asarray(n2.func(*[args[i] for i in n_pos], key=key, **kwargs))
         dot = jnp.sum(wv * nv, axis=-1, keepdims=True)
@@ -113,7 +118,7 @@ def surface_grad(
     g_pos = tuple(idx[lbl] for lbl in g.deps)
     n_pos = tuple(idx[lbl] for lbl in n2.deps)
 
-    def _op(*args, key=None, **kwargs):
+    def _op(*args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         gv = jnp.asarray(g.func(*[args[i] for i in g_pos], key=key, **kwargs))
         nv = jnp.asarray(n2.func(*[args[i] for i in n_pos], key=key, **kwargs))
         P = tangent_projector_from_normal(nv)
@@ -176,7 +181,7 @@ def surface_div(
     j_pos = tuple(idx[lbl] for lbl in J.deps)
     n_pos = tuple(idx[lbl] for lbl in n2.deps)
 
-    def _op(*args, key=None, **kwargs):
+    def _op(*args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         Jv = jnp.asarray(J.func(*[args[i] for i in j_pos], key=key, **kwargs))
         nv = jnp.asarray(n2.func(*[args[i] for i in n_pos], key=key, **kwargs))
         P = tangent_projector_from_normal(nv)
@@ -233,7 +238,7 @@ def surface_curl_scalar(
     sg_pos = tuple(idx[lbl] for lbl in sg2.deps)
     n_pos = tuple(idx[lbl] for lbl in n2.deps)
 
-    def _op(*args, key=None, **kwargs):
+    def _op(*args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         nv = jnp.asarray(n2.func(*[args[i] for i in n_pos], key=key, **kwargs))
         gv = jnp.asarray(sg2.func(*[args[i] for i in sg_pos], key=key, **kwargs))
         return jnp.cross(nv, gv)
@@ -284,7 +289,7 @@ def surface_curl_vector(
     c_pos = tuple(idx[lbl] for lbl in c2.deps)
     n_pos = tuple(idx[lbl] for lbl in n2.deps)
 
-    def _op(*args, key=None, **kwargs):
+    def _op(*args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         nv = jnp.asarray(n2.func(*[args[i] for i in n_pos], key=key, **kwargs))
         cv = jnp.asarray(c2.func(*[args[i] for i in c_pos], key=key, **kwargs))
         return jnp.sum(nv * cv, axis=-1)
@@ -340,7 +345,7 @@ def ambient_surface_hessian_trace(
     h_pos = tuple(idx[lbl] for lbl in H.deps)
     n_pos = tuple(idx[lbl] for lbl in n2.deps)
 
-    def _op(*args, key=None, **kwargs):
+    def _op(*args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         Hv = jnp.asarray(H.func(*[args[i] for i in h_pos], key=key, **kwargs))
         nv = jnp.asarray(n2.func(*[args[i] for i in n_pos], key=key, **kwargs))
         if nv.shape[-1] != var_dim:

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -27,14 +29,14 @@ from phydrax.tensor_decomposition import (
 )
 
 
-def _time(call):
+def _time(call: Any) -> Any:
     start = time.perf_counter()
     value = call()
     jax.block_until_ready(value)
     return value, time.perf_counter() - start
 
 
-def _system(variable_count):
+def _system(variable_count: Any) -> Any:
     variables = tuple(f"x{index}" for index in range(variable_count))
     equations = tuple(f"f{index}" for index in range(variable_count))
     rows = []
@@ -56,7 +58,7 @@ def _system(variable_count):
     )
 
 
-def _core_row(variable_count, iterations):
+def _core_row(variable_count: Any, iterations: Any) -> Any:
     system = _system(variable_count)
     points = jnp.linspace(-1.0, 1.0, 256 * variable_count).reshape((256, variable_count))
     evaluate = eqx.filter_jit(system.evaluate)
@@ -89,7 +91,7 @@ def _core_row(variable_count, iterations):
     }
 
 
-def _image_row():
+def _image_row() -> Any:
     mapping = polynomial_image.SparsePolynomialMap(
         algebraic.SparsePolynomialSystem.from_coo(
             ("t",),
@@ -134,7 +136,7 @@ def _image_row():
     }
 
 
-def _moment_row():
+def _moment_row() -> Any:
     objective = algebraic.SparsePolynomialSystem.from_coo(
         ("x", "y"), ("objective",), (0, 0), ((2, 0), (0, 2)), jnp.asarray((1.0, 1.0))
     )
@@ -162,7 +164,7 @@ def _moment_row():
     }
 
 
-def _tensor_row():
+def _tensor_row() -> Any:
     weights, factors = normalize_waring_components(
         jnp.asarray((1.7, -0.65)),
         jnp.asarray(((1.0, 0.35), (0.55, 1.0))),
@@ -186,7 +188,7 @@ def _tensor_row():
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--iterations", type=int, default=8)
     parser.add_argument("--output", type=Path)

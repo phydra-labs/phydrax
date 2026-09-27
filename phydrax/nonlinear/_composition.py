@@ -10,19 +10,23 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._trainable import fixed_field
 from .._tree_math import tree_allfinite
 from ..linalg import (
+    AbstractVectorSpace,
     DenseLinearOperator,
     DenseSVD,
     LeastSquaresProblem,
     LinearSolvePolicy,
     solve as solve_linear,
 )
+from ..typing import parse
 from ._precision import NonlinearPrecisionPolicy
+from ._types import NonlinearSystemProblem
 from ._updates import (
     AbstractNonlinearUpdate,
     apply_prepared_nonlinear_update,
@@ -46,8 +50,8 @@ NonlinearCompositionKind: TypeAlias = Literal[
 
 
 def _space_norm(
-    space,
-    value,
+    space: AbstractVectorSpace,
+    value: PyTree[Any],
     precision: NonlinearPrecisionPolicy,
     /,
 ) -> Array:
@@ -74,7 +78,9 @@ def _component_control(
     )
 
 
-def _sum_component_field(components, name: str, /) -> Array:
+def _sum_component_field(
+    components: tuple[NonlinearUpdateResult, ...], name: str, /
+) -> Array:
     values = [vars(component.diagnostics)[name] for component in components]
     return sum(values[1:], values[0])
 
@@ -102,7 +108,7 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
         safeguard_factor: float = 1.0,
         linear: LinearSolvePolicy | None = None,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         updates_ = tuple(updates)
         if not updates_ or not all(
             isinstance(update, AbstractNonlinearUpdate) for update in updates_
@@ -110,8 +116,7 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
             raise TypeError(
                 "updates must be a nonempty tuple of AbstractNonlinearUpdate values."
             )
-        if kind not in ("multiplicative", "additive", "residual-optimal"):
-            raise ValueError("Unknown nonlinear composition kind.")
+        kind = parse(kind, NonlinearCompositionKind, "kind")
         weights_ = (
             tuple(1.0 for _ in updates_)
             if weights is None
@@ -192,13 +197,26 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
         )
         return work_sum(tuple(update.maximum_work for update in self.updates)) + reserve
 
-    def _prepare_internal(self, problem, state, args, /):
+    def _prepare_internal(
+        self,
+        problem: NonlinearSystemProblem,
+        state: PyTree[Any],
+        args: Any,
+        /,
+    ) -> tuple[PreparedNonlinearUpdate, ...]:
         return tuple(
             prepare_nonlinear_update(problem, state, update, args=args)
             for update in self.updates
         )
 
-    def _refresh_internal(self, internal_state, problem, state, args, /):
+    def _refresh_internal(
+        self,
+        internal_state: Any,
+        problem: NonlinearSystemProblem,
+        state: PyTree[Any],
+        args: Any,
+        /,
+    ) -> tuple[PreparedNonlinearUpdate, ...]:
         children = tuple(internal_state)
         if len(children) != len(self.updates) or not all(
             isinstance(child, PreparedNonlinearUpdate) for child in children
@@ -216,7 +234,7 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
         args: Any,
         control: NonlinearUpdateControl,
         /,
-    ):
+    ) -> tuple[NonlinearUpdateResult, tuple[PreparedNonlinearUpdate, ...]]:
         child_partitions = tuple(
             eqx.partition(child, eqx.is_array) for child in prepared.internal_state
         )
@@ -248,7 +266,7 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
             linear_iteration_reserve=linear_iteration_reserve,
         )
 
-        def execute(_):
+        def execute(_: None) -> tuple[NonlinearUpdateResult, tuple[PyTree[Any], ...]]:
             if self.kind == "multiplicative":
                 components, next_children, candidate = self._apply_multiplicative(
                     children,
@@ -286,7 +304,7 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
                 ),
             )
 
-        def reject(_):
+        def reject(_: None) -> tuple[NonlinearUpdateResult, tuple[PyTree[Any], ...]]:
             skipped = skipped_nonlinear_update_result(
                 prepared,
                 state_,
@@ -320,7 +338,18 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
         )
         return result, next_children
 
-    def _apply_multiplicative(self, children, state, args, control, /):
+    def _apply_multiplicative(
+        self,
+        children: tuple[PreparedNonlinearUpdate, ...],
+        state: PyTree[Any],
+        args: Any,
+        control: NonlinearUpdateControl,
+        /,
+    ) -> tuple[
+        tuple[NonlinearUpdateResult, ...],
+        tuple[PreparedNonlinearUpdate, ...],
+        PyTree[Any],
+    ]:
         current = state
         components = []
         next_children = []
@@ -328,7 +357,7 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
         for child in children:
             child_dynamic, child_static = eqx.partition(child, eqx.is_array)
 
-            def execute(_):
+            def execute(_: None) -> tuple[NonlinearUpdateResult, PyTree[Any]]:
                 combined = eqx.combine(child_dynamic, child_static)
                 result, next_child = apply_prepared_nonlinear_update(
                     combined,
@@ -336,10 +365,10 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
                     args=args,
                     control=control,
                 )
-                next_dynamic, _ = eqx.partition(next_child, eqx.is_array)
+                next_dynamic = eqx.partition(next_child, eqx.is_array)[0]
                 return result, next_dynamic
 
-            def skip(_):
+            def skip(_: None) -> tuple[NonlinearUpdateResult, PyTree[Any]]:
                 combined = eqx.combine(child_dynamic, child_static)
                 return (
                     skipped_nonlinear_update_result(
@@ -369,15 +398,20 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
 
     def _apply_additive(
         self,
-        prepared,
-        children,
-        state,
-        args,
-        control,
+        prepared: PreparedNonlinearUpdate,
+        children: tuple[PreparedNonlinearUpdate, ...],
+        state: PyTree[Any],
+        args: Any,
+        control: NonlinearUpdateControl,
         /,
         *,
         residual_optimal: bool,
-    ):
+    ) -> tuple[
+        tuple[NonlinearUpdateResult, ...],
+        tuple[PreparedNonlinearUpdate, ...],
+        PyTree[Any],
+        NonlinearWork,
+    ]:
         components = []
         next_children = []
         for child in children:
@@ -413,12 +447,12 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
 
     def _residual_optimal_candidate(
         self,
-        prepared,
-        state,
-        components,
-        args,
+        prepared: PreparedNonlinearUpdate,
+        state: PyTree[Any],
+        components: tuple[NonlinearUpdateResult, ...],
+        args: Any,
         /,
-    ):
+    ) -> tuple[PyTree[Any], NonlinearWork]:
         problem = prepared.problem
         residual_space = prepared.plan.residual_space
         base_residual, _ = problem.evaluate(state, args)
@@ -559,14 +593,14 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
 
     def _package(
         self,
-        prepared,
-        initial_state,
-        candidate,
-        args,
-        components,
-        coefficient_work,
+        prepared: PreparedNonlinearUpdate,
+        initial_state: PyTree[Any],
+        candidate: PyTree[Any],
+        args: Any,
+        components: tuple[NonlinearUpdateResult, ...],
+        coefficient_work: NonlinearWork,
         /,
-    ):
+    ) -> NonlinearUpdateResult:
         problem = prepared.problem
         initial_residual, _ = problem.evaluate(initial_state, args)
         candidate = prepared.plan.state_space.validate(candidate)

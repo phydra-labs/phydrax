@@ -1,4 +1,5 @@
 import hashlib
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -40,7 +41,7 @@ from phydrax.stochastic import PoissonClockRealization
 from phydrax.units import CENTIMETER, KILOGRAM, METER, SECOND
 
 
-def _manifest(name):
+def _manifest(name: Any) -> Any:
     payload = name.encode()
     return ReferenceArtifactManifest(
         name,
@@ -63,14 +64,14 @@ def _manifest(name):
     )
 
 
-def _context(*, length_unit=METER, pseudo_inertial=True):
+def _context(*, length_unit: Any = METER, pseudo_inertial: Any = True) -> Any:
     frame = FrameDefinition("synthetic-star", "ICRF", pseudo_inertial=pseudo_inertial)
     epoch = ReferenceEpoch(TimeInstant(JulianDate(2451545.0), "TDB"))
     scale = AstrodynamicsScaleContract(length_unit, KILOGRAM, SECOND)
     return AstrodynamicsContext(scale, epoch, frame)
 
 
-def _profile(context):
+def _profile(context: Any) -> Any:
     return SmoothStellarRadialProfile(
         jnp.asarray((0.0, 5.0e6, 1.0e7)),
         jnp.asarray((2.0e3, 1.0e3, 0.0)),
@@ -83,7 +84,7 @@ def _profile(context):
     )
 
 
-def _zero_scattering():
+def _zero_scattering() -> Any:
     return ElasticScatteringTable(
         ("H",),
         jnp.asarray((1.6735575e-27,)),
@@ -96,7 +97,7 @@ def _zero_scattering():
     )
 
 
-def _thermal_scattering():
+def _thermal_scattering() -> Any:
     speeds = jnp.asarray((0.0, 1.0e6))
     cross_sections = 1.0e-30 * jnp.ones((1, 2))
     rates = jnp.broadcast_to(
@@ -114,7 +115,7 @@ def _thermal_scattering():
     )
 
 
-def test_stellar_enclosed_mass_interpolation_is_center_regular():
+def test_stellar_enclosed_mass_interpolation_is_center_regular() -> None:
     profile = _profile(_context())
     evaluated = profile.evaluate(
         jnp.asarray(
@@ -141,7 +142,7 @@ def test_stellar_enclosed_mass_interpolation_is_center_regular():
     assert energy.sign_qualified
 
 
-def test_solar_transport_rejects_non_si_or_non_inertial_contexts():
+def test_solar_transport_rejects_non_si_or_non_inertial_contexts() -> None:
     contexts = (
         _context(length_unit=CENTIMETER),
         _context(pseudo_inertial=False),
@@ -165,7 +166,7 @@ def test_solar_transport_rejects_non_si_or_non_inertial_contexts():
             propagate_exterior_kepler(state, 1.0, 1.0e22, context)
 
 
-def test_exterior_kepler_propagation_preserves_specific_energy():
+def test_exterior_kepler_propagation_preserves_specific_energy() -> None:
     context = _context()
     state = BodyFrameTransportState(
         jnp.asarray((2.0e7, 0.0, 0.0)),
@@ -195,7 +196,7 @@ def test_exterior_kepler_propagation_preserves_specific_energy():
     assert jnp.allclose(compiled_energy, result.specific_energy_after_m2_s2)
 
 
-def test_zero_cross_section_focusing_is_fixed_by_kepler_energy():
+def test_zero_cross_section_focusing_is_fixed_by_kepler_energy() -> None:
     context = _context()
     profile = _profile(context)
     observation_radius = 2.0e7
@@ -268,7 +269,7 @@ def test_zero_cross_section_focusing_is_fixed_by_kepler_energy():
     assert bound_outcome.outcomes[0] == int(TransportOutcome.CAPTURED)
 
 
-def test_solar_simulation_uses_guarded_interior_and_analytic_exterior():
+def test_solar_simulation_uses_guarded_interior_and_analytic_exterior() -> None:
     context = _context()
     profile = _profile(context)
     observation_radius = 2.0e7
@@ -322,7 +323,7 @@ def test_solar_simulation_uses_guarded_interior_and_analytic_exterior():
     assert jnp.sqrt(jnp.sum(result.final_states[0, :3] ** 2)) >= observation_radius
 
 
-def test_thermal_target_marks_follow_rate_weighted_bounded_law():
+def test_thermal_target_marks_follow_rate_weighted_bounded_law() -> None:
     table = _thermal_scattering()
     temperature = 1.0e6
     projectile = jnp.asarray((2.0e5, 0.0, 0.0))
@@ -336,7 +337,7 @@ def test_thermal_target_marks_follow_rate_weighted_bounded_law():
     assert table.mark_sampler.maxwellian_tail_probability_bound < 1.0e-7
 
 
-def test_observation_radius_flux_uses_spherical_area_and_exposure():
+def test_observation_radius_flux_uses_spherical_area_and_exposure() -> None:
     radius = 2.0e7
     state = jnp.asarray((radius, 0.0, 0.0, 300.0, 0.0, 0.0))
     source = WeightedSampleBatch(
@@ -359,7 +360,7 @@ def test_observation_radius_flux_uses_spherical_area_and_exposure():
     assert jnp.allclose(flux.flux_m2_s, 1.0 / (4.0 * jnp.pi * radius**2))
 
 
-def test_solar_outcomes_are_exclusive_and_numerical_failure_is_unresolved():
+def test_solar_outcomes_are_exclusive_and_numerical_failure_is_unresolved() -> None:
     classified = classify_solar_outcomes(
         jnp.asarray((1.0, -1.0, 1.0, 1.0, -1.0e-15)),
         jnp.asarray((0, 3, 2, 4, 1)),

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -30,11 +32,11 @@ from phydrax.applications.solid_mechanics._rod_tendon import (
 )
 
 
-def _f32(value):
+def _f32(value: Any) -> Any:
     return jnp.asarray(value, dtype=jnp.float32)
 
 
-def _planar_rod(*, stiffness_scale: float = 1.0):
+def _planar_rod(*, stiffness_scale: float = 1.0) -> Any:
     dtype = jnp.float32
     return prepare_rod(
         RodPlan(
@@ -52,7 +54,7 @@ def _planar_rod(*, stiffness_scale: float = 1.0):
     )
 
 
-def _spatial_rod():
+def _spatial_rod() -> Any:
     dtype = jnp.float32
     return prepare_rod(
         RodPlan(
@@ -76,7 +78,7 @@ def _spatial_rod():
     )
 
 
-def _endpoint_route(offset: float = 0.0, *, label: str | None = None):
+def _endpoint_route(offset: float = 0.0, *, label: str | None = None) -> Any:
     return TendonRoutePlan(
         (
             RodMaterialStation(0, 0.0, jnp.asarray((0.0, offset), dtype=jnp.float32)),
@@ -92,7 +94,7 @@ def _tendon_plan(
     stiffness: float = 10.0,
     maximum_tension: float = 20.0,
     label: str | None = None,
-):
+) -> Any:
     return FrictionlessElasticTendonPlan(
         route,
         stiffness,
@@ -105,7 +107,7 @@ def _tendon_plan(
     )
 
 
-def _planar_reduction(rod):
+def _planar_reduction(rod: Any) -> Any:
     basis = RodStrainBasisPlan.shifted_legendre(
         0,
         dimension=2,
@@ -115,7 +117,7 @@ def _planar_reduction(rod):
     return prepare_reduced_rod(rod, ReducedRodPlan(basis))
 
 
-def test_material_station_route_preparation_and_content_identities():
+def test_material_station_route_preparation_and_content_identities() -> None:
     rod = _planar_rod()
     repeated_rod = _planar_rod()
     changed_rod = _planar_rod(stiffness_scale=2.0)
@@ -190,7 +192,7 @@ def test_material_station_route_preparation_and_content_identities():
         )
 
 
-def test_exact_material_eyelet_points_velocities_length_and_rate():
+def test_exact_material_eyelet_points_velocities_length_and_rate() -> None:
     rod = _planar_rod()
     route = prepare_tendon_route(
         TendonRoutePlan(
@@ -221,7 +223,7 @@ def test_exact_material_eyelet_points_velocities_length_and_rate():
     ) == pytest.approx(expected_rate, abs=2.0e-6)
 
 
-def test_native_length_jvp_and_true_dual_effort_pullback():
+def test_native_length_jvp_and_true_dual_effort_pullback() -> None:
     rod = _planar_rod()
     route = prepare_tendon_route(
         TendonRoutePlan(
@@ -266,7 +268,7 @@ def test_native_length_jvp_and_true_dual_effort_pullback():
     )
 
 
-def test_endpoint_and_offset_tendons_have_exact_force_and_bending_signs():
+def test_endpoint_and_offset_tendons_have_exact_force_and_bending_signs() -> None:
     rod = _planar_rod()
     state = rod.initialize_state()
     tension = jnp.asarray(4.0, dtype=jnp.float32)
@@ -300,7 +302,7 @@ def test_endpoint_and_offset_tendons_have_exact_force_and_bending_signs():
     assert jnp.allclose(total_moments, 0.0)
 
 
-def test_per_span_rates_and_nonuniform_tensions_preserve_virtual_work():
+def test_per_span_rates_and_nonuniform_tensions_preserve_virtual_work() -> None:
     rod = _planar_rod()
     route = prepare_tendon_route(
         TendonRoutePlan(
@@ -346,7 +348,7 @@ def test_per_span_rates_and_nonuniform_tensions_preserve_virtual_work():
     assert jnp.allclose(scalar_effort[1], uniform_span_effort[1])
 
 
-def test_spatial_offset_transport_and_material_moment_are_power_dual():
+def test_spatial_offset_transport_and_material_moment_are_power_dual() -> None:
     rod = _spatial_rod()
     radius = 0.25
     route = prepare_tendon_route(
@@ -392,7 +394,7 @@ def test_spatial_offset_transport_and_material_moment_are_power_dual():
     assert effort_power == pytest.approx(-tension * route.length_rate(state))
 
 
-def test_slack_taut_continuity_and_all_rating_boundaries():
+def test_slack_taut_continuity_and_all_rating_boundaries() -> None:
     rod = _planar_rod()
     route_plan = _endpoint_route()
     prepared = prepare_frictionless_elastic_tendon(_tendon_plan(route_plan), rod)
@@ -513,7 +515,7 @@ def test_slack_taut_continuity_and_all_rating_boundaries():
     assert not degenerate.valid
 
 
-def test_payout_stored_energy_and_rod_spool_power_close_exactly():
+def test_payout_stored_energy_and_rod_spool_power_close_exactly() -> None:
     rod = _planar_rod()
     prepared = prepare_frictionless_elastic_tendon(_tendon_plan(_endpoint_route()), rod)
     rest = rod.initialize_state()
@@ -570,7 +572,7 @@ def test_payout_stored_energy_and_rod_spool_power_close_exactly():
     assert crossing.valid
 
 
-def test_reduced_length_rate_and_effort_are_exact_pushforward_pullback_duals():
+def test_reduced_length_rate_and_effort_are_exact_pushforward_pullback_duals() -> None:
     rod = _planar_rod()
     reduction = _planar_reduction(rod)
     route = prepare_tendon_route(_endpoint_route(0.1), reduction)
@@ -634,12 +636,12 @@ def test_reduced_length_rate_and_effort_are_exact_pushforward_pullback_duals():
     assert evaluation.power_balanced
 
 
-def test_fixed_route_length_and_rate_support_jit_and_vmap():
+def test_fixed_route_length_and_rate_support_jit_and_vmap() -> None:
     rod = _planar_rod()
     route = prepare_tendon_route(_endpoint_route(), rod)
     rest = rod.initialize_state()
 
-    def query(endpoint_y, endpoint_y_velocity):
+    def query(endpoint_y: Any, endpoint_y_velocity: Any) -> Any:
         state = RodState(
             rest.positions.at[-1, 1].set(endpoint_y),
             rest.velocities.at[-1, 1].set(endpoint_y_velocity),

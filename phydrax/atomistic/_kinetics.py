@@ -7,7 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from ..dynamics import StateLayout
@@ -31,7 +31,7 @@ class CollectiveVariableFeatureLibrary(AbstractFeatureLibrary):
         dynamics: PreparedAtomisticDynamics,
         variables: AbstractCollectiveVariableProgram,
         /,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedAtomisticDynamics):
             raise TypeError("dynamics must be PreparedAtomisticDynamics.")
         if not isinstance(variables, AbstractCollectiveVariableProgram):

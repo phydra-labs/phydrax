@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import cast
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._sharp_measures import QualifiedSharpGeometry
@@ -20,6 +21,8 @@ from ...discretization.finite_volume import (
     FiniteVolumeDiscretization,
     MACBoundaryPlan,
     MACOperatorPlan,
+    PreparedMACBoundaryPlan,
+    PreparedMACOperators,
 )
 from ...solver import MACVariableDensityProjectionPlan
 from ...solver._mac_sharp_interface import MACSharpInterfaceProjectionPlan
@@ -88,7 +91,7 @@ class TwoPhaseMaterialPlan(StrictModule, NonTrainableState):
         gas_viscosity: float = 1.8e-5,
         surface_tension: float = 0.0,
         contact_angle: float = 0.5 * np.pi,
-    ):
+    ) -> None:
         values = tuple(
             float(v)
             for v in (
@@ -142,7 +145,7 @@ class IncompressibleTwoPhaseVOFPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 500,
         geometry: QualifiedSharpGeometry | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, FiniteVolumeDiscretization):
             raise TypeError("discretization must be FiniteVolumeDiscretization.")
         if len(discretization.cell_shape) not in (2, 3):
@@ -213,14 +216,22 @@ class IncompressibleTwoPhaseVOFPlan(StrictModule, NonTrainableState):
 
 class PreparedIncompressibleTwoPhaseVOF(StrictModule):
     plan: IncompressibleTwoPhaseVOFPlan
-    operators: Any
-    boundaries: Any
+    operators: PreparedMACOperators
+    boundaries: PreparedMACBoundaryPlan
     projection: MACVariableDensityProjectionPlan
     sharp_projection: MACSharpInterfaceProjectionPlan | None
     geometry: QualifiedSharpGeometry | None
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, operators, boundaries, projection, sharp_projection, /):
+    def __init__(
+        self,
+        plan: IncompressibleTwoPhaseVOFPlan,
+        operators: PreparedMACOperators,
+        boundaries: PreparedMACBoundaryPlan,
+        projection: MACVariableDensityProjectionPlan,
+        sharp_projection: MACSharpInterfaceProjectionPlan | None,
+        /,
+    ) -> None:
         self.plan = plan
         self.operators = operators
         self.boundaries = boundaries
@@ -406,7 +417,7 @@ class PreparedIncompressibleTwoPhaseVOF(StrictModule):
             if grid_axis.periodic:
                 continue
             for index, sign in ((0, -1.0), (-1, 1.0)):
-                location = [slice(None)] * mixed.ndim
+                location: list[slice | int] = [slice(None)] * mixed.ndim
                 location[axis] = index
                 boundary = output[tuple(location)]
                 boundary_mixed = mixed[tuple(location)]
@@ -436,7 +447,11 @@ class PreparedIncompressibleTwoPhaseVOF(StrictModule):
     def plic(self, alpha: ArrayLike, /) -> PLICGeometry:
         alpha_ = jnp.asarray(alpha)
         gradients = jnp.stack(
-            tuple(jnp.gradient(alpha_, axis=axis) for axis in range(alpha_.ndim)),
+            # jnp.gradient returns a single Array for a scalar axis.
+            tuple(
+                cast(Array, jnp.gradient(alpha_, axis=axis))
+                for axis in range(alpha_.ndim)
+            ),
             axis=-1,
         )
         norm = jnp.linalg.norm(gradients, axis=-1)
@@ -474,7 +489,11 @@ class PreparedIncompressibleTwoPhaseVOF(StrictModule):
     def level_set_from_alpha(self, alpha: ArrayLike, /) -> Array:
         alpha_ = jnp.asarray(alpha)
         gradients = jnp.stack(
-            tuple(jnp.gradient(alpha_, axis=axis) for axis in range(alpha_.ndim)),
+            # jnp.gradient returns a single Array for a scalar axis.
+            tuple(
+                cast(Array, jnp.gradient(alpha_, axis=axis))
+                for axis in range(alpha_.ndim)
+            ),
             axis=-1,
         )
         scale = jnp.maximum(jnp.linalg.norm(gradients, axis=-1), 1.0e-6)

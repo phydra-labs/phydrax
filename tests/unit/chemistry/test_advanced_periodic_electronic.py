@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -8,28 +10,29 @@ import phydrax as phx
 periodic = phx.chemistry.periodic
 
 
-def _cell():
+def _cell() -> Any:
     return phx.discretization.PeriodicCell(
         np.asarray([[5.0, 0.0, 0.0], [0.6, 4.8, 0.0], [0.3, 0.2, 5.2]]),
         periodic_axes=(True, True, True),
     )
 
 
-def _units():
+def _units() -> Any:
     return phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
 
 
-def _manifest(source_id):
+def _manifest(source_id: Any) -> Any:
     return periodic.PeriodicProvenanceManifest.for_bytes(
         f"{source_id}-fixture".encode(), source_id, "test-redistributable"
     )
 
 
-def _pencil(*, generalized=False, reference_electron_count=2.0):
+def _pencil(*, generalized: Any = False, reference_electron_count: Any = 2.0) -> Any:
     cell = _cell()
     basis = phx.operators.periodic.PeriodicOrbitalBasisPlan(
         cell,
         ("lower", "upper"),
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0], [0.25, 0.0, 0.0]],
         phx.units.ANGSTROM,
         phx.operators.periodic.PeriodicBlochGauge("lattice"),
@@ -38,14 +41,18 @@ def _pencil(*, generalized=False, reference_electron_count=2.0):
         (1, 2, 1, 2, 1)
     )
     h = phx.operators.periodic.periodic_translation_family_from_dense_blocks(
-        [[0, 0, 0]], h_blocks
+        # ty: ignore[invalid-argument-type]
+        [[0, 0, 0]],
+        h_blocks,
     )
     if generalized:
         s_blocks = np.asarray([[[[[1.0], [0.12]]], [[[0.12], [1.0]]]]]).reshape(
             (1, 2, 1, 2, 1)
         )
         s = phx.operators.periodic.periodic_translation_family_from_dense_blocks(
-            [[0, 0, 0]], s_blocks
+            # ty: ignore[invalid-argument-type]
+            [[0, 0, 0]],
+            s_blocks,
         )
         pencil = phx.operators.periodic.PeriodicOrbitalPencilPlan(
             basis,
@@ -70,7 +77,7 @@ def _pencil(*, generalized=False, reference_electron_count=2.0):
     return mesh, pencil, mean_field
 
 
-def test_prepared_ewald_enforces_neutrality_and_reports_background_evidence():
+def test_prepared_ewald_enforces_neutrality_and_reports_background_evidence() -> None:
     cell = _cell()
     positions = np.asarray([[0.2, 0.3, 0.4], [1.2, 0.3, 0.4]])
     neutral = periodic.PeriodicEwaldPlan(
@@ -109,7 +116,7 @@ def test_prepared_ewald_enforces_neutrality_and_reports_background_evidence():
     assert float(background.energy_ledger.components[-1]) < 0.0
 
 
-def test_governed_gth_local_and_nonlocal_components_retain_units_and_source():
+def test_governed_gth_local_and_nonlocal_components_retain_units_and_source() -> None:
     channel = periodic.GTHProjectorChannel(0, 0.4, [[0.25, 0.0], [0.0, 0.1]])
     manifest = _manifest("gth-fixture")
     plan = periodic.GTHPseudopotentialPlan(
@@ -131,7 +138,7 @@ def test_governed_gth_local_and_nonlocal_components_retain_units_and_source():
     assert np.all(np.isfinite(np.asarray(local.values)))
 
 
-def test_spin_scf_closes_restricted_generalized_insulator_evidence():
+def test_spin_scf_closes_restricted_generalized_insulator_evidence() -> None:
     mesh, pencil, mean_field = _pencil(generalized=True)
     result = periodic.SpinPeriodicSCFPlan(
         mesh,
@@ -150,7 +157,7 @@ def test_spin_scf_closes_restricted_generalized_insulator_evidence():
     np.testing.assert_allclose(result.energy_ledger.closure_residual, 0.0, atol=1.0e-12)
 
 
-def test_spin_scf_closes_collinear_finite_temperature_metal_counts():
+def test_spin_scf_closes_collinear_finite_temperature_metal_counts() -> None:
     mesh, pencil, mean_field = _pencil(reference_electron_count=1.0)
     result = periodic.SpinPeriodicSCFPlan(
         mesh,
@@ -173,10 +180,14 @@ def test_spin_scf_closes_collinear_finite_temperature_metal_counts():
     assert float(result.evidence.free_energy_residual) <= 1.0e-12
 
 
-def test_governed_gamma_gdf_is_production_while_local_gth_fftdf_is_candidate():
+def test_governed_gamma_gdf_is_production_while_local_gth_fftdf_is_candidate() -> None:
     manifest = _manifest("gamma-gdf-integrals")
     factors = phx.operators.quantum.gaussian.FactorizedERITensor(
-        [[[0.5]]], 0.0, manifest.source_id, "gdf"
+        # ty: ignore[invalid-argument-type]
+        [[[0.5]]],
+        0.0,
+        manifest.source_id,
+        "gdf",
     )
     gdf = periodic.GammaGDFPlan(
         [[-1.0]],
@@ -226,16 +237,16 @@ def test_governed_gamma_gdf_is_production_while_local_gth_fftdf_is_candidate():
     )
 
 
-def test_stationary_periodic_derivatives_close_complete_force_stress_ledger():
+def test_stationary_periodic_derivatives_close_complete_force_stress_ledger() -> None:
     cell = _cell()
 
-    def hellmann_feynman(positions, vectors):
+    def hellmann_feynman(positions: Any, vectors: Any) -> Any:
         return 0.5 * jnp.sum(positions**2) + 0.02 * jnp.linalg.det(vectors)
 
-    def pulay(positions, vectors):
+    def pulay(positions: Any, vectors: Any) -> Any:
         return 0.1 * jnp.sum(positions) + 0.0 * jnp.sum(vectors)
 
-    def zero(positions, vectors):
+    def zero(positions: Any, vectors: Any) -> Any:
         return 0.0 * (jnp.sum(positions) + jnp.sum(vectors))
 
     components = (
@@ -283,7 +294,7 @@ def test_stationary_periodic_derivatives_close_complete_force_stress_ledger():
     assert float(result.evidence.stress_directional_residual) <= 2.0e-8
 
 
-def test_generic_periodic_provider_binds_method_task_result_and_provenance():
+def test_generic_periodic_provider_binds_method_task_result_and_provenance() -> None:
     units = _units()
     cell = _cell()
     system = phx.atomistic.AtomisticSystemPlan(
@@ -303,6 +314,7 @@ def test_generic_periodic_provider_binds_method_task_result_and_provenance():
         method,
         basis=phx.chemistry.BasisSetReference("periodic-fixture", "test"),
     )
+    # ty: ignore[invalid-argument-type]
     task = phx.chemistry.BandStructureTaskPlan([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]])
     calculation = phx.chemistry.ElectronicCalculationPlan(
         system,
@@ -326,12 +338,13 @@ def test_generic_periodic_provider_binds_method_task_result_and_provenance():
         ),
     )
 
-    def evaluate(plan, positions, cell_vectors):
+    def evaluate(plan: Any, positions: Any, cell_vectors: Any) -> Any:
         return phx.chemistry.make_electronic_evaluation(
             plan,
             "external-periodic",
             positions,
             -1.0,
+            # ty: ignore[invalid-argument-type]
             band_energies=[[-1.0, 0.5], [-0.8, 0.7]],
             cell_vectors=cell_vectors,
             artifact_ids=(provenance.manifest_id,),
@@ -353,4 +366,5 @@ def test_generic_periodic_provider_binds_method_task_result_and_provenance():
     assert result.header.provider_id == "external-periodic"
     assert result.header.task_id == task.task_id
     assert result.header.artifact_ids == (provenance.manifest_id,)
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(result.band_energies, [[-1.0, 0.5], [-0.8, 0.7]])

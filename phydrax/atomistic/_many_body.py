@@ -10,17 +10,20 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import PRNGKey
 from ._potential import AtomisticPotentialCapabilities, AtomisticPotentialRequirements
 from ._potential_program import (
     AbstractAtomisticEnergyTerm,
     AbstractPreparedAtomisticEnergyTerm,
+    AtomisticPotentialContext,
     AtomisticTermEvaluation,
 )
 from ._system import PreparedAtomisticSystem
@@ -53,7 +56,7 @@ class ScalarWallPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
         inside: bool = True,
         name: str = "wall",
         force_group: int = 0,
-    ):
+    ) -> None:
         if not isinstance(kind, WallKind):
             raise TypeError("kind must be WallKind.")
         parameter = np.asarray(parameters, dtype=np.float64)
@@ -116,7 +119,7 @@ class ScalarWallPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
             }
         )
 
-    def prepare(self, system: PreparedAtomisticSystem, /):
+    def prepare(self, system: PreparedAtomisticSystem, /) -> PreparedScalarWallPotential:
         return PreparedScalarWallPotential(self, system)
 
 
@@ -130,7 +133,9 @@ class PreparedScalarWallPotential(AbstractPreparedAtomisticEnergyTerm):
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
-    def __init__(self, plan, system, /):
+    def __init__(
+        self, plan: ScalarWallPotential, system: PreparedAtomisticSystem, /
+    ) -> None:
         (
             self.plan,
             self.system,
@@ -152,7 +157,7 @@ class PreparedScalarWallPotential(AbstractPreparedAtomisticEnergyTerm):
             {"kind": "prepared-wall", "plan": plan.term_id, "system": system.prepared_id}
         )
 
-    def energy(self, context, /):
+    def energy(self, context: AtomisticPotentialContext, /) -> AtomisticTermEvaluation:
         q = context.positions
         p = self.plan.parameters
         if self.plan.kind is WallKind.PLANE:
@@ -184,7 +189,7 @@ class ManifoldConstraintPlan(StrictModule, NonTrainableState):
     parameters: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: WallKind, parameters: ArrayLike, /):
+    def __init__(self, kind: WallKind, parameters: ArrayLike, /) -> None:
         if not isinstance(kind, WallKind):
             raise TypeError("kind must be WallKind.")
         parameter = np.asarray(parameters, dtype=np.float64)
@@ -216,7 +221,9 @@ class ManifoldConstraintPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def project(self, positions: ArrayLike, velocities: ArrayLike, /):
+    def project(
+        self, positions: ArrayLike, velocities: ArrayLike, /
+    ) -> ManifoldProjection:
         q, v, p = jnp.asarray(positions), jnp.asarray(velocities), self.parameters
         if q.ndim != 2 or q.shape[1] != 3 or v.shape != q.shape:
             raise ValueError("Manifold positions and velocities must have shape (N,3).")
@@ -272,7 +279,7 @@ class ActiveForcePlan(StrictModule, NonTrainableState):
     rotational_diffusion: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, magnitude: float, rotational_diffusion: float, /):
+    def __init__(self, magnitude: float, rotational_diffusion: float, /) -> None:
         if (
             not np.isfinite(magnitude)
             or not np.isfinite(rotational_diffusion)
@@ -292,7 +299,9 @@ class ActiveForcePlan(StrictModule, NonTrainableState):
             }
         )
 
-    def evaluate(self, orientations: ArrayLike, key, dt, /):
+    def evaluate(
+        self, orientations: ArrayLike, key: PRNGKey, dt: ArrayLike, /
+    ) -> ActiveForceEvaluation:
         direction = jnp.asarray(orientations)
         step = jnp.asarray(dt, dtype=direction.dtype)
         if direction.ndim != 2 or direction.shape[-1] != 3:
@@ -322,7 +331,7 @@ class DissipativeParticleDynamicsPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, conservative: float, friction: float, temperature: float, cutoff: float, /
-    ):
+    ) -> None:
         parameters = tuple(
             float(value) for value in (conservative, friction, temperature, cutoff)
         )
@@ -338,8 +347,14 @@ class DissipativeParticleDynamicsPlan(StrictModule, NonTrainableState):
         )
 
     def pair_force(
-        self, displacement, relative_velocity, normal_noise, boltzmann_constant, dt, /
-    ):
+        self,
+        displacement: ArrayLike,
+        relative_velocity: ArrayLike,
+        normal_noise: ArrayLike,
+        boltzmann_constant: ArrayLike,
+        dt: ArrayLike,
+        /,
+    ) -> Array:
         displacement = jnp.asarray(displacement)
         relative_velocity = jnp.asarray(relative_velocity, dtype=displacement.dtype)
         normal_noise = jnp.asarray(normal_noise, dtype=displacement.dtype)
@@ -407,7 +422,7 @@ class ManyBodyPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
         *,
         name: str | None = None,
         force_group: int = 0,
-    ):
+    ) -> None:
         if not isinstance(kind, ManyBodyKind):
             raise TypeError("kind must be ManyBodyKind.")
         parameter = np.asarray(parameters, dtype=np.float64).reshape((-1,))
@@ -478,11 +493,13 @@ class ManyBodyPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
             }
         )
 
-    def prepare(self, system, /):
+    def prepare(self, system: PreparedAtomisticSystem, /) -> PreparedManyBodyPotential:
         return PreparedManyBodyPotential(self, system)
 
 
-def _many_body_neighbor_slots(context, /):
+def _many_body_neighbor_slots(
+    context: AtomisticPotentialContext, /
+) -> tuple[Array, Array, Array, Array]:
     graph = context.graph
     if graph is None:
         raise RuntimeError("Many-body potentials require a prepared atomistic graph.")
@@ -554,7 +571,9 @@ class PreparedManyBodyPotential(AbstractPreparedAtomisticEnergyTerm):
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
-    def __init__(self, plan, system, /):
+    def __init__(
+        self, plan: ManyBodyPotential, system: PreparedAtomisticSystem, /
+    ) -> None:
         (
             self.plan,
             self.system,
@@ -580,7 +599,7 @@ class PreparedManyBodyPotential(AbstractPreparedAtomisticEnergyTerm):
             }
         )
 
-    def energy(self, context, /):
+    def energy(self, context: AtomisticPotentialContext, /) -> AtomisticTermEvaluation:
         displacement, distance, neighbors, graph_valid = _many_body_neighbor_slots(
             context
         )
@@ -723,19 +742,47 @@ class PreparedManyBodyPotential(AbstractPreparedAtomisticEnergyTerm):
         return AtomisticTermEvaluation(jnp.sum(atom), atom, success)
 
 
-def EAMPotential(parameters, cutoff, **kwargs):
+def EAMPotential(
+    parameters: ArrayLike,
+    cutoff: float,
+    *,
+    name: str | None = None,
+    force_group: int = 0,
+) -> ManyBodyPotential:
     """Analytic Finnis-Sinclair EAM with [density_decay, r0, embed, pair, pair_decay]."""
-    return ManyBodyPotential(ManyBodyKind.EAM, parameters, cutoff, **kwargs)
+    return ManyBodyPotential(
+        ManyBodyKind.EAM, parameters, cutoff, name=name, force_group=force_group
+    )
 
 
-def StillingerWeberPotential(parameters, cutoff, **kwargs):
+def StillingerWeberPotential(
+    parameters: ArrayLike,
+    cutoff: float,
+    *,
+    name: str | None = None,
+    force_group: int = 0,
+) -> ManyBodyPotential:
     """Stillinger-Weber with [epsilon, sigma, A, B, p, q, a, lambda, gamma, cos0]."""
-    return ManyBodyPotential(ManyBodyKind.STILLINGER_WEBER, parameters, cutoff, **kwargs)
+    return ManyBodyPotential(
+        ManyBodyKind.STILLINGER_WEBER,
+        parameters,
+        cutoff,
+        name=name,
+        force_group=force_group,
+    )
 
 
-def TersoffPotential(parameters, cutoff, **kwargs):
+def TersoffPotential(
+    parameters: ArrayLike,
+    cutoff: float,
+    *,
+    name: str | None = None,
+    force_group: int = 0,
+) -> ManyBodyPotential:
     """Tersoff with [A, B, lambda1, lambda2, lambda3, beta, n, c, d, h, R, D, m]."""
-    return ManyBodyPotential(ManyBodyKind.TERSOFF, parameters, cutoff, **kwargs)
+    return ManyBodyPotential(
+        ManyBodyKind.TERSOFF, parameters, cutoff, name=name, force_group=force_group
+    )
 
 
 __all__ = [

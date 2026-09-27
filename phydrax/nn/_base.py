@@ -7,7 +7,7 @@ from collections.abc import Callable
 from typing import Any, ClassVar
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._differentiation import DerivativeRegularity
 from .._doc import DOC_KEY0

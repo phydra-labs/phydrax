@@ -9,7 +9,8 @@ from math import prod
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 def dense_inverse(
@@ -35,7 +36,7 @@ def dense_inverse(
     flat_factor = factor.reshape((batch_count, dimension, dimension))
     flat_identity = identity.reshape((batch_count, dimension, dimension))
 
-    def solve_one(cholesky, right_hand_side):
+    def solve_one(cholesky: Array, right_hand_side: Array) -> Array:
         intermediate = jsp.linalg.solve_triangular(
             cholesky,
             right_hand_side,

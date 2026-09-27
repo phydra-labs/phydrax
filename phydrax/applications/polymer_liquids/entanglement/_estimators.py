@@ -9,11 +9,13 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import parse
 
 
 PlateauModulusConvention: TypeAlias = Literal["affine", "tube-four-fifths"]
@@ -40,7 +42,7 @@ class EntanglementEstimatorPlan(StrictModule, NonTrainableState):
         minimum_frames: int = 8,
         maximum_relative_standard_error: float = 0.25,
         plateau_convention: PlateauModulusConvention = "tube-four-fifths",
-    ):
+    ) -> None:
         density = float(monomer_number_density)
         thermal = float(temperature)
         boltzmann = float(boltzmann_constant)
@@ -58,9 +60,11 @@ class EntanglementEstimatorPlan(StrictModule, NonTrainableState):
             or minimum < blocks
             or not math.isfinite(relative)
             or relative <= 0.0
-            or plateau_convention not in ("affine", "tube-four-fifths")
         ):
             raise ValueError("Entanglement estimator controls are invalid.")
+        plateau_convention = parse(
+            plateau_convention, PlateauModulusConvention, "plateau_convention"
+        )
         self.monomer_number_density = density
         self.temperature = thermal
         self.boltzmann_constant = boltzmann

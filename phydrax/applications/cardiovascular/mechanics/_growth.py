@@ -19,7 +19,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -49,7 +50,7 @@ class ContinuumGrowthFidelity(StrictModule, NonTrainableState):
 
     route_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.route_id = "cardiovascular-continuum-log-tensor-growth"
 
 
@@ -69,7 +70,7 @@ class GrowthReferenceEpoch(StrictModule, NonTrainableState):
         topology_id: str,
         material_point_ids: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         names = (anatomy_id, reference_id, topology_id)
         if any(not isinstance(value, str) or not value.strip() for value in names):
             raise ValueError("Anatomy, reference, and topology IDs must be nonempty.")
@@ -185,7 +186,7 @@ class GrowthPlan(StrictModule, NonTrainableState):
         maximum_refinements: int = 8,
         tensor_tolerance: float = 1.0e-6,
         fidelity: ContinuumGrowthFidelity | None = None,
-    ):
+    ) -> None:
         point_ids = tuple(material_point_ids)
         channel_ids = tuple(direction_ids)
         if not point_ids or any(not value.strip() for value in point_ids):
@@ -285,7 +286,7 @@ class PreparedGrowth(StrictModule, NonTrainableState):
     direction_projectors: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: GrowthPlan, epoch: GrowthReferenceEpoch, /):
+    def __init__(self, plan: GrowthPlan, epoch: GrowthReferenceEpoch, /) -> None:
         if not isinstance(plan, GrowthPlan):
             raise TypeError("plan must be a GrowthPlan.")
         if not isinstance(epoch, GrowthReferenceEpoch):
@@ -330,7 +331,7 @@ class LogGrowthTensorState(StrictModule, NonTrainableState):
         slow_time_ms: ArrayLike,
         prepared_id: str,
         /,
-    ):
+    ) -> None:
         value = _finite_real_array("log_growth_tensor", log_growth_tensor, 3)
         if value.shape[-1] not in (2, 3) or value.shape[-2] != value.shape[-1]:
             raise ValueError("log_growth_tensor must have shape (points, d, d), d=2|3.")
@@ -476,7 +477,7 @@ class GrowthCycleSummary(StrictModule, NonTrainableState):
         cycle_index: int,
         prepared_id: str,
         /,
-    ):
+    ) -> None:
         mean = _finite_real_array("mean_stimulus", mean_stimulus, 2)
         duration = np.asarray(duration_ms)
         index = int(cycle_index)
@@ -565,7 +566,7 @@ class GrowthCycleAccumulator(StrictModule, NonTrainableState):
         last_cycle_index: int,
         prepared_id: str,
         /,
-    ):
+    ) -> None:
         integral = _finite_real_array("integrated_stimulus", integrated_stimulus, 2)
         duration = np.asarray(total_duration_ms)
         count = int(cycle_count)
@@ -706,7 +707,7 @@ class GrowthProposal(StrictModule, NonTrainableState):
         effective_step_size_ms: float,
         refinement_level: int,
         /,
-    ):
+    ) -> None:
         increment = _finite_real_array("log_increment", log_increment, 3)
         self.source_state_id = source_state_id
         self.candidate = candidate
@@ -967,7 +968,7 @@ class GrowthEpochRebuildRequirements(StrictModule, NonTrainableState):
     ordinary_gradient_supported: bool = eqx.field(static=True)
     differentiation: Literal["discrete-stop-gradient"] = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.transfer_growth_state = True
         self.rebuild_mechanics_reference = True
         self.rebuild_cycle_aggregator = True
@@ -1009,7 +1010,7 @@ class GrowthEpochTransfer(StrictModule, NonTrainableState):
         target: PreparedGrowth,
         transfer_weights: ArrayLike,
         /,
-    ):
+    ) -> None:
         _validate_growth_state(source, source_state)
         if not isinstance(target, PreparedGrowth):
             raise TypeError("target must be PreparedGrowth.")

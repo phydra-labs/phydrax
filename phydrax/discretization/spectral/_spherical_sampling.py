@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from s2fft.recursions.risbo_jax import compute_full as _wigner_small_d
 
 import phydrax.ein as ein
@@ -31,6 +32,7 @@ from ...linalg import (
     RHSLayout,
     solve as linear_solve,
 )
+from ...typing import parse
 from ._spherical import SphericalSpectralDiscretization
 
 
@@ -79,7 +81,7 @@ class SphericalSamplePlan(StrictModule, NonTrainableState):
         maximum_factor_bytes: int = 1024 * 1024**2,
         _ordering: HealpixOrdering | None = None,
         _nside: int | None = None,
-    ):
+    ) -> None:
         points_ = jnp.asarray(points)
         if points_.ndim != 2 or points_.shape[1] != 3 or points_.shape[0] == 0:
             raise ValueError("Spherical sample points must have nonempty shape (n, 3).")
@@ -172,8 +174,7 @@ class SphericalSamplePlan(StrictModule, NonTrainableState):
         nside_ = index(nside)
         if nside_ <= 0:
             raise ValueError("nside must be positive.")
-        if ordering not in ("ring", "nested"):
-            raise ValueError("HEALPix ordering must be 'ring' or 'nested'.")
+        ordering = parse(ordering, HealpixOrdering, "ordering")
         if ordering == "nested" and (nside_ & (nside_ - 1)):
             raise ValueError("Nested HEALPix ordering requires power-of-two nside.")
         points = _healpix_points(nside_, ordering)
@@ -242,7 +243,7 @@ class PreparedSphericalSampleOperator(StrictModule, NonTrainableState):
         plan: SphericalSamplePlan,
         discretization: SphericalSpectralDiscretization,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, SphericalSamplePlan):
             raise TypeError("plan must be a SphericalSamplePlan.")
         if not isinstance(discretization, SphericalSpectralDiscretization):

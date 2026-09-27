@@ -2,6 +2,8 @@ import csv
 import hashlib
 import io
 import json
+import zipfile
+from typing import Any
 
 import numpy as np
 import pytest
@@ -12,6 +14,9 @@ from phydrax.applications.nucleic_acid_biophysics.interchange import (
     StrandDisplacementSourceManifest,
     StrandDisplacementSourceMember,
     StrandDisplacementWellManifest,
+)
+from phydrax.applications.nucleic_acid_biophysics.interchange._strand_displacement import (
+    _parse_admitted_workbooks,
 )
 from phydrax.qualification import ReferenceArtifactManifest
 from phydrax.units import MILLIMOLAR
@@ -48,7 +53,9 @@ _USE = {
 }
 
 
-def _manifest(name, content, *, lineage=("independent-test-source",)):
+def _manifest(
+    name: Any, content: Any, *, lineage: Any = ("independent-test-source",)
+) -> Any:
     return ReferenceArtifactManifest(
         name,
         checksum_algorithm="sha256",
@@ -66,7 +73,7 @@ def _manifest(name, content, *, lineage=("independent-test-source",)):
     )
 
 
-def _source(*, leaking_family=False):
+def _source(*, leaking_family: Any = False) -> Any:
     raw = StrandDisplacementSourceMember(
         "raw-workbook", "raw.xlsx", _manifest("raw.xlsx", b"raw")
     )
@@ -117,7 +124,7 @@ def _source(*, leaking_family=False):
     )
 
 
-def _csv_bytes(source, *, duplicate_well=False):
+def _csv_bytes(source: Any, *, duplicate_well: Any = False) -> Any:
     source_ids = sorted(
         (
             source.raw_workbook.manifest.manifest_id,
@@ -162,7 +169,7 @@ def _csv_bytes(source, *, duplicate_well=False):
     return stream.getvalue().encode()
 
 
-def _admit(tmp_path, source, content):
+def _admit(tmp_path: Any, source: Any, content: Any) -> Any:
     path = tmp_path / "traces.csv"
     path.write_bytes(content)
     raw_ids = (
@@ -175,7 +182,9 @@ def _admit(tmp_path, source, content):
     )
 
 
-def test_prepared_csv_preserves_order_units_saturation_and_provenance(tmp_path):
+def test_prepared_csv_preserves_order_units_saturation_and_provenance(
+    tmp_path: Any,
+) -> None:
     source = _source()
     admission = _admit(tmp_path, source, _csv_bytes(source))
     first, second = admission.traces
@@ -196,7 +205,9 @@ def test_prepared_csv_preserves_order_units_saturation_and_provenance(tmp_path):
         prepare_strand_displacement_cohort((admission,))
 
 
-def test_prepared_csv_refuses_duplicate_wells_and_family_role_leakage(tmp_path):
+def test_prepared_csv_refuses_duplicate_wells_and_family_role_leakage(
+    tmp_path: Any,
+) -> None:
     source = _source()
     with pytest.raises(ValueError, match="duplicate physical well"):
         _admit(tmp_path, source, _csv_bytes(source, duplicate_well=True))
@@ -207,7 +218,7 @@ def test_prepared_csv_refuses_duplicate_wells_and_family_role_leakage(tmp_path):
         prepare_strand_displacement_cohort((admission,))
 
 
-def test_prepared_csv_refuses_schema_or_digest_disagreement(tmp_path):
+def test_prepared_csv_refuses_schema_or_digest_disagreement(tmp_path: Any) -> None:
     source = _source()
     content = _csv_bytes(source)
     malformed = content.replace(b"time_seconds", b"time_minutes", 1)
@@ -227,3 +238,71 @@ def test_prepared_csv_refuses_schema_or_digest_disagreement(tmp_path):
     )
     with pytest.raises(ValueError, match="Reference artifact size mismatch"):
         admit_prepared_strand_displacement_csv(path, source, prepared, requested_use=_USE)
+
+
+_XLSX_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_XLSX_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_XLSX_PACKAGE_REL = "http://schemas.openxmlformats.org/package/2006/relationships"
+
+
+def _xlsx_cell(coordinate: Any, value: Any) -> Any:
+    if value is None:
+        return f'<c r="{coordinate}"/>'
+    if isinstance(value, str):
+        return f'<c r="{coordinate}" t="inlineStr"><is><t>{value}</t></is></c>'
+    return f'<c r="{coordinate}"><v>{value}</v></c>'
+
+
+def _xlsx_bytes(sheet_name: Any, rows: Any) -> Any:
+    body = "".join(
+        f'<row r="{index}">'
+        + "".join(_xlsx_cell(f"{column}{index}", value) for column, value in row.items())
+        + "</row>"
+        for index, row in enumerate(rows, start=1)
+    )
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as workbook:
+        workbook.writestr(
+            "xl/workbook.xml",
+            f'<workbook xmlns="{_XLSX_MAIN}" xmlns:r="{_XLSX_REL}"><sheets>'
+            f'<sheet name="{sheet_name}" sheetId="1" r:id="rId1"/></sheets></workbook>',
+        )
+        workbook.writestr(
+            "xl/_rels/workbook.xml.rels",
+            f'<Relationships xmlns="{_XLSX_PACKAGE_REL}">'
+            '<Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
+        )
+        workbook.writestr(
+            "xl/worksheets/sheet1.xml",
+            f'<worksheet xmlns="{_XLSX_MAIN}"><sheetData>{body}</sheetData></worksheet>',
+        )
+    return stream.getvalue()
+
+
+def test_raw_workbook_rows_with_empty_sample_cells_are_not_samples() -> None:
+    source = _source()
+    plate = _xlsx_bytes(
+        "Sheet1",
+        (
+            {"A": "Sample X1", "B": "reporter calibration"},
+            {"A": "Sample X2", "B": "locked displacement"},
+        ),
+    )
+    raw = _xlsx_bytes(
+        "Table All Cycles",
+        (
+            {"A": "Well", "B": "Time [s]", "C": 0, "D": 10, "E": 20},
+            {"A": "A01", "B": "Sample X1", "C": 1.0, "D": "Inj.", "E": 2.0},
+            {"A": "A02", "B": "Sample X2", "C": 3.0, "D": "Inj.", "E": 4.0},
+            {"A": "Notes", "B": None},
+        ),
+    )
+    admission = _parse_admitted_workbooks(
+        raw, plate, source, saturation_markers=("OVER",), injection_marker="Inj."
+    )
+
+    assert tuple(trace.identity.well_id for trace in admission.traces) == (
+        "A01",
+        "A02",
+    )
+    np.testing.assert_array_equal(admission.traces[0].time_seconds, [0.0, 20.0])

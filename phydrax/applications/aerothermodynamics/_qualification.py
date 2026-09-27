@@ -9,7 +9,8 @@ from collections.abc import Mapping, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -36,7 +37,7 @@ class AerothermodynamicValidationCase(StrictModule, NonTrainableState):
         reference_values: ArrayLike,
         uncertainties: ArrayLike,
         /,
-    ):
+    ) -> None:
         name_ = str(name)
         domain_ = str(domain)
         observables = tuple(str(value) for value in observable_names)
@@ -107,7 +108,7 @@ class AerothermodynamicValidationCampaignPlan(StrictModule, NonTrainableState):
         /,
         *,
         acceptance_sigma: float = 3.0,
-    ):
+    ) -> None:
         cases_ = tuple(cases)
         sigma = float(acceptance_sigma)
         if (

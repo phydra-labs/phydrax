@@ -10,7 +10,8 @@ from collections.abc import Callable, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -61,7 +62,7 @@ class ConvexTranscriptionRelaxation(AbstractControlRelaxation, NonTrainableState
         *,
         gap_tolerance: float = 1.0e-8,
         relaxation_id: str,
-    ):
+    ) -> None:
         if not callable(solver):
             raise TypeError("convex relaxation solver must be callable.")
         tolerance = float(gap_tolerance)
@@ -123,7 +124,7 @@ class LipschitzBoxControlRelaxation(AbstractControlRelaxation, NonTrainableState
         /,
         *,
         relaxation_id: str,
-    ):
+    ) -> None:
         if not callable(objective):
             raise TypeError("objective must be callable.")
         lipschitz = float(lipschitz_constant)
@@ -180,7 +181,7 @@ class BoundedControlCertificatePlan(StrictModule, NonTrainableState):
         *,
         minimum_box_width: float = 1.0e-6,
         problem_id: str,
-    ):
+    ) -> None:
         lower_ = jnp.asarray(lower)
         upper_ = jnp.asarray(upper, dtype=lower_.dtype)
         if lower_.ndim != 1 or lower_.shape != upper_.shape or lower_.size == 0:
@@ -236,14 +237,14 @@ class _BoundedControlBranchProblem(AbstractBranchAndBoundProblem):
     terminal_widths: list[float] = eqx.field(static=True)
     relaxation_validity: list[bool] = eqx.field(static=True)
 
-    def __init__(self, plan: BoundedControlCertificatePlan, /):
+    def __init__(self, plan: BoundedControlCertificatePlan, /) -> None:
         self.plan = plan
         self.problem_id = plan.plan_id
         self.terminal_lower_bounds = []
         self.terminal_widths = []
         self.relaxation_validity = []
 
-    def root(self, /):
+    def root(self, /) -> _ControlBox:
         return _ControlBox(self.plan.lower, self.plan.upper, 0, "root")
 
     def node_id(self, node: _ControlBox, /) -> str:

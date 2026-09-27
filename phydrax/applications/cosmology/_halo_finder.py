@@ -6,19 +6,21 @@ from __future__ import annotations
 
 from itertools import product
 from math import prod
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.spatial import MortonAddressPlan, MortonRadiusRelationPlan
 from ...sparse import EdgeRelation, KeyGroupPlan
+from ...typing import parse
 
 
 FoFRealization: TypeAlias = Literal["direct", "cell_list", "morton_plane"]
@@ -125,7 +127,7 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
         maximum_particles_per_cell: int = 64,
         morton_maximum_depth: int = 21,
         morton_maximum_candidates: int | None = None,
-    ):
+    ) -> None:
         lengths = tuple(float(value) for value in box_size)
         linking = float(linking_length)
         groups = int(maximum_groups)
@@ -143,10 +145,7 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
             or groups <= 0
         ):
             raise ValueError("FoF finder policy is invalid.")
-        if realization not in ("direct", "cell_list", "morton_plane"):
-            raise ValueError(
-                "realization must be 'direct', 'cell_list', or 'morton_plane'."
-            )
+        realization = parse(realization, FoFRealization, "realization")
         if realization != "direct" and links <= 0:
             raise ValueError("Non-direct FoF realizations require maximum_links.")
         if cell_occupancy <= 0 or (
@@ -166,6 +165,7 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
         self.maximum_particles_per_cell = cell_occupancy
         self.morton_maximum_depth = morton_depth
         self.morton_maximum_candidates = morton_candidates
+        # ty: ignore[invalid-assignment]
         self.cell_shape = shape
         self.cell_strides = jnp.asarray(strides, dtype=jnp.int32)
         self.neighbor_offsets = jnp.asarray(offsets)
@@ -413,7 +413,7 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
 
         labels = jnp.where(active, ids, maximum_id)
 
-        def propagate(_, current):
+        def propagate(_: Any, current: Any) -> Any:
             left = relation.source_indices
             right = relation.target_indices
             valid = relation.valid
@@ -567,7 +567,7 @@ class DirectHaloUnbindingPlan(StrictModule, NonTrainableState):
         *,
         softening: float,
         maximum_iterations: int = 32,
-    ):
+    ) -> None:
         gravity = float(gravitational_constant)
         epsilon = float(softening)
         iterations = int(maximum_iterations)
@@ -596,7 +596,7 @@ class DirectHaloUnbindingPlan(StrictModule, NonTrainableState):
         mass = jnp.asarray(masses, dtype=position.dtype)
         initial = jnp.asarray(candidate_mask, dtype=jnp.bool_)
 
-        def update(_, state):
+        def update(_: Any, state: Any) -> Any:
             mask, iteration = state
             total_mass = jnp.sum(jnp.where(mask, mass, 0.0))
             bulk = jnp.sum(
@@ -648,7 +648,7 @@ class HaloPropertyResult(StrictModule):
 class HaloPropertyPlan(StrictModule, NonTrainableState):
     mean_density: float = eqx.field(static=True)
 
-    def __init__(self, mean_density: float, /):
+    def __init__(self, mean_density: float, /) -> None:
         density = float(mean_density)
         if not np.isfinite(density) or density <= 0.0:
             raise ValueError("Halo mean density must be finite and positive.")
@@ -703,7 +703,7 @@ class SubstructureCandidateResult(StrictModule):
 class DensityPeakSubstructurePlan(StrictModule, NonTrainableState):
     neighbor_count: int = eqx.field(static=True)
 
-    def __init__(self, neighbor_count: int = 16):
+    def __init__(self, neighbor_count: int = 16) -> None:
         count = int(neighbor_count)
         if count < 2:
             raise ValueError("Substructure neighbor count must be at least two.")
@@ -754,7 +754,7 @@ class ParticleCoreOverlapTreePlan(StrictModule, NonTrainableState):
     core_size: int = eqx.field(static=True)
     minimum_overlap: int = eqx.field(static=True)
 
-    def __init__(self, core_size: int, minimum_overlap: int, /):
+    def __init__(self, core_size: int, minimum_overlap: int, /) -> None:
         core = int(core_size)
         overlap = int(minimum_overlap)
         if core <= 0 or overlap <= 0 or overlap > core:

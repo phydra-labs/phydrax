@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -12,17 +15,17 @@ from phydrax.domain import TimeInterval
 from phydrax.operators.differential import div_diag_k_grad
 
 
-def test_div_diag_k_grad_scalar_point():
+def test_div_diag_k_grad_scalar_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2
 
     @geom.Function("x")
-    def k_vec(x):
+    def k_vec(x: Any) -> Any:
         return jnp.array([x[0], 2.0 * x[1]])
 
     op = div_diag_k_grad(u, k_vec)
@@ -32,17 +35,17 @@ def test_div_diag_k_grad_scalar_point():
     assert jnp.allclose(out, expected)
 
 
-def test_div_diag_k_grad_vector_point():
+def test_div_diag_k_grad_vector_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([x[0] ** 2, x[1] ** 2])
 
     @geom.Function("x")
-    def k_vec(x):
+    def k_vec(x: Any) -> Any:
         return jnp.array([x[0], 2.0 * x[1]])
 
     op = div_diag_k_grad(u, k_vec)
@@ -52,7 +55,7 @@ def test_div_diag_k_grad_vector_point():
     assert jnp.allclose(out, expected)
 
 
-def test_div_diag_k_grad_coord_separable(sample_grid):
+def test_div_diag_k_grad_coord_separable(sample_grid: Any) -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -60,12 +63,12 @@ def test_div_diag_k_grad_coord_separable(sample_grid):
     batch = sample_grid(component, {"x": (6, 5)}, dense_blocks=(), key=0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         x, y = x
         return x**2 + y**2
 
     @geom.Function("x")
-    def k_vec(x):
+    def k_vec(x: Any) -> Any:
         x, y = x
         return jnp.stack([x, 2.0 * y], axis=-1)
 
@@ -77,18 +80,18 @@ def test_div_diag_k_grad_coord_separable(sample_grid):
     assert jnp.allclose(out, expected, atol=1e-6)
 
 
-def test_div_diag_k_grad_spacetime_k_depends_on_t(sample_batch):
+def test_div_diag_k_grad_spacetime_k_depends_on_t(sample_batch: Any) -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
     dom = geom @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2 + jnp.sin(t)
 
     @dom.Function("x", "t")
-    def k_vec(x, t):
+    def k_vec(x: Any, t: Any) -> Any:
         k1 = 1.0 + x[0] + 3.0 * jnp.cos(t)
         k2 = 2.0 + 2.0 * x[1]
         return jnp.stack([k1, k2], axis=-1)
@@ -107,7 +110,7 @@ def test_div_diag_k_grad_spacetime_k_depends_on_t(sample_batch):
     assert jnp.allclose(out, expected)
 
 
-def test_div_diag_k_grad_preserves_metadata():
+def test_div_diag_k_grad_preserves_metadata() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -116,17 +119,17 @@ def test_div_diag_k_grad_preserves_metadata():
     assert div_diag_k_grad(u, k_vec).metadata == u.metadata
 
 
-def test_div_diag_k_grad_ad_engine_jvp_matches_default_point():
+def test_div_diag_k_grad_ad_engine_jvp_matches_default_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2
 
     @geom.Function("x")
-    def k_vec(x):
+    def k_vec(x: Any) -> Any:
         return jnp.array([1.0 + x[0], 2.0 + 0.5 * x[1]])
 
     pts = frozendict({"x": cx.AxisArray(jnp.array([0.2, -0.4]), dims=(None,))})
@@ -137,17 +140,17 @@ def test_div_diag_k_grad_ad_engine_jvp_matches_default_point():
     assert jnp.allclose(out_jvp, out_ref, atol=1e-6)
 
 
-def test_div_diag_k_grad_ad_engine_requires_ad_backend():
+def test_div_diag_k_grad_ad_engine_requires_ad_backend() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2
 
     @geom.Function("x")
-    def k_vec(x):
+    def k_vec(x: Any) -> Any:
         return jnp.array([1.0 + x[0], 1.0 + x[1]])
 
     with pytest.raises(ValueError, match="backend='ad'"):

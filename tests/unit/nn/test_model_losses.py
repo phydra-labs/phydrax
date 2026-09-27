@@ -2,7 +2,7 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from typing import Literal
+from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
@@ -19,13 +19,13 @@ from phydrax.solver import FunctionalSolver
 from phydrax.terms import ObservationPenalty
 
 
-def _domain_model_solver(model) -> FunctionalSolver:
+def _domain_model_solver(model: Any) -> FunctionalSolver:
     domain = Interval1d(0.0, 1.0)
     u = domain.Model("x")(model)
     return FunctionalSolver(functions={"u": u}, terms=[])
 
 
-def test_add_model_loss_contributes_to_solver_loss_without_constraints():
+def test_add_model_loss_contributes_to_solver_loss_without_constraints() -> None:
     model = MLP(
         in_size=1,
         out_size="scalar",
@@ -38,7 +38,7 @@ def test_add_model_loss_contributes_to_solver_loss_without_constraints():
     assert jnp.allclose(solver.loss(key=jr.key(0)), 6.0)
 
 
-def test_standalone_add_model_loss_helper_matches_method_api():
+def test_standalone_add_model_loss_helper_matches_method_api() -> None:
     base = MLP(
         in_size=1,
         out_size="scalar",
@@ -52,7 +52,7 @@ def test_standalone_add_model_loss_helper_matches_method_api():
     assert jnp.allclose(solver.loss(key=jr.key(0)), 2.0)
 
 
-def test_model_with_loss_preserves_wrapped_forward_call():
+def test_model_with_loss_preserves_wrapped_forward_call() -> None:
     base = MLP(
         in_size=1,
         out_size="scalar",
@@ -65,7 +65,7 @@ def test_model_with_loss_preserves_wrapped_forward_call():
     assert jnp.allclose(model(x, key=jr.key(0)), base(x, key=jr.key(0)))
 
 
-def test_model_loss_is_optimized_by_solve():
+def test_model_loss_is_optimized_by_solve() -> None:
     model = MLP(
         in_size=1,
         out_size="scalar",
@@ -94,16 +94,16 @@ class CustomLossModel(_AbstractBaseModel):
     in_size: Literal["scalar"]
     out_size: Literal["scalar"]
 
-    def __init__(self, init: float = 0.0):
+    def __init__(self, init: float = 0.0) -> None:
         self.weight = jnp.asarray(init, dtype="float64")
         self.in_size = "scalar"
         self.out_size = "scalar"
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         del key
         return self.weight * jnp.asarray(x)
 
-    def __loss__(self, *, key=None, iter_=None):
+    def __loss__(self, *, key: Any = None, iter_: Any = None) -> Any:
         del key, iter_
         return (self.weight - 2.0) ** 2
 
@@ -113,23 +113,23 @@ class ScaleModel(_AbstractBaseModel):
     in_size: Literal["scalar"]
     out_size: Literal["scalar"]
 
-    def __init__(self, init: float = 0.0):
+    def __init__(self, init: float = 0.0) -> None:
         self.weight = jnp.asarray(init, dtype="float64")
         self.in_size = "scalar"
         self.out_size = "scalar"
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         del key
         return self.weight * jnp.asarray(x)
 
 
-def test_custom_model_dunder_loss_contributes_to_solver_loss():
+def test_custom_model_dunder_loss_contributes_to_solver_loss() -> None:
     solver = _domain_model_solver(CustomLossModel(init=0.5))
 
     assert jnp.allclose(solver.loss(key=jr.key(0)), 2.25)
 
 
-def test_model_loss_regularizes_domain_model_forward_weights():
+def test_model_loss_regularizes_domain_model_forward_weights() -> None:
     domain = Interval1d(0.0, 1.0)
     model = ScaleModel(init=1.0).add_model_loss(
         lambda m: m.weight**2,
@@ -159,7 +159,7 @@ def test_model_loss_regularizes_domain_model_forward_weights():
     assert jnp.allclose(pred, 0.8, atol=1e-6)
 
 
-def test_model_loss_is_deduped_for_shared_model_aliases():
+def test_model_loss_is_deduped_for_shared_model_aliases() -> None:
     domain = Interval1d(0.0, 1.0)
     model = MLP(
         in_size=1,
@@ -175,7 +175,7 @@ def test_model_loss_is_deduped_for_shared_model_aliases():
     assert jnp.allclose(solver.loss(key=jr.key(0)), 2.0)
 
 
-def test_loss_wrapper_preserves_domain_model_metadata():
+def test_loss_wrapper_preserves_domain_model_metadata() -> None:
     domain = Interval1d(0.0, 1.0)
     model = SeparableMLP(
         in_size=2,
@@ -189,11 +189,15 @@ def test_loss_wrapper_preserves_domain_model_metadata():
 
     u = domain.Model("x")(model)
 
+    # ty: ignore[unresolved-attribute]
     assert u.func.binding.input_mode == "flat"
+    # ty: ignore[unresolved-attribute]
     assert u.func.binding.batch_mode == "blockwise"
 
 
-def test_solver_logs_model_losses_to_events_and_tensorboard(tmp_path, phydrax_events):
+def test_solver_logs_model_losses_to_events_and_tensorboard(
+    tmp_path: Any, phydrax_events: Any
+) -> None:
     model = MLP(
         in_size=1,
         out_size="scalar",

@@ -7,12 +7,14 @@ from __future__ import annotations
 import abc
 from collections.abc import Callable
 from math import isfinite
-from typing import Any
+from typing import Any, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._bounds import Bounds
 from .._iteration import (
@@ -117,7 +119,7 @@ class LeastSquaresState(StrictModule):
         numeric_refreshes: Any = 0,
         linear_refresh_state: LinearRefreshState | None = None,
         metrics: IterativeStepMetrics | None = None,
-    ):
+    ) -> None:
         self.iteration = jnp.asarray(iteration, dtype=jnp.int32)
         self.initial_optimality_norm = jnp.asarray(initial_optimality_norm)
         self.damping = jnp.asarray(damping)
@@ -159,12 +161,40 @@ class _ResidualModel(StrictModule):
         gradient: PyTree[Array],
         objective: Array,
         optimality_norm: Array,
-    ):
+    ) -> None:
         self.residual = residual
         self.jacobian = jacobian
         self.gradient = gradient
         self.objective = jnp.asarray(objective)
         self.optimality_norm = jnp.asarray(optimality_norm)
+
+
+# Levenberg–Marquardt trial loop carry: trial, damping, accepted, candidate
+# parameters, candidate objective, accepted step norm, ratio, residual/JVP/VJP
+# evaluations, linear iterations, last linear status, usable-step flag,
+# finite-trial flag, and the array partition of the linear refresh state.
+_LMTrialCarry: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    PyTree[Array],
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    LinearRefreshState,
+]
+# One Levenberg–Marquardt trial outcome: damping, accepted, parameters,
+# objective, step norm, ratio, residual/JVP increments, and finite flag.
+_LMTrialOutcome: TypeAlias = tuple[
+    Array, Array, PyTree[Array], Array, Array, Array, Array, Array, Array
+]
 
 
 def _default_linear_policy() -> LinearSolvePolicy:
@@ -174,7 +204,7 @@ def _default_linear_policy() -> LinearSolvePolicy:
     )
 
 
-def _usable_inexact_linear_status(status: Any, /):
+def _usable_inexact_linear_status(status: Any, /) -> Array:
     status_ = jnp.asarray(status, dtype=jnp.int32)
     return (
         (status_ == int(LinearSolveStatus.SUCCESS))
@@ -229,7 +259,7 @@ def _converged(
     initial: Array,
     current: Array,
     /,
-):
+) -> Array:
     if termination is None:
         return jnp.asarray(False)
     return current <= termination.optimality_threshold(initial)
@@ -240,7 +270,7 @@ def _stagnated(
     parameters: PyTree[Any],
     step_norm: Array,
     /,
-):
+) -> Array:
     if termination is None:
         return jnp.asarray(False)
     return step_norm <= termination.step_threshold(_tree_norm(parameters))
@@ -257,7 +287,7 @@ class GaussNewton(AbstractLeastSquaresMethod):
         *,
         linear_policy: LinearSolvePolicy | None = None,
         line_search: ArmijoLineSearch | None = None,
-    ):
+    ) -> None:
         policy = _default_linear_policy() if linear_policy is None else linear_policy
         search = ArmijoLineSearch() if line_search is None else line_search
         if not isinstance(policy, LinearSolvePolicy):
@@ -361,7 +391,7 @@ class GaussNewton(AbstractLeastSquaresMethod):
             model.optimality_norm,
         )
 
-        def terminal_step(_):
+        def terminal_step(_: None) -> tuple[PyTree[Array], LeastSquaresState, Array]:
             status = jnp.where(
                 finite_model,
                 int(OptimizationStatus.SUCCESS),
@@ -393,7 +423,9 @@ class GaussNewton(AbstractLeastSquaresMethod):
             dynamic_updated, _ = eqx.partition(updated, eqx.is_array)
             return parameters, dynamic_updated, model.objective
 
-        def gauss_newton_step(_):
+        def gauss_newton_step(
+            _: None,
+        ) -> tuple[PyTree[Array], LeastSquaresState, Array]:
             if prepared is None:
                 current_prepared, next_refresh_state = refresh_state.refresh(
                     linear_problem
@@ -425,7 +457,7 @@ class GaussNewton(AbstractLeastSquaresMethod):
             )
             directional = _tree_inner(model.gradient, direction)
 
-            def objective(candidate):
+            def objective(candidate: PyTree[Array]) -> Array:
                 residual = residual_function(candidate)
                 return 0.5 * _tree_inner(residual, residual)
 
@@ -565,7 +597,7 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
         decrease_ratio: float = 0.75,
         increase_ratio: float = 0.25,
         maximum_trials: int = 12,
-    ):
+    ) -> None:
         policy = _default_linear_policy() if linear_policy is None else linear_policy
         if not isinstance(policy, LinearSolvePolicy):
             raise TypeError("linear_policy must be a LinearSolvePolicy or None.")
@@ -701,7 +733,7 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
             model.optimality_norm,
         )
 
-        def terminal_step(_):
+        def terminal_step(_: None) -> tuple[PyTree[Array], LeastSquaresState, Array]:
             status = jnp.where(
                 finite_model,
                 int(OptimizationStatus.SUCCESS),
@@ -734,17 +766,17 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
             dynamic_updated, _ = eqx.partition(updated, eqx.is_array)
             return parameters, dynamic_updated, model.objective
 
-        def lm_step(_):
+        def lm_step(_: None) -> tuple[PyTree[Array], LeastSquaresState, Array]:
             dynamic_refresh_state, static_refresh_state = eqx.partition(
                 refresh_state,
                 eqx.is_array,
             )
 
-            def trial_condition(carry):
+            def trial_condition(carry: _LMTrialCarry) -> Array:
                 trial, _, accepted, *_ = carry
                 return (trial < self.maximum_trials) & (~accepted)
 
-            def trial_body(carry):
+            def trial_body(carry: _LMTrialCarry) -> _LMTrialCarry:
                 (
                     trial,
                     damping,
@@ -782,7 +814,7 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
                     & (directional < 0.0)
                 )
 
-                def evaluate_trial(_):
+                def evaluate_trial(_: None) -> _LMTrialOutcome:
                     linearized_residual = jax.tree.map(
                         lambda residual, change: residual + change,
                         model.residual,
@@ -850,7 +882,7 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
                         finite_trial,
                     )
 
-                def reject_linear_step(_):
+                def reject_linear_step(_: None) -> _LMTrialOutcome:
                     return (
                         jnp.minimum(
                             self.maximum_damping,
@@ -1059,7 +1091,7 @@ class BoundedResidualFunction(StrictModule):
     function: Any
     bounds: Bounds
 
-    def __init__(self, function: Any, bounds: Bounds, /):
+    def __init__(self, function: Any, bounds: Bounds, /) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         if not isinstance(bounds, Bounds):
@@ -1067,7 +1099,7 @@ class BoundedResidualFunction(StrictModule):
         self.function = function
         self.bounds = bounds
 
-    def __call__(self, parameters):
+    def __call__(self, parameters: PyTree[Array]) -> PyTree[Array]:
         return self.function(parameters)
 
 
@@ -1097,7 +1129,7 @@ class AbstractBoundedLeastSquaresMethod(AbstractLeastSquaresMethod):
         minimum_damping: float = 1e-12,
         maximum_damping: float = 1e12,
         active_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         subproblem_ = SteihaugToint() if subproblem is None else subproblem
         if not isinstance(subproblem_, SteihaugToint):
             raise TypeError("subproblem must be SteihaugToint or None.")
@@ -1191,7 +1223,7 @@ class AbstractBoundedLeastSquaresMethod(AbstractLeastSquaresMethod):
 
     def prepare_state(
         self,
-        residual_function,
+        residual_function: Callable[[PyTree[Any]], PyTree[Any]],
         parameters: PyTree[Any],
         /,
     ) -> LeastSquaresState:
@@ -1201,13 +1233,13 @@ class AbstractBoundedLeastSquaresMethod(AbstractLeastSquaresMethod):
 
     def step(
         self,
-        residual_function,
-        parameters,
-        state,
+        residual_function: Callable[[PyTree[Any]], PyTree[Any]],
+        parameters: PyTree[Any],
+        state: LeastSquaresState,
         /,
         *,
-        termination,
-    ):
+        termination: OptimizationTermination | None,
+    ) -> tuple[PyTree[Array], LeastSquaresState, Array]:
         if not isinstance(residual_function, BoundedResidualFunction):
             raise TypeError("residual_function must be BoundedResidualFunction.")
         if not isinstance(state, LeastSquaresState):
@@ -1294,6 +1326,9 @@ class AbstractBoundedLeastSquaresMethod(AbstractLeastSquaresMethod):
 class BoundedGaussNewton(AbstractBoundedLeastSquaresMethod):
     """Projected matrix-free Gauss--Newton trust-region method."""
 
+    if TYPE_CHECKING:
+        __init__ = AbstractBoundedLeastSquaresMethod.__init__
+
     @property
     def default_damping(self) -> float:
         return 0.0
@@ -1309,6 +1344,9 @@ class BoundedGaussNewton(AbstractBoundedLeastSquaresMethod):
 
 class BoundedLevenbergMarquardt(AbstractBoundedLeastSquaresMethod):
     """Projected Levenberg--Marquardt with ratio-based damping and radius."""
+
+    if TYPE_CHECKING:
+        __init__ = AbstractBoundedLeastSquaresMethod.__init__
 
     @property
     def default_damping(self) -> float:
@@ -1334,7 +1372,7 @@ class _LeastSquaresRun(StrictModule):
         state: LeastSquaresState,
         status: Any,
         /,
-    ):
+    ) -> None:
         self.parameters = parameters
         self.state = state
         self.status = jnp.asarray(status, dtype=jnp.int32)
@@ -1342,13 +1380,13 @@ class _LeastSquaresRun(StrictModule):
 
 def _least_squares_iteration_record(
     state: LeastSquaresState,
-    status,
-    phase,
+    status: ArrayLike,
+    phase: IterationPhase | ArrayLike,
     /,
     *,
-    active=True,
-    committed=False,
-    terminal=False,
+    active: ArrayLike = True,
+    committed: ArrayLike = False,
+    terminal: ArrayLike = False,
 ) -> IterationRecord:
     return IterationRecord(
         IterationCoordinates(
@@ -1392,7 +1430,7 @@ def _solve_bounded_least_squares(
         )
     )
 
-    def residual_function(candidate):
+    def residual_function(candidate: PyTree[Array]) -> PyTree[Array]:
         residual, _ = problem.value(candidate, args)
         return residual
 
@@ -1405,7 +1443,7 @@ def _solve_bounded_least_squares(
     ).astype(jnp.int32)
     run = _LeastSquaresRun(parameters, state, initial_status)
 
-    def condition(current):
+    def condition(current: _LeastSquaresRun) -> Array:
         within_evaluations = (
             jnp.asarray(True)
             if termination.maximum_evaluations is None
@@ -1417,7 +1455,7 @@ def _solve_bounded_least_squares(
             & within_evaluations
         )
 
-    def body(current):
+    def body(current: _LeastSquaresRun) -> _LeastSquaresRun:
         model = _prepare_residual_model(residual_function, current.parameters)
         projected_gradient = bounds.projected_gradient(
             current.parameters,
@@ -1438,7 +1476,7 @@ def _solve_bounded_least_squares(
         )
         converged = optimality <= termination.optimality_threshold(initial_optimality)
 
-        def terminal(_):
+        def terminal(_: None) -> _LeastSquaresRun:
             status = jnp.where(
                 ~finite,
                 int(OptimizationStatus.NONFINITE_EVALUATION),
@@ -1475,7 +1513,7 @@ def _solve_bounded_least_squares(
             )
             return _LeastSquaresRun(current.parameters, next_state, status)
 
-        def take_step(_):
+        def take_step(_: None) -> _LeastSquaresRun:
             active = bounds.active_mask(
                 current.parameters,
                 model.gradient,
@@ -1488,7 +1526,7 @@ def _solve_bounded_least_squares(
             )
             space = PyTreeSpace(current.parameters)
 
-            def normal_action(direction):
+            def normal_action(direction: PyTree[Array]) -> PyTree[Array]:
                 free_direction = jax.tree.map(
                     lambda value, mask: jnp.where(mask, 0.0, value),
                     direction,
@@ -1726,7 +1764,7 @@ def _solve_bounded_least_squares(
 
 def _run_least_squares_iterations(
     method: AbstractLeastSquaresMethod,
-    residual_function,
+    residual_function: Callable[[PyTree[Any]], PyTree[Any]],
     initial_parameters: PyTree[Any],
     termination: OptimizationTermination,
     iteration: IterationPlan | None = None,
@@ -1769,7 +1807,7 @@ def _run_least_squares_iterations(
             ),
         )
 
-    def condition(carry):
+    def condition(carry: tuple[PyTree[Array], LeastSquaresState, Array]) -> Array:
         _, current_state, status = carry
         within_evaluations = (
             jnp.asarray(True)
@@ -1782,7 +1820,9 @@ def _run_least_squares_iterations(
             & within_evaluations
         )
 
-    def body(carry):
+    def body(
+        carry: tuple[PyTree[Array], LeastSquaresState, Array],
+    ) -> tuple[PyTree[Array], LeastSquaresState, Array]:
         current_parameters, dynamic_state, _ = carry
         current_state = eqx.combine(dynamic_state, static_state)
         next_parameters, next_state, _ = method.step(
@@ -1813,10 +1853,14 @@ def _run_least_squares_iterations(
     else:
         assert iteration_state is not None
 
-        def observed_condition(carry):
+        def observed_condition(
+            carry: tuple[PyTree[Array], LeastSquaresState, Array, IterationRuntimeState],
+        ) -> Array:
             return condition(carry[:3]) & ~carry[3].stop_requested
 
-        def observed_body(carry):
+        def observed_body(
+            carry: tuple[PyTree[Array], LeastSquaresState, Array, IterationRuntimeState],
+        ) -> tuple[PyTree[Array], LeastSquaresState, Array, IterationRuntimeState]:
             previous_state = eqx.combine(carry[1], static_state)
             next_carry = body(carry[:3])
             next_state = eqx.combine(next_carry[1], static_state)
@@ -1892,7 +1936,7 @@ def _validate_least_squares_inputs(
 
 
 def _package_least_squares_result(
-    method: AbstractLeastSquaresMethod,
+    method: GaussNewton | LevenbergMarquardt | AbstractBoundedLeastSquaresMethod,
     problem: NonlinearLeastSquaresProblem,
     run: _LeastSquaresRun,
     residual_function: Callable[[PyTree[Any]], PyTree[Any]],
@@ -1969,7 +2013,7 @@ def _package_least_squares_result(
 
 
 def _solve_least_squares(
-    method: AbstractLeastSquaresMethod,
+    method: GaussNewton | LevenbergMarquardt,
     problem: NonlinearLeastSquaresProblem,
     initial_parameters: PyTree[Any],
     /,
@@ -1989,7 +2033,7 @@ def _solve_least_squares(
         termination,
     )
 
-    def residual_function(candidate):
+    def residual_function(candidate: PyTree[Array]) -> PyTree[Array]:
         residual, _ = problem.value(candidate, args)
         return residual
 

@@ -10,11 +10,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ...discretization import (
@@ -24,6 +26,7 @@ from ...discretization import (
     FieldTransfer,
 )
 from ...linalg import ArraySpace
+from ...nn._keys import EvalKey
 from ...nn.operator import (
     FunctionSamples,
     OperatorBatch,
@@ -50,11 +53,13 @@ _FLUX_UNITS = (
 _FLUX_NAMES = ("vapor_mass_flux", "total_energy_flux")
 
 
-def column_flux_quantities(thermodynamics_id: str):
+def column_flux_quantities(
+    thermodynamics_id: str,
+) -> tuple[GeophysicalQuantity, GeophysicalQuantity]:
     """Named SI interface rates, not increments or sensible-only heat."""
     if not thermodynamics_id:
         raise ValueError("A thermodynamic reference identity is required.")
-    return tuple(
+    water, heat = (
         GeophysicalQuantity(
             name,
             kind,
@@ -68,6 +73,7 @@ def column_flux_quantities(thermodynamics_id: str):
             _FLUX_NAMES, ("water_mass_flux", "heat_flux"), _FLUX_UNITS, strict=True
         )
     )
+    return water, heat
 
 
 def column_flux_tasks(
@@ -106,7 +112,7 @@ def column_flux_tasks(
         OperatorFieldSpec("resolution_m", role="source", dimension=METER.dimension),
         OperatorFieldSpec("forcing", role="source", dimension=ONE.dimension),
     )
-    return tuple(
+    vapor_task, energy_task = (
         OperatorTask(
             f"{training_id}/{quantity.name}",
             dimension_basis=tuple(
@@ -154,9 +160,12 @@ def column_flux_tasks(
         )
         for quantity in quantities
     )
+    return vapor_task, energy_task
 
 
-def column_flux_space(dry_mass: Any, support_id: str, /):
+def column_flux_space(
+    dry_mass: ArrayLike, support_id: str, /
+) -> tuple[DiscreteFieldSpace, DiscreteMeasure]:
     """Native cell-average space and physical dry-mass measure (kg/m²)."""
     mass = np.asarray(dry_mass, dtype=np.float64)
     if mass.ndim != 1 or mass.size < 2 or not np.all(np.isfinite(mass) & (mass > 0)):
@@ -176,7 +185,7 @@ def column_flux_space(dry_mass: Any, support_id: str, /):
     return space, measure
 
 
-def _check_measure(space, measure):
+def _check_measure(space: object, measure: object) -> None:
     if not isinstance(space, DiscreteFieldSpace) or not isinstance(
         measure, DiscreteMeasure
     ):
@@ -210,7 +219,7 @@ class ColumnFluxBinding:
     forcing_id: str
     measure_unit: Any = _MASS_AREA
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _check_measure(self.field, self.measure)
         if self.measure.weights.size < 2:
             raise ValueError("Flux closure needs at least two layers.")
@@ -276,11 +285,11 @@ class ColumnFluxBinding:
                     )
 
     @property
-    def thermodynamics_id(self):
+    def thermodynamics_id(self) -> str:
         return self.tasks[0].metadata["thermodynamics_id"]
 
     @property
-    def binding_id(self):
+    def binding_id(self) -> str:
         return canonical_fingerprint(
             {
                 "tasks": [task.fingerprint for task in self.tasks],
@@ -294,7 +303,9 @@ class ColumnFluxBinding:
             }
         )
 
-    def batch(self, vapor_mass, total_energy, /, *, forcing):
+    def batch(
+        self, vapor_mass: ArrayLike, total_energy: ArrayLike, /, *, forcing: ArrayLike
+    ) -> OperatorBatch:
         """Build a native batch; forcing is a declared dimensionless regime control."""
         water, energy = np.asarray(vapor_mass), np.asarray(total_energy)
         mass = self.measure.weights
@@ -343,7 +354,7 @@ class ColumnFluxBinding:
         self.validate_batch(batch)
         return batch
 
-    def validate_batch(self, batch):
+    def validate_batch(self, batch: OperatorBatch) -> None:
         """Require actual runtime coordinates/measures and interval conditioning."""
         mass = self.measure.weights
         edges = jnp.concatenate((jnp.zeros(1), jnp.cumsum(mass))) / jnp.sum(mass)
@@ -358,14 +369,16 @@ class ColumnFluxBinding:
             "forcing",
         ):
             source = batch.input(name)
+            # Task validation above rejects required sources without sampled values.
+            values = cast(Array, source.values)
             if (
                 source.support_id != self.field.support_id
                 or not np.array_equal(np.asarray(source.coordinates), np.asarray(centers))
                 or not np.array_equal(
                     np.asarray(source.quadrature_weights), np.asarray(mass)
                 )
-                or source.values.shape != batch.case_shape + (mass.size,)
-                or not np.all(np.isfinite(np.asarray(source.values)))
+                or values.shape != batch.case_shape + (mass.size,)
+                or not np.all(np.isfinite(np.asarray(values)))
             ):
                 raise ValueError(
                     "Source geometry/measure does not match the physical closure binding."
@@ -401,7 +414,7 @@ class ConservativeColumnTransfer:
     thermodynamics_id: str
     measure_unit: Any = _MASS_AREA
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _check_measure(self.transfer.source, self.source_measure)
         _check_measure(self.transfer.target, self.target_measure)
         if self.measure_unit != _MASS_AREA or not self.thermodynamics_id:
@@ -423,7 +436,7 @@ class ConservativeColumnTransfer:
             self.transfer.target.vector_space,
         )
 
-        def action(value):
+        def action(value: Array) -> Array:
             return target.flatten(
                 self.transfer.primal_operator.mv(source.unflatten(value))
             )
@@ -441,7 +454,7 @@ class ConservativeColumnTransfer:
             raise ValueError("FieldTransfer fails its constant-preserving claim.")
 
     @property
-    def transfer_id(self):
+    def transfer_id(self) -> str:
         return canonical_fingerprint(
             {
                 "transfer": self.transfer.transfer_id,
@@ -452,7 +465,7 @@ class ConservativeColumnTransfer:
             }
         )
 
-    def inventories(self, values):
+    def inventories(self, values: ArrayLike) -> Array:
         """Restrict specific inventories, then re-extensify; never average masses."""
         array = jnp.asarray(values)
         if array.ndim != 3 or array.shape[-2:] != (self.source_measure.weights.size, 2):
@@ -468,7 +481,7 @@ class ConservativeColumnTransfer:
             self.transfer.target.vector_space,
         )
 
-        def one(value):
+        def one(value: Array) -> Array:
             specific = value / self.source_measure.weights
             return (
                 target.flatten(
@@ -500,16 +513,16 @@ class ColumnFluxTarget:
 def conditional_column_flux_target(
     binding: ColumnFluxBinding,
     transfer: ConservativeColumnTransfer,
-    fine_before,
-    fine_after,
-    coarse_before,
-    coarse_after,
+    fine_before: ArrayLike,
+    fine_after: ArrayLike,
+    coarse_before: ArrayLike,
+    coarse_after: ArrayLike,
     /,
     *,
-    interval_bounds,
-    fine_reference_after=None,
-    coarse_reference_after=None,
-    reference_id="",
+    interval_bounds: ArrayLike,
+    fine_reference_after: ArrayLike | None = None,
+    coarse_reference_after: ArrayLike | None = None,
+    reference_id: str = "",
 ) -> ColumnFluxTarget:
     """Coarsened fine evolution minus coarse evolution over the SAME interval.
 
@@ -611,7 +624,7 @@ def column_flux_datasets(
     /,
     *,
     provenance: Sequence[OperatorCaseProvenance],
-    interval_bounds,
+    interval_bounds: ArrayLike,
 ) -> tuple[OperatorDataset, OperatorDataset]:
     """Attach real support/forcing/interval provenance to native training datasets."""
     count = batch.case_shape[0] if len(batch.case_shape) == 1 else -1
@@ -670,19 +683,24 @@ def column_flux_datasets(
     binding.validate_batch(batch)
     for index, (task, name) in enumerate(zip(binding.tasks, _FLUX_NAMES, strict=True)):
         task.validate_batch(batch)
+        spec = task.field_by_name[name].output_spec
+        # Validated target fields always resolve an output spec at construction.
+        if not (spec is not None):
+            raise RuntimeError("Internal invariant failed: spec is not None.")
         datasets.append(
             OperatorDataset(
                 batch,
                 OperatorTargetBatch.from_arrays(
                     {name: target.flux[..., index]},
                     batch,
-                    specs={name: task.field_by_name[name].output_spec},
+                    specs={name: spec},
                     query_names={name: "interfaces"},
                 ),
                 provenance=tuple(enriched),
             )
         )
-    return tuple(datasets)
+    vapor_dataset, energy_dataset = datasets
+    return vapor_dataset, energy_dataset
 
 
 @dataclass(frozen=True)
@@ -698,7 +716,7 @@ class ColumnFluxAdmission:
     binding_id: str
     artifact_ids: tuple[str, str]
 
-    def require_inventories(self):
+    def require_inventories(self) -> tuple[Any, Any]:
         if not np.all(np.asarray(self.admitted)):
             raise ValueError(
                 "Learned flux failed physical admission; no proposal may be committed."
@@ -708,16 +726,16 @@ class ColumnFluxAdmission:
 
 def admit_column_flux(
     binding: ColumnFluxBinding,
-    vapor_mass,
-    total_energy,
-    water_flux,
-    energy_flux,
+    vapor_mass: ArrayLike,
+    total_energy: ArrayLike,
+    water_flux: ArrayLike,
+    energy_flux: ArrayLike,
     /,
     *,
     thermodynamics: MoistThermodynamicPlan,
-    dry_mass,
-    liquid_mass=0.0,
-    ice_mass=0.0,
+    dry_mass: ArrayLike,
+    liquid_mass: ArrayLike = 0.0,
+    ice_mass: ArrayLike = 0.0,
     artifact_ids: tuple[str, str],
 ) -> ColumnFluxAdmission:
     """Derive both increments from paired rates and reject invalid donor inventories.
@@ -756,7 +774,7 @@ def admit_column_flux(
         )
     zero = jnp.zeros_like(vapor[..., :1])
 
-    def paired(flux):
+    def paired(flux: Array) -> Array:
         return binding.interval_seconds * (
             jnp.concatenate((zero, flux), axis=-1)
             - jnp.concatenate((flux, zero), axis=-1)
@@ -769,7 +787,7 @@ def admit_column_flux(
         + jnp.concatenate((zero, jnp.maximum(-wf, 0)), axis=-1)
     )
 
-    def valid_inventory(water, internal):
+    def valid_inventory(water: Array, internal: Array) -> Array:
         capacity = (
             dry * thermodynamics.dry_cv
             + water * thermodynamics.vapor_cv
@@ -827,14 +845,14 @@ def deploy_column_flux(
     batch: OperatorBatch,
     /,
     *,
-    vapor_mass,
-    total_energy,
-    thermodynamics,
-    dry_mass,
+    vapor_mass: ArrayLike,
+    total_energy: ArrayLike,
+    thermodynamics: MoistThermodynamicPlan,
+    dry_mass: ArrayLike,
     artifact_ids: tuple[str, str],
-    liquid_mass=0.0,
-    ice_mass=0.0,
-    key=None,
+    liquid_mass: ArrayLike = 0.0,
+    ice_mass: ArrayLike = 0.0,
+    key: EvalKey = None,
 ) -> ColumnFluxAdmission:
     """Predict using native restored artifacts; execution has no private state."""
     if len(trained) != 2 or len(artifact_ids) != 2:

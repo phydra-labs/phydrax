@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -15,7 +18,7 @@ from phydrax.equations._channel_les import (
 )
 
 
-def _base_channel(*, wall_velocity=0.0):
+def _base_channel(*, wall_velocity: Any = 0.0) -> Any:
     space = phx.discretization.TensorSpectralPlan(
         (
             phx.discretization.FourierBasisPlan(6),
@@ -48,7 +51,7 @@ def _base_channel(*, wall_velocity=0.0):
     return space, base
 
 
-def _prepared_model(base, model):
+def _prepared_model(base: Any, model: Any) -> Any:
     provenance = phx.equations.LESParameterProvenance(
         channel_les_filter(base.discretization),
         base.discretization.prepared_id,
@@ -59,7 +62,9 @@ def _prepared_model(base, model):
     return model.prepare(provenance)
 
 
-def _channel_les(coefficient=0.5, model_type=phx.equations.WALELESPlan):
+def _channel_les(
+    coefficient: Any = 0.5, model_type: Any = phx.equations.WALELESPlan
+) -> Any:
     space, base = _base_channel()
     return (
         space,
@@ -71,7 +76,7 @@ def _channel_les(coefficient=0.5, model_type=phx.equations.WALELESPlan):
     )
 
 
-def _vortex_state(space, dynamics, amplitude=0.02):
+def _vortex_state(space: Any, dynamics: Any, amplitude: Any = 0.02) -> Any:
     x = space.axes[0].nodes[:, None, None]
     y = space.axes[1].nodes[None, :, None]
     envelope = (1.0 - y**2) ** 2
@@ -87,7 +92,7 @@ def _vortex_state(space, dynamics, amplitude=0.02):
     return dynamics.project_state(physical)
 
 
-def test_channel_les_filter_widths_are_resolved_anisotropic_and_noncommuting():
+def test_channel_les_filter_widths_are_resolved_anisotropic_and_noncommuting() -> None:
     _, _, dynamics = _channel_les()
     geometry = dynamics.filter_geometry
     widths = geometry.directional_widths
@@ -120,7 +125,7 @@ def test_channel_les_filter_widths_are_resolved_anisotropic_and_noncommuting():
     assert jnp.max(jnp.abs(evidence)) > 0.0
 
 
-def test_channel_les_uses_all_mixed_velocity_derivatives():
+def test_channel_les_uses_all_mixed_velocity_derivatives() -> None:
     space, _, dynamics = _channel_les()
     state = _vortex_state(space, dynamics, amplitude=1.0)
     evaluated = dynamics.evaluate_subgrid(state)
@@ -144,7 +149,7 @@ def test_channel_les_uses_all_mixed_velocity_derivatives():
     np.testing.assert_allclose(evaluated.velocity_gradient[..., :, 2], 0.0, atol=2e-5)
 
 
-def test_wale_has_cubic_near_wall_scaling_on_manufactured_gradients():
+def test_wale_has_cubic_near_wall_scaling_on_manufactured_gradients() -> None:
     _, _, dynamics = _channel_les(coefficient=0.6)
     count = dynamics.filter_geometry.wall_normal_widths.size
     distances = jnp.zeros((count,)).at[:4].set(jnp.asarray((0.0, 1.0e-4, 2.0e-4, 4.0e-4)))
@@ -177,7 +182,9 @@ def test_wale_has_cubic_near_wall_scaling_on_manufactured_gradients():
         phx.equations.AMDLESPlan,
     ),
 )
-def test_channel_les_accepts_exactly_bound_prepared_algebraic_models(model_type):
+def test_channel_les_accepts_exactly_bound_prepared_algebraic_models(
+    model_type: Any,
+) -> None:
     _, base = _base_channel()
     compiled = compile_channel_les(base, _prepared_model(base, model_type(0.2)))
     assert isinstance(compiled, CompiledChannelLESDynamics)
@@ -197,7 +204,7 @@ def test_channel_les_accepts_exactly_bound_prepared_algebraic_models(model_type)
         compile_channel_les(base, model_type(0.2).prepare(wrong_provenance))
 
 
-def test_zero_coefficient_channel_les_matches_no_les_rhs_and_step():
+def test_zero_coefficient_channel_les_matches_no_les_rhs_and_step() -> None:
     space, base = _base_channel()
     zero = compile_channel_les(
         base,
@@ -205,6 +212,7 @@ def test_zero_coefficient_channel_les_matches_no_les_rhs_and_step():
     )
     state = _vortex_state(space, base)
     np.testing.assert_allclose(
+        # ty: ignore[invalid-argument-type]
         np.asarray(zero.nonlinear(0.0, state, None)),
         np.asarray(base.nonlinear(0.0, state, None)),
         atol=0.0,
@@ -226,7 +234,7 @@ def test_zero_coefficient_channel_les_matches_no_les_rhs_and_step():
     )
 
 
-def test_channel_les_stress_work_energy_and_explicit_restriction_are_consistent():
+def test_channel_les_stress_work_energy_and_explicit_restriction_are_consistent() -> None:
     space, _, dynamics = _channel_les()
     state = _vortex_state(space, dynamics)
     evaluated = dynamics.evaluate_subgrid(state)
@@ -261,7 +269,7 @@ def test_channel_les_stress_work_energy_and_explicit_restriction_are_consistent(
     assert not bool(restriction.permits(2.0 * restriction.maximum_step))
 
 
-def test_channel_les_is_jittable_and_has_a_state_jvp():
+def test_channel_les_is_jittable_and_has_a_state_jvp() -> None:
     space, _, dynamics = _channel_les()
     state = _vortex_state(space, dynamics)
     compiled_rhs = jax.jit(lambda value: dynamics.nonlinear(0.0, value, None))(state)
@@ -279,7 +287,7 @@ def test_channel_les_is_jittable_and_has_a_state_jvp():
     assert jnp.all(jnp.isfinite(derivative))
 
 
-def test_short_channel_les_step_preserves_walls_divergence_and_is_deterministic():
+def test_short_channel_les_step_preserves_walls_divergence_and_is_deterministic() -> None:
     space, _, dynamics = _channel_les()
     initial = _vortex_state(space, dynamics, amplitude=0.01)
     times = jnp.asarray((0.0, 2.0e-4))

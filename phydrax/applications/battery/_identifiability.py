@@ -10,8 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array, core as jax_core
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -62,7 +63,7 @@ class BatteryIdentifiabilityPlan(StrictModule):
         /,
         *,
         rank_policy: RankPolicy | None = None,
-    ):
+    ) -> None:
         if isinstance(calibration, BatteryCalibrationPlan):
             prepared = calibration.prepare()
         elif isinstance(calibration, PreparedBatteryCalibration):
@@ -149,7 +150,7 @@ class BatteryIdentifiabilityReport(StrictModule):
         position_fingerprint: str,
         evidence_fingerprint: str,
         report_id: str,
-    ):
+    ) -> None:
         jacobian = jnp.asarray(whitened_jacobian)
         fisher = jnp.asarray(fisher_information)
         values = jnp.asarray(singular_values)
@@ -293,7 +294,7 @@ def evaluate_battery_identifiability(
         plan.calibration.plan.parameter_space.initial if position is None else position
     )
     if any(
-        isinstance(leaf, jax.core.Tracer) for leaf in jax.tree_util.tree_leaves(point)
+        isinstance(leaf, jax_core.Tracer) for leaf in jax.tree_util.tree_leaves(point)
     ):
         raise TypeError(
             "Report identity requires a concrete position; use BatteryIdentifiabilityPlan.evaluate_numerics inside JIT."

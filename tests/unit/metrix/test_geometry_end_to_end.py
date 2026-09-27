@@ -7,7 +7,8 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_weighted_density_reference_operators_and_normalization():
+def test_weighted_density_reference_operators_and_normalization() -> None:
+    # ty: ignore[invalid-argument-type]
     domain = phx.domain.HyperRectangle([-2.0, -2.0], [2.0, 2.0], label="x")
     chart = phx.metrix.CoordinateChart("weighted-plane", ("x", "y"))
     measure = phx.metrix.WeightedRiemannianMeasure(
@@ -35,7 +36,7 @@ def test_weighted_density_reference_operators_and_normalization():
     assert normalization.mass > 0.0
 
 
-def test_information_geometry_operator_hessian_and_pullback():
+def test_information_geometry_operator_hessian_and_pullback() -> None:
     chart = phx.metrix.CoordinateChart("hessian", ("x", "y"))
     hessian = phx.metrix.HessianGeometry(
         lambda point: 0.5 * jnp.dot(point, point), chart=chart
@@ -67,7 +68,7 @@ def test_information_geometry_operator_hessian_and_pullback():
     )
 
 
-def test_geodesic_interpolant_manifold_metric_and_matrix_cost():
+def test_geodesic_interpolant_manifold_metric_and_matrix_cost() -> None:
     sphere = phx.metrix.SphereManifold(3)
     transport = phx.transport.ManifoldTransportGeometry(sphere)
     source = jnp.asarray([1.0, 0.0, 0.0])
@@ -95,7 +96,7 @@ def test_geodesic_interpolant_manifold_metric_and_matrix_cost():
     assert jnp.allclose(jnp.diag(matrix), 0.0)
 
 
-def test_projective_atlas_patchwise_metric_and_integration():
+def test_projective_atlas_patchwise_metric_and_integration() -> None:
     projective = phx.geometry.complex.ComplexProjectiveAtlas(1)
     point = jnp.asarray([2.0, 0.0])
     mapped = projective.cover.atlas.transition(0, 1)(point)
@@ -133,7 +134,7 @@ def test_projective_atlas_patchwise_metric_and_integration():
     assert jnp.allclose(result.value, 1.0)
 
 
-def test_dolbeault_chern_berry_and_projective_hypersurface():
+def test_dolbeault_chern_berry_and_projective_hypersurface() -> None:
     chart = phx.metrix.CoordinateChart("complex-plane", ("x0", "x1", "y0", "y1"))
     convention = phx.metrix.ComplexCoordinateConvention(chart)
     scalar = phx.metrix.BigradedForm(
@@ -172,7 +173,7 @@ def test_dolbeault_chern_berry_and_projective_hypersurface():
     assert fermat.local_smoothness_margin(0, root) > 0.0
 
 
-def test_flat_torus_kahler_potential_and_local_su_structure():
+def test_flat_torus_kahler_potential_and_local_su_structure() -> None:
     torus = phx.geometry.complex.FlatComplexTorus(1)
     geometry = phx.metrix.KahlerPotentialGeometry(
         torus.metric, torus.convention, lambda point: jnp.asarray(0.0)

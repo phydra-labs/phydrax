@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -24,6 +26,7 @@ from ....linalg import (
     LinearSystem,
     solve,
 )
+from ....typing import parse
 from ._contracts import AbstractFourierFactorizationPlan, FrequencyMaxwellMaterial
 
 
@@ -85,7 +88,7 @@ def _component_convolutions(
 def _translate_tensor_convolutions(
     matrices: Array,
     lattice: LatticeHarmonicDiscretization,
-    translation: ArrayLike,
+    translation: ArrayLike | Sequence[float],
     /,
 ) -> Array:
     values = jnp.transpose(matrices, (2, 3, 0, 1))
@@ -131,7 +134,7 @@ def _scalar_from_tensor(tensor_samples: Array) -> Array:
 class DirectFourierFactorizationPlan(AbstractFourierFactorizationPlan):
     """Direct Laurent multiplication for every constitutive component."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.plan_id = canonical_fingerprint({"kind": "direct-fourier-factorization"})
 
     @property
@@ -142,7 +145,7 @@ class DirectFourierFactorizationPlan(AbstractFourierFactorizationPlan):
 class InverseFourierFactorizationPlan(AbstractFourierFactorizationPlan):
     """Inverse-rule transverse factorization for scalar isotropic media."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.plan_id = canonical_fingerprint({"kind": "inverse-fourier-factorization"})
 
     @property
@@ -157,7 +160,7 @@ class AnalyticInterfaceFramePlan(StrictModule):
     frame_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, tangent_field: ArrayLike, /, *, frame_id: str):
+    def __init__(self, tangent_field: ArrayLike, /, *, frame_id: str) -> None:
         field = jnp.asarray(tangent_field)
         if field.shape[-1:] != (2,):
             raise ValueError("tangent_field must have trailing shape (2,).")
@@ -188,13 +191,12 @@ class JonesDirectFramePlan(StrictModule, NonTrainableState):
         gradient_regularization: float = 1e-8,
         differentiation: FrameDifferentiation = "mathematical",
         complex_jones: bool = True,
-    ):
+    ) -> None:
         regularization_ = float(regularization)
         gradient_regularization_ = float(gradient_regularization)
         if regularization_ <= 0.0 or gradient_regularization_ <= 0.0:
             raise ValueError("Jones regularization values must be positive.")
-        if differentiation not in ("mathematical", "frozen", "none"):
-            raise ValueError("Unknown Jones frame differentiation policy.")
+        differentiation = parse(differentiation, FrameDifferentiation, "differentiation")
         self.regularization = regularization_
         self.gradient_regularization = gradient_regularization_
         self.differentiation = differentiation
@@ -222,7 +224,7 @@ class VectorFourierFactorizationPlan(AbstractFourierFactorizationPlan):
         self,
         frame: AnalyticInterfaceFramePlan | JonesDirectFramePlan | None = None,
         /,
-    ):
+    ) -> None:
         frame_ = JonesDirectFramePlan() if frame is None else frame
         if not isinstance(frame_, AnalyticInterfaceFramePlan | JonesDirectFramePlan):
             raise TypeError("frame must be an analytic or Jones-direct frame plan.")
@@ -396,7 +398,7 @@ def prepare_fourier_material(
     factorization: AbstractFourierFactorizationPlan,
     /,
     *,
-    translation: ArrayLike = (0.0, 0.0),
+    translation: ArrayLike | Sequence[float] = (0.0, 0.0),
 ) -> PreparedFourierMaterial:
     epsilon_samples, epsilon_scalar = _tensor_samples(material.permittivity, lattice)
     mu_samples, mu_scalar = _tensor_samples(material.permeability, lattice)
@@ -470,7 +472,7 @@ def prepare_fourier_material(
 def translate_prepared_fourier_material(
     material: PreparedFourierMaterial,
     lattice: LatticeHarmonicDiscretization,
-    translation: ArrayLike,
+    translation: ArrayLike | Sequence[float],
     /,
 ) -> PreparedFourierMaterial:
     """Apply reciprocal-space translation without rebuilding material convolutions."""

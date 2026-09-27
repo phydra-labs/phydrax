@@ -9,7 +9,8 @@ from itertools import product
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -21,7 +22,7 @@ class Irrep(StrictModule):
     dual_label: str = eqx.field(static=True)
     irrep_id: str = eqx.field(static=True)
 
-    def __init__(self, label: str, dimension: int, /, *, dual_label: str):
+    def __init__(self, label: str, dimension: int, /, *, dual_label: str) -> None:
         label_ = str(label)
         dual = str(dual_label)
         dimension_ = int(dimension)
@@ -57,7 +58,7 @@ class RepresentationCategory(StrictModule):
         /,
         *,
         unit_label: str,
-    ):
+    ) -> None:
         values = tuple(irreps)
         if not values or any(not isinstance(value, Irrep) for value in values):
             raise TypeError("irreps must be a nonempty sequence of Irrep values.")
@@ -194,7 +195,7 @@ class FusionChannel(StrictModule):
         /,
         *,
         multiplicity_ordinal: int = 0,
-    ):
+    ) -> None:
         if not isinstance(category, RepresentationCategory):
             raise TypeError("category must be RepresentationCategory.")
         left_, right_, output_ = str(left), str(right), str(output)
@@ -234,7 +235,7 @@ class FusionTree(StrictModule):
         leaves: Sequence[str],
         channels: Sequence[FusionChannel],
         /,
-    ):
+    ) -> None:
         if not isinstance(category, RepresentationCategory):
             raise TypeError("category must be RepresentationCategory.")
         leaves_ = tuple(str(label) for label in leaves)
@@ -319,7 +320,7 @@ class ReducedLeg(StrictModule):
         *,
         orientation: int,
         active_multiplicities: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(category, RepresentationCategory):
             raise TypeError("category must be RepresentationCategory.")
         labels = tuple(str(label) for label in irreps)

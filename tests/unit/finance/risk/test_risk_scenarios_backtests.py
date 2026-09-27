@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 
 
@@ -33,11 +35,11 @@ from phydrax.finance.risk._scenarios import (
 )
 
 
-def _physical():
+def _physical() -> Any:
     return PhysicalLaw("physical", "historical", "factors", "daily")
 
 
-def test_cvar_fractional_atom_and_spectral_mixture_are_exact():
+def test_cvar_fractional_atom_and_spectral_mixture_are_exact() -> None:
     losses = jnp.asarray((0.0, 1.0, 2.0))
     probabilities = jnp.asarray((0.5, 0.25, 0.25))
     atoms = cvar_atoms(losses, probabilities, 0.5)
@@ -50,7 +52,7 @@ def test_cvar_fractional_atom_and_spectral_mixture_are_exact():
     assert float(risk) == pytest.approx(0.4 * 1.5 + 0.6 * 2.0)
 
 
-def test_factor_risk_components_reconcile_total_volatility():
+def test_factor_risk_components_reconcile_total_volatility() -> None:
     factor = RiskFactorKey("market", QuoteKey("index:market", "level"))
     layout = RiskFactorLayout((factor,))
     law = PhysicalLaw("factor-law", "estimated", layout.layout_id, "daily")
@@ -70,7 +72,7 @@ def test_factor_risk_components_reconcile_total_volatility():
     )
 
 
-def test_kelly_bankruptcy_is_reported_instead_of_clipped():
+def test_kelly_bankruptcy_is_reported_instead_of_clipped() -> None:
     result = kelly_risk(
         jnp.asarray((-1.0, 0.1)),
         jnp.asarray((0.5, 0.5)),
@@ -81,7 +83,7 @@ def test_kelly_bankruptcy_is_reported_instead_of_clipped():
     assert bool(jnp.isneginf(result.expected_log_growth))
 
 
-def test_scenario_evaluation_reduction_and_reweighting_preserve_meaning():
+def test_scenario_evaluation_reduction_and_reweighting_preserve_meaning() -> None:
     scenarios = FinancialScenarioSet(
         jnp.asarray(
             (
@@ -120,7 +122,7 @@ def test_scenario_evaluation_reduction_and_reweighting_preserve_meaning():
     assert zeroed.scenarios.scenario_active.tolist() == [True, True, False]
 
 
-def test_stress_law_is_distinct_and_pnl_explanation_reconciles():
+def test_stress_law_is_distinct_and_pnl_explanation_reconciles() -> None:
     law = StressLaw("shock", "committee", "assets", "instant")
     stressed = stress_test(
         jnp.asarray((100.0, 50.0)),
@@ -154,7 +156,7 @@ def test_stress_law_is_distinct_and_pnl_explanation_reconciles():
     assert float(explanation.explained_pnl) == pytest.approx(float(explanation.total_pnl))
 
 
-def test_attribution_reconciles_active_return():
+def test_attribution_reconciles_active_return() -> None:
     result = brinson_attribution(
         jnp.asarray((0.4, 0.2, 0.4)),
         jnp.asarray((0.3, 0.3, 0.4)),
@@ -168,7 +170,9 @@ def test_attribution_reconciles_active_return():
     )
 
 
-def test_walk_forward_rejects_information_leakage_and_nested_splits_are_contained():
+def test_walk_forward_rejects_information_leakage_and_nested_splits_are_contained() -> (
+    None
+):
     returns = jnp.asarray(tuple((0.01 * index, -0.005 * index) for index in range(12)))
     plan = WalkForwardPlan(4, 2, step=2, embargo=1)
     decisions = BacktestDecisions(
@@ -197,7 +201,7 @@ def test_walk_forward_rejects_information_leakage_and_nested_splits_are_containe
         assert all(inner.train_start >= outer.train_start for inner in inner_group)
 
 
-def test_nested_backtest_selects_only_from_inner_holdouts():
+def test_nested_backtest_selects_only_from_inner_holdouts() -> None:
     returns = jnp.tile(jnp.asarray((0.02, -0.01)), (30, 1))
     plan = NestedBacktestPlan(
         WalkForwardPlan(12, 3, step=3),

@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -28,7 +29,7 @@ class CochainRatePartition(StrictModule, NonTrainableState):
         cochain: CochainDiscretization,
         categories: Sequence[ArrayLike],
         /,
-    ):
+    ) -> None:
         values = [np.asarray(value, dtype=np.int32).copy() for value in categories]
         if len(values) != len(cochain.cell_counts):
             raise ValueError("Rate categories must cover every cochain degree.")
@@ -93,7 +94,7 @@ class CochainMultiratePlan(StrictModule):
         update: Callable[[Any, Array, tuple[Array, ...]], Any],
         energy: Callable[[Any], ArrayLike],
         /,
-    ):
+    ) -> None:
         if not isinstance(partition, CochainRatePartition):
             raise TypeError("partition must be CochainRatePartition.")
         if not callable(update) or not callable(energy):

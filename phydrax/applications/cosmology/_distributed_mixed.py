@@ -13,8 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.sharding import NamedSharding, PartitionSpec
-from jaxtyping import Array
 
 from ..._execution_plan import ExecutionPlan, PlacementKind
 from ..._fingerprint import canonical_fingerprint
@@ -231,7 +231,7 @@ class DistributedMixedExecutionPlan(StrictModule):
         particle_receive_capacity: int | None = None,
         particle_ghost_capacity: int | None = None,
         particle_ghost_width: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(
             mixed, (PreparedWaveParticleCosmology, PreparedWaveParticleGasCosmology)
         ):
@@ -762,7 +762,7 @@ class PreparedDistributedMixedExecution(StrictModule):
         plan: DistributedMixedExecutionPlan,
         evidence: DistributedMixedPreparationEvidence,
         /,
-    ):
+    ) -> None:
         if not evidence.executable or evidence.plan_id != plan.plan_id:
             raise ValueError(
                 "Prepared distributed mixed execution requires admitted evidence."
@@ -1476,7 +1476,7 @@ class PreparedDistributedMixedExecution(StrictModule):
             & (jnp.abs(mass_defect) <= tolerance)
         )
 
-        def select(candidate_value, previous_value):
+        def select(candidate_value: Array, previous_value: Array) -> Array:
             return jnp.where(successful, candidate_value, previous_value)
 
         accepted_gas = None
@@ -1582,7 +1582,7 @@ class PreparedDistributedMixedExecution(StrictModule):
         if state.gas is not None:
             arrays.extend((state.gas.cell_average, state.gas.scale_factor))
 
-        def encode(value):
+        def encode(value: Array) -> Array:
             return jnp.asarray(value).reshape((-1,)).view(jnp.uint8)
 
         payload = jnp.concatenate(tuple(encode(value) for value in arrays), axis=0)
@@ -1649,7 +1649,7 @@ class PreparedDistributedMixedExecution(StrictModule):
         )
         offset = 0
 
-        def take(template):
+        def take(template: Array) -> Array:
             nonlocal offset
             shape = tuple(template.shape)
             dtype = np.dtype(template.dtype)

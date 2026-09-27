@@ -8,10 +8,11 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
+from ...typing import PRNGKey
 from .._base import _AbstractBaseModel
 from .._contracts import compose_regularity, product_regularity, sum_regularity
 from .._keys import EvalKey, fold_in_eval_key
@@ -84,8 +85,8 @@ class ModifiedMLP(_AbstractBaseModel):
         use_final_bias: bool = True,
         initializer: str = "glorot_normal",
         scan: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         r"""Construct a modified MLP.
 
         **Arguments:**

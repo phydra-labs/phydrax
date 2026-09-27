@@ -4,17 +4,21 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from phydrax.domain import AbstractGeometry, DomainFunction
 
 from ..._strict import StrictModule
 from ...metrix import DifferentiableMap, RiemannianMapGeometry, RiemannianMetric
 from ._domain_ops import _factor_and_dim, _resolve_var
+
+
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
 
 
 MapOperation = Literal["energy", "tension", "isometry", "conformality"]
@@ -39,7 +43,7 @@ class _RiemannianMapCallable(StrictModule):
         function_coordinate_position: int,
         operation: MapOperation,
         /,
-    ):
+    ) -> None:
         self.function = function
         self.source_metric = source_metric
         self.target_metric = target_metric
@@ -48,7 +52,7 @@ class _RiemannianMapCallable(StrictModule):
         self.function_coordinate_position = int(function_coordinate_position)
         self.operation = operation
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         bound = [args[position] for position in self.function_positions]
 
         def point_map(point: Array) -> Array:

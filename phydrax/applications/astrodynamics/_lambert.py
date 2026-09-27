@@ -4,17 +4,23 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._context import AstrodynamicsContext
 from ._status import AstrodynamicsStatus
+
+
+_LambertGeometry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 
 def _norm(value: Array, /) -> Array:
@@ -41,7 +47,7 @@ class LambertPlan(StrictModule, NonTrainableState):
         maximum_x: float = 64.0,
         long_way: bool = False,
         plane_normal: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 1.0),
-    ):
+    ) -> None:
         for name, value in (
             ("max_revolutions", max_revolutions),
             ("grid_size", grid_size),
@@ -135,7 +141,7 @@ def _tof(x: Array, ll: Array, revolutions: int, /) -> Array:
     return numerator / denominator
 
 
-def _root_grid(plan: LambertPlan, dtype, /) -> Array:
+def _root_grid(plan: LambertPlan, dtype: DTypeLike, /) -> Array:
     elliptic_count = plan.grid_size - 128
     elliptic = jnp.linspace(-1.0 + 1.0e-8, 1.0 - 1.0e-8, elliptic_count, dtype=dtype)
     hyperbolic = 1.0 + jnp.geomspace(
@@ -157,7 +163,7 @@ def _bisect(
 ) -> Array:
     lower_value = _tof(lower, ll, revolutions) - target
 
-    def step(_, carry):
+    def step(_: Array, carry: tuple[Array, Array, Array]) -> tuple[Array, Array, Array]:
         left, right, left_value = carry
         midpoint = 0.5 * (left + right)
         midpoint_value = _tof(midpoint, ll, revolutions) - target
@@ -172,7 +178,9 @@ def _bisect(
     return 0.5 * (left + right)
 
 
-def _geometry(r1: Array, r2: Array, mu: Array, long_way: bool, plane_normal: Array, /):
+def _geometry(
+    r1: Array, r2: Array, mu: Array, long_way: bool, plane_normal: Array, /
+) -> _LambertGeometry:
     r1_norm = _norm(r1)
     r2_norm = _norm(r2)
     chord_vector = r2 - r1

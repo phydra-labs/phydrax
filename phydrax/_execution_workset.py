@@ -11,7 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ._execution_pool import (
     PoolExecutionSignature,
@@ -100,7 +102,7 @@ class ExecutionWorksetPlan(StrictModule, NonTrainableState):
         /,
         *,
         bucket_capacity: int = 8,
-    ):
+    ) -> None:
         identifiers = tuple(str(value).strip() for value in semantic_ids)
         signature_values = tuple(signatures)
         capacity = int(bucket_capacity)
@@ -173,7 +175,7 @@ class PreparedExecutionWorksets(StrictModule, NonTrainableState):
     item_slot: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ExecutionWorksetPlan, /):
+    def __init__(self, plan: ExecutionWorksetPlan, /) -> None:
         if not isinstance(plan, ExecutionWorksetPlan):
             raise TypeError("plan must be an ExecutionWorksetPlan.")
         grouped: dict[str, list[int]] = {}
@@ -380,7 +382,12 @@ def _evaluate_execution_worksets(
             group_keys = keys[start:stop]
             group_indices = prepared.bucket_rng_indices[start:stop]
 
-            def lane_operation(item, key, semantic_index, signature=signature):
+            def lane_operation(
+                item: PyTree[Array],
+                key: Array,
+                semantic_index: Array,
+                signature: PoolExecutionSignature = signature,
+            ) -> PyTree[Array]:
                 return operation(signature, item, key, semantic_index)
 
             if mode == "filter_vmap":
@@ -551,7 +558,7 @@ class ExecutionWorksetCheckpoint(StrictModule, NonTrainableState):
         /,
         *,
         numeric_revisions: Sequence[NumericRevision],
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedExecutionWorksets):
             raise TypeError("prepared must be PreparedExecutionWorksets.")
         arrays = _item_tree(state, prepared.item_count)

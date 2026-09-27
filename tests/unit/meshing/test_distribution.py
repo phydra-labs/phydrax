@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -8,7 +10,7 @@ from phydrax.meshing._assembly import MeshPart
 from phydrax.meshing._distribution import MeshDistribution
 
 
-def _cell_part(name="cells", scale=1.0, single=False):
+def _cell_part(name: Any = "cells", scale: Any = 1.0, single: Any = False) -> Any:
     points = scale * np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
     cells = np.asarray(((0, 1, 3), (1, 2, 3)), dtype=np.int32)
     if single:
@@ -20,7 +22,7 @@ def _cell_part(name="cells", scale=1.0, single=False):
     )
 
 
-def _fe(part):
+def _fe(part: Any) -> Any:
     return phx.discretization.fem.FiniteElementPlan(
         part.carrier.mesh,
         phx.discretization.fem.FiniteElementFieldSpec(
@@ -30,14 +32,14 @@ def _fe(part):
     ).prepare()
 
 
-def _grid_part(name="grid", *, periodic=True, scale=1.0):
+def _grid_part(name: Any = "grid", *, periodic: Any = True, scale: Any = 1.0) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=periodic),), axis_names=("x",)
     ).prepare(jnp.asarray([[0.0], [scale]]))
     return MeshPart(name, grid, coordinate_contract=phx.SpatialCoordinateContract.si())
 
 
-def _compiled_fv(part):
+def _compiled_fv(part: Any) -> Any:
     discretization = phx.discretization.FiniteVolumePlan(part.carrier).prepare()
     system = phx.equations.ScalarConservationSystem(
         1,
@@ -58,7 +60,7 @@ def _compiled_fv(part):
     return phx.equations.compile_conservation_problem(problem, discretization, method)
 
 
-def test_global_id_ownership_normalization_lowers_to_conservative_fe_execution():
+def test_global_id_ownership_normalization_lowers_to_conservative_fe_execution() -> None:
     part = _cell_part()
     native_ids = np.concatenate(
         [np.asarray(block.global_ids) for block in part.carrier.mesh.blocks]
@@ -84,7 +86,7 @@ def test_global_id_ownership_normalization_lowers_to_conservative_fe_execution()
         distribution.lower_finite_element(part, _fe(_cell_part(scale=2.0)))
 
 
-def test_fe_distribution_handles_no_interior_interfaces_without_fake_facets():
+def test_fe_distribution_handles_no_interior_interfaces_without_fake_facets() -> None:
     part = _cell_part(single=True)
     distribution = MeshDistribution(
         part, phx.discretization.CellPartition(np.asarray([0]), 1)
@@ -96,7 +98,9 @@ def test_fe_distribution_handles_no_interior_interfaces_without_fake_facets():
     )
 
 
-def test_distribution_rejects_fractional_ownership_missing_halos_and_wrong_partition_geometry():
+def test_distribution_rejects_fractional_ownership_missing_halos_and_wrong_partition_geometry() -> (
+    None
+):
     part = _cell_part()
     with pytest.raises(TypeError, match="integer vector"):
         phx.discretization.CellPartition(np.asarray([0.2, 1.0]), 2)
@@ -106,12 +110,14 @@ def test_distribution_rejects_fractional_ownership_missing_halos_and_wrong_parti
         MeshDistribution(
             part,
             phx.discretization.CellPartition(np.asarray([0, 1]), 2),
+            # ty: ignore[invalid-argument-type]
             halo_global_ids=([], []),
         )
     with pytest.raises(ValueError, match="locally owned"):
         MeshDistribution(
             part,
             phx.discretization.CellPartition(np.asarray([0, 1]), 2),
+            # ty: ignore[invalid-argument-type]
             halo_global_ids=([0, 1], [0]),
         )
     grid = _grid_part()
@@ -123,7 +129,7 @@ def test_distribution_rejects_fractional_ownership_missing_halos_and_wrong_parti
         )
 
 
-def test_tensor_halos_respect_periodic_topology_and_lower_to_real_fv_residual():
+def test_tensor_halos_respect_periodic_topology_and_lower_to_real_fv_residual() -> None:
     part = _grid_part()
     distribution = MeshDistribution.cartesian(part, (2,))
     np.testing.assert_array_equal(distribution.halo_global_ids[0], [4, 7])
@@ -155,7 +161,7 @@ def test_tensor_halos_respect_periodic_topology_and_lower_to_real_fv_residual():
         runtime.compile_residual(_compiled_fv(changed).dynamics, 0.0)
 
 
-def _quad_mesh(nx, ny, *, refine=(), extend=0):
+def _quad_mesh(nx: Any, ny: Any, *, refine: Any = (), extend: Any = 0) -> Any:
     """Two triangles per unit quad; ``refine`` quads split into four about their
     center (children of the two original triangles) and ``extend`` columns are
     appended as created cells. Returns the part and each cell's source parent ID."""
@@ -201,11 +207,12 @@ def _quad_mesh(nx, ny, *, refine=(), extend=0):
         phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si()),
     )
     by_id = dict(zip(ids, parents, strict=True))
+    # ty: ignore[unresolved-attribute]
     native = np.asarray(part.carrier.mesh.blocks[0].global_ids)
     return part, np.asarray([by_id[int(value)] for value in native])
 
 
-def _cell_lineage(source, target, parents):
+def _cell_lineage(source: Any, target: Any, parents: Any) -> Any:
     target_ids = np.asarray(target.carrier.mesh.blocks[0].global_ids)
     routed = parents >= 0
     kinds = np.where(
@@ -227,7 +234,7 @@ def _cell_lineage(source, target, parents):
     )
 
 
-def _brute_force_halos(part, owner, part_count, width):
+def _brute_force_halos(part: Any, owner: Any, part_count: Any, width: Any) -> Any:
     block = part.carrier.mesh.blocks[0]
     triangles = np.asarray(block.vertices)
     global_ids = np.asarray(block.global_ids)
@@ -256,7 +263,9 @@ def _brute_force_halos(part, owner, part_count, width):
 @pytest.mark.parametrize(
     "kind", [phx.meshing.MeshPartitionKind.MORTON, phx.meshing.MeshPartitionKind.HILBERT]
 )
-def test_curve_partitions_meet_the_weight_bound_and_ignore_storage_order(kind):
+def test_curve_partitions_meet_the_weight_bound_and_ignore_storage_order(
+    kind: Any,
+) -> None:
     part, _ = _quad_mesh(12, 10)
     weight_by_id = np.random.default_rng(7).uniform(0.5, 3.0, size=240)
     native = np.asarray(part.carrier.mesh.blocks[0].global_ids)
@@ -288,6 +297,7 @@ def test_curve_partitions_meet_the_weight_bound_and_ignore_storage_order(kind):
             phx.SpatialCoordinateContract.si(),
         ),
     )
+    # ty: ignore[unresolved-attribute]
     shuffled_native = np.asarray(shuffled.carrier.mesh.blocks[0].global_ids)
     permuted = phx.meshing.prepare_mesh_distribution(
         shuffled, policy=policy, cell_weights=weight_by_id[shuffled_native]
@@ -300,7 +310,7 @@ def test_curve_partitions_meet_the_weight_bound_and_ignore_storage_order(kind):
 
 
 @pytest.mark.parametrize("width", [0, 1, 2, 3])
-def test_ghost_layers_match_brute_force_breadth_first_search(width):
+def test_ghost_layers_match_brute_force_breadth_first_search(width: Any) -> None:
     part, _ = _quad_mesh(9, 7)
     distribution = phx.meshing.prepare_mesh_distribution(
         part,
@@ -325,7 +335,7 @@ def test_ghost_layers_match_brute_force_breadth_first_search(width):
     assert int(distribution.evidence.halo_replicas) == sum(map(len, expected))
 
 
-def test_fe_lowering_evaluates_every_interface_facet_exactly_once():
+def test_fe_lowering_evaluates_every_interface_facet_exactly_once() -> None:
     part, _ = _quad_mesh(8, 6)
     distribution = phx.meshing.prepare_mesh_distribution(
         part,
@@ -357,7 +367,9 @@ def test_fe_lowering_evaluates_every_interface_facet_exactly_once():
     assert phases.worksets.halo_cells.shape[1] < owner.size
 
 
-def test_provider_and_graph_routes_take_explicit_ownership_or_fail_closed(monkeypatch):
+def test_provider_and_graph_routes_take_explicit_ownership_or_fail_closed(
+    monkeypatch: Any,
+) -> None:
     part, _ = _quad_mesh(4, 4)
     provider = phx.meshing.MeshPartitionPolicy(phx.meshing.MeshPartitionKind.PROVIDER, 2)
     owners = np.arange(32) % 2
@@ -377,7 +389,7 @@ def test_provider_and_graph_routes_take_explicit_ownership_or_fail_closed(monkey
             phx.meshing.prepare_mesh_distribution(part, policy=graph)
 
 
-def test_graph_route_partitions_with_metis_deterministically():
+def test_graph_route_partitions_with_metis_deterministically() -> None:
     part, _ = _quad_mesh(10, 10)
     policy = phx.meshing.MeshPartitionPolicy(
         phx.meshing.MeshPartitionKind.GRAPH, 4, maximum_imbalance=1.1
@@ -393,7 +405,7 @@ def test_graph_route_partitions_with_metis_deterministically():
     assert float(first.evidence.imbalance) <= 1.1 + 1e-12
 
 
-def _check_migration(transition, parents, source_values):
+def _check_migration(transition: Any, parents: Any, source_values: Any) -> None:
     source_native = np.asarray(transition.source.cell_global_ids)
     target_native = np.asarray(transition.target.cell_global_ids)
     moved = transition.transfer(source_values)
@@ -429,7 +441,7 @@ def _check_migration(transition, parents, source_values):
     )
 
 
-def test_transition_keeps_balanced_inherited_owners_and_places_created_cells():
+def test_transition_keeps_balanced_inherited_owners_and_places_created_cells() -> None:
     source, _ = _quad_mesh(8, 8)
     policy = phx.meshing.MeshPartitionPolicy(
         phx.meshing.MeshPartitionKind.HILBERT, 4, maximum_imbalance=1.3
@@ -474,7 +486,7 @@ def test_transition_keeps_balanced_inherited_owners_and_places_created_cells():
         transition.source.lower_finite_element(target, _fe(target))
 
 
-def test_transition_rebalances_with_minimal_rank_relabeling_and_migrates_fields():
+def test_transition_rebalances_with_minimal_rank_relabeling_and_migrates_fields() -> None:
     source, _ = _quad_mesh(8, 8)
     policy = phx.meshing.MeshPartitionPolicy(phx.meshing.MeshPartitionKind.HILBERT, 4)
     distribution = phx.meshing.prepare_mesh_distribution(source, policy=policy)

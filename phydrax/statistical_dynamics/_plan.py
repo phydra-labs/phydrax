@@ -10,7 +10,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -59,7 +60,7 @@ class QuadraticDynamics(StrictModule, NonTrainableState):
         /,
         *,
         dynamics_id: str | None = None,
-    ):
+    ) -> None:
         constant_ = jnp.asarray(constant)
         linear_ = jnp.asarray(linear)
         quadratic_ = jnp.asarray(quadratic)
@@ -177,7 +178,7 @@ class StatisticalDynamicsPlan(StrictModule, NonTrainableState):
         psd_tolerance: float = 1.0e-10,
         maximum_state_bytes: int = 512 * 1024 * 1024,
         maximum_workspace_bytes: int = 2 * 1024 * 1024 * 1024,
-    ):
+    ) -> None:
         if not isinstance(layout, SecondCumulantLayout):
             raise TypeError("layout must be a SecondCumulantLayout.")
         if not isinstance(dynamics, QuadraticDynamics):
@@ -347,7 +348,7 @@ class PreparedStatisticalDynamics(StrictModule, NonTrainableState):
         /,
         *,
         invariant_defect: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(plan, StatisticalDynamicsPlan) or not isinstance(
             cost, StatisticalDynamicsCost
         ):

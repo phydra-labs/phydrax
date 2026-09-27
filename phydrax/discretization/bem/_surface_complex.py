@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -56,7 +57,7 @@ class OrientedTriangleSurfaceComplex3D(StrictModule, NonTrainableState):
     topology_report: SurfaceTopologyReport3D
     complex_id: str = eqx.field(static=True)
 
-    def __init__(self, vertices: ArrayLike, triangles: ArrayLike, /):
+    def __init__(self, vertices: ArrayLike, triangles: ArrayLike, /) -> None:
         points = np.asarray(vertices)
         faces = np.asarray(triangles)
         if points.ndim != 2 or points.shape[1] != 3 or points.shape[0] < 4:

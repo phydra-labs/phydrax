@@ -15,7 +15,7 @@ import phydrax as phx
 class _TrainableFlatFLRW(eqx.Module):
     expansion_rate: jax.Array
 
-    def __call__(self, coordinates):
+    def __call__(self, coordinates: Any) -> Any:
         scale_squared = jnp.exp(2.0 * self.expansion_rate * coordinates[0])
         return jnp.diag(
             jnp.stack(
@@ -29,13 +29,14 @@ class _TrainableFlatFLRW(eqx.Module):
         )
 
 
-def _spacetime():
+def _spacetime() -> Any:
+    # ty: ignore[invalid-argument-type]
     domain = phx.domain.HyperRectangle([-1.0] * 4, [1.0] * 4, label="x")
     chart = phx.metrix.CoordinateChart("spacetime", ("t", "x", "y", "z"))
     return domain, chart
 
 
-def test_domain_curvature_adapters_preserve_labeled_jittable_semantics():
+def test_domain_curvature_adapters_preserve_labeled_jittable_semantics() -> None:
     domain, chart = _spacetime()
     metric = phx.metrix.minkowski_metric(chart)
     point = jnp.array([0.2, -0.1, 0.3, 0.4])
@@ -59,11 +60,11 @@ def test_domain_curvature_adapters_preserve_labeled_jittable_semantics():
     assert jnp.allclose(jax.jit(einstein.func)(points), 0.0)
 
 
-def test_domain_curvature_is_differentiable_through_trainable_metric_fields():
+def test_domain_curvature_is_differentiable_through_trainable_metric_fields() -> None:
     domain, chart = _spacetime()
     point = jnp.array([0.3, 0.0, 0.0, 0.0])
 
-    def scalar_from_rate(expansion_rate):
+    def scalar_from_rate(expansion_rate: Any) -> Any:
         metric = phx.metrix.LorentzianMetric(
             _TrainableFlatFLRW(expansion_rate),
             chart=chart,
@@ -96,7 +97,7 @@ def test_domain_curvature_is_differentiable_through_trainable_metric_fields():
     )
 
 
-def test_domain_curvature_rejects_incompatible_geometry_contracts():
+def test_domain_curvature_rejects_incompatible_geometry_contracts() -> None:
     domain, chart = _spacetime()
     metric = phx.metrix.minkowski_metric(chart)
     line = phx.domain.Interval1d(-1.0, 1.0)

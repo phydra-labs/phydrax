@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -25,6 +26,7 @@ from ..stochastic import (
     StochasticTrajectory,
 )
 from ..stochastic._trajectory import _TrajectoryRecord
+from ..typing import parse
 from ._solution_validation import validate_solution_arrays
 
 
@@ -36,7 +38,7 @@ LevySmallJumpApproximation: TypeAlias = Literal["truncate", "gaussian"]
 class _IdentityLevyDispersion(StrictModule):
     dimension: int = eqx.field(static=True)
 
-    def __call__(self, time, state, args):
+    def __call__(self, time: Array, state: Array, args: Any) -> Array:
         del time, args
         return jnp.eye(self.dimension, dtype=jnp.asarray(state).dtype)
 
@@ -72,7 +74,7 @@ class LevySDEProblem(StrictModule):
         dispersion: LevySDEVectorField | None = None,
         args: Any = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(drift):
             raise TypeError("drift must be callable.")
         if not isinstance(driver, AbstractLevyProcess):
@@ -147,7 +149,7 @@ class LevySDESolverDiagnostics(StrictModule):
         num_steps: int,
         scheme: LevySDEScheme,
         small_jump_approximation: LevySmallJumpApproximation,
-    ):
+    ) -> None:
         complete = jnp.asarray(complete_above_cutoff, dtype=jnp.bool_)
         counts = jnp.asarray(num_large_jumps, dtype=jnp.int32)
         radii = jnp.asarray(smallest_radius, dtype=jnp.float64)
@@ -162,10 +164,12 @@ class LevySDESolverDiagnostics(StrictModule):
         steps = int(num_steps)
         if steps < 0:
             raise ValueError("num_steps must be non-negative.")
-        if scheme not in ("euler", "tamed_euler"):
-            raise ValueError("Unknown Lévy SDE scheme.")
-        if small_jump_approximation not in ("truncate", "gaussian"):
-            raise ValueError("Unknown small-jump approximation.")
+        scheme = parse(scheme, LevySDEScheme, "scheme")
+        small_jump_approximation = parse(
+            small_jump_approximation,
+            LevySmallJumpApproximation,
+            "small_jump_approximation",
+        )
         self.complete_above_cutoff = complete
         self.num_large_jumps = counts
         self.smallest_radius = radii
@@ -208,7 +212,7 @@ class LevySDESolution(StrictModule):
         solver_name: str,
         approximation_id: str,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         if not isinstance(realization, LevyProcessRealization):
             raise TypeError("realization must be a LevyProcessRealization.")
         if not isinstance(series, LevyJumpSeries):
@@ -384,10 +388,8 @@ def solve_levy_sde(
         raise ValueError("dt must be finite and positive.")
     if not isfinite(threshold) or threshold <= 0.0:
         raise ValueError("cutoff must be finite and positive.")
-    if scheme not in ("euler", "tamed_euler"):
-        raise ValueError("scheme must be 'euler' or 'tamed_euler'.")
-    if small_jumps not in ("truncate", "gaussian"):
-        raise ValueError("small_jumps must be 'truncate' or 'gaussian'.")
+    scheme = parse(scheme, LevySDEScheme, "scheme")
+    small_jumps = parse(small_jumps, LevySmallJumpApproximation, "small_jumps")
     if not isinstance(throw, bool):
         raise TypeError("throw must be a bool.")
 
@@ -427,8 +429,10 @@ def solve_levy_sde(
             gaussian,
         )
 
-    def one_path(increments):
-        def advance(state, item):
+    def one_path(increments: Array) -> Array:
+        def advance(
+            state: Array, item: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array]:
             time, step, driver_increment = item
             drift = jnp.asarray(problem.drift(time, state, problem.args))
             if drift.shape != problem.state_shape:

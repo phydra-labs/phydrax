@@ -10,7 +10,8 @@ from itertools import combinations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..linalg import (
@@ -45,7 +46,7 @@ class CompactAtlasDomain(StrictModule):
         *,
         certified_cells: ArrayLike | None = None,
         domain_id: str,
-    ):
+    ) -> None:
         points = jnp.asarray(representatives)
         if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] == 0:
             raise ValueError(
@@ -94,7 +95,7 @@ class AtlasCandidate(StrictModule):
         *,
         candidate_id: str,
         orientation: int = 1,
-    ):
+    ) -> None:
         if not isinstance(chart, CoordinateChart):
             raise TypeError("chart must be a CoordinateChart.")
         if not all(
@@ -144,7 +145,7 @@ class AtlasConstructionPolicy(StrictModule):
         inverse_tolerance: float = 1e-8,
         cocycle_tolerance: float = 1e-8,
         require_certified_cover: bool = False,
-    ):
+    ) -> None:
         if int(maximum_charts) < 1 or int(maximum_overlaps) < 0:
             raise ValueError(
                 "Atlas capacities must be nonnegative and maximum_charts positive."
@@ -183,7 +184,7 @@ class AtlasConstructionCertificate(StrictModule):
         certified: ArrayLike,
         valid: ArrayLike,
         domain_id: str,
-    ):
+    ) -> None:
         self.covered_cells = jnp.asarray(covered_cells, dtype=jnp.bool_)
         self.selected_candidates = jnp.asarray(selected_candidates, dtype=jnp.int32)
         self.maximum_inverse_residual = jnp.asarray(maximum_inverse_residual)
@@ -211,7 +212,7 @@ class PreparedAtlasConstruction(StrictModule):
         *,
         path_table: Sequence[Sequence[int]],
         candidate_ids: Sequence[str],
-    ):
+    ) -> None:
         self.cover = cover
         self.certificate = certificate
         self.path_table = tuple(tuple(path) for path in path_table)

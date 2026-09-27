@@ -11,6 +11,7 @@ global features.
 """
 
 from importlib import import_module
+from typing import Any
 
 from . import compat, nn
 from ._abelian_gauge import (
@@ -309,7 +310,7 @@ from .nn import GCNConv, GINConv, SAGEConv
 _FACADE_EXPORT_MODULES = ("._gauge_transport",)
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     for module_name in reversed(_FACADE_EXPORT_MODULES):
         module = import_module(module_name, __package__)
         if name in module.__all__:

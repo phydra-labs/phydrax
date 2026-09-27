@@ -43,6 +43,7 @@ def _provenance() -> RefractiveIndexProvenance:
 
 
 def _validity(*, extrapolation: str = "reject") -> AngularFrequencyValidity:
+    # ty: ignore[invalid-argument-type]
     return AngularFrequencyValidity(1.0, 10.0, extrapolation=extrapolation)
 
 

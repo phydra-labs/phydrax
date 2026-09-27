@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _cycle_graph(permutation=None):
+def _cycle_graph(permutation: Any = None) -> Any:
     undirected = np.asarray([[0, 1], [1, 2], [2, 3], [3, 0]], dtype=np.int32)
     directed = np.concatenate((undirected, undirected[:, ::-1]), axis=0)
     if permutation is not None:
@@ -25,7 +28,7 @@ def _cycle_graph(permutation=None):
     )
 
 
-def _basis(graph):
+def _basis(graph: Any) -> Any:
     complex_ir = phx.graph.graph_to_cochain_complex(
         graph,
         edge_weight_key="conductance",
@@ -38,7 +41,9 @@ def _basis(graph):
     )
 
 
-def _kernel(basis, length_scale=0.7, smoothness=1.4, amplitude=0.8):
+def _kernel(
+    basis: Any, length_scale: Any = 0.7, smoothness: Any = 1.4, amplitude: Any = 0.8
+) -> Any:
     correlation = phx.kernels.SpectralFeatureKernel(
         basis,
         phx.kernels.MaternSpectralMultiplier(length_scale, smoothness),
@@ -46,7 +51,9 @@ def _kernel(basis, length_scale=0.7, smoothness=1.4, amplitude=0.8):
     return phx.kernels.AmplitudeKernel(correlation, amplitude)
 
 
-def test_graph_spectral_gp_matches_dense_inference_and_is_permutation_equivariant():
+def test_graph_spectral_gp_matches_dense_inference_and_is_permutation_equivariant() -> (
+    None
+):
     basis = _basis(_cycle_graph())
     latent = jnp.asarray([0.0, 1.0, 0.0, -1.0])
     observation_entities = jnp.tile(jnp.arange(4), 3)
@@ -87,7 +94,7 @@ def test_graph_spectral_gp_matches_dense_inference_and_is_permutation_equivarian
     assert jnp.all(finite_condition.variance <= kernel.diagonal(query) + 1e-10)
     assert jnp.mean((finite_condition.mean - latent) ** 2) < jnp.mean(latent**2)
 
-    def likelihood(parameters):
+    def likelihood(parameters: Any) -> Any:
         length_scale, smoothness, amplitude, candidate_noise = parameters
         candidate_state = phx.uq.GaussianProcessLikelihoodState(
             kernel=_kernel(basis, length_scale, smoothness, amplitude),

@@ -12,7 +12,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -64,7 +64,9 @@ class AbstractDEMBarrierMotionPlan(StrictModule, NonTrainableState):
 class StaticDEMBarrierMotionPlan(AbstractDEMBarrierMotionPlan):
     motion_id: str = "dem-barrier-motion:static"
 
-    def evaluate(self, geometry, time, points, args, /):
+    def evaluate(
+        self, geometry: Any, time: Array, points: Array, args: Any, /
+    ) -> DEMBarrierMotion:
         del time, args
         dimension = points.shape[-1]
         angular_dimension = 1 if dimension == 2 else 3
@@ -87,7 +89,7 @@ class PrescribedDEMBarrierMotionPlan(AbstractDEMBarrierMotionPlan):
         /,
         *,
         motion_id: str,
-    ):
+    ) -> None:
         if not callable(motion_function):
             raise TypeError("motion_function must be callable.")
         identifier = str(motion_id)
@@ -96,7 +98,9 @@ class PrescribedDEMBarrierMotionPlan(AbstractDEMBarrierMotionPlan):
         self.motion_function = motion_function
         self.motion_id = identifier
 
-    def evaluate(self, geometry, time, points, args, /):
+    def evaluate(
+        self, geometry: Any, time: Array, points: Array, args: Any, /
+    ) -> DEMBarrierMotion:
         result = self.motion_function(geometry, time, points, args)
         if not isinstance(result, DEMBarrierMotion):
             raise TypeError("motion_function must return DEMBarrierMotion.")
@@ -152,7 +156,7 @@ class ServoDEMBarrierMotionPlan(AbstractDEMBarrierMotionPlan):
         gain_schedule_ratio: float = 1.0,
         minimum_gain_fraction: float = 0.1,
         neighbor_skin: float | None = None,
-    ):
+    ) -> None:
         axis_host = np.asarray(axis)
         if axis_host.ndim != 1 or axis_host.size not in (2, 3):
             raise ValueError("Servo axis must be a 2-D or 3-D vector.")
@@ -303,7 +307,9 @@ class ServoDEMBarrierMotionPlan(AbstractDEMBarrierMotionPlan):
             saturated,
         )
 
-    def evaluate(self, geometry, time, points, args, /):
+    def evaluate(
+        self, geometry: Any, time: Array, points: Array, args: Any, /
+    ) -> DEMBarrierMotion:
         del time
         if not isinstance(args, ServoDEMBarrierState):
             raise TypeError("Servo barrier motion requires ServoDEMBarrierState args.")
@@ -364,7 +370,7 @@ class ImplicitDEMBarrier(StrictModule):
         *,
         barrier_id: str,
         motion: AbstractDEMBarrierMotionPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(side, DEMBarrierSide):
             raise TypeError("side must be a DEMBarrierSide.")
         capabilities = {value.value for value in geometry.capabilities}
@@ -512,7 +518,7 @@ def evaluate_dem_barrier(
     if geometry.ambient_dimension != bodies.ambient_dimension:
         raise ValueError("DEM barrier dimension does not match rigid spheres.")
 
-    def broadcast(name, value, width):
+    def broadcast(name: str, value: Array, width: int) -> Array:
         array = jnp.asarray(value, dtype=position.dtype)
         if array.shape == (width,):
             return jnp.broadcast_to(array, (bodies.capacity, width))

@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 from ._schema import (
     DesignState,
     ParameterBinding,
@@ -78,7 +80,7 @@ _SKETCH_EXPORTS = frozenset(
 )
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Load construction layers lazily to keep the kernel/schema import acyclic."""
 
     if name in _CONSTRAINT_EXPORTS:

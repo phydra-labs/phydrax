@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -30,7 +33,7 @@ from phydrax.metrix import (
 )
 
 
-def _context():
+def _context() -> Any:
     scale = RelativityScaleContract(DimensionalScaleContract.si(), 1, 1, 1, 1)
     units = RelativisticUnitContract(
         scale, RelativityConvention(metric_signature="mostly_minus")
@@ -72,7 +75,7 @@ def _context():
     return units, frame
 
 
-def _thermal_artifact(units, frame, species_plan_ids):
+def _thermal_artifact(units: Any, frame: Any, species_plan_ids: Any) -> Any:
     temperature = jnp.asarray((1.0, 2.0, 3.0, 4.0))
     momentum = jnp.asarray((0.0, 1.0))
     frequency = jnp.asarray((-1.0, 0.0, 1.0))
@@ -103,7 +106,9 @@ def _thermal_artifact(units, frame, species_plan_ids):
     )
 
 
-def test_quantum_collision_thermal_screening_and_lpm_share_exact_units_and_frame():
+def test_quantum_collision_thermal_screening_and_lpm_share_exact_units_and_frame() -> (
+    None
+):
     units, frame = _context()
     species = tuple(
         DarkSectorSpeciesPlan(

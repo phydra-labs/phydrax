@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import optax
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _scalar_solver(initial: float, *, target: float = 0.0, integrand=None):
+def _scalar_solver(initial: float, *, target: float = 0.0, integrand: Any = None) -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     field = domain.Parameter(initial)
     density = (
@@ -31,22 +34,22 @@ def _scalar_solver(initial: float, *, target: float = 0.0, integrand=None):
     )
 
 
-def _parameter_value(solver):
+def _parameter_value(solver: Any) -> Any:
     return jnp.asarray(solver["u"].func()).reshape(())
 
 
-def test_public_solve_rejects_negative_iterations_before_optimizer_dispatch():
+def test_public_solve_rejects_negative_iterations_before_optimizer_dispatch() -> None:
     with pytest.raises(ValueError, match="num_iter must be non-negative"):
         _scalar_solver(1.0).solve(num_iter=-1, optim=object())
 
 
-def test_public_zero_iteration_solve_returns_original_solver():
+def test_public_zero_iteration_solve_returns_original_solver() -> None:
     solver = _scalar_solver(1.0)
 
     assert solver.solve(num_iter=0, optim=object()) is solver
 
 
-def test_standard_optimizer_best_score_keeps_its_preupdate_parameters():
+def test_standard_optimizer_best_score_keeps_its_preupdate_parameters() -> None:
     base_optimizer = optax.sgd(1.0)
     optimizer = optax.GradientTransformation(
         base_optimizer.init,
@@ -63,7 +66,7 @@ def test_standard_optimizer_best_score_keeps_its_preupdate_parameters():
     assert jnp.allclose(_parameter_value(trained), 1.0)
 
 
-def test_schedule_free_returns_the_optimizer_evaluation_parameters():
+def test_schedule_free_returns_the_optimizer_evaluation_parameters() -> None:
     optimizer = optax.contrib.schedule_free(optax.sgd(0.1), 0.1)
     initial = jnp.asarray(2.0)
     state = optimizer.init(initial)
@@ -83,8 +86,8 @@ def test_schedule_free_returns_the_optimizer_evaluation_parameters():
     assert jnp.allclose(_parameter_value(trained), expected)
 
 
-def test_evaluation_transform_controls_selection_and_returned_functions():
-    def shifted(_state, parameters):
+def test_evaluation_transform_controls_selection_and_returned_functions() -> None:
+    def shifted(_state: Any, parameters: Any) -> Any:
         return jax.tree.map(lambda value: value + 5.0, parameters)
 
     trained = _scalar_solver(2.0, target=1.0).solve(
@@ -100,10 +103,10 @@ def test_evaluation_transform_controls_selection_and_returned_functions():
     assert jnp.allclose(trained.loss(), 5.8**2)
 
 
-def test_identity_lifecycle_adds_no_objective_evaluations():
+def test_identity_lifecycle_adds_no_objective_evaluations() -> None:
     calls = 0
 
-    def counting_integrand(functions):
+    def counting_integrand(functions: Any) -> Any:
         nonlocal calls
         calls += 1
         return functions["u"] ** 2
@@ -125,7 +128,7 @@ def test_identity_lifecycle_adds_no_objective_evaluations():
     assert calls == 3
 
 
-def test_evaluation_transform_must_preserve_parameter_structure():
+def test_evaluation_transform_must_preserve_parameter_structure() -> None:
     with pytest.raises(ValueError, match="PyTree structure"):
         _scalar_solver(1.0).solve(
             num_iter=1,

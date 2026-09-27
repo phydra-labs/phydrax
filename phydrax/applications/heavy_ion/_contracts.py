@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -36,7 +37,7 @@ class NuclearCollisionBatch(StrictModule, NonTrainableState):
         /,
         *,
         geometry_provider_id: str,
-    ):
+    ) -> None:
         event_ids_ = jnp.asarray(event_ids)
         impact = jnp.asarray(impact_parameters)
         participants = jnp.asarray(participant_counts, dtype=jnp.int32)
@@ -93,7 +94,7 @@ class HeavyIonChainPlan(StrictModule, NonTrainableState):
         afterburner_provider: HEPProviderBinding,
         equation_of_state: FiniteDensityEOSTable,
         transport: QCDTransportTable,
-    ):
+    ) -> None:
         providers = (
             initial_state_provider,
             pre_equilibrium_provider,

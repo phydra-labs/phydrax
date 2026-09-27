@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _topology(shape):
+def _topology(shape: Any) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(size) for size in shape),
         axis_names=tuple(f"axis{index}" for index in range(len(shape))),
@@ -27,7 +30,9 @@ def _topology(shape):
     return phx.discretization.VariablePatchTopologyCompiler(plan).initial_topology()
 
 
-def test_identity_patch_geometry_matches_reference_cell_volumes_in_all_dimensions():
+def test_identity_patch_geometry_matches_reference_cell_volumes_in_all_dimensions() -> (
+    None
+):
     for shape in ((4,), (4, 4), (2, 2, 2)):
         topology = _topology(shape)
         geometry = phx.discretization.VariablePatchGeometryPlan(
@@ -43,7 +48,7 @@ def test_identity_patch_geometry_matches_reference_cell_volumes_in_all_dimension
         assert jnp.allclose(geometry.gcl_defects[0][0][active], 0.0)
 
 
-def test_affine_mapped_patch_geometry_has_exact_area_and_stationary_gcl():
+def test_affine_mapped_patch_geometry_has_exact_area_and_stationary_gcl() -> None:
     topology = _topology((4, 4))
     matrix = jnp.asarray([[1.5, 0.25], [0.0, 2.0]])
     geometry = phx.discretization.VariablePatchGeometryPlan(
@@ -59,7 +64,7 @@ def test_affine_mapped_patch_geometry_has_exact_area_and_stationary_gcl():
     assert jnp.allclose(geometry.mesh_volume_rates[0][0][active], 0.0)
 
 
-def test_ale_patch_geometry_satisfies_independent_gcl_face_sweep():
+def test_ale_patch_geometry_satisfies_independent_gcl_face_sweep() -> None:
     topology = _topology((4,))
     geometry_plan = phx.discretization.VariablePatchGeometryPlan(
         topology,
@@ -75,7 +80,7 @@ def test_ale_patch_geometry_satisfies_independent_gcl_face_sweep():
     assert jnp.allclose(geometry.mesh_volume_rates[0][0][active], 0.2 / 4.0)
 
 
-def test_patch_geometry_rejects_negative_orientation():
+def test_patch_geometry_rejects_negative_orientation() -> None:
     topology = _topology((4,))
     geometry = phx.discretization.VariablePatchGeometryPlan(
         topology,
@@ -86,7 +91,7 @@ def test_patch_geometry_rejects_negative_orientation():
     assert not bool(geometry.valid)
 
 
-def test_patch_geometry_rejects_reflected_hexahedron():
+def test_patch_geometry_rejects_reflected_hexahedron() -> None:
     topology = _topology((2, 2, 2))
     geometry = phx.discretization.VariablePatchGeometryPlan(
         topology,
@@ -98,7 +103,7 @@ def test_patch_geometry_rejects_reflected_hexahedron():
     assert jnp.any(geometry.orientation_minima[0][0] < 0.0)
 
 
-def test_ale_step_prepares_all_ssprk_geometry_and_commits_atomically():
+def test_ale_step_prepares_all_ssprk_geometry_and_commits_atomically() -> None:
     topology = _topology((4,))
     geometry_plan = phx.discretization.VariablePatchGeometryPlan(
         topology,
@@ -121,10 +126,10 @@ def test_ale_step_prepares_all_ssprk_geometry_and_commits_atomically():
     )
 
 
-def test_routed_patch_motion_moves_the_interior_and_keeps_the_gcl():
+def test_routed_patch_motion_moves_the_interior_and_keeps_the_gcl() -> None:
     topology = _topology((4, 4))
 
-    def boundary_map(point, time, args):
+    def boundary_map(point: Any, time: Any, args: Any) -> Any:
         del args
         return point * (1.0 + 0.2 * time) + jnp.asarray((0.1 * time * point[1] ** 2, 0.0))
 
@@ -156,7 +161,7 @@ def test_routed_patch_motion_moves_the_interior_and_keeps_the_gcl():
     assert bool(step.successful)
 
 
-def test_patch_geometry_revision_is_exact_bounded_and_cannot_overflow_ale():
+def test_patch_geometry_revision_is_exact_bounded_and_cannot_overflow_ale() -> None:
     topology = _topology((4,))
     geometry_plan = phx.discretization.VariablePatchGeometryPlan(
         topology,

@@ -5,13 +5,15 @@
 from __future__ import annotations
 
 import math
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -20,6 +22,7 @@ from ..linalg._local_blocks import (
     prepare_local_block_factorization,
     solve_local_blocks_detailed,
 )
+from ..typing import PRNGKey
 from ._contracts import (
     _mean_domain_result,
     _natural_domain_result,
@@ -35,6 +38,10 @@ from ._contracts import (
     NaturalCoordinates,
     StatisticBatch,
 )
+
+
+# natural values, active, factorization failed, line search failed, iteration counts
+_NaturalSolveState: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 class FiniteSupportNaturalSolvePlan(StrictModule):
@@ -55,7 +62,7 @@ class FiniteSupportNaturalSolvePlan(StrictModule):
         minimum_probability: float = 0.0,
         line_search_factors: tuple[float, ...] = (1.0, 0.5, 0.25, 0.125),
         portable: bool = False,
-    ):
+    ) -> None:
         steps = int(maximum_steps)
         tolerance = float(residual_tolerance)
         probability = float(minimum_probability)
@@ -128,7 +135,7 @@ class FiniteSupportExponentialFamily(AbstractExponentialFamily):
         family_id: str,
         support_id: str | None = None,
         solve_plan: FiniteSupportNaturalSolvePlan | None = None,
-    ):
+    ) -> None:
         statistic_host = np.asarray(statistics)
         base_host = np.asarray(base_probabilities)
         if statistic_host.ndim != 2:
@@ -305,7 +312,7 @@ class FiniteSupportExponentialFamily(AbstractExponentialFamily):
 
     def _sample(
         self,
-        key,
+        key: PRNGKey,
         natural_values: Array,
         sample_shape: tuple[int, ...],
         /,
@@ -379,7 +386,7 @@ def solve_finite_support_mean(
         covariance = second - means[..., :, None] * means[..., None, :]
         return probabilities, means, covariance
 
-    def body(_, state):
+    def body(_: Array, state: _NaturalSolveState) -> _NaturalSolveState:
         (
             current,
             current_active,

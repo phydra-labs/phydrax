@@ -4,7 +4,8 @@
 from dataclasses import dataclass
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...rheology import ViscoelasticLaw
 
@@ -25,7 +26,7 @@ def advance_constitutive_state(
     surface_charge_rate: ArrayLike,
     step_size_s: ArrayLike,
     /,
-):
+) -> ElectroViscoelasticState:
     dt = jnp.asarray(step_size_s)
     minus = (
         state.conformation_minus

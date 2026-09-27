@@ -9,7 +9,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -126,7 +127,7 @@ class FrequentSmallAngleSIDMPlan(StrictModule, NonTrainableState):
         maximum_drag_fraction_per_step: float = 0.1,
         maximum_transverse_variance_per_step: float = 0.2,
         moment_tolerance: float = 0.05,
-    ):
+    ) -> None:
         if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
             raise TypeError("neighborhood must be a prepared particle neighborhood.")
         if not isinstance(spatial_kernel, AbstractSPHSmoothingKernel):
@@ -268,7 +269,9 @@ class FrequentSmallAngleSIDMPlan(StrictModule, NonTrainableState):
         zero_vector = jnp.zeros(relative.shape, dtype=dtype)
         zero_scalar = jnp.zeros(speed.shape, dtype=dtype)
 
-        def apply_pair(index, carry):
+        def apply_pair(
+            index: Array, carry: tuple[Array, Array, Array, Array]
+        ) -> tuple[Array, Array, Array, Array]:
             momentum_values, impulse_values, momentum_defects, energy_defects = carry
             route = order[index]
             left_index = left[route]

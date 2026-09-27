@@ -37,10 +37,12 @@ from ._backend import (
     ROBOTICS_OPERATIONS,
     RoboticsBackendProfile,
     RoboticsIndexEntry,
+    RoboticsOperation,
     RoboticsOperationCapability,
     RoboticsOperationEvidence,
     RoboticsOperationStatus,
     RoboticsProjection,
+    RoboticsProjectionKind,
     RoboticsProjectionMap,
     RoboticsProjectionProvenance,
 )
@@ -84,7 +86,7 @@ _MJX_JAX_CONTACT_FEATURES = (
 
 
 def _capability(
-    operation: str,
+    operation: RoboticsOperation,
     implementation: str,
     devices: Sequence[str],
     dtypes: Sequence[str],
@@ -95,7 +97,7 @@ def _capability(
     contact_features: Sequence[str] = (),
 ) -> RoboticsOperationCapability:
     return RoboticsOperationCapability(
-        operation,  # type: ignore[arg-type]
+        operation,
         supported=True,
         implementation=implementation,
         devices=devices,
@@ -107,13 +109,13 @@ def _capability(
 
 
 def _unsupported_capability(
-    operation: str,
+    operation: RoboticsOperation,
     implementation: str,
     reason: str,
     /,
 ) -> RoboticsOperationCapability:
     return RoboticsOperationCapability(
-        operation,  # type: ignore[arg-type]
+        operation,
         supported=False,
         implementation=implementation,
         reason=reason,
@@ -260,7 +262,7 @@ class MJXObservationRequest(StrictModule, NonTrainableState):
         qvel: bool = True,
         control: bool = True,
         sensors: bool = True,
-    ):
+    ) -> None:
         selected = (bool(qpos), bool(qvel), bool(control), bool(sensors))
         if not any(selected):
             raise ValueError("An MJX observation must select at least one field.")
@@ -304,7 +306,7 @@ class MJXPreparedModelManifest(StrictModule, NonTrainableState):
         sensor_types: Sequence[str],
         tendon_wrap_types: Sequence[str],
         enabled_features: Sequence[str],
-    ):
+    ) -> None:
         self.integrator = str(integrator)
         self.solver = str(solver)
         self.cone = str(cone)
@@ -329,7 +331,7 @@ class MJXState(StrictModule, NonTrainableState):
     epoch: Any
     sensor_epoch: Any
 
-    def __init__(self, opaque: Any, epoch: Any, sensor_epoch: Any, /):
+    def __init__(self, opaque: Any, epoch: Any, sensor_epoch: Any, /) -> None:
         self.opaque = opaque
         self.epoch = jnp.asarray(epoch, dtype=jnp.int32)
         self.sensor_epoch = jnp.asarray(sensor_epoch, dtype=jnp.int32)
@@ -375,7 +377,7 @@ class MJXMuscleProjectionPlan(StrictModule, NonTrainableState):
 
     names: tuple[str, ...] | None = eqx.field(static=True)
 
-    def __init__(self, names: Sequence[str] | None = None, /):
+    def __init__(self, names: Sequence[str] | None = None, /) -> None:
         if names is None:
             self.names = None
             return
@@ -432,7 +434,7 @@ class MJXPreparedMuscleProjection(StrictModule, NonTrainableState):
     activation_indices: tuple[int, ...] = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, adapter: MJXAdapter, plan: MJXMuscleProjectionPlan, /):
+    def __init__(self, adapter: MJXAdapter, plan: MJXMuscleProjectionPlan, /) -> None:
         if not isinstance(adapter, MJXAdapter):
             raise TypeError("adapter must be MJXAdapter.")
         if not isinstance(plan, MJXMuscleProjectionPlan):
@@ -455,7 +457,7 @@ class MJXPreparedMuscleProjection(StrictModule, NonTrainableState):
             adapter.muscle_activation_indices[position] for position in positions
         )
 
-        def projection_map(kind):
+        def projection_map(kind: RoboticsProjectionKind) -> RoboticsProjectionMap:
             return RoboticsProjectionMap(
                 kind,
                 len(names),
@@ -678,7 +680,7 @@ class MJXAdapter(AbstractDiscretePlant, NonTrainableState):
         dtype: Any,
         case_ndim: int,
         mjx_module: Any,
-    ):
+    ) -> None:
         if isinstance(case_ndim, bool) or not isinstance(case_ndim, (int, np.integer)):
             raise TypeError("case_ndim must be an integer.")
         case_ndim_ = int(case_ndim)

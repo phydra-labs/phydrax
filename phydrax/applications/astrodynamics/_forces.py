@@ -9,7 +9,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -62,7 +63,7 @@ class PointMassGravity(AbstractAstrodynamicsForce):
         /,
         *,
         force_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         coupling_host = jnp.asarray(mu).reshape(())
@@ -80,7 +81,9 @@ class PointMassGravity(AbstractAstrodynamicsForce):
             }
         )
 
-    def evaluate(self, time, state, args=None, /) -> AstrodynamicsForceEvaluation:
+    def evaluate(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None, /
+    ) -> AstrodynamicsForceEvaluation:
         del time, args
         packed = jnp.asarray(state)
         if packed.shape != (6,):
@@ -129,7 +132,7 @@ class ConstantAcceleration(AbstractAstrodynamicsForce):
         /,
         *,
         force_id: str,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         value = jnp.asarray(acceleration)
@@ -142,7 +145,9 @@ class ConstantAcceleration(AbstractAstrodynamicsForce):
         self.context = context
         self.force_id = identifier
 
-    def evaluate(self, time, state, args=None, /) -> AstrodynamicsForceEvaluation:
+    def evaluate(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None, /
+    ) -> AstrodynamicsForceEvaluation:
         del time, args
         packed = jnp.asarray(state)
         if packed.shape != (6,):
@@ -173,7 +178,7 @@ class CompositeAstrodynamicsForce(AbstractAstrodynamicsForce):
         terms: tuple[AbstractAstrodynamicsForce, ...],
         context: AstrodynamicsContext,
         /,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         terms_ = tuple(terms)
@@ -193,7 +198,9 @@ class CompositeAstrodynamicsForce(AbstractAstrodynamicsForce):
             }
         )
 
-    def evaluate(self, time, state, args=None, /) -> AstrodynamicsForceEvaluation:
+    def evaluate(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None, /
+    ) -> AstrodynamicsForceEvaluation:
         evaluations = tuple(term.evaluate(time, state, args) for term in self.terms)
         statuses = jnp.stack(tuple(value.status for value in evaluations))
         valid = jnp.all(jnp.stack(tuple(value.valid for value in evaluations)))

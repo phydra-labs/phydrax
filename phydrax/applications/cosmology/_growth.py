@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._differentiation import DerivativeContract, DerivativeSurface
 from ..._fingerprint import canonical_fingerprint
@@ -56,7 +57,7 @@ class FLRWGrowthPlan(StrictModule, NonTrainableState):
         absolute_tolerance: float = 1.0e-10,
         maximum_steps: int = 4096,
         matter_era_tolerance: float = 5.0e-2,
-    ):
+    ) -> None:
         nodes_host = np.asarray(scale_factors, dtype=np.float64).reshape((-1,))
         relative = float(relative_tolerance)
         absolute = float(absolute_tolerance)

@@ -6,13 +6,14 @@ from __future__ import annotations
 
 from enum import IntEnum
 from math import isfinite
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, TypedDict, Unpack
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -26,9 +27,20 @@ from ...linalg import (
     OperatorProperties,
 )
 from ...metrix._complex_matrix_manifold import SpecialUnitaryGroup, UnitaryGroup
+from ...typing import parse
 
 
 GaugeFixingCondition: TypeAlias = Literal["landau", "coulomb"]
+
+
+class _GaugeFixingOptions(TypedDict, total=False):
+    anchor_vertex: int
+    maximum_iterations: int
+    maximum_backtracks: int
+    maximum_gribov_copies: int
+    step_size: float
+    residual_tolerance: float
+    gribov_tolerance: float
 
 
 def _links(space: MatrixGaugeLinkSpace, links: ArrayLike, /) -> Array:
@@ -80,13 +92,12 @@ class GaugeFixingPlan(StrictModule, NonTrainableState):
         step_size: float = 0.2,
         residual_tolerance: float = 1.0e-8,
         gribov_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(link_space, MatrixGaugeLinkSpace):
             raise TypeError("link_space must be MatrixGaugeLinkSpace.")
         if not isinstance(link_space.group, (UnitaryGroup, SpecialUnitaryGroup)):
             raise TypeError("Gauge fixing requires U(N) or SU(N) matrix links.")
-        if condition not in ("landau", "coulomb"):
-            raise ValueError("condition must be 'landau' or 'coulomb'.")
+        condition = parse(condition, GaugeFixingCondition, "condition")
         active_edges = np.asarray(
             link_space.topology.entities(1).active_mask, dtype=np.bool_
         )
@@ -166,7 +177,12 @@ class LandauGaugeFixingPlan(StrictModule, NonTrainableState):
     plan: GaugeFixingPlan
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, link_space: MatrixGaugeLinkSpace, /, **kwargs):
+    def __init__(
+        self,
+        link_space: MatrixGaugeLinkSpace,
+        /,
+        **kwargs: Unpack[_GaugeFixingOptions],
+    ) -> None:
         plan = GaugeFixingPlan(link_space, condition="landau", **kwargs)
         self.plan = plan
         self.plan_id = plan.plan_id
@@ -196,8 +212,8 @@ class CoulombGaugeFixingPlan(StrictModule, NonTrainableState):
         link_space: MatrixGaugeLinkSpace,
         spatial_edges: ArrayLike,
         /,
-        **kwargs,
-    ):
+        **kwargs: Unpack[_GaugeFixingOptions],
+    ) -> None:
         plan = GaugeFixingPlan(
             link_space,
             condition="coulomb",
@@ -289,7 +305,7 @@ class PreparedGaugeFixing(StrictModule, NonTrainableState):
         plan: GaugeFixingPlan,
         initial_transformations: ArrayLike | None,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, GaugeFixingPlan):
             raise TypeError("plan must be GaugeFixingPlan.")
         identity = plan.link_space.group.identity()
@@ -430,7 +446,7 @@ class PreparedGaugeFixing(StrictModule, NonTrainableState):
                 (links, transformation, functional, already_converged, already_converged),
                 jnp.arange(self.plan.maximum_backtracks + 1),
             )
-            next_links, next_transform, next_functional, _, accepted = selection
+            next_links, next_transform, next_functional, _chosen, accepted = selection
             next_finite = (
                 finite & jnp.all(jnp.isfinite(next_links)) & jnp.isfinite(next_functional)
             )
@@ -584,7 +600,7 @@ class FaddeevPopovOperator(AbstractLinearOperator):
     fixing: PreparedGaugeFixing
     links: Array
 
-    def __init__(self, fixing: PreparedGaugeFixing, links: ArrayLike, /):
+    def __init__(self, fixing: PreparedGaugeFixing, links: ArrayLike, /) -> None:
         if not isinstance(fixing, PreparedGaugeFixing):
             raise TypeError("fixing must be PreparedGaugeFixing.")
         values = _links(fixing.plan.link_space, links)

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -22,9 +22,10 @@ from .._mass import (
     UnknownMass,
 )
 from .._strict import StrictModule
+from ..typing import parse
 
 
-MeasureKind = Literal[
+MeasureKind: TypeAlias = Literal[
     "lebesgue",
     "hausdorff",
     "probability",
@@ -50,18 +51,8 @@ class BaseMeasure(StrictModule):
         /,
         *,
         normalized: bool = False,
-    ):
-        if kind not in (
-            "lebesgue",
-            "hausdorff",
-            "probability",
-            "counting",
-            "dirac",
-            "trajectory",
-            "riemannian",
-            "external",
-        ):
-            raise ValueError(f"Unknown measure kind {kind!r}.")
+    ) -> None:
+        kind = parse(kind, MeasureKind, "kind")
         if not isinstance(mass, (ExactMass, EstimatedMass, UnknownMass)):
             raise TypeError("BaseMeasure.mass must be an explicit Mass descriptor.")
         if normalized and isinstance(mass, ExactMass):

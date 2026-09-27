@@ -7,7 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
@@ -261,13 +261,13 @@ def _class_workspace_byte_estimates(
     high_regular_points = (regular_order + 2) ** 2
     high_singular = singular_order + 2
     high_near = near_order + 2
-    singular = tuple(
+    singular_six, singular_five, singular_two = (
         transform_count * high_singular**4 * 5 * float_bytes
         for transform_count in (6, 5, 2)
     )
     near = high_near**4 * 4 * float_bytes
     regular = (5 * high_regular_points**2 + 6 * high_regular_points) * float_bytes
-    return (*singular, near, regular), regular_points
+    return (singular_six, singular_five, singular_two, near, regular), regular_points
 
 
 def _preparation_workspace_byte_estimate(
@@ -625,7 +625,10 @@ def _prepare_surface_pairs_3d(
     supported &= (class_counts == 0) | (errors <= tolerances)
     exception_entry_bytes = _resident_byte_estimate(0, 1, 0)
     class_resident_bytes = (
-        *(int(count) * exception_entry_bytes for count in counts),
+        int(counts[0]) * exception_entry_bytes,
+        int(counts[1]) * exception_entry_bytes,
+        int(counts[2]) * exception_entry_bytes,
+        int(counts[3]) * exception_entry_bytes,
         _resident_byte_estimate(face_count, 0, regular_point_count),
     )
     return _SurfacePairData3D(

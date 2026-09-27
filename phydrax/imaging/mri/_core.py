@@ -8,12 +8,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from numbers import Integral
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._spectral._nonuniform_fourier import (
@@ -25,6 +27,10 @@ from ..._trainable import NonTrainableState
 from ...ein import contract
 from ...measurement import MeasurementAsset, SampleTimeAxis
 from ...units import SECOND
+
+
+# Conjugate-gradient iterate, residual, search direction, and squared residual norm.
+_CGCarry: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,7 +124,9 @@ class CoilSensitivityField(StrictModule, NonTrainableState):
     coil_ids: tuple[str, ...] = eqx.field(static=True)
     field_id: str = eqx.field(static=True)
 
-    def __init__(self, values: ArrayLike, coil_ids: tuple[str, ...], /, *, field_id: str):
+    def __init__(
+        self, values: ArrayLike, coil_ids: tuple[str, ...], /, *, field_id: str
+    ) -> None:
         identifiers = _coil_identities(coil_ids)
         values_ = np.asarray(values)
         if (
@@ -148,7 +156,7 @@ class CoilNoiseCovariance(StrictModule, NonTrainableState):
     coil_ids: tuple[str, ...] = eqx.field(static=True)
     covariance_id: str = eqx.field(static=True)
 
-    def __init__(self, covariance: ArrayLike, coil_ids: tuple[str, ...], /):
+    def __init__(self, covariance: ArrayLike, coil_ids: tuple[str, ...], /) -> None:
         identifiers = _coil_identities(coil_ids)
         matrix = np.asarray(covariance)
         if (
@@ -194,7 +202,7 @@ class CartesianMRIEncodingPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, coils: CoilSensitivityField, sampling_mask: ArrayLike | None = None, /
-    ):
+    ) -> None:
         shape = coils.values.shape[1:]
         mask = (
             np.ones(shape, dtype=np.bool_)
@@ -249,7 +257,7 @@ class NonuniformMRIEncodingPlan(StrictModule, NonTrainableState):
         /,
         *,
         chunk_size: int = 256,
-    ):
+    ) -> None:
         if tuple(coils.coil_ids) != tuple(support.coil_ids):
             raise ValueError("Coil sensitivity and k-space coil identities differ.")
         chunk = int(chunk_size)
@@ -359,7 +367,7 @@ class CGSensePlan:
         )
         right = self.encoding.adjoint(data)
 
-        def normal(value):
+        def normal(value: Array) -> Array:
             return (
                 self.encoding.adjoint(self.encoding.forward(value)[0])
                 + self.l2_regularization * value
@@ -369,7 +377,7 @@ class CGSensePlan:
         direction = residual
         gamma = jnp.real(jnp.vdot(residual, residual))
 
-        def step(carry, _):
+        def step(carry: _CGCarry, _: None) -> tuple[_CGCarry, Array]:
             x, residual, direction, gamma = carry
             action = normal(direction)
             alpha = gamma / jnp.maximum(
@@ -450,7 +458,7 @@ class OffResonanceMRIEncodingPlan(StrictModule, NonTrainableState):
         /,
         *,
         translations: ArrayLike | None = None,
-    ):
+    ) -> None:
         field = np.asarray(off_resonance_hz)
         if (
             field.shape != base.coils.values.shape[1:]
@@ -500,7 +508,7 @@ class OffResonanceMRIEncodingPlan(StrictModule, NonTrainableState):
         )
         flat = value.reshape((-1,))
 
-        def sample(k, time, translation):
+        def sample(k: Array, time: Array, translation: Array) -> Array:
             phase = jnp.exp(-2j * jnp.pi * self.off_resonance_hz.reshape((-1,)) * time)
             motion = jnp.exp(-1j * jnp.sum(k * translation))
             fourier = jnp.exp(-1j * (points @ k))
@@ -533,7 +541,7 @@ class QuantitativeMRIPlan(StrictModule, NonTrainableState):
     repetition_time: float = eqx.field(static=True)
     echo_time: float = eqx.field(static=True)
 
-    def __init__(self, repetition_time: float, echo_time: float, /):
+    def __init__(self, repetition_time: float, echo_time: float, /) -> None:
         repetition = float(repetition_time)
         echo = float(echo_time)
         if (
@@ -623,7 +631,7 @@ class BlochSequencePlan:
             raise ValueError("Bloch state/field require final dimension three.")
         dt = jnp.asarray(self.time_step, dtype=magnetization.dtype)
 
-        def step(value, applied):
+        def step(value: Array, applied: Array) -> tuple[Array, Array]:
             angle = self.gyromagnetic_ratio * jnp.sqrt(jnp.sum(applied * applied)) * dt
             axis = applied / jnp.maximum(
                 jnp.sqrt(jnp.sum(applied * applied)), jnp.finfo(value.dtype).tiny

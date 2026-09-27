@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._bvh import (
     bvh_hierarchical_sum,
@@ -167,7 +169,7 @@ class TriangleBVH(StrictModule):
         mesh: TriangleMesh,
         *,
         policy: BVHBuildPolicy = BVHBuildPolicy(leaf_size=8),
-    ):
+    ) -> None:
         if not isinstance(mesh, TriangleMesh):
             raise TypeError("TriangleBVH requires a TriangleMesh.")
         if not isinstance(policy, BVHBuildPolicy):
@@ -253,19 +255,19 @@ class TriangleBVH(StrictModule):
         lanes = jnp.arange(_FAN_CHUNK, dtype=jnp.int32)
         edge_count = self.boundary_edges.shape[0]
 
-        def inside(point, node):
+        def inside(point: Any, node: Any) -> Any:
             return jnp.all(
                 (point >= self.bvh.bbox_min[node]) & (point <= self.bvh.bbox_max[node])
             )
 
-        def closing_fan(point, node):
+        def closing_fan(point: Any, node: Any) -> Any:
             if edge_count == 0:
                 return jnp.zeros((), dtype=point.dtype)
             apex = 0.5 * (self.bvh.bbox_min[node] + self.bvh.bbox_max[node])
             start = self.boundary_offsets[node]
             stop = self.boundary_offsets[node + 1]
 
-            def chunk(state):
+            def chunk(state: Any) -> Any:
                 offset, total = state
                 index = offset + lanes
                 edges = self.boundary_edges[jnp.clip(index, 0, edge_count - 1)]
@@ -339,10 +341,10 @@ class TriangleBVH(StrictModule):
         node_radius = jnp.linalg.norm(reach, axis=-1)
         beta = jnp.asarray(opening_angle, dtype=flat.dtype)
 
-        def near(point, node):
+        def near(point: Any, node: Any) -> Any:
             return jnp.linalg.norm(node_center[node] - point) <= beta * node_radius[node]
 
-        def dipole(point, node):
+        def dipole(point: Any, node: Any) -> Any:
             offset = node_center[node] - point
             distance = jnp.linalg.norm(offset)
             return jnp.dot(node_normal[node], offset) / distance**3

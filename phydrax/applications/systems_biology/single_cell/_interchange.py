@@ -15,7 +15,8 @@ from typing import Literal
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax.interchange import AdapterReport, AdapterStatus
@@ -213,13 +214,17 @@ def import_velocity_field(
             "No physical time, lineage, or energy claim is inferred from an embedded field.",
         ),
     )
+    estimator, preprocessing, representation, uncertainty = labels
     return ImportedVelocityField(
         jnp.asarray(raw),
         jnp.asarray(mask),
         None if errors is None else jnp.asarray(errors),
         observations,
         source,
-        *labels,
+        estimator,
+        preprocessing,
+        representation,
+        uncertainty,
         identity,
         report,
     )

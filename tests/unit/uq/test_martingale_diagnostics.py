@@ -1,10 +1,12 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
 
 
-def _brownian_residuals(*, generator_offset=0.0):
+def _brownian_residuals(*, generator_offset: Any = 0.0) -> Any:
     num_paths = 512
     times = jnp.linspace(0.0, 1.0, 9)
     dt = jnp.diff(times)
@@ -36,7 +38,7 @@ def _brownian_residuals(*, generator_offset=0.0):
     return phx.stochastic.martingale_increments(trajectory, problem)
 
 
-def test_brownian_martingale_and_quadratic_variation_pass():
+def test_brownian_martingale_and_quadratic_variation_pass() -> None:
     residuals = _brownian_residuals()
     moments = phx.uq.martingale_diagnostics(
         residuals,
@@ -56,7 +58,7 @@ def test_brownian_martingale_and_quadratic_variation_pass():
     assert report.passed
 
 
-def test_wrong_brownian_generator_is_rejected():
+def test_wrong_brownian_generator_is_rejected() -> None:
     residuals = _brownian_residuals(generator_offset=2.0)
     diagnostics = phx.uq.martingale_diagnostics(residuals)
 
@@ -64,7 +66,7 @@ def test_wrong_brownian_generator_is_rejected():
     assert jnp.max(jnp.abs(diagnostics.standardized)) > 10.0
 
 
-def test_poisson_compensator_uses_complete_event_paths():
+def test_poisson_compensator_uses_complete_event_paths() -> None:
     process = phx.stochastic.JumpProcess(
         lambda time, state, args: jnp.asarray([2.0]),
         lambda state, channel, mark, args: state + jnp.asarray([1.0]),

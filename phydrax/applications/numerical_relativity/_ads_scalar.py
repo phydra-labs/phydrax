@@ -11,7 +11,8 @@ from math import pi
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -39,7 +40,7 @@ class ConformalAdSScalarPlan(StrictModule):
         time_step: float,
         potential: float = 0.0,
         maximum_steps: int = 1_000_000,
-    ):
+    ) -> None:
         count = int(point_count)
         length = float(ads_length)
         step = float(time_step)
@@ -113,7 +114,7 @@ class ConformalAdSScalarState(StrictModule):
         time: ArrayLike = 0.0,
         step_index: ArrayLike = 0,
         valid: ArrayLike = True,
-    ):
+    ) -> None:
         if not isinstance(plan, ConformalAdSScalarPlan):
             raise TypeError("plan must be ConformalAdSScalarPlan.")
         field_value = jnp.asarray(field, dtype=plan.radial_points.dtype)
@@ -148,7 +149,7 @@ class ConformalAdSScalarHistory(StrictModule):
         step_index: ArrayLike,
         valid: ArrayLike,
         /,
-    ):
+    ) -> None:
         field_value = jnp.asarray(field, dtype=plan.radial_points.dtype)
         momentum_value = jnp.asarray(momentum, dtype=field_value.dtype)
         time_value = jnp.asarray(time, dtype=field_value.dtype)

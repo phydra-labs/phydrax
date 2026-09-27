@@ -9,7 +9,8 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
@@ -32,7 +33,7 @@ class ApproximationAxis(StrictModule):
         *,
         parent_value: ArrayLike | None = None,
         units: str = "dimensionless",
-    ):
+    ) -> None:
         identifier = str(name)
         units_ = str(units)
         value_ = jnp.asarray(value)
@@ -74,7 +75,7 @@ class ApproximationQuantity(StrictModule):
         norm_id: str,
         estimate_kind: Literal["bound", "estimate", "statistical"],
         confidence: ArrayLike = jnp.nan,
-    ):
+    ) -> None:
         identifier = str(name)
         units_ = str(units)
         norm = str(norm_id)
@@ -134,7 +135,7 @@ class OpenSystemApproximationEvidence(StrictModule):
         execution_valid: ArrayLike,
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
         precision_policy_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         identifier = str(representation_id)
         axes_ = tuple(axes)
         quantities_ = tuple(quantities)
@@ -216,7 +217,7 @@ class OpenSystemPhysicalityEvidence(StrictModule):
         closure_tolerance: ArrayLike = 1e-6,
         certified_properties: Sequence[str] = (),
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
-    ):
+    ) -> None:
         if precision_evidence is not None and not isinstance(
             precision_evidence,
             PrecisionEvidenceEnvelope,
@@ -310,7 +311,7 @@ class QuantumGeneratorAction(StrictModule):
         *,
         representation_id: str,
         generator_id: str,
-    ):
+    ) -> None:
         if not callable(action):
             raise TypeError("Generator action must be callable.")
         self.action_function = action
@@ -336,7 +337,7 @@ class QuantumObservablePlan(StrictModule):
         *,
         observable_id: str,
         exact: bool,
-    ):
+    ) -> None:
         if not callable(reducer):
             raise TypeError("Observable reducer must be callable.")
         self.reducer = reducer
@@ -360,7 +361,7 @@ class OpenSystemRefinement(StrictModule):
         axis: ApproximationAxis,
         state_embedding: Callable[[Any], Any],
         /,
-    ):
+    ) -> None:
         if not callable(state_embedding):
             raise TypeError("state_embedding must be callable.")
         self.coarse_representation_id = str(coarse_representation_id)
@@ -388,7 +389,7 @@ class OpenSystemPromotionPolicy(StrictModule):
         *,
         require_precision: bool = True,
         policy_id: str,
-    ):
+    ) -> None:
         axes = tuple(str(value) for value in required_axes)
         quantities = tuple(str(value) for value in required_quantities)
         physicality = tuple(str(value) for value in required_physicality)
@@ -440,7 +441,7 @@ class OpenSystemPromotionDecision(StrictModule):
         /,
         *,
         policy_id: str,
-    ):
+    ) -> None:
         self.promoted = _boolean_gate(promoted, "promoted")
         self.missing_axes = tuple(missing_axes)
         self.missing_quantities = tuple(missing_quantities)

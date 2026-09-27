@@ -7,19 +7,23 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from itertools import combinations
 from math import isfinite
-from typing import Any, Literal
+from typing import Any, get_args, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax import Array
 from jax.scipy.special import logsumexp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._frozendict import frozendict
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..optim._finite import FiniteAxis, FiniteProductSpace
+from ..typing import parse
 from ._finite_experimental_design import (
     evaluate_finite_experimental_design,
     FiniteDesignBelief,
@@ -28,12 +32,12 @@ from ._finite_experimental_design import (
 from ._posterior import PosteriorProblem
 
 
-ExpectedUtilityTarget = Literal[
+ExpectedUtilityTarget: TypeAlias = Literal[
     "parameter",
     "predictive",
     "model_discrimination",
 ]
-RetrospectiveDesignStrategy = Literal[
+RetrospectiveDesignStrategy: TypeAlias = Literal[
     "random",
     "space_filling",
     "uncertainty_only",
@@ -41,14 +45,6 @@ RetrospectiveDesignStrategy = Literal[
     "proposed_design",
 ]
 
-_UTILITY_TARGETS = ("parameter", "predictive", "model_discrimination")
-_RETROSPECTIVE_STRATEGIES = (
-    "random",
-    "space_filling",
-    "uncertainty_only",
-    "domain_heuristic",
-    "proposed_design",
-)
 _EXACT_SELECTION_LIMIT = 24
 
 
@@ -90,11 +86,7 @@ def _positive_integer(value: int, name: str, /, *, minimum: int = 1) -> int:
 
 
 def _utility_target(value: ExpectedUtilityTarget, /) -> ExpectedUtilityTarget:
-    if value not in _UTILITY_TARGETS:
-        raise ValueError(
-            "utility_target must be 'parameter', 'predictive', or 'model_discrimination'."
-        )
-    return value
+    return parse(value, ExpectedUtilityTarget, "utility_target")
 
 
 class ExperimentalDesignCandidate(StrictModule, NonTrainableState):
@@ -131,7 +123,7 @@ class ExperimentalDesignCandidate(StrictModule, NonTrainableState):
         setup_cost: float = 0.0,
         diversity_group: str | None = None,
         mandatory_control: bool = False,
-    ):
+    ) -> None:
         identifier = _identifier(candidate_id, "candidate_id")
         condition = _identifier(condition_id, "condition_id")
         group = _identifier(feasibility_group, "feasibility_group")
@@ -154,11 +146,11 @@ class ExperimentalDesignCandidate(StrictModule, NonTrainableState):
             "kind": "experimental-design-candidate",
             "candidate_id": identifier,
             "condition_id": condition,
-            "cost": candidate_cost.hex(),
+            "cost": float(candidate_cost).hex(),
             "feasibility_group": group,
             "prediction_source_id": source,
             "setup_id": setup,
-            "setup_cost": shared_cost.hex(),
+            "setup_cost": float(shared_cost).hex(),
             "diversity_group": diversity,
             "mandatory_control": mandatory_control,
         }
@@ -211,7 +203,7 @@ class ExpectedUtilityResult(StrictModule):
         outer_sample_count: int = 0,
         inner_sample_count: int = 0,
         unit_id: str = "nat",
-    ):
+    ) -> None:
         candidate_values = _candidate_tuple(candidates)
         values = jnp.asarray(expected_utility, dtype=jnp.float64)
         errors = jnp.asarray(estimator_standard_error, dtype=jnp.float64)
@@ -295,7 +287,7 @@ class ExperimentalBatchConstraints(StrictModule, NonTrainableState):
         allowed_feasibility_groups: Sequence[str] = (),
         minimum_diversity_groups: int = 1,
         maximum_per_diversity_group: int | None = None,
-    ):
+    ) -> None:
         budget_value = _nonnegative_finite(budget, "budget")
         minimum_size = _positive_integer(minimum_batch_size, "minimum_batch_size")
         maximum_size = _positive_integer(maximum_batch_size, "maximum_batch_size")
@@ -343,7 +335,7 @@ class ExperimentalBatchConstraints(StrictModule, NonTrainableState):
             )
         payload = {
             "kind": "experimental-batch-constraints",
-            "budget": budget_value.hex(),
+            "budget": float(budget_value).hex(),
             "minimum_batch_size": minimum_size,
             "maximum_batch_size": maximum_size,
             "required_candidate_ids": list(required),
@@ -398,7 +390,7 @@ class ExperimentalBatchPlan(StrictModule, NonTrainableState):
         selection_policy_id: str,
         planned_total_cost: float,
         objective_value: float,
-    ):
+    ) -> None:
         candidates = _identifiers(candidate_ids, "candidate_ids")
         contents = _identifiers(candidate_content_ids, "candidate_content_ids")
         if len(contents) != len(candidates):
@@ -427,8 +419,8 @@ class ExperimentalBatchPlan(StrictModule, NonTrainableState):
             "selected_candidate_ids": list(selected),
             "candidates": [list(record) for record in records],
             "objective_id": _identifier(objective_id, "objective_id"),
-            "budget": budget_value.hex(),
-            "planned_total_cost": total_cost.hex(),
+            "budget": float(budget_value).hex(),
+            "planned_total_cost": float(total_cost).hex(),
             "objective_value": value.hex(),
             "model_ids": list(models),
             "analysis_id": _identifier(analysis_id, "analysis_id"),
@@ -466,9 +458,9 @@ class ExperimentalBatchPlan(StrictModule, NonTrainableState):
             "candidate_ids": list(self.candidate_ids),
             "candidate_content_ids": list(self.candidate_content_ids),
             "objective_id": self.objective_id,
-            "budget": self.budget.hex(),
-            "planned_total_cost": self.planned_total_cost.hex(),
-            "objective_value": self.objective_value.hex(),
+            "budget": float(self.budget).hex(),
+            "planned_total_cost": float(self.planned_total_cost).hex(),
+            "objective_value": float(self.objective_value).hex(),
             "model_ids": list(self.model_ids),
             "analysis_id": self.analysis_id,
             "constraints_id": self.constraints_id,
@@ -548,9 +540,12 @@ class RetrospectiveDesignResult(StrictModule, NonTrainableState):
         /,
         *,
         metric_id: str,
-    ):
+    ) -> None:
         plan_values = tuple(plans)
-        if len(plan_values) != len(_RETROSPECTIVE_STRATEGIES) or any(
+        strategies: tuple[RetrospectiveDesignStrategy, ...] = get_args(
+            RetrospectiveDesignStrategy
+        )
+        if len(plan_values) != len(strategies) or any(
             not isinstance(plan, ExperimentalBatchPlan) for plan in plan_values
         ):
             raise ValueError(
@@ -559,7 +554,7 @@ class RetrospectiveDesignResult(StrictModule, NonTrainableState):
             )
         values = jnp.asarray(realized_utility, dtype=jnp.float64)
         validity = jnp.asarray(realized_valid, dtype=jnp.bool_)
-        expected_shape = (len(_RETROSPECTIVE_STRATEGIES),)
+        expected_shape = (len(strategies),)
         if values.shape != expected_shape or validity.shape != expected_shape:
             raise ValueError("Retrospective metrics must have one value per strategy.")
         if bool(jnp.any(validity & ~jnp.isfinite(values))):
@@ -607,7 +602,7 @@ class RetrospectiveDesignResult(StrictModule, NonTrainableState):
         self.selected_batch_sizes = sizes
         self.cost_normalized_realized_utility = normalized
         self.cost_normalized_valid = normalized_valid
-        self.strategy_ids = _RETROSPECTIVE_STRATEGIES
+        self.strategy_ids = strategies
         self.metric_id = metric
         self.evaluation_kind = "retrospective_cost_normalized_replay"
         self.comparison_basis = "realized_utility_per_planned_total_cost"
@@ -616,7 +611,7 @@ class RetrospectiveDesignResult(StrictModule, NonTrainableState):
         self.evaluation_id = canonical_fingerprint(
             {
                 "kind": "retrospective-experimental-design-evaluation",
-                "strategy_ids": list(_RETROSPECTIVE_STRATEGIES),
+                "strategy_ids": list(strategies),
                 "plan_ids": [plan.plan_id for plan in plan_values],
                 "metric_id": metric,
                 "realized": array_tree_fingerprint((values, validity)),
@@ -675,7 +670,12 @@ def exact_finite_expected_utility(
             -jnp.inf,
         )
 
-        def channel(parameters, design, outcomes, context):
+        def channel(
+            parameters: Array,
+            design: Array,
+            outcomes: Array,
+            context: frozendict[str, Array],
+        ) -> Array:
             del context
             return log_conditional[
                 design,
@@ -1522,7 +1522,7 @@ def select_experimental_batch(
             "model_ids": list(models),
             "mandatory_control_utility_contribution": "zero",
             "pairwise_redundancy": array_tree_fingerprint(redundancy),
-            "redundancy_weight": redundancy_scale.hex(),
+            "redundancy_weight": float(redundancy_scale).hex(),
             "pairwise_diversity": array_tree_fingerprint(diversity),
             "utility_target": utility.utility_target,
             "utility_unit": utility.unit_id,
@@ -1537,7 +1537,7 @@ def select_experimental_batch(
                     utility.valid,
                 )
             ),
-            "diversity_weight": diversity_scale.hex(),
+            "diversity_weight": float(diversity_scale).hex(),
             "tie_break": "objective_then_lower_cost_then_lexicographic_candidate_ids",
         }
     )

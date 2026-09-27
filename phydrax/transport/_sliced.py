@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._univariate import _probabilities, _validate_p, _wasserstein_cost_1d
@@ -94,7 +95,7 @@ def sliced_wasserstein_distance(
     source_projected = source_points @ directions.T
     target_projected = target_points @ directions.T
 
-    def projection_cost(source_values, target_values):
+    def projection_cost(source_values: Array, target_values: Array) -> Array:
         return _wasserstein_cost_1d(
             source_values,
             target_values,

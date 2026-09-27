@@ -15,7 +15,8 @@ from typing import cast
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from scipy.linalg import expm
 
 from phydrax import ein
@@ -55,7 +56,7 @@ class SL2CPrincipalSeriesPlan(StrictModule):
         /,
         *,
         tolerance: float = 1e-11,
-    ):
+    ) -> None:
         rho_ = float(rho)
         k = int(twice_k)
         maximum = int(maximum_twice_j)
@@ -95,7 +96,9 @@ class SL2CBoostEvidence(StrictModule):
     evidence_id: str = eqx.field(static=True)
 
 
-def _boost_generator(plan: SL2CPrincipalSeriesPlan, twice_m: int, /):
+def _boost_generator(
+    plan: SL2CPrincipalSeriesPlan, twice_m: int, /
+) -> tuple[tuple[int, ...], np.ndarray]:
     m = _half(twice_m)
     values = tuple(value for value in plan.twice_j_values if value >= abs(twice_m))
     if not values:
@@ -216,7 +219,7 @@ class NativeB4BoosterPlan(StrictModule):
         /,
         *,
         tolerance: float = 1e-8,
-    ):
+    ) -> None:
         boundary = tuple(boundary_twice_spins)
         internal = tuple(internal_twice_spins)
         nodes = np.asarray(radial_nodes, dtype=np.float64)
@@ -255,8 +258,8 @@ class NativeB4BoosterPlan(StrictModule):
             "resources": resources.policy_id,
             "tolerance": tolerance_,
         }
-        self.boundary_twice_spins = boundary  # type: ignore[assignment]
-        self.internal_twice_spins = internal  # type: ignore[assignment]
+        self.boundary_twice_spins = boundary
+        self.internal_twice_spins = internal
         self.boundary_twice_intertwiner = int(boundary_twice_intertwiner)
         self.internal_twice_intertwiner = int(internal_twice_intertwiner)
         self.immirzi_parameter = gamma
@@ -464,7 +467,7 @@ class NativeEPRLVertexData(StrictModule):
         booster_values: ArrayLike,
         booster_error_bounds: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, EPRLVertexPlan):
             raise TypeError("plan must be EPRLVertexPlan.")
         support = np.asarray(support_twice_spins, dtype=np.int32)
@@ -590,7 +593,7 @@ class SpinFoamVertexTensor:
         face_labels: Sequence[str],
         amplitudes: ArrayLike,
         /,
-    ):
+    ) -> None:
         label_ = str(label).strip()
         faces = tuple(str(value).strip() for value in face_labels)
         values = np.asarray(amplitudes, dtype=np.complex128)
@@ -630,7 +633,7 @@ class FiniteSpinFoamComplexPlan(StrictModule):
         boundary_faces: Sequence[str] = (),
         face_amplitude_power: float = 1.0,
         maximum_assignments: int = 1_000_000,
-    ):
+    ) -> None:
         support = tuple(
             sorted(
                 (

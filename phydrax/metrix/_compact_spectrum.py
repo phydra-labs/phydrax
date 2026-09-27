@@ -8,7 +8,7 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -24,7 +24,7 @@ class SphereLaplacianLevels(StrictModule, NonTrainableState):
     max_level: int = eqx.field(static=True)
     spectrum_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, max_level: int, /):
+    def __init__(self, dimension: int, max_level: int, /) -> None:
         resolved_dimension = int(dimension)
         resolved_level = int(max_level)
         if resolved_dimension < 1:

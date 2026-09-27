@@ -13,6 +13,7 @@ import numpy as np
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
 if TYPE_CHECKING:
@@ -39,7 +40,7 @@ class PolynomialVariableGroup(StrictModule, NonTrainableState):
         /,
         *,
         geometry: PolynomialVariableGeometry = "affine",
-    ):
+    ) -> None:
         label_ = str(label).strip()
         if not label_:
             raise ValueError("Polynomial variable-group labels must be non-empty.")
@@ -52,8 +53,7 @@ class PolynomialVariableGroup(StrictModule, NonTrainableState):
             raise ValueError("A polynomial variable group cannot repeat a variable.")
         if tuple(sorted(indices)) != indices:
             raise ValueError("Polynomial variable indices must be strictly increasing.")
-        if geometry not in ("affine", "projective"):
-            raise ValueError("Variable-group geometry must be 'affine' or 'projective'.")
+        geometry = parse(geometry, PolynomialVariableGeometry, "geometry")
         if geometry == "projective" and len(indices) < 2:
             raise ValueError(
                 "A projective variable group requires at least two homogeneous coordinates."
@@ -89,7 +89,7 @@ class PolynomialDegreeProfile(StrictModule, NonTrainableState):
         total_degrees: Sequence[int],
         multidegrees: Sequence[Sequence[int]],
         group_labels: Sequence[str],
-    ):
+    ) -> None:
         support_id_ = str(support_id)
         totals = tuple(total_degrees)
         multidegrees_ = tuple(tuple(row) for row in multidegrees)
@@ -144,9 +144,8 @@ class PolynomialBezoutForecast(StrictModule, NonTrainableState):
         group_labels: Sequence[str],
         group_dimensions: Sequence[int],
         path_count: int,
-    ):
-        if kind not in ("total_degree", "multihomogeneous"):
-            raise ValueError("Unknown polynomial Bézout forecast kind.")
+    ) -> None:
+        kind = parse(kind, BezoutForecastKind, "kind")
         labels = tuple(str(value) for value in group_labels)
         dimensions = tuple(group_dimensions)
         count = int(path_count)

@@ -17,7 +17,8 @@ from collections.abc import Mapping, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._differentiation import (
     derivative_contract_from_payload,
@@ -51,7 +52,7 @@ class NeutralArrayPayload(StrictModule, NonTrainableState):
         array_names: Sequence[str],
         metadata: Mapping[str, object],
         /,
-    ):
+    ) -> None:
         names = tuple(str(value).strip() for value in array_names)
         values = tuple(np.asarray(value) for value in arrays)
         if (

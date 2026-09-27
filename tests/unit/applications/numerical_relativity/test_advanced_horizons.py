@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -29,7 +32,9 @@ from phydrax.applications.numerical_relativity._surfaces import (
 from phydrax.metrix._adm_exchange import ADMGridGeometry
 
 
-def _completed_minkowski_history(times, *, transverse_rate, completed=True):
+def _completed_minkowski_history(
+    times: Any, *, transverse_rate: Any, completed: Any = True
+) -> Any:
     axes = tuple(np.asarray((-2.0, 0.0, 2.0)) for _ in range(3))
     shape = (len(times), 3, 3, 3)
     alpha = np.ones(shape)
@@ -55,16 +60,20 @@ def _completed_minkowski_history(times, *, transverse_rate, completed=True):
     )
     return CompletedSpacetimeHistory(
         times,
+        # ty: ignore[invalid-argument-type]
         *axes,
+        # ty: ignore[too-many-positional-arguments]
         geometry,
         completed=completed,
         completion_id=f"completed-minkowski-{transverse_rate}",
     )
 
 
-def _trace_plan(times, *, terminal_positions, caustic_distance):
+def _trace_plan(times: Any, *, terminal_positions: Any, caustic_distance: Any) -> Any:
     surface = SphericalSpectralSurface(
+        # ty: ignore[invalid-argument-type]
         np.asarray(((1.0 + 0.0j,),)),
+        # ty: ignore[invalid-argument-type]
         np.zeros(3),
         "qualified-late-time-surface-plan",
     )
@@ -87,7 +96,7 @@ def _trace_plan(times, *, terminal_positions, caustic_distance):
     )
 
 
-def test_offline_generators_converge_backward_and_report_caustics():
+def test_offline_generators_converge_backward_and_report_caustics() -> None:
     times = np.linspace(0.0, 1.0, 9)
     transverse_rate = 2.0
     history = _completed_minkowski_history(times, transverse_rate=transverse_rate)
@@ -118,7 +127,7 @@ def test_offline_generators_converge_backward_and_report_caustics():
     assert trace.generator_trajectories.shape == (len(times), 2, 3)
 
 
-def test_event_horizon_history_must_be_completed_before_tracing():
+def test_event_horizon_history_must_be_completed_before_tracing() -> None:
     with pytest.raises(ValueError, match="completed"):
         _completed_minkowski_history(
             np.linspace(0.0, 1.0, 3),
@@ -127,7 +136,7 @@ def test_event_horizon_history_must_be_completed_before_tracing():
         )
 
 
-def test_offline_event_horizon_trace_fails_closed_outside_completed_coverage():
+def test_offline_event_horizon_trace_fails_closed_outside_completed_coverage() -> None:
     times = np.linspace(0.0, 1.0, 5)
     history = _completed_minkowski_history(times, transverse_rate=0.0)
     terminal = np.asarray(((0.0, -2.5, 0.0), (0.0, 2.5, 0.0)))
@@ -140,38 +149,58 @@ def test_offline_event_horizon_trace_fails_closed_outside_completed_coverage():
     assert bool(trace.global_history_complete)
 
 
-def _quasilocal_slices(masses, *, mots_derivative_valid=True):
+def _quasilocal_slices(masses: Any, *, mots_derivative_valid: Any = True) -> Any:
     mots = []
     geometries = []
     for index, mass in enumerate(masses):
         surface = SphericalSpectralSurface(
+            # ty: ignore[invalid-argument-type]
             np.asarray(((complex(mass),),)),
+            # ty: ignore[invalid-argument-type]
             np.zeros(3),
             "fixed-spherical-surface-plan",
         )
         stability = MOTSStabilityEvidence(
+            # ty: ignore[invalid-argument-type]
             np.zeros((1, 1)),
+            # ty: ignore[invalid-argument-type]
             np.zeros((1, 1)),
+            # ty: ignore[invalid-argument-type]
             np.zeros((1,)),
+            # ty: ignore[invalid-argument-type]
             np.asarray(0.0),
+            # ty: ignore[invalid-argument-type]
             np.asarray(0.0),
+            # ty: ignore[invalid-argument-type]
             np.asarray(True),
+            # ty: ignore[invalid-argument-type]
             np.asarray(True),
+            # ty: ignore[invalid-argument-type]
             np.asarray(True),
+            # ty: ignore[invalid-argument-type]
             np.asarray(True),
         )
         mots.append(
             MOTSSolveResult(
                 surface,
+                # ty: ignore[invalid-argument-type]
                 np.zeros((1,)),
+                # ty: ignore[invalid-argument-type]
                 np.asarray(0.0),
+                # ty: ignore[invalid-argument-type]
                 np.asarray(index + 1, dtype=np.int32),
                 stability,
+                # ty: ignore[invalid-argument-type]
                 np.asarray(True),
+                # ty: ignore[invalid-argument-type]
                 np.asarray(True),
+                # ty: ignore[invalid-argument-type]
                 np.asarray(True),
+                # ty: ignore[invalid-argument-type]
                 np.asarray(True),
+                # ty: ignore[invalid-argument-type]
                 np.asarray(mots_derivative_valid),
+                # ty: ignore[invalid-argument-type]
                 np.asarray(0, dtype=np.int32),
                 "fixed-mots-plan",
             )
@@ -179,16 +208,27 @@ def _quasilocal_slices(masses, *, mots_derivative_valid=True):
         area = 16.0 * np.pi * mass**2
         geometries.append(
             HorizonGeometryEvidence(
+                # ty: ignore[invalid-argument-type]
                 np.asarray(area),
+                # ty: ignore[invalid-argument-type]
                 np.asarray(2.0 * mass),
+                # ty: ignore[invalid-argument-type]
                 np.asarray(mass),
+                # ty: ignore[invalid-argument-type]
                 np.asarray(0.0),
+                # ty: ignore[invalid-argument-type]
                 np.asarray(mass),
+                # ty: ignore[invalid-argument-type]
                 np.asarray(0.0),
+                # ty: ignore[invalid-argument-type]
                 np.asarray(0.0),
+                # ty: ignore[invalid-argument-type]
                 np.asarray(True),
+                # ty: ignore[invalid-argument-type]
                 np.asarray(True),
+                # ty: ignore[invalid-argument-type]
                 np.asarray(True),
+                # ty: ignore[invalid-argument-type]
                 np.asarray(True),
                 "mostly-plus",
             )
@@ -196,7 +236,7 @@ def _quasilocal_slices(masses, *, mots_derivative_valid=True):
     return tuple(mots), tuple(geometries)
 
 
-def test_dynamical_and_isolated_worldtube_flux_laws_are_quasilocal():
+def test_dynamical_and_isolated_worldtube_flux_laws_are_quasilocal() -> None:
     times = np.linspace(0.0, 2.0, 5)
     energy_flux = 0.04
     masses = 1.0 + energy_flux * times
@@ -244,7 +284,7 @@ def test_dynamical_and_isolated_worldtube_flux_laws_are_quasilocal():
     assert not bool(isolated.derivative_valid)
 
 
-def test_area_law_checks_every_worldtube_interval():
+def test_area_law_checks_every_worldtube_interval() -> None:
     times = np.asarray((0.0, 1.0, 2.0))
     mots, geometries = _quasilocal_slices(np.asarray((2.0, 1.0, 2.0)))
     zeros = np.zeros(times.shape)

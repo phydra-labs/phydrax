@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -6,14 +8,15 @@ import phydrax as phx
 from examples.differentiable_cosmological_particle_mesh import build_workflow
 
 
-def test_two_lpt_particle_mesh_workflow_is_differentiable_end_to_end():
+def test_two_lpt_particle_mesh_workflow_is_differentiable_end_to_end() -> None:
     background, growth, provenance, lpt, rollout, gravity, white_noise = build_workflow()
     k = jnp.linspace(1.0, 30.0, 96)
     first_growth = growth.evaluate(0.1)[0]
 
-    def objective(amplitude):
+    def objective(amplitude: Any) -> Any:
         base = amplitude / (1.0 + (k / 8.0) ** 2)
         power = phx.applications.cosmology.MatterPowerTable(
+            # ty: ignore[invalid-argument-type]
             [0.1, 1.0],
             k,
             jnp.stack((first_growth**2 * base, base)),

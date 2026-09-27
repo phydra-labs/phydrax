@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+from types import ModuleType
 from typing import Any
 
 import numpy as np
@@ -34,7 +35,7 @@ def is_ase_available() -> bool:
     return importlib.util.find_spec("ase") is not None
 
 
-def require_ase():
+def require_ase() -> ModuleType:
     """Import ASE only at the host-side interoperability boundary."""
 
     if not is_ase_available():

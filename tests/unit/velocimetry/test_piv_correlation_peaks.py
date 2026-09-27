@@ -13,7 +13,7 @@ from phydrax.velocimetry.piv import (
 )
 
 
-def test_chunked_extended_correlation_recovers_row_column_shift_and_mask():
+def test_chunked_extended_correlation_recovers_row_column_shift_and_mask() -> None:
     first_values = jr.normal(jr.key(4), (3, 8, 8))
     margin = (3, 3)
     expected = jnp.asarray([1.0, -2.0])
@@ -41,7 +41,7 @@ def test_chunked_extended_correlation_recovers_row_column_shift_and_mask():
     assert jnp.all(correlation.overlap[:2, 4, 1] >= 64.0 - 1e-4)
 
 
-def test_linear_correlation_uses_overlap_mask_instead_of_wrapping():
+def test_linear_correlation_uses_overlap_mask_instead_of_wrapping() -> None:
     first_values = jr.normal(jr.key(5), (1, 8, 8))
     second_values = jnp.zeros_like(first_values)
     second_values = second_values.at[:, 1:, 2:].set(first_values[:, :-1, :-2])
@@ -64,7 +64,7 @@ def test_linear_correlation_uses_overlap_mask_instead_of_wrapping():
     assert correlation.overlap[0, 4, 5] == 42
 
 
-def test_circular_correlation_preserves_positive_row_down_shift():
+def test_circular_correlation_preserves_positive_row_down_shift() -> None:
     first_values = jr.normal(jr.key(7), (1, 8, 8))
     second_values = jnp.roll(first_values, (2, -1), axis=(-2, -1))
     mask = jnp.ones_like(first_values, dtype="bool")
@@ -84,7 +84,7 @@ def test_circular_correlation_preserves_positive_row_down_shift():
     assert jnp.array_equal(jnp.rint(peak.offsets_rc[0, 0]), jnp.asarray([2.0, -1.0]))
 
 
-def test_top_k_ties_are_row_major_and_gaussian_fit_is_subpixel():
+def test_top_k_ties_are_row_major_and_gaussian_fit_is_subpixel() -> None:
     rows, columns = jnp.meshgrid(jnp.arange(-2, 3), jnp.arange(-2, 3), indexing="ij")
     lags = jnp.stack((rows, columns), axis=-1)
     tied = CorrelationBatch(

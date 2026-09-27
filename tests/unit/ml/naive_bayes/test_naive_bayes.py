@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -81,7 +84,7 @@ _CATEGORIES = jnp.array(
 )
 
 
-def _sparse(values):
+def _sparse(values: Any) -> Any:
     columns = jnp.broadcast_to(jnp.arange(values.shape[-1]), values.shape)
     return SparseFeatures(values, columns, feature_count=values.shape[-1])
 
@@ -117,8 +120,8 @@ def _sparse(values):
     ],
 )
 def test_every_naive_bayes_family_has_normalized_schema_aware_jit_vmap_behavior(
-    recipe, features, model_type, method
-):
+    recipe: Any, features: Any, model_type: Any, method: Any
+) -> None:
     result = recipe.fit_batch(MLBatch(features, _TARGETS, target_schema=_SCHEMA))
     model = result.as_trainable()
     probabilities = result.model(features)
@@ -159,7 +162,7 @@ def test_every_naive_bayes_family_has_normalized_schema_aware_jit_vmap_behavior(
         assert "regularity-undeclared" not in input_gradient.conditions
 
 
-def test_gaussian_nb_preserves_case_masks_product_weights_and_string_vocabulary():
+def test_gaussian_nb_preserves_case_masks_product_weights_and_string_vocabulary() -> None:
     features = jnp.stack((_GAUSSIAN, 1.5 * _GAUSSIAN + 0.2))
     targets = jnp.stack((_TARGETS, _TARGETS))
     feature_mask = jnp.ones_like(features, dtype="bool").at[:, 2, 1].set(False)
@@ -188,10 +191,13 @@ def test_gaussian_nb_preserves_case_masks_product_weights_and_string_vocabulary(
     assert result.diagnostics.class_mass.shape == (2, 2)
     assert jnp.allclose(result.diagnostics.class_mass[0], expected_mass)
     assert model(features).shape == (2, 8, 2)
+    # ty: ignore[unresolved-attribute]
     assert model.target_schema.class_labels == _SCHEMA.class_labels
 
 
-def test_naive_bayes_dense_complex_and_out_of_sample_domains_reject_sparse_input():
+def test_naive_bayes_dense_complex_and_out_of_sample_domains_reject_sparse_input() -> (
+    None
+):
     gaussian_recipe = GaussianNaiveBayesRecipe(num_classes=2)
     dense = gaussian_recipe.fit_batch(MLBatch(_GAUSSIAN, _TARGETS)).as_trainable()
     with pytest.raises(TypeError, match="requires dense features"):
@@ -279,11 +285,11 @@ def test_naive_bayes_dense_complex_and_out_of_sample_domains_reject_sparse_input
     ],
 )
 def test_every_naive_bayes_family_has_its_declared_fit_and_prediction_gradients(
-    recipe, features, probe, replace_hyperparameter, initial
-):
+    recipe: Any, features: Any, probe: Any, replace_hyperparameter: Any, initial: Any
+) -> None:
     weights = jnp.linspace(0.8, 1.3, 8)
 
-    def fit_loss(values, sample_weight, hyperparameter):
+    def fit_loss(values: Any, sample_weight: Any, hyperparameter: Any) -> Any:
         configured = replace_hyperparameter(recipe, hyperparameter)
         model = configured.fit_batch(
             MLBatch(values, _TARGETS, sample_weight=sample_weight)
@@ -323,7 +329,9 @@ def test_every_naive_bayes_family_has_its_declared_fit_and_prediction_gradients(
     assert jnp.all(jnp.isfinite(parameter_gradient))
 
 
-def test_naive_bayes_failures_report_empty_single_class_nonfinite_weight_and_domains():
+def test_naive_bayes_failures_report_empty_single_class_nonfinite_weight_and_domains() -> (
+    None
+):
     empty = GaussianNaiveBayesRecipe(num_classes=2).fit_batch(
         MLBatch(
             _GAUSSIAN,
@@ -365,7 +373,7 @@ def test_naive_bayes_failures_report_empty_single_class_nonfinite_weight_and_dom
     assert not bool(invalid_category.diagnostics.domain_valid)
 
 
-def test_naive_bayes_rejects_invalid_capacity_and_target_axes():
+def test_naive_bayes_rejects_invalid_capacity_and_target_axes() -> None:
     with pytest.raises(ValueError, match="at least two categories"):
         CategoricalNaiveBayesRecipe((3, 1))
     with pytest.raises(ValueError, match="align with the feature axis"):

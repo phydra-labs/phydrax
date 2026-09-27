@@ -6,13 +6,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import isfinite
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
-from jaxtyping import Array
+from jax import Array
+from jaxtyping import PyTree
 
 from ..._differentiation import (
     ComponentAuthority,
@@ -27,9 +28,11 @@ from ..._training_kernel import (
     OptaxUpdateRule,
     prepare_training_kernel,
     TrainingKernelSpec,
+    TrainingKeys,
 )
 from ..._training_objective import _ObjectiveContribution
 from ..._tree_math import tree_allfinite, tree_inner, tree_norm
+from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -63,7 +66,7 @@ class FittedCircuitFeatureTransform(AbstractFittedModel):
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
         /,
-    ):
+    ) -> None:
         if not isinstance(model, DenseCircuitExpectationModel):
             raise TypeError("model must be DenseCircuitExpectationModel.")
         if len(input_schema.names) != model.in_size:
@@ -127,14 +130,13 @@ class CircuitFeatureTransformRecipe(AbstractRecipe):
         *,
         output_names: Sequence[str] = (),
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if not isinstance(model, DenseCircuitExpectationModel):
             raise TypeError("model must be DenseCircuitExpectationModel.")
         names = tuple(str(name) for name in output_names)
         if names and len(names) != model.out_size:
             raise ValueError("output_names must match the circuit observable count.")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.model = model
         self.output_names = names
         self.weight_policy = weight_policy
@@ -201,7 +203,17 @@ class CircuitFitDiagnostics(StrictModule):
     gradient_method: str = eqx.field(static=True)
 
 
-def _classifier_objective(parameters, model_state, fixed, payload, keys, /):
+_ClassifierPayload: TypeAlias = tuple[Array, Array, Array, Array, float]
+
+
+def _classifier_objective(
+    parameters: PyTree,
+    model_state: PyTree,
+    fixed: PyTree,
+    payload: _ClassifierPayload,
+    keys: TrainingKeys | None,
+    /,
+) -> tuple[_ObjectiveContribution, PyTree, tuple[()]]:
     """Weighted logistic data fit plus L2 penalty of the circuit classifier."""
     del keys
     features, encoded, weights, mass, l2_strength = payload
@@ -237,7 +249,7 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
         max_iterations: int = 100,
         tolerance: float = 1e-6,
         l2_strength: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(feature_model, DenseCircuitExpectationModel):
             raise TypeError("feature_model must be DenseCircuitExpectationModel.")
         labels = (float(class_labels[0]), float(class_labels[1]))
@@ -248,8 +260,7 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
         )
         if not all(isfinite(label) for label in labels) or labels[0] == labels[1]:
             raise ValueError("class_labels must be distinct finite scalars.")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         if not all(isfinite(value) for value in values):
             raise ValueError("Classifier numerical controls must be finite.")
         if values[0] <= 0.0 or values[1] < 0.0 or values[2] < 0.0:
@@ -357,7 +368,7 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
         optimizer_state = optimizer.init(trainable)
         payload = (safe_features, encoded, safe_weights, mass, self.l2_strength)
 
-        def objective(parameters):
+        def objective(parameters: PyTree) -> Array:
             contribution, _, _ = _classifier_objective(
                 parameters, model_state, fixed, payload, None
             )
@@ -365,7 +376,9 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
 
         value_and_grad = eqx.filter_value_and_grad(objective)
 
-        def step(value, iteration):
+        def step(
+            value: tuple[PyTree, optax.OptState], iteration: Array
+        ) -> tuple[tuple[PyTree, optax.OptState], Array, Array]:
             del iteration
             parameters, state = value
             loss, gradient = value_and_grad(parameters)

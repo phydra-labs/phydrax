@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -9,7 +12,7 @@ import phydrax as phx
 import phydrax._limit_study as limit_study
 
 
-def _data(coordinates: tuple[float, ...]):
+def _data(coordinates: tuple[float, ...]) -> Any:
     return tuple(
         phx.uq.ScientificLimitDatum(
             f"datum-{index}",
@@ -21,7 +24,7 @@ def _data(coordinates: tuple[float, ...]):
     )
 
 
-def test_limit_study_rejects_unknown_prespecified_datum_ids():
+def test_limit_study_rejects_unknown_prespecified_datum_ids() -> None:
     plan = phx.uq.ScientificLimitStudyPlan(
         (phx.uq.ScientificLimitAxis("x", 0.0),),
         (
@@ -37,7 +40,7 @@ def test_limit_study_rejects_unknown_prespecified_datum_ids():
         phx.uq.run_scientific_limit_study(plan, _data((1.0, 2.0, 3.0)))
 
 
-def test_limit_study_applies_minimum_span_in_transformed_coordinates():
+def test_limit_study_applies_minimum_span_in_transformed_coordinates() -> None:
     plan = phx.uq.ScientificLimitStudyPlan(
         (
             phx.uq.ScientificLimitAxis(
@@ -57,7 +60,7 @@ def test_limit_study_applies_minimum_span_in_transformed_coordinates():
     assert result.fits[0].reason == "insufficient-axis-span"
 
 
-def test_limit_study_abstains_when_covariance_solve_fails(monkeypatch):
+def test_limit_study_abstains_when_covariance_solve_fails(monkeypatch: Any) -> None:
     plan = phx.uq.ScientificLimitStudyPlan(
         (phx.uq.ScientificLimitAxis("x", 0.0),),
         (phx.uq.ScientificLimitVariation("linear", {"x": 1}),),
@@ -65,7 +68,7 @@ def test_limit_study_abstains_when_covariance_solve_fails(monkeypatch):
     original = limit_study.np.linalg.lstsq
     call_count = 0
 
-    def fail_second_solve(*args, **kwargs):
+    def fail_second_solve(*args: Any, **kwargs: Any) -> Any:
         nonlocal call_count
         call_count += 1
         if call_count == 2:

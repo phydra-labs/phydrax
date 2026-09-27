@@ -8,9 +8,11 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax import Array
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from .._components import DomainComponent
 from .._function import DomainFunction
 from ._cover import SubdomainCover
@@ -35,7 +37,7 @@ class _NormalizedWeight(StrictModule, NonTrainableState):
         fields: tuple[DomainFunction, ...],
         deps: tuple[str, ...],
         index: int,
-    ):
+    ) -> None:
         by_label = {label: position for position, label in enumerate(deps)}
         self.fields = fields
         self.positions = tuple(
@@ -43,7 +45,7 @@ class _NormalizedWeight(StrictModule, NonTrainableState):
         )
         self.index = int(index)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         values = jnp.stack(
             tuple(
                 jnp.asarray(
@@ -73,7 +75,7 @@ class IntegrationOwnershipEvidence(StrictModule, NonTrainableState):
         maximum_sum_defect: float,
         minimum_weight: float,
         verified: bool,
-    ):
+    ) -> None:
         self.cover_id = str(cover_id)
         self.maximum_sum_defect = float(maximum_sum_defect)
         self.minimum_weight = float(minimum_weight)
@@ -94,7 +96,7 @@ class IntegrationOwnership(StrictModule, NonTrainableState):
         /,
         *,
         kind: Literal["window", "support"],
-    ):
+    ) -> None:
         if not isinstance(cover, SubdomainCover):
             raise TypeError("cover must be a SubdomainCover.")
         weights_ = tuple(weights)

@@ -13,31 +13,33 @@ import pytest
 import phydrax as phx
 
 
-def _scaled_state(time, state, parameter):
+def _scaled_state(time: Any, state: Any, parameter: Any) -> Any:
     return parameter * state
 
 
-def _linear_state(time, state, args):
+def _linear_state(time: Any, state: Any, args: Any) -> Any:
     return args @ state
 
 
-def _diagonal_state(time, state, args):
+def _diagonal_state(time: Any, state: Any, args: Any) -> Any:
     return args * state
 
 
-def _zero_drift(time, state, args):
+def _zero_drift(time: Any, state: Any, args: Any) -> Any:
     return jnp.zeros_like(state)
 
 
-def _parameter_drift(time, state, parameter):
+def _parameter_drift(time: Any, state: Any, parameter: Any) -> Any:
     return jnp.broadcast_to(parameter, state.shape)
 
 
-def _negated_state(time, state, args):
+def _negated_state(time: Any, state: Any, args: Any) -> Any:
     return -state
 
 
-def _exponential_problem(rate=0.7, *, t0=0.0, t1=1.0, initial=None):
+def _exponential_problem(
+    rate: Any = 0.7, *, t0: Any = 0.0, t1: Any = 1.0, initial: Any = None
+) -> Any:
     if initial is None:
         initial = jnp.asarray([1.0])
     return phx.solver.DifferentialProblem(
@@ -49,7 +51,7 @@ def _exponential_problem(rate=0.7, *, t0=0.0, t1=1.0, initial=None):
     )
 
 
-def _terminal_error(order, update, steps):
+def _terminal_error(order: Any, update: Any, steps: Any) -> Any:
     solution = phx.solver.solve_probabilistic_ode(
         _exponential_problem(),
         save_times=jnp.asarray([1.0]),
@@ -65,7 +67,7 @@ def _terminal_error(order, update, steps):
 
 
 @pytest.mark.parametrize("update", ["ek0", "ek1"])
-def test_integrated_wiener_methods_converge_on_smooth_scalar_ode(update):
+def test_integrated_wiener_methods_converge_on_smooth_scalar_ode(update: Any) -> None:
     coarse = _terminal_error(1, update, 8)
     fine = _terminal_error(1, update, 16)
 
@@ -73,7 +75,7 @@ def test_integrated_wiener_methods_converge_on_smooth_scalar_ode(update):
     assert fine < 2e-3
 
 
-def test_higher_order_prior_converges_on_coupled_vector_ode():
+def test_higher_order_prior_converges_on_coupled_vector_ode() -> None:
     matrix = jnp.asarray([[0.0, 1.0], [-1.0, 0.0]])
     problem = phx.solver.DifferentialProblem(
         _linear_state,
@@ -83,7 +85,7 @@ def test_higher_order_prior_converges_on_coupled_vector_ode():
         args=matrix,
     )
 
-    def error(steps):
+    def error(steps: Any) -> Any:
         solution = phx.solver.solve_probabilistic_ode(
             problem,
             save_times=jnp.asarray([1.0]),
@@ -102,7 +104,7 @@ def test_higher_order_prior_converges_on_coupled_vector_ode():
     assert error(16) < 2e-4
 
 
-def test_work_precision_is_sane_against_canonical_diffrax_solution():
+def test_work_precision_is_sane_against_canonical_diffrax_solution() -> None:
     problem = phx.solver.DifferentialProblem(
         _scaled_state,
         jnp.asarray([1.0]),
@@ -123,7 +125,7 @@ def test_work_precision_is_sane_against_canonical_diffrax_solution():
     assert probabilistic.stats["num_drift_evaluations"] <= 64
 
 
-def test_quasi_mle_calibration_tracks_residual_scale_and_preserves_sources():
+def test_quasi_mle_calibration_tracks_residual_scale_and_preserves_sources() -> None:
     method = phx.solver.ProbabilisticODEMethod(
         num_steps=12,
         update="ek0",
@@ -161,7 +163,7 @@ def test_quasi_mle_calibration_tracks_residual_scale_and_preserves_sources():
         assert jnp.all(jnp.isfinite(smooth.source_covariances[source]))
 
 
-def test_stiffness_and_step_exhaustion_have_explicit_status_codes():
+def test_stiffness_and_step_exhaustion_have_explicit_status_codes() -> None:
     stiff = phx.solver.solve_probabilistic_ode(
         _exponential_problem(rate=-200.0),
         save_times=jnp.asarray([1.0]),
@@ -186,7 +188,7 @@ def test_stiffness_and_step_exhaustion_have_explicit_status_codes():
     assert not exhausted.successful
 
 
-def test_dense_and_block_diagonal_factors_agree_for_separable_vector_system():
+def test_dense_and_block_diagonal_factors_agree_for_separable_vector_system() -> None:
     rates = jnp.asarray([0.4, -0.2, 0.1])
     problem = phx.solver.DifferentialProblem(
         _diagonal_state,
@@ -235,7 +237,7 @@ def test_dense_and_block_diagonal_factors_agree_for_separable_vector_system():
     )
 
 
-def test_residual_adaptation_redistributes_fixed_work_and_reaches_endpoint():
+def test_residual_adaptation_redistributes_fixed_work_and_reaches_endpoint() -> None:
     solution = phx.solver.solve_probabilistic_ode(
         _exponential_problem(rate=2.0),
         save_times=jnp.asarray([1.0]),
@@ -251,7 +253,7 @@ def test_residual_adaptation_redistributes_fixed_work_and_reaches_endpoint():
     assert jnp.sum(solution.step_sizes) == 1.0
 
 
-def test_adaptive_endpoint_roundoff_does_not_report_step_limit():
+def test_adaptive_endpoint_roundoff_does_not_report_step_limit() -> None:
     solution = phx.solver.solve_probabilistic_ode(
         _exponential_problem(rate=-0.4, t1=2.0),
         save_times=jnp.asarray([2.0]),
@@ -272,7 +274,7 @@ def test_adaptive_endpoint_roundoff_does_not_report_step_limit():
     assert solution.checkpoint.time == 2.0
 
 
-def test_checkpoint_resume_replays_fixed_steps_deterministically():
+def test_checkpoint_resume_replays_fixed_steps_deterministically() -> None:
     method = phx.solver.ProbabilisticODEMethod(num_steps=24)
     full = phx.solver.solve_probabilistic_ode(
         _exponential_problem(t1=1.0),
@@ -318,12 +320,12 @@ def test_checkpoint_resume_replays_fixed_steps_deterministically():
     assert jnp.array_equal(full.diffusion_scale, resumed.diffusion_scale)
 
 
-def test_checkpoint_binds_declared_identity_of_opaque_drift():
+def test_checkpoint_binds_declared_identity_of_opaque_drift() -> None:
     method = phx.solver.ProbabilisticODEMethod(num_steps=4)
     decay = lambda time, state, rate: -rate * state
     growth = lambda time, state, rate: rate * state
 
-    def problem(drift, *, t0, t1, initial):
+    def problem(drift: Any, *, t0: Any, t1: Any, initial: Any) -> Any:
         return phx.solver.DifferentialProblem(
             drift, initial, t0=t0, t1=t1, args=jnp.asarray(0.5)
         )
@@ -366,10 +368,10 @@ def test_checkpoint_binds_declared_identity_of_opaque_drift():
         )
 
 
-def test_solver_is_jittable_and_differentiable_in_model_parameters():
+def test_solver_is_jittable_and_differentiable_in_model_parameters() -> None:
     method = phx.solver.ProbabilisticODEMethod(num_steps=12)
 
-    def terminal(rate):
+    def terminal(rate: Any) -> Any:
         return phx.solver.solve_probabilistic_ode(
             _exponential_problem(rate),
             save_times=jnp.asarray([1.0]),
@@ -389,8 +391,8 @@ def test_solver_is_jittable_and_differentiable_in_model_parameters():
     [(False, 1.0 / 24.0), (True, 5.0 / 192.0)],
 )
 def test_midpoint_iwp_covariance_uses_filter_or_conditional_bridge(
-    factorization, smoothing, unit_variance
-):
+    factorization: Any, smoothing: Any, unit_variance: Any
+) -> None:
     problem = phx.solver.DifferentialProblem(
         _zero_drift,
         jnp.asarray([0.0]),
@@ -426,7 +428,7 @@ def test_midpoint_iwp_covariance_uses_filter_or_conditional_bridge(
 
 
 @pytest.mark.parametrize("factorization", ["dense", "block_diagonal"])
-def test_parameter_covariance_is_one_fixed_random_parameter(factorization):
+def test_parameter_covariance_is_one_fixed_random_parameter(factorization: Any) -> None:
     parameter_variance = 0.09
     times = jnp.asarray([0.5, 2.0])
     expected = parameter_variance * times**2
@@ -470,7 +472,9 @@ def test_parameter_covariance_is_one_fixed_random_parameter(factorization):
         ),
     ],
 )
-def test_generated_method_id_rejects_resume_critical_mismatch(changed_method):
+def test_generated_method_id_rejects_resume_critical_mismatch(
+    changed_method: Any,
+) -> None:
     first_problem = phx.solver.DifferentialProblem(
         _zero_drift,
         jnp.asarray([0.0]),
@@ -505,7 +509,7 @@ def test_generated_method_id_rejects_resume_critical_mismatch(changed_method):
         )
 
 
-def test_dense_matrix_free_output_retains_no_covariance_matrix():
+def test_dense_matrix_free_output_retains_no_covariance_matrix() -> None:
     problem = phx.solver.DifferentialProblem(
         _negated_state,
         jnp.asarray([1.0, -2.0]),
@@ -533,7 +537,9 @@ def test_dense_matrix_free_output_retains_no_covariance_matrix():
 
 
 @pytest.mark.parametrize(("update", "evaluations_per_step"), [("ek0", 1), ("ek1", 2)])
-def test_adaptive_work_count_includes_pilot_and_production(update, evaluations_per_step):
+def test_adaptive_work_count_includes_pilot_and_production(
+    update: Any, evaluations_per_step: Any
+) -> None:
     num_steps = 5
     solution = phx.solver.solve_probabilistic_ode(
         _exponential_problem(),
@@ -550,7 +556,7 @@ def test_adaptive_work_count_includes_pilot_and_production(update, evaluations_p
     )
 
 
-def test_block_dense_output_checks_guard_before_materialization():
+def test_block_dense_output_checks_guard_before_materialization() -> None:
     problem = phx.solver.DifferentialProblem(
         _zero_drift,
         jnp.zeros((3,)),
@@ -574,8 +580,8 @@ def test_block_dense_output_checks_guard_before_materialization():
 @pytest.mark.parametrize("factorization", ["dense", "block_diagonal"])
 @pytest.mark.parametrize("observation_variance", [0.0, 3.0])
 def test_quasi_likelihood_includes_innovation_normalization(
-    factorization, observation_variance
-):
+    factorization: Any, observation_variance: Any
+) -> None:
     problem = phx.solver.DifferentialProblem(
         _zero_drift,
         jnp.asarray([0.0]),

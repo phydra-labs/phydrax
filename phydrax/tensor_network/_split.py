@@ -9,10 +9,12 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
+from ..typing import parse
 from ._precision import TensorNetworkPrecisionPolicy
 
 
@@ -37,7 +39,7 @@ class TensorTruncationEvidence(StrictModule):
         /,
         precision_evidence: PrecisionEvidenceEnvelope,
         precision_policy_id: str,
-    ):
+    ) -> None:
         if (
             not isinstance(retained_rank, Integral)
             or isinstance(retained_rank, bool)
@@ -81,8 +83,7 @@ def truncated_svd(
     capacity = int(maximum_rank)
     if capacity < 1:
         raise ValueError("maximum_rank must be positive.")
-    if absorb not in ("left", "right", "split"):
-        raise ValueError("absorb must be 'left', 'right', or 'split'.")
+    absorb = parse(absorb, SingularValueAbsorption, "absorb")
     value = precision.factorization(jnp.asarray(matrix))
     if value.ndim != 2 or min(value.shape) < 1:
         raise ValueError("truncated_svd requires a nonempty rank-two matrix.")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -26,7 +28,7 @@ def main() -> None:
     rates = jnp.linspace(0.4, 0.99, args.features)
     forcing = jax.random.normal(jax.random.key(0), (args.samples, args.features)) * 0.02
 
-    def step(state, noise):
+    def step(state: Any, noise: Any) -> Any:
         following = rates * state + noise
         return following, state
 

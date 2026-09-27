@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -10,21 +13,21 @@ import pytest
 import phydrax as phx
 
 
-def _state():
+def _state() -> Any:
     return phx.uq.GaussianProcessLikelihoodState(
         kernel=phx.kernels.Matern32Kernel(length_scale=0.3),
         noise_scale=0.05,
     )
 
 
-def _dense(operator):
+def _dense(operator: Any) -> Any:
     return phx.linalg.materialize(
         operator,
         phx.linalg.MaterializationPolicy(max_entries=10_000, max_bytes=1_000_000),
     )
 
 
-def test_fixed_actions_preserve_orientation_and_native_sparse_values():
+def test_fixed_actions_preserve_orientation_and_native_sparse_values() -> None:
     points = jnp.linspace(0.0, 1.0, 6)[:, None]
     matrix = jnp.arange(18.0).reshape(6, 3) + 1.0
     dense = phx.uq.FixedGaussianProcessActionPolicy(matrix).resolve(
@@ -57,7 +60,7 @@ def test_fixed_actions_preserve_orientation_and_native_sparse_values():
     assert jnp.array_equal(_dense(sparse.operator), sparse_operator.as_dense())
 
 
-def test_fixed_actions_reject_reversed_complex_and_misaligned_inputs():
+def test_fixed_actions_reject_reversed_complex_and_misaligned_inputs() -> None:
     with pytest.raises(ValueError, match="shape"):
         phx.uq.FixedGaussianProcessActionPolicy(jnp.ones(5))
     with pytest.raises(TypeError, match="real"):
@@ -68,7 +71,7 @@ def test_fixed_actions_reject_reversed_complex_and_misaligned_inputs():
         policy.resolve(jnp.ones((4, 1)), state=_state())
 
 
-def test_block_sparse_actions_balance_normalize_and_replay():
+def test_block_sparse_actions_balance_normalize_and_replay() -> None:
     points = jnp.linspace(0.0, 1.0, 10)[:, None]
     first = phx.uq.BlockSparseGaussianProcessActionPolicy.from_random(jr.key(7), 10, 3)
     second = phx.uq.BlockSparseGaussianProcessActionPolicy.from_random(jr.key(7), 10, 3)
@@ -83,7 +86,7 @@ def test_block_sparse_actions_balance_normalize_and_replay():
     assert tuple(jnp.count_nonzero(matrix, axis=0).tolist()) == (4, 3, 3)
 
 
-def test_block_sparse_actions_reject_invalid_blocks_and_preserve_gradients():
+def test_block_sparse_actions_reject_invalid_blocks_and_preserve_gradients() -> None:
     with pytest.raises(ValueError, match="between"):
         phx.uq.BlockSparseGaussianProcessActionPolicy(jnp.ones(4), 5)
 
@@ -95,7 +98,7 @@ def test_block_sparse_actions_reject_invalid_blocks_and_preserve_gradients():
     with pytest.raises(Exception, match="nonzero finite norm"):
         policy.resolve(points, state=_state())
 
-    def objective(values):
+    def objective(values: Any) -> Any:
         resolved = phx.uq.BlockSparseGaussianProcessActionPolicy(values, 3).resolve(
             points,
             state=_state(),
@@ -107,7 +110,7 @@ def test_block_sparse_actions_reject_invalid_blocks_and_preserve_gradients():
     assert jnp.linalg.vector_norm(gradient) > 0.0
 
 
-def test_pseudo_input_actions_match_kernel_sections_and_are_differentiable():
+def test_pseudo_input_actions_match_kernel_sections_and_are_differentiable() -> None:
     points = jnp.linspace(0.0, 1.0, 9)[:, None]
     pseudo_inputs = jnp.asarray([[0.1], [0.5], [0.9]])
     state = _state()
@@ -128,7 +131,7 @@ def test_pseudo_input_actions_match_kernel_sections_and_are_differentiable():
         jnp.eye(3),
     )
 
-    def objective(inputs):
+    def objective(inputs: Any) -> Any:
         actions = phx.uq.PseudoInputGaussianProcessActionPolicy(inputs).resolve(
             points,
             state=state,
@@ -140,7 +143,7 @@ def test_pseudo_input_actions_match_kernel_sections_and_are_differentiable():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_pseudo_input_actions_reject_shape_count_and_rank_failures():
+def test_pseudo_input_actions_reject_shape_count_and_rank_failures() -> None:
     points = jnp.linspace(0.0, 1.0, 5)[:, None]
     state = _state()
     with pytest.raises(ValueError, match="cannot exceed"):

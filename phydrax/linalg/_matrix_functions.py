@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal, TypeAlias
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -13,7 +13,9 @@ import jax.core as jax_core
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from phydrax.ein import contract
 
@@ -22,6 +24,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._model import register_artifact_value
 from .._polynomial._orthogonal import legendre_rule_data
 from .._strict import StrictModule
+from ..typing import parse
 from ._certificates import _operator_numeric_fingerprint
 from ._exponential_taylor import (
     execute_taylor_exponential_action,
@@ -106,15 +109,8 @@ class MatrixFunctionPolicy(StrictModule):
         error_tolerance: float = 1e-8,
         differentiation: DifferentiationPolicy | None = None,
         failure: FailurePolicy | None = None,
-    ):
-        if method not in (
-            "auto",
-            "spectral",
-            "chebyshev",
-            "lanczos",
-            "arnoldi",
-        ):
-            raise ValueError("Unknown matrix-function method.")
+    ) -> None:
+        method = parse(method, MatrixFunctionMethod, "method")
         dimension = int(max_dimension)
         tolerance = float(error_tolerance)
         if dimension < 1 or not np.isfinite(tolerance) or tolerance < 0.0:
@@ -157,7 +153,7 @@ class TransformDiagonalRepresentation(StrictModule):
         /,
         *,
         representation_id: str | None = None,
-    ):
+    ) -> None:
         if isinstance(analysis_or_transform, AbstractLinearTransform):
             if synthesis is not None:
                 raise ValueError(
@@ -500,7 +496,7 @@ def _batched_dense_matrix_function_action(
     scales = scale_.reshape((batch_count,))
     right_hand_sides = canonical.reshape((batch_count, size, canonical.shape[-1]))
 
-    def apply_one(matrix_, scale_value, right_hand_side):
+    def apply_one(matrix_: Array, scale_value: Array, right_hand_side: Array) -> Array:
         function_matrix = _small_matrix_function(
             matrix_,
             scale_value,
@@ -594,20 +590,7 @@ def matrix_function_action(
         raise ValueError("Matrix functions require an endomorphism.")
     self_adjoint = operator.properties.certifies("self_adjoint")
     positive_definite = operator.properties.certifies("positive_definite")
-    if kind not in (
-        "exp",
-        "phi1",
-        "phi2",
-        "phi3",
-        "sin",
-        "cos",
-        "log",
-        "sqrt",
-        "inverse-sqrt",
-        "fractional",
-        "resolvent",
-    ):
-        raise ValueError("Unknown matrix-function kind.")
+    kind = parse(kind, MatrixFunctionKind, "kind")
     if kind == "fractional" and power is None:
         raise ValueError("fractional actions require power.")
     if kind == "resolvent" and shift is None:
@@ -824,7 +807,7 @@ def matrix_function_action(
             failure=selected.failure,
         )
 
-    def action(value):
+    def action(value: Array) -> Array:
         return operator.target.flatten(operator.mv(operator.source.unflatten(value)))
 
     if method == "chebyshev":
@@ -1070,15 +1053,17 @@ def matrix_function_action(
 
 
 def matrix_exponential_action(
-    operator,
-    vector,
+    operator: AbstractLinearOperator
+    | Callable[[PyTree[Any]], PyTree[Array]]
+    | PreparedTaylorExponentialAction,
+    vector: PyTree[Any],
     scale: ArrayLike = 1.0,
     /,
     *,
     policy: MatrixFunctionPolicy | TaylorExponentialPolicy | None = None,
     key: Array | None = None,
     trace: ArrayLike | None = None,
-    **kwargs,
+    **kwargs: Any,
 ) -> MatrixFunctionResult:
     if isinstance(operator, PreparedTaylorExponentialAction):
         if policy is not None or key is not None or kwargs:
@@ -1123,19 +1108,31 @@ def matrix_exponential_action(
 
 
 def matrix_phi1_action(
-    operator, vector, scale: ArrayLike = 1.0, /, **kwargs
+    operator: AbstractLinearOperator | Callable[[PyTree[Any]], PyTree[Array]],
+    vector: PyTree[Any],
+    scale: ArrayLike = 1.0,
+    /,
+    **kwargs: Any,
 ) -> MatrixFunctionResult:
     return matrix_function_action(operator, vector, scale, kind="phi1", **kwargs)
 
 
 def matrix_phi2_action(
-    operator, vector, scale: ArrayLike = 1.0, /, **kwargs
+    operator: AbstractLinearOperator | Callable[[PyTree[Any]], PyTree[Array]],
+    vector: PyTree[Any],
+    scale: ArrayLike = 1.0,
+    /,
+    **kwargs: Any,
 ) -> MatrixFunctionResult:
     return matrix_function_action(operator, vector, scale, kind="phi2", **kwargs)
 
 
 def matrix_phi3_action(
-    operator, vector, scale: ArrayLike = 1.0, /, **kwargs
+    operator: AbstractLinearOperator | Callable[[PyTree[Any]], PyTree[Array]],
+    vector: PyTree[Any],
+    scale: ArrayLike = 1.0,
+    /,
+    **kwargs: Any,
 ) -> MatrixFunctionResult:
     return matrix_function_action(operator, vector, scale, kind="phi3", **kwargs)
 
@@ -1311,18 +1308,21 @@ def _general_primary_matrix_function(
     if kind == "fractional" and power is not None and float(power).is_integer():
         return jnp.linalg.matrix_power(matrix, int(power))
     logarithm = _general_matrix_logarithm(matrix)
-    if kind == "log":
-        return logarithm
-    if kind == "sqrt":
-        exponent = 0.5
-    elif kind == "inverse-sqrt":
-        exponent = -0.5
-    elif kind == "fractional":
-        if power is None:
-            raise ValueError("A fractional matrix function requires power.")
-        exponent = power
-    else:
-        raise ValueError(f"No general primary-matrix route exists for {kind!r}.")
+    match kind:
+        case "log":
+            return logarithm
+        case "sqrt":
+            exponent = 0.5
+        case "inverse-sqrt":
+            exponent = -0.5
+        case "fractional":
+            if power is None:
+                raise ValueError("A fractional matrix function requires power.")
+            exponent = power
+        case "exp" | "phi1" | "phi2" | "phi3" | "sin" | "cos" | "resolvent":
+            raise ValueError(f"No general primary-matrix route exists for {kind!r}.")
+        case _:
+            assert_never(kind)
     return jsp.linalg.expm(jnp.asarray(exponent, dtype=matrix.real.dtype) * logarithm)
 
 
@@ -1341,7 +1341,7 @@ def _general_matrix_logarithm(matrix: Array, /) -> Array:
 
 
 def _chebyshev_action(
-    action,
+    action: Callable[[Array], Array],
     vector: Array,
     scale: Array,
     kind: MatrixFunctionKind,
@@ -1368,7 +1368,7 @@ def _chebyshev_action(
     )
     coefficients = (2.0 / degree) * (jnp.cos(indices[:, None] * theta[None, :]) @ samples)
 
-    def normalized(value):
+    def normalized(value: Array) -> Array:
         return (action(value) - center * value) / radius
 
     previous = vector

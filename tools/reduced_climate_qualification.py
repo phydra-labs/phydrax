@@ -8,6 +8,7 @@ import json
 import tempfile
 import time
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -27,7 +28,7 @@ from phydrax.dynamics import TimeGrid
 from phydrax.solver import FixedStepRolloutPlan
 
 
-def _problem(plan, count, end_time=20.0):
+def _problem(plan: Any, count: Any, end_time: Any = 20.0) -> Any:
     runtime = plan.prepare(
         TimeGrid(
             np.linspace(0.0, end_time, count + 1), time_id=f"qualification-{count}-steps"
@@ -44,7 +45,7 @@ def _problem(plan, count, end_time=20.0):
     return runtime, initial, drivers
 
 
-def qualify():
+def qualify() -> Any:
     with jax.enable_x64(True):
         gas = GasBoxModel(((1.0,), (1.0,), (1.0,)), ((0.0,), (1.0e-14,), (0.2,)))
         initial_boxes = jnp.asarray(((2.0,), (3.0,), (4.0,)))

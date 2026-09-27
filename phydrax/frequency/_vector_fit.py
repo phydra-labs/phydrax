@@ -4,7 +4,8 @@
 from dataclasses import dataclass
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..linalg import (
     ArraySpace,
@@ -22,7 +23,7 @@ class PoleResidueModel:
     residues: Array
     direct: Array
 
-    def evaluate(self, angular_frequency_rad_s: ArrayLike):
+    def evaluate(self, angular_frequency_rad_s: ArrayLike) -> Array:
         s = 1j * jnp.asarray(angular_frequency_rad_s)
         return self.direct + jnp.sum(self.residues / (s[..., None] - self.poles), axis=-1)
 

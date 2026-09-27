@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from typing import Protocol
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -48,7 +51,7 @@ class ContactConeProgram(StrictModule, NonTrainableState):
         static_friction: ArrayLike | None = None,
         restitution: ArrayLike | None = None,
         mechanical_available: ArrayLike | None = None,
-    ):
+    ) -> None:
         free = jnp.asarray(free_velocity)
         effective = jnp.asarray(effective_mass, dtype=free.dtype)
         compliance_ = jnp.asarray(compliance, dtype=free.dtype)
@@ -117,6 +120,23 @@ class ContactConeProgram(StrictModule, NonTrainableState):
         return 1 + self.tangent_dimension
 
 
+class _ContactConeSolverControls(Protocol):
+    @property
+    def maximum_iterations(self) -> int: ...
+
+    @property
+    def absolute_tolerance(self) -> float: ...
+
+    @property
+    def relative_tolerance(self) -> float: ...
+
+    @property
+    def relaxation(self) -> float: ...
+
+    @property
+    def plan_id(self) -> str: ...
+
+
 class ContactConeSolverPlan(StrictModule, NonTrainableState):
     maximum_iterations: int = eqx.field(static=True)
     absolute_tolerance: float = eqx.field(static=True)
@@ -131,7 +151,7 @@ class ContactConeSolverPlan(StrictModule, NonTrainableState):
         absolute_tolerance: float = 1.0e-10,
         relative_tolerance: float = 1.0e-8,
         relaxation: float = 1.0,
-    ):
+    ) -> None:
         iterations = int(maximum_iterations)
         absolute = float(absolute_tolerance)
         relative = float(relative_tolerance)
@@ -194,26 +214,26 @@ class ContactConeEvidence(StrictModule):
 
     def __init__(
         self,
-        converged,
-        iterations,
-        projected_residual,
-        complementarity_defect,
-        cone_defect,
-        minimum_normal_impulse,
-        dissipated_impulse_work,
-        finite,
-        successful,
-        program_id,
-        solver_id,
+        converged: ArrayLike,
+        iterations: ArrayLike,
+        projected_residual: ArrayLike,
+        complementarity_defect: ArrayLike,
+        cone_defect: ArrayLike,
+        minimum_normal_impulse: ArrayLike,
+        dissipated_impulse_work: ArrayLike,
+        finite: ArrayLike,
+        successful: ArrayLike,
+        program_id: str,
+        solver_id: str,
         /,
         *,
-        material_law_complete=True,
-        minimum_normal_velocity=0.0,
-        maximum_dissipation_defect=0.0,
-        certificate_tolerance=0.0,
-        dissipative=True,
+        material_law_complete: ArrayLike = True,
+        minimum_normal_velocity: ArrayLike = 0.0,
+        maximum_dissipation_defect: ArrayLike = 0.0,
+        certificate_tolerance: ArrayLike = 0.0,
+        dissipative: ArrayLike = True,
         numeric_revision: ContactConeNumericRevision | None = None,
-    ):
+    ) -> None:
         self.converged = jnp.asarray(converged, dtype=jnp.bool_)
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
         self.projected_residual = jnp.asarray(projected_residual)
@@ -246,16 +266,16 @@ class ContactConeResult(StrictModule):
 
     def __init__(
         self,
-        impulse,
-        post_relative_velocity,
-        evidence,
+        impulse: ArrayLike,
+        post_relative_velocity: ArrayLike,
+        evidence: ContactConeEvidence,
         /,
         *,
-        candidate_impulse=None,
-        candidate_post_relative_velocity=None,
-        contact_law_velocity=None,
-        candidate_contact_law_velocity=None,
-    ):
+        candidate_impulse: ArrayLike | None = None,
+        candidate_post_relative_velocity: ArrayLike | None = None,
+        contact_law_velocity: ArrayLike | None = None,
+        candidate_contact_law_velocity: ArrayLike | None = None,
+    ) -> None:
         accepted = jnp.asarray(impulse)
         post = jnp.asarray(post_relative_velocity, dtype=accepted.dtype)
         if not isinstance(evidence, ContactConeEvidence):
@@ -454,7 +474,9 @@ def _iterate_contact_law(
         0.0,
     )
 
-    def body(index, state):
+    def body(
+        index: Array, state: tuple[Array, Array, Array, Array]
+    ) -> tuple[Array, Array, Array, Array]:
         value, converged, first_converged, residual_norm = state
         gradient = _contact_matrix_action(matrix, value) + free
         trial = value - solver.relaxation * step * gradient
@@ -571,7 +593,7 @@ def _contact_law_diagnostics(
 
 
 def _numeric_revision(
-    program: ContactConeProgram, solver: ContactConeSolverPlan, /
+    program: ContactConeProgram, solver: _ContactConeSolverControls, /
 ) -> ContactConeNumericRevision:
     parameters = jnp.asarray(
         (

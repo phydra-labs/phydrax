@@ -10,7 +10,7 @@ from typing import Any, ClassVar, TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -67,7 +67,7 @@ class NumericalFluxResult(StrictModule):
         /,
         *,
         fallback_activated: Array | None = None,
-    ):
+    ) -> None:
         flux = jnp.asarray(normal_flux)
         speed = jnp.asarray(max_speed)
         fallback = (
@@ -170,7 +170,7 @@ class RusanovFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan, NonTrainableS
 
     smooth_epsilon: float = eqx.field(static=True)
 
-    def __init__(self, *, smooth_epsilon: float = 0.0):
+    def __init__(self, *, smooth_epsilon: float = 0.0) -> None:
         epsilon = float(smooth_epsilon)
         if not np.isfinite(epsilon) or epsilon < 0.0:
             raise ValueError("smooth_epsilon must be finite and non-negative.")
@@ -264,7 +264,7 @@ class RusanovFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan, NonTrainableS
 class HLLFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan, NonTrainableState):
     """Two-wave Harten–Lax–van Leer numerical flux."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.differentiability = BranchDifferentiationPolicy.BRANCHWISE
         self.flux_id = canonical_fingerprint(
             {"kind": "hll-flux", "normal_ale_contract": _NORMAL_ALE_CONTRACT}
@@ -371,7 +371,7 @@ class HLLFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan, NonTrainableState
 class HLLCFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan, NonTrainableState):
     """Contact-resolving HLLC flux for Euler-compatible state layouts."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.differentiability = BranchDifferentiationPolicy.BRANCHWISE
         self.flux_id = canonical_fingerprint(
             {"kind": "hllc-euler-flux", "normal_ale_contract": _NORMAL_ALE_CONTRACT}
@@ -672,7 +672,7 @@ class HLLDFluxPlan(AbstractNumericalFluxPlan, NonTrainableState):
         *,
         denominator_epsilon: float = 1e-10,
         normal_field_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         epsilon = float(denominator_epsilon)
         tolerance = float(normal_field_tolerance)
         if (
@@ -823,7 +823,7 @@ class HLLDFluxPlan(AbstractNumericalFluxPlan, NonTrainableState):
             total_pressure: Array,
             signal: Array,
             normal_velocity: Array,
-        ):
+        ) -> tuple[Array, Array, Array, Array, Array]:
             density_denominator, bad_density = self._safe_denominator(signal - s_m)
             density_star = density * (signal - normal_velocity) / density_denominator
             transverse_denominator_raw = (
@@ -1033,7 +1033,7 @@ class RoeFluxPlan(AbstractNumericalFluxPlan, NonTrainableState):
 
     entropy_fix: float = eqx.field(static=True)
 
-    def __init__(self, *, entropy_fix: float = 0.1):
+    def __init__(self, *, entropy_fix: float = 0.1) -> None:
         fix = float(entropy_fix)
         if not np.isfinite(fix) or fix <= 0.0:
             raise ValueError("entropy_fix must be finite and positive.")
@@ -1094,7 +1094,7 @@ class EntropyConservativeEulerFluxPlan(
 ):
     """Chandrashekar-type symmetric entropy-conservative Euler flux."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.symmetric = True
         self.consistent = True
         self.differentiability = BranchDifferentiationPolicy.SMOOTH
@@ -1196,7 +1196,7 @@ class EntropyStableFluxPlan(AbstractArbitraryNormalNumericalFluxPlan):
         /,
         *,
         dissipation: float = 1.0,
-    ):
+    ) -> None:
         from ...equations._entropy_pair import ConvexEntropyPair
 
         if not isinstance(central, AbstractSymmetricTwoPointFluxPlan):
@@ -1295,7 +1295,7 @@ class EntropyStableEulerFluxPlan(
     central: EntropyConservativeEulerFluxPlan
     dissipation: float = eqx.field(static=True)
 
-    def __init__(self, *, dissipation: float = 1.0):
+    def __init__(self, *, dissipation: float = 1.0) -> None:
         coefficient = float(dissipation)
         if not np.isfinite(coefficient) or coefficient < 0.0:
             raise ValueError("dissipation must be finite and non-negative.")

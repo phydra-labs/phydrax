@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -15,7 +18,7 @@ from phydrax.discretization.finite_volume._unstructured_embedded_boundary import
 )
 
 
-def _quadrilateral_grid(nx=3, ny=2, *, x_scale=1.0):
+def _quadrilateral_grid(nx: Any = 3, ny: Any = 2, *, x_scale: Any = 1.0) -> Any:
     vertices = np.asarray(
         [(x_scale * i / nx, j / ny) for j in range(ny + 1) for i in range(nx + 1)]
     )
@@ -32,7 +35,7 @@ def _quadrilateral_grid(nx=3, ny=2, *, x_scale=1.0):
     ).prepare()
 
 
-def test_embedded_boundary_clipping_preserves_complement_and_fluid_closure():
+def test_embedded_boundary_clipping_preserves_complement_and_fluid_closure() -> None:
     discretization = _quadrilateral_grid()
     fluid_right = phx.discretization.EmbeddedBoundaryPlan(
         discretization,
@@ -73,7 +76,7 @@ def test_embedded_boundary_clipping_preserves_complement_and_fluid_closure():
     assert fluid_right.evidence.status == int(EmbeddedBoundaryStatus.SUCCESS)
 
 
-def test_embedded_boundary_has_exact_full_fluid_and_solid_limits():
+def test_embedded_boundary_has_exact_full_fluid_and_solid_limits() -> None:
     discretization = _quadrilateral_grid()
     full = phx.discretization.EmbeddedBoundaryPlan(
         discretization,
@@ -119,7 +122,7 @@ def test_embedded_boundary_has_exact_full_fluid_and_solid_limits():
 
 
 @pytest.mark.parametrize("sliver_width", [1.0e-40, 1.0e-50])
-def test_embedded_boundary_rejects_float32_extreme_slivers(sliver_width):
+def test_embedded_boundary_rejects_float32_extreme_slivers(sliver_width: Any) -> None:
     with jax.enable_x64(True):
         discretization = _quadrilateral_grid(nx=1, ny=1)
     with jax.enable_x64(False):
@@ -137,7 +140,7 @@ def test_embedded_boundary_rejects_float32_extreme_slivers(sliver_width):
             plan.prepare(vertex_values)
 
 
-def test_embedded_boundary_identity_fingerprints_realized_metric_dtype():
+def test_embedded_boundary_identity_fingerprints_realized_metric_dtype() -> None:
     discretization = _quadrilateral_grid(nx=1, ny=1)
     plan = phx.discretization.EmbeddedBoundaryPlan(
         discretization,
@@ -163,7 +166,9 @@ def test_embedded_boundary_identity_fingerprints_realized_metric_dtype():
     )
 
 
-def test_embedded_boundary_identity_binds_samples_base_and_field_body_provenance():
+def test_embedded_boundary_identity_binds_samples_base_and_field_body_provenance() -> (
+    None
+):
     discretization = _quadrilateral_grid()
     plan = phx.discretization.EmbeddedBoundaryPlan(
         discretization,
@@ -222,7 +227,7 @@ def test_embedded_boundary_identity_binds_samples_base_and_field_body_provenance
     )
 
 
-def test_embedded_boundary_closure_thresholds_produce_typed_failed_evidence():
+def test_embedded_boundary_closure_thresholds_produce_typed_failed_evidence() -> None:
     base_discretization = _quadrilateral_grid()
     discretization = eqx.tree_at(
         lambda value: value.cell_volumes,
@@ -277,7 +282,7 @@ def test_embedded_boundary_closure_thresholds_produce_typed_failed_evidence():
     assert threshold_exceeded
 
 
-def test_embedded_boundary_float32_oblique_closure_uses_realized_epsilon_floor():
+def test_embedded_boundary_float32_oblique_closure_uses_realized_epsilon_floor() -> None:
     with jax.enable_x64(False):
         discretization = _quadrilateral_grid()
         policy = EmbeddedBoundaryStabilizationPolicy(
@@ -315,7 +320,7 @@ def test_embedded_boundary_float32_oblique_closure_uses_realized_epsilon_floor()
     )
 
 
-def test_embedded_boundary_cut_normals_are_unit_and_outward_and_solids_own_zero():
+def test_embedded_boundary_cut_normals_are_unit_and_outward_and_solids_own_zero() -> None:
     discretization = _quadrilateral_grid()
     gradient = jnp.asarray((1.0, 0.25))
     embedded = phx.discretization.EmbeddedBoundaryPlan(
@@ -350,7 +355,7 @@ def test_embedded_boundary_cut_normals_are_unit_and_outward_and_solids_own_zero(
     )
 
 
-def test_embedded_boundary_stabilization_policy_classifies_slivers_by_identity():
+def test_embedded_boundary_stabilization_policy_classifies_slivers_by_identity() -> None:
     discretization = _quadrilateral_grid()
     classify = EmbeddedBoundaryStabilizationPolicy(
         minimum_volume_fraction=0.05,
@@ -419,7 +424,7 @@ def test_embedded_boundary_stabilization_policy_classifies_slivers_by_identity()
     assert slivers.metrics_id != unclassified.metrics_id
 
 
-def test_embedded_boundary_rejects_ambiguous_multi_crossings():
+def test_embedded_boundary_rejects_ambiguous_multi_crossings() -> None:
     discretization = _quadrilateral_grid(nx=1, ny=1)
     with pytest.raises(ValueError, match="ambiguous edge crossings"):
         phx.discretization.EmbeddedBoundaryPlan(
@@ -429,7 +434,7 @@ def test_embedded_boundary_rejects_ambiguous_multi_crossings():
         ).prepare()
 
 
-def test_plic_reconstructs_planar_interface_and_vof_transport_is_bounded():
+def test_plic_reconstructs_planar_interface_and_vof_transport_is_bounded() -> None:
     discretization = _quadrilateral_grid()
     embedded = phx.discretization.EmbeddedBoundaryPlan(
         discretization,

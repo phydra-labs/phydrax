@@ -6,14 +6,16 @@ from __future__ import annotations
 
 from pathlib import Path
 from time import perf_counter
-from typing import Any
+from typing import cast
 
 import numpy as np
+from jax.typing import ArrayLike
 
 from ..discretization.mpm import (
     MPMCommercialFailure,
     MPMOperationalStatus,
     MPMRuntimeState,
+    MPMStepResult,
     PreparedMPMDynamics,
 )
 from ..equations import MaterialPointArguments
@@ -24,15 +26,15 @@ from ._material_point_output import MPMOutputPlan
 class MPMOperationalResult:
     def __init__(
         self,
-        state,
-        numerical_result,
+        state: MPMRuntimeState,
+        numerical_result: MPMStepResult,
         *,
-        status,
-        failure,
-        generation,
-        output_complete,
-        elapsed_seconds,
-    ):
+        status: int,
+        failure: int,
+        generation: int,
+        output_complete: bool,
+        elapsed_seconds: float,
+    ) -> None:
         self.state = state
         self.numerical_result = numerical_result
         self.status = MPMOperationalStatus(status)
@@ -56,7 +58,7 @@ class MPMRunSupervisor:
         checkpoint_directory: str | Path | None = None,
         checkpoint_interval: int = 1,
         output_plan: MPMOutputPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedMPMDynamics):
             raise TypeError("dynamics must be PreparedMPMDynamics.")
         if not isinstance(initial_state, MPMRuntimeState):
@@ -80,7 +82,7 @@ class MPMRunSupervisor:
         self.status = MPMOperationalStatus.PREPARED
         self.failure = MPMCommercialFailure.NONE
         self.generation = 0
-        self.events = []
+        self.events: list[dict[str, object]] = []
         self.metrics = {
             "attempted_steps": 0,
             "accepted_steps": int(np.asarray(initial_state.accepted_step)),
@@ -95,7 +97,7 @@ class MPMRunSupervisor:
             "maximum_apic_condition": 0.0,
         }
 
-    def _event(self, kind, **payload):
+    def _event(self, kind: str, **payload: object) -> None:
         self.events.append(
             {
                 "sequence": len(self.events),
@@ -106,7 +108,7 @@ class MPMRunSupervisor:
             }
         )
 
-    def advance(self, step_size: Any):
+    def advance(self, step_size: ArrayLike) -> MPMOperationalResult:
         if self.status not in (
             MPMOperationalStatus.PREPARED,
             MPMOperationalStatus.RUNNING,
@@ -165,7 +167,8 @@ class MPMRunSupervisor:
                 self.status = MPMOperationalStatus.CHECKPOINTING
                 self.generation += 1
                 self.checkpoint_plan.write_generation(
-                    self.checkpoint_directory,
+                    # __init__ rejects a checkpoint plan without checkpoint_directory.
+                    cast(Path, self.checkpoint_directory),
                     self.state,
                     generation=self.generation,
                 )
@@ -197,7 +200,7 @@ class MPMRunSupervisor:
             elapsed_seconds=elapsed,
         )
 
-    def recover(self):
+    def recover(self) -> MPMRuntimeState:
         if self.checkpoint_plan is None or self.checkpoint_directory is None:
             raise RuntimeError("Supervisor has no checkpoint recovery plan.")
         self.status = MPMOperationalStatus.RECOVERING
@@ -209,7 +212,7 @@ class MPMRunSupervisor:
         self._event("recovered", generation=self.generation)
         return state
 
-    def complete(self):
+    def complete(self) -> None:
         if self.status not in (
             MPMOperationalStatus.PREPARED,
             MPMOperationalStatus.RUNNING,
@@ -218,21 +221,21 @@ class MPMRunSupervisor:
         self.status = MPMOperationalStatus.COMPLETED
         self._event("completed")
 
-    def quarantine(self, reason: str):
+    def quarantine(self, reason: str) -> None:
         reason_ = str(reason)
         if not reason_:
             raise ValueError("Quarantine reason must be non-empty.")
         self.status = MPMOperationalStatus.QUARANTINED
         self._event("quarantined", reason=reason_)
 
-    def release(self, release_bundle_id: str):
+    def release(self, release_bundle_id: str) -> None:
         identifier = str(release_bundle_id)
         if self.status != MPMOperationalStatus.COMPLETED or not identifier:
             raise RuntimeError("Only completed runs with release evidence may release.")
         self.status = MPMOperationalStatus.RELEASED
         self._event("released", release_bundle_id=identifier)
 
-    def snapshot(self):
+    def snapshot(self) -> dict[str, object]:
         return {
             "status": self.status.name,
             "failure": self.failure.name,

@@ -15,7 +15,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cells", type=int, default=262144)
     parser.add_argument("--devices", type=int, default=1)
@@ -53,6 +53,7 @@ def main():
     ).prepare(jax.devices()[: arguments.devices])
     x = grid.structured_axes[0].interval_centers
     state = decomposition.shard_state(jnp.sin(2.0 * jnp.pi * x)[:, None])
+    # ty: ignore[invalid-argument-type]
     action = decomposition.compile_residual(compiled.dynamics, 0.0)
     started = time.perf_counter()
     first = action(state)

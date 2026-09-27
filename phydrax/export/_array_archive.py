@@ -23,6 +23,7 @@ from .._array_archive import (
     write_array_archive,
 )
 from .._validation import canonical_identifier as _canonical_identifier
+from ..typing import parse
 
 
 BEMArchiveRecordKind: TypeAlias = Literal["plan", "result"]
@@ -413,16 +414,14 @@ def read_bem_array_archive(
     }
     if set(manifest) != expected_fields or manifest.get("format") != _BEM_ARCHIVE_FORMAT:
         raise ArrayArchiveCorruptionError("Archive is not a canonical BEM array record.")
-    kind = manifest["record_kind"]
-    if kind not in ("plan", "result"):
-        raise ArrayArchiveCorruptionError("BEM archive record_kind is invalid.")
     try:
+        kind = parse(manifest["record_kind"], BEMArchiveRecordKind, "record_kind")
         record_id = _canonical_identifier(manifest["record_id"], "record_id")
         plan_id = _canonical_identifier(manifest["plan_id"], "plan_id")
         metadata = _normalized_metadata(manifest["metadata"])
     except (TypeError, ValueError) as error:
         raise ArrayArchiveCorruptionError(
-            "BEM archive identities or metadata are invalid."
+            "BEM archive record kind, identities, or metadata are invalid."
         ) from error
     descriptor = _descriptor_from_manifest(manifest["descriptor"])
     payload_id = _payload_id(

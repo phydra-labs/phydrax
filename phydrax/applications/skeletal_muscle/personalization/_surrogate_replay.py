@@ -12,10 +12,11 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from ...._dtype_names import inexact_result_type
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ...._precision import inexact_result_type
 from ...._strict import StrictModule
 from ...._trainable import fixed_field, NonTrainableState
 from ....control import (
@@ -37,7 +38,7 @@ class SkeletalReplayObservationOperator(StrictModule, NonTrainableState):
         observation: Callable[[ControlTrajectory], ArrayLike],
         operator_id: str,
         /,
-    ):
+    ) -> None:
         if not callable(observation):
             raise TypeError("observation must be callable.")
         identifier = str(operator_id).strip()
@@ -97,7 +98,7 @@ class SkeletalSurrogateReplayPlan(StrictModule):
         *,
         absolute_tolerance: float,
         relative_tolerance: float,
-    ):
+    ) -> None:
         if not isinstance(source_problem, ControlProblem):
             raise TypeError("source_problem must be ControlProblem.")
         if not isinstance(parameterization, AbstractControlParameterization):

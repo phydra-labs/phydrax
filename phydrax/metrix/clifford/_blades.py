@@ -48,7 +48,7 @@ class CliffordBladeLayout(StrictModule, NonTrainableState):
         algebra: CliffordAlgebraSpec,
         bitmaps: Sequence[int],
         /,
-    ):
+    ) -> None:
         if not isinstance(algebra, CliffordAlgebraSpec):
             raise TypeError("algebra must be a CliffordAlgebraSpec.")
         resolved = _canonical_bitmaps(algebra, bitmaps)

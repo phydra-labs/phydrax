@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -5,7 +7,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _thermodynamics():
+def _thermodynamics() -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A2", "A"),
         (phx.equations.ChemicalPhaseKind.GAS,) * 2,
@@ -44,7 +46,7 @@ def _thermodynamics():
     )
 
 
-def test_thermal_mode_energy_temperature_roundtrip_and_equilibrium_projection():
+def test_thermal_mode_energy_temperature_roundtrip_and_equilibrium_projection() -> None:
     thermodynamics = _thermodynamics()
     species_density = jnp.asarray((0.6, 0.2))
     mode_temperature = jnp.asarray((1800.0,))
@@ -67,7 +69,7 @@ def test_thermal_mode_energy_temperature_roundtrip_and_equilibrium_projection():
     )
 
 
-def test_two_temperature_euler_roundtrip_flux_and_admissibility():
+def test_two_temperature_euler_roundtrip_flux_and_admissibility() -> None:
     system = phx.equations.TwoTemperatureMixtureEulerSystem(_thermodynamics(), 1)
     primitive = jnp.asarray((0.6, 0.2, 300.0, 1200.0, 1800.0))
     conserved = system.primitive_to_conserved(primitive)
@@ -81,16 +83,17 @@ def test_two_temperature_euler_roundtrip_flux_and_admissibility():
     assert system.frozen_sound_speed(conserved) > 0.0
 
 
-def test_two_temperature_navier_stokes_diffuses_modal_energy_consistently():
+def test_two_temperature_navier_stokes_diffuses_modal_energy_consistently() -> None:
     thermodynamics = _thermodynamics()
     system = phx.equations.TwoTemperatureMixtureNavierStokesSystem(
         thermodynamics,
         phx.equations.ConstantTransport(2.0e-5, 0.03),
         1,
+        # ty: ignore[invalid-argument-type]
         mode_diffusivities=(4.0e-5,),
     )
 
-    def state_at(coordinate):
+    def state_at(coordinate: Any) -> Any:
         primitive = jnp.asarray(
             (
                 0.6,
@@ -118,7 +121,7 @@ def test_two_temperature_navier_stokes_diffuses_modal_energy_consistently():
     )
 
 
-def test_system_thermal_recovery_uses_its_iteration_limit():
+def test_system_thermal_recovery_uses_its_iteration_limit() -> None:
     system = phx.equations.TwoTemperatureMixtureEulerSystem(
         _thermodynamics(),
         1,

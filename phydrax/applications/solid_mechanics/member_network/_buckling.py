@@ -10,7 +10,8 @@ from math import isfinite, pi
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -488,7 +489,7 @@ def member_network_continuation_problem(
     """Scale declared nodal force/moment loads along one continuation coordinate."""
     definition = problem.definition
 
-    def residual(reduced, coordinate, args):
+    def residual(reduced: Array, coordinate: Array, args: object) -> Array:
         del args
         scaled = eqx.tree_at(
             lambda selected: (selected.nodal_forces, selected.nodal_moments),

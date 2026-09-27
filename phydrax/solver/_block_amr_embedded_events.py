@@ -11,7 +11,8 @@ from typing import Any
 
 import equinox as eqx
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -50,7 +51,7 @@ class MovingEmbeddedBoundaryEventEvidence(StrictModule, NonTrainableState):
         budget_defect: float,
         successful: bool,
         /,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -113,7 +114,7 @@ class MovingEmbeddedBoundaryEventPlan(StrictModule, NonTrainableState):
         *,
         sign_tolerance: float = 1.0e-10,
         conservation_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         body = str(body_id)
         sign = float(sign_tolerance)
         conservation = float(conservation_tolerance)

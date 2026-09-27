@@ -36,7 +36,7 @@ def _evidence(support_id: str, kind: str) -> QualificationEvidence:
     )
 
 
-def test_finance_campaign_keeps_evidence_planes_distinct_and_fails_closed():
+def test_finance_campaign_keeps_evidence_planes_distinct_and_fails_closed() -> None:
     support = valuation_support(
         "analytic",
         product="european-option",
@@ -70,7 +70,7 @@ def test_finance_campaign_keeps_evidence_planes_distinct_and_fails_closed():
     assert complete.campaign_id == restored.campaign_id
 
 
-def test_advanced_support_cannot_claim_more_than_candidate_maturity():
+def test_advanced_support_cannot_claim_more_than_candidate_maturity() -> None:
     with pytest.raises(ValueError, match="candidate ceiling"):
         advanced_finance_support(
             "rough",

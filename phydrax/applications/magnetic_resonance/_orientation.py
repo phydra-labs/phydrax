@@ -9,7 +9,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -28,11 +29,11 @@ class SingleCrystalOrientation(StrictModule):
 
     def __init__(
         self,
-        euler_angles_rad: ArrayLike = (0.0, 0.0, 0.0),
+        euler_angles_rad: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
         /,
         *,
         orientation_id: str = "single-crystal",
-    ):
+    ) -> None:
         angles = np.asarray(euler_angles_rad, dtype=np.float64)
         if angles.shape != (3,) or np.any(~np.isfinite(angles)):
             raise ValueError("euler_angles_rad must be finite with shape (3,).")

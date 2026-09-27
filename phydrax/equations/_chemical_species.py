@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from enum import StrEnum
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -53,7 +55,7 @@ class ChemicalPhaseSpec(StrictModule, NonTrainableState):
         standard_pressure: float | None = None,
         site_density: float | None = None,
         phase_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         if not name_:
             raise ValueError("Chemical phase name must be nonempty.")
@@ -138,14 +140,14 @@ class ChemicalSpeciesSchema(StrictModule, NonTrainableState):
     def __init__(
         self,
         catalog: ChemicalComponentCatalog,
-        species_names,
+        species_names: Iterable[str],
         species_component_indices: ArrayLike,
         phase_specs: tuple[ChemicalPhaseSpec, ...],
         species_phase_indices: ArrayLike,
         /,
         *,
         schema_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(catalog, ChemicalComponentCatalog):
             raise TypeError("catalog must be ChemicalComponentCatalog.")
         names = tuple(str(value) for value in species_names)
@@ -219,10 +221,10 @@ class ChemicalSpeciesSchema(StrictModule, NonTrainableState):
     @classmethod
     def from_unique_species(
         cls,
-        species_names,
-        phases,
+        species_names: Iterable[str],
+        phases: Iterable[ChemicalPhaseKind],
         molar_masses: ArrayLike,
-        element_names,
+        element_names: Sequence[str],
         element_composition: ArrayLike,
         charges: ArrayLike,
         /,

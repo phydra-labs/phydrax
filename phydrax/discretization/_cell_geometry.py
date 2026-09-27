@@ -10,7 +10,8 @@ from typing import Protocol, runtime_checkable
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -22,10 +23,17 @@ from ._cell_mesh import CellMesh
 class CellGeometryElement(Protocol):
     """Reference element contract required by a cell geometry layout."""
 
-    cell_kind: str
-    conformity: str
-    local_dof_count: int
-    element_id: str
+    @property
+    def cell_kind(self) -> str: ...
+
+    @property
+    def conformity(self) -> str: ...
+
+    @property
+    def local_dof_count(self) -> int: ...
+
+    @property
+    def element_id(self) -> str: ...
 
 
 class CellVertexGeometryElement(StrictModule, NonTrainableState):
@@ -36,7 +44,7 @@ class CellVertexGeometryElement(StrictModule, NonTrainableState):
     local_dof_count: int = eqx.field(static=True)
     element_id: str = eqx.field(static=True)
 
-    def __init__(self, cell_kind: str, local_dof_count: int, /):
+    def __init__(self, cell_kind: str, local_dof_count: int, /) -> None:
         kind = str(cell_kind)
         count = int(local_dof_count)
         if kind not in ("polygon", "polyhedron"):
@@ -72,7 +80,7 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
         geometry_dofs: Mapping[str, ArrayLike],
         coordinates: ArrayLike,
         /,
-    ):
+    ) -> None:
         items = tuple(sorted((str(name), element) for name, element in elements.items()))
         routes = {
             str(name): np.asarray(value, dtype=np.int32)
@@ -121,7 +129,7 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
     def affine(cls, mesh: CellMesh, /) -> CellGeometrySpec:
         from .fem._reference import lagrange_element
 
-        elements = {}
+        elements: dict[str, CellGeometryElement] = {}
         for block in mesh.blocks:
             elements[block.name] = (
                 CellVertexGeometryElement(block.cell_kind, block.arity)

@@ -8,7 +8,7 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -51,7 +51,7 @@ def prepare_window_grid(
         raise ValueError("overlap must be smaller than window_size.")
     if any(window[axis] > shape[axis] for axis in range(2)):
         raise ValueError("window_size cannot exceed image_shape.")
-    spacing = tuple(window[axis] - overlap_[axis] for axis in range(2))
+    spacing = (window[0] - overlap_[0], window[1] - overlap_[1])
     starts = tuple(
         jnp.arange(0, shape[axis] - window[axis] + 1, spacing[axis], dtype=jnp.float64)
         for axis in range(2)

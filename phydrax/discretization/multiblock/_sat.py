@@ -9,11 +9,13 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ..finite_difference._certification import FDStabilityReport
 from ..finite_difference._sbp import PreparedSBPOperator
 from ._core import (
@@ -22,6 +24,7 @@ from ._core import (
     _trace,
     BlockInterface,
     BlockSide,
+    PreparedBlock,
     PreparedMultiblockGrid,
 )
 from ._interpolation import NormCompatibleInterpolationPlan
@@ -57,7 +60,7 @@ class MultiblockSATCoupling(StrictModule, NonTrainableState):
         *,
         flux: MultiblockNumericalFlux = "central",
         interpolation_order: int = 4,
-    ):
+    ) -> None:
         if (
             not isinstance(multiblock, PreparedMultiblockGrid)
             or not isinstance(left, PreparedSBPOperator)
@@ -84,16 +87,9 @@ class MultiblockSATCoupling(StrictModule, NonTrainableState):
                 "SBP operators must align with the interface blocks and normals."
             )
         speed_ = float(speed)
-        if (
-            not np.isfinite(speed_)
-            or speed_ == 0.0
-            or flux
-            not in (
-                "central",
-                "upwind",
-            )
-        ):
-            raise ValueError("Multiblock SAT speed/flux is invalid.")
+        if not np.isfinite(speed_) or speed_ == 0.0:
+            raise ValueError("Multiblock SAT speed is invalid.")
+        flux = parse(flux, MultiblockNumericalFlux, "flux")
         left_trace_shape = (
             left.grid.shape[: left.axis_index] + left.grid.shape[left.axis_index + 1 :]
         )
@@ -274,7 +270,7 @@ class MultiblockSATCoupling(StrictModule, NonTrainableState):
 
 
 def _trace_tangential_weight(
-    block,
+    block: PreparedBlock,
     sbp: PreparedSBPOperator,
     side: BlockSide,
     /,
@@ -290,7 +286,7 @@ def _trace_tangential_weight(
 
 
 def _trace_coordinate_and_weight(
-    block,
+    block: PreparedBlock,
     sbp: PreparedSBPOperator,
     side: BlockSide,
     /,

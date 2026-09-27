@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -32,7 +33,7 @@ class ShallowWaterCoriolisSource(StrictModule, NonTrainableState):
         *,
         beta: float = 0.0,
         meridional_axis: int = 1,
-    ):
+    ) -> None:
         f0_ = float(f0)
         beta_ = float(beta)
         axis = int(meridional_axis)

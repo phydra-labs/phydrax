@@ -5,23 +5,25 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....series import SampledSeries
 from ....signal import hann_window, tukey_window, WelchSpectrumPlan
+from ....typing import parse
 from .._photometry import ObservationDataProvenance
 
 
-WindowKind = Literal["none", "hann", "tukey"]
+WindowKind: TypeAlias = Literal["none", "hann", "tukey"]
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -77,7 +79,7 @@ class OneSidedPowerSpectralDensity(StrictModule, NonTrainableState):
         sample_interval: float,
         active: ArrayLike | None = None,
         psd_id: str = "one-sided-psd",
-    ):
+    ) -> None:
         count = int(sample_count)
         interval = float(sample_interval)
         if count < 4 or not np.isfinite(interval) or interval <= 0.0:
@@ -166,7 +168,7 @@ class DetectorStrainData(StrictModule, NonTrainableState):
         start_time_gps: float,
         active: ArrayLike | None = None,
         window_power: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(psd, OneSidedPowerSpectralDensity):
             raise TypeError("psd must be OneSidedPowerSpectralDensity.")
         if not isinstance(provenance, ObservationDataProvenance):
@@ -234,7 +236,7 @@ class DetectorNetworkData(StrictModule, NonTrainableState):
     start_time_gps: float = eqx.field(static=True)
     network_id: str = eqx.field(static=True)
 
-    def __init__(self, detectors: Sequence[DetectorStrainData], /):
+    def __init__(self, detectors: Sequence[DetectorStrainData], /) -> None:
         items = tuple(detectors)
         if not items or any(not isinstance(item, DetectorStrainData) for item in items):
             raise TypeError("detectors must contain DetectorStrainData values.")
@@ -319,7 +321,7 @@ class GravitationalWaveDataPlan(StrictModule, NonTrainableState):
         notches: Sequence[tuple[float, float]] = (),
         window: WindowKind = "tukey",
         tukey_alpha: float = 0.2,
-    ):
+    ) -> None:
         count = int(sample_count)
         interval = float(sample_interval)
         start = float(start_time_gps)
@@ -327,6 +329,7 @@ class GravitationalWaveDataPlan(StrictModule, NonTrainableState):
         alpha = float(tukey_alpha)
         notch_values = tuple((float(left), float(right)) for left, right in notches)
         nyquist = 0.5 / interval if interval > 0.0 else 0.0
+        window = parse(window, WindowKind, "window")
         if (
             count < 4
             or not all(
@@ -334,7 +337,6 @@ class GravitationalWaveDataPlan(StrictModule, NonTrainableState):
             )
             or interval <= 0.0
             or not 0.0 < lower < upper < nyquist
-            or window not in ("none", "hann", "tukey")
             or not 0.0 <= alpha <= 1.0
             or any(
                 not np.isfinite(left) or not np.isfinite(right) or left >= right
@@ -388,7 +390,7 @@ class GravitationalWaveDataPlan(StrictModule, NonTrainableState):
             raise ValueError("The analysis band and notches leave no active frequencies.")
         return active
 
-    def _window_values(self, dtype) -> Array:
+    def _window_values(self, dtype: jnp.dtype) -> Array:
         if self.window == "none":
             return jnp.ones((self.sample_count,), dtype=dtype)
         if self.window == "hann":

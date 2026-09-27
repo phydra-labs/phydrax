@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -19,6 +20,8 @@ from ..discretization import DiscretizationBundle, DiscretizationRecord
 from ..discretization.particle import (
     AbstractParticleNeighborhoodPlan,
     CellListParticleNeighborhoodPlan,
+    DEMDiagnostics,
+    DEMStepRestriction,
     HierarchicalRadiusParticleNeighborhoodPlan,
     ImplicitDEMBarrier,
     ParticleDiscretization,
@@ -59,7 +62,7 @@ class DiscreteElementProblemIR(StrictModule, NonTrainableState):
         external_load: ExternalDEMLoad | None = None,
         external_load_id: str | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         if not name_:
             raise ValueError("Discrete-element problem name must be nonempty.")
@@ -117,7 +120,7 @@ class CompiledDiscreteElementProblem(StrictModule, NonTrainableState):
         dynamics: PreparedSoftSphereDEMDynamics,
         discretization_bundle: DiscretizationBundle,
         /,
-    ):
+    ) -> None:
         if not isinstance(problem, DiscreteElementProblemIR):
             raise TypeError("problem must be a DiscreteElementProblemIR.")
         if not isinstance(dynamics, PreparedSoftSphereDEMDynamics):
@@ -156,11 +159,11 @@ class CompiledDiscreteElementProblem(StrictModule, NonTrainableState):
 
     def diagnostics(
         self, time: ArrayLike, state: DEMRuntimeState, /, *, args: Any = None
-    ):
+    ) -> DEMDiagnostics:
         zero = jnp.zeros((), dtype=state.kinematics.position.dtype)
         return self.dynamics.evaluate(jnp.asarray(time), state, zero, args).diagnostics
 
-    def step_restriction(self):
+    def step_restriction(self) -> DEMStepRestriction:
         return self.dynamics.step_restriction()
 
 

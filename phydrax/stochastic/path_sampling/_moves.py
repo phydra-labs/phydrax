@@ -9,15 +9,17 @@ from __future__ import annotations
 import abc
 from collections.abc import Callable
 from math import isfinite, log, pi
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from ._core import (
     _fixed_step_time_grid_valid,
     FunctionalDynamicsKernel,
@@ -48,7 +50,7 @@ class AbstractShootingSelector(StrictModule):
     selector_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
-    def select(self, key: Key[Array, ""], path: PathBuffer, /) -> ShootingSelection:
+    def select(self, key: PRNGKey, path: PathBuffer, /) -> ShootingSelection:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -66,7 +68,9 @@ class UniformShootingSelector(AbstractShootingSelector, NonTrainableState):
     endpoint_margin: int = eqx.field(static=True)
     selector_id: str = eqx.field(static=True)
 
-    def __init__(self, endpoint_margin: int = 1, *, selector_id: str | None = None):
+    def __init__(
+        self, endpoint_margin: int = 1, *, selector_id: str | None = None
+    ) -> None:
         margin = int(endpoint_margin)
         if margin < 0:
             raise ValueError("endpoint_margin must be non-negative.")
@@ -87,7 +91,7 @@ class UniformShootingSelector(AbstractShootingSelector, NonTrainableState):
         )
         return jnp.where(eligible, -jnp.log(count.astype(path.positions.dtype)), -jnp.inf)
 
-    def select(self, key: Key[Array, ""], path: PathBuffer, /) -> ShootingSelection:
+    def select(self, key: PRNGKey, path: PathBuffer, /) -> ShootingSelection:
         count = self.eligible_count(path)
         offset = jax.random.randint(key, (), 0, jnp.maximum(count, 1), dtype=jnp.int32)
         index = offset + self.endpoint_margin
@@ -109,7 +113,7 @@ class WeightedShootingSelector(AbstractShootingSelector, NonTrainableState):
         *,
         endpoint_margin: int = 1,
         selector_id: str,
-    ):
+    ) -> None:
         if not callable(log_weight):
             raise TypeError("log_weight must be callable.")
         margin = int(endpoint_margin)
@@ -152,7 +156,7 @@ class WeightedShootingSelector(AbstractShootingSelector, NonTrainableState):
             -jnp.inf,
         )
 
-    def select(self, key: Key[Array, ""], path: PathBuffer, /) -> ShootingSelection:
+    def select(self, key: PRNGKey, path: PathBuffer, /) -> ShootingSelection:
         logits, support, weights_valid = self._logits(path)
         index = jax.random.categorical(key, logits).astype(jnp.int32)
         count = self.eligible_count(path)
@@ -171,14 +175,14 @@ class AbstractShootingModifier(StrictModule):
     modifier_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
-    def apply(self, key: Key[Array, ""], state: Array, /) -> ShootingModification:
+    def apply(self, key: PRNGKey, state: Array, /) -> ShootingModification:
         raise NotImplementedError
 
 
 class IdentityShootingModifier(AbstractShootingModifier, NonTrainableState):
     modifier_id: str = eqx.field(static=True, default="identity-shooting-modifier")
 
-    def apply(self, key: Key[Array, ""], state: Array, /) -> ShootingModification:
+    def apply(self, key: PRNGKey, state: Array, /) -> ShootingModification:
         del key
         return ShootingModification(
             state,
@@ -194,7 +198,7 @@ class GaussianShootingModifier(AbstractShootingModifier, NonTrainableState):
     scale: float = eqx.field(static=True)
     modifier_id: str = eqx.field(static=True)
 
-    def __init__(self, scale: float, /, *, modifier_id: str | None = None):
+    def __init__(self, scale: float, /, *, modifier_id: str | None = None) -> None:
         scale_ = float(scale)
         if not isfinite(scale_) or scale_ <= 0.0:
             raise ValueError("scale must be finite and positive.")
@@ -203,7 +207,7 @@ class GaussianShootingModifier(AbstractShootingModifier, NonTrainableState):
             {"kind": "gaussian-shooting-modifier", "scale": scale_.hex()}
         )
 
-    def apply(self, key: Key[Array, ""], state: Array, /) -> ShootingModification:
+    def apply(self, key: PRNGKey, state: Array, /) -> ShootingModification:
         noise = self.scale * jax.random.normal(key, state.shape, dtype=state.dtype)
         proposed = state + noise
         squared = jnp.sum((noise / self.scale) ** 2)
@@ -214,7 +218,7 @@ class GaussianShootingModifier(AbstractShootingModifier, NonTrainableState):
 
 def _validated_selection(
     selector: AbstractShootingSelector,
-    key: Key[Array, ""],
+    key: PRNGKey,
     path: PathBuffer,
     /,
 ) -> ShootingSelection:
@@ -274,7 +278,7 @@ def _validated_selection(
 
 def _validated_modification(
     modifier: AbstractShootingModifier,
-    key: Key[Array, ""],
+    key: PRNGKey,
     state: Array,
     /,
 ) -> ShootingModification:
@@ -340,7 +344,7 @@ class PathProposalEvaluation(StrictModule):
             zero,
             zero,
             zero,
-            -jnp.inf,
+            jnp.asarray(-jnp.inf),
             false,
             false,
             false,
@@ -362,6 +366,9 @@ class PathMoveResult(StrictModule):
     candidate_shooting_index: Array
 
 
+_GrowthCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+
+
 class _GrowthResult(StrictModule):
     positions: Array
     log_probability: Array
@@ -374,7 +381,7 @@ class _GrowthResult(StrictModule):
 def _grow_fixed(
     kernel: FunctionalDynamicsKernel,
     ensemble: AbstractPathEnsemble,
-    key: Key[Array, ""],
+    key: PRNGKey,
     initial: Array,
     kernel_direction: Array,
     terminal_direction: Array,
@@ -390,7 +397,7 @@ def _grow_fixed(
         initial, initial, kernel_direction
     ).dtype
 
-    def body(carry, item):
+    def body(carry: _GrowthCarry, item: tuple[Array, Array]) -> tuple[_GrowthCarry, None]:
         state, output, log_probability, count, done, failed, status = carry
         index, step_key = item
         should_step = (~done) & (~failed) & (index < requested_steps)
@@ -682,7 +689,7 @@ def _accept(
     current: PathBuffer,
     proposed: PathBuffer,
     evaluation: PathProposalEvaluation,
-    key: Key[Array, ""],
+    key: PRNGKey,
     current_index: Array,
     proposed_index: Array,
     /,
@@ -709,7 +716,7 @@ def propose_one_way_shooting(
     selector: AbstractShootingSelector,
     modifier: AbstractShootingModifier,
     current: PathBuffer,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> PathMoveResult:
     """Propose one one-way shooting move; any propagation failure rejects once."""
@@ -814,7 +821,7 @@ def propose_two_way_shooting(
     selector: AbstractShootingSelector,
     modifier: AbstractShootingModifier,
     current: PathBuffer,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> PathMoveResult:
     """Regrow both temporal directions from one modified shooting state."""
@@ -913,7 +920,7 @@ def propose_path_reversal(
     action: AbstractPathAction,
     kernel: FunctionalDynamicsKernel,
     current: PathBuffer,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> PathMoveResult:
     """Metropolize exact active-prefix time reversal."""
@@ -965,7 +972,7 @@ def propose_path_shift(
     action: AbstractPathAction,
     kernel: FunctionalDynamicsKernel,
     current: PathBuffer,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     maximum_shift: int,
@@ -1103,7 +1110,7 @@ def propose_replica_exchange(
     action: AbstractPathAction,
     left: PathBuffer,
     right: PathBuffer,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> ReplicaExchangeResult:
     """Swap neighboring interface replicas with symmetric exchange evidence."""

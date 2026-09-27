@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from importlib import import_module, util
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 
 import numpy as np
 
@@ -191,7 +192,7 @@ class E57Provider:
 
     def _read_document(
         self,
-        document,
+        document: Any,
         reference: ReferenceArtifactManifest,
         coordinate_contract: SpatialCoordinateContract,
         campaign_id: str,

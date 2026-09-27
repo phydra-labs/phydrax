@@ -10,7 +10,8 @@ from typing import Any, Protocol
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -36,7 +37,7 @@ class LocalRootSolveResult(StrictModule):
         converged: ArrayLike,
         iterations: ArrayLike,
         /,
-    ):
+    ) -> None:
         value_ = jnp.asarray(value)
         residual_ = jnp.asarray(residual)
         converged_ = jnp.asarray(converged, dtype=jnp.bool_)
@@ -89,7 +90,7 @@ class VelocityDependentAccelerationProblem(StrictModule):
         *,
         parameters: Any = None,
         initial_velocity: ArrayLike | None = None,
-    ):
+    ) -> None:
         time_ = jnp.asarray(time)
         coordinates_ = jnp.asarray(coordinates)
         density_ = jnp.asarray(density)
@@ -134,7 +135,7 @@ class VelocityDependentAccelerationResult(StrictModule):
         force_density: Array,
         root: LocalRootSolveResult,
         /,
-    ):
+    ) -> None:
         self.velocity = velocity
         self.acceleration = acceleration
         self.force_density = force_density
@@ -154,7 +155,7 @@ class VelocityDependentAccelerationPlan(StrictModule, NonTrainableState):
         /,
         *,
         acceleration_id: str,
-    ):
+    ) -> None:
         if not callable(acceleration):
             raise TypeError("acceleration must be callable.")
         identifier = str(acceleration_id)
@@ -280,7 +281,7 @@ class DampedLocalRootSolver(StrictModule, NonTrainableState):
         iterations: int = 16,
         damping: float = 0.8,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         count = int(iterations)
         damping_ = float(damping)
         tolerance_ = float(tolerance)
@@ -299,7 +300,7 @@ class DampedLocalRootSolver(StrictModule, NonTrainableState):
     ) -> LocalRootSolveResult:
         initial = jnp.asarray(initial_guess)
 
-        def iteration(_, value):
+        def iteration(_: int, value: Array) -> Array:
             defect = residual(value, args)
             return value - self.damping * defect
 

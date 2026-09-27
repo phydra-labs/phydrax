@@ -6,13 +6,16 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+from types import ModuleType
 from typing import Any, Callable
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.flatten_util import ravel_pytree
+from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from .._tree_math import validate_real_inexact_tree
@@ -27,6 +30,7 @@ from ._constrained_model import prepare_constrained_model
 from ._iterative import (
     AbstractMinimizationMethod,
     LeastSquaresResult,
+    MinimizationProblem,
     MinimizationResult,
     NonlinearLeastSquaresProblem,
     OptimizationCapabilities,
@@ -37,13 +41,19 @@ from ._iterative import (
 )
 
 
-def _module(name: str):
+def _module(name: str) -> ModuleType:
     if importlib.util.find_spec(name) is None:
         raise ImportError(f"Optional nonlinear backend {name!r} is not installed.")
     return importlib.import_module(name)
 
 
-def _certify_minimization(problem, parameters, args, termination, backend_success):
+def _certify_minimization(
+    problem: MinimizationProblem,
+    parameters: PyTree[Any],
+    args: Any,
+    termination: OptimizationTermination,
+    backend_success: ArrayLike,
+) -> tuple[Array, Any, Array, Array, Array]:
     (objective, auxiliary), gradient = problem.value_and_gradient(parameters, args)
     flat_gradient, _ = ravel_pytree(gradient)
     if problem.constraints or problem.bounds is not None:
@@ -108,7 +118,7 @@ class SciPyMinimize(AbstractMinimizationMethod):
 
     def __init__(
         self, method: str = "L-BFGS-B", /, *, options: dict[str, Any] | None = None
-    ):
+    ) -> None:
         identifier = str(method)
         if not identifier:
             raise ValueError("SciPy method must be non-empty.")
@@ -116,11 +126,11 @@ class SciPyMinimize(AbstractMinimizationMethod):
         self.options = {} if options is None else dict(options)
 
     @property
-    def method_id(self):
+    def method_id(self) -> str:
         return f"scipy/{self.method.lower()}"
 
     @property
-    def capabilities(self):
+    def capabilities(self) -> OptimizationCapabilities:
         return OptimizationCapabilities(
             scalar_objective=True,
             residual_objective=False,
@@ -130,12 +140,20 @@ class SciPyMinimize(AbstractMinimizationMethod):
             explicit_host_gradient=True,
         )
 
-    def solve(self, problem, initial_parameters, /, *, termination, args):
+    def solve(
+        self,
+        problem: MinimizationProblem,
+        initial_parameters: PyTree[Any],
+        /,
+        *,
+        termination: OptimizationTermination,
+        args: Any,
+    ) -> MinimizationResult:
         scipy_optimize = _module("scipy.optimize")
         parameters = validate_real_inexact_tree(initial_parameters, name="parameters")
         coordinates, unflatten = ravel_pytree(parameters)
 
-        def objective_and_gradient(value):
+        def objective_and_gradient(value: np.ndarray) -> tuple[float, np.ndarray]:
             point = unflatten(jnp.asarray(value))
             (objective, _), gradient = problem.value_and_gradient(point, args)
             return (
@@ -226,15 +244,15 @@ class NLoptMinimize(AbstractMinimizationMethod):
 
     algorithm: int = eqx.field(static=True)
 
-    def __init__(self, algorithm: int, /):
+    def __init__(self, algorithm: int, /) -> None:
         self.algorithm = int(algorithm)
 
     @property
-    def method_id(self):
+    def method_id(self) -> str:
         return f"nlopt/{self.algorithm}"
 
     @property
-    def capabilities(self):
+    def capabilities(self) -> OptimizationCapabilities:
         return OptimizationCapabilities(
             scalar_objective=True,
             residual_objective=False,
@@ -243,7 +261,15 @@ class NLoptMinimize(AbstractMinimizationMethod):
             implicit_differentiation=False,
         )
 
-    def solve(self, problem, initial_parameters, /, *, termination, args):
+    def solve(
+        self,
+        problem: MinimizationProblem,
+        initial_parameters: PyTree[Any],
+        /,
+        *,
+        termination: OptimizationTermination,
+        args: Any,
+    ) -> MinimizationResult:
         if problem.constraints:
             raise ValueError(
                 "NLoptMinimize currently supports bounds only; nonlinear "
@@ -264,7 +290,7 @@ class NLoptMinimize(AbstractMinimizationMethod):
             optimizer.set_lower_bounds(np.asarray(ravel_pytree(lower)[0]))
             optimizer.set_upper_bounds(np.asarray(ravel_pytree(upper)[0]))
 
-        def objective(value, gradient_buffer):
+        def objective(value: np.ndarray, gradient_buffer: np.ndarray) -> float:
             point = unflatten(jnp.asarray(value))
             if gradient_buffer.size:
                 derivative = jax.grad(

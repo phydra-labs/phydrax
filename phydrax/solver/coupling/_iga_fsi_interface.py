@@ -10,12 +10,13 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import FieldTransfer
+from ...linalg import AbstractVectorSpace
 
 
 def _identifier(value: str, role: str, /) -> str:
@@ -29,7 +30,7 @@ def _tree_subtract(left: Any, right: Any, /) -> Any:
     return jax.tree.map(lambda x, y: x - y, left, right)
 
 
-def _norm(space, value: Any, /) -> Array:
+def _norm(space: AbstractVectorSpace, value: Any, /) -> Array:
     squared = jnp.real(space.inner(value, value))
     return jnp.sqrt(jnp.maximum(squared, 0.0))
 
@@ -65,7 +66,7 @@ class InterfaceTransferTolerance(StrictModule, NonTrainableState):
         error_relative: float = 0.0,
         derivative_absolute: float,
         derivative_relative: float = 0.0,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -140,7 +141,7 @@ class InterfaceTransferProbe(StrictModule):
         /,
         *,
         probe_id: str,
-    ):
+    ) -> None:
         if not isinstance(transfer, FieldTransfer):
             raise TypeError("transfer must be a FieldTransfer.")
         source = transfer.source.vector_space
@@ -218,7 +219,7 @@ class InterfaceTransferCertificate(StrictModule, NonTrainableState):
         measure_id: str,
         common_quadrature_id: str,
         probe_id: str,
-    ):
+    ) -> None:
         if not isinstance(transfer, FieldTransfer):
             raise TypeError("transfer must be a FieldTransfer.")
         if not isinstance(evidence, InterfaceTransferEvidence):

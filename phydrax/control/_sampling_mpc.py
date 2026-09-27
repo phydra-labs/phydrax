@@ -15,16 +15,20 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._bounds import Bounds
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field, NonTrainableState
 from ..optim import AbstractRiskMeasure, CVaRRisk, EntropicRisk, MeanVarianceRisk
+from ..typing import Bool, Dim, Inexact, parse, Size
 from ._dynamics import DiscreteControlDynamics
 from ._parameterization import AbstractControlParameterization
 from ._problem import ControlProblem
+from ._trajectory import ControlResult
 
 
 SamplingMPCUpdate: TypeAlias = Literal["predictive", "cem"]
@@ -35,17 +39,29 @@ SamplingMPCRealizationPolicy: TypeAlias = Literal["fixed", "resample"]
 SamplingMPCRealizationBinding: TypeAlias = Callable[[Any, PyTree[Any]], Any]
 
 
+_SamplingCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+_SamplingHistory: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+
+
+class _ModelDim(Dim, minimum=1):
+    """Number of flattened model slots (cases or realizations)."""
+
+
 class SamplingMPCRealizations(StrictModule, NonTrainableState):
     """Fixed-capacity physical model realizations for one sampling MPC plan."""
 
+    __strict_contract__ = True
+
     parameters: PyTree[Array]
-    weights: Array
-    support_mask: Array
+    weights: Inexact[_ModelDim]
+    support_mask: Bool[_ModelDim]
     realization_ids: tuple[str, ...] = eqx.field(static=True)
     posterior_id: str = eqx.field(static=True)
     campaign_id: str = eqx.field(static=True)
     policy: SamplingMPCRealizationPolicy = eqx.field(static=True)
-    count: int = eqx.field(static=True)
+    count: Size[_ModelDim] = eqx.field(static=True)
     batch_id: str = eqx.field(static=True)
 
     def __init__(
@@ -60,7 +76,7 @@ class SamplingMPCRealizations(StrictModule, NonTrainableState):
         campaign_id: str,
         policy: SamplingMPCRealizationPolicy = "fixed",
         batch_id: str | None = None,
-    ):
+    ) -> None:
         identifiers = tuple(str(value) for value in realization_ids)
         if not identifiers or any(not value for value in identifiers):
             raise ValueError("realization_ids must be non-empty identifiers.")
@@ -91,8 +107,7 @@ class SamplingMPCRealizations(StrictModule, NonTrainableState):
         campaign = str(campaign_id)
         if not posterior or not campaign:
             raise ValueError("posterior_id and campaign_id must be non-empty.")
-        if policy not in ("fixed", "resample"):
-            raise ValueError("realization policy must be 'fixed' or 'resample'.")
+        policy = parse(policy, SamplingMPCRealizationPolicy, "policy")
         identity = (
             canonical_fingerprint(
                 {
@@ -137,14 +152,16 @@ class SamplingMPCPlan(StrictModule):
     each model slot without changing the generic control problem API.
     """
 
+    __strict_contract__ = True
+
     problem: ControlProblem
     parameterization: AbstractControlParameterization
     bounds: Bounds | None
     risk_measure: AbstractRiskMeasure | None = fixed_field()
     realizations: SamplingMPCRealizations | None
     realization_binding: SamplingMPCRealizationBinding | None = eqx.field(static=True)
-    model_weights: Array = fixed_field()
-    model_support: Array = fixed_field()
+    model_weights: Inexact[_ModelDim] = fixed_field()
+    model_support: Bool[_ModelDim] = fixed_field()
     candidate_count: int = eqx.field(static=True)
     iteration_count: int = eqx.field(static=True)
     elite_count: int = eqx.field(static=True)
@@ -155,7 +172,7 @@ class SamplingMPCPlan(StrictModule):
     aggregation: SamplingMPCAggregation = eqx.field(static=True)
     warm_start_terminal: SamplingMPCWarmStartTerminal = eqx.field(static=True)
     model_shape: tuple[int, ...] = eqx.field(static=True)
-    model_count: int = eqx.field(static=True)
+    model_count: Size[_ModelDim] = eqx.field(static=True)
     knot_count: int = eqx.field(static=True)
     parameter_shape: tuple[int, ...] = eqx.field(static=True)
     control_shape: tuple[int, ...] = eqx.field(static=True)
@@ -455,8 +472,7 @@ def plan_sampling_mpc(
     )
     if elites > candidates:
         raise ValueError("elite_count must not exceed candidate_count.")
-    if update not in ("predictive", "cem"):
-        raise ValueError("update must be 'predictive' or 'cem'.")
+    update = parse(update, SamplingMPCUpdate, "update")
     rate = float(update_rate)
     if not isfinite(rate) or not 0.0 <= rate <= 1.0:
         raise ValueError("update_rate must be finite and lie in [0, 1].")
@@ -465,10 +481,10 @@ def plan_sampling_mpc(
         raise ValueError("minimum_standard_deviation must be finite and non-negative.")
     if bounds is not None and not isinstance(bounds, Bounds):
         raise TypeError("bounds must be a Bounds or None.")
-    if bound_policy not in ("clip", "reject"):
-        raise ValueError("bound_policy must be 'clip' or 'reject'.")
-    if warm_start_terminal not in ("hold", "zero"):
-        raise ValueError("warm_start_terminal must be 'hold' or 'zero'.")
+    bound_policy = parse(bound_policy, SamplingMPCBoundPolicy, "bound_policy")
+    warm_start_terminal = parse(
+        warm_start_terminal, SamplingMPCWarmStartTerminal, "warm_start_terminal"
+    )
 
     risk_measure: AbstractRiskMeasure | None
     aggregation: SamplingMPCAggregation
@@ -742,14 +758,14 @@ def _evaluate_models(
     controls: Array,
     parameters: PyTree[Array] | None,
     /,
-):
+) -> ControlResult:
     if plan.realizations is None:
         coefficients = jnp.broadcast_to(controls, plan.model_shape + plan.parameter_shape)
         return plan.problem.evaluate(plan.parameterization, coefficients)
     if parameters is None:
         raise ValueError("Explicit realization mode requires parameter values.")
 
-    def evaluate_one(realization_parameters):
+    def evaluate_one(realization_parameters: PyTree[Array]) -> ControlResult:
         args = (
             realization_parameters
             if plan.realization_binding is None
@@ -981,7 +997,9 @@ def solve_sampling_mpc(
     initial_valid = jnp.asarray(False)
     initial_index = jnp.asarray(-1, dtype=jnp.int32)
 
-    def iteration(carry, index):
+    def iteration(
+        carry: _SamplingCarry, index: Array
+    ) -> tuple[_SamplingCarry, _SamplingHistory]:
         (
             mean,
             deviation,

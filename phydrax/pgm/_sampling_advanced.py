@@ -6,17 +6,20 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections import deque
-from typing import Literal
+from collections.abc import Iterable
+from typing import Generic, Literal, TypeVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._gibbs import (
     _conditional_logits,
     gibbs_sweep,
@@ -62,7 +65,7 @@ class GibbsScanPolicy(StrictModule):
         /,
         *,
         updates_per_sweep: int | None = None,
-    ):
+    ) -> None:
         if kind not in ("systematic", "random-scan", "randomized-colors"):
             raise ValueError("Unknown Gibbs scan policy.")
         count = None if updates_per_sweep is None else int(updates_per_sweep)
@@ -80,7 +83,9 @@ class JointDiscreteBlock(StrictModule):
     maximum_configurations: int = eqx.field(static=True)
     block_id: str = eqx.field(static=True)
 
-    def __init__(self, variables, /, *, maximum_configurations: int = 4096):
+    def __init__(
+        self, variables: Iterable[int], /, *, maximum_configurations: int = 4096
+    ) -> None:
         selected = tuple(variables)
         if not selected or len(set(selected)) != len(selected) or min(selected) < 0:
             raise ValueError("Joint block variables must be unique and non-negative.")
@@ -113,7 +118,7 @@ class ParallelTempering(StrictModule):
     inverse_temperatures: Array
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, inverse_temperatures: ArrayLike, /):
+    def __init__(self, inverse_temperatures: ArrayLike, /) -> None:
         values = jnp.asarray(inverse_temperatures, dtype=jnp.float64).reshape((-1,))
         host = np.asarray(values)
         if values.size < 2 or np.any(~np.isfinite(host)) or np.any(host <= 0):
@@ -136,19 +141,23 @@ class ReducedGibbsResult(StrictModule):
     policy_id: str = eqx.field(static=True)
 
 
-class AbstractChainReducer(StrictModule):
+_CarryT = TypeVar("_CarryT")
+_ReductionT = TypeVar("_ReductionT")
+
+
+class AbstractChainReducer(StrictModule, Generic[_CarryT, _ReductionT]):
     """Fixed-structure online reduction of correlated chain states."""
 
     @abstractmethod
-    def initialize(self, positions: Array, scores: Array, /):
+    def initialize(self, positions: Array, scores: Array, /) -> _CarryT:
         raise NotImplementedError
 
     @abstractmethod
-    def update(self, carry, positions: Array, scores: Array, /):
+    def update(self, carry: _CarryT, positions: Array, scores: Array, /) -> _CarryT:
         raise NotImplementedError
 
     @abstractmethod
-    def finalize(self, carry, /):
+    def finalize(self, carry: _CarryT, /) -> _ReductionT:
         raise NotImplementedError
 
 
@@ -158,10 +167,10 @@ class MomentReducerState(StrictModule):
     second_sum: Array
 
 
-class MomentReducer(AbstractChainReducer):
+class MomentReducer(AbstractChainReducer[MomentReducerState, dict[str, Array]]):
     """Online first and second raw moments over chain states."""
 
-    def initialize(self, positions: Array, scores: Array, /):
+    def initialize(self, positions: Array, scores: Array, /) -> MomentReducerState:
         del scores
         shape = positions.shape[1:]
         return MomentReducerState(
@@ -170,7 +179,9 @@ class MomentReducer(AbstractChainReducer):
             second_sum=jnp.zeros(shape, dtype=jnp.float64),
         )
 
-    def update(self, carry, positions: Array, scores: Array, /):
+    def update(
+        self, carry: MomentReducerState, positions: Array, scores: Array, /
+    ) -> MomentReducerState:
         del scores
         values = positions.astype("float64")
         return MomentReducerState(
@@ -179,7 +190,7 @@ class MomentReducer(AbstractChainReducer):
             second_sum=carry.second_sum + jnp.sum(values**2, axis=0),
         )
 
-    def finalize(self, carry, /):
+    def finalize(self, carry: MomentReducerState, /) -> dict[str, Array]:
         denominator = jnp.maximum(carry.count, 1)
         mean = carry.first_sum / denominator
         return {"mean": mean, "variance": carry.second_sum / denominator - mean**2}
@@ -190,16 +201,20 @@ class BestStateReducerState(StrictModule):
     score: Array
 
 
-class BestStateReducer(AbstractChainReducer):
+class BestStateReducer(
+    AbstractChainReducer[BestStateReducerState, BestStateReducerState]
+):
     """Online highest-score assignment with deterministic first-tie retention."""
 
-    def initialize(self, positions: Array, scores: Array, /):
+    def initialize(self, positions: Array, scores: Array, /) -> BestStateReducerState:
         return BestStateReducerState(
             position=jnp.zeros_like(positions[0]),
             score=jnp.asarray(-jnp.inf, dtype=scores.dtype),
         )
 
-    def update(self, carry, positions: Array, scores: Array, /):
+    def update(
+        self, carry: BestStateReducerState, positions: Array, scores: Array, /
+    ) -> BestStateReducerState:
         index = jnp.argmax(scores)
         replace = scores[index] > carry.score
         return BestStateReducerState(
@@ -207,19 +222,19 @@ class BestStateReducer(AbstractChainReducer):
             score=jnp.where(replace, scores[index], carry.score),
         )
 
-    def finalize(self, carry, /):
+    def finalize(self, carry: BestStateReducerState, /) -> BestStateReducerState:
         return carry
 
 
 def _sample_site(
-    prepared,
-    positions,
-    variable,
-    key,
-    sweep_index,
-    event_index,
-    clamped,
-):
+    prepared: PreparedChromaticGibbs,
+    positions: Array,
+    variable: int,
+    key: PRNGKey,
+    sweep_index: Array,
+    event_index: int,
+    clamped: Array,
+) -> tuple[Array, Array, Array]:
     chain_count = positions.shape[0]
     chain_indices = jnp.arange(chain_count, dtype=jnp.uint32)
     logits = jax.vmap(lambda position: _conditional_logits(prepared, position, variable))(
@@ -249,7 +264,7 @@ def _sample_site(
 def gibbs_sweep_with_policy(
     prepared: PreparedChromaticGibbs,
     state: GibbsState,
-    key: Key[Array, ""],
+    key: PRNGKey,
     policy: GibbsScanPolicy,
     /,
     *,
@@ -307,7 +322,11 @@ def gibbs_sweep_with_policy(
         attempted_updates = count
     else:
 
-        def update_stage(current, stage, event_offset):
+        def update_stage(
+            current: tuple[Array, Array, Array],
+            stage: tuple[int, ...],
+            event_offset: int,
+        ) -> tuple[Array, Array, Array]:
             stage_positions, stage_valid, stage_changed = current
             snapshot = stage_positions
             for local_index, variable in enumerate(stage):
@@ -385,21 +404,23 @@ def joint_block_sweep(
     prepared: PreparedChromaticGibbs,
     state: GibbsState,
     block: JointDiscreteBlock,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> tuple[GibbsState, GibbsTransitionInfo]:
     """Sample one dependent block exactly by bounded conditional enumeration."""
     graph = prepared.graph
     if max(block.variables) >= graph.num_variables:
         raise ValueError("Joint block variable is outside the graph.")
-    cards = tuple(int(graph.cardinalities[index]) for index in block.variables)
+    cards = tuple(
+        int(graph._host_topology.cardinalities[index]) for index in block.variables
+    )
     count = int(np.prod(cards))
     if count > block.maximum_configurations:
         raise ValueError("Joint block conditional exceeds maximum_configurations.")
     configurations = jnp.asarray(tuple(np.ndindex(cards)), dtype=jnp.int32)
     chain_indices = jnp.arange(state.num_chains, dtype=jnp.uint32)
 
-    def one(position, chain):
+    def one(position: Array, chain: Array) -> tuple[Array, Array, Array]:
         candidates = jnp.broadcast_to(position, (count, graph.num_variables))
         candidates = candidates.at[:, jnp.asarray(block.variables)].set(configurations)
         scores = prepared.precision.accumulation(
@@ -470,7 +491,7 @@ def initialize_parallel_tempering(
 def parallel_tempering_step(
     prepared: PreparedChromaticGibbs,
     state: ParallelTemperingState,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> tuple[ParallelTemperingState, ParallelTemperingInfo]:
     """Advance tempered replicas and apply alternating neighboring exchange moves."""
@@ -548,10 +569,10 @@ def parallel_tempering_step(
 def reduce_gibbs_chain(
     prepared: PreparedChromaticGibbs,
     state: GibbsState,
-    reducer: AbstractChainReducer,
+    reducer: AbstractChainReducer[_CarryT, _ReductionT],
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_sweeps: int,
     policy: GibbsScanPolicy | None = None,
 ) -> ReducedGibbsResult:
@@ -564,7 +585,9 @@ def reduce_gibbs_chain(
         raise TypeError("policy must be GibbsScanPolicy or None.")
     reduction = reducer.initialize(state.positions, state.log_score)
 
-    def step(carry, _):
+    def step(
+        carry: tuple[GibbsState, _CarryT], _: None
+    ) -> tuple[tuple[GibbsState, _CarryT], None]:
         chain_state, reducer_state = carry
         updated, _info = gibbs_sweep_with_policy(
             prepared,
@@ -597,7 +620,7 @@ def reduce_gibbs_chain(
 def wolff_cluster_step(
     prepared: PreparedChromaticGibbs,
     position: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     inverse_temperature: float = 1.0,
@@ -612,12 +635,12 @@ def wolff_cluster_step(
         raise ValueError("position must have one state per graph variable.")
     if not np.issubdtype(raw_state.dtype, np.integer):
         raise TypeError("position must contain integers.")
-    cardinalities = np.asarray(graph.cardinalities)
+    cardinalities = graph._host_topology.cardinalities
     if np.any(raw_state < 0) or np.any(raw_state >= cardinalities):
         raise ValueError("position contains values outside graph support.")
     state = raw_state.astype(np.int32, copy=True)
     adjacency: list[list[tuple[int, float]]] = [[] for _ in range(graph.num_variables)]
-    for group, scope in zip(graph.factor_groups, graph.factor_scopes):
+    for group, scope in zip(graph.factor_groups, graph._host_topology.factor_scopes):
         if not isinstance(group, IsingFactorGroup):
             raise TypeError("Wolff updates require IsingFactorGroup factors only.")
         arity = scope.shape[1]
@@ -628,7 +651,7 @@ def wolff_cluster_step(
             weights = np.asarray(group.weights)
             if np.any(weights < 0.0):
                 raise ValueError("Wolff updates require ferromagnetic couplings.")
-            for row, weight in zip(np.asarray(scope), weights):
+            for row, weight in zip(scope, weights):
                 left, right = int(row[0]), int(row[1])
                 adjacency[left].append((right, float(weight)))
                 adjacency[right].append((left, float(weight)))

@@ -9,7 +9,8 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -28,6 +29,7 @@ from ...nonlinear import (
     NonlinearSystemProblem,
     NonlinearTermination,
 )
+from ...typing import parse
 from ._architecture import (
     IncompressibleGaussianMixturePlan,
     PolymerComponentPlan,
@@ -41,9 +43,8 @@ class ContourIntegratorPlan(StrictModule, NonTrainableState):
     kind: ContourIntegratorKind = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: ContourIntegratorKind = "richardson-strang-4", /):
-        if kind not in ("strang-2", "richardson-strang-4"):
-            raise ValueError("Unknown Gaussian-chain contour integrator.")
+    def __init__(self, kind: ContourIntegratorKind = "richardson-strang-4", /) -> None:
+        kind = parse(kind, ContourIntegratorKind, "kind")
         self.kind = kind
         self.plan_id = canonical_fingerprint(
             {"kind": "contour-integrator-plan", "method": kind}
@@ -69,7 +70,7 @@ class SCFTPlan(StrictModule, NonTrainableState):
         relative_tolerance: float = 1.0e-8,
         maximum_iterations: int = 64,
         minimum_partition: float = 1.0e-14,
-    ):
+    ) -> None:
         if not isinstance(model, IncompressibleGaussianMixturePlan):
             raise TypeError("model must be IncompressibleGaussianMixturePlan.")
         integrator = (
@@ -156,7 +157,7 @@ class PreparedSCFT(StrictModule, NonTrainableState):
         /,
         *,
         symmetries: tuple[TensorSpectralSymmetry, ...],
-    ):
+    ) -> None:
         if not isinstance(plan, SCFTPlan):
             raise TypeError("plan must be SCFTPlan.")
         if not isinstance(spectral, TensorSpectralDiscretization):
@@ -218,7 +219,7 @@ class PreparedSCFT(StrictModule, NonTrainableState):
         propagator: Array,
         field: Array,
         contour_step: float,
-        diffusion: float,
+        diffusion: Array,
         cell_scale: Array,
         /,
     ) -> Array:
@@ -242,7 +243,7 @@ class PreparedSCFT(StrictModule, NonTrainableState):
         propagator: Array,
         field: Array,
         contour_step: float,
-        diffusion: float,
+        diffusion: Array,
         cell_scale: Array,
         /,
     ) -> Array:
@@ -265,7 +266,7 @@ class PreparedSCFT(StrictModule, NonTrainableState):
         field: Array,
         contour_fraction: float,
         contour_steps: int,
-        diffusion: float,
+        diffusion: Array,
         cell_scale: Array,
         /,
     ) -> Array:
@@ -470,14 +471,14 @@ class PreparedSCFT(StrictModule, NonTrainableState):
         )
 
     def root_problem(self, /) -> NonlinearSystemProblem:
-        def residual(fields, _):
+        def residual(fields: Array, _: object) -> Array:
             evaluation = self.evaluate(fields)
             return jnp.where(evaluation.successful, evaluation.residual, jnp.nan)
 
         return NonlinearSystemProblem(residual, problem_id=f"{self.prepared_id}:root")
 
     def parameterized_root_problem(self, /) -> NonlinearSystemProblem:
-        def residual(fields, args):
+        def residual(fields: Array, args: tuple[Array, Array]) -> Array:
             interactions, scale = args
             evaluation = self.evaluate(fields, chi_n=interactions, cell_scale=scale)
             return jnp.where(evaluation.successful, evaluation.residual, jnp.nan)

@@ -8,7 +8,8 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Literal
 
 import equinox as eqx
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._frozendict import frozendict
@@ -42,7 +43,7 @@ class MechanicsFineTuningPolicy(StrictModule, NonTrainableState):
         allowed_observable_ids: Sequence[str],
         residual_objective_id: str,
         policy_id: str,
-    ):
+    ) -> None:
         if not isinstance(context_policy, BoundedResidualAdaptationPolicy):
             raise TypeError("context_policy must be a BoundedResidualAdaptationPolicy.")
         observables = tuple(str(value) for value in allowed_observable_ids)
@@ -95,7 +96,7 @@ class AdaptedMechanicsOperatorResult(StrictModule):
         return self.base_operator.artifact_id
 
     @property
-    def adapted_context(self):
+    def adapted_context(self) -> Array:
         return self.adaptation.context
 
 

@@ -2,20 +2,23 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _measure(beta=0.8):
+def _measure(beta: Any = 0.8) -> Any:
     topology = phx.discretization.polygonal_cell_complex(
         jnp.asarray([[0, 1, 2]]), None, 3
     )
     return phx.operators.path_integral.CompactU1GaugeMeasure(topology, beta=beta)
 
 
-def test_compact_u1_uses_topology_and_explicit_action_offset():
+def test_compact_u1_uses_topology_and_explicit_action_offset() -> None:
     measure = _measure()
     links = jnp.asarray([0.2, -0.4, 0.1])
     phases = jnp.asarray([0.3, -0.2, 0.1])
@@ -30,7 +33,7 @@ def test_compact_u1_uses_topology_and_explicit_action_offset():
     )
 
 
-def test_compact_u1_incremental_cache_matches_full_action():
+def test_compact_u1_incremental_cache_matches_full_action() -> None:
     measure = _measure()
     links = jnp.asarray([jnp.pi - 0.05, -0.4, 0.1])
     proposal = phx.sampling.SingleCoordinatePeriodicProposal(2.0 * jnp.pi, 0.4)
@@ -48,7 +51,7 @@ def test_compact_u1_incremental_cache_matches_full_action():
     assert jnp.allclose(candidate.plaquette_angles, refreshed_cache.plaquette_angles)
 
 
-def test_compact_u1_runs_through_incremental_markov_sampling():
+def test_compact_u1_runs_through_incremental_markov_sampling() -> None:
     measure = _measure(beta=0.5)
     target = phx.operators.path_integral.incremental_target_from_lattice_action(
         measure,

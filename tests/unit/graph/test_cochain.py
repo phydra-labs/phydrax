@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,13 +12,13 @@ import pytest
 import phydrax as phx
 
 
-def _square_complex():
+def _square_complex() -> Any:
     vertices = np.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
     faces = np.asarray([[0, 1, 2], [0, 2, 3]], dtype=np.int32)
     return phx.graph.triangle_mesh_to_cochain_complex(vertices, faces)
 
 
-def _annulus_complex():
+def _annulus_complex() -> Any:
     outer = np.asarray([[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]])
     vertices = np.concatenate((outer, 0.4 * outer), axis=0)
     faces = np.asarray(
@@ -26,18 +29,18 @@ def _annulus_complex():
     return phx.graph.triangle_mesh_to_cochain_complex(vertices, faces)
 
 
-def _degree_values(complex_ir, degree, values):
+def _degree_values(complex_ir: Any, degree: Any, values: Any) -> Any:
     packed = jnp.zeros((complex_ir.num_cells,), dtype=jnp.asarray(values).dtype)
     start = complex_ir.cell_offsets[degree]
     return packed.at[start : start + complex_ir.cell_counts[degree]].set(values)
 
 
-def _degree_slice(complex_ir, degree):
+def _degree_slice(complex_ir: Any, degree: Any) -> Any:
     start = complex_ir.cell_offsets[degree]
     return slice(start, start + complex_ir.cell_counts[degree])
 
 
-def test_triangle_mesh_cochain_complex_has_exact_incidence_and_metric_graph():
+def test_triangle_mesh_cochain_complex_has_exact_incidence_and_metric_graph() -> None:
     complex_ir = _square_complex()
     boundary_1 = complex_ir.incidences[0].scipy_matrix()
     boundary_2 = complex_ir.incidences[1].scipy_matrix()
@@ -62,7 +65,7 @@ def test_triangle_mesh_cochain_complex_has_exact_incidence_and_metric_graph():
     complex_ir.validate()
 
 
-def test_sparse_dec_operators_satisfy_exactness_adjointness_and_positive_energy():
+def test_sparse_dec_operators_satisfy_exactness_adjointness_and_positive_energy() -> None:
     complex_ir = _square_complex()
     graph = complex_ir.graph
     zero_form = _degree_values(complex_ir, 0, jnp.asarray([0.3, -0.2, 0.7, 1.1]))
@@ -90,7 +93,7 @@ def test_sparse_dec_operators_satisfy_exactness_adjointness_and_positive_energy(
     assert energy >= -1e-12
 
 
-def test_graphir_dec_wrappers_match_functional_operators():
+def test_graphir_dec_wrappers_match_functional_operators() -> None:
     complex_ir = _square_complex()
     values = _degree_values(complex_ir, 0, jnp.asarray([0.0, 1.0, 2.0, 3.0]))
     graph = complex_ir.graph.replace(
@@ -119,7 +122,7 @@ def test_graphir_dec_wrappers_match_functional_operators():
     )
 
 
-def test_harmonic_preprocessing_recovers_disconnected_and_annulus_betti_numbers():
+def test_harmonic_preprocessing_recovers_disconnected_and_annulus_betti_numbers() -> None:
     disconnected = phx.graph.triangle_mesh_to_cochain_complex(
         np.asarray(
             [
@@ -150,7 +153,7 @@ def test_harmonic_preprocessing_recovers_disconnected_and_annulus_betti_numbers(
     assert relative.ranks == (0, 1, 1)
 
 
-def test_harmonic_projection_is_metric_orthogonal_idempotent_and_laplacian_null():
+def test_harmonic_projection_is_metric_orthogonal_idempotent_and_laplacian_null() -> None:
     base = _annulus_complex()
     harmonics = phx.graph.compute_harmonic_subspace(base, max_modes=3)
     complex_ir = base.with_harmonic_subspace(harmonics)
@@ -176,7 +179,7 @@ def test_harmonic_projection_is_metric_orthogonal_idempotent_and_laplacian_null(
     )
 
 
-def test_orientation_changes_conjugate_exterior_codifferential_and_laplacian():
+def test_orientation_changes_conjugate_exterior_codifferential_and_laplacian() -> None:
     complex_ir = _square_complex()
     signs = (
         np.asarray([1.0, -1.0, 1.0, -1.0]),
@@ -231,7 +234,7 @@ def test_orientation_changes_conjugate_exterior_codifferential_and_laplacian():
     )
 
 
-def test_relative_boundary_policy_masks_boundary_cochains():
+def test_relative_boundary_policy_masks_boundary_cochains() -> None:
     complex_ir = _square_complex()
     zero_form = _degree_values(complex_ir, 0, jnp.ones((4,)))
     one_form = _degree_values(complex_ir, 1, jnp.ones((5,)))
@@ -253,7 +256,7 @@ def test_relative_boundary_policy_masks_boundary_cochains():
     assert jnp.allclose(relative_codifferential, 0.0)
 
 
-def _centered_square_complex():
+def _centered_square_complex() -> Any:
     vertices = np.asarray(
         [
             [0.0, 0.0],
@@ -270,7 +273,7 @@ def _centered_square_complex():
     return phx.graph.triangle_mesh_to_cochain_complex(vertices, faces)
 
 
-def test_cochain_cells_select_degree_boundary_and_padded_dataset_offsets():
+def test_cochain_cells_select_degree_boundary_and_padded_dataset_offsets() -> None:
     small = _square_complex()
     large = _centered_square_complex()
     structure = phx.domain.SampleLayout((("graph",),))
@@ -296,6 +299,7 @@ def test_cochain_cells_select_degree_boundary_and_padded_dataset_offsets():
     base_dataset = phx.domain.GraphDatasetDomain((small.graph, large.graph))
     dataset = base_dataset.with_layout(base_dataset.layout_for_batch_size(2, multiple=4))
     dataset_batch = dataset.points_from_indices(
+        # ty: ignore[invalid-argument-type]
         [0, 1],
         component=phx.domain.CochainCells(0, region="interior"),
         structure=structure,
@@ -344,7 +348,7 @@ def test_cochain_cells_select_degree_boundary_and_padded_dataset_offsets():
     assert jnp.allclose(jnp.asarray(trajectory_batch["t"].data), 0.5)
 
 
-def test_cochain_field_masks_other_degrees_and_preserves_compatible_metadata():
+def test_cochain_field_masks_other_degrees_and_preserves_compatible_metadata() -> None:
     complex_ir = _square_complex()
     domain = phx.domain.GraphDomain(complex_ir.graph)
     structure = phx.domain.SampleLayout((("graph",),))
@@ -363,7 +367,7 @@ def test_cochain_field_masks_other_degrees_and_preserves_compatible_metadata():
     )
 
     @domain.Function("graph")
-    def raw(cell):
+    def raw(cell: Any) -> Any:
         return 1.0 + cell["local_index"]
 
     zero_form = phx.domain.as_cochain_field(raw, zero_spec)
@@ -378,7 +382,7 @@ def test_cochain_field_masks_other_degrees_and_preserves_compatible_metadata():
         phx.domain.cochain_field_spec(zero_form + one_form)
 
 
-def test_domain_cochain_dec_is_exact_and_matches_sparse_graph_operators():
+def test_domain_cochain_dec_is_exact_and_matches_sparse_graph_operators() -> None:
     complex_ir = _square_complex()
     domain = phx.domain.GraphDomain(complex_ir.graph)
     structure = phx.domain.SampleLayout((("graph",),))
@@ -398,7 +402,7 @@ def test_domain_cochain_dec_is_exact_and_matches_sparse_graph_operators():
     )
 
     @domain.Function("graph")
-    def raw(cell):
+    def raw(cell: Any) -> Any:
         return 0.25 + cell["local_index"]
 
     zero_form = phx.domain.as_cochain_field(raw, zero_spec)
@@ -433,7 +437,7 @@ def test_domain_cochain_dec_is_exact_and_matches_sparse_graph_operators():
     )
 
 
-def test_domain_cochain_laplacian_is_equivariant_to_cell_reorientation():
+def test_domain_cochain_laplacian_is_equivariant_to_cell_reorientation() -> None:
     complex_ir = _square_complex()
     signs = (
         np.asarray([1.0, -1.0, 1.0, -1.0]),
@@ -450,11 +454,11 @@ def test_domain_cochain_laplacian_is_equivariant_to_cell_reorientation():
     )
     structure = phx.domain.SampleLayout((("graph",),))
 
-    def laplacian_values(bundle, coefficients):
+    def laplacian_values(bundle: Any, coefficients: Any) -> Any:
         domain = phx.domain.GraphDomain(bundle.graph)
 
         @domain.Function("graph")
-        def raw(cell):
+        def raw(cell: Any) -> Any:
             index = jnp.where(cell["cell_dim"] == 1, cell["local_index"], 0)
             return coefficients[index]
 
@@ -474,7 +478,7 @@ def test_domain_cochain_laplacian_is_equivariant_to_cell_reorientation():
     )
 
 
-def test_cochain_metric_reductions_ignore_padding_and_compose_segment_weights():
+def test_cochain_metric_reductions_ignore_padding_and_compose_segment_weights() -> None:
     values = jnp.asarray([1.0, 3.0, 1000.0, 2.0])
     metric = jnp.asarray([1.0, 3.0, 1000.0, 2.0])
     graph_index = jnp.asarray([0, 0, -1, 1], dtype=jnp.int32)
@@ -528,9 +532,9 @@ def test_cochain_metric_reductions_ignore_padding_and_compose_segment_weights():
     ],
 )
 def test_cochain_residual_constraint_composes_graph_and_time_measures(
-    measure,
-    expected,
-):
+    measure: Any,
+    expected: Any,
+) -> None:
     complex_ir = _square_complex()
     base = phx.domain.GraphTrajectoryDatasetDomain(
         (complex_ir.graph, complex_ir.graph),
@@ -553,7 +557,7 @@ def test_cochain_residual_constraint_composes_graph_and_time_measures(
     )
 
     @domain.Function("graph", "t")
-    def unit_residual(cell, time):
+    def unit_residual(cell: Any, time: Any) -> Any:
         return jnp.ones_like(time) + 0.0 * cell["local_index"]
 
     residual = phx.domain.as_cochain_field(unit_residual, zero_spec)

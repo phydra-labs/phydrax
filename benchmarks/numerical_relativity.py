@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from dataclasses import asdict
@@ -26,7 +28,7 @@ import phydrax as phx
 from phydrax.applications import numerical_relativity as nr
 
 
-def _compiler_record(compiled) -> dict[str, object]:
+def _compiler_record(compiled: Any) -> dict[str, object]:
     evidence = compiler_evidence(
         compiled.cost_analysis(),
         compiled.memory_analysis(),
@@ -38,7 +40,7 @@ def _compiler_record(compiled) -> dict[str, object]:
     return record
 
 
-def _measure(function, arguments, warmup, repeats):
+def _measure(function: Any, arguments: Any, warmup: Any, repeats: Any) -> Any:
     compiled, compilation = measure_lower_and_compile(
         lambda: jax.jit(function).lower(*arguments),
         lambda lowered: lowered.compile(),
@@ -53,7 +55,7 @@ def _measure(function, arguments, warmup, repeats):
     }
 
 
-def _setup(cell_count: int):
+def _setup(cell_count: int) -> Any:
     shape = (cell_count, cell_count, cell_count)
     lower = tuple(-0.5 * (cell_count - 1) for _ in range(3))
     spacing = (1.0, 1.0, 1.0)
@@ -98,7 +100,7 @@ def run(cell_count: int, warmup: int, repeats: int) -> dict[str, object]:
     setup, setup_seconds = measure_synchronized(lambda: _setup(cell_count))
     grid, derivatives, system, gauge, state, direction, snapshot_token = setup
 
-    def rhs_kernel(values):
+    def rhs_kernel(values: Any) -> Any:
         evaluation = nr.evaluate_z4c_rhs(
             system,
             grid,
@@ -118,8 +120,8 @@ def run(cell_count: int, warmup: int, repeats: int) -> dict[str, object]:
             evaluation.derivative_valid,
         )
 
-    def derivative_kernel(values, tangent):
-        def objective(candidate):
+    def derivative_kernel(values: Any, tangent: Any) -> Any:
+        def objective(candidate: Any) -> Any:
             rates = nr.evaluate_z4c_rhs(
                 system,
                 grid,

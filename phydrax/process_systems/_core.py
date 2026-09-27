@@ -9,11 +9,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from math import isfinite
+from typing import Self
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..qualification import CapabilityProfile, SupportTuple
 
@@ -26,7 +28,13 @@ class MaterialStream:
     pressure_pa: Array
 
     @classmethod
-    def create(cls, molar_flow_mol_s, composition, temperature_k, pressure_pa):
+    def create(
+        cls,
+        molar_flow_mol_s: ArrayLike,
+        composition: ArrayLike,
+        temperature_k: ArrayLike,
+        pressure_pa: ArrayLike,
+    ) -> Self:
         value = cls(
             jnp.asarray(molar_flow_mol_s),
             jnp.asarray(composition),
@@ -89,10 +97,10 @@ def isothermal_flash(
         "Flash feed must be normalized/nonnegative and K values finite/positive.",
     )
 
-    def residual(fraction):
+    def residual(fraction: Array) -> Array:
         return jnp.sum(feed * (ratios - 1.0) / (1.0 + fraction * (ratios - 1.0)))
 
-    def bisect(_, bounds):
+    def bisect(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
         lower, upper = bounds
         middle = 0.5 * (lower + upper)
         value = residual(middle)

@@ -9,11 +9,12 @@ from abc import abstractmethod
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 from ..discretization.spectral import SphericalSpectralDiscretization
 from ..metrix import SphereLaplacianLevels
 from ._base import _as_real_array, AbstractPositiveDefiniteKernel
@@ -125,7 +126,7 @@ class SphereSpectralKernel(AbstractPositiveDefiniteKernel):
         radius: float = 1.0,
         normalize: bool = True,
         membership_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         if not isinstance(multiplier, AbstractSpectralMultiplier):
             raise TypeError("multiplier must be an AbstractSpectralMultiplier.")
         radius_ = float(radius)
@@ -335,7 +336,7 @@ class AbstractHomogeneousPolynomialKernel(AbstractPositiveDefiniteKernel):
         casimir_shift: float,
         normalize: bool,
         membership_tolerance: float,
-    ):
+    ) -> None:
         if not isinstance(multiplier, AbstractSpectralMultiplier):
             raise TypeError("multiplier must be an AbstractSpectralMultiplier.")
         if int(max_level) < 0:
@@ -411,7 +412,7 @@ class SpecialOrthogonalCharacterKernel(AbstractHomogeneousPolynomialKernel):
         *,
         normalize: bool = True,
         membership_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         resolved = int(dimension)
         if resolved < 2:
             raise ValueError("SO(n) dimension must be at least two.")
@@ -464,7 +465,7 @@ class SpecialUnitaryCharacterKernel(AbstractHomogeneousPolynomialKernel):
         *,
         normalize: bool = True,
         membership_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         resolved = int(dimension)
         if resolved < 2:
             raise ValueError("SU(n) dimension must be at least two.")
@@ -514,7 +515,7 @@ class StiefelSpectralKernel(AbstractHomogeneousPolynomialKernel):
         *,
         normalize: bool = True,
         membership_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         ambient = int(ambient_dimension)
         frame = int(frame_dimension)
         if ambient < 2 or frame <= 0 or frame > ambient:
@@ -573,7 +574,7 @@ class GrassmannSpectralKernel(AbstractHomogeneousPolynomialKernel):
         *,
         normalize: bool = True,
         membership_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         ambient = int(ambient_dimension)
         subspace = int(subspace_dimension)
         if ambient < 2 or subspace <= 0 or subspace >= ambient:

@@ -15,7 +15,7 @@ from phydrax.series import SampledSeries
 from phydrax.units import KELVIN
 
 
-def test_epw_subhour_tmy_leap_and_interval_endings():
+def test_epw_subhour_tmy_leap_and_interval_endings() -> None:
     rows = energyplus_reference_weather().decode().splitlines()
     rows[0] = rows[0].replace("Synthetic", "TMY3")
     rows[4] = "HOLIDAYS/DAYLIGHT SAVINGS,Yes,0,0,0"
@@ -37,7 +37,7 @@ def test_epw_subhour_tmy_leap_and_interval_endings():
         )
 
 
-def test_observed_year_rollover_is_not_relabeled_as_typical_year():
+def test_observed_year_rollover_is_not_relabeled_as_typical_year() -> None:
     rows = energyplus_reference_weather().decode().splitlines()
     rows[7] = "DATA PERIODS,1,1,Data,Monday,12/31,1/1"
     first = rows[8].split(",")
@@ -51,7 +51,9 @@ def test_observed_year_rollover_is_not_relabeled_as_typical_year():
     assert temperature.origin == "2001-12-31T23:00:00+00:00"
 
 
-def test_energyplus_reference_temperature_conversion_balance_and_missing_failure():
+def test_energyplus_reference_temperature_conversion_balance_and_missing_failure() -> (
+    None
+):
     column = "ZONE:Zone Mean Air Temperature [C](Hourly)"
     csv = "Date/Time," + column + "\n 01/01  01:00:00,20\n 01/01  02:00:00,20\n"
     variable = EnergyPlusVariable(column, "zone_temperature", KELVIN, offset=273.15)

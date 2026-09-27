@@ -12,16 +12,20 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import scipy.sparse as sp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._costs import PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
 from ._operators import AbstractLinearOperator, DenseLinearOperator
 from ._preconditioner_properties import PreconditionerProperties
 from ._preconditioners import AbstractPreconditioner
 from ._preconditioning import AbstractPreconditionerBuilder
+from ._properties import PropertyEvidence
 from ._sparse_contract import AbstractSparseLinearOperator, SparseStorage
 from ._sparse_triangular import (
     analyze_sparse_triangular,
@@ -121,9 +125,8 @@ class GaussSeidelPreconditioner(AbstractPreconditioner, NonTrainableState):
         direction: GaussSeidelDirection = "symmetric",
         relaxation: float = 1.0,
         previous: "GaussSeidelPreconditioner | None" = None,
-    ):
-        if direction not in ("forward", "backward", "symmetric"):
-            raise ValueError(f"Unknown Gauss-Seidel direction {direction!r}.")
+    ) -> None:
+        direction = parse(direction, GaussSeidelDirection, "direction")
         omega = float(relaxation)
         if not isfinite(omega) or omega <= 0.0 or omega >= 2.0:
             raise ValueError("Gauss-Seidel relaxation must lie strictly between 0 and 2.")
@@ -154,7 +157,7 @@ class GaussSeidelPreconditioner(AbstractPreconditioner, NonTrainableState):
             "self_adjoint"
         )
         positive = symmetric and operator.properties.certifies("positive_definite")
-        evidence = {
+        evidence: dict[str, PropertyEvidence] = {
             "linear": "construction",
             "stationary": "construction",
             **({"self_adjoint": "transformed"} if symmetric else {}),
@@ -278,9 +281,8 @@ class GaussSeidelPreconditionerBuilder(AbstractPreconditionerBuilder):
         *,
         direction: GaussSeidelDirection = "symmetric",
         relaxation: float = 1.0,
-    ):
-        if direction not in ("forward", "backward", "symmetric"):
-            raise ValueError(f"Unknown Gauss-Seidel direction {direction!r}.")
+    ) -> None:
+        direction = parse(direction, GaussSeidelDirection, "direction")
         omega = float(relaxation)
         if not isfinite(omega) or omega <= 0.0 or omega >= 2.0:
             raise ValueError("Gauss-Seidel relaxation must lie strictly between 0 and 2.")
@@ -317,7 +319,7 @@ class GaussSeidelPreconditionerBuilder(AbstractPreconditionerBuilder):
             "self_adjoint"
         )
         positive = symmetric and setup_operator.properties.certifies("positive_definite")
-        evidence = {
+        evidence: dict[str, PropertyEvidence] = {
             "linear": "construction",
             "stationary": "construction",
             **({"self_adjoint": "transformed"} if symmetric else {}),

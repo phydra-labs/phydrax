@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
+from typing import Any, Self
 
 from ..._fingerprint import canonical_fingerprint
 from ...qualification._reference import ReferenceArtifactManifest
@@ -53,7 +55,7 @@ class ReferenceRightsAttestation:
         return canonical_fingerprint(self.to_record())
 
     @classmethod
-    def from_record(cls, record, /):
+    def from_record(cls, record: Mapping[str, Any], /) -> Self:
         if record.get("kind") != "battery-reference-rights":
             raise ValueError("Invalid reference rights record.")
         return cls(**{name: record[name] for name in cls.__dataclass_fields__})

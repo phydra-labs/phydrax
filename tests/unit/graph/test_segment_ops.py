@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import phydrax.graph as vx
 
 
-def test_segment_variance_and_normalize():
+def test_segment_variance_and_normalize() -> None:
     data = jnp.array([1.0, 3.0, 2.0, 6.0])
     seg = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
 
@@ -15,7 +15,7 @@ def test_segment_variance_and_normalize():
     assert jnp.allclose(norm, expected, atol=1e-5)
 
 
-def test_segment_constant_variants():
+def test_segment_constant_variants() -> None:
     data = jnp.array([1.0, 2.0])
     seg = jnp.array([0, 0], dtype=jnp.int32)
 
@@ -26,7 +26,7 @@ def test_segment_constant_variants():
     assert jnp.allclose(mins, jnp.array([1.0, 9.0, 9.0]))
 
 
-def test_segment_logsumexp_and_normalize_preserve_impossible_support():
+def test_segment_logsumexp_and_normalize_preserve_impossible_support() -> None:
     logits = jnp.asarray([0.0, -1.0, -jnp.inf, -jnp.inf])
     segments = jnp.asarray([0, 0, 1, 1], dtype=jnp.int32)
 

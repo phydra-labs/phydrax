@@ -58,7 +58,7 @@ def _compile_and_train(
     optimizer = optax.adam(learning_rate)
     optimizer_state = optimizer.init(eqx.filter(model, eqx.is_inexact_array))
 
-    def update(candidate, state):
+    def update(candidate: Any, state: Any) -> Any:
         value, gradient = eqx.filter_value_and_grad(loss)(candidate)
         updates, state = optimizer.update(gradient, state, candidate)
         return eqx.apply_updates(candidate, updates), state, value
@@ -192,7 +192,7 @@ def _sparse_recovery_benchmark(
     }
 
 
-def _diagonal_map(coordinate, state, rates):
+def _diagonal_map(coordinate: Any, state: Any, rates: Any) -> Any:
     del coordinate
     return jnp.exp(rates) * state
 
@@ -323,7 +323,7 @@ def _rk4_rollout(
     dt: float,
     num_steps: int,
 ) -> jax.Array:
-    def step(state, _):
+    def step(state: Any, _: Any) -> Any:
         k1 = vector_field(state)
         k2 = vector_field(state + 0.5 * dt * k1)
         k3 = vector_field(state + 0.5 * dt * k2)
@@ -408,7 +408,7 @@ def _deterministic_thermodynamic_record(
         quick=quick,
     )
 
-    def derivative_loss(candidate):
+    def derivative_loss(candidate: Any) -> Any:
         predictions = jax.vmap(candidate)(train_states)
         return jnp.mean((predictions - train_targets) ** 2)
 
@@ -526,7 +526,7 @@ def _deterministic_thermodynamic_benchmark(
 class _ConstantDiffusionCoefficient(eqx.Module):
     value: float = eqx.field(static=True)
 
-    def __call__(self, time, state, args):
+    def __call__(self, time: Any, state: Any, args: Any) -> Any:
         del time, state, args
         return jnp.asarray([[self.value]])
 
@@ -535,11 +535,11 @@ class _PositiveDiffusionCoefficient(eqx.Module):
     model: Any
     minimum: float = eqx.field(static=True)
 
-    def __init__(self, model: Any, /, *, minimum: float = 1e-4):
+    def __init__(self, model: Any, /, *, minimum: float = 1e-4) -> None:
         self.model = model
         self.minimum = float(minimum)
 
-    def __call__(self, time, state, args):
+    def __call__(self, time: Any, state: Any, args: Any) -> Any:
         del time, args
         value = jnp.asarray(self.model(state)).reshape(())
         return (jax.nn.softplus(value) + self.minimum).reshape((1, 1))
@@ -706,7 +706,7 @@ def _stochastic_thermodynamic_record(
     if architecture == "drift_only":
         derivative_targets = (train_target - train_source) / train_intervals[:, None]
 
-        def training_loss(candidate):
+        def training_loss(candidate: Any) -> Any:
             context = phx.stochastic.StateSpaceStepContext.empty()
             predictions = jax.vmap(
                 lambda state: (
@@ -724,7 +724,7 @@ def _stochastic_thermodynamic_record(
         loss_kind = "increment-regression-mse"
     else:
 
-        def training_loss(candidate):
+        def training_loss(candidate: Any) -> Any:
             return _transition_negative_log_likelihood(
                 candidate,
                 train_source,
@@ -909,6 +909,7 @@ def _learned_discrete_benchmark(
         batch_size=cases,
         key=jax.random.key(seed + 1),
     )
+    # ty: ignore[invalid-argument-type]
     predicted = jax.vmap(lambda value: fit.system.evaluate(0.0, value, None))(
         states[:, 0]
     )
@@ -1327,6 +1328,7 @@ def _comma_values(value: str, /) -> tuple[str, ...]:
 
 
 def _comma_integers(value: str, /) -> tuple[int, ...]:
+    # ty: ignore[invalid-return-type]
     return tuple(_comma_values(value))
 
 

@@ -9,9 +9,10 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._fd_precision import FDExecutionPrecisionPolicy
@@ -66,7 +67,7 @@ class FDAMRHierarchyPlan(StrictModule, NonTrainableState):
         tag_buffer: int = 0,
         proper_nesting: int = 0,
         precision: FDExecutionPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, FDExecutionPrecisionPolicy):
             raise TypeError("precision must be an FDExecutionPrecisionPolicy.")
@@ -133,7 +134,7 @@ class PreparedFDAMRHierarchy(StrictModule, NonTrainableState):
     topology_compiler: BlockTopologyCompiler
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: FDAMRHierarchyPlan, /):
+    def __init__(self, plan: FDAMRHierarchyPlan, /) -> None:
         if not isinstance(plan, FDAMRHierarchyPlan):
             raise TypeError("plan must be FDAMRHierarchyPlan.")
         compiler = BlockTopologyCompiler(
@@ -152,7 +153,7 @@ class PreparedFDAMRHierarchy(StrictModule, NonTrainableState):
         )
 
     @property
-    def precision_evidence(self):
+    def precision_evidence(self) -> PrecisionEvidenceEnvelope:
         return self.plan.precision.evidence()
 
     def initial_topology(self, /) -> BlockHierarchyTopology:
@@ -174,7 +175,7 @@ class PreparedFDAMRHierarchy(StrictModule, NonTrainableState):
         /,
         *,
         component_shape: Sequence[int] = (),
-        dtype=None,
+        dtype: DTypeLike | None = None,
     ) -> BlockFieldTopologyTransition:
         dtype_ = self.plan.precision.field_dtype if dtype is None else dtype
         return BlockFieldTopologyTransition(

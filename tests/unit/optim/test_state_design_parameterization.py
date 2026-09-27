@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -22,7 +25,13 @@ from tools.learned_physical_design_benchmarks import (
 )
 
 
-def _parameterization(problem, decoder=lambda latent: latent, *, template=None, **kwargs):
+def _parameterization(
+    problem: Any,
+    decoder: Any = lambda latent: latent,
+    *,
+    template: Any = None,
+    **kwargs: Any,
+) -> Any:
     template = jnp.asarray([0.5]) if template is None else template
     return reparameterize_state_design(
         problem,
@@ -36,7 +45,7 @@ def _parameterization(problem, decoder=lambda latent: latent, *, template=None, 
     )
 
 
-def test_physical_response_vjp_composes_decoder_and_preserves_constraints():
+def test_physical_response_vjp_composes_decoder_and_preserves_constraints() -> None:
     physical = phx.optim.StateDesignProblem(
         lambda state, design, args: state - args * design["gain"],
         lambda state, design, args: 0.5 * state**2 + 0.3 * design["gain"],
@@ -75,7 +84,7 @@ def test_physical_response_vjp_composes_decoder_and_preserves_constraints():
     np.testing.assert_allclose(upper, 2.0)
 
 
-def test_latent_mma_cannot_escape_original_physical_bound():
+def test_latent_mma_cannot_escape_original_physical_bound() -> None:
     physical = phx.optim.StateDesignProblem(
         lambda state, design, args: state - design,
         lambda state, design, args: jnp.sum((state - 1.5) ** 2),
@@ -98,12 +107,19 @@ def test_latent_mma_cannot_escape_original_physical_bound():
     assert float(jnp.max(lowered.decode(result.design))) <= 0.60005
 
 
-def test_lowering_preserves_physical_block_certification():
+def test_lowering_preserves_physical_block_certification() -> None:
     policy = phx.optim.StateAcceptancePolicy()
 
     def certify(
-        state, design, residual, status, *, reference_norm, args, solver_acceptance=None
-    ):
+        state: Any,
+        design: Any,
+        residual: Any,
+        status: Any,
+        *,
+        reference_norm: Any,
+        args: Any,
+        solver_acceptance: Any = None,
+    ) -> Any:
         del args, solver_acceptance
         block = policy.state_evidence(
             state,
@@ -135,7 +151,7 @@ def test_lowering_preserves_physical_block_certification():
     assert not rejected.acceptance.blocks[0].admissible
 
 
-def test_decoder_rejects_schema_shape_dtype_and_invalid_geometry():
+def test_decoder_rejects_schema_shape_dtype_and_invalid_geometry() -> None:
     problem = phx.optim.StateDesignProblem(
         lambda state, design, args: state - design,
         lambda state, design, args: jnp.sum(state**2),
@@ -181,7 +197,7 @@ def test_decoder_rejects_schema_shape_dtype_and_invalid_geometry():
 
 
 @pytest.mark.parametrize("failure", ("state", "transpose"))
-def test_native_guided_score_rejects_failed_physical_certification(failure):
+def test_native_guided_score_rejects_failed_physical_certification(failure: Any) -> None:
     physical = phx.optim.StateDesignProblem(
         (lambda state, design, args: state - design)
         if failure == "state"
@@ -212,7 +228,7 @@ def test_native_guided_score_rejects_failed_physical_certification(failure):
     assert not jnp.all(jnp.isfinite(score))
 
 
-def test_native_fem_density_fixed_cells_and_guidance_pullback():
+def test_native_fem_density_fixed_cells_and_guidance_pullback() -> None:
     learned, initial, _, mask, fixed = build_density_case(2)
     parameterization = learned.parameterization
     latent = jnp.asarray([-0.2, 0.1])
@@ -261,7 +277,7 @@ def test_native_fem_density_fixed_cells_and_guidance_pullback():
     )
 
 
-def test_native_fem_shape_schema_and_geometry_gradient():
+def test_native_fem_shape_schema_and_geometry_gradient() -> None:
     parameterization, initial = build_shape_case(2)
     latent = jnp.asarray([0.1, -0.2])
     response = parameterization.response_vjp(
@@ -285,7 +301,7 @@ def test_native_fem_shape_schema_and_geometry_gradient():
     )
 
 
-def test_native_fem_latent_solve_requires_reference_volume_feasibility():
+def test_native_fem_latent_solve_requires_reference_volume_feasibility() -> None:
     learned, initial, plan, mask, fixed = build_density_case(2)
     source = learned.topology_problem
     sm = phx.applications.solid_mechanics

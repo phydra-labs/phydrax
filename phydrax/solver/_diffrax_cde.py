@@ -11,7 +11,8 @@ import diffrax as dfx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
@@ -61,7 +62,7 @@ class ControlledDifferentialSolution(StrictModule):
         *,
         problem_id: str,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         if not isinstance(differential_solution, DifferentialSolution):
             raise TypeError("differential_solution must be a DifferentialSolution.")
         if not isinstance(path, AbstractDifferentiableDrivingPath):

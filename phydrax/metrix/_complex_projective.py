@@ -8,7 +8,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._manifold import (
     _array_with_trailing_shape,
@@ -30,7 +31,7 @@ class ComplexProjectiveManifold(AbstractGeodesicManifold):
     transport_is_isometric: bool = eqx.field(static=True)
     transport_is_parallel: bool = eqx.field(static=True)
 
-    def __init__(self, ambient_dimension: int, /, *, tolerance: float = 1e-7):
+    def __init__(self, ambient_dimension: int, /, *, tolerance: float = 1e-7) -> None:
         dimension = int(ambient_dimension)
         if dimension < 2:
             raise ValueError("Complex projective ambient dimension must be at least two.")

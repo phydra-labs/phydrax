@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -70,7 +71,7 @@ class ActivePhaseStoragePlan(StrictModule, NonTrainableState):
         activation_tolerance: float = 1.0e-12,
         pruning_tolerance: float = 1.0e-14,
         minimum_dwell: int = 2,
-    ):
+    ) -> None:
         cells = np.asarray(cell_dofs, dtype=np.int32)
         phases = int(phase_count)
         capacity = int(local_capacity)

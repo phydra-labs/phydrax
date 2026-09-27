@@ -12,7 +12,8 @@ from math import isfinite
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..linalg import (
@@ -54,7 +55,7 @@ def _informationally_complete_vectors(
         raise ValueError(
             "A one-dimensional process has no distinct seeded design settings."
         )
-    key = jax.random.PRNGKey(design_seed)
+    key = jax.random.key(design_seed)
     real_key, imaginary_key = jax.random.split(key)
     raw = jax.random.normal(real_key, (dimension, dimension)) + 1j * jax.random.normal(
         imaginary_key, (dimension, dimension)
@@ -151,7 +152,7 @@ class ProcessTomographyExperiment(StrictModule):
         terminal_effect: ArrayLike | None = None,
         trials: ArrayLike | None = None,
         experiment_id: str,
-    ):
+    ) -> None:
         operations = tuple(instruments)
         selected = tuple(outcomes)
         if not operations or len(operations) != len(selected):
@@ -277,7 +278,7 @@ class CausalProcessTomographyProblem(StrictModule):
         /,
         *,
         problem_id: str = "causal-process-tomography",
-    ):
+    ) -> None:
         values = tuple(experiments)
         if not values:
             raise ValueError("At least one process experiment is required.")
@@ -317,7 +318,7 @@ class CausalProcessTomographyProblem(StrictModule):
             (jnp.real(value).reshape(-1), jnp.imag(value).reshape(-1))
         )
 
-        def probabilities(parameters):
+        def probabilities(parameters: Array) -> Array:
             candidate = parameters[:size].reshape(value.shape) + 1j * parameters[
                 size:
             ].reshape(value.shape)
@@ -357,7 +358,7 @@ class CausalProcessTomographyResult(StrictModule):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         self.process = process
         self.loss_history = jnp.asarray(loss_history)
         self.support_valid = jnp.all(jnp.isfinite(self.loss_history))
@@ -381,7 +382,7 @@ def fit_causal_process_initial_state(
     if factor.shape != expected:
         raise ValueError("Initial process-density factor shape is invalid.")
 
-    def model(candidate):
+    def model(candidate: Array) -> CausalProcessTensor:
         density = faithful_density_from_cholesky(candidate)
         return CausalProcessTensor(
             problem.process.spec,
@@ -390,7 +391,7 @@ def fit_causal_process_initial_state(
             process_id=problem.process.process_id,
         )
 
-    def loss(candidate):
+    def loss(candidate: Array) -> Array:
         return problem.negative_log_likelihood(model(candidate))
 
     value_and_grad = jax.value_and_grad(loss)

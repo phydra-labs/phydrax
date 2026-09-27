@@ -2,13 +2,18 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _periodic_compiled(shape, bathymetry, reconstruction, *, source=None):
+def _periodic_compiled(
+    shape: Any, bathymetry: Any, reconstruction: Any, *, source: Any = None
+) -> Any:
     dimension = len(shape)
     axis_names = tuple("xy"[:dimension])
     grid = phx.discretization.TensorGridPlan(
@@ -42,7 +47,7 @@ def _periodic_compiled(shape, bathymetry, reconstruction, *, source=None):
     )
 
 
-def test_two_dimensional_dry_lake_is_stationary():
+def test_two_dimensional_dry_lake_is_stationary() -> None:
     x = (jnp.arange(10) + 0.5) / 10
     y = (jnp.arange(8) + 0.5) / 8
     xx, yy = jnp.meshgrid(x, y, indexing="ij")
@@ -60,8 +65,8 @@ def test_two_dimensional_dry_lake_is_stationary():
     np.testing.assert_allclose(residual, 0.0, atol=5e-12)
 
 
-def test_equilibrium_muscl_has_second_order_smooth_residual():
-    def error(count):
+def test_equilibrium_muscl_has_second_order_smooth_residual() -> None:
+    def error(count: Any) -> Any:
         bed = jnp.zeros((count,))
         compiled = _periodic_compiled(
             (count,),
@@ -88,7 +93,7 @@ def test_equilibrium_muscl_has_second_order_smooth_residual():
     assert fine < coarse / 3.0
 
 
-def test_linearization_jvp_vjp_duality_away_from_dry_switches():
+def test_linearization_jvp_vjp_duality_away_from_dry_switches() -> None:
     count = 16
     bed = jnp.zeros((count,))
     compiled = _periodic_compiled((count,), bed, phx.discretization.MUSCLReconstruction())
@@ -127,7 +132,7 @@ def test_linearization_jvp_vjp_duality_away_from_dry_switches():
     )
 
 
-def test_coriolis_runtime_preserves_mass_and_converges_inertial_rotation():
+def test_coriolis_runtime_preserves_mass_and_converges_inertial_rotation() -> None:
     shape = (6, 6)
     bed = jnp.zeros(shape)
     source = phx.equations.ShallowWaterCoriolisSource(0.5)

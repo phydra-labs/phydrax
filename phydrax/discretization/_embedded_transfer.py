@@ -11,7 +11,8 @@ from enum import StrEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._physical import SpatialCoordinateContract
@@ -91,7 +92,7 @@ class EmbeddedTransferPartition(StrictModule):
         source_route_owner: ArrayLike,
         partition_count: int,
         /,
-    ):
+    ) -> None:
         target = np.asarray(target_owner)
         routes = np.asarray(source_route_owner)
         if not np.issubdtype(target.dtype, np.integer) or not np.issubdtype(

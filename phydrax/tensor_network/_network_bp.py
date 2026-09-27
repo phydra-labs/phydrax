@@ -11,7 +11,8 @@ from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract, get_symbol
 
@@ -25,7 +26,9 @@ class FactorTensor(StrictModule):
     variables: tuple[str, ...] = eqx.field(static=True)
     values: Array
 
-    def __init__(self, factor_id: str, variables: Sequence[str], values: ArrayLike, /):
+    def __init__(
+        self, factor_id: str, variables: Sequence[str], values: ArrayLike, /
+    ) -> None:
         identifier = str(factor_id)
         variables_ = tuple(str(name) for name in variables)
         values_ = jnp.asarray(values)
@@ -56,7 +59,7 @@ class FactorGraphNetwork(StrictModule):
         variable_cardinalities: Mapping[str, int],
         factors: Sequence[FactorTensor],
         /,
-    ):
+    ) -> None:
         names = tuple(sorted(str(name) for name in variable_cardinalities))
         cardinalities = tuple(int(variable_cardinalities[name]) for name in names)
         factors_ = tuple(factors)
@@ -134,7 +137,7 @@ class NetworkBPPolicy(StrictModule):
         maximum_message_elements: int = 10_000_000,
         maximum_factor_elements: int = 100_000_000,
         maximum_workspace_bytes: int = 2**31,
-    ):
+    ) -> None:
         if any(
             not isinstance(value, Integral) or isinstance(value, bool)
             for value in (
@@ -277,8 +280,8 @@ def run_network_belief_propagation(
             jnp.ones((cardinality[name],), dtype=dtype) / cardinality[name]
             for name in network.variable_names
         )
-        log_partition = sum(
-            jnp.log(jnp.abs(factor.values)) for factor in network.factors
+        log_partition = jnp.asarray(
+            sum(jnp.log(jnp.abs(factor.values)) for factor in network.factors)
         ) + sum(jnp.log(cardinality[name]) for name in network.variable_names)
         residuals = jnp.zeros(
             (policy.maximum_iterations,), dtype=jnp.real(network.factors[0].values).dtype
@@ -416,7 +419,9 @@ def run_network_belief_propagation(
             factor_to_variable, variable_to_factor, strict=True
         )
     )
-    log_partition = sum(jnp.log(jnp.abs(value)) for value in factor_normalizers)
+    log_partition = jnp.asarray(
+        sum(jnp.log(jnp.abs(value)) for value in factor_normalizers)
+    )
     log_partition = log_partition + sum(
         jnp.log(jnp.abs(value)) for value in variable_normalizers
     )

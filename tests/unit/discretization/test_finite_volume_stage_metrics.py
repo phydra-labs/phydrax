@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -30,7 +33,7 @@ from phydrax.discretization.finite_volume._unstructured_motion import (
 )
 
 
-def _unstructured(vertices=None):
+def _unstructured(vertices: Any = None) -> Any:
     points = (
         np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
         if vertices is None
@@ -42,7 +45,7 @@ def _unstructured(vertices=None):
     ).prepare()
 
 
-def _quadrilateral_strip():
+def _quadrilateral_strip() -> Any:
     vertices = np.asarray(
         (
             (0.0, 0.0),
@@ -60,7 +63,7 @@ def _quadrilateral_strip():
     ).prepare()
 
 
-def _face_layout(**overrides):
+def _face_layout(**overrides: Any) -> Any:
     values = {
         "face_ids": np.asarray((10, 11), dtype=np.int32),
         "owner_cells": np.asarray((0, 1), dtype=np.int32),
@@ -78,10 +81,11 @@ def _face_layout(**overrides):
             0,
             -1,
         )
+    # ty: ignore[invalid-argument-type]
     return FiniteVolumeStageFaceLayout(**values)
 
 
-def _face_block(**overrides):
+def _face_block(**overrides: Any) -> Any:
     layout_fields = {
         "face_ids",
         "owner_cells",
@@ -117,7 +121,7 @@ def _face_block(**overrides):
     return FiniteVolumeStageFaceBlock(**values)
 
 
-def _geometry_evidence(**overrides):
+def _geometry_evidence(**overrides: Any) -> Any:
     values = {
         "coordinate_effective_volume_defect": np.zeros((2,)),
         "coordinate_effective_volume_tolerance": np.full((2,), 1.0e-10),
@@ -136,7 +140,7 @@ def _geometry_evidence(**overrides):
     return FiniteVolumeStageGeometryEvidence(**values)
 
 
-def _stage_metric_values():
+def _stage_metric_values() -> Any:
     return {
         "topology_epoch_id": "epoch-0",
         "geometry_family_id": "geometry-family-0",
@@ -154,13 +158,13 @@ def _stage_metric_values():
     }
 
 
-def _stage_metrics(**overrides):
+def _stage_metrics(**overrides: Any) -> Any:
     values = _stage_metric_values()
     values.update(overrides)
     return FiniteVolumeStageMetrics(**values)
 
 
-def test_static_unstructured_lowering_has_stationary_success_evidence():
+def test_static_unstructured_lowering_has_stationary_success_evidence() -> None:
     discretization = _unstructured()
     metrics = lower_static_unstructured_stage_metrics(
         discretization,
@@ -239,7 +243,7 @@ def test_static_unstructured_lowering_has_stationary_success_evidence():
     )
 
 
-def test_moving_layout_preserves_exact_physical_boundary_routes():
+def test_moving_layout_preserves_exact_physical_boundary_routes() -> None:
     vertices = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
     base_plan = phx.discretization.UnstructuredFiniteVolumePlan(
         vertices,
@@ -277,7 +281,7 @@ def test_moving_layout_preserves_exact_physical_boundary_routes():
     assert tuple(int(stage.geometry_version) for stage in stages) == (0, 1, 2, 3)
 
 
-def test_embedded_lowering_binds_exact_physical_and_cut_policy_counts():
+def test_embedded_lowering_binds_exact_physical_and_cut_policy_counts() -> None:
     discretization = _quadrilateral_strip()
     embedded = phx.discretization.EmbeddedBoundaryPlan(
         discretization,
@@ -317,7 +321,7 @@ def test_embedded_lowering_binds_exact_physical_and_cut_policy_counts():
         assert np.all(policies[active & (neighbors >= 0)] == -1)
 
 
-def test_closed_inactive_face_has_safe_zero_grid_velocity_average():
+def test_closed_inactive_face_has_safe_zero_grid_velocity_average() -> None:
     block = _face_block(
         active_mask=np.asarray((True, False)),
         area_vectors=np.asarray(((1.0, 0.0), (0.0, 0.0))),
@@ -339,7 +343,7 @@ def test_closed_inactive_face_has_safe_zero_grid_velocity_average():
     assert np.all(np.isfinite(block.grid_normal_velocity))
 
 
-def test_stage_face_block_rejects_zero_active_measure_and_invalid_quadrature():
+def test_stage_face_block_rejects_zero_active_measure_and_invalid_quadrature() -> None:
     with pytest.raises(
         (ValueError, eqx.EquinoxRuntimeError), match="Active face measures"
     ):
@@ -364,13 +368,13 @@ def test_stage_face_block_rejects_zero_active_measure_and_invalid_quadrature():
 
 
 @pytest.mark.parametrize("route", ("face_ids", "owner_cells", "neighbor_cells"))
-def test_stage_face_routes_reject_int32_overflow(route):
+def test_stage_face_routes_reject_int32_overflow(route: Any) -> None:
     values = np.asarray((0, np.iinfo(np.int32).max + 1), dtype=np.int64)
     with pytest.raises(ValueError, match="representable as int32"):
         _face_block(**{route: values})
 
 
-def test_stage_face_routes_are_normalized_to_int32():
+def test_stage_face_routes_are_normalized_to_int32() -> None:
     block = _face_block(
         face_ids=np.asarray((10, 11), dtype=np.int64),
         owner_cells=np.asarray((0, 1), dtype=np.int64),
@@ -391,13 +395,13 @@ def test_stage_face_routes_are_normalized_to_int32():
     ),
 )
 def test_active_face_routes_require_valid_boundary_policy_ownership(
-    boundary_policy_ids, message
-):
+    boundary_policy_ids: Any, message: Any
+) -> None:
     with pytest.raises(ValueError, match=message):
         _face_layout(boundary_policy_ids=boundary_policy_ids)
 
 
-def test_inactive_face_routes_normalize_boundary_policy_ids_to_minus_one():
+def test_inactive_face_routes_normalize_boundary_policy_ids_to_minus_one() -> None:
     layout = _face_layout(
         active_mask=np.asarray((False, True)),
         boundary_policy_ids=np.asarray(
@@ -410,7 +414,7 @@ def test_inactive_face_routes_normalize_boundary_policy_ids_to_minus_one():
     assert np.asarray(layout.boundary_policy_ids).dtype == np.int32
 
 
-def test_stage_face_layout_revalidates_exact_bound_policy_count():
+def test_stage_face_layout_revalidates_exact_bound_policy_count() -> None:
     layout = _face_layout()
 
     layout.validate_boundary_policy_count(1)
@@ -418,7 +422,7 @@ def test_stage_face_layout_revalidates_exact_bound_policy_count():
         layout.validate_boundary_policy_count(2)
 
 
-def test_stage_face_layout_owns_static_routes_and_exact_geometry_shapes():
+def test_stage_face_layout_owns_static_routes_and_exact_geometry_shapes() -> None:
     layout = _face_layout()
     block = _face_block(layout=layout)
 
@@ -436,8 +440,8 @@ def test_stage_face_layout_owns_static_routes_and_exact_geometry_shapes():
         _face_block(spatial_shape=(2, 3))
 
 
-def test_stage_face_layout_routes_are_array_leaves_with_bounded_static_metadata():
-    def make_layout(face_count):
+def test_stage_face_layout_routes_are_array_leaves_with_bounded_static_metadata() -> None:
+    def make_layout(face_count: Any) -> Any:
         return FiniteVolumeStageFaceLayout(
             face_ids=np.arange(face_count, dtype=np.int32),
             owner_cells=np.zeros((face_count,), dtype=np.int32),
@@ -454,7 +458,7 @@ def test_stage_face_layout_routes_are_array_leaves_with_bounded_static_metadata(
     large = make_layout(1024)
 
     @eqx.filter_jit
-    def jit_identity(layout):
+    def jit_identity(layout: Any) -> Any:
         return layout
 
     jitted = jit_identity(small)
@@ -486,7 +490,7 @@ def test_stage_face_layout_routes_are_array_leaves_with_bounded_static_metadata(
     assert len(repr(large_definition)) <= len(repr(small_definition)) + 32
 
 
-def test_inactive_solid_cell_may_have_zero_effective_and_coordinate_volume():
+def test_inactive_solid_cell_may_have_zero_effective_and_coordinate_volume() -> None:
     block = _face_block(
         owner_cells=np.asarray((0, 1), dtype=np.int32),
         neighbor_cells=np.asarray((-1, -1), dtype=np.int32),
@@ -514,7 +518,7 @@ def test_inactive_solid_cell_may_have_zero_effective_and_coordinate_volume():
     "volume_field",
     ("effective_cell_volumes", "coordinate_effective_cell_volumes"),
 )
-def test_stage_metrics_reject_nonzero_inactive_volume(volume_field):
+def test_stage_metrics_reject_nonzero_inactive_volume(volume_field: Any) -> None:
     values = {
         "effective_cell_volumes": np.asarray((0.5, 0.0)),
         "coordinate_effective_cell_volumes": np.asarray((0.5, 0.0)),
@@ -529,7 +533,7 @@ def test_stage_metrics_reject_nonzero_inactive_volume(volume_field):
         _stage_metrics(**values)
 
 
-def test_stage_metrics_reject_zero_active_volume_and_misaligned_cell_data():
+def test_stage_metrics_reject_zero_active_volume_and_misaligned_cell_data() -> None:
     with pytest.raises(
         (ValueError, eqx.EquinoxRuntimeError), match="Active effective cell volumes"
     ):
@@ -557,11 +561,11 @@ def test_stage_metrics_reject_zero_active_volume_and_misaligned_cell_data():
         )
 
 
-def test_stage_metrics_require_exact_zero_mesh_volume_rate_on_inactive_cells():
+def test_stage_metrics_require_exact_zero_mesh_volume_rate_on_inactive_cells() -> None:
     evidence = _geometry_evidence()
 
     @eqx.filter_jit
-    def construct(volume_rate):
+    def construct(volume_rate: Any) -> Any:
         return FiniteVolumeStageMetrics(
             topology_epoch_id="epoch-0",
             geometry_family_id="geometry-family-0",
@@ -596,7 +600,7 @@ def test_stage_metrics_require_exact_zero_mesh_volume_rate_on_inactive_cells():
         "evidence",
     ),
 )
-def test_stage_metrics_require_geometry_data_and_typed_evidence(missing):
+def test_stage_metrics_require_geometry_data_and_typed_evidence(missing: Any) -> None:
     values = _stage_metric_values()
     values.pop(missing)
     with pytest.raises(TypeError):
@@ -616,14 +620,16 @@ def test_stage_metrics_require_geometry_data_and_typed_evidence(missing):
         "gcl_identity_tolerance",
     ),
 )
-def test_geometry_evidence_tolerances_are_nonnegative_per_cell(tolerance_field):
+def test_geometry_evidence_tolerances_are_nonnegative_per_cell(
+    tolerance_field: Any,
+) -> None:
     with pytest.raises(ValueError, match="one entry per cell"):
         _geometry_evidence(**{tolerance_field: np.zeros((1,))})
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="nonnegative"):
         _geometry_evidence(**{tolerance_field: np.asarray((0.0, -1.0e-10))})
 
 
-def test_zero_mixed_tolerances_produce_safe_finite_retry_reductions():
+def test_zero_mixed_tolerances_produce_safe_finite_retry_reductions() -> None:
     policy = ALEGeometryConsistencyPolicy(
         absolute_tolerance=0.0,
         relative_tolerance=0.5,
@@ -655,8 +661,8 @@ def test_zero_mixed_tolerances_produce_safe_finite_retry_reductions():
     ),
 )
 def test_positive_defect_over_zero_tolerance_uses_infinite_ratio_and_finite_floor(
-    defect_field,
-):
+    defect_field: Any,
+) -> None:
     policy = ALEGeometryConsistencyPolicy(
         absolute_tolerance=0.0,
         relative_tolerance=1.0,
@@ -665,7 +671,7 @@ def test_positive_defect_over_zero_tolerance_uses_infinite_ratio_and_finite_floo
     )
 
     @jax.jit
-    def certify(defect):
+    def certify(defect: Any) -> Any:
         zero_defect = jnp.zeros((2,))
         defects = {
             "coordinate_effective_volume_defect": zero_defect,
@@ -700,7 +706,9 @@ def test_positive_defect_over_zero_tolerance_uses_infinite_ratio_and_finite_floo
         "gcl_identity_defect",
     ),
 )
-def test_each_geometry_defect_threshold_mechanically_fails_evidence(defect_field):
+def test_each_geometry_defect_threshold_mechanically_fails_evidence(
+    defect_field: Any,
+) -> None:
     evidence = _geometry_evidence(
         **{
             defect_field: np.asarray((0.0, 1.0e-9)),
@@ -752,13 +760,13 @@ def test_each_geometry_defect_threshold_mechanically_fails_evidence(defect_field
     ),
 )
 def test_geometry_evidence_rejects_pass_or_status_inconsistent_with_thresholds(
-    overrides, message
-):
+    overrides: Any, message: Any
+) -> None:
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match=message):
         _geometry_evidence(**overrides)
 
 
-def test_geometry_evidence_accepts_defects_exactly_at_every_threshold():
+def test_geometry_evidence_accepts_defects_exactly_at_every_threshold() -> None:
     coordinate_tolerance = np.asarray((2.0e-12, 3.0e-12))
     closure_tolerance = np.asarray((4.0e-12, 5.0e-12))
     gcl_tolerance = np.asarray((6.0e-12, 7.0e-12))
@@ -776,7 +784,7 @@ def test_geometry_evidence_accepts_defects_exactly_at_every_threshold():
     assert int(evidence.status) == int(FiniteVolumeGeometryStatus.SUCCESS)
 
 
-def test_stage_metrics_carry_typed_failed_dynamic_evidence():
+def test_stage_metrics_carry_typed_failed_dynamic_evidence() -> None:
     failed = _geometry_evidence(
         coordinate_effective_volume_defect=np.asarray((0.0, 2.5e-3)),
         gcl_identity_defect=np.asarray((0.0, 1.0e-3)),
@@ -799,11 +807,17 @@ def test_stage_metrics_carry_typed_failed_dynamic_evidence():
     )
 
 
-def test_filter_jit_constructs_and_certifies_dynamic_stage_metrics():
+def test_filter_jit_constructs_and_certifies_dynamic_stage_metrics() -> None:
     layout = _face_layout()
 
     @eqx.filter_jit
-    def certify(time, geometry_version, evidence_version, defect, active_cell_mask):
+    def certify(
+        time: Any,
+        geometry_version: Any,
+        evidence_version: Any,
+        defect: Any,
+        active_cell_mask: Any,
+    ) -> Any:
         face_block = FiniteVolumeStageFaceBlock(
             layout=layout,
             face_centers=jnp.asarray(((0.5, 0.5), (0.0, 0.5))) + 0.0 * time,
@@ -903,7 +917,7 @@ def test_filter_jit_constructs_and_certifies_dynamic_stage_metrics():
     assert float(failed.evidence.proposed_reduction_factor) == pytest.approx(0.5)
 
 
-def test_dynamic_geometry_versions_do_not_change_static_tree_metadata():
+def test_dynamic_geometry_versions_do_not_change_static_tree_metadata() -> None:
     first = _stage_metrics(
         geometry_version=7,
         evidence=_geometry_evidence(evidence_version=17),
@@ -934,7 +948,7 @@ def test_dynamic_geometry_versions_do_not_change_static_tree_metadata():
     assert float(second.evidence.proposed_reduction_factor) == pytest.approx(0.75)
 
 
-def test_active_face_routes_must_own_only_active_cells():
+def test_active_face_routes_must_own_only_active_cells() -> None:
     inactive_face = {
         "active_mask": np.asarray((True, False)),
         "area_vectors": np.asarray(((1.0, 0.0), (0.0, 0.0))),
@@ -980,10 +994,9 @@ def test_active_face_routes_must_own_only_active_cells():
         ("topology_epoch_id", " epoch"),
         ("geometry_family_id", "family "),
         ("geometry_layout_id", "layout "),
-        ("topology_epoch_id", object()),
     ),
 )
-def test_stage_metrics_reject_noncanonical_static_ids(field, value):
+def test_stage_metrics_reject_noncanonical_static_ids(field: Any, value: Any) -> None:
     with pytest.raises(ValueError, match=f"{field} must be a non-empty canonical"):
         _stage_metrics(**{field: value})
 
@@ -1000,6 +1013,11 @@ def test_stage_metrics_reject_noncanonical_static_ids(field, value):
         )
 
 
+def test_stage_metrics_reject_non_string_static_ids_as_wrong_kind() -> None:
+    with pytest.raises(TypeError):
+        _stage_metrics(topology_epoch_id=object())
+
+
 @pytest.mark.parametrize(
     "vertices",
     (
@@ -1007,7 +1025,9 @@ def test_stage_metrics_reject_noncanonical_static_ids(field, value):
         ((0.0, 0.0), (0.0, 1.0), (-1.0, 1.0), (-1.0, 0.0)),
     ),
 )
-def test_static_stage_family_binds_equal_volume_geometry_not_route_layout(vertices):
+def test_static_stage_family_binds_equal_volume_geometry_not_route_layout(
+    vertices: Any,
+) -> None:
     base = _unstructured()
     changed = _unstructured(vertices)
     first = lower_static_unstructured_stage_metrics(base, topology_epoch_id="epoch-a")
@@ -1037,7 +1057,9 @@ def test_static_stage_family_binds_equal_volume_geometry_not_route_layout(vertic
     assert int(moved.geometry_version) == 0
 
 
-def test_stage_contracts_do_not_change_structured_or_mapped_protocol_conformance():
+def test_stage_contracts_do_not_change_structured_or_mapped_protocol_conformance() -> (
+    None
+):
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4),

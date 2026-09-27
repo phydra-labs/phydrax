@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -31,7 +34,7 @@ from phydrax.linalg import DenseLU, LinearSolvePolicy
 from phydrax.nonlinear import NewtonKrylov, NonlinearTermination
 
 
-def _surface(*, lateral=True):
+def _surface(*, lateral: Any = True) -> Any:
     vertices = np.asarray(
         [
             (0, 0, 0),
@@ -68,6 +71,7 @@ def _surface(*, lateral=True):
         ),
     )
     fv = UnstructuredFiniteVolumePlan.from_cell_mesh(
+        # ty: ignore[invalid-argument-type]
         CellMesh.from_polyhedra(vertices, cells)
     ).prepare()
     faces = np.flatnonzero(np.asarray(fv.area_vectors)[:, 2] > 0.9)
@@ -77,7 +81,7 @@ def _surface(*, lateral=True):
     )
 
 
-def test_boundary_trace_parent_rates_cancel_and_transpose():
+def test_boundary_trace_parent_rates_cancel_and_transpose() -> None:
     fv, plan = _surface()
     rates = jnp.asarray([2.0, -3.0])
     np.testing.assert_allclose(
@@ -93,7 +97,7 @@ def test_boundary_trace_parent_rates_cancel_and_transpose():
         BoundarySurfaceTrace(fv, interior)
 
 
-def test_runoff_transfers_water_and_energy_without_creating_inventory():
+def test_runoff_transfers_water_and_energy_without_creating_inventory() -> None:
     _, plan = _surface()
     initial = plan.initial_state(jnp.asarray([0.2, 0.1]), jnp.asarray([310.0, 290.0]))
     result = plan.step(initial, 0.01)
@@ -110,7 +114,7 @@ def test_runoff_transfers_water_and_energy_without_creating_inventory():
     np.testing.assert_allclose(result.energy_residual, 0, atol=1e-8)
 
 
-def test_dry_reservoir_limits_shared_infiltration_rate_not_inventory():
+def test_dry_reservoir_limits_shared_infiltration_rate_not_inventory() -> None:
     _, plan = _surface(lateral=False)
     initial = plan.initial_state(0.0)
     result = plan.step(initial, 10.0, rainfall=0.001, infiltration_demand=1.0)
@@ -123,7 +127,7 @@ def test_dry_reservoir_limits_shared_infiltration_rate_not_inventory():
     np.testing.assert_allclose(result.energy_residual, 0, atol=1e-8)
 
 
-def test_exfiltration_carries_subsurface_enthalpy_into_surface():
+def test_exfiltration_carries_subsurface_enthalpy_into_surface() -> None:
     _, plan = _surface(lateral=False)
     initial = plan.initial_state(0.0)
     result = plan.step(
@@ -138,7 +142,7 @@ def test_exfiltration_carries_subsurface_enthalpy_into_surface():
     )
 
 
-def test_wet_interior_rainfall_derivative_preserves_mass_balance():
+def test_wet_interior_rainfall_derivative_preserves_mass_balance() -> None:
     _, plan = _surface(lateral=False)
     initial = plan.initial_state(0.1)
     derivative = jax.grad(
@@ -149,7 +153,9 @@ def test_wet_interior_rainfall_derivative_preserves_mass_balance():
     )
 
 
-def _equilibrium_subsurface(*, heat=False, surface_depth=0.1, dry_head=0.0):
+def _equilibrium_subsurface(
+    *, heat: Any = False, surface_depth: Any = 0.1, dry_head: Any = 0.0
+) -> Any:
     discretization, surface = _surface()
     density, gravity = 1000.0, 9.80665
     top_pressure = density * gravity * (surface_depth - dry_head)
@@ -189,7 +195,7 @@ def _equilibrium_subsurface(*, heat=False, surface_depth=0.1, dry_head=0.0):
     return water, surface, cell_pressure, face_pressure
 
 
-def test_monolithic_wet_surface_richards_preserves_shared_hydrostatic_flux():
+def test_monolithic_wet_surface_richards_preserves_shared_hydrostatic_flux() -> None:
     water, surface, cell_pressure, face_pressure = _equilibrium_subsurface()
     previous = water.initialize(cell_pressure, face_pressure, temperature_K=300.0)
     surface_state = surface.initial_state(0.1, 300.0)
@@ -207,7 +213,7 @@ def test_monolithic_wet_surface_richards_preserves_shared_hydrostatic_flux():
     np.testing.assert_allclose(result.complementarity_residual, 0.0, atol=1.0e-10)
 
 
-def test_monolithic_dry_surface_richards_preserves_suction_complementarity():
+def test_monolithic_dry_surface_richards_preserves_suction_complementarity() -> None:
     water, surface, cell_pressure, face_pressure = _equilibrium_subsurface(
         surface_depth=0.0, dry_head=0.1
     )
@@ -224,7 +230,7 @@ def test_monolithic_dry_surface_richards_preserves_suction_complementarity():
     np.testing.assert_allclose(result.complementarity_residual, 0.0, atol=1.0e-10)
 
 
-def test_four_field_surface_water_heat_root_preserves_shared_equilibrium():
+def test_four_field_surface_water_heat_root_preserves_shared_equilibrium() -> None:
     water, surface, cell_pressure, face_pressure = _equilibrium_subsurface(heat=True)
     top = set(np.asarray(surface.trace.parent_faces).tolist())
     thermal_boundary = HybridDiffusionBoundary(

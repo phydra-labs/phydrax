@@ -9,7 +9,8 @@ from typing import Any, Literal
 
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 from phydrax.domain import (
@@ -24,6 +25,7 @@ from .._doc import DOC_KEY0
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..domain._trajectory_signal import TrajectorySignal
+from ..typing import PRNGKey
 from ._data_metrics import (
     case_sample_count,
     normalize_case_sampling,
@@ -55,7 +57,7 @@ class TrajectoryCaseDataBatch(StrictModule):
         target: ArrayLike,
         case_indices: ArrayLike,
         times: ArrayLike,
-    ):
+    ) -> None:
         self.points = points
         self.target = jnp.asarray(target)
         self.case_indices = jnp.asarray(case_indices, dtype=jnp.int32)
@@ -97,7 +99,7 @@ def _time_selection(
 def _sample_case_indices(
     domain: TrajectoryDatasetDomain,
     n: int,
-    key: Key[Array, ""],
+    key: PRNGKey,
     time: TrajectoryCaseTime,
     /,
     *,
@@ -166,7 +168,7 @@ class TrajectoryCaseDataTerm(AbstractSamplingTerm):
         case_indices: ArrayLike | None = None,
         label: str | None = None,
         data_accuracy_eps: float = 1e-12,
-    ):
+    ) -> None:
         """Create a supervised case-level trajectory data constraint.
 
         Parameters:
@@ -244,7 +246,7 @@ class TrajectoryCaseDataTerm(AbstractSamplingTerm):
     def sample(
         self,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Any:
         """Draw a case mini-batch and return aligned model inputs and targets."""
         domain = self.domain
@@ -277,7 +279,7 @@ class TrajectoryCaseDataTerm(AbstractSamplingTerm):
         batch: TrajectoryCaseDataBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         var = self.fields[0]
@@ -293,7 +295,7 @@ class TrajectoryCaseDataTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: TrajectoryCaseDataBatch | None = None,
         **kwargs: Any,
     ) -> dict[str, Array]:
@@ -311,7 +313,7 @@ class TrajectoryCaseDataTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: TrajectoryCaseDataBatch | None = None,
         **kwargs: Any,

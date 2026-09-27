@@ -15,10 +15,13 @@ dependency; its provenance and LGPL notice live in the reference fixture.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import log1p
+from typing import TypeVar
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from ....ein import contract
@@ -70,7 +73,7 @@ class Almonacid2024MaterialParameters(StrictModule):
         fat_c1_Pa: ArrayLike,
         fat_fraction: ArrayLike,
         base_coefficients: ArrayLike,
-    ):
+    ) -> None:
         self.maximum_fiber_stress_Pa = _real(
             maximum_fiber_stress_Pa, (), "maximum_fiber_stress_Pa"
         )
@@ -173,7 +176,18 @@ _APONEUROSIS_SEGMENTS = (
 )
 
 
-def _fiber_primitive(stretch, lower, quadratic, linear, constant, logarithm):
+# Host float knots (math.log1p) or traced stretches (jnp.log1p).
+_Stretch = TypeVar("_Stretch", float, Array)
+
+
+def _fiber_primitive(
+    stretch: _Stretch,
+    lower: float,
+    quadratic: float,
+    linear: float,
+    constant: float,
+    logarithm: Callable[[_Stretch], _Stretch],
+) -> _Stretch:
     """Exact integral from lower to stretch of sigma(s)/s, not sigma(s)."""
     offset = stretch - lower
     log_ratio = logarithm(offset / lower)

@@ -5,15 +5,19 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ._commercial import MPMDerivativeEvidence, MPMDerivativeKind
+
+
+_EventBracket: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class MPMGradientResult(StrictModule):
@@ -43,18 +47,18 @@ def _tree_vdot(left: Any, right: Any, /) -> Array:
 def _evidence(
     kind: MPMDerivativeKind,
     *,
-    valid,
-    branch_margin=jnp.nan,
-    event_time=jnp.nan,
-    transversality_margin=jnp.nan,
-    primal_residual=0.0,
-    transpose_residual=0.0,
-    sample_count=0,
-    estimator_variance=jnp.nan,
-    reason_code=0,
-    journal_digest=0,
+    valid: ArrayLike,
+    branch_margin: ArrayLike = jnp.nan,
+    event_time: ArrayLike = jnp.nan,
+    transversality_margin: ArrayLike = jnp.nan,
+    primal_residual: ArrayLike = 0.0,
+    transpose_residual: ArrayLike = 0.0,
+    sample_count: ArrayLike = 0,
+    estimator_variance: ArrayLike = jnp.nan,
+    reason_code: ArrayLike = 0,
+    journal_digest: ArrayLike = 0,
     evidence_id: str,
-):
+) -> MPMDerivativeEvidence:
     return MPMDerivativeEvidence(
         jnp.asarray(int(kind), dtype=jnp.int32),
         jnp.asarray(valid, dtype=jnp.bool_),
@@ -142,7 +146,7 @@ def locate_event(
     lower_value = jnp.asarray(event(lower_))
     upper_value = jnp.asarray(event(upper_))
 
-    def body(_, carry):
+    def body(_: int | Array, carry: _EventBracket) -> _EventBracket:
         left, right, left_value, right_value = carry
         middle = 0.5 * (left + right)
         middle_value = jnp.asarray(event(middle))

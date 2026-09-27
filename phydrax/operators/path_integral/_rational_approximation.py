@@ -11,13 +11,15 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from scipy.optimize import brentq, linprog
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg._certificates import SpectralInterval
 from ...linalg._rational_functions import PartialFractionRationalFunction
+from ...typing import parse
 
 
 RationalErrorMetric: TypeAlias = Literal["absolute", "relative"]
@@ -34,7 +36,7 @@ class RationalApproximationTarget(StrictModule):
         self,
         factors: tuple[tuple[float, float], ...],
         /,
-    ):
+    ) -> None:
         if not factors:
             raise ValueError(
                 "A rational approximation target requires at least one factor."
@@ -91,7 +93,7 @@ class RationalApproximationResourcePolicy(StrictModule):
         maximum_poles: int = 128,
         maximum_verification_points: int = 131_072,
         maximum_workspace_bytes: int = 512 * 1024 * 1024,
-    ):
+    ) -> None:
         poles = int(maximum_poles)
         points = int(maximum_verification_points)
         workspace = int(maximum_workspace_bytes)
@@ -133,7 +135,7 @@ class RationalApproximationPlan(StrictModule):
         error_metric: RationalErrorMetric = "relative",
         requested_tolerance: float | None = None,
         resources: RationalApproximationResourcePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(target, RationalApproximationTarget):
             raise TypeError("target must be a RationalApproximationTarget.")
         poles = int(num_poles)
@@ -151,8 +153,7 @@ class RationalApproximationPlan(StrictModule):
             raise ValueError("verification_points is too small for the requested order.")
         if not math.isfinite(span) or span <= 1.0:
             raise ValueError("pole_span must be finite and greater than one.")
-        if error_metric not in ("absolute", "relative"):
-            raise ValueError("error_metric must be 'absolute' or 'relative'.")
+        error_metric = parse(error_metric, RationalErrorMetric, "error_metric")
         if tolerance is not None and (not math.isfinite(tolerance) or tolerance < 0.0):
             raise ValueError("requested_tolerance must be finite and non-negative.")
         workspace = 16 * points * (poles + 3) + 8 * (2 * points) * (poles + 2)
@@ -220,7 +221,7 @@ class CertifiedRationalApproximation(StrictModule):
         metric: RationalErrorMetric,
         verification_points: int,
         evidence: str,
-    ):
+    ) -> None:
         if not isinstance(target, RationalApproximationTarget):
             raise TypeError("target must be a RationalApproximationTarget.")
         if not isinstance(spectral_interval, SpectralInterval):
@@ -241,8 +242,7 @@ class CertifiedRationalApproximation(StrictModule):
             value.shape != () for value in (absolute, relative, witness_, successful_)
         ):
             raise ValueError("Rational certificate summary values must be scalar.")
-        if metric not in ("absolute", "relative"):
-            raise ValueError("Unknown rational certificate metric.")
+        metric = parse(metric, RationalErrorMetric, "metric")
         plan_identifier = str(plan_id)
         evidence_ = str(evidence)
         if not plan_identifier or not evidence_:
@@ -370,9 +370,10 @@ def generate_minimax_rational_approximation(
         bounds=[(None, None)] * (plan.num_poles + 1) + [(0.0, None)],
         method="highs",
     )
-    if not solution.success:
+    solution_x = solution.x
+    if not solution.success or solution_x is None:
         raise RuntimeError(f"Rational minimax exchange solve failed: {solution.message}")
-    coefficients = np.asarray(solution.x[:-1], dtype=np.float64)
+    coefficients = np.asarray(solution_x[:-1], dtype=np.float64)
     coefficient_dtype = spectral_interval.lower.dtype
     function = PartialFractionRationalFunction(
         jnp.asarray(-shifts, dtype=coefficient_dtype),

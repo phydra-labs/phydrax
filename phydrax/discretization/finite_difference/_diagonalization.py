@@ -10,7 +10,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -30,6 +31,8 @@ from ...linalg import (
     TransformDiagonalSolvePlan,
     TransformDiagonalSolveResult,
 )
+from ...typing import parse
+from .._tensor_entities import StructuredAxis
 from .._tensor_support import PreparedTensorGrid
 
 
@@ -66,7 +69,7 @@ class FDTransformAxisReport(StrictModule, NonTrainableState):
         unknown_count: int,
         spacing: float,
         nullspace_dimension: int,
-    ):
+    ) -> None:
         self.axis = axis
         self.primary_entity = primary_entity
         self.lower_boundary = lower_boundary
@@ -111,7 +114,7 @@ class _FDSecondDifferenceAxis(StrictModule, NonTrainableState):
         unknown_count: int,
         spacing: float,
         /,
-    ):
+    ) -> None:
         self.axis = int(axis)
         self.primary_entity = primary_entity
         self.lower_boundary, self.upper_boundary = boundaries
@@ -177,7 +180,7 @@ class FDLaplacianDiagonalization(StrictModule, NonTrainableState):
         grid: PreparedTensorGrid,
         boundaries: Mapping[str, FDBoundaryPair] | Sequence[FDBoundaryPair],
         /,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("grid must be a PreparedTensorGrid.")
         pairs = _normalize_boundaries(grid, boundaries)
@@ -213,7 +216,7 @@ class FDLaplacianDiagonalization(StrictModule, NonTrainableState):
         space = ArraySpace(unknown_shape, dtype=dtype)
         actions_ = tuple(actions)
 
-        def laplacian_action(values):
+        def laplacian_action(values: Array) -> Array:
             result = jnp.zeros_like(values)
             for action in actions_:
                 result = result + action.apply(values)
@@ -318,7 +321,7 @@ class FDLaplacianSolvePlan(StrictModule, NonTrainableState):
         compatibility: CompatibilityPolicy = "error",
         gauge: GaugePolicy = "minimum_norm",
         zero_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         if not isinstance(diagonalization, FDLaplacianDiagonalization):
             raise TypeError("diagonalization must be FDLaplacianDiagonalization.")
         scale = jnp.asarray(operator_scale, dtype=diagonalization.space.dtype)
@@ -425,13 +428,13 @@ def _normalize_boundaries(
             else:
                 raise ValueError(f"Bounded axis {axis_name!r} requires two boundaries.")
         else:
-            pair = tuple(value)
-            if len(pair) != 2 or any(
-                condition not in ("periodic", "dirichlet", "neumann")
-                for condition in pair
-            ):
-                raise ValueError("FD boundary pairs require periodic/Dirichlet/Neumann.")
-            pair = (pair[0], pair[1])
+            conditions = tuple(value)
+            if len(conditions) != 2:
+                raise ValueError("FD boundary pairs require exactly two conditions.")
+            pair = (
+                parse(conditions[0], FDBoundaryKind, f"boundaries[{axis_name!r}][0]"),
+                parse(conditions[1], FDBoundaryKind, f"boundaries[{axis_name!r}][1]"),
+            )
         if axis.periodic != (pair == ("periodic", "periodic")):
             raise ValueError("Periodic axis metadata and boundary pair must agree.")
         if (pair[0] == "periodic") != (pair[1] == "periodic"):
@@ -440,7 +443,7 @@ def _normalize_boundaries(
     return tuple(output)
 
 
-def _uniform_spacing(axis, /) -> tuple[np.ndarray, float]:
+def _uniform_spacing(axis: StructuredAxis, /) -> tuple[np.ndarray, float]:
     coordinates = np.asarray(
         axis.interval_centers
         if axis.primary_entity == "interval"
@@ -463,11 +466,17 @@ def _uniform_spacing(axis, /) -> tuple[np.ndarray, float]:
 def _prepare_axis(
     axis_index: int,
     axis_name: str,
-    axis,
+    axis: StructuredAxis,
     boundaries: FDBoundaryPair,
     dtype: np.dtype,
     /,
-):
+) -> tuple[
+    _FDSecondDifferenceAxis,
+    FDTransformAxisReport,
+    AbstractLinearTransform,
+    Array,
+    Array,
+]:
     coordinates, spacing = _uniform_spacing(axis)
     full_count = coordinates.size
     lower, upper = boundaries

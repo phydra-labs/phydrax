@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -29,7 +32,7 @@ from phydrax.discretization.lattice_boltzmann._collision import (
 )
 
 
-def _state(lattice):
+def _state(lattice: Any) -> Any:
     precision = LatticeBoltzmannPrecisionPolicy()
     density = jnp.asarray([[1.0, 1.1], [0.9, 1.05]])
     velocity = jnp.broadcast_to(
@@ -39,7 +42,7 @@ def _state(lattice):
     return precision, density, velocity, equilibrium
 
 
-def test_d3q27_and_custom_lattice_certification_are_explicit():
+def test_d3q27_and_custom_lattice_certification_are_explicit() -> None:
     lattice = D3Q27()
     assert lattice.population_count == 27
     assert lattice.supports("kbc")
@@ -53,7 +56,7 @@ def test_d3q27_and_custom_lattice_certification_are_explicit():
     assert custom.capability_evidence.hydrodynamic_isotropy_order == 4
 
 
-def test_mrt_regularized_smagorinsky_and_moment_collisions_conserve():
+def test_mrt_regularized_smagorinsky_and_moment_collisions_conserve() -> None:
     lattice = D2Q9()
     precision, density, velocity, equilibrium = _state(lattice)
     perturbation = jnp.asarray((0.0, 1.0, 1.0, -1.0, -1.0, 0.5, 0.5, -0.5, -0.5)) * 1e-5
@@ -87,7 +90,7 @@ def test_mrt_regularized_smagorinsky_and_moment_collisions_conserve():
         np.testing.assert_allclose(new_momentum, old_momentum, atol=2e-12)
 
 
-def test_mrt_guo_and_entropic_equilibrium_paths_are_certified():
+def test_mrt_guo_and_entropic_equilibrium_paths_are_certified() -> None:
     lattice = D2Q9()
     precision, density, velocity, equilibrium = _state(lattice)
     force = jnp.broadcast_to(jnp.asarray((1e-6, -2e-6)), velocity.shape)
@@ -118,7 +121,7 @@ def test_mrt_guo_and_entropic_equilibrium_paths_are_certified():
         np.testing.assert_allclose(result.populations, equilibrium, atol=2e-12)
 
 
-def test_float32_float64_and_mixed_storage_keep_explicit_population_dtype():
+def test_float32_float64_and_mixed_storage_keep_explicit_population_dtype() -> None:
     lattice = D2Q9()
     density = jnp.ones((2, 2))
     velocity = jnp.zeros((2, 2, 2))
@@ -150,7 +153,7 @@ def test_float32_float64_and_mixed_storage_keep_explicit_population_dtype():
         assert result.populations.dtype == jnp.dtype(precision.population_dtype)
 
 
-def test_collision_basis_and_spectrum_prepare_once_for_compiled_method():
+def test_collision_basis_and_spectrum_prepare_once_for_compiled_method() -> None:
     lattice = D2Q9()
     precision = LatticeBoltzmannPrecisionPolicy()
     method = LatticeBoltzmannMethodPlan(

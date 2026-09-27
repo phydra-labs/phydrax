@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -11,20 +12,20 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _block(tree) -> None:
+def _block(tree: Any) -> None:
     for leaf in jax.tree.leaves(tree):
         if isinstance(leaf, jax.Array):
             leaf.block_until_ready()
 
 
-def _measure(function, *args):
+def _measure(function: Any, *args: Any) -> Any:
     start = time.perf_counter()
     value = function(*args)
     _block(value)
     return value, time.perf_counter() - start
 
 
-def _baryon_case(cosmo):
+def _baryon_case(cosmo: Any) -> Any:
     count = 8
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(count, periodic=True),),
@@ -49,6 +50,7 @@ def _baryon_case(cosmo):
         ),
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.3, maximum_retries=0),

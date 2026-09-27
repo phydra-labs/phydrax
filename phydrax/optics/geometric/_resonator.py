@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import DTypeLike
 
 from phydrax.ein import contract
 
@@ -156,7 +157,7 @@ class ParaxialResonatorPlan(StrictModule, NonTrainableState):
         closure_tolerance: float = 1e-9,
         marginal_tolerance: float = 1e-7,
         condition_limit: float = 1e12,
-    ):
+    ) -> None:
         if not isinstance(maps, tuple) or not maps:
             raise TypeError("maps must be a nonempty tuple of DifferentialRayMap values.")
         if any(not isinstance(ray_map, DifferentialRayMap) for ray_map in maps):
@@ -389,7 +390,7 @@ def prepare_paraxial_resonator(
     )
 
 
-def _symplectic_form(dtype, /) -> Array:
+def _symplectic_form(dtype: DTypeLike, /) -> Array:
     return jnp.asarray(
         (
             (0.0, 0.0, 1.0, 0.0),

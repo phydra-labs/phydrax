@@ -8,7 +8,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..optim import (
@@ -28,7 +30,7 @@ _DEFAULT_FINITE_SEARCH = FiniteExhaustiveSearch()
 class _MAPCandidateEvaluator(StrictModule):
     problem: PosteriorProblem
 
-    def __init__(self, problem: PosteriorProblem, /):
+    def __init__(self, problem: PosteriorProblem, /) -> None:
         self.problem = problem
 
     def __call__(self, position: PyTree[Array], /) -> tuple[Array, Array]:
@@ -76,7 +78,7 @@ class MAPCandidateSearchResult(StrictModule):
         invalid_evaluations: int,
         effective_batch_size: int,
         candidate_signature: str,
-    ):
+    ) -> None:
         valid_ = bool(valid)
         if valid_ != (position is not None):
             raise ValueError("A valid MAP candidate result requires one position.")

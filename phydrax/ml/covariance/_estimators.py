@@ -4,12 +4,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -36,6 +36,10 @@ from .._contracts import (
 from .._schema import AbstractFittedModel
 
 
+_RobustCarry: TypeAlias = tuple[Array, Array, Array, Array]
+_GraphicalLassoCarry: TypeAlias = tuple[Array, Array, Array]
+
+
 def _real_dtype(dtype: jnp.dtype) -> jnp.dtype:
     return jnp.empty((), dtype=dtype).real.dtype
 
@@ -50,7 +54,9 @@ def _stable_eigvalsh(matrix: Array) -> Array:
 
 
 @_stable_eigvalsh.defjvp
-def _stable_eigvalsh_jvp(primals, tangents):
+def _stable_eigvalsh_jvp(
+    primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
     (matrix,), (matrix_tangent,) = primals, tangents
     values, vectors = jnp.linalg.eigh(_hermitian(matrix))
     tangent_basis = ein.contract(
@@ -77,7 +83,9 @@ def _spectral_floor(matrix: Array, floor: Array) -> tuple[Array, Array]:
 
 
 @_spectral_floor.defjvp
-def _spectral_floor_jvp(primals, tangents):
+def _spectral_floor_jvp(
+    primals: tuple[Array, Array], tangents: tuple[Array, Array]
+) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
     (matrix, floor), (matrix_tangent, floor_tangent) = primals, tangents
     matrix = _hermitian(matrix)
     matrix_tangent = _hermitian(matrix_tangent)
@@ -130,7 +138,9 @@ def _frobenius_norm(matrix: Array) -> Array:
 
 
 @_frobenius_norm.defjvp
-def _frobenius_norm_jvp(primals, tangents):
+def _frobenius_norm_jvp(
+    primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
     (matrix,), (matrix_tangent,) = primals, tangents
     norm = _frobenius_norm(matrix)
     inner = jnp.sum(jnp.real(jnp.conj(matrix) * matrix_tangent), axis=(-2, -1))
@@ -259,7 +269,7 @@ class CovarianceModel(AbstractFittedModel):
         factor_loadings: Array | None = None,
         diagonal: Array | None = None,
         method: str,
-    ):
+    ) -> None:
         self.mean = jnp.asarray(mean)
         self.covariance = jnp.asarray(covariance)
         self.precision = jnp.asarray(precision)
@@ -426,7 +436,7 @@ class EmpiricalCovariance(AbstractRecipe):
         correction: float = 0.0,
         regularization: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.correction = _nonnegative_scalar(correction, "correction")
         self.regularization = _nonnegative_scalar(regularization, "regularization")
         self.weight_policy = weight_policy
@@ -461,7 +471,7 @@ class WeightedCovariance(AbstractRecipe):
         correction: float = 1.0,
         regularization: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if weight_policy == "none":
             raise ValueError("WeightedCovariance requires a weighted batch policy.")
         self.correction = _nonnegative_scalar(correction, "correction")
@@ -496,7 +506,7 @@ class DiagonalCovariance(AbstractRecipe):
         correction: float = 0.0,
         regularization: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.correction = _nonnegative_scalar(correction, "correction")
         self.regularization = _nonnegative_scalar(regularization, "regularization")
         self.weight_policy = weight_policy
@@ -537,7 +547,7 @@ class FactorCovariance(AbstractRecipe):
         correction: float = 0.0,
         regularization: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if rank <= 0:
             raise ValueError("rank must be positive.")
         self.rank = int(rank)
@@ -654,7 +664,7 @@ class LedoitWolfCovariance(AbstractRecipe):
         correction: float = 0.0,
         regularization: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.correction = _nonnegative_scalar(correction, "correction")
         self.regularization = _nonnegative_scalar(regularization, "regularization")
         self.weight_policy = weight_policy
@@ -677,7 +687,7 @@ class OASCovariance(AbstractRecipe):
         correction: float = 0.0,
         regularization: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.correction = _nonnegative_scalar(correction, "correction")
         self.regularization = _nonnegative_scalar(regularization, "regularization")
         self.weight_policy = weight_policy
@@ -704,7 +714,7 @@ class RobustCovariance(AbstractRecipe):
         huber_delta: float = 2.5,
         regularization: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if max_iterations <= 0:
             raise ValueError("max_iterations must be positive.")
         self.max_iterations = int(max_iterations)
@@ -718,7 +728,7 @@ class RobustCovariance(AbstractRecipe):
         x, base_w, invalid = _active_data(batch, self.weight_policy)
         mean0, covariance0, mass, squared_mass, valid0 = _moments(x, base_w, 0.0)
 
-        def step(_, state):
+        def step(_: Array, state: _RobustCarry) -> _RobustCarry:
             mean, covariance, delta, iteration = state
             _, precision, _, _ = _regularize(covariance, self.regularization)
             centered = x - mean[..., None, :]
@@ -796,7 +806,7 @@ class GraphicalLasso(AbstractRecipe):
         step_size: float = 0.1,
         regularization: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if max_iterations <= 0:
             raise ValueError("max_iterations must be positive.")
         self.penalty = _nonnegative_scalar(penalty, "penalty")
@@ -816,7 +826,7 @@ class GraphicalLasso(AbstractRecipe):
         p = batch.feature_count
         eye = jnp.eye(p, dtype=precision0.dtype)
 
-        def step(_, state):
+        def step(_: Array, state: _GraphicalLassoCarry) -> _GraphicalLassoCarry:
             precision, delta, iteration = state
             covariance = dense_inverse(precision, positive_definite=True)
             proposal = precision - self.step_size * (sample_covariance - covariance)

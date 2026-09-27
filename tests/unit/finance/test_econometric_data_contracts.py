@@ -48,7 +48,7 @@ def _time(event: int, available: int, vintage: str) -> FinancialTimestamp:
     return FinancialTimestamp(event, event, event, available, vintage, _POLICY)
 
 
-def test_future_revision_is_excluded_and_canonical_split_adjustment_is_reused():
+def test_future_revision_is_excluded_and_canonical_split_adjustment_is_reused() -> None:
     currency = Currency("USD", 2)
     asset = AssetReference(
         FinancialIdentifier("test", "A"), "equity", currency, "synthetic asset"
@@ -109,7 +109,9 @@ def test_future_revision_is_excluded_and_canonical_split_adjustment_is_reused():
     assert jnp.isclose(returns.values[0, 0], 0.1)
 
 
-def test_feature_preparation_rejects_future_available_inputs_and_preserves_label_intervals():
+def test_feature_preparation_rejects_future_available_inputs_and_preserves_label_intervals() -> (
+    None
+):
     event = jnp.arange(8, dtype=jnp.int64) * 10
     available = event.at[2].set(100)
     panel = PreparedPointInTimePanel(
@@ -161,7 +163,7 @@ def test_feature_preparation_rejects_future_available_inputs_and_preserves_label
     assert evidence.future_feature_count == 1
 
 
-def test_walk_forward_purges_complete_label_overlap_and_embargoes_by_time():
+def test_walk_forward_purges_complete_label_overlap_and_embargoes_by_time() -> None:
     decision = jnp.arange(12, dtype=jnp.int64) * 10
     dataset = PreparedFeatureLabelDataset(
         features=jnp.arange(24.0).reshape(12, 2),

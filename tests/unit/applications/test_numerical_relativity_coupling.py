@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -37,17 +40,17 @@ _SSPRK33_WEIGHTS = jnp.asarray((1.0 / 6.0, 1.0 / 6.0, 2.0 / 3.0))
 
 def _controls(
     *,
-    z4c_ok=True,
-    matter_ok=True,
-    stage_offset=0,
-    time_offset=0.0,
-    floor_mass=0.0,
-    source_defect=0.0,
-    conservation_defect=0.0,
-    z4c_reject_stage=-1,
-    matter_reject_stage=-1,
-    reuse_snapshot_token=False,
-):
+    z4c_ok: Any = True,
+    matter_ok: Any = True,
+    stage_offset: Any = 0,
+    time_offset: Any = 0.0,
+    floor_mass: Any = 0.0,
+    source_defect: Any = 0.0,
+    conservation_defect: Any = 0.0,
+    z4c_reject_stage: Any = -1,
+    matter_reject_stage: Any = -1,
+    reuse_snapshot_token: Any = False,
+) -> Any:
     return (
         jnp.asarray(z4c_ok),
         jnp.asarray(matter_ok),
@@ -62,7 +65,7 @@ def _controls(
     )
 
 
-def _geometry_at_stage(z4c, address, args):
+def _geometry_at_stage(z4c: Any, address: Any, args: Any) -> Any:
     snapshot_token = jnp.where(
         args[9],
         jnp.int32(1),
@@ -91,12 +94,12 @@ def _geometry_at_stage(z4c, address, args):
 
 
 def _projection(
-    matter,
-    geometry,
+    matter: Any,
+    geometry: Any,
     *,
-    topology_id=_TOPOLOGY,
-    snapshot_offset=0,
-):
+    topology_id: Any = _TOPOLOGY,
+    snapshot_offset: Any = 0,
+) -> Any:
     dtype = jnp.asarray(matter).dtype
     energy = jnp.full((2,), matter, dtype=dtype)
     return StressEnergyProjection(
@@ -116,22 +119,26 @@ def _projection(
     )
 
 
-def _stress_energy_at_stage(matter, geometry, address, args):
+def _stress_energy_at_stage(matter: Any, geometry: Any, address: Any, args: Any) -> Any:
     del address, args
     return _projection(matter, geometry)
 
 
-def _wrong_topology_stress_energy(matter, geometry, address, args):
+def _wrong_topology_stress_energy(
+    matter: Any, geometry: Any, address: Any, args: Any
+) -> Any:
     del address, args
     return _projection(matter, geometry, topology_id="other-grid")
 
 
-def _wrong_snapshot_stress_energy(matter, geometry, address, args):
+def _wrong_snapshot_stress_energy(
+    matter: Any, geometry: Any, address: Any, args: Any
+) -> Any:
     del address, args
     return _projection(matter, geometry, snapshot_offset=1)
 
 
-def _evidence(ok):
+def _evidence(ok: Any) -> Any:
     return CoupledParticipantStatus(
         jnp.where(ok, jnp.int32(0), jnp.int32(1)),
         True,
@@ -142,7 +149,7 @@ def _evidence(ok):
     )
 
 
-def _proposal_address(address, controls):
+def _proposal_address(address: Any, controls: Any) -> Any:
     return CoupledStageAddress(
         address.step_start_time,
         address.stage_time + controls[3],
@@ -153,7 +160,7 @@ def _proposal_address(address, controls):
     )
 
 
-def _ssprk33_candidate(base, current, rate, address):
+def _ssprk33_candidate(base: Any, current: Any, rate: Any, address: Any) -> Any:
     euler = current + address.step_size * rate
     return jnp.where(
         address.stage_id == 0,
@@ -166,11 +173,18 @@ def _ssprk33_candidate(base, current, rate, address):
     )
 
 
-def _stage_weight(address):
+def _stage_weight(address: Any) -> Any:
     return _SSPRK33_WEIGHTS[address.stage_id]
 
 
-def _propose_z4c(base, current, geometry, stress_energy, address, controls):
+def _propose_z4c(
+    base: Any,
+    current: Any,
+    geometry: Any,
+    stress_energy: Any,
+    address: Any,
+    controls: Any,
+) -> Any:
     candidate = _ssprk33_candidate(
         base,
         current,
@@ -195,7 +209,14 @@ def _propose_z4c(base, current, geometry, stress_energy, address, controls):
     )
 
 
-def _propose_fixed_flat_z4c(base, current, geometry, stress_energy, address, controls):
+def _propose_fixed_flat_z4c(
+    base: Any,
+    current: Any,
+    geometry: Any,
+    stress_energy: Any,
+    address: Any,
+    controls: Any,
+) -> Any:
     proposal = _propose_z4c(base, current, geometry, stress_energy, address, controls)
     return Z4cStageProposal(
         jnp.zeros_like(current),
@@ -207,7 +228,14 @@ def _propose_fixed_flat_z4c(base, current, geometry, stress_energy, address, con
     )
 
 
-def _propose_matter(base, current, geometry, stress_energy, address, controls):
+def _propose_matter(
+    base: Any,
+    current: Any,
+    geometry: Any,
+    stress_energy: Any,
+    address: Any,
+    controls: Any,
+) -> Any:
     curvature = jnp.mean(jnp.abs(geometry.extrinsic_curvature[..., 0, 0]))
     candidate = _ssprk33_candidate(
         base,
@@ -246,7 +274,14 @@ def _propose_matter(base, current, geometry, stress_energy, address, controls):
     )
 
 
-def _propose_grmhd(base, current, geometry, stress_energy, address, controls):
+def _propose_grmhd(
+    base: Any,
+    current: Any,
+    geometry: Any,
+    stress_energy: Any,
+    address: Any,
+    controls: Any,
+) -> Any:
     proposal = _propose_matter(base, current, geometry, stress_energy, address, controls)
     return MatterStageProposal(
         proposal.candidate,
@@ -271,7 +306,14 @@ def _propose_grmhd(base, current, geometry, stress_energy, address, controls):
     )
 
 
-def _propose_grrmhd(base, current, geometry, stress_energy, address, controls):
+def _propose_grrmhd(
+    base: Any,
+    current: Any,
+    geometry: Any,
+    stress_energy: Any,
+    address: Any,
+    controls: Any,
+) -> Any:
     proposal = _propose_grmhd(base, current, geometry, stress_energy, address, controls)
     return MatterStageProposal(
         proposal.candidate,
@@ -287,12 +329,12 @@ def _propose_grrmhd(base, current, geometry, stress_energy, address, controls):
 
 def _runtime(
     *,
-    matter_kind="grhd",
-    projection=_stress_energy_at_stage,
-    z4c_proposal=_propose_z4c,
-    maximum_failures=3,
-    maximum_floor=1.0,
-):
+    matter_kind: Any = "grhd",
+    projection: Any = _stress_energy_at_stage,
+    z4c_proposal: Any = _propose_z4c,
+    maximum_failures: Any = 3,
+    maximum_floor: Any = 1.0,
+) -> Any:
     matter_proposal = (
         _propose_matter
         if matter_kind == "grhd"
@@ -324,7 +366,7 @@ def _runtime(
     )
 
 
-def test_zero_matter_reduces_z4c_macro_step_to_vacuum():
+def test_zero_matter_reduces_z4c_macro_step_to_vacuum() -> None:
     runtime = _runtime()
     start = runtime.initialize(jnp.asarray(0.4), jnp.asarray(0.0))
     result = runtime.advance(start, jnp.asarray(0.1), _controls())
@@ -345,7 +387,7 @@ def test_zero_matter_reduces_z4c_macro_step_to_vacuum():
     )
 
 
-def test_fixed_flat_geometry_reduces_coupled_matter_step_to_standalone_ssprk33():
+def test_fixed_flat_geometry_reduces_coupled_matter_step_to_standalone_ssprk33() -> None:
     runtime = _runtime(z4c_proposal=_propose_fixed_flat_z4c)
     start = runtime.initialize(jnp.asarray(0.0), jnp.asarray(1.0))
     result = runtime.advance(start, jnp.asarray(0.1), _controls())
@@ -361,8 +403,8 @@ def test_fixed_flat_geometry_reduces_coupled_matter_step_to_standalone_ssprk33()
     ((1, -1), (-1, 1)),
 )
 def test_either_participant_rejects_the_entire_three_stage_step(
-    z4c_reject_stage, matter_reject_stage
-):
+    z4c_reject_stage: Any, matter_reject_stage: Any
+) -> None:
     runtime = _runtime()
     start = runtime.initialize(jnp.asarray(0.2), jnp.asarray(1.0))
     result = runtime.advance(
@@ -374,6 +416,7 @@ def test_either_participant_rejects_the_entire_three_stage_step(
         ),
     )
 
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(result.stage_successful, (True, False, True))
     assert not result.successful
     assert jnp.array_equal(result.accepted.z4c, start.z4c)
@@ -392,7 +435,9 @@ def test_either_participant_rejects_the_entire_three_stage_step(
         _controls(time_offset=0.01),
     ),
 )
-def test_stage_and_time_identity_mismatch_rejects_without_partial_commit(controls):
+def test_stage_and_time_identity_mismatch_rejects_without_partial_commit(
+    controls: Any,
+) -> None:
     runtime = _runtime()
     start = runtime.initialize(jnp.asarray(0.2), jnp.asarray(1.0))
     result = runtime.advance(start, jnp.asarray(0.1), controls)
@@ -403,7 +448,7 @@ def test_stage_and_time_identity_mismatch_rejects_without_partial_commit(control
     assert jnp.array_equal(result.accepted.matter, start.matter)
 
 
-def test_geometry_projection_topology_identity_is_enforced():
+def test_geometry_projection_topology_identity_is_enforced() -> None:
     runtime = _runtime(projection=_wrong_topology_stress_energy)
     start = runtime.initialize(jnp.asarray(0.2), jnp.asarray(1.0))
     result = runtime.advance(start, jnp.asarray(0.1), _controls())
@@ -413,7 +458,7 @@ def test_geometry_projection_topology_identity_is_enforced():
     assert jnp.array_equal(result.accepted.time, start.time)
 
 
-def test_dynamic_snapshot_mismatch_is_folded_into_jit_rejection_status():
+def test_dynamic_snapshot_mismatch_is_folded_into_jit_rejection_status() -> None:
     runtime = _runtime(projection=_wrong_snapshot_stress_energy)
     start = runtime.initialize(jnp.asarray(0.2), jnp.asarray(1.0))
     result = jax.jit(lambda state: runtime.advance(state, jnp.asarray(0.1), _controls()))(
@@ -426,7 +471,7 @@ def test_dynamic_snapshot_mismatch_is_folded_into_jit_rejection_status():
     assert jnp.array_equal(result.accepted.matter, start.matter)
 
 
-def test_stale_reused_stage_snapshot_token_rejects_the_macro_step():
+def test_stale_reused_stage_snapshot_token_rejects_the_macro_step() -> None:
     runtime = _runtime()
     start = runtime.initialize(jnp.asarray(0.2), jnp.asarray(1.0))
     result = jax.jit(
@@ -445,7 +490,7 @@ def test_stale_reused_stage_snapshot_token_rejects_the_macro_step():
     assert jnp.array_equal(result.accepted.matter, start.matter)
 
 
-def test_only_accepted_stage_ledgers_enter_cumulative_coupled_budgets():
+def test_only_accepted_stage_ledgers_enter_cumulative_coupled_budgets() -> None:
     runtime = _runtime(maximum_floor=1.0)
     start = runtime.initialize(jnp.asarray(0.0), jnp.asarray(2.0))
     first = runtime.advance(
@@ -482,7 +527,7 @@ def test_only_accepted_stage_ledgers_enter_cumulative_coupled_budgets():
     )
 
 
-def test_ledger_limit_rejects_candidate_and_preserves_all_accepted_budgets():
+def test_ledger_limit_rejects_candidate_and_preserves_all_accepted_budgets() -> None:
     runtime = _runtime()
     start = runtime.initialize(jnp.asarray(0.0), jnp.asarray(1.0))
     result = runtime.advance(
@@ -498,7 +543,7 @@ def test_ledger_limit_rejects_candidate_and_preserves_all_accepted_budgets():
     assert jnp.array_equal(result.accepted.matter, start.matter)
 
 
-def test_invalid_step_is_a_bounded_rejection_not_a_partial_update():
+def test_invalid_step_is_a_bounded_rejection_not_a_partial_update() -> None:
     runtime = _runtime()
     start = runtime.initialize(jnp.asarray(0.0), jnp.asarray(1.0))
     result = runtime.advance(start, jnp.asarray(0.0), _controls())
@@ -513,7 +558,9 @@ def test_invalid_step_is_a_bounded_rejection_not_a_partial_update():
     assert jnp.array_equal(result.accepted.time, start.time)
 
 
-def test_consecutive_failure_bound_makes_runtime_terminal_without_unbounded_retries():
+def test_consecutive_failure_bound_makes_runtime_terminal_without_unbounded_retries() -> (
+    None
+):
     runtime = _runtime(maximum_failures=2)
     controls = _controls(matter_reject_stage=1)
     start = runtime.initialize(jnp.asarray(0.0), jnp.asarray(1.0))
@@ -532,8 +579,8 @@ def test_consecutive_failure_bound_makes_runtime_terminal_without_unbounded_retr
 
 @pytest.mark.parametrize("matter_kind", ("grhd", "grmhd", "grrmhd"))
 def test_coupled_relativistic_matter_steps_retain_fixed_stage_shapes_under_jit(
-    matter_kind,
-):
+    matter_kind: Any,
+) -> None:
     runtime = _runtime(matter_kind=matter_kind)
     state = runtime.initialize(jnp.asarray(0.0), jnp.asarray(1.0))
     controls = _controls(floor_mass=0.1)

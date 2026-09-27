@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -57,7 +58,7 @@ class DenseBipartiteParticleNeighborhoodPlan(StrictModule, NonTrainableState):
     maximum_pairs: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, maximum_pairs: int, /):
+    def __init__(self, maximum_pairs: int, /) -> None:
         maximum = int(maximum_pairs)
         if maximum <= 0:
             raise ValueError("maximum_pairs must be positive.")
@@ -99,7 +100,7 @@ class PreparedDenseBipartiteParticleNeighborhood(StrictModule, NonTrainableState
         *,
         target_population_id: str,
         source_population_id: str,
-    ):
+    ) -> None:
         count = target.capacity * source.capacity
         if count > plan.maximum_pairs:
             raise ValueError("Dense bipartite relation exceeds maximum_pairs.")
@@ -167,7 +168,7 @@ class CellListBipartiteParticleNeighborhoodPlan(StrictModule, NonTrainableState)
         maximum_pairs: int,
         box: ParticleBox,
         /,
-    ):
+    ) -> None:
         radius = float(search_radius)
         if radius <= 0.0 or not np.isfinite(radius):
             raise ValueError("search_radius must be finite and positive.")
@@ -225,7 +226,7 @@ class PreparedCellListBipartiteParticleNeighborhood(StrictModule, NonTrainableSt
         *,
         target_population_id: str,
         source_population_id: str,
-    ):
+    ) -> None:
         if target.ambient_dimension != source.ambient_dimension:
             raise ValueError("Bipartite particle dimensions must match.")
         total = target.capacity + source.capacity

@@ -12,14 +12,15 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax.typing import DTypeLike
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 VelocityTransportKind: TypeAlias = Literal["integer_lattice", "off_lattice"]
@@ -77,7 +78,7 @@ class QuadratureMomentCertification(StrictModule, NonTrainableState):
         maximum_degree: int,
         tolerance: float,
         positive_weights: bool,
-    ):
+    ) -> None:
         exponents_ = tuple(tuple(row) for row in exponents)
         expected_host = np.asarray(expected_moments)
         measured_host = np.asarray(measured_moments, dtype=expected_host.dtype)
@@ -142,7 +143,7 @@ class CertifiedDiscreteVelocityQuadrature(StrictModule, NonTrainableState):
         certified_degree: int,
         transport_kind: VelocityTransportKind,
         tolerance: float = 5e-12,
-    ):
+    ) -> None:
         name_ = str(name)
         velocity_values = np.asarray(velocities)
         weight_values = np.asarray(weights)
@@ -179,8 +180,7 @@ class CertifiedDiscreteVelocityQuadrature(StrictModule, NonTrainableState):
             raise ValueError(
                 "Quadrature data, temperature, degree, or tolerance is invalid."
             )
-        if transport_kind not in ("integer_lattice", "off_lattice"):
-            raise ValueError("Unknown discrete-velocity transport kind.")
+        transport_kind = parse(transport_kind, VelocityTransportKind, "transport_kind")
         integer_residual = float(
             np.max(np.abs(velocity_values - np.rint(velocity_values)))
         )

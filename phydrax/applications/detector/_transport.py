@@ -5,17 +5,22 @@
 from __future__ import annotations
 
 import math
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.pic import RelativisticBorisPlan
 from ._core import DetectorConditions, TransportTrackBank
+
+
+# (position, proper velocity, alive) per flattened track.
+_PropagationCarry: TypeAlias = tuple[Array, Array, Array]
 
 
 class ChargedPropagationPlan(StrictModule, NonTrainableState):
@@ -37,7 +42,7 @@ class ChargedPropagationPlan(StrictModule, NonTrainableState):
         step_count: int,
         speed_of_light: float = 1.0,
         mean_energy_loss_per_length: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(conditions, DetectorConditions):
             raise TypeError("conditions must be DetectorConditions.")
         step = float(step_size)
@@ -104,7 +109,9 @@ def propagate_charged_tracks(
     electric = jnp.broadcast_to(plan.conditions.electric_field, (count, 3))
     magnetic = jnp.broadcast_to(plan.conditions.magnetic_field, (count, 3))
 
-    def step(carry, _):
+    def step(
+        carry: _PropagationCarry, _: None
+    ) -> tuple[_PropagationCarry, tuple[Array, Array, Array]]:
         position, proper_velocity, alive = carry
         pushed = plan.pusher.push(
             proper_velocity,

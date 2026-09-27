@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from enum import IntEnum
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 
@@ -33,7 +35,7 @@ class MPMPhysicalFieldPlan(StrictModule, NonTrainableState):
     units: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, role: MPMFieldRole, field_id: str, units: str, /):
+    def __init__(self, role: MPMFieldRole, field_id: str, units: str, /) -> None:
         role_ = MPMFieldRole(role)
         identifier = str(field_id)
         units_ = str(units)
@@ -73,7 +75,7 @@ class BiotPoromechanicsParameters(StrictModule, NonTrainableState):
         permeability: ArrayLike,
         fluid_viscosity: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (
@@ -112,7 +114,7 @@ class ThermalMPMParameters(StrictModule, NonTrainableState):
         plastic_heat_fraction: ArrayLike,
         reference_temperature: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (
@@ -161,7 +163,7 @@ class MPMCoupledBoundaryPlan(StrictModule, NonTrainableState):
         temperature_mask: ArrayLike,
         temperature_values: ArrayLike,
         heat_flux: ArrayLike,
-    ):
+    ) -> None:
         pressure_mask_ = np.asarray(pressure_mask, dtype=np.bool_)
         temperature_mask_ = np.asarray(temperature_mask, dtype=np.bool_)
         if pressure_mask_.shape != temperature_mask_.shape:
@@ -221,14 +223,14 @@ class PreparedMPMCoupledFieldOperator(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        grid_shape,
-        spacing,
-        periodic,
+        grid_shape: Iterable[int],
+        spacing: Iterable[float],
+        periodic: Iterable[bool],
         biot: BiotPoromechanicsParameters,
         thermal: ThermalMPMParameters,
         boundaries: MPMCoupledBoundaryPlan,
         /,
-    ):
+    ) -> None:
         shape = tuple(grid_shape)
         spacing_ = tuple(float(value) for value in spacing)
         periodic_ = tuple(bool(value) for value in periodic)
@@ -257,7 +259,7 @@ class PreparedMPMCoupledFieldOperator(StrictModule, NonTrainableState):
             }
         )
 
-    def _neighbors(self, value, axis):
+    def _neighbors(self, value: Array, axis: int) -> tuple[Array, Array]:
         if self.periodic[axis]:
             return jnp.roll(value, 1, axis=axis), jnp.roll(value, -1, axis=axis)
         indices = jnp.arange(value.shape[axis])
@@ -267,14 +269,14 @@ class PreparedMPMCoupledFieldOperator(StrictModule, NonTrainableState):
         )
         return lower, upper
 
-    def gradient(self, value):
+    def gradient(self, value: Array) -> Array:
         components = []
         for axis, spacing in enumerate(self.spacing):
             lower, upper = self._neighbors(value, axis)
             components.append((upper - lower) / (2.0 * spacing))
         return jnp.stack(components, axis=-1)
 
-    def laplacian(self, value):
+    def laplacian(self, value: Array) -> Array:
         result = jnp.zeros_like(value)
         for axis, spacing in enumerate(self.spacing):
             lower, upper = self._neighbors(value, axis)
@@ -355,14 +357,14 @@ class PreparedMPMCoupledFieldOperator(StrictModule, NonTrainableState):
         self,
         state: MPMCoupledFieldState,
         state_direction: MPMCoupledFieldState,
-        pressure_rate,
-        temperature_rate,
-        volumetric_strain_rate,
-        plastic_dissipation_rate,
+        pressure_rate: ArrayLike,
+        temperature_rate: ArrayLike,
+        volumetric_strain_rate: ArrayLike,
+        plastic_dissipation_rate: ArrayLike,
         cotangent: tuple[ArrayLike, ArrayLike],
         /,
-    ):
-        def function(pressure, temperature):
+    ) -> MPMCoupledLinearization:
+        def function(pressure: Array, temperature: Array) -> tuple[Array, Array]:
             current = MPMCoupledFieldState(
                 pressure,
                 state.saturation,

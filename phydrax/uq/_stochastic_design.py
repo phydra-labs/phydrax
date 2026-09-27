@@ -6,15 +6,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import sqrt
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PRNGKeyArray
+from jax import Array
+from jax.typing import ArrayLike
 
+from .._dtype_names import inexact_result_type
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import (
@@ -25,9 +26,10 @@ from ..linalg import (
     LinearSystem,
     solve,
 )
+from ..typing import parse, PRNGKey
 
 
-StochasticDesignCriterion = Literal["a-optimal", "d-optimal", "e-optimal"]
+StochasticDesignCriterion: TypeAlias = Literal["a-optimal", "d-optimal", "e-optimal"]
 
 
 class StochasticDesignResult(StrictModule):
@@ -64,7 +66,7 @@ class StochasticExperimentDesignPlan(StrictModule, NonTrainableState):
         self,
         precision_factory: Callable[[Array], AbstractLinearOperator],
         design_template: ArrayLike,
-        key: PRNGKeyArray,
+        key: PRNGKey,
         /,
         *,
         precision_factory_id: str,
@@ -74,7 +76,7 @@ class StochasticExperimentDesignPlan(StrictModule, NonTrainableState):
         lanczos_steps: int = 32,
         linear_policy: LinearSolvePolicy | None = None,
         linear_policy_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(precision_factory):
             raise TypeError("precision_factory must be callable.")
         factory_id = str(precision_factory_id).strip()
@@ -89,8 +91,7 @@ class StochasticExperimentDesignPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Design dimension/steps must be positive and probes greater than one."
             )
-        if criterion not in ("a-optimal", "d-optimal", "e-optimal"):
-            raise ValueError("Unknown stochastic design criterion.")
+        criterion = parse(criterion, StochasticDesignCriterion, "criterion")
         policy_id = None if linear_policy_id is None else str(linear_policy_id).strip()
         if criterion == "a-optimal":
             if not isinstance(linear_policy, LinearSolvePolicy) or not policy_id:
@@ -139,11 +140,13 @@ class StochasticExperimentDesignPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _flat_action(self, operator, vector):
+    def _flat_action(self, operator: AbstractLinearOperator, vector: Array) -> Array:
         structured = operator.source.unflatten(vector)
         return operator.target.flatten(operator.mv(structured))
 
-    def _a_value(self, operator, probe):
+    def _a_value(
+        self, operator: AbstractLinearOperator, probe: Array
+    ) -> tuple[Array, Array]:
         if self.linear_policy is None:
             raise RuntimeError("A-optimal design lost its required linear solve policy.")
         result = solve(
@@ -154,7 +157,9 @@ class StochasticExperimentDesignPlan(StrictModule, NonTrainableState):
         solution = operator.source.flatten(result.value)
         return jnp.real(jnp.vdot(probe, solution)), result.successful
 
-    def _lanczos(self, operator, probe):
+    def _lanczos(
+        self, operator: AbstractLinearOperator, probe: Array
+    ) -> tuple[Array, Array, Array, Array]:
         dtype = inexact_result_type(probe.dtype)
         q = probe.astype(dtype) / jnp.sqrt(jnp.asarray(self.dimension, dtype=dtype))
         previous = jnp.zeros_like(q)

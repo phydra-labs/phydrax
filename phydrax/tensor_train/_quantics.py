@@ -6,23 +6,25 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from math import prod
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PRNGKeyArray
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse, PRNGKey
 from ._core import TensorTrain, TensorTrainCompressionResult, tt_svd
 
 
-DigitOrdering = Literal["blocked", "interleaved"]
-GridRule = Literal["trapezoid", "midpoint"]
+DigitOrdering: TypeAlias = Literal["blocked", "interleaved"]
+GridRule: TypeAlias = Literal["trapezoid", "midpoint"]
 
 
 def _bounded_count(count: int, maximum: int, label: str, /) -> int:
@@ -67,7 +69,7 @@ class TensorizedGrid(StrictModule):
         axis_nodes: Sequence[ArrayLike],
         axis_weights: Sequence[ArrayLike],
         /,
-    ):
+    ) -> None:
         nodes = tuple(jnp.asarray(axis) for axis in axis_nodes)
         weights = tuple(jnp.asarray(axis) for axis in axis_weights)
         if not nodes or len(nodes) != len(weights):
@@ -101,7 +103,7 @@ class TensorizedGrid(StrictModule):
         /,
         *,
         rule: GridRule = "trapezoid",
-        dtype=jnp.float32,
+        dtype: DTypeLike = jnp.float32,
     ) -> TensorizedGrid:
         sizes = tuple(mode_sizes)
         intervals = tuple((float(lower), float(upper)) for lower, upper in bounds)
@@ -112,8 +114,7 @@ class TensorizedGrid(StrictModule):
             for lower, upper in intervals
         ):
             raise ValueError("Uniform grid bounds must be finite increasing intervals.")
-        if rule not in ("trapezoid", "midpoint"):
-            raise ValueError("Grid rule must be 'trapezoid' or 'midpoint'.")
+        rule = parse(rule, GridRule, "rule")
         nodes: list[Array] = []
         weights: list[Array] = []
         for (lower, upper), size in zip(intervals, sizes, strict=True):
@@ -196,7 +197,7 @@ class QuanticsLayout(StrictModule):
         /,
         *,
         ordering: DigitOrdering = "interleaved",
-    ):
+    ) -> None:
         sizes = tuple(axis_sizes)
         digits = tuple(tuple(axis) for axis in axis_digit_sizes)
         if not sizes or len(sizes) != len(digits) or any(size <= 0 for size in sizes):
@@ -207,8 +208,7 @@ class QuanticsLayout(StrictModule):
             raise ValueError("Every quantics digit base must exceed one.")
         if any(prod(axis) != size for size, axis in zip(sizes, digits, strict=True)):
             raise ValueError("Each axis size must equal the product of its digit bases.")
-        if ordering not in ("blocked", "interleaved"):
-            raise ValueError("Quantics ordering must be 'blocked' or 'interleaved'.")
+        ordering = parse(ordering, DigitOrdering, "ordering")
         if ordering == "blocked":
             digit_axes = tuple(
                 (axis, digit)
@@ -338,7 +338,7 @@ class TensorFunction(StrictModule):
         *,
         vectorized: bool,
         name: str,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("TensorFunction function must be callable.")
         name_ = str(name)
@@ -432,7 +432,7 @@ def qtt_quadrature(
 def qtt_sample(
     tensor: TensorTrain,
     layout: QuanticsLayout,
-    key: PRNGKeyArray,
+    key: PRNGKey,
     /,
     *,
     sample_count: int,

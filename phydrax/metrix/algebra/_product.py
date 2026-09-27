@@ -4,22 +4,28 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any, Literal, TypeAlias
+from collections.abc import Mapping, Sequence
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._core import AbstractFiniteRealAlgebraSpec
 from ._layout import AlgebraElementLayout
 from ._resources import AlgebraResourceEvidence
+
+
+if TYPE_CHECKING:
+    from ...discretization._lowered_operator import LoweredOperatorProgram
 
 
 AlgebraProductBackend: TypeAlias = Literal["sparse", "dense"]
@@ -41,9 +47,8 @@ class AlgebraProductEvidence(StrictModule, NonTrainableState):
         backend: AlgebraProductBackend,
         term_count: int,
         resource_evidence: AlgebraResourceEvidence,
-    ):
-        if backend not in ("sparse", "dense"):
-            raise ValueError("Unknown algebra product backend.")
+    ) -> None:
+        backend = parse(backend, AlgebraProductBackend, "backend")
         if not algebra_id or not layout_id:
             raise ValueError("Algebra product evidence IDs must be non-empty.")
         self.algebra_id = algebra_id
@@ -86,7 +91,7 @@ class AlgebraProductPlan(StrictModule, NonTrainableState):
         *,
         layout: AlgebraElementLayout | None = None,
         backend: Literal["auto", "sparse", "dense"] = "auto",
-    ):
+    ) -> None:
         if not isinstance(algebra, AbstractFiniteRealAlgebraSpec):
             raise TypeError("algebra must implement AbstractFiniteRealAlgebraSpec.")
         layout_ = AlgebraElementLayout(algebra) if layout is None else layout
@@ -245,7 +250,9 @@ class AlgebraProductPlan(StrictModule, NonTrainableState):
             self(middle, right),
         )
 
-    def lower(self, leading_shape: Sequence[int], dtype: Any, /):
+    def lower(
+        self, leading_shape: Sequence[int], dtype: Any, /
+    ) -> LoweredOperatorProgram:
         from ...discretization._lowered_operator import (
             LoweredBufferSpec,
             LoweredKernel,
@@ -270,12 +277,12 @@ class AlgebraProductPlan(StrictModule, NonTrainableState):
                 "Fractional algebra products require floating or complex lowered dtype."
             )
 
-        def jax_action(state):
+        def jax_action(state: Mapping[str, Array]) -> dict[str, Array]:
             return {"output": self(state["left"], state["right"])}
 
         terms = self.algebra.structure.terms
 
-        def numpy_action(state):
+        def numpy_action(state: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
             left = np.moveaxis(np.asarray(state["left"]), algebra_axis, -1)
             right = np.moveaxis(np.asarray(state["right"]), algebra_axis, -1)
             output_dtype = (

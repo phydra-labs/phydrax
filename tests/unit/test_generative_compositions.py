@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -5,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def test_fixed_graph_and_atomistic_diffusion_preserve_structural_invariants():
+def test_fixed_graph_and_atomistic_diffusion_preserve_structural_invariants() -> None:
     graph = phx.graph.GraphIR(
         nodes={"features": jnp.asarray([[0.2, 0.1], [-0.4, 0.3]])},
         senders=jnp.asarray([0, 1]),
@@ -21,8 +23,11 @@ def test_fixed_graph_and_atomistic_diffusion_preserve_structural_invariants():
         payload_key="features",
     )
     perturbed_graph = graph_diffusion.perturb(graph, jr.key(0), time=0.2)
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(perturbed_graph.senders, graph.senders)
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(perturbed_graph.receivers, graph.receivers)
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(perturbed_graph.node_mask, graph.node_mask)
     graph_score = graph_diffusion.conditional_score(perturbed_graph, graph, time=0.2)
     assert jnp.all(graph_score[1] == 0.0)
@@ -71,7 +76,7 @@ def test_fixed_graph_and_atomistic_diffusion_preserve_structural_invariants():
     assert jnp.all(species >= 0)
 
 
-def test_atomistic_equivariance_report_permutes_every_atom_aligned_field():
+def test_atomistic_equivariance_report_permutes_every_atom_aligned_field() -> None:
     batch = phx.atomistic.AtomisticBatch(
         jnp.asarray([[1, 6]], dtype=jnp.int32),
         jnp.asarray([[[-0.7, 0.2, 0.0], [0.4, -0.1, 0.0]]]),
@@ -79,7 +84,7 @@ def test_atomistic_equivariance_report_permutes_every_atom_aligned_field():
         phx.atomistic.AtomisticScaleContract(phx.units.ANGSTROM, phx.units.ELECTRONVOLT),
     )
 
-    def centered_score(value, time):
+    def centered_score(value: Any, time: Any) -> Any:
         del time
         mass = jnp.where(value.atom_mask, value.masses, 0.0)
         center = jnp.sum(mass[..., None] * value.positions, axis=1, keepdims=True)
@@ -101,7 +106,7 @@ def test_atomistic_equivariance_report_permutes_every_atom_aligned_field():
     assert report.translation_residual < 1e-12
 
 
-def test_atomistic_conditional_score_uses_centered_noise_pseudoinverse():
+def test_atomistic_conditional_score_uses_centered_noise_pseudoinverse() -> None:
     masses = jnp.asarray([[1.0, 12.0]])
     batch = phx.atomistic.AtomisticBatch(
         jnp.asarray([[1, 6]], dtype=jnp.int32),
@@ -131,8 +136,8 @@ def test_atomistic_conditional_score_uses_centered_noise_pseudoinverse():
     assert jnp.allclose(jnp.sum(masses[..., None] * score, axis=1), 0.0, atol=1e-10)
 
 
-def test_latent_diffusion_composes_sample_only_decoder_without_density_claim():
-    def encoder(value, *, key):
+def test_latent_diffusion_composes_sample_only_decoder_without_density_claim() -> None:
+    def encoder(value: Any, *, key: Any) -> Any:
         del key
         location = jnp.asarray(value)
         return phx.nn.latent.LatentPosterior(
@@ -145,7 +150,7 @@ def test_latent_diffusion_composes_sample_only_decoder_without_density_claim():
             "encoder",
         )
 
-    def decoder(latent, *, key):
+    def decoder(latent: Any, *, key: Any) -> Any:
         del key
         return phx.nn.latent.DecodedDistribution(
             None,
@@ -174,7 +179,7 @@ def test_latent_diffusion_composes_sample_only_decoder_without_density_claim():
     assert sample.latent.shape == (4, 2)
 
 
-def test_energy_autoregressive_and_adversarial_contracts_remain_distinct():
+def test_energy_autoregressive_and_adversarial_contracts_remain_distinct() -> None:
     target = phx.terms.EnergyTarget(
         lambda value: 0.5 * jnp.sum(value**2, axis=-1),
         (1,),
@@ -219,7 +224,7 @@ def test_energy_autoregressive_and_adversarial_contracts_remain_distinct():
     assert evaluation.finite
 
 
-def test_time_embedding_has_fixed_dimension_and_endpoint_values():
+def test_time_embedding_has_fixed_dimension_and_endpoint_values() -> None:
     embedding = phx.nn.layers.SinusoidalTimeEmbedding(8)
     values = embedding(jnp.asarray([0.0, 1.0]))
     assert values.shape == (2, 8)

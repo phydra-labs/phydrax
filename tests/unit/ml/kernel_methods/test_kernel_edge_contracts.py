@@ -18,7 +18,7 @@ from phydrax.ml.kernel_methods import (
 from phydrax.uq import GaussianProcessLikelihoodState
 
 
-def test_kernel_ridge_requires_explicit_sparse_materialization():
+def test_kernel_ridge_requires_explicit_sparse_materialization() -> None:
     dense = jnp.array(
         [[1.0, 0.0, 2.0], [0.0, -1.0, 0.5], [2.0, 1.0, 0.0], [-1.0, 0.0, 1.0]]
     )
@@ -36,7 +36,7 @@ def test_kernel_ridge_requires_explicit_sparse_materialization():
     assert jax.vmap(dense_model)(dense).shape == (4,)
 
 
-def test_masked_nonfinite_rows_are_excluded_and_negative_weights_fail_closed():
+def test_masked_nonfinite_rows_are_excluded_and_negative_weights_fail_closed() -> None:
     features = jnp.array([[0.0], [jnp.nan], [1.0], [2.0]])
     targets = jnp.array([0.0, jnp.nan, 1.0, 2.0])
     result = KernelRidgeRecipe(SquaredExponentialKernel(), alpha=0.1).fit_batch(
@@ -56,7 +56,7 @@ def test_masked_nonfinite_rows_are_excluded_and_negative_weights_fail_closed():
         )
 
 
-def test_approximation_capacity_and_kernel_support_fail_closed():
+def test_approximation_capacity_and_kernel_support_fail_closed() -> None:
     x = jnp.arange(10.0).reshape((5, 2))
     insufficient = NystromRecipe(SquaredExponentialKernel(), n_components=3).fit_batch(
         MLBatch(x, sample_mask=jnp.array([True, False, False, False, True]))
@@ -65,10 +65,11 @@ def test_approximation_capacity_and_kernel_support_fail_closed():
     assert insufficient.status == ML_INSUFFICIENT_DATA
 
     with pytest.raises(TypeError, match="SquaredExponentialKernel"):
+        # ty: ignore[invalid-argument-type]
         RandomFourierFeaturesRecipe(Matern32Kernel(), n_components=4)
 
 
-def test_gp_classification_preserves_case_axes_masks_and_determinism():
+def test_gp_classification_preserves_case_axes_masks_and_determinism() -> None:
     base = jnp.array([[-1.0], [-0.2], [0.4], [1.2]])
     features = jnp.stack((base, base + 0.1), axis=0)
     labels = jnp.array([[0, 0, 1, 1], [0, 1, 1, 1]], dtype=jnp.int32)

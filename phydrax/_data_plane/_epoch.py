@@ -22,7 +22,7 @@ class IndexEpochPlan:
     epoch: int
     drop_last: bool
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if int(self.source_size) <= 0:
             raise ValueError("source_size must be positive.")
         if int(self.batch_size) <= 0:

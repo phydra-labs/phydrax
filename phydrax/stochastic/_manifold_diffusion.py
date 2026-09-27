@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import isfinite
 from typing import Any
 
@@ -11,13 +12,15 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._probability import AbstractProbabilityLaw
 from .._strict import StrictModule
 from ..domain._measure import MeasureKind
 from ..metrix import AbstractRiemannianManifold
+from ..typing import PRNGKey
 
 
 class ManifoldProbabilityLaw(AbstractProbabilityLaw):
@@ -28,7 +31,15 @@ class ManifoldProbabilityLaw(AbstractProbabilityLaw):
     log_density: Any
     law_id: str = eqx.field(static=True)
 
-    def __init__(self, manifold, sampler, log_density, /, *, law_id: str):
+    def __init__(
+        self,
+        manifold: AbstractRiemannianManifold,
+        sampler: Callable[[PRNGKey, tuple[int, ...]], ArrayLike],
+        log_density: Callable[[Array], ArrayLike],
+        /,
+        *,
+        law_id: str,
+    ) -> None:
         if not isinstance(manifold, AbstractRiemannianManifold):
             raise TypeError("manifold must implement AbstractRiemannianManifold.")
         if not callable(sampler) or not callable(log_density):
@@ -52,7 +63,7 @@ class ManifoldProbabilityLaw(AbstractProbabilityLaw):
     def density_measure_kind(self) -> MeasureKind:
         return "riemannian"
 
-    def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         value = jnp.asarray(self.sampler(key, tuple(sample_shape)))
         if value.shape != tuple(sample_shape) + self.event_shape:
             raise ValueError("Manifold sampler returned an incompatible shape.")
@@ -88,7 +99,14 @@ class RiemannianScoreField(StrictModule):
     function: Any
     score_id: str = eqx.field(static=True)
 
-    def __init__(self, manifold, function, /, *, score_id: str):
+    def __init__(
+        self,
+        manifold: AbstractRiemannianManifold,
+        function: Callable[..., ArrayLike],
+        /,
+        *,
+        score_id: str,
+    ) -> None:
         if not isinstance(manifold, AbstractRiemannianManifold) or not callable(function):
             raise TypeError("Riemannian score requires a manifold and callable.")
         if not score_id:
@@ -97,7 +115,9 @@ class RiemannianScoreField(StrictModule):
         self.function = function
         self.score_id = score_id
 
-    def __call__(self, point: ArrayLike, time: ArrayLike, /, *, key=None) -> Array:
+    def __call__(
+        self, point: ArrayLike, time: ArrayLike, /, *, key: PRNGKey | None = None
+    ) -> Array:
         value = jnp.asarray(point)
         if value.shape != self.manifold.point_shape:
             raise ValueError("Riemannian score evaluation requires one manifold point.")
@@ -132,15 +152,15 @@ class IsotropicRiemannianDiffusion(StrictModule):
 
     def __init__(
         self,
-        manifold,
-        drift,
-        diffusion_rate,
-        tangent_noise,
+        manifold: AbstractRiemannianManifold,
+        drift: Callable[[Array, Array], ArrayLike],
+        diffusion_rate: Callable[[Array], ArrayLike],
+        tangent_noise: Callable[[PRNGKey, Array], ArrayLike],
         /,
         *,
         terminal_time: float = 1.0,
         process_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(manifold, AbstractRiemannianManifold):
             raise TypeError("manifold must implement AbstractRiemannianManifold.")
         if (
@@ -166,12 +186,12 @@ class IsotropicRiemannianDiffusion(StrictModule):
         self.terminal_time = horizon
         self.process_id = identifier
 
-    def drift(self, time, point, /):
+    def drift(self, time: ArrayLike, point: ArrayLike, /) -> Array:
         value = jnp.asarray(point)
         drift = jnp.asarray(self.drift_function(jnp.asarray(time), value))
         return self.manifold.project_tangent(value, drift)
 
-    def rate(self, time, /) -> Array:
+    def rate(self, time: ArrayLike, /) -> Array:
         value = jnp.asarray(
             self.diffusion_rate(jnp.asarray(time)), dtype=jnp.float64
         ).reshape(())
@@ -179,13 +199,17 @@ class IsotropicRiemannianDiffusion(StrictModule):
             value, ~jnp.isfinite(value) | (value < 0.0), "Invalid diffusion rate."
         )
 
-    def reverse_drift(self, reverse_time, point, score, /):
+    def reverse_drift(
+        self, reverse_time: ArrayLike, point: ArrayLike, score: ArrayLike, /
+    ) -> Array:
         time = self.terminal_time - jnp.asarray(reverse_time)
         value = jnp.asarray(point)
         tangent_score = self.manifold.project_tangent(value, score)
         return -self.drift(time, value) + self.rate(time) ** 2 * tangent_score
 
-    def probability_flow_drift(self, reverse_time, point, score, /):
+    def probability_flow_drift(
+        self, reverse_time: ArrayLike, point: ArrayLike, score: ArrayLike, /
+    ) -> Array:
         time = self.terminal_time - jnp.asarray(reverse_time)
         value = jnp.asarray(point)
         tangent_score = self.manifold.project_tangent(value, score)
@@ -204,7 +228,7 @@ def sample_manifold_reverse_diffusion(
     process: IsotropicRiemannianDiffusion,
     score: RiemannianScoreField,
     terminal_state: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     num_steps: int,
@@ -228,7 +252,9 @@ def sample_manifold_reverse_diffusion(
     step_size = process.terminal_time / count
     reverse_times = jnp.arange(count, dtype=jnp.float64) * step_size
 
-    def step(carry, reverse_time):
+    def step(
+        carry: tuple[Array, PRNGKey], reverse_time: Array
+    ) -> tuple[tuple[Array, PRNGKey], Array]:
         point, current_key = carry
         current_key, score_key, noise_key = jr.split(current_key, 3)
         forward_time = process.terminal_time - reverse_time

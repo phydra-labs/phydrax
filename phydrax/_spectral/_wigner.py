@@ -11,7 +11,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import s2fft
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from s2fft.precompute_transforms import (
     construct as s2fft_construct,
     wigner as s2fft_precomputed,
@@ -23,6 +24,7 @@ from s2fft.utils import quadrature as s2fft_quadrature
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._spherical import SphericalExecution, SphericalSampling
 
 
@@ -61,7 +63,7 @@ class _RecursiveWignerExecution(StrictModule, NonTrainableState):
         sampling: SphericalSampling,
         lower_bandlimit: int,
         max_precompute_bytes: int,
-    ):
+    ) -> None:
         estimate = 512 * directional_bandlimit * bandlimit**2
         limit = _validate_limit(max_precompute_bytes, estimate, "recursive")
         forward = tuple(
@@ -148,7 +150,7 @@ class _PrecomputedWignerExecution(StrictModule, NonTrainableState):
         directional_bandlimit: int,
         sampling: SphericalSampling,
         max_precompute_bytes: int,
-    ):
+    ) -> None:
         forward_theta = (
             s2_samples.ntheta(2 * bandlimit, "mwss")
             if sampling in ("mw", "mwss")
@@ -269,7 +271,7 @@ class WignerTransformPlan(StrictModule, NonTrainableState):
         execution: SphericalExecution = "recursive",
         lower_bandlimit: int = 0,
         max_precompute_bytes: int = _DEFAULT_PRECOMPUTE_BYTES,
-    ):
+    ) -> None:
         selected_bandlimit = int(bandlimit)
         selected_directional = int(directional_bandlimit)
         selected_lower = int(lower_bandlimit)
@@ -281,10 +283,12 @@ class WignerTransformPlan(StrictModule, NonTrainableState):
             raise ValueError("directional_bandlimit must satisfy 1 <= N <= L.")
         if selected_lower < 0 or selected_lower >= selected_bandlimit:
             raise ValueError("lower_bandlimit must satisfy 0 <= L_lower < L.")
-        if selected_sampling not in ("mw", "mwss", "dh", "gl"):
-            raise ValueError("sampling must be 'mw', 'mwss', 'dh', or 'gl'.")
-        if selected_execution not in ("recursive", "precomputed"):
-            raise ValueError("execution must be 'recursive' or 'precomputed'.")
+        selected_sampling = parse(
+            selected_sampling, SphericalSampling, "selected_sampling"
+        )
+        selected_execution = parse(
+            selected_execution, SphericalExecution, "selected_execution"
+        )
         if selected_execution == "recursive" and selected_directional >= 8:
             raise ValueError(
                 "recursive Wigner execution is certified only for directional_bandlimit < 8; use precomputed execution."

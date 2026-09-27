@@ -17,7 +17,7 @@ protected edges) is never crossed, so inherited organization stays unanimous.
 
 from __future__ import annotations
 
-from typing import final, NamedTuple
+from typing import Any, final, NamedTuple
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -119,7 +119,7 @@ class LocalMetricEvidence(StrictModule, NonTrainableState):
         topology_operations: bool,
         relocation: bool,
         predicate_mode: PredicateMode,
-    ):
+    ) -> None:
         counts = {
             "passes": passes,
             "splits": splits,
@@ -283,14 +283,14 @@ def _lookup(table: np.ndarray, queries: np.ndarray, /) -> np.ndarray:
     return np.where(table[position] == queries, position, -1)
 
 
-def _csr(owners: np.ndarray, values: np.ndarray, size: int, /):
+def _csr(owners: np.ndarray, values: np.ndarray, size: int, /) -> Any:
     order = np.argsort(owners, kind="stable")
     offsets = np.zeros((size + 1,), dtype=np.int64)
     offsets[1:] = np.cumsum(np.bincount(owners, minlength=size))
     return offsets, values[order]
 
 
-def _expand(offsets: np.ndarray, rows: np.ndarray, /):
+def _expand(offsets: np.ndarray, rows: np.ndarray, /) -> Any:
     """``(owner, position)`` pairs enumerating CSR rows ``rows`` in order."""
     starts = offsets[rows]
     counts = offsets[rows + 1] - starts
@@ -362,7 +362,7 @@ def _quality(lengths: np.ndarray, /) -> np.ndarray:
     return np.sqrt(3.0) * np.sqrt(np.maximum(product, 0.0)) / (a * a + b * b + c * c)
 
 
-def _orientation(a: np.ndarray, b: np.ndarray, c: np.ndarray, mode, /) -> np.ndarray:
+def _orientation(a: np.ndarray, b: np.ndarray, c: np.ndarray, mode: Any, /) -> np.ndarray:
     """``_OK`` for certified POSITIVE, ``_UNCERTAIN``, else ``_INVALID``."""
     if a.shape[0] == 0:
         return np.zeros((0,), dtype=np.int64)
@@ -374,7 +374,7 @@ def _orientation(a: np.ndarray, b: np.ndarray, c: np.ndarray, mode, /) -> np.nda
     )
 
 
-def _collinear(a: np.ndarray, b: np.ndarray, c: np.ndarray, mode, /) -> np.ndarray:
+def _collinear(a: np.ndarray, b: np.ndarray, c: np.ndarray, mode: Any, /) -> np.ndarray:
     """``_OK`` for certified ZERO orientation, ``_UNCERTAIN``, else ``_INVALID``."""
     if a.shape[0] == 0:
         return np.zeros((0,), dtype=np.int64)
@@ -390,7 +390,7 @@ def _barycentric(triangles: np.ndarray, points: np.ndarray, /) -> np.ndarray:
     """Floating barycentric weights of ``points`` in ``(k, 3, 2)`` triangles."""
     a, b, c = triangles[:, 0], triangles[:, 1], triangles[:, 2]
 
-    def cross(origin, first, second):
+    def cross(origin: Any, first: Any, second: Any) -> Any:
         u = first - origin
         v = second - origin
         return u[:, 0] * v[:, 1] - u[:, 1] * v[:, 0]
@@ -407,13 +407,17 @@ def _normalized(weights: np.ndarray, /) -> np.ndarray:
     return clipped / np.sum(clipped, axis=1, keepdims=True)
 
 
-def _group_maximum(values: np.ndarray, owners: np.ndarray, size: int, fill, /):
+def _group_maximum(
+    values: np.ndarray, owners: np.ndarray, size: int, fill: Any, /
+) -> Any:
     result = np.full((size,), fill, dtype=values.dtype)
     np.maximum.at(result, owners, values)
     return result
 
 
-def _group_minimum(values: np.ndarray, owners: np.ndarray, size: int, fill, /):
+def _group_minimum(
+    values: np.ndarray, owners: np.ndarray, size: int, fill: Any, /
+) -> Any:
     result = np.full((size,), fill, dtype=values.dtype)
     np.minimum.at(result, owners, values)
     return result
@@ -462,7 +466,7 @@ def _tally(counts: _Counts, statuses: np.ndarray, /) -> _Counts:
 # ------------------------------------------------------------------ validation
 
 
-def _integer_array(values, rows: int, name: str, /) -> np.ndarray:
+def _integer_array(values: Any, rows: int, name: str, /) -> np.ndarray:
     array = np.asarray(values)
     if not np.issubdtype(array.dtype, np.integer):
         raise TypeError(f"{name} must be an integer array.")
@@ -471,7 +475,7 @@ def _integer_array(values, rows: int, name: str, /) -> np.ndarray:
     return array.astype(np.int64)
 
 
-def _boolean_array(values, rows: int, name: str, /) -> np.ndarray:
+def _boolean_array(values: Any, rows: int, name: str, /) -> np.ndarray:
     array = np.asarray(values)
     if array.dtype != np.bool_:
         raise TypeError(f"{name} must be a boolean array.")
@@ -480,7 +484,7 @@ def _boolean_array(values, rows: int, name: str, /) -> np.ndarray:
     return array
 
 
-def _validate_mesh(mesh: CellMesh, metric, /) -> np.ndarray:
+def _validate_mesh(mesh: CellMesh, metric: Any, /) -> np.ndarray:
     if not isinstance(mesh, CellMesh):
         raise TypeError("mesh must be CellMesh.")
     if mesh.ambient_dimension != 2 or mesh.topological_dimension != 2:
@@ -496,7 +500,7 @@ def _validate_mesh(mesh: CellMesh, metric, /) -> np.ndarray:
 
 
 def _validate_controls(
-    predicate_mode, maximum_passes, topology_operations, relocation, /
+    predicate_mode: Any, maximum_passes: Any, topology_operations: Any, relocation: Any, /
 ) -> None:
     if not isinstance(predicate_mode, PredicateMode):
         raise TypeError("predicate_mode must be PredicateMode.")
@@ -563,6 +567,7 @@ def _initial_state(
         != _OK
     ):
         raise ValueError("Source triangles must be certified positively oriented.")
+    # ty: ignore[unresolved-attribute]
     edges = np.sort(np.asarray(mesh.connectivity.edges, dtype=np.int64), axis=1)
     features = np.flatnonzero((edge_classes > 0) | protected_edges)
     count = points.shape[0]
@@ -605,7 +610,7 @@ def _initial_state(
 # ------------------------------------------------------------------ topology
 
 
-def _edge_table(cells: np.ndarray, /):
+def _edge_table(cells: np.ndarray, /) -> Any:
     count = cells.shape[0]
     first = cells.reshape((-1,))
     second = cells[:, (1, 2, 0)].reshape((-1,))
@@ -637,7 +642,7 @@ def _vertex_classes(
     edge_protected: np.ndarray,
     mode: PredicateMode,
     /,
-):
+) -> Any:
     count = state.points.shape[0]
     classified = edges[edge_class > 0]
     ends = classified.reshape((-1,))
@@ -840,11 +845,11 @@ def _raise_touching(state: _State, vertices: np.ndarray, rank: int, /) -> _State
 # ------------------------------------------------------------------ split
 
 
-def _metric_midpoint(state: _State, first: np.ndarray, second: np.ndarray, /):
+def _metric_midpoint(state: _State, first: np.ndarray, second: np.ndarray, /) -> Any:
     """Parameter of the metric-length midpoint under geometric size variation."""
     delta = state.points[second] - state.points[first]
 
-    def length(rows):
+    def length(rows: Any) -> Any:
         tensor = state.metric[rows]
         return np.sqrt(
             delta[:, 0] * delta[:, 0] * tensor[:, 0, 0]
@@ -858,7 +863,7 @@ def _metric_midpoint(state: _State, first: np.ndarray, second: np.ndarray, /):
     return np.where(nearly_equal, 0.5, np.log(0.5 * (1.0 + safe)) / np.log(safe))
 
 
-def _cavity_sides(topology: _Topology, edges: np.ndarray, /):
+def _cavity_sides(topology: _Topology, edges: np.ndarray, /) -> Any:
     """``(op, cell, local)`` per cell on candidate edges; local edge ``i`` is CCW."""
     sides = topology.edge_cells[edges]
     op, side = np.nonzero(sides >= 0)
@@ -961,7 +966,9 @@ class _CollapseCandidates(NamedTuple):
     longest: np.ndarray
 
 
-def _collapse_admissible(topology: _Topology, edge, removed, kept, /) -> np.ndarray:
+def _collapse_admissible(
+    topology: _Topology, edge: Any, removed: Any, kept: Any, /
+) -> np.ndarray:
     """Classification: interior vertices along unclassified edges inside one region;
     straight curve vertices along an edge of their own curve class."""
     label = topology.edge_class[edge]
@@ -979,7 +986,9 @@ def _collapse_admissible(topology: _Topology, edge, removed, kept, /) -> np.ndar
     return interior | curve
 
 
-def _collapse_link(topology: _Topology, edge, removed, kept, /) -> np.ndarray:
+def _collapse_link(
+    topology: _Topology, edge: Any, removed: Any, kept: Any, /
+) -> np.ndarray:
     """Link condition: common neighbors are exactly the apexes of the edge."""
     owner, position = _expand(topology.neighbor_offsets, removed)
     other = topology.neighbor_values[position]
@@ -990,8 +999,8 @@ def _collapse_link(topology: _Topology, edge, removed, kept, /) -> np.ndarray:
 
 
 def _collapse_geometry(
-    state: _State, topology: _Topology, removed, kept, mode: PredicateMode, /
-):
+    state: _State, topology: _Topology, removed: Any, kept: Any, mode: PredicateMode, /
+) -> Any:
     """Worst orientation of the modified ball cells and the longest new edge."""
     owner, position = _expand(topology.ball_offsets, removed)
     rows = state.cells[topology.ball_cells[position]]
@@ -1032,7 +1041,9 @@ def _collapse_candidates(
     return _CollapseCandidates(edge, removed, kept, status, longest)
 
 
-def _collapse_cells(state: _State, topology: _Topology, removed, kept, /) -> _State:
+def _collapse_cells(
+    state: _State, topology: _Topology, removed: Any, kept: Any, /
+) -> _State:
     """Remove the edge cells, move the other ball cells onto the kept vertex."""
     owner, position = _expand(topology.ball_offsets, removed)
     cell = topology.ball_cells[position]
@@ -1059,7 +1070,7 @@ def _collapse_cells(state: _State, topology: _Topology, removed, kept, /) -> _St
     return _replace_cells(state, cell, children, child_of, parent_of, _COLLAPSED)
 
 
-def _collapse_records(state: _State, removed, kept, /) -> _State:
+def _collapse_records(state: _State, removed: Any, kept: Any, /) -> _State:
     remap = np.arange(state.points.shape[0], dtype=np.int64)
     remap[removed] = kept
     features = np.sort(remap[state.feature_keys], axis=1)
@@ -1220,7 +1231,7 @@ def _flip_round(
 # ------------------------------------------------------------------ relocation
 
 
-def _relocation_targets(state: _State, topology: _Topology, vertices, /):
+def _relocation_targets(state: _State, topology: _Topology, vertices: Any, /) -> Any:
     """Spring displacement toward unit metric lengths and each vertex's badness.
 
     Interior vertices use every neighbor; curve vertices only their two curve
@@ -1244,7 +1255,9 @@ def _relocation_targets(state: _State, topology: _Topology, vertices, /):
     return total / np.maximum(number, 1)[:, None], badness
 
 
-def _proposal_metric(state: _State, topology: _Topology, vertex, target, /):
+def _proposal_metric(
+    state: _State, topology: _Topology, vertex: Any, target: Any, /
+) -> Any:
     """Log-Euclidean P1 metric at each proposal inside the current vertex ball."""
     owner, position = _expand(topology.ball_offsets, vertex)
     cell = topology.ball_cells[position]
@@ -1256,7 +1269,15 @@ def _proposal_metric(state: _State, topology: _Topology, vertex, target, /):
     return _interpolate_metrics(samples, _normalized(weights[first]))
 
 
-def _proposal_checks(state: _State, topology: _Topology, vertex, target, metric, mode, /):
+def _proposal_checks(
+    state: _State,
+    topology: _Topology,
+    vertex: Any,
+    target: Any,
+    metric: Any,
+    mode: Any,
+    /,
+) -> Any:
     """Worst orientation status and minimum metric quality of each proposal."""
     owner, position = _expand(topology.ball_offsets, vertex)
     rows = state.cells[topology.ball_cells[position]]
@@ -1371,7 +1392,7 @@ def _relocation_round(
 # ------------------------------------------------------------------ passes
 
 
-def _run_phase(state, counts, phase, mode, /):
+def _run_phase(state: Any, counts: Any, phase: Any, mode: Any, /) -> Any:
     applied = 0
     for _ in range(_PHASE_ROUNDS):
         state, counts, count = phase(state, _topology(state, mode), counts, mode)
@@ -1409,7 +1430,7 @@ def _run_pass(
 # ------------------------------------------------------------------ assembly
 
 
-def _locate(source: _Source, queries: np.ndarray, mode: PredicateMode, /):
+def _locate(source: _Source, queries: np.ndarray, mode: PredicateMode, /) -> Any:
     """Containing source cell (lowest ID among certified hosts) and P1 weights.
 
     Points certified inside or on a source triangle take the lowest-ID such cell;
@@ -1451,7 +1472,7 @@ def _locate(source: _Source, queries: np.ndarray, mode: PredicateMode, /):
     return cell[first], chosen
 
 
-def _target_order(state: _State, /):
+def _target_order(state: _State, /) -> Any:
     """Target rows: surviving source vertices in source order, then new vertices."""
     rows = np.flatnonzero(state.alive)
     source = rows[state.source_rows[rows] >= 0]
@@ -1471,7 +1492,7 @@ def _target_order(state: _State, /):
     return order, identifiers, final
 
 
-def _stencil(state: _State, source: _Source, order, mode: PredicateMode, /):
+def _stencil(state: _State, source: _Source, order: Any, mode: PredicateMode, /) -> Any:
     count = order.size
     sources = np.full((count, 3), -1, dtype=np.int64)
     weights = np.zeros((count, 3), dtype=np.float64)
@@ -1500,14 +1521,18 @@ def _surviving(state: _State, /) -> np.ndarray:
     return final
 
 
-def _relation(dimension, sources, targets, kinds, /) -> EntityRelations:
+def _relation(
+    dimension: Any, sources: Any, targets: Any, kinds: Any, /
+) -> EntityRelations:
     order = np.lexsort((*targets.T[::-1], *sources.T[::-1]))
     return EntityRelations(
         dimension, sources[order], targets[order], kinds[order].astype(np.int32)
     )
 
 
-def _vertex_relations(state, order, identifiers, final, stencil, /):
+def _vertex_relations(
+    state: Any, order: Any, identifiers: Any, final: Any, stencil: Any, /
+) -> Any:
     ids = state.vertex_ids
     rows = np.flatnonzero((state.source_rows >= 0) & state.alive & state.moved)
     collapsed = np.flatnonzero((state.source_rows >= 0) & ~state.alive)
@@ -1529,7 +1554,7 @@ def _vertex_relations(state, order, identifiers, final, stencil, /):
     return _relation(0, sources[:, None], targets[:, None], kinds)
 
 
-def _edge_relations(state: _State, source: _Source, final, /) -> EntityRelations:
+def _edge_relations(state: _State, source: _Source, final: Any, /) -> EntityRelations:
     changed = np.flatnonzero(state.lineage_ranks > 0)
     targets = np.sort(final[state.lineage_keys[changed]], axis=1)
     if np.any(targets < 0):
@@ -1542,7 +1567,7 @@ def _edge_relations(state: _State, source: _Source, final, /) -> EntityRelations
     )
 
 
-def _cell_identifiers(state: _State, source: _Source, final, /) -> np.ndarray:
+def _cell_identifiers(state: _State, source: _Source, final: Any, /) -> np.ndarray:
     identifiers = state.cell_ids.copy()
     new = np.flatnonzero(identifiers < 0)
     keys = np.sort(final[state.cells[new]], axis=1)
@@ -1553,7 +1578,7 @@ def _cell_identifiers(state: _State, source: _Source, final, /) -> np.ndarray:
     return identifiers
 
 
-def _cell_relations(state: _State, source: _Source, identifiers, /):
+def _cell_relations(state: _State, source: _Source, identifiers: Any, /) -> Any:
     related = (state.cell_ids < 0) | (state.cell_rank > 0)
     pairs = np.flatnonzero(related[state.ancestry_cells])
     cells = state.ancestry_cells[pairs]
@@ -1565,7 +1590,7 @@ def _cell_relations(state: _State, source: _Source, identifiers, /):
     )
 
 
-def _assemble(state: _State, source: _Source, mode: PredicateMode, /):
+def _assemble(state: _State, source: _Source, mode: PredicateMode, /) -> Any:
     order, identifiers, final = _target_order(state)
     row_of = np.full((state.points.shape[0],), -1, dtype=np.int64)
     row_of[order] = np.arange(order.size, dtype=np.int64)

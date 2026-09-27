@@ -8,7 +8,8 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 import phydrax.axes as cx
 from phydrax.discretization import (
@@ -37,9 +38,10 @@ from phydrax.domain import (
 
 from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0
+from .._dtype_names import complex_precision_dtype, real_precision_dtype_name
 from .._frozendict import frozendict
-from .._precision import complex_precision_dtype, real_precision_dtype_name
 from ..geometry import BoundaryAtlasProvider, CubatureAtlasProvider
+from ..typing import PRNGKey
 from ._batches import PointIntegrationBatch, SeparableIntegrationBatch
 from ._plans import FixedQuadraturePlan
 from ._rules import (
@@ -161,7 +163,7 @@ def component_factor_fields(
     points: PointBatch | GridBatch | Any,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     kwargs: dict[str, Any],
 ) -> tuple[cx.AxisArray, cx.AxisArray]:
     """Evaluate dynamic selection and measure-modifier fields."""
@@ -363,7 +365,7 @@ class IntegrationAxisSpec(AbstractAxisSpec):
     n: int
     rule: IntervalRule
 
-    def __init__(self, rule: IntervalRule):
+    def __init__(self, rule: IntervalRule) -> None:
         self.n = int(interval_rule_data(rule).nodes.shape[0])
         self.rule = rule
 

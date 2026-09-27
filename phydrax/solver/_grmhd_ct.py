@@ -9,7 +9,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -19,6 +20,7 @@ from ..discretization.finite_volume._uct import (
     AbstractUCTElectromotivePlan,
     HLLUCTElectromotivePlan,
 )
+from ..typing import parse
 
 
 VectorPotentialGaugeKind: TypeAlias = Literal[
@@ -39,7 +41,7 @@ class GRMHDMagneticStateLayout(StrictModule, NonTrainableState):
     electromotive_degree: int | None = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /):
+    def __init__(self, dimension: int, /) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (1, 2, 3):
             raise ValueError("GRMHD layout dimension must be one, two, or three.")
@@ -104,9 +106,8 @@ class GRMHDVectorPotentialGauge(StrictModule, NonTrainableState):
         *,
         propagation_speed: float = 1.0,
         damping_rate: float = 0.0,
-    ):
-        if kind not in ("none", "weyl", "generalized_lorenz"):
-            raise ValueError("Unknown GRMHD vector-potential gauge.")
+    ) -> None:
+        kind = parse(kind, VectorPotentialGaugeKind, "kind")
         speed = float(propagation_speed)
         damping = float(damping_rate)
         if (
@@ -198,7 +199,7 @@ class GRMHDConstrainedTransportPlan(StrictModule, NonTrainableState):
         electromotive_plan: AbstractUCTElectromotivePlan | None = None,
         divergence_tolerance: float = 1.0e-10,
         compatibility_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(bridge, StructuredCochainBridge):
             raise TypeError("bridge must be StructuredCochainBridge.")
         gauge_ = GRMHDVectorPotentialGauge() if gauge is None else gauge

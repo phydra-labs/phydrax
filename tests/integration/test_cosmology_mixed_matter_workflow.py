@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -14,7 +16,7 @@ from phydrax.applications.cosmology._wave_dark_matter import (
 )
 
 
-def _linear_mixed_workflow(count=16):
+def _linear_mixed_workflow(count: Any = 16) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(count, periodic=True),),
         axis_names=("x",),
@@ -38,6 +40,7 @@ def _linear_mixed_workflow(count=16):
         ),
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.3, maximum_retries=0),
@@ -74,6 +77,7 @@ def _linear_mixed_workflow(count=16):
         ),
     ).prepare(space, background)
     gas = ComovingEulerPlan(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         adiabatic_index=5.0 / 3.0,
         expansion_dimension=3,
@@ -103,7 +107,7 @@ def _linear_mixed_workflow(count=16):
     return prepared, state
 
 
-def test_linear_mixed_workflow_closes_shared_source_force_work_and_time_levels():
+def test_linear_mixed_workflow_closes_shared_source_force_work_and_time_levels() -> None:
     prepared, state = _linear_mixed_workflow()
     initial_assembly = prepared.density.assemble(state)
 

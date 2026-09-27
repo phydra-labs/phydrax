@@ -10,10 +10,12 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...dynamics import ContinuousSystem
 from ...solver import (
     DifferentialProblem,
     DifferentialSolution,
@@ -53,14 +55,14 @@ class AstrodynamicsPropagationResult(StrictModule):
 class _PointMassPotentialGradient(StrictModule):
     mu: Array
 
-    def __call__(self, time, position, args, /):
+    def __call__(self, time: Array, position: Array, args: Any, /) -> Array:
         del time, args
         radius = jnp.sqrt(jnp.sum(position * position))
         return self.mu * position / jnp.where(radius > 0.0, radius**3, 1.0)
 
 
 class _UnitKineticGradient(StrictModule):
-    def __call__(self, time, momentum, args, /):
+    def __call__(self, time: Array, momentum: Array, args: Any, /) -> Array:
         del time, args
         return momentum
 
@@ -97,7 +99,7 @@ class AstrodynamicsPropagationPlan(StrictModule):
         solver_id: str | None = None,
         stepsize_controller_id: str | None = None,
         adjoint_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(force, AbstractAstrodynamicsForce):
             raise TypeError("force must be an AbstractAstrodynamicsForce.")
         times = jnp.asarray(save_times, dtype=jnp.float64)
@@ -167,7 +169,7 @@ class AstrodynamicsPropagationPlan(StrictModule):
             }
         )
 
-    def _drift(self):
+    def _drift(self) -> SeparableHamiltonianVectorField | ContinuousSystem:
         if isinstance(self.solver, StormerVerlet):
             if not isinstance(self.force, PointMassGravity):
                 raise TypeError("StormerVerlet currently requires PointMassGravity.")
@@ -268,7 +270,7 @@ class AstrodynamicsPropagationPlan(StrictModule):
         force.context.require_compatible(initial_state.context)
         elapsed = self.save_times - self.save_times[0]
 
-        def one(delta):
+        def one(delta: Array) -> tuple[Array, Array, Array]:
             result = propagate_universal_kepler(
                 initial_state,
                 delta,

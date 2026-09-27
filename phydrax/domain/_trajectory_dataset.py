@@ -5,18 +5,21 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
+from ..typing import parse, PRNGKey
 from ._coordinate import CoordinateSpec
 from ._dataset import DatasetDomain
 from ._domain import JointFactor
@@ -28,16 +31,17 @@ from ._structure import _validate_label, NumPoints, PointBatch, SampleLayout
 
 
 if TYPE_CHECKING:
+    from ._components import DomainComponent
     from ._function import DomainFunction
     from ._irregular_trajectory_dataset import IrregularTrajectoryDatasetDomain
 
 
-TrajectoryMeasure = Literal[
+TrajectoryMeasure: TypeAlias = Literal[
     "case_time_probability",
     "time_integral_average",
     "time_integral_sum",
 ]
-TrajectorySampling = Literal["case_time_uniform", "observation_uniform"]
+TrajectorySampling: TypeAlias = Literal["case_time_uniform", "observation_uniform"]
 
 TRAJECTORY_CASE_INDEX_KEY = "__phydrax_trajectory_case_index"
 TRAJECTORY_TIME_INDEX_KEY = "__phydrax_trajectory_time_index"
@@ -201,7 +205,7 @@ class TrajectoryDatasetDomain(JointFactor):
         time_label: str = "t",
         measure: TrajectoryMeasure = "case_time_probability",
         sampling: TrajectorySampling = "case_time_uniform",
-    ):
+    ) -> None:
         """Create a finite dataset of row-conditioned trajectories.
 
         Parameters:
@@ -227,33 +231,8 @@ class TrajectoryDatasetDomain(JointFactor):
             raise ValueError("dt must be positive.")
         start_arr = _as_scalar("start", start)
 
-        measure_str = str(measure)
-        if measure_str not in (
-            "case_time_probability",
-            "time_integral_average",
-            "time_integral_sum",
-        ):
-            raise ValueError(
-                "measure must be one of 'case_time_probability', 'time_integral_average', or 'time_integral_sum'."
-            )
-        measure_value: TrajectoryMeasure
-        if measure_str == "case_time_probability":
-            measure_value = "case_time_probability"
-        elif measure_str == "time_integral_average":
-            measure_value = "time_integral_average"
-        else:
-            measure_value = "time_integral_sum"
-
-        sampling_str = str(sampling)
-        if sampling_str not in ("case_time_uniform", "observation_uniform"):
-            raise ValueError(
-                "sampling must be either 'case_time_uniform' or 'observation_uniform'."
-            )
-        sampling_value: TrajectorySampling
-        if sampling_str == "case_time_uniform":
-            sampling_value = "case_time_uniform"
-        else:
-            sampling_value = "observation_uniform"
+        measure_value = parse(measure, TrajectoryMeasure, "measure")
+        sampling_value = parse(sampling, TrajectorySampling, "sampling")
 
         max_length = int(jnp.max(lengths_arr))
         total_observations = int(jnp.sum(lengths_arr))
@@ -483,7 +462,7 @@ class TrajectoryDatasetDomain(JointFactor):
 
         data_samples = self.input_rows(case_idx)
 
-        def _to_field(v: ArrayLike):
+        def _to_field(v: ArrayLike) -> cx.AxisArray:
             arr = jnp.asarray(v)
             if arr.ndim == 0:
                 raise ValueError(
@@ -505,7 +484,7 @@ def _flat_observation_indices(domain: TrajectoryDatasetDomain, /) -> tuple[Array
 
 
 def _sample_cases_uniform(
-    domain: TrajectoryDatasetDomain, n: int, key: Key[Array, ""], /
+    domain: TrajectoryDatasetDomain, n: int, key: PRNGKey, /
 ) -> Array:
     return jr.randint(key, shape=(n,), minval=0, maxval=domain.size, dtype=jnp.int32)
 
@@ -513,7 +492,7 @@ def _sample_cases_uniform(
 def _sample_valid_cases(
     valid: Array,
     n: int,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> Array:
     valid_f = jnp.asarray(valid, dtype=jnp.float64)
@@ -529,10 +508,10 @@ def _sample_valid_cases(
 
 def _component_times(
     domain: TrajectoryDatasetDomain,
-    component,
+    component: DomainComponent,
     case_indices: Array,
     n: int,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> tuple[Array, Array]:
     comp = component.spec.selection_for(domain.time_label)
@@ -584,12 +563,12 @@ def _component_times(
 
 
 def sample_trajectory_component(
-    component,
+    component: DomainComponent,
     num_points: NumPoints,
     *,
     structure: SampleLayout,
     sampler: str = "latin_hypercube",
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> PointBatch:
     del sampler
     domain = component.domain
@@ -650,7 +629,7 @@ def sample_trajectory_component(
 
 
 def trajectory_default_quadrature_total_weight(
-    component, batch: PointBatch, /
+    component: DomainComponent, batch: PointBatch, /
 ) -> cx.AxisArray | None:
     domain = component.domain
     if not isinstance(domain, TrajectoryDatasetDomain):
@@ -711,7 +690,7 @@ def trajectory_default_quadrature_total_weight(
 
 
 def trajectory_quadrature_weights_by_axis(
-    component, batch: PointBatch, /
+    component: DomainComponent, batch: PointBatch, /
 ) -> Mapping[str, cx.AxisArray] | None:
     domain = component.domain
     if not isinstance(domain, TrajectoryDatasetDomain):

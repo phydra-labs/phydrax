@@ -10,7 +10,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array
+from jax import Array
 
 from ..._differentiation import (
     DerivativeContract,
@@ -82,7 +82,7 @@ class FoldRecord(StrictModule):
         *,
         fold_id: int,
         num_samples: int,
-    ):
+    ) -> None:
         train, validation = _validate_fold_indices(
             int(num_samples), train_indices, validation_indices
         )
@@ -108,7 +108,7 @@ class SplitPlanResult(StrictModule):
         sample_indices: Any,
         key: Any,
         method: str,
-    ):
+    ) -> None:
         if not folds:
             raise ValueError("A split result requires at least one fold.")
         if any(not isinstance(fold, FoldRecord) for fold in folds):
@@ -179,7 +179,7 @@ class KFoldPlan(AbstractSplitPlan):
     num_folds: int = eqx.field(static=True)
     shuffle: bool = eqx.field(static=True)
 
-    def __init__(self, num_folds: int = 5, /, *, shuffle: bool = True):
+    def __init__(self, num_folds: int = 5, /, *, shuffle: bool = True) -> None:
         if int(num_folds) < 2:
             raise ValueError("num_folds must be at least 2.")
         self.num_folds = int(num_folds)
@@ -228,7 +228,7 @@ class StratifiedKFoldPlan(AbstractSplitPlan):
     num_folds: int = eqx.field(static=True)
     shuffle: bool = eqx.field(static=True)
 
-    def __init__(self, num_folds: int = 5, /, *, shuffle: bool = True):
+    def __init__(self, num_folds: int = 5, /, *, shuffle: bool = True) -> None:
         if int(num_folds) < 2:
             raise ValueError("num_folds must be at least 2.")
         self.num_folds = int(num_folds)
@@ -283,7 +283,7 @@ class GroupKFoldPlan(AbstractSplitPlan):
     num_folds: int = eqx.field(static=True)
     shuffle: bool = eqx.field(static=True)
 
-    def __init__(self, num_folds: int = 5, /, *, shuffle: bool = False):
+    def __init__(self, num_folds: int = 5, /, *, shuffle: bool = False) -> None:
         if int(num_folds) < 2:
             raise ValueError("num_folds must be at least 2.")
         self.num_folds = int(num_folds)
@@ -332,7 +332,7 @@ class TimeSeriesSplitPlan(AbstractSplitPlan):
         validation_size: int | None = None,
         min_train_size: int | None = None,
         gap: int = 0,
-    ):
+    ) -> None:
         if int(num_folds) < 1:
             raise ValueError("num_folds must be positive.")
         if validation_size is not None and int(validation_size) < 1:
@@ -381,7 +381,7 @@ class BlockSplitPlan(AbstractSplitPlan):
     num_folds: int = eqx.field(static=True)
     gap: int = eqx.field(static=True)
 
-    def __init__(self, num_folds: int = 5, /, *, gap: int = 0):
+    def __init__(self, num_folds: int = 5, /, *, gap: int = 0) -> None:
         if int(num_folds) < 2:
             raise ValueError("num_folds must be at least 2.")
         if int(gap) < 0:
@@ -427,7 +427,7 @@ class RollingWindowSplitPlan(AbstractSplitPlan):
         step: int | None = None,
         gap: int = 0,
         max_folds: int | None = None,
-    ):
+    ) -> None:
         if int(train_size) < 1 or int(validation_size) < 1:
             raise ValueError("train_size and validation_size must be positive.")
         step_ = int(validation_size) if step is None else int(step)
@@ -473,7 +473,7 @@ class NestedFoldRecord(StrictModule):
     outer_fold: FoldRecord
     inner_split: SplitPlanResult
 
-    def __init__(self, outer_fold: FoldRecord, inner_split: SplitPlanResult, /):
+    def __init__(self, outer_fold: FoldRecord, inner_split: SplitPlanResult, /) -> None:
         if not isinstance(outer_fold, FoldRecord):
             raise TypeError("outer_fold must be a FoldRecord.")
         if not isinstance(inner_split, SplitPlanResult):
@@ -494,7 +494,7 @@ class NestedSplitResult(StrictModule):
     derivative_contract: DerivativeContract
     method: str = eqx.field(static=True)
 
-    def __init__(self, folds: tuple[NestedFoldRecord, ...], /, *, key: Any):
+    def __init__(self, folds: tuple[NestedFoldRecord, ...], /, *, key: Any) -> None:
         if not folds:
             raise ValueError("A nested split requires at least one outer fold.")
         if any(not isinstance(fold, NestedFoldRecord) for fold in folds):
@@ -511,7 +511,9 @@ class NestedSplitPlan(StrictModule):
     outer_plan: AbstractSplitPlan
     inner_plan: AbstractSplitPlan
 
-    def __init__(self, outer_plan: AbstractSplitPlan, inner_plan: AbstractSplitPlan, /):
+    def __init__(
+        self, outer_plan: AbstractSplitPlan, inner_plan: AbstractSplitPlan, /
+    ) -> None:
         if not isinstance(outer_plan, AbstractSplitPlan) or not isinstance(
             inner_plan, AbstractSplitPlan
         ):

@@ -7,14 +7,17 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from numbers import Integral
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._precision import PrecisionEvidenceEnvelope
 from ..._spectral._spherical import (
     SphericalExecution,
     SphericalHarmonicPlan,
@@ -26,6 +29,8 @@ from ...linalg import (
     FunctionLinearOperator,
     OperatorProperties,
 )
+from ...linalg._spaces import _coordinate_dtype
+from ...typing import parse
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -47,6 +52,15 @@ from ._spherical_evaluation import (
     _spherical_synthesis_cartesian,
 )
 from ._spherical_layout import SphericalModeLayout
+
+
+if TYPE_CHECKING:
+    from ._signed_coordinates import SignedHermitianSpectralCoordinates
+    from ._spherical_operators import (
+        SphericalCoordinate,
+        SphericalCoordinateDerivativeResult,
+        SphericalDerivativeRepresentation,
+    )
 
 
 _DEFAULT_EXPLICIT_BYTES = 512 * 1024**2
@@ -105,16 +119,14 @@ class SphericalSpectralPlan(AbstractDiscretizationPlan):
         max_explicit_eigenbasis_bytes: int = _DEFAULT_EXPLICIT_BYTES,
         max_dense_operator_bytes: int = _DEFAULT_EXPLICIT_BYTES,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if isinstance(spin, bool) or not isinstance(spin, Integral):
             raise TypeError("spin must be a static integer.")
         layout = SphericalModeLayout(bandlimit, spin=int(spin), reality=reality)
         sampling_ = str(sampling).lower()
         execution_ = str(execution).lower()
-        if sampling_ not in ("mw", "mwss", "dh", "gl"):
-            raise ValueError("sampling must be 'mw', 'mwss', 'dh', or 'gl'.")
-        if execution_ not in ("recursive", "precomputed"):
-            raise ValueError("execution must be 'recursive' or 'precomputed'.")
+        sampling_ = parse(sampling_, SphericalSampling, "sampling_")
+        execution_ = parse(execution_, SphericalExecution, "execution_")
         field = str(field_name)
         if not field:
             raise ValueError("field_name must be non-empty.")
@@ -259,7 +271,7 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
         *,
         radius: float,
         numeric_version: str,
-    ):
+    ) -> None:
         if not isinstance(plan, SphericalSpectralPlan):
             raise TypeError("plan must be a SphericalSpectralPlan.")
         if not isinstance(transform, SphericalHarmonicPlan):
@@ -451,7 +463,7 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
         return self.prepared_id
 
     @property
-    def precision_evidence(self):
+    def precision_evidence(self) -> PrecisionEvidenceEnvelope:
         return self.plan.precision.evidence()
 
     @property
@@ -465,7 +477,7 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
         component_shape: Sequence[int] = (),
         reality_tolerance: float = 1e-10,
         maximum_coordinate_size: int = 10_000_000,
-    ):
+    ) -> SignedHermitianSpectralCoordinates:
         """Return independent signed-Hermitian coordinates for a real spin field."""
         if not self.layout.reality:
             raise ValueError(
@@ -488,7 +500,7 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
             signs,
             valid_mask=self.layout.valid_mask,
             component_shape=component_shape,
-            coefficient_dtype=self.modal_space.vector_space.dtype,
+            coefficient_dtype=_coordinate_dtype(self.modal_space.vector_space),
             layout_id=self.layout.layout_id,
             reality_tolerance=reality_tolerance,
             maximum_coordinate_size=maximum_coordinate_size,
@@ -643,11 +655,11 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
         coefficients: ArrayLike,
         /,
         *,
-        coordinate: str,
-        representation: str = "physical",
+        coordinate: SphericalCoordinate,
+        representation: SphericalDerivativeRepresentation = "physical",
         require_all_valid: bool = True,
         polar_tolerance: float | None = None,
-    ):
+    ) -> SphericalCoordinateDerivativeResult:
         """Return a chart-valued coordinate derivative with pole evidence."""
         from ._spherical_operators import spherical_coordinate_derivative
 

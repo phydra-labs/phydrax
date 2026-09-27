@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 import itertools
+from collections.abc import Iterable
 from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.axes as cx
 from phydrax.domain import (
@@ -37,8 +38,10 @@ from .._numerics import (
     SmolyakFrontier,
     SmolyakIndexSet,
     SmolyakRefinementEpoch,
+    SmolyakTerm,
 )
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._batches import PointIntegrationBatch
 from ._estimates import (
     IntegrationEstimate,
@@ -73,7 +76,7 @@ class SparseGridRealization(StrictModule):
         level: int,
         num_terms: int,
         axis_rules: tuple[SmolyakAxisRule, ...],
-    ):
+    ) -> None:
         self.batch = batch
         self.previous = previous
         self.level = int(level)
@@ -109,7 +112,7 @@ def _unwrap(factor: Any, /) -> Any:
 def _smolyak_rule_from_terms(
     dimension: int,
     rules: tuple[SmolyakAxisRule, ...],
-    terms,
+    terms: Iterable[SmolyakTerm],
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
     table: dict[
@@ -344,7 +347,7 @@ def integrate_sparse_grid(
     realization: SparseGridRealization,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:
@@ -520,7 +523,7 @@ def _index_set_node_count(
         max((abs(weight) for weight in weights.values()), default=0.0),
     )
     threshold = 64.0 * np.finfo(np.float64).eps * weight_scale
-    return sum(abs(weight) > threshold for weight in weights.values())
+    return sum(1 for weight in weights.values() if abs(weight) > threshold)
 
 
 def prepare_adaptive_sparse_grid(
@@ -529,7 +532,7 @@ def prepare_adaptive_sparse_grid(
     plan: AdaptiveSparseGridPlan,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> AdaptiveSparseGridResult:

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -20,7 +23,7 @@ from phydrax.equations.fem._execution import TensorProductPartialAssemblyOperato
 from phydrax.equations.fem._operators import FiniteElementMetricData
 
 
-def _triangle_discretization(degree=1):
+def _triangle_discretization(degree: Any = 1) -> Any:
     mesh = phx.discretization.CellMesh.from_triangles(
         jnp.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
         jnp.asarray([[0, 1, 2]], dtype=jnp.int32),
@@ -33,7 +36,7 @@ def _triangle_discretization(degree=1):
     ).prepare()
 
 
-def _quadrilateral_discretization(degree=2):
+def _quadrilateral_discretization(degree: Any = 2) -> Any:
     mesh = phx.discretization.CellMesh(
         jnp.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]),
         (
@@ -52,7 +55,12 @@ def _quadrilateral_discretization(degree=2):
     ).prepare()
 
 
-def _compiled(discretization, action, realization="matrix_free", local_kernel="auto"):
+def _compiled(
+    discretization: Any,
+    action: Any,
+    realization: Any = "matrix_free",
+    local_kernel: Any = "auto",
+) -> Any:
     return phx.equations.compile_finite_element_problem(
         phx.equations.FiniteElementForm(action.action_id, "u", (action,)),
         discretization,
@@ -63,7 +71,7 @@ def _compiled(discretization, action, realization="matrix_free", local_kernel="a
     )
 
 
-def test_scalar_action_payload_remains_legacy_exact():
+def test_scalar_action_payload_remains_legacy_exact() -> None:
     scalar_payload = _action_payload(phx.equations.DiffusionAction("u"))
     tensor_payload = _action_payload(phx.equations.TensorDiffusionAction("u"))
 
@@ -83,7 +91,7 @@ def test_scalar_action_payload_remains_legacy_exact():
     assert "operator_properties" in tensor_payload
 
 
-def test_p1_tensor_diffusion_matches_direct_element_reference_and_axis_order():
+def test_p1_tensor_diffusion_matches_direct_element_reference_and_axis_order() -> None:
     discretization = _triangle_discretization()
     diffusivity = jnp.asarray([[2.0, 0.3], [0.1, 1.4]])
     state = jnp.asarray([0.2, -0.4, 1.1])
@@ -106,7 +114,7 @@ def test_p1_tensor_diffusion_matches_direct_element_reference_and_axis_order():
     assert jnp.allclose(reversed_residual, residual, atol=2.0e-6)
 
 
-def test_callable_constant_tensor_is_coerced_before_point_axes():
+def test_callable_constant_tensor_is_coerced_before_point_axes() -> None:
     discretization = _triangle_discretization()
     tensor = jnp.asarray([[1.6, 0.2], [-0.1, 0.7]])
     callable_coefficient = phx.equations.coefficient(
@@ -132,7 +140,7 @@ def test_callable_constant_tensor_is_coerced_before_point_axes():
     )
 
 
-def test_scalar_isotropic_tensor_action_preserves_scalar_diffusion_behavior():
+def test_scalar_isotropic_tensor_action_preserves_scalar_diffusion_behavior() -> None:
     discretization = _triangle_discretization(degree=2)
     state = jnp.linspace(-0.3, 0.9, discretization.dof_maps[0].global_dof_count)
     scalar = _compiled(
@@ -153,7 +161,7 @@ def test_scalar_isotropic_tensor_action_preserves_scalar_diffusion_behavior():
     )
 
 
-def test_cell_dof_and_quadrature_tensor_coefficients_agree_for_constant_data():
+def test_cell_dof_and_quadrature_tensor_coefficients_agree_for_constant_data() -> None:
     discretization = _triangle_discretization(degree=2)
     state = jnp.linspace(-0.7, 0.8, discretization.dof_maps[0].global_dof_count)
     tensor = jnp.asarray([[1.8, 0.25], [0.25, 0.9]])
@@ -205,7 +213,7 @@ def test_cell_dof_and_quadrature_tensor_coefficients_agree_for_constant_data():
     assert jnp.allclose(residuals[0], residuals[2], atol=2.0e-6)
 
 
-def test_high_order_tensor_action_sparse_matrix_free_jvp_vjp_and_properties():
+def test_high_order_tensor_action_sparse_matrix_free_jvp_vjp_and_properties() -> None:
     discretization = _quadrilateral_discretization(degree=3)
     properties = phx.linalg.OperatorProperties(
         self_adjoint=True,
@@ -243,7 +251,9 @@ def test_high_order_tensor_action_sparse_matrix_free_jvp_vjp_and_properties():
     assert sparse.to_scipy_csr().shape == (state.size, state.size)
 
 
-def test_tensor_product_partial_diffusion_has_exact_sparse_and_transpose_lowering():
+def test_tensor_product_partial_diffusion_has_exact_sparse_and_transpose_lowering() -> (
+    None
+):
     family = ReferenceNodalFamily("quadrilateral", 2)
     axis_rule = phx.integration.GaussLobattoLegendreRule(3)
     reference = PreparedFiniteElementReference(
@@ -269,6 +279,7 @@ def test_tensor_product_partial_diffusion_has_exact_sparse_and_transpose_lowerin
         coordinate_element.reference_nodes[None],
         reference.weights,
     )
+    # ty: ignore[invalid-argument-type]
     plan = SumFactorizationPlan(reference.tensor_tabulation)
     physical_tensor = jnp.asarray([[1.7, 0.35], [-0.2, 0.8]])
     reference_tensor = oe.contract(

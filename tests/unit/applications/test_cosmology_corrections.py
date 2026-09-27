@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +11,7 @@ import phydrax as phx
 cosmology = phx.applications.cosmology
 
 
-def _linear_power():
+def _linear_power() -> Any:
     scale = cosmology.CosmologyScaleContract(
         cosmology.CODE_COSMOLOGY_SCALE.length_unit,
         cosmology.CODE_COSMOLOGY_SCALE.mass_unit,
@@ -35,8 +37,11 @@ def _linear_power():
         ),
     )
     power = cosmology.MatterPowerTable(
+        # ty: ignore[invalid-argument-type]
         [0.5, 1.0],
+        # ty: ignore[invalid-argument-type]
         [1.0, 2.0, 4.0],
+        # ty: ignore[invalid-argument-type]
         [[1.0, 2.0, 4.0], [2.0, 4.0, 8.0]],
         cosmology.MatterPowerDescriptor("total_matter", "total_matter"),
         scale,
@@ -46,7 +51,7 @@ def _linear_power():
     return background, power
 
 
-def test_multiplicative_correction_preserves_grid_and_chains_provenance():
+def test_multiplicative_correction_preserves_grid_and_chains_provenance() -> None:
     _, power = _linear_power()
     card = cosmology.CorrectionModelCard(
         name="test-boost",
@@ -86,7 +91,7 @@ def test_multiplicative_correction_preserves_grid_and_chains_provenance():
     np.testing.assert_allclose(derivative, jnp.sum(power.power_values))
 
 
-def test_correction_rejects_wrong_denominator_and_domain():
+def test_correction_rejects_wrong_denominator_and_domain() -> None:
     _, power = _linear_power()
     card = cosmology.CorrectionModelCard(
         name="bad-domain",

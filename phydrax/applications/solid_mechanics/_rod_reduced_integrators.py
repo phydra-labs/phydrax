@@ -10,7 +10,8 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -27,6 +28,7 @@ from ._rod_loads import RodLoadLedger
 from ._rod_reduced_dynamics import (
     PreparedReducedRodDynamics,
     ReducedRodDynamicsEvaluation,
+    ReducedRodInverseDynamicsResult,
     ReducedRodMaterialControl,
     ReducedRodMaterialState,
     ReducedRodSolveEvidence,
@@ -70,7 +72,7 @@ class ReducedRodIntegrationState(StrictModule):
         time: ArrayLike = 0,
         step_index: ArrayLike = 0,
         /,
-    ):
+    ) -> None:
         if not isinstance(reduced_state, ReducedRodState):
             raise TypeError("reduced_state must be a ReducedRodState.")
         if not isinstance(material_state, ReducedRodMaterialState):
@@ -166,7 +168,7 @@ class ReducedRodSemiImplicitVelocityEuler(StrictModule):
         *,
         maximum_step_size: float,
         energy_balance_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         maximum = float(maximum_step_size)
         tolerance = float(energy_balance_tolerance)
         if not isfinite(maximum) or maximum <= 0.0:
@@ -204,7 +206,7 @@ class ReducedRodImplicitMidpoint(StrictModule):
         nonlinear_method: AbstractNonlinearMethod | None = None,
         nonlinear_termination: NonlinearTermination | None = None,
         energy_balance_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         maximum = float(maximum_step_size)
         tolerance = float(energy_balance_tolerance)
         if not isfinite(maximum) or maximum <= 0.0:
@@ -261,7 +263,9 @@ class _MidpointResidual(StrictModule):
     native_loads: RodLoadLedger | None
     step_size: Array
 
-    def __call__(self, state: tuple[Array, Array], _arguments: Any, /):
+    def __call__(
+        self, state: tuple[Array, Array], _arguments: Any, /
+    ) -> tuple[tuple[Array, Array], ReducedRodInverseDynamicsResult]:
         q0 = self.source.reduced_state.coefficients
         v0 = self.source.reduced_state.coefficient_velocities
         q1, v1 = state

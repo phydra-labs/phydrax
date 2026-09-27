@@ -10,7 +10,8 @@ from typing import Literal, TYPE_CHECKING, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._physical import SpatialCoordinateContract
@@ -25,6 +26,7 @@ from ....geometry.surface._contracts import (
     SurfaceSelection,
 )
 from ....geometry.surface._model import SurfaceModel
+from ....typing import parse
 from ._fast_provider import BEMExecutionEnvelope
 
 
@@ -65,14 +67,13 @@ class BoundaryRefinementPolicy(StrictModule, NonTrainableState):
         max_marked_faces: int = 100_000,
         max_target_faces: int = 1_000_000,
         compatibility: BisectionCompatibility | None = None,
-    ):
+    ) -> None:
         # Lazy: phydrax.meshing transitively imports the operator packages.
         from ....meshing import BisectionCompatibility
 
         if compatibility is None:
             compatibility = BisectionCompatibility.REJECT
-        if strategy not in ("dorfler", "maximum"):
-            raise ValueError("Boundary marking strategy must be 'dorfler' or 'maximum'.")
+        strategy = parse(strategy, BoundaryMarkingStrategy, "strategy")
         if not isinstance(compatibility, BisectionCompatibility):
             raise TypeError("compatibility must be BisectionCompatibility.")
         fraction_ = float(fraction)
@@ -205,7 +206,7 @@ class BoundaryMeshEpoch(StrictModule, NonTrainableState):
         generation: int = 0,
         parent_epoch_id: str | None = None,
         hierarchy: BisectionHierarchy | None = None,
-    ):
+    ) -> None:
         from ....meshing import BisectionHierarchy
 
         if hierarchy is not None and not isinstance(hierarchy, BisectionHierarchy):
@@ -332,7 +333,7 @@ class DP0BoundaryTransfer(StrictModule, NonTrainableState):
         target: BoundaryMeshEpoch,
         parent_local_indices: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, BoundaryMeshEpoch) or not isinstance(
             target, BoundaryMeshEpoch
         ):
@@ -534,6 +535,7 @@ def _dp0_parent_routes(
     """Source-face row of every target face from the exact cell lineage."""
     source_ids = np.asarray(source.mesh.blocks[0].global_ids, dtype=np.int64)
     target_ids = np.asarray(adaptation.target.mesh.blocks[0].global_ids, dtype=np.int64)
+    # ty: ignore[unresolved-attribute]
     cells = adaptation.lineage.entity_lineage(2)
     parents = np.asarray(cells.source_global_ids, dtype=np.int64)
     children = np.asarray(cells.target_global_ids, dtype=np.int64)
@@ -675,6 +677,7 @@ def refine_boundary_h(
         target_surface,
         generation=generation,
         parent_epoch_id=epoch.epoch_id,
+        # ty: ignore[invalid-argument-type]
         hierarchy=adaptation.hierarchy,
     )
     transfer = DP0BoundaryTransfer(epoch, target_epoch, routes)

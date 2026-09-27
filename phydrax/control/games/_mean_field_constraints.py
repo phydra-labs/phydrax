@@ -13,12 +13,13 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
+from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...stochastic import EmpiricalMeanField
 from ._constraints import (
@@ -71,7 +72,7 @@ class ConstrainedMeanFieldGameStatus(IntEnum):
     INVALID_LAW_MIXTURE = 15
 
 
-def _identifier(value: str, name: str, /) -> str:
+def _identifier(value: object, name: str, /) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{name} must be a non-empty string.")
     return value
@@ -127,7 +128,7 @@ class MeanFieldIndividualConstraintEvidence(StrictModule):
         best_response_path_id: str,
         evidence_id: str,
         valid: ArrayLike = True,
-    ):
+    ) -> None:
         if not isinstance(feasibility, GameFeasibilityEvidence):
             raise TypeError("feasibility must be GameFeasibilityEvidence.")
         if feasibility.case_shape != ():
@@ -201,7 +202,7 @@ class MeanFieldAggregateConstraintDerivativeEvidence(StrictModule):
         multiplier_ids: Sequence[str],
         evidence_id: str,
         valid: ArrayLike = True,
-    ):
+    ) -> None:
         jacobian = jnp.asarray(aggregate_jacobian)
         prices = jnp.asarray(multipliers)
         if jnp.issubdtype(jacobian.dtype, jnp.complexfloating):
@@ -335,7 +336,7 @@ class ConstrainedMeanFieldGameProblem(StrictModule):
         aggregate_derivative_evidence_id: str | None = None,
         multiplier_callback_id: str | None = None,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(fixed_point_problem, MeanFieldGameFixedPointProblem):
             raise TypeError(
                 "fixed_point_problem must be a MeanFieldGameFixedPointProblem."
@@ -516,7 +517,7 @@ class ConstrainedMeanFieldGamePlan(StrictModule):
         dual_feasibility_tolerance: float | None = None,
         complementarity_tolerance: float | None = None,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(maximum_iterations, int) or maximum_iterations <= 0:
             raise ValueError("maximum_iterations must be a positive integer.")
         consistency = _nonnegative_tolerance(

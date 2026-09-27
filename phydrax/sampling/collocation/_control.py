@@ -13,7 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.axes as cx
 from phydrax.domain import GridBatch, GridSampling, PointBatch, PointSampling
@@ -21,6 +21,7 @@ from phydrax.domain import GridBatch, GridSampling, PointBatch, PointSampling
 from ..._doc import DOC_KEY0
 from ..._sampling import DesignLike, resolve_design, UnitDesign
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from ._adaptive import (
     _set_batch_rows,
     _single_axis_and_size,
@@ -135,7 +136,7 @@ class RefreshSchedule(StrictModule):
     every: int
     start_at: int
 
-    def __init__(self, every: int, *, start_at: int = 1):
+    def __init__(self, every: int, *, start_at: int = 1) -> None:
         if int(every) <= 0:
             raise ValueError("RefreshSchedule.every must be positive.")
         if int(start_at) <= 0:
@@ -161,7 +162,7 @@ class ResidualMonitor(StrictModule):
         *,
         sampler: DesignLike = "sobol_scrambled",
         epsilon: float = 1e-12,
-    ):
+    ) -> None:
         if float(epsilon) <= 0.0:
             raise ValueError("ResidualMonitor.epsilon must be positive.")
         self.sampler = resolve_design(sampler)
@@ -183,7 +184,7 @@ class RefreshGuard(StrictModule):
         absolute_tolerance: float = 0.0,
         max_consecutive_rejections: int = 2,
         suspension_steps: int = 100,
-    ):
+    ) -> None:
         if float(max_relative_regression) < 0.0:
             raise ValueError("max_relative_regression must be non-negative.")
         if float(absolute_tolerance) < 0.0:
@@ -223,7 +224,7 @@ class AdaptationBudget(StrictModule):
         max_candidate_evaluations: int | None = None,
         max_monitor_evaluations: int | None = None,
         max_training_evaluations: int | None = None,
-    ):
+    ) -> None:
         values = (
             max_refresh_attempts,
             max_candidate_evaluations,
@@ -251,7 +252,7 @@ class CoverageAnchors(StrictModule):
 
     fraction: Array
 
-    def __init__(self, fraction: float = 0.25):
+    def __init__(self, fraction: float = 0.25) -> None:
         if not 0.0 <= float(fraction) < 1.0:
             raise ValueError("CoverageAnchors.fraction must lie in [0, 1).")
         self.fraction = jnp.asarray(fraction, dtype=jnp.float64)
@@ -302,7 +303,7 @@ class ControlledCollocationPopulation(StrictModule):
         candidate_evaluations: int | Array = 0,
         monitor_evaluations: int | Array = 0,
         training_evaluations: int | Array = 0,
-    ):
+    ) -> None:
         self.current = current
         self.rollback = rollback
         self.anchor_reference = anchor_reference
@@ -357,7 +358,7 @@ class ControlledCollocationPolicy(AbstractCollocationPolicy):
         guard: RefreshGuard | None = None,
         budget: AdaptationBudget | None = None,
         anchors: CoverageAnchors | None = None,
-    ):
+    ) -> None:
         if isinstance(base_policy, ControlledCollocationPolicy):
             raise TypeError("ControlledCollocationPolicy cannot wrap another controller.")
         if schedule is None:
@@ -381,7 +382,7 @@ class ControlledCollocationPolicy(AbstractCollocationPolicy):
         constraint: PointwiseSamplingTerm,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> ControlledCollocationPopulation:
         current = self.base_policy.initialize(constraint, key=jr.fold_in(key, 1))
         monitor_batch = _sample_monitor_batch(
@@ -507,7 +508,7 @@ class ControlledCollocationPolicy(AbstractCollocationPolicy):
         population: ControlledCollocationPopulation,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array,
     ) -> ControlledCollocationPopulation:
         step = jnp.asarray(iter_, dtype=jnp.int32)
@@ -596,7 +597,7 @@ class ControlledCollocationPolicy(AbstractCollocationPolicy):
         population: ControlledCollocationPopulation,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array,
     ) -> ControlledCollocationPopulation:
         """Validate the terminal proposal without admitting another proposal."""
@@ -659,7 +660,7 @@ def _sample_monitor_batch(
     /,
     *,
     sampler: DesignLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> PointBatch | GridBatch:
     sampling = constraint.sampling
     if isinstance(sampling, GridSampling):
@@ -697,7 +698,7 @@ def _monitor_statistics(
     batch: PointBatch | GridBatch,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     epsilon: Array,
 ) -> tuple[Array, Array, Array, int]:
     score = constraint.pointwise_score(functions, batch, key=key)

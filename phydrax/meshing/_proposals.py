@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._differentiation import ComponentAuthority
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -32,6 +33,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec, CellMesh, PolygonalConnectivity
 from ..optim import OptimizationTermination
+from ..typing import parse
 from ._adaptation import (
     execute_mesh_adaptation,
     MarkedMeshAdaptation,
@@ -136,7 +138,7 @@ class _AbstractMeshProposal(StrictModule, NonTrainableState):
         dimension: int,
         value_shape: tuple[int, ...],
         proposer_id: str,
-    ):
+    ) -> None:
         if not isinstance(source, CellMeshingResult):
             raise TypeError("source must be CellMeshingResult.")
         _scope_rows(source, scope)
@@ -178,7 +180,7 @@ class MeshMarkingProposal(_AbstractMeshProposal):
         /,
         *,
         proposer_id: str,
-    ):
+    ) -> None:
         super().__init__(
             source,
             scope,
@@ -200,7 +202,7 @@ class MeshSizeProposal(_AbstractMeshProposal):
         /,
         *,
         proposer_id: str,
-    ):
+    ) -> None:
         super().__init__(
             source, scope, sizes, dimension=0, value_shape=(), proposer_id=proposer_id
         )
@@ -217,7 +219,7 @@ class MeshMetricProposal(_AbstractMeshProposal):
         /,
         *,
         proposer_id: str,
-    ):
+    ) -> None:
         dimension = source.mesh.ambient_dimension
         super().__init__(
             source,
@@ -241,7 +243,7 @@ class MeshCoordinateProposal(_AbstractMeshProposal):
         /,
         *,
         proposer_id: str,
-    ):
+    ) -> None:
         if (
             not isinstance(coordinate_contract, SpatialCoordinateContract)
             or coordinate_contract.spatial_id != source.coordinate_contract.spatial_id
@@ -347,11 +349,10 @@ class LearnedMeshProposer(AbstractMeshProposer):
         spatial_dimension: int | None = None,
         ports: ModelPorts | None = None,
         port_mapping: PortMapping | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("model must be an AbstractArrayModel.")
-        if kind not in ("marking", "size", "metric"):
-            raise ValueError("kind must be 'marking', 'size', or 'metric'.")
+        kind = parse(kind, MeshProposerKind, "kind")
         if (kind == "metric") != (spatial_dimension is not None):
             raise ValueError(
                 "spatial_dimension is required exactly for metric proposers."
@@ -495,7 +496,7 @@ class MeshProposalSafetyPolicy(StrictModule, NonTrainableState):
         maximum_gradation: float = 1.3,
         maximum_marked_cells: int = 100_000,
         maximum_optimization_iterations: int = 50,
-    ):
+    ) -> None:
         if not isinstance(source, CellMeshingResult):
             raise TypeError("source must be CellMeshingResult.")
         minimum, maximum = float(minimum_size), float(maximum_size)
@@ -614,7 +615,7 @@ def _protected_vertices(
     return fixed
 
 
-def _payload_bytes(value) -> int:
+def _payload_bytes(value: Any) -> int:
     return sum(
         leaf.nbytes
         for leaf in jax.tree_util.tree_leaves(value)
@@ -641,7 +642,7 @@ def _limit_issues(result: CellMeshingResult, limits: MeshingLimits) -> tuple[str
     )
 
 
-def _check_binding(source, proposal, policy):
+def _check_binding(source: Any, proposal: Any, policy: Any) -> None:
     if not isinstance(source, CellMeshingResult):
         raise TypeError("source must be CellMeshingResult.")
     if not isinstance(
@@ -672,7 +673,7 @@ def _check_binding(source, proposal, policy):
         _scope_rows(source, scope)
 
 
-def _project_sizes(values, points, edges, policy) -> np.ndarray:
+def _project_sizes(values: Any, points: Any, edges: Any, policy: Any) -> np.ndarray:
     """Clamp to the size bounds, then grade exactly through the metric owner."""
     lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
     graded, _, _ = _grade_scalar_sizes(
@@ -686,7 +687,7 @@ def _project_sizes(values, points, edges, policy) -> np.ndarray:
 
 
 def _project_metric(
-    scope, raw, points, edges, policy
+    scope: Any, raw: Any, points: Any, edges: Any, policy: Any
 ) -> tuple[MeshMetricField, MetricNormalizationEvidence]:
     # Untrusted tensors: the trusted policy explicitly requests symmetric-part
     # repair and indefinite projection, and the evidence reports both.
@@ -705,14 +706,14 @@ def _project_metric(
     )
 
 
-def _coordinate_projector(source, proposal, policy):
+def _coordinate_projector(source: Any, proposal: Any, policy: Any) -> Any:
     points = jnp.asarray(source.mesh.coordinates)
     movable = np.zeros(points.shape[0], dtype=np.bool_)
     movable[_scope_rows(source, proposal.scope)] = True
     fixed = jnp.asarray(~movable | _protected_vertices(source, policy))
     bounds = policy.coordinate_bounds
 
-    def project(values):
+    def project(values: Any) -> Any:
         if bounds is not None:
             values = jnp.clip(values, bounds[0], bounds[1])
         delta = values - points
@@ -727,7 +728,7 @@ def _coordinate_projector(source, proposal, policy):
     return fixed, project
 
 
-def _optimization_bounds(source, policy) -> tuple[np.ndarray, np.ndarray]:
+def _optimization_bounds(source: Any, policy: Any) -> tuple[np.ndarray, np.ndarray]:
     points = np.asarray(source.mesh.coordinates)
     # A per-axis half-width r / sqrt(d) inscribes the box in the trust-region
     # ball, so box projection can never exceed maximum_displacement.
@@ -741,7 +742,7 @@ def _optimization_bounds(source, policy) -> tuple[np.ndarray, np.ndarray]:
     return np.where(empty, points, lower), np.where(empty, points, upper)
 
 
-def _safe_marks(source, scores, policy):
+def _safe_marks(source: Any, scores: Any, policy: Any) -> Any:
     """Highest positive scores within the declared capacity, then by global ID.
 
     Protection is enforced exactly by native bisection, which rejects every mark
@@ -783,15 +784,15 @@ class MeshProposalProjection(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        proposal,
-        policy,
-        marked_cell_ids,
-        size_field,
-        metric,
-        target_coordinates,
+        proposal: Any,
+        policy: Any,
+        marked_cell_ids: Any,
+        size_field: Any,
+        metric: Any,
+        target_coordinates: Any,
         *,
-        metric_evidence=None,
-    ):
+        metric_evidence: Any = None,
+    ) -> None:
         if (metric is None) != (metric_evidence is None):
             raise ValueError("A projected metric requires its normalization evidence.")
         self.proposal, self.policy = proposal, policy
@@ -897,7 +898,7 @@ def project_mesh_proposal(
     )
 
 
-def _entity_vertex_signatures(mesh: CellMesh, dimension: int):
+def _entity_vertex_signatures(mesh: CellMesh, dimension: int) -> Any:
     vertices = [{int(identifier)} for identifier in np.asarray(mesh.vertex_global_ids)]
     for degree in range(1, dimension + 1):
         upper = [set() for _ in range(mesh.entity_set(degree).count)]
@@ -913,7 +914,7 @@ def _entity_vertex_signatures(mesh: CellMesh, dimension: int):
     return tuple(tuple(sorted(values)) for values in vertices)
 
 
-def _preservation_issues(source, candidate, projection):
+def _preservation_issues(source: Any, candidate: Any, projection: Any) -> Any:
     policy = projection.policy
     issues = []
     if candidate.coordinate_contract.spatial_id != source.coordinate_contract.spatial_id:
@@ -1003,14 +1004,14 @@ class MeshProposalTransaction(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        source,
-        projection,
-        trusted_result,
-        safety_audit,
-        compliance,
-        adaptation,
-        optimization,
-    ):
+        source: Any,
+        projection: Any,
+        trusted_result: Any,
+        safety_audit: Any,
+        compliance: Any,
+        adaptation: Any,
+        optimization: Any,
+    ) -> None:
         _check_binding(source, projection.proposal, projection.policy)
         if (
             safety_audit.mesh_id != trusted_result.mesh.mesh_id
@@ -1123,6 +1124,7 @@ def _adaptation_metric(
     if projection.metric is not None:
         values = np.asarray(projection.metric.values)
     else:
+        # ty: ignore[unresolved-attribute]
         sizes = np.asarray(projection.size_field.values, dtype=np.float64)
         dimension = source.mesh.ambient_dimension
         values = np.eye(dimension)[None, :, :] / (sizes**2)[:, None, None]
@@ -1215,10 +1217,17 @@ def prepare_mesh_proposal(
     elif projection.marked_cell_ids.size or not isinstance(proposal, MeshMarkingProposal):
         adaptation = _execute_adaptation(source, projection)
         candidate = adaptation.target
+    # ty: ignore[unresolved-attribute]
     quality = evaluate_cell_quality(candidate.mesh, candidate.geometry.coordinates)
     audit = audit_cell_mesh(
-        candidate.mesh, candidate.geometry, quality, policy=policy.audit_policy
+        # ty: ignore[unresolved-attribute]
+        candidate.mesh,
+        # ty: ignore[unresolved-attribute]
+        candidate.geometry,
+        quality,
+        policy=policy.audit_policy,
     )
+    # ty: ignore[invalid-argument-type]
     issues = _limit_issues(candidate, policy.limits) + _preservation_issues(
         source, candidate, projection
     )
@@ -1245,7 +1254,9 @@ def prepare_mesh_proposal(
             ("maximum_vertices", policy.limits.maximum_vertices),
         ),
         achieved=(
+            # ty: ignore[unresolved-attribute]
             ("cells", candidate.audit.entity_counts[-1]),
+            # ty: ignore[unresolved-attribute]
             ("vertices", candidate.audit.vertex_count),
         ),
     )

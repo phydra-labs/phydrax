@@ -14,7 +14,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, Key
+from jax import Array
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
@@ -40,13 +40,15 @@ from phydrax.nn.operator.distribution import (
 )
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
+from .....typing import PRNGKey
+
 
 class _FixedReferenceQuery(StrictModule, NonTrainableState):
     """Fixed query metadata excluded from optimizer parameter partitions."""
 
     value: FunctionSamples
 
-    def __init__(self, value: FunctionSamples, /):
+    def __init__(self, value: FunctionSamples, /) -> None:
         self.value = value
 
 
@@ -56,7 +58,7 @@ class OperatorBatchConditioner(StrictModule):
     encoders: frozendict[str, AbstractBranchEncoder]
     condition_size: int
 
-    def __init__(self, encoders: Mapping[str, AbstractBranchEncoder], /):
+    def __init__(self, encoders: Mapping[str, AbstractBranchEncoder], /) -> None:
         resolved: dict[str, AbstractBranchEncoder] = {}
         for name, encoder in encoders.items():
             resolved_name = str(name)
@@ -172,7 +174,7 @@ class ConditionalFlowOperatorDistribution(AbstractOperatorDistribution):
         case_axes: tuple[str, ...],
         case_shape: tuple[int, ...],
         uncertainty_source: UncertaintySource,
-    ):
+    ) -> None:
         if not isinstance(flow, AbstractFlowDistribution):
             raise TypeError("flow must be an AbstractFlowDistribution.")
         cases = tuple(case_shape)
@@ -224,7 +226,7 @@ class ConditionalFlowOperatorDistribution(AbstractOperatorDistribution):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         shape = tuple(sample_shape)
@@ -235,7 +237,7 @@ class ConditionalFlowOperatorDistribution(AbstractOperatorDistribution):
         condition = self.condition.reshape((cases, -1))
         keys = jr.split(key, cases)
 
-        def draw(case_key, case_condition, case_center):
+        def draw(case_key: PRNGKey, case_condition: Array, case_center: Array) -> Array:
             residual = self.flow.sample(
                 case_key,
                 sample_shape=shape,
@@ -274,7 +276,9 @@ class ConditionalFlowOperatorDistribution(AbstractOperatorDistribution):
         return jnp.asarray(values).reshape(self.case_shape)
 
 
-def _conditional_flow_operator_contract(model):
+def _conditional_flow_operator_contract(
+    model: ConditionalFlowFunctionOperator,
+) -> ConfiguredOperatorContract:
     wrapped = model.location_model.operator_contract
     supported_queries = tuple(
         geometry
@@ -331,7 +335,7 @@ class ConditionalFlowFunctionOperator(AbstractProbabilisticOperatorModel):
         /,
         *,
         uncertainty_source: UncertaintySource,
-    ):
+    ) -> None:
         if not isinstance(location_model, AbstractOperatorModel):
             raise TypeError("location_model must be a neural operator.")
         if not isinstance(conditioner, OperatorBatchConditioner):
@@ -425,7 +429,7 @@ class ConditionalFlowFunctionOperator(AbstractProbabilisticOperatorModel):
 
 
 def conditional_coupling_flow_operator(
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     location_model: AbstractOperatorModel,

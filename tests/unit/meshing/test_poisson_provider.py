@@ -10,7 +10,7 @@ from phydrax.meshing.providers._poisson import (
 )
 
 
-def test_poisson_reconstructs_translated_sphere_without_sample_lineage():
+def test_poisson_reconstructs_translated_sphere_without_sample_lineage() -> None:
     pytest.importorskip("open3d")
     count = 400
     z = 1.0 - 2.0 * (np.arange(count) + 0.5) / count
@@ -39,12 +39,13 @@ def test_poisson_reconstructs_translated_sphere_without_sample_lineage():
     assert result.audit.passed and result.compliance.passed
     assert result.coordinate_contract.spatial_id == contract.spatial_id
     assert result.derivative_mode is MeshingDerivativeMode.NONDIFFERENTIABLE
+    # ty: ignore[unresolved-attribute]
     assert result.boundary.metadata.source_id != source.source_id
     assert result.associations == ()
     assert result.labels == ()
 
 
-def test_poisson_requires_nonzero_supplied_normals():
+def test_poisson_requires_nonzero_supplied_normals() -> None:
     with pytest.raises(ValueError, match="nonzero"):
         OrientedPointCloud(
             np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1))),

@@ -15,7 +15,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -33,11 +34,13 @@ from .._model._component import bind_positional_component
 from .._model._ports import require_port_shapes
 from .._strict import StrictModule
 from .._trainable import fixed_field, NonTrainableState, parameter_field
+from ..typing import PRNGKey
 from ._linear_gaussian import (
     degenerate_gaussian_log_prob,
     LinearGaussianDynamics,
     LinearGaussianParameterization,
     LinearGaussianParameters,
+    ParameterValue,
 )
 from ._process import AbstractMarginalTransitionLaw, AbstractProcessDistribution
 from ._state_space_input import (
@@ -86,7 +89,7 @@ def _event_finite(array: Array, event_shape: tuple[int, ...]) -> Array:
 
 
 def state_space_key(
-    root_key: Key[Array, ""],
+    root_key: PRNGKey,
     namespace: str,
     case_id: str,
     step: ArrayLike,
@@ -187,7 +190,7 @@ class ObservationSequence(StrictModule):
         sensor_id: str | None = None,
         discretization_id: str | None = None,
         approximation_id: str | None = None,
-    ):
+    ) -> None:
         cases = _shape(case_shape, owner="case_shape")
         case_names = _names(case_axes, owner="case_axes")
         if len(cases) != len(case_names):
@@ -297,7 +300,7 @@ class AbstractStatePrior(StrictModule):
         raise NotImplementedError
 
     @abstractmethod
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         raise NotImplementedError
 
     @abstractmethod
@@ -314,7 +317,9 @@ class DistributionStatePrior(AbstractStatePrior):
     prior_id: str = eqx.field(static=True)
     has_log_density: bool = eqx.field(static=True)
 
-    def __init__(self, distribution: AbstractProcessDistribution, /, *, prior_id: str):
+    def __init__(
+        self, distribution: AbstractProcessDistribution, /, *, prior_id: str
+    ) -> None:
         if not isinstance(distribution, AbstractProcessDistribution):
             raise TypeError("distribution must implement AbstractProcessDistribution.")
         self.distribution = distribution
@@ -327,7 +332,7 @@ class DistributionStatePrior(AbstractStatePrior):
     def location(self) -> Array:
         return self.distribution.location
 
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         return self.distribution.sample(key, sample_shape)
 
     def log_prob(self, value: ArrayLike, /) -> Array:
@@ -357,7 +362,7 @@ class GaussianStatePrior(AbstractStatePrior):
         *,
         state_shape: Sequence[int],
         prior_id: str = "gaussian-prior",
-    ):
+    ) -> None:
         states = _shape(state_shape, owner="state_shape")
         size = _event_size(states)
         mean_array = jnp.asarray(mean, dtype=jnp.float64)
@@ -391,7 +396,7 @@ class GaussianStatePrior(AbstractStatePrior):
     def location(self) -> Array:
         return self.mean
 
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         samples = _shape(sample_shape, owner="sample_shape")
         size = _event_size(self.state_shape)
         noise = jr.normal(
@@ -439,7 +444,7 @@ class CategoricalStatePrior(AbstractStatePrior):
         /,
         *,
         prior_id: str = "categorical-prior",
-    ):
+    ) -> None:
         state_values = jnp.asarray(states)
         if state_values.ndim < 1 or state_values.shape[0] <= 0:
             raise ValueError("states must have one non-empty leading category axis.")
@@ -466,7 +471,7 @@ class CategoricalStatePrior(AbstractStatePrior):
         indices = jnp.argmax(self.probabilities, axis=-1)
         return self.states[indices]
 
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         samples = _shape(sample_shape, owner="sample_shape")
         logits = jnp.log(self.probabilities)
         indices = jr.categorical(
@@ -531,7 +536,7 @@ class AbstractTransitionKernel(AbstractComponentSlot):
     @abstractmethod
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         state: ArrayLike,
         t0: ArrayLike,
         t1: ArrayLike,
@@ -579,7 +584,7 @@ class CallableTransitionKernel(AbstractTransitionKernel, NonTrainableState):
         log_prob_fn: (
             Callable[[Array, Array, Array, Array, StateSpaceStepContext], Array] | None
         ) = None,
-    ):
+    ) -> None:
         if not callable(sample_fn):
             raise TypeError("sample_fn must be callable.")
         if log_prob_fn is not None and not callable(log_prob_fn):
@@ -591,7 +596,15 @@ class CallableTransitionKernel(AbstractTransitionKernel, NonTrainableState):
         self.approximation_id = _name(approximation_id, owner="approximation_id")
         self.has_log_density = log_prob_fn is not None
 
-    def sample(self, key, state, t0, t1, context, /) -> TransitionSample:
+    def sample(
+        self,
+        key: PRNGKey,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> TransitionSample:
         state_array = jnp.asarray(state)
         _ends_with(state_array, self.state_shape, owner="state")
         result = self.sample_fn(
@@ -613,7 +626,15 @@ class CallableTransitionKernel(AbstractTransitionKernel, NonTrainableState):
             approximation_id=self.approximation_id,
         )
 
-    def log_prob(self, next_state, state, t0, t1, context, /) -> Array:
+    def log_prob(
+        self,
+        next_state: ArrayLike,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
         if self.log_prob_fn is None:
             raise ValueError("This transition kernel does not provide a log density.")
         return jnp.asarray(
@@ -640,7 +661,7 @@ class MarginalTransitionKernel(AbstractTransitionKernel):
         /,
         *,
         approximation_id: str = "marginal-transition",
-    ):
+    ) -> None:
         if not isinstance(law, AbstractMarginalTransitionLaw):
             raise TypeError("law must implement AbstractMarginalTransitionLaw.")
         self.law = law
@@ -649,7 +670,15 @@ class MarginalTransitionKernel(AbstractTransitionKernel):
         self.approximation_id = _name(approximation_id, owner="approximation_id")
         self.has_log_density = True
 
-    def sample(self, key, state, t0, t1, context, /) -> TransitionSample:
+    def sample(
+        self,
+        key: PRNGKey,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> TransitionSample:
         del context
         state_array = jnp.asarray(state)
         _ends_with(state_array, self.state_shape, owner="state")
@@ -668,7 +697,15 @@ class MarginalTransitionKernel(AbstractTransitionKernel):
             approximation_id=self.approximation_id,
         )
 
-    def log_prob(self, next_state, state, t0, t1, context, /) -> Array:
+    def log_prob(
+        self,
+        next_state: ArrayLike,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
         del context
         distribution = self.law.marginal_transition(state, t0=t0, t1=t1)
         return distribution.log_prob(next_state)
@@ -696,19 +733,22 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
         self,
         transition: (
             ArrayLike
-            | Callable[[Array, Array], ArrayLike]
+            | Callable[[Array, Array, StateSpaceStepContext], ArrayLike]
             | LinearGaussianParameterization
             | LinearGaussianDynamics
         ),
-        covariance: ArrayLike | Callable[[Array, Array], ArrayLike] | None = None,
+        covariance: (
+            ArrayLike | Callable[[Array, Array, StateSpaceStepContext], ArrayLike] | None
+        ) = None,
         /,
         *,
         state_shape: Sequence[int] | None = None,
-        offset: ArrayLike | Callable[[Array, Array], ArrayLike] = 0.0,
+        offset: ArrayLike
+        | Callable[[Array, Array, StateSpaceStepContext], ArrayLike] = 0.0,
         process_id: str | None = None,
         approximation_id: str | None = None,
         has_log_density: bool = True,
-    ):
+    ) -> None:
         if isinstance(
             transition, (LinearGaussianParameterization, LinearGaussianDynamics)
         ):
@@ -777,7 +817,7 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
         self.has_log_density = bool(has_log_density)
 
     @property
-    def transition(self):
+    def transition(self) -> ParameterValue | LinearGaussianDynamics:
         return (
             self.parameterization.transition
             if isinstance(self.parameterization, LinearGaussianParameterization)
@@ -785,11 +825,11 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
         )
 
     @property
-    def offset(self):
+    def offset(self) -> ParameterValue:
         return self.parameterization.offset
 
     @property
-    def covariance(self):
+    def covariance(self) -> ParameterValue:
         return (
             self.parameterization.covariance
             if isinstance(self.parameterization, LinearGaussianParameterization)
@@ -827,7 +867,15 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
         )
         return mean.reshape(batch_shape + self.state_shape)
 
-    def sample(self, key, state, t0, t1, context, /) -> TransitionSample:
+    def sample(
+        self,
+        key: PRNGKey,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> TransitionSample:
         mean = self.mean(state, t0, t1, context)
         covariance = self.parameters(t0, t1, context).covariance
         size = _event_size(self.state_shape)
@@ -858,7 +906,15 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
             approximation_id=self.approximation_id,
         )
 
-    def log_prob(self, next_state, state, t0, t1, context, /) -> Array:
+    def log_prob(
+        self,
+        next_state: ArrayLike,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
         if not self.has_log_density:
             raise ValueError("This transition kernel does not provide a log density.")
         mean = self.mean(state, t0, t1, context)
@@ -911,7 +967,7 @@ class AbstractObservationModel(AbstractComponentSlot):
     @abstractmethod
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         state: ArrayLike,
         time: ArrayLike,
         context: StateSpaceStepContext,
@@ -942,7 +998,7 @@ class CallableObservationModel(AbstractObservationModel):
         state_shape: Sequence[int],
         observation_shape: Sequence[int],
         observation_id: str,
-    ):
+    ) -> None:
         if (
             not callable(location_fn)
             or not callable(log_prob_fn)
@@ -956,14 +1012,24 @@ class CallableObservationModel(AbstractObservationModel):
         self.observation_shape = _shape(observation_shape, owner="observation_shape")
         self.observation_id = _name(observation_id, owner="observation_id")
 
-    def location(self, state, time, context, /) -> Array:
+    def location(
+        self, state: ArrayLike, time: ArrayLike, context: StateSpaceStepContext, /
+    ) -> Array:
         values = jnp.asarray(
             self.location_fn(jnp.asarray(state), jnp.asarray(time), context)
         )
         _ends_with(values, self.observation_shape, owner="observation location")
         return values
 
-    def log_prob(self, value, state, time, mask, context, /) -> Array:
+    def log_prob(
+        self,
+        value: ArrayLike,
+        state: ArrayLike,
+        time: ArrayLike,
+        mask: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
         return jnp.asarray(
             self.log_prob_fn(
                 jnp.asarray(value),
@@ -974,7 +1040,14 @@ class CallableObservationModel(AbstractObservationModel):
             )
         )
 
-    def sample(self, key, state, time, context, sample_shape=()) -> Array:
+    def sample(
+        self,
+        key: PRNGKey,
+        state: ArrayLike,
+        time: ArrayLike,
+        context: StateSpaceStepContext,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
         return jnp.asarray(
             self.sample_fn(
                 key,
@@ -1064,7 +1137,7 @@ class ModelObservationLocation(StrictModule):
         time_input: bool = False,
         ports: ModelPorts | None = None,
         port_mapping: PortMapping | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("model must be an AbstractArrayModel.")
         if not isinstance(time_input, bool):
@@ -1161,7 +1234,7 @@ class GaussianObservationModel(AbstractObservationModel):
         state_shape: Sequence[int],
         observation_shape: Sequence[int],
         observation_id: str = "gaussian-observation",
-    ):
+    ) -> None:
         if not callable(location):
             raise TypeError("location must be callable.")
         self.location_fn = location
@@ -1174,7 +1247,9 @@ class GaussianObservationModel(AbstractObservationModel):
         self.observation_shape = _shape(observation_shape, owner="observation_shape")
         self.observation_id = _name(observation_id, owner="observation_id")
 
-    def location(self, state, time, context, /) -> Array:
+    def location(
+        self, state: ArrayLike, time: ArrayLike, context: StateSpaceStepContext, /
+    ) -> Array:
         values = jnp.asarray(
             self.location_fn(jnp.asarray(state), jnp.asarray(time), context)
         )
@@ -1188,7 +1263,15 @@ class GaussianObservationModel(AbstractObservationModel):
             raise ValueError("Observation covariance has an incompatible trailing shape.")
         return values
 
-    def log_prob(self, value, state, time, mask, context, /) -> Array:
+    def log_prob(
+        self,
+        value: ArrayLike,
+        state: ArrayLike,
+        time: ArrayLike,
+        mask: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
         return _masked_gaussian_log_prob(
             jnp.asarray(value),
             self.location(state, time, context),
@@ -1197,7 +1280,14 @@ class GaussianObservationModel(AbstractObservationModel):
             observation_shape=self.observation_shape,
         )
 
-    def sample(self, key, state, time, context, sample_shape=()) -> Array:
+    def sample(
+        self,
+        key: PRNGKey,
+        state: ArrayLike,
+        time: ArrayLike,
+        context: StateSpaceStepContext,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
         location = self.location(state, time, context)
         size = _event_size(self.observation_shape)
         batch_shape = (
@@ -1243,7 +1333,7 @@ class LinearGaussianObservationModel(AbstractObservationModel):
         observation_shape: Sequence[int],
         offset: ArrayLike | Callable[[Array, StateSpaceStepContext], ArrayLike] = 0.0,
         observation_id: str = "linear-gaussian-observation",
-    ):
+    ) -> None:
         self.matrix = (
             cast(Callable[[Array, StateSpaceStepContext], ArrayLike], matrix)
             if callable(matrix)
@@ -1279,7 +1369,9 @@ class LinearGaussianObservationModel(AbstractObservationModel):
         offset = jnp.broadcast_to(offset, matrix.shape[:-2] + (observation_size,))
         return matrix, offset, covariance
 
-    def location(self, state, time, context, /) -> Array:
+    def location(
+        self, state: ArrayLike, time: ArrayLike, context: StateSpaceStepContext, /
+    ) -> Array:
         state_array = jnp.asarray(state, dtype=jnp.float64)
         _ends_with(state_array, self.state_shape, owner="state")
         state_size = _event_size(self.state_shape)
@@ -1300,7 +1392,15 @@ class LinearGaussianObservationModel(AbstractObservationModel):
         )
         return values.reshape(batch_shape + self.observation_shape)
 
-    def log_prob(self, value, state, time, mask, context, /) -> Array:
+    def log_prob(
+        self,
+        value: ArrayLike,
+        state: ArrayLike,
+        time: ArrayLike,
+        mask: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
         _, _, covariance = self.parameters(time, context)
         return _masked_gaussian_log_prob(
             jnp.asarray(value),
@@ -1310,7 +1410,14 @@ class LinearGaussianObservationModel(AbstractObservationModel):
             observation_shape=self.observation_shape,
         )
 
-    def sample(self, key, state, time, context, sample_shape=()) -> Array:
+    def sample(
+        self,
+        key: PRNGKey,
+        state: ArrayLike,
+        time: ArrayLike,
+        context: StateSpaceStepContext,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
         location = self.location(state, time, context)
         _, _, covariance = self.parameters(time, context)
         observation_size = _event_size(self.observation_shape)
@@ -1360,7 +1467,7 @@ class StateSpaceModel(StrictModule):
         basis_id: str | None = None,
         discretization_id: str | None = None,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         if not isinstance(prior, AbstractStatePrior):
             raise TypeError("prior must implement AbstractStatePrior.")
         if not isinstance(transition, AbstractTransitionKernel):
@@ -1517,7 +1624,7 @@ class StateSpaceProblem(StrictModule):
         problem_id: str,
         args: Any = None,
         input_signal: AbstractStateSpaceInput | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, StateSpaceModel):
             raise TypeError("model must be a StateSpaceModel.")
         if not isinstance(observations, ObservationSequence):

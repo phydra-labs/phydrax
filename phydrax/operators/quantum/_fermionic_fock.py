@@ -10,7 +10,8 @@ from numbers import Integral
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -23,7 +24,7 @@ class FermionModeOrder(StrictModule):
     mode_count: int = eqx.field(static=True)
     order_id: str = eqx.field(static=True)
 
-    def __init__(self, labels: Sequence[str], /):
+    def __init__(self, labels: Sequence[str], /) -> None:
         values = tuple(str(label) for label in labels)
         if not values or any(not label for label in values):
             raise ValueError("Fermion mode labels must be nonempty.")
@@ -77,7 +78,7 @@ class FermionicFockBasis(StrictModule):
     dimension: int = eqx.field(static=True)
     basis_id: str = eqx.field(static=True)
 
-    def __init__(self, mode_order: FermionModeOrder, /):
+    def __init__(self, mode_order: FermionModeOrder, /) -> None:
         if not isinstance(mode_order, FermionModeOrder):
             raise TypeError("mode_order must be FermionModeOrder.")
         self.mode_order = mode_order
@@ -126,7 +127,7 @@ class FermionLadderOperator(StrictModule):
     mode_index: int = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
-    def __init__(self, mode_order: FermionModeOrder, mode: str, action: str, /):
+    def __init__(self, mode_order: FermionModeOrder, mode: str, action: str, /) -> None:
         if not isinstance(mode_order, FermionModeOrder):
             raise TypeError("mode_order must be FermionModeOrder.")
         action_ = str(action)
@@ -175,7 +176,7 @@ class CARMonomial(StrictModule):
         mode_order: FermionModeOrder,
         operations: Sequence[FermionLadderOperator | tuple[str, str]] = (),
         /,
-    ):
+    ) -> None:
         if not isinstance(mode_order, FermionModeOrder):
             raise TypeError("mode_order must be FermionModeOrder.")
         selected: list[FermionLadderOperator] = []
@@ -241,7 +242,7 @@ class CARPolynomial(StrictModule):
         mode_order: FermionModeOrder,
         terms: Sequence[tuple[ArrayLike, CARMonomial | Sequence[tuple[str, str]]]],
         /,
-    ):
+    ) -> None:
         if not isinstance(mode_order, FermionModeOrder):
             raise TypeError("mode_order must be FermionModeOrder.")
         values = tuple(terms)

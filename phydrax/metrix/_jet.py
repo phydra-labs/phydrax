@@ -9,7 +9,8 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._metric import _metric_inverse, AbstractSemiRiemannianMetric, RiemannianMetric
@@ -43,7 +44,7 @@ class MetricJet(StrictModule):
         first_derivative: Array | None,
         second_derivative: Array | None,
         order: int,
-    ):
+    ) -> None:
         self.matrix = matrix
         self.inverse = inverse
         self.determinant = determinant
@@ -62,13 +63,13 @@ class _MetricJetEvaluator(StrictModule):
     order: int = eqx.field(static=True)
     positive_definite: bool = eqx.field(static=True)
 
-    def __init__(self, metric: AbstractSemiRiemannianMetric, order: int, /):
+    def __init__(self, metric: AbstractSemiRiemannianMetric, order: int, /) -> None:
         self.metric_function = metric.matrix_function
         self.dimension = metric.chart.dimension
         self.order = int(order)
         self.positive_definite = isinstance(metric, RiemannianMetric)
 
-    def __call__(self, coordinates: Array, /):
+    def __call__(self, coordinates: Array, /) -> tuple[Array, ...]:
         matrix = jnp.asarray(self.metric_function(coordinates))
         expected = (self.dimension, self.dimension)
         if matrix.shape != expected:
@@ -130,7 +131,7 @@ def _evaluate_jet(
     coordinates: Array,
     dimension: int,
     /,
-):
+) -> tuple[Array, ...]:
     if coordinates.ndim == 1:
         return evaluator(coordinates)
     leading_shape = coordinates.shape[:-1]

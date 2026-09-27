@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -15,11 +16,11 @@ import numpy as np
 import phydrax as phx
 
 
-def _number(value):
+def _number(value: Any) -> Any:
     return float(np.asarray(value))
 
 
-def _solid_material():
+def _solid_material() -> Any:
     return phx.equations.SolidLiquidEnthalpyPlan(
         1000.0,
         273.15,
@@ -35,7 +36,7 @@ def _solid_material():
     )
 
 
-def _stefan():
+def _stefan() -> Any:
     material = _solid_material()
     count = 64
     spacing = 1.0 / count
@@ -53,7 +54,7 @@ def _stefan():
     step = 0.2 * spacing**2 / diffusivity
     steps = 200
 
-    def advance(_, enthalpy):
+    def advance(_: Any, enthalpy: Any) -> Any:
         state = material.evaluate(enthalpy)
         conductivity = state.conductivity
         face_k = (
@@ -110,7 +111,7 @@ def _stefan():
     }
 
 
-def _hem_cavitation():
+def _hem_cavitation() -> Any:
     material = phx.equations.HomogeneousEquilibriumCavitationMaterial(
         1.0e5,
         1.0,
@@ -136,7 +137,7 @@ def _hem_cavitation():
     }
 
 
-def _vof_transfer(thermal):
+def _vof_transfer(thermal: Any) -> Any:
     eos = phx.equations.TwoMaterialEOSClosure(
         phx.equations.StiffenedGasMaterial(4.4, 2.0e5, 1800.0),
         phx.equations.StiffenedGasMaterial(1.33, 0.0, 1400.0, reference_energy=2.0e6),
@@ -178,7 +179,7 @@ def _vof_transfer(thermal):
     }
 
 
-def _melting_cavity():
+def _melting_cavity() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4, periodic=True),
@@ -242,7 +243,7 @@ _CASES = {
 }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--case", choices=(*_CASES, "all"), default="all")
     arguments = parser.parse_args()

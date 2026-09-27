@@ -26,8 +26,10 @@ def main() -> None:
 
     source = phx.observation.CoordinateLayout(("source:0", "source:1"))
     target = phx.observation.CoordinateLayout(("target:0",))
+    # ty: ignore[invalid-argument-type]
     response = phx.observation.LinearObservationPlan([[1.0, 2.0]], source, target)
     predicted = response.apply(
+        # ty: ignore[invalid-argument-type]
         phx.observation.TheoryVector([2.0, 3.0], source, "example")
     )
 
@@ -35,6 +37,7 @@ def main() -> None:
         jnp.arange(2), masses, ambient_dimension=1
     ).prepare()
     kdk = cosmology.CosmologicalKDKPlan(particles, (10.0,))
+    # ty: ignore[invalid-argument-type]
     state = kdk.initialize([[1.0], [2.0]], [[0.0], [0.0]], 0.5)
 
     print("scale_id", scale.scale_id)

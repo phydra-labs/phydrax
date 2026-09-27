@@ -33,6 +33,7 @@ from ._common import (
     _decode_stored_pixels,
     _float,
     _floats,
+    _Geometry,
     _load_verified_dicom,
     _optional,
     _reference_graph,
@@ -47,6 +48,7 @@ from ._common import (
 from ._contracts import (
     DICOMImportReport,
     DICOMObjectIdentity,
+    DICOMProfile,
     DICOMProfileError,
     DICOMResourcePolicy,
 )
@@ -532,7 +534,9 @@ def _dose_spec() -> ImageFieldSpec:
     )
 
 
-def _dose_geometry(dataset: Any, frame_uid: str, policy: DICOMResourcePolicy, /):
+def _dose_geometry(
+    dataset: Any, frame_uid: str, policy: DICOMResourcePolicy, /
+) -> tuple[np.ndarray, _Geometry]:
     stored = _decode_stored_pixels(dataset, policy)
     if stored.ndim == 2:
         stored = stored[np.newaxis, ...]
@@ -573,7 +577,7 @@ def _read_rt_dose(
     deidentification: DeidentificationEvidence,
     /,
     *,
-    profile: str,
+    profile: DICOMProfile,
     linked_plan: DICOMRTPlanImport | None,
     policy: DICOMResourcePolicy,
 ) -> DICOMRTDoseImport:

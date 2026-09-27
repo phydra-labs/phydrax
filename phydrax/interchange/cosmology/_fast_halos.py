@@ -14,16 +14,18 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float
 from ...applications.cosmology._halo_models import HaloCatalog
 from ...applications.cosmology._halos import SphericalOverdensityMassDefinition
 from ...qualification import ReferenceArtifactManifest
 from .._report import AdapterLoss, AdapterReport, AdapterStatus
-from ._snapshots import _admit_path, _artifact, _positive_scale
+from ._snapshots import _admit_path, _artifact
 
 
 _PINOCCHIO_APPROXIMATION = "PINOCCHIO-LPT-fragmentation-approximation"
@@ -39,12 +41,12 @@ class PinocchioCatalogSidecar(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        initial_positions: Array,
-        particle_counts: Array,
-        particle_count_known: Array,
-        active_mask: Array,
+        initial_positions: ArrayLike,
+        particle_counts: ArrayLike,
+        particle_count_known: ArrayLike,
+        active_mask: ArrayLike,
         /,
-    ):
+    ) -> None:
         initial = jax.lax.stop_gradient(jnp.asarray(initial_positions))
         counts = jax.lax.stop_gradient(jnp.asarray(particle_counts, dtype=jnp.int64))
         known = jax.lax.stop_gradient(jnp.asarray(particle_count_known, dtype=jnp.bool_))
@@ -88,19 +90,19 @@ class PinocchioLightConeProduct(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        halo_ids: Array,
-        true_redshifts: Array,
-        comoving_positions: Array,
-        velocities: Array,
-        masses: Array,
-        theta_degrees: Array,
-        phi_degrees: Array,
-        radial_velocities: Array,
-        observed_redshifts: Array,
-        phase_space_known: Array,
-        active_mask: Array,
+        halo_ids: ArrayLike,
+        true_redshifts: ArrayLike,
+        comoving_positions: ArrayLike,
+        velocities: ArrayLike,
+        masses: ArrayLike,
+        theta_degrees: ArrayLike,
+        phi_degrees: ArrayLike,
+        radial_velocities: ArrayLike,
+        observed_redshifts: ArrayLike,
+        phase_space_known: ArrayLike,
+        active_mask: ArrayLike,
         /,
-    ):
+    ) -> None:
         ids = jax.lax.stop_gradient(jnp.asarray(halo_ids, dtype=jnp.int64))
         redshift = jax.lax.stop_gradient(jnp.asarray(true_redshifts))
         positions = jax.lax.stop_gradient(jnp.asarray(comoving_positions))
@@ -187,7 +189,7 @@ class PinocchioCatalogImport(StrictModule, NonTrainableState):
         source_position_unit: str,
         source_mass_unit: str,
         source_velocity_unit: str,
-    ):
+    ) -> None:
         if (catalog is None) == (light_cone is None):
             raise ValueError(
                 "Exactly one PINOCCHIO native catalog projection is required."
@@ -244,21 +246,21 @@ class PinocchioMergerHistory(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        group_ids: Array,
-        tree_numbers: Array,
-        indices_within_tree: Array,
-        linking_indices: Array,
-        merged_with_indices: Array,
-        sink_group_ids: Array,
-        descendant_group_ids: Array,
-        halo_masses_at_merger_particles: Array,
-        main_masses_at_merger_particles: Array,
-        merger_redshifts: Array,
-        peak_collapse_redshifts: Array,
-        minimum_mass_redshifts: Array,
-        active_mask: Array,
+        group_ids: ArrayLike,
+        tree_numbers: ArrayLike,
+        indices_within_tree: ArrayLike,
+        linking_indices: ArrayLike,
+        merged_with_indices: ArrayLike,
+        sink_group_ids: ArrayLike,
+        descendant_group_ids: ArrayLike,
+        halo_masses_at_merger_particles: ArrayLike,
+        main_masses_at_merger_particles: ArrayLike,
+        merger_redshifts: ArrayLike,
+        peak_collapse_redshifts: ArrayLike,
+        minimum_mass_redshifts: ArrayLike,
+        active_mask: ArrayLike,
         /,
-    ):
+    ) -> None:
         arrays = tuple(
             jax.lax.stop_gradient(jnp.asarray(value))
             for value in (
@@ -321,7 +323,7 @@ class PinocchioLineageImport(StrictModule, NonTrainableState):
         declared_tree_count: int,
         declared_branch_count: int,
         /,
-    ):
+    ) -> None:
         self.history = history
         self.source = source
         self.report = report
@@ -393,9 +395,9 @@ def read_pinocchio_catalog(
     ids = data[:, 0].astype(np.int64)
     if np.any(ids < 0) or np.any(data[:, 0] != ids) or len(set(ids.tolist())) != count:
         raise ValueError("PINOCCHIO group IDs must be unique non-negative integers.")
-    position_factor = _positive_scale(position_scale, "position_scale")
-    mass_factor = _positive_scale(mass_scale, "mass_scale")
-    velocity_factor = _positive_scale(velocity_scale, "velocity_scale")
+    position_factor = positive_finite_float(position_scale, "position_scale")
+    mass_factor = positive_finite_float(mass_scale, "mass_scale")
+    velocity_factor = positive_finite_float(velocity_scale, "velocity_scale")
     labels = tuple(
         str(value).strip()
         for value in (

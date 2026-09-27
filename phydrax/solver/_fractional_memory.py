@@ -12,10 +12,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
 from ._memory import _solution_valid, _time_grid, MemoryEquationSolution
 
@@ -54,7 +54,7 @@ class CaputoFractionalProblem(StrictModule):
         initial_derivative: ArrayLike | None = None,
         args: Any = None,
         problem_id: str = "caputo-fractional-problem",
-    ):
+    ) -> None:
         if not callable(vector_field):
             raise TypeError("vector_field must be callable.")
         state = jnp.asarray(initial_state)
@@ -137,15 +137,15 @@ def solve_caputo_fractional(
     )
     normalization = jsp.special.gamma(problem.order + 1.0)
 
-    def outer(index, state_buffer):
+    def outer(index: Array, state_buffer: Array) -> Array:
         target = grid[index]
         base = problem.initial_state
         if problem.order_interval == 2:
             assert problem.initial_derivative is not None
             base = base + (target - problem.t0) * problem.initial_derivative
 
-        def inner(source_index, total):
-            def contribute(accumulator):
+        def inner(source_index: Array, total: Array) -> Array:
+            def contribute(accumulator: Array) -> Array:
                 left_lag = target - grid[source_index]
                 right_lag = target - grid[source_index + 1]
                 weight = (

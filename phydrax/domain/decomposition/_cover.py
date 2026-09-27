@@ -5,20 +5,21 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from .._components import DomainComponent
 from .._domain import Domain
 from .._function import DomainFunction
 
 
 CoordinateMap = tuple[tuple[str, DomainFunction], ...]
-PairingTopology = Literal[
+PairingTopology: TypeAlias = Literal[
     "shared-interface",
     "overlap-volume",
     "directed-transmission",
@@ -79,7 +80,7 @@ class SubdomainPatch(StrictModule, NonTrainableState):
         *,
         patch_id: str,
         window: DomainFunction | None = None,
-    ):
+    ) -> None:
         if not isinstance(domain, Domain):
             raise TypeError("domain must be a Domain.")
         if not isinstance(interior, DomainComponent):
@@ -167,7 +168,7 @@ class PairedSupport(StrictModule, NonTrainableState):
         normal: DomainFunction | None = None,
         codimension: int = 1,
         topology: PairingTopology = "shared-interface",
-    ):
+    ) -> None:
         if not isinstance(component, DomainComponent):
             raise TypeError("component must be a DomainComponent.")
         left_id = _identifier(left_patch_id, "left_patch_id")
@@ -177,13 +178,7 @@ class PairedSupport(StrictModule, NonTrainableState):
         codimension_ = int(codimension)
         if codimension_ < 0:
             raise ValueError("codimension must be non-negative.")
-        if topology not in (
-            "shared-interface",
-            "overlap-volume",
-            "directed-transmission",
-            "periodic-interface",
-        ):
-            raise ValueError("Unknown paired-support topology.")
+        topology = parse(topology, PairingTopology, "topology")
         if topology == "overlap-volume" and codimension_ != 0:
             raise ValueError("Overlap-volume pairings require codimension=0.")
         if topology != "overlap-volume" and codimension_ == 0:
@@ -307,7 +302,7 @@ class PairedSupportEvidence(StrictModule, NonTrainableState):
         maximum_map_mismatch: float,
         maximum_normal_error: float,
         verified: bool,
-    ):
+    ) -> None:
         self.pairing_id = _identifier(pairing_id, "pairing_id")
         self.scope = _identifier(scope, "scope")
         self.maximum_map_mismatch = float(maximum_map_mismatch)
@@ -336,7 +331,7 @@ class SubdomainCoverEvidence(StrictModule, NonTrainableState):
         max_coverage: int,
         uncovered_points: int,
         verified: bool,
-    ):
+    ) -> None:
         self.cover_id = _identifier(cover_id, "cover_id")
         self.scope = _identifier(scope, "scope")
         self.num_points = int(num_points)
@@ -366,7 +361,7 @@ class SubdomainCover(StrictModule, NonTrainableState):
         cover_id: str,
         exact_coverage: bool = False,
         maximum_overlap: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(ambient, Domain):
             raise TypeError("ambient must be a Domain.")
         patches_ = tuple(patches)

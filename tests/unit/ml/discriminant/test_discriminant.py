@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -51,12 +54,12 @@ _SCHEMA = TargetSchema(
 )
 
 
-def _sparse(values):
+def _sparse(values: Any) -> Any:
     columns = jnp.broadcast_to(jnp.arange(values.shape[-1]), values.shape)
     return SparseFeatures(values, columns, feature_count=values.shape[-1])
 
 
-def _case_batch():
+def _case_batch() -> Any:
     features = jnp.stack((_FEATURES, 1.2 * _FEATURES + jnp.array([0.3, -0.2])))
     targets = jnp.stack((_TARGETS, _TARGETS))
     feature_mask = jnp.ones_like(features, dtype="bool").at[:, 3, 0].set(False)
@@ -99,8 +102,8 @@ def _case_batch():
     ],
 )
 def test_discriminant_families_preserve_case_label_probability_and_weight_contracts(
-    recipe, model_type, method
-):
+    recipe: Any, model_type: Any, method: Any
+) -> None:
     batch = _case_batch()
     result = recipe.fit_batch(batch)
     model = result.as_trainable()
@@ -128,7 +131,9 @@ def test_discriminant_families_preserve_case_label_probability_and_weight_contra
     assert set(contract.nondifferentiable_outputs) == {"predict", "predict_indices"}
 
 
-def test_discriminant_dense_complex_and_new_sample_execution_reject_sparse_input():
+def test_discriminant_dense_complex_and_new_sample_execution_reject_sparse_input() -> (
+    None
+):
     recipe = LinearDiscriminantRecipe(num_classes=3, regularization=0.05)
     dense = recipe.fit_batch(MLBatch(_FEATURES, _TARGETS)).as_trainable()
     with pytest.raises(TypeError, match="requires dense features"):
@@ -178,12 +183,12 @@ def test_discriminant_dense_complex_and_new_sample_execution_reject_sparse_input
     ],
 )
 def test_every_discriminant_fit_family_has_declared_feature_weight_and_hyperparameter_gradients(
-    recipe, replace_hyperparameter, initial
-):
+    recipe: Any, replace_hyperparameter: Any, initial: Any
+) -> None:
     weights = jnp.linspace(0.8, 1.4, 12)
     probe = jnp.array([0.4, -0.3])
 
-    def loss(features, sample_weight, hyperparameter):
+    def loss(features: Any, sample_weight: Any, hyperparameter: Any) -> Any:
         configured = replace_hyperparameter(recipe, hyperparameter)
         model = configured.fit_batch(
             MLBatch(features, _TARGETS, sample_weight=sample_weight)
@@ -227,7 +232,9 @@ def test_every_discriminant_fit_family_has_declared_feature_weight_and_hyperpara
     assert jnp.all(jnp.isfinite(parameter_gradient))
 
 
-def test_discriminant_failures_report_empty_single_class_nonfinite_and_rank_statuses():
+def test_discriminant_failures_report_empty_single_class_nonfinite_and_rank_statuses() -> (
+    None
+):
     empty = LinearDiscriminantRecipe(num_classes=3, regularization=0.1).fit_batch(
         MLBatch(
             _FEATURES,
@@ -270,7 +277,7 @@ def test_discriminant_failures_report_empty_single_class_nonfinite_and_rank_stat
     assert jnp.all(jnp.isfinite(resolved.model(collinear)))
 
 
-def test_discriminant_rejects_invalid_schema_priors_and_target_axes():
+def test_discriminant_rejects_invalid_schema_priors_and_target_axes() -> None:
     with pytest.raises(ValueError, match="sum to one"):
         LinearDiscriminantRecipe(num_classes=3, priors=(0.2, 0.2, 0.2))
     with pytest.raises(ValueError, match="conflicts"):

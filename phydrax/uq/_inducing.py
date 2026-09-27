@@ -7,7 +7,8 @@ from __future__ import annotations
 from typing import Any
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 from phydrax.coresets import (
@@ -18,6 +19,7 @@ from phydrax.kernels import AbstractPositiveDefiniteKernel
 
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
+from ..typing import PRNGKey
 
 
 class InducingPointSelection(StrictModule):
@@ -27,7 +29,7 @@ class InducingPointSelection(StrictModule):
     indices: Array
     diagnostics: Any
 
-    def __init__(self, points: Array, indices: Array, diagnostics: Any, /):
+    def __init__(self, points: Array, indices: Array, diagnostics: Any, /) -> None:
         points_ = jnp.asarray(points, dtype=jnp.float64)
         indices_ = jnp.asarray(indices, dtype=jnp.int32)
         if points_.ndim < 2:
@@ -46,7 +48,7 @@ def select_inducing_points(
     num_points: int,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     kernel: AbstractPositiveDefiniteKernel | None = None,
 ) -> InducingPointSelection:
     """Select sparse-GP inducing inputs with randomized pivoted Cholesky."""

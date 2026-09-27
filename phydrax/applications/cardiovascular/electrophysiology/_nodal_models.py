@@ -22,7 +22,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import DTypeLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -185,7 +186,7 @@ class ZhangSinoatrialParameters(StrictModule, NonTrainableState):
         sr_leak_rate: float = 1.0e-4,
         sr_release_rate: float = 0.08,
         sr_volume_ratio: float = 8.0,
-    ):
+    ) -> None:
         values = {
             "rtf_mV": _positive(rtf_mV, "rtf_mV"),
             "potassium_i_mM": _positive(potassium_i_mM, "potassium_i_mM"),
@@ -257,7 +258,7 @@ class SinoatrialStateLayout(StrictModule, NonTrainableState):
     state_size: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         names = (
             "voltage_mV",
             "y_f",
@@ -358,7 +359,7 @@ class ZhangSinoatrialModel(StrictModule, NonTrainableState):
     layout: SinoatrialStateLayout
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, parameters: ZhangSinoatrialParameters, /):
+    def __init__(self, parameters: ZhangSinoatrialParameters, /) -> None:
         if not isinstance(parameters, ZhangSinoatrialParameters):
             raise TypeError("parameters must be ZhangSinoatrialParameters.")
         layout = SinoatrialStateLayout()
@@ -373,7 +374,7 @@ class ZhangSinoatrialModel(StrictModule, NonTrainableState):
         )
 
     def initialize(
-        self, batch_shape: Sequence[int] = (), *, dtype: jnp.dtype | None = None
+        self, batch_shape: Sequence[int] = (), *, dtype: DTypeLike | None = None
     ) -> SinoatrialState:
         shape = _shape(batch_shape)
         resolved_dtype = jnp.asarray(0.0).dtype if dtype is None else jnp.dtype(dtype)
@@ -535,7 +536,7 @@ class InadaAtrioventricularParameters(StrictModule, NonTrainableState):
         ca_current_scale: float = 2.0e-5,
         ca_removal_rate: float = 0.020,
         resting_calcium_mM: float = 1.0e-4,
-    ):
+    ) -> None:
         values = {
             "rtf_mV": _positive(rtf_mV, "rtf_mV"),
             "sodium_i_mM": _positive(sodium_i_mM, "sodium_i_mM"),
@@ -606,7 +607,7 @@ class AtrioventricularStateLayout(StrictModule, NonTrainableState):
     state_size: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         names = (
             "voltage_mV",
             "m",
@@ -705,7 +706,7 @@ class InadaAtrioventricularModel(StrictModule, NonTrainableState):
     layout: AtrioventricularStateLayout
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, parameters: InadaAtrioventricularParameters, /):
+    def __init__(self, parameters: InadaAtrioventricularParameters, /) -> None:
         if not isinstance(parameters, InadaAtrioventricularParameters):
             raise TypeError("parameters must be InadaAtrioventricularParameters.")
         layout = AtrioventricularStateLayout()
@@ -720,7 +721,7 @@ class InadaAtrioventricularModel(StrictModule, NonTrainableState):
         )
 
     def initialize(
-        self, batch_shape: Sequence[int] = (), *, dtype: jnp.dtype | None = None
+        self, batch_shape: Sequence[int] = (), *, dtype: DTypeLike | None = None
     ) -> AtrioventricularState:
         shape = _shape(batch_shape)
         resolved_dtype = jnp.asarray(0.0).dtype if dtype is None else jnp.dtype(dtype)
@@ -1018,7 +1019,7 @@ class ZhangSinoatrialReactionAdapter:
     def membrane_surface_to_volume_per_mm(self) -> float:
         return self.scaling.membrane_surface_to_volume_per_mm
 
-    def _parameters(self, parameters: Array | None, dtype: object) -> Array:
+    def _parameters(self, parameters: Array | None, dtype: DTypeLike) -> Array:
         if parameters is None:
             return jnp.asarray(self.default_parameters, dtype=dtype)
         return self.parameter_layout.require_shape(parameters).astype(dtype)
@@ -1031,7 +1032,7 @@ class ZhangSinoatrialReactionAdapter:
         self,
         batch_shape: tuple[int, ...] = (),
         *,
-        dtype: object | None = None,
+        dtype: DTypeLike | None = None,
     ) -> Array:
         return _san_reaction_state(self.cell_model.initialize(batch_shape, dtype=dtype))
 
@@ -1339,7 +1340,7 @@ class InadaAtrioventricularReactionAdapter:
     def membrane_surface_to_volume_per_mm(self) -> float:
         return self.scaling.membrane_surface_to_volume_per_mm
 
-    def _parameters(self, parameters: Array | None, dtype: object) -> Array:
+    def _parameters(self, parameters: Array | None, dtype: DTypeLike) -> Array:
         if parameters is None:
             return jnp.asarray(self.default_parameters, dtype=dtype)
         return self.parameter_layout.require_shape(parameters).astype(dtype)
@@ -1352,7 +1353,7 @@ class InadaAtrioventricularReactionAdapter:
         self,
         batch_shape: tuple[int, ...] = (),
         *,
-        dtype: object | None = None,
+        dtype: DTypeLike | None = None,
     ) -> Array:
         return _av_reaction_state(self.cell_model.initialize(batch_shape, dtype=dtype))
 

@@ -1,16 +1,18 @@
+from typing import Any
+
 import numpy as np
 
 import phydrax as phx
 
 
-def _bulk():
+def _bulk() -> Any:
     return phx.discretization.CellMesh.from_tetrahedra(
         np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))),
         np.asarray(((0, 1, 2, 3),)),
     )
 
 
-def _network(contract):
+def _network(contract: Any) -> Any:
     return phx.discretization.MetricNetworkPlan.from_arrays(
         np.asarray(((0.2, 0.2, 0.15), (0.2, 0.2, 0.25))),
         np.asarray(((0, 1),)),
@@ -22,7 +24,7 @@ def _network(contract):
     ).prepare()
 
 
-def _runtime(*, boundary_flux=None, removal_rate=None):
+def _runtime(*, boundary_flux: Any = None, removal_rate: Any = None) -> Any:
     contract = phx.SpatialCoordinateContract.si()
     bulk = _bulk()
     network = _network(contract)
@@ -32,6 +34,7 @@ def _runtime(*, boundary_flux=None, removal_rate=None):
         np.asarray((0.01,)),
         np.zeros((1, 3)),
         boundary_volume_flux=boundary_flux,
+        # ty: ignore[invalid-argument-type]
         boundary_inflow_concentration=0.0,
         removal_rate=removal_rate,
     )
@@ -60,7 +63,7 @@ def _runtime(*, boundary_flux=None, removal_rate=None):
     ).prepare()
 
 
-def test_metric_network_and_embedded_transfer_are_conservative():
+def test_metric_network_and_embedded_transfer_are_conservative() -> None:
     runtime = _runtime()
     transfer = runtime.exchange.transfer
     sampled = transfer.average(np.asarray((3.0,)))
@@ -72,10 +75,15 @@ def test_metric_network_and_embedded_transfer_are_conservative():
     np.testing.assert_allclose(np.sum(bulk) + np.sum(network), 0.0, atol=1e-12)
 
 
-def test_backward_euler_and_imex_preserve_constant_closed_state():
+def test_backward_euler_and_imex_preserve_constant_closed_state() -> None:
     runtime = _runtime()
     state = phx.equations.MixedDimensionalTransportState(
-        np.asarray((2.0,)), np.asarray((2.0, 2.0)), np.asarray((2.0,))
+        # ty: ignore[invalid-argument-type]
+        np.asarray((2.0,)),
+        # ty: ignore[invalid-argument-type]
+        np.asarray((2.0, 2.0)),
+        # ty: ignore[invalid-argument-type]
+        np.asarray((2.0,)),
     )
     for step in (
         runtime.step_backward_euler(state, 0.1),
@@ -88,10 +96,15 @@ def test_backward_euler_and_imex_preserve_constant_closed_state():
         assert bool(step.ledger.successful)
 
 
-def test_boundary_outflow_and_removal_close_mass_ledger():
+def test_boundary_outflow_and_removal_close_mass_ledger() -> None:
     runtime = _runtime(boundary_flux=0.1, removal_rate=0.2)
     state = phx.equations.MixedDimensionalTransportState(
-        np.asarray((2.0,)), np.asarray((2.0, 2.0)), np.asarray((2.0,))
+        # ty: ignore[invalid-argument-type]
+        np.asarray((2.0,)),
+        # ty: ignore[invalid-argument-type]
+        np.asarray((2.0, 2.0)),
+        # ty: ignore[invalid-argument-type]
+        np.asarray((2.0,)),
     )
     initial = float(runtime.ledger(state).total_mass)
     step = runtime.step_backward_euler(state, 0.05)
@@ -101,7 +114,7 @@ def test_boundary_outflow_and_removal_close_mass_ledger():
     assert float(step.ledger.balance_defect) < 1.0e-9
 
 
-def test_network_pressure_flow_balances_interior_nodes():
+def test_network_pressure_flow_balances_interior_nodes() -> None:
     contract = phx.SpatialCoordinateContract.si()
     network = phx.discretization.MetricNetworkPlan.from_arrays(
         np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0))),

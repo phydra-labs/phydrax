@@ -5,6 +5,7 @@
 """Deterministic directional ball-wavelet denoising on a bandlimited field."""
 
 import json
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -18,7 +19,7 @@ from phydrax.discretization import (
 )
 
 
-def _weighted_error(values, reference, radial, angular):
+def _weighted_error(values: Any, reference: Any, radial: Any, angular: Any) -> Any:
     weights = (
         radial.quadrature_weights[:, None, None]
         * angular.theta_quadrature_weights[None, :, None]

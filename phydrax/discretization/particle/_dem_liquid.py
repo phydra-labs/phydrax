@@ -10,12 +10,15 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._dem_cohesion import (
+    AbstractDEMCohesionPlan,
     BagheriCapillaryBridgePlan,
     CompositeDEMCohesionPlan,
     DEMCohesionComponentHistory,
@@ -44,14 +47,14 @@ class DEMBarrierCapillaryPlan(StrictModule, NonTrainableState):
         particle_liquid_fraction: float,
         initial_barrier_film_volume: float,
         law: DEMBarrierCapillaryLaw = "bagheri",
-    ):
+    ) -> None:
         identifier = str(barrier_id)
         if not identifier:
             raise ValueError("barrier_id must be nonempty.")
-        if geometry_policy not in ("planar", "isotropic_curvature"):
-            raise ValueError("geometry_policy must be 'planar' or 'isotropic_curvature'.")
-        if law not in ("linear", "bagheri"):
-            raise ValueError("law must be 'linear' or 'bagheri'.")
+        geometry_policy = parse(
+            geometry_policy, DEMBarrierGeometryPolicy, "geometry_policy"
+        )
+        law = parse(law, DEMBarrierCapillaryLaw, "law")
         fraction = float(particle_liquid_fraction)
         reservoir = float(initial_barrier_film_volume)
         if not np.isfinite(fraction) or fraction < 0.0 or fraction > 1.0:
@@ -172,7 +175,7 @@ class ConservedLiquidBridgeProcessPlan(StrictModule, NonTrainableState):
         barrier_capillaries: Sequence[DEMBarrierCapillaryPlan] = (),
         evaporation_flux: float = 0.0,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         initial = np.asarray(initial_film_volume)
         flux = float(evaporation_flux)
         if initial.ndim not in (0, 1):
@@ -208,7 +211,7 @@ class ConservedLiquidBridgeProcessPlan(StrictModule, NonTrainableState):
         self.plan_id = identifier
 
     def initialize(
-        self, capacity: int, dtype, active_mask: ArrayLike, /
+        self, capacity: int, dtype: DTypeLike, active_mask: ArrayLike, /
     ) -> DEMLiquidState:
         count = int(capacity)
         active = jnp.asarray(active_mask, dtype=jnp.bool_)
@@ -580,7 +583,9 @@ class ConservedLiquidBridgeProcessPlan(StrictModule, NonTrainableState):
         )
 
 
-def conserved_bagheri_component(cohesion, /) -> tuple[BagheriCapillaryBridgePlan, int]:
+def conserved_bagheri_component(
+    cohesion: AbstractDEMCohesionPlan | None, /
+) -> tuple[BagheriCapillaryBridgePlan, int]:
     if isinstance(cohesion, BagheriCapillaryBridgePlan):
         if not cohesion.conserve_liquid:
             raise ValueError("Liquid process requires conserve_liquid=True.")

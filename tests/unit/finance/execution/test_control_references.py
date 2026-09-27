@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -20,12 +23,12 @@ from phydrax.finance.execution._market_making import (
 )
 
 
-def _zero(time, state, action, args):
+def _zero(time: Any, state: Any, action: Any, args: Any) -> float:
     del time, state, action, args
     return 0.0
 
 
-def test_impulse_qvi_reports_complementarity_and_nested_refinement():
+def test_impulse_qvi_reports_complementarity_and_nested_refinement() -> None:
     grid = BoundedUniformGrid1D(-1.0, 1.0, 9)
     time_grid = TimeGrid(jnp.linspace(0.0, 0.2, 5), time_id="qvi-grid")
     terminal = np.asarray(grid.points) ** 2
@@ -70,7 +73,7 @@ def test_impulse_qvi_reports_complementarity_and_nested_refinement():
     )
 
 
-def test_avellaneda_stoikov_inventory_skews_reservation_price_downward():
+def test_avellaneda_stoikov_inventory_skews_reservation_price_downward() -> None:
     time_grid = TimeGrid(jnp.asarray([0.0, 0.5, 1.0]), time_id="as-grid")
     plan = AvellanedaStoikovPlan(
         risk_aversion=0.1,

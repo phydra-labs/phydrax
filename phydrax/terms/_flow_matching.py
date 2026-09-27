@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.domain import DomainFunction
 
@@ -30,12 +31,13 @@ from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..transport.continuous._coupling import EndpointCouplingSample
 from ..transport.continuous._interpolant import AbstractEndpointInterpolant
+from ..typing import parse, PRNGKey
 from ._sample_statistics import effective_sample_size, normalized_log_weights
 from ._time_sampling import AbstractTimeSamplingPolicy, UniformTimeSamplingPolicy
 
 
 FlowMatchingSamplingMode: TypeAlias = Literal["fixed", "resample"]
-FlowEndpointProvider: TypeAlias = Callable[[Key[Array, ""]], EndpointCouplingSample]
+FlowEndpointProvider: TypeAlias = Callable[[PRNGKey], EndpointCouplingSample]
 
 
 class FlowMatchingBatch(StrictModule):
@@ -66,14 +68,14 @@ class FlowMatchingBatch(StrictModule):
         valid: ArrayLike,
         log_weights: ArrayLike,
         context: Mapping[str, ArrayLike] | None,
-        evaluation_key: Key[Array, ""],
+        evaluation_key: PRNGKey,
         source_indices: ArrayLike,
         target_indices: ArrayLike,
         interpolant_id: str,
         coupling_id: str,
         policy_id: str,
         batch_id: str,
-    ):
+    ) -> None:
         state_array = jnp.asarray(state)
         velocity = jnp.asarray(target_velocity, dtype=state_array.dtype)
         if state_array.shape != velocity.shape or state_array.ndim < 1:
@@ -196,13 +198,12 @@ class FlowMatchingTerm(AbstractSamplingTerm):
         state_label: str = "x",
         time_label: str = "t",
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(velocity_name, str) or not velocity_name:
             raise ValueError("velocity_name must be a non-empty string.")
         if not isinstance(interpolant, AbstractEndpointInterpolant):
             raise TypeError("interpolant must implement AbstractEndpointInterpolant.")
-        if sampling_mode not in ("fixed", "resample"):
-            raise ValueError("sampling_mode must be 'fixed' or 'resample'.")
+        sampling_mode = parse(sampling_mode, FlowMatchingSamplingMode, "sampling_mode")
         if not state_label or not time_label or state_label == time_label:
             raise ValueError("state_label and time_label must be distinct and non-empty.")
         resolved_policy = UniformTimeSamplingPolicy() if policy is None else policy
@@ -244,7 +245,7 @@ class FlowMatchingTerm(AbstractSamplingTerm):
         self.sampling_mode = sampling_mode
         self.label = None if label is None else str(label)
 
-    def sample(self, *, key: Key[Array, ""] = DOC_KEY0) -> FlowMatchingBatch:
+    def sample(self, *, key: PRNGKey = DOC_KEY0) -> FlowMatchingBatch:
         endpoint_key, time_key, evaluation_key = jr.split(key, 3)
         if self.sampling_mode == "fixed":
             if self.fixed_endpoints is None:
@@ -349,7 +350,7 @@ class FlowMatchingTerm(AbstractSamplingTerm):
                 arguments.append(safe_context[dependency])
         node_keys = jr.split(batch.evaluation_key, count)
 
-        def velocity_at(key, *values):
+        def velocity_at(key: PRNGKey, *values: Array) -> Array:
             return jnp.asarray(velocity.func(*values, key=key))
 
         predicted = jax.vmap(velocity_at)(node_keys, *arguments)
@@ -394,7 +395,7 @@ class FlowMatchingTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: FlowMatchingBatch | None = None,
         **kwargs: Any,
@@ -413,7 +414,7 @@ class FlowMatchingTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: FlowMatchingBatch | None = None,
     ) -> FlowMatchingDiagnostics:
         materialized = self.sample(key=key) if batch is None else batch

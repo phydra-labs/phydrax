@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _discretization(*, periodic=(True, True), shape=(5, 4)):
+def _discretization(*, periodic: Any = (True, True), shape: Any = (5, 4)) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(count, periodic=periodic[axis])
@@ -21,7 +24,7 @@ def _discretization(*, periodic=(True, True), shape=(5, 4)):
     ).prepare()
 
 
-def test_periodic_pull_routes_every_population_direction():
+def test_periodic_pull_routes_every_population_direction() -> None:
     discretization = _discretization()
     boundary = phx.discretization.LatticeBoltzmannBoundaryPlan().prepare(discretization)
     populations = jnp.arange(
@@ -46,7 +49,7 @@ def test_periodic_pull_routes_every_population_direction():
     np.testing.assert_array_equal(routed, expected)
 
 
-def test_nonperiodic_and_interior_solid_links_reflect_local_opposites():
+def test_nonperiodic_and_interior_solid_links_reflect_local_opposites() -> None:
     discretization = _discretization(periodic=(False, False))
     fluid = np.ones(discretization.grid.shape, dtype="bool")
     fluid[2, 2] = False
@@ -68,7 +71,7 @@ def test_nonperiodic_and_interior_solid_links_reflect_local_opposites():
     np.testing.assert_array_equal(routed[2, 2], populations[2, 2])
 
 
-def test_tangential_moving_wall_adds_documented_link_momentum():
+def test_tangential_moving_wall_adds_documented_link_momentum() -> None:
     discretization = _discretization(periodic=(True, False))
     boundary = phx.discretization.LatticeBoltzmannBoundaryPlan(
         moving_faces=(("y", "upper"),)
@@ -90,7 +93,7 @@ def test_tangential_moving_wall_adds_documented_link_momentum():
     np.testing.assert_allclose(routed[:, 0, direction], 0.0, atol=1e-14)
 
 
-def test_geometry_snapshot_is_detached_from_source_mask():
+def test_geometry_snapshot_is_detached_from_source_mask() -> None:
     discretization = _discretization()
     source = np.ones(discretization.grid.shape, dtype="bool")
     snapshot = phx.discretization.LatticeBoltzmannGeometrySnapshot(discretization, source)

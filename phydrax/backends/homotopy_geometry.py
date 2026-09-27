@@ -13,12 +13,13 @@ from enum import Enum
 from math import isfinite
 from operator import index
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._external_runtime import (
     EnergyRunResult,
@@ -127,15 +128,15 @@ def _strict_fields(value: Mapping[str, Any], expected: set[str], owner: str, /) 
 
 
 def _decode_json_object(data: bytes, owner: str, /) -> dict[str, Any]:
-    def pairs(values):
-        record = {}
+    def pairs(values: list[tuple[str, Any]]) -> dict[str, Any]:
+        record: dict[str, Any] = {}
         for key, value in values:
             if key in record:
                 raise ValueError(f"{owner} contains duplicate field {key!r}.")
             record[key] = value
         return record
 
-    def reject_constant(value: str):
+    def reject_constant(value: str) -> NoReturn:
         raise ValueError(f"{owner} contains non-finite constant {value!r}.")
 
     decoded = json.loads(
@@ -279,7 +280,7 @@ class HomotopyGeometryPolicy(StrictModule, NonTrainableState):
         maximum_term_count: int = 1_000_000,
         maximum_value_count: int = 10_000_000,
         maximum_storage_bytes: int = 256 * 1024 * 1024,
-    ):
+    ) -> None:
         paths = _positive_integer(path_capacity, "path_capacity")
         tracking = (
             2 * paths
@@ -351,7 +352,7 @@ class HomotopyGeometryPathRequest(StrictModule, NonTrainableState):
     batch_id: str = eqx.field(static=True)
     source_index: int = eqx.field(static=True)
 
-    def __init__(self, path_id: str, batch_id: str, source_index: int, /):
+    def __init__(self, path_id: str, batch_id: str, source_index: int, /) -> None:
         self.path_id = _identifier(path_id, "path_id")
         self.batch_id = _identifier(batch_id, "batch_id")
         self.source_index = _nonnegative_integer(source_index, "source_index")
@@ -649,7 +650,7 @@ class HomotopyGeometryRequest(StrictModule, NonTrainableState):
         payload: Mapping[str, Any],
         paths: Sequence[HomotopyGeometryPathRequest],
         /,
-    ):
+    ) -> None:
         if not isinstance(system, SparsePolynomialSystem):
             raise TypeError("system must be a SparsePolynomialSystem.")
         try:
@@ -1134,7 +1135,7 @@ class MembershipEvidence(StrictModule, NonTrainableState):
         tolerance: float,
         paths: PathInventory,
         /,
-    ):
+    ) -> None:
         points = np.asarray(query_points)
         residuals = np.asarray(residual_norms)
         members = tuple(
@@ -1222,7 +1223,7 @@ class HomotopyGeometryResult(StrictModule, NonTrainableState):
         /,
         *,
         error: str = "",
-    ):
+    ) -> None:
         self.operation = operation
         self.status = status
         self.output = output

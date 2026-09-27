@@ -1,5 +1,8 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -14,7 +17,28 @@ from phydrax.stochastic._feynman_kac import (
 )
 
 
-def _constant_paths(*, invalid=False):
+def test_sampling_plan_canonicalizes_quadrature_before_identity() -> None:
+    common = {
+        "initial_time": 0.0,
+        "terminal_time": 1.0,
+        "sampling_mode": "queries",
+        "num_paths_per_query": 2,
+        "num_time_steps": 2,
+    }
+    # ty: ignore[invalid-argument-type]
+    canonical = FeynmanKacSamplingPlan(**common, quadrature="left")
+    # ty: ignore[invalid-argument-type]
+    equivalent = FeynmanKacSamplingPlan(**common, quadrature=np.str_("left"))
+
+    assert type(equivalent.quadrature) is str
+    assert equivalent.plan_id == canonical.plan_id
+
+    with pytest.raises(TypeError):
+        # ty: ignore[invalid-argument-type]
+        FeynmanKacSamplingPlan(**common, quadrature=1)
+
+
+def _constant_paths(*, invalid: Any = False) -> Any:
     times = jnp.asarray([0.0, 0.25, 1.0])
     states = jnp.asarray(
         [
@@ -38,7 +62,7 @@ def _constant_paths(*, invalid=False):
     )
 
 
-def _constant_problem(paths, generator):
+def _constant_problem(paths: Any, generator: Any) -> Any:
     return BSDEProblem(
         lambda key: paths,
         lambda time, state, args: jnp.zeros_like(state),
@@ -53,7 +77,7 @@ def _constant_problem(paths, generator):
     )
 
 
-def _brownian_problem(dimension=1):
+def _brownian_problem(dimension: Any = 1) -> Any:
     placeholder = _constant_paths()
     return BSDEProblem(
         lambda key: placeholder,
@@ -69,7 +93,7 @@ def _brownian_problem(dimension=1):
     )
 
 
-def test_trajectory_nodes_accumulate_constant_source_and_preserve_clusters():
+def test_trajectory_nodes_accumulate_constant_source_and_preserve_clusters() -> None:
     paths = _constant_paths()
     problem = _constant_problem(
         paths,
@@ -93,7 +117,7 @@ def test_trajectory_nodes_accumulate_constant_source_and_preserve_clusters():
     assert feynman_kac_label_diagnostics(labels).passed
 
 
-def test_trajectory_trapezoid_handles_nonuniform_time_grid_and_invalid_paths():
+def test_trajectory_trapezoid_handles_nonuniform_time_grid_and_invalid_paths() -> None:
     paths = _constant_paths(invalid=True)
     problem = _constant_problem(
         paths,
@@ -115,7 +139,7 @@ def test_trajectory_trapezoid_handles_nonuniform_time_grid_and_invalid_paths():
     assert jnp.allclose(labels.sample_weights[:3], jnp.asarray([0.125, 0.5, 0.375]))
 
 
-def test_query_conditioned_brownian_value_control_and_terminal_query():
+def test_query_conditioned_brownian_value_control_and_terminal_query() -> None:
     problem = _brownian_problem()
     # The martingale estimator Y_{t1} dW_0 / dt has per-antithetic-pair variance
     # 2 + (N - 1) = 9 for N = 8 steps here, so its standard error is 3 / sqrt(pairs):
@@ -155,7 +179,7 @@ def test_query_conditioned_brownian_value_control_and_terminal_query():
     assert labels.metadata["path_chunk_size"] == 8192
 
 
-def test_query_sampling_replays_and_rejects_out_of_interval_queries():
+def test_query_sampling_replays_and_rejects_out_of_interval_queries() -> None:
     problem = _brownian_problem()
     plan = FeynmanKacSamplingPlan(
         terminal_time=1.0,
@@ -207,7 +231,7 @@ def test_query_sampling_replays_and_rejects_out_of_interval_queries():
         )
 
 
-def test_dimension_100_query_labels_preserve_shapes_without_hessian_contracts():
+def test_dimension_100_query_labels_preserve_shapes_without_hessian_contracts() -> None:
     dimension = 100
     problem = _brownian_problem(dimension)
     plan = FeynmanKacSamplingPlan(
@@ -233,7 +257,7 @@ def test_dimension_100_query_labels_preserve_shapes_without_hessian_contracts():
     assert jnp.all(jnp.isfinite(labels.value_targets))
 
 
-def test_stochastic_source_keys_replay_across_path_chunk_sizes():
+def test_stochastic_source_keys_replay_across_path_chunk_sizes() -> None:
     base = _brownian_problem()
     problem = BSDEProblem(
         base.forward_sampler,
@@ -261,7 +285,9 @@ def test_stochastic_source_keys_replay_across_path_chunk_sizes():
         "num_paths_per_query": 8,
         "num_time_steps": 3,
     }
+    # ty: ignore[invalid-argument-type]
     unchunked = FeynmanKacSamplingPlan(**common)
+    # ty: ignore[invalid-argument-type]
     chunked = FeynmanKacSamplingPlan(**common, path_chunk_size=2)
     kwargs = {
         "query_times": jnp.asarray([0.0, 0.4]),
@@ -271,14 +297,18 @@ def test_stochastic_source_keys_replay_across_path_chunk_sizes():
         "key": jr.key(73),
     }
 
+    # ty: ignore[invalid-argument-type]
     first = query_feynman_kac_labels(problem, unchunked, **kwargs)
+    # ty: ignore[invalid-argument-type]
     second = query_feynman_kac_labels(problem, chunked, **kwargs)
 
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(first.value_targets, second.value_targets)
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(first.value_standard_errors, second.value_standard_errors)
 
 
-def test_scalar_feynman_kac_labels_preserve_query_path_and_time_axes():
+def test_scalar_feynman_kac_labels_preserve_query_path_and_time_axes() -> None:
     placeholder = BSDEPathBatch(
         jnp.asarray([0.0, 1.0]),
         jnp.zeros((1, 2)),
@@ -308,6 +338,7 @@ def test_scalar_feynman_kac_labels_preserve_query_path_and_time_axes():
         num_time_steps=2,
         path_chunk_size=4,
     )
+    # ty: ignore[not-iterable]
     labels, paths = query_feynman_kac_labels(
         problem,
         plan,

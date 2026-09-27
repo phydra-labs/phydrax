@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Sequence
+from typing import cast, Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._ports import ElectricalWaveReference, ModalWaveReference, WavePort, WaveReference
@@ -28,7 +29,7 @@ class ScatteringResponse(StrictModule):
         references: Sequence[WaveReference],
         numeric_version: ArrayLike = 0,
         /,
-    ):
+    ) -> None:
         value = jnp.asarray(matrix)
         if value.ndim < 2 or value.shape[-2] != value.shape[-1]:
             raise ValueError(
@@ -85,7 +86,7 @@ class MatrixScatteringComponent(AbstractScatteringComponent):
         *,
         numeric_version: ArrayLike = 0,
         component_id: str = "matrix-scattering-component",
-    ):
+    ) -> None:
         port_tuple = tuple(ports)
         response = ScatteringResponse(
             matrix,
@@ -148,7 +149,7 @@ class ScatteringAudit(StrictModule):
         passivity_eligible: bool,
         reciprocity_eligible: bool,
         complete_matrix: bool,
-    ):
+    ) -> None:
         self.minimum_passivity_eigenvalue = jnp.asarray(minimum_passivity_eigenvalue)
         self.passivity_residual = jnp.asarray(passivity_residual)
         self.reciprocity_residual = jnp.asarray(reciprocity_residual)
@@ -161,11 +162,14 @@ class ScatteringAudit(StrictModule):
 
 
 def _electrical_reciprocity_eligible(references: tuple[WaveReference, ...]) -> bool:
-    if not all(
-        isinstance(reference, ElectricalWaveReference) for reference in references
-    ):
+    electrical = tuple(
+        reference
+        for reference in references
+        if isinstance(reference, ElectricalWaveReference)
+    )
+    if len(electrical) != len(references):
         return False
-    return all(bool(jnp.all(jnp.imag(reference.z0) == 0.0)) for reference in references)
+    return all(bool(jnp.all(jnp.imag(reference.z0) == 0.0)) for reference in electrical)
 
 
 def audit_scattering(
@@ -232,7 +236,7 @@ class CommonNodeJunction(AbstractScatteringComponent):
         *,
         port_ids: Sequence[str] | None = None,
         component_id: str = "common-node-junction",
-    ):
+    ) -> None:
         refs = tuple(
             reference
             if isinstance(reference, ElectricalWaveReference)
@@ -273,7 +277,8 @@ class CommonNodeJunction(AbstractScatteringComponent):
         omega = jnp.asarray(angular_frequency)
         values = []
         for port in self._ports:
-            z0 = port.references[0].z0
+            # Junction ports are constructed only from electrical references.
+            z0 = cast(ElectricalWaveReference, port.references[0]).z0
             if z0.ndim == 0:
                 z0 = jnp.broadcast_to(z0, omega.shape)
             elif z0.shape != omega.shape:

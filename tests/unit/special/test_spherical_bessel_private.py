@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -14,13 +16,15 @@ from phydrax.special._spherical_bessel import (
 )
 
 
-def _scipy_sequence(function, maximum_order, argument, **kwargs):
+def _scipy_sequence(
+    function: Any, maximum_order: Any, argument: Any, **kwargs: Any
+) -> Any:
     return np.stack(
         [function(order, argument, **kwargs) for order in range(maximum_order + 1)]
     )
 
 
-def test_real_sequences_match_scipy_across_series_and_recurrence_regions():
+def test_real_sequences_match_scipy_across_series_and_recurrence_regions() -> None:
     maximum_order = 12
     argument = np.asarray([0.2, 1.5, 7.0, 21.0])
     cases = (
@@ -35,7 +39,7 @@ def test_real_sequences_match_scipy_across_series_and_recurrence_regions():
         np.testing.assert_allclose(actual, expected, rtol=2.0e-11, atol=2.0e-14)
 
 
-def test_complex_and_scaled_translation_regimes_match_reference_values():
+def test_complex_and_scaled_translation_regimes_match_reference_values() -> None:
     maximum_order = 8
     argument = np.asarray([0.4 + 0.3j, 3.0 + 2.0j, 12.0 + 5.0j])
     j_values = np.asarray(_spherical_j_sequence(maximum_order, jnp.asarray(argument)))
@@ -73,7 +77,7 @@ def test_complex_and_scaled_translation_regimes_match_reference_values():
     assert np.isfinite(far_field).all()
 
 
-def test_recurrences_and_jy_wronskian_hold_order_by_order():
+def test_recurrences_and_jy_wronskian_hold_order_by_order() -> None:
     argument = jnp.asarray([0.7, 2.5, 11.0])
     order = np.arange(1, 15)[:, None]
     j_values = _spherical_j_sequence(15, argument)
@@ -112,7 +116,7 @@ def test_recurrences_and_jy_wronskian_hold_order_by_order():
     )
 
 
-def test_zero_limits_and_tiny_regular_modes_are_not_thresholded_away():
+def test_zero_limits_and_tiny_regular_modes_are_not_thresholded_away() -> None:
     exact = jnp.asarray([0.0, 1.0e-8])
     j_values = np.asarray(_spherical_j_sequence(6, exact))
     i_values = np.asarray(_spherical_i_sequence(6, exact))
@@ -145,7 +149,7 @@ def test_zero_limits_and_tiny_regular_modes_are_not_thresholded_away():
     np.testing.assert_array_equal(i_derivative, [0.0, 1.0 / 3.0, 0.0, 0.0, 0.0])
 
 
-def test_neighbor_derivatives_match_scipy_and_differentiate_scaled_primals():
+def test_neighbor_derivatives_match_scipy_and_differentiate_scaled_primals() -> None:
     argument = jnp.asarray([0.15, 1.8, 9.0])
     maximum_order = 9
     cases = (
@@ -180,8 +184,9 @@ def test_neighbor_derivatives_match_scipy_and_differentiate_scaled_primals():
         np.testing.assert_allclose(tangent, analytic, rtol=2.0e-10, atol=3.0e-12)
 
 
-def test_structural_order_validation_rejects_dynamic_or_negative_orders():
+def test_structural_order_validation_rejects_dynamic_or_negative_orders() -> None:
     with pytest.raises(TypeError):
+        # ty: ignore[invalid-argument-type]
         _spherical_j_sequence(jnp.asarray(3), 1.0)
     with pytest.raises(TypeError):
         _spherical_i_sequence(True, 1.0)

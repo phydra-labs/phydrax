@@ -9,7 +9,8 @@ import abc
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -72,7 +73,7 @@ class ParticleNeighborhoodState(StrictModule, NonTrainableState):
         domain_violation_count: ArrayLike,
         prepared_neighborhood_id: str,
         relation_schema_id: str,
-    ):
+    ) -> None:
         if not isinstance(pair_relation, ParticlePairRelation):
             raise TypeError("pair_relation must be a ParticlePairRelation.")
         if box is not None and not isinstance(box, (ParticleBox, PeriodicCell)):
@@ -207,7 +208,7 @@ class DenseParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
         box: ParticleBox | PeriodicCell | None = None,
         name: str = "dense-particle-neighborhood",
         plan_id: str | None = None,
-    ):
+    ) -> None:
         maximum = int(maximum_pairs)
         if maximum < 0:
             raise ValueError("maximum_pairs must be non-negative.")
@@ -260,7 +261,7 @@ class PreparedDenseParticleNeighborhood(AbstractPreparedParticleNeighborhood):
         plan: DenseParticleNeighborhoodPlan,
         particles: ParticleDiscretization,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, DenseParticleNeighborhoodPlan):
             raise TypeError("plan must be a DenseParticleNeighborhoodPlan.")
         if not isinstance(particles, ParticleDiscretization):

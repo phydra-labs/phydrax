@@ -12,14 +12,15 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._array_tree import ArrayPyTreeSchema
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._identity import ExecutableSignature, NumericRevision, SemanticProvenance
 from .._strict import StrictModule
-from ._system import DiscreteStepContext, DiscreteSystem
+from ._system import DiscreteStepContext, DiscreteSystem, DiscreteTransitionResult
 
 
 _NONFINITE_STATE_STATUS = -1
@@ -225,7 +226,7 @@ class PlantRuntimeState(StrictModule):
         state_schema_id: str,
         execution_signature_id: str,
         /,
-    ):
+    ) -> None:
         self.payload = payload
         self.time = jnp.asarray(time)
         self.step_index = jnp.asarray(step_index, dtype=jnp.int32)
@@ -253,7 +254,7 @@ class PlantParameters(StrictModule):
         schema_id: str,
         numeric_revision: NumericRevision,
         /,
-    ):
+    ) -> None:
         if not isinstance(numeric_revision, NumericRevision):
             raise TypeError("numeric_revision must be a NumericRevision.")
         self.values = values
@@ -274,7 +275,7 @@ class PlantStepContext(StrictModule):
         target_time: ArrayLike,
         step_index: ArrayLike,
         /,
-    ):
+    ) -> None:
         source = jnp.asarray(source_time)
         target = jnp.asarray(target_time)
         index = jnp.asarray(step_index, dtype=jnp.int32)
@@ -350,7 +351,7 @@ class PlantCheckpoint(StrictModule):
         state_schema_id: str,
         execution_signature_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(state, PlantRuntimeState):
             raise TypeError("PlantCheckpoint state must be a PlantRuntimeState.")
         self.state = state
@@ -1051,7 +1052,7 @@ class ArrayDiscreteSystemPlant(AbstractDiscretePlant):
         require_finite_state: bool = True,
         require_finite_controls: bool = True,
         require_finite_parameters: bool = True,
-    ):
+    ) -> None:
         if not isinstance(system, DiscreteSystem):
             raise TypeError("system must be a DiscreteSystem.")
         if not callable(initializer):
@@ -1185,7 +1186,13 @@ class ArrayDiscreteSystemPlant(AbstractDiscretePlant):
 
             if self.control_schema is None:
 
-                def evaluate_one(source_time, target_time, index, state, args_):
+                def evaluate_one(
+                    source_time: Array,
+                    target_time: Array,
+                    index: Array,
+                    state: Array,
+                    args_: PyTree[Any],
+                ) -> DiscreteTransitionResult:
                     return self.system.evaluate_result(
                         DiscreteStepContext(source_time, target_time, index),
                         state,
@@ -1215,7 +1222,14 @@ class ArrayDiscreteSystemPlant(AbstractDiscretePlant):
                     else commands
                 )
 
-                def evaluate_one(source_time, target_time, index, state, command, args_):
+                def evaluate_one(
+                    source_time: Array,
+                    target_time: Array,
+                    index: Array,
+                    state: Array,
+                    command: Array,
+                    args_: PyTree[Any],
+                ) -> DiscreteTransitionResult:
                     return self.system.evaluate_result(
                         DiscreteStepContext(source_time, target_time, index),
                         state,

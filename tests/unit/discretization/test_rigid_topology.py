@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -22,7 +25,7 @@ from phydrax.discretization.particle._rigid_topology import (
 )
 
 
-def _bodies(*, active_mask=(True, True, True)):
+def _bodies(*, active_mask: Any = (True, True, True)) -> Any:
     count = len(active_mask)
     identifiers = jnp.arange(100, 100 + count, dtype=jnp.int64)
     particles = ParticleSetPlan(
@@ -53,7 +56,9 @@ def _bodies(*, active_mask=(True, True, True)):
     return identifiers, bodies, reference
 
 
-def _two_joint_topology(*, event_capacity=8, initial_active=(True, True), plan_id=None):
+def _two_joint_topology(
+    *, event_capacity: Any = 8, initial_active: Any = (True, True), plan_id: Any = None
+) -> Any:
     identifiers, bodies, reference = _bodies()
     graph = RigidJointGraphPlan(
         fixed=FixedJointSetPlan(
@@ -80,14 +85,14 @@ def _two_joint_topology(*, event_capacity=8, initial_active=(True, True), plan_i
     return plan.prepare(bodies, graph)
 
 
-def _no_transactions(prepared, state):
+def _no_transactions(prepared: Any, state: Any) -> Any:
     return prepared.proposal(
         jnp.zeros((prepared.plan.transaction_capacity,), dtype="bool"),
         state.replay_digest,
     )
 
 
-def test_break_is_one_time_irreversible_and_dissipation_is_monotone():
+def test_break_is_one_time_irreversible_and_dissipation_is_monotone() -> None:
     law = BreakableRigidJointLawPlan(
         jnp.asarray([7]),
         jnp.asarray([1.0]),
@@ -128,7 +133,7 @@ def test_break_is_one_time_irreversible_and_dissipation_is_monotone():
     assert repeated.accepted_state.next_event_id == 1
 
 
-def test_unload_arms_high_initial_load_and_reload_crossing_breaks():
+def test_unload_arms_high_initial_load_and_reload_crossing_breaks() -> None:
     law = BreakableRigidJointLawPlan(
         jnp.asarray([8]),
         1.0,
@@ -162,7 +167,7 @@ def test_unload_arms_high_initial_load_and_reload_crossing_breaks():
     assert reloaded.accepted_state.damage.tolist() == [1.0]
 
 
-def test_simultaneous_breaks_are_journaled_in_stable_id_order():
+def test_simultaneous_breaks_are_journaled_in_stable_id_order() -> None:
     prepared = _two_joint_topology()
     state = prepared.initialize_state()
     result = apply_rigid_topology_transactions(
@@ -189,7 +194,7 @@ def test_simultaneous_breaks_are_journaled_in_stable_id_order():
     assert result.accepted_state.replay_digest != state.replay_digest
 
 
-def test_event_capacity_overflow_rolls_back_entire_composite():
+def test_event_capacity_overflow_rolls_back_entire_composite() -> None:
     prepared = _two_joint_topology(event_capacity=1)
     state = prepared.initialize_state()
     result = apply_rigid_topology_transactions(
@@ -213,7 +218,7 @@ def test_event_capacity_overflow_rolls_back_entire_composite():
     assert not jnp.any(result.multiplier_reset_joint_mask)
 
 
-def test_inactive_dual_gauge_and_multiplier_reset_follow_foundation_layout():
+def test_inactive_dual_gauge_and_multiplier_reset_follow_foundation_layout() -> None:
     prepared = _two_joint_topology()
     state = prepared.initialize_state()
     result = apply_rigid_topology_transactions(
@@ -237,7 +242,7 @@ def test_inactive_dual_gauge_and_multiplier_reset_follow_foundation_layout():
     assert result.dual_gauge.finite_evidence
 
 
-def test_predeclared_joint_activation_and_body_successor_transaction():
+def test_predeclared_joint_activation_and_body_successor_transaction() -> None:
     prepared = _two_joint_topology(initial_active=(False, True))
     activation_plan = RigidTopologyPlan(
         prepared.plan.breakable_joints,
@@ -297,7 +302,7 @@ def test_predeclared_joint_activation_and_body_successor_transaction():
     assert body_result.accepted_state.contact_cache_epoch == 1
 
 
-def test_prepared_identity_and_replay_digest_are_enforced():
+def test_prepared_identity_and_replay_digest_are_enforced() -> None:
     prepared = _two_joint_topology()
     alternate = _two_joint_topology(plan_id="different-topology")
     state = prepared.initialize_state()
@@ -334,14 +339,14 @@ def test_prepared_identity_and_replay_digest_are_enforced():
     )
 
 
-def test_jit_scan_preserves_all_fixed_capacities():
+def test_jit_scan_preserves_all_fixed_capacities() -> None:
     prepared = _two_joint_topology(event_capacity=4)
     initial = prepared.initialize_state()
     loading = jnp.asarray([[2.5, 0.0], [3.0, 0.0], [4.0, 0.0]])
     derivative = jnp.ones_like(loading)
 
-    def run(state):
-        def step(carry, inputs):
+    def run(state: Any) -> Any:
+        def step(carry: Any, inputs: Any) -> Any:
             load, rate, index = inputs
             transition = apply_rigid_topology_transactions(
                 prepared,
@@ -373,7 +378,7 @@ def test_jit_scan_preserves_all_fixed_capacities():
     assert jnp.sum(final.journal.valid) == 1
 
 
-def test_invalid_derivative_margins_and_runtime_derivatives_are_rejected():
+def test_invalid_derivative_margins_and_runtime_derivatives_are_rejected() -> None:
     with pytest.raises(ValueError, match="derivative margins"):
         BreakableRigidJointLawPlan(
             jnp.asarray([1]), 1.0, 2.0, 1.0, minimum_loading_rate=0.0

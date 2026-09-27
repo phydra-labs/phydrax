@@ -5,17 +5,19 @@
 from __future__ import annotations
 
 from operator import index
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._blades import CliffordBladeLayout
 from ._reports import CliffordProductEvidence
 from ._resources import CliffordResourceEvidence
@@ -116,20 +118,14 @@ class CliffordProductPlan(StrictModule, NonTrainableState):
         kind: CliffordProductKind = "geometric",
         output_layout: CliffordBladeLayout | None = None,
         backend: Literal["auto", "dense", "sparse"] = "auto",
-    ):
+    ) -> None:
         if not isinstance(algebra, CliffordAlgebraSpec):
             raise TypeError("algebra must be a CliffordAlgebraSpec.")
         for layout in (left_layout, right_layout):
             if not isinstance(layout, CliffordBladeLayout):
                 raise TypeError("Clifford product layouts must be CliffordBladeLayout.")
             algebra.require_compatible(layout.algebra)
-        if kind not in (
-            "geometric",
-            "exterior",
-            "left_contraction",
-            "right_contraction",
-        ):
-            raise ValueError("Unsupported Clifford product kind.")
+        kind = parse(kind, CliffordProductKind, "kind")
         if backend not in ("auto", "dense", "sparse"):
             raise ValueError("backend must be 'auto', 'dense', or 'sparse'.")
 
@@ -322,7 +318,7 @@ def prepare_product(
     left_layout: CliffordBladeLayout,
     right_layout: CliffordBladeLayout,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> CliffordProductPlan:
     """Prepare one exact fixed-layout Clifford product."""
     return CliffordProductPlan(algebra, left_layout, right_layout, **kwargs)

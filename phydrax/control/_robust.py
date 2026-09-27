@@ -12,7 +12,8 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.linalg as scipy_linalg
 import scipy.stats as scipy_stats
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from ._lqr import discrete_lqr
@@ -88,7 +89,8 @@ def hinfinity_state_feedback(
         raise ValueError("gamma must be finite and positive.")
     combined = np.concatenate((b, w), axis=1)
     game_metric = scipy_linalg.block_diag(r, -(gamma_**2) * np.eye(w.shape[1]))
-    riccati = scipy_linalg.solve_continuous_are(a, combined, q, game_metric)
+    # ty resolves float64 arrays to scipy-stubs' deprecated low-precision overload.
+    riccati = scipy_linalg.solve_continuous_are(a, combined, q, game_metric)  # ty: ignore[deprecated]
     gain = np.linalg.solve(r, b.T @ riccati)
     closed = a - b @ gain
     eigenvalues = np.linalg.eigvals(closed)

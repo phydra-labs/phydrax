@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -31,7 +32,7 @@ class SolidThermalEnergyState(StrictModule):
         step_index: ArrayLike,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         energy = jnp.asarray(sensible_energy)
         success = jnp.asarray(successful, dtype=jnp.bool_)
         step = jnp.asarray(step_index)
@@ -112,7 +113,7 @@ class ConjugateThermalPlan(StrictModule, NonTrainableState):
         *,
         contact_resistance: ArrayLike = 0.0,
         model_label: str = "passive-sensible-energy-conjugate-thermal",
-    ):
+    ) -> None:
         if not isinstance(fluid, ThermalLatticeBoltzmannPlan):
             raise TypeError("fluid must be a ThermalLatticeBoltzmannPlan.")
         capacity = np.asarray(solid_volumetric_heat_capacity, dtype=np.float64)
@@ -244,7 +245,7 @@ class PreparedConjugateThermalPlan(StrictModule, NonTrainableState):
         interface_measure: Array,
         geometry_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, ConjugateThermalPlan):
             raise TypeError("plan must be ConjugateThermalPlan.")
         conductance_ = jnp.asarray(conductance)

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -12,7 +15,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _batch(*, mask=None):
+def _batch(*, mask: Any = None) -> Any:
     weights = jnp.asarray([0.5, 0.5])
     return phx.integration.SeparableIntegrationBatch(
         {},
@@ -24,7 +27,7 @@ def _batch(*, mask=None):
     )
 
 
-def _field(x_values, y_values):
+def _field(x_values: Any, y_values: Any) -> Any:
     x = phx.integration.AxisFactor(
         "x",
         jnp.asarray(x_values).reshape((2, 1, 2)),
@@ -43,7 +46,7 @@ def _field(x_values, y_values):
     )
 
 
-def test_factorized_form_matches_dense_contraction_without_full_grid():
+def test_factorized_form_matches_dense_contraction_without_full_grid() -> None:
     field = _field(
         [[0.0, 1.0], [1.0, 1.0]],
         [[1.0, 0.0], [1.0, 1.0]],
@@ -67,7 +70,7 @@ def test_factorized_form_matches_dense_contraction_without_full_grid():
     assert jnp.allclose(evaluation.value, expected, atol=2e-12)
 
 
-def test_factorized_variational_eigenspace_assembles_gradient_energy():
+def test_factorized_variational_eigenspace_assembles_gradient_energy() -> None:
     field = _field(
         [[0.0, 1.0], [1.0, 1.0]],
         [[1.0, 0.0], [1.0, 1.0]],
@@ -103,7 +106,7 @@ def test_factorized_variational_eigenspace_assembles_gradient_energy():
     assert jnp.allclose(result.eigenvalues, jnp.asarray([4.0 / 3.0, 4.0]), atol=2e-12)
 
 
-def test_separable_mlp_factor_and_partial_paths_match_dense_evaluation():
+def test_separable_mlp_factor_and_partial_paths_match_dense_evaluation() -> None:
     model = phx.nn.models.SeparableMLP(
         in_size=2,
         out_size=2,
@@ -130,7 +133,7 @@ def test_separable_mlp_factor_and_partial_paths_match_dense_evaluation():
     assert jnp.allclose(derivative.contract().data, dense_derivative, atol=2e-11)
 
 
-def test_factorized_assembly_rejects_coupled_masks():
+def test_factorized_assembly_rejects_coupled_masks() -> None:
     field = _field(
         [[0.0, 1.0], [1.0, 1.0]],
         [[1.0, 0.0], [1.0, 1.0]],

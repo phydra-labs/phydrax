@@ -9,7 +9,8 @@ from dataclasses import dataclass
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._external_runtime import NativeWorkerCall, NativeWorkerIdentity
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -84,7 +85,7 @@ class TiogaOptions(StrictModule, NonTrainableState):
         fringe_layers: int = 1,
         exclusion_layers: int = 3,
         tolerance: float = 1e-9,
-    ):
+    ) -> None:
         for name, value, minimum in (
             ("ranks", ranks, 1),
             ("fringe_layers", fringe_layers, 1),
@@ -147,7 +148,9 @@ class TiogaPartBlanking(StrictModule, NonTrainableState):
     cell_iblank: Array
     report_id: str = eqx.field(static=True)
 
-    def __init__(self, part: MeshPart, node_iblank: ArrayLike, cell_iblank: ArrayLike, /):
+    def __init__(
+        self, part: MeshPart, node_iblank: ArrayLike, cell_iblank: ArrayLike, /
+    ) -> None:
         if not isinstance(part, MeshPart) or not isinstance(
             part.carrier, CellMeshingResult
         ):
@@ -197,7 +200,7 @@ class TiogaDonorEvidence(StrictModule, NonTrainableState):
         donor_cell_ids: ArrayLike,
         raw_weights: ArrayLike,
         /,
-    ):
+    ) -> None:
         cells, weights = (
             np.asarray(donor_cell_ids),
             np.asarray(raw_weights, dtype=np.float64),
@@ -252,7 +255,7 @@ class TiogaRegistration(StrictModule, NonTrainableState):
         wall_node_ids: tuple[ArrayLike, ...],
         overset_node_ids: tuple[ArrayLike, ...],
         /,
-    ):
+    ) -> None:
         if not all(
             isinstance(value, str) and value for value in (session_id, identity_id)
         ):
@@ -315,7 +318,7 @@ class TiogaAssemblyResult(StrictModule, NonTrainableState):
         runtime: MeshingRuntimeInfo,
         provenance: SemanticProvenance,
         /,
-    ):
+    ) -> None:
         if {item.part_id for item in blanking} != {
             part.part_id for part in assembly.parts
         } or len(blanking) != len(assembly.parts):
@@ -369,6 +372,7 @@ def _conversion(message: str, /) -> MeshingFailure:
 
 
 def _tables(part: MeshPart, /) -> _PartTables:
+    # ty: ignore[unresolved-attribute]
     mesh = part.carrier.mesh
     cell_ids = np.concatenate(
         [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
@@ -497,6 +501,7 @@ def _registration_arrays(
     blocks = [
         (index, block)
         for index, part in enumerate(assembly.parts)
+        # ty: ignore[unresolved-attribute]
         for block in part.carrier.mesh.blocks
     ]
     wall_offsets, wall_nodes = _boundary_arrays(tables, walls)
@@ -524,7 +529,9 @@ def _registration_arrays(
     }
 
 
-def _require_input_bytes(arrays: Mapping[str, np.ndarray], limits: MeshingLimits, /):
+def _require_input_bytes(
+    arrays: Mapping[str, np.ndarray], limits: MeshingLimits, /
+) -> None:
     if sum(value.nbytes for value in arrays.values()) > limits.maximum_data_bytes:
         raise MeshingFailure(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
@@ -820,6 +827,7 @@ def _moved_part(part: MeshPart, coordinates: ArrayLike, /) -> MeshPart:
     if points.dtype.kind not in "iuf":
         raise TypeError("TIOGA motion coordinates must be real arrays.")
     points = points.astype(np.float64)
+    # ty: ignore[unresolved-attribute]
     current = np.asarray(carrier.mesh.coordinates, dtype=np.float64)
     if points.shape != current.shape or not np.all(np.isfinite(points)):
         raise ValueError(
@@ -827,16 +835,19 @@ def _moved_part(part: MeshPart, coordinates: ArrayLike, /) -> MeshPart:
         )
     if np.array_equal(points, current):
         return part
+    # ty: ignore[unresolved-attribute]
     if carrier.boundary is not None or carrier.associations:
         raise MeshingFailure(
             MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
             f"TIOGA motion cannot carry the geometry-bound boundary or associations of {part.name!r}.",
         )
+    # ty: ignore[unresolved-attribute]
     mesh = carrier.mesh.with_coordinates(
         points,
         numeric_version=canonical_fingerprint(
             {
                 "kind": "tioga-motion",
+                # ty: ignore[unresolved-attribute]
                 "mesh": carrier.mesh.mesh_id,
                 "coordinates": array_tree_fingerprint(points),
             }
@@ -847,9 +858,13 @@ def _moved_part(part: MeshPart, coordinates: ArrayLike, /) -> MeshPart:
         certify_cell_mesh(
             mesh,
             part.coordinate_contract,
+            # ty: ignore[unresolved-attribute]
             patches=carrier.patches,
+            # ty: ignore[unresolved-attribute]
             zones=carrier.zones,
+            # ty: ignore[unresolved-attribute]
             labels=carrier.labels,
+            # ty: ignore[unresolved-attribute]
             attributes=carrier.attributes,
         ),
     )
@@ -863,7 +878,7 @@ class TiogaProvider:
     place, so only a result produced by the live session can be moved.
     """
 
-    def __init__(self, options: TiogaOptions | None = None):
+    def __init__(self, options: TiogaOptions | None = None) -> None:
         self.options = TiogaOptions() if options is None else options
         if not isinstance(self.options, TiogaOptions):
             raise TypeError("options must be TiogaOptions.")

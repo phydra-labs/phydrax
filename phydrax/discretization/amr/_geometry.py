@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -126,6 +127,7 @@ def _volume(
             / 6.0
         )
 
+    # ty: ignore[invalid-return-type]
     return sum(
         (
             tetra(p000, p100, p010, p001),
@@ -244,6 +246,7 @@ def _swept_volume_rate(corners: Array, velocities: Array, dimension: int, /) -> 
             (p11, p01, v11, v01),
             (p01, p00, v01, v00),
         )
+        # ty: ignore[invalid-return-type]
         return sum(
             jnp.sum(
                 0.5
@@ -346,7 +349,7 @@ class VariablePatchGeometryPlan(StrictModule, NonTrainableState):
         gcl_tolerance: float = 1.0e-10,
         motion_policy: FiniteElementMeshMotionPolicy | None = None,
         monitor: TimeMeshMonitor | None = None,
-    ):
+    ) -> None:
         if not isinstance(topology, VariablePatchHierarchyTopology):
             raise TypeError("Patch geometry requires VariablePatchHierarchyTopology.")
         if not callable(coordinate_map):
@@ -520,7 +523,9 @@ class VariablePatchGeometryPlan(StrictModule, NonTrainableState):
         """Level-zero grid positions: mapped boundary plus the interior route."""
 
         extension = self.interior_motion
+        # ty: ignore[unresolved-attribute]
         reference = extension.reference_coordinates
+        # ty: ignore[unresolved-attribute]
         boundary_reference = reference[extension.boundary_indices]
         boundary = jax.vmap(
             lambda point: jnp.asarray(self.coordinate_map(point, time, args))
@@ -530,8 +535,10 @@ class VariablePatchGeometryPlan(StrictModule, NonTrainableState):
         monitor = (
             None
             if self.monitor is None
+            # ty: ignore[call-non-callable]
             else lambda points: self.monitor(time, points, args)
         )
+        # ty: ignore[invalid-argument-type, unresolved-attribute]
         routed = extension.extend(boundary - boundary_reference, monitor=monitor)
         return reference + routed.displacement, routed.successful
 

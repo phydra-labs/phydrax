@@ -9,7 +9,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ._context import AstrodynamicsContext
@@ -36,7 +36,7 @@ class Schwarzschild1PNForce(AbstractAstrodynamicsForce):
         /,
         *,
         speed_of_light: ArrayLike = _SPEED_OF_LIGHT,
-    ):
+    ) -> None:
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         mu_host = np.asarray(mu)
@@ -63,7 +63,9 @@ class Schwarzschild1PNForce(AbstractAstrodynamicsForce):
             }
         )
 
-    def evaluate(self, time, state, args: Any = None, /):
+    def evaluate(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None, /
+    ) -> AstrodynamicsForceEvaluation:
         del time, args
         packed = jnp.asarray(state)
         if packed.shape != (6,):
@@ -111,13 +113,13 @@ class LenseThirringRelativity(AbstractAstrodynamicsForce):
 
     def __init__(
         self,
-        spin_angular_momentum,
-        context,
+        spin_angular_momentum: ArrayLike,
+        context: AstrodynamicsContext,
         /,
         *,
-        gravitational_constant=_GRAVITATIONAL_CONSTANT,
-        speed_of_light=_SPEED_OF_LIGHT,
-    ):
+        gravitational_constant: ArrayLike = _GRAVITATIONAL_CONSTANT,
+        speed_of_light: ArrayLike = _SPEED_OF_LIGHT,
+    ) -> None:
         spin = jnp.asarray(spin_angular_momentum)
         if spin.shape != (3,):
             raise ValueError("Spin angular momentum must have shape (3,).")
@@ -129,7 +131,9 @@ class LenseThirringRelativity(AbstractAstrodynamicsForce):
             {"kind": "lense-thirring", "context": context.context_id}
         )
 
-    def evaluate(self, time, state, args=None, /):
+    def evaluate(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None, /
+    ) -> AstrodynamicsForceEvaluation:
         del time, args
         packed = jnp.asarray(state)
         position, velocity = packed[:3], packed[3:]

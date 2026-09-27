@@ -9,7 +9,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._spaces import _coordinate_pairing_matrix
 from ._problems import Eigenproblem, EigenproblemLike
@@ -100,7 +100,9 @@ def perturbation_in_eigenbasis(
 ) -> tuple[Array, Array]:
     """Return V⁻¹(dT)V and dG for T = B⁻¹A and G = R B."""
 
-    def operator_and_metric_images(current_problem):
+    def operator_and_metric_images(
+        current_problem: EigenproblemLike,
+    ) -> tuple[Array, Array, Array]:
         operator_images = _operator_coordinate_columns(
             current_problem.operator,
             eigenvectors,
@@ -203,7 +205,26 @@ def attach_projector_derivative(
 
 
 @attach_projector_derivative.def_jvp
-def _attach_projector_derivative_jvp(primals, tangents):
+def _attach_projector_derivative_jvp(
+    primals: tuple[
+        EigenproblemLike,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+    ],
+    tangents: tuple[
+        Any,
+        Array | None,
+        Array | None,
+        Array | None,
+        Array | None,
+        Array | None,
+        Array | None,
+    ],
+) -> tuple[Array, Array]:
     (
         problem,
         projector,
@@ -258,7 +279,30 @@ def attach_density_derivative(
 
 
 @attach_density_derivative.def_jvp
-def _attach_density_derivative_jvp(primals, tangents):
+def _attach_density_derivative_jvp(
+    primals: tuple[
+        EigenproblemLike,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+    ],
+    tangents: tuple[
+        Any,
+        Array | None,
+        Array | None,
+        Array | None,
+        Array | None,
+        Array | None,
+        Array | None,
+        Array | None,
+        Array | None,
+    ],
+) -> tuple[Array, Array]:
     (
         problem,
         density,
@@ -318,7 +362,7 @@ def _operator_coordinate_columns(operator: Any, block: Array, /) -> Array:
         images = operator.mv(structured)
         return jnp.asarray(images).reshape(operator.batch_shape + (space.size, width))
 
-    def apply(column):
+    def apply(column: Array) -> Array:
         return space.flatten(operator.mv(space.unflatten(column)))
 
     return jax.vmap(apply, in_axes=1, out_axes=1)(block)

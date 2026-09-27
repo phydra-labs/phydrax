@@ -6,12 +6,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -34,18 +36,18 @@ class VibrationalConfigurationResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        vscf_energy,
-        vscf_modal_coefficients,
-        vscf_variance,
-        vscf_iterations,
-        vci_energies,
-        vci_coefficients,
-        vci_residuals,
-        basis_quanta,
-        successful,
-        plan_id,
+        vscf_energy: ArrayLike,
+        vscf_modal_coefficients: Iterable[ArrayLike],
+        vscf_variance: ArrayLike,
+        vscf_iterations: ArrayLike,
+        vci_energies: ArrayLike,
+        vci_coefficients: ArrayLike,
+        vci_residuals: ArrayLike,
+        basis_quanta: ArrayLike,
+        successful: ArrayLike,
+        plan_id: str,
         /,
-    ):
+    ) -> None:
         energy = jnp.asarray(vci_energies)
         coefficients = jnp.asarray(vci_coefficients, dtype=energy.dtype)
         residuals = jnp.asarray(vci_residuals, dtype=energy.dtype)
@@ -119,7 +121,7 @@ class VibrationalConfigurationPlan(StrictModule, NonTrainableState):
         vscf_tolerance: float = 1.0e-10,
         vscf_maximum_sweeps: int = 100,
         residual_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(force_field, AnharmonicForceFieldResult):
             raise TypeError("force_field must be AnharmonicForceFieldResult.")
         frequency = jnp.asarray(frequencies)
@@ -170,7 +172,7 @@ class VibrationalConfigurationPlan(StrictModule, NonTrainableState):
         )
 
     @staticmethod
-    def _product_vector(modals):
+    def _product_vector(modals: Sequence[np.ndarray]) -> np.ndarray:
         result = np.asarray([1.0])
         for modal in modals:
             result = np.kron(result, modal)
@@ -251,16 +253,16 @@ class HinderedRotorResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        energies,
-        wavefunctions,
-        grid,
-        partition_function,
-        free_energy,
-        orthonormality_residual,
-        successful,
-        plan_id,
+        energies: ArrayLike,
+        wavefunctions: ArrayLike,
+        grid: ArrayLike,
+        partition_function: ArrayLike,
+        free_energy: ArrayLike,
+        orthonormality_residual: ArrayLike,
+        successful: ArrayLike,
+        plan_id: str,
         /,
-    ):
+    ) -> None:
         energies_ = jnp.asarray(energies)
         vectors_input = jnp.asarray(wavefunctions)
         vectors = vectors_input.astype(
@@ -316,7 +318,7 @@ class HinderedRotorPlan(StrictModule, NonTrainableState):
         temperature: float = 298.15,
         boltzmann_constant: float,
         root_count: int = 16,
-    ):
+    ) -> None:
         potential_ = jnp.asarray(potential)
         rotational = float(rotational_constant)
         temperature_ = float(temperature)
@@ -421,7 +423,7 @@ class ConformationalEnsemblePlan(StrictModule, NonTrainableState):
         degeneracies: ArrayLike | None = None,
         temperature: float = 298.15,
         boltzmann_constant: float,
-    ):
+    ) -> None:
         energy = jnp.asarray(energies)
         degeneracy = (
             jnp.ones(energy.shape, dtype=energy.dtype)

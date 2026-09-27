@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -33,7 +36,9 @@ from phydrax.equations._mac_dynamic_les import (
 )
 
 
-def _grid(*, counts=(5, 5, 5), axis_specs=None, side_kind=None):
+def _grid(
+    *, counts: Any = (5, 5, 5), axis_specs: Any = None, side_kind: Any = None
+) -> Any:
     specs = (
         tuple(phx.discretization.UniformCellAxisSpec(n, periodic=True) for n in counts)
         if axis_specs is None
@@ -60,7 +65,7 @@ def _grid(*, counts=(5, 5, 5), axis_specs=None, side_kind=None):
     return discretization, operators, momentum
 
 
-def _filters(*, test_repeated="composed"):
+def _filters(*, test_repeated: Any = "composed") -> Any:
     resolved = ResolvedLESFilter(
         "periodic uniform MAC cell volumes",
         family="implicit-grid-volume",
@@ -85,16 +90,16 @@ def _filters(*, test_repeated="composed"):
 
 
 def _prepared(
-    discretization,
-    momentum,
+    discretization: Any,
+    momentum: Any,
     *,
-    averaging=None,
-    regularization=None,
-    backscatter=None,
-    ratio=(2.0, 2.0, 2.0),
-    discretization_id=None,
-    regime="incompressible-unit-density",
-):
+    averaging: Any = None,
+    regularization: Any = None,
+    backscatter: Any = None,
+    ratio: Any = (2.0, 2.0, 2.0),
+    discretization_id: Any = None,
+    regime: Any = "incompressible-unit-density",
+) -> Any:
     resolved_filter, test_filter = _filters()
     parameters = LESParameterProvenance(
         resolved_filter,
@@ -113,7 +118,7 @@ def _prepared(
     )
 
 
-def _velocity(discretization):
+def _velocity(discretization: Any) -> Any:
     keys = jax.random.split(jax.random.PRNGKey(23), 3)
     return tuple(
         jax.random.normal(key, layout.shape)
@@ -121,7 +126,7 @@ def _velocity(discretization):
     )
 
 
-def test_mac_test_filter_is_fixed_normalized_distinct_and_reports_support():
+def test_mac_test_filter_is_fixed_normalized_distinct_and_reports_support() -> None:
     discretization, _, momentum = _grid(counts=(6, 6, 6))
     prepared = _prepared(discretization, momentum)
     test_filter = prepared.test_filter
@@ -143,7 +148,7 @@ def test_mac_test_filter_is_fixed_normalized_distinct_and_reports_support():
     assert test_filter.boundary_support == "periodic-wrap-only"
 
 
-def test_mac_filter_commutes_with_periodic_uniform_cell_difference():
+def test_mac_filter_commutes_with_periodic_uniform_cell_difference() -> None:
     discretization, _, momentum = _grid(counts=(6, 6, 6))
     prepared = _prepared(discretization, momentum)
     values = jnp.sin(discretization.cell_centers[..., 0])
@@ -162,7 +167,7 @@ def test_mac_filter_commutes_with_periodic_uniform_cell_difference():
     )
 
 
-def test_mac_adapter_recovers_synthetic_coefficient_at_variational_cells():
+def test_mac_adapter_recovers_synthetic_coefficient_at_variational_cells() -> None:
     discretization, _, momentum = _grid()
     prepared = _prepared(discretization, momentum, backscatter=AllowSignedBackscatter())
     velocity = _velocity(discretization)
@@ -189,7 +194,7 @@ def test_mac_adapter_recovers_synthetic_coefficient_at_variational_cells():
     )
 
 
-def test_mac_dynamic_stage_realizes_stress_rate_transfer_and_energy_evidence():
+def test_mac_dynamic_stage_realizes_stress_rate_transfer_and_energy_evidence() -> None:
     discretization, operators, momentum = _grid()
     prepared = _prepared(
         discretization,
@@ -240,7 +245,7 @@ def test_mac_dynamic_stage_realizes_stress_rate_transfer_and_energy_evidence():
         ),
     ),
 )
-def test_mac_global_plane_and_local_routes(averaging, expected_shape):
+def test_mac_global_plane_and_local_routes(averaging: Any, expected_shape: Any) -> None:
     discretization, _, momentum = _grid()
     prepared = _prepared(discretization, momentum, averaging=averaging)
 
@@ -253,7 +258,7 @@ def test_mac_global_plane_and_local_routes(averaging, expected_shape):
     assert stage.accepted_update_mask.shape == ()
 
 
-def test_mac_history_mask_restart_and_no_hidden_commit():
+def test_mac_history_mask_restart_and_no_hidden_commit() -> None:
     discretization, _, momentum = _grid()
     prepared = _prepared(
         discretization,
@@ -300,7 +305,7 @@ def test_mac_history_mask_restart_and_no_hidden_commit():
     assert restarted.dynamic_result.evidence.rejected_update_count == accepted.size
 
 
-def test_mac_compiler_consumes_dynamic_stage_and_rate():
+def test_mac_compiler_consumes_dynamic_stage_and_rate() -> None:
     discretization, operators, momentum = _grid(counts=(4, 4, 4))
     adapter = _prepared(
         discretization,
@@ -335,15 +340,17 @@ def test_mac_compiler_consumes_dynamic_stage_and_rate():
         components.dynamic_les_stage.physical_rate[0],
         atol=0.0,
     )
+    # ty: ignore[unresolved-attribute]
     assert dynamics.dynamic_les.prepared_id == components.dynamic_les_stage.prepared_id
     assert restriction.sgs_supported
     assert restriction.combined > 0.0
     assert bool(diagnostics.dynamic_les_available)
+    # ty: ignore[unresolved-attribute]
     assert diagnostics.dynamic_les_id == dynamics.dynamic_les.prepared_id
     assert bool(diagnostics.dynamic_evidence_finite)
 
 
-def test_mac_dynamic_explicit_method_commits_only_successful_outer_step():
+def test_mac_dynamic_explicit_method_commits_only_successful_outer_step() -> None:
     discretization, operators, momentum = _grid(counts=(4, 4, 4))
     adapter = _prepared(
         discretization,
@@ -364,6 +371,7 @@ def test_mac_dynamic_explicit_method_commits_only_successful_outer_step():
     velocity = dynamics.project_state(_velocity(discretization))
     faces = dynamics.physical_state(0.0, velocity)
     boundary = dynamics.boundary_stage(0.0)
+    # ty: ignore[unresolved-attribute]
     continuation = dynamics.dynamic_les.initial_state(faces, boundary)
     state = MACDynamicLESProductionState(velocity, continuation)
     method = PreparedMACDynamicExplicitMethod(dynamics)
@@ -411,6 +419,7 @@ def test_mac_dynamic_explicit_method_commits_only_successful_outer_step():
         StructuredMACProductionPlan(
             method,
             dynamics,
+            # ty: ignore[invalid-argument-type]
             None,
             start_time=0.0,
             end_time=1.0e-6,
@@ -419,7 +428,7 @@ def test_mac_dynamic_explicit_method_commits_only_successful_outer_step():
         )
 
 
-def test_mac_compiler_refuses_signed_viscosity_dynamic_policy():
+def test_mac_compiler_refuses_signed_viscosity_dynamic_policy() -> None:
     discretization, operators, momentum = _grid(counts=(4, 4, 4))
     signed = _prepared(
         discretization,
@@ -438,7 +447,7 @@ def test_mac_compiler_refuses_signed_viscosity_dynamic_policy():
         )
 
 
-def test_mac_signed_and_clipped_backscatter_remain_explicit_policies():
+def test_mac_signed_and_clipped_backscatter_remain_explicit_policies() -> None:
     discretization, _, momentum = _grid()
     signed = _prepared(discretization, momentum, backscatter=AllowSignedBackscatter())
     clipped = _prepared(
@@ -474,7 +483,7 @@ def test_mac_signed_and_clipped_backscatter_remain_explicit_policies():
     assert clipped_result.evidence.backscatter_activity_count == 1
 
 
-def test_mac_dynamic_adapter_is_jittable_and_has_finite_jvp():
+def test_mac_dynamic_adapter_is_jittable_and_has_finite_jvp() -> None:
     discretization, _, momentum = _grid()
     prepared = _prepared(
         discretization,
@@ -499,7 +508,7 @@ def test_mac_dynamic_adapter_is_jittable_and_has_finite_jvp():
     assert jnp.isfinite(tangent)
 
 
-def test_mac_dynamic_prepare_refuses_nonuniform_wall_open_and_mismatched_routes():
+def test_mac_dynamic_prepare_refuses_nonuniform_wall_open_and_mismatched_routes() -> None:
     edges = jnp.asarray((0.0, 0.1, 0.35, 0.7, 1.0))
     nonuniform_specs = tuple(
         phx.discretization.NonuniformCellAxisSpec(edges, periodic=True) for _ in range(3)

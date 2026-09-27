@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -5,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _reaction_diffusion_problem():
+def _reaction_diffusion_problem() -> Any:
     x = phx.equations.PDECoordinate(
         "x",
         "space",
@@ -28,7 +30,7 @@ def _reaction_diffusion_problem():
     )
 
 
-def _space(count=24):
+def _space(count: Any = 24) -> Any:
     return phx.discretization.TensorSpectralPlan(
         (phx.discretization.FourierBasisPlan(count),),
         axis_names=("x",),
@@ -36,7 +38,7 @@ def _space(count=24):
     ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
 
 
-def test_spectral_compiler_requires_dealiasing_for_nonlinearity():
+def test_spectral_compiler_requires_dealiasing_for_nonlinearity() -> None:
     with pytest.raises(ValueError, match="requires an explicit dealiasing"):
         phx.equations.compile_semidiscrete_pde(
             _reaction_diffusion_problem(),
@@ -45,7 +47,7 @@ def test_spectral_compiler_requires_dealiasing_for_nonlinearity():
         )
 
 
-def test_spectral_compiler_matches_physical_reference_jit_and_gradient():
+def test_spectral_compiler_matches_physical_reference_jit_and_gradient() -> None:
     space = _space()
     method = phx.discretization.PseudospectralMethodPlan(
         dealiasing=phx.discretization.PaddingDealiasingPlan(2),
@@ -77,7 +79,7 @@ def test_spectral_compiler_matches_physical_reference_jit_and_gradient():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_spherical_heat_compiles_to_coefficient_resident_diagonal_dynamics():
+def test_spherical_heat_compiles_to_coefficient_resident_diagonal_dynamics() -> None:
     sphere_coordinate = phx.equations.PDECoordinate("sphere", "space", size=2)
     time = phx.equations.PDECoordinate("t", "time")
     field = phx.equations.PDEField("u", coordinates=("sphere", "t"))

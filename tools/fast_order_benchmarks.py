@@ -137,7 +137,7 @@ def _values(case: _Case, seed: int) -> jax.Array:
     return jnp.tan(jnp.pi * (uniform - 0.5))
 
 
-def _operation(case: _Case, configuration: _Configuration):
+def _operation(case: _Case, configuration: _Configuration) -> Any:
     if case.backend == "native-sinkhorn":
         solver = phx.transport.Sinkhorn(
             configuration.native_epsilon,
@@ -173,28 +173,29 @@ def _hard_output(case: _Case, values: jax.Array) -> jax.Array:
     )
 
 
-def _compile(function, *arguments):
+def _compile(function: Any, *arguments: Any) -> Any:
     compiled, elapsed = measure_host(
         lambda: jax.jit(function).lower(*arguments).compile()
     )
     return compiled, 1_000.0 * elapsed
 
 
-def _execute(compiled, *arguments):
+def _execute(compiled: Any, *arguments: Any) -> Any:
     output, elapsed = measure_synchronized(lambda: compiled(*arguments))
     return output, 1_000.0 * elapsed
 
 
-def _steady(compiled, arguments, *, warmups: int, repeats: int) -> float:
+def _steady(compiled: Any, arguments: Any, *, warmups: int, repeats: int) -> float:
     _, distribution = measure_repeated(
         lambda: compiled(*arguments),
         warmup=warmups,
         repeats=repeats,
     )
+    # ty: ignore[invalid-argument-type]
     return 1_000.0 * float(distribution.mean_seconds)
 
 
-def _memory(compiled) -> dict[str, int | str]:
+def _memory(compiled: Any) -> dict[str, int | str]:
     analysis = compiled.memory_analysis()
     if analysis is None:
         return {"status": "unavailable"}
@@ -232,7 +233,9 @@ def _accuracy(case: _Case, values: jax.Array, output: jax.Array) -> dict[str, An
     }
 
 
-def _equivariance(case: _Case, operation, values, output) -> dict[str, float]:
+def _equivariance(
+    case: _Case, operation: Any, values: Any, output: Any
+) -> dict[str, float]:
     transformed = operation(3.0 * values - 2.0)
     if case.operation == "sort":
         residual = transformed - (3.0 * output - 2.0)
@@ -302,7 +305,7 @@ def _record(
 
     coefficients = jnp.linspace(0.5, 1.5, case.size, dtype=values.dtype)
 
-    def objective(candidate):
+    def objective(candidate: Any) -> Any:
         return jnp.sum(coefficients * operation(candidate))
 
     reverse, reverse_compile_ms = _compile(jax.grad(objective), values)
@@ -315,7 +318,7 @@ def _record(
     )
     direction = jnp.cos(jnp.arange(case.size, dtype=values.dtype))
 
-    def jvp(candidate, tangent):
+    def jvp(candidate: Any, tangent: Any) -> Any:
         return jax.jvp(operation, (candidate,), (tangent,))[1]
 
     forward_mode, jvp_compile_ms = _compile(jvp, values, direction)

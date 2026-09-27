@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -17,7 +19,7 @@ from phydrax.applications.skeletal_muscle.motor_units import (
 from phydrax.dynamics import DiscreteStepContext
 
 
-def test_default_population_reproduces_published_endpoints():
+def test_default_population_reproduces_published_endpoints() -> None:
     parameters = potvin_fuglevand_2017_default_parameters()
     runtime = PotvinFuglevand2017Plan().prepare(parameters)
 
@@ -45,7 +47,7 @@ def test_default_population_reproduces_published_endpoints():
     np.testing.assert_allclose(runtime.rested_maximum_force(), 2215.9811474699964)
 
 
-def test_float32_population_preserves_requested_runtime_dtype():
+def test_float32_population_preserves_requested_runtime_dtype() -> None:
     runtime = PotvinFuglevand2017Plan(dtype=np.float32).prepare()
     candidate = runtime.candidate(runtime.initialize(), 20.125, 0.1)
 
@@ -55,7 +57,7 @@ def test_float32_population_preserves_requested_runtime_dtype():
     assert candidate.output.total_force.dtype == jnp.float32
 
 
-def test_recruitment_threshold_and_saturation_boundaries_are_exact():
+def test_recruitment_threshold_and_saturation_boundaries_are_exact() -> None:
     runtime = PotvinFuglevand2017Plan(
         central_adaptation=False, peripheral_fatigue=False
     ).prepare()
@@ -75,7 +77,7 @@ def test_recruitment_threshold_and_saturation_boundaries_are_exact():
     np.testing.assert_allclose(np.asarray(maximum.firing_rate_hz)[[0, -1]], [35.0, 25.0])
 
 
-def test_force_frequency_branches_are_continuous_at_point_four():
+def test_force_frequency_branches_are_continuous_at_point_four() -> None:
     parameters = PotvinFuglevand2017Parameters(
         jnp.asarray([1.0, 100.0]),
         jnp.asarray([1.0, 2.0]),
@@ -102,7 +104,9 @@ def test_force_frequency_branches_are_continuous_at_point_four():
     np.testing.assert_allclose(above.normalized_force[0], expected, atol=1.0e-8)
 
 
-def test_adaptation_uses_source_duration_and_tracks_time_since_first_recruitment():
+def test_adaptation_uses_source_duration_and_tracks_time_since_first_recruitment() -> (
+    None
+):
     runtime = PotvinFuglevand2017Plan(peripheral_fatigue=False).prepare()
     source = runtime.initialize()
     first = runtime.candidate(source, 20.0, 0.1)
@@ -121,7 +125,7 @@ def test_adaptation_uses_source_duration_and_tracks_time_since_first_recruitment
     np.testing.assert_allclose(inactive.recruitment_duration_s[~recruited], 0.0)
 
 
-def test_force_is_evaluated_before_peripheral_capacity_update():
+def test_force_is_evaluated_before_peripheral_capacity_update() -> None:
     no_fatigue = PotvinFuglevand2017Plan(
         central_adaptation=False, peripheral_fatigue=False
     ).prepare()
@@ -145,7 +149,7 @@ def test_force_is_evaluated_before_peripheral_capacity_update():
     )
 
 
-def test_fatigue_mechanism_selections_are_static_and_independent():
+def test_fatigue_mechanism_selections_are_static_and_independent() -> None:
     source = PotvinFuglevand2017Plan().prepare().initialize()
     neither = PotvinFuglevand2017Plan(
         central_adaptation=False, peripheral_fatigue=False
@@ -180,7 +184,9 @@ def test_fatigue_mechanism_selections_are_static_and_independent():
         (20.0, 0.11, PotvinFuglevand2017Status.INVALID_STEP),
     ],
 )
-def test_invalid_interval_inputs_roll_back(excitation, step_s, status):
+def test_invalid_interval_inputs_roll_back(
+    excitation: Any, step_s: Any, status: Any
+) -> None:
     runtime = PotvinFuglevand2017Plan().prepare()
     source = runtime.initialize()
     candidate = runtime.candidate(source, excitation, step_s)
@@ -196,7 +202,7 @@ def test_invalid_interval_inputs_roll_back(excitation, step_s, status):
     )
 
 
-def test_direct_evaluation_refuses_inputs_outside_the_model_domain():
+def test_direct_evaluation_refuses_inputs_outside_the_model_domain() -> None:
     runtime = PotvinFuglevand2017Plan().prepare()
     with pytest.raises(
         (ValueError, eqx.EquinoxRuntimeError),
@@ -205,7 +211,7 @@ def test_direct_evaluation_refuses_inputs_outside_the_model_domain():
         jax.block_until_ready(runtime.evaluate(runtime.initialize(), -1.0).total_force)
 
 
-def test_invalid_state_and_trained_parameters_roll_back():
+def test_invalid_state_and_trained_parameters_roll_back() -> None:
     runtime = PotvinFuglevand2017Plan().prepare()
     source = runtime.initialize()
     invalid_state = PotvinFuglevand2017State(
@@ -233,7 +239,7 @@ def test_invalid_state_and_trained_parameters_roll_back():
     )
 
 
-def test_array_dynamics_view_matches_typed_candidate():
+def test_array_dynamics_view_matches_typed_candidate() -> None:
     runtime = PotvinFuglevand2017Plan().prepare()
     source = runtime.initialize()
     packed = runtime.pack_state(source)
@@ -254,7 +260,7 @@ def test_array_dynamics_view_matches_typed_candidate():
     assert int(result.status) == int(typed.evidence.status)
 
 
-def test_jit_vmap_pathwise_gradient_and_parameter_partitioning():
+def test_jit_vmap_pathwise_gradient_and_parameter_partitioning() -> None:
     runtime = PotvinFuglevand2017Plan().prepare()
     state = runtime.initialize()
     compiled = eqx.filter_jit(runtime.candidate)(state, 20.125, 0.1)

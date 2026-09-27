@@ -11,7 +11,8 @@ from enum import StrEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._physical import SpatialCoordinateContract
@@ -88,7 +89,7 @@ class ConservativeVoxelCellTransfer(StrictModule):
         source_id: str,
         target_id: str,
         measure_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         voxel = np.asarray(voxel_indices)
         cell = np.asarray(cell_indices)
         overlap = np.asarray(overlap_measures, dtype=np.float64)

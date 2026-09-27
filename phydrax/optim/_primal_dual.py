@@ -5,14 +5,16 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Callable
 from math import isfinite
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from .._linear_refresh import prepare_refresh_state
 from .._tree_math import (
@@ -23,7 +25,9 @@ from ..linalg import (
     DifferentiationPolicy,
     FunctionLinearOperator,
     LinearSolvePolicy,
+    LinearSolveResult,
     LinearSolveStatus,
+    LinearSystem,
     MINRES,
     OperatorProperties,
     saddle_point_system,
@@ -45,9 +49,16 @@ from ._nonlinear_constraints import (
     _canonical_constraints,
     _constraint_layout,
     _constraint_violation,
+    _ConstraintLayout,
     _max_abs,
     _max_positive,
 )
+
+
+_Unravel = Callable[[Array], PyTree[Any]]
+_ConstraintFunction = Callable[[Array], tuple[Array, Array]]
+_RestorationCarry = tuple[Array, Array, Array, Array, Array, Array, Array]
+_LineSearchCarry = tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array]
 
 
 def _default_kkt_policy(*, tolerance: float, maximum_steps: int) -> LinearSolvePolicy:
@@ -136,7 +147,7 @@ class _AbstractPrimalDualInteriorMethod(AbstractMinimizationMethod):
         line_search_contraction: float = 0.5,
         maximum_line_search_steps: int = 20,
         maximum_restoration_steps: int = 20,
-    ):
+    ) -> None:
         tolerance = float(linear_tolerance)
         linear_steps = int(linear_maximum_steps)
         policy = (
@@ -239,6 +250,9 @@ class _AbstractPrimalDualInteriorMethod(AbstractMinimizationMethod):
 class PrimalDualNewtonKrylov(_AbstractPrimalDualInteriorMethod):
     """Centered matrix-free primal-dual interior Newton method."""
 
+    if TYPE_CHECKING:
+        __init__ = _AbstractPrimalDualInteriorMethod.__init__
+
     @property
     def method_id(self) -> str:
         return "primal-dual-newton-krylov"
@@ -264,7 +278,7 @@ class PrimalDualPredictorCorrector(_AbstractPrimalDualInteriorMethod):
         centering_power: float = 3.0,
         require_feasible_start: bool = True,
         **kwargs: Any,
-    ):
+    ) -> None:
         super().__init__(**kwargs)
         power = float(centering_power)
         if not isfinite(power) or power <= 0.0:
@@ -285,13 +299,20 @@ class PrimalDualPredictorCorrector(_AbstractPrimalDualInteriorMethod):
         return self.require_feasible_start
 
 
-def _point_data(problem, layout, unravel, flat_parameters, args, multipliers):
+def _point_data(
+    problem: MinimizationProblem,
+    layout: _ConstraintLayout,
+    unravel: _Unravel,
+    flat_parameters: Array,
+    args: Any,
+    multipliers: tuple[Array, Array],
+) -> tuple[Array, Array, Array, Array, Array, _ConstraintFunction]:
     equality_multipliers, inequality_multipliers = multipliers
 
-    def objective(candidate):
+    def objective(candidate: Array) -> Array:
         return problem.value(unravel(candidate), args)[0]
 
-    def constraints(candidate):
+    def constraints(candidate: Array) -> tuple[Array, Array]:
         return _canonical_constraints(problem, layout, unravel(candidate), args)
 
     value, gradient = jax.value_and_grad(objective)(flat_parameters)
@@ -304,13 +325,13 @@ def _point_data(problem, layout, unravel, flat_parameters, args, multipliers):
 
 def _restore_feasibility(
     method: _AbstractPrimalDualInteriorMethod,
-    constraints,
+    constraints: _ConstraintFunction,
     flat_parameters: Array,
     equality: Array,
     inequality: Array,
     /,
-):
-    def feasibility(candidate):
+) -> tuple[Array, Array, Array, Array, Array, Array]:
+    def feasibility(candidate: Array) -> Array:
         candidate_equality, candidate_inequality = constraints(candidate)
         positive_inequality = jnp.maximum(candidate_inequality, 0.0)
         return 0.5 * (
@@ -328,11 +349,11 @@ def _restore_feasibility(
         & (directional < 0.0)
     )
 
-    def condition(carry):
+    def condition(carry: _RestorationCarry) -> Array:
         step, _, accepted, *_ = carry
         return (step < method.maximum_restoration_steps) & (~accepted) & usable
 
-    def body(carry):
+    def body(carry: _RestorationCarry) -> _RestorationCarry:
         (
             step,
             rate,
@@ -427,21 +448,21 @@ class _PrimalDualState(NamedTuple):
 def _build_kkt_system(
     method: _AbstractPrimalDualInteriorMethod,
     problem: MinimizationProblem,
-    layout,
-    unravel,
-    args,
+    layout: _ConstraintLayout,
+    unravel: _Unravel,
+    args: Any,
     flat_parameters: Array,
     equality_multipliers: Array,
     equality: Array,
     inequality_multipliers: Array,
     slacks: Array,
-    constraints,
+    constraints: _ConstraintFunction,
     /,
-):
+) -> LinearSystem:
     inverse_slack = 1.0 / jnp.maximum(slacks, method.minimum_slack)
     diagonal = inequality_multipliers * inverse_slack
 
-    def lagrangian(candidate):
+    def lagrangian(candidate: Array) -> Array:
         objective = problem.value(unravel(candidate), args)[0]
         candidate_equality, candidate_inequality = constraints(candidate)
         return (
@@ -450,7 +471,7 @@ def _build_kkt_system(
             + jnp.vdot(inequality_multipliers, candidate_inequality).real
         )
 
-    def primal_action(tangent):
+    def primal_action(tangent: Array) -> Array:
         hessian_tangent = jax.jvp(
             jax.grad(lagrangian),
             (flat_parameters,),
@@ -471,14 +492,14 @@ def _build_kkt_system(
             curvature = jnp.zeros_like(tangent)
         return hessian_tangent + curvature + method.kkt_regularization * tangent
 
-    def equality_action(tangent):
+    def equality_action(tangent: Array) -> Array:
         return jax.jvp(
             lambda candidate: constraints(candidate)[0],
             (flat_parameters,),
             (tangent,),
         )[1]
 
-    def equality_transpose(cotangent):
+    def equality_transpose(cotangent: Array) -> Array:
         _, pullback = jax.vjp(
             lambda candidate: constraints(candidate)[0],
             flat_parameters,
@@ -555,7 +576,7 @@ def _solve_primal_dual_newton_krylov(
         dtype=jnp.int32,
     )
 
-    def initial_constraints(candidate):
+    def initial_constraints(candidate: Array) -> tuple[Array, Array]:
         return _canonical_constraints(problem, layout, unravel(candidate), args)
 
     initial_kkt = _build_kkt_system(
@@ -627,7 +648,7 @@ def _solve_primal_dual_newton_krylov(
         linear_refresh_arrays=linear_refresh_arrays,
     )
 
-    def outer_condition(current):
+    def outer_condition(current: _PrimalDualState) -> Array:
         within_evaluations = (
             jnp.asarray(True)
             if termination.maximum_evaluations is None
@@ -639,7 +660,7 @@ def _solve_primal_dual_newton_krylov(
             & within_evaluations
         )
 
-    def outer_body(current):
+    def outer_body(current: _PrimalDualState) -> _PrimalDualState:
         (
             value,
             _,
@@ -694,7 +715,7 @@ def _solve_primal_dual_newton_krylov(
         )
         converged = optimality <= termination.optimality_threshold(initial_optimality)
 
-        def nonfinite_step(_):
+        def nonfinite_step(_: None) -> _PrimalDualState:
             return evaluated._replace(
                 status=jnp.asarray(
                     int(OptimizationStatus.NONFINITE_EVALUATION),
@@ -705,7 +726,7 @@ def _solve_primal_dual_newton_krylov(
                 ),
             )
 
-        def converged_step(_):
+        def converged_step(_: None) -> _PrimalDualState:
             return evaluated._replace(
                 status=jnp.asarray(
                     int(OptimizationStatus.SUCCESS),
@@ -713,7 +734,7 @@ def _solve_primal_dual_newton_krylov(
                 )
             )
 
-        def newton_step(_):
+        def newton_step(_operand: None) -> _PrimalDualState:
             inverse_slack = (
                 1.0 / jnp.maximum(current.slacks, method.minimum_slack)
                 if current_inequality.size
@@ -742,7 +763,10 @@ def _solve_primal_dual_newton_krylov(
                 eqx.is_array,
             )
 
-            def solve_direction(target, correction):
+            def solve_direction(
+                target: Array,
+                correction: Array,
+            ) -> tuple[LinearSolveResult, Array, Array, Array, Array]:
                 if current_inequality.size:
                     reduced_rhs_part = inverse_slack * (
                         complementarity_vector
@@ -796,7 +820,10 @@ def _solve_primal_dual_newton_krylov(
                 )
 
             zero_correction = jnp.zeros_like(complementarity_vector)
-            if method.predictor_corrector and current_inequality.size:
+            if (
+                isinstance(method, PrimalDualPredictorCorrector)
+                and current_inequality.size
+            ):
                 (
                     affine_result,
                     _,
@@ -933,7 +960,7 @@ def _solve_primal_dual_newton_krylov(
                 complementarity_vector - target_barrier,
             )
 
-            def line_search(_):
+            def line_search(_: None) -> _LineSearchCarry:
                 initial_rate = jnp.minimum(
                     _fraction_to_boundary(
                         current.slacks,
@@ -947,11 +974,11 @@ def _solve_primal_dual_newton_krylov(
                     ),
                 )
 
-                def line_condition(carry):
+                def line_condition(carry: _LineSearchCarry) -> Array:
                     trial, _, accepted, *_ = carry
                     return (trial < method.maximum_line_search_steps) & (~accepted)
 
-                def line_body(carry):
+                def line_body(carry: _LineSearchCarry) -> _LineSearchCarry:
                     (
                         trial,
                         rate,
@@ -1057,7 +1084,7 @@ def _solve_primal_dual_newton_krylov(
                     ),
                 )
 
-            def unusable_line_search(_):
+            def unusable_line_search(_: None) -> _LineSearchCarry:
                 return (
                     jnp.asarray(0, dtype=jnp.int32),
                     jnp.asarray(0.0, dtype=current.parameters.dtype),
@@ -1103,7 +1130,7 @@ def _solve_primal_dual_newton_krylov(
                 vjp_evaluations=(solve_counters.vjp_evaluations + line_evaluations),
             )
 
-            def accept_newton_step(_):
+            def accept_newton_step(_: None) -> _PrimalDualState:
                 stagnated = candidate_step_norm <= termination.step_threshold(
                     jnp.linalg.norm(candidate_parameters)
                 )
@@ -1131,7 +1158,7 @@ def _solve_primal_dual_newton_krylov(
                     linear_refresh_arrays=next_refresh_arrays,
                 )
 
-            def restore_step(_):
+            def restore_step(_operand: None) -> _PrimalDualState:
                 (
                     restored_parameters,
                     _,
@@ -1172,7 +1199,7 @@ def _solve_primal_dual_newton_krylov(
                     linear_refresh_arrays=next_refresh_arrays,
                 )
 
-                def commit_restoration(_):
+                def commit_restoration(_: None) -> _PrimalDualState:
                     return failed_restoration._replace(
                         parameters=restored_parameters,
                         inequality_multipliers=jnp.maximum(
@@ -1202,7 +1229,7 @@ def _solve_primal_dual_newton_krylov(
 
             if method.predictor_corrector:
 
-                def reject_predictor_corrector(_):
+                def reject_predictor_corrector(_: None) -> _PrimalDualState:
                     return evaluated._replace(
                         iteration=evaluated.iteration + 1,
                         status=jnp.where(

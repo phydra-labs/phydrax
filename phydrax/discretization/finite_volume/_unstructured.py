@@ -6,13 +6,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import final
+from typing import Any, final
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -119,7 +120,7 @@ def _normalized_triangles(vertices: np.ndarray, cells: np.ndarray, /) -> np.ndar
     return normalized
 
 
-def _quadrilateral_shape_data(points: np.ndarray, /):
+def _quadrilateral_shape_data(points: np.ndarray, /) -> Any:
     xi = points[:, 0]
     eta = points[:, 1]
     shape = 0.25 * np.stack(
@@ -341,7 +342,7 @@ def _normalized_tetrahedra(vertices: np.ndarray, cells: np.ndarray, /) -> np.nda
     return normalized
 
 
-def _owner_neighbor(connectivity: Connectivity, cell_count: int, /):
+def _owner_neighbor(connectivity: Connectivity, cell_count: int, /) -> Any:
     if isinstance(connectivity, PolygonalConnectivity):
         cell_faces = np.asarray(connectivity.cell_edges, dtype=np.int32)
         cell_signs = np.asarray(connectivity.cell_edge_signs)
@@ -444,7 +445,7 @@ def _polygon_geometry(
     owner: ArrayLike,
     owner_sign: ArrayLike,
     /,
-):
+) -> Any:
     points = jnp.asarray(vertices)
     triangle_cells = jnp.asarray(triangles, dtype=jnp.int32)
     quadrilateral_cells = jnp.asarray(quadrilaterals, dtype=jnp.int32)
@@ -534,7 +535,7 @@ def _tetrahedral_geometry(
     owner: ArrayLike,
     owner_sign: ArrayLike,
     /,
-):
+) -> Any:
     points = jnp.asarray(vertices)
     cells = jnp.asarray(tetrahedra, dtype=jnp.int32)
     cell_points = points[cells]
@@ -594,7 +595,7 @@ def evaluate_unstructured_fv_geometry(
     owner: ArrayLike,
     owner_sign: ArrayLike,
     /,
-):
+) -> Any:
     """Evaluate owner-oriented geometry for one prepared cell complex."""
 
     if isinstance(connectivity, PolygonalConnectivity):
@@ -606,6 +607,7 @@ def evaluate_unstructured_fv_geometry(
             owner,
             owner_sign,
         )
+    # ty: ignore[invalid-argument-type]
     return _tetrahedral_geometry(vertices, tetrahedra, connectivity, owner, owner_sign)
 
 
@@ -703,7 +705,7 @@ class MaskedFiniteVolumeGeometry(StrictModule):
     face_centers: Array
     content_rate_map: SparseLinearMap
 
-    def __init__(self, mesh: MaskedSimplexMesh, /):
+    def __init__(self, mesh: MaskedSimplexMesh, /) -> None:
         """Evaluate the geometry of ``mesh``; see `evaluate_masked_fv_geometry`."""
         if not isinstance(mesh, MaskedSimplexMesh):
             raise TypeError("mesh must be a MaskedSimplexMesh.")
@@ -818,7 +820,7 @@ class MaskedFiniteVolumeConservation(StrictModule):
     net_cell_sum: Array
     residual: Array
 
-    def __init__(self, ledger: ConservationStageLedger, /):
+    def __init__(self, ledger: ConservationStageLedger, /) -> None:
         if not isinstance(ledger, ConservationStageLedger):
             raise TypeError("ledger must be a ConservationStageLedger.")
         source_sum, boundary_sum, net_cell_sum = ledger.conservation_sums()
@@ -988,7 +990,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         field_name: str = "state",
         component_names: Sequence[str] = ("value",),
         _prepared: _PreparedUnstructuredFiniteVolumeData | None = None,
-    ):
+    ) -> None:
         if _prepared is not None:
             self.mesh = _prepared.mesh
             self.vertices = _prepared.vertices
@@ -1318,7 +1320,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         )
         return cls(None, _prepared=prepared)
 
-    def prepare(self, /, *, numeric_version: str = "0"):
+    def prepare(self, /, *, numeric_version: str = "0") -> Any:
         return UnstructuredFiniteVolumeDiscretization(
             self, numeric_version=numeric_version
         )
@@ -1371,7 +1373,7 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
 
     def __init__(
         self, plan: UnstructuredFiniteVolumePlan, /, *, numeric_version: str = "0"
-    ):
+    ) -> None:
         if not isinstance(plan, UnstructuredFiniteVolumePlan):
             raise TypeError("plan must be UnstructuredFiniteVolumePlan.")
         mesh = plan.mesh
@@ -1403,9 +1405,12 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
             cell_quadrature_valid = polyhedral.cell_quadrature_valid
         else:
             if plan.cell_dimension == 2:
+                # ty: ignore[unresolved-attribute]
                 face_count = connectivity.edges.shape[0]
             else:
+                # ty: ignore[unresolved-attribute]
                 face_count = connectivity.faces.shape[0]
+            # ty: ignore[invalid-argument-type]
             owner, neighbor, owner_sign = _owner_neighbor(connectivity, cell_count)
             (
                 cell_volumes,
@@ -1421,6 +1426,7 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
                 plan.triangles,
                 plan.quadrilaterals,
                 plan.tetrahedra,
+                # ty: ignore[invalid-argument-type]
                 connectivity,
                 owner,
                 owner_sign,
@@ -1429,6 +1435,7 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
                 cell_quadrature_points,
                 cell_quadrature_weights,
                 cell_quadrature_valid,
+                # ty: ignore[invalid-argument-type]
             ) = _cell_volume_quadrature(plan, connectivity)
             quadrature_mass = jnp.sum(cell_quadrature_weights, axis=1)
             quadrature_tolerance = (
@@ -1569,6 +1576,7 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         self.cell_global_ids = plan.cell_global_ids
         self.cell_dimension = plan.cell_dimension
         self.topology = topology
+        # ty: ignore[invalid-assignment]
         self.connectivity = connectivity
         self.face_block = face_block
         self.face_blocks = (face_block,)
@@ -1655,16 +1663,16 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
 
 
 def _quality_report(
-    plan,
-    connectivity,
-    cell_volumes,
-    cell_centers,
-    area_vectors,
-    face_measures,
-    closure,
-    owner,
-    neighbor,
-):
+    plan: Any,
+    connectivity: Any,
+    cell_volumes: Any,
+    cell_centers: Any,
+    area_vectors: Any,
+    face_measures: Any,
+    closure: Any,
+    owner: Any,
+    neighbor: Any,
+) -> Any:
     owner_ = jnp.asarray(owner, dtype=jnp.int32)
     neighbor_ = jnp.asarray(neighbor, dtype=jnp.int32)
     interior = neighbor_ >= 0

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -20,7 +22,7 @@ from _runtime import (
 import phydrax as phx
 
 
-def _case(size: int, repeats: int):
+def _case(size: int, repeats: int) -> Any:
     tn = phx.tensor_network
     structure = tn.ContractionStructure(
         (

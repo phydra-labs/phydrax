@@ -4,11 +4,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -21,6 +22,10 @@ from ._mapped import MappedFiniteVolumeDiscretization
 from ._physical_boundaries import PrescribedHeatFluxWallBoundary
 from ._rarefied_wall import MaxwellSmoluchowskiContinuumWallPlan
 from ._structured import FiniteVolumeDiscretization
+
+
+if TYPE_CHECKING:
+    from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
 
 def _cell_to_faces(values: Array, axis: int, periodic: bool, /) -> Array:
@@ -144,7 +149,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
 
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.plan_id = canonical_fingerprint({"kind": "equation-owned-viscous-flux"})
 
     @staticmethod
@@ -352,7 +357,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
         self,
         system: Any,
         state: ArrayLike,
-        discretization,
+        discretization: UnstructuredFiniteVolumeDiscretization,
         /,
     ) -> Array:
         """Least-squares conserved gradient on polygonal/polyhedral FV graphs."""
@@ -409,7 +414,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
         system: Any,
         time: Array,
         state: ArrayLike,
-        discretization,
+        discretization: UnstructuredFiniteVolumeDiscretization,
         args: Any = None,
         /,
         *,
@@ -459,7 +464,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
     def unstructured_residual_from_evaluation(
         self,
         evaluation: FiniteVolumeDiffusionEvaluation,
-        discretization,
+        discretization: UnstructuredFiniteVolumeDiscretization,
         /,
     ) -> Array:
         """Scatter one owner-oriented unstructured diffusive face ledger."""
@@ -492,7 +497,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
         system: Any,
         time: Array,
         state: ArrayLike,
-        discretization,
+        discretization: UnstructuredFiniteVolumeDiscretization,
         args: Any = None,
         /,
         *,
@@ -512,7 +517,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
         self,
         system: Any,
         state: ArrayLike,
-        discretization,
+        discretization: UnstructuredFiniteVolumeDiscretization,
         args: Any = None,
         /,
         *,

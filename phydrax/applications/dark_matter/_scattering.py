@@ -12,7 +12,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -144,7 +145,7 @@ class BoundedThermalMarkSamplerPlan(StrictModule, NonTrainableState):
         *,
         thermal_sigma_cutoff: float = 6.0,
         maximum_proposals: int = 128,
-    ):
+    ) -> None:
         cutoff = float(thermal_sigma_cutoff)
         proposals = int(maximum_proposals)
         if not math.isfinite(cutoff) or cutoff <= 0.0 or proposals <= 0:
@@ -203,7 +204,7 @@ class ElasticScatteringTable(StrictModule, NonTrainableState):
         redistribution: bool = False,
         training_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         targets = tuple(_identifier(value, "target ID") for value in target_ids)
         if not targets or len(set(targets)) != len(targets):
             raise ValueError("target_ids must be non-empty and unique.")

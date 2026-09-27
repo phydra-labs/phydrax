@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -46,7 +49,7 @@ class _DriftPlant(AbstractDiscretePlant):
     require_finite_controls: bool = eqx.field(static=True)
     require_finite_parameters: bool = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         semantic = SemanticProvenance({"kind": "coupled-training-drift-plant"})
         self.state_schema = ArrayPyTreeSchema.from_tree(
             {"x": jnp.zeros((1,))}, case_ndim=1
@@ -65,14 +68,18 @@ class _DriftPlant(AbstractDiscretePlant):
         self.require_finite_controls = True
         self.require_finite_parameters = True
 
-    def propose_reset(self, keys, parameters, /, *, case_shape, initial_time):
+    def propose_reset(
+        self, keys: Any, parameters: Any, /, *, case_shape: Any, initial_time: Any
+    ) -> Any:
         del keys, parameters, initial_time
         state = {"x": jnp.zeros(case_shape)}
         ok = jnp.ones(case_shape, dtype=jnp.bool_)
         status = jnp.zeros(case_shape, dtype=jnp.int32)
         return PlantProposal(state, state, ok, ok, status, status, None)
 
-    def propose_step(self, context, source, commands, parameters, keys, /):
+    def propose_step(
+        self, context: Any, source: Any, commands: Any, parameters: Any, keys: Any, /
+    ) -> Any:
         del context, keys
         successful = commands >= 0.0
         status = jnp.where(successful, 0, 37).astype(jnp.int32)
@@ -88,7 +95,9 @@ class _DriftEstimator(StrictModule):
     updates: jax.Array = model_state_field()
 
 
-def _drift_error(parameters, model_state, fixed, payload, keys):
+def _drift_error(
+    parameters: Any, model_state: Any, fixed: Any, payload: Any, keys: Any
+) -> Any:
     del fixed, keys
     residual = payload["delta"] - parameters.rate
     next_state = eqx.tree_at(
@@ -98,15 +107,15 @@ def _drift_error(parameters, model_state, fixed, payload, keys):
     return contribution, next_state, {}
 
 
-def _observed_drift(source, step):
+def _observed_drift(source: Any, step: Any) -> Any:
     return {"delta": step.candidate_state.payload["x"] - source.payload["x"]}
 
 
-def _poisoned_drift(source, step):
+def _poisoned_drift(source: Any, step: Any) -> Any:
     return {"delta": _observed_drift(source, step)["delta"] * jnp.nan}
 
 
-def _plant(cases):
+def _plant(cases: Any) -> Any:
     plant = _DriftPlant()
     parameters = PlantParameters(
         {"gain": jnp.asarray(2.0)},
@@ -118,11 +127,11 @@ def _plant(cases):
     return plant, parameters, state
 
 
-def _context(state):
+def _context(state: Any) -> Any:
     return PlantStepContext(state.time, state.time + 1.0, state.step_index)
 
 
-def _kernel(tree, *, lane_layout=None):
+def _kernel(tree: Any, *, lane_layout: Any = None) -> Any:
     spec = TrainingKernelSpec(
         OptaxUpdateRule(optax.sgd(0.25), rule_id="sgd"),
         context="coupled training test",
@@ -141,8 +150,8 @@ def _kernel(tree, *, lane_layout=None):
     return kernel, kernel.init(tree, jr.key(0))
 
 
-def _assert_trees_equal(actual, expected):
-    def data(leaf):
+def _assert_trees_equal(actual: Any, expected: Any) -> None:
+    def data(leaf: Any) -> Any:
         if jax.dtypes.issubdtype(leaf.dtype, jax.dtypes.prng_key):
             return np.asarray(jr.key_data(leaf))
         return np.asarray(leaf)
@@ -157,7 +166,7 @@ def _assert_trees_equal(actual, expected):
 
 
 @pytest.mark.parametrize("policy", list(CoupledTrainingPolicy))
-def test_accepted_physical_and_training_steps_commit_together(policy):
+def test_accepted_physical_and_training_steps_commit_together(policy: Any) -> None:
     plant, parameters, plant_state = _plant(2)
     kernel, kernel_state = _kernel(_DriftEstimator(jnp.asarray(0.0), jnp.asarray(0.0)))
     hooks = []
@@ -183,7 +192,7 @@ def test_accepted_physical_and_training_steps_commit_together(policy):
     assert len(hooks) == 1
 
 
-def test_nonfinite_training_on_a_valid_step_rolls_back_only_training():
+def test_nonfinite_training_on_a_valid_step_rolls_back_only_training() -> None:
     plant, parameters, plant_state = _plant(2)
     kernel, kernel_state = _kernel(_DriftEstimator(jnp.asarray(0.0), jnp.asarray(0.0)))
     result = coupled_training_step(
@@ -206,7 +215,7 @@ def test_nonfinite_training_on_a_valid_step_rolls_back_only_training():
     assert int(result.kernel_state.nonfinite_rejections) == 1
 
 
-def test_per_lane_parameters_commit_only_physically_accepted_lanes():
+def test_per_lane_parameters_commit_only_physically_accepted_lanes() -> None:
     plant, parameters, plant_state = _plant(2)
     tree = _DriftEstimator(jnp.zeros((2,)), jnp.zeros((2,)))
     kernel, kernel_state = _kernel(
@@ -247,7 +256,7 @@ def test_per_lane_parameters_commit_only_physically_accepted_lanes():
         )
 
 
-def test_unknown_policy_is_rejected():
+def test_unknown_policy_is_rejected() -> None:
     plant, parameters, plant_state = _plant(1)
     kernel, kernel_state = _kernel(_DriftEstimator(jnp.asarray(0.0), jnp.asarray(0.0)))
     with pytest.raises(ValueError, match="not a valid CoupledTrainingPolicy"):

@@ -161,6 +161,18 @@ size controls, regions, patches, layers, and periodic constraints are explicit.
 A control's presence in the native contract does not imply every provider can
 honor it. Provider preflight rejects unsupported combinations before work.
 
+### Typing and structural contracts
+
+Meshing conversion boundaries accept JAX/NumPy array-like values and convert once;
+compiled kernels consume canonical JAX arrays. `MaskedSimplexMesh`,
+`MeshMetricField`, and `MeshMetricSamples` opt into `phydrax.typing` structural
+contracts. Their nominal dimensions enforce aligned vertex/cell slots, coordinate
+components, simplex widths, and square metric tensors after transformations such as
+`equinox.tree_at`, without adding device operations. Scientific admissibility remains
+with the owning constructors and evidence: simplex orientation/capacity, metric SPD
+properties, hard size/anisotropy bounds, gradation, and provider compliance are not
+inferred from shapes.
+
 `RegionControl` assigns a named material-neutral region to an explicit solid
 scope. `PatchControl` assigns a named exterior or two-region interface to an
 explicit face or edge scope. Derive those scopes from `BRepModel.solid_ids`,

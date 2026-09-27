@@ -11,7 +11,8 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._materialization import MaterializationPolicy, materialize
 from .._operators import AbstractLinearOperator
@@ -415,7 +416,9 @@ def _orthonormal_initial_block(
     tiny = jnp.asarray(jnp.finfo(real_dtype).tiny, dtype=real_dtype)
     rank_scale = jnp.asarray(max(space.size, candidates.shape[1]), dtype=real_dtype)
 
-    def add_candidate(index, state):
+    def add_candidate(
+        index: Array, state: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
         current_basis, current_metric_basis, current_rank = state
         vector = candidates[:, index]
         metric_vector = metric_candidates[:, index]
@@ -546,7 +549,7 @@ def _metric_coordinate_columns(problem: EigenproblemLike, block: Array, /) -> Ar
         return block
     space = problem.operator.source
 
-    def apply(column):
+    def apply(column: Array) -> Array:
         return space.flatten(problem.metric_operator.mv(space.unflatten(column)))
 
     return jax.vmap(apply, in_axes=1, out_axes=1)(block)
@@ -767,19 +770,22 @@ def _mathematical_eigenvalues(
 
 
 @_mathematical_eigenvalues.def_jvp
-def _mathematical_eigenvalues_jvp(primals, tangents):
+def _mathematical_eigenvalues_jvp(
+    primals: tuple[EigenproblemLike, Array, Array, Array],
+    tangents: tuple[EigenproblemLike | None, Array | None, Array | None, Array | None],
+) -> tuple[Array, Array]:
     problem, values, vectors, denominators = primals
     problem_tangent, _, _, _ = tangents
     space = problem.operator.source
 
-    def perturbation(current_problem):
+    def perturbation(current_problem: EigenproblemLike) -> Array:
         contributions = []
         for index in range(values.shape[0]):
             vector = vectors[:, index]
             mathematical_vector = space.unflatten(vector)
             operator_image = current_problem.operator.mv(mathematical_vector)
             numerator = space.inner(mathematical_vector, operator_image)
-            if isinstance(problem, GeneralizedEigenproblem):
+            if isinstance(current_problem, GeneralizedEigenproblem):
                 metric_image = current_problem.metric_operator.mv(mathematical_vector)
                 numerator = numerator - values[index] * space.inner(
                     mathematical_vector,

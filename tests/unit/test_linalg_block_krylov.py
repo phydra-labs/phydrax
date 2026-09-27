@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -12,7 +15,7 @@ import phydrax as phx
 la = phx.linalg
 
 
-def _positive_definite_properties():
+def _positive_definite_properties() -> Any:
     return la.OperatorProperties(
         self_adjoint=True,
         positive_definite=True,
@@ -24,7 +27,7 @@ def _positive_definite_properties():
     )
 
 
-def _block_problem():
+def _block_problem() -> Any:
     matrix = jnp.asarray(
         [
             [4.0, 1.0, 0.0, 0.0],
@@ -42,7 +45,7 @@ def _block_problem():
 
 
 @pytest.mark.parametrize("method", [la.BlockGMRES(restart=4), la.BlockCG()])
-def test_true_block_krylov_handles_dependent_and_zero_rhs_columns(method):
+def test_true_block_krylov_handles_dependent_and_zero_rhs_columns(method: Any) -> None:
     matrix, problem = _block_problem()
     first = jnp.asarray([1.0, 2.0, -1.0, 0.5])
     second = jnp.asarray([-2.0, 0.0, 1.0, 3.0])
@@ -69,7 +72,7 @@ def test_true_block_krylov_handles_dependent_and_zero_rhs_columns(method):
 
 
 @pytest.mark.parametrize("method", [la.BlockGMRES(restart=4), la.BlockCG()])
-def test_true_block_krylov_emits_vector_iteration_records(method):
+def test_true_block_krylov_emits_vector_iteration_records(method: Any) -> None:
     _, problem = _block_problem()
     rhs = jnp.asarray(
         [
@@ -104,7 +107,7 @@ def test_true_block_krylov_emits_vector_iteration_records(method):
     assert trace.records.metrics.residual_norm.shape[1:] == (2,)
 
 
-def test_scalar_multi_rhs_remains_a_distinct_pseudo_block_path():
+def test_scalar_multi_rhs_remains_a_distinct_pseudo_block_path() -> None:
     matrix, problem = _block_problem()
     rhs = jnp.eye(4)[:, :2]
     result = la.solve_many(
@@ -122,7 +125,7 @@ def test_scalar_multi_rhs_remains_a_distinct_pseudo_block_path():
     assert result.provenance.rhs_mode == "pseudo-block"
 
 
-def test_block_methods_require_a_nonempty_planned_rhs_layout():
+def test_block_methods_require_a_nonempty_planned_rhs_layout() -> None:
     _, problem = _block_problem()
     policy = la.LinearSolvePolicy(
         la.BlockGMRES(restart=3),
@@ -134,7 +137,7 @@ def test_block_methods_require_a_nonempty_planned_rhs_layout():
         la.RHSLayout(())
 
 
-def test_recycled_solve_returns_immutable_state_and_refreshes_operator_images():
+def test_recycled_solve_returns_immutable_state_and_refreshes_operator_images() -> None:
     matrix, problem = _block_problem()
     policy = la.LinearSolvePolicy(
         la.GMRES(restart=4),
@@ -216,7 +219,7 @@ def test_recycled_solve_returns_immutable_state_and_refreshes_operator_images():
     )
 
 
-def test_recycled_solve_accepts_dynamic_tolerances_and_iteration_limits():
+def test_recycled_solve_accepts_dynamic_tolerances_and_iteration_limits() -> None:
     matrix, problem = _block_problem()
     policy = la.LinearSolvePolicy(
         la.GMRES(restart=4),
@@ -232,7 +235,7 @@ def test_recycled_solve_accepts_dynamic_tolerances_and_iteration_limits():
     right_hand_side = jnp.asarray((1.0, -2.0, 0.5, 3.0))
 
     @jax.jit
-    def execute(relative_tolerance, maximum_steps):
+    def execute(relative_tolerance: Any, maximum_steps: Any) -> Any:
         return la.solve_recycled(
             prepared,
             right_hand_side,
@@ -256,11 +259,11 @@ def test_recycled_solve_accepts_dynamic_tolerances_and_iteration_limits():
     )
 
 
-def test_recycled_matvec_diagnostics_match_executed_operator_actions():
+def test_recycled_matvec_diagnostics_match_executed_operator_actions() -> None:
     matrix, _ = _block_problem()
     executed_actions = []
 
-    def counted_action(value):
+    def counted_action(value: Any) -> Any:
         jax.debug.callback(lambda _: executed_actions.append(None), value[0])
         return matrix @ value
 
@@ -298,7 +301,7 @@ def test_recycled_matvec_diagnostics_match_executed_operator_actions():
     assert int(result.diagnostics.matvec_count) == len(executed_actions) - 1
 
 
-def test_planned_layout_is_authoritative_for_one_shot_and_transformed_solves():
+def test_planned_layout_is_authoritative_for_one_shot_and_transformed_solves() -> None:
     matrix, problem = _block_problem()
     layout = la.RHSLayout((1, 2), names=("scenario", "member"))
     policy = la.LinearSolvePolicy(
@@ -331,7 +334,9 @@ def test_planned_layout_is_authoritative_for_one_shot_and_transformed_solves():
 
 @pytest.mark.parametrize("method", [la.BlockGMRES(restart=3), la.BlockCG()])
 @pytest.mark.parametrize("scale", [1e-20, 1e20])
-def test_block_rank_deflation_is_invariant_under_nonzero_scaling(method, scale):
+def test_block_rank_deflation_is_invariant_under_nonzero_scaling(
+    method: Any, scale: Any
+) -> None:
     matrix, problem = _block_problem()
     rhs = scale * jnp.eye(4)[:, :2]
     policy = la.LinearSolvePolicy(
@@ -356,7 +361,7 @@ def test_block_rank_deflation_is_invariant_under_nonzero_scaling(method, scale):
     )
 
 
-def test_block_breakdown_reports_executed_iterations_and_empty_system_succeeds():
+def test_block_breakdown_reports_executed_iterations_and_empty_system_succeeds() -> None:
     space = la.ArraySpace((2,), dtype=jnp.float64)
     zero = la.DenseLinearOperator(
         jnp.zeros((2, 2)),
@@ -401,7 +406,7 @@ def test_block_breakdown_reports_executed_iterations_and_empty_system_succeeds()
     assert jnp.all(empty_result.successful)
 
 
-def test_block_rhs_only_jvp_solves_rank_deficient_tangent_to_full_capacity():
+def test_block_rhs_only_jvp_solves_rank_deficient_tangent_to_full_capacity() -> None:
     matrix = jnp.asarray([[4.0, 1.0], [1.0, 3.0]])
     operator = la.DenseLinearOperator(
         matrix,
@@ -431,7 +436,7 @@ def test_block_rhs_only_jvp_solves_rank_deficient_tangent_to_full_capacity():
     )
 
 
-def test_recycled_state_is_fixed_capacity_jittable_and_explicitly_rebuildable():
+def test_recycled_state_is_fixed_capacity_jittable_and_explicitly_rebuildable() -> None:
     matrix, problem = _block_problem()
     policy = la.LinearSolvePolicy(
         la.GMRES(restart=4),
@@ -476,7 +481,7 @@ def test_recycled_state_is_fixed_capacity_jittable_and_explicitly_rebuildable():
 
 
 @pytest.mark.parametrize("method", [la.BlockGMRES(restart=2), la.BlockCG()])
-def test_true_block_orthogonalization_respects_declared_pairing(method):
+def test_true_block_orthogonalization_respects_declared_pairing(method: Any) -> None:
     space = la.ArraySpace(
         (2,),
         dtype=jnp.float64,
@@ -516,7 +521,9 @@ def test_true_block_orthogonalization_respects_declared_pairing(method):
 
 
 @pytest.mark.parametrize("method", [la.BlockGMRES(restart=3), la.BlockCG()])
-def test_true_block_rank_is_invariant_to_independent_rhs_column_scales(method):
+def test_true_block_rank_is_invariant_to_independent_rhs_column_scales(
+    method: Any,
+) -> None:
     matrix, problem = _block_problem()
     scales = jnp.asarray([1e-20, 1e20])
     rhs = jnp.eye(4)[:, :2] * scales[None, :]

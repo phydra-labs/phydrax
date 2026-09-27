@@ -4,21 +4,28 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from math import prod
 from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._probability import AbstractProbabilityLaw
 from ..._strict import StrictModule
-from ...dynamics._evolution import AbstractEvolution, EVOLUTION_SUCCESS
+from ...dynamics._evolution import (
+    AbstractEvolution,
+    EVOLUTION_SUCCESS,
+    EvolutionStep,
+)
+from ...typing import PRNGKey
 
 
-def _sample_shape(value, /) -> tuple[int, ...]:
+def _sample_shape(value: Sequence[int], /) -> tuple[int, ...]:
     shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError("sample_shape dimensions must be positive.")
@@ -49,14 +56,14 @@ class ContinuousTransportSample(StrictModule):
         valid: ArrayLike,
         status: ArrayLike,
         backend_status: ArrayLike,
-        sample_shape,
-        event_shape,
+        sample_shape: Sequence[int],
+        event_shape: Sequence[int],
         density_measure_kind: str,
         system_id: str,
         evolution_id: str,
         approximation_id: str,
         transport_id: str,
-    ):
+    ) -> None:
         samples = _sample_shape(sample_shape)
         events = tuple(event_shape)
         source = jnp.asarray(source_states)
@@ -128,7 +135,7 @@ class ContinuousTransport(StrictModule):
         target_coordinate: ArrayLike = 1.0,
         args: Any = None,
         transport_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(source_law, AbstractProbabilityLaw):
             raise TypeError("source_law must implement AbstractProbabilityLaw.")
         if not isinstance(evolution, AbstractEvolution):
@@ -176,7 +183,7 @@ class ContinuousTransport(StrictModule):
 
     def sample_with_diagnostics(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> ContinuousTransportSample:
         samples = _sample_shape(sample_shape)
@@ -189,7 +196,7 @@ class ContinuousTransport(StrictModule):
         count = prod(samples) if samples else 1
         flat_source = source.reshape((count,) + self.event_shape)
 
-        def advance(state):
+        def advance(state: Array) -> EvolutionStep:
             return self.evolution.advance(
                 state,
                 self.source_coordinate,
@@ -219,7 +226,7 @@ class ContinuousTransport(StrictModule):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         result = self.sample_with_diagnostics(key, sample_shape)

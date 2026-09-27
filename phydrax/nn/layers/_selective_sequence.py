@@ -11,13 +11,14 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, ParameterOwner
+from ...typing import PRNGKey
 from .._keys import EvalKey
 from ._linear_recurrent_unit import _last_valid_array
 from ._physical_sequence import normalize_physical_schedule
@@ -60,8 +61,8 @@ class ResetAwareCausalConv1D(StrictModule, ParameterOwner):
         *,
         use_bias: bool = True,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.channels = int(channels)
         self.kernel_size = int(kernel_size)
         if self.channels <= 0 or self.kernel_size <= 0:
@@ -118,7 +119,9 @@ class ResetAwareCausalConv1D(StrictModule, ParameterOwner):
         weight = self.weight.astype(compute_dtype)
         bias = None if self.bias is None else self.bias.astype(compute_dtype)
 
-        def step(history: Array, step_inputs: tuple[Array, Array, Array]):
+        def step(
+            history: Array, step_inputs: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array]:
             inputs, valid, reset = step_inputs
             clear = (valid & reset).reshape(valid.shape + (1, 1))
             restarted = jnp.where(clear, jnp.zeros_like(history), history)
@@ -177,8 +180,8 @@ class SelectiveStateSpaceBlock(StrictModule, ParameterOwner):
         min_decay: float = 1e-4,
         min_step_scale: float = 1e-4,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.input_size = int(input_size)
         self.state_size = int(state_size)
         self.inner_size = 2 * self.input_size if inner_size is None else int(inner_size)

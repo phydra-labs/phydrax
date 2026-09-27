@@ -2,22 +2,25 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _rotation(angle):
+def _rotation(angle: Any) -> Any:
     return jnp.asarray(
         [[jnp.cos(angle), -jnp.sin(angle)], [jnp.sin(angle), jnp.cos(angle)]]
     )
 
 
-def _so2_spectrum():
+def _so2_spectrum() -> Any:
     modes = jnp.arange(5)
 
-    def zonal(left, right):
+    def zonal(left: Any, right: Any) -> Any:
         relative = left.T @ right
         angle = jnp.arctan2(relative[1, 0], relative[0, 0])
         return jnp.cos(modes * angle)
@@ -34,7 +37,7 @@ def _so2_spectrum():
     )
 
 
-def test_compact_heat_and_matern_kernels_have_psd_grams_and_tail_evidence():
+def test_compact_heat_and_matern_kernels_have_psd_grams_and_tail_evidence() -> None:
     spectrum = _so2_spectrum()
     points = jnp.stack(tuple(_rotation(angle) for angle in (0.0, 0.3, 0.8, 1.4)))
     for kernel in (
@@ -54,7 +57,7 @@ def test_compact_heat_and_matern_kernels_have_psd_grams_and_tail_evidence():
         assert jnp.allclose(kernel.diagonal(points), 1.0, atol=1e-6)
 
 
-def test_geodesic_exponential_exposes_branch_evidence_and_no_default_psd_claim():
+def test_geodesic_exponential_exposes_branch_evidence_and_no_default_psd_claim() -> None:
     kernel = phx.kernels.GeodesicExponentialKernel(space="so", length_scale=0.8)
     left = _rotation(0.2)
     right = _rotation(0.7)
@@ -72,10 +75,10 @@ def test_geodesic_exponential_exposes_branch_evidence_and_no_default_psd_claim()
 
 
 @pytest.mark.parametrize("residual", [0.0, 5e-5, 1e-4])
-def test_stiefel_log_accepts_finite_residual_at_or_below_tolerance(residual):
+def test_stiefel_log_accepts_finite_residual_at_or_below_tolerance(residual: Any) -> None:
     point = jnp.asarray([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
 
-    def stiefel_log(left, right):
+    def stiefel_log(left: Any, right: Any) -> Any:
         return right - left, jnp.asarray(residual)
 
     kernel = phx.kernels.GeodesicExponentialKernel(
@@ -91,10 +94,10 @@ def test_stiefel_log_accepts_finite_residual_at_or_below_tolerance(residual):
 
 
 @pytest.mark.parametrize("residual", [-1e-8, 1.01e-4, jnp.nan, jnp.inf])
-def test_stiefel_log_rejects_invalid_or_nonfinite_residual(residual):
+def test_stiefel_log_rejects_invalid_or_nonfinite_residual(residual: Any) -> None:
     point = jnp.asarray([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
 
-    def stiefel_log(left, right):
+    def stiefel_log(left: Any, right: Any) -> Any:
         return right - left, jnp.asarray(residual)
 
     kernel = phx.kernels.GeodesicExponentialKernel(
@@ -110,7 +113,7 @@ def test_stiefel_log_rejects_invalid_or_nonfinite_residual(residual):
         kernel.pairwise(point, point)
 
 
-def test_uncertified_spectral_tail_fails_preparation():
+def test_uncertified_spectral_tail_fails_preparation() -> None:
     with pytest.raises(ValueError, match="certified truncation tail"):
         phx.kernels.PreparedCompactHomogeneousSpectrum(
             jnp.asarray([[0]]),

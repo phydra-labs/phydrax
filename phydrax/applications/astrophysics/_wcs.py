@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -45,17 +46,17 @@ class TangentSipWcsPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        reference_sky,
-        reference_pixel,
-        cd_matrix,
-        sip_a,
-        sip_b,
+        reference_sky: ArrayLike,
+        reference_pixel: ArrayLike,
+        cd_matrix: ArrayLike,
+        sip_a: ArrayLike,
+        sip_b: ArrayLike,
         /,
         *,
-        inverse_iterations=12,
-        tolerance=1.0e-11,
-        wcs_id="tan-sip",
-    ):
+        inverse_iterations: int = 12,
+        tolerance: float = 1.0e-11,
+        wcs_id: str = "tan-sip",
+    ) -> None:
         sky = np.asarray(reference_sky, dtype=np.float64)
         pixel = np.asarray(reference_pixel, dtype=np.float64)
         cd = np.asarray(cd_matrix, dtype=np.float64)
@@ -158,7 +159,7 @@ class TangentSipWcsPlan(StrictModule, NonTrainableState):
     def pixel_to_world(self, pixel: ArrayLike, /) -> WcsResult:
         target = jnp.asarray(pixel) - self.reference_pixel
 
-        def residual(undistorted):
+        def residual(undistorted: Array) -> Array:
             distortion = jnp.asarray(
                 (
                     _polynomial_2d(self.sip_a, undistorted[0], undistorted[1]),
@@ -167,7 +168,7 @@ class TangentSipWcsPlan(StrictModule, NonTrainableState):
             )
             return undistorted + distortion - target
 
-        def step(_, value):
+        def step(_: Array, value: Array) -> Array:
             jacobian = jax.jacfwd(residual)(value)
             determinant = (
                 jacobian[0, 0] * jacobian[1, 1] - jacobian[0, 1] * jacobian[1, 0]

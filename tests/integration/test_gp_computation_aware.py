@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -9,7 +12,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_computation_aware_discrepancy_improves_physics_and_retains_uncertainty():
+def test_computation_aware_discrepancy_improves_physics_and_retains_uncertainty() -> None:
     points = jnp.linspace(0.0, 1.0, 24)
     true_coefficient = 1.35
     omitted_physics = 0.08 * jnp.sin(2.0 * jnp.pi * points)
@@ -26,7 +29,7 @@ def test_computation_aware_discrepancy_improves_physics_and_retains_uncertainty(
     model = phx.uq.ComputationAwareGaussianProcessDiscrepancy(points, observations)
     exact_model = phx.uq.ExactGaussianProcessDiscrepancy(points, observations)
 
-    def objective(coefficient, values):
+    def objective(coefficient: Any, values: Any) -> Any:
         return model.elbo(
             coefficient * points,
             state=state,

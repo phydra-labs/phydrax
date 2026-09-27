@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -31,7 +34,7 @@ from phydrax.ml.linear import (
 )
 
 
-def _features():
+def _features() -> Any:
     return jnp.array(
         [
             [-2.0, 0.0, 1.0],
@@ -47,14 +50,14 @@ def _features():
     )
 
 
-def _sparse(features):
+def _sparse(features: Any) -> Any:
     columns = jnp.argsort(jnp.where(features != 0.0, 0, 1), axis=-1)[:, :2]
     values = jnp.take_along_axis(features, columns, axis=-1)
     valid = jnp.take_along_axis(features != 0.0, columns, axis=-1)
     return SparseFeatures(values, columns, feature_count=features.shape[-1], valid=valid)
 
 
-def _assert_model_gradients(model, point):
+def _assert_model_gradients(model: Any, point: Any) -> None:
     input_gradient = jax.grad(lambda value: jnp.sum(jnp.square(model(value))))(point)
     coefficient_gradient = jax.grad(
         lambda value: jnp.sum(
@@ -72,7 +75,9 @@ def _assert_model_gradients(model, point):
 
 
 @pytest.mark.parametrize("dtype", (jnp.float32, jnp.float64))
-def test_bernoulli_and_poisson_family_kernels_match_glm_score_equations(dtype):
+def test_bernoulli_and_poisson_family_kernels_match_glm_score_equations(
+    dtype: Any,
+) -> None:
     scores = jnp.asarray([[-1.4, 0.2], [0.8, 2.1]], dtype=dtype)
     binary = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=dtype)
     counts = jnp.asarray([[0.0, 2.0], [3.0, 1.0]], dtype=dtype)
@@ -109,7 +114,7 @@ def test_bernoulli_and_poisson_family_kernels_match_glm_score_equations(dtype):
     )
 
 
-def test_one_step_glm_updates_match_weighted_score_equations():
+def test_one_step_glm_updates_match_weighted_score_equations() -> None:
     features = jnp.array([[2.0]])
     weight = jnp.array([2.0])
     logistic = (
@@ -122,6 +127,7 @@ def test_one_step_glm_updates_match_weighted_score_equations():
         .fit_batch(MLBatch(features, jnp.array([1]), sample_weight=weight))
         .as_trainable()
     )
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(logistic.coefficients, jnp.array([0.2]))
 
     poisson = (
@@ -134,10 +140,13 @@ def test_one_step_glm_updates_match_weighted_score_equations():
         .fit_batch(MLBatch(features, jnp.array([3.0]), sample_weight=weight))
         .as_trainable()
     )
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(poisson.coefficients, jnp.array([0.8]))
 
 
-def test_binary_logistic_probabilities_labels_sparse_jit_vmap_and_declared_gradients():
+def test_binary_logistic_probabilities_labels_sparse_jit_vmap_and_declared_gradients() -> (
+    None
+):
     features = _features()
     targets = (features[:, 0] - 0.3 * features[:, 1] > 0.0).astype(jnp.int32)
     weights = jnp.linspace(0.5, 1.5, features.shape[0])
@@ -181,7 +190,7 @@ def test_binary_logistic_probabilities_labels_sparse_jit_vmap_and_declared_gradi
 
     base = LogisticRegressionRecipe(l2_strength=0.1, max_iterations=3, tolerance=1e6)
 
-    def fit_loss(x, sample_weight, strength):
+    def fit_loss(x: Any, sample_weight: Any, strength: Any) -> Any:
         fitted_recipe = eqx.tree_at(lambda item: item.l2_strength, base, strength)
         fitted = fitted_recipe.fit_batch(
             MLBatch(x, targets, sample_weight=sample_weight)
@@ -192,7 +201,7 @@ def test_binary_logistic_probabilities_labels_sparse_jit_vmap_and_declared_gradi
     assert all(jnp.all(jnp.isfinite(value)) for value in gradients)
 
 
-def test_multinomial_logistic_classes_case_axes_sparse_and_gradients():
+def test_multinomial_logistic_classes_case_axes_sparse_and_gradients() -> None:
     features = _features()
     targets = jnp.mod(jnp.arange(features.shape[0]), 3).astype(jnp.int32)
     recipe = MultinomialLogisticRegressionRecipe(
@@ -228,7 +237,7 @@ def test_multinomial_logistic_classes_case_axes_sparse_and_gradients():
         3, l2_strength=0.1, max_iterations=3, tolerance=1e6
     )
 
-    def fit_loss(x, sample_weight, strength):
+    def fit_loss(x: Any, sample_weight: Any, strength: Any) -> Any:
         fitted = (
             eqx.tree_at(lambda item: item.l2_strength, base, strength)
             .fit_batch(MLBatch(x, targets, sample_weight=sample_weight))
@@ -273,8 +282,8 @@ def test_multinomial_logistic_classes_case_axes_sparse_and_gradients():
     ),
 )
 def test_log_link_glm_families_multioutput_sparse_prediction_and_all_fit_gradients(
-    recipe, model_type, targets
-):
+    recipe: Any, model_type: Any, targets: Any
+) -> None:
     features = _features()
     multioutput = jnp.stack((targets, targets + 0.5), axis=-1)
     weights = jnp.linspace(0.7, 1.4, features.shape[0])
@@ -299,7 +308,7 @@ def test_log_link_glm_families_multioutput_sparse_prediction_and_all_fit_gradien
     ).as_trainable()
     assert sparse_model(_sparse(features)).shape == multioutput.shape
 
-    def fit_loss(x, y, sample_weight, strength):
+    def fit_loss(x: Any, y: Any, sample_weight: Any, strength: Any) -> Any:
         fitted_recipe = eqx.tree_at(lambda item: item.l2_strength, recipe, strength)
         fitted = fitted_recipe.fit_batch(
             MLBatch(x, y, sample_weight=sample_weight)
@@ -312,7 +321,9 @@ def test_log_link_glm_families_multioutput_sparse_prediction_and_all_fit_gradien
     assert all(jnp.all(jnp.isfinite(value)) for value in gradients)
 
 
-def test_zero_weight_samples_do_not_change_weighted_logistic_or_poisson_objectives():
+def test_zero_weight_samples_do_not_change_weighted_logistic_or_poisson_objectives() -> (
+    None
+):
     features = _features()
     weights = jnp.ones((features.shape[0],)).at[0].set(0.0)
     binary = (features[:, 0] > 0.0).astype(jnp.int32)
@@ -324,7 +335,9 @@ def test_zero_weight_samples_do_not_change_weighted_logistic_or_poisson_objectiv
     second_logistic = logistic.fit_batch(
         MLBatch(features, flipped, sample_weight=weights)
     ).as_trainable()
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(first_logistic.coefficients, second_logistic.coefficients)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(first_logistic.intercept, second_logistic.intercept)
 
     counts = jnp.arange(1.0, features.shape[0] + 1.0)
@@ -336,11 +349,13 @@ def test_zero_weight_samples_do_not_change_weighted_logistic_or_poisson_objectiv
     second_poisson = poisson.fit_batch(
         MLBatch(features, changed_counts, sample_weight=weights)
     ).as_trainable()
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(first_poisson.coefficients, second_poisson.coefficients)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(first_poisson.intercept, second_poisson.intercept)
 
 
-def test_glm_domain_failures_missing_classes_and_nonconvergence_are_honest():
+def test_glm_domain_failures_missing_classes_and_nonconvergence_are_honest() -> None:
     features = _features()
     bad_poisson = PoissonRegressorRecipe(max_iterations=2).fit_batch(
         MLBatch(features, -jnp.ones((features.shape[0],)))
@@ -372,4 +387,5 @@ def test_glm_domain_failures_missing_classes_and_nonconvergence_are_honest():
         .fit_batch(MLBatch(features, jnp.linspace(0.5, 2.0, features.shape[0])))
         .as_trainable()
     )
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(no_intercept.intercept == 0.0)

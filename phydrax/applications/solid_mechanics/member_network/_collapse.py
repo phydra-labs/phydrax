@@ -8,7 +8,8 @@ from enum import IntEnum
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
@@ -36,7 +37,7 @@ class StructuralImperfection(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str = "structural-imperfection",
-    ):
+    ) -> None:
         shape_ = jnp.asarray(shape)
         norm = jnp.sqrt(jnp.sum(shape_ * shape_))
         if bool(~jnp.isfinite(norm) | (norm <= 0.0)):

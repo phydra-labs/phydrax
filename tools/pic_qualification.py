@@ -8,6 +8,7 @@ import argparse
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 
@@ -24,7 +25,7 @@ class PICQualificationReport:
     successful: bool
 
 
-def run_pic_qualification(*, smoke=False):
+def run_pic_qualification(*, smoke: Any = False) -> Any:
     count = 16 if smoke else 32
     particle_count = 8 if smoke else 32
     grid = phx.discretization.TensorGridPlan(
@@ -67,6 +68,7 @@ def run_pic_qualification(*, smoke=False):
         1.0e-3,
     )
     speed_defect = jnp.abs(jnp.sum(pushed.proper_velocity**2) - jnp.sum(proper**2))
+    # ty: ignore[unresolved-attribute]
     continuity_defect = step.diagnostics.continuity_defect
     successful = bool(
         step.successful
@@ -88,7 +90,7 @@ def run_pic_qualification(*, smoke=False):
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--output", type=Path)

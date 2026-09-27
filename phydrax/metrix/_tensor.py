@@ -10,12 +10,14 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..linalg import inverse
+from ..typing import parse
 from ._chart import ChartTransition
 from ._metric import AbstractSemiRiemannianMetric
 
@@ -31,19 +33,12 @@ class TensorType(StrictModule):
 
     def __init__(
         self,
-        variance: Sequence[TensorVariance] = (),
+        variance: Sequence[str] = (),
         /,
         *,
         density_weight: float = 0.0,
-    ):
-        variance_ = tuple(variance)
-        invalid = tuple(
-            value for value in variance_ if value not in ("contravariant", "covariant")
-        )
-        if invalid:
-            raise ValueError(
-                f"Tensor variance must be 'contravariant' or 'covariant'; got {invalid}."
-            )
+    ) -> None:
+        variance_ = tuple(parse(value, TensorVariance, "variance") for value in variance)
         density_weight_ = float(density_weight)
         if not isfinite(density_weight_):
             raise ValueError("Tensor density weight must be finite.")
@@ -300,9 +295,13 @@ def reexpress_tensor(
         inverse_transpose = jnp.swapaxes(inverse_matrix, -1, -2)
     result = array
     for axis, variance in enumerate(tensor_type.variance):
+        linear = jacobian if variance == "contravariant" else inverse_transpose
+        # inverse_transpose is computed above whenever any axis is covariant.
+        if not (linear is not None):
+            raise RuntimeError("Internal invariant failed: linear is not None.")
         result = _apply_linear_axis(
             result,
-            jacobian if variance == "contravariant" else inverse_transpose,
+            linear,
             axis,
             tensor_type.rank,
         )

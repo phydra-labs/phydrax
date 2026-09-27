@@ -10,7 +10,8 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -73,7 +74,7 @@ class CallableAffineConnection(AbstractAffineConnection):
         /,
         *,
         chart: CoordinateChart,
-    ):
+    ) -> None:
         if not callable(coefficients):
             raise TypeError("Connection coefficients must be callable.")
         if not isinstance(chart, CoordinateChart):
@@ -101,7 +102,7 @@ class LeviCivitaConnection(AbstractAffineConnection):
     metric: AbstractSemiRiemannianMetric
     chart: CoordinateChart
 
-    def __init__(self, metric: AbstractSemiRiemannianMetric, /):
+    def __init__(self, metric: AbstractSemiRiemannianMetric, /) -> None:
         if not isinstance(metric, AbstractSemiRiemannianMetric):
             raise TypeError("LeviCivitaConnection requires a nondegenerate metric.")
         self.metric = metric
@@ -120,7 +121,7 @@ class _PullbackConnectionCoefficients(StrictModule):
         connection: AbstractAffineConnection,
         map: DifferentiableMap,
         /,
-    ):
+    ) -> None:
         self.connection = connection
         self.map = map
 

@@ -4,14 +4,15 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
-from jaxtyping import Array
+from jax import Array
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...typing import parse
 from .._keys import EvalKey
 from ..layers import RecurrentBatch, RecurrentResult
 from ..layers._linear_recurrent_unit import (
@@ -20,7 +21,7 @@ from ..layers._linear_recurrent_unit import (
 )
 
 
-LinearRecurrentReturnMode = Literal["sequence", "final"]
+LinearRecurrentReturnMode: TypeAlias = Literal["sequence", "final"]
 
 
 class LinearRecurrentModel(StrictModule, ParameterOwner):
@@ -37,13 +38,11 @@ class LinearRecurrentModel(StrictModule, ParameterOwner):
         *,
         execution: LinearRecurrenceExecution = "associative",
         return_mode: LinearRecurrentReturnMode = "sequence",
-    ):
+    ) -> None:
         if not isinstance(unit, LinearRecurrentUnit):
             raise TypeError("unit must be a LinearRecurrentUnit.")
-        if execution not in ("serial", "associative"):
-            raise ValueError("execution must be 'serial' or 'associative'.")
-        if return_mode not in ("sequence", "final"):
-            raise ValueError("return_mode must be 'sequence' or 'final'.")
+        execution = parse(execution, LinearRecurrenceExecution, "execution")
+        return_mode = parse(return_mode, LinearRecurrentReturnMode, "return_mode")
         self.unit = unit
         self.execution = execution
         self.return_mode = return_mode

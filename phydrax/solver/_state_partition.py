@@ -9,7 +9,8 @@ from collections.abc import Mapping
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -30,7 +31,7 @@ class StatePartition(StrictModule, NonTrainableState):
         /,
         *,
         partition_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(masks, Mapping) or len(masks) < 2:
             raise TypeError("masks must map at least two names to masks.")
         names = tuple(str(name) for name in masks)

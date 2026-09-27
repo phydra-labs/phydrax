@@ -12,7 +12,7 @@ from typing import Any, cast, Literal
 
 import numpy as np
 
-from .._external_resource import read_bounded_resource, ResourceLimits
+from .._external_resource import BoundedResource, read_bounded_resource, ResourceLimits
 from ..units import UnitDefinition
 from ._geospatial import GeospatialContract, QualifiedGeospatialGrid
 
@@ -21,7 +21,7 @@ class GeospatialFormatDependencyError(RuntimeError):
     """An optional bounded raster/grid decoder is unavailable."""
 
 
-def _rasterio():
+def _rasterio() -> Any:
     try:
         return cast(Any, import_module("rasterio"))
     except ImportError as error:
@@ -30,7 +30,7 @@ def _rasterio():
         ) from error
 
 
-def _xarray():
+def _xarray() -> Any:
     try:
         return cast(Any, import_module("xarray"))
     except ImportError as error:
@@ -107,18 +107,18 @@ def read_geotiff_grid(
 
 
 def _grid_from_dataset(
-    dataset,
+    dataset: Any,
     *,
-    resource,
-    contract,
-    value_unit,
-    variable,
-    x_name,
-    y_name,
-    name,
-    value_role,
-    limits,
-):
+    resource: BoundedResource,
+    contract: GeospatialContract,
+    value_unit: UnitDefinition,
+    variable: str,
+    x_name: str,
+    y_name: str,
+    name: str,
+    value_role: Literal["scalar", "vertical"],
+    limits: ResourceLimits,
+) -> QualifiedGeospatialGrid:
     if (
         variable not in dataset
         or x_name not in dataset.coords

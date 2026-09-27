@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _pot_exposure():
+def _pot_exposure() -> Any:
     interval = phx.measurement.OperationalInterval(
         phx.measurement.OperationalCoordinate("neutrino", {"run": 1, "spill": 0}),
         phx.measurement.OperationalCoordinate("neutrino", {"run": 2, "spill": 0}),
@@ -25,7 +28,7 @@ def _pot_exposure():
     )
 
 
-def test_neutrino_oscillation_unitarity_and_rate_chain():
+def test_neutrino_oscillation_unitarity_and_rate_chain() -> None:
     neutrino = phx.applications.neutrino
     parameters = neutrino.NeutrinoOscillationParameters(
         theta12=0.59,
@@ -84,7 +87,7 @@ def test_neutrino_oscillation_unitarity_and_rate_chain():
     assert jnp.allclose(transfer.far_prediction, jnp.asarray([5.0, 10.0]))
 
 
-def test_coherent_amplitude_interference_and_time_dependent_mixing():
+def test_coherent_amplitude_interference_and_time_dependent_mixing() -> None:
     flavor = phx.applications.flavor_physics
     amplitude_plan = flavor.CoherentAmplitudePlan(
         ("resonance-a", "resonance-b"),

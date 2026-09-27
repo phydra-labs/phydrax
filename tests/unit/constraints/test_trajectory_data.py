@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -15,7 +18,7 @@ from phydrax.terms import (
 )
 
 
-def _make_problem():
+def _make_problem() -> Any:
     inputs = jnp.asarray([[0.0, 1.0], [1.0, 2.0], [2.0, 4.0]])
     lengths = jnp.asarray([2, 4, 3])
     domain = TrajectoryDatasetDomain(inputs, lengths, dt=0.5)
@@ -27,7 +30,7 @@ def _make_problem():
     return domain, values, slopes, structure
 
 
-def _all_observation_batch(domain, structure):
+def _all_observation_batch(domain: Any, structure: Any) -> Any:
     case_indices = domain.flat_case_indices
     time_indices = domain.flat_time_indices
     times = domain.observation_times(case_indices, time_indices)
@@ -39,7 +42,7 @@ def _all_observation_batch(domain, structure):
     )
 
 
-def test_trajectory_signal_matches_vector_observed_nodes():
+def test_trajectory_signal_matches_vector_observed_nodes() -> None:
     domain, values, _slopes, structure = _make_problem()
     signal = TrajectorySignal(domain, values, interpolation="linear")
 
@@ -49,7 +52,7 @@ def test_trajectory_signal_matches_vector_observed_nodes():
     assert jnp.allclose(pred, target, atol=1e-12)
 
 
-def test_trajectory_signal_linear_interpolates_and_differentiates():
+def test_trajectory_signal_linear_interpolates_and_differentiates() -> None:
     domain, values, slopes, structure = _make_problem()
     signal = TrajectorySignal(domain, values, interpolation="linear")
     dt_signal = partial_t(signal, var="t")
@@ -71,7 +74,7 @@ def test_trajectory_signal_linear_interpolates_and_differentiates():
     assert jnp.allclose(deriv, jnp.broadcast_to(slopes, deriv.shape), atol=1e-12)
 
 
-def test_trajectory_signal_nearest_rejects_time_derivative():
+def test_trajectory_signal_nearest_rejects_time_derivative() -> None:
     domain, values, _slopes, _structure = _make_problem()
     signal = TrajectorySignal(domain, values, interpolation="nearest")
 
@@ -79,7 +82,7 @@ def test_trajectory_signal_nearest_rejects_time_derivative():
         partial_t(signal, var="t")
 
 
-def test_trajectory_signal_cubic_hermite_supports_second_time_derivative():
+def test_trajectory_signal_cubic_hermite_supports_second_time_derivative() -> None:
     domain, values, _slopes, structure = _make_problem()
     signal = TrajectorySignal(domain, values, interpolation="cubic_hermite")
     d2_signal = partial_n(signal, var="t", order=2)
@@ -91,7 +94,7 @@ def test_trajectory_signal_cubic_hermite_supports_second_time_derivative():
     assert jnp.allclose(pred, jnp.zeros_like(pred), atol=1e-10)
 
 
-def test_trajectory_case_data_term_supervises_case_only_vector_target():
+def test_trajectory_case_data_term_supervises_case_only_vector_target() -> None:
     domain, _values, _slopes, _structure = _make_problem()
     inputs = domain.inputs
     targets = jnp.stack(
@@ -99,7 +102,7 @@ def test_trajectory_case_data_term_supervises_case_only_vector_target():
     )
 
     @domain.Function("data")
-    def theta(data):
+    def theta(data: Any) -> Any:
         return jnp.asarray([data[0] + data[1], data[0] - data[1]])
 
     term = TrajectoryCaseDataTerm(
@@ -117,13 +120,13 @@ def test_trajectory_case_data_term_supervises_case_only_vector_target():
     assert jnp.allclose(metrics["data_relative_l2_error"], 0.0)
 
 
-def test_trajectory_case_data_term_can_evaluate_at_case_end():
+def test_trajectory_case_data_term_can_evaluate_at_case_end() -> None:
     domain, _values, _slopes, _structure = _make_problem()
     inputs = domain.inputs
     targets = inputs[:, 0] + domain.end_times
 
     @domain.Function("data", "t")
-    def final_value(data, t):
+    def final_value(data: Any, t: Any) -> Any:
         return data[0] + t
 
     term = TrajectoryCaseDataTerm(
@@ -138,7 +141,7 @@ def test_trajectory_case_data_term_can_evaluate_at_case_end():
     assert jnp.allclose(loss, 0.0, atol=1e-12)
 
 
-def test_trajectory_case_data_term_samples_only_case_subset():
+def test_trajectory_case_data_term_samples_only_case_subset() -> None:
     domain, _values, _slopes, _structure = _make_problem()
     targets = domain.inputs[:, 0]
     allowed = jnp.asarray([0, 2], dtype=jnp.int32)
@@ -156,7 +159,7 @@ def test_trajectory_case_data_term_samples_only_case_subset():
     assert jnp.allclose(batch.target, targets[batch.case_indices])
 
 
-def test_physics_residual_can_use_fixed_trajectory_signal():
+def test_physics_residual_can_use_fixed_trajectory_signal() -> None:
     inputs = jnp.asarray([[0.0], [1.0], [2.0]])
     lengths = jnp.asarray([2, 4, 3])
     domain = TrajectoryDatasetDomain(inputs, lengths, dt=0.25)
@@ -166,7 +169,7 @@ def test_physics_residual_can_use_fixed_trajectory_signal():
     signal = TrajectorySignal(domain, values, interpolation="linear")
 
     @domain.Function("data", "t")
-    def u(data, t):
+    def u(data: Any, t: Any) -> Any:
         return data[0] + 2.0 * t
 
     component = domain.component()

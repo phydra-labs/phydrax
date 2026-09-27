@@ -17,7 +17,7 @@ class BaseInteraction:
     annotation: str
     source_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.left == self.right or any(
             not value or value != value.strip()
             for value in (self.kind, self.annotation, self.source_id)
@@ -32,7 +32,7 @@ class BaseInteractionGraph:
     construct: NucleicAcidConstruct
     interactions: tuple[BaseInteraction, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         keys = set(self.construct.nucleotide_keys)
         if not isinstance(self.interactions, tuple) or len(set(self.interactions)) != len(
             self.interactions

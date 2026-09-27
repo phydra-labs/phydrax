@@ -12,8 +12,10 @@ from typing import Any, Literal, TypeAlias
 
 from phydrax.units import DIMENSIONLESS, DimensionSignature
 
+from ..typing import parse
 
-PDERepresentation = Literal[
+
+PDERepresentation: TypeAlias = Literal[
     "scalar",
     "pseudoscalar",
     "vector",
@@ -21,11 +23,11 @@ PDERepresentation = Literal[
     "tensor",
     "pseudotensor",
 ]
-PDECoordinateKind = Literal["space", "time"]
-PDEConditionKind = Literal["initial", "boundary", "interface"]
-PDERegionKind = Literal["interior", "boundary", "interface", "initial"]
+PDECoordinateKind: TypeAlias = Literal["space", "time"]
+PDEConditionKind: TypeAlias = Literal["initial", "boundary", "interface"]
+PDERegionKind: TypeAlias = Literal["interior", "boundary", "interface", "initial"]
 PDELiteral: TypeAlias = int | float | Fraction
-PDEExpressionOp = Literal[
+PDEExpressionOp: TypeAlias = Literal[
     "constant",
     "coordinate",
     "field",
@@ -49,32 +51,6 @@ PDEExpressionOp = Literal[
     "laplacian",
     "integral",
 ]
-
-
-_VALID_OPS = {
-    "constant",
-    "coordinate",
-    "field",
-    "parameter",
-    "add",
-    "multiply",
-    "divide",
-    "negate",
-    "power",
-    "sin",
-    "cos",
-    "exp",
-    "log",
-    "sqrt",
-    "component",
-    "dot",
-    "derivative",
-    "gradient",
-    "divergence",
-    "curl",
-    "laplacian",
-    "integral",
-}
 
 
 def _finite_float(value: float, name: str, /) -> float:
@@ -105,7 +81,7 @@ def _literal(value: PDELiteral, name: str, /) -> PDELiteral:
 def _exact_integer_literal(value: PDELiteral | None, /) -> int | None:
     if value is None or isinstance(value, bool):
         return None
-    if isinstance(value, Integral):
+    if isinstance(value, (int, Integral)):
         return int(value)
     if isinstance(value, Fraction):
         return value.numerator if value.denominator == 1 else None
@@ -124,8 +100,9 @@ class PDECoordinate:
     periodic: bool = False
 
     def __post_init__(self) -> None:
-        if not self.name or self.kind not in ("space", "time"):
+        if not self.name:
             raise ValueError("PDE coordinates require a name and valid kind.")
+        object.__setattr__(self, "kind", parse(self.kind, PDECoordinateKind, "kind"))
         if self.size <= 0:
             raise ValueError("PDE coordinate size must be positive.")
         object.__setattr__(self, "size", self.size)
@@ -156,15 +133,11 @@ class PDEField:
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("PDE field name must not be empty.")
-        if self.representation not in (
-            "scalar",
-            "pseudoscalar",
-            "vector",
-            "pseudovector",
-            "tensor",
-            "pseudotensor",
-        ):
-            raise ValueError("Unknown PDE field representation.")
+        object.__setattr__(
+            self,
+            "representation",
+            parse(self.representation, PDERepresentation, "representation"),
+        )
         if int(self.components) <= 0:
             raise ValueError("PDE field components must be positive.")
         object.__setattr__(self, "components", int(self.components))
@@ -236,8 +209,7 @@ class PDEExpression:
     dimension: DimensionSignature = DIMENSIONLESS
 
     def __post_init__(self) -> None:
-        if self.op not in _VALID_OPS:
-            raise ValueError(f"Unknown PDE expression operation {self.op!r}.")
+        object.__setattr__(self, "op", parse(self.op, PDEExpressionOp, "op"))
         object.__setattr__(self, "args", tuple(self.args))
         if not isinstance(self.dimension, DimensionSignature):
             raise TypeError("PDE expression dimension must be a DimensionSignature.")
@@ -408,13 +380,9 @@ class PDERegion:
     component: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.name or self.kind not in (
-            "interior",
-            "boundary",
-            "interface",
-            "initial",
-        ):
+        if not self.name:
             raise ValueError("PDE regions require a name and valid kind.")
+        object.__setattr__(self, "kind", parse(self.kind, PDERegionKind, "kind"))
         coordinates = tuple(str(value) for value in self.coordinates)
         if not coordinates:
             raise ValueError("PDE regions require explicit coordinate labels.")
@@ -433,8 +401,9 @@ class PDECondition:
     coordinate: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.name or self.kind not in ("initial", "boundary", "interface"):
+        if not self.name:
             raise ValueError("PDE conditions require a name and valid kind.")
+        object.__setattr__(self, "kind", parse(self.kind, PDEConditionKind, "kind"))
         if not self.region:
             raise ValueError("PDE conditions require an explicit region identifier.")
 

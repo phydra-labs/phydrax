@@ -16,8 +16,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.sharding import SingleDeviceSharding
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint, canonical_json
 from ..._strict import StrictModule
@@ -49,6 +50,7 @@ from ...solver._grmhd_ct import GRMHDConstrainedTransportPlan, GRMHDCTState
 from ...solver._grmhd_runtime import GRMHDState
 from ...solver._grrmhd_runtime import GRRMHDState
 from ...solver._relativistic_finite_volume import GRHDFiniteVolumeState
+from ...typing import parse
 from ._coupled_runtime import CoupledEvolutionState
 from ._distributed import _formulation, NumericalRelativityFormulation
 from ._matter_coupling import CoupledBudget
@@ -111,12 +113,10 @@ class NumericalRelativityRestartPolicy(StrictModule, NonTrainableState):
         *,
         absolute_tolerance: float = 0.0,
         relative_tolerance: float = 0.0,
-    ):
-        relation_ = str(relation)
+    ) -> None:
         absolute = float(absolute_tolerance)
         relative = float(relative_tolerance)
-        if relation_ not in ("exact", "tolerance"):
-            raise ValueError("Restart relation must be 'exact' or 'tolerance'.")
+        relation_ = parse(relation, RestartRelation, "relation")
         if (
             not np.isfinite(absolute)
             or absolute < 0.0
@@ -132,7 +132,7 @@ class NumericalRelativityRestartPolicy(StrictModule, NonTrainableState):
             maximum_absolute_tolerance=absolute,
             maximum_relative_tolerance=relative,
         )
-        self.relation = relation_  # type: ignore[assignment]
+        self.relation = relation_
         self.absolute_tolerance = absolute
         self.relative_tolerance = relative
         self.topology_policy = topology_policy
@@ -181,7 +181,7 @@ class NumericalRelativityRestartState(StrictModule):
         step_index: ArrayLike,
         fields: Sequence[Any],
         /,
-    ):
+    ) -> None:
         formulation_ = _formulation(formulation)
         runtime, geometry, topology = tuple(
             str(value).strip() for value in (runtime_id, geometry_id, topology_id)
@@ -425,7 +425,7 @@ class NumericalRelativityCheckpointPlan(StrictModule, NonTrainableState):
         state_template: NumericalRelativityRestartState,
         constrained_transport: GRMHDConstrainedTransportPlan | None = None,
         restart: NumericalRelativityRestartPolicy | None = None,
-    ):
+    ) -> None:
         formulation_ = _formulation(formulation)
         identifiers = tuple(
             str(value).strip()
@@ -707,7 +707,7 @@ class NumericalRelativityCheckpoint(StrictModule):
         plan_id: str,
         checkpoint_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(state, NumericalRelativityRestartState):
             raise TypeError("NR checkpoint requires a restart state.")
         plan = str(plan_id)

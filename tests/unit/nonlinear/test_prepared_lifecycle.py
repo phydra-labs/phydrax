@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -13,7 +16,7 @@ la = phx.linalg
 nl = phx.nonlinear
 
 
-def _termination(*, maximum_steps=12):
+def _termination(*, maximum_steps: Any = 12) -> Any:
     return nl.NonlinearTermination(
         absolute_residual=1e-7,
         relative_residual=1e-7,
@@ -24,7 +27,9 @@ def _termination(*, maximum_steps=12):
 
 
 @pytest.mark.parametrize("method", (nl.NewtonKrylov(), nl.NewtonTrustRegion()))
-def test_prepared_newton_refresh_reuses_linear_plan_and_updates_numerics(method):
+def test_prepared_newton_refresh_reuses_linear_plan_and_updates_numerics(
+    method: Any,
+) -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state - target,
         problem_id=f"prepared-{method.method_id}",
@@ -64,7 +69,9 @@ def test_prepared_newton_refresh_reuses_linear_plan_and_updates_numerics(method)
 
 
 @pytest.mark.parametrize("method", (nl.NewtonKrylov(), nl.NewtonTrustRegion()))
-def test_prepared_newton_refresh_and_solve_follow_existing_jit_pattern(method):
+def test_prepared_newton_refresh_and_solve_follow_existing_jit_pattern(
+    method: Any,
+) -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state - target,
         problem_id=f"prepared-jit-{method.method_id}",
@@ -77,7 +84,7 @@ def test_prepared_newton_refresh_and_solve_follow_existing_jit_pattern(method):
         args=jnp.asarray([1.0]),
     )
 
-    def staged(target):
+    def staged(target: Any) -> Any:
         refreshed = nl.refresh_nonlinear(
             prepared,
             problem,
@@ -102,7 +109,7 @@ def test_prepared_newton_refresh_and_solve_follow_existing_jit_pattern(method):
     assert int(linear_version) > int(prepared.linear_refresh_state.numeric_version)
 
 
-def test_prepared_nonlinear_solve_accepts_per_call_termination_budget():
+def test_prepared_nonlinear_solve_accepts_per_call_termination_budget() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state**2 - target,
         problem_id="prepared-per-call-budget",
@@ -126,7 +133,7 @@ def test_prepared_nonlinear_solve_accepts_per_call_termination_budget():
     assert limited.provenance.linear_plan_id == completed.provenance.linear_plan_id
 
 
-def test_prepared_nonlinear_refresh_rejects_changed_spaces():
+def test_prepared_nonlinear_refresh_rejects_changed_spaces() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state - target,
         problem_id="prepared-space-identity",
@@ -147,7 +154,7 @@ def test_prepared_nonlinear_refresh_rejects_changed_spaces():
         )
 
 
-def test_prepared_nonlinear_refresh_rejects_changed_linear_structure():
+def test_prepared_nonlinear_refresh_rejects_changed_linear_structure() -> None:
     space = la.PyTreeSpace(jnp.zeros(1))
     problem = nl.NonlinearSystemProblem(
         lambda state, args: args["scale"] * state - 1.0,
@@ -156,7 +163,7 @@ def test_prepared_nonlinear_refresh_rejects_changed_linear_structure():
         problem_id="prepared-structure-identity",
     )
 
-    def operator(state, args):
+    def operator(state: Any, args: Any) -> Any:
         del state
         scale = args["scale"]
         return la.FunctionLinearOperator(
@@ -186,7 +193,7 @@ def test_prepared_nonlinear_refresh_rejects_changed_linear_structure():
         )
 
 
-def test_prepared_nonlinear_rejects_unsupported_methods_and_is_public():
+def test_prepared_nonlinear_rejects_unsupported_methods_and_is_public() -> None:
     public = {
         "PreparedNonlinearSolve",
         "prepare_nonlinear",
@@ -209,7 +216,7 @@ def test_prepared_nonlinear_rejects_unsupported_methods_and_is_public():
 
 
 @pytest.mark.parametrize("method", (nl.NewtonKrylov(), nl.NewtonTrustRegion()))
-def test_prepared_step_limit_is_relative_to_retained_iteration(method):
+def test_prepared_step_limit_is_relative_to_retained_iteration(method: Any) -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state**2 - target,
         problem_id=f"prepared-relative-step-{method.method_id}",

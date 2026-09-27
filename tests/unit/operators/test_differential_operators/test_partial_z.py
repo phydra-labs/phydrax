@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax.axes as cx
@@ -10,9 +13,9 @@ from phydrax.domain import TimeInterval
 from phydrax.operators.differential import partial_z
 
 
-def test_partial_z_point(box3d):
+def test_partial_z_point(box3d: Any) -> None:
     @box3d.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2 + x[2] ** 2
 
     pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0, 4.0]), dims=(None,))})
@@ -20,9 +23,9 @@ def test_partial_z_point(box3d):
     assert jnp.allclose(out, 8.0)
 
 
-def test_partial_z_vector_output(box3d):
+def test_partial_z_vector_output(box3d: Any) -> None:
     @box3d.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return jnp.array([x[0] ** 2, x[1] ** 2, x[2] ** 2])
 
     pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0, 4.0]), dims=(None,))})
@@ -30,11 +33,11 @@ def test_partial_z_vector_output(box3d):
     assert jnp.allclose(out, jnp.array([0.0, 0.0, 8.0]))
 
 
-def test_partial_z_spacetime_ignores_t(box3d):
+def test_partial_z_spacetime_ignores_t(box3d: Any) -> None:
     dom = box3d @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x", "t")
-    def f(x, t):
+    def f(x: Any, t: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2 + x[2] ** 2 + t
 
     pts = frozendict(
@@ -47,12 +50,12 @@ def test_partial_z_spacetime_ignores_t(box3d):
     assert jnp.allclose(out, 8.0)
 
 
-def test_partial_z_coord_separable(sample_grid, box3d):
+def test_partial_z_coord_separable(sample_grid: Any, box3d: Any) -> None:
     component = box3d.component()
     batch = sample_grid(component, {"x": (4, 5, 6)}, dense_blocks=(), key=0)
 
     @box3d.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         x, y, z = x
         return x**2 + y**2 + z**2
 
@@ -64,6 +67,6 @@ def test_partial_z_coord_separable(sample_grid, box3d):
     assert jnp.allclose(out, 2.0 * Z, atol=1e-6)
 
 
-def test_partial_z_preserves_metadata(box3d):
+def test_partial_z_preserves_metadata(box3d: Any) -> None:
     u = box3d.Function("x")(lambda x: x[2] ** 2).with_metadata(**{"tag": 1})
     assert partial_z(u).metadata == u.metadata

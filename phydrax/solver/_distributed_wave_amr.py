@@ -6,16 +6,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from math import pi, prod
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.sharding import NamedSharding, PartitionSpec
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from .._execution_plan import ExecutionPlan
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -34,6 +35,22 @@ from ..lifecycle._distributed_checkpoint import (
     restore_global_array_from_checkpoint,
 )
 from ..lifecycle._models import CheckpointManifest
+
+
+_KrylovCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+_KrylovResult: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+_PoissonResult: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+_LocalStepOutput: TypeAlias = tuple[
+    tuple[Array, ...],
+    tuple[Array, ...],
+    tuple[Array, ...],
+    tuple[Array, ...],
+    tuple[Array, ...],
+    tuple[Array, ...],
+    tuple[Array, ...],
+]
 
 
 def _part_spec(axis_name: str, rank: int, /) -> PartitionSpec:
@@ -263,7 +280,7 @@ class _PackedCompositeRoutes(StrictModule, NonTrainableState):
         layout: Any,
         diffusion: Any,
         /,
-    ):
+    ) -> None:
         flat_leaf = np.asarray(layout.flat_leaf_mask, dtype=np.bool_)
         leaf_cells = np.flatnonzero(flat_leaf).astype(np.int32)
         compact = np.full((flat_leaf.size,), -1, dtype=np.int32)
@@ -507,7 +524,7 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
         kinetic_spectral_upper_bound: float,
         source_prepared_id: str,
         physics_id: str,
-    ):
+    ) -> None:
         if not isinstance(hierarchy, PreparedDistributedBlockAMRHierarchy):
             raise TypeError("hierarchy must be PreparedDistributedBlockAMRHierarchy.")
         if execution_plan is not None and not isinstance(execution_plan, ExecutionPlan):
@@ -984,7 +1001,9 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
         hbar = self.reduced_planck_constant
         mass = self.boson_mass
 
-        def local_observables(level_values):
+        def local_observables(
+            level_values: tuple[Array, ...],
+        ) -> tuple[Array, Array, Array, Array, Array]:
             part = jax.lax.axis_index(axis_name)
             packed = jnp.concatenate(
                 tuple(value[0].reshape((-1,)) for value in level_values)
@@ -1081,7 +1100,9 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
             real = tuple(jnp.real(value) for value in checked.psi)
             imaginary = tuple(jnp.imag(value) for value in checked.psi)
 
-            def fill(values):
+            def fill(
+                values: tuple[Array, ...],
+            ) -> tuple[tuple[Array, ...], tuple[Array, ...]]:
                 boundaries, supplied = self.hierarchy._boundary_inputs(values, None)
                 return self.hierarchy._packed_fill_values(
                     values,
@@ -1129,7 +1150,7 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
                 )
                 halo_width = level_plan.halo_width
 
-                def point(first: int, second: int, /):
+                def point(first: int, second: int, /) -> Array:
                     slices = [slice(None), slice(None)]
                     for component, (width, size) in enumerate(
                         zip(
@@ -1256,13 +1277,13 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
                 )
 
         def local_step(
-            level_values,
-            initial_scale,
-            end_scale,
-            kick_value,
-            drift_value,
-            fillpatch_complete,
-        ):
+            level_values: tuple[Array, ...],
+            initial_scale: Array,
+            end_scale: Array,
+            kick_value: Array,
+            drift_value: Array,
+            fillpatch_complete: Array,
+        ) -> _LocalStepOutput:
             part = jax.lax.axis_index(axis)
             local_flat = jnp.concatenate(
                 tuple(value[0].reshape((-1,)) for value in level_values)
@@ -1280,14 +1301,14 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
             edge_jump = routes.edge_level_jump[part]
             edge_valid = routes.edge_valid[part]
 
-            def to_owned(packed):
+            def to_owned(packed: Array) -> Array:
                 return jnp.where(owned, packed[packed_indices], 0.0)
 
-            def to_packed(local):
+            def to_packed(local: Array) -> Array:
                 packed = jnp.zeros((routes.local_packed_size,), dtype=local.dtype)
                 return packed.at[packed_indices].add(jnp.where(owned, local, 0.0))
 
-            def split_packed(flat):
+            def split_packed(flat: Array) -> tuple[Array, ...]:
                 output = []
                 start = 0
                 for shape, size in zip(local_shapes, local_sizes, strict=True):
@@ -1295,10 +1316,10 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
                     start += size
                 return tuple(output)
 
-            def exchange(value):
+            def exchange(value: Array) -> Array:
                 return _safe_halo_exchange(halo, value, part, axis)
 
-            def operator(value):
+            def operator(value: Array) -> Array:
                 full = exchange(jnp.where(owned, value, 0.0))
                 difference = full[edge_left] - full[edge_right]
                 flux = jnp.where(edge_valid, edge_weights * difference, 0.0)
@@ -1308,27 +1329,29 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
                 integrated = halo.accumulate_halo(integrated, part, axis_name=axis)
                 return jnp.where(owned, integrated / measures, 0.0)
 
-            def inner(left, right):
+            def inner(left: Array, right: Array) -> Array:
                 local = jnp.sum(jnp.where(owned, measures * jnp.conj(left) * right, 0.0))
                 return jax.lax.psum(local, axis)
 
-            def weighted_mean(value):
+            def weighted_mean(value: Array) -> Array:
                 numerator = jax.lax.psum(
                     jnp.sum(jnp.where(owned, measures * value, 0.0)), axis
                 )
                 denominator = jax.lax.psum(jnp.sum(jnp.where(owned, measures, 0.0)), axis)
                 return numerator / denominator
 
-            def project(value):
+            def project(value: Array) -> Array:
                 return jnp.where(owned, value - weighted_mean(value), 0.0)
 
-            def global_norm(value):
+            def global_norm(value: Array) -> Array:
                 return jnp.sqrt(jnp.maximum(jnp.real(inner(value, value)), 0.0))
 
-            def finite_local(value):
+            def finite_local(value: Array) -> Array:
                 return jnp.all(jnp.isfinite(jnp.where(owned, value, 0.0)))
 
-            def pcg(action, rhs, *, gauge):
+            def pcg(
+                action: Callable[[Array], Array], rhs: Array, *, gauge: bool
+            ) -> _KrylovResult:
                 initial = jnp.zeros_like(rhs)
                 residual = project(rhs) if gauge else rhs
                 direction = residual
@@ -1343,7 +1366,7 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
                     axis,
                 )
 
-                def condition(carry):
+                def condition(carry: _KrylovCarry) -> Array:
                     iteration, _, _, _, residual_squared, okay = carry
                     return (
                         (iteration < maximum_steps)
@@ -1351,7 +1374,7 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
                         & (residual_squared > tolerance * tolerance)
                     )
 
-                def body(carry):
+                def body(carry: _KrylovCarry) -> _KrylovCarry:
                     iteration, solution, residual_, direction_, old_squared, okay = carry
                     image = action(direction_)
                     denominator = jnp.real(inner(direction_, image))
@@ -1431,7 +1454,7 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
                     converged,
                 )
 
-            def solve_poisson(wave):
+            def solve_poisson(wave: Array) -> _PoissonResult:
                 density = jnp.where(owned, mass * jnp.abs(wave) ** 2, 0.0)
                 mean_density = weighted_mean(density)
                 source = jnp.where(
@@ -1468,7 +1491,9 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
                     *solution[1:],
                 )
 
-            def potential_kick(wave, potential, fraction):
+            def potential_kick(
+                wave: Array, potential: Array, fraction: float
+            ) -> tuple[Array, Array]:
                 coefficient = fraction * mass * kick_value / hbar
                 phase = coefficient * potential
                 candidate = jnp.where(owned, wave * jnp.exp(-1j * phase), 0.0)
@@ -1477,14 +1502,14 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
                 )
                 return candidate, jax.lax.pmax(local_maximum, axis)
 
-            def kinetic_drift(wave):
+            def kinetic_drift(wave: Array) -> _KrylovResult:
                 action_coefficient = hbar * drift_value / (2.0 * mass)
                 alpha = 0.5 * action_coefficient
 
-                def left(value):
+                def left(value: Array) -> Array:
                     return jnp.where(owned, value + 1j * alpha * operator(value), 0.0)
 
-                def adjoint_left(value):
+                def adjoint_left(value: Array) -> Array:
                     return jnp.where(owned, value - 1j * alpha * operator(value), 0.0)
 
                 right = jnp.where(owned, wave - 1j * alpha * operator(wave), 0.0)
@@ -1517,10 +1542,10 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
                     converged,
                 )
 
-            def probability(value):
+            def probability(value: Array) -> Array:
                 return jnp.real(inner(value, value))
 
-            def integrated_current(value):
+            def integrated_current(value: Array) -> Array:
                 full = exchange(value)
                 face = (
                     hbar
@@ -2189,7 +2214,7 @@ class PreparedDistributedWaveAMRTopologyTransition(StrictModule, NonTrainableSta
         target: PreparedDistributedWaveAMR,
         transition: BlockFieldTopologyTransition,
         /,
-    ):
+    ) -> None:
         if (
             not isinstance(source, PreparedDistributedWaveAMR)
             or not isinstance(target, PreparedDistributedWaveAMR)
@@ -2463,17 +2488,19 @@ class PreparedDistributedWaveAMRTopologyTransition(StrictModule, NonTrainableSta
             transition,
         )
         common_stable_ids = tuple(
-            sorted(
-                set(
-                    int(value)
-                    for value in np.asarray(source_layout.stable_block_ids)[
-                        : source_layout.active_count
-                    ]
-                ).intersection(
-                    int(value)
-                    for value in np.asarray(target_layout.stable_block_ids)[
-                        : target_layout.active_count
-                    ]
+            tuple(
+                sorted(
+                    set(
+                        int(value)
+                        for value in np.asarray(source_layout.stable_block_ids)[
+                            : source_layout.active_count
+                        ]
+                    ).intersection(
+                        int(value)
+                        for value in np.asarray(target_layout.stable_block_ids)[
+                            : target_layout.active_count
+                        ]
+                    )
                 )
             )
             for source_layout, target_layout in zip(
@@ -2550,7 +2577,9 @@ class PreparedDistributedWaveAMRTopologyTransition(StrictModule, NonTrainableSta
         source_count = self.source.routes.halo.entity_count
         real_dtype = self.source.real_dtype
 
-        def transfer_local(level_values):
+        def transfer_local(
+            level_values: tuple[Array, ...],
+        ) -> tuple[tuple[Array, ...], Array, Array, Array, Array, Array, Array]:
             part = jax.lax.axis_index(axis_name)
             source_packed = jnp.concatenate(
                 tuple(value[0].reshape((-1,)) for value in level_values)

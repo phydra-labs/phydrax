@@ -8,7 +8,8 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -83,7 +84,7 @@ class PreparedFilamentVelocity3D(StrictModule):
     filament: VortexFilamentState
     evaluator_id: str = eqx.field(static=True)
 
-    def __init__(self, filament: VortexFilamentState, /):
+    def __init__(self, filament: VortexFilamentState, /) -> None:
         if not isinstance(filament, VortexFilamentState):
             raise TypeError("filament must be VortexFilamentState.")
         self.filament = filament

@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ._strict import StrictModule
 from ._tree_math import tree_all, validate_real_inexact_tree
@@ -50,7 +51,7 @@ class Bounds(StrictModule):
         eqx.field(static=True, repr=False)
     )
 
-    def __init__(self, lower: Any = -jnp.inf, upper: Any = jnp.inf, /):
+    def __init__(self, lower: Any = -jnp.inf, upper: Any = jnp.inf, /) -> None:
         self.lower = lower
         self.upper = upper
         self._lower_metadata = _static_bound_metadata(lower)

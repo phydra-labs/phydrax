@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 from operator import index
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._geometry_precision import GeometryPrecisionPolicy
@@ -64,7 +65,7 @@ class IncompressibleFlowProblem(StrictModule):
         forcing: Any = None,
         forcing_id: str | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if isinstance(spatial_dimension, bool):
             raise TypeError("spatial_dimension must be an integer.")
         dimension = index(spatial_dimension)
@@ -129,7 +130,7 @@ class _PeriodicRotationalDrift(StrictModule):
         algebraic_les: PreparedPeriodicAlgebraicLES | None,
         dynamic_les: PreparedPeriodicDynamicLES | None,
         /,
-    ):
+    ) -> None:
         self.problem = problem
         self.discretization = discretization
         self.method = method
@@ -162,7 +163,9 @@ class _PeriodicRotationalDrift(StrictModule):
 
     def _rotational_product(self, state: Array, /) -> Array:
         dealiasing = self.method.dealiasing
-        evaluation = dealiasing.evaluation
+        # The method was prepared on a TensorSpectralDiscretization, so its padded
+        # evaluation space is tensor-product as well.
+        evaluation = cast(TensorSpectralDiscretization, dealiasing.evaluation)
         padded = dealiasing.embed(self.projector.zero_forbidden_modes(state))
         velocity = evaluation.reconstruct(padded)
         derivatives = tuple(
@@ -361,7 +364,7 @@ class CompiledIncompressibleSpectralDynamics(StrictModule):
         /,
         *,
         compilation_id: str,
-    ):
+    ) -> None:
         residual_key = DiscretizationKey(
             "periodic_incompressible_form",
             DiscretizationRole.RESIDUAL,
@@ -378,27 +381,38 @@ class CompiledIncompressibleSpectralDynamics(StrictModule):
             )
         ]
         residual_dependencies = [discretization.key.key_id]
+        les_binding: (
+            tuple[
+                DiscretizationKey,
+                str,
+                PreparedPeriodicAlgebraicLES | PreparedPeriodicDynamicLES,
+            ]
+            | None
+        )
         if nonlinear_drift.algebraic_les is not None:
-            les_key = DiscretizationKey(
-                "periodic_algebraic_les",
-                DiscretizationRole.AUXILIARY,
-                domain_labels=discretization.key.domain_labels,
+            les_binding = (
+                DiscretizationKey(
+                    "periodic_algebraic_les",
+                    DiscretizationRole.AUXILIARY,
+                    domain_labels=discretization.key.domain_labels,
+                ),
+                "prepared-periodic-algebraic-les",
+                nonlinear_drift.algebraic_les,
             )
-            les_kind = "prepared-periodic-algebraic-les"
-            les_action = nonlinear_drift.algebraic_les
         elif nonlinear_drift.dynamic_les is not None:
-            les_key = DiscretizationKey(
-                "periodic_dynamic_les",
-                DiscretizationRole.AUXILIARY,
-                domain_labels=discretization.key.domain_labels,
+            les_binding = (
+                DiscretizationKey(
+                    "periodic_dynamic_les",
+                    DiscretizationRole.AUXILIARY,
+                    domain_labels=discretization.key.domain_labels,
+                ),
+                "prepared-periodic-dynamic-les",
+                nonlinear_drift.dynamic_les,
             )
-            les_kind = "prepared-periodic-dynamic-les"
-            les_action = nonlinear_drift.dynamic_les
         else:
-            les_key = None
-            les_kind = ""
-            les_action = None
-        if les_action is not None:
+            les_binding = None
+        if les_binding is not None:
+            les_key, les_kind, les_action = les_binding
             records.append(
                 DiscretizationRecord(
                     les_key,
@@ -800,7 +814,8 @@ def compile_periodic_incompressible_flow(
         if dynamic_les is None
         else dynamic_les.prepare(
             discretization,
-            dynamic_test_discretization,
+            # Validated above: dynamic LES requires a tensor test discretization.
+            cast(TensorSpectralDiscretization, dynamic_test_discretization),
             projector,
         )
     )

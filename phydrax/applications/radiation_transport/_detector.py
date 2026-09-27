@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -55,7 +56,7 @@ class PlanarXRayDetectorPlan(StrictModule, NonTrainableState):
         height: float,
         pixel_shape: tuple[int, int],
         detector_id: str,
-    ):
+    ) -> None:
         center_ = np.asarray(center, dtype=np.float64)
         normal_ = np.asarray(normal, dtype=np.float64)
         horizontal = np.asarray(horizontal_axis, dtype=np.float64)

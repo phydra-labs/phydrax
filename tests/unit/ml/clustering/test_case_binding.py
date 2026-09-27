@@ -9,7 +9,7 @@ from phydrax.ml import MLBatch
 from phydrax.ml.clustering import KMeans
 
 
-def test_case_bound_cluster_model_rejects_a_case_axis_omitted_as_feature_axis():
+def test_case_bound_cluster_model_rejects_a_case_axis_omitted_as_feature_axis() -> None:
     features = jnp.array(
         [
             [[-2.0, -1.0], [2.0, 1.0], [-1.0, -0.5], [1.0, 0.5]],

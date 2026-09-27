@@ -7,13 +7,13 @@
 from __future__ import annotations
 
 import math
-from numbers import Integral
 from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 from scipy.special import roots_gegenbauer
 
 from phydrax import ein
@@ -21,6 +21,8 @@ from phydrax import ein
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import nonnegative_integer
+from ..typing import parse
 from ._orthogonal import OrthogonalRuleData
 
 
@@ -28,17 +30,8 @@ GegenbauerNormalization: TypeAlias = Literal["standard", "monic", "orthonormal"]
 _DEFAULT_CONSTRUCTION_BYTES = 512 * 1024**2
 
 
-def _nonnegative_integer(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
-    result = int(value)
-    if result < 0:
-        raise ValueError(f"{name} must be nonnegative.")
-    return result
-
-
 def _positive_integer(value: int, name: str, /) -> int:
-    result = _nonnegative_integer(value, name)
+    result = nonnegative_integer(value, name)
     if result == 0:
         raise ValueError(f"{name} must be positive.")
     return result
@@ -54,7 +47,7 @@ def _static_alpha(value: float, name: str, /) -> float:
     return alpha
 
 
-def _floating_dtype(dtype, /) -> jnp.dtype:
+def _floating_dtype(dtype: DTypeLike, /) -> jnp.dtype:
     dtype_ = jnp.dtype(dtype)
     if not jnp.issubdtype(dtype_, jnp.floating):
         raise TypeError("Gegenbauer polynomial data require a real floating dtype.")
@@ -74,11 +67,11 @@ def _monic_recurrence_coefficient(index: int, alpha: float, /) -> float:
 
 
 def _gegenbauer_standard_scales(
-    alpha: float, degree: int, /, *, dtype=jnp.float64
+    alpha: float, degree: int, /, *, dtype: DTypeLike = jnp.float64
 ) -> Array:
     """Return standard-mode leading coefficients relative to monic modes."""
     alpha_ = _static_alpha(alpha, "alpha")
-    degree_ = _nonnegative_integer(degree, "degree")
+    degree_ = nonnegative_integer(degree, "degree")
     dtype_ = _floating_dtype(dtype)
     scales = np.ones((degree_ + 1,), dtype=np.float64)
     for index in range(1, degree_ + 1):
@@ -86,19 +79,21 @@ def _gegenbauer_standard_scales(
     return jnp.asarray(scales, dtype=dtype_)
 
 
-def _gegenbauer_monic_scales(alpha: float, degree: int, /, *, dtype=jnp.float64) -> Array:
+def _gegenbauer_monic_scales(
+    alpha: float, degree: int, /, *, dtype: DTypeLike = jnp.float64
+) -> Array:
     """Return the unit scales defining the monic Gegenbauer family."""
     _static_alpha(alpha, "alpha")
-    degree_ = _nonnegative_integer(degree, "degree")
+    degree_ = nonnegative_integer(degree, "degree")
     return jnp.ones((degree_ + 1,), dtype=_floating_dtype(dtype))
 
 
 def _gegenbauer_orthonormal_scales(
-    alpha: float, degree: int, /, *, dtype=jnp.float64
+    alpha: float, degree: int, /, *, dtype: DTypeLike = jnp.float64
 ) -> Array:
     """Return positive orthonormal-mode leading coefficients over monic modes."""
     alpha_ = _static_alpha(alpha, "alpha")
-    degree_ = _nonnegative_integer(degree, "degree")
+    degree_ = nonnegative_integer(degree, "degree")
     dtype_ = _floating_dtype(dtype)
     log_norm = (
         0.5 * math.log(math.pi) + math.lgamma(alpha_ + 0.5) - math.lgamma(alpha_ + 1.0)
@@ -114,7 +109,7 @@ def _normalization_scales(
     normalization: GegenbauerNormalization,
     alpha: float,
     degree: int,
-    dtype,
+    dtype: DTypeLike,
     /,
 ) -> np.ndarray:
     functions = {
@@ -129,7 +124,9 @@ def _normalization_scales(
     return np.asarray(functions[normalization](alpha, degree, dtype=dtype))
 
 
-def _monic_coefficient_matrix(alpha: float, degree: int, dtype, /) -> np.ndarray:
+def _monic_coefficient_matrix(
+    alpha: float, degree: int, dtype: DTypeLike, /
+) -> np.ndarray:
     count = degree + 1
     coefficients = np.zeros((count, count), dtype=dtype)
     coefficients[0, 0] = 1.0
@@ -145,7 +142,7 @@ def _monic_coefficient_matrix(alpha: float, degree: int, dtype, /) -> np.ndarray
 
 
 def gauss_gegenbauer_rule_data(
-    num_nodes: int, alpha: float, /, *, dtype=jnp.float64
+    num_nodes: int, alpha: float, /, *, dtype: DTypeLike = jnp.float64
 ) -> OrthogonalRuleData:
     """Return Gauss quadrature for ``(1 - x**2)**(alpha - 1/2)``."""
     count = _positive_integer(num_nodes, "num_nodes")
@@ -175,7 +172,7 @@ def gegenbauer_differentiation_matrix(
     order: int = 1,
     /,
     *,
-    dtype=jnp.float64,
+    dtype: DTypeLike = jnp.float64,
 ) -> Array:
     """Map standard ``alpha`` coefficients to standard ``alpha + order``.
 
@@ -183,8 +180,8 @@ def gegenbauer_differentiation_matrix(
     matrix acts on a leading source-mode axis, and rows are target modes.
     """
     alpha_ = _static_alpha(alpha, "alpha")
-    degree_ = _nonnegative_integer(degree, "degree")
-    order_ = _nonnegative_integer(order, "order")
+    degree_ = nonnegative_integer(degree, "degree")
+    order_ = nonnegative_integer(order, "order")
     dtype_ = _floating_dtype(dtype)
     count = degree_ + 1
     matrix = np.zeros((count, count), dtype=np.dtype(dtype_))
@@ -232,21 +229,18 @@ def gegenbauer_connection_data(
     /,
     *,
     normalization: GegenbauerNormalization = "standard",
-    dtype=jnp.float64,
+    dtype: DTypeLike = jnp.float64,
     maximum_construction_bytes: int = _DEFAULT_CONSTRUCTION_BYTES,
 ) -> GegenbauerConnectionData:
     """Construct the fixed-capacity ``alpha``-to-``beta`` coefficient map."""
     source_alpha = _static_alpha(alpha, "alpha")
     target_alpha = _static_alpha(beta, "beta")
-    degree_ = _nonnegative_integer(degree, "degree")
+    degree_ = nonnegative_integer(degree, "degree")
     dtype_ = _floating_dtype(dtype)
     maximum_bytes = _positive_integer(
         maximum_construction_bytes, "maximum_construction_bytes"
     )
-    if normalization not in ("standard", "monic", "orthonormal"):
-        raise ValueError(
-            "Gegenbauer normalization must be 'standard', 'monic', or 'orthonormal'."
-        )
+    normalization = parse(normalization, GegenbauerNormalization, "normalization")
     if normalization == "standard" and target_alpha == 0.0 and degree_ > 0:
         raise ValueError("The standard Gegenbauer target basis is degenerate at beta=0.")
 

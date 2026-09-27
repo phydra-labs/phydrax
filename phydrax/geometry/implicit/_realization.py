@@ -10,7 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from phydrax.ein import contract
 
@@ -199,7 +199,7 @@ class ImplicitSurfaceEvidence(StrictModule):
         status: Any,
         plan_id: str,
         topology_id: str,
-    ):
+    ) -> None:
         self.projection = projection
         self.sign_pattern_unchanged = jnp.asarray(
             sign_pattern_unchanged, dtype=jnp.bool_
@@ -251,7 +251,7 @@ class ImplicitSurfaceRealization(StrictModule):
         /,
         *,
         source_id: str,
-    ):
+    ) -> None:
         proposed = jnp.asarray(proposed_vertices, dtype=jnp.float64)
         safe = jnp.asarray(vertices, dtype=proposed.dtype)
         faces_ = jnp.asarray(faces, dtype=jnp.int32)
@@ -325,7 +325,7 @@ class ImplicitSurfacePlan(StrictModule):
         policy: ImplicitSurfacePolicy,
         source_id: str,
         topology_id: str,
-    ):
+    ) -> None:
         if not isinstance(projection, ImplicitPointProjectionPlan):
             raise TypeError("projection must be ImplicitPointProjectionPlan.")
         arrays = {

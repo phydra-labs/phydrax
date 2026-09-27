@@ -9,7 +9,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -55,7 +56,7 @@ class ElasticNetworkPlan(StrictModule, NonTrainableState):
         /,
         *,
         minimum_particle_id_separation: int = 0,
-    ):
+    ) -> None:
         cutoff_ = float(cutoff)
         stiffness_ = float(stiffness)
         if not isinstance(edge_capacity, (int, np.integer)) or isinstance(
@@ -128,7 +129,7 @@ class PreparedElasticNetwork(StrictModule, NonTrainableState):
         /,
         *,
         reference_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, ElasticNetworkPlan):
             raise TypeError("plan must be an ElasticNetworkPlan.")
         if not isinstance(system, PreparedAtomisticSystem):

@@ -7,12 +7,13 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from math import prod
-from typing import final
+from typing import Any, final
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -91,7 +92,7 @@ class FiniteElementFieldSpec(StrictModule, NonTrainableState):
         *,
         block_names: Sequence[str] | None = None,
         component_shape: Sequence[int] = (),
-    ):
+    ) -> None:
         field_name = str(name)
         if not field_name:
             raise ValueError("Finite-element field name must be non-empty.")
@@ -1075,6 +1076,7 @@ def _build_finite_element_dof_coordinates(
             dof_coordinates = np.asarray(mesh.coordinates)
         case _:
             raise ValueError("Unsupported finite-element DOF map.")
+    # ty: ignore[invalid-return-type]
     return coordinate_weights, boundary, dof_coordinates
 
 
@@ -1235,7 +1237,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
         /,
         *,
         component_shape: Sequence[int] = (),
-    ):
+    ) -> None:
         resolved = tuple(elements)
         if len(resolved) != len(mesh.blocks):
             raise ValueError("One finite element is required per mesh block.")
@@ -1379,7 +1381,7 @@ class FiniteElementRuntimeData(StrictModule, NonTrainableState):
         *,
         numeric_version: str,
         geometry_layout_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be a CellMesh.")
         points = jnp.asarray(coordinates)
@@ -1595,7 +1597,7 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
         *,
         precision_policy: FiniteElementPrecisionPolicy | None = None,
         coordinate_spec: CellGeometrySpec | None = None,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be a CellMesh.")
         _validate_mesh_geometry(mesh)
@@ -1665,7 +1667,7 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
             }
         )
 
-    def prepare(self, /, *, numeric_version: str = "0"):
+    def prepare(self, /, *, numeric_version: str = "0") -> Any:
         return FiniteElementDiscretization(self, numeric_version=numeric_version)
 
 
@@ -1692,7 +1694,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
     numeric_version: str = eqx.field(static=True)
     preparation: PreparationReport
 
-    def __init__(self, plan: FiniteElementPlan, /, *, numeric_version: str = "0"):
+    def __init__(self, plan: FiniteElementPlan, /, *, numeric_version: str = "0") -> None:
         if not isinstance(plan, FiniteElementPlan):
             raise TypeError("plan must be a FiniteElementPlan.")
         version = str(numeric_version)
@@ -1781,6 +1783,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
                     layout,
                     vector_space,
                     representation=representation,
+                    # ty: ignore[invalid-argument-type]
                     conformity=conformity,
                     projection_id=canonical_fingerprint(
                         {
@@ -1921,7 +1924,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         )
 
     @property
-    def precision_evidence(self):
+    def precision_evidence(self) -> Any:
         return self.precision_policy.evidence()
 
     def prepare_runtime(
@@ -2780,7 +2783,7 @@ class MaskedFiniteElementPlan(StrictModule, NonTrainableState):
         *,
         degree: int = 1,
         precision_policy: FiniteElementPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(mesh, MaskedSimplexMesh):
             raise TypeError("mesh must be a MaskedSimplexMesh.")
         if isinstance(degree, bool) or not isinstance(degree, (int, np.integer)):
@@ -2849,7 +2852,7 @@ class MaskedFiniteElementSystem(StrictModule, NonTrainableState):
         dof_active: Array,
         boundary_dofs: Array,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan_id, str) or not plan_id:
             raise ValueError("plan_id must be a non-empty string.")
         if not isinstance(mass, SparseLinearMap) or not isinstance(

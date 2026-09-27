@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,7 +15,7 @@ import phydrax as phx
 from phydrax.continuation._core import _bordered_tangent
 
 
-def test_parameter_path_exposes_declared_pytree_curve_and_jvp():
+def test_parameter_path_exposes_declared_pytree_curve_and_jvp() -> None:
     problem = phx.continuation.ParameterPathContinuationProblem(
         lambda state, parameters, args: {
             "x": state["x"] - parameters["offset"] - parameters["quadratic"]
@@ -88,7 +91,7 @@ def test_parameter_path_exposes_declared_pytree_curve_and_jvp():
     )
 
 
-def test_parameter_path_rejects_structure_dtype_and_nonfinite_drift():
+def test_parameter_path_rejects_structure_dtype_and_nonfinite_drift() -> None:
     template = {"physical": jnp.asarray([0.0, 0.0])}
     wrong_structure = phx.continuation.ParameterPathContinuationProblem(
         lambda state, parameters, args: state,
@@ -118,7 +121,7 @@ def test_parameter_path_rejects_structure_dtype_and_nonfinite_drift():
         nonfinite.parameters(jnp.asarray(0.0))
 
 
-def _bordered_system(matrix, column, row, corner):
+def _bordered_system(matrix: Any, column: Any, row: Any, corner: Any) -> Any:
     source_space = phx.linalg.PyTreeSpace(
         {"x": jnp.zeros((2,), dtype=jnp.float64)},
         space_id="bordered-source-space",
@@ -142,7 +145,7 @@ def _bordered_system(matrix, column, row, corner):
     )
 
 
-def test_prepared_bordered_solve_reuses_cached_column_across_rhs_and_refresh():
+def test_prepared_bordered_solve_reuses_cached_column_across_rhs_and_refresh() -> None:
     system = _bordered_system(
         [[2.0, 0.0], [0.0, 3.0]],
         [1.0, -1.0],
@@ -201,13 +204,13 @@ def test_prepared_bordered_solve_reuses_cached_column_across_rhs_and_refresh():
     )
 
 
-def test_bordered_refresh_preserves_preconditioner_plan_across_branch_steps():
+def test_bordered_refresh_preserves_preconditioner_plan_across_branch_steps() -> None:
     space = phx.linalg.PyTreeSpace(
         {"x": jnp.zeros((2,), dtype=jnp.float64)},
         space_id="bordered-reuse-space",
     )
 
-    def system_for(matrix, column):
+    def system_for(matrix: Any, column: Any) -> Any:
         operator = phx.linalg.DenseLinearOperator(
             jnp.asarray(matrix, dtype=jnp.float64),
             source=space,
@@ -248,7 +251,9 @@ def test_bordered_refresh_preserves_preconditioner_plan_across_branch_steps():
     assert refreshed.prepared_id == prepared.prepared_id
     assert int(refreshed.numeric_version) == int(prepared.numeric_version) + 1
     assert (
+        # ty: ignore[unresolved-attribute]
         refreshed.principal.preconditioning_state.plan.plan_id
+        # ty: ignore[unresolved-attribute]
         == prepared.principal.preconditioning_state.plan.plan_id
     )
     assert result.provenance.principal_plan_id == plan.principal_plan.plan_id
@@ -256,7 +261,7 @@ def test_bordered_refresh_preserves_preconditioner_plan_across_branch_steps():
     assert int(result.diagnostics.principal_solve_count) == 1
 
 
-def test_bordered_singular_schur_is_explicit_and_skips_rhs_solve():
+def test_bordered_singular_schur_is_explicit_and_skips_rhs_solve() -> None:
     system = _bordered_system(
         [[1.0, 0.0], [0.0, 1.0]],
         [1.0, 0.0],
@@ -282,7 +287,7 @@ def test_bordered_singular_schur_is_explicit_and_skips_rhs_solve():
     assert not bool(result.diagnostics.cached_column_solve_reused)
 
 
-def test_prepared_bordered_solve_is_filter_jittable_for_success_and_failure():
+def test_prepared_bordered_solve_is_filter_jittable_for_success_and_failure() -> None:
     system = _bordered_system(
         [[2.0, 0.0], [0.0, 3.0]],
         [1.0, -1.0],
@@ -331,7 +336,7 @@ def test_prepared_bordered_solve_is_filter_jittable_for_success_and_failure():
     assert not bool(failed.diagnostics.cached_column_solve_reused)
 
 
-def test_bordered_tangent_drops_inherited_state_sized_preconditioner():
+def test_bordered_tangent_drops_inherited_state_sized_preconditioner() -> None:
     space = phx.linalg.ArraySpace((2,), dtype=jnp.float64)
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, args: state - coordinate,
@@ -386,7 +391,7 @@ def test_bordered_tangent_drops_inherited_state_sized_preconditioner():
     assert float(alignment) > 0.0
 
 
-def _sensitivity_problem():
+def _sensitivity_problem() -> Any:
     return phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, args: jnp.stack(
             (
@@ -398,7 +403,7 @@ def _sensitivity_problem():
     )
 
 
-def _tight_termination():
+def _tight_termination() -> Any:
     return phx.nonlinear.NonlinearTermination(
         absolute_residual=1e-13,
         relative_residual=0.0,
@@ -408,7 +413,7 @@ def _tight_termination():
     )
 
 
-def test_accepted_point_sensitivity_matches_recorrected_central_differences():
+def test_accepted_point_sensitivity_matches_recorrected_central_differences() -> None:
     problem = _sensitivity_problem()
     args = {"cubic": jnp.asarray(2.0), "coupling": jnp.asarray(0.5)}
     branch = phx.continuation.continue_branch(
@@ -424,12 +429,12 @@ def test_accepted_point_sensitivity_matches_recorrected_central_differences():
     point = branch.points[-1]
     assert float(point.coordinate) > 0.0
 
-    def sensitive_state(arguments):
+    def sensitive_state(arguments: Any) -> Any:
         return phx.continuation.accepted_point_sensitivity(
             problem, point, args=arguments, termination=_tight_termination()
         ).state
 
-    def recorrected_state(arguments):
+    def recorrected_state(arguments: Any) -> Any:
         return (
             phx.nonlinear.NewtonKrylov()
             .solve(
@@ -465,7 +470,7 @@ def test_accepted_point_sensitivity_matches_recorrected_central_differences():
         )
 
 
-def test_accepted_point_sensitivity_refuses_invalid_inputs():
+def test_accepted_point_sensitivity_refuses_invalid_inputs() -> None:
     problem = _sensitivity_problem()
     args = {"cubic": jnp.asarray(2.0), "coupling": jnp.asarray(0.5)}
     branch = phx.continuation.continue_branch(
@@ -479,6 +484,7 @@ def test_accepted_point_sensitivity_refuses_invalid_inputs():
     with pytest.raises(TypeError, match="BranchPoint"):
         phx.continuation.accepted_point_sensitivity(problem, point.state, args=args)
     with pytest.raises(TypeError, match="ContinuationCurveProblem"):
+        # ty: ignore[invalid-argument-type]
         phx.continuation.accepted_point_sensitivity(object(), point, args=args)
     failed = eqx.tree_at(
         lambda value: value.status,

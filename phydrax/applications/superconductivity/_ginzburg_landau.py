@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -91,7 +92,7 @@ class GaugeCovariantGLPlan(StrictModule, NonTrainableState):
         applied_normal_field: ArrayLike = 0.0,
         phase_anchor: int = 0,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(mesh, TriangleMesh):
             raise TypeError("mesh must be TriangleMesh.")
         values = tuple(
@@ -234,7 +235,9 @@ class GaugeCovariantGLPlan(StrictModule, NonTrainableState):
         potential = coordinates[2 * count :]
         return self._anchor(ChargedGaugeState(scalar, potential, self.gauge.plan_id))
 
-    def _coordinate_energy(self, coordinates: Array, template: GinzburgLandauState, /):
+    def _coordinate_energy(
+        self, coordinates: Array, template: GinzburgLandauState, /
+    ) -> Array:
         gauge = self._decode(coordinates)
         return self.energy(
             GinzburgLandauState(

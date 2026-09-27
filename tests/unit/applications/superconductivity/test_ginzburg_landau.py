@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _mesh():
+def _mesh() -> Any:
     return phx.geometry.TriangleMesh(
         jnp.asarray(
             (
@@ -24,7 +27,7 @@ def _mesh():
     )
 
 
-def _plan():
+def _plan() -> Any:
     return phx.applications.superconductivity.GaugeCovariantGLPlan(
         _mesh(),
         alpha=-1.0,
@@ -36,7 +39,7 @@ def _plan():
     )
 
 
-def test_local_gauge_transform_preserves_covariant_energy_and_uniform_branch():
+def test_local_gauge_transform_preserves_covariant_energy_and_uniform_branch() -> None:
     plan = _plan()
     state = plan.initialize(jnp.ones((5,), dtype=jnp.complex128))
     parameter = jnp.asarray((0.1, -0.2, 0.3, -0.1, 0.0))
@@ -55,7 +58,7 @@ def test_local_gauge_transform_preserves_covariant_energy_and_uniform_branch():
     np.testing.assert_allclose(solved.state.gauge.scalar, 1.0 + 0.0j, atol=1e-10)
 
 
-def test_tdgl_decreases_energy_and_rejects_invalid_step_atomically():
+def test_tdgl_decreases_energy_and_rejects_invalid_step_atomically() -> None:
     plan = _plan()
     state = plan.initialize(0.5 * jnp.ones((5,), dtype=jnp.complex128))
     advanced = plan.tdgl_step(state, 0.01)

@@ -22,6 +22,7 @@ import json
 import math
 import platform
 from time import perf_counter
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -30,11 +31,11 @@ import numpy as np
 import phydrax as phx
 
 
-def _space(values):
+def _space(values: Any) -> Any:
     return phx.optim.FiniteProductSpace(phx.optim.FiniteAxis(values))
 
 
-def _parser():
+def _parser() -> Any:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--parameters", type=int, default=256)
     parser.add_argument("--designs", type=int, default=96)
@@ -48,8 +49,8 @@ def _parser():
     return parser
 
 
-def _reference_channel():
-    def channel(parameters, design, outcomes, context):
+def _reference_channel() -> Any:
+    def channel(parameters: Any, design: Any, outcomes: Any, context: Any) -> Any:
         answer = parameters == design
         return jnp.where(answer[:, None] == outcomes[None, :], 0.0, -jnp.inf)
 
@@ -95,12 +96,12 @@ def _reference_channel():
     }
 
 
-def _photon_problem(arguments):
+def _photon_problem(arguments: Any) -> Any:
     parameters = _space(jnp.geomspace(0.05, 5.0, arguments.parameters))
     designs = _space({"exposure": jnp.geomspace(0.005, 10.0, arguments.designs)})
     outcomes = _space(jnp.arange(arguments.shots + 1))
 
-    def channel(cross_section, design, counts, context):
+    def channel(cross_section: Any, design: Any, counts: Any, context: Any) -> Any:
         n = context["shots"]
         dose = design["exposure"] * (cross_section + context["dark_rate"])
         log_success = jnp.log(-jnp.expm1(-dose))
@@ -132,7 +133,9 @@ def _photon_problem(arguments):
     return problem, phx.uq.FiniteDesignBelief(parameters, log_masses)
 
 
-def _dense_one_design_oracle(problem, belief, design_index, maximum_bytes):
+def _dense_one_design_oracle(
+    problem: Any, belief: Any, design_index: Any, maximum_bytes: Any
+) -> Any:
     p, o = problem.parameters.size, problem.outcomes.size
     needed = 8 * p * o * np.dtype(belief.log_masses.dtype).itemsize
     if needed > maximum_bytes:
@@ -158,7 +161,7 @@ def _dense_one_design_oracle(problem, belief, design_index, maximum_bytes):
     return float(np.sum(np.exp(joint) * (logs - predictive)))
 
 
-def _memory_report(executable):
+def _memory_report(executable: Any) -> Any:
     memory = executable.memory_analysis()
     return {
         "argument_bytes": int(memory.argument_size_in_bytes),
@@ -169,7 +172,14 @@ def _memory_report(executable):
     }
 
 
-def _benchmark_chunks(problem, belief, arguments, batch_size, outcome_chunk, oracle):
+def _benchmark_chunks(
+    problem: Any,
+    belief: Any,
+    arguments: Any,
+    batch_size: Any,
+    outcome_chunk: Any,
+    oracle: Any,
+) -> Any:
     policy = phx.uq.ExpectedInformationGain(
         candidate_batch_size=batch_size,
         outcome_batch_size=outcome_chunk,
@@ -225,7 +235,7 @@ def _benchmark_chunks(problem, belief, arguments, batch_size, outcome_chunk, ora
     return report, selected, policy
 
 
-def run_benchmark(arguments):
+def run_benchmark(arguments: Any) -> Any:
     for name in (
         "parameters",
         "designs",
@@ -317,7 +327,7 @@ def run_benchmark(arguments):
     }
 
 
-def main():
+def main() -> None:
     print(json.dumps(run_benchmark(_parser().parse_args()), indent=2, allow_nan=False))
 
 

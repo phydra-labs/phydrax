@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -20,7 +23,9 @@ from phydrax.nn.layers import Linear
         ("glorot_uniform", 1.0, "fan_avg"),
     ),
 )
-def test_named_initializers_match_target_variance(initializer, scale, mode):
+def test_named_initializers_match_target_variance(
+    initializer: Any, scale: Any, mode: Any
+) -> None:
     in_size = 192
     out_size = 640
     layer = Linear(
@@ -34,7 +39,9 @@ def test_named_initializers_match_target_variance(initializer, scale, mode):
     denominator = in_size if mode == "fan_in" else (in_size + out_size) / 2
     target_variance = scale / denominator
 
+    # ty: ignore[invalid-argument-type]
     assert jnp.isclose(jnp.var(layer.weight), target_variance, rtol=0.03)
+    # ty: ignore[invalid-argument-type]
     assert jnp.abs(jnp.mean(layer.weight)) < 0.02 * jnp.sqrt(target_variance)
 
 
@@ -47,8 +54,8 @@ def test_named_initializers_match_target_variance(initializer, scale, mode):
         ("glorot_uniform", "xavier_uniform"),
     ),
 )
-def test_initializer_aliases_are_exact(canonical, alias):
-    def weight(initializer):
+def test_initializer_aliases_are_exact(canonical: Any, alias: Any) -> None:
+    def weight(initializer: Any) -> Any:
         return Linear(
             in_size=17,
             out_size=29,
@@ -62,8 +69,10 @@ def test_initializer_aliases_are_exact(canonical, alias):
 
 
 @pytest.mark.parametrize(("in_size", "out_size"), ((3, 8), (8, 3)))
-def test_orthogonal_initializer_handles_rectangular_weights(in_size, out_size):
-    def weight():
+def test_orthogonal_initializer_handles_rectangular_weights(
+    in_size: Any, out_size: Any
+) -> None:
+    def weight() -> Any:
         return Linear(
             in_size=in_size,
             out_size=out_size,
@@ -83,7 +92,7 @@ def test_orthogonal_initializer_handles_rectangular_weights(in_size, out_size):
     assert jnp.allclose(gram, jnp.eye(min(in_size, out_size)), atol=1e-5)
 
 
-def test_default_initializer_remains_glorot_normal():
+def test_default_initializer_remains_glorot_normal() -> None:
     kwargs = {
         "in_size": 11,
         "out_size": 7,
@@ -92,7 +101,10 @@ def test_default_initializer_remains_glorot_normal():
         "key": jr.key(3),
     }
 
+    # ty: ignore[invalid-argument-type]
     default = Linear(**kwargs)
+    # ty: ignore[invalid-argument-type]
     explicit = Linear(initializer="glorot_normal", **kwargs)
 
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(default.weight, explicit.weight)

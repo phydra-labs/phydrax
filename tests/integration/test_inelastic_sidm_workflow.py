@@ -1,4 +1,5 @@
 import hashlib
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -30,7 +31,7 @@ from phydrax.artifacts import ScientificArtifactEnvelope
 from phydrax.qualification import ReferenceArtifactManifest
 
 
-def _workflow():
+def _workflow() -> Any:
     species = tuple(
         DarkSectorSpeciesPlan(
             name,
@@ -49,7 +50,7 @@ def _workflow():
     recoil_speed = np.sqrt(1.0 / 0.45)
     speed_nodes = np.asarray((0.0, recoil_speed, 2.0, 5.0))
 
-    def kernel(first, second, cross_section):
+    def kernel(first: Any, second: Any, cross_section: Any) -> Any:
         cosines = np.asarray((-1.0, 0.0, 1.0))
         differential = np.full((4, 3), cross_section / (4.0 * np.pi))
         payload = TwoBodyDifferentialKernelPlan.canonical_table_bytes(
@@ -98,7 +99,9 @@ def _workflow():
         )
 
     reaction = DarkTwoBodyReactionPlan(
+        # ty: ignore[invalid-argument-type]
         species[:2],
+        # ty: ignore[invalid-argument-type]
         species[2:],
         kernel(species[0], species[1], 1.0),
         kernel(species[2], species[3], 1.0 / 0.45),
@@ -129,8 +132,8 @@ def _workflow():
 
 
 def test_reaction_radiation_capacity_and_restart_are_one_atomic_workflow(
-    tmp_path, monkeypatch
-):
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     plan, initial = _workflow()
     reacted = eqx.filter_jit(plan.react)(initial, 0, 1, jr.key(21))
     assert bool(reacted.successful)
@@ -320,7 +323,7 @@ def test_reaction_radiation_capacity_and_restart_are_one_atomic_workflow(
         arrays=extra_member_arrays,
     )
 
-    def fail_if_numpy_loads(*args, **kwargs):
+    def fail_if_numpy_loads(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("np.load must not run before inventory admission")
 
     monkeypatch.setattr(archive_module.np, "load", fail_if_numpy_loads)

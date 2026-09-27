@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from jax import Array
+
 from .._strict import StrictModule
 from ..integration import (
     factorized_bilinear_form,
@@ -17,6 +19,7 @@ from ..integration import (
 from ..linalg.eigen import (
     block_rayleigh_trace,
     BlockRayleighEvaluation,
+    EigenTarget,
     ReducedRitzResult,
     solve_reduced_ritz,
 )
@@ -31,11 +34,11 @@ class FactorizedVariationalEigenspaceResult(StrictModule):
     reduced: ReducedRitzResult
 
     @property
-    def eigenvalues(self):
+    def eigenvalues(self) -> Array:
         return self.reduced.eigenvalues
 
     @property
-    def successful(self):
+    def successful(self) -> Array:
         return (
             self.stiffness.valid
             & self.mass.valid
@@ -51,7 +54,7 @@ def factorized_variational_eigenspace(
     /,
     *,
     count: int | None = None,
-    which: str = "smallest-algebraic",
+    which: EigenTarget = "smallest-algebraic",
     tolerance: float = 1e-10,
 ) -> FactorizedVariationalEigenspaceResult:
     """Assemble and solve one high-dimensional factorized Hermitian trial space."""

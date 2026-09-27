@@ -6,15 +6,15 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import prod
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
@@ -29,20 +29,32 @@ from phydrax.nn.layers._measure_convolution import (
     _AbstractMeasureNormalizedConvND,
     _measure_dependency_support,
 )
-from phydrax.nn.operator.data import OperatorAxis, OperatorBatch
+from phydrax.nn.operator.data import (
+    FunctionSamples,
+    OperatorAxis,
+    OperatorBasis,
+    OperatorBatch,
+)
 from phydrax.nn.operator.engine import AbstractOperatorModel
 from phydrax.signal import fourier_resample as _fourier_resample
 
+from .....typing import parse, PRNGKey
 from ._fno import _activation_regularity
 
 
 CNOActivation = Literal["gelu", "silu", "tanh"]
-ConvolutionAxisPolicy = Literal[
+ConvolutionAxisPolicy: TypeAlias = Literal[
     "periodic_fourier",
     "dirichlet_sine",
     "neumann_cosine",
     "polynomial",
 ]
+_POLICY_BASIS: dict[ConvolutionAxisPolicy, OperatorBasis] = {
+    "periodic_fourier": "fourier",
+    "dirichlet_sine": "sine",
+    "neumann_cosine": "cosine",
+    "polynomial": "legendre",
+}
 
 
 class ConvolutionSupportPlan(StrictModule):
@@ -60,15 +72,12 @@ class ConvolutionSupportPlan(StrictModule):
         *,
         basis_identities: Sequence[str] = (),
         minimum_observed_mass: float = 1.0e-8,
-    ):
-        policies = tuple(axis_policies)
-        valid = {
-            "periodic_fourier",
-            "dirichlet_sine",
-            "neumann_cosine",
-            "polynomial",
-        }
-        if not policies or any(policy not in valid for policy in policies):
+    ) -> None:
+        policies = tuple(
+            parse(policy, ConvolutionAxisPolicy, "axis_policies")
+            for policy in axis_policies
+        )
+        if not policies:
             raise ValueError("Convolution support plan has an invalid axis policy.")
         identities = tuple(str(value) for value in basis_identities)
         if identities and len(identities) != len(policies):
@@ -284,7 +293,7 @@ def _dependency_on_periodic_fourier_axes(
     return support.on_axes(axes_value)
 
 
-def _operator_source(batch: OperatorBatch, source_key: str | None, /):
+def _operator_source(batch: OperatorBatch, source_key: str | None, /) -> FunctionSamples:
     if source_key is not None:
         return batch.input(source_key)
     if len(batch.inputs) != 1:
@@ -310,8 +319,8 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
         oversample_factor: int = 2,
         circular: bool = True,
         extension_modes: Sequence[ConvolutionAxisPolicy] | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         super().__init__(
             spatial_ndim=spatial_ndim,
             in_channels=in_channels,
@@ -375,7 +384,7 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
         original_shape = tuple(jnp.asarray(values).shape[-self.spatial_ndim - 1 : -1])
         halos = tuple(size // 2 for size in self.kernel_size)
 
-        def extend(array, *, channels: bool):
+        def extend(array: ArrayLike, *, channels: bool) -> Array:
             result = jnp.asarray(array)
             start = result.ndim - self.spatial_ndim - (1 if channels else 0)
             for local_axis, (width, mode) in enumerate(
@@ -491,8 +500,8 @@ class _CNOBlock(StrictModule):
         oversample_factor: int,
         circular: bool,
         extension_modes: Sequence[ConvolutionAxisPolicy],
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         first_key, second_key, skip_key = jr.split(key, 3)
         self.first = AntiAliasedConvND(
             spatial_ndim=spatial_ndim,
@@ -604,8 +613,8 @@ class CNO(AbstractOperatorModel):
         coordinate_embedding: bool = True,
         source_key: str | None = None,
         support_plan: ConvolutionSupportPlan | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.in_size = in_channels
         self.out_size = out_channels
         self.spatial_ndim = int(spatial_ndim)
@@ -773,12 +782,7 @@ class CNO(AbstractOperatorModel):
             OperatorAxis(
                 f"axis_{index}",
                 nodes,
-                basis={
-                    "periodic_fourier": "fourier",
-                    "dirichlet_sine": "sine",
-                    "neumann_cosine": "cosine",
-                    "polynomial": "legendre",
-                }[policy],
+                basis=_POLICY_BASIS[policy],
                 periodic=policy == "periodic_fourier",
             )
             for index, (nodes, policy) in enumerate(
@@ -826,8 +830,8 @@ class UNO(AbstractOperatorModel):
         coordinate_embedding: bool = True,
         source_key: str | None = None,
         support_plan: ConvolutionSupportPlan | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.in_size = in_channels
         self.out_size = out_channels
         self.spatial_ndim = int(spatial_ndim)
@@ -967,7 +971,9 @@ class UNO(AbstractOperatorModel):
         hidden = self.lift(array)
         hidden = jnp.where(mask[..., None], hidden, jnp.zeros_like(hidden))
 
-        def resize_masked(payload: Array, observed_mass: Array, shape: tuple[int, ...]):
+        def resize_masked(
+            payload: Array, observed_mass: Array, shape: tuple[int, ...]
+        ) -> tuple[Array, Array, Array]:
             target = payload.shape[: -self.spatial_ndim - 1] + shape
             resized_mass = jax.image.resize(
                 observed_mass.astype(payload.real.dtype),
@@ -1087,12 +1093,7 @@ class UNO(AbstractOperatorModel):
             OperatorAxis(
                 f"axis_{index}",
                 nodes,
-                basis={
-                    "periodic_fourier": "fourier",
-                    "dirichlet_sine": "sine",
-                    "neumann_cosine": "cosine",
-                    "polynomial": "legendre",
-                }[policy],
+                basis=_POLICY_BASIS[policy],
                 periodic=policy == "periodic_fourier",
             )
             for index, (nodes, policy) in enumerate(

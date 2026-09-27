@@ -9,7 +9,8 @@ from dataclasses import dataclass
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...structural_dynamics import LinearStructuralSystem, StructuralDynamicState
 
@@ -26,7 +27,7 @@ class WindTurbineStep:
     aerodynamic_force_n: Array
     wave_force_n: Array
     generator_power_w: Array
-    available_wind_power_w: Array
+    available_wind_power_w: float
     mechanical_residual_norm: Array
     successful: Array
 

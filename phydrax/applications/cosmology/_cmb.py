@@ -8,7 +8,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._differentiation import DerivativeSurface
 from ..._fingerprint import canonical_fingerprint
@@ -50,7 +52,7 @@ class PrimordialPowerLaw(StrictModule):
         tensor_amplitude: ArrayLike = 0.0,
         tensor_tilt: ArrayLike = 0.0,
         tensor_pivot: ArrayLike | None = None,
-    ):
+    ) -> None:
         dtype = jnp.result_type(
             scalar_amplitude,
             scalar_tilt,
@@ -126,7 +128,7 @@ class CmbSpectrumTable(StrictModule):
 
     def __init__(
         self,
-        multipoles: ArrayLike,
+        multipoles: npt.ArrayLike,
         spectra: ArrayLike,
         modes: tuple[str, ...],
         provenance: CosmologyProductProvenance,
@@ -136,7 +138,7 @@ class CmbSpectrumTable(StrictModule):
         lensing_state: str = "unlensed",
         nonlinear_source_id: str = "none",
         temperature_unit: str = "dimensionless-thermodynamic",
-    ):
+    ) -> None:
         ell_host = np.asarray(multipoles, dtype=np.int64).reshape((-1,))
         modes_ = tuple(str(mode).strip() for mode in modes)
         lensing = str(lensing_state).strip()
@@ -215,7 +217,7 @@ class CmbSpectrumTransformPlan(StrictModule, NonTrainableState):
         /,
         *,
         use_d_ell: bool = False,
-    ):
+    ) -> None:
         modes = tuple(mode_indices)
         pairs = tuple((int(left), int(right)) for left, right in field_pairs)
         if not modes or any(index < 0 for index in modes):
@@ -283,7 +285,7 @@ class CmbBandpowerResponsePlan(StrictModule, NonTrainableState):
         *,
         expected_temperature_unit: str,
         response_id: str,
-    ):
+    ) -> None:
         if not isinstance(transform, CmbSpectrumTransformPlan):
             raise TypeError("transform must be a CmbSpectrumTransformPlan.")
         windows_host = np.asarray(windows, dtype=np.float64)

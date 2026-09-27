@@ -3,24 +3,27 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, ParameterOwner
+from ...typing import parse
 from .._keys import EvalKey
 
 
-AffineMode = Literal["elementwise", "matrix"]
-AffineExecution = Literal["serial", "associative"]
-RecurrentTimeDirection = Literal["forward", "backward"]
+AffineMode: TypeAlias = Literal["elementwise", "matrix"]
+AffineExecution: TypeAlias = Literal["serial", "associative"]
+RecurrentTimeDirection: TypeAlias = Literal["forward", "backward"]
 
 
 def _broadcast_case_mask(mask: Array, value: Array, /) -> Array:
@@ -81,12 +84,11 @@ class RecurrentBatch(StrictModule, NonTrainableState):
         reset: ArrayLike | None = None,
         time: ArrayLike | None = None,
         time_direction: RecurrentTimeDirection = "forward",
-    ):
+    ) -> None:
         valid_array = jnp.asarray(valid, dtype=jnp.bool_)
         if valid_array.ndim < 1 or valid_array.shape[-1] <= 0:
             raise ValueError("valid must contain a non-empty trailing sequence axis.")
-        if time_direction not in ("forward", "backward"):
-            raise ValueError("time_direction must be 'forward' or 'backward'.")
+        time_direction = parse(time_direction, RecurrentTimeDirection, "time_direction")
         case_shape = tuple(valid_array.shape[:-1])
         sequence_length = valid_array.shape[-1]
         leaves = jax.tree.leaves(inputs)
@@ -177,7 +179,7 @@ class RecurrentTimeContext(StrictModule, NonTrainableState):
         /,
         *,
         direction: RecurrentTimeDirection,
-    ):
+    ) -> None:
         time_array = jnp.asarray(time)
         has_time_array = jnp.asarray(has_time, dtype=jnp.bool_)
         if not jnp.issubdtype(time_array.dtype, jnp.floating):
@@ -186,8 +188,7 @@ class RecurrentTimeContext(StrictModule, NonTrainableState):
             raise ValueError(
                 "Recurrent context time and has_time must have equal shapes."
             )
-        if direction not in ("forward", "backward"):
-            raise ValueError("direction must be 'forward' or 'backward'.")
+        direction = parse(direction, RecurrentTimeDirection, "direction")
         time_array = eqx.error_if(
             time_array,
             jnp.any(has_time_array & ~jnp.isfinite(time_array)),
@@ -409,7 +410,9 @@ def run_associative_recurrence(
     )
     segment_start = reset & valid
 
-    def segmented_combine(left, right):
+    def segmented_combine(
+        left: tuple[PyTree[Array], Array], right: tuple[PyTree[Array], Array]
+    ) -> tuple[PyTree[Array], Array]:
         left_summary, left_reset = left
         right_summary, right_reset = right
         composed = recurrence.combine(left_summary, right_summary)
@@ -537,7 +540,7 @@ def _recurrent_time_context(
     scan_times = jnp.moveaxis(batch.time, -1, 0)
     scan_valid = jnp.moveaxis(batch.valid, -1, 0)
 
-    def update_time(last_time: Array, values: tuple[Array, Array]):
+    def update_time(last_time: Array, values: tuple[Array, Array]) -> tuple[Array, None]:
         time, valid = values
         return jnp.where(valid, time, last_time), None
 
@@ -630,7 +633,7 @@ def run_recurrent(
         carry: tuple[Any, Any],
         step_inputs: tuple[Any, Array, Array, Array, Array],
         step_key: EvalKey,
-    ):
+    ) -> tuple[tuple[Any, Any], tuple[Any, Any]]:
         state, last_output = carry
         inputs, valid, reset, time, interval = step_inputs
         restarted = _tree_where(reset & valid, restart_state, state)
@@ -660,7 +663,7 @@ def run_recurrent(
         def step_without_key(
             carry: tuple[Any, Any],
             step_inputs: tuple[Any, Array, Array, Array, Array],
-        ):
+        ) -> tuple[tuple[Any, Any], tuple[Any, Any]]:
             return evaluate_step(carry, step_inputs, None)
 
         (final_state, final_output), (scan_states, scan_outputs) = jax.lax.scan(
@@ -674,7 +677,7 @@ def run_recurrent(
         def step_with_key(
             carry: tuple[Any, Any],
             step_inputs: tuple[Any, Array, Array, Array, Array, Array],
-        ):
+        ) -> tuple[tuple[Any, Any], tuple[Any, Any]]:
             inputs, valid, reset, time, interval, step_key = step_inputs
             return evaluate_step(
                 carry,
@@ -718,12 +721,11 @@ class AffineRecurrence(AbstractRecurrentCell):
         /,
         *,
         mode: AffineMode = "elementwise",
-    ):
+    ) -> None:
         initial = jnp.asarray(initial_state)
         if initial.ndim < 1:
             raise ValueError("AffineRecurrence initial_state must have a state axis.")
-        if mode not in ("elementwise", "matrix"):
-            raise ValueError("mode must be 'elementwise' or 'matrix'.")
+        mode = parse(mode, AffineMode, "mode")
         if mode == "matrix" and initial.ndim != 1:
             raise ValueError("Matrix affine recurrence requires a vector initial state.")
         self.initial = initial

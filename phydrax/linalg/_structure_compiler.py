@@ -11,10 +11,12 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._materialization import MaterializationPolicy, materialize
 from ._operators import (
     AbstractLinearOperator,
@@ -86,23 +88,16 @@ class StructureCompilationPolicy(StrictModule):
         max_bandwidth: int = 4,
         fallback: CompilerFallback = "dense",
         materialization: MaterializationPolicy | None = None,
-    ):
+    ) -> None:
         candidates_ = tuple(candidates)
-        valid = {
-            "diagonal",
-            "permutation",
-            "tridiagonal",
-            "triangular",
-            "banded",
-            "dct-diagonal",
-            "fft-diagonal",
-        }
         if not candidates_ or len(set(candidates_)) != len(candidates_):
             raise ValueError(
                 "candidates must be a non-empty sequence without duplicates."
             )
-        if any(candidate not in valid for candidate in candidates_):
-            raise ValueError("Unknown structure compiler candidate.")
+        candidates_ = tuple(
+            parse(candidate, StructureCandidate, f"candidates[{index}]")
+            for index, candidate in enumerate(candidates_)
+        )
         absolute = float(absolute_tolerance)
         relative = float(relative_tolerance)
         if (
@@ -119,8 +114,7 @@ class StructureCompilationPolicy(StrictModule):
         bandwidth = int(max_bandwidth)
         if bandwidth < 0:
             raise ValueError("max_bandwidth must be non-negative.")
-        if fallback not in ("dense", "error"):
-            raise ValueError("fallback must be 'dense' or 'error'.")
+        fallback = parse(fallback, CompilerFallback, "fallback")
         materialization_ = (
             MaterializationPolicy() if materialization is None else materialization
         )
@@ -162,7 +156,7 @@ class StructureCompilationResult(StrictModule):
         exact: bool,
         original_operator_id: str,
         compiler_id: str,
-    ):
+    ) -> None:
         version = jnp.asarray(numeric_version, dtype=jnp.int32)
         if version.ndim != 0:
             raise ValueError("numeric_version must be scalar.")
@@ -371,7 +365,7 @@ def _compile_candidate(
         lower_error = np.linalg.norm(matrix - lower)
         upper_error = np.linalg.norm(matrix - upper)
         projected = lower if lower_error <= upper_error else upper
-        is_lower = lower_error <= upper_error
+        is_lower = bool(lower_error <= upper_error)
         if not _accepted(matrix, projected, policy):
             return None
         variant = "lower" if is_lower else "upper"
@@ -572,7 +566,7 @@ def _orthogonal_transform_matrix(
     axes = tuple(range(len(shape)))
     basis = jnp.eye(size, dtype=dtype)
 
-    def column(coordinates):
+    def column(coordinates: Array) -> Array:
         value = coordinates.reshape(shape)
         return _forward_transform(value, transform, axes).reshape((-1,))
 

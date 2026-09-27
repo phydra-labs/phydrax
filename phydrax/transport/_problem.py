@@ -9,7 +9,7 @@ import math
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from ..integration._api import IntegrationRealization
@@ -29,7 +29,7 @@ class TransportProblemProvenance(StrictModule):
     target: str = eqx.field(static=True)
     cost: str = eqx.field(static=True)
 
-    def __init__(self, source: str, target: str, cost: str, /):
+    def __init__(self, source: str, target: str, cost: str, /) -> None:
         self.source = str(source)
         self.target = str(target)
         self.cost = str(cost)
@@ -53,7 +53,7 @@ class DiscreteTransportProblem(StrictModule):
         /,
         *,
         mass_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         if not isinstance(source, _FiniteTransportMeasure):
             raise TypeError("source must be a canonical finite transport measure.")
         if not isinstance(target, _FiniteTransportMeasure):

@@ -2,12 +2,17 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from phydrax.applications.numerical_relativity._amr import (
+    AMRTransferBinding,
     NumericalRelativityAMRHaloPlan,
     NumericalRelativityAMRState,
     NumericalRelativityAMRTopologyEpoch,
@@ -67,7 +72,7 @@ from phydrax.solver._grmhd_runtime import GRMHDState
 from phydrax.solver._grrmhd_runtime import GRRMHDState
 
 
-def _bridge(count, upper=1.0):
+def _bridge(count: Any, upper: Any = 1.0) -> Any:
     grid = TensorGridPlan(
         tuple(UniformCellAxisSpec(count, periodic=True) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -75,7 +80,7 @@ def _bridge(count, upper=1.0):
     return StructuredCochainBridge(grid)
 
 
-def _block_setup(*, fine_capacity=8, overflow=False):
+def _block_setup(*, fine_capacity: Any = 8, overflow: Any = False) -> Any:
     grid = TensorGridPlan(
         tuple(UniformCellAxisSpec(4, periodic=True) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -96,7 +101,7 @@ def _block_setup(*, fine_capacity=8, overflow=False):
     return hierarchy, initial, compiled, FDAMRHierarchyPlan(hierarchy).prepare()
 
 
-def _hierarchy_state(topology, component_count=25, *, dtype):
+def _hierarchy_state(topology: Any, component_count: Any = 25, *, dtype: Any) -> Any:
     levels = tuple(
         BlockLevelState(
             plan,
@@ -111,7 +116,14 @@ def _hierarchy_state(topology, component_count=25, *, dtype):
     return BlockHierarchyState(topology, levels)
 
 
-def _epoch(formulation, hierarchy, compilation, fd, *, magnetic_bridge=None):
+def _epoch(
+    formulation: Any,
+    hierarchy: Any,
+    compilation: Any,
+    fd: Any,
+    *,
+    magnetic_bridge: Any = None,
+) -> Any:
     prepared = NumericalRelativityAMRDistributionPlan(formulation, hierarchy, 1).prepare(
         compilation, fd
     )
@@ -127,7 +139,7 @@ def _epoch(formulation, hierarchy, compilation, fd, *, magnetic_bridge=None):
     )
 
 
-def test_single_device_named_fields_and_authoritative_block_ownership_fillpatch():
+def test_single_device_named_fields_and_authoritative_block_ownership_fillpatch() -> None:
     fixed = NumericalRelativityDistributedPlan(
         "z4c",
         (4, 4, 4),
@@ -176,7 +188,7 @@ def test_single_device_named_fields_and_authoritative_block_ownership_fillpatch(
     assert halo.source_class.shape == halo.valid.shape
 
 
-def test_z4c_and_material_transfers_report_constraints_and_conservation():
+def test_z4c_and_material_transfers_report_constraints_and_conservation() -> None:
     source = flat_z4c_state((2, 2, 2), grid_id="coarse")
     values = source.values.at[1].set(4.0).at[8].set(0.3)
     transferred, z4c_evidence = Z4cAMRTransferPlan(constraint_tolerance=2.0e-5).prolong(
@@ -222,7 +234,29 @@ def test_z4c_and_material_transfers_report_constraints_and_conservation():
     np.testing.assert_allclose(reflux.conservation_residual, 0.0, atol=1.0e-7)
 
 
-def test_magnetic_transfer_and_emf_curl_reflux_preserve_divergence():
+def test_amr_transfer_binding_content_ids_are_hashable_static_identities() -> None:
+    def bind(source: Any, target: Any) -> Any:
+        return AMRTransferBinding(
+            source,
+            target,
+            source_topology_id="coarse",
+            target_topology_id="fine",
+            source_epoch_id="epoch-0",
+            target_epoch_id="epoch-1",
+            field_name="material",
+            formulation="grhd",
+            transfer_plan_id="transfer",
+            transition_plan_id="transition",
+        )
+
+    source = jnp.arange(4.0)
+    binding = bind(source, 2.0 * source)
+    assert hash(binding) == hash(bind(source, 2.0 * source))
+    assert binding.source_content_id != bind(source + 1.0, 2.0 * source).source_content_id
+    assert eqx.filter_jit(lambda value, _: value + 1.0)(source, binding)[0] == 1.0
+
+
+def test_magnetic_transfer_and_emf_curl_reflux_preserve_divergence() -> None:
     coarse = _bridge(2)
     fine = _bridge(4)
     magnetic = coarse.pack_normal_flux(
@@ -278,7 +312,9 @@ def test_magnetic_transfer_and_emf_curl_reflux_preserve_divergence():
         )
 
 
-def test_compiled_topology_transition_commits_or_retains_predecessor_on_overflow():
+def test_compiled_topology_transition_commits_or_retains_predecessor_on_overflow() -> (
+    None
+):
     hierarchy, initial, compiled, fd = _block_setup()
     _, source_epoch = _epoch("z4c", hierarchy, initial, fd)
     _, target_epoch = _epoch("z4c", hierarchy, compiled, fd)
@@ -297,6 +333,7 @@ def test_compiled_topology_transition_commits_or_retains_predecessor_on_overflow
         target_epoch, (jnp.ones_like(source_values),)
     )
     with pytest.raises(TypeError):
+        # ty: ignore[too-many-positional-arguments]
         transition.apply(predecessor, caller_candidate)
     committed = transition.apply(predecessor)
     assert bool(committed.committed)
@@ -323,7 +360,7 @@ def test_compiled_topology_transition_commits_or_retains_predecessor_on_overflow
     assert rejected.accepted_state is predecessor_overflow
 
 
-def _checkpoint_repository(tmp_path):
+def _checkpoint_repository(tmp_path: Any) -> Any:
     profile = HPCFilesystemProfile(
         "posix.nr-restart",
         "local-posix",
@@ -341,7 +378,9 @@ def _checkpoint_repository(tmp_path):
     return POSIXArtifactRepository(tmp_path / "repository", policy)
 
 
-def test_checkpoint_binds_topology_and_separates_exact_from_tolerant_restart(tmp_path):
+def test_checkpoint_binds_topology_and_separates_exact_from_tolerant_restart(
+    tmp_path: Any,
+) -> None:
     z4c = flat_z4c_state((2, 2, 2), grid_id="grid")
     values = z4c.values
     runtime = Z4cRuntimeState(
@@ -447,8 +486,8 @@ def test_checkpoint_binds_topology_and_separates_exact_from_tolerant_restart(tmp
 
 
 def test_distributed_restart_requires_committed_rank_and_reconstructs_typed_state(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     z4c = flat_z4c_state((2, 2, 2), grid_id="grid")
     template_runtime = Z4cRuntimeState(
         z4c,
@@ -573,6 +612,7 @@ def test_distributed_restart_requires_committed_rank_and_reconstructs_typed_stat
         writer_id="child-writer",
         parent_manifest=manifest,
     )
+    # ty: ignore[unresolved-attribute]
     child_metadata = dict(child_publication.artifact_manifest.metadata)
     assert child_metadata["analysis_plan_id"] == child_plan.analysis_plan_id
     assert child_metadata["numeric_revision_id"] == child_plan.numeric_revision_id
@@ -621,7 +661,9 @@ def test_distributed_restart_requires_committed_rank_and_reconstructs_typed_stat
         plan.validate_state(substituted)
 
 
-def test_grmhd_coupled_restart_retains_ct_budgets_and_failure_counters(tmp_path):
+def test_grmhd_coupled_restart_retains_ct_budgets_and_failure_counters(
+    tmp_path: Any,
+) -> None:
     bridge = _bridge(2)
     constrained_transport = GRMHDConstrainedTransportPlan(
         bridge,

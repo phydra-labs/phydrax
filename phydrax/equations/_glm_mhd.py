@@ -7,7 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._trainable import NonTrainableState
@@ -30,7 +30,7 @@ class GLMIdealMHDSystem(AbstractAdmissibleSystem, NonTrainableState):
         material: IdealGasMaterial | None = None,
         cleaning_speed: float = 1.0,
         damping_rate: float = 0.1,
-    ):
+    ) -> None:
         speed = float(cleaning_speed)
         damping = float(damping_rate)
         if (
@@ -69,7 +69,7 @@ class GLMIdealMHDSystem(AbstractAdmissibleSystem, NonTrainableState):
             axis=-1,
         )
 
-    def physical_flux(self, state: Array, axis: int, args=None, /) -> Array:
+    def physical_flux(self, state: Array, axis: int, args: object = None, /) -> Array:
         value = jnp.asarray(state)
         axis_ = int(axis)
         base = self.ideal.physical_flux(value[..., :8], axis_, args)
@@ -83,7 +83,7 @@ class GLMIdealMHDSystem(AbstractAdmissibleSystem, NonTrainableState):
         left: Array,
         right: Array,
         axis: int,
-        args=None,
+        args: object = None,
         /,
     ) -> Array:
         ideal_speed = self.ideal.max_wave_speed(
@@ -99,7 +99,7 @@ class GLMIdealMHDSystem(AbstractAdmissibleSystem, NonTrainableState):
         left: Array,
         right: Array,
         axis: int,
-        args=None,
+        args: object = None,
         /,
     ) -> tuple[Array, Array]:
         speed = self.max_wave_speed(left, right, axis, args)
@@ -110,7 +110,7 @@ class GLMIdealMHDSystem(AbstractAdmissibleSystem, NonTrainableState):
         left: Array,
         right: Array,
         unit_normal: Array,
-        args=None,
+        args: object = None,
         /,
     ) -> tuple[Array, Array]:
         lower, upper = self.ideal.normal_signal_bounds(

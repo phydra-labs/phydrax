@@ -9,7 +9,7 @@ import abc
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -68,7 +68,7 @@ class IdealGasMaterial(AbstractThermodynamicMaterial):
         *,
         density_floor: float = 1e-12,
         pressure_floor: float = 1e-12,
-    ):
+    ) -> None:
         gamma_ = float(gamma)
         gas_constant_ = float(gas_constant)
         density_floor_ = float(density_floor)
@@ -147,7 +147,7 @@ class StiffenedGasMaterial(AbstractThermodynamicMaterial):
         reference_energy: float = 0.0,
         density_floor: float = 1e-12,
         pressure_floor: float = 1e-12,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -367,7 +367,7 @@ class TwoMaterialEOSClosure(StrictModule, NonTrainableState):
         mass_floor: float = 1.0e-12,
         energy_floor: float = 1.0e-12,
         identity: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(material_0, (IdealGasMaterial, StiffenedGasMaterial)):
             raise TypeError(
                 "material_0 must be an IdealGasMaterial or StiffenedGasMaterial."
@@ -507,7 +507,9 @@ class TwoMaterialEOSClosure(StrictModule, NonTrainableState):
         return coefficient, offset, jnp.asarray(1.0, dtype=dtype) / coefficient
 
     @staticmethod
-    def _unpack_primitive(value: Array | TwoMaterialPrimitiveState):
+    def _unpack_primitive(
+        value: Array | TwoMaterialPrimitiveState,
+    ) -> tuple[Array, Array, Array, Array, Array, bool]:
         if isinstance(value, TwoMaterialPrimitiveState):
             density_0 = jnp.asarray(value.density_0)
             dtype = TwoMaterialEOSClosure._array_dtype(density_0)
@@ -536,7 +538,9 @@ class TwoMaterialEOSClosure(StrictModule, NonTrainableState):
         )
 
     @staticmethod
-    def _unpack_conserved(value: Array):
+    def _unpack_conserved(
+        value: Array,
+    ) -> tuple[Array, Array, Array, Array, Array, jnp.dtype]:
         array = jnp.asarray(value)
         if array.ndim == 0 or array.shape[-1] < 5:
             raise ValueError(

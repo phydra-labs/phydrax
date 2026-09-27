@@ -12,12 +12,14 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
 from ._validation import canonical_identifier
+from .typing import parse
 
 
 class AdmissibilityReason(IntFlag):
@@ -51,7 +53,12 @@ def _guard_derivative_leaf(
 
 
 @_guard_derivative_leaf.defjvp
-def _guard_derivative_leaf_jvp(failure, message, primals, tangents):
+def _guard_derivative_leaf_jvp(
+    failure: DerivativeFailureMode,
+    message: str,
+    primals: tuple[Array, Array, Array],
+    tangents: tuple[Array, Array, Array],
+) -> tuple[Array, Array]:
     value, _, valid = primals
     value_tangent, dependency_tangent, _ = tangents
     valid_ = jnp.asarray(valid, dtype=jnp.bool_)
@@ -88,8 +95,7 @@ def guard_derivative_validity(
     message: str = "Derivative is invalid for the accepted primal result.",
 ) -> Any:
     """Keep a primal inspectable while poisoning or rejecting invalid derivatives."""
-    if failure not in ("status", "error"):
-        raise ValueError("Derivative failure mode must be 'status' or 'error'.")
+    failure = parse(failure, DerivativeFailureMode, "failure")
     message_ = str(message).strip()
     if not message_:
         raise ValueError("Derivative failure message must be non-empty.")

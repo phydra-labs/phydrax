@@ -11,7 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._identity import NumericRevision, SemanticProvenance
@@ -80,7 +82,7 @@ class ArrayAffineStabilityBound(AbstractStabilityBoundEvaluator):
         error_space_id: str,
         support_id: str,
         evidence_id: str,
-    ):
+    ) -> None:
         weights_ = jnp.asarray(weights)
         offset_ = jnp.asarray(offset, dtype=weights_.dtype)
         lower_ = jnp.asarray(lower, dtype=weights_.dtype)
@@ -211,7 +213,7 @@ class AffineROMCertification(StrictModule, NonTrainableState):
         residual_norm: ResidualDualNormArtifact,
         stability: AbstractStabilityBoundEvaluator,
         /,
-    ):
+    ) -> None:
         if not isinstance(residual_norm, ResidualDualNormArtifact):
             raise TypeError("residual_norm must be a ResidualDualNormArtifact.")
         if not isinstance(stability, AbstractStabilityBoundEvaluator):

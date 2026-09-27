@@ -8,13 +8,14 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from phydrax._interpolation import linear_interpolate
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import PRNGKey
 from ...particle import (
     ParticleAllocationRequest,
     ParticlePopulationPlan,
@@ -44,7 +45,7 @@ class ElectronImpactIonizationPlan(StrictModule, NonTrainableState):
         rate_scale: float = 1.0,
         maximum_probability: float = 0.25,
         maximum_events: int,
-    ):
+    ) -> None:
         energy = np.asarray(energy_grid, dtype=np.float64)
         section = np.asarray(cross_section, dtype=np.float64)
         threshold = float(ionization_energy)
@@ -94,7 +95,7 @@ class ElectronImpactIonizationPlan(StrictModule, NonTrainableState):
         electron_particles: PICParticleState,
         ion_indices: ArrayLike,
         electron_indices: ArrayLike,
-        key,
+        key: PRNGKey,
         step_size: ArrayLike,
         step_index: ArrayLike,
         /,

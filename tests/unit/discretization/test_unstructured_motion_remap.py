@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _quad_plan(nx=3, ny=2):
+def _quad_plan(nx: Any = 3, ny: Any = 2) -> Any:
     vertices = np.asarray(
         [(i / nx, j / ny) for j in range(ny + 1) for i in range(nx + 1)]
     )
@@ -31,15 +34,15 @@ def _quad_plan(nx=3, ny=2):
     )
 
 
-def _initial_cell_volumes(plan):
+def _initial_cell_volumes(plan: Any) -> Any:
     return plan.prepare().cell_volumes
 
 
-def test_ssprk_ale_rigid_translation_and_legacy_diagnostic_are_consistent():
+def test_ssprk_ale_rigid_translation_and_legacy_diagnostic_are_consistent() -> None:
     plan = _quad_plan()
     velocity = jnp.asarray((0.3, -0.2))
 
-    def translation(time, vertices, args):
+    def translation(time: Any, vertices: Any, args: Any) -> Any:
         del args
         return vertices + time * velocity
 
@@ -87,10 +90,10 @@ def test_ssprk_ale_rigid_translation_and_legacy_diagnostic_are_consistent():
     assert bool(legacy.report.passed)
 
 
-def test_ssprk_ale_constant_geometry_has_zero_grid_rates():
+def test_ssprk_ale_constant_geometry_has_zero_grid_rates() -> None:
     plan = _quad_plan(2, 2)
 
-    def stationary(time, vertices, args):
+    def stationary(time: Any, vertices: Any, args: Any) -> Any:
         del time, args
         return vertices
 
@@ -124,14 +127,14 @@ def test_ssprk_ale_constant_geometry_has_zero_grid_rates():
     )
 
 
-def test_ssprk_ale_carries_accepted_volume_and_preserves_constant_state():
+def test_ssprk_ale_carries_accepted_volume_and_preserves_constant_state() -> None:
     plan = _quad_plan(2, 2)
     policy = phx.discretization.finite_volume.ALEGeometryConsistencyPolicy(
         absolute_tolerance=5.0e-2,
         relative_tolerance=5.0e-2,
     )
 
-    def deformation(time, vertices, rate):
+    def deformation(time: Any, vertices: Any, rate: Any) -> Any:
         return vertices.at[:, 0].set((1.0 + rate * time**5) * vertices[:, 0])
 
     motion = phx.discretization.FixedConnectivityMotionPlan(
@@ -188,10 +191,10 @@ def test_ssprk_ale_carries_accepted_volume_and_preserves_constant_state():
     )
 
 
-def test_ssprk_ale_validates_and_certifies_prior_volume_mismatch():
+def test_ssprk_ale_validates_and_certifies_prior_volume_mismatch() -> None:
     plan = _quad_plan(2, 2)
 
-    def stationary(time, vertices, args):
+    def stationary(time: Any, vertices: Any, args: Any) -> Any:
         del time, args
         return vertices
 
@@ -242,7 +245,7 @@ def test_ssprk_ale_validates_and_certifies_prior_volume_mismatch():
     )
 
 
-def test_ssprk_ale_negative_trial_volume_returns_order_aware_retry_evidence():
+def test_ssprk_ale_negative_trial_volume_returns_order_aware_retry_evidence() -> None:
     plan = _quad_plan(2, 2)
     policy = phx.discretization.finite_volume.ALEGeometryConsistencyPolicy(
         absolute_tolerance=1.0e-10,
@@ -251,7 +254,7 @@ def test_ssprk_ale_negative_trial_volume_returns_order_aware_retry_evidence():
         minimum_reduction_factor=1.0e-8,
     )
 
-    def oscillatory_compression(time, vertices, amplitude):
+    def oscillatory_compression(time: Any, vertices: Any, amplitude: Any) -> Any:
         scale = 1.0 - amplitude * jnp.sin(jnp.pi * time)
         return vertices.at[:, 0].set(scale * vertices[:, 0])
 
@@ -313,7 +316,7 @@ def test_ssprk_ale_negative_trial_volume_returns_order_aware_retry_evidence():
     )
 
 
-def test_ssprk_ale_exact_identities_still_reject_intermediate_coordinate_defect():
+def test_ssprk_ale_exact_identities_still_reject_intermediate_coordinate_defect() -> None:
     plan = _quad_plan(2, 2)
     rate = 0.4
     policy = phx.discretization.finite_volume.ALEGeometryConsistencyPolicy(
@@ -323,7 +326,7 @@ def test_ssprk_ale_exact_identities_still_reject_intermediate_coordinate_defect(
         minimum_reduction_factor=1.0e-8,
     )
 
-    def expansion(time, vertices, args):
+    def expansion(time: Any, vertices: Any, args: Any) -> Any:
         del args
         return (1.0 + rate * time) * vertices
 
@@ -383,7 +386,7 @@ def test_ssprk_ale_exact_identities_still_reject_intermediate_coordinate_defect(
     )
 
 
-def test_ssprk_ale_final_defect_uses_fourth_order_reduction():
+def test_ssprk_ale_final_defect_uses_fourth_order_reduction() -> None:
     policy = phx.discretization.finite_volume.ALEGeometryConsistencyPolicy(
         absolute_tolerance=1.0e-14,
         relative_tolerance=1.0e-14,
@@ -391,7 +394,7 @@ def test_ssprk_ale_final_defect_uses_fourth_order_reduction():
         minimum_reduction_factor=1.0e-8,
     )
 
-    def fifth_order_deformation(time, vertices, args):
+    def fifth_order_deformation(time: Any, vertices: Any, args: Any) -> Any:
         scale = 1.0 + args * time**5
         return vertices.at[:, 0].set(scale * vertices[:, 0])
 
@@ -435,8 +438,8 @@ def test_ssprk_ale_final_defect_uses_fourth_order_reduction():
     )
 
 
-def test_ssprk_ale_prepare_is_jittable_and_differentiable():
-    def parameterized_expansion(time, vertices, rate):
+def test_ssprk_ale_prepare_is_jittable_and_differentiable() -> None:
+    def parameterized_expansion(time: Any, vertices: Any, rate: Any) -> Any:
         return (1.0 + rate * time) * vertices
 
     motion = phx.discretization.FixedConnectivityMotionPlan(
@@ -453,7 +456,7 @@ def test_ssprk_ale_prepare_is_jittable_and_differentiable():
     base_volumes = _initial_cell_volumes(motion.base_plan)
 
     @eqx.filter_jit
-    def prepare(rate):
+    def prepare(rate: Any) -> Any:
         return motion.prepare_ssprk33_step(
             jnp.asarray(0.1),
             jnp.asarray(0.05),
@@ -473,8 +476,8 @@ def test_ssprk_ale_prepare_is_jittable_and_differentiable():
     assert derivative > 0.0
 
 
-def test_ssprk_ale_rejects_inverted_coordinate_geometry():
-    def inversion(time, vertices, args):
+def test_ssprk_ale_rejects_inverted_coordinate_geometry() -> None:
+    def inversion(time: Any, vertices: Any, args: Any) -> Any:
         del args
         return vertices.at[:, 0].set((1.0 - 2.0 * time) * vertices[:, 0])
 
@@ -499,14 +502,14 @@ def test_ssprk_ale_rejects_inverted_coordinate_geometry():
     assert 0.0 < step.proposed_reduction_factor < 1.0
 
 
-def test_routed_interior_motion_keeps_the_ssprk_gcl_by_construction():
+def test_routed_interior_motion_keeps_the_ssprk_gcl_by_construction() -> None:
     plan = _quad_plan(4, 4)
 
-    def dilation(time, vertices, args):
+    def dilation(time: Any, vertices: Any, args: Any) -> Any:
         del args
         return vertices * (1.0 + 0.3 * time)
 
-    def sheared_dilation(time, vertices, args):
+    def sheared_dilation(time: Any, vertices: Any, args: Any) -> Any:
         del args
         shear = jnp.stack(
             (0.2 * time * vertices[:, 1] ** 2, jnp.zeros_like(vertices[:, 0])), axis=1
@@ -542,8 +545,8 @@ def test_routed_interior_motion_keeps_the_ssprk_gcl_by_construction():
     assert sheared.report.maximum_gcl_residual < 1e-10
 
 
-def test_ssprk_ale_routes_topology_geometry_and_evidence_versions_exactly():
-    def translation(time, vertices, velocity):
+def test_ssprk_ale_routes_topology_geometry_and_evidence_versions_exactly() -> None:
+    def translation(time: Any, vertices: Any, velocity: Any) -> Any:
         return vertices + time * velocity
 
     motion = phx.discretization.FixedConnectivityMotionPlan(
@@ -586,7 +589,7 @@ def test_ssprk_ale_routes_topology_geometry_and_evidence_versions_exactly():
     )
 
 
-def test_conservative_remap_identity_is_jittable_and_exact():
+def test_conservative_remap_identity_is_jittable_and_exact() -> None:
     discretization = _quad_plan().prepare()
     count = discretization.cell_count
     remap = phx.discretization.UnstructuredConservativeRemapPlan(
@@ -623,7 +626,7 @@ def test_conservative_remap_identity_is_jittable_and_exact():
         )
 
 
-def test_average_remap_validates_active_volumes_and_masks_inactive_division():
+def test_average_remap_validates_active_volumes_and_masks_inactive_division() -> None:
     discretization = _quad_plan().prepare()
     count = discretization.cell_count
     remap = phx.discretization.UnstructuredConservativeRemapPlan(
@@ -668,7 +671,7 @@ def test_average_remap_validates_active_volumes_and_masks_inactive_division():
     np.testing.assert_array_equal(transferred[0], jnp.zeros_like(transferred[0]))
 
 
-def test_topology_changing_common_refinement_remap_preserves_integral():
+def test_topology_changing_common_refinement_remap_preserves_integral() -> None:
     source_vertices = np.asarray(
         ((0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (0.0, 1.0), (1.0, 1.0), (2.0, 1.0))
     )

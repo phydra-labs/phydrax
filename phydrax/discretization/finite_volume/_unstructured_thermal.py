@@ -10,11 +10,13 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._geometry_protocol import FiniteVolumeStageMetrics
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
@@ -32,11 +34,10 @@ class UnstructuredThermalBoundaryCondition(StrictModule, NonTrainableState):
     def __init__(
         self,
         kind: UnstructuredThermalBoundaryKind = "adiabatic",
-        value=0.0,
+        value: float = 0.0,
         /,
-    ):
-        if kind not in ("adiabatic", "temperature", "heat_flux"):
-            raise ValueError("Unknown unstructured thermal boundary kind.")
+    ) -> None:
+        kind = parse(kind, UnstructuredThermalBoundaryKind, "kind")
         value_ = float(value)
         if not np.isfinite(value_) or (kind == "adiabatic" and value_ != 0.0):
             raise ValueError(
@@ -80,8 +81,8 @@ class UnstructuredTwoMaterialThermalDiffusionPlan(StrictModule, NonTrainableStat
     def __init__(
         self,
         discretization: UnstructuredFiniteVolumeDiscretization,
-        phase0_conductivity,
-        phase1_conductivity,
+        phase0_conductivity: float,
+        phase1_conductivity: float,
         /,
         *,
         boundaries: Mapping[
@@ -89,7 +90,7 @@ class UnstructuredTwoMaterialThermalDiffusionPlan(StrictModule, NonTrainableStat
             UnstructuredThermalBoundaryCondition | UnstructuredThermalBoundaryKind,
         ]
         | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
             raise TypeError("Thermal diffusion requires unstructured FV geometry.")
         conductivity0 = float(phase0_conductivity)
@@ -111,17 +112,15 @@ class UnstructuredTwoMaterialThermalDiffusionPlan(StrictModule, NonTrainableStat
             raise ValueError(
                 f"Thermal boundaries reference unknown patches {sorted(unknown)!r}."
             )
-        conditions = tuple(
-            (
-                supplied[name]
-                if isinstance(
-                    supplied.get(name, "adiabatic"),
-                    UnstructuredThermalBoundaryCondition,
-                )
-                else UnstructuredThermalBoundaryCondition(supplied.get(name, "adiabatic"))
+        condition_list: list[UnstructuredThermalBoundaryCondition] = []
+        for name in discretization.boundary_patch_names:
+            condition = supplied.get(name, "adiabatic")
+            condition_list.append(
+                condition
+                if isinstance(condition, UnstructuredThermalBoundaryCondition)
+                else UnstructuredThermalBoundaryCondition(condition)
             )
-            for name in discretization.boundary_patch_names
-        )
+        conditions = tuple(condition_list)
         self.discretization = discretization
         self.phase0_conductivity = conductivity0
         self.phase1_conductivity = conductivity1

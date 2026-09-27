@@ -4,21 +4,23 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
-CapillaryForceRepresentation = Literal["mu-grad-phi", "minus-phi-grad-mu"]
+CapillaryForceRepresentation: TypeAlias = Literal["mu-grad-phi", "minus-phi-grad-mu"]
 
 
 class PhaseFluidMaterial(StrictModule, NonTrainableState):
@@ -33,7 +35,7 @@ class PhaseFluidMaterial(StrictModule, NonTrainableState):
         /,
         *,
         material_id: str,
-    ):
+    ) -> None:
         densities = np.asarray(phase_densities)
         viscosities = np.asarray(phase_viscosities)
         identifier = str(material_id)
@@ -101,11 +103,12 @@ class ModelHCouplingPlan(StrictModule, NonTrainableState):
         *,
         force_representation: CapillaryForceRepresentation = "mu-grad-phi",
         incompressibility_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(material, PhaseFluidMaterial):
             raise TypeError("material must be PhaseFluidMaterial.")
-        if force_representation not in ("mu-grad-phi", "minus-phi-grad-mu"):
-            raise ValueError("Unknown capillary force representation.")
+        force_representation = parse(
+            force_representation, CapillaryForceRepresentation, "force_representation"
+        )
         tolerance = float(incompressibility_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("Incompressibility tolerance must be nonnegative.")

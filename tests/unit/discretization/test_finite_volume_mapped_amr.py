@@ -3,13 +3,15 @@
 #
 
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _grid(shape, *, periodic=None):
+def _grid(shape: Any, *, periodic: Any = None) -> Any:
     periodic = (False,) * len(shape) if periodic is None else periodic
     return phx.discretization.TensorGridPlan(
         tuple(
@@ -20,7 +22,7 @@ def _grid(shape, *, periodic=None):
     ).prepare(jnp.stack((jnp.zeros(len(shape)), jnp.ones(len(shape)))))
 
 
-def _scalar_system(dimension):
+def _scalar_system(dimension: Any) -> Any:
     velocity = (0.7, -0.2)
     return phx.equations.ScalarConservationSystem(
         dimension,
@@ -30,7 +32,7 @@ def _scalar_system(dimension):
     )
 
 
-def test_mapped_identity_preserves_cartesian_measures_and_constant_free_stream():
+def test_mapped_identity_preserves_cartesian_measures_and_constant_free_stream() -> None:
     reference = phx.discretization.FiniteVolumePlan(_grid((6, 5))).prepare()
     mapped = phx.discretization.MappedFiniteVolumePlan(
         reference, lambda point: point, mapping_id="identity"
@@ -57,7 +59,7 @@ def test_mapped_identity_preserves_cartesian_measures_and_constant_free_stream()
     np.testing.assert_allclose(residual, 0.0, atol=2e-12)
 
 
-def test_warped_mapped_geometry_preserves_constant_flux_divergence():
+def test_warped_mapped_geometry_preserves_constant_flux_divergence() -> None:
     reference = phx.discretization.FiniteVolumePlan(_grid((8, 7))).prepare()
     mapped = phx.discretization.MappedFiniteVolumePlan(
         reference,
@@ -90,7 +92,7 @@ def test_warped_mapped_geometry_preserves_constant_flux_divergence():
     assert jnp.all(mapped.cell_volumes > 0.0)
 
 
-def test_mapped_geometry_applies_face_closure_on_mapped_normals():
+def test_mapped_geometry_applies_face_closure_on_mapped_normals() -> None:
     reference = phx.discretization.FiniteVolumePlan(_grid((6, 5))).prepare()
     mapped = phx.discretization.MappedFiniteVolumePlan(
         reference,
@@ -114,7 +116,7 @@ def test_mapped_geometry_applies_face_closure_on_mapped_normals():
         closure_id="mapped-jump-correction",
     )
 
-    def compiled(closure):
+    def compiled(closure: Any) -> Any:
         return phx.equations.compile_conservation_problem(
             problem,
             mapped,
@@ -137,7 +139,7 @@ def test_mapped_geometry_applies_face_closure_on_mapped_normals():
     )
 
 
-def test_conforming_multiblock_interface_uses_one_conservative_flux():
+def test_conforming_multiblock_interface_uses_one_conservative_flux() -> None:
     left = phx.discretization.FiniteVolumePlan(_grid((6,))).prepare()
     right = phx.discretization.FiniteVolumePlan(_grid((5,))).prepare()
     plan = phx.discretization.ConservativeMultiblockInterfacePlan(
@@ -160,7 +162,7 @@ def test_conforming_multiblock_interface_uses_one_conservative_flux():
     )
 
 
-def test_nested_multiblock_interface_sums_fine_fluxes_to_coarse_faces():
+def test_nested_multiblock_interface_sums_fine_fluxes_to_coarse_faces() -> None:
     left = phx.discretization.FiniteVolumePlan(_grid((4, 3))).prepare()
     right = phx.discretization.FiniteVolumePlan(_grid((4, 6))).prepare()
     plan = phx.discretization.ConservativeMultiblockInterfacePlan(
@@ -182,7 +184,7 @@ def test_nested_multiblock_interface_sums_fine_fluxes_to_coarse_faces():
     np.testing.assert_allclose(result.conservation_defect, 0.0, atol=1e-13)
 
 
-def test_integrated_flux_register_applies_oriented_reflux_correction():
+def test_integrated_flux_register_applies_oriented_reflux_correction() -> None:
     register = phx.discretization.FluxRegister(
         jnp.asarray([[2.0], [3.0]]),
         jnp.asarray([[5.0], [1.0]]),

@@ -2,7 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..linalg import (
     ArraySpace,
@@ -14,7 +15,7 @@ from ..linalg import (
 )
 
 
-def _right_solve(matrix, right):
+def _right_solve(matrix: ArrayLike, right: ArrayLike) -> Array:
     a = jnp.asarray(matrix)
     b = jnp.asarray(right)
     n = a.shape[-1]
@@ -31,13 +32,13 @@ def _right_solve(matrix, right):
     return jnp.swapaxes(jnp.stack(cols, axis=1), -1, -2)
 
 
-def s_to_z(scattering: ArrayLike, reference_impedance_ohm: float, /):
+def s_to_z(scattering: ArrayLike, reference_impedance_ohm: float, /) -> Array:
     s = jnp.asarray(scattering)
     identity = jnp.eye(s.shape[-1], dtype=s.dtype)
     return float(reference_impedance_ohm) * _right_solve(identity - s, identity + s)
 
 
-def z_to_s(impedance: ArrayLike, reference_impedance_ohm: float, /):
+def z_to_s(impedance: ArrayLike, reference_impedance_ohm: float, /) -> Array:
     z = jnp.asarray(impedance)
     identity = jnp.eye(z.shape[-1], dtype=z.dtype)
     return _right_solve(

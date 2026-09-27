@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -22,19 +25,23 @@ from phydrax.applications.skeletal_muscle.fibers import (
 class _ManufacturedReaction(AbstractFiberReaction):
     """Integrate prescribed current and signed geometric stretch exactly."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.source_id = "manufactured-current-and-stretch-integrals"
         self.state_count = 2
         self.voltage_index = 0
 
-    def initialize(self, batch_shape, /):
+    def initialize(self, batch_shape: Any, /) -> Any:
         return jnp.zeros(batch_shape + (2,))
 
-    def rhs(self, time, values, current, stretch, rate, /):
+    def rhs(
+        self, time: Any, values: Any, current: Any, stretch: Any, rate: Any, /
+    ) -> Any:
         del time, values, stretch
         return jnp.stack((current, rate))
 
-    def admissible(self, time, values, current, stretch, rate, /):
+    def admissible(
+        self, time: Any, values: Any, current: Any, stretch: Any, rate: Any, /
+    ) -> Any:
         del time
         return (
             jnp.all(jnp.isfinite(values))
@@ -44,11 +51,17 @@ class _ManufacturedReaction(AbstractFiberReaction):
         )
 
 
-def _positions(x=(0.0, 0.4, 1.0, 2.0)):
+def _positions(x: Any = (0.0, 0.4, 1.0, 2.0)) -> Any:
     return jnp.zeros((1, len(x), 3)).at[0, :, 0].set(jnp.asarray(x))
 
 
-def _runtime(*, theta=(0.0, 1.0), stimulus=None, diffusivity=0.3, **policy):
+def _runtime(
+    *,
+    theta: Any = (0.0, 1.0),
+    stimulus: Any = None,
+    diffusivity: Any = 0.3,
+    **policy: Any,
+) -> Any:
     positions = _positions()
     if stimulus is None:
         stimulus = PrescribedFiberStimulusSchedule(
@@ -67,21 +80,21 @@ def _runtime(*, theta=(0.0, 1.0), stimulus=None, diffusivity=0.3, **policy):
     ).prepare(_ManufacturedReaction(), jnp.full((1, 3), diffusivity))
 
 
-def _state(runtime, voltage=(1.0, -0.5, 0.3, 0.0)):
+def _state(runtime: Any, voltage: Any = (1.0, -0.5, 0.3, 0.0)) -> Any:
     state = runtime.initialize()
     return eqx.tree_at(
         lambda s: s.values, state, state.values.at[0, :, 0].set(jnp.asarray(voltage))
     )
 
 
-def _assert_same_state(actual, expected):
+def _assert_same_state(actual: Any, expected: Any) -> None:
     assert actual.prepared_id == expected.prepared_id
     for a, b in zip(jax.tree.leaves(actual), jax.tree.leaves(expected), strict=True):
         np.testing.assert_array_equal(a, b)
         assert a.dtype == b.dtype
 
 
-def _cn_oracle(voltage, positions, diffusivity, dt):
+def _cn_oracle(voltage: Any, positions: Any, diffusivity: Any, dt: Any) -> Any:
     lengths = np.sqrt(np.sum(np.diff(positions, axis=0) ** 2, axis=-1))
     mass = np.zeros(len(voltage))
     stiffness = np.zeros((len(voltage), len(voltage)))
@@ -98,7 +111,9 @@ def _cn_oracle(voltage, positions, diffusivity, dt):
     return result, mass
 
 
-def test_nonuniform_no_flux_response_conserves_weighted_voltage_and_matches_oracle():
+def test_nonuniform_no_flux_response_conserves_weighted_voltage_and_matches_oracle() -> (
+    None
+):
     runtime = _runtime()
     state = _state(runtime)
     path = runtime.linear_geometry_path(state, state.node_positions_mm)
@@ -115,7 +130,7 @@ def test_nonuniform_no_flux_response_conserves_weighted_voltage_and_matches_orac
     assert int(accepted.accepted_steps) == 1
 
 
-def test_moving_metric_changes_diffusion_and_integrates_signed_local_kinematics():
+def test_moving_metric_changes_diffusion_and_integrates_signed_local_kinematics() -> None:
     runtime = _runtime()
     state = _state(runtime)
     path = runtime.linear_geometry_path(state, 2.0 * state.node_positions_mm)
@@ -141,7 +156,7 @@ def test_moving_metric_changes_diffusion_and_integrates_signed_local_kinematics(
     )
 
 
-def test_event_aligned_substeps_integrate_pulse_without_endpoint_contamination():
+def test_event_aligned_substeps_integrate_pulse_without_endpoint_contamination() -> None:
     stimulus = PrescribedFiberStimulusSchedule(
         jnp.asarray([0.02]),
         jnp.asarray([0.02]),
@@ -162,7 +177,9 @@ def test_event_aligned_substeps_integrate_pulse_without_endpoint_contamination()
     np.testing.assert_array_equal(rejected.evidence.reaction_solver_steps, 0)
 
 
-def test_interior_segment_collapse_rejects_entire_geometry_cell_and_counter_transaction():
+def test_interior_segment_collapse_rejects_entire_geometry_cell_and_counter_transaction() -> (
+    None
+):
     runtime = _runtime()
     state = _state(runtime)
     # Both endpoints have nonzero lengths, but every segment collapses at theta=1/2.
@@ -175,7 +192,9 @@ def test_interior_segment_collapse_rejects_entire_geometry_cell_and_counter_tran
     _assert_same_state(candidate.commit(state), state)
 
 
-def test_stale_candidate_keeps_current_state_and_foreign_numeric_binding_is_rejected():
+def test_stale_candidate_keeps_current_state_and_foreign_numeric_binding_is_rejected() -> (
+    None
+):
     runtime = _runtime()
     state = _state(runtime)
     path = runtime.linear_geometry_path(state, state.node_positions_mm)
@@ -195,7 +214,7 @@ def test_stale_candidate_keeps_current_state_and_foreign_numeric_binding_is_reje
         foreign.candidate(state, 0.04, path)
 
 
-def test_reaction_parameter_changes_affect_prepared_numeric_not_source_identity():
+def test_reaction_parameter_changes_affect_prepared_numeric_not_source_identity() -> None:
     runtime = _runtime()
     model = ShortenFastTwitchModel()
     changed = ShortenFastTwitchModel(model.parameters.at[0].multiply(1.1))
@@ -212,11 +231,11 @@ def test_reaction_parameter_changes_affect_prepared_numeric_not_source_identity(
         )
 
 
-def test_geometry_response_jvp_vjp_agree_with_branch_local_finite_difference():
+def test_geometry_response_jvp_vjp_agree_with_branch_local_finite_difference() -> None:
     runtime = _runtime(diffusivity=0.0)
     state = runtime.initialize()
 
-    def response(scale):
+    def response(scale: Any) -> Any:
         path = runtime.linear_geometry_path(state, scale * state.node_positions_mm)
         return jnp.sum(
             runtime.candidate(state, 0.04, path).candidate_state.values[..., 1]
@@ -230,7 +249,7 @@ def test_geometry_response_jvp_vjp_agree_with_branch_local_finite_difference():
     np.testing.assert_allclose(adjoint, difference, rtol=2e-7, atol=2e-7)
 
 
-def test_invalid_precision_geometry_and_unrepresentable_time_never_advance():
+def test_invalid_precision_geometry_and_unrepresentable_time_never_advance() -> None:
     runtime = _runtime()
     state = runtime.initialize()
     with pytest.raises(TypeError, match="real"):
@@ -252,7 +271,7 @@ def test_invalid_precision_geometry_and_unrepresentable_time_never_advance():
     _assert_same_state(candidate.commit(far_future), far_future)
 
 
-def test_exhausted_local_reaction_and_invalid_dynamic_diffusivity_roll_back():
+def test_exhausted_local_reaction_and_invalid_dynamic_diffusivity_roll_back() -> None:
     runtime = _runtime(maximum_reaction_steps=1)
     state = _state(runtime)
     path = runtime.linear_geometry_path(state, 1.1 * state.node_positions_mm)
@@ -272,7 +291,7 @@ def test_exhausted_local_reaction_and_invalid_dynamic_diffusivity_roll_back():
     _assert_same_state(rejected.commit(state), state)
 
 
-def test_unrepresentable_reaction_half_step_rejects_before_local_solver():
+def test_unrepresentable_reaction_half_step_rejects_before_local_solver() -> None:
     runtime = _runtime()
     state = runtime.initialize(float(2**48))
     path = runtime.linear_geometry_path(state, state.node_positions_mm)

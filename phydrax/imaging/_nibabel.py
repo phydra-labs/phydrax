@@ -134,7 +134,7 @@ class NibabelImageProvider:
         modality: str,
         reference_frame: str,
         intended_use: str = "research",
-        valid_mask=None,
+        valid_mask: np.ndarray | None = None,
         time_axis: SampleTimeAxis | None = None,
         acquisition: AcquisitionIdentity | None = None,
         conflict_tolerance: float = 1.0e-5,

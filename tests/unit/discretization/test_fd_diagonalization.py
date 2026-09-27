@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -19,7 +22,7 @@ _BOUNDARY_CASES = (
 )
 
 
-def _grid(axis):
+def _grid(axis: Any) -> Any:
     return phx.discretization.TensorGridPlan(
         (axis,),
         axis_names=("x",),
@@ -35,14 +38,15 @@ def _grid(axis):
 )
 @pytest.mark.parametrize(("boundaries", "family"), _BOUNDARY_CASES)
 def test_uniform_fd2_boundary_semantics_have_exact_fast_diagonalizations(
-    axis,
-    boundaries,
-    family,
-):
+    axis: Any,
+    boundaries: Any,
+    family: Any,
+) -> None:
     diagonalization = phx.discretization.diagonalize_fd_laplacian(
         _grid(axis),
         {"x": boundaries},
     )
+    # ty: ignore[no-matching-overload]
     values = jnp.linspace(-1.0, 2.0, np.prod(diagonalization.unknown_shape)).reshape(
         diagonalization.unknown_shape
     )
@@ -62,7 +66,7 @@ def test_uniform_fd2_boundary_semantics_have_exact_fast_diagonalizations(
     assert diagonalization.unknown_coordinates[0].shape == diagonalization.unknown_shape
 
 
-def test_tensor_fd2_diagonalization_composes_mixed_entity_and_boundary_axes():
+def test_tensor_fd2_diagonalization_composes_mixed_entity_and_boundary_axes() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(12),
@@ -102,7 +106,9 @@ def test_tensor_fd2_diagonalization_composes_mixed_entity_and_boundary_axes():
         phx.discretization.UniformAxisSpec(33),
     ],
 )
-def test_mixed_dirichlet_neumann_direct_solve_honors_nonzero_boundary_data(axis):
+def test_mixed_dirichlet_neumann_direct_solve_honors_nonzero_boundary_data(
+    axis: Any,
+) -> None:
     diagonalization = phx.discretization.diagonalize_fd_laplacian(
         _grid(axis),
         {"x": ("dirichlet", "neumann")},
@@ -120,7 +126,7 @@ def test_mixed_dirichlet_neumann_direct_solve_honors_nonzero_boundary_data(axis)
     assert float(result.residual_norm) < 2e-10
 
 
-def test_neumann_direct_solve_projects_compatibility_and_enforces_minimum_norm():
+def test_neumann_direct_solve_projects_compatibility_and_enforces_minimum_norm() -> None:
     diagonalization = phx.discretization.diagonalize_fd_laplacian(
         _grid(phx.discretization.UniformAxisSpec(33)),
         {"x": ("neumann", "neumann")},
@@ -145,7 +151,7 @@ def test_neumann_direct_solve_projects_compatibility_and_enforces_minimum_norm()
     assert float(projected.residual_norm) < 2e-9
 
 
-def test_neumann_direct_solve_has_finite_mathematical_derivatives():
+def test_neumann_direct_solve_has_finite_mathematical_derivatives() -> None:
     diagonalization = phx.discretization.diagonalize_fd_laplacian(
         _grid(phx.discretization.UniformCellAxisSpec(32)),
         {"x": ("neumann", "neumann")},
@@ -159,7 +165,7 @@ def test_neumann_direct_solve_has_finite_mathematical_derivatives():
         gauge="zero_mean",
     )
 
-    def objective(rhs):
+    def objective(rhs: Any) -> Any:
         value = plan.solve(rhs).value
         return 0.5 * jnp.vdot(value, value).real
 
@@ -172,7 +178,7 @@ def test_neumann_direct_solve_has_finite_mathematical_derivatives():
     np.testing.assert_allclose(jnp.mean(gradient), 0.0, atol=2e-12)
 
 
-def test_fd_diagonalization_rejects_boundary_metadata_mismatch():
+def test_fd_diagonalization_rejects_boundary_metadata_mismatch() -> None:
     periodic = _grid(phx.discretization.UniformCellAxisSpec(8, periodic=True))
     bounded = _grid(phx.discretization.UniformCellAxisSpec(8))
 

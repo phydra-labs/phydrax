@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -42,7 +45,7 @@ from phydrax.equations._finite_element_variational import (
 )
 
 
-def _mesh_problem(*, commanded=False):
+def _mesh_problem(*, commanded: Any = False) -> Any:
     points = jnp.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -67,7 +70,7 @@ def _mesh_problem(*, commanded=False):
         form = elasticity
     else:
 
-        def commanded_source(points, context):
+        def commanded_source(points: Any, context: Any) -> Any:
             loads = context.user_args.user_args.loads
             pressure = loads.pressure("skin")
             fiber = loads.fiber_tension("fiber-a")
@@ -91,7 +94,7 @@ def _mesh_problem(*, commanded=False):
     return phx.equations.compile_finite_element_problem(form, discretization)
 
 
-def _load_layout():
+def _load_layout() -> Any:
     return FEMSoftLoadLayout(
         pressure_region_ids=("skin",),
         fiber_routes=(("fiber-a", "skin"),),
@@ -100,18 +103,18 @@ def _load_layout():
     )
 
 
-def _sensor_layout():
+def _sensor_layout() -> Any:
     return FEMSoftSensorLayout(
         displacement_regions=(("tip", (1, 2, 3)),),
         force_region_ids=("skin",),
     )
 
 
-def _parameters(dtype):
+def _parameters(dtype: Any) -> Any:
     return FEMSoftParameters({"load_scale": jnp.asarray(1.0, dtype=dtype)})
 
 
-def _force_sensor(state, loads, parameters):
+def _force_sensor(state: Any, loads: Any, parameters: Any) -> Any:
     scale = parameters["load_scale"]
     return scale * jnp.stack(
         (
@@ -122,27 +125,27 @@ def _force_sensor(state, loads, parameters):
     )[None, :].astype(state.displacement.dtype)
 
 
-def _potential(compiled):
-    def potential(time, displacement, args):
+def _potential(compiled: Any) -> Any:
+    def potential(time: Any, displacement: Any, args: Any) -> Any:
         del time, args
         return 0.5 * jnp.sum(displacement * compiled.residual(displacement))
 
     return potential
 
 
-def _zero_work(previous, candidate, args):
+def _zero_work(previous: Any, candidate: Any, args: Any) -> Any:
     del previous, candidate, args
     return jnp.asarray(0.0)
 
 
 def _plant(
     *,
-    commanded=False,
-    inverted=False,
-    material=False,
-    constitutive=FEM_LINEAR_ELASTICITY_CAPABILITY_ID,
-    initial_velocity=None,
-):
+    commanded: Any = False,
+    inverted: Any = False,
+    material: Any = False,
+    constitutive: Any = FEM_LINEAR_ELASTICITY_CAPABILITY_ID,
+    initial_velocity: Any = None,
+) -> Any:
     compiled = _mesh_problem(commanded=commanded)
     displacement = jnp.zeros((4, 3))
     velocity = (
@@ -164,7 +167,15 @@ def _plant(
             )
         )
 
-        def update(displacement, velocity, acceleration, time, dt, previous, args):
+        def update(
+            displacement: Any,
+            velocity: Any,
+            acceleration: Any,
+            time: Any,
+            dt: Any,
+            previous: Any,
+            args: Any,
+        ) -> Any:
             del displacement, velocity, acceleration, time, args
             return previous.with_trials(
                 {"visco-history": previous.states[0].committed + dt}
@@ -189,7 +200,7 @@ def _plant(
     determinant_id = None
     if inverted:
 
-        def determinant(time, displacement, args):
+        def determinant(time: Any, displacement: Any, args: Any) -> Any:
             del time, displacement, args
             return jnp.asarray((-1.0,))
 
@@ -223,15 +234,15 @@ def _plant(
     )
 
 
-def _reset(plant):
+def _reset(plant: Any) -> Any:
     return plant.reset(jax.random.key(7), plant.parameters).accepted_state
 
 
-def _context(state, dt=0.1):
+def _context(state: Any, dt: Any = 0.1) -> Any:
     return PlantStepContext(state.time, state.time + dt, state.step_index)
 
 
-def _assert_tree_equal(first, second):
+def _assert_tree_equal(first: Any, second: Any) -> None:
     first_leaves = jax.tree.leaves(first)
     second_leaves = jax.tree.leaves(second)
     assert len(first_leaves) == len(second_leaves)
@@ -241,7 +252,7 @@ def _assert_tree_equal(first, second):
     )
 
 
-def test_reset_reports_complete_candidate_commit_and_current_sensor_evidence():
+def test_reset_reports_complete_candidate_commit_and_current_sensor_evidence() -> None:
     plant = _plant()
     reset = plant.reset(jax.random.key(3), plant.parameters, initial_time=1.25)
 
@@ -255,7 +266,7 @@ def test_reset_reports_complete_candidate_commit_and_current_sensor_evidence():
     assert reset.evidence.capability_ids == plant.capabilities.capability_ids
 
 
-def test_manufactured_translation_preserves_zero_strain_energy_and_observation():
+def test_manufactured_translation_preserves_zero_strain_energy_and_observation() -> None:
     plant = _plant(initial_velocity=(0.4, -0.2, 0.1))
     source = _reset(plant)
     command = plant.load_layout.zero_command(source.payload.displacement.dtype)
@@ -279,7 +290,7 @@ def test_manufactured_translation_preserves_zero_strain_energy_and_observation()
     assert bool(observation.successful)
 
 
-def test_pressure_fiber_and_body_force_are_routed_by_name_into_native_fem_args():
+def test_pressure_fiber_and_body_force_are_routed_by_name_into_native_fem_args() -> None:
     plant = _plant(commanded=True)
     source = _reset(plant)
     dtype = source.payload.displacement.dtype
@@ -304,7 +315,7 @@ def test_pressure_fiber_and_body_force_are_routed_by_name_into_native_fem_args()
     )
 
 
-def test_constitutive_history_is_complete_and_committed_only_on_acceptance():
+def test_constitutive_history_is_complete_and_committed_only_on_acceptance() -> None:
     plant = _plant(material=True, constitutive=FEM_VISCOELASTICITY_CAPABILITY_ID)
     source = _reset(plant)
     command = plant.load_layout.zero_command(source.payload.displacement.dtype)
@@ -328,7 +339,9 @@ def test_constitutive_history_is_complete_and_committed_only_on_acceptance():
     assert plant.capabilities.supports(FEM_VISCOELASTICITY_CAPABILITY_ID)
 
 
-def test_failed_admissibility_keeps_candidate_evidence_and_rolls_back_every_atom():
+def test_failed_admissibility_keeps_candidate_evidence_and_rolls_back_every_atom() -> (
+    None
+):
     plant = _plant(inverted=True, initial_velocity=(0.4, 0.0, 0.0))
     source = _reset(plant)
     source_digest = plant.state_digest(source)
@@ -342,7 +355,7 @@ def test_failed_admissibility_keeps_candidate_evidence_and_rolls_back_every_atom
     _assert_tree_equal(result.accepted_state, source)
 
 
-def test_checkpoint_replay_is_deterministic_and_matches_exact_digests():
+def test_checkpoint_replay_is_deterministic_and_matches_exact_digests() -> None:
     plant = _plant(initial_velocity=(0.2, -0.1, 0.05))
     source = _reset(plant)
     checkpoint = plant.checkpoint(source)
@@ -370,7 +383,7 @@ def test_checkpoint_replay_is_deterministic_and_matches_exact_digests():
     assert plant.state_digest(replay.final_state) == expected[-1]
 
 
-def test_complete_state_and_control_codecs_round_trip_exactly():
+def test_complete_state_and_control_codecs_round_trip_exactly() -> None:
     plant = _plant(material=True, constitutive=FEM_VISCOELASTICITY_CAPABILITY_ID)
     state = _reset(plant).payload
     dtype = state.displacement.dtype
@@ -391,7 +404,7 @@ def test_complete_state_and_control_codecs_round_trip_exactly():
     assert plant.capabilities.supports(FEM_EXACT_CONTROL_CODEC_CAPABILITY_ID)
 
 
-def test_capability_manifest_is_explicit_and_rejects_unimplemented_physics():
+def test_capability_manifest_is_explicit_and_rejects_unimplemented_physics() -> None:
     linear = _plant()
     expected = (
         FEM_LINEAR_ELASTICITY_CAPABILITY_ID,

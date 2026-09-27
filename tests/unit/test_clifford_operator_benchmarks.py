@@ -14,7 +14,7 @@ from tools.operator_benchmarks import (
 )
 
 
-def test_periodic_clifford_laplacian_recovers_fourier_mode():
+def test_periodic_clifford_laplacian_recovers_fourier_mode() -> None:
     count = 8
     coordinate = 2.0 * jnp.pi * jnp.arange(count) / count
     values = jnp.sin(coordinate)[None, :, None]
@@ -22,7 +22,7 @@ def test_periodic_clifford_laplacian_recovers_fourier_mode():
     assert jnp.allclose(operator(values), -values, atol=1e-12, rtol=1e-12)
 
 
-def test_all_multigrade_scenarios_are_finite_and_schema_consistent():
+def test_all_multigrade_scenarios_are_finite_and_schema_consistent() -> None:
     scenarios = clifford_benchmark_scenarios(4)
     assert tuple(value.name for value in scenarios) == (
         "clifford_incompressible_velocity_vorticity_2d",
@@ -37,15 +37,16 @@ def test_all_multigrade_scenarios_are_finite_and_schema_consistent():
         assert scenario.scenario_id
 
 
-def test_entropy_euler_scenario_retains_pair_evidence_and_admissibility():
+def test_entropy_euler_scenario_retains_pair_evidence_and_admissibility() -> None:
     scenario = entropy_euler_scenario(6)
     assert isinstance(scenario.diagnostics["pair_id"], str)
     assert bool(scenario.diagnostics["admissible"])
     assert float(scenario.diagnostics["integrated_relative_entropy"]) >= -1e-12
+    # ty: ignore[invalid-argument-type]
     assert jnp.isfinite(scenario.diagnostics["total_entropy"])
 
 
-def test_differential_candidate_and_decision_smoke_execute_every_scenario():
+def test_differential_candidate_and_decision_smoke_execute_every_scenario() -> None:
     scenarios = clifford_benchmark_scenarios(4)
     for index, scenario in enumerate(scenarios):
         candidate = DifferentialCliffordOperatorBlock(

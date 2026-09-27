@@ -7,12 +7,14 @@
 from __future__ import annotations
 
 from math import isfinite
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -26,6 +28,9 @@ from ...linalg import (
     solve,
     verify_dense_properties,
 )
+
+
+_LeadCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 class PeriodicPrincipalLayerLeadPlan(StrictModule, NonTrainableState):
@@ -45,7 +50,7 @@ class PeriodicPrincipalLayerLeadPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-12,
         fixed_point_tolerance: float = 1.0e-6,
         maximum_iterations: int = 100,
-    ):
+    ) -> None:
         onsite_ = np.asarray(onsite)
         coupling_ = np.asarray(coupling)
         tolerance_ = float(tolerance)
@@ -123,7 +128,7 @@ def prepare_periodic_lead_embedding(
     identity = jnp.eye(dimension, dtype=jnp.complex128)
     spectral = energy_.astype(jnp.complex128) + 1.0j * eta
 
-    def body(index, state):
+    def body(index: Array, state: _LeadCarry) -> _LeadCarry:
         onsite_bulk, onsite_surface, forward, backward, first_converged = state
         green = _dense_solve(spectral * identity - onsite_bulk, identity)
         forward_green = forward @ green

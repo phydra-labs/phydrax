@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -13,18 +16,19 @@ import phydrax as phx
 la = phx.linalg
 
 
-def _self_adjoint_properties(*, positive_definite=False):
+def _self_adjoint_properties(*, positive_definite: Any = False) -> Any:
     evidence = {"self_adjoint": "construction"}
     if positive_definite:
         evidence["positive_definite"] = "construction"
     return la.OperatorProperties(
         self_adjoint=True,
         positive_definite=positive_definite,
+        # ty: ignore[invalid-argument-type]
         evidence=evidence,
     )
 
 
-def test_krylov_projection_plan_costs_and_resource_rejection():
+def test_krylov_projection_plan_costs_and_resource_rejection() -> None:
     operator = la.DiagonalLinearOperator(
         jnp.arange(1.0, 6.0),
         operator_id="projection-cost-operator",
@@ -49,7 +53,7 @@ def test_krylov_projection_plan_costs_and_resource_rejection():
         la.plan_krylov_projection(operator, constrained)
 
 
-def test_prepared_krylov_projection_preserves_relation_and_projects_vectors():
+def test_prepared_krylov_projection_preserves_relation_and_projects_vectors() -> None:
     matrix = jnp.asarray(
         [
             [4.0, 1.0, 0.0, 0.0],
@@ -89,7 +93,7 @@ def test_prepared_krylov_projection_preserves_relation_and_projects_vectors():
     )
 
 
-def test_bound_projection_is_reused_without_operator_actions_and_under_jit():
+def test_bound_projection_is_reused_without_operator_actions_and_under_jit() -> None:
     actions = []
     matrix = jnp.asarray(
         [
@@ -100,7 +104,7 @@ def test_bound_projection_is_reused_without_operator_actions_and_under_jit():
     )
     space = la.ArraySpace((3,), dtype=jnp.float64)
 
-    def action(vector):
+    def action(vector: Any) -> Any:
         actions.append(None)
         return matrix @ vector
 
@@ -140,10 +144,10 @@ def test_bound_projection_is_reused_without_operator_actions_and_under_jit():
     assert jnp.allclose(compiled.value, expected, rtol=1e-11, atol=1e-11)
 
 
-def test_unbatched_matrix_function_honors_differentiation_policy():
+def test_unbatched_matrix_function_honors_differentiation_policy() -> None:
     right_hand_side = jnp.asarray([1.0, -0.5])
 
-    def action(coefficient, vector, scale, mode):
+    def action(coefficient: Any, vector: Any, scale: Any, mode: Any) -> Any:
         matrix = jnp.asarray([[1.0, 0.2], [0.1, 2.0]]).at[0, 0].set(coefficient)
         operator = la.DenseLinearOperator(
             matrix,
@@ -183,7 +187,7 @@ def test_unbatched_matrix_function_honors_differentiation_policy():
     assert none_scale_gradient == 0.0
 
 
-def test_krylov_projection_reuse_rejects_wrong_operator_start_and_unbound_state():
+def test_krylov_projection_reuse_rejects_wrong_operator_start_and_unbound_state() -> None:
     matrix = jnp.asarray([[2.0, 1.0], [0.0, 3.0]])
     operator = la.DenseLinearOperator(matrix, operator_id="projection-binding")
     initial = jnp.asarray([1.0, -1.0])
@@ -217,7 +221,7 @@ def test_krylov_projection_reuse_rejects_wrong_operator_start_and_unbound_state(
         )
 
 
-def test_krylov_projection_refresh_preserves_plan_identity_and_rebuilds_state():
+def test_krylov_projection_refresh_preserves_plan_identity_and_rebuilds_state() -> None:
     first_matrix = jnp.asarray([[3.0, 1.0], [0.0, 2.0]])
     first_operator = la.DenseLinearOperator(
         first_matrix,
@@ -260,7 +264,7 @@ def test_krylov_projection_refresh_preserves_plan_identity_and_rebuilds_state():
     )
 
 
-def test_complex_arnoldi_projection_is_metric_correct_and_reusable():
+def test_complex_arnoldi_projection_is_metric_correct_and_reusable() -> None:
     matrix = jnp.asarray([[1.0 + 1.0j, 2.0 - 0.5j], [0.25j, 3.0 - 1.0j]])
     operator = la.DenseLinearOperator(
         matrix,

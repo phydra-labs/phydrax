@@ -5,7 +5,7 @@
 from abc import abstractmethod
 from typing import Literal
 
-from jaxtyping import Array
+from jax import Array
 
 from .._base import AbstractGeometry
 

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import opt_einsum as oe
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _chart(name):
+def _chart(name: Any) -> Any:
     return phx.metrix.CoordinateChart(name, ("t", "r", "theta", "phi"))
 
 
@@ -18,9 +21,9 @@ def _chart(name):
     (("mostly_plus", -1.0), ("mostly_minus", 1.0)),
 )
 def test_minkowski_reference_is_flat_in_both_sign_conventions(
-    convention,
-    timelike_sign,
-):
+    convention: Any,
+    timelike_sign: Any,
+) -> None:
     metric = phx.metrix.minkowski_metric(
         _chart("minkowski"),
         convention=convention,
@@ -52,12 +55,12 @@ def test_minkowski_reference_is_flat_in_both_sign_conventions(
     (("mostly_plus", 1.0), ("mostly_minus", -1.0)),
 )
 def test_curved_flrw_reference_matches_friedmann_tensors_and_bianchi_identity(
-    convention,
-    scalar_sign,
-):
+    convention: Any,
+    scalar_sign: Any,
+) -> None:
     chart = _chart("flrw")
 
-    def scale_factor(time):
+    def scale_factor(time: Any) -> Any:
         return 1.0 + 0.2 * time + 0.1 * time**2
 
     spatial_curvature = 1
@@ -103,7 +106,7 @@ def test_curved_flrw_reference_matches_friedmann_tensors_and_bianchi_identity(
 
     contravariant = phx.metrix.TensorType(("contravariant", "contravariant"))
 
-    def raised_einstein(coordinates):
+    def raised_einstein(coordinates: Any) -> Any:
         inverse = metric.inverse(coordinates)
         return inverse @ phx.metrix.einstein_tensor(metric, coordinates) @ inverse
 
@@ -116,7 +119,7 @@ def test_curved_flrw_reference_matches_friedmann_tensors_and_bianchi_identity(
     assert jnp.allclose(oe.contract("ijj->i", derivative), 0.0, atol=5e-10)
 
 
-def test_schwarzschild_reference_is_vacuum_with_exact_kretschmann_scalar():
+def test_schwarzschild_reference_is_vacuum_with_exact_kretschmann_scalar() -> None:
     chart = _chart("schwarzschild")
     mass = 1.2
     metric = phx.metrix.schwarzschild_metric(mass, chart=chart)

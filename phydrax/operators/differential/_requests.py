@@ -7,12 +7,12 @@ from __future__ import annotations
 import operator
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._differentiation import (
     _REGULARITY_UNDECLARED,
@@ -42,6 +42,7 @@ from ...domain._function import (
 )
 from ...domain._model_function import ConcatenatedModelEvaluator
 from ...logging import emit
+from ...typing import parse
 
 
 # Direct eager differentiation has no owner beyond its caller, who asked for the
@@ -268,7 +269,7 @@ class _RequestRecorderRule(DerivativeRule):
         prefix_backends: tuple[DerivativeBackend, ...] = (),
         prefix_laplacian_variables: tuple[str, ...] = (),
         prefix_laplacian_backends: tuple[DerivativeBackend, ...] = (),
-    ):
+    ) -> None:
         self.recorded = recorded
         self.prefix = prefix
         self.prefix_variables = prefix_variables
@@ -420,7 +421,7 @@ def trace_derivative_requests(
     return tuple(dict.fromkeys(recorded))
 
 
-DerivativeExecutionStrategy = Literal["reverse", "forward", "jvp", "jet"]
+DerivativeExecutionStrategy: TypeAlias = Literal["reverse", "forward", "jvp", "jet"]
 
 
 class DerivativeExecutionPlan(StrictModule):
@@ -440,11 +441,10 @@ class DerivativeExecutionPlan(StrictModule):
         /,
         *,
         directional: bool = False,
-    ):
+    ) -> None:
         if not requests:
             raise ValueError("DerivativeExecutionPlan requires derivative requests.")
-        if strategy not in ("reverse", "forward", "jvp", "jet"):
-            raise ValueError("Unknown derivative execution strategy.")
+        strategy = parse(strategy, DerivativeExecutionStrategy, "strategy")
         self.requests = tuple(requests)
         self.strategy = strategy
         self.maximum_order = max(request.order for request in requests)
@@ -528,8 +528,8 @@ def evaluate_fused_coordinate_derivatives(
     else:
         first_values = ()
 
-    def second_direction(tangent):
-        def first_direction(current):
+    def second_direction(tangent: Array) -> Any:
+        def first_direction(current: Array) -> Any:
             return jax.jvp(function, (current,), (tangent,))[1]
 
         return jax.jvp(first_direction, (point_,), (tangent,))[1]

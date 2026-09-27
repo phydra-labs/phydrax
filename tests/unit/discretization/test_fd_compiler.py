@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _heat_problem(*, periodic, boundary=False):
+def _heat_problem(*, periodic: Any, boundary: Any = False) -> Any:
     x = phx.equations.PDECoordinate(
         "x",
         "space",
@@ -49,7 +52,7 @@ def _heat_problem(*, periodic, boundary=False):
     )
 
 
-def test_compile_semidiscrete_pde_dispatches_prepared_grid_to_native_fd():
+def test_compile_semidiscrete_pde_dispatches_prepared_grid_to_native_fd() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(64, periodic=True),),
         axis_names=("x",),
@@ -74,7 +77,7 @@ def test_compile_semidiscrete_pde_dispatches_prepared_grid_to_native_fd():
     )
 
 
-def test_native_fd_nodal_dirichlet_boundary_constrains_state_and_derivative():
+def test_native_fd_nodal_dirichlet_boundary_constrains_state_and_derivative() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(33),),
         axis_names=("x",),
@@ -100,7 +103,7 @@ def test_native_fd_nodal_dirichlet_boundary_constrains_state_and_derivative():
     )
 
 
-def test_native_fd_compiler_handles_pointwise_reaction_with_runtime_parameter():
+def test_native_fd_compiler_handles_pointwise_reaction_with_runtime_parameter() -> None:
     problem = _heat_problem(periodic=True)
     equation = problem.equations[0]
     u = phx.equations.PDEExpression.field("u")
@@ -132,7 +135,7 @@ def test_native_fd_compiler_handles_pointwise_reaction_with_runtime_parameter():
     assert jnp.allclose(drift, 0.25 * 0.75)
 
 
-def test_native_fd_round_trip_folds_every_associative_operand():
+def test_native_fd_round_trip_folds_every_associative_operand() -> None:
     problem = _heat_problem(periodic=True)
     equation = problem.equations[0]
     u = phx.equations.PDEExpression.field("u")
@@ -165,7 +168,7 @@ def test_native_fd_round_trip_folds_every_associative_operand():
     assert jnp.allclose(drift, 7.0 * values)
 
 
-def test_native_fd_rejects_component_valued_field_layouts():
+def test_native_fd_rejects_component_valued_field_layouts() -> None:
     x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0), periodic=True)
     t = phx.equations.PDECoordinate("t", "time", bounds=(0.0, 1.0))
     field = phx.equations.PDEField(
@@ -195,7 +198,7 @@ def test_native_fd_rejects_component_valued_field_layouts():
         phx.equations.compile_finite_difference_pde(problem, grid)
 
 
-def test_native_fd_validates_ir_before_lowering():
+def test_native_fd_validates_ir_before_lowering() -> None:
     problem = _heat_problem(periodic=True)
     equation = problem.equations[0]
     malformed = phx.equations.PDEProblemIR(
@@ -219,7 +222,7 @@ def test_native_fd_validates_ir_before_lowering():
         phx.equations.compile_finite_difference_pde(malformed, grid)
 
 
-def test_fixed_order_pde_operations_reject_derivative_order_metadata():
+def test_fixed_order_pde_operations_reject_derivative_order_metadata() -> None:
     u = phx.equations.PDEExpression.field("u")
 
     with pytest.raises(ValueError, match="does not accept derivative-order"):
@@ -234,5 +237,6 @@ def test_fixed_order_pde_operations_reject_derivative_order_metadata():
             "derivative",
             (u,),
             coordinate="x",
+            # ty: ignore[invalid-argument-type]
             order=1.5,
         )

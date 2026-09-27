@@ -9,7 +9,8 @@ from itertools import product
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -186,7 +187,7 @@ class FiniteElementMortarMetricData(StrictModule):
         /,
         *,
         metric_id: str | None = None,
-    ):
+    ) -> None:
         coordinates = jnp.asarray(physical_coordinates)
         weights = jnp.asarray(physical_weights)
         owner = jnp.asarray(owner_scaled_normals)
@@ -253,7 +254,7 @@ class FiniteElementMortarEvidence(StrictModule, NonTrainableState):
         tolerance: float,
         coordinate_tolerance: float,
         /,
-    ):
+    ) -> None:
         left = np.asarray(left_polynomial_error)
         right = np.asarray(right_polynomial_error)
         mortar = np.asarray(mortar_polynomial_error)
@@ -364,7 +365,7 @@ class FiniteElementMortarPlan(StrictModule, NonTrainableState):
         child_index: int,
         child_count: int,
         /,
-    ):
+    ) -> None:
         left = jnp.asarray(left_interpolation)
         right = jnp.asarray(right_interpolation)
         mortar = jnp.asarray(mortar_interpolation)

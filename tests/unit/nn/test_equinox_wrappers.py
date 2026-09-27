@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -13,7 +16,7 @@ from phydrax.nn.layers import Dropout, inference_mode
 from phydrax.nn.models import EquinoxModel, EquinoxStructuredModel, FunctionalJAXAdapter
 
 
-def test_equinox_model_value_layout_tensor_io():
+def test_equinox_model_value_layout_tensor_io() -> None:
     module = eqx.nn.MLP(in_size=4, out_size=6, width_size=8, depth=2, key=jr.key(0))
     model = EquinoxModel(module, in_size=(2, 2), out_size=(3, 2))
 
@@ -22,7 +25,7 @@ def test_equinox_model_value_layout_tensor_io():
     assert y.shape == (3, 2)
 
 
-def test_equinox_model_value_layout_scalar_io():
+def test_equinox_model_value_layout_scalar_io() -> None:
     module = eqx.nn.MLP(
         in_size="scalar",
         out_size="scalar",
@@ -37,7 +40,7 @@ def test_equinox_model_value_layout_scalar_io():
     assert y.shape == ()
 
 
-def test_equinox_model_passthrough_forwards_key_and_kwargs():
+def test_equinox_model_passthrough_forwards_key_and_kwargs() -> None:
     module = eqx.nn.Dropout(p=0.5, inference=False)
     model = EquinoxModel(module, in_size=4, out_size=4, layout="passthrough")
 
@@ -46,9 +49,9 @@ def test_equinox_model_passthrough_forwards_key_and_kwargs():
     assert y.shape == x.shape
 
 
-def test_equinox_structured_model_passthrough_tuple_input():
+def test_equinox_structured_model_passthrough_tuple_input() -> None:
     class TupleModule(eqx.Module):
-        def __call__(self, x, *, key=None):
+        def __call__(self, x: Any, *, key: Any = None) -> Any:
             del key
             a, b = x
             return a + 2.0 * b
@@ -61,7 +64,7 @@ def test_equinox_structured_model_passthrough_tuple_input():
     assert jnp.isclose(y, 5.0)
 
 
-def test_equinox_structured_model_value_layout_concatenates_tuple():
+def test_equinox_structured_model_value_layout_concatenates_tuple() -> None:
     module = eqx.nn.MLP(
         in_size=2, out_size="scalar", width_size=8, depth=2, key=jr.key(3)
     )
@@ -71,7 +74,7 @@ def test_equinox_structured_model_value_layout_concatenates_tuple():
     assert y.shape == ()
 
 
-def test_equinox_wrappers_declare_wrapped_module_arrays_as_parameters():
+def test_equinox_wrappers_declare_wrapped_module_arrays_as_parameters() -> None:
     module = eqx.nn.MLP(in_size=2, out_size=3, width_size=4, depth=1, key=jr.key(4))
     arrays = jax.tree_util.tree_leaves(eqx.filter(module, eqx.is_inexact_array))
 
@@ -93,7 +96,9 @@ def test_equinox_wrappers_declare_wrapped_module_arrays_as_parameters():
         assert all(left is right for left, right in zip(leaves, arrays, strict=True))
 
 
-def test_equinox_wrappers_reject_stateful_modules_and_name_the_functional_adapter():
+def test_equinox_wrappers_reject_stateful_modules_and_name_the_functional_adapter() -> (
+    None
+):
     module, _ = eqx.nn.make_with_state(eqx.nn.BatchNorm)(3, axis_name="batch")
 
     with pytest.raises(TypeError, match="stateful Equinox modules.*FunctionalJAXAdapter"):
@@ -102,7 +107,9 @@ def test_equinox_wrappers_reject_stateful_modules_and_name_the_functional_adapte
         EquinoxStructuredModel(module, in_size=3, out_size=3)
 
 
-def _running_mean(parameters, model_state, x, key, *, inference):
+def _running_mean(
+    parameters: Any, model_state: Any, x: Any, key: Any, *, inference: Any
+) -> Any:
     del key
     if inference:
         return parameters["scale"] * (x - model_state["mean"]), model_state
@@ -111,7 +118,7 @@ def _running_mean(parameters, model_state, x, key, *, inference):
     return parameters["scale"] * (x - mean), next_state
 
 
-def _running_mean_adapter(**options):
+def _running_mean_adapter(**options: Any) -> Any:
     return FunctionalJAXAdapter(
         _running_mean,
         {"scale": jnp.asarray(2.0)},
@@ -122,7 +129,7 @@ def _running_mean_adapter(**options):
     )
 
 
-def test_functional_jax_adapter_threads_explicit_state_and_inference_mode():
+def test_functional_jax_adapter_threads_explicit_state_and_inference_mode() -> None:
     adapter = _running_mean_adapter(inference=False)
     x = jnp.asarray([1.0, 2.0, 3.0])
 
@@ -150,7 +157,7 @@ def test_functional_jax_adapter_threads_explicit_state_and_inference_mode():
     assert jnp.allclose(eqx.filter_jit(lambda model, v: model(v))(adapter, x), output)
 
 
-def test_functional_jax_adapter_rejects_incongruent_next_state():
+def test_functional_jax_adapter_rejects_incongruent_next_state() -> None:
     adapter = FunctionalJAXAdapter(
         lambda parameters, model_state, x, key, *, inference: (
             x,
@@ -168,7 +175,7 @@ def test_functional_jax_adapter_rejects_incongruent_next_state():
         _running_mean_adapter(inference=1)
 
 
-def test_inference_mode_switches_mixed_phydrax_and_equinox_tree():
+def test_inference_mode_switches_mixed_phydrax_and_equinox_tree() -> None:
     tree = {
         "phydrax": Dropout(4, p=0.5, inference=False),
         "equinox": eqx.nn.Dropout(p=0.5, inference=False),
@@ -180,12 +187,18 @@ def test_inference_mode_switches_mixed_phydrax_and_equinox_tree():
     values = jnp.ones((4,))
 
     assert converted is not tree
+    # ty: ignore[unresolved-attribute]
     assert converted["phydrax"].inference
+    # ty: ignore[unresolved-attribute]
     assert converted["equinox"].inference
     assert not tree["phydrax"].inference
     assert not tree["equinox"].inference
     assert converted["label"] == "fixed"
+    # ty: ignore[call-non-callable]
     assert jnp.array_equal(converted["phydrax"](values), values)
+    # ty: ignore[call-non-callable]
     assert jnp.array_equal(converted["equinox"](values), values)
+    # ty: ignore[unresolved-attribute]
     assert not restored["phydrax"].inference
+    # ty: ignore[unresolved-attribute]
     assert not restored["equinox"].inference

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -5,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _edge(source, destination, value, variance, index):
+def _edge(source: Any, destination: Any, value: Any, variance: Any, index: Any) -> Any:
     return phx.uq.FreeEnergyEdgeObservation(
         value,
         variance,
@@ -17,7 +19,7 @@ def _edge(source, destination, value, variance, index):
     )
 
 
-def test_network_gls_consumes_full_joint_covariance_and_reports_cycle_closure():
+def test_network_gls_consumes_full_joint_covariance_and_reports_cycle_closure() -> None:
     observations = (
         _edge("a", "b", 1.0, 0.04, 0),
         _edge("b", "c", 2.0, 0.09, 1),
@@ -39,7 +41,7 @@ def test_network_gls_consumes_full_joint_covariance_and_reports_cycle_closure():
     assert bool(result.successful)
 
 
-def test_network_cycle_residual_retains_inconsistent_edge_evidence():
+def test_network_cycle_residual_retains_inconsistent_edge_evidence() -> None:
     observations = (
         _edge("a", "b", 1.0, 0.04, 0),
         _edge("b", "c", 2.0, 0.04, 1),
@@ -63,7 +65,9 @@ def test_network_cycle_residual_retains_inconsistent_edge_evidence():
     )
 
 
-def test_shared_result_influences_supply_joint_edge_covariance_without_independence_assumption():
+def test_shared_result_influences_supply_joint_edge_covariance_without_independence_assumption() -> (
+    None
+):
     covariance = jnp.asarray(
         [
             [0.0, 0.0, 0.0],
@@ -79,11 +83,14 @@ def test_shared_result_influences_supply_joint_edge_covariance_without_independe
         ]
     )
     source = phx.uq.FreeEnergyResult(
+        # ty: ignore[invalid-argument-type]
         [0.0, 1.0, 3.0],
         covariance,
         jnp.eye(3),
         jnp.ones((3, 3), dtype="bool"),
+        # ty: ignore[invalid-argument-type]
         [20.0, 20.0, 20.0],
+        # ty: ignore[invalid-argument-type]
         [20.0, 20.0, 20.0],
         influence,
         1,
@@ -107,7 +114,7 @@ def test_shared_result_influences_supply_joint_edge_covariance_without_independe
     np.testing.assert_allclose(result.free_energies, [0.0, 1.0, 3.0])
 
 
-def test_network_refuses_marginal_variances_when_joint_covariance_is_unknown():
+def test_network_refuses_marginal_variances_when_joint_covariance_is_unknown() -> None:
     observations = (
         _edge("a", "b", 1.0, 0.04, 0),
         _edge("b", "c", 2.0, 0.09, 1),

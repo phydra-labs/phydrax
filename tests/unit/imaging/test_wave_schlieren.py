@@ -1,10 +1,12 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _space(*, periodic=False, shape=(12, 12)):
+def _space(*, periodic: Any = False, shape: Any = (12, 12)) -> Any:
     axis = (
         phx.discretization.FourierAxisSpec
         if periodic
@@ -20,7 +22,7 @@ def _space(*, periodic=False, shape=(12, 12)):
     )
 
 
-def test_uniform_phase_screen_and_open_filter_preserve_uniform_intensity():
+def test_uniform_phase_screen_and_open_filter_preserve_uniform_intensity() -> None:
     space = _space()
     screen = phx.imaging.RefractivePhaseScreenPlan(space, 20.0)
     transmission, evidence = screen.evaluate(jnp.full(space.shape, 0.02))
@@ -35,18 +37,20 @@ def test_uniform_phase_screen_and_open_filter_preserve_uniform_intensity():
         padding=2,
         maximum_leakage_fraction=1.0,
     ).evaluate(field, jnp.zeros(space.shape))
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(result.detector_intensity.values, 1.0, atol=1e-6)
     assert bool(result.evidence.successful)
     assert transmission.transmission.shape == space.shape
 
 
-def test_multislice_zero_perturbation_and_helmholtz_zero_susceptibility():
+def test_multislice_zero_perturbation_and_helmholtz_zero_susceptibility() -> None:
     space = _space(periodic=True)
     incident = phx.optics.wave.ScalarPlaneField(space, jnp.ones(space.shape), 10.0, 0.0)
     multislice = phx.imaging.MultisliceRefractivePlan(
         space,
         np.asarray((0.1, 0.1)),
         4.0,
+        # ty: ignore[invalid-argument-type]
         padding=None,
         maximum_phase_per_slice=1.0,
         maximum_leakage_fraction=1.0,

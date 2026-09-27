@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import opt_einsum as oe
 import pytest
@@ -12,17 +15,17 @@ from phydrax._frozendict import frozendict
 from phydrax.operators.linalg import einsum
 
 
-def test_einsum_simple_dot_product():
+def test_einsum_simple_dot_product() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([x[0], x[1]])
 
     @geom.Function("x")
-    def v(x):
+    def v(x: Any) -> Any:
         return jnp.array([x[1], x[0]])
 
     einsum_uv = einsum("i,i->", u, v)
@@ -33,17 +36,17 @@ def test_einsum_simple_dot_product():
     assert jnp.allclose(result, expected)
 
 
-def test_einsum_outer_product():
+def test_einsum_outer_product() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([x[0], x[1]])
 
     @geom.Function("x")
-    def v(x):
+    def v(x: Any) -> Any:
         return jnp.array([x[1], x[0]])
 
     einsum_uv = einsum("i,j->ij", u, v)
@@ -55,17 +58,17 @@ def test_einsum_outer_product():
     assert jnp.allclose(result, expected)
 
 
-def test_einsum_matrix_vector_product():
+def test_einsum_matrix_vector_product() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def A(x):
+    def A(x: Any) -> Any:
         return jnp.array([[x[0], 0], [0, x[1]]])
 
     @geom.Function("x")
-    def v(x):
+    def v(x: Any) -> Any:
         return jnp.array([x[1], x[0]])
 
     einsum_Av = einsum("ij,j->i", A, v)
@@ -77,7 +80,7 @@ def test_einsum_matrix_vector_product():
     assert jnp.allclose(result, expected)
 
 
-def test_einsum_metadata_only_preserved_when_all_match():
+def test_einsum_metadata_only_preserved_when_all_match() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -87,13 +90,13 @@ def test_einsum_metadata_only_preserved_when_all_match():
     assert out.metadata == {}
 
 
-def test_einsum_constant_matrix_and_domain_vector():
+def test_einsum_constant_matrix_and_domain_vector() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def v(x):
+    def v(x: Any) -> Any:
         return jnp.array([x[0], x[1], x[0] - x[1]])
 
     k_mat = jnp.array(
@@ -113,6 +116,6 @@ def test_einsum_constant_matrix_and_domain_vector():
     assert jnp.allclose(result, expected)
 
 
-def test_einsum_requires_domain_function_operand():
+def test_einsum_requires_domain_function_operand() -> None:
     with pytest.raises(ValueError, match="at least one DomainFunction operand"):
         einsum("ij,j->i", jnp.eye(2), jnp.array([1.0, 2.0]))

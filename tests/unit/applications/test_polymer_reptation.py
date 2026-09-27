@@ -5,7 +5,7 @@ import numpy as np
 from phydrax.applications.polymer_liquids import reptation as rep
 
 
-def test_particle_reptation_observables_use_unwrapped_time_origins():
+def test_particle_reptation_observables_use_unwrapped_time_origins() -> None:
     base = jnp.asarray(
         [
             [0.0, 0.0, 0.0],
@@ -21,8 +21,11 @@ def test_particle_reptation_observables_use_unwrapped_time_origins():
     result = rep.reptation_observables(
         rep.ReptationObservablePlan(10, 6, 2, 3, maximum_modes=2),
         trajectory,
+        # ty: ignore[invalid-argument-type]
         [[0, 1, 2], [3, 4, 5]],
+        # ty: ignore[invalid-argument-type]
         [[True, True, True], [True, True, True]],
+        # ty: ignore[invalid-argument-type]
         [0, 1, 2],
         0.5,
         coordinate_representation="unwrapped",
@@ -35,10 +38,12 @@ def test_particle_reptation_observables_use_unwrapped_time_origins():
     np.testing.assert_allclose(result.rouse_mode_msd, 0.0, atol=1.0e-12)
 
 
-def test_chain_scaling_and_linear_tube_spectra():
+def test_chain_scaling_and_linear_tube_spectra() -> None:
     scaling = rep.fit_chain_length_scaling(
         rep.ChainLengthScalingPlan(exponent_interval=(2.9, 3.1)),
+        # ty: ignore[invalid-argument-type]
         [10.0, 20.0, 40.0, 80.0],
+        # ty: ignore[invalid-argument-type]
         [1.0e3, 8.0e3, 64.0e3, 512.0e3],
     )
     assert scaling.successful
@@ -46,7 +51,9 @@ def test_chain_scaling_and_linear_tube_spectra():
 
     doi_edwards = rep.doi_edwards_linear_rheology(
         rep.DoiEdwardsTubePlan(100.0, 2.0, odd_mode_count=32),
+        # ty: ignore[invalid-argument-type]
         [0.0, 1.0, 10.0],
+        # ty: ignore[invalid-argument-type]
         [0.01, 0.1, 1.0],
     )
     assert doi_edwards.successful
@@ -55,7 +62,9 @@ def test_chain_scaling_and_linear_tube_spectra():
 
     lm = rep.likhtman_mcleish_linear_rheology(
         rep.LikhtmanMcLeishPlan(10, 1.0, 2.0, odd_mode_count=32),
+        # ty: ignore[invalid-argument-type]
         [0.0, 1.0, 10.0],
+        # ty: ignore[invalid-argument-type]
         [0.01, 0.1, 1.0],
     )
     assert lm.successful
@@ -64,7 +73,8 @@ def test_chain_scaling_and_linear_tube_spectra():
     assert np.all(np.asarray(lm.rheology.loss_modulus) >= 0.0)
 
 
-def test_slip_spring_birth_and_death_obey_metropolis_hastings_ratio():
+def test_slip_spring_birth_and_death_obey_metropolis_hastings_ratio() -> None:
+    # ty: ignore[invalid-argument-type]
     prepared = rep.SlipSpringPlan(2, 1, 1.0, 2.0, 1.0).prepare([[0, 1]])
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     initial = prepared.initialize(jax.random.key(13))
@@ -79,7 +89,7 @@ def test_slip_spring_birth_and_death_obey_metropolis_hastings_ratio():
     assert int(jnp.sum(death.accepted_state.active_mask)) == 0
 
 
-def test_glamm_equilibrium_is_invariant_and_transactional():
+def test_glamm_equilibrium_is_invariant_and_transactional() -> None:
     plan = rep.GLAMMPlan(
         5,
         0.01,

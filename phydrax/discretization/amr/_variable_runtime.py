@@ -11,10 +11,10 @@ from enum import IntEnum
 from math import prod
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -48,7 +48,7 @@ class VariablePatchHierarchyState(StrictModule):
         topology: VariablePatchHierarchyTopology,
         levels: Sequence[VariablePatchFieldState],
         /,
-    ):
+    ) -> None:
         values = tuple(levels)
         if (
             not isinstance(topology, VariablePatchHierarchyTopology)
@@ -106,7 +106,7 @@ class VariablePatchFillPatchResult(StrictModule):
     result_id: str = eqx.field(static=True)
 
     def require_complete(self, /) -> None:
-        if isinstance(self.complete, jax.core.Tracer):
+        if isinstance(self.complete, jax_core.Tracer):
             raise RuntimeError("FillPatch completeness must be checked outside tracing.")
         if not bool(self.complete):
             raise ValueError("Variable patch FillPatch has unresolved active values.")
@@ -133,7 +133,7 @@ class VariablePatchFillPatchPlan(StrictModule, NonTrainableState):
         /,
         *,
         component_shape: Sequence[int] = (),
-    ):
+    ) -> None:
         if not isinstance(topology, VariablePatchHierarchyTopology):
             raise TypeError("Variable patch FillPatch requires realized topology.")
         level_ = int(level)

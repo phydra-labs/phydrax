@@ -11,7 +11,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._array_archive import array_collection_digest
 from .._fingerprint import canonical_fingerprint
@@ -40,7 +41,7 @@ class AbelianLeg(StrictModule):
         *,
         orientation: int,
         active_degeneracies: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(group, AbelianGroup):
             raise TypeError("group must be AbelianGroup.")
         charges_ = tuple(group.normalize(charge) for charge in charges)
@@ -147,7 +148,7 @@ class AbelianTensorLayout(StrictModule):
         /,
         *,
         total_charge: Sequence[int] | None = None,
-    ):
+    ) -> None:
         values = tuple(legs)
         if not values or any(not isinstance(leg, AbelianLeg) for leg in values):
             raise TypeError("legs must be a nonempty sequence of AbelianLeg values.")
@@ -204,7 +205,7 @@ class AbelianTensor(StrictModule):
         /,
         *,
         precision: TensorNetworkPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(layout, AbelianTensorLayout):
             raise TypeError("layout must be AbelianTensorLayout.")
         precision_ = TensorNetworkPrecisionPolicy() if precision is None else precision

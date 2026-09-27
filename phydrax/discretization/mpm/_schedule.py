@@ -35,7 +35,7 @@ class USLMPMSchedule(AbstractExplicitMPMSchedule):
     second_momentum_extrapolation: bool = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.schedule_code = 0
         self.stress_update = "last"
         self.second_momentum_extrapolation = False
@@ -61,7 +61,7 @@ class USFMPMSchedule(AbstractExplicitMPMSchedule):
     second_momentum_extrapolation: bool = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.schedule_code = 1
         self.stress_update = "first"
         self.second_momentum_extrapolation = False
@@ -89,7 +89,7 @@ class MUSLMPMSchedule(AbstractExplicitMPMSchedule):
     second_transfer_mode: str = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.schedule_code = 2
         self.stress_update = "last"
         self.second_momentum_extrapolation = True
@@ -121,7 +121,7 @@ class AffineMUSLMPMSchedule(AbstractExplicitMPMSchedule):
     second_transfer_mode: str = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.schedule_code = 3
         self.stress_update = "last"
         self.second_momentum_extrapolation = True
@@ -153,7 +153,7 @@ class PostAdvectionMUSLMPMSchedule(AbstractExplicitMPMSchedule):
     second_transfer_mode: str = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self, *, affine_transfer: bool = False):
+    def __init__(self, *, affine_transfer: bool = False) -> None:
         self.schedule_code = 4
         self.stress_update = "last"
         self.second_momentum_extrapolation = True

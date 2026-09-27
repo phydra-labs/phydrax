@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _path_basis():
+def _path_basis() -> Any:
     graph = phx.graph.GraphIR(
         nodes=jnp.zeros((3, 1)),
         edges={"conductance": jnp.ones((4,))},
@@ -27,7 +30,7 @@ def _path_basis():
     )
 
 
-def test_spectral_features_reproduce_matrix_and_probability_normalization():
+def test_spectral_features_reproduce_matrix_and_probability_normalization() -> None:
     basis = _path_basis()
     kernel = phx.kernels.SpectralFeatureKernel(
         basis,
@@ -47,7 +50,7 @@ def test_spectral_features_reproduce_matrix_and_probability_normalization():
     assert kernel.max_derivative_order == 0
 
 
-def test_raw_spectral_scale_is_retained_when_normalization_is_disabled():
+def test_raw_spectral_scale_is_retained_when_normalization_is_disabled() -> None:
     basis = _path_basis()
     multiplier = phx.kernels.HeatSpectralMultiplier(0.4)
     kernel = phx.kernels.SpectralFeatureKernel(basis, multiplier, normalize=False)
@@ -59,7 +62,7 @@ def test_raw_spectral_scale_is_retained_when_normalization_is_disabled():
     )
 
 
-def test_matern_large_smoothness_converges_to_heat_law():
+def test_matern_large_smoothness_converges_to_heat_law() -> None:
     basis = _path_basis()
     length_scale = 0.8
     matern = phx.kernels.MaternSpectralMultiplier(length_scale, 1e8)
@@ -73,11 +76,11 @@ def test_matern_large_smoothness_converges_to_heat_law():
     )
 
 
-def test_spectral_hyperparameter_gradients_and_jit_are_finite():
+def test_spectral_hyperparameter_gradients_and_jit_are_finite() -> None:
     basis = _path_basis()
     entities = jnp.asarray([0, 1, 1, 2])
 
-    def objective(length_scale, smoothness):
+    def objective(length_scale: Any, smoothness: Any) -> Any:
         kernel = phx.kernels.SpectralFeatureKernel(
             basis,
             phx.kernels.MaternSpectralMultiplier(length_scale, smoothness),
@@ -92,7 +95,7 @@ def test_spectral_hyperparameter_gradients_and_jit_are_finite():
     assert jnp.all(jnp.isfinite(jnp.asarray(gradients)))
 
 
-def test_matern_multiplier_preserves_fractional_dimension_for_integer_spectrum():
+def test_matern_multiplier_preserves_fractional_dimension_for_integer_spectrum() -> None:
     multiplier = phx.kernels.MaternSpectralMultiplier(1.0, 1.0)
     actual = multiplier.log_weights(jnp.asarray([1], dtype=jnp.int32), 1.5)
     expected = -1.75 * jnp.log(1.5)
@@ -100,7 +103,7 @@ def test_matern_multiplier_preserves_fractional_dimension_for_integer_spectrum()
     assert jnp.allclose(actual, expected)
 
 
-def test_spectral_kernel_rejects_nonintegral_nonfinite_and_out_of_range_ids():
+def test_spectral_kernel_rejects_nonintegral_nonfinite_and_out_of_range_ids() -> None:
     kernel = phx.kernels.SpectralFeatureKernel(
         _path_basis(), phx.kernels.HeatSpectralMultiplier(0.2)
     )
@@ -118,7 +121,7 @@ def test_spectral_kernel_rejects_nonintegral_nonfinite_and_out_of_range_ids():
         kernel.pairwise(jnp.asarray([0, 1]), 0)
 
 
-def test_entity_permutation_and_eigenbasis_gauge_changes_preserve_covariance():
+def test_entity_permutation_and_eigenbasis_gauge_changes_preserve_covariance() -> None:
     basis = _path_basis()
     multiplier = phx.kernels.HeatSpectralMultiplier(0.3)
     entities = jnp.arange(3)
@@ -152,7 +155,7 @@ def test_entity_permutation_and_eigenbasis_gauge_changes_preserve_covariance():
     assert jnp.allclose(signed, reference)
 
 
-def test_rotation_within_degenerate_eigenspace_leaves_kernel_unchanged():
+def test_rotation_within_degenerate_eigenspace_leaves_kernel_unchanged() -> None:
     values = jnp.asarray([0.0, 2.0, 2.0, 4.0])
     functions = 2.0 * jnp.asarray(
         [
@@ -193,7 +196,7 @@ def test_rotation_within_degenerate_eigenspace_leaves_kernel_unchanged():
     assert jnp.allclose(first, second, atol=1e-10)
 
 
-def test_extreme_valid_multiplier_parameters_remain_finite():
+def test_extreme_valid_multiplier_parameters_remain_finite() -> None:
     basis = _path_basis()
     for multiplier in (
         phx.kernels.HeatSpectralMultiplier(1e6),

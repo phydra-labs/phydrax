@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -120,7 +121,7 @@ class ClassicalYangMillsPlan(StrictModule, NonTrainableState):
         maximum_history_elements: int = 10_000_000,
         gauss_tolerance: float = 1.0e-8,
         courant_limit: float = 0.5,
-    ):
+    ) -> None:
         shape = tuple(lattice_shape)
         spacing_ = tuple(float(value) for value in spacing)
         dimension = len(shape)
@@ -220,7 +221,7 @@ class PreparedClassicalYangMillsEvolution(StrictModule, NonTrainableState):
         plan: ClassicalYangMillsPlan,
         state: ClassicalYangMillsState,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, ClassicalYangMillsPlan):
             raise TypeError("plan must be ClassicalYangMillsPlan.")
         if (
@@ -350,7 +351,9 @@ class PreparedClassicalYangMillsEvolution(StrictModule, NonTrainableState):
             jnp.abs(jnp.sum(self.initial_state.links**2, axis=-1) - 1.0)
         )
 
-        def body(state, _):
+        def body(
+            state: ClassicalYangMillsState, _: None
+        ) -> tuple[ClassicalYangMillsState, tuple[Array, Array, Array]]:
             advanced = self.step(state)
             energy = self.energy(advanced)
             gauss = jnp.max(jnp.abs(yang_mills_gauss(advanced)))

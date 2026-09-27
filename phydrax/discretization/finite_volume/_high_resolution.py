@@ -12,13 +12,15 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._high_resolution_extended import _HighOrderTENOPlan, TENOQualification
 
 
@@ -161,13 +163,12 @@ class HighResolutionReconstructionPlan(StrictModule, NonTrainableState):
         epsilon: float = 1e-12,
         power: int = 2,
         cutoff: float = 1e-6,
-    ):
+    ) -> None:
         epsilon_ = float(epsilon)
         cutoff_ = float(cutoff)
         power_ = int(power)
         order_ = int(order)
-        if method not in ("weno_z", "teno", "mp5"):
-            raise ValueError("Unknown high-resolution reconstruction method.")
+        method = parse(method, HighResolutionMethod, "method")
         if (
             order_ != order
             or (method == "teno" and order_ not in (5, 6, 8))
@@ -259,7 +260,7 @@ class CharacteristicSystem(StrictModule):
         /,
         *,
         system_id: str,
-    ):
+    ) -> None:
         if not callable(eigensystem):
             raise TypeError("Characteristic eigensystem must be callable.")
         identifier = str(system_id)
@@ -281,7 +282,7 @@ class CharacteristicReconstructionPlan(StrictModule):
         reconstruction: HighResolutionReconstructionPlan,
         system: CharacteristicSystem,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             reconstruction, HighResolutionReconstructionPlan
         ) or not isinstance(system, CharacteristicSystem):
@@ -373,7 +374,7 @@ class NonuniformWENOReconstructionPlan(StrictModule, NonTrainableState):
         epsilon: float = 1e-12,
         power: int = 2,
         cutoff: float = 1e-6,
-    ):
+    ) -> None:
         edges = np.asarray(cell_edges, dtype=np.float64).reshape((-1,))
         if (
             edges.size < 7
@@ -513,7 +514,9 @@ def _polynomial_data(
     return evaluation, smoothness_coeff
 
 
-def _prepare_nonuniform_side(edges: np.ndarray, side: str, /):
+def _prepare_nonuniform_side(
+    edges: np.ndarray, side: str, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     count = edges.size - 1
     all_indices = []
     coefficients = []

@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _one_dimensional_plan(*, periodic=False):
+def _one_dimensional_plan(*, periodic: Any = False) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=periodic),),
         axis_names=("x",),
@@ -31,7 +34,7 @@ def _one_dimensional_plan(*, periodic=False):
     )
 
 
-def test_variable_patch_entity_views_share_owner_at_patch_interface():
+def test_variable_patch_entity_views_share_owner_at_patch_interface() -> None:
     topology = phx.discretization.VariablePatchTopologyCompiler(
         _one_dimensional_plan()
     ).initial_topology()
@@ -48,7 +51,7 @@ def test_variable_patch_entity_views_share_owner_at_patch_interface():
     assert complex_.complex.dimension == 1
 
 
-def test_variable_patch_entity_ids_survive_refinement_of_other_entities():
+def test_variable_patch_entity_ids_survive_refinement_of_other_entities() -> None:
     plan = _one_dimensional_plan()
     compiler = phx.discretization.VariablePatchTopologyCompiler(plan)
     initial = compiler.initial_topology()
@@ -78,7 +81,7 @@ def test_variable_patch_entity_ids_survive_refinement_of_other_entities():
     )
 
 
-def test_variable_patch_periodic_entities_identify_wrap_nodes():
+def test_variable_patch_periodic_entities_identify_wrap_nodes() -> None:
     topology = phx.discretization.VariablePatchTopologyCompiler(
         _one_dimensional_plan(periodic=True)
     ).initial_topology()
@@ -95,7 +98,7 @@ def test_variable_patch_periodic_entities_identify_wrap_nodes():
     assert nodes.global_indices[0, 0] == nodes.global_indices[1, 4]
 
 
-def test_variable_patch_entity_incidence_capacity_rejects_overflow():
+def test_variable_patch_entity_incidence_capacity_rejects_overflow() -> None:
     topology = phx.discretization.VariablePatchTopologyCompiler(
         _one_dimensional_plan()
     ).initial_topology()
@@ -110,7 +113,7 @@ def test_variable_patch_entity_incidence_capacity_rejects_overflow():
         plan.prepare(topology)
 
 
-def test_variable_patch_two_dimensional_entity_complex_has_exact_chain():
+def test_variable_patch_two_dimensional_entity_complex_has_exact_chain() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4),

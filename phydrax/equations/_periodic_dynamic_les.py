@@ -9,7 +9,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -52,7 +53,7 @@ class PeriodicFourierTestFilterPlan(StrictModule, NonTrainableState):
     grid_filter_plan: PeriodicFourierGridFilterPlan
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, test_filter: ResolvedLESFilter, /):
+    def __init__(self, test_filter: ResolvedLESFilter, /) -> None:
         grid_filter = PeriodicFourierGridFilterPlan(test_filter)
         self.test_filter = test_filter
         self.grid_filter_plan = grid_filter
@@ -98,7 +99,7 @@ class PreparedPeriodicFourierTestFilter(StrictModule, NonTrainableState):
         resolved_filter: PreparedPeriodicFourierGridFilter,
         test_discretization: TensorSpectralDiscretization,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, PeriodicFourierTestFilterPlan):
             raise TypeError("plan must be a PeriodicFourierTestFilterPlan.")
         if not isinstance(resolved_filter, PreparedPeriodicFourierGridFilter):
@@ -158,7 +159,12 @@ class PreparedPeriodicFourierTestFilter(StrictModule, NonTrainableState):
         test_widths = np.asarray(
             test_grid_filter.filter_scale.directional_widths, dtype=np.float64
         )
-        ratio = tuple(float(value) for value in test_widths / resolved_widths)
+        ratio_values = test_widths / resolved_widths
+        ratio = (
+            float(ratio_values[0]),
+            float(ratio_values[1]),
+            float(ratio_values[2]),
+        )
 
         self.plan = plan
         self.resolved_filter = resolved_filter
@@ -234,7 +240,7 @@ class PeriodicDynamicLESPlan(StrictModule, NonTrainableState):
         /,
         *,
         energy_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         if not isinstance(dynamic_model, PreparedDynamicSmagorinskyPlan):
             raise TypeError("dynamic_model must be PreparedDynamicSmagorinskyPlan.")
         if not isinstance(grid_filter, PeriodicFourierGridFilterPlan):
@@ -341,7 +347,7 @@ class PreparedPeriodicDynamicLES(StrictModule, NonTrainableState):
         test_discretization: TensorSpectralDiscretization,
         projector: PeriodicLerayProjector,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, PeriodicDynamicLESPlan):
             raise TypeError("plan must be PeriodicDynamicLESPlan.")
         if not isinstance(discretization, TensorSpectralDiscretization):
@@ -561,6 +567,11 @@ class PreparedPeriodicDynamicLES(StrictModule, NonTrainableState):
         live = self.grid_filter.apply(retained)
         dealiasing = self.closure_method.dealiasing
         evaluation = dealiasing.evaluation
+        # Dealiasing keeps the tensor family of the periodic discretization.
+        if not (isinstance(evaluation, TensorSpectralDiscretization)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(evaluation, TensorSpectralDiscretization)."
+            )
         embedded = dealiasing.embed(live)
         physical_velocity = evaluation.reconstruct(embedded)
         resolved_gradient = jnp.stack(

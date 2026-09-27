@@ -9,6 +9,7 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -31,7 +32,7 @@ class AdvancedPICQualification:
     successful: bool
 
 
-def run(*, smoke=False):
+def run(*, smoke: Any = False) -> Any:
     count = 16 if smoke else 64
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(count, periodic=True),),
@@ -49,7 +50,7 @@ def run(*, smoke=False):
     )
 
     @jax.jit
-    def collide(values, key):
+    def collide(values: Any, key: Any) -> Any:
         return collision_plan.collide(
             values,
             population.mass,
@@ -135,7 +136,7 @@ def run(*, smoke=False):
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--output", type=Path)

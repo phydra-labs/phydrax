@@ -11,6 +11,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 
 from ..._strict import StrictModule
+from ...typing import parse
 
 
 ScorerResponse: TypeAlias = Literal[
@@ -86,19 +87,10 @@ class FunctionScorer(AbstractScorer):
         greater_is_better: bool,
         response_method: ScorerResponse = "call",
         metric_kwargs: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         if not callable(metric):
             raise TypeError("metric must be callable.")
-        if response_method not in (
-            "call",
-            "predict",
-            "predict_proba",
-            "decision_function",
-        ):
-            raise ValueError(
-                "response_method must be 'call', 'predict', 'predict_proba', or "
-                "'decision_function'."
-            )
+        response_method = parse(response_method, ScorerResponse, "response_method")
         options = () if metric_kwargs is None else tuple(sorted(metric_kwargs.items()))
         for key, value in options:
             if not isinstance(key, str):

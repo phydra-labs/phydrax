@@ -32,7 +32,7 @@ from tools.phase_field_production_qualification import (
 )
 
 
-def _compiler_report(executable) -> dict[str, object]:
+def _compiler_report(executable: Any) -> dict[str, object]:
     cost = executable.compiled.cost_analysis()
     memory = executable.compiled.memory_analysis()
     unavailable = (
@@ -52,7 +52,7 @@ def _compiler_report(executable) -> dict[str, object]:
     }
 
 
-def _initial_values(method, field_index: int, /):
+def _initial_values(method: Any, field_index: int, /) -> Any:
     coordinates = method.discretization.dof_maps[field_index].evaluate_coordinates(
         method.discretization.mesh,
         method.discretization.default_runtime.coordinates,

@@ -6,14 +6,16 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import parse
 from ..contracts._options import OptionType, VanillaPayoff
 from ..core._currency import Currency
 from ..core._evidence import FinanceEvidenceBinding
@@ -22,19 +24,20 @@ from ..models._diffusion import BlackScholesModel
 from ._types import ValuationEvidence, ValuationResult
 
 
-ExerciseRoute = Literal["european", "american"]
-LatticeScheme = Literal["cox-ross-rubinstein", "jarrow-rudd"]
+ExerciseRoute: TypeAlias = Literal["european", "american"]
+LatticeScheme: TypeAlias = Literal["cox-ross-rubinstein", "jarrow-rudd"]
 
 
 class LatticePlan(StrictModule):
     steps: int = eqx.field(static=True)
     scheme: LatticeScheme = eqx.field(static=True)
 
-    def __init__(self, steps: int, /, *, scheme: LatticeScheme = "cox-ross-rubinstein"):
+    def __init__(
+        self, steps: int, /, *, scheme: LatticeScheme = "cox-ross-rubinstein"
+    ) -> None:
         if isinstance(steps, bool) or not isinstance(steps, int) or steps < 2:
             raise ValueError("steps must be an integer at least two.")
-        if scheme not in ("cox-ross-rubinstein", "jarrow-rudd"):
-            raise ValueError("unsupported lattice scheme.")
+        scheme = parse(scheme, LatticeScheme, "scheme")
         self.steps = steps
         self.scheme = scheme
 
@@ -65,13 +68,12 @@ class LatticeProblem(StrictModule):
         currency: Currency | None = None,
         evidence_binding: FinanceEvidenceBinding | None = None,
         pricing_law: PricingLaw | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, BlackScholesModel) or not isinstance(
             payoff, VanillaPayoff
         ):
             raise TypeError("model/payoff must be BlackScholesModel and VanillaPayoff.")
-        if exercise_route not in ("european", "american"):
-            raise ValueError("lattice exercise_route must be european or american.")
+        exercise_route = parse(exercise_route, ExerciseRoute, "exercise_route")
         if currency is not None and not isinstance(currency, Currency):
             raise TypeError("currency must be Currency or None.")
         if evidence_binding is not None and not isinstance(
@@ -183,7 +185,7 @@ def evaluate_lattice(
     )
     values = _intrinsic(problem.payoff, terminal_spots)
 
-    def backward(iteration, current):
+    def backward(iteration: Array, current: Array) -> Array:
         step = plan_.steps - 1 - iteration
         active = indices <= step
         continuation = prepared.discount * (

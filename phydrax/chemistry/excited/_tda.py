@@ -11,7 +11,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -51,7 +52,7 @@ class ExcitedStateManifoldPlan(StrictModule, NonTrainableState):
         residual_tolerance: float = 1.0e-8,
         degeneracy_absolute: float = 1.0e-6,
         degeneracy_relative: float = 1.0e-8,
-    ):
+    ) -> None:
         roots = int(root_count)
         spin = str(spin_sector).strip()
         symmetry = None if symmetry_sector is None else str(symmetry_sector).strip()
@@ -109,7 +110,7 @@ class TammDancoffPlan(StrictModule, NonTrainableState):
         energy_unit: UnitDefinition,
         transition_dipole_unit: UnitDefinition,
         /,
-    ):
+    ) -> None:
         if not isinstance(manifold, ExcitedStateManifoldPlan):
             raise TypeError("manifold must be ExcitedStateManifoldPlan.")
         matrix = jnp.asarray(response_matrix)
@@ -187,7 +188,12 @@ class TammDancoffPlan(StrictModule, NonTrainableState):
                 start = index
         clusters.append(tuple(range(start, root_count)))
 
-        def build_result(values_, vectors_, clusters_, successful_):
+        def build_result(
+            values_: Array,
+            vectors_: Array,
+            clusters_: tuple[tuple[int, ...], ...],
+            successful_: Array,
+        ) -> ElectronicManifoldResult:
             residuals_ = jnp.sqrt(
                 jnp.sum(
                     jnp.abs(self.response_matrix @ vectors_ - vectors_ * values_[None, :])
@@ -268,7 +274,7 @@ class NonadiabaticCouplingResult(StrictModule, NonTrainableState):
         inverse_length_unit: UnitDefinition,
         energy_weighted_unit: UnitDefinition,
         /,
-    ):
+    ) -> None:
         derivative = jnp.asarray(derivative_couplings)
         weighted = jnp.asarray(energy_weighted_couplings, dtype=derivative.dtype)
         if (

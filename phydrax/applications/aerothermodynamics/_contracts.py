@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -69,7 +70,7 @@ class AerothermodynamicSupportTuple(StrictModule, NonTrainableState):
         kinetic_id: str | None = None,
         hybrid_id: str | None = None,
         turbulence_id: str | None = None,
-    ):
+    ) -> None:
         species = int(species_count)
         modes = int(mode_count)
         groups = int(radiation_group_count)
@@ -146,9 +147,13 @@ class AerothermodynamicConservationLedger(StrictModule):
         external_boundary_exchange: ArrayLike = 0.0,
         tolerance: float = 1.0e-10,
     ) -> AerothermodynamicConservationLedger:
-        defects = tuple(
-            jnp.asarray(value)
-            for value in (mass, elements, charge, momentum, energy, surface_sites)
+        defects = (
+            jnp.asarray(mass),
+            jnp.asarray(elements),
+            jnp.asarray(charge),
+            jnp.asarray(momentum),
+            jnp.asarray(energy),
+            jnp.asarray(surface_sites),
         )
         interface = jnp.asarray(interface_exchange)
         external = jnp.asarray(external_boundary_exchange)
@@ -194,7 +199,7 @@ class AerothermodynamicCapabilityStatus(StrictModule, NonTrainableState):
         operational: bool,
         security: bool,
         released: bool = False,
-    ):
+    ) -> None:
         gate_values = (scientific, performance, operational, security)
         if any(type(value) is not bool for value in (*gate_values, released)):
             raise TypeError("Capability gates and released must be booleans.")
@@ -241,7 +246,7 @@ class AerothermodynamicResourceCaps(StrictModule, NonTrainableState):
         maximum_surface_events: int,
         maximum_topology_events: int,
         maximum_radiation_groups: int,
-    ):
+    ) -> None:
         values = tuple(
             (
                 maximum_particles,

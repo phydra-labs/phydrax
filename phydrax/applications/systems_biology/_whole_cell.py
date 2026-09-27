@@ -12,7 +12,8 @@ from enum import IntEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -68,7 +69,7 @@ class ExchangeFieldSpec(StrictModule, NonTrainableState):
         quantity: str = "count",
         unit: str = "molecule",
         reservoir: bool = False,
-    ):
+    ) -> None:
         if not isinstance(reservoir, bool):
             raise TypeError("reservoir must be bool.")
         self.name = _path_name(name, "Exchange field name")
@@ -91,7 +92,7 @@ class WholeCellProcessBinding(StrictModule, NonTrainableState):
         network: PreparedStoichiometricNetwork,
         species_to_fields: Mapping[str, str],
         /,
-    ):
+    ) -> None:
         if not isinstance(network, PreparedStoichiometricNetwork):
             raise TypeError("network must be PreparedStoichiometricNetwork.")
         if not isinstance(species_to_fields, Mapping):
@@ -147,7 +148,7 @@ class MultirateScheduleEntry(StrictModule, NonTrainableState):
         *,
         minimum_copy_number: float = 20.0,
         require_regime_valid: bool = True,
-    ):
+    ) -> None:
         name = _path_name(process_name, "Scheduled process name")
         if isinstance(substeps, bool) or not isinstance(substeps, (int, np.integer)):
             raise ValueError("substeps must be a positive integer.")
@@ -174,7 +175,7 @@ class WholeCellRuntime(StrictModule):
 
     process_runtimes: tuple[StoichiometricRuntime, ...]
 
-    def __init__(self, process_runtimes: Sequence[StoichiometricRuntime], /):
+    def __init__(self, process_runtimes: Sequence[StoichiometricRuntime], /) -> None:
         values = tuple(process_runtimes)
         if any(not isinstance(item, StoichiometricRuntime) for item in values):
             raise TypeError(
@@ -202,7 +203,7 @@ class WholeCellState(StrictModule):
         assembly_id: str,
         lineage_id: str,
         /,
-    ):
+    ) -> None:
         amounts = jnp.asarray(values, dtype=jnp.float64)
         source = jnp.asarray(source_ledger, dtype=amounts.dtype)
         sink = jnp.asarray(sink_ledger, dtype=amounts.dtype)
@@ -330,7 +331,7 @@ class WholeCellAssemblyPlan(StrictModule, NonTrainableState):
         field_capacity: int,
         process_capacity: int,
         conservation_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         name_value = _name(name, "Whole-cell plan name")
         field_values = tuple(fields)
         process_values = tuple(processes)
@@ -442,7 +443,7 @@ class PreparedWholeCellAssembly(StrictModule, NonTrainableState):
     conservation_basis_units: tuple[str, ...] = eqx.field(static=True)
     assembly_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: WholeCellAssemblyPlan, /):
+    def __init__(self, plan: WholeCellAssemblyPlan, /) -> None:
         if not isinstance(plan, WholeCellAssemblyPlan):
             raise TypeError("plan must be WholeCellAssemblyPlan.")
         field_index = {item.name: index for index, item in enumerate(plan.fields)}

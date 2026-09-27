@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from typing import cast
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -10,13 +10,13 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_fourier_grid_sampler_is_owned_by_layer_namespace():
+def test_fourier_grid_sampler_is_owned_by_layer_namespace() -> None:
     assert "sample_fourier_grid" in phx.nn.layers.__all__
     assert "sample_fourier_grid" not in vars(phx.nn.models)
     assert "sample_fourier_grid" not in vars(phx.nn)
 
 
-def test_fourier_grid_sampler_uses_normalized_periodic_coordinates():
+def test_fourier_grid_sampler_uses_normalized_periodic_coordinates() -> None:
     size = 9
     nodes = -1.0 + 2.0 * jnp.arange(size, dtype="float64") / size
     values = jnp.stack(
@@ -48,7 +48,7 @@ def test_fourier_grid_sampler_uses_normalized_periodic_coordinates():
     assert jnp.allclose(output, expected, rtol=1e-12, atol=1e-12)
 
 
-def test_fourier_grid_sampler_supports_physical_nodes_batches_and_chunking():
+def test_fourier_grid_sampler_supports_physical_nodes_batches_and_chunking() -> None:
     batch_size = 2
     size = 8
     origin = 3.0
@@ -92,7 +92,7 @@ def test_fourier_grid_sampler_supports_physical_nodes_batches_and_chunking():
     assert jnp.allclose(direct[1], 2.0 * direct[0], rtol=1e-12, atol=1e-12)
 
 
-def test_public_fourier_resample_evaluates_shifted_uniform_grid():
+def test_public_fourier_resample_evaluates_shifted_uniform_grid() -> None:
     source_size = 8
     target_size = 11
     offset = 0.125
@@ -124,12 +124,12 @@ def test_public_fourier_resample_evaluates_shifted_uniform_grid():
     assert jnp.allclose(output, expected, rtol=1e-12, atol=1e-12)
 
 
-def test_fourier_grid_sampler_is_jittable_and_differentiable_in_queries():
+def test_fourier_grid_sampler_is_jittable_and_differentiable_in_queries() -> None:
     nodes = -1.0 + 2.0 * jnp.arange(7, dtype="float64") / 7.0
     values = jnp.cos(jnp.pi * nodes)[:, None]
     query = jnp.asarray([[-0.4], [0.3]])
 
-    def total(points):
+    def total(points: Any) -> Any:
         sampled = cast(
             jax.Array,
             phx.nn.layers.sample_fourier_grid(

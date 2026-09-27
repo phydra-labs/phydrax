@@ -9,7 +9,8 @@ from math import pi
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -52,7 +53,7 @@ class PreparedDisplacementDiscontinuity3D(StrictModule, NonTrainableState):
         return self.traction_operator.mv(value).reshape((self.space.vertex_count, 3))
 
 
-def _space(vertices, faces):
+def _space(vertices: ArrayLike, faces: ArrayLike) -> DisplacementDiscontinuitySpace3D:
     points = np.asarray(vertices, dtype=np.float64)
     triangles = np.asarray(faces, dtype=np.int32)
     if (

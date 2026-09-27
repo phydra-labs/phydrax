@@ -9,7 +9,7 @@ from math import prod
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from ._properties import LinearCapabilityError
@@ -26,7 +26,7 @@ class MaterializationPolicy(StrictModule):
         *,
         max_entries: int = 1_000_000,
         max_bytes: int = 64 * 1024 * 1024,
-    ):
+    ) -> None:
         entries = int(max_entries)
         byte_count = int(max_bytes)
         if entries < 1 or byte_count < 1:
@@ -53,7 +53,7 @@ def _require_materialization_budget(
         )
 
 
-def materialize(operator, policy: MaterializationPolicy, /) -> Array:
+def materialize(operator: object, policy: MaterializationPolicy, /) -> Array:
     """Materialize an operator only under an explicit bounded policy."""
     from ._operators import AbstractLinearOperator
 

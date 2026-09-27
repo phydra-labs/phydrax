@@ -21,14 +21,18 @@ from phydrax.applications.skeletal_muscle.thermal import RetainedHeatProjection
 from tools.skeletal_muscle_thermal_qualification import manufactured_case
 
 
-def main():
+def main() -> None:
     jax.config.update("jax_enable_x64", True)
     fixture = manufactured_case()
     model = UchidaUmberger2010Plan(
         UchidaUmberger2010Parameters(
+            # ty: ignore[invalid-argument-type]
             [0.5],
+            # ty: ignore[invalid-argument-type]
             [0.5],
+            # ty: ignore[invalid-argument-type]
             [0.1],
+            # ty: ignore[invalid-argument-type]
             [10.0],
         ),
         ("manufactured-muscle",),

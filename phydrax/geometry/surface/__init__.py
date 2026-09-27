@@ -5,6 +5,7 @@
 """Authoritative surface geometry, audits, selections, and intersections."""
 
 from importlib import import_module
+from typing import Any
 
 from ._contracts import (
     InterfaceSide,
@@ -35,7 +36,7 @@ from ._model import SurfaceModel, SurfaceRealization
 _FACADE_EXPORT_MODULES = ("._g1_multipatch", "._high_order", "._interop")
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     for module_name in reversed(_FACADE_EXPORT_MODULES):
         module = import_module(module_name, __package__)
         if name in module.__all__:

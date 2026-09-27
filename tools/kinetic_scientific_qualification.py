@@ -6,6 +6,7 @@ import argparse
 import json
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -29,7 +30,7 @@ from phydrax.equations._transport_closures import ConstantTransport
 from tools.lattice_boltzmann_qualification import _d3q19_case, _shear_decay_case
 
 
-def _grid(shape, *, periodic=True):
+def _grid(shape: Any, *, periodic: Any = True) -> Any:
     dimension = len(shape)
     return phx.discretization.TensorGridPlan(
         tuple(
@@ -47,7 +48,7 @@ def _grid(shape, *, periodic=True):
     )
 
 
-def _collision_forcing_case():
+def _collision_forcing_case() -> Any:
     baseline = _shear_decay_case()
     d3q19 = _d3q19_case()
     lattice = phx.discretization.D2Q9()
@@ -73,7 +74,7 @@ def _collision_forcing_case():
     }
 
 
-def _boundary_geometry_case():
+def _boundary_geometry_case() -> Any:
     discretization = phx.discretization.LatticeBoltzmannPlan(
         _grid((32, 32)), phx.discretization.D2Q9()
     ).prepare()
@@ -112,7 +113,7 @@ def _boundary_geometry_case():
     }
 
 
-def _multiphase_case():
+def _multiphase_case() -> Any:
     lattice = phx.discretization.D2Q9()
     coordinate = jnp.arange(96, dtype=jnp.float64) - 48.0
     x, y = jnp.meshgrid(coordinate, coordinate, indexing="ij")
@@ -195,7 +196,7 @@ def _multiphase_case():
     }
 
 
-def _dvm_case():
+def _dvm_case() -> Any:
     material = IdealGasMaterial(1.4, 1.0)
     transport = ConstantTransport(0.03, 0.04)
     records = {}
@@ -223,12 +224,12 @@ def _dvm_case():
     return {"methods": records, "passed": passed}
 
 
-def _differentiation_case():
+def _differentiation_case() -> Any:
     lattice = phx.discretization.D2Q9()
     precision = phx.discretization.LatticeBoltzmannPrecisionPolicy()
     velocity = jnp.broadcast_to(jnp.asarray((0.02, -0.01)), (8, 8, 2))
 
-    def objective(amplitude):
+    def objective(amplitude: Any) -> Any:
         force = jnp.broadcast_to(
             jnp.asarray((amplitude, -0.5 * amplitude)), velocity.shape
         )
@@ -246,7 +247,7 @@ def _differentiation_case():
     closure = phx.equations.BinaryPhaseThermodynamicClosure()
     phase = jnp.linspace(-0.8, 0.8, 64).reshape((8, 8))
 
-    def energy(bulk):
+    def energy(bulk: Any) -> Any:
         parameters = phx.equations.BinaryThermodynamicParameters(bulk, 0.1)
         gradient = jnp.zeros(phase.shape + (2,))
         laplacian = jnp.zeros_like(phase)
@@ -270,7 +271,7 @@ def _differentiation_case():
     }
 
 
-def _execution_case():
+def _execution_case() -> Any:
     devices = tuple(jax.devices())
     if len(devices) >= 4:
         selected = devices[:4]
@@ -344,7 +345,7 @@ def _execution_case():
     }
 
 
-def _amr_case():
+def _amr_case() -> Any:
     lattice = phx.discretization.D2Q9()
     precision = phx.discretization.LatticeBoltzmannPrecisionPolicy()
     transfer = phx.discretization.LatticeBoltzmannAMRTransferPlan(lattice)
@@ -384,7 +385,7 @@ def _amr_case():
     }
 
 
-def _checkpoint_case():
+def _checkpoint_case() -> Any:
     grid = _grid((6, 6))
     discretization = phx.discretization.LatticeBoltzmannPlan(
         grid, phx.discretization.D2Q9()
@@ -429,7 +430,7 @@ def _checkpoint_case():
     }
 
 
-def qualification():
+def qualification() -> Any:
     cases = {
         "collision_forcing": _collision_forcing_case(),
         "boundary_geometry": _boundary_geometry_case(),
@@ -471,7 +472,7 @@ def qualification():
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--output",

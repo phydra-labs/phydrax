@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -62,7 +63,7 @@ class MACVariableDensityStageInverseMomentum(StrictModule, NonTrainableState):
         /,
         *,
         stage_id: str,
-    ):
+    ) -> None:
         density = operators.validate_velocity(face_density)
         coefficient = jnp.asarray(stage_coefficient)
         inverse = tuple(
@@ -121,9 +122,9 @@ class MACOperatorStageInverseMomentum(StrictModule, NonTrainableState):
     boundaries: PreparedMACBoundaryPlan
     boundary_stage: MACBoundaryStageData
     momentum_operator: AbstractLinearOperator
-    rhs_scale: object
+    rhs_scale: Array
     boundary_affine_action: FaceVelocity
-    stage_coefficient: object
+    stage_coefficient: Array
     linear_policy: LinearSolvePolicy
     prepared: PreparedLinearSolve
     stage_id: str = eqx.field(static=True)
@@ -142,7 +143,7 @@ class MACOperatorStageInverseMomentum(StrictModule, NonTrainableState):
         stage_coefficient: ArrayLike = 0.0,
         linear_policy: LinearSolvePolicy | None = None,
         stage_id: str,
-    ):
+    ) -> None:
         if not momentum_operator.source.compatible(operators.velocity_space) or not (
             momentum_operator.target.compatible(operators.velocity_space)
         ):
@@ -315,9 +316,9 @@ class MACVariableViscosityStagePlan(StrictModule, NonTrainableState):
     frozen_viscosity_action: FrozenMACVariationalViscosityAction
     face_density: FaceVelocity
     face_resistance: FaceVelocity
-    cell_viscosity: object
-    stage_coefficient: object
-    rhs_scale: object
+    cell_viscosity: Array
+    stage_coefficient: Array
+    rhs_scale: Array
     momentum_operator: FunctionLinearOperator
     stage_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -334,7 +335,7 @@ class MACVariableViscosityStagePlan(StrictModule, NonTrainableState):
         viscosity_action: PreparedMACVariationalViscosityAction | None = None,
         face_resistance: FaceVelocity | None = None,
         stage_id: str,
-    ):
+    ) -> None:
         if not isinstance(momentum, PreparedMACMomentumOperators):
             raise TypeError("momentum must be PreparedMACMomentumOperators.")
         operators = momentum.operators
@@ -386,7 +387,7 @@ class MACVariableViscosityStagePlan(StrictModule, NonTrainableState):
         )
         viscosity = frozen_viscosity.cell_viscosity
 
-        def action(values):
+        def action(values: FaceVelocity) -> FaceVelocity:
             values_ = operators.validate_velocity(values)
             bounded = momentum.boundaries.homogeneous_rate(values_)
             essential = tuple(

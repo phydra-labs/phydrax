@@ -9,7 +9,8 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -91,7 +92,7 @@ class FiniteElementPTransfer(StrictModule, NonTrainableState):
         coarse_element_id: str,
         fine_element_id: str,
         /,
-    ):
+    ) -> None:
         prolongation = jnp.asarray(primal_prolongation)
         adjoint = jnp.asarray(pairing_adjoint)
         projection = None if mass_projection is None else jnp.asarray(mass_projection)

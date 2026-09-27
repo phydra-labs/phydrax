@@ -11,7 +11,7 @@ from phydrax._numerics import (
 )
 
 
-def test_log_normalize_reduces_multiple_axes_per_retained_slice():
+def test_log_normalize_reduces_multiple_axes_per_retained_slice() -> None:
     log_weights = jnp.log(
         jnp.asarray(
             [
@@ -40,7 +40,7 @@ def test_log_normalize_reduces_multiple_axes_per_retained_slice():
     assert jnp.array_equal(valid, jnp.asarray([True, False]))
 
 
-def test_log_normalize_ignores_masked_nan_but_rejects_included_infinity():
+def test_log_normalize_ignores_masked_nan_but_rejects_included_infinity() -> None:
     masked_nan = jnp.asarray([[0.0, jnp.nan], [0.0, 0.0]])
     mask = jnp.asarray([[True, False], [True, True]])
     _, _, masked_valid = log_normalize(masked_nan, axes=1, mask=mask)
@@ -53,7 +53,7 @@ def test_log_normalize_ignores_masked_nan_but_rejects_included_infinity():
     assert jnp.array_equal(infinite_valid, jnp.asarray([False, True]))
 
 
-def test_weighted_accumulator_preserves_batches_and_ignores_zero_weight_nan():
+def test_weighted_accumulator_preserves_batches_and_ignores_zero_weight_nan() -> None:
     values = jnp.asarray(
         [
             [[1.0, 2.0], [3.0, 4.0]],
@@ -80,7 +80,7 @@ def test_weighted_accumulator_preserves_batches_and_ignores_zero_weight_nan():
     assert jnp.all(jnp.isfinite(accumulator.normalized_mean))
 
 
-def test_weighted_accumulator_merge_handles_an_empty_chunk():
+def test_weighted_accumulator_merge_handles_an_empty_chunk() -> None:
     values = jnp.asarray([[1.0, 2.0], [3.0, 4.0]])
     log_weights = jnp.asarray([[0.0, -1000.0], [0.0, -1001.0]])
     empty = LogWeightedAccumulator.from_values(
@@ -96,7 +96,7 @@ def test_weighted_accumulator_merge_handles_an_empty_chunk():
     assert jnp.allclose(merged.raw_mean, full.raw_mean)
 
 
-def test_named_weighted_measure_reduces_multiple_sample_axes():
+def test_named_weighted_measure_reduces_multiple_sample_axes() -> None:
     samples = cx.AxisArray(
         jnp.arange(2 * 2 * 3 * 2, dtype="float64").reshape((2, 2, 3, 2)),
         dims=("case", "chain", "draw", "state"),
@@ -122,7 +122,7 @@ def test_named_weighted_measure_reduces_multiple_sample_axes():
     assert jnp.array_equal(estimate.num_evaluations, jnp.asarray([6, 6]))
 
 
-def test_weighted_measure_reports_empty_mask_per_retained_slice():
+def test_weighted_measure_reports_empty_mask_per_retained_slice() -> None:
     samples = cx.AxisArray(
         jnp.arange(6.0).reshape((2, 3)),
         dims=("case", "particle"),
@@ -147,7 +147,7 @@ def test_weighted_measure_reports_empty_mask_per_retained_slice():
     assert jnp.allclose(estimate.value.data[1], 4.0)
 
 
-def test_one_independent_weighted_sample_does_not_claim_uncertainty():
+def test_one_independent_weighted_sample_does_not_claim_uncertainty() -> None:
     target = phx.integration.weighted(
         jnp.asarray([2.0]),
         jnp.asarray([0.0]),
@@ -162,16 +162,17 @@ def test_one_independent_weighted_sample_does_not_claim_uncertainty():
     assert estimate.diagnostics.normalizer_standard_error is None
 
 
-def test_external_measures_reject_plans_and_random_keys():
+def test_external_measures_reject_plans_and_random_keys() -> None:
     target = phx.integration.weighted(jnp.ones((2,)), jnp.zeros((2,)))
 
     with pytest.raises(TypeError, match="do not take an integration plan"):
+        # ty: ignore[invalid-argument-type]
         phx.integration.integrate(1.0, target, phx.integration.FixedQuadraturePlan(3))
     with pytest.raises(ValueError, match="do not consume a random key"):
         phx.integration.integrate(1.0, target, key=jr.key(0))
 
 
-def test_discrete_measure_preserves_retained_axes_and_fixed_diagnostics():
+def test_discrete_measure_preserves_retained_axes_and_fixed_diagnostics() -> None:
     points = cx.AxisArray(
         jnp.asarray([[0.0, 1.0, 2.0], [1.0, 2.0, 3.0]]),
         dims=("case", "node"),
@@ -191,7 +192,7 @@ def test_discrete_measure_preserves_retained_axes_and_fixed_diagnostics():
     assert estimate.error_estimate is None
 
 
-def test_separable_discrete_measure_avoids_a_second_weight_convention():
+def test_separable_discrete_measure_avoids_a_second_weight_convention() -> None:
     x = cx.AxisArray(jnp.asarray([0.0, 1.0]), dims=("x",))
     y = cx.AxisArray(jnp.asarray([0.0, 2.0, 4.0]), dims=("y",))
     points = cx.AxisArray(
@@ -214,7 +215,7 @@ def test_separable_discrete_measure_avoids_a_second_weight_convention():
     assert jnp.allclose(jnp.asarray(estimate.value.data), 10.0)
 
 
-def test_weighted_measure_preserves_design_metadata_and_support_status():
+def test_weighted_measure_preserves_design_metadata_and_support_status() -> None:
     samples = cx.AxisArray(
         jnp.arange(6.0).reshape((2, 3)),
         dims=("case", "particle"),

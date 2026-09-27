@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +11,7 @@ from phydrax.discretization.spectral import LatticeHarmonicPlan
 from phydrax.solver.maxwell import fourier_modal as fm
 
 
-def _harmonics():
+def _harmonics() -> Any:
     return LatticeHarmonicPlan.parallelogramic((1,), (3,)).prepare(
         jnp.asarray(((1.0, 0.0),))
     )
@@ -119,18 +121,22 @@ def test_periodic_port_reference_phase_cache_is_directional() -> None:
     prepared = fm.prepare_fourier_modal_maxwell(problem)
     np.testing.assert_allclose(
         prepared.left_incoming_phase,
+        # ty: ignore[unresolved-attribute]
         jnp.exp(prepared.left_modes.incoming_exponents * left_distance),
     )
     np.testing.assert_allclose(
         prepared.left_outgoing_phase,
+        # ty: ignore[unresolved-attribute]
         jnp.exp(-prepared.left_modes.outgoing_exponents * left_distance),
     )
     np.testing.assert_allclose(
         prepared.right_incoming_phase,
+        # ty: ignore[unresolved-attribute]
         jnp.exp(-prepared.right_modes.incoming_exponents * right_distance),
     )
     np.testing.assert_allclose(
         prepared.right_outgoing_phase,
+        # ty: ignore[unresolved-attribute]
         jnp.exp(prepared.right_modes.outgoing_exponents * right_distance),
     )
 
@@ -155,7 +161,9 @@ def test_cell_integrated_unit_flux_and_independent_power_audit() -> None:
         0.5
         * harmonics.cell_measure
         * jnp.real(
+            # ty: ignore[unresolved-attribute]
             jnp.conj(mode.electric_matrix[0, 0]) * mode.magnetic_matrix[1, 0]
+            # ty: ignore[unresolved-attribute]
             - jnp.conj(mode.electric_matrix[1, 0]) * mode.magnetic_matrix[0, 0]
         )
     )
@@ -169,6 +177,7 @@ def test_cell_integrated_unit_flux_and_independent_power_audit() -> None:
     assert float(result.power_audit_residual[0]) < 1.0e-7
     aperture_plan = fm.FiniteApertureFarFieldPlan(
         jnp.asarray(((0.0, 0.0, 1.0),)),
+        # ty: ignore[invalid-argument-type]
         fm.RectangularFiniteAperture((6.0, 1.0)),
         1,
     )
@@ -182,6 +191,7 @@ def test_cell_integrated_unit_flux_and_independent_power_audit() -> None:
     corrupted = eqx.tree_at(
         lambda value: value.left_modes.flux_weights,
         prepared,
+        # ty: ignore[unresolved-attribute]
         2.0 * prepared.left_modes.flux_weights,
     )
     audited = fm.solve_fourier_modal_maxwell(corrupted, excitation)
@@ -234,6 +244,7 @@ def test_lossless_film_conserves_power_and_reconstructs_fields() -> None:
     assert bool(jnp.all(farfield.propagating))
     aperture_plan = fm.FiniteApertureFarFieldPlan(
         jnp.asarray(((0.0, 0.0, 1.0),)),
+        # ty: ignore[invalid-argument-type]
         fm.RectangularFiniteAperture((4.0, 3.0)),
         2,
     )
@@ -438,11 +449,14 @@ def test_constant_continuous_layer_and_zero_to_pml_reduce_to_existing_paths() ->
     interior = fm.fields_in_layer(prepared_stack, result, 0, 0.075)
     assert int(interior.continuous_segment_index) >= 0
     assert bool(jnp.isfinite(interior.boundary_solve_residual))
+    # ty: ignore[unresolved-attribute]
     assert int(interior.continuous_status) == int(prepared_stack.elements[0].status)
     assert float(interior.continuous_segment_defect) <= float(
+        # ty: ignore[unresolved-attribute]
         prepared_stack.elements[0].maximum_defect
     )
     assert (
+        # ty: ignore[unresolved-attribute]
         prepared_stack.elements[0].segment_prefix_boundaries.a.shape[0]
         == varying.integration_policy.maximum_segments + 1
     )
@@ -501,7 +515,7 @@ def test_continuous_profile_samples_are_never_aliased_by_material_id() -> None:
     )
     evaluated_coordinates = []
 
-    def profile(coordinate):
+    def profile(coordinate: Any) -> Any:
         evaluated_coordinates.append(float(coordinate))
         return fm.FrequencyMaxwellMaterial(
             2.0 + 0.1 * coordinate,

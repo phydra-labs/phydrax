@@ -14,11 +14,13 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._data_plane import EPOCH_ORDER_ALGORITHM, IndexEpochPlan
+from .._dtype_names import inexact_result_type
 from .._fingerprint import array_tree_fingerprint
-from .._precision import inexact_result_type
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
 from ._posterior import ParameterSpace
@@ -53,7 +55,7 @@ class FactorSamplingState(StrictModule):
         batch_index: int = 0,
         probability_epoch: int = 0,
         geometry_epoch: int = 0,
-    ):
+    ) -> None:
         values = tuple((epoch, batch_index, probability_epoch, geometry_epoch))
         if any(value < 0 for value in values):
             raise ValueError("Factor sampling state indices must be nonnegative.")
@@ -83,7 +85,7 @@ class LikelihoodBatch(StrictModule):
         factor_ids: ArrayLike,
         sampling_probabilities: ArrayLike,
         estimator_weights: ArrayLike,
-    ):
+    ) -> None:
         mask = jnp.asarray(factor_mask)
         if mask.ndim != 1:
             raise ValueError("factor_mask must be one-dimensional.")
@@ -174,7 +176,7 @@ class ArrayMinibatchSource(StrictModule):
         *,
         batch_size: int,
         seed: int = 0,
-    ):
+    ) -> None:
         leaves = jax.tree_util.tree_leaves(data)
         if not leaves:
             raise ValueError("ArrayMinibatchSource data must contain array leaves.")
@@ -325,7 +327,7 @@ class ImportanceMinibatchSource(StrictModule):
         seed: int = 0,
         probability_epoch: int = 0,
         epoch_span: int = 1,
-    ):
+    ) -> None:
         arrays = jax.tree_util.tree_map(jnp.asarray, data)
         leaves = jax.tree_util.tree_leaves(arrays)
         if not leaves:
@@ -479,7 +481,7 @@ class MinibatchPosteriorProblem(StrictModule):
         predict: Callable[..., Any] | None = None,
         observation_variance: Callable[..., Any] | None = None,
         sample_observation: Callable[..., Any] | None = None,
-    ):
+    ) -> None:
         if not isinstance(parameter_space, ParameterSpace):
             raise TypeError("parameter_space must be a ParameterSpace.")
         if not isinstance(
@@ -505,12 +507,12 @@ class MinibatchPosteriorProblem(StrictModule):
             if isinstance(log_likelihood_factors, AbstractObservationFactor)
             else None
         )
-        if self.observation_factor is not None:
-            if self.observation_factor.semantics != "normalized_likelihood":
+        if isinstance(log_likelihood_factors, AbstractObservationFactor):
+            if log_likelihood_factors.semantics != "normalized_likelihood":
                 raise ValueError(
                     "Posterior minibatches require normalized_likelihood semantics."
                 )
-            self.log_likelihood_factors_fn = self.observation_factor.log_factors
+            self.log_likelihood_factors_fn = log_likelihood_factors.log_factors
         else:
             self.log_likelihood_factors_fn = log_likelihood_factors
         self.num_factors = count

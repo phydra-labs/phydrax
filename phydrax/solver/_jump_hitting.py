@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .. import linalg as la
 from .._strict import StrictModule
@@ -75,9 +76,9 @@ def event_first_hit(
         jnp.asarray(initial_state), events.batch_shape + events.state_shape
     )
     after = events.post_states.reshape((-1,) + events.state_shape)
-    post_target = jax.vmap(target)(after).reshape(events.times.shape)
-    initial_target = jax.vmap(target)(
-        initial.reshape((-1,) + events.state_shape)
+    post_target = jnp.asarray(jax.vmap(target)(after)).reshape(events.times.shape)
+    initial_target = jnp.asarray(
+        jax.vmap(target)(initial.reshape((-1,) + events.state_shape))
     ).reshape(events.batch_shape)
     eligible = events.valid & (events.times >= start) & (events.times <= end)
     post_hit = jnp.min(jnp.where(eligible & post_target, events.times, jnp.inf), axis=-1)

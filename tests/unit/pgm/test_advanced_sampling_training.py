@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -7,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def _triangle_graph():
+def _triangle_graph() -> Any:
     variables = phx.pgm.DiscreteVariableGroup("x", shape=(3,), num_states=2)
     edges = jnp.asarray([[0, 1], [1, 2], [2, 0]])
     factor = phx.pgm.DenseTableFactorGroup(
@@ -20,7 +22,7 @@ def _triangle_graph():
     return phx.pgm.DiscreteFactorGraph((variables,), (factor,))
 
 
-def test_scan_policies_are_jittable_and_preserve_per_chain_clamps():
+def test_scan_policies_are_jittable_and_preserve_per_chain_clamps() -> None:
     graph = _triangle_graph()
     prepared = phx.pgm.prepare_chromatic_gibbs(graph)
     state = phx.pgm.initialize_gibbs(
@@ -65,7 +67,7 @@ def test_scan_policies_are_jittable_and_preserve_per_chain_clamps():
     assert color_state.positions.shape == state.positions.shape
 
 
-def test_joint_blocks_parallel_tempering_clusters_and_online_reducers():
+def test_joint_blocks_parallel_tempering_clusters_and_online_reducers() -> None:
     graph = _triangle_graph()
     prepared = phx.pgm.prepare_chromatic_gibbs(graph)
     state = phx.pgm.initialize_gibbs(
@@ -89,7 +91,9 @@ def test_joint_blocks_parallel_tempering_clusters_and_online_reducers():
 
     assert jnp.all(block_info.valid)
     assert jnp.all(jnp.isfinite(block_state.log_score))
+    # ty: ignore[not-subscriptable]
     assert reduced.reduction["mean"].shape == (graph.num_variables,)
+    # ty: ignore[not-subscriptable]
     assert reduced.reduction["variance"].shape == (graph.num_variables,)
 
     method = phx.pgm.ParallelTempering(jnp.asarray([0.4, 0.7, 1.0]))
@@ -105,8 +109,10 @@ def test_joint_blocks_parallel_tempering_clusters_and_online_reducers():
         key=jax.random.key(40),
         num_sweeps=2,
     )
+    # ty: ignore[unresolved-attribute]
     assert best.reduction.score == phx.pgm.factor_graph_log_score(
         graph,
+        # ty: ignore[unresolved-attribute]
         best.reduction.position,
     )
     first, first_info = jax.jit(
@@ -178,7 +184,7 @@ def test_joint_blocks_parallel_tempering_clusters_and_online_reducers():
         )
 
 
-def test_training_objectives_persistent_chains_and_exact_em():
+def test_training_objectives_persistent_chains_and_exact_em() -> None:
     variables = phx.pgm.DiscreteVariableGroup("x", shape=(1,), num_states=2)
     factor = phx.pgm.DenseTableFactorGroup(
         (phx.pgm.VariableSelection.all(variables),),
@@ -234,7 +240,7 @@ def test_training_objectives_persistent_chains_and_exact_em():
     assert em.objective_after == pytest.approx(float(em.objective_before))
 
 
-def test_gibbs_transitions_preserve_invalid_input_status():
+def test_gibbs_transitions_preserve_invalid_input_status() -> None:
     graph = _triangle_graph()
     prepared = phx.pgm.prepare_chromatic_gibbs(graph)
     state = phx.pgm.initialize_gibbs(prepared, jnp.asarray([[0, 0, 0]]))
@@ -268,7 +274,7 @@ def test_gibbs_transitions_preserve_invalid_input_status():
     assert not jnp.any(block.valid)
 
 
-def test_factor_graph_checkpoint_round_trip(tmp_path):
+def test_factor_graph_checkpoint_round_trip(tmp_path: Any) -> None:
     graph = _triangle_graph()
     belief_plan = phx.pgm.prepare_belief_propagation(graph)
     belief_state = phx.pgm.initialize_belief_propagation(belief_plan)
@@ -288,9 +294,12 @@ def test_factor_graph_checkpoint_round_trip(tmp_path):
     restored = phx.pgm.read_factor_graph_checkpoint(path)
 
     assert restored.graph.structure_id == graph.structure_id
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(restored.belief_state.messages, belief_state.messages)
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(restored.gibbs_state.positions, gibbs_state.positions)
     assert jnp.array_equal(
+        # ty: ignore[invalid-argument-type]
         jax.random.key_data(restored.gibbs_root_key),
         jax.random.key_data(root_key),
     )

@@ -46,7 +46,8 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ... import ein
 from ..._strict import StrictModule
@@ -106,7 +107,7 @@ class FirstOrderAVR(StrictModule):
     lower: float = -math.inf
     upper: float = math.inf
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         _positive(self.gain, "AVR gain")
         _positive(self.time_constant, "AVR time_constant")
         _limits(self.lower, self.upper, "AVR limits")
@@ -128,7 +129,7 @@ class DroopGovernor(StrictModule):
     lower: float = -math.inf
     upper: float = math.inf
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         _positive(self.droop, "Governor droop")
         _positive(self.time_constant, "Governor time_constant")
         _limits(self.lower, self.upper, "Governor limits")
@@ -149,7 +150,7 @@ class ClassicalMachine(StrictModule):
     stator_resistance: float = 0.0
     governor: FixedGovernor | DroopGovernor = eqx.field(default_factory=FixedGovernor)
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         _machine_parameters(self)
         _positive(self.xd_prime, "xd_prime")
 
@@ -175,7 +176,7 @@ class Order4Machine(StrictModule):
     avr: FixedExciter | FirstOrderAVR = eqx.field(default_factory=FixedExciter)
     governor: FixedGovernor | DroopGovernor = eqx.field(default_factory=FixedGovernor)
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         _machine_parameters(self)
         for name, value in (
             ("xd", self.xd),
@@ -391,7 +392,9 @@ class _PowerResidual(StrictModule):
                 result.append((target - mechanical) / machine.governor.time_constant)
         return jnp.stack(result)
 
-    def __call__(self, time: Array, state: Array, state_rate: Array, args, /) -> Array:
+    def __call__(
+        self, time: Array, state: Array, state_rate: Array, args: object, /
+    ) -> Array:
         del time, args
         model = self.model
         voltage = model.voltage(state)
@@ -728,7 +731,7 @@ class PowerEvent(StrictModule):
     target: str = eqx.field(static=True)
     admittance: complex = eqx.field(static=True, default=0j)
 
-    def __check_init__(self):
+    def __check_init__(self) -> None:
         if not math.isfinite(self.time):
             raise ValueError("Event time must be finite.")
         if self.kind not in ("fault", "clear", "trip", "reclose"):
@@ -796,7 +799,9 @@ class PowerDynamicsResult(StrictModule):
 
 
 class _ContinuousReset(StrictModule):
-    def __call__(self, time, state, rate, args, /):
+    def __call__(
+        self, time: Array, state: Array, rate: Array, args: object, /
+    ) -> tuple[Array, Array]:
         del time, args
         return state, rate
 
@@ -804,12 +809,12 @@ class _ContinuousReset(StrictModule):
 class _TimeGuard(StrictModule):
     time: float
 
-    def __call__(self, time, state, args, /):
+    def __call__(self, time: Array, state: Array, args: object, /) -> Array:
         del state, args
         return time - self.time
 
 
-def _identity_reset(time, state, args, /):
+def _identity_reset(time: Array, state: Array, args: object, /) -> Array:
     del time, args
     return state
 
@@ -817,7 +822,7 @@ def _identity_reset(time, state, args, /):
 class _BoundaryState(StrictModule):
     state: Array
 
-    def __call__(self, time, args, /):
+    def __call__(self, time: Array, args: object, /) -> Array:
         del time, args
         return self.state
 
@@ -826,7 +831,7 @@ class _DifferentialFlow(StrictModule):
     residual: _PowerResidual
     algebraic: Array
 
-    def __call__(self, time, differential, args, /):
+    def __call__(self, time: Array, differential: Array, args: object, /) -> Array:
         del time, args
         return self.residual.rhs(jnp.concatenate((differential, self.algebraic)))
 
@@ -953,7 +958,7 @@ def _apply_power_event(
             _identity_reset,
             _DifferentialFlow(before_residual, state[size:]),
             _DifferentialFlow(post_residual, after[size:]),
-            event_tolerance=time_tolerance,
+            event_tolerance=float(time_tolerance),
             plan_id=f"power:{event.target}:{event.time}:{candidate_topology.epoch}",
         )
         schedule = HybridSchedulePlan(

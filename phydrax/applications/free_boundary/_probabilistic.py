@@ -6,12 +6,14 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from typing import Literal
+from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
 import optax
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 
@@ -25,8 +27,10 @@ from ..._training_kernel import (
     prepare_training_kernel,
     run_training_attempt,
     TrainingKernelSpec,
+    TrainingKeys,
 )
 from ..._training_objective import _ObjectiveContribution
+from ..._validation import positive_finite_float
 from ...geometry import regularized_heaviside_values
 
 
@@ -62,7 +66,7 @@ class ProbabilisticStefanBatch(StrictModule, NonTrainableState):
         solid_paths: ArrayLike,
         test_centers: ArrayLike,
         test_inverse_widths: ArrayLike,
-    ):
+    ) -> None:
         times_ = jnp.asarray(times, dtype=jnp.float64)
         points = jnp.asarray(domain_points, dtype=jnp.float64)
         weights = jnp.asarray(domain_weights, dtype=jnp.float64)
@@ -140,14 +144,14 @@ class ProbabilisticStefanParameters(StrictModule, NonTrainableState):
         interface_width: float,
         maximum_phase_change: float = 1.0,
         jump_penalty: float = 0.0,
-    ):
+    ) -> None:
         self.latent_heat = _positive_scalar(latent_heat, "latent_heat")
         self.liquid_mass = _positive_scalar(liquid_mass, "liquid_mass")
         self.solid_mass = _positive_scalar(solid_mass, "solid_mass")
         if liquid_sign not in (-1, 1):
             raise ValueError("liquid_sign must be -1 or 1.")
         self.liquid_sign = int(liquid_sign)
-        self.interface_width = _positive_float(interface_width, "interface_width")
+        self.interface_width = positive_finite_float(interface_width, "interface_width")
         change = float(maximum_phase_change)
         penalty = float(jump_penalty)
         if not math.isfinite(change) or change < 0.0:
@@ -171,7 +175,7 @@ class ProbabilisticStefanLoss(StrictModule):
 class ProbabilisticLevelSetStefan(StrictModule):
     level_set: Callable[[Array], Array]
 
-    def __init__(self, level_set: Callable[[Array], Array], /):
+    def __init__(self, level_set: Callable[[Array], Array], /) -> None:
         if not callable(level_set):
             raise TypeError("level_set must be callable.")
         self.level_set = level_set
@@ -249,7 +253,7 @@ def probabilistic_stefan_moment_loss(
         test_on_domain,
     )
 
-    def phase_at_time(time):
+    def phase_at_time(time: Array) -> Array:
         points = jnp.concatenate(
             (
                 batch.domain_points,
@@ -328,7 +332,14 @@ def probabilistic_stefan_moment_loss(
     )
 
 
-def _moment_objective(parameters, model_state, fixed, payload, keys, /):
+def _moment_objective(
+    parameters: PyTree[Any],
+    model_state: PyTree[Any],
+    fixed: PyTree[Any],
+    payload: tuple[ProbabilisticStefanBatch, ProbabilisticStefanParameters],
+    keys: TrainingKeys,
+    /,
+) -> tuple[_ObjectiveContribution, PyTree[Any], ProbabilisticStefanLoss]:
     """Kernel objective: the probabilistic Stefan total with unit support."""
     del keys
     batch, physical = payload
@@ -396,7 +407,9 @@ def fit_probabilistic_level_set_stefan(
     )
 
 
-def _path_level_sets(level_set, paths: Array, times: Array, /) -> Array:
+def _path_level_sets(
+    level_set: Callable[[Array], Array], paths: Array, times: Array, /
+) -> Array:
     path_count, time_count, dimension = paths.shape
     time_values = jnp.broadcast_to(times[None, :, None], (path_count, time_count, 1))
     spacetime = jnp.concatenate((paths, time_values), axis=-1)
@@ -421,13 +434,6 @@ def _level_set_call(level_set: Callable[[Array], Array], point: Array, /) -> Arr
     scalar = jnp.asarray(value)
     if scalar.shape != () or jnp.iscomplexobj(scalar):
         raise ValueError("Probabilistic Stefan level_set must return one real scalar.")
-    return scalar
-
-
-def _positive_float(value: float, name: str, /) -> float:
-    scalar = float(value)
-    if not math.isfinite(scalar) or scalar <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
     return scalar
 
 

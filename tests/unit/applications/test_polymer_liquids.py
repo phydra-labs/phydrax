@@ -1,14 +1,16 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 from phydrax.applications import polymer_liquids as pl
 
 
-def _transform(count=32):
+def _transform(count: Any = 32) -> Any:
     return pl.IsotropicRadialTransformPlan(count, 8.0).prepare()
 
 
-def test_isotropic_radial_transform_has_exact_declared_discrete_inverse():
+def test_isotropic_radial_transform_has_exact_declared_discrete_inverse() -> None:
     transform = _transform()
     values = jnp.exp(-(transform.radii**2))
     evidence = pl.radial_transform_evidence(transform, values, tolerance=1.0e-11)
@@ -20,9 +22,11 @@ def test_isotropic_radial_transform_has_exact_declared_discrete_inverse():
     assert float(transform.wave_numbers[0]) > 0.0
 
 
-def test_one_site_ideal_hnc_prism_is_exact_fixed_point():
+def test_one_site_ideal_hnc_prism_is_exact_fixed_point() -> None:
     transform = _transform(16)
+    # ty: ignore[invalid-argument-type]
     mixture = pl.SiteMixturePlan(("A",), [0.2])
+    # ty: ignore[invalid-argument-type]
     form_factor = pl.SequenceFormFactorPlan("gaussian-chain", [0], 1.0, site_count=1)
     potential = pl.SitePairPotentialPlan(
         transform.radii,
@@ -44,9 +48,10 @@ def test_one_site_ideal_hnc_prism_is_exact_fixed_point():
     assert np.all(np.asarray(result.evaluation.oz.linear_status) == 0)
 
 
-def test_multisite_sequence_form_factors_retain_symmetry_and_psd():
+def test_multisite_sequence_form_factors_retain_symmetry_and_psd() -> None:
     wave = _transform(12).wave_numbers
     for kind in ("gaussian-chain", "freely-jointed-chain", "gaussian-ring"):
+        # ty: ignore[invalid-argument-type]
         omega = pl.SequenceFormFactorPlan(kind, [0, 1, 0, 1], 0.8, site_count=2).evaluate(
             wave
         )
@@ -54,7 +59,7 @@ def test_multisite_sequence_form_factors_retain_symmetry_and_psd():
         assert np.min(np.linalg.eigvalsh(np.asarray(omega))) >= -1.0e-12
 
 
-def test_prism_closures_enforce_domains_without_clipping():
+def test_prism_closures_enforce_domains_without_clipping() -> None:
     radii = jnp.asarray([0.25, 0.75, 1.25])
     gamma = jnp.full((1, 1, 3), 0.2)
     beta_potential = jnp.full((1, 1, 3), 0.4)
@@ -74,6 +79,7 @@ def test_prism_closures_enforce_domains_without_clipping():
     msa = pl.evaluate_prism_closure(
         pl.PRISMClosurePlan(
             pl.PRISMClosureKind.MEAN_SPHERICAL,
+            # ty: ignore[invalid-argument-type]
             hard_core_diameters=[[1.0]],
         ),
         radii,
@@ -99,9 +105,11 @@ def test_prism_closures_enforce_domains_without_clipping():
     assert float(invalid.domain_margin) < 0.0
 
 
-def test_prism_implicit_root_and_density_continuation_retain_certification():
+def test_prism_implicit_root_and_density_continuation_retain_certification() -> None:
     transform = _transform(8)
+    # ty: ignore[invalid-argument-type]
     mixture = pl.SiteMixturePlan(("A",), [0.1])
+    # ty: ignore[invalid-argument-type]
     form_factor = pl.SequenceFormFactorPlan("gaussian-chain", [0], 1.0, site_count=1)
     potential = pl.SitePairPotentialPlan(
         transform.radii,

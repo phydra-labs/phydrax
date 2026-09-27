@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import cast, Literal, TypeAlias
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.domain import DomainFunction
 
@@ -23,6 +24,7 @@ from .._term import AbstractSamplingTerm
 from ..integration._external import _canonical_weighted, materialize_weighted_target
 from ..integration._targets import WeightedSampleTarget
 from ..stochastic._gaussian_diffusion import AbstractGaussianDiffusion
+from ..typing import parse, PRNGKey
 from ._sample_statistics import effective_sample_size, normalized_log_weights
 from ._time_sampling import UniformTimeSamplingPolicy
 
@@ -31,7 +33,7 @@ DenoisingScoreSamplingMode: TypeAlias = Literal["fixed", "resample"]
 DenoisingScoreWeighting: TypeAlias = Literal[
     "unit", "conditional-variance", "diffusion-rate"
 ]
-DenoisingScoreDataProvider: TypeAlias = Callable[[Key[Array, ""]], WeightedSampleTarget]
+DenoisingScoreDataProvider: TypeAlias = Callable[[PRNGKey], WeightedSampleTarget]
 
 
 def _canonical_target(
@@ -110,7 +112,7 @@ class DenoisingScoreMatchingBatch(StrictModule):
         weighting: DenoisingScoreWeighting,
         batch_id: str,
         data_provenance: str,
-    ):
+    ) -> None:
         clean = jnp.asarray(clean_state)
         perturbed = jnp.asarray(perturbed_state, dtype=clean.dtype)
         noise_array = jnp.asarray(noise, dtype=clean.dtype)
@@ -137,8 +139,7 @@ class DenoisingScoreMatchingBatch(StrictModule):
             == expected
         ):
             raise ValueError("Denoising sample metadata must have shape (num_samples,).")
-        if weighting not in ("unit", "conditional-variance", "diffusion-rate"):
-            raise ValueError("Unknown denoising score weighting.")
+        weighting = parse(weighting, DenoisingScoreWeighting, "weighting")
         for owner, value in (
             ("process_id", process_id),
             ("policy_id", policy_id),
@@ -234,7 +235,7 @@ class DenoisingScoreMatchingTerm(AbstractSamplingTerm):
         state_label: str = "x",
         time_label: str = "t",
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(score_name, str) or not score_name:
             raise ValueError("score_name must be a non-empty string.")
         if not isinstance(process, AbstractGaussianDiffusion):
@@ -245,10 +246,8 @@ class DenoisingScoreMatchingTerm(AbstractSamplingTerm):
             raise ValueError("Denoising score minimum_time must be strictly positive.")
         if bool(policy.maximum_time > process.terminal_time):
             raise ValueError("Denoising score time policy exceeds the process interval.")
-        if weighting not in ("unit", "conditional-variance", "diffusion-rate"):
-            raise ValueError("Unknown denoising score weighting.")
-        if sampling_mode not in ("fixed", "resample"):
-            raise ValueError("sampling_mode must be 'fixed' or 'resample'.")
+        weighting = parse(weighting, DenoisingScoreWeighting, "weighting")
+        sampling_mode = parse(sampling_mode, DenoisingScoreSamplingMode, "sampling_mode")
         if not state_label or not time_label or state_label == time_label:
             raise ValueError("state_label and time_label must be distinct and non-empty.")
         if sampling_mode == "fixed":
@@ -284,7 +283,7 @@ class DenoisingScoreMatchingTerm(AbstractSamplingTerm):
             return scale**2
         return jax.vmap(self.process.diffusion_scale)(time) ** 2
 
-    def sample(self, *, key: Key[Array, ""] = DOC_KEY0) -> DenoisingScoreMatchingBatch:
+    def sample(self, *, key: PRNGKey = DOC_KEY0) -> DenoisingScoreMatchingBatch:
         data_key, time_key, noise_key = jr.split(key, 3)
         if self.sampling_mode == "fixed":
             if self.fixed_target is None:
@@ -349,7 +348,7 @@ class DenoisingScoreMatchingTerm(AbstractSamplingTerm):
         batch: DenoisingScoreMatchingBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> _DenoisingNodeEvaluation:
         if not isinstance(batch, DenoisingScoreMatchingBatch):
             raise TypeError("batch must be a DenoisingScoreMatchingBatch.")
@@ -392,7 +391,7 @@ class DenoisingScoreMatchingTerm(AbstractSamplingTerm):
         batch: DenoisingScoreMatchingBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> DenoisingScoreMatchingDiagnostics:
         evaluation = self._evaluate_nodes(functions, batch, key=key)
         weights = evaluation.weights
@@ -476,10 +475,10 @@ class DenoisingScoreMatchingTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: DenoisingScoreMatchingBatch | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> Array:
         del iter_, kwargs
         resolved = self.sample(key=key) if batch is None else batch
@@ -490,7 +489,7 @@ class DenoisingScoreMatchingTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: DenoisingScoreMatchingBatch | None = None,
     ) -> DenoisingScoreMatchingDiagnostics:
         resolved = self.sample(key=key) if batch is None else batch

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -16,7 +18,7 @@ from phydrax.optim import (
 )
 
 
-def test_orthogonal_gradients_receive_positive_equal_projections():
+def test_orthogonal_gradients_receive_positive_equal_projections() -> None:
     result = conflict_free_gradient((jnp.asarray((1.0, 0.0)), jnp.asarray((0.0, 1.0))))
 
     np.testing.assert_allclose(result.direction, (1.0, 1.0), atol=1e-6)
@@ -26,7 +28,7 @@ def test_orthogonal_gradients_receive_positive_equal_projections():
     assert int(result.status) == int(ConflictFreeGradientStatus.SUCCESS)
 
 
-def test_conflicting_feasible_gradients_still_share_a_descent_direction():
+def test_conflicting_feasible_gradients_still_share_a_descent_direction() -> None:
     gradients = (
         {"weight": jnp.asarray((1.0, 0.0))},
         {"weight": jnp.asarray((-0.5, 1.0))},
@@ -38,7 +40,7 @@ def test_conflicting_feasible_gradients_still_share_a_descent_direction():
     assert not bool(jnp.any(result.conflicts))
 
 
-def test_opposite_gradients_fail_without_a_false_conflict_free_claim():
+def test_opposite_gradients_fail_without_a_false_conflict_free_claim() -> None:
     result = conflict_free_gradient((jnp.asarray((1.0, 0.0)), jnp.asarray((-1.0, 0.0))))
 
     assert not bool(result.successful)
@@ -52,7 +54,7 @@ def test_opposite_gradients_fail_without_a_false_conflict_free_claim():
         np.asarray(checked.direction)
 
 
-def test_rank_deficient_identical_gradients_remain_usable():
+def test_rank_deficient_identical_gradients_remain_usable() -> None:
     result = conflict_free_gradient((jnp.asarray((2.0, -1.0)), jnp.asarray((2.0, -1.0))))
 
     assert int(result.rank) == 1
@@ -60,7 +62,7 @@ def test_rank_deficient_identical_gradients_remain_usable():
     assert bool(jnp.all(result.projections > 0.0))
 
 
-def test_stationary_inactive_and_complex_objectives_are_distinct():
+def test_stationary_inactive_and_complex_objectives_are_distinct() -> None:
     result = conflict_free_gradient(
         (
             {"z": jnp.asarray((1.0 + 1.0j,))},
@@ -81,7 +83,7 @@ def test_stationary_inactive_and_complex_objectives_are_distinct():
     assert int(stationary.status) == int(ConflictFreeGradientStatus.STATIONARY)
 
 
-def test_structure_shape_nonfinite_and_active_contracts_are_checked():
+def test_structure_shape_nonfinite_and_active_contracts_are_checked() -> None:
     with pytest.raises(ValueError, match="structures"):
         conflict_free_gradient(({"a": jnp.ones(1)}, {"b": jnp.ones(1)}))
     with pytest.raises(ValueError, match="shapes"):
@@ -99,31 +101,31 @@ class _ScaledOperator(phx.nn.operator.AbstractOperatorModel):
     in_size: str = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self, gain: float):
+    def __init__(self, gain: float) -> None:
         self.gain = jnp.asarray(gain)
         self.in_size = "scalar"
         self.out_size = "scalar"
 
     @property
-    def operator_contract(self):
+    def operator_contract(self) -> Any:
         return phx.nn.operator.operator_architecture_contract("DeepONet")
 
-    def __call_operator_batch__(self, batch, *, key=None):
+    def __call_operator_batch__(self, batch: Any, *, key: Any = None) -> Any:
         del key
         values = batch.input("state").values
         assert values is not None
         return self.gain * values
 
-    def __call__(self, batch, *, key=None):
+    def __call__(self, batch: Any, *, key: Any = None) -> Any:
         return self.__call_operator_batch__(batch, key=key)
 
 
-def _fixed_additive_update(value: float):
-    def initialize(parameters):
+def _fixed_additive_update(value: float) -> Any:
+    def initialize(parameters: Any) -> Any:
         del parameters
         return ()
 
-    def update(gradients, state, parameters=None):
+    def update(gradients: Any, state: Any, parameters: Any = None) -> Any:
         del parameters
         updates = jax.tree.map(
             lambda leaf: jnp.full_like(leaf, value),
@@ -131,10 +133,11 @@ def _fixed_additive_update(value: float):
         )
         return updates, state
 
+    # ty: ignore[invalid-argument-type]
     return optax.GradientTransformation(initialize, update)
 
 
-def _two_term_functional_solver():
+def _two_term_functional_solver() -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     field = domain.Parameter(jnp.asarray([1.0]))
     component = domain.component()
@@ -161,7 +164,7 @@ def _two_term_functional_solver():
     )
 
 
-def test_functional_solver_composes_one_prepared_objective_vector():
+def test_functional_solver_composes_one_prepared_objective_vector() -> None:
     optimizer = optax.sgd(0.1)
     baseline = _two_term_functional_solver().solve(
         num_iter=1,
@@ -200,7 +203,7 @@ def test_functional_solver_composes_one_prepared_objective_vector():
         )
 
 
-def test_functional_solver_aligns_the_applied_optimizer_proposal():
+def test_functional_solver_aligns_the_applied_optimizer_proposal() -> None:
     trained = _two_term_functional_solver().solve(
         num_iter=1,
         optim=_fixed_additive_update(0.1),
@@ -241,7 +244,7 @@ def test_functional_solver_aligns_the_applied_optimizer_proposal():
         )
 
 
-def test_operator_fit_composes_explicit_loss_terms():
+def test_operator_fit_composes_explicit_loss_terms() -> None:
     axis = phx.nn.operator.OperatorAxis("x", jnp.linspace(0.0, 1.0, 4))
     values = jnp.stack((axis.nodes, axis.nodes + 1.0), axis=0)
     dataset = phx.nn.operator.training.operator_dataset_from_arrays(
@@ -268,6 +271,7 @@ def test_operator_fit_composes_explicit_loss_terms():
         jit=False,
     )
 
+    # ty: ignore[unresolved-attribute]
     assert float(result.execution_model.gain) > 0.0
     assert result.final_loss < result.initial_loss
     with pytest.raises(ValueError, match="attached model losses"):
@@ -285,7 +289,7 @@ def test_operator_fit_composes_explicit_loss_terms():
         )
 
 
-def test_operator_fit_aligns_an_ordinary_aggregate_optimizer_proposal():
+def test_operator_fit_aligns_an_ordinary_aggregate_optimizer_proposal() -> None:
     axis = phx.nn.operator.OperatorAxis("x", jnp.linspace(0.0, 1.0, 4))
     values = jnp.stack((axis.nodes, axis.nodes + 1.0), axis=0)
     dataset = phx.nn.operator.training.operator_dataset_from_arrays(
@@ -314,6 +318,7 @@ def test_operator_fit_aligns_an_ordinary_aggregate_optimizer_proposal():
         jit=True,
     )
 
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(result.last_execution_model.gain, 0.0, atol=1e-10)
     statistics = result.update_alignment_statistics
     assert statistics is not None

@@ -9,7 +9,8 @@ import math
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -250,7 +251,7 @@ class TEOS10GSW75EOS(StrictModule, NonTrainableState):
         minimum_temperature: float | None = None,
         maximum_temperature: float | None = None,
         maximum_pressure_dbar: float = 8_000.0,
-    ):
+    ) -> None:
         salinity_bounds = (float(minimum_salinity), float(maximum_salinity))
         temperature_bounds = (
             None if minimum_temperature is None else float(minimum_temperature),

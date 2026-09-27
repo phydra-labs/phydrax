@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -6,7 +8,7 @@ import phydrax as phx
 from phydrax.applications import polymer_field_theory as pft
 
 
-def _spectral(count=8):
+def _spectral(count: Any = 8) -> Any:
     return phx.discretization.TensorSpectralPlan(
         (phx.discretization.FourierBasisPlan(count),),
         axis_names=("x",),
@@ -14,7 +16,7 @@ def _spectral(count=8):
     ).prepare((phx.discretization.AxisDomain.periodic(0.0, 4.0),))
 
 
-def _diblock_model():
+def _diblock_model() -> Any:
     architecture = pft.PolymerContourArchitecturePlan(
         "AB-linear",
         (
@@ -25,11 +27,16 @@ def _diblock_model():
     )
     component = pft.PolymerComponentPlan("AB", architecture, 1.0, 20.0)
     return pft.IncompressibleGaussianMixturePlan(
-        ("A", "B"), [1.0, 1.0], [[0.0, 0.0], [0.0, 0.0]], (component,)
+        ("A", "B"),
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.0],
+        # ty: ignore[invalid-argument-type]
+        [[0.0, 0.0], [0.0, 0.0]],
+        (component,),
     )
 
 
-def test_linear_scft_homogeneous_control_fixes_pressure_gauge():
+def test_linear_scft_homogeneous_control_fixes_pressure_gauge() -> None:
     prepared = pft.SCFTPlan(_diblock_model()).prepare(_spectral())
     fields = jnp.zeros(prepared.field_shape)
 
@@ -45,7 +52,7 @@ def test_linear_scft_homogeneous_control_fixes_pressure_gauge():
     np.testing.assert_allclose(evaluation.gauge_residual, 0.0, atol=0.0)
 
 
-def test_richardson_strang_propagator_is_exact_for_constant_field():
+def test_richardson_strang_propagator_is_exact_for_constant_field() -> None:
     prepared = pft.SCFTPlan(
         _diblock_model(),
         contour_integrator=pft.ContourIntegratorPlan("richardson-strang-4"),
@@ -60,7 +67,7 @@ def test_richardson_strang_propagator_is_exact_for_constant_field():
     )
 
 
-def test_acyclic_branched_scft_messages_preserve_homogeneous_mass():
+def test_acyclic_branched_scft_messages_preserve_homogeneous_mass() -> None:
     architecture = pft.PolymerContourArchitecturePlan(
         "three-arm",
         (
@@ -72,7 +79,9 @@ def test_acyclic_branched_scft_messages_preserve_homogeneous_mass():
     )
     model = pft.IncompressibleGaussianMixturePlan(
         ("A", "B"),
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0], [0.0, 0.0]],
         (pft.PolymerComponentPlan("star", architecture, 1.0, 12.0),),
     )
@@ -87,7 +96,7 @@ def test_acyclic_branched_scft_messages_preserve_homogeneous_mass():
     np.testing.assert_allclose(evaluation.densities[..., 1], 0.25, atol=1.0e-12)
 
 
-def test_scft_continuation_variable_cell_symmetry_and_field_sampling():
+def test_scft_continuation_variable_cell_symmetry_and_field_sampling() -> None:
     spectral = _spectral(4)
     symmetry = phx.discretization.TensorSpectralSymmetry(spectral, component_count=2)
     prepared = pft.SCFTPlan(_diblock_model()).prepare(spectral, symmetries=(symmetry,))

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -13,7 +16,7 @@ from phydrax.ml.preprocessing import StandardScaler
 from phydrax.ml.tree import DecisionTreeRegressor
 
 
-def _features():
+def _features() -> Any:
     return jnp.array(
         [
             [-1.3, -0.7],
@@ -26,20 +29,20 @@ def _features():
     )
 
 
-def _targets():
+def _targets() -> Any:
     return jnp.array([-1.0, -1.5, -0.4, 0.8, 1.6, 1.1])
 
 
-def _roles(model):
+def _roles(model: Any) -> Any:
     resolution = require_parameter_roles(model, context=type(model).__name__)
     return dict(zip(resolution.paths, resolution.roles, strict=True))
 
 
-def _parameter_leaves(model):
+def _parameter_leaves(model: Any) -> Any:
     return jax.tree_util.tree_leaves(partition_parameters(model)[0])
 
 
-def test_fitted_ridge_is_frozen_until_explicitly_unfrozen():
+def test_fitted_ridge_is_frozen_until_explicitly_unfrozen() -> None:
     result = phx.ml.fit(phx.ml.linear.RidgeRecipe(1e-3), _features(), _targets())
 
     assert set(_roles(result.model).values()) == {ArrayRole.FIXED}
@@ -48,7 +51,7 @@ def test_fitted_ridge_is_frozen_until_explicitly_unfrozen():
     assert roles[".intercept"] is ArrayRole.PARAMETER
 
 
-def test_fitted_knn_training_set_never_trains():
+def test_fitted_knn_training_set_never_trains() -> None:
     batch = MLBatch(_features(), _targets())
     regressor = KNeighborsRegressorRecipe(2).fit_batch(batch).as_trainable()
     labels = jnp.array([0, 0, 0, 1, 1, 1])
@@ -65,7 +68,7 @@ def test_fitted_knn_training_set_never_trains():
     assert _roles(regressor)[".targets"] is ArrayRole.FIXED
 
 
-def test_fitted_hard_tree_trains_leaf_values_not_thresholds():
+def test_fitted_hard_tree_trains_leaf_values_not_thresholds() -> None:
     model = (
         DecisionTreeRegressor(max_depth=2)
         .fit_batch(MLBatch(_features(), _targets()))
@@ -77,7 +80,7 @@ def test_fitted_hard_tree_trains_leaf_values_not_thresholds():
     assert roles[".leaf_value"] is ArrayRole.PARAMETER
 
 
-def test_fitted_scaler_statistics_never_train():
+def test_fitted_scaler_statistics_never_train() -> None:
     model = StandardScaler().fit_batch(MLBatch(_features())).as_trainable()
 
     _roles(model)

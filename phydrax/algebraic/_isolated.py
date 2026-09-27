@@ -11,7 +11,7 @@ from enum import Enum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -59,7 +59,7 @@ class IsolatedPolynomialRootProblem(StrictModule):
         system: SparsePolynomialSystem,
         scaling: PolynomialScaling | None = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(system, SparsePolynomialSystem):
             raise TypeError("system must be a SparsePolynomialSystem.")
         support = system.support

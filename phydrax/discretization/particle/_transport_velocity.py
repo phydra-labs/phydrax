@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -25,7 +28,7 @@ class TransportVelocityStateLayout(StrictModule, NonTrainableState):
     width: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, particle_capacity: int, ambient_dimension: int, /):
+    def __init__(self, particle_capacity: int, ambient_dimension: int, /) -> None:
         self.particle_capacity = int(particle_capacity)
         self.ambient_dimension = int(ambient_dimension)
         self.width = 3 * self.ambient_dimension + 1
@@ -73,7 +76,7 @@ class TransportVelocitySPHMethodPlan(StrictModule, NonTrainableState):
     background_pressure: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, background_pressure: float, /):
+    def __init__(self, background_pressure: float, /) -> None:
         pressure = float(background_pressure)
         if not np.isfinite(pressure) or pressure <= 0.0:
             raise ValueError("Transport background pressure must be finite and positive.")
@@ -101,7 +104,7 @@ class PreparedTransportVelocityDynamics(StrictModule, NonTrainableState):
         base: PreparedWeaklyCompressibleSPHDynamics,
         plan: TransportVelocitySPHMethodPlan,
         /,
-    ):
+    ) -> None:
         if not base.state_layout.density_evolved:
             raise ValueError("Transport velocity requires continuity density.")
         if base.method.free_surface_detection is not None:
@@ -130,18 +133,26 @@ class PreparedTransportVelocityDynamics(StrictModule, NonTrainableState):
     ) -> Array:
         base_state = self.base.initialize_state(position, velocity, density)
         position_, velocity_, density_ = self.base.state_layout.unpack(base_state)
+        # __init__ requires a continuity-density base, whose state always packs density.
+        if not (density_ is not None):
+            raise RuntimeError("Internal invariant failed: density_ is not None.")
         transport = (
             velocity_ if transport_velocity is None else jnp.asarray(transport_velocity)
         )
         return self.layout.pack(position_, velocity_, transport, density_)
 
-    def _terms(self, time: Array, state: Array, args, /):
+    def _terms(
+        self, time: Array, state: Array, args: Any, /
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
         position, velocity, transport, density = self.layout.unpack(state)
         base_state = self.base.state_layout.pack(position, velocity, density)
         base_rate = self.base(time, base_state, args)
         _, physical_acceleration, density_rate = self.base.state_layout.unpack_rate(
             base_rate
         )
+        # __init__ requires a continuity-density base, whose rate always packs density.
+        if not (density_rate is not None):
+            raise RuntimeError("Internal invariant failed: density_rate is not None.")
         evaluation = self.base._evaluate(time, base_state, args)
         pairs = evaluation.neighborhood.pair_relation
         left = pairs.left_indices
@@ -199,7 +210,7 @@ class PreparedTransportVelocityDynamics(StrictModule, NonTrainableState):
             stress_acceleration,
         )
 
-    def __call__(self, time: Array, state: Array, args=None, /) -> Array:
+    def __call__(self, time: Array, state: Array, args: Any = None, /) -> Array:
         position_rate, velocity_rate, transport_rate, density_rate, _, _ = self._terms(
             time, state, args
         )
@@ -208,7 +219,7 @@ class PreparedTransportVelocityDynamics(StrictModule, NonTrainableState):
         )
 
     def refresh_transport_velocity(
-        self, time: Array, state: Array, step_size: Array, args=None, /
+        self, time: Array, state: Array, step_size: Array, args: Any = None, /
     ) -> Array:
         position, velocity, _, density = self.layout.unpack(state)
         _, _, _, _, background, _ = self._terms(time, state, args)
@@ -216,7 +227,7 @@ class PreparedTransportVelocityDynamics(StrictModule, NonTrainableState):
         return self.layout.pack(position, velocity, transport, density)
 
     def diagnostics(
-        self, time: Array, state: Array, args=None, /
+        self, time: Array, state: Array, args: Any = None, /
     ) -> TransportVelocityDiagnostics:
         _, velocity, transport, _ = self.layout.unpack(state)
         _, _, _, _, background, stress_acceleration = self._terms(time, state, args)

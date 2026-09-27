@@ -10,7 +10,8 @@ from enum import StrEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -43,7 +44,7 @@ class BinaryThermodynamicParameters(StrictModule):
         bulk_scale: ArrayLike,
         gradient_coefficient: ArrayLike,
         /,
-    ):
+    ) -> None:
         bulk = jnp.asarray(bulk_scale)
         gradient = jnp.asarray(gradient_coefficient, dtype=bulk.dtype)
         if bulk.shape != () or gradient.shape != ():
@@ -112,7 +113,7 @@ class BinaryPhaseThermodynamicClosure(AbstractKineticThermodynamicClosure):
     free_energy: AbstractBulkFreeEnergy
     closure_id: str = eqx.field(static=True)
 
-    def __init__(self, free_energy: AbstractBulkFreeEnergy | None = None, /):
+    def __init__(self, free_energy: AbstractBulkFreeEnergy | None = None, /) -> None:
         potential = DoubleWellFreeEnergy() if free_energy is None else free_energy
         if not isinstance(potential, AbstractBulkFreeEnergy):
             raise TypeError("free_energy must implement AbstractBulkFreeEnergy.")

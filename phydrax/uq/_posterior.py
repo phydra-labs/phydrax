@@ -12,7 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._probability import AbstractProbabilityLaw
 from .._strict import StrictModule
@@ -86,7 +88,7 @@ class SigmoidIntervalBijector(_AbstractShapePreservingBijector):
     lower: Array = fixed_field()
     upper: Array = fixed_field()
 
-    def __init__(self, lower: ArrayLike, upper: ArrayLike):
+    def __init__(self, lower: ArrayLike, upper: ArrayLike) -> None:
         lower_array = jnp.asarray(lower, dtype=jnp.float64)
         upper_array = jnp.asarray(upper, dtype=jnp.float64)
         if bool(jnp.any(~jnp.isfinite(lower_array))) or bool(
@@ -123,7 +125,7 @@ class SimplexBijector(AbstractBijector):
 
     num_categories: int = eqx.field(static=True)
 
-    def __init__(self, num_categories: int):
+    def __init__(self, num_categories: int) -> None:
         categories = int(num_categories)
         if categories < 2:
             raise ValueError("num_categories must be at least two.")
@@ -205,7 +207,7 @@ class ParameterSpace(StrictModule):
         priors: PyTree[AbstractProbabilityLaw] | None = None,
         bijectors: PyTree[AbstractBijector] | None = None,
         log_prior: Callable[[PyTree[Any]], ArrayLike] | None = None,
-    ):
+    ) -> None:
         leaves = jax.tree_util.tree_leaves(initial)
         if not leaves:
             raise ValueError("ParameterSpace initial position must contain array leaves.")
@@ -378,7 +380,11 @@ class ParameterSpace(StrictModule):
         )
         keys = jr.split(key, len(initial_leaves))
 
-        def draw(sample_key, prior, physical_shape):
+        def draw(
+            sample_key: Array,
+            prior: AbstractProbabilityLaw,
+            physical_shape: tuple[int, ...],
+        ) -> Array:
             prior_shape = tuple(prior.batch_shape) + tuple(prior.event_shape)
             sample_shape = (count,) if prior_shape else (count,) + physical_shape
             samples = prior.sample(sample_key, sample_shape=sample_shape)
@@ -446,7 +452,7 @@ class PosteriorProblem(StrictModule):
         observation_variance: Callable[..., Any] | None = None,
         sample_observation: Callable[..., Any] | None = None,
         gauss_newton_residual: Callable[[PyTree[Any]], PyTree[Any]] | None = None,
-    ):
+    ) -> None:
         if not isinstance(parameter_space, ParameterSpace):
             raise TypeError("parameter_space must be a ParameterSpace.")
         if not callable(log_likelihood):

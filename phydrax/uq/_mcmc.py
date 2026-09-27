@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import math
 import time
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, cast, Literal, NamedTuple
+from typing import Any, cast, Literal, NamedTuple, Protocol, TypeAlias, TypeVar
 
 import blackjax
 import equinox as eqx
@@ -20,13 +21,16 @@ from blackjax.mcmc import (
     trajectory,
 )
 from blackjax.mcmc.proposal import safe_energy_diff, static_binomial_sampling
-from jaxtyping import Array, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._frozendict import frozendict
 from .._sampling import AbstractChainSampleResult
 from .._strict import StrictModule
 from ._causal_hmc import (
     _causal_block,
+    _LogDensity,
     CausalHMCConfig,
     CausalHMCDiagnostics,
     CausalNUTSConfig,
@@ -56,7 +60,14 @@ from ._diagnostics import (
     MCMCConvergenceThresholds,
     MCMCDiagnostics,
 )
-from ._interleaved_nuts import _advance_one_quantum, _initialize_transition
+from ._interleaved_nuts import (
+    _advance_one_quantum,
+    _initialize_transition,
+    _Integrator,
+    _NUTSContinuation,
+    _NUTSEmission,
+    _QuantumResult,
+)
 from ._mcmc_kinetic import (
     MCMCMassAdaptationPlan,
     prepare_mcmc_kinetic,
@@ -87,7 +98,7 @@ class MCMCChainWarmup(StrictModule):
         inverse_mass_matrix: Array,
         num_integration_steps: int | None,
         duration_seconds: float,
-    ):
+    ) -> None:
         self.state = state
         self.step_size = jnp.asarray(step_size)
         self.inverse_mass_matrix = jnp.asarray(inverse_mass_matrix)
@@ -150,7 +161,7 @@ class MCMCResult(AbstractChainSampleResult):
         trajectory_method: Literal["sequential", "causal"] = "sequential",
         causal_diagnostics: CausalHMCDiagnostics | None = None,
         causal_config: CausalHMCConfig | CausalNUTSConfig | None = None,
-    ):
+    ) -> None:
         self.problem = problem
         self.samples = samples
         self.unconstrained_samples = unconstrained_samples
@@ -334,12 +345,13 @@ def sample_nuts(
         if trajectory == "causal" and causal_config is None
         else causal_config
     )
-    if trajectory == "causal" and not isinstance(causal, CausalNUTSConfig):
-        raise TypeError("causal_config must be CausalNUTSConfig for causal NUTS.")
-    if trajectory == "causal" and causal.max_num_doublings != int(max_num_doublings):
-        raise ValueError(
-            "causal_config.max_num_doublings must agree with max_num_doublings."
-        )
+    if trajectory == "causal":
+        if not isinstance(causal, CausalNUTSConfig):
+            raise TypeError("causal_config must be CausalNUTSConfig for causal NUTS.")
+        if causal.max_num_doublings != int(max_num_doublings):
+            raise ValueError(
+                "causal_config.max_num_doublings must agree with max_num_doublings."
+            )
     if trajectory == "sequential" and causal_config is not None:
         raise ValueError("causal_config requires trajectory='causal'.")
     return _sample_mcmc(
@@ -841,18 +853,18 @@ def _sample_mcmc(
 
 
 def _adapt_mcmc(
-    algorithm_factory,
-    logdensity_fn,
-    positions,
+    algorithm_factory: _MCMCAlgorithm,
+    logdensity_fn: _LogDensity,
+    positions: PyTree[Array],
     *,
-    warmup_keys,
-    warmup_steps,
-    target_acceptance_rate,
-    initial_step_size,
-    is_mass_matrix_diagonal,
-    extra_parameters,
-    chain_method,
-):
+    warmup_keys: Array,
+    warmup_steps: int,
+    target_acceptance_rate: float,
+    initial_step_size: float,
+    is_mass_matrix_diagonal: bool,
+    extra_parameters: Mapping[str, Any],
+    chain_method: NUTSChainMethod,
+) -> _MCMCWarmup:
     adaptation = blackjax.window_adaptation(
         algorithm_factory,
         logdensity_fn,
@@ -865,7 +877,7 @@ def _adapt_mcmc(
     if chain_method in ("vectorized", "interleaved"):
         started = time.perf_counter()
 
-        def adapt_chain(warmup_key, chain_position):
+        def adapt_chain(warmup_key: Array, chain_position: PyTree[Array]) -> Any:
             result, _ = adaptation_run(
                 warmup_key,
                 chain_position,
@@ -994,6 +1006,63 @@ class _PreparedNUTSSchedulerCarry(NamedTuple):
     buffers: _PreparedNUTSBuffers
 
 
+_T = TypeVar("_T")
+_HMCState: TypeAlias = blackjax_hmc.HMCState
+_MCMCMetrics: TypeAlias = dict[str, Array]
+# (final chain states, retained positions, per-draw metrics) of one sampling chunk.
+_MCMCChunk: TypeAlias = tuple[_HMCState, PyTree[Array], _MCMCMetrics]
+_PreparedInfo: TypeAlias = _PreparedNUTSInfo | _PreparedHMCInfo
+# (current, warmup, step sizes, inverse masses, per-chain durations, total duration).
+_MCMCWarmup: TypeAlias = tuple[_HMCState, _HMCState, Array, Array, Array, float]
+# Restored checkpoint: completed draws, chain states, tuning, retained draws and
+# metrics, then adaptation, sampling, and total durations.
+_MCMCCheckpoint: TypeAlias = tuple[
+    int,
+    _HMCState,
+    _HMCState,
+    Array,
+    Array,
+    Array,
+    PyTree[Array],
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    float,
+    float,
+    float,
+]
+
+
+class _MCMCAlgorithm(Protocol):
+    """BlackJAX top-level sampling API used for warmup and state templates."""
+
+    def init(self, position: PyTree[Any], logdensity_fn: _LogDensity, /) -> _HMCState: ...
+
+
+class _MCMCAdvancer(Protocol):
+    def __call__(
+        self,
+        current_states: _HMCState,
+        step_sizes: Array,
+        inverse_mass_matrices: Array,
+        sample_keys: Array,
+        /,
+        *,
+        start: int,
+        count: int,
+    ) -> _MCMCChunk: ...
+
+
 def _prepare_warmup_kinetic(
     reference: PyTree[Any],
     plan: MCMCMassAdaptationPlan,
@@ -1052,21 +1121,23 @@ def _prepare_warmup_kinetic(
 
 
 def _prepared_metric(kinetic: PreparedMCMCKinetic, /) -> _PreparedMetric:
-    def sample_momentum(key, position):
+    def sample_momentum(key: Array, position: PyTree[Array]) -> PyTree[Array]:
         del position
         return kinetic.sample_momentum(key)
 
-    def kinetic_energy(momentum, position=None):
+    def kinetic_energy(
+        momentum: PyTree[Array], position: PyTree[Array] | None = None
+    ) -> Array:
         del position
         return kinetic.kinetic_energy_vector(kinetic.pack(momentum))
 
     def check_turning(
-        momentum_left,
-        momentum_right,
-        momentum_sum,
-        position_left=None,
-        position_right=None,
-    ):
+        momentum_left: ArrayLike,
+        momentum_right: ArrayLike,
+        momentum_sum: ArrayLike,
+        position_left: PyTree[Array] | None = None,
+        position_right: PyTree[Array] | None = None,
+    ) -> Array:
         del position_left, position_right
         left_momentum_vector = jnp.asarray(momentum_left)
         right_momentum_vector = jnp.asarray(momentum_right)
@@ -1106,24 +1177,29 @@ def _merge_causal_records(left: _CausalRecord, right: _CausalRecord) -> _CausalR
     )
 
 
-def _causal_continuation(continuation):
-    state = continuation.global_proposal.state
+def _causal_continuation(continuation: _NUTSContinuation) -> _NUTSContinuation:
+    # NUTS proposals hold `IntegratorState`s; BlackJAX types them as `NamedTuple`.
+    state = cast(integrators.IntegratorState, continuation.global_proposal.state)
+    logdensity = jnp.asarray(state.logdensity)
     initial = _CausalIntegratorState(
         position=state.position,
         momentum=state.momentum,
-        logdensity=state.logdensity,
+        logdensity=logdensity,
         logdensity_grad=state.logdensity_grad,
-        causal=_empty_causal_record(state.logdensity, converged=True),
+        causal=_empty_causal_record(logdensity, converged=True),
     )
+    # BlackJAX trajectories read only the `IntegratorState` fields, which the
+    # causal state extends with its causal record.
+    trajectory_state = cast(integrators.IntegratorState, initial)
     global_proposal = continuation.global_proposal._replace(state=initial)
     global_trajectory = continuation.global_trajectory._replace(
-        leftmost_state=initial,
-        rightmost_state=initial,
+        leftmost_state=trajectory_state,
+        rightmost_state=trajectory_state,
     )
     local_proposal = continuation.local_proposal._replace(state=initial)
     local_trajectory = continuation.local_trajectory._replace(
-        leftmost_state=initial,
-        rightmost_state=initial,
+        leftmost_state=trajectory_state,
+        rightmost_state=trajectory_state,
     )
     return continuation._replace(
         global_proposal=global_proposal,
@@ -1133,22 +1209,24 @@ def _causal_continuation(continuation):
     )
 
 
-def _causal_trajectory_record(continuation) -> _CausalRecord:
+def _causal_trajectory_record(continuation: _NUTSContinuation) -> _CausalRecord:
     trajectory_ = continuation.global_trajectory
-    return _merge_causal_records(
-        trajectory_.leftmost_state.causal,
-        trajectory_.rightmost_state.causal,
-    )
+    # `_causal_continuation` stores `_CausalIntegratorState` in every trajectory slot.
+    leftmost = cast(_CausalIntegratorState, trajectory_.leftmost_state)
+    rightmost = cast(_CausalIntegratorState, trajectory_.rightmost_state)
+    return _merge_causal_records(leftmost.causal, rightmost.causal)
 
 
 def _causal_prepared_integrator(
-    logdensity_fn,
+    logdensity_fn: _LogDensity,
     metric: _PreparedMetric,
     kinetic: PreparedMCMCKinetic,
     config: CausalHMCConfig,
     probe_key: Array,
-):
-    def step(state: _CausalIntegratorState, step_size):
+) -> _Integrator:
+    def step(
+        state: _CausalIntegratorState, step_size: ArrayLike
+    ) -> _CausalIntegratorState:
         block_probe_key = jr.fold_in(
             probe_key,
             state.causal.transition_evaluations,
@@ -1175,19 +1253,20 @@ def _causal_prepared_integrator(
             causal=_merge_causal_records(current, block),
         )
 
-    return step
+    # Causal continuations carry `_CausalIntegratorState` in every integrator slot.
+    return cast(_Integrator, step)
 
 
 def _prepared_hmc_transition(
-    key,
-    state,
-    logdensity_fn,
-    step_size,
+    key: Array,
+    state: _HMCState,
+    logdensity_fn: _LogDensity,
+    step_size: ArrayLike,
     kinetic: PreparedMCMCKinetic,
     num_integration_steps: int,
     *,
     causal_config: CausalHMCConfig | None,
-):
+) -> tuple[_HMCState, _PreparedHMCInfo]:
     metric = _prepared_metric(kinetic)
     momentum_key, integration_key, acceptance_key = jr.split(key, 3)
     momentum = metric.sample_momentum(momentum_key, state.position)
@@ -1202,10 +1281,14 @@ def _prepared_hmc_transition(
             lambda _, current: integrator(current, step_size),
             initial,
         )
-        causal_record = _empty_causal_record(state.logdensity, converged=False)
+        causal_record = _empty_causal_record(
+            jnp.asarray(state.logdensity), converged=False
+        )
     else:
         phase = (state.position, momentum)
-        causal_record = _empty_causal_record(state.logdensity, converged=True)
+        causal_record = _empty_causal_record(
+            jnp.asarray(state.logdensity), converged=True
+        )
         block_start = 0
         block_index = 0
         while block_start < int(num_integration_steps):
@@ -1241,7 +1324,7 @@ def _prepared_hmc_transition(
     initial_energy = trajectory.hmc_energy(metric.kinetic_energy)(initial)
     proposed_energy = trajectory.hmc_energy(metric.kinetic_energy)(final)
     delta = safe_energy_diff(initial_energy, proposed_energy)
-    divergent = -delta > 1000.0
+    divergent = jnp.asarray(-delta > 1000.0)
     selected, acceptance_info = static_binomial_sampling(
         acceptance_key, delta, initial, final
     )
@@ -1268,15 +1351,15 @@ def _prepared_hmc_transition(
 
 
 def _prepared_nuts_transition(
-    key,
-    state,
-    logdensity_fn,
-    step_size,
+    key: Array,
+    state: _HMCState,
+    logdensity_fn: _LogDensity,
+    step_size: ArrayLike,
     kinetic: PreparedMCMCKinetic,
     max_num_doublings: int,
     *,
     causal_config: CausalNUTSConfig | None,
-):
+) -> tuple[_HMCState, _PreparedNUTSInfo]:
     metric = _prepared_metric(kinetic)
     momentum_key, integrator_key = jr.split(key)
     momentum = metric.sample_momentum(momentum_key, state.position)
@@ -1299,7 +1382,7 @@ def _prepared_nuts_transition(
             integrator_key,
         )
 
-    def advance(current):
+    def advance(current: _NUTSContinuation) -> _QuantumResult:
         return _advance_one_quantum(
             current,
             step_size,
@@ -1339,7 +1422,7 @@ def _prepared_nuts_transition(
     )
 
 
-def _choose_prepared_value(condition, when_true, when_false):
+def _choose_prepared_value(condition: Array, when_true: _T, when_false: _T) -> _T:
     return jax.lax.cond(
         condition,
         lambda _: when_true,
@@ -1348,20 +1431,20 @@ def _choose_prepared_value(condition, when_true, when_false):
     )
 
 
-def _index_prepared_tree(values, index):
+def _index_prepared_tree(values: PyTree[Array], index: Array) -> PyTree[Array]:
     return jax.tree_util.tree_map(lambda value: value[index], values)
 
 
 def _write_prepared_nuts_buffer(
     buffers: _PreparedNUTSBuffers,
-    emission,
+    emission: _NUTSEmission,
     causal_record: _CausalRecord,
-    index,
-    should_write,
-):
+    index: Array,
+    should_write: Array,
+) -> _PreparedNUTSBuffers:
     safe_index = jnp.minimum(index, buffers.logdensity.shape[0] - 1)
 
-    def write(_):
+    def write(_: None) -> _PreparedNUTSBuffers:
         return _PreparedNUTSBuffers(
             position=jax.tree_util.tree_map(
                 lambda buffer, value: buffer.at[safe_index].set(value),
@@ -1414,16 +1497,18 @@ def _write_prepared_nuts_buffer(
 
 
 def _build_prepared_interleaved_nuts_advancer(
-    logdensity_fn,
-    kinetic_arrays,
+    logdensity_fn: _LogDensity,
+    kinetic_arrays: PreparedMCMCKinetic,
     *,
     max_num_doublings: int,
     causal_config: CausalNUTSConfig | None,
-):
-    def run(current_states, step_sizes, draw_keys):
+) -> Callable[[_HMCState, Array, Array], _MCMCChunk]:
+    def run(current_states: _HMCState, step_sizes: Array, draw_keys: Array) -> _MCMCChunk:
         chains, count = draw_keys.shape
 
-        def prepare_chain(state, keys, kinetic):
+        def prepare_chain(
+            state: _HMCState, keys: Array, kinetic: PreparedMCMCKinetic
+        ) -> tuple[PyTree[Array], Array, Array]:
             metric = _prepared_metric(kinetic)
             split_keys = jax.vmap(lambda key: jr.split(key, 2))(keys)
             momenta = jax.vmap(metric.sample_momentum, in_axes=(0, None))(
@@ -1440,7 +1525,12 @@ def _build_prepared_interleaved_nuts_advancer(
         )
         first_momenta = jax.tree_util.tree_map(lambda value: value[:, 0], momenta)
 
-        def initialize(state, momentum, kinetic_energy, integrator_key):
+        def initialize(
+            state: _HMCState,
+            momentum: PyTree[Array],
+            kinetic_energy: Array,
+            integrator_key: Array,
+        ) -> _NUTSContinuation:
             continuation = _initialize_transition(
                 state,
                 momentum,
@@ -1461,7 +1551,7 @@ def _build_prepared_interleaved_nuts_advancer(
             integrator_keys[:, 0],
         )
         scalar_shape = (chains, count)
-        scalar_dtype = current_states.logdensity.dtype
+        scalar_dtype = jnp.asarray(current_states.logdensity).dtype
         buffers = _PreparedNUTSBuffers(
             position=jax.tree_util.tree_map(
                 lambda value: jnp.zeros(
@@ -1493,11 +1583,17 @@ def _build_prepared_interleaved_nuts_advancer(
             buffers=buffers,
         )
 
-        def has_unfinished_chains(carry):
+        def has_unfinished_chains(carry: _PreparedNUTSSchedulerCarry) -> Array:
             return jnp.any(carry.completed < count)
 
-        def advance_chains(carry):
-            def advance_one(continuation, step_size, kinetic):
+        def advance_chains(
+            carry: _PreparedNUTSSchedulerCarry,
+        ) -> _PreparedNUTSSchedulerCarry:
+            def advance_one(
+                continuation: _NUTSContinuation,
+                step_size: Array,
+                kinetic: PreparedMCMCKinetic,
+            ) -> _QuantumResult:
                 metric = _prepared_metric(kinetic)
                 integrator_override = (
                     None
@@ -1601,14 +1697,17 @@ def _build_prepared_interleaved_nuts_advancer(
     return jax.jit(run)
 
 
-def _prepared_metrics(states, infos, *, algorithm: Literal["nuts", "hmc"]):
+def _prepared_metrics(
+    states: _HMCState, infos: _PreparedInfo, *, algorithm: Literal["nuts", "hmc"]
+) -> _MCMCMetrics:
     expansions = (
-        infos.num_trajectory_expansions
+        # NUTS transitions always emit `_PreparedNUTSInfo`.
+        cast(_PreparedNUTSInfo, infos).num_trajectory_expansions
         if algorithm == "nuts"
         else jnp.zeros_like(infos.num_integration_steps)
     )
     return {
-        "log_density": states.logdensity,
+        "log_density": jnp.asarray(states.logdensity),
         "acceptance_rate": infos.acceptance_rate,
         "divergent": infos.is_divergent,
         "energy": infos.energy,
@@ -1625,7 +1724,7 @@ def _prepared_metrics(states, infos, *, algorithm: Literal["nuts", "hmc"]):
 
 
 def _build_prepared_mcmc_advancer(
-    logdensity_fn,
+    logdensity_fn: _LogDensity,
     kinetics: tuple[PreparedMCMCKinetic, ...],
     /,
     *,
@@ -1634,7 +1733,7 @@ def _build_prepared_mcmc_advancer(
     chain_method: NUTSChainMethod,
     trajectory_method: Literal["sequential", "causal"],
     causal_config: CausalHMCConfig | CausalNUTSConfig | None,
-):
+) -> _MCMCAdvancer:
     if not kinetics:
         raise ValueError("At least one prepared MCMC kinetic is required.")
     template = kinetics[0]
@@ -1662,7 +1761,9 @@ def _build_prepared_mcmc_advancer(
     if algorithm == "nuts":
         depth = int(extra_parameters["max_num_doublings"])
 
-        def transition(key, state, step, kinetic):
+        def transition(
+            key: Array, state: _HMCState, step: Array, kinetic: PreparedMCMCKinetic
+        ) -> tuple[_HMCState, _PreparedInfo]:
             return _prepared_nuts_transition(
                 key,
                 state,
@@ -1676,7 +1777,9 @@ def _build_prepared_mcmc_advancer(
     else:
         steps = int(extra_parameters["num_integration_steps"])
 
-        def transition(key, state, step, kinetic):
+        def transition(
+            key: Array, state: _HMCState, step: Array, kinetic: PreparedMCMCKinetic
+        ) -> tuple[_HMCState, _PreparedInfo]:
             return _prepared_hmc_transition(
                 key,
                 state,
@@ -1687,8 +1790,15 @@ def _build_prepared_mcmc_advancer(
                 causal_config=causal_hmc,
             )
 
-    def run_chain(initial_state, keys, step_size, dynamic_kinetic):
-        def one_step(current, draw_key):
+    def run_chain(
+        initial_state: _HMCState,
+        keys: Array,
+        step_size: Array,
+        dynamic_kinetic: PreparedMCMCKinetic,
+    ) -> tuple[_HMCState, tuple[_HMCState, _PreparedInfo]]:
+        def one_step(
+            current: _HMCState, draw_key: Array
+        ) -> tuple[_HMCState, tuple[_HMCState, _PreparedInfo]]:
             next_state, info = transition(
                 draw_key,
                 current,
@@ -1710,14 +1820,14 @@ def _build_prepared_mcmc_advancer(
         )
 
         def advance_interleaved(
-            current_states,
-            step_sizes,
-            inverse_mass_matrices,
-            sample_keys,
+            current_states: _HMCState,
+            step_sizes: Array,
+            inverse_mass_matrices: Array,
+            sample_keys: Array,
             *,
-            start,
-            count,
-        ):
+            start: int,
+            count: int,
+        ) -> _MCMCChunk:
             del inverse_mass_matrices
             draw_keys = _mcmc_draw_keys(sample_keys, start=start, count=count)
             return compiled_interleaved(current_states, step_sizes, draw_keys)
@@ -1728,14 +1838,14 @@ def _build_prepared_mcmc_advancer(
         compiled_vectorized = jax.jit(jax.vmap(run_chain))
 
         def advance_vectorized(
-            current_states,
-            step_sizes,
-            inverse_mass_matrices,
-            sample_keys,
+            current_states: _HMCState,
+            step_sizes: Array,
+            inverse_mass_matrices: Array,
+            sample_keys: Array,
             *,
-            start,
-            count,
-        ):
+            start: int,
+            count: int,
+        ) -> _MCMCChunk:
             del inverse_mass_matrices
             draw_keys = _mcmc_draw_keys(sample_keys, start=start, count=count)
             final_states, (states, infos) = compiled_vectorized(
@@ -1755,14 +1865,14 @@ def _build_prepared_mcmc_advancer(
     compiled_sequential = jax.jit(run_chain)
 
     def advance_sequential(
-        current_states,
-        step_sizes,
-        inverse_mass_matrices,
-        sample_keys,
+        current_states: _HMCState,
+        step_sizes: Array,
+        inverse_mass_matrices: Array,
+        sample_keys: Array,
         *,
-        start,
-        count,
-    ):
+        start: int,
+        count: int,
+    ) -> _MCMCChunk:
         del inverse_mass_matrices
         draw_keys = _mcmc_draw_keys(sample_keys, start=start, count=count)
         chain_states = _unstack_tree(current_states, len(kinetics))
@@ -1794,7 +1904,7 @@ def _build_prepared_mcmc_advancer(
     return advance_sequential
 
 
-def _mcmc_draw_keys(sample_keys, *, start, count):
+def _mcmc_draw_keys(sample_keys: Array, *, start: int, count: int) -> Array:
     indices = jnp.arange(start, start + count, dtype=jnp.uint32)
     return jax.vmap(
         lambda sample_key: jax.vmap(lambda index: jr.fold_in(sample_key, index))(indices)
@@ -1802,33 +1912,33 @@ def _mcmc_draw_keys(sample_keys, *, start, count):
 
 
 def _write_mcmc_checkpoint(
-    destination,
+    destination: Path,
     *,
-    compatibility,
-    completed,
-    current_states,
-    warmup_states,
-    step_sizes,
-    inverse_mass_matrices,
-    warmup_durations,
-    unconstrained_samples,
-    log_density,
-    acceptance_rate,
-    divergent,
-    energy,
-    num_integration_steps,
-    num_trajectory_expansions,
-    causal_converged,
-    causal_fallback_used,
-    causal_outer_iterations,
-    causal_maximum_residual,
-    causal_accepted_steps,
-    causal_rejected_steps,
-    causal_transition_evaluations,
-    adaptation_duration,
-    sampling_duration,
-    duration_seconds,
-):
+    compatibility: Mapping[str, Any],
+    completed: int,
+    current_states: _HMCState,
+    warmup_states: _HMCState,
+    step_sizes: Array,
+    inverse_mass_matrices: Array,
+    warmup_durations: Array,
+    unconstrained_samples: PyTree[Array],
+    log_density: Array,
+    acceptance_rate: Array,
+    divergent: Array,
+    energy: Array,
+    num_integration_steps: Array,
+    num_trajectory_expansions: Array,
+    causal_converged: Array,
+    causal_fallback_used: Array,
+    causal_outer_iterations: Array,
+    causal_maximum_residual: Array,
+    causal_accepted_steps: Array,
+    causal_rejected_steps: Array,
+    causal_transition_evaluations: Array,
+    adaptation_duration: float,
+    sampling_duration: float,
+    duration_seconds: float,
+) -> None:
     arrays = {
         "step_sizes": step_sizes,
         "inverse_mass_matrices": inverse_mass_matrices,
@@ -1868,14 +1978,14 @@ def _write_mcmc_checkpoint(
 
 
 def _read_mcmc_checkpoint(
-    source,
+    source: Path,
     *,
-    compatibility,
-    algorithm_factory,
-    logdensity_fn,
-    position,
-    chains,
-):
+    compatibility: Mapping[str, Any],
+    algorithm_factory: _MCMCAlgorithm,
+    logdensity_fn: _LogDensity,
+    position: PyTree[Array],
+    chains: int,
+) -> _MCMCCheckpoint:
     state, arrays = read_checkpoint_archive(
         source,
         kind="mcmc",
@@ -1966,7 +2076,13 @@ def _read_mcmc_checkpoint(
     )
 
 
-def _checkpoint_array(arrays, name, *, shape=None, leading=None):
+def _checkpoint_array(
+    arrays: Mapping[str, Array],
+    name: str,
+    *,
+    shape: tuple[int, ...] | None = None,
+    leading: int | None = None,
+) -> Array:
     if name not in arrays:
         raise CheckpointCorruptionError(f"Checkpoint array {name!r} is missing.")
     value = jnp.asarray(arrays[name])
@@ -1981,7 +2097,7 @@ def _checkpoint_array(arrays, name, *, shape=None, leading=None):
     return value
 
 
-def _empty_sample_tree(position, chains):
+def _empty_sample_tree(position: PyTree[Array], chains: int) -> PyTree[Array]:
     return jax.tree_util.tree_map(
         lambda value: jnp.empty((chains, 0, *value.shape), dtype=value.dtype),
         position,

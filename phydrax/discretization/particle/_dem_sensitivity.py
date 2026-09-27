@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ..._differentiation import (
     branch_policy_contract,
@@ -24,6 +25,10 @@ from ..._trainable import NonTrainableState
 from ._dem import DEMDiagnostics
 
 
+if TYPE_CHECKING:
+    from ...equations._dem_material import DEMMaterialTable
+
+
 class DEMTrainableMaterialParameters(StrictModule):
     """Unconstrained continuous coordinates for one static DEM material schema."""
 
@@ -35,7 +40,9 @@ class DEMTrainableMaterialParameters(StrictModule):
     parameter_schema_id: str = eqx.field(static=True)
 
     @classmethod
-    def from_materials(cls, materials: Any, /) -> DEMTrainableMaterialParameters:
+    def from_materials(
+        cls, materials: DEMMaterialTable, /
+    ) -> DEMTrainableMaterialParameters:
         young = jnp.asarray(materials.young_modulus)
         poisson = jnp.asarray(materials.poisson_ratio)
         restitution = jnp.asarray(materials.restitution)
@@ -64,7 +71,7 @@ class DEMTrainableMaterialParameters(StrictModule):
             ),
         )
 
-    def apply(self, materials: Any, /):
+    def apply(self, materials: DEMMaterialTable, /) -> DEMMaterialTable:
         if int(materials.material_count) != self.material_count:
             raise ValueError("Trainable parameters do not match material count.")
         young = jnp.exp(self.log_young_modulus)
@@ -120,7 +127,7 @@ class DEMSensitivityPolicy(StrictModule, NonTrainableState):
         acceptance_margin: float = 1.0e-8,
         neighborhood_margin: float = 1.0e-8,
         perturbation_scale: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(mode, BranchDifferentiationPolicy):
             raise TypeError("mode must be a BranchDifferentiationPolicy.")
         match mode:
@@ -256,7 +263,7 @@ def dem_local_validity_certificate(
     )
 
 
-def _invalid_sensitivity(tree: PyTree[Any], /):
+def _invalid_sensitivity(tree: PyTree[Any], /) -> PyTree[Any]:
     return jax.tree.map(
         lambda leaf: jnp.full_like(leaf, jnp.nan) if eqx.is_inexact_array(leaf) else leaf,
         tree,

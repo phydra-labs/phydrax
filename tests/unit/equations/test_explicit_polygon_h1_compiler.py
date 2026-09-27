@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import opt_einsum as oe
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _space(*, component_shape=()):
+def _space(*, component_shape: Any = ()) -> Any:
     coordinates = jnp.asarray(
         tuple((float(i), float(j)) for j in range(3) for i in range(3))
     )
@@ -19,6 +22,7 @@ def _space(*, component_shape=()):
         (3, 4, 7, 6),
         (4, 5, 8, 7),
     )
+    # ty: ignore[invalid-argument-type]
     mesh = phx.discretization.CellMesh.from_polygons(coordinates, cells)
     field = phx.discretization.ExplicitPolygonH1FieldSpec(
         "u", component_shape=component_shape
@@ -26,7 +30,7 @@ def _space(*, component_shape=()):
     return phx.discretization.ExplicitPolygonH1Plan(mesh, field).prepare()
 
 
-def test_auto_capability_selects_dense_matrix_free_and_affine_patch_solves():
+def test_auto_capability_selects_dense_matrix_free_and_affine_patch_solves() -> None:
     space = _space()
     constraint = phx.discretization.explicit_polygon_h1_dirichlet_constraint(space, "u")
     form = phx.equations.FiniteElementForm(
@@ -58,7 +62,7 @@ def test_auto_capability_selects_dense_matrix_free_and_affine_patch_solves():
     )
 
 
-def test_tensor_diffusion_uses_prepared_polygon_capability():
+def test_tensor_diffusion_uses_prepared_polygon_capability() -> None:
     space = _space()
     state = jnp.linspace(-0.4, 0.7, space.dof_map.global_dof_count)
     scalar = phx.equations.compile_finite_element_problem(
@@ -94,7 +98,7 @@ def test_tensor_diffusion_uses_prepared_polygon_capability():
     )
 
 
-def test_cell_actions_and_exact_transposes_use_the_same_basis():
+def test_cell_actions_and_exact_transposes_use_the_same_basis() -> None:
     space = _space(component_shape=(2,))
     region = space.prepare_local_regions(
         space.cell_domain,
@@ -131,7 +135,7 @@ def test_cell_actions_and_exact_transposes_use_the_same_basis():
     )
 
 
-def test_boundary_load_and_functional_use_exterior_and_cell_worksets():
+def test_boundary_load_and_functional_use_exterior_and_cell_worksets() -> None:
     space = _space()
     boundary_form = phx.equations.FiniteElementForm(
         "polygon-boundary",
@@ -169,7 +173,7 @@ def test_boundary_load_and_functional_use_exterior_and_cell_worksets():
     assert jnp.allclose(compiled_functional.potential(jnp.ones((9,))), 4.0, atol=1e-10)
 
 
-def test_vector_constraint_selects_components_and_unoffered_modes_fail():
+def test_vector_constraint_selects_components_and_unoffered_modes_fail() -> None:
     space = _space(component_shape=(2,))
     constraint = phx.discretization.explicit_polygon_h1_dirichlet_constraint(
         space, "u", components=(0,)

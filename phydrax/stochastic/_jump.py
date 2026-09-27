@@ -15,9 +15,11 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import parse, PRNGKey
 
 
 JumpStatus: TypeAlias = Literal[
@@ -65,7 +67,7 @@ def _hash_parts(prefix: bytes, *parts: Any) -> str:
     return digest.hexdigest()
 
 
-def _key(value: Key[Array, ""], /, *, owner: str) -> Array:
+def _key(value: PRNGKey, /, *, owner: str) -> Array:
     data = jr.key_data(value)
     if data.shape != (2,):
         raise ValueError(f"{owner} requires one scalar JAX PRNG key.")
@@ -110,7 +112,7 @@ class PoissonClockRealization(StrictModule):
 
     def __init__(
         self,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         num_channels: int,
         /,
         *,
@@ -122,7 +124,7 @@ class PoissonClockRealization(StrictModule):
         coupling_id: str | None = None,
         _path_indices: Array | None = None,
         _realization_id: str | None = None,
-    ):
+    ) -> None:
         key = _key(root_key, owner="PoissonClockRealization")
         channels = int(num_channels)
         capacity = int(max_events_per_channel)
@@ -300,7 +302,7 @@ class JumpEventBatch(StrictModule):
         state_shape: Sequence[int] = (),
         pre_states: ArrayLike | None = None,
         post_states: ArrayLike | None = None,
-    ):
+    ) -> None:
         time_values = jnp.asarray(times, dtype=jnp.float64)
         if time_values.ndim < 1 or time_values.shape[-1] <= 0:
             raise ValueError("times must have a non-empty trailing event axis.")
@@ -373,8 +375,7 @@ class JumpEventBatch(StrictModule):
         """Evaluate the piecewise-constant event trajectory at query times."""
         if self.post_states is None:
             raise ValueError("states_at requires stored pre_states and post_states.")
-        if side not in ("left", "right"):
-            raise ValueError("side must be 'left' or 'right'.")
+        side = parse(side, JumpSide, "side")
         queries = jnp.asarray(query_times, dtype=self.times.dtype)
         if queries.ndim == 1:
             queries = jnp.broadcast_to(queries, self.batch_shape + queries.shape)
@@ -446,7 +447,7 @@ class AbstractJumpProcess(StrictModule):
     @abstractmethod
     def sample_mark(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         t: ArrayLike,
         state: ArrayLike,
         channel: ArrayLike,
@@ -458,7 +459,7 @@ class AbstractJumpProcess(StrictModule):
 
 IntensityFunction = Callable[[ArrayLike, ArrayLike, Any], ArrayLike]
 JumpMap = Callable[[ArrayLike, ArrayLike, ArrayLike, Any], ArrayLike]
-MarkSampler = Callable[[Key[Array, ""], ArrayLike, ArrayLike, ArrayLike, Any], ArrayLike]
+MarkSampler = Callable[[PRNGKey, ArrayLike, ArrayLike, ArrayLike, Any], ArrayLike]
 
 
 class JumpProcess(AbstractJumpProcess):
@@ -483,7 +484,7 @@ class JumpProcess(AbstractJumpProcess):
         process_id: str,
         mark_shape: Sequence[int] = (),
         mark_fn: MarkSampler | None = None,
-    ):
+    ) -> None:
         if not callable(intensity_fn) or not callable(jump_fn):
             raise TypeError("intensity_fn and jump_fn must be callable.")
         if mark_fn is not None and not callable(mark_fn):
@@ -531,7 +532,7 @@ class JumpProcess(AbstractJumpProcess):
 
     def sample_mark(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         t: ArrayLike,
         state: ArrayLike,
         channel: ArrayLike,

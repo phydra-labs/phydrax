@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -12,7 +15,7 @@ import phydrax as phx
 cv = phx.applications.cardiovascular
 
 
-def _field_space(name, count):
+def _field_space(name: Any, count: Any) -> Any:
     vector_space = phx.linalg.ArraySpace((count,), dtype=jnp.float32)
     layout = phx.discretization.TensorDofLayout(("point",), (count,))
     return phx.discretization.DiscreteFieldSpace(
@@ -25,7 +28,7 @@ def _field_space(name, count):
     )
 
 
-def _cardiac_transfer(*, source_covered=None, matrix=None):
+def _cardiac_transfer(*, source_covered: Any = None, matrix: Any = None) -> Any:
     source = _field_space("source-voltage", 2)
     target = _field_space("target-voltage", 3)
     transfer_matrix = (
@@ -70,7 +73,7 @@ def _cardiac_transfer(*, source_covered=None, matrix=None):
     )
 
 
-def _pmj_geometry():
+def _pmj_geometry() -> Any:
     graph = jnp.asarray(
         (
             (0.0, 0.25, 0.0),
@@ -92,7 +95,9 @@ def _pmj_geometry():
     return graph, myocardial
 
 
-def _prepared_pmj(*, capacity=4, maximum_distance=2.0, candidate_mask=None):
+def _prepared_pmj(
+    *, capacity: Any = 4, maximum_distance: Any = 2.0, candidate_mask: Any = None
+) -> Any:
     graph, myocardial = _pmj_geometry()
     mask = (
         jnp.asarray((True, True, False, False))
@@ -111,7 +116,7 @@ def _prepared_pmj(*, capacity=4, maximum_distance=2.0, candidate_mask=None):
     return prepared, graph, myocardial, epoch
 
 
-def test_cardiac_transfer_reports_coverage_constant_adjoint_and_configuration():
+def test_cardiac_transfer_reports_coverage_constant_adjoint_and_configuration() -> None:
     transfer = _cardiac_transfer()
     epoch = cv.anatomy.CardiacTransferEpoch(4, 7, 2, 3)
     result = transfer.apply(
@@ -141,7 +146,9 @@ def test_cardiac_transfer_reports_coverage_constant_adjoint_and_configuration():
         (4, 7, 2, 4),
     ),
 )
-def test_cardiac_transfer_invalidates_every_geometry_and_reference_epoch(epoch):
+def test_cardiac_transfer_invalidates_every_geometry_and_reference_epoch(
+    epoch: Any,
+) -> None:
     transfer = _cardiac_transfer()
     result = transfer.apply(
         jnp.asarray((2.0, 4.0), dtype=jnp.float32),
@@ -154,7 +161,7 @@ def test_cardiac_transfer_invalidates_every_geometry_and_reference_epoch(epoch):
     assert jnp.allclose(result.value, jnp.asarray((2.0, 3.0, 4.0)))
 
 
-def test_cardiac_transfer_fails_closed_for_configuration_coverage_and_claims():
+def test_cardiac_transfer_fails_closed_for_configuration_coverage_and_claims() -> None:
     epoch = cv.anatomy.CardiacTransferEpoch(4, 7, 2, 3)
     partial = _cardiac_transfer(source_covered=jnp.asarray((True, False)))
     partial_result = partial.apply(
@@ -184,7 +191,7 @@ def test_cardiac_transfer_fails_closed_for_configuration_coverage_and_claims():
     assert not bool(constant_result.evidence.accepted)
 
 
-def test_pmj_preparation_is_deterministic_fixed_shape_and_lowest_index_tied():
+def test_pmj_preparation_is_deterministic_fixed_shape_and_lowest_index_tied() -> None:
     first, graph, myocardial, epoch = _prepared_pmj()
     second, _, _, _ = _prepared_pmj()
     candidate = first.evaluate(graph, myocardial, epoch)
@@ -208,7 +215,7 @@ def test_pmj_preparation_is_deterministic_fixed_shape_and_lowest_index_tied():
     assert bool(candidate.evidence.accepted)
 
 
-def test_pmj_preparation_refuses_capacity_overflow_and_missing_support():
+def test_pmj_preparation_refuses_capacity_overflow_and_missing_support() -> None:
     graph, myocardial = _pmj_geometry()
     epoch = cv.anatomy.PMJAttachmentEpoch(5, 8)
     plan = cv.anatomy.PurkinjeAttachmentPlan(2, 2.0)
@@ -233,7 +240,7 @@ def test_pmj_preparation_refuses_capacity_overflow_and_missing_support():
         )
 
 
-def test_pmj_runtime_never_falls_back_to_a_new_nearest_support():
+def test_pmj_runtime_never_falls_back_to_a_new_nearest_support() -> None:
     prepared, graph, myocardial, epoch = _prepared_pmj()
     moved = myocardial.at[0].set(jnp.asarray((20.0, 0.0, 0.0), dtype=myocardial.dtype))
     moved = moved.at[1].set(jnp.asarray((0.0, 0.25, 0.0), dtype=myocardial.dtype))
@@ -246,7 +253,7 @@ def test_pmj_runtime_never_falls_back_to_a_new_nearest_support():
     assert not bool(candidate.evidence.accepted)
 
 
-def test_pmj_attachment_invalidates_epoch_and_differentiates_fixed_routes_only():
+def test_pmj_attachment_invalidates_epoch_and_differentiates_fixed_routes_only() -> None:
     prepared, graph, myocardial, epoch = _prepared_pmj()
     stale = prepared.evaluate(
         graph,
@@ -254,7 +261,7 @@ def test_pmj_attachment_invalidates_epoch_and_differentiates_fixed_routes_only()
         cv.anatomy.PMJAttachmentEpoch(6, 8),
     )
 
-    def fixed_route_distance(points):
+    def fixed_route_distance(points: Any) -> Any:
         candidate = prepared.evaluate(points, myocardial, epoch)
         return jnp.sum(candidate.evidence.distances_mm)
 
@@ -268,7 +275,7 @@ def test_pmj_attachment_invalidates_epoch_and_differentiates_fixed_routes_only()
     assert jnp.array_equal(prepared.myocardial_support_indices, jnp.asarray((0, 2, 0, 0)))
 
 
-def test_pmj_gather_and_scatter_preserve_fixed_capacity_and_accumulate_routes():
+def test_pmj_gather_and_scatter_preserve_fixed_capacity_and_accumulate_routes() -> None:
     prepared, _, _, _ = _prepared_pmj()
     graph_values = jnp.asarray((2.0, 3.0, 5.0, 7.0))
     myocardial_values = jnp.asarray((11.0, 13.0, 17.0, 19.0))
@@ -282,7 +289,7 @@ def test_pmj_gather_and_scatter_preserve_fixed_capacity_and_accumulate_routes():
     assert jnp.array_equal(scattered, jnp.asarray((1.5, 0.0, 2.5, 0.0)))
 
 
-def _high_order_geometry(cell_kind, *, degree=2):
+def _high_order_geometry(cell_kind: Any, *, degree: Any = 2) -> Any:
     if cell_kind == "tetrahedron":
         mesh_coordinates = jnp.asarray(
             (
@@ -335,8 +342,8 @@ def _high_order_geometry(cell_kind, *, degree=2):
     (("tetrahedron", 1.0 / 6.0, 5), ("hexahedron", 1.0, 4)),
 )
 def test_high_order_p2_q2_geometry_qualifies_jacobian_and_measure(
-    cell_kind, expected_measure, quadrature_order
-):
+    cell_kind: Any, expected_measure: Any, quadrature_order: Any
+) -> None:
     plan, coordinate_spec, epoch = _high_order_geometry(cell_kind)
     prepared = plan.prepare()
     reference_coordinates = coordinate_spec.coordinates
@@ -350,7 +357,7 @@ def test_high_order_p2_q2_geometry_qualifies_jacobian_and_measure(
         boundary_profile_id=plan.boundary_profile.profile_id,
     )
 
-    def integrated_measure(coordinates):
+    def integrated_measure(coordinates: Any) -> Any:
         result = prepared.evaluate(
             coordinates,
             epoch,
@@ -377,7 +384,7 @@ def test_high_order_p2_q2_geometry_qualifies_jacobian_and_measure(
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_high_order_geometry_rejects_inversion_without_runtime_fallback():
+def test_high_order_geometry_rejects_inversion_without_runtime_fallback() -> None:
     plan, coordinate_spec, epoch = _high_order_geometry("tetrahedron")
     prepared = plan.prepare()
     inverted = coordinate_spec.coordinates.at[:, 0].multiply(-1.0)
@@ -395,7 +402,7 @@ def test_high_order_geometry_rejects_inversion_without_runtime_fallback():
     assert not bool(candidate.evidence.rebuild_required)
 
 
-def test_high_order_geometry_distinguishes_transfer_and_rebuild_evidence():
+def test_high_order_geometry_distinguishes_transfer_and_rebuild_evidence() -> None:
     plan, coordinate_spec, _ = _high_order_geometry("hexahedron")
     prepared = plan.prepare()
     reference_change = prepared.evaluate(
@@ -428,7 +435,7 @@ def test_high_order_geometry_distinguishes_transfer_and_rebuild_evidence():
     assert not bool(role_change.evidence.accepted)
 
 
-def test_high_order_geometry_refuses_linear_and_unsupported_volume_routes():
+def test_high_order_geometry_refuses_linear_and_unsupported_volume_routes() -> None:
     with pytest.raises(ValueError, match="qualified P2 tetrahedral"):
         _high_order_geometry("tetrahedron", degree=1)
 
@@ -462,4 +469,34 @@ def test_high_order_geometry_refuses_linear_and_unsupported_volume_routes():
             boundary_role_id="prism-roles",
             boundary_profile=profile,
             prepared_epoch=cv.anatomy.HighOrderGeometryEpoch(0, 0),
+        )
+
+
+class _ForeignTetrahedralCoordinateElement:
+    cell_kind = "tetrahedron"
+    conformity = "H1"
+    local_dof_count = 10
+    element_id = "foreign-p2-tetrahedral-coordinates"
+
+
+def test_high_order_geometry_refuses_non_finite_element_coordinate_elements() -> None:
+    reference = phx.discretization.fem.lagrange_element("tetrahedron", 2)
+    block = phx.discretization.CellBlock(
+        "myocardium", "tetrahedron", jnp.asarray(((0, 1, 2, 3),))
+    )
+    mesh = phx.discretization.CellMesh(reference.reference_nodes[:4], (block,))
+    coordinate_spec = phx.discretization.CellGeometrySpec(
+        {"myocardium": _ForeignTetrahedralCoordinateElement()},
+        {"myocardium": jnp.arange(10)[None, :]},
+        reference.reference_nodes,
+    )
+    with pytest.raises(ValueError, match="qualified P2 tetrahedral"):
+        cv.anatomy.HighOrderCardiacGeometryPlan(
+            mesh,
+            coordinate_spec,
+            boundary_role_id="ventricular-boundary-roles",
+            boundary_profile=cv.anatomy.CardiacBoundaryProfile(
+                "ventricular-volume", required_roles=("epicardium",)
+            ),
+            prepared_epoch=cv.anatomy.HighOrderGeometryEpoch(3, 2),
         )

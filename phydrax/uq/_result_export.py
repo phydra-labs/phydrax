@@ -8,16 +8,20 @@ import base64
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
+
+import phydrax.axes as cx
 
 from .._array_archive import write_array_archive
 from ..stochastic._bsde import BSDEEvaluation
@@ -78,6 +82,9 @@ from ._state_space_variational import StateSpaceVariationalResult
 from ._structured_laplace import StructuredLaplaceResult
 from ._variational import VariationalResult
 
+
+if TYPE_CHECKING:
+    from arviz import InferenceData
 
 _RESULT_FORMAT = "phydrax-uq-result"
 
@@ -202,7 +209,7 @@ def read_result_archive(path: str | Path, /) -> UQResultArchive:
     )
 
 
-def to_arviz(result: MCMCResult | FlowNUTSResult | SGMCMCResult, /):
+def to_arviz(result: MCMCResult | FlowNUTSResult | SGMCMCResult, /) -> InferenceData:
     """Convert chain-preserving posterior draws and honest sampler statistics."""
     if isinstance(result, FlowNUTSResult):
         chain_result = result.mcmc
@@ -313,14 +320,28 @@ def decode_parameter_name(name: str, /) -> str:
         raise ValueError("Encoded parameter name is invalid.") from error
 
 
-def _coordinate_data(value):
-    return value.data if isinstance(value, cx.Field) else value
+def _coordinate_data(value: ArrayLike | cx.AxisArray) -> ArrayLike:
+    return value.data if isinstance(value, cx.AxisArray) else value
 
 
-_UNSUPPORTED_RESULT = object()
+class _Unsupported(Enum):
+    RESULT = "unsupported"
 
 
-def _adapt_population_result(result, arrays, fields, trees):
+_UNSUPPORTED_RESULT = _Unsupported.RESULT
+_Arrays: TypeAlias = dict[str, np.ndarray]
+_Fields: TypeAlias = dict[str, str]
+_Trees: TypeAlias = dict[str, dict[str, Any]]
+# JSON-compatible metadata payload of one exported result.
+_Metadata: TypeAlias = dict[str, Any]
+# (result kind, metadata, excluded static paths).
+_AdaptedResult: TypeAlias = tuple[str, _Metadata, tuple[str, ...]]
+_AdapterOutput: TypeAlias = _AdaptedResult | Literal[_Unsupported.RESULT]
+
+
+def _adapt_population_result(
+    result: object, arrays: _Arrays, fields: _Fields, trees: _Trees
+) -> _AdapterOutput:
     if isinstance(result, PosteriorReweightingResult):
         _put_tree(trees, arrays, "samples", result.target.samples)
         log_weights = _coordinate_data(result.target.log_weights)
@@ -512,7 +533,9 @@ def _adapt_population_result(result, arrays, fields, trees):
     return _UNSUPPORTED_RESULT
 
 
-def _adapt_state_space_result(result, arrays, fields, trees):
+def _adapt_state_space_result(
+    result: object, arrays: _Arrays, fields: _Fields, trees: _Trees
+) -> _AdapterOutput:
     if isinstance(result, BellmanFilterResult):
         metadata = _put_bellman_filter_result(result, arrays, fields, prefix="")
         return "bellman_filter", metadata, ("problem",)
@@ -681,7 +704,9 @@ def _adapt_state_space_result(result, arrays, fields, trees):
     return _UNSUPPORTED_RESULT
 
 
-def _adapt_particle_result(result, arrays, fields, trees):
+def _adapt_particle_result(
+    result: object, arrays: _Arrays, fields: _Fields, trees: _Trees
+) -> _AdapterOutput:
     if isinstance(result, ParticleSmootherResult):
         for name, value in (
             ("particles", result.particles),
@@ -947,7 +972,9 @@ def _adapt_particle_result(result, arrays, fields, trees):
     return _UNSUPPORTED_RESULT
 
 
-def _adapt_stochastic_result(result, arrays, fields, trees):
+def _adapt_stochastic_result(
+    result: object, arrays: _Arrays, fields: _Fields, trees: _Trees
+) -> _AdapterOutput:
     if isinstance(result, JumpBSDEEvaluation):
         metadata = _put_bsde_evaluation(result.base, arrays, fields, prefix="base.")
         for name, value in (
@@ -1290,7 +1317,9 @@ def _adapt_stochastic_result(result, arrays, fields, trees):
     return _UNSUPPORTED_RESULT
 
 
-def _adapt_chain_result(result, arrays, fields, trees):
+def _adapt_chain_result(
+    result: object, arrays: _Arrays, fields: _Fields, trees: _Trees
+) -> _AdapterOutput:
     if isinstance(result, FlowNUTSResult):
         mcmc = result.mcmc
         _put_tree(trees, arrays, "samples", result.samples)
@@ -1508,7 +1537,9 @@ def _adapt_chain_result(result, arrays, fields, trees):
     return _UNSUPPORTED_RESULT
 
 
-def _adapt_mode_result(result, arrays, fields, trees):
+def _adapt_mode_result(
+    result: object, arrays: _Arrays, fields: _Fields, trees: _Trees
+) -> _AdapterOutput:
     if isinstance(result, MAPCandidateSearchResult):
         if result.position is not None:
             _put_tree(trees, arrays, "position", result.position)
@@ -1678,7 +1709,9 @@ def _adapt_mode_result(result, arrays, fields, trees):
     return _UNSUPPORTED_RESULT
 
 
-def _adapt_approximation_result(result, arrays, fields, trees):
+def _adapt_approximation_result(
+    result: object, arrays: _Arrays, fields: _Fields, trees: _Trees
+) -> _AdapterOutput:
     if isinstance(result, NestedSamplingResult):
         for name in ("samples", "unconstrained_samples"):
             _put_tree(trees, arrays, name, getattr(result, name))
@@ -1850,7 +1883,9 @@ def _adapt_approximation_result(result, arrays, fields, trees):
     return _UNSUPPORTED_RESULT
 
 
-def _adapt_result(result, arrays, fields, trees):
+def _adapt_result(
+    result: object, arrays: _Arrays, fields: _Fields, trees: _Trees
+) -> _AdaptedResult:
     for adapter in (
         _adapt_population_result,
         _adapt_state_space_result,
@@ -1868,7 +1903,9 @@ def _adapt_result(result, arrays, fields, trees):
     )
 
 
-def _put_bellman_filter_result(result, arrays, fields, *, prefix):
+def _put_bellman_filter_result(
+    result: BellmanFilterResult, arrays: _Arrays, fields: _Fields, *, prefix: str
+) -> _Metadata:
     for name, value in (
         ("revised_previous_modes", result.revised_previous_modes),
         ("predicted_modes", result.predicted_modes),
@@ -1952,7 +1989,13 @@ def _put_bellman_filter_result(result, arrays, fields, *, prefix):
     }
 
 
-def _put_rao_blackwellized_filter_result(result, arrays, fields, *, prefix):
+def _put_rao_blackwellized_filter_result(
+    result: RaoBlackwellizedFilterResult,
+    arrays: _Arrays,
+    fields: _Fields,
+    *,
+    prefix: str,
+) -> _Metadata:
     for name, value in (
         ("initial_nonlinear_particles", result.initial_nonlinear_particles),
         ("initial_linear_means", result.initial_linear_means),
@@ -2021,7 +2064,9 @@ def _put_rao_blackwellized_filter_result(result, arrays, fields, *, prefix):
     }
 
 
-def _put_kalman_filter_result(result, arrays, fields, *, prefix):
+def _put_kalman_filter_result(
+    result: KalmanFilterResult, arrays: _Arrays, fields: _Fields, *, prefix: str
+) -> _Metadata:
     for name, value in (
         ("predicted_means", result.predicted_means),
         ("predicted_covariances", result.predicted_covariances),
@@ -2064,7 +2109,9 @@ def _put_kalman_filter_result(result, arrays, fields, *, prefix):
     }
 
 
-def _put_particle_filter_result(result, arrays, fields, *, prefix):
+def _put_particle_filter_result(
+    result: ParticleFilterResult, arrays: _Arrays, fields: _Fields, *, prefix: str
+) -> _Metadata:
     for name, value in (
         ("initial_particles", result.initial_particles),
         ("initial_log_weights", result.initial_log_weights),
@@ -2110,7 +2157,9 @@ def _put_particle_filter_result(result, arrays, fields, *, prefix):
     }
 
 
-def _put_ensemble_filter_result(result, arrays, fields, *, prefix):
+def _put_ensemble_filter_result(
+    result: EnsembleFilterResult, arrays: _Arrays, fields: _Fields, *, prefix: str
+) -> _Metadata:
     for name, value in (
         ("forecast_ensembles", result.forecast_ensembles),
         ("analysis_ensembles", result.analysis_ensembles),
@@ -2152,7 +2201,9 @@ def _put_ensemble_filter_result(result, arrays, fields, *, prefix):
     }
 
 
-def _put_bsde_evaluation(result, arrays, fields, *, prefix):
+def _put_bsde_evaluation(
+    result: BSDEEvaluation, arrays: _Arrays, fields: _Fields, *, prefix: str
+) -> _Metadata:
     for name, value in (
         ("values", result.values),
         ("controls", result.controls),
@@ -2182,18 +2233,20 @@ def _put_bsde_evaluation(result, arrays, fields, *, prefix):
                 f"{prefix}paths.jump_events.{label}.{name}",
                 value,
             )
-        if events.pre_states is not None:
+        pre_states, post_states = events.pre_states, events.post_states
+        # JumpEventRecord stores pre/post states together or not at all.
+        if pre_states is not None and post_states is not None:
             _put_field(
                 fields,
                 arrays,
                 f"{prefix}paths.jump_events.{label}.pre_states",
-                events.pre_states,
+                pre_states,
             )
             _put_field(
                 fields,
                 arrays,
                 f"{prefix}paths.jump_events.{label}.post_states",
-                events.post_states,
+                post_states,
             )
     realization = result.paths.realization
     metadata = {
@@ -2220,13 +2273,13 @@ def _put_bsde_evaluation(result, arrays, fields, *, prefix):
     return metadata
 
 
-def _put_field(fields, arrays, name, value):
+def _put_field(fields: _Fields, arrays: _Arrays, name: str, value: ArrayLike) -> None:
     array_name = f"field/{name}"
     arrays[array_name] = _portable_array(value)
     fields[name] = array_name
 
 
-def _put_tree(trees, arrays, name, tree):
+def _put_tree(trees: _Trees, arrays: _Arrays, name: str, tree: PyTree[object]) -> None:
     path_leaves = jax.tree_util.tree_flatten_with_path(tree)[0]
     if not path_leaves:
         raise ValueError(f"Result array tree {name!r} has no leaves.")
@@ -2240,7 +2293,9 @@ def _put_tree(trees, arrays, name, tree):
     trees[name] = {"paths": paths, "arrays": names}
 
 
-def _put_array_leaves(trees, arrays, name, tree):
+def _put_array_leaves(
+    trees: _Trees, arrays: _Arrays, name: str, tree: PyTree[object]
+) -> None:
     paths = []
     names = []
     for path, leaf in jax.tree_util.tree_flatten_with_path(tree)[0]:
@@ -2255,13 +2310,13 @@ def _put_array_leaves(trees, arrays, name, tree):
 
 
 def _put_flat_inexact_tree(
-    trees,
-    arrays,
-    name,
-    tree,
+    trees: _Trees,
+    arrays: _Arrays,
+    name: str,
+    tree: PyTree[object],
     *,
-    expected_size,
-):
+    expected_size: int,
+) -> None:
     paths = []
     names = []
     leaf_shapes = []
@@ -2293,7 +2348,7 @@ def _put_flat_inexact_tree(
     }
 
 
-def _portable_array(value):
+def _portable_array(value: ArrayLike) -> np.ndarray:
     if hasattr(value, "dtype") and str(value.dtype).startswith("key<"):
         value = jr.key_data(value)
     array = np.asarray(value)

@@ -5,11 +5,13 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Iterable
 from math import prod
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._interpolation import GatherStencil
@@ -51,7 +53,7 @@ class DenseMPMNodalStoragePlan(AbstractMPMNodalStoragePlan):
     grid_shape: tuple[int, ...] = eqx.field(static=True)
     storage_id: str = eqx.field(static=True)
 
-    def __init__(self, grid_shape, /):
+    def __init__(self, grid_shape: Iterable[int], /) -> None:
         shape = tuple(grid_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("grid_shape must contain positive dimensions.")
@@ -64,11 +66,13 @@ class DenseMPMNodalStoragePlan(AbstractMPMNodalStoragePlan):
     def storage_capacity(self) -> int:
         return prod(self.grid_shape)
 
-    def pack(self, dense, topology, /):
+    def pack(self, dense: Array, topology: SparseBlockTopologyState | None, /) -> Array:
         del topology
         return jnp.asarray(dense)
 
-    def unpack(self, compact, topology, /):
+    def unpack(
+        self, compact: Array, topology: SparseBlockTopologyState | None, /
+    ) -> Array:
         del topology
         return jnp.asarray(compact)
 
@@ -79,7 +83,7 @@ class BlockSparseMPMNodalStoragePlan(AbstractMPMNodalStoragePlan):
     topology_plan: SparseBlockTopologyPlan
     storage_id: str = eqx.field(static=True)
 
-    def __init__(self, topology_plan: SparseBlockTopologyPlan, /):
+    def __init__(self, topology_plan: SparseBlockTopologyPlan, /) -> None:
         if not isinstance(topology_plan, SparseBlockTopologyPlan):
             raise TypeError("topology_plan must be SparseBlockTopologyPlan.")
         self.topology_plan = topology_plan

@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ... import special
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -44,7 +45,7 @@ class HRGSpectrum(StrictModule, NonTrainableState):
         source_release: str,
         checksum: str,
         interaction_prescription: str = "ideal-boltzmann",
-    ):
+    ) -> None:
         masses_ = np.asarray(masses, dtype=np.float64)
         degeneracies_ = np.asarray(degeneracies, dtype=np.float64)
         charges_ = np.asarray(charges, dtype=np.float64)
@@ -181,7 +182,7 @@ class FiniteDensityProviderGrid(StrictModule, NonTrainableState):
         source_kind: FiniteDensitySourceKind,
         provider_release: str,
         checksum: str,
-    ):
+    ) -> None:
         temperatures_ = np.asarray(temperatures, dtype=np.float64)
         baryon = np.asarray(baryon_chemical_potentials, dtype=np.float64)
         regular = np.asarray(regular_pressure_over_temperature4, dtype=np.float64)
@@ -283,7 +284,7 @@ def evaluate_finite_density_provider_grid(
     ft = (temperature_ - t0) / (t1 - t0)
     fm = (baryon - m0) / (m1 - m0)
 
-    def interpolate(values):
+    def interpolate(values: Array) -> Array:
         return (
             (1.0 - ft) * (1.0 - fm) * values[ti, mi]
             + ft * (1.0 - fm) * values[ti + 1, mi]

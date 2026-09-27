@@ -8,6 +8,7 @@ import argparse
 import json
 import math
 import time
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -31,7 +32,7 @@ _STRATEGIES = (
 _OPTIMIZERS = ("adam", "kfac", "soap")
 
 
-def _problem(*, seed: int, samples: int, width: int, depth: int):
+def _problem(*, seed: int, samples: int, width: int, depth: int) -> Any:
     domain = phx.domain.Interval1d(-1.0, 1.0)
     model = phx.nn.models.MLP(
         in_size=1,
@@ -43,7 +44,7 @@ def _problem(*, seed: int, samples: int, width: int, depth: int):
     field = domain.Model("x")(model)
 
     @domain.Function("x")
-    def exact(x):
+    def exact(x: Any) -> Any:
         return jnp.sin(jnp.pi * x[0])
 
     interior = domain.component()
@@ -113,7 +114,7 @@ def _problem(*, seed: int, samples: int, width: int, depth: int):
     )
 
 
-def _training_plan(strategy: str):
+def _training_plan(strategy: str) -> Any:
     balance = None
     gradient_composition = (
         phx.optim.ConflictFreeGradientPolicy()
@@ -176,7 +177,7 @@ def _training_plan(strategy: str):
     )
 
 
-def _optimizer(name: str):
+def _optimizer(name: str) -> Any:
     if name == "adam":
         return optax.adam(1e-3)
     if name == "kfac":
@@ -192,7 +193,7 @@ def _optimizer(name: str):
     raise ValueError(f"Unknown optimizer {name!r}.")
 
 
-def _optional_diagnostic(trained, name: str):
+def _optional_diagnostic(trained: Any, name: str) -> Any:
     value = float(
         trained.training_diagnostics.get(
             name,
@@ -202,7 +203,7 @@ def _optional_diagnostic(trained, name: str):
     return value if math.isfinite(value) else None
 
 
-def run(args):
+def run(args: Any) -> Any:
     samples = 16 if args.smoke else args.samples
     width = 8 if args.smoke else args.width
     depth = 1 if args.smoke else args.depth
@@ -306,7 +307,7 @@ def run(args):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--strategy", choices=_STRATEGIES, default="baseline")
     parser.add_argument("--optimizer", choices=_OPTIMIZERS, default="adam")

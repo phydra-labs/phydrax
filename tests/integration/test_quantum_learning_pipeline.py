@@ -17,7 +17,7 @@ from phydrax.ml.quantum import (
 from phydrax.operators.quantum import HilbertRegisterLayout
 
 
-def test_projected_quantum_features_fit_inside_native_pipeline():
+def test_projected_quantum_features_fit_inside_native_pipeline() -> None:
     layout = HilbertRegisterLayout(("a", "b"), (2, 2))
     quantum_features = projected_iqp_feature_map(
         layout,
@@ -67,4 +67,5 @@ def test_projected_quantum_features_fit_inside_native_pipeline():
     assert result.valid
     assert predictions.shape == (6,)
     assert jnp.all(jnp.isfinite(predictions))
+    # ty: ignore[unresolved-attribute]
     assert model.stage_output_schemas[1].names == ("z_a", "z_b")

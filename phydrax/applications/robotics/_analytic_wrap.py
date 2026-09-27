@@ -13,21 +13,23 @@ from __future__ import annotations
 
 from enum import IntFlag
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
-WrapSense = Literal["short", "long"]
+WrapSense: TypeAlias = Literal["short", "long"]
 _OPEN_SIM_REVISION = "86b30588374650fbaf012a345a836a64f6855522"
 
 
@@ -136,12 +138,11 @@ class SphereRouteWrapPlan(StrictModule, NonTrainableState):
         sense: WrapSense = "short",
         mandatory: bool = False,
         event_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         count = int(sample_count)
         if count < 2:
             raise ValueError("sample_count must be at least two.")
-        if sense not in ("short", "long"):
-            raise ValueError("sense must be 'short' or 'long'.")
+        sense = parse(sense, WrapSense, "sense")
         tolerance = float(event_tolerance)
         if not isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("event_tolerance must be positive and finite.")
@@ -367,7 +368,7 @@ class PlanarCylinderRouteWrapPlan(StrictModule, NonTrainableState):
         sense: WrapSense = "short",
         mandatory: bool = False,
         event_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         sphere_policy = SphereRouteWrapPlan(
             sample_count,
             sense=sense,
@@ -385,7 +386,7 @@ class PlanarCylinderRouteWrapPlan(StrictModule, NonTrainableState):
                 "sample_count": self.sample_count,
                 "sense": self.sense,
                 "mandatory": self.mandatory,
-                "event_tolerance": self.event_tolerance.hex(),
+                "event_tolerance": float(self.event_tolerance).hex(),
             }
         )
 

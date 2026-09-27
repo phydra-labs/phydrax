@@ -11,7 +11,7 @@ from math import isfinite, pi
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -50,7 +50,7 @@ class BottIndexPlan(StrictModule, NonTrainableState):
         spectral_gap_tolerance: float = 1.0e-8,
         quantization_tolerance: float = 1.0e-6,
         maximum_matrix_elements: int = 4_000_000,
-    ):
+    ) -> None:
         if not isinstance(realization, PeriodicFiniteOrbitalRealization):
             raise TypeError("realization must be PeriodicFiniteOrbitalRealization.")
         occupied = int(occupied_count)

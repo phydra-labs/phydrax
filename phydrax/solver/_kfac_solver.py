@@ -14,24 +14,27 @@ same frozen realization through `KernelUpdateContext.objective_value`.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Any, ClassVar, final
+from typing import Any, ClassVar, final, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax import Array
 from jax.flatten_util import ravel_pytree
 
+from .._dtype_names import inexact_result_type
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
 from .._iteration import IterationSession
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._training import (
     emit_training_signal_stop as _emit_training_signal_stop,
+    EvaluationParametersFn,
     tensorboard_every as _tensorboard_every,
     TensorBoardLogger,
     TrainingController,
@@ -62,6 +65,7 @@ from ..optim._kfac._blocks import (
 from ..optim._kfac._config import KFAC
 from ..optim._kfac._types import (
     BlockCurvatureObservation,
+    BlockCurvatureState,
     KFACMetrics,
     KFACState,
     ParameterLayout,
@@ -112,19 +116,27 @@ from ._kfac_problem import (
 from ._model_losses import function_model_loss_labels
 
 
+if TYPE_CHECKING:
+    from ._functional_solver import FunctionalSolver
+
+
+# (parameters, value, rate, steps, accepted)
+_StepResult: TypeAlias = tuple[Array, Array, Array, Array, Array]
+
+
 def _armijo_search(
-    flat_parameters,
-    direction,
-    gradient,
-    initial_loss,
-    loss_function,
+    flat_parameters: Array,
+    direction: Array,
+    gradient: Array,
+    initial_loss: Array,
+    loss_function: Callable[[Array], Array],
     /,
     *,
     learning_rate: float,
     shrink: float,
     c1: float,
     max_steps: int,
-) -> tuple[Any, Any, Any, Any, Any]:
+) -> _StepResult:
     """Armijo backtracking along `-direction`: `(parameters, value, rate, steps, ok)`.
 
     A zero direction (zero gradient) is an accepted zero step. A nonzero
@@ -152,7 +164,7 @@ def _armijo_search(
     value_dtype = jnp.asarray(initial_loss).dtype
     rate_dtype = inexact_result_type(initial_loss, directional_derivative)
 
-    def no_search(_):
+    def no_search(_: None) -> _StepResult:
         return (
             flat_parameters,
             jnp.asarray(initial_loss, dtype=value_dtype),
@@ -161,7 +173,7 @@ def _armijo_search(
             zero_direction,
         )
 
-    def search(_):
+    def search(_: None) -> _StepResult:
         result = armijo_backtracking(
             loss_function,
             flat_parameters,
@@ -183,7 +195,14 @@ def _armijo_search(
     return jax.lax.cond(descent & ~zero_direction, search, no_search, None)
 
 
-def _fixed_step(flat_parameters, direction, loss_function, /, *, learning_rate: float):
+def _fixed_step(
+    flat_parameters: Array,
+    direction: Array,
+    loss_function: Callable[[Array], Array],
+    /,
+    *,
+    learning_rate: float,
+) -> _StepResult:
     """One fixed step `x - learning_rate * direction`, accepted iff its loss is finite."""
     candidate = flat_parameters - (float(learning_rate) * direction).astype(
         flat_parameters.dtype
@@ -198,7 +217,9 @@ def _fixed_step(flat_parameters, direction, loss_function, /, *, learning_rate: 
     )
 
 
-def _quadratic_norm_and_clip(direction, gradient, /, *, maximum: float | None):
+def _quadratic_norm_and_clip(
+    direction: Array, gradient: Array, /, *, maximum: float | None
+) -> tuple[Array, Array]:
     quadratic_norm = jnp.sqrt(jnp.maximum(jnp.vdot(gradient, direction).real, 0.0))
     if maximum is not None:
         ratio = float(maximum) / jnp.maximum(quadratic_norm, 1e-30)
@@ -208,7 +229,7 @@ def _quadratic_norm_and_clip(direction, gradient, /, *, maximum: float | None):
     return direction, quadratic_norm
 
 
-def _regularized_psd_condition(matrix, /, *, damping: float):
+def _regularized_psd_condition(matrix: Array, /, *, damping: float) -> Array:
     eigenvalues = jnp.linalg.eigvalsh(0.5 * (matrix + matrix.T))
     regularizer = jnp.sqrt(float(damping))
     return (jnp.max(eigenvalues) + regularizer) / (
@@ -216,7 +237,9 @@ def _regularized_psd_condition(matrix, /, *, damping: float):
     )
 
 
-def _factor_condition_estimate(curvature, /, *, damping: float):
+def _factor_condition_estimate(
+    curvature: BlockCurvatureState, /, *, damping: float
+) -> Array:
     maximum = jnp.asarray(1.0)
     for block_terms in curvature.affine:
         for factor in block_terms:
@@ -278,7 +301,7 @@ class _KFACLoss(StrictModule):
     """
 
     layout: ParameterLayout = eqx.field(static=True)
-    approximation: str = eqx.field(static=True)
+    approximation: Literal["expand", "reduce"] = eqx.field(static=True)
     chunk_size: int = eqx.field(static=True)
 
     def __call__(
@@ -348,7 +371,7 @@ class KFACUpdateRule(AbstractKernelUpdateRule):
     plan: KFACPlan = eqx.field(static=True)
     rule_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: KFACPlan, /):
+    def __init__(self, plan: KFACPlan, /) -> None:
         if not isinstance(plan, KFACPlan):
             raise TypeError("plan must be a KFACPlan.")
         self.plan = plan
@@ -411,7 +434,7 @@ class KFACUpdateRule(AbstractKernelUpdateRule):
             maximum=config.max_update_norm,
         )
 
-        def objective_value(flat_candidate):
+        def objective_value(flat_candidate: Array) -> Array:
             return context.objective_value(
                 unravel(flat_candidate.astype(flat_parameters.dtype))
             )
@@ -503,8 +526,8 @@ class _KFACSetup:
 
 
 def _validate_kfac_configuration(
-    self,
-    evaluation_parameters,
+    self: FunctionalSolver,
+    evaluation_parameters: EvaluationParametersFn | None,
     log_every: int,
     tensorboard_flush_every: int,
     session_every: int,
@@ -535,7 +558,7 @@ def _validate_kfac_configuration(
 
 
 def _prepare_kfac_setup(
-    self,
+    self: FunctionalSolver,
     optim: KFAC,
     seed: int,
     training: FunctionalTrainingPlan | None,
@@ -606,11 +629,11 @@ def _prepare_kfac_setup(
 
 
 def solve_kfac(
-    self,
+    self: FunctionalSolver,
     *,
     num_iter: int,
     optim: KFAC,
-    evaluation_parameters,
+    evaluation_parameters: EvaluationParametersFn | None,
     seed: int,
     jit: bool,
     keep_best: bool,
@@ -625,7 +648,7 @@ def solve_kfac(
     train_term_sample_size: int | None,
     training: FunctionalTrainingPlan | None = None,
     resume: bool = False,
-):
+) -> FunctionalSolver:
     """Run Phydrax-native KFAC over frozen residual terms.
 
     `num_iter` bounds kernel attempts (`TrainingProgress.epoch`); accepted
@@ -703,7 +726,7 @@ def solve_kfac(
     )
     start_epoch = control.progress.epoch
     start_step = control.progress.update_step
-    if start_epoch >= int(num_iter):
+    if resume_state is not None and start_epoch >= int(num_iter):
         control.emit(
             TrainingIterationKind.RUN_TERMINAL,
             metrics={"completed_steps": control.progress.update_step},
@@ -753,7 +776,7 @@ def solve_kfac(
     latest_ntk_diagnostics = None
     update = None
 
-    def make_training_state(selected_params):
+    def make_training_state(selected_params: Any) -> FunctionalTrainingState:
         if training is None:
             raise RuntimeError("Functional training state requires a training plan.")
         return FunctionalTrainingState(
@@ -775,7 +798,12 @@ def solve_kfac(
             resumed_from_step=start_step,
         )
 
-    def publish_checkpoint(checkpoint_solver, checkpoint_state, *, final=False):
+    def publish_checkpoint(
+        checkpoint_solver: FunctionalSolver,
+        checkpoint_state: FunctionalTrainingState,
+        *,
+        final: bool = False,
+    ) -> None:
         if training is None or training.checkpoint is None:
             return
         if sharding_policy is not None:
@@ -874,6 +902,7 @@ def solve_kfac(
             )
             if (
                 update is not None
+                and training is not None
                 and training.diagnostics is not None
                 and training.diagnostics.ntk
                 and training.diagnostics.due(iteration)

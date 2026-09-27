@@ -101,7 +101,7 @@ class GraphNetwork(StrictModule):
         attention_logit_fn: Callable | None = None,
         attention_normalize_fn: Callable = segment_softmax,
         attention_reduce_fn: Callable | None = None,
-    ):
+    ) -> None:
         if (attention_logit_fn is None) != (attention_reduce_fn is None):
             raise ValueError(
                 "attention_logit_fn and attention_reduce_fn must both be provided or both be None."
@@ -263,7 +263,7 @@ class InteractionNetwork(StrictModule):
         *,
         aggregate_edges_for_nodes_fn: Callable = segment_sum,
         include_sent_messages_in_node_update: bool = False,
-    ):
+    ) -> None:
         self.update_edge_fn = update_edge_fn
         self.update_node_fn = update_node_fn
         self.aggregate_edges_for_nodes_fn = aggregate_edges_for_nodes_fn
@@ -272,17 +272,23 @@ class InteractionNetwork(StrictModule):
     def __call__(self, graph: GraphIR) -> GraphIR:
         if self.include_sent_messages_in_node_update:
 
-            def node_fn(nodes, sent, recv, globals_):
+            def node_fn(
+                nodes: ArrayTree, sent: ArrayTree, recv: ArrayTree, globals_: ArrayTree
+            ) -> ArrayTree:
                 del globals_
                 return self.update_node_fn(nodes, sent, recv)
 
         else:
 
-            def node_fn(nodes, sent, recv, globals_):
+            def node_fn(
+                nodes: ArrayTree, sent: ArrayTree, recv: ArrayTree, globals_: ArrayTree
+            ) -> ArrayTree:
                 del sent, globals_
                 return self.update_node_fn(nodes, recv)
 
-        def edge_fn(edges, sent, recv, globals_):
+        def edge_fn(
+            edges: ArrayTree, sent: ArrayTree, recv: ArrayTree, globals_: ArrayTree
+        ) -> ArrayTree:
             del globals_
             return self.update_edge_fn(edges, sent, recv)
 
@@ -308,17 +314,21 @@ class RelationNetwork(StrictModule):
         update_global_fn: Callable,
         *,
         aggregate_edges_for_globals_fn: Callable = segment_sum,
-    ):
+    ) -> None:
         self.update_edge_fn = update_edge_fn
         self.update_global_fn = update_global_fn
         self.aggregate_edges_for_globals_fn = aggregate_edges_for_globals_fn
 
     def __call__(self, graph: GraphIR) -> GraphIR:
-        def edge_fn(edges, sent, recv, globals_):
+        def edge_fn(
+            edges: ArrayTree, sent: ArrayTree, recv: ArrayTree, globals_: ArrayTree
+        ) -> ArrayTree:
             del edges, globals_
             return self.update_edge_fn(sent, recv)
 
-        def global_fn(node_aggr, edge_aggr, globals_):
+        def global_fn(
+            node_aggr: ArrayTree, edge_aggr: ArrayTree, globals_: ArrayTree
+        ) -> ArrayTree:
             del node_aggr, globals_
             return self.update_global_fn(edge_aggr)
 
@@ -344,17 +354,21 @@ class DeepSets(StrictModule):
         update_global_fn: Callable,
         *,
         aggregate_nodes_for_globals_fn: Callable = segment_sum,
-    ):
+    ) -> None:
         self.update_node_fn = update_node_fn
         self.update_global_fn = update_global_fn
         self.aggregate_nodes_for_globals_fn = aggregate_nodes_for_globals_fn
 
     def __call__(self, graph: GraphIR) -> GraphIR:
-        def node_fn(nodes, sent, recv, globals_):
+        def node_fn(
+            nodes: ArrayTree, sent: ArrayTree, recv: ArrayTree, globals_: ArrayTree
+        ) -> ArrayTree:
             del sent, recv
             return self.update_node_fn(nodes, globals_)
 
-        def global_fn(node_aggr, edge_aggr, globals_):
+        def global_fn(
+            node_aggr: ArrayTree, edge_aggr: ArrayTree, globals_: ArrayTree
+        ) -> ArrayTree:
             del edge_aggr, globals_
             return self.update_global_fn(node_aggr)
 
@@ -392,7 +406,7 @@ class GraphNetGAT(StrictModule):
         aggregate_nodes_for_globals_fn: Callable = segment_sum,
         aggregate_edges_for_globals_fn: Callable = segment_sum,
         attention_normalize_fn: Callable = segment_softmax,
-    ):
+    ) -> None:
         if attention_logit_fn is None or attention_reduce_fn is None:
             raise ValueError(
                 "`None` value not supported for `attention_logit_fn` or `attention_reduce_fn` in GraphNetGAT."
@@ -434,7 +448,7 @@ class GAT(StrictModule):
         attention_query_fn: Callable,
         attention_logit_fn: Callable,
         node_update_fn: Callable | None = None,
-    ):
+    ) -> None:
         self.attention_query_fn = attention_query_fn
         self.attention_logit_fn = attention_logit_fn
         self.node_update_fn = node_update_fn
@@ -492,7 +506,7 @@ class GraphConvolution(StrictModule):
         aggregate_nodes_fn: Callable = segment_sum,
         add_self_edges: bool = False,
         symmetric_normalization: bool = True,
-    ):
+    ) -> None:
         self.update_node_fn = update_node_fn
         self.aggregate_nodes_fn = aggregate_nodes_fn
         self.add_self_edges = bool(add_self_edges)
@@ -574,7 +588,7 @@ class GraphMapFeatures(StrictModule):
         embed_edge_fn: Callable | None = None,
         embed_node_fn: Callable | None = None,
         embed_global_fn: Callable | None = None,
-    ):
+    ) -> None:
         self.embed_edge_fn = embed_edge_fn
         self.embed_node_fn = embed_node_fn
         self.embed_global_fn = embed_global_fn

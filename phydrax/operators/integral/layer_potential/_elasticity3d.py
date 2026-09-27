@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -25,6 +26,7 @@ from ....equations.trefftz._core import _AbstractTrialSpaceField, TrialSpaceCert
 from ....geometry import MeshRegion
 from ....integration import IntegrationPrecisionPolicy
 from ....linalg import AbstractLinearOperator, DenseLinearOperator
+from ....typing import PRNGKey
 from ._core import LayerDiscretizationReport
 from ._galerkin_quadrature3d import (
     _duffy_rule,
@@ -70,7 +72,7 @@ class ElasticityLayerKernel3D(StrictModule):
     contract: ElasticityBoundaryContract3D = eqx.field(static=True)
     _kernel_id: str = eqx.field(static=True)
 
-    def __init__(self, shear_modulus: ArrayLike, poisson_ratio: ArrayLike, /):
+    def __init__(self, shear_modulus: ArrayLike, poisson_ratio: ArrayLike, /) -> None:
         mu = jnp.asarray(shear_modulus, dtype=jnp.float64)
         nu = jnp.asarray(poisson_ratio, dtype=jnp.float64)
         if mu.shape != () or not bool(jnp.isfinite(mu) & (mu > 0.0)):
@@ -201,7 +203,7 @@ class ElasticityLayerPotential3D(_AbstractTrialSpaceField):
         poisson_ratio: ArrayLike,
         kind: Literal["single", "double"] = "single",
         density: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(panelization, SurfacePanelization3D):
             raise TypeError("panelization must be SurfacePanelization3D.")
         if kind not in ("single", "double"):
@@ -274,7 +276,7 @@ class ElasticityLayerPotential3D(_AbstractTrialSpaceField):
             raise ValueError("Replacement density must preserve (source_node_count, 3).")
         return eqx.tree_at(lambda potential: potential.density, self, values)
 
-    def __call__(self, target: ArrayLike, /, *, key=None) -> Array:
+    def __call__(self, target: ArrayLike, /, *, key: PRNGKey | None = None) -> Array:
         del key
         point = jnp.asarray(target, dtype=self.panelization.points.dtype)
         if point.shape != (3,):
@@ -367,7 +369,7 @@ class ElasticitySingleLayerDP0Policy3D(StrictModule, NonTrainableState):
         max_matrix_bytes: int = 64 * 1024 * 1024,
         max_preparation_workspace_bytes: int = 64 * 1024 * 1024,
         precision: IntegrationPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         regular, singular = int(regular_order), int(singular_order)
         if regular < 2 or singular < 2:
             raise ValueError(
@@ -775,7 +777,7 @@ def prepare_elasticity_single_layer_dp0_3d(
         numeric_version=binding.numeric_version,
         face_count=face_count,
         component_count=binding.component_count,
-        pair_counts=tuple(counts),
+        pair_counts=(counts[0], counts[1], counts[2], counts[3]),
         quadrature_evaluations=evaluations,
         maximum_quadrature_error=selected.precision.decision(jnp.asarray(maximum_error)),
         preparation_workspace_bytes=workspace_bytes,

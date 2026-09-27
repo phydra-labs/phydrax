@@ -4,16 +4,21 @@ import phydrax as phx
 
 
 system_plan = phx.atomistic.AtomisticSystemPlan(
+    # ty: ignore[invalid-argument-type]
     [0, 1, 2],
+    # ty: ignore[invalid-argument-type]
     [1, 1, 1],
+    # ty: ignore[invalid-argument-type]
     [1.0, 1.0, 1.0],
     phx.atomistic.AtomisticUnitSystem.reduced(),
+    # ty: ignore[invalid-argument-type]
     atom_type_ids=[0, 0, 0],
 )
 system = system_plan.prepare()
 force_field = phx.atomistic.AtomisticForceFieldPlan(
     system_plan,
     phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.MorsePotential([[0.2]], [[2.0]], [[1.0]], 2.5)]
     ),
     phx.atomistic.AtomisticNonbondedPolicy(2.5),

@@ -1,14 +1,16 @@
+from typing import Any
+
 import numpy as np
 import pytest
 
 import phydrax as phx
 
 
-def _units():
+def _units() -> Any:
     return phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
 
 
-def _system(numbers, masses, *, charges=None):
+def _system(numbers: Any, masses: Any, *, charges: Any = None) -> Any:
     units = _units()
     return phx.atomistic.AtomisticSystemPlan(
         np.arange(len(numbers), dtype=np.int64),
@@ -20,7 +22,7 @@ def _system(numbers, masses, *, charges=None):
     )
 
 
-def _model():
+def _model() -> Any:
     return phx.chemistry.ElectronicModelChemistryPlan(
         phx.chemistry.HartreeFockMethodPlan(
             phx.chemistry.ElectronicReferenceKind.RESTRICTED
@@ -29,7 +31,7 @@ def _model():
     )
 
 
-def test_electronic_state_derives_spin_population_without_using_site_charges():
+def test_electronic_state_derives_spin_population_without_using_site_charges() -> None:
     neutral = _system([8, 1], [15.999, 1.008], charges=[7.5, -7.5])
     prepared = phx.chemistry.MolecularElectronicSectorPlan(0, 2).prepare(neutral)
 
@@ -42,13 +44,13 @@ def test_electronic_state_derives_spin_population_without_using_site_charges():
     assert charged.alpha_electron_count == charged.beta_electron_count == 4
 
 
-def test_impossible_electron_spin_parity_is_rejected():
+def test_impossible_electron_spin_parity_is_rejected() -> None:
     hydrogen = _system([1], [1.008])
     with pytest.raises(ValueError, match="incompatible parity"):
         phx.chemistry.MolecularElectronicSectorPlan(0, 1).prepare(hydrogen)
 
 
-def test_open_shell_state_requires_an_open_shell_reference():
+def test_open_shell_state_requires_an_open_shell_reference() -> None:
     radical = _system([8, 1], [15.999, 1.008])
     state = phx.chemistry.MolecularElectronicSectorPlan(0, 2)
     request = phx.chemistry.GroundStateTaskPlan.energy_and_forces()
@@ -68,7 +70,7 @@ def test_open_shell_state_requires_an_open_shell_reference():
     assert calculation.state.beta_electron_count == 4
 
 
-def test_model_provider_and_property_identities_are_independent():
+def test_model_provider_and_property_identities_are_independent() -> None:
     system = _system([1, 1], [1.008, 1.008])
     state = phx.chemistry.MolecularElectronicSectorPlan(0, 1)
     request = phx.chemistry.GroundStateTaskPlan.energy_and_forces()
@@ -83,10 +85,12 @@ def test_model_provider_and_property_identities_are_independent():
         (phx.chemistry.ElectronicReferenceKind.RESTRICTED,),
     )
 
-    def unused(*_):
+    def unused(*_: Any) -> None:
         raise AssertionError("preparation must not evaluate the provider")
 
+    # ty: ignore[invalid-argument-type]
     first = phx.chemistry.CallableElectronicProvider(unused, "first", capabilities)
+    # ty: ignore[invalid-argument-type]
     second = phx.chemistry.CallableElectronicProvider(unused, "second", capabilities)
 
     assert calculation.model_chemistry.model_chemistry_id == _model().model_chemistry_id
@@ -96,7 +100,7 @@ def test_model_provider_and_property_identities_are_independent():
     )
 
 
-def test_property_and_provider_capability_mismatches_fail_before_execution():
+def test_property_and_provider_capability_mismatches_fail_before_execution() -> None:
     with pytest.raises(ValueError, match="also request forces"):
         phx.chemistry.GroundStateTaskPlan(
             (
@@ -122,7 +126,7 @@ def test_property_and_provider_capability_mismatches_fail_before_execution():
         capabilities.require(calculation)
 
 
-def test_single_system_and_molar_energy_conversion_remain_explicit_inverses():
+def test_single_system_and_molar_energy_conversion_remain_explicit_inverses() -> None:
     forward = phx.atomistic.single_system_energy_to_molar_factor(
         phx.units.ELECTRONVOLT,
         phx.units.KILOJOULE_PER_MOLE,
@@ -138,16 +142,17 @@ def test_single_system_and_molar_energy_conversion_remain_explicit_inverses():
     assert phx.units.INVERSE_CENTIMETER.dimension == phx.units.LENGTH**-1
 
 
-def test_excited_roots_are_not_encoded_in_ground_state_sector():
+def test_excited_roots_are_not_encoded_in_ground_state_sector() -> None:
     with pytest.raises(TypeError, match="state_index"):
         phx.chemistry.MolecularElectronicSectorPlan(
             0,
             1,
+            # ty: ignore[unknown-argument]
             state_index=1,
         )
 
 
-def test_unsupported_electronic_context_is_rejected_before_provider_evaluation():
+def test_unsupported_electronic_context_is_rejected_before_provider_evaluation() -> None:
     system = _system([1, 1], [1.008, 1.008])
     calculation = phx.chemistry.ElectronicCalculationPlan(
         system,
@@ -163,17 +168,20 @@ def test_unsupported_electronic_context_is_rejected_before_provider_evaluation()
         (phx.chemistry.ElectronicReferenceKind.RESTRICTED,),
     )
 
-    def unexpected(*_):
+    def unexpected(*_: Any) -> None:
         raise AssertionError("Unsupported context must not invoke the evaluator.")
 
     prepared = phx.chemistry.CallableElectronicProvider(
+        # ty: ignore[invalid-argument-type]
         unexpected,
         "context-fixture",
         capabilities,
     ).prepare(calculation)
     context = phx.chemistry.ElectronicEvaluationContext(
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, -0.35], [0.0, 0.0, 0.35]],
         external_field=phx.chemistry.ExternalFieldState(
+            # ty: ignore[invalid-argument-type]
             [0.0, 0.0, 0.01],
             system.units,
         ),

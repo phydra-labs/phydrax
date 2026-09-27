@@ -9,7 +9,7 @@ from math import isfinite
 from typing import Protocol
 
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 from phydrax.ein import contract
 
@@ -25,6 +25,7 @@ from ....stochastic import (
     SpatialBasisSynthesis,
     StaticGaussianRandomField,
 )
+from ....typing import PRNGKey
 from ....uq import DenseCovariance
 from .._quantities import CardiovascularQuantitySpec
 
@@ -402,7 +403,7 @@ class CanonicalRandomField:
 
     def realize(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
         *,
         sample_count: int,

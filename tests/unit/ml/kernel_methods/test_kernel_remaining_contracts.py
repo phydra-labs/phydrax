@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -16,11 +19,11 @@ from phydrax.ml.kernel_methods import (
 from phydrax.uq import GaussianProcessLikelihoodState
 
 
-def _assert_finite(values):
+def _assert_finite(values: Any) -> None:
     assert all(jnp.all(jnp.isfinite(value)) for value in values)
 
 
-def _assert_prediction_parameter_gradient(model, query):
+def _assert_prediction_parameter_gradient(model: Any, query: Any) -> None:
     gradient = eqx.filter_grad(
         lambda current: jnp.sum(jnp.square(jnp.real(current(query))))
     )(model)
@@ -29,7 +32,9 @@ def _assert_prediction_parameter_gradient(model, query):
     assert all(jnp.all(jnp.isfinite(leaf)) for leaf in leaves)
 
 
-def test_kernel_ridge_direct_contract_covers_features_targets_weights_and_kernel():
+def test_kernel_ridge_direct_contract_covers_features_targets_weights_and_kernel() -> (
+    None
+):
     features = jnp.array(
         [[-1.2, -0.4], [-0.5, 0.8], [0.2, -0.6], [0.9, 0.5], [1.6, -0.1]]
     )
@@ -41,7 +46,9 @@ def test_kernel_ridge_direct_contract_covers_features_targets_weights_and_kernel
     query = jnp.array([[-0.25, 0.1], [1.1, 0.15]])
     base = KernelRidgeRecipe(SquaredExponentialKernel(length_scale=0.9), alpha=0.2)
 
-    def fit_loss(x, y, sample_weight, alpha, length_scale):
+    def fit_loss(
+        x: Any, y: Any, sample_weight: Any, alpha: Any, length_scale: Any
+    ) -> Any:
         recipe = eqx.tree_at(
             lambda current: (current.alpha, current.kernel.length_scale),
             base,
@@ -77,7 +84,7 @@ def test_kernel_ridge_direct_contract_covers_features_targets_weights_and_kernel
     _assert_prediction_parameter_gradient(result.as_trainable(), query)
 
 
-def test_categorical_gp_branch_covers_declared_fit_and_prediction_gradients():
+def test_categorical_gp_branch_covers_declared_fit_and_prediction_gradients() -> None:
     features = jnp.array(
         [[-1.2, -0.4], [-0.5, 0.8], [0.2, -0.6], [0.9, 0.5], [1.6, -0.1]]
     )
@@ -93,7 +100,14 @@ def test_categorical_gp_branch_covers_declared_fit_and_prediction_gradients():
         state, class_count=3, iterations=2, curvature_floor=1e-5
     )
 
-    def fit_loss(x, sample_weight, length_scale, noise_scale, jitter, floor):
+    def fit_loss(
+        x: Any,
+        sample_weight: Any,
+        length_scale: Any,
+        noise_scale: Any,
+        jitter: Any,
+        floor: Any,
+    ) -> Any:
         recipe = eqx.tree_at(
             lambda current: (
                 current.recipe.state.kernel.length_scale,
@@ -112,6 +126,7 @@ def test_categorical_gp_branch_covers_declared_fit_and_prediction_gradients():
     gradients = jax.grad(fit_loss, argnums=(0, 1, 2, 3, 4, 5))(
         features,
         weights,
+        # ty: ignore[unresolved-attribute]
         base.recipe.state.kernel.length_scale,
         base.recipe.state.noise_scale,
         base.recipe.state.jitter,

@@ -8,7 +8,8 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._strict import StrictModule
 
@@ -22,7 +23,7 @@ class BalanceTerm(StrictModule):
 
     def __init__(
         self, name: str, value: ArrayLike, sign: int, owner_id: str, unit_id: str, /
-    ):
+    ) -> None:
         if sign not in (-1, 1):
             raise ValueError("BalanceTerm sign must be -1 or 1.")
         if not name or not owner_id or not unit_id:

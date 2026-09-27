@@ -10,13 +10,15 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....linalg import (
     AbstractLinearOperator,
+    ArraySpace,
     DiagonalLinearOperator,
     estimate_operator_action_cost,
     IdentityLinearOperator,
@@ -25,6 +27,7 @@ from ....linalg import (
     OperatorProperties,
 )
 from ....linalg._operators import _AbstractCostedLinearOperator
+from ....typing import parse
 from ._scalar_calderon3d import ScalarCalderonDP0Galerkin3D
 from ._scalar_trace import ScalarTraceSide3D, UnsupportedScalarBoundarySpaceError
 
@@ -101,14 +104,14 @@ class _ComponentMeanProjector3D(_AbstractCostedLinearOperator):
 
     def __init__(
         self,
-        space,
+        space: ArraySpace,
         areas: Array,
         component_ids: Array,
         component_count: int,
         /,
         *,
         operator_id: str,
-    ):
+    ) -> None:
         areas_ = jnp.asarray(areas, dtype=space.dtype)
         components = jnp.asarray(component_ids, dtype=jnp.int32)
         count = int(component_count)
@@ -183,7 +186,7 @@ class _ComponentMeanProjector3D(_AbstractCostedLinearOperator):
         return self.workspace_bytes, "surface-component-mean-projector-action"
 
 
-def _checked(calderon: ScalarCalderonDP0Galerkin3D, /):
+def _checked(calderon: ScalarCalderonDP0Galerkin3D, /) -> ScalarCalderonDP0Galerkin3D:
     if not isinstance(calderon, ScalarCalderonDP0Galerkin3D):
         raise TypeError("calderon must be ScalarCalderonDP0Galerkin3D.")
     if not bool(calderon.assembly_report.accuracy_supported):
@@ -492,8 +495,7 @@ def scalar_robin_mixed_formulation_3d(
     use the named compatibility/gauge formulation instead.
     """
     prepared = _checked(calderon)
-    if side not in ("interior", "exterior"):
-        raise ValueError("Robin/mixed side must be 'interior' or 'exterior'.")
+    side = parse(side, ScalarTraceSide3D, "side")
 
     def coefficient(value: ArrayLike, name: str, /) -> Array:
         result = jnp.asarray(value, dtype=prepared.space.dtype)

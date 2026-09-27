@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import cast, Literal, TypeAlias
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 
 from ..._numerics import normalize_anisotropy
 from ..._strict import StrictModule
+from ...typing import parse
 
 
 SmolyakInterpolationRule: TypeAlias = Literal[
@@ -39,32 +40,29 @@ class SmolyakInterpolationPlan(StrictModule):
         axis_rules: (
             SmolyakInterpolationRule | Sequence[SmolyakInterpolationRule] | None
         ) = "auto",
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         level_ = int(level)
         if dimension_ < 1 or level_ < 1:
             raise ValueError(
                 "Smolyak interpolation dimension and level must be positive."
             )
+        raw_rules: tuple[object, ...]
         if axis_rules is None:
-            rules: tuple[str, ...] = ("auto",) * dimension_
+            raw_rules = ("auto",) * dimension_
         elif isinstance(axis_rules, str):
-            rules = (axis_rules,) * dimension_
+            raw_rules = (axis_rules,) * dimension_
         else:
-            rules = tuple(str(rule) for rule in axis_rules)
-        if len(rules) != dimension_:
+            raw_rules = tuple(axis_rules)
+        if len(raw_rules) != dimension_:
             raise ValueError("axis_rules must contain one rule per dimension.")
-        allowed = ("auto", "leja", "clenshaw-curtis", "gauss-hermite")
-        invalid = tuple(rule for rule in rules if rule not in allowed)
-        if invalid:
-            choices = ", ".join(repr(rule) for rule in allowed)
-            raise ValueError(
-                f"Unsupported interpolation axis rule {invalid[0]!r}; expected {choices}."
-            )
+        rules = tuple(
+            parse(rule, SmolyakInterpolationRule, "axis_rules") for rule in raw_rules
+        )
         self.dimension = dimension_
         self.level = level_
         self.anisotropy = normalize_anisotropy(dimension_, anisotropy)
-        self.axis_rules = cast(tuple[SmolyakInterpolationRule, ...], rules)
+        self.axis_rules = rules
 
 
 class AdaptiveSmolyakInterpolationPlan(StrictModule):
@@ -96,7 +94,7 @@ class AdaptiveSmolyakInterpolationPlan(StrictModule):
         max_indices: int = 64,
         max_nodes: int = 100_000,
         max_rounds: int = 32,
-    ):
+    ) -> None:
         fixed = SmolyakInterpolationPlan(
             dimension,
             initial_level,

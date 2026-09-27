@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import contextlib
 import io
 import json
@@ -9,14 +10,16 @@ import runpy
 import statistics
 import time
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 
 
-def run():
+def run() -> Any:
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
         return runpy.run_path(
+            # ty: ignore[invalid-argument-type]
             Path(__file__).resolve().parents[1]
             / "examples/monolithic_reactive_cfd_dem.py"
         )

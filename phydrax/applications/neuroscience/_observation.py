@@ -12,7 +12,8 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -44,7 +45,7 @@ class BOLDObservation(StrictModule, NonTrainableState):
         *,
         standard_deviation: ArrayLike = 1.0,
         mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         labels = tuple(region_ids)
         if (
             not labels

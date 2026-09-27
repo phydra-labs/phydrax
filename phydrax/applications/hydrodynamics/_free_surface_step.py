@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._array_archive import (
     pack_array_tree,
@@ -22,7 +23,9 @@ from ..._array_archive import (
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...discretization.finite_volume import FiniteVolumeDiscretization
 from ...solver import AbstractFixedStepMethod, FixedStepResult
+from ...solver._mac_ale import MACALEStageGeometry
 from ._boundary import FreeSurfaceBoundaryPlan
 from ._capillarity import GraphCapillarityPlan
 from ._free_surface_ale import (
@@ -83,7 +86,9 @@ class FreeSurfaceALELedger(StrictModule):
     total_energy_residual: Array
 
     @classmethod
-    def zeros(cls, scalar_names: tuple[str, ...], dtype, /) -> "FreeSurfaceALELedger":
+    def zeros(
+        cls, scalar_names: tuple[str, ...], dtype: DTypeLike, /
+    ) -> "FreeSurfaceALELedger":
         zero = jnp.zeros((), dtype=dtype)
         return cls(
             volume_change=zero,
@@ -196,7 +201,7 @@ class OnePhaseFreeSurfaceALEPlan(StrictModule, NonTrainableState):
         wave: WaveForcingPlan | None = None,
         coupling_iterations: int = 6,
         coupling_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(surface_plan, GraphSurfaceALEPlan):
             raise TypeError("surface_plan must be GraphSurfaceALEPlan.")
         boundary_ = FreeSurfaceBoundaryPlan() if boundary is None else boundary
@@ -282,7 +287,7 @@ class PreparedOnePhaseFreeSurfaceALE(StrictModule):
         capillarity: GraphCapillarityPlan,
         wave: WaveForcingPlan | None,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.surface = surface
         self.projection = projection
@@ -300,7 +305,7 @@ class PreparedOnePhaseFreeSurfaceALE(StrictModule):
         )
 
     @property
-    def reference(self):
+    def reference(self) -> FiniteVolumeDiscretization:
         return self.surface.plan.reference
 
     def initial_state(
@@ -366,7 +371,7 @@ class PreparedOnePhaseFreeSurfaceALE(StrictModule):
 
     def _scalar_rate(
         self,
-        geometry,
+        geometry: MACALEStageGeometry,
         velocity: FaceTuple,
         scalar_content: dict[str, Array],
         /,
@@ -394,7 +399,7 @@ class OnePhaseFreeSurfaceALEMethod(AbstractFixedStepMethod, NonTrainableState):
     hydrodynamics: PreparedOnePhaseFreeSurfaceALE
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, hydrodynamics: PreparedOnePhaseFreeSurfaceALE, /):
+    def __init__(self, hydrodynamics: PreparedOnePhaseFreeSurfaceALE, /) -> None:
         if not isinstance(hydrodynamics, PreparedOnePhaseFreeSurfaceALE):
             raise TypeError("hydrodynamics must be PreparedOnePhaseFreeSurfaceALE.")
         self.hydrodynamics = hydrodynamics
@@ -530,6 +535,11 @@ class OnePhaseFreeSurfaceALEMethod(AbstractFixedStepMethod, NonTrainableState):
             pressure = projection.pressure_head
             geometry = end_geometry
 
+        # Plan validation guarantees at least one coupling iteration.
+        if not (projection is not None and geometry is not None):
+            raise RuntimeError(
+                "Internal invariant failed: projection is not None and geometry is not None."
+            )
         eta_new = base.eta + dt * eta_rate
         final_geometry = hydro.surface.geometry(target_time, eta_new, eta_rate, args)
         final_capillary = hydro.capillarity.evaluate(eta_new, hydro.plan.density)

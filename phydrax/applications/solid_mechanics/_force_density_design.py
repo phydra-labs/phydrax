@@ -9,7 +9,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -65,7 +66,7 @@ class ForceDensityDesignConstraint(StrictModule, NonTrainableState):
         upper: Any = jnp.inf,
         constraint_id: str,
         depends_on_state: bool = True,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         identifier = str(constraint_id)
@@ -83,7 +84,7 @@ class ForceDensityDesignConstraint(StrictModule, NonTrainableState):
         design: PyTree[Any],
         args: Any,
         /,
-    ):
+    ) -> object:
         return self.function(state, design, args)
 
 
@@ -93,7 +94,7 @@ class ForceDensityStateSolver(AbstractStateSolver):
     plan: ForceDensityPlan
     decode_inputs: Callable = eqx.field(static=True)
 
-    def __init__(self, plan: ForceDensityPlan, decode_inputs: Callable, /):
+    def __init__(self, plan: ForceDensityPlan, decode_inputs: Callable, /) -> None:
         if not isinstance(plan, ForceDensityPlan):
             raise TypeError("plan must be a ForceDensityPlan.")
         if not callable(decode_inputs):
@@ -233,7 +234,7 @@ class ForceDensityDesignProblem(StrictModule, NonTrainableState):
         constraints: Sequence[ForceDensityDesignConstraint] = (),
         has_aux: bool = False,
         problem_id: str = "force-density-design",
-    ):
+    ) -> None:
         if not isinstance(plan, ForceDensityPlan):
             raise TypeError("plan must be a ForceDensityPlan.")
         if not callable(decode_inputs) or not callable(objective):
@@ -290,13 +291,15 @@ class ForceDensityDesignProblem(StrictModule, NonTrainableState):
         return state
 
     def as_state_design_problem(self, /) -> StateDesignProblem:
-        def residual(reduced_state, design, args):
+        def residual(reduced_state: PyTree[Any], design: PyTree[Any], args: Any) -> Array:
             state = self.physical_state(reduced_state, design, args)
             return self.equilibrium_problem.structure.reduce(
                 state.internal_nodal_forces - state.applied_nodal_loads
             )
 
-        def objective(reduced_state, design, args):
+        def objective(
+            reduced_state: PyTree[Any], design: PyTree[Any], args: Any
+        ) -> Array | tuple[Array, PyTree[Any]]:
             state = self.physical_state(reduced_state, design, args)
             output = self.objective(state, design, args)
             if self.has_aux:
@@ -311,7 +314,9 @@ class ForceDensityDesignProblem(StrictModule, NonTrainableState):
         def lower_constraint(
             constraint: ForceDensityDesignConstraint,
         ) -> StateDesignConstraint:
-            def function(reduced_state, design, args):
+            def function(
+                reduced_state: PyTree[Any], design: PyTree[Any], args: Any
+            ) -> object:
                 state = self.physical_state(reduced_state, design, args)
                 return constraint.value(state, design, args)
 

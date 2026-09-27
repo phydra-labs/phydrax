@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -36,7 +37,7 @@ from phydrax.optics.wave import (
 )
 
 
-def _optical_control():
+def _optical_control() -> Any:
     plane_grid = TensorGridPlan(
         (FourierAxisSpec(2), FourierAxisSpec(2)), axis_names=("u", "v")
     ).prepare(jnp.asarray([[-1.0, -1.0], [1.0, 1.0]]))

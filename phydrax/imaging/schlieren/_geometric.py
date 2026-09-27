@@ -12,7 +12,8 @@ from enum import StrEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 from phydrax.ein import contract
@@ -159,7 +160,7 @@ class SchlierenDeflectionPlan(StrictModule, NonTrainableState):
         relation: GladstoneDaleRelation | None = None,
         gradient_frame_id: str,
         small_angle_limit: float = 0.05,
-    ):
+    ) -> None:
         if not isinstance(rays, RaySampleSupport):
             raise TypeError("rays must be RaySampleSupport.")
         if not isinstance(image_support, ImagePlaneSupport):
@@ -346,7 +347,7 @@ class KnifeEdgeSchlierenPlan(StrictModule, NonTrainableState):
         /,
         *,
         contrast_gain_per_radian: float,
-    ):
+    ) -> None:
         if not isinstance(reference, ImageAsset):
             raise TypeError("reference must be ImageAsset.")
         direction = np.asarray(cutoff_direction_rc, dtype=np.float64)
@@ -437,7 +438,7 @@ class BackgroundOrientedSchlierenPlan(StrictModule, NonTrainableState):
         background: ImageAsset,
         displacement_pixels_per_radian: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(background, ImageAsset):
             raise TypeError("background must be ImageAsset.")
         scale = np.asarray(displacement_pixels_per_radian, dtype=np.float64)

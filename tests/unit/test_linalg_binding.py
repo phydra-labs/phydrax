@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -12,7 +15,7 @@ import phydrax as phx
 la = phx.linalg
 
 
-def _spd_properties():
+def _spd_properties() -> Any:
     return la.OperatorProperties(
         self_adjoint=True,
         positive_definite=True,
@@ -24,7 +27,7 @@ def _spd_properties():
     )
 
 
-def _problem(matrix):
+def _problem(matrix: Any) -> Any:
     return la.LinearSystem(
         la.DenseLinearOperator(
             matrix,
@@ -35,7 +38,7 @@ def _problem(matrix):
     )
 
 
-def test_template_binds_changing_coefficients_inside_compiled_scan():
+def test_template_binds_changing_coefficients_inside_compiled_scan() -> None:
     matrices = jnp.asarray(
         [
             [[4.0, 1.0], [1.0, 3.0]],
@@ -52,8 +55,8 @@ def test_template_binds_changing_coefficients_inside_compiled_scan():
         ),
     )
 
-    def run(matrix_batch, rhs_batch):
-        def step(_, payload):
+    def run(matrix_batch: Any, rhs_batch: Any) -> Any:
+        def step(_: Any, payload: Any) -> Any:
             version, matrix, rhs = payload
             prepared = la.bind_numeric(
                 template,
@@ -77,7 +80,7 @@ def test_template_binds_changing_coefficients_inside_compiled_scan():
     assert jnp.array_equal(versions, jnp.arange(3, dtype=jnp.int32))
 
 
-def test_template_rejects_symbolic_structure_changes():
+def test_template_rejects_symbolic_structure_changes() -> None:
     template = la.prepare_template(_problem(jnp.eye(2)))
     changed = la.LinearSystem(
         la.DenseLinearOperator(jnp.eye(3), operator_id="binding-test-operator"),
@@ -87,7 +90,7 @@ def test_template_rejects_symbolic_structure_changes():
         la.bind_numeric(template, changed)
 
 
-def test_refresh_preserves_template_identity_and_increments_dynamic_version():
+def test_refresh_preserves_template_identity_and_increments_dynamic_version() -> None:
     first = _problem(jnp.asarray([[4.0, 1.0], [1.0, 3.0]]))
     second = _problem(jnp.asarray([[6.0, -1.0], [-1.0, 4.0]]))
     prepared = la.prepare(first, la.LinearSolvePolicy(la.DenseCholesky()))
@@ -101,7 +104,7 @@ def test_refresh_preserves_template_identity_and_increments_dynamic_version():
     )
 
 
-def test_solve_supports_transformation_generated_empty_operator_batches():
+def test_solve_supports_transformation_generated_empty_operator_batches() -> None:
     matrices = jnp.empty((0, 2, 2))
     right_hand_sides = jnp.empty((0, 2))
     result = la.solve(_problem(matrices), right_hand_sides)

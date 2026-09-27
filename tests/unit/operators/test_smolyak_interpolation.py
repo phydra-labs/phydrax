@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -15,16 +17,16 @@ from phydrax._numerics import smolyak_axis_data
 from phydrax.operators.interpolation import _smolyak as smolyak_module
 
 
-def _square_domain():
+def _square_domain() -> Any:
     x = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
     y = phx.domain.ScalarInterval(-1.0, 1.0, label="y")
     return phx.domain.ProductDomain(x, y)
 
 
-def test_polynomial_is_exact_for_scalar_vector_matrix_and_complex_outputs():
+def test_polynomial_is_exact_for_scalar_vector_matrix_and_complex_outputs() -> None:
     domain = _square_domain()
 
-    def target(x, y):
+    def target(x: Any, y: Any) -> Any:
         polynomial = x**2 + x * y + y**3
         return jnp.asarray(
             [
@@ -47,7 +49,7 @@ def test_polynomial_is_exact_for_scalar_vector_matrix_and_complex_outputs():
     )
 
 
-def test_named_batched_evaluation_jit_and_dependency_order_are_preserved():
+def test_named_batched_evaluation_jit_and_dependency_order_are_preserved() -> None:
     domain = _square_domain()
     function = domain.Function("y", "x")(lambda y, x: y**3 + x * y + 2.0 * x)
     approximation = phx.operators.interpolate_smolyak(
@@ -72,7 +74,7 @@ def test_named_batched_evaluation_jit_and_dependency_order_are_preserved():
     assert jnp.allclose(jnp.asarray(evaluated.data), expected.data, atol=1e-11)
 
 
-def test_first_and_second_derivatives_are_exact_at_and_near_nodes():
+def test_first_and_second_derivatives_are_exact_at_and_near_nodes() -> None:
     interval = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
     function = interval.Function("x")(lambda x: x**4 - 2.0 * x**2 + x)
     approximation = phx.operators.interpolate_smolyak(
@@ -80,7 +82,7 @@ def test_first_and_second_derivatives_are_exact_at_and_near_nodes():
         phx.operators.SmolyakInterpolationPlan(1, 5, axis_rules="leja"),
     )
 
-    def evaluated(x):
+    def evaluated(x: Any) -> Any:
         return approximation({"x": x}).data
 
     nodes = jnp.asarray(smolyak_axis_data("leja", 4).nodes)
@@ -99,13 +101,13 @@ def test_first_and_second_derivatives_are_exact_at_and_near_nodes():
     )
 
 
-def test_auto_rules_support_uniform_normal_and_lognormal_reference_coordinates():
+def test_auto_rules_support_uniform_normal_and_lognormal_reference_coordinates() -> None:
     uniform = phx.domain.ProbabilityDomain(phx.uq.Uniform(-1.0, 1.0), label="u")
     normal = phx.domain.ProbabilityDomain(phx.uq.Normal(2.0, 3.0), label="z")
     lognormal = phx.domain.ProbabilityDomain(phx.uq.LogNormal(0.1, 0.2), label="l")
     domain = phx.domain.ProductDomain(uniform, normal, lognormal)
 
-    def target(u, z, l):
+    def target(u: Any, z: Any, l: Any) -> Any:
         zr = (z - 2.0) / 3.0
         lr = (jnp.log(l) - 0.1) / 0.2
         return u**2 + u * zr + lr**3
@@ -132,12 +134,12 @@ def test_auto_rules_support_uniform_normal_and_lognormal_reference_coordinates()
     )
 
 
-def test_interpolant_is_fixed_state_and_does_not_retain_source_callable():
+def test_interpolant_is_fixed_state_and_does_not_retain_source_callable() -> None:
     class CountingCallable:
-        def __init__(self):
+        def __init__(self) -> None:
             self.count = 0
 
-        def __call__(self, x, *, key, iter_=None):
+        def __call__(self, x: Any, *, key: Any, iter_: Any = None) -> Any:
             del key, iter_
             self.count += 1
             return x**2 + 1.0
@@ -163,7 +165,7 @@ def test_interpolant_is_fixed_state_and_does_not_retain_source_callable():
     assert source.count == fit_count
 
 
-def test_interpolation_preserves_unused_domain_factors():
+def test_interpolation_preserves_unused_domain_factors() -> None:
     x = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
     y = phx.domain.ScalarInterval(0.0, 2.0, label="y")
     domain = phx.domain.ProductDomain(x, y)
@@ -183,7 +185,7 @@ def test_interpolation_preserves_unused_domain_factors():
     )
 
 
-def test_stochastic_fitting_is_reproducible_for_the_same_key():
+def test_stochastic_fitting_is_reproducible_for_the_same_key() -> None:
     interval = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
     function = interval.Function(
         "x",
@@ -199,7 +201,7 @@ def test_stochastic_fitting_is_reproducible_for_the_same_key():
     assert first(query).data != third(query).data
 
 
-def test_interpolation_rejects_invalid_domains_rules_and_source_values():
+def test_interpolation_rejects_invalid_domains_rules_and_source_values() -> None:
     interval = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
     function = interval.Function("x")(lambda x: x)
 
@@ -234,10 +236,11 @@ def test_interpolation_rejects_invalid_domains_rules_and_source_values():
         )
 
 
-def test_plan_validation_and_fitted_diagnostics_are_explicit():
+def test_plan_validation_and_fitted_diagnostics_are_explicit() -> None:
     with pytest.raises(ValueError, match="one rule per dimension"):
         phx.operators.SmolyakInterpolationPlan(2, 3, axis_rules=("leja",))
-    with pytest.raises(ValueError, match="Unsupported interpolation axis rule"):
+    with pytest.raises(ValueError, match="axis_rules"):
+        # ty: ignore[invalid-argument-type]
         phx.operators.SmolyakInterpolationPlan(1, 3, axis_rules="unknown")
 
     domain = _square_domain()
@@ -261,15 +264,15 @@ def test_plan_validation_and_fitted_diagnostics_are_explicit():
     ),
 )
 def test_adaptive_interpolation_rejects_frontier_before_fitting(
-    monkeypatch,
-    capacity,
-    expected_status,
-):
+    monkeypatch: Any,
+    capacity: Any,
+    expected_status: Any,
+) -> None:
     class CountingCallable:
-        def __init__(self):
+        def __init__(self) -> None:
             self.count = 0
 
-        def __call__(self, x, *, key, iter_=None):
+        def __call__(self, x: Any, *, key: Any, iter_: Any = None) -> Any:
             del key, iter_
             self.count += 1
             return x**2
@@ -283,7 +286,7 @@ def test_adaptive_interpolation_rejects_frontier_before_fitting(
     fitted_index_counts = []
     original = smolyak_module._interpolate_index_set
 
-    def instrumented(function, plan, index_set, /, *, key):
+    def instrumented(function: Any, plan: Any, index_set: Any, /, *, key: Any) -> Any:
         fitted_index_counts.append(len(index_set.indices))
         return original(function, plan, index_set, key=key)
 
@@ -307,13 +310,15 @@ def test_adaptive_interpolation_rejects_frontier_before_fitting(
     assert result.diagnostics.num_unique_nodes == 1
 
 
-def test_adaptive_interpolation_accepts_an_exactly_in_cap_refinement(monkeypatch):
+def test_adaptive_interpolation_accepts_an_exactly_in_cap_refinement(
+    monkeypatch: Any,
+) -> None:
     interval = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
     function = interval.Function("x")(lambda x: 2.0 * x + 1.0)
     fitted_node_counts = []
     original = smolyak_module._interpolate_index_set
 
-    def instrumented(function, plan, index_set, /, *, key):
+    def instrumented(function: Any, plan: Any, index_set: Any, /, *, key: Any) -> Any:
         fitted, points = original(function, plan, index_set, key=key)
         fitted_node_counts.append(points.shape[0])
         return fitted, points

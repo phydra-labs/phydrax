@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _plan(capacity: int = 64):
+def _plan(capacity: int = 64) -> Any:
     return phx.discretization.AdaptiveDyadicGridPlan(
         phx.discretization.MortonAddressPlan((0.0, 0.0), (1.0, 1.0), 4),
         cell_capacity=capacity,
@@ -14,7 +16,7 @@ def _plan(capacity: int = 64):
     )
 
 
-def _refine(plan, topology, slot):
+def _refine(plan: Any, topology: Any, slot: Any) -> Any:
     mask = jnp.zeros((plan.cell_capacity,), dtype="bool").at[slot].set(True)
     return plan.adapt(topology, refine_mask=mask)
 

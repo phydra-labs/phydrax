@@ -10,15 +10,16 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PRNGKeyArray
+from jax import Array
 
+from .._dtype_names import inexact_result_type
 from .._fingerprint import canonical_fingerprint
 from .._identity import strict_module_payload
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..ml import AbstractRecipe, FeatureSchema, MLBatch, TargetSchema
 from ..ml.model_selection import AbstractSplitPlan
+from ..typing import PRNGKey
 from ._core import CausalProblem, TargetPopulationKind
 from ._identify import AdjustmentExpression, IdentificationCertificate
 
@@ -222,7 +223,7 @@ def fit_cross_fitted_nuisance(
     certificate: IdentificationCertificate,
     plan: NuisancePlan,
     *,
-    key: PRNGKeyArray,
+    key: PRNGKey,
 ) -> CrossFittedNuisanceResult:
     """Fit outcome and propensity nuisances out of fold."""
     expression = _verify_adjustment_certificate(problem, certificate)

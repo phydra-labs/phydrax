@@ -6,11 +6,13 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from enum import IntEnum, StrEnum
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._bvh import bvh_nearest_items, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -87,7 +89,7 @@ class CouplingSearchEvidence(StrictModule, NonTrainableState):
         source_cells: ArrayLike,
         distances: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(kind, MeshCouplingKind):
             raise TypeError("kind must be MeshCouplingKind.")
         codes = np.asarray(status, dtype=np.int32)
@@ -133,7 +135,7 @@ class CouplingSearchEvidence(StrictModule, NonTrainableState):
 class CouplingSearchError(ValueError):
     """A donor search left receptors without admissible donors; see ``evidence``."""
 
-    def __init__(self, message: str, evidence: CouplingSearchEvidence, /):
+    def __init__(self, message: str, evidence: CouplingSearchEvidence, /) -> None:
         super().__init__(message)
         self.evidence = evidence
 
@@ -204,7 +206,7 @@ def _point_pairs(
     source_scope: MeshingScope,
     target_scope: MeshingScope,
     source_ids: ArrayLike | None,
-):
+) -> Any:
     _endpoints(source, target, source_scope, target_scope)
     ids = np.asarray(source_scope.entity_ids)
     paired = ids if source_ids is None else np.asarray(source_ids)
@@ -283,7 +285,7 @@ class ConformalCoupling(_PointPairCoupling):
         *,
         source_ids: ArrayLike | None = None,
         tolerance: float = 1e-10,
-    ):
+    ) -> None:
         tol = _tolerance(tolerance)
         rows, left, right = _point_pairs(
             source, target, source_scope, target_scope, source_ids
@@ -328,7 +330,7 @@ class PeriodicCoupling(_PointPairCoupling):
         *,
         source_ids: ArrayLike | None = None,
         tolerance: float = 1e-10,
-    ):
+    ) -> None:
         tol = _tolerance(tolerance)
         rows, left, right = _point_pairs(
             source, target, source_scope, target_scope, source_ids
@@ -442,7 +444,7 @@ class ContactCoupling(_PointPairCoupling):
         clearance: float = 0.0,
         tolerance: float = 1e-10,
         search_evidence: CouplingSearchEvidence | None = None,
-    ):
+    ) -> None:
         tol = _tolerance(tolerance)
         rows, left, right = _point_pairs(
             source, target, source_scope, target_scope, source_ids
@@ -578,7 +580,7 @@ class OversetCoupling(MeshCoupling):
         hole_scope: MeshingScope | None = None,
         tolerance: float = 1e-10,
         search_evidence: CouplingSearchEvidence | None = None,
-    ):
+    ) -> None:
         _endpoints(source, target, source_scope, target_scope)
         tol = _tolerance(tolerance)
         if tol >= 1:
@@ -858,6 +860,7 @@ def _overset_donor_search(
     )
     total = np.sum(barycentric, axis=1, keepdims=True)
     weights = barycentric / np.where(total > 0.0, total, 1.0)
+    # ty: ignore[unresolved-attribute]
     vertex_ids = np.asarray(source.carrier.mesh.vertex_global_ids, dtype=np.int64)
     donors = np.where(weights > 0.0, vertex_ids[vertex_rows[np.maximum(cells, 0)]], -1)
     admissible = np.isin(donors, np.asarray(source_scope.entity_ids))

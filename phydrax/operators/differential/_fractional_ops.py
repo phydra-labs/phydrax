@@ -5,18 +5,24 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax.domain import AbstractGeometry, AbstractScalarDomain, DomainFunction
 
 from ..._doc import DOC_KEY0
 from ..._sampling import materialize_design
+from ...typing import PRNGKey
 from ..integral._local_ops import _uniform_ball_rule
 from ._domain_ops import _factor_and_dim, _resolve_var, grad
+
+
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
 
 
 def fractional_laplacian(
@@ -85,7 +91,7 @@ def fractional_laplacian(
 
     if var not in u.deps:
 
-        def _zero(*args, key=None, **kwargs):
+        def _zero(*args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
             y = jnp.asarray(u.func(*args, key=key, **kwargs))
             return jnp.zeros_like(y)
 
@@ -110,7 +116,7 @@ def fractional_laplacian(
     idx = u.deps.index(var)
     grad_u = grad(u, var=var, mode="forward") if desingularize and a > 1.0 else None
 
-    def _op(*args, key=None, **kwargs):
+    def _op(*args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         x = args[idx]
         if isinstance(x, tuple):
             raise ValueError(
@@ -122,7 +128,7 @@ def fractional_laplacian(
 
         y_sp = x[None, :] + offsets
 
-        def per_y(yv):
+        def per_y(yv: Array) -> Any:
             call_args = list(args)
             call_args[idx] = yv
             return u.func(*call_args, key=key, **kwargs)
@@ -142,7 +148,7 @@ def fractional_laplacian(
     return DomainFunction(domain=u.domain, deps=u.deps, func=_op, metadata=u.metadata)
 
 
-def _gmc_cdf(alpha: float, *, max_k: int = 100000, tol: float = 1e-12):
+def _gmc_cdf(alpha: float, *, max_k: int = 100000, tol: float = 1e-12) -> Array:
     if not (1.0 < alpha < 2.0):
         raise ValueError("GMC CDF requires alpha in (1,2).")
     p = []
@@ -228,7 +234,7 @@ def fractional_derivative_gl_mc(
 
     if var not in u.deps:
 
-        def _zero(*args, key=None, **kwargs):
+        def _zero(*args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
             y = jnp.asarray(u.func(*args, key=key, **kwargs))
             return jnp.zeros_like(y)
 
@@ -251,7 +257,7 @@ def fractional_derivative_gl_mc(
 
     E = _gmc_cdf(a)
 
-    def map_F_to_Y(F):
+    def map_F_to_Y(F: Array) -> Array:
         F1 = jnp.squeeze(F, axis=-1)
         idx = jnp.searchsorted(E, F1, side="right")
         return idx + 1
@@ -261,7 +267,7 @@ def fractional_derivative_gl_mc(
 
     total_samples = int(N) * max(int(K), 1)
 
-    def _per_point_base(*args, key, **kwargs):
+    def _per_point_base(*args: Any, key: PRNGKey, **kwargs: Any) -> Array:
         x = args[idx_x]
         if isinstance(x, tuple):
             raise ValueError(
@@ -286,10 +292,10 @@ def fractional_derivative_gl_mc(
         fx0 = u.func(*args, key=key, **kwargs)
         cond_bad = jnp.logical_or(~jnp.isfinite(h), h <= 0)
 
-        def _zero():
+        def _zero() -> Array:
             return jnp.zeros_like(fx0)
 
-        def _cont():
+        def _cont() -> Array:
             # deterministic x+h
             x_h = x.at[axis_i].set(xi + sgn * h)
             call_args = list(args)
@@ -307,7 +313,7 @@ def fractional_derivative_gl_mc(
             xs = jnp.repeat(x[None, :], total_samples, axis=0)
             xs = xs.at[:, axis_i].add(sgn * Y * h)
 
-            def per_y(xy):
+            def per_y(xy: Array) -> Any:
                 call_args = list(args)
                 call_args[idx_x] = xy
                 return u.func(*call_args, key=key, **kwargs)
@@ -320,7 +326,7 @@ def fractional_derivative_gl_mc(
 
             e_axis = jnp.zeros_like(x).at[axis_i].set(1.0)
 
-            def f_single(z):
+            def f_single(z: Array) -> Any:
                 call_args = list(args)
                 call_args[idx_x] = z
                 return u.func(*call_args, key=key, **kwargs)
@@ -336,7 +342,7 @@ def fractional_derivative_gl_mc(
 
         return jax.lax.cond(cond_bad, _zero, _cont)
 
-    def _op(*args, key=None, **kwargs):
+    def _op(*args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         if key is None:
             key = DOC_KEY0
         return _per_point_base(*args, key=key, **kwargs)

@@ -10,6 +10,7 @@ import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -79,13 +80,14 @@ class ParticleSPHBenchmarkRecord:
         )
 
 
-def _problem_components(count: int):
+def _problem_components(count: int) -> Any:
     spacing = 1.0 / count
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(count),
         jnp.full((count,), spacing),
         ambient_dimension=1,
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     method = phx.discretization.BarotropicSPHMethodPlan(
         phx.discretization.WendlandC2SPHKernel(1),
@@ -100,7 +102,7 @@ def _problem_components(count: int):
     return particles, box, method, problem, position
 
 
-def _compile_backends(count: int):
+def _compile_backends(count: int) -> Any:
     particles, box, method, problem, position = _problem_components(count)
     dense = phx.equations.compile_barotropic_sph_problem(
         problem,
@@ -142,7 +144,7 @@ def _relation_bytes(state: phx.discretization.ParticleNeighborhoodState) -> int:
     return sum(value.nbytes for value in arrays)
 
 
-def _solve(compiled, position, final_time):
+def _solve(compiled: Any, position: Any, final_time: Any) -> Any:
     velocity = jnp.zeros_like(position)
     return phx.solver.solve_diffrax(
         compiled.as_differential_problem(
@@ -158,7 +160,9 @@ def _solve(compiled, position, final_time):
     )
 
 
-def _backend_benchmark(compiled, position) -> tuple[ParticleBackendBenchmark, object]:
+def _backend_benchmark(
+    compiled: Any, position: Any
+) -> tuple[ParticleBackendBenchmark, object]:
     neighborhood = eqx.filter_jit(compiled.dynamics.neighborhood.build)
     start = perf_counter()
     state = neighborhood(position)
@@ -253,6 +257,7 @@ def run_particle_sph_benchmark(count: int = 32, /) -> ParticleSPHBenchmarkRecord
         energy_error=float(jnp.abs(cell_energy - dense_energy)),
         jvp_error=float(jnp.max(jnp.abs(cell_jvp - dense_jvp))),
         trajectory_error=float(
+            # ty: ignore[unresolved-attribute]
             jnp.max(jnp.abs(cell_solution.states - dense_solution.states))
         ),
     )

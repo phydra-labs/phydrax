@@ -9,7 +9,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..linalg import (
@@ -19,6 +20,7 @@ from ..linalg import (
     LinearSystem,
     solve,
 )
+from ..typing import parse
 
 
 FrequencySystemType: TypeAlias = Literal["continuous", "discrete"]
@@ -156,8 +158,7 @@ def _frequency_result(
     sample_time: float | None,
     angular_frequencies: Array | None,
 ) -> FrequencyResponseResult:
-    if system_type not in ("continuous", "discrete"):
-        raise ValueError("system_type must be 'continuous' or 'discrete'.")
+    system_type = parse(system_type, FrequencySystemType, "system_type")
     if singular_atol < 0.0:
         raise ValueError("singular_atol must be non-negative.")
     if singular_rtol is not None and singular_rtol < 0.0:

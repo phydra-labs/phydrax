@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -55,7 +56,7 @@ class MACExplicitTestFilterPlan(StrictModule, NonTrainableState):
     boundary_support: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, test_filter: ResolvedLESFilter, /):
+    def __init__(self, test_filter: ResolvedLESFilter, /) -> None:
         if not isinstance(test_filter, ResolvedLESFilter):
             raise TypeError("test_filter must be a ResolvedLESFilter.")
         if (
@@ -110,7 +111,7 @@ class PreparedMACExplicitTestFilter(StrictModule, NonTrainableState):
         plan: MACExplicitTestFilterPlan,
         momentum: PreparedMACMomentumOperators,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, MACExplicitTestFilterPlan):
             raise TypeError("plan must be MACExplicitTestFilterPlan.")
         if not isinstance(momentum, PreparedMACMomentumOperators):
@@ -214,7 +215,7 @@ class MACDynamicLESPlan(StrictModule, NonTrainableState):
         dynamic_model: PreparedDynamicSmagorinskyPlan,
         test_filter: MACExplicitTestFilterPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(dynamic_model, PreparedDynamicSmagorinskyPlan):
             raise TypeError("dynamic_model must be PreparedDynamicSmagorinskyPlan.")
         if not isinstance(test_filter, MACExplicitTestFilterPlan):
@@ -311,7 +312,7 @@ class PreparedMACDynamicLES(StrictModule, NonTrainableState):
         plan: MACDynamicLESPlan,
         momentum: PreparedMACMomentumOperators,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, MACDynamicLESPlan):
             raise TypeError("plan must be MACDynamicLESPlan.")
         if not isinstance(momentum, PreparedMACMomentumOperators):

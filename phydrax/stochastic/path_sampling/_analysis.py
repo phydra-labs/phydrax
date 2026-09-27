@@ -12,13 +12,15 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 
 
 class ReactiveFluxEstimate(StrictModule, NonTrainableState):
@@ -133,7 +135,7 @@ class CommittorFitPlan(StrictModule, NonTrainableState):
         l2_regularization: float = 0.0,
         tolerance: float = 1.0e-7,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         features, iterations = int(feature_count), int(maximum_iterations)
         rate, regularization, tolerance_ = (
             float(learning_rate),
@@ -221,7 +223,7 @@ def fit_committor(
     )
     normalizer = jnp.sum(sample_weights)
 
-    def objective(coefficients):
+    def objective(coefficients: Array) -> Array:
         logits = contract("np,p->n", augmented, coefficients)
         likelihood = (
             jnp.maximum(logits, 0.0)
@@ -233,7 +235,7 @@ def fit_committor(
 
     value_and_gradient = jax.value_and_grad(objective)
 
-    def body(_, carry):
+    def body(_: Array, carry: tuple[Array, Array, Array]) -> tuple[Array, Array, Array]:
         coefficients, converged, iterations = carry
         loss, gradient = value_and_gradient(coefficients)
         norm = jnp.sqrt(jnp.sum(gradient**2))
@@ -310,7 +312,7 @@ def integrated_autocorrelation_time(values: ArrayLike, /, *, maximum_lag: int) -
     variance = jnp.mean(centered**2)
     indices = jnp.arange(samples.size, dtype=jnp.int32)
 
-    def correlation(lag):
+    def correlation(lag: Array) -> Array:
         paired = indices < samples.size - lag
         product = centered * centered[jnp.clip(indices + lag, 0, samples.size - 1)]
         return jnp.sum(jnp.where(paired, product, 0.0)) / jnp.maximum(
@@ -386,7 +388,7 @@ def autocorrelation_uncertainty(
 
 
 def moving_block_bootstrap_uncertainty(
-    key: Key[Array, ""],
+    key: PRNGKey,
     values: ArrayLike,
     /,
     *,

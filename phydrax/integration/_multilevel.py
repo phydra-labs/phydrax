@@ -18,7 +18,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._array_archive import (
     ArrayArchiveCorruptionError,
@@ -27,6 +28,7 @@ from .._array_archive import (
 )
 from .._numerics import LogWeightedAccumulator
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._estimates import IntegrationEstimate, IntegrationProvenance
 from ._plans import MultilevelMonteCarloPlan
 from ._precision import IntegrationPrecisionPolicy
@@ -118,7 +120,7 @@ class MultilevelSampleBatch(StrictModule):
         coarse_valid: ArrayLike | None = None,
         pair_ids: ArrayLike | None = None,
         provenance: str,
-    ):
+    ) -> None:
         level = int(level_index)
         if level < 0:
             raise ValueError("level_index must be non-negative.")
@@ -251,7 +253,7 @@ class MultilevelResultArchive:
 def materialize_multilevel(
     target: MultilevelTarget,
     plan: MultilevelMonteCarloPlan,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     precision: IntegrationPrecisionPolicy | None = None,

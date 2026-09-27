@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -9,17 +12,17 @@ import phydrax as phx
 from phydrax._array_archive import read_array_archive
 
 
-def _identity(points, time, args):
+def _identity(points: Any, time: Any, args: Any) -> Any:
     del time, args
     return points
 
 
-def _plane(points, time, args):
+def _plane(points: Any, time: Any, args: Any) -> Any:
     del time, args
     return points[:, 0] - 0.37
 
 
-def _cut_plan():
+def _cut_plan() -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(1) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -53,7 +56,7 @@ def _cut_plan():
     )
 
 
-def test_checkpoint_reconstructs_topology_without_caller_plan(tmp_path):
+def test_checkpoint_reconstructs_topology_without_caller_plan(tmp_path: Any) -> None:
     cut_plan = _cut_plan()
     moving = phx.solver.MovingMultivaluedCutCellPlan(cut_plan)
     state = moving.initialize(jnp.asarray(((2.0, 3.0),)), 0.25)
@@ -84,7 +87,7 @@ def test_checkpoint_reconstructs_topology_without_caller_plan(tmp_path):
     np.testing.assert_array_equal(restored.state.revision, state.revision)
 
 
-def test_output_snapshot_preserves_multivalued_connectivity(tmp_path):
+def test_output_snapshot_preserves_multivalued_connectivity(tmp_path: Any) -> None:
     state = phx.solver.MovingMultivaluedCutCellPlan(_cut_plan()).initialize(
         jnp.asarray(((2.0, 3.0),)),
         0.5,

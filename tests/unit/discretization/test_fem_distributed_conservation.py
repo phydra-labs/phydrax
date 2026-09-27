@@ -14,7 +14,7 @@ from phydrax.discretization.fem._generic import FiniteElementFieldSpec, FiniteEl
 from phydrax.discretization.fem._reference import discontinuous_element
 
 
-def test_cost_partition_and_phases_are_exactly_once_and_conservative():
+def test_cost_partition_and_phases_are_exactly_once_and_conservative() -> None:
     mesh = CellMesh.from_triangles(
         np.asarray(
             (

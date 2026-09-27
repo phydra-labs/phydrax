@@ -11,11 +11,13 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, Key, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..optim import DifferentialEvolutionSearch
 from ..stochastic._state_space import StateSpaceProblem
+from ..typing import parse, PRNGKey
 from ._bayesian_optimization import GaussianProcessBayesianOptimization
 from ._bellman import BellmanFilterResult
 from ._ensemble_filter import EnsembleFilterResult
@@ -182,19 +184,15 @@ class StateSpaceExperiment(StrictModule):
         covariance_regularization: float = 0.0,
         temporal_method: KalmanExecutionMethod = "auto",
         transform_safe: bool = False,
-    ):
+    ) -> None:
         if not callable(problem):
             raise TypeError("problem must be callable.")
         if likelihood is not None and not callable(likelihood):
             raise TypeError("likelihood must be callable or None.")
         if not isinstance(transform_safe, bool):
             raise TypeError("transform_safe must be a bool.")
-        if exact_method not in ("auto", "kalman", "finite-state"):
-            raise ValueError("exact_method must be 'auto', 'kalman', or 'finite-state'.")
-        if temporal_method not in ("auto", "sequential", "parallel"):
-            raise ValueError(
-                "temporal_method must be 'auto', 'sequential', or 'parallel'."
-            )
+        exact_method = parse(exact_method, ExactStateSpaceMethod, "exact_method")
+        temporal_method = parse(temporal_method, KalmanExecutionMethod, "temporal_method")
         regularization = float(covariance_regularization)
         if not np.isfinite(regularization) or regularization < 0.0:
             raise ValueError("covariance_regularization must be finite and nonnegative.")
@@ -456,7 +454,7 @@ class MultiExperimentStateSpaceLikelihood(AbstractPosteriorTerm):
         /,
         *,
         label: str = "multi_experiment_state_space",
-    ):
+    ) -> None:
         resolved = tuple(experiments)
         if not resolved:
             raise ValueError("At least one state-space experiment is required.")
@@ -564,7 +562,7 @@ class StateSpaceEstimation(StrictModule):
         /,
         *,
         label: str = "multi_experiment_state_space",
-    ):
+    ) -> None:
         if not isinstance(parameter_space, ParameterSpace):
             raise TypeError("parameter_space must be a ParameterSpace.")
         likelihood = MultiExperimentStateSpaceLikelihood(experiments, label=label)
@@ -630,7 +628,7 @@ class StateSpaceEstimation(StrictModule):
         search: DifferentialEvolutionSearch | GaussianProcessBayesianOptimization,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         position_bounds: PositionBounds,
         initial_position: PyTree[Array] | None = None,
     ) -> StateSpaceMAPWorkflowResult:
@@ -655,7 +653,7 @@ class StateSpaceEstimation(StrictModule):
         search: DifferentialEvolutionSearch | GaussianProcessBayesianOptimization,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         position_bounds: PositionBounds,
         initial_position: PyTree[Array] | None = None,
         max_steps: int = 500,

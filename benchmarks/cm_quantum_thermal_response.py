@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from math import isfinite, pi
@@ -53,7 +55,7 @@ from phydrax.solver._thermal_pure_quantum import (
 )
 
 
-def _case(mode_count: int, krylov_dimension: int):
+def _case(mode_count: int, krylov_dimension: int) -> Any:
     order = FermionModeOrder(tuple(f"m{index}" for index in range(mode_count)))
     spaces = tuple(LocalSpacePlan.fermion(label, label) for label in order.labels)
     create = np.asarray(((0.0, 0.0), (1.0, 0.0)))
@@ -117,7 +119,7 @@ def _case(mode_count: int, krylov_dimension: int):
     return source, target, probe, matrix_policy
 
 
-def benchmark_case(mode_count: int, probe_count: int, krylov_dimension: int, beta: float):
+def benchmark_case(mode_count: int, probe_count: int, krylov_dimension: int, beta: float) -> Any:
     (source, target, probe, matrix_policy), prepare_seconds = measure_host(
         lambda: _case(mode_count, krylov_dimension)
     )
@@ -243,7 +245,7 @@ def benchmark_case(mode_count: int, probe_count: int, krylov_dimension: int, bet
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--modes", type=int, default=4)
     parser.add_argument("--probes", type=int, default=8)

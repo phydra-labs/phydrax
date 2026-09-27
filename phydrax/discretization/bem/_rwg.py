@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -56,7 +57,7 @@ class RWGSurfaceCurrentSpace3D(StrictModule, NonTrainableState):
         /,
         *,
         coefficient_dtype: Any = np.complex128,
-    ):
+    ) -> None:
         if not isinstance(surface, OrientedTriangleSurfaceComplex3D):
             raise TypeError("surface must be OrientedTriangleSurfaceComplex3D.")
         dtype = np.dtype(coefficient_dtype)

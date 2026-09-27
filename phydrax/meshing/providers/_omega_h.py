@@ -23,7 +23,8 @@ from typing import Any, NamedTuple
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._external_runtime import NativeWorkerCall, NativeWorkerPolicy
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -171,7 +172,7 @@ class OmegaHOptions(StrictModule, NonTrainableState):
         should_swap: bool = True,
         should_coarsen_slivers: bool = True,
         should_prevent_coarsen_flip: bool = False,
-    ):
+    ) -> None:
         angle = _real(feature_angle, "feature_angle")
         if not 0.0 < angle < math.pi:
             raise ValueError("feature_angle must lie in (0, pi) radians.")
@@ -200,6 +201,7 @@ class OmegaHOptions(StrictModule, NonTrainableState):
             )
         )
         if any(value is not None and not 0.0 <= value <= 1.0 for value in qualities) or (
+            # ty: ignore[unsupported-operator]
             None not in qualities and qualities[0] > qualities[1]
         ):
             raise ValueError(
@@ -286,7 +288,7 @@ class OmegaHField(StrictModule, NonTrainableState):
         /,
         *,
         diffusion_tolerance: float | None = None,
-    ):
+    ) -> None:
         if not isinstance(name, str) or not name.strip():
             raise ValueError("Omega_h field names must be nonempty strings.")
         if not isinstance(transfer, OmegaHFieldTransfer):
@@ -355,7 +357,7 @@ class OmegaHTransferredField(StrictModule, NonTrainableState):
         scope: MeshingScope,
         values: ArrayLike,
         /,
-    ):
+    ) -> None:
         array = np.asarray(values, dtype=np.float64)
         if not isinstance(transfer, OmegaHFieldTransfer) or not isinstance(
             scope, MeshingScope
@@ -394,7 +396,7 @@ class OmegaHFieldEvidence(StrictModule, NonTrainableState):
         integral_before: ArrayLike | None,
         integral_after: ArrayLike | None,
         /,
-    ):
+    ) -> None:
         if not isinstance(field, OmegaHField):
             raise TypeError("field must be OmegaHField.")
         before = (
@@ -449,7 +451,7 @@ class OmegaHClassification(StrictModule, NonTrainableState):
         facet_zones: tuple[str | None, ...],
         facet_labels: tuple[tuple[str, ...], ...],
         feature_angle: float,
-    ):
+    ) -> None:
         if (
             not cell_blocks
             or len(cell_zones) != len(cell_blocks)
@@ -509,7 +511,7 @@ class OmegaHPartition(StrictModule, NonTrainableState):
     fields: tuple[Array, ...]
     partition_id: str = eqx.field(static=True)
 
-    def __init__(self, rank: int, arrays: _RankArrays, /):
+    def __init__(self, rank: int, arrays: _RankArrays, /) -> None:
         if not isinstance(arrays, _RankArrays):
             raise TypeError("arrays must be validated Omega_h rank arrays.")
         self.rank = _integer(rank, "rank", 0, _LOCAL_INDEX_LIMIT)
@@ -588,7 +590,7 @@ class OmegaHAdaptationEvidence(StrictModule, NonTrainableState):
         call: NativeWorkerCall,
         identity_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(options, OmegaHOptions):
             raise TypeError("options must be OmegaHOptions.")
         if not all(isinstance(value, OmegaHFieldEvidence) for value in fields):
@@ -665,7 +667,7 @@ class OmegaHAdaptationResult(StrictModule, NonTrainableState):
         runtime: MeshingRuntimeInfo,
         provenance: SemanticProvenance,
         /,
-    ):
+    ) -> None:
         if len(partitions) != evidence.ranks or any(
             partition.rank != rank for rank, partition in enumerate(partitions)
         ):
@@ -761,7 +763,7 @@ def _rows_of(identifiers: np.ndarray, requested: ArrayLike, /) -> np.ndarray:
     return rows
 
 
-def _entity_scope(mesh: CellMesh, dimension: int, identifiers: np.ndarray, /):
+def _entity_scope(mesh: CellMesh, dimension: int, identifiers: np.ndarray, /) -> Any:
     return MeshingScope(
         mesh.mesh_id,
         mesh.numeric_version,
@@ -776,8 +778,10 @@ def _facet_rows(mesh: CellMesh, /) -> np.ndarray:
     """Local vertex rows of the facet entity set, in entity-set order."""
     match mesh.topological_dimension:
         case 2:
+            # ty: ignore[unresolved-attribute]
             return np.asarray(mesh.connectivity.edges, dtype=np.int64)
         case 3:
+            # ty: ignore[unresolved-attribute]
             return np.asarray(mesh.connectivity.faces, dtype=np.int64)
         case _:
             raise ValueError("Omega_h facets exist for 2-D and 3-D simplices only.")
@@ -813,6 +817,7 @@ def _source_mesh(
             "and untransferred geometry associations cannot follow adaptation.",
         )
     if source.associations:
+        # ty: ignore[unresolved-attribute]
         transfer.source_associations(source)
     if any(
         value.scope.entity_dimension not in (dimension - 1, dimension)
@@ -900,7 +905,9 @@ def _facet_classes(
     )
 
 
-def _checked_metric(mesh: CellMesh, metric: MeshMetricField, vertex_ids: np.ndarray, /):
+def _checked_metric(
+    mesh: CellMesh, metric: MeshMetricField, vertex_ids: np.ndarray, /
+) -> Any:
     scope = metric.scope
     if (
         scope.source_id != mesh.mesh_id
@@ -950,7 +957,7 @@ def _require_adapted_metric_bounds(
         )
 
 
-def _field_rows(mesh: CellMesh, field: OmegaHField, identifiers: np.ndarray, /):
+def _field_rows(mesh: CellMesh, field: OmegaHField, identifiers: np.ndarray, /) -> Any:
     dimension = 0 if _on_vertices(field.transfer) else mesh.topological_dimension
     scope = field.scope
     if (
@@ -1059,7 +1066,9 @@ def _require(condition: bool, message: str, /) -> None:
         raise _conversion(message)
 
 
-def _array(arrays: Mapping[str, np.ndarray], name: str, dtype, shape: tuple, /):
+def _array(
+    arrays: Mapping[str, np.ndarray], name: str, dtype: Any, shape: tuple, /
+) -> Any:
     value = arrays[name]
     _require(
         value.dtype == dtype
@@ -1121,10 +1130,12 @@ def _rank_arrays(
         ),
     )
     _require(
+        # ty: ignore[invalid-argument-type]
         np.all(np.isfinite(result.coordinates)) and np.all(np.isfinite(metric)),
         "coordinates and metric must be finite",
     )
     _require(
+        # ty: ignore[invalid-argument-type]
         np.all((result.cells >= 0) & (result.cells < nv))
         and np.all((result.facet_vertices >= 0) & (result.facet_vertices < nv)),
         "connectivity references missing local vertices",
@@ -1172,6 +1183,7 @@ def _owner_rows(
     local = np.arange(identifiers.size) - offsets[resident_rank]
     indices = owner_indices.astype(np.int64)
     _require(
+        # ty: ignore[invalid-argument-type]
         np.all((indices >= 0) & (indices < counts[owner_ranks])),
         f"{kind} owner indices are out of range",
     )
@@ -1190,7 +1202,7 @@ def _owner_rows(
     return rows, owned
 
 
-def _merged(ranks: Sequence[_RankArrays], /):
+def _merged(ranks: Sequence[_RankArrays], /) -> Any:
     """Concatenate ranks, verify every copy against its owner, keep owners."""
     columns = [item._asdict() for item in ranks]
     counts = {
@@ -1274,6 +1286,7 @@ def _verify_fields(merged: Mapping[str, Any], fields: tuple[OmegaHField, ...], /
     for field, values in zip(fields, merged["fields"], strict=True):
         rows = merged["vertex"][1] if _on_vertices(field.transfer) else merged["cell"][1]
         _require(
+            # ty: ignore[invalid-argument-type]
             np.all(np.isfinite(values)) and np.array_equal(values[rows], values),
             f"field {field.name!r} copies disagree with their owners",
         )
@@ -1407,6 +1420,7 @@ def _decode_outputs(
     merged = _merged(rank_arrays)
     _verify_fields(merged, fields)
     _require(
+        # ty: ignore[invalid-argument-type]
         np.all(merged["cell_classes"] < len(carrier.classification.cell_blocks)),
         "cells carry unknown region classes",
     )
@@ -1438,7 +1452,7 @@ def _target_organization(
         [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
     )
 
-    def scope(dim: int, table: tuple, selects) -> MeshingScope:
+    def scope(dim: int, table: tuple, selects: Any) -> MeshingScope:
         ids, classes = (
             (cell_ids, cell_classes) if dim == dimension else (facet_ids, facet_classes)
         )
@@ -1527,6 +1541,7 @@ def _assemble(
     connectivity = np.searchsorted(target_vertex_ids, merged["cells"][cell_rows])
     classes = merged["cell_classes"][cell_rows]
     _require(
+        # ty: ignore[invalid-argument-type]
         np.all(classes < len(classification.cell_blocks))
         and np.unique(classes).size == len(classification.cell_blocks),
         "cell classes must cover exactly the source regions",
@@ -1559,6 +1574,7 @@ def _assemble(
         np.asarray(mesh.vertex_global_ids, dtype=np.int64)[_facet_rows(mesh)], axis=1
     )
     matched = _match_facets(reference, facets[facet_rows])
+    # ty: ignore[invalid-argument-type]
     _require(np.all(matched >= 0), "classified facets are not facets of the target")
     target_facet_ids = np.asarray(
         mesh.entity_set(dimension - 1).entity_ids, dtype=np.int64
@@ -1708,7 +1724,7 @@ class OmegaHProvider:
         mpi_launcher: Sequence[str] = ("mpiexec",),
         environment: Mapping[str, str] | None = None,
         policy: NativeWorkerPolicy | None = None,
-    ):
+    ) -> None:
         if isinstance(mpi_launcher, str):
             raise TypeError("mpi_launcher must be a sequence of argv tokens.")
         self.executable = None if executable is None else os.fspath(executable)

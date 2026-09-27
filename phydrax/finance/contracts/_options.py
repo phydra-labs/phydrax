@@ -16,7 +16,8 @@ from enum import Enum
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..core._currency import CurrencyAmount
@@ -169,7 +170,7 @@ class VanillaPayoff(AbstractPayoff):
 
     def __init__(
         self, strike: ArrayLike, option_type: OptionType, /, *, notional: ArrayLike = 1.0
-    ):
+    ) -> None:
         self.strike = _positive_scalar(strike, "strike")
         self.notional = _positive_scalar(notional, "notional")
         self.option_type = _option_type(option_type)
@@ -184,7 +185,7 @@ class CashDigitalPayoff(AbstractPayoff):
 
     def __init__(
         self, strike: ArrayLike, cash_amount: ArrayLike, option_type: OptionType, /
-    ):
+    ) -> None:
         self.strike = _positive_scalar(strike, "strike")
         self.cash_amount = _positive_scalar(cash_amount, "cash_amount")
         self.option_type = _option_type(option_type)
@@ -212,7 +213,7 @@ class PathBarrierPayoff(AbstractPayoff):
         *,
         rebate: ArrayLike = 0.0,
         notional: ArrayLike = 1.0,
-    ):
+    ) -> None:
         if not isinstance(direction, BarrierDirection) or not isinstance(
             activation, BarrierActivation
         ):
@@ -252,7 +253,7 @@ class AsianPayoff(AbstractPayoff):
         *,
         average_type: AverageType = AverageType.ARITHMETIC,
         notional: ArrayLike = 1.0,
-    ):
+    ) -> None:
         if not isinstance(average_type, AverageType):
             raise TypeError("average_type must be an AverageType.")
         self.strike = _positive_scalar(strike, "strike")
@@ -270,7 +271,7 @@ class LookbackPayoff(AbstractPayoff):
 
     def __init__(
         self, strike: ArrayLike, option_type: OptionType, /, *, notional: ArrayLike = 1.0
-    ):
+    ) -> None:
         self.strike = _positive_scalar(strike, "strike")
         self.notional = _positive_scalar(notional, "notional")
         self.option_type = _option_type(option_type)
@@ -293,7 +294,7 @@ class BasketPayoff(AbstractPayoff):
         /,
         *,
         notional: ArrayLike = 1.0,
-    ):
+    ) -> None:
         weights_ = jnp.asarray(weights, dtype=jnp.float64)
         if weights_.ndim != 1 or weights_.size < 1:
             raise ValueError("weights must be a non-empty vector.")
@@ -318,7 +319,9 @@ class VarianceSwapPayoff(AbstractPayoff):
     variance_notional: Array
     payoff_id: str = eqx.field(static=True)
 
-    def __init__(self, variance_strike: ArrayLike, variance_notional: ArrayLike, /):
+    def __init__(
+        self, variance_strike: ArrayLike, variance_notional: ArrayLike, /
+    ) -> None:
         strike = jnp.asarray(variance_strike, dtype=jnp.float64)
         if strike.shape != ():
             raise ValueError("variance_strike must be scalar.")
@@ -339,7 +342,7 @@ class BermudanPayoff(AbstractPayoff):
 
     def __init__(
         self, strike: ArrayLike, option_type: OptionType, /, *, notional: ArrayLike = 1.0
-    ):
+    ) -> None:
         self.strike = _positive_scalar(strike, "strike")
         self.notional = _positive_scalar(notional, "notional")
         self.option_type = _option_type(option_type)
@@ -365,7 +368,7 @@ class EuropeanOption(AbstractContract):
         /,
         *,
         quantity: ArrayLike = 1.0,
-    ):
+    ) -> None:
         if not isinstance(underlying, FinancialIdentifier) or not isinstance(
             expiry, FinanceDate
         ):
@@ -391,7 +394,7 @@ class EuropeanOption(AbstractContract):
                 "expiry": expiry.ordinal,
                 "option_type": option_type.value,
                 "settlement": settlement.terms_id,
-                "quantity": float(quantity),
+                "quantity": float(self.quantity),
             },
         )
 
@@ -423,7 +426,7 @@ class DigitalOption(AbstractContract):
         option_type: OptionType,
         settlement: SettlementTerms,
         /,
-    ):
+    ) -> None:
         if not isinstance(underlying, FinancialIdentifier) or not isinstance(
             expiry, FinanceDate
         ):
@@ -506,7 +509,7 @@ class BarrierOption(AbstractContract):
         *,
         rebate: CurrencyAmount | None = None,
         quantity: ArrayLike = 1.0,
-    ):
+    ) -> None:
         if not isinstance(underlying, FinancialIdentifier) or not isinstance(
             expiry, FinanceDate
         ):
@@ -557,7 +560,7 @@ class BarrierOption(AbstractContract):
                 "direction": direction.value,
                 "activation": activation.value,
                 "settlement": settlement.terms_id,
-                "quantity": float(quantity),
+                "quantity": float(self.quantity),
             },
         )
 
@@ -605,7 +608,7 @@ class AsianOption(AbstractContract):
         *,
         average_type: AverageType = AverageType.ARITHMETIC,
         quantity: ArrayLike = 1.0,
-    ):
+    ) -> None:
         if not isinstance(underlying, FinancialIdentifier) or not isinstance(
             expiry, FinanceDate
         ):
@@ -644,7 +647,7 @@ class AsianOption(AbstractContract):
                 "option_type": option_type.value,
                 "average_type": average_type.value,
                 "settlement": settlement.terms_id,
-                "quantity": float(quantity),
+                "quantity": float(self.quantity),
             },
         )
 
@@ -687,7 +690,7 @@ class LookbackOption(AbstractContract):
         /,
         *,
         quantity: ArrayLike = 1.0,
-    ):
+    ) -> None:
         if not isinstance(underlying, FinancialIdentifier) or not isinstance(
             expiry, FinanceDate
         ):
@@ -719,7 +722,7 @@ class LookbackOption(AbstractContract):
                 "expiry": expiry.ordinal,
                 "option_type": option_type.value,
                 "settlement": settlement.terms_id,
-                "quantity": float(quantity),
+                "quantity": float(self.quantity),
             },
         )
 
@@ -759,7 +762,7 @@ class BasketOption(AbstractContract):
         /,
         *,
         quantity: ArrayLike = 1.0,
-    ):
+    ) -> None:
         underlyings_ = _underlyings(underlyings)
         strike_ = _amount(strike, "strike")
         settlement_ = _settlement(settlement)
@@ -793,7 +796,7 @@ class BasketOption(AbstractContract):
                 "expiry": expiry.ordinal,
                 "option_type": option_type.value,
                 "settlement": settlement.terms_id,
-                "quantity": float(quantity),
+                "quantity": float(self.quantity),
             },
         )
 
@@ -833,7 +836,7 @@ class VarianceSwap(AbstractContract):
         expiry: FinanceDate,
         settlement: SettlementTerms,
         /,
-    ):
+    ) -> None:
         if not isinstance(underlying, FinancialIdentifier) or not isinstance(
             expiry, FinanceDate
         ):
@@ -861,7 +864,7 @@ class VarianceSwap(AbstractContract):
             "variance-swap",
             {
                 "underlying": underlying.canonical,
-                "variance_strike": float(variance_strike),
+                "variance_strike": float(self.variance_strike),
                 "notional_atoms": int(notional.atoms),
                 "currency": notional.currency.code,
                 "observations": [value.ordinal for value in dates],
@@ -904,7 +907,7 @@ class BermudanOption(AbstractContract):
         /,
         *,
         quantity: ArrayLike = 1.0,
-    ):
+    ) -> None:
         if not isinstance(underlying, FinancialIdentifier):
             raise TypeError("underlying must be a FinancialIdentifier.")
         dates = _dates(exercise_dates, "exercise_dates")
@@ -926,7 +929,7 @@ class BermudanOption(AbstractContract):
                 "exercise_dates": [value.ordinal for value in dates],
                 "option_type": option_type.value,
                 "settlement": settlement.terms_id,
-                "quantity": float(quantity),
+                "quantity": float(self.quantity),
             },
         )
 

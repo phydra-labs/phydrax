@@ -1,3 +1,6 @@
+from itertools import combinations
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -44,21 +47,25 @@ from phydrax.units import (
 )
 
 
-def _contacts(support):
+def _contacts(support: Any) -> Any:
     return (
         OhmicContact("left", support.boundary_patch("left")),
         OhmicContact("right", support.boundary_patch("right", side="upper")),
     )
 
 
-def _zone(support, name, ids=None):
+def _zone(support: Any, name: Any, ids: Any = None) -> Any:
     return MeshZone(name, MeshZoneRole.MATERIAL, support.node_scope(ids))
 
 
-def test_nonuniform_interval_integrates_physical_volume_and_diffusive_flux():
+def test_nonuniform_interval_integrates_physical_volume_and_diffusive_flux() -> None:
     area_unit = derived_unit("um2", ((MICROMETER, 2),))
     support = TransportSupport.interval(
-        [0.0, 1.0, 3.0], area=2.0, length_unit=MICROMETER, area_unit=area_unit
+        # ty: ignore[invalid-argument-type]
+        [0.0, 1.0, 3.0],
+        area=2.0,
+        length_unit=MICROMETER,
+        area_unit=area_unit,
     )
     np.testing.assert_allclose(support.volumes, np.asarray([1.0, 3.0, 2.0]) * 1e-18)
     np.testing.assert_allclose(support.transmissibility, [2e-6, 1e-6])
@@ -82,8 +89,8 @@ def test_nonuniform_interval_integrates_physical_volume_and_diffusive_flux():
     ],
 )
 def test_tensor_metrics_preserve_volume_and_affine_energy(
-    axes, transverse, expected_volume
-):
+    axes: Any, transverse: Any, expected_volume: Any
+) -> None:
     support = TransportSupport.tensor_grid(axes, transverse_measure=transverse)
     gradient = np.arange(1.0, len(axes) + 1.0)
     potential = np.sum(np.asarray(support.positions) * gradient, axis=1)
@@ -113,11 +120,12 @@ def test_tensor_metrics_preserve_volume_and_affine_energy(
     ],
 )
 def test_native_affine_simplex_preserves_linear_energy_and_persistent_identity(
-    kind, points, volume
-):
+    kind: Any, points: Any, volume: Any
+) -> None:
     count = len(points)
     mesh = CellMesh(
         points,
+        # ty: ignore[invalid-argument-type]
         (CellBlock("bulk", kind, [list(range(count))]),),
         vertex_global_ids=np.arange(count) * 7 + 13,
         numeric_version="revision-7",
@@ -162,7 +170,54 @@ def test_native_affine_simplex_preserves_linear_energy_and_persistent_identity(
         support.resolve_scope(stale_scope)
 
 
-def test_native_obtuse_simplex_rejects_negative_two_point_metric():
+def test_native_multi_block_tetrahedra_bind_exact_face_scopes() -> None:
+    points = [
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [1.0, 1.0, 1.0],
+    ]
+    mesh = CellMesh(
+        # ty: ignore[invalid-argument-type]
+        points,
+        (
+            # ty: ignore[invalid-argument-type]
+            CellBlock("lower", "tetrahedron", [[0, 1, 2, 3]]),
+            # ty: ignore[invalid-argument-type]
+            CellBlock("upper", "tetrahedron", [[1, 2, 3, 4]], global_ids=[1]),
+        ),
+    )
+    result = certify_cell_mesh(mesh, SpatialCoordinateContract.si())
+    support = TransportSupport.from_meshing(result)
+    faces = result.mesh.entity_set(2)
+    selected = {
+        frozenset(
+            np.flatnonzero(
+                support.resolve_scope(
+                    MeshingScope(
+                        support.source_id,
+                        support.source_revision,
+                        MeshingEntityKind.MESH,
+                        2,
+                        faces.entity_set_id,
+                        faces.entity_ids[index : index + 1],
+                    )
+                )
+            ).tolist()
+        )
+        for index in range(len(faces.entity_ids))
+    }
+    expected = {
+        frozenset(face)
+        for cell in ((0, 1, 2, 3), (1, 2, 3, 4))
+        for face in combinations(cell, 3)
+    }
+    assert selected == expected
+
+
+def test_native_obtuse_simplex_rejects_negative_two_point_metric() -> None:
+    # ty: ignore[invalid-argument-type]
     mesh = CellMesh.from_triangles([[0.0, 0.0], [1.0, 0.0], [0.2, 0.1]], [[0, 1, 2]])
     result = certify_cell_mesh(mesh, SpatialCoordinateContract.si())
     with pytest.raises(ValueError):
@@ -173,13 +228,13 @@ def test_native_obtuse_simplex_rejects_negative_two_point_metric():
     "coordinates, unit", [([0.0, 0.0, 1.0], METER), ([0.0, 1.0], SECOND)]
 )
 def test_support_rejects_collapsed_axis_and_dimensionally_wrong_coordinates(
-    coordinates, unit
-):
+    coordinates: Any, unit: Any
+) -> None:
     with pytest.raises(ValueError):
         TransportSupport.interval(coordinates, length_unit=unit)
 
 
-def test_native_dopant_units_and_neutrality_use_number_not_molar_density():
+def test_native_dopant_units_and_neutrality_use_number_not_molar_density() -> None:
     support = TransportSupport.interval(np.linspace(0.0, 1e-6, 5))
     per_cm3 = derived_unit("1/cm3", ((CENTIMETER, -3),))
     donors = MeshAttribute(
@@ -220,7 +275,8 @@ def test_native_dopant_units_and_neutrality_use_number_not_molar_density():
         SemiconductorQuantitySpec("donors", "number_density", MOLE_PER_CUBIC_METER)
 
 
-def test_dopant_binding_rejects_stale_revision_and_overlapping_attributes():
+def test_dopant_binding_rejects_stale_revision_and_overlapping_attributes() -> None:
+    # ty: ignore[invalid-argument-type]
     support = TransportSupport.interval([0.0, 1.0, 2.0])
     stale = MeshingScope(
         support.source_id,
@@ -256,7 +312,8 @@ def test_dopant_binding_rejects_stale_revision_and_overlapping_attributes():
         )
 
 
-def test_material_and_contact_admission_is_exclusive_complete_and_boundary_only():
+def test_material_and_contact_admission_is_exclusive_complete_and_boundary_only() -> None:
+    # ty: ignore[invalid-argument-type]
     support = TransportSupport.interval([0.0, 1.0, 2.0])
     silicon = SemiconductorMaterial.silicon()
     first = MaterialBinding(_zone(support, "first", [0, 1]), silicon)
@@ -265,6 +322,7 @@ def test_material_and_contact_admission_is_exclusive_complete_and_boundary_only(
         DevicePlan(support, materials=(first,), contacts=_contacts(support))
     with pytest.raises(ValueError):
         DevicePlan(support, materials=(first, overlap), contacts=_contacts(support))
+    # ty: ignore[invalid-argument-type]
     interior = OhmicContact("interior", MeshPatch("interior", support.node_scope([1])))
     with pytest.raises(ValueError):
         DevicePlan(support, silicon, contacts=(interior,))
@@ -279,7 +337,7 @@ def test_material_and_contact_admission_is_exclusive_complete_and_boundary_only(
         DevicePlan(support, silicon, contacts=())
 
 
-def test_oxide_owns_no_carriers_and_gate_keeps_explicit_reference():
+def test_oxide_owns_no_carriers_and_gate_keeps_explicit_reference() -> None:
     support = TransportSupport.interval(np.linspace(0.0, 1e-6, 5))
     silicon, oxide = (
         SemiconductorMaterial.silicon(),
@@ -300,6 +358,7 @@ def test_oxide_owns_no_carriers_and_gate_keeps_explicit_reference():
             MaterialBinding(_zone(support, "Si", [0, 1, 2]), silicon),
             MaterialBinding(_zone(support, "oxide", [3, 4]), oxide),
         ),
+        # ty: ignore[invalid-argument-type]
         donor_density=[1e21, 1e21, 1e21, 0.0, 0.0],
         contacts=contacts,
     )
@@ -315,11 +374,17 @@ def test_oxide_owns_no_carriers_and_gate_keeps_explicit_reference():
         DevicePlan(support, silicon, contacts=contacts)
 
 
-def test_unlike_semiconductor_band_reference_is_not_silently_treated_as_homojunction():
+def test_unlike_semiconductor_band_reference_is_not_silently_treated_as_homojunction() -> (
+    None
+):
+    # ty: ignore[invalid-argument-type]
     support = TransportSupport.interval([0.0, 1.0, 2.0])
     silicon = SemiconductorMaterial.silicon()
     different_gap = eqx.tree_at(
-        lambda material: material.band_gap, silicon, silicon.band_gap * 1.1
+        lambda material: material.band_gap,
+        silicon,
+        # ty: ignore[unsupported-operator]
+        silicon.band_gap * 1.1,
     )
     with pytest.raises(ValueError):
         DevicePlan(
@@ -334,7 +399,7 @@ def test_unlike_semiconductor_band_reference_is_not_silently_treated_as_homojunc
         DevicePlan(support, silicon, contacts=_contacts(support), temperature=400.0)
 
 
-def test_doping_reclosure_updates_mobility_and_contact_neutrality_under_jit():
+def test_doping_reclosure_updates_mobility_and_contact_neutrality_under_jit() -> None:
     mobility = DopingDependentMobility(
         0.01, 0.15, 1e22, 1.0, provenance="test parameters"
     )
@@ -343,11 +408,12 @@ def test_doping_reclosure_updates_mobility_and_contact_neutrality_under_jit():
         SemiconductorMaterial.silicon(),
         mobility,
     )
+    # ty: ignore[invalid-argument-type]
     support = TransportSupport.interval([0.0, 1e-6, 2e-6])
     plan = DevicePlan(support, silicon, donor_density=1e20, contacts=_contacts(support))
 
     @eqx.filter_jit
-    def response(density):
+    def response(density: Any) -> Any:
         changed = plan.with_doping(jnp.full(3, density), jnp.zeros(3))
         seed = changed.equilibrium_coordinates()
         n = changed.intrinsic_density * jnp.exp(seed[:, 0])
@@ -362,7 +428,7 @@ def test_doping_reclosure_updates_mobility_and_contact_neutrality_under_jit():
     np.testing.assert_allclose(derivative, -0.14 / (4 * 1e22), rtol=1e-12)
 
 
-def test_srh_mass_action_and_small_quasi_fermi_departure_remain_resolved():
+def test_srh_mass_action_and_small_quasi_fermi_departure_remain_resolved() -> None:
     n = jnp.asarray([1e16, 1e21])
     ni = jnp.asarray(1e16)
     p = ni**2 / n

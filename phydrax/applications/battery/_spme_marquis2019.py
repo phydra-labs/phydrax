@@ -4,16 +4,17 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import DifferentialProblem
@@ -25,8 +26,10 @@ from ._properties import (
 )
 from ._results import BatteryModelOutput
 from ._spm import (
+    _SpmTransportEvaluation,
     _stable_asinh_ratio,
     _transport,
+    BatteryPropertyLaw,
     PreparedPrescribedCurrentSpm,
     PrescribedCurrentSpmAdapter,
     PrescribedCurrentSpmPlan,
@@ -34,7 +37,15 @@ from ._spm import (
     SpmParameters,
     SpmState,
 )
-from ._through_cell import PreparedThroughCellMesh, ThroughCellRegionPlan
+from ._through_cell import (
+    _ThroughCellEvaluation,
+    PreparedThroughCellMesh,
+    ThroughCellRegionPlan,
+)
+
+
+if TYPE_CHECKING:
+    from ._protocol import BatteryProtocolPlan, BatteryProtocolValues
 
 
 _FARADAY_C_MOL = 96485.33212
@@ -96,7 +107,7 @@ class Marquis2019SpmeParameters(StrictModule):
         transference_number: ConcentrationTemperaturePropertyLaw,
         negative_solid_conductivity_s_m: ArrayLike,
         positive_solid_conductivity_s_m: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(spm_parameters, SpmParameters):
             raise TypeError("spm_parameters must be SpmParameters.")
         separator_thickness = _scalar(separator_thickness_m, "separator_thickness_m")
@@ -206,7 +217,7 @@ class Marquis2019SpmeInitialCondition(StrictModule):
         negative_stoichiometry: ArrayLike,
         positive_stoichiometry: ArrayLike,
         /,
-    ):
+    ) -> None:
         initial = SpmInitialCondition(negative_stoichiometry, positive_stoichiometry)
         self.negative_stoichiometry = initial.negative_stoichiometry
         self.positive_stoichiometry = initial.positive_stoichiometry
@@ -225,7 +236,7 @@ class Marquis2019SpmeState(StrictModule):
         positive_amount_mol: ArrayLike,
         electrolyte_amount_mol: ArrayLike,
         /,
-    ):
+    ) -> None:
         particles = SpmState(negative_amount_mol, positive_amount_mol)
         electrolyte = jnp.asarray(electrolyte_amount_mol)
         if electrolyte.ndim < 1:
@@ -317,7 +328,7 @@ class Marquis2019SpmePlan(StrictModule, NonTrainableState):
         ledger_rate_absolute_tolerance_mol_s: float = 1.0e-12,
         ledger_current_density_absolute_tolerance_a_m2: float = 1.0e-8,
         ledger_relative_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         positive_count = (
             negative_shell_count if positive_shell_count is None else positive_shell_count
         )
@@ -414,7 +425,7 @@ class PreparedMarquis2019Spme(StrictModule, NonTrainableState):
     through_cell: PreparedThroughCellMesh
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: Marquis2019SpmePlan, /):
+    def __init__(self, plan: Marquis2019SpmePlan, /) -> None:
         if not isinstance(plan, Marquis2019SpmePlan):
             raise TypeError("plan must be Marquis2019SpmePlan.")
         spm = plan.spm_plan.prepare()
@@ -490,8 +501,8 @@ class _Marquis2019SpmeEvaluation(StrictModule):
     eq49_applicable: Array
     asymptotic_conditions_satisfied: Array
     domain_valid: Array
-    particle_transport: object
-    electrolyte_transport: object
+    particle_transport: _SpmTransportEvaluation
+    electrolyte_transport: _ThroughCellEvaluation
 
 
 def _check_prepared(
@@ -513,7 +524,7 @@ def _region_mean(values: Array, weights: Array, mask: Array, /) -> Array:
 
 
 def _ocp_second_derivative_concentration(
-    law,
+    law: BatteryPropertyLaw,
     stoichiometry: Array,
     maximum_concentration_mol_m3: Array,
     neighborhood_concentration_mol_m3: Array,
@@ -555,7 +566,7 @@ def _ocp_second_derivative_concentration(
         )
         return jnp.zeros_like(stoichiometry), neighborhood_valid
 
-    def scalar_curvature(theta):
+    def scalar_curvature(theta: Array) -> Array:
         return jax.grad(lambda value: law.evaluate(value, derivative_order=1).values)(
             theta
         )
@@ -941,7 +952,7 @@ def _evaluate(
         & (ce * positive_reaction_number <= threshold)
     )
 
-    def separated_from_bounds(ratio):
+    def separated_from_bounds(ratio: Array) -> Array:
         return (ce <= threshold * ratio) & (ce * ratio <= threshold)
 
     asymptotic_conditions = (
@@ -1205,7 +1216,7 @@ class Marquis2019SpmeAdapter(StrictModule, NonTrainableState):
     observable_names: tuple[str, ...] = eqx.field(static=True)
     observable_units: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self, plan: Marquis2019SpmePlan, /):
+    def __init__(self, plan: Marquis2019SpmePlan, /) -> None:
         if not isinstance(plan, Marquis2019SpmePlan):
             raise TypeError("plan must be Marquis2019SpmePlan.")
         self.plan = plan
@@ -1422,7 +1433,7 @@ class Marquis2019SpmeAdapter(StrictModule, NonTrainableState):
     def ledger(
         self,
         prepared_model: PreparedMarquis2019Spme,
-        native_solution,
+        native_solution: Any,
         runtime_inputs: BatteryRuntimeInputs,
         /,
     ) -> Marquis2019SpmeLedger:
@@ -1476,7 +1487,7 @@ class Marquis2019SpmeAdapter(StrictModule, NonTrainableState):
         )
         electrolyte = evaluation.electrolyte_transport
 
-        def valid_max(values):
+        def valid_max(values: Array) -> Array:
             return jnp.max(jnp.where(valid, jnp.abs(values), 0.0))
 
         maximum_collector_flux = valid_max(electrolyte.collector_flux_residual_mol_m2_s)
@@ -1619,8 +1630,8 @@ def validate_marquis2019_spme_execution(
     prepared_model: PreparedMarquis2019Spme,
     parameters: Marquis2019SpmeParameters,
     initial_condition: Marquis2019SpmeInitialCondition,
-    protocol,
-    protocol_values,
+    protocol: BatteryProtocolPlan,
+    protocol_values: BatteryProtocolValues,
     /,
 ) -> None:
     """Concrete model preflight, using Eq.49/Table6 and native property support.

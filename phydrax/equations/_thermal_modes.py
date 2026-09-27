@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -35,7 +36,10 @@ def _implicit_mode_temperature(
 
 
 @_implicit_mode_temperature.defjvp
-def _implicit_mode_temperature_jvp(primals, tangents):
+def _implicit_mode_temperature_jvp(
+    primals: tuple[Array, Array, Array, Array],
+    tangents: tuple[Array, Array, Array, Array],
+) -> tuple[Array, Array]:
     temperature, _, _, heat_capacity = primals
     _, target_tangent, evaluated_tangent, _ = tangents
     tangent = (target_tangent - evaluated_tangent) / heat_capacity
@@ -75,7 +79,7 @@ class ThermalModeSpec(StrictModule, NonTrainableState):
         translational_work: bool = False,
         minimum_temperature: float = 50.0,
         maximum_temperature: float = 50000.0,
-    ):
+    ) -> None:
         name_ = str(name)
         theta = np.asarray(characteristic_temperatures, dtype=np.float64)
         minimum = float(minimum_temperature)
@@ -225,7 +229,7 @@ class ThermalModeSchema(StrictModule, NonTrainableState):
         species: ChemicalSpeciesSchema,
         modes: Sequence[ThermalModeSpec],
         /,
-    ):
+    ) -> None:
         mode_tuple = tuple(modes)
         if (
             not isinstance(species, ChemicalSpeciesSchema)
@@ -352,7 +356,7 @@ class ThermalModeSchema(StrictModule, NonTrainableState):
         upper_energy = self.evaluate(density, upper).energy_densities
         bracketed = jnp.all((target >= lower_energy) & (target <= upper_energy), axis=-1)
 
-        def body(_, bounds):
+        def body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             low, high = bounds
             midpoint = 0.5 * (low + high)
             energy = self.evaluate(density, midpoint).energy_densities

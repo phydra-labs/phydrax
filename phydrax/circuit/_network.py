@@ -7,11 +7,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from enum import IntEnum
 from math import prod
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -72,7 +73,7 @@ class ScatteringNetworkPolicy(StrictModule):
         compatibility_atol: float = 1e-12,
         residual_tolerance: float = 1e-10,
         linear: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if maximum_channels <= 0 or maximum_matrix_bytes <= 0 or maximum_rhs_bytes <= 0:
             raise ValueError("Resource limits must be positive.")
         if min(compatibility_rtol, compatibility_atol, residual_tolerance) < 0.0:
@@ -152,7 +153,7 @@ class WaveExcitation(StrictModule):
         /,
         *,
         port_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         value = jnp.asarray(incident)
         if value.ndim < 2 or not jnp.issubdtype(value.dtype, jnp.number):
             raise ValueError(
@@ -190,10 +191,25 @@ class ScatteringNetworkResult(StrictModule):
 
 
 class _Flattened:
-    def __init__(self):
+    def __init__(self) -> None:
         self.leaves: list[tuple[tuple[str, ...], AbstractScatteringComponent]] = []
         self.connections: list[tuple[tuple[str, ...], tuple[str, ...], Any]] = []
         self.probes: list[tuple[str, tuple[str, ...]]] = []
+
+
+_CompiledTopology: TypeAlias = tuple[
+    _Flattened,
+    tuple[tuple[str, ...], ...],
+    tuple[WaveReference, ...],
+    tuple[tuple[int, int], ...],
+    tuple[tuple[int, int], ...],
+    tuple[tuple[tuple[int, ...], tuple[int, ...]], ...],
+    tuple[str, ...],
+    tuple[int, ...],
+    tuple[str, ...],
+    tuple[tuple[int, ...], ...],
+    tuple[str, ...],
+]
 
 
 def _flatten_definition(
@@ -248,7 +264,7 @@ def _flatten_definition(
     }
 
 
-def _compile_topology(network: ScatteringNetwork):
+def _compile_topology(network: ScatteringNetwork) -> _CompiledTopology:
     flat = _Flattened()
     external_mapping = _flatten_definition(network, (), (), flat)
     channel_paths: list[tuple[str, ...]] = []

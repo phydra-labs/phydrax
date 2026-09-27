@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 from phydrax.ein import contract
@@ -48,7 +49,7 @@ class InvariantTransferUnitContract(StrictModule, NonTrainableState):
         path_parameter_unit: UnitDefinition,
         invariant_stokes_unit: UnitDefinition,
         /,
-    ):
+    ) -> None:
         if not isinstance(path_parameter_unit, UnitDefinition) or not isinstance(
             invariant_stokes_unit, UnitDefinition
         ):
@@ -158,7 +159,7 @@ class InvariantScalarTransferPlan(StrictModule, NonTrainableState):
         *,
         active: ArrayLike | None = None,
         path_id: str,
-    ):
+    ) -> None:
         lengths = np.asarray(segment_lengths, dtype=np.float64)
         active_host = (
             np.ones(lengths.shape, dtype=np.bool_)
@@ -225,7 +226,9 @@ class InvariantScalarTransferPlan(StrictModule, NonTrainableState):
         emission_step = jnp.where(self.active, emission, 0.0)
         extinction_step = jnp.where(self.active, extinction, 0.0)
 
-        def step(value, segment):
+        def step(
+            value: Array, segment: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array]:
             source, opacity, length = segment
             result = _stable_slab_step(value, source, opacity, length)
             return result, result
@@ -391,7 +394,7 @@ class PolarizedRayPath(StrictModule, NonTrainableState):
         metric_semantic_id: str | None = None,
         metric_numeric_id: str | None = None,
         basis_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(ray_result, GRRayResult):
             raise TypeError("ray_result must be a GRRayResult.")
         if not isinstance(metric, LorentzianMetric) or metric.chart.dimension != 4:
@@ -595,7 +598,7 @@ class PolarizedInvariantTransferPlan(StrictModule, NonTrainableState):
         /,
         *,
         cone_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(path, PolarizedRayPath):
             raise TypeError("path must be a PolarizedRayPath.")
         if not isinstance(units, InvariantTransferUnitContract):
@@ -684,7 +687,9 @@ class PolarizedInvariantTransferPlan(StrictModule, NonTrainableState):
         )
         lengths = jnp.where(self.active, self.segment_lengths, 0.0)
 
-        def step(carry, segment):
+        def step(
+            carry: tuple[Array, Array], segment: tuple[Array, Array, Array]
+        ) -> tuple[tuple[Array, Array], Array]:
             stokes, prior_converged = carry
             source, operator, length = segment
             intensity_scale = jnp.maximum(

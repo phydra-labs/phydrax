@@ -5,21 +5,24 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..nn.parameters import ParameterSubspace
+from ..typing import parse
 
 
-MCMCKineticKind = Literal["diagonal", "blocks", "diagonal_low_rank"]
+MCMCKineticKind: TypeAlias = Literal["diagonal", "blocks", "diagonal_low_rank"]
 
 
 class MCMCMassAdaptationPlan(StrictModule):
@@ -40,9 +43,8 @@ class MCMCMassAdaptationPlan(StrictModule):
         max_block_size: int = 0,
         rank: int = 0,
         memory_cap_bytes: int = 2**30,
-    ):
-        if kind not in ("diagonal", "blocks", "diagonal_low_rank"):
-            raise ValueError("Unknown MCMC kinetic kind.")
+    ) -> None:
+        kind = parse(kind, MCMCKineticKind, "kind")
         blocks = tuple(tuple(str(path) for path in block) for block in parameter_blocks)
         cap = int(memory_cap_bytes)
         if cap <= 0:

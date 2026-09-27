@@ -3,9 +3,11 @@
 #
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Self
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..ein import contract
 
@@ -43,7 +45,7 @@ class LinearFE2Plan:
         stiffness: ArrayLike,
         measure_weights: ArrayLike,
         /,
-    ):
+    ) -> Self:
         localization = jnp.asarray(strain_localization)
         moduli = jnp.asarray(stiffness)
         weights = jnp.asarray(measure_weights)

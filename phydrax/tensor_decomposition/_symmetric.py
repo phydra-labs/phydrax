@@ -10,7 +10,8 @@ from typing import Any, NamedTuple
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..ein import contract
 from ..linalg import (
@@ -602,7 +603,7 @@ def _refine_candidate(
         complex_parameters,
     )
 
-    def residual(parameters, _arguments):
+    def residual(parameters: Array, _arguments: object) -> Array:
         weights, factors = _unpack_components(
             parameters,
             problem.rank,

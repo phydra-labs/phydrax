@@ -3,19 +3,21 @@
 #
 
 from collections.abc import Mapping, Sequence
-from typing import Literal, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
 from ...graph import batch_graphs, GraphIR, LayoutPlan
+from ...typing import parse, PRNGKey
 from .._coordinate import CoordinateSpec
 from .._domain import JointFactor
 from .._factor_component import FactorComponent
@@ -40,15 +42,16 @@ from ._dataset import (
 
 
 if TYPE_CHECKING:
+    from .._components import DomainComponent
     from .._function import DomainFunction
 
 
-GraphTrajectoryMeasure = Literal[
+GraphTrajectoryMeasure: TypeAlias = Literal[
     "case_time_probability",
     "time_integral_average",
     "time_integral_sum",
 ]
-GraphTrajectorySampling = Literal["case_time_uniform", "observation_uniform"]
+GraphTrajectorySampling: TypeAlias = Literal["case_time_uniform", "observation_uniform"]
 
 GRAPH_TRAJECTORY_TIME_INDEX_KEY = "__phydrax_graph_trajectory_time_index__"
 
@@ -110,12 +113,12 @@ def _single_axis_for_graph_trajectory(
 
 
 def _sample_cases_uniform(
-    domain: "GraphTrajectoryDatasetDomain", n: int, key: Key[Array, ""], /
+    domain: "GraphTrajectoryDatasetDomain", n: int, key: PRNGKey, /
 ) -> Array:
     return jr.randint(key, shape=(n,), minval=0, maxval=domain.size, dtype=jnp.int32)
 
 
-def _sample_valid_cases(valid: Array, n: int, key: Key[Array, ""], /) -> Array:
+def _sample_valid_cases(valid: Array, n: int, key: PRNGKey, /) -> Array:
     valid_np = np.asarray(valid, dtype=np.bool_)
     if not bool(valid_np.any()):
         raise ValueError("No graph trajectories are valid for this fixed time.")
@@ -126,10 +129,10 @@ def _sample_valid_cases(valid: Array, n: int, key: Key[Array, ""], /) -> Array:
 
 def _component_times(
     domain: "GraphTrajectoryDatasetDomain",
-    component,
+    component: "DomainComponent",
     case_indices: Array,
     n: int,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> tuple[Array, Array]:
     comp = component.spec.selection_for(domain.time_label)
@@ -219,7 +222,7 @@ class GraphTrajectoryDatasetDomain(JointFactor):
         sampling: GraphTrajectorySampling = "case_time_uniform",
         layout: LayoutPlan | None = None,
         validate: bool = True,
-    ):
+    ) -> None:
         """Create a finite graph-trajectory domain.
 
         Parameters:
@@ -256,18 +259,8 @@ class GraphTrajectoryDatasetDomain(JointFactor):
             raise ValueError("dt must be positive.")
         start_arr = _as_scalar("start", start)
 
-        if measure not in (
-            "case_time_probability",
-            "time_integral_average",
-            "time_integral_sum",
-        ):
-            raise ValueError(
-                "measure must be 'case_time_probability', 'time_integral_average', or 'time_integral_sum'."
-            )
-        if sampling not in ("case_time_uniform", "observation_uniform"):
-            raise ValueError(
-                "sampling must be 'case_time_uniform' or 'observation_uniform'."
-            )
+        measure = parse(measure, GraphTrajectoryMeasure, "measure")
+        sampling = parse(sampling, GraphTrajectorySampling, "sampling")
 
         flat_case_parts: list[Array] = []
         flat_time_parts: list[Array] = []
@@ -488,7 +481,7 @@ class GraphTrajectoryDatasetDomain(JointFactor):
         times: ArrayLike | Sequence[float],
         /,
         *,
-        component,
+        component: "DomainComponent",
         structure: SampleLayout | None = None,
         time_indices: ArrayLike | Sequence[int] | None = None,
     ) -> GraphBatch:
@@ -583,18 +576,18 @@ class GraphTrajectoryDatasetDomain(JointFactor):
 
     def GraphModel(
         self,
-        model,
+        model: Any,
         /,
         *,
-        input_fn=None,
-        edge_input_fn=None,
-        global_input_fn=None,
+        input_fn: Any = None,
+        edge_input_fn: Any = None,
+        global_input_fn: Any = None,
         output: Literal["nodes", "edges", "globals"] = "nodes",
         input_key: str | None = None,
         edge_input_key: str | None = None,
         global_input_key: str | None = None,
         output_key: str | None = None,
-    ):
+    ) -> "DomainFunction":
         """Wrap a `GraphIR -> GraphIR` model as a graph-time `DomainFunction`.
 
         The model sees the sampled batched graph topology and may also consume the
@@ -622,20 +615,20 @@ class GraphTrajectoryDatasetDomain(JointFactor):
 
     def GraphRolloutModel(
         self,
-        stepper,
+        stepper: Any,
         /,
         *,
         steps: int,
         include_initial: bool = True,
         feature: Literal["nodes", "edges", "globals"] = "nodes",
-        input_fn=None,
-        edge_input_fn=None,
-        global_input_fn=None,
+        input_fn: Any = None,
+        edge_input_fn: Any = None,
+        global_input_fn: Any = None,
         input_key: str | None = None,
         edge_input_key: str | None = None,
         global_input_key: str | None = None,
         output_key: str | None = None,
-    ):
+    ) -> "DomainFunction":
         """Wrap an autoregressive graph rollout as a graph-time `DomainFunction`.
 
         Use this for graph sequence models whose state is advanced by repeatedly
@@ -683,12 +676,12 @@ class GraphTrajectoryDatasetDomain(JointFactor):
 
 
 def sample_graph_trajectory_component(
-    component,
+    component: "DomainComponent",
     num_points: NumPoints,
     *,
     structure: SampleLayout,
     sampler: str = "latin_hypercube",
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> GraphBatch:
     del sampler
     domain = component.domain
@@ -742,7 +735,7 @@ def sample_graph_trajectory_component(
 
 
 def graph_trajectory_default_quadrature_total_weight(
-    component, batch: GraphBatch, /
+    component: "DomainComponent", batch: GraphBatch, /
 ) -> cx.AxisArray | None:
     domain = component.domain
     if not isinstance(domain, GraphTrajectoryDatasetDomain):
@@ -775,7 +768,7 @@ def graph_trajectory_default_quadrature_total_weight(
 
 
 def graph_trajectory_quadrature_weights_by_axis(
-    component, batch: GraphBatch, /
+    component: "DomainComponent", batch: GraphBatch, /
 ) -> Mapping[str, cx.AxisArray] | None:
     domain = component.domain
     if not isinstance(domain, GraphTrajectoryDatasetDomain):

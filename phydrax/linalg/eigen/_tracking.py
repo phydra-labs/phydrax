@@ -13,7 +13,8 @@ import jax
 import jax.core as jax_core
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -52,7 +53,7 @@ class HermitianEigenspaceTrackingPolicy(StrictModule):
         minimum_assignment_margin: float = 1e-6,
         orthogonality_tolerance: float = 1e-8,
         maximum_dimension: int = 4096,
-    ):
+    ) -> None:
         values = {
             "degeneracy_absolute": degeneracy_absolute,
             "degeneracy_relative": degeneracy_relative,

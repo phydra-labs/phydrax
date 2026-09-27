@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -19,7 +21,7 @@ from phydrax.applications.cellular_mechanics._membrane import (
 jax.config.update("jax_enable_x64", True)
 
 
-def _tetrahedron():
+def _tetrahedron() -> Any:
     vertices = np.asarray(
         [[1.0, 1.0, 1.0], [-1.0, -1.0, 1.0], [-1.0, 1.0, -1.0], [1.0, -1.0, -1.0]]
     ) / np.sqrt(3.0)
@@ -27,7 +29,7 @@ def _tetrahedron():
     return vertices, faces
 
 
-def _octahedron():
+def _octahedron() -> Any:
     vertices = np.asarray(
         [
             [1.0, 0.0, 0.0],
@@ -54,7 +56,7 @@ def _octahedron():
     return vertices, faces
 
 
-def _icosphere(level: int):
+def _icosphere(level: int) -> Any:
     ratio = (1.0 + np.sqrt(5.0)) / 2.0
     vertices = np.asarray(
         [
@@ -130,7 +132,7 @@ def _icosphere(level: int):
     return vertices, faces
 
 
-def _prepared(*, species: bool = False):
+def _prepared(*, species: bool = False) -> Any:
     vertices, faces = _octahedron()
     keywords = {}
     if species:
@@ -152,12 +154,13 @@ def _prepared(*, species: bool = False):
         tension=0.05,
         pressure=0.07,
         mobility=np.linspace(0.4, 0.9, 6),
+        # ty: ignore[invalid-argument-type]
         **keywords,
     )
     return plan.prepare(vertices)
 
 
-def test_plan_rejects_nonmanifold_and_inconsistently_oriented_topology():
+def test_plan_rejects_nonmanifold_and_inconsistently_oriented_topology() -> None:
     vertices, faces = _tetrahedron()
     del vertices
     open_faces = faces[:-1]
@@ -169,7 +172,7 @@ def test_plan_rejects_nonmanifold_and_inconsistently_oriented_topology():
         BiomembranePlan(reversed_face)
 
 
-def test_energy_is_rigid_motion_invariant_and_internal_resultants_vanish():
+def test_energy_is_rigid_motion_invariant_and_internal_resultants_vanish() -> None:
     prepared = _prepared()
     state = prepared.state()
     angle = 0.43
@@ -199,7 +202,7 @@ def test_energy_is_rigid_motion_invariant_and_internal_resultants_vanish():
     np.testing.assert_allclose(original.geometry.local_area_residual, 0.0, atol=1.0e-14)
 
 
-def test_spherical_helfrich_energy_converges_to_eight_pi():
+def test_spherical_helfrich_energy_converges_to_eight_pi() -> None:
     errors = []
     for level in (0, 1, 2):
         vertices, faces = _icosphere(level)
@@ -210,7 +213,7 @@ def test_spherical_helfrich_energy_converges_to_eight_pi():
     assert errors[2] < 0.8
 
 
-def test_force_is_negative_energy_gradient_by_virtual_work():
+def test_force_is_negative_energy_gradient_by_virtual_work() -> None:
     prepared = _prepared(species=True)
     mass = 0.03 + 0.01 * np.arange(12, dtype=np.float64).reshape(6, 2)
     state = prepared.state(species_mass=mass)
@@ -228,7 +231,7 @@ def test_force_is_negative_energy_gradient_by_virtual_work():
     np.testing.assert_allclose(finite_difference, virtual_work, rtol=3.0e-6, atol=3.0e-7)
 
 
-def test_surface_diffusion_reaction_conserves_total_species_mass():
+def test_surface_diffusion_reaction_conserves_total_species_mass() -> None:
     prepared = _prepared(species=True)
     mass = np.asarray(
         [
@@ -248,7 +251,7 @@ def test_surface_diffusion_reaction_conserves_total_species_mass():
     assert not np.allclose(result.accepted_state.species_mass, mass)
 
 
-def test_thermal_increment_has_fdt_covariance_and_stable_rng_identity():
+def test_thermal_increment_has_fdt_covariance_and_stable_rng_identity() -> None:
     vertices, faces = _tetrahedron()
     prepared = BiomembranePlan(faces, bending_rigidity=0.0, mobility=0.7).prepare(
         vertices
@@ -278,7 +281,7 @@ def test_thermal_increment_has_fdt_covariance_and_stable_rng_identity():
     assert first.evidence.rng_identity == repeated.evidence.rng_identity
 
 
-def test_split_transaction_conserves_fields_and_changes_preparation_identity():
+def test_split_transaction_conserves_fields_and_changes_preparation_identity() -> None:
     prepared = _prepared(species=True)
     mass = 0.02 + 0.005 * np.arange(12).reshape(6, 2)
     state = prepared.state(species_mass=mass)
@@ -309,7 +312,7 @@ def test_split_transaction_conserves_fields_and_changes_preparation_identity():
     )
 
 
-def test_rejected_remesh_rolls_back_exact_source_objects():
+def test_rejected_remesh_rolls_back_exact_source_objects() -> None:
     prepared = _prepared(species=True)
     state = prepared.state(species_mass=np.full((6, 2), 0.1))
     proposal = prepared.propose_split(state, (100, 102))
@@ -326,11 +329,12 @@ def test_rejected_remesh_rolls_back_exact_source_objects():
     assert result.state is state
 
 
-def test_state_and_remesh_evidence_are_bound_to_preparation_epoch():
+def test_state_and_remesh_evidence_are_bound_to_preparation_epoch() -> None:
     vertices, faces = _tetrahedron()
     first = BiomembranePlan(faces, species_diffusivity=(0.1,)).prepare(vertices)
     second = BiomembranePlan(
         faces,
+        # ty: ignore[invalid-argument-type]
         vertex_ids=(10, 11, 12, 13),
         species_diffusivity=(0.1,),
     ).prepare(vertices)
@@ -352,7 +356,7 @@ def test_state_and_remesh_evidence_are_bound_to_preparation_epoch():
         first.commit_remesh(second_proposal, evidence)
 
 
-def test_split_preserves_uniform_concentration_and_transferred_rest_area():
+def test_split_preserves_uniform_concentration_and_transferred_rest_area() -> None:
     vertices, faces = _tetrahedron()
     vertices = vertices.copy()
     vertices[0] *= 1.04
@@ -382,7 +386,7 @@ def test_split_preserves_uniform_concentration_and_transferred_rest_area():
     )
 
 
-def test_constant_active_normal_traction_has_zero_closed_surface_resultant():
+def test_constant_active_normal_traction_has_zero_closed_surface_resultant() -> None:
     vertices, faces = _tetrahedron()
     vertices = vertices.copy()
     vertices[0] *= 1.03
@@ -393,7 +397,7 @@ def test_constant_active_normal_traction_has_zero_closed_surface_resultant():
     np.testing.assert_allclose(np.sum(evaluation.active_force, axis=0), 0.0, atol=2.0e-14)
 
 
-def test_collapse_keeps_removed_patch_material_in_its_one_ring():
+def test_collapse_keeps_removed_patch_material_in_its_one_ring() -> None:
     vertices, faces = _octahedron()
     modulus = np.arange(1.0, 9.0)
     prepared = BiomembranePlan(
@@ -426,7 +430,7 @@ def test_collapse_keeps_removed_patch_material_in_its_one_ring():
         )
 
 
-def test_centered_volume_is_invariant_at_large_global_offset():
+def test_centered_volume_is_invariant_at_large_global_offset() -> None:
     vertices, faces = _tetrahedron()
     prepared = BiomembranePlan(faces).prepare(vertices)
     shifted = vertices + np.asarray((1.0e9, -2.0e9, 3.0e9))
@@ -439,11 +443,12 @@ def test_centered_volume_is_invariant_at_large_global_offset():
     )
 
 
-def test_transport_rejects_nonfinite_derived_geometry_and_is_conservative():
+def test_transport_rejects_nonfinite_derived_geometry_and_is_conservative() -> None:
     vertices, faces = _tetrahedron()
     prepared = BiomembranePlan(
         faces,
         species_diffusivity=(0.1,),
+        # ty: ignore[invalid-argument-type]
         reaction_matrix=((1.0e-13,),),
     ).prepare(vertices)
     np.testing.assert_allclose(
@@ -455,7 +460,7 @@ def test_transport_rejects_nonfinite_derived_geometry_and_is_conservative():
     assert not bool(result.evidence.finite)
 
 
-def test_transport_uses_signed_cotangent_on_deformed_non_delaunay_edge():
+def test_transport_uses_signed_cotangent_on_deformed_non_delaunay_edge() -> None:
     vertices, faces = _tetrahedron()
     prepared = BiomembranePlan(faces, species_diffusivity=(0.3,)).prepare(vertices)
     deformed = vertices.copy()
@@ -495,7 +500,7 @@ def test_transport_uses_signed_cotangent_on_deformed_non_delaunay_edge():
     )
 
 
-def test_invalid_species_state_cannot_be_certified_by_remeshing():
+def test_invalid_species_state_cannot_be_certified_by_remeshing() -> None:
     prepared = _prepared(species=True)
     mass = np.full((6, 2), 0.1)
     mass[0, 0] = -0.01
@@ -509,7 +514,7 @@ def test_invalid_species_state_cannot_be_certified_by_remeshing():
     assert not bool(evidence.accepted)
 
 
-def test_vertex_link_and_shared_edge_intersection_guards_are_explicit():
+def test_vertex_link_and_shared_edge_intersection_guards_are_explicit() -> None:
     _, tetra_faces = _tetrahedron()
     second = tetra_faces + 3
     second[second == 3] = 0

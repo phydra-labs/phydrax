@@ -27,11 +27,11 @@ from tests._control_systems import (
 )
 
 
-def _grid():
+def _grid() -> Any:
     return TimeGrid(jnp.asarray([0.0, 0.5, 1.0]), time_id="time:grid")
 
 
-def test_control_foundation_constructor_guards_are_explicit():
+def test_control_foundation_constructor_guards_are_explicit() -> None:
     with pytest.raises(ValueError, match="at least two"):
         TimeGrid(jnp.asarray([0.0]), time_id="short")
     with pytest.raises(ValueError, match="strictly increasing"):
@@ -62,7 +62,7 @@ def test_control_foundation_constructor_guards_are_explicit():
         )
 
 
-def test_discrete_rollout_preserves_case_time_axes_and_gradients():
+def test_discrete_rollout_preserves_case_time_axes_and_gradients() -> None:
     grid = _grid()
     dynamics = make_discrete_control_dynamics(
         lambda time, state, control, args: state + control,
@@ -114,7 +114,7 @@ def test_discrete_rollout_preserves_case_time_axes_and_gradients():
     assert np.allclose(np.asarray(gradient), np.asarray([[7.0], [8.0]]))
 
 
-def test_grid_bound_parameterization_rejects_same_size_different_physical_grid():
+def test_grid_bound_parameterization_rejects_same_size_different_physical_grid() -> None:
     problem_grid = _grid()
     other_grid = TimeGrid(
         jnp.asarray([0.0, 0.25, 1.0]),
@@ -145,7 +145,7 @@ def test_grid_bound_parameterization_rejects_same_size_different_physical_grid()
         problem.rollout(parameterization, jnp.zeros((2, 1)))
 
 
-def test_discrete_rollout_masks_failed_feedback_policy_cases():
+def test_discrete_rollout_masks_failed_feedback_policy_cases() -> None:
     grid = _grid()
     dynamics = make_discrete_control_dynamics(
         lambda time, state, control, args: jnp.full_like(state, jnp.nan),
@@ -175,7 +175,7 @@ def test_discrete_rollout_masks_failed_feedback_policy_cases():
     assert np.isnan(np.asarray(trajectory.controls[1])).all()
 
 
-def test_sampled_loss_and_sampled_feasibility_remain_distinct():
+def test_sampled_loss_and_sampled_feasibility_remain_distinct() -> None:
     grid = _grid()
     dynamics = make_discrete_control_dynamics(
         lambda time, state, control, args: state + control,
@@ -208,7 +208,7 @@ def test_sampled_loss_and_sampled_feasibility_remain_distinct():
     assert bool(result.valid)
 
 
-def test_differential_rollout_is_differentiable_and_propagates_backend_failure():
+def test_differential_rollout_is_differentiable_and_propagates_backend_failure() -> None:
     grid = _grid()
     dynamics = make_differential_control_dynamics(
         lambda time, state, control, args: control,
@@ -281,7 +281,7 @@ def test_differential_rollout_is_differentiable_and_propagates_backend_failure()
     assert "maximum number of solver steps" in str(failed.backend_status)
 
 
-def test_differential_failed_feedback_reconstruction_masks_invalid_states():
+def test_differential_failed_feedback_reconstruction_masks_invalid_states() -> None:
     grid = _grid()
     dynamics = make_differential_control_dynamics(
         lambda time, state, control, args: -state + control,
@@ -316,10 +316,10 @@ def test_differential_failed_feedback_reconstruction_masks_invalid_states():
     assert np.isnan(np.asarray(trajectory.controls[1])).all()
 
 
-def test_differential_rollout_solves_declared_cases_independently():
+def test_differential_rollout_solves_declared_cases_independently() -> None:
     grid = _grid()
 
-    def vector_field(time, state, control, args):
+    def vector_field(time: Any, state: Any, control: Any, args: Any) -> Any:
         del time, control, args
         return jnp.where(
             state[0] > 5.0,

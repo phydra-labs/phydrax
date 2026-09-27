@@ -15,7 +15,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -222,7 +223,7 @@ class PeriodicWaveProductionMethod(
 
     prepared: PreparedPeriodicWaveDarkMatter
 
-    def __init__(self, prepared: PreparedPeriodicWaveDarkMatter, /):
+    def __init__(self, prepared: PreparedPeriodicWaveDarkMatter, /) -> None:
         if not isinstance(prepared, PreparedPeriodicWaveDarkMatter):
             raise TypeError("prepared must be PreparedPeriodicWaveDarkMatter.")
         schedule, step, count, tolerance = _fixed_schedule(
@@ -312,7 +313,7 @@ class RareSIDMProductionState(StrictModule):
         prng_root: ArrayLike,
         event_epoch: ArrayLike = 0,
         /,
-    ):
+    ) -> None:
         if not isinstance(particles, CosmologicalParticleState):
             raise TypeError("particles must be CosmologicalParticleState.")
         key_data = jnp.asarray(jr.key_data(prng_root), dtype=jnp.uint32)
@@ -349,7 +350,7 @@ class RareSIDMProductionMethod(AbstractScheduledCosmologyProductionMethod):
         plan: CosmologicalSIDMPlan,
         background: FLRWBackground,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, CosmologicalSIDMPlan):
             raise TypeError("plan must be CosmologicalSIDMPlan.")
         if not isinstance(background, FLRWBackground):

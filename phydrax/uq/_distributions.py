@@ -5,14 +5,19 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._probability import AbstractProbabilityLaw
+
+
+if TYPE_CHECKING:
+    from ..domain import ReferenceTransport
 
 
 class AbstractDistribution(AbstractProbabilityLaw):
@@ -31,7 +36,7 @@ class AbstractDistribution(AbstractProbabilityLaw):
         return "lebesgue"
 
     @abstractmethod
-    def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: Array, sample_shape: tuple[int, ...] = ()) -> Array:
         raise NotImplementedError
 
     @abstractmethod
@@ -71,7 +76,7 @@ class Uniform(AbstractDistribution):
     low: Array
     high: Array
 
-    def __init__(self, low: ArrayLike, high: ArrayLike):
+    def __init__(self, low: ArrayLike, high: ArrayLike) -> None:
         low_array = jnp.asarray(low, dtype=jnp.float64).reshape(())
         high_array = jnp.asarray(high, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(low_array)) or not bool(jnp.isfinite(high_array)):
@@ -85,7 +90,7 @@ class Uniform(AbstractDistribution):
     def density_measure_kind(self) -> Literal["lebesgue"]:
         return "lebesgue"
 
-    def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: Array, sample_shape: tuple[int, ...] = ()) -> Array:
         return jr.uniform(
             key,
             shape=tuple(sample_shape),
@@ -123,7 +128,7 @@ class Uniform(AbstractDistribution):
         value_array = jnp.asarray(value, dtype=jnp.float64)
         return jnp.clip((value_array - self.low) / (self.high - self.low), 0.0, 1.0)
 
-    def reference_transport(self):
+    def reference_transport(self) -> ReferenceTransport:
         from ..domain import ReferenceTransport, ReferenceTransportEvidence
 
         return ReferenceTransport(
@@ -146,7 +151,7 @@ class Normal(AbstractDistribution):
     location: Array
     scale: Array
 
-    def __init__(self, location: ArrayLike, scale: ArrayLike):
+    def __init__(self, location: ArrayLike, scale: ArrayLike) -> None:
         location_array, scale_array = jnp.broadcast_arrays(
             jnp.asarray(location, dtype=jnp.float64),
             jnp.asarray(scale, dtype=jnp.float64),
@@ -166,7 +171,7 @@ class Normal(AbstractDistribution):
     def batch_shape(self) -> tuple[int, ...]:
         return tuple(self.location.shape)
 
-    def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: Array, sample_shape: tuple[int, ...] = ()) -> Array:
         shape = tuple(sample_shape) + self.batch_shape
         return self.location + self.scale * jr.normal(
             key, shape=shape, dtype=self.location.dtype
@@ -205,7 +210,7 @@ class Normal(AbstractDistribution):
         ) / self.scale
         return jsp.special.ndtr(standardized)
 
-    def reference_transport(self):
+    def reference_transport(self) -> ReferenceTransport:
         from ..domain import ReferenceTransport, ReferenceTransportEvidence
 
         return ReferenceTransport(
@@ -228,7 +233,7 @@ class LogNormal(AbstractDistribution):
     location: Array
     scale: Array
 
-    def __init__(self, location: ArrayLike, scale: ArrayLike):
+    def __init__(self, location: ArrayLike, scale: ArrayLike) -> None:
         location_array = jnp.asarray(location, dtype=jnp.float64).reshape(())
         scale_array = jnp.asarray(scale, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(location_array)):
@@ -242,7 +247,7 @@ class LogNormal(AbstractDistribution):
     def density_measure_kind(self) -> Literal["lebesgue"]:
         return "lebesgue"
 
-    def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: Array, sample_shape: tuple[int, ...] = ()) -> Array:
         normal = self.location + self.scale * jr.normal(
             key, shape=tuple(sample_shape), dtype=self.location.dtype
         )
@@ -292,7 +297,7 @@ class LogNormal(AbstractDistribution):
         standardized = (jnp.log(value_array) - self.location) / self.scale
         return jnp.where(value_array > 0.0, jsp.special.ndtr(standardized), 0.0)
 
-    def reference_transport(self):
+    def reference_transport(self) -> ReferenceTransport:
         from ..domain import ReferenceTransport, ReferenceTransportEvidence
 
         return ReferenceTransport(
@@ -320,7 +325,7 @@ class EmpiricalDistribution(AbstractDistribution):
         self,
         values: ArrayLike,
         probabilities: ArrayLike | None = None,
-    ):
+    ) -> None:
         values_array = jnp.asarray(values, dtype=jnp.float64)
         if values_array.ndim != 1 or values_array.shape[0] <= 0:
             raise ValueError("Empirical values must be a non-empty 1D array.")
@@ -352,7 +357,7 @@ class EmpiricalDistribution(AbstractDistribution):
     def density_measure_kind(self) -> Literal["counting"]:
         return "counting"
 
-    def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: Array, sample_shape: tuple[int, ...] = ()) -> Array:
         indices = jr.choice(
             key,
             self.values.shape[0],

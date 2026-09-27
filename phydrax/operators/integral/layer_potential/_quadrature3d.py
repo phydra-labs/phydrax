@@ -4,9 +4,12 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ....integration import (
     adaptive_interval_callable,
@@ -17,6 +20,11 @@ from ....integration import (
     interval_rule_data,
 )
 from ._surface3d import interpolate_surface_panel_density, SurfacePanelization3D
+
+
+if TYPE_CHECKING:
+    from ._helmholtz3d import HelmholtzLayerPotential3D
+    from ._laplace3d import LaplaceLayerPotential3D
 
 
 def _target_reference_cell(
@@ -43,7 +51,7 @@ def _target_reference_cell(
 
 
 def evaluate_single_layer_self_triangle_3d(
-    potential,
+    potential: LaplaceLayerPotential3D | HelmholtzLayerPotential3D,
     panel_id: int,
     target_reference: ArrayLike,
     interval_plan: AdaptiveQuadraturePlan,
@@ -155,7 +163,7 @@ def evaluate_single_layer_self_triangle_3d(
 
 
 def evaluate_double_layer_self_triangle_3d(
-    potential,
+    potential: LaplaceLayerPotential3D | HelmholtzLayerPotential3D,
     panel_id: int,
     target_reference: ArrayLike,
     interval_plan: AdaptiveQuadraturePlan,

@@ -8,7 +8,7 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -40,7 +40,7 @@ class VortexCapacityGrowthPlan(StrictModule, NonTrainableState):
     maximum_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, /, *, growth_factor: float = 2.0, maximum_capacity: int):
+    def __init__(self, /, *, growth_factor: float = 2.0, maximum_capacity: int) -> None:
         if (
             not math.isfinite(float(growth_factor))
             or float(growth_factor) <= 1.0
@@ -105,7 +105,7 @@ class VortexCapacityGrowthPlan(StrictModule, NonTrainableState):
         )
         padding = request.selected_capacity - old_plan.capacity
 
-        def pad(value, fill):
+        def pad(value: Array, fill: float | bool) -> Array:
             return jnp.pad(
                 value,
                 ((0, padding),) + ((0, 0),) * (value.ndim - 1),

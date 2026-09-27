@@ -13,6 +13,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...stochastic._state_space import StateSpaceProblem
 from ...uq._conditional_volatility import (
+    ConditionalVolatilityKind,
     fit_garch as fit_garch_arrays,
     fit_har as fit_har_arrays,
     GARCHFit as GenericGARCHFit,
@@ -53,7 +54,7 @@ class GARCHDefinition(StrictModule):
     maximum_steps: int = eqx.field(static=True)
     definition_id: str = eqx.field(static=True)
 
-    def __init__(self, *, maximum_steps: int = 128):
+    def __init__(self, *, maximum_steps: int = 128) -> None:
         steps = int(maximum_steps)
         if steps < 1:
             raise ValueError("maximum_steps must be positive.")
@@ -67,7 +68,7 @@ class GJRDefinition(StrictModule):
     maximum_steps: int = eqx.field(static=True)
     definition_id: str = eqx.field(static=True)
 
-    def __init__(self, *, maximum_steps: int = 128):
+    def __init__(self, *, maximum_steps: int = 128) -> None:
         steps = int(maximum_steps)
         if steps < 1:
             raise ValueError("maximum_steps must be positive.")
@@ -81,7 +82,7 @@ class EGARCHDefinition(StrictModule):
     maximum_steps: int = eqx.field(static=True)
     definition_id: str = eqx.field(static=True)
 
-    def __init__(self, *, maximum_steps: int = 128):
+    def __init__(self, *, maximum_steps: int = 128) -> None:
         steps = int(maximum_steps)
         if steps < 1:
             raise ValueError("maximum_steps must be positive.")
@@ -103,7 +104,7 @@ class HARDefinition(StrictModule):
         windows: tuple[int, ...] = (1, 5, 22),
         include_intercept: bool = True,
         ridge: float = 0.0,
-    ):
+    ) -> None:
         windows_ = tuple(windows)
         ridge_ = float(ridge)
         if not windows_ or any(window < 1 for window in windows_):
@@ -128,7 +129,9 @@ class StochasticVolatilityDefinition(StrictModule):
     covariance_regularization: float = eqx.field(static=True)
     definition_id: str = eqx.field(static=True)
 
-    def __init__(self, model_id: str, /, *, covariance_regularization: float = 0.0):
+    def __init__(
+        self, model_id: str, /, *, covariance_regularization: float = 0.0
+    ) -> None:
         if not isinstance(model_id, str) or not model_id.strip():
             raise ValueError("model_id must be nonempty.")
         regularization = float(covariance_regularization)
@@ -180,7 +183,7 @@ def _fit_conditional(
     definition: GARCHDefinition | GJRDefinition | EGARCHDefinition,
     law: PhysicalLaw,
     series_index: int,
-    kind: str,
+    kind: ConditionalVolatilityKind,
 ) -> GARCHFit:
     _physical(law)
     if not isinstance(returns, ReturnResult):

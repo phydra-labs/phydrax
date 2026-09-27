@@ -9,6 +9,8 @@ from collections.abc import Mapping, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -85,7 +87,7 @@ class FiniteElementBoundaryPatch(StrictModule, NonTrainableState):
         domain: IntegrationDomain,
         boundary: AbstractConservationBoundary,
         /,
-    ):
+    ) -> None:
         patch_name = _canonical_patch_name(name)
         if not isinstance(domain, IntegrationDomain) or domain.kind != "exterior_facet":
             raise TypeError("Finite-element boundary patches require an exterior domain.")
@@ -116,14 +118,14 @@ class FiniteElementPeriodicTransform(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        coordinate_matrix,
-        coordinate_offset,
+        coordinate_matrix: ArrayLike,
+        coordinate_offset: ArrayLike,
         orientation: FacetOrientationAction,
         /,
         *,
-        component_matrix=None,
+        component_matrix: ArrayLike | None = None,
         tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         matrix = np.asarray(coordinate_matrix, dtype=np.float64)
         offset = np.asarray(coordinate_offset, dtype=np.float64)
         if (
@@ -174,14 +176,14 @@ class FiniteElementPeriodicTransform(StrictModule, NonTrainableState):
             }
         )
 
-    def map_coordinates(self, coordinates, /):
+    def map_coordinates(self, coordinates: ArrayLike, /) -> Array:
         values = jnp.asarray(coordinates)
         return (
             ein.contract("ij,...j->...i", self.coordinate_matrix, values, backend="jax")
             + self.coordinate_offset
         )
 
-    def map_components(self, values, /):
+    def map_components(self, values: ArrayLike, /) -> Array:
         data = jnp.asarray(values)
         if self.component_matrix.shape == (1, 1):
             return data
@@ -205,7 +207,7 @@ class FiniteElementPeriodicFacetPair(StrictModule, NonTrainableState):
         /,
         *,
         transform: FiniteElementPeriodicTransform | None = None,
-    ):
+    ) -> None:
         owner = _facet_id(owner_facet, "owner_facet")
         neighbor = _facet_id(neighbor_facet, "neighbor_facet")
         if owner == neighbor:
@@ -244,7 +246,7 @@ class FiniteElementBoundarySet(StrictModule, NonTrainableState):
         /,
         *,
         periodic_pairs: Sequence[FiniteElementPeriodicFacetPair] = (),
-    ):
+    ) -> None:
         if not isinstance(discretization, FiniteElementDiscretization):
             raise TypeError("discretization must be a FiniteElementDiscretization.")
         if not isinstance(physical, Mapping):

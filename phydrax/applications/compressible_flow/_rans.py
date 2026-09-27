@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -35,7 +36,7 @@ class PreparedWallDistanceField(StrictModule, NonTrainableState):
     geometry_id: str = eqx.field(static=True)
     field_id: str = eqx.field(static=True)
 
-    def __init__(self, distance: ArrayLike, /, *, geometry_id: str):
+    def __init__(self, distance: ArrayLike, /, *, geometry_id: str) -> None:
         value = jnp.asarray(distance)
         geometry = str(geometry_id)
         if (
@@ -64,7 +65,7 @@ class FlatWallDistancePlan(StrictModule, NonTrainableState):
     side: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, axis: int, coordinate: float, side: str, /):
+    def __init__(self, axis: int, coordinate: float, side: str, /) -> None:
         axis_ = int(axis)
         coordinate_ = float(coordinate)
         if axis_ < 0 or not np.isfinite(coordinate_) or side not in ("lower", "upper"):
@@ -99,7 +100,7 @@ class SpalartAllmarasFreestreamPlan(StrictModule, NonTrainableState):
     working_to_molecular_ratio: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, working_to_molecular_ratio: float = 3.0, /):
+    def __init__(self, working_to_molecular_ratio: float = 3.0, /) -> None:
         ratio = float(working_to_molecular_ratio)
         if not np.isfinite(ratio) or ratio <= 0.0:
             raise ValueError("SA-neg freestream working-variable ratio must be positive.")
@@ -136,7 +137,7 @@ class SpalartAllmarasWallBoundary(AbstractConservationBoundary):
         self,
         gas_boundary: NoSlipAdiabaticWallBoundary | NoSlipIsothermalWallBoundary,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             gas_boundary,
             (NoSlipAdiabaticWallBoundary, NoSlipIsothermalWallBoundary),
@@ -191,6 +192,11 @@ class SpalartAllmarasWallBoundary(AbstractConservationBoundary):
         raise ValueError("ALE SA-neg wall semantics are unsupported.")
 
 
+_ManufacturedPointTerms: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array
+]
+
+
 class SpalartAllmarasManufacturedEvidence(StrictModule):
     state: Array
     conserved_gradient: Array
@@ -219,7 +225,7 @@ class SpalartAllmarasManufacturedPlan(StrictModule):
         /,
         *,
         case_id: str,
-    ):
+    ) -> None:
         if (
             not isinstance(system, SpalartAllmarasCompressibleSystem)
             or not callable(exact_primitive)
@@ -242,8 +248,8 @@ class SpalartAllmarasManufacturedPlan(StrictModule):
         if points.ndim < 1 or points.shape[-1] != self.system.dimension:
             raise ValueError("Manufactured coordinates have the wrong dimension.")
 
-        def at_point(point):
-            def state_at(location):
+        def at_point(point: Array) -> _ManufacturedPointTerms:
+            def state_at(location: Array) -> Array:
                 return self.system.primitive_to_conserved(
                     jnp.asarray(self.exact_primitive(location, args))
                 )
@@ -263,7 +269,7 @@ class SpalartAllmarasManufacturedPlan(StrictModule):
                 )(point)
                 inviscid_divergence = inviscid_divergence + jacobian[..., axis]
 
-            def diffusive_flux(location):
+            def diffusive_flux(location: Array) -> Array:
                 local_state = state_at(location)
                 local_gradient = jax.jacfwd(state_at)(location)
                 local_arguments = SpalartAllmarasArguments(
@@ -295,8 +301,27 @@ class SpalartAllmarasManufacturedPlan(StrictModule):
         flat = points.reshape((-1, self.system.dimension))
         values = jax.vmap(at_point)(flat)
         cell_shape = points.shape[:-1]
-        reshaped = tuple(value.reshape(cell_shape + value.shape[1:]) for value in values)
-        return SpalartAllmarasManufacturedEvidence(*reshaped, self.case_id)
+        (
+            state,
+            gradient,
+            inviscid_divergence,
+            diffusive_divergence,
+            local_source,
+            exact_rate,
+            finite,
+            successful,
+        ) = (value.reshape(cell_shape + value.shape[1:]) for value in values)
+        return SpalartAllmarasManufacturedEvidence(
+            state,
+            gradient,
+            inviscid_divergence,
+            diffusive_divergence,
+            local_source,
+            exact_rate,
+            finite,
+            successful,
+            self.case_id,
+        )
 
 
 __all__ = [

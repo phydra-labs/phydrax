@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
@@ -70,7 +71,7 @@ def _signature_identity(
     batch_shape: tuple[int, ...],
     dimension: int,
     depth: int,
-    dtype,
+    dtype: DTypeLike,
     /,
 ) -> tuple[Array, ...]:
     return tuple(
@@ -196,7 +197,9 @@ def piecewise_linear_signature(
 
     if stream:
 
-        def combine_stream(carry, increment):
+        def combine_stream(
+            carry: tuple[Array, ...], increment: Array
+        ) -> tuple[tuple[Array, ...], tuple[Array, ...]]:
             updated = _chen_multiply_increment(carry, increment)
             return updated, updated
 
@@ -204,7 +207,9 @@ def piecewise_linear_signature(
         sequence_axis = len(batch_shape)
         return tuple(jnp.moveaxis(level, 0, sequence_axis) for level in history)
 
-    def combine_terminal(carry, increment):
+    def combine_terminal(
+        carry: tuple[Array, ...], increment: Array
+    ) -> tuple[tuple[Array, ...], None]:
         return _chen_multiply_increment(carry, increment), None
 
     return jax.lax.scan(combine_terminal, initial, scan_values)[0]
@@ -251,7 +256,7 @@ class PrimitiveBasis(StrictModule):
     )
     expansion_matrices: tuple[tuple[tuple[float, ...], ...], ...] = eqx.field(static=True)
 
-    def __init__(self, dimension: int, depth: int, /):
+    def __init__(self, dimension: int, depth: int, /) -> None:
         resolved_dimension = int(dimension)
         resolved_depth = _validate_depth(depth)
         if resolved_dimension <= 0:
@@ -433,7 +438,7 @@ class LogSignatureControl(AbstractRoughControl):
         joint_time: bool,
         source_id: str | None,
         realization: FractionalGaussianRealization | None,
-    ):
+    ) -> None:
         self.times = times
         self.fine_times = fine_times
         self.signature_levels = signature_levels
@@ -627,7 +632,9 @@ class LogSignatureControl(AbstractRoughControl):
             for degree in range(1, self.depth + 1)
         )
 
-        def combine(carry, segment):
+        def combine(
+            carry: tuple[Array, ...], segment: tuple[Array, ...]
+        ) -> tuple[tuple[Array, ...], None]:
             return chen_multiply(carry, segment), None
 
         scan_values = tuple(

@@ -11,7 +11,8 @@ import re
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -54,12 +55,12 @@ class Wannier90HRImport(StrictModule, NonTrainableState):
     def __init__(
         self,
         context: PeriodicSourceContext,
-        translations,
-        degeneracies,
-        raw_hamiltonian_blocks,
+        translations: ArrayLike,
+        degeneracies: ArrayLike,
+        raw_hamiltonian_blocks: ArrayLike,
         prepared_family: PreparedPeriodicTranslationFamily,
         /,
-    ):
+    ) -> None:
         if not isinstance(context, PeriodicSourceContext) or not isinstance(
             prepared_family, PreparedPeriodicTranslationFamily
         ):
@@ -144,7 +145,11 @@ def read_wannier90_hr(
         tokens = line.split()
         if len(tokens) != 7:
             raise ValueError("Wannier90 HR records require exactly seven fields.")
-        lattice = tuple(_integer(token, "translation") for token in tokens[:3])
+        lattice = (
+            _integer(tokens[0], "translation"),
+            _integer(tokens[1], "translation"),
+            _integer(tokens[2], "translation"),
+        )
         row = _integer(tokens[3], "row index") - 1
         column = _integer(tokens[4], "column index") - 1
         if row < 0 or row >= orbital_count or column < 0 or column >= orbital_count:
@@ -180,7 +185,7 @@ def read_wannier90_hr(
                 blocks[translation_index, row, column] = records[key]
     translation_lookup = {value: index for index, value in enumerate(translation_order)}
     for index, lattice in enumerate(translation_order):
-        reverse_key = tuple(-value for value in lattice)
+        reverse_key = (-lattice[0], -lattice[1], -lattice[2])
         if reverse_key not in translation_lookup:
             raise ValueError("Wannier90 HR is missing a reverse translation block.")
         reverse = translation_lookup[reverse_key]

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -22,13 +25,16 @@ from phydrax.applications.battery._aging_empirical import (
 
 def _support(
     *,
-    throughput_bounds=(0.0, 1.0e6),
-    maximum_time_gap_s=4.0,
-    maximum_macrostep_s=8.0,
-):
+    throughput_bounds: Any = (0.0, 1.0e6),
+    maximum_time_gap_s: Any = 4.0,
+    maximum_macrostep_s: Any = 8.0,
+) -> Any:
     return EmpiricalAgingSupport(
+        # ty: ignore[invalid-argument-type]
         (280.0, 330.0),
+        # ty: ignore[invalid-argument-type]
         (0.0, 1.0),
+        # ty: ignore[invalid-argument-type]
         (0.0, 10.0),
         throughput_bounds,
         maximum_time_gap_s=maximum_time_gap_s,
@@ -38,12 +44,12 @@ def _support(
 
 
 def _topology(
-    node_count=3,
+    node_count: Any = 3,
     *,
-    support=None,
-    maximum_time_gap_s=4.0,
-    maximum_macrostep_s=8.0,
-):
+    support: Any = None,
+    maximum_time_gap_s: Any = 4.0,
+    maximum_macrostep_s: Any = 8.0,
+) -> Any:
     support_ = (
         _support(
             maximum_time_gap_s=maximum_time_gap_s,
@@ -55,7 +61,7 @@ def _topology(
     return EmpiricalAgingTopology(support_, node_count)
 
 
-def _coefficients(**overrides):
+def _coefficients(**overrides: Any) -> Any:
     values = {
         "calendar_rate_per_s": 0.02,
         "throughput_rate_per_c": 0.03,
@@ -92,11 +98,11 @@ def _coefficients(**overrides):
 
 
 def _history(
-    times=(0.0, 2.0, 4.0),
-    temperature=(300.0, 300.0, 300.0),
-    state_of_charge=(0.5, 0.5, 0.5),
-    current=(2.0, 2.0, 2.0),
-):
+    times: Any = (0.0, 2.0, 4.0),
+    temperature: Any = (300.0, 300.0, 300.0),
+    state_of_charge: Any = (0.5, 0.5, 0.5),
+    current: Any = (2.0, 2.0, 2.0),
+) -> Any:
     return EmpiricalAgingStressHistory(
         jnp.asarray(times),
         jnp.asarray(temperature),
@@ -105,7 +111,7 @@ def _history(
     )
 
 
-def _assert_state_equal(actual, expected):
+def _assert_state_equal(actual: Any, expected: Any) -> None:
     np.testing.assert_array_equal(actual.calendar_exposure, expected.calendar_exposure)
     np.testing.assert_array_equal(
         actual.throughput_exposure, expected.throughput_exposure
@@ -116,7 +122,7 @@ def _assert_state_equal(actual, expected):
     )
 
 
-def test_exact_additive_law_and_stable_observables_are_recovered():
+def test_exact_additive_law_and_stable_observables_are_recovered() -> None:
     coefficients = _coefficients()
     result = advance_empirical_aging(
         _topology(), coefficients, initial_empirical_aging_state(), _history()
@@ -160,7 +166,7 @@ def test_exact_additive_law_and_stable_observables_are_recovered():
     )
 
 
-def test_time_weighted_quadrature_uses_every_nonlinear_stress_node():
+def test_time_weighted_quadrature_uses_every_nonlinear_stress_node() -> None:
     coefficients = _coefficients(
         calendar_soc_coefficient=1.1,
         throughput_soc_coefficient=-0.4,
@@ -203,7 +209,7 @@ def test_time_weighted_quadrature_uses_every_nonlinear_stress_node():
     assert not np.isclose(expected_calendar, endpoint_only_calendar)
 
 
-def test_zero_rates_advance_physical_coordinates_without_damage():
+def test_zero_rates_advance_physical_coordinates_without_damage() -> None:
     coefficients = _coefficients(
         calendar_rate_per_s=0.0,
         throughput_rate_per_c=0.0,
@@ -223,7 +229,7 @@ def test_zero_rates_advance_physical_coordinates_without_damage():
     np.testing.assert_array_equal(result.observables.state_of_health, 1.0)
 
 
-def test_rest_has_calendar_exposure_but_signed_current_adds_equal_throughput():
+def test_rest_has_calendar_exposure_but_signed_current_adds_equal_throughput() -> None:
     topology = _topology()
     coefficients = _coefficients()
     state = initial_empirical_aging_state()
@@ -259,7 +265,7 @@ def test_rest_has_calendar_exposure_but_signed_current_adds_equal_throughput():
     assert charge.observables.total_damage > rest.observables.total_damage
 
 
-def test_adjacent_history_subdivision_is_exactly_invariant():
+def test_adjacent_history_subdivision_is_exactly_invariant() -> None:
     support = _support(maximum_time_gap_s=2.0, maximum_macrostep_s=4.0)
     coefficients = _coefficients(
         calendar_activation_temperature_k=750.0,
@@ -318,7 +324,7 @@ def test_adjacent_history_subdivision_is_exactly_invariant():
     )
 
 
-def test_positive_declared_coefficients_give_monotone_one_way_outputs():
+def test_positive_declared_coefficients_give_monotone_one_way_outputs() -> None:
     topology = _topology()
     coefficients = _coefficients(
         calendar_activation_temperature_k=600.0,
@@ -366,7 +372,7 @@ def test_positive_declared_coefficients_give_monotone_one_way_outputs():
         ("resistance_growth_scale", -1.0),
     ),
 )
-def test_nonmonotone_physical_coefficients_are_rejected(name, value):
+def test_nonmonotone_physical_coefficients_are_rejected(name: Any, value: Any) -> None:
     with pytest.raises(Exception, match="outside their physical domain"):
         _coefficients(**{name: value})
 
@@ -418,8 +424,8 @@ def test_nonmonotone_physical_coefficients_are_rejected(name, value):
     ),
 )
 def test_invalid_times_gaps_and_stress_support_fail_closed(
-    topology, history, expected_status
-):
+    topology: Any, history: Any, expected_status: Any
+) -> None:
     state = initial_empirical_aging_state()
     result = advance_empirical_aging(topology, _coefficients(), state, history)
 
@@ -429,7 +435,7 @@ def test_invalid_times_gaps_and_stress_support_fail_closed(
     np.testing.assert_array_equal(result.observables.total_damage, 0.0)
 
 
-def test_invalid_latent_state_and_history_shape_fail_explicitly():
+def test_invalid_latent_state_and_history_shape_fail_explicitly() -> None:
     invalid_state = EmpiricalAgingState(-0.1, 0.0, 0.0, 0.0)
     result = advance_empirical_aging(
         _topology(), _coefficients(), invalid_state, _history()
@@ -446,7 +452,7 @@ def test_invalid_latent_state_and_history_shape_fail_explicitly():
         )
 
 
-def test_jit_vmap_and_gradients_cover_coefficients_and_stress_inputs():
+def test_jit_vmap_and_gradients_cover_coefficients_and_stress_inputs() -> None:
     topology = _topology()
     coefficients = _coefficients(
         calendar_activation_temperature_k=500.0,
@@ -470,7 +476,7 @@ def test_jit_vmap_and_gradients_cover_coefficients_and_stress_inputs():
         )
     )
 
-    def evaluate_current(current):
+    def evaluate_current(current: Any) -> Any:
         stress = EmpiricalAgingStressHistory(
             history.times_s,
             history.temperature_k,
@@ -486,7 +492,7 @@ def test_jit_vmap_and_gradients_cover_coefficients_and_stress_inputs():
     np.testing.assert_allclose(batched[0], batched[1])
     assert batched[0] > batched[2]
 
-    def objective(scales, current):
+    def objective(scales: Any, current: Any) -> Any:
         varied = eqx.tree_at(
             lambda value: (
                 value.capacity_loss_scale,
@@ -514,7 +520,7 @@ def test_jit_vmap_and_gradients_cover_coefficients_and_stress_inputs():
     assert np.all(current_gradient > 0.0)
 
 
-def test_macrostep_is_pure_and_does_not_modify_supplied_inputs():
+def test_macrostep_is_pure_and_does_not_modify_supplied_inputs() -> None:
     topology = _topology()
     coefficients = _coefficients()
     state = initial_empirical_aging_state()

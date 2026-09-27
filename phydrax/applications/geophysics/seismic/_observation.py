@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._likelihoods import GaussianLikelihood
 from ...._numerics._checkpointed_scan import CheckpointedScanMode, PreparedReplaySchedule
@@ -32,7 +33,7 @@ class BoundedAcousticWavespeed(StrictModule):
     minimum: float = eqx.field(static=True)
     maximum: float = eqx.field(static=True)
 
-    def __init__(self, raw: ArrayLike, /, *, minimum: float, maximum: float):
+    def __init__(self, raw: ArrayLike, /, *, minimum: float, maximum: float) -> None:
         if not isfinite(minimum) or not isfinite(maximum) or not 0 < minimum < maximum:
             raise ValueError(
                 "Acoustic wavespeed bounds must be finite with 0 < minimum < maximum."
@@ -77,7 +78,7 @@ class PreparedSeismicObservation(StrictModule, NonTrainableState):
         amplitude_unit: UnitDefinition = PASCAL,
         time_unit: UnitDefinition = SECOND,
         time_reference: str = "simulation",
-    ):
+    ) -> None:
         if time_reference != "simulation":
             raise ValueError(
                 "Seismic observation times must explicitly reference the simulation clock."
@@ -203,7 +204,7 @@ class SeismicGaussianLikelihood(AbstractPosteriorTerm):
         block_size: int | None = None,
         schedule: PreparedReplaySchedule | None = None,
         label: str = "seismic-pressure",
-    ):
+    ) -> None:
         if not label.strip():
             raise ValueError("Seismic likelihood label must be nonempty.")
         observation = PreparedSeismicObservation(

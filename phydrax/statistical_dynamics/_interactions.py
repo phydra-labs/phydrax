@@ -11,12 +11,14 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.spectral._space import TensorSpectralDiscretization
+from ..typing import parse
 
 
 InteractionKind: TypeAlias = Literal["nl", "ql", "gql"]
@@ -26,15 +28,12 @@ BilinearAction: TypeAlias = Callable[[Array, Array], Array]
 def _conjugate_indices(discretization: TensorSpectralDiscretization, /) -> np.ndarray:
     shape = discretization.modal_shape
     multi = np.indices(shape, dtype=np.int64).reshape((len(shape), -1))
-    conjugate_multi = np.stack(
-        tuple(
-            np.asarray(
-                discretization.axes[axis_index].modes.conjugate_indices,
-                dtype=np.int64,
-            )[multi[axis_index]]
-            for axis_index in range(len(shape))
-        ),
-        axis=0,
+    conjugate_multi = tuple(
+        np.asarray(
+            discretization.axes[axis_index].modes.conjugate_indices,
+            dtype=np.int64,
+        )[multi[axis_index]]
+        for axis_index in range(len(shape))
     )
     return np.ravel_multi_index(conjugate_multi, shape)
 
@@ -64,7 +63,7 @@ class InteractionPartition(StrictModule, NonTrainableState):
         *,
         admissibility_mask: ArrayLike | None = None,
         partition_id: str | None = None,
-    ):
+    ) -> None:
         low = np.asarray(low_mask, dtype=np.bool_)
         if low.ndim < 1 or low.size < 1:
             raise ValueError("low_mask must be a non-empty modal array.")
@@ -277,8 +276,7 @@ class InteractionPartition(StrictModule, NonTrainableState):
         return selected + coordinate.astype(value.dtype) * (nonlinear - selected)
 
     def selector(self, model: InteractionKind, /) -> Callable:
-        if model not in ("nl", "ql", "gql"):
-            raise ValueError("model must be 'nl', 'ql', or 'gql'.")
+        model = parse(model, InteractionKind, "model")
 
         def apply(
             bilinear: BilinearAction,
@@ -331,7 +329,7 @@ def _select_model(
 
 
 class NonlinearInteractions(AbstractInteractionModel):
-    def __init__(self):
+    def __init__(self) -> None:
         self.kind = "nl"
         self.model_id = canonical_fingerprint({"kind": "triad-selection", "model": "nl"})
 
@@ -348,7 +346,7 @@ class NonlinearInteractions(AbstractInteractionModel):
 
 
 class QuasilinearInteractions(AbstractInteractionModel):
-    def __init__(self):
+    def __init__(self) -> None:
         self.kind = "ql"
         self.model_id = canonical_fingerprint({"kind": "triad-selection", "model": "ql"})
 
@@ -365,7 +363,7 @@ class QuasilinearInteractions(AbstractInteractionModel):
 
 
 class GeneralizedQuasilinearInteractions(AbstractInteractionModel):
-    def __init__(self):
+    def __init__(self) -> None:
         self.kind = "gql"
         self.model_id = canonical_fingerprint({"kind": "triad-selection", "model": "gql"})
 
@@ -385,7 +383,7 @@ class InteractionContinuationStage(StrictModule, NonTrainableState):
     coordinate: float = eqx.field(static=True)
     stage_id: str = eqx.field(static=True)
 
-    def __init__(self, coordinate: float, /, *, stage_id: str | None = None):
+    def __init__(self, coordinate: float, /, *, stage_id: str | None = None) -> None:
         value = float(coordinate)
         if not np.isfinite(value) or value < 0.0 or value > 1.0:
             raise ValueError("Interaction continuation coordinates must lie in [0, 1].")
@@ -412,7 +410,7 @@ class InteractionContinuationSchedule(StrictModule, NonTrainableState):
         /,
         *,
         schedule_id: str | None = None,
-    ):
+    ) -> None:
         stages = tuple(
             value
             if isinstance(value, InteractionContinuationStage)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -14,7 +16,7 @@ from _runtime import capture_environment, measure_lower_and_compile, measure_rep
 from phydrax.applications import electrophysiology as ep
 
 
-def _runtime(cell_count: int, steps: int, mode: str):
+def _runtime(cell_count: int, steps: int, mode: str) -> Any:
     model = ep.LeakyIntegrateAndFire(1.0, 0.1, -65.0, -64.0, -65.0, refractory_ms=0.25)
     cells = tuple(
         ep.NeuralCellPlan(f"cell-{index}", model) for index in range(cell_count)
@@ -51,7 +53,7 @@ def _runtime(cell_count: int, steps: int, mode: str):
     ).prepare()
 
 
-def _measure(cell_count, steps, mode, warmup, repeats):
+def _measure(cell_count: Any, steps: Any, mode: Any, warmup: Any, repeats: Any) -> Any:
     runtime = _runtime(cell_count, steps, mode)
     state = ep.initialize_neural_network(runtime)
     inputs = ep.zero_neural_inputs(runtime, dtype=state.time_ms.dtype)

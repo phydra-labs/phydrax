@@ -9,7 +9,8 @@ from math import prod
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -37,7 +38,7 @@ class GeneralizedDOFChannel(StrictModule, NonTrainableState):
         *,
         constrained: ArrayLike | None = None,
         geometry: AbstractStateGeometry | None = None,
-    ):
+    ) -> None:
         identifier = str(channel_id)
         shape_ = tuple(shape)
         if not identifier or not shape_ or any(value <= 0 for value in shape_):
@@ -78,7 +79,7 @@ class GeneralizedDOFLayout(StrictModule, NonTrainableState):
     reduced_offsets: tuple[int, ...] = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, channels: Sequence[GeneralizedDOFChannel], /):
+    def __init__(self, channels: Sequence[GeneralizedDOFChannel], /) -> None:
         channels_ = tuple(channels)
         if not channels_ or len({value.channel_id for value in channels_}) != len(
             channels_

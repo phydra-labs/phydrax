@@ -9,7 +9,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -43,7 +44,7 @@ class EnvelopeNonlinearResponsePlan(StrictModule):
         self_steepening: bool = False,
         maximum_response_elements: int = 1_000_000,
         source_id: str,
-    ):
+    ) -> None:
         coefficient = float(nonlinear_coefficient)
         fraction = float(raman_fraction)
         maximum = int(maximum_response_elements)

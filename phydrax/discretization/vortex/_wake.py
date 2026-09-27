@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -67,7 +68,9 @@ class VortexWakePlan(StrictModule, NonTrainableState):
     core_radius: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, segment_capacity: int, source_count: int, core_radius: float, /):
+    def __init__(
+        self, segment_capacity: int, source_count: int, core_radius: float, /
+    ) -> None:
         capacity = int(segment_capacity)
         sources = int(source_count)
         core = float(core_radius)
@@ -86,7 +89,7 @@ class VortexWakePlan(StrictModule, NonTrainableState):
         )
 
     def initialize(
-        self, bound_circulation: ArrayLike, /, *, dtype=None
+        self, bound_circulation: ArrayLike, /, *, dtype: DTypeLike | None = None
     ) -> VortexWakeState:
         bound = jnp.asarray(bound_circulation, dtype=dtype)
         if bound.shape != (self.source_count,):

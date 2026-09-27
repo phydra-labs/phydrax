@@ -20,7 +20,8 @@ from typing import Mapping, Protocol, runtime_checkable
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import DTypeLike
 
 from phydrax._strict import StrictModule
 
@@ -226,7 +227,7 @@ class CardiacReactionModel(Protocol):
         self,
         batch_shape: tuple[int, ...] = (),
         *,
-        dtype: object | None = None,
+        dtype: DTypeLike | None = None,
     ) -> Array: ...
 
     def evaluate(
@@ -328,7 +329,7 @@ class PreparedReaction:
     def initialize(
         self,
         node_count: int | None = None,
-        dtype: object | None = None,
+        dtype: DTypeLike | None = None,
     ) -> tuple[Array, Array]:
         count = self.node_count if node_count is None else node_count
         if count != self.node_count:
@@ -412,7 +413,7 @@ def plan_reaction(
     model: CardiacReactionModel,
     node_count: int,
     *,
-    dtype: object = np.float64,
+    dtype: DTypeLike = np.float64,
 ) -> ReactionPlan:
     """Plan one immutable homogeneous reaction block."""
     return ReactionPlan(model=model, node_count=node_count, dtype=np.dtype(dtype))

@@ -44,7 +44,7 @@ class FinancialStateSpaceDefinition(StrictModule):
         temporal_method: Literal["sequential", "parallel", "auto"] = "auto",
         covariance_regularization: float = 0.0,
         smooth: bool = True,
-    ):
+    ) -> None:
         if not isinstance(model_id, str) or not model_id.strip():
             raise ValueError("model_id must be nonempty.")
         if temporal_method not in ("sequential", "parallel", "auto"):
@@ -73,7 +73,7 @@ class RegimeDefinition(StrictModule):
     model_id: str = eqx.field(static=True)
     definition_id: str = eqx.field(static=True)
 
-    def __init__(self, model_id: str, /):
+    def __init__(self, model_id: str, /) -> None:
         if not isinstance(model_id, str) or not model_id.strip():
             raise ValueError("model_id must be nonempty.")
         self.model_id = model_id.strip()

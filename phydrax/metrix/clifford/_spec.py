@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from numbers import Integral
+from typing import Any
 
 import equinox as eqx
 
@@ -34,7 +35,7 @@ class CliffordAlgebraSpec(StrictModule, NonTrainableState):
         basis_labels: Sequence[str] | None = None,
         orientation: int = 1,
         budget: CliffordResourceBudget | None = None,
-    ):
+    ) -> None:
         entries = tuple(diagonal)
         if not entries:
             raise ValueError("Clifford algebra dimension must be positive.")
@@ -94,7 +95,7 @@ class CliffordAlgebraSpec(StrictModule, NonTrainableState):
         negative: int,
         radical: int = 0,
         /,
-        **kwargs,
+        **kwargs: Any,
     ) -> "CliffordAlgebraSpec":
         raw_counts = (positive, negative, radical)
         if any(
@@ -154,7 +155,7 @@ class CliffordAlgebraSpec(StrictModule, NonTrainableState):
         }
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, object], /) -> "CliffordAlgebraSpec":
+    def from_dict(cls, value: Mapping[str, Any], /) -> "CliffordAlgebraSpec":
         budget_value = value["budget"]
         if not isinstance(budget_value, Mapping):
             raise TypeError("Serialized Clifford budget must be a mapping.")

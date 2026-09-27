@@ -3,6 +3,8 @@
 #
 
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -45,7 +47,7 @@ from phydrax.qualification._evidence import SupportDependency
 from phydrax.solver._production_runtime import ArtifactCheckpointStore
 
 
-def _space(count=4):
+def _space(count: Any = 4) -> Any:
     return phx.discretization.TensorSpectralPlan(
         tuple(phx.discretization.FourierBasisPlan(count) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -53,7 +55,7 @@ def _space(count=4):
     ).prepare(tuple(phx.discretization.AxisDomain.periodic(0.0, 1.0) for _ in range(3)))
 
 
-def _algebraic_plan(space):
+def _algebraic_plan(space: Any) -> Any:
     resolved_filter = ResolvedLESFilter(
         "retained Fourier grid",
         family="sharp-fourier-projection",
@@ -82,7 +84,7 @@ def _algebraic_plan(space):
     )
 
 
-def _topology(schedule="slab", devices=None):
+def _topology(schedule: Any = "slab", devices: Any = None) -> Any:
     available = (jax.devices("cpu")[0],) if devices is None else tuple(devices)
     if schedule == "pencil":
         if len(available) == 1:
@@ -101,7 +103,7 @@ def _topology(schedule="slab", devices=None):
     )
 
 
-def _velocity(space):
+def _velocity(space: Any) -> Any:
     x, y, z = jnp.meshgrid(
         space.axes[0].nodes,
         space.axes[1].nodes,
@@ -121,13 +123,13 @@ def _velocity(space):
 
 def _compiled(
     *,
-    count=4,
-    schedule="slab",
-    devices=None,
-    checkpoint_count=1,
-    maximum_bytes=2 * 1024**3,
-    forcing=False,
-):
+    count: Any = 4,
+    schedule: Any = "slab",
+    devices: Any = None,
+    checkpoint_count: Any = 1,
+    maximum_bytes: Any = 2 * 1024**3,
+    forcing: Any = False,
+) -> Any:
     space = _space(count)
     algebraic = _algebraic_plan(space)
     spatial = phx.discretization.PseudospectralMethodPlan(
@@ -175,7 +177,7 @@ def _compiled(
     return space, local, source, distributed, constant_power, state
 
 
-def test_distributed_full_flow_single_device_parity_forcing_jit_and_jvp():
+def test_distributed_full_flow_single_device_parity_forcing_jit_and_jvp() -> None:
     _, local, _, distributed, _, state = _compiled()
 
     local_stage = local.stage(jnp.asarray(0.0), state)
@@ -237,7 +239,7 @@ def test_distributed_full_flow_single_device_parity_forcing_jit_and_jvp():
 
 
 @pytest.mark.parametrize("scheme", ("etdrk2", "etdrk4", "ssprk33", "ssprk54"))
-def test_distributed_fixed_step_accepts_and_rejects_transactionally(scheme):
+def test_distributed_fixed_step_accepts_and_rejects_transactionally(scheme: Any) -> None:
     space, _, _, dynamics, _, state = _compiled()
     coordinates = phx.discretization.HermitianSpectralCoordinates(
         space, component_shape=(3,)
@@ -275,7 +277,7 @@ def test_distributed_fixed_step_accepts_and_rejects_transactionally(scheme):
     assert method.method_id != method.plan.plan_id
 
 
-def test_distributed_method_rejects_failed_forcing_and_foreign_coordinates():
+def test_distributed_method_rejects_failed_forcing_and_foreign_coordinates() -> None:
     space, _, _, dynamics, _, state = _compiled(forcing=True)
     coordinates = phx.discretization.HermitianSpectralCoordinates(
         space, component_shape=(3,)
@@ -307,7 +309,7 @@ def test_distributed_method_rejects_failed_forcing_and_foreign_coordinates():
         DistributedPeriodicLESStatisticsPlan(dynamics, foreign)
 
 
-def test_distributed_sharded_statistics_and_no_host_gather(monkeypatch):
+def test_distributed_sharded_statistics_and_no_host_gather(monkeypatch: Any) -> None:
     space, _, _, dynamics, _, state = _compiled()
     coordinates = phx.discretization.HermitianSpectralCoordinates(
         space, component_shape=(3,)
@@ -334,7 +336,7 @@ def test_distributed_sharded_statistics_and_no_host_gather(monkeypatch):
     np.testing.assert_array_equal(restored, state)
 
 
-def _artifact_store(tmp_path, plan):
+def _artifact_store(tmp_path: Any, plan: Any) -> Any:
     profile = HPCFilesystemProfile(
         "distributed-les-posix",
         "test-filesystem",
@@ -392,8 +394,8 @@ def _artifact_store(tmp_path, plan):
 
 
 def test_distributed_production_consumes_plan_and_artifact_restart_is_exact(
-    tmp_path, monkeypatch
-):
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     _, _, source, dynamics, _, state = _compiled(checkpoint_count=1)
     problem = phx.equations.IncompressibleFlowProblem(3, 0.01)
     case = DistributedPeriodicLESProductionCase(
@@ -470,10 +472,44 @@ def test_distributed_production_consumes_plan_and_artifact_restart_is_exact(
     )
     assert changed.plan_id != plan.plan_id
     with pytest.raises(ValueError, match="exactly bind"):
+        # ty: ignore[invalid-argument-type]
         changed.prepare(prepared.checkpoint_store)
 
 
-def test_distributed_production_resource_refusal_precedes_runtime(tmp_path):
+def test_distributed_production_run_returns_placed_completed_result(
+    tmp_path: Any,
+) -> None:
+    _, _, source, dynamics, _, state = _compiled(checkpoint_count=1)
+    case = DistributedPeriodicLESProductionCase(
+        dynamics,
+        state,
+        case_id="distributed-les-case",
+    )
+    plan = DistributedPeriodicLESProductionPlan(
+        phx.equations.IncompressibleFlowProblem(3, 0.01),
+        source,
+        DistributedPeriodicLESMethodPlan("etdrk2", safety_factor=0.8),
+        case,
+        start_time=0.0,
+        end_time=2.0e-4,
+        step_size=1.0e-4,
+        checkpoint_interval=1,
+        segment_steps=1,
+        checkpoint_retention=2,
+    )
+    prepared = plan.prepare(_artifact_store(tmp_path, plan))
+    result = prepared.run(prepared.initialize(state))
+    expected = plan.dynamics.backend.execution.modal_layout.sharding(
+        plan.dynamics.backend.execution.topology
+    )
+
+    assert bool(result.successful)
+    assert result.failure is None
+    assert result.state.status == "completed"
+    assert result.state.accepted_state.sharding == expected
+
+
+def test_distributed_production_resource_refusal_precedes_runtime(tmp_path: Any) -> None:
     _, local, zero_checkpoint_plan, dynamics, _, state = _compiled(checkpoint_count=0)
     case = DistributedPeriodicLESProductionCase(
         dynamics,
@@ -503,7 +539,7 @@ def test_distributed_production_resource_refusal_precedes_runtime(tmp_path):
     assert not (tmp_path / "unprepared-runtime").exists()
 
 
-def test_distributed_full_flow_real_multi_device_slab_pencil_when_available():
+def test_distributed_full_flow_real_multi_device_slab_pencil_when_available() -> None:
     devices = tuple(jax.devices("cpu"))
     if len(devices) < 4:
         pytest.skip("Four forced CPU devices are required for slab/pencil execution.")

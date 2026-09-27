@@ -9,7 +9,8 @@ from enum import IntEnum
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._spaces import _coordinate_dtype
@@ -233,7 +234,9 @@ def _evaluate_jacobi_fraction(
     )
     capacity = diagonal.size
 
-    def step(offset, current):
+    def step(
+        offset: Array, current: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
         value, singular, healthy = current
         index = capacity - 1 - offset
         active = index < effective_dimension

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -14,7 +16,9 @@ _IDS = {
 }
 
 
-def _geometry(*, alpha=None, active=None, valid=None, snapshot_token=0):
+def _geometry(
+    *, alpha: Any = None, active: Any = None, valid: Any = None, snapshot_token: Any = 0
+) -> Any:
     dtype = jnp.float32
     identity = jnp.broadcast_to(jnp.eye(3, dtype=dtype), (2, 3, 3))
     return ADMGridGeometry(
@@ -31,7 +35,7 @@ def _geometry(*, alpha=None, active=None, valid=None, snapshot_token=0):
     )
 
 
-def test_adm_grid_geometry_validates_each_active_lane_under_jit():
+def test_adm_grid_geometry_validates_each_active_lane_under_jit() -> None:
     geometry = _geometry()
 
     finite, physical, inverse_defect, determinant_defect, all_valid = jax.jit(
@@ -54,7 +58,7 @@ def test_adm_grid_geometry_validates_each_active_lane_under_jit():
     assert bool(all_valid)
 
 
-def test_adm_grid_geometry_reports_invalid_lapse_without_clipping_it():
+def test_adm_grid_geometry_reports_invalid_lapse_without_clipping_it() -> None:
     alpha = jnp.asarray([1.0, -0.25], dtype=jnp.float32)
     geometry = _geometry(
         alpha=alpha,
@@ -71,7 +75,9 @@ def test_adm_grid_geometry_reports_invalid_lapse_without_clipping_it():
     assert not bool(geometry.all_active_valid)
 
 
-def test_adm_grid_geometry_detects_non_spatial_metric_and_inverse_defects_per_lane():
+def test_adm_grid_geometry_detects_non_spatial_metric_and_inverse_defects_per_lane() -> (
+    None
+):
     dtype = jnp.float32
     spatial = jnp.broadcast_to(jnp.eye(3, dtype=dtype), (2, 3, 3))
     spatial = spatial.at[1, 0, 0].set(-1.0)
@@ -103,7 +109,7 @@ def test_adm_grid_geometry_detects_non_spatial_metric_and_inverse_defects_per_la
     )
 
 
-def test_stress_energy_projection_preserves_defects_and_geometry_binding():
+def test_stress_energy_projection_preserves_defects_and_geometry_binding() -> None:
     geometry = _geometry()
     dtype = jnp.float32
     projection = StressEnergyProjection(
@@ -134,7 +140,7 @@ def test_stress_energy_projection_preserves_defects_and_geometry_binding():
     assert bool(all_valid)
 
 
-def test_stress_energy_compatibility_rejects_changed_geometry_lineage():
+def test_stress_energy_compatibility_rejects_changed_geometry_lineage() -> None:
     geometry = _geometry()
     dtype = jnp.float32
     projection = StressEnergyProjection(
@@ -156,7 +162,7 @@ def test_stress_energy_compatibility_rejects_changed_geometry_lineage():
     assert not bool(projection.compatible_with(geometry))
 
 
-def test_stress_energy_compatibility_rejects_stale_dynamic_stage_under_jit():
+def test_stress_energy_compatibility_rejects_stale_dynamic_stage_under_jit() -> None:
     geometry = _geometry(snapshot_token=7)
     dtype = jnp.float32
     projection = StressEnergyProjection(
@@ -182,7 +188,7 @@ def test_stress_energy_compatibility_rejects_stale_dynamic_stage_under_jit():
     assert not bool(compatible)
 
 
-def test_exchange_records_reject_misaligned_shapes_and_invalid_identities():
+def test_exchange_records_reject_misaligned_shapes_and_invalid_identities() -> None:
     dtype = jnp.float32
     identity = jnp.broadcast_to(jnp.eye(3, dtype=dtype), (2, 3, 3))
     with pytest.raises(ValueError, match="beta_contravariant must have shape"):

@@ -14,7 +14,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -46,7 +47,7 @@ class TwoStateSurfaceEvaluation(StrictModule, NonTrainableState):
         state_ids: tuple[str, str],
         provider_id: str,
         /,
-    ):
+    ) -> None:
         energy = jnp.asarray(energies)
         gradient = jnp.asarray(gradients, dtype=energy.dtype)
         coupling = jnp.asarray(energy_weighted_coupling, dtype=energy.dtype)
@@ -106,7 +107,7 @@ class CallableTwoStateSurfaceProvider(AbstractTwoStateSurfaceProvider):
     evaluator: TwoStateEvaluator = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
-    def __init__(self, evaluator: TwoStateEvaluator, provider_id: str, /):
+    def __init__(self, evaluator: TwoStateEvaluator, provider_id: str, /) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         provider = str(provider_id).strip()
@@ -190,17 +191,17 @@ class CrossingOptimizationResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        positions,
-        energies,
-        projected_gradient_norm,
-        branching,
-        trajectory,
-        iterations,
-        successful,
-        plan_id,
-        provider_id,
+        positions: ArrayLike,
+        energies: ArrayLike,
+        projected_gradient_norm: ArrayLike,
+        branching: BranchingPlaneResult,
+        trajectory: ArrayLike,
+        iterations: ArrayLike,
+        successful: ArrayLike,
+        plan_id: str,
+        provider_id: str,
         /,
-    ):
+    ) -> None:
         position = jnp.asarray(positions)
         energy = jnp.asarray(energies, dtype=position.dtype)
         trajectory_ = jnp.asarray(trajectory, dtype=position.dtype)
@@ -257,7 +258,7 @@ class MinimumEnergyCrossingPlan(StrictModule, NonTrainableState):
         geometry_step: float = 0.05,
         gap_step: float = 0.5,
         maximum_iterations: int = 200,
-    ):
+    ) -> None:
         if not isinstance(kind, CrossingKind) or not isinstance(
             provider, AbstractTwoStateSurfaceProvider
         ):

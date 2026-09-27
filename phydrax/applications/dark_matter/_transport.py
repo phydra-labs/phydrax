@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -79,7 +80,7 @@ class BodyFrameTransportState(StrictModule, NonTrainableState):
         /,
         *,
         frame_id: str,
-    ):
+    ) -> None:
         position = jnp.asarray(position_m, dtype=jnp.float64)
         velocity = jnp.asarray(velocity_m_s, dtype=position.dtype)
         frame = str(frame_id)
@@ -115,7 +116,7 @@ class RadialSignedDistanceGuard(StrictModule, NonTrainableState):
     geometry: CompiledGeometry
     frame_id: str = eqx.field(static=True)
 
-    def __init__(self, geometry: CompiledGeometry, /, *, frame_id: str):
+    def __init__(self, geometry: CompiledGeometry, /, *, frame_id: str) -> None:
         if not isinstance(geometry, CompiledGeometry):
             raise TypeError("Radial guard geometry must be a CompiledGeometry.")
         if (
@@ -131,7 +132,7 @@ class RadialSignedDistanceGuard(StrictModule, NonTrainableState):
         self.geometry = geometry
         self.frame_id = frame
 
-    def __call__(self, time: Array, state: Array, args=None, /) -> Array:
+    def __call__(self, time: Array, state: Array, args: object = None, /) -> Array:
         del time, args
         return self.geometry.signed_distance(jnp.asarray(state[:3])[None, :])[0]
 
@@ -141,7 +142,7 @@ class RadialGravityDrift(StrictModule):
 
     profile: RadialBodyProfile
 
-    def __init__(self, profile: RadialBodyProfile, /):
+    def __init__(self, profile: RadialBodyProfile, /) -> None:
         if not isinstance(
             profile, (LayeredTerrestrialProfile, SmoothStellarRadialProfile)
         ):
@@ -150,7 +151,7 @@ class RadialGravityDrift(StrictModule):
             )
         self.profile = profile
 
-    def __call__(self, time: Array, state: Array, args=None, /) -> Array:
+    def __call__(self, time: Array, state: Array, args: object = None, /) -> Array:
         del time, args
         position = state[:3]
         velocity = state[3:]
@@ -187,7 +188,7 @@ class ProfiledElasticJumpProcess(AbstractJumpProcess):
         scattering: ElasticScatteringTable,
         projectile_mass_kg: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             profile, (LayeredTerrestrialProfile, SmoothStellarRadialProfile)
         ):
@@ -214,7 +215,9 @@ class ProfiledElasticJumpProcess(AbstractJumpProcess):
             }
         )
 
-    def intensities(self, t: ArrayLike, state: ArrayLike, args=None, /) -> Array:
+    def intensities(
+        self, t: ArrayLike, state: ArrayLike, args: object = None, /
+    ) -> Array:
         del t, args
         packed = jnp.asarray(state)
         evaluation = self.profile.evaluate(packed[:3])
@@ -231,7 +234,7 @@ class ProfiledElasticJumpProcess(AbstractJumpProcess):
         t: ArrayLike,
         state: ArrayLike,
         channel: ArrayLike,
-        args=None,
+        args: object = None,
         /,
     ) -> Array:
         del t, args
@@ -265,7 +268,7 @@ class ProfiledElasticJumpProcess(AbstractJumpProcess):
         state: ArrayLike,
         channel: ArrayLike,
         mark: ArrayLike,
-        args=None,
+        args: object = None,
         /,
     ) -> Array:
         del args

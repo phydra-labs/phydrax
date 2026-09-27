@@ -3,7 +3,7 @@
 #
 
 from collections.abc import Callable
-from typing import cast
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -39,7 +39,7 @@ def _array_target(
     return jnp.asarray(target)
 
 
-def test_standard_operator_benchmarks_cover_required_regimes():
+def test_standard_operator_benchmarks_cover_required_regimes() -> None:
     scenarios = standard_operator_benchmarks(quick=True)
     names = {scenario.name for scenario in scenarios}
     assert names == {
@@ -58,7 +58,7 @@ def test_standard_operator_benchmarks_cover_required_regimes():
     )
 
 
-def test_benchmark_runner_trains_and_reports_cross_resolution_metrics():
+def test_benchmark_runner_trains_and_reports_cross_resolution_metrics() -> None:
     scenario = periodic_burgers_scenario(
         train_resolution=8,
         test_resolution=12,
@@ -111,7 +111,7 @@ def test_benchmark_runner_trains_and_reports_cross_resolution_metrics():
     assert result.nonfinite_microsteps == 0
 
 
-def test_benchmark_runner_records_explicit_bfloat16_precision():
+def test_benchmark_runner_records_explicit_bfloat16_precision() -> None:
     scenario = periodic_burgers_scenario(
         train_resolution=8,
         test_resolution=12,
@@ -146,7 +146,7 @@ def test_benchmark_runner_records_explicit_bfloat16_precision():
     )
 
 
-def test_benchmark_runner_records_validation_plateau_early_stopping():
+def test_benchmark_runner_records_validation_plateau_early_stopping() -> None:
     scenario = split_operator_scenario(
         periodic_burgers_scenario(
             train_resolution=8,
@@ -178,7 +178,9 @@ def test_benchmark_runner_records_validation_plateau_early_stopping():
     assert result.resumed_from_step == 0
 
 
-def test_benchmark_runner_resumes_model_optimizer_and_curve_exactly(tmp_path):
+def test_benchmark_runner_resumes_model_optimizer_and_curve_exactly(
+    tmp_path: Any,
+) -> None:
     scenario = split_operator_scenario(
         periodic_burgers_scenario(
             train_resolution=8,
@@ -188,7 +190,7 @@ def test_benchmark_runner_resumes_model_optimizer_and_curve_exactly(tmp_path):
         seed=17,
     )
 
-    def construct():
+    def construct() -> Any:
         return phx.nn.operator.architectures.FNO(
             width=4,
             depth=1,
@@ -265,7 +267,7 @@ def test_benchmark_runner_resumes_model_optimizer_and_curve_exactly(tmp_path):
         )
 
 
-def test_architecture_matrix_contains_baselines_and_operator_families():
+def test_architecture_matrix_contains_baselines_and_operator_families() -> None:
     scenario = periodic_burgers_scenario(
         train_resolution=8,
         test_resolution=12,
@@ -295,7 +297,7 @@ def test_architecture_matrix_contains_baselines_and_operator_families():
     )
 
 
-def test_architecture_registry_models_run_every_declared_evaluation():
+def test_architecture_registry_models_run_every_declared_evaluation() -> None:
     for scenario in standard_operator_benchmarks(quick=True):
         for architecture in compatible_architectures(scenario, quick=True):
             model = architecture.build(scenario, 0)
@@ -304,7 +306,7 @@ def test_architecture_registry_models_run_every_declared_evaluation():
                 assert jnp.all(jnp.isfinite(model(evaluation.batch)))
 
 
-def test_function_frame_benchmark_respects_projection_capability_boundary():
+def test_function_frame_benchmark_respects_projection_capability_boundary() -> None:
     scenarios = {
         scenario.name: scenario for scenario in standard_operator_benchmarks(quick=True)
     }
@@ -360,7 +362,7 @@ def test_function_frame_benchmark_respects_projection_capability_boundary():
         assert "function_frame_deeponet" not in names
 
 
-def test_case_splits_are_disjoint_sized_and_seed_deterministic():
+def test_case_splits_are_disjoint_sized_and_seed_deterministic() -> None:
     scenario = periodic_burgers_scenario(
         train_resolution=8,
         test_resolution=12,
@@ -380,7 +382,7 @@ def test_case_splits_are_disjoint_sized_and_seed_deterministic():
     assert scenario_checksum(first) != scenario_checksum(changed)
 
 
-def test_standard_benchmarks_include_controlled_distribution_shifts():
+def test_standard_benchmarks_include_controlled_distribution_shifts() -> None:
     scenarios = standard_operator_benchmarks(quick=True)
     shifts = {
         evaluation.shift for scenario in scenarios for evaluation in scenario.evaluations
@@ -394,7 +396,9 @@ def test_standard_benchmarks_include_controlled_distribution_shifts():
     } <= shifts
 
 
-def test_matrix_aggregates_seeds_persists_artifacts_and_checks_thresholds(tmp_path):
+def test_matrix_aggregates_seeds_persists_artifacts_and_checks_thresholds(
+    tmp_path: Any,
+) -> None:
     scenario = periodic_burgers_scenario(
         train_resolution=8,
         test_resolution=12,
@@ -430,7 +434,7 @@ def test_matrix_aggregates_seeds_persists_artifacts_and_checks_thresholds(tmp_pa
         assert_benchmark_thresholds(matrix, (failing,))
 
 
-def _aggregate(architecture, relative_l2, inference_seconds):
+def _aggregate(architecture: Any, relative_l2: Any, inference_seconds: Any) -> Any:
     return OperatorBenchmarkAggregate(
         scenario="manufactured",
         architecture=architecture,
@@ -458,7 +462,9 @@ def _aggregate(architecture, relative_l2, inference_seconds):
     )
 
 
-def test_external_candidate_requires_audit_and_uniform_benchmark_superiority(tmp_path):
+def test_external_candidate_requires_audit_and_uniform_benchmark_superiority(
+    tmp_path: Any,
+) -> None:
     checkpoint = tmp_path / "candidate.bin"
     checkpoint.write_bytes(b"candidate-weights")
     checkpoint_digest = phx.nn.operator.adapters.checkpoint_sha256(checkpoint)
@@ -526,7 +532,7 @@ def test_external_candidate_requires_audit_and_uniform_benchmark_superiority(tmp
     assert "does not improve relative L2" in rejected.reasons[0]
 
 
-def test_external_candidate_rejects_missing_weight_provenance():
+def test_external_candidate_rejects_missing_weight_provenance() -> None:
     candidate = ExternalOperatorCandidate(
         name="unlicensed",
         source_uri="https://example.test/source",

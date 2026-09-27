@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -30,7 +33,7 @@ from phydrax.solver._dark_sector_epoch_runtime import DarkSectorEpochPlan
 from phydrax.units import BARN, COULOMB
 
 
-def _capture_plan():
+def _capture_plan() -> Any:
     units = RelativisticUnitContract(
         RelativityScaleContract(DimensionalScaleContract.si(), 1, 1, 1, 1),
         RelativityConvention(metric_signature="mostly_minus"),
@@ -134,7 +137,9 @@ def _capture_plan():
     )
 
 
-def test_radiative_capture_and_photo_dissociation_obey_pointwise_detailed_balance():
+def test_radiative_capture_and_photo_dissociation_obey_pointwise_detailed_balance() -> (
+    None
+):
     plan = _capture_plan()
     momentum = jnp.asarray((0.2, 1.0, 2.0))
     result = evaluate_radiative_capture_balance(plan, momentum)
@@ -154,7 +159,7 @@ def test_radiative_capture_and_photo_dissociation_obey_pointwise_detailed_balanc
     np.testing.assert_allclose(result.detailed_balance_residual, 0.0, atol=1e-12)
 
 
-def test_thermal_forward_reverse_rates_share_one_saha_equilibrium_ratio():
+def test_thermal_forward_reverse_rates_share_one_saha_equilibrium_ratio() -> None:
     plan = _capture_plan()
     temperature = jnp.asarray((0.1, 0.5, 1.0))
     result = evaluate_thermal_bound_state_balance(plan, temperature)

@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import abc
 from math import isfinite
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
@@ -36,12 +37,12 @@ from ._updates import (
 from ._work import NonlinearWork, work_sum
 
 
-def _norm(space, value, /):
+def _norm(space: AbstractVectorSpace, value: PyTree[Any], /) -> Array:
     squared = jnp.real(space.inner(value, value))
     return jnp.sqrt(jnp.maximum(squared, 0.0))
 
 
-def _sum_field(results, field: str, /):
+def _sum_field(results: tuple[NonlinearUpdateResult, ...], field: str, /) -> Array:
     values = [vars(result.diagnostics)[field] for result in results]
     return sum(values[1:], values[0])
 
@@ -86,7 +87,7 @@ class NonlinearSubdomain(StrictModule):
         residual_space: AbstractVectorSpace,
         weight: float = 1.0,
         subdomain_id: str,
-    ):
+    ) -> None:
         callbacks = (
             restrict_state,
             restrict_residual,
@@ -120,7 +121,7 @@ class NonlinearSubdomain(StrictModule):
         self.subdomain_id = identifier
 
     def local_problem(self, /) -> NonlinearSystemProblem:
-        def residual(local_state, context):
+        def residual(local_state: PyTree[Any], context: tuple[PyTree[Any], Any]) -> Any:
             global_state, user_args = context
             return self.local_residual(local_state, global_state, user_args)
 
@@ -138,7 +139,7 @@ class AbstractNonlinearSchwarz(AbstractNonlinearUpdate):
     subdomains: tuple[NonlinearSubdomain, ...]
     update_name: str = eqx.field(static=True)
 
-    def __init__(self, subdomains: tuple[NonlinearSubdomain, ...], /):
+    def __init__(self, subdomains: tuple[NonlinearSubdomain, ...], /) -> None:
         subdomains_ = tuple(subdomains)
         if not subdomains_ or not all(
             isinstance(subdomain, NonlinearSubdomain) for subdomain in subdomains_
@@ -194,7 +195,13 @@ class AbstractNonlinearSchwarz(AbstractNonlinearUpdate):
             complete=children.complete,
         )
 
-    def _prepare_internal(self, problem, state, args, /):
+    def _prepare_internal(
+        self,
+        problem: NonlinearSystemProblem,
+        state: PyTree[Any],
+        args: Any,
+        /,
+    ) -> tuple[PreparedNonlinearUpdate, ...]:
         del problem
         return tuple(
             prepare_nonlinear_update(
@@ -206,7 +213,14 @@ class AbstractNonlinearSchwarz(AbstractNonlinearUpdate):
             for subdomain in self.subdomains
         )
 
-    def _refresh_internal(self, internal_state, problem, state, args, /):
+    def _refresh_internal(
+        self,
+        internal_state: Any,
+        problem: NonlinearSystemProblem,
+        state: PyTree[Any],
+        args: Any,
+        /,
+    ) -> tuple[PreparedNonlinearUpdate, ...]:
         del problem
         children = tuple(internal_state)
         if len(children) != len(self.subdomains) or not all(
@@ -230,7 +244,7 @@ class AbstractNonlinearSchwarz(AbstractNonlinearUpdate):
         args: Any,
         control: NonlinearUpdateControl,
         /,
-    ):
+    ) -> tuple[NonlinearUpdateResult, tuple[PreparedNonlinearUpdate, ...]]:
         state_ = prepared.plan.state_space.validate(state)
         initial_residual, _ = prepared.problem.evaluate(state_, args)
         child_control = _child_control(control, len(self.subdomains))
@@ -317,7 +331,18 @@ class AbstractNonlinearSchwarz(AbstractNonlinearUpdate):
             children,
         )
 
-    def _apply_additive(self, prepared, state, args, control, /):
+    def _apply_additive(
+        self,
+        prepared: PreparedNonlinearUpdate,
+        state: PyTree[Any],
+        args: Any,
+        control: NonlinearUpdateControl,
+        /,
+    ) -> tuple[
+        PyTree[Any],
+        tuple[NonlinearUpdateResult, ...],
+        tuple[PreparedNonlinearUpdate, ...],
+    ]:
         candidate = state
         components = []
         children = []
@@ -356,7 +381,18 @@ class AbstractNonlinearSchwarz(AbstractNonlinearUpdate):
             children.append(next_child)
         return candidate, tuple(components), tuple(children)
 
-    def _apply_multiplicative(self, prepared, state, args, control, /):
+    def _apply_multiplicative(
+        self,
+        prepared: PreparedNonlinearUpdate,
+        state: PyTree[Any],
+        args: Any,
+        control: NonlinearUpdateControl,
+        /,
+    ) -> tuple[
+        PyTree[Any],
+        tuple[NonlinearUpdateResult, ...],
+        tuple[PreparedNonlinearUpdate, ...],
+    ]:
         current = state
         components = []
         children = []
@@ -371,7 +407,7 @@ class AbstractNonlinearSchwarz(AbstractNonlinearUpdate):
             )
             child_dynamic, child_static = eqx.partition(child, eqx.is_array)
 
-            def execute(_):
+            def execute(_: None) -> tuple[NonlinearUpdateResult, PyTree[Any]]:
                 combined = eqx.combine(child_dynamic, child_static)
                 refreshed = refresh_nonlinear_update(
                     combined,
@@ -388,7 +424,7 @@ class AbstractNonlinearSchwarz(AbstractNonlinearUpdate):
                 next_dynamic, _ = eqx.partition(next_child, eqx.is_array)
                 return result, next_dynamic
 
-            def skip(_):
+            def skip(_: None) -> tuple[NonlinearUpdateResult, PyTree[Any]]:
                 combined = eqx.combine(child_dynamic, child_static)
                 return (
                     skipped_nonlinear_update_result(
@@ -431,12 +467,18 @@ class AbstractNonlinearSchwarz(AbstractNonlinearUpdate):
 
 
 class NonlinearAdditiveSchwarz(AbstractNonlinearSchwarz):
+    if TYPE_CHECKING:
+        __init__ = AbstractNonlinearSchwarz.__init__
+
     @property
     def schwarz_kind(self) -> str:
         return "nonlinear-additive-schwarz"
 
 
 class NonlinearMultiplicativeSchwarz(AbstractNonlinearSchwarz):
+    if TYPE_CHECKING:
+        __init__ = AbstractNonlinearSchwarz.__init__
+
     @property
     def schwarz_kind(self) -> str:
         return "nonlinear-multiplicative-schwarz"
@@ -444,6 +486,9 @@ class NonlinearMultiplicativeSchwarz(AbstractNonlinearSchwarz):
 
 class NonlinearGaussSeidel(AbstractNonlinearSchwarz):
     """Ordered nonlinear block sweep using multiplicative Schwarz semantics."""
+
+    if TYPE_CHECKING:
+        __init__ = AbstractNonlinearSchwarz.__init__
 
     @property
     def schwarz_kind(self) -> str:

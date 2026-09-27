@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._canonical import canonicalize_mps
@@ -30,7 +31,7 @@ class NearestNeighborHamiltonian(StrictModule):
         /,
         *,
         hamiltonian_id: str,
-    ):
+    ) -> None:
         dimensions = tuple(physical_dimensions)
         values = tuple(jnp.asarray(term) for term in terms)
         identifier = str(hamiltonian_id)
@@ -80,7 +81,7 @@ class TEBDEvidence(StrictModule):
         *,
         trotter_order: int,
         precision_policy_id: str,
-    ):
+    ) -> None:
         self.discarded_weights = jnp.asarray(discarded_weights)
         self.cumulative_discarded_weight = jnp.sum(self.discarded_weights)
         self.norm_residual = jnp.asarray(norm_residual)
@@ -100,7 +101,7 @@ def _layer(
     step: Array,
     maximum_bond_dimension: int,
     normalize: bool,
-):
+) -> tuple[MatrixProductState, list[TensorTruncationEvidence]]:
     current = state
     evidence: list[TensorTruncationEvidence] = []
     for bond in bonds:

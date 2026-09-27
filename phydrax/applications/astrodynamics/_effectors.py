@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -25,13 +26,13 @@ class ThrusterEffector(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        directions_body,
-        locations_body,
-        maximum_thrust,
-        mass_flow_per_force,
-        tank_assignment,
+        directions_body: ArrayLike,
+        locations_body: ArrayLike,
+        maximum_thrust: ArrayLike,
+        mass_flow_per_force: ArrayLike,
+        tank_assignment: ArrayLike,
         /,
-    ):
+    ) -> None:
         directions = jnp.asarray(directions_body)
         locations = jnp.asarray(locations_body)
         thrust = jnp.asarray(maximum_thrust)
@@ -54,7 +55,9 @@ class ThrusterEffector(StrictModule, NonTrainableState):
         self.mass_flow_per_force = flow
         self.tank_assignment = assignment
 
-    def __call__(self, time, state: VehicleState, command, /):
+    def __call__(
+        self, time: ArrayLike, state: VehicleState, command: ArrayLike, /
+    ) -> VehicleEffectorEvaluation:
         del time
         throttle = jnp.clip(jnp.asarray(command)[: self.maximum_thrust.size], 0.0, 1.0)
         rotation = quaternion_rotation_matrix(state.quaternion)
@@ -80,8 +83,13 @@ class ReactionWheelEffector(StrictModule, NonTrainableState):
     command_offset: int = eqx.field(static=True)
 
     def __init__(
-        self, axes_body: ArrayLike, maximum_torque: ArrayLike, /, *, command_offset=0
-    ):
+        self,
+        axes_body: ArrayLike,
+        maximum_torque: ArrayLike,
+        /,
+        *,
+        command_offset: int = 0,
+    ) -> None:
         if isinstance(command_offset, bool) or not isinstance(command_offset, int):
             raise TypeError("command_offset must be an integer.")
         if command_offset < 0:
@@ -94,7 +102,9 @@ class ReactionWheelEffector(StrictModule, NonTrainableState):
         self.maximum_torque = torque
         self.command_offset = command_offset
 
-    def __call__(self, time, state: VehicleState, command, /):
+    def __call__(
+        self, time: ArrayLike, state: VehicleState, command: ArrayLike, /
+    ) -> VehicleEffectorEvaluation:
         del time
         wheel_count = self.maximum_torque.size
         requested = jnp.asarray(command)[
@@ -123,7 +133,14 @@ class LinearSensorPlan(StrictModule, NonTrainableState):
     lower: Array
     upper: Array
 
-    def __init__(self, matrix, bias, lower, upper, /):
+    def __init__(
+        self,
+        matrix: ArrayLike,
+        bias: ArrayLike,
+        lower: ArrayLike,
+        upper: ArrayLike,
+        /,
+    ) -> None:
         matrix_ = jnp.asarray(matrix)
         bias_ = jnp.asarray(bias)
         if matrix_.ndim != 2 or bias_.shape != (matrix_.shape[0],):

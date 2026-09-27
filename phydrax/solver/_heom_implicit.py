@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from .._temporal_precision import TemporalPrecisionPolicy
@@ -14,6 +15,7 @@ from ..linalg import (
     DiagonalPreconditioner,
     FunctionLinearOperator,
     LinearSolvePolicy,
+    LinearSolveResult,
     LinearSystem,
     PreconditioningPolicy,
     solve,
@@ -41,7 +43,9 @@ class HEOMImplicitEvidence(StrictModule):
     successful_steps: Array
     valid: Array
 
-    def __init__(self, linear_residuals: ArrayLike, successful_steps: ArrayLike, /):
+    def __init__(
+        self, linear_residuals: ArrayLike, successful_steps: ArrayLike, /
+    ) -> None:
         self.linear_residuals = jnp.asarray(linear_residuals)
         self.successful_steps = jnp.asarray(successful_steps, dtype=jnp.bool_)
         self.valid = jnp.all(jnp.isfinite(self.linear_residuals)) & jnp.all(
@@ -54,7 +58,7 @@ class HEOMImplicitResult(StrictModule):
     evidence: HEOMImplicitEvidence
     valid: Array
 
-    def __init__(self, solution: HEOMSolution, evidence: HEOMImplicitEvidence, /):
+    def __init__(self, solution: HEOMSolution, evidence: HEOMImplicitEvidence, /) -> None:
         self.solution = solution
         self.evidence = evidence
         self.valid = solution.valid & evidence.valid
@@ -104,7 +108,7 @@ class HEOMTierBlockPreconditioner(StrictModule):
         problem: HEOMProblem,
         shift: ArrayLike,
         /,
-    ):
+    ) -> None:
         decay = jnp.real(problem.hierarchy.multi_indices @ problem.expansion.exponents)
         self.diagonal = jnp.asarray(shift) + decay
 
@@ -140,7 +144,7 @@ class HEOMBDFEvidence(StrictModule):
         orders: ArrayLike,
         preconditioned_rhs_norms: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.linear_residuals = jnp.asarray(linear_residuals)
         self.successful_steps = jnp.asarray(successful_steps, dtype=jnp.bool_)
         self.orders = jnp.asarray(orders, dtype=jnp.int32)
@@ -157,7 +161,7 @@ class HEOMBDFResult(StrictModule):
     evidence: HEOMBDFEvidence
     valid: Array
 
-    def __init__(self, solution: HEOMSolution, evidence: HEOMBDFEvidence, /):
+    def __init__(self, solution: HEOMSolution, evidence: HEOMBDFEvidence, /) -> None:
         self.solution = solution
         self.evidence = evidence
         self.valid = solution.valid & evidence.valid
@@ -265,7 +269,7 @@ class HEOMAdaptiveBDFEvidence(StrictModule):
         linear_residuals: ArrayLike,
         capacity_saturated: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.attempted_step_sizes = jnp.asarray(attempted_step_sizes)
         self.accepted_steps = jnp.asarray(accepted_steps, dtype=jnp.bool_)
         self.error_ratios = jnp.asarray(error_ratios)
@@ -306,7 +310,7 @@ class HEOMAdaptiveBDFResult(StrictModule):
         /,
         *,
         maximum_attempts: int,
-    ):
+    ) -> None:
         self.solution = solution
         self.evidence = evidence
         self.accepted_step_count = int(jnp.sum(evidence.accepted_steps))
@@ -321,7 +325,7 @@ def _backward_euler_step(
     step: Array,
     space: ArraySpace,
     /,
-):
+) -> tuple[Array, LinearSolveResult]:
     shift = jnp.reciprocal(step)
     operator = FunctionLinearOperator(
         lambda value: shift * value - problem.rhs(value),

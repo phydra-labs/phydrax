@@ -8,6 +8,7 @@ import json
 import platform
 import time
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -59,14 +60,14 @@ from phydrax.solver.maxwell import FixedFrequencyGuidedModePlan
 jax.config.update("jax_enable_x64", True)
 
 
-def _timed(function):
+def _timed(function: Any) -> Any:
     start = time.perf_counter()
     value = function()
     jax.block_until_ready(value)
     return value, time.perf_counter() - start
 
 
-def _beamlet_case():
+def _beamlet_case() -> Any:
     grid = TensorGridPlan(
         (UniformAxisSpec(65), UniformAxisSpec(65)), axis_names=("u", "v")
     ).prepare(jnp.asarray(((-2.0, -2.0), (2.0, 2.0))))
@@ -81,6 +82,7 @@ def _beamlet_case():
     frame = BeamletFrame(RigidFrame.identity(3))
     beamlet = gaussian_beamlets_at_waist(
         ray,
+        # ty: ignore[invalid-argument-type]
         GaussianWaistSpecification((0.7, 0.9), 0.15),
         frame,
         2.0 * jnp.pi,
@@ -124,7 +126,7 @@ def _generated_index_manifest(
     )
 
 
-def _nonlinear_case():
+def _nonlinear_case() -> Any:
     plane = TensorGridPlan(
         (FourierAxisSpec(4), FourierAxisSpec(4)), axis_names=("u", "v")
     ).prepare(jnp.asarray(((-20.0, -20.0), (20.0, 20.0))))
@@ -174,7 +176,7 @@ def _nonlinear_case():
     )
 
 
-def _cylindrical_case():
+def _cylindrical_case() -> Any:
     hankel = CylindricalHankelPlan(20.0, 32).prepare()
     temporal = TensorGridPlan((FourierAxisSpec(64),), axis_names=("time",)).prepare(
         jnp.asarray(((0.0,), (2.0 * jnp.pi,)))
@@ -231,7 +233,7 @@ def _cylindrical_case():
     )
 
 
-def _transport_case():
+def _transport_case() -> Any:
     vertices = jnp.asarray(
         ((-10.0, -10.0, 1.0), (10.0, -10.0, 1.0), (10.0, 10.0, 1.0), (-10.0, 10.0, 1.0))
     )
@@ -271,7 +273,7 @@ def _transport_case():
     )
 
 
-def _guided_case():
+def _guided_case() -> Any:
     propagation = np.linspace(1.0, 4.0, 12)
     identity = np.eye(propagation.size, dtype=np.complex128)
     plan = FixedFrequencyGuidedModePlan(

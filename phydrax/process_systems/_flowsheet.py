@@ -7,14 +7,20 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TypeAlias
 
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..ein import contract
 from ..linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
+
+
+_NewtonState: TypeAlias = tuple[Array, Array, Array, Array]
+_LineSearchState: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,12 +118,12 @@ class EquationOrientedFlowsheet:
             raise ValueError("Flowsheet nonlinear controls must be finite and positive.")
         value = jnp.clip(value, self.lower_bounds, self.upper_bounds)
 
-        def norm_at(candidate):
+        def norm_at(candidate: Array) -> Array:
             candidate_residual = self.residual(candidate)
             scaled = candidate_residual / self.residual_scale
             return jnp.sqrt(jnp.real(contract("i,i->", jnp.conj(scaled), scaled)))
 
-        def nonlinear_step(iteration, state):
+        def nonlinear_step(iteration: Array, state: _NewtonState) -> _NewtonState:
             current, converged, failed, completed = state
             residual = self.residual(current)
             scaled = residual / self.residual_scale
@@ -138,7 +144,7 @@ class EquationOrientedFlowsheet:
             )
             direction = self.variable_scale * correction.value
 
-            def line_search(_, search_state):
+            def line_search(_: Array, search_state: _LineSearchState) -> _LineSearchState:
                 accepted, accepted_norm, found, step = search_state
                 candidate = jnp.clip(
                     current + step * direction,

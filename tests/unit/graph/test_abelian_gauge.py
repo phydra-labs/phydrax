@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _triangle_complex():
+def _triangle_complex() -> Any:
     vertex_edge = jnp.asarray([[-1.0, 0.0, 1.0], [1.0, -1.0, 0.0], [0.0, 1.0, -1.0]])
     edge_face = jnp.ones((3, 1))
     return phx.graph.cochain_complex_from_incidences(
@@ -17,7 +20,7 @@ def _triangle_complex():
     )
 
 
-def test_abelian_curvature_action_and_gauge_invariance():
+def test_abelian_curvature_action_and_gauge_invariance() -> None:
     complex = _triangle_complex()
     parameter_values = jnp.zeros((7,)).at[:3].set(jnp.asarray([0.2, -0.1, 0.4]))
     potential_values = jnp.zeros((7,)).at[3:6].set(jnp.asarray([0.3, -0.2, 0.5]))

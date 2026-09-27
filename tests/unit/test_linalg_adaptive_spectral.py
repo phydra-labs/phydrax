@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -12,7 +15,7 @@ import phydrax as phx
 la = phx.linalg
 
 
-def _positive_properties():
+def _positive_properties() -> Any:
     return la.OperatorProperties(
         self_adjoint=True,
         positive_definite=True,
@@ -23,7 +26,7 @@ def _positive_properties():
     )
 
 
-def test_adaptive_trace_stops_at_first_eligible_batch_for_zero_variance_samples():
+def test_adaptive_trace_stops_at_first_eligible_batch_for_zero_variance_samples() -> None:
     diagonal = jnp.asarray([1.0, 2.0, 3.0, 4.0])
     operator = la.DenseLinearOperator(
         jnp.diag(diagonal),
@@ -61,7 +64,7 @@ def test_adaptive_trace_stops_at_first_eligible_batch_for_zero_variance_samples(
     assert result.cost.maximum_matvec_budget == 48
 
 
-def test_adaptive_trace_hits_probe_budget_when_statistical_error_is_too_large():
+def test_adaptive_trace_hits_probe_budget_when_statistical_error_is_too_large() -> None:
     matrix = jnp.asarray([[3.0, 0.8, 0.2], [0.8, 2.0, 0.4], [0.2, 0.4, 1.5]])
     operator = la.DenseLinearOperator(
         matrix,
@@ -91,7 +94,7 @@ def test_adaptive_trace_hits_probe_budget_when_statistical_error_is_too_large():
     assert jnp.all(jnp.isfinite(result.samples))
 
 
-def test_adaptive_slq_never_claims_success_with_unresolved_krylov_truncation():
+def test_adaptive_slq_never_claims_success_with_unresolved_krylov_truncation() -> None:
     matrix = jnp.asarray([[3.0, 0.8, 0.2], [0.8, 2.0, 0.4], [0.2, 0.4, 1.5]])
     operator = la.DenseLinearOperator(
         matrix,
@@ -120,7 +123,7 @@ def test_adaptive_slq_never_claims_success_with_unresolved_krylov_truncation():
     assert result.quantity == "log-determinant"
 
 
-def test_adaptive_log_determinant_is_reproducible_and_jittable():
+def test_adaptive_log_determinant_is_reproducible_and_jittable() -> None:
     diagonal = jnp.asarray([1.0, 2.0, 3.0, 4.0])
     operator = la.DenseLinearOperator(
         jnp.diag(diagonal),
@@ -162,7 +165,7 @@ def test_adaptive_log_determinant_is_reproducible_and_jittable():
     assert compiled.converged
 
 
-def test_adaptive_slq_supports_complex_hermitian_operators():
+def test_adaptive_slq_supports_complex_hermitian_operators() -> None:
     matrix = jnp.asarray([[2.0 + 0.0j, 1.0j], [-1.0j, 3.0 + 0.0j]])
     operator = la.DenseLinearOperator(
         matrix,
@@ -189,7 +192,7 @@ def test_adaptive_slq_supports_complex_hermitian_operators():
     assert jnp.isclose(result.estimate, jnp.trace(matrix).real, atol=2.0)
 
 
-def test_adaptive_stochastic_policy_rejects_invalid_fixed_capacity_batches():
+def test_adaptive_stochastic_policy_rejects_invalid_fixed_capacity_batches() -> None:
     with pytest.raises(ValueError, match="divide"):
         la.AdaptiveStochasticPolicy(
             min_probes=3,

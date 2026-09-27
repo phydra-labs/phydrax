@@ -4,7 +4,8 @@
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._interpolation import linear_interpolate
 from .._strict import StrictModule
@@ -16,7 +17,7 @@ class TabulatedProperty(StrictModule, NonTrainableState):
     values: Array
     unit: str = eqx.field(static=True)
 
-    def __init__(self, argument: ArrayLike, values: ArrayLike, unit: str):
+    def __init__(self, argument: ArrayLike, values: ArrayLike, unit: str) -> None:
         x = np.asarray(argument, float)
         y = np.asarray(values)
         if (
@@ -31,7 +32,7 @@ class TabulatedProperty(StrictModule, NonTrainableState):
         self.values = jnp.asarray(y)
         self.unit = unit
 
-    def evaluate(self, argument: ArrayLike):
+    def evaluate(self, argument: ArrayLike) -> Array:
         q = jnp.asarray(argument)
         if self.values.ndim == 1:
             return linear_interpolate(

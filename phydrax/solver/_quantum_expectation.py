@@ -9,7 +9,7 @@ from math import isfinite, prod
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -44,7 +44,7 @@ class DenseQuantumObservablePolicy(StrictModule):
         maximum_observable_bytes: int = 2**30,
         maximum_workspace_bytes: int = 2**30,
         imaginary_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         observable_limit = int(maximum_observable_bytes)
         workspace_limit = int(maximum_workspace_bytes)
         tolerance = float(imaginary_tolerance)

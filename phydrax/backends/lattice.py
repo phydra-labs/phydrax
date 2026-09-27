@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -180,8 +181,11 @@ class LatticeProviderStatus(StrictModule, NonTrainableState):
 
 @runtime_checkable
 class LatticeKernelProvider(Protocol):
-    provider_id: str
-    capabilities: LatticeKernelCapabilities
+    @property
+    def provider_id(self) -> str: ...
+
+    @property
+    def capabilities(self) -> LatticeKernelCapabilities: ...
 
     def gauge_action(
         self, plaquettes: ArrayLike, beta: ArrayLike, owned_mask: ArrayLike, /

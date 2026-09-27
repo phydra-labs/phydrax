@@ -15,6 +15,7 @@ construction invariants and are always evaluated.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 from scipy.sparse import coo_matrix
@@ -173,21 +174,29 @@ def _welded_complex(mesh: CellMesh, welded: np.ndarray, /) -> _Complex:
         count = block.cell_count
         owners = np.arange(cursor, cursor + count)
         if block.cell_kind == "polyhedron":
+            # ty: ignore[unresolved-attribute]
             selected = np.isin(tables.star_cell, owners)
             vertices = _csr_rows(
+                # ty: ignore[unresolved-attribute]
                 np.concatenate(((0,), np.cumsum(tables.cell_vertex_counts))),
+                # ty: ignore[unresolved-attribute]
                 tables.cell_vertex_values,
             )[owners]
             cell_rows.append(np.where(vertices >= 0, welded[np.maximum(vertices, 0)], -1))
+            # ty: ignore[unresolved-attribute]
             faces = np.asarray(connectivity.cell_face_values, dtype=np.int64)
+            # ty: ignore[unresolved-attribute]
             face_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
+            # ty: ignore[unresolved-attribute]
             signs = np.asarray(connectivity.cell_face_sign_values, dtype=np.float64)
             incidence_cell = np.repeat(
                 np.arange(face_offsets.size - 1), np.diff(face_offsets)
             )
             chosen = np.isin(incidence_cell, owners)
             loops = _csr_rows(
+                # ty: ignore[unresolved-attribute]
                 np.asarray(connectivity.face_vertex_offsets, dtype=np.int64),
+                # ty: ignore[unresolved-attribute]
                 np.asarray(connectivity.face_vertex_values, dtype=np.int64),
             )[faces[chosen]]
             lengths = np.sum(loops >= 0, axis=1)
@@ -204,10 +213,13 @@ def _welded_complex(mesh: CellMesh, welded: np.ndarray, /) -> _Complex:
             edge_rows.append(
                 welded[
                     np.stack(
-                        (tables.star_first[selected], tables.star_second[selected]), 1
+                        # ty: ignore[unresolved-attribute]
+                        (tables.star_first[selected], tables.star_second[selected]),
+                        1,
                     )
                 ]
             )
+            # ty: ignore[unresolved-attribute]
             edge_cells.append(tables.star_cell[selected])
         else:
             rows = welded[np.asarray(block.vertices, dtype=np.int64)]
@@ -341,7 +353,7 @@ def _facet_links(inverse: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     return order[:-1][same], order[1:][same]
 
 
-def _vertex_links(complex_: _Complex, first: np.ndarray, second: np.ndarray, /):
+def _vertex_links(complex_: _Complex, first: np.ndarray, second: np.ndarray, /) -> Any:
     facets = complex_.facets[first]
     slots = facets >= 0
     return (
@@ -351,7 +363,7 @@ def _vertex_links(complex_: _Complex, first: np.ndarray, second: np.ndarray, /):
     )
 
 
-def _edge_links(complex_: _Complex, first: np.ndarray, second: np.ndarray, /):
+def _edge_links(complex_: _Complex, first: np.ndarray, second: np.ndarray, /) -> Any:
     facets = complex_.facets[first]
     lengths = np.sum(facets >= 0, axis=1)
     width = facets.shape[1]
@@ -396,7 +408,7 @@ def _open_boundary_count(
 # Self-intersection ---------------------------------------------------------------
 
 
-def _signs(result) -> tuple[np.ndarray, np.ndarray]:
+def _signs(result: Any) -> tuple[np.ndarray, np.ndarray]:
     return np.asarray(result.signs, dtype=np.int8), np.asarray(
         result.certain, dtype=np.bool_
     )
@@ -404,17 +416,19 @@ def _signs(result) -> tuple[np.ndarray, np.ndarray]:
 
 # Exact predicates when meshcore is available, otherwise the float64 filter
 # whose unresolved signs surface as an explicit unresolved disposition.
-def _orient3d(a, b, c, d, /) -> tuple[np.ndarray, np.ndarray]:
+def _orient3d(a: Any, b: Any, c: Any, d: Any, /) -> tuple[np.ndarray, np.ndarray]:
     mode = resolve_host_predicate_mode(PredicateMode.EXACT)
     return _signs(orient3d(a, b, c, d, mode=mode))
 
 
-def _orient2d(a, b, c, /) -> tuple[np.ndarray, np.ndarray]:
+def _orient2d(a: Any, b: Any, c: Any, /) -> tuple[np.ndarray, np.ndarray]:
     mode = resolve_host_predicate_mode(PredicateMode.EXACT)
     return _signs(orient2d(a, b, c, mode=mode))
 
 
-def _segment_crosses_triangle(segment, triangle, /) -> tuple[np.ndarray, np.ndarray]:
+def _segment_crosses_triangle(
+    segment: Any, triangle: Any, /
+) -> tuple[np.ndarray, np.ndarray]:
     """Closed segment/triangle contact for segments not lying in the plane."""
 
     a, b = segment
@@ -444,7 +458,7 @@ def _project(points: np.ndarray, axes: np.ndarray, /) -> np.ndarray:
     return np.take_along_axis(points, axes, axis=1)
 
 
-def _inside_triangle_2d(point, triangle, /, *, strict: bool):
+def _inside_triangle_2d(point: Any, triangle: Any, /, *, strict: bool) -> Any:
     p, q, r = triangle
     signs = []
     certain = np.ones(point.shape[0], dtype=np.bool_)
@@ -460,7 +474,9 @@ def _inside_triangle_2d(point, triangle, /, *, strict: bool):
     return inside, certain
 
 
-def _coplanar_overlap(first: np.ndarray, second: np.ndarray, shared: np.ndarray, /):
+def _coplanar_overlap(
+    first: np.ndarray, second: np.ndarray, shared: np.ndarray, /
+) -> Any:
     """Closed coplanar triangle overlap away from shared vertices.
 
     Pairs sharing a vertex are reordered so that it sits at local index zero of
@@ -595,7 +611,17 @@ def _triangle_pairs_intersect(
 _EAR_WORKING_ENTRIES = 1 << 20
 
 
-def _ear_blocked(loops, before, after, alive, predecessor, successor, sign, mode, /):
+def _ear_blocked(
+    loops: Any,
+    before: Any,
+    after: Any,
+    alive: Any,
+    predecessor: Any,
+    successor: Any,
+    sign: Any,
+    mode: Any,
+    /,
+) -> Any:
     """Candidate ears containing another live vertex, or not decided exactly."""
 
     count, corner_count, _ = loops.shape

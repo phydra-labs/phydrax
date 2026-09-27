@@ -13,6 +13,7 @@ import equinox as eqx
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._resources import AlgebraResourceBudget
 from ._structure import AlgebraRationalMap, AlgebraRationalVector, AlgebraStructureTable
 
@@ -43,19 +44,12 @@ class AlgebraClaimEvidence(StrictModule, NonTrainableState):
         *,
         witness: Sequence[str] = (),
         work: int = 0,
-    ):
+    ) -> None:
         name = str(property_name)
         if not name:
             raise ValueError("Algebra property name must be non-empty.")
-        if status not in ("proven", "disproven", "unknown"):
-            raise ValueError("Unknown algebra claim status.")
-        if source not in (
-            "exact_basis_audit",
-            "family_construction",
-            "explicit_witness",
-            "unavailable",
-        ):
-            raise ValueError("Unknown algebra claim source.")
+        status = parse(status, AlgebraClaimStatus, "status")
+        source = parse(source, AlgebraClaimSource, "source")
         work_ = int(work)
         if work_ < 0:
             raise ValueError("Algebra claim work must be nonnegative.")
@@ -83,7 +77,7 @@ class AlgebraPropertyEvidence(StrictModule, NonTrainableState):
     claims: tuple[AlgebraClaimEvidence, ...]
     evidence_id: str = eqx.field(static=True)
 
-    def __init__(self, claims: Sequence[AlgebraClaimEvidence], /):
+    def __init__(self, claims: Sequence[AlgebraClaimEvidence], /) -> None:
         values = tuple(claims)
         if not values or any(
             not isinstance(value, AlgebraClaimEvidence) for value in values
@@ -117,15 +111,17 @@ def _basis(dimension: int, position: int, /) -> tuple[Fraction, ...]:
     return tuple(Fraction(int(index == position)) for index in range(dimension))
 
 
-def _add(left, right):
+def _add(left: tuple[Fraction, ...], right: tuple[Fraction, ...]) -> tuple[Fraction, ...]:
     return tuple(a + b for a, b in zip(left, right, strict=True))
 
 
-def _zero(value) -> bool:
+def _zero(value: tuple[Fraction, ...]) -> bool:
     return all(entry == _ZERO for entry in value)
 
 
-def _claim_from_witness(name, witness, work):
+def _claim_from_witness(
+    name: str, witness: tuple[str, ...] | None, work: int
+) -> AlgebraClaimEvidence:
     return AlgebraClaimEvidence(
         name,
         "proven" if witness is None else "disproven",

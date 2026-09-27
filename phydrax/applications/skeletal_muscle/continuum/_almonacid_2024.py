@@ -14,13 +14,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
+from typing import TypeAlias, TypedDict
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._interpolation import linear_interpolate
 
@@ -49,6 +53,7 @@ from ._almonacid_2024_geometry import (
 )
 from ._almonacid_2024_material import (
     Almonacid2024MaterialParameters,
+    Almonacid2024MaterialResponse,
     almonacid_2024_material_response,
 )
 from ._almonacid_2024_preconditioning import (
@@ -62,8 +67,24 @@ from ._almonacid_2024_preconditioning import (
 _SOURCE_COMMIT = "0698e3d87d7261c81437d410dda161fe3b8efcbf"
 _FORCE_OWNER = "almonacid-2024-muscle-aponeurosis-three-field-continuum"
 
+# Displacement, pressure, and dilation blocks (unknowns or residual rows).
+_ThreeFieldBlocks: TypeAlias = tuple[Array, Array, Array]
 
-def _scalar(value, name):
+
+class _Almonacid2024QuadratureFields(TypedDict):
+    points_m: Array
+    weights_m3: Array
+    deformation_gradient: Array
+    displacement_m: Array
+    velocity_m_per_s: Array
+    pressure_Pa: Array
+    dilation: Array
+    orientation: Array
+    normalized_total_strain_rate: Array
+    response: Almonacid2024MaterialResponse
+
+
+def _scalar(value: ArrayLike, name: str) -> Array:
     result = jnp.asarray(value)
     if result.shape != () or jnp.issubdtype(result.dtype, jnp.complexfloating):
         raise ValueError(f"{name} must be a real scalar.")
@@ -81,7 +102,13 @@ class Almonacid2024MuscleAponeurosisParameters(StrictModule):
     aponeurosis: Almonacid2024MaterialParameters
     density_kg_per_m3: Array
 
-    def __init__(self, muscle, aponeurosis, density_kg_per_m3, /):
+    def __init__(
+        self,
+        muscle: Almonacid2024MaterialParameters,
+        aponeurosis: Almonacid2024MaterialParameters,
+        density_kg_per_m3: ArrayLike,
+        /,
+    ) -> None:
         if not isinstance(muscle, Almonacid2024MaterialParameters) or not isinstance(
             aponeurosis, Almonacid2024MaterialParameters
         ):
@@ -89,7 +116,7 @@ class Almonacid2024MuscleAponeurosisParameters(StrictModule):
         self.muscle, self.aponeurosis = muscle, aponeurosis
         self.density_kg_per_m3 = _scalar(density_kg_per_m3, "density_kg_per_m3")
 
-    def values(self):
+    def values(self) -> Array:
         return jnp.concatenate(
             tuple(jnp.ravel(x) for x in jax.tree_util.tree_leaves(self))
         )
@@ -109,8 +136,15 @@ class Almonacid2024Control(StrictModule):
     source_id: str = eqx.field(static=True)
 
     def __init__(
-        self, time_s, activation, engineering_strain, /, *, source_id, successful=True
-    ):
+        self,
+        time_s: ArrayLike,
+        activation: ArrayLike,
+        engineering_strain: ArrayLike,
+        /,
+        *,
+        source_id: str,
+        successful: ArrayLike = True,
+    ) -> None:
         time = _scalar(time_s, "time_s")
         self.activation = _scalar(activation, "activation")
         self.engineering_strain = _scalar(engineering_strain, "engineering_strain")
@@ -123,11 +157,11 @@ class Almonacid2024Control(StrictModule):
         self.source_id = str(source_id)
 
     @property
-    def time_s(self):
+    def time_s(self) -> Array:
         return self.clock.time_s
 
     @property
-    def successful(self):
+    def successful(self) -> Array:
         return self.clock.successful
 
 
@@ -149,7 +183,14 @@ class Almonacid2024InputHistory(StrictModule):
     source_id: str = eqx.field(static=True)
     source_provenance: str = eqx.field(static=True)
 
-    def __init__(self, activation_table, strain_table, /, *, source_id):
+    def __init__(
+        self,
+        activation_table: npt.ArrayLike,
+        strain_table: npt.ArrayLike,
+        /,
+        *,
+        source_id: str,
+    ) -> None:
         tables = [
             np.asarray(table, dtype=np.float64)
             for table in (activation_table, strain_table)
@@ -178,14 +219,14 @@ class Almonacid2024InputHistory(StrictModule):
         )
 
     @property
-    def activation_time_s(self):
+    def activation_time_s(self) -> Array:
         return self.time_grid.activation_time_s
 
     @property
-    def strain_time_s(self):
+    def strain_time_s(self) -> Array:
         return self.time_grid.strain_time_s
 
-    def sample(self, time_s):
+    def sample(self, time_s: ArrayLike) -> Almonacid2024Control:
         time = _scalar(time_s, "time_s")
         valid = (
             jnp.isfinite(time)
@@ -271,7 +312,7 @@ class Almonacid2024Candidate(StrictModule, NonTrainableState):
     input_valid: Array
 
     @property
-    def successful(self):
+    def successful(self) -> Array:
         finite = jnp.all(
             jnp.stack(
                 [
@@ -287,7 +328,13 @@ class Almonacid2024Candidate(StrictModule, NonTrainableState):
             & finite
         )
 
-    def commit(self, current_prepared, /, *, accept=True):
+    def commit(
+        self,
+        current_prepared: PreparedAlmonacid2024MuscleAponeurosis,
+        /,
+        *,
+        accept: ArrayLike = True,
+    ) -> PreparedAlmonacid2024MuscleAponeurosis:
         """Atomically select this solve or the unchanged current preparation.
 
         State, parameter leaves, geometry/QP arrays and all static solver policy
@@ -337,13 +384,13 @@ class Almonacid2024MuscleAponeurosisPlan(StrictModule, NonTrainableState):
         geometry: Almonacid2024Geometry,
         /,
         *,
-        control_source_id,
-        dynamic=True,
-        pulling_face_id=1,
-        stress_scale_Pa=2e5,
-        method=None,
-        termination=None,
-    ):
+        control_source_id: str,
+        dynamic: bool = True,
+        pulling_face_id: int = 1,
+        stress_scale_Pa: float = 2e5,
+        method: NewtonKrylov | None = None,
+        termination: NonlinearTermination | None = None,
+    ) -> None:
         if not isinstance(geometry, Almonacid2024Geometry):
             raise TypeError("geometry must be Almonacid2024Geometry.")
         if not str(control_source_id).strip() or pulling_face_id not in range(1, 8):
@@ -400,12 +447,14 @@ class Almonacid2024MuscleAponeurosisPlan(StrictModule, NonTrainableState):
         )
         self.plan_id = self.provenance.semantic_id
 
-    def prepare(self, parameters: Almonacid2024MuscleAponeurosisParameters, /):
+    def prepare(
+        self, parameters: Almonacid2024MuscleAponeurosisParameters, /
+    ) -> PreparedAlmonacid2024MuscleAponeurosis:
         if not isinstance(parameters, Almonacid2024MuscleAponeurosisParameters):
             raise TypeError(
                 "parameters must be Almonacid2024MuscleAponeurosisParameters."
             )
-        if not jax.config.x64_enabled:
+        if not bool(jax.config.read("jax_enable_x64")):
             raise ValueError("The source-matched continuum requires JAX float64 enabled.")
         geometry = prepare_geometry(self.geometry, self.pulling_face_id)
         dtype = parameters.density_kg_per_m3.dtype
@@ -485,7 +534,7 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
     prepared_id: str = eqx.field(static=True)
     linear_symbolic: Almonacid2024SymbolicPreconditioning
 
-    def numeric_revision(self):
+    def numeric_revision(self) -> NumericRevision:
         arrays = tuple(
             x for x in jax.tree_util.tree_leaves(self.geometry) if eqx.is_array(x)
         )
@@ -499,7 +548,7 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
             },
         )
 
-    def _trajectory_parameters(self):
+    def _trajectory_parameters(self) -> Almonacid2024MuscleAponeurosisParameters:
         return eqx.error_if(
             self.parameters,
             (self.state.accepted_steps > 0)
@@ -507,7 +556,7 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
             "Accepted trajectory parameters are fixed; replay or reprepare after changing the law or density.",
         )
 
-    def _tissue_parameters(self, tissue_ids):
+    def _tissue_parameters(self, tissue_ids: Array) -> Almonacid2024MaterialParameters:
         parameters = self._trajectory_parameters()
         return jax.tree_util.tree_map(
             lambda m, a: jnp.where(
@@ -518,11 +567,27 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
         )
 
     def _response(
-        self, F, F_previous, pressure, dilation, activation, dt, directions, tissues
-    ):
+        self,
+        F: Array,
+        F_previous: Array,
+        pressure: Array,
+        dilation: Array,
+        activation: Array,
+        dt: Array,
+        directions: Array,
+        tissues: Array,
+    ) -> Almonacid2024MaterialResponse:
         parameters = self._tissue_parameters(tissues)
 
-        def cell(p, f, fp, pr, di, dr, ti):
+        def cell(
+            p: Almonacid2024MaterialParameters,
+            f: Array,
+            fp: Array,
+            pr: Array,
+            di: Array,
+            dr: Array,
+            ti: Array,
+        ) -> Almonacid2024MaterialResponse:
             return jax.vmap(
                 lambda ff, ffp, pp, jj: almonacid_2024_material_response(
                     p, ff, ffp, pp, jj, activation, dt, dr, ti, dynamic=self.plan.dynamic
@@ -533,7 +598,7 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
             parameters, F, F_previous, pressure, dilation, directions, tissues
         )
 
-    def deformation(self, displacement_m):
+    def deformation(self, displacement_m: Array) -> Array:
         return jnp.eye(3, dtype=displacement_m.dtype) + contract(
             "cai,cqaJ->cqiJ",
             displacement_m[self.geometry.displacement_dofs],
@@ -542,12 +607,12 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
 
     def material_response(
         self,
-        displacement_m,
-        pressure_coefficients_Pa,
-        dilation_coefficients,
-        activation,
-        dt_s,
-    ):
+        displacement_m: Array,
+        pressure_coefficients_Pa: Array,
+        dilation_coefficients: Array,
+        activation: Array,
+        dt_s: Array,
+    ) -> Almonacid2024MaterialResponse:
         g = self.geometry
         F = self.deformation(displacement_m)
         F_previous = (
@@ -566,7 +631,7 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
             g.tissue_ids,
         )
 
-    def quadrature_fields(self, dt_s, /):
+    def quadrature_fields(self, dt_s: ArrayLike, /) -> _Almonacid2024QuadratureFields:
         """Accepted raw fields in source column conventions, retaining step rates.
 
         The source's ``orientation`` is F*a0 (not a unit direction), and both
@@ -623,11 +688,11 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
 
     def residual(
         self,
-        displacement_m,
-        pressure_coefficients_Pa,
-        dilation_coefficients,
+        displacement_m: Array,
+        pressure_coefficients_Pa: Array,
+        dilation_coefficients: Array,
         control: Almonacid2024Control,
-    ):
+    ) -> tuple[_ThreeFieldBlocks, Almonacid2024MaterialResponse]:
         """Physical unconstrained residual: N, m³, J in its three blocks.
 
         No penalty, interface spring, fiber force, or pressure smoothing is added.
@@ -666,7 +731,7 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
         )
         return (ru, rp, rj), response
 
-    def _displacement(self, free_scaled, strain):
+    def _displacement(self, free_scaled: Array, strain: Array) -> Array:
         g = self.geometry
         u = (
             jnp.zeros_like(self.state.displacement_m)
@@ -675,7 +740,9 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
         )
         return u.at[g.pulling_dofs, 0].set(strain * self.plan.geometry.muscle_length_m)
 
-    def _root_residual(self, coordinates, control):
+    def _root_residual(
+        self, coordinates: _ThreeFieldBlocks, control: Almonacid2024Control
+    ) -> _ThreeFieldBlocks:
         u, p, j = coordinates
         physical = self.residual(
             self._displacement(u, control.engineering_strain),
@@ -705,7 +772,7 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
             physical[2] / (stress * cell_volume[:, None]),
         )
 
-    def propose(self, control: Almonacid2024Control, /):
+    def propose(self, control: Almonacid2024Control, /) -> Almonacid2024Candidate:
         if any(
             value.dtype != self.state.time_s.dtype
             for value in jax.tree_util.tree_leaves(self.parameters)
@@ -830,7 +897,15 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
             input_valid & density_valid,
         )
 
-    def _trace_fields(self, u, p, j, control, *, neighbor=False):
+    def _trace_fields(
+        self,
+        u: Array,
+        p: Array,
+        j: Array,
+        control: Almonacid2024Control,
+        *,
+        neighbor: bool = False,
+    ) -> tuple[Array, Array, Almonacid2024MaterialResponse]:
         g, t = self.geometry, self.geometry.traces
         cells = (
             jnp.where(t.neighbor_cells >= 0, t.neighbor_cells, t.cells)
@@ -863,7 +938,16 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
         )
         return displacement, pressure, response
 
-    def _diagnostics(self, u, velocity, p, j, control, residual, response):
+    def _diagnostics(
+        self,
+        u: Array,
+        velocity: Array,
+        p: Array,
+        j: Array,
+        control: Almonacid2024Control,
+        residual: _ThreeFieldBlocks,
+        response: Almonacid2024MaterialResponse,
+    ) -> Almonacid2024Diagnostics:
         g, t = self.geometry, self.geometry.traces
         dt = control.time_s - self.state.time_s
         owner_u, owner_p, owner = self._trace_fields(u, p, j, control)
@@ -924,7 +1008,7 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
 
         # Before the first accepted step, parameters remain optimizable. Rebind
         # the reference energy to that law rather than subtracting a stale cache.
-        def initial_passive_energy(_):
+        def initial_passive_energy(_: None) -> Array:
             previous = self.material_response(
                 self.state.displacement_m,
                 self.state.pressure_coefficients_Pa,
@@ -988,7 +1072,7 @@ class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
         )
 
 
-def _verify_repository_inputs(directory):
+def _verify_repository_inputs(directory: Path) -> None:
     manifest_path = directory / "manifest.json"
     if not manifest_path.is_file():
         raise ValueError("Pinned repository inputs require their immutable manifest.")
@@ -1015,8 +1099,18 @@ def _verify_repository_inputs(directory):
 
 
 def almonacid_2024_repository_case(
-    input_directory, /, *, refinement=None, protocol="repository-default-fields"
-):
+    input_directory: str | os.PathLike[str],
+    /,
+    *,
+    refinement: int | None = None,
+    protocol: str = "repository-default-fields",
+) -> tuple[
+    Almonacid2024MuscleAponeurosisPlan,
+    Almonacid2024MuscleAponeurosisParameters,
+    Almonacid2024InputHistory,
+    float,
+    float,
+]:
     """Load pinned executable input files explicitly; these are not a biological preset.
 
     ``fixed-end-activation`` replaces strain by zero; ``passive-cyclic`` replaces
@@ -1031,7 +1125,7 @@ def almonacid_2024_repository_case(
             key, value = line.strip()[4:].split("=", 1)
             values[key.strip()] = value.split("#", 1)[0].strip()
 
-    def number(name):
+    def number(name: str) -> float:
         return float(values[name])
 
     if number("Polynomial degree") != 2 or number("Quadrature order") != 5:

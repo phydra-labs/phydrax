@@ -11,7 +11,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -67,7 +68,7 @@ class RandomPhaseApproximationPlan(StrictModule, NonTrainableState):
         residual_tolerance: float = 1.0e-8,
         imaginary_tolerance: float = 1.0e-8,
         degeneracy_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         a = jnp.asarray(a_matrix)
         b = jnp.asarray(b_matrix, dtype=a.dtype)
         dipoles = jnp.asarray(basis_transition_dipoles, dtype=a.dtype)

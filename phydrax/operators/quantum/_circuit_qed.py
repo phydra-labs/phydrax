@@ -10,7 +10,8 @@ from numbers import Integral
 import equinox as eqx
 import jax.core as jax_core
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -59,7 +60,7 @@ class ChargeBasis(StrictModule):
     dimension: int = eqx.field(static=True)
     basis_id: str = eqx.field(static=True)
 
-    def __init__(self, cutoff: int, /):
+    def __init__(self, cutoff: int, /) -> None:
         if isinstance(cutoff, bool) or not isinstance(cutoff, Integral):
             raise TypeError("cutoff must be a positive integer.")
         cutoff_ = int(cutoff)
@@ -98,7 +99,7 @@ class OscillatorBasis(StrictModule):
     phase_scale: float = eqx.field(static=True)
     basis_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /, *, phase_scale: float = 1.0):
+    def __init__(self, dimension: int, /, *, phase_scale: float = 1.0) -> None:
         if isinstance(dimension, bool) or not isinstance(dimension, Integral):
             raise TypeError("dimension must be an integer greater than one.")
         dimension_ = int(dimension)
@@ -160,7 +161,7 @@ class TransmonParameters(StrictModule):
         *,
         offset_charge: ArrayLike = 0.0,
         external_phase: ArrayLike = 0.0,
-    ):
+    ) -> None:
         self.charging_rate = _real_scalar(charging_rate, "charging_rate", positive=True)
         self.left_junction_rate = _real_scalar(
             left_junction_rate, "left_junction_rate", nonnegative=True
@@ -188,7 +189,7 @@ class FluxoniumParameters(StrictModule):
         /,
         *,
         external_phase: ArrayLike = 0.0,
-    ):
+    ) -> None:
         self.charging_rate = _real_scalar(charging_rate, "charging_rate", positive=True)
         self.inductive_rate = _real_scalar(
             inductive_rate, "inductive_rate", positive=True
@@ -204,7 +205,7 @@ class HarmonicModeParameters(StrictModule):
 
     angular_rate: Array
 
-    def __init__(self, angular_rate: ArrayLike, /):
+    def __init__(self, angular_rate: ArrayLike, /) -> None:
         self.angular_rate = _real_scalar(angular_rate, "angular_rate", positive=True)
 
 

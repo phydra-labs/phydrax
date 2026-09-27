@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Literal
+from typing import assert_never, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -25,15 +26,20 @@ from ...linalg import (
     OperatorProperties,
     PreparedFactorization,
 )
+from ...typing import parse
 
 
-DiscontinuousMassStrategy = Literal[
-    "auto",
+if TYPE_CHECKING:
+    from ...integration._rules import ReferenceRule
+
+
+_BlockMassStrategy: TypeAlias = Literal[
     "diagonal",
     "affine_scaled",
     "weight_adjusted",
     "exact_batched",
 ]
+DiscontinuousMassStrategy: TypeAlias = Literal["auto", _BlockMassStrategy]
 
 
 class DiscontinuousMassEvidence(StrictModule, NonTrainableState):
@@ -48,7 +54,7 @@ class DiscontinuousMassEvidence(StrictModule, NonTrainableState):
 class PreparedDiscontinuousMassInverse(StrictModule):
     discretization: FiniteElementDiscretization
     field_name: str = eqx.field(static=True)
-    strategies: tuple[str, ...] = eqx.field(static=True)
+    strategies: tuple[_BlockMassStrategy, ...] = eqx.field(static=True)
     routes: tuple[Array, ...]
     mass_matrices: tuple[Array, ...]
     inverse_diagonals: tuple[Array, ...]
@@ -62,25 +68,17 @@ class PreparedDiscontinuousMassInverse(StrictModule):
         self,
         discretization: FiniteElementDiscretization,
         field_name: str,
-        volume_rules,
+        volume_rules: ReferenceRule | Mapping[str, ReferenceRule],
         /,
         *,
         strategy: DiscontinuousMassStrategy = "auto",
         structure_tolerance: float = 1.0e-11,
-    ):
+    ) -> None:
         from ...integration._rules import reference_rule_data
 
         if not isinstance(discretization, FiniteElementDiscretization):
             raise TypeError("discretization must be FiniteElementDiscretization.")
-        selected_strategy = str(strategy)
-        if selected_strategy not in (
-            "auto",
-            "diagonal",
-            "affine_scaled",
-            "weight_adjusted",
-            "exact_batched",
-        ):
-            raise ValueError("Unknown discontinuous mass strategy.")
+        selected_strategy = parse(strategy, DiscontinuousMassStrategy, "strategy")
         tolerance = float(structure_tolerance)
         if not np.isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("structure_tolerance must be finite and positive.")
@@ -99,7 +97,7 @@ class PreparedDiscontinuousMassInverse(StrictModule):
         all_scales = []
         all_weight_adjusted = []
         all_factorizations = []
-        strategies = []
+        strategies: list[_BlockMassStrategy] = []
         minimum = np.inf
         condition = 0.0
         factor_bytes = 0
@@ -176,6 +174,7 @@ class PreparedDiscontinuousMassInverse(StrictModule):
                 / max(1.0, float(np.max(np.abs(matrices_np)))),
                 0.0,
             )
+            block_strategy: _BlockMassStrategy
             if selected_strategy == "auto":
                 block_strategy = (
                     "diagonal"
@@ -197,56 +196,59 @@ class PreparedDiscontinuousMassInverse(StrictModule):
             inverse_diagonal = jnp.zeros((0, 0), dtype=matrices.dtype)
             scales = jnp.asarray(scale_values)
             weight_adjusted = jnp.zeros((0, 0, 0), dtype=matrices.dtype)
-            if block_strategy == "diagonal":
-                inverse_diagonal = 1.0 / jnp.asarray(diagonal)
-                block_factorizations = ()
-            elif block_strategy == "affine_scaled":
-                factor = _factor_mass_matrix(
-                    jnp.asarray(reference_physical),
-                    properties,
-                    field,
-                    block.name,
-                    "affine-reference",
-                )
-                block_factorizations = (factor,)
-                factor_bytes += reference_physical.nbytes
-            elif block_strategy == "weight_adjusted":
-                reference_weights = np.asarray(rule_data.weights)
-                reference_mass = ein.contract(
-                    "q,qi,qj->ij",
-                    reference_weights,
-                    basis_host,
-                    basis_host,
-                )
-                jacobian = np.asarray(physical_weights) / reference_weights[None, :]
-                reciprocal_mass = ein.contract(
-                    "cq,qi,qj->cij",
-                    reference_weights[None, :] / jacobian,
-                    basis_host,
-                    basis_host,
-                )
-                factor = _factor_mass_matrix(
-                    jnp.asarray(reference_mass),
-                    properties,
-                    field,
-                    block.name,
-                    "weight-adjusted-reference",
-                )
-                block_factorizations = (factor,)
-                weight_adjusted = jnp.asarray(reciprocal_mass)
-                factor_bytes += reference_mass.nbytes + reciprocal_mass.nbytes
-            else:
-                block_factorizations = tuple(
-                    _factor_mass_matrix(
-                        matrix,
+            match block_strategy:
+                case "diagonal":
+                    inverse_diagonal = 1.0 / jnp.asarray(diagonal)
+                    block_factorizations = ()
+                case "affine_scaled":
+                    factor = _factor_mass_matrix(
+                        jnp.asarray(reference_physical),
                         properties,
                         field,
                         block.name,
-                        f"exact-{cell}",
+                        "affine-reference",
                     )
-                    for cell, matrix in enumerate(matrices)
-                )
-                factor_bytes += matrices_np.nbytes
+                    block_factorizations = (factor,)
+                    factor_bytes += reference_physical.nbytes
+                case "weight_adjusted":
+                    reference_weights = np.asarray(rule_data.weights)
+                    reference_mass = ein.contract(
+                        "q,qi,qj->ij",
+                        reference_weights,
+                        basis_host,
+                        basis_host,
+                    )
+                    jacobian = np.asarray(physical_weights) / reference_weights[None, :]
+                    reciprocal_mass = ein.contract(
+                        "cq,qi,qj->cij",
+                        reference_weights[None, :] / jacobian,
+                        basis_host,
+                        basis_host,
+                    )
+                    factor = _factor_mass_matrix(
+                        jnp.asarray(reference_mass),
+                        properties,
+                        field,
+                        block.name,
+                        "weight-adjusted-reference",
+                    )
+                    block_factorizations = (factor,)
+                    weight_adjusted = jnp.asarray(reciprocal_mass)
+                    factor_bytes += reference_mass.nbytes + reciprocal_mass.nbytes
+                case "exact_batched":
+                    block_factorizations = tuple(
+                        _factor_mass_matrix(
+                            matrix,
+                            properties,
+                            field,
+                            block.name,
+                            f"exact-{cell}",
+                        )
+                        for cell, matrix in enumerate(matrices)
+                    )
+                    factor_bytes += matrices_np.nbytes
+                case _:
+                    assert_never(block_strategy)
             strategies.append(block_strategy)
             all_routes.append(dof_map.cell_dofs[block_index])
             all_matrices.append(matrices)
@@ -302,42 +304,48 @@ class PreparedDiscontinuousMassInverse(StrictModule):
     def _apply_primal(self, residual: ArrayLike, /, *, validate: bool = True) -> Array:
         value = jnp.asarray(residual)
         result = jnp.zeros_like(value)
-        for strategy, routes, inverse_diagonal, scales, weight_adjusted, factors in zip(
-            self.strategies,
+        blocks = zip(
             self.routes,
             self.inverse_diagonals,
             self.scales,
             self.weight_adjusted_matrices,
             self.factorizations,
             strict=True,
-        ):
+        )
+        for strategy, block in zip(self.strategies, blocks, strict=True):
+            routes, inverse_diagonal, scales, weight_adjusted, factors = block
             local = value[routes]
             local_flat = local.reshape((local.shape[0], local.shape[1], -1))
-            if strategy == "diagonal":
-                solved_flat = local_flat * inverse_diagonal[..., None]
-            elif strategy == "affine_scaled":
-                solved_flat = (
-                    _solve_grouped_factor(factors[0], local_flat, validate=validate)
-                    / scales[:, None, None]
-                )
-            elif strategy == "weight_adjusted":
-                first = _solve_grouped_factor(factors[0], local_flat, validate=validate)
-                weighted = ein.contract(
-                    "cij,cjk->cik", weight_adjusted, first, backend="jax"
-                )
-                solved_flat = _solve_grouped_factor(
-                    factors[0], weighted, validate=validate
-                )
-            else:
-                solved_cells = tuple(
-                    _solve_grouped_factor(
-                        factor,
-                        local_flat[cell : cell + 1],
-                        validate=validate,
-                    )[0]
-                    for cell, factor in enumerate(factors)
-                )
-                solved_flat = jnp.stack(solved_cells, axis=0)
+            match strategy:
+                case "diagonal":
+                    solved_flat = local_flat * inverse_diagonal[..., None]
+                case "affine_scaled":
+                    solved_flat = (
+                        _solve_grouped_factor(factors[0], local_flat, validate=validate)
+                        / scales[:, None, None]
+                    )
+                case "weight_adjusted":
+                    first = _solve_grouped_factor(
+                        factors[0], local_flat, validate=validate
+                    )
+                    weighted = ein.contract(
+                        "cij,cjk->cik", weight_adjusted, first, backend="jax"
+                    )
+                    solved_flat = _solve_grouped_factor(
+                        factors[0], weighted, validate=validate
+                    )
+                case "exact_batched":
+                    solved_cells = tuple(
+                        _solve_grouped_factor(
+                            factor,
+                            local_flat[cell : cell + 1],
+                            validate=validate,
+                        )[0]
+                        for cell, factor in enumerate(factors)
+                    )
+                    solved_flat = jnp.stack(solved_cells, axis=0)
+                case _:
+                    assert_never(strategy)
             result = result.at[routes].set(
                 solved_flat.reshape(local.shape), unique_indices=True
             )
@@ -357,7 +365,10 @@ def _apply_discontinuous_mass(
 
 
 @_apply_discontinuous_mass.def_jvp
-def _apply_discontinuous_mass_jvp(primals, tangents):
+def _apply_discontinuous_mass_jvp(
+    primals: tuple[PreparedDiscontinuousMassInverse, Array],
+    tangents: tuple[object, Array | None],
+) -> tuple[Array, Array]:
     operator, residual = primals
     _operator_tangent, residual_tangent = tangents
     residual_tangent = (

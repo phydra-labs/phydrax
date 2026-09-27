@@ -9,7 +9,8 @@ from enum import IntEnum
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -37,7 +38,7 @@ class WaveformMatchPlan(StrictModule, NonTrainableState):
         /,
         *,
         normalization_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(psd, OneSidedPowerSpectralDensity):
             raise TypeError("psd must be OneSidedPowerSpectralDensity.")
         tolerance = float(normalization_tolerance)

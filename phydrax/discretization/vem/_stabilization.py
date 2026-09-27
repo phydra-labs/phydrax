@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -21,7 +21,9 @@ class VirtualElementStabilizationPolicy(StrictModule, NonTrainableState):
     minimum_scale: float = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: str = "dofi_dofi", /, *, minimum_scale: float = 1.0e-14):
+    def __init__(
+        self, kind: str = "dofi_dofi", /, *, minimum_scale: float = 1.0e-14
+    ) -> None:
         kind_ = str(kind)
         scale = float(minimum_scale)
         if kind_ not in ("dofi_dofi", "projected"):

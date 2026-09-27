@@ -9,14 +9,21 @@ from __future__ import annotations
 from collections.abc import Sequence
 from itertools import combinations
 from math import factorial
+from typing import Self
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...discretization import (
+    PolygonalConnectivity,
+    PolyhedralConnectivity,
+    TetrahedralConnectivity,
+)
 from ...meshing import (
     CellMeshingResult,
     MeshingEntityKind,
@@ -27,12 +34,12 @@ from ...units import derived_unit, METER, ONE, UnitDefinition
 from ._quantities import _si, SQUARE_METER
 
 
-def _dual_widths(axis):
+def _dual_widths(axis: np.ndarray) -> np.ndarray:
     delta = np.diff(axis)
     return np.concatenate((delta[:1] / 2, (delta[:-1] + delta[1:]) / 2, delta[-1:] / 2))
 
 
-def _transverse(value, unit, dimension):
+def _transverse(value: ArrayLike, unit: UnitDefinition | None, dimension: int) -> float:
     reference = (
         ONE
         if dimension == 3
@@ -46,7 +53,7 @@ def _transverse(value, unit, dimension):
     return float(measure)
 
 
-def _simplex_metric(points):
+def _simplex_metric(points: np.ndarray) -> tuple[float, np.ndarray]:
     """Affine simplex gradients without a host linear-system solver."""
     dimension = points.shape[1]
     edges = points[1:] - points[0]
@@ -105,22 +112,22 @@ class TransportSupport(StrictModule):
 
     def __init__(
         self,
-        positions,
-        tail,
-        head,
-        volumes,
-        transmissibility,
-        boundary_mask,
+        positions: ArrayLike,
+        tail: ArrayLike,
+        head: ArrayLike,
+        volumes: ArrayLike,
+        transmissibility: ArrayLike,
+        boundary_mask: ArrayLike,
         /,
         *,
-        node_ids=None,
-        source_id=None,
-        source_revision="0",
-        source_topology_id="",
-        entity_ids=(),
-        entity_vertices=(),
-        entity_set_ids=(),
-    ):
+        node_ids: ArrayLike | None = None,
+        source_id: str | None = None,
+        source_revision: str = "0",
+        source_topology_id: str = "",
+        entity_ids: Sequence[Array | np.ndarray] = (),
+        entity_vertices: Sequence[ArrayLike] = (),
+        entity_set_ids: Sequence[str] = (),
+    ) -> None:
         points = np.asarray(positions, dtype=np.float64)
         tails, heads = np.asarray(tail), np.asarray(head)
         weights, measure = (
@@ -243,7 +250,7 @@ class TransportSupport(StrictModule):
         area: ArrayLike = 1.0,
         length_unit: UnitDefinition = METER,
         area_unit: UnitDefinition = SQUARE_METER,
-    ):
+    ) -> Self:
         return cls.tensor_grid(
             (coordinates,),
             transverse_measure=area,
@@ -257,10 +264,10 @@ class TransportSupport(StrictModule):
         axes: Sequence[ArrayLike],
         /,
         *,
-        transverse_measure=1.0,
+        transverse_measure: ArrayLike = 1.0,
         length_unit: UnitDefinition = METER,
         transverse_unit: UnitDefinition | None = None,
-    ):
+    ) -> Self:
         axes_si = tuple(
             np.asarray(_si(axis, length_unit, METER), dtype=np.float64) for axis in axes
         )
@@ -292,7 +299,8 @@ class TransportSupport(StrictModule):
         tails, heads, weights = [], [], []
         boundary = np.zeros(shape, dtype=np.bool_)
         for axis in range(dimension):
-            lower, upper = [slice(None)] * dimension, [slice(None)] * dimension
+            lower: list[slice | int] = [slice(None)] * dimension
+            upper: list[slice | int] = [slice(None)] * dimension
             lower[axis], upper[axis] = slice(None, -1), slice(1, None)
             tails.append(indices[tuple(lower)].ravel())
             heads.append(indices[tuple(upper)].ravel())
@@ -323,9 +331,9 @@ class TransportSupport(StrictModule):
         result: CellMeshingResult,
         /,
         *,
-        transverse_measure=1.0,
+        transverse_measure: ArrayLike = 1.0,
         transverse_unit: UnitDefinition | None = None,
-    ):
+    ) -> Self:
         if not isinstance(result, CellMeshingResult):
             raise TypeError("from_meshing requires an audited native CellMeshingResult.")
         mesh = result.mesh
@@ -384,10 +392,19 @@ class TransportSupport(StrictModule):
                 "Native simplex mesh has nonpositive two-point metrics; an admissible positive mesh is required."
             )
         entity_routes = [np.arange(len(points))[:, None]]
-        if dimension >= 2:
-            entity_routes.append(np.asarray(mesh.connectivity.edges))
-        if dimension == 3:
-            entity_routes.append(np.asarray(mesh.connectivity.faces))
+        connectivity = mesh.connectivity
+        if isinstance(
+            connectivity,
+            PolygonalConnectivity | TetrahedralConnectivity | PolyhedralConnectivity,
+        ):
+            entity_routes.append(np.asarray(connectivity.edges))
+        if isinstance(connectivity, TetrahedralConnectivity):
+            entity_routes.append(np.asarray(connectivity.faces))
+        elif isinstance(connectivity, PolyhedralConnectivity):
+            # Multi-block tetrahedral meshes pack triangular faces.
+            entity_routes.append(
+                np.asarray(connectivity.face_vertex_values).reshape(-1, 3)
+            )
         cell_lookup = {
             int(identifier): cell
             for identifier, cell in zip(cell_ids, cells, strict=True)

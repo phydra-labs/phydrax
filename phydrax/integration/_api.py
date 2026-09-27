@@ -10,7 +10,6 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import jax.tree_util as jtu
-from jaxtyping import Array, Key
 
 import phydrax.axes as cx
 from phydrax.domain import (
@@ -24,6 +23,7 @@ from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0
 from .._sampling import AntitheticDesign, design_capabilities
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._adaptive import integrate_adaptive
 from ._adaptive_cubature import integrate_adaptive_cubature
 from ._adaptive_triangle import integrate_adaptive_triangle
@@ -116,7 +116,7 @@ class IntegrationRealization(StrictModule):
         /,
         *,
         precision: IntegrationPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         self.target = target
         self.plan = plan
         self.batch = batch
@@ -162,7 +162,7 @@ def _evaluation_integrand(
 
     function = _ensure_special_kwonly_args(integrand)
 
-    def evaluated(*args, **kwargs):
+    def evaluated(*args: object, **kwargs: object) -> Any:
         converted_args = jtu.tree_map(
             lambda value: _evaluation_value(value, policy),
             args,
@@ -247,7 +247,11 @@ def _requires_random_key(plan: Any, /) -> bool:
     if _is_domain_sampling_plan(plan):
         return True
     if isinstance(plan, BayesianQuadraturePlan):
-        return design_capabilities(plan.design.design).randomized
+        design = plan.design
+        return (
+            isinstance(design, PointSampling)
+            and design_capabilities(design.design).randomized
+        )
     if isinstance(plan, ProductIntegrationPlan):
         return any(_requires_random_key(factor) for factor in plan.plans.values())
     if isinstance(
@@ -264,7 +268,11 @@ def _requires_random_key(plan: Any, /) -> bool:
 
 def _is_deterministic_plan(plan: Any, /) -> bool:
     if isinstance(plan, BayesianQuadraturePlan):
-        return not design_capabilities(plan.design.design).randomized
+        design = plan.design
+        return (
+            not isinstance(design, PointSampling)
+            or not design_capabilities(design.design).randomized
+        )
     if isinstance(plan, ProductIntegrationPlan):
         return all(_is_deterministic_plan(factor) for factor in plan.plans.values())
     if isinstance(
@@ -292,7 +300,7 @@ def materialize(
     plan: Any = None,
     /,
     *,
-    key: Key[Array, ""] | object = _KEY_UNSET,
+    key: PRNGKey | object = _KEY_UNSET,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationRealization:
     """Materialize a target under a typed plan without evaluating an integrand."""
@@ -330,7 +338,7 @@ def materialize(
         sampling_key: Any = DOC_KEY0
         evaluation_key: Any = None
     else:
-        sampling_key, evaluation_key = jr.split(cast(Key[Array, ""], key))
+        sampling_key, evaluation_key = jr.split(cast(PRNGKey, key))
     base = _base_target(target)
     if _is_domain_sampling_plan(plan):
         if not isinstance(base, ComponentTarget):
@@ -429,7 +437,7 @@ def from_samples(
     points: Any,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationRealization:
     """Attach authoritative target-measure weights to an existing point batch."""
@@ -513,7 +521,7 @@ def reduce(
     realization: IntegrationRealization,
     /,
     **kwargs: Any,
-):
+) -> IntegrationEstimate:
     """Reduce an integrand against a reusable typed realization."""
     if not isinstance(realization, IntegrationRealization):
         raise TypeError("reduce expects an IntegrationRealization from materialize().")
@@ -785,10 +793,10 @@ def integrate(
     plan: Any = None,
     /,
     *,
-    key: Key[Array, ""] | object = _KEY_UNSET,
+    key: PRNGKey | object = _KEY_UNSET,
     precision: IntegrationPrecisionPolicy | None = None,
     **kwargs: Any,
-):
+) -> IntegrationEstimate:
     """Materialize and reduce an integration target in one call."""
     realization = materialize(
         target,

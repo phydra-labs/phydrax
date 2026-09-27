@@ -13,11 +13,13 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 
 from ..._strict import StrictModule
+from ...typing import parse, PRNGKey
 from ._stochastic_estimators import (
     _directional_second_derivative,
     _prepare_hessian_action,
@@ -53,7 +55,7 @@ class DimensionSamplingPolicy(StrictModule):
         replace: bool = False,
         probabilities: ArrayLike | None = None,
         policy_id: str | None = None,
-    ):
+    ) -> None:
         dimension = int(total_dimension)
         count = int(subset_size)
         if dimension < 1 or count < 1:
@@ -61,8 +63,7 @@ class DimensionSamplingPolicy(StrictModule):
         replacement = bool(replace)
         if not replacement and count > dimension:
             raise ValueError("subset_size cannot exceed dimension without replacement.")
-        if sampling not in ("uniform", "importance"):
-            raise ValueError("sampling must be 'uniform' or 'importance'.")
+        sampling = parse(sampling, DimensionSamplingMode, "sampling")
         if sampling == "uniform":
             if probabilities is not None:
                 raise ValueError(
@@ -129,7 +130,7 @@ class DimensionOperatorSamples(StrictModule):
         values: ArrayLike,
         policy: DimensionSamplingPolicy,
         /,
-    ):
+    ) -> None:
         if not isinstance(policy, DimensionSamplingPolicy):
             raise TypeError("policy must be a DimensionSamplingPolicy.")
         sampled_indices = jnp.asarray(indices, dtype=jnp.int32).reshape((-1,))
@@ -178,7 +179,7 @@ class DimensionOperatorSamples(StrictModule):
 
 
 def _sample_indices(
-    key: Key[Array, ""],
+    key: PRNGKey,
     policy: DimensionSamplingPolicy,
     /,
 ) -> Array:
@@ -194,7 +195,7 @@ def _sample_indices(
 
 def dimension_sum_samples(
     contribution: Callable[[Array], Array],
-    key: Key[Array, ""],
+    key: PRNGKey,
     policy: DimensionSamplingPolicy,
     /,
 ) -> DimensionOperatorSamples:
@@ -217,7 +218,7 @@ def dimension_sum_samples(
 
 def estimate_dimension_sum(
     contribution: Callable[[Array], Array],
-    key: Key[Array, ""],
+    key: PRNGKey,
     policy: DimensionSamplingPolicy,
     /,
 ) -> DimensionOperatorEstimate:
@@ -227,7 +228,7 @@ def estimate_dimension_sum(
 def coordinate_divergence_samples(
     vector_field: Callable[[Array], Array],
     state: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     policy: DimensionSamplingPolicy,
     /,
 ) -> DimensionOperatorSamples:
@@ -245,7 +246,7 @@ def coordinate_divergence_samples(
         raise ValueError("vector_field must preserve the state shape.")
     linearization = la.prepare_linearization(vector_field, state_array)
 
-    def contribution(index):
+    def contribution(index: Array) -> Array:
         direction = jax.nn.one_hot(
             index,
             state_size,
@@ -260,7 +261,7 @@ def coordinate_divergence_samples(
 def coordinate_second_derivative_samples(
     function: Callable[[Array], Array],
     state: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     policy: DimensionSamplingPolicy,
     /,
 ) -> DimensionOperatorSamples:
@@ -275,7 +276,7 @@ def coordinate_second_derivative_samples(
         )
     hessian_action = _prepare_hessian_action(function, state_array)
 
-    def contribution(index):
+    def contribution(index: Array) -> Array:
         direction = jax.nn.one_hot(
             index,
             state_size,

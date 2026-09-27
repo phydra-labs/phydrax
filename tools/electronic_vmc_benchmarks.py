@@ -6,6 +6,7 @@ import json
 import platform
 from dataclasses import dataclass
 from time import perf_counter
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -47,7 +48,7 @@ CASES = (
 )
 
 
-def _structure(case: MolecularCase):
+def _structure(case: MolecularCase) -> Any:
     scale = phx.atomistic.AtomisticScaleContract(phx.units.BOHR, phx.units.HARTREE)
     return phx.atomistic.AtomicStructure(
         jnp.asarray(case.charges, dtype=jnp.int32),
@@ -58,7 +59,7 @@ def _structure(case: MolecularCase):
     )
 
 
-def _problem(case: MolecularCase, seed: int):
+def _problem(case: MolecularCase, seed: int) -> Any:
     resource_plan = phx.operators.ElectronicVMCResourcePlan(
         case.electron_count,
         determinant_count=DETERMINANT_COUNT,
@@ -105,7 +106,7 @@ def _problem(case: MolecularCase, seed: int):
     )
 
 
-def _policy():
+def _policy() -> Any:
     return phx.solver.VariationalMonteCarloPolicy(
         num_iterations=200,
         draws_per_iteration=32,
@@ -120,12 +121,12 @@ def _policy():
     )
 
 
-def _diagnostic_scalar(tree, name):
+def _diagnostic_scalar(tree: Any, name: Any) -> Any:
     value = tree[name]
     return float(jnp.min(jnp.asarray(value)))
 
 
-def _run(case: MolecularCase, seed: int, *, compilation_expected: bool):
+def _run(case: MolecularCase, seed: int, *, compilation_expected: bool) -> Any:
     problem = _problem(case, seed)
     policy = _policy()
     started = perf_counter()
@@ -206,7 +207,7 @@ def _run(case: MolecularCase, seed: int, *, compilation_expected: bool):
     }
 
 
-def main():
+def main() -> None:
     records = []
     for case in CASES:
         for seed_index, seed in enumerate(SEEDS):

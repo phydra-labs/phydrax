@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -8,7 +10,7 @@ import phydrax as phx
 tn = phx.tensor_network
 
 
-def _matrix_structure():
+def _matrix_structure() -> Any:
     return tn.ContractionStructure(
         (
             tn.ContractionOperand(
@@ -22,7 +24,7 @@ def _matrix_structure():
     )
 
 
-def test_labeled_plan_preserves_output_order_refresh_and_jit():
+def test_labeled_plan_preserves_output_order_refresh_and_jit() -> None:
     structure = _matrix_structure()
     plan = tn.plan_contraction(structure, dtype="float64", optimizer="optimal")
     left = jnp.arange(6.0).reshape((2, 3))
@@ -44,7 +46,9 @@ def test_labeled_plan_preserves_output_order_refresh_and_jit():
     assert jnp.allclose(refreshed_result.value, ((left + 1.0) @ right).T)
 
 
-def test_contraction_structure_supports_hyperedges_and_rejects_resource_overflow():
+def test_contraction_structure_supports_hyperedges_and_rejects_resource_overflow() -> (
+    None
+):
     hyperedge = tn.ContractionStructure(
         tuple(
             tn.ContractionOperand(f"operand-{index}", (tn.ContractionLeg("shared", 2),))
@@ -72,7 +76,7 @@ def test_contraction_structure_supports_hyperedges_and_rejects_resource_overflow
         )
 
 
-def test_contraction_workspace_accounts_for_precision_widening():
+def test_contraction_workspace_accounts_for_precision_widening() -> None:
     structure = _matrix_structure()
     narrow = tn.plan_contraction(
         structure,
@@ -105,7 +109,7 @@ def test_contraction_workspace_accounts_for_precision_widening():
         )
 
 
-def test_contraction_planner_deadline_is_enforced_during_search():
+def test_contraction_planner_deadline_is_enforced_during_search() -> None:
     with pytest.raises(TimeoutError, match="planning exceeded"):
         tn.plan_contraction(
             _matrix_structure(),
@@ -114,7 +118,7 @@ def test_contraction_planner_deadline_is_enforced_during_search():
         )
 
 
-def test_prepared_mps_and_mpo_inner_consumers_match_native_environments():
+def test_prepared_mps_and_mpo_inner_consumers_match_native_environments() -> None:
     identity = jnp.eye(2, dtype=jnp.complex128)
     pauli_x = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128)
     state = tn.product_mps(jnp.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=jnp.complex128))

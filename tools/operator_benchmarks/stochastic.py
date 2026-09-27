@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import ceil
-from typing import Sequence
+from typing import Any, Sequence
 
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 import phydrax as phx
 import phydrax.ein as ein
@@ -16,7 +17,7 @@ import phydrax.ein as ein
 def _metadata(
     data: phx.stochastic.StochasticTransitionView,
     name: str,
-):
+) -> Any:
     if name not in data.metadata:
         raise ValueError(f"Stochastic benchmark metadata is missing {name!r}.")
     return data.metadata[name]
@@ -150,7 +151,7 @@ class LinearGaussianReferenceOperator(phx.nn.operator.AbstractProbabilisticOpera
         /,
         *,
         diagonal_jitter: float = 1e-6,
-    ):
+    ) -> None:
         drift = jnp.asarray(drift_matrix)
         noise = jnp.asarray(noise_matrix)
         if drift.ndim != 2 or drift.shape[0] != drift.shape[1]:
@@ -175,10 +176,10 @@ class LinearGaussianReferenceOperator(phx.nn.operator.AbstractProbabilisticOpera
         self.out_size = "scalar"
 
     @property
-    def operator_output_specs(self):
+    def operator_output_specs(self) -> Any:
         return {"output": phx.nn.operator.OperatorOutputSpec("scalar")}
 
-    def distribution(self, batch, /, *, key=None):
+    def distribution(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         states = batch.input("state").values
         durations = batch.input("duration").values
@@ -192,7 +193,7 @@ class LinearGaussianReferenceOperator(phx.nn.operator.AbstractProbabilisticOpera
         flat_states = states.reshape((-1, size))
         flat_durations = durations[..., 0].reshape((-1,))
 
-        def transition_moments(state, duration):
+        def transition_moments(state: Any, duration: Any) -> Any:
             decay = jnp.exp(self.drift_eigenvalues * duration)
             mean = self.drift_eigenvectors @ (decay * (self.drift_eigenvectors.T @ state))
             sums = self.drift_eigenvalues[:, None] + self.drift_eigenvalues[None, :]
@@ -256,6 +257,7 @@ def stochastic_heat_transition_data(
         size,
         endpoint=False,
         periodic=True,
+        # ty: ignore[invalid-argument-type]
     ).materialize(0.0, 1.0)
     spatial = phx.discretization.periodic_finite_difference(
         phx.discretization.PreparedTensorGrid((axis_discretization,), axis_names=("x",))
@@ -348,6 +350,7 @@ def allen_cahn_transition_data(
         size,
         endpoint=False,
         periodic=True,
+        # ty: ignore[invalid-argument-type]
     ).materialize(0.0, 1.0)
     spatial = phx.discretization.periodic_finite_difference(
         phx.discretization.PreparedTensorGrid((axis_discretization,), axis_names=("x",))
@@ -443,7 +446,7 @@ class StochasticHeatGaussianBenchmarkResult:
         )
 
 
-def _operator_predictive(samples, batch, sample_dim):
+def _operator_predictive(samples: Any, batch: Any, sample_dim: Any) -> Any:
     return phx.uq.operator_predictive_from_samples(
         samples,
         batch,
@@ -646,7 +649,7 @@ def run_stochastic_heat_process_benchmark(
         direct_covariance.shape,
     )
 
-    def relative_error(value, reference):
+    def relative_error(value: Any, reference: Any) -> Any:
         return jnp.linalg.norm(value - reference) / jnp.maximum(
             jnp.linalg.norm(reference),
             1e-12,
@@ -811,7 +814,7 @@ def _fit_allen_cahn_trial(
         uncertainty_source="process",
     )
 
-    def heldout_nll(model):
+    def heldout_nll(model: Any) -> Any:
         distribution = model.distribution(evaluation_batch)
         return float(-jnp.mean(jax.vmap(distribution.log_prob)(reference)))
 

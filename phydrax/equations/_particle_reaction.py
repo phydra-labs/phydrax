@@ -4,12 +4,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -17,6 +20,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.particle._particle_internal_mesh import (
+    ParticleShellMetrics,
     PreparedParticleInternalBatch,
 )
 from ..discretization.particle._particle_internal_state import ParticleInternalBatchState
@@ -27,6 +31,12 @@ from ._particle_thermochemistry import (
     ParticleThermodynamicState,
 )
 from ._phase_change import AntoineSaturationPressurePlan
+
+
+if TYPE_CHECKING:
+    from ..discretization.particle._particle_internal_unstructured import (
+        ParticleInternalMeshMetrics,
+    )
 
 
 _UNIVERSAL_GAS_CONSTANT = 8.31446261815324
@@ -61,9 +71,9 @@ class ParticleReactionProcessPlan(StrictModule, NonTrainableState):
         mechanism: PreparedChemicalMechanism,
         /,
         *,
-        locations=None,
+        locations: Sequence[ParticleReactionLocation] | None = None,
         network_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(mechanism, PreparedChemicalMechanism):
             raise TypeError("mechanism must be PreparedChemicalMechanism.")
         count = mechanism.reaction_count
@@ -223,16 +233,16 @@ class EvaporationPhaseChangePlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        schema,
-        liquid_species,
-        vapor_species,
-        mass_transfer_coefficient,
-        latent_heat,
-        saturation_pressure,
+        schema: ChemicalSpeciesSchema,
+        liquid_species: int,
+        vapor_species: int,
+        mass_transfer_coefficient: float,
+        latent_heat: float,
+        saturation_pressure: AntoineSaturationPressurePlan,
         /,
         *,
-        allow_condensation=False,
-    ):
+        allow_condensation: bool = False,
+    ) -> None:
         if not isinstance(schema, ChemicalSpeciesSchema):
             raise TypeError("schema must be a ChemicalSpeciesSchema.")
         liquid = int(liquid_species)
@@ -286,12 +296,12 @@ class EvaporationPhaseChangePlan(StrictModule, NonTrainableState):
 
     def evaluate(
         self,
-        batch,
-        state,
+        batch: PreparedParticleInternalBatch,
+        state: ParticleInternalBatchState,
         thermodynamics: ParticleThermodynamicState,
-        metrics,
+        metrics: ParticleShellMetrics | ParticleInternalMeshMetrics,
         /,
-    ):
+    ) -> ParticlePhaseChangeEvaluation:
         pore_volume = state.porosity * metrics.cell_measures
         vapor_concentration = state.species_amount[..., self.vapor_species] / jnp.maximum(
             pore_volume, 1.0e-30
@@ -369,14 +379,14 @@ class ShrinkingCoreConversionPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        gas_stoichiometry,
-        solid_stoichiometry,
-        solid_molar_density,
-        film_transfer_coefficient,
-        ash_diffusivity,
-        surface_rate_coefficient,
+        gas_stoichiometry: float,
+        solid_stoichiometry: float,
+        solid_molar_density: float,
+        film_transfer_coefficient: float,
+        ash_diffusivity: float,
+        surface_rate_coefficient: float,
         /,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (

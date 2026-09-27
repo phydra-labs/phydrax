@@ -10,7 +10,8 @@ from dataclasses import dataclass, field
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -158,7 +159,7 @@ class PVSNetworkFlowPlan:
             .set(jnp.asarray(self.boundary_pressures))
         )
 
-        def balance_action(pressure):
+        def balance_action(pressure: Array) -> Array:
             volume_flow = conductance * (pressure[senders] - pressure[receivers])
             balance = jnp.zeros((node_count,), dtype=pressure.dtype)
             balance = balance.at[senders].add(volume_flow)
@@ -167,7 +168,7 @@ class PVSNetworkFlowPlan:
         if free.size:
             free_indices = jnp.asarray(free, dtype=jnp.int32)
 
-            def free_action(free_pressure):
+            def free_action(free_pressure: Array) -> Array:
                 pressure = (
                     jnp.zeros_like(boundary_pressure).at[free_indices].set(free_pressure)
                 )
@@ -224,7 +225,9 @@ class FlowTransportSchedule(StrictModule):
     period: float = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self, sample_times: ArrayLike, volume_flow: ArrayLike, period: float, /):
+    def __init__(
+        self, sample_times: ArrayLike, volume_flow: ArrayLike, period: float, /
+    ) -> None:
         times = np.asarray(sample_times, dtype=np.float64)
         flow = np.asarray(volume_flow, dtype=np.float64)
         width = float(period)

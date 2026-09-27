@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -29,7 +30,7 @@ class RelaxedChemicalJumpParameters(StrictModule, NonTrainableState):
         maximum_events: int,
         final_time: float,
         /,
-    ):
+    ) -> None:
         selector = float(selector_sharpness)
         jump = float(jump_sharpness)
         capacity = int(maximum_events)
@@ -80,7 +81,7 @@ class RelaxedChemicalJumpPlan(StrictModule, NonTrainableState):
         process: ChemicalJumpProcess,
         parameters: RelaxedChemicalJumpParameters,
         /,
-    ):
+    ) -> None:
         if not isinstance(process, ChemicalJumpProcess):
             raise TypeError("process must be ChemicalJumpProcess.")
         if not isinstance(parameters, RelaxedChemicalJumpParameters):
@@ -151,7 +152,9 @@ class RelaxedChemicalJumpPlan(StrictModule, NonTrainableState):
         )
         channel_indices = jnp.arange(self.process.num_channels, dtype=state.dtype)
 
-        def step(carry, event_keys):
+        def step(
+            carry: tuple[Array, Array, Array], event_keys: Array
+        ) -> tuple[tuple[Array, Array, Array], tuple[Array, Array, Array, Array]]:
             time, current, previous_valid = carry
             intensity, intensity_valid = self._relaxed_intensities(
                 time,

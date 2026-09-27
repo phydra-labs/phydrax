@@ -10,12 +10,14 @@ from math import isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..linalg import FactorizationPolicy, inverse
+from ..typing import parse
 from ._chart import CoordinateChart
 from ._lorentzian import _assemble_adm_matrix
 from ._metric import _metric_inverse, LorentzianConvention, LorentzianMetric
@@ -61,13 +63,12 @@ class ADMDecomposition(StrictModule):
         *,
         chart: CoordinateChart,
         convention: LorentzianConvention = "mostly_plus",
-    ):
+    ) -> None:
         if not isinstance(chart, CoordinateChart):
             raise TypeError("chart must be a CoordinateChart.")
         if chart.dimension < 2:
             raise ValueError("An ADM decomposition requires at least one spatial axis.")
-        if convention not in ("mostly_plus", "mostly_minus"):
-            raise ValueError("convention must be 'mostly_plus' or 'mostly_minus'.")
+        convention = parse(convention, LorentzianConvention, "convention")
         lapse_array = jnp.asarray(lapse)
         shift_array = jnp.asarray(shift)
         spatial_array = jnp.asarray(spatial_metric)
@@ -203,7 +204,7 @@ class ADMValidationReport(StrictModule):
         maximum_spatial_asymmetry: Array,
         maximum_inverse_residual: Array,
         maximum_reconstruction_residual: Array,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.lapse_positive = jnp.asarray(lapse_positive, dtype=jnp.bool_)
@@ -371,7 +372,7 @@ class ADMParameterization(StrictModule):
         minimum_lapse: float = 1e-6,
         minimum_spatial_diagonal: float = 1e-6,
         convention: LorentzianConvention = "mostly_plus",
-    ):
+    ) -> None:
         if not callable(raw_lapse):
             raise TypeError("raw_lapse must be callable.")
         if not callable(shift):
@@ -388,8 +389,7 @@ class ADMParameterization(StrictModule):
             raise ValueError("minimum_lapse must be finite and positive.")
         if not isfinite(diagonal_floor) or diagonal_floor <= 0.0:
             raise ValueError("minimum_spatial_diagonal must be finite and positive.")
-        if convention not in ("mostly_plus", "mostly_minus"):
-            raise ValueError("convention must be 'mostly_plus' or 'mostly_minus'.")
+        convention = parse(convention, LorentzianConvention, "convention")
         self.raw_lapse = raw_lapse
         self.shift_function = shift
         self.raw_spatial_factor = raw_spatial_factor
@@ -490,7 +490,7 @@ class ADMParameterization(StrictModule):
 class _ParameterizedADMMetricMap(StrictModule):
     parameterization: ADMParameterization
 
-    def __init__(self, parameterization: ADMParameterization, /):
+    def __init__(self, parameterization: ADMParameterization, /) -> None:
         self.parameterization = parameterization
 
     def __call__(self, coordinates: Array, /) -> Array:

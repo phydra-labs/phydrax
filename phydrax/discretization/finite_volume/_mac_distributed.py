@@ -12,8 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax.sharding import Mesh, NamedSharding, PartitionSpec
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.sharding import AbstractMesh, Mesh, NamedSharding, PartitionSpec
+from jax.typing import ArrayLike
 
 from ..._execution_runtime import ExecutionGroup
 from ..._fingerprint import canonical_fingerprint
@@ -84,13 +85,15 @@ def _partition_entries(
     return tuple(normalized)
 
 
-def _mesh_identity(mesh: Mesh, /) -> tuple[tuple[str, ...], tuple[object, ...]]:
+def _mesh_identity(
+    mesh: Mesh | AbstractMesh, /
+) -> tuple[tuple[str, ...], tuple[object, ...]]:
     names = tuple(str(name) for name in mesh.axis_names)
     devices = tuple(np.asarray(mesh.devices, dtype=object).reshape(-1).tolist())
     return names, devices
 
 
-def _same_mesh(left: Mesh, right: Mesh, /) -> bool:
+def _same_mesh(left: Mesh | AbstractMesh, right: Mesh | AbstractMesh, /) -> bool:
     left_names, left_devices = _mesh_identity(left)
     right_names, right_devices = _mesh_identity(right)
     return left_names == right_names and left_devices == right_devices
@@ -341,7 +344,7 @@ class MACDistributedState(StrictModule):
         topology_id: str,
         layout_id: str,
         /,
-    ):
+    ) -> None:
         values = tuple(velocity)
         self.pressure = pressure
         self.velocity = values
@@ -391,7 +394,7 @@ class MACDistributedTopologyPlan(StrictModule, NonTrainableState):
         *,
         halo_width: int = 1,
         execution_group_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         if not isinstance(mesh, Mesh):
@@ -639,7 +642,7 @@ class PreparedMACDistributedTopology(StrictModule, NonTrainableState):
         plan: MACDistributedTopologyPlan,
         momentum: PreparedMACMomentumOperators | None = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, MACDistributedTopologyPlan):
             raise TypeError("plan must be MACDistributedTopologyPlan.")
         if momentum is not None and not isinstance(
@@ -950,7 +953,7 @@ class PreparedMACDistributedTopology(StrictModule, NonTrainableState):
         self._validate_pressure_sharding(pressure)
         axis = int(spatial_axis)
 
-        def local(value):
+        def local(value: Array) -> Array:
             return self.local_stencils.materialize(value, axis)
 
         return jax.shard_map(
@@ -974,7 +977,7 @@ class PreparedMACDistributedTopology(StrictModule, NonTrainableState):
         if component < 0 or component >= len(values):
             raise ValueError("component_axis is out of range.")
 
-        def local(value):
+        def local(value: Array) -> Array:
             return self.local_stencils.materialize(value, axis)
 
         return jax.shard_map(
@@ -988,7 +991,7 @@ class PreparedMACDistributedTopology(StrictModule, NonTrainableState):
         self._require_ready()
         self._validate_pressure_sharding(pressure)
 
-        def local(value, distances):
+        def local(value: Array, distances: FaceVelocity) -> FaceVelocity:
             return self.local_stencils.gradient(value, distances)
 
         return jax.shard_map(
@@ -1002,7 +1005,9 @@ class PreparedMACDistributedTopology(StrictModule, NonTrainableState):
         self._require_ready()
         values = self._validate_velocity_sharding(velocity)
 
-        def local(components, measures, volumes):
+        def local(
+            components: FaceVelocity, measures: FaceVelocity, volumes: Array
+        ) -> Array:
             return self.local_stencils.divergence(components, measures, volumes)
 
         return jax.shard_map(
@@ -1020,7 +1025,7 @@ class PreparedMACDistributedTopology(StrictModule, NonTrainableState):
         self._require_ready()
         self._validate_pressure_sharding(inverse_momentum)
 
-        def local(value):
+        def local(value: Array) -> FaceVelocity:
             return self.local_stencils.interpolate_inverse_momentum(value)
 
         return jax.shard_map(
@@ -1079,10 +1084,12 @@ class PreparedMACDistributedTopology(StrictModule, NonTrainableState):
         divergence = self.divergence(values)
         gradient = self.gradient(pressure)
         left = jnp.sum(self.cell_volumes * pressure * divergence)
-        right = sum(
-            jnp.sum(measure * component * derivative)
-            for measure, component, derivative in zip(
-                self.face_dual_measures, values, gradient, strict=True
+        right = jnp.asarray(
+            sum(
+                jnp.sum(measure * component * derivative)
+                for measure, component, derivative in zip(
+                    self.face_dual_measures, values, gradient, strict=True
+                )
             )
         )
         residual = jnp.abs(left + right)

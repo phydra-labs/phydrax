@@ -765,6 +765,7 @@ def _execute_exports(
                 input_conserved = (
                     inputs[0]
                     if mode == "frozen-equilibrium"
+                    # ty: ignore[invalid-argument-type]
                     else runtime.method.moments(input_state).conserved
                 )
                 case_records[case_name] = _comparison_record(

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -12,9 +15,9 @@ from phydrax.signal import fourier_resample, FourierSpectrumPlan
 
 @pytest.mark.parametrize("source_size,target_size", ((5, 8), (6, 9), (9, 6), (8, 5)))
 def test_fourier_resample_preserves_representable_complex_modes(
-    source_size,
-    target_size,
-):
+    source_size: Any,
+    target_size: Any,
+) -> None:
     source_points = jnp.arange(source_size, dtype="float64") / source_size
     target_points = jnp.arange(target_size, dtype="float64") / target_size
     values = jnp.exp(2.0j * jnp.pi * source_points)
@@ -29,7 +32,7 @@ def test_fourier_resample_preserves_representable_complex_modes(
     )
 
 
-def test_even_nyquist_mode_splits_on_upsampling_and_merges_on_downsampling():
+def test_even_nyquist_mode_splits_on_upsampling_and_merges_on_downsampling() -> None:
     source_size = 8
     fine_size = 13
     source = (-1.0) ** jnp.arange(source_size, dtype="float64")
@@ -44,7 +47,7 @@ def test_even_nyquist_mode_splits_on_upsampling_and_merges_on_downsampling():
     assert jnp.allclose(restored, source, rtol=1e-12, atol=1e-12)
 
 
-def test_explicit_axes_preserve_batch_and_payload_axes():
+def test_explicit_axes_preserve_batch_and_payload_axes() -> None:
     values = jnp.full((2, 5, 6, 3), 4.25)
 
     output = fourier_resample(values, (8, 9), axes=(1, 2))
@@ -53,7 +56,7 @@ def test_explicit_axes_preserve_batch_and_payload_axes():
     assert jnp.allclose(output, 4.25)
 
 
-def test_trailing_axis_default_and_explicit_middle_axis_are_unambiguous():
+def test_trailing_axis_default_and_explicit_middle_axis_are_unambiguous() -> None:
     x = jnp.arange(5, dtype="float64") / 5.0
     values = jnp.stack(
         (
@@ -74,11 +77,11 @@ def test_trailing_axis_default_and_explicit_middle_axis_are_unambiguous():
     assert jnp.allclose(output[1], jnp.sin(2.0 * jnp.pi * target))
 
 
-def test_fourier_resampling_is_jittable_and_has_linear_gradients():
+def test_fourier_resampling_is_jittable_and_has_linear_gradients() -> None:
     target_size = 9
 
     @jax.jit
-    def total(values):
+    def total(values: Any) -> Any:
         return jnp.sum(fourier_resample(values, (target_size,)))
 
     values = jnp.arange(6.0)
@@ -114,14 +117,14 @@ def test_fourier_spectrum_results_remain_transform_safe() -> None:
     ),
 )
 def test_fourier_resampling_rejects_invalid_sizes_and_axes(
-    output_shape, axes, error
+    output_shape: Any, axes: Any, error: Any
 ) -> None:
     with pytest.raises(error):
         fourier_resample(jnp.ones((4,)), output_shape, axes=axes)
 
 
 @pytest.mark.parametrize("name,value", (("sample_count", 8.5), ("padding_count", 2.5)))
-def test_fourier_spectrum_topology_requires_exact_integers(name, value) -> None:
+def test_fourier_spectrum_topology_requires_exact_integers(name: Any, value: Any) -> None:
     if name == "sample_count":
         with pytest.raises(TypeError, match="integer"):
             FourierSpectrumPlan(value, 0.25)
@@ -130,7 +133,7 @@ def test_fourier_spectrum_topology_requires_exact_integers(name, value) -> None:
             FourierSpectrumPlan(8, 0.25, padding_count=value)
 
 
-def test_shifted_resampling_matches_direct_multiaxis_evaluation():
+def test_shifted_resampling_matches_direct_multiaxis_evaluation() -> None:
     source_shape = (8, 6)
     target_shape = (9, 11)
     offsets = (0.137, -0.219)
@@ -156,7 +159,7 @@ def test_shifted_resampling_matches_direct_multiaxis_evaluation():
     assert jnp.allclose(shifted, direct, rtol=1e-11, atol=1e-11)
 
 
-def test_zero_phase_offsets_equal_ordinary_resampling():
+def test_zero_phase_offsets_equal_ordinary_resampling() -> None:
     values = jax.random.normal(jax.random.key(13), (6, 8, 2))
 
     ordinary = fourier_resample(values, (9, 7), axes=(0, 1))

@@ -11,7 +11,8 @@ import enum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -79,7 +80,7 @@ class GriddedExternalFieldPlan(StrictModule, NonTrainableState):
         coordinate_unit: str,
         value_unit: str,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         origin_ = np.asarray(origin)
         spacing_ = np.asarray(spacing)
         values_ = np.asarray(values)
@@ -155,11 +156,12 @@ class PreparedGriddedExternalField(StrictModule, NonTrainableState):
     grid_shape: tuple[int, int, int] = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: GriddedExternalFieldPlan, /):
+    def __init__(self, plan: GriddedExternalFieldPlan, /) -> None:
         if not isinstance(plan, GriddedExternalFieldPlan):
             raise TypeError("plan must be a GriddedExternalFieldPlan.")
         self.plan = plan
-        self.grid_shape = tuple(plan.values.shape[:3])
+        shape = plan.values.shape
+        self.grid_shape = (shape[0], shape[1], shape[2])
         self.prepared_id = canonical_fingerprint(
             {"kind": "prepared-gridded-external-field", "plan": plan.plan_id}
         )

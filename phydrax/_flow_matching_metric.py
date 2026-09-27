@@ -8,7 +8,7 @@ from abc import abstractmethod
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -47,7 +47,7 @@ class EuclideanFlowMatchingMetric(AbstractFlowMatchingMetric):
         *,
         normalize_event: bool = False,
         precision: GeometryPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = GeometryPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, GeometryPrecisionPolicy):
             raise TypeError("precision must be a GeometryPrecisionPolicy or None.")
@@ -93,7 +93,7 @@ class RiemannianFlowMatchingMetric(AbstractFlowMatchingMetric):
         /,
         *,
         precision: GeometryPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(metric, RiemannianMetric):
             raise TypeError("metric must be a RiemannianMetric.")
         precision_ = GeometryPrecisionPolicy() if precision is None else precision
@@ -155,7 +155,7 @@ class ManifoldFlowMatchingMetric(AbstractFlowMatchingMetric):
         /,
         *,
         precision: GeometryPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(geometry, AbstractRiemannianManifold):
             raise TypeError("geometry must be an AbstractRiemannianManifold.")
         precision_ = GeometryPrecisionPolicy() if precision is None else precision

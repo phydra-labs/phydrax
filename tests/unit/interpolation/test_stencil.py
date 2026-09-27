@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -16,7 +19,7 @@ def _linear_stencil() -> GatherStencil:
     )
 
 
-def test_gather_stencil_preserves_payload_shape_constants_and_complex_values():
+def test_gather_stencil_preserves_payload_shape_constants_and_complex_values() -> None:
     values = jnp.asarray(
         [[1.0 + 2.0j, 3.0 - 1.0j], [1.0 + 2.0j, 3.0 - 1.0j], [1.0 + 2.0j, 3.0 - 1.0j]]
     )
@@ -28,7 +31,7 @@ def test_gather_stencil_preserves_payload_shape_constants_and_complex_values():
     assert jnp.issubdtype(result.dtype, jnp.complexfloating)
 
 
-def test_gather_stencil_renormalizes_valid_sources_and_reports_support():
+def test_gather_stencil_renormalizes_valid_sources_and_reports_support() -> None:
     stencil = _linear_stencil()
     values = jnp.asarray([2.0, 6.0, 10.0])
     source_mask = jnp.asarray([True, False, False])
@@ -52,10 +55,10 @@ def test_gather_stencil_renormalizes_valid_sources_and_reports_support():
     assert not jnp.any(strict.support)
 
 
-def test_gather_stencil_value_gradient_is_the_declared_linear_map():
+def test_gather_stencil_value_gradient_is_the_declared_linear_map() -> None:
     stencil = _linear_stencil()
 
-    def total(values):
+    def total(values: Any) -> Any:
         return jnp.sum(apply_gather_stencil(values, stencil).values)
 
     gradient = jax.grad(total)(jnp.asarray([1.0, 2.0, 3.0]))

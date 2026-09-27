@@ -16,7 +16,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -40,7 +41,9 @@ def _identifiers(values: Sequence[str], name: str, /) -> tuple[str, ...]:
     return result
 
 
-def _real_array(value: ArrayLike, name: str, /, *, dtype=None) -> Array:
+def _real_array(
+    value: ArrayLike, name: str, /, *, dtype: DTypeLike | None = None
+) -> Array:
     result = jnp.asarray(value, dtype=dtype)
     if jnp.issubdtype(result.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real.")
@@ -56,7 +59,7 @@ def _scalar_flag(value: ArrayLike, name: str, /) -> Array:
     return result
 
 
-def _scalar(value: ArrayLike, name: str, /, *, dtype=None) -> Array:
+def _scalar(value: ArrayLike, name: str, /, *, dtype: DTypeLike | None = None) -> Array:
     result = _real_array(value, name, dtype=dtype)
     if result.shape != ():
         raise ValueError(f"{name} must be scalar.")
@@ -100,7 +103,7 @@ class MetricStressObservables(StrictModule):
         frame_id: str,
         frame_realization_id: str,
         source_ids: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(geometry, ADMGridGeometry):
             raise TypeError("geometry must be ADMGridGeometry.")
         if not isinstance(total_stress_energy, StressEnergyProjection):
@@ -204,7 +207,7 @@ class EventShowerHadronizationObservables(StrictModule):
         hadronization_profile_id: str,
         source_ids: Sequence[str],
         successful: ArrayLike,
-    ):
+    ) -> None:
         counts = _real_array(event_counts, "event_counts").reshape((-1,))
         weights = _real_array(event_weights, "event_weights", dtype=counts.dtype).reshape(
             (-1,)
@@ -362,7 +365,7 @@ class QuantumCoherenceObservables(StrictModule):
         unit_contract_id: str,
         source_ids: Sequence[str],
         successful: ArrayLike,
-    ):
+    ) -> None:
         occupation_ = _real_array(occupation, "occupation")
         coherence_r = _real_array(
             coherence_real, "coherence_real", dtype=occupation_.dtype
@@ -512,7 +515,7 @@ class RadiationObservables(StrictModule):
         unit_contract_id: str,
         source_ids: Sequence[str],
         successful: ArrayLike,
-    ):
+    ) -> None:
         coordinates = _real_array(spectral_coordinates, "spectral_coordinates").reshape(
             (-1,)
         )
@@ -648,7 +651,7 @@ class FullDarkSectorLedgerObservables(StrictModule):
         component_names: Sequence[str],
         source_evidence_ids: Sequence[str],
         successful: ArrayLike,
-    ):
+    ) -> None:
         names = _identifiers(component_names, "ledger component name")
         component = tuple(
             _real_array(value, name).reshape((-1,))
@@ -778,7 +781,7 @@ class FullDarkSectorObservableBundle(StrictModule):
         *,
         stage_id: str,
         epoch_manifest_id: str,
-    ):
+    ) -> None:
         products = (
             metric_stress,
             event_shower_hadronization,
@@ -890,7 +893,7 @@ class FullDarkSectorObservationPlan(StrictModule, NonTrainableState):
         radiation: LinearObservationPlan,
         ledgers: LinearObservationPlan,
         /,
-    ):
+    ) -> None:
         plans = (
             metric_stress,
             event_shower_hadronization,
@@ -934,8 +937,19 @@ class FullDarkSectorObservationPlan(StrictModule, NonTrainableState):
                 "products": [value.product_id for value in observed],
             }
         )
+        (
+            metric_stress,
+            event_shower_hadronization,
+            quantum_coherence,
+            radiation,
+            ledgers,
+        ) = observed
         return ObservedFullDarkSectorBundle(
-            *observed,
+            metric_stress,
+            event_shower_hadronization,
+            quantum_coherence,
+            radiation,
+            ledgers,
             bundle.output_id,
             self.plan_id,
             product_id,

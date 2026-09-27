@@ -10,7 +10,8 @@ from typing import NamedTuple
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -79,7 +80,7 @@ class CellBlock(StrictModule, NonTrainableState):
         *,
         vertex_valid: ArrayLike | None = None,
         global_ids: ArrayLike | None = None,
-    ):
+    ) -> None:
         block_name = str(name)
         kind = str(cell_kind)
         if not block_name:
@@ -186,7 +187,7 @@ class PolyhedralBlock(StrictModule, NonTrainableState):
         /,
         *,
         global_ids: ArrayLike | None = None,
-    ):
+    ) -> None:
         block_name = str(name)
         cells = np.asarray(vertices, dtype=np.int32)
         if not block_name:
@@ -655,7 +656,7 @@ class CellMesh(StrictModule, NonTrainableState):
         polyhedral_connectivity: PolyhedralConnectivity | None = None,
         numeric_version: str = "0",
         _prepared_topology: _PreparedCellMeshTopology | None = None,
-    ):
+    ) -> None:
         points = np.asarray(coordinates, dtype=np.float64)
         if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] == 0:
             raise ValueError("Cell mesh coordinates must have shape (n > 0, d > 0).")

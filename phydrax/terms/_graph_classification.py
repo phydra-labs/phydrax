@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, cast, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 from phydrax.domain import BatchEvaluator, DomainComponent, DomainFunction, PointSampling
@@ -32,9 +33,10 @@ from ..domain.graph._observation import (
     GraphTargetInterpolation,
     GraphTrajectoryClassificationSignal,
 )
-from ..integration import mean_over, over, per_step
+from ..integration import ComponentTarget, mean_over, over, per_step
 from ..ml._classification import ClassificationObjective, ClassificationObjectiveKind
 from ..ml._schema import TargetSchema
+from ..typing import parse, PRNGKey
 from ._integral_functional import IntegralFunctional
 
 
@@ -51,10 +53,7 @@ def _classification_configuration(
     if not isinstance(objective, ClassificationObjective):
         raise TypeError("objective must be a ClassificationObjective.")
     kind = target_schema.kind
-    if kind not in ("binary", "multiclass", "multilabel", "ordinal"):
-        raise ValueError(
-            "Graph classification TargetSchema kind must be binary, multiclass, multilabel, or ordinal."
-        )
+    kind = parse(kind, ClassificationKind, "kind")
 
     class_count: int | None = None
     if kind in ("multiclass", "ordinal"):
@@ -130,7 +129,7 @@ class _GraphClassificationScore(StrictModule, BatchEvaluator):
         classification_kind: ClassificationKind,
         objective: ClassificationObjective,
         class_count: int | None,
-    ):
+    ) -> None:
         self.logits = logits
         self.target = target
         self.target_mask = target_mask
@@ -144,7 +143,7 @@ class _GraphClassificationScore(StrictModule, BatchEvaluator):
         self.alpha = objective.alpha
         self.thresholds = objective.thresholds
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         del args, key, kwargs
         raise TypeError("Graph classification scores require GraphBatch evaluation.")
 
@@ -153,7 +152,7 @@ class _GraphClassificationScore(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         if not isinstance(batch, GraphBatch):
@@ -251,7 +250,7 @@ class _GraphClassificationIntegrand(StrictModule):
         target_schema: TargetSchema,
         objective: ClassificationObjective,
         class_count: int | None,
-    ):
+    ) -> None:
         self.field = field
         self.domain = domain
         self.target = target
@@ -284,7 +283,8 @@ class _GraphClassificationIntegrand(StrictModule):
                 logits=logits,
                 target=self.target,
                 target_mask=self.target_mask,
-                classification_kind=self.target_schema.kind,
+                # _classification_configuration admitted this schema kind at construction.
+                classification_kind=cast(ClassificationKind, self.target_schema.kind),
                 objective=self.objective,
                 class_count=self.class_count,
             ),
@@ -296,7 +296,7 @@ def _integration_target(
     component: DomainComponent,
     reduction: GraphClassificationReduction,
     /,
-):
+) -> ComponentTarget:
     if reduction == "mean":
         return mean_over(component)
     if reduction == "integral":

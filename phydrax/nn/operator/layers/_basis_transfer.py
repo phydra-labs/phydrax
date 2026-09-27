@@ -9,7 +9,7 @@ from collections.abc import Sequence
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax._strict import StrictModule
@@ -43,7 +43,7 @@ class InvariantBasisTransferPlan(StrictModule, NonTrainableState):
         *,
         target_axes: Sequence[int] | None = None,
         residual_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         if not isinstance(source_basis, InvariantFilterBasis) or not isinstance(
             target_basis, InvariantFilterBasis
         ):

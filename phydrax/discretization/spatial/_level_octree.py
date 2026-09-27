@@ -10,13 +10,15 @@ import math
 from collections.abc import Callable
 from itertools import product
 from operator import index
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax._strict import StrictModule
@@ -153,7 +155,7 @@ class AdaptiveOctree(NonTrainableState, StrictModule):
         radius = jnp.linalg.norm(half_widths, axis=-1)
         padding = self.separation_padding
 
-        def box_distance(points, boxes):
+        def box_distance(points: Any, boxes: Any) -> Any:
             excess = jnp.abs(points - centers[boxes]) - half_widths[boxes]
             return jnp.linalg.norm(jnp.maximum(excess, 0.0), axis=-1)
 
@@ -426,10 +428,12 @@ def _child_pairs(
     both = ~target_leaf & ~source_leaf
     target_first = table.first_children[targets].astype(np.int64)
     source_first = table.first_children[sources].astype(np.int64)
+    # ty: ignore[no-matching-overload]
     both_targets = np.broadcast_to(
         target_first[both, None, None] + digits[None, :, None],
         (np.count_nonzero(both), branching, branching),
     ).reshape(-1)
+    # ty: ignore[no-matching-overload]
     both_sources = np.broadcast_to(
         source_first[both, None, None] + digits[None, None, :],
         (np.count_nonzero(both), branching, branching),

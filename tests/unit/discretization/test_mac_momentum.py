@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _periodic(count=8):
+def _periodic(count: Any = 8) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(count, periodic=True),
@@ -23,7 +26,7 @@ def _periodic(count=8):
     return finite_volume, operators, momentum
 
 
-def _taylor_green(discretization):
+def _taylor_green(discretization: Any) -> Any:
     x_faces = discretization.face_centers[0]
     y_faces = discretization.face_centers[1]
     return (
@@ -32,7 +35,7 @@ def _taylor_green(discretization):
     )
 
 
-def test_mac_momentum_certifies_weighted_skew_and_dissipative_diffusion():
+def test_mac_momentum_certifies_weighted_skew_and_dissipative_diffusion() -> None:
     discretization, operators, momentum = _periodic()
     velocity = _taylor_green(discretization)
     convection = momentum.convection(velocity)
@@ -48,11 +51,11 @@ def test_mac_momentum_certifies_weighted_skew_and_dissipative_diffusion():
     assert jnp.real(space.inner(velocity, diffusion)) < 0.0
 
 
-def test_mac_momentum_is_jittable_and_differentiable_in_flat_coordinates():
+def test_mac_momentum_is_jittable_and_differentiable_in_flat_coordinates() -> None:
     discretization, operators, momentum = _periodic(6)
     initial = operators.velocity_space.flatten(_taylor_green(discretization))
 
-    def objective(coordinates):
+    def objective(coordinates: Any) -> Any:
         velocity = operators.velocity_space.unflatten(coordinates)
         convection = momentum.convection(tuple(velocity))
         rate = operators.velocity_space.flatten(convection)
@@ -66,7 +69,7 @@ def test_mac_momentum_is_jittable_and_differentiable_in_flat_coordinates():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_mac_moving_wall_couette_profile_has_zero_momentum_rate():
+def test_mac_moving_wall_couette_profile_has_zero_momentum_rate() -> None:
     count = 8
     grid = phx.discretization.TensorGridPlan(
         (
@@ -107,7 +110,7 @@ def test_mac_moving_wall_couette_profile_has_zero_momentum_rate():
     assert max(float(jnp.max(jnp.abs(value))) for value in diffusion) < 2e-11
 
 
-def test_mac_wall_boundaries_report_normal_flux_incompatibility():
+def test_mac_wall_boundaries_report_normal_flux_incompatibility() -> None:
     bounded_grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4),
@@ -140,7 +143,7 @@ def test_mac_wall_boundaries_report_normal_flux_incompatibility():
     assert jnp.abs(stage.compatibility_defect) > 0.0
 
 
-def test_three_dimensional_mac_constant_velocity_has_zero_rate():
+def test_three_dimensional_mac_constant_velocity_has_zero_rate() -> None:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(4, periodic=True) for _ in range(3)),
         axis_names=("x", "y", "z"),

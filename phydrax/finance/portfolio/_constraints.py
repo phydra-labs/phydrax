@@ -9,7 +9,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 
@@ -60,7 +61,7 @@ class RobustSOCConstraint(StrictModule):
         radius: float,
         bound: float,
         constraint_id: str = "robust-soc",
-    ):
+    ) -> None:
         nominal_ = _finite_array(nominal, "nominal", ndim=1)
         loading = _finite_array(factor_loading, "factor_loading", ndim=2).astype(
             nominal_.dtype
@@ -93,7 +94,9 @@ class ScenarioTree(StrictModule):
     stage_count: int = eqx.field(static=True)
     tree_id: str = eqx.field(static=True)
 
-    def __init__(self, history_labels: ArrayLike, /, *, tree_id: str = "scenario-tree"):
+    def __init__(
+        self, history_labels: ArrayLike, /, *, tree_id: str = "scenario-tree"
+    ) -> None:
         labels = np.asarray(history_labels)
         if labels.ndim != 2 or 0 in labels.shape:
             raise ValueError(
@@ -183,7 +186,7 @@ class PortfolioConstraints(StrictModule):
         fixed_fees: ArrayLike | None = None,
         robust: tuple[RobustSOCConstraint, ...] = (),
         scenario_tree: ScenarioTree | None = None,
-    ):
+    ) -> None:
         lower = (
             None
             if lower_weights is None
@@ -209,22 +212,17 @@ class PortfolioConstraints(StrictModule):
             raise ValueError(
                 "linear_matrix, linear_lower, and linear_upper must be supplied together."
             )
-        matrix = (
-            None
-            if linear_matrix is None
-            else _finite_array(linear_matrix, "linear_matrix", ndim=2)
-        )
-        linear_lo = (
-            None
-            if linear_lower is None
-            else jnp.asarray(linear_lower, dtype=matrix.dtype)
-        )
-        linear_hi = (
-            None
-            if linear_upper is None
-            else jnp.asarray(linear_upper, dtype=matrix.dtype)
-        )
-        if matrix is not None:
+        matrix: Array | None = None
+        linear_lo: Array | None = None
+        linear_hi: Array | None = None
+        if (
+            linear_matrix is not None
+            and linear_lower is not None
+            and linear_upper is not None
+        ):
+            matrix = _finite_array(linear_matrix, "linear_matrix", ndim=2)
+            linear_lo = jnp.asarray(linear_lower, dtype=matrix.dtype)
+            linear_hi = jnp.asarray(linear_upper, dtype=matrix.dtype)
             rows = matrix.shape[0]
             if linear_lo.shape != (rows,) or linear_hi.shape != (rows,):
                 raise ValueError(f"Linear bounds must both have shape ({rows},).")

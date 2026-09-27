@@ -10,14 +10,17 @@ from math import prod
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._interpolation._bspline import bspline_jet_stencil
 from ..._interpolation._bspline_grid import BSplineGrid
 from ..._interpolation._rational_spline import RationalSplineJet
 from ..._interpolation._tensor_bspline import TensorBSplineJetPlan
+from ..._precision import PrecisionEvidenceEnvelope
 from ...linalg import ArraySpace, BlockSpace, ConstraintMap
+from ...linalg._spaces import _coordinate_dtype
 from ...sparse import EdgeRelation, SparseCoordinateOperator
 from .._core import (
     DiscretizationCapability,
@@ -275,7 +278,7 @@ class IsogeometricPlan(AbstractDiscretizationPlan):
         quadrature_policy: IsogeometricQuadraturePolicy,
         precision_policy: FiniteElementPrecisionPolicy | None = None,
         qualification_policy: IsogeometricH1QualificationPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(basis, TensorSplineBasisSpec):
             raise TypeError("basis must be a TensorSplineBasisSpec.")
         if not isinstance(geometry, NURBSGeometryState):
@@ -376,7 +379,7 @@ class IsogeometricPlan(AbstractDiscretizationPlan):
         quadrature_policy: IsogeometricQuadraturePolicy,
         precision_policy: FiniteElementPrecisionPolicy | None = None,
         qualification_policy: IsogeometricH1QualificationPolicy | None = None,
-    ):
+    ) -> IsogeometricPlan:
         grid_values = (grids,) if isinstance(grids, BSplineGrid) else tuple(grids)
         basis = TensorSplineBasisSpec(grid_values, axis_names=axis_names)
         return cls(
@@ -392,7 +395,9 @@ class IsogeometricPlan(AbstractDiscretizationPlan):
             qualification_policy=qualification_policy,
         )
 
-    def prepare(self, /, *, numeric_version: str = "0"):
+    def prepare(
+        self, /, *, numeric_version: str = "0"
+    ) -> PreparedIsogeometricDiscretization:
         return PreparedIsogeometricDiscretization(self, numeric_version=numeric_version)
 
 
@@ -425,7 +430,7 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
     numeric_version: str = eqx.field(static=True)
     preparation: PreparationReport
 
-    def __init__(self, plan: IsogeometricPlan, /, *, numeric_version: str = "0"):
+    def __init__(self, plan: IsogeometricPlan, /, *, numeric_version: str = "0") -> None:
         if not isinstance(plan, IsogeometricPlan):
             raise TypeError("plan must be an IsogeometricPlan.")
         version = str(numeric_version)
@@ -593,7 +598,7 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         return self.field_cell_gathers[0]
 
     @property
-    def precision_evidence(self):
+    def precision_evidence(self) -> PrecisionEvidenceEnvelope:
         return self.precision_policy.evidence()
 
     @property
@@ -980,7 +985,7 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         )
         operator = SparseCoordinateOperator(
             relation,
-            jnp.ones((free.size,), dtype=full_space.dtype),
+            jnp.ones((free.size,), dtype=_coordinate_dtype(full_space)),
             source=reduced_space,
             target=full_space,
             operator_id=canonical_fingerprint(

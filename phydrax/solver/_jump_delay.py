@@ -11,9 +11,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
 from ..stochastic import JUMP_SUCCESS, JumpEventBatch, WienerRealization
 from ._delay import DelayDifferentialProblem, DelayHistory, DelayValues, DerivativeDelay
@@ -55,7 +56,7 @@ class JumpDelayProblem(StrictModule):
         *,
         mark_shape: Sequence[int] = (),
         problem_id: str = "jump-delay-problem",
-    ):
+    ) -> None:
         if not isinstance(delay_problem, DelayDifferentialProblem):
             raise TypeError("delay_problem must be a DelayDifferentialProblem.")
         if not callable(jump):

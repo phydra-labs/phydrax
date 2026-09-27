@@ -10,11 +10,12 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._numerics import solve_weighted_least_squares
 from ..._strict import StrictModule
 from ...operators.interpolation import BSplineInterpolationPlan, fit_bspline
+from ...typing import parse
 from .._trajectory import TrajectoryData
 
 
@@ -25,7 +26,7 @@ def _event_scale(value: Array, event_rank: int, /) -> Array:
     return value.reshape(value.shape + (1,) * event_rank)
 
 
-def _time_index(case_rank: int, index, /) -> tuple:
+def _time_index(case_rank: int, index: int, /) -> tuple[slice | int, ...]:
     return (slice(None),) * case_rank + (index,)
 
 
@@ -63,8 +64,7 @@ def finite_difference_derivative(
     """Estimate irregular-grid derivatives without crossing invalid transitions."""
     if not isinstance(data, TrajectoryData):
         raise TypeError("data must be TrajectoryData.")
-    if endpoint not in ("invalid", "one-sided"):
-        raise ValueError("endpoint must be 'invalid' or 'one-sided'.")
+    endpoint = parse(endpoint, FiniteDifferenceEndpoint, "endpoint")
     event_rank = len(data.state_layout.shape)
     case_rank = len(data.case_shape)
     derivative = jnp.full_like(data.states, jnp.nan)
@@ -255,7 +255,13 @@ def local_polynomial_derivative(
     flat_weights = weight_array.reshape((problem_count, window_size))
     flat_scale = scale_array.reshape((problem_count,))
 
-    def solve_one(design, response, mask, sample_weights, scale):
+    def solve_one(
+        design: Array,
+        response: Array,
+        mask: Array,
+        sample_weights: Array,
+        scale: Array,
+    ) -> tuple[Array, Array, Array]:
         result = solve_weighted_least_squares(
             design,
             response,

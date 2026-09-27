@@ -9,7 +9,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def test_global_map_to_local_map_and_laplace_prediction_pipeline():
+def test_global_map_to_local_map_and_laplace_prediction_pipeline() -> None:
     x = jnp.linspace(0.0, 2.0, 24)
     observation_scale = 0.03
     true_amplitude = 1.7

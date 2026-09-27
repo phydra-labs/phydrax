@@ -119,8 +119,8 @@ def _problem(
     return arguments, partition, time_grid
 
 
-def _solve_function(partition, time_grid):
-    def solve(arguments):
+def _solve_function(partition: Any, time_grid: Any) -> Any:
+    def solve(arguments: Any) -> Any:
         (
             dynamics,
             controls,
@@ -162,7 +162,7 @@ def _implied_process_covariances(arguments: BenchmarkArguments) -> jax.Array:
 
 
 def _cubature_expected_cost(
-    result,
+    result: Any,
     arguments: BenchmarkArguments,
 ) -> tuple[jax.Array, int]:
     (
@@ -262,7 +262,7 @@ def _cubature_expected_cost(
 
 
 def _expected_cost_oracle(
-    result,
+    result: Any,
     arguments: BenchmarkArguments,
     /,
     *,
@@ -293,7 +293,7 @@ def _expected_cost_oracle(
 
 
 def _certificates(
-    result,
+    result: Any,
     arguments: BenchmarkArguments,
     case_shape: tuple[int, ...],
     /,
@@ -509,7 +509,7 @@ def _case(
     }
 
 
-def _specifications():
+def _specifications() -> Any:
     return (
         ("baseline", 16, 8, (2, 2), 3, ()),
         ("horizon-4", 4, 8, (2, 2), 3, ()),

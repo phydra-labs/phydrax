@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -26,6 +27,7 @@ from ..discretization.spectral._transfer import (
     PreparedSpectralModalTransfer,
 )
 from ..equations._les_closures import ResolvedLESFilter
+from ..typing import parse
 from ._analysis import (
     ClosureAnalysisDAG,
     ClosureAnalysisNode,
@@ -34,7 +36,7 @@ from ._analysis import (
 )
 
 
-LESStressConvention = Literal["full", "deviatoric"]
+LESStressConvention: TypeAlias = Literal["full", "deviatoric"]
 
 
 class LESAnalysisReference(StrictModule, NonTrainableState):
@@ -57,7 +59,7 @@ class LESAnalysisReference(StrictModule, NonTrainableState):
         filter_id: str,
         target_id: str,
         analysis_dag_id: str,
-    ):
+    ) -> None:
         values = tuple(
             str(value).strip()
             for value in (
@@ -124,7 +126,7 @@ class PeriodicLESAnalysisContext(StrictModule, NonTrainableState):
         /,
         *,
         reference_manifest_id: str,
-    ):
+    ) -> None:
         if not isinstance(source, TensorSpectralDiscretization) or not isinstance(
             resolved, TensorSpectralDiscretization
         ):
@@ -346,8 +348,7 @@ def les_reynolds_stress_target(
 
     _validate_velocity_field(velocity, context)
     convention_ = str(convention).strip()
-    if convention_ not in ("full", "deviatoric"):
-        raise ValueError("LES stress convention must be 'full' or 'deviatoric'.")
+    convention_ = parse(convention_, LESStressConvention, "convention")
     values = velocity.values
     mean = context.filter_field(values)
     outer = values[..., :, None] * values[..., None, :]

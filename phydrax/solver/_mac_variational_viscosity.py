@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -29,7 +30,7 @@ from ..linalg import (
 )
 
 
-def _face_to_cell(value, axis, cell_shape):
+def _face_to_cell(value: Array, axis: int, cell_shape: tuple[int, ...]) -> Array:
     if value.shape[axis] == cell_shape[axis]:
         return 0.5 * (value + jnp.roll(value, 1, axis=axis))
     lower = jnp.take(value, jnp.arange(cell_shape[axis]), axis=axis)
@@ -111,7 +112,7 @@ class MACVariationalViscosityPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 500,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         self.operators = operators
@@ -178,13 +179,17 @@ class MACVariationalViscosityPlan(StrictModule, NonTrainableState):
         residual = tuple(left - right for left, right in zip(residual, rhs, strict=True))
         residual_norm = jnp.sqrt(sum(jnp.sum(value**2) for value in residual))
         dissipation = action._dissipation(candidate)
-        energy_before = 0.5 * sum(
-            jnp.sum(mass * value**2)
-            for mass, value in zip(measures.face_mass, values, strict=True)
+        energy_before = 0.5 * jnp.asarray(
+            sum(
+                jnp.sum(mass * value**2)
+                for mass, value in zip(measures.face_mass, values, strict=True)
+            )
         )
-        energy_after = 0.5 * sum(
-            jnp.sum(mass * value**2)
-            for mass, value in zip(measures.face_mass, candidate, strict=True)
+        energy_after = 0.5 * jnp.asarray(
+            sum(
+                jnp.sum(mass * value**2)
+                for mass, value in zip(measures.face_mass, candidate, strict=True)
+            )
         )
         increase = jnp.maximum(energy_after - energy_before, 0.0)
         finite = (

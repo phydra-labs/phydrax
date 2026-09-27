@@ -7,23 +7,33 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any, TypeAlias, TypeVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy.special as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import positive_finite_float
 from ._sites import AtomisticInteractionSiteState
 
 
-def _enum_value(value, enum_type, name, /):
+_EnumT = TypeVar("_EnumT", bound=StrEnum)
+_PairGeometry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
+_SolveCarry: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+
+
+def _enum_value(value: object, enum_type: type[_EnumT], name: str, /) -> _EnumT:
     if isinstance(value, enum_type):
         return value
     if not isinstance(value, str):
@@ -33,13 +43,6 @@ def _enum_value(value, enum_type, name, /):
         choices = ", ".join(member.value for member in enum_type)
         raise ValueError(f"{name} must be one of: {choices}.")
     return matches[0]
-
-
-def _finite_positive(value, name, /) -> float:
-    result = float(value)
-    if not np.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
 
 
 class PermanentMultipoleSiteData(StrictModule, NonTrainableState):
@@ -60,7 +63,7 @@ class PermanentMultipoleSiteData(StrictModule, NonTrainableState):
         polarizabilities: ArrayLike,
         damping: ArrayLike,
         /,
-    ):
+    ) -> None:
         charge = np.asarray(charges, dtype=np.float64)
         dipole = np.asarray(dipoles, dtype=np.float64)
         quadrupole = np.asarray(quadrupoles, dtype=np.float64)
@@ -135,7 +138,7 @@ class PolarizationScaleData(StrictModule, NonTrainableState):
         polarization: ArrayLike,
         mutual: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             np.asarray(value, dtype=np.float64)
             for value in (direct, polarization, mutual)
@@ -207,15 +210,15 @@ class PolarizationOperatorPlan(StrictModule, NonTrainableState):
         *,
         minimum_distance: float = 1.0e-8,
         periodic_plan: MultipolePMEPlan | None = None,
-    ):
-        distance = _finite_positive(minimum_distance, "minimum_distance")
+    ) -> None:
+        distance = positive_finite_float(minimum_distance, "minimum_distance")
         if periodic_plan is not None and not isinstance(periodic_plan, MultipolePMEPlan):
             raise TypeError("periodic_plan must be MultipolePMEPlan or None.")
         self.minimum_distance, self.periodic_plan = distance, periodic_plan
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "polarization-operator-plan",
-                "minimum_distance": distance.hex(),
+                "minimum_distance": float(distance).hex(),
                 "periodic": None if periodic_plan is None else periodic_plan.plan_id,
             }
         )
@@ -258,7 +261,15 @@ class PreparedPolarizationOperator(StrictModule, NonTrainableState):
     site_capacity: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, multipoles, scaling, active_mask, active_id, /):
+    def __init__(
+        self,
+        plan: PolarizationOperatorPlan,
+        multipoles: PermanentMultipoleSiteData,
+        scaling: PolarizationScaleData,
+        active_mask: Array,
+        active_id: str | dict[str, Any],
+        /,
+    ) -> None:
         self.plan, self.multipoles, self.scaling, self.active_mask = (
             plan,
             multipoles,
@@ -320,15 +331,15 @@ class PolarizationPreconditionerPlan(StrictModule, NonTrainableState):
         /,
         *,
         diagonal_floor: float = 1.0e-12,
-    ):
+    ) -> None:
         kind_ = _enum_value(kind, PolarizationPreconditionerKind, "kind")
-        floor = _finite_positive(diagonal_floor, "diagonal_floor")
+        floor = positive_finite_float(diagonal_floor, "diagonal_floor")
         self.kind, self.diagonal_floor = kind_, floor
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "polarization-preconditioner-plan",
                 "preconditioner": kind_.value,
-                "diagonal_floor": floor.hex(),
+                "diagonal_floor": float(floor).hex(),
             }
         )
 
@@ -347,7 +358,12 @@ class PreparedPolarizationPreconditioner(StrictModule, NonTrainableState):
     operator: PreparedPolarizationOperator
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, operator, /):
+    def __init__(
+        self,
+        plan: PolarizationPreconditionerPlan,
+        operator: PreparedPolarizationOperator,
+        /,
+    ) -> None:
         self.plan, self.operator = plan, operator
         self.prepared_id = canonical_fingerprint(
             {
@@ -389,7 +405,7 @@ class PolarizationPredictorPlan(StrictModule, NonTrainableState):
         *,
         history_coefficient: float = 1.0,
         direct_fallback: bool = True,
-    ):
+    ) -> None:
         coefficient = float(history_coefficient)
         if not np.isfinite(coefficient) or not 0.0 <= coefficient <= 2.0:
             raise ValueError("history_coefficient must be finite and in [0,2].")
@@ -433,16 +449,16 @@ class PolarizationSolverPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-8,
         force_tolerance: float | None = None,
         breakdown_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         kind_ = _enum_value(kind, PolarizationSolverKind, "kind")
         iterations, order = int(maximum_iterations), int(tcg_order)
-        tolerance_ = _finite_positive(tolerance, "tolerance")
+        tolerance_ = positive_finite_float(tolerance, "tolerance")
         force = (
             tolerance_
             if force_tolerance is None
-            else _finite_positive(force_tolerance, "force_tolerance")
+            else positive_finite_float(force_tolerance, "force_tolerance")
         )
-        breakdown = _finite_positive(breakdown_tolerance, "breakdown_tolerance")
+        breakdown = positive_finite_float(breakdown_tolerance, "breakdown_tolerance")
         if iterations <= 0 or order <= 0:
             raise ValueError("maximum_iterations and tcg_order must both be positive.")
         (
@@ -459,9 +475,9 @@ class PolarizationSolverPlan(StrictModule, NonTrainableState):
                 "solver": kind_.value,
                 "maximum_iterations": iterations,
                 "tcg_order": order,
-                "tolerance": tolerance_.hex(),
-                "force_tolerance": force.hex(),
-                "breakdown_tolerance": breakdown.hex(),
+                "tolerance": float(tolerance_).hex(),
+                "force_tolerance": float(force).hex(),
+                "breakdown_tolerance": float(breakdown).hex(),
             }
         )
 
@@ -519,7 +535,7 @@ class PolarizationPlan(StrictModule, NonTrainableState):
         predictor: PolarizationPredictorPlan | None = None,
         periodic_plan: MultipolePMEPlan | None = None,
         minimum_distance: float = 1.0e-8,
-    ):
+    ) -> None:
         relaxation_ = float(relaxation)
         if not np.isfinite(relaxation_) or not 0.0 < relaxation_ <= 1.0:
             raise ValueError("relaxation must be finite and in (0,1].")
@@ -606,18 +622,18 @@ class PolarizationState(StrictModule):
 
     def __init__(
         self,
-        induced_dipoles,
-        residual,
-        iterations,
-        converged,
-        successful,
-        plan_id,
+        induced_dipoles: ArrayLike,
+        residual: ArrayLike,
+        iterations: ArrayLike,
+        converged: ArrayLike,
+        successful: ArrayLike,
+        plan_id: str,
         *,
-        relative_residual=None,
-        force_valid=None,
-        finite=None,
-        solver_kind="legacy",
-    ):
+        relative_residual: ArrayLike | None = None,
+        force_valid: ArrayLike | None = None,
+        finite: ArrayLike | None = None,
+        solver_kind: str = "legacy",
+    ) -> None:
         residual_ = jnp.asarray(residual)
         finite_ = (
             jnp.all(jnp.isfinite(induced_dipoles)) & jnp.isfinite(residual_)
@@ -661,7 +677,15 @@ class PreparedPolarizationSolver(StrictModule, NonTrainableState):
     result_plan_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, operator, preconditioner, predictor, result_plan_id, /):
+    def __init__(
+        self,
+        plan: PolarizationSolverPlan,
+        operator: PreparedPolarizationOperator,
+        preconditioner: PreparedPolarizationPreconditioner,
+        predictor: PolarizationPredictorPlan,
+        result_plan_id: str,
+        /,
+    ) -> None:
         self.plan, self.operator, self.preconditioner, self.predictor = (
             plan,
             operator,
@@ -731,7 +755,15 @@ class PolarizationEvaluation(StrictModule):
     successful: Array
     evidence: PolarizationDifferentiationEvidence | None
 
-    def __init__(self, energy, forces, state, successful, *, evidence=None):
+    def __init__(
+        self,
+        energy: ArrayLike,
+        forces: ArrayLike,
+        state: PolarizationState,
+        successful: ArrayLike,
+        *,
+        evidence: PolarizationDifferentiationEvidence | None = None,
+    ) -> None:
         self.energy = jnp.asarray(energy)
         self.forces = jnp.asarray(forces)
         self.state = state
@@ -739,7 +771,7 @@ class PolarizationEvaluation(StrictModule):
         self.evidence = evidence
 
 
-def _positions(value, capacity, /):
+def _positions(value: ArrayLike, capacity: int, /) -> Array:
     coordinate = jnp.asarray(value)
     if coordinate.shape != (capacity, 3):
         raise ValueError("positions must have the prepared fixed shape (N,3).")
@@ -748,7 +780,9 @@ def _positions(value, capacity, /):
     return coordinate
 
 
-def _periodic_cell(operator, cell_vectors, /):
+def _periodic_cell(
+    operator: PreparedPolarizationOperator, cell_vectors: ArrayLike | None, /
+) -> Array | None:
     periodic = operator.plan.periodic_plan is not None
     if periodic and cell_vectors is None:
         raise ValueError("Periodic polarization requires cell_vectors.")
@@ -766,7 +800,9 @@ def _periodic_cell(operator, cell_vectors, /):
     return cell
 
 
-def _pair_geometry(operator, positions, cell, /):
+def _pair_geometry(
+    operator: PreparedPolarizationOperator, positions: Array, cell: Array | None, /
+) -> _PairGeometry:
     displacement = positions[:, None, :] - positions[None, :, :]
     periodic_valid = jnp.asarray(True)
     if cell is not None:
@@ -831,14 +867,19 @@ def _pair_geometry(operator, positions, cell, /):
     )
 
 
-def _damping(multipoles, distance, /):
+def _damping(multipoles: PermanentMultipoleSiteData, distance: Array, /) -> Array:
     exponent = (
         jnp.sqrt(multipoles.damping[:, None] * multipoles.damping[None, :]) * distance**3
     )
     return -jnp.expm1(-exponent)
 
 
-def _unscreened_permanent_fields(displacement, distance, multipoles, /):
+def _unscreened_permanent_fields(
+    displacement: Array,
+    distance: Array,
+    multipoles: PermanentMultipoleSiteData,
+    /,
+) -> tuple[Array, Array, Array]:
     direction = displacement / distance[..., None]
     safe2 = distance**2
     charge = multipoles.charges[None, :, None] * direction / safe2[..., None]
@@ -857,7 +898,9 @@ def _unscreened_permanent_fields(displacement, distance, multipoles, /):
     return charge, dipole, quadrupole
 
 
-def _screened_radial_derivatives(alpha, distance, /):
+def _screened_radial_derivatives(
+    alpha: float, distance: Array, /
+) -> tuple[Array, Array, Array]:
     argument = alpha * distance
     complementary = jsp.erfc(argument)
     gaussian = (
@@ -881,7 +924,13 @@ def _screened_radial_derivatives(alpha, distance, /):
     return first, second, third
 
 
-def _screened_permanent_fields(displacement, distance, multipoles, alpha, /):
+def _screened_permanent_fields(
+    displacement: Array,
+    distance: Array,
+    multipoles: PermanentMultipoleSiteData,
+    alpha: float,
+    /,
+) -> tuple[Array, Array, Array]:
     first, second, third = _screened_radial_derivatives(alpha, distance)
     charge = (
         -first[..., None]
@@ -910,7 +959,12 @@ def _screened_permanent_fields(displacement, distance, multipoles, alpha, /):
     return charge, dipole, quadrupole
 
 
-def _permanent_field(operator, geometry, scale, /):
+def _permanent_field(
+    operator: PreparedPolarizationOperator,
+    geometry: _PairGeometry,
+    scale: Array,
+    /,
+) -> Array:
     displacement, _, distance, _, pair, _, _, _ = geometry
     multipoles = operator.multipoles
     unscreened = _unscreened_permanent_fields(displacement, distance, multipoles)
@@ -931,7 +985,12 @@ def _permanent_field(operator, geometry, scale, /):
     )
 
 
-def _induced_field(operator, geometry, induced, /):
+def _induced_field(
+    operator: PreparedPolarizationOperator,
+    geometry: _PairGeometry,
+    induced: Array,
+    /,
+) -> Array:
     displacement, _, distance, _, pair, _, _, _ = geometry
     polarizable = operator.active_mask & (operator.multipoles.polarizabilities > 0.0)
     source = jnp.where(polarizable[:, None], induced, 0.0)
@@ -961,7 +1020,16 @@ def _induced_field(operator, geometry, induced, /):
     )
 
 
-def _reciprocal_field(plan, positions, charges, dipoles, quadrupoles, active, cell, /):
+def _reciprocal_field(
+    plan: MultipolePMEPlan,
+    positions: Array,
+    charges: Array,
+    dipoles: Array,
+    quadrupoles: Array,
+    active: Array,
+    cell: Array,
+    /,
+) -> Array:
     determinant = jnp.sum(cell[0] * jnp.cross(cell[1], cell[2]))
     inverse = jnp.stack(
         (
@@ -1005,14 +1073,20 @@ def _reciprocal_field(plan, positions, charges, dipoles, quadrupoles, active, ce
     return prefactor * jnp.sum(kernel[None, :, None] * jnp.real(mode_field), axis=1)
 
 
-def _dipole_self_field(plan, dipoles, /):
+def _dipole_self_field(plan: MultipolePMEPlan, dipoles: Array, /) -> Array:
     coefficient = (
         4.0 * plan.alpha**3 / (3.0 * jnp.sqrt(jnp.asarray(jnp.pi, dtype=dipoles.dtype)))
     )
     return coefficient * dipoles
 
 
-def _operator_result(operator, positions, induced, cell, /):
+def _operator_result(
+    operator: PreparedPolarizationOperator,
+    positions: Array,
+    induced: Array,
+    cell: Array | None,
+    /,
+) -> PolarizationOperatorResult:
     geometry = _pair_geometry(operator, positions, cell)
     d_field = _permanent_field(operator, geometry, operator.scaling.direct)
     p_field = _permanent_field(operator, geometry, operator.scaling.polarization)
@@ -1020,10 +1094,14 @@ def _operator_result(operator, positions, induced, cell, /):
     polarizable = operator.active_mask & (operator.multipoles.polarizabilities > 0.0)
     induced_source = jnp.where(polarizable[:, None], induced, 0.0)
     if cell is not None:
+        # _periodic_cell only returns a cell when the operator plan is periodic.
+        periodic_plan = operator.plan.periodic_plan
+        if not (periodic_plan is not None):
+            raise RuntimeError("Internal invariant failed: periodic_plan is not None.")
         zeros_charge = jnp.zeros_like(operator.multipoles.charges)
         zeros_quadrupole = jnp.zeros_like(operator.multipoles.quadrupoles)
         permanent_reciprocal = _reciprocal_field(
-            operator.plan.periodic_plan,
+            periodic_plan,
             positions,
             operator.multipoles.charges,
             operator.multipoles.dipoles,
@@ -1032,7 +1110,7 @@ def _operator_result(operator, positions, induced, cell, /):
             cell,
         )
         permanent_reciprocal = permanent_reciprocal + _dipole_self_field(
-            operator.plan.periodic_plan,
+            periodic_plan,
             jnp.where(
                 operator.active_mask[:, None],
                 operator.multipoles.dipoles,
@@ -1040,7 +1118,7 @@ def _operator_result(operator, positions, induced, cell, /):
             ),
         )
         induced_reciprocal = _reciprocal_field(
-            operator.plan.periodic_plan,
+            periodic_plan,
             positions,
             zeros_charge,
             induced_source,
@@ -1049,7 +1127,7 @@ def _operator_result(operator, positions, induced, cell, /):
             cell,
         )
         induced_reciprocal = induced_reciprocal + _dipole_self_field(
-            operator.plan.periodic_plan, induced_source
+            periodic_plan, induced_source
         )
         d_field = d_field + permanent_reciprocal
         p_field = p_field + permanent_reciprocal
@@ -1090,13 +1168,24 @@ def _operator_result(operator, positions, induced, cell, /):
     )
 
 
-def _action(operator, positions, induced, cell, geometry, /):
+def _action(
+    operator: PreparedPolarizationOperator,
+    positions: Array,
+    induced: Array,
+    cell: Array | None,
+    geometry: _PairGeometry,
+    /,
+) -> tuple[Array, Array]:
     u_field = _induced_field(operator, geometry, induced)
     polarizable = operator.active_mask & (operator.multipoles.polarizabilities > 0.0)
     induced_source = jnp.where(polarizable[:, None], induced, 0.0)
     if cell is not None:
+        # _periodic_cell only returns a cell when the operator plan is periodic.
+        periodic_plan = operator.plan.periodic_plan
+        if not (periodic_plan is not None):
+            raise RuntimeError("Internal invariant failed: periodic_plan is not None.")
         u_field = u_field + _reciprocal_field(
-            operator.plan.periodic_plan,
+            periodic_plan,
             positions,
             jnp.zeros_like(operator.multipoles.charges),
             induced_source,
@@ -1104,9 +1193,7 @@ def _action(operator, positions, induced, cell, geometry, /):
             polarizable,
             cell,
         )
-        u_field = u_field + _dipole_self_field(
-            operator.plan.periodic_plan, induced_source
-        )
+        u_field = u_field + _dipole_self_field(periodic_plan, induced_source)
     inverse_alpha = jnp.where(
         polarizable,
         1.0
@@ -1129,7 +1216,9 @@ def _action(operator, positions, induced, cell, geometry, /):
     return action, successful
 
 
-def _apply_preconditioner(preconditioner, residual, /):
+def _apply_preconditioner(
+    preconditioner: PreparedPolarizationPreconditioner, residual: Array, /
+) -> Array:
     polarizable = preconditioner.operator.active_mask & (
         preconditioner.operator.multipoles.polarizabilities > 0.0
     )
@@ -1147,11 +1236,18 @@ def _apply_preconditioner(preconditioner, residual, /):
     return scale[:, None] * residual
 
 
-def _norm(value, /):
+def _norm(value: Array, /) -> Array:
     return jnp.sqrt(jnp.maximum(contract("nd,nd->", value, value), 0.0))
 
 
-def _linear_solve(prepared, positions, right, initial, cell, /):
+def _linear_solve(
+    prepared: PreparedPolarizationSolver,
+    positions: Array,
+    right: Array,
+    initial: Array,
+    cell: Array | None,
+    /,
+) -> _SolveCarry:
     geometry = _pair_geometry(prepared.operator, positions, cell)
     initial_action, action_successful = _action(
         prepared.operator, positions, initial, cell, geometry
@@ -1169,7 +1265,7 @@ def _linear_solve(prepared, positions, right, initial, cell, /):
         & jnp.isfinite(rz)
         & (rz >= 0.0)
     )
-    carry = (
+    carry: _SolveCarry = (
         initial,
         residual,
         preconditioned,
@@ -1186,7 +1282,7 @@ def _linear_solve(prepared, positions, right, initial, cell, /):
         else prepared.plan.tcg_order
     )
 
-    def iteration(_, values):
+    def iteration(_: int | Array, values: _SolveCarry) -> _SolveCarry:
         value, residual_, z, direction, rz_, norm_, relative_, count, breakdown = values
         action, action_successful = _action(
             prepared.operator, positions, direction, cell, geometry
@@ -1236,7 +1332,12 @@ def _linear_solve(prepared, positions, right, initial, cell, /):
     return jax.lax.fori_loop(0, loop_count, iteration, carry)
 
 
-def _predict(prepared, operator_result, predictor_state, /):
+def _predict(
+    prepared: PreparedPolarizationSolver,
+    operator_result: PolarizationOperatorResult,
+    predictor_state: PolarizationPredictorState,
+    /,
+) -> Array:
     alpha = prepared.operator.multipoles.polarizabilities[:, None]
     direct = alpha * operator_result.d_field
     fallback = direct if prepared.predictor.direct_fallback else jnp.zeros_like(direct)
@@ -1251,7 +1352,13 @@ def _predict(prepared, operator_result, predictor_state, /):
     )
 
 
-def _solve_prepared(prepared, positions, predictor_state, cell, /):
+def _solve_prepared(
+    prepared: PreparedPolarizationSolver,
+    positions: Array,
+    predictor_state: PolarizationPredictorState,
+    cell: Array | None,
+    /,
+) -> PolarizationSolveResult:
     zero = jnp.zeros_like(prepared.operator.multipoles.dipoles)
     fields = _operator_result(prepared.operator, positions, zero, cell)
     initial = _predict(prepared, fields, predictor_state)
@@ -1338,7 +1445,7 @@ def prepared_polarization_energy(
     *,
     predictor_state: PolarizationPredictorState | None = None,
     cell_vectors: ArrayLike | None = None,
-):
+) -> tuple[Array, PolarizationSolveResult]:
     """Return the variational polarization energy and solve result."""
     if not isinstance(prepared, PreparedPolarizationSolver):
         raise TypeError("prepared must be PreparedPolarizationSolver.")
@@ -1363,7 +1470,7 @@ def polarization_energy(
     scaling: PolarizationScaleData | None = None,
     predictor_state: PolarizationPredictorState | None = None,
     cell_vectors: ArrayLike | None = None,
-):
+) -> tuple[Array, tuple[PolarizationState, Array]]:
     """Compatibility energy entry point using the variational functional."""
     if not isinstance(plan, PolarizationPlan):
         raise TypeError("plan must be PolarizationPlan.")
@@ -1475,7 +1582,7 @@ def evaluate_implicit_polarization_jvp(
     primal = _solve_prepared(prepared, coordinate, predictor_state, cell)
     induced = primal.state.induced_dipoles
 
-    def stationarity(position):
+    def stationarity(position: Array) -> Array:
         result = _operator_result(prepared.operator, position, induced, cell)
         return result.action - result.p_field
 
@@ -1536,7 +1643,7 @@ def implicit_polarization_jvp(
     *,
     scaling: PolarizationScaleData | None = None,
     cell_vectors: ArrayLike | None = None,
-):
+) -> tuple[Array, Array]:
     """Preserve the original ``(primal, tangent)`` implicit-JVP API."""
     result = evaluate_implicit_polarization_jvp(
         plan,
@@ -1556,7 +1663,7 @@ class MultipolePMEPlan(StrictModule, NonTrainableState):
     alpha: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, grid_shape: tuple[int, int, int], alpha: float, /):
+    def __init__(self, grid_shape: tuple[int, int, int], alpha: float, /) -> None:
         shape = tuple(grid_shape)
         alpha_ = float(alpha)
         if (
@@ -1582,7 +1689,7 @@ class MultipolePMEPlan(StrictModule, NonTrainableState):
         cell_vectors: ArrayLike,
         coulomb_constant: float,
         /,
-    ):
+    ) -> Array:
         if multipoles.charges.shape != site_state.active_mask.shape:
             raise ValueError("Multipoles and interaction sites must have equal capacity.")
         vectors = jnp.asarray(cell_vectors)
@@ -1695,7 +1802,7 @@ class ImplicitSolventPlan(StrictModule, NonTrainableState):
         solute_dielectric: float = 1.0,
         surface_tension: float = 0.005,
         kirkwood_factor: float = 2.455,
-    ):
+    ) -> None:
         if (
             model not in ("gb", "gk")
             or min(solvent_dielectric, solute_dielectric, kirkwood_factor) <= 0
@@ -1736,7 +1843,7 @@ class ImplicitSolventPlan(StrictModule, NonTrainableState):
         radii: ArrayLike,
         coulomb_constant: float,
         /,
-    ):
+    ) -> Array:
         coordinate, charge, radius = (
             jnp.asarray(positions),
             jnp.asarray(charges),

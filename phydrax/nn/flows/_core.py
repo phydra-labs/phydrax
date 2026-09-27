@@ -10,10 +10,12 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...typing import PRNGKey
 
 
 class AbstractFlowDistribution(StrictModule, ParameterOwner, abc.ABC):
@@ -32,7 +34,7 @@ class AbstractFlowDistribution(StrictModule, ParameterOwner, abc.ABC):
     @abc.abstractmethod
     def sample(
         self,
-        key: Key,
+        key: PRNGKey,
         *,
         sample_shape: tuple[int, ...] = (),
         condition: ArrayLike | None = None,
@@ -49,7 +51,7 @@ class AbstractFlowDistribution(StrictModule, ParameterOwner, abc.ABC):
 
     def sample_and_log_prob(
         self,
-        key: Key,
+        key: PRNGKey,
         *,
         sample_shape: tuple[int, ...] = (),
         condition: ArrayLike | None = None,
@@ -63,7 +65,7 @@ class NormalFlowDistribution(AbstractFlowDistribution):
     _raw_scale: Array
     _shape: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, location: ArrayLike, scale: ArrayLike, /):
+    def __init__(self, location: ArrayLike, scale: ArrayLike, /) -> None:
         location_ = jnp.asarray(location)
         scale_ = jnp.asarray(scale, dtype=location_.dtype)
         if location_.ndim != 1 or location_.shape == (0,):
@@ -93,7 +95,7 @@ class NormalFlowDistribution(AbstractFlowDistribution):
 
     def sample(
         self,
-        key: Key,
+        key: PRNGKey,
         *,
         sample_shape: tuple[int, ...] = (),
         condition: ArrayLike | None = None,
@@ -140,8 +142,8 @@ class AffineCouplingLayer(StrictModule, ParameterOwner):
         *,
         width: int,
         depth: int,
-        key: Key,
-    ):
+        key: PRNGKey,
+    ) -> None:
         event = int(event_size)
         condition = int(condition_size)
         mask_value = jnp.asarray(mask)
@@ -207,7 +209,7 @@ class CouplingFlowDistribution(AbstractFlowDistribution):
         /,
         *,
         condition_size: int,
-    ):
+    ) -> None:
         if not isinstance(base, NormalFlowDistribution):
             raise TypeError("base must be a NormalFlowDistribution.")
         if not layers:
@@ -265,7 +267,7 @@ class CouplingFlowDistribution(AbstractFlowDistribution):
 
     def sample(
         self,
-        key: Key,
+        key: PRNGKey,
         *,
         sample_shape: tuple[int, ...] = (),
         condition: ArrayLike | None = None,
@@ -304,7 +306,7 @@ class CouplingFlowDistribution(AbstractFlowDistribution):
 
 
 def coupling_flow(
-    key: Key,
+    key: PRNGKey,
     /,
     *,
     base_dist: NormalFlowDistribution,
@@ -348,7 +350,7 @@ def coupling_flow(
 
 
 def triangular_flow(
-    key: Key,
+    key: PRNGKey,
     /,
     *,
     base_dist: NormalFlowDistribution,

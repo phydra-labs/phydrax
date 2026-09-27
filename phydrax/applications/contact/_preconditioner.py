@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -34,13 +35,13 @@ class ContactGraphPlan(StrictModule, NonTrainableState):
         route_count = len(endpoints)
         parent = list(range(route_count))
 
-        def root(index):
+        def root(index: int) -> int:
             while parent[index] != index:
                 parent[index] = parent[parent[index]]
                 index = parent[index]
             return index
 
-        def union(left, right):
+        def union(left: int, right: int) -> None:
             left_root = root(left)
             right_root = root(right)
             if left_root != right_root:
@@ -88,7 +89,7 @@ class ContactBlockPreconditionerPlan(StrictModule, NonTrainableState):
         *,
         regularization: float = 1.0e-10,
         coarse_weight: float = 0.5,
-    ):
+    ) -> None:
         regularization_ = float(regularization)
         coarse = float(coarse_weight)
         if regularization_ <= 0.0 or not np.isfinite(regularization_):

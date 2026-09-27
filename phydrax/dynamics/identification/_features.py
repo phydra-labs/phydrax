@@ -11,7 +11,8 @@ from math import comb, floor
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -167,7 +168,7 @@ class PolynomialFeatureLibrary(AbstractFeatureLibrary):
         interaction_only: bool = False,
         anisotropy: Sequence[float] | None = None,
         max_features: int = 4096,
-    ):
+    ) -> None:
         if not isinstance(state_layout, StateLayout):
             raise TypeError("state_layout must be a StateLayout.")
         if input_layout is not None and not isinstance(input_layout, InputLayout):
@@ -290,7 +291,7 @@ class OperatorInferenceFeatureLibrary(AbstractFeatureLibrary):
         *,
         input_layout: InputLayout | None = None,
         max_features: int = 4096,
-    ):
+    ) -> None:
         if not isinstance(state_layout, StateLayout):
             raise TypeError("state_layout must be a StateLayout.")
         if input_layout is not None and not isinstance(input_layout, InputLayout):
@@ -392,7 +393,7 @@ class FourierFeatureLibrary(AbstractFeatureLibrary):
         include_sine: bool = True,
         include_cosine: bool = True,
         max_features: int = 4096,
-    ):
+    ) -> None:
         if not isinstance(state_layout, StateLayout):
             raise TypeError("state_layout must be a StateLayout.")
         if input_layout is not None and not isinstance(input_layout, InputLayout):
@@ -507,7 +508,7 @@ class CustomFeatureLibrary(AbstractFeatureLibrary):
         feature_names: Sequence[str],
         library_id: str,
         input_layout: InputLayout | None = None,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         if not isinstance(state_layout, StateLayout):
@@ -577,7 +578,7 @@ class ConcatenatedFeatureLibrary(AbstractFeatureLibrary):
     feature_names: tuple[str, ...] = eqx.field(static=True)
     library_id: str = eqx.field(static=True)
 
-    def __init__(self, libraries: Sequence[AbstractFeatureLibrary], /):
+    def __init__(self, libraries: Sequence[AbstractFeatureLibrary], /) -> None:
         resolved = tuple(libraries)
         _compatible(resolved, "ConcatenatedFeatureLibrary")
         names = tuple(name for library in resolved for name in library.feature_names)
@@ -629,7 +630,7 @@ class TensorProductFeatureLibrary(AbstractFeatureLibrary):
         /,
         *,
         max_features: int = 4096,
-    ):
+    ) -> None:
         _compatible((left, right), "TensorProductFeatureLibrary")
         count = left.num_features * right.num_features
         if count > int(max_features):

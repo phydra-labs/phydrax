@@ -19,6 +19,7 @@ Requires the optional Gmsh and OCP (OpenCascade) dependencies. Run with
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -33,7 +34,7 @@ RADIUS = 1.0
 HEIGHT = 2.0
 
 
-def mesh_solid(source, size, geometry_order):
+def mesh_solid(source: Any, size: Any, geometry_order: Any) -> Any:
     """Coarse Gmsh tetrahedra of one closed solid at the requested geometry order."""
     provider = phx.meshing.GmshProvider()
     scope = provider.whole_scope(source, 3)
@@ -58,7 +59,7 @@ def mesh_solid(source, size, geometry_order):
     return result
 
 
-def mapped_volume(mesh, geometry):
+def mapped_volume(mesh: Any, geometry: Any) -> Any:
     """Volume of the mapped geometry.
 
     The degree-aware finite-element rule integrates the polynomial Jacobian
@@ -74,7 +75,7 @@ def mapped_volume(mesh, geometry):
     return float(sum(jnp.sum(block.measure) for block in blocks))
 
 
-def classify(mesh, projection):
+def classify(mesh: Any, projection: Any) -> Any:
     """Vertex classes plus the derived edge, face, and cell classes."""
     vertices = phx.meshing.associate_mesh_vertices(mesh, projection, policy=ASSOCIATION)
     associations = (vertices,) + tuple(
@@ -102,7 +103,7 @@ def classify(mesh, projection):
     return vertices, counts
 
 
-def certificate_summary(certificate):
+def certificate_summary(certificate: Any) -> Any:
     status = np.asarray(certificate.status)
     if not np.all(status == phx.discretization.CellValidityStatus.CERTIFIED_VALID):
         raise RuntimeError("A curved cell is not certified valid.")
@@ -117,7 +118,9 @@ def certificate_summary(certificate):
     }
 
 
-def curve(mesh, association, projection, degree, exact_volume):
+def curve(
+    mesh: Any, association: Any, projection: Any, degree: Any, exact_volume: Any
+) -> Any:
     policy = phx.meshing.HighOrderCurvingPolicy(degree=degree)
     curved = phx.meshing.curve_cell_mesh(mesh, association, projection, policy=policy)
     if curved.status is not phx.meshing.HighOrderCurvingStatus.CURVED:

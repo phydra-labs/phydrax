@@ -10,12 +10,12 @@ from phydrax.nn.layers import RandomFourierFeatureEmbeddings
 from phydrax.nn.models import MLP, Sequential
 
 
-def test_sequential_requires_at_least_one_model():
+def test_sequential_requires_at_least_one_model() -> None:
     with pytest.raises(ValueError, match="at least one model"):
         _ = Sequential(())
 
 
-def test_sequential_rff_then_mlp_shape_and_metadata():
+def test_sequential_rff_then_mlp_shape_and_metadata() -> None:
     model = Sequential(
         (
             RandomFourierFeatureEmbeddings(
@@ -38,7 +38,7 @@ def test_sequential_rff_then_mlp_shape_and_metadata():
     assert y.shape == (3,)
 
 
-def test_sequential_single_stage_matches_wrapped_model():
+def test_sequential_single_stage_matches_wrapped_model() -> None:
     mlp = MLP(
         in_size=2,
         out_size="scalar",
@@ -54,14 +54,14 @@ def test_sequential_single_stage_matches_wrapped_model():
     assert jnp.allclose(y_seq, y_ref)
 
 
-def test_sequential_rejects_adjacent_size_mismatch():
+def test_sequential_rejects_adjacent_size_mismatch() -> None:
     m1 = MLP(in_size=2, out_size=3, width_size=8, depth=1, key=jr.key(0))
     m2 = MLP(in_size=4, out_size=1, width_size=8, depth=1, key=jr.key(1))
     with pytest.raises(ValueError, match="Sequential size mismatch"):
         _ = Sequential((m1, m2))
 
 
-def test_sequential_tuple_input_requires_structured_first_stage():
+def test_sequential_tuple_input_requires_structured_first_stage() -> None:
     m1 = MLP(in_size=2, out_size=2, width_size=8, depth=1, key=jr.key(0))
     m2 = MLP(in_size=2, out_size=1, width_size=8, depth=1, key=jr.key(1))
     model = Sequential((m1, m2))

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -27,7 +29,7 @@ from phydrax.applications.electrophysiology._neurons import (
 jax.config.update("jax_enable_x64", True)
 
 
-def test_lif_charge_includes_outward_synapse_affinity_and_inward_injection():
+def test_lif_charge_includes_outward_synapse_affinity_and_inward_injection() -> None:
     model = LeakyIntegrateAndFire(0.2, 0.01, -65.0, -45.0, -68.0)
     initial = np.asarray([-70.0, -62.0, -55.0])
     injected = np.asarray([0.1, -0.03, 0.2])
@@ -44,12 +46,12 @@ def test_lif_charge_includes_outward_synapse_affinity_and_inward_injection():
     np.testing.assert_allclose(result.voltage_mV, expected, rtol=2.0e-13, atol=2.0e-13)
 
 
-def test_zero_leak_charge_has_finite_parameter_and_current_sensitivities():
+def test_zero_leak_charge_has_finite_parameter_and_current_sensitivities() -> None:
     model = LeakyIntegrateAndFire(0.25, 0.0, -65.0, -45.0, -68.0)
     state = initialize_point_neuron(model, -60.0)
     elapsed, current = 3.0, 0.1
 
-    def voltage(leak, injected):
+    def voltage(leak: Any, injected: Any) -> Any:
         varied = eqx.tree_at(lambda value: value.leak_conductance_uS, model, leak)
         return advance_point_neuron(varied, state, elapsed, injected).voltage_mV
 
@@ -61,8 +63,9 @@ def test_zero_leak_charge_has_finite_parameter_and_current_sensitivities():
     np.testing.assert_allclose(derivatives, [expected_leak, elapsed / 0.25], atol=1.0e-12)
 
 
-def test_refractory_release_inside_vector_segment_preserves_exact_free_charge():
+def test_refractory_release_inside_vector_segment_preserves_exact_free_charge() -> None:
     model = LeakyIntegrateAndFire(0.2, 0.01, -65.0, -45.0, -70.0, refractory_ms=2.0)
+    # ty: ignore[invalid-argument-type]
     before = initialize_point_neuron(model, [-45.0, -45.0])
     reset = reset_point_neuron(model, before, jnp.asarray([1.0, 3.0]))
     result = advance_point_neuron(model, reset, 3.0, 0.2, time_ms=2.0)
@@ -74,7 +77,7 @@ def test_refractory_release_inside_vector_segment_preserves_exact_free_charge():
     np.testing.assert_allclose(released.voltage_mV[1], expected_second, atol=1.0e-12)
 
 
-def test_adex_reset_increment_and_refractory_adaptation_remain_physical():
+def test_adex_reset_increment_and_refractory_adaptation_remain_physical() -> None:
     model = AdaptiveExponentialIntegrateAndFire(
         0.2,
         0.01,
@@ -103,7 +106,7 @@ def test_adex_reset_increment_and_refractory_adaptation_remain_physical():
     )
 
 
-def test_adex_subthreshold_segment_matches_independent_ode_and_differentiates():
+def test_adex_subthreshold_segment_matches_independent_ode_and_differentiates() -> None:
     model = AdaptiveExponentialIntegrateAndFire(
         0.2,
         0.01,
@@ -119,7 +122,7 @@ def test_adex_subthreshold_segment_matches_independent_ode_and_differentiates():
     state = PointNeuronState(jnp.asarray(-54.0), jnp.asarray(0.02), jnp.asarray(0.0))
     elapsed, injected = 0.5, 0.18
 
-    def rhs(_, value):
+    def rhs(_: Any, value: Any) -> Any:
         voltage, adaptation = value
         return [
             (
@@ -141,7 +144,7 @@ def test_adex_subthreshold_segment_matches_independent_ode_and_differentiates():
         atol=1.0e-9,
     )
 
-    def voltage_for_onset(onset):
+    def voltage_for_onset(onset: Any) -> Any:
         varied = eqx.tree_at(lambda value: value.exponential_threshold_mV, model, onset)
         return advance_point_neuron(varied, state, elapsed, injected).voltage_mV
 
@@ -154,7 +157,7 @@ def test_adex_subthreshold_segment_matches_independent_ode_and_differentiates():
     np.testing.assert_allclose(derivative, finite_difference, rtol=2.0e-6, atol=1.0e-9)
 
 
-def test_adex_distinguishes_exponential_onset_from_spike_cutoff():
+def test_adex_distinguishes_exponential_onset_from_spike_cutoff() -> None:
     with pytest.raises(ValueError):
         AdaptiveExponentialIntegrateAndFire(
             0.2,
@@ -170,7 +173,7 @@ def test_adex_distinguishes_exponential_onset_from_spike_cutoff():
         )
 
 
-def test_threshold_hysteresis_does_not_refire_a_plateau_or_subthreshold_chatter():
+def test_threshold_hysteresis_does_not_refire_a_plateau_or_subthreshold_chatter() -> None:
     detector = ThresholdDetector(-50.0, -55.0)
     armed = initialize_threshold_detector(detector, -60.0)
     firings = []

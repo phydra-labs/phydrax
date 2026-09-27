@@ -9,7 +9,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -19,6 +19,7 @@ from ...solver import (
     AdaptiveBalanceLawRolloutResult,
     BalanceLawRuntimeState,
 )
+from ...stochastic import StochasticRealization
 
 
 class AstrophysicalApplicationResult(StrictModule):
@@ -43,7 +44,7 @@ class AstrophysicalMultiphysicsApplicationPlan(StrictModule, NonTrainableState):
         /,
         *,
         observation_id: str,
-    ):
+    ) -> None:
         if (
             not isinstance(rollout, AdaptiveBalanceLawRolloutPlan)
             or not callable(observation)
@@ -67,7 +68,7 @@ class AstrophysicalMultiphysicsApplicationPlan(StrictModule, NonTrainableState):
         self,
         initial_state: BalanceLawRuntimeState,
         args: Any = None,
-        realization=None,
+        realization: StochasticRealization | None = None,
         /,
     ) -> AstrophysicalApplicationResult:
         result = self.rollout.rollout(initial_state, args, realization)

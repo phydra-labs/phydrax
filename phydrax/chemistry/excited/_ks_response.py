@@ -11,7 +11,8 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -43,7 +44,7 @@ class KohnShamExcitedResponsePlan(StrictModule, NonTrainableState):
         /,
         *,
         dipole_ao: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(kohn_sham, MolecularKohnShamPlan):
             raise TypeError("kohn_sham must be MolecularKohnShamPlan.")
         if not isinstance(state, RestrictedMeanFieldState) or not bool(
@@ -76,7 +77,7 @@ class KohnShamExcitedResponsePlan(StrictModule, NonTrainableState):
             for virtual in virtual_indices
         )
 
-        def rotated_density(parameters, imaginary):
+        def rotated_density(parameters: Array, imaginary: bool) -> Array:
             generator = jnp.zeros(
                 (orbital_count, orbital_count),
                 dtype=jnp.result_type(coefficients.dtype, jnp.complex64),
@@ -94,7 +95,7 @@ class KohnShamExcitedResponsePlan(StrictModule, NonTrainableState):
             occupied_coefficients = rotated[:, jnp.asarray(occupied_indices)]
             return 2.0 * occupied_coefficients @ jnp.conj(occupied_coefficients.T)
 
-        def energy(parameters, imaginary):
+        def energy(parameters: Array, imaginary: bool) -> Array:
             density = rotated_density(parameters, imaginary)
             alpha = beta = 0.5 * density
             coulomb = contract("cd,abcd->ab", density, eri)

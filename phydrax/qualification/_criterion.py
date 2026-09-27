@@ -6,24 +6,18 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
+from typing import Any
 
 import equinox as eqx
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import canonical_identifier
 from ._evidence import QualificationEvidence
 
 
 _MAX_TIMESTAMP = 2**63 - 1
-
-
-def _identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    if not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty canonical identifier.")
-    return value
 
 
 def _timestamp(value: int, name: str, /) -> int:
@@ -37,7 +31,7 @@ def _timestamp(value: int, name: str, /) -> int:
 def _identifiers(values: Sequence[str], name: str, /) -> tuple[str, ...]:
     if not isinstance(values, Sequence) or isinstance(values, str):
         raise TypeError(f"{name} must be a sequence of identifiers.")
-    normalized = tuple(_identifier(value, name) for value in values)
+    normalized = tuple(canonical_identifier(value, name) for value in values)
     if not normalized:
         raise ValueError(f"{name} must not be empty.")
     if len(set(normalized)) != len(normalized):
@@ -75,7 +69,7 @@ class QualificationCriterion(StrictModule, NonTrainableState):
         approval_id: str,
         issued_at: int,
         valid_until: int | None = None,
-    ):
+    ) -> None:
         if isinstance(target, bool) or not isinstance(target, (int, float)):
             raise TypeError("target must be a real number.")
         target_ = float(target)
@@ -90,24 +84,26 @@ class QualificationCriterion(StrictModule, NonTrainableState):
             deadline = _timestamp(valid_until, "valid_until")
             if deadline <= issued:
                 raise ValueError("A criterion validity deadline must follow issuance.")
-        comparison_ = _identifier(comparison, "criterion comparison")
+        comparison_ = canonical_identifier(comparison, "criterion comparison")
         if comparison_ not in (
             "equal",
             "less-than-or-equal",
             "greater-than-or-equal",
         ):
             raise ValueError("Unsupported quantitative qualification comparison.")
-        self.support_tuple_id = _identifier(
+        self.support_tuple_id = canonical_identifier(
             support_tuple_id, "criterion support-tuple ID"
         )
-        self.metric = _identifier(metric, "criterion metric")
-        self.unit = _identifier(unit, "criterion unit")
+        self.metric = canonical_identifier(metric, "criterion metric")
+        self.unit = canonical_identifier(unit, "criterion unit")
         self.comparison = comparison_
         self.target = target_
-        self.aggregation = _identifier(aggregation, "criterion aggregation")
-        self.uncertainty = _identifier(uncertainty, "criterion uncertainty")
-        self.applicability = _identifier(applicability, "criterion applicability")
-        self.approval_id = _identifier(approval_id, "criterion approval ID")
+        self.aggregation = canonical_identifier(aggregation, "criterion aggregation")
+        self.uncertainty = canonical_identifier(uncertainty, "criterion uncertainty")
+        self.applicability = canonical_identifier(
+            applicability, "criterion applicability"
+        )
+        self.approval_id = canonical_identifier(approval_id, "criterion approval ID")
         self.issued_at = issued
         self.valid_until = deadline
         self.criterion_id = canonical_fingerprint(self._content_record())
@@ -140,7 +136,7 @@ class QualificationCriterion(StrictModule, NonTrainableState):
         return {**self._content_record(), "criterion_id": self.criterion_id}
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> QualificationCriterion:
+    def from_record(cls, record: Mapping[str, Any], /) -> QualificationCriterion:
         """Reconstruct and content-verify a serialized criterion."""
         if not isinstance(record, Mapping):
             raise TypeError("Qualification-criterion record must be a mapping.")
@@ -185,13 +181,17 @@ class CampaignStartRecord(StrictModule, NonTrainableState):
         resolved_run_spec_id: str,
         support_tuple_id: str,
         started_at: int,
-    ):
-        self.campaign_spec_id = _identifier(campaign_spec_id, "campaign specification ID")
-        self.criterion_id = _identifier(criterion_id, "campaign criterion ID")
-        self.resolved_run_spec_id = _identifier(
+    ) -> None:
+        self.campaign_spec_id = canonical_identifier(
+            campaign_spec_id, "campaign specification ID"
+        )
+        self.criterion_id = canonical_identifier(criterion_id, "campaign criterion ID")
+        self.resolved_run_spec_id = canonical_identifier(
             resolved_run_spec_id, "resolved run-specification ID"
         )
-        self.support_tuple_id = _identifier(support_tuple_id, "campaign support-tuple ID")
+        self.support_tuple_id = canonical_identifier(
+            support_tuple_id, "campaign support-tuple ID"
+        )
         self.started_at = _timestamp(started_at, "started_at")
         self.start_record_id = canonical_fingerprint(self._content_record())
 
@@ -210,7 +210,7 @@ class CampaignStartRecord(StrictModule, NonTrainableState):
         return {**self._content_record(), "start_record_id": self.start_record_id}
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> CampaignStartRecord:
+    def from_record(cls, record: Mapping[str, Any], /) -> CampaignStartRecord:
         """Reconstruct and content-verify a serialized campaign start."""
         if not isinstance(record, Mapping):
             raise TypeError("Campaign-start record must be a mapping.")
@@ -251,14 +251,20 @@ class CampaignObservationRecord(StrictModule, NonTrainableState):
         support_tuple_id: str,
         raw_artifact_ids: Sequence[str],
         observed_at: int,
-    ):
-        self.start_record_id = _identifier(start_record_id, "campaign-start record ID")
-        self.campaign_spec_id = _identifier(campaign_spec_id, "campaign specification ID")
-        self.criterion_id = _identifier(criterion_id, "campaign criterion ID")
-        self.resolved_run_spec_id = _identifier(
+    ) -> None:
+        self.start_record_id = canonical_identifier(
+            start_record_id, "campaign-start record ID"
+        )
+        self.campaign_spec_id = canonical_identifier(
+            campaign_spec_id, "campaign specification ID"
+        )
+        self.criterion_id = canonical_identifier(criterion_id, "campaign criterion ID")
+        self.resolved_run_spec_id = canonical_identifier(
             resolved_run_spec_id, "resolved run-specification ID"
         )
-        self.support_tuple_id = _identifier(support_tuple_id, "campaign support-tuple ID")
+        self.support_tuple_id = canonical_identifier(
+            support_tuple_id, "campaign support-tuple ID"
+        )
         self.raw_artifact_ids = _identifiers(
             raw_artifact_ids, "campaign raw-artifact IDs"
         )
@@ -285,7 +291,7 @@ class CampaignObservationRecord(StrictModule, NonTrainableState):
         }
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> CampaignObservationRecord:
+    def from_record(cls, record: Mapping[str, Any], /) -> CampaignObservationRecord:
         """Reconstruct and content-verify a serialized campaign observation."""
         if not isinstance(record, Mapping):
             raise TypeError("Campaign-observation record must be a mapping.")

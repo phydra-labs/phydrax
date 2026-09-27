@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -12,7 +15,7 @@ import phydrax as phx
 la = phx.linalg
 
 
-def _psd_properties(*, positive_definite=False):
+def _psd_properties(*, positive_definite: Any = False) -> Any:
     evidence = {
         "self_adjoint": "construction",
         "positive_semidefinite": "construction",
@@ -23,16 +26,17 @@ def _psd_properties(*, positive_definite=False):
         self_adjoint=True,
         positive_semidefinite=True,
         positive_definite=positive_definite,
+        # ty: ignore[invalid-argument-type]
         evidence=evidence,
     )
 
 
 def _operator(
-    matrix,
+    matrix: Any,
     *,
-    operator_id="nystrom-test",
-    positive_definite=False,
-):
+    operator_id: Any = "nystrom-test",
+    positive_definite: Any = False,
+) -> Any:
     values = jnp.asarray(matrix)
     space = la.ArraySpace((values.shape[0],), dtype=values.dtype)
     return la.DenseLinearOperator(
@@ -44,7 +48,7 @@ def _operator(
     )
 
 
-def test_exact_low_rank_nystrom_action_matches_shifted_inverse_and_jit():
+def test_exact_low_rank_nystrom_action_matches_shifted_inverse_and_jit() -> None:
     matrix = jnp.diag(jnp.asarray([4.0, 2.0, 0.0, 0.0]))
     operator = _operator(matrix)
     builder = la.RandomizedNystromPreconditionerBuilder(
@@ -70,7 +74,7 @@ def test_exact_low_rank_nystrom_action_matches_shifted_inverse_and_jit():
     assert action.properties.certifies("positive_definite")
 
 
-def test_randomized_nystrom_preconditions_native_pcg_without_changing_solution():
+def test_randomized_nystrom_preconditions_native_pcg_without_changing_solution() -> None:
     diagonal = jnp.asarray([20.0, 8.0, 2.0, 0.5])
     base = _operator(jnp.diag(diagonal), operator_id="nystrom-pcg-base")
     shifted = _operator(
@@ -116,7 +120,7 @@ def test_randomized_nystrom_preconditions_native_pcg_without_changing_solution()
     assert result.provenance.preconditioner_apply_workspace_bytes_per_rhs > 0
 
 
-def test_numeric_refresh_reuses_or_redraws_probes_without_shape_changes():
+def test_numeric_refresh_reuses_or_redraws_probes_without_shape_changes() -> None:
     first = _operator(jnp.diag(jnp.asarray([5.0, 3.0, 1.0, 0.2])))
     second = _operator(
         jnp.diag(jnp.asarray([6.0, 2.0, 0.8, 0.1])),
@@ -157,7 +161,7 @@ def test_numeric_refresh_reuses_or_redraws_probes_without_shape_changes():
     assert not jnp.allclose(redraw_updated.basis, reuse_updated.basis)
 
 
-def test_complex_hermitian_nystrom_action_is_finite_and_self_adjoint():
+def test_complex_hermitian_nystrom_action_is_finite_and_self_adjoint() -> None:
     matrix = jnp.asarray(
         [
             [3.0, 1.0j, 0.0],
@@ -184,7 +188,7 @@ def test_complex_hermitian_nystrom_action_is_finite_and_self_adjoint():
     )
 
 
-def test_randomized_nystrom_cost_reports_fixed_sketch_work():
+def test_randomized_nystrom_cost_reports_fixed_sketch_work() -> None:
     operator = _operator(jnp.diag(jnp.arange(1.0, 7.0)))
     builder = la.RandomizedNystromPreconditionerBuilder(
         2,
@@ -199,7 +203,7 @@ def test_randomized_nystrom_cost_reports_fixed_sketch_work():
     assert cost.preparation_workspace_bytes > cost.storage_bytes
 
 
-def test_randomized_nystrom_rejects_invalid_configuration_and_operator_claims():
+def test_randomized_nystrom_rejects_invalid_configuration_and_operator_claims() -> None:
     with pytest.raises(ValueError, match="rank"):
         la.RandomizedNystromPreconditionerBuilder(0)
     with pytest.raises(ValueError, match="shift"):

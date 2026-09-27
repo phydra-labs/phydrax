@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import abc
+from types import TracebackType
 from typing import Self
 
 import equinox as eqx
@@ -35,7 +36,7 @@ class MeshingExecutionPolicy(StrictModule, NonTrainableState):
         parallelism: int = 1,
         deterministic: bool = True,
         cleanup_workspace: bool = True,
-    ):
+    ) -> None:
         if not isinstance(execution_mode, MeshingExecutionMode):
             raise TypeError("execution_mode must be MeshingExecutionMode.")
         timeout = float(timeout_seconds)
@@ -81,7 +82,12 @@ class AbstractMeshingSession(abc.ABC):
             raise RuntimeError("Cannot enter a closed meshing session.")
         return self
 
-    def __exit__(self, exception_type, exception, traceback) -> bool:
+    def __exit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool:
         self.close()
         return False
 

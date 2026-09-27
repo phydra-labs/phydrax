@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_cid11_trainable_grid_bank_has_independent_ordered_rows():
+def test_cid11_trainable_grid_bank_has_independent_ordered_rows() -> None:
     bank = phx.nn.models.TrainableBSplineGridBank.open_uniform(2, 3, 4)
     bank = eqx.tree_at(
         lambda current: current.raw_span_logits,
@@ -17,12 +17,13 @@ def test_cid11_trainable_grid_bank_has_independent_ordered_rows():
     assert not jnp.allclose(bank.span_widths[0], bank.span_widths[1])
 
 
-def test_trainable_grid_bank_equinox_filter_exposes_only_logits():
+def test_trainable_grid_bank_equinox_filter_exposes_only_logits() -> None:
     bank = phx.nn.models.TrainableBSplineGridBank.open_uniform(
         2,
         3,
         4,
         intervals=((-2.0, 1.0), (0.0, 4.0)),
+        # ty: ignore[invalid-argument-type]
         minimum_spans=(0.05, 0.1),
     )
     trainable = eqx.filter(bank, eqx.is_inexact_array)
@@ -47,7 +48,7 @@ def test_trainable_grid_bank_equinox_filter_exposes_only_logits():
     assert jnp.all(jnp.diff(updated.knots, axis=-1) >= 0.0)
 
 
-def test_cid12_rational_trainable_refinement_is_topology_evidenced():
+def test_cid12_rational_trainable_refinement_is_topology_evidenced() -> None:
     grid = phx.nn.models.TrainableBSplineGrid.open_uniform(2, 3)
     model = phx.nn.models.KAN(
         in_size=1,

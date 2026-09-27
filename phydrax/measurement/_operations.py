@@ -29,7 +29,7 @@ class OperationalCoordinate(StrictModule, NonTrainableState):
     axes: tuple[tuple[str, int], ...] = eqx.field(static=True)
     coordinate_id: str = eqx.field(static=True)
 
-    def __init__(self, namespace: str, axes: Mapping[str, int], /):
+    def __init__(self, namespace: str, axes: Mapping[str, int], /) -> None:
         namespace_ = _identifier(namespace, "Operational namespace")
         if not isinstance(axes, Mapping) or not axes:
             raise TypeError("axes must be a non-empty mapping.")
@@ -62,7 +62,9 @@ class OperationalInterval(StrictModule, NonTrainableState):
     end: OperationalCoordinate
     interval_id: str = eqx.field(static=True)
 
-    def __init__(self, start: OperationalCoordinate, end: OperationalCoordinate, /):
+    def __init__(
+        self, start: OperationalCoordinate, end: OperationalCoordinate, /
+    ) -> None:
         if not isinstance(start, OperationalCoordinate) or not isinstance(
             end, OperationalCoordinate
         ):
@@ -117,7 +119,7 @@ class ConditionPayloadReference(StrictModule, NonTrainableState):
         interval: OperationalInterval,
         unit_ids: Sequence[str] = (),
         dependency_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(interval, OperationalInterval):
             raise TypeError("interval must be OperationalInterval.")
         values = tuple(
@@ -175,7 +177,7 @@ class ResolvedConditionSnapshot(StrictModule, NonTrainableState):
         resolution_time: int,
         resolver_id: str,
         required_names: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(coordinate, OperationalCoordinate):
             raise TypeError("coordinate must be OperationalCoordinate.")
         payloads_ = tuple(payloads)
@@ -250,7 +252,7 @@ class ExposureRecord(StrictModule, NonTrainableState):
         *,
         authority: str,
         correlation_id: str,
-    ):
+    ) -> None:
         if not isinstance(kind, ExposureKind) or not isinstance(
             interval, OperationalInterval
         ):
@@ -304,7 +306,7 @@ class DataQualityAnnotation(StrictModule, NonTrainableState):
         certified: bool,
         authority: str,
         evidence_ids: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(interval, OperationalInterval):
             raise TypeError("interval must be OperationalInterval.")
         defects = tuple(sorted(_identifier(value, "Defect ID") for value in defect_ids))

@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _quad_grid(nx, ny):
+def _quad_grid(nx: Any, ny: Any) -> Any:
     vertices = np.asarray(
         [(2.0 * i / nx, j / ny) for j in range(ny + 1) for i in range(nx + 1)]
     )
@@ -27,7 +30,7 @@ def _quad_grid(nx, ny):
     ).prepare()
 
 
-def _hierarchy(maximum_refined_cells=2):
+def _hierarchy(maximum_refined_cells: Any = 2) -> Any:
     coarse = _quad_grid(2, 1)
     fine = _quad_grid(4, 2)
     parent = np.asarray((0, 0, 1, 1, 0, 0, 1, 1), dtype=np.int32)
@@ -58,7 +61,7 @@ def _hierarchy(maximum_refined_cells=2):
     )
 
 
-def _state(hierarchy):
+def _state(hierarchy: Any) -> Any:
     return phx.discretization.initialize_particle_internal_amr(
         hierarchy,
         jnp.asarray([[2.0, 4.0]]),
@@ -71,7 +74,7 @@ def _state(hierarchy):
     )
 
 
-def test_particle_internal_amr_refines_locally_and_conserves_extensive_state():
+def test_particle_internal_amr_refines_locally_and_conserves_extensive_state() -> None:
     hierarchy = _hierarchy()
     state = _state(hierarchy)
     result = phx.discretization.adapt_particle_internal_mesh(
@@ -81,6 +84,7 @@ def test_particle_internal_amr_refines_locally_and_conserves_extensive_state():
         jnp.asarray([[2.0, 0.0]]),
     )
     assert result.successful
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(result.accepted_state.coarse_refined, [[True, False]])
     assert jnp.sum(result.accepted_state.fine_active) == 4
     assert jnp.max(jnp.abs(result.evidence.energy_residual)) < 1.0e-12
@@ -89,7 +93,7 @@ def test_particle_internal_amr_refines_locally_and_conserves_extensive_state():
     assert jnp.max(jnp.abs(result.evidence.surface_area_residual)) < 1.0e-12
 
 
-def test_particle_internal_amr_coarsening_preserves_bounded_progress():
+def test_particle_internal_amr_coarsening_preserves_bounded_progress() -> None:
     hierarchy = _hierarchy()
     state = _state(hierarchy)
     policy = phx.discretization.ParticleInternalAdaptationPolicy(
@@ -109,7 +113,7 @@ def test_particle_internal_amr_coarsening_preserves_bounded_progress():
     )
 
 
-def test_particle_internal_amr_overflow_requests_growth_atomically():
+def test_particle_internal_amr_overflow_requests_growth_atomically() -> None:
     hierarchy = _hierarchy(maximum_refined_cells=1)
     state = _state(hierarchy)
     result = phx.discretization.adapt_particle_internal_mesh(
@@ -124,7 +128,7 @@ def test_particle_internal_amr_overflow_requests_growth_atomically():
     assert jnp.array_equal(result.accepted_state.coarse_refined, state.coarse_refined)
 
 
-def test_coarse_fine_flux_correction_uses_extensive_register_once():
+def test_coarse_fine_flux_correction_uses_extensive_register_once() -> None:
     hierarchy = _hierarchy()
     coarse = jnp.asarray([1.0, 2.0])
     register = phx.discretization.UnstructuredAMRFluxRegister(

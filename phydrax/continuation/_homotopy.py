@@ -12,7 +12,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite
@@ -48,7 +49,7 @@ class HomotopyEndpointCertificate(StrictModule):
         tolerance: Any,
         finite: Any,
         status: Any,
-    ):
+    ) -> None:
         self.start_residual_norm = jnp.asarray(start_residual_norm)
         self.target_residual_norm = jnp.asarray(target_residual_norm)
         self.tolerance = jnp.asarray(tolerance)
@@ -78,7 +79,7 @@ class HomotopyProblem(StrictModule):
         state_space: AbstractVectorSpace | None = None,
         residual_space: AbstractVectorSpace | None = None,
         representation: ContinuationRepresentationPolicy | None = None,
-    ):
+    ) -> None:
         if not callable(residual):
             raise TypeError("residual must be callable.")
         if physical_parameter is not None and not callable(physical_parameter):
@@ -216,7 +217,11 @@ def linear_homotopy(
     if not identifier:
         raise ValueError("homotopy_id must be non-empty.")
 
-    def endpoint_space(start_space, target_space, name):
+    def endpoint_space(
+        start_space: AbstractVectorSpace | None,
+        target_space: AbstractVectorSpace | None,
+        name: str,
+    ) -> AbstractVectorSpace | None:
         if (
             start_space is not None
             and target_space is not None
@@ -236,7 +241,9 @@ def linear_homotopy(
         "residual",
     )
 
-    def residual(state, homotopy_parameter, args):
+    def residual(
+        state: PyTree[Any], homotopy_parameter: Array, args: Any
+    ) -> PyTree[Array]:
         start = start_problem.residual(state, args)
         target = target_problem.residual(state, args)
         if jax.tree.structure(start) != jax.tree.structure(target):
@@ -287,10 +294,12 @@ def parameter_homotopy(
     if not identifier:
         raise ValueError("homotopy_id must be non-empty.")
 
-    def physical_parameter(homotopy_parameter):
+    def physical_parameter(homotopy_parameter: Array) -> Array:
         return (1.0 - homotopy_parameter) * start + homotopy_parameter * target
 
-    def residual(state, homotopy_parameter, args):
+    def residual(
+        state: PyTree[Any], homotopy_parameter: Array, args: Any
+    ) -> PyTree[Array]:
         return problem.residual(
             state,
             physical_parameter(homotopy_parameter),

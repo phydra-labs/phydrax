@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -13,7 +16,7 @@ from phydrax.discretization.contact._surface import (
 )
 
 
-def _two_segment_scene(*, envelope=0.0):
+def _two_segment_scene(*, envelope: Any = 0.0) -> Any:
     source = phx.linalg.ArraySpace((2, 2), dtype=np.float64)
     moving_plan = phx.discretization.CollisionSurfacePlan(
         jnp.asarray((0, 1), dtype=jnp.int64),
@@ -50,12 +53,12 @@ def _two_segment_scene(*, envelope=0.0):
     return source, scene, search
 
 
-def _candidate_rows(batch):
+def _candidate_rows(batch: Any) -> Any:
     indices = np.asarray(batch.vertex_indices)
     return {tuple(row) for row in indices[np.asarray(batch.valid, dtype="bool")].tolist()}
 
 
-def test_per_vertex_separation_and_certified_ccd_guarantee():
+def test_per_vertex_separation_and_certified_ccd_guarantee() -> None:
     source, scene, search = _two_segment_scene()
     np.testing.assert_allclose(scene.feature_physical_radius[:2], (0.005, 0.01))
     start = scene.positions(source.zeros())
@@ -77,7 +80,7 @@ def test_per_vertex_separation_and_certified_ccd_guarantee():
     assert 0.0 < safety.step_size < 0.5
 
 
-def test_cached_contact_search_reuses_then_rebuilds_inside_skin():
+def test_cached_contact_search_reuses_then_rebuilds_inside_skin() -> None:
     source, scene, search = _two_segment_scene(envelope=0.2)
     cache = phx.discretization.CachedContactSearchPlan(search, skin=0.2)
     initial_positions = scene.positions(source.zeros())
@@ -107,7 +110,7 @@ def test_cached_contact_search_reuses_then_rebuilds_inside_skin():
         cache.update(foreign_scene, state, initial_positions)
 
 
-def test_contact_guarantees_kinematics_and_compiled_shapes_fail_closed():
+def test_contact_guarantees_kinematics_and_compiled_shapes_fail_closed() -> None:
     with pytest.raises(ValueError):
         phx.discretization.ContactGuaranteeEvidence(999, backend_id="invalid")
 
@@ -133,7 +136,7 @@ def test_contact_guarantees_kinematics_and_compiled_shapes_fail_closed():
         compiled.evaluate(positions[:-1])
 
 
-def test_independent_participants_search_and_force_duality():
+def test_independent_participants_search_and_force_duality() -> None:
     source_a = phx.linalg.ArraySpace((2, 2), dtype=np.float64)
     source_b = phx.linalg.ArraySpace((2, 2), dtype=np.float64)
     plan_a = phx.discretization.CollisionSurfacePlan(
@@ -179,7 +182,7 @@ def test_independent_participants_search_and_force_duality():
     assert bool(evidence.valid)
 
 
-def test_proxy_implicit_and_trajectory_bounds_are_explicit():
+def test_proxy_implicit_and_trajectory_bounds_are_explicit() -> None:
     source = phx.linalg.ArraySpace((3, 3), dtype=np.float64)
     topology = phx.discretization.CollisionSurfacePlan(
         jnp.asarray((0, 1, 2)),
@@ -203,7 +206,10 @@ def test_proxy_implicit_and_trajectory_bounds_are_explicit():
         provenance_id="closure-substrate-sphere",
     )
     sphere = phx.discretization.SphereContactGeometry(
-        (0.0, 0.0, 0.0), 1.0, feature_policy=analytic
+        # ty: ignore[invalid-argument-type]
+        (0.0, 0.0, 0.0),
+        1.0,
+        feature_policy=analytic,
     )
     sphere_evaluation = sphere.evaluate(jnp.asarray(((2.0, 0.0, 0.0),)))
     cubic = phx.discretization.CubicHermiteContactTrajectory(
@@ -224,7 +230,7 @@ def test_proxy_implicit_and_trajectory_bounds_are_explicit():
     assert bool(jnp.all(samples >= lower) & jnp.all(samples <= upper))
 
 
-def test_interface_traction_and_distributed_route_ownership_are_balanced():
+def test_interface_traction_and_distributed_route_ownership_are_balanced() -> None:
     interface = phx.discretization.ContactInterfacePlan(
         jnp.asarray(((0, 1),)),
         jnp.asarray(((0.5, 0.5),)),
@@ -250,7 +256,7 @@ def test_interface_traction_and_distributed_route_ownership_are_balanced():
     assert bool(distributed.complete)
 
 
-def test_compiled_search_matches_host_candidates_for_small_scene():
+def test_compiled_search_matches_host_candidates_for_small_scene() -> None:
     source, scene, search = _two_segment_scene()
     displacement = jnp.broadcast_to(jnp.asarray((0.0, -0.45)), source.shape)
     positions = scene.positions(displacement)
@@ -287,7 +293,7 @@ def test_compiled_search_matches_host_candidates_for_small_scene():
     assert 0 < int(lbvh.evidence.traversal_visits) <= 64
 
 
-def test_lbvh_matches_compiled_three_dimensional_candidates():
+def test_lbvh_matches_compiled_three_dimensional_candidates() -> None:
     positions = jnp.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -340,7 +346,7 @@ def test_lbvh_matches_compiled_three_dimensional_candidates():
     assert int(lbvh.evidence.traversal_visits) == 196
 
 
-def test_lbvh_tiny_visit_budget_bounds_work_and_fails_closed():
+def test_lbvh_tiny_visit_budget_bounds_work_and_fails_closed() -> None:
     vertex_count = 256
     source = phx.linalg.ArraySpace((vertex_count, 2), dtype=np.float64)
     edge_start = jnp.arange(vertex_count - 1, dtype=jnp.int32)
@@ -391,7 +397,7 @@ def test_lbvh_tiny_visit_budget_bounds_work_and_fails_closed():
     assert not bool(result.evidence.complete)
 
 
-def test_triangle_patch_and_hydroelastic_equal_pressure_extraction():
+def test_triangle_patch_and_hydroelastic_equal_pressure_extraction() -> None:
     triangle = jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
     faces = jnp.asarray(((0, 1, 2),), dtype=jnp.int32)
     patch = phx.discretization.build_triangle_mortar_interface(
@@ -449,7 +455,7 @@ def test_triangle_patch_and_hydroelastic_equal_pressure_extraction():
     assert separated.evidence.total_measure == 0.0
 
 
-def test_closed_surface_certificate_and_halo_exchange_are_explicit():
+def test_closed_surface_certificate_and_halo_exchange_are_explicit() -> None:
     vertices = jnp.asarray(
         (
             (0.0, 0.0, 0.0),

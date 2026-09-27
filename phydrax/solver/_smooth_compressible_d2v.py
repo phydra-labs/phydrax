@@ -8,7 +8,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from ..discretization.discrete_velocity._smooth_compressible import (
@@ -26,7 +26,9 @@ class OracleSmoothCompressibleD2V17FixedStepMethod(AbstractFixedStepMethod):
     dynamics: PreparedSmoothCompressibleD2V17SpatialDynamics
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, dynamics: PreparedSmoothCompressibleD2V17SpatialDynamics, /):
+    def __init__(
+        self, dynamics: PreparedSmoothCompressibleD2V17SpatialDynamics, /
+    ) -> None:
         if not isinstance(dynamics, PreparedSmoothCompressibleD2V17SpatialDynamics):
             raise TypeError(
                 "dynamics must be PreparedSmoothCompressibleD2V17SpatialDynamics."

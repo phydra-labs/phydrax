@@ -9,10 +9,12 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._algebra_spaces import AlgebraArraySpace
 from ._operators import FunctionLinearOperator
 
@@ -25,7 +27,9 @@ class _BoundAlgebraAction(StrictModule):
     multiplier: Array
     side: AlgebraActionSide = eqx.field(static=True)
 
-    def __init__(self, product: Any, multiplier: Array, side: AlgebraActionSide, /):
+    def __init__(
+        self, product: Any, multiplier: Array, side: AlgebraActionSide, /
+    ) -> None:
         self.product = product
         self.multiplier = multiplier
         self.side = side
@@ -81,8 +85,7 @@ def algebra_regular_action_operator(
         raise TypeError("product must be an AlgebraProductPlan.")
     if not isinstance(space, AlgebraArraySpace):
         raise TypeError("space must be an AlgebraArraySpace.")
-    if side not in ("left", "right"):
-        raise ValueError("side must be 'left' or 'right'.")
+    side = parse(side, AlgebraActionSide, "side")
     product.algebra.require_compatible(space.algebra)
     product_axis = product.layout.algebra_axis
     if product_axis < 0:

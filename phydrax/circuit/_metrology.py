@@ -9,7 +9,8 @@ from typing import Any, Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -18,6 +19,7 @@ from ..linalg import (
     DenseLU,
     FailurePolicy,
     LinearSolvePolicy,
+    LinearSolveResult,
     LinearSolveStatus,
     LinearSystem,
     solve,
@@ -30,7 +32,7 @@ class CalibrationStandard(StrictModule):
     scattering: Array
     standard_id: str = eqx.field(static=True)
 
-    def __init__(self, scattering: ArrayLike, /, *, standard_id: str):
+    def __init__(self, scattering: ArrayLike, /, *, standard_id: str) -> None:
         value = jnp.asarray(scattering, dtype=jnp.complex128)
         if (
             value.ndim < 2
@@ -56,7 +58,7 @@ class VNAErrorModel(StrictModule):
         /,
         *,
         model_id: str | None = None,
-    ):
+    ) -> None:
         left = jnp.asarray(left_abcd, dtype=jnp.complex128)
         right = jnp.asarray(right_abcd, dtype=jnp.complex128)
         if (
@@ -105,7 +107,7 @@ class IdentifiabilityReport(StrictModule):
     problem_id: str = eqx.field(static=True)
 
 
-def _dense_solve(matrix: Array, right: Array, problem_id: str, /):
+def _dense_solve(matrix: Array, right: Array, problem_id: str, /) -> LinearSolveResult:
     return solve(
         LinearSystem(
             DenseLinearOperator(matrix, operator_id=f"{problem_id}/matrix"),
@@ -184,7 +186,7 @@ def parameter_identifiability(
     if not jnp.issubdtype(output.dtype, jnp.number):
         raise TypeError("prediction must return numeric values.")
 
-    def real_coordinates(current):
+    def real_coordinates(current: Array) -> Array:
         predicted = jnp.asarray(prediction(current, args)).reshape((-1,))
         return jnp.concatenate((jnp.real(predicted), jnp.imag(predicted)))
 

@@ -5,10 +5,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TypeAlias
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ._estimates import DiscoveredBreakpoints
 from ._plans import BreakpointDiscoveryPlan
@@ -18,6 +19,9 @@ from ._status import IntegrationStatus
 _BREAKPOINT_JUMP = 1
 _BREAKPOINT_CUSP = 2
 _BREAKPOINT_NONFINITE = 3
+
+# (lower, upper, lower values, upper values, lower finite, upper finite)
+_RefineCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
 def _row_values(values: Array, /) -> tuple[Array, Array]:
@@ -91,7 +95,7 @@ def discover_breakpoints(
     left_finite = finite[indices]
     right_finite = finite[indices + 1]
 
-    def refine(carry, _):
+    def refine(carry: _RefineCarry, _: None) -> tuple[_RefineCarry, None]:
         lower, upper, lower_value, upper_value, lower_finite, upper_finite = carry
         midpoint = 0.5 * (lower + upper)
         mid_values = jnp.asarray(integrand(midpoint))

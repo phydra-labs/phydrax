@@ -87,13 +87,13 @@ def _heavy_tailed_problem(size: int, dtype: jnp.dtype) -> _Problem:
         - 1.2 / (1.0 + (24.0 * (coordinate + 0.48)) ** 2)
     )
 
-    def signed(parameters):
+    def signed(parameters: Any) -> Any:
         return baseline + design @ parameters
 
-    def residuals(parameters):
+    def residuals(parameters: Any) -> Any:
         return jnp.abs(signed(parameters))
 
-    def metrics(parameters):
+    def metrics(parameters: Any) -> Any:
         errors = signed(parameters)
         return {
             "signed_bias": jnp.mean(errors),
@@ -121,13 +121,13 @@ def _pde_problem(size: int, dtype: jnp.dtype) -> _Problem:
         jnp.pi * jnp.asarray([[0.0], [1.0]], dtype=dtype) * mode[None, :]
     )
 
-    def signed(parameters):
+    def signed(parameters: Any) -> Any:
         return second_derivative @ parameters + forcing
 
-    def residuals(parameters):
+    def residuals(parameters: Any) -> Any:
         return jnp.abs(signed(parameters))
 
-    def metrics(parameters):
+    def metrics(parameters: Any) -> Any:
         equation_residual = signed(parameters)
         boundary_values = boundary_basis @ parameters
         return {
@@ -160,14 +160,14 @@ def _ensemble_problem(size: int, dtype: jnp.dtype) -> _Problem:
         axis=-1,
     )
 
-    def signed(parameters):
+    def signed(parameters: Any) -> Any:
         prediction = design @ parameters
         return observations - prediction[:, None]
 
-    def residuals(parameters):
+    def residuals(parameters: Any) -> Any:
         return jnp.abs(signed(parameters)).reshape((-1,))
 
-    def metrics(parameters):
+    def metrics(parameters: Any) -> Any:
         errors = signed(parameters)
         split = case_count // 2
         return {
@@ -207,7 +207,7 @@ def _objective(
     epsilon: float,
     solver_iterations: int,
     logsumexp_temperature: float,
-):
+) -> Any:
     solver = phx.transport.Sinkhorn(
         epsilon,
         max_iterations=solver_iterations,
@@ -216,7 +216,7 @@ def _objective(
         early_stop=False,
     )
 
-    def objective(parameters):
+    def objective(parameters: Any) -> Any:
         residuals = problem.residuals(parameters)
         if method == "hard-quantile":
             tail = jnp.quantile(residuals, quantile)
@@ -238,7 +238,7 @@ def _objective(
     return objective
 
 
-def _memory(compiled) -> dict[str, int | str]:
+def _memory(compiled: Any) -> dict[str, int | str]:
     analysis = compiled.memory_analysis()
     if analysis is None:
         return {"status": "unavailable"}
@@ -251,12 +251,12 @@ def _memory(compiled) -> dict[str, int | str]:
     }
 
 
-def _adam_step(objective, learning_rate: float):
+def _adam_step(objective: Any, learning_rate: float) -> Any:
     beta1 = 0.9
     beta2 = 0.999
     stability = 1e-8
 
-    def step(state):
+    def step(state: Any) -> Any:
         parameters, first_moment, second_moment, iteration = state
         value, gradient = jax.value_and_grad(objective)(parameters)
         next_iteration = iteration + 1

@@ -5,13 +5,15 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ...linalg import ArraySpace, ConstraintMap, FunctionLinearOperator
+from .._cell_complex import PolygonalConnectivity
 from .._constraints import AbstractDiscreteDirichletConstraint
 from .._integration_domain import IntegrationDomain
 from ._space import ExplicitPolygonH1Discretization
@@ -58,13 +60,16 @@ def explicit_polygon_h1_dirichlet_constraint(
     if boundary_mask is not None and domain is not None:
         raise ValueError("Specify boundary_mask or domain, not both.")
     node_mask = np.asarray(discretization.dof_map.boundary_dof_mask, dtype=np.bool_)
+    full_space = discretization.field_space.vector_space
+    if not isinstance(full_space, ArraySpace):
+        raise TypeError("Explicit polygon Dirichlet constraints require ArraySpace.")
     if domain is not None:
         if domain.kind != "exterior_facet":
             raise ValueError(
                 "Explicit polygon Dirichlet domains must select exterior facets."
             )
         if (
-            domain.support_id != discretization.support.support_id
+            domain.support_id != discretization.mesh.support.support_id
             or domain.entity_set_id
             != discretization.mesh.topology.entity_sets[1].entity_set_id
         ):
@@ -72,13 +77,15 @@ def explicit_polygon_h1_dirichlet_constraint(
                 "Explicit polygon Dirichlet domain belongs to another support."
             )
         node_mask = np.zeros_like(node_mask)
-        edges = np.asarray(discretization.mesh.connectivity.edges, dtype=np.int32)
+        # ExplicitPolygonH1Plan rejects meshes without PolygonalConnectivity.
+        connectivity = cast(PolygonalConnectivity, discretization.mesh.connectivity)
+        edges = np.asarray(connectivity.edges, dtype=np.int32)
         node_mask[np.unique(edges[np.asarray(domain.entity_indices)].reshape((-1,)))] = (
             True
         )
     elif boundary_mask is not None:
         candidate = np.asarray(boundary_mask, dtype=np.bool_)
-        if candidate.shape == discretization.field_space.vector_space.shape:
+        if candidate.shape == full_space.shape:
             node_mask = np.any(
                 candidate.reshape((discretization.dof_map.global_dof_count, -1)),
                 axis=1,
@@ -92,9 +99,6 @@ def explicit_polygon_h1_dirichlet_constraint(
         boundary = np.asarray(discretization.dof_map.boundary_dof_mask, dtype=np.bool_)
         if np.any(node_mask & ~boundary):
             raise ValueError("Dirichlet masks may select only exterior vertices.")
-    full_space = discretization.field_space.vector_space
-    if not isinstance(full_space, ArraySpace):
-        raise TypeError("Explicit polygon Dirichlet constraints require ArraySpace.")
     component_count = (
         int(np.prod(full_space.shape[1:], dtype=np.int64)) if full_space.shape[1:] else 1
     )

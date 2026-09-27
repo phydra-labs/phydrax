@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import asdict, dataclass
+from typing import cast
 
 from ..._fingerprint import canonical_fingerprint
 from ...units import conversion_factor, ELECTRONVOLT, SECOND, UnitDefinition
@@ -31,7 +32,7 @@ class IndirectLesionRule:
     species: str
     probability: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _text(self.channel, "channel")
         _text(self.species, "species")
         if not math.isfinite(self.probability) or not 0 <= self.probability <= 1:
@@ -51,7 +52,7 @@ class LesionPolicy:
     scavenging_model_id: str | None
     components: tuple[str, ...] = ("backbone",)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _text(self.policy_id, "lesion policy")
         if not math.isfinite(self.direct_threshold) or self.direct_threshold <= 0:
             raise ValueError("Direct deposited-energy threshold must be positive.")
@@ -132,7 +133,7 @@ def candidate_radiation_lesions(
     geometry: RadiationTargetGeometry,
     policy: LesionPolicy,
     *,
-    commercial_use=False,
+    commercial_use: bool = False,
 ) -> LesionCandidates:
     """Threshold cumulative deposition per target/primary, retaining all parent events.
 
@@ -159,7 +160,9 @@ def candidate_radiation_lesions(
             raise ValueError(
                 "Lesion chemistry/scavenging policy mismatches external source."
             )
-        requested_endpoint = policy.chemistry_endpoint * float(
+        # LesionPolicy validation requires an endpoint whenever indirect rules exist.
+        policy_endpoint = cast(float, policy.chemistry_endpoint)
+        requested_endpoint = policy_endpoint * float(
             conversion_factor(policy.time_unit, source.time_unit)
         )
         if (
@@ -197,6 +200,10 @@ def candidate_radiation_lesions(
             )
         elif policy.indirect_rules:
             record = chemical_records[hit.event_key]
+            if not (requested_endpoint is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: requested_endpoint is not None."
+                )
             if record.time is not None and record.time > requested_endpoint:
                 continue
             matched = [
@@ -297,8 +304,9 @@ def realize_radiation_lesions(
     ids = {item.candidate_id for item in candidates.candidates}
     if len(ids) != len(candidates.candidates):
         raise ValueError("Duplicate candidate identity.")
-    explicit = None if uniforms is None else dict(uniforms)
-    if explicit is not None:
+    explicit: dict[str, float] | None = None
+    if uniforms is not None:
+        explicit = dict(uniforms)
         if len(explicit) != len(uniforms) or set(explicit) != ids:
             raise ValueError("Explicit uniforms must cover every candidate exactly once.")
         if any(not math.isfinite(u) or not 0 <= u < 1 for u in explicit.values()):

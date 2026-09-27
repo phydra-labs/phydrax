@@ -11,11 +11,13 @@ from math import prod
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._axis import AxisDiscretization, TensorGridPlan
 from ._measure import DiscreteMeasure
 from ._tensor_entities import AxisEntityKind, StructuredAxis
@@ -49,13 +51,11 @@ class TensorIndexLayout(StrictModule, NonTrainableState):
         names = tuple(str(name) for name in axis_names)
         axes_ = tuple(axes)
         entities = tuple(axis_entities)
-        if (
-            not names
-            or len(axes_) != len(names)
-            or len(entities) != len(names)
-            or any(entity not in ("point", "interval") for entity in entities)
-        ):
+        if not names or len(axes_) != len(names) or len(entities) != len(names):
             raise ValueError("Tensor index-layout factors must align with axes.")
+        entities = tuple(
+            parse(entity, AxisEntityKind, "axis_entity") for entity in entities
+        )
         shape = tuple(
             axis.count(entity) for axis, entity in zip(axes_, entities, strict=True)
         )
@@ -158,6 +158,9 @@ class TensorIndexLayout(StrictModule, NonTrainableState):
         flat = sum(
             value * stride for value, stride in zip(safe_axes, self.strides, strict=True)
         )
+        # Layouts have at least one axis, so the sum is never the empty-sum 0.
+        if not (isinstance(flat, Array)):
+            raise RuntimeError("Internal invariant failed: isinstance(flat, Array).")
         return flat.astype(jnp.int32), supported
 
     def coordinates_at(self, flat_indices: ArrayLike, /) -> tuple[Array, Array]:

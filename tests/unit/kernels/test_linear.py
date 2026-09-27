@@ -10,7 +10,7 @@ import pytest
 import phydrax as phx
 
 
-def test_linear_kernel_specialized_operations_agree():
+def test_linear_kernel_specialized_operations_agree() -> None:
     left = jnp.asarray([[1.0, 2.0], [-1.0, 3.0]])
     right = jnp.asarray([[0.5, -2.0], [4.0, 1.0], [2.0, 2.0]])
     kernel = phx.kernels.LinearKernel()
@@ -27,7 +27,7 @@ def test_linear_kernel_specialized_operations_agree():
     assert jnp.allclose(kernel.diagonal(left), jnp.sum(left * left, axis=1))
 
 
-def test_path_input_transform_builds_exact_truncated_signature_gram():
+def test_path_input_transform_builds_exact_truncated_signature_gram() -> None:
     paths = jnp.asarray(
         [
             [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
@@ -56,7 +56,7 @@ def test_path_input_transform_builds_exact_truncated_signature_gram():
     )
 
 
-def test_normalized_kernel_has_checked_exact_unit_diagonal():
+def test_normalized_kernel_has_checked_exact_unit_diagonal() -> None:
     points = jnp.asarray([[1.0, 0.0], [1.0, 1.0], [-1.0, 2.0]])
     kernel = phx.kernels.NormalizedKernel(phx.kernels.LinearKernel())
     matrix = kernel.matrix(points, points)
@@ -72,7 +72,7 @@ def test_normalized_kernel_has_checked_exact_unit_diagonal():
         jax.block_until_ready(invalid)
 
 
-def test_kernel_algebra_rejects_mixed_input_ranks_and_propagates_path_rank():
+def test_kernel_algebra_rejects_mixed_input_ranks_and_propagates_path_rank() -> None:
     features = phx.stochastic.SignatureFeatures(2, 2)
     path_kernel = phx.kernels.InputTransformedKernel(
         phx.kernels.LinearKernel(),
@@ -90,7 +90,7 @@ def test_kernel_algebra_rejects_mixed_input_ranks_and_propagates_path_rank():
         path_kernel * phx.kernels.LinearKernel()
 
 
-def test_input_transform_validates_declared_input_rank():
+def test_input_transform_validates_declared_input_rank() -> None:
     transform = phx.kernels.InputTransformedKernel(
         phx.kernels.LinearKernel(),
         lambda path: jnp.sum(path, axis=0),

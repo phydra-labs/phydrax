@@ -5,16 +5,18 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Literal, TypeAlias
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
 CovarianceStorage: TypeAlias = Literal["dense", "factor"]
@@ -57,7 +59,7 @@ class DistributedShard(StrictModule, NonTrainableState):
         /,
         *,
         owner_id: str,
-    ):
+    ) -> None:
         process = int(process_index)
         start_ = int(start)
         stop_ = int(stop)
@@ -97,7 +99,7 @@ class DistributedBatchLayout(StrictModule, NonTrainableState):
         *,
         item_bytes: int,
         maximum_local_bytes: int,
-    ):
+    ) -> None:
         size = _positive_integer(global_batch_size, "global_batch_size")
         processes = _positive_integer(process_count, "process_count")
         item = _positive_integer(item_bytes, "item_bytes")
@@ -175,23 +177,22 @@ class DistributedCovarianceLayout(StrictModule, NonTrainableState):
         *,
         storage: CovarianceStorage = "dense",
         factor_rank: int | None = None,
-        dtype: Any = jnp.float64,
+        dtype: DTypeLike = jnp.float64,
         maximum_local_bytes: int = 512 * 1024 * 1024,
-    ):
+    ) -> None:
         dimension = _positive_integer(covariance_dimension, "covariance_dimension")
         processes = _positive_integer(process_count, "process_count")
         maximum = _positive_integer(maximum_local_bytes, "maximum_local_bytes")
         dtype_ = np.dtype(dtype)
         if not np.issubdtype(dtype_, np.inexact):
             raise TypeError("Distributed covariance dtype must be inexact.")
-        if storage not in ("dense", "factor"):
-            raise ValueError("storage must be 'dense' or 'factor'.")
+        storage = parse(storage, CovarianceStorage, "storage")
         rank = None if factor_rank is None else int(factor_rank)
         if storage == "dense" and rank is not None:
             raise ValueError("factor_rank is only valid for factor storage.")
         if storage == "factor" and (rank is None or rank < 0 or rank > dimension):
             raise ValueError("Factor storage requires rank in [0, covariance_dimension].")
-        columns = dimension if storage == "dense" else int(rank)
+        columns = dimension if rank is None else rank
         semantic_id = canonical_fingerprint(
             {
                 "kind": "statistical-dynamics-covariance-layout",
@@ -233,11 +234,8 @@ class DistributedCovarianceLayout(StrictModule, NonTrainableState):
 
     @property
     def global_shape(self) -> tuple[int, int]:
-        columns = (
-            self.covariance_dimension
-            if self.storage == "dense"
-            else int(self.factor_rank)
-        )
+        rank = self.factor_rank
+        columns = self.covariance_dimension if rank is None else rank
         return self.covariance_dimension, columns
 
     def shard(self, covariance: ArrayLike, /) -> tuple[Array, ...]:
@@ -270,7 +268,7 @@ class DistributedStatisticalLayout(StrictModule, NonTrainableState):
         batch: DistributedBatchLayout,
         covariance: DistributedCovarianceLayout,
         /,
-    ):
+    ) -> None:
         if not isinstance(batch, DistributedBatchLayout) or not isinstance(
             covariance, DistributedCovarianceLayout
         ):
@@ -316,7 +314,7 @@ class DistributedRestartRelation(StrictModule, NonTrainableState):
         source: DistributedStatisticalLayout,
         target: DistributedStatisticalLayout,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, DistributedStatisticalLayout) or not isinstance(
             target, DistributedStatisticalLayout
         ):

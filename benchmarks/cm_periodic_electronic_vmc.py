@@ -37,7 +37,7 @@ CASES = (
 )
 
 
-def _case(electrons: int, determinants: int, real_radius: int, reciprocal_radius: int):
+def _case(electrons: int, determinants: int, real_radius: int, reciprocal_radius: int) -> Any:
     vectors = jnp.asarray(
         [[5.0, 0.0, 0.0], [0.7, 4.6, 0.0], [0.3, 0.4, 5.3]],
         dtype=jnp.float64,
@@ -131,7 +131,7 @@ def _record(
     )
 
     @eqx.filter_jit
-    def evaluate(model_, operator_, walkers_):
+    def evaluate(model_: Any, operator_: Any, walkers_: Any) -> Any:
         return operator_.estimate(model_, walkers_), operator_.potential(walkers_)
 
     inputs = (model, operator, walkers)

@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ...control.stochastic._controlled_jump import (
     ControlledJumpPathBatch,
@@ -59,7 +60,7 @@ class ExecutionFeedbackPolicy(StrictModule):
         /,
         *,
         policy_id: str,
-    ):
+    ) -> None:
         matrix = jnp.asarray(gain)
         offset = jnp.asarray(bias)
         lower = jnp.asarray(lower_bounds)
@@ -128,7 +129,7 @@ class JumpExecutionDefinition(StrictModule):
         /,
         *,
         definition_id: str,
-    ):
+    ) -> None:
         if not isinstance(instrument, InstrumentReference):
             raise TypeError("instrument must be an InstrumentReference.")
         if not isinstance(physical_law, PhysicalLaw):
@@ -155,7 +156,7 @@ class JumpExecutionPlan(StrictModule):
         *,
         definition_id: str,
         plan_id: str,
-    ):
+    ) -> None:
         if not isinstance(control_plan, ControlledJumpPlan):
             raise TypeError("control_plan must be a ControlledJumpPlan.")
         self.control_plan = control_plan
@@ -231,7 +232,7 @@ def evaluate_jump_execution(
     ):
         raise ValueError("Policy state/action dimensions do not match the jump problem.")
 
-    def feedback(time, state, args):
+    def feedback(time: Array, state: Array, args: object) -> Array:
         del args
         return policy.action(time, state).reshape(
             prepared.definition.problem.action_shape
@@ -271,7 +272,7 @@ class HJBExecutionDefinition(StrictModule):
         /,
         *,
         definition_id: str,
-    ):
+    ) -> None:
         if not isinstance(instrument, InstrumentReference):
             raise TypeError("instrument must be an InstrumentReference.")
         if not isinstance(physical_law, PhysicalLaw):
@@ -301,7 +302,7 @@ class HJBExecutionPlan(StrictModule):
         refinement_relative_tolerance: float,
         definition_id: str,
         plan_id: str,
-    ):
+    ) -> None:
         values = (
             residual_tolerance,
             refinement_absolute_tolerance,
@@ -370,7 +371,7 @@ class ImpulseExecutionDefinition(StrictModule):
         /,
         *,
         definition_id: str,
-    ):
+    ) -> None:
         if not isinstance(instrument, InstrumentReference):
             raise TypeError("instrument must be an InstrumentReference.")
         if not isinstance(physical_law, PhysicalLaw):

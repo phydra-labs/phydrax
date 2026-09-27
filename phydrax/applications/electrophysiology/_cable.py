@@ -8,12 +8,13 @@ from __future__ import annotations
 
 from enum import IntFlag
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jax.typing import DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -26,6 +27,7 @@ from ...linalg import (
     TolerancePolicy,
     TreeLinearOperator,
 )
+from ...typing import parse
 from ._mechanisms import (
     evaluate_membrane_program,
     initialize_membrane_program,
@@ -39,7 +41,7 @@ from ._morphology import PreparedCellMorphology
 from ._units import ELECTROPHYSIOLOGY_UNITS
 
 
-CableScheme = Literal["backward-euler", "crank-nicolson"]
+CableScheme: TypeAlias = Literal["backward-euler", "crank-nicolson"]
 
 
 class CableSolveStatus(IntFlag):
@@ -68,15 +70,14 @@ class CableSolverPlan(StrictModule, NonTrainableState):
         *,
         scheme: CableScheme = "backward-euler",
         residual_tolerance: float = 1.0e-5,
-    ):
+    ) -> None:
         if isinstance(dt_ms, bool):
             raise TypeError("dt_ms must be a real scalar, not bool.")
         step = float(dt_ms)
         tolerance = float(residual_tolerance)
         if not isfinite(step) or step <= 0.0:
             raise ValueError("dt_ms must be finite and positive.")
-        if scheme not in ("backward-euler", "crank-nicolson"):
-            raise ValueError("scheme must be 'backward-euler' or 'crank-nicolson'.")
+        scheme = parse(scheme, CableScheme, "scheme")
         if not isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("residual_tolerance must be finite and positive.")
         self.dt_ms = step
@@ -117,7 +118,7 @@ class PreparedCableSolver(StrictModule, NonTrainableState):
         morphology: PreparedCellMorphology,
         program: MembraneProgram,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.morphology = morphology
         self.program = program
@@ -230,7 +231,9 @@ def initialize_cable_state(
     )
 
 
-def zero_cable_inputs(runtime: PreparedCableSolver, /, *, dtype=None) -> CableStepInputs:
+def zero_cable_inputs(
+    runtime: PreparedCableSolver, /, *, dtype: DTypeLike | None = None
+) -> CableStepInputs:
     """Return neutral fixed-shape cable inputs."""
     count = runtime.morphology.plan.compartment_count
     resolved_dtype = runtime.morphology.capacitance_nF.dtype if dtype is None else dtype
@@ -299,7 +302,12 @@ def assemble_cable_system(
     return operator, right, physical_operator, offset
 
 
-def _cable_elapsed(runtime, state, elapsed_ms, /) -> Array:
+def _cable_elapsed(
+    runtime: PreparedCableSolver,
+    state: CableState,
+    elapsed_ms: Array | None,
+    /,
+) -> Array:
     elapsed = jnp.asarray(
         runtime.plan.dt_ms if elapsed_ms is None else elapsed_ms,
         dtype=state.voltage_mV.dtype,

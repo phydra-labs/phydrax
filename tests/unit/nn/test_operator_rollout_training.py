@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -17,17 +20,17 @@ class _StateOperator(phx.nn.operator.AbstractOperatorModel):
     in_size: str = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self, gain=1.0, *, keyed=False):
+    def __init__(self, gain: Any = 1.0, *, keyed: Any = False) -> None:
         self.gain = jnp.asarray(gain)
         self.keyed = bool(keyed)
         self.in_size = "scalar"
         self.out_size = "scalar"
 
     @property
-    def operator_contract(self):
+    def operator_contract(self) -> Any:
         return phx.nn.operator.operator_architecture_contract("FNO")
 
-    def __call_operator_batch__(self, batch, *, key=None):
+    def __call_operator_batch__(self, batch: Any, *, key: Any = None) -> Any:
         state = batch.input("state").values
         assert state is not None
         values = self.gain * state
@@ -39,11 +42,11 @@ class _StateOperator(phx.nn.operator.AbstractOperatorModel):
             values = values + jr.uniform(key, values.shape, dtype=values.dtype)
         return values
 
-    def __call__(self, batch, *, key=None):
+    def __call__(self, batch: Any, *, key: Any = None) -> Any:
         return self.__call_operator_batch__(batch, key=key)
 
 
-def _axis(*, shifted=False):
+def _axis(*, shifted: Any = False) -> Any:
     nodes = jnp.linspace(0.1 if shifted else 0.0, 1.0, 4)
     return phx.nn.operator.OperatorAxis(
         "x",
@@ -52,7 +55,7 @@ def _axis(*, shifted=False):
     )
 
 
-def _task(*, independent=False, control=False):
+def _task(*, independent: Any = False, control: Any = False) -> Any:
     fields = [
         phx.nn.operator.OperatorFieldSpec(
             "state",
@@ -87,7 +90,9 @@ def _task(*, independent=False, control=False):
     )
 
 
-def _batch(values, *, control=None, mask=None, shifted_query=False):
+def _batch(
+    values: Any, *, control: Any = None, mask: Any = None, shifted_query: Any = False
+) -> Any:
     axis = _axis()
     inputs = {
         "state": phx.nn.operator.FunctionSamples(
@@ -116,7 +121,7 @@ def _batch(values, *, control=None, mask=None, shifted_query=False):
     )
 
 
-def _targets(batch, first, second):
+def _targets(batch: Any, first: Any, second: Any) -> Any:
     spec = phx.nn.operator.OperatorOutputSpec("scalar")
     return phx.nn.operator.OperatorTargetBatch(
         {
@@ -136,7 +141,7 @@ def _targets(batch, first, second):
     )
 
 
-def _route():
+def _route() -> Any:
     return phx.nn.operator.training.OperatorRolloutRoute(
         source_name="state",
         prediction_name="output",
@@ -144,7 +149,7 @@ def _route():
     )
 
 
-def _state_binding(task):
+def _state_binding(task: Any) -> Any:
     port = task.field_by_name["state"].value_port()
     return {
         "output_ports": {"output": port},
@@ -152,7 +157,9 @@ def _state_binding(task):
     }
 
 
-def _trained(model, task, *, normalization=None, output_pipeline=None):
+def _trained(
+    model: Any, task: Any, *, normalization: Any = None, output_pipeline: Any = None
+) -> Any:
     return phx.nn.operator.training.TrainedOperator(
         model,
         task,
@@ -163,7 +170,7 @@ def _trained(model, task, *, normalization=None, output_pipeline=None):
     )
 
 
-def _dataset(*, cases=4, mask=None, target_nan=False):
+def _dataset(*, cases: Any = 4, mask: Any = None, target_nan: Any = False) -> Any:
     initial = jnp.arange(1, cases + 1, dtype="float64")[:, None]
     values = jnp.broadcast_to(initial, (cases, 4))
     batch = _batch(values, mask=mask)
@@ -178,14 +185,14 @@ def _dataset(*, cases=4, mask=None, target_nan=False):
     )
 
 
-def _supervised_loss():
+def _supervised_loss() -> Any:
     return phx.nn.operator.training.SupervisedOperatorRolloutLoss(
         target_fields=("state_t1", "state_t2"),
         time_weights=(1.0, 0.5),
     )
 
 
-def _policy(**kwargs):
+def _policy(**kwargs: Any) -> Any:
     return phx.nn.operator.training.OperatorRolloutPolicy(
         maximum_horizon=2,
         initial_horizon=2,
@@ -193,7 +200,7 @@ def _policy(**kwargs):
     )
 
 
-def test_future_aliases_share_one_canonical_target_normalizer():
+def test_future_aliases_share_one_canonical_target_normalizer() -> None:
     dataset = _dataset(cases=2)
     aliases = {"state_t1": "state", "state_t2": "state"}
     policy = phx.nn.operator.training.fit_operator_normalization(
@@ -219,7 +226,7 @@ def test_future_aliases_share_one_canonical_target_normalizer():
     )
 
 
-def test_feedback_reprepares_with_source_not_target_normalization():
+def test_feedback_reprepares_with_source_not_target_normalization() -> None:
     values = jnp.full((1, 4), 14.0)
     batch = _batch(values)
     normalizer = phx.nn.operator.training.AffineNormalizer
@@ -255,12 +262,12 @@ def test_feedback_reprepares_with_source_not_target_normalization():
     assert jnp.allclose(rollout.predictions[1].field("state").values, 350.0)
 
 
-def _zero_envelope(coordinates, batch, *, key):
+def _zero_envelope(coordinates: Any, batch: Any, *, key: Any) -> float:
     del coordinates, batch, key
     return 0.0
 
 
-def _state_plus_control(coordinates, batch, *, key):
+def _state_plus_control(coordinates: Any, batch: Any, *, key: Any) -> Any:
     del coordinates, key
     state = batch.input("state").values
     control = batch.input("control").values
@@ -268,13 +275,14 @@ def _state_plus_control(coordinates, batch, *, key):
     return state + control
 
 
-def test_constrained_feedback_and_static_conditioning_recur_on_step_two():
+def test_constrained_feedback_and_static_conditioning_recur_on_step_two() -> None:
     state = jnp.zeros((2, 4))
     control = jnp.stack((jnp.ones((4,)), jnp.full((4,), 2.0)))
     batch = _batch(state, control=control)
     pipeline = phx.nn.operator.training.OperatorOutputPipeline(
         phx.nn.operator.training.HardConstraintTransform(
             "state",
+            # ty: ignore[invalid-argument-type]
             _zero_envelope,
             "tests.zero-envelope",
             lift_fn=_state_plus_control,
@@ -295,10 +303,11 @@ def test_constrained_feedback_and_static_conditioning_recur_on_step_two():
     second = rollout.predictions[1].field("state").values
     assert jnp.array_equal(first, control)
     assert jnp.array_equal(second, 2.0 * control)
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(rollout.final_batch.input("control").values, control)
 
 
-def test_route_rejects_independent_or_mismatched_support_and_multiple_routes():
+def test_route_rejects_independent_or_mismatched_support_and_multiple_routes() -> None:
     values = jnp.ones((1, 4))
     route = _route()
     independent = _trained(_StateOperator(), _task(independent=True))
@@ -335,11 +344,12 @@ def test_route_rejects_independent_or_mismatched_support_and_multiple_routes():
             coincident,
             _batch(values),
             1,
+            # ty: ignore[invalid-argument-type]
             (route, route),
         )
 
 
-def test_masked_future_nans_are_sanitized_before_rollout_residuals():
+def test_masked_future_nans_are_sanitized_before_rollout_residuals() -> None:
     mask = jnp.asarray([True, True, True, False])
     result = phx.nn.operator.training.fit_operator(
         _StateOperator(1.5),
@@ -362,12 +372,12 @@ def test_masked_future_nans_are_sanitized_before_rollout_residuals():
     assert result.initial_loss == 0.0
 
 
-def _prediction_energy(prediction, batch, targets, **kwargs):
+def _prediction_energy(prediction: Any, batch: Any, targets: Any, **kwargs: Any) -> Any:
     del batch, targets, kwargs
     return jnp.mean(prediction.field("state").values ** 2)
 
 
-def test_residual_recurrence_has_gradients_and_honors_bptt_rematerialization():
+def test_residual_recurrence_has_gradients_and_honors_bptt_rematerialization() -> None:
     empty = phx.nn.operator.OperatorTargetBatch(
         {},
         case_axes=("case",),
@@ -399,6 +409,7 @@ def test_residual_recurrence_has_gradients_and_honors_bptt_rematerialization():
         shuffle=False,
     )
 
+    # ty: ignore[unresolved-attribute]
     assert result.execution_model.gain != 0.5
     schedule = phx.nn.operator.training.OperatorRolloutPolicy(
         maximum_horizon=4,
@@ -410,7 +421,7 @@ def test_residual_recurrence_has_gradients_and_honors_bptt_rematerialization():
     assert jax.jit(schedule.active_horizon)(jnp.asarray(6)) == 4
 
 
-def test_rollout_updates_are_batch_and_accumulation_invariant():
+def test_rollout_updates_are_batch_and_accumulation_invariant() -> None:
     dataset = _dataset(cases=4)
     common = {
         "task": _task(),
@@ -429,6 +440,7 @@ def test_rollout_updates_are_batch_and_accumulation_invariant():
         _StateOperator(1.0),
         dataset,
         batch_size=4,
+        # ty: ignore[invalid-argument-type]
         **common,
     )
     accumulated = phx.nn.operator.training.fit_operator(
@@ -436,11 +448,14 @@ def test_rollout_updates_are_batch_and_accumulation_invariant():
         dataset,
         batch_size=2,
         gradient_accumulation=2,
+        # ty: ignore[invalid-argument-type]
         **common,
     )
 
     assert jnp.allclose(
+        # ty: ignore[unresolved-attribute]
         full.last_execution_model.gain,
+        # ty: ignore[unresolved-attribute]
         accumulated.last_execution_model.gain,
     )
     assert jnp.allclose(
@@ -449,7 +464,7 @@ def test_rollout_updates_are_batch_and_accumulation_invariant():
     )
 
 
-def test_full_prefix_and_chunk_rollouts_share_semantic_step_keys():
+def test_full_prefix_and_chunk_rollouts_share_semantic_step_keys() -> None:
     batch = _batch(jnp.zeros((1, 4)))
     trained = _trained(_StateOperator(keyed=True), _task())
     key = jr.key(19)
@@ -486,7 +501,7 @@ def test_full_prefix_and_chunk_rollouts_share_semantic_step_keys():
     assert suffix.next_step == full.next_step == 4
 
 
-def test_fit_and_deployment_use_the_same_recurrent_physical_pipeline():
+def test_fit_and_deployment_use_the_same_recurrent_physical_pipeline() -> None:
     dataset = _dataset(cases=2)
     result = phx.nn.operator.training.fit_operator(
         _StateOperator(1.5),

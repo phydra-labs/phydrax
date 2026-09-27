@@ -9,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def test_masked_softmax_normalizes_active_entries_and_closes_empty_masks():
+def test_masked_softmax_normalizes_active_entries_and_closes_empty_masks() -> None:
     logits = jnp.asarray([[1.0, -2.0, 3.0], [4.0, 0.0, -1.0]])
     mask = jnp.asarray([[True, False, True], [False, False, False]])
     probabilities = phx.ml.masked_softmax(logits, mask=mask, axis=1)
@@ -33,14 +33,14 @@ def test_masked_softmax_normalizes_active_entries_and_closes_empty_masks():
     assert jnp.array_equal(jacobian, jnp.zeros_like(jacobian))
 
 
-def test_soft_discrete_primitives_reject_nonfloating_values():
+def test_soft_discrete_primitives_reject_nonfloating_values() -> None:
     with pytest.raises(TypeError, match="logits must have a real floating dtype"):
         phx.ml.masked_softmax(jnp.asarray([1, 2, 3]))
     with pytest.raises(TypeError, match="values must have a real floating dtype"):
         phx.ml.soft_ranks(jnp.asarray([1.0 + 1.0j, 2.0 + 0.0j]), temperature=0.1)
 
 
-def test_temperature_primitives_are_transformable_and_validate_dynamic_values():
+def test_temperature_primitives_are_transformable_and_validate_dynamic_values() -> None:
     logits = jnp.asarray([-1.0, 0.3, 2.0])
     temperature = jnp.asarray(0.7)
     probabilities = phx.ml.temperature_softmax(logits, temperature=temperature)
@@ -81,7 +81,7 @@ def test_temperature_primitives_are_transformable_and_validate_dynamic_values():
             jax.block_until_ready(result)
 
 
-def test_gumbel_softmax_replays_keys_and_has_relaxed_gradients():
+def test_gumbel_softmax_replays_keys_and_has_relaxed_gradients() -> None:
     key = jax.random.key(4)
     other_key = jax.random.key(5)
     logits = jnp.asarray([0.2, -0.5, 1.3])
@@ -115,7 +115,7 @@ def test_gumbel_softmax_replays_keys_and_has_relaxed_gradients():
     assert jnp.isfinite(temperature_gradient) & (jnp.abs(temperature_gradient) > 0.0)
 
 
-def test_soft_ranks_define_one_based_orientation_ties_and_axis_semantics():
+def test_soft_ranks_define_one_based_orientation_ties_and_axis_semantics() -> None:
     values = jnp.asarray([3.0, 1.0, 4.0, 2.0])
     ascending = phx.ml.soft_ranks(values, temperature=0.01)
     descending = phx.ml.soft_ranks(values, temperature=0.01, descending=True)
@@ -145,7 +145,7 @@ def test_soft_ranks_define_one_based_orientation_ties_and_axis_semantics():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_soft_topk_weights_are_bounded_memberships_with_separate_temperatures():
+def test_soft_topk_weights_are_bounded_memberships_with_separate_temperatures() -> None:
     scores = jnp.asarray([1.0, 4.0, 2.0, 3.0])
     memberships = phx.ml.soft_topk_weights(
         scores,

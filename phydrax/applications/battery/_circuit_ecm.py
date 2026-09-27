@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from collections.abc import Callable
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -27,7 +29,12 @@ from ...circuit._mna import AbstractMNAComponent, CircuitInstance, NodalCircuit,
 from ...circuit._ports import ElectricalWaveReference
 from ...dynamics import DifferentialAlgebraicSystem
 from ...nonlinear._domain_cond import domain_cond
-from ...solver import DAEInitializationSpec, DifferentialAlgebraicProblem, HybridGuardPlan
+from ...solver import (
+    DAEInitializationSpec,
+    DifferentialAlgebraicProblem,
+    DifferentialAlgebraicSolution,
+    HybridGuardPlan,
+)
 from ._ecm import (
     _model_terms,
     _OBSERVABLE_NAMES,
@@ -46,6 +53,10 @@ from ._thermal_graph import (
 )
 
 
+if TYPE_CHECKING:
+    from ._experiment import BatteryRuntimeInputs
+
+
 def _parameters(args: Any, /) -> ThermalEquivalentCircuitParameters:
     value = (
         args if isinstance(args, ThermalEquivalentCircuitParameters) else args.parameters
@@ -59,7 +70,9 @@ def _physical(state: Array, /) -> ThermalEquivalentCircuitState:
     return ThermalEquivalentCircuitState(state[..., 0], state[..., 1:-2], state[..., -2])
 
 
-def _local_support_bounds(parameters, soc, /):
+def _local_support_bounds(
+    parameters: ThermalEquivalentCircuitParameters, soc: Array, /
+) -> tuple[Array, Array]:
     lower, upper = jnp.asarray(0.0), jnp.asarray(1.0)
     for law in (parameters.open_circuit_voltage, parameters.entropic_coefficient):
         bounds = law.support_bounds
@@ -97,7 +110,7 @@ class CircuitEcmImplicitLaw(AbstractImplicitCircuitLaw):
 
     branch_count: int = eqx.field(static=True)
 
-    def __init__(self, branch_count: int, /):
+    def __init__(self, branch_count: int, /) -> None:
         topology = ThermalEquivalentCircuitPlan(branch_count)
         self.branch_count = topology.branch_count
         self.terminal_count = 2
@@ -117,13 +130,13 @@ class CircuitEcmImplicitLaw(AbstractImplicitCircuitLaw):
 
     def evaluate(
         self,
-        time,
-        terminal_voltages,
-        terminal_voltage_rates,
-        state,
-        state_rate,
-        inputs,
-        args,
+        time: Array,
+        terminal_voltages: Array,
+        terminal_voltage_rates: Array,
+        state: Array,
+        state_rate: Array,
+        inputs: Array,
+        args: Any,
         /,
     ) -> CircuitElementEvaluation:
         del time, terminal_voltage_rates, inputs
@@ -168,7 +181,7 @@ class CircuitConnectedEcmPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, branch_count: int, /, *, boundary: AbstractMNAComponent | None = None
-    ):
+    ) -> None:
         topology = ThermalEquivalentCircuitPlan(branch_count)
         prescribed = boundary is None
         if prescribed:
@@ -224,7 +237,7 @@ class CircuitConnectedEcmInitialCondition(StrictModule):
         /,
         *,
         relaxed: bool = False,
-    ):
+    ) -> None:
         physical = ThermalEquivalentCircuitInitialCondition(
             charge_c, temperature_k, polarization_voltages_v, relaxed=relaxed
         )
@@ -279,7 +292,9 @@ class _CircuitTrialValidity(StrictModule, NonTrainableState):
     start: int = eqx.field(static=True)
     stop: int = eqx.field(static=True)
 
-    def __call__(self, time, state, state_rate, args, inputs, /):
+    def __call__(
+        self, time: Array, state: Array, state_rate: Array, args: Any, inputs: object, /
+    ) -> Array:
         del inputs
         p = _parameters(args)
         physical = state[self.start : self.stop]
@@ -310,11 +325,11 @@ class _FixedCurrentRuntime(StrictModule):
     parameters: ThermalEquivalentCircuitParameters
     current_a: Array
 
-    def current(self, time, state, /):
+    def current(self, time: ArrayLike, state: object, /) -> Array:
         del time, state
         return self.current_a
 
-    def observed_current(self, time, /):
+    def observed_current(self, time: ArrayLike, /) -> Array:
         del time
         return self.current_a
 
@@ -331,7 +346,7 @@ class PreparedCircuitConnectedEcm(StrictModule, NonTrainableState):
     cell_stop: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: CircuitConnectedEcmPlan, /):
+    def __init__(self, plan: CircuitConnectedEcmPlan, /) -> None:
         if not isinstance(plan, CircuitConnectedEcmPlan):
             raise TypeError("plan must be CircuitConnectedEcmPlan.")
         cell = CircuitElement(
@@ -389,7 +404,9 @@ class PreparedCircuitConnectedEcm(StrictModule, NonTrainableState):
             raise ValueError("Circuit ECM state must end in the native flat state axis.")
         return CircuitConnectedEcmStateView(values, self.cell_start, self.cell_stop)
 
-    def boundary_power(self, time, state, state_rate, args, /) -> Array:
+    def boundary_power(
+        self, time: Array, state: Array, state_rate: Array, args: Any, /
+    ) -> Array:
         plan = self.base.plan
         law = plan.laws[1]
         start, stop = plan.layout.auxiliary_ranges[1]
@@ -420,7 +437,9 @@ class PreparedCircuitConnectedEcm(StrictModule, NonTrainableState):
         )
         return jnp.dot(voltages, evaluation.terminal_currents)
 
-    def diagnostics(self, time, state, state_rate, args, /) -> CircuitDAEDiagnostics:
+    def diagnostics(
+        self, time: Array, state: Array, state_rate: Array, args: Any, /
+    ) -> CircuitDAEDiagnostics:
         residual = self.system.evaluate(time, state, state_rate, args)
         view = self.state_view(state)
         power = view.voltage_v * view.current_a + self.boundary_power(
@@ -592,7 +611,7 @@ class _CircuitGuard(StrictModule, NonTrainableState):
     prepared: PreparedCircuitConnectedEcm
     coordinate: int = eqx.field(static=True)
 
-    def __call__(self, time, state, args, /):
+    def __call__(self, time: Array, state: Array, args: Any, /) -> Array:
         del time
         view, p = self.prepared.state_view(state), _parameters(args)
         soc = view.charge_c / p.reference_capacity_c
@@ -611,7 +630,7 @@ class CircuitConnectedEcmAdapter(StrictModule, NonTrainableState):
     observable_names: tuple[str, ...] = eqx.field(static=True)
     observable_units: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self, plan: CircuitConnectedEcmPlan, /):
+    def __init__(self, plan: CircuitConnectedEcmPlan, /) -> None:
         if not isinstance(plan, CircuitConnectedEcmPlan):
             raise TypeError("plan must be CircuitConnectedEcmPlan.")
         self.plan = plan
@@ -622,7 +641,7 @@ class CircuitConnectedEcmAdapter(StrictModule, NonTrainableState):
             _OBSERVABLE_UNITS,
         )
 
-    def _check(self, prepared, parameters=None, /):
+    def _check(self, prepared: object, parameters: object = None, /) -> None:
         if (
             not isinstance(prepared, PreparedCircuitConnectedEcm)
             or prepared.plan.plan_id != self.plan.plan_id
@@ -639,7 +658,13 @@ class CircuitConnectedEcmAdapter(StrictModule, NonTrainableState):
     def prepare(self, /) -> PreparedCircuitConnectedEcm:
         return self.plan.prepare()
 
-    def initial_state(self, prepared_model, parameters, initial_condition, /) -> Array:
+    def initial_state(
+        self,
+        prepared_model: PreparedCircuitConnectedEcm,
+        parameters: ThermalEquivalentCircuitParameters,
+        initial_condition: CircuitConnectedEcmInitialCondition,
+        /,
+    ) -> Array:
         self._check(prepared_model, parameters)
         if not isinstance(initial_condition, CircuitConnectedEcmInitialCondition):
             raise TypeError(
@@ -682,7 +707,11 @@ class CircuitConnectedEcmAdapter(StrictModule, NonTrainableState):
         return state.at[0].set(_model_terms(parameters, physical, jnp.asarray(0.0))[1])
 
     def problem(
-        self, prepared_model, initial_state, runtime_inputs, /
+        self,
+        prepared_model: PreparedCircuitConnectedEcm,
+        initial_state: Array,
+        runtime_inputs: BatteryRuntimeInputs,
+        /,
     ) -> DifferentialAlgebraicProblem:
         self._check(prepared_model, _parameters(runtime_inputs))
         prepared_model.state_view(initial_state)
@@ -700,7 +729,9 @@ class CircuitConnectedEcmAdapter(StrictModule, NonTrainableState):
             ),
         )
 
-    def native_guards(self, prepared_model, /) -> tuple[HybridGuardPlan, ...]:
+    def native_guards(
+        self, prepared_model: PreparedCircuitConnectedEcm, /
+    ) -> tuple[HybridGuardPlan, ...]:
         self._check(prepared_model)
         return tuple(
             HybridGuardPlan(
@@ -713,7 +744,14 @@ class CircuitConnectedEcmAdapter(StrictModule, NonTrainableState):
             for index, label in enumerate(("soc-lower", "soc-upper", "temperature-lower"))
         )
 
-    def current(self, prepared_model, times_s, states, runtime_inputs, /) -> Array:
+    def current(
+        self,
+        prepared_model: PreparedCircuitConnectedEcm,
+        times_s: ArrayLike,
+        states: ArrayLike,
+        runtime_inputs: object,
+        /,
+    ) -> Array:
         del runtime_inputs
         self._check(prepared_model)
         result = prepared_model.state_view(states).current_a
@@ -722,7 +760,12 @@ class CircuitConnectedEcmAdapter(StrictModule, NonTrainableState):
         return result
 
     def observe(
-        self, prepared_model, times_s, states, runtime_inputs, /
+        self,
+        prepared_model: PreparedCircuitConnectedEcm,
+        times_s: ArrayLike,
+        states: ArrayLike,
+        runtime_inputs: BatteryRuntimeInputs,
+        /,
     ) -> BatteryModelOutput:
         self._check(prepared_model, _parameters(runtime_inputs))
         view = prepared_model.state_view(states)
@@ -752,7 +795,11 @@ class CircuitConnectedEcmAdapter(StrictModule, NonTrainableState):
         )
 
     def _ledger_single(
-        self, prepared_model, native_solution, runtime_inputs, /
+        self,
+        prepared_model: PreparedCircuitConnectedEcm,
+        native_solution: DifferentialAlgebraicSolution | BatteryDAESolution,
+        runtime_inputs: BatteryRuntimeInputs | _FixedCurrentRuntime,
+        /,
     ) -> CircuitConnectedEcmLedger:
         self._check(prepared_model, _parameters(runtime_inputs))
         p = _parameters(runtime_inputs)
@@ -788,7 +835,7 @@ class CircuitConnectedEcmAdapter(StrictModule, NonTrainableState):
         pairs = valid[:-1] & valid[1:]
         dt = jnp.where(pairs, safe_times[1:] - safe_times[:-1], 0.0)
 
-        def integral(values):
+        def integral(values: Array) -> Array:
             return _sampled_integral(safe_times, values, valid)
 
         dq = view.charge_c[last] - view.charge_c[0]
@@ -856,7 +903,7 @@ class CircuitConnectedEcmAdapter(StrictModule, NonTrainableState):
             jnp.abs(diagnostics.residual / prepared_model.system.residual_scale), axis=-1
         )
 
-        def maximum(values):
+        def maximum(values: Array) -> Array:
             return jnp.max(jnp.where(valid, jnp.abs(values), 0.0))
 
         kcl, power = maximum(diagnostics.kcl_norm), maximum(diagnostics.terminal_power)
@@ -906,7 +953,13 @@ class CircuitConnectedEcmAdapter(StrictModule, NonTrainableState):
             jnp.asarray(successful, dtype=jnp.bool_),
         )
 
-    def _ledger_checked(self, prepared_model, native_solution, runtime_inputs, /):
+    def _ledger_checked(
+        self,
+        prepared_model: PreparedCircuitConnectedEcm,
+        native_solution: DifferentialAlgebraicSolution | BatteryDAESolution,
+        runtime_inputs: BatteryRuntimeInputs | _FixedCurrentRuntime,
+        /,
+    ) -> CircuitConnectedEcmLedger:
         """Evaluate only real valid prefixes; unavailable quantities remain NaN."""
         unknown = jnp.asarray(jnp.nan, dtype=native_solution.states.dtype)
         unavailable = CircuitConnectedEcmLedger(
@@ -936,7 +989,11 @@ class CircuitConnectedEcmAdapter(StrictModule, NonTrainableState):
         )
 
     def ledger(
-        self, prepared_model, native_solution, runtime_inputs, /
+        self,
+        prepared_model: PreparedCircuitConnectedEcm,
+        native_solution: DifferentialAlgebraicSolution | BatteryDAESolution,
+        runtime_inputs: BatteryRuntimeInputs,
+        /,
     ) -> CircuitConnectedEcmLedger:
         stitched = self._ledger_checked(prepared_model, native_solution, runtime_inputs)
         if not isinstance(native_solution, BatteryDAESolution):
@@ -957,12 +1014,12 @@ class CircuitConnectedEcmAdapter(StrictModule, NonTrainableState):
                 )
             )
 
-        def summed(select):
+        def summed(select: Callable[[CircuitConnectedEcmLedger], Array]) -> Array:
             return jnp.sum(
                 jnp.where(active, jnp.stack(tuple(select(v) for v in ledgers)), 0.0)
             )
 
-        def maximum(select):
+        def maximum(select: Callable[[CircuitConnectedEcmLedger], Array]) -> Array:
             return jnp.maximum(
                 select(stitched),
                 jnp.max(
@@ -1007,7 +1064,8 @@ class CircuitConnectedEcmAdapter(StrictModule, NonTrainableState):
             & jnp.any(active)
             & jnp.all((~active) | jnp.stack(tuple(v.successful for v in ledgers)))
         )
-        return CircuitConnectedEcmLedger(*integrated, *defects, successful)
+        fields = (*integrated, *defects, successful)
+        return CircuitConnectedEcmLedger(*fields)
 
 
 __all__ = [

@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Sequence
-from typing import final, NamedTuple
+from typing import Any, final, NamedTuple
 
 import equinox as eqx
 import jax
@@ -132,7 +132,7 @@ class PreparedAdaptiveSimplex(StrictModule, NonTrainableState):
         state: AdaptiveSimplexState,
         anchor: _Anchor,
         /,
-    ):
+    ) -> None:
         self.adaptation = adaptation
         self.layout = layout
         self.state = state
@@ -156,7 +156,7 @@ class PreparedAdaptiveSimplex(StrictModule, NonTrainableState):
         return marks
 
 
-def _record_generations(active_generations: np.ndarray, children: np.ndarray, /):
+def _record_generations(active_generations: np.ndarray, children: np.ndarray, /) -> Any:
     """Generations of records: one less than their first child, bottom-up."""
 
     generations = active_generations.copy()
@@ -184,7 +184,7 @@ def _facet_classes(
     return classes.reshape((count, width)).astype(np.int32)
 
 
-def _forest(start: _Start, source: _Source, request, /):
+def _forest(start: _Start, source: _Source, request: Any, /) -> Any:
     """Active cells and records of the start, merged into ID-ordered slots."""
 
     cells, records = start.front.cells, start.records
@@ -194,7 +194,7 @@ def _forest(start: _Start, source: _Source, request, /):
     ids = ids[order]
     count = ids.size
 
-    def merged(active_values, record_values):
+    def merged(active_values: Any, record_values: Any) -> Any:
         return np.concatenate((active_values, record_values))[order]
 
     active = merged(
@@ -232,7 +232,7 @@ def _forest(start: _Start, source: _Source, request, /):
     }
 
 
-def _vertices(start: _Start, source: _Source, request, /):
+def _vertices(start: _Start, source: _Source, request: Any, /) -> Any:
     """Source vertices by global ID, then vertices issued by the start."""
 
     count, dimension = source.vertex_ids.size, source.dimension
@@ -283,14 +283,17 @@ def _prepared_simplex(adaptation: PreparedMeshAdaptation, /) -> PreparedAdaptive
         constraints.facet_classes,
         policy.maximum_closure_iterations,
     )
+    # ty: ignore[unresolved-attribute]
     hierarchy = adaptation.request.hierarchy
     start = (
         _labelled_start(source, request, policy.compatibility)
         if hierarchy is None
+        # ty: ignore[invalid-argument-type]
         else _bound_start(source, request, hierarchy)
     )
     forest = _forest(start, source, request)
     vertices = _vertices(start, source, request)
+    # ty: ignore[unresolved-attribute]
     vertex_capacity, cell_capacity = device.capacities(
         vertices["ids"].size, forest["ids"].size
     )
@@ -302,6 +305,7 @@ def _prepared_simplex(adaptation: PreparedMeshAdaptation, /) -> PreparedAdaptive
         cell_capacity=cell_capacity,
         protected_edge_capacity=adaptive_simplex_bucket(protected.size, 1.0),
         maximum_closure_iterations=policy.maximum_closure_iterations,
+        # ty: ignore[unresolved-attribute]
         maximum_coarsening_passes=device.maximum_coarsening_passes,
     )
     state = adaptive_simplex_state(
@@ -388,7 +392,9 @@ def _node_keys(parents: np.ndarray, generations: np.ndarray, /) -> np.ndarray:
     return np.stack((root, depth, path), axis=1)
 
 
-def _ancestors(keys: np.ndarray, queries: np.ndarray, table: np.ndarray, /, *, strict):
+def _ancestors(
+    keys: np.ndarray, queries: np.ndarray, table: np.ndarray, /, *, strict: Any
+) -> Any:
     """Row in ``table`` of the nearest (strict) ancestor-or-self of each query."""
 
     found = np.full((queries.shape[0],), -1, dtype=np.int64)
@@ -471,7 +477,7 @@ def _host_epoch(state: AdaptiveSimplexState, /) -> _HostEpoch:
     )
 
 
-def _cell_lineage(anchor: _Anchor, host: _HostEpoch, count: int, /):
+def _cell_lineage(anchor: _Anchor, host: _HostEpoch, count: int, /) -> Any:
     """Source cell containing every slot, and the target cell of removed sources."""
 
     ids = np.asarray(host.cell_ids)[:count]
@@ -549,7 +555,7 @@ class _Committed(NamedTuple):
     pass_limited: bool
 
 
-def _committed(prepared: PreparedAdaptiveSimplex, host: _HostEpoch, /):
+def _committed(prepared: PreparedAdaptiveSimplex, host: _HostEpoch, /) -> Any:
     anchor = prepared.anchor
     source, start = anchor.source, anchor.start
     vertex_count = int(host.cursors[0])
@@ -659,7 +665,7 @@ def _committed(prepared: PreparedAdaptiveSimplex, host: _HostEpoch, /):
     )
 
 
-def _outcome(prepared: PreparedAdaptiveSimplex, host: _HostEpoch, /):
+def _outcome(prepared: PreparedAdaptiveSimplex, host: _HostEpoch, /) -> Any:
     require_committed_status(
         host.flags,
         host.coordinates,
@@ -708,7 +714,9 @@ def _outcome(prepared: PreparedAdaptiveSimplex, host: _HostEpoch, /):
     )
 
 
-def _checked_state(prepared: PreparedAdaptiveSimplex, state: AdaptiveSimplexState, /):
+def _checked_state(
+    prepared: PreparedAdaptiveSimplex, state: AdaptiveSimplexState, /
+) -> None:
     if not isinstance(prepared, PreparedAdaptiveSimplex):
         raise TypeError("prepared must be PreparedAdaptiveSimplex.")
     if not isinstance(state, AdaptiveSimplexState):
@@ -744,6 +752,7 @@ def _execute_device_bisection_route(prepared: PreparedMeshAdaptation, /) -> _Rou
     """One refine-then-coarsen device epoch of a marked request, then commit."""
 
     request = prepared.request
+    # ty: ignore[unresolved-attribute]
     if request.coarsen_cell_ids.size and request.hierarchy is None:
         raise ValueError(
             "Coarsening requires the BisectionHierarchy of a previous bisection."
@@ -751,12 +760,16 @@ def _execute_device_bisection_route(prepared: PreparedMeshAdaptation, /) -> _Rou
     simplex = _prepared_simplex(prepared)
     layout = simplex.layout
     refined = refine_adaptive_simplex(
-        layout, simplex.state, simplex.cell_marks(np.asarray(request.refine_cell_ids))
+        layout,
+        simplex.state,
+        # ty: ignore[unresolved-attribute]
+        simplex.cell_marks(np.asarray(request.refine_cell_ids)),
     )
     require_applied_status(int(refined.report.status), DeviceEpoch.BISECTION)
     coarsened = coarsen_adaptive_simplex(
         layout,
         refined.state,
+        # ty: ignore[unresolved-attribute]
         simplex.cell_marks(np.asarray(request.coarsen_cell_ids)),
     )
     return _outcome(simplex, _host_epoch(coarsened.state))
@@ -789,7 +802,7 @@ class PartitionedAdaptiveSimplex(StrictModule, NonTrainableState):
         states: AdaptiveSimplexState,
         slot_origins: np.ndarray,
         /,
-    ):
+    ) -> None:
         self.prepared = prepared
         self.layout = layout
         self.parts = parts
@@ -800,6 +813,7 @@ class PartitionedAdaptiveSimplex(StrictModule, NonTrainableState):
                 "kind": "partitioned-adaptive-simplex",
                 "prepared": prepared.prepared_id,
                 "layout": layout.signature_id,
+                # ty: ignore[unresolved-attribute]
                 "distribution": prepared.adaptation.policy.distribution.distribution_id,
             }
         )
@@ -811,7 +825,9 @@ class PartitionedAdaptiveSimplex(StrictModule, NonTrainableState):
         return np.isin(self.slot_origins, identifiers) & (self.slot_origins >= 0)
 
 
-def _part_arrays(base: _HostEpoch, prepared: PreparedAdaptiveSimplex, slots, /):
+def _part_arrays(
+    base: _HostEpoch, prepared: PreparedAdaptiveSimplex, slots: Any, /
+) -> Any:
     """Owned cells of one part and their vertices, in global-ID slot order."""
 
     vertices = np.unique(base.cells[slots])
@@ -863,6 +879,7 @@ def partition_adaptive_simplex(
     owned = tuple(np.flatnonzero(slot_owner == part) for part in range(part_count))
     pieces = tuple(_part_arrays(base, prepared, slots) for slots in owned)
     policy = prepared.adaptation.policy
+    # ty: ignore[unresolved-attribute]
     vertex_capacity, cell_capacity = policy.device_policy.capacities(
         max(piece["vertices"].size for piece in pieces),
         max(slots.size for slots in owned),
@@ -931,7 +948,7 @@ def _merged_epoch(
     vertex_total = vertex_count + int(cursors[0, 2]) - vertex_base
     cell_total = cell_count + int(cursors[0, 3]) - cell_base
 
-    def grown(values, total, fill):
+    def grown(values: Any, total: Any, fill: Any) -> Any:
         result = np.full((total,) + values.shape[1:], fill, dtype=values.dtype)
         result[: min(total, values.shape[0])] = values[:total]
         return result
@@ -971,14 +988,16 @@ def _merged_epoch(
     base_vertex_ids = base.vertex_ids[:vertex_count]
     base_cell_ids = base.cell_ids[:cell_count]
 
-    def global_slots(identifiers, prepared_ids, prepared_count, issued_base):
+    def global_slots(
+        identifiers: Any, prepared_ids: Any, prepared_count: Any, issued_base: Any
+    ) -> Any:
         return np.where(
             identifiers < issued_base,
             np.searchsorted(prepared_ids, identifiers),
             prepared_count + identifiers - issued_base,
         )
 
-    def mapped_slots(values, slots):
+    def mapped_slots(values: Any, slots: Any) -> Any:
         return np.where(values >= 0, slots[np.maximum(values, 0)], -1)
 
     for part in range(partitioned.parts.part_count):

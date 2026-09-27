@@ -13,12 +13,14 @@ adaptation cycles that stay inside one capacity bucket.
 from __future__ import annotations
 
 from itertools import product
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import scipy.sparse as sp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -135,7 +137,7 @@ class ForestTransferRoutes(StrictModule, NonTrainableState):
         return jnp.where(source_weights > 0.0, pulled / safe, 0.0)
 
 
-def _leaf_volumes(topology: ForestHierarchyTopology, geometry, /) -> np.ndarray:
+def _leaf_volumes(topology: ForestHierarchyTopology, geometry: Any, /) -> np.ndarray:
     geometry_ = forest_leaf_geometry(topology) if geometry is None else geometry
     if not isinstance(geometry_, ForestLeafGeometry):
         raise TypeError("Forest leaf geometry must be a ForestLeafGeometry.")
@@ -176,7 +178,7 @@ class ForestFieldTransition(StrictModule, NonTrainableState):
         *,
         source_geometry: ForestLeafGeometry | None = None,
         target_geometry: ForestLeafGeometry | None = None,
-    ):
+    ) -> None:
         if not isinstance(source, ForestHierarchyTopology) or not isinstance(
             target, ForestHierarchyTopology
         ):
@@ -296,7 +298,7 @@ class ForestRefluxRoutes(StrictModule, NonTrainableState):
     relation: EdgeRelation
     signs: Array
 
-    def __init__(self, topology: ForestHierarchyTopology, /):
+    def __init__(self, topology: ForestHierarchyTopology, /) -> None:
         if not isinstance(topology, ForestHierarchyTopology):
             raise TypeError("Forest reflux routes require a forest topology.")
         workset = topology.workset
@@ -428,7 +430,7 @@ class ForestVertexLayout(StrictModule, NonTrainableState):
     vertex_count: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, topology: ForestHierarchyTopology, /):
+    def __init__(self, topology: ForestHierarchyTopology, /) -> None:
         if not isinstance(topology, ForestHierarchyTopology):
             raise TypeError("Forest vertex layouts require a forest topology.")
         plan = topology.plan
@@ -610,7 +612,7 @@ class _EntityKeyCodec(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     coordinate_bits: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, topology: ForestHierarchyTopology, /):
+    def __init__(self, topology: ForestHierarchyTopology, /) -> None:
         plan = topology.plan
         bits = tuple(
             int(extent << plan.maximum_level).bit_length() for extent in plan.root_shape
@@ -620,7 +622,7 @@ class _EntityKeyCodec(StrictModule, NonTrainableState):
         self.dimension = plan.dimension
         self.coordinate_bits = bits
 
-    def encode(self, levels, masks, coordinates, /) -> np.ndarray:
+    def encode(self, levels: Any, masks: Any, coordinates: Any, /) -> np.ndarray:
         key = (np.asarray(levels, dtype=np.int64) << self.dimension) | np.asarray(
             masks, dtype=np.int64
         )
@@ -629,7 +631,9 @@ class _EntityKeyCodec(StrictModule, NonTrainableState):
         return key
 
 
-def _canonical_entities(topology, levels, masks, coordinates, /) -> np.ndarray:
+def _canonical_entities(
+    topology: Any, levels: Any, masks: Any, coordinates: Any, /
+) -> np.ndarray:
     """Wrap periodic normal coordinates of level-lattice entities."""
     plan = topology.plan
     extent = np.asarray(plan.root_shape, dtype=np.int64)[None, :] << levels[:, None]
@@ -711,7 +715,7 @@ class _MasterIndex(StrictModule, NonTrainableState):
     keys: tuple[np.ndarray, ...]
 
 
-def _master_entities(topology: ForestHierarchyTopology, codec: _EntityKeyCodec, /):
+def _master_entities(topology: ForestHierarchyTopology, codec: _EntityKeyCodec, /) -> Any:
     """Leaf closure entities owned at their own level, sorted per degree."""
     dimension = topology.plan.dimension
     table_masks, table_offsets = _local_entity_table(dimension)
@@ -912,8 +916,11 @@ def _sparse_operator(
 ) -> SparseCoordinateOperator:
     capacity = forest_capacity_bucket(rows.size, 1)
     return _pad_operator(
+        # ty: ignore[invalid-argument-type]
         columns,
+        # ty: ignore[invalid-argument-type]
         rows,
+        # ty: ignore[invalid-argument-type]
         coefficients,
         capacity,
         source_space,
@@ -955,8 +962,8 @@ class ForestCochainComplex(StrictModule, NonTrainableState):
         topology: ForestHierarchyTopology,
         /,
         *,
-        dtype=jnp.float64,
-    ):
+        dtype: Any = jnp.float64,
+    ) -> None:
         if not isinstance(topology, ForestHierarchyTopology):
             raise TypeError("Forest cochain complexes require a forest topology.")
         dtype_ = jnp.dtype(dtype)
@@ -1032,7 +1039,7 @@ class ForestCochainComplex(StrictModule, NonTrainableState):
         if nilpotency > 1.0e-12:
             raise ValueError("Forest cochain coboundaries violate d o d = 0.")
 
-        def padded(values, capacity, fill, dtype_host):
+        def padded(values: Any, capacity: Any, fill: Any, dtype_host: Any) -> Any:
             array = np.asarray(values, dtype=dtype_host)
             result = np.full((capacity,) + array.shape[1:], fill, dtype=dtype_host)
             result[: array.shape[0]] = array
@@ -1155,7 +1162,9 @@ class ForestCochainTransfer(StrictModule, NonTrainableState):
     transfers: tuple[CompatibleEntityTransfer, ...]
     transfer_id: str = eqx.field(static=True)
 
-    def __init__(self, coarse: ForestCochainComplex, fine: ForestCochainComplex, /):
+    def __init__(
+        self, coarse: ForestCochainComplex, fine: ForestCochainComplex, /
+    ) -> None:
         if not isinstance(coarse, ForestCochainComplex) or not isinstance(
             fine, ForestCochainComplex
         ):

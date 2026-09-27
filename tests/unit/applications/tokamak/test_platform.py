@@ -1,5 +1,6 @@
 import hashlib
 import math
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -8,7 +9,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _geometry():
+def _geometry() -> Any:
     theta = 2.0 * math.pi * np.arange(16) / 16
     contours = np.zeros((3, 16, 2))
     contours[0, :, 0] = 2.0
@@ -27,7 +28,7 @@ def _geometry():
     )
 
 
-def _equilibrium():
+def _equilibrium() -> Any:
     count = 5
     r = np.linspace(1.0, 3.0, count)
     z = np.linspace(-1.0, 1.0, count)
@@ -57,7 +58,7 @@ def _equilibrium():
     )
 
 
-def _reference():
+def _reference() -> Any:
     payload = b"imas-record"
     return phx.qualification.ReferenceArtifactManifest(
         "imas-record",
@@ -76,7 +77,7 @@ def _reference():
     )
 
 
-def test_tokamak_core_plant_uses_transactional_runtime():
+def test_tokamak_core_plant_uses_transactional_runtime() -> None:
     transport = phx.applications.tokamak.TokamakCoreTransportPlan(
         _geometry(), 1.0
     ).prepare()
@@ -112,7 +113,7 @@ def test_tokamak_core_plant_uses_transactional_runtime():
     )
 
 
-def test_tokamak_shot_record_reuses_governed_measurement_assets():
+def test_tokamak_shot_record_reuses_governed_measurement_assets() -> None:
     time = phx.measurement.SampleTimeAxis.uniform("shot-time", 3, 0.1, phx.units.SECOND)
     support = phx.measurement.IndexSampleSupport(
         (3, 2),
@@ -161,7 +162,7 @@ def test_tokamak_shot_record_reuses_governed_measurement_assets():
     assert record.record_id in split.training_record_ids
 
 
-def test_imas_equilibrium_mapping_round_trips_exact_native_semantics():
+def test_imas_equilibrium_mapping_round_trips_exact_native_semantics() -> None:
     equilibrium = _equilibrium()
     exported = phx.applications.tokamak.interchange.export_imas_equilibrium_slice(
         equilibrium,

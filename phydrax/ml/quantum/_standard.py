@@ -10,8 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax.typing import DTypeLike
-from jaxtyping import Array, ArrayLike, PRNGKeyArray
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._differentiation import (
     DerivativeContract,
@@ -33,6 +33,7 @@ from ...operators.quantum._parameterized import (
 from ...operators.quantum._register import HilbertRegisterLayout
 from ...solver._quantum_expectation import DenseQuantumObservablePolicy
 from ...solver._quantum_program import DenseQuantumProgramPolicy
+from ...typing import PRNGKey
 from .._schema import AbstractFittedModel
 from ._models import (
     CircuitGradientMethod,
@@ -121,7 +122,7 @@ class IQPAngleMap(AbstractFittedModel, NonTrainableState):
         *,
         repetitions: int = 1,
         dtype: DTypeLike = jnp.float64,
-    ):
+    ) -> None:
         size = int(input_size)
         repeats = int(repetitions)
         selected_dtype = jnp.dtype(dtype)
@@ -194,11 +195,11 @@ class ReuploadingAngleMap(AbstractFittedModel):
         self,
         input_size: int,
         feature_indices: Sequence[int],
-        key: PRNGKeyArray,
+        key: PRNGKey,
         /,
         *,
         dtype: DTypeLike = jnp.float64,
-    ):
+    ) -> None:
         size = int(input_size)
         indices = tuple(feature_indices)
         selected_dtype = jnp.dtype(dtype)
@@ -380,7 +381,7 @@ def data_reuploading_feature_map(
     input_size: int,
     layout: HilbertRegisterLayout,
     layers: int,
-    key: PRNGKeyArray,
+    key: PRNGKey,
     /,
     *,
     entanglement_edges: Sequence[tuple[str, str]] = (),

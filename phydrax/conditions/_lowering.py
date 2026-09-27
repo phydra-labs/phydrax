@@ -5,13 +5,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, NoReturn
 
 import equinox as eqx
 
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ..domain import DomainFunction
+from ..typing import PRNGKey
 from ._base import AbstractCondition, AbstractMomentCondition, AbstractResidualCondition
 from ._ir import (
     AbstractConditionOperator,
@@ -25,7 +27,7 @@ from ._ir import (
     ProductFieldSpec,
     validate_codomain_value,
 )
-from ._relations import Equality
+from ._relations import ConditionRelation, Equality
 
 
 def _exact_keys(
@@ -82,7 +84,7 @@ class BoundCondition(StrictModule):
     values: frozendict[str, Any]
     bound_id: str = eqx.field(static=True)
 
-    def __init__(self, condition: Condition, values: Mapping[str, Any], /):
+    def __init__(self, condition: Condition, values: Mapping[str, Any], /) -> None:
         if not isinstance(condition, Condition):
             raise TypeError("BoundCondition.condition must be a Condition.")
         source, local = _bind_sources(condition.fields, values)
@@ -111,7 +113,7 @@ class BoundCondition(StrictModule):
         return self.condition.codomain
 
     @property
-    def relation(self):
+    def relation(self) -> ConditionRelation:
         return self.condition.relation
 
     @property
@@ -186,23 +188,51 @@ class _LegacyResidualOperator(AbstractConditionOperator):
     condition: AbstractResidualCondition
     capabilities: OperatorCapabilities = eqx.field(static=True)
 
-    def __init__(self, condition: AbstractResidualCondition, /):
+    def __init__(self, condition: AbstractResidualCondition, /) -> None:
         self.condition = condition
         self.capabilities = OperatorCapabilities()
 
-    def apply(self, values, /, *, key=None, **kwargs):
+    def apply(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: PRNGKey | None = None,
+        **kwargs: Any,
+    ) -> DomainFunction:
         del key, kwargs
         return self.condition.residual(values)
 
-    def linear_action(self, values, /, *, key=None, **kwargs):
+    def linear_action(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: PRNGKey | None = None,
+        **kwargs: Any,
+    ) -> NoReturn:
         del values, key, kwargs
         raise TypeError("Legacy residual callables do not certify linearity.")
 
-    def adjoint_action(self, value, /, *, key=None, **kwargs):
+    def adjoint_action(
+        self,
+        value: object,
+        /,
+        *,
+        key: PRNGKey | None = None,
+        **kwargs: Any,
+    ) -> NoReturn:
         del value, key, kwargs
         raise TypeError("Legacy residual callables do not certify an adjoint.")
 
-    def linearize(self, values, /, *, key=None, **kwargs):
+    def linearize(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: PRNGKey | None = None,
+        **kwargs: Any,
+    ) -> NoReturn:
         del values, key, kwargs
         raise TypeError("Legacy residual callables do not certify a linearization.")
 
@@ -211,11 +241,18 @@ class _LegacyMomentOperator(AbstractConditionOperator):
     condition: AbstractMomentCondition
     capabilities: OperatorCapabilities = eqx.field(static=True)
 
-    def __init__(self, condition: AbstractMomentCondition, /):
+    def __init__(self, condition: AbstractMomentCondition, /) -> None:
         self.condition = condition
         self.capabilities = OperatorCapabilities()
 
-    def apply(self, values, /, *, key=None, **kwargs):
+    def apply(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: PRNGKey | None = None,
+        **kwargs: Any,
+    ) -> Any:
         if "reduction" not in kwargs:
             raise TypeError(
                 "Moment evaluation requires reduction=PreparedLinearReduction."
@@ -223,15 +260,36 @@ class _LegacyMomentOperator(AbstractConditionOperator):
         reduction = kwargs.pop("reduction")
         return reduction.apply(self.condition.integrand(values), key=key, **kwargs)
 
-    def linear_action(self, values, /, *, key=None, **kwargs):
+    def linear_action(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: PRNGKey | None = None,
+        **kwargs: Any,
+    ) -> NoReturn:
         del values, key, kwargs
         raise TypeError("Legacy moment callables do not certify linearity.")
 
-    def adjoint_action(self, value, /, *, key=None, **kwargs):
+    def adjoint_action(
+        self,
+        value: object,
+        /,
+        *,
+        key: PRNGKey | None = None,
+        **kwargs: Any,
+    ) -> NoReturn:
         del value, key, kwargs
         raise TypeError("Legacy moment callables do not certify an adjoint.")
 
-    def linearize(self, values, /, *, key=None, **kwargs):
+    def linearize(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: PRNGKey | None = None,
+        **kwargs: Any,
+    ) -> NoReturn:
         del values, key, kwargs
         raise TypeError("Legacy moment callables do not certify a linearization.")
 

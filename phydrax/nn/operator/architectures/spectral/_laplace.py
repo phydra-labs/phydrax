@@ -11,7 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity
@@ -20,6 +20,8 @@ from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
+
+from .....typing import PRNGKey
 
 
 class LaplaceTemporalOperator(AbstractOperatorModel):
@@ -53,8 +55,8 @@ class LaplaceTemporalOperator(AbstractOperatorModel):
         min_decay: float = 1e-4,
         max_initial_frequency: float = 8.0,
         source_key: str | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.in_size = in_channels
         self.out_size = out_channels
         self.num_poles = int(num_poles)
@@ -288,7 +290,9 @@ class LaplaceTemporalOperator(AbstractOperatorModel):
             dtype=self.residue.dtype,
         )
 
-        def step(current_state, inputs):
+        def step(
+            current_state: Array, inputs: tuple[Array, Array, Array, Array]
+        ) -> tuple[Array, Array]:
             width, left, right, valid = inputs
             transition = jnp.exp(width[:, None] * poles[None, :])
             increment = (

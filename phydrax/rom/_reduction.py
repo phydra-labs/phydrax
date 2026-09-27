@@ -4,9 +4,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -43,7 +46,7 @@ class TrialTestReduction(StrictModule, NonTrainableState):
         trial_basis: ReducedBasisArtifact,
         test_basis: ReducedBasisArtifact,
         /,
-    ):
+    ) -> None:
         if not isinstance(trial, ConstraintMap) or not isinstance(test, ConstraintMap):
             raise TypeError("trial and test must be ConstraintMap values.")
         if not isinstance(trial_basis, ReducedBasisArtifact) or not isinstance(
@@ -124,15 +127,17 @@ class TrialTestReduction(StrictModule, NonTrainableState):
         residuals = operator.mv_block(trial_vectors)
         return self.test.dual_pullback.mv_block(residuals)
 
-    def project_covector(self, covector, /):
+    def project_covector(self, covector: PyTree[Any], /) -> PyTree[Array]:
         return self.test.pullback_dual(DualSpace(self.test.full_space).validate(covector))
 
-    def project_lift_action(self, operator: AbstractLinearOperator, lift, /):
+    def project_lift_action(
+        self, operator: AbstractLinearOperator, lift: PyTree[Any], /
+    ) -> PyTree[Array]:
         self.validate_operator(operator)
         value = self.trial.full_space.validate(lift)
         return self.test.pullback_dual(operator.mv(value))
 
-    def reconstruct(self, reduced, lift, /):
+    def reconstruct(self, reduced: PyTree[Any], lift: PyTree[Any], /) -> PyTree[Array]:
         return self.trial.expand(reduced, lift)
 
 

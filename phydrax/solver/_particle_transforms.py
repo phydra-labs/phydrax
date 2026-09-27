@@ -9,7 +9,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._trainable import NonTrainableState
@@ -36,7 +36,7 @@ class ShepardDensityRenormalizationTransform(
         apply_every_steps: int,
         first_step: int | None = None,
         maximum_relative_correction: float = 0.5,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedWeaklyCompressibleSPHDynamics):
             raise TypeError("dynamics must be PreparedWeaklyCompressibleSPHDynamics.")
         if not dynamics.state_layout.density_evolved:
@@ -75,8 +75,11 @@ class ShepardDensityRenormalizationTransform(
             (one_based - self.first_step) % self.apply_every_steps == 0
         )
 
-        def apply_transform(state):
+        def apply_transform(state: Array) -> AcceptedStepTransformResult:
             position, velocity, density = self.dynamics.state_layout.unpack(state)
+            # __init__ requires an evolved-density layout.
+            if not (density is not None):
+                raise RuntimeError("Internal invariant failed: density is not None.")
             neighborhood = self.dynamics.neighborhood.build(position)
             position = neighborhood.require_success(position)
             geometry = particle_pair_geometry(
@@ -115,7 +118,7 @@ class ShepardDensityRenormalizationTransform(
                 transformed, jnp.asarray(True), successful, norm
             )
 
-        def skip(state):
+        def skip(state: Array) -> AcceptedStepTransformResult:
             return AcceptedStepTransformResult(
                 state,
                 jnp.asarray(False),

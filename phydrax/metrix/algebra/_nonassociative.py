@@ -11,7 +11,8 @@ from typing import Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -44,7 +45,9 @@ class UnitOctonionStateGeometry(StrictModule):
     tolerance: float = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
 
-    def __init__(self, product: AlgebraProductPlan, /, *, tolerance: float = 1e-8):
+    def __init__(
+        self, product: AlgebraProductPlan, /, *, tolerance: float = 1e-8
+    ) -> None:
         if not isinstance(product, AlgebraProductPlan):
             raise TypeError("Unit octonion geometry requires a prepared algebra product.")
         canonical_octonion = (
@@ -106,7 +109,7 @@ class UnitOctonionStateGeometry(StrictModule):
 class MoufangLoopOperations(StrictModule):
     geometry: UnitOctonionStateGeometry
 
-    def __init__(self, geometry: UnitOctonionStateGeometry, /):
+    def __init__(self, geometry: UnitOctonionStateGeometry, /) -> None:
         self.geometry = geometry
 
     def _require_unit(self, *values: ArrayLike) -> None:
@@ -146,11 +149,11 @@ class BracketingPlan(StrictModule):
     tree: tuple = eqx.field(static=True)
     operand_count: int = eqx.field(static=True)
 
-    def __init__(self, tree: tuple, /, *, operand_count: int):
+    def __init__(self, tree: tuple, /, *, operand_count: int) -> None:
         count = int(operand_count)
         seen = []
 
-        def visit(node):
+        def visit(node: object) -> None:
             if isinstance(node, int):
                 if not 0 <= node < count:
                     raise ValueError("Bracketing operand index is out of range.")
@@ -176,7 +179,7 @@ class BracketingPlan(StrictModule):
         if len(values) != self.operand_count:
             raise ValueError("Bracketing operands do not match operand_count.")
 
-        def evaluate_node(node):
+        def evaluate_node(node: int | tuple) -> Array:
             if isinstance(node, int):
                 return values[node]
             return product(evaluate_node(node[0]), evaluate_node(node[1]))
@@ -193,12 +196,12 @@ class PreparedUnitOctonionEvolution(StrictModule):
     def __init__(
         self,
         geometry: UnitOctonionStateGeometry,
-        vector_field,
+        vector_field: Callable[[Array, Array, BracketingPlan], ArrayLike],
         brackets: BracketingPlan,
         /,
         *,
         steps: int,
-    ):
+    ) -> None:
         if not callable(vector_field) or int(steps) < 1:
             raise ValueError(
                 "Evolution vector_field must be callable and steps positive."
@@ -228,7 +231,9 @@ class G2MatrixElement(StrictModule):
     phi_residual: Array
     valid: Array
 
-    def __init__(self, matrix: ArrayLike, phi: ArrayLike, /, *, tolerance: float = 1e-8):
+    def __init__(
+        self, matrix: ArrayLike, phi: ArrayLike, /, *, tolerance: float = 1e-8
+    ) -> None:
         value = jnp.asarray(matrix)
         phi_ = jnp.asarray(phi, dtype=value.dtype)
         if value.shape != (7, 7) or phi_.shape != (7, 7, 7):
@@ -261,7 +266,7 @@ class G2LocalLogResult(StrictModule):
         residual: ArrayLike,
         valid: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.coordinates = jnp.asarray(coordinates)
         self.residual = jnp.asarray(residual)
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
@@ -274,7 +279,7 @@ class G2GroupOperations(StrictModule):
 
     def __init__(
         self, phi: ArrayLike, derivation_basis: ArrayLike, /, *, tolerance: float = 1e-8
-    ):
+    ) -> None:
         phi_ = jnp.asarray(phi)
         basis = jnp.asarray(derivation_basis, dtype=phi_.dtype)
         if phi_.shape != (7, 7, 7) or basis.shape != (14, 7, 7):
@@ -369,7 +374,7 @@ class AlgebraMatrixLayout(StrictModule):
     rows: int = eqx.field(static=True)
     columns: int = eqx.field(static=True)
 
-    def __init__(self, product: AlgebraProductPlan, rows: int, columns: int, /):
+    def __init__(self, product: AlgebraProductPlan, rows: int, columns: int, /) -> None:
         if int(rows) < 1 or int(columns) < 1:
             raise ValueError("Algebra matrix dimensions must be positive.")
         self.product = product
@@ -391,7 +396,7 @@ class AlgebraMatrixProductPlan(StrictModule):
     left: AlgebraMatrixLayout
     right: AlgebraMatrixLayout
 
-    def __init__(self, left: AlgebraMatrixLayout, right: AlgebraMatrixLayout, /):
+    def __init__(self, left: AlgebraMatrixLayout, right: AlgebraMatrixLayout, /) -> None:
         if left.columns != right.rows or left.product.plan_id != right.product.plan_id:
             raise ValueError(
                 "Algebra matrix layouts have incompatible dimensions or products."
@@ -434,7 +439,7 @@ class AlgebraOperatorInverse(StrictModule):
         side: Literal["left", "right"],
         valid: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.value = jnp.asarray(value)
         self.residual = jnp.asarray(residual)
         self.side = side
@@ -518,7 +523,7 @@ class AlgebraRegularSpectrum(StrictModule):
         /,
         *,
         side: Literal["left", "right"] = "left",
-    ):
+    ) -> None:
         if side not in ("left", "right"):
             raise ValueError("Regular spectrum side must be left or right.")
         operator = _regular_matrix(product, jnp.asarray(value), side)

@@ -12,6 +12,7 @@ certified `MeshAdaptationResult` whose target solve agrees with the masked one.
 """
 
 import json
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -19,13 +20,13 @@ import numpy as np
 import phydrax as phx
 
 
-def source_term(points):
+def source_term(points: Any) -> Any:
     x, y = points[..., 0], points[..., 1]
     radius = jnp.sqrt((x - 0.5) ** 2 + (y - 0.5) ** 2)
     return 200.0 * jnp.exp(-400.0 * (radius - 0.25) ** 2)
 
 
-def masked_solve(plan, mesh):
+def masked_solve(plan: Any, mesh: Any) -> Any:
     system = phx.discretization.assemble_masked_finite_element(plan, mesh)
     load = jnp.where(mesh.vertex_active, source_term(mesh.coordinates), 0.0)
     rhs = jnp.where(system.boundary_dofs, 0.0, system.mass.mv(load))
@@ -38,7 +39,7 @@ def masked_solve(plan, mesh):
     return solved.value
 
 
-def cell_indicator(mesh, values):
+def cell_indicator(mesh: Any, values: Any) -> Any:
     """Squared P1 gradient magnitude times cell area (masked lanes are zero)."""
     corners = mesh.coordinates[mesh.cells]
     spans = corners[:, 1:] - corners[:, :1]

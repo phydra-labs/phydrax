@@ -83,7 +83,7 @@ class HostTelemetrySnapshot:
         maximum_classification: PrivacyClassification = PrivacyClassification.INTERNAL,
         /,
     ) -> dict[str, JSONValue]:
-        observations = [
+        observations: list[JSONValue] = [
             _telemetry_record(value)
             for value in self.observations
             if value.classification <= maximum_classification
@@ -130,7 +130,7 @@ class HostTelemetryCollector:
         *,
         clock: Clock | None = None,
         policy: HostTelemetryPolicy | None = None,
-    ):
+    ) -> None:
         self._clock = SystemClock() if clock is None else clock
         self._policy = HostTelemetryPolicy() if policy is None else policy
         if not isinstance(self._policy, HostTelemetryPolicy):

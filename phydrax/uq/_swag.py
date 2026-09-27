@@ -11,7 +11,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 
@@ -41,7 +43,7 @@ class SWAGCollectionPlan(StrictModule):
         num_draws: int,
         diagonal_regularization: float = 0.0,
         accumulation_precision: Any = jnp.float64,
-    ):
+    ) -> None:
         start = int(start_step)
         cadence = int(collect_every)
         capacity = int(snapshot_capacity)
@@ -130,7 +132,7 @@ class SWAGResult(StrictModule):
         state: SWAGState,
         parameter_subspace: ParameterSubspace,
         collection: SWAGCollectionPlan,
-    ):
+    ) -> None:
         if int(state.count) < 2 or int(state.active_snapshot_count) < 2:
             raise ValueError("SWAG requires at least two committed collected iterates.")
         if tuple(parameter_subspace.leaf_paths) != state.parameter_paths:

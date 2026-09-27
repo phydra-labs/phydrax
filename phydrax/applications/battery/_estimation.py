@@ -18,16 +18,18 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import prod
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import canonical_identifier
 from ...operators.interpolation import InterpolationResult
 from ...stochastic import (
     GaussianStatePrior,
@@ -40,6 +42,7 @@ from ...stochastic import (
     StateSpaceProblem,
     StateSpaceStepContext,
 )
+from ...typing import parse
 from ...uq import (
     kalman_filter,
     kalman_innovation_diagnostics,
@@ -55,7 +58,7 @@ from ._observations import BatteryRecordRole, BatteryTimeSeriesRecord
 from ._properties import ConstantPropertyLaw, TabulatedPropertyLaw
 
 
-TemperatureMode = Literal["isothermal", "known"]
+TemperatureMode: TypeAlias = Literal["isothermal", "known"]
 
 
 def _real_array(value: ArrayLike, name: str, /) -> Array:
@@ -105,14 +108,6 @@ def _covariance_matrix(
     return 0.5 * (array + array.T)
 
 
-def _identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    if not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty canonical identifier.")
-    return value
-
-
 class GloballyAffineSOCPropertyLaw(StrictModule):
     """An explicit real-line affine law for an exact Gaussian ECM observation.
 
@@ -139,7 +134,7 @@ class GloballyAffineSOCPropertyLaw(StrictModule):
         quantity: str,
         value_unit: str,
         source_id: str,
-    ):
+    ) -> None:
         intercept_array = _real_array(intercept, "intercept")
         slope_array = _real_array(slope, "slope")
         if intercept_array.shape != () or slope_array.shape != ():
@@ -149,9 +144,9 @@ class GloballyAffineSOCPropertyLaw(StrictModule):
         slope_array = slope_array.astype(dtype)
         _host_finite(intercept_array, "intercept")
         _host_finite(slope_array, "slope")
-        quantity_id = _identifier(quantity, "Property quantity")
-        unit_id = _identifier(value_unit, "Property value unit")
-        source = _identifier(source_id, "Property source ID")
+        quantity_id = canonical_identifier(quantity, "Property quantity")
+        unit_id = canonical_identifier(value_unit, "Property value unit")
+        source = canonical_identifier(source_id, "Property source ID")
         self.intercept = intercept_array
         self.slope = slope_array
         self.quantity = quantity_id
@@ -365,7 +360,7 @@ class ExactAffineECMEstimationPlan(StrictModule, NonTrainableState):
         hysteresis: bool = False,
         capacity_fade: bool = False,
         parameter_estimation: bool = False,
-    ):
+    ) -> None:
         if not isinstance(ecm_plan, ThermalEquivalentCircuitPlan):
             raise TypeError("ecm_plan must be a ThermalEquivalentCircuitPlan.")
         interval = _real_array(state_of_charge_interval, "state_of_charge_interval")
@@ -380,8 +375,7 @@ class ExactAffineECMEstimationPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "state_of_charge_interval must be an increasing subset of [0, 1]."
             )
-        if temperature_mode not in ("isothermal", "known"):
-            raise ValueError("temperature_mode must be 'isothermal' or 'known'.")
+        temperature_mode = parse(temperature_mode, TemperatureMode, "temperature_mode")
         for value, name in (
             (hysteresis, "hysteresis"),
             (capacity_fade, "capacity_fade"),
@@ -535,7 +529,7 @@ class PreparedExactAffineECMEstimation(StrictModule):
         process_noise_covariance_rate: Array,
         voltage_variance_squared: Array,
         prepared_id: str,
-    ):
+    ) -> None:
         self.plan = plan
         self.series_resistance_ohm = series_resistance_ohm
         self.branch_resistances_ohm = branch_resistances_ohm

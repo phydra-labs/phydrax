@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -7,7 +9,7 @@ import pytest
 from phydrax import pgm
 
 
-def _prepared():
+def _prepared() -> Any:
     variables = pgm.DiscreteVariableGroup("states", num_states=np.asarray([2, 3]))
     factor = pgm.DenseTableFactorGroup(
         (pgm.VariableSelection(variables, [0]), pgm.VariableSelection(variables, [1])),
@@ -23,14 +25,14 @@ def _prepared():
     return graph, bp, pgm.initialize_belief_propagation(bp)
 
 
-def test_dynamic_tables_have_exact_log_normalizer_derivatives_under_jit():
+def test_dynamic_tables_have_exact_log_normalizer_derivatives_under_jit() -> None:
     graph, bp, initial = _prepared()
     exact = pgm.prepare_exact_factor_graph(graph)
 
-    def exact_logz(table):
+    def exact_logz(table: Any) -> Any:
         return pgm.run_exact_factor_graph(exact, (table,)).log_normalizer
 
-    def implicit_logz(table):
+    def implicit_logz(table: Any) -> Any:
         updated = pgm.replace_belief_propagation_tables(bp, (table,))
         return pgm.run_implicit_belief_propagation(
             updated, initial
@@ -50,7 +52,7 @@ def test_dynamic_tables_have_exact_log_normalizer_derivatives_under_jit():
     np.testing.assert_allclose(tangent, jnp.sum(direction * expected), atol=2e-10)
 
 
-def test_numeric_nonfinite_inputs_fail_explicitly_and_support_cannot_change():
+def test_numeric_nonfinite_inputs_fail_explicitly_and_support_cannot_change() -> None:
     graph, bp, initial = _prepared()
     exact = pgm.prepare_exact_factor_graph(graph)
     bad_table = bp.factor_tables[0].at[0, 0, 1].set(jnp.nan)
@@ -77,10 +79,10 @@ def test_numeric_nonfinite_inputs_fail_explicitly_and_support_cannot_change():
     np.testing.assert_array_equal(result.variable_probabilities.values, 0.0)
 
 
-def test_exact_preparation_preserves_existing_parameter_gradient_contract():
+def test_exact_preparation_preserves_existing_parameter_gradient_contract() -> None:
     graph, bp, _ = _prepared()
 
-    def objective(table):
+    def objective(table: Any) -> Any:
         updated = eqx.tree_at(
             lambda item: item.factor_groups[0].log_potentials, graph, table
         )
@@ -96,10 +98,11 @@ def test_exact_preparation_preserves_existing_parameter_gradient_contract():
     )
 
 
-def test_table_replacement_rejects_structured_parameter_shortcuts():
+def test_table_replacement_rejects_structured_parameter_shortcuts() -> None:
     variable = pgm.DiscreteVariableGroup("spin", shape=(2,), num_states=2)
     factor = pgm.IsingFactorGroup(
         (pgm.VariableSelection(variable, [0]), pgm.VariableSelection(variable, [1])),
+        # ty: ignore[invalid-argument-type]
         [0.2],
     )
     prepared = pgm.prepare_belief_propagation(
@@ -109,12 +112,12 @@ def test_table_replacement_rejects_structured_parameter_shortcuts():
         pgm.replace_belief_propagation_tables(prepared, prepared.factor_tables)
 
 
-def test_underflowed_finite_factor_beliefs_keep_log_normalizer_gradient():
+def test_underflowed_finite_factor_beliefs_keep_log_normalizer_gradient() -> None:
     graph, bp, initial = _prepared()
     exact = pgm.prepare_exact_factor_graph(graph)
     table = jnp.asarray([[[-0.2, -1000.0, -2000.0], [-1000.0, -2000.0, -3000.0]]])
 
-    def implicit_logz(value):
+    def implicit_logz(value: Any) -> Any:
         prepared = pgm.replace_belief_propagation_tables(bp, (value,))
         return pgm.run_implicit_belief_propagation(
             prepared, initial
@@ -126,7 +129,7 @@ def test_underflowed_finite_factor_beliefs_keep_log_normalizer_gradient():
     np.testing.assert_allclose(gradient, reference.factor_probabilities[0], atol=1e-10)
 
 
-def test_custom_kernel_factor_axis_matches_direct_and_packed_exact_inference():
+def test_custom_kernel_factor_axis_matches_direct_and_packed_exact_inference() -> None:
     variables = pgm.DiscreteVariableGroup("kernel-states", shape=(3,), num_states=2)
     kernel = pgm.CallableFactorKernel(
         lambda parameters, states: parameters * states[..., 0],
@@ -173,7 +176,7 @@ def test_custom_kernel_factor_axis_matches_direct_and_packed_exact_inference():
             result.factor_probabilities[0], expected_marginals, atol=1e-12
         )
 
-    def log_normalizer(values):
+    def log_normalizer(values: Any) -> Any:
         current_graph = eqx.tree_at(
             lambda value: value.factor_groups[0].parameters, graph, values
         )

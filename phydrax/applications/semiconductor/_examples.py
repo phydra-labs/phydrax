@@ -21,7 +21,7 @@ from ._quantities import PER_CUBIC_METER
 from ._support import TransportSupport
 
 
-def _dopant(support, name, values):
+def _dopant(support: TransportSupport, name: str, values: np.ndarray) -> MeshAttribute:
     return MeshAttribute(
         name,
         MeshAttributeRole.MATERIAL,

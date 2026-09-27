@@ -12,11 +12,13 @@ import phydrax as phx
 def main() -> None:
     cosmo = phx.applications.cosmology
     first = cosmo.CosmologyPhysicalState(
+        # ty: ignore[invalid-argument-type]
         [70.0, 0.3, 2.1e-9],
         ("hubble_constant", "matter_density", "primordial_amplitude"),
         "scale",
     )
     second = cosmo.CosmologyPhysicalState(
+        # ty: ignore[invalid-argument-type]
         [70.0, 0.3, 3.0e-9],
         first.names,
         "scale",
@@ -47,9 +49,12 @@ def main() -> None:
     source = cosmo.CoordinateLayout(("P0", "P2", "P4"))
     target = cosmo.CoordinateLayout(("d0", "d1"))
     likelihood = cosmo.CorrelatedGaussianPlan(
+        # ty: ignore[invalid-argument-type]
         [2.0, 1.0],
+        # ty: ignore[invalid-argument-type]
         cosmo.LinearObservationPlan([[1.0, 0.5, 0.0], [0.0, 0.25, 1.0]], source, target),
         cosmo.PrecisionCovarianceAction(jnp.eye(2), 0.0, target),
+        # ty: ignore[invalid-argument-type]
     ).evaluate(cosmo.TheoryVector([1.0, 2.0, 0.5], source, "qualification"))
 
     report = {

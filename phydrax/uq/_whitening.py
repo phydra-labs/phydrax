@@ -8,7 +8,8 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._probability import AbstractProbabilityLaw
 from .._strict import StrictModule
@@ -27,7 +28,7 @@ class GaussianPriorWhitening(StrictModule):
     location: PyTree[Array]
     scale: PyTree[Array]
 
-    def __init__(self, location: PyTree[Array], scale: PyTree[Array], /):
+    def __init__(self, location: PyTree[Array], scale: PyTree[Array], /) -> None:
         if jax.tree_util.tree_structure(location) != jax.tree_util.tree_structure(scale):
             raise ValueError("Whitening location and scale structures must match.")
         scale_leaves = jax.tree_util.tree_leaves(scale)

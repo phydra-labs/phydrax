@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import (
     array_tree_fingerprint,
@@ -44,6 +45,7 @@ from ..linalg import (
     TolerancePolicy,
 )
 from ..topology import CellSubcomplex
+from ..typing import parse
 from ._harmonic_constraints import HarmonicConstraint
 from ._maxwell_boundaries import MaxwellBoundaryPlan, PreparedMaxwellBoundary
 from ._maxwell_observers import (
@@ -60,6 +62,7 @@ from ._maxwell_sources import (
     AbstractMaxwellSourcePlan,
     MaxwellSourceForcing,
     PreparedMaxwellSource,
+    PreparedMaxwellSourceContract,
 )
 
 
@@ -86,9 +89,8 @@ class MaxwellCochainLayout(StrictModule, NonTrainableState):
         bridge: StructuredCochainBridge | CochainDiscretization,
         polarization: MaxwellPolarization = "full_3d",
         /,
-    ):
-        if polarization not in ("full_3d", "tez", "tmz"):
-            raise ValueError("Unknown Maxwell polarization.")
+    ) -> None:
+        polarization = parse(polarization, MaxwellPolarization, "polarization")
         if isinstance(bridge, StructuredCochainBridge):
             cochain = bridge.cochain
             dimension = bridge.dimension
@@ -158,7 +160,7 @@ class MaxwellResourcePolicy(StrictModule, NonTrainableState):
         maximum_workspace_bytes: int = 2 * 1024**3,
         maximum_acquisition_bytes: int = 512 * 1024**2,
         maximum_total_bytes: int = 4 * 1024**3,
-    ):
+    ) -> None:
         values = tuple(
             (
                 maximum_state_bytes,
@@ -204,7 +206,7 @@ class MaxwellMagneticConstraintPolicy(StrictModule, NonTrainableState):
         absolute_tolerance: float = 1e-11,
         relative_tolerance: float = 1e-10,
         solve_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if mode not in ("auto", "project", "elide"):
             raise ValueError("Unknown magnetic-constraint policy mode.")
         absolute, relative = float(absolute_tolerance), float(relative_tolerance)
@@ -300,7 +302,7 @@ class MaxwellCapabilities(StrictModule, NonTrainableState):
         local_tensors: bool = False,
         spatial_distribution: bool = False,
         ffi: bool = False,
-    ):
+    ) -> None:
         if active and passive:
             raise ValueError("A Maxwell capability set cannot be passive and active.")
         if lossless and (active or not passive):
@@ -521,7 +523,7 @@ class DiagonalMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
         permittivity: ArrayLike = 1.0,
         permeability: ArrayLike = 1.0,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         epsilon = jnp.asarray(permittivity)
         mu = jnp.asarray(permeability)
         if jnp.iscomplexobj(epsilon) or jnp.iscomplexobj(mu):
@@ -571,7 +573,7 @@ class PreparedDiagonalMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
         cochain: CochainDiscretization,
         layout: MaxwellCochainLayout,
         /,
-    ):
+    ) -> None:
         if not isinstance(layout, MaxwellCochainLayout):
             raise TypeError("Maxwell constitutive preparation requires a cochain layout.")
         epsilon = _positive_material(
@@ -730,7 +732,7 @@ class CompatibleMaxwellPlan(StrictModule):
         resources: MaxwellResourcePolicy | None = None,
         courant_factor: float = 0.95,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(bridge, StructuredCochainBridge):
             raise TypeError("Compatible Maxwell requires a StructuredCochainBridge.")
         layout = MaxwellCochainLayout(bridge, polarization)
@@ -810,7 +812,7 @@ class PreparedCompatibleMaxwell(StrictModule):
     constitutive: AbstractPreparedMaxwellConstitutive
     boundaries: tuple[PreparedMaxwellBoundary, ...]
     observers: tuple[AbstractPreparedMaxwellObserver, ...]
-    sources: tuple[PreparedMaxwellSource, ...]
+    sources: tuple[PreparedMaxwellSourceContract, ...]
     capabilities: MaxwellCapabilities
     pml: PreparedMaxwellCPML | None
     magnetic_incidence: Any
@@ -823,7 +825,7 @@ class PreparedCompatibleMaxwell(StrictModule):
     discretization_bundle: DiscretizationBundle
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: CompatibleMaxwellPlan, /):
+    def __init__(self, plan: CompatibleMaxwellPlan, /) -> None:
         if not isinstance(plan, CompatibleMaxwellPlan):
             raise TypeError("plan must be a CompatibleMaxwellPlan.")
         layout, cochain = plan.layout, plan.bridge.cochain
@@ -893,7 +895,7 @@ class PreparedCompatibleMaxwell(StrictModule):
         )
         magnetic_constraint_solver = (
             None
-            if top_form or plan.magnetic_constraint.mode == "elide"
+            if magnetic_incidence is None or plan.magnetic_constraint.mode == "elide"
             else prepare(
                 MinimumNormProblem(
                     magnetic_incidence,
@@ -2015,7 +2017,9 @@ def solve_compatible_maxwell(
     fixed = _fixed_step(runtime, step_size, state.primary.electric_displacement.dtype)
     start = jnp.asarray(start_time)
 
-    def body(carry: CompatibleMaxwellState, index: Array, /):
+    def body(
+        carry: CompatibleMaxwellState, index: Array, /
+    ) -> tuple[CompatibleMaxwellState, None]:
         time = start + index * fixed.parameters.step_size
         return fixed.step(time, carry, args), None
 

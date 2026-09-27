@@ -24,6 +24,7 @@ Run with ``python examples/anisotropic_metric_adaptation.py``.
 """
 
 import json
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -41,17 +42,17 @@ _LOWER = 1.0 / np.sqrt(2.0)
 _UPPER = np.sqrt(2.0)
 
 
-def exact_solution(points):
+def exact_solution(points: Any) -> Any:
     return jnp.tanh(LAYER * (points[..., 0] - 0.5))
 
 
-def layer_source(points, args):
+def layer_source(points: Any, args: Any) -> Any:
     """``f = -u''`` for ``u = tanh(k (x - 1/2))``."""
     value = jnp.tanh(LAYER * (points[..., 0] - 0.5))
     return 2.0 * LAYER**2 * value * (1.0 - value**2)
 
 
-def square_mesh(count):
+def square_mesh(count: Any) -> Any:
     axis = np.linspace(0.0, 1.0, count + 1)
     points = np.stack(np.meshgrid(axis, axis, indexing="ij"), axis=-1).reshape((-1, 2))
     index = np.arange((count + 1) ** 2, dtype=np.int32).reshape((count + 1, count + 1))
@@ -63,12 +64,12 @@ def square_mesh(count):
     return phx.discretization.CellMesh.from_triangles(points, triangles)
 
 
-def scope_order(mesh):
+def scope_order(mesh: Any) -> Any:
     """Vertex rows in the (sorted global ID) row order of a vertex scope."""
     return np.argsort(np.asarray(mesh.vertex_global_ids), kind="stable")
 
 
-def vertex_scope(mesh):
+def vertex_scope(mesh: Any) -> Any:
     vertices = mesh.entity_set(0)
     return phx.meshing.MeshingScope(
         mesh.mesh_id,
@@ -80,11 +81,11 @@ def vertex_scope(mesh):
     )
 
 
-def cell_vertices(mesh):
+def cell_vertices(mesh: Any) -> Any:
     return np.concatenate([np.asarray(block.vertices) for block in mesh.blocks])
 
 
-def dual_areas(mesh):
+def dual_areas(mesh: Any) -> Any:
     """Barycentric dual area of every vertex row."""
     points = np.asarray(mesh.coordinates)
     cells = cell_vertices(mesh)
@@ -96,13 +97,13 @@ def dual_areas(mesh):
     return volumes
 
 
-def stretch_ratio(trace, determinant):
+def stretch_ratio(trace: Any, determinant: Any) -> Any:
     """``sqrt(lambda_max / lambda_min)`` of 2x2 SPD tensors from trace and determinant."""
     root = np.sqrt(np.maximum(trace**2 - 4.0 * determinant, 0.0))
     return np.sqrt((trace + root) / (trace - root))
 
 
-def cell_anisotropy(mesh):
+def cell_anisotropy(mesh: Any) -> Any:
     """Singular-value ratio of the map from the equilateral triangle to each cell."""
     points = np.asarray(mesh.coordinates)
     cells = cell_vertices(mesh)
@@ -115,14 +116,14 @@ def cell_anisotropy(mesh):
     return stretch_ratio(frobenius, determinant**2)
 
 
-def metric_anisotropy(values):
+def metric_anisotropy(values: Any) -> Any:
     tensors = np.asarray(values)
     trace = tensors[:, 0, 0] + tensors[:, 1, 1]
     determinant = tensors[:, 0, 0] * tensors[:, 1, 1] - tensors[:, 0, 1] ** 2
     return stretch_ratio(trace, determinant)
 
 
-def solve(certified):
+def solve(certified: Any) -> Any:
     mesh = certified.mesh
     field = phx.discretization.FiniteElementFieldSpec(
         "u", phx.discretization.lagrange_element("triangle", 1)
@@ -168,7 +169,7 @@ def solve(certified):
     return space, values, l2_error, nodal_error
 
 
-def normalized_metric(certified, space, values):
+def normalized_metric(certified: Any, space: Any, values: Any) -> Any:
     mesh = certified.mesh
     prepared = phx.discretization.fem.prepare_gradient_recovery(space, "u")
     hessian, recovery = phx.discretization.fem.recover_hessian(prepared, values)
@@ -216,7 +217,7 @@ def normalized_metric(certified, space, values):
     return metric, lp, normalization
 
 
-def edge_length_summary(certified, metric):
+def edge_length_summary(certified: Any, metric: Any) -> Any:
     mesh = certified.mesh
     order = scope_order(mesh)
     inverse = np.empty_like(order)
@@ -269,11 +270,16 @@ for cycle in range(CYCLES):
             "vertices": current.mesh.coordinates.shape[0],
             "cells": current.mesh.entity_set(2).count,
             "status": adapted.status.value,
+            # ty: ignore[unresolved-attribute]
             "passes": evidence.passes,
             "operations": {
+                # ty: ignore[unresolved-attribute]
                 "splits": evidence.splits,
+                # ty: ignore[unresolved-attribute]
                 "collapses": evidence.collapses,
+                # ty: ignore[unresolved-attribute]
                 "flips": evidence.flips,
+                # ty: ignore[unresolved-attribute]
                 "relocations": evidence.relocations,
             },
             "metric_complexity": normalization.final_complexity,
@@ -296,10 +302,13 @@ for cycle in range(CYCLES):
 
 final = cycles[-1]
 errors = [initial["l2_error"], *(record["l2_error"] for record in cycles)]
+# ty: ignore[invalid-argument-type, not-subscriptable]
 if min(record["metric_edge_lengths"]["unit_fraction"] for record in cycles) < 0.9:
     raise RuntimeError("An adapted mesh is not close to a unit mesh of its metric.")
+# ty: ignore[invalid-argument-type, not-subscriptable]
 if final["achieved_anisotropy"]["maximum"] < 5.0:
     raise RuntimeError("Adaptation did not produce anisotropic cells along the layer.")
+# ty: ignore[unsupported-operator]
 if any(later >= earlier for earlier, later in zip(errors, errors[1:])):
     raise RuntimeError("A metric adaptation cycle did not reduce the layer error.")
 if final["l2_error"] >= 0.05 * initial["l2_error"]:

@@ -5,15 +5,21 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+
+
+# (h, lower, upper, maximum residual, function count, derivative count)
+_RootCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
 class AdaptiveHRootPlan(StrictModule, NonTrainableState):
@@ -35,7 +41,7 @@ class AdaptiveHRootPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1e-10,
         maximum_iterations: int = 30,
-    ):
+    ) -> None:
         if eta <= 0.0 or dimension <= 0 or minimum_h <= 0.0 or maximum_h < minimum_h:
             raise ValueError("Adaptive-h root parameters are invalid.")
         if tolerance <= 0.0 or maximum_iterations <= 0:
@@ -85,12 +91,12 @@ def solve_adaptive_h_root(
     lower = jnp.full(initial.shape, plan.minimum_h, initial.dtype)
     upper = jnp.full(initial.shape, plan.maximum_h, initial.dtype)
 
-    def residual(h):
+    def residual(h: Array) -> tuple[Array, Array]:
         density = density_function(h)
         target = plan.eta * (mass_ / density) ** (1.0 / plan.dimension)
         return h - target, density
 
-    def body(_, carry):
+    def body(_: Array, carry: _RootCarry) -> _RootCarry:
         h, lo, hi, _, function_count, derivative_count = carry
         value, _ = residual(h)
         derivative = jax.jvp(

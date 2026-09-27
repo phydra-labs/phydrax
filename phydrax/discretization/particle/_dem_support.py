@@ -47,7 +47,7 @@ class DEMSupportMatrixEntry(StrictModule, NonTrainableState):
         barrier: str = "none",
         status: DEMSupportStatus = DEMSupportStatus.EXPERIMENTAL,
         evidence_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (2, 3):
             raise ValueError("DEM support entries require dimension 2 or 3.")
@@ -115,7 +115,7 @@ class DEMSupportMatrix(StrictModule, NonTrainableState):
     entries: tuple[DEMSupportMatrixEntry, ...]
     matrix_id: str = eqx.field(static=True)
 
-    def __init__(self, entries: Sequence[DEMSupportMatrixEntry], /):
+    def __init__(self, entries: Sequence[DEMSupportMatrixEntry], /) -> None:
         values = tuple(entries)
         if not values or any(
             not isinstance(value, DEMSupportMatrixEntry) for value in values

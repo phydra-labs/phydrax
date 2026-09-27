@@ -9,11 +9,13 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._model import register_artifact_value
 from ..._strict import StrictModule
+from ...typing import parse
 from ._register import _target_wire_ids, HilbertRegisterLayout
 
 
@@ -39,7 +41,7 @@ class LocalUnitaryOperation(StrictModule):
         unitary: ArrayLike,
         target_wire_ids: Sequence[str],
         /,
-    ):
+    ) -> None:
         matrix = _complex_array(unitary, "unitary")
         if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
             raise ValueError("unitary must have exact square shape (dT, dT).")
@@ -68,7 +70,7 @@ class LocalKrausChannelOperation(StrictModule):
         kraus: ArrayLike,
         target_wire_ids: Sequence[str],
         /,
-    ):
+    ) -> None:
         operators = _complex_array(kraus, "kraus")
         if (
             operators.ndim != 3
@@ -107,11 +109,10 @@ class QuantumProgram(StrictModule):
         /,
         *,
         state_kind: QuantumStateKind,
-    ):
+    ) -> None:
         if not isinstance(layout, HilbertRegisterLayout):
             raise TypeError("layout must be a HilbertRegisterLayout.")
-        if state_kind not in ("state-vector", "density-matrix"):
-            raise ValueError("Unknown quantum-program state kind.")
+        state_kind = parse(state_kind, QuantumStateKind, "state_kind")
         selected = tuple(operations)
         for operation in selected:
             if not isinstance(

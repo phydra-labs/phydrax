@@ -9,7 +9,8 @@ from enum import IntEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -85,7 +86,7 @@ class ParticlePopulationPlan(StrictModule, NonTrainableState):
         reuse_policy: ParticleSlotReusePolicy = ParticleSlotReusePolicy.REUSE_WITH_INCARNATION,
         allocation_capacity: int | None = None,
         incarnation_maximum: int = 2**31 - 1,
-    ):
+    ) -> None:
         if not isinstance(particles, ParticleDiscretization):
             raise TypeError("particles must be ParticleDiscretization.")
         reuse = ParticleSlotReusePolicy(reuse_policy)

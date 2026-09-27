@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
 from .data import OperatorBatch, stack_operator_batches
@@ -19,7 +19,7 @@ class OperatorSupervisedExample(StrictModule):
     batch: OperatorBatch
     targets: Array
 
-    def __init__(self, batch: OperatorBatch, targets: Array, /):
+    def __init__(self, batch: OperatorBatch, targets: Array, /) -> None:
         target = jnp.asarray(targets)
         prefix = batch.case_shape + batch.require_single_query().sample_shape
         scalar = tuple(target.shape) == prefix
@@ -56,7 +56,7 @@ class OperatorPrompt(StrictModule):
         /,
         *,
         mask: Array | None = None,
-    ):
+    ) -> None:
         resolved = tuple(examples)
         if not resolved:
             raise ValueError("OperatorPrompt requires at least one capacity slot.")
@@ -104,7 +104,7 @@ class PromptedOperatorBatch(StrictModule):
     batch: OperatorBatch
     prompt: OperatorPrompt
 
-    def __init__(self, batch: OperatorBatch, prompt: OperatorPrompt, /):
+    def __init__(self, batch: OperatorBatch, prompt: OperatorPrompt, /) -> None:
         if batch.case_shape != prompt.case_shape:
             raise ValueError("Prompt and query batch case shapes must match.")
         self.batch = batch

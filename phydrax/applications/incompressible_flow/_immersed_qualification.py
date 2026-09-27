@@ -8,12 +8,14 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._sharp_measures import QualifiedSharpGeometry
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import canonical_identifier
 from ...qualification._evidence import (
     QualificationCoverageReport,
     QualificationEvidence,
@@ -27,18 +29,10 @@ from ._immersed_profile import (
 from ._immersed_support import ImmersedBodyRegimePlan
 
 
-def _identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    if not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty canonical identifier.")
-    return value
-
-
 def _identifiers(values: Sequence[str], name: str, /) -> tuple[str, ...]:
     if not isinstance(values, Sequence) or isinstance(values, str):
         raise TypeError(f"{name} values must be a sequence.")
-    normalized = tuple(_identifier(value, name) for value in values)
+    normalized = tuple(canonical_identifier(value, name) for value in values)
     if not normalized or len(set(normalized)) != len(normalized):
         raise ValueError(f"{name} values must be non-empty and unique.")
     return tuple(sorted(normalized))
@@ -68,12 +62,12 @@ class ImmersedReferenceCaseEvidence(StrictModule, NonTrainableState):
         *,
         subject_ids: Sequence[str],
         raw_artifact_ids: Sequence[str],
-    ):
-        case = _identifier(case_id, "case_id")
+    ) -> None:
+        case = canonical_identifier(case_id, "case_id")
         if case not in IMMERSED_REFERENCE_CASES:
             raise ValueError(f"Unknown immersed reference case {case!r}.")
-        regime = _identifier(regime_plan_id, "regime_plan_id")
-        support = _identifier(support_tuple_id, "support_tuple_id")
+        regime = canonical_identifier(regime_plan_id, "regime_plan_id")
+        support = canonical_identifier(support_tuple_id, "support_tuple_id")
         subjects = _identifiers(subject_ids, "subject ID")
         artifacts = _identifiers(raw_artifact_ids, "raw artifact ID")
         value = jnp.asarray(error)
@@ -250,7 +244,7 @@ class ImmersedReferenceCampaignPlan(StrictModule, NonTrainableState):
         profile: ImmersedDNSQualificationProfile,
         regimes: Sequence[ImmersedBodyRegimePlan],
         /,
-    ):
+    ) -> None:
         if not isinstance(profile, ImmersedDNSQualificationProfile):
             raise TypeError("profile must be ImmersedDNSQualificationProfile.")
         regimes_ = tuple(regimes)

@@ -12,7 +12,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, PyTree
+from jax import Array
+from jax.tree_util import PyTreeDef
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
@@ -47,7 +50,7 @@ class EnsembleKalmanDiagnostics(StrictModule):
         parameter_update_norms: Array,
         forward_solve_count: int,
         collapse_step: int | None,
-    ):
+    ) -> None:
         self.temperature_increments = jnp.asarray(temperature_increments)
         self.residual_norms = jnp.asarray(residual_norms)
         self.ensemble_spreads = jnp.asarray(ensemble_spreads)
@@ -94,7 +97,7 @@ class EnsembleKalmanResult(StrictModule):
         duration_seconds: float,
         target_ess: float,
         inflation: float,
-    ):
+    ) -> None:
         self.problem = problem
         self.initial_unconstrained_ensemble = initial_unconstrained_ensemble
         self.unconstrained_ensemble = unconstrained_ensemble
@@ -188,7 +191,7 @@ class EnsembleKalmanConvergenceError(RuntimeError):
 
     result: EnsembleKalmanResult
 
-    def __init__(self, result: EnsembleKalmanResult):
+    def __init__(self, result: EnsembleKalmanResult) -> None:
         self.result = result
         super().__init__(
             f"Ensemble Kalman inversion did not converge: {result.termination_reason}."
@@ -367,13 +370,13 @@ def fit_eki(
 
 @jax.jit
 def _eki_update(
-    parameters,
-    residuals,
-    perturbations,
-    alpha,
-    jitter,
-    inflation,
-):
+    parameters: Array,
+    residuals: Array,
+    perturbations: Array,
+    alpha: ArrayLike,
+    jitter: ArrayLike,
+    inflation: ArrayLike,
+) -> Array:
     count = parameters.shape[0]
     parameter_anomalies = parameters - jnp.mean(parameters, axis=0, keepdims=True)
     residual_anomalies = residuals - jnp.mean(residuals, axis=0, keepdims=True)
@@ -392,10 +395,12 @@ def _eki_update(
     return updated
 
 
-def _adaptive_tempering_increment(residuals, *, remaining, target_ess):
+def _adaptive_tempering_increment(
+    residuals: Array, *, remaining: float, target_ess: float
+) -> float:
     misfits = 0.5 * jnp.sum(residuals**2, axis=1)
 
-    def relative_ess(increment):
+    def relative_ess(increment: float) -> Array:
         log_weights = -increment * misfits
         weights = jax.nn.softmax(log_weights)
         return 1.0 / (residuals.shape[0] * jnp.sum(weights**2))
@@ -413,7 +418,9 @@ def _adaptive_tempering_increment(residuals, *, remaining, target_ess):
     return lower
 
 
-def _evaluate_residuals(problem, ensemble, count):
+def _evaluate_residuals(
+    problem: PosteriorProblem, ensemble: PyTree[Array], count: int
+) -> Array:
     residual_tree = jax.vmap(problem.gauss_newton_residual)(ensemble)
     leaves = jax.tree_util.tree_leaves(residual_tree)
     if not leaves:
@@ -434,7 +441,9 @@ def _evaluate_residuals(problem, ensemble, count):
     return residuals
 
 
-def _validate_ensemble(problem, ensemble, expected_count):
+def _validate_ensemble(
+    problem: PosteriorProblem, ensemble: PyTree[Array], expected_count: int
+) -> None:
     leaves = jax.tree_util.tree_leaves(ensemble)
     if not leaves or any(
         jnp.asarray(leaf).ndim == 0 or jnp.asarray(leaf).shape[0] != expected_count
@@ -449,7 +458,9 @@ def _validate_ensemble(problem, ensemble, expected_count):
         raise FloatingPointError("Initial ensemble must be finite.")
 
 
-def _ensemble_to_matrix(ensemble, count):
+def _ensemble_to_matrix(
+    ensemble: PyTree[Array], count: int
+) -> tuple[Array, PyTreeDef, tuple[tuple[int, ...], ...], tuple[int, ...]]:
     leaves, tree_definition = jax.tree_util.tree_flatten(ensemble)
     shapes = tuple(tuple(leaf.shape[1:]) for leaf in leaves)
     sizes = tuple(int(jnp.prod(jnp.asarray(shape))) if shape else 1 for shape in shapes)
@@ -460,7 +471,13 @@ def _ensemble_to_matrix(ensemble, count):
     return matrix, tree_definition, shapes, sizes
 
 
-def _matrix_to_ensemble(matrix, tree_definition, shapes, sizes, count):
+def _matrix_to_ensemble(
+    matrix: Array,
+    tree_definition: PyTreeDef,
+    shapes: tuple[tuple[int, ...], ...],
+    sizes: tuple[int, ...],
+    count: int,
+) -> PyTree[Array]:
     leaves = []
     start = 0
     for shape, size in zip(shapes, sizes, strict=True):
@@ -469,15 +486,15 @@ def _matrix_to_ensemble(matrix, tree_definition, shapes, sizes, count):
     return jax.tree_util.tree_unflatten(tree_definition, leaves)
 
 
-def _residual_norm(residuals):
+def _residual_norm(residuals: Array) -> Array:
     return jnp.sqrt(jnp.mean(jnp.sum(residuals**2, axis=1)))
 
 
-def _ensemble_spread(parameters):
+def _ensemble_spread(parameters: Array) -> Array:
     return jnp.sqrt(jnp.sum(jnp.var(parameters, axis=0, ddof=1)))
 
 
-def _effective_rank(parameters, tolerance):
+def _effective_rank(parameters: Array, tolerance: float) -> Array:
     singular_values = jnp.linalg.svd(
         parameters - jnp.mean(parameters, axis=0, keepdims=True),
         compute_uv=False,

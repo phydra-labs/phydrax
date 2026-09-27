@@ -4,13 +4,14 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Literal, TypeAlias
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -21,6 +22,7 @@ from ...stochastic import (
     JumpMeasureChange,
     measure_changed_target,
 )
+from ...typing import parse
 from ..contracts._credit import DefaultEventState
 from ..core import Currency, FinanceDate, FinanceEvidenceBinding
 from ._collateral import (
@@ -85,7 +87,7 @@ class PathwiseTradeValues(StrictModule):
         realization_id: str,
         coupling_id: str,
         value_state_id: str,
-    ):
+    ) -> None:
         nodes = _time_grid(times)
         marks = jnp.asarray(values, dtype=jnp.float64)
         if marks.ndim != 3 or marks.shape[1] != nodes.shape[0]:
@@ -132,7 +134,7 @@ class PathWeighting(StrictModule):
         *,
         iid: bool,
         weighting_id: str,
-    ):
+    ) -> None:
         values = jnp.asarray(weights, dtype=jnp.float64)
         mask = jnp.asarray(valid)
         if mask.dtype != jnp.dtype(jnp.bool_):
@@ -190,7 +192,7 @@ class DiscountFactorPath(StrictModule):
         *,
         curve_id: str,
         pricing_law_id: str,
-    ):
+    ) -> None:
         nodes = _time_grid(times)
         discounts = jnp.asarray(values, dtype=jnp.float64)
         if discounts.ndim not in (1, 2) or discounts.shape[-1] != nodes.shape[0]:
@@ -247,9 +249,8 @@ class WrongWayRiskLink(StrictModule):
         *,
         measure_change_id: str | None = None,
         link_id: str,
-    ):
-        if mode not in ("shared_factor", "measure_change"):
-            raise ValueError("Unsupported wrong-way-risk mode.")
+    ) -> None:
+        mode = parse(mode, WrongWayRiskMode, "mode")
         factors = tuple(_identifier(value, "factor_id") for value in factor_ids)
         if not factors or len(set(factors)) != len(factors):
             raise ValueError("factor_ids must be non-empty and unique.")
@@ -307,7 +308,7 @@ class ExposureSimulationPlan(StrictModule):
         pricing_law_id: str,
         discount_curve_id: str,
         plan_id: str,
-    ):
+    ) -> None:
         if not isinstance(netting_set, NettingSet):
             raise TypeError("netting_set must be a NettingSet.")
         if not isinstance(collateral, PreparedCollateralAgreement):
@@ -327,8 +328,9 @@ class ExposureSimulationPlan(StrictModule):
             raise ValueError(
                 "Single-currency collateral must match the netting-set base currency."
             )
-        if default_dependence not in ("independent", "wrong_way"):
-            raise ValueError("Unsupported default dependence.")
+        default_dependence = parse(
+            default_dependence, DefaultDependence, "default_dependence"
+        )
         if (default_dependence == "wrong_way") != (wrong_way_risk is not None):
             raise ValueError("Exactly wrong-way-dependent exposure requires a WWR link.")
         pricing_id = _identifier(pricing_law_id, "pricing_law_id")
@@ -451,7 +453,8 @@ def link_wrong_way_risk(
             sample_axes=0,
             independent=weighting.iid,
         )
-        likelihood = jnp.exp(target.log_weights)
+        # A native measure change carries a plain Array log-likelihood ratio.
+        likelihood = jnp.exp(cast(Array, target.log_weights))
         support_valid = weighting.valid & jnp.asarray(target.mask, dtype=jnp.bool_)
     if likelihood.shape != weighting.weights.shape:
         raise ValueError("WWR likelihood must have one value per path.")
@@ -539,11 +542,9 @@ def simulate_exposure(
         raise ValueError("Default event paths must match the trade-value path axis.")
     if weighting.weights.shape != (path_count,):
         raise ValueError("Path weighting must match the trade-value path axis.")
-    if plan.default_dependence == "wrong_way":
-        if (
-            wrong_way_result is None
-            or wrong_way_result.link_id != plan.wrong_way_risk.link_id
-        ):
+    plan_link = plan.wrong_way_risk
+    if plan_link is not None:
+        if wrong_way_result is None or wrong_way_result.link_id != plan_link.link_id:
             raise ValueError(
                 "Wrong-way exposure requires weighting from the plan's WWR link."
             )
@@ -561,11 +562,10 @@ def simulate_exposure(
         if wrong_way_result is not None:
             raise ValueError("Independent exposure does not accept WWR weighting.")
         active_weighting = weighting
-    if plan.default_dependence == "wrong_way":
-        link = plan.wrong_way_risk
+    if plan_link is not None:
         if (
-            trade_values.coupling_id != link.coupling_id
-            or counterparty_default.coupling_id != link.coupling_id
+            trade_values.coupling_id != plan_link.coupling_id
+            or counterparty_default.coupling_id != plan_link.coupling_id
         ):
             raise ValueError("Shared WWR coupling identities do not match the plan link.")
     elif (

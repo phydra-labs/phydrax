@@ -5,18 +5,26 @@
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import DenseLinearOperator, MaterializationPolicy, RankPolicy
-from ...linalg.svd import svd, SVDProblem, SVDResourcePolicy, SVDSolvePolicy
+from ...linalg.svd import (
+    svd,
+    SVDProblem,
+    SVDResourcePolicy,
+    SVDSolvePolicy,
+    SVDSolveResult,
+)
 from ._contracts import (
     EvidenceDisposition,
     JacobianRankEvidence,
@@ -58,7 +66,7 @@ class PolynomialImageAnalysisPolicy(StrictModule, NonTrainableState):
         maximum_monomials: int = 2_048,
         maximum_design_entries: int = 20_000_000,
         maximum_svd_bytes: int = 1_073_741_824,
-    ):
+    ) -> None:
         rank_tolerance = float(rank_relative_tolerance)
         ambiguity = float(rank_ambiguity_factor)
         absolute = float(heldout_absolute_tolerance)
@@ -135,7 +143,7 @@ class PolynomialImageAnalysisPlan(StrictModule, NonTrainableState):
         lower_bounds: ArrayLike | float = -1.0,
         upper_bounds: ArrayLike | float = 1.0,
         policy: PolynomialImageAnalysisPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(polynomial_map, SparsePolynomialMap):
             raise TypeError("polynomial_map must be a SparsePolynomialMap.")
         if not isinstance(target_support, TargetMonomialSupport):
@@ -278,7 +286,7 @@ class PreparedPolynomialImageAnalysis(StrictModule, NonTrainableState):
         /,
         *,
         numeric_version: ArrayLike = 0,
-    ):
+    ) -> None:
         if not isinstance(plan, PolynomialImageAnalysisPlan):
             raise TypeError("plan must be a PolynomialImageAnalysisPlan.")
         if not isinstance(polynomial_map, SparsePolynomialMap):
@@ -326,7 +334,7 @@ def plan_polynomial_image_analysis(
     polynomial_map: SparsePolynomialMap,
     target_support: TargetMonomialSupport,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> PolynomialImageAnalysisPlan:
     """Create a fixed-support image-analysis plan."""
 
@@ -406,7 +414,7 @@ def _rank_bounds(
     ambiguity_factor: float,
 ) -> tuple[int, int, float, float]:
     real_dtype = np.asarray(singular_values).real.dtype
-    tiny = np.finfo(real_dtype).tiny
+    tiny = float(np.finfo(real_dtype).tiny)
     largest = float(np.max(singular_values, initial=0.0))
     central = relative_tolerance * max(largest, tiny)
     lower_cutoff = central / ambiguity_factor
@@ -420,7 +428,7 @@ def _svd(
     matrix: Array,
     policy: PolynomialImageAnalysisPolicy,
     problem_id: str,
-):
+) -> SVDSolveResult:
     rows, columns = matrix.shape
     count = min(rows, columns)
     problem = SVDProblem(
@@ -449,7 +457,7 @@ def _svd(
 def _empty_jacobian_evidence(
     sample_count: int,
     mode_count: int,
-    dtype,
+    dtype: DTypeLike,
 ) -> JacobianRankEvidence:
     return JacobianRankEvidence(
         jnp.zeros((sample_count, mode_count), dtype=dtype),
@@ -464,7 +472,7 @@ def _empty_jacobian_evidence(
 
 def _empty_relation_evidence(
     monomial_count: int,
-    dtype,
+    dtype: DTypeLike,
 ) -> TargetRelationEvidence:
     return TargetRelationEvidence(
         jnp.zeros((monomial_count,), dtype=dtype),

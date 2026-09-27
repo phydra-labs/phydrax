@@ -10,7 +10,9 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from ._operators import (
@@ -42,7 +44,7 @@ class EmpiricalGramLinearOperator(AbstractLinearOperator):
         centered: bool = True,
         damping: float = 0.0,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(features, AbstractLinearOperator):
             raise TypeError("features must be an AbstractLinearOperator.")
         if features.batch_shape:
@@ -66,13 +68,13 @@ class EmpiricalGramLinearOperator(AbstractLinearOperator):
             | jnp.any(values < 0.0)
             | (jnp.sum(values) <= 0.0)
         )
-        if not isinstance(values, jax.core.Tracer) and bool(invalid_weights):
+        if not isinstance(values, jax_core.Tracer) and bool(invalid_weights):
             raise ValueError(
                 "Empirical weights must be finite, non-negative, and have positive mass."
             )
         active_bound = (
             sample_count
-            if isinstance(values, jax.core.Tracer)
+            if isinstance(values, jax_core.Tracer)
             else int(jnp.count_nonzero(values > 0.0))
         )
         values = eqx.error_if(

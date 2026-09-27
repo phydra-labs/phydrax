@@ -9,7 +9,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_imc_absorption_commits_equal_packet_to_material_energy():
+def test_imc_absorption_commits_equal_packet_to_material_energy() -> None:
     plan = phx.solver.HybridIMCDDMCPlan(
         jnp.asarray((1.0, 1.0)),
         jnp.full((2, 1), 1.0e-3),
@@ -36,7 +36,7 @@ def test_imc_absorption_commits_equal_packet_to_material_energy():
     assert result.accepted.material_energy[0] >= state.material_energy[0]
 
 
-def test_ddmc_classification_and_failed_step_rollback_are_explicit():
+def test_ddmc_classification_and_failed_step_rollback_are_explicit() -> None:
     plan = phx.solver.HybridIMCDDMCPlan(
         jnp.asarray((1.0,)),
         jnp.asarray(((1.0e-8,),)),

@@ -11,7 +11,7 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -40,7 +40,9 @@ class MPOHamiltonian(StrictModule):
     tolerance: float = eqx.field(static=True)
     hamiltonian_id: str = eqx.field(static=True)
 
-    def __init__(self, operator: MatrixProductOperator, /, *, tolerance: float = 1e-8):
+    def __init__(
+        self, operator: MatrixProductOperator, /, *, tolerance: float = 1e-8
+    ) -> None:
         if not isinstance(operator, MatrixProductOperator):
             raise TypeError("operator must be MatrixProductOperator.")
         tolerance_ = float(tolerance)
@@ -85,7 +87,7 @@ class MPOLindbladian(StrictModule):
         /,
         *,
         tolerance: float = 1e-8,
-    ):
+    ) -> None:
         if not isinstance(generator, MatrixProductOperator):
             raise TypeError("generator must be MatrixProductOperator.")
         if generator.output_dimensions != generator.input_dimensions:
@@ -195,7 +197,7 @@ class LPDOChannelEvolutionPlan(StrictModule):
         trace_preservation_tolerance: float = 1e-8,
         trace_tolerance: float = 1e-6,
         maximum_discarded_weight: float = 1e-6,
-    ):
+    ) -> None:
         selected = tuple(channels)
         steps_ = int(steps)
         capacity = int(maximum_purification_dimension)

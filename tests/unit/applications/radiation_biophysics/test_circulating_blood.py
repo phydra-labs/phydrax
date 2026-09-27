@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -15,7 +16,7 @@ import phydrax as phx
 from phydrax.applications.radiation_biophysics import circulating_blood as cb
 
 
-def _two_state(*, forward=2.0, backward=3.0):
+def _two_state(*, forward: Any = 2.0, backward: Any = 3.0) -> Any:
     model = cb.CirculatingBloodModel(
         (
             cb.BloodCompartment("central", 1.0),
@@ -29,17 +30,17 @@ def _two_state(*, forward=2.0, backward=3.0):
     return cb.prepare_circulating_blood_model(model)
 
 
-def _quantity(reference=cb.ABSORBED_DOSE_RATE_REFERENCE):
+def _quantity(reference: Any = cb.ABSORBED_DOSE_RATE_REFERENCE) -> Any:
     return cb.circulating_blood_dose_rate_quantity("blood_dose_rate", reference)
 
 
 def _schedule(
-    intervals,
+    intervals: Any,
     *,
-    rates=(1.0, 2.0),
-    uncertainty=(0.1, 0.2),
-    reference=cb.ABSORBED_DOSE_RATE_REFERENCE,
-):
+    rates: Any = (1.0, 2.0),
+    uncertainty: Any = (0.1, 0.2),
+    reference: Any = cb.ABSORBED_DOSE_RATE_REFERENCE,
+) -> Any:
     quantity = _quantity(reference)
     return cb.PiecewiseConstantDoseRateSchedule(
         tuple(
@@ -55,7 +56,7 @@ def _schedule(
     )
 
 
-def test_two_state_transition_and_exact_occupation_match_analytic_solution():
+def test_two_state_transition_and_exact_occupation_match_analytic_solution() -> None:
     forward = 2.0
     backward = 3.0
     duration = 0.7
@@ -103,7 +104,7 @@ def test_two_state_transition_and_exact_occupation_match_analytic_solution():
     )
 
 
-def test_interval_splitting_boundaries_and_gaps_preserve_exact_reward():
+def test_interval_splitting_boundaries_and_gaps_preserve_exact_reward() -> None:
     prepared = _two_state()
     initial = np.asarray((0.25, 0.75))
     whole = cb.integrate_circulating_blood_dose(
@@ -135,7 +136,7 @@ def test_interval_splitting_boundaries_and_gaps_preserve_exact_reward():
     assert float(jnp.sum(gaps.occupation_seconds)) == pytest.approx(2.0, rel=1e-6)
 
 
-def test_absorbing_state_is_exact_and_stationary_claim_is_refused():
+def test_absorbing_state_is_exact_and_stationary_claim_is_refused() -> None:
     prepared = cb.prepare_circulating_blood_model(
         cb.CirculatingBloodModel(
             (
@@ -152,7 +153,7 @@ def test_absorbing_state_is_exact_and_stationary_claim_is_refused():
         prepared.stationary_distribution()
 
 
-def test_same_realization_replays_and_constant_dose_is_path_invariant():
+def test_same_realization_replays_and_constant_dose_is_path_invariant() -> None:
     prepared = _two_state(forward=0.5, backward=0.25)
     schedule = _schedule(((0.0, 3.0),), rates=(0.4, 0.4))
     realization = phx.stochastic.PoissonClockRealization(
@@ -195,7 +196,7 @@ def test_same_realization_replays_and_constant_dose_is_path_invariant():
     )
 
 
-def test_preparation_and_history_capacity_fail_closed_with_evidence():
+def test_preparation_and_history_capacity_fail_closed_with_evidence() -> None:
     with pytest.raises(ValueError, match="compartment capacity exceeded"):
         cb.prepare_circulating_blood_model(
             _two_state().model,
@@ -224,11 +225,12 @@ def test_preparation_and_history_capacity_fail_closed_with_evidence():
     assert bool(jnp.all(jnp.isnan(result.total_dose_gy)))
 
 
-def test_dose_rate_meanings_and_unknown_uncertainty_are_not_collapsed():
+def test_dose_rate_meanings_and_unknown_uncertainty_are_not_collapsed() -> None:
     prepared = _two_state()
     known = cb.integrate_circulating_blood_dose(
         prepared,
         _schedule(((0.0, 1.0),), uncertainty=(0.1, 0.2)),
+        # ty: ignore[invalid-argument-type]
         (1.0, 0.0),
         t0_s=0.0,
         t1_s=1.0,
@@ -236,6 +238,7 @@ def test_dose_rate_meanings_and_unknown_uncertainty_are_not_collapsed():
     unknown = cb.integrate_circulating_blood_dose(
         prepared,
         _schedule(((0.0, 1.0),), uncertainty=None),
+        # ty: ignore[invalid-argument-type]
         (1.0, 0.0),
         t0_s=0.0,
         t1_s=1.0,
@@ -256,7 +259,7 @@ def test_dose_rate_meanings_and_unknown_uncertainty_are_not_collapsed():
         cb.circulating_blood_dose_rate_quantity("rate", "generic-blood-dose")
 
 
-def _manifest(name):
+def _manifest(name: Any) -> Any:
     payload = name.encode()
     return phx.qualification.ReferenceArtifactManifest(
         name,
@@ -275,7 +278,7 @@ def _manifest(name):
     )
 
 
-def _affine(*, offset=0.0):
+def _affine(*, offset: Any = 0.0) -> Any:
     matrix = np.eye(4)
     matrix[0, 3] = offset
     return phx.imaging.ImageIndexAffine(
@@ -290,7 +293,9 @@ def _affine(*, offset=0.0):
     )
 
 
-def _image(asset_id, values, spec, affine, *, uncertainty=None):
+def _image(
+    asset_id: Any, values: Any, spec: Any, affine: Any, *, uncertainty: Any = None
+) -> Any:
     return phx.imaging.MedicalImageAsset(
         asset_id,
         "synthetic",
@@ -310,7 +315,7 @@ def _image(asset_id, values, spec, affine, *, uncertainty=None):
     )
 
 
-def _spatial_inputs(*, dose_affine=None, uncertainty=True):
+def _spatial_inputs(*, dose_affine: Any = None, uncertainty: Any = True) -> Any:
     affine = _affine()
     dose_quantity = _quantity()
     dose_spec = phx.imaging.ImageFieldSpec(
@@ -365,7 +370,9 @@ def _spatial_inputs(*, dose_affine=None, uncertainty=True):
     return dose, labels, weights
 
 
-def test_spatial_compartment_mixture_requires_exact_affine_and_normalized_weights():
+def test_spatial_compartment_mixture_requires_exact_affine_and_normalized_weights() -> (
+    None
+):
     dose, labels, weights = _spatial_inputs()
     prepared = cb.prepare_spatial_compartment_mixture(
         dose, labels, ("central", "peripheral"), weights
@@ -385,7 +392,11 @@ def test_spatial_compartment_mixture_requires_exact_affine_and_normalized_weight
     }
     with pytest.raises(ValueError, match="normalized"):
         cb.prepare_spatial_compartment_mixture(
-            dose, labels, ("central", "peripheral"), invalid
+            dose,
+            labels,
+            ("central", "peripheral"),
+            # ty: ignore[invalid-argument-type]
+            invalid,
         )
     negative = {
         **weights,
@@ -393,11 +404,15 @@ def test_spatial_compartment_mixture_requires_exact_affine_and_normalized_weight
     }
     with pytest.raises(ValueError, match="nonnegative"):
         cb.prepare_spatial_compartment_mixture(
-            dose, labels, ("central", "peripheral"), negative
+            dose,
+            labels,
+            ("central", "peripheral"),
+            # ty: ignore[invalid-argument-type]
+            negative,
         )
 
 
-def test_spatial_mixture_preserves_unknown_uncertainty():
+def test_spatial_mixture_preserves_unknown_uncertainty() -> None:
     dose, labels, weights = _spatial_inputs(uncertainty=False)
     prepared = cb.prepare_spatial_compartment_mixture(
         dose, labels, ("central", "peripheral"), weights

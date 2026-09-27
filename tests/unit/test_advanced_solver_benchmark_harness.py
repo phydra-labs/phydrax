@@ -8,6 +8,7 @@ import json
 from dataclasses import replace
 from importlib import import_module
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 
@@ -43,18 +44,18 @@ class _ExactAdapter(BenchmarkAdapter):
     dependency = "numpy"
     capabilities = frozenset({"linear.scalar"})
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.events = []
 
-    def availability(self, capability, /):
+    def availability(self, capability: Any, /) -> Any:
         return Availability(True, capability, "numpy", np.__version__, None)
 
-    def implementation(self, spec, /):
+    def implementation(self, spec: Any, /) -> Any:
         return Implementation(
             "exact", "numpy-cpu", "solve", "none", {"numpy": np.__version__}
         )
 
-    def setup(self, spec, /):
+    def setup(self, spec: Any, /) -> Any:
         self.events.append("setup")
         return {
             "spec": spec,
@@ -62,21 +63,21 @@ class _ExactAdapter(BenchmarkAdapter):
             "certificate_problem": spec.problem,
         }
 
-    def compilation_applicable(self, setup_state, /):
+    def compilation_applicable(self, setup_state: Any, /) -> bool:
         return True
 
-    def compile(self, setup_state, /):
+    def compile(self, setup_state: Any, /) -> Any:
         self.events.append("compilation")
         return setup_state
 
-    def preparation_applicable(self, compiled_state, /):
+    def preparation_applicable(self, compiled_state: Any, /) -> bool:
         return True
 
-    def prepare(self, compiled_state, /):
+    def prepare(self, compiled_state: Any, /) -> Any:
         self.events.append("preparation")
         return compiled_state
 
-    def solve(self, prepared_state, /):
+    def solve(self, prepared_state: Any, /) -> Any:
         self.events.append("solve")
         problem = prepared_state["spec"].problem
         return SolveResult(
@@ -94,21 +95,21 @@ class _ExactAdapter(BenchmarkAdapter):
             },
         )
 
-    def differentiation_applicable(self, prepared_state, /):
+    def differentiation_applicable(self, prepared_state: Any, /) -> bool:
         return True
 
-    def compile_differentiation(self, prepared_state, /):
+    def compile_differentiation(self, prepared_state: Any, /) -> Any:
         self.events.append("differentiation_compilation")
         return prepared_state
 
-    def differentiate(self, prepared_state, /):
+    def differentiate(self, prepared_state: Any, /) -> Any:
         self.events.append("differentiation")
         return np.linalg.inv(prepared_state["matrix"])
 
-    def refresh_applicable(self, prepared_state, /):
+    def refresh_applicable(self, prepared_state: Any, /) -> bool:
         return True
 
-    def refresh(self, prepared_state, /):
+    def refresh(self, prepared_state: Any, /) -> Any:
         self.events.append("refresh")
         problem = prepared_state["spec"].problem
         refreshed_problem = replace(
@@ -126,10 +127,10 @@ class _ExactAdapter(BenchmarkAdapter):
             evidence="deterministic coefficient-scale refresh",
         )
 
-    def certificate_problem(self, prepared_state, /):
+    def certificate_problem(self, prepared_state: Any, /) -> Any:
         return prepared_state["certificate_problem"]
 
-    def memory(self, prepared_state, result, /):
+    def memory(self, prepared_state: Any, result: Any, /) -> Any:
         matrix_bytes = prepared_state["matrix"].nbytes
         return {
             "matrix_bytes": matrix_bytes,
@@ -140,7 +141,7 @@ class _ExactAdapter(BenchmarkAdapter):
 
 
 class _MissingAdapter(_ExactAdapter):
-    def availability(self, capability, /):
+    def availability(self, capability: Any, /) -> Any:
         return Availability(
             False,
             capability,
@@ -150,7 +151,7 @@ class _MissingAdapter(_ExactAdapter):
         )
 
 
-def test_harness_separates_phases_excludes_warmup_and_verifies_independently():
+def test_harness_separates_phases_excludes_warmup_and_verifies_independently() -> None:
     problem = sparse_scalar_linear(size=8, right_hand_sides=1, seed=3)
     spec = CaseSpec("linear-scalar", problem, Tolerances(max_steps=20))
     adapter = _ExactAdapter()
@@ -206,7 +207,7 @@ def test_harness_separates_phases_excludes_warmup_and_verifies_independently():
     json.dumps(row, allow_nan=False)
 
 
-def test_unavailable_adapter_emits_precise_skip_without_executing_setup():
+def test_unavailable_adapter_emits_precise_skip_without_executing_setup() -> None:
     problem = sparse_scalar_linear(size=8, right_hand_sides=1, seed=4)
     adapter = _MissingAdapter()
 
@@ -230,7 +231,7 @@ def test_unavailable_adapter_emits_precise_skip_without_executing_setup():
     validate_row(row)
 
 
-def test_optional_adapters_load_without_importing_optional_dependencies_eagerly():
+def test_optional_adapters_load_without_importing_optional_dependencies_eagerly() -> None:
     assert adapter_names() == (
         "phydrax",
         "mpax",
@@ -256,7 +257,7 @@ def test_optional_adapters_load_without_importing_optional_dependencies_eagerly(
     )
 
 
-def test_public_phydrax_adapter_declares_every_representative_family():
+def test_public_phydrax_adapter_declares_every_representative_family() -> None:
     adapter = load_adapter("phydrax")
 
     assert adapter.capabilities == frozenset(
@@ -280,7 +281,7 @@ def test_public_phydrax_adapter_declares_every_representative_family():
     assert not adapter.availability("optimization.conic-program").available
 
 
-def test_capabilities_cli_emits_all_common_solver_families(capsys):
+def test_capabilities_cli_emits_all_common_solver_families(capsys: Any) -> None:
     benchmark_main(["capabilities", "--adapter", "phydrax"])
     payload = json.loads(capsys.readouterr().out)
 
@@ -303,11 +304,11 @@ def test_capabilities_cli_emits_all_common_solver_families(capsys):
     }
 
 
-def _environment():
+def _environment() -> Any:
     return capture_environment().to_dict()
 
 
-def test_phydrax_sparse_linear_adapter_runs_public_canonical_operator_contract():
+def test_phydrax_sparse_linear_adapter_runs_public_canonical_operator_contract() -> None:
     problem = sparse_scalar_linear(size=8, right_hand_sides=1, seed=21)
     row = execute_case(
         load_adapter("phydrax"),
@@ -322,7 +323,7 @@ def test_phydrax_sparse_linear_adapter_runs_public_canonical_operator_contract()
     validate_row(row)
 
 
-def test_phydrax_nonlinear_adapter_uses_prepared_refresh_lifecycle():
+def test_phydrax_nonlinear_adapter_uses_prepared_refresh_lifecycle() -> None:
     problem = nonlinear_root(size=4, seed=22)
     row = execute_case(
         load_adapter("phydrax"),
@@ -349,7 +350,7 @@ def test_phydrax_nonlinear_adapter_uses_prepared_refresh_lifecycle():
     validate_row(row)
 
 
-def test_matched_dense_and_matrix_free_root_modes_run_end_to_end():
+def test_matched_dense_and_matrix_free_root_modes_run_end_to_end() -> None:
     problem = nonlinear_root(size=4, seed=23)
     expected_methods = {
         ("phydrax", "dense"): "newton+dense-lu",
@@ -368,6 +369,7 @@ def test_matched_dense_and_matrix_free_root_modes_run_end_to_end():
                 f"nonlinear-root-{solver_mode}",
                 problem,
                 Tolerances(relative=1e-8, absolute=1e-10, max_steps=20),
+                # ty: ignore[invalid-argument-type]
                 solver_mode=solver_mode,
             ),
             environment=_environment(),
@@ -383,7 +385,7 @@ def test_matched_dense_and_matrix_free_root_modes_run_end_to_end():
         validate_row(row)
 
 
-def test_phydrax_sparse_root_runs_prepared_numeric_refresh_lifecycle():
+def test_phydrax_sparse_root_runs_prepared_numeric_refresh_lifecycle() -> None:
     problem = semilinear_poisson_root(size=8, seed=24)
     adapter = load_adapter("phydrax")
     spec = CaseSpec(
@@ -414,7 +416,7 @@ def test_phydrax_sparse_root_runs_prepared_numeric_refresh_lifecycle():
     validate_row(row)
 
 
-def test_phydrax_program_runs_compiled_prepared_refresh_lifecycle():
+def test_phydrax_program_runs_compiled_prepared_refresh_lifecycle() -> None:
     problem = bounded_linear_program(size=8, seed=25)
     adapter = load_adapter("phydrax")
     spec = CaseSpec(
@@ -442,7 +444,7 @@ def test_phydrax_program_runs_compiled_prepared_refresh_lifecycle():
     validate_row(row)
 
 
-def test_optimistix_sparse_reference_uses_dimension_scaled_linear_budget():
+def test_optimistix_sparse_reference_uses_dimension_scaled_linear_budget() -> None:
     problem = semilinear_poisson_root(size=128, seed=24)
     spec = CaseSpec(
         "nonlinear-root-sparse-pde",
@@ -462,7 +464,7 @@ def test_optimistix_sparse_reference_uses_dimension_scaled_linear_budget():
     assert linear_solver.max_steps * linear_solver.restart == problem.initial.size
 
 
-def test_root_differentiation_matches_analytic_implicit_sensitivity():
+def test_root_differentiation_matches_analytic_implicit_sensitivity() -> None:
     problem = nonlinear_root(size=2, seed=31)
     spec = CaseSpec(
         "nonlinear-root",
@@ -495,7 +497,7 @@ def test_root_differentiation_matches_analytic_implicit_sensitivity():
         assert np.allclose(derivative, expected, rtol=1e-8, atol=1e-10)
 
 
-def test_scipy_vi_memory_counts_initial_target_bounds_and_diagonal():
+def test_scipy_vi_memory_counts_initial_target_bounds_and_diagonal() -> None:
     problem = variational_inequality(size=8, seed=12)
     adapter = load_adapter("scipy")
     state = adapter.setup(CaseSpec("nonlinear-vi", problem))
@@ -525,7 +527,7 @@ def test_scipy_vi_memory_counts_initial_target_bounds_and_diagonal():
     assert memory["matrix_bytes"] == expected
 
 
-def test_phydrax_implementation_records_source_fingerprint():
+def test_phydrax_implementation_records_source_fingerprint() -> None:
     problem = sparse_scalar_linear(size=8, right_hand_sides=1, seed=13)
     implementation = load_adapter("phydrax").implementation(
         CaseSpec("linear-scalar", problem)
@@ -536,7 +538,9 @@ def test_phydrax_implementation_records_source_fingerprint():
     int(fingerprint, 16)
 
 
-def test_phydrax_source_fingerprint_covers_non_init_modules(tmp_path, monkeypatch):
+def test_phydrax_source_fingerprint_covers_non_init_modules(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     from benchmarks.advanced_solvers.adapters import phydrax as phydrax_adapter
 
     package_root = tmp_path / "phydrax"
@@ -558,19 +562,21 @@ def test_phydrax_source_fingerprint_covers_non_init_modules(tmp_path, monkeypatc
     assert first != second
 
 
-def test_scipy_arpack_no_pair_returns_honest_nonconverged_candidate(monkeypatch):
+def test_scipy_arpack_no_pair_returns_honest_nonconverged_candidate(
+    monkeypatch: Any,
+) -> None:
     from benchmarks.advanced_solvers.adapters import scipy as scipy_adapter
 
     problem = general_eigenproblem(size=8, eigenpairs=2, seed=14)
 
     class NoConvergence(Exception):
-        def __init__(self):
+        def __init__(self) -> None:
             self.eigenvalues = np.asarray([], dtype=np.complex128)
             self.eigenvectors = np.empty(
                 (problem.matrix.shape[0], 0), dtype=np.complex128
             )
 
-    def fail_eigs(*args, **kwargs):
+    def fail_eigs(*args: Any, **kwargs: Any) -> None:
         del args, kwargs
         raise NoConvergence()
 
@@ -598,7 +604,7 @@ def test_scipy_arpack_no_pair_returns_honest_nonconverged_candidate(monkeypatch)
     assert np.isfinite(certificate["relative_residual"])
 
 
-def test_slepc_initial_space_is_seed_deterministic():
+def test_slepc_initial_space_is_seed_deterministic() -> None:
     from benchmarks.advanced_solvers.adapters.slepc import (
         _deterministic_initial_vector,
     )
@@ -617,7 +623,7 @@ def test_slepc_initial_space_is_seed_deterministic():
     )
 
 
-def test_control_horizon_campaign_reports_warm_and_sparse_evidence():
+def test_control_horizon_campaign_reports_warm_and_sparse_evidence() -> None:
     report = run_control_horizon_campaign((2,), seed=17, warmup=0, repeats=1)
     row = report["rows"][0]
 

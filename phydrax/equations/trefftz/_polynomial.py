@@ -11,7 +11,8 @@ from typing import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._differentiation import DerivativeRegularity
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -55,7 +56,7 @@ def _harmonic_counts(dimension: int, maximum_degree: int) -> tuple[int, int, int
 
 def _critical_construction_audit(
     residuals: Sequence[float],
-    tolerances: Sequence[float],
+    tolerances: Sequence[float | np.floating],
     labels: Sequence[int],
     /,
     *,
@@ -111,7 +112,7 @@ def _add_scaled_expression(
 def _canonical_harmonic_block(
     dimension: int,
     degree: int,
-) -> tuple[np.ndarray, np.ndarray, float, float, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, float, np.floating, np.ndarray]:
     """Return a canonical exact nullspace basis for one homogeneous degree.
 
     The coefficient of every monomial with first exponent at least two is a
@@ -215,7 +216,7 @@ class HarmonicPolynomialBasis(AbstractTrefftzBasis):
         *,
         normalization: SimilarityNormalization | None = None,
         resources: TrefftzResourceBudget | None = None,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         degree_ = int(maximum_degree)
         if dimension_ < 2:
@@ -358,7 +359,7 @@ class PolyharmonicAlmansiBasis(AbstractTrefftzBasis):
         *,
         normalization: SimilarityNormalization | None = None,
         resources: TrefftzResourceBudget | None = None,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         order_ = int(order)
         if dimension_ < 2:

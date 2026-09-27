@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
@@ -19,7 +20,7 @@ class TransformedParameter(StrictModule, ParameterOwner):
     raw: PyTree[Array]
     transform: AbstractParameterTransform
 
-    def __init__(self, raw: PyTree[Array], transform: AbstractParameterTransform):
+    def __init__(self, raw: PyTree[Array], transform: AbstractParameterTransform) -> None:
         if not isinstance(transform, AbstractParameterTransform):
             raise TypeError("transform must be an AbstractParameterTransform.")
         leaves = jax.tree_util.tree_leaves(raw)

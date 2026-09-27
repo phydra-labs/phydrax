@@ -12,7 +12,8 @@ from enum import IntEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from scipy.special import jn_zeros
 
 from ... import ein
@@ -80,7 +81,7 @@ class CylindricalHankelPlan(StrictModule, NonTrainableState):
         inverse_tolerance: float = 2.0e-6,
         parseval_tolerance: float = 2.0e-6,
         maximum_matrix_elements: int = 4_194_304,
-    ):
+    ) -> None:
         radius_value = float(radius)
         count = int(radial_count)
         azimuthal_order = int(order)

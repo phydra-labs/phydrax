@@ -8,18 +8,20 @@ from __future__ import annotations
 
 from enum import IntEnum
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg import DenseLinearOperator, FactorizationPolicy, factorize
 from ...optim import least_squares, LevenbergMarquardt, OptimizationTermination
+from ...typing import parse
 from ..core._evidence import FinanceEvidenceBinding
 from ._surface import (
     ESSVISurface,
@@ -32,7 +34,7 @@ from ._surface import (
 )
 
 
-CalibrationFamily = Literal["svi", "essvi"]
+CalibrationFamily: TypeAlias = Literal["svi", "essvi"]
 
 
 class CalibrationStatus(IntEnum):
@@ -64,9 +66,8 @@ class CalibrationPlan(StrictModule):
         tolerance: float = 1.0e-9,
         initial_damping: float = 1.0e-3,
         fail_on_arbitrage: bool = True,
-    ):
-        if family not in ("svi", "essvi"):
-            raise ValueError("calibration family must be svi or essvi.")
+    ) -> None:
+        family = parse(family, CalibrationFamily, "family")
         expiries = jnp.asarray(slice_expiries, dtype=jnp.float64)
         if expiries.ndim != 1 or expiries.size < (1 if family == "svi" else 2):
             raise ValueError("slice_expiries has insufficient slices for the family.")
@@ -311,7 +312,9 @@ def _svi_transformed(raw: Array) -> tuple[Array, Array, Array, Array, Array]:
     )
 
 
-def _essvi_transformed(plan: CalibrationPlan, raw: Array):
+def _essvi_transformed(
+    plan: CalibrationPlan, raw: Array
+) -> tuple[Array, Array, Array, Array]:
     count = plan.slice_expiries.size
     theta = jnp.cumsum(jax.nn.softplus(raw[:count]) + 1.0e-10)
     rho = 0.999 * jnp.tanh(raw[count : 2 * count])

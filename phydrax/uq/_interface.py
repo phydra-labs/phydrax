@@ -7,7 +7,8 @@ from __future__ import annotations
 import math
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -39,7 +40,7 @@ class InterfaceAcquisitionPolicy(StrictModule, NonTrainableState):
         residual_weight: float = 1.0,
         diversity_weight: float = 1.0,
         normalization_epsilon: float = 1.0e-12,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (uncertainty_weight, residual_weight, diversity_weight)

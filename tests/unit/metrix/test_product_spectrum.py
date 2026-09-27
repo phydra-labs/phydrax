@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _two_point_basis(decomposition_id="two-point"):
+def _two_point_basis(decomposition_id: Any = "two-point") -> Any:
     return phx.discretization.SpectralDecomposition(
         jnp.asarray([0.0, 2.0]),
         jnp.asarray([[1.0, 1.0], [1.0, -1.0]]),
@@ -19,7 +22,7 @@ def _two_point_basis(decomposition_id="two-point"):
     )
 
 
-def test_product_laplacian_materializes_kronecker_basis_and_summed_values():
+def test_product_laplacian_materializes_kronecker_basis_and_summed_values() -> None:
     first = _two_point_basis("first")
     second = _two_point_basis("second")
     product = phx.metrix.product_laplacian_eigenbasis(
@@ -30,6 +33,7 @@ def test_product_laplacian_materializes_kronecker_basis_and_summed_values():
     assert jnp.allclose(product.eigenvalues, jnp.asarray([0.0, 2.0, 2.0, 4.0]))
     assert jnp.allclose(product.probability_measure, 0.25)
     assert product.spectral_dimension == 2.0
+    # ty: ignore[unresolved-attribute]
     assert product.report.exact
     assert jnp.allclose(
         product.eigenfunctions.T
@@ -38,7 +42,7 @@ def test_product_laplacian_materializes_kronecker_basis_and_summed_values():
     )
 
 
-def test_product_mode_selection_preserves_complete_degenerate_clusters():
+def test_product_mode_selection_preserves_complete_degenerate_clusters() -> None:
     factors = (_two_point_basis("first"), _two_point_basis("second"))
 
     with pytest.raises(ValueError, match="degenerate product eigenspace"):
@@ -46,11 +50,13 @@ def test_product_mode_selection_preserves_complete_degenerate_clusters():
 
     product = phx.metrix.product_laplacian_eigenbasis(factors, num_modes=3)
     assert jnp.allclose(product.eigenvalues, jnp.asarray([0.0, 2.0, 2.0]))
+    # ty: ignore[unresolved-attribute]
     assert product.report.next_eigenvalue == pytest.approx(4.0)
+    # ty: ignore[unresolved-attribute]
     assert not product.report.exact
 
 
-def test_isotropic_product_matern_is_distinct_from_separable_kernel_product():
+def test_isotropic_product_matern_is_distinct_from_separable_kernel_product() -> None:
     first = _two_point_basis("first")
     second = _two_point_basis("second")
     product_basis = phx.metrix.product_laplacian_eigenbasis(
@@ -73,7 +79,7 @@ def test_isotropic_product_matern_is_distinct_from_separable_kernel_product():
     assert np.min(np.linalg.eigvalsh(np.asarray(isotropic_matrix))) >= -1e-10
 
 
-def test_product_spectrum_uses_certified_factor_tail():
+def test_product_spectrum_uses_certified_factor_tail() -> None:
     report = phx.discretization.LaplacianEigenbasisReport(
         method_id="test-truncation",
         source_id="truncated-factor",
@@ -101,11 +107,13 @@ def test_product_spectrum_uses_certified_factor_tail():
     )
 
     assert jnp.allclose(product.eigenvalues, jnp.asarray([0.0, 2.0]))
+    # ty: ignore[unresolved-attribute]
     assert product.report.next_eigenvalue == pytest.approx(5.0)
+    # ty: ignore[unresolved-attribute]
     assert not product.report.exact
 
 
-def test_product_spectral_kernel_reuses_exact_weight_space_gp():
+def test_product_spectral_kernel_reuses_exact_weight_space_gp() -> None:
     product = phx.metrix.product_laplacian_eigenbasis(
         (_two_point_basis("first"), _two_point_basis("second")),
         num_modes=3,

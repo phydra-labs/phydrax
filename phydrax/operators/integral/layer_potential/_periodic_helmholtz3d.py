@@ -8,7 +8,8 @@ import math
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ....discretization import PeriodicCell
 from ....geometry import MeshRegion
@@ -37,7 +38,7 @@ class PeriodicHelmholtzWoodAnomalyError(ValueError):
         minimum_denominator: float,
         denominator_tolerance: float,
         unsearched_mode_lower_wavenumber: float,
-    ):
+    ) -> None:
         super().__init__(message)
         self.closest_mode_index = closest_mode_index
         self.minimum_denominator = float(minimum_denominator)
@@ -80,7 +81,7 @@ def _guard_nonwood_modes(
         policy.wood_tolerance,
         128.0 * np.finfo(stored_reciprocal.dtype).eps,
     )
-    tolerance = relative_tolerance * scale
+    tolerance = float(relative_tolerance * scale)
     singular_value = float(np.linalg.svd(reciprocal, compute_uv=False)[-1])
     outside_lower = max(
         0.0,

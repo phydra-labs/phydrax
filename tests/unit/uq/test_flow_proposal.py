@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -17,11 +20,11 @@ from phydrax.uq._flow_proposal import (
 )
 
 
-def _normal_log_density(value, *, location=0.0):
+def _normal_log_density(value: Any, *, location: Any = 0.0) -> Any:
     return -0.5 * (value - location) ** 2 - 0.5 * jnp.log(2.0 * jnp.pi)
 
 
-def test_independence_mh_uses_both_proposal_density_terms_and_rejects_nonfinite():
+def test_independence_mh_uses_both_proposal_density_terms_and_rejects_nonfinite() -> None:
     current = jnp.asarray([0.25])
     proposal = jnp.asarray([[1.5], [jnp.nan]])
     current_target = _normal_log_density(current[0])
@@ -48,7 +51,7 @@ def test_independence_mh_uses_both_proposal_density_terms_and_rejects_nonfinite(
     assert jnp.array_equal(final.position, proposal[0])
 
 
-def test_asymmetric_independence_mh_recovers_the_target_not_the_proposal():
+def test_asymmetric_independence_mh_recovers_the_target_not_the_proposal() -> None:
     count = 50_000
     proposal_key, acceptance_key = jr.split(jr.key(4))
     proposed_positions = 1.0 + jr.normal(proposal_key, (count, 1))
@@ -65,7 +68,7 @@ def test_asymmetric_independence_mh_recovers_the_target_not_the_proposal():
         _normal_log_density(0.0, location=1.0),
     )
 
-    def transition(state, item):
+    def transition(state: Any, item: Any) -> Any:
         proposed, log_target, log_proposal, log_uniform = item
         next_state, _ = _independence_mh_scan(
             state,
@@ -95,7 +98,7 @@ def test_asymmetric_independence_mh_recovers_the_target_not_the_proposal():
     assert jnp.abs(jnp.mean(retained) - 1.0) > 0.8
 
 
-def test_chain_stratified_reservoir_is_bounded_and_reproducible():
+def test_chain_stratified_reservoir_is_bounded_and_reproducible() -> None:
     replay = _initialize_replay(
         num_chains=2,
         capacity_per_chain=3,
@@ -114,7 +117,7 @@ def test_chain_stratified_reservoir_is_bounded_and_reproducible():
     assert _replay_data(first).shape == (6, 1)
 
 
-def test_default_flow_supports_scalar_and_vector_events():
+def test_default_flow_supports_scalar_and_vector_events() -> None:
     scalar_data = jnp.linspace(-2.0, 2.0, 16)[:, None]
     vector_data = jnp.stack((scalar_data[:, 0], scalar_data[:, 0] ** 2), axis=1)
     scalar = _build_default_flow(
@@ -143,7 +146,7 @@ def test_default_flow_supports_scalar_and_vector_events():
     assert jnp.isfinite(vector_log_density)
 
 
-def test_flow_training_caps_oversized_batches_to_the_training_split():
+def test_flow_training_caps_oversized_batches_to_the_training_split() -> None:
     data = jnp.linspace(-2.0, 2.0, 10)[:, None]
     flow = _build_default_flow(
         jr.key(10),

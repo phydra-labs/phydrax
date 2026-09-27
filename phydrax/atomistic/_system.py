@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -68,7 +69,7 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
         name: str = "atomistic-system",
         coordinate_dtype: Any = "float64",
         system_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(units, AtomisticUnitSystem):
             raise TypeError("units must be an AtomisticUnitSystem.")
         ids = np.asarray(particle_ids)
@@ -304,7 +305,9 @@ class PreparedAtomisticSystem(StrictModule, NonTrainableState):
     numeric_version: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: AtomisticSystemPlan, /, *, numeric_version: str = "0"):
+    def __init__(
+        self, plan: AtomisticSystemPlan, /, *, numeric_version: str = "0"
+    ) -> None:
         if not isinstance(plan, AtomisticSystemPlan):
             raise TypeError("plan must be an AtomisticSystemPlan.")
         particles = ParticleSetPlan(

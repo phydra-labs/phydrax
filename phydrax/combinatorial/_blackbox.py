@@ -9,8 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax import core as jax_core
-from jaxtyping import Array, PyTree
+from jax import Array, core as jax_core
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ._method import AbstractLinearCombinatorialMethod, solve_combinatorial
@@ -33,7 +33,7 @@ class BlackboxInterpolation(StrictModule):
         /,
         *,
         certification: CombinatorialCertification | None = None,
-    ):
+    ) -> None:
         scale = jnp.asarray(lambda_, dtype=jnp.float64)
         if scale.ndim != 0:
             raise ValueError("blackbox interpolation lambda_ must be scalar.")

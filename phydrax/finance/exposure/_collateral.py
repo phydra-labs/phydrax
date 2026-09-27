@@ -14,10 +14,12 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import parse
 from ..contracts._credit import DefaultEventState
 from ..core import Currency
 
@@ -25,6 +27,7 @@ from ..core import Currency
 CloseoutValueSource: TypeAlias = Literal["risk_free", "replacement"]
 CloseoutObservation: TypeAlias = Literal["default_time", "mpor_end"]
 SimultaneousDefaultRule: TypeAlias = Literal["counterparty", "own", "zero"]
+_CollateralCarry: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -82,7 +85,7 @@ class NettingSet(StrictModule):
         *,
         agreement_scope_id: str,
         netting_set_id: str,
-    ):
+    ) -> None:
         ids = tuple(_identifier(value, "trade_id") for value in trade_ids)
         if not ids or len(set(ids)) != len(ids):
             raise ValueError("trade_ids must be non-empty and unique.")
@@ -116,7 +119,7 @@ class NettingSetCollection(StrictModule):
         /,
         *,
         collection_id: str,
-    ):
+    ) -> None:
         sets = tuple(netting_sets)
         if not sets or any(not isinstance(value, NettingSet) for value in sets):
             raise TypeError(
@@ -174,7 +177,7 @@ class CollateralAgreement(StrictModule):
         independent_amount_postable: ArrayLike = 0.0,
         remuneration_rate: ArrayLike = 0.0,
         agreement_id: str,
-    ):
+    ) -> None:
         if not isinstance(collateral_currency, Currency):
             raise TypeError("collateral_currency must be a Currency.")
         self.threshold_receivable = _scalar(
@@ -224,7 +227,7 @@ class PreparedCollateralAgreement(StrictModule):
         settles_on_grid: ArrayLike,
         prepared_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(agreement, CollateralAgreement):
             raise TypeError("agreement must be a CollateralAgreement.")
         nodes = _time_grid(times)
@@ -290,13 +293,12 @@ class CloseoutConvention(StrictModule):
         /,
         *,
         convention_id: str,
-    ):
-        if value_source not in ("risk_free", "replacement"):
-            raise ValueError("Unsupported closeout value source.")
-        if observation not in ("default_time", "mpor_end"):
-            raise ValueError("Unsupported closeout observation.")
-        if simultaneous_default not in ("counterparty", "own", "zero"):
-            raise ValueError("Unsupported simultaneous-default rule.")
+    ) -> None:
+        value_source = parse(value_source, CloseoutValueSource, "value_source")
+        observation = parse(observation, CloseoutObservation, "observation")
+        simultaneous_default = parse(
+            simultaneous_default, SimultaneousDefaultRule, "simultaneous_default"
+        )
         self.value_source = value_source
         self.observation = observation
         self.simultaneous_default = simultaneous_default
@@ -329,7 +331,7 @@ class CloseoutIdentityBinding(StrictModule):
         own_law_id: str,
         own_realization_id: str,
         own_coupling_id: str,
-    ):
+    ) -> None:
         values = tuple(
             _identifier(value, name)
             for value, name in (
@@ -499,7 +501,9 @@ def evolve_collateral(
     pending = jnp.zeros((path_count, time_count), dtype=values.dtype)
     unsettled = jnp.zeros((path_count,), dtype=values.dtype)
 
-    def collateral_step(carry, index):
+    def collateral_step(
+        carry: _CollateralCarry, index: Array
+    ) -> tuple[_CollateralCarry, tuple[Array, Array, Array]]:
         current_, pending_, outstanding_, unsettled_ = carry
         previous = jnp.maximum(index - 1, 0)
         duration = jnp.where(index > 0, nodes[index] - nodes[previous], 0.0)

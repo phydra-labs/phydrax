@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 import math
+from typing import Protocol
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 
@@ -16,6 +18,13 @@ from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+
+
+class _IdentifiedConservationDynamics(Protocol):
+    @property
+    def dynamics_id(self) -> str: ...
+
+    def __call__(self, time: Array, state: Array, args: object = None) -> Array: ...
 
 
 class ConservationSensitivityEvidence(StrictModule, NonTrainableState):
@@ -30,14 +39,14 @@ class ConservationSensitivityEvidence(StrictModule, NonTrainableState):
 
 
 def certify_conservation_sensitivity(
-    dynamics,
+    dynamics: _IdentifiedConservationDynamics,
     time: ArrayLike,
     state: ArrayLike,
     direction: ArrayLike,
     cotangent: ArrayLike,
     /,
     *,
-    args=None,
+    args: object = None,
     epsilon: float = 1.0e-5,
     decision_policy: BranchDifferentiationPolicy = BranchDifferentiationPolicy.SMOOTH,
     decision_id: str = "smooth",

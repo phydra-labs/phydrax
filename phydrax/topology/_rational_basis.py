@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from fractions import Fraction
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -36,7 +37,7 @@ class RationalClassBasis(StrictModule, NonTrainableState):
         vectors: tuple[tuple[Fraction, ...], ...],
         complex: CellSubcomplex,
         /,
-    ):
+    ) -> None:
         cells = []
         generators = []
         numerators = []
@@ -88,7 +89,9 @@ class RationalHomologyBasisResult(StrictModule, NonTrainableState):
     source_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
-    def __init__(self, bases: tuple[RationalClassBasis, ...], /, *, source_id: str):
+    def __init__(
+        self, bases: tuple[RationalClassBasis, ...], /, *, source_id: str
+    ) -> None:
         self.bases = bases
         self.source_id = str(source_id)
         self.result_id = canonical_fingerprint(
@@ -106,7 +109,7 @@ class RationalHomologyBasisResult(StrictModule, NonTrainableState):
         raise KeyError(f"No rational homology basis exists in degree {degree}.")
 
 
-def _dense_boundary(complex: CellSubcomplex, degree: int, /):
+def _dense_boundary(complex: CellSubcomplex, degree: int, /) -> np.ndarray:
     boundary = compact_boundary(complex, degree)
     matrix = np.zeros((boundary.row_count, boundary.column_count), dtype=object)
     for row, column, coefficient in zip(
@@ -119,7 +122,7 @@ def _dense_boundary(complex: CellSubcomplex, degree: int, /):
     return matrix
 
 
-def _rref(matrix):
+def _rref(matrix: np.ndarray) -> tuple[np.ndarray, tuple[int, ...]]:
     values = np.asarray(matrix, dtype=object).copy()
     row = 0
     pivots = []
@@ -146,7 +149,7 @@ def _rref(matrix):
     return values, tuple(pivots)
 
 
-def _nullspace(matrix):
+def _nullspace(matrix: np.ndarray) -> tuple[tuple[Fraction, ...], ...]:
     rref, pivots = _rref(matrix)
     free = [column for column in range(matrix.shape[1]) if column not in pivots]
     vectors = []
@@ -159,7 +162,7 @@ def _nullspace(matrix):
     return tuple(vectors)
 
 
-def _rank(columns):
+def _rank(columns: Sequence[tuple[Fraction, ...]]) -> int:
     if not columns:
         return 0
     matrix = np.asarray(columns, dtype=object).T

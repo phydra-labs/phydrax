@@ -9,15 +9,12 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
+from .._dtype_names import precision_dtype_name
 from .._fingerprint import canonical_fingerprint
-from .._precision import (
-    precision_dtype_name,
-    PrecisionEvidenceEnvelope,
-    PrecisionRequest,
-    PrecisionResolution,
-)
+from .._precision import PrecisionEvidenceEnvelope, PrecisionRequest, PrecisionResolution
 from .._strict import StrictModule
 from ..discretization import (
     AbstractStrongFormDiscretization,
@@ -42,6 +39,7 @@ from ..stochastic import (
     WienerRealization,
 )
 from ..stochastic._spatial_noise import SpatialNoiseBasis
+from ..typing import PRNGKey
 from ._differential import (
     DifferentialInterpretation,
     DifferentialProblem,
@@ -278,7 +276,7 @@ class SemidiscreteSPDE(StrictModule):
         state_shape: Sequence[int],
         noise_shape: Sequence[int],
         basis_id: str | None,
-    ):
+    ) -> None:
         if not isinstance(problem, DifferentialProblem):
             raise TypeError("problem must be a DifferentialProblem.")
         if not isinstance(
@@ -428,7 +426,7 @@ class SemidiscreteSPDE(StrictModule):
 
     def wiener_realization(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
         *,
         support: tuple[float, float] | None = None,
@@ -561,7 +559,7 @@ def semidiscretize_spde(
         resolved_noise_shape = ()
         resolved_basis_id = None
         resolved_structure = "general"
-        effective_diffusion = None  # type: ignore[assignment]
+        effective_diffusion = None
 
     validated_drift = _ValidatedVectorField(drift, state_shape, "drift")
     validated_diffusion = (

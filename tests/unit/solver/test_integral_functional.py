@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,7 +15,7 @@ import pytest
 import phydrax as phx
 
 
-def _fixed_problem(integrand, *, label=None):
+def _fixed_problem(integrand: Any, *, label: Any = None) -> Any:
     domain = integrand.domain
     target = phx.integration.over(domain.component())
     plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(12))
@@ -24,7 +27,7 @@ def _fixed_problem(integrand, *, label=None):
     )
 
 
-def test_integral_functional_returns_raw_signed_value_through_solver():
+def test_integral_functional_returns_raw_signed_value_through_solver() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     density = domain.Function()(-2.0)
     objective = _fixed_problem(density, label="negative_energy")
@@ -35,7 +38,7 @@ def test_integral_functional_returns_raw_signed_value_through_solver():
     assert jnp.allclose(solver.loss(key=jr.key(0)), -2.0, atol=1e-12)
 
 
-def test_adaptive_plan_uses_the_same_integral_functional_and_trains_parameter():
+def test_adaptive_plan_uses_the_same_integral_functional_and_trains_parameter() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="t")
     parameter = domain.Parameter(2.0)
     objective = phx.terms.IntegralFunctional.from_operator(
@@ -61,12 +64,12 @@ def test_adaptive_plan_uses_the_same_integral_functional_and_trains_parameter():
     assert jnp.allclose(trained.loss(), 0.4096, rtol=1e-8, atol=1e-10)
 
 
-def test_integral_functional_gradient_matches_analytic_value():
+def test_integral_functional_gradient_matches_analytic_value() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="t")
     target = phx.integration.over(domain.component())
     plan = phx.integration.AdaptiveQuadraturePlan()
 
-    def loss(scale):
+    def loss(scale: Any) -> Any:
         density = domain.Function("t")(lambda time: scale * time**2)
         objective = phx.terms.IntegralFunctional(
             source=phx.integration.per_step(target, plan), integrand=density
@@ -78,7 +81,7 @@ def test_integral_functional_gradient_matches_analytic_value():
     assert jnp.allclose(jax.jit(jax.vmap(loss))(scales), scales / 3.0, atol=1e-11)
 
 
-def test_integral_functional_integration_sources_are_explicit():
+def test_integral_functional_integration_sources_are_explicit() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     function = domain.Function("x")(lambda x: x)
     target = phx.integration.over(domain.component())
@@ -100,7 +103,7 @@ def test_integral_functional_integration_sources_are_explicit():
     assert jnp.isfinite(caller.loss({"u": function}, batch=realization))
 
 
-def test_integral_functional_accepts_planless_external_measures():
+def test_integral_functional_accepts_planless_external_measures() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     density = domain.Function("x")(lambda x: x)
     component_target = phx.integration.over(domain.component())
@@ -121,7 +124,7 @@ def test_integral_functional_accepts_planless_external_measures():
     assert jnp.allclose(objective.loss({"density": density}), 0.5, atol=1e-12)
 
 
-def test_integral_functional_rejects_complex_and_failed_estimates():
+def test_integral_functional_rejects_complex_and_failed_estimates() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     complex_density = domain.Function()(1.0 + 2.0j)
     complex_objective = _fixed_problem(complex_density)
@@ -145,7 +148,7 @@ def test_integral_functional_rejects_complex_and_failed_estimates():
         jax.block_until_ready(failed_objective.loss({"u": discontinuity}))
 
 
-def test_integral_functional_nonfinite_integrand_policy_is_narrow():
+def test_integral_functional_nonfinite_integrand_policy_is_narrow() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     nonfinite = domain.Function()(jnp.nan)
     target = phx.integration.over(domain.component())
@@ -186,11 +189,12 @@ def test_integral_functional_nonfinite_integrand_policy_is_narrow():
         phx.terms.IntegralFunctional(
             source=phx.integration.per_step(target, plan),
             integrand=nonfinite,
+            # ty: ignore[invalid-argument-type]
             nonfinite_integrand="ignore",
         )
 
 
-def test_integral_functional_from_operator_forwards_nonfinite_policy():
+def test_integral_functional_from_operator_forwards_nonfinite_policy() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     domain.Parameter(1.0)
     objective = phx.terms.IntegralFunctional.from_operator(
@@ -205,14 +209,14 @@ def test_integral_functional_from_operator_forwards_nonfinite_policy():
     assert objective.nonfinite_integrand == "propagate"
 
 
-def test_lbfgs_rejects_nonfinite_neo_hookean_trial():
+def test_lbfgs_rejects_nonfinite_neo_hookean_trial() -> None:
     domain = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
     coordinate = domain.Function("x")(lambda x: x)
     displacement = domain.Parameter(0.0) * coordinate
 
-    def density(functions):
+    def density(functions: Any) -> Any:
         current = functions["u"]
         stored_energy = phx.operators.neo_hookean_reference_energy(
             current,
@@ -248,12 +252,12 @@ def test_lbfgs_rejects_nonfinite_neo_hookean_trial():
     assert 0.0 < stretch < 1.0
 
 
-def test_deep_ritz_energy_optimizes_with_fixed_realization():
+def test_deep_ritz_energy_optimizes_with_fixed_realization() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     coordinate = domain.Function("x")(lambda x: x[0])
     field = domain.Parameter(0.0) * coordinate * (1.0 - coordinate)
 
-    def density(functions):
+    def density(functions: Any) -> Any:
         value = functions["u"]
         gradient = phx.operators.grad(value, var="x")
         gradient_sq = phx.operators.einsum("...i,...i->...", gradient, gradient)
@@ -280,7 +284,7 @@ def test_deep_ritz_energy_optimizes_with_fixed_realization():
     assert jnp.allclose(trained["u"].func(jnp.asarray([0.5])), 0.125, atol=3e-3)
 
 
-def test_field_stationarity_reuses_one_prepared_scalar_term_realization():
+def test_field_stationarity_reuses_one_prepared_scalar_term_realization() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     parameter = domain.Parameter(2.0)
     functions = {"u": parameter}

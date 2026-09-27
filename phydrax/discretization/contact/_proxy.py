@@ -4,10 +4,14 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -38,10 +42,10 @@ class PreparedContactProxy(StrictModule, NonTrainableState):
     evidence: ContactProxyEvidence
     proxy_id: str = eqx.field(static=True)
 
-    def positions(self, state, /) -> Array:
+    def positions(self, state: PyTree[Any], /) -> Array:
         return self.surface.positions(state)
 
-    def effort_pullback(self, surface_effort: ArrayLike, /):
+    def effort_pullback(self, surface_effort: ArrayLike, /) -> PyTree[Array]:
         return self.surface.effort_pullback(surface_effort)
 
 
@@ -60,7 +64,7 @@ class ContactProxyPlan(StrictModule, NonTrainableState):
         /,
         *,
         certified: bool,
-    ):
+    ) -> None:
         if not isinstance(topology, CollisionSurfacePlan):
             raise TypeError("topology must be CollisionSurfacePlan.")
         error = np.asarray(approximation_error, dtype=np.float64)
@@ -167,7 +171,7 @@ class ContactProxyTransfer(StrictModule, NonTrainableState):
         new_parent_vertices: ArrayLike,
         parent_weights: ArrayLike,
         /,
-    ):
+    ) -> None:
         old_ids = np.asarray(old_vertex_ids)
         new_ids = np.asarray(new_vertex_ids)
         parents = np.asarray(new_parent_vertices)

@@ -8,7 +8,7 @@ from collections.abc import Callable
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -29,7 +29,7 @@ from ._spec import CliffordAlgebraSpec
 class _ConstantCliffordMetricMap(StrictModule, NonTrainableState):
     diagonal: Array
 
-    def __init__(self, diagonal: tuple[int, ...], /):
+    def __init__(self, diagonal: tuple[int, ...], /) -> None:
         self.diagonal = jnp.asarray(diagonal, dtype=jnp.float64)
 
     def __call__(self, coordinates: Array, /) -> Array:
@@ -49,7 +49,7 @@ class _EmbeddedFormField(StrictModule):
         output_positions: tuple[int, ...],
         index_scales: tuple[int, ...],
         /,
-    ):
+    ) -> None:
         self.form = form
         self.layout = layout
         self.output_positions = jnp.asarray(output_positions, dtype=jnp.int32)
@@ -78,7 +78,7 @@ class _ExtractedFormCoefficient(StrictModule):
         source_positions: tuple[int, ...],
         index_scales: tuple[int, ...],
         /,
-    ):
+    ) -> None:
         self.field = field
         self.layout = layout
         self.source_positions = jnp.asarray(source_positions, dtype=jnp.int32)
@@ -108,7 +108,7 @@ class CliffordMetricBridge(StrictModule, NonTrainableState):
         algebra: CliffordAlgebraSpec,
         chart: CoordinateChart,
         /,
-    ):
+    ) -> None:
         if not isinstance(algebra, CliffordAlgebraSpec):
             raise TypeError("algebra must be a CliffordAlgebraSpec.")
         if not isinstance(chart, CoordinateChart):

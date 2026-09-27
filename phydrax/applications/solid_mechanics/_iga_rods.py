@@ -35,7 +35,7 @@ class IGARodPlan(StrictModule, NonTrainableState):
         *,
         displacement_field: str = "u",
         rotation_field: str | None = None,
-    ):
+    ) -> None:
         prepared_ = _prepared(prepared)
         if not isinstance(rod, RodPlan):
             raise TypeError("rod must be a RodPlan.")

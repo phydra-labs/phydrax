@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -55,7 +56,7 @@ class UnstructuredAMRRuntimeState(StrictModule):
         fine_state: FiniteVolumeRuntimeState,
         selection: UnstructuredAMRSelection,
         /,
-    ):
+    ) -> None:
         if not isinstance(coarse_state, FiniteVolumeRuntimeState):
             raise TypeError("coarse_state must be FiniteVolumeRuntimeState.")
         if not isinstance(fine_state, FiniteVolumeRuntimeState):
@@ -100,7 +101,7 @@ class UnstructuredAMRRefluxReport(StrictModule):
         correction: ArrayLike,
         covered_cell_mask: ArrayLike,
         /,
-    ):
+    ) -> None:
         coarse = jnp.asarray(coarse_integral)
         fine = jnp.asarray(fine_integral)
         delta = jnp.asarray(correction)
@@ -171,7 +172,7 @@ class UnstructuredAMRRegridArtifact(StrictModule, NonTrainableState):
         selection: UnstructuredAMRSelection,
         hierarchy_id: str,
         /,
-    ):
+    ) -> None:
         defect = jnp.asarray(conservation_defect)
         passed = jnp.all(jnp.isfinite(defect)) & jnp.all(jnp.abs(defect) <= 1e-10)
         self.content_state = content_state
@@ -248,7 +249,7 @@ class PreparedUnstructuredAMRRuntime(StrictModule):
         *,
         refinement_ratio: int = 2,
         policy: FiniteVolumeStepPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(hierarchy, UnstructuredAMRHierarchyPlan):
             raise TypeError("hierarchy must be UnstructuredAMRHierarchyPlan.")
         if not isinstance(coarse_runtime, PreparedFiniteVolumeRuntime):

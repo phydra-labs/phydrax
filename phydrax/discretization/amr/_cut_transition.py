@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._geometry_predicates import orient3d, PredicateMode, PredicateSign
@@ -115,7 +116,7 @@ class MultivaluedCutCellTransition(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-10,
         require_complete: bool = True,
-    ):
+    ) -> None:
         if not isinstance(source, MultivaluedCutCellComplex) or not isinstance(
             target, MultivaluedCutCellComplex
         ):

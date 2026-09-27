@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -8,7 +10,7 @@ import numpy as np
 from phydrax.applications import cosmology
 
 
-def _direct(positions, masses, softening):
+def _direct(positions: Any, masses: Any, softening: Any) -> Any:
     displacement = positions[None, :, :] - positions[:, None, :]
     squared = jnp.sum(displacement**2, axis=-1) + softening**2
     mask = ~jnp.eye(positions.shape[0], dtype="bool")
@@ -22,7 +24,7 @@ def _direct(positions, masses, softening):
     )
 
 
-def _cloud(count=32):
+def _cloud(count: Any = 32) -> Any:
     key = jax.random.key(17)
     return 0.05 + 0.9 * jax.random.uniform(key, (count, 3))
 
@@ -87,7 +89,7 @@ def test_barnes_hut_fixed_topology_position_gradient_is_finite() -> None:
         use_quadrupole=False,
     )
 
-    def objective(current):
+    def objective(current: Any) -> Any:
         tree = plan.prepare(current, masses)
         acceleration = gravity.evaluate(tree).acceleration
         return jnp.sum(acceleration**2)
@@ -111,7 +113,7 @@ def test_inactive_nonfinite_particles_are_ignored() -> None:
     np.testing.assert_array_equal(result.acceleration[-1], 0.0)
 
 
-def test_periodic_barnes_hut_excludes_inactive_capacity():
+def test_periodic_barnes_hut_excludes_inactive_capacity() -> None:
     active_positions = _cloud(7)
     active_masses = jnp.linspace(0.5, 1.1, 7)
     padded_positions = jnp.concatenate(

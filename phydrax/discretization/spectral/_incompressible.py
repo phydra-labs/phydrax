@@ -8,7 +8,8 @@ from math import prod
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._geometry_precision import GeometryPrecisionPolicy
@@ -29,7 +30,7 @@ class PeriodicLerayProjector(StrictModule, NonTrainableState):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     projector_id: str = eqx.field(static=True)
 
-    def __init__(self, discretization: TensorSpectralDiscretization, /):
+    def __init__(self, discretization: TensorSpectralDiscretization, /) -> None:
         if not isinstance(discretization, TensorSpectralDiscretization):
             raise TypeError("discretization must be a TensorSpectralDiscretization.")
         dimension = len(discretization.axes)
@@ -216,7 +217,7 @@ class IncompressibleSpectralDiagnostics(StrictModule):
         finite: ArrayLike,
         projector_id: str,
         dynamic_les_id: str | None,
-    ):
+    ) -> None:
         identifier = str(projector_id)
         if not identifier:
             raise ValueError("projector_id must be non-empty.")

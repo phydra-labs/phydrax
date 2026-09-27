@@ -3,6 +3,8 @@
 #
 
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -25,18 +27,18 @@ from phydrax.solver._finite_volume_content import (
 
 
 def _state(
-    content=((2.0, -1.0), (6.0, 3.0)),
-    volumes=(2.0, 3.0),
-    active_cell_mask=(True, True),
+    content: Any = ((2.0, -1.0), (6.0, 3.0)),
+    volumes: Any = (2.0, 3.0),
+    active_cell_mask: Any = (True, True),
     *,
-    geometry_family_id="geometry-family:mesh",
-    geometry_layout_id="geometry-layout:mesh",
-    geometry_version=0,
-    evidence_policy_id="evidence-policy:metrics",
-    evidence_version=0,
-    topology_epoch_id="topology:0",
-    precision=None,
-):
+    geometry_family_id: Any = "geometry-family:mesh",
+    geometry_layout_id: Any = "geometry-layout:mesh",
+    geometry_version: Any = 0,
+    evidence_policy_id: Any = "evidence-policy:metrics",
+    evidence_version: Any = 0,
+    topology_epoch_id: Any = "topology:0",
+    precision: Any = None,
+) -> Any:
     return FiniteVolumeConservativeContentState(
         jnp.asarray(content),
         jnp.asarray(volumes),
@@ -53,16 +55,16 @@ def _state(
 
 
 def _source_ledger(
-    rate,
+    rate: Any,
     *,
-    geometry_family_id="geometry-family:mesh",
-    geometry_layout_id="geometry-layout:mesh",
-    geometry_version=0,
-    evidence_policy_id="evidence-policy:metrics",
-    evidence_version=0,
-    topology_epoch_id="topology:0",
-    active_cell_mask=None,
-):
+    geometry_family_id: Any = "geometry-family:mesh",
+    geometry_layout_id: Any = "geometry-layout:mesh",
+    geometry_version: Any = 0,
+    evidence_policy_id: Any = "evidence-policy:metrics",
+    evidence_version: Any = 0,
+    topology_epoch_id: Any = "topology:0",
+    active_cell_mask: Any = None,
+) -> Any:
     source_rate = jnp.asarray(rate)
     if active_cell_mask is None:
         active_cell_mask = jnp.ones((source_rate.shape[0],), dtype="bool")
@@ -79,7 +81,7 @@ def _source_ledger(
     )
 
 
-def test_active_and_inactive_cell_average_content_round_trip_is_safe():
+def test_active_and_inactive_cell_average_content_round_trip_is_safe() -> None:
     precision = FiniteVolumePrecisionPolicy()
     average = jnp.asarray(((1.5, -2.0), (8.0, -9.0), (3.0, 0.5)))
     volumes = jnp.asarray((2.0, 0.0, 3.0))
@@ -114,7 +116,7 @@ def test_active_and_inactive_cell_average_content_round_trip_is_safe():
     np.testing.assert_allclose(state.conservation_change(state), 0.0)
 
 
-def test_cell_average_changes_with_volume_while_content_stays_authoritative():
+def test_cell_average_changes_with_volume_while_content_stays_authoritative() -> None:
     original = _state(content=((4.0, 2.0), (3.0, 9.0)), volumes=(2.0, 3.0))
     changed_geometry = FiniteVolumeConservativeContentState(
         original.conservative_content,
@@ -143,7 +145,7 @@ def test_cell_average_changes_with_volume_while_content_stays_authoritative():
     assert int(changed_geometry.evidence_version) == 1
 
 
-def test_stage_rate_euler_update_applies_complete_rate_once_at_explicit_time():
+def test_stage_rate_euler_update_applies_complete_rate_once_at_explicit_time() -> None:
     state = _state(content=((4.0, -2.0), (1.0, 3.0)), volumes=(2.0, 1.0))
     rate = jnp.asarray(((2.0, 4.0), (-6.0, 8.0)))
     ledger = _source_ledger(rate)
@@ -177,7 +179,7 @@ def test_stage_rate_euler_update_applies_complete_rate_once_at_explicit_time():
     assert updated.topology_epoch_id == state.topology_epoch_id
 
 
-def test_stage_rate_euler_update_preserves_mask_through_static_and_ale_updates():
+def test_stage_rate_euler_update_preserves_mask_through_static_and_ale_updates() -> None:
     state = _state(
         content=((2.0, -1.0), (0.0, 0.0)),
         volumes=(2.0, 0.0),
@@ -225,7 +227,7 @@ def test_stage_rate_euler_update_preserves_mask_through_static_and_ale_updates()
     assert ale_updated.topology_epoch_id == state.topology_epoch_id
 
 
-def test_stage_rate_update_requires_exact_active_cell_mask():
+def test_stage_rate_update_requires_exact_active_cell_mask() -> None:
     state = _state(
         content=((2.0, -1.0), (0.0, 0.0)),
         volumes=(2.0, 0.0),
@@ -243,7 +245,7 @@ def test_stage_rate_update_requires_exact_active_cell_mask():
         jax.block_until_ready(updated.conservative_content)
 
 
-def test_stage_rate_update_conserves_internal_flux_and_includes_source_once():
+def test_stage_rate_update_conserves_internal_flux_and_includes_source_once() -> None:
     state = _state(content=((5.0, 2.0), (7.0, -1.0)))
     block = ConservationStageFluxRateBlock(
         jnp.asarray(((3.0, -2.0), (5.0, 1.0))),
@@ -284,7 +286,7 @@ def test_stage_rate_update_conserves_internal_flux_and_includes_source_once():
     )
 
 
-def test_precision_policy_controls_storage_and_reduction_casts():
+def test_precision_policy_controls_storage_and_reduction_casts() -> None:
     precision = FiniteVolumePrecisionPolicy(
         "float32",
         reconstruction_dtype="float32",
@@ -307,15 +309,16 @@ def test_precision_policy_controls_storage_and_reduction_casts():
     assert updated.time.dtype == jnp.float64
 
 
-def test_stage_rate_update_requires_explicit_target_time():
+def test_stage_rate_update_requires_explicit_target_time() -> None:
     state = _state()
     ledger = _source_ledger(jnp.ones_like(state.conservative_content))
 
     with pytest.raises(TypeError, match="target_time"):
+        # ty: ignore[missing-argument]
         apply_stage_rate_euler_update(state, ledger, jnp.asarray(0.125))
 
 
-def test_stage_rate_update_rejects_stale_starting_identities():
+def test_stage_rate_update_rejects_stale_starting_identities() -> None:
     state = _state(geometry_version=4, evidence_version=9)
     rate = jnp.zeros_like(state.conservative_content)
     geometry_family_mismatch = _source_ledger(
@@ -391,7 +394,7 @@ def test_stage_rate_update_rejects_stale_starting_identities():
         jax.block_until_ready(updated.conservative_content)
 
 
-def test_equal_volume_translated_geometry_rejects_stale_content_family():
+def test_equal_volume_translated_geometry_rejects_stale_content_family() -> None:
     triangles = np.asarray(((0, 1, 2), (0, 2, 3)))
     base = phx.discretization.UnstructuredFiniteVolumePlan(
         np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
@@ -430,7 +433,7 @@ def test_equal_volume_translated_geometry_rejects_stale_content_family():
         )
 
 
-def test_stage_rate_update_rejects_ledger_shape_mismatch():
+def test_stage_rate_update_rejects_ledger_shape_mismatch() -> None:
     state = _state()
     wrong_shape = _source_ledger(jnp.zeros((3, 2)))
 
@@ -456,10 +459,10 @@ def test_stage_rate_update_rejects_ledger_shape_mismatch():
     ),
 )
 def test_stage_rate_update_requires_complete_ale_target_certificate(
-    include_volumes,
-    include_geometry_version,
-    include_evidence_version,
-):
+    include_volumes: Any,
+    include_geometry_version: Any,
+    include_evidence_version: Any,
+) -> None:
     state = _state()
     ledger = _source_ledger(jnp.zeros_like(state.conservative_content))
     target = {}
@@ -480,7 +483,7 @@ def test_stage_rate_update_requires_complete_ale_target_certificate(
         )
 
 
-def test_stage_rate_update_rejects_nonpositive_active_target_volumes():
+def test_stage_rate_update_rejects_nonpositive_active_target_volumes() -> None:
     state = _state()
     ledger = _source_ledger(jnp.zeros_like(state.conservative_content))
 
@@ -499,7 +502,7 @@ def test_stage_rate_update_rejects_nonpositive_active_target_volumes():
             )
 
 
-def test_state_validates_versions_active_mask_volumes_and_inactive_content():
+def test_state_validates_versions_active_mask_volumes_and_inactive_content() -> None:
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="strictly positive"):
         _state(volumes=(0.0, 3.0))
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="strictly positive"):
@@ -544,7 +547,7 @@ def test_state_validates_versions_active_mask_volumes_and_inactive_content():
         _state(geometry_family_id=" geometry-family")
 
 
-def test_with_content_preserves_ownership_and_updates_dynamic_evidence_version():
+def test_with_content_preserves_ownership_and_updates_dynamic_evidence_version() -> None:
     state = _state(
         content=((2.0, -1.0), (0.0, 0.0)),
         volumes=(2.0, 0.0),
@@ -576,12 +579,12 @@ def test_with_content_preserves_ownership_and_updates_dynamic_evidence_version()
     assert int(replacement.evidence_version) == 5
 
 
-def test_cell_average_jit_and_gradient_are_finite_with_inactive_cells():
+def test_cell_average_jit_and_gradient_are_finite_with_inactive_cells() -> None:
     precision = FiniteVolumePrecisionPolicy()
     volumes = jnp.asarray((2.0, 0.0, 4.0))
     active_cell_mask = jnp.asarray((True, False, True))
 
-    def average_from_content(content):
+    def average_from_content(content: Any) -> Any:
         return FiniteVolumeConservativeContentState(
             content,
             volumes,
@@ -608,7 +611,7 @@ def test_cell_average_jit_and_gradient_are_finite_with_inactive_cells():
     np.testing.assert_array_equal(gradient[1], jnp.zeros((2,)))
 
 
-def test_geometry_family_identity_changes_with_topology_epoch():
+def test_geometry_family_identity_changes_with_topology_epoch() -> None:
     state = _state(geometry_family_id="geometry-family:checkpoint")
     rebound = state.with_topology_epoch(
         "topology:1",
@@ -620,15 +623,15 @@ def test_geometry_family_identity_changes_with_topology_epoch():
     assert rebound.geometry_layout_id == state.geometry_layout_id
 
 
-def test_dynamic_versions_reuse_one_jit_layout_and_static_fingerprints():
+def test_dynamic_versions_reuse_one_jit_layout_and_static_fingerprints() -> None:
     trace_count = {"value": 0}
 
     def update_for_versions(
-        geometry_version,
-        evidence_version,
-        target_geometry_version,
-        target_evidence_version,
-    ):
+        geometry_version: Any,
+        evidence_version: Any,
+        target_geometry_version: Any,
+        target_evidence_version: Any,
+    ) -> Any:
         trace_count["value"] += 1
         state = _state(
             geometry_version=geometry_version,

@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import Any, cast, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -102,7 +103,7 @@ class CartesianBoussinesqOceanPlan(StrictModule, NonTrainableState):
         surface_stress_id: str | None = None,
         temperature_surface_flux: MACScalarBoundaryCondition | None = None,
         salinity_surface_flux: MACScalarBoundaryCondition | None = None,
-    ):
+    ) -> None:
         if not isinstance(axes, OceanAxisConvention):
             raise TypeError("axes must be OceanAxisConvention.")
         if not isinstance(reference, LinearSeawaterReference):
@@ -376,7 +377,7 @@ class PreparedCartesianBoussinesqOcean(StrictModule):
         dynamics: CompiledMACScalarBuoyancyDynamics,
         boundaries: PreparedMACBoundaryPlan,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.operators = operators
         self.momentum = momentum
@@ -405,7 +406,11 @@ class PreparedCartesianBoussinesqOcean(StrictModule):
 
     @property
     def prepared_algebraic_les(self) -> "PreparedMACAlgebraicLES | None":
-        return self.dynamics.base_dynamics.algebraic_les
+        # Scalar-buoyancy compilation prepares only a MACAlgebraicLESPlan here.
+        return cast(
+            "PreparedMACAlgebraicLES | None",
+            self.dynamics.base_dynamics.algebraic_les,
+        )
 
     @property
     def prepared_scalar_sgs(self) -> "PreparedMACScalarSGS | None":
@@ -435,7 +440,8 @@ class PreparedCartesianBoussinesqOcean(StrictModule):
             self.plan.reference.salinity_name: salinity,
         }
         if self.plan.ksgs_field_name is not None:
-            if self.plan.ksgs is None:
+            # sgs_kinetic_energy is None exactly when ksgs is None (checked above).
+            if self.plan.ksgs is None or sgs_kinetic_energy is None:
                 raise ValueError("Ocean KSGS field has no closure plan.")
             ksgs_state = self.plan.ksgs.initialize_state(sgs_kinetic_energy)
             scalars[self.plan.ksgs_field_name] = ksgs_state.kinetic_energy

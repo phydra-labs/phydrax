@@ -8,7 +8,8 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jax.typing import DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ...linalg import (
@@ -25,7 +26,7 @@ from ._cone_root import safeguarded_newton_bisection, SafeguardedRootResult
 from ._cones import AbstractConvexCone
 
 
-def _exp_limit(dtype) -> Array:
+def _exp_limit(dtype: DTypeLike) -> Array:
     return 0.25 * jnp.log(jnp.asarray(jnp.finfo(dtype).max, dtype=dtype))
 
 
@@ -90,7 +91,7 @@ def _primal_candidate(value: Array, /) -> tuple[Array, Array]:
     face = jnp.asarray([jnp.minimum(x, 0.0), 0.0, jnp.maximum(z, 0.0)])
     face_distance = jnp.linalg.norm(face - value)
 
-    def smooth_candidate(_):
+    def smooth_candidate(_: None) -> tuple[Array, Array]:
         boundary = _scaled_exponential(y, x / y)
         candidate = jnp.asarray([x, y, jnp.maximum(z, boundary)])
         distance = jnp.linalg.norm(candidate - value)
@@ -110,7 +111,7 @@ def _polar_candidate(value: Array, /) -> tuple[Array, Array]:
     face = jnp.asarray([0.0, jnp.minimum(y, 0.0), jnp.minimum(z, 0.0)])
     face_distance = jnp.linalg.norm(face - value)
 
-    def smooth_candidate(_):
+    def smooth_candidate(_: None) -> tuple[Array, Array]:
         boundary = -_scaled_exponential(x, y / x - 1.0)
         candidate = jnp.asarray([x, y, jnp.minimum(z, boundary)])
         distance = jnp.linalg.norm(candidate - value)
@@ -206,14 +207,14 @@ def _root_bracket(
         jnp.maximum(polar_distance * polar_distance - negative_x * negative_x, 0.0)
     )
 
-    def positive_z(bounds):
+    def positive_z(bounds: tuple[Array, Array]) -> tuple[Array, Array]:
         lo, hi = bounds
         ratio = z / jnp.maximum(_ppsi(value), jnp.finfo(value.dtype).tiny)
         return jnp.maximum(
             lo, jnp.log(jnp.maximum(ratio, jnp.finfo(value.dtype).tiny))
         ), hi
 
-    def negative_z(bounds):
+    def negative_z(bounds: tuple[Array, Array]) -> tuple[Array, Array]:
         lo, hi = bounds
         ratio = -z / jnp.maximum(_dpsi(value), jnp.finfo(value.dtype).tiny)
         return lo, jnp.minimum(
@@ -227,7 +228,7 @@ def _root_bracket(
         (lower, upper),
     )
 
-    def positive_x(bounds):
+    def positive_x(bounds: tuple[Array, Array]) -> tuple[Array, Array]:
         lo, hi = bounds
         base = 1.0 - y / x
         lo = jnp.maximum(lo, base)
@@ -237,7 +238,7 @@ def _root_bracket(
 
     lower, upper = jax.lax.cond(x > 0.0, positive_x, lambda item: item, (lower, upper))
 
-    def positive_y(bounds):
+    def positive_y(bounds: tuple[Array, Array]) -> tuple[Array, Array]:
         lo, hi = bounds
         base = x / y
         hi = jnp.minimum(hi, base)
@@ -296,7 +297,7 @@ def _projection_value(value: Array, /) -> Array:
     in_polar = _in_dual(-value)
     face = (value[0] < 0.0) & (value[1] < 0.0)
 
-    def general(_):
+    def general(_operand: None) -> Array:
         projected, _ = _exp_root_projection(value)
         return projected
 
@@ -369,7 +370,7 @@ def _projection_jvp(value: Array, projected: Array, tangent: Array, /) -> Array:
     in_polar = _in_dual(-value)
     face = (value[0] < 0.0) & (value[1] < 0.0)
 
-    def general(_):
+    def general(_operand: None) -> Array:
         matrix, _ = _boundary_kkt_matrix(value, projected)
         right = jnp.concatenate((tangent, jnp.zeros(1, dtype=value.dtype)))
         return _kkt_solve(matrix, right)[:3]
@@ -391,7 +392,9 @@ def _projection_jvp(value: Array, projected: Array, tangent: Array, /) -> Array:
 
 
 def _working_value(value: Array, /) -> Array:
-    working_dtype = jnp.float64 if jax.config.x64_enabled else jnp.float32
+    working_dtype = (
+        jnp.float64 if bool(jax.config.read("jax_enable_x64")) else jnp.float32
+    )
     return value.astype(jnp.result_type(value.dtype, working_dtype))
 
 
@@ -414,13 +417,15 @@ def _project_exp_single(value: Array, /) -> Array:
 
 
 @_project_exp_single.defjvp
-def _project_exp_single_jvp(primals, tangents):
+def _project_exp_single_jvp(
+    primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
     (value,) = primals
     (tangent,) = tangents
     working = _working_value(value)
     working_tangent = tangent.astype(working.dtype)
 
-    def exterior(_):
+    def exterior(_: None) -> tuple[Array, Array]:
         scale = _homogeneous_scale(working)
         normalized = working / scale
         projected = _projection_value(normalized)
@@ -439,7 +444,7 @@ def _project_exp_single_jvp(primals, tangents):
 def _project_exp_dual_single(value: Array, /) -> Array:
     working = _working_value(value)
 
-    def exterior(_):
+    def exterior(_: None) -> Array:
         scale = _homogeneous_scale(working)
         normalized = working / scale
         return scale * (normalized + _project_exp_single(-normalized))
@@ -490,7 +495,7 @@ def _smoothness_margin(value: Array, /) -> Array:
 class ExponentialCone(AbstractConvexCone):
     """Three-dimensional exponential cone in canonical ``(x, y, z)`` order."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.dimension = 3
         self.cone_id = canonical_fingerprint({"kind": "exponential-cone"})
 

@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._numerics._compensated import compensated_sum_chunks
@@ -23,6 +24,10 @@ from ._unstructured_embedded_boundary import (
     EmbeddedBoundaryStabilizationPolicy,
     EmbeddedBoundaryStatus,
 )
+
+
+if TYPE_CHECKING:
+    from ..amr._cut_complex import MultivaluedCutCellComplex
 
 
 class ConservativeSmallCellRedistributionEvidence(NamedTuple):
@@ -105,7 +110,7 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
         /,
         *,
         _prepared: _PreparedSmallCellData | None = None,
-    ):
+    ) -> None:
         if _prepared is not None:
             self.active_cells = _prepared.active_cells
             self.small_cells = _prepared.small_cells
@@ -374,7 +379,7 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
     @classmethod
     def from_multivalued_cut_complex(
         cls,
-        complex_,
+        complex_: MultivaluedCutCellComplex,
         policy: EmbeddedBoundaryStabilizationPolicy,
         /,
     ) -> "ConservativeSmallCellRedistributionPlan":
@@ -648,8 +653,11 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
         ]
         return ConservationStageFluxRateBlock(
             route_flux_rate,
+            # ty: ignore[invalid-argument-type]
             self.redistribution_owner_cells,
+            # ty: ignore[invalid-argument-type]
             self.redistribution_neighbor_cells,
+            # ty: ignore[invalid-argument-type]
             (True,) * route_count,
             self.redistribution_block_id,
             "small-cell-redistribution",

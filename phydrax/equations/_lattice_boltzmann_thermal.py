@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -58,11 +59,11 @@ class ThermalLatticeBoltzmannProblemIR(StrictModule, NonTrainableState):
         transport: ThermalLatticeBoltzmannPlan,
         /,
         *,
-        boundaries=(),
+        boundaries: Sequence[ThermalBoundaryCondition] = (),
         volumetric_source: ArrayLike = 0.0,
         boussinesq: BoussinesqCouplingPlan | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         boundary_values = tuple(boundaries)
         source = np.asarray(volumetric_source, dtype=np.float64)
@@ -122,12 +123,12 @@ class CompiledThermalLatticeBoltzmannProblem(StrictModule, NonTrainableState):
         problem: ThermalLatticeBoltzmannProblemIR,
         lattice: LatticeBoltzmannVelocitySet,
         precision: LatticeBoltzmannPrecisionPolicy,
-        spatial_shape,
+        spatial_shape: Sequence[int],
         spacing: float,
         step_size: float,
         cell_measure: ArrayLike,
         /,
-    ):
+    ) -> None:
         shape = tuple(spatial_shape)
         dx = float(spacing)
         dt = float(step_size)
@@ -228,7 +229,7 @@ class CompiledThermalLatticeBoltzmannProblem(StrictModule, NonTrainableState):
             raise ValueError("The compiled thermal problem has no Boussinesq coupling.")
         return boussinesq_force(self.temperature(state), self.problem.boussinesq)
 
-    def _validate_state(self, state):
+    def _validate_state(self, state: object) -> None:
         if not isinstance(state, ThermalLatticeBoltzmannState):
             raise TypeError("state must be a ThermalLatticeBoltzmannState.")
         if state.state_id != self.compilation_id:
@@ -243,7 +244,7 @@ def compile_thermal_lattice_boltzmann_problem(
     problem: ThermalLatticeBoltzmannProblemIR,
     lattice: LatticeBoltzmannVelocitySet,
     precision: LatticeBoltzmannPrecisionPolicy,
-    spatial_shape,
+    spatial_shape: Sequence[int],
     /,
     *,
     spacing: float,
@@ -355,7 +356,9 @@ def advance_thermal_lattice_boltzmann(
     )
 
 
-def _select_thermal_ledger(condition, proposed, current):
+def _select_thermal_ledger(
+    condition: Array, proposed: ThermalEnergyLedger, current: ThermalEnergyLedger
+) -> ThermalEnergyLedger:
     return ThermalEnergyLedger(
         jnp.where(
             condition, proposed.initial_sensible_energy, current.initial_sensible_energy

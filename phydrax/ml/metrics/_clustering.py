@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.scipy.special import logsumexp
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 

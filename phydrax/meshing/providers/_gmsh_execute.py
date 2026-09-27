@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -114,8 +115,8 @@ class _Generation:
 
 
 def _configure_options(
-    gmsh,
-    plan,
+    gmsh: Any,
+    plan: Any,
     background: BackgroundMetricControl | None,
     requested_kinds: set[str],
     /,
@@ -166,8 +167,8 @@ def _configure_options(
 
 
 def _prepare_generation(
-    gmsh,
-    plan,
+    gmsh: Any,
+    plan: Any,
     cache: _CadImportCache,
     background: BackgroundMetricControl | None,
     /,
@@ -274,7 +275,7 @@ def _prepare_generation(
     )
 
 
-def _generate(gmsh, plan, generation: _Generation, /) -> None:
+def _generate(gmsh: Any, plan: Any, generation: _Generation, /) -> None:
     limits = plan.specification.limits
     top_entities = sorted(gmsh.model.getEntities(generation.dimension))
     if not top_entities:
@@ -297,6 +298,7 @@ def _generate(gmsh, plan, generation: _Generation, /) -> None:
         gmsh.model.mesh.generate(generation.dimension)
     else:
         gmsh.model.mesh.generate(2)
+        # ty: ignore[invalid-argument-type]
         _install_swept_cells(gmsh, generation.sweep)
         gmsh.option.setNumber("Mesh.MeshOnlyEmpty", 1)
         gmsh.model.mesh.generate(3)
@@ -316,7 +318,7 @@ class _Extraction:
     layer_field: _EvidenceSection
 
 
-def _extract(gmsh, plan, generation: _Generation, /) -> _Extraction:
+def _extract(gmsh: Any, plan: Any, generation: _Generation, /) -> _Extraction:
     limits = plan.specification.limits
     node_tags, node_coordinates, _ = gmsh.model.mesh.getNodes()
     node_tags = np.asarray(node_tags, dtype=np.int64)
@@ -339,10 +341,17 @@ def _extract(gmsh, plan, generation: _Generation, /) -> _Extraction:
     periodic = _audit_periodic(gmsh, generation.periodic_records, node_tags, points)
     layer_audit = _audit_layers(generation.sweep, top, node_tags, points)
     band_requested, band_achieved = _audit_planar_band_fronts(
-        gmsh, generation.band_generation
+        gmsh,
+        # ty: ignore[invalid-argument-type]
+        generation.band_generation,
     )
     field_requested, field_achieved, field_issues = _audit_boundary_layer_field(
-        gmsh, generation.layer_field, top, node_tags, points
+        gmsh,
+        # ty: ignore[invalid-argument-type]
+        generation.layer_field,
+        top,
+        node_tags,
+        points,
     )
     return _Extraction(
         node_tags,
@@ -371,7 +380,7 @@ class _CanonicalMesh:
     mixed_boundary: bool
 
 
-def _output_points(plan, points: np.ndarray, /) -> np.ndarray:
+def _output_points(plan: Any, points: np.ndarray, /) -> np.ndarray:
     specification = plan.specification
     if not (
         isinstance(specification, SurfaceMeshingSpec)
@@ -402,7 +411,7 @@ def _output_points(plan, points: np.ndarray, /) -> np.ndarray:
 
 
 def _canonical_mesh(
-    gmsh, plan, generation: _Generation, extraction: _Extraction, /
+    gmsh: Any, plan: Any, generation: _Generation, extraction: _Extraction, /
 ) -> _CanonicalMesh:
     top = extraction.top
     top_vertices = {
@@ -479,7 +488,11 @@ def _canonical_mesh(
 
 
 def _boundary_surface(
-    plan, generation: _Generation, extraction: _Extraction, canonical: _CanonicalMesh, /
+    plan: Any,
+    generation: _Generation,
+    extraction: _Extraction,
+    canonical: _CanonicalMesh,
+    /,
 ) -> SurfaceModel:
     report = plan.source.report
     boundary_triangles = []
@@ -538,8 +551,8 @@ class _Organization:
 
 
 def _organize(
-    gmsh,
-    plan,
+    gmsh: Any,
+    plan: Any,
     generation: _Generation,
     extraction: _Extraction,
     canonical: _CanonicalMesh,
@@ -561,7 +574,11 @@ def _organize(
             mesh = boundary.mesh
     mesh = canonicalize_cell_mesh(mesh)
     layer_attributes = _layer_attributes(
-        mesh, extraction.top, canonical.row_orders, extraction.layer_audit
+        mesh,
+        extraction.top,
+        canonical.row_orders,
+        # ty: ignore[invalid-argument-type]
+        extraction.layer_audit,
     )
     if generation.semantic_volume:
         cad_entities = generation.cad_entities
@@ -572,7 +589,11 @@ def _organize(
                 stage=MeshingStageKind.CANONICALIZATION.value,
             )
         cell_solid_ids = _canonical_cell_solid_ids(
-            mesh, extraction.top, canonical.row_orders, cad_entities
+            mesh,
+            extraction.top,
+            canonical.row_orders,
+            # ty: ignore[invalid-argument-type]
+            cad_entities,
         )
         surface_evidence = _semantic_surface_evidence(
             gmsh,
@@ -582,6 +603,7 @@ def _organize(
             extraction.node_tags,
             canonical.source_to_corner,
             cell_solid_ids,
+            # ty: ignore[invalid-argument-type]
             cad_entities,
             plan.plan_id,
         )
@@ -590,6 +612,7 @@ def _organize(
             source,
             cell_solid_ids,
             surface_evidence.mesh_face_source,
+            # ty: ignore[invalid-argument-type]
             generation.sweep,
         )
         region_zones, patches = _region_evidence(
@@ -642,6 +665,7 @@ def _organize(
             canonical.row_orders,
             extraction.node_tags,
             canonical.source_to_corner,
+            # ty: ignore[invalid-argument-type]
             cad_entities,
             generation.geometry_order,
         )
@@ -664,6 +688,7 @@ def _organize(
         )
     association, boundary_zones, provider_attribute = _boundary_association(
         source,
+        # ty: ignore[unresolved-attribute]
         mesh if dimension == 2 else boundary.mesh,
         plan.options.association_tolerance_factor,
     )
@@ -700,7 +725,7 @@ def _mesh_edges(mesh: CellMesh, /) -> np.ndarray:
 
 
 def _size_compliance(
-    specification,
+    specification: Any,
     mesh: CellMesh,
     organization: _Organization,
     connectivity_edges: np.ndarray,
@@ -741,7 +766,10 @@ def _size_compliance(
         )
     if semantic_volume:
         size_issues, local_requested, local_achieved = _semantic_size_compliance(
-            mesh, specification, organization.cell_solid_ids
+            mesh,
+            specification,
+            # ty: ignore[invalid-argument-type]
+            organization.cell_solid_ids,
         )
         issues.extend(size_issues)
         requested.extend(local_requested)
@@ -818,9 +846,9 @@ def _size_compliance(
 
 
 def _audit_gmsh_mesh(
-    specification,
+    specification: Any,
     specification_id: str,
-    geometry,
+    geometry: Any,
     organization: _Organization,
     requested_kinds: set[str],
     minimum_jacobian: float,
@@ -829,7 +857,7 @@ def _audit_gmsh_mesh(
     size_field_count: int,
     sections: tuple[_EvidenceSection, ...],
     /,
-):
+) -> Any:
     mesh = organization.mesh
     quality_evaluation = evaluate_cell_quality(mesh, mesh.coordinates)
     audit = audit_cell_mesh(
@@ -911,14 +939,14 @@ def _audit_gmsh_mesh(
 
 
 def _stages(
-    plan,
+    plan: Any,
     generation: _Generation,
     extraction: _Extraction,
     organization: _Organization,
     background: BackgroundMetricControl | None,
     geometry_layout_id: str,
-    audit,
-    compliance,
+    audit: Any,
+    compliance: Any,
     /,
 ) -> tuple[MeshingStageReport, ...]:
     specification = plan.specification
@@ -1074,8 +1102,8 @@ def _conformity_section(curved: _CurvedGeometry, /) -> _EvidenceSection:
 
 
 def _execute_brep(
-    gmsh,
-    plan,
+    gmsh: Any,
+    plan: Any,
     version: str,
     info: MeshingProviderInfo,
     cache: _CadImportCache,
@@ -1124,7 +1152,10 @@ def _execute_brep(
     sections = (
         extraction.periodic,
         _EvidenceSection(
-            extraction.layer_audit.requested, extraction.layer_audit.achieved
+            # ty: ignore[unresolved-attribute]
+            extraction.layer_audit.requested,
+            # ty: ignore[unresolved-attribute]
+            extraction.layer_audit.achieved,
         ),
         extraction.bands,
         extraction.layer_field,

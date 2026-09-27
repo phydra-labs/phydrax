@@ -8,7 +8,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -32,7 +33,7 @@ class FixedGridGeometry(StrictModule, NonTrainableState):
         /,
         *,
         periodic: bool,
-    ):
+    ) -> None:
         shape_ = tuple(shape)
         lower_ = tuple(float(value) for value in lower)
         spacing_ = tuple(float(value) for value in spacing)
@@ -62,11 +63,12 @@ class FixedGridGeometry(StrictModule, NonTrainableState):
 
     @property
     def upper(self) -> tuple[float, float, float]:
-        return tuple(
+        x, y, z = (
             self.lower[i]
             + self.spacing[i] * (self.shape[i] - (1 if self.periodic else 1))
             for i in range(3)
         )
+        return x, y, z
 
     @property
     def coordinates(self) -> Array:
@@ -109,7 +111,7 @@ class FixedGridGeometry(StrictModule, NonTrainableState):
         return ~self.boundary_mask(width)
 
     def radial_geometry(
-        self, center: ArrayLike = (0.0, 0.0, 0.0), /
+        self, center: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0), /
     ) -> tuple[Array, Array]:
         """Return radius and outward radial unit vectors on the full grid."""
 

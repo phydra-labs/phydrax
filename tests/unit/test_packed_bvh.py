@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -25,20 +27,26 @@ from phydrax._bvh import (
 _KINDS = tuple(BVHBuildKind)
 
 
-def _candidate_sets(indices, valid):
+def _candidate_sets(indices: Any, valid: Any) -> Any:
     return tuple(
         frozenset(int(value) for value in row[row_valid])
         for row, row_valid in zip(indices, valid, strict=True)
     )
 
 
-def _random_boxes(seed: int, count: int, dimension: int = 3, scale: float = 0.08):
+def _random_boxes(seed: int, count: int, dimension: int = 3, scale: float = 0.08) -> Any:
     rng = np.random.default_rng(seed)
     lower = rng.random((count, dimension))
     return lower, lower + scale * rng.random((count, dimension))
 
 
-def _brute_pairs(first_lower, first_upper, second_lower, second_upper, touching):
+def _brute_pairs(
+    first_lower: Any,
+    first_upper: Any,
+    second_lower: Any,
+    second_upper: Any,
+    touching: Any,
+) -> Any:
     extent = np.minimum(first_upper[:, None], second_upper[None]) - np.maximum(
         first_lower[:, None], second_lower[None]
     )
@@ -93,7 +101,9 @@ def test_packed_bvh_ray_chunks_preserve_candidates() -> None:
 
 @pytest.mark.parametrize("kind", _KINDS)
 @pytest.mark.parametrize("count", (1, 7, 300))
-def test_every_build_partitions_items_into_bounded_nested_leaves(kind, count) -> None:
+def test_every_build_partitions_items_into_bounded_nested_leaves(
+    kind: Any, count: Any
+) -> None:
     lower, upper = _random_boxes(count, count)
     bvh = prepare_bvh(
         lower, upper, policy=BVHBuildPolicy(kind, leaf_size=4), dtype=jnp.float64
@@ -145,7 +155,7 @@ def test_narrow_storage_rounds_bounds_outward() -> None:
 
 
 @pytest.mark.parametrize("kind", _KINDS)
-def test_nearest_items_match_brute_force_with_index_ordered_ties(kind) -> None:
+def test_nearest_items_match_brute_force_with_index_ordered_ties(kind: Any) -> None:
     rng = np.random.default_rng(3)
     points = rng.random((200, 3))
     points[:20] = points[100:120]
@@ -178,7 +188,7 @@ def test_nearest_items_mark_missing_neighbors() -> None:
 
 
 @pytest.mark.parametrize("kind", _KINDS)
-def test_refit_matches_rebuild_queries_and_differentiates_bounds(kind) -> None:
+def test_refit_matches_rebuild_queries_and_differentiates_bounds(kind: Any) -> None:
     lower, upper = _random_boxes(5, 150, scale=0.02)
     policy = BVHBuildPolicy(kind, leaf_size=4)
     bvh = prepare_bvh(lower, upper, policy=policy, dtype=jnp.float64)
@@ -209,7 +219,7 @@ def test_refit_matches_rebuild_queries_and_differentiates_bounds(kind) -> None:
 
 @pytest.mark.parametrize("kind", _KINDS)
 @pytest.mark.parametrize("touching", (False, True))
-def test_overlap_pairs_return_every_brute_force_pair(kind, touching) -> None:
+def test_overlap_pairs_return_every_brute_force_pair(kind: Any, touching: Any) -> None:
     first_lower, first_upper = _random_boxes(11, 120)
     second_lower, second_upper = _random_boxes(12, 90)
     # Exactly touching boxes separate the strict and touching predicates.

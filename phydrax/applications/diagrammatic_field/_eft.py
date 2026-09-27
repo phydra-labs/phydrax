@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -47,7 +48,7 @@ class EFTOperator(StrictModule, NonTrainableState):
         *,
         derivative_order: int = 0,
         quantum_numbers: tuple[tuple[str, int], ...] = (),
-    ):
+    ) -> None:
         name_ = str(name).strip()
         fields_ = tuple(fields)
         dimension = float(canonical_dimension)
@@ -95,7 +96,7 @@ class EFTOperatorBasis(StrictModule, NonTrainableState):
         *,
         spacetime_dimension: int = 4,
         maximum_operators: int = 4_096,
-    ):
+    ) -> None:
         operators_ = tuple(operators)
         dimension, maximum = int(spacetime_dimension), int(maximum_operators)
         if not operators_ or any(
@@ -150,7 +151,7 @@ class PowerCountingRule(StrictModule, NonTrainableState):
         /,
         *,
         loop_factor: float = 1.0 / (16.0 * math.pi * math.pi),
-    ):
+    ) -> None:
         expansion, scale, loop = (
             float(expansion_parameter),
             float(reference_scale),
@@ -201,7 +202,7 @@ class WilsonCoefficientState(StrictModule, NonTrainableState):
         statistical_uncertainty_available: ArrayLike,
         basis_id: str,
         /,
-    ):
+    ) -> None:
         values = jnp.asarray(coefficients)
         covariance = jnp.asarray(statistical_covariance)
         if values.ndim != 1 or covariance.shape != (values.size, values.size):
@@ -248,7 +249,7 @@ class EFTMatchingPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_matrix_elements: int = 1_000_000,
-    ):
+    ) -> None:
         if not isinstance(basis, EFTOperatorBasis):
             raise TypeError("basis must be an EFTOperatorBasis.")
         matrix = np.asarray(matching_matrix, dtype=np.complex128)
@@ -312,7 +313,7 @@ class PreparedEFTMatching(StrictModule, NonTrainableState):
         plan_id: str,
         prepared_id: str,
         /,
-    ):
+    ) -> None:
         self.basis = basis
         self.matching_matrix = matching_matrix
         self.prepared_solve = prepared_solve
@@ -414,7 +415,7 @@ class RGFlowPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_steps: int = 65_536,
-    ):
+    ) -> None:
         if not isinstance(basis, EFTOperatorBasis):
             raise TypeError("basis must be an EFTOperatorBasis.")
         gamma = np.asarray(anomalous_dimension, dtype=np.complex128)
@@ -493,7 +494,7 @@ class PreparedRGFlow(StrictModule, NonTrainableState):
         plan_id: str,
         prepared_id: str,
         /,
-    ):
+    ) -> None:
         self.basis = basis
         self.generator = generator
         self.initial_scale = initial_scale
@@ -514,7 +515,7 @@ class PreparedRGFlow(StrictModule, NonTrainableState):
         step_size = logarithmic_interval / self.steps
         identity = jnp.eye(self.basis.size, dtype=coefficients.dtype)
 
-        def rk4_step(_, evolution):
+        def rk4_step(_: Array, evolution: Array) -> Array:
             k1 = self.generator.mv_block(evolution)
             k2 = self.generator.mv_block(evolution + 0.5 * step_size * k1)
             k3 = self.generator.mv_block(evolution + 0.5 * step_size * k2)
@@ -602,7 +603,7 @@ class EFTObservablePlan(StrictModule, NonTrainableState):
         *,
         first_omitted_power: int,
         omitted_coefficient_scale: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(basis, EFTOperatorBasis) or not isinstance(
             power_counting, PowerCountingRule
         ):
@@ -649,7 +650,7 @@ class PreparedEFTObservable(StrictModule, NonTrainableState):
     plan: EFTObservablePlan
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: EFTObservablePlan, prepared_id: str, /):
+    def __init__(self, plan: EFTObservablePlan, prepared_id: str, /) -> None:
         self.plan = plan
         self.prepared_id = str(prepared_id)
 

@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
@@ -29,7 +30,7 @@ class ProjectiveInvariantPotential(StrictModule, ParameterOwner):
         width: int = 32,
         depth: int = 2,
         potential_id: str = "projective-invariant-potential",
-    ):
+    ) -> None:
         dimension = int(homogeneous_dimension)
         if dimension < 2:
             raise ValueError("homogeneous_dimension must be at least two.")

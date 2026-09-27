@@ -21,7 +21,7 @@ from benchmarks._runtime import (
 )
 
 
-def _problem(horizon: int, seed: int, /):
+def _problem(horizon: int, seed: int, /) -> Any:
     generator = np.random.Generator(np.random.PCG64(seed))
     dynamics = 0.95 + 0.02 * generator.standard_normal((horizon, 1, 1))
     controls = np.ones((horizon, 1, 1))
@@ -38,7 +38,7 @@ def _problem(horizon: int, seed: int, /):
     )
 
 
-def _measure(operation, warmup: int, repeats: int, /):
+def _measure(operation: Any, warmup: int, repeats: int, /) -> Any:
     warmup_timing = DurationDistribution(()).to_milliseconds_dict()
     if warmup:
         _, warmup_distribution = measure_repeated(
@@ -58,7 +58,7 @@ def _measure(operation, warmup: int, repeats: int, /):
     }
 
 
-def _certificate(problem, result, qp_results, /):
+def _certificate(problem: Any, result: Any, qp_results: Any, /) -> Any:
     states = np.asarray(result.states)
     controls = np.asarray(result.controls)
     predicted = (

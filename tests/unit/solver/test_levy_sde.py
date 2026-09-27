@@ -8,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def _driver(*, dimension=2, scale=0.2, drift=0.0):
+def _driver(*, dimension: Any = 2, scale: Any = 0.2, drift: Any = 0.0) -> Any:
     return phx.stochastic.SymmetricStableLevyProcess(
         1.25,
         scale,
@@ -18,7 +18,7 @@ def _driver(*, dimension=2, scale=0.2, drift=0.0):
     )
 
 
-def test_levy_euler_reproduces_additive_truncated_driver_path():
+def test_levy_euler_reproduces_additive_truncated_driver_path() -> None:
     driver = _driver(drift=jnp.asarray([0.1, -0.2]))
     initial = jnp.asarray([0.4, -0.7])
     deterministic_drift = jnp.asarray([0.3, 0.15])
@@ -64,7 +64,7 @@ def test_levy_euler_reproduces_additive_truncated_driver_path():
     assert trajectory.realizations == (realization,)
 
 
-def test_truncated_levy_increment_rejects_incomplete_series():
+def test_truncated_levy_increment_rejects_incomplete_series() -> None:
     driver = _driver()
     realization = phx.stochastic.LevyProcessRealization.from_process(
         driver,
@@ -85,7 +85,7 @@ def test_truncated_levy_increment_rejects_incomplete_series():
         )
 
 
-def test_gaussian_small_jump_closure_uses_reserved_global_wiener_path():
+def test_gaussian_small_jump_closure_uses_reserved_global_wiener_path() -> None:
     driver = _driver()
     problem = phx.solver.LevySDEProblem(
         lambda time, state, args: jnp.zeros_like(state),
@@ -144,7 +144,7 @@ def test_gaussian_small_jump_closure_uses_reserved_global_wiener_path():
     assert gaussian.diagnostics.small_jump_approximation == "gaussian"
 
 
-def test_levy_solver_reports_insufficient_series_capacity_without_fabrication():
+def test_levy_solver_reports_insufficient_series_capacity_without_fabrication() -> None:
     driver = _driver(dimension=1, scale=0.5)
     problem = phx.solver.LevySDEProblem(
         lambda time, state, args: jnp.zeros_like(state),
@@ -182,7 +182,7 @@ def test_levy_solver_reports_insufficient_series_capacity_without_fabrication():
     assert not jnp.any(result.diagnostics.capacity_sufficient)
 
 
-def test_tamed_levy_euler_bounds_only_the_deterministic_drift_update():
+def test_tamed_levy_euler_bounds_only_the_deterministic_drift_update() -> None:
     driver = _driver(dimension=1, scale=0.1)
     initial = jnp.asarray([2.0])
     problem = phx.solver.LevySDEProblem(

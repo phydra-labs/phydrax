@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -21,7 +24,9 @@ _FEATURES = jnp.array([[-3.0], [3.0], [-2.0], [2.0], [-1.0], [1.0]])
         KMedoids(2, initialization="random"),
     ],
 )
-def test_randomized_cluster_initializers_require_and_replay_explicit_keys(recipe):
+def test_randomized_cluster_initializers_require_and_replay_explicit_keys(
+    recipe: Any,
+) -> None:
     batch = MLBatch(_FEATURES)
     with pytest.raises(ValueError, match="explicit JAX key"):
         recipe.fit_batch(batch)

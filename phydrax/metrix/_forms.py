@@ -9,7 +9,8 @@ from math import comb
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._chart import CoordinateChart
@@ -45,7 +46,7 @@ class DifferentialForm(StrictModule):
         *,
         chart: CoordinateChart,
         degree: int,
-    ):
+    ) -> None:
         degree_value = int(degree)
         if not callable(coefficients):
             raise TypeError("Differential-form coefficients must be callable.")
@@ -92,7 +93,7 @@ class _WedgeCoefficient(StrictModule):
     signs: tuple[int, ...]
     output_count: int
 
-    def __init__(self, left: DifferentialForm, right: DifferentialForm, /):
+    def __init__(self, left: DifferentialForm, right: DifferentialForm, /) -> None:
         output_indices = exterior_indices(
             left.chart.dimension, left.degree + right.degree
         )
@@ -140,7 +141,7 @@ class _ExteriorDerivativeCoefficient(StrictModule):
     signs: tuple[int, ...]
     output_count: int
 
-    def __init__(self, form: DifferentialForm, /):
+    def __init__(self, form: DifferentialForm, /) -> None:
         output_indices = exterior_indices(form.chart.dimension, form.degree + 1)
         source_lookup = {index: position for position, index in enumerate(form.indices)}
         source_terms: list[int] = []
@@ -179,7 +180,7 @@ class _PullbackFormCoefficient(StrictModule):
     target_indices: tuple[tuple[int, ...], ...]
     source_indices: tuple[tuple[int, ...], ...]
 
-    def __init__(self, form: DifferentialForm, map: DifferentiableMap, /):
+    def __init__(self, form: DifferentialForm, map: DifferentiableMap, /) -> None:
         self.form = form
         self.map = map
         self.target_indices = form.indices
@@ -214,7 +215,7 @@ class _InteriorProductCoefficient(StrictModule):
         vector_field: Callable[[Array], Array],
         form: DifferentialForm,
         /,
-    ):
+    ) -> None:
         output_indices = exterior_indices(form.chart.dimension, form.degree - 1)
         source_lookup = {index: position for position, index in enumerate(form.indices)}
         vector_terms: list[int] = []
@@ -262,7 +263,7 @@ class _SumFormCoefficient(StrictModule):
     left: DifferentialForm
     right: DifferentialForm
 
-    def __init__(self, left: DifferentialForm, right: DifferentialForm, /):
+    def __init__(self, left: DifferentialForm, right: DifferentialForm, /) -> None:
         self.left = left
         self.right = right
 
@@ -276,7 +277,7 @@ class _ScaledFormCoefficient(StrictModule):
     form: DifferentialForm
     scale: float
 
-    def __init__(self, form: DifferentialForm, scale: float, /):
+    def __init__(self, form: DifferentialForm, scale: float, /) -> None:
         self.form = form
         self.scale = float(scale)
 
@@ -299,7 +300,7 @@ class _HodgeStarCoefficient(StrictModule):
         metric: AbstractSemiRiemannianMetric,
         orientation: int,
         /,
-    ):
+    ) -> None:
         source = form.indices
         output = exterior_indices(
             form.chart.dimension, form.chart.dimension - form.degree

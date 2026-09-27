@@ -4,10 +4,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
 import jax.numpy as jnp
-from jax import lax
-from jaxtyping import Array
+from jax import Array, lax
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -25,7 +26,7 @@ class BDFMethod(StrictModule, NonTrainableState):
     maximum_order: int = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, maximum_order: int = 2, /):
+    def __init__(self, maximum_order: int = 2, /) -> None:
         order = int(maximum_order)
         if order < 1 or order > _MAXIMUM_BDF_ORDER:
             raise ValueError("BDFMethod maximum_order must lie in [1, 5].")
@@ -71,8 +72,8 @@ def bdf_coefficients(
     if times.shape != (_HISTORY_CAPACITY,):
         raise ValueError(f"history_times must have shape {(_HISTORY_CAPACITY,)}.")
 
-    def branch(count: int):
-        def evaluate(_):
+    def branch(count: int) -> Callable[[None], Array]:
+        def evaluate(_: None) -> Array:
             nodes = jnp.concatenate((target[None], times[:count]))
             values = _derivative_coefficients(nodes)
             return jnp.pad(values, (0, _MAXIMUM_BDF_ORDER + 1 - values.size))
@@ -144,11 +145,11 @@ def bdf_predict(
     ):
         raise ValueError("BDF predictor histories do not align.")
 
-    def first(_):
+    def first(_: None) -> Array:
         return state_history[0] + (target_time - history_times[0]) * rate_history[0]
 
-    def branch(count: int):
-        def evaluate(_):
+    def branch(count: int) -> Callable[[None], Array]:
+        def evaluate(_: None) -> Array:
             return _extrapolate(history_times[:count], state_history[:count], target_time)
 
         return evaluate

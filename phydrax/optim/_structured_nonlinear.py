@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -43,13 +44,13 @@ def _maximum(values: Array, /) -> Array:
     return jnp.max(values, initial=jnp.asarray(0.0, dtype=values.dtype))
 
 
-def _numeric_fingerprint(values: Any, /) -> str:
+def _numeric_fingerprint(values: Any, /) -> str | dict[str, Any]:
     leaves = tuple(
         leaf
         for leaf in jax.tree_util.tree_leaves(values)
-        if isinstance(leaf, (jax.Array, np.ndarray, jax.core.Tracer))
+        if isinstance(leaf, (jax.Array, np.ndarray, jax_core.Tracer))
     )
-    if any(isinstance(leaf, jax.core.Tracer) for leaf in leaves):
+    if any(isinstance(leaf, jax_core.Tracer) for leaf in leaves):
         return "traced-structured-numerics"
     return array_tree_fingerprint(leaves)
 
@@ -125,7 +126,7 @@ class StructuredOptimizationWork(StrictModule):
         certificate_evaluations: Any = 0,
         provider_rebuilds: Any = 0,
         complete: Any = True,
-    ):
+    ) -> None:
         values = locals()
         for name in _STRUCTURED_WORK_FIELDS:
             setattr(self, name, _work_count(values[name], name))
@@ -179,7 +180,7 @@ class StructuredNonlinearWarmStart(StrictModule):
         source_program_id: str | None = None,
         source_backend: str | None = None,
         warm_start_id: str | None = None,
-    ):
+    ) -> None:
         primal_ = _real_vector(primal, None, "warm-start primal")
         constraints = _real_vector(
             constraint_multipliers, None, "warm-start constraint multipliers"
@@ -247,7 +248,7 @@ class StructuredNonlinearWarmStart(StrictModule):
                     "structure": structure,
                     "numeric_version": (
                         "traced"
-                        if isinstance(version, jax.core.Tracer)
+                        if isinstance(version, jax_core.Tracer)
                         else int(np.asarray(version))
                     ),
                     "source_result": self.source_result_id,
@@ -309,7 +310,7 @@ class StructuredNonlinearProgram(StrictModule):
         hessian_plan: SparseDerivativePlan | None = None,
         program_id: str,
         structure_id: str,
-    ):
+    ) -> None:
         if not callable(objective) or not callable(constraints):
             raise TypeError(
                 "Structured nonlinear objective and constraints must be callable."
@@ -365,10 +366,12 @@ class StructuredNonlinearProgram(StrictModule):
     def validate_coordinates(self, coordinates: ArrayLike, /) -> Array:
         return _real_vector(coordinates, self.num_variables, "coordinates")
 
-    def evaluate(self, coordinates: ArrayLike, args: Any = None, /):
+    def evaluate(
+        self, coordinates: ArrayLike, args: Any = None, /
+    ) -> StructuredNonlinearEvaluation:
         point = self.validate_coordinates(coordinates)
 
-        def scalar(value):
+        def scalar(value: Array) -> Array:
             output = jnp.asarray(self.objective(value, args))
             if output.shape != () or not jnp.issubdtype(output.dtype, jnp.floating):
                 raise TypeError(
@@ -615,7 +618,7 @@ def _argument_signature(args: Any, /) -> str:
     leaves, structure = jax.tree_util.tree_flatten(args)
     records = []
     for leaf in leaves:
-        if isinstance(leaf, (jax.Array, np.ndarray, jax.core.Tracer)):
+        if isinstance(leaf, (jax.Array, np.ndarray, jax_core.Tracer)):
             records.append(
                 {
                     "kind": "array",
@@ -691,7 +694,7 @@ class StructuredNonlinearTemplate(StrictModule):
         program: StructuredNonlinearProgram,
         sample_args: Any = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(program, StructuredNonlinearProgram):
             raise TypeError("program must be a StructuredNonlinearProgram.")
         roles = _bound_roles(
@@ -759,7 +762,7 @@ class PreparedStructuredNonlinearProgram(StrictModule):
         objective_scale: ArrayLike = 1.0,
         constraint_scale: ArrayLike | None = None,
         numeric_version: Any = 0,
-    ):
+    ) -> None:
         if not isinstance(template, StructuredNonlinearTemplate):
             raise TypeError("template must be a StructuredNonlinearTemplate.")
         program = template.program
@@ -855,7 +858,7 @@ class PreparedStructuredNonlinearProgram(StrictModule):
                 "template": template.template_id,
                 "numeric_version": (
                     "traced"
-                    if isinstance(version, jax.core.Tracer)
+                    if isinstance(version, jax_core.Tracer)
                     else int(np.asarray(version))
                 ),
                 "numerics": _numeric_fingerprint(
@@ -968,7 +971,7 @@ class StructuredNonlinearResult(StrictModule):
         structure_id: str,
         numeric_binding_id: str,
         method_id: str,
-    ):
+    ) -> None:
         if not isinstance(optimization, MinimizationResult):
             raise TypeError("optimization must be a MinimizationResult.")
         if not isinstance(warm_start, StructuredNonlinearWarmStart):

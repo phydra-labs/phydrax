@@ -11,12 +11,15 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import DTypeLike
 from scipy.special import roots_jacobi
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._lebedev_cubature_data import LEBEDEV_RULES
 from ._orthogonal import legendre_rule_data
 from ._simplex_cubature_data import TETRAHEDRON_RULES, TRIANGLE_RULES
@@ -91,8 +94,8 @@ class CubatureRuleData(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        points: ArrayLike,
-        weights: ArrayLike,
+        points: npt.ArrayLike,
+        weights: npt.ArrayLike,
         /,
         *,
         exact_degree: int,
@@ -100,25 +103,13 @@ class CubatureRuleData(StrictModule, NonTrainableState):
         reference_domain: CubatureReference,
         backend: str,
         source_id: str,
-        dtype=jnp.float64,
+        dtype: DTypeLike = jnp.float64,
         maximum_rule_bytes: int = _DEFAULT_RULE_BYTES,
-    ):
+    ) -> None:
         degree = _degree(exact_degree)
         if reference_domain not in _REFERENCE_DIMENSION:
             raise ValueError(f"Unsupported cubature reference: {reference_domain!r}.")
-        if family not in (
-            "xiao-gimbutas",
-            "lebedev",
-            "periodic-circle",
-            "radial-product",
-            "duffy",
-            "stroud-secrest-3-1",
-            "hadamard-3",
-            "stroud-secrest-5-2",
-            "stroud-secrest-5-3",
-            "tensor-hermite",
-        ):
-            raise ValueError(f"Unsupported cubature family: {family!r}.")
+        family = parse(family, CubatureFamily, "family")
         dtype_ = np.dtype(dtype)
         points_host = np.asarray(points, dtype=dtype_)
         weights_host = np.asarray(weights, dtype=dtype_).reshape((-1,))
@@ -151,7 +142,7 @@ class CubatureRuleData(StrictModule, NonTrainableState):
             np.all(points_host[1:] == points_host[:-1], axis=1)
         ):
             raise ValueError("Cubature points must be unique.")
-        tolerance = 512.0 * np.finfo(dtype_).eps * max(1, points_host.shape[0])
+        tolerance = float(512.0 * np.finfo(dtype_).eps * max(1, points_host.shape[0]))
         _validate_reference_points(reference_domain, points_host, tolerance)
         mass = _REFERENCE_MASS[reference_domain]
         if not np.isclose(

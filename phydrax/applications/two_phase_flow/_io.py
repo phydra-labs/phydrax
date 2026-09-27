@@ -6,11 +6,13 @@ from __future__ import annotations
 
 from operator import index
 from pathlib import Path
+from typing import SupportsFloat
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._array_archive import (
     pack_array_tree,
@@ -57,13 +59,15 @@ def two_phase_diagnostic_view(
     /,
 ) -> TwoPhaseDiagnosticView:
     view = two_phase.view(state.state, state.pressure)
-    kinetic = 0.5 * sum(
-        jnp.sum(rho * measure * component**2)
-        for rho, measure, component in zip(
-            two_phase.face_density(view.density),
-            two_phase.operators.face_dual_measures,
-            view.velocity,
-            strict=True,
+    kinetic = 0.5 * jnp.asarray(
+        sum(
+            jnp.sum(rho * measure * component**2)
+            for rho, measure, component in zip(
+                two_phase.face_density(view.density),
+                two_phase.operators.face_dual_measures,
+                view.velocity,
+                strict=True,
+            )
         )
     )
     return TwoPhaseDiagnosticView(
@@ -92,7 +96,7 @@ def two_phase_inspection_frame(
     state: TwoPhaseContinuationState,
     /,
     *,
-    time: ArrayLike,
+    time: SupportsFloat,
     step: int,
     state_kind: str,
     successful: ArrayLike,

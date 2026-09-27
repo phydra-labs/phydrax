@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -12,7 +15,9 @@ from phydrax.signal import convolve
 
 @pytest.mark.parametrize("mode", ("full", "same", "valid"))
 @pytest.mark.parametrize("tap_count", (3, 4))
-def test_direct_and_fft_convolution_match_declared_numpy_crops(mode, tap_count):
+def test_direct_and_fft_convolution_match_declared_numpy_crops(
+    mode: Any, tap_count: Any
+) -> None:
     values = np.linspace(-1.0, 1.0, 9)
     taps = np.linspace(0.2, 0.8, tap_count)
     full = np.convolve(values, taps, mode="full")
@@ -31,7 +36,7 @@ def test_direct_and_fft_convolution_match_declared_numpy_crops(mode, tap_count):
     assert np.allclose(transformed, expected, rtol=1e-12, atol=1e-12)
 
 
-def test_convolution_preserves_stream_axes_and_complex_dtype():
+def test_convolution_preserves_stream_axes_and_complex_dtype() -> None:
     values = jnp.arange(2 * 7 * 3, dtype="float64").reshape((2, 7, 3))
     taps = jnp.asarray((1.0 + 0.5j, -0.25j))
 
@@ -45,7 +50,7 @@ def test_convolution_preserves_stream_axes_and_complex_dtype():
     )
 
 
-def test_convolution_is_jittable_vmappable_and_differentiable_in_both_operands():
+def test_convolution_is_jittable_vmappable_and_differentiable_in_both_operands() -> None:
     values = jnp.arange(8.0)
     taps = jnp.asarray((0.2, 0.5, -0.1))
     compiled = jax.jit(lambda x, h: convolve(x, h, mode="same", method="fft"))
@@ -62,10 +67,11 @@ def test_convolution_is_jittable_vmappable_and_differentiable_in_both_operands()
     assert jnp.all(jnp.isfinite(tap_gradient))
 
 
-def test_convolution_validation_rejects_invalid_valid_mode_and_methods():
+def test_convolution_validation_rejects_invalid_valid_mode_and_methods() -> None:
     with pytest.raises(ValueError, match="signal length"):
         convolve(jnp.ones((2,)), jnp.ones((3,)), mode="valid")
     with pytest.raises(ValueError, match="method"):
+        # ty: ignore[invalid-argument-type]
         convolve(jnp.ones((3,)), jnp.ones((2,)), method="auto")
     with pytest.raises(ValueError, match="taps"):
         convolve(jnp.ones((3,)), jnp.ones((2, 1)))

@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._manifold import AbstractGeodesicManifold
 from ._state_geometry import AbstractStateGeometry
@@ -26,7 +27,7 @@ class GeodesicManifoldStateGeometry(AbstractStateGeometry):
     supports_isometric_transport: bool = eqx.field(static=True)
     supports_commutator_free: bool = eqx.field(static=True)
 
-    def __init__(self, manifold: AbstractGeodesicManifold, /):
+    def __init__(self, manifold: AbstractGeodesicManifold, /) -> None:
         if not isinstance(manifold, AbstractGeodesicManifold):
             raise TypeError("manifold must be an AbstractGeodesicManifold.")
         self.manifold = manifold

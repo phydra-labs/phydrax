@@ -32,25 +32,47 @@ from collections.abc import Sequence
 from enum import IntEnum, IntFlag
 from functools import cache
 from itertools import combinations, permutations
-from typing import final, NamedTuple
+from typing import Any, final, Literal, NamedTuple, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.sharding import Mesh, PartitionSpec
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._geometry_predicates import orient2d, orient3d, PredicateMode, PredicateSign
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import Bool, Dim, Float, Identifier, Int32, Int64, Size
 
 
-_CELL_KINDS = {2: "triangle", 3: "tetrahedron"}
+MaskedSimplexCellKind: TypeAlias = Literal["triangle", "tetrahedron"]
+_CELL_KINDS: dict[int, MaskedSimplexCellKind] = {
+    2: "triangle",
+    3: "tetrahedron",
+}
 _INDEX_LIMIT = np.iinfo(np.int32).max
 _CODE_SENTINEL = np.iinfo(np.int64).max
 _MINIMUM_BUCKET = 64
+
+
+class _AdaptiveVertexDim(Dim, minimum=1):
+    """Allocated vertex slots in one adaptive simplex capacity bucket."""
+
+
+class _AdaptiveCellDim(Dim, minimum=1):
+    """Allocated cell slots in one adaptive simplex capacity bucket."""
+
+
+class _AdaptiveAmbientDim(Dim, minimum=2):
+    """Physical coordinate components of one adaptive simplex mesh."""
+
+
+class _AdaptiveSimplexWidthDim(Dim, minimum=3):
+    """Corner/half-facet slots per simplex cell."""
 
 
 class AdaptiveSimplexCounter(IntEnum):
@@ -142,18 +164,20 @@ class MaskedSimplexMesh(StrictModule, NonTrainableState):
     order equals global-ID order. Static fields form the compile identity.
     """
 
-    cell_kind: str = eqx.field(static=True)
-    ambient_dimension: int = eqx.field(static=True)
-    vertex_capacity: int = eqx.field(static=True)
-    cell_capacity: int = eqx.field(static=True)
-    signature_id: str = eqx.field(static=True)
-    coordinates: Array
-    vertex_ids: Array
-    vertex_active: Array
-    cells: Array
-    cell_ids: Array
-    cell_active: Array
-    facet_neighbors: Array
+    __strict_contract__ = True
+
+    cell_kind: MaskedSimplexCellKind = eqx.field(static=True)
+    ambient_dimension: Size[_AdaptiveAmbientDim] = eqx.field(static=True)
+    vertex_capacity: Size[_AdaptiveVertexDim] = eqx.field(static=True)
+    cell_capacity: Size[_AdaptiveCellDim] = eqx.field(static=True)
+    signature_id: Identifier = eqx.field(static=True)
+    coordinates: Float[_AdaptiveVertexDim, _AdaptiveAmbientDim]
+    vertex_ids: Int64[_AdaptiveVertexDim]
+    vertex_active: Bool[_AdaptiveVertexDim]
+    cells: Int32[_AdaptiveCellDim, _AdaptiveSimplexWidthDim]
+    cell_ids: Int64[_AdaptiveCellDim]
+    cell_active: Bool[_AdaptiveCellDim]
+    facet_neighbors: Int32[_AdaptiveCellDim, _AdaptiveSimplexWidthDim]
 
     def __init__(
         self,
@@ -165,7 +189,7 @@ class MaskedSimplexMesh(StrictModule, NonTrainableState):
         cell_active: ArrayLike,
         facet_neighbors: ArrayLike,
         /,
-    ):
+    ) -> None:
         points = jnp.asarray(coordinates)
         rows = jnp.asarray(cells)
         if points.ndim != 2 or not jnp.issubdtype(points.dtype, jnp.floating):
@@ -343,7 +367,7 @@ class AdaptiveSimplexPolicy(StrictModule, NonTrainableState):
         cell_capacity: int | None = None,
         growth_factor: float = 4.0,
         maximum_coarsening_passes: int = 64,
-    ):
+    ) -> None:
         vertices = (
             None
             if vertex_capacity is None
@@ -422,7 +446,7 @@ class AdaptiveSimplexLayout(StrictModule, NonTrainableState):
         maximum_closure_iterations: int,
         maximum_coarsening_passes: int,
         coordinate_dtype: np.dtype = np.dtype(np.float64),
-    ):
+    ) -> None:
         kind = _CELL_KINDS.get(dimension)
         if kind is None or isinstance(dimension, bool):
             raise ValueError("Adaptive simplex layouts are two- or three-dimensional.")
@@ -533,7 +557,7 @@ class AdaptiveSimplexState(StrictModule, NonTrainableState):
         cursors: ArrayLike,
         clocks: ArrayLike,
         counters: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(mesh, MaskedSimplexMesh):
             raise TypeError("mesh must be MaskedSimplexMesh.")
         cells, vertices = mesh.cell_capacity, mesh.vertex_capacity
@@ -750,7 +774,7 @@ def _state(work: _Work, /) -> AdaptiveSimplexState:
     )
 
 
-def _select(condition: Array, first, second, /):
+def _select(condition: Array, first: Any, second: Any, /) -> Any:
     return jax.tree_util.tree_map(
         lambda left, right: jnp.where(condition, left, right), first, second
     )
@@ -793,7 +817,7 @@ def _odd_relative(rows: Array, tuples: Array, dimension: int, /) -> Array:
     return inversions % 2 == 1
 
 
-def _canonical(tuples: Array, tags: Array, odd: Array, dimension: int, /):
+def _canonical(tuples: Array, tags: Array, odd: Array, dimension: int, /) -> Any:
     """Canonical tagged tuple (smaller by slot = by global ID) and its parity."""
 
     reversal = jnp.asarray(maubach_bisection_tables(dimension)[2], dtype=jnp.int32)
@@ -867,7 +891,9 @@ def _global_flags(status: Array, axis: str | None, /) -> Array:
     return jnp.sum(weights, dtype=jnp.int32)
 
 
-def _local_issue(closure: _Closure, known, position, codes, guard: bool, /) -> _Issue:
+def _local_issue(
+    closure: _Closure, known: Any, position: Any, codes: Any, guard: bool, /
+) -> _Issue:
     """Single-part issue: new edges by slot code (slot order is ID order)."""
 
     work, selected = closure.work, closure.selected
@@ -909,7 +935,7 @@ def _local_issue(closure: _Closure, known, position, codes, guard: bool, /) -> _
 
 
 def _parts_issue(
-    closure: _Closure, known, position, codes, guard: bool, axis: str, /
+    closure: _Closure, known: Any, position: Any, codes: Any, guard: bool, axis: str, /
 ) -> _Issue:
     """Part-independent issue: new vertex and cell IDs are global ranks.
 
@@ -969,7 +995,11 @@ def _parts_issue(
         jnp.sum(fresh, dtype=jnp.int32),
         jnp.sum(selected, dtype=jnp.int32),
         jnp.sum(ordered_ids != _CODE_SENTINEL, dtype=jnp.int32),
-        jnp.any(_members(work.protected_codes, local_codes)[0]) if guard else False,
+        (
+            jnp.any(_members(work.protected_codes, local_codes)[0])
+            if guard
+            else jnp.asarray(False)
+        ),
     )
 
 
@@ -996,7 +1026,7 @@ def _issued_vertices(work: _Work, issue: _Issue, level: Array, /) -> dict[str, A
     }
 
 
-def _children(work: _Work, midpoint: Array, dimension: int, /):
+def _children(work: _Work, midpoint: Array, dimension: int, /) -> Any:
     """Canonical tuples, oriented rows, tags, and facet classes of both children.
 
     Children of every lane are formed from the static templates; halves inherit
@@ -1022,7 +1052,7 @@ def _children(work: _Work, midpoint: Array, dimension: int, /):
         work.cells, work.facet_classes, jnp.stack((second_end, first_end), axis=1)
     )
 
-    def classes(rows, partner, opposite):
+    def classes(rows: Any, partner: Any, opposite: Any) -> Any:
         inherited = _class_opposite(work.cells, work.facet_classes, rows)
         return jnp.where(
             rows == midpoint[:, None],
@@ -1052,7 +1082,7 @@ def _bisected(work: _Work, selected: Array, issue: _Issue, dimension: int, /) ->
     slots = jnp.concatenate((first_slot, second_slot))
     lanes = jnp.arange(cells, dtype=jnp.int32)
 
-    def children(values_first, values_second, target):
+    def children(values_first: Any, values_second: Any, target: Any) -> Any:
         target = target.at[first_slot].set(values_first, mode="drop")
         return target.at[second_slot].set(values_second, mode="drop")
 
@@ -1115,7 +1145,7 @@ def _bisection_round(
     )
     status = _global_flags(status.astype(jnp.int32), axis)
 
-    def apply(_):
+    def apply(_: Any) -> Any:
         level = work.clocks[0] + closure.iterations + 1
         updated = _bisected(work, selected, issue, dimension)._replace(
             **_issued_vertices(work, issue, level),
@@ -1150,7 +1180,7 @@ def _bisection_round(
             closure.created + issue.created_global,
         )
 
-    def refuse(_):
+    def refuse(_: Any) -> Any:
         return closure._replace(status=(closure.status | status).astype(jnp.int32))
 
     return jax.lax.cond(status == 0, apply, refuse, None)
@@ -1185,10 +1215,10 @@ def _closure(
     )
     limit = layout.maximum_closure_iterations
 
-    def proceed(closure: _Closure):
+    def proceed(closure: _Closure) -> Any:
         return closure.pending & (closure.status == 0) & (closure.iterations < limit)
 
-    def step(closure: _Closure):
+    def step(closure: _Closure) -> Any:
         return _bisection_round(closure, layout.dimension, guard, axis)
 
     result = jax.lax.while_loop(proceed, step, start)
@@ -1230,7 +1260,7 @@ def _protected_marks(
     protected, _ = _members(work.protected_codes, table)
     span = edges.shape[1]
 
-    def spread(state):
+    def spread(state: Any) -> Any:
         bad_edges, _ = state
         bad_cells = jnp.repeat(universe & bad_edges[refinement], span)
         target = jnp.where(bad_cells & (flat != _CODE_SENTINEL), edge_index, flat.size)
@@ -1266,7 +1296,7 @@ def _shape_quality(points: Array, dimension: int, /) -> Array:
     return 12.0 * (0.5 * volume) ** (2.0 / 3.0) / squared
 
 
-def _geometry_evidence(work: _Work, dimension: int, axis: str | None, /):
+def _geometry_evidence(work: _Work, dimension: int, axis: str | None, /) -> Any:
     """FILTERED_DEVICE orientation and shape quality of the active cells (all parts)."""
 
     points = work.coordinates[work.cells]
@@ -1698,7 +1728,9 @@ class AdaptiveSimplexParts(StrictModule, NonTrainableState):
     mesh: Mesh = eqx.field(static=True)
     axis_name: str = eqx.field(static=True)
 
-    def __init__(self, devices: Sequence[jax.Device], /, *, axis_name: str = "parts"):
+    def __init__(
+        self, devices: Sequence[jax.Device], /, *, axis_name: str = "parts"
+    ) -> None:
         chosen = tuple(devices)
         if not chosen or not all(isinstance(device, jax.Device) for device in chosen):
             raise TypeError("devices must be a non-empty sequence of jax.Device.")
@@ -1776,7 +1808,7 @@ def _refine_parts(
     axis = parts.axis_name
     spec = PartitionSpec(axis)
 
-    def local(state_block: AdaptiveSimplexState, marks_block: Array):
+    def local(state_block: AdaptiveSimplexState, marks_block: Array) -> Any:
         state = jax.tree_util.tree_map(lambda value: value[0], state_block)
         work = _work(state)
         mask = marks_block[0] & work.cell_active
@@ -1885,7 +1917,7 @@ def adaptive_simplex_state(
         raise ValueError("The protected edges exceed their capacity bucket.")
     dtype = np.dtype(layout.coordinate_dtype)
 
-    def padded(values, capacity, fill, dtype_):
+    def padded(values: Any, capacity: Any, fill: Any, dtype_: Any) -> Any:
         array = np.asarray(values, dtype=dtype_)
         result = np.full((capacity,) + array.shape[1:], fill, dtype=dtype_)
         result[: array.shape[0]] = array

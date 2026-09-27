@@ -40,7 +40,7 @@ class FunctionalShardingPolicy(StrictModule, NonTrainableState):
         policy_id: str = "functional-data-parallel",
         execution_group_id: str | None = None,
         coordinator_process: int = 0,
-    ):
+    ) -> None:
         mapping = frozendict(
             {str(sample): str(device) for sample, device in axis_mapping.items()}
         )
@@ -128,8 +128,8 @@ class FunctionalShardingPolicy(StrictModule, NonTrainableState):
             dims=field.dims,
         )
 
-    def place_tree(self, tree: Any, /, *, replicate_other_arrays: bool = True):
-        def place(value):
+    def place_tree(self, tree: Any, /, *, replicate_other_arrays: bool = True) -> Any:
+        def place(value: object) -> object:
             if isinstance(value, cx.AxisArray):
                 return self.place_field(value)
             if replicate_other_arrays and eqx.is_array(value):
@@ -142,7 +142,7 @@ class FunctionalShardingPolicy(StrictModule, NonTrainableState):
             is_leaf=lambda value: isinstance(value, cx.AxisArray),
         )
 
-    def place_parameters(self, parameters: Any, /):
+    def place_parameters(self, parameters: Any, /) -> Any:
         """Replicate every array of one PARAMETER or MODEL_STATE lane."""
         return jax.tree.map(
             lambda leaf: (
@@ -151,7 +151,9 @@ class FunctionalShardingPolicy(StrictModule, NonTrainableState):
             parameters,
         )
 
-    def place_lanes(self, parameters: Any, model_state: Any, fixed: Any, /):
+    def place_lanes(
+        self, parameters: Any, model_state: Any, fixed: Any, /
+    ) -> tuple[Any, Any, Any]:
         """Place `partition_parameters` lanes by role.
 
         Parameters and model state are replicated on every device; fixed data

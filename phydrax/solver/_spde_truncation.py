@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -21,6 +21,7 @@ from ..stochastic._path_ensemble import (
     StochasticPathEnsemblePlan,
     StochasticPathEnsembleResult,
 )
+from ..typing import PRNGKey
 from ._spde import SemidiscreteSPDE
 
 
@@ -44,7 +45,7 @@ class SPDEApproximationLevel(StrictModule):
         /,
         *,
         level_id: str,
-    ):
+    ) -> None:
         if not isinstance(spde, SemidiscreteSPDE):
             raise TypeError("spde must be a SemidiscreteSPDE.")
         if not isinstance(temporal_mesh, TimeGrid):
@@ -86,7 +87,7 @@ class SPDEApproximationFamily(StrictModule):
         /,
         *,
         tail_envelope: Any = None,
-    ):
+    ) -> None:
         selected = tuple(levels)
         if not selected or any(
             not isinstance(item, SPDEApproximationLevel) for item in selected
@@ -150,7 +151,7 @@ def prepare_spde_approximation(
     /,
     *,
     ensemble_plan: StochasticPathEnsemblePlan,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> PreparedSPDEApproximation:
     """Prepare coupled finite levels using common prefix-stable Wiener keys."""
     if not isinstance(family, SPDEApproximationFamily):

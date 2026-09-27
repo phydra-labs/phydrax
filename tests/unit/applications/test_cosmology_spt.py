@@ -17,7 +17,7 @@ NATIVE_DIFFERENTIATION = phx.DerivativeContract.smooth(
 cosmology = phx.applications.cosmology
 
 
-def test_one_loop_spt_returns_bounded_nonlinear_power():
+def test_one_loop_spt_returns_bounded_nonlinear_power() -> None:
     background = cosmology.FLRWBackground(1.0, 1.0)
     provenance = cosmology.CosmologyProductProvenance(
         producer="test",
@@ -33,6 +33,7 @@ def test_one_loop_spt_returns_bounded_nonlinear_power():
     k = jnp.geomspace(1.0e-4, 4.0, 512)
     linear_values = 1.0e-4 * k / (1.0 + k**4)
     power = cosmology.MatterPowerTable(
+        # ty: ignore[invalid-argument-type]
         [0.5, 1.0],
         k,
         jnp.stack((0.25 * linear_values, linear_values)),

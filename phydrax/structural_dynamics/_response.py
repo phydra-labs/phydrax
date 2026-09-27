@@ -5,7 +5,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 def sdof_transfer_function(
@@ -13,7 +14,7 @@ def sdof_transfer_function(
     natural_frequency_rad_s: float,
     damping_ratio: float,
     /,
-):
+) -> Array:
     if (
         not isfinite(natural_frequency_rad_s)
         or natural_frequency_rad_s <= 0
@@ -35,7 +36,7 @@ def sdof_transfer_function(
 
 def random_response_variance(
     transfer_function: ArrayLike, input_psd: ArrayLike, frequency_spacing_hz: float, /
-):
+) -> Array:
     if not isfinite(frequency_spacing_hz) or frequency_spacing_hz <= 0:
         raise ValueError("Frequency spacing must be finite and positive.")
     transfer = jnp.asarray(transfer_function)
@@ -50,7 +51,7 @@ def random_response_variance(
     return jnp.sum(jnp.abs(transfer) ** 2 * psd) * float(frequency_spacing_hz)
 
 
-def shock_response_peak(acceleration: ArrayLike, /):
+def shock_response_peak(acceleration: ArrayLike, /) -> Array:
     values = jnp.asarray(acceleration)
     values = eqx.error_if(
         values,

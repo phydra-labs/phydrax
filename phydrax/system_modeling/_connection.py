@@ -1,11 +1,14 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Self
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from ._connector import Connector
@@ -16,10 +19,10 @@ class ConnectionSet:
     connector_ids: tuple[str, ...]
 
     @classmethod
-    def create(cls, ids):
+    def create(cls, ids: Iterable[str]) -> Self:
         return cls(tuple(sorted(str(x) for x in ids)))
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (
             len(self.connector_ids) < 2
             or any(
@@ -39,12 +42,14 @@ class AcausalSystem:
     connections: tuple[ConnectionSet, ...]
 
     @classmethod
-    def create(cls, connectors, connections):
+    def create(
+        cls, connectors: Iterable[Connector], connections: Iterable[ConnectionSet]
+    ) -> Self:
         connector_values = tuple(connectors)
         connection_values = tuple(connections)
         return cls(connector_values, connection_values)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if any(not isinstance(item, Connector) for item in self.connectors):
             raise TypeError("Acausal systems require Connector entries.")
         if any(not isinstance(item, ConnectionSet) for item in self.connections):
@@ -73,7 +78,7 @@ class AcausalSystem:
                 raise ValueError("Connected connector types are not compatible.")
 
     @property
-    def system_id(self):
+    def system_id(self) -> str:
         return canonical_fingerprint(
             {
                 "kind": "acausal-system",
@@ -100,7 +105,7 @@ class AcausalSystem:
             }
         )
 
-    def connection_residual(self, values: ArrayLike, /):
+    def connection_residual(self, values: ArrayLike, /) -> Array:
         data = jnp.asarray(values)
         index = {x.connector_id: i for i, x in enumerate(self.connectors)}
         variable_counts = {

@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -54,7 +55,7 @@ class SurveyCoordinate(StrictModule, NonTrainableState):
         unit: str,
         frame: str,
         h_convention: str,
-    ):
+    ) -> None:
         scalars = tuple(
             str(value).strip()
             for value in (
@@ -128,7 +129,7 @@ class SurveyTheoryProduct(StrictModule):
         coordinates: tuple[SurveyCoordinate, ...],
         product_id: str,
         /,
-    ):
+    ) -> None:
         values_ = jnp.asarray(values)
         if values_.shape != (len(coordinates),) or not product_id:
             raise ValueError("Survey theory values and coordinates disagree.")
@@ -162,7 +163,7 @@ class SurveyVerticalSliceManifest(StrictModule, NonTrainableState):
         negative_boundaries: tuple[str, ...],
         artifact: ScientificArtifactEnvelope,
         /,
-    ):
+    ) -> None:
         name_ = str(name).strip()
         release_ = str(release).strip()
         capability = tuple(str(value).strip() for value in capabilities)
@@ -210,7 +211,7 @@ class SurveyFrameworkPlan(StrictModule, NonTrainableState):
         logdet_covariance: ArrayLike,
         manifest: SurveyVerticalSliceManifest,
         /,
-    ):
+    ) -> None:
         observation = LinearObservationPlan(
             response_matrix, source_layout, observed_layout
         )

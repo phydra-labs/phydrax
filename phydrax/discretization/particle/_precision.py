@@ -8,17 +8,15 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax import Array
+from jax.typing import ArrayLike
 
+from ..._dtype_names import real_precision_dtype_name, RealPrecisionDType
 from ..._fingerprint import canonical_fingerprint
-from ..._precision import (
-    PrecisionEvidenceEnvelope,
-    PrecisionRequest,
-    PrecisionResolution,
-    real_precision_dtype_name,
-    RealPrecisionDType,
-)
+from ..._precision import PrecisionEvidenceEnvelope, PrecisionRequest, PrecisionResolution
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 ParticleRealization: TypeAlias = Literal["dense_pairs", "cell_edge_list", "morton_tree"]
@@ -42,22 +40,10 @@ class ParticleExecutionPolicy(StrictModule, NonTrainableState):
         realization: ParticleRealization = "dense_pairs",
         accumulation: ParticleAccumulation = "deterministic",
         kernel_backend: ParticleKernelBackend = "reference",
-    ):
-        if realization not in ("dense_pairs", "cell_edge_list", "morton_tree"):
-            raise ValueError(
-                "realization must be 'dense_pairs', 'cell_edge_list', or 'morton_tree'."
-            )
-        if accumulation not in ("fast", "deterministic", "compensated"):
-            raise ValueError(
-                "accumulation must be 'fast', 'deterministic', or 'compensated'."
-            )
-        if kernel_backend not in (
-            "reference",
-            "dense_fused",
-            "cell_fused",
-            "verlet_fused",
-        ):
-            raise ValueError("Unknown particle kernel backend.")
+    ) -> None:
+        realization = parse(realization, ParticleRealization, "realization")
+        accumulation = parse(accumulation, ParticleAccumulation, "accumulation")
+        kernel_backend = parse(kernel_backend, ParticleKernelBackend, "kernel_backend")
         self.realization = realization
         self.accumulation = accumulation
         self.kernel_backend = kernel_backend
@@ -89,7 +75,7 @@ class ParticlePrecisionPolicy(StrictModule, NonTrainableState):
         accumulation_dtype: Any | None = None,
         certification_dtype: Any | None = None,
         output_dtype: Any | None = None,
-    ):
+    ) -> None:
         geometry = real_precision_dtype_name(geometry_dtype)
         evaluation = real_precision_dtype_name(evaluation_dtype)
         accumulation = real_precision_dtype_name(
@@ -131,25 +117,25 @@ class ParticlePrecisionPolicy(StrictModule, NonTrainableState):
             },
         )
 
-    def geometry(self, value: Any, /):
+    def geometry(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=self.geometry_dtype)
 
-    def evaluation(self, value: Any, /):
+    def evaluation(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=self.evaluation_dtype)
 
-    def accumulation(self, value: Any, /):
+    def accumulation(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         if not jnp.issubdtype(array.dtype, jnp.inexact):
             return array
         return array.astype(self.accumulation_dtype)
 
-    def certification(self, value: Any, /):
+    def certification(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         if not jnp.issubdtype(array.dtype, jnp.inexact):
             return array
         return array.astype(self.certification_dtype)
 
-    def output(self, value: Any, /):
+    def output(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=self.output_dtype)
 
     def evidence(self) -> PrecisionEvidenceEnvelope:

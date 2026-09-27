@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -16,13 +18,19 @@ from phydrax.applications import electrophysiology as ep
 jax.config.update("jax_enable_x64", True)
 
 
-def _lif(*, capacitance=1.0, leak=0.0, threshold=-64.0, refractory=10.0):
+def _lif(
+    *,
+    capacitance: Any = 1.0,
+    leak: Any = 0.0,
+    threshold: Any = -64.0,
+    refractory: Any = 10.0,
+) -> Any:
     return ep.LeakyIntegrateAndFire(
         capacitance, leak, -65.0, threshold, -65.0, refractory_ms=refractory
     )
 
 
-def _inputs(runtime, current):
+def _inputs(runtime: Any, current: Any) -> Any:
     return eqx.tree_at(
         lambda value: value.injected_current_nA,
         ep.zero_neural_inputs(runtime),
@@ -30,7 +38,7 @@ def _inputs(runtime, current):
     )
 
 
-def _assert_same_state(actual, expected):
+def _assert_same_state(actual: Any, expected: Any) -> None:
     for actual_leaf, expected_leaf in zip(
         jax.tree.leaves(actual), jax.tree.leaves(expected), strict=True
     ):
@@ -40,7 +48,7 @@ def _assert_same_state(actual, expected):
         np.testing.assert_array_equal(actual_leaf, expected_leaf)
 
 
-def _single_cable(*mechanisms, dt=0.05):
+def _single_cable(*mechanisms: Any, dt: Any = 0.05) -> Any:
     diameter = np.sqrt(100_000.0 / np.pi)
     morphology = ep.CellMorphologyPlan(
         "soma", (ep.CompartmentSpec("soma", None, diameter, diameter),)
@@ -52,14 +60,14 @@ def _single_cable(*mechanisms, dt=0.05):
 
 def _source_runtime(
     *,
-    queue_capacity=4,
-    spike_capacity=4,
-    recording_capacity=4,
-    maximum_events_per_step=8,
-    external_spikes=((0.25, "source"),),
-    delay=2.0,
-    fanout=1,
-):
+    queue_capacity: Any = 4,
+    spike_capacity: Any = 4,
+    recording_capacity: Any = 4,
+    maximum_events_per_step: Any = 8,
+    external_spikes: Any = ((0.25, "source"),),
+    delay: Any = 2.0,
+    fanout: Any = 1,
+) -> Any:
     cells = (ep.NeuralCellPlan("source", ep.SpikeSource()),) + tuple(
         ep.NeuralCellPlan(f"target-{index}", _lif(threshold=0.0))
         for index in range(fanout)
@@ -97,7 +105,7 @@ def _source_runtime(
     ).prepare()
 
 
-def test_endogenous_lif_delay_keeps_emission_weight_during_inflight_learning():
+def test_endogenous_lif_delay_keeps_emission_weight_during_inflight_learning() -> None:
     runtime = ep.NeuralNetworkPlan(
         (ep.NeuralCellPlan("pre", _lif()), ep.NeuralCellPlan("post", _lif())),
         ep.SynapseNetworkPlan(
@@ -154,7 +162,9 @@ def test_endogenous_lif_delay_keeps_emission_weight_during_inflight_learning():
     )
 
 
-def test_heterogeneous_point_and_cable_cells_preserve_endpoint_charge_and_parameters():
+def test_heterogeneous_point_and_cable_cells_preserve_endpoint_charge_and_parameters() -> (
+    None
+):
     morphology = ep.CellMorphologyPlan(
         "two-compartment",
         (
@@ -199,7 +209,7 @@ def test_heterogeneous_point_and_cable_cells_preserve_endpoint_charge_and_parame
     assert int(result.state.spikes.count) == 0
 
 
-def test_hh_spike_observation_never_resets_or_truncates_the_action_potential():
+def test_hh_spike_observation_never_resets_or_truncates_the_action_potential() -> None:
     cable = _single_cable(ep.HodgkinHuxleyNaK())
     runtime = ep.NeuralNetworkPlan(
         (ep.NeuralCellPlan("hh", cable, threshold_mV=0.0, rearm_mV=-40.0),),
@@ -220,7 +230,7 @@ def test_hh_spike_observation_never_resets_or_truncates_the_action_potential():
     assert float(result.voltage_mV[-1, 0]) < -40.0
 
 
-def test_voltage_recording_overflow_rolls_back_already_pending_transport():
+def test_voltage_recording_overflow_rolls_back_already_pending_transport() -> None:
     runtime = _source_runtime(
         recording_capacity=1, external_spikes=((0.25, "source"), (1.25, "source"))
     )
@@ -233,7 +243,7 @@ def test_voltage_recording_overflow_rolls_back_already_pending_transport():
     _assert_same_state(rejected.state, first.state)
 
 
-def test_queue_overflow_cannot_partially_deliver_a_source_fanout():
+def test_queue_overflow_cannot_partially_deliver_a_source_fanout() -> None:
     runtime = _source_runtime(queue_capacity=1, fanout=2)
     state = ep.initialize_neural_network(runtime)
     rejected = ep.step_neural_network(runtime, state)
@@ -242,7 +252,7 @@ def test_queue_overflow_cannot_partially_deliver_a_source_fanout():
     _assert_same_state(rejected.state, state)
 
 
-def test_spike_recording_overflow_cannot_commit_same_time_emissions():
+def test_spike_recording_overflow_cannot_commit_same_time_emissions() -> None:
     runtime = _source_runtime(
         spike_capacity=1, external_spikes=((0.25, "source"), (0.25, "source"))
     )
@@ -253,7 +263,7 @@ def test_spike_recording_overflow_cannot_commit_same_time_emissions():
     _assert_same_state(rejected.state, state)
 
 
-def test_event_work_exhaustion_rolls_back_delivery_and_learning_together():
+def test_event_work_exhaustion_rolls_back_delivery_and_learning_together() -> None:
     runtime = _source_runtime(maximum_events_per_step=1, delay=0.0)
     state = ep.initialize_neural_network(runtime)
     rejected = ep.step_neural_network(runtime, state)
@@ -262,7 +272,9 @@ def test_event_work_exhaustion_rolls_back_delivery_and_learning_together():
     _assert_same_state(rejected.state, state)
 
 
-def test_relation_deletion_and_slot_reuse_cancel_old_arrival_and_rebuild_source_route():
+def test_relation_deletion_and_slot_reuse_cancel_old_arrival_and_rebuild_source_route() -> (
+    None
+):
     runtime = ep.NeuralNetworkPlan(
         (
             ep.NeuralCellPlan("old", ep.SpikeSource()),
@@ -299,6 +311,7 @@ def test_relation_deletion_and_slot_reuse_cancel_old_arrival_and_rebuild_source_
     emitted = ep.step_neural_network(runtime, ep.initialize_neural_network(runtime))
     assert bool(emitted.evidence.successful)
     assert emitted.state.queue.size == 1
+    # ty: ignore[unresolved-attribute]
     assert float(emitted.state.learning.pre_trace[0]) > 0.0
     deletion = ep.SynapseRelationEvent(
         int(ep.SynapseRelationEventKind.DEACTIVATE),
@@ -317,7 +330,9 @@ def test_relation_deletion_and_slot_reuse_cancel_old_arrival_and_rebuild_source_
     deleted = ep.apply_neural_relation_event(runtime, emitted.state, deletion)
     assert bool(deleted.evidence.successful)
     assert deleted.state.queue.size == 0
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(deleted.state.learning.pre_trace, [0.0])
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(deleted.state.learning.post_trace, [0.0])
     activation = ep.SynapseRelationEvent(
         int(ep.SynapseRelationEventKind.ACTIVATE),
@@ -351,7 +366,9 @@ def test_relation_deletion_and_slot_reuse_cancel_old_arrival_and_rebuild_source_
     )
 
 
-def test_same_time_zero_delay_events_and_boundary_checkpoint_continue_exactly_once():
+def test_same_time_zero_delay_events_and_boundary_checkpoint_continue_exactly_once() -> (
+    None
+):
     runtime = ep.NeuralNetworkPlan(
         (
             ep.NeuralCellPlan("a", ep.SpikeSource()),
@@ -408,7 +425,7 @@ def test_same_time_zero_delay_events_and_boundary_checkpoint_continue_exactly_on
     )
 
 
-def test_isolated_physical_lif_numerical_root_has_conditional_current_gradient():
+def test_isolated_physical_lif_numerical_root_has_conditional_current_gradient() -> None:
     runtime = ep.NeuralNetworkPlan(
         (ep.NeuralCellPlan("lif", _lif(leak=0.2)),),
         ep.SynapseNetworkPlan((1,), 1, 0.0, 1.0, execution="event"),
@@ -421,7 +438,7 @@ def test_isolated_physical_lif_numerical_root_has_conditional_current_gradient()
     ).prepare()
     state = ep.initialize_neural_network(runtime)
 
-    def first_spike_time(current):
+    def first_spike_time(current: Any) -> Any:
         result = ep.step_neural_network(runtime, state, _inputs(runtime, [current]))
         return result.state.spikes.time_ms[0]
 
@@ -438,7 +455,7 @@ def test_isolated_physical_lif_numerical_root_has_conditional_current_gradient()
     )
 
 
-def test_clock_initial_time_must_share_the_prepared_grid():
+def test_clock_initial_time_must_share_the_prepared_grid() -> None:
     runtime = ep.NeuralNetworkPlan(
         (ep.NeuralCellPlan("cell", _lif(threshold=0.0)),),
         ep.SynapseNetworkPlan((1,), 1, 0.0, 1.0, execution="clock"),
@@ -450,7 +467,7 @@ def test_clock_initial_time_must_share_the_prepared_grid():
         ep.initialize_neural_network(runtime, time_ms=0.25)
 
 
-def test_checkpoint_identity_binds_fixed_capacities():
+def test_checkpoint_identity_binds_fixed_capacities() -> None:
     first = _source_runtime(recording_capacity=2)
     second = _source_runtime(recording_capacity=3)
     assert first.runtime_id != second.runtime_id
@@ -459,12 +476,13 @@ def test_checkpoint_identity_binds_fixed_capacities():
         ep.restore_neural_network(second, checkpoint)
 
 
-def test_failed_ion_coupling_rolls_back_channel_draw_keys_and_membrane_state():
+def test_failed_ion_coupling_rolls_back_channel_draw_keys_and_membrane_state() -> None:
     cable = _single_cable(ep.PassiveLeak(0.3, -65.0), dt=1.0)
     ions = ep.IonDynamicsPlan((ep.IonSpecies("Na", 1),), (1.0,), (1.0,)).prepare()
+    # ty: ignore[invalid-argument-type]
     channels = ep.MarkovChannelPlan([[-0.2, 0.2], [0.1, -0.1]], 1).prepare(0.5)
 
-    def outward_leak_current(old_cell, new_cell):
+    def outward_leak_current(old_cell: Any, new_cell: Any) -> Any:
         del old_cell
         return 0.3 * (new_cell.voltage_mV[None, :] + 65.0)
 
@@ -487,7 +505,7 @@ def test_failed_ion_coupling_rolls_back_channel_draw_keys_and_membrane_state():
         root_subdivisions=1,
     ).prepare()
 
-    def initialize(inside):
+    def initialize(inside: Any) -> Any:
         return ep.initialize_neural_network(
             runtime,
             jnp.asarray([-40.0]),

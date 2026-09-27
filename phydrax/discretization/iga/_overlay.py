@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -33,7 +34,7 @@ class IntegrationOverlay(StrictModule, NonTrainableState):
         /,
         *,
         name: str = "overlay",
-    ):
+    ) -> None:
         if not isinstance(atlas, PatchAtlas):
             raise TypeError("atlas must be a PatchAtlas.")
         name_ = str(name)

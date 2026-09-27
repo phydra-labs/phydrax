@@ -12,7 +12,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -51,7 +52,7 @@ class MACPassiveTracerFixedStepMethod(AbstractFixedStepMethod):
         velocity_from_state: Callable[[PyTree[Array]], FaceVelocity],
         velocity_provider_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(base_method, AbstractFixedStepMethod):
             raise TypeError("base_method must implement AbstractFixedStepMethod.")
         if not isinstance(transport, PreparedMACPassiveTracerMacCormack):

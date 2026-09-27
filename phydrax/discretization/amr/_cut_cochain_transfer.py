@@ -9,11 +9,13 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from .._topology import CellComplexTopology
 from ._cut_cochain import CutCellCochainPlan, CutCellCochainState
 from ._cut_transition import MultivaluedCutCellTransition
 
@@ -51,7 +53,7 @@ class CutCellCochainTransferPlan(StrictModule, NonTrainableState):
         *,
         cell_transition: MultivaluedCutCellTransition | None = None,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         if not isinstance(source_plan, CutCellCochainPlan) or not isinstance(
             target_plan, CutCellCochainPlan
         ):
@@ -81,7 +83,7 @@ class CutCellCochainTransferPlan(StrictModule, NonTrainableState):
             source_plan.complex.topology_id != target_plan.complex.topology_id
         )
 
-        def derivative(topology, degree: int) -> np.ndarray:
+        def derivative(topology: CellComplexTopology, degree: int) -> np.ndarray:
             incidence = topology.incidences[degree]
             relation = incidence.relation
             valid = np.asarray(relation.valid, dtype=np.bool_)

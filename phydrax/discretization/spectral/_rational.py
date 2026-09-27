@@ -4,10 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import TypeAlias
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._numerics import fejer_first_data
@@ -27,6 +31,9 @@ from ._basis import (
 from ._precision import SpectralPrecisionPolicy
 
 
+_RationalMapping: TypeAlias = Callable[[np.ndarray], tuple[np.ndarray, np.ndarray]]
+
+
 class RationalChebyshevLineBasisPlan(AbstractSpectralBasisPlan):
     """Rational Chebyshev modes on the full real line."""
 
@@ -40,7 +47,7 @@ class RationalChebyshevLineBasisPlan(AbstractSpectralBasisPlan):
         /,
         *,
         maximum_construction_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         count, scale_, maximum = _plan_values(
             mode_count,
             scale,
@@ -81,7 +88,7 @@ class RationalChebyshevLineBasisPlan(AbstractSpectralBasisPlan):
             )
         scale = float(np.asarray(self.scale))
 
-        def mapping(reference):
+        def mapping(reference: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
             complement = 1.0 - reference * reference
             nodes = scale * reference / np.sqrt(complement)
             jacobian = scale / complement**1.5
@@ -103,7 +110,7 @@ class RationalChebyshevHalfLineBasisPlan(AbstractSpectralBasisPlan):
         /,
         *,
         maximum_construction_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         count, scale_, maximum = _plan_values(
             mode_count,
             scale,
@@ -148,7 +155,7 @@ class RationalChebyshevHalfLineBasisPlan(AbstractSpectralBasisPlan):
         )
         direction = domain.direction
 
-        def mapping(reference):
+        def mapping(reference: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
             if direction == "positive":
                 denominator = 1.0 - reference
                 nodes = endpoint + scale * (1.0 + reference) / denominator
@@ -185,7 +192,7 @@ def _prepare_rational(
     plan: RationalChebyshevLineBasisPlan | RationalChebyshevHalfLineBasisPlan,
     domain: AxisDomain,
     precision: SpectralPrecisionPolicy,
-    mapping,
+    mapping: _RationalMapping,
     /,
 ) -> PreparedSpectralAxis:
     count = plan.mode_count
@@ -261,7 +268,7 @@ def _prepare_rational(
 def _derivative_closure_residual(
     count: int,
     derivative: np.ndarray,
-    mapping,
+    mapping: _RationalMapping,
     precision: SpectralPrecisionPolicy,
     /,
 ) -> float:

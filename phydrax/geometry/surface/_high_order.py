@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -18,7 +19,7 @@ from ..._trainable import NonTrainableState
 from ...units import derived_unit, LENGTH, UnitDefinition
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
 from ..brep._patches import BSplineSurfacePatch
-from ._model import SurfaceModel
+from ._model import _surface_connectivity, SurfaceModel
 
 
 class HighOrderSurfaceSource(str, Enum):
@@ -61,7 +62,7 @@ class HighOrderSurfacePolicy(StrictModule, NonTrainableState):
         maximum_evaluation_points: int = 1_000_000,
         corner_tolerance: float = 1.0e-10,
         minimum_jacobian: float = 0.0,
-    ):
+    ) -> None:
         capacities = (
             int(maximum_order),
             int(maximum_cells),
@@ -123,7 +124,7 @@ class HighOrderSurfaceReport(StrictModule, NonTrainableState):
         model_id: str,
         policy_id: str,
         corner_maximum_error: float,
-    ):
+    ) -> None:
         if not isinstance(source, HighOrderSurfaceSource):
             raise TypeError("source must be HighOrderSurfaceSource.")
         if not isinstance(length_unit, UnitDefinition):
@@ -175,8 +176,8 @@ class HighOrderSurfaceFrameEvidence(StrictModule, NonTrainableState):
     valid: Array
     report_id: str = eqx.field(static=True)
     maximum_parametric_derivative_order: int = eqx.field(static=True)
-    metric_unit: str = eqx.field(static=True)
-    jacobian_unit: str = eqx.field(static=True)
+    metric_unit: UnitDefinition = eqx.field(static=True)
+    jacobian_unit: UnitDefinition = eqx.field(static=True)
 
     def __init__(
         self,
@@ -192,7 +193,7 @@ class HighOrderSurfaceFrameEvidence(StrictModule, NonTrainableState):
         finite: Array,
         nondegenerate: Array,
         report: HighOrderSurfaceReport,
-    ):
+    ) -> None:
         finite_ = jnp.asarray(finite, dtype=jnp.bool_)
         nondegenerate_ = jnp.asarray(nondegenerate, dtype=jnp.bool_)
         self.chart_indices = jnp.asarray(chart_indices, dtype=jnp.int32)
@@ -238,7 +239,7 @@ class _PatchTriangleMap(AbstractBoundaryMap):
     patch: BSplineSurfacePatch
     cell_parameters: Array
 
-    def __init__(self, patch: BSplineSurfacePatch, cell_parameters: ArrayLike, /):
+    def __init__(self, patch: BSplineSurfacePatch, cell_parameters: ArrayLike, /) -> None:
         self.patch = patch
         self.cell_parameters = jnp.asarray(cell_parameters, dtype=jnp.float64)
 
@@ -282,7 +283,7 @@ class _AtlasTriangleMap(AbstractBoundaryMap):
         source_chart_indices: ArrayLike,
         cell_parameters: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.atlas = atlas
         self.source_chart_indices = jnp.asarray(source_chart_indices, dtype=jnp.int32)
         self.cell_parameters = jnp.asarray(cell_parameters, dtype=jnp.float64)
@@ -322,7 +323,14 @@ class _IsoparametricTriangleMap(AbstractBoundaryMap):
     exponents: Array
     order: int = eqx.field(static=True)
 
-    def __init__(self, coordinate_nodes, coefficients, exponents, order: int, /):
+    def __init__(
+        self,
+        coordinate_nodes: ArrayLike,
+        coefficients: ArrayLike,
+        exponents: ArrayLike,
+        order: int,
+        /,
+    ) -> None:
         self.coordinate_nodes = jnp.asarray(coordinate_nodes, dtype=jnp.float64)
         self.coefficients = jnp.asarray(coefficients, dtype=jnp.float64)
         self.exponents = jnp.asarray(exponents, dtype=jnp.int32)
@@ -387,7 +395,7 @@ class HighOrderSurfaceRealization(StrictModule, NonTrainableState):
         policy: HighOrderSurfacePolicy,
         report: HighOrderSurfaceReport,
         /,
-    ):
+    ) -> None:
         if mapping.num_charts != int(model.mesh.connectivity.cell_count):
             raise ValueError(
                 "High-order chart count must equal authoritative cell count."
@@ -418,7 +426,9 @@ class HighOrderSurfaceRealization(StrictModule, NonTrainableState):
             }
         )
 
-    def _inputs(self, chart_indices: ArrayLike, reference: ArrayLike, /):
+    def _inputs(
+        self, chart_indices: ArrayLike, reference: ArrayLike, /
+    ) -> tuple[Array, Array]:
         indices = jnp.asarray(chart_indices, dtype=jnp.int32)
         coordinates = jnp.asarray(reference, dtype=jnp.float64)
         if coordinates.ndim < 1 or coordinates.shape[-1] != 2:
@@ -454,7 +464,9 @@ class HighOrderSurfaceRealization(StrictModule, NonTrainableState):
         indices, coordinates = self._inputs(chart_indices, reference)
         return self.mapping.map(indices, coordinates)
 
-    def frame(self, chart_indices: ArrayLike, reference: ArrayLike, /):
+    def frame(
+        self, chart_indices: ArrayLike, reference: ArrayLike, /
+    ) -> HighOrderSurfaceFrameEvidence:
         indices, coordinates = self._inputs(chart_indices, reference)
         points = self.mapping.map(indices, coordinates)
         differential = _batched_differential(self.mapping, indices, coordinates)
@@ -493,7 +505,9 @@ def _policy(value: HighOrderSurfacePolicy | None, /) -> HighOrderSurfacePolicy:
 
 
 def _authoritative_corners(model: SurfaceModel, /) -> np.ndarray:
-    faces = np.asarray(model.mesh.connectivity.cell_vertices, dtype=np.int32)[:, :3]
+    faces = np.asarray(_surface_connectivity(model.mesh).cell_vertices, dtype=np.int32)[
+        :, :3
+    ]
     return np.asarray(model.mesh.coordinates, dtype=np.float64)[faces]
 
 
@@ -511,7 +525,7 @@ def _validate_parameter_triangles(value: ArrayLike, cell_count: int, /) -> np.nd
     return parameters
 
 
-def _corner_error(expected, actual, tolerance: float, /) -> float:
+def _corner_error(expected: np.ndarray, actual: np.ndarray, tolerance: float, /) -> float:
     if actual.shape != expected.shape or not np.all(np.isfinite(actual)):
         raise HighOrderGeometryMismatchError("High-order corner evaluation is malformed.")
     maximum = float(np.max(np.linalg.norm(actual - expected, axis=-1)))
@@ -522,7 +536,9 @@ def _corner_error(expected, actual, tolerance: float, /) -> float:
     return maximum
 
 
-def _preflight(model, policy, nodes_per_cell: int, /) -> int:
+def _preflight(
+    model: SurfaceModel, policy: HighOrderSurfacePolicy, nodes_per_cell: int, /
+) -> int:
     count = int(model.mesh.connectivity.cell_count)
     if count > policy.maximum_cells or nodes_per_cell > policy.maximum_nodes_per_cell:
         raise HighOrderResourceLimitError(
@@ -531,7 +547,15 @@ def _preflight(model, policy, nodes_per_cell: int, /) -> int:
     return count
 
 
-def _report(model, policy, source, order, nodes, error, /):
+def _report(
+    model: SurfaceModel,
+    policy: HighOrderSurfacePolicy,
+    source: HighOrderSurfaceSource,
+    order: int,
+    nodes: int,
+    error: float,
+    /,
+) -> HighOrderSurfaceReport:
     return HighOrderSurfaceReport(
         source=source,
         order=order,

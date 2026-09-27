@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -11,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _case(schedule, *, clamp_x=False):
+def _case(schedule: Any, *, clamp_x: Any = False) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformAxisSpec(12, periodic=True, endpoint=False)
@@ -63,8 +65,8 @@ def _case(schedule, *, clamp_x=False):
     ],
 )
 def test_explicit_schedule_phase_identity_and_translation(
-    schedule, code, stress_first, second_transfer
-):
+    schedule: Any, code: Any, stress_first: Any, second_transfer: Any
+) -> None:
     compiled, arguments, position = _case(schedule)
     velocity = jnp.broadcast_to(jnp.asarray((0.08, -0.03)), position.shape)
     state = compiled.initialize_state(position, velocity, jnp.full((4,), 0.01), arguments)
@@ -95,7 +97,7 @@ def test_explicit_schedule_phase_identity_and_translation(
         assert detail.diagnostics.schedule.second_transfer_momentum_defect < 1e-10
 
 
-def test_musl_reapplies_prescribed_constraints_after_second_transfer():
+def test_musl_reapplies_prescribed_constraints_after_second_transfer() -> None:
     compiled, arguments, position = _case(
         phx.discretization.MUSLMPMSchedule(), clamp_x=True
     )
@@ -111,7 +113,7 @@ def test_musl_reapplies_prescribed_constraints_after_second_transfer():
     assert detail.diagnostics.energy.boundary_work <= 0.0
 
 
-def test_default_explicit_method_remains_usl_minus():
+def test_default_explicit_method_remains_usl_minus() -> None:
     method = phx.discretization.ExplicitMPMMethodPlan()
     assert isinstance(method.schedule, phx.discretization.USLMPMSchedule)
     assert method.schedule.common_name == "usl-minus"

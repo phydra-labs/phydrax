@@ -8,7 +8,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -39,7 +41,7 @@ class ConvergentContactPotentialPlan(StrictModule, NonTrainableState):
         *,
         geometry_tolerance: float = 1.0e-12,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         activation = float(activation_distance)
         tolerance = float(geometry_tolerance)
         stiffness_ = jnp.asarray(stiffness)
@@ -106,7 +108,7 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
 
     def __init__(
         self, plan: ConvergentContactPotentialPlan, scene: PreparedCollisionScene, /
-    ):
+    ) -> None:
         if not isinstance(plan, ConvergentContactPotentialPlan):
             raise TypeError("plan must be ConvergentContactPotentialPlan.")
         if not isinstance(scene, PreparedCollisionScene):
@@ -457,7 +459,7 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
             else jnp.asarray(stiffness, dtype=current.dtype)
         )
 
-        def objective(value):
+        def objective(value: Array) -> Array:
             return self.energy(value, epoch, rest_positions=rest, stiffness=scale)
 
         energy, gradient = jax.value_and_grad(objective)(current)

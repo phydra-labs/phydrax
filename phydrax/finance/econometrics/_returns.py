@@ -10,10 +10,11 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import parse
 from ..core import Currency, FinancialTimestamp
 from ..market import DataLineage, QuoteTiePolicy
 from ..market._transforms import (
@@ -55,7 +56,7 @@ class CorporateActionBinding(StrictModule):
         /,
         *,
         tie_policy: QuoteTiePolicy = QuoteTiePolicy.REJECT,
-    ):
+    ) -> None:
         if not isinstance(quote_key_id, str) or not quote_key_id.strip():
             raise ValueError("quote_key_id must be nonempty.")
         if not isinstance(series, CorporateActionSeries):
@@ -179,9 +180,10 @@ class ReturnDefinition(StrictModule):
     maximum_gap_ns: int | None = eqx.field(static=True)
     definition_id: str = eqx.field(static=True)
 
-    def __init__(self, *, kind: ReturnKind = "simple", maximum_gap_ns: int | None = None):
-        if kind not in ("simple", "log"):
-            raise ValueError("kind must be 'simple' or 'log'.")
+    def __init__(
+        self, *, kind: ReturnKind = "simple", maximum_gap_ns: int | None = None
+    ) -> None:
+        kind = parse(kind, ReturnKind, "kind")
         gap = None if maximum_gap_ns is None else int(maximum_gap_ns)
         if gap is not None and gap <= 0:
             raise ValueError("maximum_gap_ns must be positive or None.")
@@ -315,9 +317,8 @@ class RealizedMeasureDefinition(StrictModule):
         kind: RealizedMeasureKind = "variance",
         window: int,
         annualization: float = 1.0,
-    ):
-        if kind not in ("variance", "volatility", "bipower-variation"):
-            raise ValueError("unsupported realized-measure kind.")
+    ) -> None:
+        kind = parse(kind, RealizedMeasureKind, "kind")
         window_ = int(window)
         annualization_ = float(annualization)
         if window_ < 2 or not np.isfinite(annualization_) or annualization_ <= 0.0:

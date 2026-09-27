@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._array_archive import (
     pack_array_tree,
@@ -59,7 +60,7 @@ class AbstractAtomisticBiasPlan(StrictModule):
     bias_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
-    def initialize(self, dtype=jnp.float64) -> AbstractAtomisticBiasState:
+    def initialize(self, dtype: DTypeLike = jnp.float64) -> AbstractAtomisticBiasState:
         raise NotImplementedError
 
 
@@ -90,7 +91,7 @@ class AtomisticBiasPlan(AbstractAtomisticBiasPlan, NonTrainableState):
         grid_minimum: ArrayLike = 0.0,
         grid_maximum: ArrayLike = 1.0,
         grid_bins: int = 64,
-    ):
+    ) -> None:
         if not isinstance(kind, BiasKind) or not isinstance(
             variables, AbstractCollectiveVariableProgram
         ):
@@ -149,7 +150,7 @@ class AtomisticBiasPlan(AbstractAtomisticBiasPlan, NonTrainableState):
             }
         )
 
-    def initialize(self, dtype=jnp.float64) -> "AtomisticBiasState":
+    def initialize(self, dtype: DTypeLike = jnp.float64) -> "AtomisticBiasState":
         dimension = self.variables.output_size
         return AtomisticBiasState(
             hill_centers=jnp.zeros((self.maximum_hills, dimension), dtype=dtype),
@@ -204,7 +205,7 @@ class AbstractPreparedAtomisticBias(StrictModule):
         state: AbstractAtomisticBiasState,
         time: Array,
         /,
-    ):
+    ) -> tuple[Array, tuple[Array, ...]]:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -233,7 +234,9 @@ class PreparedAtomisticBias(AbstractPreparedAtomisticBias):
     dynamics: PreparedAtomisticDynamics
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: AtomisticBiasPlan, dynamics: PreparedAtomisticDynamics, /):
+    def __init__(
+        self, plan: AtomisticBiasPlan, dynamics: PreparedAtomisticDynamics, /
+    ) -> None:
         self.plan = plan
         self.dynamics = dynamics
         self.prepared_id = canonical_fingerprint(
@@ -244,7 +247,13 @@ class PreparedAtomisticBias(AbstractPreparedAtomisticBias):
             }
         )
 
-    def energy(self, positions: Array, state: AtomisticBiasState, time: Array, /):
+    def energy(
+        self,
+        positions: Array,
+        state: AbstractAtomisticBiasState,
+        time: Array,
+        /,
+    ) -> tuple[Array, tuple[Array, Array]]:
         if not isinstance(state, AtomisticBiasState):
             raise TypeError("state must be an AtomisticBiasState.")
         if state.bias_id != self.plan.bias_id:
@@ -302,7 +311,7 @@ class PreparedAtomisticBias(AbstractPreparedAtomisticBias):
         return energy, (values, valid & state.successful)
 
     def evaluate(
-        self, positions: Array, state: AtomisticBiasState, time: Array, /
+        self, positions: Array, state: AbstractAtomisticBiasState, time: Array, /
     ) -> AtomisticBiasEvaluation:
         (energy, auxiliary), gradient = jax.value_and_grad(
             lambda value: self.energy(value, state, time), has_aux=True
@@ -337,7 +346,7 @@ class PreparedAtomisticBias(AbstractPreparedAtomisticBias):
 
     def update(
         self,
-        state: AtomisticBiasState,
+        state: AbstractAtomisticBiasState,
         evaluation: AtomisticBiasEvaluation,
         physical_force: Array,
         /,
@@ -450,7 +459,7 @@ class PreparedBiasedDynamics(StrictModule):
         bias: AbstractPreparedAtomisticBias,
         thermodynamic_states: PreparedThermodynamicStateTable,
         /,
-    ):
+    ) -> None:
         if not isinstance(bias, AbstractPreparedAtomisticBias):
             raise TypeError("bias must implement AbstractPreparedAtomisticBias.")
         if not isinstance(thermodynamic_states, PreparedThermodynamicStateTable):
@@ -504,7 +513,9 @@ class PreparedBiasedDynamics(StrictModule):
         return BiasedDynamicsState(base, bias_state, state.force, self.prepared_id)
 
     @staticmethod
-    def _augment_force(physical: AtomisticForceState, bias, /):
+    def _augment_force(
+        physical: AtomisticForceState, bias: AtomisticBiasEvaluation, /
+    ) -> AtomisticForceState:
         return AtomisticForceState(
             physical.forces + bias.forces,
             physical.potential_energy + bias.energy,
@@ -631,7 +642,7 @@ class BiasedDynamicsCheckpointPlan(StrictModule, NonTrainableState):
     dynamics: PreparedBiasedDynamics
     checkpoint_id: str = eqx.field(static=True)
 
-    def __init__(self, dynamics: PreparedBiasedDynamics, /):
+    def __init__(self, dynamics: PreparedBiasedDynamics, /) -> None:
         if not isinstance(dynamics, PreparedBiasedDynamics):
             raise TypeError("dynamics must be PreparedBiasedDynamics.")
         self.dynamics = dynamics

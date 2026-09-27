@@ -6,20 +6,21 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ...._fingerprint import canonical_fingerprint
 from ...._frozendict import frozendict
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import parse
 
 
-MechanicsParameterRole = Literal[
+MechanicsParameterRole: TypeAlias = Literal[
     "geometry",
     "material",
     "load",
@@ -27,7 +28,7 @@ MechanicsParameterRole = Literal[
     "constraint",
     "history",
 ]
-MechanicsParameterKind = Literal[
+MechanicsParameterKind: TypeAlias = Literal[
     "continuous",
     "integer",
     "discrete",
@@ -89,21 +90,12 @@ class MechanicsParameterField(StrictModule, NonTrainableState):
         support: Sequence[Any] = (),
         active_when: Mapping[str, Sequence[Any]] | None = None,
         unit: str | None = None,
-    ):
+    ) -> None:
         resolved_name = str(name)
         if not resolved_name:
             raise ValueError("Mechanics parameter field names must be non-empty.")
-        if role not in (
-            "geometry",
-            "material",
-            "load",
-            "boundary",
-            "constraint",
-            "history",
-        ):
-            raise ValueError("Unknown mechanics parameter field role.")
-        if kind not in ("continuous", "integer", "discrete", "categorical"):
-            raise ValueError("Unknown mechanics parameter field kind.")
+        role = parse(role, MechanicsParameterRole, "role")
+        kind = parse(kind, MechanicsParameterKind, "kind")
         resolved_shape = tuple(shape)
         if any(size <= 0 for size in resolved_shape):
             raise ValueError("Mechanics parameter field shape entries must be positive.")
@@ -247,7 +239,7 @@ class MechanicsParameterSpec(StrictModule, NonTrainableState):
         /,
         *,
         spec_id: str | None = None,
-    ):
+    ) -> None:
         resolved = tuple(fields)
         if not resolved:
             raise ValueError("MechanicsParameterSpec requires at least one field.")
@@ -365,7 +357,7 @@ class MechanicsParameterRealization(StrictModule, NonTrainableState):
         case_id: str | None = None,
         realization_id: str | None = None,
         stratum_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(spec, MechanicsParameterSpec):
             raise TypeError("spec must be a MechanicsParameterSpec.")
         if probability_weight is not None and importance_weight is not None:
@@ -438,7 +430,7 @@ class MechanicsParameterDistribution(StrictModule, NonTrainableState):
         /,
         *,
         distribution_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(spec, MechanicsParameterSpec):
             raise TypeError("spec must be a MechanicsParameterSpec.")
         resolved = tuple(realizations)
@@ -458,7 +450,7 @@ class MechanicsParameterDistribution(StrictModule, NonTrainableState):
             raise ValueError("Distribution case IDs must be unique.")
         if len(set(realization_ids)) != len(realization_ids):
             raise ValueError("Distribution realization IDs must be unique.")
-        kinds = {
+        kinds: set[MechanicsParameterWeightKind] = {
             "probability"
             if item.probability_weight is not None
             else "importance"

@@ -9,7 +9,8 @@ from typing import Any, ClassVar
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._differentiation import (
     DerivativeContract,
@@ -118,7 +119,9 @@ def _hard_tree_path(
     leaf_mass: Array,
     max_depth: int,
 ) -> Array:
-    def descend(_depth, state):
+    def descend(
+        _depth: Array, state: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
         node, depth, done = state
         split = splittable[node] & ~done
         go_left = point[features[node]] < thresholds[node]
@@ -150,7 +153,7 @@ def _hard_forest_scores_one(
     normalization: Array,
     max_depth: int,
 ) -> Array:
-    def score_point(point):
+    def score_point(point: Array) -> Array:
         paths = jax.vmap(
             lambda f_, t_, s_, m_: _hard_tree_path(point, f_, t_, s_, m_, max_depth)
         )(features, thresholds, splittable, leaf_mass)
@@ -205,7 +208,7 @@ def _smooth_forest_scores_one(
     max_depth: int,
     temperature: float,
 ) -> Array:
-    def score_point(point):
+    def score_point(point: Array) -> Array:
         paths = jax.vmap(
             lambda f_, t_, s_, m_: _smooth_tree_path(
                 point, f_, t_, s_, m_, max_depth, temperature
@@ -248,7 +251,7 @@ class IsolationForestModel(AbstractFittedModel):
         max_depth: int,
         feature_count: int,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.feature_indices = jnp.asarray(feature_indices, dtype=jnp.int32)
         self.thresholds = jnp.asarray(thresholds)
         self.splittable = jnp.asarray(splittable, dtype=jnp.bool_)
@@ -343,7 +346,7 @@ class SmoothIsolationForestModel(AbstractFittedModel):
         feature_count: int,
         temperature: float,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         if float(temperature) <= 0.0:
             raise ValueError("temperature must be positive.")
         self.feature_indices = jnp.asarray(feature_indices, dtype=jnp.int32)
@@ -411,7 +414,7 @@ class IsolationForestRecipe(AbstractRecipe):
         n_estimators: int = 100,
         max_depth: int = 8,
         contamination: float = 0.1,
-    ):
+    ) -> None:
         if int(n_estimators) <= 0:
             raise ValueError("n_estimators must be positive.")
         if int(max_depth) <= 0 or int(max_depth) > 12:
@@ -439,7 +442,9 @@ class IsolationForestRecipe(AbstractRecipe):
         flat_weights = weights.reshape((cases, batch.sample_count))
         flat_active = active.reshape((cases, batch.sample_count))
 
-        def build_case(x_, weights_, active_, keys_):
+        def build_case(
+            x_: Array, weights_: Array, active_: Array, keys_: Array
+        ) -> tuple[Array, Array, Array, Array]:
             return jax.vmap(
                 lambda key_: _build_tree_one(x_, weights_, active_, key_, self.max_depth)
             )(keys_)

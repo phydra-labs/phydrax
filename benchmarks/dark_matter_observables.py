@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -17,7 +19,7 @@ from phydrax.applications.cosmology._dark_matter_observables import (
 )
 
 
-def _case(size: int, particle_count: int, repetitions: int):
+def _case(size: int, particle_count: int, repetitions: int) -> Any:
     shape = (size, size, size)
     maximum_wavenumber = jnp.sqrt(3.0) * jnp.pi * size
     shell_edges = jnp.linspace(0.0, maximum_wavenumber, size + 1)
@@ -98,7 +100,7 @@ def _case(size: int, particle_count: int, repetitions: int):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sizes", nargs="+", type=int, default=[16, 32])
     parser.add_argument("--particle-count", type=int, default=100_000)

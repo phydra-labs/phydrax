@@ -13,11 +13,13 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._interpolation import linear_interpolate
 from ..._strict import StrictModule
+from ...typing import parse
 from ._generalized_wave_gauge import GeneralizedWaveGaugePlan
 
 
@@ -60,7 +62,7 @@ class SphericalConformalAdSPlan(StrictModule):
         gauge_relaxation: float = 1.0,
         horizon_threshold: float = 0.05,
         maximum_state_elements: int = 10_000_000,
-    ):
+    ) -> None:
         points = np.asarray(radial_points, dtype=np.float64)
         step = float(time_step)
         count = int(steps)
@@ -84,8 +86,9 @@ class SphericalConformalAdSPlan(StrictModule):
             or not np.allclose(spacing, spacing[0], rtol=1e-12, atol=1e-14)
         ):
             raise ValueError("Spherical AdS requires a uniform grid in [0, pi/2).")
-        if boundary_policy not in ("reflecting", "driven", "dissipative"):
-            raise ValueError("Unknown spherical AdS boundary policy.")
+        boundary_policy = parse(
+            boundary_policy, SphericalAdSBoundaryPolicy, "boundary_policy"
+        )
         if gauge is not None and not isinstance(gauge, GeneralizedWaveGaugePlan):
             raise TypeError("gauge must be GeneralizedWaveGaugePlan or None.")
         scalars = (
@@ -177,7 +180,7 @@ class SphericalConformalAdSState(StrictModule):
         time: ArrayLike,
         step: ArrayLike,
         /,
-    ):
+    ) -> None:
         count = plan.radial_points.shape[0]
         scalar_ = jnp.asarray(scalar, dtype=plan.radial_points.dtype)
         radial = jnp.asarray(radial_derivative, dtype=scalar_.dtype)
@@ -877,7 +880,7 @@ class FeffermanGrahamExtractionPlan(StrictModule):
         *,
         newton_constant: float,
         counterterm_scheme: str = "minimal-local-ads",
-    ):
+    ) -> None:
         count = int(boundary_points)
         lower = float(delta_minus)
         upper = float(delta_plus)

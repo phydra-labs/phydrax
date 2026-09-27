@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -15,13 +16,13 @@ from phydrax.discretization.lattice_boltzmann._collision import (
 )
 
 
-def _macroscopic(populations, velocity_set):
+def _macroscopic(populations: Any, velocity_set: Any) -> Any:
     density = jnp.sum(populations, axis=-1)
     momentum = ein.contract("...q,qd->...d", populations, velocity_set.velocities)
     return density, momentum / density[..., None]
 
 
-def _stream(populations, velocity_set):
+def _stream(populations: Any, velocity_set: Any) -> Any:
     axes = tuple(range(velocity_set.dimension))
     return jnp.stack(
         tuple(
@@ -32,12 +33,20 @@ def _stream(populations, velocity_set):
     )
 
 
-def _mode_amplitude(populations, velocity_set, mode):
+def _mode_amplitude(populations: Any, velocity_set: Any, mode: Any) -> Any:
     _, velocity = _macroscopic(populations, velocity_set)
     return 2.0 * jnp.mean(velocity[..., 0] * mode)
 
 
-def _evolve(initial, velocity_set, precision, rate, coefficient, steps, mode):
+def _evolve(
+    initial: Any,
+    velocity_set: Any,
+    precision: Any,
+    rate: Any,
+    coefficient: Any,
+    steps: Any,
+    mode: Any,
+) -> Any:
     method = phx.discretization.LatticeBoltzmannMethodPlan(
         phx.discretization.SmagorinskyCollisionPlan(coefficient)
     ).prepare(velocity_set, precision)
@@ -114,12 +123,12 @@ def _evolve(initial, velocity_set, precision, rate, coefficient, steps, mode):
 
 def qualification(
     *,
-    resolution=24,
-    steps=24,
-    amplitude=0.05,
-    base_relaxation_rate=1.25,
-    coefficient=0.18,
-):
+    resolution: Any = 24,
+    steps: Any = 24,
+    amplitude: Any = 0.05,
+    base_relaxation_rate: Any = 1.25,
+    coefficient: Any = 0.18,
+) -> Any:
     """Run one periodic, athermal D2Q9 decaying-shear qualification case."""
     resolution = int(resolution)
     steps = int(steps)
@@ -198,7 +207,7 @@ def qualification(
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--resolution", type=int, default=24)
     parser.add_argument("--steps", type=int, default=24)

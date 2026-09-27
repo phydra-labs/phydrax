@@ -8,6 +8,7 @@ import argparse
 import json
 from collections.abc import Sequence
 from dataclasses import asdict
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -42,7 +43,7 @@ def _case(node_count: int, query_count: int, repeats: int) -> dict[str, object]:
         axis=-1,
     )
 
-    def query(values):
+    def query(values: Any) -> Any:
         return point_select_leaf_items(
             values,
             bvh=bvh,
@@ -52,6 +53,7 @@ def _case(node_count: int, query_count: int, repeats: int) -> dict[str, object]:
 
     compiled_query = eqx.filter_jit(query)
     executable, compilation = measure_lower_and_compile(
+        # ty: ignore[unresolved-attribute]
         lambda: compiled_query.lower(points),
         lambda lowered: lowered.compile(),
     )

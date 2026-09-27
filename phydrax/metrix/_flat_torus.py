@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from ._state_geometry import AbstractStateGeometry
@@ -31,7 +32,7 @@ class FlatTorusStateGeometry(AbstractStateGeometry):
     supports_isometric_transport: bool = eqx.field(static=True)
     supports_commutator_free: bool = eqx.field(static=True)
 
-    def __init__(self, period: float, /, *, geometry_id: str | None = None):
+    def __init__(self, period: float, /, *, geometry_id: str | None = None) -> None:
         value = float(period)
         if not np.isfinite(value) or value <= 0.0:
             raise ValueError("period must be finite and positive.")

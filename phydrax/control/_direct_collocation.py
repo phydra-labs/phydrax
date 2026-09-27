@@ -13,7 +13,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -55,6 +56,8 @@ from ..sparse import (
     SparseDerivativeVerification,
     verify_sparse_derivative,
 )
+from ..typing import parse
+from ._constraints import TerminalConstraint
 from ._dynamics import DifferentialControlDynamics
 from ._problem import _identifier, ControlProblem
 from ._trajectory import (
@@ -163,7 +166,7 @@ class DirectCollocationScaling(StrictModule):
         dynamics: Any = None,
         objective: ArrayLike = 1.0,
         duration: ArrayLike | None = None,
-    ):
+    ) -> None:
         self.state = state
         self.control = control
         self.parameters = parameters
@@ -198,11 +201,9 @@ class DirectCollocationDerivativePolicy(StrictModule):
         chunk_size: int | None = None,
         verify: bool = True,
         num_verification_probes: int = 3,
-    ):
-        if compiler not in ("auto", "native"):
-            raise ValueError("compiler must be 'auto' or 'native'.")
-        if hessian not in ("limited-memory", "exact-sparse"):
-            raise ValueError("hessian must be 'limited-memory' or 'exact-sparse'.")
+    ) -> None:
+        compiler = parse(compiler, SparseDerivativeCompiler, "compiler")
+        hessian = parse(hessian, DirectCollocationHessianMode, "hessian")
         chunk = None if chunk_size is None else int(chunk_size)
         if chunk is not None and chunk < 1:
             raise ValueError("chunk_size must be positive or None.")
@@ -231,7 +232,7 @@ class DirectCollocationAuditPolicy(StrictModule):
         constraint_tolerance: float = 1.0e-6,
         off_grid_points: int = 2,
         audit_id: str = "control:direct-collocation:audit",
-    ):
+    ) -> None:
         defect = float(defect_tolerance)
         constraint = float(constraint_tolerance)
         points = int(off_grid_points)
@@ -267,7 +268,7 @@ class DirectCollocationPlan(StrictModule):
         derivatives: DirectCollocationDerivativePolicy | None = None,
         audit: DirectCollocationAuditPolicy | None = None,
         plan_id: str = "control:direct-collocation",
-    ):
+    ) -> None:
         if not isinstance(mesh, TemporalMesh) or mesh.role != "collocation":
             raise TypeError(
                 "Direct collocation requires TemporalMesh(role='collocation')."
@@ -318,7 +319,7 @@ class DirectCollocationBounds(StrictModule):
         controls: Bounds | None = None,
         parameters: Bounds | None = None,
         duration: tuple[float, float] | None = None,
-    ):
+    ) -> None:
         for value, name in (
             (states, "states"),
             (controls, "controls"),
@@ -385,7 +386,7 @@ class DirectCollocationDecisionLayout(StrictModule):
         duration_scale: Array,
         variable_duration: bool,
         layout_id: str,
-    ):
+    ) -> None:
         if not isinstance(state_layout, StateLayout):
             raise TypeError("state_layout must be a StateLayout.")
         geometry = state_layout.geometry
@@ -755,13 +756,17 @@ def _evaluate_values(
     dynamics_model = problem.dynamics
     if isinstance(dynamics_model, ContinuousSystem):
 
-        def physical_residual(time, state, state_rate, control):
+        def physical_residual(
+            time: Array, state: Array, state_rate: Array, control: Array
+        ) -> Array:
             field = dynamics_model.evaluate(time, state, callback_args, inputs=control)
             return state_rate - geometry.project_tangent(state, field)
 
     else:
 
-        def physical_residual(time, state, state_rate, control):
+        def physical_residual(
+            time: Array, state: Array, state_rate: Array, control: Array
+        ) -> Array:
             residual = dynamics_model.evaluate(
                 time,
                 state,
@@ -793,7 +798,7 @@ def _evaluate_values(
     running_cost = problem.running_cost
     if running_cost is not None:
 
-        def running(time, state, control):
+        def running(time: Array, state: Array, control: Array) -> Array:
             value = jnp.asarray(running_cost(time, state, control, callback_args))
             if value.shape != ():
                 raise ValueError("RunningCost must return one scalar per stage.")
@@ -809,7 +814,7 @@ def _evaluate_values(
     if terminal_cost is not None:
         final_states = view.final_state.reshape((case_count,) + problem.state_shape)
 
-        def terminal(state):
+        def terminal(state: Array) -> Array:
             value = jnp.asarray(terminal_cost(times[-1], state, callback_args))
             if value.shape != ():
                 raise ValueError("TerminalCost must return one scalar per case.")
@@ -834,7 +839,12 @@ def _evaluate_values(
     path_values = []
     for constraint in problem.path_constraints:
 
-        def evaluate_path(time, state, control, callback=constraint):
+        def evaluate_path(
+            time: Array,
+            state: Array,
+            control: Array,
+            callback: BoundedPathConstraint = constraint,
+        ) -> Array:
             return callback(time, state, control, callback_args)
 
         values = jax.vmap(evaluate_path)(flat_times, flat_states, flat_controls)
@@ -1004,13 +1014,15 @@ def _trajectory_problem(
         for index, constraint in enumerate(problem.path_constraints)
     )
 
-    def terminal_constraint(callback, index):
-        def evaluate(view, args):
+    def terminal_constraint(
+        callback: TerminalConstraint, index: int
+    ) -> BoundedTrajectoryConstraint:
+        def evaluate(view: TrajectoryOptimizationView, args: Any) -> Array:
             case_count = prod(view.case_shape) if view.case_shape else 1
             flat_states = view.final_state.reshape((case_count,) + view.state_shape)
-            values = jax.vmap(lambda state: callback(view.times[-1], state, args))(
-                flat_states
-            )
+            values = jax.vmap(
+                lambda state: jnp.asarray(callback(view.times[-1], state, args))
+            )(flat_states)
             return values.reshape(view.case_shape + values.shape[1:])
 
         return BoundedTrajectoryConstraint(
@@ -1354,20 +1366,20 @@ def compile_direct_collocation(
         state_scale,
     )
 
-    def physical_objective(value, runtime_args):
+    def physical_objective(value: Array, runtime_args: Any) -> Array:
         return _evaluate_values(
             trajectory_problem, plan, layout, value, runtime_args
         ).objective
 
-    def objective(value, runtime_args):
+    def objective(value: Array, runtime_args: Any) -> Array:
         return physical_objective(value, runtime_args) / plan.scaling.objective
 
-    def raw_constraints(value, runtime_args):
+    def raw_constraints(value: Array, runtime_args: Any) -> Array:
         return _raw_constraints(
             _evaluate_values(trajectory_problem, plan, layout, value, runtime_args)
         )
 
-    def scaled_constraints(value, runtime_args):
+    def scaled_constraints(value: Array, runtime_args: Any) -> Array:
         return raw_constraints(value, runtime_args) / constraint_layout.scale
 
     scaled_lower = constraint_layout.lower / constraint_layout.scale
@@ -1400,7 +1412,7 @@ def compile_direct_collocation(
     hessian: SparseDerivativePlan | None = None
     if plan.derivatives.hessian == "exact-sparse":
 
-        def lagrangian(value, packed_args):
+        def lagrangian(value: Array, packed_args: tuple[Any, Array, Array]) -> Array:
             runtime_args, objective_factor, multipliers = packed_args
             return objective_factor * objective(value, runtime_args) + jnp.vdot(
                 multipliers, scaled_constraints(value, runtime_args)
@@ -1681,7 +1693,12 @@ def _off_grid_audit(
     interval_path = jnp.zeros(problem.case_shape + (steps,), dtype=dtype)
     for constraint in problem.path_constraints:
 
-        def evaluate_path(time, state, control, callback=constraint):
+        def evaluate_path(
+            time: Array,
+            state: Array,
+            control: Array,
+            callback: BoundedPathConstraint = constraint,
+        ) -> Array:
             return callback(time, state, control, callback_args)
 
         path = jax.vmap(evaluate_path)(flat_times, flat_states, flat_controls)

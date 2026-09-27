@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -14,6 +15,7 @@ import jax.scipy as jsp
 from phydrax.domain import DomainFunction
 
 from ..._sampling import materialize_design
+from ...typing import PRNGKey
 from ..differential._domain_ops import _factor_and_dim
 from ._ctx import _compile_ctx_integrand
 
@@ -60,7 +62,7 @@ def local_integral(
     u: DomainFunction,
     /,
     *,
-    integrand: Callable,
+    integrand: Callable[..., Any],
     ball_quad: dict,
     var: str = "x",
     time_var: str | None = None,
@@ -131,7 +133,7 @@ def local_integral(
 
     u_var_idx = u.deps.index(var) if var in u.deps else None
 
-    def _op(*args, key=None, **kwargs):
+    def _op(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> jax.Array:
         x = args[x_pos]
         if isinstance(x, tuple):
             raise ValueError("local_integral does not support coord-separable inputs.")
@@ -146,7 +148,7 @@ def local_integral(
 
         y_space = x[None, :] + offsets
 
-        def per_y(y_sp):
+        def per_y(y_sp: jax.Array) -> Any:
             call_args = list(u_args)
             if u_var_idx is not None:
                 call_args[u_var_idx] = y_sp
@@ -154,7 +156,7 @@ def local_integral(
 
         uy = jax.vmap(per_y)(y_space)
 
-        def per_ctx(y_sp, uy_i):
+        def per_ctx(y_sp: jax.Array, uy_i: jax.Array) -> Any:
             if t is None:
                 x_full = x
                 y_full = y_sp
@@ -183,7 +185,7 @@ def local_integral(
 
 def local_integral_ball(
     u: DomainFunction,
-    f_bond: Callable,
+    f_bond: Callable[[jax.Array, jax.Array], Any],
     *,
     ball_quad: dict,
     var: str = "x",

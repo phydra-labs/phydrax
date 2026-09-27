@@ -8,6 +8,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -49,28 +50,32 @@ class ImplicitCurveRealization(StrictModule):
     source_id: str = eqx.field(static=True)
 
     @property
-    def accepted(self):
+    def accepted(self) -> jax.Array:
         return self.evidence.accepted
 
     @property
-    def refresh_required(self):
+    def refresh_required(self) -> jax.Array:
         return ~self.evidence.accepted | self.evidence.projection.refresh_required
 
     def to_segment_mesh(self, /) -> SegmentMesh:
         if not bool(np.asarray(self.accepted)):
             raise ValueError("Only an accepted implicit curve can be materialized.")
         return SegmentMesh(
+            # ty: ignore[invalid-argument-type]
             np.asarray(self.vertices),
+            # ty: ignore[invalid-argument-type]
             np.asarray(self.edges),
             source_id=self.source_id,
         )
 
 
-def _cross_2d(first, second):
+def _cross_2d(first: jax.Array, second: jax.Array) -> jax.Array:
     return first[..., 0] * second[..., 1] - first[..., 1] * second[..., 0]
 
 
-def _segment_pair_intersects(first, second, tolerance):
+def _segment_pair_intersects(
+    first: jax.Array, second: jax.Array, tolerance: jax.Array | float
+) -> jax.Array:
     first_start, first_stop = first
     second_start, second_stop = second
     first_direction = first_stop - first_start
@@ -100,14 +105,14 @@ class ImplicitCurvePlan(StrictModule):
         self,
         geometry: CompiledGeometry,
         projection: ImplicitPointProjectionPlan,
-        vertices,
-        edges,
-        intersection_pairs,
+        vertices: npt.ArrayLike,
+        edges: npt.ArrayLike,
+        intersection_pairs: npt.ArrayLike,
         /,
         *,
         policy: ImplicitSurfacePolicy,
         source_id: str,
-    ):
+    ) -> None:
         vertices_ = np.asarray(vertices, dtype=np.float64)
         edges_ = np.asarray(edges, dtype=np.int32)
         pairs_ = np.asarray(intersection_pairs, dtype=np.int32).reshape((-1, 2))
@@ -176,7 +181,7 @@ class ImplicitCurvePlan(StrictModule):
         )
         safe = jnp.where(accepted, proposed, self.base_vertices)
         evidence = ImplicitCurveEvidence(
-            projection,
+            projection.evidence,
             minimum_length,
             orientation_margin,
             intersection_free,
@@ -194,12 +199,15 @@ class ImplicitCurvePlan(StrictModule):
         )
 
 
-def _edge_key(cell_i: int, cell_j: int, first: int, second: int):
+def _edge_key(
+    cell_i: int, cell_j: int, first: int, second: int
+) -> tuple[tuple[int, int], tuple[int, int]]:
     first_offset = _CELL_CORNERS[first]
     second_offset = _CELL_CORNERS[second]
     first_index = (cell_i + first_offset[0], cell_j + first_offset[1])
     second_index = (cell_i + second_offset[0], cell_j + second_offset[1])
-    return tuple(sorted((first_index, second_index)))
+    lower, upper = sorted((first_index, second_index))
+    return lower, upper
 
 
 def discover_implicit_curve(

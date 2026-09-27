@@ -11,7 +11,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -31,6 +32,7 @@ from ..linalg import (
 )
 from ..stochastic._spatial_noise import SpatialNoiseBasis
 from ..stochastic._wiener import WienerRealization
+from ..typing import parse
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._spde import _ConstantBasisDiffusion, _ValidatedVectorField, SemidiscreteSPDE
 
@@ -46,6 +48,8 @@ _ResolvedSemilinearSPDEScheme: TypeAlias = Literal[
     "exponential_euler",
     "exponential_milstein",
 ]
+_SemilinearScanCarry: TypeAlias = tuple[Array, Array, Array]
+_SemilinearScanItem: TypeAlias = tuple[Array, Array, Array]
 
 
 def _semilinear_solution_bundle(
@@ -350,7 +354,7 @@ def _milstein_increment(
     """Compute the commutative Milstein correction with factor JVPs."""
     directions = jnp.moveaxis(diffusion, -1, 0)
 
-    def differentiate(direction):
+    def differentiate(direction: Array) -> Array:
         return jax.jvp(
             lambda value: _diffusion_columns(problem, time, value),
             (state,),
@@ -449,12 +453,8 @@ def solve_semilinear_spde(
     step_limit = float(dt)
     if not isfinite(step_limit) or step_limit <= 0.0:
         raise ValueError("dt must be finite and positive.")
-    if scheme not in ("auto", "exponential_euler", "exponential_milstein"):
-        raise ValueError(
-            "scheme must be 'auto', 'exponential_euler', or 'exponential_milstein'."
-        )
-    if fallback not in ("diffrax", "error"):
-        raise ValueError("fallback must be 'diffrax' or 'error'.")
+    scheme = parse(scheme, SemilinearSPDEScheme, "scheme")
+    fallback = parse(fallback, SemilinearFallback, "fallback")
     policy = (
         MatrixFunctionPolicy()
         if matrix_function_policy is None
@@ -527,8 +527,12 @@ def solve_semilinear_spde(
     ):
         matrix_operator = drift.spectral_representation.operator
 
-    def one_path(path_key, path_sign, wiener_increments):
-        def advance(carry, item):
+    def one_path(
+        path_key: Array, path_sign: Array, wiener_increments: Array
+    ) -> tuple[Array, Array, Array, Array]:
+        def advance(
+            carry: _SemilinearScanCarry, item: _SemilinearScanItem
+        ) -> tuple[_SemilinearScanCarry, tuple[Array, Array]]:
             time, state, path_valid = carry
             step_value, step_index, wiener_increment = item
             nonlinear = drift.nonlinear(time, state, spde.problem.args)

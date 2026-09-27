@@ -15,7 +15,10 @@ import numpy as np
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..operators.quantum._register import HilbertRegisterLayout
-from ..operators.quantum.lattice._compile import PreparedQuantumLattice
+from ..operators.quantum.lattice._compile import (
+    CompiledMonomial,
+    PreparedQuantumLattice,
+)
 from ..operators.quantum.lattice._strings import monomial_product_factors
 from ._local_hamiltonian import LocalHamiltonian, LocalHamiltonianTerm
 
@@ -26,7 +29,7 @@ class LocalHamiltonianQuantumLatticePolicy(StrictModule):
     maximum_term_matrix_elements: int = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, *, maximum_term_matrix_elements: int):
+    def __init__(self, *, maximum_term_matrix_elements: int) -> None:
         limit = int(maximum_term_matrix_elements)
         if limit < 1:
             raise ValueError("maximum_term_matrix_elements must be positive.")
@@ -53,7 +56,7 @@ class LocalHamiltonianQuantumLatticeResult(StrictModule):
 
 
 def _active_product(
-    prepared: PreparedQuantumLattice, monomial, /
+    prepared: PreparedQuantumLattice, monomial: CompiledMonomial, /
 ) -> tuple[tuple[str, ...], tuple[jnp.ndarray, ...]]:
     factors = monomial_product_factors(prepared, monomial)
     active = tuple(
@@ -73,7 +76,7 @@ def _active_product(
     )
 
 
-def _kronecker(values, /):
+def _kronecker(values: tuple[jnp.ndarray, ...], /) -> jnp.ndarray:
     result = jnp.asarray([[1.0 + 0.0j]])
     for value in values:
         result = jnp.kron(result, value)
@@ -97,7 +100,7 @@ def lower_quantum_lattice_to_local_hamiltonian(
     layout = HilbertRegisterLayout(
         prepared.specification.site_ids, prepared.specification.local_dimensions
     )
-    groups: dict[str, list] = {}
+    groups: dict[str, list[CompiledMonomial]] = {}
     for monomial in prepared.monomials:
         groups.setdefault(monomial.source_term_id, []).append(monomial)
     terms = []

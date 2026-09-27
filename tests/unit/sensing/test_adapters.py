@@ -1,4 +1,5 @@
 from hashlib import sha256
+from typing import Any
 
 import numpy as np
 import pytest
@@ -6,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _manifest():
+def _manifest() -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         "sensor-source",
         checksum_algorithm="sha256",
@@ -24,7 +25,7 @@ def _manifest():
     )
 
 
-def test_normalized_ros_records_lower_to_collection_and_frame_graph():
+def test_normalized_ros_records_lower_to_collection_and_frame_graph() -> None:
     profiles = (
         phx.sensing.RosTopicProfile(
             "/scan", "LaserScan", phx.sensing.RosMessageKind.LASER_SCAN, "sensor"
@@ -92,6 +93,7 @@ def test_normalized_ros_records_lower_to_collection_and_frame_graph():
         records, _manifest(), campaign_id="robot-run"
     )
     assert len(result.collection.assets) == 2
+    # ty: ignore[unresolved-attribute]
     _, translation, evidence = result.frame_graph.prepare_route(
         "sensor", "world"
     ).evaluate(0.5)
@@ -99,7 +101,7 @@ def test_normalized_ros_records_lower_to_collection_and_frame_graph():
     assert bool(evidence.successful)
 
 
-def test_normalized_ros_image_camera_imu_odometry_and_joint_profiles():
+def test_normalized_ros_image_camera_imu_odometry_and_joint_profiles() -> None:
     kinds = (
         ("/image", phx.sensing.RosMessageKind.IMAGE),
         ("/camera", phx.sensing.RosMessageKind.CAMERA_INFO),
@@ -163,12 +165,15 @@ def test_normalized_ros_image_camera_imu_odometry_and_joint_profiles():
     assert angular.field.support.sample_shape == (1,)
     assert angular.field.layout.component_shape == (3,)
     assert angular.field.layout.component_frame_id == "sensor"
+    # ty: ignore[unresolved-attribute]
     assert angular.acquisition.clock_id == "ros-header:/imu"
+    # ty: ignore[not-subscriptable]
     assert angular.metadata["ros_sensor_time_seconds"] == 2.0
+    # ty: ignore[not-subscriptable]
     assert angular.metadata["ros_frame_id"] == "sensor"
 
 
-def test_e57_collection_preserves_scan_pose_invalidity_and_image_links():
+def test_e57_collection_preserves_scan_pose_invalidity_and_image_links() -> None:
     reference = _manifest()
     contract = phx.SpatialCoordinateContract(
         phx.units.METER,
@@ -241,10 +246,11 @@ def test_e57_collection_preserves_scan_pose_invalidity_and_image_links():
     )
     result = phx.sensing.E57ScanCollection(collection, (scan,), report)
     assert result.scans[0].image_asset_ids == (anchor.asset_id,)
+    # ty: ignore[not-subscriptable]
     assert not result.scans[0].points.support.active_mask[1]
 
 
-def test_actual_e57_and_cfradial_adapters_are_bounded(tmp_path):
+def test_actual_e57_and_cfradial_adapters_are_bounded(tmp_path: Any) -> None:
     pye57 = pytest.importorskip("pye57")
     source = tmp_path / "scan.e57"
     writer = pye57.E57(str(source), mode="w")
@@ -341,9 +347,12 @@ def test_actual_e57_and_cfradial_adapters_are_bounded(tmp_path):
     assert radar.assets[0].field.values.shape == (2, 2)
 
 
-def test_actual_rosbag_laser_scan_and_rgb_image_admission(tmp_path):
+def test_actual_rosbag_laser_scan_and_rgb_image_admission(tmp_path: Any) -> None:
     rosbags = pytest.importorskip("rosbags")
+    # ty: ignore[unresolved-import]
     from rosbags.rosbag2 import Writer
+
+    # ty: ignore[unresolved-import]
     from rosbags.typesys import get_typestore, Stores
 
     del rosbags
@@ -470,10 +479,11 @@ def test_actual_rosbag_laser_scan_and_rgb_image_admission(tmp_path):
             )
         ),
     )
+    # ty: ignore[unresolved-attribute]
     assert image_asset.field.support.frame_id == "camera"
 
 
-def test_actual_xtf_side_scan_admission(tmp_path):
+def test_actual_xtf_side_scan_admission(tmp_path: Any) -> None:
     import ctypes
 
     pyxtf = pytest.importorskip("pyxtf")
@@ -537,7 +547,7 @@ def test_actual_xtf_side_scan_admission(tmp_path):
     np.testing.assert_allclose(result.measurement.field.values, ((1, 2, 3, 4),))
 
 
-def test_fmcw_and_sonar_signal_profiles_preserve_acquisition_axes():
+def test_fmcw_and_sonar_signal_profiles_preserve_acquisition_axes() -> None:
     radar_contract = phx.SpatialCoordinateContract(
         phx.units.METER,
         coordinate_system="cartesian",
@@ -608,7 +618,7 @@ def test_fmcw_and_sonar_signal_profiles_preserve_acquisition_axes():
     assert bool(image.successful)
 
 
-def test_sensing_plans_refuse_invalid_physical_and_capacity_contracts():
+def test_sensing_plans_refuse_invalid_physical_and_capacity_contracts() -> None:
     contract = phx.SpatialCoordinateContract(
         phx.units.METER,
         coordinate_system="cartesian",

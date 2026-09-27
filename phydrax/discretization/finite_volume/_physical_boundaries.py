@@ -10,7 +10,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -91,7 +92,7 @@ def _reject_unsupported_ale_wall(
 class SlipWallBoundary(AbstractConservationBoundary):
     """Impermeable inviscid wall for Cartesian or mapped normals."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.boundary_id = canonical_fingerprint({"kind": "fv-slip-wall"})
 
     def exterior_state(
@@ -143,7 +144,7 @@ class MovingSlipWallBoundary(AbstractConservationBoundary):
         wall_velocity_provider_id: str,
         absolute_tolerance: float = 1.0e-12,
         relative_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         provider_id = str(wall_velocity_provider_id)
         absolute = float(absolute_tolerance)
         relative = float(relative_tolerance)
@@ -303,7 +304,7 @@ class NoSlipAdiabaticWallBoundary(AbstractConservationBoundary):
 
     wall_velocity: Array
 
-    def __init__(self, wall_velocity: ArrayLike, /):
+    def __init__(self, wall_velocity: ArrayLike, /) -> None:
         velocity = jnp.asarray(wall_velocity)
         if velocity.ndim != 1 or velocity.size == 0:
             raise ValueError("wall_velocity must be a non-empty component vector.")
@@ -362,7 +363,7 @@ class NoSlipIsothermalWallBoundary(AbstractConservationBoundary):
         wall_velocity: ArrayLike,
         wall_temperature: ArrayLike,
         /,
-    ):
+    ) -> None:
         velocity = jnp.asarray(wall_velocity)
         temperature = jnp.asarray(wall_temperature).reshape(())
         if velocity.ndim != 1 or velocity.size == 0:
@@ -443,7 +444,7 @@ class PrescribedHeatFluxWallBoundary(AbstractConservationBoundary):
         /,
         *,
         boundary_id: str,
-    ):
+    ) -> None:
         velocity = jnp.asarray(wall_velocity)
         if (
             velocity.ndim != 1
@@ -512,7 +513,7 @@ class SupersonicInflowBoundary(AbstractConservationBoundary):
 
     target: PrimitiveBoundaryTarget = eqx.field(static=True)
 
-    def __init__(self, target: PrimitiveBoundaryTarget, /, *, boundary_id: str):
+    def __init__(self, target: PrimitiveBoundaryTarget, /, *, boundary_id: str) -> None:
         if not callable(target) or not str(boundary_id):
             raise ValueError("Supersonic inflow requires a target and boundary_id.")
         self.target = target
@@ -553,7 +554,7 @@ class SupersonicInflowBoundary(AbstractConservationBoundary):
 class SupersonicOutflowBoundary(AbstractConservationBoundary):
     """Pure extrapolation when every characteristic leaves the domain."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.boundary_id = canonical_fingerprint({"kind": "fv-supersonic-outflow"})
 
     def exterior_state(
@@ -586,7 +587,7 @@ class CharacteristicInflowBoundary(AbstractConservationBoundary):
 
     target: PrimitiveBoundaryTarget = eqx.field(static=True)
 
-    def __init__(self, target: PrimitiveBoundaryTarget, /, *, boundary_id: str):
+    def __init__(self, target: PrimitiveBoundaryTarget, /, *, boundary_id: str) -> None:
         if not callable(target) or not str(boundary_id):
             raise ValueError("Characteristic inflow requires target and boundary_id.")
         self.target = target
@@ -646,7 +647,7 @@ class CharacteristicOutflowBoundary(AbstractConservationBoundary):
         /,
         *,
         boundary_id: str,
-    ):
+    ) -> None:
         if not callable(pressure_target) or not str(boundary_id):
             raise ValueError("Characteristic outflow requires pressure and boundary_id.")
         self.pressure_target = pressure_target
@@ -700,7 +701,7 @@ class FarFieldBoundary(AbstractConservationBoundary):
 
     projector: CharacteristicInflowBoundary
 
-    def __init__(self, target: PrimitiveBoundaryTarget, /, *, boundary_id: str):
+    def __init__(self, target: PrimitiveBoundaryTarget, /, *, boundary_id: str) -> None:
         projector = CharacteristicInflowBoundary(target, boundary_id=boundary_id)
         self.projector = projector
         self.boundary_id = projector.boundary_id

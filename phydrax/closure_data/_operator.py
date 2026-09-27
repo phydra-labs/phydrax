@@ -6,9 +6,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import cast
 
 import jax.numpy as jnp
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
@@ -32,6 +34,8 @@ from ._binding import LearnedStressBindingPlan, PreparedLearnedStressBinding
 from ._dataset import (
     ChunkedClosureDatasetManifest,
     ClosureSample,
+    ClosureSampleKey,
+    DatasetExtent,
     DatasetSplit,
     LeakageSafePartition,
     TrainOnlyNormalizer,
@@ -47,7 +51,7 @@ class ClosureOperatorCase:
     targets: Mapping[str, ClosureTarget]
     references: Mapping[str, LESAnalysisReference] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         inputs = frozendict({str(name): value for name, value in self.inputs.items()})
         targets = frozendict({str(name): value for name, value in self.targets.items()})
         references = frozendict(
@@ -90,7 +94,7 @@ class ClosureOperatorCase:
         object.__setattr__(self, "references", references)
 
     @property
-    def key(self):
+    def key(self) -> ClosureSampleKey:
         return next(iter(self.inputs.values())).key
 
     @property
@@ -137,7 +141,7 @@ def _extent_for_case(
     case: ClosureOperatorCase,
     manifest: ChunkedClosureDatasetManifest,
     /,
-):
+) -> DatasetExtent:
     key = case.key
     matches = tuple(
         extent
@@ -453,7 +457,7 @@ class TrainedClosureOperatorPredictor(StrictModule, NonTrainableState):
         source_name: str,
         target_name: str,
         output_shape: Sequence[int] | None = None,
-    ):
+    ) -> None:
         if not isinstance(trained, TrainedOperator):
             raise TypeError("trained must be a TrainedOperator.")
         if not trained.artifact_id:
@@ -501,12 +505,13 @@ class TrainedClosureOperatorPredictor(StrictModule, NonTrainableState):
                 "target": target,
                 "output_shape": shape,
                 "physical_support": self.prepared.physical_batch.input(
-                    source_field.source_name
+                    # The template-membership check above rejects a missing source.
+                    cast(str, source_field.source_name)
                 ).support_id,
             }
         )
 
-    def __call__(self, normalized: Any, args: Any = None, /):
+    def __call__(self, normalized: ArrayLike, args: object = None, /) -> Array:
         if args is not None:
             raise ValueError(
                 "Trained closure operator predictors do not accept hidden runtime args."

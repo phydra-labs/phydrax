@@ -11,7 +11,8 @@ from math import prod
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -47,7 +48,7 @@ class LatticeRegulator(StrictModule, NonTrainableState):
         /,
         *,
         gauge_topology_id: str,
-    ):
+    ) -> None:
         if not isinstance(boundary, LatticeBoundaryPhasePlan):
             raise TypeError("boundary must be LatticeBoundaryPhasePlan.")
         spacing = np.asarray(lattice_spacing, dtype=np.float64)
@@ -103,7 +104,7 @@ class LatticeTheoryPoint(StrictModule, NonTrainableState):
         bare_parameters: Mapping[str, float],
         trajectory_id: str,
         scale_setting_id: str,
-    ):
+    ) -> None:
         if not isinstance(regulator, LatticeRegulator):
             raise TypeError("regulator must be LatticeRegulator.")
         if not isinstance(bare_parameters, Mapping) or not bare_parameters:
@@ -165,7 +166,7 @@ class LatticeEnsemblePlan(StrictModule, NonTrainableState):
         maximum_samples: int = 1_000_000,
         maximum_observables: int = 256,
         maximum_storage_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         if not isinstance(theory_point, LatticeTheoryPoint):
             raise TypeError("theory_point must be LatticeTheoryPoint.")
         names = tuple(str(value).strip() for value in observable_names)
@@ -240,7 +241,7 @@ class PreparedLatticeEnsemble(StrictModule, NonTrainableState):
     plan: LatticeEnsemblePlan
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: LatticeEnsemblePlan, /):
+    def __init__(self, plan: LatticeEnsemblePlan, /) -> None:
         if not isinstance(plan, LatticeEnsemblePlan):
             raise TypeError("plan must be LatticeEnsemblePlan.")
         self.plan = plan
@@ -352,7 +353,7 @@ class ContinuumExtrapolationPlan(StrictModule, NonTrainableState):
         powers: Sequence[int] = (0, 2),
         maximum_points: int = 64,
         extent_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         points = tuple(theory_points)
         powers_ = tuple(powers)
         point_limit = int(maximum_points)
@@ -460,7 +461,7 @@ class PreparedContinuumExtrapolation(StrictModule, NonTrainableState):
     design: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ContinuumExtrapolationPlan, /):
+    def __init__(self, plan: ContinuumExtrapolationPlan, /) -> None:
         if not isinstance(plan, ContinuumExtrapolationPlan):
             raise TypeError("plan must be ContinuumExtrapolationPlan.")
         spacings = np.asarray(

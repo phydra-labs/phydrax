@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -58,7 +59,7 @@ class PeriodicCellFeatures(StrictModule, NonTrainableState):
         /,
         *,
         twist: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(cell, PeriodicCell):
             raise TypeError("cell must be a PeriodicCell.")
         mode_host = np.asarray(reciprocal_modes)

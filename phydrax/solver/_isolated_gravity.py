@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -38,7 +39,7 @@ class IsolatedCartesianGravityPlan(StrictModule, NonTrainableState):
         *,
         gravitational_constant: float = 1.0,
         softening: float = 1e-3,
-    ):
+    ) -> None:
         coupling = float(gravitational_constant)
         epsilon = float(softening)
         if (

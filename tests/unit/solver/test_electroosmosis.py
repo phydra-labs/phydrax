@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _resolved_plan():
+def _resolved_plan() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(8, periodic=True),
@@ -63,7 +66,7 @@ def _resolved_plan():
     return operators, plan
 
 
-def test_resolved_electroosmotic_equilibrium_commits_atomically():
+def test_resolved_electroosmotic_equilibrium_commits_atomically() -> None:
     operators, plan = _resolved_plan()
     concentrations = jnp.ones((8, 8, 2))
     velocity = tuple(
@@ -80,7 +83,7 @@ def test_resolved_electroosmotic_equilibrium_commits_atomically():
     assert result.force.fluid_power == 0.0
 
 
-def test_resolved_electroosmotic_failure_rolls_back_whole_state():
+def test_resolved_electroosmotic_failure_rolls_back_whole_state() -> None:
     operators, plan = _resolved_plan()
     concentrations = jnp.ones((8, 8, 2))
     velocity = tuple(
@@ -96,7 +99,7 @@ def test_resolved_electroosmotic_failure_rolls_back_whole_state():
         np.testing.assert_array_equal(accepted, incoming)
 
 
-def test_thin_edl_slip_admits_only_electroneutral_thin_low_dukhin_state():
+def test_thin_edl_slip_admits_only_electroneutral_thin_low_dukhin_state() -> None:
     plan = phx.solver.ThinEDLElectroosmoticSlipPlan(
         permittivity=7.0e-10,
         dynamic_viscosity=1.0e-3,

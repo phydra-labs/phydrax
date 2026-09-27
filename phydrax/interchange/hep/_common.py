@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 import equinox as eqx
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -35,7 +35,7 @@ class HEPColumnProfile(StrictModule, NonTrainableState):
         /,
         *,
         unit_qualifiers: Mapping[str, str],
-    ):
+    ) -> None:
         format_name_ = str(format_name).strip()
         fields = tuple(
             sorted(

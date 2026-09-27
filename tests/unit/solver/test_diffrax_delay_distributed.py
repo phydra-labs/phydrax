@@ -1,3 +1,5 @@
+from typing import Any
+
 import diffrax as dfx
 import equinox as eqx
 import jax
@@ -10,19 +12,19 @@ import phydrax as phx
 class _AffineKernel(eqx.Module):
     scale: jax.Array
 
-    def __call__(self, time, lag, state, args):
+    def __call__(self, time: Any, lag: Any, state: Any, args: Any) -> Any:
         del time, state, args
         return self.scale * (1.0 + lag)
 
 
-def _polynomial_moments(lower, upper):
+def _polynomial_moments(lower: Any, upper: Any) -> Any:
     return tuple(
         (upper ** (degree + 1) - lower ** (degree + 1)) / (degree + 1)
         for degree in range(4)
     )
 
 
-def _polynomial_exact(time, *, lower=0.55, upper=0.95):
+def _polynomial_exact(time: Any, *, lower: Any = 0.55, upper: Any = 0.95) -> Any:
     moment0, moment1, moment2, moment3 = _polynomial_moments(lower, upper)
     quadratic = moment0 + 2.0 * moment1
     linear = 2.0 * moment0 + 2.0 * moment1 - 4.0 * moment2
@@ -30,7 +32,7 @@ def _polynomial_exact(time, *, lower=0.55, upper=0.95):
     return 3.0 + quadratic * time**3 / 3.0 + linear * time**2 / 2.0 + constant * time
 
 
-def _polynomial_problem(order):
+def _polynomial_problem(order: Any) -> Any:
     term = phx.solver.DistributedDelay(
         "polynomial",
         lambda time, lag, state, args: 1.0 + 2.0 * lag,
@@ -38,11 +40,11 @@ def _polynomial_problem(order):
         quadrature=phx.integration.GaussLegendreRule(order),
     )
 
-    def history(time, args):
+    def history(time: Any, args: Any) -> Any:
         del args
         return jnp.asarray([time**2 + 2.0 * time + 3.0])
 
-    def drift(time, state, memory, args):
+    def drift(time: Any, state: Any, memory: Any, args: Any) -> Any:
         del time, state, args
         return memory["polynomial"]
 
@@ -55,7 +57,7 @@ def _polynomial_problem(order):
     )
 
 
-def test_gauss_legendre_distributed_delay_is_polynomially_exact():
+def test_gauss_legendre_distributed_delay_is_polynomially_exact() -> None:
     times = jnp.linspace(0.0, 0.4, 9)
     solution = phx.solver.solve_diffrax_delay(
         _polynomial_problem(2),
@@ -75,23 +77,23 @@ def test_gauss_legendre_distributed_delay_is_polynomially_exact():
     )
 
 
-def test_distributed_delay_recovers_exponential_matrix_trajectory():
+def test_distributed_delay_recovers_exponential_matrix_trajectory() -> None:
     rate = 0.35
     lower, upper = 0.2, 0.45
     base = jnp.asarray([[1.0, -0.25], [0.5, 1.75]])
     kernel_coefficients = jnp.asarray([[1.0, 0.75], [1.5, 2.0]])
 
-    def exponential_integral(bound):
+    def exponential_integral(bound: Any) -> Any:
         return -jnp.exp(-rate * bound) * ((1.0 + bound) / rate + 1.0 / rate**2)
 
     scalar_factor = exponential_integral(upper) - exponential_integral(lower)
     factor = kernel_coefficients * scalar_factor
 
-    def history(time, args):
+    def history(time: Any, args: Any) -> Any:
         del args
         return jnp.exp(rate * time) * base
 
-    def kernel(time, lag, state, args):
+    def kernel(time: Any, lag: Any, state: Any, args: Any) -> Any:
         del time, state, args
         return kernel_coefficients * (1.0 + lag)
 
@@ -122,7 +124,7 @@ def test_distributed_delay_recovers_exponential_matrix_trajectory():
     assert jnp.allclose(solution.states, expected, rtol=2e-6, atol=2e-8)
 
 
-def test_mixed_point_and_distributed_terms_preserve_names_and_provenance():
+def test_mixed_point_and_distributed_terms_preserve_names_and_provenance() -> None:
     rate = 0.3
     point_lag = 0.31
     lower, upper = 0.22, 0.42
@@ -136,11 +138,11 @@ def test_mixed_point_and_distributed_terms_preserve_names_and_provenance():
         quadrature=phx.integration.GaussLegendreRule(8),
     )
 
-    def history(time, args):
+    def history(time: Any, args: Any) -> Any:
         del args
         return jnp.exp(rate * time) * base
 
-    def drift(time, state, memory, args):
+    def drift(time: Any, state: Any, memory: Any, args: Any) -> Any:
         del time, state, args
         point_part = 0.4 * rate * jnp.exp(rate * point_lag) * memory["point"]
         spread_part = 0.6 * rate * memory[1] / distributed_factor
@@ -176,7 +178,7 @@ def test_mixed_point_and_distributed_terms_preserve_names_and_provenance():
     assert jnp.allclose(effective_upper, spread.maximum_delay)
 
 
-def test_existing_fixed_interval_rule_materializes_without_parallel_rule_path():
+def test_existing_fixed_interval_rule_materializes_without_parallel_rule_path() -> None:
     lower, upper = 0.25, 0.5
     term = phx.solver.DistributedDelay(
         "spread",
@@ -211,11 +213,11 @@ def test_existing_fixed_interval_rule_materializes_without_parallel_rule_path():
     )
 
 
-def test_temporal_convergence_is_independent_of_quadrature_refinement():
+def test_temporal_convergence_is_independent_of_quadrature_refinement() -> None:
     terminal = jnp.asarray([0.4])
     step_sizes = (0.1, 0.05, 0.025)
 
-    def errors(order):
+    def errors(order: Any) -> Any:
         values = []
         for step in step_sizes:
             solution = phx.solver.solve_diffrax_delay(
@@ -237,10 +239,10 @@ def test_temporal_convergence_is_independent_of_quadrature_refinement():
     assert jnp.allclose(order_two, order_six, rtol=2e-11, atol=2e-13)
 
 
-def test_kernel_and_interval_endpoints_support_jit_vmap_and_grad():
+def test_kernel_and_interval_endpoints_support_jit_vmap_and_grad() -> None:
     final_time = 0.1
 
-    def terminal(parameters):
+    def terminal(parameters: Any) -> Any:
         scale, lower, upper = parameters
         term = phx.solver.DistributedDelay(
             "trainable",
@@ -282,14 +284,16 @@ def test_kernel_and_interval_endpoints_support_jit_vmap_and_grad():
     assert jnp.allclose(jax.vmap(terminal)(batched), batched_expected, atol=2e-9)
 
 
-def test_distributed_delay_validates_rule_kernel_shape_and_lag_bounds():
+def test_distributed_delay_validates_rule_kernel_shape_and_lag_bounds() -> None:
     with pytest.raises(TypeError, match="kernel must be callable"):
+        # ty: ignore[invalid-argument-type]
         phx.solver.DistributedDelay("bad", 1.0, (0.2, 0.4))
     with pytest.raises(TypeError, match="reducer must be callable"):
         phx.solver.DistributedDelay(
             "bad",
             lambda time, lag, state, args: 1.0,
             (0.2, 0.4),
+            # ty: ignore[invalid-argument-type]
             reducer=1.0,
         )
     with pytest.raises(TypeError, match="Unsupported interval rule"):
@@ -297,6 +301,7 @@ def test_distributed_delay_validates_rule_kernel_shape_and_lag_bounds():
             "bad",
             lambda time, lag, state, args: 1.0,
             (0.2, 0.4),
+            # ty: ignore[invalid-argument-type]
             quadrature=phx.integration.AdaptiveQuadraturePlan(),
         )
     with pytest.raises(ValueError, match="bounds must be scalar"):
@@ -347,7 +352,7 @@ def test_distributed_delay_validates_rule_kernel_shape_and_lag_bounds():
         )
 
 
-def test_non_euclidean_distributed_delay_requires_valid_reducer():
+def test_non_euclidean_distributed_delay_requires_valid_reducer() -> None:
     geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
     history = lambda time, args: jnp.eye(2)
     drift = lambda time, state, memory, args: jnp.zeros_like(state)

@@ -9,7 +9,8 @@ from typing import TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -65,7 +66,7 @@ class EdgeRelation(StrictModule, NonTrainableState):
         source_size: int,
         target_size: int,
         valid: ArrayLike | None = None,
-    ):
+    ) -> None:
         source_count = int(source_size)
         target_count = int(target_size)
         if source_count < 0 or target_count < 0:
@@ -149,7 +150,7 @@ class RowRelation(StrictModule, NonTrainableState):
         source_size: int,
         valid: ArrayLike | None = None,
         case_shape: tuple[int, ...] = (),
-    ):
+    ) -> None:
         source_count = int(source_size)
         if source_count <= 0:
             raise ValueError("Row relation source_size must be positive.")

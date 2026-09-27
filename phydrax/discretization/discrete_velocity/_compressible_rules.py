@@ -9,11 +9,14 @@ import itertools
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._compressible_contracts import CompressibleKineticModelKind
 
 
@@ -44,7 +47,7 @@ class CompressibleVelocityRule(StrictModule, NonTrainableState):
         name: str,
         frame_shift: tuple[int, ...] | None = None,
         exact_streaming: bool = True,
-    ):
+    ) -> None:
         velocity_host = np.asarray(velocities)
         base_host = np.asarray(base_probabilities)
         opposite_host = np.asarray(opposite, dtype=np.int32)
@@ -81,13 +84,7 @@ class CompressibleVelocityRule(StrictModule, NonTrainableState):
         )
         if len(shift) != dimension:
             raise ValueError("frame_shift must match the velocity dimension.")
-        if model_kind not in (
-            "guided-d3q39",
-            "entropic-d3q343",
-            "filtered-d3q33",
-            "adaptive-gauge",
-        ):
-            raise ValueError(f"Unknown kinetic model kind {model_kind!r}.")
+        model_kind = parse(model_kind, CompressibleKineticModelKind, "model_kind")
         if not name:
             raise ValueError("Velocity rule name must be non-empty.")
         dtype = np.result_type(velocity_host.dtype, base_host.dtype, feature_host.dtype)
@@ -166,11 +163,11 @@ def _signed_permutations(base: tuple[int, int, int]) -> set[tuple[int, int, int]
             point = list(permutation)
             for index, sign in zip(active, signs, strict=True):
                 point[index] *= sign
-            points.add(tuple(point))
+            points.add((point[0], point[1], point[2]))
     return points
 
 
-def d3q39_guided_rule(*, dtype: np.dtype | str = np.float64) -> CompressibleVelocityRule:
+def d3q39_guided_rule(*, dtype: npt.DTypeLike = np.float64) -> CompressibleVelocityRule:
     points = {(0, 0, 0)}
     for shell in ((1, 0, 0), (1, 1, 1), (2, 0, 0), (2, 2, 0), (3, 0, 0)):
         points.update(_signed_permutations(shell))
@@ -197,7 +194,7 @@ def d3q39_guided_rule(*, dtype: np.dtype | str = np.float64) -> CompressibleVelo
 def d3q343_entropic_rule(
     *,
     reference_temperature: float = 0.6979533220196831,
-    dtype: np.dtype | str = np.float64,
+    dtype: npt.DTypeLike = np.float64,
 ) -> CompressibleVelocityRule:
     temperature = float(reference_temperature)
     if not np.isfinite(temperature) or temperature <= 0.0:
@@ -248,7 +245,7 @@ def d3q343_entropic_rule(
 def d3q33_filtered_rule(
     *,
     reference_temperature: float = 1.0 / 3.0,
-    dtype: np.dtype | str = np.float64,
+    dtype: npt.DTypeLike = np.float64,
 ) -> CompressibleVelocityRule:
     temperature = float(reference_temperature)
     if not np.isfinite(temperature) or temperature <= 0.0:

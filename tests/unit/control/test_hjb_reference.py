@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -16,17 +19,17 @@ from phydrax.control.stochastic import (
 from phydrax.dynamics import TimeGrid
 
 
-def _zero_drift(time, state, action, args):
+def _zero_drift(time: Any, state: Any, action: Any, args: Any) -> float:
     del time, state, action, args
     return 0.0
 
 
-def _zero_diffusion(time, state, action, args):
+def _zero_diffusion(time: Any, state: Any, action: Any, args: Any) -> float:
     del time, state, action, args
     return 0.0
 
 
-def _linear_cost_problem(*, cost, problem_id):
+def _linear_cost_problem(*, cost: Any, problem_id: Any) -> Any:
     grid = BoundedUniformGrid1D(-1.0, 1.0, 9)
     time_grid = TimeGrid(jnp.linspace(0.0, 0.2, 5), time_id=problem_id)
     terminal = np.asarray(grid.points)
@@ -49,7 +52,7 @@ def _linear_cost_problem(*, cost, problem_id):
     )
 
 
-def test_deterministic_reduction_matches_running_cost_and_earns_discrete_label():
+def test_deterministic_reduction_matches_running_cost_and_earns_discrete_label() -> None:
     problem = _linear_cost_problem(cost=2.0, problem_id="deterministic-hjb")
     result = solve_discrete_hjb_reference(problem)
     times = np.asarray(problem.time_grid.times)
@@ -69,7 +72,7 @@ def test_deterministic_reduction_matches_running_cost_and_earns_discrete_label()
     assert bool(result.evidence.refinement_passed)
 
 
-def test_positive_diffusion_reduction_matches_quadratic_heat_solution():
+def test_positive_diffusion_reduction_matches_quadratic_heat_solution() -> None:
     sigma = 0.2
     terminal_time = 0.1
     grid = BoundedUniformGrid1D(-1.0, 1.0, 21)
@@ -100,7 +103,7 @@ def test_positive_diffusion_reduction_matches_quadratic_heat_solution():
     assert bool(result.successful)
 
 
-def test_upwind_drift_uses_forward_difference_for_positive_generator_drift():
+def test_upwind_drift_uses_forward_difference_for_positive_generator_drift() -> None:
     grid = BoundedUniformGrid1D(-1.0, 1.0, 5)
     time_grid = TimeGrid(jnp.asarray([0.0, 0.1]), time_id="upwind-positive")
     terminal = np.asarray(grid.points) ** 2
@@ -127,7 +130,7 @@ def test_upwind_drift_uses_forward_difference_for_positive_generator_drift():
     np.testing.assert_allclose(result.values[0, 1:-1], expected, rtol=1e-12, atol=1e-12)
 
 
-def test_upwind_drift_uses_backward_difference_for_negative_generator_drift():
+def test_upwind_drift_uses_backward_difference_for_negative_generator_drift() -> None:
     grid = BoundedUniformGrid1D(-1.0, 1.0, 5)
     time_grid = TimeGrid(jnp.asarray([0.0, 0.1]), time_id="upwind-negative")
     terminal = np.asarray(grid.points) ** 2
@@ -154,7 +157,7 @@ def test_upwind_drift_uses_backward_difference_for_negative_generator_drift():
     np.testing.assert_allclose(result.values[0, 1:-1], expected, rtol=1e-12, atol=1e-12)
 
 
-def test_terminal_boundary_data_and_action_selector_are_explicit():
+def test_terminal_boundary_data_and_action_selector_are_explicit() -> None:
     grid = BoundedUniformGrid1D(0.0, 1.0, 5)
     time_grid = TimeGrid(jnp.asarray([0.0, 0.1, 0.2]), time_id="action-hjb")
     terminal = np.asarray(grid.points)
@@ -199,7 +202,9 @@ def test_terminal_boundary_data_and_action_selector_are_explicit():
         )
 
 
-def test_unsupported_callback_shape_and_nonmonotone_step_fail_before_integration():
+def test_unsupported_callback_shape_and_nonmonotone_step_fail_before_integration() -> (
+    None
+):
     grid = BoundedUniformGrid1D(-1.0, 1.0, 5)
     time_grid = TimeGrid(jnp.asarray([0.0, 0.1]), time_id="invalid-hjb")
     terminal = np.zeros(grid.num_points)
@@ -233,7 +238,7 @@ def test_unsupported_callback_shape_and_nonmonotone_step_fail_before_integration
         solve_discrete_hjb_reference(nonmonotone_problem)
 
 
-def test_refinement_result_exposes_gate_failure_without_broad_claim_language():
+def test_refinement_result_exposes_gate_failure_without_broad_claim_language() -> None:
     grid = BoundedUniformGrid1D(-1.0, 1.0, 7)
     time_grid = TimeGrid(jnp.linspace(0.0, 0.1, 5), time_id="refinement-hjb")
     terminal = np.asarray(grid.points) ** 4

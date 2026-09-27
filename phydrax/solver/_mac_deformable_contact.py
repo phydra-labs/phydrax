@@ -10,7 +10,8 @@ from typing import Any, TYPE_CHECKING
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -74,7 +75,7 @@ class DeformableContactResidualPlan(StrictModule, NonTrainableState):
         assembly_id: str,
         step_size: float = 1.0,
         activation_distance: float | None = None,
-    ):
+    ) -> None:
         from ..applications.contact._closure import ContactClosurePlan
         from ..applications.contact._route_state import ContactRouteState
 

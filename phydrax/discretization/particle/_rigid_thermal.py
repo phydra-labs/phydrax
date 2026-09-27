@@ -10,10 +10,14 @@ angular velocity; inertia is COM-centered and angular velocities are world-frame
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -58,8 +62,13 @@ class PreparedRigidHeatBath(StrictModule, NonTrainableState):
     rotation_friction: Array
 
     def __init__(
-        self, bodies, thermal_energy, translation_friction, rotation_friction, /
-    ):
+        self,
+        bodies: PreparedRigidBodySet,
+        thermal_energy: ArrayLike,
+        translation_friction: ArrayLike,
+        rotation_friction: ArrayLike,
+        /,
+    ) -> None:
         values = np.asarray(
             [thermal_energy, translation_friction, rotation_friction], dtype=np.float64
         )
@@ -81,7 +90,9 @@ class PreparedRigidHeatBath(StrictModule, NonTrainableState):
         self.translation_friction = jnp.asarray(values[1])
         self.rotation_friction = jnp.asarray(values[2])
 
-    def apply(self, state: RigidBodyKinematics, step_size, key, /) -> RigidBodyKinematics:
+    def apply(
+        self, state: RigidBodyKinematics, step_size: ArrayLike, key: Array, /
+    ) -> RigidBodyKinematics:
         dt = jnp.asarray(step_size, dtype=state.position.dtype)
         translation_key, rotation_key = jax.random.split(key)
         ct = jnp.exp(-self.translation_friction * dt)
@@ -122,13 +133,13 @@ class PreparedRigidHeatBath(StrictModule, NonTrainableState):
 
     def step(
         self,
-        state,
+        state: RigidBodyKinematics,
         load: RigidBodyLoad,
-        time,
-        step_size,
-        load_function,
-        key,
-        args=None,
+        time: Array,
+        step_size: Array,
+        load_function: Callable[[Array, RigidBodyKinematics, Any], RigidBodyLoad],
+        key: Array,
+        args: Any = None,
         /,
     ) -> RigidBodyStepResult:
         """Symmetric OU/2--native KDK--OU/2; finite dt has configurational bias.

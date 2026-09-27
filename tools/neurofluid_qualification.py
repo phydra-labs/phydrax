@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import json
 from hashlib import sha256
+from typing import Any
 
 import numpy as np
 
 import phydrax as phx
 
 
-def manifest(payload: bytes):
+def manifest(payload: bytes) -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         "qualification-image",
         checksum_algorithm="sha256",

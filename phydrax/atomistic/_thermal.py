@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -32,7 +33,7 @@ class BAOABLangevinPlan(StrictModule, NonTrainableState):
         /,
         *,
         realization_id: int = 0,
-    ):
+    ) -> None:
         step = float(step_size)
         damping = float(friction)
         realization = int(realization_id)
@@ -67,7 +68,7 @@ def stable_particle_normals(
     *,
     operator_id: int,
     realization_id: int,
-    dtype,
+    dtype: DTypeLike,
 ) -> Array:
     """Draw Cartesian normals addressed by stable IDs, step, operator, and path."""
 
@@ -101,7 +102,7 @@ def stable_particle_normals(
     lower = (unsigned & jnp.uint64(0xFFFFFFFF)).astype(jnp.uint32)
     upper = (unsigned >> jnp.uint64(32)).astype(jnp.uint32)
 
-    def particle_key(low, high):
+    def particle_key(low: Array, high: Array) -> Array:
         return jr.fold_in(jr.fold_in(key, high), low)
 
     keys = jax.vmap(particle_key)(lower, upper)

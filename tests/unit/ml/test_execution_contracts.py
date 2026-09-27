@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -30,7 +33,7 @@ _PIECEWISE_CONSTANT = DerivativeRegularity(
 )
 
 
-def _regression_batch():
+def _regression_batch() -> Any:
     x0 = jnp.linspace(-3.0, 3.0, 10)
     return MLBatch(
         jnp.stack((x0, jnp.square(x0) - 2.0), axis=-1),
@@ -40,7 +43,7 @@ def _regression_batch():
     )
 
 
-def test_hard_tree_is_discontinuous_piecewise_constant():
+def test_hard_tree_is_discontinuous_piecewise_constant() -> None:
     result = DecisionTreeRegressor(max_depth=2).fit_batch(_regression_batch())
     contract = result.model.model_execution_contract()
     assert contract.regularity == DerivativeRegularity(
@@ -51,6 +54,7 @@ def test_hard_tree_is_discontinuous_piecewise_constant():
     assert contract.derivative.level(INPUT) is GradientLevel.NONE
     assert contract.derivative.level(PARAMETER) is GradientLevel.ALMOST_EVERYWHERE
     assert "split structure" in contract.derivative.nondifferentiable_outputs
+    # ty: ignore[unresolved-attribute]
     assert contract.randomness.mode == "deterministic"
     assert contract.ports == result.model.model_ports()
     gradient = contract.derivative.admit(DifferentiationRequest((INPUT,)))
@@ -58,7 +62,7 @@ def test_hard_tree_is_discontinuous_piecewise_constant():
     assert "regularity-degenerate" in gradient.reasons
 
 
-def _agrees_with_fit(result):
+def _agrees_with_fit(result: Any) -> Any:
     contract = result.model.model_execution_contract()
     fit = result.derivative_contract
     assert contract.regularity == fit.regularity
@@ -67,7 +71,7 @@ def _agrees_with_fit(result):
     return contract
 
 
-def test_kernel_expansion_regularity_follows_the_kernel():
+def test_kernel_expansion_regularity_follows_the_kernel() -> None:
     batch = _regression_batch()
     smooth = _agrees_with_fit(
         KernelRidgeRecipe(SquaredExponentialKernel(), alpha=0.1).fit_batch(batch)
@@ -86,7 +90,7 @@ def test_kernel_expansion_regularity_follows_the_kernel():
 
 
 @pytest.mark.parametrize("metric", ["squared-euclidean", "euclidean", "manhattan"])
-def test_exact_neighbors_are_piecewise_constant(metric):
+def test_exact_neighbors_are_piecewise_constant(metric: Any) -> None:
     contract = _agrees_with_fit(
         KNeighborsRegressorRecipe(3, metric=metric).fit_batch(_regression_batch())
     )
@@ -94,7 +98,7 @@ def test_exact_neighbors_are_piecewise_constant(metric):
     assert contract.derivative.level(INPUT) is GradientLevel.NONE
 
 
-def test_kernel_neighbors_are_smooth_only_for_a_smooth_metric():
+def test_kernel_neighbors_are_smooth_only_for_a_smooth_metric() -> None:
     smooth = _agrees_with_fit(
         KernelNeighborsRegressorRecipe(
             temperature=0.4, metric="squared-euclidean"

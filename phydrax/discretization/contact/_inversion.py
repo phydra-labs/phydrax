@@ -10,7 +10,8 @@ from math import comb, isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -48,7 +49,7 @@ class SimplexInversionStepPlan(StrictModule, NonTrainableState):
         numerical_error: float = 1.0e-13,
         conservative_rescaling: float = 0.8,
         maximum_iterations: int = 1_000_000,
-    ):
+    ) -> None:
         topology = np.asarray(cells)
         reference = np.asarray(reference_positions, dtype=np.float64)
         if (
@@ -140,11 +141,11 @@ class InversionStepEvidence(StrictModule):
         return self.status == int(InversionStatus.SUCCESS)
 
 
-def _det2(first, second, /):
+def _det2(first: np.ndarray, second: np.ndarray, /) -> np.floating:
     return first[0] * second[1] - first[1] * second[0]
 
 
-def _det3(first, second, third, /):
+def _det3(first: np.ndarray, second: np.ndarray, third: np.ndarray, /) -> float:
     return float(np.dot(first, np.cross(second, third)))
 
 

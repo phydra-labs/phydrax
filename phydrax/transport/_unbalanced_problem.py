@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..integration._api import IntegrationRealization
@@ -46,7 +47,7 @@ class UnbalancedTransportProblem(StrictModule):
         *,
         source_marginal_penalty: ArrayLike,
         target_marginal_penalty: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(source, _FiniteTransportMeasure):
             raise TypeError("source must be a canonical finite transport measure.")
         if not isinstance(target, _FiniteTransportMeasure):

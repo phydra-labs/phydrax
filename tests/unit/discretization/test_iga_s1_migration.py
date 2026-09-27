@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -19,7 +20,7 @@ _FIXTURE = json.loads(
 )
 
 
-def _unit_square(case):
+def _unit_square(case: Any) -> Any:
     grid = iga.BSplineGrid.open_uniform(
         case["degree"],
         case["span_count"],
@@ -34,7 +35,7 @@ def _unit_square(case):
     return grid, geometry
 
 
-def test_s1_fixture_preserves_topology_runtime_and_exact_poisson_result():
+def test_s1_fixture_preserves_topology_runtime_and_exact_poisson_result() -> None:
     case = _FIXTURE["cases"]["exact_quadratic_poisson"]
     grid, geometry = _unit_square(case)
     plan = iga.IsogeometricPlan.isoparametric(
@@ -91,7 +92,7 @@ def test_s1_fixture_preserves_topology_runtime_and_exact_poisson_result():
     )
 
 
-def test_s1_fixture_preserves_fixed_topology_numeric_refresh():
+def test_s1_fixture_preserves_fixed_topology_numeric_refresh() -> None:
     case = _FIXTURE["cases"]["runtime_refresh"]
     grid, geometry = _unit_square(case)
     prepared = iga.IsogeometricPlan.isoparametric(

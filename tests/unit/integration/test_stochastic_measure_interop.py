@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -6,8 +8,9 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _spatiotemporal_trajectory():
+def _spatiotemporal_trajectory() -> Any:
     times = jnp.asarray([0.0, 0.2, 0.6, 1.0])
+    # ty: ignore[invalid-argument-type]
     spatial_axis = phx.discretization.FourierAxisSpec(4).materialize(0.0, 1.0)
     path = jnp.arange(3.0)[:, None, None]
     time = times[None, :, None]
@@ -41,7 +44,7 @@ def _spatiotemporal_trajectory():
     return trajectory, discretization
 
 
-def test_staged_time_then_path_reduction_contains_failed_paths():
+def test_staged_time_then_path_reduction_contains_failed_paths() -> None:
     trajectory, _ = _spatiotemporal_trajectory()
     path_target = phx.stochastic.trajectory_measure(trajectory, mode="path")
     time_target = phx.stochastic.time_measure(trajectory)
@@ -66,7 +69,7 @@ def test_staged_time_then_path_reduction_contains_failed_paths():
     assert path_estimate.successful
 
 
-def test_staged_space_time_path_reduction_is_jittable_and_differentiable():
+def test_staged_space_time_path_reduction_is_jittable_and_differentiable() -> None:
     trajectory, discretization = _spatiotemporal_trajectory()
     path_target = phx.stochastic.trajectory_measure(trajectory, mode="path")
     time_target = phx.stochastic.time_measure(trajectory)
@@ -78,7 +81,7 @@ def test_staged_space_time_path_reduction_is_jittable_and_differentiable():
     )
     dims = ("path", "time", "space")
 
-    def staged(scale):
+    def staged(scale: Any) -> Any:
         values = cx.AxisArray(scale * trajectory.states, dims=dims)
         spatial = phx.integration.integrate(values, spatial_target).value
         temporal = phx.integration.integrate(spatial, time_target).value

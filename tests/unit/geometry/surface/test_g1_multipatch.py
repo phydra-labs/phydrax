@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -19,7 +22,7 @@ from phydrax.geometry.surface._g1_multipatch import (
 )
 
 
-def _two_patch_topology():
+def _two_patch_topology() -> Any:
     return PreparedHalfEdgePatchTopology(
         ("left", "right"),
         (
@@ -29,7 +32,7 @@ def _two_patch_topology():
     )
 
 
-def _planar_two_patch_coefficients():
+def _planar_two_patch_coefficients() -> Any:
     parameter = jnp.linspace(0.0, 1.0, 6)
     u, v = jnp.meshgrid(parameter, parameter, indexing="ij")
     zero = jnp.zeros_like(u)
@@ -38,7 +41,7 @@ def _planar_two_patch_coefficients():
     return jnp.stack((left, right))
 
 
-def test_two_patch_shared_edge_has_canonical_reversed_halfedge_orientation():
+def test_two_patch_shared_edge_has_canonical_reversed_halfedge_orientation() -> None:
     topology = _two_patch_topology()
     shared = np.asarray(topology.shared_halfedges)[0]
 
@@ -57,7 +60,7 @@ def test_two_patch_shared_edge_has_canonical_reversed_halfedge_orientation():
     assert jnp.allclose(residual, 0.0)
 
 
-def test_g0_and_g1_constraints_and_sampled_seam_jets_vanish_for_planar_join():
+def test_g0_and_g1_constraints_and_sampled_seam_jets_vanish_for_planar_join() -> None:
     topology = _two_patch_topology()
     coefficients = _planar_two_patch_coefficients()
     g0 = BiquinticGluingConstraints(topology, GluingContinuity.G0)
@@ -84,7 +87,7 @@ def test_g0_and_g1_constraints_and_sampled_seam_jets_vanish_for_planar_join():
     assert evidence.maximum_first_derivative_residual == pytest.approx(0.0, abs=2.0e-6)
 
 
-def test_regular_four_patch_vertex_is_supported():
+def test_regular_four_patch_vertex_is_supported() -> None:
     topology = PreparedHalfEdgePatchTopology(
         ("lower_left", "lower_right", "upper_left", "upper_right"),
         (
@@ -106,7 +109,7 @@ def test_regular_four_patch_vertex_is_supported():
     )
 
 
-def test_extraordinary_boundary_vertex_is_classified_and_g1_basis_fails_closed():
+def test_extraordinary_boundary_vertex_is_classified_and_g1_basis_fails_closed() -> None:
     topology = PreparedHalfEdgePatchTopology(
         ("lower_left", "right", "upper"),
         (
@@ -127,7 +130,7 @@ def test_extraordinary_boundary_vertex_is_classified_and_g1_basis_fails_closed()
     assert captured.value.unsupported_vertex_labels == ("x",)
 
 
-def test_native_nullspace_reconstructs_and_projects_g1_coefficients():
+def test_native_nullspace_reconstructs_and_projects_g1_coefficients() -> None:
     constraints = BiquinticGluingConstraints(_two_patch_topology(), GluingContinuity.G1)
     basis = BiquinticGluingBasis(constraints, relative_rank_tolerance=1.0e-6)
 
@@ -151,7 +154,7 @@ def test_native_nullspace_reconstructs_and_projects_g1_coefficients():
     )
 
 
-def test_malformed_shared_edge_orientation_is_rejected_before_preparation():
+def test_malformed_shared_edge_orientation_is_rejected_before_preparation() -> None:
     with pytest.raises(PatchTopologyError, match="opposite") as captured:
         PreparedHalfEdgePatchTopology(
             ("first", "second"),

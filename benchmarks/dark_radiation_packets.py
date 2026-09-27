@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -24,7 +26,7 @@ from phydrax.solver._dark_radiation_packets import DarkRadiationPacketPlan
 from phydrax.solver._dark_sector_epoch_runtime import DarkSectorEpochPlan
 
 
-def _frame(units, *, time_value, scale_factor, token):
+def _frame(units: Any, *, time_value: Any, scale_factor: Any, token: Any) -> Any:
     geometry = ADMGridGeometry(
         jnp.asarray(1.0),
         jnp.zeros((3,)),

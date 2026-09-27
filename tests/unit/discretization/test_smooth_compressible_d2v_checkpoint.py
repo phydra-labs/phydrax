@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -28,7 +31,7 @@ from phydrax.equations._materials import IdealGasMaterial
 from phydrax.equations._transport_closures import ConstantTransport
 
 
-def _runtime(*, viscosity=0.03):
+def _runtime(*, viscosity: Any = 0.03) -> Any:
     quadrature = d2v17_quadrature()
     method = SmoothCompressibleD2VKineticMethod(
         quadrature,
@@ -47,7 +50,7 @@ def _runtime(*, viscosity=0.03):
     )
 
 
-def _state(runtime):
+def _state(runtime: Any) -> Any:
     conserved = jnp.asarray((1.0, 0.03, -0.02, 1.251))
     moments = runtime.method._equilibrium_fields(conserved)
     target_flux = (moments[3] + moments[5]) * moments[4]
@@ -63,7 +66,7 @@ def _state(runtime):
     )
 
 
-def _plan(runtime, **overrides):
+def _plan(runtime: Any, **overrides: Any) -> Any:
     identities = {
         "topology_id": "periodic-topology",
         "support_id": "learned-support",
@@ -82,14 +85,16 @@ def _plan(runtime, **overrides):
     )
 
 
-def _histories():
+def _histories() -> Any:
     return {
         "boundary_history": {"outflow_memory": jnp.asarray((0.25, -0.5))},
         "source_history": {"source_phase": jnp.asarray(3, dtype=jnp.int32)},
     }
 
 
-def test_d2v_checkpoint_continues_exactly_from_accepted_populations(tmp_path):
+def test_d2v_checkpoint_continues_exactly_from_accepted_populations(
+    tmp_path: Any,
+) -> None:
     runtime = _runtime()
     initial = _state(runtime)
     first, _ = runtime.step_oracle(initial, jnp.asarray(0.01))
@@ -141,7 +146,9 @@ def test_d2v_checkpoint_continues_exactly_from_accepted_populations(tmp_path):
     assert int(restored.source_value("source_phase")) == 3
 
 
-def test_d2v_checkpoint_refuses_identity_mismatch_and_payload_tamper(tmp_path):
+def test_d2v_checkpoint_refuses_identity_mismatch_and_payload_tamper(
+    tmp_path: Any,
+) -> None:
     runtime = _runtime()
     state = _state(runtime)
     plan = _plan(runtime)
@@ -195,7 +202,7 @@ def test_d2v_checkpoint_refuses_identity_mismatch_and_payload_tamper(tmp_path):
         )
 
 
-def test_d2v_checkpoint_is_accepted_boundary_only_and_minimal(tmp_path):
+def test_d2v_checkpoint_is_accepted_boundary_only_and_minimal(tmp_path: Any) -> None:
     runtime = _runtime()
     state = _state(runtime)
     plan = _plan(runtime)

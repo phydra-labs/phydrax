@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -15,7 +17,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _model():
+def _model() -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("methane", "ethane"),
         (phx.equations.ChemicalPhaseKind.GAS,) * 2,

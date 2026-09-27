@@ -1,3 +1,5 @@
+from typing import Any
+
 import manifold3d
 import numpy as np
 import pytest
@@ -5,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _manifest():
+def _manifest() -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         "synthetic-labels",
         checksum_algorithm="sha256",
@@ -24,7 +26,7 @@ def _manifest():
 
 
 @pytest.mark.meshing_ftetwild
-def test_real_ftetwild_compartment_mesh_preserves_nested_zone_interface():
+def test_real_ftetwild_compartment_mesh_preserves_nested_zone_interface() -> None:
     contract = phx.SpatialCoordinateContract(
         phx.units.MILLIMETER,
         coordinate_system="cartesian-lps",
@@ -130,6 +132,7 @@ def test_real_ftetwild_compartment_mesh_preserves_nested_zone_interface():
     assert case.case_revision
     mesh = result.result.mesh
     cell_count = mesh.entity_set(3).count
+    # ty: ignore[unresolved-attribute]
     boundary_count = int(np.count_nonzero(np.asarray(mesh.connectivity.boundary_faces)))
     parameters = phx.applications.neurofluid.NeurofluidTransportParameters(
         porosity=np.ones(cell_count),
@@ -152,13 +155,18 @@ def test_real_ftetwild_compartment_mesh_preserves_nested_zone_interface():
         case, parameters
     ).prepare()
     state = phx.equations.MixedDimensionalTransportState(
-        np.ones(cell_count), np.ones(2), np.ones(1)
+        # ty: ignore[invalid-argument-type]
+        np.ones(cell_count),
+        # ty: ignore[invalid-argument-type]
+        np.ones(2),
+        # ty: ignore[invalid-argument-type]
+        np.ones(1),
     )
     step = runtime.step_backward_euler(state, 0.1)
     assert bool(step.accepted)
 
 
-def test_optional_compartment_interface_requires_declared_endpoints():
+def test_optional_compartment_interface_requires_declared_endpoints() -> None:
     compartments = (
         phx.geometry.CompartmentDefinition("inside", ("inside",), "material"),
         phx.geometry.CompartmentDefinition("outside", ("outside",), "material"),

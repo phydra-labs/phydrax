@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _compiled(*, count=4, resistance=1.0e4):
+def _compiled(*, count: Any = 4, resistance: Any = 1.0e4) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(count, periodic=True) for _ in range(2)
@@ -52,7 +55,7 @@ def _compiled(*, count=4, resistance=1.0e4):
     return finite_volume, dynamics
 
 
-def _taylor_green(discretization):
+def _taylor_green(discretization: Any) -> Any:
     x_faces = discretization.face_centers[0]
     y_faces = discretization.face_centers[1]
     return (
@@ -62,7 +65,7 @@ def _taylor_green(discretization):
     )
 
 
-def test_mac_enthalpy_uniform_liquid_closes_energy_and_projection_ledgers():
+def test_mac_enthalpy_uniform_liquid_closes_energy_and_projection_ledgers() -> None:
     finite_volume, dynamics = _compiled()
     velocity = _taylor_green(finite_volume)
     enthalpy = dynamics.problem.material.enthalpy_from_temperature(
@@ -83,7 +86,7 @@ def test_mac_enthalpy_uniform_liquid_closes_energy_and_projection_ledgers():
     assert restriction.selected > 0.0
 
 
-def test_mac_enthalpy_imex_resistance_damps_solid_and_rolls_state_atomically():
+def test_mac_enthalpy_imex_resistance_damps_solid_and_rolls_state_atomically() -> None:
     finite_volume, dynamics = _compiled(resistance=1.0e3)
     velocity = _taylor_green(finite_volume)
     enthalpy = dynamics.problem.material.enthalpy_from_temperature(
@@ -114,7 +117,7 @@ def test_mac_enthalpy_imex_resistance_damps_solid_and_rolls_state_atomically():
     assert jnp.all(jnp.isfinite(second.state.state))
 
 
-def test_mac_binary_alloy_uniform_solute_closes_conservative_transport():
+def test_mac_binary_alloy_uniform_solute_closes_conservative_transport() -> None:
     finite_volume, base = _compiled()
     scalar_problem = phx.discretization.MACScalarProblem(
         (

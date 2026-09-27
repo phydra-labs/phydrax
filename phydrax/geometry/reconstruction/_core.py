@@ -7,35 +7,47 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from types import ModuleType
+from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from scipy.spatial import Delaunay, QhullError
 
+from ..._mass import Mass
 from ...measurement.lidar import LidarPointProduct
+from ...typing import PRNGKey
 from .._capabilities import (
     ClosestPointProvider,
     ContactCurvatureProvider,
+    GeometryCapability,
     SeamDiagnosticsProvider,
     SupportMapProvider,
 )
+from .._certificate import FieldCertificate
 from .._contracts import (
     ClosestPointResult,
     ContactCurvatureResult,
     GeometryKernel,
+    GeometryKind,
     GeometrySource,
 )
-from .._cubature import CubatureComponent
-from .._validity import representation_validity
-from ..design._schema import _ParameterCollector
+from .._cubature import CubatureAtlas, CubatureComponent
+from .._validity import GeometryValidityEvidence, representation_validity
+from ..design._schema import _ParameterCollector, DesignState
 from ..simplicial._io import (
     _canonical_triangle_arrays,
     planar_region_from_triangles,
 )
 from ..simplicial._regions import MeshRegion, PlanarMeshRegion
 from ..simplicial._topology import TriangleTopology
+
+
+if TYPE_CHECKING:
+    from .._atlas import BoundaryAtlas
+    from .._sampling import RejectionSamplingPlan, SamplingResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,7 +80,7 @@ class ReconstructionFailure(ValueError):
 
     report: ReconstructionReport
 
-    def __init__(self, message: str, report: ReconstructionReport):
+    def __init__(self, message: str, report: ReconstructionReport) -> None:
         super().__init__(message)
         self.report = report
 
@@ -79,7 +91,7 @@ class ReconstructedGeometrySource(GeometrySource):
     source: GeometrySource
     report: ReconstructionReport = eqx.field(static=True)
 
-    def __init__(self, source: GeometrySource, report: ReconstructionReport):
+    def __init__(self, source: GeometrySource, report: ReconstructionReport) -> None:
         if not isinstance(source, GeometrySource):
             raise TypeError("source must implement GeometrySource.")
         self.source = source
@@ -93,43 +105,43 @@ class _ReconstructedGeometryKernel(GeometryKernel):
     child: GeometryKernel
     report: ReconstructionReport = eqx.field(static=True)
 
-    def __init__(self, child: GeometryKernel, report: ReconstructionReport):
+    def __init__(self, child: GeometryKernel, report: ReconstructionReport) -> None:
         self.child = child
         self.report = report
 
     @property
-    def ambient_dimension(self):
+    def ambient_dimension(self) -> int:
         return self.child.ambient_dimension
 
     @property
-    def intrinsic_dimension(self):
+    def intrinsic_dimension(self) -> int:
         return self.child.intrinsic_dimension
 
     @property
-    def kind(self):
+    def kind(self) -> GeometryKind:
         return self.child.kind
 
     @property
-    def capabilities(self):
+    def capabilities(self) -> frozenset[GeometryCapability]:
         return self.child.capabilities
 
     @property
-    def field_certificate(self):
+    def field_certificate(self) -> FieldCertificate:
         return self.child.field_certificate
 
-    def geometry_validity(self, state, /):
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
         return representation_validity(self.child, state)
 
-    def boundary_field(self, state, points, /):
+    def boundary_field(self, state: DesignState, points: Array, /) -> Array:
         return self.child.boundary_field(state, points)
 
-    def contains(self, state, points, /):
+    def contains(self, state: DesignState, points: Array, /) -> Array:
         return self.child.contains(state, points)
 
-    def boundary_normal(self, state, points, /):
+    def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
         return self.child.boundary_normal(state, points)
 
-    def closest_point(self, state, points, /):
+    def closest_point(self, state: DesignState, points: Array, /) -> ClosestPointResult:
         if not isinstance(self.child, ClosestPointProvider):
             raise TypeError("Reconstructed child lacks a closest-point provider.")
         result = self.child.closest_point(state, points)
@@ -137,7 +149,9 @@ class _ReconstructedGeometryKernel(GeometryKernel):
             raise TypeError("Child closest-point query returned an invalid result.")
         return result
 
-    def contact_curvature(self, state, points, /):
+    def contact_curvature(
+        self, state: DesignState, points: Array, /
+    ) -> ContactCurvatureResult:
         if not isinstance(self.child, ContactCurvatureProvider):
             raise TypeError("Reconstructed child lacks a contact-curvature provider.")
         result = self.child.contact_curvature(state, points)
@@ -145,27 +159,35 @@ class _ReconstructedGeometryKernel(GeometryKernel):
             raise TypeError("Child contact-curvature query returned an invalid result.")
         return result
 
-    def support_map(self, state, directions, /):
+    def support_map(self, state: DesignState, directions: Array, /) -> Array:
         if not isinstance(self.child, SupportMapProvider):
             raise TypeError("Reconstructed child lacks a support-map provider.")
         return self.child.support_map(state, directions)
 
-    def bounds(self, state, /):
+    def bounds(self, state: DesignState, /) -> Array:
         return self.child.bounds(state)
 
-    def measure(self, state, /):
+    def measure(self, state: DesignState, /) -> Array:
         return self.child.measure(state)
 
-    def boundary_measure(self, state, /):
+    def boundary_measure(self, state: DesignState, /) -> Array:
         return self.child.boundary_measure(state)
 
-    def interior_mass(self, state, /):
+    def interior_mass(self, state: DesignState, /) -> Mass:
         return self.child.interior_mass(state)
 
-    def boundary_mass(self, state, /):
+    def boundary_mass(self, state: DesignState, /) -> Mass:
         return self.child.boundary_mass(state)
 
-    def sample_interior(self, state, num_points, /, *, key, plan=None):
+    def sample_interior(
+        self,
+        state: DesignState,
+        num_points: int,
+        /,
+        *,
+        key: PRNGKey,
+        plan: RejectionSamplingPlan | None = None,
+    ) -> SamplingResult:
         return self.child.sample_interior(
             state,
             num_points,
@@ -173,16 +195,20 @@ class _ReconstructedGeometryKernel(GeometryKernel):
             plan=plan,
         )
 
-    def sample_boundary(self, state, num_points, /, *, key):
+    def sample_boundary(
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
+    ) -> SamplingResult:
         return self.child.sample_boundary(state, num_points, key=key)
 
-    def boundary_atlas(self, state, /):
+    def boundary_atlas(self, state: DesignState, /) -> BoundaryAtlas:
         return self.child.boundary_atlas(state)
 
-    def cubature_atlas(self, state, component: CubatureComponent, /):
+    def cubature_atlas(
+        self, state: DesignState, component: CubatureComponent, /
+    ) -> CubatureAtlas:
         return self.child.cubature_atlas(state, component)
 
-    def seam_residual(self, state, /):
+    def seam_residual(self, state: DesignState, /) -> Array:
         if not isinstance(self.child, SeamDiagnosticsProvider):
             raise TypeError("Reconstructed child lacks a seam-diagnostics provider.")
         return self.child.seam_residual(state)
@@ -214,7 +240,7 @@ def _recenter(points: np.ndarray, enabled: bool) -> tuple[np.ndarray, np.ndarray
     return points - offset, offset
 
 
-def _require_pyvista():
+def _require_pyvista() -> ModuleType:
     try:
         import pyvista
     except ImportError as error:
@@ -283,11 +309,12 @@ def _clean_surface_mesh(
     faces: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, TriangleTopology]:
     vertices_, faces_ = _canonical_triangle_arrays(vertices, faces)
+    # ty: ignore[invalid-argument-type]
     topology = TriangleTopology(faces_, num_vertices=vertices_.shape[0])
     return vertices_, faces_, topology
 
 
-def _parameter_records(**parameters) -> tuple[tuple[str, str], ...]:
+def _parameter_records(**parameters: object) -> tuple[tuple[str, str], ...]:
     return tuple(sorted((name, repr(value)) for name, value in parameters.items()))
 
 
@@ -325,6 +352,7 @@ def reconstruct_planar_region(
         np.arange(offsets[index], offsets[index + 1], dtype=np.int32)
         for index in range(offsets.shape[0] - 1)
     )
+    # ty: ignore[invalid-argument-type]
     source = PlanarMeshRegion(vertices, loops, feature_id=feature_id)
     algorithm = "scipy_delaunay_2d_native_boundary"
     parameters = _parameter_records(
@@ -411,6 +439,7 @@ def _surface_source(
             "Surface reconstruction did not produce a watertight consistently wound solid.",
             report,
         )
+    # ty: ignore[invalid-argument-type]
     source = MeshRegion(vertices_clean, faces_clean, feature_id=feature_id)
     return ReconstructedGeometrySource(source, report)
 
@@ -509,6 +538,7 @@ def reconstruct_dem_region(
     )
     top_vertices = points[retained_indices].copy()
     top_vertices[:, :2] = planar_vertices
+    # ty: ignore[invalid-argument-type]
     topology = TriangleTopology(top_faces, num_vertices=top_vertices.shape[0])
     boundary = np.asarray(topology.boundary_halfedges, dtype=np.int32)
     origins = np.asarray(topology.halfedge_origin, dtype=np.int32)[boundary]

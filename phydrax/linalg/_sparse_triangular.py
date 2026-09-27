@@ -13,9 +13,11 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import parse
 from ._sparse_contract import AbstractSparseLinearOperator, SparseStorage
 
 
@@ -87,7 +89,7 @@ class SparseTriangularFactor(StrictModule):
         *,
         pivot_tolerance: float = 0.0,
         factor_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(analysis, SparseTriangularAnalysis):
             raise TypeError("analysis must be SparseTriangularAnalysis.")
         values_ = jnp.asarray(values)
@@ -206,8 +208,7 @@ def analyze_sparse_triangular(
     unit_diagonal: bool = False,
 ) -> SparseTriangularAnalysis:
     """Analyze one immutable CSR triangular pattern on the host."""
-    if triangle not in ("lower", "upper"):
-        raise ValueError(f"Unknown sparse triangle {triangle!r}.")
+    triangle = parse(triangle, SparseTriangle, "triangle")
     storage = _storage(operator_or_storage)
     indices, indptr = _validated_host_pattern(storage)
     diagonal, levels = _orientation_analysis(
@@ -325,7 +326,7 @@ def solve_sparse_triangular(
     off_values = jnp.where(off_diagonal, values_, jnp.zeros((), dtype=dtype))
     initial = jnp.zeros_like(rhs)
 
-    def solve_level(level, solution):
+    def solve_level(level: Array, solution: Array) -> Array:
         products = off_values[:, None] * solution[indices]
         row_sums = jax.ops.segment_sum(
             products,

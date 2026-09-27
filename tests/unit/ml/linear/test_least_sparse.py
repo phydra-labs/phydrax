@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -33,7 +36,7 @@ from phydrax.ml.linear import (
 )
 
 
-def _regression_data():
+def _regression_data() -> Any:
     features = jnp.array(
         [
             [-2.0, 0.0, 1.0],
@@ -51,14 +54,14 @@ def _regression_data():
     return features, targets
 
 
-def _operator_sparse(features):
+def _operator_sparse(features: Any) -> Any:
     columns = jnp.argsort(jnp.where(features != 0.0, 0, 1), axis=-1)[:, :2]
     values = jnp.take_along_axis(features, columns, axis=-1)
     valid = jnp.take_along_axis(features != 0.0, columns, axis=-1)
     return SparseFeatures(values, columns, feature_count=features.shape[-1], valid=valid)
 
 
-def _assert_model_gradients(model, inputs):
+def _assert_model_gradients(model: Any, inputs: Any) -> None:
     input_gradient = jax.grad(lambda value: jnp.sum(jnp.square(model(value))))(inputs)
     coefficient_gradient = jax.grad(
         lambda value: jnp.sum(
@@ -75,7 +78,7 @@ def _assert_model_gradients(model, inputs):
     assert jnp.all(jnp.isfinite(intercept_gradient))
 
 
-def test_ols_ridge_tikhonov_dense_case_multioutput_masks_weights_and_gradients():
+def test_ols_ridge_tikhonov_dense_case_multioutput_masks_weights_and_gradients() -> None:
     features, targets = _regression_data()
     cases = jnp.stack((features, 0.7 * features + 0.1), axis=0)
     case_targets = jnp.stack(
@@ -115,7 +118,7 @@ def test_ols_ridge_tikhonov_dense_case_multioutput_masks_weights_and_gradients()
 
     base = RidgeRecipe(0.1)
 
-    def fit_loss(x, y, sample_weight, alpha):
+    def fit_loss(x: Any, y: Any, sample_weight: Any, alpha: Any) -> Any:
         recipe = eqx.tree_at(lambda item: item.alpha, base, alpha)
         model = recipe.fit_batch(
             MLBatch(x, y, sample_weight=sample_weight)
@@ -128,7 +131,9 @@ def test_ols_ridge_tikhonov_dense_case_multioutput_masks_weights_and_gradients()
     assert all(jnp.all(jnp.isfinite(value)) for value in gradients)
 
 
-def test_direct_solvers_match_weighted_normal_equations_and_tikhonov_hypergradients():
+def test_direct_solvers_match_weighted_normal_equations_and_tikhonov_hypergradients() -> (
+    None
+):
     features, multioutput = _regression_data()
     targets = multioutput[:, 0]
     weights = jnp.linspace(0.5, 1.5, features.shape[0])
@@ -156,12 +161,14 @@ def test_direct_solvers_match_weighted_normal_equations_and_tikhonov_hypergradie
         model = recipe.fit_batch(
             MLBatch(features, targets, sample_weight=weights)
         ).as_trainable()
+        # ty: ignore[unresolved-attribute]
         assert jnp.allclose(model.coefficients, expected[:-1], rtol=1e-4, atol=1e-5)
+        # ty: ignore[unresolved-attribute]
         assert jnp.allclose(model.intercept, expected[-1], rtol=1e-4, atol=1e-5)
 
     base = TikhonovRecipe(jnp.eye(features.shape[-1]), strength=0.1)
 
-    def fit_loss(x, y, sample_weight, penalty, strength):
+    def fit_loss(x: Any, y: Any, sample_weight: Any, penalty: Any, strength: Any) -> Any:
         recipe = eqx.tree_at(
             lambda item: (item.penalty, item.strength),
             base,
@@ -191,7 +198,7 @@ def test_direct_solvers_match_weighted_normal_equations_and_tikhonov_hypergradie
         ),
     ),
 )
-def test_linear_families_preserve_real_precision_and_intercept_policy(dtype):
+def test_linear_families_preserve_real_precision_and_intercept_policy(dtype: Any) -> None:
     features, targets = _regression_data()
     features = features.astype(dtype)
     targets = targets.astype(dtype)
@@ -220,12 +227,15 @@ def test_linear_families_preserve_real_precision_and_intercept_policy(dtype):
                 result.diagnostics.condition,
             )
         )
+        # ty: ignore[unresolved-attribute]
         assert model.coefficients.dtype == dtype
+        # ty: ignore[unresolved-attribute]
         assert model.intercept.dtype == dtype
+        # ty: ignore[unresolved-attribute]
         assert jnp.all(model.intercept == 0.0)
 
 
-def test_direct_solvers_operator_sparse_complex_and_failure_diagnostics():
+def test_direct_solvers_operator_sparse_complex_and_failure_diagnostics() -> None:
     features, targets = _regression_data()
     sparse = _operator_sparse(features)
     for recipe, model_type in (
@@ -246,6 +256,7 @@ def test_direct_solvers_operator_sparse_complex_and_failure_diagnostics():
         .fit_batch(MLBatch(complex_features, complex_targets))
         .as_trainable()
     )
+    # ty: ignore[unresolved-attribute]
     assert jnp.iscomplexobj(complex_model.coefficients)
     assert jnp.all(jnp.isfinite(complex_model(complex_features)))
     complex_sparse_model = (
@@ -253,6 +264,7 @@ def test_direct_solvers_operator_sparse_complex_and_failure_diagnostics():
         .fit_batch(MLBatch(complex_features, complex_targets))
         .as_trainable()
     )
+    # ty: ignore[unresolved-attribute]
     assert jnp.iscomplexobj(complex_sparse_model.coefficients)
     assert jnp.all(jnp.isfinite(complex_sparse_model(complex_features)))
 
@@ -286,7 +298,7 @@ def test_direct_solvers_operator_sparse_complex_and_failure_diagnostics():
     assert ill_conditioned.diagnostics.condition > 1.0
 
 
-def test_sparse_fits_preserve_duplicate_entries_as_additive_feature_mass():
+def test_sparse_fits_preserve_duplicate_entries_as_additive_feature_mass() -> None:
     features, targets = _regression_data()
     duplicate_sparse = SparseFeatures(
         jnp.stack(
@@ -318,7 +330,7 @@ def test_sparse_fits_preserve_duplicate_entries_as_additive_feature_mass():
         )
 
 
-def test_lasso_one_step_matches_weighted_proximal_gradient_equation():
+def test_lasso_one_step_matches_weighted_proximal_gradient_equation() -> None:
     model = (
         LassoRecipe(
             0.5,
@@ -337,7 +349,9 @@ def test_lasso_one_step_matches_weighted_proximal_gradient_equation():
         .as_trainable()
     )
     # Gradient is 2 * 2 * (0 - 3) = -12; soft-threshold(1.2, 0.05) = 1.15.
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.coefficients, jnp.array([1.15]))
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(model.intercept == 0.0)
 
 
@@ -377,8 +391,8 @@ def test_lasso_one_step_matches_weighted_proximal_gradient_equation():
     ),
 )
 def test_sparse_penalty_families_dense_operator_sparse_jit_vmap_and_fit_gradients(
-    recipe, model_type, replace_strength, strength
-):
+    recipe: Any, model_type: Any, replace_strength: Any, strength: Any
+) -> None:
     features, targets = _regression_data()
     weights = jnp.linspace(0.5, 1.5, features.shape[0])
     dense_result = recipe.fit_batch(MLBatch(features, targets, sample_weight=weights))
@@ -393,7 +407,7 @@ def test_sparse_penalty_families_dense_operator_sparse_jit_vmap_and_fit_gradient
     ).as_trainable()
     assert sparse_model(_operator_sparse(features)).shape == targets.shape
 
-    def fit_loss(x, y, sample_weight, hyperparameter):
+    def fit_loss(x: Any, y: Any, sample_weight: Any, hyperparameter: Any) -> Any:
         fitted = (
             replace_strength(recipe, hyperparameter)
             .fit_batch(MLBatch(x, y, sample_weight=sample_weight))
@@ -407,7 +421,7 @@ def test_sparse_penalty_families_dense_operator_sparse_jit_vmap_and_fit_gradient
     assert all(jnp.all(jnp.isfinite(value)) for value in gradients)
 
 
-def test_sparse_penalty_nonconvergence_and_group_capacity_fail_closed():
+def test_sparse_penalty_nonconvergence_and_group_capacity_fail_closed() -> None:
     features, targets = _regression_data()
     result = LassoRecipe(0.1, max_iterations=1, tolerance=0.0).fit_batch(
         MLBatch(features, targets)

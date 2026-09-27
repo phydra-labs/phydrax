@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -11,7 +14,7 @@ import phydrax as phx
 cpl = phx.solver.coupling
 
 
-def test_nonmatching_dirichlet_neumann_heat_domains_balance_interface_flux():
+def test_nonmatching_dirichlet_neumann_heat_domains_balance_interface_flux() -> None:
     interface = phx.linalg.ArraySpace(
         (1,), dtype=jnp.float64, space_id="heat-interface-scalar"
     )
@@ -46,7 +49,7 @@ def test_nonmatching_dirichlet_neumann_heat_domains_balance_interface_flux():
         fixed_topology=True,
     )
 
-    def solve_left(window, state, inputs, args):
+    def solve_left(window: Any, state: Any, inputs: Any, args: Any) -> Any:
         del window, state, args
         interface_temperature = inputs[0][0]
         profile = jnp.linspace(1.0, interface_temperature, 5)
@@ -60,7 +63,7 @@ def test_nonmatching_dirichlet_neumann_heat_domains_balance_interface_flux():
             work=5,
         )
 
-    def solve_right(window, state, inputs, args):
+    def solve_right(window: Any, state: Any, inputs: Any, args: Any) -> Any:
         del window, state, args
         incoming_flux = inputs[0][0]
         interface_temperature = incoming_flux

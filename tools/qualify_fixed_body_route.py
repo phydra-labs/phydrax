@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -28,7 +29,8 @@ _URDF = """
 """
 
 
-def _prepared_route():
+def _prepared_route() -> Any:
+    # ty: ignore[missing-argument]
     adaptation = parse_urdf_text(_URDF)
     particles = adaptation.particles.prepare()
     bodies = adaptation.bodies.prepare(particles)

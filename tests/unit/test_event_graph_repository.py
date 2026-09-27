@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import pytest
 
 from phydrax._fingerprint import canonical_fingerprint
@@ -27,11 +30,11 @@ class SimulatedCrash(RuntimeError):
     pass
 
 
-def _digest(name):
+def _digest(name: Any) -> Any:
     return canonical_fingerprint({"test": name})
 
 
-def _repository(path, *, fail=None):
+def _repository(path: Any, *, fail: Any = None) -> Any:
     profile = HPCFilesystemProfile(
         "dark-sector-test-posix",
         "local-posix",
@@ -56,7 +59,7 @@ def _repository(path, *, fail=None):
     )
 
 
-def _graph(repository):
+def _graph(repository: Any) -> Any:
     source = GlobalEntity(
         "particle",
         "dark-fermion",
@@ -123,7 +126,7 @@ def _graph(repository):
     return (source, middle, target), (first, second), edge, work
 
 
-def _manifest(graph, checkpoint, *, evidence=()):
+def _manifest(graph: Any, checkpoint: Any, *, evidence: Any = ()) -> Any:
     entities, events, edge, work = graph
     return EventGraphEpochManifest(
         "run-a",
@@ -147,7 +150,9 @@ def _manifest(graph, checkpoint, *, evidence=()):
     )
 
 
-def test_content_addressed_graph_is_immutable_acyclic_and_exactly_once(tmp_path):
+def test_content_addressed_graph_is_immutable_acyclic_and_exactly_once(
+    tmp_path: Any,
+) -> None:
     repository = _repository(tmp_path / "repository")
     graph = _graph(repository)
     entities, events, _, _ = graph
@@ -182,12 +187,12 @@ def test_content_addressed_graph_is_immutable_acyclic_and_exactly_once(tmp_path)
         )
 
 
-def test_crash_before_and_after_tip_have_deterministic_recovery(tmp_path):
+def test_crash_before_and_after_tip_have_deterministic_recovery(tmp_path: Any) -> None:
     points = {"after_epoch_manifest", "after_tip"}
     for point in points:
         raised = False
 
-        def fail(actual):
+        def fail(actual: Any) -> None:
             nonlocal raised
             if actual == point and not raised:
                 raised = True
@@ -208,7 +213,7 @@ def test_crash_before_and_after_tip_have_deterministic_recovery(tmp_path):
         assert repository.run_tip("run-a").tip_id == receipt.tip.tip_id
 
 
-def test_expired_work_lease_is_stolen_by_deterministic_owner(tmp_path):
+def test_expired_work_lease_is_stolen_by_deterministic_owner(tmp_path: Any) -> None:
     repository = _repository(tmp_path / "leases")
     _entities, _events, _edge, work = _graph(repository)
     workers = ("worker-a", "worker-b")
@@ -242,7 +247,7 @@ def test_expired_work_lease_is_stolen_by_deterministic_owner(tmp_path):
     assert stolen.previous_lease_id == first.lease_id
 
 
-def test_collection_tombstones_only_proven_unreachable_records(tmp_path):
+def test_collection_tombstones_only_proven_unreachable_records(tmp_path: Any) -> None:
     repository = _repository(tmp_path / "gc")
     graph = _graph(repository)
     checkpoint = b"reachable"
@@ -267,7 +272,7 @@ def test_collection_tombstones_only_proven_unreachable_records(tmp_path):
     assert report.tombstoned_artifact_ids == (f"dark-sector.entity.{orphan.entity_id}",)
 
 
-def test_causal_only_references_remain_reachable_during_collection(tmp_path):
+def test_causal_only_references_remain_reachable_during_collection(tmp_path: Any) -> None:
     repository = _repository(tmp_path / "causal-gc")
     entities, events, edge, parent_work = _graph(repository)
     child_work = GlobalWorkItem(
@@ -311,7 +316,7 @@ def test_causal_only_references_remain_reachable_during_collection(tmp_path):
     assert report.tombstoned_artifact_ids == ()
 
 
-def test_deep_causal_lineage_uses_iterative_bounded_traversal(tmp_path):
+def test_deep_causal_lineage_uses_iterative_bounded_traversal(tmp_path: Any) -> None:
     repository = _repository(tmp_path / "deep-lineage")
     entity = GlobalEntity(
         "particle",

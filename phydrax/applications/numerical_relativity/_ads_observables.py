@@ -9,7 +9,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -37,7 +38,7 @@ class AdSBoundaryScalarObservablePlan(StrictModule):
         maximum_condition_number: float = 1e12,
         residual_tolerance: float = 1e-4,
         normalization: float = 1.0,
-    ):
+    ) -> None:
         lower = float(delta_minus)
         upper = float(delta_plus)
         count = int(fit_points)
@@ -180,7 +181,7 @@ class HolographicStressTensorPlan(StrictModule):
         /,
         *,
         tolerance: float = 1e-8,
-    ):
+    ) -> None:
         dimension = int(boundary_dimension)
         normalization_value = float(normalization)
         source = str(source_id)

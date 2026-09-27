@@ -7,7 +7,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..metrix import ComplexStiefelManifold, faithful_density_from_cholesky
@@ -28,7 +29,7 @@ class ProcessGaugeReport(StrictModule):
         physical_parameter_count: ArrayLike,
         gauge_dimension: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.isometry_residuals = jnp.asarray(isometry_residuals)
         self.coordinate_count = jnp.asarray(coordinate_count)
         self.physical_parameter_count = jnp.asarray(physical_parameter_count)
@@ -61,7 +62,7 @@ class SequentialStinespringProcess(StrictModule):
         /,
         *,
         process_id: str,
-    ):
+    ) -> None:
         factor = jnp.asarray(initial_factor)
         composite = spec.system_dimension * spec.memory_dimension
         if factor.shape != (composite, composite):

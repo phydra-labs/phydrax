@@ -10,12 +10,14 @@ from math import prod
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
+from jax import Array
 from jax.scipy.special import logsumexp
-from jaxtyping import Array, ArrayLike, Key
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._frozendict import frozendict
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from .._results import AbstractBalancedTransportPlan, require_converged
 
 
@@ -108,7 +110,7 @@ class EndpointCouplingSample(StrictModule):
         coupling_status: ArrayLike = 0,
         coupling_id: str,
         provenance: str,
-    ):
+    ) -> None:
         source_array = jnp.asarray(source)
         target_array = jnp.asarray(target, dtype=source_array.dtype)
         if source_array.shape != target_array.shape or source_array.ndim < 1:
@@ -187,7 +189,7 @@ class EndpointCouplingSample(StrictModule):
 def independent_endpoint_coupling(
     source: ArrayLike,
     target: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     num_pairs: int,
@@ -245,7 +247,7 @@ def transport_plan_endpoint_coupling(
     plan: AbstractBalancedTransportPlan,
     source: ArrayLike,
     target: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     num_pairs: int,

@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -22,6 +23,7 @@ from ....discretization.lattice_boltzmann._discretization import (
     LatticeBoltzmannDiscretization,
 )
 from ....linalg import ArraySpace, SmallLinearSolvePlan, solve_small_linear
+from ....linalg._spaces import _coordinate_dtype
 from ....nonlinear import FixedPointIteration, NonlinearTermination
 from ....solver._partitioned_coupling_graph import (
     CouplingGraph,
@@ -37,6 +39,7 @@ from ....solver._partitioned_coupling_types import (
     CouplingSubsystemResult,
     CouplingSweep,
     CouplingTolerance,
+    CouplingWindow,
     ImplicitCouplingPolicy,
 )
 from ....sparse import gather_routes, route_reduce, RowRelation
@@ -123,7 +126,7 @@ class SparseMarkerTransferPlan(StrictModule, NonTrainableState):
         stencil_width: int = 4,
         minimum_coverage: float = 0.5,
         maximum_resource_bytes: int = 1024**3,
-    ):
+    ) -> None:
         if not isinstance(discretization, LatticeBoltzmannDiscretization):
             raise TypeError("discretization must be LatticeBoltzmannDiscretization.")
         identifiers = np.asarray(marker_ids)
@@ -142,7 +145,7 @@ class SparseMarkerTransferPlan(StrictModule, NonTrainableState):
         dimension = discretization.velocity_set.dimension
         capacity = identifiers.size
         route_width = width**dimension
-        itemsize = np.dtype(discretization.velocity_space.vector_space.dtype).itemsize
+        itemsize = _coordinate_dtype(discretization.velocity_space.vector_space).itemsize
         relation_bytes = (
             capacity
             * route_width
@@ -267,7 +270,7 @@ class PreparedSparseMarkerTransfer(StrictModule, NonTrainableState):
         valid: Array,
         host_coverage_fraction: Array,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.initial_marker_position = initial_marker_position
         self.active = active
@@ -639,7 +642,7 @@ class ImmersedDirectForcingPlan(StrictModule, NonTrainableState):
         *,
         iteration_count: int = 8,
         convergence_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         if not isinstance(transfer, PreparedSparseMarkerTransfer):
             raise TypeError("transfer must be PreparedSparseMarkerTransfer.")
         iterations = int(iteration_count)
@@ -834,6 +837,29 @@ class ImmersedFSIParticipantBundle(StrictModule, NonTrainableState):
         )
 
 
+def _interface_spaces(
+    transfer: PreparedSparseMarkerTransfer, identifier: str, /
+) -> tuple[ArraySpace, ArraySpace, ArraySpace]:
+    dtype = transfer.initial_marker_position.dtype
+    interface_shape = (transfer.capacity, transfer.dimension)
+    position_space = ArraySpace(
+        interface_shape,
+        dtype=dtype,
+        space_id=f"{identifier}/interface-position-space",
+    )
+    velocity_space = ArraySpace(
+        interface_shape,
+        dtype=dtype,
+        space_id=f"{identifier}/interface-velocity-space",
+    )
+    load_space = ArraySpace(
+        interface_shape,
+        dtype=dtype,
+        space_id=f"{identifier}/interface-load-space",
+    )
+    return position_space, velocity_space, load_space
+
+
 def build_immersed_lbm_participant(
     forcing: ImmersedDirectForcingPlan,
     fluid_fields: FluidFieldProvider,
@@ -856,22 +882,7 @@ def build_immersed_lbm_participant(
         raise ValueError("coupling_id must be non-empty.")
     transfer = forcing.transfer
     dtype = transfer.initial_marker_position.dtype
-    interface_shape = (transfer.capacity, transfer.dimension)
-    position_space = ArraySpace(
-        interface_shape,
-        dtype=dtype,
-        space_id=f"{identifier}/interface-position-space",
-    )
-    velocity_space = ArraySpace(
-        interface_shape,
-        dtype=dtype,
-        space_id=f"{identifier}/interface-velocity-space",
-    )
-    load_space = ArraySpace(
-        interface_shape,
-        dtype=dtype,
-        space_id=f"{identifier}/interface-load-space",
-    )
+    position_space, velocity_space, load_space = _interface_spaces(transfer, identifier)
     measures = jnp.asarray(marker_measure, dtype=dtype)
     if measures.shape != (transfer.capacity,):
         raise ValueError("marker_measure must have one value per marker capacity slot.")
@@ -894,7 +905,12 @@ def build_immersed_lbm_participant(
         reference_scale=force_reference,
     )
 
-    def advance_window(window, start_state, inputs, args):
+    def advance_window(
+        window: CouplingWindow,
+        start_state: Any,
+        inputs: tuple[Any, ...],
+        args: Any,
+    ) -> CouplingSubsystemResult:
         position = position_space.validate(inputs[0])
         target_velocity = velocity_space.validate(inputs[1])
         fluid_velocity, density = fluid_fields(start_state, args)
@@ -998,22 +1014,7 @@ def build_immersed_fem_participant(
     if not identifier:
         raise ValueError("coupling_id must be non-empty.")
     dtype = transfer.initial_marker_position.dtype
-    interface_shape = (transfer.capacity, transfer.dimension)
-    position_space = ArraySpace(
-        interface_shape,
-        dtype=dtype,
-        space_id=f"{identifier}/interface-position-space",
-    )
-    velocity_space = ArraySpace(
-        interface_shape,
-        dtype=dtype,
-        space_id=f"{identifier}/interface-velocity-space",
-    )
-    load_space = ArraySpace(
-        interface_shape,
-        dtype=dtype,
-        space_id=f"{identifier}/interface-load-space",
-    )
+    position_space, velocity_space, load_space = _interface_spaces(transfer, identifier)
     load_port = CouplingPort(
         f"{identifier}/load-into-solid",
         "input",
@@ -1033,7 +1034,12 @@ def build_immersed_fem_participant(
         reference_scale=velocity_reference,
     )
 
-    def advance_window(window, start_state, inputs, args):
+    def advance_window(
+        window: CouplingWindow,
+        start_state: Any,
+        inputs: tuple[Any, ...],
+        args: Any,
+    ) -> CouplingSubsystemResult:
         load = load_space.validate(inputs[0])
         step = advance(window, start_state, load, args)
         if not isinstance(step, ImmersedFEMAdvanceResult):
@@ -1157,13 +1163,17 @@ def build_immersed_fsi_participants(
         fixed_point_sweep=sweep,
     )
     differentiation = CouplingDifferentiationPolicy("none")
+    # Value-equal to the participants' port spaces: same transfer and identifier.
+    position_space, velocity_space, load_space = _interface_spaces(
+        forcing.transfer, str(coupling_id)
+    )
     return ImmersedFSIParticipantBundle(
         graph,
         policy,
         differentiation,
-        fluid.input_ports[0].space,
-        fluid.input_ports[1].space,
-        fluid.output_ports[0].space,
+        position_space,
+        velocity_space,
+        load_space,
         canonical_fingerprint(
             {
                 "kind": "cardiovascular-immersed-fsi-participants",

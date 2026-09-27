@@ -5,12 +5,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._strict import StrictModule
@@ -23,9 +26,11 @@ from .._training_kernel import (
     run_training_attempt,
     TrainingKernelSpec,
     TrainingKernelState,
+    TrainingKeys,
     TrainingRejectionBudgetError,
 )
 from .._training_objective import _ObjectiveContribution
+from ..typing import PRNGKey
 from ._belief_propagation import SumProductBeliefPropagationResult
 from ._elimination import (
     plan_variable_elimination,
@@ -91,7 +96,7 @@ def pseudolikelihood_loss(
     if states.ndim == 1:
         states = states[None, :]
     losses = []
-    for variable, cardinality in enumerate(graph.cardinalities.tolist()):
+    for variable, cardinality in enumerate(graph._host_topology.cardinalities):
         candidates = []
         for state in range(int(cardinality)):
             replaced = states.at[:, variable].set(state)
@@ -139,7 +144,13 @@ def bethe_negative_log_likelihood(
     )
 
 
-def _contrastive_divergence_objective(parameters, model_state, fixed, payload, keys):
+def _contrastive_divergence_objective(
+    parameters: PyTree[Any],
+    model_state: PyTree[Any],
+    fixed: PyTree[Any],
+    payload: tuple[Array, Array],
+    keys: TrainingKeys,
+) -> tuple[_ObjectiveContribution, PyTree[Any], FactorGraphTrainingDiagnostics]:
     """Persistent-CD surrogate; the payload is packed `(positives, negatives)`."""
     del keys
     positive, negative = payload
@@ -203,7 +214,7 @@ def persistent_contrastive_divergence_step(
     optimizer: optax.GradientTransformation,
     prepared: PreparedChromaticGibbs,
     positive_assignments: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     negative_sweeps: int = 1,
@@ -269,7 +280,7 @@ def stochastic_maximum_likelihood_step(
     optimizer: optax.GradientTransformation,
     prepared: PreparedChromaticGibbs,
     positive_assignments: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     negative_sweeps: int = 1,

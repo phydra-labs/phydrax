@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -7,7 +9,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _prepared(active_mask=None):
+def _prepared(active_mask: Any = None) -> Any:
     ids = jnp.asarray((7, 3, 11), dtype=jnp.int64)
     position = jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
     weights = jnp.asarray((2.0, 3.0, 4.0))
@@ -20,7 +22,7 @@ def _prepared(active_mask=None):
     ).prepare()
 
 
-def _geometry(active_mask=None):
+def _geometry(active_mask: Any = None) -> Any:
     prepared = _prepared(active_mask)
     normals = jnp.tile(jnp.asarray((0.0, 0.0, 1.0)), (3, 1))
     first = jnp.tile(jnp.asarray((0.5, 0.0, 0.0)), (3, 1))

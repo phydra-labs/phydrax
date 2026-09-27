@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -25,6 +26,7 @@ from ...equations import (
     CellResidualAction,
     compile_finite_element_problem,
     CompiledFiniteElementProblem,
+    FiniteElementExecutionContext,
     FiniteElementExecutionPolicy,
     FiniteElementForm,
 )
@@ -34,6 +36,7 @@ from ...integration import (
     ReferencePrismRule,
     ReferencePyramidRule,
     ReferenceQuadrilateralRule,
+    ReferenceRule,
     ReferenceTetrahedronRule,
     ReferenceTriangleRule,
 )
@@ -47,6 +50,10 @@ from ...solver import (
 )
 from ._binary import PhaseFieldProductionCase
 from ._mobility import AbstractPhaseFieldMobility, as_phase_field_mobility
+
+
+# Per-block quadrature values, gradients, physical points, and physical weights.
+_BlockQuadrature: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class GrandPotentialPhaseEvaluation(StrictModule):
@@ -75,7 +82,7 @@ class QuadraticGrandPotentialPhase(StrictModule, NonTrainableState):
         reference_composition: ArrayLike,
         susceptibility: ArrayLike,
         /,
-    ):
+    ) -> None:
         identifier = str(phase_id)
         reference_ = np.asarray(reference)
         composition = np.asarray(reference_composition)
@@ -157,7 +164,7 @@ class GrandPotentialMaterialCatalog(StrictModule, NonTrainableState):
     component_count: int = eqx.field(static=True)
     catalog_id: str = eqx.field(static=True)
 
-    def __init__(self, phases: Sequence[QuadraticGrandPotentialPhase], /):
+    def __init__(self, phases: Sequence[QuadraticGrandPotentialPhase], /) -> None:
         values = tuple(phases)
         if (
             len(values) < 2
@@ -206,7 +213,7 @@ class GrandPotentialMixtureModel(StrictModule, NonTrainableState):
         gradient_coefficient: ArrayLike,
         kinetic_coefficient: ArrayLike,
         mobility: AbstractPhaseFieldMobility | ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(catalog, GrandPotentialMaterialCatalog):
             raise TypeError("catalog must be GrandPotentialMaterialCatalog.")
         scalars = tuple(
@@ -331,14 +338,14 @@ class _PhaseResidualKernel(StrictModule):
 
     def __call__(
         self,
-        values,
-        gradients,
-        points,
-        weights,
-        test_basis,
-        test_gradients,
-        context,
-    ):
+        values: tuple[Array, ...],
+        gradients: tuple[Array, ...],
+        points: Array,
+        weights: Array,
+        test_basis: Array,
+        test_gradients: Array,
+        context: FiniteElementExecutionContext,
+    ) -> Array:
         logits, chemical = values
         logits_gradient, _ = gradients
         logits_gradient = jnp.moveaxis(logits_gradient, 2, -1)
@@ -347,7 +354,7 @@ class _PhaseResidualKernel(StrictModule):
             raise TypeError("Grand-potential phase residual needs step arguments.")
         previous = arguments.previous_logits[self.block_index]
 
-        def local_density(local_logits, local_chemical):
+        def local_density(local_logits: Array, local_chemical: Array) -> Array:
             return self.model.evaluate(local_logits, local_chemical).grand_potential
 
         flat_logits = logits.reshape((-1, logits.shape[-1]))
@@ -375,14 +382,14 @@ class _ChemicalResidualKernel(StrictModule):
 
     def __call__(
         self,
-        values,
-        gradients,
-        points,
-        weights,
-        test_basis,
-        test_gradients,
-        context,
-    ):
+        values: tuple[Array, ...],
+        gradients: tuple[Array, ...],
+        points: Array,
+        weights: Array,
+        test_basis: Array,
+        test_gradients: Array,
+        context: FiniteElementExecutionContext,
+    ) -> Array:
         logits, chemical = values
         _, chemical_gradient = gradients
         chemical_gradient = jnp.moveaxis(chemical_gradient, 2, -1)
@@ -407,7 +414,7 @@ class _ChemicalResidualKernel(StrictModule):
         ) + ein.contract("cq,cqid,cqkd->cik", weights, test_gradients, flux)
 
 
-def _reference_rule(cell_kind: str, degree: int):
+def _reference_rule(cell_kind: str, degree: int) -> ReferenceRule:
     order = max(int(degree) + 1, 2)
     rule = GaussLegendreRule(order)
     factories = {
@@ -427,8 +434,8 @@ def _block_quadrature(
     discretization: FiniteElementDiscretization,
     field_index: int,
     state: Array,
-    rules,
-):
+    rules: Sequence[object],
+) -> tuple[_BlockQuadrature, ...]:
     results = []
     for block_index, _rule in enumerate(rules):
         geometry = discretization.block_geometries[field_index][block_index]
@@ -470,7 +477,7 @@ class GrandPotentialFEMPlan(StrictModule, NonTrainableState):
         absolute_energy_tolerance: float = 1.0e-8,
         relative_energy_tolerance: float = 1.0e-8,
         component_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(model, GrandPotentialMixtureModel):
             raise TypeError("model must be GrandPotentialMixtureModel.")
         values = tuple(
@@ -538,7 +545,7 @@ class PreparedGrandPotentialFEM(AbstractFixedStepMethod, NonTrainableState):
         phase_field: str,
         chemical_field: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, GrandPotentialFEMPlan):
             raise TypeError("plan must be GrandPotentialFEMPlan.")
         phase_index = discretization._field_index(phase_field)
@@ -622,7 +629,9 @@ class PreparedGrandPotentialFEM(AbstractFixedStepMethod, NonTrainableState):
             }
         )
 
-    def _quadrature(self, phase_logits: Array, chemical: Array):
+    def _quadrature(
+        self, phase_logits: Array, chemical: Array
+    ) -> tuple[tuple[_BlockQuadrature, ...], tuple[_BlockQuadrature, ...]]:
         phase_blocks = _block_quadrature(
             self.discretization, self.phase_index, phase_logits, self.rules
         )
@@ -631,7 +640,7 @@ class PreparedGrandPotentialFEM(AbstractFixedStepMethod, NonTrainableState):
         )
         return phase_blocks, chemical_blocks
 
-    def _integrals(self, phase_logits: Array, chemical: Array):
+    def _integrals(self, phase_logits: Array, chemical: Array) -> tuple[Array, Array]:
         phase_blocks, chemical_blocks = self._quadrature(phase_logits, chemical)
         component = jnp.zeros(
             (self.plan.model.catalog.component_count,), dtype=phase_logits.dtype

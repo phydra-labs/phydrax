@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -62,7 +63,7 @@ def fit_binned_model(
     if not bool(evaluate_binned_model(model, initial).valid):
         raise ValueError("Initial statistical parameters do not define a valid model.")
 
-    def objective(parameters, _):
+    def objective(parameters: Array, _: object) -> Array:
         evaluated = evaluate_binned_model(model, parameters)
         finite_penalty = jnp.asarray(1.0e30, dtype=parameters.dtype)
         return jnp.where(evaluated.valid, -evaluated.total_log_likelihood, finite_penalty)

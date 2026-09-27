@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -12,7 +15,7 @@ import phydrax as phx
 q = phx.operators.quantum
 
 
-def test_mode_reduction_projects_named_operators_and_reports_evidence():
+def test_mode_reduction_projects_named_operators_and_reports_evidence() -> None:
     hamiltonian = jnp.diag(jnp.asarray([0.0, 1.0, 3.0]))
     position = jnp.asarray([[0.0, 1.0, 0.0], [1.0, 0.0, 2.0], [0.0, 2.0, 0.0]])
     lowering = jnp.asarray([[0.0, 1.0, 0.0], [0.0, 0.0, jnp.sqrt(2.0)], [0.0, 0.0, 0.0]])
@@ -38,10 +41,10 @@ def test_mode_reduction_projects_named_operators_and_reports_evidence():
     )
 
 
-def test_mode_reduction_refresh_tracks_labels_and_is_differentiable():
+def test_mode_reduction_refresh_tracks_labels_and_is_differentiable() -> None:
     coupling = jnp.asarray(0.15)
 
-    def problem(detuning):
+    def problem(detuning: Any) -> Any:
         hamiltonian = jnp.asarray(
             [[0.0, coupling], [coupling, detuning]], dtype=jnp.complex128
         )
@@ -74,7 +77,7 @@ def test_mode_reduction_refresh_tracks_labels_and_is_differentiable():
     assert derivative > 0.0
 
 
-def test_mode_reduction_resolution_comparison_is_explicit():
+def test_mode_reduction_resolution_comparison_is_explicit() -> None:
     coarse_problem = q.ModeReductionProblem(
         jnp.diag(jnp.asarray([0.0, 1.0, 4.0])),
         (q.NamedModeOperator("number", jnp.diag(jnp.arange(3.0)), hermitian=True),),
@@ -102,7 +105,7 @@ def test_mode_reduction_resolution_comparison_is_explicit():
         )
 
 
-def test_mode_reduction_rejects_invalid_structure_and_reports_invalid_numerics():
+def test_mode_reduction_rejects_invalid_structure_and_reports_invalid_numerics() -> None:
     with pytest.raises(ValueError, match="unique"):
         q.ModeReductionProblem(
             jnp.eye(2),

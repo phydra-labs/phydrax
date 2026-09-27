@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -41,7 +42,7 @@ class ThermalGraphPlan(StrictModule, NonTrainableState):
         *,
         link_ids: Sequence[str] = (),
         heat_allocation: ArrayLike | None = None,
-    ):
+    ) -> None:
         nodes, links = tuple(node_ids), tuple(link_ids)
         for values, owner in ((nodes, "node"), (links, "link")):
             if any(not isinstance(v, str) or not v or v != v.strip() for v in values):
@@ -113,7 +114,7 @@ class ThermalGraphParameters(StrictModule):
         cells: Sequence[ThermalEquivalentCircuitParameters],
         edge_conductance_w_per_k: ArrayLike,
         /,
-    ):
+    ) -> None:
         owners = tuple(cells)
         if not owners or any(
             not isinstance(p, ThermalEquivalentCircuitParameters) for p in owners

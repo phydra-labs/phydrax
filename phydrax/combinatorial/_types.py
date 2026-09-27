@@ -10,7 +10,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 
@@ -75,7 +76,7 @@ class CombinatorialMethodCapabilities(StrictModule):
         warm_start: bool = False,
         surrogate_pullback: bool = False,
         bound_restrictions: bool = False,
-    ):
+    ) -> None:
         self.exact = bool(exact)
         self.jax_native = bool(jax_native)
         self.jit = bool(jit)
@@ -95,7 +96,7 @@ class CombinatorialCertification(StrictModule):
     absolute: float = eqx.field(static=True)
     relative: float = eqx.field(static=True)
 
-    def __init__(self, *, absolute: float = 1e-6, relative: float = 1e-6):
+    def __init__(self, *, absolute: float = 1e-6, relative: float = 1e-6) -> None:
         absolute_ = float(absolute)
         relative_ = float(relative)
         if not isfinite(absolute_) or absolute_ < 0.0:

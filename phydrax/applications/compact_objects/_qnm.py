@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from enum import IntEnum
 from numbers import Integral
 
@@ -12,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -90,7 +92,7 @@ class BoundedContinuedFractionPlan(StrictModule, NonTrainableState):
         absolute_tolerance: float,
         relative_tolerance: float,
         /,
-    ):
+    ) -> None:
         depths = (comparison_depth, maximum_depth, inversion_index)
         if any(
             isinstance(value, bool) or not isinstance(value, Integral) for value in depths
@@ -167,7 +169,7 @@ class QnmReferenceMode(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str,
-    ):
+    ) -> None:
         if not isinstance(mode, SeparatedMode):
             raise TypeError("mode must be a SeparatedMode.")
         spin = _real_scalar(dimensionless_spin, "dimensionless_spin")
@@ -257,7 +259,7 @@ class QnmSolvePlan(StrictModule, NonTrainableState):
         /,
         *,
         branch_id: str,
-    ):
+    ) -> None:
         if not isinstance(mode, SeparatedMode):
             raise TypeError("mode must be a SeparatedMode.")
         if mode.family != "qnm":
@@ -536,7 +538,7 @@ def _continued_fraction_value(
 
 
 def _continued_fraction_evidence(
-    coefficient_function,
+    coefficient_function: Callable[[int], tuple[Array, Array, Array]],
     plan: BoundedContinuedFractionPlan,
     /,
 ) -> ContinuedFractionDepthEvidence:
@@ -740,7 +742,7 @@ def qnm_continuation_problem(plan: QnmSolvePlan, /) -> ParameterContinuationProb
     )
 
 
-def _root_problem(plan: QnmSolvePlan, dtype, /) -> NonlinearSystemProblem:
+def _root_problem(plan: QnmSolvePlan, dtype: DTypeLike, /) -> NonlinearSystemProblem:
     space = ArraySpace((4,), dtype=dtype, space_id=f"{plan.plan_id}:qnm-root-space")
     return NonlinearSystemProblem(
         lambda state, spin: _real_residual(state, spin, plan),

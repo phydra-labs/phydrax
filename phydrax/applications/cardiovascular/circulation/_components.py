@@ -6,12 +6,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -19,6 +20,7 @@ from ....dynamics import (
     DAEComponent,
     DAEDerivativeIncidence,
     DAEEquationBlock,
+    DAEJet,
     DAEPort,
     DAEVariableBlock,
 )
@@ -212,13 +214,13 @@ class PressureFlowComponent(StrictModule):
 
 
 class _ConservationResidual(StrictModule):
-    def __call__(self, time: Array, jet, args: Any, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         del time, args
         return jet.value("flow_in") - jet.value("flow_out")
 
 
 class _PressureEqualityResidual(StrictModule):
-    def __call__(self, time: Array, jet, args: Any, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         del time, args
         return jet.value("pressure_in") - jet.value("pressure_out")
 
@@ -226,7 +228,7 @@ class _PressureEqualityResidual(StrictModule):
 class _ResistanceResidual(StrictModule):
     resistance: Array
 
-    def __call__(self, time: Array, jet, args: Any, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         del time, args
         return (
             jet.value("pressure_in")
@@ -240,7 +242,7 @@ class _ComplianceConstitutiveResidual(StrictModule):
     unstressed_volume: Array
     reference_pressure: Array
 
-    def __call__(self, time: Array, jet, args: Any, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         del time, args
         return (
             jet.value("volume")
@@ -250,7 +252,7 @@ class _ComplianceConstitutiveResidual(StrictModule):
 
 
 class _VolumeBalanceResidual(StrictModule):
-    def __call__(self, time: Array, jet, args: Any, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         del time, args
         return jet.value("volume", 1) - jet.value("flow_in") + jet.value("flow_out")
 
@@ -258,7 +260,7 @@ class _VolumeBalanceResidual(StrictModule):
 class _InertanceResidual(StrictModule):
     inertance: Array
 
-    def __call__(self, time: Array, jet, args: Any, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         del time, args
         return (
             jet.value("pressure_in")
@@ -270,7 +272,7 @@ class _InertanceResidual(StrictModule):
 class _RCRProximalResidual(StrictModule):
     resistance: Array
 
-    def __call__(self, time: Array, jet, args: Any, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         del time, args
         return (
             jet.value("pressure_in")
@@ -282,7 +284,7 @@ class _RCRProximalResidual(StrictModule):
 class _RCRDistalResidual(StrictModule):
     resistance: Array
 
-    def __call__(self, time: Array, jet, args: Any, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         del time, args
         return (
             jet.value("pressure_capacitor")
@@ -296,7 +298,7 @@ class _RCRConstitutiveResidual(StrictModule):
     unstressed_volume: Array
     reference_pressure: Array
 
-    def __call__(self, time: Array, jet, args: Any, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         del time, args
         return (
             jet.value("volume")
@@ -309,7 +311,7 @@ class _RCRConstitutiveResidual(StrictModule):
 class _PrescribedPressureResidual(StrictModule):
     waveform: PressureWaveform
 
-    def __call__(self, time: Array, jet, args: Any, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         del args
         return jet.value("pressure_out") - jet.value("pressure_in") - self.waveform(time)
 
@@ -317,7 +319,7 @@ class _PrescribedPressureResidual(StrictModule):
 class _PrescribedFlowResidual(StrictModule):
     waveform: FlowWaveform
 
-    def __call__(self, time: Array, jet, args: Any, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         del args
         return jet.value("flow_out") - self.waveform(time)
 
@@ -327,7 +329,7 @@ class _ElastanceResidual(StrictModule):
     unstressed_volume: Array
     reference_pressure: Array
 
-    def __call__(self, time: Array, jet, args: Any, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         del args
         return (
             jet.value("pressure_in")
@@ -339,7 +341,7 @@ class _ElastanceResidual(StrictModule):
 class _MechanicsVolumeRateResidual(StrictModule):
     volume_rate: VolumeRateLaw
 
-    def __call__(self, time: Array, jet, args: Any, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         return jet.value("flow_in") - jet.value("flow_out") - self.volume_rate(time, args)
 
 
@@ -734,12 +736,13 @@ class PressureSource(PressureFlowComponent):
                 raise ValueError(
                     "Callable pressure sources require a stable waveform_id."
                 )
-            waveform = pressure
+            # callable() excludes every ArrayLike member; ty keeps them intersected.
+            waveform = cast(PressureWaveform, pressure)
             identifier = str(waveform_id).strip()
         else:
             value, host = _finite_scalar(pressure, "pressure")
             waveform = _ConstantWaveform(value)
-            identifier = f"constant-pressure:{host.hex()}"
+            identifier = f"constant-pressure:{float(host).hex()}"
         p_scale = _positive_scalar(pressure_scale, "pressure_scale")[1]
         q_scale = _positive_scalar(flow_scale, "flow_scale")[1]
         component = DAEComponent(
@@ -790,12 +793,13 @@ class FlowSource(PressureFlowComponent):
         if callable(flow):
             if waveform_id is None or not str(waveform_id).strip():
                 raise ValueError("Callable flow sources require a stable waveform_id.")
-            waveform = flow
+            # callable() excludes every ArrayLike member; ty keeps them intersected.
+            waveform = cast(FlowWaveform, flow)
             identifier = str(waveform_id).strip()
         else:
             value, host = _finite_scalar(flow, "flow")
             waveform = _ConstantWaveform(value)
-            identifier = f"constant-flow:{host.hex()}"
+            identifier = f"constant-flow:{float(host).hex()}"
         p_scale = _positive_scalar(pressure_scale, "pressure_scale")[1]
         q_scale = _positive_scalar(flow_scale, "flow_scale")[1]
         component = DAEComponent(

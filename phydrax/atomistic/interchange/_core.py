@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 
 import equinox as eqx
 import jax
@@ -38,14 +38,14 @@ class AtomisticInterchangeReport(StrictModule, NonTrainableState):
         self,
         source_kind: str,
         units: AtomisticUnitSystem,
-        supported_terms=(),
-        unsupported_terms=(),
-        warnings=(),
+        supported_terms: Iterable[str] = (),
+        unsupported_terms: Iterable[str] = (),
+        warnings: Iterable[str] = (),
         /,
         *,
         source_energy_unit: UnitDefinition | None = None,
         avogadro_constant_set_id: str | None = None,
-    ):
+    ) -> None:
         source = str(source_kind).strip()
         supported = tuple(str(value) for value in supported_terms)
         unsupported = tuple(str(value) for value in unsupported_terms)
@@ -108,7 +108,7 @@ class AtomisticInterchangeBundle(StrictModule):
 
     def __init__(
         self, force_field: AtomisticForceFieldPlan, report: AtomisticInterchangeReport, /
-    ):
+    ) -> None:
         if not isinstance(force_field, AtomisticForceFieldPlan) or not isinstance(
             report, AtomisticInterchangeReport
         ):
@@ -135,8 +135,8 @@ def require_mapping_fields(value: Mapping, fields: tuple[str, ...], /) -> None:
         raise ValueError("Missing interchange fields: " + ", ".join(missing))
 
 
-def canonical_source_digest(value: Mapping, /) -> str:
-    def normalize(content):
+def canonical_source_digest(value: Mapping[str, object], /) -> str:
+    def normalize(content: object) -> object:
         if isinstance(content, (np.ndarray, jax.Array)):
             array = np.asarray(content)
             return {

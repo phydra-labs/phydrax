@@ -6,18 +6,20 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from math import prod
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._uncertainty import UncertaintySource, validate_uncertainty_source
+from ...typing import PRNGKey
 from .._keys import EvalKey
 from .data import (
     FunctionSamples,
@@ -26,6 +28,10 @@ from .data import (
     OperatorPrediction,
 )
 from .engine import AbstractOperatorModel
+
+
+if TYPE_CHECKING:
+    from ...uq._operator import OperatorPredictiveField
 
 
 class AbstractOperatorDistribution(StrictModule):
@@ -54,7 +60,7 @@ class AbstractOperatorDistribution(StrictModule):
     @abstractmethod
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         raise NotImplementedError
@@ -151,7 +157,7 @@ class AbstractProbabilisticOperatorModel(AbstractOperatorModel):
         num_samples: int,
         key: Array,
         sample_dim: str | None = None,
-    ):
+    ) -> OperatorPredictiveField:
         """Return coordinate-aware samples labeled by their uncertainty source."""
         from ...uq._operator import operator_predictive_from_samples
         from ...uq._predictive import SampleAxis
@@ -202,7 +208,7 @@ class GaussianOperatorDistribution(AbstractOperatorDistribution):
         case_axes: tuple[str, ...] = (),
         case_shape: tuple[int, ...] = (),
         uncertainty_source: UncertaintySource = "observation",
-    ):
+    ) -> None:
         mean_array = jnp.asarray(mean)
         scale_array = jnp.asarray(scale)
         axes = tuple(str(axis) for axis in case_axes)
@@ -271,7 +277,7 @@ class GaussianOperatorDistribution(AbstractOperatorDistribution):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         """Draw coherent full-function samples with leading sample dimensions."""

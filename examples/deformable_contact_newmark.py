@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def main():
+def main() -> None:
     coordinates = jnp.asarray(
         ((-0.25, 0.08), (0.25, 0.08), (0.0, 0.48)), dtype=jnp.float64
     )
@@ -37,6 +37,7 @@ def main():
 
     dynamic_surface = phx.discretization.prepare_cell_mesh_collision_surface(
         mesh,
+        # ty: ignore[invalid-argument-type]
         compiled.state_space,
         body_id=0,
     )
@@ -46,7 +47,9 @@ def main():
         edges=jnp.asarray(((0, 1),), dtype=jnp.int32),
         pair_policy=phx.discretization.ContactPairPolicy(
             2,
+            # ty: ignore[unknown-argument]
             body_ids=jnp.ones((2,), dtype=jnp.int64),
+            # ty: ignore[unknown-argument]
             static_mask=jnp.ones((2,), dtype="bool"),
         ),
     )

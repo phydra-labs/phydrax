@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -22,6 +23,7 @@ from ...equations._gas_dynamics import (
     HomogeneousMixtureCompressibleNavierStokesSystem,
     HomogeneousMixtureEulerSystem,
 )
+from ...typing import parse
 
 
 CompressibleWaveKind: TypeAlias = Literal[
@@ -60,14 +62,14 @@ class CompressibleReferenceWavePlan(StrictModule, NonTrainableState):
         *,
         amplitude: float = 1.0e-3,
         propagation_sign: int = 1,
-    ):
+    ) -> None:
         base = jnp.asarray(base_primitive)
         wave = tuple(float(value) for value in wave_vector)
         amplitude_ = float(amplitude)
         sign = int(propagation_sign)
+        kind = parse(kind, CompressibleWaveKind, "kind")
         if (
-            kind not in ("isentropic", "acoustic", "entropy", "vorticity")
-            or base.ndim != 1
+            base.ndim != 1
             or len(wave) not in (1, 2, 3)
             or any(not np.isfinite(value) for value in (*np.asarray(base), *wave))
             or np.linalg.norm(np.asarray(wave)) <= 0.0
@@ -202,6 +204,9 @@ class CompressibleReferenceWavePlan(StrictModule, NonTrainableState):
         )
 
 
+_ManufacturedTerms: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+
+
 class ManufacturedViscousNSEvidence(StrictModule):
     state: Array
     forcing: Array
@@ -216,7 +221,7 @@ class ManufacturedViscousNSEvidence(StrictModule):
 class ManufacturedViscousNSPlan(StrictModule, NonTrainableState):
     """Automatic strong-form forcing for a smooth canonical mixture NS state."""
 
-    exact_state: Callable = eqx.field(static=True)
+    exact_state: Callable[[Array, Array, Any], Array] = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
     exact_state_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -227,7 +232,7 @@ class ManufacturedViscousNSPlan(StrictModule, NonTrainableState):
         exact_state: Callable[[Array, Array, Any], Array],
         exact_state_id: str,
         /,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         identifier = str(exact_state_id)
         if dimension_ not in (1, 2, 3) or not callable(exact_state) or not identifier:
@@ -264,17 +269,17 @@ class ManufacturedViscousNSPlan(StrictModule, NonTrainableState):
             raise ValueError("Manufactured NS time/coordinate shapes are invalid.")
         flat = points.reshape((-1, self.dimension))
 
-        def point_terms(point):
-            def state_at_time(local_time):
+        def point_terms(point: Array) -> _ManufacturedTerms:
+            def state_at_time(local_time: Array) -> Array:
                 return jnp.asarray(self.exact_state(local_time, point, args))
 
-            def state_at_point(local_point):
+            def state_at_point(local_point: Array) -> Array:
                 return jnp.asarray(self.exact_state(time_value, local_point, args))
 
             state = state_at_point(point)
             temporal = jax.jacfwd(state_at_time)(time_value)
 
-            def inviscid_tensor(local_point):
+            def inviscid_tensor(local_point: Array) -> Array:
                 local_state = state_at_point(local_point)
                 return jnp.stack(
                     tuple(
@@ -287,7 +292,7 @@ class ManufacturedViscousNSPlan(StrictModule, NonTrainableState):
             inviscid_gradient = jax.jacfwd(inviscid_tensor)(point)
             inviscid_divergence = jnp.trace(inviscid_gradient, axis1=-2, axis2=-1)
 
-            def viscous_tensor(local_point):
+            def viscous_tensor(local_point: Array) -> Array:
                 local_state = state_at_point(local_point)
                 conserved_gradient = jax.jacfwd(state_at_point)(local_point)
                 return system.viscous_flux(local_state, conserved_gradient, args)
@@ -307,9 +312,17 @@ class ManufacturedViscousNSPlan(StrictModule, NonTrainableState):
 
         values = jax.vmap(point_terms)(flat)
         output_shape = points.shape[:-1] + (system.component_count,)
-        reshaped = tuple(value.reshape(output_shape) for value in values)
+        state, forcing, temporal, inviscid, viscous, identity = (
+            value.reshape(output_shape) for value in values
+        )
+        reshaped = (state, forcing, temporal, inviscid, viscous, identity)
         return ManufacturedViscousNSEvidence(
-            *reshaped,
+            state,
+            forcing,
+            temporal,
+            inviscid,
+            viscous,
+            identity,
             jnp.all(jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in reshaped))),
             self.plan_id,
         )

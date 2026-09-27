@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Literal, TypeAlias
@@ -30,6 +31,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..artifacts import ArtifactManifest
+from ..typing import parse
 from ._report import (
     AdapterError,
     AdapterFormatProfile,
@@ -43,7 +45,6 @@ from ._report import (
 BlackHoleArtifactKind: TypeAlias = Literal[
     "field", "image", "visibility", "waveform", "numeric-model"
 ]
-_ARTIFACT_KINDS = frozenset(("field", "image", "visibility", "waveform", "numeric-model"))
 _NUMERIC_MODEL_FORMATS = frozenset(("onnx", "safetensors", "npz", "phydrax-ml-artifact"))
 _REQUIRED_SEMANTICS: dict[str, frozenset[str]] = {
     "field": frozenset(
@@ -155,9 +156,8 @@ class BlackHoleArtifactRights(StrictModule, NonTrainableState):
         derivative_use: bool,
         model_execution: bool,
         export: bool,
-    ):
-        if artifact_kind not in _ARTIFACT_KINDS:
-            raise ValueError("Unknown black-hole artifact kind.")
+    ) -> None:
+        artifact_kind = parse(artifact_kind, BlackHoleArtifactKind, "artifact_kind")
         if type(size_bytes) is not int:
             raise TypeError("Artifact rights byte size must be an exact integer.")
         size = size_bytes
@@ -287,7 +287,7 @@ class BlackHoleArtifactUsePolicy(StrictModule, NonTrainableState):
         derivative_use: bool = False,
         model_execution: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         intended = _identifier(intended_use, "Intended use")
         licenses = _identifiers(
             accepted_license_ids, "Accepted license IDs", nonempty=True
@@ -337,9 +337,8 @@ class BlackHoleArtifactSchema(StrictModule, NonTrainableState):
         source_format: str,
         semantic_bindings: Mapping[str, str] | Sequence[tuple[str, str]],
         /,
-    ):
-        if artifact_kind not in _ARTIFACT_KINDS:
-            raise ValueError("Unknown black-hole artifact kind.")
+    ) -> None:
+        artifact_kind = parse(artifact_kind, BlackHoleArtifactKind, "artifact_kind")
         source = _identifier(source_format, "Source format").lower()
         if artifact_kind == "numeric-model" and source not in _NUMERIC_MODEL_FORMATS:
             raise ValueError(
@@ -389,7 +388,7 @@ class NeutralBlackHoleArtifact(StrictModule, NonTrainableState):
         report: AdapterReport,
         artifact_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(resource, BoundedResource) or not isinstance(
             admission, AdmittedExternalArtifact
         ):
@@ -459,10 +458,10 @@ class NeutralBlackHoleArtifact(StrictModule, NonTrainableState):
 
 
 def map_black_hole_artifact(
-    path,
+    path: str | os.PathLike[str],
     /,
     *,
-    trusted_root,
+    trusted_root: str | os.PathLike[str],
     limits: ResourceLimits,
     rights: BlackHoleArtifactRights,
     use_policy: BlackHoleArtifactUsePolicy,
@@ -572,10 +571,10 @@ def map_black_hole_artifact(
 
 
 def map_field_artifact(
-    path,
+    path: str | os.PathLike[str],
     /,
     *,
-    trusted_root,
+    trusted_root: str | os.PathLike[str],
     limits: ResourceLimits,
     rights: BlackHoleArtifactRights,
     use_policy: BlackHoleArtifactUsePolicy,
@@ -611,10 +610,10 @@ def map_field_artifact(
 
 
 def map_image_artifact(
-    path,
+    path: str | os.PathLike[str],
     /,
     *,
-    trusted_root,
+    trusted_root: str | os.PathLike[str],
     limits: ResourceLimits,
     rights: BlackHoleArtifactRights,
     use_policy: BlackHoleArtifactUsePolicy,
@@ -646,10 +645,10 @@ def map_image_artifact(
 
 
 def map_visibility_artifact(
-    path,
+    path: str | os.PathLike[str],
     /,
     *,
-    trusted_root,
+    trusted_root: str | os.PathLike[str],
     limits: ResourceLimits,
     rights: BlackHoleArtifactRights,
     use_policy: BlackHoleArtifactUsePolicy,
@@ -683,10 +682,10 @@ def map_visibility_artifact(
 
 
 def map_waveform_artifact(
-    path,
+    path: str | os.PathLike[str],
     /,
     *,
-    trusted_root,
+    trusted_root: str | os.PathLike[str],
     limits: ResourceLimits,
     rights: BlackHoleArtifactRights,
     use_policy: BlackHoleArtifactUsePolicy,
@@ -720,10 +719,10 @@ def map_waveform_artifact(
 
 
 def map_numeric_model_artifact(
-    path,
+    path: str | os.PathLike[str],
     /,
     *,
-    trusted_root,
+    trusted_root: str | os.PathLike[str],
     limits: ResourceLimits,
     rights: BlackHoleArtifactRights,
     use_policy: BlackHoleArtifactUsePolicy,

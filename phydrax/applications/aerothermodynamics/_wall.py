@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -58,7 +59,7 @@ class ReactingPlasmaWallPlan(StrictModule, NonTrainableState):
         /,
         *,
         surface_mass_per_recession: float = 1.0,
-    ):
+    ) -> None:
         velocity = jnp.asarray(wall_velocity)
         scale = float(surface_mass_per_recession)
         if (

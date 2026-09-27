@@ -63,7 +63,7 @@ class FittedPipeline(AbstractFittedModel):
         feature_schema: FeatureSchema,
         final_feature_schema: FeatureSchema,
         derivative_contract: DerivativeContract,
-    ):
+    ) -> None:
         steps_ = tuple(steps)
         results_ = tuple(fit_results)
         input_schemas_ = tuple(stage_input_schemas)
@@ -101,7 +101,7 @@ class FittedPipeline(AbstractFittedModel):
     def _prediction_contract(self) -> DerivativeContract | None:
         return _combine_models(tuple(model for _, model in self.steps), sequential=True)
 
-    def __call__(self, x: Any, /, *, key: Any = None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         keys = _split_key(key, len(self.steps))
         blockwise = self._input_binding.batch_mode == "blockwise"
         values = x
@@ -135,7 +135,7 @@ class Pipeline(AbstractRecipe):
 
     steps: tuple[tuple[str, AbstractRecipe], ...]
 
-    def __init__(self, steps: Sequence[tuple[str, AbstractRecipe]], /):
+    def __init__(self, steps: Sequence[tuple[str, AbstractRecipe]], /) -> None:
         self.steps = _normalize_recipe_specs(
             steps, kind="Pipeline", recipe_type=AbstractRecipe
         )

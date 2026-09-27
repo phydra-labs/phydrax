@@ -9,7 +9,8 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
@@ -35,7 +36,7 @@ class SeparableHamiltonianResult(StrictModule):
         steps: int,
         step_size: ArrayLike,
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
-    ):
+    ) -> None:
         position_ = jnp.asarray(position)
         step_size_ = jnp.asarray(step_size)
         evidence = (
@@ -140,7 +141,7 @@ def integrate_stormer_verlet(
     precision_.validate_state(initial[0])
     precision_.validate_state(initial[1])
 
-    def advance(_, state: tuple[Array, Array]) -> tuple[Array, Array]:
+    def advance(_: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
         return stormer_verlet_step(
             state[0],
             state[1],

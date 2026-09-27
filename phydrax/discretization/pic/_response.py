@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -39,7 +40,7 @@ class PICParticleResponsePlan(StrictModule, NonTrainableState):
     transfer: PreparedPICParticleCochainTransfer
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, transfer: PreparedPICParticleCochainTransfer, /):
+    def __init__(self, transfer: PreparedPICParticleCochainTransfer, /) -> None:
         if not isinstance(transfer, PreparedPICParticleCochainTransfer):
             raise TypeError("transfer must be PreparedPICParticleCochainTransfer.")
         if transfer.bridge.dimension != 3:
@@ -114,7 +115,10 @@ class PICParticleResponsePlan(StrictModule, NonTrainableState):
             )
             components.append(deposited.density)
             successful = successful & deposited.successful
-        current = self.transfer.bridge.pack_edge_circulation(tuple(components))
+        # The plan admits only three-dimensional bridges, so there are three components.
+        current = self.transfer.bridge.pack_edge_circulation(
+            (components[0], components[1], components[2])
+        )
         finite = jnp.all(jnp.isfinite(current))
         return PICParticleResponseResult(
             current, finite, successful & finite, self.plan_id

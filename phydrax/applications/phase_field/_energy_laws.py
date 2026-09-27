@@ -8,7 +8,8 @@ import abc
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._phase_field import AbstractBulkFreeEnergy, DoubleWellFreeEnergy
@@ -49,7 +50,7 @@ class DiscreteGradientBulkLaw(AbstractBulkEvolutionLaw):
     law_id: str = eqx.field(static=True)
     exact_identity: bool = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.law_id = "phase-field-bulk-law/discrete-gradient"
         self.exact_identity = True
 
@@ -78,7 +79,7 @@ class ConvexSplitDoubleWellLaw(AbstractBulkEvolutionLaw):
     law_id: str = eqx.field(static=True)
     exact_identity: bool = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.law_id = "phase-field-bulk-law/double-well-convex-split"
         self.exact_identity = False
 
@@ -153,7 +154,7 @@ class PhaseFieldEnergyLedger(StrictModule):
         transfer_defect: ArrayLike = 0.0,
         tolerance: ArrayLike,
         ledger_id: str,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (

@@ -2,16 +2,16 @@
 #  Copyright 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from typing import cast
+from typing import Any, cast
 
 import jax.numpy as jnp
 import pytest
-from jaxtyping import Array
+from jax import Array
 
 from phydrax.data_utils import CSVReader, CSVReadPolicy
 
 
-def test_csv_reader_reads_numeric_columns(tmp_path):
+def test_csv_reader_reads_numeric_columns(tmp_path: Any) -> None:
     path = tmp_path / "numeric.csv"
     path.write_text("x,y,z\n1.0,4.0,7.0\n2.0,5.0,8.0\n3.0,6.0,9.0\n")
 
@@ -31,7 +31,7 @@ def test_csv_reader_reads_numeric_columns(tmp_path):
     )
 
 
-def test_csv_reader_reads_mixed_columns(tmp_path):
+def test_csv_reader_reads_mixed_columns(tmp_path: Any) -> None:
     path = tmp_path / "mixed.csv"
     path.write_text("x,y,name\n1.0,4.0,alpha\n2.0,5.0,beta\n3.0,6.0,gamma\n")
 
@@ -54,12 +54,12 @@ def test_csv_reader_reads_mixed_columns(tmp_path):
     assert data["name"] == ["alpha", "beta", "gamma"]
 
 
-def test_csv_reader_raises_for_missing_file():
+def test_csv_reader_raises_for_missing_file() -> None:
     with pytest.raises(FileNotFoundError):
         CSVReader("missing.csv")
 
 
-def test_csv_reader_uses_explicit_header_policy(tmp_path):
+def test_csv_reader_uses_explicit_header_policy(tmp_path: Any) -> None:
     path = tmp_path / "no_header.csv"
     path.write_text("1,2,3\n4,5,6\n")
 

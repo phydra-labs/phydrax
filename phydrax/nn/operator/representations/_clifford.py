@@ -10,7 +10,7 @@ from math import comb
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
@@ -44,7 +44,7 @@ class CliffordGradeRepresentation(StrictModule, NonTrainableState):
         algebra: CliffordAlgebraSpec,
         multiplicities: Sequence[int],
         /,
-    ):
+    ) -> None:
         if not isinstance(algebra, CliffordAlgebraSpec):
             raise TypeError("algebra must be a CliffordAlgebraSpec.")
         resolved = tuple(multiplicities)

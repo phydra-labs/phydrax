@@ -8,7 +8,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -26,7 +28,14 @@ from .._differentiation import (
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
+from ..linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    LinearSolvePolicy,
+    LinearSolveResult,
+    LinearSystem,
+    solve,
+)
 
 
 class MolecularVelocityQuadrature(StrictModule, NonTrainableState):
@@ -197,7 +206,7 @@ class PositiveDiscreteMaxwellianPlan(StrictModule):
             if initial.shape != (5,):
                 raise ValueError("initial_multipliers must have shape (5,).")
 
-        def evaluate(multipliers):
+        def evaluate(multipliers: Array) -> tuple[Array, Array, Array]:
             exponent = features @ multipliers
             population = jnp.exp(jnp.clip(exponent, -700.0, 700.0))
             weighted = weights * population
@@ -209,7 +218,9 @@ class PositiveDiscreteMaxwellianPlan(StrictModule):
 
         rates = jnp.asarray((1.0, 0.5, 0.25, 0.125, 0.0625), dtype=target.dtype)
 
-        def body(_, carry):
+        def body(
+            _: Array, carry: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array, Array]:
             multipliers, active, linear_success = carry
             _, residual, jacobian = evaluate(multipliers)
             direction = _solve_dense(jacobian, -residual)
@@ -506,7 +517,7 @@ class MaxwellGasSurfaceBoundary(StrictModule):
         /,
         *,
         wall_temperature: float,
-        wall_velocity: ArrayLike = (0.0, 0.0, 0.0),
+        wall_velocity: npt.ArrayLike = (0.0, 0.0, 0.0),
         accommodation: float = 1.0,
     ) -> None:
         if not isinstance(quadrature, MolecularVelocityQuadrature):
@@ -693,7 +704,7 @@ class KineticBreakdownPlan(StrictModule):
         )
 
 
-def _solve_dense(matrix: Array, right_hand_side: Array, /):
+def _solve_dense(matrix: Array, right_hand_side: Array, /) -> LinearSolveResult:
     return solve(
         LinearSystem(DenseLinearOperator(matrix)),
         right_hand_side,

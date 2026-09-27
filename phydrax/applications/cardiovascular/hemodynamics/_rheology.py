@@ -9,7 +9,8 @@ from typing import TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -60,7 +61,7 @@ class NewtonianRheology(StrictModule, NonTrainableState):
         /,
         *,
         maximum_shear_rate_per_ms: float = 10.0,
-    ):
+    ) -> None:
         viscosity = _positive_scalar("dynamic_viscosity_kpa_ms", dynamic_viscosity_kpa_ms)
         maximum = _positive_scalar("maximum_shear_rate_per_ms", maximum_shear_rate_per_ms)
         self.dynamic_viscosity_kpa_ms = jnp.asarray(viscosity, dtype=jnp.float64)
@@ -142,7 +143,7 @@ class CarreauYasudaRheology(StrictModule, NonTrainableState):
         /,
         *,
         maximum_shear_rate_per_ms: float = 10.0,
-    ):
+    ) -> None:
         mu_zero = _positive_scalar(
             "zero_shear_viscosity_kpa_ms", zero_shear_viscosity_kpa_ms
         )

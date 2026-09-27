@@ -9,7 +9,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -184,7 +185,7 @@ class GromovWasserstein(StrictModule):
         inner_solver: AbstractBalancedTransportSolver | None = None,
         block_size: int | None = None,
         differentiation: str = "fixed-iterations",
-    ):
+    ) -> None:
         iterations = int(max_outer_iterations)
         threshold = float(tolerance)
         if iterations <= 0 or not isfinite(threshold) or threshold < 0.0:

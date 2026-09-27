@@ -6,12 +6,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import isfinite, prod, sqrt
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
@@ -30,12 +31,13 @@ from ...linalg import (
     solve,
     TolerancePolicy,
 )
+from ...typing import parse
 
 
-FourierWeightPolicy = Literal["uniform", "explicit"]
+FourierWeightPolicy: TypeAlias = Literal["uniform", "explicit"]
 
 
-def _modes(mode_shape: tuple[int, ...], dtype) -> tuple[Array, ...]:
+def _modes(mode_shape: tuple[int, ...], dtype: DTypeLike) -> tuple[Array, ...]:
     return tuple(jnp.fft.fftfreq(size).astype(dtype) * size for size in mode_shape)
 
 
@@ -138,7 +140,7 @@ class FourierScatteredFitPlan(StrictModule):
         regularization: float = 0.0,
         linear_policy: LinearSolvePolicy | None = None,
         query_chunk_size: int | None = None,
-    ):
+    ) -> None:
         shape = tuple(mode_shape)
         period_values = tuple(float(value) for value in periods)
         origin_values = (
@@ -160,8 +162,7 @@ class FourierScatteredFitPlan(StrictModule):
             raise ValueError("solve_tolerance must be finite and positive.")
         if not isfinite(regularization_) or regularization_ < 0.0:
             raise ValueError("regularization must be finite and nonnegative.")
-        if weight_policy not in ("uniform", "explicit"):
-            raise ValueError("weight_policy must be 'uniform' or 'explicit'.")
+        weight_policy = parse(weight_policy, FourierWeightPolicy, "weight_policy")
         if linear_policy is not None and not isinstance(linear_policy, LinearSolvePolicy):
             raise TypeError("linear_policy must be a LinearSolvePolicy or None.")
         chunk = None if query_chunk_size is None else int(query_chunk_size)
@@ -300,7 +301,7 @@ def fit_fourier_scattered(
             source=source,
             target=source,
             transpose_action=lambda coefficients: scale * coefficients,
-            operator_id=f"fourier-tikhonov-{plan.regularization.hex()}",
+            operator_id=f"fourier-tikhonov-{float(plan.regularization).hex()}",
         )
     problem = LeastSquaresProblem(
         operator,

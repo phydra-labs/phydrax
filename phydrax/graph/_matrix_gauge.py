@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -46,7 +47,7 @@ class MatrixGaugeLinkSpace(StrictModule, NonTrainableState):
     local_shape: tuple[int, ...] = eqx.field(static=True)
     link_space_id: str = eqx.field(static=True)
 
-    def __init__(self, topology: CellComplexTopology, group: AbstractLieGroup, /):
+    def __init__(self, topology: CellComplexTopology, group: AbstractLieGroup, /) -> None:
         if not isinstance(topology, CellComplexTopology):
             raise TypeError("topology must be CellComplexTopology.")
         if not isinstance(group, AbstractLieGroup):
@@ -212,7 +213,7 @@ def path_holonomy(
         (paths.num_paths,) + space.point_shape,
     )
 
-    def step(accumulator, index):
+    def step(accumulator: Array, index: Array) -> tuple[Array, None]:
         edges = paths.edge_indices[:, index]
         factor = values[edges]
         reverse = space.group.inverse(factor)

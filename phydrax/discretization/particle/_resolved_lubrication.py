@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -39,7 +40,7 @@ class ResolvedLubricationCorrectionPlan(StrictModule, NonTrainableState):
         cutoff: ArrayLike,
         minimum_gap: ArrayLike,
         /,
-    ):
+    ) -> None:
         viscosity = np.asarray(dynamic_viscosity)
         cutoff_ = np.asarray(cutoff)
         minimum = np.asarray(minimum_gap)

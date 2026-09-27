@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -25,7 +28,7 @@ from phydrax.particle_physics._weights import WeightVariationKind
 from phydrax.qualification import CapabilityProfile, SupportTuple
 
 
-def _provider_contracts():
+def _provider_contracts() -> Any:
     profile = CapabilityProfile(
         "external-shower",
         "provider-x",
@@ -86,7 +89,7 @@ def _provider_contracts():
     return binding, normalization, revision
 
 
-def _event(source, nominal, shape):
+def _event(source: Any, nominal: Any, shape: Any) -> Any:
     return HostEventRecord(
         7,
         0,
@@ -101,7 +104,9 @@ def _event(source, nominal, shape):
     )
 
 
-def test_exclusive_matching_bins_are_disjoint_with_inclusive_highest_multiplicity():
+def test_exclusive_matching_bins_are_disjoint_with_inclusive_highest_multiplicity() -> (
+    None
+):
     assignment = assign_exclusive_matching_bins(
         jnp.asarray(
             ((30.0, 0.0, 0.0), (30.0, 20.0, 0.0), (30.0, 20.0, 15.0), (5.0, 0.0, 0.0))
@@ -122,7 +127,9 @@ def test_exclusive_matching_bins_are_disjoint_with_inclusive_highest_multiplicit
     np.testing.assert_array_equal(assignment.resolved_count, jnp.asarray((1, 2, 3, 0)))
 
 
-def test_provider_record_preserves_signed_named_weights_normalization_and_revision_provenance():
+def test_provider_record_preserves_signed_named_weights_normalization_and_revision_provenance() -> (
+    None
+):
     binding, normalization, revision = _provider_contracts()
     input_event = _event("hard-source", -2.0, -1.8)
     output_event = _event("shower-source", -2.0, -1.9)
@@ -154,7 +161,7 @@ def test_provider_record_preserves_signed_named_weights_normalization_and_revisi
     assert record.normalization.sum_weights == -2.0
 
 
-def test_provider_capability_mismatch_is_explicit_not_silently_accepted():
+def test_provider_capability_mismatch_is_explicit_not_silently_accepted() -> None:
     binding, normalization, revision = _provider_contracts()
     record = record_provider_execution(
         binding,
@@ -173,3 +180,67 @@ def test_provider_capability_mismatch_is_explicit_not_silently_accepted():
     )
     assert record.status is ProviderExecutionStatus.CAPABILITY_MISMATCH
     assert not record.successful
+
+
+def _packed_event(nominal_name: Any) -> Any:
+    catalog = phx.particle_physics.ParticleCatalogReference(
+        source_id="pdg-test",
+        provider_release="test",
+        checksum="catalog-checksum",
+        citation_url="https://pdg.lbl.gov/",
+    )
+    plan = phx.particle_physics.ParticleEventPlan(
+        catalog=catalog,
+        momentum_unit=phx.units.GIGAELECTRONVOLT,
+        length_unit=phx.units.MILLIMETER,
+        time_unit=phx.units.NANOSECOND,
+        event_capacity=1,
+        particle_capacity=1,
+        vertex_capacity=1,
+        provider_status_namespace="provider-x-status",
+    )
+    record = HostEventRecord(
+        7,
+        0,
+        (),
+        (),
+        (
+            HostEventWeight(nominal_name, -2.0, WeightVariationKind.NOMINAL, "nominal"),
+            HostEventWeight("scale-up", -1.8, WeightVariationKind.SHAPE, "scale"),
+        ),
+        "provider-x-status",
+        "hard-source",
+    )
+    packed = phx.particle_physics.pack_host_events(
+        (record,), plan, source_id="packed-source"
+    )
+    assert packed.successful
+    return packed.events
+
+
+def test_provider_record_identifies_device_event_batches_by_nominal_weight_name() -> None:
+    binding, normalization, revision = _provider_contracts()
+
+    def execution(input_event: Any) -> Any:
+        return record_provider_execution(
+            binding,
+            input_event,
+            _event("shower-source", -2.0, -1.9),
+            normalization,
+            revision,
+            stage=ProviderExecutionStage.SHOWER,
+            required_capability="hep.shower",
+            input_profile_id="hard-events",
+            output_profile_id="showered-events",
+            unit_contract_id="GeV",
+            frame_id="collision-cm",
+            frame_realization_id="f" * 64,
+            process_id="dark-pair",
+        )
+
+    nominal = execution(_packed_event("nominal"))
+    central = execution(_packed_event("central"))
+    assert nominal.successful
+    assert nominal.input_weights.names == ("nominal", "scale-up")
+    assert central.input_weights.names == ("central", "scale-up")
+    assert nominal.input_event_id != central.input_event_id

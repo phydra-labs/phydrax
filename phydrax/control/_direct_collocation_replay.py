@@ -5,13 +5,13 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -23,6 +23,7 @@ from ..solver._differential_algebraic import (
     DifferentialAlgebraicSolution,
     solve_dae,
 )
+from ..typing import parse
 from ._direct_collocation import DirectCollocationResult
 from ._trajectory_optimization import (
     TrajectoryOptimizationContext,
@@ -30,7 +31,7 @@ from ._trajectory_optimization import (
 )
 
 
-DirectCollocationReplayFailureMode = Literal["record", "error"]
+DirectCollocationReplayFailureMode: TypeAlias = Literal["record", "error"]
 
 
 def _tolerance(value: float, owner: str, /) -> float:
@@ -61,14 +62,15 @@ class DirectCollocationReplayPolicy(StrictModule):
         algebraic_constraint_tolerance: float = 1.0e-6,
         failure_mode: DirectCollocationReplayFailureMode = "record",
         policy_id: str = "control:direct-collocation:dae-replay",
-    ):
+    ) -> None:
         dae = DAESolvePolicy() if dae_policy is None else dae_policy
         if not isinstance(dae, DAESolvePolicy):
             raise TypeError("dae_policy must be DAESolvePolicy or None.")
         if time_grid is not None and not isinstance(time_grid, TimeGrid):
             raise TypeError("time_grid must be TimeGrid or None.")
-        if failure_mode not in ("record", "error"):
-            raise ValueError("failure_mode must be 'record' or 'error'.")
+        failure_mode = parse(
+            failure_mode, DirectCollocationReplayFailureMode, "failure_mode"
+        )
         if not isinstance(policy_id, str) or not policy_id:
             raise ValueError("policy_id must be a non-empty string.")
         self.dae_policy = dae

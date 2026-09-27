@@ -7,11 +7,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from enum import IntEnum
 from math import prod
-from typing import Any, TYPE_CHECKING
+from typing import Any, cast, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._array_tree import ArrayPyTreeSchema
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -36,7 +37,12 @@ from ._rod_plant import (
     ReducedRodPassiveSensorState,
     ReducedRodPlantState,
 )
-from ._rod_reduced_dynamics import ReducedRodDirectLoad, ReducedRodMaterialState
+from ._rod_reduced_dynamics import (
+    PreparedReducedRodDynamics,
+    ReducedRodDirectLoad,
+    ReducedRodInverseDynamicsResult,
+    ReducedRodMaterialState,
+)
 from ._rod_reduced_integrators import (
     _candidate_state,
     _energy_work_ledger,
@@ -85,7 +91,7 @@ class TendonDrivenRodPlantStatus(IntEnum):
 class TendonActuatorStateBank(StrictModule):
     states: tuple[TendonActuatorState, ...]
 
-    def __init__(self, states: Sequence[TendonActuatorState], /):
+    def __init__(self, states: Sequence[TendonActuatorState], /) -> None:
         values = tuple(states)
         if not values or any(
             not isinstance(value, TendonActuatorState) for value in values
@@ -107,7 +113,7 @@ class TendonDrivenRodPlantState(StrictModule):
 class TendonDrivenRodPlantParameters(StrictModule):
     values: Array
 
-    def __init__(self, values: ArrayLike, /):
+    def __init__(self, values: ArrayLike, /) -> None:
         result = jnp.asarray(values)
         if result.shape != (0,):
             raise ValueError("Tendon plant parameters must have shape (0,).")
@@ -127,7 +133,7 @@ class TendonDrivenRodPlantCommand(StrictModule):
         tendon_commands: Sequence[TendonPayoutCommand],
         external_effort: ArrayLike,
         /,
-    ):
+    ) -> None:
         commands = tuple(tendon_commands)
         if not commands or any(
             not isinstance(value, TendonPayoutCommand) for value in commands
@@ -276,7 +282,9 @@ class _TendonMidpointResidual(StrictModule):
     step_size: Array
     tendon_ids: tuple[str, ...] = eqx.field(static=True)
 
-    def __call__(self, state: tuple[Array, Array], _arguments: Any, /):
+    def __call__(
+        self, state: tuple[Array, Array], _arguments: Any, /
+    ) -> tuple[tuple[Array, Array], ReducedRodInverseDynamicsResult]:
         q0 = self.source.reduced_state.coefficients
         v0 = self.source.reduced_state.coefficient_velocities
         q1, v1 = state
@@ -293,7 +301,8 @@ class _TendonMidpointResidual(StrictModule):
         )
         direct_loads = tuple(
             ReducedRodDirectLoad(
-                evaluation.reduced_effort,
+                # The constructor requires every tendon route to use the plant reduction.
+                cast(Array, evaluation.reduced_effort),
                 source_id=f"tendon:{tendon_id}",
                 power_channel="tendon",
             )
@@ -354,7 +363,7 @@ class PreparedTendonDrivenRodPlant(AbstractDiscretePlant, NonTrainableState):
         external_effort_bounds: tuple[ArrayLike, ArrayLike] | None = None,
         observation_plan: PreparedSoftObservationPlan | None = None,
         initial_sensor_state: SoftSensorState | None = None,
-    ):
+    ) -> None:
         from ..robotics._soft_observations import (
             PreparedSoftObservationPlan,
         )
@@ -587,7 +596,7 @@ class PreparedTendonDrivenRodPlant(AbstractDiscretePlant, NonTrainableState):
         self.plant_id = plant_id
 
     @property
-    def dynamics(self):
+    def dynamics(self) -> PreparedReducedRodDynamics:
         return self.base_plant.dynamics
 
     def bind_parameters(
@@ -647,7 +656,8 @@ class PreparedTendonDrivenRodPlant(AbstractDiscretePlant, NonTrainableState):
     ) -> tuple[ReducedRodDirectLoad, ...]:
         return tuple(
             ReducedRodDirectLoad(
-                value.reduced_effort,
+                # The constructor requires every tendon route to use the plant reduction.
+                cast(Array, value.reduced_effort),
                 source_id=f"tendon:{tendon_id}",
                 power_channel="tendon",
             )

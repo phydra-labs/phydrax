@@ -9,7 +9,10 @@ import json
 import time
 from pathlib import Path
 
+# ty: ignore[unresolved-import]
 from iga_closure_qualification import run as run_closure
+
+# ty: ignore[unresolved-import]
 from iga_h1_benchmarks import run as run_h1_benchmarks
 
 

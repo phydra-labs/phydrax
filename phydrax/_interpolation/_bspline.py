@@ -11,10 +11,12 @@ from numbers import Integral
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
+from ..typing import parse
 from ._stencil import apply_gather_stencil, GatherStencil
 from ._types import BoundsMode, InterpolationResult
 
@@ -205,7 +207,7 @@ class BSplineJetStencil(StrictModule):
         degree: int,
         maximum_order: int,
         case_shape: tuple[int, ...] = (),
-    ):
+    ) -> None:
         indices_ = jnp.asarray(indices, dtype=jnp.int32)
         jets_ = jnp.asarray(jets)
         support_ = jnp.asarray(support, dtype=jnp.bool_)
@@ -275,8 +277,7 @@ def bspline_jet_stencil(
         raise ValueError("B-spline degree must be non-negative.")
     if maximum_order_ < 0:
         raise ValueError("B-spline maximum_order must be non-negative.")
-    if bounds not in ("clip", "error", "extrapolate", "fill"):
-        raise ValueError("bounds must be 'clip', 'error', 'extrapolate', or 'fill'.")
+    bounds = parse(bounds, BoundsMode, "bounds")
 
     knots_raw = jnp.asarray(knots)
     query_raw = jnp.asarray(query)

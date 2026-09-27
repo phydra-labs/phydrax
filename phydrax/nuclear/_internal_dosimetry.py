@@ -6,13 +6,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 import equinox as eqx
 import jax.lax as lax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -65,7 +67,7 @@ def _text(value: str, name: str, /) -> str:
     return value
 
 
-def _identifiers(values, name: str, /) -> tuple[str, ...]:
+def _identifiers(values: Iterable[str], name: str, /) -> tuple[str, ...]:
     result = tuple(_text(value, name) for value in values)
     if not result or len(result) != len(set(result)):
         raise ValueError(f"{name} must contain unique canonical identifiers.")
@@ -302,6 +304,8 @@ class RegionalDoseResult:
         if self.asset.field.values.shape != (len(targets),):
             raise ValueError("Regional dose values do not match target_region_ids.")
         metadata = self.asset.metadata
+        if not (metadata is not None):
+            raise RuntimeError("Internal invariant failed: metadata is not None.")
         if (
             table != self.evidence.kernel_id
             or self.evidence.mode != "regional-s-value"
@@ -325,7 +329,10 @@ class RegionalDoseResult:
 
     @property
     def valid_mask(self) -> np.ndarray:
-        return self.asset.field.valid_mask
+        mask = self.asset.field.valid_mask
+        if not (mask is not None):
+            raise RuntimeError("Internal invariant failed: mask is not None.")
+        return mask
 
 
 @dataclass(frozen=True, slots=True)
@@ -389,8 +396,11 @@ class RegionalSValuePlan:
         if field_.support.support_id != self.source_support.support_id:
             raise ValueError("Regional activity does not use the plan source support.")
         scale = float(conversion_factor(field_.quantity.unit, BECQUEREL_SECOND))
+        valid_mask = field_.valid_mask
+        if not (valid_mask is not None):
+            raise RuntimeError("Internal invariant failed: valid_mask is not None.")
         evaluation = self.prepare().evaluate(
-            np.asarray(field_.values) * scale, field_.valid_mask
+            np.asarray(field_.values) * scale, valid_mask
         )
         values = np.asarray(evaluation.dose_gy)
         valid = np.asarray(evaluation.valid)
@@ -633,6 +643,8 @@ class SpatialDoseResult:
         if self.asset.field.uncertainty is not None:
             raise ValueError("Spatial dose uncertainty must not be fabricated.")
         metadata = self.asset.metadata
+        if not (metadata is not None):
+            raise RuntimeError("Internal invariant failed: metadata is not None.")
         if (
             kernel != self.evidence.kernel_id
             or self.evidence.mode != "spatial-s-value"
@@ -656,7 +668,10 @@ class SpatialDoseResult:
 
     @property
     def valid_mask(self) -> np.ndarray:
-        return self.asset.field.valid_mask
+        mask = self.asset.field.valid_mask
+        if not (mask is not None):
+            raise RuntimeError("Internal invariant failed: mask is not None.")
+        return mask
 
 
 @dataclass(frozen=True, slots=True)
@@ -720,9 +735,10 @@ class SpatialSValueConvolutionPlan:
             conversion_factor(field_.quantity.unit, BECQUEREL_SECOND_PER_CUBIC_METER)
         )
         prepared = self.prepare()
-        evaluation = prepared.evaluate(
-            np.asarray(field_.values) * scale, field_.valid_mask
-        )
+        valid_mask = field_.valid_mask
+        if not (valid_mask is not None):
+            raise RuntimeError("Internal invariant failed: valid_mask is not None.")
+        evaluation = prepared.evaluate(np.asarray(field_.values) * scale, valid_mask)
         values = np.asarray(evaluation.dose_gy)
         valid = np.asarray(evaluation.valid)
         flags = tuple(

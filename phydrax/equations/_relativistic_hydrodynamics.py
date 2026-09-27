@@ -12,13 +12,14 @@ Cartesian specialization. Momentum is covariant in both formulations.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -29,6 +30,9 @@ from ..metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
 from ..metrix._spacetime_conventions import RelativityConvention
 from ._hyperbolic_systems import AbstractConservationSystem
 from ._relativistic_eos import AbstractRelativisticEOS, RelativisticEOSState
+
+
+_PressureBracket: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class RelativisticHydrodynamicsLayout(StrictModule, NonTrainableState):
@@ -42,7 +46,7 @@ class RelativisticHydrodynamicsLayout(StrictModule, NonTrainableState):
     momentum_variance: str = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /, *, densitized: bool):
+    def __init__(self, dimension: int, /, *, densitized: bool) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (1, 2, 3):
             raise ValueError("Relativistic hydrodynamics dimension must be 1, 2, or 3.")
@@ -162,7 +166,7 @@ class ValenciaGeometrySource(StrictModule, NonTrainableState):
         beta_gradient: ArrayLike,
         spatial_metric_gradient: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(geometry, ADMGridGeometry):
             raise TypeError("geometry must be an ADMGridGeometry.")
         alpha = jnp.asarray(alpha_gradient, dtype=geometry.alpha.dtype)
@@ -409,7 +413,7 @@ def _fixed_pressure_recovery(
         momentum_norm - total_energy + tiny,
     )
 
-    def residual(pressure):
+    def residual(pressure: Array) -> Array:
         return _primitive_at_pressure(
             eos, undensitized, inverse_spatial_metric, pressure
         )[1]
@@ -417,7 +421,7 @@ def _fixed_pressure_recovery(
     lower_value = residual(lower)
     upper = jnp.maximum(2.0 * lower, jnp.abs(total_energy) + momentum_norm + mass + 1.0)
 
-    def expand(_, current):
+    def expand(_: Array, current: tuple[Array, Array]) -> tuple[Array, Array]:
         bound, value = current
         candidate = 2.0 * bound
         candidate_value = residual(candidate)
@@ -428,7 +432,7 @@ def _fixed_pressure_recovery(
 
     upper, upper_value = jax.lax.fori_loop(0, 12, expand, (upper, residual(upper)))
 
-    def bisect(_, bracket):
+    def bisect(_: Array, bracket: _PressureBracket) -> _PressureBracket:
         left, right, left_value, right_value = bracket
         middle = 0.5 * (left + right)
         middle_value = residual(middle)
@@ -495,7 +499,7 @@ class SRHDSystem(AbstractConservationSystem, NonTrainableState):
         *,
         density_floor: float = 1.0e-12,
         pressure_floor: float = 1.0e-12,
-    ):
+    ) -> None:
         if not isinstance(eos, AbstractRelativisticEOS):
             raise TypeError("eos must be an AbstractRelativisticEOS.")
         if eos.scale.speed_of_light != 1:
@@ -734,7 +738,7 @@ class ValenciaGRHDSystem(StrictModule, NonTrainableState):
         density_floor: float = 1.0e-12,
         pressure_floor: float = 1.0e-12,
         convention: RelativityConvention | None = None,
-    ):
+    ) -> None:
         if not isinstance(eos, AbstractRelativisticEOS):
             raise TypeError("eos must be an AbstractRelativisticEOS.")
         if eos.scale.speed_of_light != 1:

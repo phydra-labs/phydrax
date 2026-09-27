@@ -12,7 +12,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optimistix as optx
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -20,6 +21,7 @@ from .._frozendict import frozendict
 from .._interpolation import barycentric_interpolate, linear_interpolate
 from .._polynomial._chebyshev import chebyshev_lobatto_data
 from .._strict import StrictModule
+from ..typing import parse
 
 
 FunctionalVectorField: TypeAlias = Callable[[Array, Array, Array, Any], ArrayLike]
@@ -55,7 +57,7 @@ class FunctionalDifferentialContext(StrictModule):
         parameters: Array | None,
         period: Array | None,
         /,
-    ):
+    ) -> None:
         self.args = args
         self.parameters = parameters
         self.period = period
@@ -110,7 +112,7 @@ class FunctionalDifferentialBoundaryProblem(StrictModule):
         observation_residual: FunctionalTrajectoryResidual | None = None,
         parameter_shape: Sequence[int] | None = None,
         unknown_period: bool = False,
-    ):
+    ) -> None:
         if not callable(vector_field):
             raise TypeError("vector_field must be callable.")
         if isinstance(num_arguments, bool) or int(num_arguments) != num_arguments:
@@ -247,14 +249,13 @@ class FunctionalCollocationPlan(StrictModule):
         root_finder: Any = None,
         least_squares_solver: Any = None,
         adjoint: Any = None,
-    ):
+    ) -> None:
         if isinstance(degree, bool) or int(degree) != degree:
             raise TypeError("degree must be an integer.")
         degree_ = int(degree)
         if degree_ < 1:
             raise ValueError("degree must be at least one.")
-        if method not in ("auto", "root", "least-squares"):
-            raise ValueError("method must be 'auto', 'root', or 'least-squares'.")
+        method = parse(method, FunctionalCollocationMethod, "method")
         if not np.isfinite(rtol) or float(rtol) < 0.0:
             raise ValueError("rtol must be finite and non-negative.")
         if not np.isfinite(atol) or float(atol) < 0.0:
@@ -336,7 +337,7 @@ class _FunctionalPolynomialInterpolation(StrictModule):
         values: Array,
         period: Array | None,
         state_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.mesh = mesh
         self.reference_nodes = reference_nodes
         self.barycentric_weights = barycentric_weights
@@ -409,7 +410,7 @@ class _FunctionalPolynomialInterpolation(StrictModule):
         reference, indices, query_shape = self._query_geometry(query_times, left=left)
         selected = self.values[indices]
 
-        def reference_derivative(point, values):
+        def reference_derivative(point: Array, values: Array) -> Array:
             interpolate = lambda location: barycentric_interpolate(
                 location,
                 self.reference_nodes,
@@ -533,7 +534,7 @@ class FunctionalDifferentialSolution(StrictModule):
         backend_result: Any,
         resolved_method: str,
         nonlinear_solver: str,
-    ):
+    ) -> None:
         interpolation = _interpolation(problem, plan, unknowns)
         times = interpolation.physical_mesh
         states = interpolation.evaluate(times)
@@ -644,7 +645,7 @@ def _argument_values(
             dtype=states.dtype,
         )
 
-    def one_argument_map(time, state):
+    def one_argument_map(time: Array, state: Array) -> Array:
         locations = jnp.asarray(argument_times(time, state, args))
         if problem.num_arguments == 1 and locations.shape == ():
             locations = locations.reshape((1,))
@@ -715,7 +716,7 @@ def _residual_blocks(
         problem, trajectory, flat_times, flat_states, callback_args
     )
 
-    def evaluate_vector_field(time, state, arguments):
+    def evaluate_vector_field(time: Array, state: Array, arguments: Array) -> Array:
         value = jnp.asarray(problem.vector_field(time, state, arguments, callback_args))
         if value.shape != problem.state_shape:
             raise ValueError("vector_field must return exactly state_shape.")
@@ -816,7 +817,7 @@ def _initial_values(
         initial_guess_function = cast(Callable[[Array, Any], ArrayLike], initial_guess)
         flat_times = physical_times.reshape((-1,))
 
-        def evaluate(time):
+        def evaluate(time: Array) -> Array:
             value = jnp.asarray(initial_guess_function(time, callback_args))
             if value.shape != problem.state_shape:
                 raise ValueError("initial_guess must return exactly state_shape.")

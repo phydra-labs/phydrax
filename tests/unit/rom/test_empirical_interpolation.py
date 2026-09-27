@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -6,7 +8,7 @@ import phydrax as phx
 from phydrax._array_archive import read_array_archive, write_array_archive
 
 
-def _artifact(basis, *, role="roq"):
+def _artifact(basis: Any, *, role: Any = "roq") -> Any:
     values = jnp.asarray(basis)
     space = phx.linalg.ArraySpace(
         (values.shape[0],),
@@ -29,7 +31,7 @@ def _artifact(basis, *, role="roq"):
     )
 
 
-def test_empirical_interpolation_reproduces_source_basis():
+def test_empirical_interpolation_reproduces_source_basis() -> None:
     basis = jnp.eye(4)
     artifact = _artifact(basis)
     interpolation = phx.rom.prepare_empirical_interpolation(artifact)
@@ -44,7 +46,7 @@ def test_empirical_interpolation_reproduces_source_basis():
     assert interpolation.maximum_reproduction_error <= 1.0e-12
 
 
-def test_empirical_interpolation_preserves_complex_basis_algebra():
+def test_empirical_interpolation_preserves_complex_basis_algebra() -> None:
     basis = jnp.asarray(
         [
             [1.0 + 1.0j, 0.5 - 0.5j],
@@ -65,7 +67,9 @@ def test_empirical_interpolation_preserves_complex_basis_algebra():
     assert jnp.issubdtype(prepared.reconstruction_matrix.dtype, jnp.complexfloating)
 
 
-def test_empirical_interpolation_archive_binds_canonical_numeric_revision(tmp_path):
+def test_empirical_interpolation_archive_binds_canonical_numeric_revision(
+    tmp_path: Any,
+) -> None:
     interpolation = phx.rom.prepare_empirical_interpolation(_artifact(jnp.eye(4)))
     path = phx.rom.write_empirical_interpolation_artifact(
         tmp_path / "eim.phx", interpolation, analysis_plan_id="eim-analysis"

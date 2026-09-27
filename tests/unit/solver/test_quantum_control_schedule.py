@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -13,7 +16,7 @@ s = phx.solver
 q = phx.operators.quantum
 
 
-def _piecewise_constant():
+def _piecewise_constant() -> Any:
     grid = phx.dynamics.TimeGrid(jnp.asarray([0.0, 0.5, 1.0]), time_id="control-grid")
     return phx.control.PiecewiseConstantControlParameterization(
         grid,
@@ -22,7 +25,7 @@ def _piecewise_constant():
     )
 
 
-def test_quantum_control_sampling_applies_iq_carrier_delay_and_support():
+def test_quantum_control_sampling_applies_iq_carrier_delay_and_support() -> None:
     parameterization = _piecewise_constant()
     line = s.QuantumControlLine(
         parameterization,
@@ -56,11 +59,11 @@ def test_quantum_control_sampling_applies_iq_carrier_delay_and_support():
     assert result.line_values[0, 0] == 0.0
 
 
-def test_control_schedule_gradients_reach_coefficients_phase_delay_and_transfer():
+def test_control_schedule_gradients_reach_coefficients_phase_delay_and_transfer() -> None:
     parameterization = _piecewise_constant()
     time_grid = jnp.asarray([0.5, 0.75, 1.0])
 
-    def objective(in_phase, phase, delay, transfer):
+    def objective(in_phase: Any, phase: Any, delay: Any, transfer: Any) -> Any:
         line = s.QuantumControlLine(
             parameterization,
             in_phase,
@@ -85,7 +88,7 @@ def test_control_schedule_gradients_reach_coefficients_phase_delay_and_transfer(
     assert all(jnp.all(jnp.isfinite(value)) for value in gradients)
 
 
-def test_sampled_controls_assemble_with_constant_drift():
+def test_sampled_controls_assemble_with_constant_drift() -> None:
     x = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128)
     z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=jnp.complex128)
     layout = q.HilbertRegisterLayout(("q",), (2,))
@@ -120,7 +123,7 @@ def test_sampled_controls_assemble_with_constant_drift():
     assert jnp.allclose(assembled.coefficients[:, 1], jnp.asarray([0.2, 0.4]))
 
 
-def test_quantum_control_schedule_rejects_incompatible_shapes():
+def test_quantum_control_schedule_rejects_incompatible_shapes() -> None:
     parameterization = _piecewise_constant()
     with pytest.raises(ValueError, match="parameter_shape"):
         s.QuantumControlLine(

@@ -8,13 +8,14 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from numbers import Integral
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 import phydrax.ein as ein
@@ -23,6 +24,7 @@ from phydrax.kernels import (
     AbstractFiniteFeatureKernel,
     AbstractPositiveDefiniteKernel,
     AmplitudeKernel,
+    FiniteFeatureKernel,
     kernel_features,
     Matern32Kernel,
     Matern52Kernel,
@@ -81,7 +83,7 @@ class IntervalKernelMean(AbstractKernelMean):
         *,
         normalized: bool = False,
         target_id: str = "interval",
-    ):
+    ) -> None:
         if not isinstance(interval, Interval1d):
             raise TypeError("interval must be an Interval1d.")
         base, amplitude = _single_scale(kernel)
@@ -134,8 +136,15 @@ class IntervalKernelMean(AbstractKernelMean):
     def matrix(self, left: ArrayLike, right: ArrayLike, /) -> Array:
         return super().matrix(left, right)
 
-    def _primitive(self, distance: Array, /) -> Array:
+    def _base_kernel(
+        self,
+    ) -> SquaredExponentialKernel | Matern32Kernel | Matern52Kernel:
         base, _ = _single_scale(self.kernel)
+        # __init__ admits only these stationary families beneath one scale wrapper.
+        return cast(SquaredExponentialKernel | Matern32Kernel | Matern52Kernel, base)
+
+    def _primitive(self, distance: Array, /) -> Array:
+        base = self._base_kernel()
         length_scale = jnp.asarray(base.length_scale, dtype=distance.dtype)
         if isinstance(base, SquaredExponentialKernel):
             return (
@@ -147,7 +156,7 @@ class IntervalKernelMean(AbstractKernelMean):
         return _exponential_polynomial_integral(distance, rate, coefficients, shift=0)
 
     def _weighted_primitive(self, distance: Array, /) -> Array:
-        base, _ = _single_scale(self.kernel)
+        base = self._base_kernel()
         length_scale = jnp.asarray(base.length_scale, dtype=distance.dtype)
         if isinstance(base, SquaredExponentialKernel):
             return (
@@ -174,7 +183,7 @@ class FiniteMeasureKernelMean(AbstractKernelMean):
         *,
         block_size: int = 256,
         target_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("kernel must be a positive-definite kernel.")
         if not isinstance(block_size, Integral) or isinstance(block_size, bool):
@@ -241,10 +250,15 @@ class FiniteFeatureKernelMean(AbstractKernelMean):
         target_mass: ArrayLike = 1.0,
         target_id: str,
         normalized: bool = True,
-    ):
+    ) -> None:
         if not isinstance(kernel, AbstractFiniteFeatureKernel):
             raise TypeError("kernel must be an AbstractFiniteFeatureKernel.")
-        moment = jnp.asarray(feature_moment, dtype=kernel.feature_factor.dtype)
+        moment_dtype = (
+            kernel.feature_factor.dtype
+            if isinstance(kernel, FiniteFeatureKernel)
+            else jnp.float64
+        )
+        moment = jnp.asarray(feature_moment, dtype=moment_dtype)
         if moment.shape != (kernel.feature_rank,):
             raise ValueError("feature_moment must align with the whitened feature rank.")
         moment = eqx.error_if(
@@ -358,7 +372,7 @@ def _kernel_support(
     if isinstance(samples, cx.AxisArray):
         position = samples.dims.index(axis) if isinstance(axis, str) else axis
         support = jnp.moveaxis(samples.data, position, 0)
-    elif isinstance(samples, (jax.Array, jax.core.Tracer)):
+    elif isinstance(samples, (jax.Array, jax_core.Tracer)):
         position = axis if isinstance(axis, int) else 0
         support = jnp.moveaxis(samples, position, 0)
     elif isinstance(samples, PointBatch):

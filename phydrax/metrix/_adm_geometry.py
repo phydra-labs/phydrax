@@ -9,7 +9,8 @@ from math import pi
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
@@ -28,7 +29,7 @@ class ADMConstraintResiduals(StrictModule):
     hamiltonian: Array
     momentum: Array
 
-    def __init__(self, hamiltonian: ArrayLike, momentum: ArrayLike, /):
+    def __init__(self, hamiltonian: ArrayLike, momentum: ArrayLike, /) -> None:
         self.hamiltonian = jnp.asarray(hamiltonian)
         self.momentum = jnp.asarray(momentum)
 
@@ -50,7 +51,7 @@ class _SpatialSliceMetricMap(StrictModule):
         spacetime_metric: LorentzianMetric,
         time: Array,
         /,
-    ):
+    ) -> None:
         self.spacetime_metric = spacetime_metric
         self.time = jnp.asarray(time)
 
@@ -279,7 +280,7 @@ def _momentum_source(
     value: ArrayLike | None,
     leading_shape: tuple[int, ...],
     spatial_dimension: int,
-    dtype,
+    dtype: DTypeLike,
     /,
 ) -> Array:
     expected = leading_shape + (spatial_dimension,)

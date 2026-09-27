@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 
@@ -13,12 +14,15 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
 
+VirtualElementConformity: TypeAlias = Literal["H1", "Hdiv", "Hcurl", "L2"]
+
+
 class VirtualElementSpec(StrictModule, NonTrainableState):
     """One bounded virtual-element family specification."""
 
     family: str = eqx.field(static=True)
     degree: int = eqx.field(static=True)
-    conformity: str = eqx.field(static=True)
+    conformity: VirtualElementConformity = eqx.field(static=True)
     enhanced: bool = eqx.field(static=True)
     value_shape: tuple[int, ...] = eqx.field(static=True)
     element_id: str = eqx.field(static=True)
@@ -32,7 +36,7 @@ class VirtualElementSpec(StrictModule, NonTrainableState):
         conformity: str = "H1",
         enhanced: bool = True,
         value_shape: Sequence[int] = (),
-    ):
+    ) -> None:
         family_ = str(family)
         degree_ = int(degree)
         conformity_ = str(conformity)
@@ -43,7 +47,7 @@ class VirtualElementSpec(StrictModule, NonTrainableState):
             shape = (2,)
         elif family_ == "DiscontinuousL2" and shape:
             raise ValueError("DiscontinuousL2 currently requires scalar values.")
-        families = {
+        families: dict[str, VirtualElementConformity] = {
             "ConformingH1": "H1",
             "ConformingHdiv": "Hdiv",
             "ConformingHcurl": "Hcurl",
@@ -66,7 +70,7 @@ class VirtualElementSpec(StrictModule, NonTrainableState):
             raise ValueError("Virtual-element value dimensions must be positive.")
         self.family = family_
         self.degree = degree_
-        self.conformity = conformity_
+        self.conformity = expected_conformity
         self.enhanced = True
         self.value_shape = shape
         self.element_id = canonical_fingerprint(
@@ -152,7 +156,7 @@ class VirtualElementFieldSpec(StrictModule, NonTrainableState):
         /,
         *,
         component_shape: Sequence[int] = (),
-    ):
+    ) -> None:
         name_ = str(name)
         shape = tuple(component_shape)
         if not name_:

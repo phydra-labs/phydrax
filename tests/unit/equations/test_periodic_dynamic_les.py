@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -29,7 +32,7 @@ from phydrax.equations._periodic_dynamic_les import (
 from phydrax.equations._periodic_les import PeriodicFourierGridFilterPlan
 
 
-def _space(count, *, lengths=(2.0 * np.pi,) * 3):
+def _space(count: Any, *, lengths: Any = (2.0 * np.pi,) * 3) -> Any:
     return phx.discretization.TensorSpectralPlan(
         tuple(phx.discretization.FourierBasisPlan(count) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -39,7 +42,7 @@ def _space(count, *, lengths=(2.0 * np.pi,) * 3):
     )
 
 
-def _filter(name):
+def _filter(name: Any) -> Any:
     return ResolvedLESFilter(
         name,
         family="sharp-fourier-projection",
@@ -53,15 +56,15 @@ def _filter(name):
 
 
 def _prepared(
-    resolved,
-    test,
+    resolved: Any,
+    test: Any,
     *,
-    averaging=None,
-    regularization=None,
-    backscatter=None,
-    ratio=(2.0, 2.0, 2.0),
-    oversampling=2.0,
-):
+    averaging: Any = None,
+    regularization: Any = None,
+    backscatter: Any = None,
+    ratio: Any = (2.0, 2.0, 2.0),
+    oversampling: Any = 2.0,
+) -> Any:
     resolved_filter = _filter("resolved retained Fourier projection")
     test_filter = _filter("coarse test Fourier projection")
     parameters = LESParameterProvenance(
@@ -93,13 +96,13 @@ def _prepared(
     )
 
 
-def _state(space):
+def _state(space: Any) -> Any:
     projector = phx.discretization.PeriodicLerayProjector(space)
     values = jax.random.normal(jax.random.PRNGKey(17), space.physical_shape + (3,))
     return projector.project(space.project(values))
 
 
-def test_periodic_test_filter_is_exact_distinct_retained_projection():
+def test_periodic_test_filter_is_exact_distinct_retained_projection() -> None:
     resolved = _space(8)
     test = _space(4)
     prepared = _prepared(resolved, test)
@@ -123,7 +126,9 @@ def test_periodic_test_filter_is_exact_distinct_retained_projection():
     assert prepared.test_filter.boundary_support == "periodic"
 
 
-def test_periodic_adapter_recovers_synthetic_coefficient_from_constructed_model_tensor():
+def test_periodic_adapter_recovers_synthetic_coefficient_from_constructed_model_tensor() -> (
+    None
+):
     resolved = _space(8)
     prepared = _prepared(resolved, _space(4))
     inputs, _, _, _ = prepared._germano_inputs(
@@ -147,7 +152,7 @@ def test_periodic_adapter_recovers_synthetic_coefficient_from_constructed_model_
     )
 
 
-def test_periodic_dynamic_stage_stress_rate_transfer_and_energy_identity():
+def test_periodic_dynamic_stage_stress_rate_transfer_and_energy_identity() -> None:
     resolved = _space(8)
     prepared = _prepared(
         resolved,
@@ -186,7 +191,9 @@ def test_periodic_dynamic_stage_stress_rate_transfer_and_energy_identity():
         ),
     ),
 )
-def test_periodic_global_plane_and_local_routes(averaging, expected_shape):
+def test_periodic_global_plane_and_local_routes(
+    averaging: Any, expected_shape: Any
+) -> None:
     resolved = _space(8)
     prepared = _prepared(resolved, _space(4), averaging=averaging)
 
@@ -197,7 +204,7 @@ def test_periodic_global_plane_and_local_routes(averaging, expected_shape):
     assert stage.accepted_update_mask.shape == ()
 
 
-def test_periodic_history_mask_restart_and_no_hidden_commit():
+def test_periodic_history_mask_restart_and_no_hidden_commit() -> None:
     resolved = _space(8)
     prepared = _prepared(
         resolved,
@@ -228,7 +235,7 @@ def test_periodic_history_mask_restart_and_no_hidden_commit():
     assert restarted.dynamic_result.evidence.rejected_update_count == accepted.size
 
 
-def test_periodic_signed_and_clipped_backscatter_are_policy_visible():
+def test_periodic_signed_and_clipped_backscatter_are_policy_visible() -> None:
     resolved = _space(8)
     signed = _prepared(resolved, _space(4), backscatter=AllowSignedBackscatter())
     clipped = _prepared(resolved, _space(4), backscatter=NonnegativeBackscatterClip())
@@ -258,7 +265,7 @@ def test_periodic_signed_and_clipped_backscatter_are_policy_visible():
     assert clipped_result.evidence.backscatter_activity_count == 1
 
 
-def test_periodic_adapter_is_jittable_and_has_finite_jvp():
+def test_periodic_adapter_is_jittable_and_has_finite_jvp() -> None:
     resolved = _space(8)
     prepared = _prepared(
         resolved,
@@ -279,7 +286,7 @@ def test_periodic_adapter_is_jittable_and_has_finite_jvp():
     assert jnp.isfinite(tangent)
 
 
-def test_periodic_dynamic_prepare_refuses_unsupported_filter_routes():
+def test_periodic_dynamic_prepare_refuses_unsupported_filter_routes() -> None:
     resolved = _space(8)
     with pytest.raises(ValueError, match="strictly coarser"):
         _prepared(resolved, _space(8), ratio=(1.01, 1.01, 1.01))
@@ -313,7 +320,7 @@ def test_periodic_dynamic_prepare_refuses_unsupported_filter_routes():
         )
 
 
-def test_periodic_compiler_consumes_dynamic_les_rate_and_evidence():
+def test_periodic_compiler_consumes_dynamic_les_rate_and_evidence() -> None:
     resolved = _space(8)
     test = _space(4)
     adapter = _prepared(
@@ -339,6 +346,7 @@ def test_periodic_compiler_consumes_dynamic_les_rate_and_evidence():
     assert stage.algebraic_les is None
     assert stage.dynamic_les is not None
     assert stage.dynamic_les.continuation_state is None
+    # ty: ignore[unresolved-attribute]
     assert dynamics.dynamic_les.prepared_id == stage.dynamic_les.prepared_id
     np.testing.assert_allclose(
         stage.rates.sgs_rate,
@@ -352,12 +360,15 @@ def test_periodic_compiler_consumes_dynamic_les_rate_and_evidence():
     )
     assert bool(diagnostics.dynamic_les_available)
     assert not bool(diagnostics.algebraic_les_available)
+    # ty: ignore[unresolved-attribute]
     assert diagnostics.dynamic_les_id == dynamics.dynamic_les.prepared_id
     assert bool(diagnostics.dynamic_evidence_finite)
     assert diagnostics.dynamic_regularization_activity_count > 0
 
 
-def test_periodic_compiler_lagrangian_state_is_explicit_and_rejection_preserves_history():
+def test_periodic_compiler_lagrangian_state_is_explicit_and_rejection_preserves_history() -> (
+    None
+):
     resolved = _space(8)
     test = _space(4)
     adapter = _prepared(
@@ -376,13 +387,16 @@ def test_periodic_compiler_lagrangian_state_is_explicit_and_rejection_preserves_
         dynamic_test_discretization=test,
     )
     velocity = _state(resolved)
+    # ty: ignore[unresolved-attribute]
     continuation = dynamics.dynamic_les.initial_state(velocity)
+    # ty: ignore[unresolved-attribute]
     accepted = dynamics.stage(
         0.0,
         velocity,
         continuation_state=continuation,
         accepted_update_mask=True,
     ).dynamic_les.continuation_state
+    # ty: ignore[unresolved-attribute]
     rejected = dynamics.stage(
         0.0,
         1.1 * velocity,
@@ -391,13 +405,22 @@ def test_periodic_compiler_lagrangian_state_is_explicit_and_rejection_preserves_
     ).dynamic_les.continuation_state
 
     np.testing.assert_array_equal(
-        rejected.averaged_numerator, accepted.averaged_numerator
+        # ty: ignore[unresolved-attribute]
+        rejected.averaged_numerator,
+        # ty: ignore[unresolved-attribute]
+        accepted.averaged_numerator,
     )
     np.testing.assert_array_equal(
-        rejected.averaged_denominator, accepted.averaged_denominator
+        # ty: ignore[unresolved-attribute]
+        rejected.averaged_denominator,
+        # ty: ignore[unresolved-attribute]
+        accepted.averaged_denominator,
     )
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(rejected.initialized_mask, accepted.initialized_mask)
+    # ty: ignore[unresolved-attribute]
     assert int(rejected.accepted_updates) == int(accepted.accepted_updates)
+    # ty: ignore[unresolved-attribute]
     assert int(rejected.rejected_updates) > int(accepted.rejected_updates)
     with pytest.raises(TypeError, match="explicit initialized continuation"):
         dynamics.stage(0.0, velocity)

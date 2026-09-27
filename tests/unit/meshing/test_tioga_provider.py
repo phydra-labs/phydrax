@@ -1,6 +1,7 @@
 import os
 import shlex
 import shutil
+from typing import Any
 
 import numpy as np
 import pytest
@@ -23,7 +24,15 @@ CENTERS = {"body-left": np.array((-2.0, 0.0, 0.0)), "body-right": np.array((2.0,
 TRANSLATION = np.array((0.75, 0.25, -0.25))
 
 
-def _grid(name, lower, upper, count, *, cavity=False, center=(0, 0, 0)):
+def _grid(
+    name: Any,
+    lower: Any,
+    upper: Any,
+    count: Any,
+    *,
+    cavity: Any = False,
+    center: Any = (0, 0, 0),
+) -> Any:
     axis = np.linspace(lower, upper, count)
     coordinates = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1).reshape(
         -1, 3
@@ -67,7 +76,7 @@ def _grid(name, lower, upper, count, *, cavity=False, center=(0, 0, 0)):
     return MeshPart(name, certify_cell_mesh(mesh, SpatialCoordinateContract.si()))
 
 
-def _options(executable, ranks):
+def _options(executable: Any, ranks: Any) -> Any:
     launcher = os.environ.get("PHYDRAX_TIOGA_MPI_LAUNCHER", "mpiexec")
     if ranks > 1 and shutil.which(launcher) is None:
         pytest.skip("MPI launcher is not installed")
@@ -83,7 +92,7 @@ def _options(executable, ranks):
 
 
 @pytest.fixture(scope="module")
-def overset_case():
+def overset_case() -> Any:
     executable = shutil.which(
         os.environ.get("PHYDRAX_TIOGA_WORKER", "phydrax-tioga-worker")
     )
@@ -107,7 +116,7 @@ def overset_case():
     return executable, MeshAssembly(tuple(parts)), tuple(walls), tuple(overset)
 
 
-def _assert_overset_assembly(result, centers):
+def _assert_overset_assembly(result: Any, centers: Any) -> None:
     """Holes lie inside the solids, receptors match donors, and transfer is affine-exact."""
     by_name = {status.part_name: status for status in result.blanking}
     background = by_name["background"]
@@ -158,7 +167,7 @@ def _assert_overset_assembly(result, centers):
             )
 
 
-def _blanking(result):
+def _blanking(result: Any) -> Any:
     return {
         status.part_name: (np.asarray(status.node_iblank), np.asarray(status.cell_iblank))
         for status in result.blanking
@@ -166,7 +175,7 @@ def _blanking(result):
 
 
 @pytest.mark.parametrize("ranks", (1, 2))
-def test_tioga_real_hole_cut_and_affine_transfer(overset_case, ranks):
+def test_tioga_real_hole_cut_and_affine_transfer(overset_case: Any, ranks: Any) -> None:
     executable, assembly, walls, overset = overset_case
     with TiogaProvider(_options(executable, ranks)) as provider:
         result = provider.execute(assembly, wall_scopes=walls, overset_scopes=overset)
@@ -178,7 +187,7 @@ def test_tioga_real_hole_cut_and_affine_transfer(overset_case, ranks):
     _assert_overset_assembly(result, CENTERS)
 
 
-def test_tioga_reuses_one_worker_session_across_registrations(overset_case):
+def test_tioga_reuses_one_worker_session_across_registrations(overset_case: Any) -> None:
     executable, assembly, walls, overset = overset_case
     with TiogaProvider(_options(executable, 1)) as provider:
         first = provider.execute(assembly, wall_scopes=walls, overset_scopes=overset)
@@ -190,10 +199,13 @@ def test_tioga_reuses_one_worker_session_across_registrations(overset_case):
 
 
 @pytest.mark.parametrize("ranks", (1, 2))
-def test_tioga_moves_parts_without_restarting_the_worker(overset_case, ranks):
+def test_tioga_moves_parts_without_restarting_the_worker(
+    overset_case: Any, ranks: Any
+) -> None:
     executable, assembly, walls, overset = overset_case
     with TiogaProvider(_options(executable, ranks)) as provider:
         first = provider.execute(assembly, wall_scopes=walls, overset_scopes=overset)
+        # ty: ignore[unresolved-attribute]
         right = np.asarray(first.assembly.part("body-right").carrier.mesh.coordinates)
 
         unchanged = provider.move(first, {"body-right": right})
@@ -232,7 +244,9 @@ def test_tioga_moves_parts_without_restarting_the_worker(overset_case, ranks):
     assert stale.value.category is MeshingFailureCategory.INVALID_SPECIFICATION
 
     np.testing.assert_array_equal(
-        moved.assembly.part("body-right").carrier.mesh.coordinates, right + TRANSLATION
+        # ty: ignore[unresolved-attribute]
+        moved.assembly.part("body-right").carrier.mesh.coordinates,
+        right + TRANSLATION,
     )
     assert (
         moved.assembly.part("body-left").part_id
@@ -250,10 +264,11 @@ def test_tioga_moves_parts_without_restarting_the_worker(overset_case, ranks):
     ]
 
 
-def test_tioga_move_after_session_loss_fails_explicitly(overset_case):
+def test_tioga_move_after_session_loss_fails_explicitly(overset_case: Any) -> None:
     executable, assembly, walls, overset = overset_case
     provider = TiogaProvider(_options(executable, 1))
     result = provider.execute(assembly, wall_scopes=walls, overset_scopes=overset)
+    # ty: ignore[unresolved-attribute]
     right = np.asarray(result.assembly.part("body-right").carrier.mesh.coordinates)
     provider.close()
 
@@ -264,7 +279,7 @@ def test_tioga_move_after_session_loss_fails_explicitly(overset_case):
     assert failure.value.category is MeshingFailureCategory.INVALID_SPECIFICATION
 
 
-def test_tioga_rejects_surface_cells_before_loading_native_dependency():
+def test_tioga_rejects_surface_cells_before_loading_native_dependency() -> None:
     mesh = CellMesh(
         np.array(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))),
         (CellBlock("surface", "triangle", np.array(((0, 1, 2),))),),
@@ -278,7 +293,7 @@ def test_tioga_rejects_surface_cells_before_loading_native_dependency():
     assert failure.value.category is MeshingFailureCategory.UNSUPPORTED_CAPABILITY
 
 
-def test_tioga_refuses_entity_budget_before_native_launch():
+def test_tioga_refuses_entity_budget_before_native_launch() -> None:
     first = _grid("first", 0.0, 1.0, 2)
     second = _grid("second", 2.0, 3.0, 2)
     assembly = MeshAssembly((first, second))

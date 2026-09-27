@@ -12,7 +12,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
@@ -91,7 +91,7 @@ class FunctionalTimeWindowPlan(StrictModule):
         | None = None,
         transfer_optimizer_state: bool = False,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(schedule, CausalTimeSlabSchedule):
             raise TypeError("schedule must be a CausalTimeSlabSchedule.")
         if not isinstance(adapter, FunctionalWindowAdapter):
@@ -154,7 +154,7 @@ class FunctionalTimeWindowResult(StrictModule):
         /,
         *,
         plan_id: str,
-    ):
+    ) -> None:
         solvers_ = tuple(solvers)
         terminals = tuple(frozendict(value) for value in terminal_fields)
         seams = tuple(frozendict(value) for value in seam_metrics)
@@ -175,7 +175,7 @@ class FunctionalTimeWindowResult(StrictModule):
         self.successful = jnp.asarray(finite)
         self.plan_id = str(plan_id)
 
-    def solver_at(self, time: Array, /):
+    def solver_at(self, time: Array, /) -> Any:
         value = jnp.asarray(time)
         if value.shape != ():
             raise ValueError("Window queries require one scalar physical time.")
@@ -320,7 +320,7 @@ def train_functional_time_windows(
         )
         optimizer = plan.optimizer(index)
         transferred = False
-        if plan.transfer_optimizer_state and index > 0:
+        if plan.transfer_optimizer_state and index > 0 and training is not None:
             built, transferred = _transfer_training_state(
                 current,
                 built,

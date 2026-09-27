@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -58,7 +60,7 @@ from phydrax.solver._runtime_lifecycle import (
 cosmology = phx.applications.cosmology
 
 
-def _reference():
+def _reference() -> Any:
     return ReferenceArtifactManifest(
         "dark-matter-reference",
         checksum_algorithm="sha256",
@@ -76,7 +78,7 @@ def _reference():
     )
 
 
-def _campaign(criteria):
+def _campaign(criteria: Any) -> Any:
     calibration = ScientificCase(
         "calibration-case",
         "calibration-unit",
@@ -123,7 +125,9 @@ _CLAIM_FACTORIES = (
 
 
 @pytest.mark.parametrize(("name", "factory"), _CLAIM_FACTORIES)
-def test_dark_matter_claim_profiles_are_independent_and_complete(name, factory):
+def test_dark_matter_claim_profiles_are_independent_and_complete(
+    name: Any, factory: Any
+) -> None:
     metric_ids = qualification.dark_matter_claim_metric_ids(name)
     criteria = qualification.dark_matter_claim_criteria(
         name,
@@ -156,7 +160,7 @@ def test_dark_matter_claim_profiles_are_independent_and_complete(name, factory):
     assert "missing-or-inadmissible-source-rights" in claim.invalidation_triggers
 
 
-def _wave_case(schedule=(1.0, 1.001, 1.002), *, dtype=jnp.float64):
+def _wave_case(schedule: Any = (1.0, 1.001, 1.002), *, dtype: Any = jnp.float64) -> Any:
     precision = phx.discretization.SpectralPrecisionPolicy(dtype)
     space = phx.discretization.TensorSpectralPlan(
         (phx.discretization.FourierBasisPlan(6),),
@@ -182,10 +186,12 @@ def _wave_case(schedule=(1.0, 1.001, 1.002), *, dtype=jnp.float64):
     return prepared, prepared.initialize(jnp.ones((6,), dtype=complex_dtype))
 
 
-def test_periodic_wave_adapter_executes_one_bounded_transaction_and_rolls_back():
+def test_periodic_wave_adapter_executes_one_bounded_transaction_and_rolls_back() -> None:
     prepared, state = _wave_case()
     method = PeriodicWaveProductionMethod(prepared)
+    # ty: ignore[invalid-argument-type]
     first = method.step(0, 1.0, state, 0.001, None)
+    # ty: ignore[invalid-argument-type]
     second = method.step(1, 1.001, first.accepted_state, 0.001, None)
 
     assert bool(first.successful)
@@ -196,6 +202,7 @@ def test_periodic_wave_adapter_executes_one_bounded_transaction_and_rolls_back()
     assert run_plan.maximum_steps == 2
     assert not method.allows_step_reduction
 
+    # ty: ignore[invalid-argument-type]
     rejected = method.step(0, 0.9, state, 0.001, None)
     assert not bool(rejected.successful)
     np.testing.assert_array_equal(rejected.accepted_state.psi, state.psi)
@@ -204,7 +211,9 @@ def test_periodic_wave_adapter_executes_one_bounded_transaction_and_rolls_back()
     )
 
 
-def test_periodic_wave_decimal_knots_run_through_production_runtime(tmp_path):
+def test_periodic_wave_decimal_knots_run_through_production_runtime(
+    tmp_path: Any,
+) -> None:
     prepared, state = _wave_case(
         jnp.asarray((0.1, 0.2, 0.3), dtype=jnp.float32),
         dtype=jnp.float32,
@@ -260,7 +269,7 @@ def test_periodic_wave_decimal_knots_run_through_production_runtime(tmp_path):
     assert int(result.state.output_cursor) == 2
 
 
-def _gravity(particles):
+def _gravity(particles: Any) -> Any:
     axes = tuple(
         phx.discretization.UniformCellAxisSpec(4, periodic=True) for _ in range(3)
     )
@@ -286,6 +295,7 @@ def _gravity(particles):
         ),
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.3, maximum_retries=0),
@@ -298,7 +308,7 @@ def _gravity(particles):
     )
 
 
-def _sidm_case():
+def _sidm_case() -> Any:
     positions = jnp.asarray(
         (
             (0.25, 0.25, 0.25),
@@ -315,6 +325,7 @@ def _sidm_case():
     particle_mesh = cosmology.CosmologicalParticleMeshPlan(
         kdk,
         _gravity(particles),
+        # ty: ignore[invalid-argument-type]
         (0.5, 0.51, 0.52),
     )
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(
@@ -347,11 +358,13 @@ def _sidm_case():
     return sidm, state, particles
 
 
-def test_rare_sidm_adapter_preserves_stable_ids_root_key_and_event_epoch():
+def test_rare_sidm_adapter_preserves_stable_ids_root_key_and_event_epoch() -> None:
     sidm, particles, support = _sidm_case()
     method = RareSIDMProductionMethod(sidm, cosmology.FLRWBackground(1.0, 0.3))
     initial = method.initialize(particles, jr.key(17), event_epoch=8)
+    # ty: ignore[invalid-argument-type]
     first = method.step(0, 0.5, initial, 0.01, None)
+    # ty: ignore[invalid-argument-type]
     second = method.step(1, 0.51, first.accepted_state, 0.01, None)
 
     assert bool(first.successful)
@@ -363,7 +376,9 @@ def test_rare_sidm_adapter_preserves_stable_ids_root_key_and_event_epoch():
     assert method.production_run_plan(segment_steps=1).maximum_steps == 2
 
 
-def _checkpoint_contract(restart_template, *, physics_id="physics", support_id="support"):
+def _checkpoint_contract(
+    restart_template: Any, *, physics_id: Any = "physics", support_id: Any = "support"
+) -> Any:
     return DarkMatterCheckpointContract(
         profile_name="rare-sidm-equal",
         physics_id=physics_id,
@@ -380,7 +395,9 @@ def _checkpoint_contract(restart_template, *, physics_id="physics", support_id="
     )
 
 
-def _restart_snapshot(*, parent=None, epoch=12, output_cursor=4, value=3.0):
+def _restart_snapshot(
+    *, parent: Any = None, epoch: Any = 12, output_cursor: Any = 4, value: Any = 3.0
+) -> Any:
     return DarkMatterRestartSnapshot(
         cosmology.CosmologicalParticleState(
             jnp.asarray(((value, 0.0, 0.0), (0.0, value, 0.0))),
@@ -402,7 +419,9 @@ def _restart_snapshot(*, parent=None, epoch=12, output_cursor=4, value=3.0):
     )
 
 
-def test_checkpoint_payload_roundtrips_and_rejects_changed_physics_or_support(tmp_path):
+def test_checkpoint_payload_roundtrips_and_rejects_changed_physics_or_support(
+    tmp_path: Any,
+) -> None:
     snapshot = _restart_snapshot()
     contract = _checkpoint_contract(snapshot)
     payload = contract.payload(snapshot)
@@ -454,7 +473,7 @@ def test_checkpoint_payload_roundtrips_and_rejects_changed_physics_or_support(tm
     np.testing.assert_array_equal(latest.snapshot.stable_ids, snapshot.stable_ids)
 
 
-def _artifact(kind, *, parents=()):
+def _artifact(kind: Any, *, parents: Any = ()) -> Any:
     return ScientificArtifactEnvelope(
         artifact_kind=kind,
         content_digest=f"{kind}-content",
@@ -468,7 +487,7 @@ def _artifact(kind, *, parents=()):
     )
 
 
-def test_typed_analysis_products_compose_without_becoming_restart_state():
+def test_typed_analysis_products_compose_without_becoming_restart_state() -> None:
     wave_prepared, wave_initial = _wave_case((0.5, 0.5001))
     wave_result = wave_prepared.solve(wave_initial)
     poisson_result = wave_prepared.poisson(wave_result.state)
@@ -518,6 +537,7 @@ def test_typed_analysis_products_compose_without_becoming_restart_state():
     particle_plan = cosmology.CosmologicalParticleMeshPlan(
         particle_kinematics,
         _gravity(particle_support),
+        # ty: ignore[invalid-argument-type]
         (0.5, 0.5001),
     )
     particle_initial = particle_kinematics.initialize(
@@ -612,6 +632,7 @@ def test_typed_analysis_products_compose_without_becoming_restart_state():
         particle_source_mass=jnp.asarray(2.0),
         particle_deposited_mass=jnp.asarray(2.0),
         particle_mass_balance_defect=jnp.asarray(0.0),
+        # ty: ignore[invalid-argument-type]
         particle_routes=None,
         scale_factor=wave_result.state.scale_factor,
         density_nonnegative=jnp.asarray(True),
@@ -651,6 +672,7 @@ def test_typed_analysis_products_compose_without_becoming_restart_state():
     mixed_result = WaveParticleGasCosmologyResult(
         mixed_state,
         gravity_result,
+        # ty: ignore[invalid-argument-type]
         None,
         jnp.asarray(True),
         "test-mixed-gas",

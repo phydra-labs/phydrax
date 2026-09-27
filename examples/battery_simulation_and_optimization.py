@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -82,6 +83,7 @@ def _prepared_experiment(
         500.0, 298.15, relaxed=True
     )
     prepared = battery.BatteryExperimentPlan(
+        # ty: ignore[invalid-argument-type]
         battery.ThermalEquivalentCircuitAdapter(battery.ThermalEquivalentCircuitPlan(2)),
         protocol,
         battery.BatteryOutputPlan(
@@ -177,7 +179,7 @@ def run_example(
 
     charge_index = prepared.plan.outputs.names.index("charge_c")
 
-    def objective(current_a, _args):
+    def objective(current_a: Any, _args: Any) -> Any:
         trial = _run(prepared, protocol, parameters, initial, current_a)
         charge_error_a_s = (
             trial.outputs.values[-1, charge_index] - _TARGET_CHARGE_C

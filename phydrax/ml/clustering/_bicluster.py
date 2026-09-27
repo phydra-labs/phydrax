@@ -9,7 +9,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -75,7 +75,7 @@ class BiclusterDiagnostics(StrictModule):
         column_active: Any,
         degeneracy: Any,
         method: str,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.objective = jnp.asarray(objective)
@@ -115,7 +115,7 @@ class BiclusterModel(AbstractFittedModel):
         /,
         *,
         method: str,
-    ):
+    ) -> None:
         self.row_centers = jnp.asarray(row_centers)
         self.row_active = jnp.asarray(row_active, dtype=jnp.bool_)
         self.column_labels = jax.lax.stop_gradient(
@@ -267,7 +267,7 @@ class SpectralBiclustering(AbstractRecipe):
         max_iterations: int = 32,
         temperature: float = 1.0,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if row_clusters <= 0 or column_clusters <= 0 or max_iterations <= 0:
             raise ValueError(
                 "row_clusters, column_clusters, and max_iterations must be positive."
@@ -348,7 +348,7 @@ class SpectralCoclustering(AbstractRecipe):
         kmeans_iterations: int = 32,
         temperature: float = 1.0,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if row_clusters <= 0 or column_clusters <= 0 or kmeans_iterations <= 0:
             raise ValueError(
                 "row_clusters, column_clusters, and kmeans_iterations must be positive."

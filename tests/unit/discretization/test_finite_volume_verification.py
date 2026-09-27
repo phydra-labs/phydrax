@@ -8,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_error_norms_and_observed_order_use_physical_cell_measure():
+def test_error_norms_and_observed_order_use_physical_cell_measure() -> None:
     numerical = jnp.asarray([[1.1], [1.8], [3.2]])
     exact = jnp.asarray([[1.0], [2.0], [3.0]])
     volumes = jnp.asarray([0.2, 0.5, 0.3])
@@ -24,19 +24,22 @@ def test_error_norms_and_observed_order_use_physical_cell_measure():
     assert convergence.passed
 
 
-def test_periodic_advection_case_exact_solution_advects_without_shape_loss():
+def test_periodic_advection_case_exact_solution_advects_without_shape_loss() -> None:
     case = phx.equations.periodic_advection_verification_case(0.7)
     points = ((jnp.arange(16.0) + 0.5) / 16.0)[:, None]
+    # ty: ignore[invalid-argument-type]
     initial = case.initial_state(points, 0.0, None)
+    # ty: ignore[call-non-callable, invalid-argument-type]
     exact_period = case.exact_state(points, 1.0 / 0.7, None)
 
     np.testing.assert_allclose(exact_period, initial, atol=2e-12)
     assert initial.shape == (16, 1)
 
 
-def test_sod_case_and_viscous_reference_profiles_are_physical():
+def test_sod_case_and_viscous_reference_profiles_are_physical() -> None:
     case = phx.equations.sod_verification_case()
     points = ((jnp.arange(20.0) + 0.5) / 20.0)[:, None]
+    # ty: ignore[invalid-argument-type]
     state = case.initial_state(points, 0.0, None)
     primitive = case.system.conserved_to_primitive(state)
     assert jnp.all(case.system.admissible(state))
@@ -50,13 +53,14 @@ def test_sod_case_and_viscous_reference_profiles_are_physical():
     np.testing.assert_allclose(poiseuille[jnp.asarray([0, -1])], 0.0, atol=0.0)
 
 
-def test_severe_euler_reference_initial_states_are_admissible():
+def test_severe_euler_reference_initial_states_are_admissible() -> None:
     points = ((jnp.arange(64.0) + 0.5) / 64.0)[:, None]
     for case in (
         phx.equations.lax_verification_case(),
         phx.equations.double_rarefaction_verification_case(),
         phx.equations.woodward_colella_verification_case(),
     ):
+        # ty: ignore[invalid-argument-type]
         state = case.initial_state(points, 0.0, None)
         assert state.shape == (64, 3)
         assert jnp.all(case.system.admissible(state))

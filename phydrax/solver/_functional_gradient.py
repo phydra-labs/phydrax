@@ -15,7 +15,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
@@ -103,6 +104,8 @@ from ._functional_kernel import (
     resume_functional_kernel_state,
 )
 from ._functional_objective import (
+    _FunctionalObjective,
+    _PreparedObjective,
     evaluate_prepared_objective,
     evaluate_prepared_scalar_remainder,
     prepared_data_metrics,
@@ -436,7 +439,7 @@ class _ConflictFreeOptaxRule(AbstractKernelUpdateRule):
         evaluation_parameters: EvaluationParametersFn | None,
         component_count: int,
         statistics_dtype: Any,
-    ):
+    ) -> None:
         if composition is None and alignment is None:
             raise ValueError("A conflict-free rule requires a composition or alignment.")
         self.optimizer = optimizer
@@ -525,6 +528,9 @@ class _ConflictFreeOptaxRule(AbstractKernelUpdateRule):
             gradient_conflict, constructed_conflict = _alignment_conflicts(
                 components, gradients, result, self.alignment
             )
+            # init() always carries statistics when an alignment policy is set.
+            if not (statistics is not None):
+                raise RuntimeError("Internal invariant failed: statistics is not None.")
             statistics = statistics.update(
                 result,
                 gradient_conflict=gradient_conflict,
@@ -706,14 +712,23 @@ def _prepared_native_state(
     rule = kernel.rule
     parameters = state.parameters
     if route.least_squares is not None:
+        # _functional_update_rule builds the kernel rule from this same route.
+        if not (isinstance(rule, LeastSquaresUpdateRule)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(rule, LeastSquaresUpdateRule)."
+            )
         residual = rule.residual(state.model_state, kernel.fixed, payload)
         return eqx.filter_jit(route.least_squares.prepare_state)(residual, parameters)
-    if route.composite is not None:
+    composite = route.composite
+    if composite is not None:
+        # _functional_update_rule builds the kernel rule from this same route.
+        if not (isinstance(rule, CompositeLeastSquaresUpdateRule)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(rule, CompositeLeastSquaresUpdateRule)."
+            )
         problem = rule.problem(state.model_state, kernel.fixed, payload)
         return eqx.filter_jit(
-            lambda parameters_: route.composite.prepare_state(
-                problem, parameters_, args=None
-            )
+            lambda parameters_: composite.prepare_state(problem, parameters_, args=None)
         )(parameters)
     if route.iterative is None:
         raise RuntimeError("Only native methods prepare a method state.")
@@ -1489,7 +1504,17 @@ def solve_gradient(
             previous_gradient,
         ) = frontend_state(resume_state)
 
-        def prepare_microstep(current_objective, state_, iteration):
+        def prepare_microstep(
+            current_objective: _FunctionalObjective,
+            state_: TrainingKernelState,
+            iteration: int,
+        ) -> tuple[
+            _FunctionalObjective,
+            _PreparedObjective | PreparedFunctionalUpdate,
+            tuple[int, ...],
+            Any,
+            float,
+        ]:
             current_params, held = legacy_lanes(state_)
             functions_snapshot_ = _reconstruct_functions(current_params, held)
             refresh_started_ = time.perf_counter() if profile_adaptive else 0.0
@@ -1612,7 +1637,7 @@ def solve_gradient(
             resume_state = restored.state
             restored_objective = restored.objective
             source_functions = resume_state.current_functions
-            if subspace is not None:
+            if parameter_paths is not None:
                 subspace, surrogate_filter = _explicit_subspace(
                     source_functions,
                     parameter_paths,
@@ -1653,7 +1678,7 @@ def solve_gradient(
         )
         if resume_state is None:
             control.best_payload = current_evaluation_params
-        elif subspace is None:
+        elif parameter_paths is None:
             control.best_payload = functional_lanes(
                 *partition_parameters(
                     functional_training_tree(
@@ -1723,7 +1748,12 @@ def solve_gradient(
                 resumed_from_step=start_update_step,
             )
 
-        def publish_checkpoint(checkpoint_solver, checkpoint_state, *, final):
+        def publish_checkpoint(
+            checkpoint_solver: FunctionalSolver,
+            checkpoint_state: FunctionalTrainingState,
+            *,
+            final: bool,
+        ) -> None:
             if training is None or training.checkpoint is None:
                 return
             if sharding_policy is not None:
@@ -1744,7 +1774,7 @@ def solve_gradient(
                     f"functional-checkpoint-after-{checkpoint_state.progress.update_step}"
                 )
 
-        if start_epoch >= int(num_iter):
+        if resume_state is not None and start_epoch >= int(num_iter):
             control.emit(
                 TrainingIterationKind.RUN_TERMINAL,
                 metrics={"completed_steps": control.progress.update_step},
@@ -1926,6 +1956,11 @@ def solve_gradient(
                             :2
                         ]
                         values_arr = jnp.asarray(values_arr, dtype=jnp.float64)
+                    # The single-microstep branch above always prepares an update.
+                    if not (prepared is not None):
+                        raise RuntimeError(
+                            "Internal invariant failed: prepared is not None."
+                        )
                     active_term_count = len(prepared.terms)
                     train_term_values = _expanded_train_terms(
                         values_arr[:active_term_count],

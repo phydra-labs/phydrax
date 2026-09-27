@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from math import prod
 from typing import Literal
 
@@ -15,11 +15,13 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._probability import AbstractProbabilityLaw
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._kernel import FactorGraphResourcePolicy
 from ._model import (
     DiscreteFactorGraph,
@@ -89,7 +91,7 @@ class VariableEliminationMethod(StrictModule):
         *,
         ordering: Literal["min-fill", "min-degree", "given"] = "min-fill",
         order: Sequence[int] | None = None,
-    ):
+    ) -> None:
         if ordering not in ("min-fill", "min-degree", "given"):
             raise ValueError("Unknown elimination ordering policy.")
         resolved = None if order is None else tuple(order)
@@ -104,13 +106,15 @@ class VariableEliminationMethod(StrictModule):
 
 def _initial_scopes(graph: DiscreteFactorGraph) -> list[set[int]]:
     scopes: list[set[int]] = []
-    for scope in graph.factor_scopes:
-        scopes.extend({int(value) for value in row} for row in np.asarray(scope))
+    for scope in graph._host_topology.factor_scopes:
+        scopes.extend({int(value) for value in row} for row in scope)
     scopes.extend({variable} for variable in range(graph.num_variables))
     return scopes
 
 
-def _choose_order(graph: DiscreteFactorGraph, method: VariableEliminationMethod):
+def _choose_order(
+    graph: DiscreteFactorGraph, method: VariableEliminationMethod
+) -> tuple[tuple[int, ...], tuple[tuple[int, ...], ...], int, int]:
     if method.ordering == "given":
         assert method.order is not None
         if sorted(method.order) != list(range(graph.num_variables)):
@@ -153,7 +157,7 @@ def _choose_order(graph: DiscreteFactorGraph, method: VariableEliminationMethod)
     active = _initial_scopes(graph)
     induced: list[tuple[int, ...]] = []
     maximum = 1
-    cards = np.asarray(graph.cardinalities, dtype=np.int64)
+    cards = graph._host_topology.cardinalities
     for variable in order:
         involved = [scope for scope in active if variable in scope]
         union = set().union(*involved) if involved else {variable}
@@ -216,7 +220,7 @@ def plan_variable_elimination(
 
 def _align(
     table: Array, scope: tuple[int, ...], union: tuple[int, ...], cards: tuple[int, ...]
-):
+) -> Array:
     present = tuple(variable for variable in union if variable in scope)
     permutation = tuple(scope.index(variable) for variable in present)
     transposed = (
@@ -230,13 +234,17 @@ def _align(
     return transposed.reshape(shape)
 
 
-def _factor_tables(graph: DiscreteFactorGraph, evidence: Array):
+def _factor_tables(
+    plan: VariableEliminationPlan, evidence: Array
+) -> list[tuple[tuple[int, ...], Array]]:
+    graph = plan.graph
     factors: list[tuple[tuple[int, ...], Array]] = []
-    for group_index, scope in enumerate(graph.factor_scopes):
+    topology = graph._host_topology
+    for group_index, rows in enumerate(topology.factor_scopes):
         tables = factor_group_dense_tables(graph, group_index)
-        for factor, row in enumerate(np.asarray(scope, dtype=np.int32)):
-            factors.append((tuple(row), tables[factor]))
-    offsets = np.asarray(graph.variable_state_offsets)
+        for factor, row in enumerate(rows):
+            factors.append((tuple(int(value) for value in row), tables[factor]))
+    offsets = topology.state_offsets
     for variable in range(graph.num_variables):
         factors.append(
             (
@@ -254,9 +262,8 @@ def _eliminate(
     *,
     mode: Literal["sum", "max"],
 ) -> Array:
-    graph = plan.graph
-    cards_by_variable = tuple(np.asarray(graph.cardinalities))
-    factors = _factor_tables(graph, evidence)
+    cards_by_variable = plan.graph._host_topology.cardinalities
+    factors = _factor_tables(plan, evidence)
     constants: list[Array] = []
     for variable in plan.order:
         involved = [(scope, table) for scope, table in factors if variable in scope]
@@ -292,14 +299,14 @@ def _eliminate(
 
 
 def _clamp_evidence(
-    graph: DiscreteFactorGraph,
+    plan: VariableEliminationPlan,
     evidence: Array,
-    assignments: dict[int, int | Array],
-):
+    assignments: Mapping[int, ArrayLike],
+) -> Array:
     result = evidence
-    offsets = np.asarray(graph.variable_state_offsets)
+    offsets = plan.graph._host_topology.state_offsets
     for variable, state in assignments.items():
-        start, stop = int(offsets[variable]), int(offsets[variable + 1])
+        start, stop = offsets[variable], offsets[variable + 1]
         mask = jnp.arange(stop - start) == jnp.asarray(state)
         result = result.at[start:stop].set(jnp.where(mask, result[start:stop], -jnp.inf))
     return result
@@ -327,12 +334,12 @@ def variable_elimination(
     log_normalizer = _eliminate(plan, packed, mode="sum")
     valid = jnp.isfinite(log_normalizer)
     probabilities: list[Array] = []
-    for variable, cardinality in enumerate(np.asarray(graph.cardinalities)):
+    for variable, cardinality in enumerate(plan.graph._host_topology.cardinalities):
         values = jnp.stack(
             [
                 _eliminate(
                     plan,
-                    _clamp_evidence(graph, packed, {variable: state}),
+                    _clamp_evidence(plan, packed, {variable: state}),
                     mode="sum",
                 )
                 for state in range(int(cardinality))
@@ -344,12 +351,12 @@ def variable_elimination(
     )
 
     chosen: dict[int, Array] = {}
-    for variable, cardinality in enumerate(np.asarray(graph.cardinalities)):
+    for variable, cardinality in enumerate(plan.graph._host_topology.cardinalities):
         values = jnp.stack(
             [
                 _eliminate(
                     plan,
-                    _clamp_evidence(graph, packed, {**chosen, variable: state}),
+                    _clamp_evidence(plan, packed, {**chosen, variable: state}),
                     mode="max",
                 )
                 for state in range(int(cardinality))
@@ -392,7 +399,7 @@ def plan_junction_tree(plan: VariableEliminationPlan, /) -> JunctionTreePlan:
     clique_count = len(cliques)
     union_parent = list(range(clique_count))
 
-    def find(index):
+    def find(index: int) -> int:
         while union_parent[index] != index:
             union_parent[index] = union_parent[union_parent[index]]
             index = union_parent[index]
@@ -486,14 +493,14 @@ def junction_tree_calibrate(
         else pack_evidence(graph).values
     )
     clique_probabilities: list[Array] = []
-    cards = np.asarray(graph.cardinalities)
+    cards = plan.elimination.graph._host_topology.cardinalities
     for clique in plan.cliques:
-        shape = tuple(int(cards[variable]) for variable in clique)
+        shape = tuple(cards[variable] for variable in clique)
         values = []
         for flat_index in range(prod(shape)):
             configuration = np.unravel_index(flat_index, shape)
             clamped = _clamp_evidence(
-                graph,
+                plan.elimination,
                 packed,
                 {variable: state for variable, state in zip(clique, configuration)},
             )
@@ -522,7 +529,7 @@ class NormalizedFactorGraphLaw(AbstractProbabilityLaw):
         /,
         *,
         evidence: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, VariableEliminationPlan):
             raise TypeError("plan must be VariableEliminationPlan.")
         if result is not None and not isinstance(result, VariableEliminationResult):
@@ -556,7 +563,7 @@ class NormalizedFactorGraphLaw(AbstractProbabilityLaw):
         return ()
 
     @property
-    def density_measure_kind(self):
+    def density_measure_kind(self) -> str:
         return "counting"
 
     def contains(self, value: ArrayLike, /) -> Array:
@@ -579,22 +586,22 @@ class NormalizedFactorGraphLaw(AbstractProbabilityLaw):
             -jnp.inf,
         )
 
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         count = prod(tuple(sample_shape)) if sample_shape else 1
         keys = jr.split(key, count)
 
-        def one_sample(sample_key):
+        def one_sample(sample_key: PRNGKey) -> Array:
             chosen: dict[int, Array] = {}
             state = jnp.zeros((self.plan.graph.num_variables,), dtype=jnp.int32)
             for variable, cardinality in enumerate(
-                np.asarray(self.plan.graph.cardinalities)
+                self.plan.graph._host_topology.cardinalities
             ):
                 log_values = jnp.stack(
                     [
                         _eliminate(
                             self.plan,
                             _clamp_evidence(
-                                self.plan.graph,
+                                self.plan,
                                 self.evidence,
                                 {**chosen, variable: candidate},
                             ),

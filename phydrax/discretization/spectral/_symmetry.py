@@ -11,7 +11,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -44,7 +45,7 @@ class TensorSpectralSymmetry(StrictModule, NonTrainableState):
         component_matrix: ArrayLike | None = None,
         component_count: int | None = None,
         symmetry_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, TensorSpectralDiscretization):
             raise TypeError("discretization must be a TensorSpectralDiscretization.")
         rank = len(discretization.axes)

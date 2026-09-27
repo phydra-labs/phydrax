@@ -12,7 +12,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy.special as jsp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from phydrax.ein import contract
 
@@ -25,6 +25,7 @@ from ..discretization import (
     TensorGridPlan,
     UniformCellAxisSpec,
 )
+from ..typing import parse
 from ._potential import AtomisticPotentialCapabilities, AtomisticPotentialRequirements
 from ._potential_program import (
     AbstractAtomisticEnergyTerm,
@@ -49,7 +50,7 @@ class DirectCoulombPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
-    def __init__(self, *, name: str = "direct-coulomb", force_group: int = 0):
+    def __init__(self, *, name: str = "direct-coulomb", force_group: int = 0) -> None:
         identifier = str(name).strip()
         group = int(force_group)
         if not identifier or group < 0:
@@ -88,7 +89,9 @@ class PreparedDirectCoulombPotential(AbstractPreparedAtomisticEnergyTerm):
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
-    def __init__(self, plan: DirectCoulombPotential, system: PreparedAtomisticSystem, /):
+    def __init__(
+        self, plan: DirectCoulombPotential, system: PreparedAtomisticSystem, /
+    ) -> None:
         self.plan = plan
         self.system = system
         self.name = plan.name
@@ -157,7 +160,7 @@ class EwaldReferencePotential(AbstractAtomisticEnergyTerm, NonTrainableState):
         charge_tolerance: float = 1.0e-10,
         name: str = "ewald-reference",
         force_group: int = 0,
-    ):
+    ) -> None:
         alpha_ = float(alpha)
         cutoff = float(real_cutoff)
         extent = int(reciprocal_extent)
@@ -176,8 +179,7 @@ class EwaldReferencePotential(AbstractAtomisticEnergyTerm, NonTrainableState):
             or group < 0
         ):
             raise ValueError("Ewald parameters, name, and force group are invalid.")
-        if neutrality not in ("require-neutral", "uniform-background"):
-            raise ValueError("Unknown charge-neutrality policy.")
+        neutrality = parse(neutrality, ChargeNeutralityPolicy, "neutrality")
         self.alpha = alpha_
         self.real_cutoff = cutoff
         self.reciprocal_extent = extent
@@ -227,7 +229,9 @@ class PreparedEwaldReferencePotential(AbstractPreparedAtomisticEnergyTerm):
     capabilities: AtomisticPotentialCapabilities
     requirements: AtomisticPotentialRequirements
 
-    def __init__(self, plan: EwaldReferencePotential, system: PreparedAtomisticSystem, /):
+    def __init__(
+        self, plan: EwaldReferencePotential, system: PreparedAtomisticSystem, /
+    ) -> None:
         cell = system.cell
         if cell is None:
             raise RuntimeError("Validated periodic cell unexpectedly absent.")
@@ -373,7 +377,7 @@ class ParticleMeshEwaldPotential(AbstractAtomisticEnergyTerm, NonTrainableState)
         charge_tolerance: float = 1.0e-10,
         name: str = "particle-mesh-ewald",
         force_group: int = 0,
-    ):
+    ) -> None:
         alpha_ = float(alpha)
         cutoff = float(real_cutoff)
         shape = tuple(grid_shape)
@@ -389,13 +393,13 @@ class ParticleMeshEwaldPotential(AbstractAtomisticEnergyTerm, NonTrainableState)
             or len(shape) != 3
             or any(value < 4 for value in shape)
             or degree not in (1, 2, 3)
-            or neutrality not in ("require-neutral", "uniform-background")
             or not math.isfinite(tolerance)
             or tolerance <= 0.0
             or not identifier
             or group < 0
         ):
             raise ValueError("Particle-mesh Ewald parameters are invalid.")
+        neutrality = parse(neutrality, ChargeNeutralityPolicy, "neutrality")
         self.alpha = alpha_
         self.real_cutoff = cutoff
         self.grid_shape = shape
@@ -451,7 +455,7 @@ class PreparedParticleMeshEwaldPotential(AbstractPreparedAtomisticEnergyTerm):
 
     def __init__(
         self, plan: ParticleMeshEwaldPotential, system: PreparedAtomisticSystem, /
-    ):
+    ) -> None:
         cell = system.cell
         if cell is None:
             raise RuntimeError("Validated PME cell unexpectedly absent.")

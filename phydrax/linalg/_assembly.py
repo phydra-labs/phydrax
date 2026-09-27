@@ -11,7 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -188,7 +188,7 @@ class SparseAssemblyPolicy(StrictModule):
         max_contributions: int = 4_000_000,
         max_workspace_bytes: int = 256 * 1024 * 1024,
         materialization: MaterializationPolicy | None = None,
-    ):
+    ) -> None:
         limits = {
             "max_nnz": int(max_nnz),
             "max_bytes": int(max_bytes),
@@ -230,7 +230,7 @@ class SparseAssemblyCostEstimate(StrictModule):
         recipe_bytes: int,
         symbolic_workspace_bytes: int,
         numeric_workspace_bytes: int,
-    ):
+    ) -> None:
         values = tuple(
             (
                 result_nnz,
@@ -285,7 +285,7 @@ class _SparseAssemblyRecipe(StrictModule):
         contribution_count: int,
         symbolic_workspace_bytes: int,
         numeric_workspace_bytes: int,
-    ):
+    ) -> None:
         self.rows = jnp.asarray(rows, dtype=jnp.int32)
         self.columns = jnp.asarray(columns, dtype=jnp.int32)
         self.children = children
@@ -326,7 +326,7 @@ class SparseAssemblyPlan(StrictModule):
         /,
         *,
         plan_id: str,
-    ):
+    ) -> None:
         self.policy = policy
         self.source = operator.source
         self.target = operator.target
@@ -370,7 +370,7 @@ class PreparedSparseAssembly(StrictModule):
         /,
         *,
         numeric_version: Any,
-    ):
+    ) -> None:
         version = jnp.asarray(numeric_version, dtype=jnp.int32)
         if version.ndim != 0:
             raise ValueError("numeric_version must be scalar.")

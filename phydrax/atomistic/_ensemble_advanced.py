@@ -5,13 +5,16 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Callable, Iterable
 from enum import StrEnum
+from typing import Any, Self
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -24,7 +27,9 @@ from ..discretization import (
     RigidBodyKinematics,
     RigidBodyLoad,
 )
+from ..typing import PRNGKey
 from ._sites import AtomisticInteractionSiteState
+from ._units import AtomisticUnitSystem
 
 
 class SplittingOperatorKind(StrEnum):
@@ -42,7 +47,12 @@ class AtomisticSplittingPlan(StrictModule, NonTrainableState):
     coefficients: tuple[float, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, operators, coefficients, /):
+    def __init__(
+        self,
+        operators: Iterable[SplittingOperatorKind],
+        coefficients: Iterable[float],
+        /,
+    ) -> None:
         ops = tuple(operators)
         coeff = tuple(float(value) for value in coefficients)
         if (
@@ -63,7 +73,7 @@ class AtomisticSplittingPlan(StrictModule, NonTrainableState):
         )
 
     @classmethod
-    def velocity_verlet(cls, /, *, constrained: bool = False):
+    def velocity_verlet(cls, /, *, constrained: bool = False) -> Self:
         operators = [SplittingOperatorKind.FORCE_KICK, SplittingOperatorKind.DRIFT]
         coefficients = [0.5, 1.0]
         if constrained:
@@ -77,7 +87,7 @@ class AtomisticSplittingPlan(StrictModule, NonTrainableState):
         return cls(operators, coefficients)
 
     @classmethod
-    def baoab(cls, /, *, constrained: bool = False):
+    def baoab(cls, /, *, constrained: bool = False) -> Self:
         operators = [
             SplittingOperatorKind.FORCE_KICK,
             SplittingOperatorKind.DRIFT,
@@ -108,7 +118,17 @@ class AbstractThermostatPlan(StrictModule, NonTrainableState):
 
     @abc.abstractmethod
     def apply(
-        self, momenta, masses, mobile_mask, key, step, dt, units, /, *, auxiliary=None
+        self,
+        momenta: ArrayLike,
+        masses: Array,
+        mobile_mask: ArrayLike,
+        key: PRNGKey,
+        step: ArrayLike,
+        dt: float | Array,
+        units: AtomisticUnitSystem,
+        /,
+        *,
+        auxiliary: ArrayLike | None = None,
     ) -> ThermostatResult:
         raise NotImplementedError
 
@@ -118,7 +138,7 @@ class BussiThermostatPlan(AbstractThermostatPlan):
     time_constant: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, temperature: float, time_constant: float, /):
+    def __init__(self, temperature: float, time_constant: float, /) -> None:
         if min(float(temperature), float(time_constant)) <= 0.0:
             raise ValueError("Bussi temperature and time constant must be positive.")
         self.temperature, self.time_constant = float(temperature), float(time_constant)
@@ -131,8 +151,18 @@ class BussiThermostatPlan(AbstractThermostatPlan):
         )
 
     def apply(
-        self, momenta, masses, mobile_mask, key, step, dt, units, /, *, auxiliary=None
-    ):
+        self,
+        momenta: ArrayLike,
+        masses: Array,
+        mobile_mask: ArrayLike,
+        key: PRNGKey,
+        step: ArrayLike,
+        dt: float | Array,
+        units: AtomisticUnitSystem,
+        /,
+        *,
+        auxiliary: ArrayLike | None = None,
+    ) -> ThermostatResult:
         del auxiliary
         p = jnp.asarray(momenta)
         mobile = jnp.asarray(mobile_mask)
@@ -175,7 +205,7 @@ class NoseHooverChainPlan(AbstractThermostatPlan):
 
     def __init__(
         self, temperature: float, /, *, chain_length: int = 3, time_constant: float = 0.1
-    ):
+    ) -> None:
         if float(temperature) <= 0 or int(chain_length) <= 0 or float(time_constant) <= 0:
             raise ValueError("Nose-Hoover chain parameters are invalid.")
         self.temperature, self.chain_length, self.time_constant = (
@@ -193,8 +223,18 @@ class NoseHooverChainPlan(AbstractThermostatPlan):
         )
 
     def apply(
-        self, momenta, masses, mobile_mask, key, step, dt, units, /, *, auxiliary=None
-    ):
+        self,
+        momenta: ArrayLike,
+        masses: Array,
+        mobile_mask: ArrayLike,
+        key: PRNGKey,
+        step: ArrayLike,
+        dt: float | Array,
+        units: AtomisticUnitSystem,
+        /,
+        *,
+        auxiliary: ArrayLike | None = None,
+    ) -> ThermostatResult:
         del key, step
         p = jnp.asarray(momenta)
         mobile = jnp.asarray(mobile_mask)
@@ -250,7 +290,7 @@ class GeneralizedLangevinPlan(AbstractThermostatPlan):
 
     def __init__(
         self, drift_matrix: ArrayLike, diffusion_factor: ArrayLike, temperature: float, /
-    ):
+    ) -> None:
         drift_host = np.asarray(drift_matrix, dtype=np.float64)
         diffusion_host = np.asarray(diffusion_factor, dtype=np.float64)
         if (
@@ -278,8 +318,18 @@ class GeneralizedLangevinPlan(AbstractThermostatPlan):
         )
 
     def apply(
-        self, momenta, masses, mobile_mask, key, step, dt, units, /, *, auxiliary=None
-    ):
+        self,
+        momenta: ArrayLike,
+        masses: Array,
+        mobile_mask: ArrayLike,
+        key: PRNGKey,
+        step: ArrayLike,
+        dt: float | Array,
+        units: AtomisticUnitSystem,
+        /,
+        *,
+        auxiliary: ArrayLike | None = None,
+    ) -> ThermostatResult:
         p = jnp.asarray(momenta)
         auxiliary_count = self.drift_matrix.shape[0] - 1
         expected = p.shape + (auxiliary_count,)
@@ -329,7 +379,7 @@ class NoisyForceLangevinPlan(AbstractThermostatPlan):
 
     def __init__(
         self, friction: float, force_noise_variance: float, temperature: float, /
-    ):
+    ) -> None:
         if min(friction, force_noise_variance, temperature) <= 0:
             raise ValueError("Noisy-force Langevin parameters must be positive.")
         base = GeneralizedLangevinPlan(
@@ -348,8 +398,18 @@ class NoisyForceLangevinPlan(AbstractThermostatPlan):
         )
 
     def apply(
-        self, momenta, masses, mobile_mask, key, step, dt, units, /, *, auxiliary=None
-    ):
+        self,
+        momenta: ArrayLike,
+        masses: Array,
+        mobile_mask: ArrayLike,
+        key: PRNGKey,
+        step: ArrayLike,
+        dt: float | Array,
+        units: AtomisticUnitSystem,
+        /,
+        *,
+        auxiliary: ArrayLike | None = None,
+    ) -> ThermostatResult:
         return self.base.apply(
             momenta,
             masses,
@@ -375,7 +435,7 @@ class AnisotropicPressurePlan(StrictModule, NonTrainableState):
         /,
         *,
         semi_isotropic: bool = False,
-    ):
+    ) -> None:
         pressure_host = np.asarray(target_pressure, dtype=np.float64)
         compress_host = np.asarray(compressibility, dtype=np.float64)
         if (
@@ -409,7 +469,9 @@ class AnisotropicPressurePlan(StrictModule, NonTrainableState):
             }
         )
 
-    def update_cell(self, cell_vectors, observed_pressure, dt, /):
+    def update_cell(
+        self, cell_vectors: ArrayLike, observed_pressure: ArrayLike, dt: ArrayLike, /
+    ) -> Array:
         cell = jnp.asarray(cell_vectors)
         observed_value = jnp.asarray(observed_pressure, dtype=cell.dtype)
         if cell.shape != (3, 3) or observed_value.shape not in ((), (3,), (3, 3)):
@@ -464,7 +526,7 @@ class RigidAtomisticCoordinateMap(StrictModule, NonTrainableState):
         local_positions: ArrayLike,
         site_ids: ArrayLike,
         /,
-    ):
+    ) -> None:
         index, local, ids = (
             jnp.asarray(body_indices, dtype=jnp.int32),
             jnp.asarray(local_positions),
@@ -512,9 +574,9 @@ def rotational_velocity_verlet(
     bodies: PreparedRigidBodySet,
     state: RotationalAtomisticState,
     step_size: ArrayLike,
-    load_function,
+    load_function: Callable[[Array, RigidBodyKinematics, Any], RigidBodyLoad],
     /,
-):
+) -> RotationalAtomisticState:
     result = rigid_body_kick_drift_kick(
         bodies,
         state.kinematics,
@@ -533,7 +595,7 @@ class BrownianDynamicsPlan(StrictModule, NonTrainableState):
     temperature: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, mobility: float, temperature: float, /):
+    def __init__(self, mobility: float, temperature: float, /) -> None:
         if min(float(mobility), float(temperature)) <= 0:
             raise ValueError("Brownian mobility and temperature must be positive.")
         self.mobility, self.temperature = float(mobility), float(temperature)
@@ -545,7 +607,15 @@ class BrownianDynamicsPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def step(self, positions, forces, dt, key, units, /):
+    def step(
+        self,
+        positions: Array,
+        forces: Array,
+        dt: float | Array,
+        key: PRNGKey,
+        units: AtomisticUnitSystem,
+        /,
+    ) -> Array:
         noise = jr.normal(key, jnp.asarray(positions).shape)
         diffusion = self.mobility * units.boltzmann_constant * self.temperature
         return (

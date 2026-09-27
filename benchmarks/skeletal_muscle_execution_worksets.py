@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -31,13 +33,13 @@ from phydrax.execution import (
 )
 
 
-def _operation(signature, item, key, semantic_index):
+def _operation(signature: Any, item: Any, key: Any, semantic_index: Any) -> Any:
     gain = 1.01 if signature.topology_id == "fast-motor-unit" else 0.99
     perturbation = 1.0e-4 * jax.random.normal(key, item.shape, dtype=item.dtype)
     return gain * item + perturbation + 0.0 * semantic_index.astype(item.dtype)
 
 
-def _case(item_count: int, state_size: int, capacity: int, warmup: int, repeats: int):
+def _case(item_count: int, state_size: int, capacity: int, warmup: int, repeats: int) -> Any:
     fast = PoolExecutionSignature(
         topology_id="fast-motor-unit",
         method_id="qualified-affine-update",

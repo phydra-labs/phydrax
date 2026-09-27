@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import hashlib
 import json
@@ -53,7 +55,7 @@ _FACTORIES = (
 )
 
 
-def _frame():
+def _frame() -> Any:
     units = RelativisticUnitContract(
         RelativityScaleContract(DimensionalScaleContract.si(), 1, 3, 2, 1),
         RelativityConvention(metric_signature="mostly_minus"),
@@ -94,7 +96,7 @@ def _frame():
     )
 
 
-def _campaign(criteria):
+def _campaign(criteria: Any) -> Any:
     calibration = ScientificCase(
         "benchmark-calibration",
         "benchmark-calibration-unit",
@@ -123,7 +125,7 @@ def _campaign(criteria):
     )
 
 
-def _reference():
+def _reference() -> Any:
     payload = b"synthetic-full-dark-sector-reference-fixture"
     return ReferenceArtifactManifest(
         "synthetic-benchmark-full-dark-sector-reference",
@@ -142,7 +144,7 @@ def _reference():
     )
 
 
-def _inputs():
+def _inputs() -> Any:
     units, frame = _frame()
     reference = _reference()
     requested_use = claims.FullDarkSectorReferenceUse()
@@ -157,7 +159,7 @@ def _inputs():
     return units, frame, reference, requested_use, tuple(values)
 
 
-def _construct_all(units, frame, reference, requested_use, values):
+def _construct_all(units: Any, frame: Any, reference: Any, requested_use: Any, values: Any) -> Any:
     return tuple(
         factory(
             campaign,

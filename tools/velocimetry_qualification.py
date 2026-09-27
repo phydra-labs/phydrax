@@ -8,6 +8,7 @@ import argparse
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -53,7 +54,7 @@ class VelocimetryQualificationReport:
         return self.piv.successful and self.camera.successful and self.stb.successful
 
 
-def _rig(image_shape: tuple[int, int]):
+def _rig(image_shape: tuple[int, int]) -> Any:
     principal = ((image_shape[0] - 1) / 2, (image_shape[1] - 1) / 2)
     intrinsics = phx.imaging.camera.CameraIntrinsics(
         (24.0, 24.0),
@@ -72,7 +73,7 @@ def _rig(image_shape: tuple[int, int]):
     return phx.imaging.camera.CameraRig(cameras)
 
 
-def _piv_qualification(*, smoke: bool):
+def _piv_qualification(*, smoke: bool) -> Any:
     size = 32 if smoke else 48
     window = 16
     first = jr.normal(jr.key(12), (size, size))
@@ -94,6 +95,7 @@ def _piv_qualification(*, smoke: bool):
     error = jnp.sqrt(jnp.sum((measured - truth) ** 2))
     valid_fraction = jnp.mean(result.raw.valid)
     return PIVQualificationEvidence(
+        # ty: ignore[invalid-argument-type]
         tuple(float(value) for value in measured),
         float(error),
         float(valid_fraction),
@@ -101,7 +103,7 @@ def _piv_qualification(*, smoke: bool):
     )
 
 
-def _camera_qualification(rig):
+def _camera_qualification(rig: Any) -> Any:
     truth = jnp.asarray((0.1, -0.1, 5.0))
     pixels = tuple(
         phx.imaging.camera.project_points(camera, truth[None]).pixels[0]
@@ -122,6 +124,7 @@ def _camera_qualification(rig):
     )
     error = jnp.sqrt(jnp.sum((result.point - truth) ** 2))
     return CameraQualificationEvidence(
+        # ty: ignore[invalid-argument-type]
         tuple(float(value) for value in result.point),
         float(error),
         bool(result.valid),
@@ -129,7 +132,7 @@ def _camera_qualification(rig):
     )
 
 
-def _stb_qualification(rig, geometry):
+def _stb_qualification(rig: Any, geometry: Any) -> Any:
     formation = phx.rendering.ParticleImageFormation(
         phx.rendering.GaussianRasterizer(4, cutoff=3.0),
         phx.rendering.PhotometricResponse(),
@@ -192,6 +195,7 @@ def _stb_qualification(rig, geometry):
     error = jnp.sqrt(jnp.sum((reconstructed - truth[0]) ** 2))
     final_energy = jnp.sum(result.residual * result.residual)
     return STBQualificationEvidence(
+        # ty: ignore[invalid-argument-type]
         tuple(float(value) for value in reconstructed),
         float(error),
         float(initial_energy),
@@ -206,7 +210,7 @@ def _stb_qualification(rig, geometry):
     )
 
 
-def run_velocimetry_qualification(*, smoke: bool = False):
+def run_velocimetry_qualification(*, smoke: bool = False) -> Any:
     geometry = phx.imaging.ImagePlaneSupport((32, 32))
     rig = _rig(geometry.image_shape)
     return VelocimetryQualificationReport(
@@ -217,7 +221,7 @@ def run_velocimetry_qualification(*, smoke: bool = False):
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--output", type=Path)

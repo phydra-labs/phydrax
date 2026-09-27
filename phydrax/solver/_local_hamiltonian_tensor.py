@@ -10,7 +10,7 @@ from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -35,7 +35,7 @@ class LocalHamiltonianMPOPolicy(StrictModule):
         *,
         maximum_bond_dimension: int = 1024,
         hermiticity_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         if isinstance(maximum_bond_dimension, bool) or not isinstance(
             maximum_bond_dimension, Integral
         ):

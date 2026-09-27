@@ -6,12 +6,15 @@ from __future__ import annotations
 
 from math import isfinite
 from pathlib import Path
+from typing import Any, cast
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from phydrax.ein import contract
 
@@ -42,9 +45,12 @@ from ..._training_kernel import (
     run_training_attempt,
     TrainingAttemptOutcome,
     TrainingKernelSpec,
+    TrainingKernelState,
+    TrainingKeys,
 )
 from ..._training_objective import _ObjectiveContribution
 from ...linalg import FactorizationPolicy, inverse, OperatorProperties
+from ...typing import PRNGKey
 from .._layout import StateLayout
 from .._trajectory import TrajectoryData
 from ._features import AbstractFeatureLibrary, FeatureEvaluation
@@ -90,7 +96,7 @@ class VariationalKineticTrainingPolicy(StrictModule):
         patience: int | None = None,
         maximum_transitions: int = 100_000,
         reversible: bool = False,
-    ):
+    ) -> None:
         steps = int(maximum_steps)
         interval = int(validation_interval)
         capacity = int(maximum_transitions)
@@ -147,7 +153,7 @@ class ModelFeatureLibrary(AbstractFeatureLibrary):
         *,
         model_id: str,
         base: AbstractFeatureLibrary | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("model must implement AbstractArrayModel.")
         if not isinstance(state_layout, StateLayout):
@@ -194,9 +200,12 @@ class ModelFeatureLibrary(AbstractFeatureLibrary):
             base = self.base.evaluate(values)
             model_inputs = base.values
             source_valid = base.valid
-        flat = model_inputs.reshape((-1, int(self.model.in_size)))
+        # Construction admits only models with integer input and output sizes.
+        flat = model_inputs.reshape((-1, int(cast(int, self.model.in_size))))
         encoded = jax.vmap(lambda value: self.model(value, key=None))(flat)
-        encoded = encoded.reshape(source_valid.shape + (int(self.model.out_size),))
+        encoded = encoded.reshape(
+            source_valid.shape + (int(cast(int, self.model.out_size)),)
+        )
         valid = source_valid & jnp.all(jnp.isfinite(encoded), axis=-1)
         return FeatureEvaluation(
             values=jnp.where(valid[..., None], encoded, 0.0),
@@ -221,7 +230,7 @@ class VariationalCoordinateModel(AbstractArrayModel):
         mean: ArrayLike,
         rotations: ArrayLike,
         /,
-    ):
+    ) -> None:
         mean_ = jnp.asarray(mean)
         rotations_ = jnp.asarray(rotations)
         if (
@@ -238,7 +247,7 @@ class VariationalCoordinateModel(AbstractArrayModel):
         self.in_size = encoder.in_size
         self.out_size = rotations_.shape[1]
 
-    def __call__(self, value, /, *, key=None):
+    def __call__(self, value: Any, /, *, key: Any = None) -> Array:
         encoded = self.encoder(value, key=key)
         return contract("i,ij->j", encoded - self.mean, self.rotations)
 
@@ -355,7 +364,7 @@ def _score(
 def fit_variational_kinetic_model(
     model: AbstractArrayModel,
     data: TrajectoryData,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     model_id: str,
@@ -430,7 +439,13 @@ def fit_variational_kinetic_model(
         "optimizer_type": f"{type(optimizer_).__module__}.{type(optimizer_).__qualname__}",
     }
 
-    def objective(parameters, model_state, fixed, payload, keys):
+    def objective(
+        parameters: PyTree[Any],
+        model_state: PyTree[Any],
+        fixed: PyTree[Any],
+        payload: tuple[Array, Array, Array, Array],
+        keys: TrainingKeys,
+    ) -> tuple[_ObjectiveContribution, PyTree[Any], tuple[Array, Array]]:
         del keys
         score, successful = _score(
             combine_parameters(parameters, model_state, fixed),
@@ -545,7 +560,7 @@ def fit_variational_kinetic_model(
         },
     )
 
-    def save(committed):
+    def save(committed: TrainingKernelState) -> None:
         assert checkpoint is not None
         save_training_checkpoint(
             checkpoint,

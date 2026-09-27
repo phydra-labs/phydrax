@@ -1,20 +1,24 @@
 from itertools import product
+from typing import Any
 
+import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import pytest
 
 import phydrax as phx
 from phydrax.units import COULOMB, KELVIN, KILOGRAM, SECOND
 
 
-def _cell():
+def _cell() -> Any:
     return phx.discretization.PeriodicCell(
+        # ty: ignore[invalid-argument-type]
         [[3.0, 0.0, 0.0], [0.4, 2.8, 0.0], [0.2, 0.1, 3.1]]
     )
 
 
-def test_triclinic_minimum_image_matches_brute_lattice_enumeration():
+def test_triclinic_minimum_image_matches_brute_lattice_enumeration() -> None:
     cell = _cell()
     displacement = jnp.asarray([2.7, 1.9, -2.2])
     observed = cell.minimum_image(displacement)
@@ -29,14 +33,18 @@ def test_triclinic_minimum_image_matches_brute_lattice_enumeration():
     np.testing.assert_allclose(observed, expected, atol=1.0e-12)
 
 
-def test_metric_cell_list_matches_dense_physical_pairs():
+def test_metric_cell_list_matches_dense_physical_pairs() -> None:
     cell = _cell()
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     system = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [0, 1, 2, 3],
+        # ty: ignore[invalid-argument-type]
         [1, 1, 1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0, 1.0, 1.0],
         units,
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0, 0, 0],
         cell=cell,
     ).prepare()
@@ -78,10 +86,14 @@ def test_metric_cell_list_matches_dense_physical_pairs():
     assert metric_pairs == dense_pairs
 
 
-def test_verlet_cell_deformation_enters_rebuild_certificate():
+def test_verlet_cell_deformation_enters_rebuild_certificate() -> None:
     cell = _cell()
     particles = phx.discretization.ParticleSetPlan(
-        [0, 1], [1.0, 1.0], ambient_dimension=3
+        # ty: ignore[invalid-argument-type]
+        [0, 1],
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.0],
+        ambient_dimension=3,
     ).prepare()
     base = phx.discretization.DenseParticleNeighborhoodPlan(1, box=cell)
     verlet = phx.discretization.VerletParticleNeighborhoodPlan(base, 0.8, 0.2).prepare(
@@ -95,16 +107,26 @@ def test_verlet_cell_deformation_enters_rebuild_certificate():
     assert float(updated.maximum_cell_deformation) > 0.1
 
 
-def test_cell_stress_is_finite_symmetric_energy_derivative():
+def test_cell_stress_is_finite_symmetric_energy_derivative() -> None:
     cell = _cell()
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     system = phx.atomistic.AtomisticSystemPlan(
-        [0, 1], [1, 1], [1.0, 1.0], units, atom_type_ids=[0, 0], cell=cell
+        # ty: ignore[invalid-argument-type]
+        [0, 1],
+        # ty: ignore[invalid-argument-type]
+        [1, 1],
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.0],
+        units,
+        # ty: ignore[invalid-argument-type]
+        atom_type_ids=[0, 0],
+        cell=cell,
     ).prepare()
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=cell).prepare(
         system.particles
     )
     potential = phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.LennardJonesPotential([1.0], [1.0], 1.2)]
     ).prepare(system)
     fractional = jnp.asarray([[0.1, 0.1, 0.1], [0.4, 0.1, 0.1]])
@@ -118,7 +140,7 @@ def test_cell_stress_is_finite_symmetric_energy_derivative():
     np.testing.assert_allclose(result.stress, result.stress.T, atol=1.0e-12)
 
 
-def test_periodic_learned_graph_execution_is_explicit_and_finite():
+def test_periodic_learned_graph_execution_is_explicit_and_finite() -> None:
     model_units = (
         phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     )
@@ -132,10 +154,14 @@ def test_periodic_learned_graph_execution_is_explicit_and_finite():
     )
     cell = phx.discretization.PeriodicCell(5.0 * jnp.eye(3))
     system = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [0, 1],
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         units,
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[1, 1],
         cell=cell,
     ).prepare()
@@ -161,3 +187,60 @@ def test_periodic_learned_graph_execution_is_explicit_and_finite():
     result = program.evaluate(positions, relation, species=system.plan.atomic_numbers)
     assert bool(result.successful)
     assert bool(jnp.isfinite(result.energy))
+
+
+class _CutoffFreeGraphTerm(phx.atomistic.AbstractAtomisticEnergyTerm):
+    """Consumer graph term that declares a directed graph but no cutoff."""
+
+    learned: phx.atomistic.LearnedGraphPotentialTerm
+    name: str = eqx.field(static=True)
+    force_group: int = eqx.field(static=True)
+    term_id: str = eqx.field(static=True)
+    capabilities: phx.atomistic.AtomisticPotentialCapabilities
+    requirements: phx.atomistic.AtomisticPotentialRequirements
+
+    def __init__(self, learned: Any) -> None:
+        self.learned = learned
+        self.name = learned.name
+        self.force_group = learned.force_group
+        self.term_id = f"cutoff-free-{learned.term_id}"
+        self.capabilities = learned.capabilities
+        self.requirements = phx.atomistic.AtomisticPotentialRequirements(
+            pair_geometry=True, directed_graph=True
+        )
+
+    def prepare(self, system: Any, /) -> Any:
+        return self.learned.prepare(system)
+
+
+def test_directed_graph_terms_without_cutoff_are_rejected_at_preparation() -> None:
+    units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
+    system = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
+        [0, 1],
+        # ty: ignore[invalid-argument-type]
+        [1, 1],
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.0],
+        units,
+        # ty: ignore[invalid-argument-type]
+        atom_type_ids=[1, 1],
+    ).prepare()
+    model = phx.nn.atomistic.PaiNNPotential(
+        units.scale,
+        cutoff=2.0,
+        feature_count=4,
+        interaction_count=1,
+        radial_basis_count=3,
+        key=jr.key(77),
+    )
+    program = phx.atomistic.AtomisticPotentialProgram(
+        [_CutoffFreeGraphTerm(phx.atomistic.LearnedGraphPotentialTerm(model))]
+    )
+    with pytest.raises(ValueError, match="require a cutoff"):
+        program.prepare(
+            system,
+            graph_execution=phx.atomistic.AtomisticGraphExecutionPlan(
+                1, backend="particle"
+            ),
+        )

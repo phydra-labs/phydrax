@@ -10,11 +10,13 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from ..sign_problem import (
     ComplexLangevinPlan,
     ComplexLangevinResult,
@@ -51,7 +53,7 @@ class PartialSaddleFTSPlan(StrictModule, NonTrainableState):
         maximum_incompressibility: float = 1.0e-4,
         realization_id: int = 0,
         maximum_state_size: int = 1_000_000,
-    ):
+    ) -> None:
         steps = int(num_steps)
         step = float(step_size)
         mobility_ = float(mobility)
@@ -119,7 +121,7 @@ class PreparedPartialSaddleFTS(StrictModule, NonTrainableState):
     scft: PreparedSCFT
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: PartialSaddleFTSPlan, scft: PreparedSCFT, /):
+    def __init__(self, plan: PartialSaddleFTSPlan, scft: PreparedSCFT, /) -> None:
         if not isinstance(plan, PartialSaddleFTSPlan):
             raise TypeError("plan must be PartialSaddleFTSPlan.")
         if not isinstance(scft, PreparedSCFT):
@@ -160,7 +162,7 @@ def initialize_partial_saddle_fts(
     fields: ArrayLike,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> PartialSaddleFTSState:
     if not isinstance(prepared, PreparedPartialSaddleFTS):
         raise TypeError("prepared must be PreparedPartialSaddleFTS.")
@@ -263,7 +265,7 @@ class ComplexFTSPlan(StrictModule, NonTrainableState):
     langevin: ComplexLangevinPlan
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, langevin: ComplexLangevinPlan, /):
+    def __init__(self, langevin: ComplexLangevinPlan, /) -> None:
         if not isinstance(langevin, ComplexLangevinPlan):
             raise TypeError("langevin must be ComplexLangevinPlan.")
         self.langevin = langevin
@@ -281,13 +283,13 @@ class PreparedComplexFTS(StrictModule, NonTrainableState):
     langevin: PreparedComplexLangevin
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ComplexFTSPlan, scft: PreparedSCFT, /):
+    def __init__(self, plan: ComplexFTSPlan, scft: PreparedSCFT, /) -> None:
         if not isinstance(plan, ComplexFTSPlan):
             raise TypeError("plan must be ComplexFTSPlan.")
         if not isinstance(scft, PreparedSCFT):
             raise TypeError("scft must be PreparedSCFT.")
 
-        def action(fields):
+        def action(fields: Array) -> Array:
             gauge_fixed = fields - jnp.mean(fields)
             value = scft.evaluate(gauge_fixed).free_energy
             return jnp.asarray(value, dtype=fields.dtype)
@@ -323,7 +325,7 @@ def sample_complex_fts(
     initial_fields: ArrayLike,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> ComplexFTSResult:
     if not isinstance(prepared, PreparedComplexFTS):
         raise TypeError("prepared must be PreparedComplexFTS.")

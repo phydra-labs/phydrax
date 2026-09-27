@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -6,7 +8,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _ar1(key, shape, *, correlation=0.85):
+def _ar1(key: Any, shape: Any, *, correlation: Any = 0.85) -> Any:
     noise = jr.normal(key, shape)
     states = [noise[..., 0]]
     innovation_scale = jnp.sqrt(1.0 - correlation**2)
@@ -15,7 +17,7 @@ def _ar1(key, shape, *, correlation=0.85):
     return jnp.stack(states, axis=-1)
 
 
-def _split(*, calibration=19, test=64):
+def _split(*, calibration: Any = 19, test: Any = 64) -> Any:
     return phx.uq.ProcessValidationSplit(
         ("train-0", "train-1"),
         tuple(f"calibration-{index}" for index in range(calibration)),
@@ -23,7 +25,9 @@ def _split(*, calibration=19, test=64):
     )
 
 
-def _synthetic_events(key, *, num_paths=4096, rate=3.0, capacity=20):
+def _synthetic_events(
+    key: Any, *, num_paths: Any = 4096, rate: Any = 3.0, capacity: Any = 20
+) -> Any:
     count_key, time_key, channel_key, mark_key = jr.split(key, 4)
     counts = jnp.minimum(jr.poisson(count_key, rate, (num_paths,)), capacity)
     valid = jnp.arange(capacity)[None, :] < counts[:, None]
@@ -41,7 +45,7 @@ def _synthetic_events(key, *, num_paths=4096, rate=3.0, capacity=20):
     )
 
 
-def _monte_carlo_zero():
+def _monte_carlo_zero() -> Any:
     return phx.uq.MonteCarloEstimate(
         replicates=jnp.zeros((3,)),
         mean=jnp.asarray(0.0),
@@ -52,7 +56,7 @@ def _monte_carlo_zero():
     )
 
 
-def _temporal_diagnostics(*, mean_error=0.01, covariance_error=0.02):
+def _temporal_diagnostics(*, mean_error: Any = 0.01, covariance_error: Any = 0.02) -> Any:
     return phx.uq.TemporalMomentDiagnostics(
         times=jnp.arange(2.0),
         mean=jnp.zeros((2,)),
@@ -67,7 +71,7 @@ def _temporal_diagnostics(*, mean_error=0.01, covariance_error=0.02):
     )
 
 
-def test_complete_trajectory_scores_reject_independent_time_marginals():
+def test_complete_trajectory_scores_reject_independent_time_marginals() -> None:
     targets = _ar1(jr.key(0), (96, 6))
     path_forecast = _ar1(jr.key(1), (256, 96, 6))
     independent_time_forecast = jr.normal(jr.key(2), (256, 96, 6))
@@ -85,7 +89,7 @@ def test_complete_trajectory_scores_reject_independent_time_marginals():
     assert path_scores.variogram_score < 0.75 * independent_scores.variogram_score
 
 
-def test_jump_event_diagnostics_recover_counts_channels_and_marks():
+def test_jump_event_diagnostics_recover_counts_channels_and_marks() -> None:
     candidate = _synthetic_events(jr.key(3))
     reference = _synthetic_events(jr.key(4))
 
@@ -115,7 +119,7 @@ def test_jump_event_diagnostics_recover_counts_channels_and_marks():
     assert diagnostics.channel_frequency_l1 < 0.03
 
 
-def test_first_passage_diagnostics_require_the_correct_analytic_law():
+def test_first_passage_diagnostics_require_the_correct_analytic_law() -> None:
     hitting_times = jr.exponential(jr.key(5), (4096,))
     observed = hitting_times <= 2.0
     censored = jnp.where(observed, hitting_times, jnp.inf)
@@ -140,7 +144,7 @@ def test_first_passage_diagnostics_require_the_correct_analytic_law():
     assert not wrong.passed
 
 
-def test_paired_refinement_is_the_only_numerical_variance_evidence():
+def test_paired_refinement_is_the_only_numerical_variance_evidence() -> None:
     exact = jnp.asarray([1.0, -2.0])
     fine_errors = jnp.asarray([[0.1, -0.2], [0.2, -0.1], [-0.1, 0.3]])
     fine = exact + fine_errors
@@ -177,7 +181,7 @@ def test_paired_refinement_is_the_only_numerical_variance_evidence():
         phx.uq.predictive_variance_decomposition(mislabeled)
 
 
-def test_process_calibration_uses_disjoint_cases_and_retains_raw_scores():
+def test_process_calibration_uses_disjoint_cases_and_retains_raw_scores() -> None:
     with pytest.raises(ValueError, match="must be disjoint"):
         phx.uq.ProcessValidationSplit(("shared",), ("shared",), ("test",))
 
@@ -220,7 +224,7 @@ def test_process_calibration_uses_disjoint_cases_and_retains_raw_scores():
     )
 
 
-def test_shift_matrix_requires_every_promoted_stochastic_shift():
+def test_shift_matrix_requires_every_promoted_stochastic_shift() -> None:
     names = ("baseline", "horizon", "covariance", "initial", "regime")
     kinds = (
         "in_distribution",
@@ -265,7 +269,7 @@ def test_shift_matrix_requires_every_promoted_stochastic_shift():
         )
 
 
-def test_retention_report_rejects_broken_statistics_and_provenance():
+def test_retention_report_rejects_broken_statistics_and_provenance() -> None:
     split = _split(calibration=19, test=128)
     targets = jr.normal(jr.key(9), (128, 3))
     samples = jr.normal(jr.key(10), (128, 128, 3))
@@ -361,7 +365,7 @@ def test_retention_report_rejects_broken_statistics_and_provenance():
         rejected.raise_for_failure()
 
 
-def test_trajectory_diagnostics_reject_unidentifiable_or_invalid_score_inputs():
+def test_trajectory_diagnostics_reject_unidentifiable_or_invalid_score_inputs() -> None:
     targets = jnp.zeros((4, 3))
     with pytest.raises(ValueError, match="at least two forecast realizations"):
         phx.uq.trajectory_score_diagnostics(jnp.zeros((1, 4, 3)), targets)
@@ -375,7 +379,7 @@ def test_trajectory_diagnostics_reject_unidentifiable_or_invalid_score_inputs():
         )
 
 
-def test_event_and_first_passage_diagnostics_reject_failed_path_evidence():
+def test_event_and_first_passage_diagnostics_reject_failed_path_evidence() -> None:
     events = _synthetic_events(jr.key(11), num_paths=8, capacity=4)
     failed = phx.stochastic.JumpEventBatch(
         events.times,
@@ -402,7 +406,7 @@ def test_event_and_first_passage_diagnostics_reject_failed_path_evidence():
         )
 
 
-def test_numerical_diagnostics_reject_uncoupled_or_insufficient_refinements():
+def test_numerical_diagnostics_reject_uncoupled_or_insufficient_refinements() -> None:
     with pytest.raises(ValueError, match="equal non-scalar shapes"):
         phx.uq.paired_refinement_uncertainty(
             jnp.zeros((3, 2)),

@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -116,7 +117,7 @@ class MaxwellEigenmodeNormalizationPlan(StrictModule, NonTrainableState):
         maximum_modes: int = 4096,
         maximum_dofs: int = 2**18,
         maximum_workspace_bytes: int = 2**31,
-    ):
+    ) -> None:
         electric = np.asarray(electric_energy_metric)
         magnetic = np.asarray(magnetic_energy_metric)
         frequencies = np.asarray(angular_frequencies, dtype=np.float64)
@@ -346,7 +347,7 @@ class PreparedMaxwellEigenmodeNormalization(StrictModule, NonTrainableState):
     plan: MaxwellEigenmodeNormalizationPlan
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MaxwellEigenmodeNormalizationPlan, /):
+    def __init__(self, plan: MaxwellEigenmodeNormalizationPlan, /) -> None:
         if not isinstance(plan, MaxwellEigenmodeNormalizationPlan):
             raise TypeError("plan must be MaxwellEigenmodeNormalizationPlan.")
         self.plan = plan
@@ -392,7 +393,7 @@ class CavityParticipationPlan(StrictModule, NonTrainableState):
         /,
         *,
         tolerance: float = 1e-10,
-    ):
+    ) -> None:
         records = (
             tuple(region_metrics.items())
             if isinstance(region_metrics, Mapping)
@@ -501,7 +502,7 @@ class CavityDipoleCouplingPlan(StrictModule, NonTrainableState):
         *,
         emitter_id: str,
         hbar_joule_second: ArrayLike = 1.054571817e-34,
-    ):
+    ) -> None:
         evaluation = np.asarray(electric_field_evaluation)
         dipole = np.asarray(dipole_moment_coulomb_meter)
         hbar = np.asarray(hbar_joule_second, dtype=np.float64)
@@ -588,7 +589,7 @@ class PurcellLoweringPlan(StrictModule, NonTrainableState):
         cavity_energy_decay_rate: ArrayLike,
         bare_emitter_decay_rate: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             np.asarray(value, dtype=np.float64)
             for value in (
@@ -650,7 +651,7 @@ class PurcellLoweringPlan(StrictModule, NonTrainableState):
 class ZeroCavityDrive(StrictModule, NonTrainableState):
     drive_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.drive_id = canonical_fingerprint({"kind": "zero-cavity-drive"})
 
     def __call__(self, time: ArrayLike, /) -> Array:
@@ -670,7 +671,7 @@ class MaxwellBlochState(StrictModule):
         bloch_v: ArrayLike,
         inversion: ArrayLike,
         /,
-    ):
+    ) -> None:
         amplitude = jnp.asarray(cavity_amplitude, dtype=jnp.complex128)
         u = jnp.asarray(bloch_u)
         v = jnp.asarray(bloch_v)
@@ -719,7 +720,7 @@ class MaxwellBlochPlan(StrictModule, NonTrainableState):
         equilibrium_inversion: ArrayLike = -1.0,
         drive: Any | None = None,
         drive_id: str | None = None,
-    ):
+    ) -> None:
         scalars = tuple(
             np.asarray(value)
             for value in (
@@ -870,7 +871,7 @@ class MaxwellLindbladState(StrictModule):
     cavity_amplitude: Array
     density_matrix: Array
 
-    def __init__(self, cavity_amplitude: ArrayLike, density_matrix: ArrayLike, /):
+    def __init__(self, cavity_amplitude: ArrayLike, density_matrix: ArrayLike, /) -> None:
         amplitude = jnp.asarray(cavity_amplitude, dtype=jnp.complex128)
         density = jnp.asarray(density_matrix, dtype=jnp.complex128)
         if amplitude.shape != ():
@@ -916,7 +917,7 @@ class MaxwellLindbladPlan(StrictModule, NonTrainableState):
         drive: Any | None = None,
         drive_id: str | None = None,
         maximum_dimension: int = 1024,
-    ):
+    ) -> None:
         hamiltonian = np.asarray(bare_hamiltonian_angular_frequency, dtype=np.complex128)
         transition = np.asarray(transition_operator, dtype=np.complex128)
         jumps = np.asarray(jump_operators, dtype=np.complex128)
@@ -1144,7 +1145,7 @@ class AdaptiveHcurlCapabilityPlan(StrictModule, NonTrainableState):
         transaction: FiniteElementTopologyTransaction | None = None,
         maximum_edges: int = 2**18,
         maximum_cells: int = 2**17,
-    ):
+    ) -> None:
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be CellMesh.")
         order = int(requested_polynomial_order)
@@ -1189,7 +1190,11 @@ class AdaptiveHcurlCapabilityPlan(StrictModule, NonTrainableState):
             assembly = True
             adaptation = False
             reason = "adaptive H(curl) requires an explicit finite-element topology transaction"
-        elif require_adaptation and transaction.field_transfer is None:
+        elif (
+            require_adaptation
+            and transaction is not None
+            and transaction.field_transfer is None
+        ):
             status = HcurlCapabilityStatus.HCURL_TRANSFER_REQUIRED
             assembly = True
             adaptation = False

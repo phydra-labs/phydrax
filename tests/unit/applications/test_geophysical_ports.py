@@ -1,6 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from phydrax.applications.geophysics import GeophysicalFieldBinding, GeophysicalQuantity
@@ -27,11 +29,11 @@ from phydrax.units import (
 _LAYOUT = StateLayout((4,), component_names=("temperature", "pressure", "u", "v"))
 
 
-def _binding(quantity, components):
+def _binding(quantity: Any, components: Any) -> Any:
     return GeophysicalFieldBinding(quantity, state_layout=_LAYOUT, components=components)
 
 
-def test_state_binding_port_carries_quantity_identity_and_dimension():
+def test_state_binding_port_carries_quantity_identity_and_dimension() -> None:
     quantity = GeophysicalQuantity(
         "surface_pressure", "surface_pressure", KILOPASCAL, axes=("time", "cell")
     )
@@ -45,7 +47,7 @@ def test_state_binding_port_carries_quantity_identity_and_dimension():
     assert port.axis_keys is None
 
 
-def test_multi_component_binding_keeps_selected_component_order():
+def test_multi_component_binding_keeps_selected_component_order() -> None:
     velocity = GeophysicalQuantity(
         "wind", "velocity", derived_unit("m/s", ((METER, 1), (SECOND, -1)))
     )
@@ -55,7 +57,7 @@ def test_multi_component_binding_keeps_selected_component_order():
     assert port.dimensions == (VELOCITY, VELOCITY)
 
 
-def test_port_identity_follows_quantity_declaration():
+def test_port_identity_follows_quantity_declaration() -> None:
     temperature = GeophysicalQuantity("temperature", "temperature", KELVIN)
     port = _binding(temperature, ("temperature",)).value_port()
     assert port.dimensions == (TEMPERATURE,)
@@ -72,7 +74,7 @@ def test_port_identity_follows_quantity_declaration():
     assert kilopascal_port.semantic_id != pascal_port.semantic_id
 
 
-def test_bindings_without_declared_components_fail_closed():
+def test_bindings_without_declared_components_fail_closed() -> None:
     task = OperatorTask(
         "temperature-task",
         fields=(

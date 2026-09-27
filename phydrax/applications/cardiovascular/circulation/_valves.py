@@ -11,11 +11,12 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
-from ....dynamics import DAEComponent, DAEEquationBlock
+from ....dynamics import DAEComponent, DAEEquationBlock, DAEJet
 from ._components import (
     _ConservationResidual,
     _incidence,
@@ -37,7 +38,7 @@ class _SmoothValveResidual(StrictModule):
     closed_resistance: Array
     pressure_width: Array
 
-    def __call__(self, time: Array, jet, args: Any, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         del time, args
         pressure_drop = jet.value("pressure_in") - jet.value("pressure_out")
         open_fraction = jax.nn.sigmoid(pressure_drop / self.pressure_width)
@@ -53,7 +54,7 @@ class _ComplementarityValveResidual(StrictModule):
     flow_scale: Array
     smoothing: Array
 
-    def __call__(self, time: Array, jet, args: Any, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         del time, args
         flow = jet.value("flow_out")
         pressure_drop = jet.value("pressure_in") - jet.value("pressure_out")
@@ -75,7 +76,7 @@ class _ComplementarityValveResidual(StrictModule):
 class _EventValveResidual(StrictModule):
     resistance: Array
 
-    def __call__(self, time: Array, jet, args: Any, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         del time, args
         pressure_drop = jet.value("pressure_in") - jet.value("pressure_out")
         return pressure_drop - self.resistance * jet.value("flow_out")
@@ -367,8 +368,8 @@ class EventValve(PressureFlowComponent):
             {
                 "kind": "event-valve-route",
                 "name": str(name),
-                "open_resistance": opened_host.hex(),
-                "closed_resistance": closed_host.hex(),
+                "open_resistance": float(opened_host).hex(),
+                "closed_resistance": float(closed_host).hex(),
                 "opening_pressure": host[0].hex(),
                 "closing_pressure": host[1].hex(),
                 "minimum_dwell_time": host[2].hex(),

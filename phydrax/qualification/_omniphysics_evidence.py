@@ -24,7 +24,7 @@ class NumericalControlEvidence:
     relative_tolerance: float
     independent_reference: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         values = (
             self.observed,
             self.reference,
@@ -54,7 +54,7 @@ class NumericalControlEvidence:
     def evidence_id(self) -> str:
         return canonical_fingerprint(self.to_record(include_id=False))
 
-    def to_record(self, *, include_id=True):
+    def to_record(self, *, include_id: bool = True) -> dict[str, object]:
         record = {
             "kind": "omniphysics-numerical-control",
             "family": self.family,
@@ -79,7 +79,7 @@ class RefinementCampaignEvidence:
     minimum_order: float
     reference: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _identifier(self.campaign, "refinement campaign")
         _identifier(self.reference, "refinement reference")
         if not self.family_ids or len(set(self.family_ids)) != len(self.family_ids):
@@ -121,7 +121,7 @@ class RefinementCampaignEvidence:
     def evidence_id(self) -> str:
         return canonical_fingerprint(self.to_record(include_id=False))
 
-    def to_record(self, *, include_id=True):
+    def to_record(self, *, include_id: bool = True) -> dict[str, object]:
         record = {
             "kind": "omniphysics-refinement-campaign",
             "campaign": self.campaign,
@@ -147,7 +147,7 @@ class HardwareProviderEvidence:
     precision: str
     executed: bool
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for value, label in (
             (self.provider_id, "provider ID"),
             (self.platform, "provider platform"),
@@ -173,7 +173,7 @@ class HardwareProviderEvidence:
     def evidence_id(self) -> str:
         return canonical_fingerprint(self.to_record(include_id=False))
 
-    def to_record(self, *, include_id=True):
+    def to_record(self, *, include_id: bool = True) -> dict[str, object]:
         record = {
             "kind": "omniphysics-hardware-provider",
             "provider_id": self.provider_id,
@@ -197,7 +197,7 @@ class ApplicationValidationEvidence:
     metrics: tuple[tuple[str, float, float, float], ...]
     independent_source: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _identifier(self.application, "validated application")
         _identifier(self.reference_case, "validation reference case")
         _identifier(self.independent_source, "validation source")
@@ -225,7 +225,7 @@ class ApplicationValidationEvidence:
     def evidence_id(self) -> str:
         return canonical_fingerprint(self.to_record(include_id=False))
 
-    def to_record(self, *, include_id=True):
+    def to_record(self, *, include_id: bool = True) -> dict[str, object]:
         record = {
             "kind": "omniphysics-application-validation",
             "application": self.application,
@@ -257,7 +257,7 @@ class OmniphysicsQualificationEvidence:
     def evidence_id(self) -> str:
         return canonical_fingerprint(self.to_record(include_id=False))
 
-    def to_record(self, *, include_id=True):
+    def to_record(self, *, include_id: bool = True) -> dict[str, object]:
         record = {
             "kind": "omniphysics-qualification-evidence",
             "controls": [value.to_record() for value in self.controls],

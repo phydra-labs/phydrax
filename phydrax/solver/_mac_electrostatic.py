@@ -5,11 +5,13 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Self
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._admissibility import AdmissibilityHeader, AdmissibilityReason
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -83,11 +85,13 @@ class MACElectrostaticBoundaryPlan(StrictModule, NonTrainableState):
         )
 
     @classmethod
-    def periodic(cls, operators: PreparedMACOperators, /):
+    def periodic(cls, operators: PreparedMACOperators, /) -> Self:
         return cls(operators, MACElectrostaticBoundaryKind.PERIODIC)
 
     @classmethod
-    def neumann(cls, operators: PreparedMACOperators, neumann_source: ArrayLike = 0.0, /):
+    def neumann(
+        cls, operators: PreparedMACOperators, neumann_source: ArrayLike = 0.0, /
+    ) -> Self:
         return cls(
             operators,
             MACElectrostaticBoundaryKind.NEUMANN,
@@ -266,13 +270,15 @@ class MACElectrostaticPlan(StrictModule, NonTrainableState):
         residual_norm = jnp.sqrt(jnp.sum(volumes * residual**2))
         rhs_norm = jnp.sqrt(jnp.sum(volumes * rhs**2))
         gauge = jnp.abs(jnp.sum(volumes * potential) / jnp.sum(volumes))
-        field_energy = 0.5 * sum(
-            jnp.sum(measure * epsilon * field**2)
-            for measure, epsilon, field in zip(
-                self.operators.face_dual_measures,
-                self.face_permittivity,
-                electric,
-                strict=True,
+        field_energy = 0.5 * jnp.asarray(
+            sum(
+                jnp.sum(measure * epsilon * field**2)
+                for measure, epsilon, field in zip(
+                    self.operators.face_dual_measures,
+                    self.face_permittivity,
+                    electric,
+                    strict=True,
+                )
             )
         )
         compatible = compatibility <= self.compatibility_tolerance * source_scale

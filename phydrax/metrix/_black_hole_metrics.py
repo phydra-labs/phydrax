@@ -9,7 +9,8 @@ from enum import IntEnum
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._chart import ChartTransition, CoordinateChart
@@ -363,7 +364,7 @@ class _IngoingSchwarzschildMetricMap(StrictModule):
     mass: Array
     convention: LorentzianConvention = eqx.field(static=True)
 
-    def __init__(self, mass: ArrayLike, convention: LorentzianConvention, /):
+    def __init__(self, mass: ArrayLike, convention: LorentzianConvention, /) -> None:
         self.mass = _scalar_parameter(mass, "Ingoing Schwarzschild mass")
         self.convention = convention
 
@@ -397,7 +398,7 @@ class _KerrBoyerLindquistMetricMap(StrictModule):
         spin: ArrayLike,
         convention: LorentzianConvention,
         /,
-    ):
+    ) -> None:
         self.mass = _scalar_parameter(mass, "Kerr mass")
         self.spin = _scalar_parameter(spin, "Kerr spin")
         self.convention = convention
@@ -447,7 +448,7 @@ class _IngoingKerrMetricMap(StrictModule):
         spin: ArrayLike,
         convention: LorentzianConvention,
         /,
-    ):
+    ) -> None:
         self.mass = _scalar_parameter(mass, "Kerr mass")
         self.spin = _scalar_parameter(spin, "Kerr spin")
         self.convention = convention
@@ -532,7 +533,7 @@ class _BoyerLindquistIngoingKerrMap(StrictModule):
         spin: ArrayLike,
         direction: int,
         /,
-    ):
+    ) -> None:
         self.mass = _scalar_parameter(mass, "Kerr transition mass")
         self.spin = _scalar_parameter(spin, "Kerr transition spin")
         self.direction = int(direction)

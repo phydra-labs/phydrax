@@ -6,13 +6,14 @@ from __future__ import annotations
 
 from enum import IntEnum
 from numbers import Integral, Real
-from typing import Literal, Sequence
+from typing import assert_never, Literal, Sequence, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -21,7 +22,10 @@ from ...geometry.analytic import RigidFrame
 from ._interface import evaluate_refractive_interface, OpticalRayState
 
 
-SurfaceKind = Literal["plane", "sphere", "conic", "even-asphere"]
+_BracketCarry: TypeAlias = tuple[Array, Array, Array, Array]
+
+
+SurfaceKind: TypeAlias = Literal["plane", "sphere", "conic", "even-asphere"]
 SurfaceInteraction = Literal["transmit", "reflect"]
 
 _KIND_TAGS: dict[str, int] = {
@@ -438,7 +442,7 @@ def _bounded_sag_intersection(
         derivatives[1:], stationary_index, axis=0
     )[0]
 
-    def refine(carry, _):
+    def refine(carry: _BracketCarry, _x: None) -> tuple[_BracketCarry, None]:
         low, high, flow, fhigh = carry
         midpoint = 0.5 * (low + high)
         fmid, dfmid, _, _, midpoint_domain = _surface_values(
@@ -488,7 +492,7 @@ def _bounded_sag_intersection(
         length=root_iteration_count,
     )
 
-    def refine_stationary(carry, _):
+    def refine_stationary(carry: _BracketCarry, _x: None) -> tuple[_BracketCarry, None]:
         low, high, dlow, dhigh = carry
         midpoint = 0.5 * (low + high)
         _, derivative_midpoint, _, _, midpoint_domain = _surface_values(
@@ -721,7 +725,7 @@ class SequentialOpticsPlan(StrictModule, NonTrainableState):
         intersection_tolerance: float = 1.0e-9,
         forward_tolerance: float = 1.0e-10,
         incidence_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         frame_tuple = tuple(frames)
         kinds = tuple(surface_kinds)
         routes = tuple(interactions)
@@ -834,35 +838,40 @@ class SequentialOpticsPlan(StrictModule, NonTrainableState):
             raise ValueError("Inactive even-asphere coefficients must be exactly zero.")
 
         for index, (kind, route) in enumerate(zip(kinds, routes, strict=True)):
-            if kind == "plane":
-                if (
-                    curvature[index] != 0.0
-                    or conic[index] != 0.0
-                    or np.any(coefficients[index] != 0.0)
-                    or np.any(active_coefficients[index])
-                ):
-                    raise ValueError("Plane rows must have exactly neutral sag data.")
-            elif kind == "sphere":
-                if curvature[index] == 0.0:
-                    raise ValueError("Sphere curvature must be nonzero.")
-                if (
-                    conic[index] != 0.0
-                    or np.any(coefficients[index] != 0.0)
-                    or np.any(active_coefficients[index])
-                ):
-                    raise ValueError(
-                        "Sphere rows must have exactly neutral conic/asphere data."
-                    )
-            elif kind == "conic":
-                if np.any(coefficients[index] != 0.0) or np.any(
-                    active_coefficients[index]
-                ):
-                    raise ValueError("Conic rows must have exactly neutral asphere data.")
-            else:
-                if not np.any(active_coefficients[index]):
-                    raise ValueError(
-                        "Even-asphere rows must declare at least one active coefficient."
-                    )
+            match kind:
+                case "plane":
+                    if (
+                        curvature[index] != 0.0
+                        or conic[index] != 0.0
+                        or np.any(coefficients[index] != 0.0)
+                        or np.any(active_coefficients[index])
+                    ):
+                        raise ValueError("Plane rows must have exactly neutral sag data.")
+                case "sphere":
+                    if curvature[index] == 0.0:
+                        raise ValueError("Sphere curvature must be nonzero.")
+                    if (
+                        conic[index] != 0.0
+                        or np.any(coefficients[index] != 0.0)
+                        or np.any(active_coefficients[index])
+                    ):
+                        raise ValueError(
+                            "Sphere rows must have exactly neutral conic/asphere data."
+                        )
+                case "conic":
+                    if np.any(coefficients[index] != 0.0) or np.any(
+                        active_coefficients[index]
+                    ):
+                        raise ValueError(
+                            "Conic rows must have exactly neutral asphere data."
+                        )
+                case "even-asphere":
+                    if not np.any(active_coefficients[index]):
+                        raise ValueError(
+                            "Even-asphere rows must declare at least one active coefficient."
+                        )
+                case _:
+                    assert_never(kind)
             if active_aperture[index] and kind != "plane":
                 radial_domain = (
                     1.0
@@ -959,7 +968,7 @@ class PreparedSequentialOptics(StrictModule, NonTrainableState):
     source_plan_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: SequentialOpticsPlan, /):
+    def __init__(self, plan: SequentialOpticsPlan, /) -> None:
         if not isinstance(plan, SequentialOpticsPlan):
             raise TypeError("plan must be a SequentialOpticsPlan.")
         rotations = np.stack([np.asarray(frame.rotation) for frame in plan.frames])

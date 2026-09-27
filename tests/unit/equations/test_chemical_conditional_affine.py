@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _schema():
+def _schema() -> Any:
     return phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B", "C"),
         (
@@ -25,7 +28,7 @@ def _schema():
     )
 
 
-def _thermodynamics(schema):
+def _thermodynamics(schema: Any) -> Any:
     return phx.equations.PolynomialSpeciesThermodynamicsPlan(
         schema,
         jnp.asarray((10.0, 10.0, 10.0)),
@@ -36,7 +39,7 @@ def _thermodynamics(schema):
     )
 
 
-def _association_mechanism(*, forward_rate=None):
+def _association_mechanism(*, forward_rate: Any = None) -> Any:
     schema = _schema()
     return phx.equations.ChemicalMechanismIR(
         "association",
@@ -56,7 +59,7 @@ def _association_mechanism(*, forward_rate=None):
     ).prepare()
 
 
-def _drivers(a=2.0):
+def _drivers(a: Any = 2.0) -> Any:
     return phx.equations.ChemicalConditionalAffineDrivers(
         jnp.asarray((a,), dtype=jnp.float64),
         jnp.asarray(500.0),
@@ -64,7 +67,7 @@ def _drivers(a=2.0):
     )
 
 
-def test_compiler_certifies_directional_pivots_and_assembles_operator():
+def test_compiler_certifies_directional_pivots_and_assembles_operator() -> None:
     mechanism = _association_mechanism()
     plan = phx.equations.ChemicalConditionalAffinePlan(("B", "C"), ("A",))
     certificate = plan.analyze(mechanism)
@@ -83,7 +86,7 @@ def test_compiler_certifies_directional_pivots_and_assembles_operator():
     assert assembly.successful
 
 
-def test_reaction_multiplier_is_shared_by_forward_and_reverse_channels():
+def test_reaction_multiplier_is_shared_by_forward_and_reverse_channels() -> None:
     prepared = phx.equations.ChemicalConditionalAffinePlan(("B", "C"), ("A",)).prepare(
         _association_mechanism()
     )
@@ -93,7 +96,7 @@ def test_reaction_multiplier_is_shared_by_forward_and_reverse_channels():
     np.testing.assert_allclose(assembly.directional_coefficients, (24.0, 1.5))
 
 
-def test_extent_reconstruction_preserves_complete_stoichiometric_state():
+def test_extent_reconstruction_preserves_complete_stoichiometric_state() -> None:
     prepared = phx.equations.ChemicalConditionalAffinePlan(("B", "C"), ("A",)).prepare(
         _association_mechanism()
     )
@@ -110,7 +113,7 @@ def test_extent_reconstruction_preserves_complete_stoichiometric_state():
     np.testing.assert_allclose(increment[2], -increment[1], atol=1e-13)
 
 
-def test_compiler_requires_every_nonpivot_and_rate_dependency_as_driver():
+def test_compiler_requires_every_nonpivot_and_rate_dependency_as_driver() -> None:
     mechanism = _association_mechanism()
     invalid = phx.equations.ChemicalConditionalAffinePlan(("C",), ("A",))
     certificate = invalid.analyze(mechanism)
@@ -135,7 +138,7 @@ def test_compiler_requires_every_nonpivot_and_rate_dependency_as_driver():
     )
 
 
-def test_driver_only_channel_is_forcing_and_negative_state_fails_closed():
+def test_driver_only_channel_is_forcing_and_negative_state_fails_closed() -> None:
     prepared = phx.equations.ChemicalConditionalAffinePlan(("C",), ("A", "B")).prepare(
         _association_mechanism()
     )

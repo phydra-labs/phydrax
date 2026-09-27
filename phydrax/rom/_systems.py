@@ -4,10 +4,14 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._identity import NumericRevision, SemanticProvenance
@@ -18,6 +22,7 @@ from ..linalg import (
     DenseLinearOperator,
     LeastSquaresProblem,
     LinearSolvePolicy,
+    LinearSolveResult,
     solve,
 )
 from ._reduction import TrialTestReduction
@@ -35,7 +40,7 @@ class RectangularLinearROMProblem(StrictModule, NonTrainableState):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(reduction, TrialTestReduction):
             raise TypeError("reduction must be TrialTestReduction.")
         if reduction.test_rank < reduction.trial_rank:
@@ -50,11 +55,11 @@ class RectangularLinearROMProblem(StrictModule, NonTrainableState):
 
     def solve(
         self,
-        right_hand_side,
+        right_hand_side: PyTree[Any],
         /,
         *,
         policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> LinearSolveResult:
         reduced_matrix = self.reduction.project_operator(self.operator)
         reduced_rhs = self.reduction.test.reduced_space.flatten(
             self.reduction.project_covector(right_hand_side)
@@ -93,7 +98,7 @@ class ReducedInfSupEvidence(StrictModule, NonTrainableState):
         pressure_basis_id: str,
         divergence_operator_id: str,
         minimum_accepted: float,
-    ):
+    ) -> None:
         matrix = jnp.asarray(reduced_divergence)
         if matrix.ndim != 2:
             raise ValueError("reduced_divergence must be a matrix.")
@@ -148,7 +153,7 @@ class DescriptorStructureEvidence(StrictModule, NonTrainableState):
         regular: bool,
         impulse_free: bool,
         pencil_id: str,
-    ):
+    ) -> None:
         finite = int(finite_dimension)
         algebraic = int(algebraic_dimension)
         index_ = int(index)
@@ -197,7 +202,7 @@ class IndexOneDescriptorReduction(StrictModule, NonTrainableState):
         algebraic_matrix: ArrayLike,
         evidence: DescriptorStructureEvidence,
         /,
-    ):
+    ) -> None:
         if (
             not isinstance(evidence, DescriptorStructureEvidence)
             or not evidence.index_one_supported

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _schema():
+def _schema() -> Any:
     return phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("cation", "anion", "solid"),
         (
@@ -25,7 +28,7 @@ def _schema():
     )
 
 
-def test_chemical_species_schema_tracks_elements_charge_and_phases():
+def test_chemical_species_schema_tracks_elements_charge_and_phases() -> None:
     schema = _schema()
     amount = jnp.asarray((2.0, 2.0, 1.0))
 
@@ -39,7 +42,7 @@ def test_chemical_species_schema_tracks_elements_charge_and_phases():
     assert schema.phase_count == 2
 
 
-def test_chemical_species_schema_rejects_invalid_charge_and_surface_phase():
+def test_chemical_species_schema_rejects_invalid_charge_and_surface_phase() -> None:
     with pytest.raises(ValueError, match="integer"):
         phx.equations.ChemicalSpeciesSchema.from_unique_species(
             ("A",),
@@ -62,7 +65,7 @@ def test_chemical_species_schema_rejects_invalid_charge_and_surface_phase():
         )
 
 
-def test_surface_phase_requires_positive_site_density():
+def test_surface_phase_requires_positive_site_density() -> None:
     with pytest.raises(ValueError, match="site_density"):
         phx.equations.ChemicalPhaseSpec(
             "electrode",

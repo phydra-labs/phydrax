@@ -13,6 +13,7 @@ import equinox as eqx
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._metric import LorentzianConvention
 
 
@@ -56,9 +57,10 @@ class RelativityConvention(StrictModule, NonTrainableState):
         future_time_orientation: int = 1,
         azimuthal_orientation: int = 1,
         fourier_sign: int = -1,
-    ):
-        if metric_signature not in ("mostly_plus", "mostly_minus"):
-            raise ValueError("metric_signature must be 'mostly_plus' or 'mostly_minus'.")
+    ) -> None:
+        metric_signature = parse(
+            metric_signature, LorentzianConvention, "metric_signature"
+        )
         riemann = _sign(riemann_sign, "riemann_sign")
         extrinsic = _sign(extrinsic_curvature_sign, "extrinsic_curvature_sign")
         spacetime = _sign(spacetime_orientation, "spacetime_orientation")

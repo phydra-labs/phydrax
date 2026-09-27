@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -34,7 +35,7 @@ class FiniteElementMetricData(StrictModule):
         cell_coordinates: ArrayLike,
         reference_weights: ArrayLike,
         /,
-    ):
+    ) -> None:
         basis = jnp.asarray(coordinate_basis)
         gradients = jnp.asarray(coordinate_gradients)
         coordinates = jnp.asarray(cell_coordinates)
@@ -100,7 +101,7 @@ class FiniteElementFacetMetricData(StrictModule):
         reference_normals: ArrayLike,
         reference_weights: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(cell_metric, FiniteElementMetricData):
             raise TypeError("cell_metric must be FiniteElementMetricData.")
         normals = jnp.asarray(reference_normals)
@@ -135,7 +136,7 @@ class PreparedFacetTrace(StrictModule):
         basis_values: ArrayLike,
         local_to_canonical: ArrayLike,
         /,
-    ):
+    ) -> None:
         basis = jnp.asarray(basis_values)
         permutation = np.asarray(local_to_canonical, dtype=np.int32)
         if basis.ndim != 2 or permutation.shape != (basis.shape[0],):
@@ -183,7 +184,7 @@ class FieldJet(StrictModule):
         gradient: ArrayLike | None = None,
         divergence: ArrayLike | None = None,
         curl: ArrayLike | None = None,
-    ):
+    ) -> None:
         self.value = jnp.asarray(value)
         self.gradient = None if gradient is None else jnp.asarray(gradient)
         self.divergence = None if divergence is None else jnp.asarray(divergence)
@@ -213,7 +214,7 @@ class FacetJet(StrictModule):
         normal: ArrayLike,
         measure: ArrayLike,
         /,
-    ):
+    ) -> None:
         plus = jnp.asarray(plus_value)
         minus = jnp.asarray(minus_value)
         plus_gradient_ = jnp.asarray(plus_gradient)
@@ -255,7 +256,7 @@ class CellDerivativeBatch(StrictModule):
         basis_values: ArrayLike,
         physical_gradients: ArrayLike,
         /,
-    ):
+    ) -> None:
         coefficients = jnp.asarray(local_coefficients)
         basis = jnp.asarray(basis_values)
         gradients = jnp.asarray(physical_gradients)
@@ -295,7 +296,7 @@ class DGTraceBatch(StrictModule):
         normal: ArrayLike,
         measure: ArrayLike,
         /,
-    ):
+    ) -> None:
         plus = CellDerivativeBatch(
             plus_local_coefficients,
             plus_basis_values,

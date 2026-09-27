@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -59,7 +60,7 @@ class VortexPanelFlowPlan2D(StrictModule, NonTrainableState):
         trailing_edge_panels: tuple[int, int] | None = None,
         density: float = 1.0,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(geometry, FlowPanelGeometry2D):
             raise TypeError("geometry must be FlowPanelGeometry2D.")
         count = geometry.length.size

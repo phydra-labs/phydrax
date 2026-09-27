@@ -1,4 +1,5 @@
 from dataclasses import replace
+from typing import Any
 
 import pytest
 
@@ -14,7 +15,7 @@ from tools.direct_collocation_qualification.graduation import (
 from tools.direct_collocation_qualification.runner import run_qualification_case
 
 
-def _record(case_id, backend="native", **overrides):
+def _record(case_id: Any, backend: Any = "native", **overrides: Any) -> Any:
     values = {
         "case_id": case_id,
         "backend": backend,
@@ -46,7 +47,7 @@ def _record(case_id, backend="native", **overrides):
     return DirectCollocationQualificationRecord.create(**values)
 
 
-def test_qualification_case_corpus_is_complete_and_unique():
+def test_qualification_case_corpus_is_complete_and_unique() -> None:
     setups = qualification_setups()
     identifiers = tuple(setup.case.case_id for setup in setups)
     assert len(setups) == 8
@@ -63,7 +64,7 @@ def test_qualification_case_corpus_is_complete_and_unique():
     }
 
 
-def test_qualification_artifact_fingerprint_and_coverage_are_independent():
+def test_qualification_artifact_fingerprint_and_coverage_are_independent() -> None:
     setups = qualification_setups()
     cases = tuple(setup.case for setup in setups)
     records = tuple(_record(case.case_id) for case in cases)
@@ -122,7 +123,7 @@ def test_qualification_artifact_fingerprint_and_coverage_are_independent():
         forged_graduation.verify(required_case_ids=required)
 
 
-def test_qualification_record_rejects_nonfinite_and_tampered_metrics():
+def test_qualification_record_rejects_nonfinite_and_tampered_metrics() -> None:
     record = _record("case")
     record.verify()
     with pytest.raises(ValueError, match="fingerprint mismatch"):
@@ -131,7 +132,7 @@ def test_qualification_record_rejects_nonfinite_and_tampered_metrics():
         _record("nonfinite", objective=float("nan"))
 
 
-def test_graduation_requires_sparse_refresh_evidence_for_production():
+def test_graduation_requires_sparse_refresh_evidence_for_production() -> None:
     cases = tuple(setup.case.case_id for setup in qualification_setups())
     native = tuple(_record(case_id) for case_id in cases)
     validated = evaluate_direct_collocation_graduation(
@@ -153,7 +154,7 @@ def test_graduation_requires_sparse_refresh_evidence_for_production():
     assert production["production_ready"]
 
 
-def test_regression_detects_new_false_success_and_dense_sparse_path():
+def test_regression_detects_new_false_success_and_dense_sparse_path() -> None:
     baseline = (_record("case", "ipopt"),)
     current = (
         _record(
@@ -174,7 +175,7 @@ def test_regression_detects_new_false_success_and_dense_sparse_path():
     assert not bool(regression.execution_passed)
 
 
-def test_native_analytic_qualification_case_produces_certified_record():
+def test_native_analytic_qualification_case_produces_certified_record() -> None:
     setup = qualification_setups()[0]
     record = run_qualification_case(setup, "native")
     assert record.successful

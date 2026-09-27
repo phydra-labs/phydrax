@@ -10,16 +10,17 @@ import importlib
 import importlib.metadata
 import importlib.util
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomicStructure, AtomisticScaleContract
+from ...typing import parse
 from ...units import (
     ANGSTROM,
     conversion_factor,
@@ -43,14 +44,14 @@ from .._result import (
 from .._task import ElectronicProperty
 
 
-ASESpinSemantics = Literal["multiplicity", "unpaired-electrons"]
+ASESpinSemantics: TypeAlias = Literal["multiplicity", "unpaired-electrons"]
 
 
 def is_ase_calculator_available() -> bool:
     return importlib.util.find_spec("ase") is not None
 
 
-def require_ase_calculator():
+def require_ase_calculator() -> Any:
     if not is_ase_calculator_available():
         raise ImportError("ASE calculator execution requires optional dependency 'ase'.")
     return importlib.import_module("ase")
@@ -73,15 +74,14 @@ class ASEElectronicStateBinding(StrictModule, NonTrainableState):
         spin_key: str | None,
         spin_semantics: ASESpinSemantics = "multiplicity",
         state_invariant: bool = False,
-    ):
+    ) -> None:
         charge = None if charge_key is None else str(charge_key).strip()
         spin = None if spin_key is None else str(spin_key).strip()
         if charge_key is not None and not charge:
             raise ValueError("charge_key must be non-empty when provided.")
         if spin_key is not None and not spin:
             raise ValueError("spin_key must be non-empty when provided.")
-        if spin_semantics not in ("multiplicity", "unpaired-electrons"):
-            raise ValueError("Unknown ASE spin semantics.")
+        spin_semantics = parse(spin_semantics, ASESpinSemantics, "spin_semantics")
         invariant = bool(state_invariant)
         if invariant and (charge is not None or spin is not None):
             raise ValueError(
@@ -153,7 +153,7 @@ class PreparedASECalculator(AbstractPreparedElectronicCalculation):
         state_binding: ASEElectronicStateBinding,
         provider_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(capabilities, ElectronicProviderCapabilities):
             raise TypeError("capabilities must be ElectronicProviderCapabilities.")
         self.calculation = calculation
@@ -330,7 +330,7 @@ class ASECalculatorProvider(AbstractElectronicProvider):
         *,
         model_chemistry_id: str,
         capabilities: ElectronicProviderCapabilities | None = None,
-    ):
+    ) -> None:
         if not callable(calculator_factory):
             raise TypeError("calculator_factory must be callable.")
         name = str(provider_name).strip()

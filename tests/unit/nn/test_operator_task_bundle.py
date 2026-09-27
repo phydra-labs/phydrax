@@ -2,9 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
 import subprocess
 import sys
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -15,7 +17,7 @@ import phydrax as phx
 from phydrax._trainable import combine_parameters, partition_parameters
 
 
-def _batch(*, cases=2, size=8):
+def _batch(*, cases: Any = 2, size: Any = 8) -> Any:
     axis = phx.nn.operator.OperatorAxis(
         "x", jnp.arange(size, dtype="float64") / size, periodic=True
     )
@@ -34,7 +36,7 @@ def _batch(*, cases=2, size=8):
     )
 
 
-def _periodic_fourier_batch(*, cases=2, size=8):
+def _periodic_fourier_batch(*, cases: Any = 2, size: Any = 8) -> Any:
     axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.arange(size, dtype="float64") / size,
@@ -60,7 +62,7 @@ def _periodic_fourier_batch(*, cases=2, size=8):
     )
 
 
-def _task(*, revision="1"):
+def _task(*, revision: Any = "1") -> Any:
     return phx.nn.operator.OperatorTask(
         "periodic-map",
         revision=revision,
@@ -95,7 +97,7 @@ def _task(*, revision="1"):
     )
 
 
-def _fixed_task():
+def _fixed_task() -> Any:
     base = _task()
     return phx.nn.operator.OperatorTask(
         base.task_id,
@@ -119,7 +121,7 @@ def _fixed_task():
     )
 
 
-def _solution_binding(task):
+def _solution_binding(task: Any) -> Any:
     port = task.field_by_name["solution"].value_port()
     return {
         "output_ports": {"output": port},
@@ -129,12 +131,12 @@ def _solution_binding(task):
 
 def _trained(
     *,
-    model=None,
-    revision="1",
-    output_pipeline=None,
-    compilation_strategy="eager",
-    dtype_policy=None,
-):
+    model: Any = None,
+    revision: Any = "1",
+    output_pipeline: Any = None,
+    compilation_strategy: Any = "eager",
+    dtype_policy: Any = None,
+) -> Any:
     if model is None:
         model = phx.nn.operator.architectures.FNO(
             n_modes=(3,),
@@ -158,7 +160,7 @@ def _trained(
     )
 
 
-def test_operator_task_is_canonical_and_rejects_unknown_sources():
+def test_operator_task_is_canonical_and_rejects_unknown_sources() -> None:
     task = _task()
     restored = phx.nn.operator.OperatorTask.from_dict(task.to_dict())
 
@@ -217,7 +219,7 @@ def test_operator_task_is_canonical_and_rejects_unknown_sources():
         )
 
 
-def test_trained_operator_applies_physical_transforms_around_model_execution():
+def test_trained_operator_applies_physical_transforms_around_model_execution() -> None:
     trained = _trained()
     batch = _batch()
     prepared = trained.prepare(batch)
@@ -251,7 +253,7 @@ def test_trained_operator_applies_physical_transforms_around_model_execution():
         other_dtype.predict_prepared(prepared)
 
 
-def test_normalized_output_pipeline_enforces_physical_conservation(tmp_path):
+def test_normalized_output_pipeline_enforces_physical_conservation(tmp_path: Any) -> None:
     pipeline = phx.nn.operator.training.OperatorOutputPipeline(
         phx.nn.operator.training.ConservationProjection("solution", source_name="u")
     )
@@ -287,7 +289,7 @@ def test_normalized_output_pipeline_enforces_physical_conservation(tmp_path):
     assert restored.output_pipeline.fingerprint == pipeline.fingerprint
 
 
-def test_trained_operator_preserves_multiple_named_outputs_and_queries():
+def test_trained_operator_preserves_multiple_named_outputs_and_queries() -> None:
     source_coordinates = jnp.linspace(0.0, 1.0, 4)[:, None]
     batch = phx.nn.operator.OperatorBatch(
         inputs={
@@ -392,7 +394,7 @@ def test_trained_operator_preserves_multiple_named_outputs_and_queries():
     assert prediction.field("flux").values.shape == (2, 2)
 
 
-def test_fixed_query_geometry_is_shared_and_persistently_bound(tmp_path):
+def test_fixed_query_geometry_is_shared_and_persistently_bound(tmp_path: Any) -> None:
     batch = _batch()
     task = _fixed_task()
     fingerprint = batch.query("solution-query").geometry_fingerprint()
@@ -465,7 +467,7 @@ def test_fixed_query_geometry_is_shared_and_persistently_bound(tmp_path):
         restored.predict(altered)
 
 
-def test_operator_task_serialization_rejects_noncanonical_fields():
+def test_operator_task_serialization_rejects_noncanonical_fields() -> None:
     payload = _task().to_dict()
     payload["schema_version"] = 1
 
@@ -482,7 +484,7 @@ def test_operator_task_serialization_rejects_noncanonical_fields():
         phx.nn.operator.OperatorTask.from_dict(legacy_query)
 
 
-def test_operator_artifact_manifest_rejects_noncanonical_fields(tmp_path):
+def test_operator_artifact_manifest_rejects_noncanonical_fields(tmp_path: Any) -> None:
     phx.nn.operator.training.save_operator_artifact(tmp_path, _trained())
     manifest_path = tmp_path / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -493,7 +495,9 @@ def test_operator_artifact_manifest_rejects_noncanonical_fields(tmp_path):
         phx.nn.operator.training.load_trained_operator(tmp_path)
 
 
-def test_operator_artifact_binding_tracks_parameters_and_fails_closed(tmp_path):
+def test_operator_artifact_binding_tracks_parameters_and_fails_closed(
+    tmp_path: Any,
+) -> None:
     base = _trained()
     parameters, model_state, fixed = partition_parameters(base.execution_model)
     updated = _trained(
@@ -501,9 +505,7 @@ def test_operator_artifact_binding_tracks_parameters_and_fails_closed(tmp_path):
             jax.tree.map(lambda leaf: leaf + 1.0, parameters), model_state, fixed
         )
     )
-    base_path = phx.nn.operator.training.save_operator_artifact(
-        tmp_path / "base", base
-    )
+    base_path = phx.nn.operator.training.save_operator_artifact(tmp_path / "base", base)
     updated_path = phx.nn.operator.training.save_operator_artifact(
         tmp_path / "updated", updated
     )
@@ -539,7 +541,9 @@ def test_operator_artifact_binding_tracks_parameters_and_fails_closed(tmp_path):
         phx.nn.operator.training.load_trained_operator(updated_path)
 
 
-def test_operator_artifact_round_trips_the_port_binding_and_fails_closed(tmp_path):
+def test_operator_artifact_round_trips_the_port_binding_and_fails_closed(
+    tmp_path: Any,
+) -> None:
     task = _task()
     target = task.field_by_name["solution"].value_port()
     # A dimensionless-by-omission declaration leaves aspects unverified.
@@ -572,7 +576,7 @@ def test_operator_artifact_round_trips_the_port_binding_and_fails_closed(tmp_pat
         phx.nn.operator.training.load_trained_operator(destination)
 
 
-def test_operator_artifact_rejects_inconsistent_precision_evidence(tmp_path):
+def test_operator_artifact_rejects_inconsistent_precision_evidence(tmp_path: Any) -> None:
     trained = _trained(
         dtype_policy=phx.nn.operator.training.OperatorDTypePolicy(
             compute_dtype="bfloat16"
@@ -588,7 +592,7 @@ def test_operator_artifact_rejects_inconsistent_precision_evidence(tmp_path):
         phx.nn.operator.training.load_trained_operator(tmp_path)
 
 
-def test_operator_artifact_rejects_unknown_architecture_codec(tmp_path):
+def test_operator_artifact_rejects_unknown_architecture_codec(tmp_path: Any) -> None:
     phx.nn.operator.training.save_operator_artifact(tmp_path, _trained())
     manifest_path = tmp_path / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -599,7 +603,9 @@ def test_operator_artifact_rejects_unknown_architecture_codec(tmp_path):
         phx.nn.operator.training.load_trained_operator(tmp_path)
 
 
-def test_portable_operator_artifact_round_trips_inference_and_training_state(tmp_path):
+def test_portable_operator_artifact_round_trips_inference_and_training_state(
+    tmp_path: Any,
+) -> None:
     trained = _trained()
     batch = _batch()
     destination = phx.nn.operator.training.save_operator_artifact(
@@ -655,10 +661,10 @@ def test_portable_operator_artifact_round_trips_inference_and_training_state(tmp
     ),
 )
 def test_periodic_fourier_cno_artifacts_round_trip_with_semantic_ids(
-    tmp_path,
-    model,
-    architecture_id,
-):
+    tmp_path: Any,
+    model: Any,
+    architecture_id: Any,
+) -> None:
     trained = phx.nn.operator.training.TrainedOperator(
         model,
         _task(),
@@ -714,10 +720,10 @@ def test_periodic_fourier_cno_artifacts_round_trip_with_semantic_ids(
     ),
 )
 def test_periodic_fourier_cno_artifacts_reject_legacy_ids(
-    tmp_path,
-    model,
-    legacy_id,
-):
+    tmp_path: Any,
+    model: Any,
+    legacy_id: Any,
+) -> None:
     trained = phx.nn.operator.training.TrainedOperator(
         model,
         _task(),
@@ -739,7 +745,9 @@ def test_periodic_fourier_cno_artifacts_reject_legacy_ids(
         phx.nn.operator.training.load_trained_operator(destination)
 
 
-def test_wavelet_operator_artifacts_round_trip_without_model_templates(tmp_path):
+def test_wavelet_operator_artifacts_round_trip_without_model_templates(
+    tmp_path: Any,
+) -> None:
     models = (
         phx.nn.operator.architectures.WaveletNeuralOperator(
             1,
@@ -790,7 +798,9 @@ def test_wavelet_operator_artifacts_round_trip_without_model_templates(tmp_path)
         assert jnp.allclose(actual, expected)
 
 
-def test_sfno_artifact_round_trips_s2fft_plan_without_model_template(tmp_path):
+def test_sfno_artifact_round_trips_s2fft_plan_without_model_template(
+    tmp_path: Any,
+) -> None:
     space = phx.discretization.SphericalSpectralPlan(3).prepare()
     plan = space.transform
     axes = (
@@ -880,7 +890,7 @@ def test_sfno_artifact_round_trips_s2fft_plan_without_model_template(tmp_path):
     assert jnp.allclose(actual, expected)
 
 
-def test_portable_operator_artifact_loads_in_fresh_process(tmp_path):
+def test_portable_operator_artifact_loads_in_fresh_process(tmp_path: Any) -> None:
     trained = _trained()
     expected = trained.predict(_batch()).field("solution").values
     destination = phx.nn.operator.training.save_operator_artifact(tmp_path, trained)
@@ -934,7 +944,9 @@ print(
     assert jnp.allclose(jnp.asarray(payload["values"]), expected)
 
 
-def test_operator_artifact_checksum_and_task_fingerprint_fail_closed(tmp_path):
+def test_operator_artifact_checksum_and_task_fingerprint_fail_closed(
+    tmp_path: Any,
+) -> None:
     phx.nn.operator.training.save_operator_artifact(tmp_path, _trained())
     manifest_path = tmp_path / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -951,7 +963,7 @@ def test_operator_artifact_checksum_and_task_fingerprint_fail_closed(tmp_path):
         phx.nn.operator.training.load_trained_operator(tmp_path)
 
 
-def test_operator_artifact_rejects_manifest_member_path_escape(tmp_path):
+def test_operator_artifact_rejects_manifest_member_path_escape(tmp_path: Any) -> None:
     phx.nn.operator.training.save_operator_artifact(tmp_path / "artifact", _trained())
     manifest_path = tmp_path / "artifact" / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -964,7 +976,7 @@ def test_operator_artifact_rejects_manifest_member_path_escape(tmp_path):
         phx.nn.operator.training.load_trained_operator(tmp_path / "artifact")
 
 
-def _external_manifest(tmp_path):
+def _external_manifest(tmp_path: Any) -> Any:
     checkpoint = tmp_path / "external.bin"
     checkpoint.write_bytes(b"verified-external-state")
     manifest = phx.nn.operator.adapters.OperatorCheckpointManifest(
@@ -987,7 +999,9 @@ def _external_manifest(tmp_path):
     return manifest_path, checkpoint
 
 
-def _external_trained(manifest_path, checkpoint, runner, capabilities, **options):
+def _external_trained(
+    manifest_path: Any, checkpoint: Any, runner: Any, capabilities: Any, **options: Any
+) -> Any:
     return phx.nn.operator.training.load_external_trained_operator(
         manifest_path,
         checkpoint,
@@ -1004,7 +1018,7 @@ def _external_trained(manifest_path, checkpoint, runner, capabilities, **options
     )
 
 
-def test_external_checkpoint_enters_the_same_task_bound_runtime(tmp_path):
+def test_external_checkpoint_enters_the_same_task_bound_runtime(tmp_path: Any) -> None:
     manifest_path, checkpoint = _external_manifest(tmp_path)
     trained = _external_trained(
         manifest_path,
@@ -1019,11 +1033,13 @@ def test_external_checkpoint_enters_the_same_task_bound_runtime(tmp_path):
     )
 
 
-def test_host_only_external_checkpoint_runs_eagerly_and_refuses_compilation(tmp_path):
+def test_host_only_external_checkpoint_runs_eagerly_and_refuses_compilation(
+    tmp_path: Any,
+) -> None:
     manifest_path, checkpoint = _external_manifest(tmp_path)
     calls = []
 
-    def runner(payload, key):
+    def runner(payload: Any, key: Any) -> Any:
         calls.append(key)
         return 2.0 * payload
 
@@ -1048,13 +1064,11 @@ def test_host_only_external_checkpoint_runs_eagerly_and_refuses_compilation(tmp_
     assert len(calls) == 1
     prepared = trained.prepare(_batch())
     with pytest.raises(TypeError, match="JAX transformations"):
-        jax.jit(
-            lambda: trained.predict_prepared(prepared).field("solution").values
-        )()
+        jax.jit(lambda: trained.predict_prepared(prepared).field("solution").values)()
     assert len(calls) == 1
 
 
-def test_training_checkpoint_uses_only_current_manifest(tmp_path):
+def test_training_checkpoint_uses_only_current_manifest(tmp_path: Any) -> None:
     batch = _batch()
     target = jnp.zeros_like(batch.input("u").values)
     model = _trained().execution_model
@@ -1101,7 +1115,7 @@ def test_training_checkpoint_uses_only_current_manifest(tmp_path):
         )
 
 
-def test_training_checkpoint_rejects_manifest_path_escape(tmp_path):
+def test_training_checkpoint_rejects_manifest_path_escape(tmp_path: Any) -> None:
     model = _trained().execution_model
     optimizer_state = {"momentum": jnp.ones((2,), dtype="float64")}
     checkpoint = phx.nn.operator.training.save_operator_training_checkpoint(
@@ -1127,7 +1141,9 @@ def test_training_checkpoint_rejects_manifest_path_escape(tmp_path):
         )
 
 
-def test_training_checkpoint_rejects_deep_manifest_before_state_read(tmp_path):
+def test_training_checkpoint_rejects_deep_manifest_before_state_read(
+    tmp_path: Any,
+) -> None:
     model = _trained().execution_model
     optimizer_state = {"momentum": jnp.ones((2,), dtype="float64")}
     checkpoint = phx.nn.operator.training.save_operator_training_checkpoint(

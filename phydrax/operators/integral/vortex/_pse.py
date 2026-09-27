@@ -9,7 +9,8 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -55,7 +56,7 @@ class GaussianParticleStrengthExchangePlan(AbstractVortexDiffusionPlan):
         cutoff_factor: float = 4.0,
         maximum_interactions: int = 1_000_000,
         box: ParticleBox | None = None,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         epsilon = float(smoothing_scale)
         cutoff = float(cutoff_factor)
@@ -71,8 +72,8 @@ class GaussianParticleStrengthExchangePlan(AbstractVortexDiffusionPlan):
         if box is not None:
             if not isinstance(box, ParticleBox) or box.ambient_dimension != dimension_:
                 raise ValueError("PSE ParticleBox dimension is incompatible.")
-            widths = np.asarray(box.widths)
-            periodic = np.asarray(box.periodic)
+            widths = np.asarray(box.lengths)
+            periodic = np.asarray(box.periodic_mask)
             if np.any(periodic & (cutoff * epsilon >= 0.5 * widths)):
                 raise ValueError(
                     "Periodic PSE support must be less than half each period."
@@ -81,7 +82,7 @@ class GaussianParticleStrengthExchangePlan(AbstractVortexDiffusionPlan):
         self.cutoff_factor = cutoff
         self.maximum_interactions = maximum
         self.box = box
-        periodic_domain = box is not None and bool(np.any(np.asarray(box.periodic)))
+        periodic_domain = box is not None and bool(np.any(np.asarray(box.periodic_mask)))
         self.capabilities = VortexDiffusionCapabilities(
             dimension_,
             required_source_fields=(
@@ -146,7 +147,7 @@ class PreparedGaussianParticleStrengthExchange(AbstractPreparedVortexDiffusion):
 
     def __init__(
         self, plan: GaussianParticleStrengthExchangePlan, left: Array, right: Array, /
-    ):
+    ) -> None:
         capacity = int(
             max(int(jnp.max(left, initial=0)), int(jnp.max(right, initial=0))) + 1
         )

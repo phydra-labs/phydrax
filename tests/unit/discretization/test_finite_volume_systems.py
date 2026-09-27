@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,7 +15,7 @@ import pytest
 import phydrax as phx
 
 
-def _cell_grid(shape, *, periodic=None):
+def _cell_grid(shape: Any, *, periodic: Any = None) -> Any:
     periodic = (False,) * len(shape) if periodic is None else periodic
     return phx.discretization.TensorGridPlan(
         tuple(
@@ -23,7 +26,7 @@ def _cell_grid(shape, *, periodic=None):
     ).prepare(jnp.stack((jnp.zeros(len(shape)), jnp.ones(len(shape)))))
 
 
-def _sine_cell_averages(edges):
+def _sine_cell_averages(edges: Any) -> Any:
     widths = edges[1:] - edges[:-1]
     return (jnp.cos(2.0 * jnp.pi * edges[:-1]) - jnp.cos(2.0 * jnp.pi * edges[1:])) / (
         2.0 * jnp.pi * widths
@@ -39,12 +42,12 @@ _ALE_SOLVER_TYPES = (
 
 
 def _compile_two_dimensional_system(
-    geometry_kind,
-    system,
-    interface_solver,
+    geometry_kind: Any,
+    system: Any,
+    interface_solver: Any,
     *,
-    entropy_pair=None,
-):
+    entropy_pair: Any = None,
+) -> Any:
     vertices = np.asarray(
         (
             (0.0, 0.0),
@@ -128,7 +131,7 @@ def _compile_two_dimensional_system(
 
 
 @pytest.mark.parametrize("geometry_kind", ("structured", "mapped"))
-def test_entropy_pair_compiles_for_structured_geometry(geometry_kind):
+def test_entropy_pair_compiles_for_structured_geometry(geometry_kind: Any) -> None:
     system = phx.equations.EulerSystem(2)
     pair = phx.equations.ideal_gas_euler_entropy_pair(system)
     without_pair = _compile_two_dimensional_system(
@@ -149,7 +152,9 @@ def test_entropy_pair_compiles_for_structured_geometry(geometry_kind):
 
 
 @pytest.mark.parametrize("geometry_kind", ("triangle", "unstructured"))
-def test_entropy_pair_rejects_unsupported_finite_volume_geometry(geometry_kind):
+def test_entropy_pair_rejects_unsupported_finite_volume_geometry(
+    geometry_kind: Any,
+) -> None:
     system = phx.equations.EulerSystem(2)
     pair = phx.equations.ideal_gas_euler_entropy_pair(system)
     with pytest.raises(ValueError, match="structured and mapped"):
@@ -161,7 +166,7 @@ def test_entropy_pair_rejects_unsupported_finite_volume_geometry(geometry_kind):
         )
 
 
-def _two_dimensional_euler_faces():
+def _two_dimensional_euler_faces() -> Any:
     system = phx.equations.EulerSystem(2)
     left = system.primitive_to_conserved(
         jnp.asarray(
@@ -192,7 +197,7 @@ def _two_dimensional_euler_faces():
     return system, left, right, normals
 
 
-def _galilean_transform(values, velocity_shift):
+def _galilean_transform(values: Any, velocity_shift: Any) -> Any:
     density = values[..., 0]
     momentum = values[..., 1:-1]
     energy = values[..., -1]
@@ -212,14 +217,14 @@ def _galilean_transform(values, velocity_shift):
     )
 
 
-def _rotate_two_dimensional_euler_values_to_global(values, normal):
+def _rotate_two_dimensional_euler_values_to_global(values: Any, normal: Any) -> Any:
     normal_ = jnp.asarray(normal)
     tangent = jnp.stack((-normal_[1], normal_[0]))
     vector = values[..., 1:2] * normal_ + values[..., 2:3] * tangent
     return jnp.concatenate((values[..., :1], vector, values[..., -1:]), axis=-1)
 
 
-def _rotated_strong_rarefaction(normal, direction=1):
+def _rotated_strong_rarefaction(normal: Any, direction: Any = 1) -> Any:
     system = phx.equations.EulerSystem(2)
     if direction == 1:
         left_primitive = jnp.asarray((1.0, -2.0, 0.7, 0.01))
@@ -248,9 +253,9 @@ def _rotated_strong_rarefaction(normal, direction=1):
     ),
 )
 def test_einfeldt_normal_bounds_include_rotated_roe_rarefaction_extrema_and_jit(
-    normal,
-    direction,
-):
+    normal: Any,
+    direction: Any,
+) -> None:
     system, local_left, local_right, left, right, normal_ = _rotated_strong_rarefaction(
         normal, direction
     )
@@ -272,7 +277,7 @@ def test_einfeldt_normal_bounds_include_rotated_roe_rarefaction_extrema_and_jit(
     )
     np.testing.assert_allclose(normal_result.max_speed, axis_result.max_speed, rtol=2e-12)
 
-    def compiled_normal_flux(left_state, right_state):
+    def compiled_normal_flux(left_state: Any, right_state: Any) -> Any:
         result = solver.normal_face_flux(system, left_state, right_state, normal_)
         return result.normal_flux, result.max_speed
 
@@ -289,10 +294,10 @@ def test_einfeldt_normal_bounds_include_rotated_roe_rarefaction_extrema_and_jit(
     ),
 )
 def test_einfeldt_ale_normal_bounds_shift_union_of_endpoint_and_roe_extrema(
-    normal,
-    direction,
-    grid_velocity,
-):
+    normal: Any,
+    direction: Any,
+    grid_velocity: Any,
+) -> None:
     system, local_left, local_right, left, right, normal_ = _rotated_strong_rarefaction(
         normal, direction
     )
@@ -344,9 +349,10 @@ def test_einfeldt_ale_normal_bounds_shift_union_of_endpoint_and_roe_extrema(
     np.testing.assert_array_equal(zero_grid.max_speed, stationary.max_speed)
 
 
-def test_einfeldt_normal_fallback_update_is_admissible_for_strong_rarefaction():
+def test_einfeldt_normal_fallback_update_is_admissible_for_strong_rarefaction() -> None:
     system, _, _, left, right, normal = _rotated_strong_rarefaction((0.6, 0.8))
     fallback = phx.discretization.FluxPositivityPlan().fallback_flux
+    # ty: ignore[unresolved-attribute]
     result = fallback.normal_face_flux(system, left, right, normal)
     timestep = 0.9 / result.max_speed
     left_physical_flux = system.physical_normal_flux(left, normal)
@@ -361,7 +367,7 @@ def test_einfeldt_normal_fallback_update_is_admissible_for_strong_rarefaction():
     assert jnp.all(system.admissible(updated))
 
 
-def test_einfeldt_normal_flux_rejects_scalar_systems():
+def test_einfeldt_normal_flux_rejects_scalar_systems() -> None:
     system = phx.equations.ScalarConservationSystem(
         2,
         lambda state, axis, args: state,
@@ -383,7 +389,7 @@ def test_einfeldt_normal_flux_rejects_scalar_systems():
     "geometry_kind",
     ("structured", "mapped", "triangle", "unstructured"),
 )
-def test_einfeldt_compile_rejects_scalar_and_accepts_euler(geometry_kind):
+def test_einfeldt_compile_rejects_scalar_and_accepts_euler(geometry_kind: Any) -> None:
     velocity = jnp.asarray((0.4, -0.15))
     scalar = phx.equations.ScalarConservationSystem(
         2,
@@ -417,7 +423,9 @@ def test_einfeldt_compile_rejects_scalar_and_accepts_euler(geometry_kind):
 
 
 @pytest.mark.parametrize("geometry_kind", ("structured", "mapped", "triangle"))
-def test_two_material_vof_rejects_non_unstructured_discretizations(geometry_kind):
+def test_two_material_vof_rejects_non_unstructured_discretizations(
+    geometry_kind: Any,
+) -> None:
     eos = phx.equations.TwoMaterialEOSClosure(
         phx.equations.IdealGasMaterial(1.4),
         phx.equations.StiffenedGasMaterial(4.4, 2.0, 1.0),
@@ -433,7 +441,7 @@ def test_two_material_vof_rejects_non_unstructured_discretizations(geometry_kind
 
 
 @pytest.mark.parametrize("solver_type", _ALE_SOLVER_TYPES)
-def test_normal_ale_flux_has_exact_zero_grid_velocity_parity(solver_type):
+def test_normal_ale_flux_has_exact_zero_grid_velocity_parity(solver_type: Any) -> None:
     system, left, right, normals = _two_dimensional_euler_faces()
     solver = solver_type()
 
@@ -446,7 +454,7 @@ def test_normal_ale_flux_has_exact_zero_grid_velocity_parity(solver_type):
     np.testing.assert_array_equal(ale.max_speed, stationary.max_speed)
 
 
-def test_smoothed_rusanov_ale_flux_has_exact_zero_grid_velocity_parity():
+def test_smoothed_rusanov_ale_flux_has_exact_zero_grid_velocity_parity() -> None:
     system, left, right, normals = _two_dimensional_euler_faces()
     solver = phx.discretization.RusanovFluxPlan(smooth_epsilon=0.15)
 
@@ -460,7 +468,9 @@ def test_smoothed_rusanov_ale_flux_has_exact_zero_grid_velocity_parity():
 
 
 @pytest.mark.parametrize("solver_type", _ALE_SOLVER_TYPES)
-def test_normal_ale_constant_state_flux_and_relative_signal_bound(solver_type):
+def test_normal_ale_constant_state_flux_and_relative_signal_bound(
+    solver_type: Any,
+) -> None:
     system, state, _, normals = _two_dimensional_euler_faces()
     grid_velocity = jnp.asarray((0.25, -0.4, 0.1))
     solver = solver_type()
@@ -479,7 +489,7 @@ def test_normal_ale_constant_state_flux_and_relative_signal_bound(solver_type):
 
 
 @pytest.mark.parametrize("solver_type", _ALE_SOLVER_TYPES)
-def test_normal_ale_flux_is_galilean_covariant_with_moving_grid(solver_type):
+def test_normal_ale_flux_is_galilean_covariant_with_moving_grid(solver_type: Any) -> None:
     system, left, right, normals = _two_dimensional_euler_faces()
     solver = solver_type()
     grid_velocity = jnp.asarray((0.3, -0.15, 0.5))
@@ -504,7 +514,7 @@ def test_normal_ale_flux_is_galilean_covariant_with_moving_grid(solver_type):
     np.testing.assert_allclose(shifted.max_speed, original.max_speed, rtol=2e-12)
 
 
-def test_hll_hllc_and_einfeldt_ale_fluxes_share_consistent_wave_regions():
+def test_hll_hllc_and_einfeldt_ale_fluxes_share_consistent_wave_regions() -> None:
     system, left, right, normals = _two_dimensional_euler_faces()
     grid_velocity = jnp.asarray((0.3, -0.15, 0.5))
     hll = phx.discretization.HLLFluxPlan().normal_ale_face_flux(
@@ -536,7 +546,7 @@ def test_hll_hllc_and_einfeldt_ale_fluxes_share_consistent_wave_regions():
         np.testing.assert_allclose(result.normal_flux, expected, rtol=1e-12, atol=1e-12)
 
 
-def test_hllc_ale_flux_exactly_resolves_a_contact_moving_with_the_grid():
+def test_hllc_ale_flux_exactly_resolves_a_contact_moving_with_the_grid() -> None:
     system = phx.equations.EulerSystem(2)
     contact_velocity = 0.6
     pressure = 1.25
@@ -564,12 +574,12 @@ def test_hllc_ale_flux_exactly_resolves_a_contact_moving_with_the_grid():
 
 @pytest.mark.parametrize("solver_type", _ALE_SOLVER_TYPES)
 def test_normal_ale_flux_is_jittable_and_differentiable_in_grid_velocity(
-    solver_type,
-):
+    solver_type: Any,
+) -> None:
     system, left, right, normals = _two_dimensional_euler_faces()
     solver = solver_type()
 
-    def total_flux(grid_velocity):
+    def total_flux(grid_velocity: Any) -> Any:
         return jnp.sum(
             solver.normal_ale_face_flux(
                 system, left, right, normals, grid_velocity
@@ -586,7 +596,7 @@ def test_normal_ale_flux_is_jittable_and_differentiable_in_grid_velocity(
 
 
 @pytest.mark.parametrize("solver_type", _ALE_SOLVER_TYPES)
-def test_normal_ale_flux_rejects_invalid_grid_velocity_inputs(solver_type):
+def test_normal_ale_flux_rejects_invalid_grid_velocity_inputs(solver_type: Any) -> None:
     system, left, right, normals = _two_dimensional_euler_faces()
     solver = solver_type()
 
@@ -610,8 +620,8 @@ def test_normal_ale_flux_rejects_invalid_grid_velocity_inputs(solver_type):
 
 @pytest.mark.parametrize("solver_type", _ALE_SOLVER_TYPES)
 def test_normal_ale_flux_accepts_scalar_velocity_only_for_unbatched_face(
-    solver_type,
-):
+    solver_type: Any,
+) -> None:
     system, left, right, normals = _two_dimensional_euler_faces()
     result = solver_type().normal_ale_face_flux(
         system, left[0], right[0], normals[0], jnp.asarray(0.2)
@@ -622,7 +632,9 @@ def test_normal_ale_flux_accepts_scalar_velocity_only_for_unbatched_face(
 
 
 @pytest.mark.parametrize("method", ["weno_z", "teno", "mp5"])
-def test_high_resolution_reconstruction_retains_fifth_order_smooth_accuracy(method):
+def test_high_resolution_reconstruction_retains_fifth_order_smooth_accuracy(
+    method: Any,
+) -> None:
     errors = []
     for cells in (32, 64, 128):
         edges = jnp.linspace(0.0, 1.0, cells + 1)
@@ -638,7 +650,7 @@ def test_high_resolution_reconstruction_retains_fifth_order_smooth_accuracy(meth
     assert rate > 4.5
 
 
-def test_multidimensional_euler_roundtrip_and_directional_flux_shapes():
+def test_multidimensional_euler_roundtrip_and_directional_flux_shapes() -> None:
     system = phx.equations.EulerSystem(2)
     primitive = jnp.asarray([[1.0, 0.3, -0.1, 1.2], [0.7, -0.2, 0.4, 0.8]])
     state = system.primitive_to_conserved(primitive)
@@ -669,7 +681,7 @@ def test_multidimensional_euler_roundtrip_and_directional_flux_shapes():
     )
 
 
-def test_euler_roe_eigensystem_roundtrips_state_jump_in_two_dimensions():
+def test_euler_roe_eigensystem_roundtrips_state_jump_in_two_dimensions() -> None:
     system = phx.equations.EulerSystem(2)
     left = system.primitive_to_conserved(jnp.asarray([[1.0, 0.3, 0.1, 1.0]]))
     right = system.primitive_to_conserved(jnp.asarray([[0.8, -0.1, 0.2, 0.7]]))
@@ -685,7 +697,7 @@ def test_euler_roe_eigensystem_roundtrips_state_jump_in_two_dimensions():
     assert eigenvalues.shape == jump.shape
 
 
-def test_euler_normal_eigensystem_roundtrips_oblique_state_jump():
+def test_euler_normal_eigensystem_roundtrips_oblique_state_jump() -> None:
     system = phx.equations.EulerSystem(2)
     left = system.primitive_to_conserved(jnp.asarray([[1.0, 0.3, 0.1, 1.0]]))
     right = system.primitive_to_conserved(jnp.asarray([[0.8, -0.1, 0.2, 0.7]]))
@@ -703,7 +715,9 @@ def test_euler_normal_eigensystem_roundtrips_oblique_state_jump():
     assert eigenvalues.shape == jump.shape
 
 
-def test_entropy_flux_is_consistent_and_dissipative_variant_has_nonpositive_pairing():
+def test_entropy_flux_is_consistent_and_dissipative_variant_has_nonpositive_pairing() -> (
+    None
+):
     system = phx.equations.EulerSystem()
     left = system.primitive_to_conserved(jnp.asarray([[1.0, 0.4, 1.0], [0.7, -0.2, 0.8]]))
     right = system.primitive_to_conserved(jnp.asarray([[0.9, 0.1, 0.9], [1.1, 0.3, 1.2]]))
@@ -739,7 +753,7 @@ def test_entropy_flux_is_consistent_and_dissipative_variant_has_nonpositive_pair
     )
 
 
-def test_characteristic_weno_euler_step_preserves_positive_sod_state_and_mass():
+def test_characteristic_weno_euler_step_preserves_positive_sod_state_and_mass() -> None:
     cells = 120
     grid = _cell_grid((cells,))
     system = phx.equations.EulerSystem()
@@ -777,6 +791,7 @@ def test_characteristic_weno_euler_step_preserves_positive_sod_state_and_mass():
     )
     state = system.primitive_to_conserved(primitive)
     initial_mass = jnp.sum(discretization.cell_volumes * state[:, 0])
+    # ty: ignore[invalid-argument-type]
     stepper = phx.solver.UnsplitFiniteVolumeSSPRK3Plan(compiled.dynamics)
     time = jnp.asarray(0.0)
     for _ in range(10):
@@ -792,7 +807,7 @@ def test_characteristic_weno_euler_step_preserves_positive_sod_state_and_mass():
     )
 
 
-def test_mhd_flux_preserves_declared_components():
+def test_mhd_flux_preserves_declared_components() -> None:
     mhd = phx.equations.IdealMHDSystem()
     mhd_primitive = jnp.asarray([[1.0, 0.1, 0.0, 0.0, 1.0, 0.75, 0.1, 0.0]])
     mhd_state = mhd.primitive_to_conserved(mhd_primitive)
@@ -801,7 +816,7 @@ def test_mhd_flux_preserves_declared_components():
     assert jnp.all(mhd.admissible(mhd_state))
 
 
-def test_wave_propagation_method_refuses_face_closure():
+def test_wave_propagation_method_refuses_face_closure() -> None:
     closure = phx.discretization.ArbitraryNormalFaceClosurePlan(
         lambda system, left, right, baseline, context, args: 0.1 * (right - left),
         closure_id="wave-jump-correction",
@@ -815,7 +830,7 @@ def test_wave_propagation_method_refuses_face_closure():
         )
 
 
-def test_unsplit_two_dimensional_scalar_residual_preserves_periodic_mass():
+def test_unsplit_two_dimensional_scalar_residual_preserves_periodic_mass() -> None:
     grid = _cell_grid((18, 14), periodic=(True, True))
     discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
     velocity = (0.7, -0.2)
@@ -846,7 +861,7 @@ def test_unsplit_two_dimensional_scalar_residual_preserves_periodic_mass():
     )
 
 
-def test_nonuniform_weno_prepares_ghost_geometry_for_bounded_faces():
+def test_nonuniform_weno_prepares_ghost_geometry_for_bounded_faces() -> None:
     edges = jnp.asarray([0.0, 0.08, 0.2, 0.38, 0.62, 0.82, 1.0])
     widths = edges[1:] - edges[:-1]
     centers = 0.5 * (edges[:-1] + edges[1:])
@@ -883,6 +898,7 @@ def test_nonuniform_weno_prepares_ghost_geometry_for_bounded_faces():
     )
     compiled = phx.equations.compile_conservation_problem(problem, discretization, method)
     state = jnp.ones(discretization.state_shape)
+    # ty: ignore[not-iterable]
     fluxes, _ = compiled.face_fluxes(jnp.asarray(0.0), state)
 
     assert fluxes[0].shape == (7, 1)
@@ -891,8 +907,8 @@ def test_nonuniform_weno_prepares_ghost_geometry_for_bounded_faces():
 
 @pytest.mark.parametrize("geometry_kind", ("triangle", "unstructured"))
 def test_stationary_polygonal_fv_executes_arbitrary_normal_non_ale_flux(
-    geometry_kind,
-):
+    geometry_kind: Any,
+) -> None:
     system = phx.equations.EulerSystem(2)
     solver = phx.discretization.EntropyStableEulerFluxPlan()
     assert not isinstance(

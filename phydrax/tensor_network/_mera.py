@@ -8,7 +8,8 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract, get_symbol
 
@@ -33,7 +34,7 @@ class MERAResourcePolicy(StrictModule):
         maximum_state_elements: int = 10_000_000,
         maximum_workspace_bytes: int = 2**31,
         isometry_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         sites = int(maximum_sites)
         elements = int(maximum_state_elements)
         workspace = int(maximum_workspace_bytes)
@@ -70,7 +71,7 @@ class BinaryMERA(StrictModule):
         isometries: Sequence[ArrayLike],
         disentanglers: Sequence[ArrayLike],
         /,
-    ):
+    ) -> None:
         isometries_ = tuple(jnp.asarray(value) for value in isometries)
         disentanglers_ = tuple(jnp.asarray(value) for value in disentanglers)
         if not isometries_ or len(disentanglers_) != len(isometries_):

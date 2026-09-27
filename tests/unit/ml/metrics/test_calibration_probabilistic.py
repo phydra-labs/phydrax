@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,7 +12,7 @@ import pytest
 from phydrax.ml import metrics
 
 
-def test_hard_calibration_bins_return_auditable_statistics():
+def test_hard_calibration_bins_return_auditable_statistics() -> None:
     target = jnp.array([0, 0, 1, 1])
     probability = jnp.array([0.1, 0.2, 0.8, 0.9])
 
@@ -25,7 +28,7 @@ def test_hard_calibration_bins_return_auditable_statistics():
     assert jnp.allclose(maximum.value, 0.15)
 
 
-def test_smooth_calibration_surrogates_are_distinct_and_differentiable():
+def test_smooth_calibration_surrogates_are_distinct_and_differentiable() -> None:
     target = jnp.array([0, 0, 1, 1])
     probability = jnp.array([0.1, 0.2, 0.8, 0.9])
     hard = metrics.expected_calibration_error(target, probability, num_bins=2)
@@ -62,7 +65,7 @@ def test_smooth_calibration_surrogates_are_distinct_and_differentiable():
     assert jnp.any(jnp.abs(gradient) > 0.0)
 
 
-def test_calibration_invalid_probability_is_explicit():
+def test_calibration_invalid_probability_is_explicit() -> None:
     result = metrics.expected_calibration_error(
         jnp.array([0, 1]), jnp.array([0.1, 1.2]), num_bins=2
     )
@@ -70,7 +73,7 @@ def test_calibration_invalid_probability_is_explicit():
     assert int(result.status) == metrics.METRIC_INVALID_INPUT
 
 
-def test_gaussian_interval_and_ordered_categorical_scores():
+def test_gaussian_interval_and_ordered_categorical_scores() -> None:
     target = jnp.array([0.0, 0.0])
     mean = jnp.zeros(2)
     variance = jnp.ones(2)
@@ -95,7 +98,7 @@ def test_gaussian_interval_and_ordered_categorical_scores():
     assert jnp.allclose(spherical.value, 1.0)
 
 
-def test_empirical_crps_and_energy_score_definitions():
+def test_empirical_crps_and_energy_score_definitions() -> None:
     observation = jnp.array([0.0])
     ensemble = jnp.array([[-1.0, 1.0]])
     crps = metrics.crps_ensemble(observation, ensemble)
@@ -110,7 +113,7 @@ def test_empirical_crps_and_energy_score_definitions():
     assert jnp.allclose(energy.value, 0.5)
 
 
-def test_probabilistic_scores_jit_and_grad_through_forecasts():
+def test_probabilistic_scores_jit_and_grad_through_forecasts() -> None:
     observation = jnp.array([0.0, 0.5])
     ensemble = jnp.array([[-1.0, 1.0], [0.0, 1.0]])
 
@@ -130,7 +133,7 @@ def test_probabilistic_scores_jit_and_grad_through_forecasts():
     assert jnp.any(jnp.abs(gradient) > 0.0)
 
 
-def test_probabilistic_complex_policy_supports_energy_but_rejects_gaussian():
+def test_probabilistic_complex_policy_supports_energy_but_rejects_gaussian() -> None:
     observation = jnp.array([[0.0 + 0.0j]])
     ensemble = jnp.array([[[1.0 + 1.0j, -1.0 - 1.0j]]])
     energy = metrics.energy_score(observation, ensemble)
@@ -145,7 +148,7 @@ def test_probabilistic_complex_policy_supports_energy_but_rejects_gaussian():
         )
 
 
-def test_calibration_norm_bins_weights_masks_case_axes_and_classwise_score():
+def test_calibration_norm_bins_weights_masks_case_axes_and_classwise_score() -> None:
     target = jnp.array([0, 1, 1])
     probability = jnp.array([0.1, 0.6, jnp.nan])
     weight = jnp.array([1.0, 3.0, 9.0])
@@ -239,7 +242,7 @@ def test_calibration_norm_bins_weights_masks_case_axes_and_classwise_score():
     assert jnp.allclose(compiled, mapped)
 
 
-def test_hard_calibration_is_local_while_smooth_calibration_crosses_bins():
+def test_hard_calibration_is_local_while_smooth_calibration_crosses_bins() -> None:
     target = jnp.array([0, 1])
     probability = jnp.array([0.1, 0.6])
     hard_gradient = jax.grad(
@@ -280,7 +283,7 @@ def test_hard_calibration_is_local_while_smooth_calibration_crosses_bins():
         )
 
 
-def test_probabilistic_output_axes_and_gaussian_gradients():
+def test_probabilistic_output_axes_and_gaussian_gradients() -> None:
     target = jnp.zeros((2, 2))
     mean = jnp.array([[0.0, 1.0], [2.0, 0.0]])
     variance = jnp.ones((2, 2))
@@ -345,7 +348,7 @@ def test_probabilistic_output_axes_and_gaussian_gradients():
     assert jnp.any(jnp.abs(gradient) > 0.0)
 
 
-def test_probabilistic_member_weights_masks_and_smooth_energy_gradient():
+def test_probabilistic_member_weights_masks_and_smooth_energy_gradient() -> None:
     observation = jnp.array([0.0])
     ensemble = jnp.array([[-1.0, 100.0, 1.0]])
     member_mask = jnp.array([True, False, True])
@@ -402,7 +405,7 @@ def test_probabilistic_member_weights_masks_and_smooth_energy_gradient():
     assert jnp.any(jnp.abs(crps_gradient) > 0.0)
 
 
-def test_probabilistic_invalid_empty_and_zero_denominator_states():
+def test_probabilistic_invalid_empty_and_zero_denominator_states() -> None:
     target = jnp.array([0.0, 1.0])
     mean = jnp.zeros(2)
     invalid_likelihood = metrics.gaussian_negative_log_likelihood(
@@ -449,11 +452,11 @@ def test_probabilistic_invalid_empty_and_zero_denominator_states():
     assert int(empty_energy_members.status) == metrics.METRIC_ZERO_DENOMINATOR
 
 
-def test_ordered_categorical_probabilistic_scores_are_differentiable():
+def test_ordered_categorical_probabilistic_scores_are_differentiable() -> None:
     target = jnp.array([0, 2])
     probability = jnp.array([[0.7, 0.2, 0.1], [0.1, 0.2, 0.7]])
 
-    def combined(values):
+    def combined(values: Any) -> Any:
         return (
             metrics.ranked_probability_score(target, values).value
             + metrics.spherical_score(target, values).value

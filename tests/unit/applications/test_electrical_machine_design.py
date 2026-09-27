@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -24,7 +27,7 @@ from phydrax.optim import Bounds, OptimizationTermination
 jax.config.update("jax_enable_x64", True)
 
 
-def _small_machine(angle=0.23, **options):
+def _small_machine(angle: Any = 0.23, **options: Any) -> Any:
     return polar_machine(
         angle,
         sectors=16,
@@ -36,7 +39,7 @@ def _small_machine(angle=0.23, **options):
     )
 
 
-def _rebuild(machine, mesh, **overrides):
+def _rebuild(machine: Any, mesh: Any, **overrides: Any) -> Any:
     arguments = dict(
         rotation_weights=machine.rotation_weights,
         radial_velocity=machine.radial_velocity,
@@ -51,7 +54,7 @@ def _rebuild(machine, mesh, **overrides):
     return PlanarMachine(mesh, machine.cell_regions, machine.regions, **arguments)
 
 
-def test_field_residual_gauge_and_constitutive_energy():
+def test_field_residual_gauge_and_constitutive_energy() -> None:
     machine = _small_machine()
     currents = jnp.asarray((-5.0, 2.0))
     result = solve_planar_machine(machine, currents)
@@ -83,7 +86,7 @@ def test_field_residual_gauge_and_constitutive_energy():
     assert float(result.energy) > 0.0
 
 
-def test_virtual_work_matches_resolved_energy_and_air_maxwell_stress():
+def test_virtual_work_matches_resolved_energy_and_air_maxwell_stress() -> None:
     machine = _small_machine(salient=True)
     currents = jnp.asarray((-6.0, 1.0))
     step = 2e-6
@@ -97,9 +100,11 @@ def test_virtual_work_matches_resolved_energy_and_air_maxwell_stress():
     assert bool(result.accepted)
 
 
-def test_reluctance_torque_is_even_in_current_not_forced_odd():
+def test_reluctance_torque_is_even_in_current_not_forced_odd() -> None:
     machine = _small_machine(salient=True, remanence=0.0)
+    # ty: ignore[invalid-argument-type]
     positive = solve_planar_machine(machine, (-8.0, 0.0))
+    # ty: ignore[invalid-argument-type]
     negative = solve_planar_machine(machine, (8.0, 0.0))
     assert abs(float(positive.torque)) > 1e-5
     np.testing.assert_allclose(
@@ -109,12 +114,13 @@ def test_reluctance_torque_is_even_in_current_not_forced_odd():
         atol=1e-11,
     )
     np.testing.assert_allclose(negative.torque, positive.torque, rtol=1e-10, atol=1e-11)
+    # ty: ignore[invalid-argument-type]
     zero = solve_planar_machine(machine, (0.0, 0.0))
     np.testing.assert_array_equal(zero.magnetic_field, 0.0)
     assert float(zero.energy) == 0.0 and float(zero.torque) == 0.0
 
 
-def test_pm_current_odd_torque_matches_circular_magnet_reference():
+def test_pm_current_odd_torque_matches_circular_magnet_reference() -> None:
     # For mu=mu0 everywhere, a uniformly magnetized disk sees a uniform coil
     # field. This independently predicts the PM-current interaction torque;
     # taking its current-odd part cancels finite-mesh magnet self torque.
@@ -129,9 +135,12 @@ def test_pm_current_odd_torque_matches_circular_magnet_reference():
         rotor_relative_permeability=1.0,
         stator_relative_permeability=1.0,
     )
+    # ty: ignore[invalid-argument-type]
     positive = solve_planar_machine(machine, (-4.0, 0.0))
+    # ty: ignore[invalid-argument-type]
     negative = solve_planar_machine(machine, (4.0, 0.0))
     odd_torque = (positive.torque - negative.torque) / 2
+    # ty: ignore[unsupported-operator]
     odd_contour = (positive.contour_torque - negative.contour_torque) / 2
     (
         a,
@@ -154,11 +163,13 @@ def test_pm_current_odd_torque_matches_circular_magnet_reference():
     np.testing.assert_allclose(odd_contour, expected, rtol=0.07)
 
 
-def test_angle_topology_survives_full_revolutions_and_radius_bounds():
+def test_angle_topology_survives_full_revolutions_and_radius_bounds() -> None:
     angle = 0.19
     first = _small_machine(angle)
     revolved = _small_machine(angle + 4 * np.pi)
+    # ty: ignore[invalid-argument-type]
     reference = solve_planar_machine(first, (-5.0, 1.0))
+    # ty: ignore[invalid-argument-type]
     periodic = solve_planar_machine(revolved, (-5.0, 1.0))
     shifted_sector = _small_machine(angle + 0.5 * np.pi, salient=True)
     assert (
@@ -174,14 +185,19 @@ def test_angle_topology_survives_full_revolutions_and_radius_bounds():
         for delta in (-first.angle_window, first.angle_window):
             result = solve_planar_machine(
                 first,
+                # ty: ignore[invalid-argument-type]
                 (-5.0, 1.0),
+                # ty: ignore[invalid-argument-type]
                 design=(radius, 1.0, 1.0),
                 angle_delta=delta,
             )
             assert bool(result.accepted)
     study = polar_machine_study(
+        # ty: ignore[invalid-argument-type]
         (angle, angle + 0.5 * np.pi),
+        # ty: ignore[invalid-argument-type]
         ((-5.0, 0.0), (0.0, -5.0)),
+        # ty: ignore[invalid-argument-type]
         weights=(1.0, 3.0),
         sectors=16,
         rotor_layers=1,
@@ -207,12 +223,13 @@ def test_angle_topology_survives_full_revolutions_and_radius_bounds():
     assert bool(scan.accepted)
 
 
-def test_implicit_torque_design_derivative_includes_field_response():
+def test_implicit_torque_design_derivative_includes_field_response() -> None:
     machine = _small_machine()
     design = jnp.asarray((0.029, 0.9, 1.1))
     direction = jnp.asarray((0.001, 0.1, -0.07))
 
-    def torque(parameters):
+    def torque(parameters: Any) -> Any:
+        # ty: ignore[invalid-argument-type]
         return solve_planar_machine(machine, (-7.0, 1.0), design=parameters).torque
 
     _, tangent = jax.jvp(torque, (design,), (direction,))
@@ -224,9 +241,11 @@ def test_implicit_torque_design_derivative_includes_field_response():
     np.testing.assert_allclose(tangent, finite_difference, rtol=2e-4, atol=1e-7)
 
 
-def test_native_design_improves_physical_torque_with_fresh_final_fields():
+def test_native_design_improves_physical_torque_with_fresh_final_fields() -> None:
     study = polar_machine_study(
+        # ty: ignore[invalid-argument-type]
         (0.2,),
+        # ty: ignore[invalid-argument-type]
         (-10.0, 0.0),
         sectors=16,
         rotor_layers=1,
@@ -256,7 +275,7 @@ def test_native_design_improves_physical_torque_with_fresh_final_fields():
     assert float(result.final_evaluation.fields[0].relative_residual) < 1e-8
 
 
-def test_rejects_inverted_airgap_source_and_out_of_domain_geometry():
+def test_rejects_inverted_airgap_source_and_out_of_domain_geometry() -> None:
     machine = _small_machine()
     mesh = machine.discretization.mesh
     cells = np.array(mesh.blocks[0].vertices)
@@ -282,6 +301,7 @@ def test_rejects_inverted_airgap_source_and_out_of_domain_geometry():
         stator_layers=1,
     )
     with pytest.raises(ValueError, match="topology"):
+        # ty: ignore[invalid-argument-type]
         MachineAngleStudy((machine, different_topology), ((-5.0, 1.0),) * 2)
     with pytest.raises(ValueError, match="source-free"):
         _rebuild(machine, mesh, airgap_cells=np.ones(len(cells), dtype="bool"))

@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Literal, TypeAlias
+from typing import Any, assert_never, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -23,6 +24,7 @@ from ..._differentiation import (
     SurfaceDerivative,
 )
 from ..._model import ModelBinding, ValuePort
+from ...typing import parse
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
@@ -167,7 +169,7 @@ class _AbstractSoftTree(AbstractFittedModel):
         objective_transform: ObjectiveTransform = "identity",
         case_shape: tuple[int, ...] = (),
         out_size: int | tuple[int, ...] | Literal["scalar"] | None = None,
-    ):
+    ) -> None:
         case_shape_ = tuple(case_shape)
         logits = jnp.asarray(feature_logits)
         if not jnp.issubdtype(logits.dtype, jnp.inexact):
@@ -436,13 +438,22 @@ class _AbstractSoftTree(AbstractFittedModel):
 class SoftDecisionTree(_AbstractSoftTree):
     """One differentiable decision tree with probabilistic routing gates."""
 
+    if TYPE_CHECKING:
+        __init__ = _AbstractSoftTree.__init__
+
 
 class SoftRandomForest(_AbstractSoftTree):
     """Averaged differentiable trees trained jointly from randomized initialization."""
 
+    if TYPE_CHECKING:
+        __init__ = _AbstractSoftTree.__init__
+
 
 class SoftGradientBoostedTrees(_AbstractSoftTree):
     """Differentiable additive soft-tree model with learned leaf increments."""
+
+    if TYPE_CHECKING:
+        __init__ = _AbstractSoftTree.__init__
 
 
 def _temperature_at(
@@ -541,7 +552,9 @@ def _fit_soft_case(
         jnp.sum(normalized_weight), jnp.finfo(normalized_weight.dtype).tiny
     )
 
-    def loss_function(params, temperature):
+    def loss_function(
+        params: tuple[Array, Array, Array, Array, Array], temperature: Array
+    ) -> Array:
         logits_, thresholds_, missing_, leaves_, base_ = params
         raw, _ = _soft_predict_case(
             x,
@@ -554,37 +567,44 @@ def _fit_soft_case(
             temperature,
             depth,
         )
-        if objective == "squared_error":
-            residual = raw - y
-            data_loss = (
-                0.5
-                * jnp.sum(
-                    normalized_weight[:, None] * jnp.real(residual * jnp.conj(residual))
+        match objective:
+            case "squared_error":
+                residual = raw - y
+                data_loss = (
+                    0.5
+                    * jnp.sum(
+                        normalized_weight[:, None]
+                        * jnp.real(residual * jnp.conj(residual))
+                    )
+                    / denominator
                 )
-                / denominator
-            )
-        elif objective == "logistic":
-            data_loss = (
-                -jnp.sum(
-                    normalized_weight[:, None]
-                    * (y * jax.nn.log_sigmoid(raw) + (1.0 - y) * jax.nn.log_sigmoid(-raw))
+            case "logistic":
+                data_loss = (
+                    -jnp.sum(
+                        normalized_weight[:, None]
+                        * (
+                            y * jax.nn.log_sigmoid(raw)
+                            + (1.0 - y) * jax.nn.log_sigmoid(-raw)
+                        )
+                    )
+                    / denominator
                 )
-                / denominator
-            )
-        elif objective == "softmax":
-            data_loss = (
-                -jnp.sum(
-                    normalized_weight[:, None] * y * jax.nn.log_softmax(raw, axis=-1)
+            case "softmax":
+                data_loss = (
+                    -jnp.sum(
+                        normalized_weight[:, None] * y * jax.nn.log_softmax(raw, axis=-1)
+                    )
+                    / denominator
                 )
-                / denominator
-            )
-        else:
-            raise ValueError(f"Unsupported soft objective {objective!r}.")
+            case _:
+                assert_never(objective)
         selection = jax.nn.softmax(logits_, axis=-1)
         sparsity_penalty = jnp.mean(selection * (1.0 - selection))
         return data_loss + sparsity * sparsity_penalty
 
-    def update(params, step):
+    def update(
+        params: tuple[Array, Array, Array, Array, Array], step: Array
+    ) -> tuple[tuple[Array, Array, Array, Array, Array], Array]:
         temperature = _temperature_at(
             step,
             iterations,
@@ -631,7 +651,7 @@ class _AbstractSoftTreeRecipe(AbstractRecipe):
         sparsity: ArrayLike = 0.0,
         tree_learning_rate: ArrayLike = 0.1,
         num_classes: int | None = None,
-    ):
+    ) -> None:
         if tree_count <= 0 or depth <= 0 or iterations <= 0:
             raise ValueError("Soft tree count, depth, and iterations must be positive.")
         if isinstance(learning_rate, (int, float)) and learning_rate <= 0.0:
@@ -646,8 +666,9 @@ class _AbstractSoftTreeRecipe(AbstractRecipe):
                 not math.isfinite(float(value)) or value <= 0.0
             ):
                 raise ValueError(f"{name} must be finite and strictly positive.")
-        if temperature_schedule not in {"constant", "linear", "geometric"}:
-            raise ValueError("Unsupported temperature schedule.")
+        temperature_schedule = parse(
+            temperature_schedule, TemperatureSchedule, "temperature_schedule"
+        )
         if (
             temperature_schedule == "constant"
             and isinstance(initial_temperature, (int, float))
@@ -655,8 +676,7 @@ class _AbstractSoftTreeRecipe(AbstractRecipe):
             and initial_temperature != final_temperature
         ):
             raise ValueError("A constant schedule requires equal temperature endpoints.")
-        if objective not in {"squared_error", "logistic", "softmax"}:
-            raise ValueError("Unsupported soft-tree objective.")
+        objective = parse(objective, SoftObjective, "objective")
         if isinstance(sparsity, (int, float)) and sparsity < 0.0:
             raise ValueError("sparsity must be nonnegative.")
         self.tree_count = int(tree_count)
@@ -812,17 +832,17 @@ class _AbstractSoftTreeRecipe(AbstractRecipe):
 
 
 class SoftDecisionTreeRecipe(_AbstractSoftTreeRecipe):
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(tree_count=1, ensemble_kind="tree", **kwargs)
 
 
 class SoftRandomForestRecipe(_AbstractSoftTreeRecipe):
-    def __init__(self, *, n_estimators: int = 32, **kwargs):
+    def __init__(self, *, n_estimators: int = 32, **kwargs: Any) -> None:
         super().__init__(tree_count=n_estimators, ensemble_kind="forest", **kwargs)
 
 
 class SoftGradientBoostedTreesRecipe(_AbstractSoftTreeRecipe):
-    def __init__(self, *, n_estimators: int = 32, **kwargs):
+    def __init__(self, *, n_estimators: int = 32, **kwargs: Any) -> None:
         super().__init__(tree_count=n_estimators, ensemble_kind="boosted", **kwargs)
 
 

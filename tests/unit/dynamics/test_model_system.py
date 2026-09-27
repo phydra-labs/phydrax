@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -13,12 +15,12 @@ class _ScaledField(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, scale):
+    def __init__(self, scale: Any) -> None:
         self.scale = jnp.asarray(scale)
         self.in_size = 2
         self.out_size = 2
 
-    def __call__(self, state, /, *, key=None):
+    def __call__(self, state: Any, /, *, key: Any = None) -> Any:
         del key
         return self.scale * state
 
@@ -30,12 +32,12 @@ class _ControlledStep(AbstractArrayModel):
 
     _input_binding = ModelBinding.pointwise("structured")
 
-    def __init__(self, gain):
+    def __init__(self, gain: Any) -> None:
         self.gain = jnp.asarray(gain)
         self.in_size = (2, 1)
         self.out_size = 2
 
-    def __call__(self, values, /, *, key=None):
+    def __call__(self, values: Any, /, *, key: Any = None) -> Any:
         del key
         state, control = values
         return state + self.gain * control[0]
@@ -48,12 +50,12 @@ class _AxisStep(AbstractArrayModel):
 
     _input_binding = ModelBinding.axis("flat")
 
-    def __init__(self, scale):
+    def __init__(self, scale: Any) -> None:
         self.scale = jnp.asarray(scale)
         self.in_size = 2
         self.out_size = 2
 
-    def __call__(self, state, /, *, key=None):
+    def __call__(self, state: Any, /, *, key: Any = None) -> Any:
         del key
         return self.scale * state
 
@@ -66,22 +68,22 @@ class _PortedIntervalStep(AbstractArrayModel):
 
     _input_binding = ModelBinding.pointwise("structured")
 
-    def __init__(self, rate, ports):
+    def __init__(self, rate: Any, ports: Any) -> None:
         self.rate = jnp.asarray(rate)
         self.ports = ports
         self.in_size = (2, "scalar", "scalar")
         self.out_size = 2
 
-    def model_ports(self):
+    def model_ports(self) -> Any:
         return self.ports
 
-    def __call__(self, values, /, *, key=None):
+    def __call__(self, values: Any, /, *, key: Any = None) -> Any:
         del key
         state, source, target = values
         return state + self.rate * (target - source) * state
 
 
-def _step_time_port(name):
+def _step_time_port(name: Any) -> Any:
     return phx.ValuePort(
         f"discrete-step:{name}",
         event_shape=(),
@@ -90,14 +92,14 @@ def _step_time_port(name):
     )
 
 
-def _identity_mapping(inputs, outputs):
+def _identity_mapping(inputs: Any, outputs: Any) -> Any:
     return phx.PortMapping(
         inputs=tuple((port.port_id, port.port_id) for port in inputs),
         outputs=tuple((port.port_id, port.port_id) for port in outputs),
     )
 
 
-def _fitted_state_model(layout, target_port):
+def _fitted_state_model(layout: Any, target_port: Any) -> Any:
     features = jr.normal(jr.key(3), (16, 2))
     targets = features @ jnp.asarray([[0.5, 0.1], [0.0, -1.0]])
     return phx.ml.fit(
@@ -111,7 +113,7 @@ def _fitted_state_model(layout, target_port):
     ).model
 
 
-def test_fitted_model_binds_to_continuous_system_through_explicit_ports():
+def test_fitted_model_binds_to_continuous_system_through_explicit_ports() -> None:
     layout = phx.dynamics.StateLayout((2,))
     point = layout.value_port(role="point")
     tangent = layout.value_port(role="tangent")
@@ -128,6 +130,7 @@ def test_fitted_model_binds_to_continuous_system_through_explicit_ports():
         port_mapping=_identity_mapping((point,), (tangent,)),
     )
     state = jnp.asarray([1.0, -3.0])
+    # ty: ignore[unresolved-attribute]
     evidence = system.vector_field.port_binding
 
     assert jnp.allclose(system(0.0, state), model(state))
@@ -138,7 +141,7 @@ def test_fitted_model_binds_to_continuous_system_through_explicit_ports():
     assert ("output", tangent.port_id, "dimensions") in evidence.unverified
 
 
-def test_fitted_model_binding_rejects_a_mismatched_owner_port():
+def test_fitted_model_binding_rejects_a_mismatched_owner_port() -> None:
     layout = phx.dynamics.StateLayout((2,))
     point = layout.value_port(role="point")
     tangent = layout.value_port(role="tangent")
@@ -165,6 +168,7 @@ def test_fitted_model_binding_rejects_a_mismatched_owner_port():
     )
     state = jnp.asarray([2.0, -4.0])
 
+    # ty: ignore[unresolved-attribute]
     assert system.transition.port_binding.outputs == ((point.port_id, point.port_id),)
     assert jnp.allclose(
         system(phx.dynamics.DiscreteStepContext(0.0, 0.1, 0), state),
@@ -172,7 +176,7 @@ def test_fitted_model_binding_rejects_a_mismatched_owner_port():
     )
 
 
-def test_discrete_interval_ports_bind_only_in_owner_order():
+def test_discrete_interval_ports_bind_only_in_owner_order() -> None:
     layout = phx.dynamics.StateLayout((2,))
     point = layout.value_port(role="point")
     source = _step_time_port("source-time")
@@ -190,6 +194,7 @@ def test_discrete_interval_ports_bind_only_in_owner_order():
     state = jnp.asarray([1.0, -2.0])
     context = phx.dynamics.DiscreteStepContext(1.0, 1.5, 0)
 
+    # ty: ignore[unresolved-attribute]
     assert system.transition.port_binding.inputs == tuple(
         (port.port_id, port.port_id) for port in (point, source, target)
     )
@@ -208,7 +213,7 @@ def test_discrete_interval_ports_bind_only_in_owner_order():
         )
 
 
-def test_portless_model_takes_no_port_mapping():
+def test_portless_model_takes_no_port_mapping() -> None:
     layout = phx.dynamics.StateLayout((2,))
     point = layout.value_port(role="point")
     tangent = layout.value_port(role="tangent")
@@ -217,6 +222,7 @@ def test_portless_model_takes_no_port_mapping():
     system = phx.dynamics.continuous_model_system(
         model, state_layout=layout, system_id="mlp-field"
     )
+    # ty: ignore[unresolved-attribute]
     assert system.vector_field.port_binding is None
     with pytest.raises(ValueError, match="declares no model ports"):
         phx.dynamics.continuous_model_system(
@@ -227,7 +233,7 @@ def test_portless_model_takes_no_port_mapping():
         )
 
 
-def test_continuous_model_system_preserves_trainable_model_leaves():
+def test_continuous_model_system_preserves_trainable_model_leaves() -> None:
     system = phx.dynamics.continuous_model_system(
         _ScaledField(2.0),
         state_layout=phx.dynamics.StateLayout((2,)),
@@ -241,7 +247,7 @@ def test_continuous_model_system_preserves_trainable_model_leaves():
     assert jnp.allclose(gradient.vector_field.model.scale, -2.0)
 
 
-def test_controlled_port_hamiltonian_binds_to_continuous_system():
+def test_controlled_port_hamiltonian_binds_to_continuous_system() -> None:
     model = phx.nn.models.PortHamiltonianVectorField(
         state_size=2,
         control_size=1,
@@ -266,7 +272,7 @@ def test_controlled_port_hamiltonian_binds_to_continuous_system():
     )
 
 
-def test_controlled_model_system_rejects_flat_input_binding():
+def test_controlled_model_system_rejects_flat_input_binding() -> None:
     model = phx.nn.models.MLP(
         in_size=3,
         out_size=2,
@@ -283,7 +289,7 @@ def test_controlled_model_system_rejects_flat_input_binding():
         )
 
 
-def test_discrete_model_system_binds_complete_autonomous_next_state():
+def test_discrete_model_system_binds_complete_autonomous_next_state() -> None:
     model = _ScaledField(0.5)
     system = phx.dynamics.discrete_model_system(
         model,
@@ -300,7 +306,7 @@ def test_discrete_model_system_binds_complete_autonomous_next_state():
     assert jnp.array_equal(jax.jit(system)(context, state), model(state))
 
 
-def test_discrete_model_system_uses_structured_interval_control():
+def test_discrete_model_system_uses_structured_interval_control() -> None:
     model = _ControlledStep(2.0)
     system = phx.dynamics.discrete_model_system(
         model,
@@ -319,7 +325,7 @@ def test_discrete_model_system_uses_structured_interval_control():
     )
 
 
-def test_discrete_model_system_rejects_axis_models_and_invalid_step_contracts():
+def test_discrete_model_system_rejects_axis_models_and_invalid_step_contracts() -> None:
     layout = phx.dynamics.StateLayout((2,))
 
     with pytest.raises(ValueError, match="pointwise"):

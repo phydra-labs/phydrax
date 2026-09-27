@@ -11,7 +11,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -32,7 +32,7 @@ class DEMBatchExecutionPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, mode: DEMBatchExecutionMode = DEMBatchExecutionMode.REFERENCE_VMAP, /
-    ):
+    ) -> None:
         if not isinstance(mode, DEMBatchExecutionMode):
             raise TypeError("mode must be a DEMBatchExecutionMode.")
         self.mode = mode
@@ -119,12 +119,13 @@ def batch_step_detailed(
     if not isinstance(plan, DEMBatchExecutionPlan):
         raise TypeError("plan must be a DEMBatchExecutionPlan.")
     prepared_states = states
+    cache = states.neighborhood_cache
     if isinstance(dynamics.neighborhood, PreparedVerletParticleNeighborhood):
-        if plan.mode is DEMBatchExecutionMode.ALWAYS_BUILD:
+        if plan.mode is DEMBatchExecutionMode.ALWAYS_BUILD and cache is not None:
             prepared_states = eqx.tree_at(
                 lambda value: value.neighborhood_cache.successful,
                 states,
-                jnp.zeros_like(states.neighborhood_cache.successful),
+                jnp.zeros_like(cache.successful),
             )
         elif plan.mode is DEMBatchExecutionMode.UNIFORM_REBUILD:
             prepared_states = _force_uniform_rebuild(dynamics, states, step_size)

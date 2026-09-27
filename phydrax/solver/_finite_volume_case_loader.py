@@ -10,7 +10,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from .._trainable import fixed_field
@@ -27,6 +27,8 @@ from ..discretization import (
     HLLFluxPlan,
     MUSCLReconstruction,
     PiecewiseConstantReconstruction,
+    PreparedFiniteVolumeDynamics,
+    PreparedUnstructuredFiniteVolumeDynamics,
     read_unstructured_fv_archive,
     RusanovFluxPlan,
     TensorGridPlan,
@@ -219,8 +221,14 @@ def _load_structured_case(payload: dict[str, Any], /) -> PreparedFiniteVolumeCas
         problem, discretization, method, precision=precision
     )
     execution = _execution(payload["execution"])
+    dynamics = compiled.dynamics
+    # Structured finite-volume plans compile to structured finite-volume dynamics.
+    if not (isinstance(dynamics, PreparedFiniteVolumeDynamics)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(dynamics, PreparedFiniteVolumeDynamics)."
+        )
     runtime = PreparedFiniteVolumeRuntime(
-        compiled.dynamics, FluxPositivityPlan(), execution.step_policy
+        dynamics, FluxPositivityPlan(), execution.step_policy
     )
     case = FiniteVolumeCaseSpec(
         str(payload["name"]), runtime, execution, precision=precision
@@ -319,8 +327,14 @@ def _load_unstructured_case(
         problem, discretization, method, precision=precision
     )
     execution = _execution(payload["execution"])
+    dynamics = compiled.dynamics
+    # Unstructured finite-volume plans compile to unstructured dynamics.
+    if not (isinstance(dynamics, PreparedUnstructuredFiniteVolumeDynamics)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(dynamics, PreparedUnstructuredFiniteVolumeDynamics)."
+        )
     runtime = PreparedFiniteVolumeRuntime(
-        compiled.dynamics, FluxPositivityPlan(), execution.step_policy
+        dynamics, FluxPositivityPlan(), execution.step_policy
     )
 
     initial_payload = payload["initial_state"]

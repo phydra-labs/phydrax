@@ -8,7 +8,8 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -33,7 +34,7 @@ class ReformulatedVPMPlan3D(StrictModule, NonTrainableState):
     h_core: float = eqx.field(static=True)
     formulation_id: str = eqx.field(static=True)
 
-    def __init__(self, f: float = 0.0, g: float = 0.2, /):
+    def __init__(self, f: float = 0.0, g: float = 0.2, /) -> None:
         f_, g_ = float(f), float(g)
         denominator = 1.0 + 3.0 * f_
         if not math.isfinite(f_) or not math.isfinite(g_) or abs(denominator) <= 1.0e-14:
@@ -108,7 +109,7 @@ class PedrizzettiRelaxationPlan3D(StrictModule, NonTrainableState):
     preserve_magnitude: bool = eqx.field(static=True)
     relaxation_id: str = eqx.field(static=True)
 
-    def __init__(self, fraction: float, /, *, preserve_magnitude: bool = False):
+    def __init__(self, fraction: float, /, *, preserve_magnitude: bool = False) -> None:
         fraction_ = float(fraction)
         if not math.isfinite(fraction_) or not 0.0 <= fraction_ <= 1.0:
             raise ValueError("Relaxation fraction must lie in [0, 1].")

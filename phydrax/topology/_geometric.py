@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -30,7 +30,7 @@ class MergeTree(StrictModule, NonTrainableState):
     filtration_id: str = eqx.field(static=True)
     tree_id: str = eqx.field(static=True)
 
-    def __init__(self, filtration: CellFiltration, /):
+    def __init__(self, filtration: CellFiltration, /) -> None:
         diagram = compute_h0_persistence_union_find(filtration)
         self.component_entity_ids = diagram.birth_entity_ids
         self.merge_entity_ids = diagram.death_entity_ids
@@ -63,7 +63,7 @@ class LocalHomologyReport(StrictModule, NonTrainableState):
         ambient_cell: int,
         neighborhood_pair_id: str,
         /,
-    ):
+    ) -> None:
         self.homology = homology
         self.degree = int(degree)
         self.ambient_cell = int(ambient_cell)

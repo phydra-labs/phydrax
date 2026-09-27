@@ -11,12 +11,14 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..linalg import FactorizationPolicy, inverse, OperatorProperties
+from ..typing import parse
 from ._chart import ChartTransition, CoordinateChart
 from ._map import DifferentiableMap, Immersion
 from ._utils import _pointwise_array
@@ -56,7 +58,7 @@ class MetricSignature(StrictModule):
     positive: int = eqx.field(static=True)
     negative: int = eqx.field(static=True)
 
-    def __init__(self, positive: int, negative: int, /):
+    def __init__(self, positive: int, negative: int, /) -> None:
         positive_count = int(positive)
         negative_count = int(negative)
         if positive_count < 0 or negative_count < 0:
@@ -179,7 +181,7 @@ class SemiRiemannianMetric(AbstractSemiRiemannianMetric):
         *,
         chart: CoordinateChart,
         signature: MetricSignature,
-    ):
+    ) -> None:
         if not callable(matrix):
             raise TypeError("Metric matrix must be callable.")
         if not isinstance(chart, CoordinateChart):
@@ -216,7 +218,7 @@ class RiemannianMetric(AbstractSemiRiemannianMetric):
         /,
         *,
         chart: CoordinateChart,
-    ):
+    ) -> None:
         if not callable(matrix):
             raise TypeError("Metric matrix must be callable.")
         if not isinstance(chart, CoordinateChart):
@@ -262,15 +264,14 @@ class LorentzianMetric(AbstractSemiRiemannianMetric):
         *,
         chart: CoordinateChart,
         convention: LorentzianConvention = "mostly_plus",
-    ):
+    ) -> None:
         if not callable(matrix):
             raise TypeError("Metric matrix must be callable.")
         if not isinstance(chart, CoordinateChart):
             raise TypeError("Metric chart must be a CoordinateChart.")
         if chart.dimension < 2:
             raise ValueError("A Lorentzian metric requires dimension at least two.")
-        if convention not in ("mostly_plus", "mostly_minus"):
-            raise ValueError("convention must be 'mostly_plus' or 'mostly_minus'.")
+        convention = parse(convention, LorentzianConvention, "convention")
         self.matrix_function = matrix
         self.chart = chart
         self.convention = convention
@@ -296,7 +297,7 @@ class LorentzianMetric(AbstractSemiRiemannianMetric):
 class _EuclideanMetricMap(StrictModule):
     dimension: int
 
-    def __init__(self, dimension: int, /):
+    def __init__(self, dimension: int, /) -> None:
         self.dimension = int(dimension)
 
     def __call__(self, coordinates: Array, /) -> Array:
@@ -307,7 +308,7 @@ class _DiagonalMetricMap(StrictModule):
     diagonal: Callable[[Array], Array]
     dimension: int
 
-    def __init__(self, diagonal: Callable[[Array], Array], dimension: int, /):
+    def __init__(self, diagonal: Callable[[Array], Array], dimension: int, /) -> None:
         self.diagonal = diagonal
         self.dimension = int(dimension)
 
@@ -331,7 +332,7 @@ class _CholeskyMetricMap(StrictModule):
         dimension: int,
         minimum_diagonal: float,
         /,
-    ):
+    ) -> None:
         if minimum_diagonal < 0.0:
             raise ValueError("minimum_diagonal must be non-negative.")
         self.model = model
@@ -359,7 +360,7 @@ class _PullbackMetricMap(StrictModule):
         target_metric: AbstractSemiRiemannianMetric,
         transition: DifferentiableMap | Immersion | ChartTransition,
         /,
-    ):
+    ) -> None:
         self.target_metric = target_metric
         self.transition = transition
 

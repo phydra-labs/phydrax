@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,7 +14,7 @@ from phydrax.terms._deep_splitting import (
 )
 
 
-def _paths():
+def _paths() -> Any:
     return BSDEPathBatch(
         jnp.asarray([0.0, 0.5, 1.0]),
         jnp.zeros((16, 3, 1)),
@@ -25,7 +27,7 @@ def _paths():
     )
 
 
-def _problem(paths):
+def _problem(paths: Any) -> Any:
     return BSDEProblem(
         lambda key: paths,
         lambda time, state, args: jnp.zeros_like(state),
@@ -40,7 +42,7 @@ def _problem(paths):
     )
 
 
-def test_deep_splitting_labels_use_explicit_right_endpoint_source():
+def test_deep_splitting_labels_use_explicit_right_endpoint_source() -> None:
     paths = _paths()
     problem = _problem(paths)
     labels = deep_splitting_labels(
@@ -65,7 +67,7 @@ def test_deep_splitting_labels_use_explicit_right_endpoint_source():
     assert jnp.allclose(objective.loss({"value": exact}, batch=labels), 0.0)
 
 
-def test_deep_splitting_masks_nonfinite_invalid_target_gradient():
+def test_deep_splitting_masks_nonfinite_invalid_target_gradient() -> None:
     paths = _paths()
     problem = _problem(paths)
     labels = deep_splitting_labels(
@@ -89,7 +91,7 @@ def test_deep_splitting_masks_nonfinite_invalid_target_gradient():
         labels=labels,
     )
 
-    def loss(value):
+    def loss(value: Any) -> Any:
         predictor = domain.Parameter(jnp.reshape(value, (1,)))
         return objective.loss({"value": predictor}, batch=labels)
 
@@ -99,7 +101,7 @@ def test_deep_splitting_masks_nonfinite_invalid_target_gradient():
     assert gradient == 2.0
 
 
-def test_solve_deep_splitting_trains_distinct_slices_and_interpolates_field():
+def test_solve_deep_splitting_trains_distinct_slices_and_interpolates_field() -> None:
     paths = _paths()
     problem = _problem(paths)
     domain = phx.domain.Interval1d(-1.0, 1.0)

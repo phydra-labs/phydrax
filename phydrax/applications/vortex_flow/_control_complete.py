@@ -9,7 +9,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -51,9 +52,9 @@ class VortexTrajectoryControlPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        transition,
-        running_cost,
-        terminal_cost,
+        transition: Callable[[Array, Array, Array, Any], tuple[Array, Array, Array]],
+        running_cost: Callable[[Array, Array, Array, Any], Array],
+        terminal_cost: Callable[[Array, Any], Array],
         method: AbstractMinimizationMethod,
         /,
         *,
@@ -61,7 +62,7 @@ class VortexTrajectoryControlPlan(StrictModule, NonTrainableState):
         continuity_weight: float = 1.0e3,
         termination: OptimizationTermination | None = None,
         control_id: str,
-    ):
+    ) -> None:
         if (
             not callable(transition)
             or not callable(running_cost)
@@ -140,7 +141,7 @@ class VortexTrajectoryControlPlan(StrictModule, NonTrainableState):
             None if fixed_event_signature is None else jnp.asarray(fixed_event_signature)
         )
 
-        def objective(controls, objective_args):
+        def objective(controls: Array, objective_args: object) -> Array:
             del objective_args
             rollout = self._rollout(state0, controls, time_, args)
             value = jnp.asarray(0.0, dtype=state0.dtype)
@@ -176,7 +177,9 @@ class VortexMPCPlan(StrictModule, NonTrainableState):
     apply_steps: int = eqx.field(static=True)
     mpc_id: str = eqx.field(static=True)
 
-    def __init__(self, trajectory: VortexTrajectoryControlPlan, apply_steps: int = 1, /):
+    def __init__(
+        self, trajectory: VortexTrajectoryControlPlan, apply_steps: int = 1, /
+    ) -> None:
         if (
             not isinstance(trajectory, VortexTrajectoryControlPlan)
             or int(apply_steps) <= 0
@@ -193,7 +196,7 @@ class VortexMPCPlan(StrictModule, NonTrainableState):
 
     def solve_window(
         self, state: ArrayLike, controls: ArrayLike, time: ArrayLike, args: Any = None, /
-    ):
+    ) -> tuple[Array, VortexControlResult]:
         result = self.trajectory.solve(state, controls, time, args)
         return result.controls[: self.apply_steps], result
 

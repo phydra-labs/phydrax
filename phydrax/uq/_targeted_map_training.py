@@ -5,12 +5,15 @@
 from __future__ import annotations
 
 from math import isfinite
+from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._fingerprint import canonical_fingerprint
@@ -23,9 +26,11 @@ from .._training_kernel import (
     prepare_training_kernel,
     run_training_attempt,
     TrainingKernelSpec,
+    TrainingKeys,
     TrainingRejectionBudgetError,
 )
 from .._training_objective import _ObjectiveContribution
+from ..typing import PRNGKey
 from ._posterior import AbstractBijector
 from ._targeted_free_energy import (
     _evaluate_forward,
@@ -55,7 +60,7 @@ class TargetedMapTrainingPolicy(StrictModule, NonTrainableState):
         displacement_weight: float = 0.0,
         validation_interval: int = 10,
         patience: int | None = None,
-    ):
+    ) -> None:
         steps = int(maximum_steps)
         interval = int(validation_interval)
         rate = float(learning_rate)
@@ -167,7 +172,14 @@ class _TargetedMapObjective(StrictModule):
 
     policy: TargetedMapTrainingPolicy
 
-    def __call__(self, parameters, model_state, fixed, payload, keys):
+    def __call__(
+        self,
+        parameters: PyTree[Any],
+        model_state: PyTree[Any],
+        fixed: PyTree[Any],
+        payload: tuple[TargetedFreeEnergyProblem, Array, Array | None],
+        keys: TrainingKeys,
+    ) -> tuple[_ObjectiveContribution, PyTree[Any], tuple[Array, Array]]:
         del keys
         problem, source, target = payload
         loss, valid, _, _ = _objective(
@@ -186,7 +198,7 @@ class _TargetedMapObjective(StrictModule):
 def fit_targeted_free_energy_map(
     problem: TargetedFreeEnergyProblem,
     source_samples: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     target_samples: ArrayLike | None = None,
@@ -238,7 +250,7 @@ def fit_targeted_free_energy_map(
         rule_id = canonical_fingerprint(
             {
                 "kind": "targeted-map-training-adam",
-                "learning_rate": policy_.learning_rate.hex(),
+                "learning_rate": float(policy_.learning_rate).hex(),
             }
         )
     else:

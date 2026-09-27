@@ -13,7 +13,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._sampling._addressing import derive_key, SampleAddress
@@ -35,6 +37,7 @@ from ..operators.path_integral._pseudofermion import (
     refresh_pseudofermion,
     TwoFlavorPseudofermionTerm,
 )
+from ..typing import PRNGKey
 
 
 _MOMENTUM_ADDRESS = SampleAddress(
@@ -63,7 +66,7 @@ class SeparableActionTerm(StrictModule):
     evaluate: Callable[[Array], Array]
     term_id: str = eqx.field(static=True)
 
-    def __init__(self, evaluate: Callable[[Array], Array], /, *, term_id: str):
+    def __init__(self, evaluate: Callable[[Array], Array], /, *, term_id: str) -> None:
         if not callable(evaluate):
             raise TypeError("evaluate must be callable.")
         identifier = str(term_id)
@@ -92,7 +95,7 @@ class SeparableActionRegistry(StrictModule):
         action_terms: Sequence[SeparableActionTerm],
         pseudofermion_terms: Sequence[PseudofermionTerm] = (),
         /,
-    ):
+    ) -> None:
         actions = tuple(action_terms)
         pseudofermions = tuple(pseudofermion_terms)
         if not actions and not pseudofermions:
@@ -142,7 +145,7 @@ class NestedForcePartition(StrictModule):
         /,
         *,
         substeps: int,
-    ):
+    ) -> None:
         indices = tuple(term_indices)
         count = int(substeps)
         if not indices or any(index < 0 for index in indices):
@@ -169,7 +172,7 @@ class NestedForcePlan(StrictModule):
     force_evaluations_per_step: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, partitions: Sequence[NestedForcePartition], /):
+    def __init__(self, partitions: Sequence[NestedForcePartition], /) -> None:
         values = tuple(partitions)
         if not values or any(
             not isinstance(value, NestedForcePartition) for value in values
@@ -209,7 +212,7 @@ class RHMCResourcePolicy(StrictModule):
         maximum_retained_bytes: int = 2 * 1024 * 1024 * 1024,
         maximum_output_bytes: int = 8 * 1024 * 1024 * 1024,
         maximum_draws: int = 1_000_000,
-    ):
+    ) -> None:
         terms = int(maximum_terms)
         evaluations = int(maximum_force_evaluations)
         retained = int(maximum_retained_bytes)
@@ -253,7 +256,7 @@ class RHMCPlan(StrictModule):
         force_plan: NestedForcePlan,
         divergence_threshold: float = 1000.0,
         resources: RHMCResourcePolicy | None = None,
-    ):
+    ) -> None:
         size = float(step_size)
         steps = int(trajectory_steps)
         threshold = float(divergence_threshold)
@@ -520,7 +523,7 @@ def initialize_rhmc_state(
     initial_configuration: ArrayLike,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> RHMCChainState:
     """Initialize a checkpoint-safe accepted state at semantic step zero."""
     _validate_kernel(kernel)
@@ -1288,7 +1291,7 @@ def _coordinate_metric(
 
 def _sample_momentum(
     kernel: PreparedRHMCKernel,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> Array:
     dtype = jnp.real(kernel.configuration_template).dtype

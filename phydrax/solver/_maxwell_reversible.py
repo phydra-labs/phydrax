@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -44,7 +45,7 @@ class MaxwellReversibleAdjointPlan(StrictModule):
         *,
         checkpoint_count: int = 0,
         tolerance: float = 1e-8,
-    ):
+    ) -> None:
         if not isinstance(runtime, PreparedCompatibleMaxwell):
             raise TypeError("runtime must be PreparedCompatibleMaxwell.")
         count = int(steps)
@@ -207,14 +208,22 @@ class MaxwellReversibleAdjointPlan(StrictModule):
         dt = jnp.asarray(step_size)
 
         @jax.custom_vjp
-        def run(state):
+        def run(state: CompatibleMaxwellState) -> CompatibleMaxwellState:
             return plan.forward_with_archive(state, t0, dt)[0]
 
-        def forward(state):
+        def forward(
+            state: CompatibleMaxwellState,
+        ) -> tuple[
+            CompatibleMaxwellState,
+            tuple[CompatibleMaxwellState, MaxwellReversibleArchive],
+        ]:
             final, archive = plan.forward_with_archive(state, t0, dt)
             return final, (final, archive)
 
-        def backward(residual, cotangent):
+        def backward(
+            residual: tuple[CompatibleMaxwellState, MaxwellReversibleArchive],
+            cotangent: CompatibleMaxwellState,
+        ) -> tuple[CompatibleMaxwellState]:
             final, archive = residual
             del archive
             state = final

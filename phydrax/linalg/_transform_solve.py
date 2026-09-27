@@ -10,11 +10,13 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._matrix_functions import TransformDiagonalRepresentation
 from ._spaces import ArraySpace
 
@@ -43,7 +45,7 @@ class TransformDiagonalSolvePlan(StrictModule, NonTrainableState):
         gauge: GaugePolicy = "minimum_norm",
         zero_tolerance: float = 1e-10,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(representation, TransformDiagonalRepresentation):
             raise TypeError("representation must be TransformDiagonalRepresentation.")
         if not isinstance(representation.operator.source, ArraySpace) or not isinstance(
@@ -55,10 +57,8 @@ class TransformDiagonalSolvePlan(StrictModule, NonTrainableState):
         shift = jnp.asarray(diagonal_shift)
         if shift.shape != () or not bool(np.isfinite(np.asarray(shift))):
             raise ValueError("diagonal_shift must be one finite scalar.")
-        if compatibility not in ("error", "project_rhs"):
-            raise ValueError("Unknown compatibility policy.")
-        if gauge not in ("zero_mean", "minimum_norm"):
-            raise ValueError("Unknown gauge policy.")
+        compatibility = parse(compatibility, CompatibilityPolicy, "compatibility")
+        gauge = parse(gauge, GaugePolicy, "gauge")
         tolerance = float(zero_tolerance)
         if not np.isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("zero_tolerance must be finite and positive.")
@@ -112,7 +112,7 @@ class PreparedTransformDiagonalSolve(StrictModule, NonTrainableState):
     nullspace_dimension: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: TransformDiagonalSolvePlan, /):
+    def __init__(self, plan: TransformDiagonalSolvePlan, /) -> None:
         if not isinstance(plan, TransformDiagonalSolvePlan):
             raise TypeError("plan must be a TransformDiagonalSolvePlan.")
         diagonal = (plan.representation.modal_values + plan.diagonal_shift).reshape((-1,))

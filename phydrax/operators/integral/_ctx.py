@@ -7,7 +7,9 @@ from collections.abc import Callable
 from typing import Any
 
 
-def _compile_ctx_integrand(integrand: Callable, /) -> Callable[[dict[str, Any]], Any]:
+def _compile_ctx_integrand(
+    integrand: Callable[..., Any], /
+) -> Callable[[dict[str, Any]], Any]:
     """Compile a context-aware integrand dispatcher.
 
     A single parameter named ``ctx`` or ``context`` receives the whole context.
@@ -17,7 +19,7 @@ def _compile_ctx_integrand(integrand: Callable, /) -> Callable[[dict[str, Any]],
     parameters = tuple(inspect.signature(integrand).parameters.values())
     if len(parameters) == 1 and parameters[0].name in {"ctx", "context"}:
 
-        def call_context(ctx: dict[str, Any]):
+        def call_context(ctx: dict[str, Any]) -> Any:
             return integrand(ctx)
 
         return call_context
@@ -32,7 +34,7 @@ def _compile_ctx_integrand(integrand: Callable, /) -> Callable[[dict[str, Any]],
         aliases.get(parameter.name, parameter.name) for parameter in parameters
     )
 
-    def call(ctx: dict[str, Any]):
+    def call(ctx: dict[str, Any]) -> Any:
         return integrand(*tuple(ctx[name] for name in arg_names))
 
     return call

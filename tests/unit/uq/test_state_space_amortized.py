@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _problem(values, *, problem_id):
+def _problem(values: Any, *, problem_id: Any) -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0]),
         jnp.asarray(values).reshape((2, 1)),
@@ -46,7 +49,7 @@ def _problem(values, *, problem_id):
     )
 
 
-def test_amortized_family_is_normalized_and_conditions_on_observations():
+def test_amortized_family_is_normalized_and_conditions_on_observations() -> None:
     first_problem = _problem([1.0, 2.0], problem_id="first")
     second_problem = _problem([-1.0, -2.0], problem_id="second")
     family = phx.uq.AmortizedGaussianMarkovFamily.from_problem(
@@ -72,7 +75,7 @@ def test_amortized_family_is_normalized_and_conditions_on_observations():
     assert jax.tree.structure(family.encoder) == jax.tree.structure(conditioned.encoder)
 
 
-def test_amortized_full_path_training_returns_reusable_encoder():
+def test_amortized_full_path_training_returns_reusable_encoder() -> None:
     problem = _problem([1.0, 2.0], problem_id="training")
     result = phx.uq.fit_amortized_state_space_variational(
         problem,

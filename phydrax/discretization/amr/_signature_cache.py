@@ -47,7 +47,7 @@ class PatchExecutableSignature(StrictModule, NonTrainableState):
         method_id: str,
         dtype: str | np.dtype,
         backend: str,
-    ):
+    ) -> None:
         cut_components = int(maximum_components_per_cell)
         components = int(physical_component_count)
         method = str(method_id)
@@ -105,7 +105,7 @@ class PatchSignaturePolicy(StrictModule, NonTrainableState):
         *,
         halo_width: int | Sequence[int] = 1,
         power_of_two_growth: bool = True,
-    ):
+    ) -> None:
         alignment_ = tuple(alignment)
         maximum = tuple(maximum_envelope)
         halo = (
@@ -180,7 +180,7 @@ class PreparedPatchExecutable(StrictModule, NonTrainableState):
         signature: PatchExecutableSignature,
         executable: Any,
         /,
-    ):
+    ) -> None:
         if not isinstance(signature, PatchExecutableSignature) or not callable(
             executable
         ):
@@ -194,7 +194,7 @@ class PreparedPatchExecutable(StrictModule, NonTrainableState):
             }
         )
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return self.executable(*args, **kwargs)
 
 
@@ -215,7 +215,7 @@ class PatchExecutableCacheState(StrictModule, NonTrainableState):
         /,
         *,
         generation: int = 0,
-    ):
+    ) -> None:
         values = tuple(executables)
         if any(not isinstance(value, PreparedPatchExecutable) for value in values):
             raise ValueError("Patch executable cache entries or generation are invalid.")
@@ -256,7 +256,7 @@ class PatchExecutableInstallResult(StrictModule, NonTrainableState):
         installed_signature_ids: Sequence[str],
         reused_signature_ids: Sequence[str],
         /,
-    ):
+    ) -> None:
         installed = tuple(installed_signature_ids)
         reused = tuple(reused_signature_ids)
         self.state = state
@@ -279,7 +279,7 @@ class PatchExecutableCachePlan(StrictModule, NonTrainableState):
     resources: BlockAMRResourcePlan
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, resources: BlockAMRResourcePlan, /):
+    def __init__(self, resources: BlockAMRResourcePlan, /) -> None:
         if not isinstance(resources, BlockAMRResourcePlan):
             raise TypeError("Patch executable cache requires BlockAMRResourcePlan.")
         self.resources = resources

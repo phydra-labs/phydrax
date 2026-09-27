@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 from phydrax.special import kv
@@ -27,7 +28,7 @@ class ModifiedHelmholtzLayerKernel2D(AbstractLayerKernel):
     decay: float = eqx.field(static=True)
     _kernel_id: str = eqx.field(static=True)
 
-    def __init__(self, decay: float, /):
+    def __init__(self, decay: float, /) -> None:
         value = float(decay)
         if not np.isfinite(value) or value <= 0.0:
             raise ValueError("decay must be finite and positive.")
@@ -102,7 +103,7 @@ class ModifiedHelmholtzLayerPotential2D(StrictModule, NonTrainableState):
         decay: float,
         kind: Literal["single", "double"] = "single",
         minimum_clearance: float,
-    ):
+    ) -> None:
         if not isinstance(panelization, BoundaryPanelization2D):
             raise TypeError("panelization must be BoundaryPanelization2D.")
         values = jnp.asarray(density, dtype=jnp.float64)

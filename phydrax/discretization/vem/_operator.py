@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -14,7 +15,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import ArraySpace, FunctionLinearOperator, OperatorProperties
-from ...sparse import ElementTensorOperator, scatter_local
+from ...sparse import ElementTensorOperator, RelationAccumulation, scatter_local
 
 
 class FactorizedVirtualElementOperator(StrictModule, NonTrainableState):
@@ -25,7 +26,7 @@ class FactorizedVirtualElementOperator(StrictModule, NonTrainableState):
     stabilization_matrices: tuple[Array, ...]
     gathers: tuple[Array, ...]
     global_size: int = eqx.field(static=True)
-    accumulation: str = eqx.field(static=True)
+    accumulation: RelationAccumulation = eqx.field(static=True)
     properties: OperatorProperties
     operator_id: str = eqx.field(static=True)
 
@@ -41,7 +42,7 @@ class FactorizedVirtualElementOperator(StrictModule, NonTrainableState):
         accumulation: str = "fast",
         properties: OperatorProperties | None = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         coefficients = tuple(jnp.asarray(value) for value in coefficient_maps)
         polynomials = tuple(jnp.asarray(value) for value in polynomial_matrices)
         stabilizations = tuple(jnp.asarray(value) for value in stabilization_matrices)

@@ -4,37 +4,43 @@
 
 from __future__ import annotations
 
-import math
-from typing import Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.domain import DomainFunction, UnaryFieldEvaluator
 from phydrax.geometry import regularized_delta_values, regularized_heaviside_values
 
 from ..._strict import StrictModule
+from ..._validation import positive_finite_float
 from ._domain_ops import div, dt, grad
+
+
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
 
 
 class _CompactHeaviside(StrictModule):
     width: float = eqx.field(static=True)
 
-    def __call__(self, value):
+    def __call__(self, value: ArrayLike) -> Array:
         return regularized_heaviside_values(value, width=self.width)
 
 
 class _CompactDelta(StrictModule):
     width: float = eqx.field(static=True)
 
-    def __call__(self, value):
+    def __call__(self, value: ArrayLike) -> Array:
         return regularized_delta_values(value, width=self.width)
 
 
 class _GradientNorm(StrictModule):
     gradient: DomainFunction
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         values = _real_values(
             self.gradient.func(*args, key=key, **kwargs),
             "Level-set gradient",
@@ -46,7 +52,7 @@ class _NormalizedGradient(StrictModule):
     gradient: DomainFunction
     gradient_floor: float = eqx.field(static=True)
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         values = _real_values(
             self.gradient.func(*args, key=key, **kwargs),
             "Level-set gradient",
@@ -59,22 +65,15 @@ class _NormalizedGradient(StrictModule):
 class _LowerBound(StrictModule):
     minimum: float = eqx.field(static=True)
 
-    def __call__(self, value):
+    def __call__(self, value: ArrayLike) -> Array:
         return jnp.maximum(_real_values(value, "Level-set gradient norm"), self.minimum)
 
 
-def _real_values(value, name: str, /):
+def _real_values(value: ArrayLike, name: str, /) -> Array:
     values = jnp.asarray(value)
     if jnp.iscomplexobj(values):
         raise TypeError(f"{name} must be real-valued.")
     return values
-
-
-def _positive_finite(value: float, name: str, /) -> float:
-    resolved = float(value)
-    if not math.isfinite(resolved) or resolved <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return resolved
 
 
 def _field(value: DomainFunction, name: str, /) -> DomainFunction:
@@ -97,7 +96,7 @@ def regularized_heaviside(
     """
 
     field = _field(level_set, "level_set")
-    width_ = _positive_finite(width, "width")
+    width_ = positive_finite_float(width, "width")
     return DomainFunction(
         domain=field.domain,
         deps=field.deps,
@@ -119,7 +118,7 @@ def regularized_delta(
     """
 
     field = _field(level_set, "level_set")
-    width_ = _positive_finite(width, "width")
+    width_ = positive_finite_float(width, "width")
     return DomainFunction(
         domain=field.domain,
         deps=field.deps,
@@ -179,7 +178,7 @@ def level_set_normal(
     """
 
     field = _field(level_set, "level_set")
-    floor = _positive_finite(gradient_floor, "gradient_floor")
+    floor = positive_finite_float(gradient_floor, "gradient_floor")
     gradient = grad(field, var=var, mode=mode)
     return DomainFunction(
         domain=gradient.domain,
@@ -224,7 +223,7 @@ def level_set_normal_velocity(
     r"""Return the normal interface velocity ``-partial_t(phi) / |grad(phi)|``."""
 
     field = _field(level_set, "level_set")
-    floor = _positive_finite(gradient_floor, "gradient_floor")
+    floor = positive_finite_float(gradient_floor, "gradient_floor")
     magnitude = level_set_gradient_norm(field, var=spatial_var, mode=mode)
     safe_magnitude = DomainFunction(
         domain=magnitude.domain,

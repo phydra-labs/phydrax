@@ -4,12 +4,14 @@
 
 """General plane stress, non-associated plasticity, and K-way contact."""
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def run():
+def run() -> Any:
     plane = phx.applications.solid_mechanics.GeneralPlaneStressMPMConstitutivePlan(
         phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(3)
     )

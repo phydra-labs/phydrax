@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -7,7 +9,7 @@ import pytest
 from phydrax.applications.solid_mechanics._rod_dynamics import prepare_rod, RodPlan
 
 
-def _rod(dimension: int):
+def _rod(dimension: int) -> Any:
     if dimension == 2:
         positions = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (2.0, 0.0)))
         frames = jnp.broadcast_to(jnp.eye(2), (2, 2, 2))
@@ -41,8 +43,8 @@ def _rod(dimension: int):
     ),
 )
 def test_native_configuration_velocity_and_effort_contracts_are_exact(
-    dimension, orientation_shape, angular_shape, configuration_sizes
-):
+    dimension: Any, orientation_shape: Any, angular_shape: Any, configuration_sizes: Any
+) -> None:
     rod = _rod(dimension)
     state = rod.initialize_state()
     configuration = rod.configuration_from_state(state)
@@ -77,7 +79,7 @@ def test_native_configuration_velocity_and_effort_contracts_are_exact(
     assert jnp.array_equal(replaced.angular_velocities, state.angular_velocities)
 
 
-def test_spatial_point_uses_scalar_first_quaternions_and_body_angular_velocity():
+def test_spatial_point_uses_scalar_first_quaternions_and_body_angular_velocity() -> None:
     rod = _rod(3)
     state = rod.initialize_state()
     assert jnp.array_equal(
@@ -90,7 +92,7 @@ def test_spatial_point_uses_scalar_first_quaternions_and_body_angular_velocity()
     )
 
 
-def test_effort_pairing_is_direct_force_velocity_plus_material_moment_power():
+def test_effort_pairing_is_direct_force_velocity_plus_material_moment_power() -> None:
     rod = _rod(3)
     linear_velocity = jnp.asarray(((0.2, -0.1, 0.4), (-0.3, 0.5, 0.7), (0.6, -0.2, -0.8)))
     body_angular_velocity = jnp.asarray(((0.3, -0.4, 0.1), (-0.5, 0.2, 0.6)))
@@ -110,7 +112,7 @@ def test_effort_pairing_is_direct_force_velocity_plus_material_moment_power():
     assert jnp.array_equal(recovered_moments, material_moments)
 
 
-def test_native_spaces_reject_quaternion_storage_as_a_spatial_moment():
+def test_native_spaces_reject_quaternion_storage_as_a_spatial_moment() -> None:
     rod = _rod(3)
     with pytest.raises(ValueError, match="shape"):
         rod.effort_from_load(jnp.zeros((3, 3)), jnp.zeros((2, 4)))

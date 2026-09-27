@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._base import (
     _prepare_pair,
@@ -19,7 +20,7 @@ from ._base import (
 )
 
 
-def _squared_magnitude(value):
+def _squared_magnitude(value: Array) -> Array:
     return jnp.real(value * jnp.conj(value))
 
 

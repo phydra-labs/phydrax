@@ -2,7 +2,7 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from typing import cast
+from typing import Any, cast
 
 import jax.numpy as jnp
 
@@ -21,18 +21,18 @@ from phydrax.operators.differential import (
 
 
 class _RadialNormalComponent:
-    def __init__(self, domain):
+    def __init__(self, domain: Any) -> None:
         self.domain = domain
 
-    def normal(self, *, var):
+    def normal(self, *, var: Any) -> Any:
         @self.domain.Function(var)
-        def radial(point):
+        def radial(point: Any) -> Any:
             return point / jnp.linalg.norm(point)
 
         return radial
 
 
-def test_surface_grad_scalar_flat_edge_projection():
+def test_surface_grad_scalar_flat_edge_projection() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -43,7 +43,7 @@ def test_surface_grad_scalar_flat_edge_projection():
     pts = jnp.stack([x_inner, -jnp.ones_like(x_inner)], axis=-1)  # bottom edge y=-1
 
     @geom.Function("x")
-    def u(p):
+    def u(p: Any) -> Any:
         return p[0] ** 2 + p[1] ** 3
 
     sg = surface_grad(u, component)
@@ -53,7 +53,7 @@ def test_surface_grad_scalar_flat_edge_projection():
     assert jnp.allclose(val, expected, atol=1e-6)
 
 
-def test_surface_div_vector_flat_edge():
+def test_surface_div_vector_flat_edge() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -63,7 +63,7 @@ def test_surface_div_vector_flat_edge():
     pts = jnp.stack([x, -jnp.ones_like(x)], axis=-1)
 
     @geom.Function("x")
-    def v(p):
+    def v(p: Any) -> Any:
         return p
 
     sd = surface_div(v, component)
@@ -71,7 +71,7 @@ def test_surface_div_vector_flat_edge():
     assert jnp.allclose(val, jnp.ones_like(x), atol=1e-6)
 
 
-def test_ambient_surface_hessian_trace_flat_edge():
+def test_ambient_surface_hessian_trace_flat_edge() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -81,7 +81,7 @@ def test_ambient_surface_hessian_trace_flat_edge():
     pts = jnp.stack([x, -jnp.ones_like(x)], axis=-1)
 
     @geom.Function("x")
-    def u(p):
+    def u(p: Any) -> Any:
         return p[0] ** 2 + p[1] ** 2
 
     trace = ambient_surface_hessian_trace(u, component)
@@ -89,7 +89,7 @@ def test_ambient_surface_hessian_trace_flat_edge():
     assert jnp.allclose(val, 2.0 * jnp.ones_like(x), atol=1e-5)
 
 
-def test_surface_curl_scalar_on_flat_face():
+def test_surface_curl_scalar_on_flat_face() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile()
     )
@@ -97,7 +97,7 @@ def test_surface_curl_scalar_on_flat_face():
     points = jnp.array([[0.2, 0.3, 1.0], [-0.4, 0.1, 1.0]])
 
     @geom.Function("x")
-    def scalar(point):
+    def scalar(point: Any) -> Any:
         return point[0] ** 2 + point[1]
 
     result = surface_curl_scalar(scalar, component)
@@ -116,7 +116,7 @@ def test_surface_curl_scalar_on_flat_face():
     assert jnp.allclose(values, expected, atol=1e-6)
 
 
-def test_surface_curl_vector_on_flat_face():
+def test_surface_curl_vector_on_flat_face() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile()
     )
@@ -124,7 +124,7 @@ def test_surface_curl_vector_on_flat_face():
     points = jnp.array([[0.2, 0.3, 1.0], [-0.4, 0.1, 1.0]])
 
     @geom.Function("x")
-    def vector(point):
+    def vector(point: Any) -> Any:
         return jnp.array([-0.5 * point[1], 0.5 * point[0], 0.0])
 
     result = surface_curl_vector(vector, component)
@@ -135,7 +135,7 @@ def test_surface_curl_vector_on_flat_face():
     assert jnp.allclose(values, jnp.ones((points.shape[0],)), atol=1e-6)
 
 
-def test_surface_div_grad_uses_differentiable_normal_provider():
+def test_surface_div_grad_uses_differentiable_normal_provider() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile()
     )
@@ -149,7 +149,7 @@ def test_surface_div_grad_uses_differentiable_normal_provider():
     )
 
     @geom.Function("x")
-    def scalar(point):
+    def scalar(point: Any) -> Any:
         return point[0]
 
     result = surface_div(surface_grad(scalar, component), component)
@@ -160,7 +160,7 @@ def test_surface_div_grad_uses_differentiable_normal_provider():
     assert jnp.allclose(values, -2.0 * points[:, 0], atol=1e-6)
 
 
-def test_tangential_component_projection():
+def test_tangential_component_projection() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -169,7 +169,7 @@ def test_tangential_component_projection():
     pts = jnp.array([[0.0, -1.0]])
 
     @geom.Function("x")
-    def w(_):
+    def w(_: Any) -> Any:
         return jnp.array([1.0, 2.0])
 
     wt = tangential_component(w, component)

@@ -8,7 +8,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -68,21 +70,21 @@ class GasBoxModel(StrictModule):
 
     def __init__(
         self,
-        fractions: ArrayLike = (
+        fractions: npt.ArrayLike = (
             (0.2173, 0.2240, 0.2824, 0.2763),
             (1.0, 0.0, 0.0, 0.0),
             (1.0, 0.0, 0.0, 0.0),
         ),
-        decay_rates: ArrayLike = (
+        decay_rates: npt.ArrayLike = (
             (0.0, 1.0 / 394.4, 1.0 / 36.54, 1.0 / 4.304),
             (1.0 / 9.3, 0.0, 0.0, 0.0),
             (1.0 / 121.0, 0.0, 0.0, 0.0),
         ),
         /,
         *,
-        background: ArrayLike = (278.3, 729.2, 270.1),
-        inventory_per_concentration: ArrayLike = (2.124, 2.78, 7.8),
-        response_coefficients: ArrayLike = (
+        background: npt.ArrayLike = (278.3, 729.2, 270.1),
+        inventory_per_concentration: npt.ArrayLike = (2.124, 2.78, 7.8),
+        response_coefficients: npt.ArrayLike = (
             (0.0, 0.0, 0.0),
             (0.0, 0.0, 0.0),
             (0.0, 0.0, 0.0),
@@ -91,7 +93,7 @@ class GasBoxModel(StrictModule):
         alpha_bounds: tuple[float, float] = (1.0e-4, 1.0e4),
         solve_iterations: int = 64,
         solve_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         fractions_ = np.asarray(fractions, dtype=np.float64)
         rates = np.asarray(decay_rates, dtype=np.float64)
         background_ = np.asarray(background, dtype=np.float64)
@@ -237,7 +239,7 @@ class GasBoxModel(StrictModule):
             & jnp.isfinite(target)
         )
 
-        def bisect(_, bracket):
+        def bisect(_: Array, bracket: tuple[Array, Array]) -> tuple[Array, Array]:
             lo, hi = bracket
             mid = jnp.sqrt(lo * hi)
             below = self.integrated_response(mid) < target

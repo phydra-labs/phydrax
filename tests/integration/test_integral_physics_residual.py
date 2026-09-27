@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -5,7 +7,7 @@ import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 
 
-def _point(x, time):
+def _point(x: Any, time: Any) -> Any:
     return frozendict(
         {
             "x": cx.AxisArray(jnp.asarray([x]), dims=(None,)),
@@ -14,11 +16,11 @@ def _point(x, time):
     )
 
 
-def _unit_kernel(lag):
+def _unit_kernel(lag: Any) -> Any:
     return jnp.ones_like(lag)
 
 
-def test_integral_heat_residual_includes_nonzero_initial_field():
+def test_integral_heat_residual_includes_nonzero_initial_field() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0) @ phx.domain.TimeInterval(0.0, 1.0)
     solution = domain.Function("x", "t")(
         lambda x, time: jnp.exp(-(jnp.pi**2) * time) * jnp.sin(jnp.pi * x[0])
@@ -38,7 +40,7 @@ def test_integral_heat_residual_includes_nonzero_initial_field():
     assert jnp.allclose(omitted_initial(points).data, 1.0, atol=2e-11)
 
 
-def test_integral_residual_equals_integrated_strong_residual():
+def test_integral_residual_equals_integrated_strong_residual() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0) @ phx.domain.TimeInterval(0.0, 1.0)
     function = domain.Function("x", "t")(lambda x, time: time**2 * jnp.sin(jnp.pi * x[0]))
     initial = domain.Function("x")(lambda x: jnp.zeros_like(x[0]))

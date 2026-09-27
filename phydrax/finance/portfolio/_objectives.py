@@ -10,7 +10,8 @@ from typing import TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...linalg import (
@@ -71,7 +72,7 @@ class MeanVarianceObjective(StrictModule):
     risk_aversion: float = eqx.field(static=True)
     return_weight: float = eqx.field(static=True)
 
-    def __init__(self, risk_aversion: float, /, *, return_weight: float = 1.0):
+    def __init__(self, risk_aversion: float, /, *, return_weight: float = 1.0) -> None:
         self.risk_aversion = _positive(risk_aversion, "risk_aversion", allow_zero=True)
         self.return_weight = _positive(return_weight, "return_weight", allow_zero=True)
         if self.risk_aversion == 0.0 and self.return_weight == 0.0:
@@ -92,7 +93,7 @@ class TrackingErrorObjective(StrictModule):
         *,
         tracking_aversion: float = 1.0,
         return_weight: float = 0.0,
-    ):
+    ) -> None:
         self.benchmark_weights = _vector(benchmark_weights, "benchmark_weights")
         self.tracking_aversion = _positive(tracking_aversion, "tracking_aversion")
         self.return_weight = _positive(return_weight, "return_weight", allow_zero=True)
@@ -118,7 +119,7 @@ class BlackLittermanObjective(StrictModule):
         *,
         tau: float = 0.05,
         risk_aversion: float = 1.0,
-    ):
+    ) -> None:
         equilibrium = _vector(equilibrium_returns, "equilibrium_returns")
         pick = _matrix(pick_matrix, "pick_matrix")
         views = _vector(view_returns, "view_returns")
@@ -188,7 +189,7 @@ class FiniteScenarioKellyObjective(StrictModule):
         *,
         initial_wealth: float = 1.0,
         bankruptcy_floor: float = 1e-8,
-    ):
+    ) -> None:
         wealth = _positive(initial_wealth, "initial_wealth")
         floor = _positive(bankruptcy_floor, "bankruptcy_floor")
         if floor >= wealth:
@@ -211,7 +212,7 @@ class CVaRObjective(StrictModule):
         *,
         risk_weight: float = 1.0,
         return_weight: float = 0.0,
-    ):
+    ) -> None:
         self.confidence = _probability(confidence, "confidence")
         self.risk_weight = _positive(risk_weight, "risk_weight")
         self.return_weight = _positive(return_weight, "return_weight", allow_zero=True)
@@ -231,7 +232,7 @@ class EVaRObjective(StrictModule):
         *,
         risk_weight: float = 1.0,
         return_weight: float = 0.0,
-    ):
+    ) -> None:
         self.confidence = _probability(confidence, "confidence")
         self.risk_weight = _positive(risk_weight, "risk_weight")
         self.return_weight = _positive(return_weight, "return_weight", allow_zero=True)
@@ -255,7 +256,7 @@ class KLDivergenceRobustObjective(StrictModule):
         *,
         risk_weight: float = 1.0,
         return_weight: float = 0.0,
-    ):
+    ) -> None:
         self.radius = _positive(radius, "radius")
         self.risk_weight = _positive(risk_weight, "risk_weight")
         self.return_weight = _positive(return_weight, "return_weight", allow_zero=True)
@@ -277,7 +278,7 @@ class SpectralRiskObjective(StrictModule):
         *,
         risk_weight: float = 1.0,
         return_weight: float = 0.0,
-    ):
+    ) -> None:
         levels = _vector(confidences, "confidences")
         masses = _vector(weights, "weights").astype(levels.dtype)
         if masses.shape != levels.shape:
@@ -302,7 +303,7 @@ class DrawdownRiskObjective(StrictModule):
     risk_weight: float = eqx.field(static=True)
     return_weight: float = eqx.field(static=True)
 
-    def __init__(self, *, risk_weight: float = 1.0, return_weight: float = 0.0):
+    def __init__(self, *, risk_weight: float = 1.0, return_weight: float = 0.0) -> None:
         self.risk_weight = _positive(risk_weight, "risk_weight")
         self.return_weight = _positive(return_weight, "return_weight", allow_zero=True)
 

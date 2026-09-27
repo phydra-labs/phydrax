@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -59,7 +60,7 @@ class FixedClusterVortexPlan2D(StrictModule):
         leaf_size: int = 32,
         opening_angle: float = 0.5,
         maximum_reference_displacement: float = 0.1,
-    ):
+    ) -> None:
         reference = np.asarray(reference_position, dtype=np.float64)
         leaf = int(leaf_size)
         angle = float(opening_angle)

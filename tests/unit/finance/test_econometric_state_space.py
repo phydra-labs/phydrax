@@ -17,7 +17,7 @@ from phydrax.stochastic._state_space import (
 from phydrax.uq._state_space_inference import exact_state_space_log_likelihood
 
 
-def test_financial_state_adapter_preserves_native_kalman_likelihood_and_masks():
+def test_financial_state_adapter_preserves_native_kalman_likelihood_and_masks() -> None:
     sequence = ObservationSequence(
         jnp.asarray([0.5, 1.0, 1.5]),
         jnp.asarray([[1.0], [0.0], [2.0]]),

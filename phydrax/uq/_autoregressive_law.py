@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from .._fingerprint import canonical_fingerprint
 from .._probability import AbstractProbabilityLaw
@@ -19,7 +21,7 @@ from ..domain._measure import MeasureKind
 class AutoregressiveLaw(AbstractProbabilityLaw):
     """Normalized ordered event law built from explicit scalar conditional laws."""
 
-    conditional: Any
+    conditional: Callable[[Array, int], AbstractProbabilityLaw]
     length: int = eqx.field(static=True)
     dtype: Any = eqx.field(static=True)
     order_id: str = eqx.field(static=True)
@@ -28,14 +30,14 @@ class AutoregressiveLaw(AbstractProbabilityLaw):
 
     def __init__(
         self,
-        conditional,
+        conditional: Callable[[Array, int], AbstractProbabilityLaw],
         length: int,
         /,
         *,
-        dtype=jnp.float64,
+        dtype: DTypeLike = jnp.float64,
         order_id: str,
         law_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(conditional):
             raise TypeError("conditional must be callable.")
         size = int(length)
@@ -93,7 +95,7 @@ class AutoregressiveLaw(AbstractProbabilityLaw):
             )
         return law
 
-    def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: Array, sample_shape: tuple[int, ...] = ()) -> Array:
         samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
             raise ValueError("sample_shape dimensions must be positive.")

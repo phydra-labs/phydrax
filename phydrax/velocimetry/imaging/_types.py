@@ -8,7 +8,8 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -30,17 +31,17 @@ class ImagePair2D(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        first: Array,
-        second: Array,
+        first: ArrayLike,
+        second: ArrayLike,
         geometry: ImagePlaneSupport,
         /,
         *,
-        first_mask: Array | None = None,
-        second_mask: Array | None = None,
-        delta_t: Array | float = 1.0,
+        first_mask: ArrayLike | None = None,
+        second_mask: ArrayLike | None = None,
+        delta_t: ArrayLike = 1.0,
         pair_id: str | None = None,
         provenance: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(geometry, ImagePlaneSupport):
             raise TypeError("geometry must be an ImagePlaneSupport.")
         first_ = jnp.asarray(first)
@@ -109,15 +110,15 @@ class DenseDisplacementField2D(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        positions_rc: Array,
-        displacement_rc: Array,
-        valid: Array,
+        positions_rc: ArrayLike,
+        displacement_rc: ArrayLike,
+        valid: ArrayLike,
         /,
         *,
         geometry_id: str,
         field_id: str | None = None,
         provenance: Sequence[str] = (),
-    ):
+    ) -> None:
         positions = jnp.asarray(positions_rc)
         displacement = jnp.asarray(displacement_rc)
         if jnp.issubdtype(positions.dtype, jnp.complexfloating) or jnp.issubdtype(

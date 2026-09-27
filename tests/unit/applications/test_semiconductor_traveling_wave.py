@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -25,15 +28,18 @@ from phydrax.applications.semiconductor._traveling_wave import (
 jax.config.update("jax_enable_x64", True)
 
 
-def _response(*, internal_loss=1.0e3):
+def _response(*, internal_loss: Any = 1.0e3) -> Any:
     return LinearizedCarrierOpticalResponsePlan(
         1.0e24,
         5.0e-21,
         1.0e15,
         reference_temperature=300.0,
         background_internal_loss=internal_loss,
+        # ty: ignore[invalid-argument-type]
         density_range=(0.5e24, 4.0e24),
+        # ty: ignore[invalid-argument-type]
         temperature_range=(290.0, 310.0),
+        # ty: ignore[invalid-argument-type]
         angular_frequency_range=(0.9e15, 1.1e15),
         active_volume=3.0e-16,
         confinement_factor=1.0,
@@ -44,17 +50,17 @@ def _response(*, internal_loss=1.0e3):
 
 def _plan(
     *,
-    steps=12,
-    reflectivity=0.3,
-    internal_loss=1.0e3,
-    recombination_a=0.0,
-    recombination_b=0.0,
-    recombination_c=0.0,
-    gain_compression=0.0,
-    linewidth=0.0,
-    detuning=None,
-    coupling=None,
-):
+    steps: Any = 12,
+    reflectivity: Any = 0.3,
+    internal_loss: Any = 1.0e3,
+    recombination_a: Any = 0.0,
+    recombination_b: Any = 0.0,
+    recombination_c: Any = 0.0,
+    gain_compression: Any = 0.0,
+    linewidth: Any = 0.0,
+    detuning: Any = None,
+    coupling: Any = None,
+) -> Any:
     amplitude_reflection = np.sqrt(reflectivity) * np.exp(0.2j)
     return TravelingWaveSemiconductorLaserPlan(
         jnp.linspace(0.0, 3.0e-4, 4),
@@ -67,6 +73,7 @@ def _plan(
         recombination_c=recombination_c,
         left_facet_amplitude_reflection=amplitude_reflection,
         right_facet_amplitude_reflection=amplitude_reflection.conjugate(),
+        # ty: ignore[invalid-argument-type]
         carrier_density_bounds=(0.5e24, 3.0e24),
         step_count=steps,
         gain_compression=gain_compression,
@@ -78,7 +85,7 @@ def _plan(
     )
 
 
-def _state(density, amplitude=0.0):
+def _state(density: Any, amplitude: Any = 0.0) -> Any:
     return TravelingWaveSemiconductorLaserState(
         jnp.full((3,), density),
         jnp.full((3,), amplitude + 0.0j),
@@ -86,7 +93,7 @@ def _state(density, amplitude=0.0):
     )
 
 
-def test_threshold_matches_analytic_uniform_fabry_perot_condition():
+def test_threshold_matches_analytic_uniform_fabry_perot_condition() -> None:
     prepared = _plan(recombination_a=1.0e9).prepare()
     result = solve_traveling_wave_laser_threshold(prepared, 300.0)
     length = 3.0e-4
@@ -103,7 +110,7 @@ def test_threshold_matches_analytic_uniform_fabry_perot_condition():
     assert result.successful
 
 
-def test_zero_field_is_an_exact_invariant_of_deterministic_transient():
+def test_zero_field_is_an_exact_invariant_of_deterministic_transient() -> None:
     prepared = _plan(steps=9).prepare()
     result = simulate_traveling_wave_laser(
         prepared,
@@ -119,7 +126,7 @@ def test_zero_field_is_an_exact_invariant_of_deterministic_transient():
     assert result.successful
 
 
-def test_abc_recombination_and_current_injection_balance_exactly_at_fixed_state():
+def test_abc_recombination_and_current_injection_balance_exactly_at_fixed_state() -> None:
     density = 1.5e24
     coefficient_a = 1.0e8
     coefficient_b = 1.0e-16
@@ -150,7 +157,7 @@ def test_abc_recombination_and_current_injection_balance_exactly_at_fixed_state(
     assert result.successful
 
 
-def test_below_and_above_threshold_fields_decay_and_grow_over_round_trips():
+def test_below_and_above_threshold_fields_decay_and_grow_over_round_trips() -> None:
     prepared = _plan(steps=12).prepare()
     below = simulate_traveling_wave_laser(
         prepared,
@@ -181,7 +188,9 @@ def test_below_and_above_threshold_fields_decay_and_grow_over_round_trips():
     assert above.successful
 
 
-def test_gain_compression_limits_power_while_linewidth_factor_changes_only_phase():
+def test_gain_compression_limits_power_while_linewidth_factor_changes_only_phase() -> (
+    None
+):
     initial = _state(2.0e24, 0.2)
     inputs = TravelingWaveLaserInput(0.0, 300.0)
     uncompressed = simulate_traveling_wave_laser(
@@ -222,7 +231,7 @@ def test_gain_compression_limits_power_while_linewidth_factor_changes_only_phase
     assert not np.allclose(linewidth.forward_field[-1], compressed.forward_field[-1])
 
 
-def test_distributed_grating_transfers_waves_without_changing_photon_inventory():
+def test_distributed_grating_transfers_waves_without_changing_photon_inventory() -> None:
     coupling = jnp.full((3,), np.pi / (4.0e-4), dtype="complex128")
     detuning = jnp.asarray((100.0, 0.0, 100.0))
     initial = TravelingWaveSemiconductorLaserState(
@@ -266,7 +275,7 @@ def test_distributed_grating_transfers_waves_without_changing_photon_inventory()
     assert not ambiguous_threshold.successful
 
 
-def test_distributed_grating_threshold_matches_exact_single_cell_eigenvalue():
+def test_distributed_grating_threshold_matches_exact_single_cell_eigenvalue() -> None:
     length = 1.0e-4
     coupling_strength = 4.0e3
     left_reflection = np.sqrt(0.2)
@@ -282,6 +291,7 @@ def test_distributed_grating_threshold_matches_exact_single_cell_eigenvalue():
         recombination_c=0.0,
         left_facet_amplitude_reflection=left_reflection,
         right_facet_amplitude_reflection=right_reflection,
+        # ty: ignore[invalid-argument-type]
         carrier_density_bounds=(0.5e24, 3.0e24),
         step_count=1,
         coupling=jnp.asarray((1j * coupling_strength,)),
@@ -326,7 +336,7 @@ def test_distributed_grating_threshold_matches_exact_single_cell_eigenvalue():
     assert threshold.successful
 
 
-def test_stimulated_exchange_is_charge_neutral_and_closes_both_ledgers():
+def test_stimulated_exchange_is_charge_neutral_and_closes_both_ledgers() -> None:
     prepared = _plan(steps=3, reflectivity=1.0, internal_loss=0.0).prepare()
     result = simulate_traveling_wave_laser(
         prepared,
@@ -348,7 +358,7 @@ def test_stimulated_exchange_is_charge_neutral_and_closes_both_ledgers():
     assert result.successful
 
 
-def test_deterministic_and_explicit_stochastic_replay_are_separate():
+def test_deterministic_and_explicit_stochastic_replay_are_separate() -> None:
     prepared = _plan(steps=5).prepare()
     initial = _state(1.4e24)
     inputs = TravelingWaveLaserInput(0.0, 300.0)
@@ -379,7 +389,7 @@ def test_deterministic_and_explicit_stochastic_replay_are_separate():
     assert first.ledger.photon_relative_residual < 2.0e-12
 
 
-def test_failure_statuses_and_resource_shapes_are_observable():
+def test_failure_statuses_and_resource_shapes_are_observable() -> None:
     prepared = _plan(steps=4).prepare()
     rejected = simulate_traveling_wave_laser(
         prepared,

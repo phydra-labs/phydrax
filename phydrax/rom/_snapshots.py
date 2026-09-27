@@ -13,6 +13,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..data_utils import CasePartitionManifest
+from ..typing import parse
 
 
 SnapshotRole: TypeAlias = Literal[
@@ -61,18 +62,8 @@ class SnapshotManifest(StrictModule, NonTrainableState):
         quadrature_id: str,
         truth_revision_id: str,
         source_artifact_ids: Sequence[str],
-    ):
-        roles = (
-            "state",
-            "nonlinear-term",
-            "time-discrete-residual",
-            "jacobian-action",
-            "element-contribution",
-            "primal-trajectory",
-            "dual-trajectory",
-        )
-        if role not in roles:
-            raise ValueError("Unknown snapshot role.")
+    ) -> None:
+        role = parse(role, SnapshotRole, "role")
         if not isinstance(partition, CasePartitionManifest):
             raise TypeError("partition must be a CasePartitionManifest.")
         cases = tuple(str(value) for value in case_ids)

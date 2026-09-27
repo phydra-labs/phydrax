@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -18,7 +21,7 @@ def _path_graph() -> phx.graph.GraphIR:
     )
 
 
-def _square_mesh():
+def _square_mesh() -> Any:
     vertices = jnp.array(
         [
             [0.0, 0.0, 0.0],
@@ -31,7 +34,7 @@ def _square_mesh():
     return vertices, faces
 
 
-def test_line_graph_builds_edge_as_node_path_graph():
+def test_line_graph_builds_edge_as_node_path_graph() -> None:
     bundle = phx.graph.line_graph(_path_graph())
     graph = bundle.graph
     assert graph.senders is not None
@@ -51,7 +54,7 @@ def test_line_graph_builds_edge_as_node_path_graph():
     assert jnp.allclose(graph.edges["shared_node"], jnp.array([1], dtype=jnp.int32))
 
 
-def test_line_graph_shared_node_connectivity_adds_undirected_edge_adjacency():
+def test_line_graph_shared_node_connectivity_adds_undirected_edge_adjacency() -> None:
     graph = phx.graph.GraphIR(
         senders=jnp.array([0, 2], dtype=jnp.int32),
         receivers=jnp.array([1, 1], dtype=jnp.int32),
@@ -68,7 +71,7 @@ def test_line_graph_shared_node_connectivity_adds_undirected_edge_adjacency():
     assert jnp.allclose(line.receivers, jnp.array([1, 0], dtype=jnp.int32))
 
 
-def test_line_graph_integrates_with_graph_domain_model():
+def test_line_graph_integrates_with_graph_domain_model() -> None:
     bundle = phx.graph.line_graph(_path_graph())
     domain = phx.domain.GraphDomain(bundle.graph)
     component = domain.component({"graph": bundle.original_edges_component()})
@@ -77,7 +80,7 @@ def test_line_graph_integrates_with_graph_domain_model():
     )
 
     @domain.Function("graph")
-    def u(edge_node):
+    def u(edge_node: Any) -> Any:
         return edge_node.get("features")[0]
 
     model = domain.GraphModel(phx.graph.GraphDiffusion(), input_fn=u)
@@ -85,7 +88,7 @@ def test_line_graph_integrates_with_graph_domain_model():
     assert jnp.allclose(jnp.asarray(model(batch).data), jnp.array([-2.0, 2.0]))
 
 
-def test_mesh_to_dual_graph_builds_face_centered_graph():
+def test_mesh_to_dual_graph_builds_face_centered_graph() -> None:
     vertices, faces = _square_mesh()
     bundle = phx.graph.mesh_to_dual_graph(vertices, faces)
     graph = bundle.graph
@@ -103,7 +106,7 @@ def test_mesh_to_dual_graph_builds_face_centered_graph():
     assert bundle.interior_faces.shape == (0,)
 
 
-def test_mesh_dual_graph_boundary_component_samples_faces():
+def test_mesh_dual_graph_boundary_component_samples_faces() -> None:
     vertices, faces = _square_mesh()
     bundle = phx.graph.mesh_to_dual_graph(vertices, faces)
     domain = phx.domain.GraphDomain(bundle.graph, measure="count")
@@ -115,4 +118,5 @@ def test_mesh_dual_graph_boundary_component_samples_faces():
     assert jnp.allclose(
         jnp.asarray(batch["graph"]["face_index"].data), jnp.array([0, 1], dtype=jnp.int32)
     )
+    # ty: ignore[unresolved-attribute]
     assert boundary.mass.value == 2.0

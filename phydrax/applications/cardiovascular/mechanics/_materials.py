@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from math import isfinite
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -27,7 +28,14 @@ from ....operators.mechanics import (
     HyperelasticResponse,
     VolumetricConstraint,
 )
-from ....variational import FieldJetSpec, Functional, LocalIntegralTerm
+from ....variational import (
+    FieldJetSpec,
+    Functional,
+    FunctionalContext,
+    LocalFieldJet,
+    LocalGeometry,
+    LocalIntegralTerm,
+)
 from ...solid_mechanics import (
     mixed_hyperelastic_form,
     MixedHyperelasticBlockTangent,
@@ -236,7 +244,7 @@ class FiniteBulkCardiacMaterial(HyperelasticLaw, NonTrainableState):
         volumetric_constraint: VolumetricConstraint | None = None,
         minimum_jacobian: float = 1.0e-8,
         material_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(isochoric_energy):
             raise TypeError("isochoric_energy must be callable.")
         bulk = jnp.asarray(bulk_modulus)
@@ -370,7 +378,7 @@ class ExactIncompressibleCardiacMaterial(StrictModule, NonTrainableState):
         volumetric_constraint: VolumetricConstraint | None = None,
         minimum_jacobian: float = 1.0e-8,
         material_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(isochoric_energy):
             raise TypeError("isochoric_energy must be callable.")
         constraint = (
@@ -514,7 +522,11 @@ def cardiac_passive_functional(
     if not isinstance(material, FiniteBulkCardiacMaterial):
         raise TypeError("material must be FiniteBulkCardiacMaterial.")
 
-    def density(fields, geometry, context):
+    def density(
+        fields: Mapping[str, LocalFieldJet],
+        geometry: LocalGeometry,
+        context: FunctionalContext,
+    ) -> Array:
         del geometry, context
         gradient = fields[field].gradient
         if gradient is None:

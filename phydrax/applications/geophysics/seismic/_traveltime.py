@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -34,7 +35,7 @@ class TravelTimeGraphPlan(StrictModule, NonTrainableState):
     iteration_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, node_positions_m: ArrayLike, edge_nodes: ArrayLike, /):
+    def __init__(self, node_positions_m: ArrayLike, edge_nodes: ArrayLike, /) -> None:
         positions = np.asarray(node_positions_m, dtype=np.float64)
         edges = np.asarray(edge_nodes)
         if (
@@ -87,7 +88,9 @@ class TravelTimeGraphPlan(StrictModule, NonTrainableState):
         predecessor = jnp.full(times.shape, -1, dtype=jnp.int32)
         second = jnp.full_like(times, infinity)
 
-        def relax(_, state):
+        def relax(
+            _: Array, state: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array, Array]:
             current_times, current_predecessor, current_second = state
             candidates = current_times[self.edge_nodes[:, 0]] + edge_time
             destination = self.edge_nodes[:, 1]
@@ -162,7 +165,7 @@ class EventLocationPlan(StrictModule, NonTrainableState):
         standard_deviation_s: ArrayLike,
         phase_velocity_m_s: ArrayLike,
         /,
-    ):
+    ) -> None:
         stations = jnp.asarray(station_positions_m)
         arrivals, deviation, velocity = jnp.broadcast_arrays(
             jnp.asarray(observed_arrival_s),
@@ -238,7 +241,7 @@ class MomentTensorRadiationPlan(StrictModule, NonTrainableState):
     p_polarizations: Array
     s_polarizations: Array
 
-    def __init__(self, source_to_receiver_directions: ArrayLike, /):
+    def __init__(self, source_to_receiver_directions: ArrayLike, /) -> None:
         directions = jnp.asarray(source_to_receiver_directions)
         if directions.ndim != 2 or directions.shape[1] != 3:
             raise ValueError("Moment-tensor directions must have shape (receivers,3).")

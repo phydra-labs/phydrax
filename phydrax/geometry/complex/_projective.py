@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...metrix import (
@@ -39,7 +40,7 @@ class _ProjectiveTransition(StrictModule):
         source_convention: ComplexCoordinateConvention,
         target_convention: ComplexCoordinateConvention,
         /,
-    ):
+    ) -> None:
         self.complex_dimension = int(complex_dimension)
         self.source_index = int(source_index)
         self.target_index = int(target_index)
@@ -80,7 +81,7 @@ class _ProjectiveOverlapPredicate(StrictModule):
         target_index: int,
         tolerance: float,
         /,
-    ):
+    ) -> None:
         self.convention = convention
         self.complex_dimension = int(complex_dimension)
         self.source_index = int(source_index)
@@ -106,7 +107,7 @@ class _FiniteSupport(StrictModule):
 class _FubiniStudyMetricMap(StrictModule):
     convention: ComplexCoordinateConvention
 
-    def __init__(self, convention: ComplexCoordinateConvention, /):
+    def __init__(self, convention: ComplexCoordinateConvention, /) -> None:
         self.convention = convention
 
     def __call__(self, coordinates: Array, /) -> Array:
@@ -131,7 +132,7 @@ class ComplexProjectiveAtlas(StrictModule):
     complex_dimension: int = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
 
-    def __init__(self, complex_dimension: int, /, *, tolerance: float = 1e-8):
+    def __init__(self, complex_dimension: int, /, *, tolerance: float = 1e-8) -> None:
         dimension = int(complex_dimension)
         if dimension < 1:
             raise ValueError("Complex projective dimension must be positive.")

@@ -12,7 +12,8 @@ from collections.abc import Callable, Mapping
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+import numpy.typing as npt
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -45,7 +46,7 @@ class LatticeDynamicsProviderCapabilities(StrictModule, NonTrainableState):
         born_effective_charges: bool = False,
         dielectric_tensor: bool = False,
         scalar_relativistic: bool = True,
-    ):
+    ) -> None:
         self.second_order_force_constants = bool(second_order_force_constants)
         self.third_order_force_constants = bool(third_order_force_constants)
         self.born_effective_charges = bool(born_effective_charges)
@@ -101,7 +102,7 @@ class LatticeDynamicsRequest(StrictModule, NonTrainableState):
         spin_id: str,
         relativity_id: str,
         input_artifact_ids: tuple[str, ...],
-    ):
+    ) -> None:
         orders = tuple(requested_orders)
         if (
             not orders
@@ -177,8 +178,8 @@ class LatticeDynamicsArtifactSet(StrictModule, NonTrainableState):
         *,
         second_order: SecondOrderForceConstants | None,
         third_order: ThirdOrderForceConstants | None,
-        born_effective_charges,
-        dielectric_tensor,
+        born_effective_charges: npt.ArrayLike | None,
+        dielectric_tensor: npt.ArrayLike | None,
         raw_residuals: Mapping[str, float],
         provider_id: str,
         provider_version: str,
@@ -187,7 +188,7 @@ class LatticeDynamicsArtifactSet(StrictModule, NonTrainableState):
         input_digest: str,
         rights_id: str,
         first_principles_artifact_id: str | None = None,
-    ):
+    ) -> None:
         if second_order is not None and not isinstance(
             second_order, SecondOrderForceConstants
         ):
@@ -204,7 +205,7 @@ class LatticeDynamicsArtifactSet(StrictModule, NonTrainableState):
             raise ValueError(
                 "Provider polar data requires Born charges and dielectric together."
             )
-        if born is not None:
+        if born is not None and dielectric is not None:
             atoms = second_order.relation.source_size if second_order is not None else -1
             if born.shape != (atoms, 3, 3) or dielectric.shape != (3, 3):
                 raise ValueError(
@@ -328,7 +329,7 @@ class CallableLatticeDynamicsProvider(AbstractLatticeDynamicsProvider):
         capabilities: LatticeDynamicsProviderCapabilities,
         evaluator: Callable[[LatticeDynamicsRequest], LatticeDynamicsArtifactSet],
         /,
-    ):
+    ) -> None:
         if not isinstance(capabilities, LatticeDynamicsProviderCapabilities):
             raise TypeError("capabilities must be LatticeDynamicsProviderCapabilities.")
         if not callable(evaluator):

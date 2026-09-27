@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -5,18 +7,24 @@ import numpy as np
 import phydrax as phx
 
 
-def _periodic_dynamics():
+def _periodic_dynamics() -> Any:
     cell = phx.discretization.PeriodicCell(jnp.eye(3) * 10.0)
     system = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [0, 1],
+        # ty: ignore[invalid-argument-type]
         [0, 0],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         phx.atomistic.AtomisticUnitSystem.reduced(),
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0],
+        # ty: ignore[invalid-argument-type]
         element_mask=[False, False],
         cell=cell,
     ).prepare()
     potential = phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.LennardJonesPotential([0.1], [1.0], 2.5)]
     ).prepare(system)
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=cell).prepare(
@@ -31,7 +39,7 @@ def _periodic_dynamics():
     return cell, dynamics
 
 
-def test_evolving_cell_and_lees_edwards_remap_preserve_cartesian_positions():
+def test_evolving_cell_and_lees_edwards_remap_preserve_cartesian_positions() -> None:
     flow = phx.atomistic.driven_flow
     cell = phx.discretization.PeriodicCell(jnp.eye(3) * 10.0)
     plan = flow.EvolvingFlowCellPlan(cell)
@@ -56,7 +64,7 @@ def test_evolving_cell_and_lees_edwards_remap_preserve_cartesian_positions():
     np.testing.assert_allclose(new_unwrapped, old_unwrapped)
 
 
-def test_planar_kraynik_reinelt_recurrence_resets_lattice():
+def test_planar_kraynik_reinelt_recurrence_resets_lattice() -> None:
     flow = phx.atomistic.driven_flow
     plan = flow.PlanarKraynikReineltPlan(0.2, 25.0, 5.0)
     state = plan.initialize()
@@ -75,7 +83,7 @@ def test_planar_kraynik_reinelt_recurrence_resets_lattice():
     assert plan.generalized.certification_residual < 1.0e-10
 
 
-def test_sllod_uses_peculiar_momenta_and_rolls_back_failed_cell_step():
+def test_sllod_uses_peculiar_momenta_and_rolls_back_failed_cell_step() -> None:
     flow = phx.atomistic.driven_flow
     cell, dynamics = _periodic_dynamics()
     cell_plan = flow.EvolvingFlowCellPlan(cell)
@@ -102,7 +110,7 @@ def test_sllod_uses_peculiar_momenta_and_rolls_back_failed_cell_step():
     )
 
 
-def test_total_driven_stress_uses_peculiar_momentum_and_tension_sign():
+def test_total_driven_stress_uses_peculiar_momentum_and_tension_sign() -> None:
     _, dynamics = _periodic_dynamics()
     thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
         phx.atomistic.AtomisticPhaseSpaceMeasurePlan(dynamics.system),
@@ -128,7 +136,7 @@ def test_total_driven_stress_uses_peculiar_momentum_and_tension_sign():
     np.testing.assert_allclose(result.pressure, 2.0e-3 / 3.0)
 
 
-def test_shear_protocol_work_ledger_and_steady_rheology():
+def test_shear_protocol_work_ledger_and_steady_rheology() -> None:
     flow = phx.atomistic.driven_flow
     protocol = flow.HomogeneousFlowProtocolPlan("steady-shear", rate=2.0)
     evaluated = protocol.evaluate(0.5)
@@ -159,7 +167,7 @@ def test_shear_protocol_work_ledger_and_steady_rheology():
     np.testing.assert_allclose(result.second_normal_stress_difference, 0.5)
 
 
-def test_laos_recovers_storage_loss_harmonics_and_cycle_work():
+def test_laos_recovers_storage_loss_harmonics_and_cycle_work() -> None:
     flow = phx.atomistic.driven_flow
     amplitude = 2.0
     frequency = 3.0

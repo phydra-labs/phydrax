@@ -4,17 +4,19 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 
 from .._interpolation import cubic_hermite_segment, linear_segment, local_cubic_slope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._irregular_trajectory_dataset import IrregularTrajectoryDatasetDomain
 from ._structure import PointBatch
 from ._trajectory_dataset import (
@@ -24,8 +26,8 @@ from ._trajectory_dataset import (
 )
 
 
-RaggedTimeSeriesHardInterpolation = Literal["linear", "cubic_hermite"]
-RaggedTimeSeriesHardGate = Literal["sin2", "sin4"]
+RaggedTimeSeriesHardInterpolation: TypeAlias = Literal["linear", "cubic_hermite"]
+RaggedTimeSeriesHardGate: TypeAlias = Literal["sin2", "sin4"]
 
 
 def _field_array(batch: PointBatch, key: str, /) -> Array:
@@ -85,11 +87,11 @@ class _RaggedTimeSeriesTable(StrictModule, NonTrainableState):
         interpolation: RaggedTimeSeriesHardInterpolation,
         gate: RaggedTimeSeriesHardGate,
         snap_tol: float,
-    ):
-        if interpolation not in ("linear", "cubic_hermite"):
-            raise ValueError("interpolation must be either 'linear' or 'cubic_hermite'.")
-        if gate not in ("sin2", "sin4"):
-            raise ValueError("gate must be either 'sin2' or 'sin4'.")
+    ) -> None:
+        interpolation = parse(
+            interpolation, RaggedTimeSeriesHardInterpolation, "interpolation"
+        )
+        gate = parse(gate, RaggedTimeSeriesHardGate, "gate")
         snap = float(snap_tol)
         if snap < 0.0:
             raise ValueError("snap_tol must be non-negative.")

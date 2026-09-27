@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 
 from phydrax._strict import StrictModule
@@ -37,7 +39,7 @@ from phydrax.finance.valuation._sensitivity import (
 )
 
 
-def test_black_scholes_benchmark_parity_and_all_implied_volatility_inversions():
+def test_black_scholes_benchmark_parity_and_all_implied_volatility_inversions() -> None:
     call = evaluate_black_scholes_european(
         BlackScholesModel(0.2), 100.0, 100.0, 1.0, 0.05
     )
@@ -69,7 +71,7 @@ def test_black_scholes_benchmark_parity_and_all_implied_volatility_inversions():
     assert jnp.allclose(recovered_normal.volatility, 8.0, rtol=2e-5)
 
 
-def test_lattice_refinement_and_pde_cross_engine_agree_with_analytic_value():
+def test_lattice_refinement_and_pde_cross_engine_agree_with_analytic_value() -> None:
     model = BlackScholesModel(0.2)
     payoff = VanillaPayoff(100.0, OptionType.PUT)
     problem = LatticeProblem(model, payoff, 100.0, 1.0, 0.05)
@@ -92,7 +94,7 @@ def test_lattice_refinement_and_pde_cross_engine_agree_with_analytic_value():
     assert jnp.allclose(pde.value, analytic, atol=8e-2)
 
 
-def test_heston_characteristic_function_and_transform_engines_agree():
+def test_heston_characteristic_function_and_transform_engines_agree() -> None:
     model = HestonModel(2.0, 0.04, 0.2, -0.5, 0.04)
     assert jnp.allclose(
         heston_log_price_characteristic_function(model, 0.0, 100.0, 1.0, 0.03, 0.01),
@@ -120,11 +122,11 @@ def test_heston_characteristic_function_and_transform_engines_agree():
 
 
 class _QuadraticValuation(StrictModule):
-    def __call__(self, parameters):
+    def __call__(self, parameters: Any) -> Any:
         return parameters[0] ** 2 + 3.0 * parameters[1]
 
 
-def test_aad_and_bump_greeks_defend_first_and_second_order_contracts():
+def test_aad_and_bump_greeks_defend_first_and_second_order_contracts() -> None:
     request = GreekRequest(
         ("spot", "rate"),
         second_order_names=("spot",),
@@ -137,12 +139,14 @@ def test_aad_and_bump_greeks_defend_first_and_second_order_contracts():
     base = _QuadraticValuation()(parameters)
     up = jnp.stack(
         tuple(
+            # ty: ignore[not-subscriptable]
             _QuadraticValuation()(parameters.at[index].add(request.bump_sizes[index]))
             for index in range(2)
         )
     )
     down = jnp.stack(
         tuple(
+            # ty: ignore[not-subscriptable]
             _QuadraticValuation()(parameters.at[index].add(-request.bump_sizes[index]))
             for index in range(2)
         )
@@ -154,7 +158,7 @@ def test_aad_and_bump_greeks_defend_first_and_second_order_contracts():
     assert jnp.allclose(bumped.second("spot"), 2.0, rtol=2e-2)
 
 
-def test_self_financing_hedge_replay_is_exact_for_unit_underlying_claim():
+def test_self_financing_hedge_replay_is_exact_for_unit_underlying_claim() -> None:
     times = jnp.array([0.0, 0.5, 1.0])
     spots = jnp.array([100.0, 110.0, 105.0])
     replay = evaluate_hedge_replay(

@@ -8,7 +8,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.axes as cx
 from phydrax.domain import (
@@ -26,6 +26,7 @@ from phydrax.domain import (
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._batches import PointIntegrationBatch
 from ._estimates import IntegrationEstimate, IntegrationProvenance
 from ._fixed import integrate_fixed_component, integrate_fixed_density
@@ -126,7 +127,7 @@ def integrate_diffrax_collocation(
     plan: DiffraxCollocationQuadraturePlan,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:

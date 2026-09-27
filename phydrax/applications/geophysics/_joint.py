@@ -8,7 +8,7 @@ from collections.abc import Callable, Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -35,7 +35,7 @@ class IndependentModalityTerm(StrictModule, NonTrainableState):
         *,
         likelihood_id: str,
         prediction_id: str,
-    ):
+    ) -> None:
         name_, observation = str(name).strip(), str(observation_id).strip()
         likelihood_identity = str(likelihood_id).strip()
         prediction_identity = str(prediction_id).strip()
@@ -96,7 +96,7 @@ class StructuralCrossGradientCoupling(StrictModule, NonTrainableState):
         first_map_id: str,
         second_map_id: str,
         prior_id: str,
-    ):
+    ) -> None:
         if (
             not callable(first_field)
             or not callable(second_field)
@@ -143,7 +143,7 @@ class PetrophysicalDiscrepancyCoupling(StrictModule, NonTrainableState):
         /,
         *,
         relationship_id: str,
-    ):
+    ) -> None:
         if not callable(predicted_property) or not callable(physical_property):
             raise TypeError(
                 "Petrophysical coupling requires predicted and physical property maps."
@@ -194,7 +194,7 @@ class SharedInterfaceCoupling(StrictModule, NonTrainableState):
         *,
         first_map_id: str,
         second_map_id: str,
-    ):
+    ) -> None:
         if not callable(first_level_set) or not callable(second_level_set):
             raise TypeError("Shared interface requires two level-set maps.")
         scale_ = jnp.asarray(scale)
@@ -245,7 +245,7 @@ class MultimodalJointInferencePlan(StrictModule, NonTrainableState):
             | SharedInterfaceCoupling
         ] = (),
         /,
-    ):
+    ) -> None:
         terms = tuple(modalities)
         couplings_ = tuple(couplings)
         if (
@@ -290,10 +290,10 @@ class MultimodalJointInferencePlan(StrictModule, NonTrainableState):
         return tuple(value.predict(parameters) for value in self.modalities)
 
     def posterior(self) -> PosteriorProblem:
-        def likelihood(parameters):
+        def likelihood(parameters: object) -> Array:
             return self.log_likelihood(parameters)
 
-        def prediction(parameters):
+        def prediction(parameters: object) -> tuple[object, ...]:
             return self.predictions(parameters)
 
         return PosteriorProblem(

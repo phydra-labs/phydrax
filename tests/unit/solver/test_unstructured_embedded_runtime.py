@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,7 +13,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _strip_plan(system, nx=2):
+def _strip_plan(system: Any, nx: Any = 2) -> Any:
     vertices = np.asarray(
         [(i / nx, j) for j in range(2) for i in range(nx + 1)],
         dtype="float64",
@@ -32,15 +35,15 @@ def _strip_plan(system, nx=2):
 
 
 def _runtime(
-    level_set,
+    level_set: Any,
     *,
-    interface_solver=None,
-    stabilization=None,
-    source=None,
-    step_policy=None,
-    field_id="runtime-cut",
-    nx=2,
-):
+    interface_solver: Any = None,
+    stabilization: Any = None,
+    source: Any = None,
+    step_policy: Any = None,
+    field_id: Any = "runtime-cut",
+    nx: Any = 2,
+) -> Any:
     system = phx.equations.EulerSystem(2)
     plan = _strip_plan(system, nx=nx)
     discretization = plan.prepare()
@@ -88,6 +91,7 @@ def _runtime(
         coupling=coupling,
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         step_policy,
@@ -95,7 +99,9 @@ def _runtime(
     return discretization, system, dynamics, runtime
 
 
-def _uniform(system, discretization, *, velocity=(0.0, 0.0), pressure=1.0):
+def _uniform(
+    system: Any, discretization: Any, *, velocity: Any = (0.0, 0.0), pressure: Any = 1.0
+) -> Any:
     primitive = jnp.broadcast_to(
         jnp.asarray((1.0, velocity[0], velocity[1], pressure)),
         discretization.state_shape,
@@ -103,11 +109,11 @@ def _uniform(system, discretization, *, velocity=(0.0, 0.0), pressure=1.0):
     return system.primitive_to_conserved(primitive)
 
 
-def _block(ledger, kind):
+def _block(ledger: Any, kind: Any) -> Any:
     return next(block for block in ledger.blocks if block.block_kind == kind)
 
 
-def test_nonzero_time_free_stream_uses_true_ssprk_times_and_zero_cut_mass_flux():
+def test_nonzero_time_free_stream_uses_true_ssprk_times_and_zero_cut_mass_flux() -> None:
     discretization, system, _, runtime = _runtime(
         lambda points, args: points[:, 0] - 0.25,
         field_id="nonzero-time-free-stream",
@@ -134,10 +140,10 @@ def test_nonzero_time_free_stream_uses_true_ssprk_times_and_zero_cut_mass_flux()
     np.testing.assert_allclose(cut.flux_integral[:, 0], 0.0, atol=2.0e-8)
 
 
-def test_outer_cut_and_physical_source_close_the_public_content_budget():
+def test_outer_cut_and_physical_source_close_the_public_content_budget() -> None:
     source_vector = jnp.asarray((0.0, 0.0, 0.0, 0.4))
 
-    def source(time, state, centers, args):
+    def source(time: Any, state: Any, centers: Any, args: Any) -> Any:
         del time, centers, args
         return jnp.broadcast_to(source_vector, state.shape)
 
@@ -169,8 +175,8 @@ def test_outer_cut_and_physical_source_close_the_public_content_budget():
     np.testing.assert_allclose(jnp.sum(change, axis=0), net_sum, atol=3.0e-8)
 
 
-def test_asymmetric_cut_source_uses_fluid_centroids_before_inactive_masking():
-    def source(time, state, centers, args):
+def test_asymmetric_cut_source_uses_fluid_centroids_before_inactive_masking() -> None:
+    def source(time: Any, state: Any, centers: Any, args: Any) -> Any:
         del time
         scale = (
             jnp.asarray(1.0, dtype=state.dtype)
@@ -233,7 +239,7 @@ def test_asymmetric_cut_source_uses_fluid_centroids_before_inactive_masking():
 
     unit_scale = jnp.asarray(1.0, dtype=stage.cell_centers.dtype)
 
-    def integrated_source(scale):
+    def integrated_source(scale: Any) -> Any:
         evaluation = dynamics.evaluate_stage(
             initial.content_state,
             stage,
@@ -285,7 +291,7 @@ def test_asymmetric_cut_source_uses_fluid_centroids_before_inactive_masking():
     )
 
 
-def test_mixed_hllc_routes_and_content_never_assign_solid_ownership():
+def test_mixed_hllc_routes_and_content_never_assign_solid_ownership() -> None:
     discretization, system, _, runtime = _runtime(
         lambda points, args: points[:, 0] - 0.75,
         interface_solver=phx.discretization.HLLCFluxPlan(),
@@ -318,14 +324,14 @@ def test_mixed_hllc_routes_and_content_never_assign_solid_ownership():
             assert np.all(active[neighbors[neighbors >= 0]])
 
 
-def test_sliver_redistribution_is_conservative_and_cfl_uses_stabilized_volume():
+def test_sliver_redistribution_is_conservative_and_cfl_uses_stabilized_volume() -> None:
     stabilization = phx.discretization.EmbeddedBoundaryStabilizationPolicy(
         minimum_volume_fraction=0.2,
         maximum_recipients=1,
     )
     source_vector = jnp.asarray((0.0, 0.0, 0.0, 1.0))
 
-    def source(time, state, centers, args):
+    def source(time: Any, state: Any, centers: Any, args: Any) -> Any:
         del time, centers, args
         return jnp.broadcast_to(source_vector, state.shape)
 
@@ -408,7 +414,9 @@ def test_sliver_redistribution_is_conservative_and_cfl_uses_stabilized_volume():
     )
 
 
-def test_stage_positivity_blends_physical_cut_and_redistribution_on_active_cells():
+def test_stage_positivity_blends_physical_cut_and_redistribution_on_active_cells() -> (
+    None
+):
     system = phx.equations.EulerSystem(1)
     active_state = system.primitive_to_conserved(
         jnp.asarray(((1.0, 0.0, 1.0), (1.0, 0.0, 1.0)))
@@ -418,24 +426,33 @@ def test_stage_positivity_blends_physical_cut_and_redistribution_on_active_cells
     blocks = (
         phx.discretization.ConservationStageFluxRateBlock(
             jnp.asarray(((12.0, 0.0, 0.0),)),
+            # ty: ignore[invalid-argument-type]
             (1,),
+            # ty: ignore[invalid-argument-type]
             (-1,),
+            # ty: ignore[invalid-argument-type]
             (True,),
             "active-physical",
             "physical",
         ),
         phx.discretization.ConservationStageFluxRateBlock(
             jnp.asarray(((8.0, 0.0, 0.0),)),
+            # ty: ignore[invalid-argument-type]
             (1,),
+            # ty: ignore[invalid-argument-type]
             (-1,),
+            # ty: ignore[invalid-argument-type]
             (True,),
             "active-cut",
             "cut",
         ),
         phx.discretization.ConservationStageFluxRateBlock(
             jnp.asarray(((2.0, 0.0, 0.0),)),
+            # ty: ignore[invalid-argument-type]
             (1,),
+            # ty: ignore[invalid-argument-type]
             (2,),
+            # ty: ignore[invalid-argument-type]
             (True,),
             "active-redistribution",
             "small-cell-redistribution",
@@ -453,12 +470,14 @@ def test_stage_positivity_blends_physical_cut_and_redistribution_on_active_cells
         blocks,
         jnp.zeros_like(content),
         active_cells,
+        # ty: ignore[invalid-argument-type]
         **kwargs,
     )
     fallback = phx.discretization.ConservationStageLedger(
         tuple(block.with_flux_rate(jnp.zeros_like(block.flux_rate)) for block in blocks),
         jnp.zeros_like(content),
         active_cells,
+        # ty: ignore[invalid-argument-type]
         **kwargs,
     )
 
@@ -479,7 +498,7 @@ def test_stage_positivity_blends_physical_cut_and_redistribution_on_active_cells
     assert jnp.all(system.admissible(limited.euler_cell_average[1:]))
 
 
-def test_full_fluid_embedded_runtime_matches_static_runtime():
+def test_full_fluid_embedded_runtime_matches_static_runtime() -> None:
     discretization, system, _, embedded_runtime = _runtime(
         lambda points, args: jnp.ones((points.shape[0],)),
         field_id="full-fluid-parity",
@@ -507,6 +526,7 @@ def test_full_fluid_embedded_runtime_matches_static_runtime():
         method,
     ).dynamics
     static_runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         static_dynamics,
         phx.discretization.FluxPositivityPlan(),
     )
@@ -534,8 +554,8 @@ def test_full_fluid_embedded_runtime_matches_static_runtime():
     )
 
 
-def test_full_solid_hllc_skips_physics_and_advances_zero_content():
-    def forbidden_source(time, state, centers, args):
+def test_full_solid_hllc_skips_physics_and_advances_zero_content() -> None:
+    def forbidden_source(time: Any, state: Any, centers: Any, args: Any) -> None:
         raise AssertionError("full-solid source must not be evaluated")
 
     discretization, system, _, runtime = _runtime(
@@ -567,7 +587,7 @@ def test_full_solid_hllc_skips_physics_and_advances_zero_content():
     )
 
 
-def test_cfl_rejection_preserves_content_journal_and_publishes_zero_ledger():
+def test_cfl_rejection_preserves_content_journal_and_publishes_zero_ledger() -> None:
     policy = phx.solver.FiniteVolumeStepPolicy(
         cfl=0.45,
         maximum_retries=0,
@@ -605,7 +625,7 @@ def test_cfl_rejection_preserves_content_journal_and_publishes_zero_ledger():
     )
 
 
-def test_embedded_advance_is_jittable_differentiable_and_result_identities_hold():
+def test_embedded_advance_is_jittable_differentiable_and_result_identities_hold() -> None:
     discretization, system, _, runtime = _runtime(
         lambda points, args: points[:, 0] - 0.25,
         interface_solver=phx.discretization.HLLCFluxPlan(),
@@ -632,7 +652,7 @@ def test_embedded_advance_is_jittable_differentiable_and_result_identities_hold(
     ) == tuple(block.block_kind for block in result.embedded.stage_rate_ledgers[0].blocks)
     assert "accepted_flux_integrals" not in vars(result.embedded)
 
-    def objective(tangential_velocity):
+    def objective(tangential_velocity: Any) -> Any:
         state = runtime.initialize_state(
             _uniform(
                 system,

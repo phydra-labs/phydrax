@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -20,11 +23,11 @@ from phydrax.discretization.discrete_velocity._quadrature import (
 jax.config.update("jax_enable_x64", True)
 
 
-def _energy_flux(populations, velocities):
+def _energy_flux(populations: Any, velocities: Any) -> Any:
     return jnp.einsum("...q,qd->...d", populations, velocities)
 
 
-def test_fixed_newton_recovers_known_duals_for_batched_targets():
+def test_fixed_newton_recovers_known_duals_for_batched_targets() -> None:
     quadrature = d2v17_quadrature()
     plan = PositiveEnergyEquilibriumPlan(quadrature, residual_tolerance=1.0e-12)
     total_energy = jnp.asarray((2.5, 1.75))
@@ -53,7 +56,9 @@ def test_fixed_newton_recovers_known_duals_for_batched_targets():
     assert bool(jnp.all(result.evidence.iterations > 0))
 
 
-def test_zero_dual_is_the_weighted_quadrature_reference_without_energy_rescaling():
+def test_zero_dual_is_the_weighted_quadrature_reference_without_energy_rescaling() -> (
+    None
+):
     quadrature = d2v17_quadrature()
     plan = PositiveEnergyEquilibriumPlan(quadrature)
     identical_plan = PositiveEnergyEquilibriumPlan(quadrature)
@@ -73,7 +78,9 @@ def test_zero_dual_is_the_weighted_quadrature_reference_without_energy_rescaling
     assert result.evidence.quadrature_id == quadrature.quadrature_id
 
 
-def test_learned_dual_keeps_total_energy_exact_and_exposes_flux_error_separately():
+def test_learned_dual_keeps_total_energy_exact_and_exposes_flux_error_separately() -> (
+    None
+):
     quadrature = d2v17_quadrature()
     plan = PositiveEnergyEquilibriumPlan(quadrature)
     total_energy = jnp.asarray(4.0)
@@ -99,7 +106,7 @@ def test_learned_dual_keeps_total_energy_exact_and_exposes_flux_error_separately
     assert float(result.evidence.flux_error_norm) > 1.0e-2
 
 
-def test_solver_refuses_infeasible_nonfinite_and_nonpositive_batched_inputs():
+def test_solver_refuses_infeasible_nonfinite_and_nonpositive_batched_inputs() -> None:
     quadrature = d2v17_quadrature()
     plan = PositiveEnergyEquilibriumPlan(quadrature)
     total_energy = jnp.asarray((2.0, 2.0, 2.0, 0.0))
@@ -134,7 +141,7 @@ def test_solver_refuses_infeasible_nonfinite_and_nonpositive_batched_inputs():
     assert not bool(result.evidence.positive[0])
 
 
-def test_plan_rejects_velocity_support_that_does_not_span_the_plane():
+def test_plan_rejects_velocity_support_that_does_not_span_the_plane() -> None:
     quadrature = CertifiedDiscreteVelocityQuadrature(
         "collinear",
         np.asarray(((-1.0, 0.0), (0.0, 0.0), (1.0, 0.0))),
@@ -148,7 +155,7 @@ def test_plan_rejects_velocity_support_that_does_not_span_the_plane():
         PositiveEnergyEquilibriumPlan(quadrature)
 
 
-def test_interior_solve_has_finite_flux_consistent_autodiff():
+def test_interior_solve_has_finite_flux_consistent_autodiff() -> None:
     quadrature = d2v17_quadrature()
     plan = PositiveEnergyEquilibriumPlan(quadrature, residual_tolerance=1.0e-12)
     total_energy = jnp.asarray(1.7)

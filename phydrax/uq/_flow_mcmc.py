@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import importlib.metadata
 import time
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, get_args, Literal, TypeAlias
 
 import blackjax
 import equinox as eqx
@@ -16,11 +17,16 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from blackjax.mcmc.hmc import HMCState
+from blackjax.mcmc.nuts import NUTSInfo
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint
+from .._frozendict import frozendict
 from .._strict import StrictModule
+from ..nn.flows import AbstractFlowDistribution
+from ._causal_hmc import _LogDensity
 from ._chain import (
     _split_chain_keys,
     _stack_trees,
@@ -38,13 +44,15 @@ from ._checkpoint import (
     unpack_array_tree,
     write_checkpoint_archive,
 )
-from ._diagnostics import mcmc_diagnostics, MCMCConvergenceReport
+from ._diagnostics import mcmc_diagnostics, MCMCConvergenceReport, MCMCDiagnostics
 from ._flow_family import (
     build_default_flow as _build_default_flow,
     validate_flow as _validate_flow,
 )
 from ._flow_proposal import (
     _fit_flow,
+    _FlowProposalBlockInfo,
+    _FlowProposalState,
     _initialize_replay,
     _proposal_effective_sample_size,
     _replay_data,
@@ -55,6 +63,7 @@ from ._flow_proposal import (
 from ._mcmc import _adapt_mcmc, MCMCChainWarmup, MCMCResult
 from ._mcmc_kinetic import MCMCMassAdaptationPlan
 from ._posterior import PosteriorProblem
+from ._predictive import PredictiveField
 
 
 _update_replay_compiled = jax.jit(_update_replay)
@@ -69,6 +78,48 @@ _FLOW_TRAINING_TAG = 5
 _ADAPTATION_GLOBAL_TAG = 6
 _STABILIZATION_TAG = 7
 _PRODUCTION_TAG = 8
+
+_FlowNUTSMetrics: TypeAlias = dict[str, Array]
+_FlowNUTSPhase: TypeAlias = Literal["adaptation", "stabilization", "production"]
+# Restored checkpoint: chain states and tuning, replay and flow, adaptation
+# histories, phase counters, retained draws and metrics, initialization count,
+# phase durations, total duration, and frozen flow fingerprint.
+_FlowNUTSCheckpoint: TypeAlias = tuple[
+    HMCState,
+    HMCState,
+    Array,
+    Array,
+    Array,
+    _ReplayBuffer,
+    AbstractFlowDistribution,
+    list[Array],
+    list[Array],
+    list[float],
+    list[Array],
+    list[Array],
+    list[Array],
+    int,
+    int,
+    int,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    int,
+    float,
+    float,
+    float,
+    float,
+    float,
+    dict[str, Any] | None,
+]
 
 
 class FlowNUTSConfig(StrictModule):
@@ -110,7 +161,7 @@ class FlowNUTSConfig(StrictModule):
         max_patience: int = 10,
         batch_size: int = 256,
         validation_fraction: float = 0.1,
-    ):
+    ) -> None:
         positive = {
             "num_adaptation_rounds": num_adaptation_rounds,
             "num_local_adaptation_steps": num_local_adaptation_steps,
@@ -233,7 +284,7 @@ class FlowNUTSResult(StrictModule):
         sampling_duration_seconds: float,
         duration_seconds: float,
         history_memory_bytes: int,
-    ):
+    ) -> None:
         if not isinstance(mcmc, MCMCResult):
             raise TypeError("mcmc must be an MCMCResult.")
         if not isinstance(config, FlowNUTSConfig):
@@ -356,7 +407,7 @@ class FlowNUTSResult(StrictModule):
         return self.mcmc.warmup
 
     @property
-    def diagnostics(self):
+    def diagnostics(self) -> MCMCDiagnostics:
         return self.mcmc.diagnostics
 
     @property
@@ -395,11 +446,15 @@ class FlowNUTSResult(StrictModule):
     def adaptation_duration_seconds(self) -> float:
         return self.mcmc.adaptation_duration_seconds
 
-    def predict(self, *args: Any, **kwargs: Any):
+    def predict(
+        self, *args: Any, **kwargs: Any
+    ) -> PredictiveField | frozendict[str, PredictiveField]:
         """Evaluate latent predictions while preserving chain and draw axes."""
         return self.mcmc.predict(*args, **kwargs)
 
-    def predict_observations(self, key: Array, /, *args: Any, **kwargs: Any):
+    def predict_observations(
+        self, key: Array, /, *args: Any, **kwargs: Any
+    ) -> PredictiveField | frozendict[str, PredictiveField]:
         """Draw observation predictions while preserving chain and draw axes."""
         return self.mcmc.predict_observations(key, *args, **kwargs)
 
@@ -1057,7 +1112,7 @@ def _indexed_chain_keys(
 ) -> Array:
     indices = jnp.arange(start, start + count, dtype=jnp.uint32)
 
-    def chain_schedule(chain_key):
+    def chain_schedule(chain_key: Array) -> Array:
         base = jr.fold_in(jr.fold_in(chain_key, phase), group)
         return jax.vmap(lambda index: jr.fold_in(base, index))(indices)
 
@@ -1099,19 +1154,26 @@ def _flatten_chain_positions(
 
 @eqx.filter_jit
 def _advance_nuts_collect(
-    current_states,
-    step_sizes,
-    inverse_mass_matrices,
-    keys,
-    logdensity_fn,
+    current_states: HMCState,
+    step_sizes: Array,
+    inverse_mass_matrices: Array,
+    keys: Array,
+    logdensity_fn: _LogDensity,
     *,
     max_num_doublings: int,
     chain_method: ChainMethod,
-):
+) -> tuple[HMCState, Array, NUTSInfo]:
     kernel = blackjax.nuts.build_kernel()
 
-    def run_chain(state, chain_keys, step_size, inverse_mass_matrix):
-        def transition(current, transition_key):
+    def run_chain(
+        state: HMCState,
+        chain_keys: Array,
+        step_size: Array,
+        inverse_mass_matrix: Array,
+    ) -> tuple[HMCState, tuple[Array, NUTSInfo]]:
+        def transition(
+            current: HMCState, transition_key: Array
+        ) -> tuple[HMCState, tuple[Array, NUTSInfo]]:
             next_state, info = kernel(
                 transition_key,
                 current,
@@ -1157,19 +1219,22 @@ def _advance_nuts_collect(
 
 @eqx.filter_jit
 def _advance_flow_chains(
-    flow,
-    current_states,
-    keys,
-    logdensity_fn,
+    flow: AbstractFlowDistribution,
+    current_states: HMCState,
+    keys: Array,
+    logdensity_fn: _LogDensity,
     *,
     num_steps: int,
     chain_method: ChainMethod,
-):
-    def run_chain(flow_value, state, transition_key):
+) -> tuple[_FlowProposalState, _FlowProposalBlockInfo]:
+    def run_chain(
+        flow_value: AbstractFlowDistribution, state: HMCState, transition_key: Array
+    ) -> tuple[_FlowProposalState, _FlowProposalBlockInfo]:
         return _run_flow_block(
             transition_key,
-            state.position,
-            state.logdensity,
+            # Flow-NUTS chains run on the raveled parameter vector.
+            cast(Array, state.position),
+            jnp.asarray(state.logdensity),
             flow_value,
             logdensity_fn,
             num_steps=num_steps,
@@ -1177,7 +1242,11 @@ def _advance_flow_chains(
 
     if chain_method == "vectorized":
 
-        def run_vectorized(flow_value, states, transition_keys):
+        def run_vectorized(
+            flow_value: AbstractFlowDistribution,
+            states: HMCState,
+            transition_keys: Array,
+        ) -> tuple[_FlowProposalState, _FlowProposalBlockInfo]:
             return jax.vmap(
                 lambda state, transition_key: run_chain(flow_value, state, transition_key)
             )(states, transition_keys)
@@ -1196,11 +1265,11 @@ def _advance_flow_chains(
 
 @eqx.filter_jit
 def _initialize_nuts_states(
-    positions,
-    logdensity_fn,
+    positions: Array,
+    logdensity_fn: _LogDensity,
     *,
     chain_method: ChainMethod,
-):
+) -> HMCState:
     if chain_method == "vectorized":
         return jax.vmap(lambda value: blackjax.nuts.init(value, logdensity_fn))(positions)
     return _stack_trees(
@@ -1210,34 +1279,37 @@ def _initialize_nuts_states(
 
 @eqx.filter_jit
 def _advance_composite_chains(
-    flow,
-    current_states,
-    step_sizes,
-    inverse_mass_matrices,
-    draw_keys,
-    logdensity_fn,
+    flow: AbstractFlowDistribution,
+    current_states: HMCState,
+    step_sizes: Array,
+    inverse_mass_matrices: Array,
+    draw_keys: Array,
+    logdensity_fn: _LogDensity,
     *,
     num_global_steps: int,
     num_local_steps: int,
     max_num_doublings: int,
     chain_method: ChainMethod,
-):
+) -> tuple[HMCState, Array, _FlowNUTSMetrics]:
     kernel = blackjax.nuts.build_kernel()
 
     def run_chain(
-        flow_value,
-        state,
-        chain_draw_keys,
-        step_size,
-        inverse_mass_matrix,
-    ):
-        def composite(current_state, draw_key):
+        flow_value: AbstractFlowDistribution,
+        state: HMCState,
+        chain_draw_keys: Array,
+        step_size: Array,
+        inverse_mass_matrix: Array,
+    ) -> tuple[HMCState, tuple[Array, _FlowNUTSMetrics]]:
+        def composite(
+            current_state: HMCState, draw_key: Array
+        ) -> tuple[HMCState, tuple[Array, _FlowNUTSMetrics]]:
             global_key = jr.fold_in(draw_key, 0)
             local_base_key = jr.fold_in(draw_key, 1)
             flow_state, flow_info = _run_flow_block(
                 global_key,
-                current_state.position,
-                current_state.logdensity,
+                # Flow-NUTS chains run on the raveled parameter vector.
+                cast(Array, current_state.position),
+                jnp.asarray(current_state.logdensity),
                 flow_value,
                 logdensity_fn,
                 num_steps=num_global_steps,
@@ -1247,7 +1319,9 @@ def _advance_composite_chains(
                 jnp.arange(num_local_steps, dtype=jnp.uint32)
             )
 
-            def local_transition(carry, transition_key):
+            def local_transition(
+                carry: HMCState, transition_key: Array
+            ) -> tuple[HMCState, NUTSInfo]:
                 next_state, info = kernel(
                     transition_key,
                     carry,
@@ -1263,6 +1337,8 @@ def _advance_composite_chains(
                 local_state,
                 local_keys,
             )
+            # Flow-NUTS chains run on the raveled parameter vector.
+            final_position = cast(Array, final_state.position)
             finite_log_ratio = jnp.isfinite(flow_info.log_acceptance_ratio)
             finite_count = jnp.sum(finite_log_ratio)
             mean_log_ratio = jnp.where(
@@ -1278,34 +1354,34 @@ def _advance_composite_chains(
                 -jnp.inf,
             )
             metrics = {
-                "log_density": final_state.logdensity,
+                "log_density": jnp.asarray(final_state.logdensity),
                 "acceptance_rate": jnp.mean(local_info.acceptance_rate),
                 "divergent": jnp.any(local_info.is_divergent),
-                "energy": local_info.energy[-1],
+                "energy": jnp.asarray(local_info.energy)[-1],
                 "num_integration_steps": jnp.sum(local_info.num_integration_steps),
                 "num_trajectory_expansions": jnp.max(
                     local_info.num_trajectory_expansions
                 ),
                 "global_acceptance_rate": jnp.mean(
-                    flow_info.accepted.astype(final_state.position.dtype)
+                    flow_info.accepted.astype(final_position.dtype)
                 ),
                 "global_accepted_count": jnp.sum(flow_info.accepted, dtype=jnp.int32),
                 "global_mean_log_acceptance_ratio": mean_log_ratio,
                 "global_nonfinite_count": jnp.sum(flow_info.nonfinite, dtype=jnp.int32),
             }
-            return final_state, (final_state.position, metrics)
+            return final_state, (final_position, metrics)
 
         return jax.lax.scan(composite, state, chain_draw_keys)
 
     if chain_method == "vectorized":
 
         def run_vectorized(
-            flow_value,
-            states,
-            keys,
-            chain_step_sizes,
-            chain_mass_matrices,
-        ):
+            flow_value: AbstractFlowDistribution,
+            states: HMCState,
+            keys: Array,
+            chain_step_sizes: Array,
+            chain_mass_matrices: Array,
+        ) -> tuple[HMCState, tuple[Array, _FlowNUTSMetrics]]:
             return jax.vmap(
                 lambda state, chain_keys, step_size, mass_matrix: run_chain(
                     flow_value,
@@ -1347,16 +1423,19 @@ def _advance_composite_chains(
     )
 
 
-def _flow_fingerprint(flow) -> dict[str, Any]:
+def _flow_fingerprint(flow: AbstractFlowDistribution) -> dict[str, Any]:
     parameters, _ = eqx.partition(flow, eqx.is_array)
     return array_tree_fingerprint(parameters)
 
 
-def _unravel_hmc_state(state, unravel) -> HMCState:
+def _unravel_hmc_state(
+    state: HMCState, unravel: Callable[[Array], PyTree[Array]]
+) -> HMCState:
+    # Flow-NUTS chains run on the raveled parameter vector.
     return HMCState(
-        position=unravel(state.position),
+        position=unravel(cast(Array, state.position)),
         logdensity=state.logdensity,
-        logdensity_grad=unravel(state.logdensity_grad),
+        logdensity_grad=unravel(cast(Array, state.logdensity_grad)),
     )
 
 
@@ -1367,45 +1446,45 @@ def _stack_rows(values: list[Array], width: int) -> Array:
 
 
 def _write_flow_nuts_checkpoint(
-    destination,
+    destination: Path,
     *,
-    compatibility,
-    phase,
-    completed_rounds,
-    completed_stabilization,
-    completed_draws,
-    current_states,
-    warmup_states,
-    step_sizes,
-    inverse_mass_matrices,
-    warmup_durations,
-    replay,
-    flow,
-    training_losses,
-    validation_losses,
-    flow_training_durations,
-    adaptation_acceptance,
-    adaptation_ess,
-    adaptation_history_size,
-    flat_samples,
-    log_density,
-    acceptance_rate,
-    divergent,
-    energy,
-    num_integration_steps,
-    num_trajectory_expansions,
-    global_acceptance_rate,
-    global_accepted_count,
-    global_mean_log_acceptance_ratio,
-    global_nonfinite_count,
-    num_unique_initial_positions,
-    nuts_adaptation_duration,
-    flow_adaptation_duration,
-    stabilization_duration,
-    sampling_duration,
-    duration_seconds,
-    frozen_flow_fingerprint,
-):
+    compatibility: Mapping[str, Any],
+    phase: _FlowNUTSPhase,
+    completed_rounds: int,
+    completed_stabilization: int,
+    completed_draws: int,
+    current_states: HMCState,
+    warmup_states: HMCState,
+    step_sizes: Array,
+    inverse_mass_matrices: Array,
+    warmup_durations: Array,
+    replay: _ReplayBuffer,
+    flow: AbstractFlowDistribution,
+    training_losses: Sequence[Array],
+    validation_losses: Sequence[Array],
+    flow_training_durations: Sequence[float],
+    adaptation_acceptance: Array,
+    adaptation_ess: Array,
+    adaptation_history_size: Array,
+    flat_samples: Array,
+    log_density: Array,
+    acceptance_rate: Array,
+    divergent: Array,
+    energy: Array,
+    num_integration_steps: Array,
+    num_trajectory_expansions: Array,
+    global_acceptance_rate: Array,
+    global_accepted_count: Array,
+    global_mean_log_acceptance_ratio: Array,
+    global_nonfinite_count: Array,
+    num_unique_initial_positions: int,
+    nuts_adaptation_duration: float,
+    flow_adaptation_duration: float,
+    stabilization_duration: float,
+    sampling_duration: float,
+    duration_seconds: float,
+    frozen_flow_fingerprint: dict[str, Any] | None,
+) -> None:
     arrays = {
         "step_sizes": step_sizes,
         "inverse_mass_matrices": inverse_mass_matrices,
@@ -1472,23 +1551,23 @@ def _write_flow_nuts_checkpoint(
 
 
 def _read_flow_nuts_checkpoint(
-    source,
+    source: Path,
     *,
-    compatibility,
-    problem,
-    flat_reference,
-    flat_logdensity,
-    root_key,
-    chains,
-    config,
-):
+    compatibility: Mapping[str, Any],
+    problem: PosteriorProblem,
+    flat_reference: Array,
+    flat_logdensity: _LogDensity,
+    root_key: Array,
+    chains: int,
+    config: FlowNUTSConfig,
+) -> _FlowNUTSCheckpoint:
     state, arrays = read_checkpoint_archive(
         source,
         kind="flow_nuts",
         compatibility=compatibility,
     )
     phase = state.get("phase")
-    if phase not in ("adaptation", "stabilization", "production"):
+    if phase not in get_args(_FlowNUTSPhase):
         raise CheckpointCorruptionError("Flow-NUTS checkpoint phase is invalid.")
     completed_rounds = int(state.get("completed_rounds", -1))
     completed_stabilization = int(state.get("completed_stabilization", -1))
@@ -1671,7 +1750,13 @@ def _read_flow_nuts_checkpoint(
     )
 
 
-def _required_array(arrays, name, *, shape=None, leading=None):
+def _required_array(
+    arrays: Mapping[str, Array],
+    name: str,
+    *,
+    shape: tuple[int, ...] | None = None,
+    leading: int | None = None,
+) -> Array:
     if name not in arrays:
         raise CheckpointCorruptionError(f"Checkpoint array {name!r} is missing.")
     value = jnp.asarray(arrays[name])
@@ -1686,7 +1771,7 @@ def _required_array(arrays, name, *, shape=None, leading=None):
     return value
 
 
-def _loss_array(arrays, name) -> Array:
+def _loss_array(arrays: Mapping[str, Array], name: object) -> Array:
     if not isinstance(name, str) or name not in arrays:
         raise CheckpointCorruptionError("A checkpoint flow loss array is missing.")
     value = jnp.asarray(arrays[name])

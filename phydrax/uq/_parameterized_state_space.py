@@ -9,7 +9,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..stochastic import StateSpaceProblem
@@ -55,7 +56,7 @@ class ParameterizedStateSpaceProblem(StrictModule):
         *,
         initial_log_prob: Callable[[PyTree[Any], Array], Array] | None = None,
         parameterization_id: str = "parameterized-state-space",
-    ):
+    ) -> None:
         if not isinstance(problem, StateSpaceProblem):
             raise TypeError("problem must be a StateSpaceProblem.")
         if not isinstance(parameter_space, ParameterSpace):

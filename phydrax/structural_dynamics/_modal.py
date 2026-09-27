@@ -3,10 +3,11 @@
 #
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
-def mass_normalize_modes(modes: ArrayLike, mass: ArrayLike, /):
+def mass_normalize_modes(modes: ArrayLike, mass: ArrayLike, /) -> Array:
     phi = jnp.asarray(modes)
     m = jnp.asarray(mass)
     if phi.ndim != 2 or m.shape != (phi.shape[0], phi.shape[0]):
@@ -26,7 +27,7 @@ def modal_damping_matrix(
     damping_ratios: ArrayLike,
     angular_frequencies: ArrayLike,
     /,
-):
+) -> Array:
     phi = jnp.asarray(modes)
     ratios = jnp.asarray(damping_ratios)
     frequencies = jnp.asarray(angular_frequencies)

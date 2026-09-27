@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -20,7 +21,7 @@ class RadialSpeciesTransportPlan(StrictModule, NonTrainableState):
     species_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, species_count: int, /, *, plan_id: str | None = None):
+    def __init__(self, species_count: int, /, *, plan_id: str | None = None) -> None:
         count = int(species_count)
         if count <= 0:
             raise ValueError("species_count must be positive.")
@@ -68,7 +69,7 @@ class PreparedRadialSpeciesTransport(StrictModule, NonTrainableState):
         plan: RadialSpeciesTransportPlan,
         mesh: PreparedRadialShellMesh,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, RadialSpeciesTransportPlan):
             raise TypeError("plan must be a RadialSpeciesTransportPlan.")
         if not isinstance(mesh, PreparedRadialShellMesh):

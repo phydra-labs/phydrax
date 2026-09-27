@@ -9,6 +9,7 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 
 from .._strict import StrictModule
+from ..typing import parse
 
 
 SPDESolutionConcept: TypeAlias = Literal[
@@ -50,28 +51,11 @@ class SPDESolutionSpec(StrictModule):
         noise_regularization: SPDENoiseRegularization = "finite_rank",
         cutoff_id: str | None = None,
         renormalization: str | None = None,
-    ):
-        if concept not in (
-            "strong",
-            "mild",
-            "variational",
-            "martingale",
-            "wiener_chaos",
-        ):
-            raise ValueError(
-                "concept must be 'strong', 'mild', 'variational', 'martingale', or 'wiener_chaos'."
-            )
-        if noise_regularization not in (
-            "none",
-            "finite_rank",
-            "trace_class",
-            "space_time_white",
-            "distributional",
-        ):
-            raise ValueError(
-                "noise_regularization must be 'none', 'finite_rank', 'trace_class', "
-                "'space_time_white', or 'distributional'."
-            )
+    ) -> None:
+        concept = parse(concept, SPDESolutionConcept, "concept")
+        noise_regularization = parse(
+            noise_regularization, SPDENoiseRegularization, "noise_regularization"
+        )
         if cutoff_id is not None and (not isinstance(cutoff_id, str) or not cutoff_id):
             raise ValueError("cutoff_id must be a non-empty string or None.")
         if renormalization is not None and (

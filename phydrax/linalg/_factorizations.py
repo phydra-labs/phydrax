@@ -10,13 +10,15 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from phydrax import ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._dense_pseudoinverse import fixed_rank_pseudoinverse_value
 from ._materialization import MaterializationPolicy
 from ._operators import AbstractLinearOperator, DenseLinearOperator
@@ -45,7 +47,7 @@ from ._results import (
     LinearSolveStatus,
     MatrixInversionResult,
 )
-from ._spaces import ArraySpace, RHSLayout
+from ._spaces import AbstractVectorSpace, ArraySpace, RHSLayout
 from ._subspaces import LinearSubspace
 from .backends._jax_dense import (
     dense_lu_slogdet,
@@ -86,9 +88,8 @@ class FactorizationPolicy(StrictModule):
         failure: FailurePolicy | None = None,
         resources: SolveResourcePolicy | None = None,
         precision: MixedPrecisionPolicy | None = None,
-    ):
-        if kind not in ("auto", "lu", "cholesky", "qr", "svd"):
-            raise ValueError("Unknown factorization kind.")
+    ) -> None:
+        kind = parse(kind, FactorizationKind, "kind")
         self.kind = kind
         self.rank = RankPolicy() if rank is None else rank
         self.tolerance = TolerancePolicy() if tolerance is None else tolerance
@@ -168,7 +169,7 @@ class PreparedFactorization(StrictModule):
         policy: FactorizationPolicy,
         capabilities: FactorizationCapabilities,
         /,
-    ):
+    ) -> None:
         self.operator = operator
         self.prepared_solve = prepared_solve
         self.policy = policy
@@ -192,19 +193,25 @@ class PreparedFactorization(StrictModule):
     def batch_shape(self) -> tuple[int, ...]:
         return self.operator.batch_shape
 
-    def solve(self, rhs: PyTree[Any], /, *, rhs_layout=None):
+    def solve(
+        self, rhs: PyTree[Any], /, *, rhs_layout: RHSLayout | None = None
+    ) -> LinearSolveResult:
         from ._runtime import solve
 
         return solve(self.prepared_solve, rhs, rhs_layout=rhs_layout)
 
-    def solve_transpose(self, rhs: PyTree[Any], /, *, rhs_layout=None):
+    def solve_transpose(
+        self, rhs: PyTree[Any], /, *, rhs_layout: RHSLayout | None = None
+    ) -> LinearSolveResult:
         if not self.capabilities.transpose_solve:
             raise ValueError("This factorization does not support transpose solves.")
         from ._runtime import solve_transpose
 
         return solve_transpose(self.prepared_solve, rhs, rhs_layout=rhs_layout)
 
-    def solve_adjoint(self, rhs: PyTree[Any], /, *, rhs_layout=None):
+    def solve_adjoint(
+        self, rhs: PyTree[Any], /, *, rhs_layout: RHSLayout | None = None
+    ) -> LinearSolveResult:
         if not self.capabilities.adjoint_solve:
             raise ValueError("This factorization does not support adjoint solves.")
         from ._runtime import solve_adjoint
@@ -607,7 +614,10 @@ def _mathematical_lu_slogdet(
 
 
 @_mathematical_lu_slogdet.def_jvp
-def _mathematical_lu_slogdet_jvp(primals, tangents):
+def _mathematical_lu_slogdet_jvp(
+    primals: tuple[DenseLUState, Any, Array, Array],
+    tangents: tuple[DenseLUState, object, object, object],
+) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
     state, plan, sign, log_abs = primals
     state_tangent, _, _, _ = tangents
     transpose_rhs = jnp.swapaxes(state_tangent.matrix, -1, -2)
@@ -644,7 +654,9 @@ def _mathematical_inverse_value(matrix: Array, value: Array, /) -> Array:
 
 
 @_mathematical_inverse_value.defjvp
-def _mathematical_inverse_value_jvp(primals, tangents):
+def _mathematical_inverse_value_jvp(
+    primals: tuple[Array, Array], tangents: tuple[Array, Array]
+) -> tuple[Array, Array]:
     _, value = primals
     matrix_tangent, _ = tangents
     return value, -value @ matrix_tangent @ value
@@ -860,7 +872,7 @@ def _nullspace(
     )
 
 
-def _riesz_matrix(space, /) -> Array:
+def _riesz_matrix(space: AbstractVectorSpace, /) -> Array:
     coordinates = space.flatten(space.zeros())
     basis = jnp.eye(space.size, dtype=coordinates.dtype)
     return jax.vmap(
@@ -871,7 +883,7 @@ def _riesz_matrix(space, /) -> Array:
 
 
 def _metric_orthonormalize(
-    space,
+    space: AbstractVectorSpace,
     basis: Array,
     dimension: Array,
     /,
@@ -884,10 +896,10 @@ def _metric_orthonormalize(
     flattened = masked.reshape((batch_count, space.size, capacity))
     dimensions = dimension.reshape((batch_count,))
 
-    def orthonormalize_one(columns, active_dimension):
+    def orthonormalize_one(columns: Array, active_dimension: Array) -> Array:
         active_columns = jnp.arange(capacity) < active_dimension
 
-        def inner(left, right):
+        def inner(left: Array, right: Array) -> Array:
             return space.inner(space.unflatten(left), space.unflatten(right))
 
         gram = jax.vmap(

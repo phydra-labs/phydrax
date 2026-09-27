@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import IntEnum
 from math import isfinite, prod
 from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .. import ein
 from .._fingerprint import canonical_fingerprint
@@ -34,7 +35,7 @@ from ._uniform_square import UniformSquareTensor
 class TRGMethod(StrictModule):
     method_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.method_id = "trg"
 
 
@@ -46,7 +47,7 @@ class HOTRGMethod(StrictModule):
         self,
         *,
         first_direction: Literal["vertical", "horizontal"] = "vertical",
-    ):
+    ) -> None:
         if first_direction not in ("vertical", "horizontal"):
             raise ValueError("first_direction must be 'vertical' or 'horizontal'.")
         self.first_direction = first_direction
@@ -75,7 +76,7 @@ class TensorRenormalizationProblem(StrictModule):
         /,
         *,
         problem_id: str = "uniform-square-partition-function",
-    ):
+    ) -> None:
         if not isinstance(tensor, UniformSquareTensor):
             raise TypeError("tensor must be a UniformSquareTensor.")
         if jnp.issubdtype(tensor.value.dtype, jnp.complexfloating):
@@ -106,7 +107,7 @@ class TensorRenormalizationResourcePolicy(StrictModule):
         maximum_workspace_bytes: int = 2**31,
         maximum_history_elements: int = 1_000_000,
         contractions: ContractionResourcePolicy | None = None,
-    ):
+    ) -> None:
         limits = tuple(
             (
                 maximum_tensor_elements,
@@ -157,7 +158,7 @@ class TensorRenormalizationPolicy(StrictModule):
         terminal_imaginary_tolerance: float = 1e-10,
         terminal_positivity_tolerance: float = 0.0,
         resources: TensorRenormalizationResourcePolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(method, (TRGMethod, HOTRGMethod)):
             raise TypeError("method must be TRGMethod or HOTRGMethod.")
         capacity = int(maximum_bond_dimension)
@@ -220,7 +221,7 @@ class TensorRenormalizationStagePlan(StrictModule):
         merge: ContractionPlan | None,
         coarse: ContractionPlan,
         /,
-    ):
+    ) -> None:
         self.kind = str(kind)
         self.input_shape = tuple(input_shape)
         self.output_shape = tuple(output_shape)
@@ -309,7 +310,9 @@ class TensorRenormalizationResult(StrictModule):
         return self.diagnostics.successful
 
 
-def _operand(identifier: str, labels: tuple[str, ...], dimensions, /):
+def _operand(
+    identifier: str, labels: tuple[str, ...], dimensions: Sequence[int], /
+) -> ContractionOperand:
     return ContractionOperand(
         identifier,
         tuple(
@@ -537,7 +540,9 @@ def plan_tensor_renormalization(
     precision = tensor.precision
     dtype = str(tensor.value.dtype)
     cache = ContractionPlanCache(max(4, 2 * policy.steps))
-    shape = tuple(tensor.value.shape)
+    # UniformSquareTensor construction guarantees a rank-four value.
+    up, right, down, left = tensor.value.shape
+    shape = (up, right, down, left)
     stages: list[TensorRenormalizationStagePlan] = []
     for index in range(policy.steps):
         if isinstance(policy.method, TRGMethod):

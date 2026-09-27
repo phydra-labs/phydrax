@@ -6,10 +6,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...nonlinear._scalar import Brent, ScalarRootProblem
 from ...nonlinear._types import NonlinearTermination
@@ -446,7 +449,7 @@ def _implied(
     price: ArrayLike,
     lower_price: Array,
     upper_price: Array | None,
-    price_function,
+    price_function: Callable[[Array], Array],
     upper_volatility: Array,
     model_name: str,
     /,

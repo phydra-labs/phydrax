@@ -9,12 +9,14 @@ from typing import Any, ClassVar, final
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._training_kernel import AbstractKernelUpdateRule, KernelUpdateContext
+from ..typing import PRNGKey
 
 
 class AbstractDistributionEvolutionMethod(abc.ABC):
@@ -23,11 +25,11 @@ class AbstractDistributionEvolutionMethod(abc.ABC):
     population_size: int
 
     @abc.abstractmethod
-    def init(self, key: Key, mean: Any, /) -> Any:
+    def init(self, key: PRNGKey, mean: Any, /) -> Any:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def ask(self, key: Key, state: Any, /) -> tuple[Any, Any]:
+    def ask(self, key: PRNGKey, state: Any, /) -> tuple[Any, Any]:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -67,7 +69,7 @@ class OpenEvolutionStrategy(
         learning_rate: float = 0.05,
         standard_deviation_decay: float = 1.0,
         minimum_standard_deviation: float = 1.0e-6,
-    ):
+    ) -> None:
         population = int(population_size)
         deviation = float(initial_standard_deviation)
         rate = float(learning_rate)
@@ -91,7 +93,7 @@ class OpenEvolutionStrategy(
         self.standard_deviation_decay = decay
         self.minimum_standard_deviation = minimum
 
-    def init(self, key: Key, mean: Any, /) -> OpenEvolutionState:
+    def init(self, key: PRNGKey, mean: Any, /) -> OpenEvolutionState:
         del key
         leaves = jax.tree_util.tree_leaves(mean)
         if not leaves or any(not eqx.is_inexact_array(leaf) for leaf in leaves):
@@ -105,7 +107,7 @@ class OpenEvolutionStrategy(
 
     def ask(
         self,
-        key: Key,
+        key: PRNGKey,
         state: OpenEvolutionState,
         /,
     ) -> tuple[Any, OpenEvolutionState]:
@@ -144,7 +146,7 @@ class OpenEvolutionStrategy(
         normalizer = jnp.maximum(jnp.sum(jnp.abs(utilities)), 1.0)
         utilities = utilities / normalizer
 
-        def update(mean_leaf, population_leaf):
+        def update(mean_leaf: Array, population_leaf: Array) -> Array:
             noise = (population_leaf - mean_leaf[None, ...]) / state.standard_deviation
             direction = jnp.tensordot(utilities, noise, axes=((0,), (0,)))
             return mean_leaf + self.learning_rate * direction
@@ -170,8 +172,10 @@ class DistributionEvolutionPayload(StrictModule):
     so a retried generation samples a fresh population.
     """
 
+    __strict_contract__ = True
+
     objective: Any
-    ask_key: Key[Array, ""]
+    ask_key: PRNGKey
 
 
 @final
@@ -204,19 +208,21 @@ class DistributionEvolutionUpdateRule(AbstractKernelUpdateRule):
     Nothing commits on a finite rejection.
     """
 
+    __strict_contract__ = True
+
     rejection_commit_policy: ClassVar[tuple[str, ...]] = ()
     method: AbstractDistributionEvolutionMethod
-    key: Key[Array, ""]
+    key: PRNGKey
     rule_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         method: AbstractDistributionEvolutionMethod,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
         *,
         rule_id: str,
-    ):
+    ) -> None:
         if not isinstance(method, AbstractDistributionEvolutionMethod):
             raise TypeError("method must be an AbstractDistributionEvolutionMethod.")
         key_ = jnp.asarray(key)

@@ -7,7 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 from numpy.polynomial import Polynomial
 from numpy.polynomial.legendre import Legendre
 
@@ -27,7 +27,7 @@ class RadauIIAMethod(StrictModule, NonTrainableState):
     stiffly_accurate: bool = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, stage_count: int, /):
+    def __init__(self, stage_count: int, /) -> None:
         if not isinstance(stage_count, int) or isinstance(stage_count, bool):
             raise TypeError("stage_count must be an integer.")
         if stage_count < 1 or stage_count > 8:

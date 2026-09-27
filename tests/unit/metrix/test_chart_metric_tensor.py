@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -5,14 +7,14 @@ import pytest
 import phydrax as phx
 
 
-def _polar_transition():
+def _polar_transition() -> Any:
     polar = phx.metrix.CoordinateChart("polar", ("r", "theta"))
     cartesian = phx.metrix.CoordinateChart("cartesian", ("x", "y"))
 
-    def to_cartesian(q):
+    def to_cartesian(q: Any) -> Any:
         return jnp.array([q[0] * jnp.cos(q[1]), q[0] * jnp.sin(q[1])])
 
-    def to_polar(x):
+    def to_polar(x: Any) -> Any:
         return jnp.array([jnp.linalg.norm(x), jnp.arctan2(x[1], x[0])])
 
     return (
@@ -27,7 +29,7 @@ def _polar_transition():
     )
 
 
-def test_chart_transition_batches_derivatives_inverse_and_composition():
+def test_chart_transition_batches_derivatives_inverse_and_composition() -> None:
     polar, cartesian, transition = _polar_transition()
     points = jnp.array([[2.0, 0.3], [1.5, -0.4]])
 
@@ -58,7 +60,7 @@ def test_chart_transition_batches_derivatives_inverse_and_composition():
         transition.compose(incompatible)
 
 
-def test_metric_constructors_pullback_jets_validation_and_parameter_gradients():
+def test_metric_constructors_pullback_jets_validation_and_parameter_gradients() -> None:
     polar, cartesian, transition = _polar_transition()
     cartesian_metric = phx.metrix.euclidean_metric(cartesian)
     metric = phx.metrix.pullback_metric(cartesian_metric, transition)
@@ -92,7 +94,7 @@ def test_metric_constructors_pullback_jets_validation_and_parameter_gradients():
     with pytest.raises(ValueError, match="Metric validation failed"):
         phx.metrix.validate_metric(asymmetric, point)
 
-    def learned_log_volume(parameter):
+    def learned_log_volume(parameter: Any) -> Any:
         learned = phx.metrix.cholesky_metric(
             lambda q: jnp.array([[parameter + q[0], 0.0], [0.2, parameter]]),
             chart=polar,
@@ -106,7 +108,7 @@ def test_metric_constructors_pullback_jets_validation_and_parameter_gradients():
     assert jnp.isfinite(derivative)
 
 
-def test_tensor_index_operations_and_coordinate_transformation_laws():
+def test_tensor_index_operations_and_coordinate_transformation_laws() -> None:
     source = phx.metrix.CoordinateChart("source", ("x", "y"))
     target = phx.metrix.CoordinateChart("target", ("u", "v"))
     transition = phx.metrix.ChartTransition(
@@ -195,12 +197,12 @@ def test_tensor_index_operations_and_coordinate_transformation_laws():
     )
 
 
-def test_tensor_contracts_reject_invalid_variance_and_shapes():
+def test_tensor_contracts_reject_invalid_variance_and_shapes() -> None:
     chart = phx.metrix.CoordinateChart("plane", ("x", "y"))
     metric = phx.metrix.euclidean_metric(chart)
     point = jnp.zeros(2)
 
-    with pytest.raises(ValueError, match="Tensor variance"):
+    with pytest.raises(ValueError, match="variance"):
         phx.metrix.TensorType(("invalid",))
     with pytest.raises(ValueError, match="covariant source axis"):
         phx.metrix.raise_index(

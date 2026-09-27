@@ -11,7 +11,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._admissibility import (
     AdmissibilityReason,
@@ -86,7 +86,7 @@ class FixedGridStressOperatorModel(AbstractArrayModel):
         *,
         source_name: str,
         target_name: str,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractOperatorModel):
             raise TypeError("operator must be an AbstractOperatorModel.")
         if not isinstance(template, OperatorBatch) or template.case_shape:
@@ -157,7 +157,7 @@ class _CurrentStressPredictor(StrictModule):
         iteration: Array | None,
         output_shape: tuple[int, ...],
         /,
-    ):
+    ) -> None:
         self.model = model
         self.key = key
         self.iteration = iteration
@@ -208,7 +208,7 @@ class PeriodicLearnedStressRolloutTransition(
         step_rtol: float = 1e-7,
         step_atol: float = 1e-12,
         port_mapping: PortMapping | None = None,
-    ):
+    ) -> None:
         if not isinstance(prepared_stress, PreparedPeriodicLearnedStress):
             raise TypeError("prepared_stress must be PreparedPeriodicLearnedStress.")
         if not isinstance(coordinates, HermitianSpectralCoordinates):
@@ -303,7 +303,7 @@ class PeriodicLearnedStressRolloutTransition(
             predictor,
         )
 
-        def vector_field(time, real_state, _args):
+        def vector_field(time: Array, real_state: Array, _args: Any) -> Array:
             modal = self.coordinates.from_real_coordinates(real_state)
             stage = prepared.evaluate(modal)
             base = jnp.asarray(self.base_rate(time, modal, inputs))
@@ -316,7 +316,9 @@ class PeriodicLearnedStressRolloutTransition(
             rate = self.coordinates.project(rate)
             return self.coordinates.to_real_coordinates(rate)
 
-        def project_stage(index, time, candidate, _args):
+        def project_stage(
+            index: int, time: Array, candidate: Array, _args: Any
+        ) -> StageTransformResult:
             del index, time
             modal = self.coordinates.from_real_coordinates(candidate)
             projected = self.coordinates.project(
@@ -391,7 +393,7 @@ class MACLearnedRateRolloutTransition(
         step_rtol: float = 1e-7,
         step_atol: float = 1e-12,
         port_mapping: PortMapping | None = None,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
             raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
         if dynamics.algebraic_les is not None or dynamics.dynamic_les is not None:

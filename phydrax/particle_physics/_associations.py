@@ -8,7 +8,8 @@ from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -42,7 +43,7 @@ class AssociationTable(StrictModule, NonTrainableState):
         target_collection: str,
         source_capacity: int,
         target_capacity: int,
-    ):
+    ) -> None:
         source = jnp.asarray(source_indices, dtype=jnp.int32)
         target = jnp.asarray(target_indices, dtype=jnp.int32)
         weights_ = jnp.asarray(weights)

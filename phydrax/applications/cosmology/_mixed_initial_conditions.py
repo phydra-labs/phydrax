@@ -16,7 +16,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -29,6 +30,7 @@ from ...discretization.spectral._coordinates import HermitianSpectralCoordinates
 from ...discretization.spectral._space import TensorSpectralDiscretization
 from ...qualification import ReferenceArtifactManifest
 from ...stochastic._random_field import GaussianCoefficientRealization
+from ...typing import parse
 from ...units import derived_unit, DIMENSIONLESS, UnitDefinition
 from ._background import FLRWBackground
 from ._closure import CosmologyRealizationSignature
@@ -36,6 +38,7 @@ from ._initial_conditions import (
     LagrangianInitialConditionResult,
     LagrangianPerturbationInitialConditionPlan,
 )
+from ._particles import CosmologicalParticleState
 from ._products import (
     CosmologyProductProvenance,
     LagrangianGrowthHistory,
@@ -627,7 +630,7 @@ class ComponentTransferMatrixProduct(StrictModule):
         normalization: str = "dimensionless-density-contrast",
         component_units: Sequence[UnitDefinition] | None = None,
         spatial_dimension: int = 3,
-    ):
+    ) -> None:
         if not isinstance(scale, CosmologyScaleContract):
             raise TypeError("scale must be CosmologyScaleContract.")
         if not isinstance(provenance, CosmologyProductProvenance):
@@ -643,8 +646,7 @@ class ComponentTransferMatrixProduct(StrictModule):
             or scale.scale_id != realization.scale_id
         ):
             raise ValueError("Component transfer scale identities disagree.")
-        if gauge not in ("synchronous", "newtonian", "gauge-invariant"):
-            raise ValueError("Unknown component transfer gauge.")
+        gauge = parse(gauge, TransferGauge, "gauge")
         normalization_ = str(normalization).strip()
         if not normalization_:
             raise ValueError("Component transfer normalization must be non-empty.")
@@ -949,7 +951,7 @@ class ParticleInitialConditionProjection(StrictModule):
     )
 
     @property
-    def state(self):
+    def state(self) -> CosmologicalParticleState:
         return self.initial_conditions.state
 
 
@@ -976,7 +978,7 @@ class MixedInitialConditionPlan(StrictModule, NonTrainableState):
         gauge: TransferGauge | None = None,
         mode_relative_tolerance: float = 1.0e-9,
         mass_relative_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         if not isinstance(transfer, ComponentTransferMatrixProduct):
             raise TypeError("transfer must be ComponentTransferMatrixProduct.")
         if not isinstance(particle_lpt, LagrangianPerturbationInitialConditionPlan):
@@ -1246,7 +1248,7 @@ class WavePhaseSeedPlan(StrictModule, NonTrainableState):
         current_relative_tolerance: float = 1.0e-8,
         phase_gauge_tolerance: float = 1.0e-10,
         mass_relative_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedPeriodicWaveDarkMatter):
             raise TypeError("prepared must be PreparedPeriodicWaveDarkMatter.")
         dimension = len(prepared.discretization.axes)
@@ -1567,7 +1569,7 @@ class SolitonSeedPlan(StrictModule, NonTrainableState):
         shape_coefficient: float = 0.091,
         profile_exponent: float = 8.0,
         mass_relative_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedPeriodicWaveDarkMatter):
             raise TypeError("prepared must be PreparedPeriodicWaveDarkMatter.")
         origins, lengths, _ = _periodic_geometry(prepared.discretization)
@@ -1744,7 +1746,7 @@ class VortexSeedPlan(StrictModule, NonTrainableState):
         mass_relative_tolerance: float = 1.0e-10,
         winding_tolerance: float = 1.0e-10,
         node_relative_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedPeriodicWaveDarkMatter):
             raise TypeError("prepared must be PreparedPeriodicWaveDarkMatter.")
         if isinstance(winding_number, bool) or not isinstance(winding_number, Integral):
@@ -1763,7 +1765,8 @@ class VortexSeedPlan(StrictModule, NonTrainableState):
         elif axis_ < 0 or axis_ >= dimension:
             raise ValueError("Vortex axis is outside the spatial dimension.")
         else:
-            transverse = tuple(index for index in range(dimension) if index != axis_)[:2]
+            remaining = tuple(index for index in range(dimension) if index != axis_)
+            transverse = (remaining[0], remaining[1])
         center_ = tuple(float(value) for value in center)
         if antivortex_center is None and len(center_) == dimension:
             partner_values = list(center_)
@@ -2017,7 +2020,7 @@ class ImportedComplexFieldValidationPlan(StrictModule, NonTrainableState):
         training_use: bool = False,
         export: bool = False,
         mass_relative_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedPeriodicWaveDarkMatter):
             raise TypeError("prepared must be PreparedPeriodicWaveDarkMatter.")
         if not isinstance(artifact, ScientificArtifactEnvelope):

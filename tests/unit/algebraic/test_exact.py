@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from fractions import Fraction
+from typing import Any
 
 import numpy as np
 import pytest
@@ -21,7 +23,7 @@ from phydrax.algebraic._exact import (
 from phydrax.algebraic._system import SparsePolynomialSupport
 
 
-def _support():
+def _support() -> Any:
     return SparsePolynomialSupport(
         ("x", "y"),
         ("f",),
@@ -30,7 +32,7 @@ def _support():
     )
 
 
-def test_exact_coefficient_normalization_is_canonical_and_float_free():
+def test_exact_coefficient_normalization_is_canonical_and_float_free() -> None:
     support = _support()
     left = ExactSparsePolynomialSystem(
         support,
@@ -51,7 +53,7 @@ def test_exact_coefficient_normalization_is_canonical_and_float_free():
         ExactSparsePolynomialSystem(support, (1, 0.5, 3), QQ)
 
 
-def test_finite_field_admission_normalizes_residues_and_invertible_rationals():
+def test_finite_field_admission_normalizes_residues_and_invertible_rationals() -> None:
     field = GF(5)
 
     assert field.label == "GF(5)"
@@ -65,7 +67,9 @@ def test_finite_field_admission_normalizes_residues_and_invertible_rationals():
         GF(15)
 
 
-def test_joint_coo_construction_keeps_coefficients_aligned_after_canonicalization():
+def test_joint_coo_construction_keeps_coefficients_aligned_after_canonicalization() -> (
+    None
+):
     exact = ExactSparsePolynomialSystem.from_coo(
         ("x",),
         ("f",),
@@ -79,7 +83,7 @@ def test_joint_coo_construction_keeps_coefficients_aligned_after_canonicalizatio
     assert exact.coefficients == ("3", "5", "2")
 
 
-def test_operation_plans_reject_mismatched_or_nonunivariate_inventory():
+def test_operation_plans_reject_mismatched_or_nonunivariate_inventory() -> None:
     system = ExactSparsePolynomialSystem(_support(), (1, 2, 3), QQ)
     dividend = ExactSparsePolynomialSystem(
         SparsePolynomialSupport(("x", "y"), ("g",), [0], [[1, 0]]),
@@ -92,12 +96,14 @@ def test_operation_plans_reject_mismatched_or_nonunivariate_inventory():
         ExactSymbolicOperation.NORMAL_FORM,
         NormalFormArguments(dividend),
     )
+    # ty: ignore[unresolved-attribute]
     assert normal.arguments.polynomial.system_id == dividend.system_id
     eliminate = plan_exact_symbolic(
         system,
         ExactSymbolicOperation.ELIMINATE,
         EliminateArguments((0,)),
     )
+    # ty: ignore[unresolved-attribute]
     assert eliminate.arguments.variable_indices == (0,)
     with pytest.raises(ValueError, match="exactly one system variable"):
         plan_exact_symbolic(

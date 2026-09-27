@@ -38,7 +38,7 @@ class Data(StrictModule):
         pos: jnp.ndarray | None = None,
         batch: jnp.ndarray | None = None,
         ptr: jnp.ndarray | None = None,
-    ):
+    ) -> None:
         self.x = None if x is None else jnp.asarray(x)
         self.edge_index = None if edge_index is None else jnp.asarray(edge_index)
         self.edge_attr = None if edge_attr is None else jnp.asarray(edge_attr)
@@ -125,37 +125,37 @@ class Batch(StrictModule):
 
     data: Data
 
-    def __init__(self, data: Data, /):
+    def __init__(self, data: Data, /) -> None:
         if not isinstance(data, Data):
             raise TypeError("data must be Data.")
         self.data = data
 
     @property
-    def x(self):
+    def x(self) -> jnp.ndarray | None:
         return self.data.x
 
     @property
-    def edge_index(self):
+    def edge_index(self) -> jnp.ndarray | None:
         return self.data.edge_index
 
     @property
-    def edge_attr(self):
+    def edge_attr(self) -> jnp.ndarray | None:
         return self.data.edge_attr
 
     @property
-    def y(self):
+    def y(self) -> jnp.ndarray | None:
         return self.data.y
 
     @property
-    def pos(self):
+    def pos(self) -> jnp.ndarray | None:
         return self.data.pos
 
     @property
-    def batch(self):
+    def batch(self) -> jnp.ndarray | None:
         return self.data.batch
 
     @property
-    def ptr(self):
+    def ptr(self) -> jnp.ndarray | None:
         return self.data.ptr
 
     @property

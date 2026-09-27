@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -36,7 +37,7 @@ class ThinWalledSection(StrictModule, NonTrainableState):
         free_edge_nodes: ArrayLike | None = None,
         closed_cells: tuple[tuple[int, ...], ...] = (),
         section_id: str | None = None,
-    ):
+    ) -> None:
         nodes_ = jnp.asarray(nodes)
         segments_ = jnp.asarray(segments, dtype=jnp.int32)
         thickness_ = jnp.asarray(thickness, dtype=nodes_.dtype)

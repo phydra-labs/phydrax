@@ -38,7 +38,7 @@ class AtomisticCheckpointPlan(StrictModule, NonTrainableState):
         /,
         *,
         scope_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedAtomisticDynamics):
             raise TypeError("dynamics must be PreparedAtomisticDynamics.")
         if not isinstance(thermodynamic, PreparedThermodynamicStateTable):

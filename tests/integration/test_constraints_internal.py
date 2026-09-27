@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -12,12 +15,12 @@ from phydrax.domain import FixedStart, Interval1d, TimeInterval
 from phydrax.terms import ObservationPenalty, ResidualPenalty
 
 
-def _jit_loss(term, functions):
+def _jit_loss(term: Any, functions: Any) -> Any:
     loss_fn = eqx.filter_jit(lambda k: term.loss(functions, key=k))
     return loss_fn(jr.key(0))
 
 
-def _fixed_source(component, points):
+def _fixed_source(component: Any, points: Any) -> Any:
     realization = phx.integration.from_samples(
         phx.integration.mean_over(component),
         component.points(points),
@@ -25,12 +28,12 @@ def _fixed_source(component, points):
     return phx.integration.fixed(realization)
 
 
-def test_continuous_pointwise_interior_constraint_zero():
+def test_continuous_pointwise_interior_constraint_zero() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> float:
         return 0.0
 
     condition = Residual("u", component, lambda field: field)
@@ -42,14 +45,14 @@ def test_continuous_pointwise_interior_constraint_zero():
     assert _jit_loss(term, {"u": u}) < 1e-6
 
 
-def test_continuous_initial_function_constraint_zero():
+def test_continuous_initial_function_constraint_zero() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
     component = domain.component({"t": FixedStart()})
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return t**2
 
     source = phx.integration.per_step(
@@ -69,14 +72,14 @@ def test_continuous_initial_function_constraint_zero():
     assert _jit_loss(second, {"u": u}) < 1e-6
 
 
-def test_discrete_initial_constraint_zero():
+def test_discrete_initial_constraint_zero() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
     component = domain.component({"t": FixedStart()})
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return t**2
 
     points = {"x": jnp.array([[0.25], [0.75]], dtype="float64")}
@@ -96,19 +99,19 @@ def test_discrete_initial_constraint_zero():
     assert _jit_loss(term2, {"u": u}) < 1e-6
 
 
-def test_discrete_interior_data_constraint_points_zero():
+def test_discrete_interior_data_constraint_points_zero() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0]
 
     points = {"x": jnp.array([[0.25], [0.75]], dtype="float64")}
     values = jnp.array([0.25, 0.75], dtype="float64")
 
     @geom.Function("x")
-    def target(x):
+    def target(x: Any) -> Any:
         return x[0]
 
     assert jnp.allclose(values, jnp.asarray([0.25, 0.75]))

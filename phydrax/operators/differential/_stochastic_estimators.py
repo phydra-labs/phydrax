@@ -5,20 +5,22 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.linalg as la
 
 from ..._strict import StrictModule
+from ...typing import parse, PRNGKey
 
 
-ProbeDistribution = Literal["rademacher", "normal"]
+ProbeDistribution: TypeAlias = Literal["rademacher", "normal"]
 
 
 def _state_axes(value: Array, state_ndim: int, /) -> tuple[int, ...]:
@@ -126,12 +128,11 @@ class StochasticTracePolicy(StrictModule):
         /,
         *,
         distribution: ProbeDistribution = "rademacher",
-    ):
+    ) -> None:
         count = int(num_probes)
         if count < 2:
             raise ValueError("num_probes must be at least two to estimate uncertainty.")
-        if distribution not in ("rademacher", "normal"):
-            raise ValueError("distribution must be 'rademacher' or 'normal'.")
+        distribution = parse(distribution, ProbeDistribution, "distribution")
         self.num_probes = count
         self.distribution = distribution
 
@@ -151,15 +152,14 @@ class StochasticOperatorEstimate(StrictModule):
         num_probes: int,
         distribution: ProbeDistribution,
         /,
-    ):
+    ) -> None:
         value_array = jnp.asarray(value)
         error_array = jnp.asarray(standard_error)
         if value_array.shape != error_array.shape:
             raise ValueError("value and standard_error must have the same shape.")
         if int(num_probes) < 2:
             raise ValueError("num_probes must be at least two.")
-        if distribution not in ("rademacher", "normal"):
-            raise ValueError("distribution must be 'rademacher' or 'normal'.")
+        distribution = parse(distribution, ProbeDistribution, "distribution")
         self.value = value_array
         self.standard_error = error_array
         self.num_probes = int(num_probes)
@@ -189,12 +189,11 @@ class StochasticOperatorSamples(StrictModule):
         *,
         distribution: ProbeDistribution,
         dependence_ids: ArrayLike | None = None,
-    ):
+    ) -> None:
         samples = jnp.asarray(values)
         if samples.ndim < 1 or samples.shape[0] < 2:
             raise ValueError("values must contain at least two probe realizations.")
-        if distribution not in ("rademacher", "normal"):
-            raise ValueError("distribution must be 'rademacher' or 'normal'.")
+        distribution = parse(distribution, ProbeDistribution, "distribution")
         count = samples.shape[0]
         mean = jnp.mean(samples, axis=0)
         centered = samples - mean
@@ -225,9 +224,9 @@ class StochasticOperatorSamples(StrictModule):
 
 
 def _probes(
-    key: Key[Array, ""],
+    key: PRNGKey,
     shape: tuple[int, ...],
-    dtype,
+    dtype: DTypeLike,
     policy: StochasticTracePolicy,
     /,
 ) -> Array:
@@ -241,7 +240,7 @@ def stochastic_trace_samples(
     function: Callable[[Array], Array],
     state: ArrayLike,
     covariance_action: Callable[[Array, Array], Array],
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     policy: StochasticTracePolicy | None = None,
@@ -299,7 +298,7 @@ def exact_state_divergence(
 def stochastic_divergence_samples(
     vector_field: Callable[[Array], Array],
     state: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     policy: StochasticTracePolicy | None = None,
@@ -331,7 +330,7 @@ def estimate_stochastic_trace(
     function: Callable[[Array], Array],
     state: ArrayLike,
     covariance_action: Callable[[Array, Array], Array],
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     policy: StochasticTracePolicy | None = None,
@@ -356,7 +355,7 @@ def estimate_kolmogorov_generator(
     drift: Callable[[Array], Array],
     state: ArrayLike,
     covariance_action: Callable[[Array, Array], Array],
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     policy: StochasticTracePolicy | None = None,

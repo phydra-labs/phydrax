@@ -18,12 +18,14 @@ structure = sm.ForceDensityStructure.from_edges(
 positions = jnp.asarray(((0.0, 0.0), (1.0, 0.0)))
 material = mn.LinearElasticMaterial(1000.0, 400.0, 1.0)
 section = mn.BeamSection(1.0, 1.0, 1.0, 0.5, 100.0, 100.0)
+# ty: ignore[invalid-argument-type]
 properties = mn.MemberPropertyMap((material,), (section,), (0,), (0,))
 reference = mn.MemberReferenceState(structure, positions)
 dofs = mn.MemberDOFLayout(
     structure, rotation_constrained=jnp.asarray(((True,), (False,)))
 )
 definition = mn.MemberNetworkDefinition(structure, reference, properties, dofs)
+# ty: ignore[invalid-argument-type]
 assembly = mn.MemberNetworkAssembly((mn.CorotationalFrameBlock((0,)),))
 problem = mn.MemberNetworkProblem(definition, assembly)
 initial = mn.MemberKinematics(positions, jnp.zeros((2, 1)))
@@ -52,6 +54,7 @@ print("status", int(result.status), result.message)
 print("tip", result.state.kinematics.positions[1])
 print("bending moment", result.state.assembly.bending_moment[0])
 print("minimum tangent eigenvalue", stability.minimum_eigenvalue)
+# ty: ignore[not-subscriptable]
 print("first angular frequency", stability.angular_frequencies[0])
 print("modal evidence valid", True)
 print("Euler critical load", local.critical_load[0])

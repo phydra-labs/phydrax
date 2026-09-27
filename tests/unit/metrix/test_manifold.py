@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,13 +12,13 @@ import pytest
 import phydrax as phx
 
 
-def _orthonormal(rows, columns):
+def _orthonormal(rows: Any, columns: Any) -> Any:
     matrix = jnp.arange(1, rows * columns + 1, dtype="float64").reshape(rows, columns)
     orthogonal, _ = jnp.linalg.qr(matrix)
     return orthogonal
 
 
-def _manifold_cases():
+def _manifold_cases() -> Any:
     stiefel = _orthonormal(4, 2)
     return (
         (
@@ -51,8 +54,9 @@ def _manifold_cases():
     )
 
 
-def test_manifold_contract_is_public_and_abstract():
+def test_manifold_contract_is_public_and_abstract() -> None:
     with pytest.raises(TypeError):
+        # ty: ignore[call-non-callable, missing-argument]
         phx.metrix.AbstractRiemannianManifold()
 
     for symbol in (
@@ -69,7 +73,9 @@ def test_manifold_contract_is_public_and_abstract():
 
 
 @pytest.mark.parametrize("manifold,point,ambient", _manifold_cases())
-def test_manifold_metric_retraction_and_transport_laws(manifold, point, ambient):
+def test_manifold_metric_retraction_and_transport_laws(
+    manifold: Any, point: Any, ambient: Any
+) -> None:
     tangent = manifold.project_tangent(point, ambient)
     cotangent = 0.7 - 0.3 * ambient
     rgradient = manifold.egrad_to_rgrad(point, cotangent)
@@ -107,7 +113,7 @@ def test_manifold_metric_retraction_and_transport_laws(manifold, point, ambient)
 
 
 @pytest.mark.parametrize("method", ["exponential", "cayley"])
-def test_so_manifold_delegates_existing_state_retraction(method):
+def test_so_manifold_delegates_existing_state_retraction(method: Any) -> None:
     manifold = phx.metrix.SpecialOrthogonalManifold(3, retraction=method)
     state_geometry = phx.metrix.SpecialOrthogonalStateGeometry(3, retraction=method)
     point = jnp.eye(3)
@@ -123,7 +129,7 @@ def test_so_manifold_delegates_existing_state_retraction(method):
     assert not manifold.transport_is_parallel
 
 
-def test_spd_metric_gradient_and_transport_are_affine_invariant():
+def test_spd_metric_gradient_and_transport_are_affine_invariant() -> None:
     manifold = phx.metrix.AffineInvariantSPDManifold(3)
     point = jnp.array([[2.0, 0.2, -0.1], [0.2, 1.4, 0.15], [-0.1, 0.15, 1.1]])
     left = manifold.project_tangent(
@@ -150,7 +156,7 @@ def test_spd_metric_gradient_and_transport_are_affine_invariant():
     assert jnp.all(jnp.linalg.eigvalsh(destination) > 0.0)
 
 
-def test_grassmann_operations_are_invariant_under_basis_change():
+def test_grassmann_operations_are_invariant_under_basis_change() -> None:
     manifold = phx.metrix.GrassmannManifold(5, 2)
     point = _orthonormal(5, 2)
     rotation = jnp.array([[0.0, -1.0], [1.0, 0.0]])
@@ -171,7 +177,7 @@ def test_grassmann_operations_are_invariant_under_basis_change():
     )
 
 
-def test_manifolds_support_leading_product_axes():
+def test_manifolds_support_leading_product_axes() -> None:
     sphere = phx.metrix.SphereManifold(3)
     points = jnp.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
     ambient = jnp.array([[0.0, 0.2, -0.1], [0.3, 0.0, 0.4]])
@@ -190,7 +196,7 @@ def test_manifolds_support_leading_product_axes():
     assert updated.shape == matrices.shape
 
 
-def test_manifold_constructor_and_shape_failures_are_explicit():
+def test_manifold_constructor_and_shape_failures_are_explicit() -> None:
     with pytest.raises(ValueError, match="at least two"):
         phx.metrix.SphereManifold(1)
     with pytest.raises(ValueError, match="must not exceed"):

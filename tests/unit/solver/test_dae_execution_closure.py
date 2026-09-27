@@ -11,7 +11,7 @@ from phydrax.solver._dae_events import (
 )
 
 
-def test_bounded_dae_regularity_marks_singularity_crossing_uncovered():
+def test_bounded_dae_regularity_marks_singularity_crossing_uncovered() -> None:
     domain = DAERegularityDomain(
         jnp.asarray([[1.0], [-0.5]]),
         jnp.asarray([[2.0], [0.5]]),
@@ -31,7 +31,7 @@ def test_bounded_dae_regularity_marks_singularity_crossing_uncovered():
     assert not certificate.certified
 
 
-def test_manifold_bdf_stage_uses_fixed_local_chart_and_is_jittable():
+def test_manifold_bdf_stage_uses_fixed_local_chart_and_is_jittable() -> None:
     geometry = EuclideanStateGeometry()
     method = ManifoldBDFMethod(2)
     stage = jax.jit(

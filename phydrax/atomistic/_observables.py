@@ -9,7 +9,8 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax.ein import contract
 
@@ -33,7 +34,7 @@ class ThermodynamicAccumulator(StrictModule):
     successful: Array
 
     @classmethod
-    def empty(cls, dtype) -> "ThermodynamicAccumulator":
+    def empty(cls, dtype: DTypeLike) -> "ThermodynamicAccumulator":
         zero = jnp.zeros((), dtype=dtype)
         return cls(
             jnp.zeros((), dtype=jnp.int32),
@@ -109,7 +110,7 @@ class RadialDistributionPlan(StrictModule, NonTrainableState):
     maximum_radius: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, bin_count: int, maximum_radius: float, /):
+    def __init__(self, bin_count: int, maximum_radius: float, /) -> None:
         bins = int(bin_count)
         radius = float(maximum_radius)
         if bins <= 0 or not math.isfinite(radius) or radius <= 0.0:
@@ -126,7 +127,9 @@ class RadialDistributionState(StrictModule):
     samples: Array
 
     @classmethod
-    def empty(cls, plan: RadialDistributionPlan, dtype) -> "RadialDistributionState":
+    def empty(
+        cls, plan: RadialDistributionPlan, dtype: DTypeLike
+    ) -> "RadialDistributionState":
         return cls(
             jnp.zeros((plan.bin_count,), dtype=dtype), jnp.zeros((), dtype=jnp.int32)
         )
@@ -254,7 +257,7 @@ class StaticStructureFactorPlan(StrictModule, NonTrainableState):
         *,
         maximum_frames: int,
         maximum_particles: int,
-    ):
+    ) -> None:
         vectors = np.asarray(wave_vectors, dtype=np.float64)
         frame_capacity = int(maximum_frames)
         particle_capacity = int(maximum_particles)
@@ -391,7 +394,7 @@ class LaggedCorrelationPlan(StrictModule, NonTrainableState):
         maximum_frames: int,
         maximum_particles: int,
         spatial_dimension: int = 3,
-    ):
+    ) -> None:
         lags = np.asarray(lag_steps)
         frames = int(maximum_frames)
         particles = int(maximum_particles)
@@ -554,7 +557,7 @@ class DiffusionFitPlan(StrictModule, NonTrainableState):
         minimum_r_squared: float = 0.9,
         maximum_relative_standard_error: float = 0.25,
         maximum_einstein_green_kubo_relative_error: float = 0.5,
-    ):
+    ) -> None:
         first = int(first_lag_index)
         last = int(last_lag_index)
         dimension = int(spatial_dimension)

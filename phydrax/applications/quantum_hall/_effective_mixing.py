@@ -12,7 +12,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -47,7 +48,7 @@ class LandauLevelMixingEffectivePlan(StrictModule, NonTrainableState):
         three_body_ids: Sequence[str] = (),
         three_body_vertices: ArrayLike | None = None,
         denominator_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         virtual_ = tuple(virtual)
         channels = tuple(str(value).strip() for value in channel_ids)
         three_ids = tuple(str(value).strip() for value in three_body_ids)

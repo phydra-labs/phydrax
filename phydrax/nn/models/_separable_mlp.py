@@ -7,12 +7,13 @@ from typing import ClassVar, Literal
 
 import jax
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 from ..._axis_factorization import AxisFactorizedField
 from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._model import ModelBinding
+from ...typing import PRNGKey
 from .._base import _AbstractStructuredInputModel
 from .._keys import EvalKey
 from .._utils import _get_size
@@ -41,7 +42,7 @@ class SeparableMLP(_AbstractStructuredInputModel):
 
     in_size: int | Literal["scalar"]
     out_size: int | Literal["scalar"]
-    model: _AbstractStructuredInputModel
+    model: Separable
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise("flat")
 
     def __init__(
@@ -68,8 +69,8 @@ class SeparableMLP(_AbstractStructuredInputModel):
         use_final_bias: bool = True,
         initializer: str = "glorot_normal",
         scan: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         r"""Create a separable MLP.
 
         `SeparableMLP` forwards MLP hyperparameters to each internal scalar

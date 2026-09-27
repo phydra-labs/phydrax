@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax.axes as cx
@@ -10,11 +13,11 @@ from phydrax.domain import Interval1d, TimeInterval
 from phydrax.operators.differential import dt
 
 
-def test_dt_time_only_vector():
+def test_dt_time_only_vector() -> None:
     tdom = TimeInterval(0.0, 1.0)
 
     @tdom.Function("t")
-    def y(t):
+    def y(t: Any) -> Any:
         return t**2
 
     t = jnp.linspace(0.0, 1.0, 7)
@@ -23,11 +26,11 @@ def test_dt_time_only_vector():
     assert jnp.allclose(out, 2.0 * t)
 
 
-def test_dt_spacetime_broadcasts_over_space(sample_batch):
+def test_dt_spacetime_broadcasts_over_space(sample_batch: Any) -> None:
     dom = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
 
     @dom.Function("t")
-    def u(t):
+    def u(t: Any) -> Any:
         return jnp.sin(t)
 
     component = dom.component()
@@ -39,11 +42,11 @@ def test_dt_spacetime_broadcasts_over_space(sample_batch):
     assert jnp.allclose(out, jnp.cos(t)[None, :])
 
 
-def test_dt_spacetime_depends_on_x_and_t(sample_batch):
+def test_dt_spacetime_depends_on_x_and_t(sample_batch: Any) -> None:
     dom = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return x[..., 0] * jnp.exp(t)
 
     component = dom.component()

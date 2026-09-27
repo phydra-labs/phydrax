@@ -12,7 +12,9 @@ from enum import StrEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from numpy.typing import DTypeLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -23,7 +25,9 @@ from ._support import SampleSupport
 from ._time import TemporalSampling
 
 
-def _readonly(value: ArrayLike, name: str, /, *, dtype=None) -> np.ndarray:
+def _readonly(
+    value: ArrayLike, name: str, /, *, dtype: DTypeLike | None = None
+) -> np.ndarray:
     array = np.array(value, dtype=dtype, copy=True)
     if array.dtype.hasobject:
         raise TypeError(f"{name} must not use object dtype.")
@@ -365,9 +369,13 @@ class QuantityField:
                 uncertainty = uncertainty * jnp.asarray(
                     float(uncertainty_factor), dtype=uncertainty.dtype
                 )
+        mask = self.valid_mask
+        # __post_init__ always replaces a None valid_mask with an all-true mask.
+        if not (mask is not None):
+            raise RuntimeError("Internal invariant failed: mask is not None.")
         return PreparedQuantityField(
             values,
-            self.valid_mask,
+            mask,
             standard_uncertainty=uncertainty,
             quantity_id=self.quantity.quantity_id,
             compatibility_id=self.quantity.compatibility_id,

@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._strict import StrictModule
 
@@ -51,7 +52,7 @@ class SphericalHarmonicGravityField(StrictModule):
         maximum_degree: int | None = None,
         maximum_order: int | None = None,
         tide_system: str = "tide-free",
-    ):
+    ) -> None:
         cosine_host = np.asarray(cosine, dtype=np.float64)
         sine_host = np.asarray(sine, dtype=np.float64)
         if cosine_host.ndim != 2 or cosine_host.shape != sine_host.shape:
@@ -143,12 +144,14 @@ class SphericalHarmonicGravity(AbstractAstrodynamicsForce):
     context: AstrodynamicsContext
     force_id: str = eqx.field(static=True)
 
-    def __init__(self, field: SphericalHarmonicGravityField, /):
+    def __init__(self, field: SphericalHarmonicGravityField, /) -> None:
         self.field = field
         self.context = field.context
         self.force_id = field.field_id
 
-    def evaluate(self, time, state, args: Any = None, /) -> AstrodynamicsForceEvaluation:
+    def evaluate(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None, /
+    ) -> AstrodynamicsForceEvaluation:
         del time, args
         packed = jnp.asarray(state)
         if packed.shape != (6,):

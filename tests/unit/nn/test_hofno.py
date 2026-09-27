@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -15,7 +18,7 @@ from phydrax.nn.operator.architectures.spectral._hofno import (
 )
 
 
-def _identity_quadratic_mixer(aliasing):
+def _identity_quadratic_mixer(aliasing: Any) -> Any:
     mixer = _ProjectedProductFourierMixer(
         channels=1,
         n_modes=(4,),
@@ -30,12 +33,13 @@ def _identity_quadratic_mixer(aliasing):
         mixer,
         (
             jnp.ones_like(mixer.projection.weight),
+            # ty: ignore[invalid-argument-type]
             jnp.ones_like(mixer.spectral.weight),
         ),
     )
 
 
-def _grid_batch(*, periodic=True, mask=None):
+def _grid_batch(*, periodic: Any = True, mask: Any = None) -> Any:
     nodes = jnp.arange(8, dtype="float64") / 8.0
     axis = phx.nn.operator.OperatorAxis("x", nodes, basis="fourier", periodic=periodic)
     source = phx.nn.operator.FunctionSamples(
@@ -55,7 +59,7 @@ def _grid_batch(*, periodic=True, mask=None):
     )
 
 
-def test_dealiased_projected_product_removes_folded_retained_mode():
+def test_dealiased_projected_product_removes_folded_retained_mode() -> None:
     nodes = jnp.arange(16, dtype="float64") / 16.0
     values = jnp.cos(2.0 * jnp.pi * 7.0 * nodes)[:, None]
     collocation = _identity_quadratic_mixer("collocation")(values)[:, 0]
@@ -68,7 +72,7 @@ def test_dealiased_projected_product_removes_folded_retained_mode():
     assert jnp.max(jnp.abs(dealiased - jnp.mean(dealiased))) < 1e-10
 
 
-def test_dealiased_resampling_preserves_even_grid_nyquist_mode():
+def test_dealiased_resampling_preserves_even_grid_nyquist_mode() -> None:
     values = ((-1.0) ** jnp.arange(16, dtype="float64"))[:, None]
     oversampled = _dealiased_spectral_resample(values, (21,))
     restored = _dealiased_spectral_resample(oversampled, (16,))
@@ -78,7 +82,7 @@ def test_dealiased_resampling_preserves_even_grid_nyquist_mode():
 
 
 @pytest.mark.parametrize("ndim", (1, 2, 3))
-def test_hofno_has_finite_nd_output_and_parameter_gradients(ndim):
+def test_hofno_has_finite_nd_output_and_parameter_gradients(ndim: Any) -> None:
     size = 6
     nodes = jnp.arange(size, dtype="float64") / size
     values = jr.normal(jr.key(10 + ndim), (size,) * ndim)
@@ -102,7 +106,7 @@ def test_hofno_has_finite_nd_output_and_parameter_gradients(ndim):
     assert all(bool(jnp.all(jnp.isfinite(leaf))) for leaf in leaves)
 
 
-def test_hofno_scan_matches_loop_under_jit():
+def test_hofno_scan_matches_loop_under_jit() -> None:
     nodes = jnp.arange(8, dtype="float64") / 8.0
     x, y = jnp.meshgrid(nodes, nodes, indexing="ij")
     values = jnp.sin(2.0 * jnp.pi * x) + jnp.cos(2.0 * jnp.pi * y)
@@ -113,7 +117,9 @@ def test_hofno_scan_matches_loop_under_jit():
         ffn_expansion=2,
         key=jr.key(9),
     )
+    # ty: ignore[invalid-argument-type]
     loop = phx.nn.operator.architectures.HOFNO(**options, scan=False)
+    # ty: ignore[invalid-argument-type]
     scanned = phx.nn.operator.architectures.HOFNO(**options, scan=True)
     execute = eqx.filter_jit(lambda model, field, axis: model((field, axis, axis)))
 
@@ -125,7 +131,7 @@ def test_hofno_scan_matches_loop_under_jit():
     )
 
 
-def test_hofno_runtime_and_registry_enforce_periodic_all_valid_contract():
+def test_hofno_runtime_and_registry_enforce_periodic_all_valid_contract() -> None:
     model = phx.nn.operator.architectures.HOFNO(
         n_modes=(3,),
         width=4,

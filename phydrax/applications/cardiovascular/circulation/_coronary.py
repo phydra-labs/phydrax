@@ -10,11 +10,12 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
-from ....dynamics import DAEComponent, DAEEquationBlock, DAEVariableBlock
+from ....dynamics import DAEComponent, DAEEquationBlock, DAEJet, DAEVariableBlock
 from ._components import (
     _finite_scalar,
     _incidence,
@@ -107,7 +108,7 @@ class _CoronaryConstitutiveResidual(StrictModule):
     unstressed_volume: Array
     extravascular_pressure: ExtravascularPressureWaveform
 
-    def __call__(self, time: Array, jet, args: Any, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         del args
         transmural_pressure = jet.value("pressure_in") - self.extravascular_pressure(time)
         return (

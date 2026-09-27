@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -9,17 +12,17 @@ import pytest
 import phydrax as phx
 
 
-def test_lie_bracket_matches_analytic_vector_fields():
+def test_lie_bracket_matches_analytic_vector_fields() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def x_field(x):
+    def x_field(x: Any) -> Any:
         return jnp.asarray([1.0, 0.0])
 
     @geom.Function("x")
-    def y_field(x):
+    def y_field(x: Any) -> Any:
         return jnp.asarray([0.0, x[0]])
 
     bracket = phx.operators.lie_bracket(x_field, y_field)
@@ -27,21 +30,21 @@ def test_lie_bracket_matches_analytic_vector_fields():
     assert jnp.allclose(value, jnp.asarray([0.0, 1.0]), atol=1e-12)
 
 
-def test_lie_bracket_is_antisymmetric_and_satisfies_jacobi_identity():
+def test_lie_bracket_is_antisymmetric_and_satisfies_jacobi_identity() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def x_field(x):
+    def x_field(x: Any) -> Any:
         return jnp.asarray([x[1], 0.0])
 
     @geom.Function("x")
-    def y_field(x):
+    def y_field(x: Any) -> Any:
         return jnp.asarray([0.0, x[0]])
 
     @geom.Function("x")
-    def z_field(x):
+    def z_field(x: Any) -> Any:
         return jnp.asarray([x[0], x[1]])
 
     point = jnp.asarray([0.3, -0.4])
@@ -56,17 +59,17 @@ def test_lie_bracket_is_antisymmetric_and_satisfies_jacobi_identity():
     assert jnp.allclose(jacobi.func(point), jnp.zeros((2,)), atol=1e-12)
 
 
-def test_lie_bracket_rejects_nonvector_value_shape():
+def test_lie_bracket_rejects_nonvector_value_shape() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def scalar(x):
+    def scalar(x: Any) -> Any:
         return x[0]
 
     @geom.Function("x")
-    def vector(x):
+    def vector(x: Any) -> Any:
         return x
 
     bracket = phx.operators.lie_bracket(scalar, vector)

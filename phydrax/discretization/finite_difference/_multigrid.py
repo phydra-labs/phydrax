@@ -5,13 +5,15 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -34,7 +36,9 @@ from ...linalg import (
     pseudoinverse,
     RankPolicy,
 )
+from ...typing import parse
 from .._axis import TensorGridPlan, UniformAxisSpec, UniformCellAxisSpec
+from .._tensor_entities import StructuredAxis
 from .._tensor_support import PreparedTensorGrid
 from ..finite_volume._diffusion import (
     ConservativeDiffusionPlan,
@@ -71,7 +75,7 @@ class StructuredTransferReport(StrictModule, NonTrainableState):
         conservation_residual: float | None,
         transfer_id: str,
         tolerance: float,
-    ):
+    ) -> None:
         constant = float(constant_residual)
         conservation = (
             None if conservation_residual is None else float(conservation_residual)
@@ -114,7 +118,7 @@ class StructuredTensorTransferOperator(AbstractLinearOperator):
         /,
         *,
         precision: FDExecutionPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(source, ArraySpace) or not isinstance(target, ArraySpace):
             raise TypeError("Structured transfers require ArraySpace source and target.")
         precision_ = (
@@ -236,7 +240,7 @@ class StructuredTransferPlan(StrictModule, NonTrainableState):
         /,
         *,
         precision: FDExecutionPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, FDExecutionPrecisionPolicy):
             raise TypeError("precision must be an FDExecutionPrecisionPolicy.")
@@ -326,7 +330,7 @@ class StructuredTransferPlan(StrictModule, NonTrainableState):
         )
         tolerance = max(
             1e-12,
-            256.0 * np.finfo(np.dtype(precision_.coefficient_dtype)).eps,
+            256.0 * float(np.finfo(np.dtype(precision_.coefficient_dtype)).eps),
         )
         report = StructuredTransferReport(
             fine_shape=fine_grid.shape,
@@ -392,7 +396,7 @@ class StructuredTransferPlan(StrictModule, NonTrainableState):
         raise ValueError("Structured transfer role must be 'field' or 'coefficient'.")
 
 
-def _cell_edges(axis, /) -> np.ndarray:
+def _cell_edges(axis: StructuredAxis, /) -> np.ndarray:
     return np.concatenate(
         (
             np.asarray([axis.bounds[0]]),
@@ -401,7 +405,9 @@ def _cell_edges(axis, /) -> np.ndarray:
     )
 
 
-def _cell_restriction(fine_axis, coarse_axis, /) -> np.ndarray:
+def _cell_restriction(
+    fine_axis: StructuredAxis, coarse_axis: StructuredAxis, /
+) -> np.ndarray:
     fine_edges = _cell_edges(fine_axis)
     coarse_edges = _cell_edges(coarse_axis)
     matrix = np.zeros(
@@ -452,7 +458,7 @@ class _DenseCoarsePreconditioner(AbstractPreconditioner, NonTrainableState):
         operator: AbstractLinearOperator,
         precision: FDExecutionPrecisionPolicy,
         /,
-    ):
+    ) -> None:
         matrix = precision.accumulation(operator._materialize())
         inverse_result = pseudoinverse(
             matrix,
@@ -485,11 +491,11 @@ class _DenseCoarsePreconditioner(AbstractPreconditioner, NonTrainableState):
 
     def apply(
         self,
-        residual,
+        residual: PyTree[Any],
         /,
         *,
         iteration: ArrayLike | None = None,
-    ):
+    ) -> PyTree[Array]:
         del iteration
         coordinates = self.precision.accumulation(
             self.space.flatten(self.space.validate(residual))
@@ -512,7 +518,7 @@ class StructuredMultigridResult(StrictModule, NonTrainableState):
         /,
         *,
         precision_evidence: object,
-    ):
+    ) -> None:
         self.value = value
         self.residual_norms = residual_norms
         scale = jnp.maximum(1.0, residual_norms[0])
@@ -534,7 +540,7 @@ class _RedBlackPreconditioner(AbstractPreconditioner, NonTrainableState):
         shape: tuple[int, ...],
         relaxation: float,
         /,
-    ):
+    ) -> None:
         coordinates = jnp.indices(shape)
         parity = jnp.sum(coordinates, axis=0) % 2
         self.operator = operator
@@ -558,11 +564,11 @@ class _RedBlackPreconditioner(AbstractPreconditioner, NonTrainableState):
 
     def apply(
         self,
-        residual,
+        residual: PyTree[Any],
         /,
         *,
         iteration: ArrayLike | None = None,
-    ):
+    ) -> Array:
         del iteration
         rhs = self.space.validate(residual)
         estimate = jnp.zeros_like(rhs)
@@ -588,7 +594,7 @@ class _LinePreconditioner(AbstractPreconditioner, NonTrainableState):
         diffusion: PreparedConservativeDiffusion,
         axis: int,
         /,
-    ):
+    ) -> None:
         lower, diagonal, upper = _line_coefficients(diffusion, axis)
         self.lower = lower
         self.diagonal = diagonal
@@ -610,11 +616,11 @@ class _LinePreconditioner(AbstractPreconditioner, NonTrainableState):
 
     def apply(
         self,
-        residual,
+        residual: PyTree[Any],
         /,
         *,
         iteration: ArrayLike | None = None,
-    ):
+    ) -> Array:
         del iteration
         rhs = self.space.validate(residual)
         return _tridiagonal_solve(
@@ -690,7 +696,9 @@ def _tridiagonal_solve(
     first_c = upper_[0] / diagonal_[0]
     first_d = rhs_[0] / diagonal_[0]
 
-    def forward(carry, values):
+    def forward(
+        carry: tuple[Array, Array], values: tuple[Array, Array, Array, Array]
+    ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
         previous_c, previous_d = carry
         lower_value, diagonal_value, upper_value, rhs_value = values
         denominator = diagonal_value - lower_value * previous_c
@@ -706,7 +714,7 @@ def _tridiagonal_solve(
     c_values = jnp.concatenate((first_c[None], history[0]), axis=0)
     d_values = jnp.concatenate((first_d[None], history[1]), axis=0)
 
-    def backward(next_value, values):
+    def backward(next_value: Array, values: tuple[Array, Array]) -> tuple[Array, Array]:
         c_value, d_value = values
         current = d_value - c_value * next_value
         return current, current
@@ -760,7 +768,7 @@ class StructuredMultigridPlan(StrictModule, NonTrainableState):
         post_smoothing: int = 2,
         cycle_kind: MultigridCycleKind = "v",
         precision: FDExecutionPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(finest_operator, PreparedConservativeDiffusion):
             raise TypeError(
                 "Structured multigrid requires PreparedConservativeDiffusion."
@@ -791,13 +799,13 @@ class StructuredMultigridPlan(StrictModule, NonTrainableState):
         minimum = int(minimum_coarse_points)
         maximum = int(maximum_levels)
         relaxation_ = float(relaxation)
+        coarsening = parse(coarsening, StructuredCoarsening, "coarsening")
+        compatibility = parse(compatibility, StructuredMGCompatibility, "compatibility")
+        gauge = parse(gauge, StructuredMGGauge, "gauge")
+        smoother = parse(smoother, StructuredSmootherKind, "smoother")
         if (
             minimum < 2
             or maximum < 2
-            or coarsening not in ("full", "semi")
-            or compatibility not in ("error", "project_rhs")
-            or gauge not in ("zero_mean", "minimum_norm")
-            or smoother not in ("jacobi", "red_black", "line")
             or not np.isfinite(relaxation_)
             or relaxation_ <= 0.0
             or relaxation_ >= 2.0
@@ -861,7 +869,7 @@ class PreparedStructuredMultigrid(StrictModule):
     nullspace_dimension: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: StructuredMultigridPlan, /):
+    def __init__(self, plan: StructuredMultigridPlan, /) -> None:
         if not isinstance(plan, StructuredMultigridPlan):
             raise TypeError("plan must be StructuredMultigridPlan.")
         grids = [plan.finest_operator.plan.grid]
@@ -910,8 +918,8 @@ class PreparedStructuredMultigrid(StrictModule):
             transfer.prepare(fine.source, coarse.source)
             for transfer, fine, coarse in zip(
                 transfers,
-                level_operators[:-1],
-                level_operators[1:],
+                diffusions[:-1],
+                diffusions[1:],
                 strict=True,
             )
         )

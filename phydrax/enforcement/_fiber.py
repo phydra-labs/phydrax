@@ -7,11 +7,12 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from math import prod
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
 
 import phydrax.axes as cx
 import phydrax.ein as ein
@@ -29,9 +30,10 @@ from ..domain._derivative import (
 )
 from ..domain._evaluation import BatchEvaluator
 from ..linalg._constraint_operators import PreparedConstraintOperator
+from ..typing import parse, PRNGKey
 
 
-FiberExactnessScope = Literal["continuum", "realization"]
+FiberExactnessScope: TypeAlias = Literal["continuum", "realization"]
 FiberDerivativeAction = Callable[..., DomainFunction | None]
 
 
@@ -51,19 +53,17 @@ def _names(values: Sequence[str], /) -> tuple[str, ...]:
     return names
 
 
-def _scope(value: str, /) -> FiberExactnessScope:
-    if value not in ("continuum", "realization"):
-        raise ValueError("Exactness scope must be 'continuum' or 'realization'.")
-    return value
-
-
-def _checked(updates: Mapping[str, Any], names: tuple[str, ...], /):
+def _checked(
+    updates: Mapping[str, Any], names: tuple[str, ...], /
+) -> frozendict[str, Any]:
     if not isinstance(updates, Mapping) or tuple(updates) != names:
         raise ValueError("A fiber lift must return its declared ordered field mapping.")
     return frozendict(updates)
 
 
-def _add(fields: Mapping[str, Any], updates: Mapping[str, Any], /):
+def _add(
+    fields: Mapping[str, Any], updates: Mapping[str, Any], /
+) -> frozendict[str, Any]:
     def add_value(left: Any, right: Any, /) -> Any:
         if isinstance(left, tuple):
             if not isinstance(right, tuple) or len(left) != len(right):
@@ -164,7 +164,7 @@ def _same_product_layout(left: Any, right: Any, /) -> bool:
     return False
 
 
-def _factor_layout(value: cx.AxisArray, name: str, /):
+def _factor_layout(value: cx.AxisArray, name: str, /) -> tuple[tuple[int, ...], int, int]:
     if not isinstance(value, cx.AxisArray) or value.data.ndim < 2:
         raise TypeError(f"{name} must be a matrix-valued phydrax.axes.AxisArray.")
     if value.dims[-2:] != (None, None) or any(dim is None for dim in value.dims[:-2]):
@@ -293,7 +293,7 @@ class BatchedFiberFactor(StrictModule):
         compatibility_tolerance: Any = 1e-8,
         factor_id: str | None = None,
         numeric_version: int = 0,
-    ):
+    ) -> None:
         shape, k, m = _factor_layout(right_inverse, "right_inverse")
         if constraint is not None:
             other_shape, rows, columns = _factor_layout(constraint, "constraint")
@@ -355,7 +355,7 @@ class BatchedFiberFactor(StrictModule):
             dims=correction.dims,
         )
 
-    def right_inverse_defect(self, /):
+    def right_inverse_defect(self, /) -> Array | None:
         if self.constraint is None or self.generalized:
             return None
         product = ein.contract(
@@ -363,7 +363,7 @@ class BatchedFiberFactor(StrictModule):
         )
         return jnp.max(jnp.abs(product - jnp.eye(self.target_size, dtype=product.dtype)))
 
-    def generalized_inverse_defect(self, /):
+    def generalized_inverse_defect(self, /) -> Array | None:
         if self.constraint is None:
             return None
         matrix = self.constraint.data
@@ -433,7 +433,7 @@ class AnalyticFiberProjectionUnit(StrictModule):
         exactness_scope: FiberExactnessScope = "continuum",
         unit_id: str | None = None,
         numeric_version: int = 0,
-    ):
+    ) -> None:
         if not callable(action) or not callable(target) or not callable(lift):
             raise TypeError("Analytic fiber action, target, and lift must be callable.")
         if not isinstance(residual_domain, Domain):
@@ -456,7 +456,12 @@ class AnalyticFiberProjectionUnit(StrictModule):
             self.condition_ids,
             self.exactness_scope,
             self.numeric_version,
-        ) = names, ids, _scope(exactness_scope), version
+        ) = (
+            names,
+            ids,
+            parse(exactness_scope, FiberExactnessScope, "exactness_scope"),
+            version,
+        )
         self.unit_id = _id(
             unit_id,
             {
@@ -468,11 +473,15 @@ class AnalyticFiberProjectionUnit(StrictModule):
             },
         )
 
-    def corrections(self, fields: Mapping[str, Any], context: Any, /):
+    def corrections(
+        self, fields: Mapping[str, Any], context: Any, /
+    ) -> frozendict[str, Any]:
         residual = _sub(self.target(fields, context), self.action(fields, context))
         return _checked(self.lift(residual, context), self.field_names)
 
-    def homogeneous_corrections(self, fields: Mapping[str, Any], context: Any, /):
+    def homogeneous_corrections(
+        self, fields: Mapping[str, Any], context: Any, /
+    ) -> frozendict[str, Any]:
         return _checked(
             self.lift(_negate(self.action(fields, context)), context), self.field_names
         )
@@ -503,7 +512,7 @@ class RealizedFiberProjectionUnit(StrictModule):
         condition_ids: Sequence[str] = (),
         evidence: Any = None,
         unit_id: str | None = None,
-    ):
+    ) -> None:
         if (
             not callable(action)
             or not callable(target)
@@ -536,7 +545,14 @@ class RealizedFiberProjectionUnit(StrictModule):
             },
         )
 
-    def _residual(self, fields, batch, context, key, /):
+    def _residual(
+        self,
+        fields: Mapping[str, Any],
+        batch: Any,
+        context: object,
+        key: PRNGKey | None,
+        /,
+    ) -> Any:
         target = self.target(fields, batch, context, key)
         action = self.action(fields, batch, context, key)
         if not _same_product_layout(target, action):
@@ -545,14 +561,28 @@ class RealizedFiberProjectionUnit(StrictModule):
             )
         return _sub(target, action)
 
-    def corrections(self, fields, batch, context, key=None, /):
+    def corrections(
+        self,
+        fields: Mapping[str, Any],
+        batch: Any,
+        context: object,
+        key: PRNGKey | None = None,
+        /,
+    ) -> frozendict[str, Any]:
         coefficients = self.factor.apply(self._residual(fields, batch, context, key))
         return _checked(
             self.synthesis(coefficients, fields, batch, context, key),
             self.field_names,
         )
 
-    def homogeneous_corrections(self, fields, batch, context, key=None, /):
+    def homogeneous_corrections(
+        self,
+        fields: Mapping[str, Any],
+        batch: Any,
+        context: object,
+        key: PRNGKey | None = None,
+        /,
+    ) -> frozendict[str, Any]:
         action = self.action(fields, batch, context, key)
         _fiber_product_leaves(action)
         return _checked(
@@ -591,7 +621,7 @@ class SeparableFiberProjectionUnit(StrictModule):
         evidence: Any = None,
         exactness_scope: FiberExactnessScope = "realization",
         unit_id: str | None = None,
-    ):
+    ) -> None:
         if (
             not callable(action)
             or not callable(target)
@@ -614,7 +644,13 @@ class SeparableFiberProjectionUnit(StrictModule):
             self.field_names,
             self.condition_ids,
             self.exactness_scope,
-        ) = reduction, evidence, names, ids, _scope(exactness_scope)
+        ) = (
+            reduction,
+            evidence,
+            names,
+            ids,
+            parse(exactness_scope, FiberExactnessScope, "exactness_scope"),
+        )
         self.unit_id = _id(
             unit_id,
             {
@@ -625,7 +661,14 @@ class SeparableFiberProjectionUnit(StrictModule):
             },
         )
 
-    def _residual(self, fields, batch, context, key, /):
+    def _residual(
+        self,
+        fields: Mapping[str, Any],
+        batch: Any,
+        context: object,
+        key: PRNGKey | None,
+        /,
+    ) -> Any:
         target = self.target(fields, batch, context, key)
         action = self.action(fields, batch, context, key)
         if not _same_product_layout(target, action):
@@ -634,7 +677,14 @@ class SeparableFiberProjectionUnit(StrictModule):
             )
         return _sub(target, action)
 
-    def corrections(self, fields, batch, context, key=None, /):
+    def corrections(
+        self,
+        fields: Mapping[str, Any],
+        batch: Any,
+        context: object,
+        key: PRNGKey | None = None,
+        /,
+    ) -> frozendict[str, Any]:
         coefficients = _shared_lift(
             self.operator, self._residual(fields, batch, context, key)
         )
@@ -643,7 +693,14 @@ class SeparableFiberProjectionUnit(StrictModule):
             self.field_names,
         )
 
-    def homogeneous_corrections(self, fields, batch, context, key=None, /):
+    def homogeneous_corrections(
+        self,
+        fields: Mapping[str, Any],
+        batch: Any,
+        context: object,
+        key: PRNGKey | None = None,
+        /,
+    ) -> frozendict[str, Any]:
         action = self.action(fields, batch, context, key)
         _fiber_product_leaves(action)
         return _checked(
@@ -681,7 +738,7 @@ class FiberProjectionState(StrictModule):
         evidence: Sequence[Any] = (),
         prepared_id: str | None = None,
         numeric_version: int = 0,
-    ):
+    ) -> None:
         values = tuple(units)
         if not values or any(
             not isinstance(
@@ -726,7 +783,9 @@ class FiberProjectionState(StrictModule):
             },
         )
 
-    def project_analytic(self, fields, context, /):
+    def project_analytic(
+        self, fields: Mapping[str, Any], context: Any, /
+    ) -> frozendict[str, Any]:
         updates: dict[str, Any] = {}
         for unit in self.units:
             if not isinstance(unit, AnalyticFiberProjectionUnit):
@@ -734,7 +793,16 @@ class FiberProjectionState(StrictModule):
             updates.update(unit.corrections(fields, context))
         return _add(fields, updates)
 
-    def project_batch(self, fields, batch, context, /, *, key=None, **kwargs):
+    def project_batch(
+        self,
+        fields: Mapping[str, Any],
+        batch: Any,
+        context: object,
+        /,
+        *,
+        key: PRNGKey | None = None,
+        **kwargs: Any,
+    ) -> frozendict[str, Any]:
         base = {
             name: value(batch, key=key, **kwargs)
             if isinstance(value, DomainFunction)
@@ -756,7 +824,15 @@ class _FiberProjectedEvaluator(StrictModule, BatchEvaluator, DerivativeRuleProvi
     derivative_action: FiberDerivativeAction | None
     field_name: str = eqx.field(static=True)
 
-    def __init__(self, fields, state, context, field_name, derivative_action, /):
+    def __init__(
+        self,
+        fields: Mapping[str, Any],
+        state: FiberProjectionState,
+        context: object,
+        field_name: str,
+        derivative_action: FiberDerivativeAction | None,
+        /,
+    ) -> None:
         self.fields, self.state, self.context, self.field_name = (
             frozendict(fields),
             state,
@@ -774,7 +850,14 @@ class _FiberProjectedEvaluator(StrictModule, BatchEvaluator, DerivativeRuleProvi
             return None
         return FiberProjectionDerivativeRule(self.derivative_action, self.field_name)
 
-    def __call_batch__(self, batch, /, *, key=None, **kwargs):
+    def __call_batch__(
+        self,
+        batch: Any,
+        /,
+        *,
+        key: PRNGKey | None = None,
+        **kwargs: Any,
+    ) -> cx.AxisArray:
         value = self.state.project_batch(
             self.fields, batch, self.context, key=key, **kwargs
         )[self.field_name]
@@ -786,13 +869,13 @@ class _FiberProjectedEvaluator(StrictModule, BatchEvaluator, DerivativeRuleProvi
 
 
 def realized_fiber_functions(
-    fields,
+    fields: Mapping[str, Any],
     state: FiberProjectionState,
-    context,
+    context: object,
     /,
     *,
     derivative_actions: Mapping[str, FiberDerivativeAction] = frozendict(),
-):
+) -> frozendict[str, Any]:
     """Wrap stored fiber factors as batch-aware projected DomainFunctions."""
     out = dict(fields)
     for unit in state.units:

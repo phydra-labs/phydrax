@@ -12,11 +12,12 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from .._dtype_names import inexact_result_type
 from .._frozendict import frozendict
 from .._numerics import normalize_anisotropy, normalize_axis_rules, SmolyakAxisRule
-from .._precision import inexact_result_type
 from .._sampling import (
     AntitheticDesign,
     IIDDesign,
@@ -53,7 +54,7 @@ class StratifiedDesign(StrictModule):
         *,
         allocation: Literal["proportional", "equal", "explicit"] = "proportional",
         allocation_weights: Sequence[float] | None = None,
-    ):
+    ) -> None:
         if allocation not in ("proportional", "equal", "explicit"):
             raise ValueError("Unknown stratified allocation policy.")
         weights = (
@@ -73,14 +74,14 @@ class StratifiedDesign(StrictModule):
 class SampleMeanEstimator(StrictModule):
     """Ordinary sample-mean estimator."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
 
 class SelfNormalizedEstimator(StrictModule):
     """Ratio estimator using the observed sum of raw weights."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
 
@@ -104,7 +105,7 @@ class ControlVariateEstimator(StrictModule):
         pilot_samples: int = 64,
         same_sample_asymptotic: bool = False,
         regularization: float = 1e-8,
-    ):
+    ) -> None:
         controls_ = tuple(controls)
         expectations_ = tuple(expectations)
         if not controls_ or len(controls_) != len(expectations_):
@@ -147,7 +148,7 @@ class DiffraxCollocationQuadraturePlan(StrictModule, NonTrainableState):
         solver_successful: ArrayLike = True,
         max_collocation: int | None = None,
         throw: bool = True,
-    ):
+    ) -> None:
         nodes_ = jnp.asarray(nodes)
         weights_ = jnp.asarray(weights)
         if nodes_.ndim != 1 or weights_.shape != nodes_.shape or nodes_.size == 0:
@@ -191,7 +192,7 @@ class FixedQuadraturePlan(StrictModule):
 
     def __init__(
         self, rule: IntervalRule | ProbabilityRule | ReferenceRule | None = None
-    ):
+    ) -> None:
         self.rule = GaussLegendreRule() if rule is None else rule
 
 
@@ -214,7 +215,7 @@ class BreakpointDiscoveryPlan(StrictModule):
         defect_threshold: float = 8.0,
         jump_threshold: float = 8.0,
         minimum_separation: float = 1.0e-6,
-    ):
+    ) -> None:
         pilots = int(pilot_count)
         candidates = int(max_candidates)
         rounds = int(refinement_rounds)
@@ -270,7 +271,7 @@ class AdaptiveQuadraturePlan(StrictModule):
         discovery: BreakpointDiscoveryPlan | None = None,
         collect_partition: bool = False,
         throw: bool = True,
-    ):
+    ) -> None:
         rule_ = GaussKronrodRule() if rule is None else rule
         absolute = _validate_tolerance(absolute_tolerance, "absolute_tolerance")
         relative = _validate_tolerance(relative_tolerance, "relative_tolerance")
@@ -344,7 +345,7 @@ class AdaptiveTrianglePlan(StrictModule):
         max_evaluations: int | None = None,
         collect_partition: bool = False,
         throw: bool = True,
-    ):
+    ) -> None:
         low = CubatureRule("triangle", 5) if low_rule is None else low_rule
         high = CubatureRule("triangle", 10) if high_rule is None else high_rule
         if low.reference_domain != "triangle" or high.reference_domain != "triangle":
@@ -426,7 +427,7 @@ class AdaptiveCubaturePlan(StrictModule):
         max_evaluations: int | None = None,
         collect_partition: bool = False,
         throw: bool = True,
-    ):
+    ) -> None:
         if not isinstance(rule, (GenzMalikRule, TensorProductCubatureRule)):
             raise TypeError(
                 "Adaptive cubature rule must be GenzMalikRule or TensorProductCubatureRule."
@@ -500,7 +501,7 @@ class MonteCarloPlan(StrictModule):
         *,
         design: Any | None = None,
         control_variate: ControlVariateEstimator | None = None,
-    ):
+    ) -> None:
         count = int(num_samples)
         if count < 2:
             raise ValueError("Monte Carlo num_samples must be at least two.")
@@ -527,7 +528,7 @@ class StratifiedMonteCarloPlan(StrictModule):
         num_samples: int,
         design: StratifiedDesign,
         /,
-    ):
+    ) -> None:
         count = int(num_samples)
         if count < 2:
             raise ValueError("Stratified num_samples must be at least two.")
@@ -554,7 +555,7 @@ class QuasiMonteCarloPlan(StrictModule):
         num_replicates: int = 8,
         allow_arbitrary_count: bool = False,
         control_variate: ControlVariateEstimator | None = None,
-    ):
+    ) -> None:
         count = int(num_samples)
         if count < 2:
             raise ValueError("QMC num_samples must be at least two.")
@@ -590,7 +591,7 @@ class ImportanceSamplingPlan(StrictModule):
         *,
         self_normalized: bool = False,
         support_policy: Literal["strict"] = "strict",
-    ):
+    ) -> None:
         count = int(num_samples)
         if count < 2:
             raise ValueError("Importance num_samples must be at least two.")
@@ -630,7 +631,7 @@ class MultilevelMonteCarloPlan(StrictModule):
         batch_size: int = 1024,
         variance_fraction: float = 0.5,
         max_rounds: int = 20,
-    ):
+    ) -> None:
         def counts(
             value: int | Sequence[int],
             name: str,
@@ -703,7 +704,7 @@ class SparseGridPlan(StrictModule):
         axis_rules: (
             SmolyakAxisRule | Sequence[SmolyakAxisRule] | None
         ) = "clenshaw-curtis",
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         level_ = int(level)
         if dimension_ < 1 or level_ < 1:
@@ -747,7 +748,7 @@ class AdaptiveSparseGridPlan(StrictModule):
         max_indices: int = 64,
         max_nodes: int = 100_000,
         max_rounds: int = 32,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         level = int(initial_level)
         indices = int(max_indices)
@@ -787,7 +788,7 @@ class CellQuadraturePlan(StrictModule):
 
     rule: ReferenceRule
 
-    def __init__(self, rule: ReferenceRule):
+    def __init__(self, rule: ReferenceRule) -> None:
         self.rule = rule
 
 
@@ -796,7 +797,7 @@ class ProductIntegrationPlan(StrictModule):
 
     plans: frozendict[tuple[str, ...], Any]
 
-    def __init__(self, plans: Mapping[str | tuple[str, ...], Any]):
+    def __init__(self, plans: Mapping[str | tuple[str, ...], Any]) -> None:
         if not plans:
             raise ValueError("ProductIntegrationPlan requires at least one axis plan.")
         normalized = {

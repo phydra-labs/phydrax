@@ -6,13 +6,19 @@ import phydrax as phx
 
 units = phx.atomistic.AtomisticUnitSystem.reduced()
 fine_system = phx.atomistic.AtomisticSystemPlan(
+    # ty: ignore[invalid-argument-type]
     [10, 20, 30, 40],
+    # ty: ignore[invalid-argument-type]
     [1, 1, 1, 1],
+    # ty: ignore[invalid-argument-type]
     [1.0, 3.0, 2.0, 2.0],
     units,
+    # ty: ignore[invalid-argument-type]
     atom_type_ids=[1, 1, 1, 1],
+    # ty: ignore[invalid-argument-type]
     molecule_ids=[0, 0, 1, 1],
 ).prepare()
+# ty: ignore[invalid-argument-type]
 mapping = phx.atomistic.MolecularCoarseMapPlan([100, 200], [0, 1], [0, 0, 1, 1]).prepare(
     fine_system
 )

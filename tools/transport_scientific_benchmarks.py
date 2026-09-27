@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from typing import Any
 
 import coordax as cx
 import jax
@@ -26,17 +27,18 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _timed(operation, ready, repeats):
+def _timed(operation: Any, ready: Any, repeats: Any) -> Any:
     result, distribution = measure_repeated(
         operation,
         warmup=1,
         repeats=repeats,
         synchronizer=lambda value: jax.block_until_ready(ready(value)),
     )
+    # ty: ignore[invalid-argument-type]
     return result, 1_000.0 * float(distribution.mean_seconds)
 
 
-def _spatial_density_record(size: int, repeats: int):
+def _spatial_density_record(size: int, repeats: int) -> Any:
     parameter = jnp.linspace(0.0, 1.0, size)
     points = (parameter**2)[:, None]
     widths = jnp.diff(
@@ -52,12 +54,14 @@ def _spatial_density_record(size: int, repeats: int):
     target_weights = widths * jnp.exp(-8.0 * (points[:, 0] - 0.65) ** 2)
     source = phx.integration.discrete(
         points,
+        # ty: ignore[invalid-argument-type]
         cx.Field(source_weights, dims=("atom",)),
         axes="atom",
         normalized=True,
     )
     target = phx.integration.discrete(
         points,
+        # ty: ignore[invalid-argument-type]
         cx.Field(target_weights, dims=("atom",)),
         axes="atom",
         normalized=True,
@@ -89,7 +93,7 @@ def _spatial_density_record(size: int, repeats: int):
     }
 
 
-def _operator_record(size: int, samples: int, repeats: int):
+def _operator_record(size: int, samples: int, repeats: int) -> Any:
     nodes = jnp.linspace(0.0, 1.0, size)
     coordinates = jnp.broadcast_to(nodes[None, :, None], (2, size, 1))
     quadrature = jnp.linspace(1.0, 2.0, size)
@@ -114,7 +118,7 @@ def _operator_record(size: int, samples: int, repeats: int):
     left_values = jnp.broadcast_to(base, (samples, 2, size))
     right_values = left_values + jnp.asarray([0.0, 0.4])[None, :, None]
 
-    def predictive(values, dim):
+    def predictive(values: Any, dim: Any) -> Any:
         return phx.uq.operator_predictive_from_samples(
             values,
             batch,
@@ -146,7 +150,7 @@ def _operator_record(size: int, samples: int, repeats: int):
     }
 
 
-def _particle_record(size: int, repeats: int):
+def _particle_record(size: int, repeats: int) -> Any:
     particles = jnp.stack(
         [jnp.linspace(-1.0, 1.0, size), jnp.linspace(0.0, 2.0, size)],
         axis=1,

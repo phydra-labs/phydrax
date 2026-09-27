@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -19,24 +20,28 @@ from phydrax.applications.atmosphere import (
 )
 
 
-def build_case(case="rising_thermal", *, nx=32, nz=16):
+def build_case(case: Any = "rising_thermal", *, nx: Any = 32, nz: Any = 16) -> Any:
     if case == "column":
+        # ty: ignore[invalid-argument-type]
         plan = DryAtmospherePlan((nz,), ((0.0,), (10000.0,)))
     elif case == "gravity_wave":
         plan = DryAtmospherePlan(
             (nx, nz),
+            # ty: ignore[invalid-argument-type]
             ((0.0, 0.0), (300000.0, 10000.0)),
             reference=DryHydrostaticReference("isothermal", temperature=300.0),
         )
     elif case == "rising_thermal":
         plan = DryAtmospherePlan(
             (nx, nz),
+            # ty: ignore[invalid-argument-type]
             ((0.0, 0.0), (20000.0, 10000.0)),
             reference=DryHydrostaticReference("isentropic", temperature=300.0),
         )
     elif case == "density_current":
         plan = DryAtmospherePlan(
             (nx, nz),
+            # ty: ignore[invalid-argument-type]
             ((0.0, 0.0), (25600.0, 6400.0)),
             reference=DryHydrostaticReference("isentropic", temperature=300.0),
             boundaries=(("closed", "closed"), ("closed", "closed")),
@@ -71,7 +76,7 @@ def build_case(case="rising_thermal", *, nx=32, nz=16):
     return prepared, prepared.thermal_state(delta, velocity=velocity)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--case",

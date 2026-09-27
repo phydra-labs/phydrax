@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -24,8 +25,8 @@ def _axis_boundary_mask(shape: tuple[int, ...], axis: int, periodic: bool, /) ->
     mask = jnp.ones(shape)
     if periodic:
         return mask
-    lower = [slice(None)] * len(shape)
-    upper = [slice(None)] * len(shape)
+    lower: list[slice | int] = [slice(None)] * len(shape)
+    upper: list[slice | int] = [slice(None)] * len(shape)
     lower[axis] = 0
     upper[axis] = shape[axis] - 1
     return mask.at[tuple(lower)].set(0.0).at[tuple(upper)].set(0.0)
@@ -93,7 +94,7 @@ class PreparedMACOceanForcing(StrictModule, NonTrainableState):
         reference_density: float,
         surface_stress: Sequence[float] | Any | None = None,
         surface_stress_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         dimension = len(operators.discretization.cell_shape)
@@ -185,7 +186,7 @@ class PreparedMACOceanForcing(StrictModule, NonTrainableState):
         first_weight = self.operators.face_dual_measures[first_axis]
         second_weight = self.operators.face_dual_measures[second_axis]
 
-        def first_from_second(component):
+        def first_from_second(component: Array) -> Array:
             return self._cross_interpolate(component, second_axis, first_axis)
 
         first_force = self.coriolis_parameter * first_from_second(values[second_axis])
@@ -245,7 +246,7 @@ class PreparedMACOceanForcing(StrictModule, NonTrainableState):
         output = [jnp.zeros_like(component) for component in values]
         for axis in self.horizontal_axes:
             stresses = self._surface_stress_values(time, axis, args)[..., axis]
-            location = [slice(None)] * output[axis].ndim
+            location: list[slice | int] = [slice(None)] * output[axis].ndim
             location[self.vertical_axis] = self.surface_index
             output[axis] = (
                 output[axis]

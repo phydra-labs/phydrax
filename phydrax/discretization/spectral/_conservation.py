@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from operator import index
 from typing import Any, TYPE_CHECKING
 
@@ -11,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -53,7 +55,7 @@ class SpectralSplitFormPlan(StrictModule):
         pair_chunk_size: int = 4096,
         maximum_pair_workspace_bytes: int = 512 * 1024**2,
         certification_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         if not isinstance(volume_flux, AbstractSymmetricTwoPointFluxPlan):
             raise TypeError("volume_flux must be a symmetric two-point flux plan.")
         if not isinstance(volume_flux, EntropyConservativeEulerFluxPlan):
@@ -122,7 +124,7 @@ class SpectralConservationMethodPlan(StrictModule):
         differentiability: BranchDifferentiationPolicy = (
             BranchDifferentiationPolicy.SMOOTH
         ),
-    ):
+    ) -> None:
         if (pseudospectral is None) == (split_form is None):
             raise ValueError(
                 "Select exactly one of pseudospectral or split_form execution."
@@ -214,7 +216,7 @@ class PreparedSpectralConservationMethod(StrictModule):
         pseudospectral: PreparedPseudospectralMethod | None,
         split_form: PreparedSpectralSplitForm | None,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.discretization = discretization
         self.pseudospectral = pseudospectral
@@ -392,7 +394,7 @@ class PreparedSpectralConservationDynamics(StrictModule):
         *,
         source: Any = None,
         entropy_pair: "ConvexEntropyPair | None" = None,
-    ):
+    ) -> None:
         from ...equations import AbstractConservationSystem, ConvexEntropyPair
 
         if not isinstance(system, AbstractConservationSystem):
@@ -455,7 +457,16 @@ class PreparedSpectralConservationDynamics(StrictModule):
     ) -> Array:
         if self.source is None:
             return jnp.zeros_like(physical_state)
-        evaluation = self.method.pseudospectral.dealiasing.evaluation
+        # Sources imply the projected-flux method over a tensor discretization, whose
+        # dealiasing evaluation space is therefore tensor as well.
+        pseudospectral = self.method.pseudospectral
+        if not (pseudospectral is not None):
+            raise RuntimeError("Internal invariant failed: pseudospectral is not None.")
+        evaluation = pseudospectral.dealiasing.evaluation
+        if not (isinstance(evaluation, TensorSpectralDiscretization)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(evaluation, TensorSpectralDiscretization)."
+            )
         points = evaluation.points.reshape(
             evaluation.physical_shape + (len(evaluation.axes),)
         )
@@ -614,7 +625,9 @@ class PreparedSpectralConservationDynamics(StrictModule):
         )
         return residual, diagnostics
 
-    def linearize(self, time: Array, state: Array, args: Any = None, /):
+    def linearize(
+        self, time: Array, state: Array, args: Any = None, /
+    ) -> tuple[Array, Callable[[Array], Array]]:
         value = self._validate_state(state)
         return jax.linearize(lambda candidate: self(time, candidate, args), value)
 

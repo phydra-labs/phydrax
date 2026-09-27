@@ -7,10 +7,12 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._doc import DOC_KEY0
 from ...discretization import TemporalMesh
+from ...typing import PRNGKey
 from ._potential import _as_potential_callable, PotentialLike
 from ._sampling import _positive_scalar
 
@@ -55,7 +57,7 @@ def potential_action(
     slicing: TemporalMesh,
     position_var: str = "q",
     time_var: str = "t",
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> Array:
     r"""Evaluate a real scalar potential along path-segment midpoints."""
     potential_fn = _as_potential_callable(
@@ -100,7 +102,7 @@ def discrete_euclidean_action(
     mass: ArrayLike,
     position_var: str = "q",
     time_var: str = "t",
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> Array:
     r"""Evaluate midpoint-discretized kinetic plus potential Euclidean action."""
     return kinetic_action(paths, slicing=slicing, mass=mass) + potential_action(

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -16,7 +19,7 @@ from phydrax.metrix._spacetime_conventions import RelativityConvention
 from phydrax.units import KILOGRAM, METER, SECOND
 
 
-def _scale():
+def _scale() -> Any:
     return RelativityScaleContract(
         DimensionalScaleContract(METER, KILOGRAM, SECOND),
         1,
@@ -26,7 +29,7 @@ def _scale():
     )
 
 
-def _geometry(shape, scale, convention):
+def _geometry(shape: Any, scale: Any, convention: Any) -> Any:
     identity = jnp.broadcast_to(jnp.eye(3), shape + (3, 3))
     return ADMGridGeometry(
         jnp.ones(shape),
@@ -46,7 +49,7 @@ def _geometry(shape, scale, convention):
     )
 
 
-def _system(*, maximum_magnetization=1.0e6):
+def _system(*, maximum_magnetization: Any = 1.0e6) -> Any:
     scale = _scale()
     convention = RelativityConvention.canonical()
     eos = GammaLawEOS(scale, 4.0 / 3.0, minimum_density=1.0e-15)
@@ -62,7 +65,7 @@ def _system(*, maximum_magnetization=1.0e6):
     return system, _geometry((), scale, convention)
 
 
-def test_minkowski_zero_field_valencia_limit_and_bounded_recovery():
+def test_minkowski_zero_field_valencia_limit_and_bounded_recovery() -> None:
     system, geometry = _system()
     primitive = jnp.asarray((1.2, 0.25, -0.1, 0.05, 0.18, 0.0, 0.0, 0.0))
     conserved = system.primitive_to_conserved(primitive, geometry)
@@ -104,7 +107,7 @@ def test_minkowski_zero_field_valencia_limit_and_bounded_recovery():
     assert float(projection.conservation_defect) < 3.0e-5
 
 
-def test_parallel_alfven_momentum_and_rotor_covariance_are_preserved():
+def test_parallel_alfven_momentum_and_rotor_covariance_are_preserved() -> None:
     system, geometry = _system()
     primitive = jnp.asarray((0.9, 0.22, 0.0, 0.0, 0.08, 0.7, 0.0, 0.0))
     conserved = system.primitive_to_conserved(primitive, geometry)
@@ -134,7 +137,7 @@ def test_parallel_alfven_momentum_and_rotor_covariance_are_preserved():
     )
 
 
-def test_hlle_shock_bounds_and_high_magnetization_status_are_explicit():
+def test_hlle_shock_bounds_and_high_magnetization_status_are_explicit() -> None:
     system, geometry = _system()
     left_primitive = jnp.asarray((1.0, 0.1, 0.0, 0.0, 1.0, 0.2, 0.3, 0.0))
     right_primitive = jnp.asarray((0.125, -0.1, 0.0, 0.0, 0.1, 0.2, -0.3, 0.0))

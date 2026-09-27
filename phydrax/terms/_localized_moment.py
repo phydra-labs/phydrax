@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -20,6 +21,7 @@ from .._term import AbstractScalarTerm
 from .._trainable import NonTrainableState
 from ..conditions import AbstractResidualCondition
 from ..domain import DomainComponent, DomainFunction
+from ..typing import PRNGKey
 
 
 class LocalTestSpaceEvidence(StrictModule, NonTrainableState):
@@ -35,7 +37,7 @@ class LocalTestSpaceEvidence(StrictModule, NonTrainableState):
         gram_condition: float,
         orthonormal: bool,
         verified: bool,
-    ):
+    ) -> None:
         self.minimum_gram_eigenvalue = float(minimum_gram_eigenvalue)
         self.gram_condition = float(gram_condition)
         self.orthonormal = bool(orthonormal)
@@ -63,7 +65,7 @@ class LocalTestSpace(StrictModule, NonTrainableState):
         weights: ArrayLike | None = None,
         test_space_id: str,
         gram_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         if not isinstance(component, DomainComponent):
             raise TypeError("component must be a DomainComponent.")
         basis = np.asarray(basis_values, dtype=np.float64)
@@ -121,7 +123,7 @@ class LocalizedResidualNorm(AbstractScalarTerm):
         *,
         scale: float = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(condition, AbstractResidualCondition):
             raise TypeError("condition must be an AbstractResidualCondition.")
         if not isinstance(test_space, LocalTestSpace):
@@ -142,7 +144,7 @@ class LocalizedResidualNorm(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:

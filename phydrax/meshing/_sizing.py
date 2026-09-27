@@ -9,7 +9,8 @@ from enum import StrEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._bvh import bvh_nearest_items, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -54,7 +55,7 @@ class SizeCompliancePolicy(StrictModule, NonTrainableState):
         absolute_tolerance: float = 0.0,
         relative_tolerance: float = 0.0,
         target_statistics: tuple[str, ...] = ("p50", "p95"),
-    ):
+    ) -> None:
         absolute = float(absolute_tolerance)
         relative = float(relative_tolerance)
         statistics = tuple(str(value).strip() for value in target_statistics)
@@ -117,7 +118,7 @@ class UniformSizeControl(StrictModule, NonTrainableState):
         maximum_growth_rate: float | None = None,
         strength: SizeControlStrength = SizeControlStrength.HARD,
         priority: int = 0,
-    ):
+    ) -> None:
         if not isinstance(scope, MeshingScope):
             raise TypeError("scope must be MeshingScope.")
         target = _size(target_size, "target_size")
@@ -174,7 +175,7 @@ class CurvatureSizeControl(StrictModule, NonTrainableState):
         use_faceted_curvature: bool = False,
         strength: SizeControlStrength = SizeControlStrength.SOFT,
         priority: int = 0,
-    ):
+    ) -> None:
         if not isinstance(scope, MeshingScope):
             raise TypeError("scope must be MeshingScope.")
         angle = float(normal_angle)
@@ -230,7 +231,7 @@ class ProximitySizeControl(StrictModule, NonTrainableState):
         opposite_normals_only: bool = True,
         strength: SizeControlStrength = SizeControlStrength.HARD,
         priority: int = 0,
-    ):
+    ) -> None:
         if not isinstance(source_scope, MeshingScope) or not isinstance(
             target_scope, MeshingScope
         ):
@@ -305,7 +306,7 @@ class ResolvedSizeField(StrictModule, NonTrainableState):
         *,
         sample_entity_ids: ArrayLike,
         source_control_ids: tuple[str, ...],
-    ):
+    ) -> None:
         if not isinstance(domain, SizeFieldDomain):
             raise TypeError("domain must be SizeFieldDomain.")
         points = np.asarray(sample_points, dtype=np.float64)
@@ -376,7 +377,7 @@ class SizeResolutionReport(StrictModule, NonTrainableState):
         provider_resolved: bool = False,
         graded_count: int = 0,
         maximum_gradation_violation: float = 0.0,
-    ):
+    ) -> None:
         if not controls or not all(
             isinstance(
                 control,

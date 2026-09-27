@@ -4,11 +4,14 @@
 
 from __future__ import annotations
 
+from typing import Any, TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
@@ -25,11 +28,18 @@ from ...linalg import SmallLinearSolvePlan, solve_small_linear
 from ...nonlinear import VectorLocalRootPlan
 
 
+# Per-particle (stress, trial state, energy, wave speed, dissipation, branch,
+# suggested step, valid, director, root residual, root condition, embedded F).
+_GeneralPlaneStressPointOutputs: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+
+
 class MPMMaterialOrientation(StrictModule, NonTrainableState):
     rotation: Array
     orientation_id: str = eqx.field(static=True)
 
-    def __init__(self, rotation: ArrayLike, /, *, tolerance: float = 1.0e-10):
+    def __init__(self, rotation: ArrayLike, /, *, tolerance: float = 1.0e-10) -> None:
         value = np.asarray(rotation, dtype=np.float64)
         if value.shape != (3, 3) or np.any(~np.isfinite(value)):
             raise ValueError("Material orientation must be one finite 3x3 rotation.")
@@ -60,7 +70,7 @@ class OrientedMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
         base: AbstractImplicitMPMConstitutivePlan,
         orientation: MPMMaterialOrientation,
         /,
-    ):
+    ) -> None:
         if not isinstance(base, AbstractImplicitMPMConstitutivePlan):
             raise TypeError("base must be AbstractImplicitMPMConstitutivePlan.")
         if base.dimension != 3:
@@ -81,27 +91,29 @@ class OrientedMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
             }
         )
 
-    def initialize_state(self, batch_shape, dtype, /):
+    def initialize_state(
+        self, batch_shape: tuple[int, ...], dtype: DTypeLike, /
+    ) -> Array:
         return self.base.initialize_state(batch_shape, dtype)
 
-    def _to_material(self, deformation):
+    def _to_material(self, deformation: Array) -> Array:
         rotation = self.orientation.rotation.astype(deformation.dtype)
         return ein.contract("ij,...jk,lk->...il", rotation, deformation, rotation)
 
-    def _to_global_stress(self, stress):
+    def _to_global_stress(self, stress: Array) -> Array:
         rotation = self.orientation.rotation.astype(stress.dtype)
         return ein.contract("ij,...jk,lk->...il", rotation.T, stress, rotation.T)
 
     def evaluate(
         self,
-        deformation_gradient,
-        committed_state,
-        reference_density,
-        parameters,
-        time,
-        step_size,
+        deformation_gradient: ArrayLike,
+        committed_state: ArrayLike,
+        reference_density: ArrayLike,
+        parameters: Any,
+        time: ArrayLike,
+        step_size: ArrayLike,
         /,
-    ):
+    ) -> MPMConstitutiveResponse:
         material_deformation = self._to_material(jnp.asarray(deformation_gradient))
         response = self.base.evaluate(
             material_deformation,
@@ -126,14 +138,14 @@ class OrientedMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
 
     def evaluate_linearized(
         self,
-        deformation_gradient,
-        committed_state,
-        reference_density,
-        parameters,
-        time,
-        step_size,
+        deformation_gradient: ArrayLike,
+        committed_state: ArrayLike,
+        reference_density: ArrayLike,
+        parameters: Any,
+        time: ArrayLike,
+        step_size: ArrayLike,
         /,
-    ):
+    ) -> MPMLinearizedConstitutiveResponse:
         response = self.evaluate(
             deformation_gradient,
             committed_state,
@@ -183,7 +195,7 @@ class GeneralPlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan)
         /,
         *,
         root: VectorLocalRootPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(base, AbstractImplicitMPMConstitutivePlan):
             raise TypeError("base must be AbstractImplicitMPMConstitutivePlan.")
         if base.dimension != 3 or base.kinematics != "three_dimensional":
@@ -223,7 +235,9 @@ class GeneralPlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan)
             }
         )
 
-    def initialize_state(self, batch_shape, dtype, /):
+    def initialize_state(
+        self, batch_shape: tuple[int, ...], dtype: DTypeLike, /
+    ) -> Array:
         base = self.base.initialize_state(tuple(batch_shape), dtype).reshape(
             tuple(batch_shape) + (self.base_state_width,)
         )
@@ -233,16 +247,24 @@ class GeneralPlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan)
         return jnp.concatenate((base, director), axis=-1)
 
     @staticmethod
-    def _embed(deformation, director):
+    def _embed(deformation: Array, director: Array) -> Array:
         embedded = jnp.zeros((3, 3), dtype=deformation.dtype)
         embedded = embedded.at[:2, :2].set(deformation)
         return embedded.at[:, 2].set(director)
 
-    def _point(self, deformation, state, density, parameters, time, step_size):
+    def _point(
+        self,
+        deformation: Array,
+        state: Array,
+        density: Array,
+        parameters: Any,
+        time: ArrayLike,
+        step_size: ArrayLike,
+    ) -> _GeneralPlaneStressPointOutputs:
         base_state = state[: self.base_state_width].reshape(self.base.state_shape)
         director0 = state[-3:]
 
-        def residual(director):
+        def residual(director: Array) -> Array:
             response = self.base.evaluate(
                 self._embed(deformation, director)[None],
                 base_state[None],
@@ -289,14 +311,14 @@ class GeneralPlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan)
 
     def evaluate(
         self,
-        deformation_gradient,
-        committed_state,
-        reference_density,
-        parameters,
-        time,
-        step_size,
+        deformation_gradient: ArrayLike,
+        committed_state: ArrayLike,
+        reference_density: ArrayLike,
+        parameters: Any,
+        time: ArrayLike,
+        step_size: ArrayLike,
         /,
-    ):
+    ) -> MPMConstitutiveResponse:
         deformation = jnp.asarray(deformation_gradient)
         state = jnp.asarray(committed_state, dtype=deformation.dtype)
         density = jnp.asarray(reference_density, dtype=deformation.dtype)
@@ -347,14 +369,14 @@ class GeneralPlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan)
 
     def evaluate_linearized(
         self,
-        deformation_gradient,
-        committed_state,
-        reference_density,
-        parameters,
-        time,
-        step_size,
+        deformation_gradient: ArrayLike,
+        committed_state: ArrayLike,
+        reference_density: ArrayLike,
+        parameters: Any,
+        time: ArrayLike,
+        step_size: ArrayLike,
         /,
-    ):
+    ) -> MPMLinearizedConstitutiveResponse:
         response = self.evaluate(
             deformation_gradient,
             committed_state,
@@ -369,7 +391,9 @@ class GeneralPlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan)
         batch_shape = deformation.shape[:-2]
         director = response.trial_state[..., -3:]
 
-        def point(value, history, rho, current_director):
+        def point(
+            value: Array, history: Array, rho: Array, current_director: Array
+        ) -> tuple[Array, Array]:
             embedded = self._embed(value, current_director)
             base_state = history[: self.base_state_width].reshape(self.base.state_shape)
             linearized = self.base.evaluate_linearized(

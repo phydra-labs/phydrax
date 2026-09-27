@@ -11,14 +11,17 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, PRNGKeyArray
+from jax import Array
+from jax.typing import ArrayLike
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
+from ..typing import parse, PRNGKey
 
 
 HawkesTiePolicy: TypeAlias = Literal["simultaneous", "ordered"]
 HawkesLikelihoodStatus: TypeAlias = Literal[0, 1, 2, 3]
+_HawkesSimulationCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 HAWKES_SUCCESS = 0
 HAWKES_UNSTABLE = 1
@@ -47,7 +50,7 @@ class PointProcessObservation(StrictModule):
         start_time: ArrayLike,
         end_time: ArrayLike,
         channel_count: int,
-    ):
+    ) -> None:
         times_ = jnp.asarray(times)
         channels_ = jnp.asarray(channels, dtype=jnp.int32)
         valid_ = jnp.asarray(valid, dtype=jnp.bool_)
@@ -117,7 +120,7 @@ class ExponentialHawkesProcess(StrictModule):
         excitation: ArrayLike,
         decay: ArrayLike,
         /,
-    ):
+    ) -> None:
         baseline_ = jnp.asarray(baseline)
         excitation_ = jnp.asarray(excitation)
         decay_ = jnp.asarray(decay)
@@ -169,13 +172,12 @@ class HawkesLikelihoodPlan(StrictModule):
         *,
         tie_policy: HawkesTiePolicy = "simultaneous",
         require_stable: bool = True,
-    ):
+    ) -> None:
         capacity_ = int(capacity)
         channels = int(channel_count)
         if capacity_ < 1 or channels < 1:
             raise ValueError("capacity and channel_count must be positive.")
-        if tie_policy not in ("simultaneous", "ordered"):
-            raise ValueError("tie_policy must be 'simultaneous' or 'ordered'.")
+        tie_policy = parse(tie_policy, HawkesTiePolicy, "tie_policy")
         self.capacity = capacity_
         self.channel_count = channels
         self.tie_policy = tie_policy
@@ -274,7 +276,9 @@ def evaluate_hawkes_likelihood(
     initial_history = jnp.zeros_like(process.excitation)
     initial_pending = jnp.zeros_like(process.excitation)
 
-    def likelihood_step(carry, inputs):
+    def likelihood_step(
+        carry: tuple[Array, Array, Array], inputs: tuple[Array, Array, Array]
+    ) -> tuple[tuple[Array, Array, Array], Array]:
         history, pending, previous_time = carry
         time, channel, valid = inputs
         elapsed = jnp.maximum(time - previous_time, 0.0)
@@ -371,7 +375,7 @@ def evaluate_hawkes_likelihood(
 
 def simulate_hawkes(
     process: ExponentialHawkesProcess,
-    key: PRNGKeyArray,
+    key: PRNGKey,
     /,
     *,
     start_time: float,
@@ -405,7 +409,7 @@ def simulate_hawkes(
     initial_channels = jnp.zeros((capacity_,), dtype=jnp.int32)
     initial_excitation = jnp.zeros_like(process.excitation)
 
-    def body(index, state):
+    def body(index: Array, state: _HawkesSimulationCarry) -> _HawkesSimulationCarry:
         (
             current_time,
             excitation_state,

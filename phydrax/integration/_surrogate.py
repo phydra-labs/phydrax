@@ -12,14 +12,17 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.domain import DomainFunction, ProbabilityDomain
 
 from .._strict import StrictModule
 from ..fidelity import FidelityLevelSpec
 from ..stochastic._hierarchy import StochasticCouplingPlan, StochasticLevelSpec
+from ..typing import PRNGKey
 from ._api import integrate
+from ._estimates import IntegrationEstimate
 from ._fidelity import FidelityBatchEvaluation, FidelityMultilevelSampler
 from ._multilevel import MultilevelSampleBatch
 from ._plans import SparseGridPlan
@@ -30,7 +33,7 @@ if TYPE_CHECKING:
     from ..operators.interpolation._smolyak import SmolyakInterpolant
 
 
-SmolyakInputSampler: TypeAlias = Callable[[Array, Key[Array, ""]], tuple[Array, ...]]
+SmolyakInputSampler: TypeAlias = Callable[[Array, PRNGKey], tuple[Array, ...]]
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -77,7 +80,7 @@ class SmolyakProbabilityInputSampler(StrictModule):
         /,
         *,
         axis_labels: Sequence[str],
-    ):
+    ) -> None:
         values = tuple(factors)
         labels = tuple(str(label) for label in axis_labels)
         if not values or any(
@@ -98,22 +101,25 @@ class SmolyakProbabilityInputSampler(StrictModule):
         /,
     ) -> "SmolyakProbabilityInputSampler":
         interpolant = _smolyak_interpolant(surrogate)
-        if any(
-            not isinstance(factor, ProbabilityDomain) for factor in interpolant.factors
-        ):
+        factors = tuple(
+            factor
+            for factor in interpolant.factors
+            if isinstance(factor, ProbabilityDomain)
+        )
+        if len(factors) != len(interpolant.factors):
             raise TypeError(
                 "Automatic surrogate input sampling requires every interpolation axis "
                 "to be a ProbabilityDomain. Supply input_sampler explicitly otherwise."
             )
         return cls(
-            tuple(interpolant.factors),
+            factors,
             axis_labels=interpolant.axis_labels,
         )
 
     def __call__(
         self,
         sample_indices: Array,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         /,
     ) -> tuple[Array, ...]:
         indices = jnp.asarray(sample_indices, dtype=jnp.uint32).reshape((-1,))
@@ -158,7 +164,7 @@ class SmolyakSurrogateHierarchyAdapter(StrictModule):
         fine_approximation_id: str,
         input_sampler: SmolyakInputSampler | None = None,
         surrogate_expectation: ArrayLike | None = None,
-    ):
+    ) -> None:
         interpolant = _smolyak_interpolant(surrogate)
         if not callable(fine_model):
             raise TypeError("fine_model must be callable.")
@@ -258,7 +264,7 @@ class SmolyakSurrogateHierarchyAdapter(StrictModule):
     def _sample_inputs(
         self,
         sample_indices: Array,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         /,
     ) -> tuple[Array, ...]:
         coordinates = tuple(self.input_sampler(sample_indices, root_key))
@@ -311,7 +317,7 @@ class SmolyakSurrogateHierarchyAdapter(StrictModule):
         self,
         level_index: int,
         sample_indices: Array,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         /,
     ) -> MultilevelSampleBatch:
         return self.multilevel_sampler(level_index, sample_indices, root_key)
@@ -322,7 +328,7 @@ def smolyak_surrogate_expectation(
     /,
     *,
     quadrature_level: int | None = None,
-):
+) -> IntegrationEstimate:
     """Integrate a Smolyak surrogate over its declared physical/probability axes."""
 
     interpolant = _smolyak_interpolant(surrogate)

@@ -5,13 +5,13 @@
 from __future__ import annotations
 
 from math import prod
-from typing import Any, Literal, Sequence
+from typing import Any, Literal, Sequence, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, Key
+from jax import Array
 
 from .._doc import DOC_KEY0
 from .._mass import require_exact_mass
@@ -19,12 +19,13 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..graph._operator_topology import OperatorTopology
 from ..nn.operator.data import FunctionSamples, OperatorAxis
+from ..typing import parse, PRNGKey
 
 
-BoundsPolicy = Literal["global", "case_bbox"]
+BoundsPolicy: TypeAlias = Literal["global", "case_bbox"]
 GeometryComponent = Literal["interior", "boundary"]
 MeshTopologyKind = Literal["graph", "simplicial"]
-RegionalGeometryMode = Literal["fixed", "farthest_point"]
+RegionalGeometryMode: TypeAlias = Literal["fixed", "farthest_point"]
 
 
 def _shape_tuple(shape: Sequence[int], /) -> tuple[int, ...]:
@@ -71,11 +72,10 @@ class TensorGridLatentGeometry(StrictModule, NonTrainableState):
         axis_names: Sequence[str] | None = None,
         periodic: bool | Sequence[bool] = False,
         margin: float = 0.0,
-    ):
+    ) -> None:
         shape_ = _shape_tuple(shape)
         coord_dim = len(shape_)
-        if bounds_policy not in ("global", "case_bbox"):
-            raise ValueError("bounds_policy must be 'global' or 'case_bbox'.")
+        bounds_policy = parse(bounds_policy, BoundsPolicy, "bounds_policy")
         if float(margin) < 0.0:
             raise ValueError("margin must be non-negative.")
         names = (
@@ -249,13 +249,12 @@ class RegionalPointLatentGeometry(StrictModule, NonTrainableState):
         *,
         mode: RegionalGeometryMode = "farthest_point",
         fixed_points: Any | None = None,
-    ):
+    ) -> None:
         count = int(point_count)
         dimension = int(coord_dim)
         if count <= 0 or dimension <= 0:
             raise ValueError("point_count and coord_dim must be positive.")
-        if mode not in ("fixed", "farthest_point"):
-            raise ValueError("mode must be 'fixed' or 'farthest_point'.")
+        mode = parse(mode, RegionalGeometryMode, "mode")
         if mode == "fixed":
             if fixed_points is None:
                 raise ValueError("fixed regional geometry requires fixed_points.")
@@ -317,7 +316,9 @@ class RegionalPointLatentGeometry(StrictModule, NonTrainableState):
         minimum_distance = jnp.sum((flattened - first_points[:, None, :]) ** 2, axis=-1)
         minimum_distance = jnp.where(valid, minimum_distance, -jnp.inf)
 
-        def select_next(carry, _):
+        def select_next(
+            carry: tuple[Array, Array], _: None
+        ) -> tuple[tuple[Array, Array], Array]:
             distances, selected = carry
             index = jnp.argmax(distances, axis=-1)
             point = flattened[jnp.arange(cases), index]
@@ -366,7 +367,7 @@ def function_samples_from_geometry(
     values: Any | None = None,
     component: GeometryComponent = "interior",
     sampler: str = "latin_hypercube",
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> FunctionSamples:
     """Sample a PhydraX geometry into measure-aware operator points."""
     from phydrax.domain import AbstractGeometry

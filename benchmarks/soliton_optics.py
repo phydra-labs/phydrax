@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 
@@ -31,7 +33,7 @@ from phydrax.optics.wave import (
 )
 
 
-def benchmark_case(kink_points: int, optical_steps: int):
+def benchmark_case(kink_points: int, optical_steps: int) -> Any:
     kink_plan = DoubleWellKinkPlan(
         jnp.linspace(-8.0, 8.0, kink_points),
         DoubleWellFreeEnergy(1.0),

@@ -11,6 +11,7 @@ import argparse
 import json
 from math import prod
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -36,13 +37,13 @@ class _ViscosityStressModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, coefficient, physical_shape, dtype):
+    def __init__(self, coefficient: Any, physical_shape: Any, dtype: Any) -> None:
         self.coefficient = jnp.asarray(coefficient, dtype=dtype)
         self.physical_shape = tuple(physical_shape)
         self.in_size = prod(self.physical_shape + (9,))
         self.out_size = prod(self.physical_shape + (3, 3))
 
-    def __call__(self, values, /, *, key=None):
+    def __call__(self, values: Any, /, *, key: Any = None) -> Any:
         del key
         gradient = jnp.asarray(values).reshape(self.physical_shape + (3, 3))
         strain = 0.5 * (gradient + jnp.swapaxes(gradient, -1, -2))
@@ -53,7 +54,7 @@ class _ViscosityStressModel(AbstractArrayModel):
         return (-2.0 * self.coefficient * deviatoric).reshape((self.out_size,))
 
 
-def _case(count):
+def _case(count: Any) -> Any:
     space = phx.discretization.TensorSpectralPlan(
         tuple(phx.discretization.FourierBasisPlan(count) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -118,7 +119,7 @@ def _case(count):
         normalizer_id=normalizer.normalizer_id,
     )
 
-    def zero_predictor(features, args):
+    def zero_predictor(features: Any, args: Any) -> Any:
         del args
         return jnp.zeros(features.shape[:-1] + (3, 3), dtype=features.dtype)
 
@@ -151,7 +152,7 @@ def _case(count):
     )
     state = coordinates.to_real_coordinates(projector.project(space.project(velocity)))
 
-    def zero_base_rate(time, modal, inputs):
+    def zero_base_rate(time: Any, modal: Any, inputs: Any) -> Any:
         del time, inputs
         return jnp.zeros_like(modal)
 
@@ -181,7 +182,7 @@ def run(*, quick: bool) -> dict:
     repetitions = 2 if quick else 5
     transition, context, state, model = _case(count)
 
-    def advance(candidate, current):
+    def advance(candidate: Any, current: Any) -> Any:
         return transition.evaluate(
             candidate,
             context,
@@ -193,6 +194,7 @@ def run(*, quick: bool) -> dict:
 
     jitted = eqx.filter_jit(advance)
     compiled, compilation = measure_lower_and_compile(
+        # ty: ignore[unresolved-attribute]
         lambda: jitted.lower(model, state),
         lambda lowered: lowered.compile(),
     )
@@ -203,7 +205,7 @@ def run(*, quick: bool) -> dict:
         repeats=repetitions,
     )
 
-    def objective(candidate):
+    def objective(candidate: Any) -> Any:
         value = advance(candidate, state).accepted_state
         return jnp.sum(jnp.square(value - state))
 

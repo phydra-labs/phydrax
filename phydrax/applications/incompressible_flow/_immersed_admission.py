@@ -10,16 +10,19 @@ from enum import IntFlag
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState
+from ..._validation import canonical_identifier
 from ...discretization.finite_volume._distributed_marker_transfer import (
     DistributedMarkerTransferDiagnostics,
 )
 from ...qualification._evidence import QualificationCoverageReport
 from ...solver._marker_flow_runtime import HydrodynamicLoadRecord
+from ...typing import parse
 from ._immersed_profile import ImmersedDNSQualificationProfile
 from ._immersed_support import (
     ImmersedBodyRegimePlan,
@@ -28,18 +31,10 @@ from ._immersed_support import (
 )
 
 
-def _identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    if not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty canonical identifier.")
-    return value
-
-
 def _identifiers(values: Sequence[str], name: str, /) -> tuple[str, ...]:
     if not isinstance(values, Sequence) or isinstance(values, str):
         raise TypeError(f"{name} values must be a sequence.")
-    normalized = tuple(_identifier(value, name) for value in values)
+    normalized = tuple(canonical_identifier(value, name) for value in values)
     if not normalized or len(set(normalized)) != len(normalized):
         raise ValueError(f"{name} values must be non-empty and unique.")
     return tuple(sorted(normalized))
@@ -88,9 +83,9 @@ class ImmersedRuntimePreflightEvidence(StrictModule, NonTrainableState):
         /,
         *,
         evidence_ids: Sequence[str],
-    ):
-        owner = _identifier(owner_plan_id, "owner_plan_id")
-        support = _identifier(support_tuple_id, "support_tuple_id")
+    ) -> None:
+        owner = canonical_identifier(owner_plan_id, "owner_plan_id")
+        support = canonical_identifier(support_tuple_id, "support_tuple_id")
         rank = jnp.asarray(marker_numerical_rank, dtype=jnp.int32)
         condition = jnp.asarray(marker_condition)
         certified = jnp.asarray(rank_certified, dtype=jnp.bool_)
@@ -190,7 +185,7 @@ class ImmersedRuntimeEvidence(StrictModule, NonTrainableState):
         gap: ArrayLike | None = None,
         distributed: DistributedMarkerTransferDiagnostics | None = None,
         load_record: HydrodynamicLoadRecord | None = None,
-    ):
+    ) -> None:
         predicates = tuple(
             jnp.asarray(value, dtype=jnp.bool_)
             for value in (
@@ -229,13 +224,15 @@ class ImmersedRuntimeEvidence(StrictModule, NonTrainableState):
         self.gap = gap_
         self.distributed = distributed
         self.load_record = load_record
-        self.owner_plan_id = _identifier(owner_plan_id, "owner_plan_id")
-        self.support_tuple_id = _identifier(support_tuple_id, "support_tuple_id")
-        self.marker_set_id = _identifier(marker_set_id, "marker_set_id")
-        self.geometry_id = _identifier(geometry_id, "geometry_id")
-        self.route_id = _identifier(route_id, "route_id")
-        self.topology_epoch_id = _identifier(topology_epoch_id, "topology_epoch_id")
-        self.motion_epoch_id = _identifier(motion_epoch_id, "motion_epoch_id")
+        self.owner_plan_id = canonical_identifier(owner_plan_id, "owner_plan_id")
+        self.support_tuple_id = canonical_identifier(support_tuple_id, "support_tuple_id")
+        self.marker_set_id = canonical_identifier(marker_set_id, "marker_set_id")
+        self.geometry_id = canonical_identifier(geometry_id, "geometry_id")
+        self.route_id = canonical_identifier(route_id, "route_id")
+        self.topology_epoch_id = canonical_identifier(
+            topology_epoch_id, "topology_epoch_id"
+        )
+        self.motion_epoch_id = canonical_identifier(motion_epoch_id, "motion_epoch_id")
         self.geometry_epoch = epoch
         self.evidence_ids = _identifiers(evidence_ids, "runtime evidence ID")
         self.evidence_id = canonical_fingerprint(
@@ -316,7 +313,7 @@ class ImmersedRuntimeAdmissionPlan(StrictModule, NonTrainableState):
         marker_condition_limit: float | None = None,
         distributed_tolerance: float = 1.0e-9,
         require_load_record: bool = False,
-    ):
+    ) -> None:
         if not isinstance(profile, ImmersedDNSQualificationProfile):
             raise TypeError("profile must be ImmersedDNSQualificationProfile.")
         if not isinstance(regime, ImmersedBodyRegimePlan):
@@ -338,8 +335,9 @@ class ImmersedRuntimeAdmissionPlan(StrictModule, NonTrainableState):
             )
         if not np.isfinite(reduction_tolerance) or reduction_tolerance <= 0.0:
             raise ValueError("distributed_tolerance must be finite and positive.")
-        if derivative_mode not in ("none", "jvp", "vjp"):
-            raise ValueError("derivative_mode must be 'none', 'jvp', or 'vjp'.")
+        derivative_mode = parse(
+            derivative_mode, ImmersedDerivativeMode, "derivative_mode"
+        )
         self.profile = profile
         self.regime = regime
         self.derivative_mode = derivative_mode

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -11,7 +13,7 @@ from phydrax.uq._free_energy_kernels import (
 )
 
 
-def _assert_tree_allclose(actual, expected):
+def _assert_tree_allclose(actual: Any, expected: Any) -> None:
     actual_leaves = jax.tree.leaves(actual)
     expected_leaves = jax.tree.leaves(expected)
     assert len(actual_leaves) == len(expected_leaves)
@@ -19,7 +21,7 @@ def _assert_tree_allclose(actual, expected):
         np.testing.assert_allclose(actual_leaf, expected_leaf, rtol=1.0e-10, atol=1.0e-12)
 
 
-def test_fep_kernel_lowers_and_matches_eager():
+def test_fep_kernel_lowers_and_matches_eager() -> None:
     values = jnp.asarray([0.0, 0.2, -0.1, 0.1])
     mask = jnp.asarray([True, True, True, True])
     weight = jnp.ones_like(values)
@@ -27,13 +29,15 @@ def test_fep_kernel_lowers_and_matches_eager():
     _assert_tree_allclose(lowered(values, mask, weight), fep_kernel(values, mask, weight))
 
 
-def test_bar_kernel_lowers_and_matches_eager():
+def test_bar_kernel_lowers_and_matches_eager() -> None:
     values = jnp.asarray([1.0, 1.1, 0.9, -1.0, -1.1, -0.9])
     forward = jnp.asarray([True, True, True, False, False, False])
     reverse = ~forward
     weight = jnp.ones_like(values)
 
-    def execute(work, forward_mask, reverse_mask, sample_weight):
+    def execute(
+        work: Any, forward_mask: Any, reverse_mask: Any, sample_weight: Any
+    ) -> Any:
         return bar_kernel(
             work,
             forward_mask,
@@ -50,7 +54,7 @@ def test_bar_kernel_lowers_and_matches_eager():
     )
 
 
-def test_ti_kernel_lowers_and_matches_eager():
+def test_ti_kernel_lowers_and_matches_eager() -> None:
     values = jnp.asarray(
         [
             [1.9, 2.0, 2.1, 2.0],
@@ -69,7 +73,7 @@ def test_ti_kernel_lowers_and_matches_eager():
     )
 
 
-def test_mbar_kernels_lower_and_match_eager():
+def test_mbar_kernels_lower_and_match_eager() -> None:
     values = jnp.asarray(
         [
             [0.0, 0.1, 0.0, 0.1, 0.0, 0.1],
@@ -79,7 +83,7 @@ def test_mbar_kernels_lower_and_match_eager():
     origins = jnp.asarray([0, 0, 0, 1, 1, 1], dtype=jnp.int32)
     sample_weight = jnp.ones((6,))
 
-    def solve(potential, origin, weight):
+    def solve(potential: Any, origin: Any, weight: Any) -> Any:
         return mbar_kernel(
             potential,
             origin,
@@ -95,7 +99,7 @@ def test_mbar_kernels_lower_and_match_eager():
     _assert_tree_allclose(compiled, eager)
     _, _, _, counts, weights = eager
 
-    def covariance(weight_matrix, observation_weight, state_counts):
+    def covariance(weight_matrix: Any, observation_weight: Any, state_counts: Any) -> Any:
         return mbar_asymptotic_covariance_kernel(
             weight_matrix,
             observation_weight,

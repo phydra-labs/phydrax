@@ -6,14 +6,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import sqrt
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
 import scipy.sparse as sp
+from jax import Array
 
 import phydrax.ein as ein
 
 from ...backends import ClarabelPlan, prepare_clarabel, PreparedClarabel
+from ...linalg import AbstractSparseLinearOperator
 from ._cones import (
     AbstractConvexCone,
     NonnegativeCone,
@@ -57,7 +60,9 @@ class _PreparedClarabelProgram:
     structure: _ClarabelStructure
 
 
-def _cone_blocks(cone: AbstractConvexCone, /):
+def _cone_blocks(
+    cone: AbstractConvexCone, /
+) -> tuple[tuple[AbstractConvexCone, ...], tuple[slice, ...]]:
     if isinstance(cone, ProductCone):
         return cone.cones, cone.slices
     return (cone,), (slice(0, cone.dimension),)
@@ -72,10 +77,12 @@ def _rotated_transform(dimension: int, /) -> np.ndarray:
     return transform
 
 
-def _clarabel_cones(prepared, cone: AbstractConvexCone, /):
+def _clarabel_cones(
+    prepared: PreparedClarabel, cone: AbstractConvexCone, /
+) -> tuple[tuple[object, ...], tuple[np.ndarray | None, ...], tuple[slice, ...]]:
     module = prepared.module
-    mapped = []
-    transforms = []
+    mapped: list[object] = []
+    transforms: list[np.ndarray | None] = []
     _, slices = _cone_blocks(cone)
     for block, block_slice in zip(*_cone_blocks(cone), strict=True):
         dimension = block_slice.stop - block_slice.start
@@ -188,7 +195,9 @@ def prepare_clarabel_policy(
     return _prepare_structure(program, policy)
 
 
-def _host_sparse_case(operator, batch_index: int, count: int, /):
+def _host_sparse_case(
+    operator: AbstractSparseLinearOperator, batch_index: int, count: int, /
+) -> sp.csr_matrix:
     storage = operator.sparse_storage()
     values = np.asarray(storage.values)
     if storage.batch_shape:
@@ -206,10 +215,11 @@ def _transformed_constraint_data(
     structure: _ClarabelStructure,
     batch_index: int,
     /,
-):
+) -> tuple[sp.csr_matrix | np.ndarray, np.ndarray]:
     count = int(np.prod(program.batch_shape)) if program.batch_shape else 1
-    if program.constraint_is_sparse:
-        matrix = _host_sparse_case(program.constraint_matrix, batch_index, count)
+    constraint_matrix = program.constraint_matrix
+    if isinstance(constraint_matrix, AbstractSparseLinearOperator):
+        matrix = _host_sparse_case(constraint_matrix, batch_index, count)
     else:
         matrix = np.asarray(program.constraint_matrix).reshape(
             (count, program.num_constraints, program.num_variables)
@@ -217,8 +227,8 @@ def _transformed_constraint_data(
     rhs = np.asarray(program.constraint_rhs).reshape((count, program.num_constraints))[
         batch_index
     ]
-    blocks = []
-    rhs_blocks = []
+    blocks: list[sp.csr_matrix | np.ndarray] = []
+    rhs_blocks: list[np.ndarray] = []
     for block_slice, transform in zip(
         structure.slices, structure.transforms, strict=True
     ):
@@ -248,12 +258,14 @@ def _transformed_constraint_data(
     matrix_output = (
         sp.vstack(
             tuple(
-                block if sp.issparse(block) else sp.csr_matrix(block) for block in blocks
+                sp.csr_matrix(block) if isinstance(block, np.ndarray) else block
+                for block in blocks
             ),
             format="csr",
         )
         if program.constraint_is_sparse
-        else np.concatenate(blocks, axis=0)
+        # Dense constraint programs only append host ndarray blocks.
+        else np.concatenate(cast("list[np.ndarray]", blocks), axis=0)
     )
     return matrix_output, np.concatenate(rhs_blocks, axis=0)
 
@@ -279,7 +291,7 @@ def _bound_duals(
     original_dimension: int,
     variables: int,
     /,
-):
+) -> tuple[np.ndarray, np.ndarray]:
     lower = np.zeros(variables)
     upper = np.zeros(variables)
     cursor = original_dimension
@@ -300,7 +312,7 @@ def _bound_duals(
     return lower, upper
 
 
-def _recession_bound_residual(program: ConicProgram, ray, /):
+def _recession_bound_residual(program: ConicProgram, ray: Array, /) -> Array:
     lower_finite = jnp.isfinite(program.lower_bounds)
     upper_finite = jnp.isfinite(program.upper_bounds)
     fixed = lower_finite & upper_finite & (program.lower_bounds == program.upper_bounds)
@@ -318,18 +330,18 @@ def _recession_bound_residual(program: ConicProgram, ray, /):
 
 def _audit_result(
     program: ConicProgram,
-    primal,
-    slack,
-    dual,
-    lower_dual,
-    upper_dual,
-    backend_status,
-    iterations,
-    policy,
-    backend_version,
+    primal: Array,
+    slack: Array,
+    dual: Array,
+    lower_dual: Array,
+    upper_dual: Array,
+    backend_status: Array,
+    iterations: Array,
+    policy: ConvexSolvePolicy,
+    backend_version: str,
     *,
-    backend="clarabel",
-):
+    backend: str = "clarabel",
+) -> ConvexProgramResult:
     dtype = program.linear.dtype
     quadratic_primal = _conic_quadratic_mv(program.quadratic, primal)
     objective = 0.5 * ein.contract("...i,...i->...", primal, quadratic_primal) + jnp.sum(
@@ -578,14 +590,15 @@ def solve_clarabel_program(
     linear = np.asarray(program.linear, dtype=np.float64).reshape(
         (count, program.num_variables)
     )
-    if program.quadratic is None:
+    program_quadratic = program.quadratic
+    if program_quadratic is None:
         quadratic = tuple(
             sp.csr_matrix((program.num_variables, program.num_variables))
             for _ in range(count)
         )
-    elif program.quadratic_is_sparse:
+    elif isinstance(program_quadratic, AbstractSparseLinearOperator):
         quadratic = tuple(
-            _host_sparse_case(program.quadratic, index, count) for index in range(count)
+            _host_sparse_case(program_quadratic, index, count) for index in range(count)
         )
     else:
         dense_quadratic = np.asarray(program.quadratic, dtype=np.float64).reshape(

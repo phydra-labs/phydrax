@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -31,14 +34,16 @@ from phydrax.linalg.eigen import (
 la = phx.linalg
 
 
-def _dense(matrix, *, space=None):
+def _dense(matrix: Any, *, space: Any = None) -> Any:
     return la.DenseLinearOperator(jnp.asarray(matrix), source=space, target=space)
 
 
 class _MatrixFreeOperator(la.AbstractLinearOperator):
     matrix: jax.Array
 
-    def __init__(self, matrix, /, *, properties=None, operator_id):
+    def __init__(
+        self, matrix: Any, /, *, properties: Any = None, operator_id: Any
+    ) -> None:
         matrix_ = jnp.asarray(matrix)
         space = la.ArraySpace((matrix_.shape[0],), dtype=matrix_.dtype)
         self.source = space
@@ -53,20 +58,21 @@ class _MatrixFreeOperator(la.AbstractLinearOperator):
         self.batch_shape = ()
         self.operator_id = operator_id
 
-    def mv(self, vector):
+    def mv(self, vector: Any) -> Any:
         return self.matrix @ self.source.validate(vector)
 
-    def transpose_mv(self, vector):
+    def transpose_mv(self, vector: Any) -> Any:
         return self.matrix.T @ self.target.validate(vector)
 
-    def adjoint_mv(self, vector):
+    def adjoint_mv(self, vector: Any) -> Any:
         return jnp.conj(self.matrix.T) @ self.target.validate(vector)
 
-    def _materialize(self):
+    # ty: ignore[invalid-method-override]
+    def _materialize(self) -> None:
         raise AssertionError("native Arnoldi must not materialize this operator")
 
 
-def test_dense_standard_and_generalized_eigenpairs_are_complex_and_paired():
+def test_dense_standard_and_generalized_eigenpairs_are_complex_and_paired() -> None:
     standard_matrix = jnp.asarray([[0.0, -1.0], [1.0, 0.0]])
     standard = general_eigensolve(GeneralEigenproblem(_dense(standard_matrix)))
 
@@ -117,7 +123,7 @@ def test_dense_standard_and_generalized_eigenpairs_are_complex_and_paired():
     )
 
 
-def test_dense_singular_pencil_reports_homogeneous_finite_and_infinite_modes():
+def test_dense_singular_pencil_reports_homogeneous_finite_and_infinite_modes() -> None:
     matrix = _dense(jnp.diag(jnp.asarray([2.0, 3.0])))
     singular_mass = _dense(jnp.diag(jnp.asarray([1.0, 0.0])))
     problem = GeneralEigenproblem(matrix, singular_mass)
@@ -142,7 +148,7 @@ def test_dense_singular_pencil_reports_homogeneous_finite_and_infinite_modes():
         )
 
 
-def test_restarted_arnoldi_shift_invert_and_cayley_target_interior_modes():
+def test_restarted_arnoldi_shift_invert_and_cayley_target_interior_modes() -> None:
     values = jnp.asarray([0.0, 2.0, 5.0, 8.0, 11.0])
     problem = GeneralEigenproblem(
         _MatrixFreeOperator(
@@ -183,7 +189,7 @@ def test_restarted_arnoldi_shift_invert_and_cayley_target_interior_modes():
     assert jnp.allclose(shift_invert.diagnostics.pairing_matrix, 1.0, atol=1e-7)
 
 
-def test_native_arnoldi_finite_mask_tracks_each_nonfinite_recovered_mode():
+def test_native_arnoldi_finite_mask_tracks_each_nonfinite_recovered_mode() -> None:
     matrix = 1.0e300 * jnp.eye(3)
     problem = GeneralEigenproblem(
         _MatrixFreeOperator(
@@ -214,7 +220,7 @@ def test_native_arnoldi_finite_mask_tracks_each_nonfinite_recovered_mode():
     assert result.status == int(GeneralEigenSolveStatus.NONFINITE_OUTPUT)
 
 
-def test_matrix_free_generalized_arnoldi_uses_certified_mass_and_full_pairing():
+def test_matrix_free_generalized_arnoldi_uses_certified_mass_and_full_pairing() -> None:
     dimension = 6
     mass_matrix = jnp.diag(jnp.linspace(1.0, 2.0, dimension))
     reduced = jnp.diag(jnp.arange(1.0, dimension + 1.0))
@@ -259,7 +265,7 @@ def test_matrix_free_generalized_arnoldi_uses_certified_mass_and_full_pairing():
     )
 
 
-def test_public_native_eigensolve_is_jittable_without_materialization():
+def test_public_native_eigensolve_is_jittable_without_materialization() -> None:
     values = jnp.asarray([1.0, 2.0, 4.0, 7.0, 11.0])
     problem = GeneralEigenproblem(
         _MatrixFreeOperator(
@@ -286,7 +292,7 @@ def test_public_native_eigensolve_is_jittable_without_materialization():
     assert jnp.all(result.diagnostics.converged_mask)
 
 
-def test_targeted_native_simple_derivative_is_matrix_free_and_jittable():
+def test_targeted_native_simple_derivative_is_matrix_free_and_jittable() -> None:
     problem = GeneralEigenproblem(
         _MatrixFreeOperator(
             jnp.diag(jnp.asarray([1.0, 2.0, 4.0, 7.0, 11.0])),
@@ -324,14 +330,16 @@ def test_targeted_native_simple_derivative_is_matrix_free_and_jittable():
 
     assert bool(derivative.successful)
     assert bool(compiled_derivative.successful)
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(derivative.scalar_derivative, 5.0, atol=1e-7)
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(compiled_derivative.scalar_derivative, 5.0, atol=1e-7)
     assert (
         derivative.provenance.method == "matrix-free paired simple-mode pencil quotient"
     )
 
 
-def test_native_partial_convergence_and_failure_policy_are_residual_driven():
+def test_native_partial_convergence_and_failure_policy_are_residual_driven() -> None:
     values = jnp.asarray([1.0, 2.0, 4.0, 7.0, 11.0])
     problem = GeneralEigenproblem(
         _MatrixFreeOperator(
@@ -365,7 +373,7 @@ def test_native_partial_convergence_and_failure_policy_are_residual_driven():
         jax.block_until_ready(failed.eigenvalues)
 
 
-def test_native_plan_rejects_retained_workspace_and_matvec_budget_overruns():
+def test_native_plan_rejects_retained_workspace_and_matvec_budget_overruns() -> None:
     problem = GeneralEigenproblem(
         _MatrixFreeOperator(
             jnp.diag(jnp.asarray([1.0, 2.0, 4.0, 7.0, 11.0])),
@@ -405,7 +413,7 @@ def test_native_plan_rejects_retained_workspace_and_matvec_budget_overruns():
             )
 
 
-def test_general_eigen_preparation_refresh_preserves_symbolic_identity():
+def test_general_eigen_preparation_refresh_preserves_symbolic_identity() -> None:
     first = GeneralEigenproblem(
         _dense(jnp.asarray([[1.0, 1.0], [0.0, 2.0]])),
         problem_id="refreshable-general-eigen",
@@ -426,7 +434,7 @@ def test_general_eigen_preparation_refresh_preserves_symbolic_identity():
     )
 
 
-def test_repeated_cluster_derivative_returns_basis_invariant_projected_data():
+def test_repeated_cluster_derivative_returns_basis_invariant_projected_data() -> None:
     matrix = jnp.diag(jnp.asarray([2.0, 2.0, 5.0]))
     perturbation = jnp.asarray(
         [
@@ -492,12 +500,13 @@ def test_repeated_cluster_derivative_returns_basis_invariant_projected_data():
         atol=1e-9,
     )
     assert jnp.allclose(derivative.trace_derivative, jnp.trace(perturbation[:2, :2]))
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(simple_derivative.scalar_derivative, 4.0)
     assert not bool(invalid_scalar.successful)
     assert invalid_scalar.scalar_derivative is None
 
 
-def test_generalized_simple_eigenvalue_derivative_includes_mass_perturbation():
+def test_generalized_simple_eigenvalue_derivative_includes_mass_perturbation() -> None:
     matrix = jnp.diag(jnp.asarray([2.0, 6.0]))
     mass = jnp.diag(jnp.asarray([1.0, 2.0]))
     prepared = prepare_general_eigensolve(
@@ -513,10 +522,11 @@ def test_generalized_simple_eigenvalue_derivative_includes_mass_perturbation():
     )
 
     assert bool(derivative.successful)
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(derivative.scalar_derivative, 0.5)
 
 
-def test_cluster_projector_derivative_uses_only_external_spectral_gaps():
+def test_cluster_projector_derivative_uses_only_external_spectral_gaps() -> None:
     matrix = jnp.diag(jnp.asarray([2.0, 2.0, 5.0]))
     perturbation = jnp.asarray(
         [
@@ -552,7 +562,7 @@ def test_cluster_projector_derivative_uses_only_external_spectral_gaps():
     assert jnp.allclose(derivative.value, expected, atol=1e-9)
 
 
-def test_general_eigenvectors_preserve_complexified_pytree_space_structure():
+def test_general_eigenvectors_preserve_complexified_pytree_space_structure() -> None:
     structure = {
         "position": jax.ShapeDtypeStruct((1,), jnp.float64),
         "velocity": jax.ShapeDtypeStruct((1,), jnp.float64),

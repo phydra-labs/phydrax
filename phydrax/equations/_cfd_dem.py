@@ -9,7 +9,8 @@ import abc
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -66,7 +67,7 @@ class StokesDragPlan(AbstractHydrodynamicClosurePlan):
         *,
         maximum_reynolds: float = 1.0,
         include_pressure_gradient: bool = True,
-    ):
+    ) -> None:
         maximum = float(maximum_reynolds)
         if not np.isfinite(maximum) or maximum <= 0.0:
             raise ValueError("maximum_reynolds must be finite and positive.")
@@ -82,12 +83,12 @@ class StokesDragPlan(AbstractHydrodynamicClosurePlan):
 
     def evaluate(
         self,
-        sample,
-        particle_velocity,
-        particle_radius,
-        particle_volume,
+        sample: FluidParticleSample,
+        particle_velocity: Array,
+        particle_radius: Array,
+        particle_volume: Array,
         /,
-    ):
+    ) -> HydrodynamicClosureResult:
         slip = sample.velocity - particle_velocity
         speed = jnp.linalg.norm(slip, axis=-1)
         diameter = 2.0 * particle_radius
@@ -145,7 +146,7 @@ class UnresolvedCFDEMCouplingPlan(StrictModule, NonTrainableState):
         *,
         minimum_porosity: float = 1.0e-3,
         maximum_porosity: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedSoftSphereDEMDynamics):
             raise TypeError("dynamics must be PreparedSoftSphereDEMDynamics.")
         if not isinstance(transfer, PreparedMeshParticleGridSplat):

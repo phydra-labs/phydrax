@@ -1,4 +1,5 @@
 from importlib.util import find_spec
+from typing import Any
 
 import build123d as bd
 import numpy as np
@@ -18,7 +19,7 @@ pytestmark = [
 ]
 
 
-def _planar_face(points):
+def _planar_face(points: Any) -> Any:
     polygon = BRepBuilderAPI_MakePolygon()
     for x, y in points:
         polygon.Add(gp_Pnt(float(x), float(y), 0.0))
@@ -26,7 +27,7 @@ def _planar_face(points):
     return BRepBuilderAPI_MakeFace(polygon.Wire()).Face()
 
 
-def _source(path, shape=None):
+def _source(path: Any, shape: Any = None) -> Any:
     persisted = path.with_suffix(".brep")
     model = phx.geometry.persist_occt_shape(
         (
@@ -44,9 +45,9 @@ def _source(path, shape=None):
 
 @pytest.mark.parametrize("geometry_order", (1, 2))
 def test_real_gmsh_volume_result_is_audited_associated_and_solver_ready(
-    tmp_path,
-    geometry_order,
-):
+    tmp_path: Any,
+    geometry_order: Any,
+) -> None:
     if find_spec("gmsh") is None:
         pytest.skip("optional gmsh package is not installed")
     source = _source(tmp_path / "cube.step")
@@ -77,6 +78,7 @@ def test_real_gmsh_volume_result_is_audited_associated_and_solver_ready(
     assert result.trace.successful
     assert result.boundary is not None
     assert result.associations[0].complete
+    # ty: ignore[unresolved-attribute]
     assert result.geometry.elements[0].degree == geometry_order
     assert result.mesh.blocks[0].cell_kind == "tetrahedron"
     assert result.coordinate_contract.spatial_id == source.coordinate_contract.spatial_id
@@ -88,11 +90,11 @@ def test_real_gmsh_volume_result_is_audited_associated_and_solver_ready(
     assert prepared.mesh.mesh_id == result.mesh.mesh_id
 
 
-def _provider():
+def _provider() -> Any:
     return phx.meshing.GmshProvider()
 
 
-def _scope(source, dimension, identifiers):
+def _scope(source: Any, dimension: Any, identifiers: Any) -> Any:
     return phx.meshing.MeshingScope(
         source.report.source_id,
         source.report.source_revision,
@@ -103,7 +105,7 @@ def _scope(source, dimension, identifiers):
     )
 
 
-def _face_scope(source, axis, coordinate):
+def _face_scope(source: Any, axis: Any, coordinate: Any) -> Any:
     points = np.asarray(source.model.mesh_vertices)
     triangles = points[np.asarray(source.model.mesh_faces)]
     face_ids = np.asarray(source.model.triangle_face_ids)
@@ -114,7 +116,7 @@ def _face_scope(source, axis, coordinate):
     return _scope(source, 2, selected)
 
 
-def _edge_scope(source, axis, coordinate):
+def _edge_scope(source: Any, axis: Any, coordinate: Any) -> Any:
     from OCP.BRepAdaptor import BRepAdaptor_Curve
     from OCP.TopAbs import TopAbs_EDGE
     from OCP.TopoDS import TopoDS
@@ -123,6 +125,7 @@ def _edge_scope(source, axis, coordinate):
 
     shape, _, _ = read_occt_shape(source.report.source_id)
     selected = []
+    # ty: ignore[unresolved-attribute]
     for index, edge in enumerate(_explore_unique(shape, TopAbs_EDGE, TopoDS.Edge_s)):
         curve = BRepAdaptor_Curve(edge)
         values = [
@@ -137,8 +140,15 @@ def _edge_scope(source, axis, coordinate):
 
 
 def _specification(
-    provider, source, dimension, policy, *, order=2, layers=(), periodic=()
-):
+    provider: Any,
+    source: Any,
+    dimension: Any,
+    policy: Any,
+    *,
+    order: Any = 2,
+    layers: Any = (),
+    periodic: Any = (),
+) -> Any:
     scope = provider.whole_scope(source, dimension)
     target = phx.meshing.CellMeshingTarget(dimension, 3, policy, geometry_order=order)
     size = phx.meshing.UniformSizeControl(
@@ -163,7 +173,7 @@ def _specification(
     )
 
 
-def _assert_curved_geometry(result):
+def _assert_curved_geometry(result: Any) -> None:
     elements, routes, coordinates = result.geometry.resolve(result.mesh)
     for element, route in zip(elements, routes, strict=True):
         # Evaluate canonical maps, independently of Gmsh's node ordering and audit.
@@ -186,8 +196,8 @@ def _assert_curved_geometry(result):
 
 @pytest.mark.parametrize("dimension", (2, 3))
 def test_real_periodic_planar_and_volume_meshes_match_all_quadratic_nodes(
-    tmp_path, dimension
-):
+    tmp_path: Any, dimension: Any
+) -> None:
     provider = _provider()
     source = _source(
         tmp_path / "periodic.step",
@@ -232,7 +242,9 @@ def test_real_periodic_planar_and_volume_meshes_match_all_quadratic_nodes(
 
 
 @pytest.mark.parametrize("mixed", (False, True))
-def test_real_planar_quadrilateral_and_mixed_output_keeps_quadratic_maps(tmp_path, mixed):
+def test_real_planar_quadrilateral_and_mixed_output_keeps_quadratic_maps(
+    tmp_path: Any, mixed: Any
+) -> None:
     provider = _provider()
     # An odd boundary subdivision admits mixed recombination; the rectangle
     # can legitimately become all-quadrilateral even with partial recombination.
@@ -262,7 +274,7 @@ def test_real_planar_quadrilateral_and_mixed_output_keeps_quadratic_maps(tmp_pat
     _assert_curved_geometry(result)
 
 
-def test_real_whole_volume_sweep_has_exact_prism_schedule(tmp_path):
+def test_real_whole_volume_sweep_has_exact_prism_schedule(tmp_path: Any) -> None:
     provider = _provider()
     source = _source(tmp_path / "sweep.step")
     first = 1.0 / (1.0 + 1.2 + 1.2**2 + 1.2**3)
@@ -312,7 +324,8 @@ def test_real_whole_volume_sweep_has_exact_prism_schedule(tmp_path):
     _assert_curved_geometry(result)
 
 
-def test_real_curved_tetrahedron_audit_detects_inversion_with_valid_corners():
+def test_real_curved_tetrahedron_audit_detects_inversion_with_valid_corners() -> None:
+    # ty: ignore[unresolved-import]
     import gmsh
 
     from phydrax.meshing.providers._gmsh_elements import _audit_jacobians, _element_rows
@@ -333,7 +346,8 @@ def test_real_curved_tetrahedron_audit_detects_inversion_with_valid_corners():
         assert failure.value.category is phx.meshing.MeshingFailureCategory.AUDIT_FAILED
 
 
-def test_real_gmsh_session_releases_global_ownership_after_body_failure():
+def test_real_gmsh_session_releases_global_ownership_after_body_failure() -> None:
+    # ty: ignore[unresolved-import]
     import gmsh
 
     provider = _provider()
@@ -350,8 +364,8 @@ def test_real_gmsh_session_releases_global_ownership_after_body_failure():
 
 
 def test_open_cad_model_is_rejected_for_volume_meshing_without_weakening_solid_source(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     provider = _provider()
     model = _source(
         tmp_path / "open-sheet.brep",
@@ -386,7 +400,7 @@ def test_open_cad_model_is_rejected_for_volume_meshing_without_weakening_solid_s
     )
 
 
-def test_gmsh_preflight_rejects_unlowered_local_curvature(tmp_path):
+def test_gmsh_preflight_rejects_unlowered_local_curvature(tmp_path: Any) -> None:
     source = _source(tmp_path / "local-sizing.step")
     provider = _provider()
     whole = provider.whole_scope(source, 2)
@@ -410,7 +424,9 @@ def test_gmsh_preflight_rejects_unlowered_local_curvature(tmp_path):
     )
 
 
-def test_real_gmsh_hard_size_compliance_has_no_factor_two_allowance(tmp_path):
+def test_real_gmsh_hard_size_compliance_has_no_factor_two_allowance(
+    tmp_path: Any,
+) -> None:
     source = _source(tmp_path / "hard-size.step")
     provider = _provider()
     scope = provider.whole_scope(source, 3)
@@ -438,7 +454,7 @@ def test_real_gmsh_hard_size_compliance_has_no_factor_two_allowance(tmp_path):
     assert failure.value.category is phx.meshing.MeshingFailureCategory.COMPLIANCE_FAILED
 
 
-def _two_box_shape(*, conformal):
+def _two_box_shape(*, conformal: Any) -> Any:
     from OCP.BOPAlgo import BOPAlgo_Splitter
     from OCP.BRep import BRep_Builder
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
@@ -463,7 +479,7 @@ def _two_box_shape(*, conformal):
     return compound
 
 
-def _semantic_source(path, *, conformal=True):
+def _semantic_source(path: Any, *, conformal: Any = True) -> Any:
     model = phx.geometry.persist_occt_shape(
         _two_box_shape(conformal=conformal),
         path,
@@ -476,13 +492,13 @@ def _semantic_source(path, *, conformal=True):
 
 
 def _semantic_specification(
-    provider,
-    source,
+    provider: Any,
+    source: Any,
     *,
-    order=1,
-    size_controls=None,
-    interface_required=True,
-):
+    order: Any = 1,
+    size_controls: Any = None,
+    interface_required: Any = True,
+) -> Any:
     whole = provider.whole_scope(source, 3)
     left_scope = provider.entity_scope(source, source.solid_ids[0])
     right_scope = provider.entity_scope(source, source.solid_ids[1])
@@ -550,8 +566,8 @@ def _semantic_specification(
 
 @pytest.mark.parametrize("geometry_order", (1, 2))
 def test_real_semantic_multi_region_mesh_preserves_ownership_and_interface(
-    tmp_path, geometry_order
-):
+    tmp_path: Any, geometry_order: Any
+) -> None:
     provider = _provider()
     source = _semantic_source(tmp_path / f"partition-{geometry_order}.brep")
     specification, regions = _semantic_specification(
@@ -597,7 +613,9 @@ def test_real_semantic_multi_region_mesh_preserves_ownership_and_interface(
         _assert_curved_geometry(result)
 
 
-def test_real_persisted_semantic_source_replays_with_stable_identity(tmp_path):
+def test_real_persisted_semantic_source_replays_with_stable_identity(
+    tmp_path: Any,
+) -> None:
     provider = _provider()
     path = tmp_path / "replay-partition.brep"
     source = _semantic_source(path)
@@ -622,7 +640,9 @@ def test_real_persisted_semantic_source_replays_with_stable_identity(tmp_path):
     assert failure.value.category is phx.meshing.MeshingFailureCategory.INVALID_SOURCE
 
 
-def test_semantic_region_ownership_conflict_is_rejected_by_contract(tmp_path):
+def test_semantic_region_ownership_conflict_is_rejected_by_contract(
+    tmp_path: Any,
+) -> None:
     provider = _provider()
     source = _semantic_source(tmp_path / "ownership-conflict.brep")
     whole = provider.whole_scope(source, 3)
@@ -655,7 +675,9 @@ def test_semantic_region_ownership_conflict_is_rejected_by_contract(tmp_path):
         )
 
 
-def test_real_nonconformal_touching_solids_are_rejected_before_generation(tmp_path):
+def test_real_nonconformal_touching_solids_are_rejected_before_generation(
+    tmp_path: Any,
+) -> None:
     provider = _provider()
     source = _semantic_source(
         tmp_path / "ambiguous-touching-partition.brep", conformal=False
@@ -668,7 +690,9 @@ def test_real_nonconformal_touching_solids_are_rejected_before_generation(tmp_pa
     assert failure.value.category is phx.meshing.MeshingFailureCategory.INVALID_SOURCE
 
 
-def test_real_solid_scoped_uniform_size_refines_only_selected_region(tmp_path):
+def test_real_solid_scoped_uniform_size_refines_only_selected_region(
+    tmp_path: Any,
+) -> None:
     provider = _provider()
     source = _semantic_source(tmp_path / "scoped-size-partition.brep")
     whole = provider.whole_scope(source, 3)

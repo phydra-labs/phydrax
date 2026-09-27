@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -61,7 +64,7 @@ from phydrax.graph._matrix_gauge import MatrixGaugeLinkSpace
 from phydrax.metrix._complex_matrix_manifold import SpecialUnitaryGroup
 
 
-def _su3_square_geometry(*, decomposition=None, shape=(2, 2)):
+def _su3_square_geometry(*, decomposition: Any = None, shape: Any = (2, 2)) -> Any:
     boundary = LatticeBoundaryPhasePlan(
         TensorTopology(("x", "t"), shape, periodic=(True, True)),
         jnp.ones((2,), dtype=jnp.complex128),
@@ -120,7 +123,7 @@ def _su3_square_geometry(*, decomposition=None, shape=(2, 2)):
     )
 
 
-def test_gauge_normalization_topology_and_flow_identities():
+def test_gauge_normalization_topology_and_flow_identities() -> None:
     plan = HypercubicGaugeObservablePlan(
         (2, 2, 2, 2),
         lattice_spacing=0.125,
@@ -132,6 +135,7 @@ def test_gauge_normalization_topology_and_flow_identities():
 
     np.testing.assert_allclose(measured.mean_plaquette, 1.0, atol=1.0e-13)
     np.testing.assert_allclose(measured.wilson_action_density, 0.0, atol=1.0e-13)
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(measured.topological_charge, 0.0, atol=1.0e-13)
     assert measured.topology_status == "measured"
     assert measured.topology_id == plan.topology_id
@@ -158,7 +162,7 @@ def test_gauge_normalization_topology_and_flow_identities():
     np.testing.assert_allclose(flowed.mean_plaquette, 1.0, atol=1.0e-12)
 
 
-def test_meson_and_baryon_contractions_obey_declared_spatial_normalization():
+def test_meson_and_baryon_contractions_obey_declared_spatial_normalization() -> None:
     spin, color = 2, 3
     identity = jnp.eye(spin * color, dtype=jnp.complex128).reshape(
         (spin, color, spin, color)
@@ -201,7 +205,7 @@ def test_meson_and_baryon_contractions_obey_declared_spatial_normalization():
     np.testing.assert_allclose(baryon, jnp.full((2,), 3.0))
 
 
-def test_measurement_streams_and_segment_merge_exclude_thermalization():
+def test_measurement_streams_and_segment_merge_exclude_thermalization() -> None:
     schedule = MeasurementSchedule(
         12,
         thermalization_trajectories=4,
@@ -284,7 +288,7 @@ def test_measurement_streams_and_segment_merge_exclude_thermalization():
         )
 
 
-def _continuum_data(spacings, site_counts):
+def _continuum_data(spacings: Any, site_counts: Any) -> Any:
     spacings = np.asarray(spacings, dtype="float64")
     sites = np.asarray(site_counts, dtype="int64")
     extents = spacings * sites
@@ -306,7 +310,7 @@ def _continuum_data(spacings, site_counts):
     )
 
 
-def _continuum_plan():
+def _continuum_plan() -> Any:
     variations = (
         ContinuumSystematicVariation(
             cutoff_power=2.0,
@@ -332,7 +336,7 @@ def _continuum_plan():
     )
 
 
-def test_correlated_continuum_fit_and_resolution_volume_abstention():
+def test_correlated_continuum_fit_and_resolution_volume_abstention() -> None:
     data = _continuum_data(
         (0.12, 0.12, 0.09, 0.09, 0.06, 0.06),
         (24, 32, 32, 40, 48, 64),
@@ -341,6 +345,7 @@ def test_correlated_continuum_fit_and_resolution_volume_abstention():
     assert result.status == "complete"
     assert len(result.fits) == 2
     np.testing.assert_allclose(result.fits[0].continuum_value, 1.25, atol=2.0e-3)
+    # ty: ignore[invalid-argument-type]
     assert float(result.total_standard_error) >= float(result.statistical_standard_error)
 
     resolution_failure = run_continuum_study(
@@ -397,7 +402,7 @@ def test_correlated_continuum_fit_and_resolution_volume_abstention():
     assert "insufficient-distinct-spatial-volumes" not in mixed.abstention_reasons
 
 
-def test_small_volume_dynamical_recipes_lower_to_native_contracts():
+def test_small_volume_dynamical_recipes_lower_to_native_contracts() -> None:
     geometry = _su3_square_geometry()
     schedule = MeasurementSchedule(
         6,
@@ -488,7 +493,9 @@ def test_small_volume_dynamical_recipes_lower_to_native_contracts():
         trajectory_steps=1,
     )
     prepared_clover = prepare_wilson_clover_nf2_recipe(clover, links)
+    # ty: ignore[unresolved-attribute]
     assert prepared_clover.dirac.inverse_evidence.storage_bytes > 0
+    # ty: ignore[unresolved-attribute]
     assert bool(jnp.all(prepared_clover.dirac.inverse_evidence.finite))
 
     staggered = StaggeredHisqStyleRHMCRecipe(

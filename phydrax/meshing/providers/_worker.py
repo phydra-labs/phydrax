@@ -94,7 +94,7 @@ class ProviderWorker:
         arguments: Sequence[str] = (),
         policy: NativeWorkerPolicy | None = None,
         environment: Mapping[str, str] | None = None,
-    ):
+    ) -> None:
         self.provider = str(provider)
         self.executable = None if executable is None else str(executable)
         self.environment_variable = str(environment_variable)

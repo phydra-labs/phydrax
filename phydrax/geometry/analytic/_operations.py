@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from dataclasses import replace
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn, TypeAlias
 from uuid import uuid4
 
 import equinox as eqx
@@ -14,14 +15,16 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+from jax import Array
 from jax.scipy.special import logsumexp
-from jaxtyping import Array
 
 import phydrax.ein as ein
 from phydrax._strict import StrictModule
 
-from ..._mass import EstimatedMass, scale_mass
+from ..._mass import EstimatedMass, Mass, scale_mass
 from ..._numerics._quadrature_rules import gauss_legendre_data
+from ..._polynomial._cubature import CubatureReference
+from ...typing import parse, PRNGKey
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
 from .._capabilities import (
     ClosestPointProvider,
@@ -62,6 +65,7 @@ from .._validity import (
 )
 from ..design._schema import (
     _ParameterCollector,
+    DesignState,
     ParameterBinding,
     ParameterId,
 )
@@ -73,7 +77,7 @@ class RigidFrame(StrictModule):
     rotation: Array
     translation: Array
 
-    def __init__(self, rotation: Any, translation: Any):
+    def __init__(self, rotation: Any, translation: Any) -> None:
         rotation_host = np.asarray(rotation, dtype=np.float64)
         translation_host = np.asarray(translation, dtype=np.float64)
         if rotation_host.ndim != 2 or rotation_host.shape[0] != rotation_host.shape[1]:
@@ -145,7 +149,7 @@ class _AffineBoundaryMap(AbstractBoundaryMap):
     linear: Array
     offset: Array
 
-    def __init__(self, base: AbstractBoundaryMap, linear: Array, offset: Array):
+    def __init__(self, base: AbstractBoundaryMap, linear: Array, offset: Array) -> None:
         self.base = base
         self.linear = jnp.asarray(linear, dtype=jnp.float64)
         self.offset = jnp.asarray(offset, dtype=jnp.float64)
@@ -172,7 +176,7 @@ class _AffineBoundaryMap(AbstractBoundaryMap):
         flat_indices = indices.reshape((-1,))
         flat_reference = reference_.reshape((-1, self.reference_dimension))
 
-        def differential(index, coordinate):
+        def differential(index: Array, coordinate: Array) -> Array:
             return jax.jacfwd(lambda value: self.base.map(index, value))(coordinate)
 
         base_differential = jax.vmap(differential)(flat_indices, flat_reference)
@@ -192,7 +196,7 @@ class _AffineCubatureMap(AbstractCubatureMap):
         base: AbstractCubatureMap,
         linear: Array,
         offset: Array,
-    ):
+    ) -> None:
         self.base = base
         self.linear = jnp.asarray(linear, dtype=jnp.float64)
         self.offset = jnp.asarray(offset, dtype=jnp.float64)
@@ -202,7 +206,7 @@ class _AffineCubatureMap(AbstractCubatureMap):
         return self.base.num_charts
 
     @property
-    def reference_domain(self):
+    def reference_domain(self) -> CubatureReference:
         return self.base.reference_domain
 
     @property
@@ -292,7 +296,7 @@ class RigidTransform(GeometrySource):
 
     def __init__(
         self, child: GeometrySource, frame: RigidFrame, *, feature_id: str | None = None
-    ):
+    ) -> None:
         if not isinstance(child, GeometrySource):
             raise TypeError("child must be a GeometrySource.")
         if not isinstance(frame, RigidFrame):
@@ -331,37 +335,44 @@ class _RigidTransformKernel(GeometryKernel):
     translation: ParameterBinding = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, child, rotation, translation, *, source_id):
+    def __init__(
+        self,
+        child: GeometryKernel,
+        rotation: ParameterBinding,
+        translation: ParameterBinding,
+        *,
+        source_id: str,
+    ) -> None:
         self.child = child
         self.rotation = rotation
         self.translation = translation
         self.source_id = source_id
 
     @property
-    def ambient_dimension(self):
+    def ambient_dimension(self) -> int:
         return self.child.ambient_dimension
 
     @property
-    def intrinsic_dimension(self):
+    def intrinsic_dimension(self) -> int:
         return self.child.intrinsic_dimension
 
     @property
-    def kind(self):
+    def kind(self) -> GeometryKind:
         return self.child.kind
 
     @property
-    def capabilities(self):
+    def capabilities(self) -> frozenset[GeometryCapability]:
         return self.child.capabilities
 
     @property
-    def field_certificate(self):
+    def field_certificate(self) -> FieldCertificate:
         certificate = self.child.field_certificate
         return replace(
             certificate,
             provenance=(*certificate.provenance, "rigid_transform"),
         )
 
-    def geometry_validity(self, state, /):
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
         rotation, _ = self._parameters(state)
         identity = jnp.eye(rotation.shape[0], dtype=rotation.dtype)
         tolerance = 10.0 * jnp.sqrt(jnp.finfo(rotation.dtype).eps)
@@ -391,24 +402,24 @@ class _RigidTransformKernel(GeometryKernel):
             contract_id="rigid_transform",
         )
 
-    def _parameters(self, state):
+    def _parameters(self, state: DesignState) -> tuple[Array, Array]:
         return self.rotation.read(state), self.translation.read(state)
 
-    def _local(self, state, points):
+    def _local(self, state: DesignState, points: Array) -> Array:
         rotation, translation = self._parameters(state)
         return (jnp.asarray(points) - translation) @ rotation
 
-    def boundary_field(self, state, points, /):
+    def boundary_field(self, state: DesignState, points: Array, /) -> Array:
         return self.child.boundary_field(state, self._local(state, points))
 
-    def contains(self, state, points, /):
+    def contains(self, state: DesignState, points: Array, /) -> Array:
         return self.child.contains(state, self._local(state, points))
 
-    def boundary_normal(self, state, points, /):
+    def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
         rotation, _ = self._parameters(state)
         return self.child.boundary_normal(state, self._local(state, points)) @ rotation.T
 
-    def closest_point(self, state, points, /):
+    def closest_point(self, state: DesignState, points: Array, /) -> ClosestPointResult:
         if not isinstance(self.child, ClosestPointProvider):
             raise TypeError("Transformed child lacks a closest-point provider.")
         rotation, translation = self._parameters(state)
@@ -432,7 +443,9 @@ class _RigidTransformKernel(GeometryKernel):
             exact_to_physical=result.exact_to_physical,
         )
 
-    def contact_curvature(self, state, points, /):
+    def contact_curvature(
+        self, state: DesignState, points: Array, /
+    ) -> ContactCurvatureResult:
         if not isinstance(self.child, ContactCurvatureProvider):
             raise TypeError("Transformed child lacks contact-curvature provider.")
         result = self.child.contact_curvature(state, self._local(state, points))
@@ -440,7 +453,7 @@ class _RigidTransformKernel(GeometryKernel):
             raise TypeError("Child curvature query returned an invalid result.")
         return result
 
-    def support_map(self, state, directions, /):
+    def support_map(self, state: DesignState, directions: Array, /) -> Array:
         if not isinstance(self.child, SupportMapProvider):
             raise TypeError("Transformed child lacks a support-map provider.")
         rotation, translation = self._parameters(state)
@@ -448,12 +461,12 @@ class _RigidTransformKernel(GeometryKernel):
         support = self.child.support_map(state, directions_ @ rotation)
         return support @ rotation.T + translation
 
-    def seam_residual(self, state, /):
+    def seam_residual(self, state: DesignState, /) -> Array:
         if not isinstance(self.child, SeamDiagnosticsProvider):
             raise TypeError("Transformed child lacks a seam-diagnostics provider.")
         return self.child.seam_residual(state)
 
-    def bounds(self, state, /):
+    def bounds(self, state: DesignState, /) -> Array:
         rotation, translation = self._parameters(state)
         bounds = self.child.bounds(state)
         center = 0.5 * (bounds[0] + bounds[1])
@@ -467,19 +480,27 @@ class _RigidTransformKernel(GeometryKernel):
             )
         )
 
-    def measure(self, state, /):
+    def measure(self, state: DesignState, /) -> Array:
         return self.child.measure(state)
 
-    def boundary_measure(self, state, /):
+    def boundary_measure(self, state: DesignState, /) -> Array:
         return self.child.boundary_measure(state)
 
-    def interior_mass(self, state, /):
+    def interior_mass(self, state: DesignState, /) -> Mass:
         return self.child.interior_mass(state)
 
-    def boundary_mass(self, state, /):
+    def boundary_mass(self, state: DesignState, /) -> Mass:
         return self.child.boundary_mass(state)
 
-    def sample_interior(self, state, num_points, /, *, key, plan=None):
+    def sample_interior(
+        self,
+        state: DesignState,
+        num_points: int,
+        /,
+        *,
+        key: PRNGKey,
+        plan: RejectionSamplingPlan | None = None,
+    ) -> SamplingResult:
         rotation, translation = self._parameters(state)
         result = self.child.sample_interior(state, num_points, key=key, plan=plan)
         return SamplingResult(
@@ -490,7 +511,9 @@ class _RigidTransformKernel(GeometryKernel):
             strata=result.strata,
         )
 
-    def sample_boundary(self, state, num_points, /, *, key):
+    def sample_boundary(
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
+    ) -> SamplingResult:
         rotation, translation = self._parameters(state)
         result = self.child.sample_boundary(state, num_points, key=key)
         return SamplingResult(
@@ -501,7 +524,7 @@ class _RigidTransformKernel(GeometryKernel):
             strata=result.strata,
         )
 
-    def boundary_atlas(self, state, /):
+    def boundary_atlas(self, state: DesignState, /) -> BoundaryAtlas:
         rotation, translation = self._parameters(state)
         atlas = self.child.boundary_atlas(state)
         return BoundaryAtlas(
@@ -514,7 +537,9 @@ class _RigidTransformKernel(GeometryKernel):
             trim_domains=atlas.trim_domains,
         )
 
-    def cubature_atlas(self, state, component: CubatureComponent, /) -> CubatureAtlas:
+    def cubature_atlas(
+        self, state: DesignState, component: CubatureComponent, /
+    ) -> CubatureAtlas:
         rotation, translation = self._parameters(state)
         atlas = self.child.cubature_atlas(state, component)
         return CubatureAtlas(
@@ -545,7 +570,7 @@ class Scaling(GeometrySource):
         *,
         center: Any | None = None,
         feature_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(child, GeometrySource):
             raise TypeError("child must be a GeometrySource.")
         scale_host = np.asarray(scale, dtype=np.float64)
@@ -580,7 +605,7 @@ class Scaling(GeometrySource):
         self.uniform = uniform
         self.feature_id = feature_id or f"scaling-{uuid4().hex}"
 
-    def _compile(self, context):
+    def _compile(self, context: _ParameterCollector) -> GeometryKernel:
         child = self.child._compile(context)
         scale = self.scale
         center = self.center
@@ -619,7 +644,15 @@ class _ScalingKernel(GeometryKernel):
     uniform: bool = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, child, scale, center, *, uniform, source_id):
+    def __init__(
+        self,
+        child: GeometryKernel,
+        scale: ParameterBinding,
+        center: ParameterBinding,
+        *,
+        uniform: bool,
+        source_id: str,
+    ) -> None:
         self.child = child
         self.scale = scale
         self.center = center
@@ -627,19 +660,19 @@ class _ScalingKernel(GeometryKernel):
         self.source_id = source_id
 
     @property
-    def ambient_dimension(self):
+    def ambient_dimension(self) -> int:
         return self.child.ambient_dimension
 
     @property
-    def intrinsic_dimension(self):
+    def intrinsic_dimension(self) -> int:
         return self.child.intrinsic_dimension
 
     @property
-    def kind(self):
+    def kind(self) -> GeometryKind:
         return self.child.kind
 
     @property
-    def capabilities(self):
+    def capabilities(self) -> frozenset[GeometryCapability]:
         if self.uniform:
             return self.child.capabilities
         unsupported = {
@@ -655,7 +688,7 @@ class _ScalingKernel(GeometryKernel):
         )
 
     @property
-    def field_certificate(self):
+    def field_certificate(self) -> FieldCertificate:
         certificate = self.child.field_certificate
         return FieldCertificate(
             certificate.zero_set_accuracy,
@@ -679,7 +712,7 @@ class _ScalingKernel(GeometryKernel):
             topology_identity=certificate.topology_identity,
         )
 
-    def geometry_validity(self, state, /):
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
         scale = self.scale.read(state)
         spread = jnp.max(jnp.abs(scale - scale[0]))
         classification_valid = spread == 0.0 if self.uniform else jnp.asarray(True)
@@ -705,7 +738,7 @@ class _ScalingKernel(GeometryKernel):
             contract_id="scaling",
         )
 
-    def _parameters(self, state):
+    def _parameters(self, state: DesignState) -> tuple[Array, Array]:
         scale = self.scale.read(state)
         center = self.center.read(state)
         invalid = (
@@ -720,25 +753,25 @@ class _ScalingKernel(GeometryKernel):
         )
         return scale, center
 
-    def _local(self, state, points):
+    def _local(self, state: DesignState, points: Array) -> Array:
         scale, center = self._parameters(state)
         return center + (jnp.asarray(points) - center) / scale
 
-    def boundary_field(self, state, points, /):
+    def boundary_field(self, state: DesignState, points: Array, /) -> Array:
         scale, _ = self._parameters(state)
         return self.child.boundary_field(state, self._local(state, points)) * jnp.min(
             scale
         )
 
-    def contains(self, state, points, /):
+    def contains(self, state: DesignState, points: Array, /) -> Array:
         return self.child.contains(state, self._local(state, points))
 
-    def boundary_normal(self, state, points, /):
+    def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
         scale, _ = self._parameters(state)
         normal = self.child.boundary_normal(state, self._local(state, points)) / scale
         return normal / jnp.linalg.norm(normal, axis=-1, keepdims=True)
 
-    def closest_point(self, state, points, /):
+    def closest_point(self, state: DesignState, points: Array, /) -> ClosestPointResult:
         if not self.uniform:
             raise NotImplementedError(
                 "Nonuniform scaling does not preserve closest-point maps."
@@ -767,7 +800,9 @@ class _ScalingKernel(GeometryKernel):
             exact_to_physical=result.exact_to_physical,
         )
 
-    def contact_curvature(self, state, points, /):
+    def contact_curvature(
+        self, state: DesignState, points: Array, /
+    ) -> ContactCurvatureResult:
         if not self.uniform:
             raise NotImplementedError(
                 "Nonuniform scaling does not preserve principal curvatures."
@@ -786,14 +821,14 @@ class _ScalingKernel(GeometryKernel):
             ambient_dimension=result.ambient_dimension,
         )
 
-    def support_map(self, state, directions, /):
+    def support_map(self, state: DesignState, directions: Array, /) -> Array:
         if not isinstance(self.child, SupportMapProvider):
             raise TypeError("Scaled child lacks a support-map provider.")
         scale, center = self._parameters(state)
         support = self.child.support_map(state, jnp.asarray(directions) * scale)
         return center + (support - center) * scale
 
-    def seam_residual(self, state, /):
+    def seam_residual(self, state: DesignState, /) -> Array:
         if not self.uniform:
             raise NotImplementedError(
                 "Nonuniform scaling does not preserve scalar seam residuals."
@@ -803,16 +838,16 @@ class _ScalingKernel(GeometryKernel):
         scale, _ = self._parameters(state)
         return scale[0] * self.child.seam_residual(state)
 
-    def bounds(self, state, /):
+    def bounds(self, state: DesignState, /) -> Array:
         scale, center = self._parameters(state)
         bounds = self.child.bounds(state)
         return center + (bounds - center) * scale
 
-    def measure(self, state, /):
+    def measure(self, state: DesignState, /) -> Array:
         scale, _ = self._parameters(state)
         return self.child.measure(state) * jnp.prod(scale)
 
-    def interior_mass(self, state, /):
+    def interior_mass(self, state: DesignState, /) -> Mass:
         scale, _ = self._parameters(state)
         return scale_mass(
             self.child.interior_mass(state),
@@ -820,7 +855,7 @@ class _ScalingKernel(GeometryKernel):
             provenance="affine_volume_scale",
         )
 
-    def _boundary_measure_rule(self, state, order):
+    def _boundary_measure_rule(self, state: DesignState, order: int) -> Array:
         atlas = self.boundary_atlas(state)
         rule = gauss_legendre_data(order)
         reference_axis = jnp.asarray(0.5 * (rule.nodes + 1.0))
@@ -839,7 +874,7 @@ class _ScalingKernel(GeometryKernel):
             quadrature = jnp.tile(cell_weights, atlas.num_charts)
         return jnp.sum(atlas.jacobian(charts, reference) * quadrature)
 
-    def boundary_measure(self, state, /):
+    def boundary_measure(self, state: DesignState, /) -> Array:
         scale, _ = self._parameters(state)
         if self.uniform:
             return self.child.boundary_measure(state) * scale[0] ** (
@@ -847,7 +882,7 @@ class _ScalingKernel(GeometryKernel):
             )
         return self._boundary_measure_rule(state, 24)
 
-    def boundary_mass(self, state, /):
+    def boundary_mass(self, state: DesignState, /) -> Mass:
         scale, _ = self._parameters(state)
         if self.uniform:
             return scale_mass(
@@ -868,7 +903,15 @@ class _ScalingKernel(GeometryKernel):
             provenance="nonuniform_scaled_boundary_gauss_legendre",
         )
 
-    def sample_interior(self, state, num_points, /, *, key, plan=None):
+    def sample_interior(
+        self,
+        state: DesignState,
+        num_points: int,
+        /,
+        *,
+        key: PRNGKey,
+        plan: RejectionSamplingPlan | None = None,
+    ) -> SamplingResult:
         scale, center = self._parameters(state)
         result = self.child.sample_interior(state, num_points, key=key, plan=plan)
         return SamplingResult(
@@ -879,7 +922,9 @@ class _ScalingKernel(GeometryKernel):
             strata=result.strata,
         )
 
-    def sample_boundary(self, state, num_points, /, *, key):
+    def sample_boundary(
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
+    ) -> SamplingResult:
         atlas = self.boundary_atlas(state)
         candidate_count = max(8 * int(num_points), 64)
         chart_key, reference_key, choice_key = jr.split(key, 3)
@@ -900,7 +945,7 @@ class _ScalingKernel(GeometryKernel):
 
         return complete_sampling_result(points)
 
-    def boundary_atlas(self, state, /):
+    def boundary_atlas(self, state: DesignState, /) -> BoundaryAtlas:
         scale, center = self._parameters(state)
         atlas = self.child.boundary_atlas(state)
         offset = center - scale * center
@@ -914,7 +959,9 @@ class _ScalingKernel(GeometryKernel):
             trim_domains=atlas.trim_domains,
         )
 
-    def cubature_atlas(self, state, component: CubatureComponent, /) -> CubatureAtlas:
+    def cubature_atlas(
+        self, state: DesignState, component: CubatureComponent, /
+    ) -> CubatureAtlas:
         scale, center = self._parameters(state)
         atlas = self.child.cubature_atlas(state, component)
         offset = center - scale * center
@@ -930,7 +977,7 @@ class _ScalingKernel(GeometryKernel):
         )
 
 
-_CSGOperation = Literal["intersection", "difference"]
+_CSGOperation: TypeAlias = Literal["intersection", "difference"]
 
 
 class SharpCSG(GeometrySource):
@@ -939,19 +986,20 @@ class SharpCSG(GeometrySource):
     children: tuple[GeometrySource, ...]
     operation: _CSGOperation = eqx.field(static=True)
 
-    def __init__(self, children: tuple[GeometrySource, ...], operation: _CSGOperation):
+    def __init__(
+        self, children: tuple[GeometrySource, ...], operation: _CSGOperation
+    ) -> None:
         children_ = tuple(children)
         minimum = 2
         if len(children_) < minimum or not all(
             isinstance(child, GeometrySource) for child in children_
         ):
             raise ValueError("Sharp CSG requires at least two geometry sources.")
-        if operation not in ("intersection", "difference"):
-            raise ValueError("operation must be 'intersection' or 'difference'.")
+        operation = parse(operation, _CSGOperation, "operation")
         self.children = children_
         self.operation = operation
 
-    def _compile(self, context):
+    def _compile(self, context: _ParameterCollector) -> GeometryKernel:
         children = tuple(child._compile(context) for child in self.children)
         dimension = children[0].ambient_dimension
         if any(
@@ -966,23 +1014,25 @@ class _SharpCSGKernel(GeometryKernel):
     children: tuple[GeometryKernel, ...]
     operation: _CSGOperation = eqx.field(static=True)
 
-    def __init__(self, children, *, operation):
+    def __init__(
+        self, children: tuple[GeometryKernel, ...], *, operation: _CSGOperation
+    ) -> None:
         self.children, self.operation = children, operation
 
     @property
-    def ambient_dimension(self):
+    def ambient_dimension(self) -> int:
         return self.children[0].ambient_dimension
 
     @property
-    def intrinsic_dimension(self):
+    def intrinsic_dimension(self) -> int:
         return self.children[0].intrinsic_dimension
 
     @property
-    def kind(self):
+    def kind(self) -> GeometryKind:
         return GeometryKind.REGION
 
     @property
-    def capabilities(self):
+    def capabilities(self) -> frozenset[GeometryCapability]:
         shared = set(self.children[0].capabilities)
         for child in self.children[1:]:
             shared.intersection_update(child.capabilities)
@@ -1005,7 +1055,7 @@ class _SharpCSGKernel(GeometryKernel):
         return frozenset(shared)
 
     @property
-    def field_certificate(self):
+    def field_certificate(self) -> FieldCertificate:
         certificates = tuple(child.field_certificate for child in self.children)
         return FieldCertificate(
             max(
@@ -1027,24 +1077,24 @@ class _SharpCSGKernel(GeometryKernel):
             ),
         )
 
-    def geometry_validity(self, state, /):
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
         return combine_validity(
             tuple(representation_validity(child, state) for child in self.children),
             contract_id=f"sharp_{self.operation}",
         )
 
-    def _fields(self, state, points):
+    def _fields(self, state: DesignState, points: Array) -> Array:
         return jnp.stack(
             tuple(child.boundary_field(state, points) for child in self.children), axis=-1
         )
 
-    def boundary_field(self, state, points, /):
+    def boundary_field(self, state: DesignState, points: Array, /) -> Array:
         fields = self._fields(state, points)
         if self.operation == "intersection":
             return jnp.max(fields, axis=-1)
         return jnp.maximum(fields[..., 0], jnp.max(-fields[..., 1:], axis=-1))
 
-    def contains(self, state, points, /):
+    def contains(self, state: DesignState, points: Array, /) -> Array:
         values = jnp.stack(
             tuple(child.contains(state, points) for child in self.children), axis=-1
         )
@@ -1052,7 +1102,7 @@ class _SharpCSGKernel(GeometryKernel):
             return jnp.all(values, axis=-1)
         return values[..., 0] & ~jnp.any(values[..., 1:], axis=-1)
 
-    def boundary_normal(self, state, points, /):
+    def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
         fields = self._fields(state, points)
         normals = jnp.stack(
             tuple(child.boundary_normal(state, points) for child in self.children),
@@ -1069,7 +1119,7 @@ class _SharpCSGKernel(GeometryKernel):
             ..., 0, :
         ]
 
-    def bounds(self, state, /):
+    def bounds(self, state: DesignState, /) -> Array:
         bounds = jnp.stack(tuple(child.bounds(state) for child in self.children))
         if self.operation == "intersection":
             return jnp.stack(
@@ -1077,15 +1127,23 @@ class _SharpCSGKernel(GeometryKernel):
             )
         return bounds[0]
 
-    def measure(self, state, /):
+    def measure(self, state: DesignState, /) -> NoReturn:
         del state
         raise NotImplementedError("Sharp CSG measure requires a realization.")
 
-    def boundary_measure(self, state, /):
+    def boundary_measure(self, state: DesignState, /) -> NoReturn:
         del state
         raise NotImplementedError("Sharp CSG boundary measure requires a realization.")
 
-    def sample_interior(self, state, num_points, /, *, key, plan=None):
+    def sample_interior(
+        self,
+        state: DesignState,
+        num_points: int,
+        /,
+        *,
+        key: PRNGKey,
+        plan: RejectionSamplingPlan | None = None,
+    ) -> SamplingResult:
         bounds = self.bounds(state)
         plan_ = RejectionSamplingPlan() if plan is None else plan
         return bounded_rejection_sample(
@@ -1104,11 +1162,13 @@ class _SharpCSGKernel(GeometryKernel):
             dtype=bounds.dtype,
         )
 
-    def sample_boundary(self, state, num_points, /, *, key):
+    def sample_boundary(
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
+    ) -> NoReturn:
         del state, num_points, key
         raise NotImplementedError("Sharp CSG boundary sampling requires realization.")
 
-    def boundary_atlas(self, state, /):
+    def boundary_atlas(self, state: DesignState, /) -> NoReturn:
         del state
         raise NotImplementedError("Sharp CSG boundary atlas requires realization.")
 
@@ -1121,7 +1181,14 @@ class BlendCSG(GeometrySource):
     operation: Literal["union", "intersection", "difference"] = eqx.field(static=True)
     feature_id: str = eqx.field(static=True)
 
-    def __init__(self, children, width, operation="union", *, feature_id=None):
+    def __init__(
+        self,
+        children: Iterable[GeometrySource],
+        width: Any,
+        operation: Literal["union", "intersection", "difference"] = "union",
+        *,
+        feature_id: str | None = None,
+    ) -> None:
         children_ = tuple(children)
         if len(children_) < 2 or not all(
             isinstance(child, GeometrySource) for child in children_
@@ -1137,7 +1204,7 @@ class BlendCSG(GeometrySource):
         self.operation = operation
         self.feature_id = feature_id or f"blend-{uuid4().hex}"
 
-    def _compile(self, context):
+    def _compile(self, context: _ParameterCollector) -> GeometryKernel:
         children = tuple(child._compile(context) for child in self.children)
         dimension = children[0].ambient_dimension
         if any(
@@ -1159,23 +1226,29 @@ class _BlendCSGKernel(GeometryKernel):
     width: ParameterBinding = eqx.field(static=True)
     operation: Literal["union", "intersection", "difference"] = eqx.field(static=True)
 
-    def __init__(self, children, width, *, operation):
+    def __init__(
+        self,
+        children: tuple[GeometryKernel, ...],
+        width: ParameterBinding,
+        *,
+        operation: Literal["union", "intersection", "difference"],
+    ) -> None:
         self.children, self.width, self.operation = children, width, operation
 
     @property
-    def ambient_dimension(self):
+    def ambient_dimension(self) -> int:
         return self.children[0].ambient_dimension
 
     @property
-    def intrinsic_dimension(self):
+    def intrinsic_dimension(self) -> int:
         return self.children[0].intrinsic_dimension
 
     @property
-    def kind(self):
+    def kind(self) -> GeometryKind:
         return GeometryKind.REGION
 
     @property
-    def capabilities(self):
+    def capabilities(self) -> frozenset[GeometryCapability]:
         return frozenset(
             {
                 GeometryCapability.REGION_QUERY,
@@ -1185,7 +1258,7 @@ class _BlendCSGKernel(GeometryKernel):
         )
 
     @property
-    def field_certificate(self):
+    def field_certificate(self) -> FieldCertificate:
         return FieldCertificate(
             ZeroSetAccuracy.APPROXIMATE,
             SignReliability.RELIABLE,
@@ -1197,18 +1270,18 @@ class _BlendCSGKernel(GeometryKernel):
             (f"blend_{self.operation}",),
         )
 
-    def geometry_validity(self, state, /):
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
         return combine_validity(
             tuple(representation_validity(child, state) for child in self.children),
             contract_id=f"blend_{self.operation}",
         )
 
-    def _fields(self, state, points):
+    def _fields(self, state: DesignState, points: Array) -> Array:
         return jnp.stack(
             tuple(child.boundary_field(state, points) for child in self.children), axis=-1
         )
 
-    def boundary_field(self, state, points, /):
+    def boundary_field(self, state: DesignState, points: Array, /) -> Array:
         fields = self._fields(state, points)
         width = self.width.read(state)
         if self.operation == "union":
@@ -1218,10 +1291,10 @@ class _BlendCSGKernel(GeometryKernel):
         transformed = jnp.concatenate((fields[..., :1], -fields[..., 1:]), axis=-1)
         return width * logsumexp(transformed / width, axis=-1)
 
-    def contains(self, state, points, /):
+    def contains(self, state: DesignState, points: Array, /) -> Array:
         return self.boundary_field(state, points) <= 0.0
 
-    def boundary_normal(self, state, points, /):
+    def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
         points_ = jnp.asarray(points)
         flat = points_.reshape((-1, self.ambient_dimension))
         gradient = jax.vmap(jax.grad(lambda point: self.boundary_field(state, point)))(
@@ -1233,7 +1306,7 @@ class _BlendCSGKernel(GeometryKernel):
         )
         return gradient.reshape(points_.shape)
 
-    def bounds(self, state, /):
+    def bounds(self, state: DesignState, /) -> Array:
         bounds = jnp.stack(tuple(child.bounds(state) for child in self.children))
         if self.operation == "union":
             return jnp.stack(
@@ -1245,15 +1318,23 @@ class _BlendCSGKernel(GeometryKernel):
             )
         return bounds[0]
 
-    def measure(self, state, /):
+    def measure(self, state: DesignState, /) -> NoReturn:
         del state
         raise NotImplementedError("Blend measure is estimator-only.")
 
-    def boundary_measure(self, state, /):
+    def boundary_measure(self, state: DesignState, /) -> NoReturn:
         del state
         raise NotImplementedError("Blend boundary measure is estimator-only.")
 
-    def sample_interior(self, state, num_points, /, *, key, plan=None):
+    def sample_interior(
+        self,
+        state: DesignState,
+        num_points: int,
+        /,
+        *,
+        key: PRNGKey,
+        plan: RejectionSamplingPlan | None = None,
+    ) -> SamplingResult:
         bounds = self.bounds(state)
         plan_ = RejectionSamplingPlan() if plan is None else plan
         return bounded_rejection_sample(
@@ -1272,11 +1353,13 @@ class _BlendCSGKernel(GeometryKernel):
             dtype=bounds.dtype,
         )
 
-    def sample_boundary(self, state, num_points, /, *, key):
+    def sample_boundary(
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
+    ) -> NoReturn:
         del state, num_points, key
         raise NotImplementedError("Blend boundary sampling requires realization.")
 
-    def boundary_atlas(self, state, /):
+    def boundary_atlas(self, state: DesignState, /) -> NoReturn:
         del state
         raise NotImplementedError("Blend boundary atlas requires realization.")
 

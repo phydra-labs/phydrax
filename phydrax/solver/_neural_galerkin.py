@@ -12,8 +12,9 @@ import diffrax as dfx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.axes as cx
 from phydrax.domain import ComponentSum, DomainFunction
@@ -45,15 +46,18 @@ from ..linalg import (
     LeastSquaresProblem,
     LinearSolvePolicy,
     LinearSystem,
+    MINRES,
     OperatorProperties,
     PCG,
     PreconditioningPolicy,
     prepare_linearization,
+    PropertyEvidence,
     RandomizedNystromPreconditionerBuilder,
     ScaledLinearOperator,
     solve,
 )
 from ..nn.parameters import ParameterSubspace
+from ..typing import parse, PRNGKey
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._diffrax_backend import solve_diffrax
 from ._hybrid_event import HybridReplayPolicy
@@ -97,7 +101,9 @@ def _qualified_type_name(value: Any, /) -> str:
     return f"{cls.__module__}.{cls.__qualname__}"
 
 
-def _default_parameter_subspace(functions: frozendict[str, DomainFunction]):
+def _default_parameter_subspace(
+    functions: frozendict[str, DomainFunction],
+) -> ParameterSubspace:
     resolution = require_parameter_roles(functions, context="NeuralGalerkinProblem")
     if ArrayRole.PARAMETER not in resolution.roles:
         raise ValueError("Neural Galerkin evolution requires PARAMETER function leaves.")
@@ -141,7 +147,7 @@ class FieldProjectionMetric(StrictModule):
         *,
         scale: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         name = str(field)
         if not name:
             raise ValueError("field must be non-empty.")
@@ -177,9 +183,17 @@ class FieldProjectionMetric(StrictModule):
 
 
 class NeuralTangentSolvePolicy(StrictModule):
-    """Rectangular or Gram formulation for one neural tangent projection."""
+    """Rectangular or Gram formulation for one neural tangent projection.
+
+    `linear_policy` solves the primal projection: a least-squares problem for the
+    rectangular formulation, the damped Gram system for the Gram formulation.
+    `adjoint_linear_policy` solves the self-adjoint damped normal system of the
+    certified implicit adjoint. It defaults to the Gram policy, or for the
+    rectangular formulation to PCG when damping is positive and MINRES otherwise.
+    """
 
     linear_policy: LinearSolvePolicy
+    adjoint_linear_policy: LinearSolvePolicy
     preconditioner: AbstractPreconditionerBuilder | None
     damping: float = eqx.field(static=True)
     maximum_relative_defect: float | None = eqx.field(static=True)
@@ -191,12 +205,12 @@ class NeuralTangentSolvePolicy(StrictModule):
         /,
         *,
         linear_policy: LinearSolvePolicy | None = None,
+        adjoint_linear_policy: LinearSolvePolicy | None = None,
         damping: float = 1e-6,
         maximum_relative_defect: float | None = None,
         preconditioner: AbstractPreconditionerBuilder | None = None,
-    ):
-        if formulation not in ("rectangular", "gram"):
-            raise ValueError("formulation must be 'rectangular' or 'gram'.")
+    ) -> None:
+        formulation = parse(formulation, TangentFormulation, "formulation")
         damping_ = float(damping)
         if not isfinite(damping_) or damping_ < 0.0:
             raise ValueError("damping must be finite and non-negative.")
@@ -245,8 +259,21 @@ class NeuralTangentSolvePolicy(StrictModule):
             raise ValueError(
                 "Supply neural tangent preconditioning through preconditioner, not both policies."
             )
+        if adjoint_linear_policy is None:
+            if formulation == "gram":
+                adjoint_linear_policy = linear_policy
+            else:
+                # The adjoint normal operator J^T J + damping I is self-adjoint; it is
+                # positive definite only when damping is positive.
+                adjoint_linear_policy = LinearSolvePolicy(
+                    PCG() if damping_ > 0.0 else MINRES(),
+                    differentiation=DifferentiationPolicy("mathematical"),
+                )
+        if not isinstance(adjoint_linear_policy, LinearSolvePolicy):
+            raise TypeError("adjoint_linear_policy must be a LinearSolvePolicy or None.")
         self.formulation = formulation
         self.linear_policy = linear_policy
+        self.adjoint_linear_policy = adjoint_linear_policy
         self.preconditioner = preconditioner
         self.damping = damping_
         self.maximum_relative_defect = defect_limit
@@ -267,7 +294,7 @@ class NeuralGalerkinAdjointPolicy(StrictModule):
         *,
         maximum_primal_residual: float = 1.0e-6,
         maximum_adjoint_residual: float = 1.0e-6,
-    ):
+    ) -> None:
         if mode not in ("recursive_checkpoint", "certified_backsolve"):
             raise ValueError("Unknown neural Galerkin adjoint policy.")
         primal = float(maximum_primal_residual)
@@ -290,7 +317,7 @@ class NeuralGalerkinEpoch(StrictModule):
 
     def __init__(
         self, problem: NeuralGalerkinProblem, grid: TimeGrid, /, *, population_id: str
-    ):
+    ) -> None:
         if not isinstance(problem, NeuralGalerkinProblem) or not isinstance(
             grid, TimeGrid
         ):
@@ -308,7 +335,7 @@ class NeuralGalerkinEpochPlan(StrictModule):
     epochs: tuple[NeuralGalerkinEpoch, ...]
     replay_id: str = eqx.field(static=True)
 
-    def __init__(self, epochs: Sequence[NeuralGalerkinEpoch], /):
+    def __init__(self, epochs: Sequence[NeuralGalerkinEpoch], /) -> None:
         values = tuple(epochs)
         if not values or any(
             not isinstance(value, NeuralGalerkinEpoch) for value in values
@@ -375,9 +402,9 @@ class NeuralGalerkinProblem(StrictModule):
         parameter_subspace: ParameterSubspace | None = None,
         enforcement: EnforcementProgram | None = None,
         args: Any = None,
-        evaluation_key: Key[Array, ""] = DOC_KEY0,
+        evaluation_key: PRNGKey = DOC_KEY0,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         fields = frozendict(functions)
         if not fields or any(
             not isinstance(value, DomainFunction) for value in fields.values()
@@ -474,7 +501,12 @@ class _TangentEvaluation(NamedTuple):
     accepted: Array
 
 
-def _component_batches_and_keys(metric: FieldProjectionMetric):
+_ProjectionBatch: TypeAlias = PointIntegrationBatch | SeparableIntegrationBatch
+
+
+def _component_batches_and_keys(
+    metric: FieldProjectionMetric,
+) -> tuple[tuple[_ProjectionBatch, ...], tuple[PRNGKey, ...]]:
     target = metric.realization.target
     base = target.base if isinstance(target, DensityTarget) else target
     if not isinstance(base, ComponentTarget):
@@ -715,10 +747,10 @@ def _implicit_tangent_rate(
 
 @_implicit_tangent_rate.def_fwd
 def _implicit_tangent_rate_fwd(
-    perturbed,
+    perturbed: PyTree[bool],
     inputs: tuple[Array, Array],
     field: _NeuralGalerkinVectorField,
-):
+) -> tuple[Array, tuple[Array, Array, Array]]:
     del perturbed
     time, parameters = inputs
     rate = field.evaluate(time, parameters).rate
@@ -727,34 +759,38 @@ def _implicit_tangent_rate_fwd(
 
 @_implicit_tangent_rate.def_bwd
 def _implicit_tangent_rate_bwd(
-    residual,
+    residual: tuple[Array, Array, Array],
     rate_cotangent: Array,
-    perturbed,
+    perturbed: PyTree[bool],
     inputs: tuple[Array, Array],
     field: _NeuralGalerkinVectorField,
-):
+) -> tuple[Array, Array]:
     del perturbed, inputs
     time, parameters, rate = residual
     damping = jnp.asarray(field.policy.damping, dtype=parameters.real.dtype)
 
-    def sampled(candidate):
+    def sampled(candidate: Array) -> Array:
         return field._sampled_fields(candidate)
 
     _, pullback = jax.vjp(sampled, parameters)
 
-    def normal_action(vector):
+    def normal_action(vector: Array) -> Array:
         tangent = jax.jvp(sampled, (parameters,), (vector,))[1]
         return pullback(tangent)[0] + damping * vector
 
     source = ArraySpace(parameters.shape, dtype=parameters.dtype)
+    positive_definite = field.policy.damping > 0.0
+    evidence: dict[str, PropertyEvidence] = {
+        "self_adjoint": "construction",
+        "positive_semidefinite": "construction",
+    }
+    if positive_definite:
+        evidence["positive_definite"] = "construction"
     properties = OperatorProperties(
         self_adjoint=True,
         positive_semidefinite=True,
-        positive_definite=field.policy.damping > 0.0,
-        evidence={
-            "self_adjoint": "implicit-normal-equation",
-            "positive_semidefinite": "construction",
-        },
+        positive_definite=positive_definite,
+        evidence=evidence,
     )
     normal = FunctionLinearOperator(
         normal_action,
@@ -769,7 +805,7 @@ def _implicit_tangent_rate_bwd(
             problem_id=f"{field.problem.problem_id}:implicit-adjoint",
         ),
         rate_cotangent,
-        policy=field.policy.linear_policy,
+        policy=field.policy.adjoint_linear_policy,
     )
     multiplier = eqx.error_if(
         adjoint_result.value,
@@ -781,10 +817,10 @@ def _implicit_tangent_rate_bwd(
         "Neural Galerkin implicit adjoint solve failed its residual audit.",
     )
 
-    def stationarity(t, candidate):
+    def stationarity(t: Array, candidate: Array) -> Array:
         target = field._target(t, candidate)
 
-        def sampled_candidate(value):
+        def sampled_candidate(value: Array) -> Array:
             return field._sampled_fields(value)
 
         sampled_value, sampled_pullback = jax.vjp(

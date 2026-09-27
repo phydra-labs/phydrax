@@ -10,7 +10,8 @@ from math import prod
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -52,7 +53,7 @@ class MatrixProductState(StrictModule):
         /,
         *,
         precision: TensorNetworkPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = TensorNetworkPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, TensorNetworkPrecisionPolicy):
             raise TypeError("precision must be TensorNetworkPrecisionPolicy or None.")
@@ -131,7 +132,7 @@ class MatrixProductOperator(StrictModule):
         /,
         *,
         precision: TensorNetworkPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = TensorNetworkPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, TensorNetworkPrecisionPolicy):
             raise TypeError("precision must be TensorNetworkPrecisionPolicy or None.")
@@ -192,7 +193,7 @@ class LocallyPurifiedDensity(StrictModule):
         /,
         *,
         precision: TensorNetworkPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = TensorNetworkPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, TensorNetworkPrecisionPolicy):
             raise TypeError("precision must be TensorNetworkPrecisionPolicy or None.")

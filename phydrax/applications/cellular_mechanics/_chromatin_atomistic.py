@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -39,7 +40,7 @@ class ChromatinAtomisticCouplingPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_spring_energy: float,
-    ):
+    ) -> None:
         identifiers = np.asarray(site_particle_ids)
         maximum = float(maximum_spring_energy)
         if (
@@ -112,7 +113,7 @@ class PreparedChromatinAtomisticCoupling(StrictModule, NonTrainableState):
         atomistic: PreparedAtomisticDynamics,
         chromatin: PreparedChromatinDynamics,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, ChromatinAtomisticCouplingPlan):
             raise TypeError("plan must be ChromatinAtomisticCouplingPlan.")
         if not isinstance(atomistic, PreparedAtomisticDynamics):

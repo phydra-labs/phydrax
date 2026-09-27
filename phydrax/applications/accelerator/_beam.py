@@ -4,19 +4,26 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from enum import IntEnum
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+
+
+_ElementCarry: TypeAlias = tuple[Array, Array, Array, Array]
+_ElementData: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 class BeamlineElementKind(IntEnum):
@@ -39,7 +46,7 @@ class AcceleratorConvention(StrictModule, NonTrainableState):
         *,
         longitudinal_sign: str = "positive-late",
         momentum_normalization: str = "px-over-p0,py-over-p0,delta-p-over-p0",
-    ):
+    ) -> None:
         sign = str(longitudinal_sign).strip()
         normalization = str(momentum_normalization).strip()
         if not sign or not normalization:
@@ -84,7 +91,7 @@ class AcceleratorBunch(StrictModule, NonTrainableState):
         reference_charge: float,
         convention: AcceleratorConvention | None = None,
         bunch_id: str,
-    ):
+    ) -> None:
         coordinates_ = jnp.asarray(coordinates)
         weights_ = jnp.asarray(weights, dtype=coordinates_.dtype)
         identifiers = jnp.asarray(particle_ids, dtype=jnp.int32)
@@ -160,10 +167,10 @@ class BeamlinePlan(StrictModule, NonTrainableState):
         secondary_strengths: ArrayLike,
         /,
         *,
-        element_ids,
+        element_ids: Iterable[str],
         active: ArrayLike | None = None,
         convention: AcceleratorConvention | None = None,
-    ):
+    ) -> None:
         kinds_ = np.asarray(kinds)
         lengths_ = np.asarray(lengths, dtype=np.float64)
         strengths_ = np.asarray(strengths, dtype=np.float64)
@@ -245,7 +252,9 @@ def track_beamline(plan: BeamlinePlan, bunch: AcceleratorBunch, /) -> BeamlineRe
     initial_active = bunch.active & bunch.valid
     initial_loss = jnp.full((bunch.capacity,), -1, dtype=jnp.int32)
 
-    def one_element(carry, data):
+    def one_element(
+        carry: _ElementCarry, data: _ElementData
+    ) -> tuple[_ElementCarry, tuple[Array, Array, Array]]:
         coordinates, alive, loss_index, element_index = carry
         kind, length, strength, secondary, enabled = data
         x, px, y, py, zeta, delta = (coordinates[:, index] for index in range(6))

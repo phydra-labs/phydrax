@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,7 +12,7 @@ import phydrax as phx
 class _Hydrogenic(eqx.Module):
     alpha: jax.Array
 
-    def __call__(self, electrons):
+    def __call__(self, electrons: Any) -> Any:
         radius = jnp.sqrt(jnp.sum(electrons[0] ** 2))
         return phx.operators.LogAmplitude(-self.alpha * radius)
 
@@ -18,11 +20,18 @@ class _Hydrogenic(eqx.Module):
 class _Constant(eqx.Module):
     offset: jax.Array
 
-    def __call__(self, electrons):
+    def __call__(self, electrons: Any) -> Any:
         return phx.operators.LogAmplitude(self.offset + 0.0 * jnp.sum(electrons))
 
 
-def _structure(charges, positions, *, name="molecule", cell=None, periodic_axes=None):
+def _structure(
+    charges: Any,
+    positions: Any,
+    *,
+    name: Any = "molecule",
+    cell: Any = None,
+    periodic_axes: Any = None,
+) -> Any:
     scale = phx.atomistic.AtomisticScaleContract(phx.units.BOHR, phx.units.HARTREE)
     return phx.atomistic.AtomicStructure(
         jnp.asarray(charges, dtype=jnp.int32),
@@ -35,7 +44,7 @@ def _structure(charges, positions, *, name="molecule", cell=None, periodic_axes=
     )
 
 
-def test_h_and_h2_coulomb_values_and_analytic_hydrogen_local_energy():
+def test_h_and_h2_coulomb_values_and_analytic_hydrogen_local_energy() -> None:
     hydrogen = _structure([1], [[0.0, 0.0, 0.0]], name="H")
     hamiltonian = phx.operators.ElectronicCoulombHamiltonian(hydrogen, 1)
     coordinate = jnp.asarray([[[2.0, 0.0, 0.0]]], dtype=jnp.float64)
@@ -61,7 +70,7 @@ def test_h_and_h2_coulomb_values_and_analytic_hydrogen_local_energy():
     assert jnp.allclose(h2.value[0], -1.5)
 
 
-def test_helium_coulomb_symmetry_translation_and_rotation_invariance():
+def test_helium_coulomb_symmetry_translation_and_rotation_invariance() -> None:
     helium = _structure([2], [[0.0, 0.0, 0.0]], name="He")
     hamiltonian = phx.operators.ElectronicCoulombHamiltonian(helium, 2)
     electrons = jnp.asarray([[[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]], dtype=jnp.float64)
@@ -85,7 +94,7 @@ def test_helium_coulomb_symmetry_translation_and_rotation_invariance():
     assert jnp.allclose(transformed_value.value, baseline.value)
 
 
-def test_exact_and_chunked_kinetic_trace_match_with_jit_vjp_and_gradient():
+def test_exact_and_chunked_kinetic_trace_match_with_jit_vjp_and_gradient() -> None:
     hydrogen = _structure([1], [[0.0, 0.0, 0.0]], name="H")
     exact = phx.operators.ElectronicCoulombHamiltonian(
         hydrogen,
@@ -130,7 +139,7 @@ def test_exact_and_chunked_kinetic_trace_match_with_jit_vjp_and_gradient():
     assert jnp.allclose(cotangent, direct)
 
 
-def test_coincident_singularities_are_invalid_and_never_clipped():
+def test_coincident_singularities_are_invalid_and_never_clipped() -> None:
     hydrogen = _structure([1], [[0.0, 0.0, 0.0]], name="H")
     hamiltonian = phx.operators.ElectronicCoulombHamiltonian(hydrogen, 1)
     estimate = phx.operators.evaluate_local_operator(
@@ -160,7 +169,7 @@ def test_coincident_singularities_are_invalid_and_never_clipped():
     )
 
 
-def test_electronic_scales_require_explicit_bohr_hartree_reference_conversion():
+def test_electronic_scales_require_explicit_bohr_hartree_reference_conversion() -> None:
     bad_scale = phx.atomistic.AtomisticUnitSystem.reduced().scale
     bad_structure = phx.atomistic.AtomicStructure(
         jnp.asarray([1], dtype=jnp.int32),
@@ -192,7 +201,9 @@ def test_electronic_scales_require_explicit_bohr_hartree_reference_conversion():
     assert jnp.allclose(estimate.value[0], -14.3996454784255, rtol=1e-12)
 
 
-def test_periodic_electronic_systems_and_stochastic_trace_are_explicitly_rejected():
+def test_periodic_electronic_systems_and_stochastic_trace_are_explicitly_rejected() -> (
+    None
+):
     periodic = _structure(
         [1],
         [[0.0, 0.0, 0.0]],
@@ -203,10 +214,13 @@ def test_periodic_electronic_systems_and_stochastic_trace_are_explicitly_rejecte
     with pytest.raises(ValueError, match="finite nonperiodic"):
         phx.operators.ElectronicCoulombHamiltonian(periodic, 1)
     with pytest.raises(ValueError, match="exact"):
+        # ty: ignore[invalid-argument-type]
         phx.operators.ElectronicKineticPolicy(trace_method="stochastic")
 
 
-def test_initial_walkers_and_state_dependent_proposal_are_replayable_and_corrected():
+def test_initial_walkers_and_state_dependent_proposal_are_replayable_and_corrected() -> (
+    None
+):
     hydrogen = _structure([1], [[0.0, 0.0, 0.0]], name="H")
     first = phx.operators.electronic_initial_walkers(jr.key(7), hydrogen, 1, 8)
     second = phx.operators.electronic_initial_walkers(jr.key(7), hydrogen, 1, 8)
@@ -224,7 +238,9 @@ def test_initial_walkers_and_state_dependent_proposal_are_replayable_and_correct
     assert not jnp.allclose(forward, reverse)
 
 
-def _with_antisymmetric_hermitian_pair(two_body, bra, ket, value):
+def _with_antisymmetric_hermitian_pair(
+    two_body: Any, bra: Any, ket: Any, value: Any
+) -> Any:
     for first, second, bra_phase in (
         (bra[0], bra[1], 1),
         (bra[1], bra[0], -1),
@@ -241,7 +257,7 @@ def _with_antisymmetric_hermitian_pair(two_body, bra, ket, value):
     return two_body
 
 
-def _explicit_two_body_matrix_element(two_body, bra, ket):
+def _explicit_two_body_matrix_element(two_body: Any, bra: Any, ket: Any) -> Any:
     bra_state = tuple(bool(value) for value in bra)
     orbital_count = len(bra_state)
     element = jnp.asarray(0.0, dtype=two_body.dtype)
@@ -271,7 +287,7 @@ def _explicit_two_body_matrix_element(two_body, bra, ket):
     return element
 
 
-def test_finite_ewald_excludes_only_same_particle_zero_image_self_terms():
+def test_finite_ewald_excludes_only_same_particle_zero_image_self_terms() -> None:
     self_energy, self_evidence = phx.operators.periodic_coulomb_energy(
         jnp.asarray([[0.125, 0.25, 0.375]]),
         jnp.asarray([1.0]),
@@ -298,8 +314,8 @@ def test_finite_ewald_excludes_only_same_particle_zero_image_self_terms():
 
 @pytest.mark.parametrize("real_image_radius", [0, 1, 3])
 def test_finite_ewald_rejects_periodically_equivalent_particles_at_every_cutoff(
-    real_image_radius,
-):
+    real_image_radius: Any,
+) -> None:
     energy, evidence = phx.operators.periodic_coulomb_energy(
         jnp.asarray([[0.125, 0.25, 0.375], [2.125, -2.75, 4.375]]),
         jnp.asarray([1.0, -1.0]),
@@ -313,7 +329,7 @@ def test_finite_ewald_rejects_periodically_equivalent_particles_at_every_cutoff(
     assert not bool(evidence.valid)
 
 
-def test_finite_ewald_canonicalizes_wrapped_fractional_positions():
+def test_finite_ewald_canonicalizes_wrapped_fractional_positions() -> None:
     positions = jnp.asarray([[0.125, 0.25, 0.375], [0.625, 0.75, 0.875]])
     shifts = jnp.asarray([[2.0, -3.0, 4.0], [-1.0, 5.0, -2.0]])
     charges = jnp.asarray([1.0, -1.0])
@@ -339,7 +355,7 @@ def test_finite_ewald_canonicalizes_wrapped_fractional_positions():
     assert eqx.tree_equal(wrapped_evidence, baseline_evidence)
 
 
-def test_integral_hamiltonian_validity_includes_two_body_bra_ket_hermiticity():
+def test_integral_hamiltonian_validity_includes_two_body_bra_ket_hermiticity() -> None:
     one_body = jnp.zeros((4, 4), dtype=jnp.complex64)
     two_body = jnp.zeros((4, 4, 4, 4), dtype=jnp.complex64)
     two_body = two_body.at[0, 1, 2, 3].set(1.0)
@@ -354,7 +370,7 @@ def test_integral_hamiltonian_validity_includes_two_body_bra_ket_hermiticity():
     assert not bool(hamiltonian.valid)
 
 
-def test_double_connections_use_exact_spectator_dependent_fermionic_parity():
+def test_double_connections_use_exact_spectator_dependent_fermionic_parity() -> None:
     one_body = jnp.zeros((6, 6), dtype=jnp.complex64)
     two_body = jnp.zeros((6, 6, 6, 6), dtype=jnp.complex64)
     positive_value = jnp.asarray(2.0 + 0.25j, dtype=jnp.complex64)

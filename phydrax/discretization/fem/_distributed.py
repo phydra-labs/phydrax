@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -46,7 +47,7 @@ class PartitionedFiniteElementDofMap(StrictModule, NonTrainableState):
         *,
         multiplicity: ArrayLike | None = None,
         partition_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(dof_map, FiniteElementDofMap):
             raise TypeError("dof_map must be FiniteElementDofMap.")
         identifiers = np.asarray(global_ids, dtype=np.int64)
@@ -152,7 +153,7 @@ class FiniteElementHaloPlan(StrictModule, NonTrainableState):
         *,
         valid: ArrayLike | None = None,
         owner_columns: ArrayLike | None = None,
-    ):
+    ) -> None:
         groups = np.asarray(replica_groups, dtype=np.int32)
         if groups.ndim != 2 or groups.shape[0] == 0 or groups.shape[1] < 2:
             raise ValueError("replica_groups must have shape (groups, width >= 2).")
@@ -304,7 +305,7 @@ class DistributedFiniteElementConstraint(StrictModule, NonTrainableState):
         constraint: ConstraintMap,
         partition: PartitionedFiniteElementDofMap,
         /,
-    ):
+    ) -> None:
         if not isinstance(constraint, ConstraintMap):
             raise TypeError("constraint must be ConstraintMap.")
         if constraint.full_space.size != partition.dof_map.global_dof_count:
@@ -331,7 +332,7 @@ class CostAwareFiniteElementPartition(StrictModule, NonTrainableState):
         partition: CellPartition,
         evidence: FiniteElementPartitionCostEvidence,
         /,
-    ):
+    ) -> None:
         if not isinstance(partition, CellPartition) or not isinstance(
             evidence, FiniteElementPartitionCostEvidence
         ):
@@ -468,7 +469,7 @@ class FiniteElementPartitionWorksetPlan(StrictModule, NonTrainableState):
         dependencies: ArrayLike,
         completions: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(partition, CellPartition):
             raise TypeError("partition must be CellPartition.")
         owned = np.asarray(owned_cells, dtype=np.int32)
@@ -658,7 +659,7 @@ class FiniteElementFacetOwnershipPlan(StrictModule, NonTrainableState):
         *,
         cell_global_ids: ArrayLike | None = None,
         facet_global_ids: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(partition, CellPartition):
             raise TypeError("partition must be CellPartition.")
         owner = np.asarray(partition.cell_owner)
@@ -731,7 +732,7 @@ class FiniteElementFacetOwnershipPlan(StrictModule, NonTrainableState):
             # No interior facets: indexing the empty ownership arrays cannot be traced.
             return result
 
-        def route(offset, current):
+        def route(offset: Array, current: Array) -> Array:
             facet = self.reduction_order[offset]
             left = self.facet_cells[facet, 0]
             right = self.facet_cells[facet, 1]
@@ -766,7 +767,7 @@ class FiniteElementDistributedPhasePlan(StrictModule, NonTrainableState):
         /,
         *,
         worksets: FiniteElementPartitionWorksetPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, FiniteElementDiscretization) or not isinstance(
             partition, CellPartition
         ):
@@ -895,7 +896,7 @@ class DistributedFiniteElementMortarPlan(StrictModule, NonTrainableState):
         mortars: tuple[FiniteElementMortarPlan, ...],
         facet_indices: ArrayLike,
         /,
-    ):
+    ) -> None:
         mortar_plans = tuple(mortars)
         indices = np.asarray(facet_indices, dtype=np.int32)
         if not isinstance(ownership, FiniteElementFacetOwnershipPlan):
@@ -977,7 +978,7 @@ class JaxCollectiveBackend(StrictModule, NonTrainableState):
 
     axis_name: str = eqx.field(static=True)
 
-    def __init__(self, axis_name: str, /):
+    def __init__(self, axis_name: str, /) -> None:
         name = str(axis_name)
         if not name:
             raise ValueError("axis_name must be non-empty.")
@@ -1002,7 +1003,7 @@ class DistributedFiniteElementOperator(StrictModule, NonTrainableState):
         local_operator: AbstractLinearOperator,
         collective: JaxCollectiveBackend,
         /,
-    ):
+    ) -> None:
         if not isinstance(local_operator, AbstractLinearOperator) or not isinstance(
             collective, JaxCollectiveBackend
         ):
@@ -1041,7 +1042,7 @@ class FiniteElementHPPartitionPlan(StrictModule, NonTrainableState):
         cell_owner_by_slot: ArrayLike,
         part_count: int,
         /,
-    ):
+    ) -> None:
         owners = np.asarray(cell_owner_by_slot, dtype=np.int32)
         active = np.asarray(epoch.topology.active)
         parts = int(part_count)

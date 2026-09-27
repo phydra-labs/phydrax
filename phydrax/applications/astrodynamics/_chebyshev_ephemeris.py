@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -54,7 +55,7 @@ class ChebyshevEphemeris(StrictModule, NonTrainableState):
         catalog: CelestialBodyCatalog,
         provenance: AstrodynamicsDataProvenance,
         /,
-    ):
+    ) -> None:
         bounds = np.asarray(segment_bounds, dtype=np.float64)
         coefficients = np.asarray(position_coefficients, dtype=np.float64)
         if (

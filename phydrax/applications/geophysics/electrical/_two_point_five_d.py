@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 from phydrax import ein
@@ -42,7 +43,7 @@ class InvariantElectricalSurvey(StrictModule, NonTrainableState):
         current_kind: str,
         length_unit: UnitDefinition = METER,
         current_unit: UnitDefinition | None = None,
-    ):
+    ) -> None:
         if current_kind not in ("line-current", "point-current"):
             raise ValueError(
                 "Invariant electrical current kind must be line-current or point-current."
@@ -128,7 +129,7 @@ class PreparedInvariantElectricalGeometry(StrictModule, NonTrainableState):
     gauge: Array
     geometry_id: str = eqx.field(static=True)
 
-    def __init__(self, mesh: CellMesh, positions_m: ArrayLike, /):
+    def __init__(self, mesh: CellMesh, positions_m: ArrayLike, /) -> None:
         if (
             not isinstance(mesh, CellMesh)
             or mesh.topological_dimension != 2
@@ -252,7 +253,7 @@ class PreparedInvariantElectricalGeometry(StrictModule, NonTrainableState):
         )
         local_mass = self.areas[:, None, None] * along[:, None, None] * reference_mass
 
-        def action(values):
+        def action(values: Array) -> Array:
             local = values[self.cells]
             result = ein.contract(
                 "cij,cj->ci", local_stiffness + wave**2 * local_mass, local
@@ -287,7 +288,7 @@ class LineCurrentDCPlan(StrictModule, NonTrainableState):
     survey: InvariantElectricalSurvey
     policy: la.LinearSolvePolicy
 
-    def __init__(self, mesh: CellMesh, survey: InvariantElectricalSurvey, /):
+    def __init__(self, mesh: CellMesh, survey: InvariantElectricalSurvey, /) -> None:
         if (
             not isinstance(survey, InvariantElectricalSurvey)
             or survey.current_kind != "line-current"
@@ -315,7 +316,7 @@ class LineCurrentDCPlan(StrictModule, NonTrainableState):
         )
         nodes = self.geometry.space.size
 
-        def kkt(values):
+        def kkt(values: Array) -> Array:
             return jnp.concatenate(
                 (
                     operator.mv(values[:nodes]) + values[-1] * self.geometry.gauge,
@@ -365,7 +366,7 @@ class TwoPointFiveDDCPlan(StrictModule, NonTrainableState):
         wavenumbers_m_inverse: ArrayLike,
         quadrature_weights_m_inverse: ArrayLike,
         /,
-    ):
+    ) -> None:
         if (
             not isinstance(survey, InvariantElectricalSurvey)
             or survey.current_kind != "point-current"

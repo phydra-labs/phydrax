@@ -418,6 +418,11 @@ def _insert_knot_axis(
     return np.moveaxis(inserted, 0, axis), new_knots
 
 
+def _float_pair(values: np.ndarray, /) -> tuple[float, float]:
+    lower, upper = values
+    return float(lower), float(upper)
+
+
 def _bezier_homogeneous_cells(
     volume: TensorNURBSVolume, /
 ) -> tuple[tuple[np.ndarray, tuple[tuple[float, float], ...], tuple[int, ...]], ...]:
@@ -440,7 +445,7 @@ def _bezier_homogeneous_cells(
                     refined, knots, axis.degree, float(knot), axis_index
                 )
         refined_knots.append(knots)
-    cells = []
+    cells: list[tuple[np.ndarray, tuple[tuple[float, float], ...], tuple[int, ...]]] = []
     for span_index in np.ndindex(volume.basis.span_shape):
         selector = tuple(
             slice(index * axis.degree, index * axis.degree + axis.degree + 1)
@@ -453,7 +458,7 @@ def _bezier_homogeneous_cells(
                 "Bezier extraction produced an inconsistent cell control net."
             )
         bounds = tuple(
-            tuple(float(value) for value in np.asarray(axis.span_bounds[index]))
+            _float_pair(np.asarray(axis.span_bounds[index]))
             for index, axis in zip(span_index, volume.basis.axes, strict=True)
         )
         cells.append((controls, bounds, tuple(span_index)))
@@ -600,7 +605,8 @@ def _cell_evidence(
         measure_polynomial.coefficients, policy
     )
     if weight.lower <= 0.0:
-        measure = IntervalBound(-np.finfo(np.float64).max, np.finfo(np.float64).max)
+        maximum = np.float64(np.finfo(np.float64).max)
+        measure = IntervalBound(-maximum, maximum)
     else:
         measure = _divide_intervals(
             measure_numerator, _positive_power_interval(weight, exponent)
@@ -1010,7 +1016,8 @@ def certify_global_injectivity(
             first.control_aabb(), second.control_aabb()
         )
         if separated:
-            separation_pairs.append(tuple(sorted((first.block_id, second.block_id))))
+            low, high = sorted((first.block_id, second.block_id))
+            separation_pairs.append((low, high))
         else:
             diagnostics.append(
                 CertificateDiagnostic(

@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -260,7 +261,7 @@ class AbstractEntropyDiffusionSystem(abc.ABC):
         raise NotImplementedError
 
 
-def _orthonormal_normal_frame(normal: Array, dimension: int, /) -> Array:
+def _orthonormal_normal_frame(normal: ArrayLike, dimension: int, /) -> Array:
     value = jnp.asarray(normal)
     if value.shape[-1] != dimension:
         raise ValueError("Normal frame dimension is incompatible with the system.")
@@ -352,7 +353,7 @@ class ScalarConservationSystem(
         *,
         system_id: str,
         component_name: str = "value",
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         identifier = str(system_id)
         component = str(component_name)
@@ -445,7 +446,7 @@ class EulerSystem(
         /,
         *,
         material: IdealGasMaterial | None = None,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         material_ = IdealGasMaterial() if material is None else material
         if dimension_ not in (1, 2, 3):
@@ -818,7 +819,7 @@ class CompressibleNavierStokesSystem(
         /,
         *,
         material: IdealGasMaterial | None = None,
-    ):
+    ) -> None:
         if not isinstance(transport, AbstractTransportClosure):
             raise TypeError("transport must be an AbstractTransportClosure.")
         inviscid = EulerSystem(dimension, material=material)
@@ -1139,7 +1140,7 @@ class IdealMHDSystem(
         /,
         *,
         material: IdealGasMaterial | None = None,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         material_ = IdealGasMaterial() if material is None else material
         if dimension_ not in (1, 2, 3):
@@ -1362,7 +1363,7 @@ class ShallowWaterSystem(AbstractAdmissibleSystem, NonTrainableState):
         /,
         *,
         gravity: float = 9.81,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         gravity_ = float(gravity)
         if dimension_ not in (1, 2):

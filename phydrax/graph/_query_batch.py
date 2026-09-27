@@ -49,7 +49,7 @@ class QueryNeighborhood(StrictModule):
         count: Any,
         source_size: int,
         evidence: QueryNeighborhoodEvidence | None = None,
-    ):
+    ) -> None:
         index_array = jnp.asarray(indices)
         if index_array.ndim != 3:
             raise ValueError(

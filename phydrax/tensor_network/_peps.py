@@ -9,7 +9,8 @@ from math import prod
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -46,7 +47,7 @@ class PEPS(StrictModule):
         *,
         precision: TensorNetworkPrecisionPolicy | None = None,
         numeric_version: ArrayLike = 0,
-    ):
+    ) -> None:
         arrays = tuple(jnp.asarray(tensor) for tensor in tensors)
         rows_ = int(rows)
         columns_ = int(columns)
@@ -124,7 +125,7 @@ class PEPO(StrictModule):
         /,
         *,
         precision: TensorNetworkPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         arrays = tuple(jnp.asarray(tensor) for tensor in tensors)
         rows_ = int(rows)
         columns_ = int(columns)
@@ -212,7 +213,7 @@ def _edge_label(row: int, column: int, direction: str, /) -> str:
 
 
 def _grid_structure(
-    shapes: Sequence[tuple[int, int, int, int]], rows: int, columns: int, /
+    shapes: Sequence[Sequence[int]], rows: int, columns: int, /
 ) -> ContractionStructure:
     nodes = []
     for row in range(rows):
@@ -242,7 +243,9 @@ def _grid_structure(
     return ContractionStructure(tuple(nodes), ())
 
 
-def _double_layer_specification(left: PEPS, right: PEPS, /):
+def _double_layer_specification(
+    left: PEPS, right: PEPS, /
+) -> tuple[ContractionStructure, tuple[tuple[int, ...], ...]]:
     if (
         left.rows != right.rows
         or left.columns != right.columns

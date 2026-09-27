@@ -6,29 +6,43 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._binding import LinearSolveTemplate
 from ._certificates import KernelCertificate
 from ._materialization import MaterializationPolicy, materialize
+from ._operators import AbstractLinearOperator
 from ._policies import FailurePolicy, LinearSolvePolicy, TolerancePolicy
 from ._problems import LinearSystem
 from ._results import LinearSolveResult, LinearSolveStatus
-from ._runtime import _pack_rhs, _unpack_value, bind_numeric, prepare_template, solve
-from ._spaces import _coordinate_dtype, RHSLayout
+from ._runtime import (
+    _pack_rhs,
+    _PackedRHSLayout,
+    _unpack_value,
+    bind_numeric,
+    prepare_template,
+    solve,
+)
+from ._spaces import _coordinate_dtype, AbstractVectorSpace, RHSLayout
 from ._structured_operators import TwoSidedScaledLinearOperator
 from ._subspaces import LinearSubspace, NullspacePolicy
 
 
-EquilibrationMode = Literal["none", "ruiz", "symmetric-ruiz", "explicit"]
+EquilibrationMode: TypeAlias = Literal["none", "ruiz", "symmetric-ruiz", "explicit"]
+_RefinementState: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class ResilientSolveStatus(IntEnum):
@@ -66,9 +80,8 @@ class EquilibrationPolicy(StrictModule):
         materialization: MaterializationPolicy | None = None,
         left_scale: ArrayLike | None = None,
         right_scale: ArrayLike | None = None,
-    ):
-        if mode not in ("none", "ruiz", "symmetric-ruiz", "explicit"):
-            raise ValueError("Unknown equilibration mode.")
+    ) -> None:
+        mode = parse(mode, EquilibrationMode, "mode")
         steps = int(max_steps)
         tolerance_ = float(tolerance)
         minimum = float(minimum_scale)
@@ -122,7 +135,7 @@ class RefinementPolicy(StrictModule):
         max_steps: int = 3,
         tolerance: TolerancePolicy | None = None,
         minimum_improvement: float = 0.999,
-    ):
+    ) -> None:
         steps = int(max_steps)
         tolerance_ = TolerancePolicy(relative=1e-10) if tolerance is None else tolerance
         improvement = float(minimum_improvement)
@@ -142,7 +155,7 @@ class ResilienceResourcePolicy(StrictModule):
 
     max_workspace_bytes: int = eqx.field(static=True)
 
-    def __init__(self, *, max_workspace_bytes: int = 512 * 1024 * 1024):
+    def __init__(self, *, max_workspace_bytes: int = 512 * 1024 * 1024) -> None:
         limit = int(max_workspace_bytes)
         if limit < 1:
             raise ValueError("max_workspace_bytes must be positive.")
@@ -166,7 +179,7 @@ class ResilientSolvePolicy(StrictModule):
         refinement: RefinementPolicy | None = None,
         failure: FailurePolicy | None = None,
         resources: ResilienceResourcePolicy | None = None,
-    ):
+    ) -> None:
         base_ = LinearSolvePolicy() if base is None else base
         equilibration_ = EquilibrationPolicy() if equilibration is None else equilibration
         refinement_ = RefinementPolicy() if refinement is None else refinement
@@ -203,7 +216,7 @@ class ResilientCostEstimate(StrictModule):
         itemsize: int,
         materializes: bool,
         /,
-    ):
+    ) -> None:
         n, size = int(dimension), int(itemsize)
         self.dimension = n
         self.transformation_storage_bytes = 2 * n * size
@@ -234,7 +247,7 @@ class DiagonalSystemTransform(StrictModule):
         column_spread: Array,
         mode: EquilibrationMode,
         transform_id: str,
-    ):
+    ) -> None:
         self.left_scale = jnp.asarray(left_scale)
         self.right_scale = jnp.asarray(right_scale)
         self.converged = jnp.asarray(converged, dtype=jnp.bool_)
@@ -264,7 +277,7 @@ class ResilientSolvePlan(StrictModule):
         policy: ResilientSolvePolicy,
         base_template: LinearSolveTemplate,
         cost: ResilientCostEstimate,
-    ):
+    ) -> None:
         self.policy = policy
         self.base_template = base_template
         self.cost = cost
@@ -324,7 +337,7 @@ class PreparedResilientSolve(StrictModule):
         condition_before: Array,
         condition_after: Array,
         numeric_version: Any,
-    ):
+    ) -> None:
         version = jnp.asarray(numeric_version, dtype=jnp.int32)
         if version.ndim != 0:
             raise ValueError("numeric_version must be scalar.")
@@ -361,7 +374,7 @@ class ResilientSolveDiagnostics(StrictModule):
     row_spread: Array
     column_spread: Array
 
-    def __init__(self, **values: Any):
+    def __init__(self, **values: Any) -> None:
         self.initial_residual_norm = jnp.asarray(values["initial_residual_norm"])
         self.residual_norm = jnp.asarray(values["residual_norm"])
         self.relative_residual = jnp.asarray(values["relative_residual"])
@@ -388,7 +401,7 @@ class ResilientSolveProvenance(StrictModule):
     numeric_version: Array
     base_numeric_version: Array
 
-    def __init__(self, prepared: PreparedResilientSolve, /):
+    def __init__(self, prepared: PreparedResilientSolve, /) -> None:
         self.plan_id = prepared.plan.plan_id
         self.prepared_id = prepared.prepared_id
         self.operator_id = prepared.problem.operator.operator_id
@@ -416,7 +429,7 @@ class ResilientSolveResult(StrictModule):
         provenance: ResilientSolveProvenance,
         base_result: LinearSolveResult,
         /,
-    ):
+    ) -> None:
         self.value = value
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.diagnostics = diagnostics
@@ -555,7 +568,7 @@ def solve_resilient(
         base_result.diagnostics.matvec_count, dtype=jnp.int32
     ).reshape(-1)
 
-    def refinement_step(_, state):
+    def refinement_step(_: Array, state: _RefinementState) -> _RefinementState:
         (
             current,
             current_residual,
@@ -584,9 +597,9 @@ def solve_resilient(
             correction_rhs_tree,
             rhs_layout=rhs_layout,
         )
-        transformed_correction, _ = _pack_rhs(
-            operator.source, (), correction_result.value
-        )
+        transformed_correction = _pack_rhs(operator.source, (), correction_result.value)[
+            0
+        ]
         correction = prepared.transform.right_scale[:, None] * transformed_correction
         candidate = current + correction
         candidate_residual, candidate_norm, candidate_applied_norm = _residual(
@@ -858,7 +871,9 @@ def _ruiz_equilibrate(
     converged = jnp.asarray(False)
     steps = jnp.asarray(0, dtype=jnp.int32)
 
-    def step(_, state):
+    def step(
+        _: Array, state: tuple[Array, Array, Array, Array, Array]
+    ) -> tuple[Array, Array, Array, Array, Array]:
         left_, right_, scaled, converged_, steps_ = state
         row_norm = jnp.max(jnp.abs(scaled), axis=1)
         if policy.mode == "symmetric-ruiz":
@@ -1008,7 +1023,7 @@ def _scaled_left_nullspace(
         return None
     space = subspace.space
 
-    def transform_basis_column(column):
+    def transform_basis_column(column: Array) -> Array:
         vector = space.unflatten(column)
         covector = space.flatten(space.riesz(vector))
         scaled_covector = covector / jnp.conj(transform.left_scale)
@@ -1023,7 +1038,9 @@ def _scaled_left_nullspace(
     )
 
 
-def _residual(operator, coordinates: Array, rhs: Array, /):
+def _residual(
+    operator: AbstractLinearOperator, coordinates: Array, rhs: Array, /
+) -> tuple[Array, Array, Array]:
     applied = _operator_columns(operator, coordinates)
     residual = rhs - applied
     return (
@@ -1033,16 +1050,16 @@ def _residual(operator, coordinates: Array, rhs: Array, /):
     )
 
 
-def _operator_columns(operator, coordinates: Array, /) -> Array:
-    def apply(column):
+def _operator_columns(operator: AbstractLinearOperator, coordinates: Array, /) -> Array:
+    def apply(column: Array) -> Array:
         value = operator.mv(operator.source.unflatten(column))
         return operator.target.flatten(value)
 
     return jax.vmap(apply, in_axes=1, out_axes=1)(coordinates)
 
 
-def _column_norm(space, coordinates: Array, /) -> Array:
-    def norm(column):
+def _column_norm(space: AbstractVectorSpace, coordinates: Array, /) -> Array:
+    def norm(column: Array) -> Array:
         value = space.unflatten(column)
         squared = jnp.real(space.inner(value, value))
         return jnp.sqrt(jnp.maximum(squared, 0.0))
@@ -1116,7 +1133,7 @@ def _transform_id(problem: LinearSystem, policy: EquilibrationPolicy, /) -> str:
     )
 
 
-def _restore_axes(value: Array, layout, /) -> Array:
+def _restore_axes(value: Array, layout: _PackedRHSLayout, /) -> Array:
     return jnp.asarray(value).reshape(layout.rhs_shape)
 
 

@@ -8,13 +8,14 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
 from ...linalg import AbstractVectorSpace
 from ...linalg.eigen import (
     Eigenproblem,
     EigenSolvePolicy,
+    EigenTarget,
     GeneralizedEigenproblem,
     rayleigh_ritz,
     TrialSubspaceRitzResult,
@@ -102,7 +103,7 @@ def rayleigh_ritz_from_samples(
     /,
     *,
     count: int | None = None,
-    which: str = "smallest-algebraic",
+    which: EigenTarget = "smallest-algebraic",
     tolerance: float = 1e-10,
 ) -> TrialSubspaceRitzResult:
     """Certify a neural-operator trial-space prediction by physical projection."""

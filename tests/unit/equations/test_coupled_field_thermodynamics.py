@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _electrolyte():
+def _electrolyte() -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("cation", "anion"),
         (
@@ -29,7 +32,7 @@ def _electrolyte():
     return schema, parameters, phx.equations.IdealDiluteElectrochemicalClosure(schema)
 
 
-def test_multiphase_electrolyte_derives_one_finite_stress_and_potential_set():
+def test_multiphase_electrolyte_derives_one_finite_stress_and_potential_set() -> None:
     _, electrolyte, electrochemical = _electrolyte()
     closure = phx.equations.MultiphaseElectrolyteClosure(
         phx.equations.BinaryPhaseThermodynamicClosure(), electrochemical
@@ -56,7 +59,7 @@ def test_multiphase_electrolyte_derives_one_finite_stress_and_potential_set():
     assert jnp.all(jnp.isfinite(fields.ionic_electrochemical_potential))
 
 
-def test_electrolytic_nematic_composition_is_finite_and_dielectrically_positive():
+def test_electrolytic_nematic_composition_is_finite_and_dielectrically_positive() -> None:
     _, electrolyte, electrochemical = _electrolyte()
     basis = phx.equations.NematicTensorBasis(2)
     closure = phx.equations.ElectrolyticNematicClosure(

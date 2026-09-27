@@ -5,22 +5,24 @@
 from __future__ import annotations
 
 import enum
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._numerics import gauss_legendre_data
+from ..._numerics import gauss_legendre_data, QuadratureRuleData
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
-RegulatorName = Literal["optimized", "exponential", "power-law"]
+RegulatorName: TypeAlias = Literal["optimized", "exponential", "power-law"]
 
 
 class FunctionalRGStatus(enum.IntEnum):
@@ -38,9 +40,8 @@ class Regulator(StrictModule, NonTrainableState):
     family: RegulatorName = eqx.field(static=True)
     regulator_id: str = eqx.field(static=True)
 
-    def __init__(self, family: RegulatorName, /, *, power: float = 1.0):
-        if family not in ("optimized", "exponential", "power-law"):
-            raise ValueError("Unknown functional-RG regulator family.")
+    def __init__(self, family: RegulatorName, /, *, power: float = 1.0) -> None:
+        family = parse(family, RegulatorName, "family")
         power_ = float(power)
         if not np.isfinite(power_) or power_ <= 0.0:
             raise ValueError("Regulator power must be finite and positive.")
@@ -130,7 +131,7 @@ class ThresholdQuadraturePlan(StrictModule, NonTrainableState):
         quadrature_order: int = 48,
         momentum_upper: float = 24.0,
         maximum_nodes: int = 512,
-    ):
+    ) -> None:
         dimension_ = float(dimension)
         order = int(quadrature_order)
         upper = float(momentum_upper)
@@ -149,7 +150,7 @@ class ThresholdQuadraturePlan(StrictModule, NonTrainableState):
         fine_rule = gauss_legendre_data(order)
         coarse_rule = gauss_legendre_data(coarse_order)
 
-        def map_rule(rule):
+        def map_rule(rule: QuadratureRuleData) -> tuple[Array, Array]:
             return (
                 0.5 * upper * (jnp.asarray(rule.nodes) + 1.0),
                 0.5 * upper * jnp.asarray(rule.weights),

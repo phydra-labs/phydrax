@@ -5,6 +5,7 @@
 """Real external-format fixtures exercising electrical and fail-closed contracts."""
 
 from math import pi, sqrt
+from typing import Any
 
 import numpy as np
 import pytest
@@ -149,7 +150,7 @@ CGMES = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
-def test_matpower_analytic_power_flow_and_mw_cost():
+def test_matpower_analytic_power_flow_and_mw_cost() -> None:
     adapted = parse_matpower(MATPOWER)
     result = solve_power_flow(adapted.network, study=adapted.study)
     assert bool(result.converged)
@@ -164,7 +165,7 @@ def test_matpower_analytic_power_flow_and_mw_cost():
     assert adapted.report.status == AdapterStatus.DECLARED_LOSS
 
 
-def test_generator_voltage_changes_study_without_changing_passive_network():
+def test_generator_voltage_changes_study_without_changing_passive_network() -> None:
     original = parse_matpower(MATPOWER)
     changed = parse_matpower(
         MATPOWER.replace(
@@ -180,7 +181,7 @@ def test_generator_voltage_changes_study_without_changing_passive_network():
     assert abs(complex(result.voltage[0])) == pytest.approx(1.04, abs=2e-6)
 
 
-def test_same_bus_generator_voltage_disagreement_is_not_lost_in_study_mapping():
+def test_same_bus_generator_voltage_disagreement_is_not_lost_in_study_mapping() -> None:
     source = MATPOWER.replace(
         "2 30 5 50 -50 1 50 0 50 0",
         "1 30 5 50 -50 1.02 50 1 50 0",
@@ -190,7 +191,7 @@ def test_same_bus_generator_voltage_disagreement_is_not_lost_in_study_mapping():
     assert not failure.value.report.valid
 
 
-def test_matpower_tap_phase_shunt_and_offline_branch_stamp():
+def test_matpower_tap_phase_shunt_and_offline_branch_stamp() -> None:
     source = MATPOWER.replace("2 1 10 0 0 0", "2 1 10 0 1 2").replace(
         "1 2 0 0.1 0 100 0 0 0 0 1", "1 2 0 0.1 0.02 100 0 0 1.05 10 1"
     )
@@ -208,7 +209,7 @@ def test_matpower_tap_phase_shunt_and_offline_branch_stamp():
     np.testing.assert_allclose(network.branch_admittance[1], 0)
 
 
-def test_matpower_executable_rejected_without_side_effect(tmp_path):
+def test_matpower_executable_rejected_without_side_effect(tmp_path: Any) -> None:
     marker = tmp_path / "must-not-exist"
     executable = MATPOWER.replace("end\n", f"system('touch {marker}');\nend\n")
     with pytest.raises(PowerImportError) as failure:
@@ -226,13 +227,15 @@ def test_matpower_executable_rejected_without_side_effect(tmp_path):
         MATPOWER.replace("1 -360 360", "1 -30 30"),
     ],
 )
-def test_matpower_rejects_expressions_and_unsupported_active_semantics(source):
+def test_matpower_rejects_expressions_and_unsupported_active_semantics(
+    source: Any,
+) -> None:
     with pytest.raises(PowerImportError) as failure:
         parse_matpower(source)
     assert not failure.value.report.valid
 
 
-def test_raw_dyr_machine_base_status_and_two_sided_transformer():
+def test_raw_dyr_machine_base_status_and_two_sided_transformer() -> None:
     adapted = parse_psse(RAW, DYR)
     network = compile_network(adapted.network, adapted.study)
     # Original two-sided ideal winding ratios, not just a normalized field copy.
@@ -250,8 +253,10 @@ def test_raw_dyr_machine_base_status_and_two_sided_transformer():
     assert not adapted.network.generators[1].in_service
     (machine,) = adapted.dynamics
     # H * machine MVA is the kinetic-energy coefficient, not H * system MVA.
+    # ty: ignore[unsupported-operator]
     assert machine.inertia * machine.base_mva == pytest.approx(100)
     assert (
+        # ty: ignore[unsupported-operator]
         machine.xd_prime * adapted.network.base_mva / machine.base_mva
         == pytest.approx(0.4)
     )
@@ -271,7 +276,9 @@ def test_raw_dyr_machine_base_status_and_two_sided_transformer():
         (RAW, DYR.replace("4.0 0.2", "0.0 0.2")),
     ],
 )
-def test_raw_dyr_rejects_unknown_missing_and_unrepresentable_models(raw, dyr):
+def test_raw_dyr_rejects_unknown_missing_and_unrepresentable_models(
+    raw: Any, dyr: Any
+) -> None:
     with pytest.raises(PowerImportError) as failure:
         parse_psse(raw, dyr)
     assert not failure.value.report.valid
@@ -284,14 +291,14 @@ def test_raw_dyr_rejects_unknown_missing_and_unrepresentable_models(raw, dyr):
         "1, 1, 50, 1, 'ACTIVE AREA CONTROL'",
     ],
 )
-def test_raw_tail_cannot_hide_executable_or_active_control_semantics(record):
+def test_raw_tail_cannot_hide_executable_or_active_control_semantics(record: Any) -> None:
     source = RAW.replace("Q\n", f"{record}\n0 / END OF AREA DATA\nQ\n")
     with pytest.raises(PowerImportError) as failure:
         parse_psse(source, DYR)
     assert not failure.value.report.valid
 
 
-def test_cgmes_real_rdf_resource_links_units_and_inward_signs():
+def test_cgmes_real_rdf_resource_links_units_and_inward_signs() -> None:
     adapted = parse_cgmes(CGMES)
     network = compile_network(adapted.network, adapted.study)
     series = 1 / (0.01 + 0.1j)
@@ -310,7 +317,7 @@ def test_cgmes_real_rdf_resource_links_units_and_inward_signs():
     assert adapted.report.valid
 
 
-def test_cgmes_disconnected_load_does_not_inject():
+def test_cgmes_disconnected_load_does_not_inject() -> None:
     terminal = """<cim:Terminal rdf:ID="load1">
   <cim:Terminal.ConductingEquipment rdf:resource="#load"/>
   <cim:Terminal.TopologicalNode rdf:resource="#n2"/>
@@ -337,13 +344,13 @@ def test_cgmes_disconnected_load_does_not_inject():
         CGMES.replace("EquipmentCore/3/1", "EquipmentCore/9/9"),
     ],
 )
-def test_cgmes_rejects_entities_unknown_semantics_and_dangling_links(source):
+def test_cgmes_rejects_entities_unknown_semantics_and_dangling_links(source: Any) -> None:
     with pytest.raises(PowerImportError) as failure:
         parse_cgmes(source)
     assert not failure.value.report.valid
 
 
-def test_parser_resource_budgets_fail_closed():
+def test_parser_resource_budgets_fail_closed() -> None:
     for limits in (
         PowerParserLimits(max_bytes=32),
         PowerParserLimits(max_rows=1),

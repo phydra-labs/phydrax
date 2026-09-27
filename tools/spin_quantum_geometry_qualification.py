@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -16,7 +17,7 @@ from phydrax.applications import spin_foam, spin_network
 from phydrax.operators.quantum.lattice import SU2SectorResourcePolicy
 
 
-def _resources():
+def _resources() -> Any:
     return SU2SectorResourcePolicy(
         maximum_product_dimension=10_000,
         maximum_sector_dimension=1_000,

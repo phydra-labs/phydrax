@@ -9,7 +9,8 @@ from operator import index
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..kernels import FiniteFeatureKernel
@@ -43,7 +44,7 @@ class CategoricalGaussianProcessLikelihood(StrictModule):
 
     class_count: int = eqx.field(static=True)
 
-    def __init__(self, class_count: int):
+    def __init__(self, class_count: int) -> None:
         if isinstance(class_count, bool):
             raise TypeError("class_count must be an integer.")
         count = index(class_count)
@@ -111,7 +112,7 @@ class CategoricalGaussianProcessPosterior(StrictModule):
     factors: tuple[BernoulliGaussianProcessPosterior, ...]
     likelihood: CategoricalGaussianProcessLikelihood
 
-    def __init__(self, factors: tuple[BernoulliGaussianProcessPosterior, ...]):
+    def __init__(self, factors: tuple[BernoulliGaussianProcessPosterior, ...]) -> None:
         if len(factors) < 2:
             raise ValueError(
                 "Categorical GP posterior requires at least two latent factors."
@@ -187,7 +188,7 @@ def condition_bernoulli_gaussian_process(
     identity = jnp.eye(points.shape[0], dtype=kernel_matrix.dtype)
     latent0 = jnp.zeros_like(labels)
 
-    def newton_step(_, latent):
+    def newton_step(_: int | Array, latent: Array) -> Array:
         probabilities = jax.nn.sigmoid(latent)
         curvature = jnp.where(
             weight > 0,

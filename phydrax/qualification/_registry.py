@@ -8,7 +8,7 @@ import hashlib
 import hmac
 import re
 from collections.abc import Mapping, Sequence
-from typing import Protocol
+from typing import Any, Protocol
 
 import equinox as eqx
 
@@ -48,7 +48,7 @@ def _timestamp(value: int, name: str, /) -> int:
 
 
 def _support_value(value: object, /) -> SupportValue:
-    if type(value) not in (str, int, bool):
+    if type(value) not in (str, int, bool) or not isinstance(value, (str, int)):
         raise TypeError("Support-tuple values must be strings, integers, or booleans.")
     if isinstance(value, str) and not value:
         raise ValueError("Support-tuple string values must be non-empty.")
@@ -67,7 +67,7 @@ class SupportTuple(StrictModule, NonTrainableState):
         capability: str,
         attributes: Mapping[str, SupportValue],
         /,
-    ):
+    ) -> None:
         capability_ = _capability_name(capability, "capability")
         if not isinstance(attributes, Mapping) or not attributes:
             raise TypeError("attributes must be a non-empty mapping.")
@@ -136,7 +136,7 @@ class ReleaseGateEvidence(StrictModule, NonTrainableState):
         issued_at: int,
         expires_at: int,
         deviation_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         gate_ = _identifier(gate, "gate")
         evidence = tuple(_identifier(value, "evidence ID") for value in evidence_ids)
         reviewer = _identifier(reviewer_id, "reviewer ID")
@@ -183,7 +183,7 @@ class ReleaseGateEvidence(StrictModule, NonTrainableState):
         return {**self._content_record(), "evidence_id": self.evidence_id}
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> ReleaseGateEvidence:
+    def from_record(cls, record: Mapping[str, Any], /) -> ReleaseGateEvidence:
         """Reconstruct and content-verify serialized release evidence."""
         if not isinstance(record, Mapping):
             raise TypeError("Release-evidence record must be a mapping.")
@@ -235,7 +235,7 @@ class CapabilityProfile(StrictModule, NonTrainableState):
         required_gates: Sequence[str] = (),
         release_evidence: Sequence[ReleaseGateEvidence] = (),
         released: bool = False,
-    ):
+    ) -> None:
         name_ = _capability_name(name, "profile name")
         provider_ = _identifier(provider, "provider")
         version_ = _identifier(version, "profile version")
@@ -338,7 +338,7 @@ class CapabilityProfile(StrictModule, NonTrainableState):
         return {**self._content_record(), "profile_id": self.profile_id}
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> CapabilityProfile:
+    def from_record(cls, record: Mapping[str, Any], /) -> CapabilityProfile:
         """Reconstruct and content-verify a serialized capability profile."""
         if not isinstance(record, Mapping):
             raise TypeError("Capability-profile record must be a mapping.")
@@ -410,7 +410,7 @@ class HMACSHA256ReleaseSigner:
 
     __slots__ = ("_secret", "_signer_id")
 
-    def __init__(self, signer_id: str, secret: bytes, /):
+    def __init__(self, signer_id: str, secret: bytes, /) -> None:
         signer = _identifier(signer_id, "signer ID")
         if not isinstance(secret, bytes) or not secret:
             raise TypeError("HMAC signing secret must be non-empty bytes.")
@@ -447,7 +447,7 @@ class HMACSHA256TrustPolicy:
         *,
         maximum_index_age: int,
         maximum_evidence_age: int,
-    ):
+    ) -> None:
         if not isinstance(trusted_signers, Mapping) or not trusted_signers:
             raise TypeError("trusted_signers must be a non-empty signer-key mapping.")
         keys = tuple(
@@ -522,7 +522,7 @@ class ReleaseIndex(StrictModule, NonTrainableState):
         signer_id: str,
         signature_algorithm: str,
         signature: str,
-    ):
+    ) -> None:
         profiles_ = tuple(profiles)
         if not profiles_ or any(
             not isinstance(item, CapabilityProfile) for item in profiles_
@@ -595,7 +595,7 @@ class ReleaseIndex(StrictModule, NonTrainableState):
         }
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> ReleaseIndex:
+    def from_record(cls, record: Mapping[str, Any], /) -> ReleaseIndex:
         """Reconstruct and content-verify a signed release index."""
         if not isinstance(record, Mapping):
             raise TypeError("Release-index record must be a mapping.")

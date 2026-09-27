@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from types import ModuleType
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -17,6 +19,7 @@ from ...backends.cvxpy import cvxpy_availability
 from ...linalg import AbstractSparseLinearOperator, OperatorProperties
 from ...sparse import EdgeRelation, SparseLinearMap
 from ._cones import (
+    AbstractConvexCone,
     NonnegativeCone,
     ProductCone,
     RotatedSecondOrderCone,
@@ -28,6 +31,13 @@ from ._power_cone import PowerCone
 from ._problem import ConicProgram
 from ._psd_cone import PositiveSemidefiniteCone
 from ._quadratic import ConvexProgramResult
+
+
+if TYPE_CHECKING:
+    import scipy.sparse as sp
+
+    from ._lifecycle import ConvexProgramPlan, PreparedConvexProgram
+    from ._policy import ConvexSolvePolicy
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +74,9 @@ class CVXPYProgramBinding(StrictModule):
         static=True, default=()
     )
 
-    def prepare(self, policy: Any = None, /):
+    def prepare(
+        self, policy: ConvexSolvePolicy | ConvexProgramPlan | None = None, /
+    ) -> PreparedConvexProgram:
         """Prepare this exact numeric import for provenance-bound execution."""
         fingerprint = _program_numeric_fingerprint(self.program)
         expected_binding = _numeric_binding_id(
@@ -86,13 +98,18 @@ class CVXPYProgramBinding(StrictModule):
         )
 
 
-def _module():
+def _module() -> ModuleType:
     return import_backend_module(
         cvxpy_availability(), "optimization.canonical-convex-model", "cvxpy"
     )
 
 
-def _sparse_map(matrix, /, *, properties=None):
+def _sparse_map(
+    matrix: sp.csr_matrix | sp.csr_array,
+    /,
+    *,
+    properties: OperatorProperties | None = None,
+) -> SparseLinearMap:
     coo = matrix.tocoo()
     relation = EdgeRelation(
         jnp.asarray(coo.col, dtype=jnp.int32),
@@ -107,8 +124,8 @@ def _sparse_map(matrix, /, *, properties=None):
     )
 
 
-def _cones(dims):
-    cones = []
+def _cones(dims: Any) -> ProductCone:
+    cones: list[AbstractConvexCone] = []
     if int(dims.zero):
         cones.append(ZeroCone(int(dims.zero)))
     if int(dims.nonneg):
@@ -122,7 +139,7 @@ def _cones(dims):
     return ProductCone(tuple(cones))
 
 
-def _parameter_topology(problem) -> str:
+def _parameter_topology(problem: Any) -> str:
     return canonical_fingerprint(
         {
             "kind": "cvxpy-parameter-topology",
@@ -268,7 +285,9 @@ def import_cvxpy_problem(problem: Any, /) -> CVXPYProgramBinding:
     )
 
 
-def _dense_host(operator):
+def _dense_host(
+    operator: Array | AbstractSparseLinearOperator,
+) -> sp.csr_matrix | np.ndarray:
     if isinstance(operator, AbstractSparseLinearOperator):
         storage = operator.sparse_storage()
         import scipy.sparse as sp
@@ -286,7 +305,7 @@ def _dense_host(operator):
     return np.asarray(operator)
 
 
-def export_cvxpy_program(program: ConicProgram, /):
+def export_cvxpy_program(program: ConicProgram, /) -> tuple[Any, CVXPYProgramBinding]:
     """Export supported native cone blocks to an explicit CVXPY Problem."""
     cp = _module()
     if not isinstance(program, ConicProgram) or program.batch_shape:

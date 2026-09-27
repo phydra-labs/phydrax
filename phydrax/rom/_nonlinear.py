@@ -10,7 +10,9 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from phydrax.ein import contract
 
@@ -70,7 +72,7 @@ class FullResidualGalerkin(StrictModule, NonTrainableState):
         /,
         *,
         lift: PyTree[Array] | None = None,
-    ):
+    ) -> None:
         if not isinstance(reduction, TrialTestReduction):
             raise TypeError("reduction must be a TrialTestReduction.")
         if not isinstance(provider, AbstractResidualProvider):
@@ -175,7 +177,7 @@ class ReducedLSPGProblem(StrictModule, NonTrainableState):
         /,
         *,
         lift: PyTree[Array] | None = None,
-    ):
+    ) -> None:
         if not isinstance(reduction, TrialTestReduction):
             raise TypeError("reduction must be a TrialTestReduction.")
         if not isinstance(provider, AbstractStageResidualProvider):
@@ -460,7 +462,7 @@ class GNATLSPGProblem(StrictModule, NonTrainableState):
         provider: AbstractSampledStageResidualProvider,
         gnat: GNATArtifact,
         /,
-    ):
+    ) -> None:
         if not isinstance(lspg, ReducedLSPGProblem):
             raise TypeError("lspg must be a ReducedLSPGProblem.")
         if not isinstance(provider, AbstractSampledStageResidualProvider):
@@ -623,7 +625,9 @@ class ECSWPlan(StrictModule, NonTrainableState):
     minimum_weight: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, maximum_elements: int, /, *, minimum_weight: float = 1.0e-12):
+    def __init__(
+        self, maximum_elements: int, /, *, minimum_weight: float = 1.0e-12
+    ) -> None:
         maximum = int(maximum_elements)
         minimum = float(minimum_weight)
         if maximum <= 0:

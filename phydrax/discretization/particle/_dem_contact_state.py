@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
 from ._pair_state import (
@@ -90,7 +90,15 @@ class DEMContactHistory(StrictModule):
         )
 
     @property
-    def values(self):
+    def values(
+        self,
+    ) -> tuple[
+        Array,
+        DEMNormalHistory,
+        DEMCohesionHistory,
+        DEMTangentialHistory,
+        DEMRotationalHistory,
+    ]:
         return (
             self.active,
             self.normal,

@@ -1,14 +1,16 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def test_pooled_small_roots_preserve_task_order_and_lane_invariance():
+def test_pooled_small_roots_preserve_task_order_and_lane_invariance() -> None:
     targets = jnp.asarray([[1.0], [2.0], [3.0], [4.0], [5.0]])
     initial = jnp.ones_like(targets)
 
-    def residual(value, target):
+    def residual(value: Any, target: Any) -> Any:
         return value**2 - target
 
     full = phx.nonlinear.batched_small_root(
@@ -31,7 +33,7 @@ def test_pooled_small_roots_preserve_task_order_and_lane_invariance():
     assert 0.0 < float(pooled.evidence.utilization) <= 1.0
 
 
-def test_pooled_small_roots_are_jittable_and_record_nonfinite_failures():
+def test_pooled_small_roots_are_jittable_and_record_nonfinite_failures() -> None:
     targets = jnp.asarray([[1.0], [jnp.nan], [9.0]])
     initial = jnp.ones_like(targets)
 
@@ -53,7 +55,7 @@ def test_pooled_small_roots_are_jittable_and_record_nonfinite_failures():
     assert sorted(result.evidence.completion_order.tolist()) == [0, 1, 2]
 
 
-def test_pooled_small_roots_honor_configured_damping_floor():
+def test_pooled_small_roots_honor_configured_damping_floor() -> None:
     result = phx.nonlinear.pooled_small_root(
         lambda state, target: state * state - target,
         jnp.asarray([[0.1], [0.2]]),

@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -48,7 +49,7 @@ class QuantumSpinObservablePlan(StrictModule):
     components: tuple[str, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, model: QuantumSpinModel, components: Sequence[str], /):
+    def __init__(self, model: QuantumSpinModel, components: Sequence[str], /) -> None:
         if not isinstance(model, QuantumSpinModel):
             raise TypeError("model must be QuantumSpinModel.")
         values = tuple(str(value) for value in components)
@@ -83,7 +84,13 @@ def spin_matrices(twice_spin: int, /) -> tuple[Array, Array, Array, Array, Array
     sx = 0.5 * (raising + lowering)
     sy = (raising - lowering) / (2.0j)
     sz = np.diag(projections)
-    return tuple(jnp.asarray(value) for value in (sx, sy, sz, raising, lowering))
+    return (
+        jnp.asarray(sx),
+        jnp.asarray(sy),
+        jnp.asarray(sz),
+        jnp.asarray(raising),
+        jnp.asarray(lowering),
+    )
 
 
 def _spaces_and_operators(

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 
@@ -14,18 +14,19 @@ from phydrax.enforcement._geometry_support import (
     BoundaryPatch,
     BoundarySide,
 )
-from phydrax.linalg import AbstractLinearOperator
+from phydrax.linalg import AbstractLinearOperator, RankPolicy, SolveResourcePolicy
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._trace_extension import (
     DiscreteTraceCorrectionProvider,
     PreparedTraceExtension,
 )
 
 
-InterfaceGauge = Literal["minimum_energy", "minus_only", "plus_only"]
+InterfaceGauge: TypeAlias = Literal["minimum_energy", "minus_only", "plus_only"]
 
 
 class OrientedInterfaceSupport(StrictModule, NonTrainableState):
@@ -57,7 +58,7 @@ class OrientedInterfaceSupport(StrictModule, NonTrainableState):
         normal_opposition_error: float,
         normal_opposition_tolerance: float,
         stability_owner_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         if not isinstance(cover, BoundaryCover) or len(cover.patches) != 2:
             raise ValueError(
                 "An oriented interface cover must contain exactly two patches."
@@ -144,7 +145,7 @@ class TwoSidedInterfaceCorrectionProvider(StrictModule, NonTrainableState):
         gauge: InterfaceGauge = "minimum_energy",
         gauge_certificate_id: str | None = None,
         preservation_operator: AbstractLinearOperator | None = None,
-    ):
+    ) -> None:
         if not isinstance(trace_operator, AbstractLinearOperator) or not isinstance(
             candidate_operator, AbstractLinearOperator
         ):
@@ -161,9 +162,7 @@ class TwoSidedInterfaceCorrectionProvider(StrictModule, NonTrainableState):
             raise ValueError(
                 "Interface trace target does not match the declared common trace space."
             )
-        gauge_ = str(gauge)
-        if gauge_ not in ("minimum_energy", "minus_only", "plus_only"):
-            raise ValueError("Unknown two-sided interface correction gauge.")
+        gauge_ = parse(str(gauge), InterfaceGauge, "gauge")
         gauge_id = None if gauge_certificate_id is None else str(gauge_certificate_id)
         if gauge_ != "minimum_energy" and (gauge_id is None or not gauge_id):
             raise ValueError(
@@ -183,7 +182,7 @@ class TwoSidedInterfaceCorrectionProvider(StrictModule, NonTrainableState):
         self.candidate_operator = candidate_operator
         self.support = support
         self.preservation_operator = preservation_operator
-        self.gauge = gauge_  # type: ignore[assignment]
+        self.gauge = gauge_
         self.gauge_certificate_id = gauge_id
         self.construction_certificate_id = construction
         self.provider_id = canonical_fingerprint(
@@ -204,7 +203,12 @@ class TwoSidedInterfaceCorrectionProvider(StrictModule, NonTrainableState):
         )
 
     def prepare(
-        self, /, *, rank=None, resources=None, numeric_version=0
+        self,
+        /,
+        *,
+        rank: RankPolicy | None = None,
+        resources: SolveResourcePolicy | None = None,
+        numeric_version: int = 0,
     ) -> PreparedTraceExtension:
         preservation_id = (
             None

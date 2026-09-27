@@ -22,41 +22,43 @@ from typing import Any, final
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
-from OCP.Bnd import Bnd_Box  # ty: ignore[unresolved-import]
-from OCP.BRep import BRep_Tool  # ty: ignore[unresolved-import]
+from jax import Array
+from jax.typing import ArrayLike
+from OCP.Bnd import Bnd_Box
+from OCP.BRep import BRep_Tool
 from OCP.BRepAdaptor import (
-    BRepAdaptor_Curve,  # ty: ignore[unresolved-import]
-    BRepAdaptor_Surface,  # ty: ignore[unresolved-import]
+    BRepAdaptor_Curve,
+    BRepAdaptor_Surface,
 )
-from OCP.BRepBndLib import BRepBndLib  # ty: ignore[unresolved-import]
-from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeVertex  # ty: ignore[unresolved-import]
-from OCP.BRepClass import BRepClass_FaceClassifier  # ty: ignore[unresolved-import]
-from OCP.BRepClass3d import BRepClass3d_SolidClassifier  # ty: ignore[unresolved-import]
-from OCP.BRepExtrema import BRepExtrema_DistShapeShape  # ty: ignore[unresolved-import]
-from OCP.BRepTools import BRepTools  # ty: ignore[unresolved-import]
+from OCP.BRepBndLib import BRepBndLib
+from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeVertex
+from OCP.BRepClass import BRepClass_FaceClassifier
+from OCP.BRepClass3d import BRepClass3d_SolidClassifier
+from OCP.BRepExtrema import BRepExtrema_DistShapeShape
+from OCP.BRepTools import BRepTools
 from OCP.GeomAPI import (
-    GeomAPI_ProjectPointOnCurve,  # ty: ignore[unresolved-import]
-    GeomAPI_ProjectPointOnSurf,  # ty: ignore[unresolved-import]
+    GeomAPI_ProjectPointOnCurve,
+    GeomAPI_ProjectPointOnSurf,
 )
-from OCP.GeomLProp import GeomLProp_SLProps  # ty: ignore[unresolved-import]
-from OCP.gp import gp_Pnt, gp_Pnt2d, gp_Vec  # ty: ignore[unresolved-import]
-from OCP.ShapeAnalysis import ShapeAnalysis_Surface  # ty: ignore[unresolved-import]
+from OCP.GeomLProp import GeomLProp_SLProps
+from OCP.gp import gp_Pnt, gp_Pnt2d, gp_Vec
+from OCP.ShapeAnalysis import ShapeAnalysis_Surface
 from OCP.TopAbs import (
-    TopAbs_EDGE,  # ty: ignore[unresolved-import]
-    TopAbs_FACE,  # ty: ignore[unresolved-import]
-    TopAbs_IN,  # ty: ignore[unresolved-import]
-    TopAbs_ON,  # ty: ignore[unresolved-import]
-    TopAbs_SOLID,  # ty: ignore[unresolved-import]
-    TopAbs_VERTEX,  # ty: ignore[unresolved-import]
+    TopAbs_EDGE,
+    TopAbs_FACE,
+    TopAbs_IN,
+    TopAbs_ON,
+    TopAbs_SOLID,
+    TopAbs_VERTEX,
 )
-from OCP.TopExp import TopExp  # ty: ignore[unresolved-import]
-from OCP.TopoDS import TopoDS, TopoDS_Shape  # ty: ignore[unresolved-import]
+from OCP.TopExp import TopExp
+from OCP.TopoDS import TopoDS, TopoDS_Shape
 
 from ..._bvh import bvh_overlap_pairs_host, prepare_bvh
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float
 from ._model import BRepModel
 from ._occt import _explore_unique, _shape_digest, _shape_index, read_occt_shape
 from ._planar import PlanarEmbedding
@@ -91,13 +93,6 @@ class BRepProjectionStatus(IntEnum):
     FAILED = 3
 
 
-def _positive(value: float, name: str, /) -> float:
-    result = float(value)
-    if not np.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
-
-
 def brep_entity_id(source_revision: str, dimension: int, index: int, /) -> str:
     """Canonical revision-qualified ``<revision>:<kind>:<index>`` entity identity."""
     return f"{source_revision}:{_KINDS[int(dimension)]}:{int(index)}"
@@ -125,10 +120,10 @@ class BRepProjectionPolicy(StrictModule, NonTrainableState):
         ambiguity_tolerance: float = 1.0e-9,
         parametric_tolerance: float = 1.0e-9,
         classifier_tolerance: float = 1.0e-7,
-    ):
-        ambiguity = _positive(ambiguity_tolerance, "ambiguity_tolerance")
-        parametric = _positive(parametric_tolerance, "parametric_tolerance")
-        classifier = _positive(classifier_tolerance, "classifier_tolerance")
+    ) -> None:
+        ambiguity = positive_finite_float(ambiguity_tolerance, "ambiguity_tolerance")
+        parametric = positive_finite_float(parametric_tolerance, "parametric_tolerance")
+        classifier = positive_finite_float(classifier_tolerance, "classifier_tolerance")
         self.ambiguity_tolerance = ambiguity
         self.parametric_tolerance = parametric
         self.classifier_tolerance = classifier
@@ -179,7 +174,7 @@ class BRepProjectionResult(StrictModule, NonTrainableState):
         normals: ArrayLike,
         tangents: ArrayLike,
         /,
-    ):
+    ) -> None:
         revision = str(source_revision).strip()
         dims = np.asarray(dimensions, dtype=np.int8)
         rows = np.asarray(indices, dtype=np.int32)
@@ -318,7 +313,7 @@ def _bound_shape(model: BRepModel, source: Any, /) -> Any:
     return shape
 
 
-def _matches(sorted_keys: np.ndarray, queries: np.ndarray, /):
+def _matches(sorted_keys: np.ndarray, queries: np.ndarray, /) -> Any:
     """``(query_row, position)`` of every sorted key equal to each query."""
     start = np.searchsorted(sorted_keys, queries, side="left")
     counts = np.searchsorted(sorted_keys, queries, side="right") - start
@@ -328,7 +323,7 @@ def _matches(sorted_keys: np.ndarray, queries: np.ndarray, /):
 
 
 def _closure_codes(
-    topology, edge_vertices: np.ndarray, counts: tuple[int, int, int, int], /
+    topology: Any, edge_vertices: np.ndarray, counts: tuple[int, int, int, int], /
 ) -> np.ndarray:
     """Sorted codes ``container * total + member`` of the reflexive closure relation."""
 
@@ -432,10 +427,14 @@ class PreparedBRepProjection(StrictModule, NonTrainableState):
         policy: BRepProjectionPolicy,
         embedding: PlanarEmbedding | None,
         /,
-    ):
+    ) -> None:
+        # ty: ignore[unresolved-attribute]
         faces = tuple(_explore_unique(shape, TopAbs_FACE, TopoDS.Face_s))
+        # ty: ignore[unresolved-attribute]
         edges = tuple(_explore_unique(shape, TopAbs_EDGE, TopoDS.Edge_s))
+        # ty: ignore[unresolved-attribute]
         vertices = _explore_unique(shape, TopAbs_VERTEX, TopoDS.Vertex_s)
+        # ty: ignore[unresolved-attribute]
         solids = tuple(_explore_unique(shape, TopAbs_SOLID, TopoDS.Solid_s))
         topology = model.topology
         if (len(faces), len(edges), len(vertices), len(solids)) != (
@@ -737,7 +736,10 @@ class PreparedBRepProjection(StrictModule, NonTrainableState):
                 probes = probes[(probes >= first) & (probes <= last)]
                 distances = [np.linalg.norm(_xyz(curve.Value(p)) - query) for p in probes]
                 if _flat(
-                    distances, float(np.linalg.norm(candidates[best] - query)), tolerance
+                    # ty: ignore[invalid-argument-type]
+                    distances,
+                    float(np.linalg.norm(candidates[best] - query)),
+                    tolerance,
                 ):
                     status = BRepProjectionStatus.AMBIGUOUS
             if status == BRepProjectionStatus.UNIQUE and closed:
@@ -800,6 +802,7 @@ class PreparedBRepProjection(StrictModule, NonTrainableState):
                         for sign in (-1.0, 1.0)
                     ]
                     if _flat(
+                        # ty: ignore[invalid-argument-type]
                         [np.linalg.norm(probe - query) for probe in probes],
                         distance,
                         tolerance,
@@ -912,7 +915,7 @@ class PreparedBRepProjection(StrictModule, NonTrainableState):
         lowest-dimensional entities with distinct closest points are AMBIGUOUS.
         """
         queries = self._queries(points, "Classification queries")
-        radius = _positive(tolerance, "tolerance")
+        radius = positive_finite_float(tolerance, "tolerance")
         top = int(maximum_dimension)
         if top not in (0, 1, 2):
             raise ValueError("maximum_dimension must be 0, 1, or 2.")
@@ -1000,7 +1003,7 @@ class PreparedBRepProjection(StrictModule, NonTrainableState):
         np.maximum.at(spread, owners, np.linalg.norm(points[rows] - leader, axis=1))
         ambiguous = spread > self.policy.ambiguity_tolerance
 
-        def gather(values: Array, fill: float, shape: tuple[int, ...] = ()):
+        def gather(values: Array, fill: float, shape: tuple[int, ...] = ()) -> Any:
             output = np.full((count,) + shape, fill, dtype=np.float64)
             output[selected_owners] = np.asarray(values)[selected_rows]
             return output
@@ -1079,7 +1082,7 @@ def _flat(distances: list[float], reference: float, tolerance: float, /) -> bool
     )
 
 
-def _select(query: np.ndarray, candidates: np.ndarray, tolerance: float, /):
+def _select(query: np.ndarray, candidates: np.ndarray, tolerance: float, /) -> Any:
     """Nearest candidate and UNIQUE/AMBIGUOUS status among distinct tied minima."""
     distances = np.linalg.norm(candidates - query, axis=1)
     best = int(np.argmin(distances))

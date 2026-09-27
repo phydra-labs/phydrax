@@ -12,9 +12,10 @@ from ..._fingerprint import canonical_fingerprint
 from ..._frozendict import frozendict
 from ..._model import ValuePort
 from ..._strict import StrictModule
-from ...equations._ir import PDEProblemIR
+from ...equations._ir import PDEExpression, PDEProblemIR
 from ...equations._serialize import pde_ir_from_dict, pde_ir_to_dict
 from ...graph._operator_topology import OperatorTopologySite
+from ...typing import parse
 from ...units import DimensionSignature
 from .capabilities import (
     OperatorGeometryKind,
@@ -116,7 +117,7 @@ class OperatorQuerySpec(StrictModule):
         topology_site: OperatorTopologySite | None = None,
         quadrature: OperatorQuadraturePolicy = "optional",
         fixed_geometry: bool | None = None,
-    ):
+    ) -> None:
         resolved_name = str(name)
         if not resolved_name:
             raise ValueError("Operator query names must not be empty.")
@@ -153,8 +154,7 @@ class OperatorQuerySpec(StrictModule):
             and topology_site is not None
         ):
             raise ValueError("Topology sites are only valid for topological queries.")
-        if quadrature not in ("unused", "optional", "physical_required"):
-            raise ValueError("Unknown operator query quadrature policy.")
+        quadrature = parse(quadrature, OperatorQuadraturePolicy, "quadrature")
         self.name = resolved_name
         self.geometry_kind = geometry_kind
         self.coordinate_components = components
@@ -260,7 +260,7 @@ class OperatorTask(StrictModule):
         dimension_basis: Sequence[str] = (),
         revision: str = "1",
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         resolved_id = str(task_id)
         resolved_revision = str(revision)
         if not resolved_id or not resolved_revision:
@@ -342,7 +342,7 @@ class OperatorTask(StrictModule):
                 *(item.dimension for item in pde.parameters),
             ]
 
-            def append_expression_dimensions(expression) -> None:
+            def append_expression_dimensions(expression: PDEExpression) -> None:
                 pde_dimensions.append(expression.dimension)
                 for argument in expression.args:
                     append_expression_dimensions(argument)

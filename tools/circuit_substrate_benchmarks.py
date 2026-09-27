@@ -2,8 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
 import platform
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -12,7 +14,7 @@ import phydrax as phx
 from benchmarks._runtime import measure_repeated, measure_synchronized
 
 
-def _network(size):
+def _network(size: Any) -> Any:
     reference = phx.circuit.ElectricalWaveReference(50.0)
     through = phx.circuit.MatrixScatteringComponent(
         jnp.asarray([[0.0, 0.999], [0.999, 0.0]], dtype=jnp.complex128),
@@ -45,7 +47,7 @@ def _network(size):
     )
 
 
-def _rc_circuit():
+def _rc_circuit() -> Any:
     reference = phx.circuit.ElectricalWaveReference(50.0)
     source = phx.circuit.CircuitElement(
         phx.circuit.IndependentCurrentSourceLaw(1.0), element_id="source"
@@ -66,7 +68,7 @@ def _rc_circuit():
     )
 
 
-def _network_rows():
+def _network_rows() -> Any:
     rows = []
     for size in (8, 32, 128):
         network = _network(size)
@@ -123,7 +125,7 @@ def _network_rows():
     return rows
 
 
-def _dynamic_row():
+def _dynamic_row() -> Any:
     prepared, prepare_seconds = measure_synchronized(
         lambda: phx.circuit.prepare_circuit_dae(_rc_circuit())
     )
@@ -153,7 +155,7 @@ def _dynamic_row():
     }
 
 
-def _harmonic_balance_row():
+def _harmonic_balance_row() -> Any:
     dae = phx.circuit.prepare_circuit_dae(_rc_circuit())
     waveform = jnp.ones((9, dae.plan.layout.size))
     plan, plan_seconds = measure_synchronized(
@@ -190,7 +192,7 @@ def _harmonic_balance_row():
     }
 
 
-def _macromodel_row():
+def _macromodel_row() -> Any:
     poles = jnp.asarray([-1.0 + 0.0j, -10.0 + 0.0j])
     model = phx.circuit.RationalMatrixModel(
         poles,
@@ -218,7 +220,7 @@ def _macromodel_row():
     }
 
 
-def main():
+def main() -> None:
     print(
         json.dumps(
             {

@@ -4,12 +4,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite
@@ -24,11 +24,15 @@ from ..nonlinear import (
 from ..units import conversion_factor
 from ._partitioned_coupling_graph import PreparedCoupling
 from ._partitioned_coupling_types import (
+    CouplingPort,
     CouplingProvenance,
+    CouplingQuantity,
     CouplingState,
     CouplingStatus,
+    CouplingSubsystemResult,
     CouplingWindow,
     CouplingWindowDiagnostics,
+    CouplingWindowErrorEstimate,
     CouplingWindowResult,
     ExplicitCouplingPolicy,
     ImplicitCouplingPolicy,
@@ -42,6 +46,24 @@ from ._partitioned_coupling_waveform import (
     unflatten_coupling_signal,
     validate_coupling_signal,
 )
+
+
+if TYPE_CHECKING:
+    from ..discretization import DiscreteMeasure
+    from ..units import UnitDefinition
+
+
+_ParticipantEvidence: TypeAlias = tuple[
+    list[Any],
+    list[Array],
+    list[Array],
+    list[Array],
+    list[Array],
+    list[CouplingWindowErrorEstimate | None],
+    list[Array],
+    list[Array],
+    list[tuple[Any, ...]],
+]
 
 
 class _CouplingEvaluation(StrictModule):
@@ -66,13 +88,13 @@ def _tree_stop(value: Any, /) -> Any:
     return jax.tree.map(jax.lax.stop_gradient, value)
 
 
-def _target_port(prepared: PreparedCoupling, exchange_index: int, /):
+def _target_port(prepared: PreparedCoupling, exchange_index: int, /) -> CouplingPort:
     subsystem_index = prepared.exchange_target_subsystems[exchange_index]
     input_index = prepared.exchange_target_input_indices[exchange_index]
     return prepared.subsystems[subsystem_index].input_ports[input_index]
 
 
-def _source_port(prepared: PreparedCoupling, exchange_index: int, /):
+def _source_port(prepared: PreparedCoupling, exchange_index: int, /) -> CouplingPort:
     subsystem_index = prepared.exchange_source_subsystems[exchange_index]
     output_index = prepared.exchange_source_output_indices[exchange_index]
     return prepared.subsystems[subsystem_index].output_ports[output_index]
@@ -96,10 +118,13 @@ def _apply_exchange(
         action = operator.mv
     else:
         action = exchange.transfer.primal_operator.mv
-    if source_port.quantity is not None:
-        factor = float(
-            conversion_factor(source_port.quantity.unit, target_port.quantity.unit)
-        )
+    source_quantity = source_port.quantity
+    if source_quantity is not None:
+        target_quantity = target_port.quantity
+        # Preparation requires physical descriptors at both ends of an exchange.
+        if not (target_quantity is not None):
+            raise RuntimeError("Internal invariant failed: target_quantity is not None.")
+        factor = float(conversion_factor(source_quantity.unit, target_quantity.unit))
         spatial_action = action
         action = lambda value: jax.tree.map(
             lambda leaf: factor * leaf, spatial_action(value)
@@ -107,7 +132,7 @@ def _apply_exchange(
     return transfer_coupling_signal(source_port, target_port, output, action)
 
 
-def _participant_finite(result, /) -> Array:
+def _participant_finite(result: CouplingSubsystemResult, /) -> Array:
     outputs_finite = jnp.asarray(True)
     for output in result.outputs:
         outputs_finite = outputs_finite & coupling_signal_finite(output)
@@ -129,7 +154,7 @@ def _evaluate_participant(
     input_values: tuple[Any, ...],
     args: Any,
     /,
-):
+) -> CouplingSubsystemResult:
     subsystem = prepared.subsystems[subsystem_index]
     result = subsystem.advance_window(
         window,
@@ -167,7 +192,9 @@ def _outgoing_exchange_indices(
     )
 
 
-def _empty_evidence(prepared: PreparedCoupling, start_state: CouplingState, /):
+def _empty_evidence(
+    prepared: PreparedCoupling, start_state: CouplingState, /
+) -> _ParticipantEvidence:
     count = len(prepared.subsystems)
     dtype = start_state.time.dtype
     return (
@@ -176,25 +203,25 @@ def _empty_evidence(prepared: PreparedCoupling, start_state: CouplingState, /):
         [jnp.asarray(jnp.inf, dtype=dtype) for _ in range(count)],
         [jnp.asarray(0, dtype=jnp.int32) for _ in range(count)],
         [jnp.asarray(0, dtype=jnp.int32) for _ in range(count)],
-        [jnp.asarray(False) for _ in range(count)],
-        [jnp.asarray(False) for _ in range(count)],
         [None for _ in range(count)],
+        [jnp.asarray(False) for _ in range(count)],
+        [jnp.asarray(False) for _ in range(count)],
         [() for _ in range(count)],
     )
 
 
 def _record_result(
     subsystem_index: int,
-    result,
-    candidate_states,
-    statuses,
-    residual_norms,
-    iterations,
-    work,
-    error_estimates,
-    successful,
-    finite,
-    outputs,
+    result: CouplingSubsystemResult,
+    candidate_states: list[Any],
+    statuses: list[Array],
+    residual_norms: list[Array],
+    iterations: list[Array],
+    work: list[Array],
+    error_estimates: list[CouplingWindowErrorEstimate | None],
+    successful: list[Array],
+    finite: list[Array],
+    outputs: list[tuple[Any, ...]],
     /,
 ) -> None:
     candidate_states[subsystem_index] = result.candidate_state
@@ -585,7 +612,7 @@ def _exchange_diagnostics(
     prepared: PreparedCoupling,
     evaluation: _CouplingEvaluation,
     /,
-):
+) -> tuple[Array, Array, Array, Array]:
     physical_norms: list[Array] = []
     normalized_norms: list[Array] = []
     thresholds: list[Array] = []
@@ -723,8 +750,24 @@ def _status_from_nonlinear(
     ).astype(jnp.int32)
 
 
-def _physical_window_budget(prepared, evaluation, /):
-    rows = []
+def _interval_integral_parts(
+    port: CouplingPort, /
+) -> tuple[CouplingQuantity, DiscreteMeasure, UnitDefinition]:
+    quantity = port.quantity
+    measure = port.measure
+    unit = port.measure_unit
+    # Interval-integral ports require quantity and measure; measured ports a unit.
+    if not (quantity is not None and measure is not None and (unit is not None)):
+        raise RuntimeError(
+            "Internal invariant failed: quantity is not None and measure is not None and (unit is not None)."
+        )
+    return quantity, measure, unit
+
+
+def _physical_window_budget(
+    prepared: PreparedCoupling, evaluation: _CouplingEvaluation, /
+) -> tuple[Array, Array]:
+    rows: list[Array] = []
     certified = jnp.asarray(True)
     for index in range(len(prepared.exchanges)):
         source = _source_port(prepared, index)
@@ -736,13 +779,14 @@ def _physical_window_budget(prepared, evaluation, /):
             continue
         proposed = source.space.flatten(evaluation.source_values[index])
         received = target.space.flatten(evaluation.used_inputs[index])
-        debit = -source.measure.integrate(proposed) * float(
-            source.quantity.unit.scale_to_reference
-            * source.measure_unit.scale_to_reference
+        source_quantity, source_measure, source_unit = _interval_integral_parts(source)
+        # Prepared exchanges share temporal kinds, so the target is interval-integral.
+        target_quantity, target_measure, target_unit = _interval_integral_parts(target)
+        debit = -source_measure.integrate(proposed) * float(
+            source_quantity.unit.scale_to_reference * source_unit.scale_to_reference
         )
-        credit = target.measure.integrate(received) * float(
-            target.quantity.unit.scale_to_reference
-            * target.measure_unit.scale_to_reference
+        credit = target_measure.integrate(received) * float(
+            target_quantity.unit.scale_to_reference * target_unit.scale_to_reference
         )
         row = jnp.stack((debit, credit))
         scale = jnp.maximum(jnp.abs(debit), jnp.abs(credit))
@@ -850,11 +894,16 @@ def _window_result(
         ),
         counts_complete=prepared.report.resources.complete and not implicit,
     )
-    method_id = (
-        f"explicit-{prepared.policy.sweep.kind}"
-        if isinstance(prepared.policy, ExplicitCouplingPolicy)
-        else prepared.policy.method.method_id
-    )
+    policy = prepared.policy
+    if isinstance(policy, ExplicitCouplingPolicy):
+        method_id = f"explicit-{policy.sweep.kind}"
+    else:
+        # Preparation admits only explicit and implicit coupling policies.
+        if not (isinstance(policy, ImplicitCouplingPolicy)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(policy, ImplicitCouplingPolicy)."
+            )
+        method_id = policy.method.method_id
     provenance = CouplingProvenance(
         problem_id=prepared.problem_id,
         graph_id=prepared.graph_id,
@@ -950,7 +999,7 @@ def advance_coupling_window(
         if sweep is None:
             raise RuntimeError("Prepared fixed-point coupling sweep is missing.")
 
-        def mapping(coordinates, runtime_args):
+        def mapping(coordinates: Array, runtime_args: Any) -> Array:
             current_values = _unpack_interface(
                 prepared, coordinates, state.exchange_values
             )
@@ -983,7 +1032,9 @@ def advance_coupling_window(
             space_id=f"{prepared.plan_id}/interface-coordinates",
         )
 
-        def residual(coordinates, runtime_args):
+        def residual(
+            coordinates: Array, runtime_args: Any
+        ) -> tuple[Array, _CouplingEvaluation]:
             current_values = _unpack_interface(
                 prepared, coordinates, state.exchange_values
             )

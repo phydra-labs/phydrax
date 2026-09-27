@@ -6,9 +6,12 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 
@@ -22,12 +25,16 @@ from ._measure_transform import (
 )
 
 
+if TYPE_CHECKING:
+    from ._api import IntegrationRealization
+
+
 class EmpiricalCubaturePlan(StrictModule):
     """Positive moment recombination policy for a supplied finite feature span."""
 
     method: MomentRecombination
 
-    def __init__(self, method: MomentRecombination | None = None, /):
+    def __init__(self, method: MomentRecombination | None = None, /) -> None:
         resolved = MomentRecombination() if method is None else method
         if not isinstance(resolved, MomentRecombination):
             raise TypeError("method must be a MomentRecombination or None.")
@@ -51,11 +58,11 @@ class EmpiricalCubatureDiagnostics(StrictModule):
 
 
 def empirical_cubature(
-    realization,
-    basis_values,
+    realization: IntegrationRealization,
+    basis_values: PyTree,
     plan: EmpiricalCubaturePlan,
     /,
-):
+) -> IntegrationRealization:
     """Recombine one positive finite measure while preserving supplied moments."""
     if not isinstance(plan, EmpiricalCubaturePlan):
         raise TypeError("plan must be an EmpiricalCubaturePlan.")

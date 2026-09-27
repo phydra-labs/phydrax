@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -7,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def _batch(*, cases=2, size=6, masked=False):
+def _batch(*, cases: Any = 2, size: Any = 6, masked: Any = False) -> Any:
     nodes = jnp.linspace(0.0, 1.0, size, endpoint=False)
     axis = phx.nn.operator.OperatorAxis(
         "x",
@@ -30,7 +32,7 @@ def _batch(*, cases=2, size=6, masked=False):
     )
 
 
-def test_gaussian_distribution_matches_dense_log_density_and_masks_samples():
+def test_gaussian_distribution_matches_dense_log_density_and_masks_samples() -> None:
     batch = _batch(masked=True)
     query = batch.require_single_query()
     mean = jnp.arange(12, dtype="float64").reshape((2, 6)) / 10.0
@@ -78,7 +80,9 @@ def test_gaussian_distribution_matches_dense_log_density_and_masks_samples():
         distribution.log_prob(target[:, :-1])
 
 
-def test_fixed_scale_gaussian_operator_has_coherent_process_distribution_and_gradient():
+def test_fixed_scale_gaussian_operator_has_coherent_process_distribution_and_gradient() -> (
+    None
+):
     batch = _batch()
     base = phx.nn.operator.architectures.FNO(
         n_modes=(2,),
@@ -128,7 +132,9 @@ def test_fixed_scale_gaussian_operator_has_coherent_process_distribution_and_gra
     assert all(bool(jnp.all(jnp.isfinite(leaf))) for leaf in leaves)
 
 
-def test_gaussian_operator_parameter_contract_distinguishes_fixed_and_learned_scale():
+def test_gaussian_operator_parameter_contract_distinguishes_fixed_and_learned_scale() -> (
+    None
+):
     fixed_base = phx.nn.operator.architectures.FNO(
         n_modes=(2,),
         in_channels="scalar",
@@ -154,6 +160,7 @@ def test_gaussian_operator_parameter_contract_distinguishes_fixed_and_learned_sc
         phx.nn.operator.architectures.GaussianFunctionOperator(
             fixed_base,
             factor_rank=1,
+            # ty: ignore[invalid-argument-type]
             scale_mode="invalid",
         )
     with pytest.raises(ValueError, match="finite"):

@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..sparse import gather_routes, route_reduce, RowRelation
+from ..typing import parse
 from ._types import InterpolationResult, MaskMode
 
 
@@ -29,7 +31,7 @@ class GatherStencil(StrictModule):
         valid: ArrayLike | None = None,
         support: ArrayLike | None = None,
         case_shape: tuple[int, ...] = (),
-    ):
+    ) -> None:
         relation = RowRelation(
             indices,
             source_size=source_size,
@@ -99,8 +101,7 @@ def apply_gather_stencil(
     mask_mode: MaskMode = "strict",
 ) -> InterpolationResult:
     """Apply a weighted gather while preserving explicit query support."""
-    if mask_mode not in ("reject", "renormalize", "strict"):
-        raise ValueError("mask_mode must be 'reject', 'renormalize', or 'strict'.")
+    mask_mode = parse(mask_mode, MaskMode, "mask_mode")
 
     patches, valid = gather_patches(values, stencil)
     if source_mask is not None:

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -16,11 +19,11 @@ from phydrax._training_kernel import TrainingRejectionBudgetError
 class _TrainableFront(eqx.Module):
     offset: jnp.ndarray = phx.parameter_field()
 
-    def __call__(self, time):
+    def __call__(self, time: Any) -> Any:
         return time[0] + self.offset
 
 
-def test_exact_stefan_all_representations_satisfy_shared_problem():
+def test_exact_stefan_all_representations_satisfy_shared_problem() -> None:
     result = phx.applications.free_boundary.ExactStefanBenchmark().run(
         points_per_block=32,
         key=jr.key(0),
@@ -31,7 +34,7 @@ def test_exact_stefan_all_representations_satisfy_shared_problem():
     assert result.implicit.total < 1.0e-3
 
 
-def test_stefan_fit_optimizes_a_trainable_representation_end_to_end():
+def test_stefan_fit_optimizes_a_trainable_representation_end_to_end() -> None:
     benchmark = phx.applications.free_boundary.ExactStefanBenchmark()
     batch = phx.applications.free_boundary.stefan_collocation_batch(
         benchmark.parameters,
@@ -66,13 +69,13 @@ def test_stefan_fit_optimizes_a_trainable_representation_end_to_end():
     assert abs(float(fitted.model.front.offset) - 0.5) < 0.1
 
 
-def test_stefan_fit_refuses_a_nonfinite_update_instead_of_committing_it():
+def test_stefan_fit_refuses_a_nonfinite_update_instead_of_committing_it() -> None:
     model = phx.applications.free_boundary.ExplicitFrontStefanPINN(
         lambda point: point[0],
         _TrainableFront(jnp.asarray(0.4)),
     )
 
-    def loss(candidate):
+    def loss(candidate: Any) -> Any:
         offset = candidate.front.offset
         return phx.applications.free_boundary.StefanLoss(
             pde=jnp.sqrt(offset - 0.5),
@@ -88,7 +91,7 @@ def test_stefan_fit_refuses_a_nonfinite_update_instead_of_committing_it():
         )
 
 
-def test_relaxed_first_passage_weights_form_one_stopping_law():
+def test_relaxed_first_passage_weights_form_one_stopping_law() -> None:
     distance = jnp.asarray(((1.0, 0.1, -0.1, -1.0),))
     result = phx.applications.free_boundary.relaxed_first_passage_weights(
         distance,
@@ -105,7 +108,7 @@ def test_relaxed_first_passage_weights_form_one_stopping_law():
     )
 
 
-def test_stationary_probabilistic_stefan_moments_have_zero_loss():
+def test_stationary_probabilistic_stefan_moments_have_zero_loss() -> None:
     times = jnp.asarray((0.0, 0.5, 1.0))
     domain_points = jnp.asarray(((-1.0,), (1.0,)))
     paths_outside = jnp.ones((4, 3, 1))
@@ -138,7 +141,7 @@ def test_stationary_probabilistic_stefan_moments_have_zero_loss():
     np.testing.assert_allclose(result.moment_residual, 0.0, atol=1.0e-14)
 
 
-def test_benchmark_ladder_observables_are_exact_on_reference_data():
+def test_benchmark_ladder_observables_are_exact_on_reference_data() -> None:
     times = jnp.asarray((0.0, 0.5, 1.0))
     modes = jnp.asarray((2, 3))
     rates = jnp.asarray((0.2, -0.1))
@@ -170,7 +173,7 @@ def test_benchmark_ladder_observables_are_exact_on_reference_data():
     assert obstacle.complementarity_residual == 0.0
 
 
-def test_hysing_fsi_and_fracture_benchmark_contracts():
+def test_hysing_fsi_and_fracture_benchmark_contracts() -> None:
     angle = jnp.linspace(0.0, 2.0 * jnp.pi, 65)[:-1]
     contour = jnp.stack((jnp.cos(angle), jnp.sin(angle)), axis=-1)
     bubble = phx.applications.free_boundary.hysing_bubble_benchmark(
@@ -209,7 +212,7 @@ def test_hysing_fsi_and_fracture_benchmark_contracts():
     assert fracture.crack_path_hausdorff == 0.0
 
 
-def test_trajectory_split_never_leaks_one_trajectory():
+def test_trajectory_split_never_leaks_one_trajectory() -> None:
     result = phx.applications.free_boundary.trajectory_disjoint_ood_split(
         ("a", "a", "b", "b", "c", "c", "d", "d"),
         jnp.asarray((False, False, False, False, False, False, True, True)),

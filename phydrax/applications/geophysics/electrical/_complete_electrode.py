@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 from phydrax import ein
@@ -21,6 +24,9 @@ from ._finite_patch import DC_CONDUCTIVITY_UNIT, FinitePatchDCPlan, PreparedDC
 
 
 CONTACT_IMPEDANCE_UNIT = derived_unit("ohm*m^2", ((OHM, 1), (METER, 2)))
+
+# potential, electrode, residual norm, current residual, gauge, power, successful
+_CurrentSolveRow: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 
 class CompleteElectrodeSolveResult(StrictModule):
@@ -48,7 +54,7 @@ class CompleteElectrodeDCPlan(StrictModule, NonTrainableState):
         /,
         *,
         unit: UnitDefinition = CONTACT_IMPEDANCE_UNIT,
-    ):
+    ) -> None:
         if not isinstance(finite_patch, FinitePatchDCPlan):
             raise TypeError(
                 "Complete electrode model requires FinitePatchDCPlan geometry/survey."
@@ -90,7 +96,7 @@ class PreparedCompleteElectrodeDC(StrictModule, NonTrainableState):
     solve_policy: la.LinearSolvePolicy
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: CompleteElectrodeDCPlan, /):
+    def __init__(self, plan: CompleteElectrodeDCPlan, /) -> None:
         if not isinstance(plan, CompleteElectrodeDCPlan):
             raise TypeError("Prepared complete electrode model requires its plan.")
         base = plan.finite_patch.prepare()
@@ -161,7 +167,9 @@ class PreparedCompleteElectrodeDC(StrictModule, NonTrainableState):
             }
         )
 
-    def _operator(self, conductivity: ArrayLike, unit: UnitDefinition):
+    def _operator(
+        self, conductivity: ArrayLike, unit: UnitDefinition
+    ) -> la.FunctionLinearOperator:
         bound = self.base.bind_conductivity(conductivity, unit=unit)
         bulk = bound.linear_solve.problem.operator
         node_count = self.base.compiled.state_space.size
@@ -171,7 +179,7 @@ class PreparedCompleteElectrodeDC(StrictModule, NonTrainableState):
         mass_columns = self.mass_columns
         mass_weights = self.mass_weights
 
-        def action(values):
+        def action(values: Array) -> Array:
             potential = values[:node_count]
             electrode = values[node_count : node_count + electrode_count]
             gauge_multiplier = values[-1]
@@ -226,7 +234,7 @@ class PreparedCompleteElectrodeDC(StrictModule, NonTrainableState):
         node_count = self.base.compiled.state_space.size
         electrode_count = len(survey.patches)
 
-        def solve_current(current):
+        def solve_current(current: Array) -> _CurrentSolveRow:
             rhs = jnp.concatenate((jnp.zeros(node_count), current, jnp.zeros(1)))
             result = la.solve(la.LinearSystem(operator), rhs, policy=self.solve_policy)
             residual = operator.mv(result.value) - rhs

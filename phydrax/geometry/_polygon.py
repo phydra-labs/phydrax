@@ -20,7 +20,9 @@ def orientation(a: np.ndarray, b: np.ndarray, c: np.ndarray, /) -> float:
     return float((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
 
 
-def _segments_intersect(a, b, c, d, tolerance: float, /) -> bool:
+def _segments_intersect(
+    a: np.ndarray, b: np.ndarray, c: np.ndarray, d: np.ndarray, tolerance: float, /
+) -> bool:
     first = orientation(a, b, c)
     second = orientation(a, b, d)
     third = orientation(c, d, a)
@@ -47,7 +49,7 @@ def validate_simple_polygon(
         raise ValueError("Polygon vertices must contain only finite values.")
     count = points_.shape[0]
     scale = max(float(np.max(np.abs(points_))), 1.0)
-    tolerance = 128.0 * np.finfo(np.float64).eps * scale * scale
+    tolerance = 128.0 * float(np.finfo(np.float64).eps) * scale * scale
     area = signed_area2(points_)
     if abs(area) <= tolerance:
         raise ValueError("Polygon cells must have positive area.")

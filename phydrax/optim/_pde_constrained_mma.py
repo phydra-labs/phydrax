@@ -10,9 +10,9 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax import core
+from jax import Array, core
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from phydrax._strict import StrictModule
 from phydrax.ein import contract
@@ -29,6 +29,8 @@ from ._mma import _mma_subproblem, _MMAState, MMAEvidence, MMAPolicy
 from ._pde_constrained import (
     _default_adjoint_policy,
     AbstractStateDesignMethod,
+    AdjointAcceptanceEvidence,
+    StateAcceptanceEvidence,
     StateDesignConstraint,
     StateDesignProblem,
     StateDesignResult,
@@ -47,7 +49,7 @@ class _StateInequality:
     bound: float
     source: str
 
-    def value(self, state, design, args):
+    def value(self, state: PyTree[Any], design: PyTree[Any], args: Any) -> Array:
         raw = jnp.asarray(self.constraint.value(state, design, args))
         return self.sign * (raw - self.bound)
 
@@ -74,7 +76,7 @@ class ReducedMMA(AbstractStateDesignMethod):
         *,
         policy: MMAPolicy | None = None,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         policy_ = MMAPolicy() if policy is None else policy
         linear_policy_ = (
             _default_adjoint_policy() if linear_policy is None else linear_policy
@@ -173,13 +175,26 @@ def _reduced_values_and_gradients(
     design: PyTree[Any],
     args: Any,
     linear_policy: LinearSolvePolicy,
-    state_acceptance,
+    state_acceptance: StateAcceptanceEvidence,
     /,
-):
+) -> tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    PyTree[Array],
+    AdjointAcceptanceEvidence,
+    Array,
+    Array,
+    Array,
+]:
     point = _linearize_state_design(
         problem, state, design, args, linear_policy, state_acceptance
     )
     objective = state_design_response_vjp(point)
+    objective_acceptance = objective.adjoint_acceptance
+    if objective_acceptance is None:
+        raise RuntimeError("Objective response omitted its required adjoint evidence.")
     flat_objective_gradient, _ = ravel_pytree(objective.design_cotangent)
     values = []
     rows = []
@@ -209,7 +224,7 @@ def _reduced_values_and_gradients(
         jnp.stack(values),
         jnp.stack(rows),
         objective.adjoint,
-        objective.adjoint_acceptance,
+        objective_acceptance,
         usable,
         jnp.asarray(len(all_results), dtype=jnp.int32),
         linear_iterations,
@@ -316,12 +331,12 @@ def _solve_reduced_mma(
         jnp.asarray(0, jnp.int32),
     )
 
-    def condition(current):
+    def condition(current: _ReducedMMAState) -> Array:
         return (current.status == int(OptimizationStatus.ITERATING)) & (
             current.mma.iterations < termination.maximum_steps
         )
 
-    def body(current):
+    def body(current: _ReducedMMAState) -> _ReducedMMAState:
         design = unravel(current.mma.parameters)
         (
             _,

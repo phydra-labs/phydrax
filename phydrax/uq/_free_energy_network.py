@@ -13,7 +13,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -27,7 +28,7 @@ from ..linalg._policies import RankPolicy
 from ._free_energy import FreeEnergyResult, FreeEnergyStatus
 
 
-def _identifier(value: str, name: str, /) -> str:
+def _identifier(value: object, name: str, /) -> str:
     if not isinstance(value, str) or not value or value.strip() != value:
         raise ValueError(f"{name} must be a non-empty canonical string.")
     return value
@@ -42,7 +43,7 @@ def _real_array(value: ArrayLike, name: str, /) -> Array:
     return array
 
 
-def _covariance_tolerance(value: np.ndarray, /) -> float:
+def _covariance_tolerance(value: np.ndarray, /) -> np.floating:
     scale = max(float(np.max(np.abs(value), initial=0.0)), 1.0)
     return 256.0 * np.finfo(value.dtype).eps * scale
 
@@ -74,7 +75,7 @@ class FreeEnergyEdgeObservation(StrictModule, NonTrainableState):
         selection_id: str,
         influence_values: ArrayLike | None = None,
         influence_basis_id: str | None = None,
-    ):
+    ) -> None:
         estimate = _real_array(value, "value").reshape(())
         variance_ = _real_array(variance, "variance").reshape(())
         source = _identifier(source_state_id, "source_state_id")
@@ -181,7 +182,7 @@ class FreeEnergyNetworkPlan(StrictModule, NonTrainableState):
         reference_state_id: str,
         rank_tolerance: float = 1.0e-12,
         maximum_cycle_z_score: float = 5.0,
-    ):
+    ) -> None:
         states = tuple(_identifier(value, "state_id") for value in state_ids)
         if len(states) < 2 or len(set(states)) != len(states):
             raise ValueError(
@@ -266,7 +267,7 @@ class FreeEnergyNetworkResult(StrictModule, NonTrainableState):
         /,
         *,
         observation_ids: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(plan, FreeEnergyNetworkPlan):
             raise TypeError("plan must be FreeEnergyNetworkPlan.")
         free = _real_array(free_energies, "free_energies").reshape((-1,))

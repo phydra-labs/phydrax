@@ -10,7 +10,8 @@ from dataclasses import dataclass, field
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -443,7 +444,7 @@ class PermeabilityExchangePlan(StrictModule):
         transfer: PreparedEmbeddedMeasureTransfer,
         coefficients: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(transfer, PreparedEmbeddedMeasureTransfer):
             raise TypeError("transfer must be PreparedEmbeddedMeasureTransfer.")
         coefficient = jnp.asarray(coefficients)
@@ -497,7 +498,7 @@ class ReservoirCouplingPlan(StrictModule):
         /,
         *,
         network_size: int,
-    ):
+    ) -> None:
         indices = np.asarray(network_indices)
         volume = np.asarray(volumes, dtype=np.float64)
         coefficient = np.asarray(coefficients, dtype=np.float64)
@@ -594,7 +595,7 @@ class PreparedMixedDimensionalTransport(StrictModule):
         if actual != expected:
             raise ValueError(f"State shapes must be {expected}; got {actual}.")
 
-    def mass_vector(self, dtype) -> Array:
+    def mass_vector(self, dtype: DTypeLike) -> Array:
         return jnp.concatenate(
             (
                 self.bulk.mass.astype(dtype),
@@ -702,7 +703,7 @@ class PreparedMixedDimensionalTransport(StrictModule):
             )
             explicit = self.flatten(advective)
 
-        def action(candidate):
+        def action(candidate: Array) -> Array:
             candidate_state = self.unflatten(candidate)
             residual, _ = self.residual(candidate_state, include_advection=not imex)
             return mass * candidate + width * self.flatten(residual)

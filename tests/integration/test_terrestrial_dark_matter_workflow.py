@@ -1,4 +1,5 @@
 import hashlib
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -18,7 +19,7 @@ from phydrax.qualification import ReferenceArtifactManifest
 from phydrax.stochastic import PoissonClockRealization
 
 
-def _manifest(name):
+def _manifest(name: Any) -> Any:
     payload = name.encode()
     return ReferenceArtifactManifest(
         name,
@@ -41,7 +42,7 @@ def _manifest(name):
     )
 
 
-def _plan(*, maximum_guard_events=16):
+def _plan(*, maximum_guard_events: Any = 16) -> Any:
     profile = LayeredTerrestrialProfile(
         jnp.asarray((1.0, 2.0)),
         jnp.zeros((2,)),
@@ -71,7 +72,7 @@ def _plan(*, maximum_guard_events=16):
     )
 
 
-def _paths(count):
+def _paths(count: Any) -> Any:
     states = jnp.broadcast_to(
         jnp.asarray((-3.0, 0.0, 0.0, 1.0, 0.0, 0.0)),
         (count, 6),
@@ -85,7 +86,7 @@ def _paths(count):
     )
 
 
-def _clocks(plan, count):
+def _clocks(plan: Any, count: Any) -> Any:
     return PoissonClockRealization(
         jr.key(12),
         1,
@@ -96,7 +97,7 @@ def _clocks(plan, count):
     )
 
 
-def test_transparent_terrestrial_workflow_replays_guards_and_crossing_measure():
+def test_transparent_terrestrial_workflow_replays_guards_and_crossing_measure() -> None:
     plan = _plan()
     paths = _paths(4)
     clocks = _clocks(plan, 4)
@@ -128,7 +129,7 @@ def test_transparent_terrestrial_workflow_replays_guards_and_crossing_measure():
     )
 
 
-def test_inactive_terrestrial_paths_are_safe_filled_and_excluded():
+def test_inactive_terrestrial_paths_are_safe_filled_and_excluded() -> None:
     plan = _plan()
     base = _paths(2)
     states = jnp.asarray(base.samples).at[1].set(jnp.nan)
@@ -150,7 +151,7 @@ def test_inactive_terrestrial_paths_are_safe_filled_and_excluded():
     assert result.detector_crossings.diagnostics.crossing_count == 2
 
 
-def test_guard_capacity_failure_is_numerical_not_a_transmission_outcome():
+def test_guard_capacity_failure_is_numerical_not_a_transmission_outcome() -> None:
     plan = _plan(maximum_guard_events=3)
     result = plan.simulate(_paths(2), _clocks(plan, 2), jnp.asarray((0.0, 6.0)))
 

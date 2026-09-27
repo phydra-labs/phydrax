@@ -6,21 +6,29 @@ from __future__ import annotations
 
 from enum import StrEnum
 from math import isfinite
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...discretization.finite_volume._incompressible import FaceVelocity
+from ...discretization.finite_volume._incompressible import (
+    FaceVelocity,
+    PreparedMACOperators,
+)
 from ...discretization.finite_volume._mac_scalar import PreparedMACScalarTransport
+from ...equations._chemical_mechanism import PreparedChemicalMechanism
+from ...equations._homogeneous_thermodynamics import (
+    HomogeneousThermodynamicEvaluation,
+)
 from ...equations._mixture_transport import MixtureAveragedTransportPlan
 from ...solver._mac_variable_density import (
     MACVariableDensityProjectionPlan,
@@ -47,7 +55,7 @@ class LowMachReactingSDCPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, correction_sweeps: int = 2, nonlinear_tolerance: float = 1.0e-8, /
-    ):
+    ) -> None:
         sweeps = int(correction_sweeps)
         tolerance = float(nonlinear_tolerance)
         if sweeps < 1 or not isfinite(tolerance) or tolerance <= 0.0:
@@ -140,7 +148,7 @@ class LowMachReactingFlowPlan(StrictModule, NonTrainableState):
         conservation_tolerance: float = 1.0e-8,
         eos_tolerance: float = 1.0e-7,
         maximum_temperature_iterations: int = 64,
-    ):
+    ) -> None:
         if not isinstance(formulation, LowMachReactingFormulation):
             raise TypeError("formulation must be LowMachReactingFormulation.")
         if formulation.mechanism is None:
@@ -235,7 +243,7 @@ class LowMachReactingFlowPlan(StrictModule, NonTrainableState):
         )
 
     @property
-    def operators(self):
+    def operators(self) -> PreparedMACOperators:
         return self.projection.operators
 
     def initialize(
@@ -278,7 +286,9 @@ class LowMachReactingFlowPlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
-    def _recover(self, species_density: Array, enthalpy_density: Array, /):
+    def _recover(
+        self, species_density: Array, enthalpy_density: Array, /
+    ) -> tuple[HomogeneousThermodynamicEvaluation, Array, Array]:
         schema = self.formulation.thermodynamics.schema
         molar_mass = schema.molar_masses.astype(species_density.dtype)
         concentration = species_density / molar_mass
@@ -293,7 +303,7 @@ class LowMachReactingFlowPlan(StrictModule, NonTrainableState):
             self.formulation.thermodynamics.thermodynamics.maximum_temperature,
         )
 
-        def enthalpy(temperature):
+        def enthalpy(temperature: Array) -> Array:
             species = self.formulation.thermodynamics.thermodynamics.evaluate(temperature)
             return contract(
                 "...s,...s->...",
@@ -302,7 +312,7 @@ class LowMachReactingFlowPlan(StrictModule, NonTrainableState):
                 backend="jax",
             )
 
-        def iteration(_, bounds):
+        def iteration(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             low, high = bounds
             midpoint = 0.5 * (low + high)
             below = enthalpy(midpoint) < enthalpy_density
@@ -339,7 +349,9 @@ class LowMachReactingFlowPlan(StrictModule, NonTrainableState):
             output.append(0.5 * (component + jnp.roll(component, 1, axis=axis)))
         return tuple(output)
 
-    def _fields(self, species_density: Array, enthalpy_density: Array, /):
+    def _fields(
+        self, species_density: Array, enthalpy_density: Array, /
+    ) -> dict[str, Array]:
         output = {
             name: species_density[..., index]
             for index, name in enumerate(self.species_field_names)
@@ -384,7 +396,8 @@ class LowMachReactingFlowPlan(StrictModule, NonTrainableState):
             None
             if self.transport_reuse is None
             else self.transport_reuse.propose(
-                state.transport_reuse,
+                # States owned by a reuse-enabled plan carry reuse state.
+                cast(TransportPropertyReuseState, state.transport_reuse),
                 temperature,
                 thermal.pressure,
             )
@@ -412,18 +425,19 @@ class LowMachReactingFlowPlan(StrictModule, NonTrainableState):
         enthalpy_diffusion = -self.operators.divergence(
             self._face_flux(transport.total_heat_flux)
         )
-        concentrations = (
-            species_density
-            / self.formulation.mechanism.schema.molar_masses.astype(species_density.dtype)
+        # The constructor rejects formulations without a mechanism.
+        mechanism = cast(PreparedChemicalMechanism, self.formulation.mechanism)
+        concentrations = species_density / mechanism.schema.molar_masses.astype(
+            species_density.dtype
         )
-        chemistry = self.formulation.mechanism.evaluate(
+        chemistry = mechanism.evaluate(
             concentrations,
             temperature,
             jnp.broadcast_to(pressure, shape),
         )
         chemistry_mass_rate = (
             chemistry.species_amount_rate
-            * self.formulation.mechanism.schema.molar_masses.astype(species_density.dtype)
+            * mechanism.schema.molar_masses.astype(species_density.dtype)
         )
         species_rate = (
             jnp.stack(
@@ -798,8 +812,11 @@ class LowMachReactingFlowPlan(StrictModule, NonTrainableState):
         )
         accepted_reuse = state.transport_reuse
         if self.transport_reuse is not None:
+            # Reuse-enabled plans always carry reuse state and rate candidates.
             accepted_reuse = self.transport_reuse.commit(
-                state.transport_reuse, final.transport_reuse, successful
+                cast(TransportPropertyReuseState, state.transport_reuse),
+                cast(TransportPropertyReuseCandidate, final.transport_reuse),
+                successful,
             )
         accepted_candidate = eqx.tree_at(
             lambda value: value.transport_reuse, candidate, accepted_reuse

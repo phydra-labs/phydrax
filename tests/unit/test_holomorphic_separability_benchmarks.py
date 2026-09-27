@@ -7,7 +7,7 @@ from tools.holomorphic_separability_benchmarks import (
 )
 
 
-def test_holomorphic_separability_benchmark_schema_and_guarantees():
+def test_holomorphic_separability_benchmark_schema_and_guarantees() -> None:
     result = run_holomorphic_separability_benchmarks()
     assert result["kind"] == "holomorphic-separability-benchmark"
     assert result["passed"]

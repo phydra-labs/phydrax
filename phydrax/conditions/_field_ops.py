@@ -2,15 +2,19 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from __future__ import annotations
+
 from typing import Any
 
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.domain import DomainFunction
 
 from .._strict import StrictModule
 from ..operators.linalg import einsum
+from ..typing import PRNGKey
 
 
 class _CrossEvaluator(StrictModule):
@@ -26,13 +30,13 @@ class _CrossEvaluator(StrictModule):
         left_positions: tuple[int, ...],
         right_positions: tuple[int, ...],
         /,
-    ):
+    ) -> None:
         self.left = left
         self.right = right
         self.left_positions = left_positions
         self.right_positions = right_positions
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         left = self.left.func(
             *(args[index] for index in self.left_positions),
             key=key,

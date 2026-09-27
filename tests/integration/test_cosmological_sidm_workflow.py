@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -9,7 +11,7 @@ import phydrax as phx
 cosmology = phx.applications.cosmology
 
 
-def _workflow():
+def _workflow() -> Any:
     positions = jnp.asarray(
         [(x, y, z) for x in (0.25, 0.75) for y in (0.25, 0.75) for z in (0.25, 0.75)]
     )
@@ -43,6 +45,7 @@ def _workflow():
         ),
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.3, maximum_retries=0),
@@ -54,6 +57,7 @@ def _workflow():
         phx.discretization.ParticleGridSplatPlan(grid).prepare(particles),
     )
     kdk = cosmology.CosmologicalKDKPlan(particles, (1.0, 1.0, 1.0))
+    # ty: ignore[invalid-argument-type]
     particle_mesh = cosmology.CosmologicalParticleMeshPlan(kdk, gravity, (0.5, 0.55))
     box = phx.discretization.ParticleBox(
         jnp.zeros((3,)), jnp.ones((3,)), periodic_axes=(True, True, True)
@@ -97,13 +101,13 @@ def _workflow():
     return sidm, state
 
 
-def test_homogeneous_rare_scattering_rate_and_split_rollout_are_conservative():
+def test_homogeneous_rare_scattering_rate_and_split_rollout_are_conservative() -> None:
     sidm, state = _workflow()
     sample_count = 256
     keys = jr.split(jr.key(2026), sample_count)
     epochs = jnp.arange(sample_count, dtype=jnp.int32)
 
-    def sample(local_key, epoch):
+    def sample(local_key: Any, epoch: Any) -> Any:
         collision = sidm.collide(state, local_key, epoch, 1.0)
         return (
             collision.diagnostics.event_count,

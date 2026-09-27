@@ -4,23 +4,29 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._strict import StrictModule
 
 from ..._doc import DOC_KEY0
 from ...discretization import TemporalMesh
+from ...typing import PRNGKey
 from ._action import _paths_array, potential_action
 from ._diffusion import DiffusionLike, DriftLike, sample_diffusion_paths
 from ._estimate import _estimate_positive_log_weights, PathIntegralEstimate
 from ._potential import _as_point_time_callable, PotentialLike
+
+
+if TYPE_CHECKING:
+    from ...stochastic._path_ensemble import StochasticPathEnsembleResult
 
 
 class SourceFeynmanKacEstimate(StrictModule):
@@ -60,7 +66,7 @@ def _point_values(
     *,
     position_var: str,
     time_var: str,
-    key: Key[Array, ""],
+    key: PRNGKey,
     role: str,
 ) -> Array:
     state_dim = positions.shape[-1]
@@ -97,7 +103,7 @@ def _terminal_values(
     slicing: TemporalMesh,
     position_var: str,
     time_var: str,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> Array:
     endpoint = paths[..., -1, :]
     state_dim = endpoint.shape[-1]
@@ -138,7 +144,7 @@ def feynman_kac_from_paths(
     source_quadrature: Literal["left", "trapezoid", "midpoint"] = "midpoint",
     position_var: str = "x",
     time_var: str = "t",
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> PathIntegralEstimate:
     r"""Estimate a terminal Feynman--Kac expectation from supplied paths.
 
@@ -225,7 +231,7 @@ def source_feynman_kac_from_paths(
     boundary_event_error: ArrayLike = jnp.nan,
     position_var: str = "x",
     time_var: str = "t",
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> SourceFeynmanKacEstimate:
     """Estimate terminal plus Duhamel terms on the same fixed path population."""
     if source_quadrature not in ("left", "trapezoid", "midpoint"):
@@ -368,7 +374,7 @@ def _common_stochastic_time_axis(times: ArrayLike, path_count: int, /) -> np.nda
 
 
 def source_feynman_kac_from_stochastic_paths(
-    result,
+    result: StochasticPathEnsembleResult,
     terminal: PotentialLike,
     source: PotentialLike,
     /,
@@ -378,7 +384,7 @@ def source_feynman_kac_from_stochastic_paths(
     boundary_event_error: ArrayLike = jnp.nan,
     position_var: str = "x",
     time_var: str = "t",
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> AdaptiveFeynmanKacEstimate:
     """Consume the canonical SST fixed-output path ensemble without reintegration."""
     from ...stochastic._path_ensemble import StochasticPathEnsembleResult
@@ -429,7 +435,7 @@ def feynman_kac_expectation(
     killing: PotentialLike | None = None,
     position_var: str = "x",
     time_var: str = "t",
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> PathIntegralEstimate:
     """Simulate diffusion paths and estimate a terminal Feynman--Kac value."""
     path_key, estimate_key = jr.split(key)

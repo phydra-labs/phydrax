@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -8,7 +10,7 @@ import phydrax as phx
 fem = phx.discretization.fem
 
 
-def _square(count):
+def _square(count: Any) -> Any:
     axis = np.linspace(0.0, 1.0, count + 1)
     first, second = np.meshgrid(axis, axis, indexing="ij")
     points = np.stack((first.ravel(), second.ravel()), axis=1)
@@ -23,13 +25,13 @@ def _square(count):
     return phx.discretization.CellMesh.from_triangles(points, cells.astype(np.int32))
 
 
-def _discretization(mesh, degree):
+def _discretization(mesh: Any, degree: Any) -> Any:
     element = phx.discretization.lagrange_element("triangle", degree)
     field = phx.discretization.FiniteElementFieldSpec("u", element)
     return phx.discretization.FiniteElementPlan(mesh, field).prepare()
 
 
-def _local_poisson(discretization, source):
+def _local_poisson(discretization: Any, source: Any) -> Any:
     geometry = discretization.block_geometries[0][0]
     weights = np.asarray(geometry.physical_weights)
     gradients = np.asarray(geometry.physical_gradients)
@@ -43,7 +45,7 @@ def _local_poisson(discretization, source):
     return stiffness, load
 
 
-def _assemble(discretization, local_matrix, local_vector):
+def _assemble(discretization: Any, local_matrix: Any, local_vector: Any) -> Any:
     dofs = np.asarray(discretization.dof_maps[0].cell_dofs[0])
     count = discretization.dof_maps[0].global_dof_count
     matrix = np.zeros((count, count))
@@ -53,13 +55,13 @@ def _assemble(discretization, local_matrix, local_vector):
     return matrix, vector
 
 
-def _sine_source(points):
+def _sine_source(points: Any) -> Any:
     return (
         2.0 * np.pi**2 * np.sin(np.pi * points[..., 0]) * np.sin(np.pi * points[..., 1])
     )
 
 
-def test_hessian_recovery_is_exact_for_quadratics_on_p2():
+def test_hessian_recovery_is_exact_for_quadratics_on_p2() -> None:
     discretization = _discretization(_square(4), 2)
     prepared = fem.prepare_gradient_recovery(discretization, "u")
     nodes = np.asarray(discretization.dof_maps[0].dof_coordinates)
@@ -82,7 +84,7 @@ def test_hessian_recovery_is_exact_for_quadratics_on_p2():
     assert hessian_evidence.maximum_asymmetry < 1e-8
 
 
-def test_recovery_rejects_patches_that_cannot_determine_the_fit():
+def test_recovery_rejects_patches_that_cannot_determine_the_fit() -> None:
     mesh = phx.discretization.CellMesh.from_triangles(
         np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
         np.asarray(((0, 1, 2),), dtype=np.int32),
@@ -91,7 +93,7 @@ def test_recovery_rejects_patches_that_cannot_determine_the_fit():
         fem.prepare_gradient_recovery(_discretization(mesh, 2), "u")
 
 
-def _p1_poisson(count):
+def _p1_poisson(count: Any) -> Any:
     discretization = _discretization(_square(count), 1)
     matrix, load = _assemble(
         discretization, *_local_poisson(discretization, _sine_source)
@@ -102,7 +104,7 @@ def _p1_poisson(count):
     return discretization, solution
 
 
-def _effectivity(count):
+def _effectivity(count: Any) -> Any:
     discretization, solution = _p1_poisson(count)
     prepared = fem.prepare_gradient_recovery(discretization, "u")
     estimate, evidence = fem.recovery_error_estimate(prepared, solution)
@@ -131,14 +133,14 @@ def _effectivity(count):
     return float(estimate.global_estimate) / error
 
 
-def test_recovery_estimator_is_asymptotically_exact_for_a_smooth_solution():
+def test_recovery_estimator_is_asymptotically_exact_for_a_smooth_solution() -> None:
     coarse = _effectivity(8)
     fine = _effectivity(16)
     assert 0.9 < fine < 1.3
     assert abs(fine - 1.0) < abs(coarse - 1.0)
 
 
-def test_dual_weighted_indicators_sum_to_the_enriched_goal_error():
+def test_dual_weighted_indicators_sum_to_the_enriched_goal_error() -> None:
     mesh = _square(6)
     base = _discretization(mesh, 1)
     enriched = _discretization(mesh, 2)

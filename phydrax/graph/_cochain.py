@@ -14,7 +14,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import scipy.sparse as sp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -28,6 +29,7 @@ from ..discretization import (
     OrientedIncidence,
 )
 from ..sparse import EdgeRelation, SparseLinearMap
+from ..typing import parse
 from ._ir import GraphIR
 
 
@@ -81,7 +83,7 @@ class CochainIncidence(StrictModule, NonTrainableState):
         upper_indices: Any,
         signs: Any,
         /,
-    ):
+    ) -> None:
         resolved_degree = int(degree)
         lower_size = int(lower_count)
         upper_size = int(upper_count)
@@ -185,7 +187,7 @@ class HarmonicSubspace(StrictModule, NonTrainableState):
         max_modes: int,
         boundary_policy: CochainBoundaryKind,
         complex_fingerprint: str,
-    ):
+    ) -> None:
         basis_tuple = tuple(jnp.asarray(value) for value in bases)
         eigenvalue_tuple = tuple(jnp.asarray(value) for value in eigenvalues)
         rank_tuple = tuple(ranks)
@@ -250,7 +252,7 @@ class CochainComplexIR(StrictModule, NonTrainableState):
         coordinates: Sequence[Any | None] | None = None,
         harmonic_subspace: HarmonicSubspace | None = None,
         validate: bool = True,
-    ):
+    ) -> None:
         counts = tuple(cell_counts)
         if not counts or any(value <= 0 for value in counts):
             raise ValueError("Cochain complexes require positive cell counts by degree.")
@@ -709,8 +711,7 @@ def graph_to_cochain_complex(
         raise ValueError("Graph-to-cochain conversion requires exactly one graph.")
     if graph.node_mask is not None or graph.graph_mask is not None:
         raise ValueError("Padded node or graph masks are not supported.")
-    if edge_semantics not in ("reciprocal", "undirected_once"):
-        raise ValueError("edge_semantics must be 'reciprocal' or 'undirected_once'.")
+    edge_semantics = parse(edge_semantics, GraphEdgeSemantics, "edge_semantics")
     if float(reciprocal_rtol) < 0.0 or float(reciprocal_atol) < 0.0:
         raise ValueError("Reciprocal tolerances must be nonnegative.")
     node_count = graph.num_nodes

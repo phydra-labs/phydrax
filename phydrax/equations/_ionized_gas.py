@@ -9,13 +9,15 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ._chemical_species import ChemicalSpeciesSchema
 from ._chemical_thermodynamics import UNIVERSAL_GAS_CONSTANT
 from ._electrochemistry import FARADAY_CONSTANT
 from ._hyperbolic_systems import (
@@ -29,6 +31,7 @@ from ._nonequilibrium_gas import (
     TwoTemperatureRecovery,
     TwoTemperatureThermodynamicsPlan,
 )
+from ._thermal_modes import ThermalModeSchema
 from ._transport_closures import AbstractTransportClosure, TransportProperties
 
 
@@ -73,7 +76,7 @@ class IonizedMixtureThermodynamicsPlan(StrictModule, NonTrainableState):
         /,
         *,
         neutrality_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         species_index = int(electron_species_index)
         mode_index = int(electron_mode_index)
         tolerance = float(neutrality_tolerance)
@@ -110,11 +113,11 @@ class IonizedMixtureThermodynamicsPlan(StrictModule, NonTrainableState):
         )
 
     @property
-    def schema(self):
+    def schema(self) -> ChemicalSpeciesSchema:
         return self.base.schema
 
     @property
-    def modes(self):
+    def modes(self) -> ThermalModeSchema:
         return self.base.modes
 
     def charge_density(self, species_mass_density: ArrayLike, /) -> Array:
@@ -237,7 +240,7 @@ class IonizedMultitemperatureEulerSystem(
         *,
         density_floor: float = 1.0e-12,
         pressure_floor: float = 1.0e-12,
-    ):
+    ) -> None:
         if not isinstance(thermodynamics, IonizedMixtureThermodynamicsPlan):
             raise TypeError("thermodynamics must be IonizedMixtureThermodynamicsPlan.")
         base = TwoTemperatureMixtureEulerSystem(
@@ -450,7 +453,7 @@ class IonizedMultitemperatureNavierStokesSystem(
         /,
         *,
         mode_diffusivities: ArrayLike | None = None,
-    ):
+    ) -> None:
         inviscid = IonizedMultitemperatureEulerSystem(thermodynamics, dimension)
         base = TwoTemperatureMixtureNavierStokesSystem(
             thermodynamics.base,
@@ -472,11 +475,11 @@ class IonizedMultitemperatureNavierStokesSystem(
         )
 
     @property
-    def thermodynamics(self):
+    def thermodynamics(self) -> IonizedMixtureThermodynamicsPlan:
         return self.inviscid.thermodynamics
 
     @property
-    def transport(self):
+    def transport(self) -> AbstractTransportClosure:
         return self.base.transport
 
     @property
@@ -526,7 +529,9 @@ class IonizedMultitemperatureNavierStokesSystem(
     def charge_density(self, state: ArrayLike, /) -> Array:
         return self.inviscid.charge_density(state)
 
-    def recover_thermodynamics(self, state: ArrayLike, /):
+    def recover_thermodynamics(
+        self, state: ArrayLike, /
+    ) -> IonizedThermodynamicEvaluation:
         return self.inviscid.recover_thermodynamics(state)
 
     def conserved_to_primitive(self, state: Array, /) -> Array:
@@ -549,14 +554,35 @@ class IonizedMultitemperatureNavierStokesSystem(
     def physical_flux(self, state: Array, axis: int, args: Any = None, /) -> Array:
         return self.inviscid.physical_flux(state, axis, args)
 
-    def max_wave_speed(self, *args, **kwargs):
-        return self.inviscid.max_wave_speed(*args, **kwargs)
+    def max_wave_speed(
+        self,
+        left: Array,
+        right: Array,
+        axis: int,
+        args: Any = None,
+        /,
+    ) -> Array:
+        return self.inviscid.max_wave_speed(left, right, axis, args)
 
-    def signal_bounds(self, *args, **kwargs):
-        return self.inviscid.signal_bounds(*args, **kwargs)
+    def signal_bounds(
+        self,
+        left: Array,
+        right: Array,
+        axis: int,
+        args: Any = None,
+        /,
+    ) -> tuple[Array, Array]:
+        return self.inviscid.signal_bounds(left, right, axis, args)
 
-    def normal_signal_bounds(self, *args, **kwargs):
-        return self.inviscid.normal_signal_bounds(*args, **kwargs)
+    def normal_signal_bounds(
+        self,
+        left: Array,
+        right: Array,
+        normal: Array,
+        args: Any = None,
+        /,
+    ) -> tuple[Array, Array]:
+        return self.inviscid.normal_signal_bounds(left, right, normal, args)
 
     def reflect_state(self, state: Array, axis: int, /) -> Array:
         return self.inviscid.reflect_state(state, axis)

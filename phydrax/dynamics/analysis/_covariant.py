@@ -9,11 +9,13 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ...linalg import inverse
+from ...typing import parse
 from .._evolution import AbstractDifferentiableEvolution
 from .._grid import EvolutionGrid, IterationGrid, TimeGrid
 
@@ -84,7 +86,7 @@ def _initial_basis(
     dimension = state.size
     if supplied is None:
         matrix = jax.random.normal(
-            jax.random.PRNGKey(int(seed)),
+            jax.random.key(int(seed)),
             (dimension, rank),
             dtype=inexact_result_type(state),
         )
@@ -116,7 +118,7 @@ def _advance_interval(
         source = coordinates[step_index]
         target = coordinates[step_index + 1]
 
-        def propagate(vector):
+        def propagate(vector: Array) -> tuple[Array, Array, Array]:
             tangent_step = evolution.tangent_action(
                 state,
                 vector.reshape(state_shape),
@@ -195,10 +197,8 @@ def covariant_directions(
             "Covariant directions require a trivial geometry with identical "
             "point, local, and tangent dimensions."
         )
-    if kind not in ("clv", "adjoint"):
-        raise ValueError("kind must be 'clv' or 'adjoint'.")
-    if memory_mode not in ("store", "recompute"):
-        raise ValueError("memory_mode must be 'store' or 'recompute'.")
+    kind = parse(kind, CovariantDirectionKind, "kind")
+    memory_mode = parse(memory_mode, CovariantMemoryMode, "memory_mode")
     cadence = int(qr_interval)
     saving = int(save_every)
     discard = int(backward_discard)
@@ -285,7 +285,7 @@ def covariant_directions(
     coefficients = jnp.eye(rank, dtype=basis0.dtype)
     probe_coefficients = jnp.eye(rank, dtype=basis0.dtype) + 0.25 * jnp.triu(
         jax.random.normal(
-            jax.random.PRNGKey(int(seed) + 1),
+            jax.random.key(int(seed) + 1),
             (rank, rank),
             dtype=basis0.dtype,
         ),

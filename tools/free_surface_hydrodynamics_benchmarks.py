@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -16,7 +17,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _model(shape, *, wave):
+def _model(shape: Any, *, wave: Any) -> Any:
     nx, ny, nz = shape
     grid = phx.discretization.TensorGridPlan(
         (
@@ -54,7 +55,7 @@ def _model(shape, *, wave):
     return hydro, method, continuation
 
 
-def _measure(shape, repeats, *, wave):
+def _measure(shape: Any, repeats: Any, *, wave: Any) -> Any:
     hydro, method, state = _model(shape, wave=wave)
     geometry = eqx.filter_jit(hydro.surface.geometry)
     zero_rate = jnp.zeros_like(state.state.eta)
@@ -106,7 +107,7 @@ def _measure(shape, repeats, *, wave):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--shape", default="6,6,3")
     parser.add_argument("--repeats", type=int, default=2)

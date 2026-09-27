@@ -6,22 +6,24 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from numbers import Integral
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
-NonuniformFourierType = Literal[1, 2]
-NonuniformFourierRoute = Literal["direct", "chunked"]
+NonuniformFourierType: TypeAlias = Literal[1, 2]
+NonuniformFourierRoute: TypeAlias = Literal["direct", "chunked"]
 
 
 def _static_int(value: int, name: str, /) -> int:
@@ -59,7 +61,7 @@ class NonuniformFourierPlan(StrictModule):
         centered: bool = False,
         route: NonuniformFourierRoute = "direct",
         chunk_size: int = 256,
-    ):
+    ) -> None:
         supplied_shape = tuple(mode_shape)
         if not supplied_shape or len(supplied_shape) > 3:
             raise ValueError(
@@ -72,16 +74,17 @@ class NonuniformFourierPlan(StrictModule):
             raise ValueError(
                 "Nonuniform Fourier mode_shape must contain one to three positive sizes."
             )
-        transform = _static_int(transform_type, "Nonuniform Fourier transform_type")
-        if transform not in (1, 2):
-            raise ValueError("Nonuniform Fourier transform_type must be one or two.")
+        transform = parse(
+            _static_int(transform_type, "Nonuniform Fourier transform_type"),
+            NonuniformFourierType,
+            "transform_type",
+        )
         exponent_sign = _static_int(sign, "Nonuniform Fourier sign")
         if exponent_sign not in (-1, 1):
             raise ValueError("Nonuniform Fourier sign must be -1 or 1.")
         if not isinstance(centered, bool):
             raise TypeError("Nonuniform Fourier centered must be a bool.")
-        if route not in ("direct", "chunked"):
-            raise ValueError("Unknown nonuniform Fourier route.")
+        route = parse(route, NonuniformFourierRoute, "route")
         chunk = _static_int(chunk_size, "Nonuniform Fourier chunk_size")
         if chunk < 1:
             raise ValueError("Nonuniform Fourier chunk_size must be positive.")
@@ -116,7 +119,7 @@ class PreparedNonuniformFourier(StrictModule, NonTrainableState):
         /,
         *,
         dtype: jnp.dtype = jnp.float32,
-    ):
+    ) -> None:
         if not isinstance(plan, NonuniformFourierPlan):
             raise TypeError("plan must be a NonuniformFourierPlan.")
         resolved_dtype = jnp.dtype(dtype)

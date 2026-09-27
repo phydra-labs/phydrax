@@ -6,17 +6,20 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from typing import Any, Literal, TypeAlias
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import scipy.linalg as scipy_linalg
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import parse
 from .._dense_pseudoinverse import (
     factor_pseudoinverse,
     materialize_pseudoinverse,
@@ -91,7 +94,7 @@ class GeneralEigenproblem(StrictModule):
         /,
         *,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         _require_general_endomorphism(operator, "operator")
         if mass_operator is not None:
             _require_general_endomorphism(mass_operator, "mass_operator")
@@ -142,21 +145,8 @@ class GeneralEigenSelection(StrictModule):
         count: int | None = None,
         target: complex = 0.0,
         selection_id: str | None = None,
-    ):
-        kinds = (
-            "all",
-            "finite",
-            "infinite",
-            "closest",
-            "largest-magnitude",
-            "smallest-magnitude",
-            "largest-real",
-            "smallest-real",
-            "largest-imaginary",
-            "smallest-imaginary",
-        )
-        if kind not in kinds:
-            raise ValueError("Unknown general eigenvalue selection kind.")
+    ) -> None:
+        kind = parse(kind, GeneralEigenSelectionKind, "kind")
         count_ = None if count is None else int(count)
         if count_ is not None and count_ < 1:
             raise ValueError("selection count must be positive or None.")
@@ -202,7 +192,7 @@ class GeneralEigenSelection(StrictModule):
 class StandardTransform(StrictModule):
     """Use the pencil operator itself (or ``B^{-1} A`` when ``B`` is present)."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         return
 
     @property
@@ -215,7 +205,7 @@ class ShiftInvertTransform(StrictModule):
 
     shift: complex = eqx.field(static=True)
 
-    def __init__(self, shift: complex, /):
+    def __init__(self, shift: complex, /) -> None:
         shift_ = complex(shift)
         if not math.isfinite(shift_.real) or not math.isfinite(shift_.imag):
             raise ValueError("shift must be finite.")
@@ -231,7 +221,7 @@ class CayleyTransform(StrictModule):
 
     shift: complex = eqx.field(static=True)
 
-    def __init__(self, shift: complex, /):
+    def __init__(self, shift: complex, /) -> None:
         shift_ = complex(shift)
         if not math.isfinite(shift_.real) or not math.isfinite(shift_.imag):
             raise ValueError("shift must be finite.")
@@ -252,7 +242,7 @@ GeneralEigenTransform: TypeAlias = (
 class DenseSchurQZ(StrictModule):
     """Host LAPACK Schur/QZ eigenpairs, including homogeneous pencil values."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         return
 
     @property
@@ -265,7 +255,7 @@ class RestartedArnoldi(StrictModule):
 
     subspace_dimension: int | None = eqx.field(static=True)
 
-    def __init__(self, *, subspace_dimension: int | None = None):
+    def __init__(self, *, subspace_dimension: int | None = None) -> None:
         dimension = None if subspace_dimension is None else int(subspace_dimension)
         if dimension is not None and dimension < 3:
             raise ValueError("subspace_dimension must be at least three or None.")
@@ -277,6 +267,8 @@ class RestartedArnoldi(StrictModule):
 
 
 GeneralEigenMethod: TypeAlias = DenseSchurQZ | RestartedArnoldi
+# Restart basis, locked vectors/values/residuals/mask, matvec count, and validity.
+_ArnoldiCycleState: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 
 class GeneralEigenTolerancePolicy(StrictModule):
@@ -298,7 +290,7 @@ class GeneralEigenTolerancePolicy(StrictModule):
         homogeneous_relative: float = 1e-12,
         mass_rank_relative: float = 1e-12,
         cluster_relative: float = 1e-8,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -339,7 +331,7 @@ class GeneralEigenResourcePolicy(StrictModule):
         workspace_bytes: int = 2 * 1024 * 1024 * 1024,
         krylov_basis_bytes: int = 1024 * 1024 * 1024,
         operator_matvecs: int = 10_000_000,
-    ):
+    ) -> None:
         values = tuple(
             (
                 max_dimension,
@@ -390,7 +382,7 @@ class GeneralEigenSolvePolicy(StrictModule):
         singular_mass: SingularMassPolicy = "report",
         initial_vector: ArrayLike | None = None,
         failure: FailurePolicy | None = None,
-    ):
+    ) -> None:
         method_ = DenseSchurQZ() if method is None else method
         transform_ = StandardTransform() if transform is None else transform
         selection_ = GeneralEigenSelection.all() if selection is None else selection
@@ -414,8 +406,7 @@ class GeneralEigenSolvePolicy(StrictModule):
             raise TypeError("resources must be a GeneralEigenResourcePolicy.")
         if not isinstance(materialization_, MaterializationPolicy):
             raise TypeError("materialization must be a MaterializationPolicy.")
-        if singular_mass not in ("report", "error"):
-            raise ValueError("singular_mass must be 'report' or 'error'.")
+        singular_mass = parse(singular_mass, SingularMassPolicy, "singular_mass")
         if not isinstance(failure_, FailurePolicy):
             raise TypeError("failure must be a FailurePolicy.")
         if transform_solve is not None and not isinstance(
@@ -1055,10 +1046,11 @@ def _general_eigensolve_native(
         jnp.conj(initial),
         adjoint_action=True,
     )
-    if prepared.left_transform_solver is not None:
+    left_transform_solver = prepared.left_transform_solver
+    if left_transform_solver is not None:
         left = jax.vmap(
             lambda vector: _solve_complexified_coordinates(
-                prepared.left_transform_solver,
+                left_transform_solver,
                 vector,
             ),
             in_axes=1,
@@ -1080,12 +1072,13 @@ def _general_eigensolve_native(
     pairing = _jax_greedy_eigenvalue_pairing(right_values, left_values)
     left = left[:, pairing]
     left_locked = left_locked[pairing]
+    mass_operator = prepared.problem.mass_operator
     mass_right = (
         right
-        if prepared.problem.mass_operator is None
+        if mass_operator is None
         else jax.vmap(
             lambda vector: _operator_coordinate_action(
-                prepared.problem.mass_operator,
+                mass_operator,
                 vector,
                 adjoint_action=False,
             ),
@@ -1108,10 +1101,10 @@ def _general_eigensolve_native(
     left = left @ jnp.conj(overlap_pseudoinverse.T)
     mass_right = (
         right
-        if prepared.problem.mass_operator is None
+        if mass_operator is None
         else jax.vmap(
             lambda vector: _operator_coordinate_action(
-                prepared.problem.mass_operator,
+                mass_operator,
                 vector,
                 adjoint_action=False,
             ),
@@ -1285,7 +1278,7 @@ def _jax_greedy_eigenvalue_pairing(right: Array, left: Array, /) -> Array:
         jnp.zeros((count,), dtype=jnp.bool_),
     )
 
-    def pair(index, state):
+    def pair(index: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
         indices, used = state
         distance = jnp.abs(left - right[index])
         selected = jnp.argmin(jnp.where(used, jnp.inf, distance)).astype(indices.dtype)
@@ -1425,8 +1418,14 @@ def _arnoldi_cycle_configuration(
     count: int,
     /,
 ) -> tuple[int, int, int]:
+    method = policy.method
+    # Cycle configuration is only computed on the RestartedArnoldi route.
+    if not (isinstance(method, RestartedArnoldi)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(method, RestartedArnoldi)."
+        )
     requested_subspace = _arnoldi_subspace_dimension(
-        policy.method,
+        method,
         count,
         dimension,
     )
@@ -1572,7 +1571,7 @@ class _CanonicalCoordinateAdjoint(AbstractLinearOperator):
 
     operator: AbstractLinearOperator
 
-    def __init__(self, operator: AbstractLinearOperator, /):
+    def __init__(self, operator: AbstractLinearOperator, /) -> None:
         self.source = operator.target
         self.target = operator.source
         self.operator = operator
@@ -1703,7 +1702,8 @@ def _dense_generalized_schur(
         raise ValueError("Generalized Schur pencil members must be finite.")
     dtype = np.result_type(matrix_.dtype, mass_.dtype, np.complex64)
     output = "complex"
-    schur_a, schur_b, left, right = scipy_linalg.qz(
+    # ty selects scipy-stubs' deprecated bool/float16 overload for complex input.
+    schur_a, schur_b, left, right = scipy_linalg.qz(  # ty: ignore[deprecated]
         matrix_.astype(dtype, copy=False),
         mass_.astype(dtype, copy=False),
         output=output,
@@ -1734,10 +1734,11 @@ def _arnoldi_host_eigensolve(
         jnp.conj(initial),
         adjoint_action=True,
     )
-    if prepared.left_transform_solver is not None:
+    left_transform_solver = prepared.left_transform_solver
+    if left_transform_solver is not None:
         left_vectors = jax.vmap(
             lambda vector: _solve_complexified_coordinates(
-                prepared.left_transform_solver,
+                left_transform_solver,
                 vector,
             ),
             in_axes=1,
@@ -1840,7 +1841,7 @@ def _native_restarted_arnoldi_evidence(
         count,
     )
 
-    def action(block):
+    def action(block: Array) -> Array:
         return jax.vmap(
             lambda vector: _transformed_coordinate_action(
                 prepared,
@@ -1867,7 +1868,7 @@ def _native_restarted_arnoldi_evidence(
         jnp.asarray(True),
     )
 
-    def execute_cycle(state):
+    def execute_cycle(state: _ArnoldiCycleState) -> _ArnoldiCycleState:
         (
             restart_basis,
             locked_vectors,
@@ -1927,10 +1928,11 @@ def _native_restarted_arnoldi_evidence(
         selected_transformed = transformed_values[selected]
         selected_original = original_values[selected]
         pencil_vectors = ritz_vectors
-        if adjoint_action and prepared.left_transform_solver is not None:
+        left_transform_solver = prepared.left_transform_solver
+        if adjoint_action and left_transform_solver is not None:
             pencil_vectors = jax.vmap(
                 lambda vector: _solve_complexified_coordinates(
-                    prepared.left_transform_solver,
+                    left_transform_solver,
                     vector,
                 ),
                 in_axes=1,
@@ -1999,7 +2001,7 @@ def _native_restarted_arnoldi_evidence(
             valid & finite_cycle,
         )
 
-    def restart_step(_, state):
+    def restart_step(_: Array, state: _ArnoldiCycleState) -> _ArnoldiCycleState:
         return jax.lax.cond(
             jnp.all(state[4]),
             lambda current: current,
@@ -2041,7 +2043,7 @@ def _jax_original_pencil_residuals(
 ) -> tuple[Array, Array]:
     problem = prepared.problem
 
-    def residual(value, vector):
+    def residual(value: Array, vector: Array) -> tuple[Array, Array]:
         matrix_action = _operator_coordinate_action(
             problem.operator,
             vector,
@@ -2134,7 +2136,7 @@ def _operator_coordinate_action(
     output_space = operator.source if adjoint_action else operator.target
     dtype = np.dtype(_coordinate_dtype(input_space))
 
-    def apply_component(component):
+    def apply_component(component: Array) -> Array:
         tree = input_space.unflatten(component.astype(dtype))
         action = operator.transpose_mv if adjoint_action else operator.mv
         return output_space.flatten(action(tree))
@@ -2154,7 +2156,7 @@ def _solve_complexified_coordinates(
     space = prepared.problem.operator.target
     dtype = np.dtype(_coordinate_dtype(space))
 
-    def solve_component(component):
+    def solve_component(component: Array) -> Array:
         tree = space.unflatten(component.astype(dtype))
         result = linear_solve(prepared, tree)
         coordinates = prepared.problem.operator.source.flatten(result.value)
@@ -2288,30 +2290,45 @@ def _selection_indices(
     /,
 ) -> np.ndarray:
     count = selection.count
-    if selection.kind == "all":
-        candidates = np.arange(alpha.size)
-    elif selection.kind == "finite":
-        candidates = np.flatnonzero(finite)
-    elif selection.kind == "infinite":
-        candidates = np.flatnonzero(infinite)
-    else:
-        candidates = np.flatnonzero(finite)
-        values = alpha[candidates] / beta[candidates]
-        if selection.kind == "closest":
-            key = np.abs(values - selection.target)
-        elif selection.kind == "largest-magnitude":
-            key = -np.abs(values)
-        elif selection.kind == "smallest-magnitude":
-            key = np.abs(values)
-        elif selection.kind == "largest-real":
-            key = -np.real(values)
-        elif selection.kind == "smallest-real":
-            key = np.real(values)
-        elif selection.kind == "largest-imaginary":
-            key = -np.imag(values)
-        else:
-            key = np.imag(values)
-        candidates = candidates[np.argsort(key, kind="stable")]
+    kind = selection.kind
+    match kind:
+        case "all":
+            candidates = np.arange(alpha.size)
+        case "finite":
+            candidates = np.flatnonzero(finite)
+        case "infinite":
+            candidates = np.flatnonzero(infinite)
+        case (
+            "closest"
+            | "largest-magnitude"
+            | "smallest-magnitude"
+            | "largest-real"
+            | "smallest-real"
+            | "largest-imaginary"
+            | "smallest-imaginary"
+        ):
+            candidates = np.flatnonzero(finite)
+            values = alpha[candidates] / beta[candidates]
+            match kind:
+                case "closest":
+                    key = np.abs(values - selection.target)
+                case "largest-magnitude":
+                    key = -np.abs(values)
+                case "smallest-magnitude":
+                    key = np.abs(values)
+                case "largest-real":
+                    key = -np.real(values)
+                case "smallest-real":
+                    key = np.real(values)
+                case "largest-imaginary":
+                    key = -np.imag(values)
+                case "smallest-imaginary":
+                    key = np.imag(values)
+                case _:
+                    assert_never(kind)
+            candidates = candidates[np.argsort(key, kind="stable")]
+        case _:
+            assert_never(kind)
     if count is not None:
         candidates = candidates[:count]
     return np.asarray(candidates, dtype=np.int64)
@@ -2488,13 +2505,14 @@ def _pencil_vector_actions(
         in_axes=1,
         out_axes=1,
     )(left_array)
-    if prepared.problem.mass_operator is None:
+    mass_operator = prepared.problem.mass_operator
+    if mass_operator is None:
         mass_right = right_array
         mass_left = left_array
     else:
         mass_right = jax.vmap(
             lambda vector: _operator_coordinate_action(
-                prepared.problem.mass_operator,
+                mass_operator,
                 vector,
                 adjoint_action=False,
             ),
@@ -2503,15 +2521,18 @@ def _pencil_vector_actions(
         )(right_array)
         mass_left = jax.vmap(
             lambda vector: _operator_coordinate_action(
-                prepared.problem.mass_operator,
+                mass_operator,
                 vector,
                 adjoint_action=True,
             ),
             in_axes=1,
             out_axes=1,
         )(left_array)
-    return tuple(
-        np.asarray(value) for value in (matrix_right, mass_right, matrix_left, mass_left)
+    return (
+        np.asarray(matrix_right),
+        np.asarray(mass_right),
+        np.asarray(matrix_left),
+        np.asarray(mass_left),
     )
 
 

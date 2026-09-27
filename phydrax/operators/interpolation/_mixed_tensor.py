@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 import phydrax.ein as ein
@@ -21,9 +22,10 @@ from ..._frozendict import frozendict
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.spectral import PreparedSpectralAxis
+from ...typing import parse, PRNGKey
 
 
-MixedBoundsPolicy = Literal["error", "extrapolate"]
+MixedBoundsPolicy: TypeAlias = Literal["error", "extrapolate"]
 
 
 class MixedTensorReconstructionPlan(StrictModule, NonTrainableState):
@@ -42,7 +44,7 @@ class MixedTensorReconstructionPlan(StrictModule, NonTrainableState):
         *,
         payload_ndim: int = 0,
         bounds: MixedBoundsPolicy = "error",
-    ):
+    ) -> None:
         axes_ = tuple(axes)
         labels = tuple(str(label) for label in axis_labels)
         payload = int(payload_ndim)
@@ -58,8 +60,9 @@ class MixedTensorReconstructionPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Mixed reconstruction supports Fourier, Chebyshev, and Legendre."
             )
-        if payload < 0 or bounds not in ("error", "extrapolate"):
-            raise ValueError("Invalid payload_ndim or bounds policy.")
+        if payload < 0:
+            raise ValueError("payload_ndim must be nonnegative.")
+        bounds = parse(bounds, MixedBoundsPolicy, "bounds")
         self.axes = axes_
         self.axis_labels = labels
         self.payload_ndim = payload
@@ -78,7 +81,7 @@ class MixedTensorInterpolant(StrictModule):
         lower = jnp.asarray(axis.domain.lower, dtype=coordinate.dtype)
         upper = jnp.asarray(axis.domain.upper, dtype=coordinate.dtype)
 
-        def base(value):
+        def base(value: Array) -> Array:
             if axis.family == "fourier":
                 phase = 2.0 * jnp.pi * (value - lower) / (upper - lower)
                 normalization = jnp.sqrt(jnp.asarray(axis.length, dtype=coordinate.dtype))
@@ -99,7 +102,7 @@ class MixedTensorInterpolant(StrictModule):
                 values.append(next_value)
             return jnp.stack(values)
 
-        result = base
+        result: Callable[[Array], Array] = base
         for _ in range(int(order)):
             result = jax.jacfwd(result)
         return result(coordinate)
@@ -129,16 +132,22 @@ class MixedTensorInterpolant(StrictModule):
             for axis_index, axis in enumerate(self.plan.axes):
                 if axis.periodic:
                     continue
+                lower, upper = axis.domain.lower, axis.domain.upper
+                # Spectral bases require bounded axis domains, which carry both endpoints.
+                if not (lower is not None and upper is not None):
+                    raise RuntimeError(
+                        "Internal invariant failed: lower is not None and upper is not None."
+                    )
                 valid &= jnp.all(
-                    (points[..., axis_index] >= axis.domain.lower)
-                    & (points[..., axis_index] <= axis.domain.upper)
+                    (points[..., axis_index] >= lower)
+                    & (points[..., axis_index] <= upper)
                 )
             points = eqx.error_if(
                 points, ~valid, "Polynomial query lies outside support."
             )
         flat = points.reshape((-1, dimension))
 
-        def evaluate(point):
+        def evaluate(point: Array) -> Array:
             result = self.coefficients
             for axis, coordinate, order in zip(
                 self.plan.axes, point, orders, strict=True
@@ -184,7 +193,7 @@ def interpolate_mixed_tensor(
     plan: MixedTensorReconstructionPlan,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> DomainFunction:
     """Fit a DomainFunction on the prepared mixed canonical tensor grid."""
     if not isinstance(function, DomainFunction):

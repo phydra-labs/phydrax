@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TYPE_CHECKING, TypeAlias
+from typing import Any, assert_never, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -45,6 +46,7 @@ from ..linalg._transform_line import (
     TransformLineSolvePlan,
     TransformLineSolveResult,
 )
+from ..typing import parse
 from ._mac_composite_projection import (
     CompositeMACProjectionPlan,
     CompositeMACProjectionResult,
@@ -237,11 +239,10 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
         fixed_mass_coefficient: float | None = None,
         fixed_diffusion_coefficient: float | None = None,
         maximum_resource_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         if not isinstance(momentum, PreparedMACMomentumOperators):
             raise TypeError("momentum must be PreparedMACMomentumOperators.")
-        if solve_method not in ("auto", "transform", "hybrid", "iterative"):
-            raise ValueError("Unknown MAC Helmholtz solve_method.")
+        solve_method = parse(solve_method, MACHelmholtzSolveMethod, "solve_method")
         tolerance_ = float(tolerance)
         iterations = int(maximum_iterations)
         budget = int(maximum_resource_bytes)
@@ -259,7 +260,7 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
                 "Fixed mass and diffusion coefficients must be supplied together."
             )
         fixed: tuple[float, float] | None
-        if fixed_mass_coefficient is None:
+        if fixed_mass_coefficient is None or fixed_diffusion_coefficient is None:
             fixed = None
         else:
             mass = float(fixed_mass_coefficient)
@@ -445,7 +446,7 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
                     hybrid_eligible = False
                     break
                 transverse_data.append(axis_data)
-        if hybrid_eligible:
+        if hybrid_eligible and hybrid_line_axis is not None:
             grid_axis = momentum.operators.discretization.grid.structured_axes[
                 hybrid_line_axis
             ]
@@ -453,7 +454,7 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
             if hybrid_line_axis == component and not grid_axis.periodic:
                 count -= 1
             hybrid_eligible = count >= 1 and (not grid_axis.periodic or count >= 3)
-        if hybrid_eligible:
+        if hybrid_eligible and hybrid_line_axis is not None:
             lower, diagonal, upper, corners = velocity_face_line_coefficients(
                 momentum, component, hybrid_line_axis
             )
@@ -493,28 +494,38 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
             if not hybrid_eligible:
                 hybrid = None
 
-        if method == "transform":
-            if not direct_eligible:
-                raise ValueError(
-                    "Transform Helmholtz requires a certified uniform action."
-                )
-            route = "transform"
-        elif method == "hybrid":
-            if not hybrid_eligible or fixed is None:
-                raise ValueError(
-                    "Hybrid Helmholtz requires a certified line action and fixed coefficients."
-                )
-            route = "hybrid"
-        elif method == "iterative":
-            route = "iterative"
-        elif direct_eligible:
-            route = "transform"
-        elif hybrid_eligible and fixed is not None:
-            route = "hybrid"
-        else:
-            route = "iterative"
+        match method:
+            case "transform":
+                if not direct_eligible:
+                    raise ValueError(
+                        "Transform Helmholtz requires a certified uniform action."
+                    )
+                route = "transform"
+            case "hybrid":
+                if not hybrid_eligible or fixed is None:
+                    raise ValueError(
+                        "Hybrid Helmholtz requires a certified line action and fixed coefficients."
+                    )
+                route = "hybrid"
+            case "iterative":
+                route = "iterative"
+            case "auto":
+                if direct_eligible:
+                    route = "transform"
+                elif hybrid_eligible and fixed is not None:
+                    route = "hybrid"
+                else:
+                    route = "iterative"
+            case _:
+                assert_never(method)
 
         if route == "hybrid":
+            # The hybrid route requires a certified line representation and fixed
+            # coefficients, both checked when the route was selected above.
+            if not (hybrid is not None and fixed is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: hybrid is not None and fixed is not None."
+                )
             prepared_hybrid = TransformLineSolvePlan(
                 hybrid,
                 diagonal_shift=fixed[0],
@@ -533,6 +544,11 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
                 estimate.total_bytes,
             )
         elif route == "transform":
+            # The transform route is selected only when direct resources were counted.
+            if not (direct_resource_data is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: direct_resource_data is not None."
+                )
             count, factor_bytes, workspace_bytes, total_bytes = direct_resource_data
             resources = MACHelmholtzResourceEstimate(
                 component,
@@ -672,6 +688,12 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
             if prepared.route == "transform":
                 unknown_rhs = _extract_unknown(self.momentum, component, component_rhs)
                 modal_values = prepared.modal_values
+                transform = prepared.transform
+                # _prepare_component keeps transform data exactly on this route.
+                if not (transform is not None and modal_values is not None):
+                    raise RuntimeError(
+                        "Internal invariant failed: transform is not None and modal_values is not None."
+                    )
                 mass_ = mass
                 diffusion_ = diffusion
                 if self.differentiation_policy in ("rhs-only", "none"):
@@ -680,9 +702,7 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
                     diffusion_ = jax.lax.stop_gradient(diffusion_)
                 denominator = mass_ + diffusion_ * modal_values
                 unknown = jnp.real(
-                    prepared.transform.synthesize(
-                        prepared.transform.analyze(unknown_rhs) / denominator
-                    )
+                    transform.synthesize(transform.analyze(unknown_rhs) / denominator)
                 ).astype(component_rhs.dtype)
                 candidates.append(
                     _inject_unknown(self.momentum, component, unknown) + target[component]
@@ -694,7 +714,13 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
                     jnp.all(jnp.isfinite(denominator)) & jnp.all(denominator > 0.0)
                 )
             elif prepared.route == "hybrid":
-                result = prepared.prepared_hybrid.solve(
+                prepared_hybrid = prepared.prepared_hybrid
+                # _prepare_component prepares the line solve exactly on this route.
+                if not (prepared_hybrid is not None):
+                    raise RuntimeError(
+                        "Internal invariant failed: prepared_hybrid is not None."
+                    )
+                result = prepared_hybrid.solve(
                     _extract_unknown(self.momentum, component, component_rhs)
                 )
                 candidates.append(
@@ -703,7 +729,7 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
                 )
                 linears.append(None)
                 hybrids.append(result)
-                factors.append(prepared.prepared_hybrid.factors)
+                factors.append(prepared_hybrid.factors)
                 route_success.append(result.converged)
             else:
                 operator = FunctionLinearOperator(
@@ -920,19 +946,19 @@ def _constraint_operators(
     operators = dynamics.momentum.operators
     boundaries = dynamics.momentum.boundaries
 
-    def divergence(velocity):
+    def divergence(velocity: FaceVelocity) -> Array:
         return operators.divergence(velocity)
 
-    def negative_gradient(pressure):
+    def negative_gradient(pressure: Array) -> FaceVelocity:
         return tuple(
             -value
             for value in boundaries.pressure_gradient(pressure, None, homogeneous=True)
         )
 
-    def gradient(pressure):
+    def gradient(pressure: Array) -> FaceVelocity:
         return boundaries.pressure_gradient(pressure, None, homogeneous=True)
 
-    def negative_divergence(velocity):
+    def negative_divergence(velocity: FaceVelocity) -> Array:
         return -operators.divergence(velocity)
 
     divergence_operator = FunctionLinearOperator(
@@ -1074,7 +1100,7 @@ class MACIMEXEulerMethod(StrictModule, NonTrainableState):
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
         maximum_resource_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
             raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
         prepared_les = _prepared_algebraic_les(dynamics)
@@ -1204,7 +1230,11 @@ class MACIMEXEulerMethod(StrictModule, NonTrainableState):
             for value, rate in zip(current_velocity, explicit, strict=True)
         )
         viscosity = self.dynamics.problem.viscosity.astype(step.dtype)
-        helmholtz = self.helmholtz.solve(
+        helmholtz_plan = self.helmholtz
+        # Plans without implicit LES always prepare a Helmholtz solve.
+        if not (helmholtz_plan is not None):
+            raise RuntimeError("Internal invariant failed: helmholtz_plan is not None.")
+        helmholtz = helmholtz_plan.solve(
             rhs,
             boundary_stage,
             mass_coefficient=None if self.fixed_step_size is not None else 1.0,
@@ -1285,6 +1315,21 @@ class MACIMEXEulerMethod(StrictModule, NonTrainableState):
         from ._mac_stage_inverse_general import MACVariableViscosityStagePlan
 
         prepared_les = self.dynamics.algebraic_les
+        face_density = self.face_density
+        divergence_operator = self.divergence_operator
+        gradient_operator = self.gradient_operator
+        # Implicit-LES plans are built only from a validated prepared LES together
+        # with the composite-pressure operators and face density it requires.
+        if not (isinstance(prepared_les, PreparedMACAlgebraicLES)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(prepared_les, PreparedMACAlgebraicLES)."
+            )
+        if not (face_density is not None):
+            raise RuntimeError("Internal invariant failed: face_density is not None.")
+        if not (divergence_operator is not None and gradient_operator is not None):
+            raise RuntimeError(
+                "Internal invariant failed: divergence_operator is not None and gradient_operator is not None."
+            )
         current_boundary = self.dynamics.boundary_stage(time, args)
         current_velocity = self.dynamics.momentum.boundaries.enforce(
             self.dynamics.unpack_velocity(current_state), current_boundary
@@ -1306,7 +1351,7 @@ class MACIMEXEulerMethod(StrictModule, NonTrainableState):
         )
         stage_plan = MACVariableViscosityStagePlan(
             self.dynamics.momentum,
-            self.face_density,
+            face_density,
             total_viscosity,
             step,
             rhs_scale=step,
@@ -1323,8 +1368,8 @@ class MACIMEXEulerMethod(StrictModule, NonTrainableState):
         predictor = inverse.solve_affine(physical_rhs)
         inverse_operator = inverse.operator()
         projection_plan = CompositeMACProjectionPlan(
-            self.divergence_operator,
-            self.gradient_operator,
+            divergence_operator,
+            gradient_operator,
             inverse_operator,
             self.dynamics.momentum.operators.gauge_project,
             linear_policy=self.pressure_linear_policy,
@@ -1557,7 +1602,7 @@ class MACSBDF2Method(StrictModule, NonTrainableState):
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
         maximum_resource_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
             raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
         step = float(step_size)
@@ -1711,7 +1756,11 @@ class MACSBDF2Method(StrictModule, NonTrainableState):
                 strict=True,
             )
         )
-        helmholtz = self.helmholtz.solve(
+        helmholtz_plan = self.helmholtz
+        # Plans without implicit LES always prepare a Helmholtz solve.
+        if not (helmholtz_plan is not None):
+            raise RuntimeError("Internal invariant failed: helmholtz_plan is not None.")
+        helmholtz = helmholtz_plan.solve(
             rhs, boundary_stage, initial_guess=current_velocity
         )
         pressure_coefficient = (2.0 / 3.0) * step
@@ -1822,6 +1871,22 @@ class MACSBDF2Method(StrictModule, NonTrainableState):
         from ._mac_stage_inverse_general import MACVariableViscosityStagePlan
 
         prepared_les = self.dynamics.algebraic_les
+        startup = self.startup_method
+        face_density = startup.face_density
+        divergence_operator = startup.divergence_operator
+        gradient_operator = startup.gradient_operator
+        # Implicit-LES plans are built only from a validated prepared LES together
+        # with the composite-pressure operators and face density it requires.
+        if not (isinstance(prepared_les, PreparedMACAlgebraicLES)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(prepared_les, PreparedMACAlgebraicLES)."
+            )
+        if not (face_density is not None):
+            raise RuntimeError("Internal invariant failed: face_density is not None.")
+        if not (divergence_operator is not None and gradient_operator is not None):
+            raise RuntimeError(
+                "Internal invariant failed: divergence_operator is not None and gradient_operator is not None."
+            )
         attempted_time = history.time + step
         boundary_stage = self.dynamics.boundary_stage(attempted_time, args)
         extrapolated = tuple(
@@ -1850,7 +1915,7 @@ class MACSBDF2Method(StrictModule, NonTrainableState):
         )
         stage_plan = MACVariableViscosityStagePlan(
             self.dynamics.momentum,
-            self.startup_method.face_density,
+            face_density,
             total_viscosity,
             step,
             rhs_scale=step,
@@ -1874,8 +1939,8 @@ class MACSBDF2Method(StrictModule, NonTrainableState):
         predictor = inverse.solve_affine(physical_rhs)
         inverse_operator = inverse.operator()
         projection_plan = CompositeMACProjectionPlan(
-            self.startup_method.divergence_operator,
-            self.startup_method.gradient_operator,
+            divergence_operator,
+            gradient_operator,
             inverse_operator,
             self.dynamics.momentum.operators.gauge_project,
             linear_policy=self.startup_method.pressure_linear_policy,

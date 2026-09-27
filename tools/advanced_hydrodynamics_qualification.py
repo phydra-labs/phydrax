@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import argparse
 import json
+from typing import Any
 
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _graph(case):
+def _graph(case: Any) -> Any:
     shape = (4, 4, 3)
     grid = phx.discretization.TensorGridPlan(
         (
@@ -54,7 +55,7 @@ def _graph(case):
     return hydro, continuation
 
 
-def _two_phase():
+def _two_phase() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(8, periodic=True),
@@ -81,7 +82,7 @@ def _two_phase():
     return two_phase, method, method.initial_continuation(two_phase.initial_state(alpha))
 
 
-def _passive_tracer():
+def _passive_tracer() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(32, periodic=True),
@@ -112,7 +113,7 @@ def _passive_tracer():
     return discretization, transport, values, velocity, center
 
 
-def run_case(case, dt):
+def run_case(case: Any, dt: Any) -> Any:
     if case == "passive-tracer":
         discretization, transport, values, velocity, center = _passive_tracer()
         result = transport.advance(values, velocity, jnp.asarray(dt))
@@ -252,7 +253,7 @@ def run_case(case, dt):
     }
 
 
-def main():
+def main() -> Any:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--case",

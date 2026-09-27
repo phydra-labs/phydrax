@@ -8,7 +8,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -45,7 +46,7 @@ class FiniteVolumeStageEpochTransition(StrictModule, NonTrainableState):
         stage_index: int,
         event_id: str,
         /,
-    ):
+    ) -> None:
         source = str(source_dynamics_id)
         successor = str(successor_dynamics_id)
         event = str(event_id)

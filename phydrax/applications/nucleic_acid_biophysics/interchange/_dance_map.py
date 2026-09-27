@@ -8,6 +8,7 @@ and records every parsed row, including mapping categories excluded from analysi
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -65,7 +66,7 @@ class DanceMapFile:
         upstream_version: str,
         reference_sequence_id: str,
         parent_case_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         if not isinstance(source, ReferenceArtifactManifest):
             raise TypeError("source must be a ReferenceArtifactManifest.")
         path_ = str(Path(path).expanduser().resolve())
@@ -151,7 +152,7 @@ class DanceMapAdmission(StrictModule, NonTrainableState):
         files: tuple[DanceMapFile, ...],
         category_counts: tuple[int, ...],
         included_mapping_categories: tuple[str, ...],
-    ):
+    ) -> None:
         if not isinstance(batch, MutationProfileBatch):
             raise TypeError("batch must be a MutationProfileBatch.")
         if (
@@ -222,11 +223,11 @@ class _ParsedRead:
 
 
 def import_dance_map_files(
-    files,
+    files: Iterable[DanceMapFile],
     /,
     *,
     included_mapping_categories: tuple[str, ...] = ("INCLUDED",),
-    requested_use=None,
+    requested_use: Mapping[str, bool] | None = None,
 ) -> DanceMapAdmission:
     """Verify and import caller paths using ShapeMapper ``parsed.mut`` columns.
 
@@ -287,7 +288,7 @@ def import_dance_map_files(
     if sum(len(values) for values in parsed_by_file) == 0:
         raise ValueError("Parsed-mutation admission contains no mapped-read rows.")
 
-    def vocabulary(values):
+    def vocabulary(values: Iterable[str]) -> tuple[str, ...]:
         return tuple(dict.fromkeys(values))
 
     construct_ids = vocabulary(record.construct_id for record in records)

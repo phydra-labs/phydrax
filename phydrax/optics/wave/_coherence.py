@@ -8,7 +8,7 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ._fields import IntensityPlane, ScalarPlaneField, TangentialPlaneField
 

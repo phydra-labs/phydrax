@@ -14,7 +14,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Literal, Protocol, TypeAlias
+from typing import Any, get_args, Literal, Protocol, TypeAlias
 
 import numpy as np
 
@@ -113,9 +113,6 @@ class LifecycleQuery:
 SupportBundleDisclosure: TypeAlias = Literal[
     "arrays", "payloads", "paths", "identifiers", "free-text", "secrets"
 ]
-_FULL_SUPPORT_DISCLOSURE = frozenset(
-    {"arrays", "payloads", "paths", "identifiers", "free-text", "secrets"}
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,7 +148,7 @@ class SupportBundleAuthorization:
         ):
             raise ValueError("Support authorization time must be a non-negative integer.")
         disclosures = frozenset(self.disclosures)
-        if disclosures != _FULL_SUPPORT_DISCLOSURE:
+        if disclosures != frozenset(get_args(SupportBundleDisclosure)):
             raise ValueError(
                 "Full-archive support authorization must explicitly grant every sensitive disclosure category."
             )
@@ -818,6 +815,7 @@ def _export_npz(query_: LifecycleQuery, destination: Path, /) -> Path:
     buffer = io.BytesIO()
     np.savez(
         buffer,
+        allow_pickle=True,
         metadata=np.asarray(json.dumps(metadata, sort_keys=True)),
         **arrays,
     )
@@ -1034,9 +1032,7 @@ def _verified_archive_snapshot(
     return payload
 
 
-def _lineage_revision(
-    semantic_id: str, arrays: Mapping[str, Any], /
-) -> NumericRevision:
+def _lineage_revision(semantic_id: str, arrays: Mapping[str, Any], /) -> NumericRevision:
     """Recompute the canonical numeric revision realized by lineage payloads."""
     if not arrays:
         raise ValueError("Revision lineage archives require materialized payloads.")
@@ -1116,11 +1112,7 @@ def _encode_record(record: LifecycleRecord, /) -> dict[str, Any]:
             "payloads": [list(item) for item in record.payloads],
             "unit_contract_id": record.unit_contract_id,
             "association_ids": list(record.association_ids),
-            **(
-                {}
-                if record.binding is None
-                else {"binding": record.binding.to_record()}
-            ),
+            **({} if record.binding is None else {"binding": record.binding.to_record()}),
             "manifest_id": record.manifest_id,
         }
     if isinstance(record, ResultManifest):

@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -42,7 +43,7 @@ class LocalCurvatureValidityPlan(StrictModule, NonTrainableState):
         light_speed: float,
         geometry_error_budget: float,
         support_kind: str,
-    ):
+    ) -> None:
         speed = float(light_speed)
         budget = float(geometry_error_budget)
         kind = str(support_kind).strip()

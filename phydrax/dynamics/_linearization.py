@@ -8,7 +8,8 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from ..linalg import (
@@ -43,7 +44,7 @@ class EvolutionJacobianAction(AbstractLinearOperator):
         *,
         args: Any = None,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(evolution, AbstractDifferentiableEvolution):
             raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
         state_array = jnp.asarray(state)
@@ -163,7 +164,7 @@ class EvolutionArgumentJacobianAction(AbstractLinearOperator):
         /,
         *,
         operator_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(evolution, AbstractDifferentiableEvolution):
             raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
         state_array = jnp.asarray(state)

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -13,7 +16,7 @@ import phydrax as phx
 from phydrax.discretization import spectral as spectral_api
 
 
-def _harmonic(space, degree=2, order=1):
+def _harmonic(space: Any, degree: Any = 2, order: Any = 1) -> Any:
     theta, phi = np.meshgrid(
         np.asarray(space.transform.theta),
         np.asarray(space.transform.phi),
@@ -22,7 +25,7 @@ def _harmonic(space, degree=2, order=1):
     return jnp.asarray(np.real(sph_harm_y(degree, order, theta, phi)))
 
 
-def _scipy_harmonic_on_vectors(degree, order, directions):
+def _scipy_harmonic_on_vectors(degree: Any, order: Any, directions: Any) -> Any:
     vectors = np.asarray(directions, dtype="float64")
     unit = vectors / np.linalg.norm(vectors, axis=-1)[..., None]
     theta = np.arccos(np.clip(unit[..., 2], -1.0, 1.0))
@@ -30,7 +33,7 @@ def _scipy_harmonic_on_vectors(degree, order, directions):
     return sph_harm_y(degree, order, theta, phi)
 
 
-def test_spherical_mode_layout_tracks_valid_storage_and_real_conjugacy():
+def test_spherical_mode_layout_tracks_valid_storage_and_real_conjugacy() -> None:
     layout = phx.discretization.SphericalModeLayout(5)
     assert layout.coefficient_shape == (5, 9)
     assert layout.logical_mode_count == 25
@@ -54,7 +57,7 @@ def test_spherical_mode_layout_tracks_valid_storage_and_real_conjugacy():
     assert jnp.allclose(masked, canonical)
 
 
-def test_spherical_discretization_roundtrips_integrates_and_applies_laplacian():
+def test_spherical_discretization_roundtrips_integrates_and_applies_laplacian() -> None:
     radius = 1.7
     space = phx.discretization.SphericalSpectralPlan(5).prepare(radius=radius)
     values = _harmonic(space, degree=2, order=1)
@@ -88,7 +91,7 @@ def test_spherical_discretization_roundtrips_integrates_and_applies_laplacian():
     assert dict(space.preparation.resource_counts)["dense_transform_entries"] == 0
 
 
-def test_spherical_invalid_coefficient_capacity_is_numerically_inert():
+def test_spherical_invalid_coefficient_capacity_is_numerically_inert() -> None:
     space = phx.discretization.SphericalSpectralPlan(4).prepare()
     values = _harmonic(space, degree=2, order=1)
     coefficients = space.project(values)
@@ -102,7 +105,7 @@ def test_spherical_invalid_coefficient_capacity_is_numerically_inert():
     assert not jnp.isfinite(space.invalid_storage_defect(contaminated))
 
 
-def test_spherical_real_eigenpairs_are_complete_degree_weighted_modes():
+def test_spherical_real_eigenpairs_are_complete_degree_weighted_modes() -> None:
     space = phx.discretization.SphericalSpectralPlan(4).prepare(radius=2.0)
     eigenvalues, modes = space.eigenpairs(rank=4)
     flattened = modes.reshape((-1, 4))
@@ -121,7 +124,7 @@ def test_spherical_real_eigenpairs_are_complete_degree_weighted_modes():
         space.eigenpairs(rank=2)
 
 
-def test_spherical_laplacian_operator_is_pairing_self_adjoint():
+def test_spherical_laplacian_operator_is_pairing_self_adjoint() -> None:
     space = phx.discretization.SphericalSpectralPlan(4).prepare()
     operator = phx.discretization.spherical_laplacian_operator(space)
     left = _harmonic(space, degree=1, order=0)
@@ -138,7 +141,7 @@ def test_spherical_laplacian_operator_is_pairing_self_adjoint():
     assert jnp.real(pairing.inner(left, operator.mv(left))) <= 1e-12
 
 
-def test_spherical_discretization_is_jittable_and_rejects_unsupported_contracts():
+def test_spherical_discretization_is_jittable_and_rejects_unsupported_contracts() -> None:
     space = phx.discretization.SphericalSpectralPlan(4).prepare()
     values = _harmonic(space, degree=2, order=1)
     actual = eqx.filter_jit(lambda prepared, field: prepared.laplacian(field))(
@@ -168,7 +171,7 @@ def test_spherical_discretization_is_jittable_and_rejects_unsupported_contracts(
         spin_space.eigenpairs(rank=4)
 
 
-def test_spherical_modal_integral_spin_ladders_and_rotation():
+def test_spherical_modal_integral_spin_ladders_and_rotation() -> None:
     radius = 1.3
     space = phx.discretization.SphericalSpectralPlan(4).prepare(radius=radius)
     coefficients = space.project(jnp.ones(space.sample_shape))
@@ -186,7 +189,7 @@ def test_spherical_modal_integral_spin_ladders_and_rotation():
     np.testing.assert_allclose(rotated, coefficients, atol=1e-11)
 
 
-def test_spherical_scattered_fit_healpix_and_inactive_nan_safety():
+def test_spherical_scattered_fit_healpix_and_inactive_nan_safety() -> None:
     space = phx.discretization.SphericalSpectralPlan(3).prepare()
     sample_plan = spectral_api.SphericalSamplePlan.healpix(2, ordering="nested")
     prepared = sample_plan.prepare(space)
@@ -205,7 +208,7 @@ def test_spherical_scattered_fit_healpix_and_inactive_nan_safety():
     assert jnp.all(jnp.isfinite(masked.evaluate(coefficients)))
 
 
-def test_spherical_clebsch_gordan_constant_identity_and_modal_transfer():
+def test_spherical_clebsch_gordan_constant_identity_and_modal_transfer() -> None:
     coarse = phx.discretization.SphericalSpectralPlan(3).prepare()
     fine = phx.discretization.SphericalSpectralPlan(5).prepare()
     constant = coarse.project(jnp.ones(coarse.sample_shape))
@@ -222,7 +225,7 @@ def test_spherical_clebsch_gordan_constant_identity_and_modal_transfer():
     assert evidence.removed_coefficient_energy >= 0.0
 
 
-def test_spherical_dynamic_evaluation_matches_grid_and_prepared_samples():
+def test_spherical_dynamic_evaluation_matches_grid_and_prepared_samples() -> None:
     space = phx.discretization.SphericalSpectralPlan(4).prepare(radius=1.7)
     values = _harmonic(space, degree=3, order=2) + 0.35 * _harmonic(
         space, degree=2, order=1
@@ -259,7 +262,7 @@ def test_spherical_dynamic_evaluation_matches_grid_and_prepared_samples():
     )
 
 
-def test_spherical_complex_dynamic_evaluation_is_linear_jitted_and_lane_local():
+def test_spherical_complex_dynamic_evaluation_is_linear_jitted_and_lane_local() -> None:
     precision = phx.discretization.SpectralPrecisionPolicy(jnp.complex128)
     space = phx.discretization.SphericalSpectralPlan(
         4, reality=False, precision=precision
@@ -325,7 +328,7 @@ def test_spherical_complex_dynamic_evaluation_is_linear_jitted_and_lane_local():
     np.testing.assert_allclose(lanes[0], lanes[4], rtol=2e-12, atol=2e-12)
 
 
-def test_spherical_dynamic_evaluation_direction_ad():
+def test_spherical_dynamic_evaluation_direction_ad() -> None:
     space = phx.discretization.SphericalSpectralPlan(3).prepare()
     center = space.layout.bandlimit - 1
     coefficients = jnp.zeros(space.coefficient_shape, dtype=jnp.complex128)

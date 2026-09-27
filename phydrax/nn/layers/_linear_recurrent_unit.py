@@ -11,13 +11,14 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax._strict import StrictModule
 from phydrax._trainable import ParameterOwner
 
 from ..._doc import DOC_KEY0
+from ...typing import PRNGKey
 from .._keys import EvalKey
 from ._recurrent import (
     AffineRecurrence,
@@ -67,8 +68,8 @@ class LinearRecurrentUnit(StrictModule, ParameterOwner):
         min_radius: float = 0.0,
         max_initial_radius: float = 0.99,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.input_size = int(input_size)
         self.state_size = int(state_size)
         self.output_size = self.input_size if output_size is None else int(output_size)

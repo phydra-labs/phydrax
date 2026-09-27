@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from scipy.spatial import cKDTree
 
 import phydrax.ein as ein
@@ -72,7 +73,7 @@ class PointCloudPlan(StrictModule):
         degree: int = 2,
         neighbor_count: int | None = None,
         condition_limit: float = 1e8,
-    ):
+    ) -> None:
         points_ = np.asarray(points, dtype=np.float64)
         weights = np.asarray(quadrature_weights, dtype=np.float64)
         if points_.ndim != 2 or points_.shape[0] == 0 or points_.shape[1] == 0:
@@ -185,7 +186,7 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
     preparation: PreparationReport
     trust_radius: Array
 
-    def __init__(self, plan: PointCloudPlan, /):
+    def __init__(self, plan: PointCloudPlan, /) -> None:
         points = np.asarray(plan.points)
         count, dimension = points.shape
         tree = cKDTree(points)
@@ -227,11 +228,11 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
             condition_limit=plan.condition_limit,
         )
         factors = np.asarray(fit.factors)
-        derivative_weights = []
+        derivative_weights: list[tuple[Array, Array]] = []
         residuals = []
         amplifications = []
         for axis in range(dimension):
-            axis_weights = []
+            axis_weights: list[Array] = []
             for order in (1, 2):
                 target = np.zeros((count, exponents.shape[0] + 1))
                 exponent = np.zeros(dimension, dtype=np.int32)
@@ -247,7 +248,7 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
                 residuals.append(np.max(np.abs(moments - target)))
                 amplifications.append(np.max(np.sum(np.abs(weights), axis=1)))
                 axis_weights.append(jnp.asarray(weights))
-            derivative_weights.append(tuple(axis_weights))
+            derivative_weights.append((axis_weights[0], axis_weights[1]))
         trust = (
             np.full(count, np.inf)
             if query_count == plan.neighbor_count

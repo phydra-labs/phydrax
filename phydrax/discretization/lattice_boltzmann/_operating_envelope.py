@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._admissibility import (
     AdmissibilityHeader,
@@ -19,6 +20,7 @@ from ..._admissibility import (
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float
 from ._collision import (
     BGKCollisionPlan,
     CentralMomentCollisionPlan,
@@ -72,13 +74,6 @@ def _identifier(value: str, name: str, /) -> str:
     return identifier
 
 
-def _positive(value: float, name: str, /) -> float:
-    result = float(value)
-    if not np.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
-
-
 def _nonnegative(value: float, name: str, /) -> float:
     result = float(value)
     if not np.isfinite(result) or result < 0.0:
@@ -111,7 +106,7 @@ class LatticeBoltzmannHardwareTarget(StrictModule, NonTrainableState):
         host_count: int = 1,
         devices_per_host: int = 1,
         maximum_device_bytes: int,
-    ):
+    ) -> None:
         platform_ = _identifier(platform, "platform")
         if platform_ not in ("cpu", "gpu", "tpu"):
             raise ValueError("LBM hardware platform must be 'cpu', 'gpu', or 'tpu'.")
@@ -182,7 +177,7 @@ class LatticeBoltzmannOperatingPoint(StrictModule):
         capillary_number: ArrayLike = 0.0,
         relative_mass_drift: ArrayLike = 0.0,
         spurious_current_ratio: ArrayLike = 0.0,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (
@@ -235,7 +230,7 @@ class LatticeBoltzmannEnvelopeAdmission(StrictModule, NonTrainableState):
         margins: ArrayLike,
         envelope_id: str,
         /,
-    ):
+    ) -> None:
         checks_ = jnp.asarray(checks, dtype=jnp.bool_)
         margins_ = jnp.asarray(margins)
         if checks_.shape != (len(_ENVELOPE_CHECKS),):
@@ -300,7 +295,7 @@ class LatticeBoltzmannResourceEstimate(StrictModule, NonTrainableState):
         output_bytes: int,
         maximum_device_bytes: int,
         precision_resource_assumptions_id: str,
-    ):
+    ) -> None:
         components = tuple(
             (
                 state_bytes,
@@ -395,7 +390,7 @@ class LatticeBoltzmannOperatingEnvelopePlan(StrictModule, NonTrainableState):
         maximum_capillary_number: float = 0.0,
         maximum_relative_mass_drift: float = 0.0,
         maximum_spurious_current_ratio: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(lattice, LatticeBoltzmannVelocitySet):
             raise TypeError("lattice must be a LatticeBoltzmannVelocitySet.")
         if not isinstance(collision, _COLLISION_TYPES):
@@ -442,9 +437,9 @@ class LatticeBoltzmannOperatingEnvelopePlan(StrictModule, NonTrainableState):
             or minimum_density >= maximum_density
         ):
             raise ValueError("Density limits must form a finite positive interval.")
-        mach = _positive(maximum_mach_number, "maximum_mach_number")
-        knudsen = _positive(maximum_knudsen_number, "maximum_knudsen_number")
-        density = _positive(maximum_density_ratio, "maximum_density_ratio")
+        mach = positive_finite_float(maximum_mach_number, "maximum_mach_number")
+        knudsen = positive_finite_float(maximum_knudsen_number, "maximum_knudsen_number")
+        density = positive_finite_float(maximum_density_ratio, "maximum_density_ratio")
         force = _nonnegative(maximum_force_number, "maximum_force_number")
         interface = _nonnegative(
             minimum_interface_width_cells, "minimum_interface_width_cells"
@@ -452,7 +447,9 @@ class LatticeBoltzmannOperatingEnvelopePlan(StrictModule, NonTrainableState):
         wall = _nonnegative(
             minimum_wall_resolution_cells, "minimum_wall_resolution_cells"
         )
-        viscosity = _positive(maximum_viscosity_ratio, "maximum_viscosity_ratio")
+        viscosity = positive_finite_float(
+            maximum_viscosity_ratio, "maximum_viscosity_ratio"
+        )
         cahn = _nonnegative(maximum_cahn_number, "maximum_cahn_number")
         capillary = _nonnegative(maximum_capillary_number, "maximum_capillary_number")
         mass = _nonnegative(maximum_relative_mass_drift, "maximum_relative_mass_drift")
@@ -700,7 +697,7 @@ class PreparedLatticeBoltzmannOperatingEnvelope(StrictModule, NonTrainableState)
         plan: LatticeBoltzmannOperatingEnvelopePlan,
         resources: LatticeBoltzmannResourceEstimate,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, LatticeBoltzmannOperatingEnvelopePlan):
             raise TypeError("plan must be a LatticeBoltzmannOperatingEnvelopePlan.")
         if not isinstance(resources, LatticeBoltzmannResourceEstimate):

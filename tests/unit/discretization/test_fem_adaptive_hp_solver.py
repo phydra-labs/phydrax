@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -19,7 +22,7 @@ from phydrax.discretization.fem import (
 )
 
 
-def _mesh():
+def _mesh() -> Any:
     return CellMesh(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
         (
@@ -33,7 +36,7 @@ def _mesh():
     )
 
 
-def test_hp_condensation_skeleton_and_back_substitution_match_full_solve():
+def test_hp_condensation_skeleton_and_back_substitution_match_full_solve() -> None:
     topology, geometry = initial_finite_element_hp_topology(_mesh(), 3, 8)
     epoch = prepare_finite_element_hp_epoch(topology, geometry, "u")
     condensation = finite_element_hp_condensation_plan(epoch, "u")
@@ -61,7 +64,7 @@ def test_hp_condensation_skeleton_and_back_substitution_match_full_solve():
     assert skeleton.retained_dofs_by_degree
 
 
-def test_hp_multigrid_and_solver_refresh_reuse_degree_signatures():
+def test_hp_multigrid_and_solver_refresh_reuse_degree_signatures() -> None:
     topology, geometry = initial_finite_element_hp_topology(_mesh(), 2, 12)
     fine = refine_tensor_hp_cells(topology, geometry, jnp.asarray((10,), dtype=jnp.int64))
     fine_epoch = prepare_finite_element_hp_epoch(

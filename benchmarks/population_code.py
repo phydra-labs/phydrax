@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -17,7 +19,7 @@ from phydrax.domain import HyperRectangle
 from phydrax.nn import population as pc
 
 
-def target(points):
+def target(points: Any) -> Any:
     return jnp.stack((points[..., 0] ** 2, jnp.sin(2.0 * points[..., 0])), axis=-1)
 
 

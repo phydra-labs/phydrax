@@ -11,10 +11,12 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import PRNGKey
 
 
 class AbstractTimeSamplingPolicy(StrictModule):
@@ -27,11 +29,11 @@ class AbstractTimeSamplingPolicy(StrictModule):
     @abstractmethod
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         shape: Sequence[int],
         /,
         *,
-        dtype,
+        dtype: DTypeLike,
     ) -> Array:
         raise NotImplementedError
 
@@ -50,7 +52,7 @@ class UniformTimeSamplingPolicy(AbstractTimeSamplingPolicy):
         /,
         *,
         policy_id: str | None = None,
-    ):
+    ) -> None:
         lower = jnp.asarray(minimum_time, dtype=jnp.float64).reshape(())
         upper = jnp.asarray(maximum_time, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(lower) & jnp.isfinite(upper)):
@@ -72,11 +74,11 @@ class UniformTimeSamplingPolicy(AbstractTimeSamplingPolicy):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         shape: Sequence[int],
         /,
         *,
-        dtype,
+        dtype: DTypeLike,
     ) -> Array:
         sample_shape = tuple(shape)
         if any(size <= 0 for size in sample_shape):
@@ -105,7 +107,7 @@ class LogitNormalTimeSamplingPolicy(AbstractTimeSamplingPolicy):
         location: float = 0.0,
         scale: float = 1.0,
         policy_id: str | None = None,
-    ):
+    ) -> None:
         lower = jnp.asarray(minimum_time, dtype=jnp.float64).reshape(())
         upper = jnp.asarray(maximum_time, dtype=jnp.float64).reshape(())
         location_ = float(location)
@@ -133,11 +135,11 @@ class LogitNormalTimeSamplingPolicy(AbstractTimeSamplingPolicy):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         shape: Sequence[int],
         /,
         *,
-        dtype,
+        dtype: DTypeLike,
     ) -> Array:
         sample_shape = tuple(shape)
         if any(size <= 0 for size in sample_shape):

@@ -7,14 +7,15 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from numbers import Integral
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -27,6 +28,7 @@ from ..._strict import StrictModule
 from ..._symmetric_coordinates import smat, svec, symmetric_packed_dimension
 from ..._trainable import NonTrainableState
 from ...linalg import HermitianPrecisionPolicy
+from ...typing import parse, PRNGKey
 from .._base import _AbstractBaseModel
 from .._contracts import AFFINE, network_randomness
 from .._initializers import _initializer_dict
@@ -35,8 +37,7 @@ from .._utils import _canonical_size, _get_size, _get_value_shape, SizeLike
 from ..parameters import PositiveSemidefiniteTransform
 
 
-_Monotonicity = Literal["free", "increasing", "decreasing"]
-_MONOTONICITY_MODES = frozenset(("free", "increasing", "decreasing"))
+_Monotonicity: TypeAlias = Literal["free", "increasing", "decreasing"]
 _PSD_TRANSFORM = PositiveSemidefiniteTransform()
 
 
@@ -83,7 +84,7 @@ class SpectralNeuronInitializationReport(StrictModule, NonTrainableState):
         jitter_bound: float,
         perturbation_bound: float,
         certified_minimum_gap: float,
-    ):
+    ) -> None:
         features = int(feature_count)
         dimension = int(matrix_size)
         index = int(eigen_index)
@@ -170,8 +171,8 @@ class SpectralNeuron(_AbstractBaseModel):
         initialization_radius: float = 5.0,
         dtype: Any = jnp.float32,
         precision: HermitianPrecisionPolicy | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         if isinstance(matrix_size, bool) or not isinstance(matrix_size, Integral):
             raise TypeError("SpectralNeuron matrix_size must be an integer.")
         if isinstance(eigen_index, bool) or not isinstance(eigen_index, Integral):
@@ -204,11 +205,9 @@ class SpectralNeuron(_AbstractBaseModel):
             raise ValueError(
                 "SpectralNeuron monotonicity must have one entry per input feature."
             )
-        if any(mode not in _MONOTONICITY_MODES for mode in modes):
-            raise ValueError(
-                "SpectralNeuron monotonicity entries must be 'free', 'increasing', or 'decreasing'."
-            )
-        canonical_modes = tuple(modes)
+        canonical_modes = tuple(
+            parse(mode, _Monotonicity, "monotonicity") for mode in modes
+        )
         free_indices = tuple(
             i for i, mode in enumerate(canonical_modes) if mode == "free"
         )

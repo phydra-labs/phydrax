@@ -7,12 +7,14 @@ from __future__ import annotations
 import hashlib
 from enum import IntEnum
 from math import prod
-from typing import Any, Literal, TypeAlias
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..dynamics import AbstractInputPolicy, DifferentialAlgebraicSystem
@@ -28,6 +30,7 @@ from ..nonlinear import (
     PreparedNonlinearSolve,
     refresh_nonlinear,
 )
+from ..typing import parse
 
 
 DAEInitializationMode: TypeAlias = Literal[
@@ -46,7 +49,7 @@ class DAEInitializationStatus(IntEnum):
     DOMAIN_FAILURE = 4
 
 
-def _mask_tuple(value: ArrayLike, owner: str, /) -> tuple[bool, ...]:
+def _mask_tuple(value: npt.ArrayLike, owner: str, /) -> tuple[bool, ...]:
     array = np.asarray(value)
     if array.dtype.kind != "b":
         raise TypeError(f"{owner} must have Boolean dtype.")
@@ -79,11 +82,10 @@ class DAEInitializationSpec(StrictModule):
         mode: DAEInitializationMode = "index-one",
         /,
         *,
-        fixed_state: ArrayLike | None = None,
-        fixed_rate: ArrayLike | None = None,
-    ):
-        if mode not in ("index-one", "fixed-rate", "check", "custom"):
-            raise ValueError("Unknown DAE initialization mode.")
+        fixed_state: npt.ArrayLike | None = None,
+        fixed_rate: npt.ArrayLike | None = None,
+    ) -> None:
+        mode = parse(mode, DAEInitializationMode, "mode")
         if mode == "custom":
             if fixed_state is None or fixed_rate is None:
                 raise ValueError("Custom initialization requires both fixed masks.")
@@ -118,8 +120,8 @@ class DAEInitializationSpec(StrictModule):
     @classmethod
     def from_masks(
         cls,
-        fixed_state: ArrayLike,
-        fixed_rate: ArrayLike,
+        fixed_state: npt.ArrayLike,
+        fixed_rate: npt.ArrayLike,
         /,
     ) -> "DAEInitializationSpec":
         return cls("custom", fixed_state=fixed_state, fixed_rate=fixed_rate)
@@ -162,7 +164,7 @@ class DAEInitializationResult(StrictModule):
         status: Array,
         nonlinear_result: NonlinearResult | None,
         initialization_id: str,
-    ):
+    ) -> None:
         if nonlinear_result is not None and not isinstance(
             nonlinear_result, NonlinearResult
         ):
@@ -220,7 +222,9 @@ class _DAEInitializationResidual(StrictModule):
     rate_indices: Array
     state_unknown_count: int = eqx.field(static=True)
 
-    def _state_rate_inputs(self, unknown, arguments, /):
+    def _state_rate_inputs(
+        self, unknown: Array, arguments: _DAEInitializationArguments, /
+    ) -> tuple[Array, Array, Array | None]:
         flat_state = (
             arguments.state_guess.reshape((-1,))
             .at[self.state_indices]
@@ -240,13 +244,17 @@ class _DAEInitializationResidual(StrictModule):
         )
         return state, state_rate, inputs
 
-    def trial_valid(self, unknown, arguments, /):
+    def trial_valid(
+        self, unknown: Array, arguments: _DAEInitializationArguments, /
+    ) -> Array:
         state, state_rate, inputs = self._state_rate_inputs(unknown, arguments)
         return self.system.trial_valid(
             arguments.time, state, state_rate, arguments.model_args, inputs=inputs
         )
 
-    def __call__(self, unknown, arguments, /):
+    def __call__(
+        self, unknown: Array, arguments: _DAEInitializationArguments, /
+    ) -> Array:
         state, state_rate, inputs = self._state_rate_inputs(unknown, arguments)
         return self.system.scaled_residual(
             arguments.time,
@@ -291,36 +299,40 @@ def _fixed_masks(
     spec: DAEInitializationSpec,
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
-    if spec.mode == "index-one":
-        fixed_state = _role_mask(
-            system,
-            system.structure.variable_roles,
-            "differential",
-        )
-        fixed_rate = _role_mask(
-            system,
-            system.structure.variable_roles,
-            "algebraic",
-        )
-    elif spec.mode == "fixed-rate":
-        fixed_state = np.zeros(system.state_shape, dtype=np.bool_)
-        fixed_rate = np.ones(system.state_shape, dtype=np.bool_)
-    elif spec.mode == "check":
-        fixed_state = np.ones(system.state_shape, dtype=np.bool_)
-        fixed_rate = np.ones(system.state_shape, dtype=np.bool_)
-    else:
-        assert spec.fixed_state is not None and spec.fixed_rate is not None
-        if len(spec.fixed_state) != system.state_size:
-            raise ValueError(
-                f"Custom DAE initialization masks must contain exactly {system.state_size} entries."
+    mode = spec.mode
+    match mode:
+        case "index-one":
+            fixed_state = _role_mask(
+                system,
+                system.structure.variable_roles,
+                "differential",
             )
-        fixed_state = np.asarray(spec.fixed_state, dtype=np.bool_).reshape(
-            system.state_shape
-        )
-        fixed_rate = np.asarray(spec.fixed_rate, dtype=np.bool_).reshape(
-            system.state_shape
-        )
-    if spec.mode != "check":
+            fixed_rate = _role_mask(
+                system,
+                system.structure.variable_roles,
+                "algebraic",
+            )
+        case "fixed-rate":
+            fixed_state = np.zeros(system.state_shape, dtype=np.bool_)
+            fixed_rate = np.ones(system.state_shape, dtype=np.bool_)
+        case "check":
+            fixed_state = np.ones(system.state_shape, dtype=np.bool_)
+            fixed_rate = np.ones(system.state_shape, dtype=np.bool_)
+        case "custom":
+            assert spec.fixed_state is not None and spec.fixed_rate is not None
+            if len(spec.fixed_state) != system.state_size:
+                raise ValueError(
+                    f"Custom DAE initialization masks must contain exactly {system.state_size} entries."
+                )
+            fixed_state = np.asarray(spec.fixed_state, dtype=np.bool_).reshape(
+                system.state_shape
+            )
+            fixed_rate = np.asarray(spec.fixed_rate, dtype=np.bool_).reshape(
+                system.state_shape
+            )
+        case _:
+            assert_never(mode)
+    if mode != "check":
         free_count = int(np.count_nonzero(~fixed_state) + np.count_nonzero(~fixed_rate))
         if free_count != system.state_size:
             raise ValueError(

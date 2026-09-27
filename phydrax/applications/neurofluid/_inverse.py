@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._bounds import Bounds
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -58,7 +59,7 @@ class ImageSpaceObservation(StrictModule):
         /,
         *,
         observation_id: str,
-    ):
+    ) -> None:
         if not isinstance(operator, PreparedObservationOperator):
             raise TypeError("operator must be PreparedObservationOperator.")
         observed_ = jnp.asarray(observed)
@@ -217,7 +218,7 @@ class NeurofluidInverseProblem(StrictModule):
         /,
         *,
         regularization: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(schema, NeurofluidParameterSchema):
             raise TypeError("schema must be NeurofluidParameterSchema.")
         if not isinstance(observation, ImageSpaceObservation):
@@ -243,10 +244,10 @@ class NeurofluidInverseProblem(StrictModule):
     def state_design_problem(self) -> StateDesignProblem:
         initial = jnp.asarray(self.schema.initial)
 
-        def residual(state, design, args=None):
+        def residual(state: Array, design: Array, args: object = None) -> Array:
             return state - self.forward(design)
 
-        def objective(state, design, args=None):
+        def objective(state: Array, design: Array, args: object = None) -> Array:
             likelihood = self.observation.evaluate(state).negative_log_likelihood
             difference = design - initial
             return (
@@ -272,7 +273,7 @@ class NeurofluidInverseProblem(StrictModule):
         if not np.isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("rank_tolerance must be finite and positive.")
 
-        def prediction(value):
+        def prediction(value: Array) -> Array:
             return self.observation.operator.apply(self.forward(value)).values.reshape(
                 (-1,)
             )

@@ -10,7 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -24,6 +24,7 @@ from ..._differentiation import (
 )
 from ..._model._array import value_derivative_contract
 from ..._strict import StrictModule
+from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -177,7 +178,7 @@ def _initial_means(
             )
         keys = jax.random.split(key, case_count)
 
-        def choose(values, weights, case_key):
+        def choose(values: Array, weights: Array, case_key: Array) -> Array:
             logits = jnp.where(weights > 0.0, jnp.log(weights), -jnp.inf)
             indices = jax.random.categorical(case_key, logits, shape=(component_count,))
             return values[indices]
@@ -239,7 +240,7 @@ def _fit_gaussian_mixture(
     singular_seen = jnp.zeros(batch.case_shape, dtype=jnp.bool_)
     concentration_ = 0.0 if concentration is None else concentration
 
-    def em_step(_, state):
+    def em_step(_: Array, state: _EMState) -> _EMState:
         (
             mixing,
             means,
@@ -405,6 +406,9 @@ def _fit_gaussian_mixture(
     )
 
 
+_EMState: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
+
+
 class MixtureDiagnostics(StrictModule):
     valid: Array
     status: Array
@@ -432,7 +436,7 @@ class MixtureDiagnostics(StrictModule):
         singular_components_seen: Array,
         converged: Array,
         method: str,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.negative_log_likelihood = jnp.asarray(negative_log_likelihood)
@@ -478,7 +482,7 @@ class GaussianMixtureModel(AbstractFittedModel):
         /,
         *,
         covariance_type: CovarianceType,
-    ):
+    ) -> None:
         self.mixing_weights = jnp.asarray(mixing_weights)
         self.means = jnp.asarray(means)
         self.covariance = jnp.asarray(covariance)
@@ -562,7 +566,7 @@ class BayesianGaussianMixtureModel(AbstractFittedModel):
         /,
         *,
         covariance_type: CovarianceType,
-    ):
+    ) -> None:
         self.mixing_weights = jnp.asarray(mixing_weights)
         self.means = jnp.asarray(means)
         self.covariance = jnp.asarray(covariance)
@@ -648,15 +652,12 @@ class GaussianMixture(AbstractRecipe):
         initialization: MixtureInitialization = "random",
         empty_policy: EmptyComponentPolicy = "reseed",
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if component_count <= 0 or max_iterations <= 0:
             raise ValueError("component_count and max_iterations must be positive.")
-        if (
-            covariance_type not in ("full", "tied", "diagonal", "spherical")
-            or initialization not in ("random", "first")
-            or empty_policy not in ("retain", "reseed", "error")
-        ):
-            raise ValueError("unsupported Gaussian mixture policy.")
+        covariance_type = parse(covariance_type, CovarianceType, "covariance_type")
+        initialization = parse(initialization, MixtureInitialization, "initialization")
+        empty_policy = parse(empty_policy, EmptyComponentPolicy, "empty_policy")
         self.component_count = int(component_count)
         self.covariance_type = covariance_type
         self.max_iterations = int(max_iterations)
@@ -776,15 +777,12 @@ class BayesianGaussianMixture(AbstractRecipe):
         initialization: MixtureInitialization = "random",
         empty_policy: EmptyComponentPolicy = "retain",
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if component_count <= 0 or max_iterations <= 0:
             raise ValueError("component_count and max_iterations must be positive.")
-        if (
-            covariance_type not in ("full", "tied", "diagonal", "spherical")
-            or initialization not in ("random", "first")
-            or empty_policy not in ("retain", "reseed", "error")
-        ):
-            raise ValueError("unsupported Bayesian Gaussian mixture policy.")
+        covariance_type = parse(covariance_type, CovarianceType, "covariance_type")
+        initialization = parse(initialization, MixtureInitialization, "initialization")
+        empty_policy = parse(empty_policy, EmptyComponentPolicy, "empty_policy")
         self.component_count = int(component_count)
         self.covariance_type = covariance_type
         self.concentration = _positive_scalar(concentration, "concentration")

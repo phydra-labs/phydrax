@@ -8,9 +8,11 @@ from itertools import combinations
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ._chart import CoordinateChart
 from ._complex import (
     AlmostComplexStructure,
     validate_almost_complex_structure,
@@ -34,7 +36,7 @@ class _FundamentalFormCoefficients(StrictModule):
         metric: RiemannianMetric,
         complex_structure: AlmostComplexStructure,
         /,
-    ):
+    ) -> None:
         self.metric = metric
         self.complex_structure = complex_structure
         self.indices = tuple(combinations(range(metric.chart.dimension), 2))
@@ -48,7 +50,7 @@ class _RicciFormCoefficients(StrictModule):
     structure: KahlerStructure
     indices: tuple[tuple[int, int], ...]
 
-    def __init__(self, structure: KahlerStructure, /):
+    def __init__(self, structure: KahlerStructure, /) -> None:
         self.structure = structure
         self.indices = tuple(combinations(range(structure.metric.chart.dimension), 2))
 
@@ -70,7 +72,7 @@ class HermitianStructure(StrictModule):
         metric: RiemannianMetric,
         complex_structure: AlmostComplexStructure,
         /,
-    ):
+    ) -> None:
         if not isinstance(metric, RiemannianMetric):
             raise TypeError("HermitianStructure requires a RiemannianMetric.")
         if not isinstance(complex_structure, AlmostComplexStructure):
@@ -81,7 +83,7 @@ class HermitianStructure(StrictModule):
         self.complex_structure = complex_structure
 
     @property
-    def chart(self):
+    def chart(self) -> CoordinateChart:
         return self.metric.chart
 
     def fundamental_form(self) -> DifferentialForm:
@@ -107,7 +109,7 @@ class HermitianValidationReport(StrictModule):
         complex_valid: ArrayLike,
         compatibility_residual: ArrayLike,
         skew_residual: ArrayLike,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.metric_valid = jnp.asarray(metric_valid, dtype=jnp.bool_)
         self.complex_valid = jnp.asarray(complex_valid, dtype=jnp.bool_)
@@ -167,7 +169,7 @@ class KahlerStructure(StrictModule):
 
     hermitian: HermitianStructure
 
-    def __init__(self, hermitian: HermitianStructure, /):
+    def __init__(self, hermitian: HermitianStructure, /) -> None:
         if not isinstance(hermitian, HermitianStructure):
             raise TypeError("KahlerStructure requires a HermitianStructure.")
         self.hermitian = hermitian
@@ -181,7 +183,7 @@ class KahlerStructure(StrictModule):
         return self.hermitian.complex_structure
 
     @property
-    def chart(self):
+    def chart(self) -> CoordinateChart:
         return self.hermitian.chart
 
     def fundamental_form(self) -> DifferentialForm:
@@ -221,7 +223,7 @@ class KahlerValidationReport(StrictModule):
         closure_residual: ArrayLike,
         covariant_complex_residual: ArrayLike,
         minimum_symplectic_singular_value: ArrayLike,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.hermitian_valid = jnp.asarray(hermitian_valid, dtype=jnp.bool_)
         self.integrable = jnp.asarray(integrable, dtype=jnp.bool_)

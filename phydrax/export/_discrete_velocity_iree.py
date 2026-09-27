@@ -11,7 +11,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from ..backends._types import BackendAvailability
@@ -27,6 +27,7 @@ from ..discretization.discrete_velocity._spatial import (
     PreparedSmoothCompressibleD2V17SpatialDynamics,
     SmoothCompressibleD2VStepStatus,
 )
+from ..typing import parse
 from ._iree import IREEExportPolicy, IREEExportResult, save_iree
 
 
@@ -386,8 +387,7 @@ def prepare_discrete_velocity_iree_contract(
     """Prepare a fixed forward-only ABI without invoking an IREE compiler."""
 
     _validate_runtime_binding(dynamics, binding)
-    if mode not in ("frozen-equilibrium", "one-step", "fixed-horizon"):
-        raise ValueError("Unknown D2V IREE export mode.")
+    mode = parse(mode, DiscreteVelocityIREEExportMode, "mode")
     host = str(host_id).strip()
     if not host:
         raise ValueError("D2V IREE export requires a non-empty host_id.")
@@ -418,7 +418,9 @@ def prepare_discrete_velocity_iree_contract(
     )
     population_dtype = np.dtype(dynamics.method.quadrature.velocities.dtype).str
     if mode == "frozen-equilibrium":
-        if not eqx.is_array(example):
+        if isinstance(example, SmoothCompressibleKineticState) or not eqx.is_array(
+            example
+        ):
             raise TypeError("Frozen-equilibrium D2V export requires a conserved array.")
         conserved = example
         expected_conserved_shape = (*dynamics.transport.spatial_shape, 4)
@@ -538,8 +540,12 @@ def save_discrete_velocity_iree(
 
     if mode == "frozen-equilibrium":
         conserved = example
+        if isinstance(conserved, SmoothCompressibleKineticState):
+            raise TypeError("Frozen-equilibrium D2V export requires a conserved array.")
 
-        def forward(conserved_input, *, key=None):
+        def forward(
+            conserved_input: Array, *, key: Array | None = None
+        ) -> tuple[Array, ...]:
             if key is not None:
                 raise ValueError("D2V IREE export requires key=None.")
             return _frozen_equilibrium_outputs(dynamics, binding, conserved_input)
@@ -551,7 +557,9 @@ def save_discrete_velocity_iree(
             raise TypeError("D2V forward export requires a kinetic-state example.")
         runtime = tuple(runtime_arrays)
 
-        def forward(f, g, *runtime_inputs, key=None):
+        def forward(
+            f: Array, g: Array, *runtime_inputs: Array, key: Array | None = None
+        ) -> tuple[Array, ...]:
             if key is not None:
                 raise ValueError("D2V IREE export requires key=None.")
             transport_args = None if not runtime_inputs else tuple(runtime_inputs)

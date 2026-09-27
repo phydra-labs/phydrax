@@ -6,7 +6,7 @@ import phydrax as phx
 from examples.differentiable_two_body_orbit import build_workflow
 
 
-def test_two_body_workflow_propagates_and_differentiates_end_to_end():
+def test_two_body_workflow_propagates_and_differentiates_end_to_end() -> None:
     _, initial, plan = build_workflow()
     analytic = plan.solve_analytic_two_body(initial)
     numerical = plan.solve(initial)

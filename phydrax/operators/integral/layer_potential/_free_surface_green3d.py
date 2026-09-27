@@ -9,7 +9,8 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -63,7 +64,7 @@ class FreeSurfaceGreenPolicy3D(StrictModule, NonTrainableState):
         root_tolerance: float = 1.0e-13,
         max_root_iterations: int = 128,
         max_resident_bytes: int = 32 * 1024 * 1024,
-    ):
+    ) -> None:
         radial = int(radial_order_per_interval)
         angular = int(angular_order)
         cutoff_factor = float(cutoff_clearance_factor)

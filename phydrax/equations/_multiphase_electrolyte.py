@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -40,7 +41,7 @@ class MultiphaseElectrolyteParameters(StrictModule, NonTrainableState):
         negative_phase_permittivity: ArrayLike,
         positive_phase_permittivity: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(binary, BinaryThermodynamicParameters):
             raise TypeError("binary must be BinaryThermodynamicParameters.")
         if not isinstance(electrolyte, ElectrolyteTransportParameters):
@@ -102,7 +103,7 @@ class MultiphaseElectrolyteClosure(StrictModule, NonTrainableState):
         binary: BinaryPhaseThermodynamicClosure,
         electrochemical: AbstractElectrochemicalClosure,
         /,
-    ):
+    ) -> None:
         if not isinstance(binary, BinaryPhaseThermodynamicClosure):
             raise TypeError("binary must be BinaryPhaseThermodynamicClosure.")
         if not isinstance(electrochemical, AbstractElectrochemicalClosure):

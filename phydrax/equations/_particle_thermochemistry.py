@@ -4,17 +4,21 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.particle._particle_internal_mesh import (
     PreparedParticleInternalBatch,
+    PreparedRadialShellMesh,
 )
 from ..discretization.particle._particle_internal_state import ParticleInternalBatchState
 from ..discretization.particle._particle_internal_unstructured import (
@@ -33,18 +37,21 @@ _UNIVERSAL_GAS_CONSTANT = 8.31446261815324
 
 @jax.custom_jvp
 def _implicit_temperature_value(
-    temperature,
-    internal_energy,
-    species_amount,
-    molar_internal_energy,
-    molar_heat_capacity,
-):
+    temperature: Array,
+    internal_energy: Array,
+    species_amount: Array,
+    molar_internal_energy: Array,
+    molar_heat_capacity: Array,
+) -> Array:
     del internal_energy, species_amount, molar_internal_energy, molar_heat_capacity
     return temperature
 
 
 @_implicit_temperature_value.defjvp
-def _implicit_temperature_value_jvp(primals, tangents):
+def _implicit_temperature_value_jvp(
+    primals: tuple[Array, Array, Array, Array, Array],
+    tangents: tuple[Array, Array, Array, Array, Array],
+) -> tuple[Array, Array]:
     temperature, internal_energy, species_amount, molar_energy, molar_capacity = primals
     _, energy_tangent, amount_tangent, molar_energy_tangent, _ = tangents
     capacity = jnp.sum(species_amount * molar_capacity, axis=-1)
@@ -83,7 +90,7 @@ class ParticleThermodynamicMaterialPlan(StrictModule, NonTrainableState):
         maximum_temperature: float | None = None,
         inversion_iterations: int = 48,
         material_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(species_thermodynamics, AbstractSpeciesThermodynamicsPlan):
             raise TypeError(
                 "species_thermodynamics must implement AbstractSpeciesThermodynamicsPlan."
@@ -174,7 +181,7 @@ class ParticleThermodynamicMaterialPlan(StrictModule, NonTrainableState):
             0.5 * (low_energy + high_energy),
         )
 
-        def iteration(_, bracket):
+        def iteration(_: Array, bracket: tuple[Array, Array]) -> tuple[Array, Array]:
             lower, upper = bracket
             midpoint = 0.5 * (lower + upper)
             midpoint_energy = self.energy_from_temperature(midpoint, amount)
@@ -256,7 +263,7 @@ class ParticleTransportMaterialPlan(StrictModule, NonTrainableState):
         *,
         tortuosity_exponent: float = 1.0,
         material_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(schema, ChemicalSpeciesSchema):
             raise TypeError("schema must be a ChemicalSpeciesSchema.")
         conductivity = np.asarray(thermal_conductivity, dtype=np.float64)
@@ -296,7 +303,12 @@ class ParticleThermochemicalMaterialBundle(StrictModule, NonTrainableState):
     transport: ParticleTransportMaterialPlan
     bundle_id: str = eqx.field(static=True)
 
-    def __init__(self, thermodynamics, transport, /):
+    def __init__(
+        self,
+        thermodynamics: ParticleThermodynamicMaterialPlan,
+        transport: ParticleTransportMaterialPlan,
+        /,
+    ) -> None:
         if not isinstance(thermodynamics, ParticleThermodynamicMaterialPlan):
             raise TypeError("thermodynamics must be a ParticleThermodynamicMaterialPlan.")
         if not isinstance(transport, ParticleTransportMaterialPlan):
@@ -348,9 +360,12 @@ def evaluate_particle_transport(
         raise ValueError("Particle transport state does not match prepared batch.")
     if material.thermodynamics.schema.species_count != batch.species_count:
         raise ValueError("Particle transport species schema does not match batch.")
-    if isinstance(batch.mesh, PreparedUnstructuredParticleInternalMesh):
-        return _evaluate_unstructured_particle_transport(batch, state, material, boundary)
-    metrics = batch.mesh.metrics(state.outer_scale)
+    mesh = batch.mesh
+    if isinstance(mesh, PreparedUnstructuredParticleInternalMesh):
+        return _evaluate_unstructured_particle_transport(
+            batch, mesh, state, material, boundary
+        )
+    metrics = mesh.metrics(state.outer_scale)
     thermodynamics = material.thermodynamics.state(
         state.internal_energy,
         state.species_amount,
@@ -396,8 +411,10 @@ def evaluate_particle_transport(
         * (boundary.species_concentration - surface_concentration)
         + boundary.prescribed_species_rate
     )
+    # Radial shells are the only other prepared particle-internal mesh.
+    radial_mesh = cast(PreparedRadialShellMesh, mesh)
     radial_species = prepare_radial_species_transport(
-        RadialSpeciesTransportPlan(batch.species_count), batch.mesh
+        RadialSpeciesTransportPlan(batch.species_count), radial_mesh
     ).evaluate(
         state.species_amount,
         outer_scale=state.outer_scale,
@@ -502,11 +519,12 @@ def evaluate_particle_transport(
 
 
 def _evaluate_unstructured_particle_transport(
-    batch,
-    state,
-    material,
-    boundary,
-):
+    batch: PreparedParticleInternalBatch,
+    mesh: PreparedUnstructuredParticleInternalMesh,
+    state: ParticleInternalBatchState,
+    material: ParticleThermochemicalMaterialBundle,
+    boundary: ParticleTransportBoundary,
+) -> ParticleTransportEvaluation:
     _validate_boundary(boundary, batch, state.internal_energy.dtype)
     boundary_valid = (
         jnp.all(jnp.isfinite(boundary.temperature) & (boundary.temperature > 0.0))
@@ -528,7 +546,7 @@ def _evaluate_unstructured_particle_transport(
     active_cells = jnp.broadcast_to(
         state.active[:, None], (batch.particle_count, batch.cell_capacity)
     )
-    metrics = batch.mesh.metrics(state.outer_scale, active_cells=active_cells)
+    metrics = mesh.metrics(state.outer_scale, active_cells=active_cells)
     thermodynamics = material.thermodynamics.state(
         state.internal_energy,
         state.species_amount,
@@ -702,7 +720,9 @@ def _evaluate_unstructured_particle_transport(
     )
 
 
-def _validate_boundary(boundary, batch, dtype):
+def _validate_boundary(
+    boundary: object, batch: PreparedParticleInternalBatch, dtype: DTypeLike
+) -> None:
     if not isinstance(boundary, ParticleTransportBoundary):
         raise TypeError("boundary must be a ParticleTransportBoundary.")
     particle_shape = (batch.particle_count,)
@@ -723,7 +743,7 @@ def _validate_boundary(boundary, batch, dtype):
         raise ValueError("Particle transport boundary shapes are invalid.")
 
 
-def _harmonic_mean(left, right):
+def _harmonic_mean(left: Array, right: Array) -> Array:
     denominator = left + right
     return jnp.where(denominator > 0.0, 2.0 * left * right / denominator, 0.0)
 

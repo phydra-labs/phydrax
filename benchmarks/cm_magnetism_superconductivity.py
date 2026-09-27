@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -47,7 +49,7 @@ from phydrax.operators.quantum._superconductivity import (
 from phydrax.sparse import EdgeRelation
 
 
-def _constant_family(matrix, *, hermitian):
+def _constant_family(matrix: Any, *, hermitian: Any) -> Any:
     value = np.asarray(matrix, dtype="complex128")
     count = value.shape[0]
     target = np.repeat(np.arange(count), count)
@@ -66,14 +68,14 @@ def _constant_family(matrix, *, hermitian):
     return prepare_periodic_translation_family(plan, state)
 
 
-def _measure(function):
+def _measure(function: Any) -> Any:
     start = time.perf_counter()
     value = function()
     jax.block_until_ready(value)
     return value, time.perf_counter() - start
 
 
-def _classical_case(site_count: int):
+def _classical_case(site_count: int) -> Any:
     units = AtomisticUnitSystem.reduced()
     positions = np.zeros((site_count, 3))
     positions[:, 0] = np.arange(site_count)
@@ -126,7 +128,7 @@ def _classical_case(site_count: int):
     }
 
 
-def _lswt_case(site_count: int, q_count: int):
+def _lswt_case(site_count: int, q_count: int) -> Any:
     reference = SpinWaveReferenceState(
         np.broadcast_to([0.0, 0.0, 1.0], (site_count, 3)), np.ones(site_count)
     )
@@ -161,7 +163,7 @@ def _lswt_case(site_count: int, q_count: int):
     }
 
 
-def _bdg_case(mode_count: int, k_count: int):
+def _bdg_case(mode_count: int, k_count: int) -> Any:
     if mode_count % 2:
         raise ValueError("BdG benchmark mode_count must be even.")
     order = FermionModeOrder(tuple(f"mode-{index}" for index in range(mode_count)))

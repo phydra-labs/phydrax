@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -25,7 +28,13 @@ _SQUARE = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
 _DIAGONAL_CELLS = ((0, 1, 2), (0, 2, 3))
 
 
-def _discretization(degree, *, element=None, cell_kind="triangle", cells=_DIAGONAL_CELLS):
+def _discretization(
+    degree: Any,
+    *,
+    element: Any = None,
+    cell_kind: Any = "triangle",
+    cells: Any = _DIAGONAL_CELLS,
+) -> Any:
     mesh = phx.discretization.CellMesh(
         jnp.asarray(_SQUARE),
         (phx.discretization.CellBlock("cells", cell_kind, jnp.asarray(cells)),),
@@ -40,12 +49,12 @@ def _discretization(degree, *, element=None, cell_kind="triangle", cells=_DIAGON
     ).prepare()
 
 
-def _nodal(discretization, function):
+def _nodal(discretization: Any, function: Any) -> Any:
     coordinates = np.asarray(discretization.dof_maps[0].dof_coordinates)
     return jnp.asarray(function(coordinates[:, 0], coordinates[:, 1]))
 
 
-def _view(reconstruction, coefficients):
+def _view(reconstruction: Any, coefficients: Any) -> Any:
     domain = phx.domain.GeometryDomain(reconstruction.support_geometry, label="x")
     return DiscreteFieldFunctionView(reconstruction, coefficients, domain, variable="x")
 
@@ -53,7 +62,9 @@ def _view(reconstruction, coefficients):
 _INTERIOR = jnp.asarray(((0.2, 0.1), (0.7, 0.3), (0.3, 0.8), (0.1, 0.6)))
 
 
-def test_view_evaluation_matches_native_point_interpolation_values_and_gradients():
+def test_view_evaluation_matches_native_point_interpolation_values_and_gradients() -> (
+    None
+):
     discretization = _discretization(2)
     coefficients = _nodal(discretization, lambda x, y: np.sin(3.0 * x) + x * y**2)
     reconstruction = prepare_finite_element_field_reconstruction(discretization, "u")
@@ -83,7 +94,9 @@ def test_view_evaluation_matches_native_point_interpolation_values_and_gradients
     )
 
 
-def test_quadratic_elements_reproduce_quadratics_and_exact_gradients_at_arbitrary_points():
+def test_quadratic_elements_reproduce_quadratics_and_exact_gradients_at_arbitrary_points() -> (
+    None
+):
     discretization = _discretization(2)
     reconstruction = prepare_finite_element_field_reconstruction(discretization, "u")
     coefficients = _nodal(discretization, lambda x, y: 1.0 + 2.0 * x - y + x * y + y**2)
@@ -107,7 +120,7 @@ def test_quadratic_elements_reproduce_quadratics_and_exact_gradients_at_arbitrar
         phx.operators.partial_n(field, var="x", axis=0, order=2)
 
 
-def _kinked():
+def _kinked() -> Any:
     # u = max(x - y, 0): gradient (1, -1) in cell 0 and (0, 0) in cell 1.
     discretization = _discretization(1)
     coefficients = _nodal(discretization, lambda x, y: np.maximum(x - y, 0.0))
@@ -115,7 +128,7 @@ def _kinked():
     return reconstruction, coefficients, _view(reconstruction, coefficients)
 
 
-def test_c0_facet_gradient_needs_an_explicit_trace_side():
+def test_c0_facet_gradient_needs_an_explicit_trace_side() -> None:
     reconstruction, coefficients, view = _kinked()
     gradient = phx.operators.grad(view.as_domain_function(), var="x")
     facet = jnp.asarray(((0.5, 0.5), (0.25, 0.25)))
@@ -143,7 +156,7 @@ def test_c0_facet_gradient_needs_an_explicit_trace_side():
         )
 
 
-def test_trace_sides_are_validated_against_the_cells_containing_each_site():
+def test_trace_sides_are_validated_against_the_cells_containing_each_site() -> None:
     _, _, view = _kinked()
     facet = jnp.asarray(((0.5, 0.5),))
 
@@ -158,7 +171,7 @@ def test_trace_sides_are_validated_against_the_cells_containing_each_site():
     np.testing.assert_allclose(boundary.func(jnp.asarray((0.5, 0.0))), 0.5)
 
 
-def test_outside_support_queries_fail_closed_with_evidence():
+def test_outside_support_queries_fail_closed_with_evidence() -> None:
     reconstruction, coefficients, view = _kinked()
     outside = jnp.asarray(((1.2, 0.5), (0.5, 0.5)))
 
@@ -170,7 +183,7 @@ def test_outside_support_queries_fail_closed_with_evidence():
         eqx.filter_jit(view.as_domain_function().func)(outside).block_until_ready()
 
 
-def test_coefficient_adjoint_is_the_exact_transpose_scatter():
+def test_coefficient_adjoint_is_the_exact_transpose_scatter() -> None:
     discretization = _discretization(2)
     reconstruction = prepare_finite_element_field_reconstruction(discretization, "u")
     coefficients = _nodal(discretization, lambda x, y: np.cos(x) * y)
@@ -190,13 +203,17 @@ def test_coefficient_adjoint_is_the_exact_transpose_scatter():
         eqx.filter_grad(lambda tree: jnp.sum(tree.func(_INTERIOR[0])))(field)
 
 
-def test_views_require_an_equivalent_explicit_geometry_domain():
+def test_views_require_an_equivalent_explicit_geometry_domain() -> None:
     reconstruction, coefficients, _ = _kinked()
     square = phx.geometry.Rectangle((0.5, 0.5), (1.0, 1.0)).compile()
 
     with pytest.raises(TypeError, match="GeometryDomain"):
         DiscreteFieldFunctionView(
-            reconstruction, coefficients, phx.domain.Interval1d(0.0, 1.0), variable="x"
+            reconstruction,
+            coefficients,
+            # ty: ignore[invalid-argument-type]
+            phx.domain.Interval1d(0.0, 1.0),
+            variable="x",
         )
     with pytest.raises(ValueError, match="not equivalent"):
         DiscreteFieldFunctionView(
@@ -223,7 +240,7 @@ def test_views_require_an_equivalent_explicit_geometry_domain():
         )
 
 
-def test_non_simplicial_cells_need_an_explicit_inverse_provider():
+def test_non_simplicial_cells_need_an_explicit_inverse_provider() -> None:
     quadrilateral = _discretization(1, cell_kind="quadrilateral", cells=((0, 1, 2, 3),))
 
     with pytest.raises(ValueError, match="explicit AbstractCellLocator"):
@@ -236,7 +253,7 @@ def test_non_simplicial_cells_need_an_explicit_inverse_provider():
     np.testing.assert_allclose(native.interpolate(coefficients), (1.25,), atol=1e-12)
 
 
-def test_discontinuous_fields_need_a_side_for_facet_values():
+def test_discontinuous_fields_need_a_side_for_facet_values() -> None:
     discretization = _discretization(
         0, element=phx.discretization.discontinuous_element("triangle", 0)
     )
@@ -262,21 +279,21 @@ class _TemperatureModel(phx.AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self, input_port, output_port):
+    def __init__(self, input_port: Any, output_port: Any) -> None:
         self.weight = jnp.asarray((0.5, -0.25))
         self.input_port = input_port
         self.output_port = output_port
         self.in_size = 2
         self.out_size = "scalar"
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         return jnp.tanh(self.weight @ x)
 
-    def model_ports(self):
+    def model_ports(self) -> Any:
         return phx.ModelPorts(inputs=(self.input_port,), outputs=(self.output_port,))
 
 
-def _temperature_port(dimension):
+def _temperature_port(dimension: Any) -> Any:
     return phx.ValuePort(
         "temperature",
         event_shape=(),
@@ -286,7 +303,7 @@ def _temperature_port(dimension):
     )
 
 
-def _bound_model(domain, output_port):
+def _bound_model(domain: Any, output_port: Any) -> Any:
     x_port = domain.value_port("x")
     model = _TemperatureModel(x_port, output_port)
     return domain.Model(
@@ -294,7 +311,7 @@ def _bound_model(domain, output_port):
     )(model)
 
 
-def test_fe_plus_network_requires_compatible_support_units_and_ports():
+def test_fe_plus_network_requires_compatible_support_units_and_ports() -> None:
     kelvin = phx.units.DimensionSignature({"temperature": 1})
     meter = phx.units.DimensionSignature({"length": 1})
     discretization = _discretization(1)

@@ -11,7 +11,8 @@ from enum import StrEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -50,7 +51,7 @@ class SpectralResponseEvidence(StrictModule, NonTrainableState):
         selection_rule_residual: ArrayLike,
         successful: ArrayLike,
         /,
-    ):
+    ) -> None:
         residuals = jnp.asarray(
             [
                 passivity_residual,
@@ -114,7 +115,7 @@ class SpectralResponseProduct(StrictModule, NonTrainableState):
         /,
         *,
         convention: SpectralResponseConvention = SpectralResponseConvention.RETARDED_EXP_MINUS_IWT_POSITIVE_LOSS,
-    ):
+    ) -> None:
         coordinate = jnp.asarray(coordinates)
         response = jnp.asarray(values)
         mask = jnp.asarray(active, dtype=jnp.bool_)

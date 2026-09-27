@@ -11,7 +11,7 @@ from numbers import Integral
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from ..linalg import DenseLinearOperator, FactorizationPolicy, factorize
@@ -31,7 +31,7 @@ class LPDOCompressionPlan(StrictModule):
         maximum_purification_dimension: int,
         tolerance: float = 1e-10,
         maximum_dense_amplitude_elements: int = 1_000_000,
-    ):
+    ) -> None:
         if any(
             not isinstance(value, Integral) or isinstance(value, bool)
             for value in (

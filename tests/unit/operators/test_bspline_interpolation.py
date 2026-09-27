@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,12 +14,12 @@ import pytest
 import phydrax as phx
 
 
-def test_exact_fit_preserves_unsorted_nodes_payloads_and_derivatives():
+def test_exact_fit_preserves_unsorted_nodes_payloads_and_derivatives() -> None:
     ordered = jnp.linspace(-1.7, 2.3, 10)
     permutation = jnp.asarray([4, 0, 8, 2, 6, 1, 9, 5, 3, 7])
     nodes = ordered[permutation]
 
-    def target(value):
+    def target(value: Any) -> Any:
         polynomial = value**3 - 2.0 * value + 0.4
         return jnp.asarray(
             [
@@ -50,7 +53,7 @@ def test_exact_fit_preserves_unsorted_nodes_payloads_and_derivatives():
     )
 
 
-def test_weighted_least_squares_recovers_polynomial_with_duplicate_nodes():
+def test_weighted_least_squares_recovers_polynomial_with_duplicate_nodes() -> None:
     nodes = jnp.concatenate((jnp.linspace(-1.0, 1.0, 40), jnp.asarray([0.0, 0.0])))
     target = lambda value: 0.7 * value**3 - 0.2 * value**2 + 1.3 * value - 0.1
     values = target(nodes)
@@ -75,7 +78,7 @@ def test_weighted_least_squares_recovers_polynomial_with_duplicate_nodes():
     )
 
 
-def test_smoothing_reduces_sobolev_energy_for_noisy_data():
+def test_smoothing_reduces_sobolev_energy_for_noisy_data() -> None:
     nodes = jnp.linspace(-1.0, 1.0, 80)
     clean = jnp.sin(2.5 * jnp.pi * nodes)
     noisy = clean + 0.12 * jax.random.normal(jax.random.key(0), nodes.shape)
@@ -111,7 +114,7 @@ def test_smoothing_reduces_sobolev_energy_for_noisy_data():
     )
 
 
-def test_natural_periodic_and_explicit_boundary_jets_are_exact():
+def test_natural_periodic_and_explicit_boundary_jets_are_exact() -> None:
     nodes = jnp.linspace(0.0, 1.0, 12)
     values = jnp.sin(2.0 * jnp.pi * nodes)
     natural = phx.operators.fit_bspline(
@@ -152,7 +155,7 @@ def test_natural_periodic_and_explicit_boundary_jets_are_exact():
     assert explicit.diagnostics.constraint_residual_norm < 3e-11
 
 
-def test_fit_validation_rejects_ambiguous_or_rank_deficient_systems():
+def test_fit_validation_rejects_ambiguous_or_rank_deficient_systems() -> None:
     nodes = jnp.linspace(-1.0, 1.0, 8)
     values = nodes**2
     with pytest.raises(ValueError, match="distinct"):
@@ -182,7 +185,7 @@ def test_fit_validation_rejects_ambiguous_or_rank_deficient_systems():
         )
 
 
-def test_domain_function_adapter_is_fixed_jittable_and_differentiable():
+def test_domain_function_adapter_is_fixed_jittable_and_differentiable() -> None:
     interval = phx.domain.ScalarInterval(-2.0, 3.0, label="x")
     source = interval.Function("x")(lambda x: jnp.asarray([x**3 - 2.0 * x, x**2 + 0.5]))
     approximation = phx.operators.interpolate_bspline(
@@ -191,7 +194,7 @@ def test_domain_function_adapter_is_fixed_jittable_and_differentiable():
     )
     query = jnp.asarray(0.23)
 
-    def evaluate(value):
+    def evaluate(value: Any) -> Any:
         return approximation({"x": value}).data
 
     parameters, _, _ = phx.partition_parameters(approximation)

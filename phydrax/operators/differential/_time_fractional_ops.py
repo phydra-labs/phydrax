@@ -4,18 +4,25 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from collections.abc import Callable
+from typing import Any, Literal, TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
 import jax.scipy.special as jsp
+from jax import Array
 
 from phydrax.domain import AbstractScalarDomain, DomainFunction
 
 from ..._doc import DOC_KEY0
 from ...integration import GaussLegendreRule
+from ...typing import PRNGKey
 from .._causal_quadrature import causal_reference_rule
 from ._domain_ops import _unwrap_factor
+
+
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
 
 
 def _time_start(u: DomainFunction, time_var: str) -> jax.Array:
@@ -67,12 +74,12 @@ def caputo_time_fractional(
     t0 = _time_start(u, time_var)
     time_position = u.deps.index(time_var) if time_var in u.deps else None
 
-    def d_t_at(args, *, key, **kwargs):
+    def d_t_at(args: tuple[Any, ...], *, key: PRNGKey, **kwargs: Any) -> Array:
         if time_position is None:
             return jnp.zeros_like(u.func(*args, key=key, **kwargs))
         time = args[time_position]
 
-        def evaluate(candidate_time):
+        def evaluate(candidate_time: Array) -> Any:
             call_args = list(args)
             call_args[time_position] = candidate_time
             return u.func(*call_args, key=key, **kwargs)
@@ -84,12 +91,12 @@ def caputo_time_fractional(
         )
         return derivative
 
-    def d2_t_at(args, *, key, **kwargs):
+    def d2_t_at(args: tuple[Any, ...], *, key: PRNGKey, **kwargs: Any) -> Array:
         if time_position is None:
             return jnp.zeros_like(u.func(*args, key=key, **kwargs))
         time = args[time_position]
 
-        def first_derivative(candidate_time):
+        def first_derivative(candidate_time: Array) -> Array:
             call_args = list(args)
             call_args[time_position] = candidate_time
             return d_t_at(tuple(call_args), key=key, **kwargs)
@@ -101,7 +108,7 @@ def caputo_time_fractional(
         )
         return derivative
 
-    def with_metadata(function, *, method: str) -> DomainFunction:
+    def with_metadata(function: Callable[..., Array], *, method: str) -> DomainFunction:
         metadata = dict(u.metadata)
         metadata.update(
             {
@@ -135,17 +142,17 @@ def caputo_time_fractional(
                 cluster_exponent=cluster,
             )
 
-        def _op(*args, key=None, **kwargs):
+        def _op(*args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
             evaluation_key = DOC_KEY0 if key is None else key
             if time_position is None:
                 return jnp.zeros_like(u.func(*args, key=evaluation_key, **kwargs))
             target_time = jnp.asarray(args[time_position], dtype=jnp.float64).reshape(())
             duration = jnp.maximum(target_time - t0, 0.0)
 
-            def positive(_):
+            def positive(_: None) -> Array:
                 source_times = t0 + duration * nodes
 
-                def derivative_at(source_time):
+                def derivative_at(source_time: Array) -> Array:
                     call_args = list(args)
                     call_args[time_position] = source_time
                     return d_t_at(
@@ -166,7 +173,7 @@ def caputo_time_fractional(
                     axes=(0, 0),
                 )
 
-            def zero(_):
+            def zero(_: None) -> Array:
                 return jnp.zeros_like(u.func(*args, key=evaluation_key, **kwargs))
 
             return jax.lax.cond(duration > 0.0, positive, zero, operand=None)
@@ -186,17 +193,17 @@ def caputo_time_fractional(
             cluster_exponent=cluster,
         )
 
-    def _op(*args, key=None, **kwargs):
+    def _op(*args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         evaluation_key = DOC_KEY0 if key is None else key
         if time_position is None:
             return jnp.zeros_like(u.func(*args, key=evaluation_key, **kwargs))
         target_time = jnp.asarray(args[time_position], dtype=jnp.float64).reshape(())
         duration = jnp.maximum(target_time - t0, 0.0)
 
-        def positive(_):
+        def positive(_: None) -> Array:
             source_times = t0 + duration * nodes
 
-            def second_derivative_at(source_time):
+            def second_derivative_at(source_time: Array) -> Array:
                 call_args = list(args)
                 call_args[time_position] = source_time
                 return d2_t_at(
@@ -217,7 +224,7 @@ def caputo_time_fractional(
                 axes=(0, 0),
             )
 
-        def zero(_):
+        def zero(_: None) -> Array:
             return jnp.zeros_like(u.func(*args, key=evaluation_key, **kwargs))
 
         return jax.lax.cond(duration > 0.0, positive, zero, operand=None)

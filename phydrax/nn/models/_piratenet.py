@@ -8,11 +8,13 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
+from ..._callable import _KeyIterAdapter
 from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from .._base import _AbstractBaseModel
 from .._contracts import AFFINE, compose_regularity, model_regularity, sum_regularity
 from .._keys import EvalKey, fold_in_eval_key
@@ -34,10 +36,10 @@ class _PirateBranch(StrictModule):
         rwf: bool | tuple[float, float],
         use_bias: bool,
         initializer: str,
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         keys = jr.split(key, 3)
-        self.layers = tuple(
+        first, second, third = (
             Linear(
                 in_size=width,
                 out_size=width,
@@ -49,6 +51,7 @@ class _PirateBranch(StrictModule):
             )
             for layer_key in keys
         )
+        self.layers = (first, second, third)
 
     @staticmethod
     def _gate(gate: Array, encoder_u: Array, encoder_v: Array, /) -> Array:
@@ -118,8 +121,8 @@ class PirateNet(_AbstractBaseModel):
         use_bias: bool = True,
         use_final_bias: bool = True,
         initializer: str = "glorot_normal",
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         in_size_c = _canonical_size(in_size)
         out_size_c = _canonical_size(out_size)
         width = int(width_size)
@@ -205,8 +208,18 @@ class PirateNet(_AbstractBaseModel):
         )
         for block in self.blocks:
             # x + alpha * (F(x) - x) with a constant alpha: a sum of x and F(x).
-            # AdaptiveResidual stores the branch behind its key adapter.
-            branch = block.branch.func._regularity(hidden, encoder_u, encoder_v)
+            # AdaptiveResidual stores the key-only branch behind its key adapter.
+            adapter = block.branch
+            if not (isinstance(adapter, _KeyIterAdapter)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(adapter, _KeyIterAdapter)."
+                )
+            pirate_branch = adapter.func
+            if not (isinstance(pirate_branch, _PirateBranch)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(pirate_branch, _PirateBranch)."
+                )
+            branch = pirate_branch._regularity(hidden, encoder_u, encoder_v)
             hidden = sum_regularity((hidden, branch))
         return compose_regularity(
             hidden,

@@ -11,7 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -93,7 +95,7 @@ class CompressibleResourcePreflight(StrictModule, NonTrainableState):
         *,
         work_array_count: int,
         maximum_device_bytes: int,
-    ):
+    ) -> None:
         count = int(work_array_count)
         maximum = int(maximum_device_bytes)
         leaves = jax.tree.leaves(state)
@@ -144,7 +146,7 @@ class ExplicitCompressibleFixedStepAdapter(AbstractFixedStepMethod):
         /,
         *,
         order: int = 3,
-    ):
+    ) -> None:
         identifier = str(spatial_operator_id)
         order_ = int(order)
         if not callable(vector_field) or not identifier or order_ not in (3, 4):
@@ -197,7 +199,7 @@ class AdditiveIMEXCompressibleFixedStepAdapter(
         *,
         explicit_operator_id: str,
         implicit_operator_id: str,
-    ):
+    ) -> None:
         explicit = str(explicit_operator_id)
         implicit = str(implicit_operator_id)
         if not isinstance(method, ConservationIMEXMethod) or not explicit or not implicit:
@@ -252,7 +254,7 @@ class FiniteVolumeRuntimeFixedStepAdapter(AbstractFixedStepMethod):
     runtime: PreparedFiniteVolumeRuntime
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, runtime: PreparedFiniteVolumeRuntime, /):
+    def __init__(self, runtime: PreparedFiniteVolumeRuntime, /) -> None:
         if not isinstance(runtime, PreparedFiniteVolumeRuntime):
             raise TypeError("runtime must be PreparedFiniteVolumeRuntime.")
         self.runtime = runtime
@@ -320,7 +322,7 @@ class PreparedCompressibleProduction(StrictModule):
         route_label: str,
         spatial_operator_id: str,
         /,
-    ):
+    ) -> None:
         route = str(route_label)
         spatial = str(spatial_operator_id)
         if not isinstance(method, AbstractFixedStepMethod) or not route or not spatial:
@@ -473,7 +475,7 @@ class SmoothCompressibleProductionPlan(StrictModule):
         compatibility: DGSEMSampledFluxCompatibilityEvidence | None = None,
         viscous: ViscousDGPlan | None = None,
         accumulation: str = "deterministic",
-    ):
+    ) -> None:
         if (
             not isinstance(compatibility, DGSEMSampledFluxCompatibilityEvidence)
             or compatibility.volume_flux_id != volume_flux.flux_id
@@ -521,6 +523,10 @@ class SmoothCompressibleProductionPlan(StrictModule):
             raise TypeError("Smooth production requires prepared tensor DGSEM dynamics.")
         if dynamics.method.method_id != self.method.method_id:
             raise ValueError("Prepared DGSEM dynamics do not belong to this plan.")
+        compatibility = self.method.compatibility
+        # The constructor requires sampled compatibility evidence.
+        if not (compatibility is not None):
+            raise RuntimeError("Internal invariant failed: compatibility is not None.")
         if (
             not isinstance(
                 dynamics.system,
@@ -529,7 +535,7 @@ class SmoothCompressibleProductionPlan(StrictModule):
                     HomogeneousMixtureCompressibleNavierStokesSystem,
                 ),
             )
-            or dynamics.system.system_id != self.method.compatibility.system_id
+            or dynamics.system.system_id != compatibility.system_id
         ):
             raise ValueError(
                 "Prepared DGSEM dynamics lack exact canonical entropy-system evidence."
@@ -554,6 +560,10 @@ class SmoothCompressibleProductionPlan(StrictModule):
             raise TypeError("Smooth production requires prepared tensor DGSEM dynamics.")
         if dynamics.method.method_id != self.method.method_id:
             raise ValueError("Prepared DGSEM dynamics do not belong to this plan.")
+        compatibility = self.method.compatibility
+        # The constructor requires sampled compatibility evidence.
+        if not (compatibility is not None):
+            raise RuntimeError("Internal invariant failed: compatibility is not None.")
         if (
             not isinstance(
                 dynamics.system,
@@ -562,7 +572,7 @@ class SmoothCompressibleProductionPlan(StrictModule):
                     HomogeneousMixtureCompressibleNavierStokesSystem,
                 ),
             )
-            or dynamics.system.system_id != self.method.compatibility.system_id
+            or dynamics.system.system_id != compatibility.system_id
         ):
             raise ValueError(
                 "Prepared DGSEM dynamics lack exact canonical entropy-system evidence."
@@ -634,7 +644,7 @@ class NodalDGCompressibleProductionPlan(StrictModule):
         *,
         viscous: ViscousDGPlan | None = None,
         accumulation: str = "deterministic",
-    ):
+    ) -> None:
         viscous_ = ViscousDGPlan(formulation="ldg") if viscous is None else viscous
         if not isinstance(viscous_, ViscousDGPlan) or viscous_.formulation != "ldg":
             raise ValueError("Non-tensor nodal DG requires its separate LDG route.")
@@ -703,7 +713,7 @@ class StructuredFVCompressibleProductionPlan(StrictModule):
         viscous: ViscousFluxPlan | None = None,
         reconstruction_order: int = 5,
         positivity_iterations: int = 32,
-    ):
+    ) -> None:
         shock_ = ShockResolvingPolicy() if shock is None else shock
         if geometry_route not in ("structured", "mapped") or not isinstance(
             shock_, ShockResolvingPolicy
@@ -819,6 +829,12 @@ class StructuredFVCompressibleProductionPlan(StrictModule):
             raise ValueError(
                 "FV qualification requires exact system/viscous-plan agreement."
             )
+        reconstruction = self.method.reconstruction
+        # The constructor always installs a HighResolutionReconstructionPlan.
+        if not (isinstance(reconstruction, HighResolutionReconstructionPlan)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(reconstruction, HighResolutionReconstructionPlan)."
+            )
         return CompressibleQualificationEvidence(
             case.case_id,
             self.route_label,
@@ -827,7 +843,7 @@ class StructuredFVCompressibleProductionPlan(StrictModule):
                 ("geometry-route-exact", True),
                 (
                     "high-resolution-reconstruction",
-                    self.method.reconstruction.method in ("weno_z", "teno", "mp5"),
+                    reconstruction.method in ("weno_z", "teno", "mp5"),
                 ),
                 ("face-state-positivity", self.method.positivity is not None),
                 (

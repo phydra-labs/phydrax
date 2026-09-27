@@ -8,7 +8,8 @@ from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -32,7 +33,7 @@ class PersistenceFeaturePolicy(StrictModule, NonTrainableState):
         *,
         include_essential: bool = False,
         coordinates: Literal["birth-death", "birth-persistence"] = "birth-persistence",
-    ):
+    ) -> None:
         if int(degree) < 0:
             raise ValueError("Persistence feature degree must be non-negative.")
         if coordinates not in ("birth-death", "birth-persistence"):
@@ -50,7 +51,9 @@ class PersistenceFeaturePolicy(StrictModule, NonTrainableState):
         )
 
 
-def _packed_values(diagram: PackedPersistenceDiagram, policy: PersistenceFeaturePolicy):
+def _packed_values(
+    diagram: PackedPersistenceDiagram, policy: PersistenceFeaturePolicy
+) -> tuple[Array, Array, Array, Array]:
     active = diagram.active_mask & (diagram.degrees == policy.degree)
     if not policy.include_essential:
         active = active & diagram.has_finite_death
@@ -148,7 +151,7 @@ class PersistenceFeatureEvidence(StrictModule, NonTrainableState):
         *,
         source_id: str,
         policy_id: str,
-    ):
+    ) -> None:
         value_ = jnp.asarray(value)
         valid = jnp.asarray(ordering_valid, dtype=jnp.bool_)
         self.value = value_

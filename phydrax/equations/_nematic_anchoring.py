@@ -8,7 +8,8 @@ from enum import StrEnum
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -52,7 +53,7 @@ class NematicAnchoringPlan(StrictModule, NonTrainableState):
         normals: ArrayLike | None = None,
         strength: ArrayLike = 1.0,
         scalar_order: ArrayLike = 1.0,
-    ):
+    ) -> None:
         if not isinstance(basis, NematicTensorBasis):
             raise TypeError("basis must be NematicTensorBasis.")
         if not isinstance(kind, NematicAnchoringKind):

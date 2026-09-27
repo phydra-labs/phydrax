@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -54,7 +55,7 @@ class QualificationEvidence(StrictModule, NonTrainableState):
         finite: ArrayLike,
         status: str,
         source_id: str,
-    ):
+    ) -> None:
         metric_ = str(metric)
         status_ = str(status)
         source = str(source_id)
@@ -105,7 +106,7 @@ class PIVQualificationResult(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str,
-    ):
+    ) -> None:
         evidence_ = tuple(evidence)
         if any(not isinstance(item, QualificationEvidence) for item in evidence_):
             raise TypeError("evidence must contain QualificationEvidence values.")
@@ -254,7 +255,7 @@ class PTVQualificationResult(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str,
-    ):
+    ) -> None:
         evidence_ = tuple(evidence)
         if any(not isinstance(item, QualificationEvidence) for item in evidence_):
             raise TypeError("evidence must contain QualificationEvidence values.")
@@ -491,7 +492,7 @@ class STBQualificationResult(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str,
-    ):
+    ) -> None:
         evidence_ = tuple(evidence)
         if any(not isinstance(item, QualificationEvidence) for item in evidence_):
             raise TypeError("evidence must contain QualificationEvidence values.")

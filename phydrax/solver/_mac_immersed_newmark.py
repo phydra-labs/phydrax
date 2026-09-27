@@ -8,7 +8,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -75,7 +76,7 @@ class MACDeformableImmersedNewmarkMethod(StrictModule, NonTrainableState):
         *,
         beta: float = 0.25,
         gamma: float = 0.5,
-    ):
+    ) -> None:
         if not isinstance(base, MACDeformableImmersedBackwardEulerMethod):
             raise TypeError("base must be MACDeformableImmersedBackwardEulerMethod.")
         beta_ = float(beta)
@@ -183,7 +184,9 @@ class MACDeformableImmersedNewmarkMethod(StrictModule, NonTrainableState):
             state.marker_force_density,
         )
 
-        def residual(unknown, _):
+        def residual(
+            unknown: tuple[Array, Array, Array, Array, Array, Array], _: object
+        ) -> tuple[Array, Array, Array, Array, Array, Array]:
             fluid_coordinates, q, v, acceleration, pressure, multiplier = unknown
             fluid_velocity = tuple(operators.velocity_space.unflatten(fluid_coordinates))
             marker = base.marker_map.kinematics(q, v)

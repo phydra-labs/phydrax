@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -56,7 +57,7 @@ class MultigroupRadiationMatterProcessPlan(StrictModule, NonTrainableState):
         transport_light_speed: float = 299792458.0,
         matter_light_speed: float = 299792458.0,
         subcycles: int = 4,
-    ):
+    ) -> None:
         transport_speed = float(transport_light_speed)
         matter_speed = float(matter_light_speed)
         count = int(subcycles)
@@ -119,7 +120,7 @@ class MultigroupRadiationMatterProcessPlan(StrictModule, NonTrainableState):
         )
         substep = step / self.subcycles
 
-        def body(_, carry):
+        def body(_: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             gas_value, radiation_value = carry
             recovered = system.recover_thermodynamics(gas_value)
             species_molar = gas_value[

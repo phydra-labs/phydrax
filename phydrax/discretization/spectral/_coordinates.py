@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._trainable import NonTrainableState
@@ -52,7 +53,7 @@ class HermitianSpectralCoordinates(AbstractRealCoordinateMap, NonTrainableState)
         component_shape: Sequence[int] = (),
         reality_tolerance: float = 1e-10,
         maximum_coordinate_size: int = 10_000_000,
-    ):
+    ) -> None:
         if not isinstance(discretization, TensorSpectralDiscretization):
             raise TypeError("discretization must be a TensorSpectralDiscretization.")
         if any(isinstance(size, bool) for size in component_shape):
@@ -81,7 +82,8 @@ class HermitianSpectralCoordinates(AbstractRealCoordinateMap, NonTrainableState)
             ),
             axis=0,
         )
-        modal_conjugates = np.ravel_multi_index(conjugate_multi, modal_shape)
+        # Array multi-indices give an index array; NumPy's stubs pick the scalar overload.
+        modal_conjugates = np.asarray(np.ravel_multi_index(conjugate_multi, modal_shape))
         component_count = prod(components) if components else 1
         modal_size = prod(modal_shape)
         if modal_size * component_count > maximum:

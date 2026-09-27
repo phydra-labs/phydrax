@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -19,7 +21,7 @@ from phydrax.circuit import (
 )
 
 
-def _component(matrix, name):
+def _component(matrix: Any, name: Any) -> Any:
     reference = ElectricalWaveReference(50.0)
     count = jnp.asarray(matrix).shape[-1]
     return MatrixScatteringComponent(
@@ -29,7 +31,7 @@ def _component(matrix, name):
     )
 
 
-def test_selected_full_parity_and_noninvasive_hierarchical_probe():
+def test_selected_full_parity_and_noninvasive_hierarchical_probe() -> None:
     through = _component([[0.0, 1.0], [1.0, 0.0]], "through")
     inner = ScatteringNetwork(
         (ScatteringInstance("a", through), ScatteringInstance("b", through)),
@@ -56,7 +58,7 @@ def test_selected_full_parity_and_noninvasive_hierarchical_probe():
     assert jnp.allclose(result.external_outgoing[:, 0], jnp.asarray([0.0, 1.0]))
 
 
-def test_unit_gain_closed_loop_reports_singular_without_regularization():
+def test_unit_gain_closed_loop_reports_singular_without_regularization() -> None:
     reflector = _component([[1.0]], "reflector")
     matched = _component([[0.0]], "matched")
     network = ScatteringNetwork(
@@ -75,7 +77,7 @@ def test_unit_gain_closed_loop_reports_singular_without_regularization():
     assert int(result.diagnostics.status) == int(ScatteringNetworkStatus.SINGULAR)
 
 
-def test_scattering_rhs_resource_envelope_is_enforced_before_allocation():
+def test_scattering_rhs_resource_envelope_is_enforced_before_allocation() -> None:
     through = _component([[0.0, 1.0], [1.0, 0.0]], "through")
     network = ScatteringNetwork(
         (ScatteringInstance("device", through),),

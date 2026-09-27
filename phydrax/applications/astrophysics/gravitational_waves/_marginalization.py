@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import itertools
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -14,7 +14,9 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._probability import AbstractProbabilityLaw
@@ -23,6 +25,7 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....integration import GaussLegendreRule, interval_rule_data
 from ....special import ive
+from ....typing import parse
 from ....uq import AbstractPosteriorTerm
 from .._photometry import ObservationDataProvenance
 from ._likelihood import GravitationalWaveLikelihoodPlan
@@ -35,7 +38,7 @@ _RECONSTRUCTION_ADDRESS = SampleAddress(
     target="joint-nuisance",
     role="posterior",
 )
-CalibrationCorrectionConvention = Literal["data", "template"]
+CalibrationCorrectionConvention: TypeAlias = Literal["data", "template"]
 
 
 def _identifier(value: str, role: str, /) -> str:
@@ -73,7 +76,7 @@ class PhaseMarginalizationPlan(StrictModule, NonTrainableState):
         low: float = 0.0,
         high: float = 2.0 * np.pi,
         reconstruction_nodes: int = 256,
-    ):
+    ) -> None:
         name = _identifier(parameter, "phase parameter")
         lower, upper = float(low), float(high)
         count = int(reconstruction_nodes)
@@ -117,7 +120,7 @@ class TimeMarginalizationPlan(StrictModule, NonTrainableState):
         *,
         num_nodes: int,
         parameter: str = "geocent_time",
-    ):
+    ) -> None:
         lower, upper = float(low), float(high)
         count = int(num_nodes)
         name = _identifier(parameter, "time parameter")
@@ -160,7 +163,7 @@ class DistanceMarginalizationPlan(StrictModule, NonTrainableState):
         *,
         order: int = 64,
         parameter: str = "luminosity_distance",
-    ):
+    ) -> None:
         lower, upper = float(low), float(high)
         count = int(order)
         name = _identifier(parameter, "distance parameter")
@@ -224,7 +227,7 @@ class CalibrationResponseEnsemble(StrictModule, NonTrainableState):
         convention: CalibrationCorrectionConvention,
         log_weights: ArrayLike | None = None,
         ensemble_id: str = "calibration-response-ensemble",
-    ):
+    ) -> None:
         frequencies = np.asarray(frequency, dtype=np.float64)
         curves = np.asarray(responses)
         identifiers = tuple(str(value).strip() for value in detector_ids)
@@ -240,11 +243,11 @@ class CalibrationResponseEnsemble(StrictModule, NonTrainableState):
             or not identifiers
             or any(not value for value in identifiers)
             or len(set(identifiers)) != len(identifiers)
-            or convention not in ("data", "template")
         ):
             raise ValueError(
                 "Calibration frequency, response, detector, or convention is invalid."
             )
+        convention = parse(convention, CalibrationCorrectionConvention, "convention")
         if convention == "data":
             if np.any(curves == 0.0):
                 raise ValueError("Data-convention calibration responses must be nonzero.")
@@ -307,7 +310,7 @@ class CalibrationMarginalizationPlan(StrictModule, NonTrainableState):
         /,
         *,
         parameter: str = "calibration_index",
-    ):
+    ) -> None:
         if not isinstance(ensemble, CalibrationResponseEnsemble):
             raise TypeError("ensemble must be CalibrationResponseEnsemble.")
         self.ensemble = ensemble
@@ -352,7 +355,7 @@ class GravitationalWaveMarginalizationPlan(StrictModule):
         calibration: CalibrationMarginalizationPlan | None = None,
         maximum_grid_points: int = 1_000_000,
         phase_separable_calibration: bool = False,
-    ):
+    ) -> None:
         if not isinstance(likelihood, GravitationalWaveLikelihoodPlan):
             raise TypeError("likelihood must be GravitationalWaveLikelihoodPlan.")
         values = (phase, time, distance, calibration)
@@ -550,7 +553,7 @@ class GravitationalWaveMarginalizedPosteriorTerm(AbstractPosteriorTerm):
         /,
         *,
         label: str = "gravitational_wave_marginalized_network",
-    ):
+    ) -> None:
         if not isinstance(marginalization, GravitationalWaveMarginalizationPlan):
             raise TypeError(
                 "marginalization must be GravitationalWaveMarginalizationPlan."

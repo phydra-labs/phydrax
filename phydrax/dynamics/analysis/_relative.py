@@ -10,7 +10,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...linalg import ArraySpace
@@ -36,7 +37,7 @@ class RelativeEquilibriumProblem(StrictModule):
         /,
         *,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         generators_ = tuple(generators)
         phases = tuple(phase_conditions)
         if not callable(vector_field):
@@ -137,7 +138,7 @@ class RelativePeriodicOrbitProblem(StrictModule):
         *,
         num_segments: int = 1,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(evolution, AbstractDifferentiableEvolution):
             raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
         phases = tuple(spatial_phases)

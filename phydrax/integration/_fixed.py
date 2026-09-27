@@ -8,12 +8,13 @@ from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.axes as cx
 from phydrax.domain import ComponentSum, DomainComponent
 
 from .._doc import DOC_KEY0
+from ..typing import PRNGKey
 from ._batches import PointIntegrationBatch, SeparableIntegrationBatch
 from ._estimates import (
     FixedQuadratureDiagnostics,
@@ -51,7 +52,7 @@ def _component_weight(
     batch: PointIntegrationBatch | SeparableIntegrationBatch,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     kwargs: dict[str, Any],
 ) -> cx.AxisArray:
     mask, modifier = component_factor_fields(
@@ -101,7 +102,7 @@ def _component_reduction_weights(
     | tuple[PointIntegrationBatch | SeparableIntegrationBatch, ...],
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
     reduction_axes: tuple[str, ...] | None = None,
 ) -> cx.AxisArray | tuple[cx.AxisArray, ...]:
@@ -163,7 +164,7 @@ def _target_reduction_weights(
     | tuple[PointIntegrationBatch | SeparableIntegrationBatch, ...],
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     kwargs: dict[str, Any],
     reduction_axes: tuple[str, ...] | None = None,
 ) -> cx.AxisArray | tuple[cx.AxisArray, ...]:
@@ -271,7 +272,7 @@ def _component_moments(
     /,
     *,
     log_density: Any | None,
-    key: Key[Array, ""],
+    key: PRNGKey,
     kwargs: dict[str, Any],
     precision: IntegrationPrecisionPolicy,
 ) -> tuple[cx.AxisArray, cx.AxisArray, cx.AxisArray, Array]:
@@ -414,7 +415,7 @@ def integrate_fixed_component(
     | tuple[PointIntegrationBatch | SeparableIntegrationBatch, ...],
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:
@@ -492,7 +493,7 @@ def integrate_fixed_density(
     | tuple[PointIntegrationBatch | SeparableIntegrationBatch, ...],
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:

@@ -6,18 +6,20 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import parse
 from ._base import AbstractPositiveDefiniteKernel
 
 
-CompactSpace = Literal["so", "su", "stiefel", "grassmann"]
+CompactSpace: TypeAlias = Literal["so", "su", "stiefel", "grassmann"]
 
 
 class PreparedCompactHomogeneousSpectrum(StrictModule):
@@ -45,7 +47,7 @@ class PreparedCompactHomogeneousSpectrum(StrictModule):
         tail_bound: ArrayLike,
         tail_certified: bool,
         spectrum_id: str,
-    ):
+    ) -> None:
         labels_ = jnp.asarray(labels, dtype=jnp.int32)
         eigenvalues = jnp.asarray(casimir_eigenvalues)
         multiplicities_ = jnp.asarray(multiplicities)
@@ -58,9 +60,8 @@ class PreparedCompactHomogeneousSpectrum(StrictModule):
             raise ValueError(
                 "Compact spectrum labels/eigenvalues/multiplicities are incompatible."
             )
-        if space not in ("so", "su", "stiefel", "grassmann") or not callable(
-            zonal_evaluator
-        ):
+        space = parse(space, CompactSpace, "space")
+        if not callable(zonal_evaluator):
             raise ValueError("Compact spectrum space/evaluator are unsupported.")
         if bool(jnp.any(eigenvalues < 0.0)) or bool(jnp.any(multiplicities_ <= 0.0)):
             raise ValueError(
@@ -105,7 +106,7 @@ class KernelEvaluationEvidence(StrictModule):
         branch_valid: ArrayLike,
         finite: ArrayLike,
         positive_definite_capability: ArrayLike,
-    ):
+    ) -> None:
         self.truncation_tail_bound = jnp.asarray(truncation_tail_bound)
         self.membership_valid = jnp.asarray(membership_valid, dtype=jnp.bool_)
         self.branch_valid = jnp.asarray(branch_valid, dtype=jnp.bool_)
@@ -131,7 +132,7 @@ class _CompactHomogeneousSpectralKernel(AbstractPositiveDefiniteKernel):
         *,
         normalize: bool,
         family: str,
-    ):
+    ) -> None:
         values = jnp.asarray(weights, dtype=spectrum.casimir_eigenvalues.dtype)
         if (
             values.shape != (spectrum.frontier,)
@@ -213,7 +214,7 @@ class CompactHomogeneousHeatKernel(_CompactHomogeneousSpectralKernel):
         *,
         time: float,
         normalize: bool = True,
-    ):
+    ) -> None:
         if float(time) <= 0.0:
             raise ValueError("Heat-kernel time must be positive.")
         weights = spectrum.multiplicities * jnp.exp(
@@ -239,7 +240,7 @@ class CompactHomogeneousMaternKernel(_CompactHomogeneousSpectralKernel):
         inverse_length_squared: float,
         spectral_dimension: float,
         normalize: bool = True,
-    ):
+    ) -> None:
         if (
             min(
                 float(smoothness),
@@ -280,7 +281,7 @@ class GeodesicDistanceEvidence(StrictModule):
         membership_valid: ArrayLike,
         branch_valid: ArrayLike,
         valid: ArrayLike,
-    ):
+    ) -> None:
         self.distance = jnp.asarray(distance)
         self.branch_margin = jnp.asarray(branch_margin)
         self.log_residual = jnp.asarray(log_residual)
@@ -313,14 +314,10 @@ class GeodesicRadialKernel(StrictModule):
         stiefel_log: Callable[[Array, Array], tuple[Array, Array]] | None = None,
         positive_definite_theorem: bool = False,
         kernel_id: str = "geodesic-radial",
-    ):
-        if not callable(radial_function) or space not in (
-            "so",
-            "su",
-            "stiefel",
-            "grassmann",
-        ):
+    ) -> None:
+        if not callable(radial_function):
             raise ValueError("Geodesic radial function/space are invalid.")
+        space = parse(space, CompactSpace, "space")
         if min(float(membership_tolerance), float(branch_tolerance)) <= 0.0:
             raise ValueError("Geodesic tolerances must be positive.")
         if space == "stiefel" and stiefel_log is None:
@@ -386,7 +383,11 @@ class GeodesicRadialKernel(StrictModule):
             distance = jnp.linalg.norm(angles)
             branch = jnp.isfinite(margin) & (margin > self.branch_tolerance)
         else:
-            tangent, residual = self.stiefel_log(first, second)
+            stiefel_log = self.stiefel_log
+            # Construction rejects the Stiefel space without a log provider.
+            if not (stiefel_log is not None):
+                raise RuntimeError("Internal invariant failed: stiefel_log is not None.")
+            tangent, residual = stiefel_log(first, second)
             tangent = jnp.asarray(tangent)
             residual = jnp.asarray(residual)
             margin = self.branch_tolerance - residual
@@ -447,7 +448,7 @@ class GeodesicExponentialKernel(GeodesicRadialKernel):
         branch_tolerance: float = 1e-6,
         stiefel_log: Callable[[Array, Array], tuple[Array, Array]] | None = None,
         positive_definite_theorem: bool = False,
-    ):
+    ) -> None:
         if float(length_scale) <= 0.0:
             raise ValueError("Geodesic exponential length_scale must be positive.")
         scale = float(length_scale)

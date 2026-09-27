@@ -9,7 +9,8 @@ from dataclasses import dataclass
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -53,7 +54,7 @@ class ManeuverSchedule(StrictModule, NonTrainableState):
         impulses: tuple[ImpulseManeuver, ...] = (),
         finite_burns: tuple[FiniteBurnSegment, ...] = (),
         /,
-    ):
+    ) -> None:
         impulses_ = tuple(sorted(impulses, key=lambda value: value.epoch_seconds))
         burns = tuple(sorted(finite_burns, key=lambda value: value.start_seconds))
         if any(not np.isfinite(value.epoch_seconds) for value in impulses_):

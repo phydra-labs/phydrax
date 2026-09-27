@@ -5,14 +5,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
+
+
+_IterationCarry: TypeAlias = tuple[Any, Array, Array]
 
 
 class IterationResult(StrictModule):
@@ -43,7 +46,9 @@ def run_fixed_iterations(
     if float(tolerance) < 0.0:
         raise ValueError("tolerance must be non-negative.")
 
-    def body(carry, iteration):
+    def body(
+        carry: _IterationCarry, iteration: Array
+    ) -> tuple[_IterationCarry, tuple[Array, Array, Array]]:
         value, done, used = carry
         candidate, objective, residual = step(value, iteration)
         finite = jnp.isfinite(objective) & jnp.isfinite(residual)

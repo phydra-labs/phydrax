@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -67,7 +68,7 @@ class PRISMPlan(StrictModule, NonTrainableState):
         relative_tolerance: float = 1.0e-8,
         maximum_iterations: int = 200,
         maximum_condition: float = 1.0e12,
-    ):
+    ) -> None:
         damping_ = float(damping)
         history = int(anderson_history)
         absolute = float(absolute_tolerance)
@@ -157,7 +158,7 @@ class PreparedPRISM(StrictModule, NonTrainableState):
         form_factor: FormFactorPlan,
         potential: SitePairPotentialPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, PRISMPlan):
             raise TypeError("plan must be PRISMPlan.")
         if not isinstance(transform, PreparedIsotropicRadialTransform):
@@ -236,7 +237,7 @@ class PreparedPRISM(StrictModule, NonTrainableState):
             policy=LinearSolvePolicy(DenseLU()),
         )
 
-        def condition_one(matrix):
+        def condition_one(matrix: Array) -> tuple[Array, Array]:
             condition_operator = DenseLinearOperator(
                 matrix,
                 operator_id=f"{self.prepared_id}:oz-conditioning-operator",
@@ -346,7 +347,7 @@ class PreparedPRISM(StrictModule, NonTrainableState):
         )
 
     def fixed_point_problem(self, /) -> FixedPointProblem:
-        def mapping(gamma, _):
+        def mapping(gamma: Array, _: object) -> Array:
             evaluation = self.evaluate(gamma)
             iteration_successful = (
                 evaluation.closure.successful
@@ -359,7 +360,7 @@ class PreparedPRISM(StrictModule, NonTrainableState):
         return FixedPointProblem(mapping, problem_id=f"{self.prepared_id}:fixed-point")
 
     def root_problem(self, /) -> NonlinearSystemProblem:
-        def residual(gamma, _):
+        def residual(gamma: Array, _: object) -> Array:
             evaluation = self.evaluate(gamma)
             iteration_successful = (
                 evaluation.closure.successful
@@ -371,7 +372,7 @@ class PreparedPRISM(StrictModule, NonTrainableState):
         return NonlinearSystemProblem(residual, problem_id=f"{self.prepared_id}:root")
 
     def parameterized_root_problem(self, /) -> NonlinearSystemProblem:
-        def residual(gamma, args):
+        def residual(gamma: Array, args: tuple[Array, Array]) -> Array:
             densities, potential = args
             evaluation = self.evaluate(
                 gamma,

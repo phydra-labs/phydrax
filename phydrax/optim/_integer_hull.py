@@ -13,8 +13,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -22,12 +23,14 @@ from .._trainable import NonTrainableState
 from ..combinatorial import (
     AbstractBoundableCombinatorialSpace,
     AbstractBoundableLinearCombinatorialMethod,
+    BoundedCombinatorialExecution,
     CombinatorialCertification,
     CombinatorialFeatureRestriction,
     CombinatorialStatus,
     LinearCombinatorialProblem,
     solve_restricted_combinatorial,
 )
+from ..typing import parse
 from ._branch_and_bound import (
     AbstractBranchAndBoundProblem,
     branch_and_bound,
@@ -67,9 +70,8 @@ class ConvexObjectiveEvidence(StrictModule, NonTrainableState):
         kind: ConvexObjectiveEvidenceKind,
         evidence_id: str,
         /,
-    ):
-        if kind not in ("construction", "verified", "asserted"):
-            raise ValueError("Unknown convex objective evidence kind.")
+    ) -> None:
+        kind = parse(kind, ConvexObjectiveEvidenceKind, "kind")
         identifier = str(evidence_id)
         if not identifier:
             raise ValueError("evidence_id must be nonempty.")
@@ -96,7 +98,7 @@ class IntegerHullProblem(StrictModule):
         args: Any = None,
         convexity: ConvexObjectiveEvidence,
         problem_id: str = "integer-hull-convex-program",
-    ):
+    ) -> None:
         if not isinstance(objective, MinimizationProblem):
             raise TypeError("objective must be a MinimizationProblem.")
         if objective.bounds is not None or objective.constraints:
@@ -162,7 +164,7 @@ class IntegerHullPolicy(StrictModule):
         integrality_tolerance: float = 1e-7,
         maximum_backtracks: int = 20,
         armijo: float = 1e-4,
-    ):
+    ) -> None:
         if not isinstance(oracle, AbstractBoundableLinearCombinatorialMethod):
             raise TypeError(
                 "oracle must be an AbstractBoundableLinearCombinatorialMethod."
@@ -312,7 +314,7 @@ class _IntegerHullNodeState:
     fw_gap: float
 
 
-def _tree_dot(left, right, /) -> Array:
+def _tree_dot(left: PyTree[Any], right: PyTree[Any], /) -> Array:
     products = tuple(
         jnp.sum(jnp.asarray(a) * jnp.asarray(b))
         for a, b in zip(
@@ -327,11 +329,13 @@ def _tree_dot(left, right, /) -> Array:
     return total
 
 
-def _tree_subtract(left, right, /):
+def _tree_subtract(left: PyTree[Any], right: PyTree[Any], /) -> PyTree[Array]:
     return jax.tree.map(lambda a, b: a - b, left, right)
 
 
-def _tree_interpolate(current, atom, step: float, /):
+def _tree_interpolate(
+    current: PyTree[Any], atom: PyTree[Any], step: float, /
+) -> PyTree[Array]:
     return jax.tree.map(
         lambda x, v: (1.0 - step) * x + step * v,
         current,
@@ -339,7 +343,7 @@ def _tree_interpolate(current, atom, step: float, /):
     )
 
 
-def _active_combination(atoms: list[_Atom], weights: np.ndarray, /):
+def _active_combination(atoms: list[_Atom], weights: np.ndarray, /) -> PyTree[Array]:
     if not atoms or len(atoms) != len(weights):
         raise ValueError("An active set requires one weight per atom.")
     result = jax.tree.map(
@@ -357,7 +361,7 @@ def _active_combination(atoms: list[_Atom], weights: np.ndarray, /):
     return result
 
 
-def _atom(features, decision, /) -> _Atom:
+def _atom(features: PyTree[Any], decision: Any, /) -> _Atom:
     identifier = canonical_fingerprint(
         {
             "kind": "integer-hull-atom",
@@ -393,7 +397,7 @@ class _IntegerHullBranchProblem(AbstractBranchAndBoundProblem):
     fw_steps: list[int]
     active_maximum: list[int]
 
-    def __init__(self, problem: IntegerHullProblem, policy: IntegerHullPolicy, /):
+    def __init__(self, problem: IntegerHullProblem, policy: IntegerHullPolicy, /) -> None:
         self.problem = problem
         self.policy = policy
         self.oracle_calls = [0]
@@ -414,7 +418,9 @@ class _IntegerHullBranchProblem(AbstractBranchAndBoundProblem):
     def node_id(self, node: _IntegerHullNode, /) -> str:
         return node.path
 
-    def _oracle(self, costs, restriction, /):
+    def _oracle(
+        self, costs: PyTree[Any], restriction: CombinatorialFeatureRestriction, /
+    ) -> BoundedCombinatorialExecution:
         linear = LinearCombinatorialProblem(
             self.problem.space,
             costs,
@@ -429,12 +435,12 @@ class _IntegerHullBranchProblem(AbstractBranchAndBoundProblem):
         self.oracle_calls[0] += 1
         return execution
 
-    def _value(self, features, /) -> float:
+    def _value(self, features: PyTree[Any], /) -> float:
         value, _ = self.problem.objective.value(features, self.problem.args)
         self.objective_evaluations[0] += 1
         return float(np.asarray(value))
 
-    def _value_and_gradient(self, features, /):
+    def _value_and_gradient(self, features: PyTree[Any], /) -> tuple[float, PyTree[Any]]:
         (value, _), gradient = self.problem.objective.value_and_gradient(
             features,
             self.problem.args,
@@ -443,7 +449,7 @@ class _IntegerHullBranchProblem(AbstractBranchAndBoundProblem):
         self.gradient_evaluations[0] += 1
         return float(np.asarray(value)), gradient
 
-    def _candidate(self, atom: _Atom, restriction_id: str, /):
+    def _candidate(self, atom: _Atom, restriction_id: str, /) -> BranchCandidate | None:
         objective = self._value(atom.features)
         if not np.isfinite(objective):
             return None
@@ -709,7 +715,9 @@ class _IntegerHullBranchProblem(AbstractBranchAndBoundProblem):
             upper=upper_unravel(upper),
         )
 
-        def child(restriction, suffix):
+        def child(
+            restriction: CombinatorialFeatureRestriction, suffix: str
+        ) -> _IntegerHullNode:
             selected = [
                 (atom, weight)
                 for atom, weight in zip(

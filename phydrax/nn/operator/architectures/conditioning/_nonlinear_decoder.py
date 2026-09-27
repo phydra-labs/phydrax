@@ -10,7 +10,7 @@ from typing import Any, Literal
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
@@ -36,6 +36,8 @@ from phydrax.nn.operator.architectures.conditioning._deeponet import (
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.encoded import AbstractEncodedOperatorModel
 
+from .....typing import parse, PRNGKey
+
 
 class CoordinateDecoderState(StrictModule):
     """Function-level latent code retained for independent query decoding."""
@@ -51,7 +53,7 @@ class CoordinateDecoderState(StrictModule):
         *,
         case_shape: Sequence[int],
         source_names: Sequence[str],
-    ):
+    ) -> None:
         value = jnp.asarray(latent)
         cases = tuple(case_shape)
         if value.ndim != len(cases) + 1 or value.shape[: len(cases)] != cases:
@@ -85,8 +87,8 @@ class FiLMCoordinateDecoder(StrictModule):
         out_size: int | Literal["scalar"] = "scalar",
         width: int = 128,
         depth: int = 4,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.latent_size = int(latent_size)
         self.coord_dim = int(coord_dim)
         self.width = int(width)
@@ -195,7 +197,7 @@ class CoordinateConditionedOperator(AbstractEncodedOperatorModel):
         fusion: BranchFusion = "sum",
         branch_mixer: Any | None = None,
         source_key: str | None = None,
-    ):
+    ) -> None:
         self.latent_size = int(latent_size)
         self.coord_dim = int(coord_dim)
         self.in_size = in_size
@@ -205,8 +207,7 @@ class CoordinateConditionedOperator(AbstractEncodedOperatorModel):
         self.branch_mixer = branch_mixer
         if self.latent_size <= 0 or self.coord_dim <= 0:
             raise ValueError("latent_size and coord_dim must be positive.")
-        if fusion not in ("sum", "product", "concat"):
-            raise ValueError("fusion must be 'sum', 'product', or 'concat'.")
+        fusion = parse(fusion, BranchFusion, "fusion")
         if isinstance(decoder, Linear):
             raise ValueError(
                 "CoordinateConditionedOperator requires a genuinely nonlinear decoder."

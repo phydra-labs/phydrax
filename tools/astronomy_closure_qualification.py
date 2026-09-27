@@ -1,13 +1,14 @@
 """Deterministic qualification evidence for astronomy closure systems."""
 
 import json
+from typing import Any
 
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def main():
+def main() -> Any:
     solver = phx.solver.IAS15Plan(relative_tolerance=1e-10, absolute_tolerance=1e-12)
     trajectory = solver.solve(
         lambda time, position, velocity, args: -position,

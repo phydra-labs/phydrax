@@ -11,7 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -39,7 +41,7 @@ class RecyclingSubspace(StrictModule):
         image_basis: ArrayLike,
         operator_id: str,
         recycling_id: str,
-    ):
+    ) -> None:
         if not isinstance(source, AbstractVectorSpace) or not isinstance(
             target, AbstractVectorSpace
         ):
@@ -146,7 +148,7 @@ class RecyclingState(StrictModule):
         update_count: Any = 0,
         update_status: Any = RecyclingUpdateStatus.CURRENT,
         extraction: str = "harmonic-ritz",
-    ):
+    ) -> None:
         if not isinstance(source, AbstractVectorSpace) or not isinstance(
             target, AbstractVectorSpace
         ):

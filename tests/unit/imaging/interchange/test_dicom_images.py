@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from io import BytesIO
+from typing import Any
 
 import numpy as np
 import pytest
@@ -41,7 +42,7 @@ _LIMITS = ResourceLimits(
 )
 
 
-def _inputs(*payloads: bytes):
+def _inputs(*payloads: bytes) -> Any:
     resources = tuple(
         bounded_resource_from_bytes(payload, limits=_LIMITS) for payload in payloads
     )
@@ -66,7 +67,7 @@ def _inputs(*payloads: bytes):
     return resources, references
 
 
-def _deidentification():
+def _deidentification() -> Any:
     return DeidentificationEvidence(
         "synthetic-dicom-deid",
         "synthetic-subject",

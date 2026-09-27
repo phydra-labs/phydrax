@@ -8,13 +8,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from math import prod
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.axes as cx
 
@@ -28,6 +28,7 @@ from ..graph._operator_topology import (
     OperatorTopologyKind,
     OperatorTopologySite,
 )
+from ..nn.operator.capabilities import OperatorCompatibilityReport
 from ..nn.operator.data import (
     FunctionSamples,
     OperatorAxis,
@@ -36,9 +37,10 @@ from ..nn.operator.data import (
     tensor_product,
 )
 from ..nn.operator.protocols import OperatorModel
+from ..typing import parse
 
 
-OperatorDomainKind = Literal[
+OperatorDomainKind: TypeAlias = Literal[
     "points",
     "coord_separable",
     "graph",
@@ -64,7 +66,7 @@ class OperatorDomainLayout(StrictModule, NonTrainableState):
         /,
         *,
         gather_indices: Any | None = None,
-    ):
+    ) -> None:
         name = str(query_name)
         if not name:
             raise ValueError("Operator domain query names must be non-empty.")
@@ -126,18 +128,10 @@ class OperatorDomainView(StrictModule, NonTrainableState):
         /,
         *,
         kind: OperatorDomainKind,
-    ):
+    ) -> None:
         if not isinstance(batch, OperatorBatch):
             raise TypeError("OperatorDomainView requires an OperatorBatch.")
-        if kind not in (
-            "points",
-            "coord_separable",
-            "graph",
-            "simplicial",
-            "ragged_series",
-            "trajectory",
-        ):
-            raise ValueError("Unknown operator domain view kind.")
+        kind = parse(kind, OperatorDomainKind, "kind")
         frozen = frozendict(layouts)
         if tuple(frozen) != tuple(batch.queries):
             raise ValueError(
@@ -187,7 +181,7 @@ class OperatorDomainView(StrictModule, NonTrainableState):
             {name: self.restore_field(prediction, name) for name in prediction.fields}
         )
 
-    def compatibility(self, model: Any, /, **kwargs: Any):
+    def compatibility(self, model: Any, /, **kwargs: Any) -> OperatorCompatibilityReport:
         """Return the configured model's capability report for this view."""
         if not isinstance(model, OperatorModel):
             raise TypeError("Operator domain preflight requires a neural operator model.")

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from ._causal_process import CausalProcessTensor, CombLegSpec
@@ -27,7 +27,7 @@ class ProcessMemoryProjectionResult(StrictModule):
         retained_initial_weight: Array,
         maximum_invariant_subspace_leakage: Array,
         /,
-    ):
+    ) -> None:
         self.process = process
         self.discarded_initial_weight = jnp.asarray(discarded_initial_weight)
         self.maximum_channel_completeness_residual = jnp.asarray(

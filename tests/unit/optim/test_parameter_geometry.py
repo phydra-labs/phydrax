@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,14 +12,14 @@ import pytest
 import phydrax as phx
 
 
-def _mixed_parameters():
+def _mixed_parameters() -> Any:
     return {
         "euclidean": jnp.array([2.0, -1.0]),
         "sphere": jnp.array([1.0, 0.0, 0.0]),
     }
 
 
-def _mixed_geometry(parameters=None):
+def _mixed_geometry(parameters: Any = None) -> Any:
     parameters = _mixed_parameters() if parameters is None else parameters
     return phx.optim.ParameterGeometry.from_leaf_paths(
         parameters,
@@ -24,7 +27,7 @@ def _mixed_geometry(parameters=None):
     )
 
 
-def test_parameter_geometry_paths_binding_and_public_exports():
+def test_parameter_geometry_paths_binding_and_public_exports() -> None:
     parameters = _mixed_parameters()
     paths = phx.optim.ParameterGeometry.array_leaf_paths(parameters)
     geometry = _mixed_geometry(parameters)
@@ -38,7 +41,7 @@ def test_parameter_geometry_paths_binding_and_public_exports():
     assert "riemannian_momentum" in phx.optim.__all__
 
 
-def test_parameter_geometry_mixes_leaf_metrics_without_flattening():
+def test_parameter_geometry_mixes_leaf_metrics_without_flattening() -> None:
     parameters = _mixed_parameters()
     geometry = _mixed_geometry(parameters)
     gradients = {
@@ -60,7 +63,7 @@ def test_parameter_geometry_mixes_leaf_metrics_without_flattening():
     assert geometry.maximum_constraint_residual(destination) < 1e-12
 
 
-def test_parameter_geometry_transport_preserves_mixed_tree_structure():
+def test_parameter_geometry_transport_preserves_mixed_tree_structure() -> None:
     parameters = _mixed_parameters()
     geometry = _mixed_geometry(parameters)
     tangent = {
@@ -85,7 +88,7 @@ def test_parameter_geometry_transport_preserves_mixed_tree_structure():
     )
 
 
-def test_parameter_geometry_supports_leading_manifold_product_axes():
+def test_parameter_geometry_supports_leading_manifold_product_axes() -> None:
     parameters = {
         "directions": jnp.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
     }
@@ -104,7 +107,7 @@ def test_parameter_geometry_supports_leading_manifold_product_axes():
     assert destination["directions"].shape == (3, 3)
 
 
-def test_parameter_geometry_factor_moments_follow_product_axes_and_weights():
+def test_parameter_geometry_factor_moments_follow_product_axes_and_weights() -> None:
     parameters = {
         "directions": jnp.array(
             [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
@@ -148,7 +151,7 @@ def test_parameter_geometry_factor_moments_follow_product_axes_and_weights():
     assert jnp.array_equal(scaled["offset"], jnp.array([6.0, 12.0]))
 
 
-def test_parameter_geometry_rejects_invalid_bindings_and_reuse():
+def test_parameter_geometry_rejects_invalid_bindings_and_reuse() -> None:
     parameters = _mixed_parameters()
 
     with pytest.raises(ValueError, match="at least one manifold"):
@@ -183,7 +186,7 @@ def test_parameter_geometry_rejects_invalid_bindings_and_reuse():
         )
 
 
-def test_unselected_complex_leaf_uses_real_hermitian_metric():
+def test_unselected_complex_leaf_uses_real_hermitian_metric() -> None:
     parameters = {
         "complex": jnp.array([1.0 + 2.0j, -0.5j]),
         "sphere": jnp.array([1.0, 0.0, 0.0]),

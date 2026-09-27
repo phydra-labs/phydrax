@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 from phydrax.domain import (
@@ -18,6 +19,7 @@ from phydrax.domain import (
     AbstractScalarDomain,
     Boundary,
     ComponentSum,
+    DomainComponent,
     Fixed,
     FixedEnd,
     FixedStart,
@@ -37,6 +39,7 @@ from .._sampling import (
     SampleAddress,
 )
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._batches import PointIntegrationBatch
 from ._estimates import (
     IntegrationEstimate,
@@ -234,7 +237,7 @@ def _replicate_count(groups: tuple[tuple[tuple[str, ...], Any], ...], /) -> int:
 
 
 def _materialize_product_factor(
-    component: ComponentTarget,
+    component: DomainComponent,
     labels: tuple[str, ...],
     factor_plan: Any,
     structure: SampleLayout,
@@ -438,7 +441,7 @@ def _materialize_product_factor(
         next_offset = offset + transport.reference_dimension
         mapped = transport.map(unit[:, offset:next_offset])
 
-        def _sample_field(value):
+        def _sample_field(value: ArrayLike) -> cx.AxisArray:
             array = jnp.asarray(value)
             return cx.AxisArray(
                 array,
@@ -454,7 +457,7 @@ def _materialize_product_factor(
 
 
 def _materialize_product_replica(
-    component: ComponentTarget,
+    component: DomainComponent,
     groups: tuple[tuple[tuple[str, ...], Any], ...],
     fixed_labels: frozenset[str],
     structure: SampleLayout,
@@ -517,7 +520,7 @@ def materialize_product(
     plan: ProductIntegrationPlan,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> ProductIntegrationRealization:
     """Materialize fixed/sparse and one stochastic named-axis product plan."""
     base = target.base if isinstance(target, DensityTarget) else target
@@ -619,7 +622,7 @@ def _reduce_stochastic_product(
     design: Any,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     kwargs: dict[str, Any],
     precision: IntegrationPrecisionPolicy,
 ) -> tuple[cx.AxisArray, Array | None, Array, int]:
@@ -761,7 +764,7 @@ def integrate_product(
     realization: ProductIntegrationRealization,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:

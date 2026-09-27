@@ -6,12 +6,14 @@ from __future__ import annotations
 
 from enum import IntEnum
 from math import ceil, isfinite, log2, pi
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -73,7 +75,7 @@ class PeriodicSchwingerModel(StrictModule):
         theta_angle: float = 0.0,
         global_flux_sector: int = 0,
         maximum_link_dimension: int = 4096,
-    ):
+    ) -> None:
         sites = int(site_count)
         spacing = float(lattice_spacing)
         mass_ = float(mass)
@@ -181,7 +183,7 @@ class CompactU1GaugeModel(StrictModule):
         electric_coupling: float,
         magnetic_coupling: float,
         electric_flux_offset: float = 0.0,
-    ):
+    ) -> None:
         if not isinstance(topology, CellComplexTopology):
             raise TypeError("topology must be a CellComplexTopology.")
         if topology.dimension < 2:
@@ -282,7 +284,7 @@ class GaugeSimulationResourcePolicy(StrictModule):
         maximum_local_exponential_elements: int = 1 << 24,
         gauge_tolerance: float = 1e-9,
         unitarity_tolerance: float = 1e-9,
-    ):
+    ) -> None:
         dense = int(maximum_dense_elements)
         operations = int(maximum_program_operations)
         local = int(maximum_local_exponential_elements)
@@ -899,10 +901,12 @@ def execute_gauge_preserving_program(
     )
     final = state
     for operation in prepared.program.operations:
+        # Prepared gauge programs are state-vector programs, which reject Kraus channels.
+        unitary_operation = cast(LocalUnitaryOperation, operation)
         final = apply_local_unitary_to_state(
             prepared.program.layout,
-            operation.unitary,
-            operation.target_wire_ids,
+            unitary_operation.unitary,
+            unitary_operation.target_wire_ids,
             final,
         )
     final_leakage = gauss_leakage(

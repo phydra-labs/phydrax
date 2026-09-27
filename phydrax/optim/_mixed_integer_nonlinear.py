@@ -11,11 +11,13 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._programming._mixed_integer import _indices
 
 
@@ -30,9 +32,8 @@ class ConvexConstraintEvidence(StrictModule, NonTrainableState):
     kind: ConvexConstraintKind = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: ConvexConstraintKind, evidence_id: str, /):
-        if kind not in ("convex-upper", "concave-lower", "affine-equality"):
-            raise ValueError("Unknown convex constraint evidence kind.")
+    def __init__(self, kind: ConvexConstraintKind, evidence_id: str, /) -> None:
+        kind = parse(kind, ConvexConstraintKind, "kind")
         identifier = str(evidence_id)
         if not identifier:
             raise ValueError("evidence_id must be nonempty.")
@@ -97,7 +98,7 @@ class ConvexMixedIntegerNonlinearProgram(StrictModule):
         args: Any = None,
         objective_evidence_id: str,
         program_id: str = "convex-mixed-integer-nonlinear-program",
-    ):
+    ) -> None:
         if not callable(objective) or not callable(constraints):
             raise TypeError("objective and constraints must be callable.")
         lower = jnp.asarray(variable_lower)
@@ -239,7 +240,7 @@ class ConvexMixedIntegerNonlinearProgram(StrictModule):
         if value.shape != (self.num_variables,):
             raise ValueError(f"primal must have shape ({self.num_variables},).")
 
-        def scalar(point):
+        def scalar(point: Array) -> Array:
             return jnp.asarray(self.objective(point, self.args))
 
         objective, gradient = jax.value_and_grad(scalar)(value)

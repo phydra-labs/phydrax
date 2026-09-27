@@ -13,7 +13,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._differentiation import (
     branch_policy_contract,
@@ -25,6 +26,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._interpolation import (
     apply_gather_stencil,
     gather_patches,
+    GatherStencil,
     rectilinear_stencil,
 )
 from ..._strict import StrictModule
@@ -115,7 +117,7 @@ class MACPassiveTracerMacCormackPlan(StrictModule, NonTrainableState):
         correction_strength: float = 1.0,
         characteristic_integrator: MACPassiveTracerCharacteristicIntegrator = "midpoint",
         interpolation: MACPassiveTracerInterpolation = "multilinear",
-    ):
+    ) -> None:
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
         if not isinstance(tracer_space, DiscreteFieldSpace):
@@ -237,7 +239,7 @@ class PreparedMACPassiveTracerMacCormack(StrictModule, NonTrainableState):
     prepared_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MACPassiveTracerMacCormackPlan, /):
+    def __init__(self, plan: MACPassiveTracerMacCormackPlan, /) -> None:
         if not isinstance(plan, MACPassiveTracerMacCormackPlan):
             raise TypeError("plan must be MACPassiveTracerMacCormackPlan.")
         tracer_vector_space = plan.tracer_space.vector_space
@@ -322,7 +324,9 @@ class PreparedMACPassiveTracerMacCormack(StrictModule, NonTrainableState):
             }
         )
 
-    def _stencil(self, axis_nodes: tuple[Array, ...], coordinates: Array, /):
+    def _stencil(
+        self, axis_nodes: tuple[Array, ...], coordinates: Array, /
+    ) -> GatherStencil:
         return rectilinear_stencil(
             axis_nodes,
             coordinates,

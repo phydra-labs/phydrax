@@ -12,6 +12,8 @@ Run: python -m benchmarks.protein_internal_coordinate_generation --steps 50
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import hashlib
 import json
@@ -53,7 +55,7 @@ from phydrax.qualification import ReferenceArtifactManifest
 from phydrax.units import ANGSTROM
 
 
-def _fixed_construct():
+def _fixed_construct() -> Any:
     construct = ProteinConstruct(("A",), ("AP",))
     alanine, proline = construct.residue_keys
     alanine_names = ("N", "CA", "C", "O", "CB", "H")
@@ -87,7 +89,7 @@ def _fixed_construct():
     )
     index = {key: row for row, key in enumerate(keys)}
 
-    def atom(residue, name):
+    def atom(residue: Any, name: Any) -> Any:
         return index[ProteinAtomKey(residue, name)]
 
     routes = np.asarray(
@@ -209,7 +211,7 @@ def _fixed_construct():
     return binding, qualification, rights
 
 
-def _prepare_corpora():
+def _prepare_corpora() -> Any:
     binding, qualification, rights = _fixed_construct()
     support, decoder = prepare_bound_protein_coordinate_generation(
         binding, qualification, cis_peptide_indices=(0,)
@@ -259,7 +261,7 @@ def _prepare_corpora():
     return binding, qualification, support, decoder, internal, cartesian
 
 
-def _accepted_diverse_count(positions, accepted, threshold=0.05):
+def _accepted_diverse_count(positions: Any, accepted: Any, threshold: Any=0.05) -> Any:
     rows = np.asarray(positions)[np.asarray(accepted, dtype="bool")]
     representatives = []
     for row in rows:
@@ -270,11 +272,11 @@ def _accepted_diverse_count(positions, accepted, threshold=0.05):
     return len(representatives)
 
 
-def _full_evidence(qualification, positions):
+def _full_evidence(qualification: Any, positions: Any) -> Any:
     return jax.vmap(qualification.evaluate)(positions)
 
 
-def _failure_counts(batch):
+def _failure_counts(batch: Any) -> Any:
     failures = batch.failures
     rows = (
         ("raw_nonfinite", failures.raw_nonfinite),
@@ -297,7 +299,7 @@ def _failure_counts(batch):
     return {name: int(jnp.sum(values)) for name, values in rows}
 
 
-def run(*, steps=50, samples=16, repeats=3):
+def run(*, steps: Any=50, samples: Any=16, repeats: Any=3) -> Any:
     prepared, preparation_seconds = measure_synchronized(_prepare_corpora)
     binding, qualification, support, decoder, internal_data, cartesian_data = prepared
     cartesian_fit, cartesian_fit_seconds = measure_synchronized(

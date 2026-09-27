@@ -1,4 +1,5 @@
 from importlib.util import find_spec
+from typing import Any
 
 import numpy as np
 import pytest
@@ -25,7 +26,7 @@ pytestmark = [
 _CONTRACT = phx.SpatialCoordinateContract(phx.units.MILLIMETER)
 
 
-def _face(points):
+def _face(points: Any) -> Any:
     polygon = BRepBuilderAPI_MakePolygon()
     for x, y in points:
         polygon.Add(gp_Pnt(float(x), float(y), 0.0))
@@ -33,7 +34,7 @@ def _face(points):
     return BRepBuilderAPI_MakeFace(polygon.Wire()).Face()
 
 
-def _persist(shape, path, *, overwrite=False):
+def _persist(shape: Any, path: Any, *, overwrite: Any = False) -> Any:
     return phx.geometry.persist_occt_shape(
         shape,
         path,
@@ -44,7 +45,7 @@ def _persist(shape, path, *, overwrite=False):
     )
 
 
-def _surface_spec(provider, source, size, **kwargs):
+def _surface_spec(provider: Any, source: Any, size: Any, **kwargs: Any) -> Any:
     scope = provider.whole_scope(source, 2)
     return phx.meshing.SurfaceMeshingSpec(
         phx.meshing.CellMeshingTarget(
@@ -56,7 +57,9 @@ def _surface_spec(provider, source, size, **kwargs):
     )
 
 
-def _volume_spec(provider, source, size, *, order=1, deterministic=True):
+def _volume_spec(
+    provider: Any, source: Any, size: Any, *, order: Any = 1, deterministic: Any = True
+) -> Any:
     scope = provider.whole_scope(source, 3)
     return phx.meshing.VolumeMeshingSpec(
         phx.meshing.CellMeshingTarget(
@@ -72,13 +75,13 @@ def _volume_spec(provider, source, size, *, order=1, deterministic=True):
     )
 
 
-def _mesh_edges(result):
+def _mesh_edges(result: Any) -> Any:
     points = np.asarray(result.mesh.coordinates)
     edges = np.asarray(result.mesh.connectivity.edges)
     return points[edges[:, 0]], points[edges[:, 1]]
 
 
-def _achieved(result, prefix):
+def _achieved(result: Any, prefix: Any) -> Any:
     return {
         key.rsplit(":", 1)[-1]: value
         for key, value in result.compliance.achieved
@@ -86,7 +89,7 @@ def _achieved(result, prefix):
     }
 
 
-def _square_metric_control(hx, hy, mode):
+def _square_metric_control(hx: Any, hy: Any, mode: Any) -> Any:
     corners = np.array(
         [[-0.01, -0.01, 0.0], [1.01, -0.01, 0.0], [1.01, 1.01, 0.0], [-0.01, 1.01, 0.0]]
     )
@@ -119,8 +122,8 @@ def _square_metric_control(hx, hy, mode):
 
 
 def test_real_anisotropic_background_metric_stretches_cells_along_the_metric(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     square = _persist(_face(((0, 0), (1, 0), (1, 1), (0, 1))), tmp_path / "square.brep")
     provider = phx.meshing.GmshProvider(
         phx.meshing.GmshOptions(algorithm_2d=phx.meshing.GmshSurfaceAlgorithm.BAMG)
@@ -143,7 +146,7 @@ def test_real_anisotropic_background_metric_stretches_cells_along_the_metric(
     assert metric["unit_edge_fraction"] > 0.9
 
 
-def test_gmsh_preflight_routes_anisotropic_volume_metrics_away(tmp_path):
+def test_gmsh_preflight_routes_anisotropic_volume_metrics_away(tmp_path: Any) -> None:
     cube = phx.geometry.BRepSource(
         _persist(BRepPrimAPI_MakeBox(1.0, 1.0, 1.0).Shape(), tmp_path / "cube.brep")
     )
@@ -165,7 +168,7 @@ def test_gmsh_preflight_routes_anisotropic_volume_metrics_away(tmp_path):
     )
 
 
-def _channel_walls(provider, source):
+def _channel_walls(provider: Any, source: Any) -> Any:
     from OCP.BRepAdaptor import BRepAdaptor_Curve
     from OCP.TopAbs import TopAbs_EDGE
     from OCP.TopoDS import TopoDS
@@ -174,6 +177,7 @@ def _channel_walls(provider, source):
 
     shape, _, _ = read_occt_shape(source.report.source_id)
     walls = {0.45: [], 0.55: []}
+    # ty: ignore[unresolved-attribute]
     for index, edge in enumerate(_explore_unique(shape, TopAbs_EDGE, TopoDS.Edge_s)):
         curve = BRepAdaptor_Curve(edge)
         ends = (curve.Value(curve.FirstParameter()), curve.Value(curve.LastParameter()))
@@ -183,7 +187,7 @@ def _channel_walls(provider, source):
     return tuple(provider.entity_scope(source, walls[height]) for height in (0.45, 0.55))
 
 
-def test_real_proximity_control_refines_a_narrow_channel(tmp_path):
+def test_real_proximity_control_refines_a_narrow_channel(tmp_path: Any) -> None:
     outline = (
         (0, 0),
         (1, 0),
@@ -203,7 +207,7 @@ def test_real_proximity_control_refines_a_narrow_channel(tmp_path):
     lower, upper = _channel_walls(provider, source)
     tolerance = phx.meshing.SizeCompliancePolicy(relative_tolerance=0.5)
 
-    def channel_edges(result):
+    def channel_edges(result: Any) -> Any:
         first, second = _mesh_edges(result)
         midpoint = 0.5 * (first + second)
         inside = (midpoint[:, 0] > 1.1) & (midpoint[:, 0] < 1.9)
@@ -232,7 +236,7 @@ def test_real_proximity_control_refines_a_narrow_channel(tmp_path):
     assert evidence["maximum_edge_ratio"] <= 1.5
 
 
-def test_real_protected_free_curve_is_embedded_as_mesh_edges(tmp_path):
+def test_real_protected_free_curve_is_embedded_as_mesh_edges(tmp_path: Any) -> None:
     builder = BRep_Builder()
     compound = TopoDS_Compound()
     builder.MakeCompound(compound)
@@ -256,7 +260,7 @@ def test_real_protected_free_curve_is_embedded_as_mesh_edges(tmp_path):
     first, second = _mesh_edges(result)
     direction = stop - start
 
-    def on_curve(points):
+    def on_curve(points: Any) -> Any:
         parameter = (points - start) @ direction / (direction @ direction)
         residual = np.linalg.norm(start + parameter[:, None] * direction - points, axis=1)
         return (parameter > -1.0e-12) & (parameter < 1.0 + 1.0e-12) & (residual < 1.0e-9)
@@ -271,7 +275,7 @@ def test_real_protected_free_curve_is_embedded_as_mesh_edges(tmp_path):
     assert evidence["maximum_deviation"] <= 1.0e-12
 
 
-def _stl_cube(path):
+def _stl_cube(path: Any) -> Any:
     corners = np.array(
         [[x, y, z] for x in (0.0, 1.0) for y in (0.0, 1.0) for z in (0.0, 1.0)]
     )
@@ -299,7 +303,9 @@ def _stl_cube(path):
     ).model
 
 
-def test_real_discrete_stl_remesh_is_audited_and_preserves_topology(tmp_path):
+def test_real_discrete_stl_remesh_is_audited_and_preserves_topology(
+    tmp_path: Any,
+) -> None:
     source = _stl_cube(tmp_path / "cube.stl")
     provider = phx.meshing.GmshProvider()
     surface = _surface_spec(provider, source, 0.2)
@@ -309,6 +315,7 @@ def test_real_discrete_stl_remesh_is_audited_and_preserves_topology(tmp_path):
     result = provider.plan(source, specification, reconstruction=reconstruction).execute()
 
     achieved = dict(result.compliance.achieved)
+    # ty: ignore[unresolved-attribute]
     boundary_audit = result.boundary.audit()
     assert result.audit.passed and result.compliance.passed
     assert boundary_audit.valid and boundary_audit.closed
@@ -321,7 +328,7 @@ def test_real_discrete_stl_remesh_is_audited_and_preserves_topology(tmp_path):
         provider.validate(source.mesh, specification, reconstruction=reconstruction)
 
 
-def _tetrahedron_rule(count):
+def _tetrahedron_rule(count: Any) -> Any:
     """Collapsed Gauss rule on the reference tetrahedron (Duffy transform)."""
     nodes, weights = np.polynomial.legendre.leggauss(count)
     nodes = 0.5 * (nodes + 1.0)
@@ -337,7 +344,9 @@ def _tetrahedron_rule(count):
 
 
 @pytest.mark.parametrize("order", (2, 3))
-def test_real_curved_cylinder_is_certified_by_native_gmsh_quality(tmp_path, order):
+def test_real_curved_cylinder_is_certified_by_native_gmsh_quality(
+    tmp_path: Any, order: Any
+) -> None:
     source = phx.geometry.BRepSource(
         _persist(BRepPrimAPI_MakeCylinder(1.0, 1.0).Shape(), tmp_path / "cylinder.brep")
     )
@@ -356,6 +365,7 @@ def test_real_curved_cylinder_is_certified_by_native_gmsh_quality(tmp_path, orde
     element = elements[0]
     nodes = np.asarray(coordinates)[np.asarray(routes[0])]
     points, weights = _tetrahedron_rule(6)
+    # ty: ignore[unresolved-attribute]
     _, gradients = element.tabulate(points)
     jacobians = np.matmul(np.swapaxes(nodes, 1, 2)[:, None], np.asarray(gradients)[None])
     curved_volume = float(np.sum(np.linalg.det(jacobians) @ weights))
@@ -366,8 +376,10 @@ def test_real_curved_cylinder_is_certified_by_native_gmsh_quality(tmp_path, orde
         np.sum(np.abs(np.linalg.det(corners[:, 1:] - corners[:, :1]))) / 6.0
     )
     reference_vertices = np.vstack((np.zeros((1, 3)), np.eye(3)))
+    # ty: ignore[unresolved-attribute]
     values, _ = element.tabulate(reference_vertices)
     assert result.audit.passed and result.compliance.passed
+    # ty: ignore[unresolved-attribute]
     assert element.degree == order
     assert achieved["gmsh_minimum_scaled_inverse_condition"] > 0.0
     assert achieved["gmsh_minimum_scaled_inverse_gradient_error"] > 0.0
@@ -378,8 +390,8 @@ def test_real_curved_cylinder_is_certified_by_native_gmsh_quality(tmp_path, orde
 
 
 def test_real_session_import_cache_reuses_verified_bytes_and_drops_replaced_ones(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     path = tmp_path / "cube.brep"
     source = phx.geometry.BRepSource(
         _persist(BRepPrimAPI_MakeBox(1.0, 1.0, 1.0).Shape(), path)
@@ -405,7 +417,7 @@ def test_real_session_import_cache_reuses_verified_bytes_and_drops_replaced_ones
     assert first.mesh.mesh_id != second.mesh.mesh_id
 
 
-def test_real_hxt_threads_follow_the_explicit_resource_policy(tmp_path):
+def test_real_hxt_threads_follow_the_explicit_resource_policy(tmp_path: Any) -> None:
     source = phx.geometry.BRepSource(
         _persist(BRepPrimAPI_MakeBox(1.0, 1.0, 1.0).Shape(), tmp_path / "box.brep")
     )

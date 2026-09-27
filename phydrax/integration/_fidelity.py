@@ -10,7 +10,8 @@ from typing import Any, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..fidelity import FidelityLevelSpec, FidelityPath
@@ -42,7 +43,7 @@ class FidelityBatchEvaluation(StrictModule):
         valid: ArrayLike | None = None,
         costs: ArrayLike = 1.0,
         evidence_id: str | None = None,
-    ):
+    ) -> None:
         leaves = tuple(jax.tree_util.tree_leaves(values))
         if not leaves:
             raise ValueError("values must contain at least one array leaf.")
@@ -105,7 +106,7 @@ class FidelityMultilevelSampler(StrictModule):
         sampler_id: str,
         input_sampler_id: str,
         evaluator_id: str,
-    ):
+    ) -> None:
         if not isinstance(path, FidelityPath):
             raise TypeError("path must be a FidelityPath.")
         if not callable(input_sampler) or not callable(level_evaluator):

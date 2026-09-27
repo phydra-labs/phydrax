@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 from phydrax import ein
@@ -30,7 +33,7 @@ class ConductiveEMMaterial(StrictModule):
         inverse_permeability_m_H: ArrayLike,
         cell_count: int,
         /,
-    ):
+    ) -> None:
         self.conductivity_S_m = self._tensor(conductivity_S_m, cell_count, "conductivity")
         self.permittivity_F_m = self._tensor(permittivity_F_m, cell_count, "permittivity")
         self.inverse_permeability_m_H = self._tensor(
@@ -72,7 +75,7 @@ class FrequencyDomainEMSurvey(StrictModule, NonTrainableState):
         receiver_functionals: ArrayLike,
         source_indices: ArrayLike,
         /,
-    ):
+    ) -> None:
         sources = jnp.asarray(electric_current_functionals)
         receivers = jnp.asarray(receiver_functionals)
         indices = np.asarray(source_indices)
@@ -135,7 +138,7 @@ class FrequencyDomainEMPlan(StrictModule, NonTrainableState):
     policy: la.LinearSolvePolicy
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, mesh: CellMesh, survey: FrequencyDomainEMSurvey, /):
+    def __init__(self, mesh: CellMesh, survey: FrequencyDomainEMSurvey, /) -> None:
         space = TetrahedralNedelecSpace(mesh)
         if not isinstance(survey, FrequencyDomainEMSurvey):
             raise TypeError("Frequency-domain EM requires FrequencyDomainEMSurvey.")
@@ -168,17 +171,19 @@ class FrequencyDomainEMPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _operator(self, angular_frequency: Array, material: ConductiveEMMaterial):
+    def _operator(
+        self, angular_frequency: Array, material: ConductiveEMMaterial
+    ) -> tuple[la.FunctionLinearOperator, Callable[[ArrayLike], Array]]:
         omega = angular_frequency
 
-        def full_action(field):
+        def full_action(field: ArrayLike) -> Array:
             return (
                 self.space.curl_curl_action(field, material.inverse_permeability_m_H)
                 - omega**2 * self.space.mass_action(field, material.permittivity_F_m)
                 - 1j * omega * self.space.mass_action(field, material.conductivity_S_m)
             )
 
-        def reduced_action(values):
+        def reduced_action(values: Array) -> Array:
             full = (
                 jnp.zeros((self.space.edge_count,), dtype=values.dtype)
                 .at[self.free_edges]

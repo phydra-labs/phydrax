@@ -11,7 +11,7 @@ import equinox as eqx
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
@@ -26,6 +26,7 @@ from phydrax.nn.layers._measure_attention import (
     MeasureAwareAttention,
 )
 from phydrax.nn.operator.architectures.attention._upt import (
+    _ChanneledAttentionOptions,
     _feature_norm,
     _flatten_function_values,
     _flatten_geometry,
@@ -37,6 +38,8 @@ from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.encoded import AbstractEncodedOperatorModel
 from phydrax.nn.operator.layers._attention import _measure_attention_regularity
 from phydrax.nn.operator.prompt import OperatorPrompt, PromptedOperatorBatch
+
+from .....typing import PRNGKey
 
 
 class OperatorPromptState(StrictModule):
@@ -58,7 +61,7 @@ class OperatorPromptState(StrictModule):
         case_shape: tuple[int, ...],
         capacity: int,
         tokens_per_example: int,
-    ):
+    ) -> None:
         cases = tuple(case_shape)
         values_ = jnp.asarray(values)
         if values_.ndim != len(cases) + 2:
@@ -97,7 +100,7 @@ class InContextOperatorState(StrictModule):
         mask: Array,
         case_shape: tuple[int, ...],
         prompt_state: OperatorPromptState,
-    ):
+    ) -> None:
         self.values = jnp.asarray(values)
         self.weights = jnp.asarray(weights)
         self.mask = jnp.asarray(mask, dtype=jnp.bool_)
@@ -155,8 +158,8 @@ class InContextOperator(AbstractEncodedOperatorModel):
         attention_execution: AttentionExecution = "auto",
         attention_block_size: int = 256,
         accumulation_dtype: str = "input",
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.in_channels = _get_size(in_channels)
         self.out_channels = _get_size(out_channels)
         self.coord_dim = int(coord_dim)
@@ -203,17 +206,17 @@ class InContextOperator(AbstractEncodedOperatorModel):
         self.role_embeddings = jr.normal(keys[3], (3, self.width)) / jnp.sqrt(
             float(self.width)
         )
-        attention_kwargs = dict(
-            source_channels=self.width,
-            query_channels=self.width,
-            out_channels=self.width,
-            num_heads=int(num_heads),
-            head_dim=resolved_head_dim,
-            kernel=attention_kernel,
-            execution=attention_execution,
-            block_size=attention_block_size,
-            accumulation_dtype=accumulation_dtype,
-        )
+        attention_kwargs: _ChanneledAttentionOptions = {
+            "source_channels": self.width,
+            "query_channels": self.width,
+            "out_channels": self.width,
+            "num_heads": int(num_heads),
+            "head_dim": resolved_head_dim,
+            "kernel": attention_kernel,
+            "execution": attention_execution,
+            "block_size": attention_block_size,
+            "accumulation_dtype": accumulation_dtype,
+        }
         self.prompt_source_attention = MeasureAwareAttention(
             key=keys[4], **attention_kwargs
         )

@@ -9,10 +9,11 @@ from math import isfinite, prod
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._wiener import WienerRealization
 
 
@@ -45,7 +46,7 @@ class OrnsteinUhlenbeckRealization(StrictModule):
 
     def __init__(
         self,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         noise_shape: Sequence[int],
         /,
         *,
@@ -57,7 +58,7 @@ class OrnsteinUhlenbeckRealization(StrictModule):
         coupling_id: str | None = None,
         _path_indices: Array | None = None,
         _path_signs: Array | None = None,
-    ):
+    ) -> None:
         if len(support) != 2:
             raise ValueError(
                 "OrnsteinUhlenbeckRealization support must contain two bounds."
@@ -128,7 +129,7 @@ class OrnsteinUhlenbeckRealization(StrictModule):
     @classmethod
     def independent(
         cls,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         noise_shape: Sequence[int],
         /,
         *,
@@ -153,7 +154,7 @@ class OrnsteinUhlenbeckRealization(StrictModule):
     @classmethod
     def antithetic(
         cls,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         noise_shape: Sequence[int],
         /,
         *,

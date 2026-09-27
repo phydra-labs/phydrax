@@ -41,7 +41,7 @@ class PIVPassPlan(StrictModule, NonTrainableState):
         /,
         *,
         deformation: str = "none",
-    ):
+    ) -> None:
         window = _pair(window_size, name="window_size", minimum=2)
         overlap_ = _pair(overlap, name="overlap", minimum=0)
         margin = _pair(search_margin, name="search_margin", minimum=0)
@@ -112,7 +112,7 @@ class PIVPlan(StrictModule, NonTrainableState):
         retain_correlation: bool = False,
         compute_dtype: str = "float32",
         resource_limit_bytes: int = 512 * 1024 * 1024,
-    ):
+    ) -> None:
         passes_ = tuple(passes)
         if not passes_ or any(not isinstance(item, PIVPassPlan) for item in passes_):
             raise ValueError("passes must contain at least one PIVPassPlan.")
@@ -246,7 +246,7 @@ class PreparedPIV(StrictModule, NonTrainableState):
 
 def _resolved_dtypes(requested: str) -> tuple[str, str]:
     resolved = requested
-    if requested == "float64" and not bool(jax.config.jax_enable_x64):
+    if requested == "float64" and not bool(jax.config.read("jax_enable_x64")):
         resolved = "float32"
     return resolved, "complex128" if resolved == "float64" else "complex64"
 

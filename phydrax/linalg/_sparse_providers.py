@@ -7,11 +7,12 @@ from __future__ import annotations
 import platform
 import sys
 from importlib.util import find_spec
-from typing import Literal, TypeAlias
+from typing import assert_never, Literal, TypeAlias
 
 import equinox as eqx
 
 from .._strict import StrictModule
+from ..typing import parse
 
 
 SparseProviderName: TypeAlias = Literal[
@@ -151,67 +152,74 @@ def sparse_provider_availability(
     /,
 ) -> SparseProviderAvailability:
     """Inspect one provider without mutating global selection state."""
+    name = parse(name, SparseProviderName, "name")
     capabilities = sparse_provider_capabilities(name)
-    if name == "jax-cpu":
-        import jax
+    match name:
+        case "jax-cpu":
+            import jax
 
-        package_available = _package_available("scipy")
-        cpu_default = jax.default_backend() == "cpu"
-        available = package_available and cpu_default
-        missing = []
-        if not package_available:
-            missing.append("scipy is not installed")
-        if not cpu_default:
-            missing.append("the default JAX backend is not CPU")
-        reason = (
-            "JAX CPU sparse LU is available."
-            if available
-            else "JAX CPU sparse LU unavailable: " + "; ".join(missing) + "."
-        )
-    elif name == "jax-cuda":
-        import jax
+            package_available = _package_available("scipy")
+            cpu_default = jax.default_backend() == "cpu"
+            available = package_available and cpu_default
+            missing = []
+            if not package_available:
+                missing.append("scipy is not installed")
+            if not cpu_default:
+                missing.append("the default JAX backend is not CPU")
+            reason = (
+                "JAX CPU sparse LU is available."
+                if available
+                else "JAX CPU sparse LU unavailable: " + "; ".join(missing) + "."
+            )
+        case "jax-cuda":
+            import jax
 
-        available = any(device.platform == "gpu" for device in jax.devices())
-        reason = (
-            "CUDA device available." if available else "No JAX CUDA device is available."
-        )
-    elif name == "spineax-cudss":
-        import jax
+            available = any(device.platform == "gpu" for device in jax.devices())
+            reason = (
+                "CUDA device available."
+                if available
+                else "No JAX CUDA device is available."
+            )
+        case "spineax-cudss":
+            import jax
 
-        package_available = _package_available("spineax")
-        platform_supported = sys.platform.startswith("linux")
-        architecture_supported = platform.machine().lower() in ("x86_64", "amd64")
-        cuda_available = any(device.platform == "gpu" for device in jax.devices())
-        available = (
-            package_available
-            and platform_supported
-            and architecture_supported
-            and cuda_available
-        )
-        missing = []
-        if not package_available:
-            missing.append("spineax is not installed")
-        if not platform_supported:
-            missing.append("Linux is required")
-        if not architecture_supported:
-            missing.append("x86-64 is required")
-        if not cuda_available:
-            missing.append("no JAX CUDA device is available")
-        reason = (
-            "Spineax cuDSS is available."
-            if available
-            else "Spineax cuDSS unavailable: " + "; ".join(missing) + "."
-        )
-    elif capabilities.package is None:
-        available = True
-        reason = "Provider has no optional package dependency."
-    else:
-        available = _package_available(capabilities.package)
-        reason = (
-            f"Optional package {capabilities.package!r} is available."
-            if available
-            else f"Optional package {capabilities.package!r} is not installed."
-        )
+            package_available = _package_available("spineax")
+            platform_supported = sys.platform.startswith("linux")
+            architecture_supported = platform.machine().lower() in ("x86_64", "amd64")
+            cuda_available = any(device.platform == "gpu" for device in jax.devices())
+            available = (
+                package_available
+                and platform_supported
+                and architecture_supported
+                and cuda_available
+            )
+            missing = []
+            if not package_available:
+                missing.append("spineax is not installed")
+            if not platform_supported:
+                missing.append("Linux is required")
+            if not architecture_supported:
+                missing.append("x86-64 is required")
+            if not cuda_available:
+                missing.append("no JAX CUDA device is available")
+            reason = (
+                "Spineax cuDSS is available."
+                if available
+                else "Spineax cuDSS unavailable: " + "; ".join(missing) + "."
+            )
+        case "scipy-superlu" | "umfpack" | "cholmod" | "spqr":
+            if capabilities.package is None:
+                available = True
+                reason = "Provider has no optional package dependency."
+            else:
+                available = _package_available(capabilities.package)
+                reason = (
+                    f"Optional package {capabilities.package!r} is available."
+                    if available
+                    else f"Optional package {capabilities.package!r} is not installed."
+                )
+        case _:
+            assert_never(name)
     return SparseProviderAvailability(
         capabilities=capabilities,
         available=available,

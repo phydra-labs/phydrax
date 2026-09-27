@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from typing import cast
+from typing import Any, cast
 
 import equinox as eqx
 import jax
@@ -14,16 +14,18 @@ import pytest
 import phydrax as phx
 
 
-def _periodic_nodes(size):
+def _periodic_nodes(size: Any) -> Any:
     return -1.0 + 2.0 * jnp.arange(size, dtype="float64") / size
 
 
-def _lattice(nodes):
+def _lattice(nodes: Any) -> Any:
     return jnp.stack(jnp.meshgrid(*nodes, indexing="ij"), axis=-1)
 
 
 @pytest.mark.parametrize("spatial_shape", ((7,), (5, 6), (4, 5, 6)))
-def test_rectilinear_sampling_identity_and_periodic_cell_translation(spatial_shape):
+def test_rectilinear_sampling_identity_and_periodic_cell_translation(
+    spatial_shape: Any,
+) -> None:
     dimensions = len(spatial_shape)
     nodes = tuple(_periodic_nodes(size) for size in spatial_shape)
     coordinates = _lattice(nodes)
@@ -45,7 +47,9 @@ def test_rectilinear_sampling_identity_and_periodic_cell_translation(spatial_sha
         boundary=boundary,
         axis_nodes=nodes,
     )
+    # ty: ignore[redundant-cast]
     identity = cast(jax.Array, identity)
+    # ty: ignore[redundant-cast]
     translated = cast(jax.Array, translated)
     expected = values
     for axis in range(dimensions):
@@ -88,7 +92,9 @@ def test_rectilinear_sampling_identity_and_periodic_cell_translation(spatial_sha
         ),
     ),
 )
-def test_rectilinear_boundary_modes(boundary, coordinates, fill_value, expected, support):
+def test_rectilinear_boundary_modes(
+    boundary: Any, coordinates: Any, fill_value: Any, expected: Any, support: Any
+) -> None:
     sampled, actual_support = phx.nn.layers.sample_rectilinear_grid(
         jnp.arange(4.0)[:, None],
         jnp.asarray(coordinates)[:, None],
@@ -102,7 +108,7 @@ def test_rectilinear_boundary_modes(boundary, coordinates, fill_value, expected,
     assert jnp.array_equal(actual_support, jnp.asarray(support))
 
 
-def test_nonuniform_rectilinear_nodes_are_affine_exact_eager_and_jit():
+def test_nonuniform_rectilinear_nodes_are_affine_exact_eager_and_jit() -> None:
     physical_x = jnp.array([2.0, 3.0, 6.0, 10.0])
     physical_y = jnp.array([-4.0, -1.0, 0.5, 5.0, 8.0])
     x = phx.nn.layers.normalized_axis_nodes(physical_x, periodic=False)
@@ -115,7 +121,7 @@ def test_nonuniform_rectilinear_nodes_are_affine_exact_eager_and_jit():
     values = (1.25 + 2.0 * x[:, None] - 0.75 * y[None, :])[..., None]
     query = jnp.array([[-0.8, -0.7], [-0.1, 0.2], [0.75, 0.9]])
 
-    def evaluate(field, coordinates, x_nodes, y_nodes):
+    def evaluate(field: Any, coordinates: Any, x_nodes: Any, y_nodes: Any) -> Any:
         return phx.nn.layers.sample_rectilinear_grid(
             field,
             coordinates,
@@ -134,13 +140,14 @@ def test_nonuniform_rectilinear_nodes_are_affine_exact_eager_and_jit():
     assert jnp.allclose(compiled, eager, rtol=1e-6, atol=1e-6)
 
 
-def test_rectilinear_sampling_promotes_integral_inputs_before_interpolation():
+def test_rectilinear_sampling_promotes_integral_inputs_before_interpolation() -> None:
     result = phx.nn.layers.sample_rectilinear_grid(
         jnp.array([0, 2])[:, None],
         jnp.array([[0.0]]),
         spatial_ndim=1,
         boundary=("clamp",),
     )
+    # ty: ignore[redundant-cast]
     result = cast(jax.Array, result)
 
     assert jnp.issubdtype(result.dtype, jnp.inexact)
@@ -155,11 +162,11 @@ def test_rectilinear_sampling_promotes_integral_inputs_before_interpolation():
     ),
 )
 def test_masked_nan_corners_follow_nonreject_mask_semantics(
-    mask_mode,
-    fill_value,
-    expected,
-    expected_support,
-):
+    mask_mode: Any,
+    fill_value: Any,
+    expected: Any,
+    expected_support: Any,
+) -> None:
     sampled, support = phx.nn.layers.sample_rectilinear_grid(
         jnp.array([1.0, jnp.nan, 5.0])[:, None],
         jnp.array([[-0.5]]),
@@ -176,7 +183,7 @@ def test_masked_nan_corners_follow_nonreject_mask_semantics(
     assert support[0] == expected_support
 
 
-def test_reject_mask_mode_rejects_holes_even_when_payload_is_nan():
+def test_reject_mask_mode_rejects_holes_even_when_payload_is_nan() -> None:
     with pytest.raises(
         eqx.EquinoxRuntimeError,
         match="reject mode does not permit source holes",
@@ -192,7 +199,7 @@ def test_reject_mask_mode_rejects_holes_even_when_payload_is_nan():
         jax.block_until_ready(result)
 
 
-def test_affine_warp_jacobian_and_determinant_are_exact_on_nonuniform_nodes():
+def test_affine_warp_jacobian_and_determinant_are_exact_on_nonuniform_nodes() -> None:
     x = jnp.array([-1.0, -0.45, 0.2, 1.0])
     y = jnp.array([-1.0, -0.7, 0.15, 0.6, 1.0])
     coordinates = _lattice((x, y))
@@ -221,7 +228,9 @@ def test_affine_warp_jacobian_and_determinant_are_exact_on_nonuniform_nodes():
         ),
     ),
 )
-def test_vector_covector_and_rank_two_tensor_transformation_laws(variance, components):
+def test_vector_covector_and_rank_two_tensor_transformation_laws(
+    variance: Any, components: Any
+) -> None:
     x = jnp.linspace(-1.0, 1.0, 4)
     y = jnp.linspace(-1.0, 1.0, 5)
     coordinates = _lattice((x, y))
@@ -247,7 +256,7 @@ def test_vector_covector_and_rank_two_tensor_transformation_laws(variance, compo
     assert jnp.allclose(transformed, expected, rtol=1e-5, atol=1e-6)
 
 
-def test_periodic_density_remap_preserves_discrete_total_mass():
+def test_periodic_density_remap_preserves_discrete_total_mass() -> None:
     size = 24
     x = _periodic_nodes(size)
     density = jnp.ones((size,))
@@ -266,7 +275,7 @@ def test_periodic_density_remap_preserves_discrete_total_mass():
     assert jnp.allclose(jnp.sum(remapped), jnp.sum(density), rtol=1e-6, atol=1e-6)
 
 
-def test_manifold_projection_retraction_and_masked_nan_payloads():
+def test_manifold_projection_retraction_and_masked_nan_payloads() -> None:
     points = jnp.array(
         [
             [1.0, 0.0, 0.0],
@@ -322,7 +331,9 @@ def test_manifold_projection_retraction_and_masked_nan_payloads():
     assert jnp.allclose(jnp.sum(diagnostics.interpolation_weights, axis=1), 1.0)
 
 
-def test_probabilistic_warp_mean_and_sample_routes_are_coherent_and_differentiable():
+def test_probabilistic_warp_mean_and_sample_routes_are_coherent_and_differentiable() -> (
+    None
+):
     layer = phx.nn.layers.ProbabilisticMultiheadWarp(
         spatial_ndim=1,
         in_channels=2,
@@ -358,6 +369,7 @@ def test_probabilistic_warp_mean_and_sample_routes_are_coherent_and_differentiab
     assert jnp.allclose(mean_diagnostics.displacement, distribution.mean)
     assert jnp.allclose(mean_output, expected_mean)
     assert jnp.allclose(sampled_output, expected_sample)
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(sampled_diagnostics.route_scale, distribution.scale)
     assert jnp.all(jnp.isfinite(value_gradient))
     assert jnp.linalg.norm(value_gradient) > 0.0

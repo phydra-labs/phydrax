@@ -9,7 +9,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._interpolation import apply_gather_stencil, rectilinear_stencil
 from .._strict import StrictModule
@@ -22,7 +23,7 @@ class ImageSample2D(StrictModule):
     values: Array
     valid: Array
 
-    def __init__(self, values: ArrayLike, valid: ArrayLike, /):
+    def __init__(self, values: ArrayLike, valid: ArrayLike, /) -> None:
         values_ = jnp.asarray(values)
         valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         if values_.shape[: valid_.ndim] != valid_.shape:

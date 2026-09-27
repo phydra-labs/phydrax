@@ -10,7 +10,8 @@ from typing import Any, Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -42,7 +43,7 @@ class TemporalHarmonicPlan(StrictModule):
 
     def __init__(
         self, angular_frequency: ArrayLike, sample_count: int, state_size: int, /
-    ):
+    ) -> None:
         frequency = jnp.asarray(angular_frequency, dtype=jnp.float64)
         samples, size = int(sample_count), int(state_size)
         if frequency.shape != () or samples < 3 or size <= 0:
@@ -103,7 +104,7 @@ class HarmonicBalancePolicy(StrictModule):
         maximum_waveform_bytes: int = 2**30,
         maximum_workspace_bytes: int = 2**30,
         aliasing_tail_tolerance: float = 1e-6,
-    ):
+    ) -> None:
         limits = (
             int(maximum_samples),
             int(maximum_unknowns),

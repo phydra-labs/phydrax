@@ -12,7 +12,8 @@ from collections.abc import Callable
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -45,7 +46,7 @@ class ExcitedStateDerivativeResult(StrictModule, NonTrainableState):
         *,
         derivative_couplings: ArrayLike | None = None,
         energy_weighted_couplings: ArrayLike | None = None,
-    ):
+    ) -> None:
         gradients = jnp.asarray(energy_gradients)
         residual = jnp.asarray(residuals, dtype=gradients.real.dtype)
         couplings = (
@@ -119,7 +120,9 @@ class CallableExcitedDerivativeProvider(AbstractExcitedDerivativeProvider):
     evaluator: ExcitedDerivativeEvaluator = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
-    def __init__(self, evaluator: ExcitedDerivativeEvaluator, provider_id: str, /):
+    def __init__(
+        self, evaluator: ExcitedDerivativeEvaluator, provider_id: str, /
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         provider = str(provider_id).strip()
@@ -271,14 +274,14 @@ class TDAPropertyDerivativeResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        excitation_energy_derivatives,
-        transition_dipole_derivatives,
-        oscillator_strength_derivatives,
-        eigenvector_derivative_residuals,
-        successful,
-        representation_id,
+        excitation_energy_derivatives: ArrayLike,
+        transition_dipole_derivatives: ArrayLike,
+        oscillator_strength_derivatives: ArrayLike,
+        eigenvector_derivative_residuals: ArrayLike,
+        successful: ArrayLike,
+        representation_id: str,
         /,
-    ):
+    ) -> None:
         energy = jnp.asarray(excitation_energy_derivatives)
         dipole = jnp.asarray(transition_dipole_derivatives, dtype=energy.dtype)
         oscillator = jnp.asarray(oscillator_strength_derivatives, dtype=energy.real.dtype)

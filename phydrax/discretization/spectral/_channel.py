@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from operator import index
 from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
@@ -23,6 +25,7 @@ from ...linalg._local_blocks import (
     prepare_local_block_factorization,
     solve_local_blocks,
 )
+from ...typing import parse
 from ._channel_ultraspherical import (
     prepare_ultraspherical_channel,
     PreparedUltrasphericalChannel,
@@ -45,11 +48,10 @@ class ChannelMeanConstraint(StrictModule, NonTrainableState):
     def __init__(
         self,
         kind: ChannelMeanConstraintKind = "pressure_gradient",
-        values: ArrayLike = (0.0, 0.0),
+        values: ArrayLike | Sequence[float] = (0.0, 0.0),
         /,
-    ):
-        if kind not in ("pressure_gradient", "bulk_flux"):
-            raise ValueError("Unknown channel mean constraint kind.")
+    ) -> None:
+        kind = parse(kind, ChannelMeanConstraintKind, "kind")
         raw_values = jnp.asarray(values)
         if jnp.iscomplexobj(raw_values):
             raise TypeError("Channel mean constraint values must be real.")
@@ -87,14 +89,14 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
         viscosity: ArrayLike,
         /,
         *,
-        lower_wall_velocity: ArrayLike = (0.0, 0.0, 0.0),
-        upper_wall_velocity: ArrayLike = (0.0, 0.0, 0.0),
+        lower_wall_velocity: ArrayLike | Sequence[float] = (0.0, 0.0, 0.0),
+        upper_wall_velocity: ArrayLike | Sequence[float] = (0.0, 0.0, 0.0),
         mean_constraint: ChannelMeanConstraint | None = None,
         tangential_boundary: ChannelTangentialBoundaryKind = "velocity",
         route: ChannelStokesRoute = "ultraspherical_banded",
         maximum_factor_bytes: int = 512 * 1024**2,
         constraint_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         if not isinstance(discretization, TensorSpectralDiscretization):
             raise TypeError("discretization must be a TensorSpectralDiscretization.")
         families = tuple(axis.family for axis in discretization.axes)
@@ -126,8 +128,9 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Incompressible channel walls must have matching normal velocities."
             )
-        if tangential_boundary not in ("velocity", "traction"):
-            raise ValueError("Unknown channel tangential boundary kind.")
+        tangential_boundary = parse(
+            tangential_boundary, ChannelTangentialBoundaryKind, "tangential_boundary"
+        )
         if tangential_boundary == "traction" and not bool(
             jnp.array_equal(
                 lower[jnp.asarray((0, 2))], jnp.zeros((2,), dtype=lower.dtype)
@@ -144,10 +147,7 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
         )
         if not isinstance(constraint, ChannelMeanConstraint):
             raise TypeError("mean_constraint must be ChannelMeanConstraint or None.")
-        if route not in ("ultraspherical_banded", "dense_reference"):
-            raise ValueError(
-                "route must be 'ultraspherical_banded' or 'dense_reference'."
-            )
+        route = parse(route, ChannelStokesRoute, "route")
         if isinstance(maximum_factor_bytes, bool):
             raise TypeError("maximum_factor_bytes must be an integer.")
         maximum = index(maximum_factor_bytes)
@@ -250,7 +250,7 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
     block_size: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ChannelStokesPlan, shift: ArrayLike, /):
+    def __init__(self, plan: ChannelStokesPlan, shift: ArrayLike, /) -> None:
         if not isinstance(plan, ChannelStokesPlan):
             raise TypeError("plan must be a ChannelStokesPlan.")
         raw_shift = jnp.asarray(shift)
@@ -544,7 +544,7 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
 
     def _tangential_boundary_modes(
         self,
-        dtype,
+        dtype: DTypeLike,
         lower_tangential_traction: ArrayLike | None,
         upper_tangential_traction: ArrayLike | None,
         /,
@@ -645,6 +645,10 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
                 diagnostics=diagnostics,
                 prepared_id=self.prepared_id,
             )
+        factorization = self.factorization
+        # Dense-route preparations always carry the block factorization.
+        if not (factorization is not None):
+            raise RuntimeError("Internal invariant failed: factorization is not None.")
         interior = self.synthesis[1:-1]
         physical_rhs = ein.contract("ij,kjc->kic", interior, modal_modes, backend="jax")
         batch_rhs = jnp.zeros((modal_modes.shape[0], self.block_size), dtype=value.dtype)
@@ -690,7 +694,7 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
                 self.zero_mode_index,
                 2 * interior_count : 3 * interior_count,
             ].add(gradient[1])
-            solution, failed = solve_local_blocks(self.factorization, batch_rhs)
+            solution, failed = solve_local_blocks(factorization, batch_rhs)
             residual = (
                 ein.contract("kij,kj->ki", self.blocks, solution, backend="jax")
                 - batch_rhs
@@ -698,7 +702,7 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
         else:
             if self.bulk_block is None or self.bulk_factorization is None:
                 raise RuntimeError("Prepared bulk-flux factorization is missing.")
-            solution, failed = solve_local_blocks(self.factorization, batch_rhs)
+            solution, failed = solve_local_blocks(factorization, batch_rhs)
             augmented_rhs = jnp.concatenate(
                 (
                     batch_rhs[self.zero_mode_index],

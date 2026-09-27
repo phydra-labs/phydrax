@@ -12,6 +12,7 @@ import argparse
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -37,7 +38,7 @@ from phydrax.applications.geophysics import (
 )
 
 
-def _transfer(layers, refinement, thermo):
+def _transfer(layers: Any, refinement: Any, thermo: Any) -> Any:
     # Unit horizontal area and 1 kg/m3 dry density: these measures are kg/m2.
     fine_mass = np.full(layers * refinement, 600.0 / (layers * refinement))
     coarse_mass = np.full(layers, 600.0 / layers)
@@ -73,14 +74,16 @@ def _transfer(layers, refinement, thermo):
     return ConservativeColumnTransfer(transfer, fm, cm, thermo.plan_id)
 
 
-def _evolve(initial, mass, interval, diffusivity, substeps):
+def _evolve(
+    initial: Any, mass: Any, interval: Any, diffusivity: Any, substeps: Any
+) -> Any:
     """Execute the existing native closed vertical transport law, no fitted labels."""
     rate = diffusivity / (600.0 / mass.size) ** 2
     h = interval / substeps
     if 2 * h * rate >= 1:
         raise ValueError("Explicit native transport timestep violates positivity CFL.")
 
-    def step(_, values):
+    def step(_: Any, values: Any) -> Any:
         derivative = jax.vmap(
             lambda value: conservative_vertical_mixing(value / mass, mass, rate),
             in_axes=-1,
@@ -91,7 +94,17 @@ def _evolve(initial, mass, interval, diffusivity, substeps):
     return jax.lax.fori_loop(0, substeps, step, initial)
 
 
-def _cases(tasks, thermo, *, layers, interval, forcing, count, seed, partition):
+def _cases(
+    tasks: Any,
+    thermo: Any,
+    *,
+    layers: Any,
+    interval: Any,
+    forcing: Any,
+    count: Any,
+    seed: Any,
+    partition: Any,
+) -> Any:
     transfer = _transfer(layers, 4, thermo)
     fm, cm = transfer.source_measure.weights, transfer.target_measure.weights
     rng = np.random.default_rng(seed)
@@ -168,7 +181,7 @@ def _cases(tasks, thermo, *, layers, interval, forcing, count, seed, partition):
     }
 
 
-def _model(key):
+def _model(key: Any) -> Any:
     op = phx.nn.operator
     keys = jr.split(key, 3)
     latent = 16
@@ -203,7 +216,7 @@ def _model(key):
     )
 
 
-def _metrics(operators, data, thermo):
+def _metrics(operators: Any, data: Any, thermo: Any) -> Any:
     binding = data["binding"]
     resolved, truth, mass = data["resolved"], data["truth"], data["mass"]
     admission = deploy_column_flux(
@@ -222,7 +235,7 @@ def _metrics(operators, data, thermo):
     accepted = np.asarray(admission.admitted)
     committed = jnp.where(admission.admitted[:, None, None], candidate, resolved)
 
-    def rms(value):
+    def rms(value: Any) -> Any:
         return np.asarray(
             jnp.sqrt(
                 jnp.sum(value**2 * mass[None, :, None], axis=(0, 1))
@@ -255,7 +268,7 @@ def _metrics(operators, data, thermo):
     }
 
 
-def _column_restart(operators, data, thermo):
+def _column_restart(operators: Any, data: Any, thermo: Any) -> Any:
     """Exercise physical native continuation with stateless restored flux artifacts."""
     binding = data["binding"]
     mass = data["mass"]
@@ -276,7 +289,7 @@ def _column_restart(operators, data, thermo):
     initial = plan.initialize(mass, water, temperature, mass, surface_temperature=286.0)
     identities = tuple(model.artifact_id for model in operators)
 
-    def advance(state):
+    def advance(state: Any) -> Any:
         batch = binding.batch(
             state.vapor_mass[None, :], state.internal_energy[None, :], forcing=np.ones(1)
         )
@@ -323,7 +336,7 @@ def _column_restart(operators, data, thermo):
     )
 
 
-def run_example(*, steps=200, artifact_directory=None):
+def run_example(*, steps: Any = 200, artifact_directory: Any = None) -> Any:
     jax.config.update("jax_enable_x64", True)
     thermo = MoistThermodynamicPlan()
     tasks = column_flux_tasks(
@@ -363,6 +376,7 @@ def run_example(*, steps=200, artifact_directory=None):
             model,
             steps=steps,
             learning_rate=0.003,
+            # ty: ignore[invalid-argument-type]
             **output_binding,
             artifact_id=f"closed-flux-{index}-trained",
         )
@@ -378,6 +392,7 @@ def run_example(*, steps=200, artifact_directory=None):
                 training_evidence=phx.nn.operator.OperatorTrainingEvidence(
                     "task_specific"
                 ),
+                # ty: ignore[invalid-argument-type]
                 **output_binding,
                 normalization=fit.normalization,
                 artifact_id=f"closed-flux-{index}-untrained",
@@ -385,7 +400,7 @@ def run_example(*, steps=200, artifact_directory=None):
             )
         )
 
-    def reload(directory):
+    def reload(directory: Any) -> Any:
         restored = []
         for index, fit in enumerate(fits):
             path = Path(directory) / f"flux-{index}"
@@ -515,6 +530,7 @@ def run_example(*, steps=200, artifact_directory=None):
                 float(
                     np.max(
                         np.abs(original - reloaded)
+                        # ty: ignore[unsupported-operator]
                         / (record["atol_SI"] + record["rtol"] * np.abs(original))
                     )
                 ),

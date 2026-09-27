@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,14 +13,14 @@ import pytest
 import phydrax as phx
 
 
-def _grid(count=9):
+def _grid(count: Any = 9) -> Any:
     return phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformAxisSpec(count) for _ in range(3)),
         axis_names=("x", "y", "z"),
     ).prepare(jnp.asarray([[-1.4, -1.4, -1.4], [1.4, 1.4, 1.4]]))
 
 
-def test_dual_surface_has_static_watertight_topology_and_dynamic_coordinates():
+def test_dual_surface_has_static_watertight_topology_and_dynamic_coordinates() -> None:
     geometry = phx.geometry.Sphere(
         (0.0, 0.0, 0.0),
         0.75,
@@ -48,7 +51,7 @@ def test_dual_surface_has_static_watertight_topology_and_dynamic_coordinates():
     assert mesh.topology.num_face_components == 1
 
 
-def test_dual_surface_derivative_and_refresh_status_are_explicit():
+def test_dual_surface_derivative_and_refresh_status_are_explicit() -> None:
     geometry = phx.geometry.Sphere(
         (0.0, 0.0, 0.0),
         0.75,
@@ -65,7 +68,7 @@ def test_dual_surface_derivative_and_refresh_status_are_explicit():
     )
     radius_index = geometry.schema.index(phx.geometry.ParameterId("sphere", "radius"))
 
-    def vertex_sum(radius):
+    def vertex_sum(radius: Any) -> Any:
         state = geometry.state.replace_at(radius_index, radius)
         return jnp.sum(plan.realize(state).proposed_vertices)
 
@@ -79,7 +82,7 @@ def test_dual_surface_derivative_and_refresh_status_are_explicit():
     assert jnp.array_equal(expired.vertices, plan.base_vertices)
 
 
-def test_ambiguous_lattice_zero_fails_closed():
+def test_ambiguous_lattice_zero_fails_closed() -> None:
     geometry = phx.geometry.Sphere(
         (0.0, 0.0, 0.0),
         0.7,

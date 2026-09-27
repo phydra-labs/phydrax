@@ -12,7 +12,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def test_moment_compression_is_reusable_and_preserves_named_ancestry():
+def test_moment_compression_is_reusable_and_preserves_named_ancestry() -> None:
     axis = "sample"
     coordinates = jnp.linspace(-1.0, 1.0, 33)
     samples = cx.AxisArray(coordinates, dims=(axis,))
@@ -63,7 +63,7 @@ def test_moment_compression_is_reusable_and_preserves_named_ancestry():
     )
 
 
-def test_compression_preserves_nonnormalized_target_mass():
+def test_compression_preserves_nonnormalized_target_mass() -> None:
     samples = jnp.linspace(0.0, 2.0, 25)
     target = phx.integration.weighted(
         samples,
@@ -89,7 +89,7 @@ def test_compression_preserves_nonnormalized_target_mass():
     )
 
 
-def test_compression_lowers_a_named_discrete_point_measure():
+def test_compression_lowers_a_named_discrete_point_measure() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     layout = phx.domain.SampleLayout((("x",),))
     points = domain.component().sample(
@@ -117,7 +117,7 @@ def test_compression_lowers_a_named_discrete_point_measure():
     )
 
     @domain.Function("x")
-    def square(x):
+    def square(x: Any) -> Any:
         return x[0] ** 2
 
     source_estimate = phx.integration.reduce(square, source)
@@ -131,7 +131,7 @@ def test_compression_lowers_a_named_discrete_point_measure():
     )
 
 
-def test_compression_preserves_proposal_support_failure():
+def test_compression_preserves_proposal_support_failure() -> None:
     samples = jnp.linspace(0.0, 1.0, 9)
     target = phx.integration.weighted(
         samples,
@@ -151,7 +151,7 @@ def test_compression_preserves_proposal_support_failure():
 
 
 @pytest.mark.parametrize("identifier", ["stratum_ids", "pair_ids", "replicate_ids"])
-def test_compression_rejects_unpreserved_sample_grouping(identifier):
+def test_compression_rejects_unpreserved_sample_grouping(identifier: Any) -> None:
     samples = jnp.linspace(0.0, 1.0, 12)
     identifiers = jnp.arange(12, dtype=jnp.int32) // 2
     grouping: dict[str, Any] = {identifier: identifiers}

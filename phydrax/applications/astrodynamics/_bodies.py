@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -34,7 +35,7 @@ class CelestialBodyCatalog(StrictModule, NonTrainableState):
         /,
         *,
         active_mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         identifiers = tuple(str(value).strip() for value in body_ids)
         if not identifiers or any(not value for value in identifiers):
             raise ValueError("body_ids must be non-empty identifiers.")

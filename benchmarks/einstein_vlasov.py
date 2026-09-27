@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from dataclasses import asdict
@@ -52,7 +54,7 @@ from phydrax.metrix import RelativityConvention
 from phydrax.units import KILOGRAM
 
 
-def _compiler_record(compiled) -> dict[str, object]:
+def _compiler_record(compiled: Any) -> dict[str, object]:
     evidence = compiler_evidence(
         compiled.cost_analysis(),
         compiled.memory_analysis(),
@@ -64,7 +66,7 @@ def _compiler_record(compiled) -> dict[str, object]:
     return record
 
 
-def _measure(function, arguments, warmup, repeats):
+def _measure(function: Any, arguments: Any, warmup: Any, repeats: Any) -> Any:
     compiled, compilation = measure_lower_and_compile(
         lambda: jax.jit(function).lower(*arguments),
         lambda lowered: lowered.compile(),
@@ -79,7 +81,7 @@ def _measure(function, arguments, warmup, repeats):
     }
 
 
-def _setup(cell_count: int, particle_count: int):
+def _setup(cell_count: int, particle_count: int) -> Any:
     shape = (cell_count,) * 3
     upper = float(cell_count - 1)
     grid = FixedGridGeometry(shape, (0.0, 0.0, 0.0), (1.0, 1.0, 1.0), periodic=True)
@@ -115,7 +117,7 @@ def _setup(cell_count: int, particle_count: int):
     spatial = jnp.moveaxis(grid.coordinates, 0, -1)
     coordinates = jnp.concatenate((jnp.zeros(shape + (1,)), spatial), axis=-1)
 
-    def frame_provider(geometry, time, scale_factor):
+    def frame_provider(geometry: Any, time: Any, scale_factor: Any) -> Any:
         return LocalRelativisticFramePlan.from_adm(
             geometry,
             units,
@@ -171,7 +173,7 @@ def _setup(cell_count: int, particle_count: int):
         maximum_consecutive_failures=2,
     )
 
-    def constraint_solver(state, particle_state, projection, geometry):
+    def constraint_solver(state: Any, particle_state: Any, projection: Any, geometry: Any) -> Any:
         del particle_state, projection, geometry
         return EinsteinVlasovConstraintSolveResult(
             state,
@@ -200,7 +202,7 @@ def run(
     )
     plan, state = setup
 
-    def kernel(candidate):
+    def kernel(candidate: Any) -> Any:
         result = plan.advance(candidate)
         return (
             result.accepted,

@@ -8,7 +8,9 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from phydrax.ein import contract
 
@@ -47,7 +49,7 @@ class AffineEvolutionROMProblem(StrictModule, NonTrainableState):
         lift_terms: Sequence[PyTree[Array]] = (),
         lift_term_ids: Sequence[str] = (),
         source_artifact_ids: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(reduction, TrialTestReduction) or not reduction.square:
             raise ValueError("Affine evolution currently requires a square reduction.")
         masses = tuple(mass_terms)
@@ -168,7 +170,7 @@ class PreparedAffineEvolutionROM(StrictModule, NonTrainableState):
                 self.reduced_mass_lift_terms,
             )
 
-        def residual(time, state, state_rate, args):
+        def residual(time: Array, state: Array, state_rate: Array, args: object) -> Array:
             del time, args
             return mass @ state_rate + operator @ state - rhs
 

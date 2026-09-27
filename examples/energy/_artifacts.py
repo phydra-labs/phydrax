@@ -8,6 +8,7 @@ import importlib.metadata
 import json
 import platform
 from pathlib import Path
+from typing import Any
 
 import jax
 import numpy as np
@@ -15,17 +16,17 @@ import numpy as np
 from phydrax import lifecycle
 
 
-def json_bytes(value):
+def json_bytes(value: Any) -> Any:
     return json.dumps(
         value, sort_keys=True, allow_nan=False, separators=(",", ":")
     ).encode()
 
 
-def identity(value):
+def identity(value: Any) -> Any:
     return hashlib.sha256(json_bytes(value)).hexdigest()
 
 
-def execution_identity():
+def execution_identity() -> Any:
     root = Path(__file__).resolve().parents[2]
     paths = sorted(path.relative_to(root) for path in (root / "phydrax").rglob("*.py"))
     paths += sorted(
@@ -42,6 +43,7 @@ def execution_identity():
     packages = {
         item.metadata["Name"]: item.version
         for item in importlib.metadata.distributions()
+        # ty: ignore[unresolved-attribute]
         if item.metadata.get("Name")
     }
     environment = {
@@ -50,6 +52,7 @@ def execution_identity():
         "machine": platform.machine(),
         "packages": dict(sorted(packages.items())),
         "backend": jax.default_backend(),
+        # ty: ignore[unresolved-attribute]
         "jax_enable_x64": bool(jax.config.x64_enabled),
         "devices": [str(device) for device in jax.devices()],
     }
@@ -61,7 +64,16 @@ def execution_identity():
     }
 
 
-def archive_workflow(directory, name, metrics, arrays, units, checkpoint, *, execution):
+def archive_workflow(
+    directory: Any,
+    name: Any,
+    metrics: Any,
+    arrays: Any,
+    units: Any,
+    checkpoint: Any,
+    *,
+    execution: Any,
+) -> Any:
     """Persist actual arrays and a numeric checkpoint; verify exact bytes on reopen.
 
     Checkpoints contain physical restart coordinates, not serialized executable
@@ -124,7 +136,7 @@ def archive_workflow(directory, name, metrics, arrays, units, checkpoint, *, exe
     return {"result": reopened, "checkpoint": restored, "run_id": run_id}
 
 
-def archive_metrics(archives):
+def archive_metrics(archives: Any) -> Any:
     return {
         "result_archive_id": archives["result"].archive_id,
         "result_path": str(archives["result"].path),

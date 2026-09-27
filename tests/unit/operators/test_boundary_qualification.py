@@ -48,7 +48,7 @@ def _operational(**overrides: object) -> BoundaryOperationalEvidence:
         "observed_bytes": 2304,
     }
     arguments.update(overrides)
-    return BoundaryOperationalEvidence(**arguments)  # type: ignore[arg-type]
+    return BoundaryOperationalEvidence(**arguments)  # ty: ignore[invalid-argument-type]
 
 
 def _provenance(**overrides: object) -> BoundaryProductProvenance:
@@ -67,7 +67,7 @@ def _provenance(**overrides: object) -> BoundaryProductProvenance:
         "parent_result_ids": ("result:assemble",),
     }
     arguments.update(overrides)
-    return BoundaryProductProvenance(**arguments)  # type: ignore[arg-type]
+    return BoundaryProductProvenance(**arguments)
 
 
 def test_continuum_certification_requires_prerequisite_evidence() -> None:
@@ -201,7 +201,7 @@ def test_fingerprints_are_deterministic_under_set_like_input_order() -> None:
     )
     assert first.envelope_id == second.envelope_id
     with pytest.raises(AttributeError):
-        first.platform_id = "other"  # type: ignore[misc]
+        first.platform_id = "other"
 
     provenance_first = _provenance(
         parent_product_ids=("product:b", "product:a"),

@@ -6,12 +6,14 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from ...typing import parse
 from ._results import (
     BlockKrylovDecomposition,
     GolubKahanDecomposition,
@@ -20,7 +22,15 @@ from ._results import (
 )
 
 
-Orthogonalization = Literal["modified", "double", "selective", "full"]
+_ArnoldiState: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+_BlockArnoldiState: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+_LanczosState: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
+_BidiagonalState: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+
+
+Orthogonalization: TypeAlias = Literal["modified", "double", "selective", "full"]
 InnerProduct = Callable[[Array, Array], Array]
 
 
@@ -72,8 +82,7 @@ def _validate(
     dimension = int(max_dimension)
     if dimension < 1 or dimension > vector.size:
         raise ValueError("max_dimension must be in [1, vector.size].")
-    if orthogonalization not in ("modified", "double", "selective", "full"):
-        raise ValueError("Unknown orthogonalization policy.")
+    orthogonalization = parse(orthogonalization, Orthogonalization, "orthogonalization")
     return vector, dimension
 
 
@@ -125,10 +134,10 @@ def arnoldi(
         jnp.asarray(0, dtype=jnp.int32),
     )
 
-    def step(index, state):
+    def step(index: Array, state: _ArnoldiState) -> _ArnoldiState:
         basis_, projected_, residual, effective, status, active, matvecs = state
 
-        def execute(operand):
+        def execute(operand: _ArnoldiState) -> _ArnoldiState:
             basis_i, projected_i, _, _, _, _, matvecs_i = operand
             candidate = action(basis_i[index])
             finite = jnp.all(jnp.isfinite(candidate))
@@ -142,7 +151,7 @@ def arnoldi(
             if orthogonalization == "selective":
                 repeat = first_norm < 0.717 * initial_norm
 
-            def reorthogonalize(values):
+            def reorthogonalize(values: tuple[Array, Array]) -> tuple[Array, Array]:
                 residual_value, coefficient_value = values
                 correction = jax.vmap(lambda q: inner(q, residual_value))(basis_i[:-1])
                 correction = jnp.where(mask, correction, 0)
@@ -232,8 +241,7 @@ def block_arnoldi(
     blocks = int(max_blocks)
     if block_size < 1 or blocks < 1 or blocks * block_size > dimension:
         raise ValueError("max_blocks * block_size must lie in [1, vector dimension].")
-    if orthogonalization not in ("modified", "double", "selective", "full"):
-        raise ValueError("Unknown orthogonalization policy.")
+    orthogonalization = parse(orthogonalization, Orthogonalization, "orthogonalization")
     tolerance = _breakdown_tolerance(breakdown_tolerance, block.real.dtype)
     output = jax.eval_shape(action, block)
     if (
@@ -276,10 +284,10 @@ def block_arnoldi(
         jnp.asarray(0, dtype=jnp.int32),
     )
 
-    def step(index, current):
+    def step(index: Array, current: _BlockArnoldiState) -> _BlockArnoldiState:
         basis_, projected_, ranks_, status_, active_, count_ = current
 
-        def execute(operand):
+        def execute(operand: _BlockArnoldiState) -> _BlockArnoldiState:
             basis_i, projected_i, ranks_i, status_i, _, count_i = operand
             start = index * block_size
             current_block = jax.lax.dynamic_slice(
@@ -303,7 +311,7 @@ def block_arnoldi(
             if orthogonalization == "selective":
                 repeat = first_norm < 0.717 * candidate_norm
 
-            def reorthogonalize(values):
+            def reorthogonalize(values: tuple[Array, Array]) -> tuple[Array, Array]:
                 residual_value, coefficient_value = values
                 correction = _block_inner(prior, residual_value, inner)
                 correction = jnp.where(prior_mask[:, None], correction, 0)
@@ -448,12 +456,12 @@ def lanczos(
         jnp.asarray(0, dtype=jnp.int32),
     )
 
-    def step(index, current):
+    def step(index: Array, current: _LanczosState) -> _LanczosState:
         basis_, projected_, previous, previous_beta, effective, status, active, count = (
             current
         )
 
-        def execute(operand):
+        def execute(operand: _LanczosState) -> _LanczosState:
             basis_i, projected_i, previous_i, beta_i, _, _, _, count_i = operand
             q = basis_i[index]
             candidate = action(q) - beta_i * previous_i
@@ -599,7 +607,7 @@ def golub_kahan(
         jnp.asarray(0, dtype=jnp.int32),
     )
 
-    def step(index, current):
+    def step(index: Array, current: _BidiagonalState) -> _BidiagonalState:
         (
             ub,
             vb,
@@ -614,7 +622,7 @@ def golub_kahan(
             adjoint_matvecs,
         ) = current
 
-        def execute(operand):
+        def execute(operand: _BidiagonalState) -> _BidiagonalState:
             (
                 ub_i,
                 vb_i,

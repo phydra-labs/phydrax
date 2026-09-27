@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -15,7 +18,7 @@ from phydrax.solver._mac_pressure_operator import (
 )
 
 
-def _operators(*, periodic=True, dimension=2):
+def _operators(*, periodic: Any = True, dimension: Any = 2) -> Any:
     axes = tuple(
         phx.discretization.UniformCellAxisSpec(4, periodic=periodic)
         for _ in range(dimension)
@@ -28,7 +31,7 @@ def _operators(*, periodic=True, dimension=2):
     return finite_volume, phx.discretization.MACOperatorPlan(finite_volume).prepare()
 
 
-def test_general_beta_pcg_evidence_and_frozen_coefficient_mismatch():
+def test_general_beta_pcg_evidence_and_frozen_coefficient_mismatch() -> None:
     _, operators = _operators()
     shape = operators.discretization.cell_shape
     beta = 1.0 + 0.25 * jnp.sin(jnp.arange(operators.pressure_space.size)).reshape(shape)
@@ -58,7 +61,7 @@ def test_general_beta_pcg_evidence_and_frozen_coefficient_mismatch():
         prepared.validate_frozen(2.0 * beta)
 
 
-def test_robin_eligibility_removes_gauge_and_nonsymmetric_traction_uses_fgmres():
+def test_robin_eligibility_removes_gauge_and_nonsymmetric_traction_uses_fgmres() -> None:
     _, operators = _operators(periodic=False, dimension=1)
     robin = MACPressureRobinSide(0, "lower", 1.0, 0.5, 2.0)
     prepared = MACPressureOperatorSpec(
@@ -83,7 +86,7 @@ def test_robin_eligibility_removes_gauge_and_nonsymmetric_traction_uses_fgmres()
     assert "nonsymmetric" in flexible.spec.route_reason
 
 
-def test_explicit_direct_request_never_falls_back_for_general_beta():
+def test_explicit_direct_request_never_falls_back_for_general_beta() -> None:
     _, operators = _operators()
     beta = 1.0 + 0.1 * jnp.arange(operators.pressure_space.size).reshape(
         operators.discretization.cell_shape
@@ -92,7 +95,7 @@ def test_explicit_direct_request_never_falls_back_for_general_beta():
         MACPressureOperatorSpec(operators, beta, solve_method="direct")
 
 
-def test_mixed_dirichlet_neumann_transform_lift_has_no_pressure_gauge():
+def test_mixed_dirichlet_neumann_transform_lift_has_no_pressure_gauge() -> None:
     finite_volume, operators = _operators(periodic=False)
     side = phx.discretization.MACBoundarySide
     provider = phx.discretization.MACBoundaryProvider
@@ -121,7 +124,7 @@ def test_mixed_dirichlet_neumann_transform_lift_has_no_pressure_gauge():
     assert result.converged
 
 
-def test_immersed_pressure_block_composes_without_owning_kkt():
+def test_immersed_pressure_block_composes_without_owning_kkt() -> None:
     composition = MACImmersedPressureBlockPreconditionerPlan()
     policy = composition.policy()
 
@@ -131,7 +134,7 @@ def test_immersed_pressure_block_composes_without_owning_kkt():
     assert policy.refresh_policy == "numeric"
 
 
-def test_identity_ale_manufactured_projection_records_epoch_and_metric_evidence():
+def test_identity_ale_manufactured_projection_records_epoch_and_metric_evidence() -> None:
     finite_volume, _ = _operators(periodic=False)
     plan = phx.solver.MACALEGeometryPlan(
         finite_volume,

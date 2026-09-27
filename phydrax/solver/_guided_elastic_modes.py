@@ -10,7 +10,8 @@ from enum import IntEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -86,7 +87,7 @@ class GuidedElasticModePlan(StrictModule, NonTrainableState):
         negative_eigenvalue_tolerance: float = 1e-10,
         orthogonality_tolerance: float = 1e-8,
         maximum_dofs: int = 4096,
-    ):
+    ) -> None:
         stiffness, mass = _guided_elastic_operators(stiffness_operator, mass_operator)
         if not isinstance(stiffness.source, ArraySpace):
             raise TypeError("Guided elastic mode coordinates must use an ArraySpace.")
@@ -251,14 +252,19 @@ def solve_guided_elastic_modes(
     )
 
 
-def _guided_elastic_operators(stiffness, mass):
+def _guided_elastic_operators(
+    stiffness: AbstractLinearOperator | ArrayLike,
+    mass: AbstractLinearOperator | ArrayLike,
+) -> tuple[AbstractLinearOperator, AbstractLinearOperator]:
     stiffness_is_operator = isinstance(stiffness, AbstractLinearOperator)
     mass_is_operator = isinstance(mass, AbstractLinearOperator)
     if stiffness_is_operator != mass_is_operator:
         raise TypeError(
             "stiffness_operator and mass_operator must both be operators or both be arrays."
         )
-    if stiffness_is_operator:
+    if isinstance(stiffness, AbstractLinearOperator) and isinstance(
+        mass, AbstractLinearOperator
+    ):
         if (
             not stiffness.source.compatible(stiffness.target)
             or not mass.source.compatible(mass.target)

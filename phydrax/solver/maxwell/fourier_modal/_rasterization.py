@@ -10,7 +10,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -35,7 +36,7 @@ class FourierModalRasterizationPolicy(StrictModule, NonTrainableState):
         *,
         samples_per_axis: int = 1,
         smoothing_width: float | None = None,
-    ):
+    ) -> None:
         if isinstance(samples_per_axis, bool) or not isinstance(samples_per_axis, int):
             raise TypeError("samples_per_axis must be an integer.")
         if samples_per_axis <= 0:
@@ -67,7 +68,7 @@ class FourierModalRasterizationPlan(StrictModule, NonTrainableState):
         harmonics: LatticeHarmonicDiscretization,
         policy: FourierModalRasterizationPolicy | None = None,
         /,
-    ):
+    ) -> None:
         if not isinstance(harmonics, LatticeHarmonicDiscretization):
             raise TypeError("harmonics must be a LatticeHarmonicDiscretization.")
         if harmonics.periodic_dimension != 2:

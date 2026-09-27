@@ -39,9 +39,9 @@ _STABLEHLO_OPERATIONS = (
 
 def _timed_case(
     name: str,
-    function,
+    function: Any,
     arguments: tuple[jax.Array, ...],
-    reference,
+    reference: Any,
     /,
     *,
     warmup: int,
@@ -108,7 +108,7 @@ def _transform_cases(
         dtype=jnp.float64,
     )
 
-    def native(array):
+    def native(array: Any) -> Any:
         heads = phx.ein.rearrange(
             array,
             "batch (head channel) payload -> batch head payload channel",
@@ -125,7 +125,7 @@ def _transform_cases(
             replica=2,
         )
 
-    def reference(array):
+    def reference(array: Any) -> Any:
         heads = array.reshape(batch_size, 2, feature_size, payload_size).transpose(
             0,
             1,
@@ -189,11 +189,11 @@ def _iga_cases(
     )
     expanded_extraction = extraction[..., None]
 
-    def realize_reference(values):
+    def realize_reference(values: Any) -> Any:
         local = direct.gather(values)
         return jnp.sum(expanded_extraction * local[:, None, :, :], axis=2)
 
-    def transpose_reference(values):
+    def transpose_reference(values: Any) -> Any:
         local_dual = jnp.sum(
             expanded_extraction * values[:, :, None, :],
             axis=1,
@@ -248,7 +248,7 @@ def _clifford_cases(
         dtype=jnp.float64,
     )
 
-    def reference(array):
+    def reference(array: Any) -> Any:
         features = input_representation.split(array)
         leading = array.shape[:-1]
         grades = []

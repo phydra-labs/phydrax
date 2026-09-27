@@ -41,7 +41,7 @@ class MagneticResonanceConvention(StrictModule):
     receiver_convention: str = eqx.field(static=True)
     fft_convention: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.hbar_j_s = HBAR_J_S
         self.hamiltonian_unit = "angular-frequency-rad-s^-1"
         self.frame = "laboratory"
@@ -62,7 +62,7 @@ class MagneticResonanceResourcePolicy(StrictModule):
         *,
         maximum_hilbert_dimension: int = 256,
         maximum_density_elements: int = 65_536,
-    ):
+    ) -> None:
         dimension = int(maximum_hilbert_dimension)
         density = int(maximum_density_elements)
         if dimension < 1 or density < 1:

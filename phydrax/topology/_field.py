@@ -10,7 +10,8 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -46,7 +47,7 @@ class FieldTopologySnapshot(StrictModule, NonTrainableState):
         /,
         *,
         field_id: str,
-    ):
+    ) -> None:
         threshold_values = jnp.asarray(thresholds)
         counts = jnp.asarray(betti_counts, dtype=jnp.int32)
         if threshold_values.ndim != 1 or counts.ndim != 2:
@@ -98,7 +99,7 @@ class FieldTopologyPlan(StrictModule, NonTrainableState):
         direction: Literal["sublevel", "superlevel"] = "sublevel",
         max_degree: int | None = None,
         resources: TopologyResourcePolicy | None = None,
-    ):
+    ) -> None:
         if direction not in ("sublevel", "superlevel"):
             raise ValueError("Field topology direction must be sublevel or superlevel.")
         threshold_values = jnp.asarray(thresholds)
@@ -193,7 +194,7 @@ class FieldTopologySeries(StrictModule, NonTrainableState):
         snapshots: Sequence[FieldTopologySnapshot],
         times: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(snapshots)
         time_values = jnp.asarray(times)
         if not values or time_values.shape != (len(values),):

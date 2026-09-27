@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _prepared_coarse_graining():
+def _prepared_coarse_graining() -> Any:
     axis = phx.discretization.UniformAxisSpec(5)
     grid = phx.discretization.TensorGridPlan((axis, axis), axis_names=("x", "y")).prepare(
         jnp.asarray([[-1.0, -1.0], [1.0, 1.0]])
@@ -31,7 +34,7 @@ def _prepared_coarse_graining():
     return plan.prepare(particles, 1), relation
 
 
-def test_particle_coarse_graining_conserves_primary_fields_and_pair_virial():
+def test_particle_coarse_graining_conserves_primary_fields_and_pair_virial() -> None:
     prepared, relation = _prepared_coarse_graining()
     position = jnp.asarray([[-0.25, 0.0], [0.25, 0.0]])
     velocity = jnp.asarray([[1.0, 0.0], [1.0, 0.0]])
@@ -82,12 +85,12 @@ def test_particle_coarse_graining_conserves_primary_fields_and_pair_virial():
     assert jnp.allclose(shifted.contact_stress, result.contact_stress)
 
 
-def test_segment_stress_is_differentiable_with_frozen_routes():
+def test_segment_stress_is_differentiable_with_frozen_routes() -> None:
     prepared, relation = _prepared_coarse_graining()
     position = jnp.asarray([[-0.25, 0.0], [0.25, 0.0]])
     displacement = jnp.asarray([[-0.5, 0.0]])
 
-    def integrated_contact_stress(force_x):
+    def integrated_contact_stress(force_x: Any) -> Any:
         fields = prepared.evaluate(
             position,
             jnp.zeros_like(position),

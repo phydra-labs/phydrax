@@ -5,15 +5,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, TypedDict
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import parse
 from ._scalar_lattice import Phi4LatticeAction
 
 
@@ -24,6 +26,12 @@ LatticeObservableNormalization: TypeAlias = Literal[
     "pair-mean",
 ]
 LatticeObservableKind: TypeAlias = Literal["real", "complex"]
+
+
+class _CommonPlanFields(TypedDict):
+    topology_id: str
+    field_space_id: str
+    output_kind: LatticeObservableKind
 
 
 class LatticeObservablePlan(StrictModule):
@@ -48,21 +56,16 @@ class LatticeObservablePlan(StrictModule):
         normalization: LatticeObservableNormalization,
         output_kind: LatticeObservableKind,
         observable_id: str,
-    ):
+    ) -> None:
         if not callable(evaluate):
             raise TypeError("evaluate must be callable.")
         shape = tuple(output_shape)
         if any(value <= 0 for value in shape):
             raise ValueError("output_shape dimensions must be positive.")
-        if normalization not in (
-            "extensive",
-            "site-mean",
-            "physical-measure",
-            "pair-mean",
-        ):
-            raise ValueError("Unknown lattice-observable normalization.")
-        if output_kind not in ("real", "complex"):
-            raise ValueError("output_kind must be 'real' or 'complex'.")
+        normalization = parse(
+            normalization, LatticeObservableNormalization, "normalization"
+        )
+        output_kind = parse(output_kind, LatticeObservableKind, "output_kind")
         identifiers = str(topology_id), str(field_space_id), str(observable_id)
         if any(not value for value in identifiers):
             raise ValueError("Lattice observable identifiers must be non-empty.")
@@ -115,10 +118,10 @@ def phi4_observable_plans(
     weights = action.discretization.dual_measures[0]
     volume = jnp.sum(weights)
 
-    def magnetization(field):
+    def magnetization(field: Array) -> Array:
         return jnp.sum(weights * field) / volume
 
-    common = {
+    common: _CommonPlanFields = {
         "topology_id": action.topology_id,
         "field_space_id": action.field_space_id,
         "output_kind": "real",
@@ -207,7 +210,7 @@ def phi4_pair_correlation_plan(
     if not resolved_id:
         raise ValueError("observable_id must be non-empty.")
 
-    def evaluate(field):
+    def evaluate(field: Array) -> Array:
         values = jnp.asarray(field)
         if values.shape != action.configuration_shape:
             raise ValueError("Scalar field shape does not match the phi4 action.")

@@ -12,7 +12,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.domain import (
     AbstractGeometry,
@@ -43,10 +44,18 @@ from ..operators.differential._domain_ops import (
 )
 from ..operators.differential._hooks import blend_with_gate
 from ..operators.linalg import einsum
+from ..typing import PRNGKey
 
 
 class _IdentityCallable(StrictModule):
-    def __call__(self, x, /, *, key=None, **kwargs):
+    def __call__(
+        self,
+        x: Array | tuple[Array, ...],
+        /,
+        *,
+        key: PRNGKey | None = None,
+        **kwargs: Any,
+    ) -> Array:
         del key, kwargs
         if isinstance(x, tuple):
             if len(x) != 1:
@@ -72,14 +81,14 @@ class _InitialPolynomialCallable(StrictModule):
         target_pos: tuple[tuple[int, ...], ...],
         var_pos: int | None,
         t0: Array,
-    ):
+    ) -> None:
         self.targets = targets
         self.coeffs = coeffs
         self.target_pos = target_pos
         self.var_pos = var_pos
         self.t0 = jnp.asarray(t0, dtype=jnp.float64).reshape(())
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         def _mul_aligned(a: Any, b: Any, /) -> Array:
             a_arr = jnp.asarray(a)
             b_arr = jnp.asarray(b)
@@ -157,7 +166,7 @@ def _guard_no_coord_separable(
 
     var_pos = u.deps.index(var)
 
-    def _guarded(*args, key=None, **kwargs):
+    def _guarded(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Any:
         x = args[var_pos]
         if isinstance(x, tuple):
             raise ValueError(
@@ -187,7 +196,7 @@ def _enforcement_weight_fn(
     *,
     num_reference: int = 3_000_000,
     sampler: str = "latin_hypercube",
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     on_empty: Literal["error", "zero"] = "error",
 ) -> Callable[[Array], Array] | float:
     """Compute a boundary-subset weight function using a point BVH.
@@ -298,8 +307,8 @@ def _enforcement_weight_fn(
         x: Array | tuple[Array, ...],
         /,
         *,
-        key=None,
-        **kwargs,
+        key: PRNGKey | None = None,
+        **kwargs: Any,
     ) -> Array:
         del key, kwargs
         if isinstance(x, tuple):
@@ -1005,7 +1014,7 @@ def enforce_blend(
     include_identity_remainder: bool = True,
     num_reference: int = 3_000_000,
     sampler: str = "latin_hypercube",
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> DomainFunction:
     r"""Blend multiple enforced ansatz pieces via ported MLS/BVH weights.
 

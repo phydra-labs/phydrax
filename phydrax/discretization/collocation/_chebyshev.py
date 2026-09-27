@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -65,7 +66,7 @@ class ChebyshevCollocation(StrictModule, NonTrainableState):
         lower: float = -1.0,
         upper: float = 1.0,
         maximum_dimension: int = 256,
-    ):
+    ) -> None:
         maximum = int(maximum_dimension)
         if int(count) > maximum or maximum < 3:
             raise ValueError("Chebyshev collocation exceeds maximum_dimension budget.")

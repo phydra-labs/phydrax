@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -39,7 +40,7 @@ class NeutrinoFlux(StrictModule, NonTrainableState):
         *,
         source_id: str,
         flavor_names: Sequence[str] = ("electron", "muon", "tau"),
-    ):
+    ) -> None:
         edges = np.asarray(energy_edges_gev, dtype=np.float64)
         values_ = np.asarray(values, dtype=np.float64)
         covariance_ = np.asarray(covariance, dtype=np.float64)
@@ -112,7 +113,7 @@ class NeutrinoRatePlan(StrictModule, NonTrainableState):
         *,
         target_count: float,
         provider_id: str,
-    ):
+    ) -> None:
         if not isinstance(flux, NeutrinoFlux):
             raise TypeError("flux must be NeutrinoFlux.")
         cross = np.asarray(cross_sections, dtype=np.float64)

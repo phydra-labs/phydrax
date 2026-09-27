@@ -52,6 +52,7 @@ def _resource_benchmark(
         {
             ".weight": phx.nn.parameters.LowRankSpec(
                 rank,
+                # ty: ignore[invalid-argument-type]
                 scaling=scaling,
             )
         },
@@ -69,8 +70,8 @@ def _resource_benchmark(
     dense_state = dense_optimizer.init(dense_parameters)
     adapter_state = adapter_optimizer.init(adapter_parameters)
 
-    def dense_step(parameters, state):
-        def objective(candidate):
+    def dense_step(parameters: Any, state: Any) -> Any:
+        def objective(candidate: Any) -> Any:
             model = combine_parameters(candidate, dense_model_state, dense_fixed)
             return jnp.mean((model(inputs) - targets) ** 2)
 
@@ -78,8 +79,8 @@ def _resource_benchmark(
         updates, state = dense_optimizer.update(gradient, state, parameters)
         return optax.apply_updates(parameters, updates), state, loss
 
-    def adapter_step(parameters, state):
-        def objective(candidate):
+    def adapter_step(parameters: Any, state: Any) -> Any:
+        def objective(candidate: Any) -> Any:
             model = eqx.combine(candidate, adapter_fixed)
             return jnp.mean((model(inputs) - targets) ** 2)
 
@@ -148,7 +149,7 @@ def _resource_benchmark(
     }
 
 
-def _operator_dataset(*, coefficient: float, cases: int = 8, resolution: int = 8):
+def _operator_dataset(*, coefficient: float, cases: int = 8, resolution: int = 8) -> Any:
     axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, resolution),
@@ -164,7 +165,7 @@ def _operator_dataset(*, coefficient: float, cases: int = 8, resolution: int = 8
     )
 
 
-def _operator_loss(model, dataset) -> float:
+def _operator_loss(model: Any, dataset: Any) -> float:
     prediction = model(dataset.batch)
     target = dataset.targets.field("solution").values
     return float(jax.device_get(jnp.mean((prediction - target) ** 2)))

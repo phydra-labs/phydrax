@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -11,7 +14,7 @@ from phydrax.nn.models import LatentContractionModel, MLP, Separable
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_latent_contraction_regular_and_factorwise(scan):
+def test_latent_contraction_regular_and_factorwise(scan: Any) -> None:
     key = jr.key(0)
     # space model: in_size=2 -> out=latent*out=8
     space_model = MLP(in_size=2, out_size=8, width_size=8, depth=1, scan=scan, key=key)
@@ -44,7 +47,7 @@ def test_latent_contraction_regular_and_factorwise(scan):
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_separable_wrapper_regular_and_separable(scan):
+def test_separable_wrapper_regular_and_separable(scan: Any) -> None:
     key = jr.key(42)
     # Two scalar models for 2D
     m1 = MLP(in_size="scalar", out_size=8, width_size=8, depth=1, scan=scan, key=key)
@@ -65,7 +68,7 @@ def test_separable_wrapper_regular_and_separable(scan):
     assert ys.shape == (2, 2, 2)
 
 
-def test_separable_scan_matches_loop_for_point_and_separable_tuple():
+def test_separable_scan_matches_loop_for_point_and_separable_tuple() -> None:
     latent_size = 3
     out_size = 2
     split_input = 2
@@ -112,7 +115,7 @@ def test_separable_scan_matches_loop_for_point_and_separable_tuple():
     assert jnp.allclose(y_sep_scan, y_sep_loop)
 
 
-def test_separable_scan_falls_back_for_heterogeneous_models():
+def test_separable_scan_falls_back_for_heterogeneous_models() -> None:
     m1 = MLP(
         in_size="scalar",
         out_size=8,

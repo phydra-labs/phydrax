@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -18,12 +20,12 @@ class _QuadraticModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, stiffness):
+    def __init__(self, stiffness: Any) -> None:
         self.stiffness = jnp.asarray(stiffness)
         self.in_size = 1
         self.out_size = 1
 
-    def __call__(self, value, /, *, key=None):
+    def __call__(self, value: Any, /, *, key: Any=None) -> Any:
         del key
         return jnp.asarray([0.5 * self.stiffness * value[0] ** 2])
 

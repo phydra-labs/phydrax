@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def test_mesh_filtration_persistence_hodge_and_event_workflow():
+def test_mesh_filtration_persistence_hodge_and_event_workflow() -> None:
     vertices = np.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
     faces = np.asarray([[0, 1, 2]], dtype=np.int32)
     complex_ir = phx.graph.triangle_mesh_to_cochain_complex(vertices, faces)
@@ -57,8 +60,10 @@ def test_mesh_filtration_persistence_hodge_and_event_workflow():
     assert bool(benchmark.event_detected)
 
 
-def jax_vmap_component_count(times, births, deaths, finite, selected):
-    def at_time(time):
+def jax_vmap_component_count(
+    times: Any, births: Any, deaths: Any, finite: Any, selected: Any
+) -> Any:
+    def at_time(time: Any) -> Any:
         alive = (births <= time) & (~finite | (deaths > time))
         return jnp.sum((selected & alive).astype(jnp.int32))
 

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -36,7 +39,7 @@ from phydrax.metrix import (
 )
 
 
-def _support():
+def _support() -> Any:
     scale = RelativityScaleContract(DimensionalScaleContract.si(), 1, 3, 2, 1)
     units = RelativisticUnitContract(
         scale, RelativityConvention(metric_signature="mostly_minus")
@@ -96,7 +99,7 @@ def _support():
     )
 
 
-def _paths(topology):
+def _paths(topology: Any) -> Any:
     boundary = prepare_cell_boundary_paths(topology).paths
     edges = boundary.edge_indices[0]
     signs = boundary.orientations[0]
@@ -109,7 +112,7 @@ def _paths(topology):
     )
 
 
-def test_abelian_wilson_line_wigner_transform_is_gauge_covariant():
+def test_abelian_wilson_line_wigner_transform_is_gauge_covariant() -> None:
     topology = polygonal_cell_complex(jnp.asarray([[0, 1, 2]]), None, 3)
     group = UnitaryGroup(1)
     link_space = MatrixGaugeLinkSpace(topology, group)
@@ -144,7 +147,9 @@ def test_abelian_wilson_line_wigner_transform_is_gauge_covariant():
     )
 
 
-def test_nonabelian_wigner_transport_refuses_complex_fundamental_without_real_owner():
+def test_nonabelian_wigner_transport_refuses_complex_fundamental_without_real_owner() -> (
+    None
+):
     topology = polygonal_cell_complex(jnp.asarray([[0, 1, 2]]), None, 3)
     group = SpecialUnitaryGroup(2)
     link_space = MatrixGaugeLinkSpace(topology, group)

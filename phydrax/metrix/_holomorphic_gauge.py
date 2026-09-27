@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._holomorphic_linear import MultivariableHolomorphicPotentialProvider
@@ -30,7 +31,7 @@ class KahlerGaugeInvarianceReport(StrictModule, NonTrainableState):
         /,
         *,
         gauge_id: str,
-    ):
+    ) -> None:
         change = jnp.asarray(maximum_complex_hessian_change)
         tolerance_ = jnp.asarray(tolerance)
         if change.shape != () or tolerance_.shape != ():
@@ -58,7 +59,7 @@ class KahlerHolomorphicGauge(StrictModule):
         /,
         *,
         branch: int = 0,
-    ):
+    ) -> None:
         if not isinstance(base, KahlerPotentialGeometry):
             raise TypeError("base must be KahlerPotentialGeometry.")
         if not isinstance(provider, MultivariableHolomorphicPotentialProvider):

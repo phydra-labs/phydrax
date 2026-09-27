@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from dataclasses import asdict
@@ -26,7 +28,7 @@ from _runtime import (
 import phydrax as phx
 
 
-def _compiler_record(compiled) -> dict[str, object]:
+def _compiler_record(compiled: Any) -> dict[str, object]:
     evidence = compiler_evidence(
         compiled.cost_analysis(),
         compiled.memory_analysis(),
@@ -38,7 +40,7 @@ def _compiler_record(compiled) -> dict[str, object]:
     return record
 
 
-def _measure(function, arguments, warmup, repeats):
+def _measure(function: Any, arguments: Any, warmup: Any, repeats: Any) -> Any:
     compiled, compilation = measure_lower_and_compile(
         lambda: jax.jit(function).lower(*arguments),
         lambda lowered: lowered.compile(),
@@ -53,7 +55,7 @@ def _measure(function, arguments, warmup, repeats):
     }
 
 
-def _setup(point_count: int):
+def _setup(point_count: int) -> Any:
     chart = phx.metrix.CoordinateChart(
         "benchmark-kerr-boyer-lindquist", ("t", "r", "theta", "phi")
     )
@@ -90,7 +92,7 @@ def run(point_count: int, warmup: int, repeats: int) -> dict[str, object]:
     setup, setup_seconds = measure_synchronized(lambda: _setup(point_count))
     chart, metric, mass, spin, horizon_radii, points, direction = setup
 
-    def geometry_kernel(sample_points):
+    def geometry_kernel(sample_points: Any) -> Any:
         matrices = jax.vmap(metric)(sample_points)
         domain = phx.metrix.kerr_boyer_lindquist_domain_evidence(
             mass, spin, sample_points, chart=chart
@@ -118,8 +120,8 @@ def run(point_count: int, warmup: int, repeats: int) -> dict[str, object]:
             domain.status,
         )
 
-    def differential_kernel(sample_points, tangent_points):
-        def observables(value):
+    def differential_kernel(sample_points: Any, tangent_points: Any) -> Any:
+        def observables(value: Any) -> Any:
             matrices = jax.vmap(metric)(value)
             curvature = jax.vmap(
                 lambda point: phx.metrix.kerr_kretschmann_scalar(

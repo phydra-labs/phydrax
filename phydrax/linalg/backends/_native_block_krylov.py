@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._iteration import IterationPlan, IterationRuntimeState
 from ..._strict import StrictModule
@@ -18,6 +19,7 @@ from .._plans import _certified_rank, LinearSolvePlan
 from .._policies import BlockCG, BlockGMRES, RankPolicy
 from .._preconditioners import AbstractPreconditioner
 from .._results import LinearSolveStatus
+from .._spaces import AbstractVectorSpace
 from ._native_krylov import (
     _action_coordinates,
     _iteration_stop,
@@ -25,6 +27,48 @@ from ._native_krylov import (
     _space_inner,
     _update_krylov_iteration,
 )
+
+
+# Callbacks on (n, k) coordinate blocks.
+_BlockAction: TypeAlias = Callable[[Array], Array]
+_BlockPrecondition: TypeAlias = Callable[[Array, Array], Array]
+_BlockGram: TypeAlias = Callable[[Array, Array], Array]
+# (value, iterations, matvec count, effective rank, breakdown, last executed
+# iteration, observed).
+_BlockKrylovResult: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, IterationRuntimeState | None
+]
+# (basis, preconditioned basis, Hessenberg, x, residual, converged, iterations,
+# matvec count, breakdown, active block, last executed iteration, observed).
+_BlockGMRESCarry: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    IterationRuntimeState | None,
+]
+# (correction, residual, direction, gram, value, converged, iterations, matvec
+# count, breakdown, last executed iteration, observed).
+_BlockCGCarry: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    IterationRuntimeState | None,
+]
 
 
 class NativeBlockKrylovState(StrictModule):
@@ -247,9 +291,9 @@ def solve_native_block_krylov(
 
 
 def _block_gmres_raw(
-    action,
-    precondition,
-    block_gram,
+    action: _BlockAction,
+    precondition: _BlockPrecondition,
+    block_gram: _BlockGram,
     rhs: Array,
     initial: Array,
     *,
@@ -259,7 +303,7 @@ def _block_gmres_raw(
     rhs_norms: Array,
     iteration: IterationPlan | None = None,
     iteration_state: IterationRuntimeState | None = None,
-):
+) -> _BlockKrylovResult:
     dimension, rhs_count = rhs.shape
     block_width = min(dimension, rhs_count)
     x = initial
@@ -303,7 +347,7 @@ def _block_gmres_raw(
             if global_index >= max_steps:
                 continue
 
-            def execute(operand):
+            def execute(operand: _BlockGMRESCarry) -> _BlockGMRESCarry:
                 (
                     basis_,
                     preconditioned_basis_,
@@ -332,7 +376,9 @@ def _block_gmres_raw(
                 )
                 orthogonalization_count = local_index + 1
 
-                def orthogonalize(iteration_index, carry):
+                def orthogonalize(
+                    iteration_index: Array, carry: tuple[Array, Array]
+                ) -> tuple[Array, Array]:
                     candidate_, column_ = carry
                     basis_index = iteration_index % orthogonalization_count
                     row_start = basis_index * block_width
@@ -475,9 +521,9 @@ def _block_gmres_raw(
 
 
 def _block_cg_raw(
-    action,
-    precondition,
-    block_gram,
+    action: _BlockAction,
+    precondition: _BlockPrecondition,
+    block_gram: _BlockGram,
     rhs: Array,
     initial: Array,
     *,
@@ -486,7 +532,7 @@ def _block_cg_raw(
     rhs_norms: Array,
     iteration: IterationPlan | None = None,
     iteration_state: IterationRuntimeState | None = None,
-):
+) -> _BlockKrylovResult:
     rhs_count = rhs.shape[1]
     initial_residual = rhs - action(initial)
     matvec_count = jnp.asarray(1, dtype=jnp.int32)
@@ -506,8 +552,8 @@ def _block_cg_raw(
     breakdown = jnp.zeros((rhs_count,), dtype=jnp.bool_)
     last_executed_iteration = jnp.asarray(0, dtype=jnp.int32)
 
-    def iteration_body(index, operand):
-        def execute(selected):
+    def iteration_body(index: Array, operand: _BlockCGCarry) -> _BlockCGCarry:
+        def execute(selected: _BlockCGCarry) -> _BlockCGCarry:
             (
                 correction_,
                 residual_,
@@ -641,7 +687,9 @@ def _block_cg_raw(
     )
 
 
-def _rank_revealing_factor(value: Array, block_gram):
+def _rank_revealing_factor(
+    value: Array, block_gram: _BlockGram
+) -> tuple[Array, Array, Array, Array]:
     reduced_size = min(value.shape)
     if reduced_size == 0:
         return (
@@ -673,8 +721,8 @@ def _rank_revealing_factor(value: Array, block_gram):
     return basis, factor, active, rank
 
 
-def _block_gram(space, left: Array, right: Array) -> Array:
-    def row(left_column):
+def _block_gram(space: AbstractVectorSpace, left: Array, right: Array) -> Array:
+    def row(left_column: Array) -> Array:
         return jax.vmap(
             lambda right_column: _space_inner(space, left_column, right_column),
             in_axes=1,
@@ -683,7 +731,7 @@ def _block_gram(space, left: Array, right: Array) -> Array:
     return jax.vmap(row, in_axes=1)(left)
 
 
-def _hermitian_gram(block_gram, left: Array, right: Array) -> Array:
+def _hermitian_gram(block_gram: _BlockGram, left: Array, right: Array) -> Array:
     gram = block_gram(left, right)
     return (gram + jnp.conj(gram.T)) / 2
 
@@ -699,7 +747,7 @@ def _pseudoinverse_apply(
     return apply_pseudoinverse(factors, right_hand_side), factors.rank
 
 
-def _column_norms(value: Array, block_gram) -> Array:
+def _column_norms(value: Array, block_gram: _BlockGram) -> Array:
     gram = block_gram(value, value)
     return jnp.sqrt(jnp.maximum(jnp.real(jnp.diag(gram)), 0.0))
 

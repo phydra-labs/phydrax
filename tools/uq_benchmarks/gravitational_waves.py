@@ -26,7 +26,7 @@ def _timed(function: Callable[[], Any]) -> tuple[Any, float]:
     return value, time.perf_counter() - started
 
 
-def _problem(configuration: BenchmarkConfiguration):
+def _problem(configuration: BenchmarkConfiguration) -> Any:
     gw = phx.applications.astrophysics.gravitational_waves
     frequency_bins = configuration.gravitational_wave_frequency_bins
     sample_count = 2 * (frequency_bins - 1)
@@ -283,7 +283,7 @@ def gravitational_wave_multiband(
     )
 
 
-def _train_roq_interpolation(likelihood, parameters, *, quadratic: bool):
+def _train_roq_interpolation(likelihood: Any, parameters: Any, *, quadratic: bool) -> Any:
     frequency = np.asarray(likelihood.network.frequency)
     center = float(parameters["center_frequency"])
     quality = float(parameters["quality_factor"])
@@ -393,7 +393,7 @@ def gravitational_wave_population_recycling(
         )
     batch = phx.uq.prepare_population_sample_batch(tuple(events))
 
-    def population_log_probability(hyperparameters, sample):
+    def population_log_probability(hyperparameters: Any, sample: Any) -> Any:
         scale = hyperparameters["scale"]
         return (
             -0.5 * ((sample["x"] - hyperparameters["mean"]) / scale) ** 2

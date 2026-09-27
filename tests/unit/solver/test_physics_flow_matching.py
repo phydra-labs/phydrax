@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -11,18 +13,18 @@ import phydrax as phx
 class _ConstantVelocity(eqx.Module):
     value: jnp.ndarray = phx.parameter_field()
 
-    def __call__(self, state, time):
+    def __call__(self, state: Any, time: Any) -> Any:
         del time
         return jnp.broadcast_to(self.value, state.shape)
 
 
 class _LinearVelocity(eqx.Module):
-    def __call__(self, state, time):
+    def __call__(self, state: Any, time: Any) -> Any:
         del time
         return state
 
 
-def _velocity_function(model):
+def _velocity_function(model: Any) -> Any:
     state = phx.domain.HyperRectangle(
         jnp.asarray((-10.0,)),
         jnp.asarray((10.0,)),
@@ -32,7 +34,7 @@ def _velocity_function(model):
     return domain.Function("x", "t")(model)
 
 
-def _endpoints(count=8):
+def _endpoints(count: Any = 8) -> Any:
     source = jnp.zeros((count, 1))
     target = jnp.ones((count, 1))
     return phx.transport.EndpointCouplingSample(
@@ -48,7 +50,7 @@ def _endpoints(count=8):
     )
 
 
-def _functional():
+def _functional() -> Any:
     return phx.terms.CallableFlowEndpointFunctional(
         lambda state, context: jnp.sum(jnp.square(state - context["desired"])),
         event_shape=(1,),
@@ -56,7 +58,13 @@ def _functional():
     )
 
 
-def _term(steps, *, velocity=0.0, sampling_mode="fixed", endpoints=None):
+def _term(
+    steps: Any,
+    *,
+    velocity: Any = 0.0,
+    sampling_mode: Any = "fixed",
+    endpoints: Any = None,
+) -> Any:
     endpoint_source = _endpoints() if endpoints is None else endpoints
     term = phx.terms.PhysicsFlowMatchingTerm(
         "velocity",
@@ -69,7 +77,7 @@ def _term(steps, *, velocity=0.0, sampling_mode="fixed", endpoints=None):
     return term, _velocity_function(_ConstantVelocity(jnp.asarray((velocity,))))
 
 
-def test_logit_normal_time_sampling_is_bounded_and_reproducible():
+def test_logit_normal_time_sampling_is_bounded_and_reproducible() -> None:
     policy = phx.terms.LogitNormalTimeSamplingPolicy(
         0.1,
         0.9,
@@ -84,7 +92,7 @@ def test_logit_normal_time_sampling_is_bounded_and_reproducible():
     assert jnp.all(first < 0.9)
 
 
-def test_exact_constant_velocity_satisfies_both_shared_batch_objectives():
+def test_exact_constant_velocity_satisfies_both_shared_batch_objectives() -> None:
     term, velocity = _term(4, velocity=1.0)
     batch = term.sample(key=jr.key(7))
     flow, physics = term.objective_components(
@@ -105,7 +113,7 @@ def test_exact_constant_velocity_satisfies_both_shared_batch_objectives():
     assert diagnostics.finite
 
 
-def test_endpoint_refinement_reduces_nonlinear_euler_error():
+def test_endpoint_refinement_reduces_nonlinear_euler_error() -> None:
     endpoints = _endpoints(count=1)
     interpolant = phx.transport.LinearEndpointInterpolant((1,))
     batch = phx.terms.FlowMatchingBatch(
@@ -144,10 +152,10 @@ def test_endpoint_refinement_reduces_nonlinear_euler_error():
     assert four_physics < one_physics
 
 
-def test_physics_flow_term_trains_with_conflict_free_component_gradients():
+def test_physics_flow_term_trains_with_conflict_free_component_gradients() -> None:
     calls = []
 
-    def provider(key):
+    def provider(key: Any) -> Any:
         calls.append(key)
         return _endpoints()
 
@@ -173,4 +181,5 @@ def test_physics_flow_term_trains_with_conflict_free_component_gradients():
     )
 
     assert len(calls) == 1
+    # ty: ignore[unresolved-attribute]
     assert trained.functions["velocity"].func.function.value[0] > 0.5

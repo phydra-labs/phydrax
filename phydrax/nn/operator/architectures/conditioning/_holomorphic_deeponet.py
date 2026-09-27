@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._differentiation import (
     AbstractConstructionCertificate,
@@ -25,9 +26,11 @@ from phydrax.equations.trefftz._holomorphic_constraints import (
 )
 from phydrax.nn._contracts import AFFINE, SMOOTH, sum_regularity
 from phydrax.nn._keys import EvalKey
+from phydrax.nn.operator.capabilities import ConfiguredOperatorContract
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
+from .....typing import parse
 from ._deeponet import (
     AbstractBasisTrunk,
     AbstractBranchEncoder,
@@ -35,7 +38,9 @@ from ._deeponet import (
 )
 
 
-HolomorphicTrunkMode = Literal["unconstrained", "fixed-target", "variable-target"]
+HolomorphicTrunkMode: TypeAlias = Literal[
+    "unconstrained", "fixed-target", "variable-target"
+]
 
 
 class ConditionalHolomorphicMapCertificate(AbstractConstructionCertificate):
@@ -69,7 +74,7 @@ class ConditionalHolomorphicMapCertificate(AbstractConstructionCertificate):
         bias_mode: str,
         branch_names: tuple[str, ...],
         branch_fusion: str,
-    ):
+    ) -> None:
         input_size = int(query_complex_input_size)
         output_size = int(complex_output_size)
         latent = int(latent_size)
@@ -86,8 +91,7 @@ class ConditionalHolomorphicMapCertificate(AbstractConstructionCertificate):
             raise ValueError(
                 "Conditional holomorphic certificate dimensions are invalid."
             )
-        if trunk_mode not in ("unconstrained", "fixed-target", "variable-target"):
-            raise ValueError("Unknown conditional holomorphic trunk mode.")
+        trunk_mode = parse(trunk_mode, HolomorphicTrunkMode, "trunk_mode")
         if not frame_id_ or not layout or not bias or not branches or not fusion:
             raise ValueError("Conditional holomorphic identifiers must be nonempty.")
         if trunk_mode == "unconstrained" and operator_id is not None:
@@ -140,7 +144,7 @@ class TargetAugmentedBranchEncoder(AbstractBranchEncoder):
         free_encoder: AbstractBranchEncoder,
         target_indices: tuple[int, ...],
         /,
-    ):
+    ) -> None:
         if not isinstance(free_encoder, AbstractBranchEncoder):
             raise TypeError("free_encoder must be AbstractBranchEncoder.")
         indices = tuple(target_indices)
@@ -209,7 +213,7 @@ class HolomorphicBasisTrunk(AbstractBasisTrunk, NonTrainableState):
         *,
         constraint_operator: PreparedHolomorphicConstraintOperator | None = None,
         coefficient_map: HolomorphicAffineCoefficientMap | None = None,
-    ):
+    ) -> None:
         if not isinstance(frame, HolomorphicLinearFrame):
             raise TypeError("frame must implement HolomorphicLinearFrame.")
         if constraint_operator is not None and not isinstance(
@@ -381,7 +385,7 @@ class ConditionalHolomorphicDeepONet(AbstractOperatorModel):
     out_size: int | Literal["scalar"]
     _certificate: ConditionalHolomorphicMapCertificate
 
-    def __init__(self, operator: DeepONet, /):
+    def __init__(self, operator: DeepONet, /) -> None:
         if not isinstance(operator, DeepONet):
             raise TypeError("operator must be DeepONet.")
         if not isinstance(operator.trunk, HolomorphicBasisTrunk):
@@ -433,7 +437,7 @@ class ConditionalHolomorphicDeepONet(AbstractOperatorModel):
         )
 
     @property
-    def operator_contract(self):
+    def operator_contract(self) -> ConfiguredOperatorContract:
         return self.operator.operator_contract
 
     def conditional_holomorphic_certificate(self) -> ConditionalHolomorphicMapCertificate:
@@ -497,7 +501,7 @@ class ConditionalHarmonicOperator2D(AbstractOperatorModel):
     in_size: int | Literal["scalar"]
     out_size: Literal["scalar"]
 
-    def __init__(self, potential: ConditionalHolomorphicDeepONet, /):
+    def __init__(self, potential: ConditionalHolomorphicDeepONet, /) -> None:
         if not isinstance(potential, ConditionalHolomorphicDeepONet):
             raise TypeError("potential must be ConditionalHolomorphicDeepONet.")
         if potential.conditional_holomorphic_certificate().complex_output_size != 1:
@@ -507,7 +511,7 @@ class ConditionalHarmonicOperator2D(AbstractOperatorModel):
         self.out_size = "scalar"
 
     @property
-    def operator_contract(self):
+    def operator_contract(self) -> ConfiguredOperatorContract:
         return self.potential.operator_contract
 
     def __call__(self, value: Any, /, *, key: EvalKey = None) -> Array:

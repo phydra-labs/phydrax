@@ -4,21 +4,25 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._structured import FiniteVolumeDiscretization
 
 
-VerticalCoordinate = Literal["zstar", "partial-z"]
+VerticalCoordinate: TypeAlias = Literal["zstar", "partial-z"]
 HorizontalCoordinate = Literal["cartesian", "latitude-longitude"]
+_AxisBoundaryValues: TypeAlias = tuple[ArrayLike | None, ArrayLike | None]
+_BoundaryValues: TypeAlias = tuple[_AxisBoundaryValues, _AxisBoundaryValues]
 
 
 def _face_neighbor_min(value: Array, axis: int, periodic: bool, /) -> Array:
@@ -56,7 +60,7 @@ def _face_difference(
     periodic: bool,
     /,
     *,
-    boundary_values: tuple[Array | None, Array | None] | None = None,
+    boundary_values: _AxisBoundaryValues | None = None,
 ) -> Array:
     moved = jnp.moveaxis(value, axis, 0)
     if periodic:
@@ -247,7 +251,7 @@ class PreparedHydrostaticGrid(StrictModule, NonTrainableState):
         potential: Array,
         /,
         *,
-        boundary_values=None,
+        boundary_values: _BoundaryValues | None = None,
     ) -> tuple[Array, Array]:
         boundaries = (
             ((None, None), (None, None)) if boundary_values is None else boundary_values
@@ -290,7 +294,7 @@ class PreparedHydrostaticGrid(StrictModule, NonTrainableState):
         )
 
     def surface_gradient(
-        self, potential: ArrayLike, /, *, boundary_values=None
+        self, potential: ArrayLike, /, *, boundary_values: _BoundaryValues | None = None
     ) -> tuple[Array, Array]:
         value = jnp.asarray(potential, dtype=self.cell_area.dtype)
         if value.shape != self.horizontal_shape:
@@ -303,7 +307,7 @@ class PreparedHydrostaticGrid(StrictModule, NonTrainableState):
         epoch: HydrostaticMetricEpoch,
         /,
         *,
-        boundary_values=None,
+        boundary_values: _BoundaryValues | None = None,
     ) -> tuple[Array, Array]:
         gx, gy = self.surface_gradient(potential, boundary_values=boundary_values)
         return (
@@ -336,7 +340,7 @@ class PreparedHydrostaticGrid(StrictModule, NonTrainableState):
         return _face_neighbor_average(value_, axis, self.periodic[axis])
 
     def layer_gradient(
-        self, potential: ArrayLike, /, *, boundary_values=None
+        self, potential: ArrayLike, /, *, boundary_values: _BoundaryValues | None = None
     ) -> tuple[Array, Array]:
         value = jnp.asarray(potential, dtype=self.cell_area.dtype)
         if value.shape != self.cell_shape:
@@ -349,7 +353,7 @@ class PreparedHydrostaticGrid(StrictModule, NonTrainableState):
         epoch: HydrostaticMetricEpoch,
         /,
         *,
-        boundary_values=None,
+        boundary_values: _BoundaryValues | None = None,
     ) -> tuple[Array, Array]:
         gx, gy = self.layer_gradient(potential, boundary_values=boundary_values)
         return -epoch.x_face_area * gx, -epoch.y_face_area * gy
@@ -461,7 +465,7 @@ class TensorZHydrostaticGridPlan(StrictModule, NonTrainableState):
         vertical_coordinate: VerticalCoordinate = "zstar",
         wet_depth: float = 1.0e-6,
         minimum_partial_fraction: float = 0.2,
-    ):
+    ) -> None:
         if not isinstance(discretization, FiniteVolumeDiscretization):
             raise TypeError("discretization must be FiniteVolumeDiscretization.")
         if len(discretization.cell_shape) != 3:
@@ -473,8 +477,9 @@ class TensorZHydrostaticGridPlan(StrictModule, NonTrainableState):
             raise ValueError("rest_depth must match the horizontal cell shape.")
         if bool(jnp.any(~jnp.isfinite(depth))) or bool(jnp.any(depth < 0.0)):
             raise ValueError("rest_depth must be finite and nonnegative.")
-        if vertical_coordinate not in ("zstar", "partial-z"):
-            raise ValueError("Unknown hydrostatic vertical-coordinate policy.")
+        vertical_coordinate = parse(
+            vertical_coordinate, VerticalCoordinate, "vertical_coordinate"
+        )
         wet = float(wet_depth)
         fraction = float(minimum_partial_fraction)
         if not np.isfinite(wet) or wet < 0.0 or not 0.0 < fraction <= 1.0:
@@ -572,7 +577,7 @@ class LatitudeLongitudeHydrostaticGridPlan(StrictModule, NonTrainableState):
         radius: float = 6_371_000.0,
         rotation_rate: float = 7.292115e-5,
         wet_depth: float = 1.0e-6,
-    ):
+    ) -> None:
         lon = jnp.asarray(longitude_faces, dtype=jnp.float64)
         lat = jnp.asarray(latitude_faces, dtype=jnp.float64)
         z = jnp.asarray(vertical_faces, dtype=jnp.float64)

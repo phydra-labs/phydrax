@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -41,7 +42,7 @@ class PowerAdjointTransferPair(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-10,
         transfer_id: str,
-    ):
+    ) -> None:
         if not isinstance(primal, AbstractLinearOperator) or not isinstance(
             dual, AbstractLinearOperator
         ):

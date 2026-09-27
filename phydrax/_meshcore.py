@@ -32,7 +32,7 @@ import os
 from collections.abc import Callable, Mapping
 from enum import IntEnum
 from pathlib import Path
-from typing import final
+from typing import Any, final
 
 import numpy as np
 
@@ -48,7 +48,7 @@ class MeshcoreUnavailableError(ImportError):
 class MeshcoreError(RuntimeError):
     """The native meshcore library refused a call for resource or internal reasons."""
 
-    def __init__(self, status: MeshcoreStatus, message: str, /):
+    def __init__(self, status: MeshcoreStatus, message: str, /) -> None:
         super().__init__(f"{message} (meshcore status {status.name})")
         self.status = status
 
@@ -184,18 +184,18 @@ class MeshcoreLibrary:
         version: str,
         build_hash: str,
         /,
-    ):
+    ) -> None:
         self._library = library
         self._functions = functions
         self.path = path
         self.version = version
         self.build_hash = build_hash
 
-    def __getitem__(self, name: str, /):
+    def __getitem__(self, name: str, /) -> Any:
         return self._functions[name]
 
 
-def _identity_text(function: Callable[[], object], symbol: str, path: Path, /):
+def _identity_text(function: Callable[[], object], symbol: str, path: Path, /) -> Any:
     """Decode one required non-null ASCII identity string, or return its error."""
 
     raw = function()
@@ -222,7 +222,9 @@ def _bind(library: ctypes.CDLL, path: Path, /) -> MeshcoreLibrary | str:
         except AttributeError:
             missing.append(name)
             continue
+        # ty: ignore[invalid-assignment]
         function.restype = restype
+        # ty: ignore[invalid-assignment]
         function.argtypes = argtypes
         functions[name] = function
     if missing:

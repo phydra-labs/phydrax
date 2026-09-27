@@ -10,9 +10,11 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from ._base import (
     _nan_where_invalid,
     _prepare_pair,
@@ -34,7 +36,7 @@ class PairedLossComparisonPlan(StrictModule):
         confidence: float = 0.95,
         resamples: int = 2_000,
         noninferiority_margin: float = 0.0,
-    ):
+    ) -> None:
         confidence_ = float(confidence)
         resamples_ = int(resamples)
         margin = float(noninferiority_margin)
@@ -84,7 +86,7 @@ class PairedLossComparisonResult(StrictModule):
         status: ArrayLike,
         plan: PairedLossComparisonPlan,
         grouped: bool,
-    ):
+    ) -> None:
         self.loss_difference = jnp.asarray(loss_difference)
         self.valid_mask = jnp.asarray(valid_mask, dtype=jnp.bool_)
         self.effect = jnp.asarray(effect)
@@ -156,7 +158,7 @@ def _bootstrap_effects(
     unit_numerator: Array,
     unit_weight: Array,
     unit_count: Array,
-    key: Key[Array, ""],
+    key: PRNGKey,
     resamples: int,
     /,
 ) -> Array:
@@ -164,7 +166,7 @@ def _bootstrap_effects(
     draw_position = jnp.arange(capacity)
     safe_unit_count = jnp.maximum(unit_count, 1)
 
-    def one_resample(_, replicate):
+    def one_resample(_: None, replicate: Array) -> tuple[None, Array]:
         replicate_key = jr.fold_in(key, replicate)
         sampled = jr.randint(
             replicate_key,
@@ -192,7 +194,7 @@ def compare_paired_losses(
     candidate_loss: ArrayLike,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     plan: PairedLossComparisonPlan,
     sample_weight: ArrayLike | None = None,
     mask: ArrayLike | None = None,

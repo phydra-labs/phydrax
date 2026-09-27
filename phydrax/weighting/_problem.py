@@ -10,8 +10,8 @@ from typing import TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -24,6 +24,7 @@ from ..linalg import (
     OperatorProperties,
     RankPolicy,
 )
+from ..linalg._spaces import _coordinate_dtype
 from ..linalg.eigen import SelfAdjointSpectrumPolicy
 from ..sparse import EdgeRelation, SparseLinearMap
 
@@ -33,7 +34,7 @@ class ExactMoments(StrictModule):
 
     values: Array
 
-    def __init__(self, values: ArrayLike, /):
+    def __init__(self, values: ArrayLike, /) -> None:
         values_ = _moment_values(values)
         self.values = values_
 
@@ -45,7 +46,7 @@ class IntervalMoments(StrictModule):
     upper: Array
     values: Array
 
-    def __init__(self, lower: ArrayLike, upper: ArrayLike, /):
+    def __init__(self, lower: ArrayLike, upper: ArrayLike, /) -> None:
         lower_ = _moment_values(lower)
         upper_ = _moment_values(upper).astype(lower_.dtype)
         if upper_.shape != lower_.shape:
@@ -76,7 +77,7 @@ class QuadraticMoments(StrictModule):
         /,
         *,
         covariance: ArrayLike | AbstractLinearOperator | None = None,
-    ):
+    ) -> None:
         values_ = _moment_values(values)
         count = values_.shape[0]
         if covariance is None:
@@ -161,7 +162,7 @@ class GroupMassConstraints(StrictModule):
         group_map: AbstractSparseLinearOperator,
         target: ExactMoments | IntervalMoments,
         /,
-    ):
+    ) -> None:
         if not isinstance(group_map, AbstractSparseLinearOperator):
             raise TypeError("group_map must be an AbstractSparseLinearOperator.")
         if not isinstance(target, (ExactMoments, IntervalMoments)):
@@ -223,7 +224,7 @@ class EqualWeightSubset(StrictModule):
 
     cardinality: int = eqx.field(static=True)
 
-    def __init__(self, cardinality: int, /):
+    def __init__(self, cardinality: int, /) -> None:
         if isinstance(cardinality, bool) or int(cardinality) <= 0:
             raise ValueError("cardinality must be a positive integer.")
         self.cardinality = int(cardinality)
@@ -240,7 +241,7 @@ class BoundaryFacePolicy(StrictModule):
         *,
         maximum_linear_programs: int = 10_000,
         zero_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         programs = int(maximum_linear_programs)
         tolerance = float(zero_tolerance)
         if programs <= 0 or not isfinite(tolerance) or tolerance < 0.0:
@@ -256,7 +257,13 @@ class MomentCalibrationExecutionPolicy(StrictModule):
 
     route: str = eqx.field(static=True)
 
-    def __init__(self, route: str = "dual-relative-entropy", /, *, solver=None):
+    def __init__(
+        self,
+        route: str = "dual-relative-entropy",
+        /,
+        *,
+        solver: object | None = None,
+    ) -> None:
         if route not in (
             "dual-relative-entropy",
             "canonical-conic",
@@ -287,7 +294,7 @@ class MomentCalibrationPolicy(StrictModule):
         affine_relative_tolerance: float = 1e-8,
         regularity_relative_tolerance: float = 1e-10,
         maximum_moments: int = 512,
-    ):
+    ) -> None:
         rank_ = RankPolicy() if rank is None else rank
         spectrum_ = SelfAdjointSpectrumPolicy() if spectrum is None else spectrum
         if not isinstance(rank_, RankPolicy):
@@ -340,19 +347,20 @@ class MomentCalibrationProblem(StrictModule):
         subset: EqualWeightSubset | None = None,
         boundary: BoundaryFacePolicy | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         moment_map = _moment_operator(features)
         if not isinstance(target, (ExactMoments, IntervalMoments, QuadraticMoments)):
             raise TypeError(
                 "target must be ExactMoments, IntervalMoments, or QuadraticMoments."
             )
-        source_points = moment_map.source.shape[0]
-        moment_count = moment_map.target.shape[0]
+        # _moment_operator validated one-dimensional ArraySpace source and target.
+        source_points = moment_map.source.size
+        moment_count = moment_map.target.size
         if target.values.shape != (moment_count,):
             raise ValueError(
                 f"Target moments must have shape ({moment_count},); got {target.values.shape}."
             )
-        dtype = moment_map.source.dtype
+        dtype = _coordinate_dtype(moment_map.source)
         if isinstance(target, ExactMoments):
             target_ = ExactMoments(target.values.astype(dtype))
         elif isinstance(target, IntervalMoments):
@@ -360,7 +368,7 @@ class MomentCalibrationProblem(StrictModule):
                 target.lower.astype(dtype), target.upper.astype(dtype)
             )
         else:
-            if target.covariance.source.dtype != dtype:
+            if _coordinate_dtype(target.covariance.source) != dtype:
                 raise TypeError(
                     "Quadratic moment covariance dtype must match the moment map."
                 )
@@ -383,7 +391,8 @@ class MomentCalibrationProblem(StrictModule):
         if group_constraints is not None:
             if not isinstance(group_constraints, GroupMassConstraints):
                 raise TypeError("group_constraints must be GroupMassConstraints or None.")
-            if group_constraints.group_map.source.shape != (source_points,):
+            # GroupMassConstraints validated a one-dimensional ArraySpace source.
+            if group_constraints.group_map.source.size != source_points:
                 raise ValueError("Group map source size must match calibration support.")
         if subset is not None:
             if not isinstance(subset, EqualWeightSubset):

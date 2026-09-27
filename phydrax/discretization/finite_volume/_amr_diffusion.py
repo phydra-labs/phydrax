@@ -12,9 +12,12 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
+import jax.core as jax_core
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -36,6 +39,7 @@ from ...linalg import (
     PreconditionerProperties,
     PyTreeSpace,
 )
+from ...typing import parse
 from ..amr._composite import CompositeAMRCellLayout
 from ..amr._core import BlockHierarchyTopology
 from ._diffusion import ConservativeBoundaryCondition, ConservativeBoundaryKind
@@ -50,11 +54,11 @@ CompositeBoundaryInput: TypeAlias = Mapping[
     ],
 ]
 CompositeBoundaryData: TypeAlias = Mapping[str, tuple[Any, Any]]
-CompositeCoarseOperatorSource = Literal["direct", "galerkin"]
+CompositeCoarseOperatorSource: TypeAlias = Literal["direct", "galerkin"]
 
 
 def _checked(value: Array, invalid: Array, message: str, /) -> Array:
-    if isinstance(invalid, jax.core.Tracer):
+    if isinstance(invalid, jax_core.Tracer):
         return eqx.error_if(value, invalid, message)
     if bool(invalid):
         raise ValueError(message)
@@ -138,7 +142,7 @@ class _CompositeAMRFaceRoutes(StrictModule, NonTrainableState):
     boundary_distance: Array
     route_id: str = eqx.field(static=True)
 
-    def __init__(self, layout: CompositeAMRCellLayout, /):
+    def __init__(self, layout: CompositeAMRCellLayout, /) -> None:
         topology = layout.topology
         dimension = len(topology.plan.grid.shape)
         finest_shape = topology.plan.global_cell_shapes[-1]
@@ -443,7 +447,7 @@ class CompositeAMRDiffusionPlan(StrictModule, NonTrainableState):
         *,
         boundaries: CompositeBoundaryInput | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(layout, CompositeAMRCellLayout):
             raise TypeError("Composite AMR diffusion requires CompositeAMRCellLayout.")
         precision_ = (
@@ -515,7 +519,7 @@ class PreparedCompositeAMRDiffusion(AbstractLinearOperator):
         plan: CompositeAMRDiffusionPlan,
         coefficient: ArrayLike | Sequence[ArrayLike],
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, CompositeAMRDiffusionPlan):
             raise TypeError(
                 "Prepared composite diffusion requires CompositeAMRDiffusionPlan."
@@ -962,9 +966,9 @@ def composite_amr_multigrid_builder(
     smoothers_ = tuple(smoothers)
     restrictions_ = tuple(restrictions)
     prolongations_ = tuple(prolongations)
-    source = str(coarse_operator_source)
-    if source not in ("direct", "galerkin"):
-        raise ValueError("Unknown composite AMR coarse-operator source.")
+    source = parse(
+        coarse_operator_source, CompositeCoarseOperatorSource, "coarse_operator_source"
+    )
     if not operators_ or not isinstance(operators_[0], PreparedCompositeAMRDiffusion):
         raise TypeError(
             "Composite AMR multigrid requires a prepared composite fine operator."

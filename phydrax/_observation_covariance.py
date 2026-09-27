@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PRNGKeyArray
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ._strict import StrictModule
@@ -22,10 +23,11 @@ from .linalg import (
     solve,
     TriangularLinearOperator,
 )
+from .typing import PRNGKey
 
 
 if TYPE_CHECKING:
-    from .observation import CoordinateLayout
+    from .observation import CholeskyCovarianceAction, CoordinateLayout
     from .uq import AbstractCovariance
 
 
@@ -61,7 +63,7 @@ class DiagonalCovarianceAction(StrictModule, NonTrainableState):
     layout: CoordinateLayout
     action_id: str = eqx.field(static=True)
 
-    def __init__(self, variance: ArrayLike, layout: CoordinateLayout, /):
+    def __init__(self, variance: ArrayLike, layout: CoordinateLayout, /) -> None:
         values = jax.lax.stop_gradient(jnp.asarray(variance))
         if values.shape != (layout.size,) or jnp.issubdtype(
             values.dtype, jnp.complexfloating
@@ -95,7 +97,7 @@ class DiagonalCovarianceAction(StrictModule, NonTrainableState):
         whitened = self.whiten(residual)
         return jnp.real(jnp.vdot(whitened, whitened))
 
-    def sample(self, key: PRNGKeyArray, /) -> Array:
+    def sample(self, key: PRNGKey, /) -> Array:
         normal = jax.random.normal(key, self.variance.shape, dtype=self.variance.dtype)
         return jnp.sqrt(self.variance) * normal
 
@@ -117,7 +119,7 @@ class LowRankDiagonalCovarianceAction(StrictModule, NonTrainableState):
         factors: ArrayLike,
         layout: CoordinateLayout,
         /,
-    ):
+    ) -> None:
         diagonal = np.asarray(variance)
         low_rank = np.asarray(factors)
         if (
@@ -194,7 +196,7 @@ class LowRankDiagonalCovarianceAction(StrictModule, NonTrainableState):
             raise ValueError("Residual must match covariance layout.")
         return jnp.real(jnp.vdot(value, self.solve(value)))
 
-    def sample(self, key: PRNGKeyArray, /) -> Array:
+    def sample(self, key: PRNGKey, /) -> Array:
         diagonal_key, factor_key = jax.random.split(key)
         real_dtype = self.variance.dtype
         diagonal = jax.random.normal(diagonal_key, self.variance.shape, dtype=real_dtype)
@@ -217,7 +219,7 @@ class PrecisionOperatorCovarianceAction(StrictModule, NonTrainableState):
         logdet_covariance: ArrayLike,
         layout: CoordinateLayout,
         /,
-    ):
+    ) -> None:
         if not isinstance(precision, AbstractLinearOperator):
             raise TypeError("Precision action must be a native AbstractLinearOperator.")
         if (
@@ -274,7 +276,7 @@ class KroneckerCholeskyCovarianceAction(StrictModule, NonTrainableState):
         factors: Sequence[ArrayLike],
         layout: CoordinateLayout,
         /,
-    ):
+    ) -> None:
         arrays = tuple(np.asarray(value) for value in factors)
         if not arrays or any(
             value.ndim != 2
@@ -348,7 +350,7 @@ class CirculantCovarianceAction(StrictModule, NonTrainableState):
     layout: CoordinateLayout
     action_id: str = eqx.field(static=True)
 
-    def __init__(self, spectrum: ArrayLike, layout: CoordinateLayout, /):
+    def __init__(self, spectrum: ArrayLike, layout: CoordinateLayout, /) -> None:
         values = np.asarray(spectrum, dtype=np.float64)
         expected = layout.size // 2 + 1
         if (
@@ -392,6 +394,8 @@ def prepare_observation_covariance(
     /,
     *,
     diagonal_nugget: ArrayLike | None = None,
+) -> (
+    DiagonalCovarianceAction | CholeskyCovarianceAction | LowRankDiagonalCovarianceAction
 ):
     """Lower a native UQ covariance into one likelihood-capable observation action."""
     from .observation import CholeskyCovarianceAction

@@ -9,7 +9,8 @@ from operator import index
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -53,7 +54,7 @@ class ColorGradientLatticeBoltzmannProblem(StrictModule, NonTrainableState):
         *,
         reference_density: float = 1.0,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         if not name_:
             raise ValueError("Color-gradient problem name must be non-empty.")

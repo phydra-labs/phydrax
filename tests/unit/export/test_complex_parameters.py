@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,12 +14,12 @@ import pytest
 import phydrax as phx
 
 
-def _complex_trainable_leaf_count(value):
+def _complex_trainable_leaf_count(value: Any) -> Any:
     parameters, _, _ = phx.partition_parameters(value)
     return sum(int(jnp.iscomplexobj(leaf)) for leaf in jax.tree.leaves(parameters))
 
 
-def test_complex_interchange_state_is_canonical_and_rejects_invalid_entries():
+def test_complex_interchange_state_is_canonical_and_rejects_invalid_entries() -> None:
     first = phx.export.ComplexInterchangeState.from_entries(
         "trainable-parameters",
         "external-model",
@@ -75,7 +78,7 @@ def test_complex_interchange_state_is_canonical_and_rejects_invalid_entries():
         )
 
 
-def test_complex_linear_and_low_rank_exact_round_trip():
+def test_complex_linear_and_low_rank_exact_round_trip() -> None:
     dense = phx.nn.layers.ComplexLinear(in_size=2, out_size=3, key=jr.key(0))
     dense_state = phx.export.export_complex_parameters(dense)
     dense_target = phx.nn.layers.ComplexLinear(in_size=2, out_size=3, key=jr.key(1))
@@ -83,7 +86,9 @@ def test_complex_linear_and_low_rank_exact_round_trip():
     point = jnp.asarray([0.2 + 0.1j, -0.3 + 0.4j])
     assert jnp.array_equal(dense_restored.weight_real, dense.weight_real)
     assert jnp.array_equal(dense_restored.weight_imag, dense.weight_imag)
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(dense_restored.bias_real, dense.bias_real)
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(dense_restored.bias_imag, dense.bias_imag)
     assert jnp.array_equal(dense_restored(point), dense(point))
     assert _complex_trainable_leaf_count(dense_restored) == 0
@@ -114,7 +119,7 @@ def test_complex_linear_and_low_rank_exact_round_trip():
     assert _complex_trainable_leaf_count(low_rank_restored) == 0
 
 
-def test_holomorphic_mlp_round_trip_preserves_values_jets_and_architecture():
+def test_holomorphic_mlp_round_trip_preserves_values_jets_and_architecture() -> None:
     model = phx.nn.models.HolomorphicMLP(
         in_size=2,
         out_size=2,
@@ -159,7 +164,7 @@ def test_holomorphic_mlp_round_trip_preserves_values_jets_and_architecture():
         phx.export.import_complex_parameters(incompatible, state)
 
 
-def test_polynomial_potential_and_multivariate_frame_coordinates_round_trip():
+def test_polynomial_potential_and_multivariate_frame_coordinates_round_trip() -> None:
     potential = phx.equations.HolomorphicPolynomialPotential(
         2,
         3,
@@ -171,9 +176,12 @@ def test_polynomial_potential_and_multivariate_frame_coordinates_round_trip():
     restored = phx.export.import_complex_parameters(target, state)
     coordinate = 0.2 - 0.3j
     assert jnp.array_equal(restored.coefficients, potential.coefficients)
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(restored(coordinate), potential(coordinate))
     assert jnp.array_equal(
+        # ty: ignore[invalid-argument-type]
         restored.jet(coordinate, 3).derivative(3),
+        # ty: ignore[invalid-argument-type]
         potential.jet(coordinate, 3).derivative(3),
     )
 
@@ -192,7 +200,7 @@ def test_polynomial_potential_and_multivariate_frame_coordinates_round_trip():
     assert jnp.array_equal(recovered, real_coordinates)
 
 
-def _constrained_holomorphic(free):
+def _constrained_holomorphic(free: Any) -> Any:
     frame = phx.equations.HolomorphicPolynomialFrame.one_variable(3)
     operator = phx.equations.HolomorphicConstraintOperatorPlan(
         frame,
@@ -208,7 +216,7 @@ def _constrained_holomorphic(free):
     )
 
 
-def test_constrained_import_recovers_free_coordinates_and_rejects_projection():
+def test_constrained_import_recovers_free_coordinates_and_rejects_projection() -> None:
     source = _constrained_holomorphic(jnp.linspace(-0.2, 0.3, 6))
     destination = _constrained_holomorphic(jnp.zeros((6,)))
     state = phx.export.export_complex_parameters(source)
@@ -243,10 +251,11 @@ def test_constrained_import_recovers_free_coordinates_and_rejects_projection():
         phx.export.import_complex_parameters(destination, invalid)
 
 
-def test_meromorphic_coefficients_and_trainable_poles_round_trip():
+def test_meromorphic_coefficients_and_trainable_poles_round_trip() -> None:
     poles = phx.equations.PoleSet(jnp.asarray([2.0 + 0.2j]), (2,))
     frame = phx.equations.MeromorphicLinearFrame(2, poles)
     operator = phx.equations.HolomorphicConstraintOperatorPlan(
+        # ty: ignore[invalid-argument-type]
         frame,
         (
             phx.equations.HolomorphicPointFunctional.value(-0.5),
@@ -280,7 +289,7 @@ def test_meromorphic_coefficients_and_trainable_poles_round_trip():
     assert _complex_trainable_leaf_count(pole_restored) == 0
 
 
-def test_import_precision_policy_rejects_narrowing_by_default():
+def test_import_precision_policy_rejects_narrowing_by_default() -> None:
     source = phx.nn.layers.ComplexLinear(in_size=2, out_size=2, key=jr.key(9))
     source = eqx.tree_at(
         lambda layer: (
@@ -293,7 +302,9 @@ def test_import_precision_policy_rejects_narrowing_by_default():
         (
             source.weight_real.astype(jnp.float64),
             source.weight_imag.astype(jnp.float64),
+            # ty: ignore[unresolved-attribute]
             source.bias_real.astype(jnp.float64),
+            # ty: ignore[unresolved-attribute]
             source.bias_imag.astype(jnp.float64),
         ),
     )
@@ -310,7 +321,9 @@ def test_import_precision_policy_rejects_narrowing_by_default():
         (
             target.weight_real.astype(jnp.float32),
             target.weight_imag.astype(jnp.float32),
+            # ty: ignore[unresolved-attribute]
             target.bias_real.astype(jnp.float32),
+            # ty: ignore[unresolved-attribute]
             target.bias_imag.astype(jnp.float32),
         ),
     )

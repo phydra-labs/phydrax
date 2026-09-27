@@ -10,6 +10,7 @@ import json
 import math
 import subprocess
 from dataclasses import asdict
+from typing import Any
 
 import jax
 import pytest
@@ -30,7 +31,9 @@ from phydrax.interchange.hfss_design import (
 )
 
 
-def test_source_pin_rejects_changed_working_bytes_and_unsafe_selectors(tmp_path):
+def test_source_pin_rejects_changed_working_bytes_and_unsafe_selectors(
+    tmp_path: Any,
+) -> None:
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
     source_file = tmp_path / "geometry.py"
     source_file.write_text("radius_cm = 4.0\n")
@@ -73,7 +76,7 @@ def test_source_pin_rejects_changed_working_bytes_and_unsafe_selectors(tmp_path)
         source.snapshot(["missing.py"], max_bytes=4096)
 
 
-def _hfss_fixture():
+def _hfss_fixture() -> Any:
     targets = (
         HFSSDesignTarget("frequency", "frequency_hz", ("qubit_1",), 5e9, 1e8),
         HFSSDesignTarget("linewidth", "kappa_hz", ("resonator_1",), 2e6, 1e5),
@@ -177,13 +180,13 @@ def _hfss_fixture():
     return profile, result
 
 
-def test_hfss_qualifies_eigenmode_epr_and_signed_capacitance_targets():
+def test_hfss_qualifies_eigenmode_epr_and_signed_capacitance_targets() -> None:
     profile, result = _hfss_fixture()
     values, _ = read_hfss_design_result(json.dumps(result).encode(), profile)
     assert values == (5e9, 2e6, 1.1e6, 0.75, -3.2)
 
 
-def test_hfss_rejects_mode_crossing_in_eigenmode_or_epr_results():
+def test_hfss_rejects_mode_crossing_in_eigenmode_or_epr_results() -> None:
     profile, result = _hfss_fixture()
     result["eigenmode_frequency_hz"] = [7.1e9, 5.1e9]
     with pytest.raises(ValueError, match="mode identity"):
@@ -194,7 +197,7 @@ def test_hfss_rejects_mode_crossing_in_eigenmode_or_epr_results():
         read_hfss_design_result(json.dumps(result).encode(), profile)
 
 
-def test_hfss_rejects_unconverged_tampered_or_unpinned_evidence():
+def test_hfss_rejects_unconverged_tampered_or_unpinned_evidence() -> None:
     profile, result = _hfss_fixture()
     result["eigenmode_convergence"]["data"][-1][1] = 0.1
     with pytest.raises(ValueError, match="convergence tolerance"):
@@ -209,12 +212,13 @@ def test_hfss_rejects_unconverged_tampered_or_unpinned_evidence():
         read_hfss_design_result(json.dumps(result).encode(), profile)
 
 
-def test_hfss_target_schema_has_no_s_parameter_substitute():
+def test_hfss_target_schema_has_no_s_parameter_substitute() -> None:
     with pytest.raises(ValueError, match="quantity and label arity"):
+        # ty: ignore[invalid-argument-type]
         HFSSDesignTarget("s21", "s_parameter", ("port1", "port2"), 0.0, 1.0)
 
 
-def _detector_fixture(*, bad_bin=None, drop_last=False):
+def _detector_fixture(*, bad_bin: Any = None, drop_last: Any = False) -> Any:
     parameters, fits = io.StringIO(), io.StringIO()
     parameter_fields = (
         "etarange",
@@ -271,6 +275,7 @@ def _detector_fixture(*, bad_bin=None, drop_last=False):
                 "prange": f"{momentum[j]} - {momentum[j + 1]}",
             }
             row = dict.fromkeys(parameter_fields, 0)
+            # ty: ignore[no-matching-overload]
             row.update(
                 {
                     **identity,
@@ -286,12 +291,13 @@ def _detector_fixture(*, bad_bin=None, drop_last=False):
                 row.update(bad_bin)
             writer.writerow(row)
             fit = dict.fromkeys(fit_fields, 0)
+            # ty: ignore[no-matching-overload]
             fit.update({**identity, "Chi2_dpp": 18, "NDF_dpp": 20})
             fit_writer.writerow(fit)
     return parameters.getvalue().encode(), fits.getvalue().encode()
 
 
-def test_detector_parser_preserves_fit_and_binomial_uncertainty():
+def test_detector_parser_preserves_fit_and_binomial_uncertainty() -> None:
     bins = read_gym_detector_metrics(*_detector_fixture())
     first = bins[0]
     assert first.eta_range == (-3.4, -2.0)
@@ -324,12 +330,14 @@ def test_detector_parser_preserves_fit_and_binomial_uncertainty():
         ({"error_KF_InEfficiency": 0.2}, "binomial error"),
     ],
 )
-def test_detector_failures_never_become_training_penalties(bad_bin, reason):
+def test_detector_failures_never_become_training_penalties(
+    bad_bin: Any, reason: Any
+) -> None:
     with pytest.raises(ValueError, match=reason):
         read_gym_detector_metrics(*_detector_fixture(bad_bin=bad_bin))
 
 
-def test_detector_rejects_excessive_reduced_chi_squared():
+def test_detector_rejects_excessive_reduced_chi_squared() -> None:
     parameters, fits = _detector_fixture()
     rows = list(csv.DictReader(io.StringIO(fits.decode())))
     rows[0]["Chi2_dpp"] = "220"
@@ -341,7 +349,7 @@ def test_detector_rejects_excessive_reduced_chi_squared():
         read_gym_detector_metrics(parameters, output.getvalue().encode())
 
 
-def test_corrected_silicon_profile_records_every_exact_source_stage():
+def test_corrected_silicon_profile_records_every_exact_source_stage() -> None:
     inputs = {
         "G4_Barrel_EIC.C": (
             b"void BarrelSetup(PHG4Reco* g4Reco)\npitch / 10000. / sqrt(12.)\npitch / 10000. / sqrt(12.)\n"
@@ -362,7 +370,7 @@ def test_corrected_silicon_profile_records_every_exact_source_stage():
     assert corrected["G4_FST_EIC.C"].count(b"9.37 / 100.") == 2
 
 
-def _settings():
+def _settings() -> Any:
     return (
         ("NLAYERS_SI_BAR", 2.0),
         ("NLAYERS_SI_EDISK", 1.0),
@@ -382,21 +390,26 @@ def _settings():
     )
 
 
-def test_unpatched_known_bad_detector_profile_is_never_accepted():
+def test_unpatched_known_bad_detector_profile_is_never_accepted() -> None:
     with pytest.raises(ValueError, match="corrected-silicon-units"):
         GYMDetectorProfile(
-            _settings(), 200, 123, "container@sha256:test", "upstream-unpatched"
+            _settings(),
+            200,
+            123,
+            "container@sha256:test",
+            # ty: ignore[invalid-argument-type]
+            "upstream-unpatched",
         )
 
 
-def test_device_adapter_entrypoints_refuse_jax_tracing():
+def test_device_adapter_entrypoints_refuse_jax_tracing() -> None:
     @jax.jit
-    def parse_detector_config():
+    def parse_detector_config() -> int:
         read_gym_detector_config(b"B_FIELD : 1.4\n")
         return 1
 
     @jax.jit
-    def construct_hfss_target(value):
+    def construct_hfss_target(value: Any) -> Any:
         HFSSDesignTarget("frequency", "frequency_hz", ("qubit_1",), value, 1.0)
         return value
 

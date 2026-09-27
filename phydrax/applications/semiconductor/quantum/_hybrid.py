@@ -6,7 +6,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from ....units import AMPERE
@@ -46,18 +47,18 @@ class QuantumClassicalInterface(StrictModule):
 
     def __init__(
         self,
-        classical_terminal,
-        quantum_terminal,
+        classical_terminal: str,
+        quantum_terminal: str,
         *,
-        classical_region_id,
-        quantum_region_id,
-        voltage_bounds,
-        current_tolerance,
-        heat_tolerance,
-        energy_reference,
-        provenance,
-        maximum_steps=48,
-    ):
+        classical_region_id: str,
+        quantum_region_id: str,
+        voltage_bounds: ArrayLike,
+        current_tolerance: ArrayLike,
+        heat_tolerance: ArrayLike,
+        energy_reference: str,
+        provenance: str,
+        maximum_steps: int = 48,
+    ) -> None:
         self.classical_terminal = _text(classical_terminal, "classical terminal")
         if quantum_terminal not in ("left", "right"):
             raise ValueError("quantum_terminal must be 'left' or 'right'.")
@@ -139,7 +140,7 @@ class HybridOperatingPoint(StrictModule):
     successful: Array
 
 
-def _classical_energy_reference(prepared):
+def _classical_energy_reference(prepared: PreparedSemiconductorDevice) -> str:
     references = {
         model.thermodynamics.energy_reference
         for model in prepared.plan.material_models
@@ -155,7 +156,9 @@ def _classical_energy_reference(prepared):
     return references.pop()
 
 
-def _shift_joined_lead(device, side, voltage):
+def _shift_joined_lead(
+    device: CoherentDevice, side: str, voltage: float
+) -> CoherentDevice:
     lead = device.left if side == "left" else device.right
     target_mu = -Q * voltage
     shifted = lead.shifted(target_mu - lead.chemical_potential)
@@ -167,19 +170,19 @@ def _shift_joined_lead(device, side, voltage):
 
 
 def solve_quantum_classical_interface(
-    prepared,
-    coherent,
-    interface,
-    classical_voltages,
+    prepared: PreparedSemiconductorDevice,
+    coherent: CoherentDevice,
+    interface: QuantumClassicalInterface,
+    classical_voltages: ArrayLike,
     /,
     *,
-    classical_initial=None,
+    classical_initial: SemiconductorOperatingPoint | ArrayLike | None = None,
     bound_occupation: BoundStateOccupation | None = None,
-    quantum_tolerance=1e-6,
-    spectral_tolerance=2e-4,
-    initial_panels=16,
-    max_refinements=3,
-):
+    quantum_tolerance: float = 1e-6,
+    spectral_tolerance: float = 2e-4,
+    initial_panels: int = 16,
+    max_refinements: int = 3,
+) -> HybridOperatingPoint:
     """Bisect the physical interface voltage until particle/energy exchange closes.
 
     Component failures and an unbracketed current are retained as unsuccessful
@@ -218,7 +221,7 @@ def solve_quantum_classical_interface(
     quantum_index = 0 if interface.quantum_terminal == "left" else 1
     attempts = []
 
-    def evaluate(voltage):
+    def evaluate(voltage: float) -> HybridInterfaceEvaluation:
         classical_bias = voltages.at[classical_index].set(voltage)
         classical = prepared.solve(classical_bias, initial=classical_initial)
         shifted = _shift_joined_lead(coherent, interface.quantum_terminal, voltage)

@@ -8,11 +8,12 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import PRNGKey
 from ...particle import (
     ParticleAllocationRequest,
     ParticlePopulationPlan,
@@ -42,7 +43,7 @@ class FieldIonizationPlan(StrictModule, NonTrainableState):
         ionization_energy: float,
         maximum_probability: float = 0.25,
         maximum_events: int,
-    ):
+    ) -> None:
         rate = float(rate_coefficient)
         power = float(field_power)
         energy = float(ionization_energy)
@@ -87,7 +88,7 @@ class FieldIonizationPlan(StrictModule, NonTrainableState):
         electron_population: ParticlePopulationState,
         electron_charge: PICChargeState,
         electron_particles: PICParticleState,
-        key,
+        key: PRNGKey,
         step_size: ArrayLike,
         step_index: ArrayLike,
         /,

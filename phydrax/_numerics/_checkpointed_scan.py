@@ -11,11 +11,12 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
 CheckpointedScanMode: TypeAlias = Literal["full", "step", "block", "scheduled"]
@@ -37,13 +38,12 @@ class AdaptiveReplayPreparationPolicy(StrictModule, NonTrainableState):
         /,
         *,
         cost_model: ReplayCostModel = "uniform",
-    ):
+    ) -> None:
         checkpoint_bytes = int(maximum_checkpoint_bytes)
         operations = int(maximum_schedule_operations)
         if checkpoint_bytes < 1 or operations < 1:
             raise ValueError("Replay byte and operation budgets must be positive.")
-        if cost_model not in ("uniform", "declared"):
-            raise ValueError("Unknown adaptive replay cost model.")
+        cost_model = parse(cost_model, ReplayCostModel, "cost_model")
         self.maximum_checkpoint_bytes = checkpoint_bytes
         self.maximum_schedule_operations = operations
         self.cost_model = cost_model
@@ -191,8 +191,7 @@ def checkpointed_scan(
     count = int(length)
     if count <= 0:
         raise ValueError("checkpointed_scan length must be positive.")
-    if mode not in ("full", "step", "block", "scheduled"):
-        raise ValueError("Unknown checkpointed scan mode.")
+    mode = parse(mode, CheckpointedScanMode, "mode")
     if mode in ("full", "step"):
         if block_size is not None or schedule is not None:
             raise ValueError("Full/step replay accepts no block or schedule.")
@@ -216,7 +215,9 @@ def checkpointed_scan(
                 lambda value: value[offset : offset + scheduled_size], xs
             )
 
-            def run_scheduled_block(block_carry, block_inputs):
+            def run_scheduled_block(
+                block_carry: Any, block_inputs: Any
+            ) -> tuple[Any, Any]:
                 return jax.lax.scan(
                     body, block_carry, block_inputs, length=scheduled_size
                 )
@@ -258,7 +259,7 @@ def checkpointed_scan(
             xs,
         )
 
-        def run_block(block_carry, block_inputs):
+        def run_block(block_carry: Any, block_inputs: Any) -> tuple[Any, Any]:
             return jax.lax.scan(body, block_carry, block_inputs, length=size)
 
         carry, block_outputs = jax.lax.scan(

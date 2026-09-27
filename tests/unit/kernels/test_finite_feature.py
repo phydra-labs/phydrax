@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,11 +12,11 @@ import pytest
 import phydrax as phx
 
 
-def _linear_features(point):
+def _linear_features(point: Any) -> Any:
     return jnp.asarray([1.0, point[0]])
 
 
-def _kernel(factor=None):
+def _kernel(factor: Any = None) -> Any:
     if factor is None:
         factor = jnp.eye(2)
     return phx.kernels.FiniteFeatureKernel(
@@ -24,7 +27,7 @@ def _kernel(factor=None):
     )
 
 
-def test_finite_feature_capability_reports_rank_and_direct_features():
+def test_finite_feature_capability_reports_rank_and_direct_features() -> None:
     points = jnp.asarray([-1.0, 0.5, 2.0])
     kernel = _kernel(jnp.asarray([[1.0, 0.0], [0.25, 0.5]]))
 
@@ -36,7 +39,7 @@ def test_finite_feature_capability_reports_rank_and_direct_features():
     assert jnp.allclose(phx.kernels.kernel_features(kernel, points), expected)
 
 
-def test_amplitude_sum_and_input_transform_compose_exact_features():
+def test_amplitude_sum_and_input_transform_compose_exact_features() -> None:
     points = jnp.asarray([-0.5, 0.25, 1.5])
     first = phx.kernels.AmplitudeKernel(_kernel(), 0.4)
     transformed = phx.kernels.InputTransformedKernel(
@@ -58,7 +61,7 @@ def test_amplitude_sum_and_input_transform_compose_exact_features():
     assert jnp.allclose(compiled(points), expected)
 
 
-def test_unsupported_kernel_algebra_has_no_feature_representation():
+def test_unsupported_kernel_algebra_has_no_feature_representation() -> None:
     finite = _kernel()
     stationary = phx.kernels.Matern32Kernel(length_scale=0.5)
 
@@ -73,34 +76,34 @@ def test_unsupported_kernel_algebra_has_no_feature_representation():
             phx.kernels.kernel_features(kernel, jnp.asarray([0.0, 1.0]))
 
 
-def test_composed_feature_rank_validation_rejects_inconsistent_kernel():
+def test_composed_feature_rank_validation_rejects_inconsistent_kernel() -> None:
     class BadFeatureKernel(phx.kernels.AbstractFiniteFeatureKernel):
-        def features(self, points):
+        def features(self, points: Any) -> Any:
             return jnp.ones((jnp.asarray(points).shape[0], 2))
 
         @property
-        def feature_rank(self):
+        def feature_rank(self) -> int:
             return 3
 
-        def pairwise(self, left, right):
+        def pairwise(self, left: Any, right: Any) -> Any:
             return jnp.asarray(1.0)
 
-        def matrix(self, left, right):
+        def matrix(self, left: Any, right: Any) -> Any:
             return jnp.ones((jnp.asarray(left).shape[0], jnp.asarray(right).shape[0]))
 
-        def diagonal(self, points):
+        def diagonal(self, points: Any) -> Any:
             return jnp.ones((jnp.asarray(points).shape[0],))
 
         @property
-        def max_derivative_order(self):
+        def max_derivative_order(self) -> int:
             return 0
 
         @property
-        def is_unit_diagonal(self):
+        def is_unit_diagonal(self) -> bool:
             return True
 
         @property
-        def kernel_id(self):
+        def kernel_id(self) -> str:
             return "bad-feature"
 
     with pytest.raises(ValueError, match="declared rank"):

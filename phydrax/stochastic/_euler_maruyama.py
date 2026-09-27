@@ -12,9 +12,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
 from ._linear_gaussian import degenerate_gaussian_log_prob
 from ._state_space import (
@@ -175,7 +176,7 @@ class EulerMaruyamaTransitionKernel(AbstractTransitionKernel):
         noise_shape: Sequence[int],
         process_id: str,
         approximation_id: str = "euler-maruyama",
-    ):
+    ) -> None:
         from ..dynamics import ContinuousSystem
         from ..solver import WienerTerm
 
@@ -399,7 +400,7 @@ class EulerMaruyamaQuasiLikelihood(StrictModule):
         /,
         *,
         normalize_by_interval: bool = False,
-    ):
+    ) -> None:
         if not isinstance(kernel, EulerMaruyamaTransitionKernel):
             raise TypeError("kernel must be an EulerMaruyamaTransitionKernel.")
         self.kernel = kernel
@@ -470,13 +471,28 @@ class EulerMaruyamaQuasiLikelihood(StrictModule):
         case_indices = jnp.repeat(jnp.arange(case_count, dtype=jnp.int32), pair_count)
         step_indices = jnp.tile(jnp.arange(pair_count, dtype=jnp.int32), case_count)
 
-        def transition_log_density(source_, target_, start_, end_, case_, step_, input_):
+        def transition_log_density(
+            source_: Array,
+            target_: Array,
+            start_: Array,
+            end_: Array,
+            case_: Array,
+            step_: Array,
+            input_: Array,
+        ) -> Array:
             context = self._context(args, case_, step_, input_)
             return self.kernel.log_prob(target_, source_, start_, end_, context)
 
         if inputs is None:
 
-            def score_without_input(source_, target_, start_, end_, case_, step_):
+            def score_without_input(
+                source_: Array,
+                target_: Array,
+                start_: Array,
+                end_: Array,
+                case_: Array,
+                step_: Array,
+            ) -> Array:
                 context = self._context(args, case_, step_, None)
                 return self.kernel.log_prob(target_, source_, start_, end_, context)
 

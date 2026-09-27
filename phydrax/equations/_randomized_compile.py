@@ -12,7 +12,7 @@ from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.axes as cx
 
@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from phydrax.domain import (
         DomainComponent,
         DomainFunction,
+        GraphBatch,
         GridBatch,
         PointBatch,
         SamplingPlan,
@@ -35,12 +36,13 @@ if TYPE_CHECKING:
         StochasticTracePolicy,
     )
     from ..terms._randomized_residual import (
-        RandomizedResidualLossMode,
         RandomizedResidualSamples,
         RandomizedResidualTerm,
     )
+from .._randomized_residual_modes import RandomizedResidualLossMode
+from ..typing import parse, PRNGKey
 from ._compile import compile_pde_expression
-from ._ir import PDEEquation, PDEExpression, PDEProblemIR
+from ._ir import PDECoordinate, PDEEquation, PDEExpression, PDEProblemIR
 from ._validate import infer_expression_type, validate_pde_ir
 
 
@@ -104,7 +106,7 @@ class RandomizedDifferentialPlan(StrictModule):
         node_coupling: RandomizedNodeCoupling = "independent",
         prefer_exact: bool = True,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         from ..operators.differential._dimension_estimators import (
             DimensionSamplingPolicy,
         )
@@ -112,12 +114,9 @@ class RandomizedDifferentialPlan(StrictModule):
             StochasticTracePolicy,
         )
 
-        if method not in ("hutchinson", "dimension"):
-            raise ValueError("method must be 'hutchinson' or 'dimension'.")
-        if loss_mode not in ("u_statistic", "independent_product", "plug_in"):
-            raise ValueError("Unknown randomized residual loss_mode.")
-        if node_coupling not in ("independent", "common"):
-            raise ValueError("node_coupling must be 'independent' or 'common'.")
+        method = parse(method, RandomizedDifferentialMethod, "method")
+        loss_mode = parse(loss_mode, RandomizedResidualLossMode, "loss_mode")
+        node_coupling = parse(node_coupling, RandomizedNodeCoupling, "node_coupling")
         if method == "hutchinson":
             if dimension_policy is not None:
                 raise ValueError("Hutchinson plans do not accept dimension_policy.")
@@ -184,7 +183,7 @@ class CompiledRandomizedPDETerm:
     source: PDEEquation
 
 
-def _coordinate(problem: PDEProblemIR, name: str, /):
+def _coordinate(problem: PDEProblemIR, name: str, /) -> PDECoordinate:
     return next(item for item in problem.coordinates if item.name == name)
 
 
@@ -359,7 +358,12 @@ def _coordinate_functions(
     for coordinate in problem.coordinates:
         name = coordinate.name
 
-        def identity(value, *, key=None, iter=None):
+        def identity(
+            value: object,
+            *,
+            key: PRNGKey | None = None,
+            iter: object = None,
+        ) -> object:
             del key, iter
             return value
 
@@ -375,7 +379,7 @@ def _evaluate_domain_value(
     value: Any,
     labels: tuple[str, ...],
     args: tuple[Any, ...],
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> Array:
     from phydrax.domain import DomainFunction
@@ -424,7 +428,7 @@ class _RandomizedPointCallable(StrictModule):
     node_indices: tuple[tuple[str, int], ...] = eqx.field(static=True)
     labels: tuple[str, ...] = eqx.field(static=True)
 
-    def _node_key(self, key: Key[Array, ""], path: str, /) -> Key[Array, ""]:
+    def _node_key(self, key: PRNGKey, path: str, /) -> PRNGKey:
         if self.plan.node_coupling == "common":
             return key
         index = dict(self.node_indices)[path]
@@ -434,7 +438,7 @@ class _RandomizedPointCallable(StrictModule):
         self,
         node: PDEExpression,
         args: tuple[Any, ...],
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
     ) -> Array:
         coordinates = _coordinate_functions(
@@ -455,7 +459,7 @@ class _RandomizedPointCallable(StrictModule):
         node: PDEExpression,
         path: str,
         args: tuple[Any, ...],
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
     ) -> Array:
         from phydrax.domain import DomainFunction
@@ -494,7 +498,7 @@ class _RandomizedPointCallable(StrictModule):
         local_position = operand.deps.index(node.coordinate)
         node_key = self._node_key(key, path)
 
-        def evaluate(local_state):
+        def evaluate(local_state: Array) -> Array:
             current = list(local_args)
             current[local_position] = local_state
             return operand.func(*current, key=key)
@@ -547,7 +551,7 @@ class _RandomizedPointCallable(StrictModule):
         node: PDEExpression,
         path: str,
         args: tuple[Any, ...],
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
     ) -> tuple[Array, bool]:
         randomized_path_set = frozenset(self.randomized_paths)
@@ -590,7 +594,13 @@ class _RandomizedPointCallable(StrictModule):
             f"Unsupported randomized expression node {node.op!r} at {path}."
         )
 
-    def __call__(self, *args: Any, key=None, iter=None, **kwargs: Any) -> Array:
+    def __call__(
+        self,
+        *args: Any,
+        key: PRNGKey | None = None,
+        iter: object = None,
+        **kwargs: Any,
+    ) -> Array:
         del iter, kwargs
         resolved_key = jr.key(0) if key is None else key
         result, randomized = self._evaluate(
@@ -617,7 +627,7 @@ class _RandomizedPDEEvaluator(StrictModule):
         self,
         functions: Mapping[str, DomainFunction],
         collocation: Any,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
     ) -> RandomizedResidualSamples:
         from phydrax.domain import DomainFunction, GridBatch, PointBatch
@@ -696,7 +706,7 @@ class _RandomizedCollocationSampler(StrictModule):
     component: DomainComponent
     sampling: SamplingPlan
 
-    def __call__(self, key: Key[Array, ""], /):
+    def __call__(self, key: PRNGKey, /) -> PointBatch | GridBatch | GraphBatch:
         return self.component.sample(self.sampling, key=key)
 
 
@@ -713,7 +723,7 @@ def compile_pde_randomized_term(
     label: str | None = None,
     sampling_mode: Literal["resample", "fixed"] = "resample",
     fixed_batch: PointBatch | GridBatch | None = None,
-    fixed_batch_key: Key[Array, ""] = jr.key(0),
+    fixed_batch_key: PRNGKey = jr.key(0),
 ) -> CompiledRandomizedPDETerm:
     """Compile one scalar IR equation to an estimator-aware sampled term."""
     from phydrax.domain import ComponentSum, DomainComponent

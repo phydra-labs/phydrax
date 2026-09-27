@@ -9,7 +9,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 from phydrax import ein
@@ -90,7 +91,7 @@ class SphericalSurfacePlan(StrictModule, NonTrainableState):
         sampling: SphericalSampling = "gl",
         execution: SphericalExecution = "recursive",
         max_precompute_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         bandlimit_ = int(bandlimit)
         if bandlimit_ < 2:
             raise ValueError("Surface bandlimit must be at least two.")
@@ -168,7 +169,7 @@ class SphericalSurfacePlan(StrictModule, NonTrainableState):
         radius: ArrayLike,
         /,
         *,
-        center: ArrayLike = (0.0, 0.0, 0.0),
+        center: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
     ) -> SphericalSpectralSurface:
         values = jnp.asarray(radius)
         if values.shape != self.sample_shape:
@@ -186,7 +187,7 @@ class SphericalSurfacePlan(StrictModule, NonTrainableState):
         radius: ArrayLike,
         /,
         *,
-        center: ArrayLike = (0.0, 0.0, 0.0),
+        center: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
     ) -> SphericalSpectralSurface:
         value = jnp.asarray(radius).reshape(())
         return self.from_samples(

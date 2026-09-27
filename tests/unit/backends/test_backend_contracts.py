@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _capabilities():
+def _capabilities() -> Any:
     return phx.backends.BackendCapabilities(
         backend="contract-probe",
         problem_kinds=("linear.system",),
@@ -21,8 +24,8 @@ def _capabilities():
 
 
 def test_backend_probe_is_lazy_and_reports_missing_requirement_exactly(
-    phydrax_events,
-):
+    phydrax_events: Any,
+) -> None:
     availability = phx.backends.probe_backend(
         _capabilities(),
         module="__phydrax_backend_that_does_not_exist__",
@@ -47,7 +50,7 @@ def test_backend_probe_is_lazy_and_reports_missing_requirement_exactly(
     )
 
 
-def test_backend_capability_rejection_is_distinct_from_provider_availability():
+def test_backend_capability_rejection_is_distinct_from_provider_availability() -> None:
     availability = phx.backends.BackendAvailability(
         capabilities=_capabilities(),
         available=True,
@@ -61,7 +64,7 @@ def test_backend_capability_rejection_is_distinct_from_provider_availability():
         availability.require("eigen.general")
 
 
-def test_backend_transfer_evidence_preserves_array_scalars():
+def test_backend_transfer_evidence_preserves_array_scalars() -> None:
     evidence = phx.backends.BackendTransferEvidence(
         host_to_device_bytes=128,
         device_to_host_bytes=64,

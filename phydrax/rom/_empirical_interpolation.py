@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 from numpy.typing import ArrayLike, NDArray
 
 from phydrax.ein import contract
@@ -17,6 +17,7 @@ from phydrax.ein import contract
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._basis import BasisRole, ReducedBasisArtifact
 
 
@@ -79,8 +80,7 @@ class EmpiricalInterpolationArtifact:
             raise ValueError(
                 "Empirical interpolation source, support, measure, geometry, and plan IDs must be non-empty."
             )
-        if role not in ("state", "nonlinear-term", "residual", "roq"):
-            raise ValueError("basis_role must identify one supported basis role.")
+        role = parse(role, BasisRole, "role")
         if not np.issubdtype(interpolation.dtype, np.inexact):
             raise TypeError("Interpolation matrices must use real or complex dtypes.")
         if reconstruction.dtype != interpolation.dtype:
@@ -161,7 +161,7 @@ class PreparedEmpiricalInterpolation(StrictModule, NonTrainableState):
     condition_number: float = eqx.field(static=True)
     maximum_reproduction_error: float = eqx.field(static=True)
 
-    def __init__(self, artifact: EmpiricalInterpolationArtifact, /):
+    def __init__(self, artifact: EmpiricalInterpolationArtifact, /) -> None:
         if not isinstance(artifact, EmpiricalInterpolationArtifact):
             raise TypeError("artifact must be EmpiricalInterpolationArtifact.")
         self.node_indices = jnp.asarray(artifact.node_indices, dtype=jnp.int32)

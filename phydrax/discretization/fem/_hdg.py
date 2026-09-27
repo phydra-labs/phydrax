@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -25,7 +26,7 @@ class HDGTraceSpace(StrictModule, NonTrainableState):
     trace_dof_count: int = eqx.field(static=True)
     trace_space_id: str = eqx.field(static=True)
 
-    def __init__(self, mesh: CellMesh, /):
+    def __init__(self, mesh: CellMesh, /) -> None:
         connectivity = mesh.connectivity
         if isinstance(connectivity, PolygonalConnectivity):
             width = int(np.max(np.asarray(connectivity.cell_kinds)))
@@ -77,7 +78,7 @@ class HDGCondensationPlan(StrictModule, NonTrainableState):
         trace_space: HDGTraceSpace,
         interior_dof_count: int,
         /,
-    ):
+    ) -> None:
         if not isinstance(trace_space, HDGTraceSpace):
             raise TypeError("trace_space must be HDGTraceSpace.")
         interior = int(interior_dof_count)

@@ -38,7 +38,7 @@ class TensorNetworkReleaseGate(StrEnum):
     INDEPENDENT_APPROVAL = "independent-approval"
 
 
-def _finite_nonnegative(value: object, name: str, /) -> float:
+def _finite_nonnegative(value: float, name: str, /) -> float:
     result = float(value)
     if not math.isfinite(result) or result < 0.0:
         raise ValueError(f"{name} must be finite and nonnegative.")
@@ -68,7 +68,7 @@ class TensorNetworkQualificationProfile(StrictModule, NonTrainableState):
         ),
         maximum_samples_per_claim: int = 100_000,
         target_maturity: TensorNetworkMaturity = TensorNetworkMaturity.QUALIFIED,
-    ):
+    ) -> None:
         supported = tuple(supported_tuples)
         if not supported or any(
             not isinstance(value, TensorNetworkSupportTuple) for value in supported
@@ -162,7 +162,7 @@ class TensorNetworkClaimEvidence(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str,
-    ):
+    ) -> None:
         if not isinstance(profile, TensorNetworkQualificationProfile) or not isinstance(
             support, TensorNetworkSupportTuple
         ):
@@ -240,7 +240,7 @@ class TensorNetworkQualificationResult(StrictModule, NonTrainableState):
         support: TensorNetworkSupportTuple,
         evidence: Sequence[TensorNetworkClaimEvidence],
         /,
-    ):
+    ) -> None:
         if not isinstance(profile, TensorNetworkQualificationProfile) or not isinstance(
             support, TensorNetworkSupportTuple
         ):
@@ -316,7 +316,7 @@ class TensorNetworkReleaseDecision(StrictModule, NonTrainableState):
         failure: TensorNetworkFailure,
         reasons: Sequence[str],
         /,
-    ):
+    ) -> None:
         result_id = _identifier(qualification_result_id, "qualification_result_id")
         evidence_ids = tuple(
             _identifier(value, "gate evidence ID") for value in gate_evidence_ids

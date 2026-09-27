@@ -18,19 +18,21 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ...stochastic import JUMP_INVALID_INTENSITY, JUMP_SUCCESS, PoissonClockRealization
+from ...typing import parse
 from ..contracts._credit import (
     CreditDefaultSwapContract,
     DefaultableBondContract,
     DefaultEventState,
     RecoveryTerms,
 )
-from ..core import PhysicalLaw, PricingLaw, StressLaw
+from ..core import CurrencyAmount, PhysicalLaw, PricingLaw, StressLaw
 from ..curves._core import CurveRepresentation, InterpolationMethod, PreparedCurve
 
 
@@ -134,7 +136,7 @@ class ReducedFormCreditModel(StrictModule):
         pricing_measure_id: str,
         model_id: str,
         default_process_id: str,
-    ):
+    ) -> None:
         _require_survival_curve(survival_curve)
         if not isinstance(recovery, RecoveryTerms):
             raise TypeError("recovery must be RecoveryTerms.")
@@ -165,15 +167,14 @@ class IntensityCreditModel(StrictModule):
         transformation: IntensityTransformation,
         factor_layout_id: str,
         model_id: str,
-    ):
+    ) -> None:
         if not isinstance(base, ReducedFormCreditModel):
             raise TypeError("base must be a ReducedFormCreditModel.")
         loadings = jnp.asarray(factor_loadings, dtype=jnp.float64)
         host = np.asarray(jax.device_get(loadings))
         if loadings.ndim != 1 or loadings.shape[0] == 0 or not np.all(np.isfinite(host)):
             raise ValueError("factor_loadings must be a non-empty finite vector.")
-        if transformation not in ("exponential", "positive_part"):
-            raise ValueError("Unsupported intensity transformation.")
+        transformation = parse(transformation, IntensityTransformation, "transformation")
         self.base = base
         self.factor_loadings = loadings
         self.transformation = transformation
@@ -203,7 +204,7 @@ class StructuralCreditModel(StrictModule):
         reference_entity_id: str,
         factor_layout_id: str,
         model_id: str,
-    ):
+    ) -> None:
         self.initial_asset_value = _scalar(
             initial_asset_value, "initial_asset_value", positive=True
         )
@@ -501,7 +502,7 @@ def default_events_from_intensity_paths(
     )
 
 
-def _face_units(amount, /) -> Array:
+def _face_units(amount: CurrencyAmount, /) -> Array:
     return amount.atoms.astype("float64") / float(amount.currency.atoms_per_unit)
 
 

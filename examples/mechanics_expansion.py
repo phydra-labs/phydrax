@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def main():
+def main() -> None:
     body_ids = jnp.asarray([10, 11], dtype=jnp.int64)
     particles = phx.discretization.ParticleSetPlan(
         body_ids,

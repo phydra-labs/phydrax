@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -11,7 +14,7 @@ from opt_einsum import contract
 import phydrax as phx
 
 
-def test_low_rank_complex_linear_matches_materialized_affine_map():
+def test_low_rank_complex_linear_matches_materialized_affine_map() -> None:
     layer = phx.nn.layers.LowRankComplexLinear(
         in_size=4,
         out_size=3,
@@ -27,7 +30,7 @@ def test_low_rank_complex_linear_matches_materialized_affine_map():
     assert layer.initialization.relative_truncation_residual >= 0.0
 
 
-def test_full_rank_factorization_recovers_dense_initializer_energy():
+def test_full_rank_factorization_recovers_dense_initializer_energy() -> None:
     layer = phx.nn.layers.LowRankComplexLinear(
         in_size=3,
         out_size=4,
@@ -38,7 +41,7 @@ def test_full_rank_factorization_recovers_dense_initializer_energy():
     assert layer.initialization.relative_truncation_residual < 1e-12
 
 
-def test_low_rank_complex_linear_uses_real_trainable_leaves_and_jax_transforms():
+def test_low_rank_complex_linear_uses_real_trainable_leaves_and_jax_transforms() -> None:
     layer = phx.nn.layers.LowRankComplexLinear(
         in_size=3,
         out_size=2,
@@ -56,7 +59,7 @@ def test_low_rank_complex_linear_uses_real_trainable_leaves_and_jax_transforms()
 
 
 @pytest.mark.parametrize("rank", (0, 4, 1.5, True))
-def test_low_rank_complex_linear_rejects_invalid_rank(rank):
+def test_low_rank_complex_linear_rejects_invalid_rank(rank: Any) -> None:
     with pytest.raises((TypeError, ValueError)):
         phx.nn.layers.LowRankComplexLinear(
             in_size=3,
@@ -65,7 +68,7 @@ def test_low_rank_complex_linear_rejects_invalid_rank(rank):
         )
 
 
-def test_factorized_holomorphic_mlp_is_holomorphic_and_binds_architecture():
+def test_factorized_holomorphic_mlp_is_holomorphic_and_binds_architecture() -> None:
     model = phx.nn.models.HolomorphicMLP(
         in_size=1,
         out_size=2,
@@ -75,7 +78,7 @@ def test_factorized_holomorphic_mlp_is_holomorphic_and_binds_architecture():
     )
     point = jnp.asarray([0.2, -0.3])
 
-    def real_map(value):
+    def real_map(value: Any) -> Any:
         output = model(value[0] + 1j * value[1])
         return jnp.concatenate((jnp.real(output), jnp.imag(output)))
 
@@ -95,7 +98,7 @@ def test_factorized_holomorphic_mlp_is_holomorphic_and_binds_architecture():
     )
 
 
-def test_holomorphic_mlp_dense_default_and_rank_plan_validation():
+def test_holomorphic_mlp_dense_default_and_rank_plan_validation() -> None:
     dense = phx.nn.models.HolomorphicMLP(
         in_size=1,
         out_size=1,
@@ -117,5 +120,6 @@ def test_holomorphic_mlp_dense_default_and_rank_plan_validation():
             in_size=1,
             out_size=1,
             hidden_sizes=(3,),
+            # ty: ignore[invalid-argument-type]
             linear_ranks=(1.5, 1),
         )

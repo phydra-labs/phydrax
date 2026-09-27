@@ -12,17 +12,21 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._identity import NumericRevision
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....circuit import ModalWaveReference
+from ....typing import parse
 from ._contracts import (
     ContinuousFourierModalLayer,
     FourierModalLayer,
+    FourierModalMaxwellProblem,
     FourierModalSourcePlane,
+    FrequencyMaxwellMaterial,
 )
 from ._loss import FourierModalLossConvergenceEvidence, FourierModalLossEvidence
 from ._numeric_revision import (
@@ -117,12 +121,11 @@ class EquivalentSlabRetrievalPlan(StrictModule, NonTrainableState):
         grazing_tolerance: float = 1.0e-10,
         transmission_tolerance: float = 1.0e-12,
         passive_claim: bool = False,
-    ):
+    ) -> None:
         minimum, maximum = (int(value) for value in branch_window)
         if minimum > maximum:
             raise ValueError("branch_window must be ordered.")
-        if anchor not in ("low-frequency", "known-index", "cross-thickness"):
-            raise ValueError("Unknown equivalent-slab branch anchor.")
+        anchor = parse(anchor, RetrievalAnchor, "anchor")
         anchor_value = (
             None
             if anchor_refractive_index is None
@@ -225,7 +228,7 @@ class LocalIsotropicQualificationPolicy(StrictModule, NonTrainableState):
         commensurate_denominator_limit: int = 16,
         commensurate_tolerance: float = 1.0e-8,
         passive_claim: bool = True,
-    ):
+    ) -> None:
         tolerances = (
             parameter_relative_tolerance,
             parameter_absolute_tolerance,
@@ -301,7 +304,12 @@ def _modal_admittance(modes: HomogeneousPortModes, index: int, /) -> Array:
     return jnp.sum(jnp.conj(ex) * hy - jnp.conj(ey) * hx) / denominator
 
 
-def _same_material(left, right, problem, /) -> bool:
+def _same_material(
+    left: FrequencyMaxwellMaterial,
+    right: FrequencyMaxwellMaterial,
+    problem: FourierModalMaxwellProblem,
+    /,
+) -> bool:
     left_values = _canonical_material_samples(left, problem)
     right_values = _canonical_material_samples(right, problem)
     return (

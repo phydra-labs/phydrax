@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 from phydrax.solver._dmrg import FiniteDMRGPolicy, FiniteDMRGProblem, solve_finite_dmrg
@@ -41,7 +44,7 @@ from phydrax.tensor_network._thermal import (
 )
 
 
-def _product_state(*vectors):
+def _product_state(*vectors: Any) -> Any:
     return MatrixProductState(
         tuple(
             jnp.asarray(vector, dtype=jnp.complex128)[None, :, None] for vector in vectors
@@ -49,7 +52,7 @@ def _product_state(*vectors):
     )
 
 
-def test_local_and_string_mpo_builders_have_dense_and_hermiticity_evidence():
+def test_local_and_string_mpo_builders_have_dense_and_hermiticity_evidence() -> None:
     z = jnp.diag(jnp.asarray([1.0, -1.0], dtype=jnp.complex128))
     result = build_local_term_mpo(
         (2, 2), (FiniteLocalTerm(0, (z,)), FiniteLocalTerm(1, (z,), coefficient=2.0))
@@ -62,7 +65,7 @@ def test_local_and_string_mpo_builders_have_dense_and_hermiticity_evidence():
     assert jnp.allclose(string.operator.to_dense(), jnp.kron(z, z))
 
 
-def test_local_mpo_builder_supports_heterogeneous_site_dimensions():
+def test_local_mpo_builder_supports_heterogeneous_site_dimensions() -> None:
     x = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128)
     number = jnp.diag(jnp.arange(3.0)).astype(jnp.complex128)
     result = build_local_term_mpo(
@@ -82,7 +85,7 @@ def test_local_mpo_builder_supports_heterogeneous_site_dimensions():
     assert bool(result.evidence.hermitian)
 
 
-def test_finite_dmrg_reports_galerkin_global_residual_and_variance():
+def test_finite_dmrg_reports_galerkin_global_residual_and_variance() -> None:
     z = jnp.diag(jnp.asarray([1.0, -1.0], dtype=jnp.complex128))
     hamiltonian = build_local_term_mpo(
         (2, 2), (FiniteLocalTerm(0, (z,)), FiniteLocalTerm(1, (z,)))
@@ -99,7 +102,7 @@ def test_finite_dmrg_reports_galerkin_global_residual_and_variance():
     assert jnp.allclose(result.energy, -2.0, atol=1e-7)
 
 
-def test_excited_state_projector_targeting_reports_reference_overlap():
+def test_excited_state_projector_targeting_reports_reference_overlap() -> None:
     z = jnp.diag(jnp.asarray([1.0, -1.0], dtype=jnp.complex128))
     hamiltonian = build_local_term_mpo(
         (2, 2), (FiniteLocalTerm(0, (z,)), FiniteLocalTerm(1, (z,)))
@@ -119,7 +122,7 @@ def test_excited_state_projector_targeting_reports_reference_overlap():
     assert result.reference_overlaps[0] < 1e-6
 
 
-def test_finite_tdvp_real_and_imaginary_time_semantics_are_normalized():
+def test_finite_tdvp_real_and_imaginary_time_semantics_are_normalized() -> None:
     z = jnp.diag(jnp.asarray([1.0, -1.0], dtype=jnp.complex128))
     hamiltonian = product_mpo(z[None, ...])
     plus = _product_state(jnp.asarray([1.0, 1.0]) / jnp.sqrt(2.0))
@@ -143,7 +146,7 @@ def test_finite_tdvp_real_and_imaginary_time_semantics_are_normalized():
     assert imaginary.checkpoint.completed_steps == 2
 
 
-def test_two_site_tdvp_uses_fixed_schedule_and_truncation_capacity():
+def test_two_site_tdvp_uses_fixed_schedule_and_truncation_capacity() -> None:
     z = jnp.diag(jnp.asarray([1.0, -1.0], dtype=jnp.complex128))
     hamiltonian = build_local_term_mpo(
         (2, 2), (FiniteLocalTerm(0, (z,)), FiniteLocalTerm(1, (z,)))
@@ -167,7 +170,7 @@ def test_two_site_tdvp_uses_fixed_schedule_and_truncation_capacity():
     assert schedule.operator_at(0).structure_id == schedule.operator_at(1).structure_id
 
 
-def test_variational_compression_returns_fixed_objective_and_residual_histories():
+def test_variational_compression_returns_fixed_objective_and_residual_histories() -> None:
     state = _product_state([1.0, 1.0], [1.0, -1.0]).normalized()
     compressed, evidence = variational_compress_mps(
         state,
@@ -183,7 +186,7 @@ def test_variational_compression_returns_fixed_objective_and_residual_histories(
     assert jnp.all(jnp.isfinite(evidence.objective_history[evidence.active_sweeps.sum()]))
 
 
-def test_beta_zero_purification_is_maximally_mixed_and_normalized():
+def test_beta_zero_purification_is_maximally_mixed_and_normalized() -> None:
     z = jnp.diag(jnp.asarray([1.0, -1.0], dtype=jnp.complex128))
     hamiltonian = product_mpo(z[None, ...])
     thermal = finite_temperature_purification(
@@ -198,7 +201,7 @@ def test_beta_zero_purification_is_maximally_mixed_and_normalized():
     )
 
 
-def test_response_zero_time_sum_rule_and_finite_fourier_history():
+def test_response_zero_time_sum_rule_and_finite_fourier_history() -> None:
     z = jnp.diag(jnp.asarray([1.0, -1.0], dtype=jnp.complex128))
     x = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128)
     problem = FiniteResponseProblem(
@@ -219,7 +222,7 @@ def test_response_zero_time_sum_rule_and_finite_fourier_history():
     assert jnp.all(jnp.isfinite(result.spectrum))
 
 
-def test_correlations_reduced_density_and_entanglement_are_computed():
+def test_correlations_reduced_density_and_entanglement_are_computed() -> None:
     z = jnp.diag(jnp.asarray([1.0, -1.0], dtype=jnp.complex128))
     state = _product_state([1.0, 0.0], [1.0, 0.0])
     correlations = finite_correlation_matrix(state, z)

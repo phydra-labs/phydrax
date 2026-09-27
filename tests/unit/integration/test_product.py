@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -6,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def _product_problem():
+def _product_problem() -> Any:
     space = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     time = phx.domain.ScalarInterval(0.0, 2.0, label="t")
     domain = phx.domain.ProductDomain(space, time)
@@ -14,7 +16,7 @@ def _product_problem():
     return domain, function
 
 
-def test_deterministic_product_plan_composes_axis_rules():
+def test_deterministic_product_plan_composes_axis_rules() -> None:
     domain, function = _product_problem()
     plan = phx.integration.ProductIntegrationPlan(
         {
@@ -36,7 +38,7 @@ def test_deterministic_product_plan_composes_axis_rules():
     assert estimate.provenance.method == "product"
 
 
-def test_sparse_grid_axis_group_composes_with_fixed_factor():
+def test_sparse_grid_axis_group_composes_with_fixed_factor() -> None:
     x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     y = phx.domain.ScalarInterval(0.0, 1.0, label="y")
     t = phx.domain.ScalarInterval(0.0, 2.0, label="t")
@@ -58,7 +60,7 @@ def test_sparse_grid_axis_group_composes_with_fixed_factor():
     assert jnp.allclose(jnp.asarray(estimate.value.data), 10.0 / 3.0, atol=1e-11)
 
 
-def test_mixed_fixed_and_iid_plan_reports_only_stochastic_axis_error():
+def test_mixed_fixed_and_iid_plan_reports_only_stochastic_axis_error() -> None:
     domain, function = _product_problem()
     plan = phx.integration.ProductIntegrationPlan(
         {
@@ -78,10 +80,11 @@ def test_mixed_fixed_and_iid_plan_reports_only_stochastic_axis_error():
 
     assert jnp.allclose(jnp.asarray(estimate.value.data), 8.0 / 3.0, atol=5e-2)
     assert estimate.error_kind == "iid-standard-error"
+    # ty: ignore[unsupported-operator]
     assert estimate.error_estimate > 0.0
 
 
-def test_stochastic_product_requires_declared_domain_functions():
+def test_stochastic_product_requires_declared_domain_functions() -> None:
     domain, _ = _product_problem()
     plan = phx.integration.ProductIntegrationPlan(
         {
@@ -92,7 +95,7 @@ def test_stochastic_product_requires_declared_domain_functions():
         }
     )
 
-    def undeclared(x=jnp.asarray(2.0), *, key=None):
+    def undeclared(x: Any = jnp.asarray(2.0), *, key: Any = None) -> Any:
         del key
         return x**2
 
@@ -105,7 +108,7 @@ def test_stochastic_product_requires_declared_domain_functions():
         )
 
 
-def test_mixed_qmc_needs_replicates_for_uncertainty():
+def test_mixed_qmc_needs_replicates_for_uncertainty() -> None:
     domain, function = _product_problem()
     fixed = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(8))
     deterministic_plan = phx.integration.ProductIntegrationPlan(
@@ -139,7 +142,7 @@ def test_mixed_qmc_needs_replicates_for_uncertainty():
     assert randomized.error_kind == "randomized-qmc-replicate-error"
 
 
-def test_grouped_qmc_uses_one_joint_reference_design():
+def test_grouped_qmc_uses_one_joint_reference_design() -> None:
     x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     y = phx.domain.ScalarInterval(0.0, 1.0, label="y")
     domain = phx.domain.ProductDomain(x, y)
@@ -166,7 +169,7 @@ def test_grouped_qmc_uses_one_joint_reference_design():
     assert estimate.value.data == pytest.approx(0.125)
 
 
-def test_product_plan_requires_exact_nonfixed_label_coverage():
+def test_product_plan_requires_exact_nonfixed_label_coverage() -> None:
     domain, function = _product_problem()
     plan = phx.integration.ProductIntegrationPlan(
         {"x": phx.integration.FixedQuadraturePlan()}
@@ -178,7 +181,7 @@ def test_product_plan_requires_exact_nonfixed_label_coverage():
         )
 
 
-def test_product_density_normalization_uses_full_product_measure():
+def test_product_density_normalization_uses_full_product_measure() -> None:
     domain, _ = _product_problem()
     function = domain.Function("x", "t")(lambda x, t: x + t)
     log_density = domain.Function("x", "t")(lambda x, t: jnp.log1p(x) + jnp.log1p(t))
@@ -201,7 +204,7 @@ def test_product_density_normalization_uses_full_product_measure():
     assert jnp.allclose(jnp.asarray(estimate.value.data), 31.0 / 18.0, atol=1e-12)
 
 
-def test_product_plan_preserves_unintegrated_target_axes():
+def test_product_plan_preserves_unintegrated_target_axes() -> None:
     domain, function = _product_problem()
     plan = phx.integration.ProductIntegrationPlan(
         {
@@ -225,7 +228,7 @@ def test_product_plan_preserves_unintegrated_target_axes():
     )
 
 
-def test_product_plan_integrates_multiple_complete_axis_blocks():
+def test_product_plan_integrates_multiple_complete_axis_blocks() -> None:
     x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     y = phx.domain.ScalarInterval(0.0, 1.0, label="y")
     t = phx.domain.ScalarInterval(0.0, 1.0, label="t")
@@ -251,7 +254,7 @@ def test_product_plan_integrates_multiple_complete_axis_blocks():
     )
 
 
-def test_product_plan_rejects_unsupported_control_variates():
+def test_product_plan_rejects_unsupported_control_variates() -> None:
     domain, function = _product_problem()
     control = domain.Function("t")(lambda t: t)
     estimator = phx.integration.ControlVariateEstimator(
@@ -278,7 +281,7 @@ def test_product_plan_rejects_unsupported_control_variates():
         )
 
 
-def test_randomized_product_materialization_is_jittable():
+def test_randomized_product_materialization_is_jittable() -> None:
     domain, _ = _product_problem()
     target = phx.integration.over(domain.component())
     plan = phx.integration.ProductIntegrationPlan(
@@ -294,7 +297,7 @@ def test_randomized_product_materialization_is_jittable():
     )
 
     @jax.jit
-    def materialized_time_points(key):
+    def materialized_time_points(key: Any) -> Any:
         realization = phx.integration.materialize(target, plan, key=key)
         return realization.batch.batches[0].points.points["t"].data
 
@@ -304,7 +307,7 @@ def test_randomized_product_materialization_is_jittable():
     assert jnp.all(jnp.isfinite(points))
 
 
-def test_mixed_product_density_preserves_a_normalized_component_base():
+def test_mixed_product_density_preserves_a_normalized_component_base() -> None:
     space = phx.domain.ScalarInterval(0.0, 2.0, label="x")
     time = phx.domain.ScalarInterval(0.0, 3.0, label="t")
     domain = phx.domain.ProductDomain(space, time)
@@ -327,7 +330,7 @@ def test_mixed_product_density_preserves_a_normalized_component_base():
     assert jnp.allclose(jnp.asarray(estimate.value.data), 1.0, atol=1e-12)
 
 
-def test_open_probability_product_materialization_is_jittable():
+def test_open_probability_product_materialization_is_jittable() -> None:
     probability = phx.domain.ProbabilityDomain(
         phx.uq.Normal(0.0, 1.0),
         label="z",
@@ -338,7 +341,7 @@ def test_open_probability_product_materialization_is_jittable():
     )
 
     @jax.jit
-    def materialized_probability_points():
+    def materialized_probability_points() -> Any:
         realization = phx.integration.materialize(target, plan)
         return realization.batch.batches[0].points.points["z"].data
 
@@ -356,8 +359,8 @@ def test_open_probability_product_materialization_is_jittable():
     ),
 )
 def test_endpoint_inclusive_probability_product_requires_bounded_support(
-    factor_plan,
-):
+    factor_plan: Any,
+) -> None:
     probability = phx.domain.ProbabilityDomain(
         phx.uq.Normal(0.0, 1.0),
         label="z",
@@ -369,7 +372,7 @@ def test_endpoint_inclusive_probability_product_requires_bounded_support(
         phx.integration.materialize(target, plan)
 
 
-def test_retained_randomized_qmc_axes_do_not_create_reduction_replicates():
+def test_retained_randomized_qmc_axes_do_not_create_reduction_replicates() -> None:
     x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     t = phx.domain.ScalarInterval(0.0, 1.0, label="t")
     domain = phx.domain.ProductDomain(x, t)
@@ -387,7 +390,7 @@ def test_retained_randomized_qmc_axes_do_not_create_reduction_replicates():
     assert not realization.batch.randomized_qmc
 
 
-def test_retained_qmc_coordinates_are_stable_across_reduced_qmc_replicas():
+def test_retained_qmc_coordinates_are_stable_across_reduced_qmc_replicas() -> None:
     x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     t = phx.domain.ScalarInterval(0.0, 1.0, label="t")
     domain = phx.domain.ProductDomain(x, t)

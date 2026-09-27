@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -15,26 +18,26 @@ class _ResidualCorrectionOperator(phx.nn.operator.AbstractOperatorModel):
     in_size: str = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self, gain=0.5):
+    def __init__(self, gain: Any = 0.5) -> None:
         self.gain = jnp.asarray(gain, dtype=jnp.float32)
         self.in_size = "scalar"
         self.out_size = "scalar"
 
     @property
-    def operator_contract(self):
+    def operator_contract(self) -> Any:
         return phx.nn.operator.operator_architecture_contract("FNO")
 
-    def __call_operator_batch__(self, batch, /, *, key=None):
+    def __call_operator_batch__(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         values = batch.input("residual").values
         assert values is not None
         return self.gain * values
 
-    def __call__(self, batch, /, *, key=None):
+    def __call__(self, batch: Any, /, *, key: Any = None) -> Any:
         return self.__call_operator_batch__(batch, key=key)
 
 
-def _operator_task():
+def _operator_task() -> Any:
     return phx.nn.operator.OperatorTask(
         "linear-residual-correction",
         fields=(
@@ -64,7 +67,7 @@ def _operator_task():
     )
 
 
-def _template(count=3):
+def _template(count: Any = 3) -> Any:
     axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, count),
@@ -80,7 +83,7 @@ def _template(count=3):
     )
 
 
-def _field_space(name, support_id, vector_space):
+def _field_space(name: Any, support_id: Any, vector_space: Any) -> Any:
     count = vector_space.size
     return phx.discretization.DiscreteFieldSpace(
         name,
@@ -92,7 +95,7 @@ def _field_space(name, support_id, vector_space):
     )
 
 
-def _transfer(source, target, *, transfer_id):
+def _transfer(source: Any, target: Any, *, transfer_id: Any) -> Any:
     matrix = jnp.eye(
         source.vector_space.size, dtype=source.vector_space.structure().dtype
     )
@@ -108,7 +111,12 @@ def _transfer(source, target, *, transfer_id):
     )
 
 
-def _binding(*, gain=0.5, artifact_id="correction-artifact", normalization=None):
+def _binding(
+    *,
+    gain: Any = 0.5,
+    artifact_id: Any = "correction-artifact",
+    normalization: Any = None,
+) -> Any:
     template = _template()
     support = template.input("residual").support_id
     vector = phx.linalg.ArraySpace((3,), dtype=jnp.float32)
@@ -146,7 +154,7 @@ def _binding(*, gain=0.5, artifact_id="correction-artifact", normalization=None)
     return binding
 
 
-def test_prepared_correction_preserves_physical_normalization_and_is_jittable():
+def test_prepared_correction_preserves_physical_normalization_and_is_jittable() -> None:
     normalizer = phx.nn.operator.training.AffineNormalizer(
         mean=jnp.asarray(0.0),
         scale=jnp.asarray(2.0),
@@ -173,7 +181,9 @@ def test_prepared_correction_preserves_physical_normalization_and_is_jittable():
     )
 
 
-def test_direct_correction_is_fgmres_only_and_original_residual_is_authoritative():
+def test_direct_correction_is_fgmres_only_and_original_residual_is_authoritative() -> (
+    None
+):
     binding = _binding(gain=0.4)
     builder = phx.nn.operator.TrainedOperatorPreconditionerBuilder(
         binding,
@@ -215,7 +225,7 @@ def test_direct_correction_is_fgmres_only_and_original_residual_is_authoritative
         )
 
 
-def test_binding_identity_tracks_artifact_and_rejects_wrong_transfer_direction():
+def test_binding_identity_tracks_artifact_and_rejects_wrong_transfer_direction() -> None:
     first = _binding(artifact_id="artifact-a")
     second = _binding(artifact_id="artifact-b")
     assert first.binding_id != second.binding_id
@@ -235,7 +245,7 @@ def test_binding_identity_tracks_artifact_and_rejects_wrong_transfer_direction()
         )
 
 
-def test_operator_basis_lowers_with_hilbert_adjoint_and_rejects_dependent_modes():
+def test_operator_basis_lowers_with_hilbert_adjoint_and_rejects_dependent_modes() -> None:
     sample = phx.nn.operator.FunctionSamples(
         values=jnp.asarray(
             [[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]],

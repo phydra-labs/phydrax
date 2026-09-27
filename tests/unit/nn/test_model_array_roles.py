@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
-from jaxtyping import Array
+from jax import Array
 
 import phydrax as phx
 from phydrax._model import AbstractArrayModel, FrozenModel
@@ -24,7 +27,7 @@ from phydrax.nn.layers import GRUCell, RecurrentBatch
 from phydrax.nn.models import RecurrentSequenceModel
 
 
-def _paths_with(resolution, role):
+def _paths_with(resolution: Any, role: Any) -> Any:
     return {
         path
         for path, leaf_role in zip(resolution.paths, resolution.roles, strict=True)
@@ -32,13 +35,13 @@ def _paths_with(resolution, role):
     }
 
 
-def _mlp(key=0):
+def _mlp(key: Any = 0) -> Any:
     return phx.nn.models.MLP(
         in_size=2, out_size=1, width_size=4, depth=1, key=jr.key(key)
     )
 
 
-def _deeponet():
+def _deeponet() -> Any:
     latent = 3
     return phx.nn.operator.architectures.DeepONet(
         branch=phx.nn.models.MLP(
@@ -54,14 +57,14 @@ def _deeponet():
     )
 
 
-def _fno():
+def _fno() -> Any:
     return phx.nn.operator.architectures.FNO(
         n_modes=(3,), width=4, depth=1, source_key="u", key=jr.key(1)
     )
 
 
 @pytest.mark.parametrize("build", [_mlp, _fno, _deeponet], ids=["mlp", "fno", "deeponet"])
-def test_stock_models_train_their_weights_without_declarations(build):
+def test_stock_models_train_their_weights_without_declarations(build: Any) -> None:
     model = build()
     resolution = require_parameter_roles(model, context="stock model")
 
@@ -74,7 +77,7 @@ def test_stock_models_train_their_weights_without_declarations(build):
     assert jax.tree_util.tree_structure(restored) == jax.tree_util.tree_structure(model)
 
 
-def _context_batch():
+def _context_batch() -> Any:
     axis = phx.nn.operator.OperatorAxis("x", jnp.linspace(0.0, 1.0, 4))
     return phx.nn.operator.OperatorBatch(
         inputs={
@@ -88,7 +91,7 @@ def _context_batch():
     )
 
 
-def test_operator_context_batch_is_never_a_parameter():
+def test_operator_context_batch_is_never_a_parameter() -> None:
     context = phx.nn.operator.adapters.bind_operator_context(
         _deeponet(), _context_batch()
     )
@@ -101,7 +104,7 @@ def test_operator_context_batch_is_never_a_parameter():
 
     parameters, state, fixed = partition_parameters(context)
 
-    def loss(parameters_):
+    def loss(parameters_: Any) -> Any:
         model = combine_parameters(parameters_, state, fixed)
         return jnp.sum(model(jnp.asarray([0.25])) ** 2)
 
@@ -115,7 +118,7 @@ class _FixedPlan(StrictModule, NonTrainableState):
     scale: Array
 
 
-def test_frozen_model_inside_fixed_plan_is_frozen_on_purpose():
+def test_frozen_model_inside_fixed_plan_is_frozen_on_purpose() -> None:
     frozen = _FixedPlan(FrozenModel(_mlp()), jnp.asarray(2.0))
     resolution = require_parameter_roles(frozen, context="plan")
     assert set(resolution.roles) == {ArrayRole.FIXED}
@@ -125,7 +128,7 @@ def test_frozen_model_inside_fixed_plan_is_frozen_on_purpose():
         require_parameter_roles(silent, context="plan")
 
 
-def test_low_rank_adapted_model_trains_only_its_factors():
+def test_low_rank_adapted_model_trains_only_its_factors() -> None:
     model = _mlp()
     specs = {
         path: phx.nn.parameters.LowRankSpec(rank=1)
@@ -148,7 +151,7 @@ def test_low_rank_adapted_model_trains_only_its_factors():
     )
 
 
-def test_recurrent_sequence_model_is_a_trainable_root_and_batches_are_fixed():
+def test_recurrent_sequence_model_is_a_trainable_root_and_batches_are_fixed() -> None:
     model = RecurrentSequenceModel(GRUCell(2, 3, dtype=jnp.float64, key=jr.key(5)))
     batch = RecurrentBatch(jnp.ones((1, 4, 2)), jnp.ones((1, 4), dtype=bool))
 
@@ -158,7 +161,7 @@ def test_recurrent_sequence_model_is_a_trainable_root_and_batches_are_fixed():
     assert set(batch_roles.roles) == {ArrayRole.FIXED}
 
 
-def test_variational_ansatz_is_a_trainable_root():
+def test_variational_ansatz_is_a_trainable_root() -> None:
     amplitude = phx.nn.quantum.RestrictedBoltzmannAmplitude(
         jnp.zeros(3), jnp.zeros(2), jnp.full((2, 3), 0.1)
     )
@@ -172,18 +175,18 @@ class _StatefulModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.weight = jnp.ones(2)
         self.running_mean = jnp.zeros(2)
         self.in_size = 2
         self.out_size = "scalar"
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         del key
         return jnp.dot(self.weight, x - self.running_mean)
 
 
-def test_domain_bindings_reject_model_state():
+def test_domain_bindings_reject_model_state() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = _StatefulModel()
 

@@ -2,13 +2,16 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
 class _EdgeGlobalInputModel:
-    def __call__(self, graph):
+    def __call__(self, graph: Any) -> Any:
         nodes = dict(graph.nodes)
         edges = dict(graph.edges)
         scale = graph.globals["scale"][0]
@@ -40,21 +43,22 @@ def _mapping_graph() -> phx.graph.GraphIR:
     )
 
 
-def _batch(domain):
+def _batch(domain: Any) -> Any:
     component = domain.component({"graph": phx.domain.Nodes()})
     return component.sample(
         phx.domain.PointSampling(3, layout=phx.domain.SampleLayout((("graph",),)))
     )
 
 
-def _boundary_batch(domain):
+def _boundary_batch(domain: Any) -> Any:
+    # ty: ignore[invalid-argument-type]
     component = domain.component({"graph": phx.domain.BoundaryNodes([0, 2])})
     return component.sample(
         phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),)))
     )
 
 
-def test_graph_model_wrapper_returns_node_field():
+def test_graph_model_wrapper_returns_node_field() -> None:
     domain = phx.domain.GraphDomain(_graph())
     batch = _batch(domain)
     model = phx.graph.GraphMapFeatures(embed_node_fn=lambda nodes: nodes + 2.0)
@@ -68,7 +72,7 @@ def test_graph_model_wrapper_returns_node_field():
     assert jnp.allclose(jnp.asarray(out.data), jnp.array([[3.0], [4.0], [5.0]]))
 
 
-def test_graph_model_wrapper_restricts_output_to_node_set():
+def test_graph_model_wrapper_restricts_output_to_node_set() -> None:
     domain = phx.domain.GraphDomain(_graph())
     batch = _boundary_batch(domain)
     model = phx.graph.GraphMapFeatures(embed_node_fn=lambda nodes: nodes + 2.0)
@@ -82,12 +86,12 @@ def test_graph_model_wrapper_restricts_output_to_node_set():
     assert jnp.allclose(jnp.asarray(out.data), jnp.array([[3.0], [5.0]]))
 
 
-def test_graph_model_wrapper_input_fn_uses_full_node_view_for_node_sets():
+def test_graph_model_wrapper_input_fn_uses_full_node_view_for_node_sets() -> None:
     domain = phx.domain.GraphDomain(_graph())
     batch = _boundary_batch(domain)
 
     @domain.Function("graph")
-    def input_fn(node):
+    def input_fn(node: Any) -> Any:
         return 10.0 * node[0]
 
     model = phx.graph.GraphMapFeatures(embed_node_fn=lambda nodes: nodes)
@@ -101,20 +105,20 @@ def test_graph_model_wrapper_input_fn_uses_full_node_view_for_node_sets():
     assert jnp.allclose(jnp.asarray(out.data), jnp.array([10.0, 30.0]))
 
 
-def test_graph_model_wrapper_installs_edge_and_global_input_functions():
+def test_graph_model_wrapper_installs_edge_and_global_input_functions() -> None:
     domain = phx.domain.GraphDomain(_mapping_graph())
     batch = _boundary_batch(domain)
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> Any:
         return node["base"][0]
 
     @domain.Function("graph")
-    def k(edge):
+    def k(edge: Any) -> Any:
         return edge["base"][0]
 
     @domain.Function("graph")
-    def scale(case):
+    def scale(case: Any) -> Any:
         return case["case"][0]
 
     out = domain.GraphModel(
@@ -131,7 +135,7 @@ def test_graph_model_wrapper_installs_edge_and_global_input_functions():
     assert jnp.allclose(jnp.asarray(out.data), jnp.array([5.0, 8.0]))
 
 
-def test_graph_domain_graph_model_convenience():
+def test_graph_domain_graph_model_convenience() -> None:
     domain = phx.domain.GraphDomain(_graph())
     batch = _batch(domain)
     model = phx.graph.GraphMapFeatures(embed_node_fn=lambda nodes: 2.0 * nodes)

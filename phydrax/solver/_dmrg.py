@@ -10,7 +10,7 @@ from math import isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -37,7 +37,7 @@ from ..tensor_network._environments import (
     TwoSiteMPOEffectiveAction,
 )
 from ..tensor_network._mpo import apply_mpo_exact
-from ..tensor_network._split import truncated_svd
+from ..tensor_network._split import TensorTruncationEvidence, truncated_svd
 
 
 class FiniteDMRGStatus(IntEnum):
@@ -61,7 +61,7 @@ class FiniteDMRGProblem(StrictModule):
         /,
         *,
         problem_id: str = "matrix-product-ground-state",
-    ):
+    ) -> None:
         if not isinstance(initial_state, MatrixProductState):
             raise TypeError("initial_state must be a MatrixProductState.")
         if not isinstance(hamiltonian, MatrixProductOperator):
@@ -111,7 +111,7 @@ class FiniteDMRGPolicy(StrictModule):
         maximum_residual_elements: int = 100_000_000,
         maximum_history_elements: int = 10_000_000,
         eigen_policy: eigen_linalg.EigenSolvePolicy | None = None,
-    ):
+    ) -> None:
         bond = int(maximum_bond_dimension)
         sweeps = int(maximum_sweeps)
         if bond < 1 or sweeps < 1:
@@ -405,7 +405,7 @@ def _solve_two_site(
     policy: FiniteDMRGPolicy,
     direction: int,
     /,
-):
+) -> tuple[MatrixProductState, Array, Array, Array, TensorTruncationEvidence]:
     precision = state.precision
     left = precision.contraction(state.tensors[bond])
     right = precision.contraction(state.tensors[bond + 1])

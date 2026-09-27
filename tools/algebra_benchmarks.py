@@ -8,6 +8,7 @@ import argparse
 import json
 import time
 from dataclasses import asdict, dataclass
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -53,7 +54,7 @@ class AlgebraBenchmarkRecord:
         )
 
 
-def _measure(function, left, right, repeats):
+def _measure(function: Any, left: Any, right: Any, repeats: Any) -> Any:
     compiled = eqx.filter_jit(function)
     value, first_seconds = measure_synchronized(lambda: compiled(left, right))
     value, distribution = measure_repeated(
@@ -64,11 +65,14 @@ def _measure(function, left, right, repeats):
     return (
         value,
         1_000.0 * first_seconds,
+        # ty: ignore[invalid-argument-type]
         1_000.0 * float(distribution.mean_seconds),
     )
 
 
-def _measure_three(function, left, middle, right, repeats):
+def _measure_three(
+    function: Any, left: Any, middle: Any, right: Any, repeats: Any
+) -> Any:
     compiled = eqx.filter_jit(function)
     value, first_seconds = measure_synchronized(lambda: compiled(left, middle, right))
     value, distribution = measure_repeated(
@@ -79,6 +83,7 @@ def _measure_three(function, left, middle, right, repeats):
     return (
         value,
         1_000.0 * first_seconds,
+        # ty: ignore[invalid-argument-type]
         1_000.0 * float(distribution.mean_seconds),
     )
 

@@ -5,17 +5,19 @@
 from __future__ import annotations
 
 import hashlib
-import math
 from collections.abc import Sequence
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float
 from ...geometry import interface_distance_metrics, phase_geometry_metrics
+from ...typing import PRNGKey
 from ._stefan import (
     compare_stefan_representations,
     ExplicitFrontStefanPINN,
@@ -31,8 +33,8 @@ from ._stefan import (
 class ExactStefanFields(StrictModule, NonTrainableState):
     initial_front: float
 
-    def __init__(self, initial_front: float, /):
-        self.initial_front = _positive_float(initial_front, "initial_front")
+    def __init__(self, initial_front: float, /) -> None:
+        self.initial_front = positive_finite_float(initial_front, "initial_front")
 
     def temperature(self, point: Array, /) -> Array:
         x, time = point
@@ -74,7 +76,7 @@ class ExactStefanBenchmark(StrictModule, NonTrainableState):
         final_time: float = 0.5,
         domain_length: float = 1.5,
         interface_width: float = 0.05,
-    ):
+    ) -> None:
         fields = ExactStefanFields(initial_front)
         self.parameters = OnePhaseStefanParameters(
             diffusivity=1.0,
@@ -90,9 +92,13 @@ class ExactStefanBenchmark(StrictModule, NonTrainableState):
             fields.boundary_temperature,
         )
         self.fields = fields
-        self.interface_width = _positive_float(interface_width, "interface_width")
+        self.interface_width = positive_finite_float(interface_width, "interface_width")
 
-    def models(self):
+    def models(
+        self,
+    ) -> tuple[
+        ExplicitFrontStefanPINN, ImplicitLevelSetStefanPINN, ReferenceMapStefanPINN
+    ]:
         return (
             ExplicitFrontStefanPINN(self.fields.temperature, self.fields.front),
             ImplicitLevelSetStefanPINN(
@@ -110,7 +116,7 @@ class ExactStefanBenchmark(StrictModule, NonTrainableState):
         /,
         *,
         points_per_block: int = 256,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> StefanRepresentationComparison:
         batch = stefan_collocation_batch(
             self.parameters,
@@ -305,7 +311,7 @@ def turek_hron_fsi_benchmark(
     }
     if len(shapes) != 1 or predicted_tip_.ndim != 1 or predicted_tip_.size < 3:
         raise ValueError("FSI observable histories must share one vector shape.")
-    dt = _positive_float(step_size, "step_size")
+    dt = positive_finite_float(step_size, "step_size")
     predicted_frequency = _dominant_frequency(predicted_tip_, dt)
     reference_frequency = _dominant_frequency(reference_tip_, dt)
     return FSIReport(
@@ -477,13 +483,6 @@ def _dominant_frequency(values: Array, step_size: float, /) -> Array:
     frequencies = jnp.fft.rfftfreq(values.size, d=step_size)
     usable = spectrum.at[0].set(0.0)
     return frequencies[jnp.argmax(usable)]
-
-
-def _positive_float(value: float, name: str, /) -> float:
-    scalar = float(value)
-    if not math.isfinite(scalar) or scalar <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return scalar
 
 
 __all__ = [

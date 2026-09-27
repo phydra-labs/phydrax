@@ -2,7 +2,7 @@ import phydrax as phx
 from phydrax.qualification import CapabilityDepth, ClosureState
 
 
-def test_exact_candidates_close_implementation_without_claiming_release():
+def test_exact_candidates_close_implementation_without_claiming_release() -> None:
     catalog = phx.qualification.builtin_capability_catalog()
     matrices = phx.qualification.builtin_omniphysics_closure_matrices(catalog)
     assert len(matrices) == 21
@@ -33,7 +33,7 @@ def test_exact_candidates_close_implementation_without_claiming_release():
     )
 
 
-def test_promoted_candidate_tuples_are_exact_and_single_host_only():
+def test_promoted_candidate_tuples_are_exact_and_single_host_only() -> None:
     catalog = phx.qualification.builtin_capability_catalog()
     declarations = tuple(
         value
@@ -57,7 +57,7 @@ def test_promoted_candidate_tuples_are_exact_and_single_host_only():
         assert "no-distributed-hardware-evidence" in declaration.nonclaims
 
 
-def test_source_ledger_pins_and_reviews_every_reference():
+def test_source_ledger_pins_and_reviews_every_reference() -> None:
     ledger = phx.qualification.builtin_source_absorption_ledger()
     assert phx.qualification.validate_source_coverage(ledger) == ()
     assert all(
@@ -68,7 +68,7 @@ def test_source_ledger_pins_and_reviews_every_reference():
     assert all(len(source.relevant_documents) >= 2 for source in ledger.sources)
 
 
-def test_production_evidence_runs_controls_refinements_and_applications():
+def test_production_evidence_runs_controls_refinements_and_applications() -> None:
     evidence = phx.qualification.builtin_omniphysics_qualification_evidence()
     assert evidence.to_record()["passed"]
     assert len(evidence.controls) == 21

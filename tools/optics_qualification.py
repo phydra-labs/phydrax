@@ -254,6 +254,7 @@ def _pulse_envelope_bridge_case() -> dict[str, float | int | bool]:
     )
     prepared = prepare_pulse_envelope_bridge(PulseEnvelopeBridgePlan(time_space, carrier))
     analytic = envelope_to_analytic_field(prepared, envelope)
+    # ty: ignore[invalid-argument-type]
     recovered = analytic_field_to_envelope(prepared, analytic.field)
     return {
         "analytic_status": int(analytic.status),

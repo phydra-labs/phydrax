@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import BinaryIO, TYPE_CHECKING
 
 import h5py
+import h5py.h5o as h5o
 import numpy as np
 
 from .._external_resource import (
@@ -29,6 +30,8 @@ from ._report import AdapterReport, AdapterStatus
 
 
 if TYPE_CHECKING:
+    from _typeshed import ReadableBuffer
+
     from ..geometry.analytic._operations import RigidFrame
     from ..optics.wave._envelope import PulseEnvelopeField
     from ..optics.wave._fields import PlaneFieldSpace
@@ -145,7 +148,7 @@ class OpenPMDLaserEnvelopeError(ValueError):
     status: AdapterStatus
     report: AdapterReport
 
-    def __init__(self, message: str, report: AdapterReport, /):
+    def __init__(self, message: str, report: AdapterReport, /) -> None:
         self.status = report.status
         self.report = report
         super().__init__(str(message))
@@ -195,13 +198,15 @@ def _text(value: object, name: str, /) -> str:
     return result
 
 
-def _required_text(attributes, name: str, /) -> str:
+def _required_text(attributes: h5py.AttributeManager, name: str, /) -> str:
     if name not in attributes:
         raise ValueError(f"Missing required openPMD attribute {name}.")
     return _text(attributes[name], name)
 
 
-def _numeric_array(attributes, name: str, shape: tuple[int, ...], /) -> np.ndarray:
+def _numeric_array(
+    attributes: h5py.AttributeManager, name: str, shape: tuple[int, ...], /
+) -> np.ndarray:
     if name not in attributes:
         raise ValueError(f"Missing required openPMD attribute {name}.")
     supplied = np.asarray(attributes[name])
@@ -213,21 +218,25 @@ def _numeric_array(attributes, name: str, shape: tuple[int, ...], /) -> np.ndarr
     return result
 
 
-def _scalar_float(attributes, name: str, /) -> float:
+def _scalar_float(attributes: h5py.AttributeManager, name: str, /) -> float:
     value = _numeric_array(attributes, name, ())
     return float(value.reshape(()))
 
 
-def _axis_labels(attributes, /) -> tuple[str, str, str]:
+def _axis_labels(attributes: h5py.AttributeManager, /) -> tuple[str, str, str]:
     if "axisLabels" not in attributes:
         raise ValueError("Missing required openPMD attribute axisLabels.")
     values = np.asarray(attributes["axisLabels"])
     if values.shape != (3,):
         raise ValueError("axisLabels must contain exactly three labels.")
-    labels = tuple(_text(value, "axisLabels") for value in values)
+    labels = (
+        _text(values[0], "axisLabels"),
+        _text(values[1], "axisLabels"),
+        _text(values[2], "axisLabels"),
+    )
     if set(labels) != {"x", "y", "t"}:
         raise ValueError("Only Cartesian temporal axes ('x', 'y', 't') are supported.")
-    return labels  # type: ignore[return-value]
+    return labels
 
 
 def _preflight_hdf5(
@@ -251,7 +260,7 @@ def _preflight_hdf5(
         maximum_depth = max(maximum_depth, depth)
         if maximum_depth > limits.max_depth or object_count > limits.max_nodes:
             raise ResourceReadError("limit", "openPMD HDF5 structure exceeds its bounds.")
-        address = int(h5py.h5o.get_info(item.id).addr)
+        address = int(h5o.get_info(item.id).addr)
         if address in addresses:
             raise ValueError("HDF5 hard-link aliases and cycles are unsupported.")
         addresses.add(address)
@@ -583,12 +592,12 @@ def read_openpmd_laser_envelope_hdf5(
 
 
 class _BoundedHDF5Buffer(BytesIO):
-    def __init__(self, maximum_bytes: int):
+    def __init__(self, maximum_bytes: int) -> None:
         super().__init__()
         self.maximum_bytes = int(maximum_bytes)
 
-    def write(self, data: bytes | bytearray, /) -> int:
-        projected = max(self.tell() + len(data), len(self.getbuffer()))
+    def write(self, data: ReadableBuffer, /) -> int:
+        projected = max(self.tell() + memoryview(data).nbytes, len(self.getbuffer()))
         if projected > self.maximum_bytes:
             raise ResourceReadError("limit", "Encoded HDF5 output exceeds max_bytes.")
         return super().write(data)

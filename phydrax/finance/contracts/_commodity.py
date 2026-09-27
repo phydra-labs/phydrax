@@ -12,7 +12,8 @@ from typing import Any, TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..core import Currency, FinanceDate, FXPair
@@ -22,7 +23,7 @@ from ._rates import DeterministicCashflowReplay, PayReceive
 
 
 if TYPE_CHECKING:
-    from ..curves._core import CurveSet
+    from ..curves._core import CurveSet, PreparedCurve
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -94,7 +95,7 @@ def _curve(
     currency: Currency,
     role: str,
     /,
-):
+) -> PreparedCurve:
     curve = curves.curve(curve_id)
     definition = curve.definition
     if definition.valuation_date.ordinal != valuation_date.ordinal:
@@ -190,7 +191,7 @@ class ResolvedEquityForward(AbstractResolvedContract):
         pay_receive: PayReceive | str,
         settlement_price: ArrayLike = 0.0,
         settlement_price_known: bool,
-    ):
+    ) -> None:
         if not isinstance(currency, Currency):
             raise TypeError("currency must be a Currency.")
         maturity = _dates(valuation_date, maturity_date, maturity_time)
@@ -325,7 +326,7 @@ class ResolvedFXForward(AbstractResolvedContract):
         quote_discount_curve_id: str,
         base_discount_curve_id: str,
         pay_receive: PayReceive | str,
-    ):
+    ) -> None:
         if not isinstance(fx_pair, FXPair):
             raise TypeError("fx_pair must be an FXPair.")
         maturity = _dates(valuation_date, maturity_date, maturity_time)
@@ -358,7 +359,7 @@ class ResolvedFXForward(AbstractResolvedContract):
             },
         )
 
-    def _curves(self, curves: CurveSet, /):
+    def _curves(self, curves: CurveSet, /) -> tuple[PreparedCurve, PreparedCurve]:
         quote = _curve(
             curves,
             self.quote_discount_curve_id,
@@ -493,7 +494,7 @@ class ResolvedCommodityForward(AbstractResolvedContract):
         pay_receive: PayReceive | str,
         settlement_price: ArrayLike = 0.0,
         settlement_price_known: bool,
-    ):
+    ) -> None:
         if not isinstance(currency, Currency):
             raise TypeError("currency must be a Currency.")
         maturity = _dates(valuation_date, maturity_date, maturity_time)
@@ -630,7 +631,7 @@ class ResolvedCommodityFuture(AbstractResolvedContract):
         pay_receive: PayReceive | str,
         settlement_price: ArrayLike = 0.0,
         settlement_price_known: bool,
-    ):
+    ) -> None:
         if not isinstance(currency, Currency):
             raise TypeError("currency must be a Currency.")
         maturity = _dates(valuation_date, maturity_date, maturity_time)
@@ -733,7 +734,7 @@ class ResolvedEquityFuture(AbstractResolvedContract):
         pay_receive: PayReceive | str,
         settlement_price: ArrayLike = 0.0,
         settlement_price_known: bool,
-    ):
+    ) -> None:
         if not isinstance(currency, Currency):
             raise TypeError("currency must be a Currency.")
         maturity = _dates(valuation_date, maturity_date, maturity_time)
@@ -836,7 +837,7 @@ class ResolvedFXFuture(AbstractResolvedContract):
         pay_receive: PayReceive | str,
         settlement_rate: ArrayLike = 0.0,
         settlement_rate_known: bool,
-    ):
+    ) -> None:
         if not isinstance(fx_pair, FXPair):
             raise TypeError("fx_pair must be an FXPair.")
         maturity = _dates(valuation_date, maturity_date, maturity_time)

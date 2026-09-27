@@ -1,4 +1,5 @@
 from dataclasses import replace
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -25,7 +26,7 @@ from phydrax.stochastic.path_sampling import StateRegionPlan
 from phydrax.units import KILOJOULE_PER_MOLE, PICOSECOND
 
 
-def _replicas():
+def _replicas() -> Any:
     composition = ProteinEnsembleComposition(
         "ordered-protein",
         "fixed-protonation",
@@ -74,7 +75,7 @@ def _replicas():
     return tuple(result)
 
 
-def _reference():
+def _reference() -> Any:
     return ReferenceArtifactManifest(
         "synthetic-melting-experiment",
         checksum_algorithm="sha256",
@@ -92,7 +93,7 @@ def _reference():
     )
 
 
-def test_matched_state_enthalpy_cp_and_experimental_closure_uncertainty():
+def test_matched_state_enthalpy_cp_and_experimental_closure_uncertainty() -> None:
     folded, unfolded = _replicas()
     estimate = paired_state_enthalpy(
         folded, unfolded, convention=ThermodynamicConvention()
@@ -123,7 +124,7 @@ def test_matched_state_enthalpy_cp_and_experimental_closure_uncertainty():
     assert closed.experimental_dependencies == (_reference().manifest_id,)
 
 
-def test_composition_duplicate_replica_and_underblocked_data_are_not_accepted():
+def test_composition_duplicate_replica_and_underblocked_data_are_not_accepted() -> None:
     folded, unfolded = _replicas()
     wrong = replace(
         unfolded[0].composition,
@@ -148,7 +149,7 @@ def test_composition_duplicate_replica_and_underblocked_data_are_not_accepted():
         replace(folded[0], correlation_time_bound=1.0)
 
 
-def test_free_energy_adapters_agree_with_exact_constant_energy_shift():
+def test_free_energy_adapters_agree_with_exact_constant_energy_shift() -> None:
     convention = ThermodynamicConvention()
     workflow = ProteinFreeEnergyWorkflow(
         ("state-A", "state-B"),
@@ -223,13 +224,15 @@ def test_free_energy_adapters_agree_with_exact_constant_energy_shift():
         )
 
 
-def test_kinetic_lag_pairs_never_cross_resets_and_irregular_times_refuse():
+def test_kinetic_lag_pairs_never_cross_resets_and_irregular_times_refuse() -> None:
     coordinates = [0.0, 1.0, 2.0, 0.0, 1.0, 2.0]
     states = jnp.asarray([[0.0], [0.0], [1.0], [0.0], [1.0], [1.0]])
     data = TrajectoryData(
+        # ty: ignore[invalid-argument-type]
         coordinates,
         states,
         state_layout=StateLayout((1,)),
+        # ty: ignore[invalid-argument-type]
         reset_mask=[False, False, True, False, False],
         coordinate_id=PICOSECOND.unit_id,
         source_id="independent-physical-trajectories",
@@ -242,7 +245,9 @@ def test_kinetic_lag_pairs_never_cross_resets_and_irregular_times_refuse():
     basins = ProteinBasinDefinitions(
         ("A", "B"),
         (
+            # ty: ignore[invalid-argument-type]
             StateRegionPlan.half_open([-0.5], [0.5]),
+            # ty: ignore[invalid-argument-type]
             StateRegionPlan.half_open([0.5], [1.5]),
         ),
         "held-out-basin-definition",
@@ -250,7 +255,9 @@ def test_kinetic_lag_pairs_never_cross_resets_and_irregular_times_refuse():
     model = workflow.markov(states, basins)
     np.testing.assert_allclose(model.diagnostics.counts, [[1.0, 2.0], [0.0, 1.0]])
     irregular = TrajectoryData(
+        # ty: ignore[invalid-argument-type]
         [0.0, 1.0, 3.0],
+        # ty: ignore[invalid-argument-type]
         [[0.0], [1.0], [0.0]],
         state_layout=StateLayout((1,)),
         coordinate_id=PICOSECOND.unit_id,

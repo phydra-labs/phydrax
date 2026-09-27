@@ -11,7 +11,8 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+import numpy.typing as npt
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax._strict import StrictModule
@@ -92,11 +93,11 @@ class FiniteOrthogonalGroup(StrictModule, NonTrainableState):
     def __init__(
         self,
         name: str,
-        matrices: Array | Sequence[Array],
+        matrices: npt.ArrayLike,
         /,
         *,
         tolerance: float = 1e-6,
-    ):
+    ) -> None:
         resolved_name = str(name)
         if not resolved_name:
             raise ValueError("Finite group names must be non-empty.")

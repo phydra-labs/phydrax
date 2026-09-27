@@ -103,7 +103,7 @@ class PhysicalStaticStabilityProblem(StrictModule):
         tangent_provenance_id: str,
         constraints: LinearSubspace | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         equilibrium_ = _equilibrium(equilibrium)
         space = _physical_space(equilibrium_, physical_space)
         tangent = _physical_endomorphism(
@@ -173,7 +173,7 @@ class DynamicStabilityProblem(StrictModule):
         mass_provenance_id: str,
         constraints: LinearSubspace | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         equilibrium_ = _equilibrium(equilibrium)
         space = _physical_space(equilibrium_, physical_space)
         stiffness = _physical_endomorphism(

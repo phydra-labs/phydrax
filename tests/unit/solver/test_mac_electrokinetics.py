@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _plan():
+def _plan() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(16, periodic=True),),
         axis_names=("x",),
@@ -48,7 +51,7 @@ def _plan():
     return operators, pnp
 
 
-def test_mac_pnp_preserves_uniform_equilibrium_and_exact_layouts():
+def test_mac_pnp_preserves_uniform_equilibrium_and_exact_layouts() -> None:
     operators, plan = _plan()
     concentrations = jnp.ones((16, 2))
     evaluation = eqx.filter_jit(plan.evaluate)(concentrations)
@@ -61,7 +64,7 @@ def test_mac_pnp_preserves_uniform_equilibrium_and_exact_layouts():
     assert evaluation.electrostatic.operators_id == operators.prepared_id
 
 
-def test_mac_ionic_advection_is_conservative_and_ehd_force_is_power_consistent():
+def test_mac_ionic_advection_is_conservative_and_ehd_force_is_power_consistent() -> None:
     operators, plan = _plan()
     coordinate = (jnp.arange(16) + 0.5) / 16.0
     perturbation = 0.02 * jnp.sin(2.0 * jnp.pi * coordinate)
@@ -84,7 +87,7 @@ def test_mac_ionic_advection_is_conservative_and_ehd_force_is_power_consistent()
     )
 
 
-def test_mac_pnp_explicit_step_rolls_back_outside_positivity_restriction():
+def test_mac_pnp_explicit_step_rolls_back_outside_positivity_restriction() -> None:
     _, plan = _plan()
     coordinate = (jnp.arange(16) + 0.5) / 16.0
     concentrations = jnp.stack(

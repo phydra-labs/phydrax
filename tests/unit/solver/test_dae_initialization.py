@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -5,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _semi_explicit_system():
+def _semi_explicit_system() -> Any:
     return phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, parameter: jnp.asarray(
             (
@@ -22,7 +24,7 @@ def _semi_explicit_system():
     )
 
 
-def _strict_policy():
+def _strict_policy() -> Any:
     return phx.solver.DAESolvePolicy(
         initialization_termination=phx.nonlinear.NonlinearTermination(
             absolute_residual=1e-11,
@@ -34,7 +36,7 @@ def _strict_policy():
     )
 
 
-def test_dae_structure_broadcasts_roles_and_preserves_independent_scales():
+def test_dae_structure_broadcasts_roles_and_preserves_independent_scales() -> None:
     structure = phx.dynamics.DAEStructure(
         ("differential", "algebraic"),
         component_axis=-1,
@@ -69,7 +71,7 @@ def test_dae_structure_broadcasts_roles_and_preserves_independent_scales():
     )
 
 
-def test_mass_matrix_constructor_preserves_raw_implicit_residual():
+def test_mass_matrix_constructor_preserves_raw_implicit_residual() -> None:
     mass = jnp.asarray(((1.0, 0.0), (0.0, 0.0)))
     system = phx.dynamics.DifferentialAlgebraicSystem.from_mass_matrix(
         mass,
@@ -84,7 +86,7 @@ def test_mass_matrix_constructor_preserves_raw_implicit_residual():
     assert jnp.array_equal(actual, jnp.zeros(2))
 
 
-def test_index_one_initialization_fixes_differential_state_and_algebraic_rate():
+def test_index_one_initialization_fixes_differential_state_and_algebraic_rate() -> None:
     system = _semi_explicit_system()
     problem = phx.solver.DifferentialAlgebraicProblem(
         system,
@@ -107,7 +109,7 @@ def test_index_one_initialization_fixes_differential_state_and_algebraic_rate():
     assert result.residual_norm <= result.residual_threshold
 
 
-def test_consistent_initialization_remains_inside_parameter_gradient():
+def test_consistent_initialization_remains_inside_parameter_gradient() -> None:
     system = _semi_explicit_system()
     problem = phx.solver.DifferentialAlgebraicProblem(
         system,
@@ -117,7 +119,7 @@ def test_consistent_initialization_remains_inside_parameter_gradient():
         problem_id="initialization-gradient",
     )
 
-    def differential_rate(parameter):
+    def differential_rate(parameter: Any) -> Any:
         result = phx.solver.initialize_dae(
             problem,
             0.0,
@@ -132,7 +134,7 @@ def test_consistent_initialization_remains_inside_parameter_gradient():
     assert jnp.allclose(gradient, -2.0, atol=1e-9)
 
 
-def test_fixed_rate_and_check_only_modes_have_distinct_validity_contracts():
+def test_fixed_rate_and_check_only_modes_have_distinct_validity_contracts() -> None:
     system = _semi_explicit_system()
     fixed_rate_problem = phx.solver.DifferentialAlgebraicProblem(
         system,
@@ -170,7 +172,7 @@ def test_fixed_rate_and_check_only_modes_have_distinct_validity_contracts():
     assert jnp.array_equal(checked.state_rate, check_problem.initial_state_rate)
 
 
-def test_custom_initialization_requires_one_unknown_per_residual_scalar():
+def test_custom_initialization_requires_one_unknown_per_residual_scalar() -> None:
     system = _semi_explicit_system()
     problem = phx.solver.DifferentialAlgebraicProblem(
         system,

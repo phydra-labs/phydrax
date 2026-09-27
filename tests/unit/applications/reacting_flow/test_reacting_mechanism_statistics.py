@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -42,7 +45,7 @@ from phydrax.equations._homogeneous_thermodynamics import (
 from phydrax.solver._chemical_reactor import ChemicalReactorKind, ChemicalReactorPlan
 
 
-def _mechanism():
+def _mechanism() -> Any:
     schema = ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (ChemicalPhaseKind.GAS, ChemicalPhaseKind.GAS),
@@ -101,7 +104,7 @@ def _mechanism():
     return thermodynamics, prepared, HomogeneousMixtureEulerSystem(thermodynamics, 1)
 
 
-def test_prepared_mechanism_owns_all_canonical_rate_plans_and_exact_schema():
+def test_prepared_mechanism_owns_all_canonical_rate_plans_and_exact_schema() -> None:
     thermodynamics, mechanism, _ = _mechanism()
     kinds = tuple(reaction.forward_rate.kind.value for reaction in mechanism.reactions)
 
@@ -122,7 +125,7 @@ def test_prepared_mechanism_owns_all_canonical_rate_plans_and_exact_schema():
     )
 
 
-def test_canonical_sources_preserve_element_charge_mass_and_total_energy():
+def test_canonical_sources_preserve_element_charge_mass_and_total_energy() -> None:
     _, mechanism, system = _mechanism()
     result = mechanism.evaluate(
         jnp.asarray((2.0, 1.0)),
@@ -145,7 +148,7 @@ def test_canonical_sources_preserve_element_charge_mass_and_total_energy():
     assert heat_release > 0.0
 
 
-def test_constant_volume_and_pressure_reactors_consume_prepared_mechanism():
+def test_constant_volume_and_pressure_reactors_consume_prepared_mechanism() -> None:
     _, mechanism, _ = _mechanism()
     amounts = jnp.asarray((2.0, 1.0))
     constant_volume = ChemicalReactorPlan(
@@ -170,7 +173,7 @@ def test_constant_volume_and_pressure_reactors_consume_prepared_mechanism():
     np.testing.assert_allclose(pressure_evaluation.temperature, 800.0)
 
 
-def test_low_mach_uses_full_species_and_canonical_thermodynamic_derivatives():
+def test_low_mach_uses_full_species_and_canonical_thermodynamic_derivatives() -> None:
     thermodynamics, mechanism, _ = _mechanism()
     formulation = LowMachReactingFormulation(thermodynamics, 2, mechanism=mechanism)
     mass = jnp.asarray((0.3, 0.7))
@@ -210,7 +213,7 @@ def test_low_mach_uses_full_species_and_canonical_thermodynamic_derivatives():
     assert chemistry.diagnostic_heat_release_rate > 0.0
 
 
-def test_reactive_favre_species_element_energy_and_closure_statistics():
+def test_reactive_favre_species_element_energy_and_closure_statistics() -> None:
     _, _, system = _mechanism()
     first = system.primitive_to_conserved(jnp.asarray((0.8, 0.2, 2.0, 700.0)))
     second = system.primitive_to_conserved(jnp.asarray((0.4, 1.6, -1.0, 900.0)))
@@ -241,7 +244,9 @@ def test_reactive_favre_species_element_energy_and_closure_statistics():
     assert jnp.all(jnp.linalg.eigvalsh(statistics.favre_species_covariance) >= -1.0e-12)
 
 
-def test_cantera_adapter_reports_unsupported_features_and_refuses_device_values(tmp_path):
+def test_cantera_adapter_reports_unsupported_features_and_refuses_device_values(
+    tmp_path: Any,
+) -> None:
     source = tmp_path / "surface.yaml"
     source.write_text(
         """phases:
@@ -268,7 +273,9 @@ reactions: []
         reference.evaluate(jnp.asarray(300.0), 101325.0, np.asarray((1.0,)))
 
 
-def test_cantera_host_yaml_builds_catalog_gas_schema_thermo_and_mechanism(tmp_path):
+def test_cantera_host_yaml_builds_catalog_gas_schema_thermo_and_mechanism(
+    tmp_path: Any,
+) -> None:
     source = tmp_path / "gas.yaml"
     source.write_text(
         """description: supported-gas

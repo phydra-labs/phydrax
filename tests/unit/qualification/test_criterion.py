@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from phydrax.qualification import (
@@ -152,7 +154,7 @@ def _evidence(
     )
 
 
-def _linked_records():
+def _linked_records() -> Any:
     criterion = _criterion()
     start = _start(criterion)
     observation = _observation(criterion, start)
@@ -160,7 +162,7 @@ def _linked_records():
     return criterion, start, observation, evidence
 
 
-def test_content_addresses_are_deterministic_and_versionless():
+def test_content_addresses_are_deterministic_and_versionless() -> None:
     criterion_a = _criterion()
     criterion_b = _criterion()
     start_a = _start(criterion_a)
@@ -199,7 +201,7 @@ def test_content_addresses_are_deterministic_and_versionless():
     )
 
 
-def test_criterion_may_have_no_validity_deadline():
+def test_criterion_may_have_no_validity_deadline() -> None:
     criterion = _criterion(valid_until=None)
 
     assert criterion.valid_until is None
@@ -207,7 +209,7 @@ def test_criterion_may_have_no_validity_deadline():
     assert QualificationCriterion.from_record(criterion.to_record()).valid_until is None
 
 
-def test_valid_causality_accepts_boundaries_and_multi_criterion_evidence():
+def test_valid_causality_accepts_boundaries_and_multi_criterion_evidence() -> None:
     criterion = _criterion(issued_at=1, valid_until=2)
     start = _start(criterion, started_at=2)
     observation = _observation(criterion, start, observed_at=2)
@@ -219,7 +221,7 @@ def test_valid_causality_accepts_boundaries_and_multi_criterion_evidence():
     )
 
 
-def test_postdated_and_expired_criteria_are_refused():
+def test_postdated_and_expired_criteria_are_refused() -> None:
     postdated = _criterion(issued_at=2, valid_until=4)
     postdated_start = _start(postdated, started_at=2)
     postdated_observation = _observation(postdated, postdated_start, observed_at=3)
@@ -247,7 +249,7 @@ def test_postdated_and_expired_criteria_are_refused():
         )
 
 
-def test_forged_serialized_records_are_refused():
+def test_forged_serialized_records_are_refused() -> None:
     criterion, start, observation, evidence = _linked_records()
     cases = (
         (criterion, QualificationCriterion, "metric", "forged-metric"),
@@ -267,7 +269,7 @@ def test_forged_serialized_records_are_refused():
             record_type.from_record(record)
 
 
-def test_superseded_passing_evidence_cannot_satisfy_campaign_predicates():
+def test_superseded_passing_evidence_cannot_satisfy_campaign_predicates() -> None:
     criterion, start, observation, old_evidence = _linked_records()
     replacement = _evidence(
         criterion,
@@ -295,7 +297,7 @@ def test_superseded_passing_evidence_cannot_satisfy_campaign_predicates():
     assert report.matched_evidence_ids == (replacement.evidence_id,)
 
 
-def test_borrowed_observation_is_refused():
+def test_borrowed_observation_is_refused() -> None:
     criterion = _criterion()
     start = _start(criterion)
     other_start = _start(criterion, started_at=3)
@@ -310,7 +312,7 @@ def test_borrowed_observation_is_refused():
         validate_qualification_causality(criterion, start, observation, evidence)
 
 
-def test_mutated_live_records_are_refused_before_linkage():
+def test_mutated_live_records_are_refused_before_linkage() -> None:
     mutation_cases = (
         ("criterion", "metric", "mutated-metric"),
         ("start", "started_at", 9),
@@ -330,7 +332,7 @@ def test_mutated_live_records_are_refused_before_linkage():
             validate_qualification_causality(criterion, start, observation, evidence)
 
 
-def test_mismatched_start_and_observation_records_are_refused():
+def test_mismatched_start_and_observation_records_are_refused() -> None:
     criterion = _criterion()
     mismatched_start = _start(criterion, criterion_id="other-criterion")
     observation = _observation(criterion, mismatched_start)
@@ -381,7 +383,7 @@ def test_mismatched_start_and_observation_records_are_refused():
             )
 
 
-def test_mismatched_evidence_linkage_and_artifacts_are_refused():
+def test_mismatched_evidence_linkage_and_artifacts_are_refused() -> None:
     criterion, start, observation, _ = _linked_records()
     evidence_cases = (
         (
@@ -433,7 +435,7 @@ def test_mismatched_evidence_linkage_and_artifacts_are_refused():
 def test_observation_must_follow_start_and_precede_evidence(
     observed_at: int,
     evidence_issued_at: int,
-):
+) -> None:
     criterion = _criterion()
     start = _start(criterion, started_at=2)
     observation = _observation(criterion, start, observed_at=observed_at)

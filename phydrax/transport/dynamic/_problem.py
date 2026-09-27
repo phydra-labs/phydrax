@@ -10,7 +10,8 @@ from typing import Any, cast
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 
@@ -428,7 +429,7 @@ class SchrodingerBridgeProblem(StrictModule):
         *,
         transition_tolerance: float = 1e-7,
         mass_tolerance: float = 1e-8,
-    ):
+    ) -> None:
         if not isinstance(reference, AbstractTransitionKernel):
             raise TypeError("reference must implement AbstractTransitionKernel.")
         if not reference.has_log_density:

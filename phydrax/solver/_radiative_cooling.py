@@ -10,7 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import DTypeLike
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -68,7 +70,7 @@ class RadiativeCoolingProcessPlan(AbstractBalanceLawProcessPlan):
         accuracy_fraction: float = 0.1,
         maximum_iterations: int = 20,
         tolerance: float = 1e-9,
-    ):
+    ) -> None:
         if not isinstance(curve, TabulatedCoolingCurve):
             raise TypeError("curve must be TabulatedCoolingCurve.")
         amplitude_ = float(amplitude)
@@ -156,7 +158,7 @@ class PreparedRadiativeCoolingProcess(AbstractPreparedBalanceLawProcess):
         plan: RadiativeCoolingProcessPlan,
         transport: AbstractPreparedBalanceLawTransport,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, RadiativeCoolingProcessPlan):
             raise TypeError("plan must be RadiativeCoolingProcessPlan.")
         if not isinstance(
@@ -232,7 +234,7 @@ class PreparedRadiativeCoolingProcess(AbstractPreparedBalanceLawProcess):
             raise ValueError(f"Cooling cell_average must have shape {expected}.")
         return value.reshape(self.cell_shape + (components,))
 
-    def _amplitude(self, args: Any, dtype, /) -> Array:
+    def _amplitude(self, args: Any, dtype: DTypeLike, /) -> Array:
         raw = (
             self.plan.amplitude
             if self.plan.amplitude_argument is None
@@ -245,7 +247,7 @@ class PreparedRadiativeCoolingProcess(AbstractPreparedBalanceLawProcess):
             "Cooling amplitude must be positive and finite.",
         )
 
-    def _heating(self, args: Any, dtype, /) -> Array:
+    def _heating(self, args: Any, dtype: DTypeLike, /) -> Array:
         raw = (
             self.plan.heating_rate
             if self.plan.heating_argument is None
@@ -339,7 +341,9 @@ class PreparedRadiativeCoolingProcess(AbstractPreparedBalanceLawProcess):
             flat_density = density.reshape((-1,))
             flat_internal = internal.reshape((-1,))
 
-            def solve_cell(log_value, density_value, internal_value):
+            def solve_cell(
+                log_value: Array, density_value: Array, internal_value: Array
+            ) -> tuple[PyTree[Array], Array, Array, Array]:
                 result = implicit_root_result(
                     self.problem,
                     log_value,

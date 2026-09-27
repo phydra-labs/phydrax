@@ -5,14 +5,15 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -28,8 +29,15 @@ from ..stochastic._state_space import (
     GaussianStatePrior,
     StateSpaceModel,
     StateSpaceProblem,
+    StateSpaceStepContext,
     TransitionSample,
 )
+from ..typing import parse
+
+
+if TYPE_CHECKING:
+    from ..solver import WienerTerm
+    from ._sing import SINGResult, SINGState
 
 
 SINGTransitionMethod: TypeAlias = Literal[
@@ -67,7 +75,7 @@ class SINGSupportPlan(StrictModule):
         rank: int,
         support_id: str,
         tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         matrix = np.asarray(constraints, dtype=np.float64)
         basis = np.asarray(tangent_basis, dtype=np.float64)
         fixed_rank = int(rank)
@@ -176,9 +184,8 @@ class SINGTransitionPlan(StrictModule):
         surrogate_provider: Any = None,
         rank_tolerance: float = 1.0e-8,
         approximation_tolerance: float = 1.0e-4,
-    ):
-        if method not in ("euler-factor", "local-linearization", "ensemble-moments"):
-            raise ValueError("Unknown SING transition method.")
+    ) -> None:
+        method = parse(method, SINGTransitionMethod, "method")
         if support is not None and not isinstance(support, SINGSupportPlan):
             raise TypeError("support must be SINGSupportPlan or None.")
         if method == "euler-factor" and surrogate_provider is not None:
@@ -236,7 +243,7 @@ def _gaussian_data(
     next_state: Array,
     tolerance: float,
     /,
-):
+) -> tuple[Array, Array, Array, Array]:
     symmetric = 0.5 * (covariance + covariance.T)
     eigenvalues = jnp.linalg.eigvalsh(symmetric)
     valid = (
@@ -368,7 +375,7 @@ def evaluate_sing_transition(
 class _ProjectedEulerTransition(AbstractTransitionKernel):
     ambient: EulerMaruyamaTransitionKernel
     support: SINGSupportPlan
-    wiener_terms: tuple[Any, ...]
+    wiener_terms: tuple[WienerTerm, ...]
     state_shape: tuple[int, ...] = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
@@ -379,7 +386,7 @@ class _ProjectedEulerTransition(AbstractTransitionKernel):
         ambient: EulerMaruyamaTransitionKernel,
         support: SINGSupportPlan,
         /,
-    ):
+    ) -> None:
         self.ambient = ambient
         self.support = support
         self.wiener_terms = ambient.wiener_terms
@@ -393,27 +400,52 @@ class _ProjectedEulerTransition(AbstractTransitionKernel):
         ambient = self.support.origin + self.support.tangent_basis @ coordinates
         return ambient.reshape(self.ambient.state_shape)
 
-    def drift(self, time, state, context, /) -> Array:
+    def drift(
+        self, time: ArrayLike, state: ArrayLike, context: StateSpaceStepContext, /
+    ) -> Array:
         ambient = self.lift(state)
         value = self.ambient.drift(time, ambient, context).reshape((-1,))
         return self.support.tangent_basis.T @ value
 
-    def dispersion(self, time, state, context, /) -> Array:
+    def dispersion(
+        self, time: ArrayLike, state: ArrayLike, context: StateSpaceStepContext, /
+    ) -> Array:
         ambient = self.lift(state)
         value = self.ambient.dispersion(time, ambient, context)
         return self.support.tangent_basis.T @ value
 
-    def mean(self, state, t0, t1, context, /) -> Array:
+    def mean(
+        self,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
         value = jnp.asarray(state)
         return value + (jnp.asarray(t1) - jnp.asarray(t0)) * self.drift(
             t0, value, context
         )
 
-    def covariance(self, state, t0, t1, context, /) -> Array:
+    def covariance(
+        self,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
         coefficient = self.dispersion(t0, state, context)
         return (jnp.asarray(t1) - jnp.asarray(t0)) * (coefficient @ coefficient.T)
 
-    def _factorization(self, state, t0, t1, context, /):
+    def _factorization(
+        self,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> tuple[PreparedFactorization, Array]:
         covariance = self.covariance(state, t0, t1, context)
         symmetric = 0.5 * (covariance + covariance.T)
         eigenvalues = jnp.linalg.eigvalsh(symmetric)
@@ -437,7 +469,15 @@ class _ProjectedEulerTransition(AbstractTransitionKernel):
         )
         return prepared, positive_definite
 
-    def sample(self, key, state, t0, t1, context, /) -> TransitionSample:
+    def sample(
+        self,
+        key: Array,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> TransitionSample:
         mean = self.mean(state, t0, t1, context)
         coefficient = self.dispersion(t0, state, context)
         noise = jr.normal(key, (coefficient.shape[-1],), dtype=mean.dtype)
@@ -451,7 +491,15 @@ class _ProjectedEulerTransition(AbstractTransitionKernel):
             approximation_id=self.approximation_id,
         )
 
-    def log_prob(self, next_state, state, t0, t1, context, /) -> Array:
+    def log_prob(
+        self,
+        next_state: ArrayLike,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
         mean = self.mean(state, t0, t1, context)
         difference = jnp.asarray(next_state) - mean
         prepared, covariance_valid = self._factorization(state, t0, t1, context)
@@ -479,24 +527,43 @@ class _ProjectedObservationModel(AbstractObservationModel):
     observation_shape: tuple[int, ...] = eqx.field(static=True)
     observation_id: str = eqx.field(static=True)
 
-    def __init__(self, ambient: AbstractObservationModel, support: SINGSupportPlan, /):
+    def __init__(
+        self, ambient: AbstractObservationModel, support: SINGSupportPlan, /
+    ) -> None:
         self.ambient = ambient
         self.support = support
         self.state_shape = (support.rank,)
         self.observation_shape = ambient.observation_shape
         self.observation_id = f"{ambient.observation_id}:support:{support.support_id}"
 
-    def lift(self, state):
+    def lift(self, state: ArrayLike) -> Array:
         flat = self.support.origin + self.support.tangent_basis @ jnp.asarray(state)
         return flat.reshape(self.ambient.state_shape)
 
-    def location(self, state, time, context, /):
+    def location(
+        self, state: ArrayLike, time: ArrayLike, context: StateSpaceStepContext, /
+    ) -> Array:
         return self.ambient.location(self.lift(state), time, context)
 
-    def log_prob(self, value, state, time, mask, context, /):
+    def log_prob(
+        self,
+        value: ArrayLike,
+        state: ArrayLike,
+        time: ArrayLike,
+        mask: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
         return self.ambient.log_prob(value, self.lift(state), time, mask, context)
 
-    def sample(self, key, state, time, context, sample_shape=()):
+    def sample(
+        self,
+        key: Array,
+        state: ArrayLike,
+        time: ArrayLike,
+        context: StateSpaceStepContext,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
         return self.ambient.sample(
             key,
             self.lift(state),
@@ -510,7 +577,7 @@ class SINGConstrainedResult(StrictModule):
     """Gaussian-chain posterior normalized on one fixed affine Hausdorff support."""
 
     reduced_problem: StateSpaceProblem
-    reduced_result: Any
+    reduced_result: SINGResult
     ambient_means: Array
     ambient_covariances: Array
     ambient_transition_cross_covariances: Array
@@ -523,11 +590,11 @@ class SINGConstrainedResult(StrictModule):
     approximation_kind: str = eqx.field(static=True)
 
     @property
-    def state(self):
+    def state(self) -> SINGState:
         return self.reduced_result.state
 
     @property
-    def objective(self):
+    def objective(self) -> Array:
         return self.reduced_result.elbo.total_elbo
 
 
@@ -535,7 +602,7 @@ def _projected_prior(
     prior: GaussianStatePrior,
     support: SINGSupportPlan,
     /,
-):
+) -> tuple[GaussianStatePrior, tuple[str, ...]]:
     state_size = support.tangent_basis.shape[0]
     case_shape = prior.batch_shape
     case_count = int(np.prod(case_shape)) if case_shape else 1
@@ -630,7 +697,7 @@ def _projected_sing_problem(
     problem: StateSpaceProblem,
     support: SINGSupportPlan,
     /,
-):
+) -> tuple[StateSpaceProblem, tuple[str, ...]]:
     if not isinstance(problem, StateSpaceProblem):
         raise TypeError("problem must be a StateSpaceProblem.")
     transition = problem.model.transition
@@ -646,7 +713,7 @@ def _projected_sing_problem(
     context = problem.step_context(0, 0)
     origin_state = support.origin.reshape(transition.state_shape)
 
-    def flat_drift(flat):
+    def flat_drift(flat: Array) -> Array:
         return transition.drift(
             problem.initial_time.reshape((-1,))[0],
             flat.reshape(transition.state_shape),
@@ -690,7 +757,10 @@ def _projected_sing_problem(
         raise ValueError(
             "Transition is not affine/tangent with constant diffusion on the support."
         )
-    reduced_prior, prior_evidence = _projected_prior(problem.model.prior, support)
+    prior = problem.model.prior
+    if not isinstance(prior, GaussianStatePrior):
+        raise TypeError("Affine-Hausdorff SING requires a GaussianStatePrior.")
+    reduced_prior, prior_evidence = _projected_prior(prior, support)
     reduced_transition = _ProjectedEulerTransition(transition, support)
     reduced_observation = _ProjectedObservationModel(
         problem.model.observation,
@@ -732,7 +802,7 @@ def sing_constrained_smoother(
     /,
     *,
     transition_plan: SINGTransitionPlan,
-    **kwargs,
+    **kwargs: Any,
 ) -> SINGConstrainedResult:
     """Run SING in fixed affine coordinates and lift Hausdorff posterior moments."""
     from ._sing import sing_smoother

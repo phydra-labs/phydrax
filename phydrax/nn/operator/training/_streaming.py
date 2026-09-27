@@ -17,7 +17,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ....graph import (
     broadcast_operator_topology,
@@ -38,7 +38,7 @@ class OperatorQuerySchema:
     coordinate_dimension: int
     fingerprint: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.size <= 0:
             raise ValueError("Query source size must be positive.")
         if int(self.coordinate_dimension) <= 0:
@@ -55,7 +55,7 @@ class OperatorQueryChunk:
     start: int
     valid_count: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if len(self.samples.sample_shape) != 1:
             raise ValueError("Streamed query chunks must be point clouds.")
         if int(self.start) < 0:
@@ -137,7 +137,7 @@ class ArrayOperatorQuerySource(OperatorQuerySource):
         *,
         case_shape: Sequence[int] = (),
         fingerprint: str = "",
-    ):
+    ) -> None:
         cases = tuple(case_shape)
         coordinates = query.coordinates_array(case_shape=cases, flatten=True)
         coordinate_dimension = coordinates.shape[-1]
@@ -246,7 +246,7 @@ class CallbackOperatorQuerySource(OperatorQuerySource):
         schema: OperatorQuerySchema,
         reader: Callable[[int, int], FunctionSamples],
         /,
-    ):
+    ) -> None:
         self._schema = schema
         self.reader = reader
 
@@ -281,7 +281,7 @@ class CallbackOperatorQuerySource(OperatorQuerySource):
 class ArrayPredictionSink(OperatorPredictionSink):
     """In-memory sink for ordinary workloads and equivalence checks."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.metadata: OperatorPredictionMetadata | None = None
         self.values: np.ndarray | None = None
         self.next_index = 0
@@ -325,7 +325,7 @@ class ArrayPredictionSink(OperatorPredictionSink):
 class NpyPredictionSink(OperatorPredictionSink):
     """Resumable NumPy memmap sink with fail-closed progress metadata."""
 
-    def __init__(self, path: str | Path, /, *, resume: bool = False):
+    def __init__(self, path: str | Path, /, *, resume: bool = False) -> None:
         self.path = Path(path)
         self.metadata_path = self.path.with_suffix(self.path.suffix + ".metadata.json")
         self.resume = bool(resume)

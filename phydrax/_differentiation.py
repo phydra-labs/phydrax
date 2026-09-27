@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from enum import StrEnum
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 
@@ -336,7 +336,7 @@ class DerivativeRegularity(StrictModule, NonTrainableState):
         degree_bound: int | None = None,
         conditions: Iterable[str] = (),
         support: str | None = None,
-    ):
+    ) -> None:
         continuity_ = _continuity(continuity)
         _piece_rank(pieces)
         if pieces == "polynomial":
@@ -434,7 +434,7 @@ class DerivativeRegularity(StrictModule, NonTrainableState):
             return GradientLevel.SMOOTH, self.conditions
         match self.pieces:
             case "polynomial":
-                if self.degree_bound < order_:
+                if self._polynomial_degree_bound() < order_:
                     return GradientLevel.NONE, ()
             case "none":
                 if continuity == -1:
@@ -470,7 +470,9 @@ class DerivativeRegularity(StrictModule, NonTrainableState):
             "smooth" if self.continuity == "smooth" else max(self.continuity - order_, -1)
         )
         degree = (
-            None if self.pieces != "polynomial" else max(self.degree_bound - order_, 0)
+            None
+            if self.pieces != "polynomial"
+            else max(self._polynomial_degree_bound() - order_, 0)
         )
         return DerivativeRegularity(
             continuity=continuity,
@@ -492,6 +494,13 @@ class DerivativeRegularity(StrictModule, NonTrainableState):
         """Regularity of `outer` applied after `self`: degree bounds multiply."""
         return self._combine(outer, lambda inner, outer_: inner * outer_)
 
+    def _polynomial_degree_bound(self) -> int:
+        degree_bound = self.degree_bound
+        # The constructor requires an int bound exactly when pieces are polynomial.
+        if not (degree_bound is not None):
+            raise RuntimeError("Internal invariant failed: degree_bound is not None.")
+        return degree_bound
+
     def _combine(
         self,
         other: DerivativeRegularity,
@@ -504,7 +513,9 @@ class DerivativeRegularity(StrictModule, NonTrainableState):
         # structure is the most general.
         pieces = max((self.pieces, other_.pieces), key=_piece_rank)
         degree = (
-            degree_rule(self.degree_bound, other_.degree_bound)
+            degree_rule(
+                self._polynomial_degree_bound(), other_._polynomial_degree_bound()
+            )
             if pieces == "polynomial"
             else None
         )
@@ -549,7 +560,7 @@ class SurfaceDerivative(StrictModule, NonTrainableState):
         /,
         *,
         conditions: Iterable[str] = (),
-    ):
+    ) -> None:
         surface_ = _require_surface(surface)
         level_ = _require_level(level)
         conditions_ = _identifier_set(conditions, "conditions")
@@ -577,7 +588,7 @@ class DifferentiationRequest(StrictModule, NonTrainableState):
         *,
         order: int = 1,
         authority: ComponentAuthority | None = None,
-    ):
+    ) -> None:
         surfaces_ = _surface_set(surfaces)
         order_ = _derivative_order(order)
         if authority is not None and not isinstance(authority, ComponentAuthority):
@@ -616,7 +627,7 @@ class DerivativeAdmission(StrictModule, NonTrainableState):
         conditions: Iterable[str] = (),
         reasons: Iterable[str] = (),
         nondifferentiable_outputs: Iterable[str] = (),
-    ):
+    ) -> None:
         if not isinstance(request, DifferentiationRequest):
             raise TypeError("request must be a DifferentiationRequest.")
         levels_ = tuple(_require_level(level) for level in levels)
@@ -669,7 +680,7 @@ class RegularityPolicy(StrictModule, NonTrainableState):
         *,
         allow_almost_everywhere: bool = False,
         allow_undeclared: bool = False,
-    ):
+    ) -> None:
         if not isinstance(allow_almost_everywhere, bool) or not isinstance(
             allow_undeclared, bool
         ):
@@ -904,7 +915,7 @@ class DerivativeContract(StrictModule, NonTrainableState):
         regularity: DerivativeRegularity | None = None,
         conditions: Iterable[str] = (),
         nondifferentiable_outputs: Iterable[str] = (),
-    ):
+    ) -> None:
         entries = tuple(surfaces)
         if any(not isinstance(entry, SurfaceDerivative) for entry in entries):
             raise TypeError("surfaces must contain SurfaceDerivative values.")
@@ -1062,11 +1073,16 @@ class DerivativeContract(StrictModule, NonTrainableState):
         contracts = (self, *others)
         if any(not isinstance(contract, DerivativeContract) for contract in contracts):
             raise TypeError("meet requires DerivativeContract values.")
+        declared = tuple(
+            contract.regularity
+            for contract in contracts
+            if contract.regularity is not None
+        )
         regularity = None
-        if all(contract.regularity is not None for contract in contracts):
-            regularity = self.regularity
-            for contract in others:
-                regularity = regularity.add(contract.regularity)
+        if len(declared) == len(contracts):
+            regularity = declared[0]
+            for other in declared[1:]:
+                regularity = regularity.add(other)
         return _combined_contract(
             contracts, _met_surfaces(contracts), regularity, composition_route
         )
@@ -1387,7 +1403,7 @@ class CapabilityRequirement(StrictModule, NonTrainableState):
         /,
         *,
         safety_critical: bool = False,
-    ):
+    ) -> None:
         capability_id_ = _identifier(capability_id, "capability_id")
         if not isinstance(safety_critical, bool):
             raise TypeError("safety_critical must be bool.")
@@ -1426,7 +1442,14 @@ class AbstractConstructionCertificate(StrictModule, NonTrainableState):
     as fields or properties.
     """
 
-    capability_id: eqx.AbstractVar[str]
+    if TYPE_CHECKING:
+        # Read-only view: implementations use a ClassVar, field, or property,
+        # all of which Equinox accepts for an AbstractVar.
+        @property
+        def capability_id(self) -> str: ...
+
+    else:
+        capability_id: eqx.AbstractVar[str]
     certificate_id: eqx.AbstractVar[str]
 
 

@@ -7,20 +7,28 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import determinant_small_linear, SmallLinearSolvePlan
+from ...typing import PRNGKey
 from ...uq import correlated_observable_diagnostics, CorrelatedObservablePolicy
 from ._core import DiagramGraph
+
+
+_CTINTKernel: TypeAlias = Callable[[Array, Array, Array], Array]
+_CTINTRecord: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
+_LowOrderRecord: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 
 class FermionMonteCarloChain(StrictModule, NonTrainableState):
@@ -92,7 +100,7 @@ class SignFreeCTINTPlan(StrictModule, NonTrainableState):
         steps: int,
         maximum_order: int = 3,
         symmetry_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         beta_ = float(beta)
         coupling = float(interaction)
         signs = np.asarray(sublattice_signs, dtype=np.int64)
@@ -133,8 +141,8 @@ class SignFreeCTINTPlan(StrictModule, NonTrainableState):
 
     def prepare(
         self,
-        up_kernel: Callable[[Array, Array, Array], Array],
-        down_kernel: Callable[[Array, Array, Array], Array],
+        up_kernel: _CTINTKernel,
+        down_kernel: _CTINTKernel,
         /,
         *,
         kernel_id: str,
@@ -158,13 +166,20 @@ class PreparedSignFreeCTINT(StrictModule, NonTrainableState):
     __hash__ = object.__hash__
 
     plan: SignFreeCTINTPlan
-    up_kernel: Callable = eqx.field(static=True)
-    down_kernel: Callable = eqx.field(static=True)
+    up_kernel: _CTINTKernel = eqx.field(static=True)
+    down_kernel: _CTINTKernel = eqx.field(static=True)
     kernel_id: str = eqx.field(static=True)
     determinant_plan: SmallLinearSolvePlan
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, up_kernel, down_kernel, kernel_id, /):
+    def __init__(
+        self,
+        plan: SignFreeCTINTPlan,
+        up_kernel: _CTINTKernel,
+        down_kernel: _CTINTKernel,
+        kernel_id: str,
+        /,
+    ) -> None:
         self.plan = plan
         self.up_kernel = up_kernel
         self.down_kernel = down_kernel
@@ -213,7 +228,7 @@ class PreparedSignFreeCTINT(StrictModule, NonTrainableState):
         weight = (-self.plan.interaction) ** order * determinant_up * determinant_down
         return weight, determinant_up, determinant_down, symmetry
 
-    def run(self, key: Key[Array, ""], /) -> SignFreeCTINTResult:
+    def run(self, key: PRNGKey, /) -> SignFreeCTINTResult:
         sites = jnp.zeros((self.plan.maximum_order,), dtype=jnp.int32)
         times = jnp.zeros((self.plan.maximum_order,))
         weight, _, _, _ = self._weight(sites, times, jnp.asarray(0, dtype=jnp.int32))
@@ -226,7 +241,9 @@ class PreparedSignFreeCTINT(StrictModule, NonTrainableState):
         )
         keys = jr.split(key, self.plan.steps)
 
-        def advance(state, step_key):
+        def advance(
+            state: _CTINTState, step_key: PRNGKey
+        ) -> tuple[_CTINTState, _CTINTRecord]:
             move_key, site_key, time_key, slot_key, accept_key = jr.split(step_key, 5)
             insertion = jr.bernoulli(move_key)
             can_insert = state.order < self.plan.maximum_order
@@ -344,7 +361,7 @@ class LowOrderFermionDiagramMonteCarloPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, /, *, steps: int, maximum_order: int = 6, maximum_diagrams: int = 256
-    ):
+    ) -> None:
         draws, order, count = int(steps), int(maximum_order), int(maximum_diagrams)
         if draws < 8 or order < 1 or count < 2:
             raise ValueError("Low-order diagram Monte Carlo bounds are invalid.")
@@ -452,7 +469,16 @@ class PreparedLowOrderFermionDiagramMonteCarlo(StrictModule, NonTrainableState):
     detailed_balance_residual: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, orders, weights, proposal_matrix, residual, prepared_id, /):
+    def __init__(
+        self,
+        plan: LowOrderFermionDiagramMonteCarloPlan,
+        orders: Array,
+        weights: Array,
+        proposal_matrix: Array,
+        residual: Array,
+        prepared_id: str,
+        /,
+    ) -> None:
         self.plan, self.orders, self.weights, self.proposal_matrix = (
             plan,
             orders,
@@ -462,13 +488,13 @@ class PreparedLowOrderFermionDiagramMonteCarlo(StrictModule, NonTrainableState):
         self.detailed_balance_residual, self.prepared_id = residual, str(prepared_id)
 
     def run(
-        self, key: Key[Array, ""], /, *, initial_index: int = 0
+        self, key: PRNGKey, /, *, initial_index: int = 0
     ) -> LowOrderDiagramMonteCarloResult:
         if initial_index < 0 or initial_index >= self.orders.size:
             raise ValueError("initial_index is outside the diagram catalog.")
         keys = jr.split(key, self.plan.steps)
 
-        def advance(index, step_key):
+        def advance(index: Array, step_key: PRNGKey) -> tuple[Array, _LowOrderRecord]:
             proposal_key, acceptance_key = jr.split(step_key)
             candidate = jr.categorical(
                 proposal_key, jnp.log(self.proposal_matrix[index])
@@ -534,8 +560,13 @@ class PreparedLowOrderFermionDiagramMonteCarlo(StrictModule, NonTrainableState):
 
 
 def _chain_evidence(
-    chain, detailed_balance, symmetry, minimum_weight, overflow, prepared_id
-):
+    chain: FermionMonteCarloChain,
+    detailed_balance: Array,
+    symmetry: Array,
+    minimum_weight: Array,
+    overflow: Array,
+    prepared_id: str,
+) -> FermionMonteCarloEvidence:
     phase_components = jnp.stack(
         (jnp.real(chain.phases), jnp.imag(chain.phases)), axis=-1
     )

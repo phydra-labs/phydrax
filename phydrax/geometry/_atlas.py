@@ -11,7 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..linalg import orthonormal_frame
@@ -50,7 +52,7 @@ class TrimDomain(StrictModule):
     outer: Array
     holes: tuple[Array, ...]
 
-    def __init__(self, outer: Array, holes: Sequence[Array] = ()):
+    def __init__(self, outer: npt.ArrayLike, holes: Sequence[npt.ArrayLike] = ()) -> None:
         outer_host = np.asarray(outer, dtype=np.float64)
         hole_hosts = tuple(np.asarray(hole, dtype=np.float64) for hole in holes)
         if outer_host.ndim != 2 or outer_host.shape[1] != 2 or outer_host.shape[0] < 3:
@@ -112,7 +114,7 @@ class BoundaryFrame(StrictModule):
         finite: Array,
         regular: Array,
         jacobian_consistent: Array,
-    ):
+    ) -> None:
         self.origin = jnp.asarray(origin, dtype=jnp.float64)
         self.tangents = jnp.asarray(tangents, dtype=jnp.float64)
         self.normal = jnp.asarray(normal, dtype=jnp.float64)
@@ -149,7 +151,7 @@ class BoundaryAtlas(StrictModule):
         orientation: Array | None = None,
         seam_owner: Array | None = None,
         trim_domains: Sequence[TrimDomain | None] | None = None,
-    ):
+    ) -> None:
         entity_ids = jnp.asarray(source_entity_ids, dtype=jnp.int32).reshape((-1,))
         if entity_ids.shape != (mapping.num_charts,):
             raise ValueError("source_entity_ids must contain one ID per boundary chart.")
@@ -210,7 +212,9 @@ class BoundaryAtlas(StrictModule):
     def ambient_dimension(self) -> int:
         return self.mapping.ambient_dimension
 
-    def _validate_inputs(self, chart_indices: Array, reference: Array):
+    def _validate_inputs(
+        self, chart_indices: ArrayLike, reference: ArrayLike
+    ) -> tuple[Array, Array]:
         indices = jnp.asarray(chart_indices, dtype=jnp.int32)
         reference_ = jnp.asarray(reference, dtype=jnp.float64)
         if reference_.shape[:-1] != indices.shape:
@@ -413,7 +417,7 @@ class _SelectedBoundaryMap(AbstractBoundaryMap):
     base: AbstractBoundaryMap
     chart_indices: Array
 
-    def __init__(self, base: AbstractBoundaryMap, chart_indices: Array):
+    def __init__(self, base: AbstractBoundaryMap, chart_indices: Array) -> None:
         self.base = base
         self.chart_indices = jnp.asarray(chart_indices, dtype=jnp.int32).reshape((-1,))
 
@@ -440,7 +444,7 @@ class _TranslatedBoundaryMap(AbstractBoundaryMap):
     base: AbstractBoundaryMap
     offset: Array
 
-    def __init__(self, base: AbstractBoundaryMap, offset: Array):
+    def __init__(self, base: AbstractBoundaryMap, offset: Array) -> None:
         offset_ = jnp.asarray(offset, dtype=jnp.float64).reshape((-1,))
         if offset_.shape != (base.ambient_dimension,):
             raise ValueError(
@@ -472,7 +476,7 @@ class _CircleBoundaryMap(AbstractBoundaryMap):
     center: Array
     radius: Array
 
-    def __init__(self, center: Array, radius: Array):
+    def __init__(self, center: Array, radius: Array) -> None:
         self.center = jnp.asarray(center, dtype=jnp.float64).reshape((2,))
         self.radius = jnp.asarray(radius, dtype=jnp.float64).reshape(())
 
@@ -502,7 +506,7 @@ class _SphereBoundaryMap(AbstractBoundaryMap):
     center: Array
     radius: Array
 
-    def __init__(self, center: Array, radius: Array):
+    def __init__(self, center: Array, radius: Array) -> None:
         self.center = jnp.asarray(center, dtype=jnp.float64).reshape((3,))
         self.radius = jnp.asarray(radius, dtype=jnp.float64).reshape(())
 
@@ -551,7 +555,7 @@ class _BoxBoundaryMap(AbstractBoundaryMap):
     second_axes: Array
     jacobians: Array
 
-    def __init__(self, center: Array, size: Array):
+    def __init__(self, center: Array, size: Array) -> None:
         center_ = jnp.asarray(center, dtype=jnp.float64).reshape((3,))
         size_ = jnp.asarray(size, dtype=jnp.float64).reshape((3,))
         half = 0.5 * size_

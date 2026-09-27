@@ -26,7 +26,7 @@ class MorrisViscosityPlan(StrictModule, NonTrainableState):
         *,
         regularization: float = 0.01,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         viscosity = float(kinematic_viscosity)
         epsilon = float(regularization)
         if not np.isfinite(viscosity) or viscosity < 0.0:

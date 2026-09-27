@@ -18,7 +18,7 @@ def _fibonacci_sphere(n: int) -> np.ndarray:
     return np.c_[x, y, z]
 
 
-def test_geometry3d_from_lidar_scene_basic():
+def test_geometry3d_from_lidar_scene_basic() -> None:
     # Two clusters; crop ROI to keep the first
     obj1 = _fibonacci_sphere(600)
     obj2 = _fibonacci_sphere(400) * 0.5 + np.array([2.0, 0.0, 0.0])

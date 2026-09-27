@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint, canonical_json
 from ..._strict import StrictModule
@@ -18,6 +19,28 @@ from ..._trainable import NonTrainableState
 from ...artifacts import ScientificArtifactEnvelope
 from ...linalg import DenseLinearOperator, LinearSystem, solve
 from ...qualification import ReferenceArtifactManifest
+
+
+_HydrostaticFields: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+_StructuralState: TypeAlias = tuple[Array, Array, Array, Array]
+_ReadjustedStructure: TypeAlias = tuple[
+    Array, Array, Array, _HydrostaticFields, Array, Array, Array
+]
+_ClosureFields: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 
 def gravothermal_calibration_payload(
@@ -82,7 +105,7 @@ class GravothermalSIDMState(StrictModule):
         radial_faces: ArrayLike,
         time: ArrayLike,
         /,
-    ):
+    ) -> None:
         density = jnp.asarray(mass_density)
         faces = jnp.asarray(radial_faces, dtype=density.dtype)
         self.mass_density = density
@@ -210,7 +233,7 @@ class GravothermalSIDMPlan(StrictModule, NonTrainableState):
         redistribution: bool,
         training_use: bool,
         export: bool,
-    ):
+    ) -> None:
         faces = np.asarray(radial_faces, dtype=np.float64)
         if (
             faces.ndim != 1
@@ -372,7 +395,7 @@ class GravothermalSIDMPlan(StrictModule, NonTrainableState):
 
     def _hydrostatic_from_faces(
         self, faces: Array, shell_mass: Array, dispersion_squared: Array, /
-    ):
+    ) -> _HydrostaticFields:
         inner = faces[:-1]
         outer = faces[1:]
         volumes = (4.0 * jnp.pi / 3.0) * (outer**3 - inner**3)
@@ -435,7 +458,7 @@ class GravothermalSIDMPlan(StrictModule, NonTrainableState):
 
     def _structural_state(
         self, log_width: Array, shell_mass: Array, entropy_proxy: Array, /
-    ):
+    ) -> _StructuralState:
         dtype = shell_mass.dtype
         faces = jnp.concatenate(
             (jnp.zeros((1,), dtype=dtype), jnp.cumsum(jnp.exp(log_width)))
@@ -481,10 +504,10 @@ class GravothermalSIDMPlan(StrictModule, NonTrainableState):
         entropy_proxy: Array,
         initial_faces: Array,
         /,
-    ):
+    ) -> _ReadjustedStructure:
         initial_log_width = jnp.log(jnp.diff(initial_faces))
 
-        def residual(log_width):
+        def residual(log_width: Array) -> Array:
             return self._structural_state(log_width, shell_mass, entropy_proxy)[-1]
 
         initial_residual = residual(initial_log_width)
@@ -493,10 +516,12 @@ class GravothermalSIDMPlan(StrictModule, NonTrainableState):
         )
         line_search_factors = 0.5 ** jnp.arange(14, dtype=shell_mass.dtype)
 
-        def iteration(_, carry):
+        def iteration(
+            _: Array, carry: tuple[Array, Array, Array, Array]
+        ) -> tuple[Array, Array, Array, Array]:
             log_width, converged, solver_valid, count = carry
 
-            def attempt(current):
+            def attempt(current: Array) -> tuple[Array, Array, Array]:
                 current_residual = residual(current)
                 jacobian = jax.jacfwd(residual)(current)
                 solved = solve(
@@ -648,7 +673,7 @@ class GravothermalSIDMPlan(StrictModule, NonTrainableState):
             & jnp.all(jnp.diff(state.radial_faces) > 0.0)
         )
 
-    def _closure(self, state: GravothermalSIDMState):
+    def _closure(self, state: GravothermalSIDMState) -> _ClosureFields:
         dtype = state.mass_density.dtype
         faces = state.radial_faces.astype(dtype)
         density = state.mass_density

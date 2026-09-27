@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -28,7 +29,7 @@ class TopologyEpoch(StrictModule, NonTrainableState):
 
     def __init__(
         self, index: int, geometry_id: str, topology_id: str, partition_id: str, /
-    ):
+    ) -> None:
         if (
             isinstance(index, bool)
             or not isinstance(index, (int, np.integer))
@@ -118,7 +119,7 @@ class TopologyEpochTransition(StrictModule, NonTrainableState):
         source_measures: ArrayLike,
         target_measures: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, TopologyEpoch) or not isinstance(target, TopologyEpoch):
             raise TypeError("Topology transition endpoints must be TopologyEpoch values.")
         if target.index != source.index + 1 or source.epoch_id == target.epoch_id:

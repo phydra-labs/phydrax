@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -25,7 +27,7 @@ from phydrax.applications.cosmology._sidm_kernels import (
 from phydrax.applications.cosmology._sidm_weighted import WeightedSIDMPacketState
 
 
-def _case(packet_count: int, repetitions: int):
+def _case(packet_count: int, repetitions: int) -> Any:
     indices = jnp.arange(packet_count, dtype=jnp.float64)
     positions = jnp.stack(
         (
@@ -110,7 +112,7 @@ def _case(packet_count: int, repetitions: int):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--packet-counts", nargs="+", type=int, default=[16, 32, 64])
     parser.add_argument("--repeats", type=int, default=10)

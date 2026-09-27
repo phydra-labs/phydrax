@@ -5,20 +5,21 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from math import isfinite
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, TypeVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float
 from ...dynamics import (
     AbstractDiscretePlant,
     ArrayPyTreeSchema,
@@ -47,6 +48,7 @@ from ...metrix import (
     ProductStateGeometryBlock,
     QuaternionPoseStateGeometry,
 )
+from ...typing import parse
 from ._rod_dynamics import PreparedRod, RodState
 from ._rod_loads import RodLoadLedger
 from ._rod_reduced_dynamics import (
@@ -54,6 +56,7 @@ from ._rod_reduced_dynamics import (
     ReducedRodDenseCholeskyPlan,
     ReducedRodDynamicsEvaluation,
     ReducedRodDynamicsPlan,
+    ReducedRodForwardDynamicsResult,
     ReducedRodMaterial,
     ReducedRodMaterialControl,
     ReducedRodMaterialState,
@@ -67,13 +70,7 @@ from ._rod_reduction import (
 
 
 FloatingRodTwistConvention: TypeAlias = Literal["body", "spatial"]
-
-
-def _positive_finite(value: float, name: str, /) -> float:
-    result = float(value)
-    if not isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
+_Tree = TypeVar("_Tree")
 
 
 def _quaternion_conjugate(quaternion: Array, /) -> Array:
@@ -108,7 +105,7 @@ def _body_angular_velocity(quaternion: Array, tangent: Array, /) -> Array:
     return 2.0 * _quaternion_multiply(_quaternion_conjugate(quaternion), tangent)[..., 1:]
 
 
-def _tree_select(selector: Array, candidate, source):
+def _tree_select(selector: Array, candidate: _Tree, source: _Tree) -> _Tree:
     return jax.tree_util.tree_map(
         lambda candidate_leaf, source_leaf: jnp.where(
             selector, candidate_leaf, source_leaf
@@ -140,14 +137,13 @@ class FloatingReducedRodPlan(StrictModule, NonTrainableState):
         convention: FloatingRodTwistConvention = "body",
         pose_tolerance: float = 1.0e-9,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(reduction, ReducedRodPlan):
             raise TypeError("reduction must be a ReducedRodPlan.")
         if reduction.dimension != 3:
             raise ValueError("Floating reduced rods require a spatial 3-D reduction.")
-        if convention not in ("body", "spatial"):
-            raise ValueError("convention must be 'body' or 'spatial'.")
-        tolerance = _positive_finite(pose_tolerance, "pose_tolerance")
+        convention = parse(convention, FloatingRodTwistConvention, "convention")
+        tolerance = positive_finite_float(pose_tolerance, "pose_tolerance")
         if tolerance >= np.pi:
             raise ValueError("pose_tolerance must be smaller than pi.")
         self.reduction = reduction
@@ -183,7 +179,7 @@ class FloatingReducedRodState(StrictModule):
         base_twist: ArrayLike,
         coefficient_velocities: ArrayLike,
         /,
-    ):
+    ) -> None:
         pose = jnp.asarray(base_pose)
         values = jnp.asarray(coefficients)
         twist = jnp.asarray(base_twist)
@@ -237,7 +233,9 @@ class FloatingReducedRodDirectLoad(StrictModule):
     source_id: str = eqx.field(static=True)
     power_channel: str = eqx.field(static=True)
 
-    def __init__(self, effort: ArrayLike, /, *, source_id: str, power_channel: str):
+    def __init__(
+        self, effort: ArrayLike, /, *, source_id: str, power_channel: str
+    ) -> None:
         value = jnp.asarray(effort)
         if (
             value.ndim != 1
@@ -420,7 +418,7 @@ class PreparedFloatingReducedRod(StrictModule, NonTrainableState):
         stretch_shear_material: ReducedRodMaterial | None = None,
         bend_twist_material: ReducedRodMaterial | None = None,
         gravity: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(rod, PreparedRod):
             raise TypeError("rod must be a PreparedRod.")
         if not isinstance(plan, FloatingReducedRodPlan):
@@ -703,7 +701,7 @@ class PreparedFloatingReducedRod(StrictModule, NonTrainableState):
         tangent = self.tangent_space.validate(velocity)
         zero = jnp.zeros_like(tangent)
 
-        def configuration_curve(local):
+        def configuration_curve(local: Array) -> tuple[Array, Array]:
             point = self.configuration_geometry.retract(configuration, local)
             return self._lift_configuration_values(point)
 
@@ -891,7 +889,7 @@ class PreparedFloatingReducedRod(StrictModule, NonTrainableState):
             self.dynamics_id,
         )
 
-        def inverse_action(value):
+        def inverse_action(value: Array) -> Array:
             tangent_value = self.tangent_space.inverse_riesz(value)
             return solve(
                 LinearSystem(solver_operator),
@@ -925,7 +923,7 @@ class PreparedFloatingReducedRod(StrictModule, NonTrainableState):
         native_velocity = self._native_velocity_values(configuration, velocity)
         zero = jnp.zeros_like(velocity)
 
-        def lifted_at(local):
+        def lifted_at(local: Array) -> tuple[Array, Array]:
             point = self.configuration_geometry.retract(configuration, local)
             return self._native_velocity_values(point, velocity)
 
@@ -1186,7 +1184,7 @@ class PreparedFloatingReducedRod(StrictModule, NonTrainableState):
         )
 
     def forward_dynamics(
-        self, state: FloatingReducedRodState, /, **kwargs
+        self, state: FloatingReducedRodState, /, **kwargs: Any
     ) -> FloatingReducedRodForwardDynamicsResult:
         evaluation = self.evaluate(state, **kwargs)
         rhs = evaluation.forces.total_effort - evaluation.bias.effort
@@ -1208,7 +1206,7 @@ class PreparedFloatingReducedRod(StrictModule, NonTrainableState):
         state: FloatingReducedRodState,
         acceleration: ArrayLike,
         /,
-        **kwargs,
+        **kwargs: Any,
     ) -> FloatingReducedRodInverseDynamicsResult:
         evaluation = self.evaluate(state, **kwargs)
         acceleration_ = self.tangent_space.validate(jnp.asarray(acceleration))
@@ -1231,7 +1229,7 @@ class PreparedFloatingReducedRod(StrictModule, NonTrainableState):
         )
 
     def fixed_base_evaluation(
-        self, state: FloatingReducedRodState, /, **kwargs
+        self, state: FloatingReducedRodState, /, **kwargs: Any
     ) -> ReducedRodDynamicsEvaluation:
         """Delegate the constrained-root limit to the authoritative fixed profile."""
         self._validated_configuration(state)
@@ -1241,7 +1239,9 @@ class PreparedFloatingReducedRod(StrictModule, NonTrainableState):
             kwargs["source_state"] = source_state.reduced_state
         return self.fixed_base_dynamics.evaluate(state.reduced_state, **kwargs)
 
-    def fixed_base_forward_dynamics(self, state: FloatingReducedRodState, /, **kwargs):
+    def fixed_base_forward_dynamics(
+        self, state: FloatingReducedRodState, /, **kwargs: Any
+    ) -> ReducedRodForwardDynamicsResult:
         """Return the exact fixed-profile evolution after imposing zero root motion."""
         self._validated_configuration(state)
         source_state = kwargs.pop("source_state", None)
@@ -1275,7 +1275,7 @@ class PreparedFloatingReducedRod(StrictModule, NonTrainableState):
         acceleration_ = self.tangent_space.validate(jnp.asarray(acceleration))
         zero = jnp.zeros_like(velocity)
 
-        def momentum_at(local, tangent):
+        def momentum_at(local: Array, tangent: Array) -> Array:
             point = self.configuration_geometry.retract(configuration, local)
             candidate = self.state_from_configuration_velocity(point, tangent)
             return self.spatial_momentum(candidate).values
@@ -1301,7 +1301,7 @@ class FloatingReducedRodPlantControl(StrictModule):
 
     effort: Array
 
-    def __init__(self, effort: ArrayLike, /):
+    def __init__(self, effort: ArrayLike, /) -> None:
         value = jnp.asarray(effort)
         if (
             value.ndim != 1
@@ -1317,7 +1317,7 @@ class FloatingReducedRodPlantParameterValues(StrictModule):
 
     values: Array
 
-    def __init__(self, values: ArrayLike, /):
+    def __init__(self, values: ArrayLike, /) -> None:
         array = jnp.asarray(values)
         if array.shape != (0,):
             raise ValueError(
@@ -1370,7 +1370,7 @@ class FloatingReducedRodPlant(AbstractDiscretePlant):
         /,
         *,
         initial_state: FloatingReducedRodState | None = None,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedFloatingReducedRod):
             raise TypeError("prepared must be a PreparedFloatingReducedRod.")
         state = prepared.initialize_state() if initial_state is None else initial_state
@@ -1590,7 +1590,7 @@ def prepare_floating_reduced_rod(
     plan: FloatingReducedRodPlan,
     dynamics_plan: ReducedRodDynamicsPlan | None = None,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> PreparedFloatingReducedRod:
     return PreparedFloatingReducedRod(rod, plan, dynamics_plan, **kwargs)
 
@@ -1623,13 +1623,13 @@ def floating_reduced_rod_gravity(
 
 
 def evaluate_floating_reduced_rod(
-    prepared: PreparedFloatingReducedRod, state: FloatingReducedRodState, /, **kwargs
+    prepared: PreparedFloatingReducedRod, state: FloatingReducedRodState, /, **kwargs: Any
 ) -> FloatingReducedRodDynamicsEvaluation:
     return prepared.evaluate(state, **kwargs)
 
 
 def floating_reduced_rod_forward_dynamics(
-    prepared: PreparedFloatingReducedRod, state: FloatingReducedRodState, /, **kwargs
+    prepared: PreparedFloatingReducedRod, state: FloatingReducedRodState, /, **kwargs: Any
 ) -> FloatingReducedRodForwardDynamicsResult:
     return prepared.forward_dynamics(state, **kwargs)
 
@@ -1639,7 +1639,7 @@ def floating_reduced_rod_inverse_dynamics(
     state: FloatingReducedRodState,
     acceleration: ArrayLike,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> FloatingReducedRodInverseDynamicsResult:
     return prepared.inverse_dynamics(state, acceleration, **kwargs)
 

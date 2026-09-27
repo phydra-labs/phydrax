@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 
 
@@ -13,7 +16,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _square_mesh():
+def _square_mesh() -> Any:
     return phx.discretization.CellMesh.from_triangles(
         jnp.asarray(
             ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)),
@@ -23,7 +26,7 @@ def _square_mesh():
     )
 
 
-def _two_block_mesh():
+def _two_block_mesh() -> Any:
     coordinates = jnp.asarray(
         (
             (0.0, 0.0),
@@ -54,7 +57,7 @@ def _two_block_mesh():
     )
 
 
-def _binary_model(*, polynomial=False):
+def _binary_model(*, polynomial: Any = False) -> Any:
     parameters = phx.equations.BinaryThermodynamicParameters(1.0, 1.0)
     if not polynomial:
         return phx.applications.phase_field.BinaryPhaseFieldModel(parameters)
@@ -65,7 +68,7 @@ def _binary_model(*, polynomial=False):
     )
 
 
-def test_multiblock_discrete_gradient_closes_one_energy_ledger():
+def test_multiblock_discrete_gradient_closes_one_energy_ledger() -> None:
     element = phx.discretization.lagrange_element("triangle", 1)
     discretization = phx.discretization.FiniteElementPlan(
         _two_block_mesh(),
@@ -93,7 +96,7 @@ def test_multiblock_discrete_gradient_closes_one_energy_ledger():
     assert len(method.discretization.mesh.blocks) == 2
 
 
-def test_periodic_constraint_identifies_both_square_seams():
+def test_periodic_constraint_identifies_both_square_seams() -> None:
     element = phx.discretization.lagrange_element("triangle", 1)
     discretization = phx.discretization.FiniteElementPlan(
         _square_mesh(),
@@ -128,7 +131,7 @@ def test_periodic_constraint_identifies_both_square_seams():
     np.testing.assert_array_equal(expanded, jnp.full((4,), 2.5))
 
 
-def test_wetting_and_time_dependent_microtraction_enter_boundary_ledger():
+def test_wetting_and_time_dependent_microtraction_enter_boundary_ledger() -> None:
     element = phx.discretization.lagrange_element("triangle", 1)
     discretization = phx.discretization.FiniteElementPlan(
         _square_mesh(),
@@ -161,7 +164,7 @@ def test_wetting_and_time_dependent_microtraction_enter_boundary_ledger():
     assert result.evidence.ledger.closed
 
 
-def test_tensor_mobility_and_boundary_flux_close_mass_balance():
+def test_tensor_mobility_and_boundary_flux_close_mass_balance() -> None:
     element = phx.discretization.lagrange_element("triangle", 1)
     discretization = phx.discretization.FiniteElementPlan(
         _square_mesh(),
@@ -197,7 +200,7 @@ def test_tensor_mobility_and_boundary_flux_close_mass_balance():
     assert result.evidence.dissipation > 0.0
 
 
-def test_dense_grand_potential_step_conserves_components():
+def test_dense_grand_potential_step_conserves_components() -> None:
     phase_a = phx.applications.phase_field.QuadraticGrandPotentialPhase(
         "phase-a", 0.0, jnp.asarray((0.2,)), jnp.asarray(((1.0,),))
     )
@@ -250,7 +253,7 @@ def test_dense_grand_potential_step_conserves_components():
     assert result.evidence.energy_defect <= result.evidence.energy_tolerance
 
 
-def test_active_phase_storage_is_dense_equivalent_and_capacity_safe():
+def test_active_phase_storage_is_dense_equivalent_and_capacity_safe() -> None:
     element = phx.discretization.lagrange_element("triangle", 1)
     discretization = phx.discretization.FiniteElementPlan(
         _square_mesh(),
@@ -295,7 +298,7 @@ def test_active_phase_storage_is_dense_equivalent_and_capacity_safe():
     assert bool(allowed.successful)
 
 
-def test_amr_stochastic_replay_and_distributed_ownership_are_identity_safe():
+def test_amr_stochastic_replay_and_distributed_ownership_are_identity_safe() -> None:
     element = phx.discretization.lagrange_element("triangle", 1)
     discretization = phx.discretization.FiniteElementPlan(
         _square_mesh(),
@@ -322,7 +325,10 @@ def test_amr_stochastic_replay_and_distributed_ownership_are_identity_safe():
         jnp.asarray(0), jnp.asarray(0.0), initial, jnp.asarray(0.01)
     )
     np.testing.assert_array_equal(
-        first.candidate_state.phase, replay.candidate_state.phase
+        # ty: ignore[unresolved-attribute]
+        first.candidate_state.phase,
+        # ty: ignore[unresolved-attribute]
+        replay.candidate_state.phase,
     )
 
     epoch = phx.applications.phase_field.PhaseFieldAdaptiveEpoch(method, initial)
@@ -355,7 +361,7 @@ def test_amr_stochastic_replay_and_distributed_ownership_are_identity_safe():
     assert manifest.stochastic_id == noise.noise_plan_id
 
 
-def test_integrated_capability_profiles_are_exact_unreleased_claims():
+def test_integrated_capability_profiles_are_exact_unreleased_claims() -> None:
     profiles = phx.applications.phase_field.phase_field_candidate_profiles()
 
     assert tuple(profile.name for profile in profiles) == (

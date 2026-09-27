@@ -11,12 +11,15 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
+from ..typing import PRNGKey
 from ._coordinate import CoordinateSpec
 from ._domain import JointFactor
 from ._factor_component import FactorComponent
@@ -55,7 +58,7 @@ class DatasetDomain(JointFactor):
         *,
         label: str = "data",
         measure: Literal["probability", "count"] = "probability",
-    ):
+    ) -> None:
         leaves = jax.tree_util.tree_leaves(data)
         if not leaves:
             raise ValueError("DatasetDomain requires at least one array leaf.")
@@ -148,7 +151,7 @@ class DatasetDomain(JointFactor):
         num_points: int,
         *,
         sampler: str = "uniform",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> PyTree[Array]:
         idx = self.sample_indices(num_points, sampler=sampler, key=key)
         return self.input_rows(idx)
@@ -158,7 +161,7 @@ class DatasetDomain(JointFactor):
         num_points: int,
         *,
         sampler: str = "uniform",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         del sampler
         n = int(num_points)
@@ -197,7 +200,7 @@ class DatasetDomain(JointFactor):
         idx = jnp.asarray(indices, dtype=jnp.int32).reshape((-1,))
         rows = self.input_rows(idx)
 
-        def _to_field(v: ArrayLike):
+        def _to_field(v: ArrayLike) -> cx.AxisArray:
             arr = jnp.asarray(v)
             if arr.ndim == 0:
                 raise ValueError(

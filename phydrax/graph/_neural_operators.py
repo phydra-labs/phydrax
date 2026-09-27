@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,13 +16,14 @@ from ..sparse import (
     route_reduce,
     RouteReduction,
 )
+from ..typing import parse
 from ._graph import ensure_graph
 from ._ir import GraphIR
-from ._typed import node_type_ids
+from ._typed import GraphFlow, node_type_ids
 
 
 ArrayTree = Any
-FiniteVolumeSign = Literal["in_minus_out", "out_minus_in"]
+FiniteVolumeSign: TypeAlias = Literal["in_minus_out", "out_minus_in"]
 
 
 def _route_reduction(value: str, /) -> RouteReduction:
@@ -360,7 +361,7 @@ class GraphKernelIntegral(StrictModule):
         source_measure: Any | None = None,
         reduction: RouteReduction = "sum",
         normalize: bool = False,
-    ):
+    ) -> None:
         self.kernel_fn = kernel_fn
         self.source_fn = source_fn
         self.update_node_fn = update_node_fn
@@ -425,7 +426,7 @@ class GraphDiffusion(StrictModule):
 
     conductivity_fn: Callable | None
     update_node_fn: Callable | None
-    sign: str = eqx.field(static=True)
+    sign: FiniteVolumeSign = eqx.field(static=True)
 
     def __init__(
         self,
@@ -433,12 +434,9 @@ class GraphDiffusion(StrictModule):
         /,
         *,
         update_node_fn: Callable | None = None,
-        sign: str = "in_minus_out",
-    ):
-        if sign not in ("in_minus_out", "out_minus_in"):
-            raise ValueError(
-                "GraphDiffusion sign must be 'in_minus_out' or 'out_minus_in'."
-            )
+        sign: FiniteVolumeSign = "in_minus_out",
+    ) -> None:
+        sign = parse(sign, FiniteVolumeSign, "sign")
         self.conductivity_fn = conductivity_fn
         self.update_node_fn = update_node_fn
         self.sign = sign
@@ -515,7 +513,7 @@ class GraphNeuralOperator(StrictModule):
         normalize: bool = True,
         node_type_key: str = "type",
         target_node_type: int | None = None,
-    ):
+    ) -> None:
         self.kernel_fn = kernel_fn
         self.source_fn = source_fn
         self.update_node_fn = update_node_fn
@@ -610,7 +608,7 @@ class GraphAttentionOperator(StrictModule):
     input_key: str | None = eqx.field(static=True)
     output_key: str | None = eqx.field(static=True)
     edge_bias_key: str | None = eqx.field(static=True)
-    flow: str = eqx.field(static=True)
+    flow: GraphFlow = eqx.field(static=True)
     temperature: float = eqx.field(static=True)
     head_reduction: str = eqx.field(static=True)
     node_type_key: str = eqx.field(static=True)
@@ -633,14 +631,13 @@ class GraphAttentionOperator(StrictModule):
         source_measure_key: str | None = None,
         source_measure: Any | None = None,
         measure_eps: float = 1e-12,
-        flow: str = "source_to_target",
+        flow: GraphFlow = "source_to_target",
         temperature: float | None = None,
         head_reduction: str = "concat",
         node_type_key: str = "type",
         target_node_type: int | None = None,
-    ):
-        if flow not in ("source_to_target", "target_to_source"):
-            raise ValueError("flow must be 'source_to_target' or 'target_to_source'.")
+    ) -> None:
+        flow = parse(flow, GraphFlow, "flow")
         if head_reduction not in ("concat", "mean"):
             raise ValueError("head_reduction must be 'concat' or 'mean'.")
         self.query_fn = query_fn
@@ -798,9 +795,8 @@ class GraphFiniteVolumeDivergence(StrictModule):
         volume: Any | None = None,
         normalize_by_volume: bool = True,
         sign: FiniteVolumeSign = "in_minus_out",
-    ):
-        if sign not in ("in_minus_out", "out_minus_in"):
-            raise ValueError("sign must be 'in_minus_out' or 'out_minus_in'.")
+    ) -> None:
+        sign = parse(sign, FiniteVolumeSign, "sign")
         self.flux_key = flux_key
         self.output_key = output_key
         self.volume_key = volume_key
@@ -853,9 +849,8 @@ class GraphFiniteVolumeDiffusion(StrictModule):
         normalize_by_volume: bool = True,
         sign: FiniteVolumeSign = "in_minus_out",
         eps: float = 1e-12,
-    ):
-        if sign not in ("in_minus_out", "out_minus_in"):
-            raise ValueError("sign must be 'in_minus_out' or 'out_minus_in'.")
+    ) -> None:
+        sign = parse(sign, FiniteVolumeSign, "sign")
         self.input_key = input_key
         self.output_key = output_key
         self.conductivity_key = conductivity_key
@@ -920,7 +915,7 @@ class GraphProcessor(StrictModule):
 
     blocks: tuple[Callable[[GraphIR], GraphIR], ...]
 
-    def __init__(self, blocks: Sequence[Callable[[GraphIR], GraphIR]], /):
+    def __init__(self, blocks: Sequence[Callable[[GraphIR], GraphIR]], /) -> None:
         if len(blocks) == 0:
             raise ValueError("GraphProcessor requires at least one block.")
         self.blocks = tuple(blocks)
@@ -940,7 +935,7 @@ class RepeatedGraphProcessor(StrictModule):
     block: Callable[[GraphIR], GraphIR]
     steps: int = eqx.field(static=True)
 
-    def __init__(self, block: Callable[[GraphIR], GraphIR], /, *, steps: int):
+    def __init__(self, block: Callable[[GraphIR], GraphIR], /, *, steps: int) -> None:
         self.block = block
         self.steps = int(steps)
         if self.steps < 0:

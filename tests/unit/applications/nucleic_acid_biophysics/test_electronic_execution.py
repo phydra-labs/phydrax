@@ -1,8 +1,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
 import hashlib
 import json
 from dataclasses import replace
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -47,7 +49,7 @@ UNITS = AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
 PER_FS = derived_unit("1/fs", ((FEMTOSECOND, -1),))
 
 
-def _graph(count=2):
+def _graph(count: Any = 2) -> Any:
     construct = NucleicAcidConstruct(("strand",), ("A" * count,), ("DNA",), (False,))
     sites = tuple(2**40 + index * 13 for index in range(count))
     return ElectronicSiteGraph(
@@ -59,7 +61,13 @@ def _graph(count=2):
     )
 
 
-def _parameters(keys, energies=None, couplings=(), channels=(), energy_unit=ELECTRONVOLT):
+def _parameters(
+    keys: Any,
+    energies: Any = None,
+    couplings: Any = (),
+    channels: Any = (),
+    energy_unit: Any = ELECTRONVOLT,
+) -> Any:
     energies = (0.0,) * len(keys) if energies is None else tuple(energies)
     record = {
         "basis": keys,
@@ -97,7 +105,9 @@ def _parameters(keys, energies=None, couplings=(), channels=(), energy_unit=ELEC
     )
 
 
-def _model(graph=None, *, coupling=0.0, channels=(), energies=None):
+def _model(
+    graph: Any = None, *, coupling: Any = 0.0, channels: Any = (), energies: Any = None
+) -> Any:
     graph = _graph() if graph is None else graph
     keys = tuple((site,) for site in graph.site_ids)
     edges = ((keys[0], keys[1], coupling),) if coupling else ()
@@ -105,12 +115,12 @@ def _model(graph=None, *, coupling=0.0, channels=(), energies=None):
     return prepare_electronics(graph, parameters, units=UNITS, requested_use=USE)
 
 
-def _density(state):
+def _density(state: Any) -> Any:
     return state[:, None] * jnp.conj(state[None, :])
 
 
 @pytest.mark.parametrize("method", ["lindblad", "cptp"])
-def test_coherent_two_site_solution_and_density_physicality(method):
+def test_coherent_two_site_solution_and_density_physicality(method: Any) -> None:
     model = _model(coupling=UNITS.reduced_planck_constant)
     initial = model.basis_state(model.basis_keys[0])
     result = evolve_electronics(
@@ -143,7 +153,7 @@ def test_coherent_two_site_solution_and_density_physicality(method):
 
 
 @pytest.mark.parametrize("method", ["lindblad", "cptp"])
-def test_local_dephasing_decay_uses_rate_once(method):
+def test_local_dephasing_decay_uses_rate_once(method: Any) -> None:
     graph = _graph()
     keys = tuple((site,) for site in graph.site_ids)
     channels = tuple(
@@ -171,7 +181,7 @@ def test_local_dephasing_decay_uses_rate_once(method):
     assert bool(result.native_result.valid)
 
 
-def test_native_unraveling_agrees_with_density_and_retains_event_evidence():
+def test_native_unraveling_agrees_with_density_and_retains_event_evidence() -> None:
     graph = _graph()
     keys = tuple((site,) for site in graph.site_ids)
     bath = ElectronicChannel(
@@ -225,7 +235,7 @@ def test_native_unraveling_agrees_with_density_and_retains_event_evidence():
         )
 
 
-def test_site_and_parameter_permutations_preserve_mapped_observables():
+def test_site_and_parameter_permutations_preserve_mapped_observables() -> None:
     graph = _graph(3)
     keys = tuple((site,) for site in graph.site_ids)
     parameters = _parameters(
@@ -282,7 +292,7 @@ def test_site_and_parameter_permutations_preserve_mapped_observables():
         assert bool(result.native_result.valid)
 
 
-def test_energy_time_and_rate_units_give_equivalent_physical_execution():
+def test_energy_time_and_rate_units_give_equivalent_physical_execution() -> None:
     graph = _graph()
     keys = tuple((site,) for site in graph.site_ids)
     channels = (ElectronicChannel("bath", "bath", keys[1], keys[0], 0.3, PER_FS),)
@@ -333,7 +343,7 @@ def test_energy_time_and_rate_units_give_equivalent_physical_execution():
         replace(source, energy_unit=KILOJOULE_PER_MOLE)
 
 
-def test_electron_hole_tensor_factorization_and_recombination_to_vacuum():
+def test_electron_hole_tensor_factorization_and_recombination_to_vacuum() -> None:
     graph = _graph()
     keys = tuple((site,) for site in graph.site_ids)
     electron = _model(graph, coupling=UNITS.reduced_planck_constant)
@@ -403,7 +413,7 @@ def test_electron_hole_tensor_factorization_and_recombination_to_vacuum():
     assert bool(decayed.native_result.valid)
 
 
-def test_tensor_baths_preserve_each_carriers_independent_rates():
+def test_tensor_baths_preserve_each_carriers_independent_rates() -> None:
     graph = _graph()
     keys = tuple((site,) for site in graph.site_ids)
     electron = _model(
@@ -445,7 +455,7 @@ def test_tensor_baths_preserve_each_carriers_independent_rates():
     assert bool(result.native_result.valid)
 
 
-def test_host_admission_refuses_missing_support_rights_and_unbounded_models():
+def test_host_admission_refuses_missing_support_rights_and_unbounded_models() -> None:
     graph = _graph()
     keys = tuple((site,) for site in graph.site_ids)
     parameters = _parameters(keys)
@@ -481,7 +491,9 @@ def test_host_admission_refuses_missing_support_rights_and_unbounded_models():
         model.jump_problem(jnp.ones(2, dtype="complex128"))
 
 
-def test_fixed_support_generator_and_observables_are_jittable_and_differentiable():
+def test_fixed_support_generator_and_observables_are_jittable_and_differentiable() -> (
+    None
+):
     model = _model(coupling=UNITS.reduced_planck_constant)
     problem = model.density_problem(_density(model.basis_state(model.basis_keys[0])))
     evolved_rate = jax.jit(lambda density: problem.generator(density))(
@@ -489,7 +501,7 @@ def test_fixed_support_generator_and_observables_are_jittable_and_differentiable
     )
     np.testing.assert_allclose(evolved_rate, jnp.asarray([[0, 1j], [-1j, 0]]), atol=1e-12)
 
-    def population(angle):
+    def population(angle: Any) -> Any:
         state = jnp.asarray([jnp.cos(angle), -1j * jnp.sin(angle)])
         return electronic_populations(model, _density(state))[1]
 

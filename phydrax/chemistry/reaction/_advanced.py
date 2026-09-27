@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from enum import StrEnum
 from math import isfinite
 
@@ -13,7 +14,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -53,18 +55,18 @@ class InternalOptimizationResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        positions,
-        internal_coordinates,
-        energies,
-        maximum_forces,
-        internal_gradient_norms,
-        iterations,
-        successful,
-        kind,
-        source_result_ids,
-        plan_id,
+        positions: ArrayLike,
+        internal_coordinates: ArrayLike,
+        energies: ArrayLike,
+        maximum_forces: ArrayLike,
+        internal_gradient_norms: ArrayLike,
+        iterations: ArrayLike,
+        successful: ArrayLike,
+        kind: InternalOptimizationKind,
+        source_result_ids: Iterable[str],
+        plan_id: str,
         /,
-    ):
+    ) -> None:
         positions_ = jnp.asarray(positions)
         internals = jnp.asarray(internal_coordinates, dtype=positions_.dtype)
         energies_ = jnp.asarray(energies, dtype=positions_.dtype)
@@ -133,7 +135,7 @@ class InternalCoordinateOptimizationPlan(StrictModule, NonTrainableState):
         internal_gradient_tolerance: float = 1.0e-5,
         trust_radius: float = 0.1,
         maximum_iterations: int = 200,
-    ):
+    ) -> None:
         if (
             not isinstance(system, AtomisticSystemPlan)
             or not isinstance(surface, AbstractPreparedPotentialEnergySurface)
@@ -329,16 +331,16 @@ class DimerSaddleRefinementPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        system,
-        surface,
+        system: AtomisticSystemPlan,
+        surface: AbstractPreparedPotentialEnergySurface,
         /,
         *,
-        translation_step=0.02,
-        rotation_step=0.1,
-        dimer_separation=1.0e-3,
-        force_tolerance=1.0e-4,
-        maximum_iterations=200,
-    ):
+        translation_step: float = 0.02,
+        rotation_step: float = 0.1,
+        dimer_separation: float = 1.0e-3,
+        force_tolerance: float = 1.0e-4,
+        maximum_iterations: int = 200,
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan) or not isinstance(
             surface, AbstractPreparedPotentialEnergySurface
         ):
@@ -462,7 +464,15 @@ class TransitionStateRatePlan(StrictModule, NonTrainableState):
     hbar: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, temperature, boltzmann_constant, planck_constant, /, *, hbar):
+    def __init__(
+        self,
+        temperature: float,
+        boltzmann_constant: float,
+        planck_constant: float,
+        /,
+        *,
+        hbar: float,
+    ) -> None:
         values = tuple(
             float(value)
             for value in (temperature, boltzmann_constant, planck_constant, hbar)
@@ -486,12 +496,12 @@ class TransitionStateRatePlan(StrictModule, NonTrainableState):
 
     def evaluate(
         self,
-        reactant_free_energy,
-        transition_state_free_energy,
+        reactant_free_energy: ArrayLike,
+        transition_state_free_energy: ArrayLike,
         /,
         *,
-        imaginary_angular_frequency=None,
-    ):
+        imaginary_angular_frequency: ArrayLike | None = None,
+    ) -> TransitionStateRateResult:
         reactant = jnp.asarray(reactant_free_energy)
         transition = jnp.asarray(transition_state_free_energy, dtype=reactant.dtype)
         activation = transition - reactant
@@ -531,7 +541,9 @@ class ReactionNetworkPlan(StrictModule, NonTrainableState):
     conservation_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, rate_matrix: ArrayLike, /, *, conservation_tolerance=1.0e-12):
+    def __init__(
+        self, rate_matrix: ArrayLike, /, *, conservation_tolerance: float = 1.0e-12
+    ) -> None:
         rates_host = np.asarray(rate_matrix)
         tolerance = float(conservation_tolerance)
         if (

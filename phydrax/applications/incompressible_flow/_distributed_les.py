@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._numerics._ssp_runge_kutta import (
@@ -24,6 +25,7 @@ from ..._trainable import fixed_field, NonTrainableState
 from ...discretization.spectral._coordinates import HermitianSpectralCoordinates
 from ...discretization.spectral._distributed_les import (
     DistributedPeriodicLESPlan,
+    DistributedPeriodicLESRestartEvidence,
     DistributedPeriodicLESStage,
     DistributedPeriodicLESStepRestriction,
     PreparedDistributedPeriodicLES,
@@ -49,6 +51,7 @@ from ...solver._runtime_lifecycle import (
     ExactTimeSchedule,
     RuntimeCheckpointEncodingPlan,
 )
+from ...typing import parse
 from ._forcing import ConstantPowerFourierForcingPlan
 from ._production import (
     _output_schedule,
@@ -102,7 +105,7 @@ class _DistributedPeriodicFullFlowDrift(StrictModule):
         backend: PreparedDistributedPeriodicLES,
         constant_power_forcing: ConstantPowerFourierForcingPlan | None,
         /,
-    ):
+    ) -> None:
         if problem.spatial_dimension != 3:
             raise ValueError(
                 "Distributed periodic LES requires a three-dimensional problem."
@@ -254,7 +257,7 @@ class CompiledDistributedPeriodicLESDynamics(StrictModule, NonTrainableState):
         /,
         *,
         constant_power_forcing: ConstantPowerFourierForcingPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(problem, IncompressibleFlowProblem):
             raise TypeError("problem must be an IncompressibleFlowProblem.")
         if not isinstance(source_plan, DistributedPeriodicLESPlan):
@@ -370,9 +373,8 @@ class DistributedPeriodicLESMethodPlan(StrictModule, NonTrainableState):
         /,
         *,
         safety_factor: float = 0.8,
-    ):
-        if method not in ("etdrk2", "etdrk4", "ssprk33", "ssprk54"):
-            raise ValueError("Distributed LES method is unsupported.")
+    ) -> None:
+        method = parse(method, DistributedPeriodicLESMethod, "method")
         safety = float(safety_factor)
         if not np.isfinite(safety) or not 0.0 < safety <= 1.0:
             raise ValueError("safety_factor must be finite and lie in (0, 1].")
@@ -414,7 +416,7 @@ class PreparedDistributedPeriodicLESMethod(AbstractFixedStepMethod, NonTrainable
         dynamics: CompiledDistributedPeriodicLESDynamics,
         coordinates: HermitianSpectralCoordinates,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, DistributedPeriodicLESMethodPlan):
             raise TypeError("plan must be a DistributedPeriodicLESMethodPlan.")
         if not isinstance(dynamics, CompiledDistributedPeriodicLESDynamics):
@@ -542,7 +544,7 @@ class PreparedDistributedPeriodicLESMethod(AbstractFixedStepMethod, NonTrainable
         def advance(_: None) -> FixedStepResult:
             if self.method.startswith("etdrk"):
                 candidate = _etdrk_update(
-                    self.order,
+                    2 if self.method == "etdrk2" else 4,
                     self.dynamics.drift,
                     self.dynamics.diagonal,
                     start,
@@ -681,7 +683,7 @@ class DistributedPeriodicLESStatisticsPlan(StrictModule, NonTrainableState):
         dynamics: CompiledDistributedPeriodicLESDynamics,
         coordinates: HermitianSpectralCoordinates,
         /,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledDistributedPeriodicLESDynamics):
             raise TypeError("dynamics has the wrong compiled type.")
         if not isinstance(coordinates, HermitianSpectralCoordinates):
@@ -830,7 +832,7 @@ class _DistributedPeriodicLESStatisticsEvaluator(StrictModule):
         method: PreparedDistributedPeriodicLESMethod,
         statistics: DistributedPeriodicLESStatisticsPlan,
         /,
-    ):
+    ) -> None:
         self.method = method
         self.statistics = statistics
         self.evaluator_id = canonical_fingerprint(
@@ -903,7 +905,7 @@ class DistributedPeriodicLESProductionCase(StrictModule, NonTrainableState):
         /,
         *,
         case_id: str,
-    ):
+    ) -> None:
         if not isinstance(dynamics, CompiledDistributedPeriodicLESDynamics):
             raise TypeError("dynamics has the wrong compiled distributed type.")
         label = str(case_id)
@@ -1036,7 +1038,7 @@ class DistributedPeriodicLESProductionPlan(StrictModule):
         statistics_window_end: float | None = None,
         statistics_batch_duration: float | None = None,
         maximum_statistics_batches: int = 0,
-    ):
+    ) -> None:
         if not isinstance(source_plan, DistributedPeriodicLESPlan):
             raise TypeError("source_plan must be a DistributedPeriodicLESPlan.")
         if source_plan.checkpoint_count < 1:
@@ -1214,7 +1216,7 @@ class PreparedDistributedPeriodicLESProduction(_PreparedProductionRoute):
         args: Any = None,
         args_id: str | None = None,
         publisher: ByteBoundedAsyncPublisher | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, DistributedPeriodicLESProductionPlan):
             raise TypeError("plan must be DistributedPeriodicLESProductionPlan.")
         self._bind_runtime(
@@ -1267,6 +1269,7 @@ class PreparedDistributedPeriodicLESProduction(_PreparedProductionRoute):
             successful=result.successful,
             failure=result.failure,
             run_id=result.run_id,
+            iteration_session_state=result.iteration_session_state,
         )
 
     def checkpoint(self, state: ProductionRunState, /) -> ProductionRunState:
@@ -1313,7 +1316,9 @@ class PreparedDistributedPeriodicLESProduction(_PreparedProductionRoute):
             )
         return restored
 
-    def restart_evidence(self, state: ProductionRunState, /):
+    def restart_evidence(
+        self, state: ProductionRunState, /
+    ) -> DistributedPeriodicLESRestartEvidence:
         return self.plan.dynamics.backend.restart_evidence(state.accepted_state)
 
     def statistics_snapshot(

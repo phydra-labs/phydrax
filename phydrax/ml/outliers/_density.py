@@ -9,7 +9,8 @@ from typing import Any, ClassVar
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._differentiation import (
     DerivativeContract,
@@ -130,7 +131,7 @@ class KernelDensityOutlierModel(AbstractFittedModel):
         *,
         bandwidth: float,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         train = jnp.asarray(training_features)
         self.training_features = train
         self.training_weights = jnp.asarray(training_weights)
@@ -179,7 +180,7 @@ class KernelDensityOutlierRecipe(AbstractRecipe):
     bandwidth: float = eqx.field(static=True)
     contamination: float = eqx.field(static=True)
 
-    def __init__(self, *, bandwidth: float = 1.0, contamination: float = 0.1):
+    def __init__(self, *, bandwidth: float = 1.0, contamination: float = 0.1) -> None:
         if float(bandwidth) <= 0.0:
             raise ValueError("bandwidth must be positive.")
         if not 0.0 < float(contamination) < 0.5:
@@ -282,7 +283,9 @@ def _fit_robust_one(
     variance = weighted_mean(jnp.real(centered * jnp.conj(centered)), weights)
     scale = jnp.sqrt(jnp.maximum(variance, scale_floor * scale_floor))
 
-    def step(_iteration, state):
+    def step(
+        _iteration: Array, state: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
         current_location, current_scale, _delta = state
         standardized = (x - current_location) / current_scale
         influence = 1.0 / jnp.sqrt(
@@ -339,7 +342,7 @@ class RobustNoveltyModel(AbstractFittedModel):
         *,
         tuning: float,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         location_ = jnp.asarray(location)
         self.location = location_
         self.scale = jnp.asarray(scale)
@@ -399,7 +402,7 @@ class RobustNoveltyRecipe(AbstractRecipe):
         tuning: float = 1.345,
         scale_floor: float = 1e-6,
         tolerance: float = 1e-5,
-    ):
+    ) -> None:
         if not 0.0 < float(contamination) < 0.5:
             raise ValueError("contamination must lie in (0, 0.5).")
         if int(iterations) <= 0 or float(tuning) <= 0.0:

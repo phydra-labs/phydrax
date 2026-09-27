@@ -10,10 +10,11 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from .._dtype_names import inexact_result_type
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import (
@@ -24,6 +25,7 @@ from ..linalg import (
     LinearSystem,
     solve,
 )
+from ..typing import parse
 from ._point_cloud import PreparedPointCloudDiscretization
 
 
@@ -43,9 +45,8 @@ class PointBoundaryPlan(StrictModule):
         /,
         *,
         robin_coefficient: ArrayLike | None = None,
-    ):
-        if kind not in ("dirichlet", "neumann", "robin"):
-            raise ValueError("Unknown point-cloud boundary kind.")
+    ) -> None:
+        kind = parse(kind, PointBoundaryKind, "kind")
         values_ = jnp.asarray(values)
         if values_.ndim != 1:
             raise ValueError("Point boundary values must be a vector.")
@@ -150,7 +151,7 @@ class DissipativePointDiffusion(StrictModule, NonTrainableState):
         discretization: PreparedPointCloudDiscretization,
         diffusivity: ArrayLike = 1.0,
         /,
-    ):
+    ) -> None:
         count = discretization.state_shape[0]
         coefficient = jnp.broadcast_to(
             jnp.asarray(diffusivity, dtype=jnp.float64), (count,)
@@ -315,7 +316,7 @@ class PointConormalInterface(StrictModule):
         /,
         *,
         jump: ArrayLike = 0.0,
-    ):
+    ) -> None:
         left_host = np.asarray(left_indices)
         right_host = np.asarray(right_indices)
         if (
@@ -369,7 +370,7 @@ class DistributedPointPartition(StrictModule, NonTrainableState):
     partition_count: int = eqx.field(static=True)
     partition_id: str = eqx.field(static=True)
 
-    def __init__(self, owners: ArrayLike, partition_count: int, /):
+    def __init__(self, owners: ArrayLike, partition_count: int, /) -> None:
         owners_host = np.asarray(owners)
         count = int(partition_count)
         if (

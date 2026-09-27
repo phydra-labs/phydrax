@@ -16,12 +16,12 @@ from __future__ import annotations
 import dataclasses
 import time
 from enum import StrEnum
-from typing import final, NamedTuple, TypeAlias
+from typing import Any, final, NamedTuple, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 from numpy.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -197,7 +197,7 @@ class MarkedMeshAdaptation(StrictModule, NonTrainableState):
         /,
         *,
         hierarchy: BisectionHierarchy | FiniteElementHPEpoch | None = None,
-    ):
+    ) -> None:
         refine = _identifier_vector(refine_cell_ids, "refine_cell_ids")
         coarsen = _identifier_vector(coarsen_cell_ids, "coarsen_cell_ids")
         if np.intersect1d(refine, coarsen).size:
@@ -228,7 +228,7 @@ class MetricMeshAdaptation(StrictModule, NonTrainableState):
     metric: MeshMetricField
     request_id: str = eqx.field(static=True)
 
-    def __init__(self, metric: MeshMetricField, /):
+    def __init__(self, metric: MeshMetricField, /) -> None:
         if not isinstance(metric, MeshMetricField):
             raise TypeError("metric must be MeshMetricField.")
         self.metric = metric
@@ -244,7 +244,7 @@ class RelocationMeshAdaptation(StrictModule, NonTrainableState):
     metric: MeshMetricField
     request_id: str = eqx.field(static=True)
 
-    def __init__(self, metric: MeshMetricField, /):
+    def __init__(self, metric: MeshMetricField, /) -> None:
         if not isinstance(metric, MeshMetricField):
             raise TypeError("metric must be MeshMetricField.")
         self.metric = metric
@@ -258,7 +258,7 @@ MeshAdaptationRequest: TypeAlias = (
 )
 
 
-def _hierarchy_id(hierarchy: BisectionHierarchy | FiniteElementHPEpoch | None, /):
+def _hierarchy_id(hierarchy: BisectionHierarchy | FiniteElementHPEpoch | None, /) -> Any:
     match hierarchy:
         case None:
             return None
@@ -270,7 +270,7 @@ def _hierarchy_id(hierarchy: BisectionHierarchy | FiniteElementHPEpoch | None, /
             raise TypeError("Unsupported adaptation hierarchy.")
 
 
-def _provider_options_record(options: MmgOptions | OmegaHOptions | None, /):
+def _provider_options_record(options: MmgOptions | OmegaHOptions | None, /) -> Any:
     match options:
         case None:
             return None
@@ -404,7 +404,7 @@ class MeshAdaptationPolicy(StrictModule, NonTrainableState):
         distribution: MeshDistribution | None = None,
         partition_policy: MeshPartitionPolicy | None = None,
         association_transfer: BRepAssociationTransfer | None = None,
-    ):
+    ) -> None:
         if not isinstance(route, MeshAdaptationRoute):
             raise TypeError("route must be MeshAdaptationRoute.")
         protected = tuple(protected_scopes)
@@ -690,6 +690,7 @@ def _resolve_constraints(
             else np.zeros((edge_count,), dtype=np.int64)
         ),
         metric_values=(
+            # ty: ignore[unresolved-attribute]
             _metric_rows(mesh, request.metric)
             if planar
             else np.zeros((0, mesh.ambient_dimension, mesh.ambient_dimension))
@@ -806,7 +807,7 @@ class PreparedMeshAdaptation(StrictModule, NonTrainableState):
         policy: MeshAdaptationPolicy,
         constraints: _AdaptationConstraints,
         /,
-    ):
+    ) -> None:
         self.source = source
         self.request = request
         self.policy = policy
@@ -887,7 +888,7 @@ MeshAdaptationEvidence: TypeAlias = (
 )
 
 
-def _evidence_id(evidence: MeshAdaptationEvidence | None, /):
+def _evidence_id(evidence: MeshAdaptationEvidence | None, /) -> Any:
     match evidence:
         case None:
             return None
@@ -943,7 +944,7 @@ class MeshAdaptationResult(StrictModule, NonTrainableState):
         distribution: MeshDistributionTransition | None,
         elapsed_seconds: float,
         /,
-    ):
+    ) -> None:
         source_preserved = outcome.target.result_id == prepared.source.result_id
         absent = (
             outcome.transition is None
@@ -959,6 +960,7 @@ class MeshAdaptationResult(StrictModule, NonTrainableState):
             raise ValueError("UNCHANGED must preserve the exact source result.")
         if outcome.transition is not None and (
             outcome.transition.target.result_id != outcome.target.result_id
+            # ty: ignore[unresolved-attribute]
             or outcome.transition.lineage.lineage_id != outcome.lineage.lineage_id
         ):
             raise ValueError("The transition must describe the certified target.")
@@ -1193,8 +1195,11 @@ def _execute_bisection_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutco
     constraints = prepared.constraints
     outcome = execute_bisection(
         prepared.source.mesh,
+        # ty: ignore[unresolved-attribute]
         np.asarray(request.refine_cell_ids, dtype=np.int64),
+        # ty: ignore[unresolved-attribute]
         np.asarray(request.coarsen_cell_ids, dtype=np.int64),
+        # ty: ignore[invalid-argument-type, unresolved-attribute]
         hierarchy=request.hierarchy,
         compatibility=policy.compatibility,
         protected_edges=constraints.protected_edge_keys,
@@ -1313,6 +1318,7 @@ def _execute_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         native.lineage,
         native.stencil,
         native.transfer,
+        # ty: ignore[unresolved-attribute]
         _target_metric(request.metric, native.target.mesh, outcome.metric),
         evidence,
         None,
@@ -1374,30 +1380,43 @@ def _provider_outcome(
 def _execute_mmg_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
     policy = prepared.policy
     provider = policy.provider
+    # ty: ignore[unresolved-attribute]
     plan = provider.plan(
         prepared.source,
+        # ty: ignore[unresolved-attribute]
         metric=prepared.request.metric,
         required=policy.protected_scopes,
+        # ty: ignore[invalid-argument-type]
         options=policy.provider_options,
         limits=policy.limits,
         audit_policy=policy.audit_policy,
         association_transfer=policy.association_transfer,
     )
+    # ty: ignore[invalid-argument-type, missing-argument, unresolved-attribute]
     result = provider.execute(plan)
+    # ty: ignore[unresolved-attribute]
     return _provider_outcome(prepared, result.mesh, result.metric, result)
 
 
 def _execute_omega_h_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
     policy = prepared.policy
+    # ty: ignore[unresolved-attribute]
     result = policy.provider.execute(
+        # ty: ignore[invalid-argument-type]
         prepared.source,
+        # ty: ignore[too-many-positional-arguments, unresolved-attribute]
         prepared.request.metric,
+        # ty: ignore[invalid-argument-type, unknown-argument]
         options=policy.provider_options,
+        # ty: ignore[unknown-argument]
         limits=policy.limits,
+        # ty: ignore[unknown-argument]
         association_transfer=policy.association_transfer,
     )
+    # ty: ignore[unresolved-attribute]
     if result.target is None:
         raise ValueError("A serial Omega_h adaptation must return its target.")
+    # ty: ignore[unresolved-attribute]
     return _provider_outcome(prepared, result.target, result.metric, result)
 
 
@@ -1442,7 +1461,7 @@ def project_hp_lineage(
     return MeshLineage(source.mesh.topology_id, target.mesh.topology_id, (entities,))
 
 
-def _complete_hp_parents(epoch: FiniteElementHPEpoch, marked: np.ndarray, /):
+def _complete_hp_parents(epoch: FiniteElementHPEpoch, marked: np.ndarray, /) -> Any:
     """Parents whose complete active leaf family is marked for coarsening."""
 
     topology = epoch.topology
@@ -1464,21 +1483,31 @@ def _complete_hp_parents(epoch: FiniteElementHPEpoch, marked: np.ndarray, /):
 
 def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
     request = prepared.request
+    # ty: ignore[unresolved-attribute]
     epoch = request.hierarchy
     source = prepared.source
+    # ty: ignore[unresolved-attribute]
     refine = np.asarray(request.refine_cell_ids, dtype=np.int64)
+    # ty: ignore[unresolved-attribute]
     coarsen = np.asarray(request.coarsen_cell_ids, dtype=np.int64)
     if refine.size:
+        # ty: ignore[unresolved-attribute]
         closed, _ = balanced_hp_refinement_ids(epoch.topology, epoch.interfaces, refine)
         result = refine_tensor_hp_cells(
-            epoch.topology, epoch.geometry, np.asarray(closed, dtype=np.int64)
+            # ty: ignore[unresolved-attribute]
+            epoch.topology,
+            # ty: ignore[unresolved-attribute]
+            epoch.geometry,
+            np.asarray(closed, dtype=np.int64),
         )
         kind = MeshTransitionKind.REFINE
         partial = False
     else:
+        # ty: ignore[invalid-argument-type]
         parents = _complete_hp_parents(epoch, coarsen)
         if parents.size == 0:
             return _unchanged(prepared, None, epoch)
+        # ty: ignore[unresolved-attribute]
         result = coarsen_tensor_hp_cells(epoch.topology, epoch.geometry, parents)
         kind = MeshTransitionKind.COARSEN
         covered = np.asarray(result.lineage.source_slots)[
@@ -1499,6 +1528,7 @@ def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         result.geometry,
         finite_element_hp_interface_plan(result.topology, result.geometry),
     )
+    # ty: ignore[invalid-argument-type]
     lineage = project_hp_lineage(epoch, target_epoch, result.lineage)
     transition = CellMeshTransition(
         source.mesh.mesh_id, source.mesh.topology_id, target, lineage, kind
@@ -1556,7 +1586,9 @@ def _adaptation_result(
         distribution = prepare_distribution_transition(
             policy.distribution,
             MeshPart(policy.distribution.part.name, outcome.target),
+            # ty: ignore[invalid-argument-type]
             outcome.lineage,
+            # ty: ignore[invalid-argument-type]
             policy=policy.partition_policy,
         )
     elapsed = time.monotonic() - started

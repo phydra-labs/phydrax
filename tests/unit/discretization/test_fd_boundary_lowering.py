@@ -2,20 +2,23 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _grid():
+def _grid() -> Any:
     return phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(4),),
         axis_names=("x",),
     ).prepare(jnp.asarray([[0.0], [1.0]]))
 
 
-def _context(grid, state, args=None, *, time=0.0):
+def _context(grid: Any, state: Any, args: Any = None, *, time: Any = 0.0) -> Any:
     return phx.discretization.BoundaryStageContext(
         time,
         {"u": state},
@@ -26,7 +29,7 @@ def _context(grid, state, args=None, *, time=0.0):
     )
 
 
-def _problem(expression, target, *, component=None):
+def _problem(expression: Any, target: Any, *, component: Any = None) -> Any:
     x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0))
     t = phx.equations.PDECoordinate("t", "time", bounds=(0.0, 1.0))
     field = phx.equations.PDEField("u", coordinates=("x", "t"))
@@ -53,7 +56,7 @@ def _problem(expression, target, *, component=None):
     )
 
 
-def test_dirichlet_condition_lowers_to_executable_cell_ghost_pair():
+def test_dirichlet_condition_lowers_to_executable_cell_ghost_pair() -> None:
     u = phx.equations.PDEExpression.field("u")
     problem = _problem(u, phx.equations.PDEExpression.constant(2.0))
 
@@ -68,7 +71,7 @@ def test_dirichlet_condition_lowers_to_executable_cell_ghost_pair():
     assert jnp.allclose(result, jnp.asarray([3.0, 1.0, 2.0, 3.0, 4.0, 0.0]))
 
 
-def test_neumann_and_robin_forms_preserve_coefficients_and_runtime_parameters():
+def test_neumann_and_robin_forms_preserve_coefficients_and_runtime_parameters() -> None:
     u = phx.equations.PDEExpression.field("u")
     neumann = _problem(
         u.derivative("x"),
@@ -96,7 +99,7 @@ def test_neumann_and_robin_forms_preserve_coefficients_and_runtime_parameters():
     assert jnp.all(jnp.isfinite(result))
 
 
-def test_one_sided_region_cannot_silently_invent_missing_boundary_condition():
+def test_one_sided_region_cannot_silently_invent_missing_boundary_condition() -> None:
     u = phx.equations.PDEExpression.field("u")
     problem = _problem(
         u,
@@ -109,7 +112,7 @@ def test_one_sided_region_cannot_silently_invent_missing_boundary_condition():
         phx.equations.prepare_fd_boundary_runtime(_grid(), bindings, "u")
 
 
-def test_serialized_dynamic_boundary_target_folds_every_operand():
+def test_serialized_dynamic_boundary_target_folds_every_operand() -> None:
     u = phx.equations.PDEExpression.field("u")
     target = ((phx.equations.PDEExpression.constant(1.0) + 2.0) + 3.0) * 4.0 * 5.0
     problem = phx.equations.pde_ir_from_json(

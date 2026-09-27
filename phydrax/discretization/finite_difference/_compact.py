@@ -11,7 +11,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -70,7 +71,7 @@ class CompactOperatorReport(StrictModule, NonTrainableState):
         storage_bytes: int,
         solve_workspace_bytes_per_rhs: int,
         subject_id: str,
-    ):
+    ) -> None:
         self.kind = kind
         self.derivative_order = int(derivative_order)
         self.accuracy_order = int(accuracy_order)
@@ -228,7 +229,7 @@ class PreparedCompactOperator(AbstractLinearOperator):
         grid: PreparedTensorGrid,
         source_location: GridLocation,
         target_location: GridLocation,
-        offsets: Sequence[int],
+        offsets: Sequence[int] | np.ndarray,
         weights: ArrayLike,
         /,
         *,
@@ -239,8 +240,8 @@ class PreparedCompactOperator(AbstractLinearOperator):
         alpha: float,
         moment_residual: float,
         component_shape: Sequence[int] = (),
-        dtype: object = jnp.float64,
-    ):
+        dtype: DTypeLike = jnp.float64,
+    ) -> None:
         axis_index = grid.axis_names.index(axis)
         source_field = grid.field_space(
             "compact_source",
@@ -472,8 +473,8 @@ class CompactDerivativePlan(StrictModule, NonTrainableState):
         /,
         *,
         component_shape: Sequence[int] = (),
-        dtype: object = jnp.float64,
-    ):
+        dtype: DTypeLike = jnp.float64,
+    ) -> None:
         if not isinstance(request, DerivativeRequest):
             raise TypeError("request must be a DerivativeRequest.")
         if request.bias != "centered" or request.boundary != "periodic":
@@ -578,8 +579,8 @@ class CompactInterpolationPlan(StrictModule, NonTrainableState):
         *,
         accuracy_order: int = 4,
         component_shape: Sequence[int] = (),
-        dtype: object = jnp.float64,
-    ):
+        dtype: DTypeLike = jnp.float64,
+    ) -> None:
         order = int(accuracy_order)
         if order not in (4, 6):
             raise ValueError("Compact interpolation supports accuracy four or six.")

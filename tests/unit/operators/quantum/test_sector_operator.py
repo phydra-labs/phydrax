@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -34,7 +37,7 @@ from phydrax.operators.quantum.lattice import (
 )
 
 
-def _resources():
+def _resources() -> Any:
     return QuantumLatticeResourcePolicy(
         maximum_terms=16,
         maximum_factors_per_term=4,
@@ -44,11 +47,11 @@ def _resources():
     )
 
 
-def _basis_resources():
+def _basis_resources() -> Any:
     return SectorBasisResourcePolicy(maximum_dimension=64, maximum_table_bytes=20_000)
 
 
-def _three_mode_hopping():
+def _three_mode_hopping() -> Any:
     order = FermionModeOrder(("a", "b", "c"))
     spaces = tuple(LocalSpacePlan.fermion(label, label) for label in order.labels)
     create = np.asarray(((0.0, 0.0), (1.0, 0.0)))
@@ -72,12 +75,12 @@ def _three_mode_hopping():
     return order, prepare_quantum_lattice(specification, _resources())
 
 
-def _matrix(operator):
+def _matrix(operator: Any) -> Any:
     identity = jnp.eye(operator.source.size, dtype=jnp.complex128)
     return jnp.stack(tuple(operator.mv(column) for column in identity), axis=1)
 
 
-def test_matrix_free_sector_action_matches_independent_full_fock_car_signs():
+def test_matrix_free_sector_action_matches_independent_full_fock_car_signs() -> None:
     order, prepared = _three_mode_hopping()
     sector = FixedCardinalityFermionBasis(order, 2, resources=_basis_resources())
     operator = QuantumSectorOperator(prepared, SectorChargeMap(sector, sector, 0))
@@ -104,7 +107,7 @@ def test_matrix_free_sector_action_matches_independent_full_fock_car_signs():
     assert sector_matrix[2, 0] == -1.0
 
 
-def test_charge_map_certification_rejects_wrong_target_sector():
+def test_charge_map_certification_rejects_wrong_target_sector() -> None:
     order = FermionModeOrder(("a", "b"))
     spaces = tuple(LocalSpacePlan.fermion(label, label) for label in order.labels)
     creation = LocalOperatorPlan(spaces[0], "create-a", ((0.0, 0.0), (1.0, 0.0)), (1,))
@@ -122,7 +125,7 @@ def test_charge_map_certification_rejects_wrong_target_sector():
         QuantumSectorOperator(prepared, SectorChargeMap(target, target, 0))
 
 
-def test_direct_spin_and_boson_sectors_preserve_ladder_normalizations():
+def test_direct_spin_and_boson_sectors_preserve_ladder_normalizations() -> None:
     spin_spaces = (LocalSpacePlan.spin("i", 1), LocalSpacePlan.spin("j", 1))
     spin_raise = ((0.0, 0.0), (1.0, 0.0))
     spin_lower = np.asarray(spin_raise).T
@@ -174,7 +177,9 @@ def test_direct_spin_and_boson_sectors_preserve_ladder_normalizations():
     )
 
 
-def test_existing_linalg_eigensolve_consumes_matrix_free_sector_operator_directly():
+def test_existing_linalg_eigensolve_consumes_matrix_free_sector_operator_directly() -> (
+    None
+):
     order, prepared = _three_mode_hopping()
     sector = FixedCardinalityFermionBasis(order, 2, resources=_basis_resources())
     operator = QuantumSectorOperator(prepared, SectorChargeMap(sector, sector, 0))

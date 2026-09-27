@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, cast, Literal
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax import Array
 
 import phydrax.axes as cx
 
@@ -23,6 +24,7 @@ from ..nn._base import _AbstractBaseModel
 from ..nn._keys import EvalKey, split_eval_key
 from ..nn.operator.data import OperatorBatch
 from ..nn.operator.protocols import OperatorModel
+from ..typing import PRNGKey
 from ._operator import operator_predictive_from_samples, OperatorPredictiveField
 from ._predictive import _sample_validity, PredictiveField, SampleAxis
 
@@ -49,7 +51,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
         *,
         source_dim: str = "__phydra_uq_epistemic",
         layout: LaneLayout | None = None,
-    ):
+    ) -> None:
         count = int(num_members)
         if count <= 0:
             raise ValueError("num_members must be positive.")
@@ -79,7 +81,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
         /,
         *,
         num_members: int,
-        key,
+        key: PRNGKey,
         source_dim: str = "__phydra_uq_epistemic",
     ) -> "HomogeneousFunctionEnsemble":
         count = int(num_members)
@@ -110,7 +112,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
         points: Any,
         /,
         *,
-        key,
+        key: PRNGKey,
         variable: str | None = None,
         valid_policy: Literal["record", "raise"] = "record",
         **kwargs: Any,
@@ -121,7 +123,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
             template_member, points, variable=variable, key=member_keys[0], **kwargs
         )
 
-        def evaluate(member, member_key):
+        def evaluate(member: Any, member_key: PRNGKey) -> Array:
             return _evaluate_field(
                 member,
                 points,
@@ -147,7 +149,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
         batch: OperatorBatch,
         /,
         *,
-        key,
+        key: PRNGKey,
         field_name: str,
         query_name: str,
         input_sample_axes: Sequence[str] = (),
@@ -169,7 +171,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
                 f"Output field {field_name!r} is bound to query {template_field.query_name!r}, not {query_name!r}."
             )
 
-        def evaluate(member, member_key):
+        def evaluate(member: Any, member_key: PRNGKey) -> Array:
             return member.evaluate(batch, key=member_key).field(field_name).values
 
         data = eqx.filter_vmap(
@@ -193,7 +195,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
         points: Any,
         /,
         *,
-        key,
+        key: PRNGKey,
         valid_policy: Literal["record", "raise"] = "record",
         **kwargs: Any,
     ) -> frozendict[str, PredictiveField]:
@@ -226,7 +228,7 @@ class HeterogeneousFunctionEnsemble(StrictModule):
         /,
         *,
         source_dim: str = "__phydra_uq_epistemic",
-    ):
+    ) -> None:
         values = tuple(members)
         if not values:
             raise ValueError("members must be non-empty.")
@@ -244,7 +246,7 @@ class HeterogeneousFunctionEnsemble(StrictModule):
         points: Any,
         /,
         *,
-        key,
+        key: PRNGKey,
         variable: str | None = None,
         valid_policy: Literal["record", "raise"] = "record",
         **kwargs: Any,
@@ -281,7 +283,7 @@ class HeterogeneousFunctionEnsemble(StrictModule):
         batch: OperatorBatch,
         /,
         *,
-        key,
+        key: PRNGKey,
         field_name: str,
         query_name: str,
         input_sample_axes: Sequence[str] = (),
@@ -349,7 +351,7 @@ class HeterogeneousFunctionEnsemble(StrictModule):
         points: Any,
         /,
         *,
-        key,
+        key: PRNGKey,
         valid_policy: Literal["record", "raise"] = "record",
         **kwargs: Any,
     ) -> frozendict[str, PredictiveField]:
@@ -386,7 +388,7 @@ class RandomizedPriorModel(_AbstractBaseModel):
         /,
         *,
         beta: float = 1.0,
-    ):
+    ) -> None:
         if learned.in_size != prior.in_size or learned.out_size != prior.out_size:
             raise ValueError(
                 "Learned and prior models must have matching input/output sizes."
@@ -400,7 +402,7 @@ class RandomizedPriorModel(_AbstractBaseModel):
         self.in_size = learned.in_size
         self.out_size = learned.out_size
 
-    def __call__(self, x, /, *, key: EvalKey = None):
+    def __call__(self, x: Any, /, *, key: EvalKey = None) -> Array:
         learned_key, prior_key = split_eval_key(key, 2)
         return self.learned(x, key=learned_key) + self.beta * self.prior(x, key=prior_key)
 
@@ -410,7 +412,7 @@ def randomized_prior_ensemble(
     /,
     *,
     num_members: int,
-    key,
+    key: PRNGKey,
     beta: float = 1.0,
     homogeneous: bool = True,
     source_dim: str = "__phydra_uq_epistemic",
@@ -445,7 +447,7 @@ class EnsembleMemberDiagnostics(StrictModule):
         seed: int,
         duration_seconds: float,
         training_diagnostics: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         self.member_index = int(member_index)
         self.seed = int(seed)
         self.duration_seconds = float(duration_seconds)
@@ -463,7 +465,7 @@ class EnsembleFitResult(StrictModule):
         ensemble: HomogeneousFunctionEnsemble | HeterogeneousFunctionEnsemble,
         members: Sequence[EnsembleMemberDiagnostics],
         /,
-    ):
+    ) -> None:
         diagnostics = tuple(members)
         if len(diagnostics) != ensemble.num_members:
             raise ValueError("Member diagnostics must align with the fitted ensemble.")
@@ -485,7 +487,7 @@ class EnsembleFitError(RuntimeError):
         seed: int,
         duration_seconds: float,
         completed: Sequence[EnsembleMemberDiagnostics],
-    ):
+    ) -> None:
         super().__init__(
             f"Ensemble member {member_index} failed during fitting with seed {seed}."
         )
@@ -500,7 +502,7 @@ def fit_ensemble(
     /,
     *,
     num_members: int,
-    key,
+    key: PRNGKey,
     solve_kwargs: Mapping[str, Any] | None = None,
     homogeneous: bool = True,
     source_dim: str = "__phydra_uq_epistemic",
@@ -569,7 +571,7 @@ def _evaluate_field(
     /,
     *,
     variable: str | None,
-    key,
+    key: PRNGKey,
     **kwargs: Any,
 ) -> cx.AxisArray:
     ansatz = getattr(member, "ansatz_functions", None)
@@ -639,10 +641,11 @@ def _stack_homogeneous_members(members: tuple[Any, ...]) -> Any:
         if not bool(equal):
             raise ValueError("Homogeneous ensemble members have different static leaves.")
 
-    def stack(*leaves):
+    def stack(*leaves: Array | None) -> Array | None:
         if leaves[0] is None:
             return None
-        return jnp.stack(leaves, axis=0)
+        # Matching tree structures place None at the same positions in every member.
+        return jnp.stack(cast(tuple[Array, ...], leaves), axis=0)
 
     stacked = jax.tree_util.tree_map(
         stack,

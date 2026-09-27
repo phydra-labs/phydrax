@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -36,7 +37,7 @@ class IsotropicRadialTransformPlan(StrictModule, NonTrainableState):
         *,
         length_unit_id: str = "dimensionless",
         dtype: Any = jnp.float64,
-    ):
+    ) -> None:
         size = int(count)
         radius = float(maximum_radius)
         unit = str(length_unit_id).strip()
@@ -81,7 +82,7 @@ class PreparedIsotropicRadialTransform(StrictModule, NonTrainableState):
     transform: RealTrigonometricTransform
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: IsotropicRadialTransformPlan, /):
+    def __init__(self, plan: IsotropicRadialTransformPlan, /) -> None:
         if not isinstance(plan, IsotropicRadialTransformPlan):
             raise TypeError("plan must be IsotropicRadialTransformPlan.")
         dtype = np.dtype(plan.dtype_name)

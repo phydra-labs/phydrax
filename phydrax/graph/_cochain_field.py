@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._cochain import CochainBoundaryKind, CochainBoundaryPolicy, CochainComplexIR
@@ -30,7 +31,7 @@ class CochainField(StrictModule):
         *,
         boundary_policy: CochainBoundaryKind = "absolute",
         field_id: str,
-    ):
+    ) -> None:
         if not isinstance(complex, CochainComplexIR):
             raise TypeError("complex must be a CochainComplexIR.")
         degree_ = int(degree)

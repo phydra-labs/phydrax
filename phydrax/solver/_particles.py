@@ -11,7 +11,8 @@ from typing import Any, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -76,7 +77,7 @@ class InteractingParticleProblem(StrictModule):
         args: Any = None,
         problem_id: str = "interacting-particle-problem",
         mean_field_id: str | None = None,
-    ):
+    ) -> None:
         if not callable(drift):
             raise TypeError("drift must be callable.")
         if diffusion is not None and not callable(diffusion):
@@ -217,7 +218,7 @@ class InteractingParticleSolution(StrictModule):
         num_particles: int,
         mean_field_id: str,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> None:
         grid = jnp.asarray(times, dtype=jnp.float64)
         values = jnp.asarray(particles)
         validity = jnp.asarray(valid, dtype=jnp.bool_)
@@ -470,14 +471,14 @@ def solve_interacting_particles(
     num_steps = num_times - 1
     step_sizes = jnp.diff(grid)
 
-    def one_system(idiosyncratic_path, common_path):
+    def one_system(idiosyncratic_path: Array, common_path: Array) -> Array:
         particles = jnp.zeros(
             (num_times, problem.num_particles) + problem.state_shape,
             dtype=problem.initial_particles.dtype,
         )
         particles = particles.at[0].set(problem.initial_particles)
 
-        def step(index, buffer):
+        def step(index: Array, buffer: Array) -> Array:
             time = grid[index]
             current = buffer[index]
             snapshot = _mean_field_snapshot(

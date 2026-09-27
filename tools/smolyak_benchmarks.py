@@ -9,6 +9,7 @@ import json
 import math
 import time
 from collections.abc import Sequence
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -42,7 +43,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _domain(dimension: int, rule: SmolyakAxisRule):
+def _domain(dimension: int, rule: SmolyakAxisRule) -> Any:
     if rule == "gauss-hermite":
         factors = tuple(
             phx.domain.ProbabilityDomain(
@@ -59,11 +60,11 @@ def _domain(dimension: int, rule: SmolyakAxisRule):
     return phx.domain.ProductDomain(*factors)
 
 
-def _target(domain, dimension: int, output_size: int):
+def _target(domain: Any, dimension: int, output_size: int) -> Any:
     labels = tuple(f"x{axis}" for axis in range(dimension))
     frequencies = jnp.arange(1, output_size + 1, dtype="float64")
 
-    def observable(*coordinates):
+    def observable(*coordinates: Any) -> Any:
         signal = sum(
             (axis + 1.0) / dimension * (coordinate + 0.1 * coordinate**2)
             for axis, coordinate in enumerate(coordinates)
@@ -82,7 +83,7 @@ def _interpolation_record(
     output_size: int,
     query_sizes: Sequence[int],
     repeats: int,
-):
+) -> Any:
     anisotropy = tuple(
         1.0 + 2.0 * axis / max(dimension - 1, 1) for axis in range(dimension)
     )
@@ -125,7 +126,7 @@ def _interpolation_record(
             (query_size, dimension)
         )
 
-        def evaluate(rows):
+        def evaluate(rows: Any) -> Any:
             return jax.vmap(
                 lambda row: interpolant(*tuple(row[axis] for axis in range(dimension)))
             )(rows)
@@ -185,7 +186,7 @@ def _interpolation_record(
     }
 
 
-def _integration_record(dimension: int, level: int):
+def _integration_record(dimension: int, level: int) -> Any:
     started = time.perf_counter()
     nodes, weights = _smolyak_rule(dimension, level, None)
     construction_ms = 1e3 * (time.perf_counter() - started)

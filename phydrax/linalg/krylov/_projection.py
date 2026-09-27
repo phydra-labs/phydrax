@@ -10,10 +10,12 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import parse
 from .._certificates import _operator_numeric_fingerprint
 from .._operators import AbstractLinearOperator, estimate_operator_action_cost
 from .._spaces import _coordinate_dtype
@@ -37,7 +39,7 @@ class KrylovProjectionResourcePolicy(StrictModule):
         max_matvec_count: int | None = None,
         max_storage_bytes: int | None = None,
         max_workspace_bytes: int | None = None,
-    ):
+    ) -> None:
         self.max_matvec_count = _optional_nonnegative_int(
             max_matvec_count, "max_matvec_count"
         )
@@ -67,14 +69,14 @@ class KrylovProjectionPolicy(StrictModule):
         orthogonalization: Orthogonalization = "selective",
         breakdown_tolerance: float | None = None,
         resources: KrylovProjectionResourcePolicy | None = None,
-    ):
-        if method not in ("auto", "arnoldi", "lanczos"):
-            raise ValueError("Unknown Krylov projection method.")
+    ) -> None:
+        method = parse(method, KrylovProjectionMethod, "method")
         dimension = int(max_dimension)
         if dimension < 1:
             raise ValueError("max_dimension must be positive.")
-        if orthogonalization not in ("modified", "double", "selective", "full"):
-            raise ValueError("Unknown orthogonalization policy.")
+        orthogonalization = parse(
+            orthogonalization, Orthogonalization, "orthogonalization"
+        )
         if breakdown_tolerance is not None:
             tolerance = float(breakdown_tolerance)
             if not math.isfinite(tolerance) or tolerance < 0.0:

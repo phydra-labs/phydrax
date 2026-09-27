@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
@@ -30,7 +31,7 @@ class ShellSubmodelTransfer(StrictModule, NonTrainableState):
         /,
         *,
         transfer_id: str = "shell-submodel-transfer",
-    ):
+    ) -> None:
         nodes = jnp.asarray(boundary_node_indices, dtype=jnp.int32)
         displacement = jnp.asarray(displacement_map)
         resultant = jnp.asarray(resultant_map, dtype=displacement.dtype)

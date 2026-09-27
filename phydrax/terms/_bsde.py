@@ -10,7 +10,8 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.domain import DomainFunction
 
@@ -24,6 +25,7 @@ from ..stochastic._bsde import (
     BSDEQuadrature,
     evaluate_bsde,
 )
+from ..typing import parse, PRNGKey
 
 
 class BSDETerm(AbstractSamplingTerm):
@@ -57,25 +59,22 @@ class BSDETerm(AbstractSamplingTerm):
         global_weight: ArrayLike = 1.0,
         sampling_mode: Literal["resample", "fixed"] = "resample",
         fixed_paths: BSDEPathBatch | None = None,
-        fixed_paths_key: Key[Array, ""] = jr.key(0),
+        fixed_paths_key: PRNGKey = jr.key(0),
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(problem, BSDEProblem):
             raise TypeError("problem must be a BSDEProblem.")
         if not isinstance(value_name, str) or not value_name:
             raise ValueError("value_name must be a non-empty string.")
-        if control_mode not in ("explicit", "autodiff"):
-            raise ValueError("control_mode must be 'explicit' or 'autodiff'.")
+        control_mode = parse(control_mode, BSDEControlMode, "control_mode")
         if control_mode == "explicit" and (
             not isinstance(control_name, str) or not control_name
         ):
             raise ValueError("Explicit control requires a non-empty control_name.")
         if control_mode == "autodiff" and control_name is not None:
             raise ValueError("Autodiff control does not accept control_name.")
-        if mode not in ("terminal", "local", "global", "joint"):
-            raise ValueError("Unknown BSDE objective mode.")
-        if quadrature not in ("left", "trapezoid"):
-            raise ValueError("Unknown BSDE quadrature.")
+        mode = parse(mode, BSDEObjectiveMode, "mode")
+        quadrature = parse(quadrature, BSDEQuadrature, "quadrature")
         if sampling_mode not in ("resample", "fixed"):
             raise ValueError("sampling_mode must be 'resample' or 'fixed'.")
         if fixed_paths is not None and not isinstance(fixed_paths, BSDEPathBatch):
@@ -103,7 +102,7 @@ class BSDETerm(AbstractSamplingTerm):
         self.sampling_mode = sampling_mode
         self.label = None if label is None else str(label)
 
-    def sample(self, *, key: Key[Array, ""] = jr.key(0)) -> BSDEPathBatch:
+    def sample(self, *, key: PRNGKey = jr.key(0)) -> BSDEPathBatch:
         if self.sampling_mode == "fixed":
             if self.fixed_paths is None:
                 raise ValueError("Fixed BSDE objective has no fixed_paths.")
@@ -115,7 +114,7 @@ class BSDETerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
         batch: BSDEPathBatch | None = None,
         **kwargs: Any,
     ) -> Array:

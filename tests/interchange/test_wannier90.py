@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -27,7 +29,7 @@ from phydrax.operators.periodic import (
 from phydrax.units import ANGSTROM, ELECTRONVOLT
 
 
-def _context(payload, cell, labels, centers, source):
+def _context(payload: Any, cell: Any, labels: Any, centers: Any, source: Any) -> Any:
     basis = PeriodicOrbitalBasisPlan(
         cell,
         labels,
@@ -41,13 +43,15 @@ def _context(payload, cell, labels, centers, source):
     return PeriodicSourceContext(basis, ELECTRONVOLT, provenance)
 
 
-def test_hr_public_spec_bytes_apply_degeneracy_exactly_once():
+def test_hr_public_spec_bytes_apply_degeneracy_exactly_once() -> None:
     payload = (
         "independent one-orbital chain\n1\n3\n2 1 2\n-1 0 0 1 1 -2.0 0.0\n0 0 0 1 1 -1.0 0.0\n1 0 0 1 1 -2.0 0.0\n"
     ).encode()
+    # ty: ignore[invalid-argument-type]
     context = _context(payload, PeriodicCell([[1.0]]), ("s",), [[0.0]], "hr-chain")
     imported = read_wannier90_hr(payload, context)
 
+    # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(imported.prepared_family.evaluate([[0.0]])[0, 0, 0], -3.0)
     np.testing.assert_array_equal(imported.degeneracies, [2, 1, 2])
     np.testing.assert_allclose(
@@ -55,14 +59,16 @@ def test_hr_public_spec_bytes_apply_degeneracy_exactly_once():
     )
 
 
-def test_hr_requires_complete_context_digest_reverse_and_capacity():
+def test_hr_requires_complete_context_digest_reverse_and_capacity() -> None:
     payload = (
         "bad reverse\n1\n2\n1 1\n-1 0 0 1 1 -1.0 0.0\n1 0 0 1 1 -2.0 0.0\n"
     ).encode()
+    # ty: ignore[invalid-argument-type]
     context = _context(payload, PeriodicCell([[1.0]]), ("s",), [[0.0]], "bad-hr")
     with pytest.raises(ValueError, match="Hermitian adjoints"):
         read_wannier90_hr(payload, context)
     with pytest.raises(TypeError, match="PeriodicSourceContext"):
+        # ty: ignore[invalid-argument-type]
         read_wannier90_hr(payload, None)
     with pytest.raises(PeriodicResourceError, match="maximum_bytes"):
         read_wannier90_hr(payload, context, maximum_bytes=4)
@@ -71,7 +77,7 @@ def test_hr_requires_complete_context_digest_reverse_and_capacity():
         read_wannier90_hr(altered, context)
 
 
-def test_mmn_public_spec_bytes_require_exact_connectivity_coverage():
+def test_mmn_public_spec_bytes_require_exact_connectivity_coverage() -> None:
     payload = (
         "independent one-band links\n"
         "1 2 2\n"
@@ -80,6 +86,7 @@ def test_mmn_public_spec_bytes_require_exact_connectivity_coverage():
         "2 1 1 0 0\n1.0 0.0\n"
         "2 1 0 0 0\n1.0 0.0\n"
     ).encode()
+    # ty: ignore[invalid-argument-type]
     cell = PeriodicCell([[1.0]])
     mesh = ReciprocalMeshPlan.monkhorst_pack(cell, (2,))
     connectivity = ReciprocalConnectivityPlan.regular(mesh).prepare()
@@ -90,7 +97,9 @@ def test_mmn_public_spec_bytes_require_exact_connectivity_coverage():
     np.testing.assert_allclose(imported.singular_values, 1.0)
     assert imported.connectivity.prepared_id == connectivity.prepared_id
     hamiltonian = periodic_translation_family_from_dense_blocks(
-        [[0]], np.asarray([[[[[-1.0]]]]])
+        # ty: ignore[invalid-argument-type]
+        [[0]],
+        np.asarray([[[[[-1.0]]]]]),
     )
     pencil = PeriodicOrbitalPencilPlan.orthonormal(
         context.basis,
@@ -104,10 +113,11 @@ def test_mmn_public_spec_bytes_require_exact_connectivity_coverage():
     assert bundle.source_id.startswith("wannier90-mmn:")
 
 
-def test_mmn_rejects_missing_edge_and_cell_mismatch():
+def test_mmn_rejects_missing_edge_and_cell_mismatch() -> None:
     payload = (
         "missing link\n1 2 2\n1 2 0 0 0\n1.0 0.0\n1 2 -1 0 0\n1.0 0.0\n2 1 1 0 0\n1.0 0.0\n"
     ).encode()
+    # ty: ignore[invalid-argument-type]
     cell = PeriodicCell([[1.0]])
     mesh = ReciprocalMeshPlan.monkhorst_pack(cell, (2,))
     connectivity = ReciprocalConnectivityPlan.regular(mesh).prepare()
@@ -116,6 +126,7 @@ def test_mmn_rejects_missing_edge_and_cell_mismatch():
         read_wannier90_mmn(payload, context, connectivity)
 
     other_payload = payload + b"\n"
+    # ty: ignore[invalid-argument-type]
     other = _context(other_payload, PeriodicCell([[2.0]]), ("band-1",), [[0.0]], "other")
     with pytest.raises(ValueError, match="different periodic cells"):
         read_wannier90_mmn(other_payload, other, connectivity)

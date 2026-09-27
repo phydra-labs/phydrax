@@ -8,7 +8,8 @@ from enum import IntEnum, IntFlag
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 
@@ -59,7 +60,7 @@ class ContactGuaranteeEvidence(StrictModule):
         failure_code: ArrayLike = 0,
         margin: ArrayLike = jnp.inf,
         backend_id: str,
-    ):
+    ) -> None:
         level_value = ContactGuaranteeLevel(int(level))
         required_value = ContactGuaranteeLevel(int(required_level))
         level_ = jnp.asarray(int(level_value), dtype=jnp.int32)

@@ -11,10 +11,12 @@ import equinox as eqx
 import jax.nn as jnn
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
+from .._dtype_names import inexact_result_type
 from .._numerics._quadrature_rules import gauss_legendre_data
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._bspline_grid import BSplineGrid, TrainableBSplineGrid
@@ -28,7 +30,7 @@ class BSplineGridBank(StrictModule, NonTrainableState):
     coefficient_count: int = eqx.field(static=True)
     positive_span_count: int = eqx.field(static=True)
 
-    def __init__(self, knots: ArrayLike, degree: int, /):
+    def __init__(self, knots: ArrayLike, degree: int, /) -> None:
         knots_ = jnp.asarray(knots)
         if knots_.ndim != 2 or knots_.shape[0] == 0:
             raise ValueError(
@@ -121,9 +123,9 @@ class TrainableBSplineGridBank(StrictModule):
         degree: int,
         /,
         *,
-        intervals: ArrayLike,
+        intervals: npt.ArrayLike,
         minimum_spans: ArrayLike | None = None,
-    ):
+    ) -> None:
         if isinstance(degree, bool) or not isinstance(degree, Integral):
             raise TypeError("Trainable B-spline grid-bank degree must be an integer.")
         degree_ = int(degree)
@@ -185,7 +187,7 @@ class TrainableBSplineGridBank(StrictModule):
         num_intervals: int = 8,
         /,
         *,
-        intervals: ArrayLike = (-1.0, 1.0),
+        intervals: npt.ArrayLike = (-1.0, 1.0),
         minimum_spans: ArrayLike | None = None,
     ) -> TrainableBSplineGridBank:
         """Construct independently trainable rows with uniform initial spans."""

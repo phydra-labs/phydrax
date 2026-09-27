@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 
@@ -24,7 +25,7 @@ _SPAN_COUNTS = (2, 4, 8, 16)
 _SOLVER_RTOL = 1.0e-10
 
 
-def _basis_values(grid, points: np.ndarray, degree: int | None = None) -> np.ndarray:
+def _basis_values(grid: Any, points: np.ndarray, degree: int | None = None) -> np.ndarray:
     knots = np.asarray(grid.knots, dtype="float64")
     p = grid.degree if degree is None else degree
     x = np.asarray(points, dtype="float64").reshape((-1,))
@@ -52,7 +53,7 @@ def _basis_values(grid, points: np.ndarray, degree: int | None = None) -> np.nda
     return values
 
 
-def _basis_and_derivative(grid, points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _basis_and_derivative(grid: Any, points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     values = _basis_values(grid, points)
     lower = _basis_values(grid, points, grid.degree - 1)
     knots = np.asarray(grid.knots, dtype="float64")
@@ -67,7 +68,7 @@ def _basis_and_derivative(grid, points: np.ndarray) -> tuple[np.ndarray, np.ndar
     return values, derivative
 
 
-def _quadrature(grid, points_per_axis: int):
+def _quadrature(grid: Any, points_per_axis: int) -> Any:
     nodes, weights = np.polynomial.legendre.leggauss(points_per_axis)
     points = []
     scaled_weights = []
@@ -82,7 +83,7 @@ def _quadrature(grid, points_per_axis: int):
     return xi.reshape((-1,)), eta.reshape((-1,)), (wx * wy).reshape((-1,))
 
 
-def _evaluate(grid, geometry, coefficients, points_per_axis: int):
+def _evaluate(grid: Any, geometry: Any, coefficients: Any, points_per_axis: int) -> Any:
     xi, eta, parameter_weights = _quadrature(grid, points_per_axis)
     nx, dnx = _basis_and_derivative(grid, xi)
     ny, dny = _basis_and_derivative(grid, eta)
@@ -134,13 +135,13 @@ def _evaluate(grid, geometry, coefficients, points_per_axis: int):
     return result
 
 
-def _polynomial_coefficients(grid, values) -> np.ndarray:
+def _polynomial_coefficients(grid: Any, values: Any) -> np.ndarray:
     sites = np.asarray(grid.greville_abscissae, dtype="float64")
     collocation = _basis_values(grid, sites)
     return np.linalg.solve(collocation, np.asarray(values(sites), dtype="float64"))
 
 
-def _geometry(case: str, grid):
+def _geometry(case: str, grid: Any) -> Any:
     if case == "affine-square":
         sites = np.asarray(grid.greville_abscissae, dtype="float64")
         xx, yy = np.meshgrid(sites, sites, indexing="ij")
@@ -166,7 +167,7 @@ def _geometry(case: str, grid):
     )
 
 
-def _exact(case: str, points: np.ndarray):
+def _exact(case: str, points: np.ndarray) -> Any:
     x = points[:, 0]
     y = points[:, 1]
     if case == "affine-square":
@@ -196,7 +197,7 @@ def _exact(case: str, points: np.ndarray):
     return amplitude * sine_angle, gradient
 
 
-def _source(case: str):
+def _source(case: str) -> Any:
     if case == "affine-square":
         return phx.equations.coefficient(
             lambda points, args: (
@@ -208,7 +209,7 @@ def _source(case: str):
             coefficient_id="iga-affine-square-source",
         )
 
-    def quarter_annulus(points, args):
+    def quarter_annulus(points: Any, args: Any) -> Any:
         x = points[..., 0]
         y = points[..., 1]
         radius = jnp.sqrt(x**2 + y**2)
@@ -227,7 +228,9 @@ def _source(case: str):
     )
 
 
-def _compile(case, grid, geometry, points_per_axis, policy, version):
+def _compile(
+    case: Any, grid: Any, geometry: Any, points_per_axis: Any, policy: Any, version: Any
+) -> Any:
     plan = phx.discretization.iga.IsogeometricPlan.isoparametric(
         (grid, grid),
         geometry,
@@ -259,11 +262,13 @@ def _compile(case, grid, geometry, points_per_axis, policy, version):
     return discretization, compiled
 
 
-def _norm(value) -> jax.Array:
+def _norm(value: Any) -> jax.Array:
     return jnp.sqrt(jnp.real(jnp.vdot(value, value)))
 
 
-def _field_errors(case, grid, geometry, coefficients, points_per_axis):
+def _field_errors(
+    case: Any, grid: Any, geometry: Any, coefficients: Any, points_per_axis: Any
+) -> Any:
     evaluation = _evaluate(grid, geometry, coefficients, points_per_axis)
     exact_value, exact_gradient = _exact(case, evaluation["physical_points"])
     value_error = evaluation["field"] - exact_value
@@ -274,7 +279,7 @@ def _field_errors(case, grid, geometry, coefficients, points_per_axis):
     return float(l2_error), float(h1_error)
 
 
-def _private_sparse_stiffness(grid, geometry, points_per_axis):
+def _private_sparse_stiffness(grid: Any, geometry: Any, points_per_axis: Any) -> Any:
     evaluation = _evaluate(grid, geometry, None, points_per_axis)
     weights = evaluation["physical_weights"]
     gradient_x = evaluation["gradient_x"]
@@ -290,20 +295,22 @@ def _private_sparse_stiffness(grid, geometry, points_per_axis):
     return rows, columns, reduced[rows, columns], reduced.shape[0]
 
 
-def _sparse_matvec(rows, columns, data, size, vector):
+def _sparse_matvec(rows: Any, columns: Any, data: Any, size: Any, vector: Any) -> Any:
     result = np.zeros((size,), dtype="float64")
     np.add.at(result, rows, data * np.asarray(vector)[columns])
     return result
 
 
-def _taylor_evidence(compiled, discretization, geometry, state, policy):
+def _taylor_evidence(
+    compiled: Any, discretization: Any, geometry: Any, state: Any, policy: Any
+) -> Any:
     direction = jnp.sin(
         jnp.arange(geometry.control_points.size, dtype=geometry.control_points.dtype)
         + 1.0
     ).reshape(geometry.control_points.shape)
     direction = 1.0e-2 * direction / jnp.maximum(_norm(direction), 1.0)
 
-    def residual(alpha):
+    def residual(alpha: Any) -> Any:
         perturbed = phx.discretization.iga.NURBSGeometryState(
             geometry.control_points + alpha * direction,
             geometry.weights,
@@ -342,7 +349,7 @@ def _taylor_evidence(compiled, discretization, geometry, state, policy):
     }
 
 
-def _level(case, span_count, policy):
+def _level(case: Any, span_count: Any, policy: Any) -> Any:
     grid = phx.discretization.iga.BSplineGrid.open_uniform(
         _DEGREE,
         span_count,
@@ -474,12 +481,12 @@ def _level(case, span_count, policy):
     }
 
 
-def _rate(errors):
+def _rate(errors: Any) -> Any:
     widths = 1.0 / np.asarray(_SPAN_COUNTS, dtype="float64")
     return float(np.polyfit(np.log(widths), np.log(np.asarray(errors)), 1)[0])
 
 
-def _case(case, policy):
+def _case(case: Any, policy: Any) -> Any:
     levels = [_level(case, spans, policy) for spans in _SPAN_COUNTS]
     h1_rate = _rate([level["h1_error"] for level in levels])
     l2_rate = _rate([level["l2_error"] for level in levels])
@@ -562,7 +569,7 @@ def _case(case, policy):
     }
 
 
-def run():
+def run() -> Any:
     policy = phx.discretization.iga.IsogeometricH1QualificationPolicy()
     if policy.refinement_levels != len(_SPAN_COUNTS):
         raise ValueError("The frozen IGA qualification requires exactly four levels.")

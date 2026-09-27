@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from dataclasses import asdict
@@ -39,7 +41,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _runtime_fixture(iterations: int):
+def _runtime_fixture(iterations: int) -> Any:
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     system = phx.atomistic.AtomisticSystemPlan(
         [10, 20],
@@ -187,7 +189,7 @@ def _runtime_benchmark(iterations: int, repeats: int) -> dict:
     }
 
 
-def _controlled_fixture():
+def _controlled_fixture() -> Any:
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     system = phx.atomistic.AtomisticSystemPlan(
         [10, 20, 30],

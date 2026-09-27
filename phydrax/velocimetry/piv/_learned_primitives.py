@@ -10,12 +10,13 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
+from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...imaging import backward_warp
@@ -39,7 +40,7 @@ class CostVolumePlan(StrictModule, NonTrainableState):
     chunk_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, radius: int, /, *, chunk_size: int = 16):
+    def __init__(self, radius: int, /, *, chunk_size: int = 16) -> None:
         radius_ = int(radius)
         chunk_size_ = int(chunk_size)
         if radius_ < 0:
@@ -409,7 +410,7 @@ class MultiScaleRobustPIVLoss(StrictModule, NonTrainableState):
         smoothness_weight: float = 0.01,
         epsilon: float = 1e-3,
         exponent: float = 0.5,
-    ):
+    ) -> None:
         scale_weights_ = tuple(float(weight) for weight in scale_weights)
         term_weights = (
             float(supervised_weight),

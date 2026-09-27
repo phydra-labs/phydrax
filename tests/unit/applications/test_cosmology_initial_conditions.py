@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -8,7 +10,7 @@ import phydrax as phx
 cosmology = phx.applications.cosmology
 
 
-def _case(shape, *, order=1, dealiasing="none"):
+def _case(shape: Any, *, order: Any = 1, dealiasing: Any = "none") -> Any:
     dimension = len(shape)
     capacity = int(np.prod(shape))
     scale = cosmology.CosmologyScaleContract(
@@ -39,6 +41,7 @@ def _case(shape, *, order=1, dealiasing="none"):
     base = 1.0e-8 / (1.0 + k**2)
     first_growth = growth.evaluate(0.1)[0]
     power = cosmology.MatterPowerTable(
+        # ty: ignore[invalid-argument-type]
         [0.1, 1.0],
         k,
         jnp.stack((first_growth**2 * base, base)),
@@ -62,7 +65,7 @@ def _case(shape, *, order=1, dealiasing="none"):
     return plan, background, growth, power
 
 
-def test_zero_noise_produces_lattice_and_zero_momentum():
+def test_zero_noise_produces_lattice_and_zero_momentum() -> None:
     plan, background, growth, power = _case((4, 4, 4), order=2)
     result = plan.realize(background, growth, power, jnp.zeros(plan.shape), 0.1)
     axes = tuple((jnp.arange(4) + 0.5) / 4.0 for _ in range(3))
@@ -73,7 +76,7 @@ def test_zero_noise_produces_lattice_and_zero_momentum():
     np.testing.assert_allclose(result.second_order_displacement, 0.0, atol=1e-14)
 
 
-def test_plane_wave_has_zero_second_order_source_and_edS_momentum():
+def test_plane_wave_has_zero_second_order_source_and_edS_momentum() -> None:
     plan, background, growth, power = _case((8,), order=2)
     x = (jnp.arange(8) + 0.5) / 8.0
     noise = jnp.cos(2.0 * jnp.pi * x)
@@ -90,7 +93,7 @@ def test_plane_wave_has_zero_second_order_source_and_edS_momentum():
     np.testing.assert_allclose(result.canonical_momenta, expected, rtol=1e-10)
 
 
-def test_nonparallel_modes_generate_finite_second_order_displacement():
+def test_nonparallel_modes_generate_finite_second_order_displacement() -> None:
     plan, background, growth, power = _case((4, 4, 4), order=2, dealiasing="three_halves")
     coordinates = tuple((jnp.arange(4) + 0.5) / 4.0 for _ in range(3))
     x, y, _ = jnp.meshgrid(*coordinates, indexing="ij")
@@ -104,7 +107,7 @@ def test_nonparallel_modes_generate_finite_second_order_displacement():
     np.testing.assert_allclose(result.power_spectrum, recovered, rtol=1e-10, atol=1e-40)
 
 
-def test_lpt_rejects_unsupported_order_and_dimension_mismatch():
+def test_lpt_rejects_unsupported_order_and_dimension_mismatch() -> None:
     plan, _, _, _ = _case((4,), order=1)
     with pytest.raises(ValueError, match="order must be 1 or 2"):
         cosmology.LagrangianPerturbationInitialConditionPlan(
@@ -124,8 +127,11 @@ def test_lpt_rejects_unsupported_order_and_dimension_mismatch():
         differentiation=phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT),
     )
     mismatched = cosmology.MatterPowerTable(
+        # ty: ignore[invalid-argument-type]
         [0.1, 1.0],
+        # ty: ignore[invalid-argument-type]
         [1.0, 10.0],
+        # ty: ignore[invalid-argument-type]
         [[1.0, 1.0], [1.0, 1.0]],
         cosmology.MatterPowerDescriptor(
             "cold_baryon", "cold_baryon", spatial_dimension=2
@@ -137,6 +143,7 @@ def test_lpt_rejects_unsupported_order_and_dimension_mismatch():
     with pytest.raises(ValueError, match="dimensions disagree"):
         plan.realize(
             background,
+            # ty: ignore[invalid-argument-type]
             cosmology.FLRWGrowthPlan([0.1, 1.0]).solve(background),
             mismatched,
             jnp.ones((4,)),

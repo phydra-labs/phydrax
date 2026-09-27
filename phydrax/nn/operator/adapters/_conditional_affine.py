@@ -8,7 +8,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._doc import DOC_KEY0
 from phydrax._fingerprint import canonical_fingerprint
@@ -21,6 +22,9 @@ from phydrax.dynamics import (
 )
 from phydrax.nn._keys import EvalKey
 from phydrax.nn.operator.architectures import ChemicalConditionalAffineOperator
+from phydrax.nn.operator.architectures.dynamics._conditional_affine import (
+    ChemicalConditionalAffineResult,
+)
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 
 
@@ -43,7 +47,7 @@ class TrainedChemicalConditionalAffineTransition(StrictModule):
         minimum_duration: float | None = None,
         maximum_duration: float | None = None,
         transition_id: str | None = None,
-    ):
+    ) -> None:
         from phydrax.nn.operator.training._trained_operator import TrainedOperator
 
         if not isinstance(trained_operator, TrainedOperator):
@@ -189,7 +193,7 @@ class TrainedChemicalConditionalAffineTransition(StrictModule):
         /,
         *,
         key: EvalKey = DOC_KEY0,
-    ):
+    ) -> ChemicalConditionalAffineResult:
         state_ = jnp.asarray(state)
         duration_ = jnp.asarray(duration, dtype=state_.dtype)
         inputs_ = jnp.asarray(inputs, dtype=state_.dtype)

@@ -10,7 +10,8 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -37,7 +38,7 @@ class ReptationObservablePlan(StrictModule):
         *,
         maximum_modes: int = 4,
         minimum_origins: int = 8,
-    ):
+    ) -> None:
         values = (
             maximum_frames,
             maximum_particles,

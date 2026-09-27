@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from importlib.util import find_spec
+from typing import Any
 
 import numpy as np
 import pytest
@@ -19,15 +21,16 @@ _EMBEDDING = phx.geometry.PlanarEmbedding(
 _COORDINATES = phx.SpatialCoordinateContract(phx.units.MILLIMETER)
 
 
-def _rectangle(x0, x1, *, feature_id):
+def _rectangle(x0: Any, x1: Any, *, feature_id: Any) -> Any:
     return phx.geometry.PlanarMeshRegion(
+        # ty: ignore[invalid-argument-type]
         np.asarray(((x0, 0.0), (x1, 0.0), (x1, 1.0), (x0, 1.0))),
         ((0, 1, 2, 3),),
         feature_id=feature_id,
     )
 
 
-def _partition(tmp_path, widths=(1.0, 1.0)):
+def _partition(tmp_path: Any, widths: Any = (1.0, 1.0)) -> Any:
     cursor = 0.0
     operands = []
     names = []
@@ -55,7 +58,7 @@ def _partition(tmp_path, widths=(1.0, 1.0)):
     )
 
 
-def _interface(partition, first, second):
+def _interface(partition: Any, first: Any, second: Any) -> Any:
     adjacent = tuple(sorted((first, second)))
     return next(
         patch
@@ -64,7 +67,7 @@ def _interface(partition, first, second):
     )
 
 
-def _controls(provider, source):
+def _controls(provider: Any, source: Any) -> Any:
     regions = tuple(
         phx.meshing.RegionControl(
             provider.entity_scope(source, region.entity_ids),
@@ -86,9 +89,12 @@ def _controls(provider, source):
     return regions, patches
 
 
-def test_planar_band_partition_retains_regions_and_exact_named_fronts(tmp_path):
+def test_planar_band_partition_retains_regions_and_exact_named_fronts(
+    tmp_path: Any,
+) -> None:
     source = _partition(tmp_path)
     interface = _interface(source, "region-0", "region-1")
+    # ty: ignore[invalid-argument-type]
     schedule = phx.meshing.LayerSchedule((0.05, 0.1))
     plan = phx.meshing.PlanarBandPlan(
         source,
@@ -129,9 +135,10 @@ def test_planar_band_partition_retains_regions_and_exact_named_fronts(tmp_path):
     find_spec("gmsh") is None, reason="optional gmsh package is not installed"
 )
 @pytest.mark.meshing_gmsh
-def test_real_gmsh_planar_band_fronts_equal_cumulative_schedule(tmp_path):
+def test_real_gmsh_planar_band_fronts_equal_cumulative_schedule(tmp_path: Any) -> None:
     partition = _partition(tmp_path)
     interface = _interface(partition, "region-0", "region-1")
+    # ty: ignore[invalid-argument-type]
     schedule = phx.meshing.LayerSchedule((0.05, 0.1))
     control = phx.meshing.PlanarBandControl(
         interface.name,
@@ -172,7 +179,7 @@ def test_real_gmsh_planar_band_fronts_equal_cumulative_schedule(tmp_path):
     assert result.audit.passed and result.compliance.passed
 
 
-def test_planar_band_rejects_insufficient_clearance(tmp_path):
+def test_planar_band_rejects_insufficient_clearance(tmp_path: Any) -> None:
     source = _partition(tmp_path)
     interface = _interface(source, "region-0", "region-1")
     plan = phx.meshing.PlanarBandPlan(
@@ -182,7 +189,9 @@ def test_planar_band_rejects_insufficient_clearance(tmp_path):
             phx.meshing.PlanarBandControl(
                 interface.name,
                 {
+                    # ty: ignore[invalid-argument-type]
                     "region-0": phx.meshing.LayerSchedule((1.1,)),
+                    # ty: ignore[invalid-argument-type]
                     "region-1": phx.meshing.LayerSchedule((0.1,)),
                 },
                 0.2,
@@ -194,7 +203,7 @@ def test_planar_band_rejects_insufficient_clearance(tmp_path):
         phx.meshing.prepare_planar_bands(plan, destination=tmp_path / "no-clearance.brep")
 
 
-def test_planar_band_rejects_colliding_straight_strips(tmp_path):
+def test_planar_band_rejects_colliding_straight_strips(tmp_path: Any) -> None:
     source = _partition(tmp_path, widths=(1.0, 0.5, 1.0))
     left = _interface(source, "region-0", "region-1")
     right = _interface(source, "region-1", "region-2")
@@ -202,7 +211,9 @@ def test_planar_band_rejects_colliding_straight_strips(tmp_path):
         phx.meshing.PlanarBandControl(
             left.name,
             {
+                # ty: ignore[invalid-argument-type]
                 "region-0": phx.meshing.LayerSchedule((0.1,)),
+                # ty: ignore[invalid-argument-type]
                 "region-1": phx.meshing.LayerSchedule((0.3,)),
             },
             0.2,
@@ -210,7 +221,9 @@ def test_planar_band_rejects_colliding_straight_strips(tmp_path):
         phx.meshing.PlanarBandControl(
             right.name,
             {
+                # ty: ignore[invalid-argument-type]
                 "region-1": phx.meshing.LayerSchedule((0.3,)),
+                # ty: ignore[invalid-argument-type]
                 "region-2": phx.meshing.LayerSchedule((0.1,)),
             },
             0.2,

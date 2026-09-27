@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._differentiation import (
     DerivativeContract,
@@ -134,7 +135,7 @@ def _ista_codes(
     lipschitz = jnp.sum(jnp.real(dictionary * jnp.conj(dictionary)), axis=(-2, -1))
     step = 1.0 / jnp.maximum(lipschitz, jnp.finfo(values.real.dtype).tiny)
 
-    def body(_, current):
+    def body(_: int | Array, current: Array) -> Array:
         residual = current @ dictionary - values
         if mask is not None:
             residual = jnp.where(mask, residual, 0)
@@ -166,7 +167,7 @@ class SparseCodingModel(AbstractFittedModel):
         *,
         regularization: float,
         transform_iterations: int,
-    ):
+    ) -> None:
         dictionary_ = jnp.asarray(dictionary)
         if not jnp.issubdtype(dictionary_.dtype, jnp.inexact):
             dictionary_ = dictionary_.astype(jnp.float32)
@@ -254,7 +255,9 @@ class NMFModel(AbstractFittedModel):
 
     _input_binding = ModelBinding.blockwise("flat", pass_key=False)
 
-    def __init__(self, components, *, transform_iterations: int, epsilon: float):
+    def __init__(
+        self, components: ArrayLike, *, transform_iterations: int, epsilon: float
+    ) -> None:
         components_ = jnp.asarray(components)
         if not jnp.issubdtype(components_.dtype, jnp.floating):
             raise TypeError("NMF components must use a real floating dtype.")
@@ -285,7 +288,7 @@ class NMFModel(AbstractFittedModel):
         )
         gram = self.components @ jnp.swapaxes(self.components, -1, -2)
 
-        def body(_, current):
+        def body(_: int | Array, current: Array) -> Array:
             numerator = working @ jnp.swapaxes(self.components, -1, -2)
             denominator = current @ gram
             return current * numerator / jnp.maximum(denominator, self.epsilon)
@@ -321,7 +324,7 @@ class NMF(AbstractRecipe):
         tolerance: float = 1e-6,
         epsilon: float = 1e-8,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.n_components = int(n_components)
         self.max_iterations = int(max_iterations)
         self.transform_iterations = int(transform_iterations)
@@ -361,7 +364,7 @@ class NMF(AbstractRecipe):
             maxval=1.0,
         )
 
-        def body(_, state):
+        def body(_: int | Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
             current_codes, current_components = state
             prediction = current_codes @ current_components
             numerator_codes = values @ jnp.swapaxes(current_components, -1, -2)
@@ -497,7 +500,7 @@ class SparseCoding(AbstractRecipe):
         regularization: float = 1e-2,
         transform_iterations: int = 64,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         dictionary_ = jnp.asarray(dictionary)
         if not jnp.issubdtype(dictionary_.dtype, jnp.inexact):
             dictionary_ = dictionary_.astype(jnp.float32)
@@ -638,7 +641,7 @@ class DictionaryLearning(AbstractRecipe):
         transform_iterations: int = 64,
         tolerance: float = 1e-6,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         self.n_components = int(n_components)
         self.regularization = float(regularization)
         self.max_iterations = int(max_iterations)
@@ -678,7 +681,7 @@ class DictionaryLearning(AbstractRecipe):
         )
         dictionary = _normalize_atoms(dictionary)
 
-        def body(_, current):
+        def body(_: int | Array, current: Array) -> Array:
             codes = _ista_codes(
                 values,
                 current,

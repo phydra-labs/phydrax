@@ -4,8 +4,11 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -24,7 +27,7 @@ class CliffordFiniteAlgebraProvider(StrictModule, NonTrainableState):
     basis_ids: tuple[str, ...] = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
-    def __init__(self, algebra: CliffordAlgebraSpec, /):
+    def __init__(self, algebra: CliffordAlgebraSpec, /) -> None:
         if not isinstance(algebra, CliffordAlgebraSpec):
             raise TypeError("algebra must be CliffordAlgebraSpec.")
         layout = CliffordBladeLayout.full(algebra)
@@ -52,10 +55,10 @@ class CliffordFiniteAlgebraProvider(StrictModule, NonTrainableState):
     def algebra_id(self) -> str:
         return self.provider_id
 
-    def conjugate(self, value: ArrayLike, /):
+    def conjugate(self, value: ArrayLike, /) -> Array:
         return clifford_conjugate(value, self.layout)
 
-    def prepare_product(self, **kwargs) -> CliffordProductPlan:
+    def prepare_product(self, **kwargs: Any) -> CliffordProductPlan:
         return CliffordProductPlan(self.algebra, self.layout, self.layout, **kwargs)
 
 

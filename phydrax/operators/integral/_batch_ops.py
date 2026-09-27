@@ -22,7 +22,7 @@ def integral(
     plan: Any = None,
     /,
     **kwargs: Any,
-):
+) -> Any:
     """Return the value of an unnormalized typed integration execution."""
     if isinstance(target_or_realization, IntegrationRealization):
         if plan is not None:
@@ -39,7 +39,7 @@ def mean(
     plan: Any = None,
     /,
     **kwargs: Any,
-):
+) -> Any:
     """Return a normalized component/density integration value."""
     if isinstance(target_or_realization, IntegrationRealization):
         if plan is not None:
@@ -77,7 +77,7 @@ def integrate_interior(
     plan: Any = None,
     /,
     **kwargs: Any,
-):
+) -> Any:
     """Semantic alias; interior selection belongs to the supplied target."""
     return integral(integrand, target_or_realization, plan, **kwargs)
 
@@ -88,7 +88,7 @@ def integrate_boundary(
     plan: Any = None,
     /,
     **kwargs: Any,
-):
+) -> Any:
     """Semantic alias; boundary selection belongs to the supplied target."""
     return integral(integrand, target_or_realization, plan, **kwargs)
 

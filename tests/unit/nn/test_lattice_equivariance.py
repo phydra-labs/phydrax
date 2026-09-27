@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -23,7 +25,9 @@ from phydrax.nn.operator.representations import (
 )
 
 
-def _layout(kind, dimension=2, *, name=None, multiplicity=1):
+def _layout(
+    kind: Any, dimension: Any = 2, *, name: Any = None, multiplicity: Any = 1
+) -> Any:
     specifications = {
         "scalar": TensorType((), dimension=dimension),
         "pseudoscalar": TensorType((), parity=-1, dimension=dimension),
@@ -54,8 +58,8 @@ def _layout(kind, dimension=2, *, name=None, multiplicity=1):
     ),
 )
 def test_invariant_lattice_convolution_intertwines_d4_tensor_actions(
-    input_kind, output_kind
-):
+    input_kind: Any, output_kind: Any
+) -> None:
     group = FiniteOrthogonalGroup.d4()
     input_layout = _layout(input_kind)
     output_layout = _layout(output_kind)
@@ -90,7 +94,9 @@ def test_invariant_lattice_convolution_intertwines_d4_tensor_actions(
         assert jnp.allclose(transformed_output, expected, atol=2e-9, rtol=2e-9)
 
 
-def test_lattice_convolution_is_periodic_translation_equivariant_and_zero_without_support():
+def test_lattice_convolution_is_periodic_translation_equivariant_and_zero_without_support() -> (
+    None
+):
     group = FiniteOrthogonalGroup.c4()
     layout = _layout("scalar")
     layer = LatticeEquivariantConvND(
@@ -110,7 +116,7 @@ def test_lattice_convolution_is_periodic_translation_equivariant_and_zero_withou
     assert jnp.array_equal(unsupported, jnp.zeros_like(unsupported))
 
 
-def test_equivariant_biases_are_only_available_to_ordinary_scalars():
+def test_equivariant_biases_are_only_available_to_ordinary_scalars() -> None:
     group = FiniteOrthogonalGroup.d4()
     scalar = _layout("scalar")
     for output_kind in ("pseudoscalar", "vector", "pseudovector"):
@@ -120,7 +126,7 @@ def test_equivariant_biases_are_only_available_to_ordinary_scalars():
             LatticeEquivariantConvND(basis, use_bias=True)
 
 
-def test_tensor_norm_activation_and_rms_normalization_are_d4_equivariant():
+def test_tensor_norm_activation_and_rms_normalization_are_d4_equivariant() -> None:
     group = FiniteOrthogonalGroup.d4()
     layout = TensorFieldLayout(
         (
@@ -141,7 +147,7 @@ def test_tensor_norm_activation_and_rms_normalization_are_d4_equivariant():
         )
 
 
-def test_group_average_equivariantizes_a_directional_lattice_model():
+def test_group_average_equivariantizes_a_directional_lattice_model() -> None:
     group = FiniteOrthogonalGroup.d4()
     layout = _layout("scalar")
     directional = lambda values: jnp.roll(values, 1, axis=0)
@@ -155,7 +161,9 @@ def test_group_average_equivariantizes_a_directional_lattice_model():
         assert jnp.allclose(transformed, expected, atol=2e-10, rtol=2e-10)
 
 
-def test_scalar_invariant_basis_transfer_reports_exact_central_embedding_and_rejects_loss():
+def test_scalar_invariant_basis_transfer_reports_exact_central_embedding_and_rejects_loss() -> (
+    None
+):
     source_group = FiniteOrthogonalGroup.c4()
     target_group = FiniteOrthogonalGroup.cube_rotations()
     source_layout = _layout("scalar", 2, name="field")
@@ -192,7 +200,9 @@ def test_scalar_invariant_basis_transfer_reports_exact_central_embedding_and_rej
         rejecting_plan.transfer(generic)
 
 
-def test_cross_dimensional_basis_transfer_rejects_tensor_component_reinterpretation():
+def test_cross_dimensional_basis_transfer_rejects_tensor_component_reinterpretation() -> (
+    None
+):
     source_group = FiniteOrthogonalGroup.c4()
     target_group = FiniteOrthogonalGroup.cube_rotations()
     source_vector = _layout("vector", 2, name="field")
@@ -207,7 +217,7 @@ def test_cross_dimensional_basis_transfer_rejects_tensor_component_reinterpretat
         InvariantBasisTransferPlan(source, target)
 
 
-def test_lattice_equivariant_cno_is_d4_equivariant_jittable_and_differentiable():
+def test_lattice_equivariant_cno_is_d4_equivariant_jittable_and_differentiable() -> None:
     group = FiniteOrthogonalGroup.d4()
     layout = _layout("scalar")
     model = LatticeEquivariantCNO(

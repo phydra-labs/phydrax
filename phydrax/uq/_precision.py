@@ -8,15 +8,18 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax import Array
 
-from .._precision import (
+from .._dtype_names import (
     complex_precision_dtype,
     precision_dtype_name,
+    real_precision_dtype_name,
+)
+from .._precision import (
     precision_itemsize,
     PrecisionEvidenceEnvelope,
     PrecisionRequest,
     PrecisionResolution,
-    real_precision_dtype_name,
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -34,7 +37,7 @@ class PredictivePrecisionPolicy(StrictModule, NonTrainableState):
         *,
         storage_dtype: Any | None = None,
         summary_dtype: Any | None = None,
-    ):
+    ) -> None:
         storage = (
             None if storage_dtype is None else real_precision_dtype_name(storage_dtype)
         )
@@ -61,7 +64,7 @@ class PredictivePrecisionPolicy(StrictModule, NonTrainableState):
         self.summary_dtype = summary
         self.policy_id = request.request_id
 
-    def storage(self, value: Any, /):
+    def storage(self, value: Any, /) -> Array:
         array = jnp.asarray(value)
         if self.storage_dtype is None:
             return array
@@ -72,7 +75,7 @@ class PredictivePrecisionPolicy(StrictModule, NonTrainableState):
         )
         return array.astype(target)
 
-    def summary(self, value: Any, /):
+    def summary(self, value: Any, /) -> Array:
         array = jnp.asarray(value)
         if self.summary_dtype is None:
             return array
@@ -127,7 +130,7 @@ class ParticlePrecisionPolicy(StrictModule, NonTrainableState):
         statistics_dtype: Any = jnp.float64,
         decision_dtype: Any = jnp.float64,
         output_dtype: Any | None = None,
-    ):
+    ) -> None:
         state = (
             None
             if state_storage_dtype is None
@@ -205,7 +208,7 @@ class ParticlePrecisionPolicy(StrictModule, NonTrainableState):
         )
         return PrecisionEvidenceEnvelope(resolution, dict(resolution.effective))
 
-    def state(self, value: Any, /):
+    def state(self, value: Any, /) -> Array:
         array = jnp.asarray(value)
         if self.state_storage_dtype is None:
             return array
@@ -216,13 +219,13 @@ class ParticlePrecisionPolicy(StrictModule, NonTrainableState):
         )
         return array.astype(target)
 
-    def statistics(self, value: Any, /):
+    def statistics(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=self.statistics_dtype)
 
-    def decision(self, value: Any, /):
+    def decision(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=self.decision_dtype)
 
-    def output(self, value: Any, /):
+    def output(self, value: Any, /) -> Array:
         array = jnp.asarray(value)
         if self.output_dtype is None:
             return array

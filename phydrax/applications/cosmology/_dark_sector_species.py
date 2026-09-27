@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -46,10 +47,10 @@ class DarkSectorSpeciesPlan(StrictModule, NonTrainableState):
         internal_energy: float = 0.0,
         degeneracy: int = 1,
         charge_names: Sequence[str] = (),
-        charges: ArrayLike = (),
+        charges: npt.ArrayLike = (),
         mass_unit: str = "physical-mass",
         energy_unit: str = "physical-energy",
-    ):
+    ) -> None:
         identifier = str(species_id).strip()
         mass_ = float(mass)
         energy = float(internal_energy)

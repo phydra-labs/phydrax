@@ -8,7 +8,8 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -41,7 +42,7 @@ class SingularVortexKernel2D(StrictModule):
 
     core_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.core_id = canonical_fingerprint({"kind": "singular-vortex-core-2d"})
 
     def evaluate(
@@ -113,7 +114,7 @@ class RosenheadVortexKernel2D(StrictModule):
 
     core_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.core_id = canonical_fingerprint({"kind": "rosenhead-vortex-core-2d"})
 
     def evaluate(
@@ -183,7 +184,7 @@ class SingularVortexKernel3D(StrictModule):
 
     core_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.core_id = canonical_fingerprint({"kind": "singular-vortex-core-3d"})
 
     def evaluate(
@@ -247,7 +248,7 @@ class RosenheadVortexKernel3D(StrictModule):
 
     core_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.core_id = canonical_fingerprint({"kind": "rosenhead-vortex-core-3d"})
 
     def evaluate(

@@ -8,18 +8,20 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...nonlinear import Bisection, NonlinearTermination, scalar_root, ScalarRootProblem
+from ...typing import parse
 from ...units import ENERGY, UnitDefinition
 from ..excited import ElectronicManifoldResult, RandomPhaseApproximationPlan
 from ..excited._tda import ExcitedStateManifoldPlan, TammDancoffPlan
@@ -27,7 +29,7 @@ from ._source import PeriodicProvenanceManifest
 
 
 DiagonalSelfEnergy = Callable[[int, Array], Array]
-BSEApproximation = Literal["tda", "full"]
+BSEApproximation: TypeAlias = Literal["tda", "full"]
 
 
 class GWQuasiparticleEvidence(StrictModule, NonTrainableState):
@@ -43,7 +45,7 @@ class GWQuasiparticleEvidence(StrictModule, NonTrainableState):
         successful_roots: ArrayLike,
         residual_tolerance: float,
         /,
-    ):
+    ) -> None:
         residuals = jnp.asarray(root_residuals)
         roots = jnp.asarray(successful_roots, dtype=jnp.bool_)
         tolerance = float(residual_tolerance)
@@ -102,7 +104,7 @@ class GWQuasiparticleResult(StrictModule, NonTrainableState):
         self_energy_definition_id: str,
         source_manifest_id: str,
         plan_id: str,
-    ):
+    ) -> None:
         mean_field = jnp.asarray(mean_field_energies)
         quasiparticle = jnp.asarray(quasiparticle_energies, dtype=mean_field.dtype)
         factors = jnp.asarray(renormalization_factors, dtype=mean_field.real.dtype)
@@ -196,7 +198,7 @@ class DiagonalGWPlan(StrictModule, NonTrainableState):
         *,
         residual_tolerance: float = 1.0e-9,
         maximum_iterations: int = 200,
-    ):
+    ) -> None:
         energies = jnp.asarray(mean_field_energies)
         xc = jnp.asarray(mean_field_xc_expectations, dtype=energies.dtype)
         brackets_ = jnp.asarray(brackets, dtype=energies.real.dtype)
@@ -264,7 +266,9 @@ class DiagonalGWPlan(StrictModule, NonTrainableState):
         for index in range(self.mean_field_energies.size):
             state_index = index
 
-            def equation(energy, _, state_index=state_index):
+            def equation(
+                energy: Array, _: object, state_index: int = state_index
+            ) -> Array:
                 return (
                     energy
                     - self.mean_field_energies[state_index]
@@ -337,7 +341,7 @@ class BSEPostprocessEvidence(StrictModule, NonTrainableState):
         provider_id: str,
         residual_tolerance: float,
         /,
-    ):
+    ) -> None:
         residuals = jnp.asarray(eigenpair_residuals).reshape((-1,))
         tolerance = float(residual_tolerance)
         identifiers = tuple(
@@ -397,13 +401,12 @@ class BSEPostprocessResult(StrictModule, NonTrainableState):
         approximation: BSEApproximation,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(manifold, ElectronicManifoldResult):
             raise TypeError("manifold must be ElectronicManifoldResult.")
         if not isinstance(evidence, BSEPostprocessEvidence):
             raise TypeError("evidence must be BSEPostprocessEvidence.")
-        if approximation not in ("tda", "full"):
-            raise ValueError("BSE approximation must be tda or full.")
+        approximation = parse(approximation, BSEApproximation, "approximation")
         plan = str(plan_id).strip()
         if not plan:
             raise ValueError("BSE plan_id must be non-empty.")
@@ -460,7 +463,7 @@ class BetheSalpeterPlan(StrictModule, NonTrainableState):
         coupling: ArrayLike | None = None,
         maximum_transitions: int = 4096,
         eigenpair_tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         identifiers = tuple(str(value).strip() for value in transition_ids)
         transition_input = jnp.asarray(transition_energies)
         transitions = jnp.real(transition_input)

@@ -9,7 +9,8 @@ from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -51,7 +52,7 @@ class SecondOrderDifferentialSystem(StrictModule):
         acceleration_scale: ArrayLike | None = None,
         residual_scale: ArrayLike | None = None,
         system_id: str,
-    ):
+    ) -> None:
         if not callable(residual):
             raise TypeError("Second-order residual must be callable.")
         shape = tuple(state_shape)
@@ -92,7 +93,14 @@ class SecondOrderDifferentialSystem(StrictModule):
             raise ValueError("Second-order residual must preserve state_shape.")
         return value
 
-    def scaled_residual(self, time, configuration, velocity, acceleration, args=None):
+    def scaled_residual(
+        self,
+        time: ArrayLike,
+        configuration: ArrayLike,
+        velocity: ArrayLike,
+        acceleration: ArrayLike,
+        args: Any = None,
+    ) -> Array:
         value = self.evaluate(time, configuration, velocity, acceleration, args)
         return value / self.residual_scale.astype(value.dtype)
 
@@ -120,7 +128,7 @@ class SecondOrderDifferentialProblem(StrictModule):
         args: Any = None,
         discretization_bundle: DiscretizationBundle | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(system, SecondOrderDifferentialSystem):
             raise TypeError("system must be SecondOrderDifferentialSystem.")
         configuration = jnp.asarray(initial_configuration)

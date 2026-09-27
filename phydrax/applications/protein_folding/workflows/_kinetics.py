@@ -2,25 +2,49 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TypedDict, Unpack
 
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
+from jax.typing import ArrayLike
 
 from ....dynamics import TrajectoryData
-from ....dynamics.analysis import validate_markov_models
+from ....dynamics.analysis import MarkovValidationResult, validate_markov_models
 from ....dynamics.identification import (
+    AbstractFeatureLibrary,
     fit_markov_state_model,
     fit_tica,
     fit_vac,
     fit_vamp,
+    LaggedPairWeighting,
+    MarkovStateModel,
+    VACResult,
+    VAMPResult,
 )
 from ....stochastic.path_sampling import (
+    CommittorFitPlan,
+    CommittorFitResult,
     FirstPassagePathEnsemble,
     fit_committor,
     StateRegionPlan,
 )
 from ....units import conversion_factor, SECOND, UnitDefinition
 from .._construct import _identifier
+
+
+class _VariationalKineticOptions(TypedDict, total=False):
+    n_modes: int
+    regularization: float
+    weighting: LaggedPairWeighting
+    lag_tolerance: float
+
+
+class _MarkovStateOptions(TypedDict, total=False):
+    reversible: bool
+    weighting: LaggedPairWeighting
+    pseudocount: float
+    lag_tolerance: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +55,7 @@ class ProteinBasinDefinitions:
     regions: tuple[StateRegionPlan, ...]
     source_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _identifier(self.source_id, "independent basin source")
         if (
             len(self.names) < 2
@@ -44,7 +68,7 @@ class ProteinBasinDefinitions:
         if any(not isinstance(region, StateRegionPlan) for region in self.regions):
             raise TypeError("Basin predicates must use native StateRegionPlan.")
 
-    def assign(self, features):
+    def assign(self, features: ArrayLike) -> Array:
         memberships = jnp.stack(
             tuple(region.contains(features) for region in self.regions), axis=-1
         )
@@ -53,7 +77,9 @@ class ProteinBasinDefinitions:
             raise ValueError("Basin predicates overlap on observed support.")
         return jnp.where(counts == 1, jnp.argmax(memberships, axis=-1), -1)
 
-    def first_passage_ensemble(self, source: int, target: int):
+    def first_passage_ensemble(
+        self, source: int, target: int
+    ) -> FirstPassagePathEnsemble:
         if (
             source == target
             or not 0 <= source < len(self.regions)
@@ -80,7 +106,7 @@ class ProteinKineticWorkflow:
     source_kind: str = "physical-dynamics"
     configuration_bias_id: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.data, TrajectoryData):
             raise TypeError(
                 "Kinetic consumers require native reset-aware TrajectoryData."
@@ -106,7 +132,9 @@ class ProteinKineticWorkflow:
                 "a separately derived native path measure is required."
             )
 
-    def require_uniform_lag(self, lag=1, *, relative_tolerance=1e-8):
+    def require_uniform_lag(
+        self, lag: int = 1, *, relative_tolerance: float = 1e-8
+    ) -> float:
         transitions = self.data.transitions(lag)
         valid = np.asarray(transitions.valid)
         deltas = np.asarray(
@@ -124,21 +152,40 @@ class ProteinKineticWorkflow:
             )
         return float(np.mean(deltas))
 
-    def vamp(self, library, *, lag=1, **options):
+    def vamp(
+        self,
+        library: AbstractFeatureLibrary,
+        *,
+        lag: int = 1,
+        **options: Unpack[_VariationalKineticOptions],
+    ) -> VAMPResult:
         self.require_uniform_lag(lag)
         return fit_vamp(self.data, library, lag=lag, **options)
 
-    def vac(self, library, *, lag=1, **options):
+    def vac(
+        self,
+        library: AbstractFeatureLibrary,
+        *,
+        lag: int = 1,
+        **options: Unpack[_VariationalKineticOptions],
+    ) -> VACResult:
         self.require_uniform_lag(lag)
         return fit_vac(self.data, library, lag=lag, **options)
 
-    def tica(self, *, lag=1, **options):
+    def tica(
+        self, *, lag: int = 1, **options: Unpack[_VariationalKineticOptions]
+    ) -> VACResult:
         self.require_uniform_lag(lag)
         return fit_tica(self.data, lag=lag, **options)
 
     def markov(
-        self, basin_features, basins: ProteinBasinDefinitions, *, lag=1, **options
-    ):
+        self,
+        basin_features: ArrayLike,
+        basins: ProteinBasinDefinitions,
+        *,
+        lag: int = 1,
+        **options: Unpack[_MarkovStateOptions],
+    ) -> MarkovStateModel:
         self.require_uniform_lag(lag)
         assignments = basins.assign(basin_features)
         return fit_markov_state_model(
@@ -146,15 +193,27 @@ class ProteinKineticWorkflow:
         )
 
     def chapman_kolmogorov(
-        self, basin_features, basins, *, lag=1, multiplier=2, **options
-    ):
+        self,
+        basin_features: ArrayLike,
+        basins: ProteinBasinDefinitions,
+        *,
+        lag: int = 1,
+        multiplier: int = 2,
+        **options: Unpack[_MarkovStateOptions],
+    ) -> MarkovValidationResult:
         short = self.markov(basin_features, basins, lag=lag, **options)
         long = self.markov(basin_features, basins, lag=lag * multiplier, **options)
         return validate_markov_models(short, long, multiplier)
 
     def committor(
-        self, plan, initial_features, outcomes, *, shooting_source_id, weights=None
-    ):
+        self,
+        plan: CommittorFitPlan,
+        initial_features: ArrayLike,
+        outcomes: ArrayLike,
+        *,
+        shooting_source_id: str,
+        weights: ArrayLike | None = None,
+    ) -> CommittorFitResult:
         """Fit native q from independent physical shooting outcomes.
 
         Outcomes must be observed A/B first hits, not inferred structure scores;

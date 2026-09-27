@@ -1,5 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -17,13 +20,13 @@ from phydrax.metrix._gaussian_entanglement import (
 jax.config.update("jax_enable_x64", True)
 
 
-def _thermal_entropy(occupation):
+def _thermal_entropy(occupation: Any) -> Any:
     return (occupation + 1.0) * np.log(occupation + 1.0) - (
         0.0 if occupation == 0.0 else occupation * np.log(occupation)
     )
 
 
-def _two_mode_squeezed(squeezing):
+def _two_mode_squeezed(squeezing: Any) -> Any:
     cosine = np.cosh(2.0 * squeezing)
     sine = np.sinh(2.0 * squeezing)
     return 0.5 * np.asarray(
@@ -36,7 +39,9 @@ def _two_mode_squeezed(squeezing):
     )
 
 
-def _thermal_loss(covariance, transmissivity, environment_occupation):
+def _thermal_loss(
+    covariance: Any, transmissivity: Any, environment_occupation: Any
+) -> Any:
     root = np.sqrt(transmissivity)
     x = np.diag((1.0, 1.0, root, root))
     noise = np.zeros((4, 4))
@@ -44,7 +49,7 @@ def _thermal_loss(covariance, transmissivity, environment_occupation):
     return x @ covariance @ x.T + noise
 
 
-def test_product_thermal_reduction_entropy_and_ppt_margin():
+def test_product_thermal_reduction_entropy_and_ppt_margin() -> None:
     occupations = (0.25, 1.5)
     covariance = np.diag(
         (
@@ -75,7 +80,7 @@ def test_product_thermal_reduction_entropy_and_ppt_margin():
     assert float(report.minimum_ppt_margin) >= 0.0
 
 
-def test_two_mode_squeezed_state_has_exact_ppt_spectrum_and_log_negativity():
+def test_two_mode_squeezed_state_has_exact_ppt_spectrum_and_log_negativity() -> None:
     squeezing = 0.73
     covariance = _two_mode_squeezed(squeezing)
     state = BosonicGaussianState(np.zeros(4), covariance)
@@ -107,7 +112,7 @@ def test_two_mode_squeezed_state_has_exact_ppt_spectrum_and_log_negativity():
     assert float(report.minimum_ppt_margin) < 0.0
 
 
-def test_thermal_loss_separability_threshold_is_reported_without_clipping():
+def test_thermal_loss_separability_threshold_is_reported_without_clipping() -> None:
     covariance = _two_mode_squeezed(0.81)
     environment_occupation = 0.2
     threshold = environment_occupation / (environment_occupation + 1.0)

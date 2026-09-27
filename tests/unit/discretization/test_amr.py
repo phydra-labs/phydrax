@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,14 +12,16 @@ import pytest
 import phydrax as phx
 
 
-def _grid(cells=8, *, periodic=False):
+def _grid(cells: Any = 8, *, periodic: Any = False) -> Any:
     return phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(cells, periodic=periodic),),
         axis_names=("x",),
     ).prepare(jnp.asarray([[0.0], [1.0]]))
 
 
-def _hierarchy(*, fine_capacity=8, fine_shape=2, periodic=False):
+def _hierarchy(
+    *, fine_capacity: Any = 8, fine_shape: Any = 2, periodic: Any = False
+) -> Any:
     return phx.discretization.BlockHierarchyPlan(
         _grid(periodic=periodic),
         (
@@ -28,7 +33,7 @@ def _hierarchy(*, fine_capacity=8, fine_shape=2, periodic=False):
     )
 
 
-def test_hierarchy_geometry_is_derived_from_uniform_interval_grid():
+def test_hierarchy_geometry_is_derived_from_uniform_interval_grid() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(8),
@@ -50,7 +55,7 @@ def test_hierarchy_geometry_is_derived_from_uniform_interval_grid():
     assert plan.level_spacings == ((0.25, 0.5), (0.125, 0.25))
 
 
-def test_hierarchy_rejects_non_cell_geometry_and_misaligned_fixed_blocks():
+def test_hierarchy_rejects_non_cell_geometry_and_misaligned_fixed_blocks() -> None:
     point_grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(9),), axis_names=("x",)
     ).prepare(jnp.asarray([[0.0], [1.0]]))
@@ -69,7 +74,7 @@ def test_hierarchy_rejects_non_cell_geometry_and_misaligned_fixed_blocks():
         )
 
 
-def test_initial_topology_has_canonical_int32_ids_slots_and_base_coverage():
+def test_initial_topology_has_canonical_int32_ids_slots_and_base_coverage() -> None:
     hierarchy = _hierarchy()
     topology = phx.discretization.BlockTopologyCompiler(hierarchy).initial_topology()
     base = topology.levels[0]
@@ -85,7 +90,7 @@ def test_initial_topology_has_canonical_int32_ids_slots_and_base_coverage():
     assert topology.epoch.geometry_id == hierarchy.geometry_id
 
 
-def test_compiler_selects_partial_children_and_is_path_independent():
+def test_compiler_selects_partial_children_and_is_path_independent() -> None:
     hierarchy = _hierarchy()
     compiler = phx.discretization.BlockTopologyCompiler(hierarchy)
     initial = compiler.initial_topology()
@@ -115,7 +120,7 @@ def test_compiler_selects_partial_children_and_is_path_independent():
     )
 
 
-def test_compiler_requires_exact_boolean_tag_dtype():
+def test_compiler_requires_exact_boolean_tag_dtype() -> None:
     hierarchy = _hierarchy()
     compiler = phx.discretization.BlockTopologyCompiler(hierarchy)
     source = compiler.initial_topology()
@@ -124,7 +129,7 @@ def test_compiler_requires_exact_boolean_tag_dtype():
         compiler.compile(source, (jnp.zeros((2, 4), dtype=jnp.int32),))
 
 
-def test_proper_nesting_rejection_is_atomic():
+def test_proper_nesting_rejection_is_atomic() -> None:
     hierarchy = phx.discretization.BlockHierarchyPlan(
         _grid(),
         (
@@ -155,7 +160,7 @@ def test_proper_nesting_rejection_is_atomic():
     )
 
 
-def test_balance_closure_supports_requests_that_strict_nesting_rejects():
+def test_balance_closure_supports_requests_that_strict_nesting_rejects() -> None:
     hierarchy = phx.discretization.BlockHierarchyPlan(
         _grid(),
         (
@@ -189,7 +194,7 @@ def test_balance_closure_supports_requests_that_strict_nesting_rejects():
     assert np.all(np.abs(np.diff(finest)) <= 1)
 
 
-def test_capacity_failure_is_atomic_and_preserves_source_epoch():
+def test_capacity_failure_is_atomic_and_preserves_source_epoch() -> None:
     hierarchy = _hierarchy(fine_capacity=1)
     compiler = phx.discretization.BlockTopologyCompiler(hierarchy)
     source = compiler.initial_topology()
@@ -209,7 +214,7 @@ def test_capacity_failure_is_atomic_and_preserves_source_epoch():
     )
 
 
-def test_inactive_payload_is_inert_and_state_binds_realized_topology():
+def test_inactive_payload_is_inert_and_state_binds_realized_topology() -> None:
     hierarchy = _hierarchy()
     topology = phx.discretization.BlockTopologyCompiler(hierarchy).initial_topology()
     coarse = phx.discretization.BlockLevelState(

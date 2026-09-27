@@ -11,11 +11,15 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from ..discretization.finite_volume import UpwindConstrainedTransportPlan
+from ..discretization.finite_volume import (
+    MHDCTRateResult,
+    UpwindConstrainedTransportPlan,
+)
 
 
 class ConstrainedMHDRunStatus(IntEnum):
@@ -86,7 +90,7 @@ class ConstrainedMHDSSPRK3Plan(StrictModule):
         positivity_iterations: int = 32,
         divergence_tolerance: float = 1e-10,
         ctu_predictor: bool = False,
-    ):
+    ) -> None:
         if not isinstance(spatial, UpwindConstrainedTransportPlan):
             raise TypeError("spatial must be UpwindConstrainedTransportPlan.")
         cfl_ = float(cfl)
@@ -175,7 +179,7 @@ class ConstrainedMHDSSPRK3Plan(StrictModule):
     ) -> tuple[Array, Array, Array]:
         candidate_valid = self._admissible(candidate_cell, candidate_magnetic)
 
-        def body(_, bounds):
+        def body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             lower, upper = bounds
             midpoint = 0.5 * (lower + upper)
             cell = base_cell + midpoint * (candidate_cell - base_cell)
@@ -209,7 +213,7 @@ class ConstrainedMHDSSPRK3Plan(StrictModule):
         increment: Array,
         args: Any,
         /,
-    ):
+    ) -> tuple[Array, Array, Array, MHDCTRateResult]:
         if self.ctu_predictor:
             predictor = self.spatial.rate(
                 time,

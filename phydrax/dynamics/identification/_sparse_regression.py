@@ -11,11 +11,12 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics import (
     normalize_least_squares_design,
+    NormalizedLeastSquaresDesign,
     solve_normalized_least_squares,
 )
 from ..._strict import StrictModule
@@ -27,6 +28,7 @@ from ...linalg import (
     RankPolicy,
     solve,
 )
+from ...typing import parse
 from ._sindy_design import SINDyDesign
 from ._status import (
     IDENTIFICATION_INSUFFICIENT_SAMPLES,
@@ -111,7 +113,13 @@ def _target_scales(design: SINDyDesign, enabled: bool, /) -> Array:
     return jnp.where(scale > tolerance, scale, 1.0)
 
 
-def _solve_outputs(normalized, target, support, ridge: float, /):
+def _solve_outputs(
+    normalized: NormalizedLeastSquaresDesign,
+    target: Array,
+    support: Array,
+    ridge: float,
+    /,
+) -> tuple[Array, Array, Array, Array]:
     coefficients = []
     ranks = []
     conditions = []
@@ -163,7 +171,7 @@ class SequentialThresholdedLeastSquares(AbstractSparseRegression):
         threshold_space: ThresholdSpace = "normalized",
         unbiased_refit: bool = True,
         zero_tolerance: float | None = None,
-    ):
+    ) -> None:
         ridge_value = float(ridge)
         iterations = int(max_iterations)
         if not np.isfinite(ridge_value) or ridge_value < 0.0:
@@ -172,8 +180,7 @@ class SequentialThresholdedLeastSquares(AbstractSparseRegression):
             raise ValueError("max_iterations must be positive.")
         if rcond is not None and (not np.isfinite(rcond) or rcond < 0.0):
             raise ValueError("rcond must be finite and nonnegative or None.")
-        if threshold_space not in ("normalized", "physical"):
-            raise ValueError("threshold_space must be 'normalized' or 'physical'.")
+        threshold_space = parse(threshold_space, ThresholdSpace, "threshold_space")
         resolved_zero = None if zero_tolerance is None else float(zero_tolerance)
         if resolved_zero is not None and (
             not np.isfinite(resolved_zero) or resolved_zero < 0.0
@@ -222,7 +229,7 @@ class SequentialThresholdedLeastSquares(AbstractSparseRegression):
         condition_history = [conditions]
         residual_history = []
 
-        def physical(normalized_coefficients):
+        def physical(normalized_coefficients: Array) -> Array:
             return (
                 target_scale[:, None]
                 * normalized_coefficients
@@ -391,7 +398,7 @@ class DenseBlockRidgeRegression(AbstractSparseRegression):
         scale_features: bool = True,
         scale_targets: bool = False,
         rcond: float | None = None,
-    ):
+    ) -> None:
         sizes = tuple(block_sizes)
         penalties = tuple(float(value) for value in regularization)
         if not sizes or any(size <= 0 for size in sizes):

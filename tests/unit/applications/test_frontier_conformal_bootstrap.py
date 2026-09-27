@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import hashlib
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -27,7 +29,7 @@ from phydrax.applications.conformal_bootstrap import (
 jax.config.update("jax_enable_x64", True)
 
 
-def test_frontier_sl2_scalar_block_matches_closed_delta_one_reference():
+def test_frontier_sl2_scalar_block_matches_closed_delta_one_reference() -> None:
     prepared = prepare_scalar_blocks(
         ScalarBlockPlan(
             jnp.asarray((0.1, 0.2, 0.35, 0.65, 0.8, 0.9)),
@@ -45,7 +47,7 @@ def test_frontier_sl2_scalar_block_matches_closed_delta_one_reference():
     assert "reference-only" in evidence.claim
 
 
-def test_frontier_crossing_conic_residual_and_gap_exclusion_evidence():
+def test_frontier_crossing_conic_residual_and_gap_exclusion_evidence() -> None:
     feasible_plan = CrossingConePlan(
         jnp.asarray((-1.0, 0.0)),
         jnp.asarray(((1.0, 0.0), (0.0, 1.0))),
@@ -72,7 +74,7 @@ def test_frontier_crossing_conic_residual_and_gap_exclusion_evidence():
     assert "user-declared" in known.claim
 
 
-def test_frontier_scalar_blocks_lower_to_fixed_crossing_matrix():
+def test_frontier_scalar_blocks_lower_to_fixed_crossing_matrix() -> None:
     blocks = prepare_scalar_blocks(
         ScalarBlockPlan(
             jnp.asarray((0.2, 0.35, 0.65, 0.8)),
@@ -93,7 +95,7 @@ def test_frontier_scalar_blocks_lower_to_fixed_crossing_matrix():
     )
 
 
-def test_sdpb_resource_counts_require_exact_integer_contracts(tmp_path):
+def test_sdpb_resource_counts_require_exact_integer_contracts(tmp_path: Any) -> None:
     executable = tmp_path / "sdpb"
     executable.write_text("#!/bin/sh\nexit 0\n")
     executable.chmod(0o700)
@@ -108,6 +110,7 @@ def test_sdpb_resource_counts_require_exact_integer_contracts(tmp_path):
     with pytest.raises(TypeError, match="precision_bits"):
         SDPBJobPlan(
             provider,
+            # ty: ignore[invalid-argument-type]
             64.5,
             10,
             1.0,

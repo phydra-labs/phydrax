@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -13,13 +15,13 @@ from phydrax.solver._potential_flow_hydrodynamics import (
 
 
 def _hydrodynamics(
-    added_mass,
-    radiation_damping,
+    added_mass: Any,
+    radiation_damping: Any,
     *,
-    frame_id="tank-z-up",
-    unit_system_id="si-water",
-    geometry_id="prepared-wet-body",
-):
+    frame_id: Any = "tank-z-up",
+    unit_system_id: Any = "si-water",
+    geometry_id: Any = "prepared-wet-body",
+) -> Any:
     added = jnp.asarray(added_mass, dtype=jnp.float64)
     damping = jnp.asarray(radiation_damping, dtype=jnp.float64)
     size = added.shape[0]
@@ -37,6 +39,7 @@ def _hydrodynamics(
         excitation_loads=jnp.zeros((size, 0), dtype=jnp.complex128),
         radiation_linear_results=(),
         diffraction_linear_results=(),
+        # ty: ignore[invalid-argument-type]
         assembly_report=None,
         fluid_density=jnp.asarray(1025.0),
         added_mass_reciprocity_defect=jnp.asarray(0.0),
@@ -64,7 +67,7 @@ def _hydrodynamics(
     )
 
 
-def _solve_kwargs(size):
+def _solve_kwargs(size: Any) -> Any:
     return {
         "angular_frequency": 2.0,
         "coefficient_frequency_id": "omega=2-rad-per-second",
@@ -81,7 +84,7 @@ def _solve_kwargs(size):
     }
 
 
-def test_rigid_rao_matrix_equation_exact_residual_and_operator_duals():
+def test_rigid_rao_matrix_equation_exact_residual_and_operator_duals() -> None:
     hydrodynamics = _hydrodynamics(
         jnp.diag(jnp.asarray((1.0, 0.5))),
         jnp.diag(jnp.asarray((0.6, 0.3))),
@@ -135,7 +138,7 @@ def test_rigid_rao_matrix_equation_exact_residual_and_operator_duals():
     assert result.solver_provider_id.startswith("phydrax.linalg.DenseLU")
 
 
-def test_checked_wet_force_map_builds_bounded_modal_hydroelastic_response():
+def test_checked_wet_force_map_builds_bounded_modal_hydroelastic_response() -> None:
     hydrodynamics = _hydrodynamics(
         jnp.diag(jnp.asarray((0.8, 0.4))),
         jnp.diag(jnp.asarray((0.5, 0.2))),
@@ -196,7 +199,7 @@ def test_checked_wet_force_map_builds_bounded_modal_hydroelastic_response():
     assert not result.continuum_certified
 
 
-def test_frame_unit_reference_and_modal_geometry_mismatches_fail_before_solve():
+def test_frame_unit_reference_and_modal_geometry_mismatches_fail_before_solve() -> None:
     hydrodynamics = _hydrodynamics(jnp.asarray(((0.2,),)), jnp.asarray(((0.1,),)))
 
     frame_kwargs = _solve_kwargs(1)
@@ -235,7 +238,7 @@ def test_frame_unit_reference_and_modal_geometry_mismatches_fail_before_solve():
         solve_hydrodynamic_response_3d(hydrodynamics, **modal_kwargs)
 
 
-def test_singular_dynamic_stiffness_returns_checked_failure_status():
+def test_singular_dynamic_stiffness_returns_checked_failure_status() -> None:
     hydrodynamics = _hydrodynamics(jnp.asarray(((0.0,),)), jnp.asarray(((0.0,),)))
     result = solve_hydrodynamic_response_3d(
         hydrodynamics,
@@ -260,7 +263,7 @@ def test_singular_dynamic_stiffness_returns_checked_failure_status():
     assert not bool(result.residual_accepted)
 
 
-def test_passivity_energy_identity_and_nonpassive_input_rejection():
+def test_passivity_energy_identity_and_nonpassive_input_rejection() -> None:
     hydrodynamics = _hydrodynamics(jnp.asarray(((0.5,),)), jnp.asarray(((0.6,),)))
     result = solve_hydrodynamic_response_3d(
         hydrodynamics,
@@ -300,7 +303,9 @@ def test_passivity_energy_identity_and_nonpassive_input_rejection():
         solve_hydrodynamic_response_3d(hydrodynamics, **bad_kwargs)
 
 
-def test_periodic_fluid_kernel_and_continuum_certification_are_explicit_non_goals():
+def test_periodic_fluid_kernel_and_continuum_certification_are_explicit_non_goals() -> (
+    None
+):
     hydrodynamics = _hydrodynamics(jnp.asarray(((0.2,),)), jnp.asarray(((0.1,),)))
     result = solve_hydrodynamic_response_3d(hydrodynamics, **_solve_kwargs(1))
 

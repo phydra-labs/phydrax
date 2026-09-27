@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, Key
+from jax import Array
 
 from phydrax.ein import contract
 
@@ -21,6 +21,7 @@ from ..._doc import DOC_KEY0
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from .._base import _AbstractBaseModel
 from .._contracts import AFFINE
 from .._keys import EvalKey
@@ -47,7 +48,7 @@ class LowRankComplexLinearInitializationReport(StrictModule, NonTrainableState):
         realized_rank: int,
         retained_energy: float,
         relative_truncation_residual: float,
-    ):
+    ) -> None:
         counts = (
             int(input_count),
             int(output_count),
@@ -105,8 +106,8 @@ class LowRankComplexLinear(_AbstractBaseModel):
         out_size: SizeLike,
         rank: int,
         use_bias: bool = True,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         in_size_ = _canonical_size(in_size)
         out_size_ = _canonical_size(out_size)
         in_shape = _get_value_shape(in_size_)

@@ -9,7 +9,8 @@ import abc
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -118,7 +119,7 @@ class AbstractSPHSmoothingKernel(StrictModule, NonTrainableState):
 class WendlandC2SPHKernel(AbstractSPHSmoothingKernel):
     """Wendland C2 kernel with compact support radius 2h."""
 
-    def __init__(self, dimension: int, /):
+    def __init__(self, dimension: int, /) -> None:
         dimension_ = int(dimension)
         normalizations = {
             1: 3.0 / 4.0,
@@ -155,7 +156,7 @@ class WendlandC2SPHKernel(AbstractSPHSmoothingKernel):
 class CubicSplineSPHKernel(AbstractSPHSmoothingKernel):
     """Cubic B-spline SPH kernel with compact support radius 2h."""
 
-    def __init__(self, dimension: int, /):
+    def __init__(self, dimension: int, /) -> None:
         dimension_ = int(dimension)
         normalizations = {
             1: 2.0 / 3.0,

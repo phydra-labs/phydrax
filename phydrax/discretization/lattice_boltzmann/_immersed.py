@@ -4,11 +4,14 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -16,6 +19,9 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._discretization import LatticeBoltzmannDiscretization
+
+
+_ForcingCarry: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class ImmersedBoundaryForceLedger(StrictModule):
@@ -73,7 +79,7 @@ class ImmersedBoundaryForcingPlan(StrictModule, NonTrainableState):
         iteration_count: int = 4,
         kernel_radius: float = 2.0,
         convergence_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         if not isinstance(discretization, LatticeBoltzmannDiscretization):
             raise TypeError("discretization must be LatticeBoltzmannDiscretization.")
         iterations = int(iteration_count)
@@ -122,7 +128,7 @@ class ImmersedBoundaryForcingPlan(StrictModule, NonTrainableState):
             self.discretization.cell_size,
             dtype=marker_positions.dtype,
         )
-        indices_by_axis = []
+        indices_by_axis: list[Array] = []
         scaled_components = []
         valid = jnp.ones(
             (marker_positions.shape[0], self.stencil_offsets.shape[0]),
@@ -160,10 +166,9 @@ class ImmersedBoundaryForcingPlan(StrictModule, NonTrainableState):
         strides = tuple(
             int(np.prod(grid_shape[axis + 1 :])) for axis in range(len(grid_shape))
         )
-        flat_indices = sum(
-            indices * stride
-            for indices, stride in zip(indices_by_axis, strides, strict=True)
-        )
+        flat_indices = indices_by_axis[0] * strides[0]
+        for indices, stride in zip(indices_by_axis[1:], strides[1:], strict=True):
+            flat_indices = flat_indices + indices * stride
         flat_mask = fluid_mask.reshape((-1,))
         valid = valid & flat_mask[flat_indices]
         raw = jnp.where(valid, jnp.prod(kernel, axis=-1), 0.0)
@@ -278,8 +283,8 @@ class ImmersedBoundaryForcingPlan(StrictModule, NonTrainableState):
             flat_velocity,
         )
 
-        def forcing_step(_, carry):
-            force_density_, marker_force_, _, corrected_velocity_ = carry
+        def forcing_step(_: int, carry: _ForcingCarry) -> _ForcingCarry:
+            force_density_, marker_force_, _previous, corrected_velocity_ = carry
             interpolated_ = jnp.sum(
                 weights[..., None] * corrected_velocity_[route_indices],
                 axis=1,

@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
@@ -120,7 +121,7 @@ class _FunctionalActionResidual(StrictModule):
         /,
         *,
         sign: float,
-    ):
+    ) -> None:
         self.action = action
         self.subspace = subspace
         self.realization = realization
@@ -158,7 +159,7 @@ class _FunctionalTermsResidual(StrictModule):
         *,
         sign: float,
         include_model_losses: bool,
-    ):
+    ) -> None:
         self.prepared_objective = prepared_objective
         self.subspace = subspace
         self.sign = sign
@@ -215,7 +216,7 @@ class _VirtualWorkResidual(StrictModule):
         subspace: ParameterSubspace,
         realization: Any,
         /,
-    ):
+    ) -> None:
         self.field_jet = field_jet
         self.virtual_work = virtual_work
         self.subspace = subspace
@@ -285,7 +286,7 @@ class PreparedFieldEquilibrium(StrictModule):
         realization_id: str,
         provenance_id: str,
         formulation: FieldEquilibriumFormulation,
-    ):
+    ) -> None:
         if not isinstance(problem, NonlinearSystemProblem):
             raise TypeError("problem must be a NonlinearSystemProblem.")
         residual = _field_residual(problem)

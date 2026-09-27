@@ -14,12 +14,14 @@ from collections.abc import Sequence
 from enum import IntFlag
 from math import isfinite
 from pathlib import Path
+from typing import TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -51,6 +53,10 @@ from ._aliev_panfilov import (
 )
 
 
+if TYPE_CHECKING:
+    from ....discretization.fem._generic import FiniteElementBlockGeometry
+
+
 _SSPRK33_NEGATIVE_REAL_STABILITY_RADIUS = 2.5127453266183286
 
 
@@ -62,7 +68,7 @@ class CellwiseDiffusivity(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     diffusivity_id: str = eqx.field(static=True)
 
-    def __init__(self, tensor_mm2_per_ms: ArrayLike, /):
+    def __init__(self, tensor_mm2_per_ms: ArrayLike, /) -> None:
         tensor_host = np.asarray(tensor_mm2_per_ms, dtype=np.float64)
         if (
             tensor_host.ndim != 3
@@ -166,7 +172,7 @@ class CellStimulusPulse(StrictModule, NonTrainableState):
         stop_ms: float,
         amplitude_per_ms: float,
         /,
-    ):
+    ) -> None:
         ids = tuple(cell_ids)
         if not ids or len(set(ids)) != len(ids) or any(value < 0 for value in ids):
             raise ValueError("cell_ids must be nonempty, unique, and nonnegative.")
@@ -216,7 +222,7 @@ class PhenomenologicalMonodomainPlan(StrictModule, NonTrainableState):
         *,
         pulses: Sequence[CellStimulusPulse] = (),
         field_name: str = "activation",
-    ):
+    ) -> None:
         if not isinstance(discretization, FiniteElementDiscretization):
             raise TypeError(
                 "discretization must be a prepared FiniteElementDiscretization."
@@ -267,6 +273,7 @@ class PhenomenologicalMonodomainPlan(StrictModule, NonTrainableState):
                 )
             if (
                 coordinate_element.cell_kind != expected_kind
+                # ty: ignore[unresolved-attribute]
                 or coordinate_element.degree != 1
             ):
                 raise ValueError("Monodomain coordinate geometry must be affine P1.")
@@ -335,7 +342,7 @@ class PreparedPhenomenologicalMonodomain(StrictModule, NonTrainableState):
         dt_ms: float,
         diffusion_step_limit_ms: float,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.stiffness = stiffness
         self.lumped_mass = lumped_mass
@@ -476,7 +483,7 @@ class MonodomainReplayResult(StrictModule):
     state_id: str = eqx.field(static=True)
 
 
-def _local_mass(geometry) -> Array:
+def _local_mass(geometry: FiniteElementBlockGeometry) -> Array:
     if geometry.basis_values.ndim != 2:
         raise ValueError("Monodomain scalar P1 basis must have rank two.")
     return contract(
@@ -488,7 +495,9 @@ def _local_mass(geometry) -> Array:
     )
 
 
-def _local_anisotropic_stiffness(geometry, tensor: Array) -> Array:
+def _local_anisotropic_stiffness(
+    geometry: FiniteElementBlockGeometry, tensor: Array
+) -> Array:
     return contract(
         "cq,cqid,cde,cqje->cij",
         geometry.physical_weights,
@@ -499,7 +508,7 @@ def _local_anisotropic_stiffness(geometry, tensor: Array) -> Array:
     )
 
 
-def _local_cell_load(geometry) -> Array:
+def _local_cell_load(geometry: FiniteElementBlockGeometry) -> Array:
     return contract(
         "cq,qi->ci",
         geometry.physical_weights,
@@ -899,6 +908,9 @@ def commit_monodomain_step(
     )
 
 
+_ReplayCarry: TypeAlias = tuple[MonodomainState, Array, Array]
+
+
 def run_monodomain_steps(
     runtime: PreparedPhenomenologicalMonodomain,
     state: MonodomainState,
@@ -910,10 +922,10 @@ def run_monodomain_steps(
     if isinstance(step_count, bool) or not isinstance(step_count, int) or step_count < 0:
         raise ValueError("step_count must be a nonnegative integer.")
 
-    def advance(_, carry):
+    def advance(_: Array, carry: _ReplayCarry) -> _ReplayCarry:
         current, accepted, successful = carry
 
-        def evaluate(active_carry):
+        def evaluate(active_carry: _ReplayCarry) -> _ReplayCarry:
             active_state, accepted_count, _ = active_carry
             candidate = runtime.evaluate(active_state)
             step_successful = candidate.evidence.successful

@@ -4,21 +4,23 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._filters import FavreFilter, PreparedFilter
 from ._state import ClosureSnapshot
 
 
-AnalysisNodeKind = Literal[
+AnalysisNodeKind: TypeAlias = Literal[
     "reynolds_sgs_stress",
     "favre_sgs_stress",
     "sgs_energy",
@@ -32,7 +34,7 @@ AnalysisNodeKind = Literal[
     "periodic_les_energy_transfer",
     "periodic_les_scalar_flux",
 ]
-ClosureTargetKind = Literal[
+ClosureTargetKind: TypeAlias = Literal[
     "sgs_stress",
     "sgs_energy",
     "species_flux",
@@ -63,7 +65,7 @@ class ClosureField(StrictModule, NonTrainableState):
         units: str,
         schema_id: str,
         lineage_ids: tuple[str, ...],
-    ):
+    ) -> None:
         array = jnp.asarray(values)
         name_ = str(name).strip()
         units_ = str(units).strip()
@@ -144,7 +146,7 @@ class ClosureAnalysisNode(StrictModule, NonTrainableState):
         output_name: str,
         output_units: str,
         parameters: tuple[tuple[str, str], ...] = (),
-    ):
+    ) -> None:
         kind_ = str(kind).strip()
         inputs = tuple(str(value).strip() for value in input_ids)
         output = str(output_name).strip()
@@ -152,23 +154,9 @@ class ClosureAnalysisNode(StrictModule, NonTrainableState):
         parameters_ = tuple(
             sorted((str(key).strip(), str(value).strip()) for key, value in parameters)
         )
+        kind_ = parse(kind_, AnalysisNodeKind, "kind")
         if (
-            kind_
-            not in (
-                "reynolds_sgs_stress",
-                "favre_sgs_stress",
-                "sgs_energy",
-                "reynolds_species_flux",
-                "favre_species_flux",
-                "reynolds_enthalpy_flux",
-                "favre_enthalpy_flux",
-                "source_residual",
-                "periodic_les_reynolds_stress",
-                "periodic_les_stress_divergence",
-                "periodic_les_energy_transfer",
-                "periodic_les_scalar_flux",
-            )
-            or not inputs
+            not inputs
             or any(not value for value in inputs)
             or not output
             or not units
@@ -205,7 +193,7 @@ class ClosureAnalysisDAG(StrictModule, NonTrainableState):
         external_input_ids: tuple[str, ...],
         nodes: tuple[ClosureAnalysisNode, ...] = (),
         /,
-    ):
+    ) -> None:
         external = tuple(str(value).strip() for value in external_input_ids)
         nodes_ = tuple(nodes)
         if (
@@ -259,26 +247,14 @@ class ClosureTarget(StrictModule, NonTrainableState):
         *,
         target_kind: ClosureTargetKind,
         schema_id: str,
-    ):
+    ) -> None:
         if not isinstance(node, ClosureAnalysisNode):
             raise TypeError("node must be a ClosureAnalysisNode.")
         array = jnp.asarray(values)
         kind = str(target_kind).strip()
         schema = str(schema_id).strip()
-        if (
-            kind
-            not in (
-                "sgs_stress",
-                "sgs_energy",
-                "species_flux",
-                "enthalpy_flux",
-                "source",
-                "sgs_stress_divergence",
-                "sgs_transfer",
-                "scalar_flux",
-            )
-            or not schema
-        ):
+        kind = parse(kind, ClosureTargetKind, "target_kind")
+        if not schema:
             raise ValueError("Closure target metadata is invalid.")
         self.values = array
         self.node = node
@@ -319,7 +295,7 @@ class ClosureQualityReport(StrictModule, NonTrainableState):
         /,
         *,
         maximum_allowed: float | None = None,
-    ):
+    ) -> None:
         values = tuple(targets)
         if not values or any(not isinstance(value, ClosureTarget) for value in values):
             raise ValueError("Quality reports require at least one closure target.")

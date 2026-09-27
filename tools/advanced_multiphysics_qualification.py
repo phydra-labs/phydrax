@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import time
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -14,7 +15,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _mhd_case(dimension: int):
+def _mhd_case(dimension: int) -> Any:
     count = 6
     names = tuple("xyz"[:dimension])
     grid = phx.discretization.TensorGridPlan(
@@ -52,6 +53,7 @@ def _mhd_case(dimension: int):
     )
     reconstruction = phx.solver.advanced.MHDPrimitiveReconstructionPlan("weno_z")
     spatial = phx.discretization.UpwindConstrainedTransportPlan(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         bridge,
         reconstruction=reconstruction,

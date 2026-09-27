@@ -48,7 +48,7 @@ def compute_h0_persistence_union_find(
     birth_entity = vertex_entities.copy()
     active = np.zeros((vertex_slots.size,), dtype=np.bool_)
 
-    def root(index):
+    def root(index: int) -> int:
         current = int(index)
         while parent[current] != current:
             parent[current] = parent[parent[current]]

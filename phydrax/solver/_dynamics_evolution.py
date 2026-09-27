@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import diffrax as dfx
@@ -11,7 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..dynamics import (
     AbstractDifferentiableEvolution,
@@ -25,12 +28,13 @@ from ..dynamics import (
     EvolutionTangentStep,
 )
 from ..linalg import (
+    AbstractVectorSpace,
     ArraySpace,
     LinearizationPolicy,
     PreparedLinearization,
     PyTreeSpace,
 )
-from ._differential import DifferentialProblem
+from ._differential import DifferentialProblem, DifferentialSolution
 from ._diffrax_backend import solve_diffrax
 from ._temporal_method import (
     configuration_id,
@@ -50,11 +54,11 @@ def _identifier(value: str | None, default: str, owner: str, /) -> str:
 
 
 def _split_linearization(
-    forward_endpoint,
-    reverse_endpoint,
-    point,
-    source_space,
-    target_space,
+    forward_endpoint: Callable[[PyTree[Array]], Array],
+    reverse_endpoint: Callable[[PyTree[Array]], Array],
+    point: PyTree[Array],
+    source_space: AbstractVectorSpace,
+    target_space: AbstractVectorSpace,
     linearization_id: str,
     /,
 ) -> PreparedLinearization:
@@ -62,7 +66,7 @@ def _split_linearization(
     _, pushforward = jax.linearize(forward_endpoint, point_)
     primal, reverse_pullback = jax.vjp(reverse_endpoint, point_)
 
-    def pullback(cotangent):
+    def pullback(cotangent: Array) -> PyTree[Array]:
         return reverse_pullback(cotangent)[0]
 
     return PreparedLinearization(
@@ -121,7 +125,7 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
         atol: float = 1.0e-8,
         max_steps: int | None = 4096,
         evolution_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(system, ContinuousSystem):
             raise TypeError("DiffraxEvolution system must be a ContinuousSystem.")
         if input_policy is not None and not isinstance(input_policy, AbstractInputPolicy):
@@ -275,7 +279,7 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
         /,
         *,
         adjoint: Any,
-    ):
+    ) -> DifferentialSolution:
         problem = DifferentialProblem(
             self._vector_field,
             state,
@@ -436,7 +440,7 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
             )
             zero = jnp.zeros_like(state_array)
 
-            def local_flow(local):
+            def local_flow(local: Array) -> Array:
                 perturbed = geometry.retract(state_array, local)
                 endpoint, _ = self._solve_data(
                     perturbed,
@@ -486,7 +490,7 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
         if geometry.trivial:
             point = state_array
 
-            def forward_endpoint(current_state):
+            def forward_endpoint(current_state: Array) -> Array:
                 return self._solve_data(
                     current_state,
                     source,
@@ -495,7 +499,7 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
                     adjoint=self.forward_adjoint,
                 )[0]
 
-            def reverse_endpoint(current_state):
+            def reverse_endpoint(current_state: Array) -> Array:
                 return self._solve_data(
                     current_state,
                     source,
@@ -514,7 +518,7 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
                 adjoint=self.reverse_adjoint,
             )
 
-            def forward_endpoint(local):
+            def forward_endpoint(local: Array) -> Array:
                 endpoint, _ = self._solve_data(
                     geometry.retract(state_array, local),
                     source,
@@ -524,7 +528,7 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
                 )
                 return geometry.inverse_retract(base, endpoint)
 
-            def reverse_endpoint(local):
+            def reverse_endpoint(local: Array) -> Array:
                 endpoint, _ = self._solve_data(
                     geometry.retract(state_array, local),
                     source,
@@ -566,7 +570,7 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
         if source.shape != () or target.shape != ():
             raise ValueError("Evolution segment coordinates must be scalar.")
 
-        def forward_endpoint(current_args):
+        def forward_endpoint(current_args: PyTree[Array]) -> Array:
             return self._solve_data(
                 state_array,
                 source,
@@ -575,7 +579,7 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
                 adjoint=self.forward_adjoint,
             )[0]
 
-        def reverse_endpoint(current_args):
+        def reverse_endpoint(current_args: PyTree[Array]) -> Array:
             return self._solve_data(
                 state_array,
                 source,

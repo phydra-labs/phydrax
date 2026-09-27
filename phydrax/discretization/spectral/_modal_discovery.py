@@ -7,7 +7,8 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -37,7 +38,7 @@ class ModalSupportDiscoveryPlan(StrictModule, NonTrainableState):
         conjugate_signs: ArrayLike | None = None,
         omp_iterations: int = 64,
         omp_step_size: float = 1.0e-2,
-    ):
+    ) -> None:
         size = 1
         for value in candidate_layout.coefficient_shape:
             size *= int(value)
@@ -294,7 +295,7 @@ def estimate_spectral_regularity(
     y = jnp.log(jnp.where(usable, sums / jnp.maximum(count, 1), 1.0))
     weights = usable.astype("float64")
 
-    def slope(x):
+    def slope(x: Array) -> tuple[Array, Array, Array]:
         mean_x = jnp.sum(weights * x) / jnp.maximum(jnp.sum(weights), 1.0)
         mean_y = jnp.sum(weights * y) / jnp.maximum(jnp.sum(weights), 1.0)
         centered_x = x - mean_x
@@ -325,7 +326,7 @@ class MissingModeRecoveryPolicy(StrictModule, NonTrainableState):
         regularization: float = 1.0e-6,
         iterations: int = 256,
         step_size: float = 1.0e-2,
-    ):
+    ) -> None:
         if regularization < 0.0 or iterations <= 0 or step_size <= 0.0:
             raise ValueError("Missing-mode recovery policy values are invalid.")
         self.regularization = float(regularization)
@@ -349,7 +350,7 @@ class MissingModeRecoveryProblem(StrictModule):
         *,
         held_out_measurement: ArrayLike | None = None,
         held_out_observations: ArrayLike | None = None,
-    ):
+    ) -> None:
         matrix = jnp.asarray(measurement)
         values = jnp.asarray(observations)
         if matrix.ndim != 2 or values.shape[-1] != matrix.shape[0]:
@@ -394,7 +395,7 @@ def recover_missing_modes(
         dtype=jnp.result_type(matrix.dtype, target.dtype),
     )
 
-    def step(_, coefficients):
+    def step(_: int, coefficients: Array) -> Array:
         residual = contract("mn,...n->...m", matrix, coefficients) - target
         gradient = (
             contract("mn,...m->...n", jnp.conj(matrix), residual)

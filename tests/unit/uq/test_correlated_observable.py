@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def test_correlated_observable_fft_matches_direct_autocovariance():
+def test_correlated_observable_fft_matches_direct_autocovariance() -> None:
     samples = jnp.asarray([[[1.0, 3.0], [2.0, 1.0], [4.0, 0.0], [7.0, 2.0], [9.0, 5.0]]])
     result = phx.uq.correlated_observable_diagnostics(
         samples,
@@ -31,11 +34,11 @@ def test_correlated_observable_fft_matches_direct_autocovariance():
     assert jnp.allclose(result.autocorrelation, expected_correlation, atol=1e-6)
 
 
-def test_correlated_observable_ar1_recovers_integrated_time():
+def test_correlated_observable_ar1_recovers_integrated_time() -> None:
     rho = 0.7
     innovations = jr.normal(jr.key(1), (4, 8192))
 
-    def step(previous, innovation):
+    def step(previous: Any, innovation: Any) -> Any:
         value = rho * previous + jnp.sqrt(1.0 - rho**2) * innovation
         return value, value
 
@@ -58,7 +61,7 @@ def test_correlated_observable_ar1_recovers_integrated_time():
     )
 
 
-def test_correlated_observable_statuses_are_explicit():
+def test_correlated_observable_statuses_are_explicit() -> None:
     short = phx.uq.correlated_observable_diagnostics(
         jnp.arange(6.0)[None, :],
         policy=phx.uq.CorrelatedObservablePolicy(minimum_draws=8),
@@ -76,7 +79,7 @@ def test_correlated_observable_statuses_are_explicit():
     assert not nonfinite.valid
 
 
-def test_correlated_observable_preserves_outputs_and_jit():
+def test_correlated_observable_preserves_outputs_and_jit() -> None:
     samples = jr.normal(jr.key(2), (3, 64, 2, 3))
     policy = phx.uq.CorrelatedObservablePolicy(max_lag=16)
     eager = phx.uq.correlated_observable_diagnostics(samples, policy=policy)
@@ -93,7 +96,7 @@ def test_correlated_observable_preserves_outputs_and_jit():
     )
 
 
-def test_correlated_observable_rejects_invalid_contracts():
+def test_correlated_observable_rejects_invalid_contracts() -> None:
     with pytest.raises(ValueError, match="chain and draw"):
         phx.uq.correlated_observable_diagnostics(jnp.ones((8,)))
     with pytest.raises(TypeError, match="real samples"):

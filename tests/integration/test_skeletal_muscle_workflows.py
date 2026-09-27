@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -5,12 +7,12 @@ import numpy as np
 from phydrax.applications import skeletal_muscle
 
 
-def test_public_motor_unit_workflow_advances_and_retains_population_evidence():
+def test_public_motor_unit_workflow_advances_and_retains_population_evidence() -> None:
     plan = skeletal_muscle.motor_units.PotvinFuglevand2017Plan()
     runtime = plan.prepare()
     initial = runtime.initialize()
 
-    def step(state, _):
+    def step(state: Any, _: Any) -> Any:
         candidate = runtime.candidate(state, 40.0, 0.1)
         return candidate.commit(), jnp.stack(
             (

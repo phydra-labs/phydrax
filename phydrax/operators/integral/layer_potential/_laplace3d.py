@@ -10,7 +10,8 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._strict import StrictModule
 from phydrax.ein import contract
@@ -18,6 +19,7 @@ from phydrax.ein import contract
 from ...._fingerprint import canonical_fingerprint
 from ...._model import TRIAL_SPACE_CERTIFICATE_KEY
 from ....equations.trefftz._core import _AbstractTrialSpaceField, TrialSpaceCertificate
+from ....typing import PRNGKey
 from ._core import LayerDiscretizationReport
 from ._surface3d import SurfacePanelization3D, SurfaceTargetReport3D
 
@@ -27,7 +29,7 @@ class LaplaceLayerKernel3D(StrictModule):
 
     _kernel_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._kernel_id = canonical_fingerprint(
             {
                 "kind": "laplace-layer-kernel-3d",
@@ -83,7 +85,7 @@ class LaplaceLayerPotential3D(_AbstractTrialSpaceField):
         *,
         kind: Literal["single", "double"] = "single",
         density: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(panelization, SurfacePanelization3D):
             raise TypeError("panelization must be SurfacePanelization3D.")
         if kind not in ("single", "double"):
@@ -141,7 +143,7 @@ class LaplaceLayerPotential3D(_AbstractTrialSpaceField):
             raise ValueError("Replacement density must preserve source-node shape.")
         return eqx.tree_at(lambda potential: potential.density, self, values)
 
-    def __call__(self, target: Array, /, *, key=None) -> Array:
+    def __call__(self, target: Array, /, *, key: PRNGKey | None = None) -> Array:
         del key
         value = jnp.asarray(target, dtype=jnp.float64)
         if value.shape != (3,):

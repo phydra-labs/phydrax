@@ -77,7 +77,7 @@ def _measure(
     return output
 
 
-def _arguments(batch_size: int):
+def _arguments(batch_size: int) -> Any:
     if batch_size == 0:
         return jnp.asarray(2.5 + 0.2j), jnp.asarray(0.45 + 0.1j)
     order = jnp.linspace(0.5, 4.0, batch_size) + 0.2j

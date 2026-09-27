@@ -4,16 +4,19 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from collections.abc import Sequence
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._coefficients import PrimeField
 from ._complex import CellComplexPair, CellSubcomplex
 from ._filtration import CellFiltration
@@ -24,7 +27,7 @@ from ._maps import CellularChainMap, CellularPairMap, chain_coordinate_id
 from ._resources import TopologyResourcePolicy
 
 
-ExtendedComponentKind = Literal[
+ExtendedComponentKind: TypeAlias = Literal[
     "ordinary", "relative", "extended_positive", "extended_negative"
 ]
 
@@ -49,14 +52,8 @@ class ExtendedPersistenceComponent(StrictModule, NonTrainableState):
         birth_nodes: ArrayLike,
         death_nodes: ArrayLike,
         /,
-    ):
-        if kind not in (
-            "ordinary",
-            "relative",
-            "extended_positive",
-            "extended_negative",
-        ):
-            raise ValueError("Unknown extended-persistence component kind.")
+    ) -> None:
+        kind = parse(kind, ExtendedComponentKind, "kind")
         arrays = tuple(
             np.asarray(value)
             for value in (degrees, birth_values, death_values, birth_nodes, death_nodes)
@@ -110,7 +107,7 @@ class ExtendedPersistenceResult(StrictModule, NonTrainableState):
         *,
         filtration_id: str,
         field: PrimeField,
-    ):
+    ) -> None:
         self.ordinary = ordinary
         self.relative = relative
         self.extended_positive = extended_positive
@@ -140,7 +137,9 @@ def _empty_subcomplex(complex: CellSubcomplex, /) -> CellSubcomplex:
     )
 
 
-def _prefixes(filtration: CellFiltration, /):
+def _prefixes(
+    filtration: CellFiltration, /
+) -> tuple[tuple[CellSubcomplex, ...], np.ndarray]:
     canonical = tuple(
         np.asarray(value if filtration.direction == "sublevel" else -value)
         for value in filtration.values
@@ -221,7 +220,9 @@ def _modular_rank(matrix: np.ndarray, field: PrimeField, /) -> int:
     return row
 
 
-def _intervals(dimensions, maps, field: PrimeField, /):
+def _intervals(
+    dimensions: Sequence[int], maps: Sequence[np.ndarray], field: PrimeField, /
+) -> list[tuple[int, int]]:
     node_count = len(dimensions)
     ranks = np.zeros((node_count, node_count), dtype=np.int32)
     for start in range(node_count):
@@ -332,7 +333,7 @@ def compute_extended_persistence(
             levels,
         )
     )
-    buckets: dict[str, list[tuple[int, float, float, int, int]]] = {
+    buckets: dict[ExtendedComponentKind, list[tuple[int, float, float, int, int]]] = {
         "ordinary": [],
         "relative": [],
         "extended_positive": [],
@@ -348,6 +349,7 @@ def compute_extended_persistence(
             for index, values in enumerate(adjacent)
         ]
         for birth, death in _intervals(dimensions, maps, coefficients):
+            kind: ExtendedComponentKind
             if death < center:
                 kind = "ordinary"
             elif birth > center:

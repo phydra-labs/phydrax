@@ -7,24 +7,26 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from math import prod
-from typing import Any, Literal
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._assignment_core import hungarian_assignment_one
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._identity import callable_payload
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ._differential_algebraic import DAEStructure, DifferentialAlgebraicSystem
+from ..typing import parse
+from ._differential_algebraic import DAERole, DAEStructure, DifferentialAlgebraicSystem
 from ._layout import InputLayout
 
 
-DAETearingPolicy = Literal["none", "automatic", "declared"]
+DAETearingPolicy: TypeAlias = Literal["none", "automatic", "declared"]
 
 
 def _identifier(value: str, owner: str, /) -> str:
@@ -73,7 +75,7 @@ class DAEDerivativeIncidence(StrictModule, NonTrainableState):
     variable_name: str = eqx.field(static=True)
     derivative_order: int = eqx.field(static=True)
 
-    def __init__(self, variable_name: str, derivative_order: int = 0, /):
+    def __init__(self, variable_name: str, derivative_order: int = 0, /) -> None:
         if not isinstance(derivative_order, int) or isinstance(derivative_order, bool):
             raise TypeError("derivative_order must be an integer.")
         if derivative_order < 0:
@@ -98,7 +100,7 @@ class DAEVariableBlock(StrictModule, NonTrainableState):
         *,
         state_scale: ArrayLike = 1.0,
         rate_scale: ArrayLike = 1.0,
-    ):
+    ) -> None:
         if not isinstance(maximum_derivative_order, int) or isinstance(
             maximum_derivative_order, bool
         ):
@@ -141,7 +143,7 @@ class DAEJet(StrictModule):
 
     def __init__(
         self, variable_names: Sequence[str], derivatives: Sequence[Sequence[ArrayLike]], /
-    ):
+    ) -> None:
         names = tuple(variable_names)
         values = tuple(tuple(jnp.asarray(value) for value in jet) for jet in derivatives)
         if len(names) != len(values) or len(set(names)) != len(names):
@@ -193,7 +195,7 @@ class DAEEquationBlock(StrictModule, NonTrainableState):
         residual_semantic_id: str | None = None,
         residual_numeric_id: str | None = None,
         residual_scale: ArrayLike = 1.0,
-    ):
+    ) -> None:
         edges = tuple(incidence)
         if not callable(residual):
             raise TypeError("DAEEquationBlock residual must be callable.")
@@ -224,7 +226,9 @@ class DAEPort(StrictModule, NonTrainableState):
     potentials: tuple[str, ...] = eqx.field(static=True)
     flows: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self, name: str, potentials: Sequence[str], flows: Sequence[str], /):
+    def __init__(
+        self, name: str, potentials: Sequence[str], flows: Sequence[str], /
+    ) -> None:
         potentials_ = tuple(_identifier(value, "potential") for value in potentials)
         flows_ = tuple(_identifier(value, "flow") for value in flows)
         if not potentials_ and not flows_:
@@ -242,7 +246,7 @@ class DAEConnection(StrictModule, NonTrainableState):
     port_ids: tuple[str, ...] = eqx.field(static=True)
     orientations: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, port_ids: Sequence[str], orientations: Sequence[int], /):
+    def __init__(self, port_ids: Sequence[str], orientations: Sequence[int], /) -> None:
         ports = tuple(_identifier(value, "port_id") for value in port_ids)
         signs = tuple(orientations)
         if len(ports) < 2 or len(ports) != len(signs) or len(set(ports)) != len(ports):
@@ -266,7 +270,7 @@ class DAEComponent(StrictModule, NonTrainableState):
         equations: Sequence[DAEEquationBlock],
         ports: Sequence[DAEPort] = (),
         /,
-    ):
+    ) -> None:
         variables_ = tuple(variables)
         equations_ = tuple(equations)
         ports_ = tuple(ports)
@@ -329,7 +333,7 @@ class AcausalDAESource(StrictModule, NonTrainableState):
         /,
         *,
         input_layout: InputLayout | None = None,
-    ):
+    ) -> None:
         components_ = tuple(components)
         connections_ = tuple(connections)
         if not components_ or any(
@@ -432,7 +436,7 @@ class DAEStructuralPolicy(StrictModule, NonTrainableState):
         *,
         tearing: DAETearingPolicy = "none",
         declared_tears: Sequence[str] = (),
-    ):
+    ) -> None:
         if any(
             not isinstance(value, int) or isinstance(value, bool)
             for value in (maximum_differentiations, maximum_tears)
@@ -440,8 +444,7 @@ class DAEStructuralPolicy(StrictModule, NonTrainableState):
             raise TypeError("DAE structural capacities must be integers.")
         if maximum_differentiations < 0 or maximum_tears < 0:
             raise ValueError("DAE structural capacities must be nonnegative.")
-        if tearing not in ("none", "automatic", "declared"):
-            raise ValueError("Unknown DAE tearing policy.")
+        tearing = parse(tearing, DAETearingPolicy, "tearing")
         tears = tuple(_identifier(value, "declared tear") for value in declared_tears)
         if tearing != "declared" and tears:
             raise ValueError("declared_tears require tearing='declared'.")
@@ -596,10 +599,19 @@ def _assemble(source: AcausalDAESource, /) -> _Assembly:
             )
         name_map = dict(zip(local_names, global_names, strict=True))
         for equation in component.equations:
+            # The source input layout declares which residual arity every equation uses.
             residual = (
-                _AutonomousComponentResidual(equation.residual, local_names, global_names)
+                _AutonomousComponentResidual(
+                    cast(AutonomousDAEEquationResidual, equation.residual),
+                    local_names,
+                    global_names,
+                )
                 if source.input_layout is None
-                else _InputComponentResidual(equation.residual, local_names, global_names)
+                else _InputComponentResidual(
+                    cast(InputDAEEquationResidual, equation.residual),
+                    local_names,
+                    global_names,
+                )
             )
             assembled = _AssembledEquation(
                 f"{component.name}.{equation.name}",
@@ -1292,13 +1304,15 @@ def compile_acausal_dae(
         if source.input_layout is None
         else _InputReducedResidual(residual_core)
     )
-    variable_roles = []
+    variable_roles: list[DAERole] = []
     for variable in assembly.variables:
-        role = "differential" if variable.maximum_derivative_order > 0 else "algebraic"
+        role: DAERole = (
+            "differential" if variable.maximum_derivative_order > 0 else "algebraic"
+        )
         variable_roles.extend(
             [role] * variable.size * max(variable.maximum_derivative_order, 1)
         )
-    equation_roles = []
+    equation_roles: list[DAERole] = []
     for equation, size in zip(assembly.equations, equation_sizes, strict=True):
         matched = variable_by_name[matching[equation.name]]
         role = "differential" if matched.maximum_derivative_order > 0 else "algebraic"

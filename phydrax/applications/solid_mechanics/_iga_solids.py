@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 
@@ -18,10 +18,13 @@ from ...discretization.iga._certificate import (
     LocalGeometryCertificate,
 )
 from ...operators.mechanics import HyperelasticResponse
+from ...typing import parse
 from ._mixed_hyperelastic import MixedHyperelasticLaw
 
 
-IGASolidDimensionalMode = Literal["plane_strain", "plane_stress", "axisymmetric", "3d"]
+IGASolidDimensionalMode: TypeAlias = Literal[
+    "plane_strain", "plane_stress", "axisymmetric", "3d"
+]
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -42,7 +45,7 @@ def _prepared(
 def _local_certificate(value: LocalGeometryCertificate, /) -> LocalGeometryCertificate:
     if not isinstance(value, LocalGeometryCertificate):
         raise TypeError("reference_certificate must be a LocalGeometryCertificate.")
-    if not bool(value.passed):
+    if not bool(value.accepted):
         raise ValueError("reference_certificate did not pass; IGA lowering fails closed.")
     return value
 
@@ -84,13 +87,14 @@ class IGASolidFormulation(StrictModule, NonTrainableState):
         deformed_certificate: DeformedJacobianCertificate
         | GlobalInjectivityCertificate
         | None = None,
-    ):
+    ) -> None:
         if material is None:
             raise TypeError("material must be an existing mechanics material object.")
         prepared_ = _prepared(prepared)
         certificate = _local_certificate(reference_certificate)
-        if dimensional_mode not in ("plane_strain", "plane_stress", "axisymmetric", "3d"):
-            raise ValueError("dimensional_mode is unsupported.")
+        dimensional_mode = parse(
+            dimensional_mode, IGASolidDimensionalMode, "dimensional_mode"
+        )
         if deformed_certificate is not None:
             if not isinstance(
                 deformed_certificate,
@@ -99,7 +103,7 @@ class IGASolidFormulation(StrictModule, NonTrainableState):
                 raise TypeError(
                     "deformed_certificate is not an IGA deformation certificate."
                 )
-            if not bool(deformed_certificate.passed):
+            if not bool(deformed_certificate.accepted):
                 raise ValueError(
                     "deformed_certificate did not pass; IGA lowering fails closed."
                 )

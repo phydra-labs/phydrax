@@ -4,13 +4,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import IntEnum
+from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -408,7 +411,7 @@ class GRRMHDImplicitSourcePlan(StrictModule, NonTrainableState):
         }
         return _RadiationVariableResidual(**common), _MaterialVariableResidual(**common)
 
-    def _kernel(self, residual) -> SmallRootKernel:
+    def _kernel(self, residual: Callable[[Array, Any], Array]) -> SmallRootKernel:
         return SmallRootKernel(
             residual,
             maximum_dimension=4,

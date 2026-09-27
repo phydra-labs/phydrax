@@ -6,6 +6,7 @@
 
 import json
 import time
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -13,7 +14,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _configuration(count_per_axis=8):
+def _configuration(count_per_axis: Any = 8) -> Any:
     axis = jnp.linspace(-0.315, 0.315, count_per_axis)
     xx, yy = jnp.meshgrid(axis, axis, indexing="ij")
     position = jnp.stack((xx.reshape(-1), yy.reshape(-1)), axis=-1)
@@ -45,7 +46,7 @@ def _configuration(count_per_axis=8):
     return particles, spheres, method, problem, position
 
 
-def _compiled(backend, kernel_backend):
+def _compiled(backend: Any, kernel_backend: Any) -> Any:
     particles, spheres, method, problem, position = _configuration()
     count = particles.capacity
     box = phx.discretization.ParticleBox(
@@ -84,16 +85,16 @@ def _compiled(backend, kernel_backend):
     return compiled, state
 
 
-def _tree_bytes(tree):
+def _tree_bytes(tree: Any) -> Any:
     return sum(leaf.size * leaf.dtype.itemsize for leaf in jax.tree.leaves(tree))
 
 
-def _measure(backend, kernel_backend, repeats=20):
+def _measure(backend: Any, kernel_backend: Any, repeats: Any = 20) -> Any:
     compiled, state = _compiled(backend, kernel_backend)
     step_size = jnp.asarray(1.0e-5)
 
     @jax.jit
-    def step(current):
+    def step(current: Any) -> Any:
         return compiled.dynamics.step_detailed(
             jnp.asarray(0, dtype=jnp.int32),
             jnp.asarray(0.0),
@@ -103,7 +104,7 @@ def _measure(backend, kernel_backend, repeats=20):
         ).accepted_state
 
     @jax.jit
-    def evaluate(current):
+    def evaluate(current: Any) -> Any:
         return compiled.dynamics.evaluate(
             jnp.asarray(0.0), current, step_size, None
         ).loads.total.force
@@ -121,7 +122,7 @@ def _measure(backend, kernel_backend, repeats=20):
     keys = compiled.dynamics.pair_key_space.keys(neighborhood.pair_relation)
 
     @jax.jit
-    def remap(history):
+    def remap(history: Any) -> Any:
         return phx.discretization.match_particle_pair_keys(
             history.pair_keys,
             history.valid,
@@ -177,7 +178,7 @@ def _measure(backend, kernel_backend, repeats=20):
     }
 
 
-def main():
+def main() -> None:
     cases = (
         ("dense", "reference"),
         ("dense", "dense_fused"),

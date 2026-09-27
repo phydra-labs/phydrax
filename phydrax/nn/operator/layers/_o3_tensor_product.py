@@ -10,8 +10,8 @@ from typing import Literal, NamedTuple
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
+from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Array, Key
 
 from phydrax._doc import DOC_KEY0
 from phydrax._fingerprint import canonical_fingerprint
@@ -20,6 +20,8 @@ from phydrax._trainable import NonTrainableState
 from phydrax.ein import contract
 from phydrax.nn.operator.representations import O3Representation
 from phydrax.nn.operator.representations._o3 import _tensor_basis
+
+from ....typing import PRNGKey
 
 
 O3TensorProductConnectionMode = Literal["uvw"]
@@ -110,7 +112,7 @@ class O3TensorProductPlan(StrictModule, NonTrainableState):
         maximum_parameters: int = 10_000_000,
         maximum_multiply_adds: int = 2_000_000_000,
         maximum_coefficients: int = 1_000_000,
-    ):
+    ) -> None:
         if not isinstance(left_representation, O3Representation):
             raise TypeError("left_representation must be an O3Representation.")
         if not isinstance(right_representation, O3Representation):
@@ -355,8 +357,8 @@ class O3TensorProduct(StrictModule):
         *,
         internal_weights: bool = True,
         dtype: DTypeLike = jnp.float64,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         if not isinstance(plan, O3TensorProductPlan):
             raise TypeError("plan must be an O3TensorProductPlan.")
         dtype_ = jnp.dtype(dtype)

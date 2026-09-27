@@ -12,7 +12,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
 
@@ -24,7 +24,7 @@ class ParameterId:
     feature_id: str
     name: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.feature_id:
             raise ValueError("ParameterId.feature_id must be non-empty.")
         if not self.name:
@@ -46,7 +46,7 @@ class ParameterSpec:
     bounds: tuple[float | None, float | None] = (None, None)
     trainable: bool = True
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if any(dimension < 0 for dimension in self.shape):
             raise ValueError("ParameterSpec.shape dimensions must be non-negative.")
         if not self.dtype:
@@ -72,7 +72,7 @@ class ParameterSchema:
 
     specs: tuple[ParameterSpec, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         identifiers = tuple(spec.parameter_id for spec in self.specs)
         if len(set(identifiers)) != len(identifiers):
             raise ValueError("ParameterSchema parameter IDs must be unique.")
@@ -104,7 +104,7 @@ class DesignState(StrictModule):
         self,
         schema: ParameterSchema,
         values: Sequence[Any],
-    ):
+    ) -> None:
         values_ = tuple(jnp.asarray(value) for value in values)
         if len(values_) != len(schema):
             raise ValueError(
@@ -169,7 +169,7 @@ class ParameterBinding:
 class _ParameterCollector:
     """Host-side compile context building one global schema for an expression DAG."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._specs: list[ParameterSpec] = []
         self._values: list[Array] = []
         self._index_by_id: dict[ParameterId, int] = {}

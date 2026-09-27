@@ -7,11 +7,12 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint
 from ..._physical import RelativityScaleContract
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...units import (
@@ -158,7 +159,7 @@ class ThermalSynchrotronUnitContract(StrictModule, NonTrainableState):
     specific_intensity_unit: UnitDefinition = eqx.field(static=True)
     units_id: str = eqx.field(static=True)
 
-    def __init__(self, scale: RelativityScaleContract, /):
+    def __init__(self, scale: RelativityScaleContract, /) -> None:
         if not isinstance(scale, RelativityScaleContract):
             raise TypeError("scale must be a RelativityScaleContract.")
         if scale.scale_id != _SI_RELATIVITY_SCALE.scale_id:
@@ -220,7 +221,7 @@ class ThermalSynchrotronReferenceEvidence(StrictModule, NonTrainableState):
     source_ledger: tuple[tuple[str, str], ...] = eqx.field(static=True)
     reference_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         authors = ("Rohan Mahadevan", "Ramesh Narayan", "Insu Yi")
         title = "Harmony in Electrons: Cyclotron and Synchrotron Emission by Thermal Electrons in a Magnetic Field"
         self.authors = authors
@@ -295,7 +296,7 @@ class ThermalSynchrotronDomain(StrictModule, NonTrainableState):
         maximum_theta_e: float = 1.0e3,
         minimum_normalized_frequency: float = 1.0e-6,
         maximum_normalized_frequency: float = 1.0e6,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -475,7 +476,7 @@ class ThermalSynchrotronModel(StrictModule, NonTrainableState):
         /,
         *,
         scale: RelativityScaleContract | None = None,
-    ):
+    ) -> None:
         domain_ = ThermalSynchrotronDomain() if domain is None else domain
         if not isinstance(domain_, ThermalSynchrotronDomain):
             raise TypeError("domain must be a ThermalSynchrotronDomain.")

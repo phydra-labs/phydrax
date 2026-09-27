@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _circle_panelization():
+def _circle_panelization() -> Any:
     geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
     return phx.operators.BoundaryPanelization2D(
         geometry.boundary_atlas,
@@ -17,7 +20,9 @@ def _circle_panelization():
     )
 
 
-def test_modified_helmholtz_stokes_and_elasticity_2d_layers_are_finite_off_surface():
+def test_modified_helmholtz_stokes_and_elasticity_2d_layers_are_finite_off_surface() -> (
+    None
+):
     panelization = _circle_panelization()
     scalar_density = jnp.ones((panelization.node_count,))
     vector_density = jnp.ones((panelization.node_count, 2))

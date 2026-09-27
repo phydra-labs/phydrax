@@ -14,6 +14,7 @@ import inspect
 import pkgutil
 import sys
 import typing
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -23,6 +24,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax import _typing_plan
 from phydrax._trainable import (
     ExplicitFreeze,
     NonTrainableState,
@@ -205,6 +207,7 @@ def _dynamic_fields(cls: type, /) -> list[tuple[dataclasses.Field, typing.Any]]:
     hints = _hints(cls)
     return [
         (field, hints.get(field.name))
+        # ty: ignore[invalid-argument-type]
         for field in dataclasses.fields(cls)
         if not field.metadata.get("static", False)
     ]
@@ -241,7 +244,30 @@ def _admits_component(
     return annotation in supertypes or issubclass(annotation, components)
 
 
+def _contract_admits_inexact_array(contract: _typing_plan.Contract, /) -> bool:
+    match contract:
+        case _typing_plan.ArrayContract(tensor=tensor):
+            rule = tensor.dtype
+            if rule is None:
+                return True
+            if rule.exact is not None:
+                return bool(jnp.issubdtype(rule.exact, jnp.inexact))
+            return rule.category in ("floating", "complex", "inexact", "numeric")
+        case _typing_plan.OptionalContract(inner=inner):
+            return _contract_admits_inexact_array(inner)
+        case (
+            _typing_plan.UnionContract(alternatives=items)
+            | _typing_plan.FixedTupleContract(items=items)
+        ):
+            return any(_contract_admits_inexact_array(item) for item in items)
+        case _:
+            return False
+
+
 def _admits_inexact_array(annotation: typing.Any, /) -> bool:
+    if _typing_plan.contains_vocabulary(annotation):
+        contract = _typing_plan.compile_form(annotation)
+        return contract is not None and _contract_admits_inexact_array(contract)
     origin = typing.get_origin(annotation)
     if origin is typing.Annotated:
         return _admits_inexact_array(typing.get_args(annotation)[0])
@@ -363,7 +389,7 @@ def test_default_constructible_slot_implementations_classify_every_array() -> No
     assert not violations, "\n".join(violations)
 
 
-def _module_function(x):
+def _module_function(x: Any) -> Any:
     return jnp.tanh(x)
 
 
@@ -372,11 +398,11 @@ class _Holder(phx.StrictModule, phx.ParameterOwner):
     function: typing.Any
     static_function: typing.Any = eqx.field(static=True, default=_module_function)
 
-    def __call__(self, x):
+    def __call__(self, x: Any) -> Any:
         return self.function(self.weight * x)
 
 
-def _captures(value):
+def _captures(value: Any) -> Any:
     return lambda x: x * value
 
 
@@ -391,7 +417,7 @@ def _captures(value):
     ],
     ids=["module-function", "lambda", "python-float", "integer-array", "component"],
 )
-def test_declared_callable_categories_are_admitted(function) -> None:
+def test_declared_callable_categories_are_admitted(function: Any) -> None:
     phx.require_parameter_roles(_Holder(jnp.ones(3), function), context="probe")
 
 
@@ -431,8 +457,38 @@ def test_visible_terminal_providers_are_not_searched() -> None:
     ids=["closure", "default", "partial", "captured-model", "static-field"],
 )
 def test_training_preflight_rejects_hidden_inexact_state_with_its_path(
-    holder, route
+    holder: Any, route: Any
 ) -> None:
     with pytest.raises(ValueError, match="training entry") as error:
         phx.require_parameter_roles(holder, context="training entry")
     assert route in str(error.value)
+
+
+class _NodeDim(phx.typing.Dim):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("annotation", "admits"),
+    [
+        (phx.typing.Float64[_NodeDim], True),
+        (phx.typing.Inexact[_NodeDim], True),
+        (phx.typing.Shaped[_NodeDim], True),
+        (phx.typing.Int32[_NodeDim], False),
+        (phx.typing.Bool[_NodeDim], False),
+        (phx.typing.Float64[_NodeDim] | None, True),
+        (phx.typing.Int32[_NodeDim] | phx.typing.Float32[_NodeDim], True),
+        (phx.typing.HostFloat64[_NodeDim], True),
+        (phx.typing.HostInteger[_NodeDim], False),
+        (phx.typing.Size[_NodeDim], False),
+    ],
+)
+def test_contract_forms_are_classified_by_their_dtype_rule(
+    annotation: Any, admits: Any
+) -> None:
+    assert _admits_inexact_array(annotation) is admits
+
+
+def test_unsupported_contract_placements_are_refused() -> None:
+    with pytest.raises(TypeError):
+        _admits_inexact_array(list[phx.typing.Float64[_NodeDim]])

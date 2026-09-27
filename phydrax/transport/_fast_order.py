@@ -10,20 +10,26 @@ The formulation follows Blondel, Teboul, Berthet, and Djolonga,
 
 from __future__ import annotations
 
-from typing import Any, overload
+from collections.abc import Callable
+from typing import Any, overload, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 
 
 Value = ArrayLike | cx.AxisArray
+# (levels, block_sizes, num_blocks)
+_PAVCarry: TypeAlias = tuple[Array, Array, Array]
+# (levels, masses, block_sizes, num_blocks)
+_WeightedPAVCarry: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 def _pav_decreasing_with_blocks(values: Array, /) -> tuple[Array, Array]:
@@ -32,19 +38,19 @@ def _pav_decreasing_with_blocks(values: Array, /) -> tuple[Array, Array]:
     levels = jnp.zeros_like(values)
     block_sizes = jnp.zeros((count,), dtype=jnp.int32)
 
-    def append(index, state):
+    def append(index: Array, state: _PAVCarry) -> _PAVCarry:
         levels_, block_sizes_, num_blocks = state
         levels_ = levels_.at[num_blocks].set(values[index])
         block_sizes_ = block_sizes_.at[num_blocks].set(1)
         num_blocks = num_blocks + 1
 
-        def violates(inner_state):
+        def violates(inner_state: _PAVCarry) -> Array:
             levels__, _, num_blocks__ = inner_state
             previous = jnp.maximum(num_blocks__ - 2, 0)
             current = jnp.maximum(num_blocks__ - 1, 0)
             return (num_blocks__ > 1) & (levels__[previous] < levels__[current])
 
-        def merge(inner_state):
+        def merge(inner_state: _PAVCarry) -> _PAVCarry:
             levels__, block_sizes__, num_blocks__ = inner_state
             previous = num_blocks__ - 2
             current = num_blocks__ - 1
@@ -88,7 +94,9 @@ def _pav_decreasing(values: Array, /) -> Array:
 
 
 @_pav_decreasing.defjvp
-def _pav_decreasing_jvp(primals, tangents):
+def _pav_decreasing_jvp(
+    primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
     (values,), (values_dot,) = primals, tangents
     projected, assignments = _pav_decreasing_with_blocks(values)
     count = values.shape[0]
@@ -115,21 +123,21 @@ def _weighted_pav_decreasing_with_blocks(
     masses = jnp.zeros_like(weights)
     block_sizes = jnp.zeros((count,), dtype=jnp.int32)
 
-    def append(index, state):
+    def append(index: Array, state: _WeightedPAVCarry) -> _WeightedPAVCarry:
         levels_, masses_, sizes_, num_blocks = state
         levels_ = levels_.at[num_blocks].set(values[index])
         masses_ = masses_.at[num_blocks].set(weights[index])
         sizes_ = sizes_.at[num_blocks].set(1)
         num_blocks = num_blocks + 1
 
-        def violates(inner):
+        def violates(inner: _WeightedPAVCarry) -> Array:
             levels__, _, _, blocks__ = inner
             return (blocks__ > 1) & (
                 levels__[jnp.maximum(blocks__ - 2, 0)]
                 < levels__[jnp.maximum(blocks__ - 1, 0)]
             )
 
-        def merge(inner):
+        def merge(inner: _WeightedPAVCarry) -> _WeightedPAVCarry:
             levels__, masses__, sizes__, blocks__ = inner
             previous, current = blocks__ - 2, blocks__ - 1
             mass = masses__[previous] + masses__[current]
@@ -165,7 +173,9 @@ def _weighted_pav_decreasing(values: Array, weights: Array, /) -> Array:
 
 
 @_weighted_pav_decreasing.defjvp
-def _weighted_pav_decreasing_jvp(primals, tangents):
+def _weighted_pav_decreasing_jvp(
+    primals: tuple[Array, Array], tangents: tuple[Array, Array]
+) -> tuple[Array, Array]:
     values, weights = primals
     values_dot, weights_dot = tangents
     projected, assignments, masses = _weighted_pav_decreasing_with_blocks(values, weights)
@@ -322,7 +332,7 @@ def _map_rows(
     data: Array,
     position: int,
     temperature: Array,
-    operation,
+    operation: Callable[[Array, Array], Array],
     /,
 ) -> Array:
     moved = jnp.moveaxis(data, position, -1)
@@ -445,7 +455,7 @@ def _weighted_rows(
     *,
     temperature: ArrayLike,
     axis: int | str,
-    operation,
+    operation: Callable[[Array, Array, Array], Array],
 ) -> tuple[Array, int, tuple[Any, ...] | None]:
     data, position, dims = _data_axis(values, axis=axis)
     weight_data, weight_position, weight_dims = _data_axis(weights, axis=axis)

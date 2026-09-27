@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -14,7 +15,7 @@ import jax.numpy as jnp
 from phydrax.operators.differential import evaluate_fused_coordinate_derivatives
 
 
-def _seconds(function, argument, repeats: int, /) -> tuple[float, float]:
+def _seconds(function: Any, argument: Any, repeats: int, /) -> tuple[float, float]:
     started = time.perf_counter()
     compiled = function.lower(argument).compile()
     compile_seconds = time.perf_counter() - started
@@ -41,10 +42,10 @@ def main() -> None:
 
     point = jnp.linspace(-0.7, 0.9, dimension)
 
-    def function(value):
+    def function(value: Any) -> Any:
         return jnp.sum(jnp.sin(value) + 0.05 * value**3)
 
-    def action_laplacian(value):
+    def action_laplacian(value: Any) -> Any:
         evaluated = evaluate_fused_coordinate_derivatives(
             function,
             value,
@@ -55,7 +56,7 @@ def main() -> None:
             total = total + derivative
         return total
 
-    def dense_laplacian(value):
+    def dense_laplacian(value: Any) -> Any:
         return jnp.trace(jax.hessian(function)(value))
 
     action = jax.jit(action_laplacian)

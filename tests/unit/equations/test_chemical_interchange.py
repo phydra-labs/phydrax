@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def test_yaml_import_normalizes_units_and_calibration_changes_rate(tmp_path):
+def test_yaml_import_normalizes_units_and_calibration_changes_rate(tmp_path: Any) -> None:
     source = tmp_path / "mechanism.yaml"
     source.write_text(
         """

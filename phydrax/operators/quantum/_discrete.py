@@ -11,7 +11,8 @@ from math import prod
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ._amplitude import amplitude_ratio, LogAmplitude
@@ -39,7 +40,7 @@ class ConnectedConfigurations(StrictModule):
         /,
         *,
         configuration_shape: Sequence[int],
-    ):
+    ) -> None:
         shape = tuple(configuration_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("configuration_shape must contain positive dimensions.")
@@ -72,7 +73,12 @@ class ConnectedConfigurations(StrictModule):
 class AbstractDiscreteQuantumOperator(AbstractLocalQuantumOperator):
     """Matrix-free discrete operator exposing diagonal and connected configurations."""
 
-    def estimate(self, model, configurations, /) -> LocalOperatorEstimate:
+    def estimate(
+        self,
+        model: Callable[[Array], LogAmplitude],
+        configurations: Array,
+        /,
+    ) -> LocalOperatorEstimate:
         return _discrete_operator_estimate(model, self, configurations)
 
     @abstractmethod
@@ -100,7 +106,7 @@ class CallableDiscreteQuantumOperator(AbstractDiscreteQuantumOperator):
         *,
         configuration_shape: Sequence[int],
         operator_id: str,
-    ):
+    ) -> None:
         if not callable(diagonal) or not callable(connections):
             raise TypeError("diagonal and connections must be callable.")
         shape = tuple(configuration_shape)
@@ -145,7 +151,9 @@ class CallableDiscreteQuantumOperator(AbstractDiscreteQuantumOperator):
         return result
 
 
-def _evaluate_amplitudes(model: Callable[[Array], LogAmplitude], configs: Array):
+def _evaluate_amplitudes(
+    model: Callable[[Array], LogAmplitude], configs: Array
+) -> LogAmplitude:
     values = jax.vmap(model)(configs)
     if not isinstance(values, LogAmplitude):
         raise TypeError("The amplitude model must return LogAmplitude values.")

@@ -10,12 +10,14 @@ from typing import Any, Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
+from ...typing import parse
 from ._matter_coupling import (
     CoupledBudget,
     CoupledStageAddress,
@@ -140,7 +142,7 @@ class CoupledEvolutionState(StrictModule, NonTrainableState):
         *,
         topology_id: str,
         runtime_id: str,
-    ):
+    ) -> None:
         if not isinstance(budget, CoupledBudget):
             raise TypeError("budget must be CoupledBudget.")
         if not isinstance(topology_id, str) or not topology_id:
@@ -254,7 +256,7 @@ class Z4cMatterCoupledRuntime(StrictModule, NonTrainableState):
         matter_kind: RelativisticMatterKind,
         z4c_runtime_id: str,
         matter_runtime_id: str,
-    ):
+    ) -> None:
         callbacks = (
             geometry_at_stage,
             stress_energy_at_stage,
@@ -267,8 +269,7 @@ class Z4cMatterCoupledRuntime(StrictModule, NonTrainableState):
             raise TypeError("policy must be MatterCouplingPolicy.")
         if not isinstance(topology_id, str) or not topology_id:
             raise ValueError("topology_id must be non-empty.")
-        if matter_kind not in ("grhd", "grmhd", "grrmhd"):
-            raise ValueError("matter_kind must be 'grhd', 'grmhd', or 'grrmhd'.")
+        matter_kind = parse(matter_kind, RelativisticMatterKind, "matter_kind")
         if not isinstance(z4c_runtime_id, str) or not z4c_runtime_id:
             raise ValueError("z4c_runtime_id must be non-empty.")
         if not isinstance(matter_runtime_id, str) or not matter_runtime_id:
@@ -535,12 +536,17 @@ class Z4cMatterCoupledRuntime(StrictModule, NonTrainableState):
         stage_values = tuple(stages)
         if len(stage_values) != _SSPRK33_STAGE_COUNT:
             raise RuntimeError("The fixed SSPRK33 stage count changed.")
-        addresses = tuple(value.address for value in stage_values)
-        geometries = tuple(value.geometry for value in stage_values)
-        stress_energy = tuple(value.stress_energy for value in stage_values)
-        z4c_proposals = tuple(value.z4c_proposal for value in stage_values)
-        matter_proposals = tuple(value.matter_proposal for value in stage_values)
-        stage_ledgers = tuple(value.ledgers for value in stage_values)
+        first, second, third = stage_values
+        addresses = (first.address, second.address, third.address)
+        geometries = (first.geometry, second.geometry, third.geometry)
+        stress_energy = (first.stress_energy, second.stress_energy, third.stress_energy)
+        z4c_proposals = (first.z4c_proposal, second.z4c_proposal, third.z4c_proposal)
+        matter_proposals = (
+            first.matter_proposal,
+            second.matter_proposal,
+            third.matter_proposal,
+        )
+        stage_ledgers = (first.ledgers, second.ledgers, third.ledgers)
         ledgers = CoupledStepLedgers.combine(stage_ledgers)
         proposed_budget = state.budget.accumulate(ledgers)
         stage_status = jnp.stack(tuple(value.status for value in stage_values))

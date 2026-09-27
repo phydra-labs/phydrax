@@ -9,7 +9,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._differentiation import (
     DerivativeContract,
@@ -22,6 +22,7 @@ from ..._differentiation import (
 from ..._model._array import value_derivative_contract
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
+from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import prediction_fit_contract
 from .._numerics import MetricName
@@ -157,8 +158,7 @@ def initialize_centers(
         case_count *= size
     flat_x = x.reshape((case_count, n, p))
     flat_w = w.reshape((case_count, n))
-    if initialization not in ("random", "first", "k-means++"):
-        raise ValueError(f"unsupported initialization {initialization!r}.")
+    initialization = parse(initialization, ClusterInitialization, "initialization")
     if initialization == "first":
         order = jnp.argsort(
             jnp.where(flat_w > 0.0, jnp.arange(n), n), axis=-1, stable=True
@@ -172,13 +172,13 @@ def initialize_centers(
             )
         keys = jax.random.split(key, case_count)
 
-        def choose(values, weights, case_key):
+        def choose(values: Array, weights: Array, case_key: Array) -> Array:
             first_key, current_key = jax.random.split(case_key)
             logits = jnp.where(weights > 0.0, jnp.log(weights), -jnp.inf)
             first = jax.random.categorical(first_key, logits).astype(jnp.int32)
             indices = jnp.zeros((cluster_count,), dtype=jnp.int32).at[0].set(first)
 
-            def add_center(i, state):
+            def add_center(i: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
                 indices, current_key = state
                 current_key, draw_key = jax.random.split(current_key)
                 chosen = values[indices]
@@ -232,7 +232,7 @@ class ClusterDiagnostics(StrictModule):
         converged: Any,
         degeneracy: Any = False,
         method: str,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.objective = jnp.asarray(objective)
@@ -265,7 +265,7 @@ class HardClusterModel(AbstractFittedModel):
         *,
         metric: MetricName = "squared-euclidean",
         method: str,
-    ):
+    ) -> None:
         self.centers = jnp.asarray(centers)
         self.active_clusters = jnp.asarray(active_clusters, dtype=jnp.bool_)
         self.in_size = self.centers.shape[-1]
@@ -316,7 +316,7 @@ class SoftClusterModel(AbstractFittedModel):
         *,
         metric: MetricName = "squared-euclidean",
         method: str,
-    ):
+    ) -> None:
         self.centers = jnp.asarray(centers)
         self.active_clusters = jnp.asarray(active_clusters, dtype=jnp.bool_)
         self.temperature = positive_scalar(

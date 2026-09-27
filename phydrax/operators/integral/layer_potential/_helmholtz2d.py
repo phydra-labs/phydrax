@@ -10,7 +10,8 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -18,6 +19,7 @@ from ...._fingerprint import canonical_fingerprint
 from ...._model import TRIAL_SPACE_CERTIFICATE_KEY
 from ....equations.trefftz._core import _AbstractTrialSpaceField, TrialSpaceCertificate
 from ....special import hankel1
+from ....typing import PRNGKey
 from ._core import AbstractLayerKernel, BoundaryPanelization2D, LayerDiscretizationReport
 
 
@@ -25,7 +27,7 @@ class HelmholtzLayerKernel2D(AbstractLayerKernel):
     wavenumber: float = eqx.field(static=True)
     _kernel_id: str = eqx.field(static=True)
 
-    def __init__(self, wavenumber: float):
+    def __init__(self, wavenumber: float) -> None:
         value = float(wavenumber)
         if not jnp.isfinite(value) or value <= 0.0:
             raise ValueError("Helmholtz wavenumber must be finite and positive.")
@@ -105,7 +107,7 @@ class HelmholtzLayerPotential2D(_AbstractTrialSpaceField):
         *,
         kind: Literal["single", "double"] = "single",
         density: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(panelization, BoundaryPanelization2D):
             raise TypeError("panelization must be BoundaryPanelization2D.")
         if kind not in ("single", "double"):
@@ -186,7 +188,7 @@ class HelmholtzLayerPotential2D(_AbstractTrialSpaceField):
             self.panelization.normals,
         )
 
-    def __call__(self, target: Array, /, *, key=None) -> Array:
+    def __call__(self, target: Array, /, *, key: PRNGKey | None = None) -> Array:
         del key
         value = jnp.asarray(target, dtype=jnp.float64)
         if value.shape != (2,):
@@ -234,7 +236,7 @@ class HelmholtzCombinedField2D(_AbstractTrialSpaceField):
         /,
         *,
         eta: float,
-    ):
+    ) -> None:
         kernel = HelmholtzLayerKernel2D(wavenumber)
         density_ = jnp.asarray(density, dtype=jnp.complex128)
         if density_.shape != (panelization.node_count,):
@@ -283,7 +285,7 @@ class HelmholtzCombinedField2D(_AbstractTrialSpaceField):
             trace_policy="brakhage-werner-combined-field",
         )
 
-    def __call__(self, target: Array, /, *, key=None) -> Array:
+    def __call__(self, target: Array, /, *, key: PRNGKey | None = None) -> Array:
         del key
         value = jnp.asarray(target, dtype=jnp.float64)
         if value.shape != (2,):

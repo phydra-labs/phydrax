@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -35,7 +36,7 @@ from phydrax.execution import (
 )
 
 
-def _descriptor_and_inventory(compiled: str = "2" * 64):
+def _descriptor_and_inventory(compiled: str = "2" * 64) -> Any:
     asset = "1" * 64
     descriptor = ExternalModelDescriptor(
         source=ExternalModelSource(
@@ -132,7 +133,7 @@ def _descriptor_and_inventory(compiled: str = "2" * 64):
     return descriptor, inventory
 
 
-def _operation(signature, item, key, semantic_index):
+def _operation(signature: Any, item: Any, key: Any, semantic_index: Any) -> Any:
     factor = 2.0 if signature.topology_id == "fast" else 3.0
     random_value = jax.random.uniform(key, item.shape, dtype=item.dtype)
     return factor * item + random_value + 0.0 * semantic_index.astype(item.dtype)

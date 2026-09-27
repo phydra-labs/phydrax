@@ -10,14 +10,15 @@ import os
 from collections.abc import Sequence
 from dataclasses import fields, is_dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -59,7 +60,7 @@ _UNSPECIFIED_PARENT = object()
 _STORE_VERIFIED_PARENT = object()
 
 
-def _identifier(value: str, name: str, /) -> str:
+def _identifier(value: object, name: str, /) -> str:
     if not isinstance(value, str):
         raise TypeError(f"{name} must be a string.")
     normalized = value.strip()
@@ -85,7 +86,7 @@ def _identifiers(
     return tuple(sorted(normalized))
 
 
-def _fingerprint_id(value: str | None, name: str, /) -> str | None:
+def _fingerprint_id(value: object, name: str, /) -> str | None:
     if value is None:
         return None
     normalized = _identifier(value, name)
@@ -208,7 +209,7 @@ class SimulationProductStatusEvidence(StrictModule, NonTrainableState):
         /,
         *,
         failure_reason: str = "none",
-    ):
+    ) -> None:
         if not isinstance(check_names, Sequence) or isinstance(check_names, str):
             raise TypeError("check_names must be a sequence of identifiers.")
         names = tuple(
@@ -294,7 +295,7 @@ class WaveSnapshotEvidence(StrictModule, NonTrainableState):
     producer_state_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
-    def __init__(self, result: WaveDarkMatterResult, /):
+    def __init__(self, result: WaveDarkMatterResult, /) -> None:
         if not isinstance(result, WaveDarkMatterResult):
             raise TypeError("result must be WaveDarkMatterResult.")
         diagnostics = result.diagnostics
@@ -395,7 +396,7 @@ class ParticleSnapshotEvidence(StrictModule, NonTrainableState):
         /,
         *,
         producer_plan: CosmologicalParticleMeshPlan | CosmologicalSIDMPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(
             result,
             (
@@ -522,7 +523,7 @@ class GasSnapshotEvidence(StrictModule, NonTrainableState):
         self,
         result: WaveParticleGasCosmologyResult,
         /,
-    ):
+    ) -> None:
         if not isinstance(result, WaveParticleGasCosmologyResult):
             raise TypeError("result must be WaveParticleGasCosmologyResult.")
         gas = result.state.gas
@@ -617,7 +618,7 @@ class CommonGravitySnapshotEvidence(StrictModule, NonTrainableState):
     producer_result_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
-    def __init__(self, result: SharedPeriodicGravityResult, /):
+    def __init__(self, result: SharedPeriodicGravityResult, /) -> None:
         if not isinstance(result, SharedPeriodicGravityResult):
             raise TypeError("result must be SharedPeriodicGravityResult.")
         values = (
@@ -709,7 +710,7 @@ class WaveSimulationSnapshot(StrictModule, NonTrainableState):
         density: ArrayLike | None = None,
         potential: ArrayLike | None = None,
         poisson_result: WaveDarkMatterPoissonResult | None = None,
-    ):
+    ) -> None:
         value = jax.lax.stop_gradient(jnp.asarray(psi))
         scale = _scalar(scale_factor, "scale_factor")
         density_ = (
@@ -897,7 +898,7 @@ class ParticleSimulationSnapshot(StrictModule, NonTrainableState):
         inactive_reference_momenta: ArrayLike | None = None,
         inactive_reference_masses: ArrayLike | None = None,
         inactive_reference_weights: ArrayLike | None = None,
-    ):
+    ) -> None:
         ids = jax.lax.stop_gradient(jnp.asarray(stable_ids))
         position = jax.lax.stop_gradient(jnp.asarray(positions))
         momentum = jax.lax.stop_gradient(
@@ -1130,7 +1131,7 @@ class GasSimulationSnapshot(StrictModule, NonTrainableState):
         physics_id: str,
         scale_id: str,
         coordinate_time_level: str,
-    ):
+    ) -> None:
         fields = jax.lax.stop_gradient(jnp.asarray(conserved_fields))
         scale = _scalar(scale_factor, "scale_factor")
         if not isinstance(component_names, Sequence) or isinstance(component_names, str):
@@ -1255,7 +1256,7 @@ class CommonGravitySimulationSnapshot(StrictModule, NonTrainableState):
         scale_id: str,
         potential_time_level: str,
         producer_result: SharedPeriodicGravityResult,
-    ):
+    ) -> None:
         density = jax.lax.stop_gradient(jnp.asarray(total_comoving_density))
         potential_ = jax.lax.stop_gradient(jnp.asarray(potential, dtype=density.dtype))
         acceleration = jax.lax.stop_gradient(
@@ -1395,7 +1396,7 @@ class CosmologyOutputBundle(StrictModule, NonTrainableState):
         producer_result: (
             WaveParticleCosmologyResult | WaveParticleGasCosmologyResult | None
         ) = None,
-    ):
+    ) -> None:
         scale = _scalar(scale_factor, "scale_factor")
         children = tuple(
             value for value in (wave, particles, gas, common_gravity) if value is not None
@@ -1629,11 +1630,11 @@ class DarkMatterRestartSnapshot(StrictModule, NonTrainableState):
         component_state: Any,
         /,
         *,
-        stable_ids: ArrayLike = (),
-        active_mask: ArrayLike = (),
-        incarnations: ArrayLike = (),
+        stable_ids: ArrayLike | Sequence[int] = (),
+        active_mask: ArrayLike | Sequence[bool] = (),
+        incarnations: ArrayLike | Sequence[int] = (),
         lineage_ids: ArrayLike = np.empty((0, 2), dtype=np.int64),
-        prng_root: ArrayLike = (),
+        prng_root: ArrayLike | tuple[()] = (),
         event_epoch: ArrayLike = 0,
         time: ArrayLike,
         accepted_step: ArrayLike,
@@ -1641,7 +1642,7 @@ class DarkMatterRestartSnapshot(StrictModule, NonTrainableState):
         output_cursor: ArrayLike,
         accepted_evidence: Any = (),
         parent_checkpoint_id: str | None = None,
-    ):
+    ) -> None:
         if _contains_analysis_product(component_state):
             raise TypeError(
                 "Analysis products cannot be promoted to restart component state."
@@ -1693,10 +1694,11 @@ class DarkMatterRestartSnapshot(StrictModule, NonTrainableState):
                 "Restart stable identity, mask, incarnation, or lineage changed."
             )
         root_input = jnp.asarray(prng_root)
+        # A nonempty root cannot be the empty-tuple absence marker.
         root = (
             jnp.zeros((0,), dtype=jnp.uint32)
             if root_input.size == 0
-            else jnp.asarray(jr.key_data(prng_root), dtype=jnp.uint32)
+            else jnp.asarray(jr.key_data(cast(ArrayLike, prng_root)), dtype=jnp.uint32)
         )
         if root.shape not in ((0,), (2,)):
             raise ValueError("Restart PRNG root must be absent or one canonical JAX key.")
@@ -1773,7 +1775,7 @@ class DarkMatterCheckpointRecoveryEvidence(StrictModule, NonTrainableState):
         event_epoch_verified: ArrayLike,
         parent_chain_verified: ArrayLike,
         failure_reason: str = "none",
-    ):
+    ) -> None:
         checkpoint = _fingerprint_id(source_checkpoint_id, "source_checkpoint_id")
         if checkpoint is None:
             raise ValueError("source_checkpoint_id must be present.")
@@ -1828,7 +1830,7 @@ class DarkMatterCheckpointPayload(StrictModule, NonTrainableState):
         recovery: DarkMatterCheckpointRecoveryEvidence,
         contract_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(snapshot, DarkMatterRestartSnapshot):
             raise TypeError("snapshot must be DarkMatterRestartSnapshot.")
         if not isinstance(envelope, RuntimeCheckpointEnvelope):
@@ -1930,7 +1932,7 @@ class DarkMatterCheckpointContract(StrictModule, NonTrainableState):
         scale_id: str,
         partition_id: str | None = "serial",
         encoding_plan: RuntimeCheckpointEncodingPlan | None = None,
-    ):
+    ) -> None:
         encoding = (
             RuntimeCheckpointEncodingPlan() if encoding_plan is None else encoding_plan
         )

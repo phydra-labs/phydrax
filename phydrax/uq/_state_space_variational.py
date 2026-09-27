@@ -11,7 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -60,7 +60,7 @@ class GaussianMarkovVariationalFamily(AbstractVariationalFamily):
         case_shape: tuple[int, ...],
         state_shape: tuple[int, ...],
         scale_floor: float = 1e-6,
-    ):
+    ) -> None:
         cases = tuple(case_shape)
         state = tuple(state_shape)
         state_size = prod(state) if state else 1
@@ -153,7 +153,7 @@ class GaussianMarkovVariationalFamily(AbstractVariationalFamily):
     def innovation_scale(self) -> Array:
         return jax.nn.softplus(self.innovation_raw_scale) + self.scale_floor
 
-    def _flat_parameters(self):
+    def _flat_parameters(self) -> tuple[Array, Array, Array, Array, Array, Array]:
         case_count = prod(self.case_shape) if self.case_shape else 1
         return (
             self.initial_location.reshape((case_count, self.state_size)),
@@ -228,7 +228,7 @@ class GaussianMarkovVariationalFamily(AbstractVariationalFamily):
         )
         scan_offsets = effective_offsets.at[:, :, 0].set(first_values)
 
-        def one_path(path_transitions, path_offsets):
+        def one_path(path_transitions: Array, path_offsets: Array) -> Array:
             return associative_affine_solve(path_transitions, path_offsets)
 
         later_states = jax.vmap(
@@ -360,7 +360,7 @@ class StateSpaceVariationalConfig(StrictModule):
         optimization: VariationalConfig | None = None,
         initial_scale: float = 0.5,
         scale_floor: float = 1e-6,
-    ):
+    ) -> None:
         optimization_ = VariationalConfig() if optimization is None else optimization
         if not isinstance(optimization_, VariationalConfig):
             raise TypeError("optimization must be VariationalConfig or None.")
@@ -446,9 +446,15 @@ def fit_state_space_variational(
     log_model = jax.vmap(
         lambda path: state_space_path_log_density(problem, path).log_density
     )(fitted.unconstrained_samples)
+    # The training kernel rebuilds the fitted family with the input family's treedef.
+    fitted_family = fitted.family
+    if not (isinstance(fitted_family, GaussianMarkovVariationalFamily)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(fitted_family, GaussianMarkovVariationalFamily)."
+        )
     return StateSpaceVariationalResult(
         problem=problem,
-        family=fitted.family,
+        family=fitted_family,
         states=fitted.unconstrained_samples,
         log_model=log_model,
         log_variational=fitted.log_variational,

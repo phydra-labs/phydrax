@@ -9,7 +9,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -61,7 +62,7 @@ class ElectronicManifoldResult(StrictModule, NonTrainableState):
         symmetry_sector: str | None = None,
         magnetic_transition_dipoles: ArrayLike | None = None,
         rotatory_strengths: ArrayLike | None = None,
-    ):
+    ) -> None:
         excitation = jnp.asarray(excitation_energies)
         absolute = jnp.asarray(absolute_energies, dtype=excitation.dtype)
         electric_input = jnp.asarray(electric_transition_dipoles)

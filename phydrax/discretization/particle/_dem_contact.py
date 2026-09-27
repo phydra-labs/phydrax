@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -174,7 +175,7 @@ def _unilateral_restitution_from_ratio(ratio: Array, /) -> Array:
 def _unilateral_damping_ratio(restitution: Array, /) -> Array:
     target = jnp.clip(restitution, 1.0e-8, 1.0)
 
-    def iteration(_, bounds):
+    def iteration(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
         lower, upper = bounds
         midpoint = 0.5 * (lower + upper)
         value = _unilateral_restitution_from_ratio(midpoint)
@@ -192,7 +193,9 @@ def _unilateral_damping_ratio(restitution: Array, /) -> Array:
 
 
 @_unilateral_damping_ratio.defjvp
-def _unilateral_damping_ratio_jvp(primals, tangents):
+def _unilateral_damping_ratio_jvp(
+    primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
     (restitution,) = primals
     (restitution_tangent,) = tangents
     ratio = _unilateral_damping_ratio(restitution)
@@ -208,7 +211,9 @@ class LinearSpringDashpotNormalPlan(AbstractDEMNormalContactPlan):
     stiffness: Array
     normal_law_id: str = eqx.field(static=True)
 
-    def __init__(self, stiffness: ArrayLike, /, *, normal_law_id: str | None = None):
+    def __init__(
+        self, stiffness: ArrayLike, /, *, normal_law_id: str | None = None
+    ) -> None:
         values = np.asarray(stiffness)
         if values.ndim not in (0, 2):
             raise ValueError("Linear normal stiffness must be scalar or a square table.")
@@ -232,18 +237,18 @@ class LinearSpringDashpotNormalPlan(AbstractDEMNormalContactPlan):
 
     def evaluate(
         self,
-        batch,
-        previous_history,
-        left_inverse_mass,
-        right_inverse_mass,
-        left_radius,
-        right_radius,
-        left_material,
-        right_material,
-        materials,
-        step_size,
+        batch: DEMContactBatch,
+        previous_history: DEMContactHistory,
+        left_inverse_mass: Array,
+        right_inverse_mass: Array,
+        left_radius: Array,
+        right_radius: Array,
+        left_material: Array,
+        right_material: Array,
+        materials: Any,
+        step_size: Array,
         /,
-    ):
+    ) -> DEMNormalResponse:
         del left_radius, right_radius, previous_history
         stiffness = _pair_parameter(
             self.stiffness, left_material, right_material, materials.material_count
@@ -292,7 +297,7 @@ class LinearSpringDashpotNormalPlan(AbstractDEMNormalContactPlan):
 class HertzNormalContactPlan(AbstractDEMNormalContactPlan):
     normal_law_id: str = eqx.field(static=True)
 
-    def __init__(self, *, normal_law_id: str | None = None):
+    def __init__(self, *, normal_law_id: str | None = None) -> None:
         generated = canonical_fingerprint({"kind": "hertz-normal-tsuji-damping"})
         identifier = generated if normal_law_id is None else str(normal_law_id)
         if not identifier:
@@ -301,18 +306,18 @@ class HertzNormalContactPlan(AbstractDEMNormalContactPlan):
 
     def evaluate(
         self,
-        batch,
-        previous_history,
-        left_inverse_mass,
-        right_inverse_mass,
-        left_radius,
-        right_radius,
-        left_material,
-        right_material,
-        materials,
-        step_size,
+        batch: DEMContactBatch,
+        previous_history: DEMContactHistory,
+        left_inverse_mass: Array,
+        right_inverse_mass: Array,
+        left_radius: Array,
+        right_radius: Array,
+        left_material: Array,
+        right_material: Array,
+        materials: Any,
+        step_size: Array,
         /,
-    ):
+    ) -> DEMNormalResponse:
         effective_mass = _effective_mass(left_inverse_mass, right_inverse_mass)
         del previous_history
         del left_radius, right_radius
@@ -393,7 +398,7 @@ class ThorntonLinearPlasticNormalPlan(AbstractDEMNormalContactPlan):
         /,
         *,
         normal_law_id: str | None = None,
-    ):
+    ) -> None:
         arrays = tuple(
             np.asarray(value)
             for value in (
@@ -451,18 +456,18 @@ class ThorntonLinearPlasticNormalPlan(AbstractDEMNormalContactPlan):
 
     def evaluate(
         self,
-        batch,
-        previous_history,
-        left_inverse_mass,
-        right_inverse_mass,
-        left_radius,
-        right_radius,
-        left_material,
-        right_material,
-        materials,
-        step_size,
+        batch: DEMContactBatch,
+        previous_history: DEMContactHistory,
+        left_inverse_mass: Array,
+        right_inverse_mass: Array,
+        left_radius: Array,
+        right_radius: Array,
+        left_material: Array,
+        right_material: Array,
+        materials: Any,
+        step_size: Array,
         /,
-    ):
+    ) -> DEMNormalResponse:
         del left_radius, right_radius
         dtype = batch.overlap.dtype
         count = materials.material_count
@@ -607,7 +612,9 @@ class CundallStrackTangentialPlan(AbstractDEMTangentialContactPlan):
     stiffness: Array
     tangential_law_id: str = eqx.field(static=True)
 
-    def __init__(self, stiffness: ArrayLike, /, *, tangential_law_id: str | None = None):
+    def __init__(
+        self, stiffness: ArrayLike, /, *, tangential_law_id: str | None = None
+    ) -> None:
         values = np.asarray(stiffness)
         if values.ndim not in (0, 2):
             raise ValueError("Tangential stiffness must be scalar or a square table.")
@@ -631,19 +638,19 @@ class CundallStrackTangentialPlan(AbstractDEMTangentialContactPlan):
 
     def evaluate(
         self,
-        batch,
-        normal,
-        transported_displacement,
-        left_inverse_mass,
-        right_inverse_mass,
-        left_radius,
-        right_radius,
-        left_material,
-        right_material,
-        materials,
-        step_size,
+        batch: DEMContactBatch,
+        normal: DEMNormalResponse,
+        transported_displacement: Array,
+        left_inverse_mass: Array,
+        right_inverse_mass: Array,
+        left_radius: Array,
+        right_radius: Array,
+        left_material: Array,
+        right_material: Array,
+        materials: Any,
+        step_size: Array,
         /,
-    ):
+    ) -> DEMTangentialResponse:
         del left_radius, right_radius
         stiffness = _pair_parameter(
             self.stiffness, left_material, right_material, materials.material_count
@@ -668,7 +675,7 @@ class CundallStrackTangentialPlan(AbstractDEMTangentialContactPlan):
 class MindlinTangentialContactPlan(AbstractDEMTangentialContactPlan):
     tangential_law_id: str = eqx.field(static=True)
 
-    def __init__(self, *, tangential_law_id: str | None = None):
+    def __init__(self, *, tangential_law_id: str | None = None) -> None:
         generated = canonical_fingerprint({"kind": "mindlin-tangential-tsuji-damping"})
         identifier = generated if tangential_law_id is None else str(tangential_law_id)
         if not identifier:
@@ -677,19 +684,19 @@ class MindlinTangentialContactPlan(AbstractDEMTangentialContactPlan):
 
     def evaluate(
         self,
-        batch,
-        normal,
-        transported_displacement,
-        left_inverse_mass,
-        right_inverse_mass,
-        left_radius,
-        right_radius,
-        left_material,
-        right_material,
-        materials,
-        step_size,
+        batch: DEMContactBatch,
+        normal: DEMNormalResponse,
+        transported_displacement: Array,
+        left_inverse_mass: Array,
+        right_inverse_mass: Array,
+        left_radius: Array,
+        right_radius: Array,
+        left_material: Array,
+        right_material: Array,
+        materials: Any,
+        step_size: Array,
         /,
-    ):
+    ) -> DEMTangentialResponse:
         effective_mass = _effective_mass(left_inverse_mass, right_inverse_mass)
         del left_radius, right_radius
         effective_radius = batch.effective_radius
@@ -735,7 +742,7 @@ class AbstractDEMRotationalContactPlan(StrictModule, NonTrainableState):
 class ConstantRollingResistancePlan(AbstractDEMRotationalContactPlan):
     rotational_law_id: str = eqx.field(static=True)
 
-    def __init__(self, *, rotational_law_id: str | None = None):
+    def __init__(self, *, rotational_law_id: str | None = None) -> None:
         generated = canonical_fingerprint({"kind": "constant-rolling-resistance"})
         identifier = generated if rotational_law_id is None else str(rotational_law_id)
         if not identifier:
@@ -744,14 +751,14 @@ class ConstantRollingResistancePlan(AbstractDEMRotationalContactPlan):
 
     def evaluate(
         self,
-        batch,
-        normal,
-        history,
-        context,
-        materials,
-        ambient_dimension,
+        batch: DEMContactBatch,
+        normal: DEMNormalResponse,
+        history: DEMRotationalHistory,
+        context: DEMContactEvaluationContext,
+        materials: Any,
+        ambient_dimension: int,
         /,
-    ):
+    ) -> DEMRotationalResponse:
         coefficient = materials.pair_rolling_friction(
             context.left_material, context.right_material
         ).astype(batch.overlap.dtype)
@@ -828,7 +835,7 @@ class DEMContactModelPlan(StrictModule, NonTrainableState):
         tangential: AbstractDEMTangentialContactPlan | None = None,
         rotational: AbstractDEMRotationalContactPlan | None = None,
         contact_model_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(normal, AbstractDEMNormalContactPlan):
             raise TypeError("normal must be an AbstractDEMNormalContactPlan.")
         if cohesion is not None and not isinstance(cohesion, AbstractDEMCohesionPlan):
@@ -953,7 +960,7 @@ class PreparedDEMContactModel(StrictModule, NonTrainableState):
 
     def __init__(
         self, plan: DEMContactModelPlan, materials: Any, ambient_dimension: int, /
-    ):
+    ) -> None:
         if not isinstance(plan, DEMContactModelPlan):
             raise TypeError("plan must be a DEMContactModelPlan.")
         dimension = int(ambient_dimension)
@@ -1455,17 +1462,17 @@ def _zero_tangential_response(
 
 
 def _validate_batch_inputs(
-    batch,
-    history,
-    keys,
-    valid,
-    continued,
-    left_inverse_mass,
-    right_inverse_mass,
-    left_radius,
-    right_radius,
-    left_material,
-    right_material,
+    batch: object,
+    history: object,
+    keys: ArrayLike,
+    valid: ArrayLike,
+    continued: ArrayLike,
+    left_inverse_mass: ArrayLike,
+    right_inverse_mass: ArrayLike,
+    left_radius: ArrayLike,
+    right_radius: ArrayLike,
+    left_material: ArrayLike,
+    right_material: ArrayLike,
     /,
 ) -> None:
     if not isinstance(batch, DEMContactBatch):

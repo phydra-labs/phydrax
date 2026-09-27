@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -59,7 +60,7 @@ class LatticeBoltzmannProblem(StrictModule, NonTrainableState):
         acceleration_id: str | None = None,
         implicit_acceleration: VelocityDependentAccelerationPlan | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         if not name_:
             raise ValueError("Lattice-Boltzmann problem name must be non-empty.")

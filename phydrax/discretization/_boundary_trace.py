@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -38,7 +39,7 @@ class BoundarySurfaceTrace(StrictModule):
 
     def __init__(
         self, discretization: UnstructuredFiniteVolumeDiscretization, faces: ArrayLike
-    ):
+    ) -> None:
         if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
             raise TypeError("Boundary trace requires prepared unstructured FV geometry.")
         if discretization.cell_dimension != 3:
@@ -107,7 +108,9 @@ class BoundarySurfaceTrace(StrictModule):
             }
         )
 
-    def require_geometry(self, discretization: UnstructuredFiniteVolumeDiscretization):
+    def require_geometry(
+        self, discretization: UnstructuredFiniteVolumeDiscretization
+    ) -> None:
         if discretization.geometry_id != self.geometry_id:
             raise ValueError("Boundary trace is bound to different volume geometry.")
 

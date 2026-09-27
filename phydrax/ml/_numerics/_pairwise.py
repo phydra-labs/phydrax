@@ -9,7 +9,8 @@ from typing import Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 MetricName: TypeAlias = Literal["euclidean", "squared-euclidean", "manhattan", "cosine"]

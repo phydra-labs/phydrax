@@ -12,19 +12,19 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from tempfile import SpooledTemporaryFile
-from typing import Any, BinaryIO, TYPE_CHECKING
+from typing import Any, BinaryIO, cast, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, Key
 
 from ._array_archive import DEFAULT_ARRAY_ARCHIVE_LIMITS
 from ._document_resource import decode_json_resource
 from ._external_resource import read_bounded_resource, ResourceLimits
 from ._host_io import open_regular_beneath
 from ._publication import publish_bytes, publish_file
+from .typing import PRNGKey
 
 
 if TYPE_CHECKING:
@@ -44,7 +44,8 @@ def _publish_state(
     """Serialize and durably publish one content-addressed state file."""
 
     with SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b") as staged:
-        serialize(staged)
+        # A binary-mode spooled file provides the BinaryIO surface serializers use.
+        serialize(cast(BinaryIO, staged))
         staged.flush()
         staged.seek(0)
         digest = hashlib.sha256()
@@ -162,7 +163,7 @@ def _open_verified_state(
         ) from error
 
 
-def _serialize_root_key(key: Key[Array, ""], /) -> dict[str, Any]:
+def _serialize_root_key(key: PRNGKey, /) -> dict[str, Any]:
     """Return the canonical manifest representation of a typed JAX root key."""
 
     return {
@@ -175,7 +176,7 @@ def _deserialize_root_key(
     key_data: Any,
     key_impl: str,
     /,
-) -> Key[Array, ""]:
+) -> PRNGKey:
     """Restore one strictly validated scalar typed JAX root key."""
 
     words = {"threefry2x32": 2, "rbg": 4, "unsafe_rbg": 4}

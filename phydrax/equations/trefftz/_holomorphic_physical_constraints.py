@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from typing import Literal
 
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ._complex_potential_2d import PlaneIsotropicMaterial
 from ._holomorphic_constraints import (

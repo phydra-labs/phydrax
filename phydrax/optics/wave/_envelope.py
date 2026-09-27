@@ -6,16 +6,18 @@ from __future__ import annotations
 
 from enum import IntFlag
 from math import erf, prod, sqrt
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._fields import (
     _angular_frequency,
     _complex_field_values,
@@ -26,7 +28,7 @@ from ._nonlinear_response import AnalyticPulseField
 from ._pulse_time import PulseTimeSpace
 
 
-PulseEnvelopePolarization = Literal["scalar", "tangential"]
+PulseEnvelopePolarization: TypeAlias = Literal["scalar", "tangential"]
 
 
 class PulseEnvelopeField(StrictModule):
@@ -55,13 +57,12 @@ class PulseEnvelopeField(StrictModule):
         /,
         *,
         polarization: PulseEnvelopePolarization = "scalar",
-    ):
+    ) -> None:
         if not isinstance(plane_space, PlaneFieldSpace):
             raise TypeError("plane_space must be a PlaneFieldSpace.")
         if not isinstance(time_space, PulseTimeSpace):
             raise TypeError("time_space must be a PulseTimeSpace.")
-        if polarization not in ("scalar", "tangential"):
-            raise ValueError("polarization must be 'scalar' or 'tangential'.")
+        polarization = parse(polarization, PulseEnvelopePolarization, "polarization")
         expected = (
             plane_space.shape + time_space.shape
             if polarization == "scalar"
@@ -101,7 +102,7 @@ class PulseEnvelopeBridgePlan(StrictModule, NonTrainableState):
         *,
         carrier_grid_tolerance: float = 1.0e-10,
         spectral_support_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         if not isinstance(time_space, PulseTimeSpace):
             raise TypeError("time_space must be a PulseTimeSpace.")
         if time_space.topology != "periodic-cell":
@@ -215,7 +216,7 @@ def prepare_pulse_envelope_bridge(
             "kind": "prepared-pulse-envelope-bridge",
             "plan": plan.plan_id,
             "carrier_mode": carrier_mode,
-            "aligned_carrier": aligned.hex(),
+            "aligned_carrier": float(aligned).hex(),
             "envelope_supported_modes": np.flatnonzero(envelope_supported).tolist(),
         }
     )
@@ -406,13 +407,12 @@ class GaussianPulseEnvelopePlan(StrictModule, NonTrainableState):
         jones_vector: ArrayLike | None = None,
         boundary_tolerance: float = 1.0e-6,
         spectral_edge_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(plane_space, PlaneFieldSpace):
             raise TypeError("plane_space must be a PlaneFieldSpace.")
         if not isinstance(time_space, PulseTimeSpace):
             raise TypeError("time_space must be a PulseTimeSpace.")
-        if polarization not in ("scalar", "tangential"):
-            raise ValueError("polarization must be 'scalar' or 'tangential'.")
+        polarization = parse(polarization, PulseEnvelopePolarization, "polarization")
 
         def real_array(name: str, value: ArrayLike, shape: tuple[int, ...]) -> Array:
             supplied = jnp.asarray(value)
@@ -652,9 +652,9 @@ def sample_gaussian_pulse_envelope(
         1j * (plan.carrier_phase + 0.5 * plan.chirp * prepared.temporal_displacement**2)
     )
     scalar = magnitude * phase[None, None, :]
-    values = (
-        scalar if plan.polarization == "scalar" else scalar[..., None] * plan.jones_vector
-    )
+    # Tangential envelopes are exactly those constructed with a Jones vector.
+    jones_vector = plan.jones_vector
+    values = scalar if jones_vector is None else scalar[..., None] * jones_vector
     spatial_spectrum = jnp.fft.fftn(values, axes=(0, 1), norm="ortho")
     spectrum = jnp.fft.ifft(spatial_spectrum, axis=2, norm="ortho")
     edge_mask = prepared.spectral_edge_mask.reshape(

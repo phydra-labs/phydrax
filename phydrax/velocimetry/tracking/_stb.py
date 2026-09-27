@@ -8,7 +8,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -59,7 +60,7 @@ class STBPlan(StrictModule, NonTrainableState):
         promotion_steps: int = 2,
         minimum_active_amplitude: float = 0.0,
         observation_variance: float = 1.0e-4,
-    ):
+    ) -> None:
         if not isinstance(ipr, IPRPlan):
             raise TypeError("ipr must be IPRPlan.")
         if not isinstance(shake, ShakePlan):

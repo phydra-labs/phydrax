@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -30,7 +31,7 @@ class ContactStateTransferPlan(StrictModule, NonTrainableState):
         /,
         *,
         valid: ArrayLike | None = None,
-    ):
+    ) -> None:
         keys = np.asarray(new_route_keys)
         parents = np.asarray(parent_route_slots)
         weights = np.asarray(parent_weights, dtype=np.float64)
@@ -103,7 +104,7 @@ def transfer_contact_route_state(
         weight_sum[:, None], jnp.finfo(weights.dtype).eps
     )
 
-    def transfer(field):
+    def transfer(field: Array) -> Array:
         gathered = field[safe]
         local_weights = normalized
         while local_weights.ndim < gathered.ndim:

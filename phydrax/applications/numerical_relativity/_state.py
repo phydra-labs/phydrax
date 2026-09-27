@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._strict import StrictModule
 
@@ -49,7 +50,7 @@ class Z4cState(StrictModule):
     values: Array
     grid_id: str = eqx.field(static=True)
 
-    def __init__(self, values: ArrayLike, /, *, grid_id: str):
+    def __init__(self, values: ArrayLike, /, *, grid_id: str) -> None:
         value = jnp.asarray(values)
         identifier = str(grid_id)
         if value.ndim != 4 or value.shape[0] != Z4C_CHANNEL_COUNT:
@@ -63,7 +64,8 @@ class Z4cState(StrictModule):
 
     @property
     def grid_shape(self) -> tuple[int, int, int]:
-        return self.values.shape[1:]
+        _, nx, ny, nz = self.values.shape
+        return nx, ny, nz
 
     @property
     def chi(self) -> Array:
@@ -198,7 +200,7 @@ def flat_z4c_state(
     /,
     *,
     grid_id: str,
-    dtype=jnp.float32,
+    dtype: DTypeLike = jnp.float32,
 ) -> Z4cState:
     """Return exact Cartesian Minkowski data in the packed Z4c representation."""
 

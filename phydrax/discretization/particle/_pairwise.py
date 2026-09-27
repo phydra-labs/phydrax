@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -37,7 +38,7 @@ class ParticleBox(StrictModule, NonTrainableState):
         /,
         *,
         periodic_axes: Sequence[bool] | None = None,
-    ):
+    ) -> None:
         lower_host = np.asarray(lower)
         upper_host = np.asarray(upper)
         if lower_host.ndim != 1 or upper_host.shape != lower_host.shape:
@@ -114,7 +115,7 @@ class ParticlePairRelation(StrictModule, NonTrainableState):
         same_set: bool,
         unordered: bool,
         relation_schema_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(relation, EdgeRelation):
             raise TypeError("relation must be an EdgeRelation.")
         left_ids = jnp.asarray(left_particle_ids)
@@ -218,7 +219,7 @@ class ParticlePairGeometry(StrictModule):
         *,
         relation_schema_id: str,
         box_id: str | None,
-    ):
+    ) -> None:
         displacement_ = jnp.asarray(displacement)
         distance_ = jnp.asarray(distance)
         direction_ = jnp.asarray(direction)
@@ -268,7 +269,7 @@ def particle_pair_geometry(
     left = value[pairs.left_indices]
     right = value[pairs.right_indices]
     displacement = left - right
-    if cell_vectors is not None:
+    if cell_vectors is not None and isinstance(box, PeriodicCell):
         displacement = box.minimum_image_with_vectors(displacement, cell_vectors)
     elif box is not None:
         displacement = box.minimum_image(displacement)

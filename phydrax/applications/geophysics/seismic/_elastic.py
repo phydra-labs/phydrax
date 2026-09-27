@@ -4,12 +4,11 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._numerics._checkpointed_scan import (
@@ -62,7 +61,7 @@ class ElasticAcquisition(StrictModule, NonTrainableState):
         source_positions_m: ArrayLike,
         receiver_positions_m: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.sources = PreparedAcousticSampling(grid, source_positions_m)
         self.receivers = PreparedAcousticSampling(grid, receiver_positions_m)
         self.acquisition_id = canonical_fingerprint(
@@ -99,7 +98,7 @@ class PeriodicIsotropicElasticWavePlan(StrictModule, NonTrainableState):
         /,
         *,
         cfl_limit: float = 0.9,
-    ):
+    ) -> None:
         if not isinstance(grid, AcousticGrid):
             raise TypeError("Elastic waves require AcousticGrid.")
         dt, maximum = float(time_step_s), float(maximum_p_wavespeed_m_s)
@@ -262,7 +261,9 @@ class PeriodicIsotropicElasticWavePlan(StrictModule, NonTrainableState):
         )
         initial = self.initial_state()
 
-        def body(state: ElasticWaveState, sources) -> tuple[ElasticWaveState, Any]:
+        def body(
+            state: ElasticWaveState, sources: tuple[Array, Array]
+        ) -> tuple[ElasticWaveState, tuple[Array, Array]]:
             force, moment = sources
             force_density = (
                 jnp.stack(

@@ -3,21 +3,23 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
 import time
+from typing import Any
 
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def timed(function):
+def timed(function: Any) -> Any:
     started = time.perf_counter()
     value = function()
     return value, time.perf_counter() - started
 
 
-def main():
+def main() -> None:
     topology = phx.geometry.simplicial.TriangleTopology(
         jnp.asarray([[0, 1, 2]], dtype=jnp.int32),
         num_vertices=3,

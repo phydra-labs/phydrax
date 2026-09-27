@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -42,7 +43,7 @@ class PeriodicSheetHallPlan(StrictModule, NonTrainableState):
         charge_coulomb: float,
         chemical_potential_joule: float,
         temperature_kelvin: float,
-    ):
+    ) -> None:
         energies = np.asarray(energies_joule, dtype=np.float64)
         curvature = np.asarray(chern_density, dtype=np.float64)
         weights = np.asarray(point_weights, dtype=np.float64)

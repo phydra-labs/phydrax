@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -19,7 +20,7 @@ def main() -> None:
     k = jnp.linspace(1.0, 30.0, 96)
     first_growth = growth.evaluate(0.1)[0]
 
-    def objective(amplitude):
+    def objective(amplitude: Any) -> Any:
         base = amplitude / (1.0 + (k / 8.0) ** 2)
         power = phx.applications.cosmology.MatterPowerTable(
             jnp.asarray([0.1, 1.0]),

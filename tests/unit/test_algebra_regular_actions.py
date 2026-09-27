@@ -4,7 +4,7 @@ import pytest
 import phydrax as phx
 
 
-def test_left_and_right_quaternion_actions_are_distinct_native_operators():
+def test_left_and_right_quaternion_actions_are_distinct_native_operators() -> None:
     algebra = phx.metrix.algebra.QuaternionAlgebraSpec()
     product = algebra.prepare_product(backend="sparse")
     space = phx.linalg.AlgebraArraySpace((), algebra, dtype=jnp.float64)
@@ -22,7 +22,7 @@ def test_left_and_right_quaternion_actions_are_distinct_native_operators():
     assert left.operator_id != right.operator_id
 
 
-def test_octonion_action_composition_does_not_collapse_to_one_multiplier():
+def test_octonion_action_composition_does_not_collapse_to_one_multiplier() -> None:
     algebra = phx.metrix.algebra.OctonionAlgebraSpec()
     product = algebra.prepare_product(backend="sparse")
     space = phx.linalg.AlgebraArraySpace((), algebra, dtype=jnp.float64)
@@ -49,7 +49,7 @@ def test_octonion_action_composition_does_not_collapse_to_one_multiplier():
     )
 
 
-def test_regular_action_materialization_and_transpose_match_pairing():
+def test_regular_action_materialization_and_transpose_match_pairing() -> None:
     algebra = phx.metrix.algebra.OctonionAlgebraSpec()
     product = algebra.prepare_product(backend="sparse")
     space = phx.linalg.AlgebraArraySpace((), algebra, dtype=jnp.float64)
@@ -69,7 +69,7 @@ def test_regular_action_materialization_and_transpose_match_pairing():
     )
 
 
-def test_regular_actions_support_nonfinal_axes_and_base_shaped_multipliers():
+def test_regular_actions_support_nonfinal_axes_and_base_shaped_multipliers() -> None:
     algebra = phx.metrix.algebra.QuaternionAlgebraSpec()
     layout = phx.metrix.algebra.AlgebraElementLayout(algebra, algebra_axis=0)
     product = algebra.prepare_product(layout=layout, backend="sparse")
@@ -83,7 +83,7 @@ def test_regular_actions_support_nonfinal_axes_and_base_shaped_multipliers():
     assert jnp.array_equal(action.mv(value), product(multiplier, value))
 
 
-def test_regular_action_rejects_ambiguous_layout_dtype_and_side():
+def test_regular_action_rejects_ambiguous_layout_dtype_and_side() -> None:
     quaternion = phx.metrix.algebra.QuaternionAlgebraSpec()
     octonion = phx.metrix.algebra.OctonionAlgebraSpec()
     product = quaternion.prepare_product(backend="sparse")
@@ -92,7 +92,11 @@ def test_regular_action_rejects_ambiguous_layout_dtype_and_side():
 
     with pytest.raises(ValueError, match="side"):
         phx.linalg.algebra_regular_action_operator(
-            product, multiplier, space, side="center"
+            product,
+            multiplier,
+            space,
+            # ty: ignore[invalid-argument-type]
+            side="center",
         )
     with pytest.raises(TypeError, match="dtype"):
         phx.linalg.algebra_regular_action_operator(

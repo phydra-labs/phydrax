@@ -4,27 +4,24 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import assert_never, Literal, TypeAlias
 
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...typing import parse, PRNGKey
 from ._linear import Linear
 
 
-AttentionKernel = Literal["softmax", "kernel_linear", "galerkin", "identity"]
-AttentionExecution = Literal["auto", "dense", "xla", "cudnn", "blockwise"]
-
-
-_ATTENTION_KERNELS = ("softmax", "kernel_linear", "galerkin", "identity")
-_ATTENTION_EXECUTIONS = ("auto", "dense", "xla", "cudnn", "blockwise")
+AttentionKernel: TypeAlias = Literal["softmax", "kernel_linear", "galerkin", "identity"]
+AttentionExecution: TypeAlias = Literal["auto", "dense", "xla", "cudnn", "blockwise"]
 
 
 def _attention_scale(query: Array, /) -> float:
@@ -236,27 +233,19 @@ class MeasureAwareAttention(StrictModule, ParameterOwner):
         execution: AttentionExecution = "auto",
         block_size: int = 256,
         accumulation_dtype: str = "input",
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.num_heads = int(num_heads)
         self.head_dim = int(head_dim)
         self.out_channels = int(out_channels)
-        self.kernel = kernel
-        self.execution = execution
         self.block_size = int(block_size)
         self.accumulation_dtype = str(accumulation_dtype)
         source_channels = int(source_channels)
         query_channels = int(query_channels)
         if source_channels <= 0 or query_channels <= 0:
             raise ValueError("source_channels and query_channels must be positive.")
-        if self.kernel not in _ATTENTION_KERNELS:
-            raise ValueError(
-                f"kernel must be one of {_ATTENTION_KERNELS}; got {self.kernel!r}."
-            )
-        if self.execution not in _ATTENTION_EXECUTIONS:
-            raise ValueError(
-                f"execution must be one of {_ATTENTION_EXECUTIONS}; got {self.execution!r}."
-            )
+        self.kernel = parse(kernel, AttentionKernel, "kernel")
+        self.execution = parse(execution, AttentionExecution, "execution")
         if self.num_heads <= 0 or self.head_dim <= 0 or self.out_channels <= 0:
             raise ValueError("num_heads, head_dim, and out_channels must be positive.")
         if self.block_size <= 0:
@@ -351,61 +340,68 @@ class MeasureAwareAttention(StrictModule, ParameterOwner):
             jnp.any(source_support, axis=-1)[:, None],
             q.shape[:2],
         )
-        if self.kernel == "identity":
-            if q.shape[1] != k.shape[1]:
-                raise ValueError("Identity attention requires equal source/query counts.")
-            attended = jnp.where(
-                source_support[:, :, None, None],
-                v_acc,
-                0.0,
-            )
-            output_mask = source_support
-        elif self.kernel == "kernel_linear":
-            attended = _linear_attention(
-                q_acc,
-                k_acc,
-                v_acc,
-                measure,
-                normalize=True,
-            )
-        elif self.kernel == "galerkin":
-            attended = _linear_attention(
-                q_acc,
-                k_acc,
-                v_acc,
-                measure,
-                normalize=False,
-            )
-        elif self.execution == "blockwise":
-            attended = _blockwise_softmax_attention(
-                q_acc,
-                k_acc,
-                v_acc,
-                measure,
-                block_size=self.block_size,
-            )
-        elif self.execution == "cudnn":
-            attended = _fused_softmax_attention(
-                q_acc,
-                k_acc,
-                v_acc,
-                measure,
-                implementation="cudnn",
-            )
-        elif self.execution == "xla" or (
-            self.execution == "auto" and q_acc.dtype == jnp.float32
-        ):
-            attended = _fused_softmax_attention(
-                q_acc,
-                k_acc,
-                v_acc,
-                measure,
-                implementation="xla",
-            )
-        elif self.execution in ("auto", "dense"):
-            attended = _dense_softmax_attention(q_acc, k_acc, v_acc, measure)
-        else:
-            raise ValueError(f"Unknown attention execution {self.execution!r}.")
+        match self.kernel:
+            case "identity":
+                if q.shape[1] != k.shape[1]:
+                    raise ValueError(
+                        "Identity attention requires equal source/query counts."
+                    )
+                attended = jnp.where(
+                    source_support[:, :, None, None],
+                    v_acc,
+                    0.0,
+                )
+                output_mask = source_support
+            case "kernel_linear":
+                attended = _linear_attention(
+                    q_acc,
+                    k_acc,
+                    v_acc,
+                    measure,
+                    normalize=True,
+                )
+            case "galerkin":
+                attended = _linear_attention(
+                    q_acc,
+                    k_acc,
+                    v_acc,
+                    measure,
+                    normalize=False,
+                )
+            case "softmax":
+                match self.execution:
+                    case "blockwise":
+                        attended = _blockwise_softmax_attention(
+                            q_acc,
+                            k_acc,
+                            v_acc,
+                            measure,
+                            block_size=self.block_size,
+                        )
+                    case "cudnn":
+                        attended = _fused_softmax_attention(
+                            q_acc,
+                            k_acc,
+                            v_acc,
+                            measure,
+                            implementation="cudnn",
+                        )
+                    case "xla" | "auto" if (
+                        self.execution == "xla" or q_acc.dtype == jnp.float32
+                    ):
+                        attended = _fused_softmax_attention(
+                            q_acc,
+                            k_acc,
+                            v_acc,
+                            measure,
+                            implementation="xla",
+                        )
+                    case "auto" | "dense":
+                        attended = _dense_softmax_attention(q_acc, k_acc, v_acc, measure)
+                    case _:
+                        assert_never(self.execution)
+            case _:
+                assert_never(self.kernel)
         if query_mask is not None:
             mask = jnp.broadcast_to(
                 jnp.asarray(query_mask, dtype=jnp.bool_),

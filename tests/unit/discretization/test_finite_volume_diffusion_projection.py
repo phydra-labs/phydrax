@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,14 +12,14 @@ import numpy as np
 import phydrax as phx
 
 
-def _grid(count=24, *, periodic=True):
+def _grid(count: Any = 24, *, periodic: Any = True) -> Any:
     return phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(count, periodic=periodic),),
         axis_names=("x",),
     ).prepare(jnp.asarray([[0.0], [1.0]]))
 
 
-def test_harmonic_face_interpolation_resolves_discontinuous_material_interface():
+def test_harmonic_face_interpolation_resolves_discontinuous_material_interface() -> None:
     grid = _grid(4, periodic=False)
     values = jnp.asarray([1.0, 1.0, 9.0, 9.0])
     interpolation = phx.discretization.FaceCoefficientPlan(grid, kind="harmonic")
@@ -26,7 +29,7 @@ def test_harmonic_face_interpolation_resolves_discontinuous_material_interface()
     np.testing.assert_allclose(faces[jnp.asarray([0, -1])], [1.0, 9.0])
 
 
-def test_compressible_viscous_flux_vanishes_for_constant_primitive_state():
+def test_compressible_viscous_flux_vanishes_for_constant_primitive_state() -> None:
     grid = _grid(12, periodic=True)
     system = phx.equations.CompressibleNavierStokesSystem(
         phx.equations.ConstantTransport(0.1, 0.2)
@@ -43,14 +46,16 @@ def test_compressible_viscous_flux_vanishes_for_constant_primitive_state():
         phx.discretization.FiniteVolumeBoundarySet.periodic(("x",)),
     ).prepare()
 
+    # ty: ignore[invalid-argument-type]
     fluxes = viscous.face_fluxes(system, 0.0, state, discretization, halo)
+    # ty: ignore[invalid-argument-type]
     residual = viscous.residual(system, 0.0, state, discretization, halo)
 
     np.testing.assert_allclose(fluxes[0], 0.0, atol=1e-13)
     np.testing.assert_allclose(residual, 0.0, atol=1e-13)
 
 
-def test_compiled_finite_volume_linearization_matches_direct_jvp():
+def test_compiled_finite_volume_linearization_matches_direct_jvp() -> None:
     grid = _grid(20, periodic=True)
     discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
     system = phx.equations.ScalarConservationSystem(
@@ -73,7 +78,9 @@ def test_compiled_finite_volume_linearization_matches_direct_jvp():
     x = grid.structured_axes[0].interval_centers
     state = jnp.sin(2.0 * jnp.pi * x)[..., None]
     tangent = jnp.cos(4.0 * jnp.pi * x)[..., None]
+    # ty: ignore[invalid-argument-type, invalid-assignment]
     _, linearized, _ = compiled.linearize(0.0, state)
+    # ty: ignore[invalid-argument-type]
     _, expected = jax.jvp(lambda value: compiled(0.0, value), (state,), (tangent,))
 
     np.testing.assert_allclose(linearized(tangent), expected, rtol=1e-12, atol=1e-12)

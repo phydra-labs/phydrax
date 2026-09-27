@@ -12,7 +12,8 @@ from math import factorial
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -84,7 +85,7 @@ class GaussianShellPlan(StrictModule, NonTrainableState):
         primitive_mask: ArrayLike | None = None,
         representation: GaussianShellRepresentation = GaussianShellRepresentation.CARTESIAN,
         role: str = "orbital",
-    ):
+    ) -> None:
         center = int(center_particle_id)
         angular = int(angular_momentum)
         exponent = np.asarray(exponents, dtype=np.float64).reshape((-1,))

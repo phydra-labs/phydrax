@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..discretization import (
@@ -31,11 +32,12 @@ from ..linalg import (
     FunctionLinearOperator,
     OperatorProperties,
 )
+from ..typing import parse
 from ._ir import PDEExpression, PDEField, PDEProblemIR
 from ._validate import infer_expression_type, validate_pde_ir
 
 
-SemidiscreteCompilationMethod = Literal["auto", "direct", "semilinear"]
+SemidiscreteCompilationMethod: TypeAlias = Literal["auto", "direct", "semilinear"]
 ResolvedSemidiscreteMethod = Literal[
     "direct",
     "semilinear-matrix-free",
@@ -115,7 +117,7 @@ class DiscreteStateLayout(StrictModule):
         fields: Sequence[PDEField],
         discretization: AbstractStrongFormDiscretization,
         /,
-    ):
+    ) -> None:
         from ..discretization.spectral import TensorSpectralDiscretization
 
         field_values = tuple(fields)
@@ -287,7 +289,7 @@ class BoundaryLift(StrictModule):
         *,
         lift_id: str,
         time_derivative: ArrayLike | Any | None = None,
-    ):
+    ) -> None:
         name = str(field_name)
         identifier = str(lift_id)
         if not name:
@@ -345,7 +347,7 @@ class _SemidiscreteEvaluator(StrictModule):
         time_coordinate: str,
         region_axes: Sequence[tuple[str, tuple[int, ...]]],
         /,
-    ):
+    ) -> None:
         self.layout = layout
         self.discretization = discretization
         self.boundary_lifts = tuple(boundary_lifts)
@@ -1393,7 +1395,7 @@ class CompiledDiscreteDynamics(StrictModule):
         compilation_id: str,
         source_hash: str,
         resolved_method: ResolvedSemidiscreteMethod,
-    ):
+    ) -> None:
         self.drift = drift
         self.layout = layout
         self.spatial_discretization = spatial_discretization
@@ -1443,7 +1445,7 @@ class SemidiscreteDAEStructuralReport(StrictModule):
         variable_roles: Sequence[DAERole],
         equation_roles: Sequence[DAERole],
         temporal_derivative_counts: Sequence[int],
-    ):
+    ) -> None:
         fields = tuple(str(name) for name in field_names)
         equations = tuple(str(name) for name in equation_names)
         targets = tuple(
@@ -1515,7 +1517,7 @@ class CompiledDiscreteResidual(StrictModule):
         boundary_lifts: Sequence[BoundaryLift],
         compilation_id: str,
         source_hash: str,
-    ):
+    ) -> None:
         self.residual = residual
         self.system = system
         self.layout = layout
@@ -2492,8 +2494,7 @@ def compile_semidiscrete_pde(
     from ..discretization.spectral import SphericalSpectralDiscretization
     from ..solver._semilinear_drift import SemilinearDrift
 
-    if method not in ("auto", "direct", "semilinear"):
-        raise ValueError("method must be 'auto', 'direct', or 'semilinear'.")
+    method = parse(method, SemidiscreteCompilationMethod, "method")
     if (
         isinstance(
             discretization,

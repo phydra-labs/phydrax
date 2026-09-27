@@ -11,7 +11,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from scipy.special import roots_genlaguerre
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -32,7 +33,7 @@ class SubbandCoulombFormFactorPlan(StrictModule, NonTrainableState):
         /,
         *,
         normalization_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         positions = np.asarray(positions_meter, dtype=np.float64)
         density = np.asarray(probability_density_per_meter, dtype=np.float64)
         tolerance = float(normalization_tolerance)
@@ -160,13 +161,15 @@ class PlanarCoulombPseudopotentialResult(StrictModule, NonTrainableState):
     result_id: str = eqx.field(static=True)
 
 
-def _planar_channels(level: int, maximum_relative: int, order: int, /):
+def _planar_channels(
+    level: int, maximum_relative: int, order: int, /
+) -> tuple[tuple[int, float], ...]:
     nodes, weights = roots_genlaguerre(order, -0.5)
     level_coefficients = np.zeros((level + 1,), dtype=np.float64)
     level_coefficients[-1] = 1.0
     level_form = np.polynomial.laguerre.lagval(0.5 * nodes, level_coefficients)
     base = 0.5 * weights * level_form**2
-    channels = []
+    channels: list[tuple[int, float]] = []
     for relative in range(maximum_relative + 1):
         coefficients = np.zeros((relative + 1,), dtype=np.float64)
         coefficients[-1] = 1.0

@@ -1,5 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -17,7 +20,7 @@ from phydrax.applications.geophysics._vertical import HybridPressureCoordinate
 from phydrax.discretization.spectral._spherical import SphericalSpectralPlan
 
 
-def _reconstruct_water_phases(model, water):
+def _reconstruct_water_phases(model: Any, water: Any) -> Any:
     coefficients = jnp.stack(water, axis=-1)
     flattened = coefficients.reshape(coefficients.shape[:2] + (-1,))
     return model.reconstruct(flattened).reshape(
@@ -26,23 +29,23 @@ def _reconstruct_water_phases(model, water):
 
 
 @pytest.fixture(scope="module")
-def space():
+def space() -> Any:
     return SphericalSpectralPlan(4, sampling="gl").prepare(radius=6.371e6)
 
 
-def _model(space, **kwargs):
+def _model(space: Any, **kwargs: Any) -> Any:
     vertical = HybridPressureCoordinate([0.1, 0.05, 0.0], [0.0, 0.5, 1.0])
     return GlobalPrimitiveEquationPlan(space, vertical, dt=20.0, **kwargs).prepare()
 
 
-def test_global_atmosphere_integer_controls_reject_boolean_aliases(space):
+def test_global_atmosphere_integer_controls_reject_boolean_aliases(space: Any) -> None:
     with pytest.raises(TypeError, match="filter_order"):
         _model(space, filter_order=True)
     with pytest.raises(TypeError, match="cadence"):
         GlobalAtmosphereProcesses(cadence=True)
 
 
-def test_isothermal_rest_and_closed_column_continuity(space):
+def test_isothermal_rest_and_closed_column_continuity(space: Any) -> None:
     model = _model(space)
     initial = model.initialize()
     view = model.view(initial.state)
@@ -60,7 +63,9 @@ def test_isothermal_rest_and_closed_column_continuity(space):
     np.testing.assert_allclose(final.surface_pressure, view.surface_pressure, atol=1e-7)
 
 
-def test_fast_gravity_operator_is_actual_primitive_equation_linearization(space):
+def test_fast_gravity_operator_is_actual_primitive_equation_linearization(
+    space: Any,
+) -> None:
     model = _model(space, rotation_rate=0.0)
     initial = model.initialize()
     theta = model.work_space.transform.theta[:, None, None]
@@ -99,7 +104,9 @@ def test_fast_gravity_operator_is_actual_primitive_equation_linearization(space)
     assert float(jnp.max(jnp.abs(model.fast_tendency(lower).divergence[..., 0]))) > 1e-12
 
 
-def test_nonuniform_flow_conserves_pressure_mass_and_diagnoses_vertical_flux(space):
+def test_nonuniform_flow_conserves_pressure_mass_and_diagnoses_vertical_flux(
+    space: Any,
+) -> None:
     model = _model(space, rotation_rate=0.0)
     theta = model.work_space.transform.theta[:, None, None]
     phi = model.work_space.transform.phi[None, :, None]
@@ -130,7 +137,7 @@ def test_nonuniform_flow_conserves_pressure_mass_and_diagnoses_vertical_flux(spa
     np.testing.assert_allclose(after, before, rtol=2e-13)
 
 
-def test_joint_water_projection_preserves_total_water_and_energy(space):
+def test_joint_water_projection_preserves_total_water_and_energy(space: Any) -> None:
     thermodynamics = MoistThermodynamicPlan()
     processes = GlobalAtmosphereProcesses(thermodynamics=thermodynamics)
     model = _model(
@@ -238,7 +245,7 @@ def test_joint_water_projection_preserves_total_water_and_energy(space):
     assert float(jnp.abs(energy_residual) / area) < 1e-5
 
 
-def test_joint_water_projection_rejects_excessive_phase_repartition(space):
+def test_joint_water_projection_rejects_excessive_phase_repartition(space: Any) -> None:
     thermodynamics = MoistThermodynamicPlan()
     processes = GlobalAtmosphereProcesses(thermodynamics=thermodynamics)
     model = _model(
@@ -270,7 +277,7 @@ def test_joint_water_projection_rejects_excessive_phase_repartition(space):
     assert not bool(successful)
 
 
-def test_failed_step_preserves_physical_state_time_and_forcing(space):
+def test_failed_step_preserves_physical_state_time_and_forcing(space: Any) -> None:
     model = _model(space)
     initial = model.initialize()
     invalid = eqx.tree_at(
@@ -289,7 +296,9 @@ def test_failed_step_preserves_physical_state_time_and_forcing(space):
     np.testing.assert_array_equal(result.continuation.forcing_age, invalid.forcing_age)
 
 
-def test_moist_precipitation_budget_and_cadenced_restart(space, tmp_path):
+def test_moist_precipitation_budget_and_cadenced_restart(
+    space: Any, tmp_path: Any
+) -> None:
     processes = GlobalAtmosphereProcesses(
         thermodynamics=MoistThermodynamicPlan(),
         cadence=3,
@@ -388,13 +397,13 @@ def test_moist_precipitation_budget_and_cadenced_restart(space, tmp_path):
     )
 
 
-def test_unresolved_terrain_fails_rest_admission(space):
+def test_unresolved_terrain_fails_rest_admission(space: Any) -> None:
     terrain = 8e4 * jnp.cos(space.transform.theta)[:, None]
     with pytest.raises(ValueError, match="rest gate"):
         _model(space, terrain=terrain, terrain_rest_tolerance=1e-12)
 
 
-def test_monopole_rest_has_no_diffusive_mode():
+def test_monopole_rest_has_no_diffusive_mode() -> None:
     space = SphericalSpectralPlan(1, sampling="gl").prepare(radius=6.371e6)
     model = _model(space, filter_rate=1.0)
     initial = model.initialize()

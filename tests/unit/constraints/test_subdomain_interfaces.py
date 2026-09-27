@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.random as jr
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _family():
+def _family() -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     cover = phx.domain.cartesian_subdomain_cover(domain, "x", 2)
     left, right = cover.patches
@@ -24,14 +27,14 @@ def _family():
     return cover, family
 
 
-def _interface_batch(pairing):
+def _interface_batch(pairing: Any) -> Any:
     return pairing.component.sample(
         phx.domain.PointSampling(6),
         key=jr.key(0),
     )
 
 
-def test_value_and_flux_jumps_use_one_paired_realization_and_orientation():
+def test_value_and_flux_jumps_use_one_paired_realization_and_orientation() -> None:
     cover, family = _family()
     pairing = cover.pairings[0]
     left_name = family.field_name(pairing.left_patch_id)
@@ -59,7 +62,7 @@ def test_value_and_flux_jumps_use_one_paired_realization_and_orientation():
     np.testing.assert_allclose(pairing.normal(batch).data, 1.0)
 
 
-def test_general_transmission_receives_local_fields_and_returns_pair_support():
+def test_general_transmission_receives_local_fields_and_returns_pair_support() -> None:
     cover, family = _family()
     pairing = cover.pairings[0]
     left_name = family.field_name(pairing.left_patch_id)
@@ -79,7 +82,7 @@ def test_general_transmission_receives_local_fields_and_returns_pair_support():
     np.testing.assert_allclose(residual(_interface_batch(pairing)).data, 0.0)
 
 
-def test_overlap_consistency_requires_volume_pairing():
+def test_overlap_consistency_requires_volume_pairing() -> None:
     cover, family = _family()
     pairing = cover.pairings[0]
 
@@ -91,7 +94,7 @@ def test_overlap_consistency_requires_volume_pairing():
         )
 
 
-def test_flux_jump_rejects_pairing_without_normal():
+def test_flux_jump_rejects_pairing_without_normal() -> None:
     cover, family = _family()
     original = cover.pairings[0]
     pairing = phx.domain.PairedSupport(

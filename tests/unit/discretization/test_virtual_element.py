@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -11,10 +14,12 @@ import pytest
 import phydrax as phx
 
 
-def _single_polygon(points, degree=1):
+def _single_polygon(points: Any, degree: Any = 1) -> Any:
     coordinates = jnp.asarray(points, dtype="float64")
     mesh = phx.discretization.CellMesh.from_polygons(
-        coordinates, (tuple(range(len(points))),)
+        coordinates,
+        # ty: ignore[invalid-argument-type]
+        (tuple(range(len(points))),),
     )
     field = phx.discretization.VirtualElementFieldSpec(
         "u", phx.discretization.conforming_h1_virtual_element(degree)
@@ -22,7 +27,7 @@ def _single_polygon(points, degree=1):
     return phx.discretization.VirtualElementPlan(mesh, field).prepare()
 
 
-def _two_cell_space(factory, degree=1):
+def _two_cell_space(factory: Any, degree: Any = 1) -> Any:
     coordinates = jnp.asarray(
         (
             (0.0, 0.0),
@@ -36,13 +41,14 @@ def _two_cell_space(factory, degree=1):
     )
     mesh = phx.discretization.CellMesh.from_polygons(
         coordinates,
+        # ty: ignore[invalid-argument-type]
         ((0, 1, 4, 3), (1, 2, 5, 4)),
     )
     field = phx.discretization.VirtualElementFieldSpec("v", factory(degree))
     return phx.discretization.VirtualElementPlan(mesh, field).prepare()
 
 
-def _affine_vector_coefficients(space, components):
+def _affine_vector_coefficients(space: Any, components: Any) -> Any:
     projection = space.default_runtime.projections[0]
     geometry = space.default_runtime.geometries[0]
     exponents = [tuple(row) for row in projection.basis.exponents]
@@ -70,7 +76,7 @@ def _affine_vector_coefficients(space, components):
     return coefficients
 
 
-def _global_state_from_local(space, local):
+def _global_state_from_local(space: Any, local: Any) -> Any:
     routes = np.asarray(space.dof_map.cell_dofs[0])
     orientations = np.asarray(space.dof_map.orientations[0])
     oriented = np.asarray(local) * orientations
@@ -86,25 +92,31 @@ def _global_state_from_local(space, local):
     return jnp.asarray(state)
 
 
-def test_polygon_mesh_canonicalizes_orientation_and_arbitrary_arity():
+def test_polygon_mesh_canonicalizes_orientation_and_arbitrary_arity() -> None:
     coordinates = jnp.asarray(
         ((0.0, 0.0), (0.0, 1.0), (0.5, 1.4), (1.0, 1.0), (1.0, 0.0))
     )
     mesh = phx.discretization.CellMesh.from_polygons(
-        coordinates, ((0, 1, 2, 3, 4),), cell_global_ids=jnp.asarray((17,))
+        coordinates,
+        # ty: ignore[invalid-argument-type]
+        ((0, 1, 2, 3, 4),),
+        cell_global_ids=jnp.asarray((17,)),
     )
     connectivity = mesh.connectivity
 
     assert mesh.blocks[0].cell_kind == "polygon"
     assert mesh.blocks[0].arity == 5
+    # ty: ignore[unresolved-attribute]
     assert connectivity.cell_vertices.shape == (1, 5)
     assert connectivity.cell_count == 1
+    # ty: ignore[unresolved-attribute]
     assert connectivity.polygon_count == 1
     assert int(mesh.topology.entity_sets[2].entity_ids[0]) == 17
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(connectivity.boundary_edges)
 
 
-def test_polygon_mesh_rejects_self_intersection_during_vem_preparation():
+def test_polygon_mesh_rejects_self_intersection_during_vem_preparation() -> None:
     coordinates = jnp.asarray(((0.0, 0.0), (1.0, 1.0), (0.0, 1.0), (1.0, 0.0)))
     mesh = phx.discretization.CellMesh(
         coordinates,
@@ -121,8 +133,9 @@ def test_polygon_mesh_rejects_self_intersection_during_vem_preparation():
         phx.discretization.VirtualElementPlan(mesh, field).prepare()
 
 
-def test_virtual_element_projector_budget_is_checked_during_planning():
+def test_virtual_element_projector_budget_is_checked_during_planning() -> None:
     coordinates = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
+    # ty: ignore[invalid-argument-type]
     mesh = phx.discretization.CellMesh.from_polygons(coordinates, ((0, 1, 2, 3),))
     field = phx.discretization.VirtualElementFieldSpec(
         "u", phx.discretization.conforming_hdiv_virtual_element(1)
@@ -132,12 +145,13 @@ def test_virtual_element_projector_budget_is_checked_during_planning():
         phx.discretization.VirtualElementPlan(mesh, field, resource_budget=budget)
 
 
-def test_virtual_element_dof_layout_and_edge_orientation():
+def test_virtual_element_dof_layout_and_edge_orientation() -> None:
     coordinates = jnp.asarray(
         ((0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (0.0, 1.0), (1.0, 1.0), (2.0, 1.0))
     )
     mesh = phx.discretization.CellMesh.from_polygons(
         coordinates,
+        # ty: ignore[invalid-argument-type]
         ((0, 1, 4, 3), (1, 2, 5, 4)),
     )
     field = phx.discretization.VirtualElementFieldSpec(
@@ -145,6 +159,7 @@ def test_virtual_element_dof_layout_and_edge_orientation():
     )
     space = phx.discretization.VirtualElementPlan(mesh, field).prepare()
     dof_map = space.dof_map
+    # ty: ignore[unresolved-attribute]
     expected = coordinates.shape[0] + 2 * mesh.connectivity.edges.shape[0] + 3 * 2
 
     assert dof_map.global_dof_count == expected
@@ -155,7 +170,7 @@ def test_virtual_element_dof_layout_and_edge_orientation():
     assert space.field_space.conformity == "H1"
 
 
-def test_h1_and_enhanced_l2_projectors_reproduce_polynomials():
+def test_h1_and_enhanced_l2_projectors_reproduce_polynomials() -> None:
     points = ((0.0, 0.0), (1.0, 0.0), (1.2, 0.8), (0.5, 1.3), (-0.2, 0.8))
     for degree in (1, 2, 3):
         space = _single_polygon(points, degree)
@@ -169,7 +184,7 @@ def test_h1_and_enhanced_l2_projectors_reproduce_polynomials():
         assert jnp.all(evidence.factorization_valid)
 
 
-def test_stabilization_annihilates_polynomial_image():
+def test_stabilization_annihilates_polynomial_image() -> None:
     space = _single_polygon(
         ((0.0, 0.0), (1.0, 0.0), (1.1, 0.8), (0.4, 1.2), (-0.1, 0.7)),
         2,
@@ -191,13 +206,13 @@ def test_stabilization_annihilates_polynomial_image():
     assert jnp.min(stabilized.evidence.minimum_kernel_eigenvalue) > -1.0e-10
 
 
-def test_polygon_geometry_refresh_has_finite_coordinate_gradient():
+def test_polygon_geometry_refresh_has_finite_coordinate_gradient() -> None:
     space = _single_polygon(
         ((0.0, 0.0), (1.0, 0.0), (1.2, 0.7), (0.5, 1.2), (-0.1, 0.7)),
         1,
     )
 
-    def total_area(coordinates):
+    def total_area(coordinates: Any) -> Any:
         runtime = space.prepare_runtime(coordinates, numeric_version="gradient")
         return jnp.sum(runtime.geometries[0].areas)
 
@@ -206,12 +221,13 @@ def test_polygon_geometry_refresh_has_finite_coordinate_gradient():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_virtual_element_families_have_distinct_entity_topologies():
+def test_virtual_element_families_have_distinct_entity_topologies() -> None:
     coordinates = jnp.asarray(
         ((0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (0.0, 1.0), (1.0, 1.0), (2.0, 1.0))
     )
     mesh = phx.discretization.CellMesh.from_polygons(
         coordinates,
+        # ty: ignore[invalid-argument-type]
         ((0, 1, 4, 3), (1, 2, 5, 4)),
     )
     factories = (
@@ -230,9 +246,13 @@ def test_virtual_element_families_have_distinct_entity_topologies():
     assert hdiv.field_space.conformity == "Hdiv"
     assert hcurl.field_space.conformity == "Hcurl"
     assert l2.field_space.conformity == "L2"
+    # ty: ignore[unresolved-attribute]
     assert h1.field_space.layout.names == ("vertices",)
+    # ty: ignore[unresolved-attribute]
     assert hdiv.field_space.layout.names == ("edges", "cells")
+    # ty: ignore[unresolved-attribute]
     assert hcurl.field_space.layout.names == ("edges", "cells")
+    # ty: ignore[unresolved-attribute]
     assert l2.field_space.layout.names == ("cells",)
     assert h1.field_space.representation == "functional"
     assert hdiv.field_space.representation == "flux_moment"
@@ -261,11 +281,13 @@ def test_virtual_element_families_have_distinct_entity_topologies():
         )
 
 
-def test_moment_virtual_element_projectors_reproduce_exact_sequence_polynomials():
+def test_moment_virtual_element_projectors_reproduce_exact_sequence_polynomials() -> None:
     points = ((0.0, 0.0), (1.0, 0.0), (1.2, 0.8), (0.5, 1.3), (-0.2, 0.8))
     coordinates = jnp.asarray(points, dtype="float64")
     mesh = phx.discretization.CellMesh.from_polygons(
-        coordinates, (tuple(range(len(points))),)
+        coordinates,
+        # ty: ignore[invalid-argument-type]
+        (tuple(range(len(points))),),
     )
     for factory, differential_kind in (
         (phx.discretization.conforming_hdiv_virtual_element, "divergence"),
@@ -322,8 +344,8 @@ def test_moment_virtual_element_projectors_reproduce_exact_sequence_polynomials(
     ),
 )
 def test_vector_reconstruction_orients_shared_edges_and_exposes_exact_trace(
-    factory, differential_kind, expected_differential
-):
+    factory: Any, differential_kind: Any, expected_differential: Any
+) -> None:
     space = _two_cell_space(factory)
     projection = space.default_runtime.projections[0]
     coefficients = _affine_vector_coefficients(
@@ -351,6 +373,7 @@ def test_vector_reconstruction_orients_shared_edges_and_exposes_exact_trace(
         axis=-1,
     )
     np.testing.assert_allclose(value, expected_value, atol=2.0e-9)
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(differential, expected_differential, atol=2.0e-9)
     assert projection.differential_kind == differential_kind
 
@@ -403,7 +426,7 @@ def test_vector_reconstruction_orients_shared_edges_and_exposes_exact_trace(
         constraint.lift(lambda points: points[:, 0])
 
 
-def test_discontinuous_l2_reconstructs_cell_polynomials_without_a_trace():
+def test_discontinuous_l2_reconstructs_cell_polynomials_without_a_trace() -> None:
     space = _two_cell_space(phx.discretization.discontinuous_l2_virtual_element)
     projection = space.default_runtime.projections[0]
     geometry = space.default_runtime.geometries[0]
@@ -454,7 +477,7 @@ def test_discontinuous_l2_reconstructs_cell_polynomials_without_a_trace():
         )
 
 
-def test_component_replicated_virtual_element_fields_are_refused():
+def test_component_replicated_virtual_element_fields_are_refused() -> None:
     with pytest.raises(NotImplementedError, match="Component-replicated"):
         phx.discretization.VirtualElementFieldSpec(
             "u",
@@ -463,7 +486,7 @@ def test_component_replicated_virtual_element_fields_are_refused():
         )
 
 
-def test_vem_product_and_transfer_qualification_fail_closed():
+def test_vem_product_and_transfer_qualification_fail_closed() -> None:
     fields = (
         phx.discretization.VirtualElementFieldSpec(
             "u",
@@ -499,10 +522,12 @@ def test_vem_product_and_transfer_qualification_fail_closed():
             commuting_defect=0.0,
         )
 
+    # ty: ignore[invalid-argument-type]
     epoch = phx.discretization.VirtualElementEpoch((3, 7), (1, 1))
     with pytest.raises(ValueError, match="does not preserve constants"):
         phx.discretization.adapt_virtual_element_p(
             epoch,
+            # ty: ignore[invalid-argument-type]
             (1.0, 0.5),
             jnp.asarray(((1.0, 0.0), (0.0, 0.5))),
             phx.discretization.VirtualElementAdaptivityPolicy(),

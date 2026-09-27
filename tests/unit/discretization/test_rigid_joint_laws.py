@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -19,11 +22,11 @@ from phydrax.discretization.particle._rigid_joint_laws import (
 )
 
 
-def _quaternion_z(angle):
+def _quaternion_z(angle: Any) -> Any:
     return jnp.asarray([jnp.cos(0.5 * angle), 0.0, 0.0, jnp.sin(0.5 * angle)])
 
 
-def _prepared_mechanism():
+def _prepared_mechanism() -> Any:
     body_ids = jnp.arange(100, 104, dtype=jnp.int64)
     particles = phx.discretization.ParticleSetPlan(
         body_ids,
@@ -65,7 +68,9 @@ def _prepared_mechanism():
     return bodies, reference, graph
 
 
-def _moved(reference, *, body, angle=0.0, angular_velocity=0.0):
+def _moved(
+    reference: Any, *, body: Any, angle: Any = 0.0, angular_velocity: Any = 0.0
+) -> Any:
     orientation = reference.orientation.at[body].set(_quaternion_z(angle))
     angular = reference.angular_velocity.at[body, 2].set(angular_velocity)
     return phx.discretization.RigidBodyKinematics(
@@ -76,22 +81,25 @@ def _moved(reference, *, body, angle=0.0, angular_velocity=0.0):
     )
 
 
-def test_law_plans_validate_physics_fingerprints_and_hard_compatibility():
+def test_law_plans_validate_physics_fingerprints_and_hard_compatibility() -> None:
     _, _, graph = _prepared_mechanism()
     with pytest.raises(ValueError, match="positive semidefinite"):
         CompliantRigidJointLawPlan(
+            # ty: ignore[invalid-argument-type]
             [20],
             RigidJointCoordinate.BALL_ORIENTATION,
             jnp.diag(jnp.asarray([1.0, -1.0, 1.0])),
         )
     with pytest.raises(ValueError, match="symmetric"):
         DissipativeRigidJointLawPlan(
+            # ty: ignore[invalid-argument-type]
             [20],
             RigidJointCoordinate.BALL_ORIENTATION,
             jnp.asarray([[1.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]),
         )
     with pytest.raises(ValueError, match="strictly positive"):
         CompliantRigidJointLawPlan(
+            # ty: ignore[invalid-argument-type]
             [20],
             RigidJointCoordinate.BALL_ORIENTATION,
             1.0,
@@ -99,6 +107,7 @@ def test_law_plans_validate_physics_fingerprints_and_hard_compatibility():
         )
     with pytest.raises(ValueError, match="nonnegative"):
         RigidJointPDServoPlan(
+            # ty: ignore[invalid-argument-type]
             [30],
             0.0,
             proportional_gain=-1.0,
@@ -106,19 +115,23 @@ def test_law_plans_validate_physics_fingerprints_and_hard_compatibility():
             effort_limit=1.0,
         )
     with pytest.raises(ValueError, match="strictly positive"):
+        # ty: ignore[invalid-argument-type]
         RigidJointEffortMotorPlan([30], 1.0, effort_limit=0.0)
 
     first = CompliantRigidJointLawPlan(
+        # ty: ignore[invalid-argument-type]
         [20],
         RigidJointCoordinate.BALL_ORIENTATION,
         jnp.diag(jnp.asarray([1.0, 2.0, 3.0])),
     )
     same = CompliantRigidJointLawPlan(
+        # ty: ignore[invalid-argument-type]
         [20],
         RigidJointCoordinate.BALL_ORIENTATION,
         jnp.diag(jnp.asarray([1.0, 2.0, 3.0])),
     )
     changed = CompliantRigidJointLawPlan(
+        # ty: ignore[invalid-argument-type]
         [20],
         RigidJointCoordinate.BALL_ORIENTATION,
         jnp.diag(jnp.asarray([1.0, 2.0, 4.0])),
@@ -128,8 +141,12 @@ def test_law_plans_validate_physics_fingerprints_and_hard_compatibility():
     assert first.prepare(graph).prepared_id == same.prepare(graph).prepared_id
 
     hard_fixed = CompliantRigidJointLawPlan(
-        [10], RigidJointCoordinate.FIXED_TRANSLATION, 1.0
+        # ty: ignore[invalid-argument-type]
+        [10],
+        RigidJointCoordinate.FIXED_TRANSLATION,
+        1.0,
     )
+    # ty: ignore[invalid-argument-type]
     hard_ball = DissipativeRigidJointLawPlan([20], RigidJointCoordinate.BALL_ANCHOR, 1.0)
     fixed_evidence = evaluate_rigid_joint_law_compatibility(hard_fixed, graph)
     ball_evidence = evaluate_rigid_joint_law_compatibility(hard_ball, graph)
@@ -144,16 +161,17 @@ def test_law_plans_validate_physics_fingerprints_and_hard_compatibility():
         hard_ball.prepare(graph)
 
 
-def test_compliance_energy_gradient_and_equal_opposite_wrench():
+def test_compliance_energy_gradient_and_equal_opposite_wrench() -> None:
     _, reference, graph = _prepared_mechanism()
     law = CompliantRigidJointLawPlan(
+        # ty: ignore[invalid-argument-type]
         [20],
         RigidJointCoordinate.BALL_ORIENTATION,
         jnp.diag(jnp.asarray([0.0, 0.0, 8.0])),
     ).prepare(graph)
     angle = jnp.asarray(0.25)
 
-    def energy(value):
+    def energy(value: Any) -> Any:
         return law.evaluate(_moved(reference, body=2, angle=value)).stored_energy
 
     kinematics = _moved(reference, body=2, angle=angle)
@@ -172,9 +190,10 @@ def test_compliance_energy_gradient_and_equal_opposite_wrench():
     assert evaluation.evidence.valid
 
 
-def test_damping_is_nonnegative_and_removes_mechanical_power():
+def test_damping_is_nonnegative_and_removes_mechanical_power() -> None:
     _, reference, graph = _prepared_mechanism()
     law = DissipativeRigidJointLawPlan(
+        # ty: ignore[invalid-argument-type]
         [20],
         RigidJointCoordinate.BALL_ORIENTATION,
         jnp.diag(jnp.asarray([0.0, 0.0, 5.0])),
@@ -197,7 +216,7 @@ def test_damping_is_nonnegative_and_removes_mechanical_power():
     assert evaluation.evidence.valid
 
 
-def test_zero_law_is_exact_zero_baseline():
+def test_zero_law_is_exact_zero_baseline() -> None:
     _, reference, graph = _prepared_mechanism()
     law = CompliantRigidJointLawPlan(
         jnp.empty((0,), dtype=jnp.int64),
@@ -215,8 +234,9 @@ def test_zero_law_is_exact_zero_baseline():
     assert evaluation.evidence.valid
 
 
-def test_hinge_effort_has_consistent_sign_work_and_unwrapped_state():
+def test_hinge_effort_has_consistent_sign_work_and_unwrapped_state() -> None:
     _, reference, graph = _prepared_mechanism()
+    # ty: ignore[invalid-argument-type]
     motor = RigidJointEffortMotorPlan([30], 3.0, effort_limit=5.0).prepare(graph)
     state = motor.initialize_state(reference)
     kinematics = _moved(reference, body=3, angle=0.4, angular_velocity=2.0)
@@ -238,15 +258,21 @@ def test_hinge_effort_has_consistent_sign_work_and_unwrapped_state():
         _moved(reference, body=3, angle=3.2), near_branch.accepted_state
     )
     assert jnp.allclose(
+        # ty: ignore[unresolved-attribute]
         crossed.candidate_state.unwrapped_coordinate,
         jnp.asarray([[3.2]]),
         atol=1.0e-6,
     )
     rolled_back = accept_rigid_joint_hinge_coordinate(
-        near_branch.accepted_state, crossed.candidate_state, False
+        # ty: ignore[invalid-argument-type]
+        near_branch.accepted_state,
+        # ty: ignore[invalid-argument-type]
+        crossed.candidate_state,
+        False,
     )
     assert jnp.array_equal(
         rolled_back.unwrapped_coordinate,
+        # ty: ignore[unresolved-attribute]
         near_branch.accepted_state.unwrapped_coordinate,
     )
 
@@ -255,9 +281,10 @@ def test_hinge_effort_has_consistent_sign_work_and_unwrapped_state():
     assert compiled.evidence.valid
 
 
-def test_pd_servo_saturates_and_reports_source_power():
+def test_pd_servo_saturates_and_reports_source_power() -> None:
     _, reference, graph = _prepared_mechanism()
     servo = RigidJointPDServoPlan(
+        # ty: ignore[invalid-argument-type]
         [30],
         1.0,
         proportional_gain=10.0,
@@ -275,8 +302,9 @@ def test_pd_servo_saturates_and_reports_source_power():
     assert evaluation.evidence.valid
 
 
-def test_chart_and_nonfinite_failures_are_explicit_and_rollback_state():
+def test_chart_and_nonfinite_failures_are_explicit_and_rollback_state() -> None:
     _, reference, graph = _prepared_mechanism()
+    # ty: ignore[invalid-argument-type]
     motor = RigidJointEffortMotorPlan([30], 1.0, effort_limit=2.0).prepare(graph)
     motor_state = motor.initialize_state(reference)
     chart_failure = motor.evaluate(_moved(reference, body=3, angle=jnp.pi), motor_state)
@@ -284,9 +312,12 @@ def test_chart_and_nonfinite_failures_are_explicit_and_rollback_state():
     assert chart_failure.chart_margin[0] <= motor.plan.chart_tolerance
     assert not chart_failure.evidence.chart_valid
     assert not chart_failure.successful
+    # ty: ignore[unresolved-attribute]
     assert not chart_failure.candidate_state.chart_valid[0]
     assert jnp.array_equal(
+        # ty: ignore[unresolved-attribute]
         chart_failure.accepted_state.unwrapped_coordinate,
+        # ty: ignore[unresolved-attribute]
         motor_state.unwrapped_coordinate,
     )
 
@@ -299,11 +330,14 @@ def test_chart_and_nonfinite_failures_are_explicit_and_rollback_state():
     actuator_failure = motor.evaluate(nonfinite_actuator, motor_state)
     assert not actuator_failure.evidence.finite
     assert jnp.array_equal(
+        # ty: ignore[unresolved-attribute]
         actuator_failure.accepted_state.unwrapped_coordinate,
+        # ty: ignore[unresolved-attribute]
         motor_state.unwrapped_coordinate,
     )
 
     damper = DissipativeRigidJointLawPlan(
+        # ty: ignore[invalid-argument-type]
         [20],
         RigidJointCoordinate.BALL_ORIENTATION,
         jnp.eye(3),

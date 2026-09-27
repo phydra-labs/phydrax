@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -83,7 +84,7 @@ class DiagramLoweringPlan(StrictModule, NonTrainableState):
         maximum_factors: int = 4_096,
         maximum_nodes: int = 8_191,
         maximum_edges: int = 8_190,
-    ):
+    ) -> None:
         limits = (int(maximum_factors), int(maximum_nodes), int(maximum_edges))
         if any(value <= 0 for value in limits):
             raise ValueError("Diagram lowering limits must be positive.")
@@ -177,7 +178,7 @@ class PreparedDiagramEvaluation(StrictModule, NonTrainableState):
         node_count: int,
         prepared_id: str,
         /,
-    ):
+    ) -> None:
         self.diagram = diagram
         self.ir = ir
         self.factor_count = int(factor_count)
@@ -279,7 +280,7 @@ class DiagramQuadraturePlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_samples: int = 1_000_000,
-    ):
+    ) -> None:
         points_ = np.asarray(points, dtype=np.float64)
         weights_ = np.asarray(weights, dtype=np.float64)
         maximum = int(maximum_samples)
@@ -345,7 +346,7 @@ class PreparedDiagramQuadrature(StrictModule, NonTrainableState):
         plan_id: str,
         prepared_id: str,
         /,
-    ):
+    ) -> None:
         self.realization = realization
         self.sample_count = int(sample_count)
         self.plan_id = str(plan_id)

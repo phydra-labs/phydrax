@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from dataclasses import fields
+from typing import Any
 
 import pytest
 
@@ -25,11 +27,11 @@ from tools.structured_flow_benchmarks import StructuredFlowBenchmarkRecord
 
 
 def _artifact(
-    route="periodic-spectral",
+    route: Any = "periodic-spectral",
     *,
-    metric_value=1.0e-12,
-    tolerance=1.0e-9,
-):
+    metric_value: Any = 1.0e-12,
+    tolerance: Any = 1.0e-9,
+) -> Any:
     support = phx.qualification.SupportTuple(
         "incompressible-flow",
         {"route": route, "method": "native-test-route"},
@@ -53,7 +55,9 @@ def _artifact(
     )
 
 
-def test_content_address_and_serialization_are_deterministic_and_content_derived():
+def test_content_address_and_serialization_are_deterministic_and_content_derived() -> (
+    None
+):
     left = _artifact()
     reordered = _artifact()
     changed_metric = _artifact(metric_value=2.0e-12)
@@ -72,7 +76,7 @@ def test_content_address_and_serialization_are_deterministic_and_content_derived
     verify_qualification_artifact(left)
 
 
-def test_artifact_is_route_exact_unreleased_and_has_no_schema_or_version_field():
+def test_artifact_is_route_exact_unreleased_and_has_no_schema_or_version_field() -> None:
     artifact = _artifact("mac")
 
     assert artifact["route"] == "mac"
@@ -84,7 +88,7 @@ def test_artifact_is_route_exact_unreleased_and_has_no_schema_or_version_field()
     assert artifact["configuration"]["timing_gate"] is False
 
 
-def test_missing_required_route_evidence_is_explicitly_inconclusive():
+def test_missing_required_route_evidence_is_explicitly_inconclusive() -> None:
     support = phx.qualification.SupportTuple(
         "incompressible-flow",
         {"route": "spectral-channel", "method": "native-test-route"},
@@ -107,14 +111,16 @@ def test_missing_required_route_evidence_is_explicitly_inconclusive():
 
     assert artifact["status"] == "inconclusive"
     assert artifact["failed_reasons"] == []
+    # ty: ignore[invalid-argument-type]
     assert len(artifact["inconclusive_reasons"]) == 2
     assert any(
         gate["gate"] == "required-case:poiseuille" and gate["outcome"] == "inconclusive"
+        # ty: ignore[not-iterable]
         for gate in artifact["gates"]
     )
 
 
-def test_missing_or_failed_numeric_evidence_fails_with_reason():
+def test_missing_or_failed_numeric_evidence_fails_with_reason() -> None:
     gate = numeric_gate("required-error", "case.error", None, 1.0e-9)
     support = phx.qualification.SupportTuple(
         "incompressible-flow",
@@ -136,7 +142,7 @@ def test_missing_or_failed_numeric_evidence_fails_with_reason():
     assert artifact["failed_reasons"] == [gate["reason"]]
 
 
-def test_external_reference_hook_is_all_or_none_and_never_executes_data():
+def test_external_reference_hook_is_all_or_none_and_never_executes_data() -> None:
     with pytest.raises(ValueError, match="all-or-none"):
         external_reference_input(path="external.csv", checksum="sha256:abc")
 
@@ -154,7 +160,7 @@ def test_external_reference_hook_is_all_or_none_and_never_executes_data():
     assert reference["reference_input_id"]
 
 
-def test_assembly_references_verified_artifacts_but_cannot_release_or_sign():
+def test_assembly_references_verified_artifacts_but_cannot_release_or_sign() -> None:
     artifact = _artifact()
     candidate = assemble_candidate_profile((artifact,))
 
@@ -162,7 +168,9 @@ def test_assembly_references_verified_artifacts_but_cannot_release_or_sign():
     assert candidate["release_ready"] is False
     assert candidate["signed"] is False
     assert "signature" not in candidate
+    # ty: ignore[not-subscriptable]
     assert candidate["profile"]["released"] is False
+    # ty: ignore[not-subscriptable]
     assert candidate["profile"]["release_evidence"] == []
     assert candidate["candidate_id"]
 
@@ -172,7 +180,7 @@ def test_assembly_references_verified_artifacts_but_cannot_release_or_sign():
         assemble_candidate_profile((tampered,))
 
 
-def test_benchmark_records_are_raw_smoke_evidence_not_qualification_schemas():
+def test_benchmark_records_are_raw_smoke_evidence_not_qualification_schemas() -> None:
     spectral_fields = {
         field.name for field in fields(IncompressibleSpectralBenchmarkRecord)
     }

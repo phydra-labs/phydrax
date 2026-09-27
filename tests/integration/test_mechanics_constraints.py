@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -9,18 +12,20 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_euler_lagrange_residual_runs_through_functional_solver():
+def test_euler_lagrange_residual_runs_through_functional_solver() -> None:
+    # ty: ignore[invalid-argument-type]
     q_space = phx.domain.HyperRectangle([-2.0], [2.0], label="q")
+    # ty: ignore[invalid-argument-type]
     v_space = phx.domain.HyperRectangle([-2.0], [2.0], label="v")
     tangent = phx.domain.ProductDomain(q_space, v_space)
     time = phx.domain.TimeInterval(0.0, 1.0)
 
     @tangent.Function("q", "v")
-    def lagrangian(q, v):
+    def lagrangian(q: Any, v: Any) -> Any:
         return 0.5 * jnp.dot(v, v) - 0.5 * jnp.dot(q, q)
 
     @time.Function("t")
-    def trajectory(t):
+    def trajectory(t: Any) -> Any:
         return jnp.asarray([jnp.cos(t)])
 
     condition = phx.conditions.Residual(
@@ -44,22 +49,24 @@ def test_euler_lagrange_residual_runs_through_functional_solver():
     assert loss < 1e-18
 
 
-def test_hamiltonian_residual_runs_through_multifield_constraint():
+def test_hamiltonian_residual_runs_through_multifield_constraint() -> None:
+    # ty: ignore[invalid-argument-type]
     q_space = phx.domain.HyperRectangle([-2.0], [2.0], label="q")
+    # ty: ignore[invalid-argument-type]
     p_space = phx.domain.HyperRectangle([-2.0], [2.0], label="p")
     phase = phx.domain.ProductDomain(q_space, p_space)
     time = phx.domain.TimeInterval(0.0, 1.0)
 
     @phase.Function("q", "p")
-    def hamiltonian(q, p):
+    def hamiltonian(q: Any, p: Any) -> Any:
         return 0.5 * jnp.dot(q, q) + 0.5 * jnp.dot(p, p)
 
     @time.Function("t")
-    def q(t):
+    def q(t: Any) -> Any:
         return jnp.asarray([jnp.cos(t)])
 
     @time.Function("t")
-    def p(t):
+    def p(t: Any) -> Any:
         return jnp.asarray([-jnp.sin(t)])
 
     condition = phx.conditions.Residual(

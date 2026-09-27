@@ -9,7 +9,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.axes as cx
 from phydrax.conditions._ir import (
@@ -21,6 +21,7 @@ from phydrax.domain import DomainFunction, PointBatch
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import PRNGKey
 
 
 class ObservationActionEvidence(StrictModule):
@@ -40,7 +41,7 @@ class ObservationActionEvidence(StrictModule):
         observation_count: int,
         components: tuple[int, ...] | None,
         exact_scope: str = "finite_restriction",
-    ):
+    ) -> None:
         count = int(observation_count)
         if count <= 0:
             raise ValueError("Observation actions require at least one observation.")
@@ -112,7 +113,7 @@ class PointObservationAction(AbstractConditionOperator):
         /,
         *,
         components: Sequence[int] | None = None,
-    ):
+    ) -> None:
         field_ = str(field)
         if not field_:
             raise ValueError("Point observation field name must be non-empty.")
@@ -148,7 +149,14 @@ class PointObservationAction(AbstractConditionOperator):
     def observation_count(self) -> int:
         return self.evidence.observation_count
 
-    def _apply(self, values: Mapping[str, Any], /, *, key=None, **kwargs: Any) -> Array:
+    def _apply(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: PRNGKey | None = None,
+        **kwargs: Any,
+    ) -> Array:
         if self.field not in values:
             raise KeyError(f"Missing observed field {self.field!r}.")
         value = values[self.field]

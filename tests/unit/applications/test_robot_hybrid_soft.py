@@ -99,7 +99,7 @@ class _FakePlant(AbstractDiscretePlant, NonTrainableState):
     require_finite_parameters: bool = eqx.field(static=True)
     parameters: PlantParameters
 
-    def __init__(self, name: str, fallback: _BodyPayload, /):
+    def __init__(self, name: str, fallback: _BodyPayload, /) -> None:
         state_schema = ArrayPyTreeSchema.from_tree(fallback, case_ndim=0)
         command_template = _BodyCommands(
             jnp.zeros((3,), dtype=fallback.position.dtype),
@@ -157,6 +157,7 @@ class _FakePlant(AbstractDiscretePlant, NonTrainableState):
         status = jnp.zeros(case_shape, dtype=jnp.int32)
         return PlantProposal(payload, payload, attempted, attempted, status, status, ())
 
+    # ty: ignore[invalid-method-override]
     def propose_step(
         self,
         context: PlantStepContext,
@@ -211,7 +212,7 @@ class _FakePort(AbstractHybridPlantPort, NonTrainableState):
         *,
         state_schema_id: str | None = None,
         topology_id: str = "fixed-body-topology",
-    ):
+    ) -> None:
         self.semantic_provenance_id = plant.semantic_provenance.semantic_id
         self.numeric_revision_id = plant.numeric_revision.revision_id
         self.state_schema_id = (
@@ -236,6 +237,7 @@ class _FakePort(AbstractHybridPlantPort, NonTrainableState):
             payload.angular_velocity,
         )
 
+    # ty: ignore[invalid-method-override]
     def apply_frame_wrenches(
         self,
         payload: _BodyPayload,
@@ -265,7 +267,7 @@ class _FakePort(AbstractHybridPlantPort, NonTrainableState):
         return source.topology_marker == candidate.topology_marker
 
 
-def _payload(position, linear_velocity) -> _BodyPayload:
+def _payload(position: Any, linear_velocity: Any) -> _BodyPayload:
     return _BodyPayload(
         jnp.asarray(position, dtype="float64"),
         jnp.eye(3),
@@ -280,9 +282,9 @@ def _payload(position, linear_velocity) -> _BodyPayload:
 
 def _child_commands(
     *,
-    translation=(0.0, 0.0, 0.0),
-    fail=False,
-    change_topology=False,
+    translation: Any = (0.0, 0.0, 0.0),
+    fail: Any = False,
+    change_topology: Any = False,
 ) -> _BodyCommands:
     return _BodyCommands(
         jnp.zeros((3,)),
@@ -293,7 +295,7 @@ def _child_commands(
     )
 
 
-def _profile(*, name: str = "primary"):
+def _profile(*, name: str = "primary") -> Any:
     rigid = _FakePlant(f"{name}-rigid", _payload((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)))
     soft = _FakePlant(f"{name}-soft", _payload((1.0, 0.0, 0.0), (1.0, 2.0, 0.0)))
     policy = SynchronizedStepPolicy(fixed_duration=0.1)
@@ -345,13 +347,13 @@ def _step_commands(
     )
 
 
-def _reset(plant: HybridRigidSoftPlant):
+def _reset(plant: HybridRigidSoftPlant) -> Any:
     result = plant.reset(jax.random.key(3), plant.parameters)
     assert bool(result.successful)
     return result.accepted_state
 
 
-def _assert_same_tree(left, right):
+def _assert_same_tree(left: Any, right: Any) -> None:
     for left_leaf, right_leaf in zip(
         jax.tree_util.tree_leaves(left),
         jax.tree_util.tree_leaves(right),
@@ -360,7 +362,7 @@ def _assert_same_tree(left, right):
         np.testing.assert_array_equal(left_leaf, right_leaf)
 
 
-def _prepared_floating_hybrid_rod():
+def _prepared_floating_hybrid_rod() -> Any:
     dtype = jnp.float32
     rod = prepare_rod(
         RodPlan(
@@ -399,7 +401,7 @@ def _prepared_floating_hybrid_rod():
     )
 
 
-def _prepared_tendon_hybrid_plant():
+def _prepared_tendon_hybrid_plant() -> Any:
     floating = _prepared_floating_hybrid_rod()
     base = prepare_reduced_rod_plant(
         floating.fixed_base_dynamics,
@@ -428,7 +430,7 @@ def _prepared_tendon_hybrid_plant():
     return prepare_tendon_driven_rod_plant(base, (tendon,), (1.7,))
 
 
-def test_attachment_kinematics_wrench_moment_and_power_close_exactly():
+def test_attachment_kinematics_wrench_moment_and_power_close_exactly() -> None:
     plant, _, _, _, _, attachment, _ = _profile()
     source = _reset(plant)
     kinematics = plant.attachment_kinematics(source)[0]
@@ -481,7 +483,7 @@ def test_attachment_kinematics_wrench_moment_and_power_close_exactly():
     np.testing.assert_array_equal(result.accepted_state.step_index, 1)
 
 
-def test_one_child_failure_atomically_rolls_back_both_complete_states():
+def test_one_child_failure_atomically_rolls_back_both_complete_states() -> None:
     plant, _, _, _, _, attachment, _ = _profile()
     source = _reset(plant)
     commands = _step_commands(
@@ -511,7 +513,7 @@ def test_one_child_failure_atomically_rolls_back_both_complete_states():
     )
 
 
-def test_attachment_drift_and_topology_change_each_reject_the_joint_commit():
+def test_attachment_drift_and_topology_change_each_reject_the_joint_commit() -> None:
     plant, _, _, _, _, attachment, _ = _profile()
     source = _reset(plant)
     drift = plant.step(
@@ -545,7 +547,7 @@ def test_attachment_drift_and_topology_change_each_reject_the_joint_commit():
     assert not bool(topology.evidence.topology_unchanged)
 
 
-def test_fixed_duration_policy_is_enforced_on_the_shared_context():
+def test_fixed_duration_policy_is_enforced_on_the_shared_context() -> None:
     plant, _, _, _, _, attachment, _ = _profile()
     source = _reset(plant)
     result = plant.step(
@@ -563,7 +565,7 @@ def test_fixed_duration_policy_is_enforced_on_the_shared_context():
     np.testing.assert_allclose(result.candidate_state.payload.soft.observed_duration, 0.2)
 
 
-def test_port_policy_schema_parameter_and_runtime_provenance_mismatches_reject():
+def test_port_policy_schema_parameter_and_runtime_provenance_mismatches_reject() -> None:
     plant, rigid, soft, rigid_port, soft_port, attachment, policy = _profile()
     incompatible = SynchronizedStepPolicy(fixed_duration=0.2)
     bad_policy_port = _FakePort(
@@ -634,7 +636,7 @@ def test_port_policy_schema_parameter_and_runtime_provenance_mismatches_reject()
         )
 
 
-def test_floating_rod_port_exposes_endpoint_twist_and_adds_exact_dual_wrench():
+def test_floating_rod_port_exposes_endpoint_twist_and_adds_exact_dual_wrench() -> None:
     prepared = _prepared_floating_hybrid_rod()
     initial = prepared.initialize_state()
     moving = FloatingReducedRodState(
@@ -690,7 +692,7 @@ def test_floating_rod_port_exposes_endpoint_twist_and_adds_exact_dual_wrench():
     )
 
 
-def test_two_real_floating_rod_ports_compose_and_retain_child_transactions():
+def test_two_real_floating_rod_ports_compose_and_retain_child_transactions() -> None:
     prepared = _prepared_floating_hybrid_rod()
     rigid = FloatingReducedRodPlant(prepared)
     soft = FloatingReducedRodPlant(prepared)
@@ -784,7 +786,7 @@ def test_two_real_floating_rod_ports_compose_and_retain_child_transactions():
     )
 
 
-def test_passive_reduced_rod_port_is_rejected_before_hybrid_composition():
+def test_passive_reduced_rod_port_is_rejected_before_hybrid_composition() -> None:
     prepared = _prepared_floating_hybrid_rod()
     passive = prepare_reduced_rod_plant(
         prepared.fixed_base_dynamics,
@@ -822,7 +824,7 @@ def test_passive_reduced_rod_port_is_rejected_before_hybrid_composition():
         )
 
 
-def test_tendon_port_preserves_payout_commands_and_adds_only_endpoint_effort():
+def test_tendon_port_preserves_payout_commands_and_adds_only_endpoint_effort() -> None:
     plant = _prepared_tendon_hybrid_plant()
     policy = SynchronizedStepPolicy(fixed_duration=1.0e-4)
     port = TendonDrivenRodPlantPort(

@@ -8,12 +8,17 @@ import math
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ...linalg import OperatorProperties
-from .._finite_element_variational import CellResidualAction, FiniteElementForm
+from .._finite_element_variational import (
+    CellResidualAction,
+    FiniteElementExecutionContext,
+    FiniteElementForm,
+)
 from ._operators import symmetric_gradient
 
 
@@ -54,7 +59,15 @@ def guided_elasticity_form(
     lambda_ = jnp.asarray(lambda_host)
     mu = jnp.asarray(mu_host)
 
-    def kernel(values, gradients, points, weights, test_basis, test_gradients, context):
+    def kernel(
+        values: tuple[Array, ...],
+        gradients: tuple[Array, ...],
+        points: Array,
+        weights: Array,
+        test_basis: Array,
+        test_gradients: Array,
+        context: FiniteElementExecutionContext,
+    ) -> Array:
         del points, context
         displacement = values[0]
         transverse_gradient = gradients[0]

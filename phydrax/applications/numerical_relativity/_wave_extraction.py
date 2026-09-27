@@ -11,7 +11,8 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 from phydrax import ein
@@ -81,7 +82,7 @@ class Psi4TetradConvention(StrictModule, NonTrainableState):
         dyad_orientation: int = 1,
         psi4_sign: int = 1,
         magnetic_sign: int = 1,
-    ):
+    ) -> None:
         relativity_ = RelativityConvention() if relativity is None else relativity
         if not isinstance(relativity_, RelativityConvention):
             raise TypeError("relativity must be a RelativityConvention or None.")
@@ -139,7 +140,7 @@ class SpinWeightedMultipolePlan(StrictModule, NonTrainableState):
         execution: SphericalExecution = "recursive",
         reconstruction_tolerance: float = 1.0e-8,
         max_precompute_bytes: int = 512 * 1024**2,
-    ):
+    ) -> None:
         bandlimit_ = int(bandlimit)
         spin_ = int(spin)
         tolerance = float(reconstruction_tolerance)
@@ -257,7 +258,7 @@ class Psi4ExtractionPlan(StrictModule, NonTrainableState):
         /,
         *,
         tetrad_tolerance: float = 1.0e-7,
-    ):
+    ) -> None:
         if (
             not isinstance(multipole_plan, SpinWeightedMultipolePlan)
             or multipole_plan.spin != -2
@@ -383,7 +384,7 @@ class FixedFrequencyStrainPlan(StrictModule, NonTrainableState):
         /,
         *,
         reconstruction_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         count = int(sample_count)
         interval = float(sample_interval)
         cutoff = float(low_frequency_cutoff)
@@ -500,7 +501,7 @@ class FiniteRadiusExtrapolationPlan(StrictModule, NonTrainableState):
         *,
         radial_power: float = 1.0,
         convergence_tolerance: float = 5.0e-3,
-    ):
+    ) -> None:
         radii_ = np.asarray(radii, dtype=np.float64).reshape((-1,))
         order_ = int(order)
         radial_power_ = float(radial_power)

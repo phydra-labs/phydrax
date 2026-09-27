@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import math
@@ -29,7 +31,7 @@ from phydrax.applications import astrophysics
 from phydrax.units import KILOGRAM
 
 
-def _compiler_record(compiled) -> dict[str, object]:
+def _compiler_record(compiled: Any) -> dict[str, object]:
     evidence = compiler_evidence(
         compiled.cost_analysis(),
         compiled.memory_analysis(),
@@ -41,7 +43,7 @@ def _compiler_record(compiled) -> dict[str, object]:
     return record
 
 
-def _measure(function, arguments, warmup, repeats):
+def _measure(function: Any, arguments: Any, warmup: Any, repeats: Any) -> Any:
     compiled, compilation = measure_lower_and_compile(
         lambda: jax.jit(function).lower(*arguments),
         lambda lowered: lowered.compile(),
@@ -63,7 +65,7 @@ def _pixel_coordinates(pixel_count: int) -> np.ndarray:
     return np.stack((horizontal.ravel(), vertical.ravel()), axis=-1)[:pixel_count]
 
 
-def _setup(pixel_count: int, sample_count: int, maximum_steps: int):
+def _setup(pixel_count: int, sample_count: int, maximum_steps: int) -> Any:
     chart = phx.metrix.CoordinateChart(
         "benchmark-kerr-boyer-lindquist", ("t", "r", "theta", "phi")
     )
@@ -149,7 +151,7 @@ def run(
         spin,
     ) = setup
 
-    def imaging_kernel(emission_scale):
+    def imaging_kernel(emission_scale: Any) -> Any:
         rays = astrophysics.trace_gr_rays(ray_plan)
         radius = rays.coordinates[..., 1]
         support = rays.valid
@@ -157,7 +159,7 @@ def run(
         profile = active * jnp.exp(-0.5 * ((radius - 6.0) / 1.5) ** 2)
         extinction = active * jnp.asarray(0.03, dtype=radius.dtype)
 
-        def transfer_one(emission, opacity, supported):
+        def transfer_one(emission: Any, opacity: Any, supported: Any) -> Any:
             result = transfer_plan.evaluate(
                 emission, opacity, support=supported
             )
@@ -176,7 +178,7 @@ def run(
             emission_scale * profile, extinction, support
         )
 
-        def image_total(scale):
+        def image_total(scale: Any) -> Any:
             return jnp.sum(
                 jax.vmap(
                     lambda emission, opacity, supported: transfer_plan.evaluate(

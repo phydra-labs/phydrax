@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import hashlib
+from typing import Any
 
 import numpy as np
 import pytest
@@ -47,7 +49,7 @@ _COUNT_KEYS = (
 )
 
 
-def _provider(tmp_path):
+def _provider(tmp_path: Any) -> Any:
     project = tmp_path / "project"
     project.mkdir()
     project_bytes = b"[deps]\n"
@@ -70,7 +72,7 @@ def _provider(tmp_path):
     )
 
 
-def _two_bus():
+def _two_bus() -> Any:
     network = PowerNetwork(
         (Bus("source", 110), Bus("load", 110)),
         (Branch("line", "source", "load", 0.0, 0.1),),
@@ -81,7 +83,7 @@ def _two_bus():
     return compile_network(network, study)
 
 
-def _three_bus():
+def _three_bus() -> Any:
     network = PowerNetwork(
         (Bus("r"), Bus("v"), Bus("d")),
         (
@@ -104,7 +106,7 @@ def _three_bus():
     return compile_network(network, study)
 
 
-def _execution(prepared, endpoints):
+def _execution(prepared: Any, endpoints: Any) -> Any:
     paths = tuple(
         HomotopyContinuationPathRecord(
             index,
@@ -136,7 +138,7 @@ def _execution(prepared, endpoints):
     )
 
 
-def test_sparse_rectangular_polynomial_matches_native_power_residual():
+def test_sparse_rectangular_polynomial_matches_native_power_residual() -> None:
     compiled = _three_bus()
     voltage = np.asarray([0.98 + 0.07j, 1.01 - 0.04j, 0.91 - 0.11j])
     for modes in (
@@ -185,8 +187,8 @@ def test_sparse_rectangular_polynomial_matches_native_power_residual():
 
 
 def test_two_bus_high_and_low_branches_are_retained_with_separate_physical_masks(
-    tmp_path, monkeypatch
-):
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     compiled = _two_bus()
     polynomial = compile_fixed_mode_power_flow_polynomial(compiled)
     prepared = prepare_fixed_mode_power_flow_roots(
@@ -225,7 +227,7 @@ def test_two_bus_high_and_low_branches_are_retained_with_separate_physical_masks
     assert len(roots.candidates) == 2
 
 
-def test_power_root_refresh_rejects_mode_structure_change(tmp_path):
+def test_power_root_refresh_rejects_mode_structure_change(tmp_path: Any) -> None:
     compiled = _three_bus()
     prepared = prepare_fixed_mode_power_flow_roots(
         compile_fixed_mode_power_flow_polynomial(

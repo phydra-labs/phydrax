@@ -12,7 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -143,7 +145,7 @@ class CollisionFeaturePolicy(StrictModule, NonTrainableState):
         solver_clearance: ArrayLike | float = 0.0,
         proxy_error: ArrayLike | float = 0.0,
         provenance_id: str,
-    ):
+    ) -> None:
         identifiers = np.asarray(feature_ids)
         kinds = np.asarray(feature_kinds)
         if (
@@ -285,7 +287,7 @@ class ContactPairPolicy(StrictModule, NonTrainableState):
         *,
         allowed_participant_pairs: ArrayLike | None = None,
         excluded_vertex_pairs: ArrayLike | None = None,
-    ):
+    ) -> None:
         count = int(vertex_count)
         if count <= 0:
             raise ValueError("Contact pair policy requires a positive vertex count.")
@@ -536,7 +538,7 @@ class CollisionSurfacePlan(StrictModule, NonTrainableState):
         feature_provenance_id: str | None = None,
         allow_isolated_vertices: bool = False,
         topology_id: str | None = None,
-    ):
+    ) -> None:
         identifiers = np.asarray(vertex_ids)
         dimension = int(ambient_dimension)
         if (
@@ -778,7 +780,7 @@ class PreparedCollisionSurface(StrictModule, NonTrainableState):
         *,
         precision: ContactPrecisionPolicy | None = None,
         prepared_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, CollisionSurfacePlan):
             raise TypeError("plan must be CollisionSurfacePlan.")
         if not isinstance(displacement_operator, AbstractLinearOperator):
@@ -925,10 +927,10 @@ def selection_collision_operator(
     target = ArraySpace((indices.size, dimension), dtype=source_space.dtype)
     indices_array = jnp.asarray(indices, dtype=jnp.int32)
 
-    def gather(value):
+    def gather(value: Array) -> Array:
         return value[indices_array]
 
-    def scatter(value):
+    def scatter(value: Array) -> Array:
         return (
             jnp.zeros(source_space.shape, dtype=value.dtype).at[indices_array].add(value)
         )
@@ -956,10 +958,10 @@ def static_collision_operator(
         raise TypeError("source_space must be AbstractVectorSpace.")
     target = ArraySpace((int(vertex_count), int(ambient_dimension)), dtype=dtype)
 
-    def zero(_):
+    def zero(_: object) -> PyTree[Array]:
         return target.zeros()
 
-    def zero_transpose(_):
+    def zero_transpose(_: object) -> PyTree[Array]:
         return source_space.zeros()
 
     return FunctionLinearOperator(
@@ -980,7 +982,7 @@ class PreparedCollisionScene(StrictModule, NonTrainableState):
     face_offsets: tuple[int, ...] = eqx.field(static=True)
     scene_id: str = eqx.field(static=True)
 
-    def __init__(self, surfaces: Sequence[PreparedCollisionSurface], /):
+    def __init__(self, surfaces: Sequence[PreparedCollisionSurface], /) -> None:
         values = tuple(surfaces)
         if not values or not all(
             isinstance(value, PreparedCollisionSurface) for value in values

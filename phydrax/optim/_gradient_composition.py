@@ -6,13 +6,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from enum import IntEnum
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -29,9 +30,10 @@ from ..linalg._dense_pseudoinverse import (
     factor_pseudoinverse,
 )
 from ..linalg._policies import RankPolicy
+from ..typing import parse
 
 
-ConflictFreeFailureMode = Literal["status", "error"]
+ConflictFreeFailureMode: TypeAlias = Literal["status", "error"]
 
 
 class ConflictFreeGradientStatus(IntEnum):
@@ -57,7 +59,7 @@ class ConflictFreeGradientPolicy(StrictModule, NonTrainableState):
         minimum_norm: float = 1e-12,
         projection_tolerance: float = 1e-10,
         failure: ConflictFreeFailureMode = "status",
-    ):
+    ) -> None:
         rank = RankPolicy() if rank_policy is None else rank_policy
         if not isinstance(rank, RankPolicy):
             raise TypeError("rank_policy must be a RankPolicy.")
@@ -67,8 +69,7 @@ class ConflictFreeGradientPolicy(StrictModule, NonTrainableState):
             raise ValueError("minimum_norm must be finite and strictly positive.")
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("projection_tolerance must be finite and nonnegative.")
-        if failure not in ("status", "error"):
-            raise ValueError("failure must be 'status' or 'error'.")
+        failure = parse(failure, ConflictFreeFailureMode, "failure")
         self.rank_policy = rank
         self.minimum_norm = norm
         self.projection_tolerance = tolerance
@@ -124,7 +125,7 @@ class ConflictFreeGradientResult(StrictModule):
         successful: Array,
         status: Array,
         policy_id: str,
-    ):
+    ) -> None:
         self.direction = direction
         self.norms = jnp.asarray(norms)
         self.cosine_matrix = jnp.asarray(cosine_matrix)

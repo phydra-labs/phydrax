@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 import pytest
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
@@ -19,7 +21,7 @@ _FACE = phx.geometry.BRepEntityDimension.FACE
 _EDGE = phx.geometry.BRepEntityDimension.EDGE
 
 
-def _bound(shape, embedding=None):
+def _bound(shape: Any, embedding: Any = None) -> Any:
     model = phx.geometry.model_from_occt_shape(
         shape,
         coordinate_contract=_CONTRACT,
@@ -29,7 +31,7 @@ def _bound(shape, embedding=None):
     return model, phx.geometry.prepare_brep_projection(model, shape, embedding=embedding)
 
 
-def _project(projection, points, dimension, index):
+def _project(projection: Any, points: Any, dimension: Any, index: Any) -> Any:
     points = np.asarray(points, dtype=np.float64)
     count = points.shape[0]
     return projection.project(
@@ -37,7 +39,7 @@ def _project(projection, points, dimension, index):
     )
 
 
-def _circle_edge(projection, height):
+def _circle_edge(projection: Any, height: Any) -> Any:
     """Index of the closed circular edge at ``height`` (edges keep OCCT order)."""
     vertices = np.asarray(projection.vertex_points)
     edge_vertices = np.asarray(projection.edge_vertices)
@@ -45,7 +47,7 @@ def _circle_edge(projection, height):
     return int(closed[np.isclose(vertices[edge_vertices[closed, 0], 2], height)][0])
 
 
-def test_cylinder_face_projection_reports_parameters_frames_and_residuals():
+def test_cylinder_face_projection_reports_parameters_frames_and_residuals() -> None:
     shape = BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape()
     _, projection = _bound(shape)
     result = _project(projection, [[0.3, 0.4, 1.0], [1.5, 1.5, 0.25]], _FACE, 0)
@@ -68,7 +70,7 @@ def test_cylinder_face_projection_reports_parameters_frames_and_residuals():
     assert result.entity_ids()[0] == f"{projection.source_revision}:face:0"
 
 
-def test_cylinder_projection_flags_seams_and_continua_of_minima():
+def test_cylinder_projection_flags_seams_and_continua_of_minima() -> None:
     shape = BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape()
     _, projection = _bound(shape)
     face = _project(projection, [[2.0, 0.0, 0.5], [0.0, 0.0, 1.0]], _FACE, 0)
@@ -93,7 +95,7 @@ def test_cylinder_projection_flags_seams_and_continua_of_minima():
     )
 
 
-def test_sphere_projection_parameters_poles_and_center():
+def test_sphere_projection_parameters_poles_and_center() -> None:
     shape = BRepPrimAPI_MakeSphere(1.0).Shape()
     _, projection = _bound(shape)
     query = np.asarray([[0.3, 0.4, 1.0], [0.0, 0.0, 2.0], [0.0, 0.0, 0.0]])
@@ -113,7 +115,7 @@ def test_sphere_projection_parameters_poles_and_center():
     ]
 
 
-def test_classification_picks_the_lowest_dimensional_entity_within_tolerance():
+def test_classification_picks_the_lowest_dimensional_entity_within_tolerance() -> None:
     shape = BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape()
     _, projection = _bound(shape)
     points = np.asarray(
@@ -138,7 +140,7 @@ def test_classification_picks_the_lowest_dimensional_entity_within_tolerance():
     ).tolist() == [True, True, False]
 
 
-def test_projection_binds_the_exact_source_revision():
+def test_projection_binds_the_exact_source_revision() -> None:
     shape = BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape()
     model = phx.geometry.model_from_occt_shape(
         shape,
@@ -161,7 +163,7 @@ def test_projection_binds_the_exact_source_revision():
         )
 
 
-def test_planar_embedding_projects_two_dimensional_mesh_coordinates():
+def test_planar_embedding_projects_two_dimensional_mesh_coordinates() -> None:
     polygon = BRepBuilderAPI_MakePolygon()
     for x, y in ((-2, -2), (2, -2), (2, 2), (-2, 2)):
         polygon.Add(gp_Pnt(x, y, 0))

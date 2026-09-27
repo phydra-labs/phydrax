@@ -8,7 +8,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 
@@ -45,7 +47,7 @@ class FiniteElementPatchPlan(StrictModule, NonTrainableState):
         partition_weights: ArrayLike,
         global_size: int,
         /,
-    ):
+    ) -> None:
         routes = jnp.asarray(gathers, dtype=jnp.int32)
         valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         weights = jnp.asarray(partition_weights)
@@ -166,7 +168,7 @@ class FiniteElementPatchPreconditioner(AbstractPreconditioner):
         /,
         *,
         builder_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, FiniteElementPatchPlan):
             raise TypeError("plan must be FiniteElementPatchPlan.")
         if not isinstance(space, AbstractVectorSpace):
@@ -248,7 +250,7 @@ class FiniteElementPatchPreconditioner(AbstractPreconditioner):
         /,
         *,
         iteration: ArrayLike | None = None,
-    ):
+    ) -> PyTree[Array]:
         coordinates = self.space.flatten(self.space.validate(residual))
         safe_routes = jnp.maximum(self.plan.gathers, 0)
         local = coordinates[safe_routes]
@@ -353,7 +355,7 @@ class FiniteElementPatchPreconditionerBuilder(AbstractPreconditionerBuilder):
         *,
         local_solver: AbstractPreconditionerBuilder | None = None,
         properties: PreconditionerProperties | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, FiniteElementPatchPlan):
             raise TypeError("plan must be a FiniteElementPatchPlan.")
         solver = (

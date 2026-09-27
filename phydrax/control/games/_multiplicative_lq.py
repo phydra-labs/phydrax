@@ -8,15 +8,17 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ...dynamics import TimeGrid
 from ...linalg import (
@@ -48,6 +50,51 @@ from ..stochastic._multiplicative_lq import (
 )
 from ._layout import PlayerControlPartition
 from ._linear_quadratic import _game_inputs
+
+
+_StageCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+_StageInputs: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+_StageOutputs: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 
 class MultiplicativeLQFeedbackNashStatus(IntEnum):
@@ -402,7 +449,9 @@ def finite_horizon_multiplicative_lq_feedback_nash(
         to_time_major(covariance_minimum, 0),
     )
 
-    def step(carry, stage):
+    def step(
+        carry: _StageCarry, stage: _StageInputs
+    ) -> tuple[_StageCarry, _StageOutputs]:
         (
             z_next,
             linear_next,

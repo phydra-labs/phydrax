@@ -13,7 +13,7 @@ from numbers import Integral
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._interpolation import linear_interpolate
@@ -276,7 +276,9 @@ class FluxSurfacePlan:
         return geometry
 
 
-def _bilinear(r, z, values, query_r: float, query_z: float) -> float:
+def _bilinear(
+    r: np.ndarray, z: np.ndarray, values: np.ndarray, query_r: float, query_z: float
+) -> float:
     if query_r < r[0] or query_r > r[-1] or query_z < z[0] or query_z > z[-1]:
         raise ValueError("Flux interpolation query lies outside the R-Z grid.")
     i = int(np.clip(np.searchsorted(r, query_r, side="right") - 1, 0, r.size - 2))
@@ -291,7 +293,9 @@ def _bilinear(r, z, values, query_r: float, query_z: float) -> float:
     )
 
 
-def _ray_limit(r, z, origin, direction) -> float:
+def _ray_limit(
+    r: np.ndarray, z: np.ndarray, origin: np.ndarray, direction: np.ndarray
+) -> float:
     candidates = []
     if direction[0] > 0.0:
         candidates.append((r[-1] - origin[0]) / direction[0])
@@ -307,7 +311,15 @@ def _ray_limit(r, z, origin, direction) -> float:
     return min(positive)
 
 
-def _ray_crossing(r, z, values, origin, direction, target, search_count):
+def _ray_crossing(
+    r: np.ndarray,
+    z: np.ndarray,
+    values: np.ndarray,
+    origin: np.ndarray,
+    direction: np.ndarray,
+    target: float,
+    search_count: int,
+) -> np.ndarray:
     maximum = _ray_limit(r, z, origin, direction)
     distances = np.linspace(0.0, maximum * (1.0 - 1.0e-12), search_count)
     samples = np.asarray(
@@ -333,7 +345,7 @@ def _ray_crossing(r, z, values, origin, direction, target, search_count):
     return origin + 0.5 * (lower + upper) * direction
 
 
-def _polygon_area_centroid_r(points):
+def _polygon_area_centroid_r(points: np.ndarray) -> tuple[float, float]:
     next_points = np.roll(points, -1, axis=0)
     cross = points[:, 0] * next_points[:, 1] - next_points[:, 0] * points[:, 1]
     signed_area = 0.5 * np.sum(cross)

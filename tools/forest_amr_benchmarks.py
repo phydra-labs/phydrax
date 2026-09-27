@@ -16,6 +16,7 @@ import argparse
 import json
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -31,7 +32,9 @@ from benchmarks._runtime import (
 )
 
 
-def _advect_step(workset, geometry, state, velocity, step):
+def _advect_step(
+    workset: Any, geometry: Any, state: Any, velocity: Any, step: Any
+) -> Any:
     """One explicit upwind step over the padded forest face list."""
     valid = workset.face_valid
     minus = jnp.where(valid, workset.face_minus, 0)
@@ -49,7 +52,7 @@ _advect = jax.jit(_advect_step)
 
 
 @jax.jit
-def _transfer(routes, values):
+def _transfer(routes: Any, values: Any) -> Any:
     result = routes.apply(values)
     return result.values, result.conservation_residual
 
@@ -70,7 +73,7 @@ def _plan(maximum_level: int, /) -> phx.discretization.ForestPlan:
     )
 
 
-def _marks(topology, center, radius, base_level, /) -> np.ndarray:
+def _marks(topology: Any, center: Any, radius: Any, base_level: Any, /) -> np.ndarray:
     lower, upper = topology.reference_bounds()
     count = topology.leaf_count
     offset = 0.5 * (lower + upper)[:count] - center
@@ -100,7 +103,9 @@ def _scale(maximum_level: int, cycles: int, /) -> dict[str, object]:
         jnp.exp(-40.0 * jnp.sum((jnp.asarray(centers) - 0.3) ** 2, axis=1)),
         0.0,
     )
+    # ty: ignore[unresolved-attribute]
     advect_before = _advect._cache_size()
+    # ty: ignore[unresolved-attribute]
     transfer_before = _transfer._cache_size()
     adapt_seconds = []
     transition_seconds = []
@@ -160,7 +165,9 @@ def _scale(maximum_level: int, cycles: int, /) -> dict[str, object]:
         "leaf_counts": leaf_counts,
         "distinct_workset_signatures": len(set(workset_signatures)),
         "distinct_transfer_signatures": len(set(transfer_signatures)),
+        # ty: ignore[unresolved-attribute]
         "advect_executables": _advect._cache_size() - advect_before,
+        # ty: ignore[unresolved-attribute]
         "transfer_executables": _transfer._cache_size() - transfer_before,
         "maximum_conservation_residual": max(residuals, default=0.0),
         "adapt_seconds_median": float(np.median(adapt_seconds)),
@@ -177,8 +184,11 @@ def benchmark(*, smoke: bool) -> dict[str, object]:
     cycles = 6 if smoke else 24
     scales = [_scale(level, cycles) for level in levels]
     reused = all(
+        # ty: ignore[unsupported-operator]
         scale["advect_executables"] <= scale["distinct_workset_signatures"] + 1
+        # ty: ignore[unsupported-operator]
         and scale["transfer_executables"] <= scale["distinct_transfer_signatures"]
+        # ty: ignore[unsupported-operator]
         and scale["maximum_conservation_residual"] <= 1.0e-12
         for scale in scales
     )

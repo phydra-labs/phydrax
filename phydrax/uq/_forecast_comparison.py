@@ -8,10 +8,12 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax import Array
 from jax.scipy.special import ndtr
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import parse
 
 
 ForecastAlternative: TypeAlias = Literal["two-sided", "less", "greater"]
@@ -35,7 +37,7 @@ class ForecastComparisonPlan(StrictModule):
         hac_lags: int = 0,
         horizon: int = 1,
         alternative: ForecastAlternative = "two-sided",
-    ):
+    ) -> None:
         lags = int(hac_lags)
         forecast_horizon = int(horizon)
         if lags < 0:
@@ -46,8 +48,7 @@ class ForecastComparisonPlan(StrictModule):
             raise ValueError(
                 "hac_lags must be at least horizon - 1 for overlapping forecasts."
             )
-        if alternative not in ("two-sided", "less", "greater"):
-            raise ValueError("alternative must be 'two-sided', 'less', or 'greater'.")
+        alternative = parse(alternative, ForecastAlternative, "alternative")
         self.hac_lags = lags
         self.horizon = forecast_horizon
         self.alternative = alternative

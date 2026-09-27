@@ -9,7 +9,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -36,7 +37,7 @@ class ElectrostaticEmbeddingState(StrictModule, NonTrainableState):
         /,
         *,
         active_mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         ids = jnp.asarray(point_ids, dtype=jnp.int64)
         coordinate = jnp.asarray(positions)
         charge = jnp.asarray(charges, dtype=coordinate.dtype)
@@ -109,7 +110,7 @@ class ExternalFieldState(StrictModule, NonTrainableState):
         angular_frequency: ArrayLike = 0.0,
         damping: ArrayLike = 0.0,
         gauge: str = "length",
-    ):
+    ) -> None:
         if not isinstance(units, AtomisticUnitSystem):
             raise TypeError("units must be AtomisticUnitSystem.")
         electric_ = jnp.asarray(electric)
@@ -177,7 +178,7 @@ class ElectronicInitialGuessState(StrictModule, NonTrainableState):
         sector_id: str,
         coefficients: ArrayLike | None = None,
         occupations: ArrayLike | None = None,
-    ):
+    ) -> None:
         density_ = jnp.asarray(density)
         if density_.ndim not in (2, 3) or density_.shape[-1] != density_.shape[-2]:
             raise ValueError("Guess density must contain one or more square matrices.")
@@ -254,7 +255,7 @@ class PermanentMultipoleEmbeddingState(StrictModule, NonTrainableState):
         /,
         *,
         active_mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         ids = jnp.asarray(point_ids, dtype=jnp.int64)
         positions_ = jnp.asarray(positions)
         if not isinstance(multipoles, PermanentMultipoleSiteData):
@@ -318,7 +319,7 @@ class PolarizableEmbeddingState(StrictModule, NonTrainableState):
         residual: ArrayLike,
         solver_state_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(permanent, PermanentMultipoleEmbeddingState):
             raise TypeError("permanent must be PermanentMultipoleEmbeddingState.")
         induced = jnp.asarray(induced_dipoles, dtype=permanent.positions.dtype)
@@ -378,7 +379,7 @@ class ElectronicEvaluationContext(StrictModule, NonTrainableState):
         initial_guess: ElectronicInitialGuessState | None = None,
         time: ArrayLike = 0.0,
         topology_epoch_id: str = "fixed",
-    ):
+    ) -> None:
         coordinate = jnp.asarray(positions)
         if coordinate.ndim != 2 or coordinate.shape[1] != 3:
             raise ValueError("Electronic positions must have shape (atom_capacity, 3).")

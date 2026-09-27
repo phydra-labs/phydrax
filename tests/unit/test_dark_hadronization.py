@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -32,7 +35,7 @@ from phydrax.solver._dark_sector_epoch_runtime import DarkSectorEpochPlan
 from phydrax.units import COULOMB
 
 
-def _contracts():
+def _contracts() -> Any:
     units = RelativisticUnitContract(
         RelativityScaleContract(DimensionalScaleContract.si(), 1, 1, 1, 1),
         RelativityConvention(metric_signature="mostly_minus"),
@@ -104,7 +107,7 @@ def _contracts():
     return units, frame, runtime, species
 
 
-def _plans():
+def _plans() -> Any:
     units, frame, runtime, species = _contracts()
     channels = (
         DarkHadronPairChannel((200, -200), 2.0, spectrum_label="light-pair"),
@@ -142,7 +145,7 @@ def _plans():
     return string, cluster
 
 
-def test_declared_dark_string_spectrum_is_normalized_and_conservative():
+def test_declared_dark_string_spectrum_is_normalized_and_conservative() -> None:
     string, _ = _plans()
     result = fragment_dark_string(
         string,
@@ -167,7 +170,9 @@ def test_declared_dark_string_spectrum_is_normalized_and_conservative():
     np.testing.assert_allclose(jnp.sum(result.output_charges), 0.0, atol=1e-12)
 
 
-def test_dark_cluster_decay_and_fission_normalize_channels_and_preserve_lineage_quantities():
+def test_dark_cluster_decay_and_fission_normalize_channels_and_preserve_lineage_quantities() -> (
+    None
+):
     _, cluster = _plans()
     parent = jnp.asarray((10.0, 1.0, -0.5, 0.25))
     decay = decay_dark_cluster(

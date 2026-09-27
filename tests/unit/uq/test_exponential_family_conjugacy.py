@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -12,7 +15,7 @@ import scipy.stats as stats
 import phydrax as phx
 
 
-def test_gamma_poisson_update_evidence_predictive_and_merge_are_exact():
+def test_gamma_poisson_update_evidence_predictive_and_merge_are_exact() -> None:
     pair = phx.uq.GammaPoissonConjugacy(2.5, 1.7)
     counts = jnp.asarray([0.0, 3.0, 1.0, 4.0])
     exposure = jnp.asarray([0.5, 1.2, 2.0, 0.7])
@@ -53,7 +56,7 @@ def test_gamma_poisson_update_evidence_predictive_and_merge_are_exact():
     assert bool(update.valid)
 
 
-def test_gamma_poisson_sequential_updates_and_predictive_sampling():
+def test_gamma_poisson_sequential_updates_and_predictive_sampling() -> None:
     pair = phx.uq.GammaPoissonConjugacy(1.8, 2.2)
     first = pair.update(jnp.asarray([1, 0, 2]), exposure=jnp.asarray([0.5, 1.0, 1.5]))
     first_shape, first_rate = first.posterior_shape_rate
@@ -78,7 +81,7 @@ def test_gamma_poisson_sequential_updates_and_predictive_sampling():
     assert samples.shape == (80_000,)
 
 
-def test_gamma_poisson_batched_jit_and_invalid_observations():
+def test_gamma_poisson_batched_jit_and_invalid_observations() -> None:
     pair = phx.uq.GammaPoissonConjugacy(jnp.asarray([1.0, 2.0]), 3.0)
     counts = jnp.asarray([[0.0, 1.0, 2.0], [3.0, 1.0, 0.0]])
     update = jax.jit(lambda values: pair.update(values, sample_axes=1))(counts)
@@ -115,7 +118,7 @@ def test_gamma_poisson_batched_jit_and_invalid_observations():
     assert jnp.all(jnp.isnan(compensated.posterior_natural.values))
 
 
-def test_dirichlet_categorical_update_evidence_predictive_and_merge_are_exact():
+def test_dirichlet_categorical_update_evidence_predictive_and_merge_are_exact() -> None:
     concentration = jnp.asarray([0.7, 1.2, 2.1, 3.0])
     labels = jnp.asarray([0, 3, 1, 3, 2, 3, 1, 3])
     pair = phx.uq.DirichletCategoricalConjugacy(concentration)
@@ -123,7 +126,7 @@ def test_dirichlet_categorical_update_evidence_predictive_and_merge_are_exact():
     counts = jnp.bincount(labels, length=4)
     expected = concentration + counts
 
-    def log_beta(value):
+    def log_beta(value: Any) -> Any:
         return jnp.sum(jsp.special.gammaln(value)) - jsp.special.gammaln(jnp.sum(value))
 
     first = pair.summarize(labels[:3])
@@ -149,7 +152,7 @@ def test_dirichlet_categorical_update_evidence_predictive_and_merge_are_exact():
     assert bool(update.valid)
 
 
-def test_dirichlet_categorical_sequential_updates_and_predictive_sampling():
+def test_dirichlet_categorical_sequential_updates_and_predictive_sampling() -> None:
     concentration = jnp.asarray([1.0, 2.0, 1.5])
     pair = phx.uq.DirichletCategoricalConjugacy(concentration)
     first = pair.update(jnp.asarray([0, 2, 2, 1]))
@@ -169,7 +172,7 @@ def test_dirichlet_categorical_sequential_updates_and_predictive_sampling():
     assert samples.shape == (100_000,)
 
 
-def test_dirichlet_categorical_batched_jit_and_invalid_labels():
+def test_dirichlet_categorical_batched_jit_and_invalid_labels() -> None:
     pair = phx.uq.DirichletCategoricalConjugacy(jnp.asarray([1.0, 1.0, 1.0]))
     labels = jnp.asarray([[0, 1, 2, 2], [1, 1, 0, 1]])
     update = jax.jit(lambda values: pair.update(values, sample_axes=1))(labels)

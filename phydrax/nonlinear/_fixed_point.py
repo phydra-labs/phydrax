@@ -6,12 +6,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import isfinite
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._iteration import IterationPlan
@@ -102,7 +103,7 @@ class AndersonAcceleration(StrictModule):
         safeguard_factor: float = 2.0,
         restart_condition: float = 1e12,
         linear: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
         history_ = int(history)
         regularization_ = float(regularization)
         safeguard_ = float(safeguard_factor)
@@ -153,6 +154,13 @@ class _FixedPointRun(StrictModule):
     status: Array
 
 
+# Proposed state, accelerated flag, then the coefficient solve's linear status,
+# rank, condition estimate, residual norm, convergence flag, and iterations.
+_AndersonCandidate: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array
+]
+
+
 def _anderson_candidate(
     raw: Array,
     residual: Array,
@@ -162,7 +170,7 @@ def _anderson_candidate(
     damping: float,
     maximum_linear_iterations: int | None,
     /,
-) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
+) -> _AndersonCandidate:
     capacity = run.history_states.shape[0] - 1
     active_count = jnp.minimum(run.history_count, capacity)
     indices = jnp.arange(capacity)
@@ -274,7 +282,7 @@ class FixedPointIteration(StrictModule):
         damping: float = 1.0,
         acceleration: AndersonAcceleration | None = None,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         damping_ = float(damping)
         if not isfinite(damping_) or not 0.0 < damping_ <= 1.0:
             raise ValueError("Fixed-point damping must lie in (0, 1].")
@@ -293,7 +301,7 @@ class FixedPointIteration(StrictModule):
         acceleration = self.acceleration
         payload: dict[str, object] = {
             "kind": "fixed-point-iteration",
-            "damping": self.damping.hex(),
+            "damping": float(self.damping).hex(),
             "acceleration": (
                 None
                 if acceleration is None
@@ -301,9 +309,9 @@ class FixedPointIteration(StrictModule):
                     "kind": acceleration.kind,
                     "history_requested": acceleration.history,
                     "history_effective": effective_history,
-                    "regularization": acceleration.regularization.hex(),
-                    "safeguard_factor": acceleration.safeguard_factor.hex(),
-                    "restart_condition": acceleration.restart_condition.hex(),
+                    "regularization": float(acceleration.regularization).hex(),
+                    "safeguard_factor": float(acceleration.safeguard_factor).hex(),
+                    "restart_condition": float(acceleration.restart_condition).hex(),
                     "linear": repr(acceleration.linear),
                 }
             ),
@@ -409,13 +417,13 @@ class FixedPointIteration(StrictModule):
             status=status,
         )
 
-        def required_evaluations(current):
+        def required_evaluations(current: _FixedPointRun) -> Array:
             required = jnp.asarray(1, dtype=jnp.int32)
             if effective_history > 0:
                 required = required + (current.history_count > 0).astype(jnp.int32)
             return required
 
-        def condition(current):
+        def condition(current: _FixedPointRun) -> Array:
             within_evaluations = (
                 jnp.asarray(True)
                 if termination_.maximum_evaluations is None
@@ -428,10 +436,10 @@ class FixedPointIteration(StrictModule):
                 & within_evaluations
             )
 
-        def evaluate_flat(candidate):
+        def evaluate_flat(candidate: Array) -> Array:
             return space.flatten(problem.mapping(space.unflatten(candidate), args))
 
-        def body(current):
+        def body(current: _FixedPointRun) -> _FixedPointRun:
             raw = current.state + self.damping * current.residual
             if self.acceleration is None or effective_history == 0:
                 attempted = jnp.asarray(False)
@@ -445,19 +453,20 @@ class FixedPointIteration(StrictModule):
                 coefficient_iterations = jnp.asarray(0, dtype=jnp.int32)
             else:
                 attempted = current.history_count > 0
+                acceleration = self.acceleration
 
-                def accelerate(_):
+                def accelerate(_: None) -> _AndersonCandidate:
                     return _anderson_candidate(
                         raw,
                         current.residual,
                         current,
-                        self.acceleration,
+                        acceleration,
                         self.precision,
                         self.damping,
                         termination_.maximum_linear_iterations,
                     )
 
-                def unaccelerated(_):
+                def unaccelerated(_: None) -> _AndersonCandidate:
                     return (
                         raw,
                         jnp.asarray(False),
@@ -681,16 +690,16 @@ class FixedPointIteration(StrictModule):
         method_id = self._method_id(effective_history)
         acceleration = self.acceleration
         notes = (
-            f"damping={self.damping.hex()};"
+            f"damping={float(self.damping).hex()};"
             f"history-requested={0 if acceleration is None else acceleration.history};"
             f"history-effective={effective_history}"
         )
         if acceleration is not None:
             notes = (
                 f"{notes};anderson-kind={acceleration.kind};"
-                f"regularization={acceleration.regularization.hex()};"
-                f"safeguard-factor={acceleration.safeguard_factor.hex()};"
-                f"restart-condition={acceleration.restart_condition.hex()}"
+                f"regularization={float(acceleration.regularization).hex()};"
+                f"safeguard-factor={float(acceleration.safeguard_factor).hex()};"
+                f"restart-condition={float(acceleration.restart_condition).hex()}"
             )
         result = NonlinearResult(
             state=output_state,
@@ -743,7 +752,7 @@ class SteffensenIteration(StrictModule):
         denominator_tolerance: float = 1e-12,
         safeguard_factor: float = 1.0,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         tolerance = float(denominator_tolerance)
         safeguard = float(safeguard_factor)
         if not isfinite(tolerance) or tolerance <= 0.0:
@@ -819,7 +828,7 @@ class SteffensenIteration(StrictModule):
             ).astype(jnp.int32),
         )
 
-        def condition(current):
+        def condition(current: _SteffensenRun) -> Array:
             within = (
                 jnp.asarray(True)
                 if termination_.maximum_evaluations is None
@@ -831,7 +840,7 @@ class SteffensenIteration(StrictModule):
                 & within
             )
 
-        def body(current):
+        def body(current: _SteffensenRun) -> _SteffensenRun:
             current_tree = space.unflatten(current.state)
             first_coordinates = space.flatten(problem.mapping(current_tree, args))
             first_tree = space.unflatten(first_coordinates)
@@ -1013,7 +1022,7 @@ class PicardUpdate(AbstractNonlinearUpdate):
         *,
         damping: float = 1.0,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not callable(inverse_action) and not isinstance(
             inverse_action, AbstractPreconditioner
         ):
@@ -1048,11 +1057,24 @@ class PicardUpdate(AbstractNonlinearUpdate):
             preconditioner_applications=1,
         )
 
-    def _prepare_internal(self, problem, state, args, /):
+    def _prepare_internal(
+        self,
+        problem: NonlinearSystemProblem,
+        state: PyTree[Any],
+        args: Any,
+        /,
+    ) -> None:
         del problem, state, args
         return None
 
-    def _refresh_internal(self, internal_state, problem, state, args, /):
+    def _refresh_internal(
+        self,
+        internal_state: Any,
+        problem: NonlinearSystemProblem,
+        state: PyTree[Any],
+        args: Any,
+        /,
+    ) -> Any:
         del problem, state, args
         return internal_state
 
@@ -1063,11 +1085,11 @@ class PicardUpdate(AbstractNonlinearUpdate):
         args: Any,
         control: NonlinearUpdateControl,
         /,
-    ):
+    ) -> tuple[NonlinearUpdateResult, Any]:
         problem = prepared.problem
         state_ = prepared.plan.state_space.validate(state)
 
-        def skipped(_):
+        def skipped(_: None) -> tuple[NonlinearUpdateResult, Any]:
             diagnostics = NonlinearUpdateDiagnostics(
                 initial_residual_norm=jnp.asarray(jnp.nan),
                 final_residual_norm=jnp.asarray(jnp.nan),
@@ -1091,8 +1113,8 @@ class PicardUpdate(AbstractNonlinearUpdate):
                 prepared.internal_state,
             )
 
-        def execute(_):
-            residual, _ = problem.evaluate(state_, args)
+        def execute(_: None) -> tuple[NonlinearUpdateResult, Any]:
+            residual = problem.evaluate(state_, args)[0]
             self.precision.validate_trees(state_, residual)
             initial_norm = self.precision.norm(
                 prepared.plan.residual_space,
@@ -1193,7 +1215,7 @@ class PicardIteration(StrictModule):
         damping: float = 1.0,
         acceleration: AndersonAcceleration | None = None,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not callable(inverse_action) and not isinstance(
             inverse_action, AbstractPreconditioner
         ):
@@ -1216,7 +1238,7 @@ class PicardIteration(StrictModule):
         acceleration = self.acceleration
         payload: dict[str, object] = {
             "kind": "picard-iteration",
-            "damping": self.damping.hex(),
+            "damping": float(self.damping).hex(),
             "precision_policy": self.precision.policy_id,
             "fixed_point_method": fixed_point_method_id,
             "acceleration": (
@@ -1225,9 +1247,9 @@ class PicardIteration(StrictModule):
                 else {
                     "kind": acceleration.kind,
                     "history": acceleration.history,
-                    "regularization": acceleration.regularization.hex(),
-                    "safeguard_factor": acceleration.safeguard_factor.hex(),
-                    "restart_condition": acceleration.restart_condition.hex(),
+                    "regularization": float(acceleration.regularization).hex(),
+                    "safeguard_factor": float(acceleration.safeguard_factor).hex(),
+                    "restart_condition": float(acceleration.restart_condition).hex(),
                     "linear": repr(acceleration.linear),
                 }
             ),
@@ -1280,7 +1302,7 @@ class PicardIteration(StrictModule):
             divergence_factor=termination_.divergence_factor,
         )
 
-        def mapping(state, current_args):
+        def mapping(state: PyTree[Any], current_args: Any) -> PyTree[Array]:
             residual = problem.residual(state, current_args)
             return _picard_candidate(
                 self.inverse_action,
@@ -1364,7 +1386,7 @@ class PicardIteration(StrictModule):
                 globalization_id="fixed-point-safeguard",
                 precision_policy_id=self.precision.policy_id,
                 notes=(
-                    f"picard-damping={self.damping.hex()};"
+                    f"picard-damping={float(self.damping).hex()};"
                     f"picard-precision-policy={self.precision.policy_id};"
                     f"{result.provenance.notes}"
                 ),

@@ -1,4 +1,5 @@
 import hashlib
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -37,7 +38,7 @@ from phydrax.series import SampledSeries, SeriesPairView, SeriesSupport
 from phydrax.units import ANGSTROM, METER
 
 
-def fixture():
+def fixture() -> Any:
     construct = NucleicAcidConstruct(("rna",), ("AUC",), ("RNA",), (False,))
     ring = np.array([[1.0, 0.0, 0.0], [-0.5, 0.8, 0.0], [-0.5, -0.8, 0.0]])
     centers = np.array([[0.0, 0.0, 0.0], [4.0, 0.0, 0.4], [30.0, 0.0, 0.0]])
@@ -50,7 +51,7 @@ def fixture():
     return mapping, jnp.asarray(positions)
 
 
-def rights():
+def rights() -> Any:
     payload = b"independently authored geometric fixture"
     return ReferenceArtifactManifest(
         "synthetic geometry",
@@ -69,7 +70,7 @@ def rights():
     )
 
 
-def _mutation_profile_arguments():
+def _mutation_profile_arguments() -> Any:
     source = rights()
     case = MutationProfileCase(
         construct_id="construct",
@@ -105,7 +106,7 @@ def _mutation_profile_arguments():
     }
 
 
-def test_mutation_profile_rejects_wrapping_binary_and_row_indices():
+def test_mutation_profile_rejects_wrapping_binary_and_row_indices() -> None:
     arguments = _mutation_profile_arguments()
     with pytest.raises(ValueError, match="must be binary"):
         MutationProfileBatch(
@@ -134,7 +135,7 @@ def test_mutation_profile_rejects_wrapping_binary_and_row_indices():
         )
 
 
-def test_construct_connectivity_chemistry_and_full_graph_refusal():
+def test_construct_connectivity_chemistry_and_full_graph_refusal() -> None:
     construct = NucleicAcidConstruct(
         ("dna", "rna"), ("ACGT", "ACGU"), ("DNA", "RNA"), (True, False)
     )
@@ -171,7 +172,7 @@ def test_construct_connectivity_chemistry_and_full_graph_refusal():
     assert len(multi.interactions) == 2
 
 
-def test_published_frame_order_and_proper_rigid_invariance():
+def test_published_frame_order_and_proper_rigid_invariance() -> None:
     mapping, positions = fixture()
     binding = prepare_nucleotide_binding(mapping, mapping.atom_ids)
     descriptor = NucleotideGDescriptor(
@@ -205,7 +206,7 @@ def test_published_frame_order_and_proper_rigid_invariance():
     assert bool(jnp.any(reference.values[0, :3] != reference.values[2, :3]))
 
 
-def test_sparse_dense_equivalence_and_native_cv_series_support():
+def test_sparse_dense_equivalence_and_native_cv_series_support() -> None:
     mapping, positions = fixture()
     binding = prepare_nucleotide_binding(mapping, mapping.atom_ids)
     k = mapping.construct.nucleotide_keys
@@ -255,10 +256,11 @@ def test_sparse_dense_equivalence_and_native_cv_series_support():
             support, coordinates.values, value_valid=mask, series_id="missing-marker"
         )
     )
+    # ty: ignore[not-subscriptable]
     assert not bool(jnp.any(incomplete.value_valid[1]))
 
 
-def test_ermsd_drives_native_harmonic_bias_energy_and_forces():
+def test_ermsd_drives_native_harmonic_bias_energy_and_forces() -> None:
     from phydrax.atomistic import (
         AtomisticDynamicsPlan,
         AtomisticPotentialProgram,
@@ -276,12 +278,20 @@ def test_ermsd_drives_native_harmonic_bias_energy_and_forces():
     units = AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     count = len(mapping.atom_ids)
     system = AtomisticSystemPlan(
-        mapping.atom_ids, [6] * count, [12.0] * count, units, atom_type_ids=[0] * count
+        mapping.atom_ids,
+        # ty: ignore[invalid-argument-type]
+        [6] * count,
+        # ty: ignore[invalid-argument-type]
+        [12.0] * count,
+        units,
+        # ty: ignore[invalid-argument-type]
+        atom_type_ids=[0] * count,
     ).prepare()
     neighborhood = DenseParticleNeighborhoodPlan(count * (count - 1) // 2).prepare(
         system.particles
     )
     potential = AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [LennardJonesPotential([0.2], [1.0], 2.5)]
     ).prepare(system)
     dynamics = AtomisticDynamicsPlan(
@@ -296,7 +306,12 @@ def test_ermsd_drives_native_harmonic_bias_energy_and_forces():
     stiffness = 2.5
     bias = PreparedAtomisticBias(
         AtomisticBiasPlan(
-            BiasKind.HARMONIC, program, center=[0.0], stiffness=[stiffness]
+            BiasKind.HARMONIC,
+            program,
+            # ty: ignore[invalid-argument-type]
+            center=[0.0],
+            # ty: ignore[invalid-argument-type]
+            stiffness=[stiffness],
         ),
         dynamics,
     )
@@ -328,7 +343,7 @@ def test_ermsd_drives_native_harmonic_bias_energy_and_forces():
         program.evaluate(positions, cell_vectors=jnp.eye(3))
 
 
-def test_cutoff_sides_and_distinct_c2_descriptor():
+def test_cutoff_sides_and_distinct_c2_descriptor() -> None:
     mapping, positions = fixture()
     k = mapping.construct.nucleotide_keys
     binding = prepare_nucleotide_binding(mapping, mapping.atom_ids)
@@ -348,7 +363,7 @@ def test_cutoff_sides_and_distinct_c2_descriptor():
         image_policy="nonperiodic",
     )
 
-    def place(distance):
+    def place(distance: Any) -> Any:
         return positions.at[3:6].set(positions[:3] + jnp.array([distance, 0.0, 0.0]))
 
     left, right = hard.evaluate(place(12.0 - 1e-6)), hard.evaluate(place(12.0 + 1e-6))
@@ -365,7 +380,7 @@ def test_cutoff_sides_and_distinct_c2_descriptor():
     assert smooth.descriptor_id != hard.descriptor_id
 
 
-def test_missing_and_degenerate_ring_never_shorten_construct():
+def test_missing_and_degenerate_ring_never_shorten_construct() -> None:
     mapping, positions = fixture()
     mask = np.ones(9, bool)
     mask[1] = False
@@ -387,7 +402,7 @@ def test_missing_and_degenerate_ring_never_shorten_construct():
         base_frames(positions, full, image_policy="minimum-image")
 
 
-def test_source_normalization_keeps_raw_and_restrictions():
+def test_source_normalization_keeps_raw_and_restrictions() -> None:
     mapping, positions = fixture()
     manifest = rights()
     source = ScientificArtifactEnvelope(
@@ -424,7 +439,7 @@ def test_source_normalization_keeps_raw_and_restrictions():
         )
 
 
-def test_native_torsions_keep_termini_and_pucker_phase_degeneracy():
+def test_native_torsions_keep_termini_and_pucker_phase_degeneracy() -> None:
     construct = NucleicAcidConstruct(("r",), ("A",), ("RNA",), (False,))
     names = ("P", "O5'", "C5'", "C4'", "C3'", "O3'", "O4'", "C1'", "C2'", "N9", "C4")
     ids = tuple(10 + 7 * i for i in range(len(names)))
@@ -433,7 +448,15 @@ def test_native_torsions_keep_termini_and_pucker_phase_degeneracy():
     )
     units = AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     system = AtomisticSystemPlan(
-        ids, [6] * len(ids), [12.0] * len(ids), units, atom_type_ids=[0] * len(ids)
+        # ty: ignore[invalid-argument-type]
+        ids,
+        # ty: ignore[invalid-argument-type]
+        [6] * len(ids),
+        # ty: ignore[invalid-argument-type]
+        [12.0] * len(ids),
+        units,
+        # ty: ignore[invalid-argument-type]
+        atom_type_ids=[0] * len(ids),
     ).prepare()
     t = jnp.arange(len(ids), dtype="float64")
     positions = jnp.stack((jnp.cos(t), jnp.sin(t), 0.2 * t), axis=-1)
@@ -454,7 +477,9 @@ def test_native_torsions_keep_termini_and_pucker_phase_degeneracy():
         support, coordinates, value_valid=coverage, series_id="partial-sugar"
     )
     observed = program.observe_series(series)
+    # ty: ignore[not-subscriptable]
     assert bool(observed.value_valid[0, 0, 6]) and not bool(observed.value_valid[1, 0, 6])
+    # ty: ignore[not-subscriptable]
     assert not bool(jnp.any(program.observe_pseudorotation_series(series).value_valid[1]))
     phase, amplitude = 0.73, 0.42
     nu = amplitude * jnp.cos(phase + 4 * jnp.pi * (jnp.arange(5) - 2) / 5)
@@ -472,7 +497,7 @@ def test_native_torsions_keep_termini_and_pucker_phase_degeneracy():
     assert not bool(flat.valid[0])
 
 
-def test_named_contacts_are_geometry_not_inferred_canonical_pairs():
+def test_named_contacts_are_geometry_not_inferred_canonical_pairs() -> None:
     mapping, positions = fixture()
     binding = prepare_nucleotide_binding(mapping, mapping.atom_ids)
     descriptor = NucleotideGDescriptor(
@@ -488,7 +513,7 @@ def test_named_contacts_are_geometry_not_inferred_canonical_pairs():
     assert bool(stacked.stacked[0]) and not bool(stacked.coplanar[0])
 
 
-def test_native_source_records_to_descriptor_retains_author_identity():
+def test_native_source_records_to_descriptor_retains_author_identity() -> None:
     from phydrax.applications.nucleic_acid_biophysics import (
         nucleic_hypothesis_from_pdb_records,
     )
@@ -562,7 +587,7 @@ def test_native_source_records_to_descriptor_retains_author_identity():
     assert imported.source_records[0].insertion_code == "A"
 
 
-def test_complete_frame_is_not_complete_chemical_geometry():
+def test_complete_frame_is_not_complete_chemical_geometry() -> None:
     from phydrax.applications.nucleic_acid_biophysics.structure import (
         NucleotideStructureQualifier,
     )

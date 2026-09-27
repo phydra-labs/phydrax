@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 
@@ -33,7 +34,7 @@ class ROMArtifactReference(StrictModule, NonTrainableState):
         /,
         *,
         required: bool = True,
-    ):
+    ) -> None:
         values = tuple(
             str(value) for value in (role, artifact_id, recipe_id, archive_uri)
         )
@@ -97,7 +98,7 @@ class ROMDeploymentBundle(StrictModule, NonTrainableState):
         execution_requirements_id: str,
         resource_policy_id: str,
         qualification_ids: Sequence[str],
-    ):
+    ) -> None:
         model = str(model_id)
         refs = tuple(references)
         capabilities = tuple(str(value) for value in capability_profile_ids)
@@ -147,7 +148,7 @@ class ROMDeploymentBundle(StrictModule, NonTrainableState):
         return record
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> "ROMDeploymentBundle":
+    def from_record(cls, record: Mapping[str, Any], /) -> "ROMDeploymentBundle":
         references = record["references"]
         if not isinstance(references, Sequence) or isinstance(references, str):
             raise TypeError("Serialized ROM references must be a sequence.")

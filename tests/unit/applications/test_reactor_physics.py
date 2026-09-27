@@ -1,4 +1,5 @@
 import hashlib
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -7,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _data():
+def _data() -> Any:
     payload = b"reactor-data"
     reference = phx.qualification.ReferenceArtifactManifest(
         "synthetic-reactor-data",
@@ -33,15 +34,24 @@ def _data():
     )
 
 
-def _one_group():
+def _one_group() -> Any:
     return phx.nuclear.EnergyGroupStructure(
-        [0.0, 20.0], phx.units.MEGAELECTRONVOLT, source_id="one-group"
+        # ty: ignore[invalid-argument-type]
+        [0.0, 20.0],
+        phx.units.MEGAELECTRONVOLT,
+        source_id="one-group",
     )
 
 
-def test_multigroup_diffusion_fixed_source_is_balanced_and_nonnegative():
+def test_multigroup_diffusion_fixed_source_is_balanced_and_nonnegative() -> None:
     geometry = phx.discretization.finite_volume.MetricLinePlan(
-        [0.0, 1.0, 2.0], [1.0, 1.0], [1.0, 1.0, 1.0], "slab"
+        # ty: ignore[invalid-argument-type]
+        [0.0, 1.0, 2.0],
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.0],
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.0, 1.0],
+        "slab",
     )
     material = phx.applications.reactor_physics.MultigroupMaterialData(
         _one_group(),
@@ -63,9 +73,15 @@ def test_multigroup_diffusion_fixed_source_is_balanced_and_nonnegative():
     assert np.all(result.scalar_flux_m2_s >= 0.0)
 
 
-def test_one_cell_criticality_recovers_generalized_eigenvalue():
+def test_one_cell_criticality_recovers_generalized_eigenvalue() -> None:
     geometry = phx.discretization.finite_volume.MetricLinePlan(
-        [0.0, 1.0], [1.0], [1.0, 1.0], "critical-slab"
+        # ty: ignore[invalid-argument-type]
+        [0.0, 1.0],
+        # ty: ignore[invalid-argument-type]
+        [1.0],
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.0],
+        "critical-slab",
     )
     material = phx.applications.reactor_physics.MultigroupMaterialData(
         _one_group(),
@@ -88,7 +104,7 @@ def test_one_cell_criticality_recovers_generalized_eigenvalue():
     np.testing.assert_allclose(result.k_effective, 2.0, rtol=1.0e-10)
 
 
-def test_delayed_neutron_equilibrium_is_stationary_at_zero_reactivity():
+def test_delayed_neutron_equilibrium_is_stationary_at_zero_reactivity() -> None:
     plan = phx.applications.reactor_physics.DelayedNeutronKineticsPlan(
         np.asarray([0.004, 0.002]),
         np.asarray([0.1, 1.0]),
@@ -107,14 +123,14 @@ def test_delayed_neutron_equilibrium_is_stationary_at_zero_reactivity():
     )
 
 
-def test_delayed_neutron_kinetics_is_differentiable_in_reactivity():
+def test_delayed_neutron_kinetics_is_differentiable_in_reactivity() -> None:
     plan = phx.applications.reactor_physics.DelayedNeutronKineticsPlan(
         np.asarray([0.006]), np.asarray([0.2]), 1.0e-4, "synthetic-delayed-data"
     )
     prepared = plan.prepare()
     state = plan.equilibrium_state(1.0)
 
-    def population(reactivity):
+    def population(reactivity: Any) -> Any:
         return prepared.step(
             state, reactivity, 0.0, 1.0e-3
         ).accepted_state.neutron_population

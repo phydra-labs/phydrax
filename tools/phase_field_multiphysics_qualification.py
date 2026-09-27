@@ -8,6 +8,7 @@ import argparse
 import json
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -21,7 +22,7 @@ from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 PF = phx.applications.phase_field
 
 
-def _mechanics():
+def _mechanics() -> Any:
     identity = jnp.eye(2)
     stiffness = 2.0 * jnp.einsum("ij,kl->ijkl", identity, identity) + (
         jnp.einsum("ik,jl->ijkl", identity, identity)
@@ -39,7 +40,7 @@ def _mechanics():
     )
 
 
-def _thermal():
+def _thermal() -> Any:
     phases = (
         PF.NonisothermalGrandPotentialPhase(
             "qualification-solid",
@@ -69,7 +70,7 @@ def _thermal():
     )
 
 
-def _graph():
+def _graph() -> Any:
     return PF.PhaseFieldCouplingGraph(
         (
             PF.PhaseFieldCouplingTerm(
@@ -119,7 +120,7 @@ def _graph():
     )
 
 
-def build_coupled_case():
+def build_coupled_case() -> Any:
     thermal = _thermal()
     nucleation = PF.NucleationEventPlan(
         phx.stochastic.PoissonClockRealization(
@@ -391,7 +392,7 @@ def _power_transfer_and_distributed() -> dict[str, object]:
             np.asarray(jax.devices()[:2], dtype=object), (distributed.axis_name,)
         )
 
-        def execute(cell_values):
+        def execute(cell_values: Any) -> Any:
             return distributed.collective_owned_sum(cell_values).global_value
 
         collective = jax.shard_map(

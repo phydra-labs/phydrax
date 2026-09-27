@@ -10,7 +10,9 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -36,7 +38,7 @@ class ElectrophysiologyInverseRoute(StrictModule, NonTrainableState):
 
     route_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.route_id = "electrophysiology-inverse"
 
     @property
@@ -49,7 +51,7 @@ class MechanicsInverseRoute(StrictModule, NonTrainableState):
 
     route_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.route_id = "mechanics-inverse"
 
     @property
@@ -64,7 +66,7 @@ class LoadingInverseRoute(StrictModule, NonTrainableState):
 
     route_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.route_id = "loading-inverse"
 
     @property
@@ -77,7 +79,7 @@ class UnloadedGeometryInverseRoute(StrictModule, NonTrainableState):
 
     route_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.route_id = "unloaded-geometry-inverse"
 
     @property
@@ -179,7 +181,7 @@ class CardiovascularInverseProblem(StrictModule, NonTrainableState):
         state_admissibility: Callable[[PyTree[Any], tuple[Array, ...], Any], ArrayLike]
         | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(schema, CardiacParameterSchema):
             raise TypeError("schema must be a CardiacParameterSchema.")
         if not isinstance(likelihood, PreparedMultimodalLikelihood):
@@ -304,11 +306,15 @@ class CardiovascularInverseProblem(StrictModule, NonTrainableState):
         parameter_space = self.schema.parameter_space(physical_reference)
         initial_raw = tuple(parameter_space.initial)
 
-        def residual(state, raw_parameters, dynamic_args):
+        def residual(
+            state: PyTree[Any], raw_parameters: Sequence[ArrayLike], dynamic_args: Any
+        ) -> PyTree[ArrayLike]:
             physical = self._physical(raw_parameters, physical_reference)
             return self.state_residual(state, physical, dynamic_args)
 
-        def objective(state, raw_parameters, dynamic_args):
+        def objective(
+            state: PyTree[Any], raw_parameters: Sequence[ArrayLike], dynamic_args: Any
+        ) -> tuple[Array, InverseObjectiveEvaluation]:
             evaluation = self.objective_evaluation(
                 state,
                 raw_parameters,
@@ -317,16 +323,23 @@ class CardiovascularInverseProblem(StrictModule, NonTrainableState):
             )
             return evaluation.negative_log_posterior, evaluation
 
-        def realization(state, raw_parameters, dynamic_args):
+        def realization(
+            state: PyTree[Any], raw_parameters: Sequence[ArrayLike], dynamic_args: Any
+        ) -> ArrayLike:
             physical = self._physical(raw_parameters, physical_reference)
             return self.fixed_topology(state, physical, dynamic_args)
 
         admissibility = None
-        if self.state_admissibility is not None:
+        state_admissibility = self.state_admissibility
+        if state_admissibility is not None:
 
-            def admissibility(state, raw_parameters, dynamic_args):
+            def admissibility(
+                state: PyTree[Any],
+                raw_parameters: Sequence[ArrayLike],
+                dynamic_args: Any,
+            ) -> ArrayLike:
                 physical = self._physical(raw_parameters, physical_reference)
-                return self.state_admissibility(state, physical, dynamic_args)
+                return state_admissibility(state, physical, dynamic_args)
 
         problem = StateDesignProblem(
             residual,

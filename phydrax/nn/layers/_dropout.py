@@ -3,12 +3,12 @@
 #
 
 from collections.abc import Sequence
-from typing import cast, Literal
+from typing import cast, Literal, TypeVar
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array
+from jax import Array
 
 from ..._differentiation import DerivativeRegularity
 from .._base import _AbstractBaseModel
@@ -35,6 +35,9 @@ def _dropout_probabilities(
     return probabilities
 
 
+_TreeT = TypeVar("_TreeT")
+
+
 class Dropout(_AbstractBaseModel):
     """Inverted dropout with explicit elementwise or feature-mask semantics."""
 
@@ -53,7 +56,7 @@ class Dropout(_AbstractBaseModel):
         p: float,
         mode: Literal["elementwise", "feature"] = "feature",
         inference: bool = False,
-    ):
+    ) -> None:
         probability = float(p)
         if not 0.0 <= probability < 1.0:
             raise ValueError("Dropout p must satisfy 0 <= p < 1.")
@@ -94,7 +97,7 @@ class Dropout(_AbstractBaseModel):
         return AFFINE
 
 
-def inference_mode(tree, value: bool = True):
+def inference_mode(tree: _TreeT, value: bool = True) -> _TreeT:
     """Switch every inference-aware Equinox or Phydrax leaf in a PyTree."""
 
     return eqx.nn.inference_mode(tree, value)

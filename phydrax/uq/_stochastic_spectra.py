@@ -4,9 +4,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..control._frequency import (
@@ -274,31 +277,31 @@ def linear_gaussian_spectral_densities(
     )
 
 
-def state_spectral_density(*args, **kwargs) -> Array:
+def state_spectral_density(*args: ArrayLike, **kwargs: Any) -> Array:
     """Return the state auto-spectrum from ``linear_gaussian_spectral_densities``."""
 
     return linear_gaussian_spectral_densities(*args, **kwargs).state_spectrum
 
 
-def output_spectral_density(*args, **kwargs) -> Array:
+def output_spectral_density(*args: ArrayLike, **kwargs: Any) -> Array:
     """Return the output auto-spectrum from ``linear_gaussian_spectral_densities``."""
 
     return linear_gaussian_spectral_densities(*args, **kwargs).output_spectrum
 
 
-def state_output_cross_spectral_density(*args, **kwargs) -> Array:
+def state_output_cross_spectral_density(*args: ArrayLike, **kwargs: Any) -> Array:
     """Return :math:`S_{xy}=E[x y^H]`."""
 
     return linear_gaussian_spectral_densities(*args, **kwargs).state_output_cross_spectrum
 
 
-def state_input_cross_spectral_density(*args, **kwargs) -> Array:
+def state_input_cross_spectral_density(*args: ArrayLike, **kwargs: Any) -> Array:
     """Return :math:`S_{xu}=E[x u^H]`."""
 
     return linear_gaussian_spectral_densities(*args, **kwargs).state_input_cross_spectrum
 
 
-def output_input_cross_spectral_density(*args, **kwargs) -> Array:
+def output_input_cross_spectral_density(*args: ArrayLike, **kwargs: Any) -> Array:
     """Return :math:`S_{yu}=E[y u^H]`."""
 
     return linear_gaussian_spectral_densities(*args, **kwargs).output_input_cross_spectrum

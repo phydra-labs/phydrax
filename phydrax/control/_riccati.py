@@ -13,8 +13,8 @@ from math import isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 
@@ -339,7 +339,10 @@ def _care_solution(a: Array, b: Array, q: Array, r: Array, s: Array, /) -> Array
 
 
 @_care_solution.defjvp
-def _care_solution_jvp(primals, tangents):
+def _care_solution_jvp(
+    primals: tuple[Array, Array, Array, Array, Array],
+    tangents: tuple[Array, Array, Array, Array, Array],
+) -> tuple[Array, Array]:
     a, b, q, r, s = primals
     da, db, dq, dr, ds = tangents
     p = _care_solution(a, b, q, r, s)
@@ -369,7 +372,7 @@ def _dare_primal(
     tolerance: float,
     /,
 ) -> tuple[Array, Array]:
-    def body(_, carry):
+    def body(_: Array, carry: tuple[Array, Array, Array]) -> tuple[Array, Array, Array]:
         p, done, count = carry
         residual = _discrete_residual(p, a, b, q, r, s)
         candidate = p + residual
@@ -421,7 +424,12 @@ def _dare_solution(
 
 
 @_dare_solution.defjvp
-def _dare_solution_jvp(max_iterations, tolerance, primals, tangents):
+def _dare_solution_jvp(
+    max_iterations: int,
+    tolerance: float,
+    primals: tuple[Array, Array, Array, Array, Array],
+    tangents: tuple[Array, Array, Array, Array, Array],
+) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
     a, b, q, r, s = primals
     da, db, dq, dr, ds = tangents
     p, count = _dare_solution(a, b, q, r, s, max_iterations, tolerance)

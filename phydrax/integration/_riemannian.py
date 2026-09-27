@@ -4,10 +4,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
@@ -25,7 +27,9 @@ from ._targets import MappedTarget
 class _BoundaryMeasureScale(StrictModule):
     density: Any
 
-    def __init__(self, ambient_metric: RiemannianMetric, parameterization: Immersion, /):
+    def __init__(
+        self, ambient_metric: RiemannianMetric, parameterization: Immersion, /
+    ) -> None:
         self.density = induced_boundary_density(ambient_metric, parameterization)
 
     def __call__(self, reference_points: Array, /) -> Array:
@@ -53,7 +57,7 @@ class MetricMeasureNormalization(StrictModule):
         maximum_log_density: ArrayLike,
         sample_count: int,
         precision_evidence: PrecisionEvidenceEnvelope,
-    ):
+    ) -> None:
         self.mass = jnp.asarray(mass)
         self.log_mass = jnp.asarray(log_mass)
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
@@ -71,7 +75,7 @@ def riemannian_boundary_target(
     parameterization: Immersion,
     /,
     *,
-    mask=None,
+    mask: Callable[[Array], ArrayLike] | Array | None = None,
     target_mass: ArrayLike | None = None,
 ) -> MappedTarget:
     """Build a mapped boundary target with induced Riemannian measure."""

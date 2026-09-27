@@ -8,7 +8,8 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -19,7 +20,7 @@ class FlowObservablePlan(StrictModule, NonTrainableState):
     harmonics: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, harmonics: Sequence[int], /):
+    def __init__(self, harmonics: Sequence[int], /) -> None:
         harmonics_ = tuple(harmonics)
         if (
             not harmonics_

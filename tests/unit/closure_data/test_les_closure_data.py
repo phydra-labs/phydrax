@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -26,7 +28,7 @@ from phydrax.equations._les_closures import ResolvedLESFilter
 _AXES = ("x", "y", "z")
 
 
-def _space(shape):
+def _space(shape: Any) -> Any:
     return TensorSpectralPlan(
         tuple(FourierBasisPlan(count) for count in shape),
         axis_names=_AXES,
@@ -34,7 +36,7 @@ def _space(shape):
     ).prepare(tuple(AxisDomain.periodic(0.0, 2.0 * np.pi) for _ in shape))
 
 
-def _filter(name="resolved"):
+def _filter(name: Any = "resolved") -> Any:
     return ResolvedLESFilter(
         name,
         family="sharp-fourier-projection",
@@ -47,7 +49,7 @@ def _filter(name="resolved"):
     )
 
 
-def _context(source_shape=(12, 12, 12), resolved_shape=(4, 4, 4)):
+def _context(source_shape: Any = (12, 12, 12), resolved_shape: Any = (4, 4, 4)) -> Any:
     source = _space(source_shape)
     resolved = _space(resolved_shape)
     context = prepare_periodic_les_analysis(
@@ -59,11 +61,11 @@ def _context(source_shape=(12, 12, 12), resolved_shape=(4, 4, 4)):
     return source, resolved, context
 
 
-def _coordinates(space):
+def _coordinates(space: Any) -> Any:
     return jnp.meshgrid(*(axis.nodes for axis in space.axes), indexing="ij")
 
 
-def _velocity_field(source):
+def _velocity_field(source: Any) -> Any:
     x, y, z = _coordinates(source)
     values = jnp.stack(
         (
@@ -82,7 +84,9 @@ def _velocity_field(source):
     )
 
 
-def test_periodic_filter_matches_modal_transfer_retained_modes_nyquist_and_constants():
+def test_periodic_filter_matches_modal_transfer_retained_modes_nyquist_and_constants() -> (
+    None
+):
     source, resolved, context = _context((8, 8, 8), (4, 4, 4))
     coarse_coefficients = jnp.zeros(resolved.modal_shape, dtype=jnp.complex128)
     coarse_coefficients = coarse_coefficients.at[1, 0, 0].set(1.25 - 0.5j)
@@ -106,7 +110,9 @@ def test_periodic_filter_matches_modal_transfer_retained_modes_nyquist_and_const
     )
 
 
-def test_periodic_product_filter_projects_the_source_product_not_separate_factors():
+def test_periodic_product_filter_projects_the_source_product_not_separate_factors() -> (
+    None
+):
     source, resolved, context = _context()
     x, y, _ = _coordinates(source)
     left = jnp.sin(x) + 0.4 * jnp.cos(5.0 * y)
@@ -115,7 +121,7 @@ def test_periodic_product_filter_projects_the_source_product_not_separate_factor
     np.testing.assert_allclose(context.filter_product(left, right), expected, atol=2e-12)
 
 
-def test_reynolds_stress_conventions_divergence_and_positive_forward_sign():
+def test_reynolds_stress_conventions_divergence_and_positive_forward_sign() -> None:
     source, resolved, context = _context()
     velocity = _velocity_field(source)
     derivatives = tuple(spectral_derivative_operator(resolved, axis) for axis in range(3))
@@ -164,7 +170,7 @@ def test_reynolds_stress_conventions_divergence_and_positive_forward_sign():
     assert reference.analysis_dag_id == dag.dag_id
 
 
-def test_named_generic_scalar_flux_uses_the_same_exact_projection():
+def test_named_generic_scalar_flux_uses_the_same_exact_projection() -> None:
     source, _, context = _context()
     velocity = _velocity_field(source)
     x, y, z = _coordinates(source)
@@ -190,7 +196,9 @@ def test_named_generic_scalar_flux_uses_the_same_exact_projection():
     assert target.target_kind == "scalar_flux"
 
 
-def test_filter_identity_transfer_derivative_and_source_resolution_mismatches_refuse():
+def test_filter_identity_transfer_derivative_and_source_resolution_mismatches_refuse() -> (
+    None
+):
     source = _space((8, 8, 8))
     resolved = _space((4, 4, 4))
     wrong_axes_filter = ResolvedLESFilter(
@@ -236,7 +244,7 @@ def test_filter_identity_transfer_derivative_and_source_resolution_mismatches_re
         )
 
 
-def test_les_additions_do_not_change_existing_filter_energy_or_pair_semantics():
+def test_les_additions_do_not_change_existing_filter_energy_or_pair_semantics() -> None:
     prepared = FilterSpec.identity().prepare((4, 4, 4))
     values = jnp.ones((4, 4, 4, 3))
     np.testing.assert_array_equal(prepared(values), values)

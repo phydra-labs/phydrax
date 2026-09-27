@@ -4,17 +4,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array
+from jaxtyping import PyTree
 
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
@@ -32,6 +34,14 @@ from ._nested_extensions import (
     PeriodicNestedCoordinate,
     PhantomNestedState,
 )
+
+
+if TYPE_CHECKING:
+    from ._nested import NestedSamplingResult
+    from ._posterior import PosteriorProblem
+
+# Evaluates one flat position into (log prior, log likelihood).
+_EvaluateOne: TypeAlias = Callable[[Array], tuple[Array, Array]]
 
 
 _CHECKPOINT_KIND = "nested_sampling"
@@ -192,7 +202,7 @@ class _ProposalOutcome(NamedTuple):
 
 
 class _Evaluator:
-    def __init__(self, evaluate_one, *, count: int, limit: int):
+    def __init__(self, evaluate_one: _EvaluateOne, *, count: int, limit: int) -> None:
         self.evaluate_one = evaluate_one
         self.count = int(count)
         self.limit = int(limit)
@@ -867,7 +877,7 @@ def _propose_nested(
         step_size = plan.proposal.gradient_step_size
         barrier_scale = plan.proposal.gradient_barrier_scale
 
-        def guided(value):
+        def guided(value: Array) -> Array:
             prior_value, likelihood_value = evaluate_one(value)
             barrier = jax.nn.log_sigmoid((likelihood_value - threshold) / barrier_scale)
             return prior_value + barrier
@@ -1138,18 +1148,18 @@ def _propose_nested(
 
 
 def execute_prepared_nested(
-    problem,
+    problem: PosteriorProblem,
     plan: NestedSamplingPlan,
     /,
     *,
     key: Array,
     remaining_evidence_tolerance: float,
-    prior_position_sampler,
+    prior_position_sampler: Callable[[Array, int], PyTree[Array]] | None,
     checkpoint_path: str | Path | None,
     checkpoint_id: str | None,
     checkpoint_every: int,
     resume_from: str | Path | None,
-):
+) -> NestedSamplingResult:
     """Execute one exact-correction, fixed-capacity variable-live nested lifecycle."""
     from ._nested import (
         NESTED_SAMPLING_INNER_KERNEL_FAILURE,

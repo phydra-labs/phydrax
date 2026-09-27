@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -23,7 +26,7 @@ def run() -> dict[str, float | int | bool]:
         phx.discretization.FiniteElementFieldSpec("u", element),
     ).prepare()
 
-    def exact_solution(points):
+    def exact_solution(points: Any) -> Any:
         return points[..., 0] ** 3 + points[..., 1] ** 3
 
     form = phx.equations.FiniteElementForm(

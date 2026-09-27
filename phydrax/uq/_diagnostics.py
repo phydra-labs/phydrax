@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 
@@ -34,7 +35,7 @@ class MCMCDiagnostics(StrictModule):
         tail_ess: PyTree[Array],
         acceptance_rate: Array,
         divergent: Array,
-    ):
+    ) -> None:
         self.rhat = rhat
         self.bulk_ess = bulk_ess
         self.tail_ess = tail_ess
@@ -62,7 +63,7 @@ class MCMCConvergenceThresholds(StrictModule):
         min_tail_ess: float = 400.0,
         allow_divergences: bool = False,
         allow_trajectory_saturation: bool = False,
-    ):
+    ) -> None:
         maximum = float(max_rhat)
         minimum_bulk = float(min_bulk_ess)
         minimum_tail = float(min_tail_ess)
@@ -121,7 +122,7 @@ class MCMCConvergenceReport(StrictModule):
         adaptation_duration_seconds: float,
         sampling_duration_seconds: float,
         samples_per_second: float,
-    ):
+    ) -> None:
         rhat_failures = _failing_locations(
             diagnostics.rhat,
             lambda value: ~jnp.isfinite(value) | (value > thresholds.max_rhat),
@@ -218,7 +219,7 @@ class MCMCConvergenceError(RuntimeError):
 
     report: MCMCConvergenceReport
 
-    def __init__(self, report: MCMCConvergenceReport):
+    def __init__(self, report: MCMCConvergenceReport) -> None:
         self.report = report
         super().__init__(
             "MCMC convergence gates failed: " + ", ".join(report.failures) + "."

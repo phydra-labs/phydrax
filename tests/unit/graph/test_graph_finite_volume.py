@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -31,7 +34,9 @@ def _square_dual() -> phx.graph.MeshDualGraph:
     return phx.graph.mesh_to_dual_graph(vertices, faces)
 
 
-def test_finite_volume_divergence_conserves_internal_flux_without_volume_normalization():
+def test_finite_volume_divergence_conserves_internal_flux_without_volume_normalization() -> (
+    None
+):
     out = phx.graph.GraphFiniteVolumeDivergence(
         output_key="div",
         normalize_by_volume=False,
@@ -41,13 +46,13 @@ def test_finite_volume_divergence_conserves_internal_flux_without_volume_normali
     assert jnp.allclose(jnp.sum(out.nodes["div"]), 0.0)
 
 
-def test_finite_volume_divergence_normalizes_by_cell_volume():
+def test_finite_volume_divergence_normalizes_by_cell_volume() -> None:
     out = phx.graph.GraphFiniteVolumeDivergence(output_key="div")(_flux_graph())
 
     assert jnp.allclose(out.nodes["div"], jnp.array([-4.0, 8.0]))
 
 
-def test_finite_volume_diffusion_is_zero_for_constant_dual_cell_field():
+def test_finite_volume_diffusion_is_zero_for_constant_dual_cell_field() -> None:
     dual = _square_dual()
     graph = dual.graph.replace(
         nodes={**dual.graph.nodes, "u": jnp.ones((2,))},
@@ -59,7 +64,7 @@ def test_finite_volume_diffusion_is_zero_for_constant_dual_cell_field():
     assert jnp.allclose(out.nodes["du"], jnp.zeros((2, 1)))
 
 
-def test_finite_volume_diffusion_is_conservative_on_dual_graph():
+def test_finite_volume_diffusion_is_conservative_on_dual_graph() -> None:
     dual = _square_dual()
     graph = dual.graph.replace(
         nodes={**dual.graph.nodes, "u": jnp.array([1.0, 3.0])},
@@ -75,7 +80,7 @@ def test_finite_volume_diffusion_is_conservative_on_dual_graph():
     assert out.nodes["du"][1, 0] < 0.0
 
 
-def test_finite_volume_diffusion_wraps_as_graph_model_on_dual_graph():
+def test_finite_volume_diffusion_wraps_as_graph_model_on_dual_graph() -> None:
     dual = _square_dual()
     domain = phx.domain.GraphDomain(dual.graph)
     faces = domain.component({"graph": dual.face_nodes_component()})
@@ -85,7 +90,7 @@ def test_finite_volume_diffusion_wraps_as_graph_model_on_dual_graph():
     values = jnp.array([1.0, 3.0])
 
     @domain.Function("graph")
-    def u(face):
+    def u(face: Any) -> Any:
         return values[face.get("face_index")]
 
     model = domain.GraphModel(

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -15,12 +18,12 @@ from phydrax.applications.skeletal_muscle.electromyography import (
 )
 
 
-def test_skeletal_muscle_parent_exports_electromyography_namespace():
+def test_skeletal_muscle_parent_exports_electromyography_namespace() -> None:
     assert skeletal_muscle.electromyography is electromyography
     assert "electromyography" in skeletal_muscle.__all__
 
 
-def test_event_template_superposition_mask_and_fractional_delay():
+def test_event_template_superposition_mask_and_fractional_delay() -> None:
     template = jnp.asarray([[[0.0, 1.0, 2.0, 1.0, 0.0]]])
     prepared = MotorUnitActionPotentialTemplatePlan(
         template,
@@ -47,7 +50,7 @@ def test_event_template_superposition_mask_and_fractional_delay():
     np.testing.assert_allclose(half.voltage_V[0, 1], 0.5)
 
 
-def test_event_template_retains_aligned_final_nonzero_sample():
+def test_event_template_retains_aligned_final_nonzero_sample() -> None:
     prepared = MotorUnitActionPotentialTemplatePlan(
         jnp.asarray([[[1.0, 2.0, 3.0]]]),
         1.0,
@@ -68,7 +71,7 @@ def test_event_template_retains_aligned_final_nonzero_sample():
     assert bool(result.evidence.successful)
 
 
-def test_template_support_is_incomplete_when_any_active_event_is_clipped():
+def test_template_support_is_incomplete_when_any_active_event_is_clipped() -> None:
     prepared = MotorUnitActionPotentialTemplatePlan(
         jnp.asarray([[[1.0, 2.0, 3.0]]]),
         1.0,
@@ -97,11 +100,11 @@ def test_template_support_is_incomplete_when_any_active_event_is_clipped():
     assert not bool(clipped.evidence.successful)
 
 
-def _frequencies(count=8, spacing=0.005):
+def _frequencies(count: Any = 8, spacing: Any = 0.005) -> Any:
     return 2.0 * jnp.pi * jnp.fft.fftfreq(count, d=spacing)
 
 
-def _conductor(depth=-0.01, *, muscle_longitudinal_conductivity=0.5):
+def _conductor(depth: Any = -0.01, *, muscle_longitudinal_conductivity: Any = 0.5) -> Any:
     frequency = _frequencies()
     parameters = PlanarConductorParameters(
         muscle_longitudinal_conductivity,
@@ -122,7 +125,7 @@ def _conductor(depth=-0.01, *, muscle_longitudinal_conductivity=0.5):
     )
 
 
-def test_planar_conductor_plan_identity_includes_physical_parameters():
+def test_planar_conductor_plan_identity_includes_physical_parameters() -> None:
     baseline = _conductor()
     different_depth = _conductor(-0.02)
     different_conductivity = _conductor(muscle_longitudinal_conductivity=0.6)
@@ -133,12 +136,12 @@ def test_planar_conductor_plan_identity_includes_physical_parameters():
     )
 
 
-def _neutral_source():
+def _neutral_source() -> Any:
     source = jnp.zeros((8, 8), dtype=jnp.complex128)
     return source.at[1, 0].set(1.0).at[-1, 0].set(1.0)
 
 
-def test_planar_surface_conductor_zero_mode_reality_and_depth_attenuation():
+def test_planar_surface_conductor_zero_mode_reality_and_depth_attenuation() -> None:
     source = _neutral_source()
     shallow = _conductor(-0.005)
     deep = _conductor(-0.02)
@@ -157,7 +160,7 @@ def test_planar_surface_conductor_zero_mode_reality_and_depth_attenuation():
     )
 
 
-def test_planar_conductor_rejects_non_neutral_source_and_montage():
+def test_planar_conductor_rejects_non_neutral_source_and_montage() -> None:
     source = _neutral_source().at[0, 0].set(1.0)
     result = _conductor().evaluate(source)
     assert not bool(result.evidence.successful)

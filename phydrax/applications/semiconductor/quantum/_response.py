@@ -16,19 +16,24 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from .... import linalg as la
 from ...._strict import StrictModule
 from ....ein import contract
-from ....integration import adaptive_interval_callable, AdaptiveQuadraturePlan
+from ....integration import (
+    adaptive_interval_callable,
+    AdaptiveQuadraturePlan,
+    IntegrationEstimate,
+)
 from ._basis import _array, HBAR, KB, PLANCK, Q
 from ._coherent import bound_states, CoherentDevice
 from ._dynamic import _finite_hamiltonian, _hermitian_spectrum
 from ._leads import BoundStateOccupation
 
 
-def _coherent_moments(device, tolerance):
+def _coherent_moments(device: CoherentDevice, tolerance: float) -> IntegrationEstimate:
     leads = (device.left, device.right)
     bands = [np.asarray(lead.band()) for lead in leads]
     lo, hi = min(b[0] for b in bands), max(b[1] for b in bands)
@@ -52,7 +57,7 @@ def _coherent_moments(device, tolerance):
             if lo < float(edge) < hi:
                 breaks.add(float((edge - origin) / Q))
 
-    def integrand(x):
+    def integrand(x: Array) -> Array:
         energy = origin + Q * x
         point = device.spectral(energy)
         f = jnp.stack(
@@ -109,7 +114,9 @@ class CoherentNoiseResult(StrictModule):
     successful: Array
 
 
-def coherent_low_frequency_noise(device, *, tolerance=1e-7):
+def coherent_low_frequency_noise(
+    device: CoherentDevice, *, tolerance: float = 1e-7
+) -> CoherentNoiseResult:
     """Two-terminal Landauer–Büttiker thermal plus Pauli partition noise.
 
     Currents have equal-and-opposite cross correlation. Out of equilibrium
@@ -159,7 +166,7 @@ class QuantumCapacitance(StrictModule):
 
     cell_terminal: Array
 
-    def __init__(self, cell_terminal):
+    def __init__(self, cell_terminal: ArrayLike) -> None:
         c = _array(cell_terminal, "cell-to-electrode capacitance")
         if (
             c.ndim != 2
@@ -186,7 +193,9 @@ class QuasistaticQuantumResponse(StrictModule):
     )
 
 
-def quasistatic_quantum_response(device, terminal_capacitances, *, tolerance=1e-7):
+def quasistatic_quantum_response(
+    device: CoherentDevice, terminal_capacitances: ArrayLike, *, tolerance: float = 1e-7
+) -> QuasistaticQuantumResponse:
     """Equilibrium DC G and static dQ/dV for one equipotential quantum region.
 
     A separate, explicitly bounded three-terminal lumped closure. Bound
@@ -266,7 +275,13 @@ class QuantumFrequencyResponse(StrictModule):
     successful: Array
 
 
-def _frequency_once(device, capacitance, omega, rate, sites):
+def _frequency_once(
+    device: CoherentDevice,
+    capacitance: QuantumCapacitance,
+    omega: float,
+    rate: float,
+    sites: int,
+) -> QuantumFrequencyResponse:
     n, dim = device.hamiltonian.size, device.hamiltonian.size + 2 * sites
     resources = device.hamiltonian.resources
     # Physical transition projectors, not basis-probed dense Jacobians.
@@ -372,14 +387,14 @@ def _frequency_once(device, capacitance, omega, rate, sites):
 
 
 def finite_frequency_quantum_response(
-    device,
-    capacitance,
-    angular_frequency,
+    device: CoherentDevice,
+    capacitance: QuantumCapacitance,
+    angular_frequency: float,
     *,
-    adiabatic_rate,
-    lead_sites=32,
-    tolerance=2e-2,
-):
+    adiabatic_rate: float,
+    lead_sites: int = 32,
+    tolerance: float = 2e-2,
+) -> QuantumFrequencyResponse:
     """Full coherent screened AC at z=omega+i*adiabatic_rate, with refinements.
 
     ``adiabatic_rate`` is the inverse switch-on observation window, NOT a

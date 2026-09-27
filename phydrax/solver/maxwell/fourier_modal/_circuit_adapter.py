@@ -11,7 +11,7 @@ import jax.numpy as jnp
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ....circuit import MatrixScatteringComponent, ModalWaveReference, WavePort
 from ._runtime import PreparedFourierModalMaxwell
-from ._scattering import _port_power_data
+from ._scattering import _port_power_data, PreparedFourierModalPortModes
 
 
 def _mode_indices(
@@ -33,7 +33,10 @@ def _mode_indices(
 
 
 def _validate_eligible(
-    prepared_modes, indices: tuple[int, ...], side: str, tolerance: float
+    prepared_modes: PreparedFourierModalPortModes,
+    indices: tuple[int, ...],
+    side: str,
+    tolerance: float,
 ) -> None:
     index = jnp.asarray(indices)
     (

@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import importlib.metadata
+from typing import Any
 
 import numpy as np
 import pytest
@@ -45,25 +47,25 @@ UNIT_TET = np.asarray(
 )
 
 
-def _signed_areas(corners):
+def _signed_areas(corners: Any) -> Any:
     first = corners[:, 1] - corners[:, 0]
     second = corners[:, 2] - corners[:, 0]
     return 0.5 * (first[:, 0] * second[:, 1] - first[:, 1] * second[:, 0])
 
 
-def _tet_moments(vertices):
+def _tet_moments(vertices: Any) -> Any:
     volume = abs(np.linalg.det(vertices[1:] - vertices[0])) / 6.0
     return volume, volume * np.mean(vertices, axis=0)
 
 
-def test_identity_reports_the_phydrax_release_and_source_hash():
+def test_identity_reports_the_phydrax_release_and_source_hash() -> None:
     name, version, digest = meshcore_identity().split(" ")
     assert name == "phydrax-meshcore"
     assert version == importlib.metadata.version("phydrax")
     assert len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
 
 
-def test_tetrahedron_intersection_moments_match_analytic_cases():
+def test_tetrahedron_intersection_moments_match_analytic_cases() -> None:
     shifted_overlap = np.asarray(
         ((0.25, 0.25, 0.25), (0.5, 0.25, 0.25), (0.25, 0.5, 0.25), (0.25, 0.25, 0.5))
     )
@@ -90,7 +92,7 @@ def test_tetrahedron_intersection_moments_match_analytic_cases():
     np.testing.assert_array_equal(moment[3:], 0.0)
 
 
-def test_tetrahedron_intersection_rejects_degenerate_cells():
+def test_tetrahedron_intersection_rejects_degenerate_cells() -> None:
     flat = UNIT_TET.copy()
     flat[3] = (0.25, 0.25, 0.0)
     volume, _, status = tetrahedron_intersection_moments(flat[None], UNIT_TET[None])
@@ -98,7 +100,7 @@ def test_tetrahedron_intersection_rejects_degenerate_cells():
     assert volume[0] == 0.0
 
 
-def test_polygon_intersection_moments_handle_orientation_and_contact():
+def test_polygon_intersection_moments_handle_orientation_and_contact() -> None:
     square = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
     shifted = square + 0.5
     collinear = np.asarray(((0.0, 0.0), (0.5, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
@@ -127,7 +129,7 @@ def test_polygon_intersection_moments_handle_orientation_and_contact():
     assert area[2] == 0.0
 
 
-def test_polyhedron_clip_moments_match_analytic_halves():
+def test_polyhedron_clip_moments_match_analytic_halves() -> None:
     corner = np.asarray(
         ((0.5, 0.0, 0.0), (1.0, 0.0, 0.0), (0.5, 0.5, 0.0), (0.5, 0.0, 0.5))
     )
@@ -147,7 +149,7 @@ def test_polyhedron_clip_moments_match_analytic_halves():
     assert volume[2] == 0.0
 
 
-def test_intersection_simplices_partition_the_clipped_moments():
+def test_intersection_simplices_partition_the_clipped_moments() -> None:
     rng = np.random.default_rng(4)
     first = rng.random((40, 4, 3))
     second = 0.3 + rng.random((40, 4, 3))
@@ -190,7 +192,7 @@ def test_intersection_simplices_partition_the_clipped_moments():
     assert refused[0] == MeshcoreStatus.CAPACITY_EXCEEDED
 
 
-def _assert_empty_circles(points, triangles):
+def _assert_empty_circles(points: Any, triangles: Any) -> None:
     a, b, c = (points[triangles[:, index]] for index in range(3))
     assert np.all(orient2d(a, b, c, mode=EXACT).signs == 1)
     for query in points:
@@ -198,7 +200,7 @@ def _assert_empty_circles(points, triangles):
         assert np.all(signs <= 0)
 
 
-def test_delaunay_2d_is_exactly_empty_circle_on_random_and_lattice_points():
+def test_delaunay_2d_is_exactly_empty_circle_on_random_and_lattice_points() -> None:
     rng = np.random.default_rng(0)
     random_points = rng.random((200, 2))
     lattice = np.stack(np.meshgrid(np.arange(6.0), np.arange(6.0)), axis=-1).reshape(
@@ -217,7 +219,7 @@ def test_delaunay_2d_is_exactly_empty_circle_on_random_and_lattice_points():
     )
 
 
-def test_delaunay_2d_reports_duplicates_and_rejects_collinear_points():
+def test_delaunay_2d_reports_duplicates_and_rejects_collinear_points() -> None:
     points = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 0.0), (1.0, 1.0)))
     triangulation = DelaunayTriangulation(points)
     np.testing.assert_array_equal(triangulation.vertex_map, (0, 1, 2, 1, 4))
@@ -227,7 +229,7 @@ def test_delaunay_2d_reports_duplicates_and_rejects_collinear_points():
         DelaunayTriangulation(np.asarray(((0.0, 0.0), (1.0, 1.0), (2.0, 2.0))))
 
 
-def test_delaunay_3d_is_exactly_empty_sphere_and_fills_the_hull():
+def test_delaunay_3d_is_exactly_empty_sphere_and_fills_the_hull() -> None:
     rng = np.random.default_rng(1)
     random_points = rng.random((60, 3))
     lattice = np.stack(np.meshgrid(*(np.arange(4.0),) * 3), axis=-1).reshape((-1, 3))
@@ -244,7 +246,7 @@ def test_delaunay_3d_is_exactly_empty_sphere_and_fills_the_hull():
         assert volume == pytest.approx(ConvexHull(points).volume, rel=1e-12)
 
 
-def _segment_coverage(triangulation, segments):
+def _segment_coverage(triangulation: Any, segments: Any) -> None:
     points = triangulation.points
     triangles = triangulation.triangles
     for segment_id, (start, stop) in enumerate(segments):
@@ -262,7 +264,7 @@ def _segment_coverage(triangulation, segments):
         assert length == pytest.approx(np.linalg.norm(b - a), rel=1e-12)
 
 
-def test_constrained_delaunay_keeps_segments_and_reaches_the_angle_bound():
+def test_constrained_delaunay_keeps_segments_and_reaches_the_angle_bound() -> None:
     l_shape = np.asarray(
         ((0.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 1.0), (1.0, 2.0), (0.0, 2.0))
     )
@@ -283,7 +285,7 @@ def test_constrained_delaunay_keeps_segments_and_reaches_the_angle_bound():
     _segment_coverage(triangulation, segments)
 
 
-def test_constrained_delaunay_carves_holes_and_reports_refinement_limit():
+def test_constrained_delaunay_carves_holes_and_reports_refinement_limit() -> None:
     outer = np.asarray(((0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)))
     inner = np.asarray(((1.0, 1.0), (3.0, 1.0), (3.0, 3.0), (1.0, 3.0)))
     points = np.concatenate((outer, inner))
@@ -308,7 +310,7 @@ def test_constrained_delaunay_carves_holes_and_reports_refinement_limit():
         ConstrainedDelaunayTriangulation(outer, np.asarray(((0, 2), (1, 3))))
 
 
-def _reciprocal_faces(cells):
+def _reciprocal_faces(cells: Any) -> Any:
     offsets = cells.cell_face_offsets
     owners = np.repeat(np.arange(cells.cell_count), np.diff(offsets))
     labels = cells.face_labels
@@ -317,7 +319,7 @@ def _reciprocal_faces(cells):
     return all((other, owner) in forward for owner, other in forward)
 
 
-def test_voronoi_cells_partition_the_box_and_convex_domain():
+def test_voronoi_cells_partition_the_box_and_convex_domain() -> None:
     rng = np.random.default_rng(2)
     planar = VoronoiDiagram(
         rng.random((80, 2)), box_lower=(0.0, 0.0), box_upper=(1.0, 1.0)
@@ -354,7 +356,7 @@ def test_voronoi_cells_partition_the_box_and_convex_domain():
     assert np.sum(collinear.cells.measures) == pytest.approx(1.0, rel=1e-14)
 
 
-def test_power_cells_partition_the_box_and_hide_redundant_generators():
+def test_power_cells_partition_the_box_and_hide_redundant_generators() -> None:
     rng = np.random.default_rng(4)
     points = rng.random((50, 3))
     unweighted = PowerDiagram(
@@ -379,6 +381,7 @@ def test_power_cells_partition_the_box_and_hide_redundant_generators():
         box_lower=(0.0, 0.0),
         box_upper=(1.0, 1.0),
     )
+    # ty: ignore[not-subscriptable]
     assert hidden.dual_vertex_map[3] == -1
     assert hidden.cells.measures[3] == 0.0
     assert hidden.evidence.redundant_count == 1

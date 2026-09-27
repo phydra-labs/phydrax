@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -37,7 +38,7 @@ class CosmologyPhysicalState(StrictModule):
         /,
         *,
         categorical_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         names_ = tuple(str(name).strip() for name in names)
         values_ = jnp.asarray(values).reshape((-1,))
         scale_id_ = str(scale_id).strip()
@@ -85,7 +86,7 @@ class PhysicalDependencyProjection(StrictModule, NonTrainableState):
     names: tuple[str, ...] = eqx.field(static=True)
     projection_id: str = eqx.field(static=True)
 
-    def __init__(self, names: tuple[str, ...], /):
+    def __init__(self, names: tuple[str, ...], /) -> None:
         names_ = tuple(str(name).strip() for name in names)
         if (
             not names_
@@ -129,7 +130,7 @@ class CosmologyRealizationSignature(StrictModule):
         scale_id: str,
         projection_id: str,
         /,
-    ):
+    ) -> None:
         names = tuple(str(name).strip() for name in parameter_names)
         values = jnp.asarray(parameter_values).reshape((-1,))
         identities = tuple(

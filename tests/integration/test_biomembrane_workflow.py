@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -12,7 +14,7 @@ from phydrax.applications.cellular_mechanics._membrane import BiomembranePlan
 from phydrax.discretization.lattice_boltzmann import ImmersedBoundaryForcingPlan
 
 
-def _membrane():
+def _membrane() -> Any:
     reference = np.asarray(
         [[1.0, 1.0, 1.0], [-1.0, -1.0, 1.0], [-1.0, 1.0, -1.0], [1.0, -1.0, -1.0]]
     )
@@ -27,13 +29,15 @@ def _membrane():
         active_traction=0.01,
         mobility=1.0e-4,
         species_diffusivity=(0.02, 0.01),
+        # ty: ignore[invalid-argument-type]
         reaction_matrix=((-0.1, 0.05), (0.1, -0.05)),
+        # ty: ignore[invalid-argument-type]
         curvature_coupling=(0.02, -0.01),
     )
     return plan.prepare(reference)
 
 
-def _fluid():
+def _fluid() -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(8, periodic=True) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -43,7 +47,7 @@ def _fluid():
     ).prepare()
 
 
-def test_transport_thermal_mechanics_and_immersed_fluid_compose_end_to_end():
+def test_transport_thermal_mechanics_and_immersed_fluid_compose_end_to_end() -> None:
     membrane = _membrane()
     fluid = _fluid()
     forcing = ImmersedBoundaryForcingPlan(

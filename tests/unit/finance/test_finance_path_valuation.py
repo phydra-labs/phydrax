@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 
 from phydrax.finance.contracts._options import (
@@ -19,7 +21,7 @@ from phydrax.finance.valuation._monte_carlo import (
 )
 
 
-def _paths():
+def _paths() -> Any:
     values = jnp.array(
         [
             [[100.0, 100.0], [110.0, 90.0], [120.0, 80.0]],
@@ -36,7 +38,7 @@ def _paths():
     )
 
 
-def test_path_payoffs_cover_barrier_asian_basket_and_variance_swap_semantics():
+def test_path_payoffs_cover_barrier_asian_basket_and_variance_swap_semantics() -> None:
     paths = _paths()
     asian, valid = evaluate_path_payoff(
         paths,
@@ -74,7 +76,7 @@ def test_path_payoffs_cover_barrier_asian_basket_and_variance_swap_semantics():
     assert jnp.all(variance >= 0.0)
 
 
-def test_monte_carlo_route_reports_exact_deterministic_sample_moments():
+def test_monte_carlo_route_reports_exact_deterministic_sample_moments() -> None:
     paths = _paths()
     payoff = AsianPayoff(100.0, OptionType.CALL)
     prepared = prepare_monte_carlo(
@@ -85,4 +87,5 @@ def test_monte_carlo_route_reports_exact_deterministic_sample_moments():
     )
     result = evaluate_monte_carlo(prepared)
     assert jnp.allclose(result.value, 3.75)
+    # ty: ignore[unsupported-operator]
     assert result.standard_error > 0.0

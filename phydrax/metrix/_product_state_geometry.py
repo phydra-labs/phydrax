@@ -10,7 +10,8 @@ from math import prod
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -61,7 +62,7 @@ class ProductStateGeometryBlock(StrictModule, NonTrainableState):
         block_id: str,
         local_space: AbstractVectorSpace | None = None,
         tangent_space: AbstractVectorSpace | None = None,
-    ):
+    ) -> None:
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError("geometry must be an AbstractStateGeometry.")
         point_shape_ = _shape(point_shape, "Product-state point block")
@@ -123,7 +124,7 @@ class ProductStateGeometry(AbstractStateGeometry):
         /,
         *,
         geometry_id: str | None = None,
-    ):
+    ) -> None:
         blocks_ = tuple(blocks)
         if not blocks_ or any(
             not isinstance(block, ProductStateGeometryBlock) for block in blocks_

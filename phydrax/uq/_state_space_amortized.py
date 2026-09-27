@@ -11,8 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Array
 
 import phydrax.ein as ein
 
@@ -80,7 +80,7 @@ class AmortizedGaussianMarkovEncoder(StrictModule, ParameterOwner):
         *,
         key: Array,
         dtype: DTypeLike = jnp.float32,
-    ):
+    ) -> None:
         inputs = int(input_size)
         hidden = int(hidden_size)
         state = int(state_size)
@@ -197,7 +197,7 @@ class AmortizedGaussianMarkovFamily(AbstractVariationalFamily):
         *,
         scale_floor: float = 1e-6,
         context_mask: Array | None = None,
-    ):
+    ) -> None:
         if not isinstance(encoder, AmortizedGaussianMarkovEncoder):
             raise TypeError("encoder must be AmortizedGaussianMarkovEncoder.")
         if not isinstance(problem, StateSpaceProblem):
@@ -286,7 +286,7 @@ class AmortizedGaussianMarkovFamily(AbstractVariationalFamily):
         /,
         *,
         sample_shape: tuple[int, ...] = (),
-    ):
+    ) -> tuple[Array, Array]:
         return self.conditional_family.sample_and_log_prob(
             key,
             sample_shape=sample_shape,
@@ -309,7 +309,7 @@ class AmortizedStateSpaceVariationalConfig(StrictModule):
         optimization: VariationalConfig | None = None,
         hidden_size: int = 64,
         scale_floor: float = 1e-6,
-    ):
+    ) -> None:
         optimization_ = VariationalConfig() if optimization is None else optimization
         if not isinstance(optimization_, VariationalConfig):
             raise TypeError("optimization must be VariationalConfig or None.")
@@ -397,9 +397,15 @@ def fit_amortized_state_space_variational(
     log_model = jax.vmap(
         lambda path: state_space_path_log_density(problem, path).log_density
     )(fitted.unconstrained_samples)
+    # The training kernel rebuilds the fitted family with the input family's treedef.
+    fitted_family = fitted.family
+    if not (isinstance(fitted_family, AmortizedGaussianMarkovFamily)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(fitted_family, AmortizedGaussianMarkovFamily)."
+        )
     return AmortizedStateSpaceVariationalResult(
         problem=problem,
-        family=fitted.family,
+        family=fitted_family,
         states=fitted.unconstrained_samples,
         log_model=log_model,
         log_variational=fitted.log_variational,

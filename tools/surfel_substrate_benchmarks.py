@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -11,20 +12,20 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _block(value) -> None:
+def _block(value: Any) -> None:
     for leaf in jax.tree.leaves(value):
         if isinstance(leaf, jax.Array):
             leaf.block_until_ready()
 
 
-def _measure(function, *arguments, **keyword_arguments):
+def _measure(function: Any, *arguments: Any, **keyword_arguments: Any) -> Any:
     started = time.perf_counter()
     value = function(*arguments, **keyword_arguments)
     _block(value)
     return value, time.perf_counter() - started
 
 
-def _sphere_surfels(count: int):
+def _sphere_surfels(count: int) -> Any:
     index = jnp.arange(count, dtype="float64")
     golden_angle = jnp.pi * (3.0 - jnp.sqrt(5.0))
     vertical = 1.0 - 2.0 * (index + 0.5) / count
@@ -46,7 +47,7 @@ def _sphere_surfels(count: int):
     return position, normal, axes, weight
 
 
-def _case(count: int):
+def _case(count: int) -> Any:
     position, normal, axes, weight = _sphere_surfels(count)
     ids = jnp.arange(count, dtype=jnp.int64)
     surfel_plan = phx.discretization.SurfelSetPlan(ids, position, weight)

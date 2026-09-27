@@ -9,7 +9,7 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -66,7 +66,7 @@ class HarmonicGauge(AbstractZ4cGauge):
     slicing_speed: float = eqx.field(static=True)
     gauge_id: str = eqx.field(static=True)
 
-    def __init__(self, /, *, slicing_speed: float = 1.0):
+    def __init__(self, /, *, slicing_speed: float = 1.0) -> None:
         speed = float(slicing_speed)
         if not isfinite(speed) or speed <= 0.0:
             raise ValueError("slicing_speed must be finite and positive.")
@@ -110,7 +110,7 @@ class MovingPunctureGauge(AbstractZ4cGauge):
         shift_coefficient: float = 0.75,
         driver_damping: float = 1.0,
         advective: bool = True,
-    ):
+    ) -> None:
         slicing = float(slicing_coefficient)
         shift = float(shift_coefficient)
         damping = float(driver_damping)

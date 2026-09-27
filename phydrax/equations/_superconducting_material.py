@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._interpolation import apply_gather_stencil, rectilinear_stencil
@@ -57,7 +58,7 @@ class SuperconductingMaterialLawPlan(StrictModule, NonTrainableState):
         power_law_exponent: float = 20.0,
         commercial_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         temperature = np.asarray(temperature_axis, dtype=np.float64)
         field = np.asarray(magnetic_field_axis, dtype=np.float64)
         angle = np.asarray(angle_axis, dtype=np.float64)

@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -66,7 +67,7 @@ class ContinuationRepresentationPolicy(StrictModule, NonTrainableState):
         residual_execution_space: AbstractVectorSpace | None = None,
         defect_tolerance: float = 1e-10,
         policy_id: str | None = None,
-    ):
+    ) -> None:
         for value, name in (
             (state_coordinates, "state_coordinates"),
             (residual_coordinates, "residual_coordinates"),
@@ -161,7 +162,7 @@ class ContinuationGeometry(StrictModule, NonTrainableState):
         /,
         *,
         coordinate_scale: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(public_state_space, AbstractVectorSpace):
             raise TypeError("public_state_space must be an AbstractVectorSpace.")
         if not isinstance(public_residual_space, AbstractVectorSpace):

@@ -13,7 +13,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -27,7 +28,7 @@ from .._surface import (
     PotentialEnergySurfaceCapabilities,
     PotentialEnergySurfaceEvaluation,
 )
-from ..electronic_structure._hartree_fock import NativeRHFPlan
+from ..electronic_structure._hartree_fock import NativeRHFPlan, SCFState
 
 
 class QuantumRegionPlan(StrictModule, NonTrainableState):
@@ -51,7 +52,7 @@ class QuantumRegionPlan(StrictModule, NonTrainableState):
         link_ratio: float = 0.72,
         total_charge: int = 0,
         spin_multiplicity: int = 1,
-    ):
+    ) -> None:
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
         ids = tuple(particle_ids)
@@ -114,7 +115,7 @@ class PreparedQuantumRegion(StrictModule, NonTrainableState):
     mm_indices: tuple[int, ...] = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: QuantumRegionPlan, /):
+    def __init__(self, plan: QuantumRegionPlan, /) -> None:
         system = plan.system
         id_to_index = {
             int(value): index
@@ -148,7 +149,7 @@ class PreparedQuantumRegion(StrictModule, NonTrainableState):
         )
         region_ids = (*plan.particle_ids, *link_ids)
         region_system = AtomisticSystemPlan(
-            region_ids,
+            np.asarray(region_ids, dtype=np.int64),
             numbers,
             masses,
             system.units,
@@ -243,7 +244,7 @@ class QMMMEvaluation(StrictModule, NonTrainableState):
         /,
         *,
         point_charge_forces: ArrayLike | None = None,
-    ):
+    ) -> None:
         total = jnp.asarray(total_energy).reshape(())
         dtype = total.dtype
         classical_full = jnp.asarray(classical_full_energy, dtype=dtype).reshape(())
@@ -302,7 +303,7 @@ class SubtractiveQMMMSurface(AbstractPreparedPotentialEnergySurface):
         quantum_model: AbstractPreparedPotentialEnergySurface,
         classical_model: AbstractPreparedPotentialEnergySurface,
         /,
-    ):
+    ) -> None:
         if not isinstance(region, PreparedQuantumRegion):
             raise TypeError("region must be PreparedQuantumRegion.")
         surfaces = (classical_full, quantum_model, classical_model)
@@ -400,7 +401,7 @@ class EmbeddedRegionEvaluation(StrictModule, NonTrainableState):
         successful: ArrayLike,
         provider_id: str,
         /,
-    ):
+    ) -> None:
         energy_ = jnp.asarray(energy).reshape(())
         region = jnp.asarray(region_forces, dtype=energy_.dtype)
         points = jnp.asarray(point_charge_forces, dtype=energy_.dtype)
@@ -473,7 +474,7 @@ class CallableEmbeddedRegionProvider(AbstractEmbeddedRegionProvider):
         /,
         *,
         conservative: bool = True,
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         provider = str(provider_id).strip()
@@ -526,7 +527,7 @@ class NativeRHFEmbeddedRegionProvider(AbstractEmbeddedRegionProvider):
     unit_system_id: str = eqx.field(static=True)
     conservative: bool = eqx.field(static=True)
 
-    def __init__(self, plan: NativeRHFPlan, /):
+    def __init__(self, plan: NativeRHFPlan, /) -> None:
         if not isinstance(plan, NativeRHFPlan):
             raise TypeError("plan must be NativeRHFPlan.")
         self.plan = plan
@@ -576,7 +577,7 @@ class NativeRHFEmbeddedRegionProvider(AbstractEmbeddedRegionProvider):
             )
         )
 
-        def solve(nuclei, points):
+        def solve(nuclei: Array, points: Array) -> SCFState:
             return self.plan.solve_atomic_units(
                 nuclei * length_to_bohr,
                 embedding_positions_bohr=points * length_to_bohr,
@@ -639,7 +640,7 @@ class ElectrostaticEmbeddingQMMMSurface(AbstractPreparedPotentialEnergySurface):
         quantum_provider: AbstractEmbeddedRegionProvider,
         classical_partition_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(region, PreparedQuantumRegion):
             raise TypeError("region must be PreparedQuantumRegion.")
         if not isinstance(classical_partition, AbstractPreparedPotentialEnergySurface):

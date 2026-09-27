@@ -8,7 +8,8 @@ from math import isfinite, pi
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -236,7 +237,7 @@ class Z4cSystem(StrictModule, NonTrainableState):
         damping_coupling: float = 0.0,
         einstein_coupling: float = 8.0 * pi,
         constraint_tolerance: float = 1.0e-6,
-    ):
+    ) -> None:
         if not isinstance(scale, RelativityScaleContract):
             raise TypeError("scale must be a RelativityScaleContract.")
         if scale.gravitational_constant != 1 or scale.speed_of_light != 1:
@@ -587,7 +588,7 @@ def evaluate_z4c_rhs(
         "ij...,ij...->...", physical_inverse, lapse_hessian, backend="jax"
     )
     shift_gradient = derivatives.gradient(state.shift)
-    shift_divergence = sum(shift_gradient[index, index] for index in range(3))
+    shift_divergence = shift_gradient[0, 0] + shift_gradient[1, 1] + shift_gradient[2, 2]
     shift_hessian = derivatives.hessian(state.shift)
     stress_trace = ein.contract(
         "ij...,ij...->...", physical_inverse, stress_covariant, backend="jax"

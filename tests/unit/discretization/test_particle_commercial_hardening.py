@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -15,16 +18,16 @@ class IntervalGeometry:
     bounds = jnp.asarray([[0.0], [1.0]])
 
     @staticmethod
-    def signed_distance(points):
+    def signed_distance(points: Any) -> Any:
         x = points[:, 0]
         return jnp.minimum(x, 1.0 - x)
 
     @staticmethod
-    def boundary_normal(points):
+    def boundary_normal(points: Any) -> Any:
         return jnp.where(points[:, :1] < 0.5, -1.0, 1.0)
 
 
-def _population(name, count=6):
+def _population(name: Any, count: Any = 6) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(count), jnp.ones((count,)), ambient_dimension=1, name=name
     ).prepare()
@@ -33,9 +36,10 @@ def _population(name, count=6):
     )
 
 
-def test_native_multi_population_cells_match_dense_bipartite_pairs():
+def test_native_multi_population_cells_match_dense_bipartite_pairs() -> None:
     target = _population("target")
     source = _population("source")
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     prepared = phx.discretization.MultiPopulationCellPlan(box, 0.25, (4, 4)).prepare(
         (target, source)
@@ -86,7 +90,7 @@ def test_native_multi_population_cells_match_dense_bipartite_pairs():
     assert pairs == dense_pairs
 
 
-def test_small_batched_solver_and_adaptive_root_report_residuals():
+def test_small_batched_solver_and_adaptive_root_report_residuals() -> None:
     matrix = jnp.asarray([[[2.0, 0.5], [0.5, 1.5]], [[1.0, 0.0], [0.0, 3.0]]])
     rhs = jnp.asarray([[1.0, 2.0], [2.0, 3.0]])
     result = phx.linalg.solve_small_linear(
@@ -105,7 +109,7 @@ def test_small_batched_solver_and_adaptive_root_report_residuals():
     assert root.residual < 1e-10
 
 
-def test_production_boundary_reconstruction_and_moments_are_explicit():
+def test_production_boundary_reconstruction_and_moments_are_explicit() -> None:
     kernel = phx.discretization.WendlandC2SPHKernel(1)
     wall = phx.discretization.WallParticleGenerationPlan(
         IntervalGeometry(), kernel, 0.25, 0.3, layers=1
@@ -120,7 +124,7 @@ def test_production_boundary_reconstruction_and_moments_are_explicit():
     assert certification.successful
 
 
-def test_shock_sensor_shifting_and_precision_certification_are_finite():
+def test_shock_sensor_shifting_and_precision_certification_are_finite() -> None:
     previous = phx.discretization.ShockViscosityState(
         jnp.zeros((3,)), jnp.zeros((3,)), jnp.ones((3,)), jnp.asarray(0)
     )
@@ -142,7 +146,7 @@ def test_shock_sensor_shifting_and_precision_certification_are_finite():
     assert certified.successful
 
 
-def test_iisph_operator_oracle_and_projection_qualification_are_separate():
+def test_iisph_operator_oracle_and_projection_qualification_are_separate() -> None:
     count = 5
     spacing = 1.0 / count
     particles = phx.discretization.ParticleSetPlan(
@@ -150,6 +154,7 @@ def test_iisph_operator_oracle_and_projection_qualification_are_separate():
     ).prepare()
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(
         count * (count - 1) // 2,
+        # ty: ignore[invalid-argument-type]
         box=phx.discretization.ParticleBox([0.0], [1.0]),
     ).prepare(particles)
     position = (jnp.arange(count, dtype="float64") + 0.5)[:, None] * spacing
@@ -163,7 +168,11 @@ def test_iisph_operator_oracle_and_projection_qualification_are_separate():
     oracle = phx.discretization.assemble_iisph_operator(iisph, position, 0.001)
     diagnostics = phx.discretization.diagnose_iisph_operator(oracle)
     step = iisph.step_detailed(
-        0.0, iisph.initialize_state(position, jnp.zeros_like(position)), 0.001
+        # ty: ignore[invalid-argument-type]
+        0.0,
+        iisph.initialize_state(position, jnp.zeros_like(position)),
+        # ty: ignore[invalid-argument-type]
+        0.001,
     )
 
     assert oracle.action_error < 1e-12
@@ -172,7 +181,8 @@ def test_iisph_operator_oracle_and_projection_qualification_are_separate():
     assert not step.production_qualified
 
 
-def test_reference_domain_decomposition_updates_halos_and_migration():
+def test_reference_domain_decomposition_updates_halos_and_migration() -> None:
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     plan = phx.discretization.ParticleDomainDecompositionPlan(2, 0.15, box)
     position = jnp.asarray([[0.1], [0.45], [0.55], [0.9]])
@@ -192,7 +202,7 @@ def test_reference_domain_decomposition_updates_halos_and_migration():
     assert bool(halo.halo_mask[0, 3])
 
 
-def test_distributed_runtime_rejects_invalid_active_stable_ids():
+def test_distributed_runtime_rejects_invalid_active_stable_ids() -> None:
     layout = phx.solver.DistributedParticleLayout(
         1,
         2,
@@ -214,7 +224,7 @@ def test_distributed_runtime_rejects_invalid_active_stable_ids():
         )
 
 
-def test_benchmark_registry_and_replay_round_trip(tmp_path):
+def test_benchmark_registry_and_replay_round_trip(tmp_path: Any) -> None:
     profile = phx.discretization.ParticleQualificationProfile()
     qualification = phx.discretization.ParticleQualificationResult(
         phx.discretization.ParticleMethodMaturity.EXPERIMENTAL,

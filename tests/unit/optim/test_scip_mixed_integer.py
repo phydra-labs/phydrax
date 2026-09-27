@@ -8,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_scip_method_rejects_quadratic_program_before_provider_import():
+def test_scip_method_rejects_quadratic_program_before_provider_import() -> None:
     program = phx.optim.MixedIntegerProgram(
         phx.optim.QuadraticProgram(
             jnp.eye(1),
@@ -26,7 +26,7 @@ def test_scip_method_rejects_quadratic_program_before_provider_import():
         )
 
 
-def test_live_scip_solution_is_primal_audited_but_provider_qualified():
+def test_live_scip_solution_is_primal_audited_but_provider_qualified() -> None:
     pytest.importorskip("pyscipopt")
     program = phx.optim.MixedIntegerProgram(
         phx.optim.LinearProgram(

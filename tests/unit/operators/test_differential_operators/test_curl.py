@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -12,9 +15,9 @@ from phydrax.domain import TimeInterval
 from phydrax.operators.differential import curl, scalar_curl_2d, vector_curl_2d
 
 
-def test_curl_point(box3d):
+def test_curl_point(box3d: Any) -> None:
     @box3d.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([x[1], -x[0], 0.0])
 
     curl_u = curl(u, var="x")
@@ -23,11 +26,11 @@ def test_curl_point(box3d):
     assert jnp.allclose(out, jnp.array([0.0, 0.0, -2.0]))
 
 
-def test_curl_spacetime_depends_on_t(sample_batch, box3d):
+def test_curl_spacetime_depends_on_t(sample_batch: Any, box3d: Any) -> None:
     dom = box3d @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return jnp.array([x[1] * t, -x[0] * t, 0.0])
 
     curl_u = curl(u, var="x")
@@ -50,12 +53,12 @@ def test_curl_spacetime_depends_on_t(sample_batch, box3d):
     assert jnp.allclose(out_b, expected)
 
 
-def test_curl_coord_separable(sample_grid, box3d):
+def test_curl_coord_separable(sample_grid: Any, box3d: Any) -> None:
     component = box3d.component()
     batch = sample_grid(component, {"x": (3, 4, 2)}, dense_blocks=(), key=0)
 
     @box3d.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         x, y, z = x
         return jnp.stack([y, -x, jnp.zeros_like(z)], axis=-1)
 
@@ -67,24 +70,24 @@ def test_curl_coord_separable(sample_grid, box3d):
     assert jnp.allclose(out, expected, atol=1e-6)
 
 
-def test_curl_preserves_metadata(box3d):
+def test_curl_preserves_metadata(box3d: Any) -> None:
     u = box3d.Function("x")(lambda x: jnp.array([x[1], -x[0], 0.0])).with_metadata(
         **{"k": 1}
     )
     assert curl(u, var="x").metadata == u.metadata
 
 
-def test_explicit_planar_curls_have_unambiguous_value_shapes():
+def test_explicit_planar_curls_have_unambiguous_value_shapes() -> None:
     box2d = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @box2d.Function("x")
-    def vector(x):
+    def vector(x: Any) -> Any:
         return jnp.asarray((-x[1], x[0]))
 
     @box2d.Function("x")
-    def scalar(x):
+    def scalar(x: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2
 
     points = frozendict({"x": cx.AxisArray(jnp.asarray((0.5, -0.25)), dims=(None,))})
@@ -95,9 +98,9 @@ def test_explicit_planar_curls_have_unambiguous_value_shapes():
     )
 
 
-def test_curl_ad_engine_jvp_matches_default(box3d):
+def test_curl_ad_engine_jvp_matches_default(box3d: Any) -> None:
     @box3d.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([x[1] + x[2], -x[0], x[0] * x[1]])
 
     pts = frozendict({"x": cx.AxisArray(jnp.array([0.3, -0.4, 0.2]), dims=(None,))})
@@ -106,9 +109,9 @@ def test_curl_ad_engine_jvp_matches_default(box3d):
     assert jnp.allclose(out_jvp, out_ref, atol=1e-6)
 
 
-def test_curl_ad_engine_requires_ad_backend(box3d):
+def test_curl_ad_engine_requires_ad_backend(box3d: Any) -> None:
     @box3d.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([x[1], -x[0], 0.0])
 
     with pytest.raises(ValueError, match="backend='ad'"):

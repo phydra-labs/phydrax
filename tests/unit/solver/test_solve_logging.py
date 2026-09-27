@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import optax
@@ -21,7 +24,7 @@ def _make_supervised_solver(seed: int = 0) -> FunctionalSolver:
     points = jnp.linspace(0.0, 1.0, 5).reshape((-1, 1))
 
     @domain.Function("x")
-    def target(x):
+    def target(x: Any) -> Any:
         return 1.0 + 2.0 * x[0]
 
     model = MLP(
@@ -126,19 +129,19 @@ def _make_dataset_solver_with_two_train_terms(seed: int = 0) -> FunctionalSolver
     return FunctionalSolver(functions={"u": u}, terms=[train_a, train_b])
 
 
-def _logged_metric_names(phydrax_events) -> set[str]:
+def _logged_metric_names(phydrax_events: Any) -> set[str]:
     events = phydrax_events.records("training.step.completed")
     assert events
     fields = events[-1]["fields"]
     return {metric["name"] for metric in fields["metrics"]}
 
 
-def test_finite_interior_observation_reports_exact_data_metrics():
+def test_finite_interior_observation_reports_exact_data_metrics() -> None:
     domain = HyperRectangle(jnp.asarray([0.0]), jnp.asarray([1.0]), label="x")
     points = jnp.linspace(0.0, 1.0, 5).reshape((-1, 1))
 
     @domain.Function("x")
-    def exact(x):
+    def exact(x: Any) -> Any:
         return 1.0 + 2.0 * x[0]
 
     component = domain.component()
@@ -155,11 +158,11 @@ def test_finite_interior_observation_reports_exact_data_metrics():
     assert jnp.allclose(metrics["data_rmse"], 0.0)
 
 
-def test_finite_time_observation_reports_exact_data_metrics():
+def test_finite_time_observation_reports_exact_data_metrics() -> None:
     time = TimeInterval(0.0, 1.0)
 
     @time.Function("t")
-    def exact(t):
+    def exact(t: Any) -> Any:
         return t**2
 
     times = jnp.linspace(0.0, 1.0, 5)
@@ -177,7 +180,7 @@ def test_finite_time_observation_reports_exact_data_metrics():
     assert jnp.allclose(metrics["data_rmse"], 0.0)
 
 
-def test_solve_event_includes_observation_data_metrics(phydrax_events):
+def test_solve_event_includes_observation_data_metrics(phydrax_events: Any) -> None:
     solver = _make_supervised_solver()
 
     solver.solve(
@@ -193,7 +196,7 @@ def test_solve_event_includes_observation_data_metrics(phydrax_events):
     assert "train/terms/000_data/data_rmse" in metric_names
 
 
-def test_solve_event_includes_classification_data_metrics(phydrax_events):
+def test_solve_event_includes_classification_data_metrics(phydrax_events: Any) -> None:
     solver = _make_classification_solver()
 
     solver.solve(
@@ -213,7 +216,7 @@ def test_solve_event_includes_classification_data_metrics(phydrax_events):
     assert f"{prefix}/data_status" in metric_names
 
 
-def test_solve_event_includes_evaluation_terms(phydrax_events):
+def test_solve_event_includes_evaluation_terms(phydrax_events: Any) -> None:
     solver = _make_dataset_solver_with_eval()
 
     solver.solve(
@@ -229,7 +232,7 @@ def test_solve_event_includes_evaluation_terms(phydrax_events):
     assert "eval/terms/000_eval_data/data_accuracy" in metric_names
 
 
-def test_solve_can_subsample_train_terms_and_log_all_terms(phydrax_events):
+def test_solve_can_subsample_train_terms_and_log_all_terms(phydrax_events: Any) -> None:
     solver = _make_dataset_solver_with_two_train_terms()
 
     solver.solve(
@@ -245,7 +248,7 @@ def test_solve_can_subsample_train_terms_and_log_all_terms(phydrax_events):
     assert "train/terms/001_train_b/value" in metric_names
 
 
-def test_solve_can_subsample_train_terms_without_term_logging():
+def test_solve_can_subsample_train_terms_without_term_logging() -> None:
     solver = _make_dataset_solver_with_two_train_terms()
 
     solver.solve(
@@ -258,7 +261,7 @@ def test_solve_can_subsample_train_terms_without_term_logging():
     )
 
 
-def test_solve_rejects_invalid_train_term_sample_size():
+def test_solve_rejects_invalid_train_term_sample_size() -> None:
     solver = _make_dataset_solver_with_two_train_terms()
 
     with pytest.raises(ValueError, match="train_term_sample_size"):
@@ -269,13 +272,13 @@ def test_solve_rejects_invalid_train_term_sample_size():
         )
 
 
-def test_solver_loss_excludes_evaluation_terms():
+def test_solver_loss_excludes_evaluation_terms() -> None:
     domain = DatasetDomain(jnp.asarray([[0.0], [1.0], [2.0]]))
     train_targets = jnp.asarray([0.0, 1.0, 2.0])
     eval_targets = jnp.asarray([10.0, 10.0, 10.0])
 
     @domain.Function("data")
-    def u(data):
+    def u(data: Any) -> Any:
         return data[0]
 
     train = SupervisedDatasetTerm(
@@ -299,7 +302,7 @@ def test_solver_loss_excludes_evaluation_terms():
     assert jnp.allclose(solver.loss(key=jr.key(4)), 0.0, atol=1e-12)
 
 
-def test_solve_tensorboard_log_includes_loss_and_data_metrics(tmp_path):
+def test_solve_tensorboard_log_includes_loss_and_data_metrics(tmp_path: Any) -> None:
     solver = _make_supervised_solver()
     log_dir = tmp_path / "tb"
 
@@ -326,7 +329,7 @@ def test_solve_tensorboard_log_includes_loss_and_data_metrics(tmp_path):
     assert "train/terms/000_data/data_accuracy" in scalar_tags
 
 
-def test_solve_tensorboard_log_includes_eval_metrics(tmp_path):
+def test_solve_tensorboard_log_includes_eval_metrics(tmp_path: Any) -> None:
     solver = _make_dataset_solver_with_eval()
     log_dir = tmp_path / "tb_eval"
 
@@ -351,8 +354,8 @@ def test_solve_tensorboard_log_includes_eval_metrics(tmp_path):
 
 
 def test_functional_session_receives_cadenced_scalars_without_step_logs(
-    phydrax_events,
-):
+    phydrax_events: Any,
+) -> None:
     events = []
     session = phx.execution.IterationSession(
         "functional-session",

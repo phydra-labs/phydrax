@@ -12,7 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -46,7 +46,7 @@ class AlgebraDerivationPolicy(StrictModule, NonTrainableState):
         minimum_singular_gap: float = 1e4,
         residual_tolerance: float = 1e-10,
         dtype: Any = np.float64,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -95,7 +95,7 @@ class AlgebraDerivationPlan(StrictModule, NonTrainableState):
         /,
         *,
         policy: AlgebraDerivationPolicy | None = None,
-    ):
+    ) -> None:
         from ..metrix.algebra import AlgebraDerivationConstraint
 
         if not isinstance(constraint, AlgebraDerivationConstraint):
@@ -147,7 +147,7 @@ class PreparedAlgebraDerivations(StrictModule):
         constraint_matrix_bytes: int,
         workspace_bytes: int,
         basis_bytes: int,
-    ):
+    ) -> None:
         self.plan = plan
         self.subspace = subspace
         self.singular_values = jnp.asarray(singular_values)

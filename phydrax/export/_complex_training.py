@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
@@ -13,7 +14,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._array_archive import (
     array_collection_digest,
@@ -24,6 +27,7 @@ from .._array_archive import (
 )
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._complex_parameters import (
     ComplexImportPolicy,
     ComplexInterchangeEntry,
@@ -40,15 +44,6 @@ ComplexOptimizerRouteKind: TypeAlias = Literal[
     "exact-discrete",
 ]
 
-_ROUTE_KINDS = frozenset(
-    {
-        "complex-vector",
-        "cartesian-second-moment",
-        "exact-real",
-        "exact-discrete",
-    }
-)
-
 
 @dataclass(frozen=True, slots=True)
 class ComplexOptimizerStateGroup:
@@ -63,15 +58,14 @@ class ComplexOptimizerStateGroup:
         name: str,
         kind: ComplexOptimizerRouteKind,
         paths: Sequence[str],
-    ):
+    ) -> None:
         name_ = str(name)
         paths_ = tuple(str(path) for path in paths)
         if not name_ or "/" in name_ or name_ in (".", ".."):
             raise ValueError(
                 "Optimizer interchange group name must be safe and non-empty."
             )
-        if kind not in _ROUTE_KINDS:
-            raise ValueError("Unknown optimizer interchange route kind.")
+        kind = parse(kind, ComplexOptimizerRouteKind, "kind")
         expected = 2 if kind in ("complex-vector", "cartesian-second-moment") else 1
         if len(paths_) != expected or any(not path for path in paths_):
             raise ValueError(f"Optimizer group {kind!r} requires {expected} paths.")
@@ -164,7 +158,9 @@ class ComplexOptimizerInterchangeEntry(StrictModule):
     values: tuple[Array, ...]
     entry_id: str = eqx.field(static=True)
 
-    def __init__(self, group: ComplexOptimizerStateGroup, values: Sequence[Any], /):
+    def __init__(
+        self, group: ComplexOptimizerStateGroup, values: Sequence[Any], /
+    ) -> None:
         values_ = tuple(jnp.asarray(value) for value in values)
         expected = 1 if group.kind != "cartesian-second-moment" else 2
         if len(values_) != expected:
@@ -196,7 +192,7 @@ class ComplexOptimizerInterchangeState(StrictModule):
         layout: ComplexOptimizerStateLayout,
         entries: Sequence[ComplexOptimizerInterchangeEntry],
         /,
-    ):
+    ) -> None:
         entries_ = tuple(entries)
         expected = tuple(group.name for group in layout.groups)
         if tuple(entry.name for entry in entries_) != expected:
@@ -218,7 +214,7 @@ class RNGInterchangeState(StrictModule):
     paths: tuple[str, ...] = eqx.field(static=True)
     content_id: str = eqx.field(static=True)
 
-    def __init__(self, rng_state: Any, /):
+    def __init__(self, rng_state: Any, /) -> None:
         path_leaves, _ = jax.tree_util.tree_flatten_with_path(rng_state)
         paths = tuple(jax.tree_util.keystr(path) or "<root>" for path, _ in path_leaves)
         keys = tuple(leaf for _, leaf in path_leaves)
@@ -419,7 +415,7 @@ def _import_optimizer(
     state: ComplexOptimizerInterchangeState,
     policy: ComplexImportPolicy,
     /,
-):
+) -> PyTree:
     layout = prepared.optimizer_layout
     if state.layout_id != layout.layout_id:
         raise ValueError("Complex optimizer layout identity mismatch.")
@@ -463,12 +459,12 @@ def _import_optimizer(
 
 
 def _rebuild_rng_tree(
-    template: Any,
-    key_data: tuple[Array, ...],
+    template: PyTree,
+    key_data: tuple[ArrayLike, ...],
     key_impls: tuple[str, ...],
     paths: tuple[str, ...],
     /,
-):
+) -> PyTree:
     path_leaves, treedef = jax.tree_util.tree_flatten_with_path(template)
     expected_paths = tuple(
         jax.tree_util.keystr(path) or "<root>" for path, _ in path_leaves
@@ -484,11 +480,11 @@ def _rebuild_rng_tree(
     ):
         if str(jr.key_impl(target)) != implementation:
             raise ValueError("RNG implementation changed across interchange.")
-        keys.append(jr.wrap_key_data(data, impl=implementation))
+        keys.append(jr.wrap_key_data(jnp.asarray(data), impl=implementation))
     return jax.tree.unflatten(treedef, keys)
 
 
-def _import_rng(template: Any, state: RNGInterchangeState, /):
+def _import_rng(template: PyTree, state: RNGInterchangeState, /) -> PyTree:
     return _rebuild_rng_tree(
         template,
         state.key_data,
@@ -541,7 +537,7 @@ def write_complex_training_checkpoint(
     path: str,
     state: ComplexTrainingInterchangeState,
     /,
-):
+) -> Path:
     """Atomically write one checksum-protected, pickle-free full-state archive."""
     if not isinstance(state, ComplexTrainingInterchangeState):
         raise TypeError("state must be ComplexTrainingInterchangeState.")

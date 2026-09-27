@@ -13,7 +13,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 
@@ -287,7 +289,7 @@ class AttachmentFrameState(StrictModule):
         linear_velocity: ArrayLike,
         angular_velocity: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.position = jnp.asarray(position)
         self.rotation = jnp.asarray(rotation)
         self.linear_velocity = jnp.asarray(linear_velocity)
@@ -309,7 +311,7 @@ class RigidFrameAttachmentPlan(StrictModule, NonTrainableState):
         local_position: ArrayLike,
         local_rotation: ArrayLike,
         /,
-    ):
+    ) -> None:
         position = np.asarray(local_position)
         if position.ndim != 1 or position.shape[0] not in (2, 3):
             raise ValueError("Rigid local_position must be a planar or spatial vector.")
@@ -347,7 +349,7 @@ class SoftEndpointAttachmentPlan(StrictModule, NonTrainableState):
         local_position: ArrayLike,
         local_rotation: ArrayLike,
         /,
-    ):
+    ) -> None:
         position = np.asarray(local_position)
         if position.ndim != 1 or position.shape[0] not in (2, 3):
             raise ValueError("Soft local_position must be a planar or spatial vector.")
@@ -394,7 +396,7 @@ class RigidSoftAttachmentPlan(StrictModule, NonTrainableState):
         velocity_tolerance: float = 1.0e-7,
         balance_tolerance: float = 1.0e-7,
         power_tolerance: float = 1.0e-7,
-    ):
+    ) -> None:
         if not isinstance(rigid, RigidFrameAttachmentPlan):
             raise TypeError("rigid must be RigidFrameAttachmentPlan.")
         if not isinstance(soft, SoftEndpointAttachmentPlan):
@@ -437,7 +439,7 @@ class SynchronizedStepPolicy(StrictModule):
     fixed_duration: float | None = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, *, fixed_duration: float | None = None):
+    def __init__(self, *, fixed_duration: float | None = None) -> None:
         if fixed_duration is None:
             duration = None
         else:
@@ -505,7 +507,7 @@ class FrameWrench(StrictModule):
     moment: Array
     frame_id: str = eqx.field(static=True)
 
-    def __init__(self, force: ArrayLike, moment: ArrayLike, frame_id: str, /):
+    def __init__(self, force: ArrayLike, moment: ArrayLike, frame_id: str, /) -> None:
         self.force = jnp.asarray(force)
         self.moment = jnp.asarray(moment)
         self.frame_id = _identifier(frame_id, "FrameWrench frame_id")
@@ -638,7 +640,7 @@ class PreparedReducedRodPlantPort(AbstractHybridPlantPort, NonTrainableState):
         *,
         base_frame_id: str = "base",
         tip_frame_id: str = "tip",
-    ):
+    ) -> None:
         if not isinstance(plant, PreparedReducedRodPlant):
             raise TypeError("plant must be PreparedReducedRodPlant.")
         if not isinstance(step_policy, SynchronizedStepPolicy):
@@ -723,7 +725,7 @@ class FloatingReducedRodPlantPort(AbstractHybridPlantPort, NonTrainableState):
         *,
         base_frame_id: str = "base",
         tip_frame_id: str = "tip",
-    ):
+    ) -> None:
         if not isinstance(plant, FloatingReducedRodPlant):
             raise TypeError("plant must be FloatingReducedRodPlant.")
         if not isinstance(step_policy, SynchronizedStepPolicy):
@@ -824,7 +826,7 @@ class TendonDrivenRodPlantPort(AbstractHybridPlantPort, NonTrainableState):
         *,
         base_frame_id: str = "base",
         tip_frame_id: str = "tip",
-    ):
+    ) -> None:
         if not isinstance(plant, TendonDrivenRodPlant):
             raise TypeError("plant must be TendonDrivenRodPlant.")
         if not isinstance(step_policy, SynchronizedStepPolicy):
@@ -920,7 +922,9 @@ class AttachmentWrenchCommand(StrictModule):
     moment: Array
     attachment_id: str = eqx.field(static=True)
 
-    def __init__(self, force: ArrayLike, moment: ArrayLike, attachment_id: str, /):
+    def __init__(
+        self, force: ArrayLike, moment: ArrayLike, attachment_id: str, /
+    ) -> None:
         self.force = jnp.asarray(force)
         self.moment = jnp.asarray(moment)
         self.attachment_id = _identifier(attachment_id, "attachment_id")
@@ -969,7 +973,9 @@ class HybridRigidSoftState(StrictModule):
     soft: Any
     topology_id: str = eqx.field(static=True)
 
-    def __init__(self, rigid: PyTree[Any], soft: PyTree[Any], topology_id: str, /):
+    def __init__(
+        self, rigid: PyTree[Any], soft: PyTree[Any], topology_id: str, /
+    ) -> None:
         self.rigid = rigid
         self.soft = soft
         self.topology_id = _identifier(topology_id, "topology_id")
@@ -980,7 +986,9 @@ class HybridRigidSoftParameterValues(StrictModule):
     soft: Any
     topology_id: str = eqx.field(static=True)
 
-    def __init__(self, rigid: PyTree[Any], soft: PyTree[Any], topology_id: str, /):
+    def __init__(
+        self, rigid: PyTree[Any], soft: PyTree[Any], topology_id: str, /
+    ) -> None:
         self.rigid = rigid
         self.soft = soft
         self.topology_id = _identifier(topology_id, "topology_id")
@@ -1001,7 +1009,7 @@ class HybridRigidSoftCommands(StrictModule):
         attachment_wrenches: tuple[AttachmentWrenchCommand, ...],
         topology_id: str,
         /,
-    ):
+    ) -> None:
         self.rigid = rigid
         self.soft = soft
         self.attachment_wrenches = tuple(attachment_wrenches)
@@ -1388,7 +1396,7 @@ class HybridRigidSoftPlant(AbstractDiscretePlant, NonTrainableState):
         attachments: tuple[RigidSoftAttachmentPlan, ...],
         step_policy: SynchronizedStepPolicy,
         /,
-    ):
+    ) -> None:
         if not isinstance(rigid_plant, AbstractDiscretePlant):
             raise TypeError("rigid_plant must be AbstractDiscretePlant.")
         if not isinstance(soft_plant, AbstractDiscretePlant):

@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -135,7 +136,7 @@ class LinearCombinatorialProblem(StrictModule):
         /,
         *,
         problem_id: str = "linear-combinatorial-problem",
-    ):
+    ) -> None:
         if not isinstance(space, AbstractCombinatorialSpace):
             raise TypeError("space must be an AbstractCombinatorialSpace.")
         identifier = str(problem_id)

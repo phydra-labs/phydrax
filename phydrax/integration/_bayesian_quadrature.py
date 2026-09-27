@@ -4,12 +4,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast, TYPE_CHECKING, TypeGuard
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 import phydrax.ein as ein
@@ -33,6 +33,7 @@ from ..linalg import (
     prepare,
     solve,
 )
+from ..typing import PRNGKey
 from ._batches import PointIntegrationBatch
 from ._estimates import (
     BayesianQuadratureDiagnostics,
@@ -49,7 +50,11 @@ from ._status import IntegrationStatus
 from ._targets import ProbabilityTarget
 
 
-def _is_phydrax_normal(distribution: Any, /) -> bool:
+if TYPE_CHECKING:
+    from ..uq._distributions import Normal
+
+
+def _is_phydrax_normal(distribution: object, /) -> TypeGuard[Normal]:
     distribution_type = type(distribution)
     return (
         distribution_type.__module__ == "phydrax.uq._distributions"
@@ -81,7 +86,7 @@ class GaussianKernelMean(AbstractKernelMean):
         target: ProbabilityTarget,
         kernel: SquaredExponentialKernel | ScaleKernel,
         /,
-    ):
+    ) -> None:
         if not isinstance(target, ProbabilityTarget) or not target.normalized:
             raise TypeError(
                 "GaussianKernelMean requires one normalized ProbabilityTarget."
@@ -119,6 +124,8 @@ class GaussianKernelMean(AbstractKernelMean):
 
     def _parameters(self, dtype: Any, /) -> tuple[Array, Array, Array, Array]:
         base = self.kernel.kernel if isinstance(self.kernel, ScaleKernel) else self.kernel
+        # __init__ admits only a squared-exponential base under at most one scale.
+        base = cast(SquaredExponentialKernel, base)
         length_scale = jnp.broadcast_to(
             jnp.asarray(base.length_scale, dtype=dtype), (self.dimension,)
         )
@@ -259,7 +266,7 @@ class BayesianQuadraturePlan(StrictModule):
         solve_regularization: ArrayLike = 0.0,
         solve_policy: LinearSolvePolicy | None = None,
         max_points: int = 4096,
-    ):
+    ) -> None:
         if not isinstance(kernel_mean, AbstractKernelMean):
             raise TypeError("kernel_mean must implement AbstractKernelMean.")
         if isinstance(design, PointSampling):
@@ -350,12 +357,20 @@ class BayesianQuadratureBatch(StrictModule):
 def _materialize_points(
     target: ProbabilityTarget,
     plan: BayesianQuadraturePlan,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> PointIntegrationBatch:
     probability = target.probability
-    count = plan.design.count
-    sampler = design_name(plan.design.design)
+    design = plan.design
+    if not isinstance(design, PointSampling):
+        raise TypeError(
+            "Generic Bayesian quadrature integration requires a PointSampling design; "
+            "prepare fixed or sequential designs with "
+            "prepare_kernel_mean_bayesian_quadrature."
+        )
+    # BayesianQuadraturePlan validates PointSampling counts as positive integers.
+    count = cast(int, design.count)
+    sampler = design_name(design.design)
     values = probability.sample(count, sampler=sampler, key=key)
     structure = SampleLayout(((probability.label,),)).canonicalize((probability.label,))
     axis = structure.axis_for(probability.label)
@@ -388,7 +403,7 @@ def materialize_bayesian_quadrature(
     plan: BayesianQuadraturePlan,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> BayesianQuadratureBatch:
     """Prepare the fixed kernel system before any integrand is evaluated."""
@@ -398,15 +413,21 @@ def materialize_bayesian_quadrature(
         raise ValueError(
             "GaussianKernelMean target identity does not match the integration target."
         )
-    if target.probability.label != plan.kernel_mean.probability_label:
+    gaussian_mean = plan.kernel_mean
+    if not isinstance(gaussian_mean, GaussianKernelMean):
+        raise TypeError(
+            "Generic Bayesian quadrature integration requires a GaussianKernelMean; "
+            "prepare other kernel means with prepare_kernel_mean_bayesian_quadrature."
+        )
+    if target.probability.label != gaussian_mean.probability_label:
         raise ValueError(
             "GaussianKernelMean probability label does not match the integration target."
         )
     distribution = target.probability.distribution
     if not _is_phydrax_normal(distribution):
         raise TypeError("Bayesian quadrature currently requires a Gaussian target.")
-    binding_mismatch = (distribution.location != plan.kernel_mean.location[0]) | (
-        distribution.scale != plan.kernel_mean.scale[0]
+    binding_mismatch = (distribution.location != gaussian_mean.location[0]) | (
+        distribution.scale != gaussian_mean.scale[0]
     )
     binding_message = (
         "GaussianKernelMean probability content does not match the integration target."
@@ -432,7 +453,7 @@ def materialize_bayesian_quadrature(
     )
     evaluation_design = policy.evaluation(point_values)
     solve_design = policy.accumulation(evaluation_design)
-    if plan.kernel_mean.dimension != 1:
+    if gaussian_mean.dimension != 1:
         raise ValueError(
             "Kernel-mean dimension does not match the scalar target dimension."
         )
@@ -523,16 +544,16 @@ def materialize_bayesian_quadrature(
             "Bayesian quadrature kernel system exceeds the dense solve resource budget; no kernel matrix was allocated."
         )
     kernel_matrix = policy.accumulation(
-        plan.kernel_mean.matrix(evaluation_design, evaluation_design)
+        gaussian_mean.matrix(evaluation_design, evaluation_design)
     )
-    kernel_mean = policy.accumulation(plan.kernel_mean.mean(evaluation_design))
+    kernel_mean = policy.accumulation(gaussian_mean.mean(evaluation_design))
     kernel_double_mean = policy.accumulation(
-        plan.kernel_mean._double_mean(evaluation_design.dtype)
+        gaussian_mean._double_mean(evaluation_design.dtype)
     )
     observation_noise = policy.accumulation(plan.observation_noise)
     solve_regularization = policy.accumulation(plan.solve_regularization)
     kernel_amplitude = policy.accumulation(
-        plan.kernel_mean._parameters(evaluation_design.dtype)[3]
+        gaussian_mean._parameters(evaluation_design.dtype)[3]
     )
     system_scale = jnp.maximum(
         jnp.abs(kernel_amplitude),
@@ -600,7 +621,7 @@ def materialize_bayesian_quadrature(
         observation_noise,
         solve_regularization,
         solve_result,
-        kernel_id=plan.kernel_mean.kernel.kernel_id,
+        kernel_id=gaussian_mean.kernel.kernel_id,
     )
 
 
@@ -643,7 +664,7 @@ def integrate_bayesian_quadrature(
     batch: BayesianQuadratureBatch,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:

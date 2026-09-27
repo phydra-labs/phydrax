@@ -10,10 +10,12 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._operators import AbstractLinearOperator, adjoint
 from ._spaces import _coordinate_dtype
 
@@ -32,17 +34,11 @@ def _operator_numeric_fingerprint(operator: AbstractLinearOperator, /) -> str:
 
 
 def _validate_evidence(value: CertificateEvidence, /) -> CertificateEvidence:
-    if value not in ("construction", "verified", "asserted"):
-        raise ValueError(
-            "certificate evidence must be 'construction', 'verified', or 'asserted'."
-        )
-    return value
+    return parse(value, CertificateEvidence, "evidence")
 
 
 def _validate_scope(value: CertificateScope, /) -> CertificateScope:
-    if value not in ("structural", "numerical"):
-        raise ValueError("certificate scope must be 'structural' or 'numerical'.")
-    return value
+    return parse(value, CertificateScope, "scope")
 
 
 def _subspace_residuals(operator: AbstractLinearOperator, subspace: Any, /) -> Array:
@@ -54,7 +50,7 @@ def _subspace_residuals(operator: AbstractLinearOperator, subspace: Any, /) -> A
     real_dtype = columns.real.dtype
     floor = jnp.finfo(real_dtype).tiny
 
-    def residual(column):
+    def residual(column: Array) -> Array:
         vector = operator.source.unflatten(column)
         image = operator.mv(vector)
         input_norm = jnp.sqrt(
@@ -97,7 +93,7 @@ class KernelCertificate(StrictModule):
         scope: CertificateScope = "numerical",
         complete: bool = False,
         tolerance: float = 1e-10,
-    ):
+    ) -> None:
         from ._subspaces import LinearSubspace
 
         if not isinstance(operator, AbstractLinearOperator):
@@ -209,7 +205,7 @@ class SpectralInterval(StrictModule):
         *,
         evidence: CertificateEvidence = "asserted",
         scope: CertificateScope = "numerical",
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         coordinate_dtype = _coordinate_dtype(operator.source)
@@ -282,7 +278,7 @@ class StabilityLowerBound(StrictModule):
         *,
         evidence: CertificateEvidence = "asserted",
         scope: CertificateScope = "numerical",
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         coordinate_dtype = _coordinate_dtype(operator.source)

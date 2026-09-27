@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -6,7 +8,9 @@ import pytest
 import phydrax as phx
 
 
-def _circle_panelization(*, panels=4, order=6, partition=None):
+def _circle_panelization(
+    *, panels: Any = 4, order: Any = 6, partition: Any = None
+) -> Any:
     geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
     return phx.operators.BoundaryPanelization2D(
         geometry.boundary_atlas,
@@ -17,7 +21,7 @@ def _circle_panelization(*, panels=4, order=6, partition=None):
     )
 
 
-def test_adaptive_layer_reports_global_panel_accuracy_and_regimes():
+def test_adaptive_layer_reports_global_panel_accuracy_and_regimes() -> None:
     panelization = _circle_panelization(panels=4, order=6)
     potential = phx.operators.LaplaceLayerPotential2D(
         panelization,
@@ -49,7 +53,7 @@ def test_adaptive_layer_reports_global_panel_accuracy_and_regimes():
     assert jnp.allclose(result.values, -1.0, atol=2e-6)
 
 
-def test_single_layer_self_panel_regularization_is_finite():
+def test_single_layer_self_panel_regularization_is_finite() -> None:
     panelization = _circle_panelization(panels=2, order=4)
     potential = phx.operators.LaplaceLayerPotential2D(
         panelization,
@@ -77,11 +81,32 @@ def test_single_layer_self_panel_regularization_is_finite():
     assert result.evaluation_report.error_estimate < 1e-4
 
 
-def test_kress_partition_preserves_support_and_measure():
+def test_adaptive_boundary_targets_reject_combined_field_without_self_correction() -> (
+    None
+):
+    panelization = _circle_panelization(panels=2, order=4)
+    potential = phx.operators.HelmholtzCombinedField2D(
+        panelization,
+        2.0,
+        jnp.ones((panelization.node_count,), dtype="complex128"),
+        eta=1.3,
+    )
+
+    with pytest.raises(ValueError, match="Boundary targets require QBX"):
+        phx.operators.evaluate_layer_potential(
+            potential,
+            panelization.points[0],
+            phx.operators.LayerEvaluationPlan2D("adaptive"),
+            target_side="boundary",
+        )
+
+
+def test_kress_partition_preserves_support_and_measure() -> None:
     geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
     topology = phx.operators.BoundaryCornerTopology2D(
         geometry.boundary_atlas.num_charts,
         ((0, "start"), (0, "end")),
+        # ty: ignore[invalid-argument-type]
         interior_angles=(jnp.pi, jnp.pi),
     )
     partition = phx.operators.BoundaryPanelPartition2D(
@@ -98,7 +123,7 @@ def test_kress_partition_preserves_support_and_measure():
     assert jnp.allclose(panelization.boundary_measure, 2.0 * jnp.pi, atol=1e-10)
 
 
-def test_qbx_boundary_average_is_reported_separately():
+def test_qbx_boundary_average_is_reported_separately() -> None:
     panelization = _circle_panelization(panels=4, order=8)
     potential = phx.operators.LaplaceLayerPotential2D(
         panelization,
@@ -129,7 +154,7 @@ def test_qbx_boundary_average_is_reported_separately():
     assert float(result.values) == pytest.approx(-0.5, abs=2e-2)
 
 
-def test_barycentric_self_weights_are_partition_unity_and_nodal_delta():
+def test_barycentric_self_weights_are_partition_unity_and_nodal_delta() -> None:
     panelization = _circle_panelization(panels=1, order=5)
     from phydrax._interpolation import barycentric_basis
 
@@ -142,7 +167,7 @@ def test_barycentric_self_weights_are_partition_unity_and_nodal_delta():
     assert jnp.allclose(basis, jnp.eye(nodes.size), atol=1e-12)
 
 
-def test_helmholtz_cfie_requires_and_reports_explicit_self_policy():
+def test_helmholtz_cfie_requires_and_reports_explicit_self_policy() -> None:
     panelization = _circle_panelization(panels=2, order=4)
     quadrature = phx.integration.AdaptiveQuadraturePlan(
         absolute_tolerance=1e-5,
@@ -165,7 +190,7 @@ def test_helmholtz_cfie_requires_and_reports_explicit_self_policy():
     assert jnp.all(jnp.isfinite(result.density))
 
 
-def test_3d_surface_layer_uses_continuous_target_evidence():
+def test_3d_surface_layer_uses_continuous_target_evidence() -> None:
     geometry = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile()
     panelization = phx.operators.SurfacePanelization3D(
         geometry.boundary_atlas,
@@ -188,7 +213,7 @@ def test_3d_surface_layer_uses_continuous_target_evidence():
     assert report.target_fingerprint
 
 
-def test_3d_qbx_directional_expansion_covers_real_and_complex_layers():
+def test_3d_qbx_directional_expansion_covers_real_and_complex_layers() -> None:
     geometry = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile()
     panelization = phx.operators.SurfacePanelization3D(
         geometry.boundary_atlas,
@@ -256,7 +281,7 @@ def test_3d_qbx_directional_expansion_covers_real_and_complex_layers():
         assert int(result.num_evaluations) > 0
 
 
-def test_helmholtz_qbx_uses_directional_hankel_expansion():
+def test_helmholtz_qbx_uses_directional_hankel_expansion() -> None:
     phx.geometry.Circle((0.0, 0.0), 1.0).compile()
     panelization = _circle_panelization(panels=1, order=2)
     potential = phx.operators.HelmholtzLayerPotential2D(
@@ -289,7 +314,7 @@ def test_helmholtz_qbx_uses_directional_hankel_expansion():
 
 
 @pytest.mark.parametrize("field_kind", ("single", "double", "combined"))
-def test_helmholtz_directional_terms_match_order_three_ad_oracle(field_kind):
+def test_helmholtz_directional_terms_match_order_three_ad_oracle(field_kind: Any) -> None:
     from phydrax.operators.integral.layer_potential._qbx2d import _directional_terms
 
     panelization = _circle_panelization(panels=1, order=2)
@@ -316,23 +341,24 @@ def test_helmholtz_directional_terms_match_order_three_ad_oracle(field_kind):
 
     if field_kind == "combined":
 
-        def kernel(distance):
+        def kernel(distance: Any) -> Any:
             target = center + distance * direction
             return potential.kernel.source_normal_derivative(
                 target,
                 source,
                 normal,
+                # ty: ignore[unresolved-attribute]
             ) - 1j * potential.eta * potential.kernel.value(target, source)
     elif field_kind == "single":
 
-        def kernel(distance):
+        def kernel(distance: Any) -> Any:
             return potential.kernel.value(
                 center + distance * direction,
                 source,
             )
     else:
 
-        def kernel(distance):
+        def kernel(distance: Any) -> Any:
             return potential.kernel.source_normal_derivative(
                 center + distance * direction,
                 source,
@@ -361,7 +387,7 @@ def test_helmholtz_directional_terms_match_order_three_ad_oracle(field_kind):
     )
 
 
-def test_direct_near_far_backend_matches_circle_double_layer_identity():
+def test_direct_near_far_backend_matches_circle_double_layer_identity() -> None:
     panelization = _circle_panelization()
     potential = phx.operators.LaplaceLayerPotential2D(
         panelization,
@@ -380,7 +406,7 @@ def test_direct_near_far_backend_matches_circle_double_layer_identity():
     )
 
 
-def test_double_layer_diagonal_limit_is_analytic_and_orientation_aware():
+def test_double_layer_diagonal_limit_is_analytic_and_orientation_aware() -> None:
     geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
     uniform = _circle_panelization(panels=4, order=4)
     topology = phx.operators.BoundaryCornerTopology2D(
@@ -433,7 +459,7 @@ def test_double_layer_diagonal_limit_is_analytic_and_orientation_aware():
     )
 
 
-def test_rcip_uses_nonzero_nested_corner_hierarchy():
+def test_rcip_uses_nonzero_nested_corner_hierarchy() -> None:
     coarse = jnp.asarray(((2.0, 0.2), (0.1, 1.5)))
     fine = (
         jnp.asarray(
@@ -466,7 +492,7 @@ def test_rcip_uses_nonzero_nested_corner_hierarchy():
     assert preconditioner.preconditioner_id
 
 
-def test_laplace_fmm_order_sweep_matches_direct_far_field():
+def test_laplace_fmm_order_sweep_matches_direct_far_field() -> None:
     panelization = _circle_panelization(panels=8, order=4)
     potential = phx.operators.LaplaceLayerPotential2D(
         panelization,
@@ -502,7 +528,7 @@ def test_laplace_fmm_order_sweep_matches_direct_far_field():
     assert errors[-1] <= errors[0]
 
 
-def test_fmm_mixed_excluded_leaf_is_kept_in_near_correction():
+def test_fmm_mixed_excluded_leaf_is_kept_in_near_correction() -> None:
     panelization = _circle_panelization(panels=8, order=4)
     potential = phx.operators.LaplaceLayerPotential2D(
         panelization,
@@ -528,7 +554,7 @@ def test_fmm_mixed_excluded_leaf_is_kept_in_near_correction():
     assert any(0 in block and any(index != 0 for index in block) for block in near_blocks)
 
 
-def test_global_qbx_fmm_reports_independent_error_channels():
+def test_global_qbx_fmm_reports_independent_error_channels() -> None:
     panelization = _circle_panelization(panels=4, order=4)
     potential = phx.operators.LaplaceLayerPotential2D(
         panelization,

@@ -15,7 +15,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -55,7 +56,7 @@ class NonadiabaticSurfaceEvaluation(StrictModule, NonTrainableState):
         *,
         spin_orbit_couplings: ArrayLike | None = None,
         successful: ArrayLike = True,
-    ):
+    ) -> None:
         energy = jnp.asarray(energies)
         gradient = jnp.asarray(gradients, dtype=energy.real.dtype)
         coupling = jnp.asarray(derivative_couplings, dtype=energy.real.dtype)
@@ -135,7 +136,7 @@ class CallableNonadiabaticSurfaceProvider(AbstractNonadiabaticSurfaceProvider):
     evaluator: NonadiabaticEvaluator = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
 
-    def __init__(self, evaluator: NonadiabaticEvaluator, provider_id: str, /):
+    def __init__(self, evaluator: NonadiabaticEvaluator, provider_id: str, /) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         provider = str(provider_id).strip()
@@ -215,7 +216,7 @@ class FewestSwitchesSurfaceHoppingPlan(StrictModule, NonTrainableState):
         decoherence_parameter: float = 0.1,
         frustrated_hop: FrustratedHopPolicy = FrustratedHopPolicy.REJECT,
         rescaling_direction: str = "derivative-coupling",
-    ):
+    ) -> None:
         if not isinstance(provider, AbstractNonadiabaticSurfaceProvider):
             raise TypeError(
                 "provider must implement AbstractNonadiabaticSurfaceProvider."
@@ -316,7 +317,13 @@ class FewestSwitchesSurfaceHoppingPlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
-    def _electronic_step(self, coefficients, evaluation, velocity, /):
+    def _electronic_step(
+        self,
+        coefficients: Array,
+        evaluation: NonadiabaticSurfaceEvaluation,
+        velocity: Array,
+        /,
+    ) -> tuple[Array, Array, Array, Array]:
         coupling_rate = contract("nx,ijnx->ij", velocity, evaluation.derivative_couplings)
         hamiltonian = (
             jnp.diag(evaluation.energies.astype(evaluation.spin_orbit_couplings.dtype))
@@ -470,7 +477,9 @@ class FewestSwitchesSurfaceHoppingPlan(StrictModule, NonTrainableState):
             successful,
         )
 
-    def run(self, initial: SurfaceHoppingState, step_count: int, /):
+    def run(
+        self, initial: SurfaceHoppingState, step_count: int, /
+    ) -> tuple[tuple[SurfaceHoppingState, ...], tuple[SurfaceHopEvent, ...]]:
         count = int(step_count)
         if count < 0:
             raise ValueError("step_count must be non-negative.")

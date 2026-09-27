@@ -3,20 +3,21 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ....atomistic import AtomisticTrajectory
 from ....series import SampledSeries, SeriesSupport
-from ....units import conversion_factor, derived_unit
+from ....units import conversion_factor, derived_unit, UnitDefinition
 
 
 def native_enthalpy_series(
     trajectory: AtomisticTrajectory,
     *,
-    pressure,
-    pressure_unit,
-    volumes,
-    volume_unit,
+    pressure: npt.ArrayLike,
+    pressure_unit: UnitDefinition,
+    volumes: npt.ArrayLike,
+    volume_unit: UnitDefinition,
     source_id: str,
 ) -> SampledSeries:
     """Form total H=U+K+pV from a native retained trajectory and explicit volume.

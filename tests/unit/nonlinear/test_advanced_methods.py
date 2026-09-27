@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -24,7 +24,7 @@ class _CoordinateResidual(NamedTuple):
 
 
 class _NoDenseDistinctJacobian(la.AbstractLinearOperator):
-    def __init__(self, source: la.PyTreeSpace, target: la.PyTreeSpace):
+    def __init__(self, source: la.PyTreeSpace, target: la.PyTreeSpace) -> None:
         self.source = source
         self.target = target
         self.properties = la.OperatorProperties()
@@ -36,28 +36,29 @@ class _NoDenseDistinctJacobian(la.AbstractLinearOperator):
         self.batch_shape = ()
         self.operator_id = "no-dense-distinct-jacobian"
 
-    def mv(self, vector):
+    def mv(self, vector: Any) -> Any:
         value = self.source.validate(vector)
         return self.target.validate(_CoordinateResidual(2.0 * value.value))
 
-    def transpose_mv(self, vector):
+    def transpose_mv(self, vector: Any) -> Any:
         value = self.target.validate(vector)
         return self.source.validate(_CoordinateState(2.0 * value.value))
 
-    def adjoint_mv(self, vector):
+    def adjoint_mv(self, vector: Any) -> Any:
         return self.transpose_mv(vector)
 
-    def _materialize(self):
+    # ty: ignore[invalid-method-override]
+    def _materialize(self) -> None:
         raise AssertionError("The distinct-space Jacobian must remain matrix-free.")
 
-    def to_dense(self):
+    def to_dense(self) -> None:
         raise AssertionError("The distinct-space Jacobian must remain matrix-free.")
 
 
 class _NoMaterializeArrayOperator(la.AbstractLinearOperator):
     matrix: jax.Array
 
-    def __init__(self, matrix, source, target, operator_id):
+    def __init__(self, matrix: Any, source: Any, target: Any, operator_id: Any) -> None:
         self.matrix = jnp.asarray(matrix)
         self.source = source
         self.target = target
@@ -70,17 +71,18 @@ class _NoMaterializeArrayOperator(la.AbstractLinearOperator):
         self.batch_shape = ()
         self.operator_id = operator_id
 
-    def mv(self, vector):
+    def mv(self, vector: Any) -> Any:
         return self.target.validate(self.matrix @ self.source.validate(vector))
 
-    def transpose_mv(self, vector):
+    def transpose_mv(self, vector: Any) -> Any:
         return self.source.validate(self.matrix.T @ self.target.validate(vector))
 
-    def adjoint_mv(self, vector):
+    def adjoint_mv(self, vector: Any) -> Any:
         covector = self.target.riesz(self.target.validate(vector))
         return self.source.inverse_riesz(jnp.conj(self.matrix.T) @ covector)
 
-    def _materialize(self):
+    # ty: ignore[invalid-method-override]
+    def _materialize(self) -> None:
         raise AssertionError("The supplied nonlinear setup must remain matrix-free.")
 
 
@@ -88,7 +90,7 @@ class _DensePairing(la.AbstractPairing):
     matrix: jax.Array
     inverse: jax.Array
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.matrix = jnp.asarray([[2.0, 1.0], [1.0, 2.0]], dtype=jnp.float64)
         self.inverse = (
             jnp.asarray(
@@ -99,17 +101,17 @@ class _DensePairing(la.AbstractPairing):
         )
         self.pairing_id = "dense-coupled-pairing"
 
-    def inner(self, left, right):
+    def inner(self, left: Any, right: Any) -> Any:
         return jnp.vdot(left, self.matrix @ right)
 
-    def riesz(self, vector):
+    def riesz(self, vector: Any) -> Any:
         return self.matrix @ vector
 
-    def inverse_riesz(self, covector):
+    def inverse_riesz(self, covector: Any) -> Any:
         return self.inverse @ covector
 
 
-def test_advanced_nonlinear_public_exports_are_available():
+def test_advanced_nonlinear_public_exports_are_available() -> None:
     names = {
         "AbstractNonlinearSystemTransformation",
         "Bounds",
@@ -139,8 +141,8 @@ def test_advanced_nonlinear_public_exports_are_available():
 
 @pytest.mark.parametrize("linear_solver", ("matrix-free", "dense-lu"))
 def test_implicit_root_matches_analytic_primal_forward_and_reverse_sensitivities(
-    linear_solver,
-):
+    linear_solver: Any,
+) -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state * state - target,
         problem_id="implicit-positive-square-root",
@@ -160,7 +162,7 @@ def test_implicit_root_matches_analytic_primal_forward_and_reverse_sensitivities
         else nl.NewtonKrylov(linear_policy=la.LinearSolvePolicy(la.DenseLU()))
     )
 
-    def solution(expected):
+    def solution(expected: Any) -> Any:
         return nl.implicit_root(
             problem,
             initial,
@@ -186,14 +188,14 @@ def test_implicit_root_matches_analytic_primal_forward_and_reverse_sensitivities
 
 @pytest.mark.parametrize("globalization", ("line-search", "trust-region"))
 def test_newton_rebases_distinct_pytree_spaces_without_dense_fallback(
-    globalization,
-):
+    globalization: Any,
+) -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, args: _CoordinateResidual(2.0 * state.value - 4.0),
         problem_id=f"distinct-space-{globalization}",
     )
 
-    def jacobian(state, args):
+    def jacobian(state: Any, args: Any) -> Any:
         del args
         source = la.PyTreeSpace(state)
         target = la.PyTreeSpace(_CoordinateResidual(jnp.zeros_like(state.value)))
@@ -238,7 +240,7 @@ def test_newton_rebases_distinct_pytree_spaces_without_dense_fallback(
     assert result.provenance.notes == ("linear-method=gmres;linear-backend=native-krylov")
 
 
-def test_newton_still_rejects_unequal_coordinate_dimensions():
+def test_newton_still_rejects_unequal_coordinate_dimensions() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, args: _CoordinateResidual(
             jnp.concatenate((state.value, state.value))
@@ -253,7 +255,7 @@ def test_newton_still_rejects_unequal_coordinate_dimensions():
         )
 
 
-def test_nonlinear_system_explicit_spaces_validate_and_missing_spaces_bind():
+def test_nonlinear_system_explicit_spaces_validate_and_missing_spaces_bind() -> None:
     state_space = la.ArraySpace((1,), dtype=jnp.float64)
     residual_space = la.ArraySpace((2,), dtype=jnp.float64)
     problem = nl.NonlinearSystemProblem(
@@ -274,7 +276,7 @@ def test_nonlinear_system_explicit_spaces_validate_and_missing_spaces_bind():
 
     calls = 0
 
-    def residual(state, args):
+    def residual(state: Any, args: Any) -> Any:
         nonlocal calls
         calls += 1
         return jnp.concatenate((state, -state))
@@ -292,7 +294,7 @@ def test_nonlinear_system_explicit_spaces_validate_and_missing_spaces_bind():
     assert calls == 1
 
 
-def test_left_and_right_preconditioned_roots_expose_physical_results():
+def test_left_and_right_preconditioned_roots_expose_physical_results() -> None:
     physical_space = la.ArraySpace((1,), dtype=jnp.float64)
     residual_space = la.ArraySpace((1,), dtype=jnp.float64)
     latent_space = la.ArraySpace((1,), dtype=jnp.float64)
@@ -384,7 +386,7 @@ def test_left_and_right_preconditioned_roots_expose_physical_results():
         invalid_target.reconstruct(jnp.ones((1,), dtype=jnp.float64))
 
 
-def test_zeroing_left_preconditioner_cannot_certify_a_false_physical_root():
+def test_zeroing_left_preconditioner_cannot_certify_a_false_physical_root() -> None:
     space = la.ArraySpace((1,), dtype=jnp.float64)
     problem = nl.NonlinearSystemProblem(
         lambda state, args: state - 2.0,
@@ -419,7 +421,7 @@ def test_zeroing_left_preconditioner_cannot_certify_a_false_physical_root():
     assert jnp.allclose(result.transformation_evidence.residual, 0.0)
 
 
-def test_left_preconditioner_validates_state_source_and_target_spaces():
+def test_left_preconditioner_validates_state_source_and_target_spaces() -> None:
     scalar = la.ArraySpace((1,), dtype=jnp.float64)
     pair = la.ArraySpace((2,), dtype=jnp.float64)
     preconditioner = nl.FunctionLeftNonlinearPreconditioner(
@@ -447,7 +449,7 @@ def test_left_preconditioner_validates_state_source_and_target_spaces():
         bad_target.apply(jnp.ones((1,)), jnp.ones((1,)))
 
 
-def test_scaled_root_uses_physical_initial_and_preserves_jit_and_evidence():
+def test_scaled_root_uses_physical_initial_and_preserves_jit_and_evidence() -> None:
     initial = {"state": jnp.asarray([3.0], dtype=jnp.float64)}
     problem = nl.NonlinearSystemProblem(
         lambda state, target: (
@@ -519,7 +521,7 @@ def test_scaled_root_uses_physical_initial_and_preserves_jit_and_evidence():
     assert result.attempts == ()
 
 
-def test_large_residual_scale_does_not_cause_premature_success():
+def test_large_residual_scale_does_not_cause_premature_success() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, args: state - 1.0,
         problem_id="large-residual-scale",
@@ -551,7 +553,7 @@ def test_large_residual_scale_does_not_cause_premature_success():
     assert int(result.diagnostics.iterations) > 0
 
 
-def test_scaled_root_divergence_limit_respects_the_solver_norm_floor():
+def test_scaled_root_divergence_limit_respects_the_solver_norm_floor() -> None:
     initial = jnp.asarray([1e-40], dtype=jnp.float64)
     transformed = nl.scale_root(
         nl.NonlinearSystemProblem(lambda state, args: state),
@@ -570,7 +572,7 @@ def test_scaled_root_divergence_limit_respects_the_solver_norm_floor():
     assert solver.divergence_factor == pytest.approx(1e14)
 
 
-def test_scaled_root_enforces_physical_accepted_validity():
+def test_scaled_root_enforces_physical_accepted_validity() -> None:
     initial = jnp.asarray([1.0], dtype=jnp.float64)
     problem = nl.NonlinearSystemProblem(
         lambda state, args: (state - 1.0, state),
@@ -610,7 +612,7 @@ def test_scaled_root_enforces_physical_accepted_validity():
     assert not bool(transformed.problem.trial_valid(invalid_trial))
 
 
-def test_scaled_root_transforms_matrix_free_setup_tangent_and_adjoint_routes():
+def test_scaled_root_transforms_matrix_free_setup_tangent_and_adjoint_routes() -> None:
     state_space = la.ArraySpace(
         (2,),
         dtype=jnp.float64,
@@ -669,7 +671,7 @@ def test_scaled_root_transforms_matrix_free_setup_tangent_and_adjoint_routes():
     assert jnp.allclose(adjoint_setup.mv(covector), expected.T @ covector)
 
 
-def test_real_scaling_supports_complex_physical_states_and_has_content_identity():
+def test_real_scaling_supports_complex_physical_states_and_has_content_identity() -> None:
     space = la.ArraySpace((2,), dtype=jnp.complex128)
     target = jnp.asarray([1.0 + 2.0j, -3.0 + 0.5j], dtype=jnp.complex128)
     initial = jnp.zeros((2,), dtype=jnp.complex128)
@@ -713,7 +715,7 @@ def test_real_scaling_supports_complex_physical_states_and_has_content_identity(
     assert jnp.allclose(result.residual, 0.0, atol=1e-10)
 
 
-def test_scaled_root_rejects_unsupported_physical_pairings():
+def test_scaled_root_rejects_unsupported_physical_pairings() -> None:
     space = la.ArraySpace((2,), dtype=jnp.float64, pairing=_DensePairing())
     problem = nl.NonlinearSystemProblem(
         lambda state, args: state - 1.0,
@@ -735,8 +737,8 @@ def test_scaled_root_rejects_unsupported_physical_pairings():
         )
 
 
-def test_nonlinear_gmres_rejects_a_harmful_affine_combination_and_restarts():
-    def residual(state, args):
+def test_nonlinear_gmres_rejects_a_harmful_affine_combination_and_restarts() -> None:
+    def residual(state: Any, args: Any) -> Any:
         del args
         return 1.0 - 0.1 * (state - 1.0) + 10.0 * jnp.maximum(state - 2.0, 0.0) ** 2
 
@@ -765,23 +767,23 @@ def test_nonlinear_gmres_rejects_a_harmful_affine_combination_and_restarts():
     assert method.capabilities.nonlinear_preconditioning
 
 
-def _nonlinear_fas_hierarchy():
+def _nonlinear_fas_hierarchy() -> Any:
     fine_space = la.ArraySpace((4,), dtype=jnp.float64)
     middle_space = la.ArraySpace((2,), dtype=jnp.float64)
     coarse_space = la.ArraySpace((1,), dtype=jnp.float64)
 
-    def operator(state, args):
+    def operator(state: Any, args: Any) -> Any:
         del args
         return state**2
 
-    def smoother(state, right_hand_side, args):
+    def smoother(state: Any, right_hand_side: Any, args: Any) -> Any:
         del args
         return 0.5 * (state + right_hand_side / state)
 
-    def restrict(value):
+    def restrict(value: Any) -> Any:
         return jnp.mean(value.reshape((-1, 2)), axis=1)
 
-    def prolong(value):
+    def prolong(value: Any) -> Any:
         return jnp.repeat(value, 2)
 
     fine = nl.FASLevel(
@@ -828,8 +830,8 @@ def _nonlinear_fas_hierarchy():
     ),
 )
 def test_fas_cycles_reduce_a_nonlinear_residual_across_levels(
-    kind, coarse_solves, level_visits
-):
+    kind: Any, coarse_solves: Any, level_visits: Any
+) -> None:
     hierarchy = _nonlinear_fas_hierarchy()
     result = nl.fas_cycle(
         hierarchy,
@@ -849,7 +851,7 @@ def test_fas_cycles_reduce_a_nonlinear_residual_across_levels(
     assert int(hierarchy.numeric_refreshes) == 3
 
 
-def test_vi_certificate_separates_feasibility_from_complementarity():
+def test_vi_certificate_separates_feasibility_from_complementarity() -> None:
     problem = nl.VariationalInequalityProblem(
         lambda state, args: -jnp.ones_like(state),
         nl.Bounds(0.0, 1.0),
@@ -886,7 +888,7 @@ def test_vi_certificate_separates_feasibility_from_complementarity():
     assert int(solved.diagnostics.iterations) > 0
 
 
-def test_fischer_burmeister_residual_is_finite_for_unbounded_variables():
+def test_fischer_burmeister_residual_is_finite_for_unbounded_variables() -> None:
     problem = nl.VariationalInequalityProblem(
         lambda state, args: state - 1.0,
         nl.Bounds(),
@@ -903,7 +905,7 @@ def test_fischer_burmeister_residual_is_finite_for_unbounded_variables():
     assert jnp.all(jnp.isfinite(tangent))
 
 
-def test_semismooth_solver_cannot_report_false_success_from_a_loose_tolerance():
+def test_semismooth_solver_cannot_report_false_success_from_a_loose_tolerance() -> None:
     problem = nl.VariationalInequalityProblem(
         lambda state, args: -jnp.ones_like(state),
         nl.Bounds(0.0, 1.0),
@@ -929,13 +931,15 @@ def test_semismooth_solver_cannot_report_false_success_from_a_loose_tolerance():
     assert result.provenance.problem_id.endswith("/fischer-burmeister")
 
 
-def test_generalized_derivative_policy_requires_a_clarke_unit_vector():
+def test_generalized_derivative_policy_requires_a_clarke_unit_vector() -> None:
     with pytest.raises(ValueError, match="Clarke unit ball"):
         nl.GeneralizedDerivativePolicy(origin_coefficient=0.8)
 
 
 @pytest.mark.parametrize("globalization", ("line-search", "trust-region"))
-def test_newton_globalization_reports_finite_domain_rejections(globalization):
+def test_newton_globalization_reports_finite_domain_rejections(
+    globalization: Any,
+) -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, args: state - 2.0,
         validity=lambda state, residual, auxiliary, args: jnp.all(state <= 0.0),
@@ -960,7 +964,7 @@ def test_newton_globalization_reports_finite_domain_rejections(globalization):
     assert jnp.all(jnp.isfinite(result.residual))
 
 
-def test_newton_rejects_a_finite_but_invalid_initial_state_using_auxiliary_data():
+def test_newton_rejects_a_finite_but_invalid_initial_state_using_auxiliary_data() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, args: (jnp.zeros_like(state), state < 0.0),
         has_aux=True,
@@ -979,7 +983,7 @@ def test_newton_rejects_a_finite_but_invalid_initial_state_using_auxiliary_data(
     assert jnp.allclose(result.state, jnp.asarray([0.5]))
 
 
-def test_newton_keeps_nonfinite_trials_distinct_from_domain_rejections():
+def test_newton_keeps_nonfinite_trials_distinct_from_domain_rejections() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, args: jnp.where(state > 0.0, jnp.asarray(jnp.nan), state - 2.0),
         validity=lambda state, residual, auxiliary, args: jnp.asarray(True),
@@ -996,7 +1000,7 @@ def test_newton_keeps_nonfinite_trials_distinct_from_domain_rejections():
     assert int(result.diagnostics.nonfinite_trials) == 3
 
 
-def test_projected_vi_caps_each_inner_linear_solve_by_remaining_budget():
+def test_projected_vi_caps_each_inner_linear_solve_by_remaining_budget() -> None:
     matrix = jnp.diag(jnp.asarray([1.0, 2.0, 4.0, 8.0]))
     target = jnp.ones(4)
     problem = nl.VariationalInequalityProblem(

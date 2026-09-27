@@ -7,11 +7,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from enum import IntEnum
 from math import isfinite
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -47,6 +48,21 @@ EventIndicator = Callable[
     [ContinuationCurveProblem, PyTree[Any], Array, Any],
     Any,
 ]
+_CorrectedCandidate: TypeAlias = tuple[
+    PyTree[Array],
+    Array,
+    PyTree[Array],
+    Array,
+    Array,
+    Array,
+    int,
+    PreparedNonlinearSolve | None,
+    int,
+    int,
+    int,
+    bool,
+    bool,
+]
 
 
 class EventLocalizationStatus(IntEnum):
@@ -80,7 +96,7 @@ class EventLocalizationPolicy(StrictModule):
         maximum_steps: int = 40,
         secant_safeguard: float = 0.1,
         policy_id: str | None = None,
-    ):
+    ) -> None:
         corrector_ = (
             NewtonKrylov(
                 linear_policy=LinearSolvePolicy(
@@ -179,7 +195,7 @@ class EventLocalizationDiagnostics(StrictModule):
         localized_indicator: Any,
         residual_norm: Any,
         corrector_status: Any,
-    ):
+    ) -> None:
         integer_values = tuple(
             jnp.asarray(value, dtype=jnp.int32)
             for value in (
@@ -231,7 +247,7 @@ class EventLocalizationProvenance(StrictModule):
         corrector_prepared_id: str,
         corrector_numeric_version: Any,
         indicator_id: str,
-    ):
+    ) -> None:
         values = tuple(
             str(value)
             for value in (
@@ -280,7 +296,7 @@ class EventLocalizationResult(StrictModule):
         diagnostics: EventLocalizationDiagnostics,
         provenance: EventLocalizationProvenance,
         /,
-    ):
+    ) -> None:
         if point is not None and not isinstance(point, BranchPoint):
             raise TypeError("point must be a BranchPoint or None.")
         if not isinstance(diagnostics, EventLocalizationDiagnostics):
@@ -465,7 +481,7 @@ def _correct_candidate(
     prepared: PreparedNonlinearSolve | None,
     args: Any,
     /,
-):
+) -> _CorrectedCandidate:
     geometry = branch.geometry
     state_tangent, coordinate_tangent = _normalized_chord(branch, left, right)
     left_state = geometry.state_to_execution(left.state)
@@ -473,7 +489,9 @@ def _correct_candidate(
     predicted_state = _interpolate_tree(left_state, right_state, weight)
     predicted_coordinate = left.coordinate + weight * (right.coordinate - left.coordinate)
 
-    def augmented_residual(variables):
+    def augmented_residual(
+        variables: tuple[PyTree[Array], Array],
+    ) -> tuple[PyTree[Array], Array]:
         state, coordinate = variables
         residual = _execution_residual(
             problem,

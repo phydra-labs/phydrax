@@ -14,7 +14,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -35,6 +36,7 @@ from ..equations._relativistic_hydrodynamics import (
 )
 from ..linalg import inverse_small_linear, SmallLinearSolvePlan
 from ..metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
+from ..typing import parse
 from ._finite_volume_content import FiniteVolumeConservativeContentState
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 from ._relativistic_primitive import (
@@ -65,9 +67,8 @@ class GRHDBoundaryCondition(StrictModule, NonTrainableState):
     kind: GRHDBoundaryKind = eqx.field(static=True)
     boundary_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: GRHDBoundaryKind = "outflow", /):
-        if kind not in ("outflow", "reflective", "atmosphere"):
-            raise ValueError("GRHD boundary kind is unsupported.")
+    def __init__(self, kind: GRHDBoundaryKind = "outflow", /) -> None:
+        kind = parse(kind, GRHDBoundaryKind, "kind")
         self.kind = kind
         self.boundary_id = canonical_fingerprint(
             {"kind": "grhd-boundary-condition", "policy": kind}
@@ -79,7 +80,9 @@ class GRHDBoundaryPair(StrictModule, NonTrainableState):
     upper: GRHDBoundaryCondition
     pair_id: str = eqx.field(static=True)
 
-    def __init__(self, lower: GRHDBoundaryCondition, upper: GRHDBoundaryCondition, /):
+    def __init__(
+        self, lower: GRHDBoundaryCondition, upper: GRHDBoundaryCondition, /
+    ) -> None:
         if not isinstance(lower, GRHDBoundaryCondition) or not isinstance(
             upper, GRHDBoundaryCondition
         ):
@@ -110,9 +113,8 @@ class GRHDFaceFluxPlan(StrictModule, NonTrainableState):
     kind: GRHDFaceFluxKind = eqx.field(static=True)
     flux_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: GRHDFaceFluxKind = "hlle", /):
-        if kind not in ("hlle", "rusanov"):
-            raise ValueError("GRHD face flux must be 'hlle' or 'rusanov'.")
+    def __init__(self, kind: GRHDFaceFluxKind = "hlle", /) -> None:
+        kind = parse(kind, GRHDFaceFluxKind, "kind")
         self.kind = kind
         self.flux_id = canonical_fingerprint(
             {
@@ -463,7 +465,7 @@ class ValenciaFiniteVolumeStageGeometry(StrictModule, NonTrainableState):
         faces: Sequence[ADMGridGeometry],
         time: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(source, ValenciaGeometrySource):
             raise TypeError("source must be a ValenciaGeometrySource.")
         faces_ = tuple(faces)
@@ -752,7 +754,7 @@ class FixedGridGRHDSSPRK3Plan(AbstractFixedStepMethod):
         conservation_tolerance: float = 1.0e-9,
         maximum_step_atmosphere_mass: float = 1.0e30,
         maximum_step_atmosphere_energy: float = 1.0e30,
-    ):
+    ) -> None:
         if not isinstance(system, ValenciaGRHDSystem):
             raise TypeError("system must be a ValenciaGRHDSystem.")
         if not isinstance(c2p, GRHDC2PPolicy) or c2p.system.system_id != system.system_id:
@@ -968,7 +970,9 @@ class FixedGridGRHDSSPRK3Plan(AbstractFixedStepMethod):
         )
         return lower, upper
 
-    def _active_face_sides(self, active: Array, axis: int, periodic: bool, /):
+    def _active_face_sides(
+        self, active: Array, axis: int, periodic: bool, /
+    ) -> tuple[Array, Array]:
         if periodic:
             return jnp.roll(active, 1, axis=axis), active
         lower = jnp.zeros_like(jnp.take(active, 0, axis=axis))
@@ -1404,7 +1408,7 @@ class FixedGridGRHDSSPRK3Plan(AbstractFixedStepMethod):
             first: ValenciaFiniteVolumeStageGeometry,
             second: ValenciaFiniteVolumeStageGeometry,
             /,
-        ):
+        ) -> Array:
             first_cell, second_cell = first.cell, second.cell
             return (
                 jnp.all(first_cell.alpha == second_cell.alpha)
@@ -1594,7 +1598,19 @@ class FixedGridGRHDSSPRK3Plan(AbstractFixedStepMethod):
             self.runtime_id,
         )
 
-    def step(self, step_index, time, state, step_size, args, /) -> FixedStepResult:
+    def step(
+        self,
+        step_index: Array,
+        time: Array,
+        state: GRHDFiniteVolumeState,
+        step_size: Array,
+        args: tuple[
+            ValenciaFiniteVolumeStageGeometry,
+            ValenciaFiniteVolumeStageGeometry,
+            ValenciaFiniteVolumeStageGeometry,
+        ],
+        /,
+    ) -> FixedStepResult:
         if (
             not isinstance(args, tuple)
             or len(args) != 3

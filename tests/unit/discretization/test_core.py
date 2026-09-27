@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,11 +12,15 @@ import pytest
 import phydrax as phx
 
 
-def _interval_topology():
+def _interval_topology() -> Any:
+    # ty: ignore[invalid-argument-type]
     vertices = phx.discretization.EntitySet("vertices", 0, [0, 1, 2])
+    # ty: ignore[invalid-argument-type]
     edges = phx.discretization.EntitySet("edges", 1, [0, 1])
     relation = phx.sparse.EdgeRelation(
+        # ty: ignore[invalid-argument-type]
         [0, 1, 1, 2],
+        # ty: ignore[invalid-argument-type]
         [0, 0, 1, 1],
         source_size=3,
         target_size=2,
@@ -23,23 +30,31 @@ def _interval_topology():
         vertices,
         edges,
         relation,
+        # ty: ignore[invalid-argument-type]
         [-1.0, 1.0, -1.0, 1.0],
     )
     return phx.discretization.CellComplexTopology((vertices, edges), (incidence,))
 
 
-def _triangle_topology():
+def _triangle_topology() -> Any:
+    # ty: ignore[invalid-argument-type]
     vertices = phx.discretization.EntitySet("vertices", 0, [0, 1, 2])
+    # ty: ignore[invalid-argument-type]
     edges = phx.discretization.EntitySet("edges", 1, [0, 1, 2])
+    # ty: ignore[invalid-argument-type]
     faces = phx.discretization.EntitySet("faces", 2, [0])
     edge_relation = phx.sparse.EdgeRelation(
+        # ty: ignore[invalid-argument-type]
         [0, 1, 1, 2, 2, 0],
+        # ty: ignore[invalid-argument-type]
         [0, 0, 1, 1, 2, 2],
         source_size=3,
         target_size=3,
     )
     face_relation = phx.sparse.EdgeRelation(
+        # ty: ignore[invalid-argument-type]
         [0, 1, 2],
+        # ty: ignore[invalid-argument-type]
         [0, 0, 0],
         source_size=3,
         target_size=1,
@@ -52,6 +67,7 @@ def _triangle_topology():
                 vertices,
                 edges,
                 edge_relation,
+                # ty: ignore[invalid-argument-type]
                 [-1.0, 1.0, -1.0, 1.0, -1.0, 1.0],
             ),
             phx.discretization.OrientedIncidence(
@@ -59,13 +75,14 @@ def _triangle_topology():
                 edges,
                 faces,
                 face_relation,
+                # ty: ignore[invalid-argument-type]
                 [1.0, 1.0, 1.0],
             ),
         ),
     )
 
 
-def _field_space(name="u"):
+def _field_space(name: Any = "u") -> Any:
     topology = phx.discretization.TensorTopology(("x",), (3,))
     support = phx.discretization.DiscreteSupport(topology, 1, "line")
     layout = phx.discretization.TensorDofLayout(("x",), (3,))
@@ -79,7 +96,7 @@ def _field_space(name="u"):
     )
 
 
-def test_discretization_keys_are_semantic_and_stable():
+def test_discretization_keys_are_semantic_and_stable() -> None:
     left = phx.discretization.DiscretizationKey(
         "space", "physical", domain_labels=("x", "y")
     )
@@ -98,7 +115,7 @@ def test_discretization_keys_are_semantic_and_stable():
         )
 
 
-def test_cell_complex_validates_boundary_of_boundary_without_dense_state():
+def test_cell_complex_validates_boundary_of_boundary_without_dense_state() -> None:
     topology = _triangle_topology()
 
     assert topology.dimension == 2
@@ -116,6 +133,7 @@ def test_cell_complex_validates_boundary_of_boundary_without_dense_state():
         topology.entity_sets[1],
         topology.entity_sets[2],
         topology.incidences[1].relation,
+        # ty: ignore[invalid-argument-type]
         [1.0, -1.0, 1.0],
     )
     with pytest.raises(ValueError, match="boundary-of-boundary"):
@@ -125,22 +143,30 @@ def test_cell_complex_validates_boundary_of_boundary_without_dense_state():
         )
 
 
-def test_entity_subsets_cannot_activate_padding():
+def test_entity_subsets_cannot_activate_padding() -> None:
+    # ty: ignore[invalid-argument-type]
     subset = phx.discretization.EntitySubset("boundary", [True, False, True])
     with pytest.raises(ValueError, match="inactive"):
         phx.discretization.EntitySet(
             "vertices",
             0,
+            # ty: ignore[invalid-argument-type]
             [0, 1, -1],
+            # ty: ignore[invalid-argument-type]
             active_mask=[True, True, False],
             subsets=(subset,),
         )
 
 
-def test_discrete_measure_masks_nonfinite_padding_before_multiplication():
+def test_discrete_measure_masks_nonfinite_padding_before_multiplication() -> None:
     topology = phx.discretization.PointTopology(
         phx.discretization.EntitySet(
-            "points", 0, [0, 1, -1], active_mask=[True, True, False]
+            "points",
+            0,
+            # ty: ignore[invalid-argument-type]
+            [0, 1, -1],
+            # ty: ignore[invalid-argument-type]
+            active_mask=[True, True, False],
         )
     )
     support = phx.discretization.DiscreteSupport(topology, 1, "points")
@@ -148,7 +174,9 @@ def test_discrete_measure_masks_nonfinite_padding_before_multiplication():
         "physical",
         support.support_id,
         topology.points.entity_set_id,
+        # ty: ignore[invalid-argument-type]
         [0.25, 0.75, np.nan],
+        # ty: ignore[invalid-argument-type]
         active_mask=[True, True, False],
         normalization="probability",
     )
@@ -159,7 +187,7 @@ def test_discrete_measure_masks_nonfinite_padding_before_multiplication():
     assert jnp.allclose(value, 3.5)
 
 
-def test_field_space_requires_exact_vector_coordinates():
+def test_field_space_requires_exact_vector_coordinates() -> None:
     topology = phx.discretization.TensorTopology(("x",), (3,))
     support = phx.discretization.DiscreteSupport(topology, 1, "line")
     layout = phx.discretization.TensorDofLayout(("x",), (3,))
@@ -174,7 +202,7 @@ def test_field_space_requires_exact_vector_coordinates():
         )
 
 
-def test_field_space_accepts_basis_coefficient_representation():
+def test_field_space_accepts_basis_coefficient_representation() -> None:
     topology = phx.discretization.TensorTopology(("x",), (3,))
     support = phx.discretization.DiscreteSupport(topology, 1, "line")
     layout = phx.discretization.TensorDofLayout(("x",), (3,))
@@ -191,7 +219,7 @@ def test_field_space_accepts_basis_coefficient_representation():
     assert space.representation == "basis_coefficient"
 
 
-def test_field_transfer_validates_spaces_and_bundle_dependencies():
+def test_field_transfer_validates_spaces_and_bundle_dependencies() -> None:
     source = _field_space("source")
     target = _field_space("target")
     operator = phx.linalg.DenseLinearOperator(
@@ -242,9 +270,10 @@ def test_field_transfer_validates_spaces_and_bundle_dependencies():
         phx.discretization.DiscretizationBundle((cyclic_space, bundle.record(time_key)))
 
 
-def test_temporal_mesh_distinguishes_plan_from_realization():
+def test_temporal_mesh_distinguishes_plan_from_realization() -> None:
     plan = phx.discretization.TemporalMesh.uniform(0.0, 1.0, 4, role="driver")
     realized = phx.discretization.TemporalMesh(
+        # ty: ignore[invalid-argument-type]
         [0.0, 0.1, 0.4, 1.0],
         role="driver",
         realized=True,
@@ -255,10 +284,11 @@ def test_temporal_mesh_distinguishes_plan_from_realization():
     assert realized.source_plan_id == plan.mesh_id
     assert not plan.realized
     with pytest.raises(ValueError, match="source_plan_id"):
+        # ty: ignore[invalid-argument-type]
         phx.discretization.TemporalMesh([0.0, 1.0], role="internal", realized=True)
 
 
-def test_triangle_mesh_exposes_one_canonical_oriented_support():
+def test_triangle_mesh_exposes_one_canonical_oriented_support() -> None:
     mesh = phx.geometry.TriangleMesh(
         jnp.asarray(
             [
@@ -273,7 +303,9 @@ def test_triangle_mesh_exposes_one_canonical_oriented_support():
 
     support = mesh.discrete_support()
     topology = support.topology
+    # ty: ignore[unresolved-attribute]
     boundary = topology.incidences[0].scipy_boundary()
+    # ty: ignore[unresolved-attribute]
     face_boundary = topology.incidences[1].scipy_boundary()
 
     assert isinstance(topology, phx.discretization.CellComplexTopology)

@@ -11,6 +11,7 @@ import sys
 import time
 from itertools import product
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -42,7 +43,7 @@ CASES = (
 OPTIMIZERS = ("kfac-expand", "kfac-reduce", "adam", "lbfgs", "exact-ggn")
 
 
-def _network(domain, *, in_size, width, depth, key):
+def _network(domain: Any, *, in_size: Any, width: Any, depth: Any, key: Any) -> Any:
     model = phx.nn.models.MLP(
         in_size=in_size,
         out_size="scalar",
@@ -54,7 +55,15 @@ def _network(domain, *, in_size, width, depth, key):
     return domain.Model(*domain.labels)(model)
 
 
-def _fixed_residual_term(component, operator, fields, *, samples, key, scale=1.0):
+def _fixed_residual_term(
+    component: Any,
+    operator: Any,
+    fields: Any,
+    *,
+    samples: Any,
+    key: Any,
+    scale: Any = 1.0,
+) -> Any:
     condition = phx.conditions.Residual(fields, component, operator)
     batch = component.sample(
         phx.domain.PointSampling(
@@ -74,12 +83,12 @@ def _fixed_residual_term(component, operator, fields, *, samples, key, scale=1.0
     )
 
 
-def _poisson_1d(width, depth, samples, key):
+def _poisson_1d(width: Any, depth: Any, samples: Any, key: Any) -> Any:
     domain = phx.domain.Interval1d(-1.0, 1.0)
     u = _network(domain, in_size=1, width=width, depth=depth, key=key)
 
     @domain.Function("x")
-    def forcing(x):
+    def forcing(x: Any) -> Any:
         return (jnp.pi**2) * jnp.sin(jnp.pi * x[0])
 
     residual = _fixed_residual_term(
@@ -104,7 +113,7 @@ def _poisson_1d(width, depth, samples, key):
     )
 
 
-def _poisson_2d(width, depth, samples, key):
+def _poisson_2d(width: Any, depth: Any, samples: Any, key: Any) -> Any:
     domain = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -119,16 +128,18 @@ def _poisson_2d(width, depth, samples, key):
     return phx.solver.FunctionalSolver(functions={"u": u}, terms=residual)
 
 
-def _spacetime_problem(width, depth, samples, key, *, burgers):
+def _spacetime_problem(
+    width: Any, depth: Any, samples: Any, key: Any, *, burgers: Any
+) -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0) @ phx.domain.TimeInterval(0.0, 1.0)
     u = _network(domain, in_size=2, width=width, depth=depth, key=key)
     if burgers:
 
         @domain.Function("x", "t")
-        def forcing(x, t):
+        def forcing(x: Any, t: Any) -> Any:
             return 1.0 + x[0] + t
 
-        def operator(field):
+        def operator(field: Any) -> Any:
             return (
                 partial_n(field, var="t", order=1)
                 + field * partial_n(field, var="x", order=1)
@@ -138,10 +149,10 @@ def _spacetime_problem(width, depth, samples, key, *, burgers):
     else:
 
         @domain.Function("x", "t")
-        def forcing(x, t):
+        def forcing(x: Any, t: Any) -> Any:
             return (jnp.pi**2 - 1.0) * jnp.sin(jnp.pi * x[0]) * jnp.exp(-t)
 
-        def operator(field):
+        def operator(field: Any) -> Any:
             return (
                 partial_n(field, var="t", order=1) - laplacian(field, var="x") - forcing
             )
@@ -156,7 +167,9 @@ def _spacetime_problem(width, depth, samples, key, *, burgers):
     return phx.solver.FunctionalSolver(functions={"u": u}, terms=residual)
 
 
-def _poisson_high_dim(width, depth, samples, key, *, dimension=100):
+def _poisson_high_dim(
+    width: Any, depth: Any, samples: Any, key: Any, *, dimension: Any = 100
+) -> Any:
     factors = [
         phx.domain.Interval1d(-1.0, 1.0).relabel(f"x{index}")
         for index in range(int(dimension))
@@ -166,7 +179,7 @@ def _poisson_high_dim(width, depth, samples, key, *, dimension=100):
         domain = domain @ factor
     u = _network(domain, in_size=dimension, width=width, depth=depth, key=key)
 
-    def operator(field):
+    def operator(field: Any) -> Any:
         total = sum(
             (partial_n(field, var=label, order=2) for label in domain.labels),
             field * 0.0,
@@ -183,14 +196,14 @@ def _poisson_high_dim(width, depth, samples, key, *, dimension=100):
     return phx.solver.FunctionalSolver(functions={"u": u}, terms=residual)
 
 
-def _coupled(width, depth, samples, key):
+def _coupled(width: Any, depth: Any, samples: Any, key: Any) -> Any:
     domain = phx.domain.Interval1d(-1.0, 1.0)
     key_u, key_v = jr.split(key)
     u = _network(domain, in_size=1, width=width, depth=depth, key=key_u)
     v = _network(domain, in_size=1, width=width, depth=depth, key=key_v)
 
     @domain.Function("x")
-    def first_forcing(x):
+    def first_forcing(x: Any) -> Any:
         return 2.0 + x[0]
 
     first = _fixed_residual_term(
@@ -213,17 +226,17 @@ def _coupled(width, depth, samples, key):
     )
 
 
-def _inverse(width, depth, samples, key):
+def _inverse(width: Any, depth: Any, samples: Any, key: Any) -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     u = _network(domain, in_size=1, width=width, depth=depth, key=key)
     coefficient = domain.Parameter(0.5)
 
     @domain.Function("x")
-    def state_target(x):
+    def state_target(x: Any) -> Any:
         return x[0]
 
     @domain.Function("x")
-    def equation_target(x):
+    def equation_target(x: Any) -> Any:
         return 2.0 * x[0]
 
     state = _fixed_residual_term(
@@ -246,7 +259,7 @@ def _inverse(width, depth, samples, key):
     )
 
 
-def make_solver(case, *, width, depth, samples, seed):
+def make_solver(case: Any, *, width: Any, depth: Any, samples: Any, seed: Any) -> Any:
     key = jr.key(int(seed))
     if case == "poisson-1d":
         return _poisson_1d(width, depth, samples, key)
@@ -265,7 +278,7 @@ def make_solver(case, *, width, depth, samples, seed):
     raise ValueError(f"Unknown benchmark case {case!r}.")
 
 
-def _solve_exact_ggn(solver, *, steps, seed, damping=1e-3):
+def _solve_exact_ggn(solver: Any, *, steps: Any, seed: Any, damping: Any = 1e-3) -> Any:
     require_parameter_roles(solver.functions, context="_solve_exact_ggn")
     params, held = partition_functional_parameters(solver.functions)
     step_times: list[float] = []
@@ -321,7 +334,7 @@ def _solve_exact_ggn(solver, *, steps, seed, damping=1e-3):
     return result, first_step, steady_step
 
 
-def _peak_device_memory_bytes():
+def _peak_device_memory_bytes() -> Any:
     statistics = jax.devices()[0].memory_stats()
     if statistics is None:
         return None
@@ -329,7 +342,7 @@ def _peak_device_memory_bytes():
     return None if value is None else int(value)
 
 
-def _integration_evaluations(term):
+def _integration_evaluations(term: Any) -> Any:
     source = term.source
     if not isinstance(source, phx.integration.FixedIntegration):
         raise TypeError("Campaign terms must use FixedIntegration sources.")
@@ -339,11 +352,11 @@ def _integration_evaluations(term):
     return batch.weights.data.size
 
 
-def _diagnostic_float(diagnostics, name):
+def _diagnostic_float(diagnostics: Any, name: Any) -> Any:
     return float(diagnostics[name]) if name in diagnostics else None
 
 
-def _run_one(args):
+def _run_one(args: Any) -> None:
     samples = min(args.samples, 8) if args.smoke else args.samples
     solver = make_solver(
         args.case,
@@ -509,7 +522,9 @@ def _run_one(args):
     print(json.dumps(result, sort_keys=True))
 
 
-def _isolated_command(args, *, case, optimizer, width, depth, seed):
+def _isolated_command(
+    args: Any, *, case: Any, optimizer: Any, width: Any, depth: Any, seed: Any
+) -> Any:
     command = [
         sys.executable,
         str(Path(__file__).resolve()),
@@ -539,7 +554,7 @@ def _isolated_command(args, *, case, optimizer, width, depth, seed):
     return command
 
 
-def run(args):
+def run(args: Any) -> None:
     if int(args.steps) < 0:
         raise ValueError("steps must be nonnegative.")
     if int(args.width) <= 0 or (
@@ -588,7 +603,7 @@ def run(args):
         )
 
 
-def parse_args():
+def parse_args() -> Any:
     parser = argparse.ArgumentParser(description="Benchmark Phydrax PINN optimizers.")
     parser.add_argument("--case", choices=CASES, default="poisson-1d")
     parser.add_argument("--optimizer", choices=OPTIMIZERS, default="kfac-expand")

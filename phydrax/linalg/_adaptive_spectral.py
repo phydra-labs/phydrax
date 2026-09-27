@@ -7,13 +7,13 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from statistics import NormalDist
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from ._operators import (
@@ -40,6 +40,11 @@ from ._spectral import (
 from .krylov import KrylovBreakdownStatus, lanczos
 
 
+_TraceProbeSample: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+
+
 class AdaptiveStochasticPolicy(StrictModule):
     """Fixed-capacity batched stopping policy for stochastic estimators."""
 
@@ -62,7 +67,7 @@ class AdaptiveStochasticPolicy(StrictModule):
         relative_tolerance: float = 1e-2,
         absolute_tolerance: float = 1e-6,
         confidence_level: float = 0.95,
-    ):
+    ) -> None:
         minimum = int(min_probes)
         maximum = int(max_probes)
         batch = int(batch_size)
@@ -361,11 +366,11 @@ def _adaptive_stochastic_trace(
         integers,
     )
 
-    def condition(values):
+    def condition(values: tuple[Array, ...]) -> Array:
         count, done, *_ = values
         return (~done) & (count < maximum)
 
-    def body(values):
+    def body(values: tuple[Array, ...]) -> tuple[Array, ...]:
         (
             count,
             _,
@@ -525,8 +530,8 @@ def _trace_probe(
     dimension: int,
     policy: AdaptiveStochasticPolicy,
     /,
-):
-    def one(coordinates):
+) -> Callable[[Array], _TraceProbeSample]:
+    def one(coordinates: Array) -> _TraceProbeSample:
         decomposition = lanczos(
             _coordinate_action(operator),
             coordinates,

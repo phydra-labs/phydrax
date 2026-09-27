@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -12,7 +15,7 @@ import phydrax as phx
 la = phx.linalg
 
 
-def _positive_definite_properties():
+def _positive_definite_properties() -> Any:
     return la.OperatorProperties(
         self_adjoint=True,
         positive_definite=True,
@@ -24,7 +27,7 @@ def _positive_definite_properties():
     )
 
 
-def _coordinate_term(global_space, local_space, row):
+def _coordinate_term(global_space: Any, local_space: Any, row: Any) -> Any:
     restriction = la.DenseLinearOperator(
         jnp.asarray(row, dtype=jnp.float64)[None, :],
         source=global_space,
@@ -42,7 +45,7 @@ def _coordinate_term(global_space, local_space, row):
     )
 
 
-def test_hcurl_auxiliary_correction_uses_complex_hilbert_adjoint():
+def test_hcurl_auxiliary_correction_uses_complex_hilbert_adjoint() -> None:
     edge_space = la.ArraySpace((1,), dtype=jnp.complex128)
     scalar_space = la.ArraySpace((1,), dtype=jnp.complex128)
     edge_inverse = la.OperatorPreconditioner(
@@ -68,7 +71,9 @@ def test_hcurl_auxiliary_correction_uses_complex_hilbert_adjoint():
     assert jnp.allclose(preconditioner.apply(residual), 2.0 * residual)
 
 
-def test_additive_and_multiplicative_subspace_corrections_match_dense_references():
+def test_additive_and_multiplicative_subspace_corrections_match_dense_references() -> (
+    None
+):
     space = la.ArraySpace((2,), dtype=jnp.float64)
     local = la.ArraySpace((1,), dtype=jnp.float64)
     matrix = jnp.asarray([[4.0, 1.0], [1.0, 3.0]])
@@ -122,6 +127,7 @@ def test_additive_and_multiplicative_subspace_corrections_match_dense_references
         jax.jit(lambda value: forward.apply(value))(residual),
         forward_expected,
     )
+    # ty: ignore[unresolved-attribute]
     cost = additive.cost_for(operator)
     assert cost.storage_bytes == 112
     assert cost.setup_matvec_count == 0
@@ -150,7 +156,7 @@ def test_additive_and_multiplicative_subspace_corrections_match_dense_references
         la.AdditiveSubspaceCorrectionBuilder(())
 
 
-def test_chebyshev_preconditioner_is_fixed_degree_matrix_free_and_jittable():
+def test_chebyshev_preconditioner_is_fixed_degree_matrix_free_and_jittable() -> None:
     diagonal = jnp.asarray([2.0, 3.0, 5.0])
     operator = la.DiagonalLinearOperator(
         diagonal,
@@ -167,6 +173,7 @@ def test_chebyshev_preconditioner_is_fixed_degree_matrix_free_and_jittable():
 
     assert jnp.allclose(compiled, value)
     assert jnp.linalg.norm(operator.mv(value) - residual) < 1e-4
+    # ty: ignore[unresolved-attribute]
     assert action.degree == 8
     assert builder.cost_for(operator).setup_matvec_count == 0
     with pytest.raises(ValueError, match="degree"):
@@ -175,7 +182,7 @@ def test_chebyshev_preconditioner_is_fixed_degree_matrix_free_and_jittable():
         la.ChebyshevPreconditionerBuilder(2, interval=(2.0, 1.0))
 
 
-def _two_by_two_block_operator():
+def _two_by_two_block_operator() -> Any:
     first = la.ArraySpace((1,), dtype=jnp.float64)
     second = la.ArraySpace((1,), dtype=jnp.float64)
     block_space = la.BlockSpace((first, second))
@@ -192,7 +199,9 @@ def _two_by_two_block_operator():
     return la.BlockLinearOperator(blocks, source=block_space, target=block_space)
 
 
-def test_block_factorization_forms_match_block_algebra_and_require_typed_schur_action():
+def test_block_factorization_forms_match_block_algebra_and_require_typed_schur_action() -> (
+    None
+):
     operator = _two_by_two_block_operator()
     rhs = (jnp.asarray([2.0]), jnp.asarray([-1.0]))
     matrix = la.materialize(operator, la.MaterializationPolicy(max_entries=4))
@@ -242,5 +251,6 @@ def test_block_factorization_forms_match_block_algebra_and_require_typed_schur_a
             operator.blocks[1][1],
             operator.blocks[1][0],
             operator.blocks[0][1],
+            # ty: ignore[invalid-argument-type]
             lambda value: value,
         )

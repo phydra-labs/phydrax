@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -112,7 +115,7 @@ class HexahedralConnectivity(StrictModule, NonTrainableState):
         )
 
 
-def _cycle_permutation(cycle, canonical):
+def _cycle_permutation(cycle: Any, canonical: Any) -> Any:
     permutation = tuple(canonical.index(vertex) for vertex in cycle)
     if tuple(sorted(permutation)) != (0, 1, 2, 3):
         raise ValueError("Hex face does not contain its canonical vertices.")
@@ -126,11 +129,11 @@ def _cycle_permutation(cycle, canonical):
 
 
 def _quadrilateral_tensor_permutation(
-    vertex_permutation,
+    vertex_permutation: Any,
     width_u: int,
     width_v: int,
     /,
-):
+) -> Any:
     """Map one local C-order tensor grid to canonical face positions."""
 
     permutation = tuple(vertex_permutation)
@@ -273,10 +276,10 @@ def _hexahedral_complex(
     c: HexahedralConnectivity,
     /,
     *,
-    vertex_global_ids,
-    edge_global_ids,
-    face_global_ids,
-    cell_global_ids,
+    vertex_global_ids: Any,
+    edge_global_ids: Any,
+    face_global_ids: Any,
+    cell_global_ids: Any,
 ) -> CellComplexTopology:
     edges = np.asarray(c.edges)
     faces = np.asarray(c.faces)

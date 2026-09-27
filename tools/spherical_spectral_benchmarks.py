@@ -77,7 +77,7 @@ class SphericalSpectralBenchmarkRecord:
         )
 
 
-def _measure(function, argument, repeats):
+def _measure(function: Any, argument: Any, repeats: Any) -> Any:
     compiled = eqx.filter_jit(function)
     value, first_seconds = measure_synchronized(lambda: compiled(argument))
     value, distribution = measure_repeated(
@@ -88,11 +88,12 @@ def _measure(function, argument, repeats):
     return (
         value,
         1_000.0 * first_seconds,
+        # ty: ignore[invalid-argument-type]
         1_000.0 * float(distribution.mean_seconds),
     )
 
 
-def _measure_uncompiled(function, argument, repeats):
+def _measure_uncompiled(function: Any, argument: Any, repeats: Any) -> Any:
     value, first_seconds = measure_synchronized(lambda: function(argument))
     value, distribution = measure_repeated(
         lambda: function(argument),
@@ -102,6 +103,7 @@ def _measure_uncompiled(function, argument, repeats):
     return (
         value,
         1_000.0 * first_seconds,
+        # ty: ignore[invalid-argument-type]
         1_000.0 * float(distribution.mean_seconds),
     )
 
@@ -115,8 +117,9 @@ def _tree_checksum(tree: Any, /) -> float:
 
 
 def _compiled_case(
-    function, arguments, /, *, repeats: int, reference: Any | None = None
+    function: Any, arguments: Any, /, *, repeats: int, reference: Any | None = None
 ) -> dict[str, Any]:
+    # ty: ignore[unresolved-attribute]
     lowered = eqx.filter_jit(function).lower(*arguments)
     started = time.perf_counter()
     executable = lowered.compile()
@@ -156,7 +159,9 @@ def _compiled_case(
     return metrics
 
 
-def _solid_reference(function, coefficients, points, bandlimit):
+def _solid_reference(
+    function: Any, coefficients: Any, points: Any, bandlimit: Any
+) -> Any:
     offset = bandlimit - 1
     values = jnp.zeros(
         (points.shape[0], coefficients.shape[2]),
@@ -319,7 +324,9 @@ def run_spherical_spectral_benchmark(
     started = time.perf_counter()
     space = phx.discretization.SphericalSpectralPlan(
         limit,
+        # ty: ignore[invalid-argument-type]
         sampling=sampling,
+        # ty: ignore[invalid-argument-type]
         execution=execution,
     ).prepare(radius=radius)
     jax.block_until_ready(space.transform.theta)

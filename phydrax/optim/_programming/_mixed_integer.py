@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from enum import IntEnum
 from math import isfinite
 from typing import Literal, TypeAlias
@@ -11,7 +12,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -67,7 +69,7 @@ class MixedIntegerProgram(StrictModule):
         integer_indices: tuple[int, ...] = (),
         binary_indices: tuple[int, ...] = (),
         program_id: str = "bounded-mixed-integer-convex-program",
-    ):
+    ) -> None:
         if not isinstance(relaxation, (LinearProgram, QuadraticProgram, ConicProgram)):
             raise TypeError("relaxation must be a canonical convex program.")
         if relaxation.batch_shape:
@@ -133,7 +135,7 @@ class MixedIntegerCandidate(StrictModule, NonTrainableState):
         reported_objective: ArrayLike | None = None,
         source_kind: str = "caller",
         source_id: str = "caller-supplied",
-    ):
+    ) -> None:
         primal_ = jnp.asarray(primal)
         if primal_.ndim != 1:
             raise ValueError("MixedIntegerCandidate.primal must be one-dimensional.")
@@ -310,7 +312,7 @@ def solve_mixed_integer_program(
     ).result
 
 
-def _indices(values, variables, name):
+def _indices(values: Iterable[int], variables: int, name: str) -> tuple[int, ...]:
     original = tuple(values)
     if any(
         isinstance(value, bool) or not isinstance(value, (int, np.integer))

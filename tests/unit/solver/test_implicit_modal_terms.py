@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -11,7 +13,7 @@ class _HeatModeModel(eqx.Module):
     scale: jnp.ndarray
     diffusivity: float = eqx.field(static=True)
 
-    def __call__(self, query, *, key=None):
+    def __call__(self, query: Any, *, key: Any = None) -> Any:
         del key
         mode, time = query
         amplitude = jnp.where(
@@ -23,7 +25,7 @@ class _HeatModeModel(eqx.Module):
         return self.scale * amplitude * jnp.exp(-self.diffusivity * wave_number**2 * time)
 
 
-def _compiled_heat(count=4, diffusivity=0.05):
+def _compiled_heat(count: Any = 4, diffusivity: Any = 0.05) -> Any:
     x = phx.equations.PDECoordinate(
         "x",
         "space",
@@ -57,7 +59,7 @@ def _compiled_heat(count=4, diffusivity=0.05):
     return space, compiled
 
 
-def _function(scale, space, *, diffusivity=0.05):
+def _function(scale: Any, space: Any, *, diffusivity: Any = 0.05) -> Any:
     modal = phx.nn.models.ImplicitModalField(
         _HeatModeModel(jnp.asarray(scale), diffusivity),
         space,
@@ -67,7 +69,7 @@ def _function(scale, space, *, diffusivity=0.05):
     return modal.as_domain_function(time)
 
 
-def test_compiled_modal_residual_matches_exact_heat_evolution():
+def test_compiled_modal_residual_matches_exact_heat_evolution() -> None:
     space, compiled = _compiled_heat()
     function = _function(1.0, space)
     term = phx.terms.CompiledModalResidualTerm(
@@ -81,7 +83,7 @@ def test_compiled_modal_residual_matches_exact_heat_evolution():
     assert loss < 1e-24
 
 
-def test_modal_observation_ignores_unobserved_nonfinite_targets():
+def test_modal_observation_ignores_unobserved_nonfinite_targets() -> None:
     space, _compiled = _compiled_heat()
     function = _function(1.0, space)
     target = function.func(0.0)[None, ...]
@@ -98,7 +100,7 @@ def test_modal_observation_ignores_unobserved_nonfinite_targets():
     assert term.loss({"u_hat": function}, key=jr.key(2)) == 0.0
 
 
-def test_functional_solver_updates_implicit_modal_parameters():
+def test_functional_solver_updates_implicit_modal_parameters() -> None:
     space, compiled = _compiled_heat()
     exact = _function(1.0, space)
     trainable = _function(0.0, space)
@@ -131,10 +133,11 @@ def test_functional_solver_updates_implicit_modal_parameters():
     final = trained.loss(key=jr.key(3))
 
     assert final < initial
+    # ty: ignore[unresolved-attribute]
     assert trained.functions["u_hat"].func.model.scale > 0.0
 
 
-def test_compiled_modal_residual_rejects_incompatible_discretization():
+def test_compiled_modal_residual_rejects_incompatible_discretization() -> None:
     _space, compiled = _compiled_heat(count=4)
     other_space, _ = _compiled_heat(count=6)
     term = phx.terms.CompiledModalResidualTerm(

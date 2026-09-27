@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import equinox as eqx
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -58,7 +58,7 @@ class LatticeBoltzmannMethodPlan(StrictModule, NonTrainableState):
         /,
         *,
         forcing: GuoForcingPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(collision, _COLLISION_TYPES):
             raise TypeError("collision must be a supported LBM collision plan.")
         if forcing is not None and not isinstance(forcing, GuoForcingPlan):
@@ -122,8 +122,26 @@ class LatticeBoltzmannMethodPlan(StrictModule, NonTrainableState):
             precision,
         )
 
-    def collide_detailed(self, *args, **kwargs) -> LatticeBoltzmannCollisionResult:
-        return self.collide(*args, **kwargs)
+    def collide_detailed(
+        self,
+        populations: Array,
+        density: Array,
+        velocity: Array,
+        force_density: Array,
+        even_rate: Array,
+        velocity_set: LatticeBoltzmannVelocitySet,
+        precision: LatticeBoltzmannPrecisionPolicy,
+        /,
+    ) -> LatticeBoltzmannCollisionResult:
+        return self.collide(
+            populations,
+            density,
+            velocity,
+            force_density,
+            even_rate,
+            velocity_set,
+            precision,
+        )
 
 
 class PreparedLatticeBoltzmannMethodPlan(StrictModule, NonTrainableState):
@@ -139,7 +157,7 @@ class PreparedLatticeBoltzmannMethodPlan(StrictModule, NonTrainableState):
         forcing: GuoForcingPlan | None,
         method_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(collision, PreparedLatticeBoltzmannCollision):
             raise TypeError("collision must be PreparedLatticeBoltzmannCollision.")
         if forcing is not None and not isinstance(forcing, GuoForcingPlan):
@@ -179,8 +197,26 @@ class PreparedLatticeBoltzmannMethodPlan(StrictModule, NonTrainableState):
             precision,
         )
 
-    def collide_detailed(self, *args, **kwargs) -> LatticeBoltzmannCollisionResult:
-        return self.collide(*args, **kwargs)
+    def collide_detailed(
+        self,
+        populations: Array,
+        density: Array,
+        velocity: Array,
+        force_density: Array,
+        even_rate: Array,
+        velocity_set: LatticeBoltzmannVelocitySet,
+        precision: LatticeBoltzmannPrecisionPolicy,
+        /,
+    ) -> LatticeBoltzmannCollisionResult:
+        return self.collide(
+            populations,
+            density,
+            velocity,
+            force_density,
+            even_rate,
+            velocity_set,
+            precision,
+        )
 
 
 __all__ = [

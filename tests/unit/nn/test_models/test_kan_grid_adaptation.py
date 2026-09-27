@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +14,9 @@ import pytest
 import phydrax as phx
 
 
-def _spline_kan(*, scan=False, use_tanh=False, key=jax.random.key(0)):
+def _spline_kan(
+    *, scan: Any = False, use_tanh: Any = False, key: Any = jax.random.key(0)
+) -> Any:
     return phx.nn.models.KAN(
         in_size=2,
         out_size="scalar",
@@ -25,7 +30,7 @@ def _spline_kan(*, scan=False, use_tanh=False, key=jax.random.key(0)):
     )
 
 
-def test_shared_grid_adaptation_is_pure_and_fixed_count():
+def test_shared_grid_adaptation_is_pure_and_fixed_count() -> None:
     model = _spline_kan()
     calibration = 0.18 * jax.random.normal(jax.random.key(1), (128, 2)) - 0.42
     original_knots = tuple(
@@ -65,7 +70,7 @@ def test_shared_grid_adaptation_is_pure_and_fixed_count():
     )
 
 
-def test_per_input_adaptation_separates_marginal_distributions():
+def test_per_input_adaptation_separates_marginal_distributions() -> None:
     model = phx.nn.models.KAN(
         in_size=2,
         out_size="scalar",
@@ -90,6 +95,7 @@ def test_per_input_adaptation_separates_marginal_distributions():
             per_input=True,
         ),
     )
+    # ty: ignore[unresolved-attribute]
     bank = adapted.layers[0].edge_basis.grid
     evaluation = jax.random.uniform(jax.random.key(21), (32, 2), minval=-1.0, maxval=1.0)
 
@@ -105,7 +111,7 @@ def test_per_input_adaptation_separates_marginal_distributions():
     )
 
 
-def test_per_input_adaptation_preserves_scanned_hidden_layers():
+def test_per_input_adaptation_preserves_scanned_hidden_layers() -> None:
     model = _spline_kan(scan=True)
     calibration = jax.random.normal(jax.random.key(22), (64, 2)) * jnp.asarray(
         [0.12, 0.47]
@@ -117,7 +123,7 @@ def test_per_input_adaptation_preserves_scanned_hidden_layers():
     )
     evaluation = jax.random.normal(jax.random.key(23), (12, 2))
 
-    def explicit_loop(value):
+    def explicit_loop(value: Any) -> Any:
         output = value
         for layer in adapted.layers:
             output = layer(output)
@@ -131,7 +137,7 @@ def test_per_input_adaptation_preserves_scanned_hidden_layers():
     )
 
 
-def test_adaptation_uses_the_layer_canonical_edge_inputs():
+def test_adaptation_uses_the_layer_canonical_edge_inputs() -> None:
     model = phx.nn.models.KAN(
         in_size=2,
         out_size="scalar",
@@ -158,18 +164,19 @@ def test_adaptation_uses_the_layer_canonical_edge_inputs():
         calibration,
         plan=phx.nn.models.KANGridAdaptationPlan(blend=0.0, minimum_span=1e-5),
     )
+    # ty: ignore[unresolved-attribute]
     actual = np.asarray(adapted.layers[0].edge_basis.grid.knots)[3:-3]
 
     assert np.allclose(actual, expected, atol=2e-12)
 
 
-def test_adaptation_preserves_scan_execution_with_distinct_grid_values():
+def test_adaptation_preserves_scan_execution_with_distinct_grid_values() -> None:
     model = _spline_kan(scan=True)
     calibration = jax.random.uniform(jax.random.key(3), (96, 2), minval=-0.8, maxval=0.35)
     adapted, _ = phx.nn.models.adapt_kan_grids(model, calibration)
     evaluation = jax.random.normal(jax.random.key(4), (16, 2))
 
-    def explicit_loop(value):
+    def explicit_loop(value: Any) -> Any:
         output = value
         for layer in adapted.layers:
             output = layer(output)
@@ -184,7 +191,7 @@ def test_adaptation_preserves_scan_execution_with_distinct_grid_values():
     assert np.allclose(np.asarray(actual), np.asarray(expected), atol=2e-12)
 
 
-def test_mixed_basis_layers_are_preserved_and_reported():
+def test_mixed_basis_layers_are_preserved_and_reported() -> None:
     bases = (
         phx.nn.models.BSplineEdgeBasis(degree=3, num_intervals=4),
         phx.nn.models.OrthogonalPolynomialEdgeBasis(degree=3),
@@ -208,7 +215,7 @@ def test_mixed_basis_layers_are_preserved_and_reported():
     assert eqx.tree_equal(adapted.layers[1], model.layers[1])
 
 
-def test_degenerate_calibration_policy_and_failures_are_explicit():
+def test_degenerate_calibration_policy_and_failures_are_explicit() -> None:
     model = _spline_kan()
     calibration = jnp.zeros((12, 2))
 
@@ -239,7 +246,7 @@ def test_degenerate_calibration_policy_and_failures_are_explicit():
         )
 
 
-def test_separable_kan_adapts_every_coordinate_model():
+def test_separable_kan_adapts_every_coordinate_model() -> None:
     model = phx.nn.models.SeparableKAN(
         in_size=2,
         out_size="scalar",
@@ -258,16 +265,21 @@ def test_separable_kan_adapts_every_coordinate_model():
     assert len(report.paths) == 4
     assert {path[0] for path in report.paths} == {0, 1}
     assert np.isfinite(np.asarray(adapted(query)))
+    # ty: ignore[unresolved-attribute]
     assert adapted.model.scan == model.model.scan
     assert all(
         new_model.layers[0].coeffs.shape == old_model.layers[0].coeffs.shape
         for new_model, old_model in zip(
-            adapted.model.models, model.model.models, strict=True
+            # ty: ignore[unresolved-attribute]
+            adapted.model.models,
+            # ty: ignore[unresolved-attribute]
+            model.model.models,
+            strict=True,
         )
     )
 
 
-def test_affine_initialized_model_is_preserved_by_regridding():
+def test_affine_initialized_model_is_preserved_by_regridding() -> None:
     model = _spline_kan()
     calibration = jax.random.normal(jax.random.key(9), (64, 2)) * 0.3
     adapted, _ = phx.nn.models.adapt_kan_grids(model, calibration)
@@ -276,3 +288,31 @@ def test_affine_initialized_model_is_preserved_by_regridding():
     expected = jax.vmap(model)(evaluation)
     actual = jax.vmap(adapted)(evaluation)
     assert np.allclose(np.asarray(actual), np.asarray(expected), atol=2e-11)
+
+
+@pytest.mark.parametrize("per_input", [False, True])
+def test_adaptation_rejects_trainable_grids_and_grid_banks(per_input: Any) -> None:
+    model = phx.nn.models.KAN(
+        in_size=2,
+        out_size="scalar",
+        width_size=4,
+        depth=2,
+        edge_basis=phx.nn.models.BSplineEdgeBasis(
+            grid=phx.nn.models.TrainableBSplineGrid.open_uniform(3, 6),
+            per_input=per_input,
+        ),
+        skip_connection=False,
+        key=jax.random.key(11),
+    )
+    expected_grid = (
+        phx.nn.models.TrainableBSplineGridBank
+        if per_input
+        else phx.nn.models.TrainableBSplineGrid
+    )
+    # ty: ignore[unresolved-attribute]
+    assert isinstance(model.layers[0].edge_basis.grid, expected_grid)
+
+    with pytest.raises(ValueError, match="trainable knot grids"):
+        phx.nn.models.adapt_kan_grids(
+            model, jax.random.normal(jax.random.key(12), (32, 2))
+        )

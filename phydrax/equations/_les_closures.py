@@ -4,38 +4,39 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
+from .._dtype_names import inexact_result_type
 from .._fingerprint import canonical_fingerprint
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
-_LESFormula = Literal["smagorinsky", "wale", "vreman", "amd"]
-_LESFilterFamily = Literal[
+_LESFormula: TypeAlias = Literal["smagorinsky", "wale", "vreman", "amd"]
+_LESFilterFamily: TypeAlias = Literal[
     "sharp-fourier-projection",
     "implicit-grid-volume",
     "explicit-filter",
 ]
-_LESTopology = Literal["tensor-product", "unstructured"]
-_LESBoundaryClass = Literal["periodic", "wall-bounded", "open", "mixed"]
-_LESScaleRule = Literal[
+_LESTopology: TypeAlias = Literal["tensor-product", "unstructured"]
+_LESBoundaryClass: TypeAlias = Literal["periodic", "wall-bounded", "open", "mixed"]
+_LESScaleRule: TypeAlias = Literal[
     "cutoff-equivalent",
     "volume-equivalent",
     "kernel-equivalent",
 ]
-_LESCommutationStatus = Literal["commuting", "modeled", "unmodeled"]
-_LESRepeatedFilterSemantics = Literal["idempotent", "composed", "unmodeled"]
-_LESParameterSourceKind = Literal[
+_LESCommutationStatus: TypeAlias = Literal["commuting", "modeled", "unmodeled"]
+_LESRepeatedFilterSemantics: TypeAlias = Literal["idempotent", "composed", "unmodeled"]
+_LESParameterSourceKind: TypeAlias = Literal[
     "user",
     "literature",
     "a-priori",
@@ -75,41 +76,33 @@ class ResolvedLESFilter(StrictModule, NonTrainableState):
         scale_rule: _LESScaleRule,
         commutation_status: _LESCommutationStatus,
         repeated_filter_semantics: _LESRepeatedFilterSemantics,
-    ):
+    ) -> None:
         if not isinstance(name, str):
             raise TypeError("Resolved LES filter name must be a string.")
         normalized = name.strip()
         if not normalized:
             raise ValueError("Resolved LES filter name must be non-empty.")
-        if family not in (
-            "sharp-fourier-projection",
-            "implicit-grid-volume",
-            "explicit-filter",
-        ):
-            raise ValueError("Unsupported resolved LES filter family.")
+        family = parse(family, _LESFilterFamily, "family")
         if (
             not isinstance(axis_names, tuple)
             or len(axis_names) != 3
             or any(not isinstance(axis, str) or not axis.strip() for axis in axis_names)
         ):
             raise TypeError("Resolved LES axis_names must be three non-empty strings.")
-        axes = tuple(axis.strip() for axis in axis_names)
+        axes = (axis_names[0].strip(), axis_names[1].strip(), axis_names[2].strip())
         if len(set(axes)) != 3:
             raise ValueError("Resolved LES axis names must be unique.")
-        if topology not in ("tensor-product", "unstructured"):
-            raise ValueError("Unsupported resolved LES topology.")
-        if boundary_class not in ("periodic", "wall-bounded", "open", "mixed"):
-            raise ValueError("Unsupported resolved LES boundary class.")
-        if scale_rule not in (
-            "cutoff-equivalent",
-            "volume-equivalent",
-            "kernel-equivalent",
-        ):
-            raise ValueError("Unsupported resolved LES scale rule.")
-        if commutation_status not in ("commuting", "modeled", "unmodeled"):
-            raise ValueError("Unsupported LES filter commutation status.")
-        if repeated_filter_semantics not in ("idempotent", "composed", "unmodeled"):
-            raise ValueError("Unsupported repeated-filter semantics.")
+        topology = parse(topology, _LESTopology, "topology")
+        boundary_class = parse(boundary_class, _LESBoundaryClass, "boundary_class")
+        scale_rule = parse(scale_rule, _LESScaleRule, "scale_rule")
+        commutation_status = parse(
+            commutation_status, _LESCommutationStatus, "commutation_status"
+        )
+        repeated_filter_semantics = parse(
+            repeated_filter_semantics,
+            _LESRepeatedFilterSemantics,
+            "repeated_filter_semantics",
+        )
         expected_scale_rule = {
             "sharp-fourier-projection": "cutoff-equivalent",
             "implicit-grid-volume": "volume-equivalent",
@@ -165,13 +158,13 @@ class LESFilterScale(StrictModule):
 
     directional_widths: Array
 
-    def __init__(self, directional_widths: ArrayLike, /):
+    def __init__(self, directional_widths: ArrayLike, /) -> None:
         widths = jnp.asarray(directional_widths)
         if not jnp.issubdtype(widths.dtype, jnp.inexact):
             widths = widths.astype(inexact_result_type(widths))
         if widths.ndim < 1 or widths.shape[-1] != 3:
             raise ValueError("LES directional widths must have trailing dimension 3.")
-        if not isinstance(widths, jax.core.Tracer):
+        if not isinstance(widths, jax_core.Tracer):
             concrete = np.asarray(widths)
             if np.any(~np.isfinite(concrete)) or np.any(concrete <= 0.0):
                 raise ValueError("LES directional widths must be finite and positive.")
@@ -203,7 +196,7 @@ class LESParameterProvenance(StrictModule, NonTrainableState):
         *,
         source_kind: _LESParameterSourceKind,
         evidence_ids: tuple[str, ...],
-    ):
+    ) -> None:
         if not isinstance(resolved_filter, ResolvedLESFilter):
             raise TypeError("resolved_filter must be a ResolvedLESFilter.")
         if not isinstance(discretization_id, str) or not isinstance(regime, str):
@@ -212,8 +205,7 @@ class LESParameterProvenance(StrictModule, NonTrainableState):
         regime_ = regime.strip()
         if not discretization or not regime_:
             raise ValueError("LES discretization identity and regime must be non-empty.")
-        if source_kind not in ("user", "literature", "a-priori", "a-posteriori"):
-            raise ValueError("Unsupported LES parameter source kind.")
+        source_kind = parse(source_kind, _LESParameterSourceKind, "source_kind")
         if not isinstance(evidence_ids, tuple) or any(
             not isinstance(value, str) or not value.strip() for value in evidence_ids
         ):
@@ -251,7 +243,7 @@ class AlgebraicLESInputs(StrictModule):
         velocity_gradient: ArrayLike,
         filter_scale: LESFilterScale,
         /,
-    ):
+    ) -> None:
         if not isinstance(filter_scale, LESFilterScale):
             raise TypeError("filter_scale must be a LESFilterScale.")
         gradient = jnp.asarray(velocity_gradient)
@@ -306,13 +298,13 @@ class PreparedAlgebraicLESModel(StrictModule, NonTrainableState):
         model: AbstractAlgebraicLESModel,
         provenance: LESParameterProvenance,
         /,
-    ):
+    ) -> None:
         if not isinstance(model, AbstractAlgebraicLESModel):
             raise TypeError("model must be an AbstractAlgebraicLESModel.")
         if not isinstance(provenance, LESParameterProvenance):
             raise TypeError("provenance must be LESParameterProvenance.")
         coefficient_array = model.coefficient
-        if isinstance(coefficient_array, jax.core.Tracer):
+        if isinstance(coefficient_array, jax_core.Tracer):
             raise TypeError("Prepared LES coefficients must have concrete values.")
         coefficient = float(np.asarray(coefficient_array))
         if not np.isfinite(coefficient) or coefficient < 0.0:
@@ -346,7 +338,7 @@ class SmagorinskyLESPlan(AbstractAlgebraicLESModel):
     formula: _LESFormula = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, coefficient: ArrayLike, /):
+    def __init__(self, coefficient: ArrayLike, /) -> None:
         self.coefficient = _validated_coefficient(coefficient, "Smagorinsky")
         self.formula = "smagorinsky"
         self.model_id = _formula_id(self.formula)
@@ -359,7 +351,7 @@ class WALELESPlan(AbstractAlgebraicLESModel):
     formula: _LESFormula = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, coefficient: ArrayLike, /):
+    def __init__(self, coefficient: ArrayLike, /) -> None:
         self.coefficient = _validated_coefficient(coefficient, "WALE")
         self.formula = "wale"
         self.model_id = _formula_id(self.formula)
@@ -372,7 +364,7 @@ class VremanLESPlan(AbstractAlgebraicLESModel):
     formula: _LESFormula = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, coefficient: ArrayLike, /):
+    def __init__(self, coefficient: ArrayLike, /) -> None:
         self.coefficient = _validated_coefficient(coefficient, "Vreman")
         self.formula = "vreman"
         self.model_id = _formula_id(self.formula)
@@ -385,7 +377,7 @@ class AMDLESPlan(AbstractAlgebraicLESModel):
     formula: _LESFormula = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
-    def __init__(self, coefficient: ArrayLike, /):
+    def __init__(self, coefficient: ArrayLike, /) -> None:
         self.coefficient = _validated_coefficient(coefficient, "AMD")
         self.formula = "amd"
         self.model_id = _formula_id(self.formula)
@@ -401,7 +393,7 @@ def _validated_coefficient(value: ArrayLike, name: str, /) -> Array:
         coefficient = coefficient.astype(inexact_result_type(coefficient))
     if coefficient.shape != ():
         raise ValueError(f"{name} LES coefficient must be scalar.")
-    if not isinstance(coefficient, jax.core.Tracer):
+    if not isinstance(coefficient, jax_core.Tracer):
         concrete = np.asarray(coefficient)
         if not np.isfinite(concrete) or concrete < 0.0:
             raise ValueError(f"{name} LES coefficient must be finite and nonnegative.")
@@ -515,16 +507,17 @@ def _evaluate_formula(
     if not isinstance(inputs, AlgebraicLESInputs):
         raise TypeError("inputs must be AlgebraicLESInputs.")
     strain, deviatoric_strain = _strain_tensors(inputs.velocity_gradient)
-    if formula == "smagorinsky":
-        viscosity = _smagorinsky_viscosity(coefficient, inputs, strain)
-    elif formula == "wale":
-        viscosity = _wale_viscosity(coefficient, inputs, strain)
-    elif formula == "vreman":
-        viscosity = _vreman_viscosity(coefficient, inputs)
-    elif formula == "amd":
-        viscosity = _amd_viscosity(coefficient, inputs, deviatoric_strain)
-    else:
-        raise ValueError(f"Unsupported algebraic LES formula {formula!r}.")
+    match formula:
+        case "smagorinsky":
+            viscosity = _smagorinsky_viscosity(coefficient, inputs, strain)
+        case "wale":
+            viscosity = _wale_viscosity(coefficient, inputs, strain)
+        case "vreman":
+            viscosity = _vreman_viscosity(coefficient, inputs)
+        case "amd":
+            viscosity = _amd_viscosity(coefficient, inputs, deviatoric_strain)
+        case _:
+            raise ValueError(f"Unsupported algebraic LES formula {formula!r}.")
     stress = -2.0 * viscosity[..., None, None] * deviatoric_strain
     transfer = -ein.contract("...ij,...ij->...", stress, strain, backend="jax")
     return AlgebraicLESResult(viscosity, stress, transfer)

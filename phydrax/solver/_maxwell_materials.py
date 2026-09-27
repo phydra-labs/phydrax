@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -61,7 +62,7 @@ class MatrixMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
         *,
         maximum_dense_dofs: int = 4096,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         electric = jnp.asarray(electric_matrix)
         magnetic = jnp.asarray(magnetic_matrix)
         if electric.ndim != 2 or electric.shape[0] != electric.shape[1]:
@@ -123,9 +124,12 @@ def _metric_spectrum(
     metric_matrix = (
         jnp.diag(jnp.asarray(weight)) if weight.ndim == 1 else jnp.asarray(weight)
     )
-    metric_tolerance = np.finfo(metric_matrix.real.dtype).eps * max(
-        1.0,
-        float(jnp.max(jnp.abs(metric_matrix))),
+    metric_tolerance = float(
+        np.finfo(metric_matrix.real.dtype).eps
+        * max(
+            1.0,
+            float(jnp.max(jnp.abs(metric_matrix))),
+        )
     )
     metric_spectrum = HermitianSpectrum(
         metric_matrix,
@@ -137,9 +141,12 @@ def _metric_spectrum(
     ):
         raise ValueError(f"{name} Hodge metric must be positive definite.")
     weighted = metric_matrix @ jnp.asarray(host)
-    tolerance = np.finfo(weighted.real.dtype).eps * max(
-        1.0,
-        float(jnp.max(jnp.abs(weighted))),
+    tolerance = float(
+        np.finfo(weighted.real.dtype).eps
+        * max(
+            1.0,
+            float(jnp.max(jnp.abs(weighted))),
+        )
     )
     weighted_residual = jnp.max(jnp.abs(weighted - jnp.conj(weighted.T)))
     if not bool(weighted_residual <= 64.0 * tolerance):
@@ -184,7 +191,7 @@ class PreparedMatrixMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
         cochain: CochainDiscretization,
         layout: MaxwellCochainLayout,
         /,
-    ):
+    ) -> None:
         _, electric_minimum, electric_condition = _metric_spectrum(
             "electric",
             plan.electric_matrix,
@@ -369,7 +376,7 @@ class ConductiveMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
         permeability: ArrayLike = 1.0,
         electric_conductivity: ArrayLike = 0.0,
         magnetic_conductivity: ArrayLike = 0.0,
-    ):
+    ) -> None:
         self.permittivity = jnp.asarray(permittivity)
         self.permeability = jnp.asarray(permeability)
         self.electric_conductivity = jnp.asarray(electric_conductivity)
@@ -428,7 +435,7 @@ class PreparedConductiveMaxwellConstitutive(AbstractPreparedMaxwellConstitutive)
         cochain: CochainDiscretization,
         layout: MaxwellCochainLayout,
         /,
-    ):
+    ) -> None:
         from ._maxwell import _positive_material
 
         self.permittivity = _positive_material(
@@ -607,7 +614,7 @@ class LorentzDrudeMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
         *,
         permittivity_infinity: ArrayLike = 1.0,
         permeability: ArrayLike = 1.0,
-    ):
+    ) -> None:
         frequency = jnp.asarray(resonance_frequency, dtype=jnp.float64)
         damping_ = jnp.asarray(damping, dtype=jnp.float64)
         strength = jnp.asarray(oscillator_strength, dtype=jnp.float64)
@@ -672,7 +679,7 @@ class PreparedLorentzDrudeMaxwellConstitutive(AbstractPreparedMaxwellConstitutiv
         cochain: CochainDiscretization,
         layout: MaxwellCochainLayout,
         /,
-    ):
+    ) -> None:
         from ._maxwell import _positive_material
 
         self.electric_count = layout.electric_count

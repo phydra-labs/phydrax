@@ -3,16 +3,24 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ....atomistic import PreparedAtomisticSystem
-from ....atomistic.sampling import CollectiveVariableKind, CollectiveVariablePlan
-from ....optim import least_squares, LevenbergMarquardt
+from ....atomistic.sampling import (
+    CollectiveVariableKind,
+    CollectiveVariablePlan,
+    PreparedCollectiveVariable,
+)
+from ....optim import least_squares, LevenbergMarquardt, OptimizationTermination
 from ....qualification import ReferenceArtifactManifest
 from ....units import conversion_factor, UnitDefinition
 
@@ -47,7 +55,7 @@ class IntervalDistanceReconstruction(StrictModule):
     """
 
     system: PreparedAtomisticSystem
-    variables: tuple
+    variables: tuple[PreparedCollectiveVariable, ...]
     lower: Array
     upper: Array
     sigma: Array
@@ -61,21 +69,21 @@ class IntervalDistanceReconstruction(StrictModule):
 
     def __init__(
         self,
-        system,
-        atom_pairs,
-        lower,
-        upper,
-        standard_deviation,
+        system: PreparedAtomisticSystem,
+        atom_pairs: npt.ArrayLike,
+        lower: npt.ArrayLike,
+        upper: npt.ArrayLike,
+        standard_deviation: npt.ArrayLike,
         *,
-        weights,
+        weights: npt.ArrayLike,
         length_unit: UnitDefinition,
-        sources,
-        requested_use,
-        chirality_atom_ids=(),
-        chirality_sign=(),
-        minimum_volume=(),
-        chirality_standard_deviation=(),
-    ):
+        sources: Iterable[ReferenceArtifactManifest],
+        requested_use: Mapping[str, bool],
+        chirality_atom_ids: npt.ArrayLike = (),
+        chirality_sign: npt.ArrayLike = (),
+        minimum_volume: npt.ArrayLike = (),
+        chirality_standard_deviation: npt.ArrayLike = (),
+    ) -> None:
         if not isinstance(system, PreparedAtomisticSystem):
             raise TypeError("Reconstruction must consume an existing atomistic support.")
         if system.cell is not None:
@@ -189,12 +197,12 @@ class IntervalDistanceReconstruction(StrictModule):
             }
         )
 
-    def distances(self, positions):
+    def distances(self, positions: ArrayLike) -> Array:
         return jnp.stack(
             tuple(variable.evaluate(positions).value for variable in self.variables)
         )
 
-    def chirality(self, positions):
+    def chirality(self, positions: ArrayLike) -> ChiralityEvaluation:
         points = jnp.asarray(positions)[self.chirality_indices]
         vectors = points[:, 1:] - points[:, 0, None, :]
         volume = (
@@ -206,8 +214,13 @@ class IntervalDistanceReconstruction(StrictModule):
         )
 
     def reconstruct(
-        self, initial_positions, *, fixed_mask, termination=None, interval_tolerance=1e-7
-    ):
+        self,
+        initial_positions: npt.ArrayLike,
+        *,
+        fixed_mask: npt.ArrayLike,
+        termination: OptimizationTermination | None = None,
+        interval_tolerance: float = 1e-7,
+    ) -> IntervalReconstructionResult:
         initial = np.asarray(initial_positions, float)
         fixed = np.asarray(fixed_mask, bool)
         if (
@@ -229,10 +242,10 @@ class IntervalDistanceReconstruction(StrictModule):
             raise ValueError("Reconstruction needs at least one mobile coordinate.")
         initial_array = jnp.asarray(initial)
 
-        def realize(values):
+        def realize(values: Array) -> Array:
             return initial_array.reshape(-1).at[free].set(values).reshape(initial.shape)
 
-        def residual(values, args):
+        def residual(values: Array, args: object) -> tuple[Array, Array]:
             del args
             positions = realize(values)
             distance = self.distances(positions)

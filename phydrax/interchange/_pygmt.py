@@ -19,6 +19,7 @@ import re
 import tempfile
 from dataclasses import asdict
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import equinox as eqx
@@ -38,7 +39,7 @@ class GeospatialDependencyError(ImportError):
 
     report: AdapterReport
 
-    def __init__(self, package: str, source_id: str):
+    def __init__(self, package: str, source_id: str) -> None:
         self.report = AdapterReport(
             AdapterStatus.OPTIONAL_DEPENDENCY_UNAVAILABLE,
             "qualified-geospatial-grid",
@@ -58,7 +59,7 @@ class GeospatialDependencyError(ImportError):
         super().__init__(f"This operation requires the optional {package} package.")
 
 
-def _optional_module(package: str, source_id: str):
+def _optional_module(package: str, source_id: str) -> ModuleType:
     try:
         return importlib.import_module(package)
     except ModuleNotFoundError as error:
@@ -76,7 +77,14 @@ class XarrayGridExport(StrictModule, NonTrainableState):
     region: tuple[float, float, float, float] = eqx.field(static=True)
     report: AdapterReport = eqx.field(static=True)
 
-    def __init__(self, dataarray, grid_id, export_id, region, report):
+    def __init__(
+        self,
+        dataarray: Any,
+        grid_id: str,
+        export_id: str,
+        region: tuple[float, float, float, float],
+        report: AdapterReport,
+    ) -> None:
         self.dataarray = dataarray
         self.grid_id = grid_id
         self.export_id = export_id
@@ -98,7 +106,15 @@ class PyGMTRenderResult(StrictModule, NonTrainableState):
     render_id: str = eqx.field(static=True)
     provenance_json: str = eqx.field(static=True)
 
-    def __init__(self, figure, manifest, report, grid_id, render_id, provenance_json):
+    def __init__(
+        self,
+        figure: Any,
+        manifest: ResourceManifest,
+        report: AdapterReport,
+        grid_id: str,
+        render_id: str,
+        provenance_json: str,
+    ) -> None:
         self.figure = figure
         self.manifest = manifest
         self.report = report
@@ -168,7 +184,12 @@ def export_geospatial_grid(
             factor = float(conversion_factor(x_unit, DEGREE))
             if factor != 1:
                 x, y = x * factor, y * factor
-                region = tuple(value * factor for value in region)
+                region = (
+                    region[0] * factor,
+                    region[1] * factor,
+                    region[2] * factor,
+                    region[3] * factor,
+                )
                 mapping.append(
                     f"Angular coordinates converted to degrees with factor {factor!r}"
                 )

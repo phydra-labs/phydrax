@@ -15,7 +15,9 @@ from ...geometry._interface_extension import (
     TwoSidedInterfaceCorrectionProvider,
 )
 from ...geometry._trace_extension import PreparedTraceExtension
+from ...linalg import RankPolicy, SolveResourcePolicy
 from ...linalg._operators import AbstractLinearOperator
+from ...typing import parse
 from ._core import BlockInterface, PreparedMultiblockGrid
 
 
@@ -53,7 +55,7 @@ class MultiblockInterfaceCorrectionProvider(StrictModule, NonTrainableState):
         gauge: InterfaceGauge = "minimum_energy",
         gauge_certificate_id: str | None = None,
         preservation_operator: AbstractLinearOperator | None = None,
-    ):
+    ) -> None:
         if not isinstance(multiblock, PreparedMultiblockGrid):
             raise TypeError("multiblock must be PreparedMultiblockGrid.")
         if not isinstance(interface, BlockInterface):
@@ -85,8 +87,7 @@ class MultiblockInterfaceCorrectionProvider(StrictModule, NonTrainableState):
                 "The oriented interface support must retain its SAT stability owner."
             )
         gauge_ = str(gauge)
-        if gauge_ not in ("minimum_energy", "minus_only", "plus_only"):
-            raise ValueError("Unknown multiblock interface gauge.")
+        gauge_ = parse(gauge_, InterfaceGauge, "gauge_")
         gauge_id = None if gauge_certificate_id is None else str(gauge_certificate_id)
         if gauge_ != "minimum_energy" and (gauge_id is None or not gauge_id):
             raise ValueError("One-sided multiblock gauges require a certificate.")
@@ -98,7 +99,7 @@ class MultiblockInterfaceCorrectionProvider(StrictModule, NonTrainableState):
         self.preservation_operator = preservation_operator
         self.sat_stability_owner_id = sat_owner
         self.interpolation_certificate_id = interpolation
-        self.gauge = gauge_  # type: ignore[assignment]
+        self.gauge = gauge_
         self.gauge_certificate_id = gauge_id
         self.provider_id = canonical_fingerprint(
             {
@@ -116,7 +117,12 @@ class MultiblockInterfaceCorrectionProvider(StrictModule, NonTrainableState):
         )
 
     def prepare(
-        self, /, *, rank=None, resources=None, numeric_version=0
+        self,
+        /,
+        *,
+        rank: RankPolicy | None = None,
+        resources: SolveResourcePolicy | None = None,
+        numeric_version: int = 0,
     ) -> PreparedTraceExtension:
         provider = TwoSidedInterfaceCorrectionProvider(
             self.trace_operator,

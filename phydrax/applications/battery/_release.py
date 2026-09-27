@@ -9,7 +9,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any, cast, Self, TypeVar
 
 from ..._fingerprint import canonical_fingerprint, canonical_json
 from ...qualification._criterion import (
@@ -35,6 +37,7 @@ from ...qualification._registry import (
 from ...qualification._runtime_distribution import parse_distribution_manifest
 from ...qualification._trust import (
     AsymmetricReleaseTrustPolicy,
+    CanonicalRecord,
     SignedQualificationRecord,
 )
 from ._release_contracts import battery_release_contract, RESOURCE_METRICS
@@ -44,15 +47,18 @@ from ._validity import BATTERY_NUMERICAL_ENVELOPES, BatteryValidityEnvelope
 
 REQUIRED_RESOURCE_MEASUREMENTS = frozenset(name for name, _, _, _ in RESOURCE_METRICS)
 
+_T = TypeVar("_T")
+_K = TypeVar("_K", bound=Hashable)
 
-def _unique(items, identity):
+
+def _unique(items: Sequence[_T], identity: Callable[[_T], _K]) -> dict[_K, _T]:
     result = {identity(item): item for item in items}
     if len(result) != len(items):
         raise ValueError("Typed release records must have unique identities.")
     return result
 
 
-def _envelope_from_record(record) -> BatteryValidityEnvelope:
+def _envelope_from_record(record: Mapping[str, Any]) -> BatteryValidityEnvelope:
     if record.get("kind") != "battery-validity-envelope":
         raise ValueError("Invalid battery validity envelope record.")
     values = {key: value for key, value in record.items() if key != "kind"}
@@ -111,7 +117,7 @@ class CleanReplayComparison:
         return canonical_fingerprint(self.to_record())
 
     @classmethod
-    def from_record(cls, record, /):
+    def from_record(cls, record: Mapping[str, Any], /) -> Self:
         if record.get("kind") != "battery-clean-replay-comparison":
             raise ValueError("Invalid clean replay record.")
         return cls(
@@ -160,7 +166,8 @@ class BatteryReleaseBundle:
             raise ValueError(
                 "Release distribution differs from its retained source/artifact mapping."
             )
-        return manifest["source_build_id"]
+        # parse_distribution_manifest validates every identity as a SHA-256 string.
+        return cast(str, manifest["source_build_id"])
 
     def approval_record(self, support_tuple_id: str) -> dict[str, object]:
         return {
@@ -214,24 +221,34 @@ class BatteryReleaseBundle:
         return canonical_fingerprint(self.to_record())
 
     @classmethod
-    def from_record(cls, record, /):
+    def from_record(cls, record: Mapping[str, Any], /) -> Self:
         if record.get("kind") != "battery-release-bundle":
             raise ValueError("Invalid battery release bundle.")
-        types = {
-            "criteria": QualificationCriterion,
-            "starts": CampaignStartRecord,
-            "observations": CampaignObservationRecord,
-            "evidence": QualificationEvidence,
-            "references": ReferenceArtifactManifest,
-            "rights": ReferenceRightsAttestation,
-            "resources": ObservedResourceRecord,
-            "attestations": SignedQualificationRecord,
-            "dependencies": SupportDependency,
-        }
-        values = {
-            name: tuple(kind.from_record(row) for row in record[name])
-            for name, kind in types.items()
-        }
+        criteria = tuple(
+            QualificationCriterion.from_record(row) for row in record["criteria"]
+        )
+        starts = tuple(CampaignStartRecord.from_record(row) for row in record["starts"])
+        observations = tuple(
+            CampaignObservationRecord.from_record(row) for row in record["observations"]
+        )
+        evidence = tuple(
+            QualificationEvidence.from_record(row) for row in record["evidence"]
+        )
+        references = tuple(
+            ReferenceArtifactManifest.from_record(row) for row in record["references"]
+        )
+        rights = tuple(
+            ReferenceRightsAttestation.from_record(row) for row in record["rights"]
+        )
+        resources = tuple(
+            ObservedResourceRecord.from_record(row) for row in record["resources"]
+        )
+        attestations = tuple(
+            SignedQualificationRecord.from_record(row) for row in record["attestations"]
+        )
+        dependencies = tuple(
+            SupportDependency.from_record(row) for row in record["dependencies"]
+        )
         return cls(
             envelope=_envelope_from_record(record["envelope"]),
             distribution_id=record["distribution_id"],
@@ -246,10 +263,20 @@ class BatteryReleaseBundle:
             prerequisite_index=None
             if record["prerequisite_index"] is None
             else ReleaseIndex.from_record(record["prerequisite_index"]),
-            **values,
+            criteria=criteria,
+            starts=starts,
+            observations=observations,
+            evidence=evidence,
+            references=references,
+            rights=rights,
+            resources=resources,
+            attestations=attestations,
+            dependencies=dependencies,
         )
 
-    def _signature(self, record, role: str) -> SignedQualificationRecord:
+    def _signature(
+        self, record: dict[str, object] | CanonicalRecord, role: str
+    ) -> SignedQualificationRecord:
         content = canonical_json(
             record if isinstance(record, dict) else record.to_record()
         )
@@ -321,7 +348,9 @@ class BatteryReleaseBundle:
         )
         limits: list[int] = []
 
-        def authenticate(record, role):
+        def authenticate(
+            record: dict[str, object] | CanonicalRecord, role: str
+        ) -> tuple[str, SignedQualificationRecord]:
             signature = self._signature(record, role)
             key = policy.roles.verify(record, signature, role=role, at_time=at_time)
             limits.append(policy.roles.expiry(signature))
@@ -353,7 +382,11 @@ class BatteryReleaseBundle:
             raw_ids.add(identifier)
             raw_by_id[identifier] = raw
 
-        def validate_execution(starts, observations, evidence):
+        def validate_execution(
+            starts: Sequence[CampaignStartRecord],
+            observations: Sequence[CampaignObservationRecord],
+            evidence: Sequence[QualificationEvidence],
+        ) -> tuple[set[str], set[str]]:
             start_by_criterion = _unique(starts, lambda item: item.criterion_id)
             observation_by_criterion = _unique(
                 observations, lambda item: item.criterion_id
@@ -749,7 +782,7 @@ class BatteryReleaseRecord:
         }
 
     @classmethod
-    def from_record(cls, record, /):
+    def from_record(cls, record: Mapping[str, Any], /) -> Self:
         if record.get("kind") != "battery-release-record":
             raise ValueError("Invalid typed battery release record.")
         return cls(
@@ -761,7 +794,12 @@ class BatteryReleaseRecord:
         )
 
 
-def _release_profile(candidate, bundle, issued_at, expires_at):
+def _release_profile(
+    candidate: CapabilityProfile,
+    bundle: BatteryReleaseBundle,
+    issued_at: int,
+    expires_at: int,
+) -> CapabilityProfile:
     from ._qualification import BATTERY_RELEASE_COORDINATES
 
     name, version = BATTERY_RELEASE_COORDINATES[

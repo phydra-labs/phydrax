@@ -12,7 +12,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._execution_array import shard_array_axis
 from .._execution_runtime import ExecutionGroup
@@ -25,14 +27,19 @@ from .._sampling import (
     resolve_design,
 )
 from .._strict import StrictModule
+from ..typing import parse, PRNGKey
 from ._bounded_search import _BoundedVectorDomain
 from ._finite import FiniteAxis
 from ._pareto import dominance_matrix
 
 
-SearchStrategy = Literal["best1bin", "rand1bin"]
-DifferentialEvolutionSelection = Literal["scalar", "pareto"]
-DifferentialEvolutionValidityMode = Literal["guarded", "vectorized"]
+SearchStrategy: TypeAlias = Literal["best1bin", "rand1bin"]
+DifferentialEvolutionSelection: TypeAlias = Literal["scalar", "pareto"]
+DifferentialEvolutionValidityMode: TypeAlias = Literal["guarded", "vectorized"]
+_Objective: TypeAlias = Callable[[PyTree[Array]], Array]
+_Validity: TypeAlias = Callable[[PyTree[Array]], Array]
+# (generation, population, objectives, valid, key, invalid count, best history)
+_EvolutionState: TypeAlias = tuple[Array, Array, Array, Array, PRNGKey, Array, Array]
 
 
 class DifferentialEvolutionStatus(IntEnum):
@@ -47,7 +54,7 @@ class DifferentialEvolutionContinuous(StrictModule):
     shape: tuple[int, ...] = eqx.field(static=True)
     size: int = eqx.field(static=True)
 
-    def __init__(self, lower: ArrayLike, upper: ArrayLike, /):
+    def __init__(self, lower: ArrayLike, upper: ArrayLike, /) -> None:
         lower_, upper_ = np.broadcast_arrays(np.asarray(lower), np.asarray(upper))
         dtype = np.result_type(lower_.dtype, upper_.dtype, np.float32)
         if not np.issubdtype(dtype, np.floating):
@@ -67,7 +74,7 @@ class DifferentialEvolutionInteger(StrictModule):
     shape: tuple[int, ...] = eqx.field(static=True)
     size: int = eqx.field(static=True)
 
-    def __init__(self, lower: ArrayLike, upper: ArrayLike, /):
+    def __init__(self, lower: ArrayLike, upper: ArrayLike, /) -> None:
         lower_, upper_ = np.broadcast_arrays(np.asarray(lower), np.asarray(upper))
         if not np.issubdtype(lower_.dtype, np.integer) or not np.issubdtype(
             upper_.dtype, np.integer
@@ -82,7 +89,7 @@ class DifferentialEvolutionInteger(StrictModule):
 class DifferentialEvolutionCategorical(StrictModule):
     axis: FiniteAxis
 
-    def __init__(self, axis: FiniteAxis, /):
+    def __init__(self, axis: FiniteAxis, /) -> None:
         if not isinstance(axis, FiniteAxis):
             raise TypeError("axis must be a FiniteAxis.")
         self.axis = axis
@@ -118,7 +125,7 @@ class DifferentialEvolutionSpace(StrictModule):
     categorical_sizes: tuple[int, ...] = eqx.field(static=True)
     space_id: str = eqx.field(static=True)
 
-    def __init__(self, leaves: PyTree[DifferentialEvolutionLeaf], /):
+    def __init__(self, leaves: PyTree[DifferentialEvolutionLeaf], /) -> None:
         flat, definition = jax.tree_util.tree_flatten(leaves, is_leaf=_is_de_leaf)
         if not flat or any(not _is_de_leaf(value) for value in flat):
             raise TypeError("Every DifferentialEvolutionSpace leaf must be a DE leaf.")
@@ -209,19 +216,17 @@ class DifferentialEvolutionSearch(StrictModule):
         relative_tolerance: float = 0.01,
         absolute_tolerance: float = 0.0,
         design: DesignLike = LatinHypercubeDesign(),
-    ):
+    ) -> None:
         population, generations = int(population_size), int(max_generations)
         if population < 4:
             raise ValueError("population_size must be at least 4.")
         if generations < 0:
             raise ValueError("max_generations must be non-negative.")
-        if strategy not in ("best1bin", "rand1bin"):
-            raise ValueError("Unknown differential-evolution strategy.")
-        if selection not in ("scalar", "pareto") or validity_mode not in (
-            "guarded",
-            "vectorized",
-        ):
-            raise ValueError("Unknown selection or validity mode.")
+        strategy = parse(strategy, SearchStrategy, "strategy")
+        selection = parse(selection, DifferentialEvolutionSelection, "selection")
+        validity_mode = parse(
+            validity_mode, DifferentialEvolutionValidityMode, "validity_mode"
+        )
         objectives = int(objective_count)
         if objectives <= 0 or (selection == "scalar" and objectives != 1):
             raise ValueError(
@@ -250,6 +255,8 @@ class DifferentialEvolutionSearch(StrictModule):
 
 
 class DifferentialEvolutionResult(StrictModule):
+    __strict_contract__ = True
+
     population: PyTree[Array]
     population_vectors: Array
     population_objectives: Array
@@ -266,7 +273,7 @@ class DifferentialEvolutionResult(StrictModule):
     best_objective_history: Array
     lower_bounds: Array
     upper_bounds: Array
-    key: Key[Array, ""]
+    key: PRNGKey
     search: DifferentialEvolutionSearch
     status: Array
     converged: bool = eqx.field(static=True)
@@ -289,7 +296,7 @@ def _ranks_and_crowding(objectives: Array, valid: Array, /) -> tuple[Array, Arra
     ranks = jnp.full((count,), count, dtype=jnp.int32)
     remaining = valid
 
-    def assign(rank, state):
+    def assign(rank: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
         ranks_, remaining_ = state
         dominated = jnp.any(dominance & remaining_[:, None], axis=0)
         front = remaining_ & ~dominated
@@ -299,7 +306,7 @@ def _ranks_and_crowding(objectives: Array, valid: Array, /) -> tuple[Array, Arra
     ranks, _ = jax.lax.fori_loop(0, count, assign, (ranks, remaining))
     indices = jnp.arange(count, dtype=jnp.int32)
 
-    def objective_crowding(values):
+    def objective_crowding(values: Array) -> Array:
         safe_values = jnp.where(valid, values, jnp.inf)
         order = jnp.lexsort((indices, safe_values, ranks))
         ordered_ranks = ranks[order]
@@ -339,7 +346,9 @@ def _ranks_and_crowding(objectives: Array, valid: Array, /) -> tuple[Array, Arra
     return ranks, crowding
 
 
-def _select_union(vectors, objectives, valid, capacity):
+def _select_union(
+    vectors: Array, objectives: Array, valid: Array, capacity: int
+) -> tuple[Array, Array, Array, Array, Array]:
     ranks, crowding = _ranks_and_crowding(objectives, valid)
     indices = jnp.arange(vectors.shape[0], dtype=jnp.int32)
     order = jnp.argsort(indices, stable=True)
@@ -355,7 +364,13 @@ def _select_union(vectors, objectives, valid, capacity):
     )
 
 
-def _evaluate_population(objective, validity, space, vectors, search):
+def _evaluate_population(
+    objective: _Objective,
+    validity: _Validity | None,
+    space: DifferentialEvolutionSpace,
+    vectors: Array,
+    search: DifferentialEvolutionSearch,
+) -> tuple[PyTree[Array], Array, Array]:
     decoded = space.decode(vectors)
     if validity is None:
         valid = jnp.ones((vectors.shape[0],), dtype=jnp.bool_)
@@ -363,7 +378,7 @@ def _evaluate_population(objective, validity, space, vectors, search):
         valid = jax.vmap(validity)(decoded)
     if search.validity_mode == "guarded":
 
-        def one(arguments):
+        def one(arguments: tuple[PyTree[Array], Array]) -> Array:
             candidate, accepted = arguments
             return jax.lax.cond(
                 accepted,
@@ -385,7 +400,9 @@ def _evaluate_population(objective, validity, space, vectors, search):
     return decoded, jnp.where(valid[:, None], objectives, jnp.inf), valid
 
 
-def _round_integer_columns(space, vectors, key):
+def _round_integer_columns(
+    space: DifferentialEvolutionSpace, vectors: Array, key: PRNGKey
+) -> Array:
     if not space.integer_columns:
         return vectors
     columns = jnp.asarray(space.integer_columns, dtype=jnp.int32)
@@ -404,7 +421,14 @@ def _round_integer_columns(space, vectors, key):
     return vectors.at[:, columns].set(unit)
 
 
-def _categorical_mutant(space, population, a, b, c, key):
+def _categorical_mutant(
+    space: DifferentialEvolutionSpace,
+    population: Array,
+    a: Array,
+    b: Array,
+    c: Array,
+    key: PRNGKey,
+) -> Array:
     if not space.categorical_columns:
         return population[a]
     columns = jnp.asarray(space.categorical_columns, dtype=jnp.int32)
@@ -453,8 +477,13 @@ def _sample_distinct_donors(key: Array, population_size: int, /) -> Array:
 
 @eqx.filter_jit
 def _run_differential_evolution(
-    objective, validity, space, search, initial_population, key
-):
+    objective: _Objective,
+    validity: _Validity | None,
+    space: DifferentialEvolutionSpace,
+    search: DifferentialEvolutionSearch,
+    initial_population: Array,
+    key: PRNGKey,
+) -> tuple[Array, Array, Array, Array, Array, Array]:
     population = initial_population
     _, objectives, valid = _evaluate_population(
         objective, validity, space, population, search
@@ -472,7 +501,7 @@ def _run_differential_evolution(
         history,
     )
 
-    def condition(state_):
+    def condition(state_: _EvolutionState) -> Array:
         generation, _, objectives_, valid_, _, _, _ = state_
         finite = jnp.where(valid_, objectives_[:, 0], jnp.nan)
         mean = jnp.nanmean(finite)
@@ -488,7 +517,7 @@ def _run_differential_evolution(
         )
         return (generation < search.max_generations) & jnp.any(valid_) & ~converged
 
-    def step(state_):
+    def step(state_: _EvolutionState) -> _EvolutionState:
         (
             generation,
             population_,
@@ -566,7 +595,7 @@ def search_differential_evolution(
     search: DifferentialEvolutionSearch,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     validity: Callable[[PyTree[Array]], Array] | None = None,
     initial: ArrayLike | None = None,
     execution_group: ExecutionGroup | None = None,
@@ -710,7 +739,7 @@ def _bounded_differential_evolution(
     search: DifferentialEvolutionSearch,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     validity: Callable[[Array], Array] | None = None,
 ) -> DifferentialEvolutionResult:
     domain = _BoundedVectorDomain(initial_vector, lower_bounds, upper_bounds)

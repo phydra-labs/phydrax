@@ -11,10 +11,11 @@ import equinox as eqx
 import jax.nn as jnn
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from .._dtype_names import inexact_result_type
 from .._numerics._quadrature_rules import gauss_legendre_data
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 
@@ -27,7 +28,7 @@ class BSplineGrid(StrictModule, NonTrainableState):
     degree: int = eqx.field(static=True)
     continuity_orders: tuple[int, ...] = eqx.field(static=True)
 
-    def __init__(self, knots: ArrayLike, degree: int, /):
+    def __init__(self, knots: ArrayLike, degree: int, /) -> None:
         if isinstance(degree, bool) or not isinstance(degree, Integral):
             raise TypeError("B-spline grid degree must be an integer.")
         degree_ = int(degree)
@@ -187,7 +188,7 @@ class TrainableBSplineGrid(StrictModule):
         *,
         interval: tuple[float, float] = (-1.0, 1.0),
         minimum_span: float | None = None,
-    ):
+    ) -> None:
         if isinstance(degree, bool) or not isinstance(degree, Integral):
             raise TypeError("Trainable B-spline grid degree must be an integer.")
         degree_ = int(degree)

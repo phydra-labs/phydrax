@@ -5,6 +5,8 @@ Run from the worktree: python examples/coupled_slab_ocean.py
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -26,7 +28,9 @@ from phydrax.solver.coupling import (
 )
 
 
-def slab_ocean_scenario(*, water_rate=1.0e-4, conductance=20.0, water_mass=10.0):
+def slab_ocean_scenario(
+    *, water_rate: Any = 1.0e-4, conductance: Any = 20.0, water_mass: Any = 10.0
+) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(2, periodic=axis < 2)
@@ -58,7 +62,7 @@ def slab_ocean_scenario(*, water_rate=1.0e-4, conductance=20.0, water_mass=10.0)
         positivity_preserving=True,
     )
 
-    def transfer(source, target, matrix):
+    def transfer(source: Any, target: Any, matrix: Any) -> Any:
         primal = phx.linalg.DenseLinearOperator(
             matrix, source=source.vector_space, target=target.vector_space
         )
@@ -122,7 +126,7 @@ def slab_ocean_scenario(*, water_rate=1.0e-4, conductance=20.0, water_mass=10.0)
     return prepared, slab, receiver
 
 
-def run():
+def run() -> None:
     prepared, slab, receiver = slab_ocean_scenario()
     state = prepared.reference_state
     for _ in range(4):

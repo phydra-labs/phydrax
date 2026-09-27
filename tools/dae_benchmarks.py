@@ -761,7 +761,7 @@ def _vector_linear(steps: int) -> _Case:
 def _robertson(steps: int) -> _Case:
     started = time.perf_counter()
 
-    def residual(time, state, state_rate, scale):
+    def residual(time: Any, state: Any, state_rate: Any, scale: Any) -> Any:
         first, second, third = state
         forward = 0.04 * first - 1e4 * second * third
         return jnp.asarray(
@@ -837,7 +837,7 @@ def _circuit(steps: int) -> _Case:
     resistance = 0.4
     load_resistance = 1.2
 
-    def residual(time, state, state_rate, capacitance):
+    def residual(time: Any, state: Any, state_rate: Any, capacitance: Any) -> Any:
         voltage, current, branch_current = state
         return jnp.asarray(
             (
@@ -878,7 +878,7 @@ def _circuit(steps: int) -> _Case:
         )
         forcing = jnp.asarray((1.0 / capacitance, 0.0))
 
-        def state_at(time):
+        def state_at(time: Any) -> Any:
             dynamic = jnp.linalg.solve(
                 matrix,
                 (jsp.linalg.expm(matrix * time) - jnp.eye(2)) @ forcing,
@@ -957,6 +957,7 @@ def _reaction_diffusion(steps: int, spatial_points: int) -> _Case:
             phx.equations.PDEEquation("local-equilibrium", equilibrium, u**2),
         ),
     )
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.FourierAxisSpec(spatial_points).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     compiled = phx.equations.compile_semidiscrete_dae(

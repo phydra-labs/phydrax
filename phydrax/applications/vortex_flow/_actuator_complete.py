@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -42,7 +43,7 @@ class ActuatorLineFlowPlan(StrictModule, NonTrainableState):
         /,
         *,
         core_radius: float,
-    ):
+    ) -> None:
         if not isinstance(rotor, BladeElementRotorPlan) or float(core_radius) <= 0.0:
             raise ValueError("Actuator line requires rotor and positive core radius.")
         azimuth, hub, axis_ = (
@@ -76,7 +77,7 @@ class ActuatorLineFlowPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _basis(self):
+    def _basis(self) -> tuple[Array, Array]:
         reference = jnp.where(
             jnp.abs(self.axis[0]) < 0.9,
             jnp.asarray((1.0, 0.0, 0.0)),

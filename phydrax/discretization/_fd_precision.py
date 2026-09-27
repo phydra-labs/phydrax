@@ -8,15 +8,15 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax import Array
 
+from .._dtype_names import precision_dtype_name, real_precision_dtype_name
 from .._precision import (
-    precision_dtype_name,
     precision_itemsize,
     PrecisionEvidenceEnvelope,
     PrecisionRequest,
     PrecisionResolution,
     PrecisionResourceAssumptions,
-    real_precision_dtype_name,
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -54,7 +54,7 @@ class FDExecutionPrecisionPolicy(StrictModule, NonTrainableState):
         field_dtype: Any = jnp.float64,
         accumulation_dtype: Any | None = None,
         certification_dtype: Any | None = None,
-    ):
+    ) -> None:
         coefficient = precision_dtype_name(coefficient_dtype)
         field = precision_dtype_name(field_dtype)
         accumulation = (
@@ -106,16 +106,16 @@ class FDExecutionPrecisionPolicy(StrictModule, NonTrainableState):
         self.certification_dtype = certification
         self.policy_id = resolution.resolution_id
 
-    def coefficient(self, value: Any, /):
+    def coefficient(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.coefficient_dtype))
 
-    def field(self, value: Any, /):
+    def field(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.field_dtype))
 
-    def accumulation(self, value: Any, /):
+    def accumulation(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.accumulation_dtype))
 
-    def certification(self, value: Any, /):
+    def certification(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.certification_dtype))
 
     @property

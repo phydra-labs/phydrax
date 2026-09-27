@@ -4,7 +4,8 @@
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+import numpy.typing as npt
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -17,7 +18,13 @@ class MaterialHistory(StrictModule, NonTrainableState):
     phase_fractions: Array
     history_id: str = eqx.field(static=True)
 
-    def __init__(self, times_s, temperatures_k, phase_fractions, /):
+    def __init__(
+        self,
+        times_s: npt.ArrayLike,
+        temperatures_k: npt.ArrayLike,
+        phase_fractions: npt.ArrayLike,
+        /,
+    ) -> None:
         t = np.asarray(times_s, float)
         T = np.asarray(temperatures_k, float)
         p = np.asarray(phase_fractions, float)

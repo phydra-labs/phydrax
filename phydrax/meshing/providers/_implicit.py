@@ -87,6 +87,7 @@ def _admit_implicit_specification(
             "Native implicit meshing does not enforce: " + ", ".join(unsupported) + ".",
             provider_code="preflight",
         )
+    # ty: ignore[invalid-return-type]
     return specification.size_controls[0]
 
 
@@ -286,7 +287,7 @@ class ImplicitMeshingPlan(StrictModule, NonTrainableState):
         source_id: str,
         source_revision: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(geometry, CompiledGeometry):
             raise TypeError("geometry must be CompiledGeometry.")
         if not isinstance(grid, PreparedTensorGrid):

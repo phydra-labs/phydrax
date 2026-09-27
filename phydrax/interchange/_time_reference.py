@@ -5,20 +5,22 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._external_resource import ResourceManifest
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
-TimeScale = Literal["tai", "gps", "utc", "instrument", "source-relative"]
+TimeScale: TypeAlias = Literal["tai", "gps", "utc", "instrument", "source-relative"]
 
 
 class LeapSecondTable(StrictModule, NonTrainableState):
@@ -42,7 +44,7 @@ class LeapSecondTable(StrictModule, NonTrainableState):
         initial_tai_minus_utc: float,
         source: ResourceManifest,
         /,
-    ):
+    ) -> None:
         transitions = np.asarray(transition_utc_seconds, dtype=np.float64)
         offsets = np.asarray(tai_minus_utc_after, dtype=np.float64)
         initial = float(initial_tai_minus_utc)
@@ -139,9 +141,8 @@ class TimeReferenceContract(StrictModule, NonTrainableState):
         drift_ppm: float = 0.0,
         leap_seconds: LeapSecondTable | None = None,
         correction_resources: Sequence[ResourceManifest] = (),
-    ):
-        if scale not in ("tai", "gps", "utc", "instrument", "source-relative"):
-            raise ValueError("Unsupported time scale.")
+    ) -> None:
+        scale = parse(scale, TimeScale, "scale")
         label = str(epoch_label).strip()
         tai_epoch = float(epoch_tai_seconds)
         nominal = None if epoch_nominal_seconds is None else float(epoch_nominal_seconds)
@@ -246,7 +247,9 @@ class TimeTransform(StrictModule, NonTrainableState):
     resources: tuple[ResourceManifest, ...] = eqx.field(static=True)
     transform_id: str = eqx.field(static=True)
 
-    def __init__(self, source: TimeReferenceContract, target: TimeReferenceContract, /):
+    def __init__(
+        self, source: TimeReferenceContract, target: TimeReferenceContract, /
+    ) -> None:
         if not isinstance(source, TimeReferenceContract) or not isinstance(
             target, TimeReferenceContract
         ):

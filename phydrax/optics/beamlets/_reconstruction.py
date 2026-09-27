@@ -9,7 +9,8 @@ from math import prod
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -45,7 +46,7 @@ class BeamletReconstructionPlan(StrictModule, NonTrainableState):
         singular_tolerance: float = 1e-12,
         maximum_condition: float = 1e12,
         caustic_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         if not isinstance(space, PlaneFieldSpace):
             raise TypeError("space must be a PlaneFieldSpace.")
         coordinate = jnp.asarray(longitudinal_coordinate)
@@ -103,7 +104,7 @@ class PreparedBeamletReconstruction(StrictModule, NonTrainableState):
         *,
         point_count: int,
         tile_count: int,
-    ):
+    ) -> None:
         if not isinstance(plan, BeamletReconstructionPlan):
             raise TypeError("plan must be a BeamletReconstructionPlan.")
         points = jnp.asarray(world_point_tiles)
@@ -203,7 +204,7 @@ def reconstruct_gaussian_beamlets(
     )
     normalized_amplitude = amplitudes * initial_square_root / safe_square_root
 
-    def evaluate_tile(_: None, inputs: tuple[Array, Array]):
+    def evaluate_tile(_: None, inputs: tuple[Array, Array]) -> tuple[None, Array]:
         points, active = inputs
         displacement = points[None, :, :] - origins[:, None, :]
         transverse = contract("bpc,bca->bpa", displacement, basis)

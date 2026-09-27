@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -15,6 +18,7 @@ from ..._trainable import NonTrainableState
 from ._particle_internal_mesh import (
     ParticleInternalGeometry,
     PreparedParticleInternalBatch,
+    PreparedRadialShellMesh,
 )
 from ._particle_internal_state import (
     ParticleConversionState,
@@ -60,14 +64,14 @@ class DensityPorosityMorphologyPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        solid_density,
+        solid_density: Iterable[ArrayLike],
         /,
         *,
         neighborhood_skin: float,
         minimum_scale: float = 1.0e-12,
         maximum_scale: float = 1.0e12,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         densities = tuple(np.asarray(value, dtype=np.float64) for value in solid_density)
         skin = float(neighborhood_skin)
         minimum = float(minimum_scale)
@@ -108,7 +112,7 @@ class DensityPorosityMorphologyPlan(StrictModule, NonTrainableState):
         self,
         batches: tuple[PreparedParticleInternalBatch, ...],
         state: ParticleConversionState,
-        molar_masses,
+        molar_masses: Iterable[ArrayLike],
         /,
     ) -> ParticleMorphologyEvaluation:
         prepared_values = tuple(batches)
@@ -150,13 +154,16 @@ class DensityPorosityMorphologyPlan(StrictModule, NonTrainableState):
                 batch_state.porosity * pore_weight, axis=1
             ) / jnp.maximum(jnp.sum(pore_weight, axis=1), 1.0e-30)
             target_volume = solid_volume / jnp.maximum(1.0 - average_porosity, 1.0e-30)
-            geometry = prepared.mesh.plan.geometry
-            if geometry is ParticleInternalGeometry.SLAB:
-                scale = target_volume / prepared.mesh.plan.transverse_measure
-            elif geometry is ParticleInternalGeometry.CYLINDER:
-                scale = jnp.sqrt(
-                    target_volume / (jnp.pi * prepared.mesh.plan.transverse_measure)
+            mesh = prepared.mesh
+            if not isinstance(mesh, PreparedRadialShellMesh):
+                raise TypeError(
+                    "Density-porosity morphology requires radial shell meshes."
                 )
+            geometry = mesh.plan.geometry
+            if geometry is ParticleInternalGeometry.SLAB:
+                scale = target_volume / mesh.plan.transverse_measure
+            elif geometry is ParticleInternalGeometry.CYLINDER:
+                scale = jnp.sqrt(target_volume / (jnp.pi * mesh.plan.transverse_measure))
             else:
                 scale = (3.0 * target_volume / (4.0 * jnp.pi)) ** (1.0 / 3.0)
             scale = jnp.where(batch_state.active, scale, 1.0)
@@ -276,7 +283,7 @@ class ThermochemicalFragmentationPlan(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, maximum_children: int, /, *, tolerance: float = 1.0e-10):
+    def __init__(self, maximum_children: int, /, *, tolerance: float = 1.0e-10) -> None:
         children = int(maximum_children)
         tolerance_ = float(tolerance)
         if children < 2 or not np.isfinite(tolerance_) or tolerance_ <= 0.0:

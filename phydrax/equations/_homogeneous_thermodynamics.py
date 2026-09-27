@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -403,8 +404,8 @@ class HomogeneousHelmholtzPlan(StrictModule, NonTrainableState):
             1.0,
         )
 
-        def residual(temperature_value):
-            def total_molar_helmholtz(temperature_argument):
+        def residual(temperature_value: Array) -> Array:
+            def total_molar_helmholtz(temperature_argument: Array) -> Array:
                 return jnp.sum(
                     self.molar_helmholtz_energy(
                         temperature_argument,
@@ -433,7 +434,7 @@ class HomogeneousHelmholtzPlan(StrictModule, NonTrainableState):
             & (upper_residual >= 0.0)
         )
 
-        def body(_, bounds):
+        def body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             low, high = bounds
             midpoint = 0.5 * (low + high)
             value = residual(midpoint)
@@ -472,7 +473,9 @@ class HomogeneousHelmholtzPlan(StrictModule, NonTrainableState):
             self.model_id,
         )
 
-    def _evaluate_scalar(self, temperature, density, composition):
+    def _evaluate_scalar(
+        self, temperature: Array, density: Array, composition: Array
+    ) -> HomogeneousThermodynamicEvaluation:
         safe_temperature = jnp.clip(
             temperature,
             self.thermodynamics.minimum_temperature,
@@ -487,7 +490,7 @@ class HomogeneousHelmholtzPlan(StrictModule, NonTrainableState):
         composition_sum = jnp.sum(clipped)
         safe_composition = clipped / jnp.maximum(composition_sum, 1.0)
 
-        def energy(t, c):
+        def energy(t: Array, c: Array) -> Array:
             return self.molar_helmholtz_energy(t, c, safe_composition)
 
         a = energy(safe_temperature, safe_density)
@@ -582,8 +585,10 @@ class HomogeneousHelmholtzPlan(StrictModule, NonTrainableState):
             self.model_id,
         )
 
-    def _chemical_potential_scalar(self, temperature, density, composition):
-        def energy(c, x):
+    def _chemical_potential_scalar(
+        self, temperature: Array, density: Array, composition: Array
+    ) -> Array:
+        def energy(c: Array, x: Array) -> Array:
             return self.molar_helmholtz_energy(temperature, c, x)
 
         molar_energy = energy(density, composition)
@@ -605,7 +610,7 @@ def _broadcast_state(
     molar_density: ArrayLike,
     mole_fraction: ArrayLike,
     species_count: int,
-):
+) -> tuple[Array, Array, Array]:
     temperature_value = jnp.asarray(temperature)
     density = jnp.asarray(molar_density)
     composition = jnp.asarray(mole_fraction)

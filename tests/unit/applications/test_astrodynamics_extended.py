@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -5,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _context(origin="earth", orientation="icrf"):
+def _context(origin: Any = "earth", orientation: Any = "icrf") -> Any:
     astro = phx.applications.astrodynamics
     return astro.AstrodynamicsContext(
         astro.AstrodynamicsScaleContract.si(),
@@ -14,7 +16,7 @@ def _context(origin="earth", orientation="icrf"):
     )
 
 
-def _provenance(context):
+def _provenance(context: Any) -> Any:
     astro = phx.applications.astrodynamics
     return astro.AstrodynamicsDataProvenance(
         producer="test",
@@ -29,7 +31,7 @@ def _provenance(context):
     )
 
 
-def test_lambert_quarter_circle_and_multirevolution_capacity():
+def test_lambert_quarter_circle_and_multirevolution_capacity() -> None:
     astro = phx.applications.astrodynamics
     context = _context()
     result = astro.solve_lambert(
@@ -50,7 +52,7 @@ def test_lambert_quarter_circle_and_multirevolution_capacity():
     )
 
 
-def test_typed_array_adapter_converts_values_without_changing_context_semantics():
+def test_typed_array_adapter_converts_values_without_changing_context_semantics() -> None:
     astro = phx.applications.astrodynamics
     assert astro.AstrodynamicsScaleContract is phx.DimensionalScaleContract
     context = _context("earth", "icrf")
@@ -73,12 +75,12 @@ def test_typed_array_adapter_converts_values_without_changing_context_semantics(
     assert state.context.epoch.time_scale == "TT"
 
 
-def test_sgp4_adapter_preserves_teme_utc_context_while_converting_units():
+def test_sgp4_adapter_preserves_teme_utc_context_while_converting_units() -> None:
     astro = phx.applications.astrodynamics
 
     class Satrec:
         @staticmethod
-        def sgp4(day, fraction):
+        def sgp4(day: Any, fraction: Any) -> Any:
             del day, fraction
             return 0, (1.0, 2.0, 3.0), (4.0, 5.0, 6.0)
 
@@ -105,7 +107,7 @@ def test_sgp4_adapter_preserves_teme_utc_context_while_converting_units():
 
     class ErrorSatrec:
         @staticmethod
-        def sgp4(day, fraction):
+        def sgp4(day: Any, fraction: Any) -> Any:
             del day
             error = 1 if fraction == 0.0 else 6
             return error, (1.0, 2.0, 3.0), (4.0, 5.0, 6.0)
@@ -134,7 +136,7 @@ def test_sgp4_adapter_preserves_teme_utc_context_while_converting_units():
 
     class NonfiniteSatrec:
         @staticmethod
-        def sgp4(day, fraction):
+        def sgp4(day: Any, fraction: Any) -> Any:
             del day, fraction
             return 0, (jnp.nan, 2.0, 3.0), (4.0, 5.0, 6.0)
 
@@ -160,7 +162,7 @@ def test_sgp4_adapter_preserves_teme_utc_context_while_converting_units():
         )
 
 
-def test_time_frame_ephemeris_and_third_body_contracts():
+def test_time_frame_ephemeris_and_third_body_contracts() -> None:
     astro = phx.applications.astrodynamics
     source_context = _context("earth", "icrf")
     target_context = astro.AstrodynamicsContext(
@@ -240,7 +242,7 @@ def test_time_frame_ephemeris_and_third_body_contracts():
     assert bool(third_body.valid)
 
 
-def test_direct_nbody_and_cr3bp_invariants():
+def test_direct_nbody_and_cr3bp_invariants() -> None:
     astro = phx.applications.astrodynamics
     context = _context("barycenter")
     particles = phx.discretization.particle.ParticleSetPlan(
@@ -281,11 +283,12 @@ def test_direct_nbody_and_cr3bp_invariants():
     points = cr3bp.lagrange_points()
     assert bool(jnp.all(points.valid))
     for point in points.points:
+        # ty: ignore[invalid-argument-type]
         derivative = cr3bp.vector_field(0.0, jnp.concatenate((point, jnp.zeros(3))))
         np.testing.assert_allclose(derivative, 0.0, atol=2.0e-10)
 
 
-def test_spacecraft_burn_and_measurement_adapters():
+def test_spacecraft_burn_and_measurement_adapters() -> None:
     astro = phx.applications.astrodynamics
     context = _context()
     particles = phx.discretization.particle.ParticleSetPlan(
@@ -333,7 +336,7 @@ def test_spacecraft_burn_and_measurement_adapters():
     np.testing.assert_allclose(measurements.jacobian[0, 0, 3], 1.0)
 
 
-def test_environment_force_parameters_are_finite_physical_and_identity_defining():
+def test_environment_force_parameters_are_finite_physical_and_identity_defining() -> None:
     astro = phx.applications.astrodynamics
     context = _context()
     atmosphere = astro.ExponentialAtmosphere(1.0, 1.0, 0.0, 1.0)

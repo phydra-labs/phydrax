@@ -9,7 +9,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 
@@ -35,7 +36,7 @@ class DiscrepancyIdentifiabilityThresholds(StrictModule):
         min_crps_improvement: float = 0.0,
         min_coverage: float = 0.85,
         max_abs_parameter_gp_correlation: float = 0.95,
-    ):
+    ) -> None:
         if int(min_repeats) < 2:
             raise ValueError("min_repeats must be at least two.")
         for name, value in (
@@ -89,7 +90,7 @@ class DiscrepancyIdentifiabilityReport(StrictModule):
         crps_improvement: ArrayLike,
         mean_coverage: ArrayLike,
         max_abs_parameter_gp_correlation: ArrayLike,
-    ):
+    ) -> None:
         self.passed = not failures
         self.failures = tuple(failures)
         self.num_repeats = int(num_repeats)

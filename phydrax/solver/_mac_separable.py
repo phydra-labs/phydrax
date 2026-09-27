@@ -5,16 +5,22 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TypeAlias
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import DTypeLike
 
+from ..discretization._tensor_entities import StructuredAxis
 from ..discretization.finite_volume._mac_momentum import (
     PreparedMACMomentumOperators,
 )
 from ..linalg import FFTLinearTransform, RealTrigonometricTransform
 from ..linalg._linear_transform import AbstractLinearTransform
+
+
+_AxisTransform: TypeAlias = tuple[AbstractLinearTransform, Array, float]
 
 
 _ESSENTIAL_NORMAL_KINDS = (
@@ -26,7 +32,7 @@ _ESSENTIAL_NORMAL_KINDS = (
 )
 
 
-def uniform_axis_spacing(axis, /) -> float | None:
+def uniform_axis_spacing(axis: StructuredAxis, /) -> float | None:
     """Return the certified uniform spacing of one structured axis, if any."""
     widths = np.asarray(axis.interval_widths, dtype=np.float64)
     if widths.size == 0:
@@ -41,7 +47,9 @@ def uniform_axis_spacing(axis, /) -> float | None:
     return spacing
 
 
-def _periodic_axis_transform(axis, dtype, /):
+def _periodic_axis_transform(
+    axis: StructuredAxis, dtype: DTypeLike, /
+) -> _AxisTransform | None:
     spacing = uniform_axis_spacing(axis)
     if spacing is None or not axis.periodic:
         return None
@@ -55,7 +63,9 @@ def _periodic_axis_transform(axis, dtype, /):
     return transform, jnp.asarray(spectrum, dtype=dtype), trace
 
 
-def pressure_cell_axis_transform(axis, dtype, /):
+def pressure_cell_axis_transform(
+    axis: StructuredAxis, dtype: DTypeLike, /
+) -> _AxisTransform | None:
     """Diagonalize a uniform cell-pressure axis with periodic/Neumann closure."""
     periodic = _periodic_axis_transform(axis, dtype)
     if periodic is not None:
@@ -88,7 +98,7 @@ def velocity_face_axis_transform(
     component: int,
     derivative_axis: int,
     /,
-):
+) -> _AxisTransform | None:
     """Diagonalize one uniform velocity-face Laplacian axis."""
     axis = momentum.operators.discretization.grid.structured_axes[derivative_axis]
     dtype = momentum.operators.pressure_space.dtype
@@ -133,7 +143,7 @@ def velocity_face_axis_transform(
     return transform, jnp.asarray(spectrum, dtype=dtype), trace
 
 
-def modal_sum(spectra: Sequence[Array], /, *, dtype=None) -> Array:
+def modal_sum(spectra: Sequence[Array], /, *, dtype: DTypeLike | None = None) -> Array:
     """Form a tensor-product Kronecker sum without materializing matrices."""
     spectra_ = tuple(spectra)
     if not spectra_:
@@ -149,7 +159,9 @@ def modal_sum(spectra: Sequence[Array], /, *, dtype=None) -> Array:
     return result
 
 
-def pressure_cell_line_coefficients(axis, dtype, /):
+def pressure_cell_line_coefficients(
+    axis: StructuredAxis, dtype: DTypeLike, /
+) -> tuple[Array, Array, Array]:
     """Assemble the nonperiodic Neumann cell-pressure line operator."""
     if axis.periodic:
         raise ValueError("A pressure hybrid line must be explicitly nonperiodic.")
@@ -175,7 +187,7 @@ def velocity_face_line_coefficients(
     component: int,
     line_axis: int,
     /,
-):
+) -> tuple[Array, Array, Array, tuple[Array, Array] | None]:
     """Assemble one velocity-face line, retaining its staggered coefficients."""
     axis = momentum.operators.discretization.grid.structured_axes[line_axis]
     dtype = momentum.operators.pressure_space.dtype
@@ -247,7 +259,13 @@ def certify_separable_action(
     return defect, certified
 
 
-def diagonal_resource_counts(shape, dtype, maximum_bytes: int, description: str, /):
+def diagonal_resource_counts(
+    shape: tuple[int, ...],
+    dtype: DTypeLike,
+    maximum_bytes: int,
+    description: str,
+    /,
+) -> tuple[int, int, int, int]:
     """Preflight diagonal factors and peak transform workspace."""
     count = int(np.prod(shape))
     factor_bytes = count * np.dtype(dtype).itemsize
@@ -258,7 +276,13 @@ def diagonal_resource_counts(shape, dtype, maximum_bytes: int, description: str,
     return count, factor_bytes, workspace_bytes, total_bytes
 
 
-def iterative_workspace_bytes(shape, dtype, maximum_bytes: int, description: str, /):
+def iterative_workspace_bytes(
+    shape: tuple[int, ...],
+    dtype: DTypeLike,
+    maximum_bytes: int,
+    description: str,
+    /,
+) -> int:
     """Preflight the fixed six-vector workspace used by MAC Krylov solves."""
     workspace_bytes = 6 * int(np.prod(shape)) * np.dtype(dtype).itemsize
     if workspace_bytes > maximum_bytes:

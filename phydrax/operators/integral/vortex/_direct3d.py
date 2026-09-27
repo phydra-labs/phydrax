@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -27,6 +29,13 @@ from ....discretization.vortex._interfaces import (
 from ....discretization.vortex._precision import VortexPrecisionPolicy
 from ....discretization.vortex._source import VortexSourceState, VortexTargetState
 from ._gaussian3d import GaussianErfVortexKernel3D
+
+
+_TargetChunk: TypeAlias = tuple[jax.Array, jax.Array, jax.Array]
+_SourceChunk: TypeAlias = tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]
+_AccumulationCarry: TypeAlias = tuple[
+    jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array
+]
 
 
 class DirectVortexResourceEvidence3D(StrictModule):
@@ -73,7 +82,7 @@ class GaussianErfDirectVortexPlan3D(AbstractVortexVelocityPlan):
         maximum_interactions: int | None = None,
         maximum_workspace_bytes: int = 64 * 1024 * 1024,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         sources = int(maximum_sources)
         targets = sources if maximum_targets is None else int(maximum_targets)
         kernel_ = GaussianErfVortexKernel3D() if kernel is None else kernel
@@ -243,7 +252,7 @@ class PreparedGaussianErfDirectVortex3D(AbstractPreparedVortexVelocity):
         source_chunk_count: int,
         target_chunk_count: int,
         estimated_working_set_bytes: int,
-    ):
+    ) -> None:
         if not isinstance(compatibility, VortexVelocityCompatibility):
             raise TypeError("compatibility must be VortexVelocityCompatibility.")
         self.plan = plan
@@ -359,7 +368,7 @@ class PreparedGaussianErfDirectVortex3D(AbstractPreparedVortexVelocity):
             jnp.zeros((), dtype=compute_dtype)
         ).dtype
 
-        def evaluate_target_chunk(target_chunk):
+        def evaluate_target_chunk(target_chunk: _TargetChunk) -> _AccumulationCarry:
             chunk_targets, chunk_target_valid, chunk_self_indices = target_chunk
             initial = (
                 jnp.zeros((self.target_chunk_size, 3), dtype=accumulation_dtype),
@@ -370,7 +379,9 @@ class PreparedGaussianErfDirectVortex3D(AbstractPreparedVortexVelocity):
                 jnp.asarray(0, dtype=jnp.int32),
             )
 
-            def accumulate_source_chunk(carry, source_chunk):
+            def accumulate_source_chunk(
+                carry: _AccumulationCarry, source_chunk: _SourceChunk
+            ) -> tuple[_AccumulationCarry, None]:
                 (
                     velocity_sum,
                     gradient_sum,

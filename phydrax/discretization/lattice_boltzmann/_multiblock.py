@@ -10,11 +10,13 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ..multiblock import InterfaceOrientation
 from ._discretization import LatticeBoltzmannDiscretization
 from ._geometry import LatticeBoltzmannGeometryKind
@@ -72,7 +74,7 @@ class LatticeBoltzmannBlockInterfacePlan(StrictModule, NonTrainableState):
         left_side: LatticeBoltzmannBlockSide = "upper",
         right_side: LatticeBoltzmannBlockSide = "lower",
         scale_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         if not isinstance(left, LatticeBoltzmannDiscretization) or not isinstance(
             right, LatticeBoltzmannDiscretization
         ):
@@ -85,13 +87,10 @@ class LatticeBoltzmannBlockInterfacePlan(StrictModule, NonTrainableState):
         tolerance = float(scale_tolerance)
         if right.velocity_set.dimension != dimension:
             raise ValueError("LBM block dimensions must match.")
-        if (
-            not 0 <= left_axis_ < dimension
-            or not 0 <= right_axis_ < dimension
-            or left_side not in ("lower", "upper")
-            or right_side not in ("lower", "upper")
-        ):
+        if not 0 <= left_axis_ < dimension or not 0 <= right_axis_ < dimension:
             raise ValueError("LBM block interface axes or sides are invalid.")
+        left_side = parse(left_side, LatticeBoltzmannBlockSide, "left_side")
+        right_side = parse(right_side, LatticeBoltzmannBlockSide, "right_side")
         if orientation.trace_rank != dimension - 1:
             raise ValueError("Interface orientation rank must match tangential rank.")
         if left.periodic[left_axis_] or right.periodic[right_axis_]:
@@ -239,7 +238,7 @@ class LatticeBoltzmannBlockConnection(StrictModule, NonTrainableState):
         right_block: int,
         interface: LatticeBoltzmannBlockInterfacePlan,
         /,
-    ):
+    ) -> None:
         left = int(left_block)
         right = int(right_block)
         if left < 0 or right < 0 or left == right:
@@ -264,7 +263,7 @@ class LatticeBoltzmannBlockConnection(StrictModule, NonTrainableState):
 class LatticeBoltzmannMultiblockState(StrictModule):
     populations: tuple[Array, ...]
 
-    def __init__(self, populations: Sequence[ArrayLike], /):
+    def __init__(self, populations: Sequence[ArrayLike], /) -> None:
         values = tuple(jnp.asarray(value) for value in populations)
         if not values:
             raise ValueError("A multiblock state requires at least one block.")
@@ -324,7 +323,7 @@ class LatticeBoltzmannMultiblockCouplingPlan(StrictModule, NonTrainableState):
         blocks: Sequence[LatticeBoltzmannDiscretization],
         connections: Sequence[LatticeBoltzmannBlockConnection],
         /,
-    ):
+    ) -> None:
         blocks_ = tuple(blocks)
         connections_ = tuple(connections)
         if not blocks_ or any(

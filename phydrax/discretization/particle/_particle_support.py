@@ -67,7 +67,7 @@ class ParticleDiscretizationSupportClaim(StrictModule, NonTrainableState):
         sensitivity: str = "forward",
         status: ParticleDiscretizationSupportStatus = ParticleDiscretizationSupportStatus.EXPERIMENTAL,
         evidence_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(status, ParticleDiscretizationSupportStatus):
             raise TypeError("status must be ParticleDiscretizationSupportStatus.")
         labels = tuple(
@@ -139,7 +139,7 @@ class ParticleDiscretizationSupportClaim(StrictModule, NonTrainableState):
         )
 
     @property
-    def configuration(self):
+    def configuration(self) -> tuple[str, ...]:
         return (
             self.mechanics,
             self.population_topology,
@@ -166,7 +166,7 @@ class ParticleDiscretizationSupportMatrix(StrictModule, NonTrainableState):
     claims: tuple[ParticleDiscretizationSupportClaim, ...]
     matrix_id: str = eqx.field(static=True)
 
-    def __init__(self, claims: Sequence[ParticleDiscretizationSupportClaim], /):
+    def __init__(self, claims: Sequence[ParticleDiscretizationSupportClaim], /) -> None:
         values = tuple(claims)
         if not values or any(
             not isinstance(value, ParticleDiscretizationSupportClaim) for value in values
@@ -188,13 +188,15 @@ class ParticleDiscretizationSupportMatrix(StrictModule, NonTrainableState):
         )
 
     @property
-    def production_ready(self):
+    def production_ready(self) -> bool:
         return all(
             value.status is ParticleDiscretizationSupportStatus.PRODUCTION
             for value in self.claims
         )
 
-    def claims_with_status(self, status, /):
+    def claims_with_status(
+        self, status: ParticleDiscretizationSupportStatus, /
+    ) -> tuple[ParticleDiscretizationSupportClaim, ...]:
         if not isinstance(status, ParticleDiscretizationSupportStatus):
             raise TypeError("status must be ParticleDiscretizationSupportStatus.")
         return tuple(value for value in self.claims if value.status is status)

@@ -9,12 +9,14 @@ from typing import Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ..geometry.complex import ProjectiveHypersurface, ProjectiveLineSamples
 from ..geometry.complex._hypersurface_patch import HypersurfacePatchGeometry
+from ..typing import parse
 from ._precision import IntegrationPrecisionPolicy
 
 
@@ -40,7 +42,7 @@ class ProjectiveMeasureTarget(StrictModule):
         *,
         measure_kind: ProjectiveMeasureKind,
         precision: IntegrationPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = IntegrationPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, IntegrationPrecisionPolicy):
             raise TypeError("precision must be an IntegrationPrecisionPolicy or None.")
@@ -87,7 +89,7 @@ class ProjectiveIntegralResult(StrictModule):
         valid: ArrayLike,
         precision_evidence: PrecisionEvidenceEnvelope,
         /,
-    ):
+    ) -> None:
         self.normalized_value = jnp.asarray(normalized_value)
         self.physical_value = jnp.asarray(physical_value)
         self.effective_sample_size = jnp.asarray(effective_sample_size)
@@ -105,8 +107,7 @@ def projective_measure_target(
     measure_kind: ProjectiveMeasureKind,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> ProjectiveMeasureTarget:
-    if measure_kind not in ("fubini-study", "canonical"):
-        raise ValueError("Unknown projective measure kind.")
+    measure_kind = parse(measure_kind, ProjectiveMeasureKind, "measure_kind")
     geometry = HypersurfacePatchGeometry(hypersurface)
     log_weights = []
     for index in range(samples.homogeneous_points.shape[0]):

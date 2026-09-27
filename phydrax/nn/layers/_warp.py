@@ -6,17 +6,17 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import prod
-from typing import cast, Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 from ..._doc import DOC_KEY0
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...typing import parse, PRNGKey
 from .._keys import EvalKey
 from ._linear import Linear
 from ._warp_geometry import (
@@ -24,12 +24,9 @@ from ._warp_geometry import (
     RectilinearWarpDiagnostics,
     sample_rectilinear_grid,
     warp_jacobian,
+    WarpBoundaryMode,
     WarpMaskMode,
 )
-
-
-WarpBoundaryMode: TypeAlias = Literal["periodic", "reflect", "clamp", "constant"]
-_VALID_BOUNDARY_MODES = frozenset(("periodic", "reflect", "clamp", "constant"))
 
 
 def _boundary_modes(
@@ -42,12 +39,7 @@ def _boundary_modes(
         raise ValueError(
             f"boundary must provide one mode per spatial axis; expected {spatial_ndim}, got {len(modes)}."
         )
-    invalid = tuple(mode for mode in modes if mode not in _VALID_BOUNDARY_MODES)
-    if invalid:
-        raise ValueError(
-            f"boundary modes must be 'periodic', 'reflect', 'clamp', or 'constant'; got {invalid}."
-        )
-    return cast(tuple[WarpBoundaryMode, ...], modes)
+    return tuple(parse(mode, WarpBoundaryMode, "boundary") for mode in modes)
 
 
 def _normalized_lattice(
@@ -204,8 +196,8 @@ class MultiheadWarp(StrictModule, ParameterOwner):
         mask_mode: WarpMaskMode = "reject",
         displacement_width: int | None = None,
         fill_value: float = 0.0,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.spatial_ndim = int(spatial_ndim)
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
@@ -228,8 +220,7 @@ class MultiheadWarp(StrictModule, ParameterOwner):
         )
         if hidden_width <= 0:
             raise ValueError("displacement_width must be positive.")
-        if self.mask_mode not in ("reject", "renormalize", "strict"):
-            raise ValueError("mask_mode must be 'reject', 'renormalize', or 'strict'.")
+        parse(self.mask_mode, WarpMaskMode, "mask_mode")
         self.boundary = _boundary_modes(boundary, self.spatial_ndim)
 
         value_key, hidden_key, output_key = jr.split(key, 3)

@@ -10,10 +10,12 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
+from ..._validation import positive_finite_float
 from ...dynamics._grid import TimeGrid
 
 
@@ -21,13 +23,6 @@ def _identifier(value: str, owner: str, /) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{owner} must be a non-empty string.")
     return value
-
-
-def _positive(value: float, owner: str, /) -> float:
-    resolved = float(value)
-    if not isfinite(resolved) or resolved <= 0.0:
-        raise ValueError(f"{owner} must be finite and positive.")
-    return resolved
 
 
 def _nonnegative(value: float, owner: str, /) -> float:
@@ -72,12 +67,12 @@ class AvellanedaStoikovPlan(StrictModule):
         arrival_decay: float,
         inventory_bound: float,
         plan_id: str,
-    ):
+    ) -> None:
         self.risk_aversion = _nonnegative(risk_aversion, "risk_aversion")
         self.volatility = _nonnegative(volatility, "volatility")
-        self.arrival_scale = _positive(arrival_scale, "arrival_scale")
-        self.arrival_decay = _positive(arrival_decay, "arrival_decay")
-        self.inventory_bound = _positive(inventory_bound, "inventory_bound")
+        self.arrival_scale = positive_finite_float(arrival_scale, "arrival_scale")
+        self.arrival_decay = positive_finite_float(arrival_decay, "arrival_decay")
+        self.inventory_bound = positive_finite_float(inventory_bound, "inventory_bound")
         self.plan_id = _identifier(plan_id, "plan_id")
 
 
@@ -102,12 +97,12 @@ class GLFTPlan(StrictModule):
         inventory_bound: float,
         benchmark_tolerance: float,
         plan_id: str,
-    ):
-        self.risk_aversion = _positive(risk_aversion, "risk_aversion")
+    ) -> None:
+        self.risk_aversion = positive_finite_float(risk_aversion, "risk_aversion")
         self.volatility = _nonnegative(volatility, "volatility")
-        self.arrival_scale = _positive(arrival_scale, "arrival_scale")
-        self.arrival_decay = _positive(arrival_decay, "arrival_decay")
-        self.inventory_bound = _positive(inventory_bound, "inventory_bound")
+        self.arrival_scale = positive_finite_float(arrival_scale, "arrival_scale")
+        self.arrival_decay = positive_finite_float(arrival_decay, "arrival_decay")
+        self.inventory_bound = positive_finite_float(inventory_bound, "inventory_bound")
         self.benchmark_tolerance = _nonnegative(
             benchmark_tolerance, "benchmark_tolerance"
         )

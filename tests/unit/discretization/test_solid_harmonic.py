@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,7 +15,7 @@ import phydrax as phx
 from phydrax.discretization import spectral as spectral_api
 
 
-def _explicit_synthesis(coefficients, displacements, kind):
+def _explicit_synthesis(coefficients: Any, displacements: Any, kind: Any) -> Any:
     modal = jnp.asarray(coefficients)
     points = jnp.asarray(displacements)
     limit = modal.shape[0]
@@ -39,7 +42,7 @@ def _explicit_synthesis(coefficients, displacements, kind):
     return output
 
 
-def _complex_payload_coefficients(limit):
+def _complex_payload_coefficients(limit: Any) -> Any:
     width = 2 * limit - 1
     real = jnp.arange(limit * width * 6, dtype=jnp.float64).reshape((limit, width, 2, 3))
     coefficients = (0.013 * real - 0.4) + 1j * (0.2 - 0.007 * real)
@@ -51,7 +54,7 @@ def _complex_payload_coefficients(limit):
 
 
 @pytest.mark.parametrize("kind", ["regular", "irregular"])
-def test_complex_payload_synthesis_matches_explicit_mode_sum(kind):
+def test_complex_payload_synthesis_matches_explicit_mode_sum(kind: Any) -> None:
     limit = 5
     coefficients = _complex_payload_coefficients(limit)
     points = jnp.asarray(
@@ -70,7 +73,7 @@ def test_complex_payload_synthesis_matches_explicit_mode_sum(kind):
     np.testing.assert_allclose(actual, expected, rtol=3e-12, atol=3e-12)
 
 
-def test_real_synthesis_uses_independent_half_and_signed_conjugacy():
+def test_real_synthesis_uses_independent_half_and_signed_conjugacy() -> None:
     limit = 5
     center = limit - 1
     coefficients = jnp.zeros((limit, 2 * limit - 1, 2), dtype=jnp.complex128)
@@ -103,7 +106,7 @@ def test_real_synthesis_uses_independent_half_and_signed_conjugacy():
     np.testing.assert_allclose(actual, expected, rtol=2e-12, atol=2e-13)
 
 
-def test_regular_origin_and_irregular_singular_lanes_survive_fused_synthesis():
+def test_regular_origin_and_irregular_singular_lanes_survive_fused_synthesis() -> None:
     limit = 4
     center = limit - 1
     coefficients = jnp.zeros((limit, 2 * limit - 1), dtype=jnp.complex128)
@@ -138,7 +141,7 @@ def test_regular_origin_and_irregular_singular_lanes_survive_fused_synthesis():
     )
 
 
-def test_fused_synthesis_is_jittable_and_has_explicit_sum_coordinate_jvp():
+def test_fused_synthesis_is_jittable_and_has_explicit_sum_coordinate_jvp() -> None:
     limit = 4
     coefficients = _complex_payload_coefficients(limit)[..., 0, 0]
     points = jnp.asarray([[0.4, -0.2, 0.8], [-0.5, 0.7, 1.2]], dtype=jnp.float64)
@@ -165,7 +168,7 @@ def test_fused_synthesis_is_jittable_and_has_explicit_sum_coordinate_jvp():
     np.testing.assert_allclose(actual_jvp, expected_jvp, rtol=2e-11, atol=2e-11)
 
 
-def test_plan_dtype_validation_resources_and_provenance_contract():
+def test_plan_dtype_validation_resources_and_provenance_contract() -> None:
     real = spectral_api.SolidHarmonicPlan(3, reality=True).prepare()
     complex_ = spectral_api.SolidHarmonicPlan(3, reality=False).prepare()
     coefficients = jnp.zeros((3, 5), dtype=jnp.complex64).at[0, 2].set(1.0)
@@ -187,6 +190,7 @@ def test_plan_dtype_validation_resources_and_provenance_contract():
     with pytest.raises(ValueError):
         spectral_api.SolidHarmonicPlan(0)
     with pytest.raises(ValueError):
+        # ty: ignore[invalid-argument-type]
         spectral_api.SolidHarmonicPlan(3, kind="exterior")
     with pytest.raises(ValueError, match="must begin with shape"):
         real.evaluate(jnp.ones((3, 4)), points)

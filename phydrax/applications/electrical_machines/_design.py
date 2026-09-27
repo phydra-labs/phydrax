@@ -12,8 +12,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax import core
-from jaxtyping import Array, ArrayLike
+from jax import Array, core
+from jax.typing import ArrayLike
 
 from phydrax._strict import StrictModule
 from phydrax.ein import contract
@@ -56,7 +56,7 @@ class MachineAngleStudy(StrictModule):
         currents: ArrayLike,
         *,
         weights: ArrayLike | None = None,
-    ):
+    ) -> None:
         models = tuple(machines)
         if not models or any(not isinstance(model, PlanarMachine) for model in models):
             raise ValueError("An angle study requires at least one prepared machine.")
@@ -290,7 +290,7 @@ def optimize_machine_design(
         raise TypeError("termination must be OptimizationTermination or None.")
     offset, span = jnp.asarray(lower), jnp.asarray(upper - lower)
 
-    def physical_objective(normalized, context):
+    def physical_objective(normalized: Array, context: object) -> Array:
         candidate = offset + span * normalized
         evaluated = scan_machine_angles(study, candidate, policy=policy)
         value = (

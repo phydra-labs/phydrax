@@ -10,7 +10,8 @@ from itertools import pairwise
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._array_archive import array_collection_digest
 from .._fingerprint import canonical_fingerprint
@@ -36,7 +37,7 @@ class AbelianKrausOperator(StrictModule):
         routes: Sequence[tuple[int, int]],
         blocks: Sequence[ArrayLike],
         /,
-    ):
+    ) -> None:
         if not isinstance(input_leg, AbelianLeg) or not isinstance(
             output_leg, AbelianLeg
         ):
@@ -95,7 +96,7 @@ class ChargeCovariantKrausMap(StrictModule):
         *,
         completeness_tolerance: float = 1e-10,
         require_trace_preserving: bool = True,
-    ):
+    ) -> None:
         tolerance = float(completeness_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("completeness_tolerance must be finite and non-negative.")
@@ -169,7 +170,7 @@ class AbelianLPDO(StrictModule):
         /,
         *,
         normalize: bool = False,
-    ):
+    ) -> None:
         if not isinstance(physical_leg, AbelianLeg) or physical_leg.orientation != 1:
             raise TypeError("LPDO physical_leg must be an outward AbelianLeg.")
         capacities = tuple(purification_capacities)
@@ -205,7 +206,9 @@ class AbelianLPDO(StrictModule):
         )
 
     def trace(self, /) -> Array:
-        return sum(jnp.real(jnp.vdot(value, value)) for value in self.factors)
+        return jnp.asarray(
+            sum(jnp.real(jnp.vdot(value, value)) for value in self.factors)
+        )
 
     def density_blocks(self, /) -> tuple[Array, ...]:
         return tuple(value @ jnp.conj(value.T) for value in self.factors)
@@ -327,7 +330,7 @@ class AbelianLindbladian(StrictModule):
         hamiltonian_blocks: Sequence[ArrayLike],
         jumps: Sequence[AbelianKrausOperator],
         /,
-    ):
+    ) -> None:
         if not isinstance(physical_leg, AbelianLeg):
             raise TypeError("physical_leg must be AbelianLeg.")
         blocks = tuple(jnp.asarray(value) for value in hamiltonian_blocks)
@@ -416,7 +419,7 @@ class AbelianOpenProcess(StrictModule):
     routes: tuple[ChargeCovariantKrausMap, ...]
     process_id: str = eqx.field(static=True)
 
-    def __init__(self, routes: Sequence[ChargeCovariantKrausMap], /):
+    def __init__(self, routes: Sequence[ChargeCovariantKrausMap], /) -> None:
         values = tuple(routes)
         if not values or any(
             not isinstance(value, ChargeCovariantKrausMap) for value in values

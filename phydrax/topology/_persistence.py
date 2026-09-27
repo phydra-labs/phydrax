@@ -10,11 +10,13 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._coefficients import PrimeField
 from ._complex import CellComplexPair, CellSubcomplex, compact_boundary, CompactCellLayout
 from ._diagram import PackedPersistenceDiagram, PersistenceDiagram
@@ -53,7 +55,7 @@ class PersistenceRepresentatives(StrictModule, NonTrainableState):
         /,
         *,
         source_id: str,
-    ):
+    ) -> None:
         cells = []
         pairs = []
         coefficients = []
@@ -128,7 +130,7 @@ class PersistencePairing(StrictModule, NonTrainableState):
         layout_id: str,
         field: PrimeField,
         representatives: PersistenceRepresentatives | None = None,
-    ):
+    ) -> None:
         pair_arrays = tuple(
             np.asarray(value)
             for value in (
@@ -222,7 +224,7 @@ class PersistenceResult(StrictModule, NonTrainableState):
         /,
         *,
         filtration_id: str,
-    ):
+    ) -> None:
         values = jnp.asarray(compact_values)
         canonical = jnp.asarray(canonical_compact_values)
         if values.ndim != 1 or canonical.shape != values.shape:
@@ -300,7 +302,7 @@ class FrozenPersistenceEvaluation(StrictModule):
         ordering_valid: Array,
         ordering_margin: Array,
         /,
-    ):
+    ) -> None:
         self.degrees = jnp.asarray(degrees)
         self.birth_values = jnp.asarray(birth_values)
         self.death_values = jnp.asarray(death_values)
@@ -324,7 +326,7 @@ class FrozenPersistencePairing(StrictModule, NonTrainableState):
         /,
         *,
         direction: str,
-    ):
+    ) -> None:
         if not isinstance(result, PersistenceResult):
             raise TypeError("Frozen pairing requires a PersistenceResult.")
         if not isinstance(layout, CompactCellLayout):
@@ -550,8 +552,9 @@ def compute_persistence(
         raise TypeError("compute_persistence requires a CellFiltration.")
     if not isinstance(coefficients, PrimeField):
         raise TypeError("Persistent homology requires an explicit PrimeField.")
-    if representatives not in ("none", "cycles"):
-        raise ValueError("Persistence representatives must be 'none' or 'cycles'.")
+    representatives = parse(
+        representatives, PersistenceRepresentativeKind, "representatives"
+    )
     if relative_to is not None and not isinstance(relative_to, CellSubcomplex):
         raise TypeError("relative_to must be a CellSubcomplex or None.")
     policy = TopologyResourcePolicy() if resources is None else resources

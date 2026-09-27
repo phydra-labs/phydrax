@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -5,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _controlled_dae():
+def _controlled_dae() -> Any:
     return phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, control, args: jnp.asarray(
             (
@@ -20,7 +22,7 @@ def _controlled_dae():
     )
 
 
-def test_input_aware_dae_validates_inputs_and_differentiates():
+def test_input_aware_dae_validates_inputs_and_differentiates() -> None:
     system = _controlled_dae()
     state = jnp.asarray((2.0, 6.0))
     state_rate = jnp.asarray((4.0, 0.0))
@@ -57,7 +59,7 @@ def test_input_aware_dae_validates_inputs_and_differentiates():
         )
 
 
-def test_autonomous_dae_rejects_extra_inputs_and_ivp_rejects_controlled_dae():
+def test_autonomous_dae_rejects_extra_inputs_and_ivp_rejects_controlled_dae() -> None:
     autonomous = phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, args: state_rate + state,
         state_shape=(1,),
@@ -80,7 +82,7 @@ def test_autonomous_dae_rejects_extra_inputs_and_ivp_rejects_controlled_dae():
         )
 
 
-def test_controlled_mass_matrix_constructor_preserves_input_role():
+def test_controlled_mass_matrix_constructor_preserves_input_role() -> None:
     system = phx.dynamics.DifferentialAlgebraicSystem.from_mass_matrix(
         jnp.eye(2),
         lambda time, state, control, args: args * state + control[0],
@@ -99,7 +101,7 @@ def test_controlled_mass_matrix_constructor_preserves_input_role():
     assert jnp.allclose(value, jnp.asarray((1.0, 2.0)))
 
 
-def test_trajectory_view_interpolates_states_and_holds_controls():
+def test_trajectory_view_interpolates_states_and_holds_controls() -> None:
     view = phx.control.TrajectoryOptimizationView(
         jnp.asarray((0.0, 1.0, 2.0)),
         jnp.asarray(((0.0,), (2.0,), (6.0,))),
@@ -121,7 +123,7 @@ def test_trajectory_view_interpolates_states_and_holds_controls():
         view.evaluate_state(jnp.asarray((2.1,)))
 
 
-def test_trajectory_view_retracts_between_equivalent_quaternion_poses():
+def test_trajectory_view_retracts_between_equivalent_quaternion_poses() -> None:
     geometry = phx.metrix.QuaternionPoseStateGeometry()
     pose = jnp.asarray([1.0, 0.0, 0.0, 0.0, 0.2, -0.4, 0.7])
     equivalent = pose.at[:4].multiply(-1.0)
@@ -145,7 +147,7 @@ def test_trajectory_view_retracts_between_equivalent_quaternion_poses():
     )
 
 
-def test_trajectory_problem_retains_cases_and_shared_parameter_space():
+def test_trajectory_problem_retains_cases_and_shared_parameter_space() -> None:
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, control, args: args * state + control,
         state_layout=phx.dynamics.StateLayout((1,)),

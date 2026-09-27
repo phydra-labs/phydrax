@@ -5,15 +5,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._model import ValuePort
 from ..._strict import StrictModule
 from ...discretization import CochainFieldSpec
+from ...typing import parse
 from ...units import DIMENSIONLESS, DimensionSignature
 from .._utils import _get_size
 from .capabilities import OperatorFieldRepresentation
@@ -24,7 +25,7 @@ from .representations import (
 )
 
 
-OperatorFieldRole = Literal["source", "target", "both"]
+OperatorFieldRole: TypeAlias = Literal["source", "target", "both"]
 
 
 class OperatorFieldSpec(StrictModule):
@@ -65,12 +66,11 @@ class OperatorFieldSpec(StrictModule):
         tensor_layout: TensorFieldLayout | None = None,
         clifford_layout: CliffordGradeRepresentation | None = None,
         required: bool = True,
-    ):
+    ) -> None:
         resolved_name = str(name)
         if not resolved_name:
             raise ValueError("Operator field name must not be empty.")
-        if role not in ("source", "target", "both"):
-            raise ValueError("Operator field role must be 'source', 'target', or 'both'.")
+        role = parse(role, OperatorFieldRole, "role")
         channel_count = _get_size(channels)
         if representation is None:
             if clifford_layout is not None:
@@ -85,16 +85,11 @@ class OperatorFieldSpec(StrictModule):
                 resolved_representation = "generic_channels"
         else:
             resolved_representation = representation
-        if resolved_representation not in (
-            "generic_channels",
-            "scalar",
-            "pseudoscalar",
-            "vector",
-            "covector",
-            "tensor",
-            "clifford_multivector",
-        ):
-            raise ValueError("Unknown operator field representation.")
+        resolved_representation = parse(
+            resolved_representation,
+            OperatorFieldRepresentation,
+            "resolved_representation",
+        )
         names = tuple(str(value) for value in component_names)
         if names and (len(names) != channel_count or len(set(names)) != len(names)):
             raise ValueError("component_names must uniquely name every field channel.")

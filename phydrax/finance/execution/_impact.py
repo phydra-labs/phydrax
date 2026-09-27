@@ -11,9 +11,10 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ...dynamics._grid import TimeGrid
 
@@ -74,7 +75,7 @@ class AlmgrenChrissModel(StrictModule):
         temporary_impact: float,
         permanent_impact: float = 0.0,
         model_id: str,
-    ):
+    ) -> None:
         self.volatility = _nonnegative(volatility, "volatility")
         self.risk_aversion = _nonnegative(risk_aversion, "risk_aversion")
         self.temporary_impact = _positive(temporary_impact, "temporary_impact")
@@ -167,7 +168,7 @@ class TransientPropagatorModel(StrictModule):
         /,
         *,
         model_id: str,
-    ):
+    ) -> None:
         weights_array = _finite_vector(weights, "weights")
         rates = _finite_vector(decay_rates, "decay_rates")
         if weights_array.shape != rates.shape:
@@ -297,7 +298,7 @@ class ObizhaevaWangModel(StrictModule):
         resilience: float,
         maximum_trade_quantity: float,
         model_id: str,
-    ):
+    ) -> None:
         self.depth = _positive(depth, "depth")
         self.resilience = _positive(resilience, "resilience")
         self.maximum_trade_quantity = _positive(

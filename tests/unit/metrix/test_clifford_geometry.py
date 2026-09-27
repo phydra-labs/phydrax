@@ -12,7 +12,7 @@ import phydrax as phx
 cl = phx.metrix.clifford
 
 
-def test_form_bridge_round_trip_and_chevalley_vector_action():
+def test_form_bridge_round_trip_and_chevalley_vector_action() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1))
     chart = phx.metrix.CoordinateChart("plane", ("x", "y"))
     bridge = cl.CliffordMetricBridge(algebra, chart)
@@ -41,7 +41,7 @@ def test_form_bridge_round_trip_and_chevalley_vector_action():
     assert jnp.allclose(product(e0, field(point)), wedge + contraction)
 
 
-def test_signed_form_bridge_raises_and_lowers_indices():
+def test_signed_form_bridge_raises_and_lowers_indices() -> None:
     algebra = cl.CliffordAlgebraSpec((1, -1))
     chart = phx.metrix.CoordinateChart("minkowski", ("t", "x"))
     bridge = cl.CliffordMetricBridge(algebra, chart)
@@ -59,7 +59,7 @@ def test_signed_form_bridge_raises_and_lowers_indices():
         cl.CliffordMetricBridge(cl.CliffordAlgebraSpec((1, 0)), chart)
 
 
-def test_standalone_boost_and_orthogonal_actions_preserve_products():
+def test_standalone_boost_and_orthogonal_actions_preserve_products() -> None:
     minkowski = cl.CliffordAlgebraSpec((1, -1))
     boost = cl.lorentz_boost_action(minkowski, 1, 0.4)
     inverse = cl.lorentz_boost_action(minkowski, 1, -0.4)
@@ -74,7 +74,7 @@ def test_standalone_boost_and_orthogonal_actions_preserve_products():
     assert all(bool(value.valid) for value in cl.audit_clifford_actions(audit_set))
 
 
-def test_finite_metric_group_requires_actual_composition_closure():
+def test_finite_metric_group_requires_actual_composition_closure() -> None:
     algebra = cl.CliffordAlgebraSpec((1, -1))
     identity = np.eye(2)
     reflection = np.diag([1.0, -1.0])
@@ -91,7 +91,7 @@ def test_finite_metric_group_requires_actual_composition_closure():
         cl.FiniteMetricIsometryGroup(algebra, np.stack((identity, boost)))
 
 
-def test_three_dimensional_o3_adapter_preserves_reflection_action():
+def test_three_dimensional_o3_adapter_preserves_reflection_action() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1, 1))
     representation = phx.nn.operator.representations.CliffordGradeRepresentation(
         algebra,

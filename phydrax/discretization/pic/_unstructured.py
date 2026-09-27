@@ -9,7 +9,9 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -18,9 +20,11 @@ from ...linalg import (
     ConjugateGradient,
     DenseLinearOperator,
     LinearSolvePolicy,
+    LinearSolveResult,
     LinearSystem,
     OperatorProperties,
     prepare,
+    PreparedLinearSolve,
     solve,
     TolerancePolicy,
 )
@@ -63,7 +67,7 @@ class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
     cell_measures: Array
     stiffness: Array
     dirichlet_mask: Array
-    prepared_linear: object
+    prepared_linear: PreparedLinearSolve
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -78,7 +82,7 @@ class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-10,
         maximum_iterations: int = 500,
         pusher: RelativisticBorisPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(locator, PreparedSimplicialCellLocator):
             raise TypeError("locator must be PreparedSimplicialCellLocator.")
         if locator.cell_map.coordinate_element.degree != 1:
@@ -181,7 +185,9 @@ class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
             )
         return nodal
 
-    def solve_field(self, nodal_charge: ArrayLike, initial=None):
+    def solve_field(
+        self, nodal_charge: ArrayLike, initial: ArrayLike | None = None
+    ) -> tuple[Array, Array, LinearSolveResult]:
         rhs = jnp.where(self.dirichlet_mask, 0.0, jnp.asarray(nodal_charge))
         guess = jnp.zeros_like(rhs) if initial is None else jnp.asarray(initial)
         result = solve(self.prepared_linear, rhs, initial_guess=guess)
@@ -300,7 +306,7 @@ class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
         )
 
 
-def jax_tree_where(predicate, candidate, current):
+def jax_tree_where(predicate: Array, candidate: PyTree, current: PyTree) -> PyTree:
     import jax
 
     return jax.tree.map(

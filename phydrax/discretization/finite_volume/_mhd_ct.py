@@ -8,7 +8,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -32,7 +33,7 @@ class ConstrainedMagneticStateLayout(StrictModule, NonTrainableState):
     electromotive_degree: int | None = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /):
+    def __init__(self, dimension: int, /) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (1, 2, 3):
             raise ValueError(
@@ -120,7 +121,7 @@ class UpwindConstrainedTransportPlan(StrictModule):
         reconstruction: MHDPrimitiveReconstructionPlan | None = None,
         electromotive_plan: AbstractUCTElectromotivePlan | None = None,
         boundary_set: ConstrainedMHDBoundarySet | None = None,
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedFiniteVolumeDynamics):
             raise TypeError("dynamics must be PreparedFiniteVolumeDynamics.")
         if not isinstance(bridge, StructuredCochainBridge):
@@ -405,9 +406,15 @@ class UpwindConstrainedTransportPlan(StrictModule):
             edge_circulation = jnp.zeros((0,), dtype=full.dtype)
             magnetic_rate = jnp.zeros_like(magnetic)
         else:
+            # Layouts of dimension two or more always carry an electromotive degree.
+            electromotive_degree = self.layout.electromotive_degree
+            if not (electromotive_degree is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: electromotive_degree is not None."
+                )
             edge_circulation = self.bridge.pack_electromotive(electromotive_components)
             magnetic_rate = -self.bridge.exterior_derivative(
-                int(self.layout.electromotive_degree), edge_circulation
+                int(electromotive_degree), edge_circulation
             )
         stable = jnp.asarray(float(cfl), dtype=full.dtype) / jnp.max(inverse_dt)
         fallback = jnp.any(jnp.stack(fallbacks, axis=0))

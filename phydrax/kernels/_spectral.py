@@ -8,7 +8,8 @@ from abc import abstractmethod
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from .._trainable import ParameterOwner
@@ -53,7 +54,7 @@ class HeatSpectralMultiplier(AbstractSpectralMultiplier):
 
     diffusion_time: Array
 
-    def __init__(self, diffusion_time: ArrayLike, /):
+    def __init__(self, diffusion_time: ArrayLike, /) -> None:
         value = jnp.asarray(diffusion_time, dtype=jnp.float64)
         if value.ndim != 0:
             raise ValueError("diffusion_time must be scalar.")
@@ -84,7 +85,7 @@ class MaternSpectralMultiplier(AbstractSpectralMultiplier):
     length_scale: Array
     smoothness: Array
 
-    def __init__(self, length_scale: ArrayLike, smoothness: ArrayLike, /):
+    def __init__(self, length_scale: ArrayLike, smoothness: ArrayLike, /) -> None:
         self.length_scale = _positive_scalar(length_scale, "length_scale")
         self.smoothness = _positive_scalar(smoothness, "smoothness")
 
@@ -124,7 +125,7 @@ class SpectralFeatureKernel(AbstractFiniteFeatureKernel):
         /,
         *,
         normalize: bool = True,
-    ):
+    ) -> None:
         if not isinstance(eigenbasis, SpectralDecomposition):
             raise TypeError(
                 "eigenbasis must be a Laplacian-provenance SpectralDecomposition."

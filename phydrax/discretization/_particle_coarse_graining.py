@@ -5,20 +5,31 @@
 from __future__ import annotations
 
 from math import pi
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ._measure import DiscreteMeasure
 from .particle._core import ParticleDiscretization, ParticleSetPlan
 from .particle._pairwise import particle_pair_geometry, ParticlePairRelation
 from .splatting import ParticleGridSplatPlan, PreparedParticleGridSplat
+
+
+if TYPE_CHECKING:
+    from .particle._dem import (
+        DEMEvaluation,
+        DEMRuntimeState,
+        PreparedSoftSphereDEMDynamics,
+    )
 
 
 class ParticleContinuumFields(StrictModule):
@@ -62,7 +73,7 @@ class ParticleCoarseGrainingPlan(StrictModule, NonTrainableState):
         *,
         quadrature_order: int = 4,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(splat, ParticleGridSplatPlan):
             raise TypeError("splat must be a ParticleGridSplatPlan.")
         order = int(quadrature_order)
@@ -105,7 +116,7 @@ class PreparedParticleCoarseGraining(StrictModule, NonTrainableState):
         particles: ParticleDiscretization,
         pair_capacity: int,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, ParticleCoarseGrainingPlan):
             raise TypeError("plan must be a ParticleCoarseGrainingPlan.")
         if not isinstance(particles, ParticleDiscretization):
@@ -275,7 +286,13 @@ class PreparedParticleCoarseGraining(StrictModule, NonTrainableState):
             "...i,...j->...ij", momentum_result.density, mean_velocity
         )
         kinetic_stress = -(raw_flux_result.density - advective_flux)
-        target_measure = self.particle_splat.target_measure.weights.reshape(
+        particle_measure = self.particle_splat.target_measure
+        # deposit_content above already rejected non-materialized target measures.
+        if not (isinstance(particle_measure, DiscreteMeasure)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(particle_measure, DiscreteMeasure)."
+            )
+        target_measure = particle_measure.weights.reshape(
             self.particle_splat.target_shape
         ).astype(position.dtype)
         total_measure = jnp.sum(target_measure)
@@ -340,7 +357,13 @@ class PreparedParticleCoarseGraining(StrictModule, NonTrainableState):
             successful,
         )
 
-    def evaluate_dem(self, dynamics, state, evaluation, /) -> ParticleContinuumFields:
+    def evaluate_dem(
+        self,
+        dynamics: PreparedSoftSphereDEMDynamics,
+        state: DEMRuntimeState,
+        evaluation: DEMEvaluation,
+        /,
+    ) -> ParticleContinuumFields:
         from .particle._dem import (
             DEMEvaluation,
             DEMRuntimeState,

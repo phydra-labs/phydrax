@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -34,7 +37,7 @@ _DATA = jnp.array(
 )
 
 
-def _gaussian(covariance_type="full"):
+def _gaussian(covariance_type: Any = "full") -> Any:
     return GaussianMixture(
         2,
         covariance_type=covariance_type,
@@ -47,8 +50,8 @@ def _gaussian(covariance_type="full"):
 
 @pytest.mark.parametrize("covariance_type", ["full", "tied", "diagonal", "spherical"])
 def test_gaussian_mixture_covariance_modes_are_spd_and_structurally_exact(
-    covariance_type,
-):
+    covariance_type: Any,
+) -> None:
     result = _gaussian(covariance_type).fit_batch(MLBatch(_DATA))
     model = result.as_trainable()
     covariance = model.covariance
@@ -76,7 +79,7 @@ def test_gaussian_mixture_covariance_modes_are_spd_and_structurally_exact(
         assert jnp.allclose(diagonal[..., 0], diagonal[..., 1], atol=1e-7)
 
 
-def test_gaussian_mixture_preserves_cases_and_ignores_target_axes():
+def test_gaussian_mixture_preserves_cases_and_ignores_target_axes() -> None:
     cases = jnp.stack((_DATA, 2.0 * _DATA + jnp.array([10.0, -4.0])))
     targets = jnp.arange(2 * 6 * 3.0).reshape(2, 6, 3)
     recipe = _gaussian("full")
@@ -95,7 +98,7 @@ def test_gaussian_mixture_preserves_cases_and_ignores_target_axes():
     assert recipe.component_count == 2
 
 
-def test_mixture_product_weights_and_masks_determine_mean_and_mass():
+def test_mixture_product_weights_and_masks_determine_mean_and_mass() -> None:
     features = jnp.array([[0.0], [10.0], [100.0], [999.0]])
     batch = MLBatch(
         features,
@@ -121,13 +124,15 @@ def test_mixture_product_weights_and_masks_determine_mean_and_mass():
     ).fit_batch(batch)
 
     assert product.status == ML_SUCCESS
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(product.as_trainable().means[0, 0], 6.0, atol=1e-5)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(statistical.as_trainable().means[0, 0], 7.5, atol=1e-5)
     assert jnp.allclose(product.diagnostics.component_mass, jnp.array([5.0]))
     assert jnp.allclose(product.diagnostics.effective_samples, 25.0 / 13.0)
 
 
-def test_random_mixture_initialization_requires_and_replays_explicit_key():
+def test_random_mixture_initialization_requires_and_replays_explicit_key() -> None:
     recipe = GaussianMixture(
         2,
         initialization="random",
@@ -144,14 +149,20 @@ def test_random_mixture_initialization_requires_and_replays_explicit_key():
     second = recipe.fit_batch(batch, key=key)
 
     assert first.status == ML_SUCCESS
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(first.as_trainable().means, second.as_trainable().means)
     assert jnp.array_equal(
-        first.as_trainable().covariance, second.as_trainable().covariance
+        # ty: ignore[unresolved-attribute]
+        first.as_trainable().covariance,
+        # ty: ignore[unresolved-attribute]
+        second.as_trainable().covariance,
     )
     assert jnp.array_equal(first.model(_DATA), second.model(_DATA))
 
 
-def test_gaussian_model_ties_choose_lowest_component_but_probabilities_stay_soft():
+def test_gaussian_model_ties_choose_lowest_component_but_probabilities_stay_soft() -> (
+    None
+):
     model = GaussianMixtureModel(
         jnp.array([0.5, 0.5]),
         jnp.array([[0.0], [0.0]]),
@@ -172,8 +183,8 @@ def test_gaussian_model_ties_choose_lowest_component_but_probabilities_stay_soft
 
 @pytest.mark.parametrize("covariance_type", ["full", "tied", "diagonal", "spherical"])
 def test_bayesian_mixture_exposes_each_covariance_mode_and_posterior_concentration(
-    covariance_type,
-):
+    covariance_type: Any,
+) -> None:
     prior = 0.7
     result = BayesianGaussianMixture(
         2,
@@ -231,7 +242,9 @@ def test_bayesian_mixture_exposes_each_covariance_mode_and_posterior_concentrati
         ),
     ],
 )
-def test_each_mixture_family_exercises_declared_fit_feature_and_weight_gradients(recipe):
+def test_each_mixture_family_exercises_declared_fit_feature_and_weight_gradients(
+    recipe: Any,
+) -> None:
     weights = jnp.array([1.0, 1.1, 0.9, 1.2, 0.8, 1.3])
     point = jnp.array([0.25, -0.1])
     feature_gradient = jax.grad(
@@ -280,7 +293,9 @@ def test_each_mixture_family_exercises_declared_fit_feature_and_weight_gradients
         ),
     ],
 )
-def test_each_mixture_family_exercises_declared_fit_hyperparameter_gradient(factory):
+def test_each_mixture_family_exercises_declared_fit_hyperparameter_gradient(
+    factory: Any,
+) -> None:
     gradient = jax.grad(
         lambda regularization: (
             factory(regularization)
@@ -292,7 +307,7 @@ def test_each_mixture_family_exercises_declared_fit_hyperparameter_gradient(fact
     assert jnp.isfinite(gradient)
 
 
-def test_mixture_prediction_parameter_gradient_is_finite():
+def test_mixture_prediction_parameter_gradient_is_finite() -> None:
     model = _gaussian("full").fit_batch(MLBatch(_DATA)).as_trainable()
     point = jnp.array([0.25, -0.1])
     gradient = jax.grad(
@@ -310,7 +325,7 @@ def test_mixture_prediction_parameter_gradient_is_finite():
     assert jnp.any(gradient != 0.0)
 
 
-def test_mixture_supports_complex_features_with_hermitian_spd_geometry():
+def test_mixture_supports_complex_features_with_hermitian_spd_geometry() -> None:
     features = jnp.array(
         [
             [1.0 + 1.0j, 0.0 + 0.5j],
@@ -328,18 +343,24 @@ def test_mixture_supports_complex_features_with_hermitian_spd_geometry():
     model = result.as_trainable()
 
     assert result.status == ML_SUCCESS
+    # ty: ignore[unresolved-attribute]
     assert jnp.issubdtype(model.means.dtype, jnp.complexfloating)
     assert jnp.allclose(
+        # ty: ignore[unresolved-attribute]
         model.covariance,
+        # ty: ignore[unresolved-attribute]
         jnp.conj(jnp.swapaxes(model.covariance, -1, -2)),
         atol=1e-6,
     )
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(jnp.linalg.eigvalsh(model.covariance) > 0.0)
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(jnp.isreal(model.log_prob(features)))
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(jnp.isfinite(model.log_prob(features)))
 
 
-def test_mixture_reports_empty_singleton_constant_nonfinite_and_nonconvergence():
+def test_mixture_reports_empty_singleton_constant_nonfinite_and_nonconvergence() -> None:
     empty = GaussianMixture(
         2,
         initialization="first",
@@ -382,7 +403,7 @@ def test_mixture_reports_empty_singleton_constant_nonfinite_and_nonconvergence()
     assert not nonconverged.diagnostics.converged
 
 
-def test_empty_component_error_and_capacity_failures_are_explicit():
+def test_empty_component_error_and_capacity_failures_are_explicit() -> None:
     features = jnp.array([[1000.0], [-1.0], [1.0]])
     empty_component = GaussianMixture(
         2,
@@ -400,7 +421,7 @@ def test_empty_component_error_and_capacity_failures_are_explicit():
         GaussianMixture(4, initialization="first").fit_batch(MLBatch(jnp.ones((3, 1))))
 
 
-def test_case_bound_mixture_rejects_wrong_case_and_feature_shapes():
+def test_case_bound_mixture_rejects_wrong_case_and_feature_shapes() -> None:
     cases = jnp.stack((_DATA, _DATA + jnp.array([10.0, -2.0])))
     model = _gaussian().fit_batch(MLBatch(cases)).as_trainable()
 

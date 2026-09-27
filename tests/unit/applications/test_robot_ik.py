@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -21,11 +24,11 @@ from phydrax.discretization.particle._reduced_articulation import (
 )
 
 
-def _quaternion_z(angle):
+def _quaternion_z(angle: Any) -> Any:
     return jnp.asarray((jnp.cos(0.5 * angle), 0.0, 0.0, jnp.sin(0.5 * angle)))
 
 
-def _one_joint_articulation(kind):
+def _one_joint_articulation(kind: Any) -> Any:
     body_ids = jnp.asarray((100, 101), dtype=jnp.int64)
     particles = phx.discretization.ParticleSetPlan(
         body_ids,
@@ -74,7 +77,7 @@ def _one_joint_articulation(kind):
     return articulation
 
 
-def _termination():
+def _termination() -> Any:
     return phx.optim.OptimizationTermination(
         absolute_optimality=1.0e-9,
         relative_optimality=0.0,
@@ -84,12 +87,12 @@ def _termination():
     )
 
 
-def _tip_transform():
+def _tip_transform() -> Any:
     return jnp.eye(4).at[0, 3].set(1.0)
 
 
 @pytest.mark.parametrize("task_kind", ("position", "orientation", "pose"))
-def test_one_hinge_reaches_analytic_frame_targets(task_kind):
+def test_one_hinge_reaches_analytic_frame_targets(task_kind: Any) -> None:
     articulation = _one_joint_articulation("hinge")
     angle = jnp.asarray(0.6)
     target_position = jnp.asarray((jnp.cos(angle), jnp.sin(angle), 0.0))
@@ -135,7 +138,7 @@ def test_one_hinge_reaches_analytic_frame_targets(task_kind):
     assert bool(result.task_residuals[0].feasible)
 
 
-def test_prismatic_target_and_joint_bounds_are_respected():
+def test_prismatic_target_and_joint_bounds_are_respected() -> None:
     articulation = _one_joint_articulation("prismatic")
     reachable = FramePositionTask(
         101,
@@ -176,7 +179,7 @@ def test_prismatic_target_and_joint_bounds_are_respected():
     assert float(bounded_result.task_residuals[0].bound_violation) > 0.4
 
 
-def test_conflicting_tasks_report_residual_without_false_success():
+def test_conflicting_tasks_report_residual_without_false_success() -> None:
     articulation = _one_joint_articulation("prismatic")
     left = FramePositionTask(
         101,
@@ -204,7 +207,7 @@ def test_conflicting_tasks_report_residual_without_false_success():
     np.testing.assert_allclose(jnp.abs(residuals), jnp.asarray((0.25, 0.25)), atol=2.0e-6)
 
 
-def test_pose_residual_is_invariant_to_target_quaternion_sign():
+def test_pose_residual_is_invariant_to_target_quaternion_sign() -> None:
     articulation = _one_joint_articulation("hinge")
     target_angle = jnp.asarray(0.7)
     target_position = jnp.asarray((jnp.cos(target_angle), jnp.sin(target_angle), 0.0))
@@ -236,7 +239,7 @@ def test_pose_residual_is_invariant_to_target_quaternion_sign():
     )
 
 
-def test_pi_rotation_chart_failure_is_typed_and_fails_closed():
+def test_pi_rotation_chart_failure_is_typed_and_fails_closed() -> None:
     articulation = _one_joint_articulation("hinge")
     task = FrameOrientationTask(
         101,
@@ -256,7 +259,7 @@ def test_pi_rotation_chart_failure_is_typed_and_fails_closed():
     assert int(result.status) == int(InverseKinematicsStatus.CHART_INVALID)
 
 
-def test_posture_residual_uses_articulation_configuration_difference():
+def test_posture_residual_uses_articulation_configuration_difference() -> None:
     articulation = _one_joint_articulation("hinge")
     task = FrameOrientationTask(
         101,
@@ -276,13 +279,13 @@ def test_posture_residual_uses_articulation_configuration_difference():
     assert evaluation.residual.shape == (4,)
 
 
-def test_residual_jit_and_implicit_local_solution_sensitivity():
+def test_residual_jit_and_implicit_local_solution_sensitivity() -> None:
     articulation = _one_joint_articulation("prismatic")
     initial = jnp.zeros((1,))
     termination = _termination()
     method = phx.optim.GaussNewton()
 
-    def make_plan(target):
+    def make_plan(target: Any) -> Any:
         return FrameInverseKinematicsPlan(
             articulation,
             (

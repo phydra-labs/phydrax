@@ -19,7 +19,8 @@ from enum import IntEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -54,7 +55,7 @@ class MeanFieldSarcomereFidelity(StrictModule, NonTrainableState):
 
     route_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.route_id = "cardiovascular-sarcomere-mean-field"
 
 
@@ -69,7 +70,7 @@ class StochasticMolecularSarcomereFidelity(StrictModule, NonTrainableState):
     realization_count: int = eqx.field(static=True)
     route_id: str = eqx.field(static=True)
 
-    def __init__(self, molecule_count: int, realization_count: int = 1, /):
+    def __init__(self, molecule_count: int, realization_count: int = 1, /) -> None:
         molecules = int(molecule_count)
         realizations = int(realization_count)
         if molecules < 1 or molecules != molecule_count:
@@ -165,7 +166,7 @@ class MeanFieldSarcomerePlan(StrictModule, NonTrainableState):
         lengthening_stress_limit: float = 1.5,
         balance_tolerance: float = 1.0e-6,
         fidelity: MeanFieldSarcomereFidelity | None = None,
-    ):
+    ) -> None:
         fidelity_ = MeanFieldSarcomereFidelity() if fidelity is None else fidelity
         if not isinstance(fidelity_, MeanFieldSarcomereFidelity):
             raise TypeError(
@@ -257,7 +258,7 @@ class SarcomereCouplingInputs(StrictModule, NonTrainableState):
         oxygen_tension_kpa: ArrayLike,
         oxidative_capacity_pmol_per_mm3_ms: ArrayLike,
         /,
-    ):
+    ) -> None:
         arrays = tuple(
             np.asarray(value)
             for value in (
@@ -311,7 +312,7 @@ class SarcomereState(StrictModule, NonTrainableState):
         time_ms: ArrayLike,
         plan_id: str,
         /,
-    ):
+    ) -> None:
         fractions = jnp.asarray(crossbridge_fractions)
         atp = jnp.asarray(atp_pmol_per_mm3)
         adp = jnp.asarray(adp_pmol_per_mm3)

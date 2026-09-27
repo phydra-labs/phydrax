@@ -10,7 +10,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 from phydrax.domain import AbstractGeometry, AbstractScalarDomain, Domain, DomainFunction
@@ -19,6 +20,7 @@ from phydrax.ein import contract
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._interpolation import inverse_distance_stencil
 from .._strict import StrictModule
+from ..typing import parse, PRNGKey
 from ._observation import PointObservationAction
 
 
@@ -139,7 +141,7 @@ class CardinalCorrectionEvidence(StrictModule):
         extension_scope: CardinalExtensionScope,
         preserves_multiplier_zeros: bool,
         uses_envelopes: bool,
-    ):
+    ) -> None:
         self.provider_id = str(provider_id)
         self.action_id = str(action_id)
         self.field = str(field)
@@ -313,7 +315,12 @@ class _CardinalBasisEvaluator(StrictModule):
         return jnp.take_along_axis(by_source, source, axis=-1)
 
     def _query_multiplier(
-        self, args: tuple[Any, ...], /, *, key=None, **kwargs: Any
+        self,
+        args: tuple[Any, ...],
+        /,
+        *,
+        key: PRNGKey | None = None,
+        **kwargs: Any,
     ) -> Array:
         if self.preservation_weight is None:
             return jnp.asarray(1.0, dtype=jnp.float64)
@@ -323,7 +330,7 @@ class _CardinalBasisEvaluator(StrictModule):
             dtype=jnp.float64,
         )
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         distance = self._distance_squared(args)
         weights = self._weights(distance) * self._envelope(distance)
         multiplier = self._query_multiplier(args, key=key, **kwargs)
@@ -341,7 +348,7 @@ class _CardinalLinearCombination(StrictModule):
     components: tuple[int, ...] | None = eqx.field(static=True)
     output_width: int | None = eqx.field(static=True)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         basis_values = jnp.asarray(
             self.basis.func(*args, key=key, **kwargs), dtype=jnp.float64
         )
@@ -378,7 +385,7 @@ class CardinalCorrectionAction(StrictModule):
         components: tuple[int, ...] | None,
         output_width: int | None,
         evidence: CardinalCorrectionEvidence,
-    ):
+    ) -> None:
         field_ = str(field)
         if field_ != evidence.field:
             raise ValueError("Cardinal action field and evidence field disagree.")
@@ -479,13 +486,12 @@ class CardinalCorrectionPlan(StrictModule):
         envelope_enabled: Sequence[bool] = (),
         envelope_scale: ArrayLike = 1.0,
         preservation_weight: DomainFunction | None = None,
-    ):
+    ) -> None:
         if not isinstance(action, PointObservationAction):
             raise TypeError("CardinalCorrectionPlan requires PointObservationAction.")
         if not isinstance(domain, Domain):
             raise TypeError("CardinalCorrectionPlan requires a Domain.")
-        if interpolation not in ("idw", "compact"):
-            raise ValueError("interpolation must be 'idw' or 'compact'.")
+        interpolation = parse(interpolation, CardinalInterpolation, "interpolation")
         count = action.observation_count
         anchors = _anchor_coordinates(domain, action)
         _validate_distinct_anchors(anchors, count)
@@ -670,7 +676,7 @@ class IDWCardinalCorrectionProvider(StrictModule):
         domain: Domain,
         /,
         **kwargs: Any,
-    ):
+    ) -> None:
         self.plan = CardinalCorrectionPlan(
             action,
             domain,
@@ -705,7 +711,7 @@ class CompactCardinalCorrectionProvider(StrictModule):
         domain: Domain,
         /,
         **kwargs: Any,
-    ):
+    ) -> None:
         self.plan = CardinalCorrectionPlan(
             action,
             domain,

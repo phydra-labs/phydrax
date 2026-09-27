@@ -11,12 +11,14 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from .._dtype_names import precision_dtype_name
 from .._fingerprint import canonical_fingerprint
-from .._precision import precision_dtype_name
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._algebra_spaces import AlgebraArraySpace
 from ._real_coordinates import AbstractRealCoordinateMap, RealCoordinateEvidence
 from ._spaces import ArraySpace
@@ -42,13 +44,12 @@ class AlgebraCoordinatePlan(StrictModule, NonTrainableState):
         public_axis: int = -1,
         backend_axis: int = 0,
         public_dtype: Any = np.float64,
-    ):
+    ) -> None:
         from ..metrix.algebra import AbstractFiniteRealAlgebraSpec, ComplexAlgebraSpec
 
         if not isinstance(algebra, AbstractFiniteRealAlgebraSpec):
             raise TypeError("algebra must implement AbstractFiniteRealAlgebraSpec.")
-        if public_storage not in ("native_complex", "real_coordinates"):
-            raise ValueError("Unknown algebra coordinate storage kind.")
+        public_storage = parse(public_storage, AlgebraCoordinateStorage, "public_storage")
         if public_storage == "native_complex" and not isinstance(
             algebra, ComplexAlgebraSpec
         ):
@@ -80,13 +81,14 @@ class AlgebraCoordinatePlan(StrictModule, NonTrainableState):
 
 
 class PreparedAlgebraCoordinates(AbstractRealCoordinateMap, NonTrainableState):
+    coordinate_space: AlgebraArraySpace
     plan: AlgebraCoordinatePlan
     base_shape: tuple[int, ...] = eqx.field(static=True)
     public_shape: tuple[int, ...] = eqx.field(static=True)
     public_axis: int = eqx.field(static=True)
     backend_axis: int = eqx.field(static=True)
 
-    def __init__(self, plan: AlgebraCoordinatePlan, base_shape: Sequence[int], /):
+    def __init__(self, plan: AlgebraCoordinatePlan, base_shape: Sequence[int], /) -> None:
         if not isinstance(plan, AlgebraCoordinatePlan):
             raise TypeError("plan must be AlgebraCoordinatePlan.")
         base = tuple(base_shape)

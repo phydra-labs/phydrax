@@ -16,7 +16,7 @@ from phydrax.operators.integral.vortex._gaussian2d import (
 from phydrax.operators.integral.vortex._gaussian3d import GaussianErfVortexKernel3D
 
 
-def test_gaussian_2d_kernel_has_lamb_oseen_profile_and_regular_center_limit():
+def test_gaussian_2d_kernel_has_lamb_oseen_profile_and_regular_center_limit() -> None:
     displacement = jnp.asarray(((0.0, 0.0), (0.7, -0.4), (4.0, 0.0)))
     circulation = jnp.asarray((1.3, -0.8, 2.0))
     core_radius = jnp.asarray((0.35, 0.6, 0.25))
@@ -62,7 +62,7 @@ def test_gaussian_2d_kernel_has_lamb_oseen_profile_and_regular_center_limit():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_gaussian_erf_3d_kernel_matches_biot_savart_and_gaussian_vorticity():
+def test_gaussian_erf_3d_kernel_matches_biot_savart_and_gaussian_vorticity() -> None:
     kernel = GaussianErfVortexKernel3D()
     displacement = jnp.asarray(((0.0, 0.0, 0.0), (0.8, -0.3, 0.5), (5.0, 0.0, 0.0)))
     strength = jnp.asarray(((1.0, -0.5, 0.25), (0.2, 1.1, -0.7), (0.0, 2.0, 0.0)))

@@ -217,7 +217,7 @@ class FittedColumnTransformer(AbstractFittedModel):
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
         derivative_contract: DerivativeContract,
-    ):
+    ) -> None:
         transformers_ = tuple(transformers)
         results = tuple(fit_results)
         input_schemas = tuple(branch_input_schemas)
@@ -264,7 +264,10 @@ class FittedColumnTransformer(AbstractFittedModel):
             else _with_remainder(branches, self.remainder_indices)
         )
 
-    def __call__(self, x: Any, /, *, key: Any = None):
+    # Sparse inputs pass through as SparseFeatures; the base model contract declares Array.
+    def __call__(  # ty: ignore[invalid-method-override]
+        self, x: Any, /, *, key: Any = None
+    ) -> FeatureArray:
         keys = _split_key(key, len(self.transformers))
         blockwise = self._input_binding.batch_mode == "blockwise"
         outputs: list[tuple[str, FeatureArray]] = []
@@ -315,7 +318,7 @@ class ColumnTransformer(AbstractRecipe):
         /,
         *,
         remainder: Literal["drop", "passthrough"] = "drop",
-    ):
+    ) -> None:
         if remainder not in ("drop", "passthrough"):
             raise ValueError("remainder must be 'drop' or 'passthrough'.")
         self.transformers = _normalize_transformers(transformers)

@@ -19,7 +19,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -184,7 +185,7 @@ class ChromatinDynamicsPlan(StrictModule, NonTrainableState):
         spring_rest_length: float = 0.0,
         realization_id: int = 0,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         sites = int(site_count)
         dimension = int(ambient_dimension)
         capacity = int(relation_capacity)
@@ -316,7 +317,7 @@ class PreparedChromatinDynamics(StrictModule, NonTrainableState):
     springs: PreparedPairSpringEnergy
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ChromatinDynamicsPlan, /):
+    def __init__(self, plan: ChromatinDynamicsPlan, /) -> None:
         if not isinstance(plan, ChromatinDynamicsPlan):
             raise TypeError("plan must be a ChromatinDynamicsPlan.")
         relations = plan.relations.prepare(prepared_scope_id=plan.plan_id)
@@ -739,7 +740,7 @@ class ActinNetworkPlan(StrictModule, NonTrainableState):
         severing_rate: float = 0.01,
         realization_id: int = 0,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         nodes = int(node_capacity)
         edges = int(edge_capacity)
         dimension = int(ambient_dimension)
@@ -873,7 +874,7 @@ class PreparedActinNetwork(StrictModule, NonTrainableState):
     springs: PreparedPairSpringEnergy
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: ActinNetworkPlan, /):
+    def __init__(self, plan: ActinNetworkPlan, /) -> None:
         if not isinstance(plan, ActinNetworkPlan):
             raise TypeError("plan must be an ActinNetworkPlan.")
         relations = plan.relations.prepare(prepared_scope_id=plan.plan_id)
@@ -1484,7 +1485,7 @@ class MotorCrosslinkerPlan(StrictModule, NonTrainableState):
         stall_force: float = 10.0,
         realization_id: int = 0,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         endpoints = int(endpoint_capacity)
         capacity = int(relation_capacity)
         dimension = int(ambient_dimension)
@@ -1587,7 +1588,7 @@ class PreparedMotorCrosslinkers(StrictModule, NonTrainableState):
     springs: PreparedPairSpringEnergy
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MotorCrosslinkerPlan, /):
+    def __init__(self, plan: MotorCrosslinkerPlan, /) -> None:
         if not isinstance(plan, MotorCrosslinkerPlan):
             raise TypeError("plan must be a MotorCrosslinkerPlan.")
         relations = plan.relations.prepare(prepared_scope_id=plan.plan_id)
@@ -1825,7 +1826,7 @@ class FocalAdhesionPlan(StrictModule, NonTrainableState):
         force_scale: float = 1.0,
         realization_id: int = 0,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         cells = int(cell_endpoint_count)
         substrate = int(substrate_endpoint_count)
         capacity = int(relation_capacity)
@@ -1943,7 +1944,7 @@ class PreparedFocalAdhesions(StrictModule, NonTrainableState):
     springs: PreparedPairSpringEnergy
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: FocalAdhesionPlan, /):
+    def __init__(self, plan: FocalAdhesionPlan, /) -> None:
         if not isinstance(plan, FocalAdhesionPlan):
             raise TypeError("plan must be a FocalAdhesionPlan.")
         relations = plan.relations.prepare(prepared_scope_id=plan.plan_id)

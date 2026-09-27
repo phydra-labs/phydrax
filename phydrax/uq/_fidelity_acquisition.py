@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -44,7 +45,7 @@ class TargetVarianceAcquisitionPolicy(StrictModule, NonTrainableState):
         batch_size: int = 1,
         cost_unit: str = "relative-cost",
         policy_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(path, FidelityPath):
             raise TypeError("path must be a FidelityPath.")
         points = _as_points(target_points)

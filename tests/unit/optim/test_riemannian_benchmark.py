@@ -8,7 +8,7 @@ from tools.riemannian_optim_benchmarks import (
 )
 
 
-def test_riemannian_benchmark_records_progress_and_invariants():
+def test_riemannian_benchmark_records_progress_and_invariants() -> None:
     report = run_smoke_benchmarks()
     line_search_records = {
         record["name"]: record for record in report["line_search_records"]
@@ -63,7 +63,7 @@ def test_riemannian_benchmark_records_progress_and_invariants():
     assert records["affine_invariant_spd"]["minimum_eigenvalue"] > 0.0
 
 
-def test_advanced_optimizers_qualify_across_builtin_manifold_families():
+def test_advanced_optimizers_qualify_across_builtin_manifold_families() -> None:
     report = run_qualification_benchmarks(steps=8)
     records = {
         (record["geometry"], record["optimizer"]): record for record in report["records"]

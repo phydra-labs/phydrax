@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -20,18 +23,18 @@ from phydrax.terms import ResidualPenalty
 
 
 def _interval_term(
-    policy,
+    policy: Any,
     *,
-    num_points=32,
-    upper=1.0,
-    residual_scale=1.0,
-    residual_power=1,
-):
+    num_points: Any = 32,
+    upper: Any = 1.0,
+    residual_scale: Any = 1.0,
+    residual_power: Any = 1,
+) -> Any:
     domain = Interval1d(0.0, upper)
     structure = SampleLayout((("x",),))
 
     @domain.Function("x")
-    def coordinate(x):
+    def coordinate(x: Any) -> Any:
         return residual_scale * (x[0] / upper) ** residual_power
 
     condition = Residual("u", domain.component(), lambda _u: coordinate)
@@ -48,13 +51,13 @@ def _interval_term(
     return domain, term, {"u": domain.Function()(0.0)}
 
 
-def _coordinates(population):
+def _coordinates(population: Any) -> Any:
     field = population.batch.points["x"]
     assert isinstance(field, cx.AxisArray)
     return jnp.asarray(field.data).reshape((-1,))
 
 
-def test_periodic_collocation_replaces_a_fixed_size_population():
+def test_periodic_collocation_replaces_a_fixed_size_population() -> None:
     policy = PeriodicCollocation(refresh_every=2, sampler="uniform")
     _domain, term, functions = _interval_term(policy)
     initial = policy.initialize(term, key=jr.key(0))
@@ -65,7 +68,7 @@ def test_periodic_collocation_replaces_a_fixed_size_population():
     assert not jnp.allclose(_coordinates(refreshed), _coordinates(initial))
 
 
-def test_collocation_policy_accepts_typed_reference_design():
+def test_collocation_policy_accepts_typed_reference_design() -> None:
     policy = R3(
         refresh_every=1,
         sampler=HaltonDesign(scrambled=True),
@@ -85,7 +88,7 @@ def test_collocation_policy_accepts_typed_reference_design():
     assert isinstance(refreshed.batch, PointBatch)
 
 
-def test_r3_retains_difficult_points_and_preserves_population_size():
+def test_r3_retains_difficult_points_and_preserves_population_size() -> None:
     policy = R3(refresh_every=1, sampler="uniform")
     _domain, term, functions = _interval_term(policy, num_points=64)
     initial = policy.initialize(term, key=jr.key(4))
@@ -97,7 +100,7 @@ def test_r3_retains_difficult_points_and_preserves_population_size():
     assert jnp.all(jnp.isin(difficult, refreshed_x))
 
 
-def test_fixed_capacity_rar_d_activates_new_slots():
+def test_fixed_capacity_rar_d_activates_new_slots() -> None:
     policy = RARD(
         refresh_every=1,
         sampler="uniform",
@@ -114,7 +117,7 @@ def test_fixed_capacity_rar_d_activates_new_slots():
     assert _coordinates(refreshed).shape == (40,)
 
 
-def test_coreset_collocation_preserves_capacity_and_reports_candidate_cost():
+def test_coreset_collocation_preserves_capacity_and_reports_candidate_cost() -> None:
     policy = CoresetCollocation(
         refresh_every=1,
         sampler="halton_scrambled",
@@ -145,7 +148,9 @@ def test_coreset_collocation_preserves_capacity_and_reports_candidate_cost():
     assert int(refreshed.last_refresh) == 1
 
 
-def test_coreset_defaults_delay_refresh_and_controlled_policy_preserves_activation():
+def test_coreset_defaults_delay_refresh_and_controlled_policy_preserves_activation() -> (
+    None
+):
     policy = CoresetCollocation(refresh_every=5)
     _domain, constraint, _functions = _interval_term(policy)
     population = policy.initialize(constraint, key=jr.key(30))
@@ -157,7 +162,7 @@ def test_coreset_defaults_delay_refresh_and_controlled_policy_preserves_activati
     assert controlled.schedule.start_at == 10
 
 
-def test_coreset_importance_is_invariant_to_residual_units():
+def test_coreset_importance_is_invariant_to_residual_units() -> None:
     policy = CoresetCollocation(
         refresh_every=1,
         start_at=1,
@@ -198,7 +203,7 @@ def test_coreset_importance_is_invariant_to_residual_units():
     assert jnp.array_equal(_coordinates(base_refreshed), _coordinates(scaled_refreshed))
 
 
-def test_coreset_auto_scale_is_affine_invariant_and_ess_guard_is_enforced():
+def test_coreset_auto_scale_is_affine_invariant_and_ess_guard_is_enforced() -> None:
     policy = CoresetCollocation(
         refresh_every=1,
         start_at=1,
@@ -252,7 +257,7 @@ def test_coreset_auto_scale_is_affine_invariant_and_ess_guard_is_enforced():
     assert unit_metrics["coreset_importance_effective_sample_fraction"] >= 0.75
 
 
-def test_coreset_fill_distance_guard_retains_the_current_population():
+def test_coreset_fill_distance_guard_retains_the_current_population() -> None:
     policy = CoresetCollocation(
         refresh_every=1,
         start_at=1,
@@ -290,7 +295,7 @@ def test_coreset_fill_distance_guard_retains_the_current_population():
     assert jnp.isfinite(metrics["coreset_selection_mmd"])
 
 
-def test_coreset_collocation_is_declared_conditional():
+def test_coreset_collocation_is_declared_conditional() -> None:
     support = phx.sampling.collocation.collocation_policy_support(CoresetCollocation())
 
     assert support.name == "coreset"

@@ -13,8 +13,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..nn.flows import AbstractFlowDistribution
@@ -25,6 +26,7 @@ from ._variational import (
     fit_variational,
     MeanFieldGaussianFamily,
     VariationalConfig,
+    VariationalDiagnostics,
     VariationalResult,
 )
 
@@ -49,7 +51,7 @@ class FlowVariationalFamily(AbstractVariationalFamily):
         flow: AbstractFlowDistribution,
         reference: PyTree[Any],
         /,
-    ):
+    ) -> None:
         if not isinstance(flow, AbstractFlowDistribution):
             raise TypeError("flow must be an AbstractFlowDistribution.")
         flat_reference, unravel = ravel_pytree(reference)
@@ -157,7 +159,7 @@ class FlowVariationalConfig(StrictModule):
         flow_layers: int = 6,
         nn_width: int = 64,
         nn_depth: int = 2,
-    ):
+    ) -> None:
         initialization_ = (
             VariationalConfig(num_steps=500) if initialization is None else initialization
         )
@@ -225,7 +227,7 @@ class FlowVariationalResult(StrictModule):
         return self.variational.log_variational
 
     @property
-    def diagnostics(self):
+    def diagnostics(self) -> VariationalDiagnostics:
         return self.variational.diagnostics
 
     @property

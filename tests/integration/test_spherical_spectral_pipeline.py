@@ -8,7 +8,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_spherical_space_composes_laplacian_noise_kernel_and_sfno():
+def test_spherical_space_composes_laplacian_noise_kernel_and_sfno() -> None:
     space = phx.discretization.SphericalSpectralPlan(4).prepare()
     plan = space.transform
     theta, phi = jnp.meshgrid(plan.theta, plan.phi, indexing="ij")

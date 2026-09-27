@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -14,14 +17,14 @@ import phydrax as phx
 class BlockLimitedSquaredExponentialKernel(phx.kernels.AbstractPositiveDefiniteKernel):
     max_left_count: int = eqx.field(static=True)
 
-    def __init__(self, max_left_count: int):
+    def __init__(self, max_left_count: int) -> None:
         self.max_left_count = int(max_left_count)
 
-    def pairwise(self, left, right, /):
+    def pairwise(self, left: Any, right: Any, /) -> Any:
         difference = jnp.ravel(left) - jnp.ravel(right)
         return jnp.exp(-0.5 * jnp.dot(difference, difference))
 
-    def matrix(self, left, right, /):
+    def matrix(self, left: Any, right: Any, /) -> Any:
         left_array = jnp.asarray(left)
         right_array = jnp.asarray(right)
         if left_array.shape[0] > self.max_left_count:
@@ -30,23 +33,23 @@ class BlockLimitedSquaredExponentialKernel(phx.kernels.AbstractPositiveDefiniteK
             lambda point: jax.vmap(lambda other: self.pairwise(point, other))(right_array)
         )(left_array)
 
-    def diagonal(self, points, /):
+    def diagonal(self, points: Any, /) -> Any:
         return jnp.ones((jnp.asarray(points).shape[0],), dtype=jnp.asarray(points).dtype)
 
     @property
-    def max_derivative_order(self):
+    def max_derivative_order(self) -> Any:
         return None
 
     @property
-    def is_unit_diagonal(self):
+    def is_unit_diagonal(self) -> bool:
         return True
 
     @property
-    def kernel_id(self):
+    def kernel_id(self) -> Any:
         return f"block-limited-se:{self.max_left_count}"
 
 
-def _state(*, noise=0.08, length_scale=0.25):
+def _state(*, noise: Any = 0.08, length_scale: Any = 0.25) -> Any:
     return phx.uq.GaussianProcessLikelihoodState(
         kernel=phx.kernels.Matern32Kernel(length_scale=length_scale),
         noise_scale=noise,
@@ -54,14 +57,14 @@ def _state(*, noise=0.08, length_scale=0.25):
     )
 
 
-def _problem(count=10):
+def _problem(count: Any = 10) -> Any:
     points = jnp.linspace(0.0, 1.0, count)
     observations = 0.7 * points + 0.12 * jnp.sin(2.0 * jnp.pi * points)
     mean = 0.65 * points
     return points, observations, mean
 
 
-def test_full_rank_actions_recover_exact_gp_and_exact_log_evidence():
+def test_full_rank_actions_recover_exact_gp_and_exact_log_evidence() -> None:
     points, observations, mean = _problem(9)
     state = _state()
     exact = phx.uq.ExactGaussianProcessDiscrepancy(points, observations)
@@ -94,7 +97,7 @@ def test_full_rank_actions_recover_exact_gp_and_exact_log_evidence():
     )
 
 
-def test_action_basis_changes_leave_posterior_and_elbo_invariant():
+def test_action_basis_changes_leave_posterior_and_elbo_invariant() -> None:
     points, observations, mean = _problem(11)
     state = _state()
     key_s, key_r = jr.split(jr.key(11))
@@ -124,7 +127,7 @@ def test_action_basis_changes_leave_posterior_and_elbo_invariant():
     )
 
 
-def test_lower_rank_covariance_is_conservative_and_nested_actions_reduce_it():
+def test_lower_rank_covariance_is_conservative_and_nested_actions_reduce_it() -> None:
     points, observations, mean = _problem(10)
     state = _state()
     model = phx.uq.ComputationAwareGaussianProcessDiscrepancy(points, observations)
@@ -162,7 +165,7 @@ def test_lower_rank_covariance_is_conservative_and_nested_actions_reduce_it():
     assert residual.shape == observations.shape
 
 
-def test_diagonal_moments_match_full_condition_and_factor_reuses_residuals():
+def test_diagonal_moments_match_full_condition_and_factor_reuses_residuals() -> None:
     points, observations, mean = _problem(12)
     state = _state(noise=jnp.linspace(0.04, 0.09, points.size))
     actions = phx.uq.BlockSparseGaussianProcessActionPolicy.from_random(
@@ -189,7 +192,7 @@ def test_diagonal_moments_match_full_condition_and_factor_reuses_residuals():
     assert first.output_dims == ("query",)
 
 
-def test_chunked_kernel_action_never_requests_full_left_design():
+def test_chunked_kernel_action_never_requests_full_left_design() -> None:
     points, observations, mean = _problem(14)
     state = phx.uq.GaussianProcessLikelihoodState(
         kernel=BlockLimitedSquaredExponentialKernel(1),
@@ -217,7 +220,7 @@ def test_chunked_kernel_action_never_requests_full_left_design():
     assert jnp.all(predicted_variance >= 0.0)
 
 
-def test_full_covariance_resource_limit_preserves_diagonal_prediction():
+def test_full_covariance_resource_limit_preserves_diagonal_prediction() -> None:
     points, observations, mean = _problem(8)
     state = _state()
     factor = phx.uq.ComputationAwareGaussianProcessDiscrepancy(
@@ -240,7 +243,7 @@ def test_full_covariance_resource_limit_preserves_diagonal_prediction():
         factor.condition(observations - mean, query)
 
 
-def test_rank_deficient_actions_retain_failure_evidence_and_fail_on_use():
+def test_rank_deficient_actions_retain_failure_evidence_and_fail_on_use() -> None:
     points, observations, mean = _problem(7)
     duplicate = jnp.stack((jnp.ones(points.size), jnp.ones(points.size)), axis=1)
     factor = phx.uq.ComputationAwareGaussianProcessDiscrepancy(
@@ -260,11 +263,11 @@ def test_rank_deficient_actions_retain_failure_evidence_and_fail_on_use():
         factor.conditioner(points)
 
 
-def test_kernel_noise_mean_and_action_gradients_are_finite():
+def test_kernel_noise_mean_and_action_gradients_are_finite() -> None:
     points, observations, mean = _problem(8)
     initial_actions = jnp.linspace(0.4, 1.4, points.size)
 
-    def objective(parameters):
+    def objective(parameters: Any) -> Any:
         state = phx.uq.GaussianProcessLikelihoodState(
             kernel=phx.kernels.AmplitudeKernel(
                 phx.kernels.Matern32Kernel(

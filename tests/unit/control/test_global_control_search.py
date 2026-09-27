@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import diffrax as dfx
 import jax.numpy as jnp
 import jax.random as jr
@@ -15,7 +18,7 @@ from tests._control_systems import (
 )
 
 
-def _quadratic_problem(*, initial_state=None, num_steps=2):
+def _quadratic_problem(*, initial_state: Any = None, num_steps: Any = 2) -> Any:
     times = jnp.linspace(0.0, 1.0, num_steps + 1)
     time_grid = phx.dynamics.TimeGrid(times, time_id=f"search-time-{num_steps}")
     dynamics = make_discrete_control_dynamics(
@@ -41,7 +44,7 @@ def _quadratic_problem(*, initial_state=None, num_steps=2):
     return problem, parameterization
 
 
-def _search(population_size=8, max_generations=2):
+def _search(population_size: Any = 8, max_generations: Any = 2) -> Any:
     return phx.optim.DifferentialEvolutionSearch(
         population_size,
         max_generations,
@@ -51,7 +54,7 @@ def _search(population_size=8, max_generations=2):
     )
 
 
-def test_search_is_reproducible_bounded_and_preserves_provenance():
+def test_search_is_reproducible_bounded_and_preserves_provenance() -> None:
     problem, parameterization = _quadratic_problem()
     shape = parameterization.parameter_shape
     lower = -jnp.ones(shape)
@@ -120,7 +123,7 @@ def test_search_is_reproducible_bounded_and_preserves_provenance():
     assert np.all(np.diff(np.asarray(result.best_objective_history)) <= 0.0)
 
 
-def test_coefficient_layout_and_bounds_are_strict_and_never_repaired():
+def test_coefficient_layout_and_bounds_are_strict_and_never_repaired() -> None:
     problem, parameterization = _quadratic_problem()
     search = _search(population_size=4, max_generations=0)
     shape = parameterization.parameter_shape
@@ -164,7 +167,7 @@ def test_coefficient_layout_and_bounds_are_strict_and_never_repaired():
     )
 
 
-def test_invalid_candidates_are_counted_without_hiding_valid_rollouts():
+def test_invalid_candidates_are_counted_without_hiding_valid_rollouts() -> None:
     times = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 1.0]),
         time_id="invalid-search-time",
@@ -230,7 +233,7 @@ def test_invalid_candidates_are_counted_without_hiding_valid_rollouts():
     assert jnp.all(jnp.isinf(invalid_result.population_objectives))
 
 
-def test_population_evaluation_preserves_case_and_coefficient_axes():
+def test_population_evaluation_preserves_case_and_coefficient_axes() -> None:
     initial_states = jnp.asarray([[0.0], [0.25]])
     problem, parameterization = _quadratic_problem(initial_state=initial_states)
     shape = problem.case_shape + parameterization.parameter_shape
@@ -255,7 +258,7 @@ def test_population_evaluation_preserves_case_and_coefficient_axes():
     )
 
 
-def test_bspline_search_improves_objective_and_emits_a_local_control_seed():
+def test_bspline_search_improves_objective_and_emits_a_local_control_seed() -> None:
     problem, _ = _quadratic_problem(num_steps=4)
     grid = phx.nn.models.BSplineGrid(
         jnp.asarray([0.0, 0.0, 0.5, 1.0, 1.0]),
@@ -308,7 +311,7 @@ def test_bspline_search_improves_objective_and_emits_a_local_control_seed():
     )
 
 
-def test_differential_search_rollouts_respect_piecewise_constant_jumps():
+def test_differential_search_rollouts_respect_piecewise_constant_jumps() -> None:
     grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 1.0, 2.5]), time_id="search-control-jump"
     )

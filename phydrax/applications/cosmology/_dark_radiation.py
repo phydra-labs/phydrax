@@ -11,7 +11,8 @@ from enum import IntEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -67,7 +68,7 @@ class DarkRadiationPacket(StrictModule, NonTrainableState):
         physical_momentum: ArrayLike,
         comoving_position: ArrayLike,
         emission_scale_factor: ArrayLike,
-    ):
+    ) -> None:
         energy = jnp.asarray(physical_energy)
         if not jnp.issubdtype(energy.dtype, jnp.floating):
             raise TypeError("Dark-radiation packet energy must use a floating dtype.")
@@ -158,8 +159,8 @@ class DarkRadiationLedgerPlan(StrictModule, NonTrainableState):
         momentum_unit: str = "physical-mass*physical-length/physical-time",
         position_unit: str = "comoving-length",
         absolute_balance_tolerance: float = 0.0,
-        relative_balance_tolerance: float = 64.0 * np.finfo(np.float64).eps,
-    ):
+        relative_balance_tolerance: float = float(64.0 * np.finfo(np.float64).eps),
+    ) -> None:
         capacity_ = int(capacity)
         dimension_ = int(dimension)
         light_speed = float(speed_of_light)
@@ -211,7 +212,7 @@ class DarkRadiationLedgerPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def empty(self, *, dtype=jnp.float64) -> DarkRadiationLedger:
+    def empty(self, *, dtype: DTypeLike = jnp.float64) -> DarkRadiationLedger:
         dtype_ = jnp.dtype(dtype)
         if not jnp.issubdtype(dtype_, jnp.floating):
             raise TypeError("Dark-radiation ledgers require a floating dtype.")

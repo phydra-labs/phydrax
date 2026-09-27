@@ -19,6 +19,7 @@ import numpy as np
 from ..._external_resource import BoundedResource
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float
 from ...applications.cosmology._force_scalability import CosmologySnapshotProduct
 from ...artifacts import ScientificArtifactEnvelope
 from ...qualification import read_reference_artifact, ReferenceArtifactManifest
@@ -57,7 +58,7 @@ class ConceptSnapshotImport(StrictModule, NonTrainableState):
         source_time_unit: str,
         source_length_unit: str,
         source_mass_unit: str,
-    ):
+    ) -> None:
         if not isinstance(snapshot, CosmologySnapshotProduct):
             raise TypeError("snapshot must be CosmologySnapshotProduct.")
         if not isinstance(source, ReferenceArtifactManifest):
@@ -135,13 +136,6 @@ def _text(value: object, name: str, /) -> str:
     return result
 
 
-def _positive_scale(value: float, name: str, /) -> float:
-    scale = float(value)
-    if not np.isfinite(scale) or scale <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return scale
-
-
 def _artifact(
     source: ReferenceArtifactManifest,
     /,
@@ -206,9 +200,9 @@ def read_concept_snapshot(
         raise ValueError("CONCEPT particle positions must be declared comoving.")
     if isinstance(maximum_particles, bool) or int(maximum_particles) <= 0:
         raise ValueError("maximum_particles must be a positive integer.")
-    length_factor = _positive_scale(position_scale, "position_scale")
-    mass_factor = _positive_scale(mass_scale, "mass_scale")
-    time_factor = _positive_scale(time_scale, "time_scale")
+    length_factor = positive_finite_float(position_scale, "position_scale")
+    mass_factor = positive_finite_float(mass_scale, "mass_scale")
+    time_factor = positive_finite_float(time_scale, "time_scale")
     length_unit = str(target_length_unit).strip()
     mass_unit = str(target_mass_unit).strip()
     if not length_unit or not mass_unit:

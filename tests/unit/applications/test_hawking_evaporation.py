@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -16,11 +18,11 @@ from phydrax.applications.compact_objects._hawking import (
 )
 
 
-def _scale():
+def _scale() -> Any:
     return RelativityScaleContract(DimensionalScaleContract.si(), 1, 1, 1, 1)
 
 
-def _tail(*, frequency=(0.0, 0.0, 0.0), modes=(0.0, 0.0, 0.0)):
+def _tail(*, frequency: Any = (0.0, 0.0, 0.0), modes: Any = (0.0, 0.0, 0.0)) -> Any:
     return HawkingTailEvidence(
         frequency,
         modes,
@@ -30,7 +32,7 @@ def _tail(*, frequency=(0.0, 0.0, 0.0), modes=(0.0, 0.0, 0.0)):
     )
 
 
-def _scattering(plan, graybody, slopes, tail=None):
+def _scattering(plan: Any, graybody: Any, slopes: Any, tail: Any = None) -> Any:
     sources = tuple(
         tuple(
             f"radial:{mode}:{frequency}" for frequency in range(plan.frequency_capacity)
@@ -54,15 +56,15 @@ def _scattering(plan, graybody, slopes, tail=None):
 
 
 def _evaluate(
-    plan,
-    scattering,
-    source_state,
-    temperature,
-    angular_velocity,
-    horizon_source_id,
+    plan: Any,
+    scattering: Any,
+    source_state: Any,
+    temperature: Any,
+    angular_velocity: Any,
+    horizon_source_id: Any,
     *,
-    horizon_qualified=True,
-):
+    horizon_qualified: Any = True,
+) -> Any:
     return evaluate_hawking_spectrum(
         plan,
         source_state,
@@ -78,16 +80,19 @@ def _evaluate(
     )
 
 
-def test_unruh_statistics_superradiance_and_large_exponents_are_finite():
+def test_unruh_statistics_superradiance_and_large_exponents_are_finite() -> None:
     scale = _scale()
     scalar = QuantumFieldSpecies("massless-scalar", 0, "boson")
     spinor = QuantumFieldSpecies("massless-spinor", 0.5, "fermion")
     plan = HawkingSpectrumPlan(
         scale,
         (scalar, spinor),
+        # ty: ignore[invalid-argument-type]
         (0.5, 1.0, 1000.0),
         (scalar.species_id, spinor.species_id),
+        # ty: ignore[invalid-argument-type]
         (2.0, 0.5),
+        # ty: ignore[invalid-argument-type]
         (2.0, 0.5),
         mode_ids=("scalar:2:2", "spinor:1/2:1/2"),
     )
@@ -127,15 +132,20 @@ def test_unruh_statistics_superradiance_and_large_exponents_are_finite():
     assert result.species_ids == (scalar.species_id, spinor.species_id)
 
 
-def test_schwarzschild_mode_pair_cancels_angular_flux_and_tail_gates_convergence():
+def test_schwarzschild_mode_pair_cancels_angular_flux_and_tail_gates_convergence() -> (
+    None
+):
     scale = _scale()
     photon = QuantumFieldSpecies("photon", 1, "boson", multiplicity=2)
     plan = HawkingSpectrumPlan(
         scale,
         (photon,),
+        # ty: ignore[invalid-argument-type]
         (0.0, 0.2, 0.4),
         (photon.species_id, photon.species_id),
+        # ty: ignore[invalid-argument-type]
         (1, 1),
+        # ty: ignore[invalid-argument-type]
         (-1, 1),
         mode_ids=("photon:1:-1", "photon:1:1"),
     )
@@ -191,22 +201,25 @@ def test_schwarzschild_mode_pair_cancels_angular_flux_and_tail_gates_convergence
     assert not bool(unqualified_horizon.qualified)
 
 
-def test_bounded_kerr_evaporation_coevolves_and_terminates_fail_closed():
+def test_bounded_kerr_evaporation_coevolves_and_terminates_fail_closed() -> None:
     scale = _scale()
     scalar = QuantumFieldSpecies("scalar", 0, "boson")
     plan = HawkingSpectrumPlan(
         scale,
         (scalar,),
+        # ty: ignore[invalid-argument-type]
         (0.5, 1.0, 1.5),
         (scalar.species_id,),
+        # ty: ignore[invalid-argument-type]
         (2,),
+        # ty: ignore[invalid-argument-type]
         (2,),
         mode_ids=("scalar:2:2",),
     )
     scattering = _scattering(plan, ((-0.1, 0.0, 0.1),), (0.2,))
     initial = KerrEvaporationState(10.0, 20.0, state_id="initial-kerr")
 
-    def spectrum_for_state(state):
+    def spectrum_for_state(state: Any) -> Any:
         return _evaluate(
             plan,
             scattering,
@@ -219,6 +232,7 @@ def test_bounded_kerr_evaporation_coevolves_and_terminates_fail_closed():
     spectrum = spectrum_for_state(initial)
     evolution_plan = KerrEvaporationPlan(
         scale,
+        # ty: ignore[invalid-argument-type]
         (0.0, 1.0e-3, 2.0e-3),
         semiclassical_mass_ratio=2.0,
         maximum_adiabatic_parameter=10.0,
@@ -257,9 +271,12 @@ def test_bounded_kerr_evaporation_coevolves_and_terminates_fail_closed():
     schwarzschild_plan = HawkingSpectrumPlan(
         scale,
         (scalar,),
+        # ty: ignore[invalid-argument-type]
         (0.0, 0.2, 0.4),
         (scalar.species_id, scalar.species_id),
+        # ty: ignore[invalid-argument-type]
         (1, 1),
+        # ty: ignore[invalid-argument-type]
         (-1, 1),
         mode_ids=("scalar:1:-1", "scalar:1:1"),
     )
@@ -270,7 +287,7 @@ def test_bounded_kerr_evaporation_coevolves_and_terminates_fail_closed():
     )
     near_boundary = KerrEvaporationState(2.1, 0.0, state_id="near-boundary")
 
-    def schwarzschild_for_state(state):
+    def schwarzschild_for_state(state: Any) -> Any:
         return _evaluate(
             schwarzschild_plan,
             symmetric,
@@ -284,6 +301,7 @@ def test_bounded_kerr_evaporation_coevolves_and_terminates_fail_closed():
     crossing_time = 0.2 / float(schwarzschild_spectrum.energy_flux)
     endpoint_plan = KerrEvaporationPlan(
         scale,
+        # ty: ignore[invalid-argument-type]
         (0.0, crossing_time),
         semiclassical_mass_ratio=2.0,
         maximum_adiabatic_parameter=10.0,
@@ -305,7 +323,7 @@ def test_bounded_kerr_evaporation_coevolves_and_terminates_fail_closed():
     assert float(stopped.final_state.mass) > float(endpoint_plan.planck_length)
     assert float(stopped.final_state.mass) > float(endpoint_plan.semiclassical_mass_floor)
 
-    def uncovered_for_state(state):
+    def uncovered_for_state(state: Any) -> Any:
         current = spectrum_for_state(state)
         return eqx.tree_at(
             lambda value: (value.coverage_satisfied, value.converged),
@@ -326,6 +344,7 @@ def test_bounded_kerr_evaporation_coevolves_and_terminates_fail_closed():
 
     restrictive_plan = KerrEvaporationPlan(
         scale,
+        # ty: ignore[invalid-argument-type]
         (0.0, 1.0e-3),
         semiclassical_mass_ratio=2.0,
         maximum_adiabatic_parameter=float(spectrum.energy_flux) / 2.0,

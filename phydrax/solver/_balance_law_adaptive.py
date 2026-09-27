@@ -6,13 +6,13 @@ from __future__ import annotations
 
 from enum import IntEnum
 from math import isfinite
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -20,6 +20,14 @@ from .._trainable import NonTrainableState
 from ..discretization._temporal import RealizedTemporalMesh
 from ..stochastic._realization import StochasticRealization
 from ._balance_law import BalanceLawRuntimeState, PreparedBalanceLawRuntime
+
+
+_AdaptiveCarry: TypeAlias = tuple[
+    BalanceLawRuntimeState, Array, Array, Array, Array, Array, Array, Array
+]
+_AdaptiveOutput: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class BalanceLawAdaptiveStatus(IntEnum):
@@ -54,7 +62,7 @@ class BalanceLawAdaptivePolicy(StrictModule, NonTrainableState):
         growth_factor: float = 1.25,
         minimum_step_size: float = 1e-12,
         maximum_step_size: float = np.inf,
-    ):
+    ) -> None:
         steps = int(maximum_steps)
         retries = int(maximum_retries)
         safety = float(safety_factor)
@@ -141,7 +149,7 @@ class BalanceLawDecisionJournal(StrictModule):
         reached_final_time: Array,
         process_ids: tuple[str, ...],
         source_plan_id: str,
-    ):
+    ) -> None:
         attempted_ = jnp.asarray(attempted, dtype=jnp.bool_)
         capacity = attempted_.size
         aligned = (
@@ -214,7 +222,7 @@ class AdaptiveBalanceLawRolloutPlan(StrictModule, NonTrainableState):
         final_time: float,
         policy: BalanceLawAdaptivePolicy,
         /,
-    ):
+    ) -> None:
         if not isinstance(runtime, PreparedBalanceLawRuntime):
             raise TypeError("runtime must be PreparedBalanceLawRuntime.")
         if not isinstance(policy, BalanceLawAdaptivePolicy):
@@ -284,7 +292,9 @@ class AdaptiveBalanceLawRolloutPlan(StrictModule, NonTrainableState):
             ),
         )
 
-        def step(carry, _):
+        def step(
+            carry: _AdaptiveCarry, _: Array
+        ) -> tuple[_AdaptiveCarry, _AdaptiveOutput]:
             (
                 state,
                 next_step,
@@ -297,7 +307,7 @@ class AdaptiveBalanceLawRolloutPlan(StrictModule, NonTrainableState):
             ) = carry
             active = ~finished & ~failed
 
-            def execute(_):
+            def execute(_: None) -> tuple[_AdaptiveCarry, _AdaptiveOutput]:
                 start = state.time
                 remaining = target - start
                 requested = jnp.minimum(jnp.minimum(next_step, maximum_step), remaining)
@@ -386,7 +396,7 @@ class AdaptiveBalanceLawRolloutPlan(StrictModule, NonTrainableState):
                 )
                 return next_carry, output
 
-            def inactive(_):
+            def inactive(_: None) -> tuple[_AdaptiveCarry, _AdaptiveOutput]:
                 nan = jnp.asarray(jnp.nan, dtype=initial_time.dtype)
                 output = (
                     jnp.asarray(False),

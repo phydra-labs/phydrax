@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import math
@@ -26,7 +28,7 @@ _CRITICAL_BETA = 0.5 * math.log(1.0 + math.sqrt(2.0))
 _CRITICAL_LOG_PARTITION = 0.5 * math.log(2.0) + 2.0 * 0.915965594177219 / math.pi
 
 
-def _case(method_name: str, bond: int, steps: int, repeats: int):
+def _case(method_name: str, bond: int, steps: int, repeats: int) -> Any:
     tn = phx.tensor_network
     spins = jnp.asarray((-1.0, 1.0), dtype=jnp.float64)
     pair_weight = jnp.exp(_CRITICAL_BETA * spins[:, None] * spins[None, :])

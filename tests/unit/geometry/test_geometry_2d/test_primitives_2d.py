@@ -8,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_circle():
+def test_circle() -> None:
     radius = 1.0
     circle = phx.domain.GeometryDomain(
         phx.geometry.Circle(center=(0.0, 0.0), radius=radius).compile()
@@ -18,7 +18,7 @@ def test_circle():
     assert np.isclose(computed_area, expected_area, rtol=0.05)
 
 
-def test_ellipse():
+def test_ellipse() -> None:
     x_radius = 2.0
     y_radius = 1.0
     ellipse = phx.domain.GeometryDomain(
@@ -29,7 +29,7 @@ def test_ellipse():
     assert np.isclose(computed_area, expected_area, rtol=0.05)
 
 
-def test_rectangle():
+def test_rectangle() -> None:
     width = 3.0
     height = 2.0
     rectangle = phx.domain.GeometryDomain(
@@ -40,7 +40,7 @@ def test_rectangle():
     assert np.isclose(computed_area, expected_area, rtol=0.05)
 
 
-def test_square():
+def test_square() -> None:
     side = 2.0
     square = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=side).compile()
@@ -50,7 +50,7 @@ def test_square():
     assert np.isclose(computed_area, expected_area, rtol=0.05)
 
 
-def test_polygon():
+def test_polygon() -> None:
     vertices = [(0.0, 0.0), (2.0, 0.0), (1.0, 1.0)]
     polygon = phx.domain.GeometryDomain(phx.geometry.Polygon(vertices=vertices).compile())
     expected_area = 1.0  # Triangle area: 0.5 * base * height = 0.5 * 2 * 1
@@ -58,7 +58,7 @@ def test_polygon():
     assert np.isclose(computed_area, expected_area, rtol=0.05)
 
 
-def test_triangle():
+def test_triangle() -> None:
     vertices = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)]
     triangle = phx.domain.GeometryDomain(
         phx.geometry.Triangle(vertices=vertices).compile()
@@ -68,25 +68,25 @@ def test_triangle():
     assert np.isclose(computed_area, expected_area, rtol=0.05)
 
 
-def test_polygon_non_unique_vertices():
+def test_polygon_non_unique_vertices() -> None:
     vertices = [(0.0, 0.0), (1.0, 0.0), (1.0, 0.0), (0.0, 1.0)]
     with pytest.raises(ValueError, match="Non-unique vertices"):
         phx.domain.GeometryDomain(phx.geometry.Polygon(vertices=vertices).compile())
 
 
-def test_polygon_self_intersection():
+def test_polygon_self_intersection() -> None:
     vertices = [(0.0, 0.0), (1.0, 1.0), (1.0, 0.0), (0.0, 1.0)]
     with pytest.raises(ValueError, match="Self-intersection"):
         phx.domain.GeometryDomain(phx.geometry.Polygon(vertices=vertices).compile())
 
 
-def test_triangle_invalid_vertices():
+def test_triangle_invalid_vertices() -> None:
     vertices = [(0.0, 0.0), (1.0, 0.0)]  # Only 2 vertices
     with pytest.raises(ValueError, match="Triangle must have exactly 3 vertices"):
         phx.domain.GeometryDomain(phx.geometry.Triangle(vertices=vertices).compile())
 
 
-def test_polygon_preserves_absolute_coordinates():
+def test_polygon_preserves_absolute_coordinates() -> None:
     # A non-centered polygon; ensure analytic bounds match input bounds.
     vertices = [
         (1.0, 0.0),
@@ -110,7 +110,7 @@ def test_polygon_preserves_absolute_coordinates():
     assert np.allclose(out_max, in_max, atol=1e-6)
 
 
-def test_boundary_normals_circle():
+def test_boundary_normals_circle() -> None:
     # Circle centered at origin with radius 1
     c = phx.domain.GeometryDomain(
         phx.geometry.Circle(center=(0.0, 0.0), radius=1.0).compile()

@@ -21,6 +21,7 @@ import json
 import math
 import shlex
 from itertools import permutations, product
+from typing import Any
 
 import numpy as np
 
@@ -66,7 +67,7 @@ def simplex_grid(dim: int, n: int) -> CellMesh:
     )
 
 
-def scope(mesh: CellMesh, dimension: int, ids) -> MeshingScope:
+def scope(mesh: CellMesh, dimension: int, ids: Any) -> MeshingScope:
     return MeshingScope(
         mesh.mesh_id,
         mesh.numeric_version,
@@ -107,6 +108,7 @@ def main() -> None:
     right = MeshZone(
         "right", MeshZoneRole.REGION, scope(mesh, dim, cell_ids[centroids[:, 0] > 0.5])
     )
+    # ty: ignore[unresolved-attribute]
     facets = np.asarray(mesh.connectivity.edges if dim == 2 else mesh.connectivity.faces)
     on_inlet = np.all(np.asarray(mesh.coordinates)[facets][:, :, 0] == 0.0, axis=1)
     inlet = MeshPatch(
@@ -152,6 +154,7 @@ def main() -> None:
         )
 
     target = result.target
+    # ty: ignore[unresolved-attribute]
     ids, target_measures, target_centroids = cell_table(target.mesh)
     if not np.all(target_measures > 0):
         raise RuntimeError("Adaptation inverted a simplex")
@@ -159,16 +162,21 @@ def main() -> None:
         raise RuntimeError("Adaptation changed domain measure")
     if ids.size <= cell_ids.size:
         raise RuntimeError("Requested finer metric did not refine the carrier")
+    # ty: ignore[unresolved-attribute]
     if not target.audit.passed or result.lineage_status != "unknown":
         raise RuntimeError("Omega_h audit or lineage evidence failed")
+    # ty: ignore[unresolved-attribute]
     zones = {zone.name: zone for zone in target.zones}
     left_measure = float(
         np.sum(target_measures[np.isin(ids, np.asarray(zones["left"].scope.entity_ids))])
     )
+    # ty: ignore[unresolved-attribute]
     if not np.isclose(left_measure, 0.5, atol=1e-12) or len(target.patches) != 1:
         raise RuntimeError("Region or patch classification was not preserved")
     potential, transferred = result.fields
+    # ty: ignore[unresolved-attribute]
     target_points = np.asarray(target.mesh.coordinates)[
+        # ty: ignore[unresolved-attribute]
         np.argsort(np.asarray(target.mesh.vertex_global_ids))
     ]
     if not np.allclose(
@@ -192,6 +200,7 @@ def main() -> None:
         raise RuntimeError("Omega_h ownership evidence is incomplete")
     if arguments.ranks > 1 and not all(value > 0 for value in ghosts):
         raise RuntimeError("No real cross-rank ghost residence")
+    # ty: ignore[unresolved-attribute]
     if not np.all(np.linalg.eigvalsh(np.asarray(result.metric.values)) > 0):
         raise RuntimeError("Omega_h returned a non-positive metric")
     print(
@@ -213,6 +222,7 @@ def main() -> None:
                     result.evidence.minimum_length,
                     result.evidence.maximum_length,
                 ],
+                # ty: ignore[unresolved-attribute]
                 "audit": target.audit.passed,
                 "iterations": result.evidence.iterations,
                 "session": result.evidence.session_id[:16],

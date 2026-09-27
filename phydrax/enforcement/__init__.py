@@ -5,6 +5,7 @@
 """Exact condition transforms and their typed staged compiler."""
 
 from importlib import import_module
+from typing import Any
 
 from ._affine import (
     AbstractLinearCorrectionProvider,
@@ -169,7 +170,7 @@ from ._trajectory import (
 _FACADE_EXPORT_MODULES = ("._polynomial_representation",)
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     for module_name in reversed(_FACADE_EXPORT_MODULES):
         module = import_module(module_name, __package__)
         if name in module.__all__:

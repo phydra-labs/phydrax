@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeVar
 
 import equinox as eqx
 import numpy as np
@@ -37,8 +37,15 @@ from ._vof_phase_change import VOFPhaseChangePlan
 _TOPOLOGY_EVENT_POLICIES = frozenset(("disabled", "accepted_step"))
 
 
-def _optional_plan(value: Any, expected_type: type, name: str, /):
-    if value is not None and not isinstance(value, expected_type):
+_PlanT = TypeVar("_PlanT")
+
+
+def _optional_plan(
+    value: object, expected_type: type[_PlanT], name: str, /
+) -> _PlanT | None:
+    if value is None:
+        return None
+    if not isinstance(value, expected_type):
         raise TypeError(f"{name} must be {expected_type.__name__} or None.")
     return value
 
@@ -64,7 +71,8 @@ def _validate_current_geometry(
     name: str,
     artifact_topology_id: str,
     artifact_geometry_id: str,
-    discretization: UnstructuredFiniteVolumeDiscretization,
+    discretization: UnstructuredFiniteVolumeDiscretization
+    | DyadicFiniteVolumeDiscretization,
     /,
 ) -> None:
     if artifact_topology_id != discretization.topology_id:
@@ -76,7 +84,8 @@ def _validate_current_geometry(
 def _validate_prepared_geometry(
     name: str,
     artifact: UnstructuredFiniteVolumeDiscretization,
-    discretization: UnstructuredFiniteVolumeDiscretization,
+    discretization: UnstructuredFiniteVolumeDiscretization
+    | DyadicFiniteVolumeDiscretization,
     /,
 ) -> None:
     _validate_current_geometry(
@@ -172,7 +181,8 @@ def _overset_masks(
 
 def _validate_overset_epoch(
     overset: UnstructuredOversetPlan,
-    discretization: UnstructuredFiniteVolumeDiscretization,
+    discretization: UnstructuredFiniteVolumeDiscretization
+    | DyadicFiniteVolumeDiscretization,
     /,
 ) -> None:
     """Reject maps compiled for a different receiver epoch."""
@@ -256,7 +266,7 @@ class UnstructuredFiniteVolumeCouplingPlan(StrictModule, NonTrainableState):
         sliding: PeriodicSlidingInterfacePlan | None = None,
         topology_event_capacity: int = 0,
         topology_event_policy: str = "disabled",
-    ):
+    ) -> None:
         motion_ = _optional_plan(motion, FixedConnectivityMotionPlan, "motion")
         embedded_boundary_ = _optional_plan(
             embedded_boundary, EmbeddedBoundaryPlan, "embedded_boundary"
@@ -491,7 +501,7 @@ class PreparedUnstructuredFiniteVolumeCoupling(StrictModule, NonTrainableState):
         /,
         *,
         sliding_coupling: PeriodicSlidingCoupling | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, UnstructuredFiniteVolumeCouplingPlan):
             raise TypeError("plan must be UnstructuredFiniteVolumeCouplingPlan.")
         if not isinstance(
@@ -785,7 +795,8 @@ class PreparedUnstructuredFiniteVolumeCoupling(StrictModule, NonTrainableState):
 
     def with_sliding_coupling(
         self,
-        discretization: UnstructuredFiniteVolumeDiscretization,
+        discretization: UnstructuredFiniteVolumeDiscretization
+        | DyadicFiniteVolumeDiscretization,
         sliding_coupling: PeriodicSlidingCoupling,
         /,
     ) -> "PreparedUnstructuredFiniteVolumeCoupling":

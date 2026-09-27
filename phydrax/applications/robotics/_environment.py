@@ -14,7 +14,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._array_tree import ArrayPyTreeSchema
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -502,7 +503,7 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         *,
         step_size: float,
         environment_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(plant, AbstractDiscretePlant):
             raise TypeError("plant must be an AbstractDiscretePlant.")
         if plant.control_schema is None:

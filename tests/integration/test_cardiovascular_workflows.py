@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -23,7 +25,7 @@ from phydrax.measurement import SampleTimeAxis
 from phydrax.units import MILLISECOND
 
 
-def _unit_cube_anatomy():
+def _unit_cube_anatomy() -> Any:
     coordinates = np.asarray(
         [
             (0.0, 0.0, 0.0),
@@ -48,6 +50,7 @@ def _unit_cube_anatomy():
         dtype=np.int32,
     )
     mesh = CellMesh.from_tetrahedra(coordinates, tetrahedra)
+    # ty: ignore[unresolved-attribute]
     face_points = coordinates[np.asarray(mesh.connectivity.faces)]
     role_faces = {
         "endocardium": np.flatnonzero(np.all(face_points[..., 0] == 0.0, axis=1)),
@@ -81,7 +84,7 @@ def _unit_cube_anatomy():
     return mesh, anatomy.CardiacBoundaryRoles(mesh, role_faces, profile=profile)
 
 
-def test_anatomy_microstructure_drives_phenomenological_ep():
+def test_anatomy_microstructure_drives_phenomenological_ep() -> None:
     mesh, roles = _unit_cube_anatomy()
     fields = (
         anatomy.HarmonicCoordinatePlan(
@@ -122,7 +125,7 @@ def test_anatomy_microstructure_drives_phenomenological_ep():
     assert runtime.plan.diffusivity.diffusivity_id == diffusivity.diffusivity_id
 
 
-def test_circulation_work_and_observation_loop_share_sign_and_units():
+def test_circulation_work_and_observation_loop_share_sign_and_units() -> None:
     pressure_kpa = jnp.asarray([1.0, 3.0, 3.0, 1.0, 1.0])
     volume_mm3 = jnp.asarray([3.0, 3.0, 1.0, 1.0, 3.0])
     observed = observations.PressureVolumeLoopPlan(

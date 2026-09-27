@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import hashlib
+from typing import Any
 
 import numpy as np
 import pytest
@@ -41,7 +43,7 @@ _COUNT_KEYS = (
 )
 
 
-def _provider(tmp_path):
+def _provider(tmp_path: Any) -> Any:
     project = tmp_path / "project"
     project.mkdir()
     project_bytes = b"[deps]\n"
@@ -64,17 +66,18 @@ def _provider(tmp_path):
     )
 
 
-def _quadratic():
+def _quadratic() -> Any:
     return SparsePolynomialSystem.from_coo(
         ("x",),
         ("x-squared-minus-one",),
         (0, 0),
         ((0,), (2,)),
+        # ty: ignore[invalid-argument-type]
         (-1.0, 1.0),
     )
 
 
-def _execution(prepared, paths):
+def _execution(prepared: Any, paths: Any) -> Any:
     counts = {key: 0 for key in _COUNT_KEYS}
     for path in paths:
         counts[path.status.value] += 1
@@ -97,7 +100,12 @@ def _execution(prepared, paths):
     )
 
 
-def _path(index, endpoint, *, status=HomotopyContinuationPathStatus.REGULAR_ENDPOINT):
+def _path(
+    index: Any,
+    endpoint: Any,
+    *,
+    status: Any = HomotopyContinuationPathStatus.REGULAR_ENDPOINT,
+) -> Any:
     return HomotopyContinuationPathRecord(
         index,
         "success" if endpoint is not None else "step_limit",
@@ -108,7 +116,7 @@ def _path(index, endpoint, *, status=HomotopyContinuationPathStatus.REGULAR_ENDP
     )
 
 
-def _prepared(tmp_path, **plan_options):
+def _prepared(tmp_path: Any, **plan_options: Any) -> Any:
     policy = HomotopyContinuationPolicy(start_system="total-degree", path_capacity=4)
     plan = plan_isolated_roots(
         IsolatedPolynomialRootProblem(_quadratic()),
@@ -120,8 +128,8 @@ def _prepared(tmp_path, **plan_options):
 
 
 def test_deterministic_clustering_retains_every_raw_path_and_near_real_evidence(
-    tmp_path, monkeypatch
-):
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     prepared = _prepared(
         tmp_path,
         residual_tolerance=1e-3,
@@ -158,8 +166,8 @@ def test_deterministic_clustering_retains_every_raw_path_and_near_real_evidence(
 
 
 def test_original_system_residual_rejects_provider_claim_independently(
-    tmp_path, monkeypatch
-):
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     prepared = _prepared(tmp_path, residual_tolerance=1e-8)
     paths = (_path(0, (2 + 0j,)),)
     monkeypatch.setattr(
@@ -177,7 +185,9 @@ def test_original_system_residual_rejects_provider_claim_independently(
     assert not result.paths[0].independently_accepted
 
 
-def test_tracking_failure_is_not_hidden_by_a_valid_endpoint(tmp_path, monkeypatch):
+def test_tracking_failure_is_not_hidden_by_a_valid_endpoint(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     prepared = _prepared(tmp_path)
     paths = (
         _path(0, (1 + 0j,)),
@@ -201,7 +211,9 @@ def test_tracking_failure_is_not_hidden_by_a_valid_endpoint(tmp_path, monkeypatc
     assert result.coverage.classified_path_count == 2
 
 
-def test_total_degree_capacity_fails_before_provider_execution(tmp_path, monkeypatch):
+def test_total_degree_capacity_fails_before_provider_execution(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     plan = plan_isolated_roots(
         _quadratic(),
         _provider(tmp_path),
@@ -209,7 +221,7 @@ def test_total_degree_capacity_fails_before_provider_execution(tmp_path, monkeyp
     )
     prepared = prepare_isolated_roots(plan)
 
-    def unexpected_provider_call(provider, policy, request):
+    def unexpected_provider_call(provider: Any, policy: Any, request: Any) -> None:
         raise AssertionError("provider must not run above the declared path capacity")
 
     monkeypatch.setattr(
@@ -226,13 +238,14 @@ def test_total_degree_capacity_fails_before_provider_execution(tmp_path, monkeyp
     assert result.provider.start_count == 2
 
 
-def test_refresh_rejects_support_structural_mismatch(tmp_path):
+def test_refresh_rejects_support_structural_mismatch(tmp_path: Any) -> None:
     prepared = _prepared(tmp_path)
     changed_support = SparsePolynomialSystem.from_coo(
         ("x",),
         ("x-cubed-minus-one",),
         (0, 0),
         ((0,), (3,)),
+        # ty: ignore[invalid-argument-type]
         (-1.0, 1.0),
     )
 

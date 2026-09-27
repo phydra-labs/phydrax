@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
+from jax import Array
 
 from phydrax import ein
 
@@ -23,7 +24,9 @@ from ._problem import (
 from ._quadratic import _max_abs, QuadraticProgram
 
 
-def _linear_residuals(matrix, rhs, primal, /, *, inequality: bool):
+def _linear_residuals(
+    matrix: Array, rhs: Array, primal: Array, /, *, inequality: bool
+) -> tuple[Array, Array]:
     values = ein.contract("ij,j->i", matrix, primal)
     residual = values - rhs
     if inequality:

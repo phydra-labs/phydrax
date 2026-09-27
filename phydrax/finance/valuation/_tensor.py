@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Literal, TypeAlias
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...tensor_train import (
@@ -20,11 +21,12 @@ from ...tensor_train import (
     TensorTrainCompressionResult,
     TTCrossResult,
 )
+from ...typing import parse
 from ..core import FinanceEvidenceBinding, PricingLaw
 
 
 TensorApproximation: TypeAlias = TensorTrainCompressionResult | TTCrossResult
-TensorRoute = Literal["tt", "qtt"]
+TensorRoute: TypeAlias = Literal["tt", "qtt"]
 
 
 class TensorValuationApplicability(StrictModule):
@@ -61,13 +63,12 @@ class TensorValuationApplicability(StrictModule):
         maximum_core_bytes: int,
         maximum_validation_points: int,
         quantics_layout: QuanticsLayout | None = None,
-    ):
+    ) -> None:
         if not isinstance(pricing_law, PricingLaw):
             raise TypeError("pricing_law must be a PricingLaw.")
         if not isinstance(grid, TensorizedGrid):
             raise TypeError("grid must be a TensorizedGrid.")
-        if route not in ("tt", "qtt"):
-            raise ValueError("route must be 'tt' or 'qtt'.")
+        route = parse(route, TensorRoute, "route")
         if route == "qtt":
             if not isinstance(quantics_layout, QuanticsLayout):
                 raise TypeError("QTT applicability requires a QuanticsLayout.")
@@ -138,7 +139,7 @@ class TensorSupportEvidence(StrictModule):
         factor_layout_id: str,
         evidence_id: str,
         tolerance: float,
-    ):
+    ) -> None:
         violation = jnp.asarray(maximum_support_violation, dtype=jnp.float64)
         identifiers = tuple(
             str(value) for value in (domain_id, support_id, factor_layout_id, evidence_id)
@@ -173,7 +174,7 @@ class TensorCausalityEvidence(StrictModule):
         filtration_id: str,
         evidence_id: str,
         tolerance: float,
-    ):
+    ) -> None:
         dependency = jnp.asarray(maximum_future_dependency, dtype=jnp.float64)
         filtration = str(filtration_id)
         identifier = str(evidence_id)
@@ -444,10 +445,11 @@ def assess_tensor_valuation_candidate(
         and pricing_law.factor_layout_id == expected.factor_layout_id
         and pricing_law.filtration_id == expected.filtration_id
     )
+    # TensorValuationApplicability requires a QuanticsLayout on the QTT route.
     expected_modes = (
         applicability.grid.mode_sizes
         if applicability.route == "tt"
-        else applicability.quantics_layout.digit_mode_sizes
+        else cast(QuanticsLayout, applicability.quantics_layout).digit_mode_sizes
     )
     domain_compatible = (
         tensor.mode_sizes == expected_modes

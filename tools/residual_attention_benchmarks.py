@@ -8,6 +8,7 @@ import argparse
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -17,7 +18,7 @@ import optax
 import phydrax as phx
 
 
-def _solver(method: str, seed: int, points: int):
+def _solver(method: str, seed: int, points: int) -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     component = domain.component()
     model = phx.nn.models.MLP(
@@ -30,7 +31,7 @@ def _solver(method: str, seed: int, points: int):
     field = domain.Model("x")(model)
 
     @domain.Function("x")
-    def target(x):
+    def target(x: Any) -> Any:
         return jnp.exp(-200.0 * (x[0] - 0.73) ** 2)
 
     condition = phx.conditions.Residual("u", component, lambda value: value - target)
@@ -79,7 +80,7 @@ def _solver(method: str, seed: int, points: int):
     ), monitor
 
 
-def _run(method: str, seed: int, points: int, iterations: int):
+def _run(method: str, seed: int, points: int, iterations: int) -> Any:
     solver, monitor = _solver(method, seed, points)
     started = time.perf_counter()
     trained = solver.solve(

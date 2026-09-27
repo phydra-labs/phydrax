@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from enum import IntEnum
 
 import equinox as eqx
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -99,7 +99,7 @@ class MPMIntendedUse(StrictModule, NonTrainableState):
         geometry_loading_scope: str,
         material_parameter_scope: str,
         accuracy_uq_goal: str,
-    ):
+    ) -> None:
         values = (
             str(decision),
             str(risk_class),
@@ -158,7 +158,7 @@ class MPMClaimTuple(StrictModule, NonTrainableState):
         precision_accumulation: str,
         capacity_envelope: str,
         derivative_mode: str,
-    ):
+    ) -> None:
         dimension_ = int(dimension)
         values = {
             "equation_family": str(equation_family),
@@ -269,7 +269,7 @@ class MPMSupportDecision(StrictModule, NonTrainableState):
         *,
         reason: str,
         required_profile: str,
-    ):
+    ) -> None:
         if not isinstance(claim, MPMClaimTuple):
             raise TypeError("claim must be MPMClaimTuple.")
         outcome_ = MPMClaimOutcome(outcome)
@@ -303,7 +303,7 @@ class MPMSupportMatrix(StrictModule, NonTrainableState):
     decisions: tuple[MPMSupportDecision, ...]
     matrix_id: str = eqx.field(static=True)
 
-    def __init__(self, decisions: Sequence[MPMSupportDecision], /):
+    def __init__(self, decisions: Sequence[MPMSupportDecision], /) -> None:
         decisions_ = tuple(decisions)
         if not decisions_ or any(
             not isinstance(value, MPMSupportDecision) for value in decisions_
@@ -383,7 +383,7 @@ class MPMReleaseGateEvidence(StrictModule, NonTrainableState):
         deviation_ids: Sequence[str] = (),
         issued_at: int = 0,
         expires_at: int = 2**63 - 1,
-    ):
+    ) -> None:
         gate_ = MPMReleaseGate(gate)
         self.release_evidence = ReleaseGateEvidence(
             gate_.name,
@@ -435,7 +435,7 @@ class MPMReleaseEvidenceBundle(StrictModule, NonTrainableState):
         /,
         *,
         independent_approver_id: str,
-    ):
+    ) -> None:
         gates_ = tuple(gates)
         approver = str(independent_approver_id)
         if not isinstance(claim, MPMClaimTuple) or not isinstance(
@@ -491,7 +491,7 @@ class MPMRunProvenance(StrictModule, NonTrainableState):
         backend_device: str,
         input_digest: str,
         sbom_digest: str,
-    ):
+    ) -> None:
         values = {key: str(value) for key, value in locals().items() if key != "self"}
         if any(not value for value in values.values()):
             raise ValueError("Run provenance fields must be non-empty.")

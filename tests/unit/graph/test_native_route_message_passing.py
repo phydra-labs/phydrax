@@ -2,7 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from collections.abc import Callable
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -21,7 +23,7 @@ NODE_COUNT = 6
 EDGE_TYPES = np.asarray([0, 1, 0, 1, 1, 0, 0, 1, 1, 0], dtype=np.int32)
 
 
-def _graph(nodes, edges) -> phx.graph.GraphIR:
+def _graph(nodes: Any, edges: Any) -> phx.graph.GraphIR:
     return phx.graph.GraphIR(
         nodes=nodes,
         edges=edges,
@@ -38,7 +40,7 @@ def _padded(graph: phx.graph.GraphIR) -> phx.graph.GraphIR:
     receivers = np.asarray([0, 5, 1], dtype=np.int32)
     rng = np.random.default_rng(11)
 
-    def pad(value):
+    def pad(value: Any) -> Any:
         array = jnp.asarray(value)
         shape = (senders.size,) + array.shape[1:]
         if jnp.issubdtype(array.dtype, jnp.integer):
@@ -54,31 +56,34 @@ def _padded(graph: phx.graph.GraphIR) -> phx.graph.GraphIR:
         receivers=np.concatenate((np.asarray(graph.receivers), receivers)),
         globals=graph.globals,
         n_node=graph.n_node,
+        # ty: ignore[unresolved-attribute]
         n_edge=[graph.senders.shape[0] + senders.size],
+        # ty: ignore[unresolved-attribute]
         edge_mask=np.arange(graph.senders.shape[0] + senders.size)
+        # ty: ignore[unresolved-attribute]
         < graph.senders.shape[0],
     )
 
 
-def _random(shape, seed):
+def _random(shape: Any, seed: Any) -> Any:
     return jnp.asarray(np.random.default_rng(seed).normal(size=shape))
 
 
-def _segment_mean(data, ids, count):
+def _segment_mean(data: Any, ids: Any, count: Any) -> Any:
     total = jax.ops.segment_sum(data, ids, count)
     ones = jnp.ones((ids.shape[0],) + (1,) * (data.ndim - 1), dtype=data.dtype)
     return total / jnp.maximum(jax.ops.segment_sum(ones, ids, count), 1.0)
 
 
-def _inverse(values):
+def _inverse(values: Any) -> Any:
     return jnp.where(values > 0, 1.0 / values, 0.0)
 
 
-def _mesh_graph_net_block_case():
+def _mesh_graph_net_block_case() -> Any:
     block = phx.graph.MeshGraphNetBlock(4, key=jr.key(0))
     graph = _graph(_random((NODE_COUNT, 4), 1), _random((SENDERS.size, 4), 2))
 
-    def reference(graph):
+    def reference(graph: Any) -> Any:
         s, r = graph.senders, graph.receivers
         nodes, edges = graph.nodes, graph.edges
         edges = edges + block.edge_mlp(jnp.concatenate([edges, nodes[s], nodes[r]], -1))
@@ -88,10 +93,10 @@ def _mesh_graph_net_block_case():
     return graph, lambda g: block(g).nodes, reference
 
 
-def _attention_case():
+def _attention_case() -> Any:
     graph = _graph(_random((NODE_COUNT, 3), 3), None)
 
-    def reference(graph):
+    def reference(graph: Any) -> Any:
         x, s, r = graph.nodes, graph.senders, graph.receivers
         logits = jnp.sum(x[s] * x[r], axis=-1) / jnp.sqrt(3.0)
         weights = jnp.exp(logits - jax.ops.segment_max(logits, r, NODE_COUNT)[r])
@@ -102,18 +107,18 @@ def _attention_case():
     return graph, lambda g: operator(g).nodes, reference
 
 
-def _kernel_integral_case():
+def _kernel_integral_case() -> Any:
     graph = _graph(_random((NODE_COUNT, 2), 4), _random((SENDERS.size, 1), 5))
     operator = phx.graph.GraphKernelIntegral(lambda edges, s, r, g: edges[:, 0])
 
-    def reference(graph):
+    def reference(graph: Any) -> Any:
         messages = graph.nodes[graph.senders] * graph.edges
         return jax.ops.segment_sum(messages, graph.receivers, NODE_COUNT)
 
     return graph, lambda g: operator(g).nodes, reference
 
 
-def _equivariant_case():
+def _equivariant_case() -> Any:
     graph = _graph(
         {
             "positions": _random((NODE_COUNT, 2), 6),
@@ -123,13 +128,13 @@ def _equivariant_case():
     )
     operator = phx.graph.EquivariantGraphConvolution(edge_weight_key="w", normalize=True)
 
-    def apply(graph):
+    def apply(graph: Any) -> Any:
         nodes = operator(graph).nodes
         return jnp.concatenate(
             [nodes["scalar"], nodes["vector"].reshape((NODE_COUNT, -1))], -1
         )
 
-    def reference(graph):
+    def reference(graph: Any) -> Any:
         s, r = graph.senders, graph.receivers
         pos, x, w = graph.nodes["positions"], graph.nodes["features"], graph.edges["w"]
         scale = _inverse(jax.ops.segment_sum(jnp.abs(w), r, NODE_COUNT))
@@ -149,7 +154,7 @@ def _equivariant_case():
     return graph, apply, reference
 
 
-def _relational_case():
+def _relational_case() -> Any:
     weights = _random((2, 3, 2), 9)
     graph = _graph(
         _random((NODE_COUNT, 3), 10),
@@ -159,7 +164,7 @@ def _relational_case():
         weights, edge_weight_key="w", normalize=True
     )
 
-    def reference(graph):
+    def reference(graph: Any) -> Any:
         s, r = graph.senders, graph.receivers
         types, w = graph.edges["type"], graph.edges["w"]
         keys = types * NODE_COUNT + r
@@ -170,14 +175,14 @@ def _relational_case():
     return graph, lambda g: operator(g).nodes, reference
 
 
-def _hypergraph_case():
+def _hypergraph_case() -> Any:
     graph = phx.graph.hypergraph_to_bipartite_graph(
         ([0, 1], [1, 2, 3], [0, 3]),
         node_features=_random((4, 2), 12),
     ).graph
     operator = phx.graph.HypergraphConvolution(output_key="out")
 
-    def reference(graph):
+    def reference(graph: Any) -> Any:
         s, r, n = graph.senders, graph.receivers, graph.nodes["type"].shape[0]
         x, types = graph.nodes["features"], graph.edges["type"]
         weight = graph.edges["incidence_weight"].reshape((-1,))
@@ -193,11 +198,11 @@ def _hypergraph_case():
     return graph, lambda g: operator(g).nodes["out"], reference
 
 
-def _pool_case():
+def _pool_case() -> Any:
     cluster_ids = jnp.asarray([0, 0, 1, 1, 2, -1], dtype=jnp.int32)
     graph = _graph(_random((NODE_COUNT, 2), 13), None)
 
-    def reference(graph):
+    def reference(graph: Any) -> Any:
         valid = np.asarray(cluster_ids) >= 0
         return _segment_mean(graph.nodes[valid], cluster_ids[valid], 3)
 
@@ -210,17 +215,17 @@ def _pool_case():
     )
 
 
-def _edge_index_case(layer, reference_fn):
+def _edge_index_case(layer: Any, reference_fn: Any) -> Any:
     x = _random((NODE_COUNT, 3), 14)
     edge_index = jnp.asarray(np.stack([SENDERS, RECEIVERS]))
     return (x, edge_index), lambda args: layer(*args), reference_fn
 
 
-def _gcn_case():
+def _gcn_case() -> Any:
     conv = phx.graph.GCNConv(3, 2, key=jr.key(1), add_self_loops=False)
     weight = jnp.abs(_random((SENDERS.size,), 15)) + 0.1
 
-    def reference(args):
+    def reference(args: Any) -> Any:
         x, (row, col) = args
         degree = jax.ops.segment_sum(weight, col, NODE_COUNT)
         inv_sqrt = jnp.where(degree > 0, degree**-0.5, 0.0)
@@ -231,10 +236,10 @@ def _gcn_case():
     return _edge_index_case(lambda x, index: conv(x, index, weight), reference)
 
 
-def _sage_max_case():
+def _sage_max_case() -> Any:
     conv = phx.graph.SAGEConv(3, 2, key=jr.key(2), aggr="max", root_weight=False)
 
-    def reference(args):
+    def reference(args: Any) -> Any:
         x, (row, col) = args
         projected = jax.vmap(conv.lin_neigh)(x)
         out = jax.ops.segment_max(projected[row], col, NODE_COUNT)
@@ -243,12 +248,12 @@ def _sage_max_case():
     return _edge_index_case(conv, reference)
 
 
-def _message_passing_mean_case():
+def _message_passing_mean_case() -> Any:
     passing = phx.graph.MessagePassing(
         aggr="mean", message=lambda x_j, x_i, edge_attr: x_j - 2.0 * x_i
     )
 
-    def reference(args):
+    def reference(args: Any) -> Any:
         x, (row, col) = args
         return _segment_mean(x[row] - 2.0 * x[col], col, NODE_COUNT)
 
@@ -270,13 +275,13 @@ PARITY_CASES: dict[str, Callable] = {
 
 
 @pytest.mark.parametrize("case", sorted(PARITY_CASES))
-def test_route_reductions_match_segment_reductions(case):
+def test_route_reductions_match_segment_reductions(case: Any) -> None:
     inputs, apply, reference = PARITY_CASES[case]()
 
     np.testing.assert_allclose(apply(inputs), reference(inputs), rtol=1e-12, atol=1e-12)
 
 
-def _typed_graph(nodes, **edges):
+def _typed_graph(nodes: Any, **edges: Any) -> Any:
     return _graph(nodes, {"type": EDGE_TYPES, **edges})
 
 
@@ -327,7 +332,7 @@ def _padding_cases() -> dict[str, tuple[phx.graph.GraphIR, Callable]]:
 
 
 @pytest.mark.parametrize("case", sorted(_padding_cases()))
-def test_masked_routes_are_inert(case):
+def test_masked_routes_are_inert(case: Any) -> None:
     graph, apply = _padding_cases()[case]
 
     np.testing.assert_allclose(
@@ -335,7 +340,7 @@ def test_masked_routes_are_inert(case):
     )
 
 
-def test_masked_routes_do_not_change_mesh_graph_net_gradients():
+def test_masked_routes_do_not_change_mesh_graph_net_gradients() -> None:
     model = phx.graph.MeshGraphNet(
         node_in_size=3,
         edge_in_size=2,
@@ -346,7 +351,7 @@ def test_masked_routes_do_not_change_mesh_graph_net_gradients():
     )
     graph = _graph(_random((NODE_COUNT, 3), 30), _random((SENDERS.size, 2), 31))
 
-    def loss(model, graph):
+    def loss(model: Any, graph: Any) -> Any:
         return jnp.sum(model(graph).nodes ** 2)
 
     grad = eqx.filter_grad(loss)
@@ -359,12 +364,15 @@ def test_masked_routes_do_not_change_mesh_graph_net_gradients():
         np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
 
 
-def test_graph_view_of_relation_reproduces_routes():
+def test_graph_view_of_relation_reproduces_routes() -> None:
     relation = phx.sparse.EdgeRelation(
+        # ty: ignore[invalid-argument-type]
         [0, -5, 2, 1],
+        # ty: ignore[invalid-argument-type]
         [1, 9, 0, 0],
         source_size=3,
         target_size=3,
+        # ty: ignore[invalid-argument-type]
         valid=[True, False, True, True],
     )
     payload = _random((4, 2), 40)
@@ -382,15 +390,18 @@ def test_graph_view_of_relation_reproduces_routes():
     )
 
 
-def test_graph_view_requires_one_node_space():
+def test_graph_view_requires_one_node_space() -> None:
+    # ty: ignore[invalid-argument-type]
     rectangular = phx.sparse.EdgeRelation([0], [1], source_size=1, target_size=2)
 
     with pytest.raises(ValueError, match="one node space"):
         phx.graph.GraphIR.from_edge_relation(rectangular)
     with pytest.raises(TypeError, match="EdgeRelation"):
+        # ty: ignore[invalid-argument-type]
         phx.graph.GraphIR.from_edge_relation(np.zeros((2, 1), dtype=np.int32))
 
 
-def test_graph_kernel_integral_rejects_unknown_reduction():
+def test_graph_kernel_integral_rejects_unknown_reduction() -> None:
     with pytest.raises(ValueError, match="reduction"):
+        # ty: ignore[invalid-argument-type]
         phx.graph.GraphKernelIntegral(reduction="median")

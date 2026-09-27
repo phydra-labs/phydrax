@@ -7,13 +7,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol, TYPE_CHECKING, TypeVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -24,6 +25,11 @@ from ..._trainable import fixed_field, ParameterOwner
 from ...linalg import DenseLinearOperator, FactorizationPolicy, factorize
 from ...operators.quantum._amplitude import LogAmplitude
 from ...tensor_network import MatrixProductState
+from ...typing import PRNGKey
+
+
+if TYPE_CHECKING:
+    from ...solver._quantum_program import PreparedDenseQuantumProgram
 
 
 _DIRECT_SAMPLE_ADDRESS = SampleAddress(
@@ -60,7 +66,7 @@ class JastrowSpinAmplitude(StrictModule, ParameterOwner):
     couplings: Array
     site_count: int = eqx.field(static=True)
 
-    def __init__(self, fields: ArrayLike, couplings: ArrayLike, /):
+    def __init__(self, fields: ArrayLike, couplings: ArrayLike, /) -> None:
         h, matrix = jnp.asarray(fields), jnp.asarray(couplings)
         if h.ndim != 1 or matrix.shape != (h.shape[0], h.shape[0]) or h.size < 1:
             raise ValueError(
@@ -127,7 +133,7 @@ class RestrictedBoltzmannAmplitude(StrictModule, ParameterOwner):
 
     def __init__(
         self, visible_bias: ArrayLike, hidden_bias: ArrayLike, weights: ArrayLike, /
-    ):
+    ) -> None:
         visible, hidden, matrix = map(jnp.asarray, (visible_bias, hidden_bias, weights))
         if (
             visible.ndim != 1
@@ -168,7 +174,7 @@ class RestrictedBoltzmannAmplitude(StrictModule, ParameterOwner):
 
     def propose_flips(
         self, cache: RestrictedBoltzmannCache, indices: ArrayLike, active: ArrayLike, /
-    ):
+    ) -> tuple[Array, RestrictedBoltzmannCache, Array]:
         sites, mask = (
             jnp.asarray(indices, dtype=jnp.int32),
             jnp.asarray(active, dtype=jnp.bool_),
@@ -189,12 +195,31 @@ class RestrictedBoltzmannAmplitude(StrictModule, ParameterOwner):
         )
 
 
-def _spin_cache_incremental_target(model, target_id: str):
-    def initialize(position):
+_SpinCache = TypeVar("_SpinCache", JastrowSpinCache, RestrictedBoltzmannCache)
+_Selected = TypeVar("_Selected")
+
+
+class _SpinCacheModel(Protocol[_SpinCache]):
+    def initialize_cache(self, configuration: ArrayLike, /) -> _SpinCache: ...
+
+    def propose_flips(
+        self, cache: _SpinCache, indices: ArrayLike, active: ArrayLike, /
+    ) -> tuple[Array, _SpinCache, Array]: ...
+
+
+def _spin_cache_incremental_target(
+    model: _SpinCacheModel[_SpinCache], target_id: str
+) -> IncrementalMarkovTarget:
+    def initialize(position: ArrayLike) -> tuple[Array, _SpinCache]:
         cache = model.initialize_cache(position)
         return 2.0 * jnp.real(cache.complex_log_amplitude), cache
 
-    def propose(current, cache, proposed_position, payload):
+    def propose(
+        current: Array,
+        cache: _SpinCache,
+        proposed_position: Array,
+        payload: tuple[ArrayLike, ArrayLike],
+    ) -> tuple[Array, _SpinCache, Array]:
         indices, active = payload
         ratio, proposed_cache, valid = model.propose_flips(
             cache,
@@ -208,7 +233,7 @@ def _spin_cache_incremental_target(model, target_id: str):
             valid & (residual == 0.0),
         )
 
-    def select(current, proposed, accepted):
+    def select(current: _Selected, proposed: _Selected, accepted: Array) -> _Selected:
         return jax.tree_util.tree_map(
             lambda proposed_leaf, current_leaf: jnp.where(
                 accepted, proposed_leaf, current_leaf
@@ -260,13 +285,13 @@ class AutoregressiveSpinAmplitude(StrictModule, ParameterOwner):
 
     def __init__(
         self,
-        conditional_bias,
-        conditional_weights,
+        conditional_bias: ArrayLike,
+        conditional_weights: ArrayLike,
         /,
         *,
-        phase_bias=None,
-        phase_weights=None,
-    ):
+        phase_bias: ArrayLike | None = None,
+        phase_weights: ArrayLike | None = None,
+    ) -> None:
         bias, weights = jnp.asarray(conditional_bias), jnp.asarray(conditional_weights)
         if bias.ndim != 1 or weights.shape != (bias.shape[0], bias.shape[0]):
             raise ValueError(
@@ -301,7 +326,7 @@ class AutoregressiveSpinAmplitude(StrictModule, ParameterOwner):
         )
         return LogAmplitude(0.5 * log_probability, jnp.exp(1j * phase_angle), valid=valid)
 
-    def sample(self, key: Key[Array, ""], /, *, sample_index: int = 0) -> Array:
+    def sample(self, key: PRNGKey, /, *, sample_index: int = 0) -> Array:
         spins = jnp.zeros((self.site_count,), dtype=self.conditional_bias.dtype)
         for site in range(self.site_count):
             site_key = derive_key(key, _DIRECT_SAMPLE_ADDRESS, sample_index, site)
@@ -329,7 +354,7 @@ class SlaterJastrowAmplitude(StrictModule):
         *,
         electron_count: int,
         cusp_id: str,
-    ):
+    ) -> None:
         if not callable(orbital_evaluator) or not callable(jastrow):
             raise TypeError("orbital_evaluator and jastrow must be callable.")
         count = int(electron_count)
@@ -370,12 +395,12 @@ class CircuitAmplitude(StrictModule, ParameterOwner):
 
     def __init__(
         self,
-        prepared,
+        prepared: PreparedDenseQuantumProgram,
         initial_state: ArrayLike,
         /,
         *,
         maximum_dimension: int,
-    ):
+    ) -> None:
         from ...solver._quantum_program import PreparedDenseQuantumProgram
 
         if not isinstance(prepared, PreparedDenseQuantumProgram):

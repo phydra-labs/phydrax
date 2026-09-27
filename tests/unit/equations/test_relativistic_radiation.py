@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -17,11 +20,11 @@ from phydrax.metrix._spacetime_conventions import RelativityConvention
 from phydrax.units import KILOGRAM
 
 
-def _scale():
+def _scale() -> Any:
     return RelativityScaleContract.geometric(KILOGRAM)
 
 
-def _nonunit_scale():
+def _nonunit_scale() -> Any:
     return RelativityScaleContract(
         DimensionalScaleContract.si(),
         gravitational_constant=1,
@@ -31,7 +34,9 @@ def _nonunit_scale():
     )
 
 
-def _geometry(scale, convention, *, alpha=1.0, shift=(0.0, 0.0, 0.0)):
+def _geometry(
+    scale: Any, convention: Any, *, alpha: Any = 1.0, shift: Any = (0.0, 0.0, 0.0)
+) -> Any:
     dtype = jnp.float32
     identity = jnp.eye(3, dtype=dtype)
     return ADMGridGeometry(
@@ -52,7 +57,7 @@ def _geometry(scale, convention, *, alpha=1.0, shift=(0.0, 0.0, 0.0)):
     )
 
 
-def test_gr_m1_closure_recovers_diffusion_and_streaming_limits_under_jit():
+def test_gr_m1_closure_recovers_diffusion_and_streaming_limits_under_jit() -> None:
     scale = _scale()
     convention = RelativityConvention.canonical()
     geometry = _geometry(scale, convention)
@@ -81,7 +86,7 @@ def test_gr_m1_closure_recovers_diffusion_and_streaming_limits_under_jit():
     assert not bool(streaming.derivative_valid)
 
 
-def test_gr_m1_characteristics_follow_lapse_shift_light_cone():
+def test_gr_m1_characteristics_follow_lapse_shift_light_cone() -> None:
     scale = _scale()
     convention = RelativityConvention.canonical()
     geometry = _geometry(scale, convention, alpha=0.5, shift=(0.1, 0.0, 0.0))
@@ -95,7 +100,7 @@ def test_gr_m1_characteristics_follow_lapse_shift_light_cone():
     np.testing.assert_allclose(upper, 0.4, rtol=1.0e-6)
 
 
-def test_gr_radiation_matter_exchange_is_balanced_and_exposes_optical_limits():
+def test_gr_radiation_matter_exchange_is_balanced_and_exposes_optical_limits() -> None:
     scale = _scale()
     convention = RelativityConvention.canonical()
     geometry = _geometry(scale, convention)
@@ -140,7 +145,7 @@ def test_gr_radiation_matter_exchange_is_balanced_and_exposes_optical_limits():
     assert bool(exchange.qualified)
 
 
-def test_reduced_transport_speed_does_not_change_physical_frame_or_adm_momentum():
+def test_reduced_transport_speed_does_not_change_physical_frame_or_adm_momentum() -> None:
     scale = _nonunit_scale()
     convention = RelativityConvention.canonical()
     geometry = _geometry(scale, convention)

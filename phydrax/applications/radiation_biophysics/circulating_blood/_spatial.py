@@ -13,6 +13,7 @@ from numbers import Real
 import numpy as np
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ...._validation import canonical_identifier
 from ....imaging import LabelVolume, MedicalImageAsset
 from ....measurement import (
     QualityFlag,
@@ -22,7 +23,6 @@ from ....measurement import (
 )
 from ....units import conversion_factor, GRAY_PER_SECOND
 from ._dose import _require_dose_rate_quantity, DoseRateInterval
-from ._model import _identifier
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +79,7 @@ class PreparedSpatialCompartmentMixture:
 def _compartment_ids(values: Sequence[str], /) -> tuple[str, ...]:
     if isinstance(values, str):
         raise TypeError("compartment_ids must be a sequence, not one string.")
-    identifiers = tuple(_identifier(value, "compartment_id") for value in values)
+    identifiers = tuple(canonical_identifier(value, "compartment_id") for value in values)
     if not identifiers or len(set(identifiers)) != len(identifiers):
         raise ValueError("compartment_ids must be non-empty and unique.")
     return identifiers

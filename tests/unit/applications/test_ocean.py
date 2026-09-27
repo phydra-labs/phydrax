@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -10,13 +13,13 @@ import phydrax as phx
 
 def _prepared_ocean(
     *,
-    shape=(4, 4, 3),
-    coriolis=0.0,
-    temperature_diffusivity=0.0,
-    salinity_diffusivity=0.0,
-    temperature_flux=None,
-    surface_stress=None,
-):
+    shape: Any = (4, 4, 3),
+    coriolis: Any = 0.0,
+    temperature_diffusivity: Any = 0.0,
+    salinity_diffusivity: Any = 0.0,
+    temperature_flux: Any = None,
+    surface_stress: Any = None,
+) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(shape[0], periodic=True),
@@ -41,7 +44,7 @@ def _prepared_ocean(
     return plan.prepare(discretization)
 
 
-def _rest_state(ocean):
+def _rest_state(ocean: Any) -> Any:
     discretization = ocean.operators.discretization
     velocity = tuple(
         jnp.zeros(layout.shape, dtype=discretization.cell_volumes.dtype)
@@ -58,7 +61,7 @@ def _rest_state(ocean):
     return ocean.initial_state(velocity, temperature, salinity)
 
 
-def test_linear_seawater_reference_density_compensation():
+def test_linear_seawater_reference_density_compensation() -> None:
     reference = phx.applications.ocean.LinearSeawaterReference()
     temperature = jnp.asarray((11.0, 9.0))
     salinity = reference.reference_salinity + (
@@ -78,7 +81,7 @@ def test_linear_seawater_reference_density_compensation():
     )
 
 
-def test_scalar_cfl_uses_oriented_face_flux_not_canceling_average():
+def test_scalar_cfl_uses_oriented_face_flux_not_canceling_average() -> None:
     ocean = _prepared_ocean()
     discretization = ocean.operators.discretization
     x_layout = discretization.face_layouts[0]
@@ -97,7 +100,7 @@ def test_scalar_cfl_uses_oriented_face_flux_not_canceling_average():
     assert restriction.advective["temperature"] > 0.0
 
 
-def test_directional_scalar_diffusion_and_surface_flux_are_conservative():
+def test_directional_scalar_diffusion_and_surface_flux_are_conservative() -> None:
     flux = phx.discretization.MACScalarBoundaryCondition("flux", 2.0e-6)
     ocean = _prepared_ocean(
         temperature_diffusivity=jnp.asarray((1.0e-4, 1.0e-4, 1.0e-5)),
@@ -151,7 +154,7 @@ def test_directional_scalar_diffusion_and_surface_flux_are_conservative():
     )
 
 
-def test_mac_coriolis_is_weighted_power_neutral():
+def test_mac_coriolis_is_weighted_power_neutral() -> None:
     ocean = _prepared_ocean(coriolis=0.5)
     discretization = ocean.operators.discretization
     x = jnp.arange(np.prod(discretization.face_layouts[0].shape)).reshape(
@@ -176,7 +179,7 @@ def test_mac_coriolis_is_weighted_power_neutral():
     np.testing.assert_allclose(evidence.surface_stress_power, 0.0)
 
 
-def test_ocean_stage_and_wave_restrictions_are_finite():
+def test_ocean_stage_and_wave_restrictions_are_finite() -> None:
     ocean = _prepared_ocean(coriolis=0.25)
     state = _rest_state(ocean)
 
@@ -190,7 +193,7 @@ def test_ocean_stage_and_wave_restrictions_are_finite():
     np.testing.assert_allclose(stage.buoyancy.normalized_exchange_defect, 0.0)
 
 
-def test_ocean_checkpoint_round_trip(tmp_path):
+def test_ocean_checkpoint_round_trip(tmp_path: Any) -> None:
     ocean = _prepared_ocean()
     continuation = phx.applications.ocean.OceanBoussinesqContinuationState.initialize(
         _rest_state(ocean)
@@ -214,20 +217,20 @@ def test_ocean_checkpoint_round_trip(tmp_path):
     assert jax_tree_allclose(restored, continuation)
 
 
-def jax_tree_allclose(left, right):
+def jax_tree_allclose(left: Any, right: Any) -> Any:
     return all(
         np.allclose(np.asarray(a), np.asarray(b))
         for a, b in zip(jax_tree_leaves(left), jax_tree_leaves(right), strict=True)
     )
 
 
-def jax_tree_leaves(value):
+def jax_tree_leaves(value: Any) -> Any:
     import jax
 
     return jax.tree.leaves(value)
 
 
-def test_dynamic_surface_scalar_flux_uses_stage_time_and_args():
+def test_dynamic_surface_scalar_flux_uses_stage_time_and_args() -> None:
     condition = phx.discretization.MACScalarBoundaryCondition(
         "flux",
         lambda time, coordinates, args: args * time * jnp.ones(coordinates.shape[:-1]),
@@ -250,7 +253,7 @@ def test_dynamic_surface_scalar_flux_uses_stage_time_and_args():
     )
 
 
-def test_surface_stress_is_tangential_and_top_layer_owned():
+def test_surface_stress_is_tangential_and_top_layer_owned() -> None:
     ocean = _prepared_ocean(surface_stress=(2.0, 0.0, 0.0))
     discretization = ocean.operators.discretization
     velocity = (
@@ -270,7 +273,7 @@ def test_surface_stress_is_tangential_and_top_layer_owned():
     assert evidence.surface_stress_power > 0.0
 
 
-def test_ocean_diagnostic_output_contains_named_fields(tmp_path):
+def test_ocean_diagnostic_output_contains_named_fields(tmp_path: Any) -> None:
     from phydrax._array_archive import read_array_archive
 
     ocean = _prepared_ocean(coriolis=0.25)
@@ -305,7 +308,7 @@ def test_ocean_diagnostic_output_contains_named_fields(tmp_path):
     }.issubset(arrays)
 
 
-def test_coupled_stage_propagates_dynamic_boundary_data():
+def test_coupled_stage_propagates_dynamic_boundary_data() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(3, periodic=True),

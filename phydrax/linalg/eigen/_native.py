@@ -4,19 +4,70 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeAlias
 
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from .._spaces import _coordinate_pairing_matrix
-from ..krylov._decompositions import _block_inner, _orthonormalize_block
+from ..krylov._decompositions import _block_inner, _orthonormalize_block, InnerProduct
 from ._problems import GeneralizedEigenproblem
 from ._results import _NativeEigenResult
+
+
+# Basis/operator/metric blocks, search directions, masks, Ritz data, and counters.
+_LOBPCGState: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+
+# Retained basis blocks, masks, Ritz data, and restart counters.
+_RestartState: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+
+# Expanded basis blocks, basis mask, and action counters.
+_ExpansionState: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 
 def _solve_dense_eigh(prepared: Any, /) -> _NativeEigenResult:
@@ -193,7 +244,7 @@ def _solve_batched_dense_eigh(prepared: Any, /) -> _NativeEigenResult:
         policy.which,
     )
 
-    def per_batch(value):
+    def per_batch(value: ArrayLike) -> Array:
         return jnp.full(batch_shape, value, dtype=jnp.int32)
 
     return _NativeEigenResult(
@@ -386,7 +437,7 @@ def _solve_lobpcg(prepared: Any, /) -> _NativeEigenResult:
         jnp.asarray(0, dtype=jnp.int32),
     )
 
-    def step(iteration, current):
+    def step(iteration: Array, current: _LOBPCGState) -> _LOBPCGState:
         (
             x,
             ax,
@@ -422,7 +473,7 @@ def _solve_lobpcg(prepared: Any, /) -> _NativeEigenResult:
         )
         execute = jnp.any(mode_mask) & incomplete
 
-        def update(operand):
+        def update(operand: _LOBPCGState) -> _LOBPCGState:
             (
                 x_i,
                 ax_i,
@@ -681,7 +732,7 @@ def _solve_restarted_lanczos(prepared: Any, /) -> _NativeEigenResult:
         jnp.asarray(0, dtype=jnp.int32),
     )
 
-    def restart(cycle, current):
+    def restart(cycle: Array, current: _RestartState) -> _RestartState:
         (
             retained_basis,
             retained_operator_basis,
@@ -713,7 +764,7 @@ def _solve_restarted_lanczos(prepared: Any, /) -> _NativeEigenResult:
         )
         execute = jnp.any(retained_mask) & incomplete
 
-        def expand_and_restart(operand):
+        def expand_and_restart(operand: _RestartState) -> _RestartState:
             (
                 retained_basis_i,
                 retained_operator_basis_i,
@@ -752,7 +803,7 @@ def _solve_restarted_lanczos(prepared: Any, /) -> _NativeEigenResult:
                 preconditioner_applies_i,
             )
 
-            def expand(index, expansion):
+            def expand(index: Array, expansion: _ExpansionState) -> _ExpansionState:
                 (
                     basis_i,
                     operator_basis_i,
@@ -805,7 +856,9 @@ def _solve_restarted_lanczos(prepared: Any, /) -> _NativeEigenResult:
                 metric_candidate = metric_raw[:, 0]
                 initial_norm = _paired_norm(space, candidate, metric_candidate)
 
-                def orthogonalize(_, vectors):
+                def orthogonalize(
+                    _: Array, vectors: tuple[Array, Array]
+                ) -> tuple[Array, Array]:
                     candidate_i, metric_candidate_i = vectors
                     coefficients = _block_inner(
                         basis_i,
@@ -976,18 +1029,18 @@ def _solve_restarted_lanczos(prepared: Any, /) -> _NativeEigenResult:
     )
 
 
-def _coordinate_inner(space: Any):
-    def inner(left, right):
+def _coordinate_inner(space: Any) -> InnerProduct:
+    def inner(left: Array, right: Array) -> Array:
         return space.inner(space.unflatten(left), space.unflatten(right))
 
     return inner
 
 
-def _operator_columns(operator: Any, block: Array, mask: Array, /):
+def _operator_columns(operator: Any, block: Array, mask: Array, /) -> tuple[Array, Array]:
     output = jnp.zeros_like(block)
 
-    def apply(index, images):
-        def active_action(value):
+    def apply(index: Array, images: Array) -> Array:
+        def active_action(value: Array) -> Array:
             vector = operator.source.unflatten(block[:, index])
             image = operator.mv(vector)
             return value.at[:, index].set(operator.target.flatten(image))
@@ -998,7 +1051,7 @@ def _operator_columns(operator: Any, block: Array, mask: Array, /):
     return output, jnp.sum(mask, dtype=jnp.int32)
 
 
-def _metric_columns(problem: Any, block: Array, mask: Array, /):
+def _metric_columns(problem: Any, block: Array, mask: Array, /) -> tuple[Array, Array]:
     if problem.kind == "standard":
         return jnp.where(mask[None, :], block, 0), jnp.asarray(0, dtype=jnp.int32)
     return _operator_columns(problem.metric_operator, block, mask)
@@ -1010,15 +1063,15 @@ def _precondition_columns(
     mask: Array,
     iteration: Array,
     /,
-):
+) -> tuple[Array, Array]:
     if prepared.preconditioning_state is None:
         return jnp.where(mask[None, :], block, 0), jnp.asarray(0, dtype=jnp.int32)
     action = prepared.preconditioning_state.action
     space = prepared.problem.operator.source
     output = jnp.zeros_like(block)
 
-    def apply(index, images):
-        def active_action(value):
+    def apply(index: Array, images: Array) -> Array:
+        def active_action(value: Array) -> Array:
             vector = space.unflatten(block[:, index])
             image = action.apply(vector, iteration=iteration)
             return value.at[:, index].set(space.flatten(image))
@@ -1036,7 +1089,7 @@ def _project_constraints(
     constraints: Array,
     metric_constraints: Array,
     /,
-):
+) -> tuple[Array, Array]:
     if constraints.shape[1] == 0:
         return block, metric_block
     inner = _coordinate_inner(space)
@@ -1070,7 +1123,7 @@ def _orthonormalize_seed(
     /,
     *,
     generalized: bool,
-):
+) -> tuple[Array, Array, Array]:
     block = jnp.where(mask[None, :], block, 0)
     metric_block = jnp.where(mask[None, :], metric_block, 0)
     if not generalized:
@@ -1097,7 +1150,7 @@ def _orthonormalize_images(
     mask: Array,
     tolerance: Array,
     /,
-):
+) -> tuple[Array, Array, Array, Array]:
     block = jnp.where(mask[None, :], block, 0)
     operator_block = jnp.where(mask[None, :], operator_block, 0)
     metric_block = jnp.where(mask[None, :], metric_block, 0)
@@ -1152,7 +1205,7 @@ def _rayleigh_ritz(
     mask: Array,
     which: str,
     /,
-):
+) -> tuple[Array, Array, Array, Array, Array]:
     inner = _coordinate_inner(space)
     projected = _block_inner(basis, operator_basis, inner)
     gram = _block_inner(basis, metric_basis, inner)
@@ -1229,7 +1282,7 @@ def _residual_evidence(
     mask: Array,
     constraint_dual_basis: Array,
     /,
-):
+) -> tuple[Array, Array, Array]:
     width = operator_basis.shape[1]
     projected_images = _project_dual_residual(
         space,
@@ -1285,12 +1338,12 @@ def _project_dual_residual(
     return residual - normalized_dual @ (inverse @ right)
 
 
-def _column_norms(space: Any, block: Array, /):
+def _column_norms(space: Any, block: Array, /) -> Array:
     gram = _block_inner(block, block, _coordinate_inner(space))
     return jnp.sqrt(jnp.maximum(jnp.real(jnp.diag(gram)), 0.0))
 
 
-def _paired_norm(space: Any, vector: Array, metric_vector: Array, /):
+def _paired_norm(space: Any, vector: Array, metric_vector: Array, /) -> Array:
     value = _coordinate_inner(space)(vector, metric_vector)
     return jnp.sqrt(jnp.maximum(jnp.real(value), 0.0))
 
@@ -1302,7 +1355,7 @@ def _mode_convergence(
     absolute: float,
     relative: float,
     /,
-):
+) -> Array:
     return mask & (
         (residual_norms <= jnp.asarray(absolute, residual_norms.dtype))
         | (relative_residuals <= jnp.asarray(relative, relative_residuals.dtype))
@@ -1315,7 +1368,7 @@ def _orthogonality_error(
     metric_basis: Array,
     mask: Array,
     /,
-):
+) -> Array:
     gram = _block_inner(basis, metric_basis, _coordinate_inner(space))
     identity = jnp.eye(basis.shape[1], dtype=gram.dtype)
     pair_mask = mask[:, None] & mask[None, :]
@@ -1332,7 +1385,7 @@ def _isolation_gaps(
     count: int,
     which: str,
     /,
-):
+) -> Array:
     distances = jnp.abs(values[:, None] - values[None, :])
     if which in ("smallest-magnitude", "largest-magnitude"):
         target_distances = jnp.abs(jnp.abs(values)[:, None] - jnp.abs(values)[None, :])
@@ -1375,7 +1428,7 @@ def _final_result(
     operator_count: Array,
     metric_count: Array,
     preconditioner_count: Array,
-):
+) -> _NativeEigenResult:
     retained_values = values[:retained]
     retained_mask = mode_mask[:retained]
     requested_mask = mode_mask[:count]

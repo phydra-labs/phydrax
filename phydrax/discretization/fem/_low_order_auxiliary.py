@@ -7,7 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -35,7 +37,7 @@ class LowOrderAuxiliaryOperatorPlan(StrictModule, NonTrainableState):
         anterpolation: AbstractLinearOperator,
         multiplicity_weight: object,
         /,
-    ):
+    ) -> None:
         if not isinstance(interpolation, AbstractLinearOperator) or not isinstance(
             anterpolation, AbstractLinearOperator
         ):
@@ -76,7 +78,7 @@ class LowOrderAuxiliaryPreconditioner(AbstractPreconditioner):
         plan: LowOrderAuxiliaryOperatorPlan,
         low_order_preconditioner: AbstractPreconditioner,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, LowOrderAuxiliaryOperatorPlan) or not isinstance(
             low_order_preconditioner, AbstractPreconditioner
         ):
@@ -109,7 +111,7 @@ class LowOrderAuxiliaryPreconditioner(AbstractPreconditioner):
         /,
         *,
         iteration: ArrayLike | None = None,
-    ):
+    ) -> PyTree[Array]:
         checked = self.space.validate(residual)
         weighted = jax.tree.map(
             lambda value, weight: value * weight,

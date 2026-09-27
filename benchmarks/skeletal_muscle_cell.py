@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import platform
@@ -22,7 +24,7 @@ from phydrax.applications.skeletal_muscle.cellular import (
 )
 
 
-def _measure(callable_, arguments, repeats: int) -> tuple[float, object]:
+def _measure(callable_: Any, arguments: Any, repeats: int) -> tuple[float, object]:
     start = time.perf_counter()
     result = None
     for _ in range(repeats):

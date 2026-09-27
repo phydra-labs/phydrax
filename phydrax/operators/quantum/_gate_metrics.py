@@ -9,7 +9,8 @@ from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
@@ -71,7 +72,7 @@ def _subspace_valid(subspace: QuantumSubspace, /) -> Array:
     raise TypeError("subspace must be a BasisStateSubspace or DenseQuantumSubspace.")
 
 
-def _dense_isometry(subspace: QuantumSubspace, dtype, /) -> Array:
+def _dense_isometry(subspace: QuantumSubspace, dtype: DTypeLike, /) -> Array:
     if isinstance(subspace, DenseQuantumSubspace):
         return subspace.isometry.astype(dtype)
     if isinstance(subspace, BasisStateSubspace):

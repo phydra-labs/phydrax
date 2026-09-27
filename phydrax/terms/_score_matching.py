@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax.domain import DomainFunction
 
@@ -30,6 +31,7 @@ from ..stochastic._state_time import (
     TrajectoryStateTimeSamples,
 )
 from ..stochastic._trajectory import StochasticTrajectory
+from ..typing import parse, PRNGKey
 from ._sample_statistics import (
     clustered_standard_error,
     effective_sample_size,
@@ -39,8 +41,9 @@ from ._sample_statistics import (
 
 ScoreMatchingMethod: TypeAlias = Literal["exact", "implicit", "sliced"]
 ScoreMatchingSamplingMode: TypeAlias = Literal["fixed", "resample"]
+_ScoreNodeValues: TypeAlias = tuple[Array, Array, Array, Array]
 ScoreSampleProvider: TypeAlias = Callable[
-    [Key[Array, ""]], TrajectoryStateTimeSamples | StochasticTrajectory
+    [PRNGKey], TrajectoryStateTimeSamples | StochasticTrajectory
 ]
 
 
@@ -71,9 +74,8 @@ class ScoreMatchingPolicy(StrictModule):
         num_probes: int = 16,
         distribution: Literal["rademacher", "normal"] = "rademacher",
         policy_id: str | None = None,
-    ):
-        if method not in ("exact", "implicit", "sliced"):
-            raise ValueError("method must be 'exact', 'implicit', or 'sliced'.")
+    ) -> None:
+        method = parse(method, ScoreMatchingMethod, "method")
         count = int(num_probes)
         if method == "exact":
             if count < 0:
@@ -104,11 +106,11 @@ class ScoreMatchingBatch(StrictModule):
     def __init__(
         self,
         samples: TrajectoryStateTimeSamples,
-        probe_key: Key[Array, ""],
+        probe_key: PRNGKey,
         /,
         *,
         batch_id: str,
-    ):
+    ) -> None:
         if not isinstance(samples, TrajectoryStateTimeSamples):
             raise TypeError("samples must be TrajectoryStateTimeSamples.")
         if not batch_id:
@@ -163,10 +165,10 @@ def _as_samples(
 
 
 def _probes(
-    key: Key[Array, ""],
+    key: PRNGKey,
     shape: tuple[int, ...],
     policy: ScoreMatchingPolicy,
-    dtype,
+    dtype: DTypeLike,
     /,
 ) -> Array:
     full_shape = (policy.num_probes,) + shape
@@ -196,11 +198,10 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
         sampling_mode: ScoreMatchingSamplingMode = "fixed",
         scalar_weight: ArrayLike = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(score_name, str) or not score_name:
             raise ValueError("score_name must be a non-empty string.")
-        if sampling_mode not in ("fixed", "resample"):
-            raise ValueError("sampling_mode must be 'fixed' or 'resample'.")
+        sampling_mode = parse(sampling_mode, ScoreMatchingSamplingMode, "sampling_mode")
         resolved_policy = ScoreMatchingPolicy() if policy is None else policy
         if not isinstance(resolved_policy, ScoreMatchingPolicy):
             raise TypeError("policy must be a ScoreMatchingPolicy.")
@@ -225,7 +226,7 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
         self.sampling_mode = sampling_mode
         self.label = label
 
-    def sample(self, *, key: Key[Array, ""] = jr.key(0)) -> ScoreMatchingBatch:
+    def sample(self, *, key: PRNGKey = jr.key(0)) -> ScoreMatchingBatch:
         sample_key, probe_key = jr.split(key)
         if self.sampling_mode == "fixed":
             if self.fixed_samples is None:
@@ -277,10 +278,10 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
         safe_times = jnp.where(valid, times, 0.0)
         node_keys = jr.split(batch.probe_key, node_count)
 
-        def score_at(state, time, key):
+        def score_at(state: Array, time: Array, key: PRNGKey) -> Array:
             return score(state, time, key=key)
 
-        def exact_node(state, time, key):
+        def exact_node(state: Array, time: Array, key: PRNGKey) -> _ScoreNodeValues:
             value = score_at(state, time, key)
             divergence = exact_state_divergence(
                 lambda current: score_at(current, time, key), state
@@ -293,7 +294,7 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
             distribution=self.policy.distribution,
         )
 
-        def implicit_node(state, time, key):
+        def implicit_node(state: Array, time: Array, key: PRNGKey) -> _ScoreNodeValues:
             value = score_at(state, time, key)
             estimate = stochastic_divergence_samples(
                 lambda current: score_at(current, time, key),
@@ -309,11 +310,11 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
                 estimate.standard_error,
             )
 
-        def sliced_node(state, time, key):
+        def sliced_node(state: Array, time: Array, key: PRNGKey) -> _ScoreNodeValues:
             value = score_at(state, time, key)
             probes = _probes(key, state_shape, self.policy, state.dtype)
 
-            def one(probe):
+            def one(probe: Array) -> tuple[Array, Array]:
                 _, derivative = jax.jvp(
                     lambda current: score_at(current, time, key),
                     (state,),
@@ -371,7 +372,7 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
         iter_: int | Array | None = None,
         batch: ScoreMatchingBatch | None = None,
         **kwargs: Any,
@@ -386,7 +387,7 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
         batch: ScoreMatchingBatch | None = None,
     ) -> ScoreMatchingDiagnostics:
         materialized = self.sample(key=key) if batch is None else batch

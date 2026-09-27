@@ -33,12 +33,12 @@ from __future__ import annotations
 
 from enum import StrEnum
 from itertools import combinations
-from typing import final, NamedTuple
+from typing import Any, final, NamedTuple
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 from numpy.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -78,7 +78,7 @@ def _tag_array(values: ArrayLike, count: int, dimension: int, name: str, /) -> n
     return tags
 
 
-def _simplex_rows(values: ArrayLike, count: int, dimension: int, name: str, /):
+def _simplex_rows(values: ArrayLike, count: int, dimension: int, name: str, /) -> Any:
     rows = np.asarray(values, dtype=np.int64)
     if rows.shape != (count, dimension + 1) or np.any(rows < 0):
         raise ValueError(f"{name} must have shape ({count}, {dimension + 1}).")
@@ -88,7 +88,7 @@ def _simplex_rows(values: ArrayLike, count: int, dimension: int, name: str, /):
     return rows
 
 
-def _retired_tables(keys, ids, dimension: int, /):
+def _retired_tables(keys: Any, ids: Any, dimension: int, /) -> Any:
     key_tables = tuple(np.asarray(value, dtype=np.int64) for value in keys)
     id_tables = tuple(np.asarray(value, dtype=np.int64) for value in ids)
     if len(key_tables) != dimension - 1 or len(id_tables) != dimension - 1:
@@ -214,7 +214,7 @@ class BisectionHierarchy(StrictModule, NonTrainableState):
         retired_entity_ids: tuple[ArrayLike, ...],
         next_vertex_id: int,
         next_cell_id: int,
-    ):
+    ) -> None:
         if isinstance(dimension, bool) or dimension not in (2, 3):
             raise ValueError("Bisection hierarchies are two- or three-dimensional.")
         arrays = _validated_forest(
@@ -328,7 +328,7 @@ class BisectionEvidence(StrictModule, NonTrainableState):
         coarsening_passes: int,
         restored_cells: int,
         rejected_coarsening_ids: ArrayLike,
-    ):
+    ) -> None:
         counts = {
             "requested_refinements": int(requested_refinements),
             "accepted_refinements": int(accepted_refinements),
@@ -506,11 +506,11 @@ class _Coarsening(NamedTuple):
     rejected_ids: np.ndarray
 
 
-def _select(table, index, /):
+def _select(table: Any, index: Any, /) -> Any:
     return type(table)(*(value[index] for value in table))
 
 
-def _joined(first, second, /):
+def _joined(first: Any, second: Any, /) -> Any:
     return type(first)(
         *(np.concatenate((a, b), axis=0) for a, b in zip(first, second, strict=True))
     )
@@ -560,7 +560,7 @@ def _distinct_rows(values: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     return np.where(columns < counts[:, None], packed, -1), counts
 
 
-def _merged_rows(sources: np.ndarray, weights: np.ndarray, width: int, /):
+def _merged_rows(sources: np.ndarray, weights: np.ndarray, width: int, /) -> Any:
     """Sum duplicate sources of each sparse row and pack them into ``width``."""
 
     count = sources.shape[0]
@@ -593,7 +593,7 @@ def _merged_rows(sources: np.ndarray, weights: np.ndarray, width: int, /):
     return merged_sources, merged_weights
 
 
-def _odd_relative(rows: np.ndarray, tuples: np.ndarray, dimension: int, /):
+def _odd_relative(rows: np.ndarray, tuples: np.ndarray, dimension: int, /) -> Any:
     """Whether each tuple is an odd permutation of its oriented row."""
 
     pairs = _TABLES[dimension][3]
@@ -602,11 +602,11 @@ def _odd_relative(rows: np.ndarray, tuples: np.ndarray, dimension: int, /):
     return inversions % 2 == 1
 
 
-def _reversed(tuples: np.ndarray, tags: np.ndarray, dimension: int, /):
+def _reversed(tuples: np.ndarray, tags: np.ndarray, dimension: int, /) -> Any:
     return np.take_along_axis(tuples, _TABLES[dimension][2][tags], axis=1)
 
 
-def _canonical(tuples, tags, odd, dimension: int, /):
+def _canonical(tuples: Any, tags: Any, odd: Any, dimension: int, /) -> Any:
     """Canonical representative of each tagged simplex and its orientation parity."""
 
     reversed_ = _reversed(tuples, tags, dimension)
@@ -628,7 +628,7 @@ def _oriented_rows(tuples: np.ndarray, odd: np.ndarray, /) -> np.ndarray:
     return rows
 
 
-def _children(tuples, tags, midpoints, dimension: int, /):
+def _children(tuples: Any, tags: Any, midpoints: Any, dimension: int, /) -> Any:
     first_table, second_table = _TABLES[dimension][:2]
     extended = np.concatenate((tuples, midpoints[:, None]), axis=1)
     return (
@@ -673,7 +673,7 @@ def _prepared_source(mesh: CellMesh, /) -> _Source:
     return _Source(mesh, dimension, vertex_ids[original], original, coordinates, cells)
 
 
-def _compact_vertices(source: _Source, identifiers: np.ndarray, name: str, /):
+def _compact_vertices(source: _Source, identifiers: np.ndarray, name: str, /) -> Any:
     ids = source.vertex_ids
     position = np.minimum(np.searchsorted(ids, identifiers), ids.size - 1)
     if np.any(ids[position] != identifiers):
@@ -744,7 +744,9 @@ def _prepared_request(
     )
 
 
-def _longest_edge_labels(cells: _Cells, coordinates: np.ndarray, dimension: int, /):
+def _longest_edge_labels(
+    cells: _Cells, coordinates: np.ndarray, dimension: int, /
+) -> Any:
     """Maubach labels from the global strict edge order (longest first, then key)."""
 
     pairs = _TABLES[dimension][3]
@@ -781,14 +783,14 @@ def _longest_edge_labels(cells: _Cells, coordinates: np.ndarray, dimension: int,
     return tuples, tags
 
 
-def _reflected(first, second, tags, dimension: int, /) -> np.ndarray:
+def _reflected(first: Any, second: Any, tags: Any, dimension: int, /) -> np.ndarray:
     mirrored = _reversed(second, tags, dimension)
     return (np.sum(first != second, axis=1) == 1) | (
         np.sum(first != mirrored, axis=1) == 1
     )
 
 
-def _facet_children(cells: _Cells, owners, opposite, dimension: int, /):
+def _facet_children(cells: _Cells, owners: Any, opposite: Any, dimension: int, /) -> Any:
     """Child of each owner containing the facet opposite ``opposite``."""
 
     tuples, tags = cells.tuples[owners], cells.tags[owners]
@@ -888,7 +890,7 @@ def _subdivided(front: _Front, dimension: int, /) -> _Front:
     )
 
 
-def _split_edges(front: _Front, codes: np.ndarray, level: int, dimension: int, /):
+def _split_edges(front: _Front, codes: np.ndarray, level: int, dimension: int, /) -> Any:
     """Midpoint of each refinement edge, issuing new vertices in sorted key order."""
 
     known = _members(front.split_keys, codes)
@@ -922,7 +924,7 @@ def _split_edges(front: _Front, codes: np.ndarray, level: int, dimension: int, /
     )
 
 
-def _bisected(front: _Front, selected: np.ndarray, level: int, dimension: int, /):
+def _bisected(front: _Front, selected: np.ndarray, level: int, dimension: int, /) -> Any:
     """Bisect the selected cells once; children follow in (parent ID, 1, 2) order."""
 
     cells = front.cells
@@ -964,7 +966,7 @@ def _bisected(front: _Front, selected: np.ndarray, level: int, dimension: int, /
     return front, records, created
 
 
-def _nonconforming(cells: _Cells, split_keys: np.ndarray, dimension: int, /):
+def _nonconforming(cells: _Cells, split_keys: np.ndarray, dimension: int, /) -> Any:
     pairs = _TABLES[dimension][3]
     codes = _edge_codes(cells.tuples[:, pairs[:, 0]], cells.tuples[:, pairs[:, 1]])
     return np.any(_members(split_keys, codes), axis=1)
@@ -1008,7 +1010,7 @@ def _closure(
 
 def _admissible_marks(
     front: _Front, marks: np.ndarray, request: _Request, dimension: int, /
-):
+) -> Any:
     """Split marks into those whose own closure keeps every protected edge whole.
 
     Closures of a union are unions of closures, so a clean group is admissible
@@ -1062,7 +1064,9 @@ def _refinement(start: _Start, request: _Request, dimension: int, /) -> _Refinem
     )
 
 
-def _initial_front(cells: _Cells, vertex_base: int, next_cell: int, dimension: int):
+def _initial_front(
+    cells: _Cells, vertex_base: int, next_cell: int, dimension: int
+) -> Any:
     width = dimension + 1
     empty = np.zeros((0,), dtype=np.int64)
     growth = _Growth(
@@ -1205,7 +1209,7 @@ def _bound_start(
     )
 
 
-def _record_links(ids: np.ndarray, child_ids: np.ndarray, /):
+def _record_links(ids: np.ndarray, child_ids: np.ndarray, /) -> Any:
     """Record of each active cell as a child and the row of its active sibling."""
 
     flat = child_ids.reshape((-1,))
@@ -1220,7 +1224,9 @@ def _record_links(ids: np.ndarray, child_ids: np.ndarray, /):
     return np.where(hit, slot // 2, -1), sibling
 
 
-def _facet_merges(records: _Records, family: np.ndarray, facets, dimension: int, /):
+def _facet_merges(
+    records: _Records, family: np.ndarray, facets: Any, dimension: int, /
+) -> Any:
     """Class agreement of the facet halves each undone bisection merges."""
 
     keys, classes = facets
@@ -1259,7 +1265,7 @@ def _removable_family(
     flags: _Flags,
     records: _Records,
     protected: np.ndarray,
-    facets,
+    facets: Any,
     dimension: int,
     /,
 ) -> _Family | None:
@@ -1305,7 +1311,7 @@ def _removable_family(
     )
 
 
-def _undone(cells: _Cells, flags: _Flags, records: _Records, family: _Family, /):
+def _undone(cells: _Cells, flags: _Flags, records: _Records, family: _Family, /) -> Any:
     """Restore the parents of one coarsening pass in ascending cell-ID order."""
 
     undo = family.undo
@@ -1332,7 +1338,7 @@ def _undone(cells: _Cells, flags: _Flags, records: _Records, family: _Family, /)
     return _select(merged, order), _select(merged_flags, order), _select(records, keep)
 
 
-def _reverse_supports(steps, vertex_count: int, dimension: int, /) -> np.ndarray:
+def _reverse_supports(steps: Any, vertex_count: int, dimension: int, /) -> np.ndarray:
     """Surviving vertices spanning each source vertex (removed ones by their edges)."""
 
     width = dimension + 1
@@ -1400,7 +1406,7 @@ def _coarsening(
     )
 
 
-def _resolved_stencil(growth: _Growth, vertex_base: int, dimension: int, /):
+def _resolved_stencil(growth: _Growth, vertex_base: int, dimension: int, /) -> Any:
     """Source-vertex stencil of every new vertex, composed level by level."""
 
     width = dimension + 1
@@ -1428,7 +1434,7 @@ def _resolved_stencil(growth: _Growth, vertex_base: int, dimension: int, /):
     return sources, weights
 
 
-def _global_vertices(compact: np.ndarray, source: _Source, next_vertex: int, /):
+def _global_vertices(compact: np.ndarray, source: _Source, next_vertex: int, /) -> Any:
     count = source.vertex_ids.size
     return np.where(
         compact < count,
@@ -1437,7 +1443,7 @@ def _global_vertices(compact: np.ndarray, source: _Source, next_vertex: int, /):
     )
 
 
-def _contained(keys_from, supports, keys_to, /):
+def _contained(keys_from: Any, supports: Any, keys_to: Any, /) -> Any:
     """Entities of one mesh lying inside one same-dimension entity of the other."""
 
     width = keys_from.shape[1]
@@ -1452,7 +1458,7 @@ def _contained(keys_from, supports, keys_to, /):
     return missing[found], candidates[found]
 
 
-def _grouped_relations(degree: int, groups, /) -> EntityRelations:
+def _grouped_relations(degree: int, groups: Any, /) -> EntityRelations:
     """One relation record from (source keys, target keys, kind) groups."""
 
     return EntityRelations(
@@ -1540,7 +1546,7 @@ def _entity_identities(
     entity_tables: tuple[tuple[np.ndarray, np.ndarray], ...],
     alive: np.ndarray,
     /,
-):
+) -> Any:
     """Restored entities regain retired IDs; newly retired entities are recorded.
 
     Only entities whose vertices all survive can reappear, so retired entries
@@ -1572,7 +1578,9 @@ def _entity_identities(
     return tuple(prescribed), tuple(retired)
 
 
-def _merged_forest(start: _Start, refinement: _Refinement, coarsening: _Coarsening):
+def _merged_forest(
+    start: _Start, refinement: _Refinement, coarsening: _Coarsening
+) -> Any:
     cells = refinement.front.cells
     cells = _joined(
         _select(cells, ~_members(coarsening.removed_ids, cells.ids)),
@@ -1594,7 +1602,7 @@ def _target_hierarchy(
     start: _Start,
     cells: _Cells,
     records: _Records,
-    retired,
+    retired: Any,
     front: _Front,
     /,
 ) -> BisectionHierarchy:
@@ -1621,7 +1629,7 @@ def _target_hierarchy(
     )
 
 
-def _target_vertices(source: _Source, removed: np.ndarray, new_count: int, /):
+def _target_vertices(source: _Source, removed: np.ndarray, new_count: int, /) -> Any:
     """Surviving source vertices in source row order, then surviving new vertices.
 
     ``removed`` may hold new vertices (created and coarsened away inside one
@@ -1641,7 +1649,7 @@ def _target_vertices(source: _Source, removed: np.ndarray, new_count: int, /):
     return ordered, position, alive
 
 
-def _target_stencil(source: _Source, stencil, ordered: np.ndarray, /):
+def _target_stencil(source: _Source, stencil: Any, ordered: np.ndarray, /) -> Any:
     """Coordinates and source stencil rows of the ordered target vertices."""
 
     count, width = source.vertex_ids.size, source.dimension + 1
@@ -1676,7 +1684,7 @@ def _edit(
     coarsening: _Coarsening,
     cells: _Cells,
     /,
-):
+) -> Any:
     dimension, count = source.dimension, source.vertex_ids.size
     growth = refinement.front.growth
     stencil = _resolved_stencil(growth, count, dimension)

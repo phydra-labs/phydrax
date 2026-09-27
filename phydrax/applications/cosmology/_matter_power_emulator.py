@@ -15,11 +15,13 @@ import time
 import zipfile
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._differentiation import DerivativeContract, DerivativeRoute
 from ..._fingerprint import canonical_fingerprint
@@ -46,6 +48,7 @@ from ._products import (
     MatterPowerDescriptor,
     MatterPowerTable,
 )
+from ._scales import CosmologyScaleContract
 
 
 _SCALE_FACTOR_UNIT = "dimensionless"
@@ -98,7 +101,9 @@ _DESCRIPTOR_FIELDS = frozenset(
 )
 
 
-def _power_unit(scale, descriptor: MatterPowerDescriptor, /) -> UnitDefinition:
+def _power_unit(
+    scale: CosmologyScaleContract, descriptor: MatterPowerDescriptor, /
+) -> UnitDefinition:
     return derived_unit(
         f"{scale.length_unit.symbol}^{descriptor.spatial_dimension}",
         ((scale.length_unit, descriptor.spatial_dimension),),
@@ -224,7 +229,7 @@ class MatterPowerEvaluationRequest(StrictModule, NonTrainableState):
         wavenumbers: ArrayLike,
         descriptor: MatterPowerDescriptor,
         /,
-    ):
+    ) -> None:
         if not isinstance(cosmology, CosmologyModelRequest):
             raise TypeError("cosmology must be CosmologyModelRequest.")
         if not isinstance(descriptor, MatterPowerDescriptor):
@@ -291,7 +296,7 @@ class EmulatorSupportEvidence(StrictModule, NonTrainableState):
         /,
         *,
         provider_support_complete: bool,
-    ):
+    ) -> None:
         bounds = tuple(
             self._validated_bounds(value, name)
             for value, name in (
@@ -365,7 +370,7 @@ class MatterPowerProcessEvidence(StrictModule, NonTrainableState):
         result_uncompressed_bytes: int,
         standard_output_bytes: int,
         standard_error_bytes: int,
-    ):
+    ) -> None:
         code = int(return_code)
         elapsed = float(elapsed_seconds)
         counts = tuple(
@@ -433,7 +438,7 @@ class ExternalMatterPowerResult(StrictModule, NonTrainableState):
         support: EmulatorSupportEvidence,
         reference_manifest: ReferenceArtifactManifest,
         /,
-    ):
+    ) -> None:
         if not isinstance(table, MatterPowerTable):
             raise TypeError("table must be MatterPowerTable.")
         if not isinstance(artifact, ScientificArtifactEnvelope):
@@ -480,7 +485,7 @@ class MatterPowerProviderError(RuntimeError):
         *,
         adapter_status: AdapterStatus,
         support: EmulatorSupportEvidence | None = None,
-    ):
+    ) -> None:
         reason_ = str(reason).strip()
         message_ = str(message).strip()
         if not reason_ or not message_:
@@ -531,7 +536,7 @@ class SubprocessMatterPowerBackend(AbstractExternalBackend, NonTrainableState):
         redistribution: bool = False,
         training_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         executable = str(application).strip()
         artifact_path = str(Path(reference_artifact_path).expanduser().resolve())
         arguments_ = tuple(str(argument) for argument in arguments)
@@ -860,7 +865,8 @@ class SubprocessMatterPowerBackend(AbstractExternalBackend, NonTrainableState):
                 "Matter-power provider clamped, extrapolated, or remapped coordinates.",
                 adapter_status=AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
             )
-        support_record = _mapping(metadata["support"], "support evidence")
+        # Decoded provider JSON; EmulatorSupportEvidence validates the numeric bounds.
+        support_record: dict[str, Any] = _mapping(metadata["support"], "support evidence")
         _exact_fields(support_record, _SUPPORT_FIELDS, "support evidence")
         support = EmulatorSupportEvidence(
             _bounds(request.scale_factors),

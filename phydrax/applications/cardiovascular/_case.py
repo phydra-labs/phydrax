@@ -149,7 +149,7 @@ class CardiovascularCaseManifest:
         license_ids: Iterable[str] = (),
         data_rights_ids: Iterable[str] = (),
         metadata: Mapping[str, str] | Iterable[tuple[str, str]] | None = None,
-    ):
+    ) -> None:
         case = _identity(case_id, "case_id")
         anatomy = _identity(anatomy_id, "anatomy_id")
         model = _identity(model_id, "model_id")

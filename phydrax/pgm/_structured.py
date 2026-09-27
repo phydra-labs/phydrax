@@ -7,7 +7,8 @@ from __future__ import annotations
 from math import prod
 
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._model import (
     DiscreteFactorGraph,
@@ -18,7 +19,7 @@ from ._model import (
 )
 
 
-def _edge_array(edges: ArrayLike, variable_count: int, /):
+def _edge_array(edges: ArrayLike, variable_count: int, /) -> Array:
     array = jnp.asarray(edges)
     if not jnp.issubdtype(array.dtype, jnp.integer):
         raise TypeError("edges must contain integer variable indices.")

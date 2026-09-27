@@ -8,7 +8,8 @@ from enum import IntEnum
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..geometric._sequential import SequentialOpticsResult
@@ -82,9 +83,9 @@ def _cell_determinants(coordinates: Array, /) -> Array:
 
 def _cell_to_node_average(cell_values: Array, /) -> Array:
     padding = (((0, 1), (0, 1)), ((1, 0), (0, 1)), ((0, 1), (1, 0)), ((1, 0), (1, 0)))
-    total = sum(jnp.pad(cell_values, pad) for pad in padding)
+    total = jnp.asarray(sum(jnp.pad(cell_values, pad) for pad in padding))
     ones = jnp.ones_like(cell_values)
-    count = sum(jnp.pad(ones, pad) for pad in padding)
+    count = jnp.asarray(sum(jnp.pad(ones, pad) for pad in padding))
     return total / count
 
 

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -63,13 +65,16 @@ jax.config.update("jax_enable_x64", True)
 def _pump_map() -> PumpHeadFlowMap:
     return PumpHeadFlowMap(
         "qualification-pump",
+        # ty: ignore[invalid-argument-type]
         [0.0, 2.0, 4.0],
+        # ty: ignore[invalid-argument-type]
         [2_000.0, 4_000.0],
+        # ty: ignore[invalid-argument-type]
         [[6.0, 4.0, 2.0], [12.0, 8.0, 4.0]],
     )
 
 
-def _hydraulic_plan(*, oxygen_model=None) -> ECMOCircuitPlan:
+def _hydraulic_plan(*, oxygen_model: Any = None) -> ECMOCircuitPlan:
     return ECMOCircuitPlan(
         _pump_map(),
         Cannula(
@@ -101,7 +106,7 @@ def _hydraulic_plan(*, oxygen_model=None) -> ECMOCircuitPlan:
     )
 
 
-def test_tube_law_wave_speed_conservative_step_and_0d_port():
+def test_tube_law_wave_speed_conservative_step_and_0d_port() -> None:
     law = SquareRootTubeLaw(100.0, 10.0, reference_pressure_kPa=8.0)
     expected_speed = np.sqrt(10.0 / (2.0 * 1.06))
     np.testing.assert_allclose(law.wave_speed(100.0, 1.06), expected_speed)
@@ -143,7 +148,7 @@ def test_tube_law_wave_speed_conservative_step_and_0d_port():
     assert float(outlet.flow_into_vessel_mm3_per_ms) > 0.0
 
 
-def test_vascular_step_rejects_boundary_driven_cfl_violation():
+def test_vascular_step_rejects_boundary_driven_cfl_violation() -> None:
     law = SquareRootTubeLaw(100.0, 10.0, reference_pressure_kPa=8.0)
     runtime = Vascular1DPlan(
         "boundary-cfl",
@@ -167,7 +172,7 @@ def test_vascular_step_rejects_boundary_driven_cfl_violation():
     np.testing.assert_array_equal(result.state.flow_mm3_per_ms, state.flow_mm3_per_ms)
 
 
-def test_characteristic_reflection_and_junction_conservation():
+def test_characteristic_reflection_and_junction_conservation() -> None:
     matched = CharacteristicTerminal("matched", 8.0, 0.5)
     reflection = reflect_characteristic_wave(matched, 1.2, 0.5)
     assert bool(reflection.successful)
@@ -193,7 +198,7 @@ def test_characteristic_reflection_and_junction_conservation():
     )
 
 
-def test_pump_map_interpolates_and_refuses_extrapolation():
+def test_pump_map_interpolates_and_refuses_extrapolation() -> None:
     pump_map = _pump_map()
     inside = evaluate_pump_map(pump_map, 1.0, 3_000.0)
     assert bool(inside.successful)
@@ -205,7 +210,7 @@ def test_pump_map_interpolates_and_refuses_extrapolation():
     assert int(outside.status) & int(PumpMapStatus.FLOW_OUT_OF_DOMAIN)
 
 
-def test_pacemaker_is_causal_rate_limited_and_exactly_replayable():
+def test_pacemaker_is_causal_rate_limited_and_exactly_replayable() -> None:
     plan = PacemakerControllerPlan(60.0, 120.0, 250.0, 2.0, 4.0)
     initial = initialize_pacemaker_controller(plan)
     times = jnp.asarray([250.0, 500.0, 750.0, 1_000.0, 1_250.0, 1_500.0])
@@ -223,7 +228,7 @@ def test_pacemaker_is_causal_rate_limited_and_exactly_replayable():
     np.testing.assert_allclose(rejected.pacing_output_mA, 0.0)
 
 
-def test_pump_controller_future_samples_cannot_change_prior_commands_and_replay():
+def test_pump_controller_future_samples_cannot_change_prior_commands_and_replay() -> None:
     plan = PumpControllerPlan(
         10.0,
         300.0,
@@ -255,7 +260,7 @@ def test_pump_controller_future_samples_cannot_change_prior_commands_and_replay(
     np.testing.assert_allclose(rejected.state.speed_rpm, first.final_state.speed_rpm)
 
 
-def test_hydraulic_ecmo_conserves_pressure_and_requires_explicit_oxygen_model():
+def test_hydraulic_ecmo_conserves_pressure_and_requires_explicit_oxygen_model() -> None:
     hydraulic_only = _hydraulic_plan()
     assert not hydraulic_only.gas_exchange_enabled
     assert not hydraulic_only.oxygenator.supports_gas_exchange
@@ -296,7 +301,7 @@ def test_hydraulic_ecmo_conserves_pressure_and_requires_explicit_oxygen_model():
     assert float(enabled.oxygen_transfer_mL_per_ms) > 0.0
 
 
-def test_oxygen_components_inversion_mixing_and_transport_are_conservative():
+def test_oxygen_components_inversion_mixing_and_transport_are_conservative() -> None:
     model = BloodOxygenModel(15.0)
     content = evaluate_oxygen_content(model, 10.0)
     assert bool(content.successful)
@@ -319,7 +324,9 @@ def test_oxygen_components_inversion_mixing_and_transport_are_conservative():
     np.testing.assert_allclose(mixing.mixed_content_mL_per_dL, 16.0)
     np.testing.assert_allclose(mixing.conservation_residual_mL_per_ms, 0.0)
 
+    # ty: ignore[invalid-argument-type]
     transport = OxygenTransportPlan([100.0, 100.0], [0], [1], 1.0)
+    # ty: ignore[invalid-argument-type]
     state = initialize_oxygen_transport_state(transport, [10.0, 20.0])
     result = step_oxygen_transport(
         transport,
@@ -342,7 +349,7 @@ def test_oxygen_components_inversion_mixing_and_transport_are_conservative():
     )
 
 
-def test_membrane_exchange_refuses_zero_flow_without_epsilon_division():
+def test_membrane_exchange_refuses_zero_flow_without_epsilon_division() -> None:
     model = BloodOxygenModel(14.0)
     membrane = MembraneOxygenatorModel(
         model,

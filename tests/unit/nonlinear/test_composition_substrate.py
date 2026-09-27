@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -13,7 +16,7 @@ nl = phx.nonlinear
 la = phx.linalg
 
 
-def _termination(**kwargs):
+def _termination(**kwargs: Any) -> Any:
     return nl.NonlinearTermination(
         absolute_residual=kwargs.pop("absolute_residual", 1e-9),
         relative_residual=0.0,
@@ -22,7 +25,9 @@ def _termination(**kwargs):
     )
 
 
-def test_function_update_distinguishes_application_from_root_convergence_and_refresh():
+def test_function_update_distinguishes_application_from_root_convergence_and_refresh() -> (
+    None
+):
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state - target,
         problem_id="finite-update",
@@ -59,7 +64,7 @@ def test_function_update_distinguishes_application_from_root_convergence_and_ref
     assert int(refreshed.numeric_version) == 1
 
 
-def test_update_budget_rejects_before_callable_proposal():
+def test_update_budget_rejects_before_callable_proposal() -> None:
     problem = nl.NonlinearSystemProblem(lambda state, target: state - target)
     update = nl.FunctionNonlinearUpdate(lambda state, target: target)
     prepared = nl.prepare_nonlinear_update(
@@ -80,7 +85,9 @@ def test_update_budget_rejects_before_callable_proposal():
     assert jnp.allclose(result.state, jnp.asarray([0.0]))
 
 
-def test_additive_multiplicative_and_optimal_compositions_preserve_physical_residual():
+def test_additive_multiplicative_and_optimal_compositions_preserve_physical_residual() -> (
+    None
+):
     problem = nl.NonlinearSystemProblem(lambda state, target: state - target)
     half = nl.FunctionNonlinearUpdate(
         lambda state, target: state + 0.5 * (target - state),
@@ -152,7 +159,7 @@ def test_additive_multiplicative_and_optimal_compositions_preserve_physical_resi
     assert float(optimal_result.diagnostics.final_residual_norm) <= 1.0
 
 
-def test_typed_ngmres_and_richardson_solve_and_raw_callable_is_rejected():
+def test_typed_ngmres_and_richardson_solve_and_raw_callable_is_rejected() -> None:
     problem = nl.NonlinearSystemProblem(lambda state, target: state - target)
     exact = nl.FunctionNonlinearUpdate(lambda state, target: target)
 
@@ -173,10 +180,11 @@ def test_typed_ngmres_and_richardson_solve_and_raw_callable_is_rejected():
     assert bool(ngmres_result.successful)
     assert bool(richardson_result.successful)
     with pytest.raises(TypeError, match="AbstractNonlinearUpdate"):
+        # ty: ignore[invalid-argument-type]
         nl.NonlinearGMRES(lambda state, args: state)
 
 
-def _subdomain(index, target):
+def _subdomain(index: Any, target: Any) -> Any:
     space = la.ArraySpace((1,), dtype=jnp.float64)
     return nl.NonlinearSubdomain(
         lambda state: state[index : index + 1],
@@ -195,7 +203,7 @@ def _subdomain(index, target):
     )
 
 
-def test_nonlinear_schwarz_gauss_seidel_and_aspin_certify_global_system():
+def test_nonlinear_schwarz_gauss_seidel_and_aspin_certify_global_system() -> None:
     target = jnp.asarray([2.0, 3.0], dtype=jnp.float64)
     problem = nl.NonlinearSystemProblem(
         lambda state, args: state - args,
@@ -232,7 +240,7 @@ def test_nonlinear_schwarz_gauss_seidel_and_aspin_certify_global_system():
     assert not aspin_result.diagnostics.counts_complete
 
 
-def test_prepared_function_update_follows_filtered_jit_pattern():
+def test_prepared_function_update_follows_filtered_jit_pattern() -> None:
     problem = nl.NonlinearSystemProblem(lambda state, target: state - target)
     prepared = nl.prepare_nonlinear_update(
         problem,
@@ -242,7 +250,7 @@ def test_prepared_function_update_follows_filtered_jit_pattern():
     )
 
     @eqx.filter_jit
-    def apply(current, state, target):
+    def apply(current: Any, state: Any, target: Any) -> Any:
         result, next_current = nl.apply_prepared_nonlinear_update(
             current,
             state,
@@ -259,7 +267,7 @@ def test_prepared_function_update_follows_filtered_jit_pattern():
     assert next_prepared.plan.plan_id == prepared.plan.plan_id
 
 
-def test_residual_optimal_composition_preflights_and_accounts_coefficient_solve():
+def test_residual_optimal_composition_preflights_and_accounts_coefficient_solve() -> None:
     problem = nl.NonlinearSystemProblem(lambda state, target: state - target)
     updates = (
         nl.FunctionNonlinearUpdate(

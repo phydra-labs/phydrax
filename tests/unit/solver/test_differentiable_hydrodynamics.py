@@ -15,7 +15,7 @@ import phydrax as phx
 from phydrax.solver._balance_law_composition import BalanceLawCompositionPlan
 
 
-def _periodic_euler_runtime(shape):
+def _periodic_euler_runtime(shape: Any) -> Any:
     dimension = len(shape)
     grid = phx.discretization.TensorGridPlan(
         tuple(
@@ -42,6 +42,7 @@ def _periodic_euler_runtime(shape):
         problem, discretization, method
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.3, maximum_retries=0),
@@ -49,7 +50,7 @@ def _periodic_euler_runtime(shape):
     return grid, system, discretization, runtime
 
 
-def _periodic_mhd_transport(count=3):
+def _periodic_mhd_transport(count: Any = 3) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(count, periodic=True) for _ in range(3)
@@ -87,6 +88,7 @@ def _periodic_mhd_transport(count=3):
     primitive = primitive.at[..., 4].set(1.0)
     primitive = primitive.at[..., 5].set(0.2)
     full = system.primitive_to_conserved(primitive)
+    # ty: ignore[invalid-argument-type]
     spatial = phx.discretization.UpwindConstrainedTransportPlan(dynamics, bridge)
     integrator = phx.solver.ConstrainedMHDSSPRK3Plan(spatial, cfl=0.2)
     return grid, system, integrator, full, magnetic_flux
@@ -95,7 +97,7 @@ def _periodic_mhd_transport(count=3):
 class _AbstractPreparedLinearSource(phx.solver.AbstractPreparedBalanceLawProcess):
     maximum_step: float = eqx.field(static=True)
 
-    def __init__(self, maximum_step: float, /):
+    def __init__(self, maximum_step: float, /) -> None:
         self.maximum_step = float(maximum_step)
         self.process_id = "adaptive-linear-source"
         self.requires_realization = False
@@ -103,7 +105,7 @@ class _AbstractPreparedLinearSource(phx.solver.AbstractPreparedBalanceLawProcess
         self.differentiability = "smooth"
         self.modified_components = ("total_energy",)
 
-    def initialize(self, source_view, args: Any = None, /):
+    def initialize(self, source_view: Any, args: Any = None, /) -> Any:
         del source_view, args
         return phx.solver.BalanceLawProcessState(
             self.process_id,
@@ -111,20 +113,22 @@ class _AbstractPreparedLinearSource(phx.solver.AbstractPreparedBalanceLawProcess
             (jnp.asarray(0.0),),
         )
 
-    def step_limit(self, time, cell_average, process_state, args: Any = None, /):
+    def step_limit(
+        self, time: Any, cell_average: Any, process_state: Any, args: Any = None, /
+    ) -> Any:
         del time, cell_average, process_state, args
         return jnp.asarray(self.maximum_step)
 
     def linear_advance(
         self,
-        start_time,
-        end_time,
-        cell_average,
-        process_state,
-        realization=None,
+        start_time: Any,
+        end_time: Any,
+        cell_average: Any,
+        process_state: Any,
+        realization: Any = None,
         args: Any = None,
         /,
-    ):
+    ) -> Any:
         del realization
         step = end_time - start_time
         rate = jnp.asarray(args["rate"], dtype=cell_average.dtype)
@@ -147,14 +151,14 @@ class _AbstractPreparedLinearSource(phx.solver.AbstractPreparedBalanceLawProcess
 class _PreparedLinearSource(_AbstractPreparedLinearSource):
     def advance(
         self,
-        start_time,
-        end_time,
-        cell_average,
-        process_state,
-        realization=None,
-        args=None,
+        start_time: Any,
+        end_time: Any,
+        cell_average: Any,
+        process_state: Any,
+        realization: Any = None,
+        args: Any = None,
         /,
-    ):
+    ) -> Any:
         return self.linear_advance(
             start_time, end_time, cell_average, process_state, realization, args
         )
@@ -163,20 +167,20 @@ class _PreparedLinearSource(_AbstractPreparedLinearSource):
 class _PreparedInconsistentSource(_AbstractPreparedLinearSource):
     mode: str = eqx.field(static=True)
 
-    def __init__(self, mode):
+    def __init__(self, mode: Any) -> None:
         super().__init__(float("inf"))
         self.mode = mode
 
     def advance(
         self,
-        start_time,
-        end_time,
-        cell_average,
-        process_state,
-        realization=None,
-        args=None,
+        start_time: Any,
+        end_time: Any,
+        cell_average: Any,
+        process_state: Any,
+        realization: Any = None,
+        args: Any = None,
         /,
-    ):
+    ) -> Any:
         result = self.linear_advance(
             start_time, end_time, cell_average, process_state, realization, args
         )
@@ -198,20 +202,20 @@ class _PreparedInconsistentSource(_AbstractPreparedLinearSource):
 
 
 class _PreparedEnergyGrowth(_AbstractPreparedLinearSource):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(float("inf"))
         self.process_id = "explicit-euler-energy-growth"
 
     def advance(
         self,
-        start_time,
-        end_time,
-        cell_average,
-        process_state,
-        realization=None,
-        args=None,
+        start_time: Any,
+        end_time: Any,
+        cell_average: Any,
+        process_state: Any,
+        realization: Any = None,
+        args: Any = None,
         /,
-    ):
+    ) -> Any:
         return self.linear_advance(
             start_time,
             end_time,
@@ -223,7 +227,9 @@ class _PreparedEnergyGrowth(_AbstractPreparedLinearSource):
 
 
 @pytest.mark.parametrize("mode", ("mismatch", "nonfinite", "ownership"))
-def test_balance_rejects_inconsistent_sources_and_rolls_back_native_ledgers(mode):
+def test_balance_rejects_inconsistent_sources_and_rolls_back_native_ledgers(
+    mode: Any,
+) -> None:
     _, system, _, runtime = _periodic_euler_runtime((4,))
     primitive = jnp.broadcast_to(jnp.asarray([1.0, 0.3, 1.0]), (4, 3))
     transport = phx.solver.prepare_balance_law_transport(runtime)
@@ -243,15 +249,19 @@ def test_balance_rejects_inconsistent_sources_and_rolls_back_native_ledgers(mode
     ):
         np.testing.assert_array_equal(after, before)
     np.testing.assert_array_equal(
-        result.transport.state.cell_average(), initial.transport_state.cell_average()
+        # ty: ignore[unresolved-attribute]
+        result.transport.state.cell_average(),
+        # ty: ignore[unresolved-attribute]
+        initial.transport_state.cell_average(),
     )
     np.testing.assert_array_equal(
         result.transport.accepted_integrals.scatter_content_integral(),
+        # ty: ignore[unresolved-attribute]
         jnp.zeros_like(initial.transport_state.cell_average()),
     )
 
 
-def test_balance_source_change_requires_exact_source_view_shape():
+def test_balance_source_change_requires_exact_source_view_shape() -> None:
     _, system, _, runtime = _periodic_euler_runtime((4,))
     primitive = jnp.broadcast_to(jnp.asarray([1.0, 0.0, 1.0]), (4, 3))
     transport = phx.solver.prepare_balance_law_transport(runtime)
@@ -265,13 +275,16 @@ def test_balance_source_change_requires_exact_source_view_shape():
         balance.advance_prescribed(initial, 0.0, 1e-4, {"rate": 0.2})
 
 
-def test_balance_composition_owns_symmetric_order_but_process_owns_finite_method():
+def test_balance_composition_owns_symmetric_order_but_process_owns_finite_method() -> (
+    None
+):
     _, system, _, runtime = _periodic_euler_runtime((4,))
     primitive = jnp.broadcast_to(jnp.asarray([1.0, 0.0, 1.0]), (4, 3))
     transport = phx.solver.prepare_balance_law_transport(runtime)
     step, rate, growth = 0.02, 0.2, 3.0
     balance = phx.solver.PreparedBalanceLawRuntime(
         transport,
+        # ty: ignore[invalid-argument-type, missing-argument]
         (_PreparedLinearSource(step / 4.0), _PreparedEnergyGrowth()),
         composition=BalanceLawCompositionPlan((4, 3)),
     )
@@ -282,11 +295,13 @@ def test_balance_composition_owns_symmetric_order_but_process_owns_finite_method
         initial, 0.0, step, {"rate": rate, "growth": growth}
     )
     assert result.accepted
+    # ty: ignore[unresolved-attribute]
     incoming_energy = initial.transport_state.cell_average()[..., -1]
     expected = (incoming_energy + rate * step / 2.0) * (
         1.0 + growth * step / 6.0
     ) ** 6 + rate * step / 2.0
     np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
         result.runtime_state.transport_state.cell_average()[..., -1],
         expected,
         atol=1e-12,
@@ -294,7 +309,9 @@ def test_balance_composition_owns_symmetric_order_but_process_owns_finite_method
     assert result.stability_margin >= 0.0
 
 
-def test_balance_budget_uses_nonuniform_measures_and_source_plus_boundary_transport():
+def test_balance_budget_uses_nonuniform_measures_and_source_plus_boundary_transport() -> (
+    None
+):
     axis = phx.discretization.AxisDiscretization(
         nodes=jnp.asarray([0.1, 0.45, 0.85]),
         quad_weights=jnp.asarray([0.2, 0.5, 0.3]),
@@ -328,13 +345,16 @@ def test_balance_budget_uses_nonuniform_measures_and_source_plus_boundary_transp
         ),
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.3, maximum_retries=0),
     )
     transport = phx.solver.prepare_balance_law_transport(runtime)
     balance = phx.solver.PreparedBalanceLawRuntime(
-        transport, (_PreparedLinearSource(float("inf")),)
+        transport,
+        # ty: ignore[invalid-argument-type, missing-argument]
+        (_PreparedLinearSource(float("inf")),),
     )
     primitive = jnp.broadcast_to(jnp.asarray([1.0, 0.0, 1.0]), (3, 3))
     initial = balance.initialize_state(
@@ -360,31 +380,33 @@ def test_balance_budget_uses_nonuniform_measures_and_source_plus_boundary_transp
 
 
 class _PreparedMagneticMutation(phx.solver.AbstractPreparedBalanceLawProcess):
-    def __init__(self, modified_components=("total_energy",)):
+    def __init__(self, modified_components: Any = ("total_energy",)) -> None:
         self.process_id = "undeclared-magnetic-mutation"
         self.requires_realization = False
         self.realization_name = None
         self.differentiability = "invalid"
         self.modified_components = tuple(modified_components)
 
-    def initialize(self, source_view, args: Any = None, /):
+    def initialize(self, source_view: Any, args: Any = None, /) -> Any:
         del source_view, args
         return phx.solver.BalanceLawProcessState.empty(self.process_id)
 
-    def step_limit(self, time, cell_average, process_state, args: Any = None, /):
+    def step_limit(
+        self, time: Any, cell_average: Any, process_state: Any, args: Any = None, /
+    ) -> Any:
         del time, cell_average, process_state, args
         return jnp.asarray(jnp.inf)
 
     def advance(
         self,
-        start_time,
-        end_time,
-        cell_average,
-        process_state,
-        realization=None,
+        start_time: Any,
+        end_time: Any,
+        cell_average: Any,
+        process_state: Any,
+        realization: Any = None,
         args: Any = None,
         /,
-    ):
+    ) -> Any:
         del start_time, end_time, realization, args
         candidate = cell_average.at[..., 5].add(1e-3)
         return phx.solver.BalanceLawProcessAdvance(
@@ -396,7 +418,9 @@ class _PreparedMagneticMutation(phx.solver.AbstractPreparedBalanceLawProcess):
         )
 
 
-def test_adaptive_balance_law_records_rolls_back_replays_and_checkpoints(tmp_path):
+def test_adaptive_balance_law_records_rolls_back_replays_and_checkpoints(
+    tmp_path: Any,
+) -> None:
     _, system, _, runtime = _periodic_euler_runtime((4,))
     primitive = jnp.broadcast_to(jnp.asarray([1.0, 0.0, 1.0]), (4, 3))
     transport_state = runtime.initialize_state(
@@ -407,6 +431,7 @@ def test_adaptive_balance_law_records_rolls_back_replays_and_checkpoints(tmp_pat
     transport = phx.solver.prepare_balance_law_transport(runtime)
     balance = phx.solver.PreparedBalanceLawRuntime(
         transport,
+        # ty: ignore[invalid-argument-type, missing-argument]
         (_PreparedLinearSource(1e-3),),
     )
     initial = balance.initialize_state(transport_state)
@@ -460,7 +485,9 @@ def test_adaptive_balance_law_records_rolls_back_replays_and_checkpoints(tmp_pat
         replayed = scheduled.rollout(initial, {"rate": jnp.asarray(0.2)})
         replay_results.append(replayed)
         np.testing.assert_allclose(
+            # ty: ignore[unresolved-attribute]
             replayed.final_state.transport_state.cell_average(),
+            # ty: ignore[unresolved-attribute]
             realized.final_state.transport_state.cell_average(),
         )
         assert bool(jnp.all(replayed.accepted))
@@ -470,16 +497,17 @@ def test_adaptive_balance_law_records_rolls_back_replays_and_checkpoints(tmp_pat
             atol=1e-12,
         )
 
-    def loss(rate, replay_policy):
+    def loss(rate: Any, replay_policy: Any) -> Any:
         scheduled = phx.solver.ScheduledBalanceLawRolloutPlan.from_realized_mesh(
             balance,
             realized.realized_mesh,
             replay=replay_policy,
         )
         replayed = scheduled.rollout(initial, {"rate": rate})
+        # ty: ignore[unresolved-attribute]
         return jnp.sum(replayed.final_state.transport_state.cell_average()[..., -1])
 
-    def gradient(replay_policy):
+    def gradient(replay_policy: Any) -> Any:
         return jax.grad(lambda rate: loss(rate, replay_policy))(jnp.asarray(0.2))
 
     gradients = tuple(gradient(replay_policy) for replay_policy in replay_policies)
@@ -503,7 +531,9 @@ def test_adaptive_balance_law_records_rolls_back_replays_and_checkpoints(tmp_pat
     restored = phx.solver.read_balance_law_checkpoint(path, checkpoint_plan)
     assert restored.payload_id == written.payload_id
     np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
         restored.runtime_state.transport_state.content_state.conservative_content,
+        # ty: ignore[unresolved-attribute]
         realized.final_state.transport_state.content_state.conservative_content,
     )
     for saved, loaded in zip(
@@ -514,7 +544,7 @@ def test_adaptive_balance_law_records_rolls_back_replays_and_checkpoints(tmp_pat
         np.testing.assert_array_equal(loaded, saved)
 
 
-def test_ou_realization_is_subdivision_consistent_and_antithetic():
+def test_ou_realization_is_subdivision_consistent_and_antithetic() -> None:
     realization = phx.stochastic.OrnsteinUhlenbeckRealization(
         jr.key(19),
         (3,),
@@ -523,9 +553,13 @@ def test_ou_realization_is_subdivision_consistent_and_antithetic():
         noise_id="ou-semigroup",
     )
     correlation = jnp.asarray(0.35)
+    # ty: ignore[invalid-argument-type]
     first = realization.innovations(0.0, 0.4, correlation)
+    # ty: ignore[invalid-argument-type]
     second = realization.innovations(0.4, 1.0, correlation)
+    # ty: ignore[invalid-argument-type]
     full = realization.innovations(0.0, 1.0, correlation)
+    # ty: ignore[invalid-argument-type]
     composed = realization.decay(0.4, 1.0, correlation) * first + second
 
     np.testing.assert_allclose(full, composed, rtol=1e-6, atol=1e-7)
@@ -540,6 +574,7 @@ def test_ou_realization_is_subdivision_consistent_and_antithetic():
         num_pairs=1,
         tolerance=1e-6,
     )
+    # ty: ignore[invalid-argument-type]
     paired = antithetic.innovations(0.1, 0.7, correlation)
     np.testing.assert_allclose(paired[0] + paired[1], 0.0, atol=1e-8)
     composite = phx.stochastic.CompositeStochasticRealization({"forcing": antithetic})
@@ -548,7 +583,9 @@ def test_ou_realization_is_subdivision_consistent_and_antithetic():
     assert composite.independence_labels[0] == composite.independence_labels[1]
 
 
-def test_gravity_balance_runtime_preserves_kick_internal_energy_and_checkpoints(tmp_path):
+def test_gravity_balance_runtime_preserves_kick_internal_energy_and_checkpoints(
+    tmp_path: Any,
+) -> None:
     grid, system, _, runtime = _periodic_euler_runtime((16,))
     x = grid.structured_axes[0].interval_centers
     density = 1.0 + 0.05 * jnp.sin(2.0 * jnp.pi * x)
@@ -574,12 +611,14 @@ def test_gravity_balance_runtime_preserves_kick_internal_energy_and_checkpoints(
     restored = phx.solver.read_balance_law_checkpoint(path, plan)
     assert written.payload_id == restored.payload_id
     np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
         restored.runtime_state.transport_state.content_state.conservative_content,
+        # ty: ignore[unresolved-attribute]
         advanced.runtime_state.transport_state.content_state.conservative_content,
     )
 
 
-def test_particle_mesh_deposition_and_kick_drift_kick_are_finite():
+def test_particle_mesh_deposition_and_kick_drift_kick_are_finite() -> None:
     grid, _, _, runtime = _periodic_euler_runtime((8,))
     gravity = phx.solver.NewtonianSelfGravityPlan(0.1).prepare(
         phx.solver.prepare_balance_law_transport(runtime)
@@ -602,7 +641,7 @@ def test_particle_mesh_deposition_and_kick_drift_kick_are_finite():
     assert result.diagnostics.mass_balance_defect < 1e-10
 
 
-def test_spectral_ou_replays_real_zero_mean_forcing():
+def test_spectral_ou_replays_real_zero_mean_forcing() -> None:
     _, system, _, runtime = _periodic_euler_runtime((4, 4))
     primitive = jnp.zeros((4, 4, 4)).at[..., 0].set(1.0).at[..., -1].set(1.0)
     transport_state = runtime.initialize_state(
@@ -624,14 +663,18 @@ def test_spectral_ou_replays_real_zero_mean_forcing():
         noise_id="ou-test",
     )
     first = process.advance(
+        # ty: ignore[invalid-argument-type]
         0.0,
+        # ty: ignore[invalid-argument-type]
         1e-3,
         transport_state.cell_average(),
         process_state,
         realization,
     )
     replay = process.advance(
+        # ty: ignore[invalid-argument-type]
         0.0,
+        # ty: ignore[invalid-argument-type]
         1e-3,
         transport_state.cell_average(),
         process_state,
@@ -647,7 +690,9 @@ def test_spectral_ou_replays_real_zero_mean_forcing():
     assert jnp.all(jnp.isfinite(first.diagnostics.acceleration))
 
     balance = phx.solver.PreparedBalanceLawRuntime(
-        transport, (process, _PreparedLinearSource(5e-4))
+        transport,
+        # ty: ignore[invalid-argument-type, missing-argument]
+        (process, _PreparedLinearSource(5e-4)),
     )
     initial = balance.initialize_state(transport_state)
     args = {"rate": 0.0}
@@ -683,7 +728,7 @@ def test_spectral_ou_replays_real_zero_mean_forcing():
         np.testing.assert_array_equal(retry_value, replay_value)
 
 
-def test_implicit_radiative_cooling_decreases_energy_without_clipping():
+def test_implicit_radiative_cooling_decreases_energy_without_clipping() -> None:
     _, system, _, runtime = _periodic_euler_runtime((4,))
     primitive = jnp.broadcast_to(jnp.asarray([1.0, 0.0, 1.0]), (4, 3))
     transport_state = runtime.initialize_state(
@@ -704,7 +749,9 @@ def test_implicit_radiative_cooling_decreases_energy_without_clipping():
     process_state = cooling.initialize(transport.source_view(transport_state))
 
     result = cooling.advance(
+        # ty: ignore[invalid-argument-type]
         0.0,
+        # ty: ignore[invalid-argument-type]
         1e-3,
         transport_state.cell_average(),
         process_state,
@@ -716,7 +763,7 @@ def test_implicit_radiative_cooling_decreases_energy_without_clipping():
     assert jnp.all(system.admissible(result.cell_average.reshape((4, 3))))
 
 
-def test_shared_face_closure_is_conservative_and_equal_state_consistent():
+def test_shared_face_closure_is_conservative_and_equal_state_consistent() -> None:
     grid, system, discretization, _ = _periodic_euler_runtime((8,))
     closure = phx.discretization.ArbitraryNormalFaceClosurePlan(
         lambda system, left, right, baseline, context, args: (
@@ -745,6 +792,7 @@ def test_shared_face_closure_is_conservative_and_equal_state_consistent():
     )
     state = system.primitive_to_conserved(primitive)
 
+    # ty: ignore[invalid-argument-type]
     residual = dynamics(0.0, state, {"scale": jnp.asarray(0.02)})
     constant = system.primitive_to_conserved(
         jnp.broadcast_to(jnp.asarray([1.0, 0.0, 1.0]), (8, 3))
@@ -752,11 +800,14 @@ def test_shared_face_closure_is_conservative_and_equal_state_consistent():
 
     np.testing.assert_allclose(jnp.sum(residual, axis=0), 0.0, atol=1e-11)
     np.testing.assert_allclose(
-        dynamics(0.0, constant, {"scale": jnp.asarray(0.02)}), 0.0, atol=1e-12
+        # ty: ignore[invalid-argument-type]
+        dynamics(0.0, constant, {"scale": jnp.asarray(0.02)}),
+        0.0,
+        atol=1e-12,
     )
 
 
-def test_hlld_and_constrained_transport_preserve_constant_mhd_state():
+def test_hlld_and_constrained_transport_preserve_constant_mhd_state() -> None:
     _, system, integrator, full, magnetic_flux = _periodic_mhd_transport()
     hlld = phx.discretization.HLLDFluxPlan().face_flux(system, full, full, 0)
     state = integrator.initialize(full, magnetic_flux, step_size=1e-4)
@@ -775,7 +826,7 @@ def test_hlld_and_constrained_transport_preserve_constant_mhd_state():
     assert result.diagnostics.magnetic_constraint_change < 1e-12
 
 
-def test_unified_mhd_balance_replays_and_checkpoints_cooling(tmp_path):
+def test_unified_mhd_balance_replays_and_checkpoints_cooling(tmp_path: Any) -> None:
     _, _, integrator, full, magnetic_flux = _periodic_mhd_transport()
     state = integrator.initialize(full, magnetic_flux, step_size=1e-4)
     transport = phx.solver.prepare_balance_law_transport(integrator)
@@ -813,11 +864,15 @@ def test_unified_mhd_balance_replays_and_checkpoints_cooling(tmp_path):
     assert bool(realized.completed)
     assert bool(jnp.all(replayed.accepted))
     np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
         replayed.final_state.transport_state.cell_state,
+        # ty: ignore[unresolved-attribute]
         realized.final_state.transport_state.cell_state,
     )
     np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
         replayed.final_state.transport_state.magnetic_flux,
+        # ty: ignore[unresolved-attribute]
         realized.final_state.transport_state.magnetic_flux,
     )
     np.testing.assert_array_equal(
@@ -846,16 +901,20 @@ def test_unified_mhd_balance_replays_and_checkpoints_cooling(tmp_path):
     restored = phx.solver.read_balance_law_checkpoint(path, checkpoint_plan)
     assert restored.payload_id == written.payload_id
     np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
         restored.runtime_state.transport_state.cell_state,
+        # ty: ignore[unresolved-attribute]
         realized.final_state.transport_state.cell_state,
     )
     np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
         restored.runtime_state.transport_state.magnetic_flux,
+        # ty: ignore[unresolved-attribute]
         realized.final_state.transport_state.magnetic_flux,
     )
 
 
-def test_mhd_balance_rejects_declared_and_undeclared_magnetic_sources():
+def test_mhd_balance_rejects_declared_and_undeclared_magnetic_sources() -> None:
     _, _, integrator, full, magnetic_flux = _periodic_mhd_transport()
     state = integrator.initialize(full, magnetic_flux, step_size=1e-4)
     transport = phx.solver.prepare_balance_law_transport(integrator)
@@ -875,9 +934,12 @@ def test_mhd_balance_rejects_declared_and_undeclared_magnetic_sources():
     assert not bool(result.accepted)
     assert int(result.status) == 3
     np.testing.assert_array_equal(
-        result.runtime_state.transport_state.cell_state, state.cell_state
+        # ty: ignore[unresolved-attribute]
+        result.runtime_state.transport_state.cell_state,
+        state.cell_state,
     )
     np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
         result.runtime_state.transport_state.magnetic_flux,
         state.magnetic_flux,
     )
@@ -896,7 +958,7 @@ def test_mhd_balance_rejects_declared_and_undeclared_magnetic_sources():
     )
 
 
-def test_mhd_balance_composes_gravity_cooling_and_ou_forcing():
+def test_mhd_balance_composes_gravity_cooling_and_ou_forcing() -> None:
     grid, system, integrator, full, magnetic_flux = _periodic_mhd_transport()
     x = grid.structured_axes[0].interval_centers[:, None, None]
     primitive = system.conserved_to_primitive(full)
@@ -949,6 +1011,7 @@ def test_mhd_balance_composes_gravity_cooling_and_ou_forcing():
     assert len(result.process_diagnostics) == 6
     constraint_before = integrator.spatial.magnetic_constraint(magnetic_flux)
     constraint_after = integrator.spatial.magnetic_constraint(
+        # ty: ignore[unresolved-attribute]
         result.runtime_state.transport_state.magnetic_flux
     )
     np.testing.assert_allclose(constraint_after, constraint_before, atol=1e-12)

@@ -8,7 +8,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
@@ -67,7 +67,7 @@ class AllSpeedHLLFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan, NonTraina
     flux_id: str = eqx.field(static=True)
     differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
 
-    def __init__(self, policy: AllSpeedCompressiblePolicy, /):
+    def __init__(self, policy: AllSpeedCompressiblePolicy, /) -> None:
         if not isinstance(policy, AllSpeedCompressiblePolicy):
             raise TypeError("policy must be AllSpeedCompressiblePolicy.")
         self.policy = policy
@@ -196,7 +196,7 @@ class ShockAwareAllSpeedFluxPlan(
     flux_id: str = eqx.field(static=True)
     differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
 
-    def __init__(self, policy: ShockResolvingPolicy, /):
+    def __init__(self, policy: ShockResolvingPolicy, /) -> None:
         if not isinstance(policy, ShockResolvingPolicy):
             raise TypeError("policy must be ShockResolvingPolicy.")
         self.policy = policy

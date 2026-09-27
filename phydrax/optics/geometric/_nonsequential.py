@@ -6,12 +6,14 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -23,6 +25,39 @@ from ...geometry._triangle_ray import (
     TriangleRayQueryPlan,
 )
 from ._interface import evaluate_refractive_interface, OpticalRayState
+
+
+# Ray bank (8), budgets (8), interaction count, failure flags (5), and history (6).
+_NonSequentialState: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 
 class NonSequentialSurfaceKind(IntEnum):
@@ -100,7 +135,7 @@ class NonSequentialSurfaceTable(StrictModule, NonTrainableState):
         detector_acceptance_cosines: ArrayLike | None = None,
         medium_power_attenuation_coefficients: ArrayLike | None = None,
         medium_attenuation_model_ids: tuple[str, ...] = (),
-    ):
+    ) -> None:
         vertices_host = np.asarray(vertices)
         triangles_host = np.asarray(triangles)
         if vertices_host.ndim != 2 or vertices_host.shape[1:] != (3,):
@@ -311,7 +346,7 @@ class NonSequentialOpticsPlan(StrictModule, NonTrainableState):
         ray_tolerance: float = 1e-9,
         tie_tolerance: float = 1e-9,
         power_tolerance: float = 0.0,
-    ):
+    ) -> None:
         maximum = int(maximum_interactions)
         branches = int(branch_capacity)
         stack = int(traversal_stack_capacity)
@@ -562,7 +597,7 @@ def _trace_one(
         history_distances,
     )
 
-    def step(interaction, state):
+    def step(interaction: Array, state: _NonSequentialState) -> _NonSequentialState:
         (
             positions_,
             directions_,

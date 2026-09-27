@@ -11,7 +11,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._interpolation import apply_gather_stencil, rectilinear_stencil
@@ -51,7 +52,7 @@ class DetectorTrajectoryRoute(StrictModule, NonTrainableState):
         *,
         position_unit: UnitDefinition = METER,
         time_unit: UnitDefinition = SECOND,
-    ):
+    ) -> None:
         if not isinstance(state_layout, StateLayout):
             raise TypeError("state_layout must be StateLayout.")
         indices = tuple(position_components)
@@ -136,7 +137,7 @@ class PrescribedShockleyRamoPlan(StrictModule, NonTrainableState):
         /,
         *,
         closure_tolerance: float = 1.0e-12,
-    ):
+    ) -> None:
         if not isinstance(weighting_plan, DetectorWeightingFieldPlan):
             raise TypeError("weighting_plan must be DetectorWeightingFieldPlan.")
         if not isinstance(weighting, DetectorWeightingFieldResult):

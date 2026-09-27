@@ -6,17 +6,19 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from enum import IntEnum
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..dynamics import AbstractInputPolicy, DifferentialAlgebraicSystem
 from ..linalg import DenseLinearOperator, FactorizationPolicy, factorize
 from ..metrix import AbstractStateGeometry
 from ..nonlinear import (
@@ -65,7 +67,7 @@ class DAEConsistencyPolicy(StrictModule, NonTrainableState):
         /,
         *,
         failure: int = -1,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -210,7 +212,7 @@ class DAEResetMap(StrictModule, NonTrainableState):
         /,
         *,
         reset_id: str,
-    ):
+    ) -> None:
         if not callable(reset):
             raise TypeError("DAEResetMap reset must be callable.")
         if not isinstance(initialization, DAEInitializationSpec):
@@ -259,7 +261,7 @@ class DAEEventPlan(StrictModule, NonTrainableState):
         grazing_tolerance: float = 1.0e-8,
         event_tolerance: float = 1.0e-10,
         localization_iterations: int = 32,
-    ):
+    ) -> None:
         resets = tuple(reset_maps)
         if not isinstance(schedule, HybridSchedulePlan):
             raise TypeError("schedule must be a HybridSchedulePlan.")
@@ -391,20 +393,24 @@ class _DAEEventRootArguments(StrictModule):
 
 
 class _DAEEventRootResidual(StrictModule, NonTrainableState):
-    system: Any
-    input_policy: Any
+    system: DifferentialAlgebraicSystem
+    input_policy: AbstractInputPolicy | None
     guard: Callable[[Array, Array, Any], Array]
     guard_scale: float = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
     state_size: int = eqx.field(static=True)
 
-    def _state_time_rate(self, augmented, arguments, /):
+    def _state_time_rate(
+        self, augmented: Array, arguments: _DAEEventRootArguments, /
+    ) -> tuple[Array, Array, Array]:
         state = arguments.physical_state(augmented)
         time = augmented[-1]
         rate = arguments.state_rate(augmented)
         return state, time, rate
 
-    def trial_valid(self, augmented, arguments, /):
+    def trial_valid(
+        self, augmented: Array, arguments: _DAEEventRootArguments, /
+    ) -> Array:
         time = augmented[-1]
         in_bracket = (
             jnp.isfinite(time)
@@ -412,7 +418,7 @@ class _DAEEventRootResidual(StrictModule, NonTrainableState):
             & (time <= arguments.bracket_right)
         )
 
-        def active(_):
+        def active(_: object) -> Array:
             state, time, rate = self._state_time_rate(augmented, arguments)
             inputs = (
                 None
@@ -432,7 +438,9 @@ class _DAEEventRootResidual(StrictModule, NonTrainableState):
             None,
         )
 
-    def _active_residual(self, augmented, arguments, /):
+    def _active_residual(
+        self, augmented: Array, arguments: _DAEEventRootArguments, /
+    ) -> Array:
         state, time, rate = self._state_time_rate(augmented, arguments)
         inputs = (
             None
@@ -455,7 +463,7 @@ class _DAEEventRootResidual(StrictModule, NonTrainableState):
         )
         return jnp.concatenate((residual, guard[None]))
 
-    def __call__(self, augmented, arguments, /):
+    def __call__(self, augmented: Array, arguments: _DAEEventRootArguments, /) -> Array:
         return _domain_cond(
             arguments.active,
             lambda _: self._active_residual(augmented, arguments),
@@ -675,7 +683,7 @@ def empty_dae_event_result(
 
 def _consistency_candidate(
     prepared: _PreparedDAEInitialization,
-    system: Any,
+    system: DifferentialAlgebraicSystem,
     policy: DAEConsistencyPolicy,
     state_guess: Array,
     rate_guess: Array,
@@ -825,7 +833,7 @@ def localize_dae_event(
         & prepared.root_problems[event_index].trial_valid(augmented, arguments)
     )
 
-    def guard_diagnostics(_):
+    def guard_diagnostics(_: object) -> tuple[Array, Array]:
         return (
             jnp.abs(guard(event_time, state_before, args)),
             jax.jvp(
@@ -869,7 +877,12 @@ def localize_dae_event(
         & (state_guess.shape == state_before.shape)
         & (rate_guess.shape == state_rate_before.shape)
     )
-    system = prepared.root_problems[event_index].residual_function.system
+    # prepare_dae_event_plan builds every event root problem from _DAEEventRootResidual.
+    root_residual = cast(
+        _DAEEventRootResidual,
+        prepared.root_problems[event_index].residual_function,
+    )
+    system = root_residual.system
     consistency = _consistency_candidate(
         prepared.consistency_solves[event_index],
         system,
@@ -902,7 +915,7 @@ def localize_dae_event(
         consistency_regularity_rank = jnp.asarray(-1, dtype=jnp.int32)
         consistency_regularity_condition = jnp.asarray(jnp.nan, dtype=event_time.dtype)
         consistency_regularity_valid = jnp.asarray(False)
-    input_policy = prepared.root_problems[event_index].residual_function.input_policy
+    input_policy = root_residual.input_policy
     pre_inputs = (
         None
         if input_policy is None
@@ -1311,7 +1324,7 @@ class DAERegularityDomain(StrictModule, NonTrainableState):
     upper: Array
     domain_id: str = eqx.field(static=True)
 
-    def __init__(self, lower: ArrayLike, upper: ArrayLike, /, *, domain_id: str):
+    def __init__(self, lower: ArrayLike, upper: ArrayLike, /, *, domain_id: str) -> None:
         lower_ = jnp.asarray(lower)
         upper_ = jnp.asarray(upper, dtype=lower_.dtype)
         if lower_.ndim != 2 or lower_.shape != upper_.shape or lower_.shape[0] == 0:
@@ -1356,7 +1369,7 @@ class DAERegularityCertificatePlan(StrictModule, NonTrainableState):
         /,
         *,
         operator_id: str,
-    ):
+    ) -> None:
         if not isinstance(domain, DAERegularityDomain):
             raise TypeError("domain must be a DAERegularityDomain.")
         if not callable(enclosure):
@@ -1446,7 +1459,7 @@ class ManifoldBDFMethod(StrictModule, NonTrainableState):
     coefficients: tuple[float, ...] = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, order: int = 1, /):
+    def __init__(self, order: int = 1, /) -> None:
         if order not in (1, 2):
             raise ValueError("Manifold BDF currently supports only orders one and two.")
         coefficients = (1.0, -1.0) if order == 1 else (1.5, -2.0, 0.5)

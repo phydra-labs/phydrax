@@ -10,7 +10,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._numerics._ssp_runge_kutta import ssprk33_step
@@ -41,6 +42,7 @@ from ..discretization.finite_volume._small_cell import (
 from ..discretization.finite_volume._unstructured_motion import (
     UnstructuredALEStepGeometry,
 )
+from ..typing import parse
 from ._finite_volume_content import FiniteVolumeConservativeContentState
 
 
@@ -66,7 +68,7 @@ class FiniteVolumeStageStateProvider(StrictModule, NonTrainableState):
         /,
         *,
         provider_id: str,
-    ):
+    ) -> None:
         identity = str(provider_id)
         if not callable(callback):
             raise TypeError("callback must be callable.")
@@ -330,7 +332,7 @@ def unstructured_ssprk33_content_candidate(
         )
     )
 
-    def continue_after_stage_1(_):
+    def continue_after_stage_1(_: None) -> FiniteVolumeSSPRK3ContentCandidate:
         stage_q1 = _provided_content_at_metrics(stage_state_provider, q1, stage_2)
         high_2 = dynamics.evaluate_stage(
             stage_q1, stage_2, args, cfl=cfl, redistribution=redistribution
@@ -373,7 +375,9 @@ def unstructured_ssprk33_content_candidate(
             )
         )
 
-        def continue_after_stage_2(_):
+        def continue_after_stage_2(
+            _: None,
+        ) -> FiniteVolumeSSPRK3ContentCandidate:
             stage_q2 = _provided_content_at_metrics(stage_state_provider, q2, stage_3)
             high_3 = dynamics.evaluate_stage(
                 stage_q2, stage_3, args, cfl=cfl, redistribution=redistribution
@@ -601,9 +605,10 @@ def zero_unstructured_ssprk33_content_candidate(
         }
     )
     dt = jnp.asarray(step_size, dtype=initial.effective_cell_volumes.dtype)
-    ledgers = tuple(
-        dynamics.zero_stage_ledger(stage, redistribution=redistribution)
-        for stage in stage_metrics
+    ledgers = (
+        dynamics.zero_stage_ledger(stage_metrics[0], redistribution=redistribution),
+        dynamics.zero_stage_ledger(stage_metrics[1], redistribution=redistribution),
+        dynamics.zero_stage_ledger(stage_metrics[2], redistribution=redistribution),
     )
     accepted_flux_integrals = AcceptedConservationIntegralLedger.integrate_ssprk33(
         ledgers[0],
@@ -727,7 +732,7 @@ class UnsplitFiniteVolumeSSPRK3Plan(StrictModule):
     temporal_method_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, dynamics: PreparedFVDynamics, /):
+    def __init__(self, dynamics: PreparedFVDynamics, /) -> None:
         if not isinstance(
             dynamics,
             (
@@ -782,15 +787,14 @@ class DirectionalSplitFiniteVolumePlan(StrictModule):
         /,
         *,
         splitting: SplittingKind = "strang",
-    ):
+    ) -> None:
         if not isinstance(dynamics, PreparedFiniteVolumeDynamics):
             raise TypeError("Directional splitting requires finite-volume dynamics.")
         if not isinstance(dynamics.method.interface_solver, AbstractNumericalFluxPlan):
             raise ValueError(
                 "Directional splitting requires a numerical-flux interface method."
             )
-        if splitting not in ("godunov", "strang"):
-            raise ValueError("splitting must be 'godunov' or 'strang'.")
+        splitting = parse(splitting, SplittingKind, "splitting")
         self.dynamics = dynamics
         self.splitting = splitting
         self.temporal_method_id = f"temporal:split:{splitting}"

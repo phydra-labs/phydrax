@@ -12,16 +12,17 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 from phydrax.domain import DomainFunction, PointBatch, SampleLayout
 
 from ..._doc import DOC_KEY0
+from ..._dtype_names import inexact_result_type
 from ..._frozendict import frozendict
 from ..._interpolation import BoundsMode, bspline_evaluate, bspline_stencil, BSplineGrid
 from ..._numerics import solve_weighted_least_squares
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import (
@@ -36,6 +37,7 @@ from ...linalg import (
     RankPolicy,
     solve,
 )
+from ...typing import parse, PRNGKey
 
 
 BSplineFitMode: TypeAlias = Literal["interpolate", "least_squares", "smooth"]
@@ -65,7 +67,7 @@ class BSplineInterpolationPlan(StrictModule, NonTrainableState):
         bounds: BoundsMode = "error",
         boundary: BSplineBoundaryMode = "open",
         rcond: float | None = None,
-    ):
+    ) -> None:
         if isinstance(degree, bool) or not isinstance(degree, Integral):
             raise TypeError("B-spline interpolation degree must be an integer.")
         degree_ = int(degree)
@@ -77,8 +79,7 @@ class BSplineInterpolationPlan(StrictModule, NonTrainableState):
             or num_intervals < 1
         ):
             raise ValueError("num_intervals must be a positive integer or None.")
-        if mode not in ("interpolate", "least_squares", "smooth"):
-            raise ValueError(f"Unknown B-spline fit mode: {mode!r}.")
+        mode = parse(mode, BSplineFitMode, "mode")
         smoothing_ = (
             (1.0e-4 if mode == "smooth" else 0.0)
             if smoothing is None
@@ -102,8 +103,7 @@ class BSplineInterpolationPlan(StrictModule, NonTrainableState):
             raise ValueError("regularization_order must lie between zero and degree.")
         if bounds not in ("error", "clip", "extrapolate", "fill"):
             raise ValueError(f"Unknown B-spline bounds mode: {bounds!r}.")
-        if boundary not in ("open", "natural", "periodic"):
-            raise ValueError(f"Unknown B-spline boundary mode: {boundary!r}.")
+        boundary = parse(boundary, BSplineBoundaryMode, "boundary")
         if boundary == "natural" and degree_ < 2:
             raise ValueError("Natural B-spline boundaries require degree at least two.")
         if boundary == "periodic" and degree_ < 1:
@@ -134,7 +134,7 @@ class BSplineBoundaryConstraint(StrictModule, NonTrainableState):
         derivative_order: int,
         value: ArrayLike,
         /,
-    ):
+    ) -> None:
         if isinstance(location, str):
             if location not in ("lower", "upper"):
                 raise ValueError(
@@ -184,7 +184,7 @@ class BSplineFitDiagnostics(StrictModule, NonTrainableState):
         weighted_residual_norm: float,
         constraint_residual_norm: float,
         regularization_energy: float,
-    ):
+    ) -> None:
         self.mode = mode
         self.num_observations = num_observations
         self.coefficient_count = coefficient_count
@@ -212,7 +212,7 @@ class BSplineInterpolant(StrictModule, NonTrainableState):
         coefficients: ArrayLike,
         diagnostics: BSplineFitDiagnostics,
         bounds: BoundsMode,
-    ):
+    ) -> None:
         coefficients_ = jnp.asarray(coefficients)
         if coefficients_.ndim < 1 or coefficients_.shape[0] != grid.coefficient_count:
             raise ValueError(
@@ -225,7 +225,7 @@ class BSplineInterpolant(StrictModule, NonTrainableState):
         self.output_shape = tuple(coefficients_.shape[1:])
 
     @property
-    def dtype(self):
+    def dtype(self) -> jnp.dtype:
         return self.coefficients.dtype
 
     def __call__(
@@ -234,7 +234,7 @@ class BSplineInterpolant(StrictModule, NonTrainableState):
         /,
         *,
         derivative_order: int = 0,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -625,7 +625,7 @@ def interpolate_bspline(
     grid: BSplineGrid | None = None,
     sample_weights: ArrayLike | None = None,
     constraints: Sequence[BSplineBoundaryConstraint] = (),
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> DomainFunction:
     """Fit a one-dependency `DomainFunction` and preserve its domain metadata."""
     if not isinstance(function, DomainFunction):

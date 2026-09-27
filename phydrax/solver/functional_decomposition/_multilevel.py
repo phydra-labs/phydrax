@@ -40,7 +40,7 @@ class FunctionalCoarseCorrection(StrictModule):
         /,
         *,
         epsilon: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(base_solver, FunctionalSolver):
             raise TypeError("base_solver must be a FunctionalSolver.")
         if not isinstance(family, LocalFieldFamily):
@@ -81,7 +81,7 @@ class FunctionalHierarchyPlan(StrictModule, NonTrainableState):
         /,
         *,
         epsilons: Sequence[float] | None = None,
-    ):
+    ) -> None:
         iterations_ = tuple(iterations)
         if not iterations_ or any(value <= 0 for value in iterations_):
             raise ValueError("iterations must contain positive per-level work counts.")
@@ -110,7 +110,7 @@ class FunctionalHierarchyResult(StrictModule):
         /,
         *,
         hierarchy_id: str,
-    ):
+    ) -> None:
         self.solver = solver
         self.level_solvers = tuple(level_solvers)
         self.hierarchy_id = str(hierarchy_id)
@@ -190,7 +190,7 @@ class FunctionalCyclePlan(StrictModule, NonTrainableState):
         *,
         ascending_iterations: Sequence[int] | None = None,
         kind: Literal["v", "f"] = "v",
-    ):
+    ) -> None:
         cycles_ = int(cycles)
         descending = tuple(descending_iterations)
         ascending = (
@@ -235,7 +235,7 @@ class FunctionalCycleResult(StrictModule):
         /,
         *,
         cycles: int,
-    ):
+    ) -> None:
         self.solver = solver
         self.level_solvers = tuple(level_solvers)
         self.visits = tuple(str(value) for value in visits)

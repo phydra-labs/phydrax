@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,13 +12,16 @@ import pytest
 import phydrax as phx
 
 
-def _periodic_problem(count=8, *, external_potential=None, external_potential_id=None):
+def _periodic_problem(
+    count: Any = 8, *, external_potential: Any = None, external_potential_id: Any = None
+) -> Any:
     spacing = 1.0 / count
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(count),
         jnp.full((count,), spacing),
         ambient_dimension=1,
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(
         count * (count - 1) // 2,
@@ -40,14 +46,14 @@ def _periodic_problem(count=8, *, external_potential=None, external_potential_id
     )
 
 
-def _positions(count=8):
+def _positions(count: Any = 8) -> Any:
     spacing = 1.0 / count
     lattice = (jnp.arange(count, dtype="float64") + 0.5)[:, None] * spacing
     perturbation = 0.015 * spacing * jnp.sin(2.0 * jnp.pi * lattice)
     return lattice + perturbation
 
 
-def test_barotropic_sph_density_matches_direct_periodic_sum():
+def test_barotropic_sph_density_matches_direct_periodic_sum() -> None:
     compiled = _periodic_problem()
     position = _positions()
     displacement = position[:, None, :] - position[None, :, :]
@@ -63,7 +69,7 @@ def test_barotropic_sph_density_matches_direct_periodic_sum():
     assert jnp.allclose(compiled.dynamics.density(position), direct, atol=2e-14)
 
 
-def test_analytic_pressure_gradient_is_the_discrete_energy_gradient():
+def test_analytic_pressure_gradient_is_the_discrete_energy_gradient() -> None:
     compiled = _periodic_problem()
     position = _positions()
     analytic = compiled.dynamics.potential_gradient(0.0, position, None)
@@ -75,7 +81,7 @@ def test_analytic_pressure_gradient_is_the_discrete_energy_gradient():
     assert jnp.allclose(jnp.sum(-analytic, axis=0), 0.0, atol=2e-14)
 
 
-def test_barotropic_sph_is_translation_invariant_and_rotation_covariant():
+def test_barotropic_sph_is_translation_invariant_and_rotation_covariant() -> None:
     compiled = _periodic_problem()
     position = _positions()
     reference = compiled.dynamics.internal_potential_gradient(position)
@@ -106,8 +112,8 @@ def test_barotropic_sph_is_translation_invariant_and_rotation_covariant():
     assert jnp.allclose(rotated, gradient @ rotation.T, rtol=2e-11, atol=2e-12)
 
 
-def test_external_potential_and_linearization_preserve_discrete_ad_contract():
-    def harmonic(time, position, stiffness):
+def test_external_potential_and_linearization_preserve_discrete_ad_contract() -> None:
+    def harmonic(time: Any, position: Any, stiffness: Any) -> Any:
         del time
         return 0.5 * stiffness * jnp.sum(position * position)
 
@@ -135,7 +141,7 @@ def test_external_potential_and_linearization_preserve_discrete_ad_contract():
     )
 
 
-def test_barotropic_sph_phase_layout_diagnostics_and_step_restriction():
+def test_barotropic_sph_phase_layout_diagnostics_and_step_restriction() -> None:
     compiled = _periodic_problem()
     position = _positions()
     velocity = 0.01 * jnp.cos(2.0 * jnp.pi * position)
@@ -159,7 +165,7 @@ def test_barotropic_sph_phase_layout_diagnostics_and_step_restriction():
     assert restriction.selected > 0.0
 
 
-def test_cell_list_matches_dense_force_energy_and_linearization():
+def test_cell_list_matches_dense_force_energy_and_linearization() -> None:
     dense = _periodic_problem()
     particles = dense.dynamics.particles
     method = dense.dynamics.method
@@ -222,7 +228,7 @@ def test_cell_list_matches_dense_force_energy_and_linearization():
     )
 
 
-def test_cell_list_compilation_validates_search_and_realization_contracts():
+def test_cell_list_compilation_validates_search_and_realization_contracts() -> None:
     dense = _periodic_problem()
     method = dense.dynamics.method
     box = dense.dynamics.neighborhood.box

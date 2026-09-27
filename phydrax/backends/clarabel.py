@@ -77,7 +77,7 @@ class ClarabelPlan(StrictModule):
         tolerance_feasibility: float = 1e-8,
         presolve: bool = True,
         verbose: bool = False,
-    ):
+    ) -> None:
         steps = int(max_iterations)
         tolerances = tuple(
             float(value)
@@ -126,7 +126,7 @@ class PreparedClarabel(StrictModule):
         /,
         *,
         backend_version: str,
-    ):
+    ) -> None:
         if not isinstance(plan, ClarabelPlan):
             raise TypeError("plan must be a ClarabelPlan.")
         version = str(backend_version)

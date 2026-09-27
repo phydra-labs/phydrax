@@ -11,7 +11,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -40,7 +41,7 @@ class PhotoemissionMatrixElementRequest(StrictModule, NonTrainableState):
         spectral_source_id: str,
         geometry_id: str,
         /,
-    ):
+    ) -> None:
         points = jnp.asarray(kpoints, dtype=jnp.float64)
         photon = jnp.asarray(photon_energy, dtype=jnp.float64).reshape(())
         vector = jnp.asarray(polarization)
@@ -96,7 +97,7 @@ class PhotoemissionMatrixElementResult(StrictModule, NonTrainableState):
         source_hashes: tuple[str, ...],
         converged: ArrayLike,
         /,
-    ):
+    ) -> None:
         elements = jnp.asarray(matrix_elements)
         provider = str(provider_id).strip()
         hashes = tuple(str(value).strip() for value in source_hashes)
@@ -146,7 +147,7 @@ class ARPESResult(StrictModule, NonTrainableState):
         evidence: ARPESEvidence,
         matrix_element_result_id: str,
         /,
-    ):
+    ) -> None:
         self.raw_response = raw_response
         self.evidence = evidence
         self.matrix_element_result_id = str(matrix_element_result_id)
@@ -179,7 +180,7 @@ class ARPESPlan(StrictModule, NonTrainableState):
         kpoint_capacity: int,
         band_capacity: int,
         moment_tolerance: float = 5.0e-3,
-    ):
+    ) -> None:
         grid = jnp.asarray(energy, dtype=jnp.float64)
         chemical = float(chemical_potential)
         thermal = float(temperature)
@@ -293,7 +294,7 @@ class VacuumLDOSRequest(StrictModule, NonTrainableState):
 
     def __init__(
         self, tip_positions: ArrayLike, energy: ArrayLike, electronic_source_id: str, /
-    ):
+    ) -> None:
         positions = jnp.asarray(tip_positions, dtype=jnp.float64)
         grid = jnp.asarray(energy, dtype=jnp.float64)
         source = str(electronic_source_id).strip()
@@ -340,7 +341,7 @@ class VacuumLDOSResult(StrictModule, NonTrainableState):
         moment_residual: ArrayLike,
         converged: ArrayLike,
         /,
-    ):
+    ) -> None:
         density = jnp.asarray(ldos, dtype=jnp.float64)
         provider = str(provider_id).strip()
         hashes = tuple(str(value).strip() for value in source_hashes)
@@ -398,7 +399,7 @@ class TersoffHamannResult(StrictModule, NonTrainableState):
         evidence: TersoffHamannEvidence,
         provider_result_id: str,
         /,
-    ):
+    ) -> None:
         self.raw_didv = raw_didv
         self.current = jnp.asarray(current)
         self.biases = jnp.asarray(biases)
@@ -431,7 +432,7 @@ class TersoffHamannPlan(StrictModule, NonTrainableState):
         current_scale: float,
         position_capacity: int,
         closure_tolerance: float = 1.0e-3,
-    ):
+    ) -> None:
         voltage = jnp.asarray(biases, dtype=jnp.float64)
         thermal = float(temperature)
         scale = float(current_scale)
@@ -500,6 +501,11 @@ class TersoffHamannPlan(StrictModule, NonTrainableState):
         zero_index = int(jnp.argmax(self.biases == 0.0))
         current = cumulative - cumulative[:, zero_index : zero_index + 1]
         numerical_derivative = jnp.gradient(current, self.biases, axis=-1)
+        # One differentiation axis yields one gradient array, never a list.
+        if not (isinstance(numerical_derivative, Array)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(numerical_derivative, Array)."
+            )
         denominator = jnp.maximum(jnp.max(jnp.abs(didv)), jnp.finfo(didv.dtype).tiny)
         closure = jnp.max(jnp.abs(numerical_derivative - didv)) / denominator
         passivity = jnp.maximum(-jnp.min(didv), 0.0)

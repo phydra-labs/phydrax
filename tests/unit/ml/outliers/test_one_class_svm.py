@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -18,7 +21,7 @@ from phydrax.ml import (
 from phydrax.ml.outliers import OneClassSVMModel, OneClassSVMRecipe
 
 
-def _features():
+def _features() -> Any:
     return jnp.array(
         [
             [-2.0, -0.3],
@@ -33,7 +36,7 @@ def _features():
     )
 
 
-def test_one_class_svm_uses_native_kernel_score_and_dual_invariants():
+def test_one_class_svm_uses_native_kernel_score_and_dual_invariants() -> None:
     features = _features()
     weights = jnp.array([1.0, 1.3, 0.8, 1.5, 1.1, 0.9, 1.4, 1.0])
     recipe = OneClassSVMRecipe(
@@ -47,7 +50,9 @@ def test_one_class_svm_uses_native_kernel_score_and_dual_invariants():
     model = result.as_trainable()
     points = jnp.array([[-0.2, 0.1], [5.0, 4.5]])
     scores = model(points)
+    # ty: ignore[unresolved-attribute]
     predictions = model.predict(points)
+    # ty: ignore[unresolved-attribute]
     membership = model.smooth_membership(points, temperature=0.4)
 
     assert isinstance(model, OneClassSVMModel)
@@ -75,7 +80,7 @@ def test_one_class_svm_uses_native_kernel_score_and_dual_invariants():
     assert contract.route is DerivativeRoute.UNROLLED
 
 
-def test_one_class_svm_case_axes_masks_and_inactive_dual_capacity():
+def test_one_class_svm_case_axes_masks_and_inactive_dual_capacity() -> None:
     base = _features()
     features = jnp.stack((base, base * jnp.array([1.1, 0.9])), axis=0)
     targets = jnp.stack(
@@ -97,17 +102,22 @@ def test_one_class_svm_case_axes_masks_and_inactive_dual_capacity():
     )
     model = result.as_trainable()
 
+    # ty: ignore[unresolved-attribute]
     assert model.case_shape == (2,)
+    # ty: ignore[unresolved-attribute]
     assert model.dual_coefficients.shape == (2, 8)
     assert model(features[:, :3]).shape == (2, 3)
     assert model(jnp.array([0.1, -0.2])).shape == (2,)
     assert jnp.array_equal(result.diagnostics.effective_samples, jnp.array([6, 6]))
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(model.dual_coefficients[:, 2] == 0.0)
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(model.dual_coefficients[:, 7] == 0.0)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(jnp.sum(model.dual_coefficients, axis=-1), 1.0, atol=2e-5)
 
 
-def test_one_class_svm_jit_vmap_prediction_parameter_and_fit_gradients():
+def test_one_class_svm_jit_vmap_prediction_parameter_and_fit_gradients() -> None:
     features = _features()
     weights = jnp.array([1.0, 1.3, 0.8, 1.5, 1.1, 0.9, 1.4, 1.05])
     point = jnp.array([0.35, -0.25])
@@ -137,11 +147,11 @@ def test_one_class_svm_jit_vmap_prediction_parameter_and_fit_gradients():
     assert all(jnp.all(jnp.isfinite(leaf)) for leaf in parameter_leaves)
     assert any(jnp.any(jnp.abs(leaf) > 1e-8) for leaf in parameter_leaves)
 
-    def feature_loss(value):
+    def feature_loss(value: Any) -> Any:
         fitted = recipe.fit_batch(MLBatch(value, sample_weight=weights)).as_trainable()
         return fitted(point)
 
-    def weight_loss(value):
+    def weight_loss(value: Any) -> Any:
         fitted = recipe.fit_batch(MLBatch(features, sample_weight=value)).as_trainable()
         return fitted(point)
 
@@ -151,11 +161,11 @@ def test_one_class_svm_jit_vmap_prediction_parameter_and_fit_gradients():
     assert jnp.all(jnp.isfinite(weight_gradient))
 
 
-def test_one_class_svm_native_kernel_hyperparameter_gradient_is_finite():
+def test_one_class_svm_native_kernel_hyperparameter_gradient_is_finite() -> None:
     features = _features()
     point = jnp.array([0.3, -0.2])
 
-    def loss(length_scale):
+    def loss(length_scale: Any) -> Any:
         recipe = OneClassSVMRecipe(
             SquaredExponentialKernel(length_scale=length_scale),
             nu=0.25,
@@ -170,10 +180,11 @@ def test_one_class_svm_native_kernel_hyperparameter_gradient_is_finite():
     assert jnp.abs(derivative) > 1e-8
 
 
-def test_one_class_svm_rejects_precomputed_and_complex_kernel_geometry():
+def test_one_class_svm_rejects_precomputed_and_complex_kernel_geometry() -> None:
     features = _features()
 
     with pytest.raises(TypeError, match="native AbstractPositiveDefiniteKernel"):
+        # ty: ignore[invalid-argument-type]
         OneClassSVMRecipe(jnp.eye(features.shape[0]))
 
     recipe = OneClassSVMRecipe(nu=0.25, iterations=3, learning_rate=0.1, tolerance=1e6)
@@ -185,7 +196,7 @@ def test_one_class_svm_rejects_precomputed_and_complex_kernel_geometry():
         model(jnp.array([0.2 + 0.1j, -0.3 + 0.2j]))
 
 
-def test_one_class_svm_rejects_sparse_features_explicitly():
+def test_one_class_svm_rejects_sparse_features_explicitly() -> None:
     features = _features()
     sparse = SparseFeatures(
         features,
@@ -197,7 +208,9 @@ def test_one_class_svm_rejects_sparse_features_explicitly():
         OneClassSVMRecipe().fit_batch(MLBatch(sparse))
 
 
-def test_one_class_svm_invalid_statuses_distinguish_insufficient_and_nonconverged():
+def test_one_class_svm_invalid_statuses_distinguish_insufficient_and_nonconverged() -> (
+    None
+):
     features = _features()
     insufficient_mask = jnp.array([True, False, False, False, False, False, False, False])
     insufficient = OneClassSVMRecipe(nu=0.25, iterations=2, tolerance=1e6).fit_batch(

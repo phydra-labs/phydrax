@@ -9,17 +9,18 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Sequence
 from threading import RLock
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, TypedDict, Unpack
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._execution_plan import ExecutionPlan
 from ..._execution_resources import ExecutionPolicy, ResourceRequest
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._iteration import IterationSession
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...interchange._black_hole import (
@@ -27,6 +28,7 @@ from ...interchange._black_hole import (
     BlackHoleArtifactUsePolicy,
     NeutralBlackHoleArtifact,
 )
+from ...lifecycle._migration import MigrationReport
 from ...lifecycle._resolved_run import ResolvedRunSpec
 from ...qualification._evidence import SupportDependency
 from ...qualification._registry import SupportTuple
@@ -48,7 +50,11 @@ from ...solver._production_runtime import (
     ProductionRunState,
 )
 from ...solver._relativistic_finite_volume import ValenciaFiniteVolumeStageGeometry
-from ...solver._runtime_lifecycle import ByteBoundedAsyncPublisher
+from ...solver._runtime_lifecycle import (
+    ByteBoundedAsyncPublisher,
+    RuntimeRestartRelation,
+)
+from ...typing import parse
 from ._status import NumericalRelativityStatus
 from ._temporal import FixedGridZ4cRuntime, Z4cRuntimeState
 
@@ -61,15 +67,20 @@ FailureCategory: TypeAlias = Literal[
     "output-failed",
     "runtime-failed",
 ]
-_FAILURE_CATEGORIES = frozenset(
-    (
-        "state-invalid",
-        "step-rejected",
-        "step-capacity-exhausted",
-        "output-failed",
-        "runtime-failed",
-    )
-)
+
+
+class _PreparedRunOptions(TypedDict, total=False):
+    args: Any
+    args_id: str | None
+    session: IterationSession | None
+    restart_relation: RuntimeRestartRelation | None
+    migration_report: MigrationReport | None
+
+
+class _PrepareOptions(_PreparedRunOptions, total=False):
+    publisher: ByteBoundedAsyncPublisher | None
+
+
 _DOMAIN_COORDINATES = (
     "formulation_id",
     "chart_id",
@@ -102,7 +113,7 @@ def _index(value: object, owner: str, /) -> int:
     return value
 
 
-def _finite_time(value: object, owner: str, /) -> float:
+def _finite_time(value: float, owner: str, /) -> float:
     if isinstance(value, bool):
         raise TypeError(f"{owner} must be a real scalar.")
     result = float(value)
@@ -143,7 +154,7 @@ class FixedGridZ4cProductionMethod(AbstractFixedStepMethod, NonTrainableState):
     runtime: FixedGridZ4cRuntime
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, runtime: FixedGridZ4cRuntime, /):
+    def __init__(self, runtime: FixedGridZ4cRuntime, /) -> None:
         if not isinstance(runtime, FixedGridZ4cRuntime):
             raise TypeError("runtime must be FixedGridZ4cRuntime.")
         self.runtime = runtime
@@ -189,10 +200,10 @@ class FixedGridZ4cProductionMethod(AbstractFixedStepMethod, NonTrainableState):
 
     def step(
         self,
-        step_index,
-        time,
+        step_index: Array,
+        time: Array,
         state: Z4cProductionState,
-        step_size,
+        step_size: Array,
         args: Any,
         /,
     ) -> FixedStepResult:
@@ -351,10 +362,10 @@ class FixedGridGRRMHDProductionMethod(AbstractFixedStepMethod, NonTrainableState
 
     def step(
         self,
-        step_index,
-        time,
+        step_index: Array,
+        time: Array,
         state: GRRMHDProductionState,
-        step_size,
+        step_size: Array,
         args: Any,
         /,
     ) -> FixedStepResult:
@@ -446,9 +457,8 @@ class NumericalRelativitySupportBinding(StrictModule, NonTrainableState):
         profile_id: str,
         support: SupportTuple,
         /,
-    ):
-        if scope not in ("scientific", "deployment"):
-            raise ValueError("Support scope must be scientific or deployment.")
+    ) -> None:
+        scope = parse(scope, SupportScope, "scope")
         profile = _identifier(profile_id, "Support profile ID")
         if not isinstance(support, SupportTuple):
             raise TypeError("support must be a SupportTuple.")
@@ -496,7 +506,7 @@ class NumericalRelativityArtifactBinding(StrictModule, NonTrainableState):
     intended_use: str = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
-    def __init__(self, artifact: NeutralBlackHoleArtifact, /):
+    def __init__(self, artifact: NeutralBlackHoleArtifact, /) -> None:
         if (
             not isinstance(artifact, NeutralBlackHoleArtifact)
             or not artifact.report.valid
@@ -589,7 +599,7 @@ class NumericalRelativityCommittedOutputReceipt(StrictModule, NonTrainableState)
         state: ProductionScientificState,
         artifacts: Sequence[NumericalRelativityArtifactBinding],
         /,
-    ):
+    ) -> None:
         if not isinstance(state, (Z4cProductionState, GRRMHDProductionState)):
             raise TypeError("Committed output state has an unsupported runtime type.")
         bindings = tuple(artifacts)
@@ -672,7 +682,7 @@ class NumericalRelativityOutputCommitter:
         ],
         writer_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(production, NumericalRelativityProductionPlan):
             raise TypeError("production must be NumericalRelativityProductionPlan.")
         if not callable(writer):
@@ -833,7 +843,7 @@ class NumericalRelativityProductionLimits(StrictModule, NonTrainableState):
         maximum_output_artifacts: int,
         maximum_output_bytes: int,
         maximum_cancellation_detail_bytes: int,
-    ):
+    ) -> None:
         if not isinstance(execution_policy, ExecutionPolicy):
             raise TypeError("execution_policy must be ExecutionPolicy.")
         resource_request = execution_policy.resources
@@ -923,7 +933,7 @@ class NumericalRelativityDomainBinding(StrictModule, NonTrainableState):
         topology_id: str,
         precision_id: str,
         input_artifacts: Sequence[NeutralBlackHoleArtifact] = (),
-    ):
+    ) -> None:
         identifiers = tuple(
             _identifier(value, name)
             for value, name in zip(
@@ -987,7 +997,7 @@ class NumericalRelativityRestartManifest(StrictModule, NonTrainableState):
         prepared: PreparedProductionRun,
         checkpoint_id: str,
         /,
-    ):
+    ) -> None:
         production._require_prepared(prepared)
         checkpoint = _identifier(checkpoint_id, "Restart checkpoint ID")
         self.production_id = production.production_id
@@ -1048,7 +1058,7 @@ class NumericalRelativityOutputManifest(StrictModule, NonTrainableState):
         receipt: NumericalRelativityCommittedOutputReceipt,
         result: ProductionRunResult,
         /,
-    ):
+    ) -> None:
         production._require_prepared(prepared)
         if not isinstance(committer, NumericalRelativityOutputCommitter):
             raise TypeError(
@@ -1138,7 +1148,7 @@ class NumericalRelativityFailureManifest(StrictModule, NonTrainableState):
         /,
         *,
         terminal_checkpoint_id: str,
-    ):
+    ) -> None:
         production._require_prepared(prepared)
         if not isinstance(failure, ProductionFailureRecord):
             raise TypeError("failure must be a ProductionFailureRecord.")
@@ -1147,8 +1157,7 @@ class NumericalRelativityFailureManifest(StrictModule, NonTrainableState):
         if type(terminal_checkpoint_id) is not str:
             raise TypeError("terminal_checkpoint_id must be a string.")
         category = _identifier(failure.category, "Failure category")
-        if category not in _FAILURE_CATEGORIES:
-            raise ValueError("Failure category is outside the production contract.")
+        category = parse(category, FailureCategory, "failure.category")
         error_code = _identifier(failure.error_code, "Failure error code")
         checkpoint_value = (
             terminal_checkpoint_id
@@ -1227,7 +1236,7 @@ class NumericalRelativityCancellationManifest(StrictModule, NonTrainableState):
         receipt: CheckpointCommitReceipt,
         reason: str,
         /,
-    ):
+    ) -> None:
         production._require_prepared(prepared)
         if not isinstance(state, ProductionRunState) or state.status != "canceled":
             raise ValueError(
@@ -1382,7 +1391,7 @@ class NumericalRelativityProductionPlan(StrictModule):
         checkpoint_policy: CheckpointGenerationPolicy,
         limits: NumericalRelativityProductionLimits,
         /,
-    ):
+    ) -> None:
         if not isinstance(domain, NumericalRelativityDomainBinding):
             raise TypeError("domain must be NumericalRelativityDomainBinding.")
         bindings = tuple(support_bindings)
@@ -1542,7 +1551,7 @@ class NumericalRelativityProductionPlan(StrictModule):
         self,
         checkpoint_store: DurableCheckpointStore | ArtifactCheckpointStore,
         /,
-        **kwargs,
+        **kwargs: Unpack[_PrepareOptions],
     ) -> PreparedProductionRun:
         if not isinstance(
             checkpoint_store, (DurableCheckpointStore, ArtifactCheckpointStore)
@@ -1617,7 +1626,7 @@ class NumericalRelativityProductionPlan(StrictModule):
         /,
         *,
         maximum_pending: int = 2,
-        **kwargs,
+        **kwargs: Unpack[_PreparedRunOptions],
     ) -> tuple[PreparedProductionRun, NumericalRelativityOutputCommitter]:
         if "publisher" in kwargs:
             raise ValueError("Output committer preparation owns the publisher.")

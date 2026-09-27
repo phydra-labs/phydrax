@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -23,6 +23,7 @@ from ...discretization import (
 from ...equations import (
     BulkDGTransportPlan,
     MixedDimensionalTransportPlan,
+    MixedDimensionalTransportState,
     NetworkTransportPlan,
     PreparedMixedDimensionalTransport,
 )
@@ -456,7 +457,7 @@ class NeurofluidDiagnosticReport(StrictModule):
 
 def neurofluid_diagnostics(
     runtime: PreparedMixedDimensionalTransport,
-    state,
+    state: MixedDimensionalTransportState,
     cell_compartment_indices: Array,
     compartment_ids: tuple[str, ...],
     /,

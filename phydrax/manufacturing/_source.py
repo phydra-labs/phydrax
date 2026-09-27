@@ -4,7 +4,8 @@
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -17,7 +18,7 @@ class GaussianMovingSource(StrictModule, NonTrainableState):
     radius_m: Array
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, power_w, absorptivity, radius_m, /):
+    def __init__(self, power_w: float, absorptivity: float, radius_m: float, /) -> None:
         values = (power_w, absorptivity, radius_m)
         if (
             not all(np.isfinite(value) for value in values)
@@ -38,7 +39,7 @@ class GaussianMovingSource(StrictModule, NonTrainableState):
             }
         )
 
-    def evaluate(self, coordinates: ArrayLike, center: ArrayLike, /):
+    def evaluate(self, coordinates: ArrayLike, center: ArrayLike, /) -> Array:
         delta = jnp.asarray(coordinates) - jnp.asarray(center)
         r2 = jnp.sum(delta * delta, axis=-1)
         return (
@@ -58,7 +59,16 @@ class GoldakDoubleEllipsoidSource(StrictModule, NonTrainableState):
     width_m: Array
     depth_m: Array
 
-    def __init__(self, power_w, efficiency, front_m, rear_m, width_m, depth_m, /):
+    def __init__(
+        self,
+        power_w: float,
+        efficiency: float,
+        front_m: float,
+        rear_m: float,
+        width_m: float,
+        depth_m: float,
+        /,
+    ) -> None:
         values = (power_w, efficiency, front_m, rear_m, width_m, depth_m)
         if (
             not all(np.isfinite(value) for value in values)
@@ -76,7 +86,7 @@ class GoldakDoubleEllipsoidSource(StrictModule, NonTrainableState):
         self.width_m = jnp.asarray(width_m)
         self.depth_m = jnp.asarray(depth_m)
 
-    def evaluate(self, coordinates: ArrayLike, center: ArrayLike, /):
+    def evaluate(self, coordinates: ArrayLike, center: ArrayLike, /) -> Array:
         p = jnp.asarray(coordinates) - jnp.asarray(center)
         x, y, z = p[..., 0], p[..., 1], p[..., 2]
         length = jnp.where(x >= 0, self.front_m, self.rear_m)

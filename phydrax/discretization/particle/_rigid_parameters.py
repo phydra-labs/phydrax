@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -123,12 +124,8 @@ def _matrix_condition_numbers(eigenvalues: np.ndarray, /) -> np.ndarray:
     upper = np.maximum(np.abs(eigenvalues[:, -1]), lower)
     with np.errstate(over="ignore", invalid="ignore"):
         condition = upper / lower
-    return np.nan_to_num(
-        condition,
-        nan=information.max,
-        posinf=information.max,
-        neginf=information.max,
-    )
+    maximum = float(information.max)
+    return np.nan_to_num(condition, nan=maximum, posinf=maximum, neginf=maximum)
 
 
 def _finite_norm(value: np.ndarray, axes: tuple[int, ...], /) -> np.ndarray:
@@ -165,7 +162,7 @@ class RigidInertialCoordinates(StrictModule):
         /,
         *,
         parameterization_id: str,
-    ):
+    ) -> None:
         mass = _finite_array(mass_coordinates, "mass_coordinates")
         offsets = _finite_array(center_of_mass_offsets, "center_of_mass_offsets")
         covariance = _finite_array(covariance_coordinates, "covariance_coordinates")
@@ -223,7 +220,7 @@ class RigidInertialParameters(StrictModule, NonTrainableState):
         *,
         parameterization_id: str,
         coordinates_id: str,
-    ):
+    ) -> None:
         mass = _finite_array(masses, "masses")
         offsets = _finite_array(center_of_mass_offsets, "center_of_mass_offsets")
         inertia = _finite_array(inertia_com, "inertia_com")
@@ -344,7 +341,7 @@ class RigidInertialEvaluation(StrictModule, NonTrainableState):
         *,
         positive_floor: float,
         finite_ceiling: float,
-    ):
+    ) -> None:
         if not isinstance(parameters, RigidInertialParameters):
             raise TypeError("parameters must be RigidInertialParameters.")
         if not isinstance(source, PreparedRigidBodySet):
@@ -525,7 +522,7 @@ class RigidInertialParameterization(StrictModule, NonTrainableState):
         /,
         *,
         parameterization_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(source, PreparedRigidBodySet):
             raise TypeError("source must be a PreparedRigidBodySet.")
         if source.ambient_dimension != _SPATIAL_DIMENSION:
@@ -743,7 +740,7 @@ class RigidInertialRealization(StrictModule, NonTrainableState):
         evaluation: RigidInertialEvaluation,
         reference_frame_rebase: RigidBodyReferenceFrameRebase,
         /,
-    ):
+    ) -> None:
         if not isinstance(particle_plan, ParticleSetPlan):
             raise TypeError("particle_plan must be a ParticleSetPlan.")
         if not isinstance(rigid_body_plan, RigidBodySetPlan):

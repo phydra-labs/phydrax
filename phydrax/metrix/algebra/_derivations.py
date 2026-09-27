@@ -11,7 +11,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -35,7 +35,7 @@ class AlgebraSymmetryBudget(StrictModule, NonTrainableState):
         maximum_materialized_bytes: int = 64 * 1024**2,
         maximum_workspace_bytes: int = 128 * 1024**2,
         maximum_basis_bytes: int = 16 * 1024**2,
-    ):
+    ) -> None:
         names = (
             "maximum_constraint_equations",
             "maximum_constraint_nonzeros",
@@ -108,7 +108,7 @@ class AlgebraSymmetryResourceEvidence(StrictModule, NonTrainableState):
         sparse_bytes: int,
         materialized_bytes: int,
         budget: AlgebraSymmetryBudget,
-    ):
+    ) -> None:
         if not isinstance(budget, AlgebraSymmetryBudget):
             raise TypeError("budget must be an AlgebraSymmetryBudget.")
         values = tuple(
@@ -167,7 +167,7 @@ class AlgebraDerivationConstraint(StrictModule, NonTrainableState):
         /,
         *,
         budget: AlgebraSymmetryBudget | None = None,
-    ):
+    ) -> None:
         if not isinstance(algebra, AbstractFiniteRealAlgebraSpec):
             raise TypeError("algebra must implement AbstractFiniteRealAlgebraSpec.")
         budget_ = AlgebraSymmetryBudget() if budget is None else budget

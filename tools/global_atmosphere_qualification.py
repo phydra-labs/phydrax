@@ -13,6 +13,7 @@ import argparse
 import json
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -42,7 +43,7 @@ CASES = (
 )
 
 
-def make_case(case, *, bandlimit=4, levels=2, dt=20.0):
+def make_case(case: Any, *, bandlimit: Any = 4, levels: Any = 2, dt: Any = 20.0) -> Any:
     space = SphericalSpectralPlan(bandlimit, sampling="gl").prepare(radius=6.371e6)
     sigma = np.linspace(0.0, 1.0, levels + 1)
     vertical = HybridPressureCoordinate(0.1 * (1.0 - sigma), sigma)
@@ -109,7 +110,7 @@ def make_case(case, *, bandlimit=4, levels=2, dt=20.0):
     return model, initial
 
 
-def integrate(model, initial, steps):
+def integrate(model: Any, initial: Any, steps: Any) -> Any:
     current = initial
     evidence = []
     # Explicit host stepping keeps small qualification runs inspectable and
@@ -123,7 +124,7 @@ def integrate(model, initial, steps):
     return current, evidence
 
 
-def state_distance(left, right):
+def state_distance(left: Any, right: Any) -> Any:
     # Dimensionless retained-modal comparison; reservoirs are diagnosed in
     # budgets rather than mixed into a norm with unrelated units.
     scales = (1e-5, 1e-5, 300.0, 1e5)
@@ -139,7 +140,7 @@ def state_distance(left, right):
     )
 
 
-def linear_wave_error(model, initial, final):
+def linear_wave_error(model: Any, initial: Any, final: Any) -> Any:
     n = model.levels
     packed = np.concatenate(
         (
@@ -168,7 +169,9 @@ def linear_wave_error(model, initial, final):
     return state_distance(final.state, exact)
 
 
-def qualify(case, *, bandlimit, levels, dt, steps, refine=False):
+def qualify(
+    case: Any, *, bandlimit: Any, levels: Any, dt: Any, steps: Any, refine: Any = False
+) -> Any:
     model, initial = make_case(case, bandlimit=bandlimit, levels=levels, dt=dt)
     final, evidence = integrate(model, initial, steps)
     before, after = model.inventories(initial.state), model.inventories(final.state)
@@ -273,7 +276,7 @@ def qualify(case, *, bandlimit, levels, dt, steps, refine=False):
     return result
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--cases", nargs="+", choices=CASES, default=["rest", "wave", "moist"]
@@ -286,6 +289,7 @@ def main():
     args = parser.parse_args()
     if args.steps < 1 or args.levels < 1:
         parser.error("steps and levels must be positive")
+    # ty: ignore[unresolved-attribute]
     if not jax.config.x64_enabled:
         parser.error("Spherical transforms require JAX_ENABLE_X64=1")
     results = [

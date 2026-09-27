@@ -8,7 +8,8 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -81,7 +82,7 @@ class CornerBlockInversePreconditioner2D(StrictModule, NonTrainableState):
         /,
         *,
         levels: int = 3,
-    ):
+    ) -> None:
         matrix_ = jnp.asarray(matrix)
         if matrix_.ndim != 2 or matrix_.shape[0] != matrix_.shape[1]:
             raise ValueError("Corner block matrix must be square.")

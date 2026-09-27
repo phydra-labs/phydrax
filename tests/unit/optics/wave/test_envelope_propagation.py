@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -24,21 +27,21 @@ from phydrax.optics.wave import (
 )
 
 
-def _plane():
+def _plane() -> Any:
     grid = TensorGridPlan(
         (FourierAxisSpec(2), FourierAxisSpec(2)), axis_names=("u", "v")
     ).prepare(jnp.asarray([[-1.0, -1.0], [1.0, 1.0]]))
     return PlaneFieldSpace(grid, RigidFrame.identity(3), "periodic-cell")
 
 
-def _time(size=256, half_width=20.0):
+def _time(size: Any = 256, half_width: Any = 20.0) -> Any:
     grid = TensorGridPlan((FourierAxisSpec(size),), axis_names=("time",)).prepare(
         jnp.asarray([[-half_width], [half_width]])
     )
     return PulseTimeSpace(grid, topology="periodic-cell")
 
 
-def _field(time_space, values, *, carrier=100.0):
+def _field(time_space: Any, values: Any, *, carrier: Any = 100.0) -> Any:
     plane = _plane()
     return PulseEnvelopeField(
         plane,
@@ -50,7 +53,7 @@ def _field(time_space, values, *, carrier=100.0):
     )
 
 
-def test_linear_envelope_propagation_matches_exact_spectral_phase():
+def test_linear_envelope_propagation_matches_exact_spectral_phase() -> None:
     time = _time(128, 10.0)
     values = jnp.exp(-0.5 * (time.coordinates / 1.5) ** 2).astype(jnp.complex128)
     field = _field(time, values)
@@ -89,7 +92,7 @@ def test_linear_envelope_propagation_matches_exact_spectral_phase():
     )
 
 
-def test_fundamental_nls_soliton_preserves_intensity_and_adaptive_path():
+def test_fundamental_nls_soliton_preserves_intensity_and_adaptive_path() -> None:
     time = _time(256, 20.0)
     values = (1.0 / jnp.cosh(time.coordinates)).astype(jnp.complex128)
     field = _field(time, values)
@@ -141,7 +144,7 @@ def test_fundamental_nls_soliton_preserves_intensity_and_adaptive_path():
     )
 
 
-def test_delayed_raman_and_self_steepening_response_is_explicit_and_finite():
+def test_delayed_raman_and_self_steepening_response_is_explicit_and_finite() -> None:
     time = _time(128, 10.0)
     coordinates = time.coordinates
     kernel = jnp.where(coordinates >= 0.0, jnp.exp(-coordinates / 0.8), 0.0)

@@ -15,7 +15,7 @@ from typing import Any, ClassVar, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -28,6 +28,7 @@ from ....graph import (
     CochainMetricReduction,
     CochainResidualProgram,
 )
+from ....typing import PRNGKey
 from ..data import (
     OperatorBatch,
     OperatorPrediction,
@@ -184,7 +185,7 @@ class CochainResidualInput:
     kind: Literal["prediction", "source"]
     field: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.kind not in ("prediction", "source"):
             raise ValueError(
                 "Cochain residual input kind must be 'prediction' or 'source'."
@@ -198,7 +199,10 @@ class AbstractOperatorLossTerm(ABC):
 
     name: str
     weight: float
-    accumulation_kind: ClassVar[OperatorAccumulationKind] = "single_batch"
+
+    @property
+    def accumulation_kind(self) -> OperatorAccumulationKind:
+        return "single_batch"
 
     @abstractmethod
     def __call__(
@@ -209,7 +213,7 @@ class AbstractOperatorLossTerm(ABC):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -224,7 +228,7 @@ class AbstractOperatorLossTerm(ABC):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -268,7 +272,7 @@ class CochainResidualLoss(AbstractOperatorLossTerm):
     reduction: CochainMetricReduction = "graph_mean"
     topology_fingerprint: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("Cochain residual loss names must be non-empty.")
         if not isinstance(self.program, CochainResidualProgram):
@@ -342,7 +346,7 @@ class CochainResidualLoss(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -508,7 +512,7 @@ class OperatorLossTerm(AbstractOperatorLossTerm):
     space: Literal["execution", "physical"] = "physical"
     case_reduction: Literal["scalar", "per_case"] = "scalar"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("Operator loss term names must be non-empty.")
         if not callable(self.fn):
@@ -528,7 +532,7 @@ class OperatorLossTerm(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -606,11 +610,11 @@ class SupervisedOperatorLoss(AbstractOperatorLossTerm):
     target_field: str | None = None
     relative: bool = False
     squared: bool = True
-    reduction: Literal["none", "mean", "sum"] = "mean"
+    reduction: Literal["mean", "sum"] = "mean"
     epsilon: float = 1e-12
     space: Literal["execution", "physical"] = "physical"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("Operator loss term names must be non-empty.")
         if not jnp.isfinite(self.weight):
@@ -632,7 +636,7 @@ class SupervisedOperatorLoss(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -715,7 +719,7 @@ class SupervisedOperatorRolloutLoss(AbstractOperatorLossTerm):
     reduction: Literal["mean"] = "mean"
     accumulation_kind: ClassVar[OperatorAccumulationKind] = "case_mean"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         fields = tuple(str(field) for field in self.target_fields)
         weights = tuple(float(value) for value in self.time_weights)
         if not self.name:
@@ -746,7 +750,7 @@ class SupervisedOperatorRolloutLoss(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -789,7 +793,7 @@ class ResidualOperatorRolloutLoss(AbstractOperatorLossTerm):
     def accumulation_kind(self) -> OperatorAccumulationKind:
         return self.residual_term.accumulation_kind
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         weights = tuple(float(value) for value in self.time_weights)
         if not self.name:
             raise ValueError("Operator rollout loss names must be non-empty.")
@@ -825,7 +829,7 @@ class ResidualOperatorRolloutLoss(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,

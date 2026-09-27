@@ -6,14 +6,15 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -66,7 +67,7 @@ class TissueTransportCoefficients(StrictModule, NonTrainableState):
         g: ArrayLike,
         n: ArrayLike,
         /,
-    ):
+    ) -> None:
         absorption = np.asarray(mu_a)
         scattering = np.asarray(mu_s)
         anisotropy = np.asarray(g)
@@ -143,7 +144,7 @@ class TissueTransportPlan(StrictModule, NonTrainableState):
         ray_tolerance: float = 1e-9,
         tie_tolerance: float = 1e-9,
         weight_tolerance: float = 0.0,
-    ):
+    ) -> None:
         maximum = int(maximum_interactions)
         branches = int(branch_capacity)
         stack = int(traversal_stack_capacity)
@@ -377,6 +378,31 @@ def _compact_candidates(
     )
 
 
+# Packet branches (positions, directions, weights, media, optical depths,
+# semantic IDs, live), medium/surface/detector tallies, escape and roulette
+# weights, interaction count, and five sticky failure flags.
+_PhotonTransportState: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+
+
 def _transport_one(
     prepared: PreparedTissueTransport,
     root_key: Array,
@@ -421,7 +447,7 @@ def _transport_one(
     surface_flux = jnp.zeros((prepared.surfaces.surface_count,), dtype=dtype)
     detector = jnp.zeros((prepared.surfaces.detector_count,), dtype=dtype)
     zero = jnp.asarray(0.0, dtype=dtype)
-    initial_state = (
+    initial_state: _PhotonTransportState = (
         positions,
         directions,
         weights,
@@ -442,7 +468,9 @@ def _transport_one(
         jnp.asarray(False),
     )
 
-    def step(interaction, state):
+    def step(
+        interaction: Array, state: _PhotonTransportState
+    ) -> tuple[_PhotonTransportState, Array]:
         (
             positions_,
             directions_,
@@ -733,7 +761,9 @@ def _transport_one(
             saw_branch_capacity,
         ), failure_weight
 
-    def scan_step(state, interaction):
+    def scan_step(
+        state: _PhotonTransportState, interaction: Array
+    ) -> tuple[_PhotonTransportState, Array]:
         next_state, truncated_increment = step(interaction, state)
         return next_state, truncated_increment
 
@@ -900,7 +930,9 @@ def simulate_tissue_transport(
     if key_.shape != (2,):
         raise ValueError("key must be one JAX PRNG key with shape (2,).")
 
-    def simulate_one(inputs):
+    def simulate_one(
+        inputs: tuple[Array, Array, Array, Array, Array],
+    ) -> tuple[Array, ...]:
         photon_id, origin, direction, medium, weight = inputs
         return _transport_one(
             prepared, key_, photon_id, origin, direction, medium, weight

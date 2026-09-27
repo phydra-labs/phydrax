@@ -11,9 +11,10 @@ import json
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, TypeAlias
 
 from .._fingerprint import canonical_fingerprint, canonical_json
+from ..typing import parse
 from ._chunk_repository import (
     ArtifactManifest,
     ArtifactRepository,
@@ -26,7 +27,7 @@ from ._repository import ObjectNotFoundError
 
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}\Z")
-ConservationStatus = Literal["conserved", "violated", "incomplete"]
+ConservationStatus: TypeAlias = Literal["conserved", "violated", "incomplete"]
 FailureInjector = Callable[[str], None]
 
 
@@ -104,7 +105,7 @@ class GlobalEntity:
         rights_id: str,
         provenance_ids: Sequence[str] = (),
         parent_event_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         kind = _identifier(entity_kind, "entity_kind")
         species = _identifier(species_id, "species_id")
         state = _digest(state_digest, "state_digest")
@@ -194,7 +195,7 @@ class GlobalEvent:
         epoch_sequence: int,
         parent_event_ids: Sequence[str] = (),
         evidence_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         kind = _identifier(event_kind, "event_kind")
         revision = _digest(model_revision_id, "model_revision_id")
         inputs = _digests(input_entity_ids, "input entity ID", ordered=True)
@@ -275,7 +276,7 @@ class GlobalEventEdge:
         entity_id: str,
         relation: str,
         /,
-    ):
+    ) -> None:
         source = _digest(source_event_id, "source_event_id")
         target = _digest(target_event_id, "target_event_id")
         if source == target:
@@ -340,7 +341,7 @@ class GlobalWorkItem:
         partition_key: str,
         priority: int = 0,
         parent_work_id: str | None = None,
-    ):
+    ) -> None:
         operation_ = _identifier(operation, "work operation")
         inputs = _digests(input_entity_ids, "work input entity ID", ordered=True)
         revision = _digest(model_revision_id, "work model_revision_id")
@@ -438,7 +439,7 @@ class EventGraphEpochManifest:
         commit_owner_id: str,
         conservation_status: ConservationStatus,
         evidence_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         run = _identifier(run_id, "run_id")
         epoch = _nonnegative(epoch_sequence, "epoch_sequence")
         parent = _optional_digest(parent_manifest_id, "parent_manifest_id")
@@ -464,8 +465,9 @@ class EventGraphEpochManifest:
         matrix = _digest(matrix_element_revision_id, "matrix_element_revision_id")
         checkpoint = _digest(checkpoint_id, "checkpoint_id")
         owner = _identifier(commit_owner_id, "commit_owner_id")
-        if conservation_status not in ("conserved", "violated", "incomplete"):
-            raise ValueError("conservation_status is not recognized.")
+        conservation_status = parse(
+            conservation_status, ConservationStatus, "conservation_status"
+        )
         evidence = _identifiers(evidence_ids, "epoch evidence ID")
         content: dict[str, object] = {
             "kind": "dark-sector-event-graph-epoch",
@@ -535,9 +537,11 @@ class EventGraphEpochManifest:
     @classmethod
     def from_record(cls, record: Mapping[str, object], /) -> EventGraphEpochManifest:
         _require_kind(record, "dark-sector-event-graph-epoch")
-        status = _string(record, "conservation_status")
-        if status not in ("conserved", "violated", "incomplete"):
-            raise ValueError("Serialized conservation status is not recognized.")
+        status = parse(
+            _string(record, "conservation_status"),
+            ConservationStatus,
+            "conservation_status",
+        )
         result = cls(
             _string(record, "run_id"),
             _integer(record, "epoch_sequence"),
@@ -577,7 +581,7 @@ class RunTip:
         epoch_manifest_id: str,
         previous_tip_id: str | None,
         /,
-    ):
+    ) -> None:
         run = _identifier(run_id, "run_id")
         epoch = _nonnegative(epoch_sequence, "epoch_sequence")
         manifest = _digest(epoch_manifest_id, "epoch_manifest_id")
@@ -640,7 +644,7 @@ class WorkLease:
         /,
         *,
         previous_lease_id: str | None = None,
-    ):
+    ) -> None:
         work = _digest(work_id, "work_id")
         worker = _identifier(worker_id, "worker_id")
         eligible = _identifiers(eligible_worker_ids, "eligible worker ID")
@@ -719,7 +723,7 @@ class EpochCommitReceipt:
         tip: RunTip,
         repository_manifest_id: str,
         /,
-    ):
+    ) -> None:
         repository_manifest = _digest(repository_manifest_id, "repository_manifest_id")
         if tip.epoch_manifest_id != manifest.epoch_manifest_id:
             raise ValueError("Commit tip does not name the epoch manifest.")
@@ -753,7 +757,7 @@ class EventGraphGarbageCollectionReport:
         reachable_epoch_manifest_ids: Sequence[str],
         tombstoned_artifact_ids: Sequence[str],
         /,
-    ):
+    ) -> None:
         roots = _identifiers(root_run_ids, "root run ID")
         reachable = _digests(
             reachable_epoch_manifest_ids, "reachable epoch manifest ID", ordered=False
@@ -811,7 +815,7 @@ class EventGraphRepository:
         maximum_record_bytes: int = 64 * 1024 * 1024,
         maximum_lineage_records: int = 1_000_000,
         failure_injector: FailureInjector | None = None,
-    ):
+    ) -> None:
         namespace_ = _identifier(namespace, "event graph namespace")
         if len(namespace_) > 64:
             raise ValueError("Event graph namespace cannot exceed 64 characters.")

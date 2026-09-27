@@ -11,11 +11,13 @@ import equinox as eqx
 import jax.lax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._trainable import fixed_field
+from ...typing import PRNGKey
 from .._base import _AbstractBaseModel
 from .._contracts import SMOOTH
 from .._keys import EvalKey
@@ -111,7 +113,7 @@ def _random_wavevectors(
     feature_size: int,
     mu: ArrayLike | Sequence[ArrayLike],
     sigma: ArrayLike | Sequence[ArrayLike],
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> Array:
     mu_in = _tuple(mu)
     if mu_in is None or len(mu_in) == 0:
@@ -245,7 +247,7 @@ class ExplicitFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
         phases: ArrayLike | None = None,
         passthrough: Sequence[int] = (),
         include_constant: bool = False,
-    ):
+    ) -> None:
         r"""**Arguments:**
 
         - `in_size`: Input value size. The input is flattened to a vector.
@@ -325,7 +327,7 @@ class MultiscaleFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
         phases: ArrayLike | None = None,
         passthrough: Sequence[int] = (),
         include_constant: bool = False,
-    ):
+    ) -> None:
         r"""**Arguments:**
 
         - `in_size`: Input value size. The input is flattened to a vector.
@@ -394,8 +396,8 @@ class HybridFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
         random_sigma: ArrayLike | Sequence[ArrayLike] = 1.0,
         passthrough: Sequence[int] = (),
         include_constant: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         r"""**Arguments:**
 
         - `in_size`: Input value size. The input is flattened to a vector.
@@ -468,8 +470,8 @@ class RandomFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
         passthrough: Sequence[int] = (),
         include_constant: bool = False,
         trainable: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         r"""**Arguments:**
 
         - `in_size`: Input value size. The input is flattened to a vector.
@@ -526,8 +528,8 @@ class TrainableFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
         phases: ArrayLike | None = None,
         passthrough: Sequence[int] = (),
         include_constant: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         r"""**Arguments:**
 
         - `in_size`: Input value size. The input is flattened to a vector.

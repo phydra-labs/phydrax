@@ -7,7 +7,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..operators.quantum import BathCorrelationExpansion
@@ -30,7 +31,7 @@ class HEOMContinuationStage(StrictModule):
         maximum_top_tier_norm: ArrayLike,
         valid: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.depth = int(depth)
         self.auxiliary_count = int(auxiliary_count)
         self.root_difference = jnp.asarray(root_difference)
@@ -50,7 +51,7 @@ class HEOMContinuationResult(StrictModule):
         /,
         *,
         tolerance: float,
-    ):
+    ) -> None:
         self.solutions = tuple(solutions)
         self.stages = tuple(stages)
         self.converged = (
@@ -126,7 +127,7 @@ class HEOMGridContinuationResult(StrictModule):
         bath_differences: ArrayLike,
         valid: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.final_roots = jnp.asarray(final_roots)
         self.depth_differences = jnp.asarray(depth_differences)
         self.bath_differences = jnp.asarray(bath_differences)
@@ -215,7 +216,7 @@ class PreparedHEOMRefinementPlan(StrictModule):
         tolerance: float,
         future_contraction: float | None = None,
         plan_id: str,
-    ):
+    ) -> None:
         expansions_ = tuple(expansions)
         depths_ = tuple(depths)
         steps_ = tuple(time_steps)

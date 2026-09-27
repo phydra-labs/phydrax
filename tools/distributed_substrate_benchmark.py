@@ -13,6 +13,7 @@ import socket
 import sys
 import time
 from collections.abc import Sequence
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -35,7 +36,7 @@ from phydrax.linalg import (
 )
 
 
-def _time(operation, iterations: int) -> tuple[object, float]:
+def _time(operation: Any, iterations: int) -> tuple[object, float]:
     value = operation()
     jax.block_until_ready(value)
     started = time.perf_counter()
@@ -99,6 +100,7 @@ def run(size: int, iterations: int) -> dict[str, object]:
         ),
         iterations,
     )
+    # ty: ignore[unresolved-attribute]
     solution_error = jnp.max(jnp.where(mask, jnp.abs(result.value - values), 0.0))
     jax.block_until_ready(solution_error)
     return {
@@ -124,7 +126,9 @@ def run(size: int, iterations: int) -> dict[str, object]:
         },
         "distributed_pcg": {
             "seconds": pcg_seconds,
+            # ty: ignore[unresolved-attribute]
             "iterations": int(np.asarray(result.iterations)),
+            # ty: ignore[unresolved-attribute]
             "converged": bool(np.asarray(result.converged)),
             "maximum_solution_error": float(np.asarray(solution_error)),
         },

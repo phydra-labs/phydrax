@@ -8,13 +8,14 @@ from collections.abc import Sequence
 from hashlib import blake2b
 from itertools import combinations, combinations_with_replacement
 from numbers import Integral, Number
-from typing import Any, Literal
+from typing import Any, cast, Literal, SupportsFloat
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._differentiation import (
     DerivativeContract,
@@ -24,10 +25,11 @@ from ..._differentiation import (
     GradientLevel,
     SurfaceDerivative,
 )
+from ..._dtype_names import inexact_result_type
 from ..._interpolation import bspline_stencil, linear_interpolate
-from ..._precision import inexact_result_type
 from ..._trainable import fixed_field, NonTrainableState
 from ...sparse import EdgeRelation, SparseLinearMap
+from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -128,7 +130,7 @@ class FittedPolynomialFeatures(AbstractFittedModel):
         linear_indices: tuple[int, ...],
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
-    ):
+    ) -> None:
         self.in_size = len(input_schema.names)
         self.out_size = len(output_schema.names)
         self.exponents = jnp.asarray(exponents, dtype=jnp.int32)
@@ -174,7 +176,7 @@ class PolynomialFeatures(AbstractRecipe):
         include_bias: bool = True,
         max_output_features: int = 4096,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if (
             isinstance(degree, bool)
             or not isinstance(degree, Integral)
@@ -183,8 +185,7 @@ class PolynomialFeatures(AbstractRecipe):
             raise ValueError("degree must be a positive integer.")
         if int(max_output_features) <= 0:
             raise ValueError("max_output_features must be positive.")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.degree = int(degree)
         self.interaction_only = bool(interaction_only)
         self.include_bias = bool(include_bias)
@@ -276,7 +277,7 @@ class FittedSplineTransformer(AbstractFittedModel):
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.in_size = len(input_schema.names)
         self.out_size = len(output_schema.names)
         self.knots = jnp.asarray(knots)
@@ -321,7 +322,7 @@ class FittedSplineTransformer(AbstractFittedModel):
         flat_values = values.reshape((-1,))
         flat_knots = knots.reshape((-1, knots.shape[-1]))
 
-        def basis_row(knot_row, query):
+        def basis_row(knot_row: Array, query: Array) -> Array:
             stencil = bspline_stencil(
                 knot_row,
                 query,
@@ -364,7 +365,7 @@ class SplineTransformer(AbstractRecipe):
         knots: Literal["uniform", "quantile"] = "uniform",
         bounds: Literal["clip", "error"] = "error",
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if int(n_knots) < 2:
             raise ValueError("n_knots must be at least two.")
         if int(degree) < 0:
@@ -373,8 +374,7 @@ class SplineTransformer(AbstractRecipe):
             raise ValueError("knots must be 'uniform' or 'quantile'.")
         if bounds not in ("clip", "error"):
             raise ValueError("bounds must be 'clip' or 'error'.")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.n_knots = int(n_knots)
         self.degree = int(degree)
         self.knots = knots
@@ -478,7 +478,7 @@ class FittedFourierFeatures(AbstractFittedModel):
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.in_size = len(input_schema.names)
         self.out_size = len(output_schema.names)
         self.origin = jnp.asarray(origin)
@@ -550,17 +550,19 @@ class FourierFeatures(AbstractRecipe):
         include_bias: bool = False,
         include_original: bool = False,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if int(n_frequencies) <= 0:
             raise ValueError("n_frequencies must be positive.")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
 
-        def normalize(value):
+        def normalize(
+            value: Number | Sequence[Number] | None,
+        ) -> tuple[float, ...] | None:
             if value is None:
                 return None
             raw = (value,) if isinstance(value, Number) else tuple(value)
-            converted = tuple(float(item) for item in raw)
+            # float() is the real-scalar check: it rejects non-real Numbers.
+            converted = tuple(float(cast(SupportsFloat, item)) for item in raw)
             if any(not jnp.isfinite(item) for item in converted):
                 raise ValueError("Fourier origins and periods must be finite.")
             return converted
@@ -592,7 +594,9 @@ class FourierFeatures(AbstractRecipe):
         minimum = jnp.where(mass > 0.0, minimum, jnp.zeros_like(minimum))
         maximum = jnp.where(mass > 0.0, maximum, jnp.zeros_like(maximum))
 
-        def configured(values, fallback, name):
+        def configured(
+            values: tuple[float, ...] | None, fallback: Array, name: str
+        ) -> Array:
             if values is None:
                 return fallback
             if len(values) not in (1, batch.feature_count):
@@ -686,7 +690,7 @@ class FittedRandomFourierFeatures(AbstractFittedModel):
         *,
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
-    ):
+    ) -> None:
         self.in_size = len(input_schema.names)
         self.out_size = len(output_schema.names)
         self.frequencies = jnp.asarray(frequencies)
@@ -727,7 +731,7 @@ class RandomFourierFeatures(AbstractRecipe):
         *,
         gamma: ArrayLike = 1.0,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if int(n_components) <= 0:
             raise ValueError("n_components must be positive.")
         gamma_ = jnp.asarray(gamma, dtype=jnp.float64)
@@ -738,8 +742,7 @@ class RandomFourierFeatures(AbstractRecipe):
             ~jnp.isfinite(gamma_) | (gamma_ <= 0.0),
             "gamma must be finite and positive.",
         )
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.n_components = int(n_components)
         self.gamma = gamma_
         self.weight_policy = weight_policy
@@ -804,7 +807,7 @@ class FittedFeatureHasher(AbstractFittedModel, NonTrainableState):
         *,
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
-    ):
+    ) -> None:
         self.in_size = len(input_schema.names)
         self.out_size = len(output_schema.names)
         self.buckets = jnp.asarray(buckets, dtype=jnp.int32)
@@ -845,11 +848,10 @@ class FeatureHasher(AbstractRecipe):
         *,
         alternate_sign: bool = True,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if int(n_features) <= 0:
             raise ValueError("n_features must be positive.")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.n_features = int(n_features)
         self.alternate_sign = bool(alternate_sign)
         self.weight_policy = weight_policy
@@ -933,7 +935,7 @@ class FittedGaussianRandomProjection(_AbstractRandomProjection):
         *,
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
-    ):
+    ) -> None:
         self.in_size = len(input_schema.names)
         self.out_size = len(output_schema.names)
         self.projection = jnp.asarray(projection)
@@ -948,11 +950,12 @@ class GaussianRandomProjection(AbstractRecipe):
     n_components: int = eqx.field(static=True)
     weight_policy: WeightPolicy = eqx.field(static=True)
 
-    def __init__(self, n_components: int, *, weight_policy: WeightPolicy = "statistical"):
+    def __init__(
+        self, n_components: int, *, weight_policy: WeightPolicy = "statistical"
+    ) -> None:
         if int(n_components) <= 0:
             raise ValueError("n_components must be positive.")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.n_components = int(n_components)
         self.weight_policy = weight_policy
 
@@ -1009,7 +1012,7 @@ class FittedSparseRandomProjection(AbstractFittedModel):
         density: float,
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
-    ):
+    ) -> None:
         self.in_size = len(input_schema.names)
         self.out_size = len(output_schema.names)
         self.projection = projection
@@ -1047,15 +1050,14 @@ class SparseRandomProjection(AbstractRecipe):
         *,
         density: float | None = None,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if int(n_components) <= 0:
             raise ValueError("n_components must be positive.")
         if density is not None and (
             not jnp.isfinite(density) or not 0.0 < float(density) <= 1.0
         ):
             raise ValueError("density must lie in (0, 1].")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.n_components = int(n_components)
         self.density = None if density is None else float(density)
         self.weight_policy = weight_policy
@@ -1186,7 +1188,7 @@ class FittedPowerTransformer(AbstractFittedModel):
         method: Literal["yeo-johnson", "box-cox"],
         schema: FeatureSchema,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.in_size = len(schema.names)
         self.out_size = len(schema.names)
         self.lambdas = jnp.asarray(lambdas)
@@ -1277,7 +1279,7 @@ class PowerTransformer(AbstractRecipe):
         lambda_range: tuple[float, float] = (-2.0, 2.0),
         n_lambdas: int = 65,
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if method not in ("yeo-johnson", "box-cox"):
             raise ValueError("method must be 'yeo-johnson' or 'box-cox'.")
         lower, upper = float(lambda_range[0]), float(lambda_range[1])
@@ -1285,8 +1287,7 @@ class PowerTransformer(AbstractRecipe):
             raise ValueError("lambda_range must be finite and increasing.")
         if int(n_lambdas) < 2:
             raise ValueError("n_lambdas must be at least two.")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.method = method
         self.lambda_range = (lower, upper)
         self.n_lambdas = int(n_lambdas)
@@ -1396,7 +1397,7 @@ class FittedQuantileTransformer(AbstractFittedModel):
         output_distribution: Literal["uniform", "normal"],
         schema: FeatureSchema,
         case_shape: tuple[int, ...],
-    ):
+    ) -> None:
         self.in_size = len(schema.names)
         self.out_size = len(schema.names)
         self.quantiles = jnp.asarray(quantiles)
@@ -1495,13 +1496,12 @@ class QuantileTransformer(AbstractRecipe):
         *,
         output_distribution: Literal["uniform", "normal"] = "uniform",
         weight_policy: WeightPolicy = "statistical",
-    ):
+    ) -> None:
         if int(n_quantiles) < 2:
             raise ValueError("n_quantiles must be at least two.")
         if output_distribution not in ("uniform", "normal"):
             raise ValueError("output_distribution must be 'uniform' or 'normal'.")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.n_quantiles = int(n_quantiles)
         self.output_distribution = output_distribution
         self.weight_policy = weight_policy

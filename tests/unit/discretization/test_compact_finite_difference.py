@@ -1,4 +1,5 @@
 from fractions import Fraction
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -9,7 +10,7 @@ import pytest
 import phydrax as phx
 
 
-def _grid(count, *, dimension=1):
+def _grid(count: Any, *, dimension: Any = 1) -> Any:
     axes = tuple(
         phx.discretization.UniformAxisSpec(count, periodic=True, endpoint=False)
         for _ in range(dimension)
@@ -21,7 +22,7 @@ def _grid(count, *, dimension=1):
     )
 
 
-def _derivative(count, derivative_order, accuracy_order):
+def _derivative(count: Any, derivative_order: Any, accuracy_order: Any) -> Any:
     grid = _grid(count)
     request = phx.discretization.DerivativeRequest(
         f"d{derivative_order}",
@@ -34,7 +35,9 @@ def _derivative(count, derivative_order, accuracy_order):
 
 
 @pytest.mark.parametrize("accuracy_order", (4, 6))
-def test_periodic_compact_first_and_second_derivatives_converge(accuracy_order):
+def test_periodic_compact_first_and_second_derivatives_converge(
+    accuracy_order: Any,
+) -> None:
     errors = []
     for count in (16, 32):
         grid, first = _derivative(count, 1, accuracy_order)
@@ -53,7 +56,7 @@ def test_periodic_compact_first_and_second_derivatives_converge(accuracy_order):
     assert errors[0] / errors[1] > 2.0 ** (accuracy_order - 1)
 
 
-def test_compact_staggered_interpolation_and_derivative_preserve_locations():
+def test_compact_staggered_interpolation_and_derivative_preserve_locations() -> None:
     grid = _grid(32)
     point = grid.centered_location
     cell = grid.location((Fraction(1, 2),))
@@ -94,7 +97,7 @@ def test_compact_staggered_interpolation_and_derivative_preserve_locations():
     assert interpolation.target.shape == grid.layout_at(cell).shape
 
 
-def test_compact_tensor_components_transpose_adjoint_and_grad():
+def test_compact_tensor_components_transpose_adjoint_and_grad() -> None:
     grid = _grid(24, dimension=2)
     request = phx.discretization.DerivativeRequest(
         "dy",
@@ -124,7 +127,7 @@ def test_compact_tensor_components_transpose_adjoint_and_grad():
     assert result.shape == value.shape
 
 
-def test_compact_rejects_unsupported_structure_and_dense_materialization():
+def test_compact_rejects_unsupported_structure_and_dense_materialization() -> None:
     grid, operator = _derivative(16, 1, 4)
     with pytest.raises(ValueError, match="prohibit"):
         operator._materialize()

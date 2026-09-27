@@ -45,7 +45,7 @@ class DataTierReference(StrictModule, NonTrainableState):
         format_profile_id: str,
         resource_ids: Sequence[str],
         conditions_snapshot_id: str,
-    ):
+    ) -> None:
         values = tuple(
             str(value).strip()
             for value in (
@@ -103,7 +103,7 @@ class FrameworkEventContext(StrictModule, NonTrainableState):
         device_id: str,
         stream_id: str,
         side_effects: Sequence[str] = ("none",),
-    ):
+    ) -> None:
         if not isinstance(coordinate, OperationalCoordinate):
             raise TypeError("coordinate must be OperationalCoordinate.")
         if (

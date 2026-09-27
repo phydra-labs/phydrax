@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -27,17 +30,17 @@ def _domain(series_tail: float = 99.0) -> phx.domain.RaggedSeriesDatasetDomain:
     )
 
 
-def _batch(domain: phx.domain.RaggedSeriesDatasetDomain):
+def _batch(domain: phx.domain.RaggedSeriesDatasetDomain) -> Any:
     return domain.points_from_indices(
         jnp.asarray([0, 1], dtype=jnp.int32),
         structure=phx.domain.SampleLayout((("data",),)),
     )
 
 
-def test_ragged_series_model_returns_case_axis_field():
+def test_ragged_series_model_returns_case_axis_field() -> None:
     domain = _domain()
 
-    def exact(payload, *, key=None):
+    def exact(payload: Any, *, key: Any = None) -> Any:
         del key
         return payload.static[:, 0] + jnp.sum(
             payload.series[..., 0] * payload.mask.astype("float64"),
@@ -52,15 +55,15 @@ def test_ragged_series_model_returns_case_axis_field():
     assert jnp.allclose(jnp.asarray(out.data), jnp.asarray([5.0, 23.0]))
 
 
-def test_masked_series_pooling_ignores_padded_tail_values():
+def test_masked_series_pooling_ignores_padded_tail_values() -> None:
     domain_a = _domain(series_tail=99.0)
     domain_b = _domain(series_tail=-123.0)
 
-    def step_model(x, *, key=None):
+    def step_model(x: Any, *, key: Any = None) -> Any:
         del key
         return x[..., :1]
 
-    def readout_model(x, *, key=None):
+    def readout_model(x: Any, *, key: Any = None) -> Any:
         del key
         return x[:, 0]
 
@@ -80,7 +83,7 @@ def test_masked_series_pooling_ignores_padded_tail_values():
     assert jnp.allclose(out_a, jnp.asarray([2.0, 7.0]))
 
 
-def test_masked_series_pooling_selects_nonfinite_padded_latents():
+def test_masked_series_pooling_selects_nonfinite_padded_latents() -> None:
     payload = phx.nn.models.RaggedSeriesBatchInput(
         static=None,
         series=jnp.asarray([[[1.0], [0.0]]]),
@@ -89,11 +92,11 @@ def test_masked_series_pooling_selects_nonfinite_padded_latents():
         length=jnp.asarray([1], dtype=jnp.int32),
     )
 
-    def step_model(x, *, key=None):
+    def step_model(x: Any, *, key: Any = None) -> Any:
         del key
         return jnp.log(x)
 
-    def readout_model(x, *, key=None):
+    def readout_model(x: Any, *, key: Any = None) -> Any:
         del key
         return x[:, 0]
 
@@ -111,7 +114,7 @@ def test_masked_series_pooling_selects_nonfinite_padded_latents():
     assert jnp.array_equal(compiled, eager)
 
 
-def test_masked_series_pooling_can_scale_sampled_sum():
+def test_masked_series_pooling_can_scale_sampled_sum() -> None:
     payload = phx.nn.models.RaggedSeriesBatchInput(
         static=None,
         series=jnp.asarray([[[1.0], [3.0]]]),
@@ -122,11 +125,11 @@ def test_masked_series_pooling_can_scale_sampled_sum():
         sample_scale=jnp.asarray([2.0]),
     )
 
-    def step_model(x, *, key=None):
+    def step_model(x: Any, *, key: Any = None) -> Any:
         del key
         return x[..., :1]
 
-    def readout_model(x, *, key=None):
+    def readout_model(x: Any, *, key: Any = None) -> Any:
         del key
         return x[:, 0]
 
@@ -150,7 +153,7 @@ def test_masked_series_pooling_can_scale_sampled_sum():
     assert jnp.allclose(scaled(payload), jnp.asarray([8.0]))
 
 
-def test_masked_series_pooling_has_finite_parameter_gradients():
+def test_masked_series_pooling_has_finite_parameter_gradients() -> None:
     domain = _domain()
     payload = phx.nn.models.RaggedSeriesBatchInput(
         static=domain.input_rows(jnp.asarray([0, 1], dtype=jnp.int32))["static"],
@@ -177,7 +180,7 @@ def test_masked_series_pooling_has_finite_parameter_gradients():
         ),
     )
 
-    def total(m):
+    def total(m: Any) -> Any:
         return jnp.sum(m(payload, key=jr.key(3)))
 
     value, grads = eqx.filter_value_and_grad(total)(model)

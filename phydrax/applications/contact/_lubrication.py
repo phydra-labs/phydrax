@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
@@ -36,7 +37,7 @@ class LubricationContactPlan(StrictModule, NonTrainableState):
         minimum_film_thickness: float,
         cavitation_pressure: float = 0.0,
         asperity_transition: float,
-    ):
+    ) -> None:
         viscosity_ = float(viscosity)
         minimum = float(minimum_film_thickness)
         cavitation = float(cavitation_pressure)
@@ -146,7 +147,7 @@ class ReynoldsPressureBoundaryConditions(StrictModule, NonTrainableState):
     pressure: Array
     boundary_id: str = eqx.field(static=True)
 
-    def __init__(self, node_indices: ArrayLike, pressure: ArrayLike, /):
+    def __init__(self, node_indices: ArrayLike, pressure: ArrayLike, /) -> None:
         indices = np.asarray(node_indices)
         values = np.asarray(pressure, dtype=np.float64)
         if (
@@ -225,7 +226,7 @@ class ReynoldsFilmPlan(StrictModule, NonTrainableState):
         minimum_film_thickness: float = 1.0e-9,
         active_set_iterations: int = 32,
         convergence_tolerance: float = 1.0e-8,
-    ):
+    ) -> None:
         if not isinstance(film_mesh, CellMesh):
             raise TypeError("film_mesh must be CellMesh.")
         if not isinstance(interface, ContactInterfacePlan):
@@ -343,7 +344,7 @@ class PreparedReynoldsFilm(StrictModule, NonTrainableState):
     cell_area: Array
     prepared_id: str = eqx.field(static=True)
 
-    def initialize(self, dtype=jnp.float64, /) -> ReynoldsFilmState:
+    def initialize(self, dtype: DTypeLike = jnp.float64, /) -> ReynoldsFilmState:
         pressure = jnp.full(
             (self.plan.film_mesh.coordinates.shape[0],),
             self.plan.cavitation_pressure,

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -30,7 +32,7 @@ from phydrax.optics.wave._fresnel import (
 )
 
 
-def _finite_space(shape, bounds, frame=None):
+def _finite_space(shape: Any, bounds: Any, frame: Any = None) -> Any:
     grid = TensorGridPlan(
         tuple(UniformAxisSpec(size) for size in shape), axis_names=("u", "v")
     ).prepare(jnp.asarray(bounds))
@@ -41,7 +43,7 @@ def _finite_space(shape, bounds, frame=None):
     )
 
 
-def test_identical_space_zero_distance_is_exact_identity_for_both_polarizations():
+def test_identical_space_zero_distance_is_exact_identity_for_both_polarizations() -> None:
     space = _finite_space((17, 18), ((-2.0, -1.5), (2.0, 1.5)))
     coordinates = space.transverse_coordinates
     scalar_values = jnp.exp(
@@ -65,7 +67,7 @@ def test_identical_space_zero_distance_is_exact_identity_for_both_polarizations(
         assert result.evidence.relative_power_error == 0.0
 
 
-def test_different_grid_direct_fresnel_reproduces_gaussian_beam_width_and_power():
+def test_different_grid_direct_fresnel_reproduces_gaussian_beam_width_and_power() -> None:
     input_space = _finite_space((81, 83), ((-4.0, -4.0), (4.0, 4.0)))
     output_space = _finite_space((101, 103), ((-6.0, -6.0), (6.0, 6.0)))
     coordinates = input_space.transverse_coordinates
@@ -105,7 +107,7 @@ def test_different_grid_direct_fresnel_reproduces_gaussian_beam_width_and_power(
     assert result.successful
 
 
-def test_direct_fresnel_distance_gradient_is_finite_and_nonzero():
+def test_direct_fresnel_distance_gradient_is_finite_and_nonzero() -> None:
     input_space = _finite_space((25, 27), ((-2.0, -2.0), (2.0, 2.0)))
     output_space = _finite_space((29, 31), ((-2.5, -2.5), (2.5, 2.5)))
     coordinates = input_space.transverse_coordinates
@@ -125,7 +127,7 @@ def test_direct_fresnel_distance_gradient_is_finite_and_nonzero():
         )
     )
 
-    def objective(distance):
+    def objective(distance: Any) -> Any:
         propagated = propagate_direct_fresnel(prepared, field, distance, 16.0)
         return jnp.real(propagated.field.values[14, 15])
 
@@ -134,7 +136,7 @@ def test_direct_fresnel_distance_gradient_is_finite_and_nonzero():
     assert derivative != 0.0
 
 
-def test_prepare_rejects_unsupported_topology_grid_frame_and_resources():
+def test_prepare_rejects_unsupported_topology_grid_frame_and_resources() -> None:
     finite = _finite_space((9, 10), ((-1.0, -1.0), (1.0, 1.0)))
     periodic_grid = TensorGridPlan(
         (FourierAxisSpec(8), FourierAxisSpec(8)), axis_names=("u", "v")
@@ -173,7 +175,9 @@ def test_prepare_rejects_unsupported_topology_grid_frame_and_resources():
         )
 
 
-def test_zero_distance_different_spaces_and_accuracy_limits_are_explicit_failures():
+def test_zero_distance_different_spaces_and_accuracy_limits_are_explicit_failures() -> (
+    None
+):
     input_space = _finite_space((13, 15), ((-1.0, -1.0), (1.0, 1.0)))
     output_space = _finite_space((17, 19), ((-1.5, -1.5), (1.5, 1.5)))
     field = ScalarPlaneField(input_space, jnp.ones(input_space.shape), 7.0, 0.0)
@@ -196,3 +200,51 @@ def test_zero_distance_different_spaces_and_accuracy_limits_are_explicit_failure
     assert propagated.status & int(FresnelPropagationStatus.SAMPLING_LIMIT)
     assert propagated.status & int(FresnelPropagationStatus.PARAXIAL_LIMIT)
     assert propagated.status & int(FresnelPropagationStatus.POWER_LIMIT)
+
+
+def test_axes_without_quadrature_weights_use_the_grid_point_measure() -> None:
+    nodes = jnp.asarray([-1.0, -0.5, 0.0, 0.5, 1.0])
+    trapezoid = jnp.asarray([0.25, 0.5, 0.5, 0.5, 0.25])
+
+    def space(quad_weights: Any) -> Any:
+        axis = AxisDiscretization(
+            nodes=nodes,
+            quad_weights=quad_weights,
+            basis="uniform",
+            domain=AxisDomain.interval(-1.0, 1.0),
+            lower_endpoint_included=True,
+            upper_endpoint_included=True,
+        )
+        return PlaneFieldSpace(
+            PreparedTensorGrid((axis, axis), axis_names=("u", "v")),
+            RigidFrame.identity(3),
+            "finite-window",
+        )
+
+    implicit = space(None)
+    explicit = space(trapezoid)
+    assert jnp.array_equal(implicit.area_weights, explicit.area_weights)
+    coordinates = implicit.transverse_coordinates
+    values = jnp.exp(-jnp.sum(coordinates**2, axis=-1)).astype(jnp.complex128)
+    plan_options = dict(
+        maximum_sampling_phase_step=100.0,
+        maximum_paraxial_angle=1.5,
+        maximum_power_error=1.0,
+    )
+
+    implicit_result = propagate_direct_fresnel(
+        # ty: ignore[invalid-argument-type]
+        prepare_direct_fresnel(DirectFresnelPlan(implicit, implicit, **plan_options)),
+        ScalarPlaneField(implicit, values, 9.0, 0.0),
+        1.0,
+        4.0,
+    )
+    explicit_result = propagate_direct_fresnel(
+        # ty: ignore[invalid-argument-type]
+        prepare_direct_fresnel(DirectFresnelPlan(explicit, explicit, **plan_options)),
+        ScalarPlaneField(explicit, values, 9.0, 0.0),
+        1.0,
+        4.0,
+    )
+
+    assert jnp.allclose(implicit_result.field.values, explicit_result.field.values)

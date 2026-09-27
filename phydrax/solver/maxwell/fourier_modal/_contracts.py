@@ -5,11 +5,13 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Callable, Sequence
 from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -54,7 +56,7 @@ class FrequencyMaxwellMaterial(StrictModule):
         origin_evidence_id: str | None = None,
         passive: bool | None = None,
         reciprocal: bool | None = None,
-    ):
+    ) -> None:
         epsilon = jnp.asarray(permittivity)
         mu = jnp.asarray(permeability)
         xi = jnp.asarray(magnetoelectric_xi)
@@ -118,7 +120,7 @@ class HomogeneousMaxwellPort(AbstractFourierModalPort):
         *,
         reference_distance: ArrayLike = 0.0,
         port_id: str,
-    ):
+    ) -> None:
         if not isinstance(material, FrequencyMaxwellMaterial):
             raise TypeError("material must be a FrequencyMaxwellMaterial.")
         identifier = str(port_id)
@@ -144,7 +146,7 @@ class PeriodicMaxwellPort(AbstractFourierModalPort):
         reference_distance: ArrayLike = 0.0,
         mode_policy: Literal["frozen", "spectral-subspace"] = "frozen",
         port_id: str,
-    ):
+    ) -> None:
         if not isinstance(material, FrequencyMaxwellMaterial):
             raise TypeError("material must be FrequencyMaxwellMaterial.")
         if not isinstance(factorization, AbstractFourierFactorizationPlan):
@@ -177,9 +179,9 @@ class FourierModalLayer(StrictModule):
         factorization: AbstractFourierFactorizationPlan,
         /,
         *,
-        translation: ArrayLike = (0.0, 0.0),
+        translation: ArrayLike | Sequence[float] = (0.0, 0.0),
         layer_id: str,
-    ):
+    ) -> None:
         if not isinstance(material, FrequencyMaxwellMaterial):
             raise TypeError("material must be a FrequencyMaxwellMaterial.")
         if not isinstance(factorization, AbstractFourierFactorizationPlan):
@@ -219,7 +221,7 @@ class ContinuousZIntegrationPolicy(StrictModule, NonTrainableState):
         relative_tolerance: float = 1.0e-8,
         maximum_segments: int = 64,
         minimum_segment_fraction: float = 1.0e-6,
-    ):
+    ) -> None:
         if int(order) != 4:
             raise ValueError("Continuous-z Fourier modal integration uses order four.")
         if (
@@ -250,7 +252,7 @@ class ContinuousZIntegrationPolicy(StrictModule, NonTrainableState):
 class ContinuousFourierModalLayer(StrictModule):
     """Finite continuously varying z-profile with a prepared segment epoch."""
 
-    material_profile: object
+    material_profile: Callable[[Array], FrequencyMaxwellMaterial]
     thickness: Array
     factorization: AbstractFourierFactorizationPlan
     integration_policy: ContinuousZIntegrationPolicy
@@ -258,14 +260,14 @@ class ContinuousFourierModalLayer(StrictModule):
 
     def __init__(
         self,
-        material_profile,
+        material_profile: Callable[[Array], FrequencyMaxwellMaterial],
         thickness: ArrayLike,
         factorization: AbstractFourierFactorizationPlan,
         integration_policy: ContinuousZIntegrationPolicy,
         /,
         *,
         layer_id: str,
-    ):
+    ) -> None:
         if not callable(material_profile):
             raise TypeError("material_profile must be callable.")
         if not isinstance(factorization, AbstractFourierFactorizationPlan):
@@ -290,7 +292,7 @@ class FourierModalSourcePlane(StrictModule, NonTrainableState):
 
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, source_id: str, /):
+    def __init__(self, source_id: str, /) -> None:
         identifier = str(source_id)
         if not identifier:
             raise ValueError("source_id must be non-empty.")
@@ -325,7 +327,7 @@ class FourierModalMaxwellProblem(StrictModule):
         /,
         *,
         numeric_version: str = "0",
-    ):
+    ) -> None:
         if not isinstance(harmonics, LatticeHarmonicDiscretization):
             raise TypeError("harmonics must be a LatticeHarmonicDiscretization.")
         if not isinstance(superstrate, AbstractFourierModalPort) or not isinstance(

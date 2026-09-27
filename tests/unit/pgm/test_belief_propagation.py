@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -6,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def _chain_graph(length=4):
+def _chain_graph(length: Any = 4) -> Any:
     variables = phx.pgm.DiscreteVariableGroup("x", shape=(length,), num_states=2)
     unary = phx.pgm.DenseTableFactorGroup(
         (phx.pgm.VariableSelection.all(variables),),
@@ -26,7 +28,9 @@ def _chain_graph(length=4):
     return phx.pgm.DiscreteFactorGraph((variables,), (unary, interactions))
 
 
-def test_forest_sum_product_matches_exact_marginals_factor_beliefs_and_normalizer():
+def test_forest_sum_product_matches_exact_marginals_factor_beliefs_and_normalizer() -> (
+    None
+):
     graph = _chain_graph()
     exact = phx.pgm.enumerate_factor_graph(graph)
     prepared = phx.pgm.prepare_belief_propagation(
@@ -40,22 +44,29 @@ def test_forest_sum_product_matches_exact_marginals_factor_beliefs_and_normalize
 
     assert prepared.forest
     assert result.successful
+    # ty: ignore[unresolved-attribute]
     assert result.marginals_exact
+    # ty: ignore[unresolved-attribute]
     assert result.log_normalizer_exact
+    # ty: ignore[unresolved-attribute]
     assert result.log_normalizer_kind == "exact"
     assert jnp.allclose(
+        # ty: ignore[unresolved-attribute]
         jnp.exp(result.variable_log_probabilities.values),
         exact.variable_probabilities.values,
         atol=1e-10,
     )
+    # ty: ignore[unresolved-attribute]
     assert result.log_normalizer == pytest.approx(float(exact.log_normalizer), abs=1e-10)
     for inferred, expected in zip(
-        result.factor_probabilities, exact.factor_probabilities
+        # ty: ignore[unresolved-attribute]
+        result.factor_probabilities,
+        exact.factor_probabilities,
     ):
         assert jnp.allclose(inferred, expected, atol=1e-10)
 
 
-def test_forest_max_product_backtracks_consistent_exact_map():
+def test_forest_max_product_backtracks_consistent_exact_map() -> None:
     graph = _chain_graph()
     exact = phx.pgm.enumerate_factor_graph(graph)
     prepared = phx.pgm.prepare_belief_propagation(
@@ -67,13 +78,17 @@ def test_forest_max_product_backtracks_consistent_exact_map():
         phx.pgm.initialize_belief_propagation(prepared),
     )
 
+    # ty: ignore[unresolved-attribute]
     assert result.map_available
+    # ty: ignore[unresolved-attribute]
     assert result.optimal
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(result.map_assignment, exact.map_assignment)
+    # ty: ignore[unresolved-attribute]
     assert result.map_log_score == pytest.approx(float(exact.map_log_score))
 
 
-def test_loopy_result_reports_fixed_point_without_claiming_exactness():
+def test_loopy_result_reports_fixed_point_without_claiming_exactness() -> None:
     variables = phx.pgm.DiscreteVariableGroup("x", shape=(3,), num_states=2)
     edges = jnp.asarray([[0, 1], [1, 2], [2, 0]])
     factor = phx.pgm.DenseTableFactorGroup(
@@ -95,13 +110,17 @@ def test_loopy_result_reports_fixed_point_without_claiming_exactness():
 
     assert not prepared.forest
     assert result.successful
+    # ty: ignore[unresolved-attribute]
     assert not result.marginals_exact
+    # ty: ignore[unresolved-attribute]
     assert not result.log_normalizer_exact
+    # ty: ignore[unresolved-attribute]
     assert result.log_normalizer_kind == "bethe"
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(jnp.isfinite(result.variable_log_probabilities.values))
 
 
-def test_hard_evidence_remains_exact_and_never_creates_nan_messages():
+def test_hard_evidence_remains_exact_and_never_creates_nan_messages() -> None:
     graph = _chain_graph(2)
     evidence = phx.pgm.pack_evidence(
         graph,
@@ -115,16 +134,18 @@ def test_hard_evidence_remains_exact_and_never_creates_nan_messages():
 
     assert result.successful
     assert not jnp.any(jnp.isnan(result.state.messages))
+    # ty: ignore[unresolved-attribute]
     assert jnp.exp(result.variable_log_probabilities.values[0]) == pytest.approx(1.0)
+    # ty: ignore[unresolved-attribute]
     assert jnp.isneginf(result.variable_log_probabilities.values[1])
 
 
-def test_sum_product_log_normalizer_gradient_matches_exact_factor_marginals():
+def test_sum_product_log_normalizer_gradient_matches_exact_factor_marginals() -> None:
     graph = _chain_graph(2)
     prepared = phx.pgm.prepare_belief_propagation(graph)
     base_table = graph.factor_groups[1].log_potentials
 
-    def inferred_log_normalizer(table):
+    def inferred_log_normalizer(table: Any) -> Any:
         updated_graph = eqx.tree_at(
             lambda value: value.factor_groups[1].log_potentials,
             graph,
@@ -135,6 +156,7 @@ def test_sum_product_log_normalizer_gradient_matches_exact_factor_marginals():
             refreshed,
             phx.pgm.initialize_belief_propagation(refreshed),
         )
+        # ty: ignore[unresolved-attribute]
         return result.log_normalizer
 
     gradient = jax.grad(inferred_log_normalizer)(base_table)

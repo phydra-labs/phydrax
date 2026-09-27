@@ -7,8 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax import lax
-from jaxtyping import Array, ArrayLike
+from jax import Array, lax
+from jax.typing import ArrayLike
 
 from phydrax.integration import GaussLegendreRule, interval_rule_data
 
@@ -43,7 +43,7 @@ class FLRWModePlan(StrictModule):
         mass: float,
         curvature_coupling: float = 0.0,
         maximum_mode_steps: int = 1_000_000,
-    ):
+    ) -> None:
         times = np.asarray(conformal_times, dtype=np.float64)
         scale = np.asarray(scale_factors, dtype=np.float64)
         prime = np.asarray(scale_factor_primes, dtype=np.float64)
@@ -282,7 +282,9 @@ def evolve_flrw_modes(
     initial_mode = jnp.asarray(initial.modes)
     initial_derivative = jnp.asarray(initial.derivatives)
 
-    def verlet_step(carry, interval_data):
+    def verlet_step(
+        carry: tuple[Array, Array], interval_data: tuple[Array, Array, Array]
+    ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
         current_mode, current_derivative = carry
         width, current_frequency_squared, next_frequency_squared = interval_data
         half = current_derivative - 0.5 * width * current_frequency_squared * current_mode

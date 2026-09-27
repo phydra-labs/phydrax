@@ -125,11 +125,13 @@ def test_resolved_run_requires_exact_profiles_and_validity_window() -> None:
     )
 
     with pytest.raises(ValueError, match="exactly match"):
+        # ty: ignore[invalid-argument-type]
         ResolvedRunSpec((dependency,), (), profile_ids=("profile-other",), **arguments)
     with pytest.raises(ValueError, match="within"):
         ResolvedRunSpec(
             (dependency,),
             (),
             profile_ids=("profile-science",),
+            # ty: ignore[invalid-argument-type]
             **{**arguments, "valid_at": 31},
         )

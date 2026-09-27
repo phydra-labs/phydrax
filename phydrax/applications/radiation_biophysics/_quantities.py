@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import cast
 
 from ...units import (
     conversion_factor,
@@ -44,7 +45,7 @@ class HistoryExposure:
     molecule_count: int
     dose_standard_error_gy: float | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _nonnegative(self.deposited_energy, "scored deposited energy")
         if not math.isfinite(self.mass) or self.mass <= 0:
             raise ValueError("Scored mass must be finite and positive.")
@@ -184,9 +185,10 @@ def radiation_yield(
     elif all(
         by_history[history].dose_standard_error_gy is not None for history in histories
     ):
+        # The enclosing all(...) check guarantees every dose standard error is set.
         denominator_error = math.sqrt(
             math.fsum(
-                (by_history[history].dose_standard_error_gy * weight) ** 2
+                (cast(float, by_history[history].dose_standard_error_gy) * weight) ** 2
                 for history, weight in zip(histories, weights, strict=True)
             )
         )

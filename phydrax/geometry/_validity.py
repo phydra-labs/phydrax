@@ -9,7 +9,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from .design._schema import DesignState, ParameterSchema
@@ -42,7 +42,7 @@ class GeometryValidityEvidence(StrictModule):
         margins: Any = (),
         margin_names: tuple[str, ...] = (),
         contract_id: str,
-    ):
+    ) -> None:
         finite_ = jnp.asarray(finite, dtype=jnp.bool_)
         satisfied_ = jnp.asarray(conditions_satisfied, dtype=jnp.bool_)
         resolved_ = jnp.asarray(resolved, dtype=jnp.bool_)

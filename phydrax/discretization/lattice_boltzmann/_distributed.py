@@ -10,8 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.sharding import NamedSharding, PartitionSpec
-from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -47,7 +47,7 @@ class LatticeBoltzmannHaloRoute(StrictModule, NonTrainableState):
         velocity_offset: tuple[int, ...],
         descriptor: HaloExchangeDescriptor | None,
         /,
-    ):
+    ) -> None:
         direction = int(direction_index)
         velocity = tuple(velocity_offset)
         source = tuple(-value for value in velocity)
@@ -92,7 +92,7 @@ class LatticeBoltzmannHaloSchedule(StrictModule, NonTrainableState):
         velocity_set: LatticeBoltzmannVelocitySet,
         schedule: DistributedHaloSchedule,
         /,
-    ):
+    ) -> None:
         if not isinstance(velocity_set, LatticeBoltzmannVelocitySet):
             raise TypeError("velocity_set must be a LatticeBoltzmannVelocitySet.")
         if not isinstance(schedule, DistributedHaloSchedule):
@@ -312,7 +312,7 @@ class ShardedLatticeBoltzmannExecutionPlan(StrictModule, NonTrainableState):
         /,
         *,
         backend: str = "jax",
-    ):
+    ) -> None:
         if not isinstance(reference, ReferenceLatticeBoltzmannExecutionPlan):
             raise TypeError("reference must be a reference LBM execution plan.")
         if not isinstance(halo, LatticeBoltzmannHaloSchedule):

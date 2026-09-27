@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -25,7 +25,7 @@ class SharpCrackQuadrature3D(StrictModule, NonTrainableState):
     front_tangents: Array
     quadrature_id: str = eqx.field(static=True)
 
-    def __init__(self, geometry: CrackSurfaceGeometry3D, /):
+    def __init__(self, geometry: CrackSurfaceGeometry3D, /) -> None:
         if not isinstance(geometry, CrackSurfaceGeometry3D):
             raise TypeError("geometry must be CrackSurfaceGeometry3D.")
         points = jnp.mean(geometry.vertices[geometry.triangles], axis=1)

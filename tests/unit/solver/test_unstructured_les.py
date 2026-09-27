@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -34,7 +37,7 @@ from phydrax.solver._unstructured_les import (
 )
 
 
-def _operators():
+def _operators() -> Any:
     vertices = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -73,7 +76,7 @@ def _operators():
     )
 
 
-def _prepared(*, ksgs=False, coefficient=0.04):
+def _prepared(*, ksgs: Any = False, coefficient: Any = 0.04) -> Any:
     operators = _operators()
     discretization = operators.discretization
     resolved_filter = ResolvedLESFilter(
@@ -117,7 +120,7 @@ def _prepared(*, ksgs=False, coefficient=0.04):
     ).prepare(operators)
 
 
-def _case(prepared):
+def _case(prepared: Any) -> Any:
     centers = prepared.operators.discretization.cell_centers
     density = jnp.full((centers.shape[0],), 1.3)
     velocity = jnp.stack(
@@ -157,7 +160,7 @@ def _case(prepared):
     return state, pressure, inputs
 
 
-def _advance(method, restart, inputs, count):
+def _advance(method: Any, restart: Any, inputs: Any, count: Any) -> Any:
     state = restart
     for index in range(count):
         state = method.step(
@@ -170,7 +173,7 @@ def _advance(method, restart, inputs, count):
     return state
 
 
-def test_pressure_corrected_step_closes_divergence_and_uses_one_mass_flux():
+def test_pressure_corrected_step_closes_divergence_and_uses_one_mass_flux() -> None:
     prepared = _prepared()
     state, pressure, inputs = _case(prepared)
     method = prepared.prepare_fixed_step(
@@ -216,7 +219,7 @@ def test_pressure_corrected_step_closes_divergence_and_uses_one_mass_flux():
     )
 
 
-def test_static_ksgs_conservative_rate_and_energy_history_are_advanced():
+def test_static_ksgs_conservative_rate_and_energy_history_are_advanced() -> None:
     prepared = _prepared(ksgs=True)
     state, pressure, inputs = _case(prepared)
     centers = prepared.operators.discretization.cell_centers
@@ -256,7 +259,7 @@ def test_static_ksgs_conservative_rate_and_energy_history_are_advanced():
     )
 
 
-def test_static_ksgs_owns_transport_despite_favre_coefficient_mismatch():
+def test_static_ksgs_owns_transport_despite_favre_coefficient_mismatch() -> None:
     weak = _prepared(ksgs=True, coefficient=0.005)
     strong = _prepared(ksgs=True, coefficient=0.4)
     weak_state, weak_pressure, inputs = _case(weak)
@@ -339,7 +342,7 @@ def test_static_ksgs_owns_transport_despite_favre_coefficient_mismatch():
     assert strong_result.status == UNSTRUCTURED_LES_ENERGY_FAILURE
 
 
-def test_two_step_ksgs_energy_balance_closes_every_modeled_contribution():
+def test_two_step_ksgs_energy_balance_closes_every_modeled_contribution() -> None:
     prepared = _prepared(ksgs=True, coefficient=0.3)
     state, pressure, inputs = _case(prepared)
     centers = prepared.operators.discretization.cell_centers
@@ -425,7 +428,7 @@ def test_two_step_ksgs_energy_balance_closes_every_modeled_contribution():
         assert jnp.isfinite(result.evidence.temporal_energy_defect)
 
 
-def test_inconsistent_modeled_transfer_is_rejected_with_energy_status():
+def test_inconsistent_modeled_transfer_is_rejected_with_energy_status() -> None:
     prepared = _prepared(ksgs=True)
     state, pressure, inputs = _case(prepared)
     method = prepared.prepare_fixed_step(
@@ -497,7 +500,7 @@ def test_inconsistent_modeled_transfer_is_rejected_with_energy_status():
     assert _step_status(negative_evidence) == UNSTRUCTURED_LES_ENERGY_FAILURE
 
 
-def test_noncoercive_algebraic_sgs_work_is_rejected_and_rolled_back():
+def test_noncoercive_algebraic_sgs_work_is_rejected_and_rolled_back() -> None:
     prepared = _prepared()
     state, pressure, inputs = _case(prepared)
     method = prepared.prepare_fixed_step(
@@ -546,7 +549,7 @@ def test_noncoercive_algebraic_sgs_work_is_rejected_and_rolled_back():
         np.testing.assert_array_equal(actual, expected)
 
 
-def test_rejected_step_rolls_back_every_restart_leaf_and_preserves_history():
+def test_rejected_step_rolls_back_every_restart_leaf_and_preserves_history() -> None:
     prepared = _prepared()
     state, pressure, inputs = _case(prepared)
     method = prepared.prepare_fixed_step(
@@ -578,7 +581,7 @@ def test_rejected_step_rolls_back_every_restart_leaf_and_preserves_history():
     assert result.fixed_step.accepted_state.accepted_steps == 0
 
 
-def test_restart_continuation_is_deterministic_and_jittable_with_momentum_jvp():
+def test_restart_continuation_is_deterministic_and_jittable_with_momentum_jvp() -> None:
     prepared = _prepared()
     state, pressure, inputs = _case(prepared)
     method = prepared.prepare_fixed_step(
@@ -680,7 +683,7 @@ def test_restart_continuation_is_deterministic_and_jittable_with_momentum_jvp():
     assert rollout.successful
     assert rollout.states.accepted_steps[-1] == 2
 
-    def advance_momentum(momentum):
+    def advance_momentum(momentum: Any) -> Any:
         perturbed = eqx.tree_at(
             lambda value: value.conservative.momentum_density,
             first,
@@ -702,7 +705,7 @@ def test_restart_continuation_is_deterministic_and_jittable_with_momentum_jvp():
     assert jnp.all(jnp.isfinite(tangent))
 
 
-def test_manufactured_temporal_refinement_converges_to_the_same_transition():
+def test_manufactured_temporal_refinement_converges_to_the_same_transition() -> None:
     prepared = _prepared()
     state, pressure, inputs = _case(prepared)
     coarse = prepared.prepare_fixed_step(

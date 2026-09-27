@@ -8,17 +8,19 @@ from __future__ import annotations
 
 from itertools import product
 from math import isfinite, prod
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
+from ...typing import parse
 from ._family import (
     PeriodicFiniteRealization,
     PeriodicResourceError,
@@ -27,7 +29,7 @@ from ._family import (
 from ._orbital import PreparedPeriodicOrbitalPencil
 
 
-BoundaryKind = Literal["open", "periodic", "twisted", "slab"]
+BoundaryKind: TypeAlias = Literal["open", "periodic", "twisted", "slab"]
 
 
 class PeriodicFiniteBoundaryPlan(StrictModule, NonTrainableState):
@@ -44,7 +46,7 @@ class PeriodicFiniteBoundaryPlan(StrictModule, NonTrainableState):
         twists: tuple[float, ...],
         kind: BoundaryKind,
         /,
-    ):
+    ) -> None:
         if any(
             isinstance(value, (bool, np.bool_))
             or not isinstance(value, (int, np.integer))
@@ -64,9 +66,9 @@ class PeriodicFiniteBoundaryPlan(StrictModule, NonTrainableState):
             or any(
                 value != 0.0 and not axis for value, axis in zip(twist, axes, strict=True)
             )
-            or kind not in ("open", "periodic", "twisted", "slab")
         ):
             raise ValueError("Finite boundary shape, axes, twists, or kind are invalid.")
+        kind = parse(kind, BoundaryKind, "kind")
         expected_kind = (
             "open"
             if not any(axes)
@@ -137,7 +139,7 @@ class PrescribedPeriodicDisorder(StrictModule, NonTrainableState):
         basis_id: str,
         source_id: str,
         /,
-    ):
+    ) -> None:
         shifts = np.asarray(onsite_shifts)
         basis = str(basis_id).strip()
         source = str(source_id).strip()
@@ -179,7 +181,7 @@ class PeriodicFiniteOrbitalRealization(StrictModule, NonTrainableState):
         basis_id: str,
         orbital_labels: tuple[str, ...],
         /,
-    ):
+    ) -> None:
         if not isinstance(hamiltonian, PeriodicFiniteRealization) or not isinstance(
             overlap, PeriodicFiniteRealization
         ):
@@ -225,7 +227,7 @@ class PeriodicFiniteOrbitalPlan(StrictModule, NonTrainableState):
         /,
         *,
         disorder: PrescribedPeriodicDisorder | None = None,
-    ):
+    ) -> None:
         if not isinstance(pencil, PreparedPeriodicOrbitalPencil) or not isinstance(
             boundary, PeriodicFiniteBoundaryPlan
         ):

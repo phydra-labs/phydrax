@@ -6,22 +6,24 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._probability import _leading_shape, AbstractProbabilityLaw, DiagonalNormalLaw
 from .._strict import StrictModule
+from ..typing import parse, PRNGKey
 from ._process import (
     AbstractMarginalTransitionLaw,
     DiagonalGaussianProcessDistribution,
 )
 
 
-TerminalReferenceRelationship = Literal["exact", "asymptotic", "external"]
+TerminalReferenceRelationship: TypeAlias = Literal["exact", "asymptotic", "external"]
 
 
 def _identifier(value: str, /, *, owner: str) -> str:
@@ -62,15 +64,14 @@ class DiffusionTerminalReference(StrictModule):
         residual_signal_scale: ArrayLike,
         reference_id: str,
         process_id: str,
-    ):
+    ) -> None:
         if not isinstance(law, AbstractProbabilityLaw):
             raise TypeError("law must implement AbstractProbabilityLaw.")
         if tuple(law.batch_shape):
             raise ValueError("A diffusion terminal reference must be unbatched.")
         if law.density_measure_kind != "lebesgue":
             raise ValueError("A Gaussian diffusion terminal reference must be Lebesgue.")
-        if relationship not in ("exact", "asymptotic", "external"):
-            raise ValueError("Unknown terminal-reference relationship.")
+        relationship = parse(relationship, TerminalReferenceRelationship, "relationship")
         residual = jnp.asarray(residual_signal_scale, dtype=jnp.float64).reshape(())
         if bool(~jnp.isfinite(residual)) or float(residual) < 0.0:
             raise ValueError("residual_signal_scale must be finite and nonnegative.")
@@ -89,7 +90,7 @@ class AbstractGaussianDiffusion(AbstractMarginalTransitionLaw):
     terminal_time: float = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, terminal_time: float, process_id: str):
+    def __init__(self, dimension: int, terminal_time: float, process_id: str) -> None:
         size = int(dimension)
         horizon = float(terminal_time)
         if size <= 0:
@@ -160,7 +161,7 @@ class AbstractGaussianDiffusion(AbstractMarginalTransitionLaw):
 
     def perturb(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         state: ArrayLike,
         /,
         *,
@@ -196,7 +197,7 @@ class VariancePreservingDiffusion(AbstractGaussianDiffusion):
         beta_maximum: float = 20.0,
         terminal_time: float = 1.0,
         process_id: str | None = None,
-    ):
+    ) -> None:
         minimum = float(beta_minimum)
         maximum = float(beta_maximum)
         if not isfinite(minimum) or not isfinite(maximum) or minimum <= 0.0:
@@ -279,7 +280,7 @@ class VarianceExplodingDiffusion(AbstractGaussianDiffusion):
         terminal_scale: float = 50.0,
         terminal_time: float = 1.0,
         process_id: str | None = None,
-    ):
+    ) -> None:
         initial = float(initial_scale)
         terminal = float(terminal_scale)
         if not isfinite(initial) or not isfinite(terminal) or initial <= 0.0:

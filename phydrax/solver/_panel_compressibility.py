@@ -9,7 +9,8 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -33,7 +34,7 @@ class PanelCompressibilityPolicy(StrictModule, NonTrainableState):
         ] = "incompressible",
         mach_number: float = 0.0,
         /,
-    ):
+    ) -> None:
         mach = float(mach_number)
         if (
             kind not in ("incompressible", "prandtl-glauert", "karman-tsien")

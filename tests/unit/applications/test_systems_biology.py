@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -45,7 +47,7 @@ from phydrax.solver import solve_direct_ssa
 from phydrax.stochastic import PoissonClockRealization
 
 
-def _closed_conversion():
+def _closed_conversion() -> Any:
     compartment = CompartmentSpec("cell", 1.0)
     return StoichiometricNetworkPlan(
         "closed-conversion",
@@ -66,7 +68,7 @@ def _closed_conversion():
     ).prepare()
 
 
-def _whole_cell_assembly():
+def _whole_cell_assembly() -> Any:
     compartment = CompartmentSpec("cell", 1.0)
     uptake = StoichiometricNetworkPlan(
         "uptake",
@@ -128,7 +130,7 @@ def _whole_cell_assembly():
     ).prepare()
 
 
-def test_sparse_stoichiometry_conservation_and_nonnegative_propensities():
+def test_sparse_stoichiometry_conservation_and_nonnegative_propensities() -> None:
     network = _closed_conversion()
     np.testing.assert_array_equal(network.stoichiometry, np.asarray([[-1, 1], [1, -1]]))
     np.testing.assert_allclose(
@@ -144,7 +146,7 @@ def test_sparse_stoichiometry_conservation_and_nonnegative_propensities():
     assert float(boundary.propensities[0]) == 0.0
 
 
-def test_thermochemical_binding_requires_exact_reactants_orders_and_content():
+def test_thermochemical_binding_requires_exact_reactants_orders_and_content() -> None:
     schema = ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (ChemicalPhaseKind.GAS, ChemicalPhaseKind.GAS),
@@ -160,7 +162,7 @@ def test_thermochemical_binding_requires_exact_reactants_orders_and_content():
         np.asarray([0.0, 0.0]),
     )
 
-    def mechanism(pre_exponential):
+    def mechanism(pre_exponential: Any) -> Any:
         reaction = ChemicalReactionSpec(
             "association-view",
             {"A": 2},
@@ -211,7 +213,7 @@ def test_thermochemical_binding_requires_exact_reactants_orders_and_content():
     assert first.binding_id != second.binding_id
 
 
-def test_plan_capacities_and_stoichiometric_units_are_exact():
+def test_plan_capacities_and_stoichiometric_units_are_exact() -> None:
     network = _closed_conversion()
     with pytest.raises(ValueError, match="stoichiometry_capacity"):
         StoichiometricNetworkPlan(
@@ -219,9 +221,11 @@ def test_plan_capacities_and_stoichiometric_units_are_exact():
             network.plan.compartments,
             network.plan.species,
             network.plan.processes,
+            # ty: ignore[invalid-argument-type]
             stoichiometry_capacity=2.0,
         )
     with pytest.raises(ValueError, match="substeps"):
+        # ty: ignore[invalid-argument-type]
         MultirateScheduleEntry("process", 2.0)
     compartment = CompartmentSpec("cell", 1.0)
     with pytest.raises(ValueError, match="incompatible"):
@@ -242,7 +246,7 @@ def test_plan_capacities_and_stoichiometric_units_are_exact():
         )
 
 
-def test_invalid_runtime_parameters_fail_closed():
+def test_invalid_runtime_parameters_fail_closed() -> None:
     network = _closed_conversion()
     parameters = network.propensity_parameters.at[0, 0].set(jnp.nan)
     evaluation = network.evaluate(
@@ -253,7 +257,7 @@ def test_invalid_runtime_parameters_fail_closed():
     assert bool(jnp.all(jnp.isnan(evaluation.propensities)))
 
 
-def test_opposing_reservoir_flows_remain_separate_in_ledgers():
+def test_opposing_reservoir_flows_remain_separate_in_ledgers() -> None:
     compartment = CompartmentSpec("cell", 1.0)
     network = StoichiometricNetworkPlan(
         "reservoir-ledgers",
@@ -281,7 +285,7 @@ def test_opposing_reservoir_flows_remain_separate_in_ledgers():
     np.testing.assert_allclose(evaluation.conservation_residual, 0.0, atol=1.0e-12)
 
 
-def test_supported_nonlinear_propensities_are_finite_and_nonnegative():
+def test_supported_nonlinear_propensities_are_finite_and_nonnegative() -> None:
     compartment = CompartmentSpec("cell", 2.0)
     species = tuple(
         SpeciesSpec(name, "cell")
@@ -313,7 +317,7 @@ def test_supported_nonlinear_propensities_are_finite_and_nonnegative():
     assert bool(jnp.all(result.propensities >= 0.0))
 
 
-def test_exact_ssa_reuses_native_realization_reproducibly():
+def test_exact_ssa_reuses_native_realization_reproducibly() -> None:
     network = _closed_conversion()
     process = network.exact_jump_process()
     realization = PoissonClockRealization(
@@ -330,16 +334,21 @@ def test_exact_ssa_reuses_native_realization_reproducibly():
         save_times=jnp.linspace(0.0, 2.0, 9),
         args=network.default_runtime(),
     )
+    # ty: ignore[invalid-argument-type]
     first = solve_direct_ssa(process, realization, jnp.asarray([40.0, 10.0]), **arguments)
     second = solve_direct_ssa(
-        process, realization, jnp.asarray([40.0, 10.0]), **arguments
+        process,
+        realization,
+        jnp.asarray([40.0, 10.0]),
+        # ty: ignore[invalid-argument-type]
+        **arguments,
     )
     np.testing.assert_array_equal(first.states, second.states)
     np.testing.assert_array_equal(first.events.channels, second.events.channels)
     np.testing.assert_allclose(jnp.sum(first.states, axis=-1), 50.0)
 
 
-def test_cle_ensemble_mean_agrees_with_deterministic_step_in_large_count_regime():
+def test_cle_ensemble_mean_agrees_with_deterministic_step_in_large_count_regime() -> None:
     network = _closed_conversion()
     state = jnp.asarray([10_000.0, 10_000.0])
     duration = jnp.asarray(0.05)
@@ -364,7 +373,7 @@ def test_cle_ensemble_mean_agrees_with_deterministic_step_in_large_count_regime(
     assert not bool(zero_intensity.evidence.differentiable)
 
 
-def test_telegraph_stationary_moments_and_gradient_sanity():
+def test_telegraph_stationary_moments_and_gradient_sanity() -> None:
     model = TelegraphGeneExpressionPlan(2.0, 3.0, 12.0, 4.0, 1.5).prepare()
     moments = model.stationary_moments()
     np.testing.assert_allclose(moments.promoter_mean, 0.4)
@@ -406,7 +415,7 @@ def test_telegraph_stationary_moments_and_gradient_sanity():
     assert not bool(identifiability.locally_identifiable)
 
 
-def test_capture_and_background_count_likelihood_is_exact():
+def test_capture_and_background_count_likelihood_is_exact() -> None:
     measurement = CountMeasurementPlan(0.5, 0.0, observation_capacity=8).prepare()
     evaluation = measurement.log_likelihood(1, 2)
     assert bool(evaluation.valid)
@@ -429,7 +438,7 @@ def test_capture_and_background_count_likelihood_is_exact():
     assert not bool(measurement.log_likelihood(9, 10).valid)
 
 
-def test_evidence_bindings_reject_conflicts_and_cover_prepared_identity():
+def test_evidence_bindings_reject_conflicts_and_cover_prepared_identity() -> None:
     model = TelegraphGeneExpressionPlan(2.0, 3.0, 12.0, 4.0, 1.5).prepare()
     reference = BiologicalReference("doi", "10.example/gene", "table:2")
     fact = BiologicalFact("ecoli", "transcription-rate", 12.0, "s^-1", reference)
@@ -492,7 +501,7 @@ def test_evidence_bindings_reject_conflicts_and_cover_prepared_identity():
         bind_biological_evidence(model, (fact, conflicting), (condition,), (assertion,))
 
 
-def test_whole_cell_rechecks_regime_after_shared_deltas_are_coupled():
+def test_whole_cell_rechecks_regime_after_shared_deltas_are_coupled() -> None:
     compartment = CompartmentSpec("cell", 1.0)
     drain = StoichiometricNetworkPlan(
         "drain",
@@ -521,6 +530,7 @@ def test_whole_cell_rechecks_regime_after_shared_deltas_are_coupled():
         field_capacity=1,
         process_capacity=2,
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     state = assembly.initial_state([100.0])
     evaluation = assembly.step(state, 1.0)
     np.testing.assert_allclose(evaluation.candidate, [0.0])
@@ -529,7 +539,7 @@ def test_whole_cell_rechecks_regime_after_shared_deltas_are_coupled():
     assert not bool(evaluation.commit(state).committed)
 
 
-def test_whole_cell_exchange_conservation_atomic_commit_and_rollback():
+def test_whole_cell_exchange_conservation_atomic_commit_and_rollback() -> None:
     assembly = _whole_cell_assembly()
     with pytest.raises(ValueError, match="reservoir"):
         WholeCellAssemblyPlan(

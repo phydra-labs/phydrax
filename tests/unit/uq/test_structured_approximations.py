@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def test_gaussian_prior_whitening_roundtrips_normal_and_lognormal_coordinates():
+def test_gaussian_prior_whitening_roundtrips_normal_and_lognormal_coordinates() -> None:
     space = phx.uq.ParameterSpace(
         {
             "coefficient": jnp.array([1.5, -0.5]),
@@ -44,7 +47,9 @@ def test_gaussian_prior_whitening_roundtrips_normal_and_lognormal_coordinates():
     )
 
 
-def test_structured_whitening_and_transformed_covariance_match_analytic_delta_method():
+def test_structured_whitening_and_transformed_covariance_match_analytic_delta_method() -> (
+    None
+):
     location = 0.3
     scale = 0.4
     space = phx.uq.ParameterSpace(
@@ -78,14 +83,14 @@ def test_structured_whitening_and_transformed_covariance_match_analytic_delta_me
     assert jnp.var(draws) == pytest.approx(expected_unconstrained, rel=0.04)
 
 
-def test_ggn_fisher_curvature_matches_linear_gaussian_posterior():
+def test_ggn_fisher_curvature_matches_linear_gaussian_posterior() -> None:
     design = jnp.array([[1.0, 2.0], [0.5, -1.0], [2.0, 0.2]])
     target = jnp.array([0.4, -0.2, 1.0])
     noise_scale = 0.3
     precision = design.T @ design / noise_scale**2 + jnp.eye(2)
     mode = jnp.linalg.solve(precision, design.T @ target / noise_scale**2)
 
-    def residual(parameters):
+    def residual(parameters: Any) -> Any:
         return (design @ parameters - target) / noise_scale
 
     space = phx.uq.ParameterSpace(mode, priors=phx.uq.Normal(0.0, 1.0))
@@ -106,7 +111,7 @@ def test_ggn_fisher_curvature_matches_linear_gaussian_posterior():
     assert jnp.allclose(covariance, jnp.linalg.inv(precision), atol=2e-6)
 
 
-def test_ggn_requires_an_explicit_normalized_residual_contract():
+def test_ggn_requires_an_explicit_normalized_residual_contract() -> None:
     space = phx.uq.ParameterSpace(jnp.zeros(2), priors=phx.uq.Normal(0.0, 1.0))
     problem = phx.uq.PosteriorProblem(space, lambda value: -0.5 * jnp.sum(value**2))
 
@@ -118,7 +123,7 @@ def test_ggn_requires_an_explicit_normalized_residual_contract():
         )
 
 
-def test_named_parameter_subspace_selects_exact_array_leaves():
+def test_named_parameter_subspace_selects_exact_array_leaves() -> None:
     model = {
         "encoder": {"weight": jnp.ones((2, 2)), "bias": jnp.zeros(2)},
         "head": {"weight": jnp.ones((1, 2)), "bias": jnp.zeros(1)},
@@ -134,7 +139,7 @@ def test_named_parameter_subspace_selects_exact_array_leaves():
         phx.nn.parameters.ParameterSubspace.from_leaf_paths(model, ["['missing']"])
 
 
-def test_parameter_subspace_selects_disjoint_branched_subtrees_by_exact_path():
+def test_parameter_subspace_selects_disjoint_branched_subtrees_by_exact_path() -> None:
     model = {
         "branches": (
             {

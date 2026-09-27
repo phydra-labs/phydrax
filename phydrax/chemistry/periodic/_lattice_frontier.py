@@ -11,7 +11,8 @@ from collections.abc import Mapping
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -53,7 +54,7 @@ class LatticeFrontierCapacity(StrictModule, NonTrainableState):
         maximum_routes: int,
         maximum_channels: int,
         maximum_bytes: int,
-    ):
+    ) -> None:
         values = tuple(
             (
                 maximum_atoms,
@@ -132,7 +133,7 @@ class LatticeFrontierContract(StrictModule, NonTrainableState):
         excluded_claims: tuple[str, ...],
         capacity: LatticeFrontierCapacity,
         /,
-    ):
+    ) -> None:
         if not isinstance(capacity, LatticeFrontierCapacity):
             raise TypeError("capacity must be LatticeFrontierCapacity.")
         self.capability = _identifier(capability, "capability")
@@ -204,7 +205,7 @@ class ElectronPhononCoupling(StrictModule, NonTrainableState):
         provider_artifact_id: str,
         hermitian_reverse_residual: float,
         capacity: LatticeFrontierCapacity,
-    ):
+    ) -> None:
         value = np.asarray(vertices)
         if value.ndim != 5 or np.any(~np.isfinite(value)):
             raise ValueError(
@@ -275,7 +276,7 @@ class SpinPhononCoupling(StrictModule, NonTrainableState):
         provider_artifact_id: str,
         reality_residual: float,
         capacity: LatticeFrontierCapacity,
-    ):
+    ) -> None:
         value = np.asarray(derivatives)
         if value.ndim < 2 or np.any(~np.isfinite(value)):
             raise ValueError(

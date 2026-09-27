@@ -8,7 +8,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
 
 from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0
@@ -22,6 +22,7 @@ from .._model import (
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import PRNGKey
 from ._keys import EvalKey, fold_in_eval_key
 
 
@@ -39,7 +40,7 @@ class ModelLossTerm(StrictModule, NonTrainableState):
         *,
         weight: Any = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         if not callable(penalty):
             raise TypeError("Model loss penalty must be callable.")
         self.penalty = _ensure_special_kwonly_args(penalty)
@@ -80,16 +81,18 @@ class ModelWithLoss(
         *,
         loss_terms: Sequence[ModelLossTerm] = (),
         loss_identity: int | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, ModelEvaluator):
             raise TypeError(
                 "ModelWithLoss requires a model with an explicit input binding."
             )
         terms = tuple(loss_terms)
-        bad = tuple(t for t in terms if not isinstance(t, ModelLossTerm))
-        if bad:
+        if any(not isinstance(t, ModelLossTerm) for t in terms):
+            bad = tuple(
+                type(t).__name__ for t in terms if not isinstance(t, ModelLossTerm)
+            )
             raise TypeError(
-                f"loss_terms must contain ModelLossTerm instances; got {tuple(type(t).__name__ for t in bad)!r}."
+                f"loss_terms must contain ModelLossTerm instances; got {bad!r}."
             )
         self.model = model
         self.loss_terms = terms
@@ -202,7 +205,7 @@ def model_loss_values(
     model: Any,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     iter_: Array | None = None,
 ) -> tuple[Array, ...]:
     """Evaluate all scalar objective terms attached to `model`."""

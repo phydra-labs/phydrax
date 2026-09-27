@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from typing import TypeVar
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -49,7 +52,7 @@ class FLIPReseedingPlan(StrictModule, NonTrainableState):
         minimum_per_cell: int,
         maximum_per_cell: int,
         maximum_events: int,
-    ):
+    ) -> None:
         cells = int(cell_count)
         target = int(target_per_cell)
         minimum = int(minimum_per_cell)
@@ -324,7 +327,10 @@ class FLIPReseedingPlan(StrictModule, NonTrainableState):
         )
 
 
-def jax_tree_where(predicate, candidate, current):
+_T = TypeVar("_T")
+
+
+def jax_tree_where(predicate: Array, candidate: _T, current: _T) -> _T:
 
     return jax.tree.map(
         lambda proposed, old: jnp.where(predicate, proposed, old), candidate, current

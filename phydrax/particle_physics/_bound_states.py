@@ -12,7 +12,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -58,7 +59,7 @@ class DarkBoundStateLevel(StrictModule, NonTrainableState):
         orbital_angular_momentum: int,
         spin_twice: int,
         level_label: str,
-    ):
+    ) -> None:
         constituents = tuple(constituent_pdg_ids)
         energy = float(rest_energy)
         charge_ = float(charge)
@@ -138,7 +139,7 @@ class DarkBoundStateSpectrum(StrictModule, NonTrainableState):
         model_revision_id: str,
         spectrum_source_id: str,
         production_evidence_ids: Sequence[str],
-    ):
+    ) -> None:
         if not isinstance(runtime_plan, DarkSectorEpochPlan):
             raise TypeError("runtime_plan must be DarkSectorEpochPlan.")
         if not isinstance(species, ParticleSpeciesTable):
@@ -266,7 +267,7 @@ class RadiativeCapturePlan(StrictModule, NonTrainableState):
         cross_section_unit: UnitDefinition,
         coefficient_source_id: str,
         differentiation_mode: str = "analytic",
-    ):
+    ) -> None:
         if not isinstance(spectrum, DarkBoundStateSpectrum):
             raise TypeError("spectrum must be DarkBoundStateSpectrum.")
         level = spectrum.level(bound_pdg_id)
@@ -344,7 +345,7 @@ class ThermalBoundStateBalance(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
 
-def _constituent_rest_energies(plan: RadiativeCapturePlan):
+def _constituent_rest_energies(plan: RadiativeCapturePlan) -> tuple[float, float]:
     identifiers = np.asarray(plan.spectrum.species.pdg_ids)
     energies = np.asarray(plan.spectrum.species.rest_energies)
     active = np.asarray(plan.spectrum.species.active)
@@ -353,7 +354,8 @@ def _constituent_rest_energies(plan: RadiativeCapturePlan):
         for identifier, energy, present in zip(identifiers, energies, active, strict=True)
         if present
     }
-    return tuple(by_id[value] for value in plan.bound_level.constituent_pdg_ids)
+    first, second = plan.bound_level.constituent_pdg_ids
+    return by_id[first], by_id[second]
 
 
 def evaluate_radiative_capture_balance(

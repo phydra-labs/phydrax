@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Callable, Sequence
+from typing import Any, cast, NoReturn
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 import phydrax.linalg as la
@@ -19,6 +21,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState
+from ...typing import parse
 from .._conservation_boundary import SourceFunction
 from .._core import (
     DiscretizationCapability,
@@ -51,7 +54,7 @@ class TensorSBPPlan(StrictModule, NonTrainableState):
         field_name: str = "state",
         component_names: Sequence[str],
         interior_order: SBPInteriorOrder = 4,
-    ):
+    ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("grid must be a PreparedTensorGrid.")
         if any(
@@ -71,8 +74,7 @@ class TensorSBPPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Field and component names must be unique and non-empty.")
         order = int(interior_order)
-        if order not in (2, 4, 6, 8):
-            raise ValueError("Tensor SBP order must be 2, 4, 6, or 8.")
+        order = parse(order, SBPInteriorOrder, "order")
         self.grid = grid
         self.field_name = field
         self.component_names = components
@@ -107,7 +109,7 @@ class TensorSBPDiscretization(AbstractPreparedDiscretization):
     prepared_id: str = eqx.field(static=True)
     numeric_version: str = eqx.field(static=True)
 
-    def __init__(self, plan: TensorSBPPlan, /):
+    def __init__(self, plan: TensorSBPPlan, /) -> None:
         if not isinstance(plan, TensorSBPPlan):
             raise TypeError("plan must be a TensorSBPPlan.")
         derivatives = tuple(
@@ -192,7 +194,8 @@ class TensorSBPDiscretization(AbstractPreparedDiscretization):
 
     @property
     def state_shape(self) -> tuple[int, ...]:
-        return self.state_space.vector_space.shape
+        # `PreparedTensorGrid.field_space` always binds an `ArraySpace` vector space.
+        return cast(la.ArraySpace, self.state_space.vector_space).shape
 
     @property
     def quadrature_weights(self) -> Array:
@@ -212,7 +215,7 @@ class SBPFluxDifferencingMethodPlan(StrictModule):
         /,
         *,
         entropy_diagnostics: bool = False,
-    ):
+    ) -> None:
         if not isinstance(volume_flux, AbstractSymmetricTwoPointFluxPlan):
             raise TypeError("volume_flux must be an AbstractSymmetricTwoPointFluxPlan.")
         if not volume_flux.symmetric or not volume_flux.consistent:
@@ -245,7 +248,7 @@ class SBPFluxDifferencingReport(StrictModule, NonTrainableState):
         /,
         *,
         dynamics_id: str,
-    ):
+    ) -> None:
         counts = tuple(pair_counts)
         dofs = int(state_dofs)
         dense = dofs * max(dofs - 1, 0) // 2
@@ -300,7 +303,7 @@ class PreparedSBPConservationDynamics(StrictModule):
         *,
         source: SourceFunction | None = None,
         entropy_pair: Any = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, TensorSBPDiscretization):
             raise TypeError("discretization must be a TensorSBPDiscretization.")
         if not isinstance(method, SBPFluxDifferencingMethodPlan):
@@ -473,13 +476,19 @@ class PreparedSBPConservationDynamics(StrictModule):
             rate = rate + row_bound * jnp.max(speed)
         return jnp.asarray(cfl, dtype=rate.dtype) / jnp.where(rate > 0.0, rate, jnp.inf)
 
-    def face_fluxes(self, *args, **kwargs):
+    def face_fluxes(self, *args: object, **kwargs: object) -> NoReturn:
         del args, kwargs
         raise NotImplementedError(
             "SBP flux differencing has volume pairs, not finite-volume face fluxes."
         )
 
-    def linearize(self, time: Array, state: Array, args: Any = None, /):
+    def linearize(
+        self, time: Array, state: Array, args: Any = None, /
+    ) -> tuple[
+        PyTree[Array],
+        Callable[[PyTree[Any]], PyTree[Array]],
+        Callable[[PyTree[Any]], tuple[PyTree[Array]]],
+    ]:
         value = self._validate_state(state)
         linearization = la.prepare_linearization(
             lambda item: self(time, item, args), value

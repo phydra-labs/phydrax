@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _complex():
+def _complex() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(4),),
         axis_names=("x",),
@@ -39,7 +42,7 @@ def _complex():
     )
 
 
-def test_cochain_metric_plan_separates_static_topology_from_runtime_metrics():
+def test_cochain_metric_plan_separates_static_topology_from_runtime_metrics() -> None:
     complex_ = _complex()
     topology = phx.discretization.PreparedCochainTopology(complex_)
     plan = phx.discretization.CochainMetricPlan(
@@ -73,7 +76,9 @@ def test_cochain_metric_plan_separates_static_topology_from_runtime_metrics():
     assert first.host_snapshot().topology.topology_id == complex_.topology_id
 
 
-def test_cochain_metric_runtime_validity_is_traceable_without_content_fingerprints():
+def test_cochain_metric_runtime_validity_is_traceable_without_content_fingerprints() -> (
+    None
+):
     complex_ = _complex()
     topology = phx.discretization.PreparedCochainTopology(complex_)
     plan = phx.discretization.CochainMetricPlan(
@@ -97,7 +102,9 @@ def test_cochain_metric_runtime_validity_is_traceable_without_content_fingerprin
     assert not bool(valid(jnp.asarray(-1.0)))
 
 
-def test_cochain_metric_runtime_ignores_inactive_nan_padding_but_requires_coordinates():
+def test_cochain_metric_runtime_ignores_inactive_nan_padding_but_requires_coordinates() -> (
+    None
+):
     complex_ = _complex()
     topology = phx.discretization.PreparedCochainTopology(complex_)
     plan = phx.discretization.CochainMetricPlan(

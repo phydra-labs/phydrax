@@ -9,7 +9,8 @@ from collections.abc import Callable, Sequence
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..discretization import CochainFieldSpec
@@ -41,7 +42,7 @@ class OrientedCellParameterization(StrictModule):
         quadrature_weights: ArrayLike,
         orientation_signs: ArrayLike,
         /,
-    ):
+    ) -> None:
         degree_value = int(degree)
         count = int(cell_count)
         dimension = int(ambient_dimension)
@@ -97,7 +98,7 @@ class ContinuousCochainBridge(StrictModule):
         chart: CoordinateChart,
         parameterizations: Sequence[OrientedCellParameterization],
         /,
-    ):
+    ) -> None:
         if not isinstance(complex, CochainComplexIR):
             raise TypeError("complex must be a CochainComplexIR.")
         if not isinstance(chart, CoordinateChart):
@@ -136,7 +137,7 @@ class ContinuousCochainProjection(StrictModule):
         spec: CochainFieldSpec,
         complex_fingerprint: str,
         /,
-    ):
+    ) -> None:
         self.values = jnp.asarray(values)
         self.spec = spec
         self.complex_fingerprint = str(complex_fingerprint)
@@ -153,7 +154,7 @@ class StokesValidationReport(StrictModule):
         valid: Array,
         maximum_residual: Array,
         relative_residual: Array,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.maximum_residual = jnp.asarray(maximum_residual)
         self.relative_residual = jnp.asarray(relative_residual)

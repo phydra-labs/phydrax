@@ -13,11 +13,13 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from ._kinematics import minkowski_dot
 
 
@@ -120,7 +122,7 @@ class TwoBodyPhaseSpaceMap(AbstractPhaseSpaceMap, NonTrainableState):
     masses: Array
     _map_id: str = eqx.field(static=True)
 
-    def __init__(self, first_mass: float, second_mass: float, /):
+    def __init__(self, first_mass: float, second_mass: float, /) -> None:
         masses = np.asarray([first_mass, second_mass], dtype=np.float64)
         if np.any(~np.isfinite(masses)) or np.any(masses < 0.0):
             raise ValueError("Two-body masses must be finite and nonnegative.")
@@ -206,7 +208,7 @@ class RecursivePhaseSpaceMap(AbstractPhaseSpaceMap, NonTrainableState):
         /,
         *,
         max_multiplicity: int = 16,
-    ):
+    ) -> None:
         masses_ = np.asarray(tuple(masses), dtype=np.float64)
         maximum = int(max_multiplicity)
         if masses_.ndim != 1 or masses_.size < 2:
@@ -356,7 +358,7 @@ class MultiChannelPhaseSpacePlan(StrictModule, NonTrainableState):
         /,
         *,
         max_channels: int = 16,
-    ):
+    ) -> None:
         channels_ = tuple(channels)
         probabilities_ = np.asarray(tuple(probabilities), dtype=np.float64)
         maximum = int(max_channels)
@@ -395,7 +397,7 @@ class MultiChannelPhaseSpacePlan(StrictModule, NonTrainableState):
         clipped = jnp.clip(selector_, 0.0, jnp.nextafter(1.0, 0.0))
         return jnp.searchsorted(jnp.cumsum(self.probabilities), clipped)
 
-    def sample_channel_indices(self, key: Key[Array, ""], count: int, /) -> Array:
+    def sample_channel_indices(self, key: PRNGKey, count: int, /) -> Array:
         """Draw a fixed-size set of channel indices from the prepared mixture."""
         count_ = int(count)
         if count_ < 1:

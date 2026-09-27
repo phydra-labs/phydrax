@@ -5,24 +5,27 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..integration import WeightedSampleTarget
+from ..typing import parse
 from ._particle import effective_sample_size, normalize_log_weights
 from ._posterior_reweighting import _flatten_target
 from ._posterior_terms import AbstractPosteriorTerm
 
 
-EvidenceKind = Literal["absolute", "noise-relative", "omitted-constant"]
+EvidenceKind: TypeAlias = Literal["absolute", "noise-relative", "omitted-constant"]
 
 
 def _identifier(value: str, role: str, /) -> str:
@@ -64,7 +67,7 @@ class EventPosterior(StrictModule, NonTrainableState):
         source_effective_sample_size: ArrayLike,
         log_evidence: ArrayLike | None = None,
         evidence_kind: EvidenceKind = "omitted-constant",
-    ):
+    ) -> None:
         samples, weights, active, shape = _flatten_target(posterior)
         del samples
         if posterior.support_valid is not None and not bool(
@@ -90,8 +93,7 @@ class EventPosterior(StrictModule, NonTrainableState):
             raise ValueError(
                 "Source effective sample size must lie within the active sample count."
             )
-        if evidence_kind not in ("absolute", "noise-relative", "omitted-constant"):
-            raise ValueError("Unknown event evidence kind.")
+        evidence_kind = parse(evidence_kind, EvidenceKind, "evidence_kind")
         has_evidence = log_evidence is not None
         evidence = jnp.asarray(0.0 if log_evidence is None else log_evidence).reshape(())
         if has_evidence and not bool(jnp.isfinite(evidence)):
@@ -293,7 +295,7 @@ class SelectionInjectionSet(StrictModule, NonTrainableState):
         campaign_id: str,
         parameterization_id: str,
         mask: ArrayLike | None = None,
-    ):
+    ) -> None:
         leaves = tuple(
             jnp.asarray(value) for value in jax.tree_util.tree_leaves(parameters)
         )
@@ -451,7 +453,7 @@ class PopulationPosteriorTerm(AbstractPosteriorTerm):
         minimum_event_effective_sample_size: float = 20.0,
         include_event_evidence: bool = False,
         label: str = "population_posterior_recycling",
-    ):
+    ) -> None:
         if not isinstance(batch, PopulationSampleBatch) or not callable(
             population_log_prob
         ):
@@ -569,7 +571,7 @@ class PoissonPopulationPosteriorTerm(AbstractPosteriorTerm):
         minimum_event_effective_sample_size: float = 20.0,
         include_event_evidence: bool = False,
         label: str = "poisson_population_process",
-    ):
+    ) -> None:
         if not callable(rate) or not isinstance(selection, SelectionInjectionSet):
             raise TypeError(
                 "Poisson population term requires rate and selection contracts."

@@ -6,37 +6,24 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import cast, get_args, Literal, TypeAlias
 
 import equinox as eqx
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import canonical_identifier
+from ..typing import parse
 
 
-CampaignRoleName = Literal[
+CampaignRoleName: TypeAlias = Literal[
     "calibration",
     "model_selection",
     "interval_calibration",
     "locked_evaluation",
     "prospective",
 ]
-_ROLE_NAMES: tuple[CampaignRoleName, ...] = (
-    "calibration",
-    "model_selection",
-    "interval_calibration",
-    "locked_evaluation",
-    "prospective",
-)
-
-
-def _identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    if not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty canonical identifier.")
-    return value
 
 
 def _identifiers(
@@ -48,7 +35,7 @@ def _identifiers(
 ) -> tuple[str, ...]:
     if not isinstance(values, Sequence) or isinstance(values, str):
         raise TypeError(f"{name} must be a sequence of identifiers.")
-    normalized = tuple(_identifier(value, name) for value in values)
+    normalized = tuple(canonical_identifier(value, name) for value in values)
     if not allow_empty and not normalized:
         raise ValueError(f"{name} must not be empty.")
     if len(set(normalized)) != len(normalized):
@@ -70,22 +57,26 @@ class ScientificCase:
     parent_case_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "case_id", _identifier(self.case_id, "case_id"))
+        object.__setattr__(self, "case_id", canonical_identifier(self.case_id, "case_id"))
         object.__setattr__(
             self,
             "independent_unit_id",
-            _identifier(self.independent_unit_id, "independent_unit_id"),
+            canonical_identifier(self.independent_unit_id, "independent_unit_id"),
         )
         object.__setattr__(
-            self, "construct_id", _identifier(self.construct_id, "construct_id")
+            self, "construct_id", canonical_identifier(self.construct_id, "construct_id")
         )
         object.__setattr__(
-            self, "condition_id", _identifier(self.condition_id, "condition_id")
+            self, "condition_id", canonical_identifier(self.condition_id, "condition_id")
         )
         object.__setattr__(
-            self, "preparation_id", _identifier(self.preparation_id, "preparation_id")
+            self,
+            "preparation_id",
+            canonical_identifier(self.preparation_id, "preparation_id"),
         )
-        object.__setattr__(self, "batch_id", _identifier(self.batch_id, "batch_id"))
+        object.__setattr__(
+            self, "batch_id", canonical_identifier(self.batch_id, "batch_id")
+        )
         object.__setattr__(
             self,
             "source_manifest_ids",
@@ -142,12 +133,8 @@ class CampaignRole:
     case_ids: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        name = _identifier(self.name, "campaign role name")
-        if name not in _ROLE_NAMES:
-            raise ValueError(
-                "Campaign role must be calibration, model_selection, "
-                "interval_calibration, locked_evaluation, or prospective."
-            )
+        name = canonical_identifier(self.name, "campaign role name")
+        name = parse(name, CampaignRoleName, "campaign role name")
         object.__setattr__(self, "name", name)
         object.__setattr__(
             self,
@@ -168,7 +155,8 @@ class CampaignRole:
         if not isinstance(case_ids, Sequence) or isinstance(case_ids, str):
             raise TypeError("Serialized campaign role case_ids must be a sequence.")
         return cls(
-            str(record["name"]),
+            # __post_init__ rejects names outside CampaignRoleName.
+            cast(CampaignRoleName, str(record["name"])),
             tuple(str(value) for value in case_ids),
         )
 
@@ -192,7 +180,7 @@ class ScientificCampaign(StrictModule, NonTrainableState):
         *,
         preprocessing_source_ids: Sequence[str] = (),
         criteria_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(cases, Sequence) or isinstance(cases, str) or not cases:
             raise TypeError("cases must be a non-empty sequence of ScientificCase.")
         if any(not isinstance(case, ScientificCase) for case in cases):
@@ -214,7 +202,7 @@ class ScientificCampaign(StrictModule, NonTrainableState):
         role_by_name = {role.name: role for role in provided_roles}
         roles_ = tuple(
             role_by_name[name] if name in role_by_name else CampaignRole(name, ())
-            for name in _ROLE_NAMES
+            for name in get_args(CampaignRoleName)
         )
         membership = tuple(case_id for role in roles_ for case_id in role.case_ids)
         unknown = set(membership) - set(case_ids)
@@ -344,7 +332,7 @@ class ScientificCampaign(StrictModule, NonTrainableState):
         return {**self._content_record(), "campaign_id": self.campaign_id}
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> ScientificCampaign:
+    def from_record(cls, record: object, /) -> ScientificCampaign:
         """Reconstruct and content-verify a serialized scientific campaign."""
         if not isinstance(record, Mapping):
             raise TypeError("Scientific-campaign record must be a mapping.")

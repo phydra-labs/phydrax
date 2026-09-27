@@ -11,7 +11,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -40,7 +41,7 @@ class VariablePatchPartitionPlan(StrictModule, NonTrainableState):
         part_count: int,
         local_lane_capacities: Sequence[Sequence[int]],
         /,
-    ):
+    ) -> None:
         parts = int(part_count)
         capacities = tuple(tuple(row) for row in local_lane_capacities)
         if (
@@ -86,7 +87,7 @@ class PreparedVariablePatchPartition(StrictModule, NonTrainableState):
         /,
         *,
         costs: Sequence[Sequence[ArrayLike | None]] | None = None,
-    ):
+    ) -> None:
         if not isinstance(plan, VariablePatchPartitionPlan) or not isinstance(
             topology, VariablePatchHierarchyTopology
         ):

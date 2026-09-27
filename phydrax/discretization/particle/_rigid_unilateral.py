@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -52,7 +53,7 @@ class FixedCapacityUnilateralPlan(StrictModule, NonTrainableState):
         termination: NonlinearTermination | None = None,
         complementarity_tolerance: float = 1.0e-8,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         keys = np.asarray(route_keys)
         if keys.ndim != 1 or keys.size == 0 or not np.issubdtype(keys.dtype, np.integer):
             raise TypeError("route_keys must be a nonempty rank-1 integer array.")
@@ -172,7 +173,7 @@ class PreparedUnilateralRows(StrictModule, NonTrainableState):
         /,
         *,
         prepared_scope_id: str,
-    ):
+    ) -> None:
         if not isinstance(plan, FixedCapacityUnilateralPlan):
             raise TypeError("plan must be a FixedCapacityUnilateralPlan.")
         scope = str(prepared_scope_id)
@@ -236,7 +237,7 @@ class PreparedUnilateralRows(StrictModule, NonTrainableState):
         effective_free = jnp.where(enabled, free, 0.0)
         warm = jnp.where(enabled, jnp.maximum(state.impulses, 0.0), 0.0)
 
-        def operator(impulses, arguments):
+        def operator(impulses: Array, arguments: object) -> Array:
             del arguments
             return contract("ij,j->i", effective_matrix, impulses) + effective_free
 
@@ -378,7 +379,7 @@ class JointLimitPlan(StrictModule, NonTrainableState):
         release_velocity: float = 1.0e-10,
         complementarity_tolerance: float = 1.0e-8,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         identifiers = np.asarray(hinge_ids)
         lower = np.asarray(lower_limits)
         upper = np.asarray(upper_limits)
@@ -537,7 +538,7 @@ class PreparedJointLimits(StrictModule, NonTrainableState):
     rows: PreparedUnilateralRows
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: JointLimitPlan, graph: PreparedRigidJointGraph, /):
+    def __init__(self, plan: JointLimitPlan, graph: PreparedRigidJointGraph, /) -> None:
         if not isinstance(plan, JointLimitPlan):
             raise TypeError("plan must be a JointLimitPlan.")
         if not isinstance(graph, PreparedRigidJointGraph):
@@ -844,7 +845,7 @@ class PreparedJointLimits(StrictModule, NonTrainableState):
         row_valid = jnp.repeat(self.plan.valid, 2)
         row_count = 2 * self.capacity
 
-        def response(impulse):
+        def response(impulse: Array) -> Array:
             torque = jnp.zeros((self.bodies.capacity, 3), dtype=kinematics.position.dtype)
             applied = row_axis * impulse[:, None] * row_valid[:, None]
             torque = torque.at[row_right].add(applied)

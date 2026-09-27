@@ -9,12 +9,14 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import NormCompatibleInterpolationPlan, StructuredCochainBridge
+from ..typing import parse
 
 
 MaxwellBoundaryKind: TypeAlias = Literal["pec", "pmc", "impedance"]
@@ -33,9 +35,8 @@ class MaxwellBoundaryPlan(StrictModule):
         /,
         *,
         admittance: ArrayLike | None = None,
-    ):
-        if kind not in ("pec", "pmc", "impedance"):
-            raise ValueError("Unknown Maxwell boundary kind.")
+    ) -> None:
+        kind = parse(kind, MaxwellBoundaryKind, "kind")
         if kind == "impedance":
             if admittance is None:
                 raise ValueError("Impedance boundaries require admittance.")
@@ -88,7 +89,7 @@ class PreparedMaxwellBoundary(StrictModule):
         bridge: StructuredCochainBridge,
         layout: Any,
         /,
-    ):
+    ) -> None:
         if not isinstance(bridge, StructuredCochainBridge):
             raise TypeError("bridge must be a StructuredCochainBridge.")
         electric_boundary = jnp.asarray(
@@ -192,7 +193,7 @@ class BlochCochainCalculus(StrictModule, NonTrainableState):
         bridge: StructuredCochainBridge,
         wavevector: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(bridge, StructuredCochainBridge):
             raise TypeError("bridge must be a StructuredCochainBridge.")
         if not all(axis.periodic for axis in bridge.grid.structured_axes):
@@ -260,7 +261,7 @@ class MaxwellInterfaceJump(StrictModule):
         *,
         orientation: ArrayLike = 1.0,
         jump: ArrayLike = 0.0,
-    ):
+    ) -> None:
         left = np.asarray(left_indices)
         right = np.asarray(right_indices)
         if (
@@ -334,7 +335,7 @@ class MaxwellInterfaceMortar(StrictModule, NonTrainableState):
     interpolation: NormCompatibleInterpolationPlan
     mortar_id: str = eqx.field(static=True)
 
-    def __init__(self, interpolation: NormCompatibleInterpolationPlan, /):
+    def __init__(self, interpolation: NormCompatibleInterpolationPlan, /) -> None:
         if not isinstance(interpolation, NormCompatibleInterpolationPlan):
             raise TypeError("interpolation must be NormCompatibleInterpolationPlan.")
         self.interpolation = interpolation

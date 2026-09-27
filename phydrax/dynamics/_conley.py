@@ -29,7 +29,7 @@ class ConleyHomologyIndex(StrictModule, NonTrainableState):
     homology: HomologyResult
     result_id: str = eqx.field(static=True)
 
-    def __init__(self, enclosure: CellMapEnclosure, homology: HomologyResult, /):
+    def __init__(self, enclosure: CellMapEnclosure, homology: HomologyResult, /) -> None:
         self.enclosure = enclosure
         self.homology = homology
         self.result_id = canonical_fingerprint(
@@ -53,7 +53,7 @@ class ConleyIndexResult(StrictModule, NonTrainableState):
         homology_index: ConleyHomologyIndex,
         index_maps: tuple[FiniteFieldCoordinateMap, ...],
         /,
-    ):
+    ) -> None:
         self.homology_index = homology_index
         self.index_maps = index_maps
         self.result_id = canonical_fingerprint(

@@ -12,7 +12,7 @@ from typing import Literal, TypeAlias
 
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import array_tree_fingerprint
 from ..stochastic._state_space import StateSpaceProblem
@@ -162,7 +162,7 @@ def read_kalman_filter_checkpoint(
         log_likelihood=arrays["log_likelihood"],
         valid=arrays["valid"].astype("bool"),
         status=arrays["status"].astype(jnp.int32),
-        step_index=step_index,
+        step_index=jnp.asarray(step_index, dtype=jnp.int32),
         problem_id=problem.problem_id,
         covariance_regularization=regularization,
     )

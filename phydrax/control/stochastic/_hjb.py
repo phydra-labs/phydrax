@@ -14,10 +14,11 @@ from typing import Any, NamedTuple
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from ..._dtype_names import inexact_result_type
 from ..._interpolation import linear_interpolate
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import TimeGrid
@@ -51,7 +52,7 @@ class BoundedUniformGrid1D(StrictModule, NonTrainableState):
         upper_bound: float,
         num_points: int,
         /,
-    ):
+    ) -> None:
         lower = float(lower_bound)
         upper = float(upper_bound)
         if not np.isfinite(lower) or not np.isfinite(upper) or not lower < upper:
@@ -114,7 +115,7 @@ class DiscreteHJBProblem(StrictModule, NonTrainableState):
         args: Any = None,
         corner_tolerance: float = 0.0,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(spatial_grid, BoundedUniformGrid1D):
             raise TypeError("spatial_grid must be a BoundedUniformGrid1D.")
         if not isinstance(time_grid, TimeGrid):

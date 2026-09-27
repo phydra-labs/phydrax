@@ -10,10 +10,13 @@ from importlib import import_module
 from importlib.util import find_spec
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import ModuleType
+from typing import Any
 
 import equinox as eqx
 import numpy as np
-from jaxtyping import ArrayLike
+import numpy.typing as npt
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._publication import publish_bytes
@@ -22,7 +25,7 @@ from .._trainable import NonTrainableState
 from ..discretization.finite_volume import FiniteVolumeDiscretization
 
 
-def _h5py():
+def _h5py() -> ModuleType:
     if find_spec("h5py") is None:
         raise ImportError("Marker-flow output requires the optional 'h5py' package.")
     return import_module("h5py")
@@ -47,7 +50,7 @@ class MarkerFlowOutputPlan(StrictModule, NonTrainableState):
     hdf5_path: str = eqx.field(static=True)
     xdmf_path: str = eqx.field(static=True)
     discretization_id: str = eqx.field(static=True)
-    marker_ids: object
+    marker_ids: np.ndarray
     output_id: str = eqx.field(static=True)
 
     def __init__(
@@ -56,7 +59,7 @@ class MarkerFlowOutputPlan(StrictModule, NonTrainableState):
         discretization: FiniteVolumeDiscretization,
         marker_ids: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(discretization, FiniteVolumeDiscretization):
             raise TypeError("discretization must be FiniteVolumeDiscretization.")
         ids = np.asarray(marker_ids)
@@ -176,7 +179,7 @@ class MarkerFlowOutputPlan(StrictModule, NonTrainableState):
         hdf5_name = html.escape(Path(self.hdf5_path).name)
         grids = []
 
-        def attributes(group, prefix):
+        def attributes(group: Any, prefix: str) -> str:
             output = []
             for field_name, dataset in group.items():
                 if field_name in ("position", "connectivity"):
@@ -273,11 +276,13 @@ class MarkerFlowOutputPlan(StrictModule, NonTrainableState):
         meshio = import_module("meshio")
         root = Path(self.hdf5_path).with_suffix("")
 
-        def points3(value):
+        def points3(value: np.ndarray) -> np.ndarray:
             return np.pad(value, ((0, 0), (0, 1))) if value.shape[1] == 2 else value
 
-        def write_cloud(name, position, fields):
-            point_data = {
+        def write_cloud(
+            name: str, position: np.ndarray, fields: Mapping[str, np.ndarray]
+        ) -> None:
+            point_data: dict[str, npt.ArrayLike] = {
                 field_name: value
                 for field_name, value in fields.items()
                 if field_name not in ("position", "connectivity")

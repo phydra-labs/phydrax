@@ -5,18 +5,20 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import parse
 from ...astrodynamics import PreparedEarthOrientation, PreparedTimeRoute
 from .._photometry import ObservationDataProvenance
 from ._data import DetectorNetworkData
@@ -24,7 +26,7 @@ from ._status import GravitationalWaveStatus
 
 
 _SPEED_OF_LIGHT_M_S = 299792458.0
-SkyFrame = Literal["itrs", "gcrs"]
+SkyFrame: TypeAlias = Literal["itrs", "gcrs"]
 
 
 def _unit_vector(value: ArrayLike, role: str, /) -> np.ndarray:
@@ -59,7 +61,7 @@ class InterferometerGeometry(StrictModule, NonTrainableState):
         /,
         *,
         frame_id: str = "itrs",
-    ):
+    ) -> None:
         identifier = str(detector_id).strip()
         frame = str(frame_id).strip()
         vertex = np.asarray(vertex_m, dtype=np.float64)
@@ -126,7 +128,7 @@ class DetectorResponsePlan(StrictModule, NonTrainableState):
         earth_orientation: PreparedEarthOrientation | None = None,
         gps_to_utc: PreparedTimeRoute | None = None,
         time_origin_gps: float | None = None,
-    ):
+    ) -> None:
         if not isinstance(network, DetectorNetworkData):
             raise TypeError("network must be DetectorNetworkData.")
         items = tuple(geometries)
@@ -134,8 +136,7 @@ class DetectorResponsePlan(StrictModule, NonTrainableState):
             raise ValueError("Detector geometry order must match network data exactly.")
         if any(item.frame_id.lower() != "itrs" for item in items):
             raise ValueError("Detector geometries must use the ITRS frame.")
-        if sky_frame not in ("itrs", "gcrs"):
-            raise ValueError("sky_frame must be 'itrs' or 'gcrs'.")
+        sky_frame = parse(sky_frame, SkyFrame, "sky_frame")
         if sky_frame == "gcrs" and (
             not isinstance(earth_orientation, PreparedEarthOrientation)
             or not isinstance(gps_to_utc, PreparedTimeRoute)

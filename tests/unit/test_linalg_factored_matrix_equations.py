@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -15,7 +18,9 @@ la = phx.linalg
 class _NoMaterializeStableOperator(la.AbstractLinearOperator):
     matrix: jax.Array
 
-    def __init__(self, matrix, /, *, operator_id="matrix-free-stable"):
+    def __init__(
+        self, matrix: Any, /, *, operator_id: Any = "matrix-free-stable"
+    ) -> None:
         matrix = jnp.asarray(matrix)
         space = la.ArraySpace((matrix.shape[0],), dtype=matrix.dtype)
         self.matrix = matrix
@@ -33,20 +38,21 @@ class _NoMaterializeStableOperator(la.AbstractLinearOperator):
         self.batch_shape = ()
         self.operator_id = operator_id
 
-    def mv(self, vector, /):
+    def mv(self, vector: Any, /) -> Any:
         return self.matrix @ vector
 
-    def transpose_mv(self, vector, /):
+    def transpose_mv(self, vector: Any, /) -> Any:
         return self.matrix.T @ vector
 
-    def adjoint_mv(self, vector, /):
+    def adjoint_mv(self, vector: Any, /) -> Any:
         return jnp.conj(self.matrix.T) @ vector
 
-    def _materialize(self, /):
+    # ty: ignore[invalid-method-override]
+    def _materialize(self, /) -> None:
         raise AssertionError("The factored path must not materialize the operator.")
 
 
-def _problem(*, problem_id="factored-reference"):
+def _problem(*, problem_id: Any = "factored-reference") -> Any:
     matrix = jnp.diag(jnp.asarray([-1.0, -2.0, -4.0, -8.0]))
     source_factor = jnp.asarray([[1.0], [0.75], [-0.5], [0.25]])
     operator = _NoMaterializeStableOperator(matrix, operator_id=problem_id)
@@ -61,7 +67,9 @@ def _problem(*, problem_id="factored-reference"):
     )
 
 
-def _policy(*, maximum_rank=None, residual_tolerance=1e-8, max_dimension=4):
+def _policy(
+    *, maximum_rank: Any = None, residual_tolerance: Any = 1e-8, max_dimension: Any = 4
+) -> Any:
     return la.FactoredMatrixEquationPolicy(
         (-1.0, -2.0, -4.0, -8.0),
         shifted=la.ShiftedSolvePolicy(
@@ -78,7 +86,7 @@ def _policy(*, maximum_rank=None, residual_tolerance=1e-8, max_dimension=4):
     )
 
 
-def test_factored_solution_rank_masks_unused_fixed_capacity_columns():
+def test_factored_solution_rank_masks_unused_fixed_capacity_columns() -> None:
     left = jnp.asarray([[1.0, 100.0], [2.0, 200.0]])
     right = jnp.asarray([[3.0, 300.0], [4.0, 400.0], [5.0, 500.0]])
     general = la.FactoredMatrixSolution(left, right, rank=1)
@@ -92,7 +100,9 @@ def test_factored_solution_rank_masks_unused_fixed_capacity_columns():
     assert jnp.allclose(psd.to_dense(), jnp.outer(left[:, 0], left[:, 0]))
 
 
-def test_matrix_free_factored_lyapunov_matches_existing_exact_reference_without_materializing():
+def test_matrix_free_factored_lyapunov_matches_existing_exact_reference_without_materializing() -> (
+    None
+):
     matrix, source_factor, problem = _problem()
     result = la.solve_factored_matrix_equation(problem, policy=_policy())
     forcing = source_factor @ source_factor.T
@@ -122,7 +132,9 @@ def test_matrix_free_factored_lyapunov_matches_existing_exact_reference_without_
     assert result.provenance.solution_materialized is False
 
 
-def test_factored_truncation_reports_rank_loss_storage_and_original_residual_certificate():
+def test_factored_truncation_reports_rank_loss_storage_and_original_residual_certificate() -> (
+    None
+):
     matrix, source_factor, problem = _problem(problem_id="factored-truncated")
     result = la.solve_factored_matrix_equation(
         problem,
@@ -161,7 +173,7 @@ def test_factored_truncation_reports_rank_loss_storage_and_original_residual_cer
     )
 
 
-def test_general_factored_solution_contract_reconstructs_u_v_adjoint():
+def test_general_factored_solution_contract_reconstructs_u_v_adjoint() -> None:
     left = jnp.asarray([[1.0, 0.5], [-2.0, 1.0], [0.25, -0.75]])
     right = jnp.asarray([[1.0 + 0.5j, -1.0j], [0.25, 2.0], [-0.5j, 0.75], [1.5, -0.25j]])
     solution = la.FactoredMatrixSolution(left, right)
@@ -172,7 +184,7 @@ def test_general_factored_solution_contract_reconstructs_u_v_adjoint():
     assert jnp.allclose(solution.to_dense(), left @ jnp.conj(right.T))
 
 
-def test_shifted_failure_propagates_to_factored_status_and_per_shift_evidence():
+def test_shifted_failure_propagates_to_factored_status_and_per_shift_evidence() -> None:
     _matrix, _source_factor, problem = _problem(problem_id="factored-failure")
     failed = la.solve_factored_matrix_equation(
         problem,
@@ -186,7 +198,9 @@ def test_shifted_failure_propagates_to_factored_status_and_per_shift_evidence():
     assert not failed.diagnostics.converged
 
 
-def test_factored_public_lifecycle_refreshes_and_unsupported_dense_structures_are_rejected():
+def test_factored_public_lifecycle_refreshes_and_unsupported_dense_structures_are_rejected() -> (
+    None
+):
     matrix, source_factor, first = _problem(problem_id="factored-refresh")
     policy = _policy()
     plan = la.plan_factored_matrix_equation(first, policy)

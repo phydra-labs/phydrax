@@ -13,18 +13,21 @@ subspaces described by their evidence objects.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._frozendict import frozendict
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..algebraic._system import PolynomialScaling, SparsePolynomialSupport
+from ..conditions._lowering import BoundCondition
 from ..linalg import (
     AbstractLinearOperator,
     ArraySpace,
@@ -36,6 +39,7 @@ from ..linalg import (
     OperatorProperties,
     svd as svd_api,
 )
+from ..typing import parse
 from ._linear_representation import (
     AbstractLinearRepresentation,
     CallableLinearRepresentation,
@@ -154,9 +158,8 @@ class PolynomialActionEvidence(StrictModule, NonTrainableState):
         exact_relations: bool,
         complex_valued: bool,
         reductivity: Literal["not-applicable", "declared"] = "not-applicable",
-    ):
-        if kind not in ("finite", "declared-reductive", "scaling"):
-            raise ValueError("Unknown polynomial action kind.")
+    ) -> None:
+        kind = parse(kind, PolynomialActionKind, "kind")
         if reductivity not in ("not-applicable", "declared"):
             raise ValueError("Unknown reductivity evidence scope.")
         verification, rejection = _tolerances(verification_tolerance, rejection_tolerance)
@@ -223,7 +226,7 @@ class FinitePolynomialAction(StrictModule, NonTrainableState):
         element_labels: Sequence[str] = (),
         verification_tolerance: float = 1e-10,
         rejection_tolerance: float = 1e-7,
-    ):
+    ) -> None:
         if not isinstance(support, SparsePolynomialSupport):
             raise TypeError("support must be a SparsePolynomialSupport.")
         variable_input = _numeric_array(variable_actions, "variable_actions", ndim=3)
@@ -366,7 +369,7 @@ class DeclaredReductivePolynomialAction(StrictModule, NonTrainableState):
         generator_labels: Sequence[str] = (),
         verification_tolerance: float = 1e-10,
         rejection_tolerance: float = 1e-7,
-    ):
+    ) -> None:
         if not isinstance(support, SparsePolynomialSupport):
             raise TypeError("support must be a SparsePolynomialSupport.")
         variable_input = _numeric_array(
@@ -500,7 +503,7 @@ class PolynomialScalingAction(StrictModule, NonTrainableState):
         support: SparsePolynomialSupport,
         scaling: PolynomialScaling,
         /,
-    ):
+    ) -> None:
         if not isinstance(support, SparsePolynomialSupport):
             raise TypeError("support must be a SparsePolynomialSupport.")
         if not isinstance(scaling, PolynomialScaling):
@@ -709,7 +712,7 @@ class PolynomialActionConstraints(StrictModule, NonTrainableState):
         ambient_metric_weights: ArrayLike,
         action_count: int,
         exact: bool,
-    ):
+    ) -> None:
         matrix_ = jnp.asarray(matrix)
         equations = jnp.asarray(ambient_equation_indices, dtype=jnp.int32)
         exponents = jnp.asarray(ambient_exponents, dtype=jnp.int32)
@@ -865,11 +868,9 @@ class PolynomialSubspaceEvidence(StrictModule, NonTrainableState):
         method: str,
         method_evidence_id: str,
         candidate_isotypic: bool = False,
-    ):
-        if kind not in ("invariant", "equivariant", "casimir-spectral-block"):
-            raise ValueError("Unknown polynomial subspace kind.")
-        if status not in ("verified", "ambiguous"):
-            raise ValueError("Unknown polynomial subspace status.")
+    ) -> None:
+        kind = parse(kind, PolynomialSubspaceKind, "kind")
+        status = parse(status, PolynomialActionStatus, "status")
         verification, rejection = _tolerances(verification_tolerance, rejection_tolerance)
         dimension_ = int(dimension)
         rank_ = int(numerical_rank)
@@ -938,7 +939,7 @@ class PolynomialSubspaceBasis(StrictModule, NonTrainableState):
         metric_weights: ArrayLike,
         evidence: PolynomialSubspaceEvidence,
         /,
-    ):
+    ) -> None:
         if not isinstance(support, SparsePolynomialSupport):
             raise TypeError("support must be a SparsePolynomialSupport.")
         if not isinstance(evidence, PolynomialSubspaceEvidence):
@@ -996,7 +997,10 @@ def _subspace_tolerances(
     /,
 ) -> tuple[float, float]:
     verification = (
-        max(action.evidence.verification_tolerance, 64.0 * np.finfo(np.float64).eps)
+        max(
+            action.evidence.verification_tolerance,
+            64.0 * float(np.finfo(np.float64).eps),
+        )
         if verification_tolerance is None
         else float(verification_tolerance)
     )
@@ -1515,16 +1519,18 @@ def lower_polynomial_linear_representation(
         }
     )
 
-    def extract(values):
+    def extract(values: Mapping[str, Any]) -> Array:
         return basis.coordinates(representation.extract(values))
 
-    def replace(values, coordinates):
+    def replace(
+        values: Mapping[str, Any], coordinates: ArrayLike
+    ) -> frozendict[str, Any]:
         return representation.replace(values, basis.coefficients(coordinates))
 
-    def synthesize(coordinates):
+    def synthesize(coordinates: ArrayLike) -> frozendict[str, Any]:
         return representation.synthesize(basis.coefficients(coordinates))
 
-    def assemble(bound):
+    def assemble(bound: BoundCondition) -> LinearConditionAssembly:
         full = representation.assemble(bound)
         operator = lower_polynomial_enforcement_operator(full.operator, basis)
         full_evidence = full.evidence

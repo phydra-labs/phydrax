@@ -10,7 +10,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -19,6 +20,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import StateLayout
 from ...linalg import AbstractLinearOperator, ArraySpace, BlockSpace, DualSpace
+from ...typing import parse
 from ._rod_dynamics import (
     evaluate_rod,
     PreparedRod,
@@ -160,13 +162,10 @@ class ReducedRodPlan(StrictModule, NonTrainableState):
         quadrature_tolerance: float = 1.0e-6,
         certification_tolerance: float = 1.0e-6,
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(basis, RodStrainBasisPlan):
             raise TypeError("basis must be a RodStrainBasisPlan.")
-        if base_policy not in ("reference", "fixed"):
-            raise ValueError(
-                "base_policy must be 'reference' or 'fixed'; floating rods are unsupported."
-            )
+        base_policy = parse(base_policy, ReducedRodBasePolicy, "base_policy")
         dtype = np.dtype(basis.polynomial_coefficients.dtype)
         coordinate_count = basis.coordinate_count
         reference = (
@@ -268,7 +267,7 @@ class ReducedRodState(StrictModule):
         coefficients: ArrayLike,
         coefficient_velocities: ArrayLike,
         /,
-    ):
+    ) -> None:
         coefficients_ = jnp.asarray(coefficients)
         velocities_ = jnp.asarray(coefficient_velocities)
         if coefficients_.ndim != 1 or coefficients_.shape[0] < 1:
@@ -388,7 +387,7 @@ class PreparedReducedRod(StrictModule, NonTrainableState):
     velocity_slice: slice = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, rod: PreparedRod, plan: ReducedRodPlan, /):
+    def __init__(self, rod: PreparedRod, plan: ReducedRodPlan, /) -> None:
         if not isinstance(rod, PreparedRod):
             raise TypeError("rod must be a PreparedRod.")
         if not isinstance(plan, ReducedRodPlan):

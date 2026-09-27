@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 import abc
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._numerics._checkpointed_scan import checkpointed_scan
@@ -49,7 +50,7 @@ class BalanceLawProcessState(StrictModule):
         field_names: tuple[str, ...],
         values: tuple[ArrayLike, ...],
         /,
-    ):
+    ) -> None:
         identifier = str(process_id)
         names = tuple(str(name) for name in field_names)
         arrays = tuple(jnp.asarray(value) for value in values)
@@ -200,7 +201,7 @@ class BalanceLawRuntimeState(StrictModule):
         process_states: tuple[BalanceLawProcessState, ...],
         accepted_budget: BalanceLawAcceptedBudget,
         /,
-    ):
+    ) -> None:
         if not isinstance(
             transport_state, (FiniteVolumeRuntimeState, ConstrainedMHDState)
         ):
@@ -268,7 +269,7 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         *,
         accepted_step_couplings: tuple[AbstractPreparedAcceptedStepCoupling, ...] = (),
         composition: BalanceLawCompositionPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(transport, AbstractPreparedBalanceLawTransport):
             raise TypeError("transport must be a prepared balance-law transport.")
         prepared = tuple(processes)
@@ -654,13 +655,13 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
                 accepted_integrals=transport.accepted_integrals,
                 transport_id=self.transport.transport_id,
             )
-            result = coupling.apply(context, args)
+            coupling_result = coupling.apply(context, args)
             incoming_coupling_average = average
             average, coupling_successful, component_ownership = (
                 self._accepted_candidate_average(
                     average,
-                    result.cell_average,
-                    result.successful,
+                    coupling_result.cell_average,
+                    coupling_result.successful,
                     self.coupling_forbidden_component_indices[index],
                 )
             )
@@ -671,7 +672,7 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
             )
             successful = successful & coupling_successful
             ownership_valid = ownership_valid & component_ownership
-            coupling_diagnostics.append(result.diagnostics)
+            coupling_diagnostics.append(coupling_result.diagnostics)
 
         candidate_transport = self.transport.with_source_view(transport.state, average)
         budget = BalanceLawAcceptedBudget(
@@ -718,6 +719,10 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         )
 
 
+_RolloutCarry: TypeAlias = tuple[BalanceLawRuntimeState, Array]
+_RolloutOutput: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+
+
 class ScheduledBalanceLawRolloutPlan(StrictModule, NonTrainableState):
     runtime: PreparedBalanceLawRuntime
     temporal_mesh: TemporalMesh
@@ -731,7 +736,7 @@ class ScheduledBalanceLawRolloutPlan(StrictModule, NonTrainableState):
         /,
         *,
         replay: FiniteVolumeReplayPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(runtime, PreparedBalanceLawRuntime):
             raise TypeError("runtime must be PreparedBalanceLawRuntime.")
         if not isinstance(temporal_mesh, TemporalMesh):
@@ -794,11 +799,13 @@ class ScheduledBalanceLawRolloutPlan(StrictModule, NonTrainableState):
         if not isinstance(initial_state, BalanceLawRuntimeState):
             raise TypeError("initial_state must be BalanceLawRuntimeState.")
 
-        def step(carry, interval):
+        def step(
+            carry: _RolloutCarry, interval: tuple[Array, Array]
+        ) -> tuple[_RolloutCarry, _RolloutOutput]:
             state, active = carry
             start, end = interval
 
-            def execute(_):
+            def execute(_: None) -> tuple[_RolloutCarry, _RolloutOutput]:
                 result = self.runtime.advance_prescribed(
                     state, start, end, args, realization
                 )
@@ -818,7 +825,7 @@ class ScheduledBalanceLawRolloutPlan(StrictModule, NonTrainableState):
                     ),
                 )
 
-            def skip(_):
+            def skip(_: None) -> tuple[_RolloutCarry, _RolloutOutput]:
                 return (
                     (state, active),
                     (

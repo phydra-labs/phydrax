@@ -1,4 +1,5 @@
 from importlib.util import find_spec
+from typing import Any
 
 import numpy as np
 import pytest
@@ -21,7 +22,7 @@ _COORDINATES = phx.SpatialCoordinateContract(phx.units.MILLIMETER)
 _SCHEDULE = phx.meshing.LayerSchedule.geometric(3, 0.02, growth_rate=1.25)
 
 
-def _persist(shape, path, **options):
+def _persist(shape: Any, path: Any, **options: Any) -> Any:
     return phx.geometry.persist_occt_shape(
         shape,
         path,
@@ -31,7 +32,7 @@ def _persist(shape, path, **options):
     )
 
 
-def _ball_in_box(path):
+def _ball_in_box(path: Any) -> Any:
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeSphere
     from OCP.gp import gp_Pnt
@@ -41,7 +42,7 @@ def _ball_in_box(path):
     return _persist(BRepAlgoAPI_Cut(box, ball).Shape(), path)
 
 
-def _box(path):
+def _box(path: Any) -> Any:
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
     from OCP.gp import gp_Pnt
 
@@ -53,20 +54,20 @@ def _box(path):
     )
 
 
-def _faces(source, predicate):
+def _faces(source: Any, predicate: Any) -> Any:
     points = np.asarray(source.mesh_vertices)
     triangles = points[np.asarray(source.mesh_faces)]
     face_ids = np.asarray(source.triangle_face_ids)
     return tuple(np.unique(face_ids[np.all(predicate(triangles), axis=1)]))
 
 
-def _face_scope(provider, source, indices):
+def _face_scope(provider: Any, source: Any, indices: Any) -> Any:
     return provider.entity_scope(
         source, tuple(source.face_ids[index] for index in indices)
     )
 
 
-def _layered_spec(provider, source, control):
+def _layered_spec(provider: Any, source: Any, control: Any) -> Any:
     whole = provider.whole_scope(source, 3)
     return phx.meshing.VolumeMeshingSpec(
         phx.meshing.CellMeshingTarget(
@@ -87,7 +88,7 @@ def _layered_spec(provider, source, control):
     )
 
 
-def _ball_control(provider, source, route, corner):
+def _ball_control(provider: Any, source: Any, route: Any, corner: Any) -> Any:
     ball = _faces(source, lambda triangles: np.linalg.norm(triangles, axis=2) < 0.5)
     return phx.meshing.BoundaryLayerControl(
         _face_scope(provider, source, ball),
@@ -98,7 +99,7 @@ def _ball_control(provider, source, route, corner):
     )
 
 
-def _face_rows(mesh):
+def _face_rows(mesh: Any) -> Any:
     connectivity = mesh.connectivity
     offsets = np.asarray(connectivity.face_vertex_offsets)
     values = np.asarray(connectivity.face_vertex_values)
@@ -107,7 +108,7 @@ def _face_rows(mesh):
     ]
 
 
-def _assert_layered_organization(result):
+def _assert_layered_organization(result: Any) -> None:
     zones = {zone.name: zone for zone in result.zones}
     assert set(zones) == {"boundary-layer", "core"}
     cell_kinds = np.concatenate(
@@ -128,7 +129,7 @@ def _assert_layered_organization(result):
     face_ids = np.asarray(result.mesh.entity_set(2).entity_ids)
     row_of = {int(identifier): row for row, identifier in enumerate(face_ids)}
 
-    def face_rows(name):
+    def face_rows(name: Any) -> Any:
         return np.asarray(
             [row_of[int(value)] for value in np.asarray(patches[name].scope.entity_ids)]
         )
@@ -150,7 +151,9 @@ def _assert_layered_organization(result):
 
 
 @requires_meshcore
-def test_advancing_layers_around_a_curved_wall_fill_a_conforming_certified_core(tmp_path):
+def test_advancing_layers_around_a_curved_wall_fill_a_conforming_certified_core(
+    tmp_path: Any,
+) -> None:
     provider = phx.meshing.GmshProvider()
     source = _ball_in_box(tmp_path / "ball.brep")
     control = _ball_control(
@@ -177,7 +180,9 @@ def test_advancing_layers_around_a_curved_wall_fill_a_conforming_certified_core(
 
 
 @requires_meshcore
-def test_provider_boundary_layer_extrusion_meets_measured_layer_compliance(tmp_path):
+def test_provider_boundary_layer_extrusion_meets_measured_layer_compliance(
+    tmp_path: Any,
+) -> None:
     provider = phx.meshing.GmshProvider()
     source = _ball_in_box(tmp_path / "ball.brep")
     control = _ball_control(
@@ -215,8 +220,8 @@ def test_provider_boundary_layer_extrusion_meets_measured_layer_compliance(tmp_p
     ),
 )
 def test_layered_volume_routes_reject_unsupported_requests_before_generation(
-    tmp_path, route, corner, wall_predicate, message
-):
+    tmp_path: Any, route: Any, corner: Any, wall_predicate: Any, message: Any
+) -> None:
     provider = phx.meshing.GmshProvider()
     source = _ball_in_box(tmp_path / "ball.brep")
     control = phx.meshing.BoundaryLayerControl(
@@ -236,9 +241,12 @@ def test_layered_volume_routes_reject_unsupported_requests_before_generation(
     )
 
 
-def test_cad_extrusion_partitions_an_exact_slab_meshed_as_an_exact_sweep(tmp_path):
+def test_cad_extrusion_partitions_an_exact_slab_meshed_as_an_exact_sweep(
+    tmp_path: Any,
+) -> None:
     provider = phx.meshing.GmshProvider()
     source = _box(tmp_path / "box.brep")
+    # ty: ignore[invalid-argument-type]
     schedule = phx.meshing.LayerSchedule((0.08, 0.10, 0.12))
     control = phx.meshing.BoundaryLayerControl(
         _face_scope(
@@ -291,7 +299,10 @@ def test_cad_extrusion_partitions_an_exact_slab_meshed_as_an_exact_sweep(tmp_pat
         ),
         patch_controls=(
             phx.meshing.PatchControl(
-                "cap", extrusion.control.cap_scope, ("core", "layers")
+                "cap",
+                # ty: ignore[invalid-argument-type]
+                extrusion.control.cap_scope,
+                ("core", "layers"),
             ),
         ),
         layer_controls=(extrusion.control,),
@@ -306,7 +317,7 @@ def test_cad_extrusion_partitions_an_exact_slab_meshed_as_an_exact_sweep(tmp_pat
 
 
 @requires_meshcore
-def test_core_fill_keeps_the_native_cap_bitwise_and_conforming():
+def test_core_fill_keeps_the_native_cap_bitwise_and_conforming() -> None:
     provider = phx.meshing.GmshProvider()
     t = (1.0 + 5.0**0.5) / 2.0
     base = np.asarray(
@@ -373,6 +384,7 @@ def test_core_fill_keeps_the_native_cap_bitwise_and_conforming():
             cells.entity_set_id,
             cells.entity_ids,
         ),
+        # ty: ignore[invalid-argument-type]
         phx.meshing.LayerSchedule((0.02, 0.03)),
         route=phx.meshing.BoundaryLayerRoute.ADVANCING,
     )
@@ -414,14 +426,19 @@ def test_core_fill_keeps_the_native_cap_bitwise_and_conforming():
     layer_points = np.asarray(layers.mesh.coordinates)
     np.testing.assert_array_equal(coordinates[: layer_points.shape[0]], layer_points)
     np.testing.assert_array_equal(
-        coordinates[np.asarray(layers.cap_vertices)], np.asarray(layers.cap.coordinates)
+        coordinates[np.asarray(layers.cap_vertices)],
+        # ty: ignore[unresolved-attribute]
+        np.asarray(layers.cap.coordinates),
     )
     _assert_layered_organization(result)
 
 
-def test_planar_provider_layers_lower_to_a_measured_gmsh_boundary_layer_field(tmp_path):
+def test_planar_provider_layers_lower_to_a_measured_gmsh_boundary_layer_field(
+    tmp_path: Any,
+) -> None:
     embedding = phx.geometry.PlanarEmbedding((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1))
     region = phx.geometry.PlanarMeshRegion(
+        # ty: ignore[invalid-argument-type]
         np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 0.5), (0.0, 0.5))),
         ((0, 1, 2, 3),),
         feature_id="channel",

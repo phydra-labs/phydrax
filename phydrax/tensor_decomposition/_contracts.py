@@ -13,10 +13,12 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from .._validation import nonnegative_integer
 from ..optim import (
     AbstractLeastSquaresMethod,
     LevenbergMarquardt,
@@ -56,7 +58,7 @@ class SymmetricWaringRankPolicy(StrictModule):
         relative_commutator_tolerance: float = 1.0e-6,
         relative_joint_diagonalization_tolerance: float = 1.0e-6,
         relative_reconstruction_tolerance: float = 2.0e-6,
-    ):
+    ) -> None:
         values = (
             float(relative_rank_tolerance),
             float(maximum_hankel_condition),
@@ -100,7 +102,7 @@ class SymmetricWaringResourcePolicy(StrictModule):
         maximum_vandermonde_entries: int = 1_000_000,
         maximum_basis_subsets: int = 16_384,
         maximum_refinement_parameters: int = 100_000,
-    ):
+    ) -> None:
         values = (
             _positive_integer(maximum_rank, "maximum_rank"),
             _positive_integer(maximum_tensor_entries, "maximum_tensor_entries"),
@@ -136,7 +138,7 @@ class SymmetricWaringRefinement(StrictModule):
         enabled: bool = True,
         method: AbstractLeastSquaresMethod | None = None,
         termination: OptimizationTermination | None = None,
-    ):
+    ) -> None:
         method_ = LevenbergMarquardt() if method is None else method
         termination_ = (
             OptimizationTermination(maximum_steps=32)
@@ -175,7 +177,7 @@ class SymmetricWaringProblem(StrictModule):
         *,
         symmetry_tolerance: float = 1.0e-6,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         values = jnp.asarray(tensor)
         if values.ndim < 3:
             raise ValueError("A symmetric Waring tensor must have order at least three.")
@@ -248,9 +250,9 @@ class SymmetricWaringCostEstimate(StrictModule):
         vandermonde_entries: int,
         basis_subsets: int,
         refinement_parameters: int,
-    ):
+    ) -> None:
         values = tuple(
-            _nonnegative_integer(value, name)
+            nonnegative_integer(value, name)
             for value, name in (
                 (tensor_entries, "tensor_entries"),
                 (quotient_basis_size, "quotient_basis_size"),
@@ -300,7 +302,7 @@ class SymmetricWaringPlan(StrictModule):
         resource_rejection: str | None,
         cost: SymmetricWaringCostEstimate,
         /,
-    ):
+    ) -> None:
         if not isinstance(problem, SymmetricWaringProblem):
             raise TypeError("problem must be a SymmetricWaringProblem.")
         if not isinstance(rank_policy, SymmetricWaringRankPolicy):
@@ -397,7 +399,7 @@ class SymmetricWaringEvidence(StrictModule):
         refinement_status: Any = -1,
         provider: str = "not-invoked",
         detail: str = "",
-    ):
+    ) -> None:
         self.requested_rank = int(requested_rank)
         self.observed_hankel_rank = int(observed_hankel_rank)
         self.chart_axis = int(chart_axis)
@@ -450,7 +452,7 @@ class SymmetricWaringResult(StrictModule):
         status: int | SymmetricWaringStatus | ArrayLike,
         evidence: SymmetricWaringEvidence,
         plan_id: str,
-    ):
+    ) -> None:
         weights_ = jnp.asarray(weights)
         factors_ = jnp.asarray(factors)
         reconstruction_ = jnp.asarray(reconstruction)
@@ -491,15 +493,6 @@ def _positive_integer(value: int, name: str, /) -> int:
     result = int(value)
     if result <= 0:
         raise ValueError(f"{name} must be positive.")
-    return result
-
-
-def _nonnegative_integer(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
-    result = int(value)
-    if result < 0:
-        raise ValueError(f"{name} must be nonnegative.")
     return result
 
 

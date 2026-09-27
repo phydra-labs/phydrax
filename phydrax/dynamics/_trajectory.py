@@ -9,12 +9,14 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from .._dtype_names import inexact_result_type
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ..series import CoordinateKind, SampledSeries, SeriesPairView, SeriesSupport
+from ..typing import parse
 from ._layout import InputLayout, StateLayout
 
 
@@ -24,7 +26,7 @@ CaseAxisRole: TypeAlias = Literal[
 InputAlignment: TypeAlias = Literal["samples", "transitions"]
 
 
-def _identifier(value: str | None, payload, prefix: str, /) -> str:
+def _identifier(value: str | None, payload: object, prefix: str, /) -> str:
     if value is not None:
         if not isinstance(value, str) or not value:
             raise ValueError("Trajectory identifiers must be non-empty strings or None.")
@@ -58,12 +60,11 @@ def _case_axes(
         or len(set(resolved_names)) != len(resolved_names)
     ):
         raise ValueError("case_axes must uniquely name every case axis.")
-    if len(resolved_roles) != len(shape) or any(
-        role not in ("case", "dataset", "parameter", "process", "realization")
-        for role in resolved_roles
-    ):
+    if len(resolved_roles) != len(shape):
         raise ValueError("case_axis_roles must assign one supported role per case axis.")
-    return resolved_names, resolved_roles
+    return resolved_names, tuple(
+        parse(role, CaseAxisRole, "case_axis_roles") for role in resolved_roles
+    )
 
 
 class TrajectoryTransitions(StrictModule):
@@ -124,7 +125,7 @@ class TrajectoryData(StrictModule):
         coordinate_kind: CoordinateKind = "continuous",
         source_id: str,
         dataset_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(state_layout, StateLayout):
             raise TypeError("state_layout must be a StateLayout.")
         if input_layout is not None and not isinstance(input_layout, InputLayout):
@@ -241,8 +242,7 @@ class TrajectoryData(StrictModule):
             raise ValueError(
                 "inputs and input_layout must either both be supplied or both absent."
             )
-        if input_alignment not in ("samples", "transitions"):
-            raise ValueError("input_alignment must be 'samples' or 'transitions'.")
+        input_alignment = parse(input_alignment, InputAlignment, "input_alignment")
         if inputs is None:
             if input_valid is not None:
                 raise ValueError("input_valid requires inputs.")

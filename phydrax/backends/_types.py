@@ -9,9 +9,10 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
+from ..typing import parse
 
 
 BackendExecution: TypeAlias = Literal["host", "device"]
@@ -44,7 +45,7 @@ class BackendDistributionCapabilities(StrictModule):
         supports_process_local_input: bool = False,
         supports_distributed_output: bool = False,
         supports_topology_change_restart: bool = False,
-    ):
+    ) -> None:
         scopes_ = tuple(str(scope).strip() for scope in scopes)
         platforms_ = tuple(str(platform).strip() for platform in platforms)
         collectives_ = tuple(str(value).strip() for value in collectives)
@@ -96,7 +97,7 @@ class BackendUnavailableError(RuntimeError):
         requirement: str,
         reason: str,
         /,
-    ):
+    ) -> None:
         backend_ = str(backend)
         capability_ = str(capability)
         requirement_ = str(requirement)
@@ -138,7 +139,7 @@ class BackendCapabilities(StrictModule):
         supports_plan_prepare_solve_refresh: bool = True,
         requires_explicit_release: bool = False,
         distribution: BackendDistributionCapabilities | None = None,
-    ):
+    ) -> None:
         backend_ = str(backend)
         kinds = tuple(str(kind) for kind in problem_kinds)
         dtypes = tuple(str(dtype) for dtype in coordinate_dtypes)
@@ -146,8 +147,7 @@ class BackendCapabilities(StrictModule):
             raise ValueError("Backend name and problem kinds must be non-empty.")
         if not dtypes or any(not value for value in dtypes):
             raise ValueError("Backend coordinate dtypes must be non-empty.")
-        if execution not in ("host", "device"):
-            raise ValueError("Backend execution must be 'host' or 'device'.")
+        execution = parse(execution, BackendExecution, "execution")
         if execution == "device" and bool(host_only):
             raise ValueError("A device backend cannot be declared host-only.")
         self.backend = backend_
@@ -190,7 +190,7 @@ class BackendAvailability(StrictModule):
         requirement: str,
         reason: str,
         versions: tuple[tuple[str, str], ...] = (),
-    ):
+    ) -> None:
         if not isinstance(capabilities, BackendCapabilities):
             raise TypeError("capabilities must be BackendCapabilities.")
         requirement_ = str(requirement)
@@ -241,7 +241,7 @@ class BackendTransferEvidence(StrictModule):
         host_to_device_bytes: Any = 0,
         device_to_host_bytes: Any = 0,
         synchronization_count: Any = 0,
-    ):
+    ) -> None:
         host_to_device = jnp.asarray(host_to_device_bytes, dtype=jnp.int64)
         device_to_host = jnp.asarray(device_to_host_bytes, dtype=jnp.int64)
         synchronizations = jnp.asarray(synchronization_count, dtype=jnp.int32)

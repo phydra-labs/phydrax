@@ -15,7 +15,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax.ein import contract
 
@@ -47,6 +48,7 @@ from ...operators.path_integral._lattice_fermion import (
     WilsonDiracOperator,
 )
 from ...operators.path_integral._wilson_gauge import WilsonGaugeAction
+from ...typing import parse, PRNGKey
 from ._qcd_ensembles import MeasurementWorkItem
 
 
@@ -143,7 +145,7 @@ class HypercubicGaugeObservablePlan(StrictModule, NonTrainableState):
         topology_id: str | None = None,
         field_space_id: str | None = None,
         maximum_sites: int = 1 << 22,
-    ):
+    ) -> None:
         shape = _positive_shape(lattice_shape, "lattice_shape")
         spacing = float(lattice_spacing)
         colors = int(color_components)
@@ -355,7 +357,7 @@ def routed_clover_field_strength(
     spacing = float(lattice_spacing)
     if not np.isfinite(spacing) or spacing <= 0.0:
         raise ValueError("lattice_spacing must be finite and positive.")
-    colors = transport.representation.group.dimension
+    colors = transport.representation.group.point_shape[0]
     field_bytes = (
         transport.site_count
         * (transport.dimension * (transport.dimension - 1) // 2)
@@ -521,7 +523,7 @@ def measure_hypercubic_gauge_observables(
         topology_status = "measured"
     finite_values = (
         (mean_plaquette, action_density)
-        if charge is None
+        if charge is None or density is None
         else (
             mean_plaquette,
             action_density,
@@ -600,7 +602,7 @@ class WilsonFlowPlan(StrictModule, NonTrainableState):
         maximum_backtracks: int = 8,
         descent_tolerance: float = 1.0e-10,
         maximum_history_bytes: int = 256 * 1024 * 1024,
-    ):
+    ) -> None:
         if not isinstance(action, WilsonGaugeAction):
             raise TypeError("action must be WilsonGaugeAction.")
         if not isinstance(action.link_space.group, SpecialUnitaryGroup):
@@ -708,7 +710,7 @@ class StochasticSourcePlan(StrictModule, NonTrainableState):
         randomness_id: str,
         noise_kind: NoiseKind = "z4",
         maximum_source_values: int = 1 << 24,
-    ):
+    ) -> None:
         shape = _positive_shape(source_shape, "source_shape")
         count = int(source_count)
         maximum = int(maximum_source_values)
@@ -719,8 +721,7 @@ class StochasticSourcePlan(StrictModule, NonTrainableState):
             raise ValueError("source_count must be positive.")
         if maximum <= 0 or prod(shape) * count > maximum:
             raise ValueError("Stochastic sources exceed maximum_source_values.")
-        if noise_kind not in ("z2", "z4"):
-            raise ValueError("noise_kind must be 'z2' or 'z4'.")
+        noise_kind = parse(noise_kind, NoiseKind, "noise_kind")
         source_ids = tuple(
             canonical_fingerprint(
                 {
@@ -782,7 +783,7 @@ class StochasticSourceRealization(StrictModule):
 
 def realize_stochastic_sources(
     plan: StochasticSourcePlan,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> StochasticSourceRealization:
     """Realize normalized Z2/Z4 noise without changing semantic source identity."""
@@ -790,7 +791,7 @@ def realize_stochastic_sources(
         raise TypeError("plan must be StochasticSourcePlan.")
     keys = jr.split(key, len(plan.source_ids))
 
-    def one(source_key):
+    def one(source_key: PRNGKey) -> Array:
         if plan.noise_kind == "z2":
             values = (
                 2 * jr.bernoulli(source_key, shape=plan.source_shape).astype("float64")
@@ -833,7 +834,7 @@ class PropagatorSolvePlan(StrictModule, NonTrainableState):
         maximum_steps: int = 4096,
         maximum_workspace_bytes: int = 256 * 1024 * 1024,
         maximum_source_bytes: int = 256 * 1024 * 1024,
-    ):
+    ) -> None:
         if not isinstance(operator, AbstractLatticeDiracOperator):
             raise TypeError("operator must be AbstractLatticeDiracOperator.")
         if not isinstance(operator.target, ArraySpace):
@@ -1081,7 +1082,7 @@ def meson_correlator(
     )
 
 
-def color_levi_civita_three(dtype=jnp.float32, /) -> Array:
+def color_levi_civita_three(dtype: DTypeLike = jnp.float32, /) -> Array:
     """Return ε_ijk for three-color baryon contractions."""
     epsilon = jnp.zeros((3, 3, 3), dtype=dtype)
     return epsilon.at[

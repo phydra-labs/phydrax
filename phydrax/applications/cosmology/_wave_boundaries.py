@@ -11,7 +11,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -24,7 +25,7 @@ class PeriodicWaveBoundaryDescriptor(StrictModule, NonTrainableState):
     potential_gauge: str = eqx.field(static=True)
     descriptor_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.potential_gauge = "volume-weighted-mean-zero"
         self.descriptor_id = canonical_fingerprint(
             {
@@ -51,7 +52,7 @@ class IsolatedPotentialGauge(StrictModule, NonTrainableState):
         *,
         multipole_order: int = 2,
         reference_potential: float = 0.0,
-    ):
+    ) -> None:
         center = tuple(float(value) for value in expansion_center)
         radius = float(reference_radius)
         order = int(multipole_order)
@@ -110,7 +111,7 @@ class AbsorbingWaveBoundaryPolicy(StrictModule, NonTrainableState):
         *,
         polynomial_order: int = 2,
         maximum_probability_loss_fraction: float = 0.05,
-    ):
+    ) -> None:
         width_ = float(width)
         strength_ = float(strength)
         order = int(polynomial_order)
@@ -235,7 +236,7 @@ class IsolatedWaveBoundaryDescriptor(StrictModule, NonTrainableState):
         /,
         *,
         absorbing: AbsorbingWaveBoundaryPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(gauge, IsolatedPotentialGauge):
             raise TypeError("Isolated wave boundaries require IsolatedPotentialGauge.")
         if absorbing is not None and not isinstance(

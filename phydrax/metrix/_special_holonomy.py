@@ -10,7 +10,8 @@ from math import factorial, isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -28,7 +29,7 @@ from .algebra import AlgebraProductPlan, OctonionAlgebraSpec
 class _ConjugateFormCoefficients(StrictModule):
     form: DifferentialForm
 
-    def __init__(self, form: DifferentialForm, /):
+    def __init__(self, form: DifferentialForm, /) -> None:
         self.form = form
 
     def __call__(self, coordinates: Array, /) -> Array:
@@ -49,7 +50,7 @@ class LocalSUNStructure(StrictModule):
         /,
         *,
         volume_bidegree: tuple[int, int],
-    ):
+    ) -> None:
         if not isinstance(kahler, KahlerStructure):
             raise TypeError("LocalSUNStructure requires a KahlerStructure.")
         if not isinstance(holomorphic_volume, DifferentialForm):
@@ -109,7 +110,7 @@ class LocalSUNValidationReport(StrictModule):
         maximum_compatibility_residual: ArrayLike,
         maximum_volume_normalization_residual: ArrayLike,
         maximum_ricci_residual: ArrayLike,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.kahler_valid = jnp.asarray(kahler_valid, dtype=jnp.bool_)
         self.volume_closed = jnp.asarray(volume_closed, dtype=jnp.bool_)
@@ -255,7 +256,7 @@ def _maximum_or_zero(value: Array, /) -> Array:
 class _ConstantG2FormCoefficients(StrictModule):
     coefficients: Array
 
-    def __init__(self, coefficients: Array, /):
+    def __init__(self, coefficients: Array, /) -> None:
         self.coefficients = jnp.asarray(coefficients)
 
     def __call__(self, coordinates: Array, /) -> Array:
@@ -276,7 +277,7 @@ class LocalG2Structure(StrictModule):
         /,
         *,
         orientation: int = 1,
-    ):
+    ) -> None:
         if not isinstance(metric, RiemannianMetric):
             raise TypeError("LocalG2Structure requires a RiemannianMetric.")
         if not isinstance(associative_form, DifferentialForm):
@@ -320,7 +321,7 @@ class OctonionG2Bridge(StrictModule):
         /,
         *,
         orientation: int = 1,
-    ):
+    ) -> None:
         if not isinstance(algebra, OctonionAlgebraSpec):
             raise TypeError("OctonionG2Bridge requires an OctonionAlgebraSpec.")
         if not isinstance(chart, CoordinateChart):
@@ -459,7 +460,7 @@ class LocalG2ValidationReport(StrictModule):
         maximum_ricci_residual: ArrayLike,
         required_torsion_free: bool,
         required_ricci_flat: bool,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.algebraically_compatible = jnp.asarray(
             algebraically_compatible,
@@ -609,7 +610,7 @@ class G2DerivationInvarianceReport(StrictModule):
         algebra_id: str,
         derivation_plan_id: str,
         tolerance: float,
-    ):
+    ) -> None:
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.derivation_dimension = jnp.asarray(
             derivation_dimension,
@@ -627,7 +628,7 @@ class G2DerivationInvarianceReport(StrictModule):
 
 def validate_g2_derivations(
     bridge: OctonionG2Bridge,
-    derivations,
+    derivations: object,
     /,
     *,
     tolerance: float = 1e-9,

@@ -10,7 +10,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -114,7 +115,7 @@ class GravitationalWaveLikelihoodPlan(AbstractGravitationalWaveLikelihood):
         calibration_id: str | None = None,
         calibration: Callable[[PyTree[Any], Array], Array] | None = None,
         approximation_id: str = "full-frequency",
-    ):
+    ) -> None:
         if not isinstance(network, DetectorNetworkData):
             raise TypeError("network must be DetectorNetworkData.")
         if not isinstance(response, DetectorResponsePlan):
@@ -278,7 +279,7 @@ class GravitationalWavePosteriorTerm(AbstractPosteriorTerm):
         /,
         *,
         label: str = "gravitational_wave_network",
-    ):
+    ) -> None:
         if not isinstance(likelihood, AbstractGravitationalWaveLikelihood):
             raise TypeError(
                 "likelihood must implement AbstractGravitationalWaveLikelihood."

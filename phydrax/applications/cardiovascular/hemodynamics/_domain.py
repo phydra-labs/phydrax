@@ -9,7 +9,8 @@ from enum import IntEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -44,7 +45,7 @@ class FixedWallScope(StrictModule, NonTrainableState):
     statement: str = eqx.field(static=True)
     scope_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         statement = "fixed voxel lumen with stationary halfway bounce-back walls; numerical hemodynamics qualification only"
         self.wall_motion_supported = False
         self.fluid_structure_interaction_supported = False
@@ -89,7 +90,7 @@ class HemodynamicsScaling(StrictModule, NonTrainableState):
         *,
         reference_velocity_mm_per_ms: float,
         maximum_lattice_mach: float = 0.1,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -281,7 +282,7 @@ class HemodynamicsValidityLimits(StrictModule, NonTrainableState):
         maximum_terminal_flow_relative_defect: float = 5.0e-2,
         maximum_terminal_pressure_absolute_defect_kpa: float = 1.0e-3,
         maximum_terminal_power_relative_defect: float = 5.0e-2,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -362,7 +363,7 @@ class FixedWallLumenRegion(StrictModule, NonTrainableState):
     lumen_name: str = eqx.field(static=True)
     lumen_id: str = eqx.field(static=True)
 
-    def __init__(self, fluid_mask: ArrayLike, /, *, lumen_name: str = "lumen"):
+    def __init__(self, fluid_mask: ArrayLike, /, *, lumen_name: str = "lumen") -> None:
         mask = np.asarray(fluid_mask, dtype=np.bool_)
         name = str(lumen_name)
         if mask.ndim != 3 or not np.any(mask):
@@ -386,7 +387,8 @@ class FixedWallLumenRegion(StrictModule, NonTrainableState):
 
     @property
     def shape(self) -> tuple[int, int, int]:
-        return tuple(self.fluid_mask.shape)
+        x, y, z = self.fluid_mask.shape
+        return (x, y, z)
 
 
 class HemodynamicsEvidence(StrictModule):
@@ -435,7 +437,7 @@ class PoiseuillePipeReference(StrictModule, NonTrainableState):
         pressure_drop_kpa: float,
         dynamic_viscosity_kpa_ms: float,
         /,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -529,7 +531,7 @@ class WomersleyPipeReference(StrictModule, NonTrainableState):
         /,
         *,
         phase_radians: float = 0.0,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (

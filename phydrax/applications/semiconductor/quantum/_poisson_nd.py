@@ -9,7 +9,8 @@ from itertools import product
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 
@@ -36,7 +37,7 @@ class QuantumPoissonND(StrictModule):
         fixed_charge_density: ArrayLike,
         boundary_voltages: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(basis, EffectiveMassND):
             raise TypeError("basis must be EffectiveMassND.")
         shape = basis.grid_shape
@@ -123,7 +124,7 @@ class QuantumPoissonND(StrictModule):
         charge = (self.fixed_charge_density + quantum.reshape((-1,))) * self.cell_volumes
         return (charge + self.boundary_load) / self.scale
 
-    def solve(self, quantum_charge_density: ArrayLike, /):
+    def solve(self, quantum_charge_density: ArrayLike, /) -> la.LinearSolveResult:
         return la.solve(self.prepared, self.right_hand_side(quantum_charge_density))
 
     def residual(

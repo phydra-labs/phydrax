@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._blocks import column_logsumexp, coupling_statistics, row_logsumexp
 from ._problem import DiscreteTransportProblem
@@ -18,6 +21,11 @@ from ._results import (
     TransportProvenance,
 )
 from ._status import TransportStatus
+
+
+# (source_potential, target_potential, marginal_residual, dual_residual,
+#  first_converged, converged, failed)
+_SinkhornCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 
 class Sinkhorn(AbstractBalancedTransportSolver):
@@ -44,7 +52,7 @@ class Sinkhorn(AbstractBalancedTransportSolver):
         block_size: int | None = None,
         early_stop: bool = False,
         store_history: bool = False,
-    ):
+    ) -> None:
         maximum = int(max_iterations)
         minimum = int(min_iterations)
         interval = int(check_every)
@@ -124,7 +132,7 @@ class Sinkhorn(AbstractBalancedTransportSolver):
             jnp.asarray(False),
         )
 
-        def step(carry, index):
+        def step(carry: _SinkhornCarry, index: Array) -> tuple[_SinkhornCarry, Array]:
             (
                 source_potential,
                 target_potential,
@@ -136,7 +144,7 @@ class Sinkhorn(AbstractBalancedTransportSolver):
             ) = carry
             frozen = failed | (converged if self.early_stop else False)
 
-            def update(_):
+            def update(_: None) -> tuple[Array, Array, Array, Array]:
                 next_source = -epsilon * row_logsumexp(
                     problem,
                     log_target + target_potential / epsilon,
@@ -168,7 +176,7 @@ class Sinkhorn(AbstractBalancedTransportSolver):
                 )
                 return next_source, next_target, next_dual_residual, ~finite
 
-            def keep(_):
+            def keep(_: None) -> tuple[Array, Array, Array, Array]:
                 return source_potential, target_potential, dual_residual, failed
 
             (
@@ -184,7 +192,7 @@ class Sinkhorn(AbstractBalancedTransportSolver):
                 | (iteration == self.min_iterations)
             )
 
-            def check(_):
+            def check(_operand: None) -> tuple[Array, Array]:
                 source_marginal, target_marginal, _, _, _, finite = coupling_statistics(
                     problem,
                     next_source,
@@ -198,7 +206,7 @@ class Sinkhorn(AbstractBalancedTransportSolver):
                 )
                 return jnp.where(finite, residual, jnp.inf), ~finite
 
-            def retain(_):
+            def retain(_: None) -> tuple[Array, Array]:
                 return marginal_residual, jnp.asarray(False)
 
             next_residual, objective_failed = jax.lax.cond(

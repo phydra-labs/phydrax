@@ -1,4 +1,5 @@
 from hashlib import sha256
+from typing import Any
 
 import numpy as np
 import pytest
@@ -7,10 +8,10 @@ import phydrax as phx
 
 
 def _manifest(
-    artifact_name="synthetic-medical-image",
+    artifact_name: Any = "synthetic-medical-image",
     *,
-    export_permitted=True,
-):
+    export_permitted: Any = True,
+) -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         artifact_name,
         checksum_algorithm="sha256",
@@ -28,13 +29,13 @@ def _manifest(
     )
 
 
-def _deid():
+def _deid() -> Any:
     return phx.imaging.DeidentificationEvidence(
         "synthetic-deid", "subject-0", "synthetic", True, True, True
     )
 
 
-def _derivation():
+def _derivation() -> Any:
     return phx.measurement.DerivationRecord(
         phx.measurement.DataOrigin.SYNTHETIC,
         phx.measurement.DataStage.RECONSTRUCTED,
@@ -42,7 +43,7 @@ def _derivation():
     )
 
 
-def _affine(matrix=None):
+def _affine(matrix: Any = None) -> Any:
     contract = phx.SpatialCoordinateContract(
         phx.units.MILLIMETER,
         coordinate_system="cartesian-lps",
@@ -57,16 +58,16 @@ def _affine(matrix=None):
 
 
 def _asset(
-    values,
-    layout,
+    values: Any,
+    layout: Any,
     *,
-    mask=None,
-    affine=None,
-    asset_id="image",
-    references=None,
-    uncertainty=None,
-    quality_flags=(),
-):
+    mask: Any = None,
+    affine: Any = None,
+    asset_id: Any = "image",
+    references: Any = None,
+    uncertainty: Any = None,
+    quality_flags: Any = (),
+) -> Any:
     return phx.imaging.MedicalImageAsset(
         asset_id,
         "synthetic-mri",
@@ -82,7 +83,7 @@ def _asset(
     )
 
 
-def test_medical_image_asset_preserves_references_uncertainty_and_quality_flags():
+def test_medical_image_asset_preserves_references_uncertainty_and_quality_flags() -> None:
     values = np.arange(8.0).reshape((2, 2, 2))
     layout = phx.imaging.ImageFieldSpec.named(
         "signal", phx.units.ONE, phx.measurement.ValueKind.REAL_SCALAR
@@ -117,7 +118,7 @@ def test_medical_image_asset_preserves_references_uncertainty_and_quality_flags(
         _asset(values, layout, references=(references[0], references[0]))
 
 
-def test_nifti_export_requires_rights_from_every_reference(tmp_path):
+def test_nifti_export_requires_rights_from_every_reference(tmp_path: Any) -> None:
     values = np.zeros((2, 2, 2), dtype="float64")
     layout = phx.imaging.ImageFieldSpec.named(
         "signal", phx.units.ONE, phx.measurement.ValueKind.REAL_SCALAR
@@ -135,7 +136,7 @@ def test_nifti_export_requires_rights_from_every_reference(tmp_path):
         phx.imaging.NibabelImageProvider().write(asset, tmp_path / "blocked.nii")
 
 
-def test_nifti_export_requires_explicit_semantic_loss_admission(tmp_path):
+def test_nifti_export_requires_explicit_semantic_loss_admission(tmp_path: Any) -> None:
     asset = _asset(
         np.zeros((2, 2, 2), dtype=np.float64),
         phx.imaging.ImageFieldSpec.named(
@@ -146,7 +147,7 @@ def test_nifti_export_requires_explicit_semantic_loss_admission(tmp_path):
         phx.imaging.NibabelImageProvider().write(asset, tmp_path / "lossy.nii")
 
 
-def test_image_affine_units_frames_and_qform_conflict():
+def test_image_affine_units_frames_and_qform_conflict() -> None:
     matrix = np.asarray(
         (
             (0.0, -2.0, 0.0, 10.0),
@@ -173,7 +174,7 @@ def test_image_affine_units_frames_and_qform_conflict():
         )
 
 
-def test_scalar_projection_and_voxel_sampling_reproduce_affine_field():
+def test_scalar_projection_and_voxel_sampling_reproduce_affine_field() -> None:
     with pytest.raises(ValueError, match="coordinate system disagree"):
         phx.imaging.ImageIndexAffine(
             np.eye(4),
@@ -207,7 +208,7 @@ def test_scalar_projection_and_voxel_sampling_reproduce_affine_field():
     assert bool(projected.evidence.successful)
 
 
-def test_tensor_transfer_reorients_spd_field():
+def test_tensor_transfer_reorients_spd_field() -> None:
     tensor = np.broadcast_to(np.diag((3.0, 2.0, 1.0)), (2, 2, 2, 3, 3)).copy()
     layout = phx.imaging.ImageFieldSpec.named(
         "diffusion",
@@ -232,7 +233,7 @@ def test_tensor_transfer_reorients_spd_field():
         )
 
 
-def test_registration_refuses_empty_support_and_non_millimeter_policy():
+def test_registration_refuses_empty_support_and_non_millimeter_policy() -> None:
     with pytest.raises(ValueError, match="at least one point"):
         phx.imaging.RegistrationEvaluationPlan(
             np.zeros((0, 3)),
@@ -248,7 +249,7 @@ def test_registration_refuses_empty_support_and_non_millimeter_policy():
         )
 
 
-def test_conservative_overlap_has_exact_mass_and_dual_pairing():
+def test_conservative_overlap_has_exact_mass_and_dual_pairing() -> None:
     transfer = phx.imaging.ConservativeVoxelCellTransfer(
         np.asarray((0, 0, 1, 1)),
         np.asarray((0, 1, 0, 1)),
@@ -263,7 +264,7 @@ def test_conservative_overlap_has_exact_mass_and_dual_pairing():
     assert bool(result.evidence.successful)
 
 
-def test_label_compartments_and_single_oriented_interface():
+def test_label_compartments_and_single_oriented_interface() -> None:
     values = np.ones((2, 2, 2), dtype=np.int16)
     values[1] = 2
     layout = phx.imaging.ImageFieldSpec.named(
@@ -328,7 +329,7 @@ def test_label_compartments_and_single_oriented_interface():
     assert np.all(reflected_normals[:, 0] < 0.0)
 
 
-def test_probability_transfer_preserves_simplex_and_segmentation_transition():
+def test_probability_transfer_preserves_simplex_and_segmentation_transition() -> None:
     probabilities = np.zeros((2, 2, 2, 2), dtype="float64")
     probabilities[..., 0] = np.fromfunction(lambda i, j, k: (i + j + k) / 3.0, (2, 2, 2))
     probabilities[..., 1] = 1.0 - probabilities[..., 0]
@@ -399,7 +400,7 @@ def test_probability_transfer_preserves_simplex_and_segmentation_transition():
     assert transition.target.asset.quality_flags[0] is source_flag
 
 
-def test_real_nifti_roundtrip_preserves_values_affine_and_rights(tmp_path):
+def test_real_nifti_roundtrip_preserves_values_affine_and_rights(tmp_path: Any) -> None:
     nib = pytest.importorskip("nibabel")
 
     source = tmp_path / "source.nii.gz"
@@ -452,7 +453,7 @@ def test_real_nifti_roundtrip_preserves_values_affine_and_rights(tmp_path):
     np.testing.assert_allclose(restored_image.affine, matrix)
 
 
-def test_real_timed_nifti_roundtrip_preserves_temporal_axis(tmp_path):
+def test_real_timed_nifti_roundtrip_preserves_temporal_axis(tmp_path: Any) -> None:
     nib = pytest.importorskip("nibabel")
 
     source = tmp_path / "timed.nii.gz"

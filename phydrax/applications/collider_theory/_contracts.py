@@ -47,7 +47,7 @@ class TheoryModel(StrictModule, NonTrainableState):
         *,
         scheme_id: str,
         source_id: str,
-    ):
+    ) -> None:
         name_ = str(name).strip()
         parameters = tuple(sorted(str(value).strip() for value in parameter_names))
         scheme = str(scheme_id).strip()
@@ -107,7 +107,7 @@ class TheoryProcessPlan(StrictModule, NonTrainableState):
         pdf_id: str = "none",
         scale_id: str,
         shower_hadronization_id: str = "none",
-    ):
+    ) -> None:
         if (
             not isinstance(model, TheoryModel)
             or not isinstance(provider, HEPProviderBinding)

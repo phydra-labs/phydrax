@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -37,7 +38,7 @@ class ElasticityLayerKernel2D(AbstractLayerKernel):
         young_modulus: float,
         poisson_ratio: float,
         reduction: PlaneElasticityReduction,
-    ):
+    ) -> None:
         young = float(young_modulus)
         poisson = float(poisson_ratio)
         if not np.isfinite(young) or young <= 0.0:
@@ -137,7 +138,7 @@ class ElasticityLayerPotential2D(StrictModule, NonTrainableState):
         reduction: PlaneElasticityReduction,
         kind: Literal["single", "double"] = "single",
         minimum_clearance: float,
-    ):
+    ) -> None:
         if not isinstance(panelization, BoundaryPanelization2D):
             raise TypeError("panelization must be BoundaryPanelization2D.")
         values = jnp.asarray(density, dtype=jnp.float64)

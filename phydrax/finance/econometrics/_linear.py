@@ -4,11 +4,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -66,7 +68,7 @@ class ARIMADefinition(StrictModule):
         include_intercept: bool = True,
         iterations: int = 4,
         ridge: float = 0.0,
-    ):
+    ) -> None:
         orders = (int(p), int(d), int(q))
         if min(orders) < 0 or orders[0] + orders[2] < 1:
             raise ValueError("ARIMA orders must be nonnegative with p + q positive.")
@@ -102,7 +104,7 @@ class VARDefinition(StrictModule):
         *,
         include_intercept: bool = True,
         ridge: float = 0.0,
-    ):
+    ) -> None:
         order_ = int(order)
         ridge_ = float(ridge)
         if order_ < 1 or not jnp.isfinite(ridge_) or ridge_ < 0.0:
@@ -131,8 +133,8 @@ class CointegrationDefinition(StrictModule):
         *,
         lag_differences: int = 0,
         deterministic: Literal["constant", "none"] = "constant",
-        critical_values: ArrayLike = (),
-    ):
+        critical_values: ArrayLike | Sequence[float] = (),
+    ) -> None:
         lags = int(lag_differences)
         if lags < 0:
             raise ValueError("lag_differences must be nonnegative.")
@@ -174,7 +176,7 @@ class VECMDefinition(StrictModule):
         lag_differences: int = 0,
         include_intercept: bool = True,
         ridge: float = 1e-10,
-    ):
+    ) -> None:
         rank_ = int(rank)
         lags = int(lag_differences)
         ridge_ = float(ridge)

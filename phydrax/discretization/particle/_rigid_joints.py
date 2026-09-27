@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax.ein import contract
 
@@ -91,7 +92,7 @@ class BallJointSetPlan(StrictModule, NonTrainableState):
         /,
         *,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         identifiers, left, right = _joint_vectors(
             "Ball", joint_ids, left_body_ids, right_body_ids
         )
@@ -138,7 +139,7 @@ class FixedJointSetPlan(StrictModule, NonTrainableState):
         /,
         *,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         identifiers, left, right = _joint_vectors(
             "Fixed", joint_ids, left_body_ids, right_body_ids
         )
@@ -180,7 +181,7 @@ class HingeJointSetPlan(StrictModule, NonTrainableState):
         /,
         *,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         identifiers, left, right = _joint_vectors(
             "Hinge", joint_ids, left_body_ids, right_body_ids
         )
@@ -242,7 +243,7 @@ class PrismaticJointSetPlan(StrictModule, NonTrainableState):
         /,
         *,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         identifiers, left, right = _joint_vectors(
             "Prismatic", joint_ids, left_body_ids, right_body_ids
         )
@@ -304,7 +305,7 @@ class DistanceJointSetPlan(StrictModule, NonTrainableState):
         /,
         *,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         identifiers, left, right = _joint_vectors(
             "Distance", joint_ids, left_body_ids, right_body_ids
         )
@@ -368,7 +369,7 @@ class RigidJointGraphPlan(StrictModule, NonTrainableState):
         prismatic: PrismaticJointSetPlan | None = None,
         distance: DistanceJointSetPlan | None = None,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         expected = (
             ("fixed", fixed, FixedJointSetPlan),
             ("ball", ball, BallJointSetPlan),
@@ -531,7 +532,7 @@ class PreparedRigidJointGraph(StrictModule, NonTrainableState):
         bodies: PreparedRigidBodySet,
         reference: RigidBodyKinematics,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, RigidJointGraphPlan):
             raise TypeError("plan must be a RigidJointGraphPlan.")
         if not isinstance(bodies, PreparedRigidBodySet):
@@ -882,7 +883,17 @@ class PreparedRigidJointGraph(StrictModule, NonTrainableState):
         )
 
     @staticmethod
-    def _endpoints(plan, bodies, active, fixed_mask):
+    def _endpoints(
+        plan: FixedJointSetPlan
+        | BallJointSetPlan
+        | HingeJointSetPlan
+        | PrismaticJointSetPlan
+        | DistanceJointSetPlan
+        | None,
+        bodies: PreparedRigidBodySet,
+        active: np.ndarray,
+        fixed_mask: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
         if plan is None:
             empty = np.empty((0,), dtype=np.int32)
             return empty, empty
@@ -910,7 +921,13 @@ class PreparedRigidJointGraph(StrictModule, NonTrainableState):
         return left, right
 
     @staticmethod
-    def _local_anchors(anchors, left, right, position, rotation):
+    def _local_anchors(
+        anchors: np.ndarray | None,
+        left: np.ndarray,
+        right: np.ndarray,
+        position: np.ndarray,
+        rotation: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
         if anchors is None:
             empty = np.empty((0, position.shape[-1]), dtype=position.dtype)
             return empty, empty
@@ -965,7 +982,9 @@ class PreparedRigidJointGraph(StrictModule, NonTrainableState):
             )
         )
 
-    def empty_multipliers(self, dtype=None, /) -> RigidJointMultipliers:
+    def empty_multipliers(
+        self, dtype: DTypeLike | None = None, /
+    ) -> RigidJointMultipliers:
         dtype_ = self.bodies.particles.safe_masses.dtype if dtype is None else dtype
         dimension = self.bodies.ambient_dimension
         angular = self.bodies.angular_dimension
@@ -980,7 +999,7 @@ class PreparedRigidJointGraph(StrictModule, NonTrainableState):
             jnp.zeros((self.distance_left.shape[0],), dtype=dtype_),
         )
 
-    def empty_increment(self, dtype=None, /) -> _RigidMobileIncrement:
+    def empty_increment(self, dtype: DTypeLike | None = None, /) -> _RigidMobileIncrement:
         dtype_ = self.bodies.particles.safe_masses.dtype if dtype is None else dtype
         return _RigidMobileIncrement(
             jnp.zeros((self.mobile_count, self.bodies.ambient_dimension), dtype=dtype_),

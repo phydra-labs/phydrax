@@ -8,7 +8,8 @@ from enum import IntEnum
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -44,7 +45,7 @@ class StatisticalResidualAOPlan(StrictModule, NonTrainableState):
         loop_delay: ArrayLike = 0.0,
         measurement_phase_variance: ArrayLike = 0.0,
         aliasing_phase_variance: ArrayLike = 0.0,
-    ):
+    ) -> None:
         cutoff = jnp.asarray(control_cutoff, dtype=jnp.float64)
         gain = jnp.asarray(correction_gain, dtype=jnp.float64)
         delay = jnp.asarray(loop_delay, dtype=jnp.float64)
@@ -337,19 +338,23 @@ def long_exposure_otf(
     if optical.shape != residual.total_residual_psd.shape:
         raise ValueError("Optical OTF and residual PSD supports must have equal shapes.")
     reference = residual.atmosphere.layers[0].screen
-    requested_axes = tuple(axis * scale for axis in diffraction_limited.frequency_axes)
-    residual_axes = tuple(
+    requested_axes = (
+        diffraction_limited.frequency_axes[0] * scale,
+        diffraction_limited.frequency_axes[1] * scale,
+    )
+    residual_axes = (
         jnp.fft.fftshift(
             jnp.fft.fftfreq(
-                count,
-                d=1.0 / (count * spacing),
+                optical.shape[0],
+                d=1.0 / (optical.shape[0] * reference.spacings[0]),
             )
-        )
-        for count, spacing in zip(
-            optical.shape,
-            reference.spacings,
-            strict=True,
-        )
+        ),
+        jnp.fft.fftshift(
+            jnp.fft.fftfreq(
+                optical.shape[1],
+                d=1.0 / (optical.shape[1] * reference.spacings[1]),
+            )
+        ),
     )
     alignment_errors = jnp.stack(
         tuple(

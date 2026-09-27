@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -23,7 +26,7 @@ from phydrax.enforcement import (
 from phydrax.solver import FunctionalSolver
 
 
-def _line_batch(domain, xs):
+def _line_batch(domain: Any, xs: Any) -> Any:
     structure = SampleLayout((("x",),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
@@ -38,17 +41,17 @@ def _line_batch(domain, xs):
     return PointBatch(points=points, structure=structure)
 
 
-def test_boundary_subset_blend_matches_pieces():
+def test_boundary_subset_blend_matches_pieces() -> None:
     geom = Interval1d(0.0, 1.0)
 
-    def left_where(x):
+    def left_where(x: Any) -> Any:
         return x[0] < 0.5
 
-    def right_where(x):
+    def right_where(x: Any) -> Any:
         return x[0] >= 0.5
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] * 0.0
 
     left_component = geom.component({"x": Boundary()}, where={"x": left_where})
@@ -75,7 +78,7 @@ def test_boundary_subset_blend_matches_pieces():
     assert jnp.allclose(out[1], 2.0, atol=1e-3)
 
 
-def test_initial_overlay_boundary_gate_is_dimensionless_and_scale_invariant():
+def test_initial_overlay_boundary_gate_is_dimensionless_and_scale_invariant() -> None:
     gate_values = []
 
     for length in (1.0, 100.0):
@@ -84,11 +87,11 @@ def test_initial_overlay_boundary_gate_is_dimensionless_and_scale_invariant():
         initial = domain.component({"t": FixedStart()})
 
         @domain.Function("x", "t")
-        def u(x, t):
+        def u(x: Any, t: Any) -> Any:
             return x[0] * 0.0 + t * 0.0
 
         @domain.Function("x")
-        def initial_target(x):
+        def initial_target(x: Any) -> Any:
             return jnp.sin(jnp.pi * x[0] / length)
 
         specs = [
@@ -117,7 +120,7 @@ def test_initial_overlay_boundary_gate_is_dimensionless_and_scale_invariant():
     assert jnp.allclose(gate_values[0], gate_values[1])
 
 
-def test_initial_overlay_gate_preserves_declared_normal_derivative():
+def test_initial_overlay_gate_preserves_declared_normal_derivative() -> None:
     domain = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     ) @ TimeInterval(0.0, 1.0)
@@ -125,11 +128,11 @@ def test_initial_overlay_gate_preserves_declared_normal_derivative():
     initial = domain.component({"t": FixedStart()})
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return x[0] * 0.0 + t * 0.0
 
     @domain.Function("x")
-    def incompatible_initial_target(x):
+    def incompatible_initial_target(x: Any) -> Any:
         return x[0]
 
     specs = [
@@ -161,7 +164,7 @@ def test_initial_overlay_gate_preserves_declared_normal_derivative():
     assert jnp.allclose(derivative, 0.0, atol=1e-10)
 
 
-def test_functional_solver_configures_cad_preservation_gate_extent():
+def test_functional_solver_configures_cad_preservation_gate_extent() -> None:
     domain = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     ) @ TimeInterval(0.0, 1.0)
@@ -169,11 +172,11 @@ def test_functional_solver_configures_cad_preservation_gate_extent():
     initial = domain.component({"t": FixedStart()})
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return x[0] * 0.0 + t * 0.0
 
     @domain.Function("x")
-    def initial_target(x):
+    def initial_target(x: Any) -> Any:
         return (1.0 - x[0] ** 2) * (1.0 - x[1] ** 2)
 
     specs = [

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -16,7 +18,9 @@ from phydrax.applications.cosmology._wave_boundaries import (
 from phydrax.discretization.amr._complex_field import complex_amr_fill_patch
 
 
-def _hierarchy(*, fine_capacity=4, refined=False, periodic=True):
+def _hierarchy(
+    *, fine_capacity: Any = 4, refined: Any = False, periodic: Any = True
+) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=periodic),),
         axis_names=("x",),
@@ -40,7 +44,9 @@ def _hierarchy(*, fine_capacity=4, refined=False, periodic=True):
     return grid, runtime, topology
 
 
-def _prepared(*, topology=None, fd_plan=None, adaptivity=None):
+def _prepared(
+    *, topology: Any = None, fd_plan: Any = None, adaptivity: Any = None
+) -> Any:
     if topology is None or fd_plan is None:
         _, fd_plan, topology = _hierarchy(refined=True)
     plan = WaveAMRDiscretizationPlan(
@@ -60,7 +66,7 @@ def _prepared(*, topology=None, fd_plan=None, adaptivity=None):
     )
 
 
-def _field(prepared, *, wave_number=2.0 * np.pi, packet=True):
+def _field(prepared: Any, *, wave_number: Any = 2.0 * np.pi, packet: Any = True) -> Any:
     arrays = []
     lower = float(np.asarray(prepared.topology.plan.grid.structured_axes[0].bounds[0]))
     for level_plan, metadata, spacing in zip(
@@ -92,7 +98,7 @@ def _field(prepared, *, wave_number=2.0 * np.pi, packet=True):
     return prepared.initialize(tuple(arrays), 1.0)
 
 
-def test_fixed_topology_packet_soliton_current_uses_global_composite_solves():
+def test_fixed_topology_packet_soliton_current_uses_global_composite_solves() -> None:
     prepared = _prepared()
     state = _field(prepared)
     result = prepared.step(state, 1.00005)
@@ -126,7 +132,7 @@ def test_fixed_topology_packet_soliton_current_uses_global_composite_solves():
     assert result.state.psi.topology.epoch.epoch_id == state.psi.topology.epoch.epoch_id
 
 
-def test_amr_cayley_solve_honors_configured_iteration_cap_and_rolls_back():
+def test_amr_cayley_solve_honors_configured_iteration_cap_and_rolls_back() -> None:
     _, fd_plan, topology = _hierarchy(refined=True)
     prepared = WaveAMRDiscretizationPlan(
         fd_plan,
@@ -160,7 +166,7 @@ def test_amr_cayley_solve_honors_configured_iteration_cap_and_rolls_back():
         np.testing.assert_array_equal(actual.values, expected.values)
 
 
-def test_amr_kinetic_dispersion_phase_gate_rolls_back():
+def test_amr_kinetic_dispersion_phase_gate_rolls_back() -> None:
     _, fd_plan, topology = _hierarchy(refined=True)
     prepared = WaveAMRDiscretizationPlan(
         fd_plan,
@@ -186,7 +192,7 @@ def test_amr_kinetic_dispersion_phase_gate_rolls_back():
     assert result.state.scale_factor == state.scale_factor
 
 
-def test_complex_fill_patch_is_globally_u1_equivariant():
+def test_complex_fill_patch_is_globally_u1_equivariant() -> None:
     prepared = _prepared()
     state = _field(prepared)
     phase = jnp.exp(0.37j)
@@ -220,7 +226,7 @@ def test_complex_fill_patch_is_globally_u1_equivariant():
         )
 
 
-def test_fixed_topology_derivative_keeps_the_epoch_frozen():
+def test_fixed_topology_derivative_keeps_the_epoch_frozen() -> None:
     prepared = _prepared()
     state = _field(prepared, packet=False)
     tangent = tuple(0.01 * level.values for level in state.psi.levels)
@@ -235,7 +241,9 @@ def test_fixed_topology_derivative_keeps_the_epoch_frozen():
     assert state.psi.topology.epoch.epoch_id == prepared.topology.epoch.epoch_id
 
 
-def test_phase_aware_topology_transfer_preserves_mass_current_and_winding_evidence():
+def test_phase_aware_topology_transfer_preserves_mass_current_and_winding_evidence() -> (
+    None
+):
     _, fd_plan, topology = _hierarchy(refined=False)
     adaptivity = WaveAMRAdaptivityPlan(
         maximum_phase_change=0.01,
@@ -293,7 +301,7 @@ def test_phase_aware_topology_transfer_preserves_mass_current_and_winding_eviden
     assert rejected.candidate_state.psi.topology.epoch.index == topology.epoch.index + 1
 
 
-def test_zero_current_transfer_uses_named_absolute_tolerance():
+def test_zero_current_transfer_uses_named_absolute_tolerance() -> None:
     _, fd_plan, topology = _hierarchy(refined=False)
     prepared = _prepared(
         topology=topology,
@@ -314,7 +322,7 @@ def test_zero_current_transfer_uses_named_absolute_tolerance():
     assert bool(transitioned.evidence.current_preserved)
 
 
-def test_phase_aware_restriction_preserves_probability_current_and_winding():
+def test_phase_aware_restriction_preserves_probability_current_and_winding() -> None:
     _, fd_plan, topology = _hierarchy(refined=True)
     prepared = _prepared(
         topology=topology,
@@ -341,7 +349,7 @@ def test_phase_aware_restriction_preserves_probability_current_and_winding():
     assert restricted.state.psi.topology.epoch.index == topology.epoch.index + 1
 
 
-def test_adaptive_capacity_failure_rolls_back_before_state_transition():
+def test_adaptive_capacity_failure_rolls_back_before_state_transition() -> None:
     _, fd_plan, topology = _hierarchy(fine_capacity=1, refined=False)
     adaptivity = WaveAMRAdaptivityPlan(maximum_phase_change=0.01)
     prepared = _prepared(topology=topology, fd_plan=fd_plan, adaptivity=adaptivity)
@@ -358,8 +366,8 @@ def test_adaptive_capacity_failure_rolls_back_before_state_transition():
 
 
 def test_distributed_resource_admission_requires_mesh_for_multipart_execution(
-    monkeypatch,
-):
+    monkeypatch: Any,
+) -> None:
     _, fd_plan, topology = _hierarchy(refined=True)
     prepared = _prepared(topology=topology, fd_plan=fd_plan)
     state = _field(prepared)
@@ -386,7 +394,7 @@ def test_distributed_resource_admission_requires_mesh_for_multipart_execution(
 
     denied_partition = phx.discretization.BlockAMRPartitionPlan(topology.plan, 1)
 
-    def forbidden_prepare(*args, **kwargs):
+    def forbidden_prepare(*args: Any, **kwargs: Any) -> None:
         del args, kwargs
         raise AssertionError("distributed routes were constructed before admission")
 
@@ -403,7 +411,7 @@ def test_distributed_resource_admission_requires_mesh_for_multipart_execution(
     assert "before layout or route construction" in denied.reason
 
 
-def test_isolated_boundary_requires_distinct_finite_domain_gravity_owner():
+def test_isolated_boundary_requires_distinct_finite_domain_gravity_owner() -> None:
     _, fd_plan, topology = _hierarchy(periodic=False)
     gauge = IsolatedPotentialGauge((0.5,), 2.0, multipole_order=4)
     absorbing = AbsorbingWaveBoundaryPolicy(0.2, 3.0)

@@ -3,12 +3,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+import numpy.typing as npt
+from jax import Array
+from jax.typing import ArrayLike
 
 from .... import linalg as la
 from ...._fingerprint import canonical_fingerprint
@@ -18,10 +21,11 @@ from ....observation import (
     CholeskyCovarianceAction,
     CoordinateLayout,
     CorrelatedGaussianPlan,
+    CorrelatedGaussianResult,
     LinearObservationPlan,
     TheoryVector,
 )
-from ....optim import least_squares, LevenbergMarquardt
+from ....optim import least_squares, LevenbergMarquardt, OptimizationTermination
 from ....qualification import ReferenceArtifactManifest
 from ....units import conversion_factor, SECOND, UnitDefinition
 from .._construct import NucleicAcidConstruct, NucleotideKey
@@ -34,7 +38,7 @@ class ChemicalMappingCondition:
     exposure: float | None
     exposure_unit: UnitDefinition = SECOND
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         conversion_factor(self.exposure_unit, SECOND)
         if (
             not self.condition_id
@@ -79,20 +83,20 @@ class ChemicalMappingObservation(StrictModule):
 
     def __init__(
         self,
-        construct,
-        nucleotide_keys,
-        reactivity,
-        standard_deviation,
+        construct: NucleicAcidConstruct,
+        nucleotide_keys: Iterable[NucleotideKey],
+        reactivity: npt.ArrayLike,
+        standard_deviation: npt.ArrayLike,
         *,
-        reagent,
-        condition,
-        replicate_id,
-        preprocessing,
-        source,
-        observed=None,
-        covariance_lower=None,
-        requested_use=None,
-    ):
+        reagent: str,
+        condition: ChemicalMappingCondition,
+        replicate_id: str,
+        preprocessing: Iterable[str],
+        source: ReferenceArtifactManifest,
+        observed: npt.ArrayLike | None = None,
+        covariance_lower: npt.ArrayLike | None = None,
+        requested_use: Mapping[str, bool] | None = None,
+    ) -> None:
         if not isinstance(source, ReferenceArtifactManifest):
             raise TypeError(
                 "Chemical mapping requires source rights and uncertainty provenance."
@@ -191,7 +195,7 @@ class ChemicalMappingObservation(StrictModule):
             }
         )
 
-    def score(self, prediction):
+    def score(self, prediction: ArrayLike) -> CorrelatedGaussianResult:
         values = jnp.asarray(prediction)
         if values.shape != self.reactivity.shape:
             raise ValueError("Prediction must retain original observation support.")
@@ -201,7 +205,7 @@ class ChemicalMappingObservation(StrictModule):
             )
         )
 
-    def residual(self, prediction):
+    def residual(self, prediction: ArrayLike) -> Array:
         return self.covariance.whiten(
             (jnp.asarray(prediction) - self.reactivity)[self.observed_indices]
         )
@@ -237,13 +241,13 @@ class AccessibilityReactivityModel(StrictModule):
 
     def __init__(
         self,
-        observations,
-        accessibility,
+        observations: Iterable[ChemicalMappingObservation],
+        accessibility: Iterable[npt.ArrayLike],
         *,
-        baseline_groups,
-        condition_features,
-        condition_names=(),
-    ):
+        baseline_groups: Iterable[str],
+        condition_features: npt.ArrayLike,
+        condition_names: Sequence[str] = (),
+    ) -> None:
         observations, accessibility, groups = (
             tuple(observations),
             tuple(accessibility),
@@ -307,10 +311,16 @@ class AccessibilityReactivityModel(StrictModule):
             }
         )
 
-    def predict(self, parameters):
+    def predict(self, parameters: ArrayLike) -> tuple[Array, ...]:
         return tuple(contract("ij,j->i", matrix, parameters) for matrix in self.design)
 
-    def fit(self, initial_parameters=None, *, termination=None, requested_use=None):
+    def fit(
+        self,
+        initial_parameters: ArrayLike | None = None,
+        *,
+        termination: OptimizationTermination | None = None,
+        requested_use: Mapping[str, bool] | None = None,
+    ) -> ChemicalMappingFit:
         use = {} if requested_use is None else dict(requested_use)
         use["training_use"] = True
         for observation in self.observations:
@@ -323,7 +333,7 @@ class AccessibilityReactivityModel(StrictModule):
         if initial.shape != (len(self.parameter_names),):
             raise ValueError("Initial observation-model parameters have incorrect shape.")
 
-        def residual(parameters, args):
+        def residual(parameters: Array, args: object) -> tuple[Array, ...]:
             del args
             return tuple(
                 obs.residual(prediction)

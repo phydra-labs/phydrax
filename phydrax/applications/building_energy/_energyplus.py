@@ -8,16 +8,21 @@ import hashlib
 import io
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
 from ...series import SampledSeries, SeriesSupport
 from ...units import UnitDefinition
 from .._energy_series import EnergySeries
+
+
+if TYPE_CHECKING:
+    from ..._external_runtime import EnergyRunResult, PinnedExecutable
 
 
 class EnergyPlusVariable(StrictModule):
@@ -37,7 +42,7 @@ class EnergyPlusVariable(StrictModule):
         meaning: str = "interval_average",
         scale: float = 1.0,
         offset: float = 0.0,
-    ):
+    ) -> None:
         if (
             not column
             or not quantity
@@ -67,7 +72,7 @@ class EnergyPlusReference(StrictModule):
 
     def __init__(
         self, model: bytes, *, model_format: str = "idf", provenance: Sequence[str]
-    ):
+    ) -> None:
         if not model or model_format not in ("idf", "epjson") or not provenance:
             raise ValueError(
                 "Reference requires model bytes, supported format, and provenance."
@@ -79,7 +84,9 @@ class EnergyPlusReference(StrictModule):
         )
         self.content_sha256 = hashlib.sha256(model).hexdigest()
 
-    def run(self, executable, weather: bytes, *, timeout: float = 120):
+    def run(
+        self, executable: PinnedExecutable, weather: bytes, *, timeout: float = 120
+    ) -> EnergyRunResult:
         from ..._external_runtime import run_energyplus
 
         result = run_energyplus(

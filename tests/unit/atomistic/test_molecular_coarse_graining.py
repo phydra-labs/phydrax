@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,27 +13,34 @@ import pytest
 import phydrax as phx
 
 
-def _fine_system(*, cell=None):
+def _fine_system(*, cell: Any = None) -> Any:
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     return phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [10, 20, 30, 40],
+        # ty: ignore[invalid-argument-type]
         [1, 1, 1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 3.0, 2.0, 2.0],
         units,
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[1, 1, 1, 1],
+        # ty: ignore[invalid-argument-type]
         charges=[0.1, -0.1, 0.2, -0.2],
+        # ty: ignore[invalid-argument-type]
         molecule_ids=[0, 0, 1, 1],
         cell=cell,
     ).prepare()
 
 
-def _mapping(system):
+def _mapping(system: Any) -> Any:
+    # ty: ignore[invalid-argument-type]
     return phx.atomistic.MolecularCoarseMapPlan([100, 200], [0, 1], [0, 0, 1, 1]).prepare(
         system
     )
 
 
-def test_center_of_mass_map_conserves_mass_charge_momentum_and_force():
+def test_center_of_mass_map_conserves_mass_charge_momentum_and_force() -> None:
     system = _fine_system()
     mapping = _mapping(system)
     positions = jnp.asarray(
@@ -53,7 +63,7 @@ def test_center_of_mass_map_conserves_mass_charge_momentum_and_force():
     assert jnp.array_equal(mapping.coarse_system.plan.atom_type_ids, jnp.asarray([0, 1]))
 
 
-def test_periodic_map_uses_image_counts_and_rejects_invalid_partition():
+def test_periodic_map_uses_image_counts_and_rejects_invalid_partition() -> None:
     cell = phx.discretization.PeriodicCell(jnp.eye(3) * 10.0)
     system = _fine_system(cell=cell)
     mapping = _mapping(system)
@@ -67,12 +77,13 @@ def test_periodic_map_uses_image_counts_and_rejects_invalid_partition():
     assert bool(mapped.successful)
     assert jnp.allclose(mapped.positions[0, 0], 0.1)
     with pytest.raises(ValueError, match="Every active"):
+        # ty: ignore[invalid-argument-type]
         phx.atomistic.MolecularCoarseMapPlan([100, 200], [0, 1], [0, -1, 1, 1]).prepare(
             system
         )
 
 
-def test_type_id_potential_accepts_coarse_particles_and_atomic_model_rejects():
+def test_type_id_potential_accepts_coarse_particles_and_atomic_model_rejects() -> None:
     system = _fine_system()
     mapping = _mapping(system)
     positions = jnp.asarray(

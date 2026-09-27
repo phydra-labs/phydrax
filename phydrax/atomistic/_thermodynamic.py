@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -40,7 +42,7 @@ class AtomisticPhaseSpaceMeasurePlan(StrictModule, NonTrainableState):
         *,
         scaled_entity_count: int | None = None,
         volume_coordinate_convention: str = "molecular-center",
-    ):
+    ) -> None:
         if not isinstance(system, PreparedAtomisticSystem):
             raise TypeError("system must be a PreparedAtomisticSystem.")
         entities = (
@@ -103,7 +105,7 @@ class AtomisticThermodynamicStatePlan(StrictModule, NonTrainableState):
         control_ids: tuple[str, ...] = (),
         bias_id: str | None = None,
         state_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(phase_space, AtomisticPhaseSpaceMeasurePlan):
             raise TypeError("phase_space must be an AtomisticPhaseSpaceMeasurePlan.")
         if ensemble not in _ENSEMBLE_CODES:
@@ -223,7 +225,12 @@ class PreparedThermodynamicStateTable(StrictModule, NonTrainableState):
     requires_cross_evaluation: bool = eqx.field(static=True)
     table_id: str = eqx.field(static=True)
 
-    def __init__(self, dynamics: Any, states, /):
+    def __init__(
+        self,
+        dynamics: Any,
+        states: Iterable[AtomisticThermodynamicStatePlan],
+        /,
+    ) -> None:
         from ._dynamics import PreparedAtomisticDynamics
 
         if not isinstance(dynamics, PreparedAtomisticDynamics):

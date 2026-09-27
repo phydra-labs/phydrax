@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -16,7 +19,7 @@ from phydrax.integration import from_samples, over
 from phydrax.operators.integral import integral
 
 
-def test_coord_separable_fourier_axis_spec_interval_discretization_attached():
+def test_coord_separable_fourier_axis_spec_interval_discretization_attached() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
 
@@ -30,20 +33,24 @@ def test_coord_separable_fourier_axis_spec_interval_discretization_attached():
     disc = batch.axis_discretization_by_axis[axis]
     assert disc.basis == "fourier"
     assert bool(disc.periodic) is True
+    # ty: ignore[unresolved-attribute]
     assert disc.quad_weights.shape == (8,)
+    # ty: ignore[invalid-argument-type]
     assert jnp.all(jnp.isfinite(disc.quad_weights))
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(disc.quad_weights, jnp.full((8,), 1.0 / 8.0))
+    # ty: ignore[invalid-argument-type]
     assert jnp.sum(disc.quad_weights) == pytest.approx(1.0, abs=1e-12)
     assert disc.nodes.shape == x_field.data.shape
     assert jnp.allclose(disc.nodes, jnp.asarray(x_field.data, dtype="float64"))
 
 
-def test_coord_separable_legendre_axis_spec_integral_matches_closed_form():
+def test_coord_separable_legendre_axis_spec_integral_matches_closed_form() -> None:
     geom = Interval1d(-1.0, 2.0)
     component = geom.component()
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 2
 
     batch = component.sample(phx.domain.GridSampling({"x": LegendreAxisSpec(6)}))
@@ -53,7 +60,7 @@ def test_coord_separable_legendre_axis_spec_integral_matches_closed_form():
     assert jnp.allclose(jnp.asarray(out.data), expected, rtol=1e-7, atol=1e-7)
 
 
-def test_legendre_axis_endpoint_rules_and_validation():
+def test_legendre_axis_endpoint_rules_and_validation() -> None:
     lower = jnp.asarray(-2.0)
     upper = jnp.asarray(3.0)
     radau = LegendreAxisSpec(5, kind="radau").materialize(lower, upper)
@@ -62,15 +69,18 @@ def test_legendre_axis_endpoint_rules_and_validation():
     assert radau.nodes[0] == lower
     assert lobatto.nodes[0] == lower
     assert lobatto.nodes[-1] == upper
+    # ty: ignore[invalid-argument-type]
     assert jnp.sum(radau.quad_weights) == pytest.approx(5.0, abs=1e-12)
+    # ty: ignore[invalid-argument-type]
     assert jnp.sum(lobatto.quad_weights) == pytest.approx(5.0, abs=1e-12)
     with pytest.raises(ValueError, match="kind"):
+        # ty: ignore[invalid-argument-type]
         LegendreAxisSpec(4, kind="typo")
     with pytest.raises(ValueError, match="at least two"):
         LegendreAxisSpec(1, kind="lobatto")
 
 
-def test_sdf_domain_function_preserves_interval_sign_and_boundary_distance():
+def test_sdf_domain_function_preserves_interval_sign_and_boundary_distance() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
     epsilon = 1e-4
@@ -87,14 +97,14 @@ def test_sdf_domain_function_preserves_interval_sign_and_boundary_distance():
     assert jnp.allclose(jnp.abs(values[near_boundary]), epsilon, rtol=1e-3)
 
 
-def test_coord_separable_scalar_time_axis_integral_constant():
+def test_coord_separable_scalar_time_axis_integral_constant() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 2.0)
     domain = geom @ time
     component = domain.component()
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> float:
         del x, t
         return 1.0
 

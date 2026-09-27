@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -12,7 +15,7 @@ import pytest
 import phydrax as phx
 
 
-def _linear_case():
+def _linear_case() -> Any:
     mean = jnp.asarray([0.3, -0.8])
     root = jnp.asarray([[1.1, 0.0], [0.25, 0.7]])
     matrix = jnp.asarray([[1.5, -0.4], [0.2, 0.9], [-0.7, 0.3]])
@@ -20,7 +23,7 @@ def _linear_case():
     return mean, phx.uq.GaussianFactor(root), matrix, offset
 
 
-def test_all_transforms_recover_affine_moments_and_cross_covariance():
+def test_all_transforms_recover_affine_moments_and_cross_covariance() -> None:
     mean, factor, matrix, offset = _linear_case()
     covariance = factor.covariance
     expected_mean = matrix @ mean + offset
@@ -45,11 +48,11 @@ def test_all_transforms_recover_affine_moments_and_cross_covariance():
         assert result.output_dimension == 3
 
 
-def test_first_order_transform_uses_complex_real_linear_factor_directions():
+def test_first_order_transform_uses_complex_real_linear_factor_directions() -> None:
     mean = jnp.asarray([0.2 + 0.3j, -0.4 + 0.1j])
     root = jnp.asarray([[0.8 + 0.2j, -0.1 + 0.3j], [0.25 - 0.4j, 0.6 + 0.1j]])
 
-    def real_linear(value):
+    def real_linear(value: Any) -> Any:
         return jnp.stack(
             (
                 jnp.conj(value[0]),
@@ -67,7 +70,7 @@ def test_first_order_transform_uses_complex_real_linear_factor_directions():
     )
     expected_cross = root @ jnp.conj(output_directions.T)
 
-    def transformed_cross(scale):
+    def transformed_cross(scale: Any) -> Any:
         factor = phx.uq.GaussianFactor(scale * root)
         return phx.uq.first_order_gaussian_transform(
             real_linear, mean, factor
@@ -96,10 +99,10 @@ def test_first_order_transform_uses_complex_real_linear_factor_directions():
     )
 
 
-def test_first_order_high_output_cross_covariance_has_linear_shape():
+def test_first_order_high_output_cross_covariance_has_linear_shape() -> None:
     output_size = 50_000
 
-    def transformed_cross(root):
+    def transformed_cross(root: Any) -> Any:
         factor = phx.uq.GaussianFactor(root.reshape((1, 1)))
         return phx.uq.first_order_gaussian_transform(
             lambda value: jnp.broadcast_to(value, (output_size,)),
@@ -115,7 +118,7 @@ def test_first_order_high_output_cross_covariance_has_linear_shape():
     )
 
 
-def test_quadratic_moments_distinguish_exact_and_first_order_rules():
+def test_quadratic_moments_distinguish_exact_and_first_order_rules() -> None:
     mean = jnp.asarray(0.3)
     variance = 0.7
     factor = phx.uq.GaussianFactor(jnp.asarray([[jnp.sqrt(variance)]]))
@@ -140,12 +143,12 @@ def test_quadratic_moments_distinguish_exact_and_first_order_rules():
     assert jnp.allclose(first_order.cross_covariance[0, 0], exact_cross, atol=2e-6)
 
 
-def test_high_order_hermite_matches_a_deterministic_particle_reference():
+def test_high_order_hermite_matches_a_deterministic_particle_reference() -> None:
     mean = jnp.asarray(-0.2)
     scale = 0.65
     factor = phx.uq.GaussianFactor(jnp.asarray([[scale]]))
 
-    def function(value):
+    def function(value: Any) -> Any:
         return jnp.asarray([jnp.sin(value), jnp.exp(0.2 * value)])
 
     result = phx.uq.gauss_hermite_transform(function, mean, factor, order=9)
@@ -164,7 +167,7 @@ def test_high_order_hermite_matches_a_deterministic_particle_reference():
     assert jnp.allclose(result.cross_covariance[0], reference_cross, atol=4e-5)
 
 
-def test_singular_and_zero_rank_factors_remain_observable_and_valid():
+def test_singular_and_zero_rank_factors_remain_observable_and_valid() -> None:
     singular = phx.uq.GaussianFactor(jnp.asarray([[1.0], [2.0]]))
     matrix = jnp.asarray([[0.5, -0.25], [1.0, 0.5]])
     transformed = phx.uq.spherical_radial_cubature(
@@ -191,7 +194,7 @@ def test_singular_and_zero_rank_factors_remain_observable_and_valid():
     assert jnp.array_equal(deterministic.cross_covariance, jnp.zeros((2, 1)))
 
 
-def test_dimension_and_tensor_point_guards_are_explicit():
+def test_dimension_and_tensor_point_guards_are_explicit() -> None:
     factor = phx.uq.GaussianFactor(jnp.eye(6))
     with pytest.raises(ValueError, match="got 6, cap 5"):
         phx.uq.gauss_hermite_transform(lambda value: value, jnp.zeros(6), factor)
@@ -214,7 +217,7 @@ def test_dimension_and_tensor_point_guards_are_explicit():
         )
 
 
-def test_invalid_unscented_covariance_is_reported_without_repair():
+def test_invalid_unscented_covariance_is_reported_without_repair() -> None:
     factor = phx.uq.GaussianFactor(jnp.ones((1, 1)))
     result = phx.uq.scaled_unscented_transform(
         lambda value: value**2,
@@ -229,7 +232,7 @@ def test_invalid_unscented_covariance_is_reported_without_repair():
     assert jnp.any(~jnp.isfinite(result.factor.factor))
 
 
-def test_regularization_is_applied_and_recorded_explicitly():
+def test_regularization_is_applied_and_recorded_explicitly() -> None:
     factor = phx.uq.GaussianFactor(jnp.ones((1, 1)))
     result = phx.uq.spherical_radial_cubature(
         lambda value: jnp.asarray([2.0, -1.0]),
@@ -244,7 +247,7 @@ def test_regularization_is_applied_and_recorded_explicitly():
     assert jnp.array_equal(result.cross_covariance, jnp.zeros((1, 2)))
 
 
-def test_method_and_parameter_provenance_are_stable():
+def test_method_and_parameter_provenance_are_stable() -> None:
     factor = phx.uq.GaussianFactor(jnp.eye(2))
     mean = jnp.zeros(2)
     cubature = phx.uq.spherical_radial_cubature(lambda value: value, mean, factor)
@@ -287,11 +290,11 @@ def test_method_and_parameter_provenance_are_stable():
     )
 
 
-def test_event_pytrees_jit_vmap_and_gradients_preserve_contracts():
+def test_event_pytrees_jit_vmap_and_gradients_preserve_contracts() -> None:
     pytree_mean = {"forcing": jnp.asarray([0.2, -0.5]), "parameter": jnp.asarray(0.7)}
     pytree_factor = phx.uq.GaussianFactor(jnp.eye(3))
 
-    def pytree_function(value):
+    def pytree_function(value: Any) -> Any:
         return {
             "field": jnp.asarray(
                 [value["forcing"][0] + value["parameter"], value["forcing"][1]]
@@ -330,7 +333,7 @@ def test_event_pytrees_jit_vmap_and_gradients_preserve_contracts():
     )(centers)
     mean_gradient = jax.grad(lambda center: compiled(center).mean)(jnp.asarray(0.3))
 
-    def covariance_from_root(root):
+    def covariance_from_root(root: Any) -> Any:
         local_factor = phx.uq.GaussianFactor(root.reshape((1, 1)))
         result = phx.uq.first_order_gaussian_transform(
             lambda value: value**2,
@@ -372,10 +375,12 @@ def test_event_pytrees_jit_vmap_and_gradients_preserve_contracts():
     assert jnp.allclose(root_gradient, 8.0 * 0.7**2 * root)
 
 
-def test_gaussian_expectation_reuses_rules_without_materializing_output_covariance():
+def test_gaussian_expectation_reuses_rules_without_materializing_output_covariance() -> (
+    None
+):
     mean, factor, matrix, offset = _linear_case()
 
-    def function(value):
+    def function(value: Any) -> Any:
         transformed = matrix @ value + offset
         return {"field": transformed[:2], "total": jnp.sum(transformed)}
 
@@ -399,11 +404,11 @@ def test_gaussian_expectation_reuses_rules_without_materializing_output_covarian
     )
 
 
-def test_gaussian_expectation_polynomial_values_and_gradients_are_exact():
+def test_gaussian_expectation_polynomial_values_and_gradients_are_exact() -> None:
     mean = jnp.asarray(0.35)
     scale = jnp.asarray(0.6)
 
-    def expectation(center, root):
+    def expectation(center: Any, root: Any) -> Any:
         factor = phx.uq.GaussianFactor(root.reshape((1, 1)))
         return phx.uq.gaussian_expectation(
             lambda value: jnp.asarray([value**2, value**3]),
@@ -429,7 +434,7 @@ def test_gaussian_expectation_polynomial_values_and_gradients_are_exact():
     assert jnp.allclose(scale_gradient, 2.0 * scale, atol=2e-6)
 
 
-def test_gaussian_expectation_monte_carlo_is_keyed_and_zero_rank_is_exact():
+def test_gaussian_expectation_monte_carlo_is_keyed_and_zero_rank_is_exact() -> None:
     factor = phx.uq.GaussianFactor(jnp.asarray([[0.7]]))
     first = phx.uq.gaussian_expectation(
         lambda value: value**2,
@@ -471,7 +476,7 @@ def test_gaussian_expectation_monte_carlo_is_keyed_and_zero_rank_is_exact():
     assert jnp.array_equal(deterministic.value["value"], jnp.asarray([-0.25, -2.5]))
 
 
-def test_gaussian_expectation_preserves_guards_and_nonfinite_status():
+def test_gaussian_expectation_preserves_guards_and_nonfinite_status() -> None:
     factor = phx.uq.GaussianFactor(jnp.eye(2))
     with pytest.raises(ValueError, match="exceeds max_dimension"):
         phx.uq.gaussian_expectation(

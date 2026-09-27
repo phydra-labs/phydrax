@@ -9,11 +9,13 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ..._strict import StrictModule
+from ...typing import parse
 
 
 SpectrumReplacement: TypeAlias = Literal["bulk-mean", "upper-edge", "hard-floor"]
@@ -166,10 +168,7 @@ def clean_covariance_spectrum(
 ) -> RandomMatrixCleaningResult:
     """Replace null-bulk eigenvalues and reconstruct a Hermitian PSD covariance."""
 
-    if replacement not in ("bulk-mean", "upper-edge", "hard-floor"):
-        raise ValueError(
-            "replacement must be 'bulk-mean', 'upper-edge', or 'hard-floor'."
-        )
+    replacement = parse(replacement, SpectrumReplacement, "replacement")
     floor = float(eigenvalue_floor)
     if not math.isfinite(floor) or floor < 0.0:
         raise ValueError("eigenvalue_floor must be finite and nonnegative.")

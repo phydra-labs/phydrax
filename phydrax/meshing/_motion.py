@@ -24,7 +24,8 @@ from enum import StrEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -128,7 +129,7 @@ class MeshMotionMonitorPolicy(StrictModule, NonTrainableState):
         validity: CellValidityPolicy | None = None,
         relocation_termination: OptimizationTermination | None = None,
         accept_valid_nonconverged_relocation: bool = False,
-    ):
+    ) -> None:
         relocation_jacobian = _ratio(
             relocation_jacobian_ratio, "relocation_jacobian_ratio"
         )
@@ -234,7 +235,7 @@ class MeshMotionAssessment(StrictModule, NonTrainableState):
         boundary_residual: float,
         reasons: tuple[str, ...],
         coordinates_id: str,
-    ):
+    ) -> None:
         self.decision = decision
         self.certificate = certificate
         self.minimum_jacobian_ratio = float(minimum_jacobian_ratio)
@@ -277,7 +278,7 @@ class MeshMotionMonitor(StrictModule, NonTrainableState):
         /,
         *,
         policy: MeshMotionMonitorPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(reference, CellMesh):
             raise TypeError("reference must be CellMesh.")
         policy_ = MeshMotionMonitorPolicy() if policy is None else policy
@@ -334,6 +335,7 @@ class MeshMotionMonitor(StrictModule, NonTrainableState):
                 maximum_displacement_fraction=math.inf,
                 boundary_residual=residual,
                 reasons=("nonfinite-coordinates",),
+                # ty: ignore[invalid-argument-type]
                 coordinates_id=coordinates_id,
             )
         policy = self.policy
@@ -405,6 +407,7 @@ class MeshMotionMonitor(StrictModule, NonTrainableState):
             maximum_displacement_fraction=displacement,
             boundary_residual=residual,
             reasons=reasons,
+            # ty: ignore[invalid-argument-type]
             coordinates_id=coordinates_id,
         )
 
@@ -441,7 +444,7 @@ class MeshMotionAdvance(StrictModule, NonTrainableState):
         relocation: MeshOptimizationResult | None = None,
         remesh_metric: MeshMetricField | None = None,
         adaptation: MeshAdaptationResult | None = None,
-    ):
+    ) -> None:
         remesh = decision is MeshMotionDecision.REMESH
         if (decision is MeshMotionDecision.REJECT) != (result is None):
             raise ValueError("Exactly the rejected advances carry no result.")
@@ -627,6 +630,7 @@ def advance_mesh_motion(
                 relocation=relocation,
             )
         candidate = relocation.result
+    # ty: ignore[unresolved-attribute]
     elif assessment.certificate.all_certified:
         candidate = certify_cell_mesh(moved, source.coordinate_contract)
     else:
@@ -635,8 +639,10 @@ def advance_mesh_motion(
             MeshMotionDecision.REJECT, tuple(assessments), relocation=relocation
         )
     metric = (
+        # ty: ignore[invalid-argument-type]
         _reference_size_metric(monitor.reference, candidate)
         if remesh_metric is None
+        # ty: ignore[invalid-argument-type]
         else remesh_metric(candidate)
     )
     if not isinstance(metric, MeshMetricField):
@@ -649,6 +655,7 @@ def advance_mesh_motion(
             relocation=relocation,
             remesh_metric=metric,
         )
+    # ty: ignore[invalid-argument-type]
     adaptation = _remesh(candidate, metric, adaptation_policy)
     return MeshMotionAdvance(
         MeshMotionDecision.REMESH,

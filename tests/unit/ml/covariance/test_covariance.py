@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -53,7 +56,7 @@ _DATA = jnp.array(
         GraphicalLasso(max_iterations=8, tolerance=1.0, regularization=1e-4),
     ],
 )
-def test_covariance_recipe_families_produce_immutable_spd_geometry(recipe):
+def test_covariance_recipe_families_produce_immutable_spd_geometry(recipe: Any) -> None:
     result = recipe.fit_batch(MLBatch(_DATA, sample_weight=jnp.arange(1.0, 7.0)))
     model = result.as_trainable()
     eigenvalues = jnp.linalg.eigvalsh(model.covariance)
@@ -71,7 +74,7 @@ def test_covariance_recipe_families_produce_immutable_spd_geometry(recipe):
     assert contract.level(DerivativeSurface.INPUT) is GradientLevel.SMOOTH
 
 
-def test_weighted_covariance_uses_effective_denominator_masks_and_case_axes():
+def test_weighted_covariance_uses_effective_denominator_masks_and_case_axes() -> None:
     features = jnp.stack((_DATA, 2.0 * _DATA), axis=0)
     feature_mask = jnp.ones_like(features, dtype="bool").at[:, 2, 1].set(False)
     sample_weight = jnp.array([1.0, 2.0, 50.0, 2.0, 1.0, 1.0])
@@ -88,14 +91,17 @@ def test_weighted_covariance_uses_effective_denominator_masks_and_case_axes():
     weights = jnp.array([1.0, 2.0, 2.0, 1.0])
     expected_mean = jnp.sum(weights[:, None] * retained, axis=0) / jnp.sum(weights)
 
+    # ty: ignore[unresolved-attribute]
     assert model.mean.shape == (2, 3)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.mean[0], expected_mean)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.mean[1], 2.0 * expected_mean)
     assert model(features).shape == (2, 6)
     assert result.diagnostics.effective_samples.shape == (2,)
 
 
-def test_covariance_parameterizations_are_exactly_diagonal_low_rank_and_sparse():
+def test_covariance_parameterizations_are_exactly_diagonal_low_rank_and_sparse() -> None:
     diagonal = (
         DiagonalCovariance(regularization=1e-5).fit_batch(MLBatch(_DATA)).as_trainable()
     )
@@ -110,11 +116,16 @@ def test_covariance_parameterizations_are_exactly_diagonal_low_rank_and_sparse()
         .as_trainable()
     )
 
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(diagonal.covariance, jnp.diag(jnp.diag(diagonal.covariance)))
+    # ty: ignore[unresolved-attribute]
     assert factor.factor_loadings.shape == (3, 1)
+    # ty: ignore[unresolved-attribute]
     reconstructed = factor.factor_loadings @ factor.factor_loadings.T + jnp.diag(
+        # ty: ignore[unresolved-attribute]
         factor.diagonal
     )
+    # ty: ignore[unresolved-attribute]
     regularization_residual = factor.covariance - reconstructed
     assert jnp.allclose(
         regularization_residual,
@@ -122,11 +133,12 @@ def test_covariance_parameterizations_are_exactly_diagonal_low_rank_and_sparse()
         atol=3e-5,
     )
     assert jnp.all(jnp.diag(regularization_residual) > 0.0)
+    # ty: ignore[unresolved-attribute]
     graphical_off_diagonal = graphical.precision - jnp.diag(jnp.diag(graphical.precision))
     assert jnp.count_nonzero(jnp.abs(graphical_off_diagonal) < 1e-7) > 3
 
 
-def test_complex_covariance_is_hermitian_and_uses_proper_complex_likelihood():
+def test_complex_covariance_is_hermitian_and_uses_proper_complex_likelihood() -> None:
     complex_data = _DATA.astype(jnp.complex64) + 1j * jnp.flip(_DATA, axis=-1)
     model = (
         EmpiricalCovariance(regularization=1e-4)
@@ -134,24 +146,33 @@ def test_complex_covariance_is_hermitian_and_uses_proper_complex_likelihood():
         .as_trainable()
     )
     point = complex_data[0]
+    # ty: ignore[unresolved-attribute]
     expected = -(model(point) + 3 * jnp.log(jnp.pi) + model.log_determinant)
 
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.covariance, jnp.conj(model.covariance.T), atol=2e-5)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.log_density(point), expected)
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(jnp.isfinite(model.whiten(complex_data)))
 
 
-def test_covariance_prediction_and_declared_fit_gradients_are_finite_and_jittable():
+def test_covariance_prediction_and_declared_fit_gradients_are_finite_and_jittable() -> (
+    None
+):
     point = jnp.array([0.3, -0.2, 0.7])
     recipe = EmpiricalCovariance(regularization=1e-3)
     model = recipe.fit_batch(MLBatch(_DATA)).as_trainable()
 
+    # ty: ignore[unresolved-attribute]
     prediction_gradient = jax.grad(model.log_density)(point)
     feature_gradient = jax.grad(
+        # ty: ignore[unresolved-attribute]
         lambda values: recipe.fit_batch(MLBatch(values)).as_trainable().log_density(point)
     )(_DATA)
     weight_gradient = jax.grad(
         lambda weights: (
+            # ty: ignore[unresolved-attribute]
             recipe.fit_batch(MLBatch(_DATA, sample_weight=weights))
             .as_trainable()
             .log_density(point)
@@ -161,18 +182,24 @@ def test_covariance_prediction_and_declared_fit_gradients_are_finite_and_jittabl
     assert jnp.all(jnp.isfinite(prediction_gradient))
     assert jnp.all(jnp.isfinite(feature_gradient))
     assert jnp.all(jnp.isfinite(weight_gradient))
+    # ty: ignore[unresolved-attribute]
     assert jax.jit(model.log_density)(point).shape == ()
 
     parameter_gradient = jax.grad(
         lambda mean: CovarianceModel(
             mean,
+            # ty: ignore[unresolved-attribute]
             model.covariance,
+            # ty: ignore[unresolved-attribute]
             model.precision,
+            # ty: ignore[unresolved-attribute]
             model.log_determinant,
             method="gradient-probe",
         ).log_density(point)
+        # ty: ignore[unresolved-attribute]
     )(model.mean)
     assert jnp.all(jnp.isfinite(parameter_gradient))
+    # ty: ignore[unresolved-attribute]
     assert jax.vmap(model.log_density)(_DATA).shape == (6,)
 
 
@@ -188,7 +215,7 @@ def test_covariance_prediction_and_declared_fit_gradients_are_finite_and_jittabl
         GraphicalLasso(max_iterations=3, tolerance=1.0, regularization=1e-3),
     ],
 )
-def test_each_declared_covariance_fit_gradient_is_finite(recipe):
+def test_each_declared_covariance_fit_gradient_is_finite(recipe: Any) -> None:
     point = jnp.array([0.1, 0.2, -0.3])
     feature_gradient = jax.grad(
         lambda values: recipe.fit_batch(MLBatch(values)).as_trainable().log_density(point)
@@ -225,7 +252,9 @@ def test_each_declared_covariance_fit_gradient_is_finite(recipe):
         ),
     ],
 )
-def test_each_declared_covariance_fit_hyperparameter_gradient_is_finite(factory):
+def test_each_declared_covariance_fit_hyperparameter_gradient_is_finite(
+    factory: Any,
+) -> None:
     point = jnp.array([0.1, -0.3, 0.2])
     gradient = jax.grad(
         lambda regularization: (
@@ -238,7 +267,7 @@ def test_each_declared_covariance_fit_hyperparameter_gradient_is_finite(factory)
     assert jnp.isfinite(gradient)
 
 
-def test_covariance_reports_nonfinite_underfull_and_constant_degeneracy():
+def test_covariance_reports_nonfinite_underfull_and_constant_degeneracy() -> None:
     nonfinite = _DATA.at[1, 0].set(jnp.nan)
     nonfinite_result = EmpiricalCovariance().fit_batch(MLBatch(nonfinite))
     underfull = WeightedCovariance(correction=1.0).fit_batch(
@@ -259,10 +288,11 @@ def test_covariance_reports_nonfinite_underfull_and_constant_degeneracy():
     assert robust_nonconverged.status == ML_NONCONVERGED
     assert graphical_nonconverged.status == ML_NONCONVERGED
     assert constant.diagnostics.rank < 3
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(jnp.linalg.eigvalsh(constant.as_trainable().covariance) > 0.0)
 
 
-def test_streaming_gaussian_moments_update_merge_and_model_match_batch_fit():
+def test_streaming_gaussian_moments_update_merge_and_model_match_batch_fit() -> None:
     empty = StreamingGaussianMoments.initialize(3)
     first = empty.update(_DATA[:3], weights=jnp.array([1.0, 2.0, 3.0]))
     second = StreamingGaussianMoments.initialize(3).update(
@@ -279,7 +309,9 @@ def test_streaming_gaussian_moments_update_merge_and_model_match_batch_fit():
     assert empty.mass == 0.0
     assert first.mass == 6.0
     assert merged.updates == 2
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(merged.mean, batch.mean, atol=2e-6)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(streamed.covariance, batch.covariance, atol=3e-5)
     assert jnp.allclose(
         first.mean,
@@ -290,21 +322,26 @@ def test_streaming_gaussian_moments_update_merge_and_model_match_batch_fit():
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
-def test_covariance_preserves_real_precision_and_is_key_deterministic(dtype):
+def test_covariance_preserves_real_precision_and_is_key_deterministic(dtype: Any) -> None:
     features = _DATA.astype(dtype)
     recipe = EmpiricalCovariance(regularization=1e-4)
     first = recipe.fit_batch(MLBatch(features), key=jax.random.key(1)).as_trainable()
     second = recipe.fit_batch(MLBatch(features), key=jax.random.key(2)).as_trainable()
 
+    # ty: ignore[unresolved-attribute]
     assert first.mean.dtype == features.dtype
+    # ty: ignore[unresolved-attribute]
     assert first.covariance.dtype == features.dtype
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(first.mean, second.mean)
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(first.covariance, second.covariance)
 
 
-def test_covariance_fit_is_jittable_and_vmappable_over_independent_datasets():
+def test_covariance_fit_is_jittable_and_vmappable_over_independent_datasets() -> None:
     recipe = EmpiricalCovariance(regularization=1e-3)
     covariance = lambda values: (
+        # ty: ignore[unresolved-attribute]
         recipe.fit_batch(MLBatch(values)).as_trainable().covariance
     )
     cases = jnp.stack((_DATA, 2.0 * _DATA))
@@ -313,7 +350,7 @@ def test_covariance_fit_is_jittable_and_vmappable_over_independent_datasets():
     assert jax.vmap(covariance)(cases).shape == (2, 3, 3)
 
 
-def test_covariance_configuration_fails_closed():
+def test_covariance_configuration_fails_closed() -> None:
     with pytest.raises(ValueError):
         FactorCovariance(0)
     with pytest.raises(ValueError):

@@ -4,11 +4,14 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -18,7 +21,12 @@ from ._context import AstrodynamicsContext
 from ._status import AstrodynamicsStatus
 
 
-def _norm(value: Array, /, *, axis=-1) -> Array:
+_LeapfrogCarry: TypeAlias = tuple[Array, Array, Array, Array]
+_LeapfrogBranch: TypeAlias = tuple[Array, Array, Array, Array, Array]
+_LeapfrogOutput: TypeAlias = tuple[Array, Array, Array, Array]
+
+
+def _norm(value: Array, /, *, axis: int = -1) -> Array:
     return jnp.sqrt(jnp.sum(value * value, axis=axis))
 
 
@@ -35,7 +43,7 @@ class NBodyState(StrictModule):
         particles: ParticleDiscretization,
         context: AstrodynamicsContext,
         /,
-    ):
+    ) -> None:
         if not isinstance(particles, ParticleDiscretization):
             raise TypeError("particles must be a ParticleDiscretization.")
         if not isinstance(context, AstrodynamicsContext):
@@ -82,7 +90,7 @@ class DirectNBodyGravityPlan(StrictModule, NonTrainableState):
         gravitational_constant: ArrayLike = 1.0,
         softening: ArrayLike = 0.0,
         collision_distance: ArrayLike = 0.0,
-    ):
+    ) -> None:
         if not isinstance(particles, ParticleDiscretization):
             raise TypeError("particles must be a ParticleDiscretization.")
         if particles.ambient_dimension != 3:
@@ -198,7 +206,7 @@ class NBodyPropagationPlan(StrictModule, NonTrainableState):
     times: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, gravity: DirectNBodyGravityPlan, times: ArrayLike, /):
+    def __init__(self, gravity: DirectNBodyGravityPlan, times: ArrayLike, /) -> None:
         if not isinstance(gravity, DirectNBodyGravityPlan):
             raise TypeError("gravity must be a DirectNBodyGravityPlan.")
         times_host = np.asarray(times, dtype=np.float64)
@@ -228,12 +236,14 @@ class NBodyPropagationPlan(StrictModule, NonTrainableState):
         active = self.gravity.particles.active_mask[:, None]
         initial_force = self.gravity.evaluate(initial_state.position)
 
-        def step(carry, interval):
+        def step(
+            carry: _LeapfrogCarry, interval: Array
+        ) -> tuple[_LeapfrogCarry, _LeapfrogOutput]:
             position, velocity, acceleration, active_path = carry
             start, end = interval
             dt = end - start
 
-            def advance(_):
+            def advance(_: None) -> _LeapfrogBranch:
                 half_velocity = velocity + 0.5 * dt * acceleration
                 next_position = jnp.where(active, position + dt * half_velocity, 0.0)
                 next_force = self.gravity.evaluate(next_position)
@@ -251,7 +261,7 @@ class NBodyPropagationPlan(StrictModule, NonTrainableState):
                     next_force.status,
                 )
 
-            def hold(_):
+            def hold(_: None) -> _LeapfrogBranch:
                 return (
                     position,
                     velocity,
@@ -287,7 +297,7 @@ class NBodyPropagationPlan(StrictModule, NonTrainableState):
         status = jnp.concatenate((initial_force.status[None], outputs[3]))
         masses = self.gravity.particles.masses.astype(positions.dtype)
 
-        def diagnostics(position, velocity):
+        def diagnostics(position: Array, velocity: Array) -> tuple[Array, Array, Array]:
             force = self.gravity.evaluate(position)
             kinetic = 0.5 * jnp.sum(masses[:, None] * velocity * velocity)
             momentum = jnp.sum(masses[:, None] * velocity, axis=0)

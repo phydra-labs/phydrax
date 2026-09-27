@@ -4,14 +4,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._strict import StrictModule
 from .domain import DomainFunction
+from .typing import PRNGKey
 
 
 class StateTimeScoreField(StrictModule):
@@ -29,8 +31,8 @@ class StateTimeScoreField(StrictModule):
         *,
         state_label: str,
         time_label: str,
-        context_labels=(),
-    ):
+        context_labels: Iterable[str] = (),
+    ) -> None:
         if not isinstance(function, DomainFunction):
             raise TypeError("score field must be a DomainFunction.")
         if not state_label or not time_label or state_label == time_label:
@@ -59,7 +61,7 @@ class StateTimeScoreField(StrictModule):
         time: ArrayLike,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         context: Mapping[str, ArrayLike] | None = None,
     ) -> Array:
         state_array = jnp.asarray(state)
@@ -101,7 +103,7 @@ def require_score_field(
     *,
     state_label: str,
     time_label: str,
-    context_labels=(),
+    context_labels: Iterable[str] = (),
 ) -> StateTimeScoreField:
     if name not in functions:
         raise KeyError(f"Missing score field {name!r}.")

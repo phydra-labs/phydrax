@@ -14,13 +14,15 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from phydrax.ein import contract
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, ParameterOwner
+from ...typing import parse, PRNGKey
 from ._selection import ParameterSubspace
 
 
@@ -43,12 +45,10 @@ class LowRankSpec:
         if rank <= 0:
             raise ValueError("Low-rank adaptation rank must be positive.")
         alpha = float(rank if self.alpha is None else self.alpha)
-        scaling = str(self.scaling)
         stddev = float(self.stddev)
         if not isfinite(alpha) or alpha <= 0.0:
             raise ValueError("Low-rank adaptation alpha must be finite and positive.")
-        if scaling not in ("rank", "sqrt_rank"):
-            raise ValueError("Low-rank scaling must be 'rank' or 'sqrt_rank'.")
+        scaling = parse(str(self.scaling), LowRankScaling, "scaling")
         if not isfinite(stddev) or stddev <= 0.0:
             raise ValueError(
                 "Low-rank initialization stddev must be finite and positive."
@@ -100,9 +100,9 @@ class LowRankUpdate(StrictModule, ParameterOwner):
         alpha: float | None = None,
         scaling: LowRankScaling = "rank",
         stddev: float = 0.01,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         _factors: tuple[Array, Array] | None = None,
-    ):
+    ) -> None:
         value = jnp.asarray(base)
         if not eqx.is_inexact_array(value):
             raise TypeError("Low-rank base weights must be inexact JAX arrays.")
@@ -127,11 +127,9 @@ class LowRankUpdate(StrictModule, ParameterOwner):
             if left.dtype != value.dtype or right.dtype != value.dtype:
                 raise TypeError("Low-rank factors must have the exact base dtype.")
             alpha_value = float(alpha) if alpha is not None else float(factor_rank)
-            scaling_value = str(scaling)
             if not isfinite(alpha_value) or alpha_value <= 0.0:
                 raise ValueError("Low-rank adaptation alpha must be finite and positive.")
-            if scaling_value not in ("rank", "sqrt_rank"):
-                raise ValueError("Low-rank scaling must be 'rank' or 'sqrt_rank'.")
+            scaling_value = parse(str(scaling), LowRankScaling, "scaling")
             self.base = value
             self.left = left
             self.right = right
@@ -190,7 +188,7 @@ class LowRankUpdate(StrictModule, ParameterOwner):
         return self.base.shape[0], self.base.shape[1]
 
     @property
-    def dtype(self):
+    def dtype(self) -> jnp.dtype:
         return self.base.dtype
 
     @property
@@ -454,7 +452,7 @@ def adapt_low_rank(
     plan: LowRankAdaptationPlan | Mapping[str, LowRankSpec],
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> tuple[PyTree[Any], LowRankAdaptationReport]:
     """Apply a prepared adaptation plan and return immutable accounting."""
     from ..layers._linear import Linear
@@ -525,7 +523,7 @@ def adapt_low_rank(
             )
         )
 
-    def replace(path, value):
+    def replace(path: jax.tree_util.KeyPath, value: object) -> object:
         if not isinstance(value, Linear):
             return value
         prefix = jax.tree_util.keystr(path)

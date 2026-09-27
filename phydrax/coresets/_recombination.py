@@ -9,7 +9,7 @@ import math
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._measure_weights import log_weights_from_normalized, normalized_weights
 from .._strict import StrictModule
@@ -27,7 +27,7 @@ class MomentRecombination(StrictModule):
         *,
         rcond: float | None = None,
         tree_reduction_factor: int = 2,
-    ):
+    ) -> None:
         if rcond is not None:
             condition = float(rcond)
             if not math.isfinite(condition) or condition <= 0.0:
@@ -125,7 +125,7 @@ def _eliminate_to_rank(
         )
         return jnp.where(can_reduce, updated, current)
 
-    def body(_, current):
+    def body(_: Array, current: Array) -> Array:
         return eliminate_once(current)
 
     reduced = jax.lax.fori_loop(0, count, body, weights)

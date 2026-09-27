@@ -13,12 +13,14 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._calabi_yau import ProjectiveMeasureTarget
 
 
@@ -50,7 +52,7 @@ class CalabiYauModuliObservablePlan(StrictModule):
         positivity_tolerance: float = 1e-10,
         yukawa_symmetry_tolerance: float = 1e-9,
         maximum_elements: int = 10_000_000,
-    ):
+    ) -> None:
         labels = tuple(str(value) for value in modulus_labels)
         kind = str(representative_kind)
         source = str(representative_source_id)
@@ -65,8 +67,7 @@ class CalabiYauModuliObservablePlan(StrictModule):
             or len(set(labels)) != len(labels)
         ):
             raise ValueError("modulus_labels must be unique and non-empty.")
-        if kind not in {"algebraic", "harmonic"}:
-            raise ValueError("representative_kind must be algebraic or harmonic.")
+        kind = parse(kind, ModuliRepresentativeKind, "representative_kind")
         if not source or batches < 1 or maximum < 1:
             raise ValueError("Representative source and resource bounds are required.")
         if any(
@@ -119,7 +120,7 @@ class PreparedCalabiYauModuliSamples(StrictModule):
         representatives: ArrayLike,
         yukawa_density: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, CalabiYauModuliObservablePlan):
             raise TypeError("plan must be CalabiYauModuliObservablePlan.")
         if not isinstance(measure, ProjectiveMeasureTarget):

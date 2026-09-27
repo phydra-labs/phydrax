@@ -10,7 +10,8 @@ from math import prod
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._spectral._fourier import resize_fourier_axis as _resize_fourier_axis
 from .._spectral._nonuniform_fourier import (

@@ -5,14 +5,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, ArrayLike, PyTree
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 
@@ -40,6 +42,9 @@ from ._core import (
 from ._geometry import ContinuationGeometry, ContinuationRepresentationPolicy
 
 
+_HopfCurveState: TypeAlias = tuple[Array, Array, Array, Array, Array]
+
+
 class ContinuationStabilityPencil(StrictModule, NonTrainableState):
     """Declared square execution pencil, including projected rectangular closures."""
 
@@ -58,7 +63,7 @@ class ContinuationStabilityPencil(StrictModule, NonTrainableState):
         lift: Callable[[Array], Any] | None = None,
         project: Callable[[Any], Array] | None = None,
         pencil_id: str,
-    ):
+    ) -> None:
         if not callable(provider):
             raise TypeError("pencil provider must be callable.")
         if stability_space is not None and not isinstance(
@@ -122,7 +127,9 @@ class ContinuationStabilityPencil(StrictModule, NonTrainableState):
         if template.ndim != 1:
             raise ValueError("stability_template must be a rank-one coordinate vector.")
 
-        def provider(state: Any, coordinate: Any, args: Any):
+        def provider(
+            state: Any, coordinate: Any, args: Any
+        ) -> tuple[Array, Array | None]:
             basis = jnp.eye(template.size, dtype=template.dtype)
             columns = jax.vmap(
                 lambda direction: project(
@@ -155,7 +162,7 @@ class ContinuationStabilityPencil(StrictModule, NonTrainableState):
 
         rate = jnp.asarray(state_rate)
 
-        def provider(state: Array, coordinate: Any, args: Any):
+        def provider(state: Array, coordinate: Any, args: Any) -> tuple[Array, Array]:
             time = jnp.asarray(coordinate)
             a = -jax.jacfwd(lambda value: residual(time, value, rate, args))(state)
             b = jax.jacfwd(lambda value: residual(time, state, value, args))(rate)
@@ -181,7 +188,7 @@ class GeneralizedPencilStabilityAnalyzer(AbstractStabilityAnalyzer):
         *,
         zero_tolerance: float = 1.0e-8,
         pair_tolerance: float = 1.0e-7,
-    ):
+    ) -> None:
         if not isinstance(pencil, ContinuationStabilityPencil):
             raise TypeError("pencil must be a ContinuationStabilityPencil.")
         policy_ = GeneralEigenSolvePolicy() if policy is None else policy
@@ -300,7 +307,7 @@ class GeneralizedPencilStabilityAnalyzer(AbstractStabilityAnalyzer):
 class _HopfCurveProblem(ContinuationCurveProblem):
     physical_residual: Callable[[Array, Any, Any], Array]
     pencil: ContinuationStabilityPencil
-    parameter_plane: Callable[[Array, Array, Any], Any]
+    parameter_plane: Callable[[Array, ArrayLike, Any], Any]
     reference_mode: Array
     coordinate_lower: float = eqx.field(static=True)
     coordinate_upper: float = eqx.field(static=True)
@@ -308,11 +315,11 @@ class _HopfCurveProblem(ContinuationCurveProblem):
 
     def residual(
         self,
-        state: tuple[Array, Array, Array, Array, Array],
+        state: _HopfCurveState,
         coordinate: Any,
         args: Any = None,
         /,
-    ):
+    ) -> _HopfCurveState:
         physical_state, parameter_one, mode_real, mode_imag, frequency = state
         parameters = self.parameter_plane(parameter_one, coordinate, args)
         physical = jnp.asarray(self.physical_residual(physical_state, parameters, args))
@@ -330,22 +337,31 @@ class _HopfCurveProblem(ContinuationCurveProblem):
         phase = jnp.real(jnp.vdot(self.reference_mode, mode_imag))
         return physical, real_mode, imag_mode, normalization, phase
 
-    def parameters(self, coordinate: Any, args: Any = None, /):
+    def parameters(self, coordinate: Any, args: Any = None, /) -> Array:
         del args
         return jnp.asarray(coordinate)
 
-    def declared_spaces(self, /):
+    def declared_spaces(self, /) -> tuple[None, None]:
         return None, None
 
-    def representation_policy(self, /):
+    def representation_policy(self, /) -> ContinuationRepresentationPolicy:
         return ContinuationRepresentationPolicy()
 
-    def state_jacobian_action(self, state, coordinate, tangent, args: Any = None, /):
+    def state_jacobian_action(
+        self,
+        state: _HopfCurveState,
+        coordinate: Any,
+        tangent: _HopfCurveState,
+        args: Any = None,
+        /,
+    ) -> _HopfCurveState:
         return jax.jvp(
             lambda value: self.residual(value, coordinate, args), (state,), (tangent,)
         )[1]
 
-    def coordinate_derivative(self, state, coordinate, args: Any = None, /):
+    def coordinate_derivative(
+        self, state: _HopfCurveState, coordinate: Any, args: Any = None, /
+    ) -> _HopfCurveState:
         coordinate_ = jnp.asarray(coordinate)
         return jax.jvp(
             lambda value: self.residual(state, value, args),
@@ -366,7 +382,7 @@ class HopfContinuationAdapter(StrictModule, NonTrainableState):
         self,
         physical_residual: Callable[[Array, Any, Any], Array],
         pencil: ContinuationStabilityPencil,
-        parameter_plane: Callable[[Array, Array, Any], Any],
+        parameter_plane: Callable[[Array, ArrayLike, Any], Any],
         reference_mode: ArrayLike,
         /,
         *,
@@ -375,7 +391,7 @@ class HopfContinuationAdapter(StrictModule, NonTrainableState):
         omega_min: float = 1.0e-8,
         spectral_isolation_tolerance: float = 1.0e-6,
         problem_id: str,
-    ):
+    ) -> None:
         if not callable(physical_residual) or not callable(parameter_plane):
             raise TypeError(
                 "Hopf physical residual and parameter plane must be callable."

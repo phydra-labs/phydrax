@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -187,7 +188,7 @@ def _configuration_velocity(
     tangent: Array,
     /,
 ) -> tuple[Array, Array]:
-    def configuration(values):
+    def configuration(values: Array) -> tuple[Array, Array]:
         return lift_configuration(prepared, values)
 
     (positions, orientations), (position_velocity, orientation_velocity) = jax.jvp(
@@ -212,7 +213,7 @@ def lift_velocity_operator(
     """Return the matrix-free reduced-tangent to native-velocity JVP action."""
     point = _validate_coefficients(prepared, coefficients)
 
-    def pushforward(tangent):
+    def pushforward(tangent: Array) -> tuple[Array, Array]:
         return _configuration_velocity(prepared, point, tangent)
 
     return FunctionLinearOperator(
@@ -236,7 +237,7 @@ def lift_effort_pullback_operator(
     """Return the algebraic native-effort to reduced-dual VJP action."""
     velocity_operator = lift_velocity_operator(prepared, coefficients)
 
-    def pullback(effort):
+    def pullback(effort: tuple[Array, Array]) -> Array:
         return velocity_operator.transpose_mv(effort)
 
     return FunctionLinearOperator(

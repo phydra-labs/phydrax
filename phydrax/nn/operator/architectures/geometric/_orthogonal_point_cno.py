@@ -5,7 +5,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -35,7 +36,7 @@ class OrthogonalPointTopology(StrictModule):
         *,
         cutoff_margin: float,
         support_id: str,
-    ):
+    ) -> None:
         query = jnp.asarray(query_indices, dtype=jnp.int32)
         source = jnp.asarray(source_indices, dtype=jnp.int32)
         mask = jnp.asarray(active, dtype=jnp.bool_)
@@ -77,7 +78,7 @@ class OrthogonalEquivariantPointCNO(AbstractOperatorModel):
         source_key: str | None = None,
         topology: OrthogonalPointTopology | None = None,
         initial_length_scale: float = 1.0,
-    ):
+    ) -> None:
         if not isinstance(layout, TensorFieldLayout):
             raise TypeError("layout must be TensorFieldLayout.")
         if layout.dimension not in (2, 3) or any(

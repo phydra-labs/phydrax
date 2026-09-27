@@ -12,11 +12,14 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry.design import DesignState
+from ...linalg import LinearSolvePolicy
 from ...optim._iterative._types import Bounds, OptimizationTermination
 from ...optim._pde_constrained import (
     AbstractStateDesignMethod,
@@ -33,8 +36,10 @@ from ...optim._state_design_parameterization import (
 from ...transport.diffusion._guidance import (
     AbstractScoreGuidance,
     GuidanceEvaluation,
+    GuidanceExactness,
     ScoreContext,
 )
+from ...typing import PRNGKey
 from ._topology import (
     TopologyContinuationStageEvidence,
     TopologyMechanicsProblem,
@@ -53,7 +58,7 @@ class _FixedDensityDecoder(StrictModule, NonTrainableState):
     design_mask: Array
     fixed_density: Array
 
-    def __call__(self, latent):
+    def __call__(self, latent: PyTree[Array]) -> Array:
         density = self.decode(latent)
         if not eqx.is_array(density) or density.shape != self.fixed_density.shape:
             raise ValueError("Density decoder must return the prepared cell array shape.")
@@ -66,7 +71,7 @@ class _FixedDensityDecoder(StrictModule, NonTrainableState):
 class _DensityCoordinate(StrictModule):
     index: int = eqx.field(static=True)
 
-    def __call__(self, state, density, args):
+    def __call__(self, state: object, density: Array, args: object) -> Array:
         del state, args
         return density[self.index]
 
@@ -81,7 +86,7 @@ class LearnedTopologyDesign(StrictModule, NonTrainableState):
 def prepare_learned_topology_design(
     problem: TopologyMechanicsProblem,
     decode: Callable,
-    latent_template,
+    latent_template: PyTree[Array],
     /,
     *,
     latent_bounds: Bounds,
@@ -137,7 +142,7 @@ class _ShapeDecoder(StrictModule, NonTrainableState):
     decode: Callable
     reference: DesignState
 
-    def __call__(self, latent):
+    def __call__(self, latent: PyTree[Array]) -> DesignState:
         design = self.decode(latent)
         if not isinstance(design, DesignState) or design.schema != self.reference.schema:
             raise ValueError("Shape decoder must return the exact DesignState schema.")
@@ -156,7 +161,7 @@ class _DesignStateCoordinate(StrictModule):
     parameter_index: int = eqx.field(static=True)
     coordinate_index: int = eqx.field(static=True)
 
-    def __call__(self, state, design, args):
+    def __call__(self, state: object, design: DesignState, args: object) -> Array:
         del state, args
         return jnp.ravel(design.values[self.parameter_index])[self.coordinate_index]
 
@@ -164,7 +169,7 @@ class _DesignStateCoordinate(StrictModule):
 def prepare_learned_shape_design(
     problem: StateDesignProblem,
     decode: Callable,
-    latent_template,
+    latent_template: PyTree[Array],
     physical_template: DesignState,
     /,
     *,
@@ -250,7 +255,7 @@ class LearnedTopologyResult(StrictModule):
     realization_id: str = eqx.field(static=True)
 
     @property
-    def accepted(self):
+    def accepted(self) -> Array:
         return (
             self.latent_result.successful
             & self.reanalysis.accepted
@@ -261,9 +266,9 @@ class LearnedTopologyResult(StrictModule):
 def solve_learned_topology_design(
     design: LearnedTopologyDesign,
     initial_states: PyTree[Array],
-    initial_latent,
+    initial_latent: PyTree[Array],
     reanalysis_plan: TopologyReanalysisPlan,
-    initial_reference_state,
+    initial_reference_state: PyTree[Any],
     /,
     *,
     method: AbstractStateDesignMethod | None = None,
@@ -368,24 +373,24 @@ class MechanicsPotentialGuidance(AbstractScoreGuidance):
     parameterization: StateDesignParameterization
     initial_state: PyTree[Array]
     args: Any
-    linear_policy: Any
+    linear_policy: LinearSolvePolicy | None
     denoise: Callable | None = eqx.field(static=True)
     scale: float = eqx.field(static=True)
-    exactness: str = eqx.field(static=True)
+    exactness: GuidanceExactness = eqx.field(static=True)
     guidance_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         parameterization: StateDesignParameterization,
-        initial_state,
+        initial_state: PyTree[Array],
         /,
         *,
         scale: float = 1.0,
         denoise: Callable | None = None,
-        args=None,
-        linear_policy=None,
+        args: Any = None,
+        linear_policy: LinearSolvePolicy | None = None,
         guidance_id: str = "mechanics-potential",
-    ):
+    ) -> None:
         if not isinstance(parameterization, StateDesignParameterization):
             raise TypeError("parameterization must be StateDesignParameterization.")
         if not isfinite(float(scale)) or float(scale) < 0.0:
@@ -403,7 +408,15 @@ class MechanicsPotentialGuidance(AbstractScoreGuidance):
         self.exactness = "heuristic" if denoise is not None else "approximate"
         self.guidance_id = guidance_id
 
-    def evaluate(self, state, time, context, /, *, key=None):
+    def evaluate(
+        self,
+        state: ArrayLike,
+        time: ArrayLike,
+        context: ScoreContext,
+        /,
+        *,
+        key: PRNGKey | None = None,
+    ) -> GuidanceEvaluation:
         del key
         if not isinstance(context, ScoreContext):
             raise TypeError("context must be ScoreContext.")

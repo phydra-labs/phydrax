@@ -11,15 +11,17 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ...stochastic._signature_features import (
     LogSignatureFeatures,
     SignatureFeatures,
     time_augment_path,
 )
+from ...typing import parse
 
 
 SignatureFeatureKind: TypeAlias = Literal["signature", "logsignature"]
@@ -60,13 +62,12 @@ class CausalSignaturePolicySpec(StrictModule):
         feature_kind: SignatureFeatureKind = "signature",
         include_scalar: bool = True,
         spec_id: str,
-    ):
+    ) -> None:
         if history_dimension <= 0 or action_size <= 0 or depth <= 0:
             raise ValueError(
                 "history_dimension, action_size, and depth must be positive."
             )
-        if feature_kind not in ("signature", "logsignature"):
-            raise ValueError("feature_kind must be 'signature' or 'logsignature'.")
+        feature_kind = parse(feature_kind, SignatureFeatureKind, "feature_kind")
         if feature_kind == "logsignature" and include_scalar:
             raise ValueError("logsignature features do not include a scalar level.")
         self.history_dimension = int(history_dimension)
@@ -146,7 +147,7 @@ class SignaturePolicySampleSet(StrictModule):
         independence_labels: ArrayLike,
         sample_role: PolicySampleRole,
         dataset_id: str,
-    ):
+    ) -> None:
         history = jnp.asarray(histories)
         if history.ndim != 3 or 0 in history.shape:
             raise ValueError(
@@ -188,8 +189,7 @@ class SignaturePolicySampleSet(StrictModule):
             )
         if bool(jnp.any(labels < 0)):
             raise ValueError("independence_labels must be nonnegative.")
-        if sample_role not in ("training", "holdout"):
-            raise ValueError("sample_role must be 'training' or 'holdout'.")
+        sample_role = parse(sample_role, PolicySampleRole, "sample_role")
         identities = _identifiers(tuple(realization_ids), "realization_ids")
         if len(identities) != num_paths:
             raise ValueError("realization_ids must contain one identity per path.")
@@ -228,7 +228,7 @@ class CausalSignaturePolicy(StrictModule):
         *,
         training_sample: SignaturePolicySampleSet,
         policy_id: str,
-    ):
+    ) -> None:
         if not isinstance(prepared, PreparedCausalSignaturePolicy):
             raise TypeError("prepared must be a PreparedCausalSignaturePolicy.")
         if not isinstance(training_sample, SignaturePolicySampleSet):

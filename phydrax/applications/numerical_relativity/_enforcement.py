@@ -8,7 +8,7 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
@@ -63,7 +63,7 @@ class Z4cAlgebraicEnforcement(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-10,
         maximum_correction: float = float("inf"),
-    ):
+    ) -> None:
         tolerance_ = float(tolerance)
         maximum = float(maximum_correction)
         if not isfinite(tolerance_) or tolerance_ < 0.0:

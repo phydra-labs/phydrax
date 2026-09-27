@@ -8,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_coordinate_metric_clifford_relation_associativity_and_inverse():
+def test_coordinate_metric_clifford_relation_associativity_and_inverse() -> None:
     metric = jnp.asarray([[1.0, 0.2], [0.2, -1.0]])
     field = phx.metrix.clifford.CliffordMetricField(
         lambda coordinates: metric + 0.0 * coordinates[0],
@@ -40,7 +40,7 @@ def test_coordinate_metric_clifford_relation_associativity_and_inverse():
     assert inverse.right_residual < 1e-6
 
 
-def test_pin_and_spin_require_unit_versors_with_audited_adjoint_action():
+def test_pin_and_spin_require_unit_versors_with_audited_adjoint_action() -> None:
     field = phx.metrix.clifford.CliffordMetricField(
         lambda coordinates: jnp.eye(2) + 0.0 * coordinates[0],
         dimension=2,
@@ -117,7 +117,7 @@ def test_pin_and_spin_require_unit_versors_with_audited_adjoint_action():
     assert not bool(phx.metrix.clifford.SpinElement(product, coordinates, basis[1]).valid)
 
 
-def test_conformal_null_embedding_and_projective_radical_rejection():
+def test_conformal_null_embedding_and_projective_radical_rejection() -> None:
     model = phx.metrix.clifford.ConformalCliffordModel(3)
     embedded = model.embed(jnp.asarray([0.2, -0.3, 0.4]))
     assert model.null_residual(embedded) < 1e-6
@@ -131,7 +131,7 @@ def test_conformal_null_embedding_and_projective_radical_rejection():
         raise AssertionError("Projective radical inversion must fail closed.")
 
 
-def test_unit_octonion_geometry_moufang_brackets_and_algebra_matrix_semantics():
+def test_unit_octonion_geometry_moufang_brackets_and_algebra_matrix_semantics() -> None:
     octonion = phx.metrix.algebra.OctonionAlgebraSpec()
     product = octonion.prepare_product(backend="sparse")
     geometry = phx.metrix.algebra.UnitOctonionStateGeometry(product)
@@ -190,7 +190,7 @@ def test_unit_octonion_geometry_moufang_brackets_and_algebra_matrix_semantics():
     assert bool(spectrum.valid)
 
 
-def test_clifford_metric_signature_and_cochain_plan_fail_closed():
+def test_clifford_metric_signature_and_cochain_plan_fail_closed() -> None:
     with pytest.raises(ValueError, match="signature"):
         phx.metrix.clifford.CliffordMetricField(
             lambda coordinates: jnp.eye(2) + 0.0 * coordinates[0],

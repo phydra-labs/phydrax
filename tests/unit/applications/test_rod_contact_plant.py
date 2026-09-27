@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -50,14 +52,14 @@ from phydrax.discretization.contact._surface import (
 from phydrax.dynamics import PlantStepContext
 
 
-def _straight_positions(*, height: float = 0.55):
+def _straight_positions(*, height: float = 0.55) -> Any:
     return jnp.asarray(
         tuple((float(index), 0.0, height) for index in range(6)),
         dtype=jnp.float32,
     )
 
 
-def _self_contact_positions():
+def _self_contact_positions() -> Any:
     return jnp.asarray(
         (
             (0.0, 0.0, 1.0),
@@ -71,7 +73,7 @@ def _self_contact_positions():
     )
 
 
-def _rod(positions):
+def _rod(positions: Any) -> Any:
     segment_count = positions.shape[0] - 1
     return prepare_rod(
         RodPlan(
@@ -101,7 +103,7 @@ def _rod(positions):
     )
 
 
-def _plane(offset: float):
+def _plane(offset: float) -> Any:
     features = CollisionFeaturePolicy(
         jnp.asarray((10_000,), dtype=jnp.int64),
         jnp.asarray((int(CollisionFeatureKind.ANALYTIC),), dtype=jnp.int32),
@@ -122,13 +124,13 @@ def _plane(offset: float):
 def _prepared_plant(
     *,
     plane_offset: float = -10.0,
-    positions=None,
-    velocity=None,
+    positions: Any = None,
+    velocity: Any = None,
     friction: float = 0.0,
     search_capacity: int = 24,
     ccd: RodContactCCDPlan | None = None,
     solver: ContactConeSolverPlan | None = None,
-):
+) -> Any:
     positions = _straight_positions() if positions is None else positions
     rod = _rod(positions)
     basis = RodStrainBasisPlan.shifted_legendre(
@@ -179,11 +181,11 @@ def _prepared_plant(
     return plant
 
 
-def _reset(plant):
+def _reset(plant: Any) -> Any:
     return plant.reset(jax.random.key(31), plant.bind_parameters()).accepted_state
 
 
-def _step(plant, source, dt=0.025):
+def _step(plant: Any, source: Any, dt: Any = 0.025) -> Any:
     context = PlantStepContext(
         source.time,
         source.time + jnp.asarray(dt, dtype=source.time.dtype),
@@ -192,7 +194,7 @@ def _step(plant, source, dt=0.025):
     return plant.step(context, source, None, plant.bind_parameters())
 
 
-def _assert_tree_exact(actual, expected):
+def _assert_tree_exact(actual: Any, expected: Any) -> None:
     actual_leaves = jax.tree.leaves(actual)
     expected_leaves = jax.tree.leaves(expected)
     assert len(actual_leaves) == len(expected_leaves)
@@ -206,7 +208,7 @@ def _assert_tree_exact(actual, expected):
         np.testing.assert_array_equal(actual_leaf, expected_leaf)
 
 
-def test_contact_free_step_has_free_integrator_parity():
+def test_contact_free_step_has_free_integrator_parity() -> None:
     plant = _prepared_plant(plane_offset=-10.0)
     source = _reset(plant)
     integration_source = ReducedRodIntegrationState(
@@ -238,7 +240,7 @@ def test_contact_free_step_has_free_integrator_parity():
     )
 
 
-def test_plane_impact_is_resolved_over_the_requested_interval():
+def test_plane_impact_is_resolved_over_the_requested_interval() -> None:
     velocity = jnp.asarray((0.0, 0.0, -12.0, 0.0, 0.0, 0.0), dtype=jnp.float32)
     plant = _prepared_plant(plane_offset=0.0, velocity=velocity)
     source = _reset(plant)
@@ -254,7 +256,7 @@ def test_plane_impact_is_resolved_over_the_requested_interval():
     assert result.accepted_state.step_index == source.step_index + 1
 
 
-def test_sustained_plane_contact_retains_manifold_and_nonpenetration():
+def test_sustained_plane_contact_retains_manifold_and_nonpenetration() -> None:
     velocity = jnp.asarray((0.0, 0.0, -12.0, 0.0, 0.0, 0.0), dtype=jnp.float32)
     plant = _prepared_plant(plane_offset=0.0, velocity=velocity)
     first = _step(plant, _reset(plant), 0.05)
@@ -274,7 +276,7 @@ def test_sustained_plane_contact_retains_manifold_and_nonpenetration():
     )
 
 
-def test_nonadjacent_self_contact_uses_canonical_manifold_routes():
+def test_nonadjacent_self_contact_uses_canonical_manifold_routes() -> None:
     plant = _prepared_plant(
         positions=_self_contact_positions(),
         plane_offset=-10.0,
@@ -295,7 +297,7 @@ def test_nonadjacent_self_contact_uses_canonical_manifold_routes():
     ).size == jnp.sum(search.witnesses.valid)
 
 
-def test_isotropic_coulomb_response_is_dissipative():
+def test_isotropic_coulomb_response_is_dissipative() -> None:
     velocity = jnp.asarray((0.0, 5.0, -12.0, 0.0, 0.0, 0.0), dtype=jnp.float32)
     plant = _prepared_plant(
         plane_offset=0.0,
@@ -324,6 +326,7 @@ def test_isotropic_coulomb_response_is_dissipative():
         committed_velocity,
         result.evidence.response.post_velocities[0],
     )
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         committed_velocity,
         result.evidence.free_step.candidate_state.reduced_state.coefficient_velocities
@@ -352,8 +355,8 @@ def test_isotropic_coulomb_response_is_dissipative():
         )
 
 
-def _failed_search(original, failure):
-    def evaluate(search, positions, /, *, end_positions=None):
+def _failed_search(original: Any, failure: Any) -> Any:
+    def evaluate(search: Any, positions: Any, /, *, end_positions: Any = None) -> Any:
         result = original(search, positions, end_positions=end_positions)
         evidence = eqx.tree_at(
             lambda value: (value.complete, value.successful, value.failure),
@@ -382,7 +385,9 @@ def _failed_search(original, failure):
         ),
     ),
 )
-def test_search_and_capacity_failure_roll_back_every_atom(monkeypatch, failure, expected):
+def test_search_and_capacity_failure_roll_back_every_atom(
+    monkeypatch: Any, failure: Any, expected: Any
+) -> None:
     plant = _prepared_plant()
     source = _reset(plant)
     original = PreparedRodContactSearch.search
@@ -405,12 +410,12 @@ def test_search_and_capacity_failure_roll_back_every_atom(monkeypatch, failure, 
     )
 
 
-def test_certified_safe_prefix_is_never_silently_committed(monkeypatch):
+def test_certified_safe_prefix_is_never_silently_committed(monkeypatch: Any) -> None:
     plant = _prepared_plant()
     source = _reset(plant)
     original = RodContactCCDPlan.evaluate
 
-    def prefix(plan, search, start, end, /, **kwargs):
+    def prefix(plan: Any, search: Any, start: Any, end: Any, /, **kwargs: Any) -> Any:
         result = original(plan, search, start, end, **kwargs)
         evidence = eqx.tree_at(
             lambda value: (
@@ -445,13 +450,13 @@ def test_certified_safe_prefix_is_never_silently_committed(monkeypatch):
     _assert_tree_exact(result.accepted_state, source)
 
 
-def test_cone_failure_retains_candidate_iterate_and_rolls_back(monkeypatch):
+def test_cone_failure_retains_candidate_iterate_and_rolls_back(monkeypatch: Any) -> None:
     velocity = jnp.asarray((0.0, 4.0, -12.0, 0.0, 0.0, 0.0), dtype=jnp.float32)
     plant = _prepared_plant(plane_offset=0.0, velocity=velocity, friction=0.5)
     source = _reset(plant)
     original = CompositeContactResponse.solve
 
-    def fail(response, /, *, initial_impulse=None):
+    def fail(response: Any, /, *, initial_impulse: Any = None) -> Any:
         result = original(response, initial_impulse=initial_impulse)
         evidence = eqx.tree_at(
             lambda value: (value.applied, value.fail_closed, value.successful),
@@ -472,7 +477,7 @@ def test_cone_failure_retains_candidate_iterate_and_rolls_back(monkeypatch):
     _assert_tree_exact(result.accepted_state, source)
 
 
-def test_checkpoint_replay_reproduces_contact_history_clock_and_key():
+def test_checkpoint_replay_reproduces_contact_history_clock_and_key() -> None:
     plant = _prepared_plant()
     source = _reset(plant)
     checkpoint = plant.checkpoint(source)
@@ -497,7 +502,7 @@ def test_checkpoint_replay_reproduces_contact_history_clock_and_key():
     _assert_tree_exact(replay.final_state, direct.accepted_state)
 
 
-def test_frictionless_capability_id_is_explicit_and_not_a_fallback():
+def test_frictionless_capability_id_is_explicit_and_not_a_fallback() -> None:
     plant = _prepared_plant(friction=0.0)
 
     assert plant.capability_id == FRICTIONLESS_ROD_CONTACT_CAPABILITY

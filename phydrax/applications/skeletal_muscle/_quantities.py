@@ -132,7 +132,7 @@ class SkeletalMuscleQuantitySpec:
         sign_convention: str = "",
         support_association: str = "",
         reference_configuration: str = "",
-    ):
+    ) -> None:
         resolved = resolve_quantity(
             domain="skeletal-muscle",
             reference_units=_REFERENCE_UNIT_BY_KIND,

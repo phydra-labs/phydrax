@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from itertools import combinations
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -12,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _brute(costs, count, valid):
+def _brute(costs: Any, count: Any, valid: Any) -> Any:
     candidates = [
         candidate
         for candidate in combinations(range(len(costs)), count)
@@ -27,7 +29,7 @@ def _brute(costs, count, valid):
 
 
 @pytest.mark.parametrize("count", [0, 1, 2, 4])
-def test_cardinality_matches_enumeration_and_certifies_boundary(count):
+def test_cardinality_matches_enumeration_and_certifies_boundary(count: Any) -> None:
     costs = np.asarray([2.0, -1.0, -1.0, 3.0])
     valid = np.asarray([True, True, True, True])
     expected = _brute(costs, count, valid)
@@ -53,7 +55,7 @@ def test_cardinality_matches_enumeration_and_certifies_boundary(count):
         assert not result.certificate.tie_available
 
 
-def test_cardinality_masks_infeasibility_and_batches_under_jit():
+def test_cardinality_masks_infeasibility_and_batches_under_jit() -> None:
     space = phx.combinatorial.CardinalitySpace(
         4,
         2,
@@ -110,7 +112,7 @@ def test_cardinality_masks_infeasibility_and_batches_under_jit():
     np.testing.assert_array_equal(nonfinite.features, jnp.zeros((4,)))
 
 
-def test_cardinality_rejects_invalid_static_contracts():
+def test_cardinality_rejects_invalid_static_contracts() -> None:
     with pytest.raises(ValueError, match="positive"):
         phx.combinatorial.CardinalitySpace(0, 0)
     with pytest.raises(ValueError, match=r"\[0, size\]"):
@@ -119,7 +121,7 @@ def test_cardinality_rejects_invalid_static_contracts():
         phx.combinatorial.CardinalitySpace(3, 1, valid=jnp.ones((2,), dtype="bool"))
 
 
-def test_cardinality_oracle_honors_required_and_forbidden_items():
+def test_cardinality_oracle_honors_required_and_forbidden_items() -> None:
     space = phx.combinatorial.CardinalitySpace(4, 2)
     problem = phx.combinatorial.LinearCombinatorialProblem(
         space,
@@ -142,7 +144,7 @@ def test_cardinality_oracle_honors_required_and_forbidden_items():
     assert execution.restriction_violation == 0.0
 
 
-def test_cardinality_oracle_proves_incompatible_requirements_infeasible():
+def test_cardinality_oracle_proves_incompatible_requirements_infeasible() -> None:
     space = phx.combinatorial.CardinalitySpace(3, 1)
     restriction = phx.combinatorial.CombinatorialFeatureRestriction(
         space,

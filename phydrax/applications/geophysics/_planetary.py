@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 
@@ -37,7 +38,7 @@ class RadialBodyModel(StrictModule, NonTrainableState):
         thermal_conductivity_W_m_K: ArrayLike,
         body: ReferenceBodyContract,
         /,
-    ):
+    ) -> None:
         radius = jnp.asarray(radius_m)
         values = tuple(
             jnp.asarray(value)
@@ -104,7 +105,7 @@ class SphericalRayPlan(StrictModule, NonTrainableState):
     model: RadialBodyModel
     phase: str = eqx.field(static=True)
 
-    def __init__(self, model: RadialBodyModel, phase: str, /):
+    def __init__(self, model: RadialBodyModel, phase: str, /) -> None:
         if not isinstance(model, RadialBodyModel) or phase not in ("P", "S"):
             raise ValueError("Spherical ray phase must be P or S on a radial body model.")
         if phase == "S" and bool(jnp.any(model.s_velocity_m_s <= 0)):
@@ -196,7 +197,7 @@ class RadialThermalConductionPlan(StrictModule, NonTrainableState):
     cell_volume_m3: Array
     interface_area_m2: Array
 
-    def __init__(self, model: RadialBodyModel, /):
+    def __init__(self, model: RadialBodyModel, /) -> None:
         if not isinstance(model, RadialBodyModel):
             raise TypeError("Radial thermal conduction requires RadialBodyModel.")
         radius = np.asarray(model.radius_m)

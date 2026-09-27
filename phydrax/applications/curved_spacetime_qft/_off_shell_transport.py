@@ -11,7 +11,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -43,7 +44,7 @@ class OffShellTransportProfile(StrictModule, NonTrainableState):
     production_ready: bool = eqx.field(static=True)
     profile_id: str = eqx.field(static=True)
 
-    def __init__(self, production_evidence_ids: Sequence[str] = (), /):
+    def __init__(self, production_evidence_ids: Sequence[str] = (), /) -> None:
         evidence = tuple(
             _identifier(value, "production_evidence_id")
             for value in production_evidence_ids
@@ -125,7 +126,7 @@ class OffShellTransportPlan(StrictModule, NonTrainableState):
         kms_tolerance: float = 1.0e-9,
         maximum_spectral_bytes: int = 512_000_000,
         production_evidence_ids: Sequence[str] = (),
-    ):
+    ) -> None:
         if not isinstance(quantum_support, QuantumKineticState):
             raise TypeError("quantum_support must be a QuantumKineticState.")
         species = tuple(quantum_support.species)

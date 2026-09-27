@@ -2,16 +2,20 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _context(count=8):
+def _context(count: Any = 8) -> Any:
     spacing = 1.0 / count
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(count), jnp.full((count,), spacing), ambient_dimension=1
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     kernel = phx.discretization.WendlandC2SPHKernel(1)
     position = (jnp.arange(count, dtype="float64") + 0.5)[:, None] * spacing
@@ -30,7 +34,7 @@ def _context(count=8):
     return particles, kernel, position, neighborhood, geometry, physical, spacing
 
 
-def test_kernel_and_first_order_corrections_return_explicit_evidence():
+def test_kernel_and_first_order_corrections_return_explicit_evidence() -> None:
     particles, kernel, _, neighborhood, geometry, physical, spacing = _context()
     density = jnp.ones((particles.capacity,))
     execution = phx.discretization.ParticleExecutionPolicy()
@@ -61,7 +65,7 @@ def test_kernel_and_first_order_corrections_return_explicit_evidence():
     assert jnp.all(jnp.isfinite(correction.residual_norm))
 
 
-def test_delta_sph_artificial_viscosity_and_shepard_are_operational():
+def test_delta_sph_artificial_viscosity_and_shepard_are_operational() -> None:
     particles, kernel, position, neighborhood, geometry, physical, spacing = _context()
     density = 1.0 + 0.02 * jnp.sin(2.0 * jnp.pi * position[:, 0])
     sound = jnp.ones_like(density)
@@ -115,7 +119,7 @@ def test_delta_sph_artificial_viscosity_and_shepard_are_operational():
     assert jnp.all(renormalized > 0.0)
 
 
-def test_adaptive_h_computes_grad_h_and_variable_h_force():
+def test_adaptive_h_computes_grad_h_and_variable_h_force() -> None:
     particles, kernel, _, neighborhood, geometry, _, spacing = _context()
     density = jnp.linspace(0.9, 1.1, particles.capacity)
     execution = phx.discretization.ParticleExecutionPolicy()

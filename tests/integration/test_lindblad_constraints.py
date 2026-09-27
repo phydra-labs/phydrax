@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -12,14 +15,14 @@ import phydrax as phx
 LOWERING = jnp.asarray([[0.0, 1.0], [0.0, 0.0]], dtype="complex128")
 
 
-def test_lindblad_residual_runs_through_functional_solver():
+def test_lindblad_residual_runs_through_functional_solver() -> None:
     time = phx.domain.TimeInterval(0.0, 2.0)
     rate = 0.8
     hamiltonian = time.Function()(jnp.zeros((2, 2), dtype="complex128"))
     collapse = time.Function()(jnp.sqrt(rate) * LOWERING)
 
     @time.Function("t")
-    def exact_density(t):
+    def exact_density(t: Any) -> Any:
         excited = jnp.exp(-rate * t)
         return jnp.asarray(
             [[1.0 - excited, 0.0], [0.0, excited]],
@@ -27,7 +30,7 @@ def test_lindblad_residual_runs_through_functional_solver():
         )
 
     @time.Function("t")
-    def perturbed_density(t):
+    def perturbed_density(t: Any) -> Any:
         excited = jnp.exp(-0.6 * rate * t)
         return jnp.asarray(
             [[1.0 - excited, 0.0], [0.0, excited]],

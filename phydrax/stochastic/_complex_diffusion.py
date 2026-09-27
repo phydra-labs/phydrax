@@ -4,18 +4,24 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._event_layout import ComplexEventLayout
 from .._probability import AbstractProbabilityLaw, DiagonalNormalLaw
 from .._strict import StrictModule
 from .._trainable import fixed_field
 from ..domain._measure import MeasureKind
-from ._gaussian_diffusion import VariancePreservingDiffusion
+from ..typing import PRNGKey
+from ._gaussian_diffusion import (
+    DiffusionTerminalReference,
+    VariancePreservingDiffusion,
+)
 
 
 ComplexScoreConvention: TypeAlias = Literal["real-packed", "wirtinger"]
@@ -29,7 +35,14 @@ class ComplexNormalLaw(AbstractProbabilityLaw):
     layout: ComplexEventLayout
     real_law: DiagonalNormalLaw
 
-    def __init__(self, location: ArrayLike, variance: ArrayLike, /, *, event_shape):
+    def __init__(
+        self,
+        location: ArrayLike,
+        variance: ArrayLike,
+        /,
+        *,
+        event_shape: Sequence[int],
+    ) -> None:
         mean = jnp.asarray(location)
         if not jnp.iscomplexobj(mean):
             raise TypeError("ComplexNormalLaw location must be complex-valued.")
@@ -65,7 +78,7 @@ class ComplexNormalLaw(AbstractProbabilityLaw):
     def density_measure_kind(self) -> MeasureKind:
         return "lebesgue"
 
-    def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         return self.layout.from_real_coordinates(self.real_law.sample(key, sample_shape))
 
     def contains(self, value: ArrayLike, /) -> Array:
@@ -79,7 +92,7 @@ class ComplexNormalLaw(AbstractProbabilityLaw):
 
     def score(
         self, value: ArrayLike, /, *, convention: ComplexScoreConvention = "real-packed"
-    ):
+    ) -> Array:
         packed = self.real_law.score(self.layout.to_real_coordinates(value))
         if convention == "real-packed":
             return packed
@@ -97,14 +110,14 @@ class ComplexVariancePreservingDiffusion(StrictModule):
 
     def __init__(
         self,
-        event_shape,
+        event_shape: Sequence[int],
         /,
         *,
         beta_minimum: float = 0.1,
         beta_maximum: float = 20.0,
         terminal_time: float = 1.0,
         process_id: str | None = None,
-    ):
+    ) -> None:
         layout = ComplexEventLayout(event_shape)
         real = VariancePreservingDiffusion(
             layout.coordinate_size,
@@ -125,9 +138,7 @@ class ComplexVariancePreservingDiffusion(StrictModule):
     def terminal_time(self) -> float:
         return self.real_process.terminal_time
 
-    def perturb(
-        self, key: Key[Array, ""], clean: ArrayLike, /, *, time: ArrayLike
-    ) -> Array:
+    def perturb(self, key: PRNGKey, clean: ArrayLike, /, *, time: ArrayLike) -> Array:
         packed = self.layout.to_real_coordinates(clean)
         perturbed = self.real_process.perturb(key, packed, t1=time)
         return self.layout.from_real_coordinates(perturbed)
@@ -140,7 +151,7 @@ class ComplexVariancePreservingDiffusion(StrictModule):
         *,
         time: ArrayLike,
         convention: ComplexScoreConvention = "real-packed",
-    ):
+    ) -> Array:
         noisy = self.layout.to_real_coordinates(perturbed)
         source = self.layout.to_real_coordinates(clean)
         score = self.real_process.conditional_score(noisy, source, t1=time)
@@ -150,7 +161,7 @@ class ComplexVariancePreservingDiffusion(StrictModule):
             return self.layout.from_real_coordinates(score)
         raise ValueError("Unknown complex score convention.")
 
-    def real_terminal_reference(self):
+    def real_terminal_reference(self) -> DiffusionTerminalReference:
         return self.real_process.asymptotic_terminal_reference()
 
 

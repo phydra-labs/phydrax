@@ -6,10 +6,12 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
+from types import TracebackType
 from typing import Any
 
 import jax
 import jax.numpy as jnp
+from jax import Array
 
 from ...._data_plane import (
     BoundedPrefetchIterator,
@@ -48,12 +50,12 @@ _LOADER_FINGERPRINT_FORMAT = "phydrax-operator-loader"
 def _pad_case_payload(
     batch: OperatorBatch,
     targets: OperatorTargetBatch,
-    case_log_weights,
-    case_mask,
+    case_log_weights: Array,
+    case_mask: Array,
     /,
     *,
     capacity: int,
-):
+) -> tuple[OperatorBatch, OperatorTargetBatch, Array, Array]:
     size = int(batch.case_shape[0])
     if size == capacity:
         return batch, targets, case_log_weights, case_mask
@@ -114,7 +116,7 @@ class OperatorBatchEpoch(Iterator[OperatorTrainingBatch]):
         /,
         *,
         start_batch: int,
-    ):
+    ) -> None:
         self._loader = loader
         self._plan = plan
         self._next_batch_index = int(start_batch)
@@ -152,7 +154,12 @@ class OperatorBatchEpoch(Iterator[OperatorTrainingBatch]):
         self._iterator.__enter__()
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         self._iterator.__exit__(exc_type, exc_value, traceback)
 
     def _prepare_item(
@@ -197,7 +204,7 @@ class OperatorBatchLoader:
         sharding_policy: OperatorShardingPolicy | None = None,
         sampling: AnchorQuerySamplingPolicy | None = None,
         split: str = "train",
-    ):
+    ) -> None:
         if int(batch_size) <= 0:
             raise ValueError("batch_size must be positive.")
         if int(seed) < 0:
@@ -212,8 +219,17 @@ class OperatorBatchLoader:
         if not isinstance(source, OperatorCaseSource):
             raise TypeError("dataset must be an OperatorDataset or OperatorCaseSource.")
         if isinstance(source, InMemoryOperatorCaseSource):
-            active_mass = source.dataset.case_mask & jnp.isfinite(
-                source.dataset.case_log_weights
+            source_dataset = source.dataset
+            if not (source_dataset.case_mask is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: source_dataset.case_mask is not None."
+                )
+            if not (source_dataset.case_log_weights is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: source_dataset.case_log_weights is not None."
+                )
+            active_mass = source_dataset.case_mask & jnp.isfinite(
+                source_dataset.case_log_weights
             )
             if not bool(jnp.any(active_mass)):
                 raise ValueError("Operator training data requires positive case mass.")
@@ -406,6 +422,10 @@ class OperatorBatchLoader:
         targets = selected.targets
         case_log_weights = selected.case_log_weights
         case_mask = selected.case_mask
+        if not (case_log_weights is not None and case_mask is not None):
+            raise RuntimeError(
+                "Internal invariant failed: case_log_weights is not None and case_mask is not None."
+            )
         if valid is not None:
             valid_mask = jnp.asarray(valid, dtype=jnp.bool_)
             if valid_mask.shape != jnp.asarray(case_mask).shape:

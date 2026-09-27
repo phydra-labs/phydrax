@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +12,15 @@ import numpy as np
 import phydrax as phx
 
 
-def _space(source, target, vertices, balances, capacities, *, valid=None):
+def _space(
+    source: Any,
+    target: Any,
+    vertices: Any,
+    balances: Any,
+    capacities: Any,
+    *,
+    valid: Any = None,
+) -> Any:
     relation = phx.sparse.EdgeRelation(
         jnp.asarray(source, dtype=jnp.int32),
         jnp.asarray(target, dtype=jnp.int32),
@@ -24,7 +35,7 @@ def _space(source, target, vertices, balances, capacities, *, valid=None):
     )
 
 
-def _solve(space, costs, method=None):
+def _solve(space: Any, costs: Any, method: Any = None) -> Any:
     selected = phx.combinatorial.CycleCancelingMinCostFlow() if method is None else method
     return phx.combinatorial.solve_combinatorial(
         phx.combinatorial.LinearCombinatorialProblem(
@@ -34,7 +45,7 @@ def _solve(space, costs, method=None):
     )
 
 
-def test_capacitated_min_cost_flow_builds_disjoint_multi_object_paths():
+def test_capacitated_min_cost_flow_builds_disjoint_multi_object_paths() -> None:
     space = _space(
         [0, 1, 0, 2],
         [1, 3, 2, 3],
@@ -53,7 +64,7 @@ def test_capacitated_min_cost_flow_builds_disjoint_multi_object_paths():
     np.testing.assert_allclose(result.certificate.dual_residual, 0.0, atol=1e-6)
 
 
-def test_min_cost_flow_uses_deterministic_edge_ties_and_negative_cycles():
+def test_min_cost_flow_uses_deterministic_edge_ties_and_negative_cycles() -> None:
     tied_space = _space([0, 0], [1, 1], 2, [1, -1], [1, 1])
     tied = _solve(tied_space, [0.0, 0.0])
     np.testing.assert_array_equal(tied.decision.flow, [1, 0])
@@ -66,7 +77,7 @@ def test_min_cost_flow_uses_deterministic_edge_ties_and_negative_cycles():
     assert circulation.certificate.optimality_proven
 
 
-def test_min_cost_flow_reports_infeasible_and_budget_exhausted_states():
+def test_min_cost_flow_reports_infeasible_and_budget_exhausted_states() -> None:
     infeasible_space = _space([0], [1], 3, [1, 0, -1], [1])
     infeasible = _solve(infeasible_space, [0.0])
     assert infeasible.status == int(phx.combinatorial.CombinatorialStatus.INFEASIBLE)
@@ -94,7 +105,7 @@ def test_min_cost_flow_reports_infeasible_and_budget_exhausted_states():
     np.testing.assert_array_equal(budgeted.decision.flow, [1, 0, 0])
 
 
-def test_min_cost_flow_masks_edges_and_stops_ordinary_gradients():
+def test_min_cost_flow_masks_edges_and_stops_ordinary_gradients() -> None:
     space = _space(
         [0, 0],
         [1, 1],

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -31,7 +32,14 @@ def _limits(max_bytes: int = 4096, max_losses: int = 4) -> ResourceLimits:
     return ResourceLimits(max_bytes, 4, 32, 16, max_losses)
 
 
-def _rights(kind, payload, *, checksum=None, size=None, commercial_use=True):
+def _rights(
+    kind: Any,
+    payload: Any,
+    *,
+    checksum: Any = None,
+    size: Any = None,
+    commercial_use: Any = True,
+) -> Any:
     return BlackHoleArtifactRights(
         kind,
         f"source:{kind}",
@@ -53,7 +61,12 @@ def _rights(kind, payload, *, checksum=None, size=None, commercial_use=True):
     )
 
 
-def _policy(*, license_id="CC-BY-4.0", commercial_use=True, model_execution=False):
+def _policy(
+    *,
+    license_id: Any = "CC-BY-4.0",
+    commercial_use: Any = True,
+    model_execution: Any = False,
+) -> Any:
     return BlackHoleArtifactUsePolicy(
         "bounded scientific interchange",
         (license_id,),
@@ -62,7 +75,7 @@ def _policy(*, license_id="CC-BY-4.0", commercial_use=True, model_execution=Fals
     )
 
 
-def test_neutral_mappings_bind_all_five_artifact_semantics(tmp_path: Path):
+def test_neutral_mappings_bind_all_five_artifact_semantics(tmp_path: Path) -> None:
     cases = (
         (
             "field",
@@ -133,6 +146,7 @@ def test_neutral_mappings_bind_all_five_artifact_semantics(tmp_path: Path):
             rights=_rights(kind, payload),
             use_policy=_policy(model_execution=kind == "numeric-model"),
             preserved_fields=("values",),
+            # ty: ignore[invalid-argument-type]
             **semantics,
         )
         mapped.append(artifact)
@@ -149,7 +163,7 @@ def test_neutral_mappings_bind_all_five_artifact_semantics(tmp_path: Path):
 
 def test_mapping_fails_closed_on_checksum_size_license_path_and_byte_bounds(
     tmp_path: Path,
-):
+) -> None:
     payload = b"trusted-field"
     (tmp_path / "field.bin").write_bytes(payload)
     field = {
@@ -168,6 +182,7 @@ def test_mapping_fails_closed_on_checksum_size_license_path_and_byte_bounds(
             "field.bin",
             rights=_rights("field", payload, checksum="0" * 64, commercial_use=False),
             use_policy=_policy(license_id="LicenseRef-Denied"),
+            # ty: ignore[invalid-argument-type]
             **field,
         )
     with pytest.raises(ValueError, match="size"):
@@ -175,6 +190,7 @@ def test_mapping_fails_closed_on_checksum_size_license_path_and_byte_bounds(
             "field.bin",
             rights=_rights("field", payload, size=len(payload) + 1),
             use_policy=_policy(),
+            # ty: ignore[invalid-argument-type]
             **field,
         )
     with pytest.raises(PermissionError, match="license"):
@@ -182,6 +198,7 @@ def test_mapping_fails_closed_on_checksum_size_license_path_and_byte_bounds(
             "field.bin",
             rights=_rights("field", payload),
             use_policy=_policy(license_id="MIT"),
+            # ty: ignore[invalid-argument-type]
             **field,
         )
     with pytest.raises(PermissionError, match="commercial use"):
@@ -189,6 +206,7 @@ def test_mapping_fails_closed_on_checksum_size_license_path_and_byte_bounds(
             "field.bin",
             rights=_rights("field", payload, commercial_use=False),
             use_policy=_policy(commercial_use=True),
+            # ty: ignore[invalid-argument-type]
             **field,
         )
     outside_name = f"{tmp_path.name}-outside-black-hole.bin"
@@ -198,6 +216,7 @@ def test_mapping_fails_closed_on_checksum_size_license_path_and_byte_bounds(
             f"../{outside_name}",
             rights=_rights("field", payload),
             use_policy=_policy(),
+            # ty: ignore[invalid-argument-type]
             **field,
         )
     with pytest.raises(ValueError, match="manifest exceeds"):
@@ -205,13 +224,14 @@ def test_mapping_fails_closed_on_checksum_size_license_path_and_byte_bounds(
             "field.bin",
             rights=_rights("field", payload),
             use_policy=_policy(),
+            # ty: ignore[invalid-argument-type]
             **{**field, "limits": _limits(max_bytes=4)},
         )
 
 
 def test_mapping_loss_is_explicit_bounded_and_waived_when_interpretation_changes(
     tmp_path: Path,
-):
+) -> None:
     payload = b"image"
     (tmp_path / "image.bin").write_bytes(payload)
     common = {
@@ -231,6 +251,7 @@ def test_mapping_loss_is_explicit_bounded_and_waived_when_interpretation_changes
         "Free-form producer comment has no neutral semantic role.",
         changes_interpretation=False,
     )
+    # ty: ignore[invalid-argument-type]
     mapped = map_image_artifact("image.bin", losses=(declared,), **common)
     assert mapped.report.status == AdapterStatus.DECLARED_LOSS
     assert mapped.report.losses == (declared,)
@@ -244,12 +265,17 @@ def test_mapping_loss_is_explicit_bounded_and_waived_when_interpretation_changes
         changes_interpretation=True,
     )
     with pytest.raises(AdapterError):
+        # ty: ignore[invalid-argument-type]
         map_image_artifact("image.bin", losses=(interpretation,), **common)
     waiver = AdapterWaiver(
         interpretation, "The consuming analysis requires this orientation."
     )
     admitted = map_image_artifact(
-        "image.bin", losses=(interpretation,), waivers=(waiver,), **common
+        "image.bin",
+        losses=(interpretation,),
+        waivers=(waiver,),
+        # ty: ignore[invalid-argument-type]
+        **common,
     )
     assert admitted.report.valid
     assert admitted.report.negotiation.waived_losses == (interpretation,)
@@ -257,7 +283,7 @@ def test_mapping_loss_is_explicit_bounded_and_waived_when_interpretation_changes
 
 def test_numeric_model_mapping_rejects_pickle_formats_without_deserializing(
     tmp_path: Path,
-):
+) -> None:
     payload = b"opaque-model-bytes"
     (tmp_path / "model.bin").write_bytes(payload)
     with pytest.raises(ValueError, match="pickle-free"):

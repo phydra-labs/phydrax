@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -32,7 +33,7 @@ class ScalarScreenJunctionCondition3D(StrictModule, NonTrainableState):
     constraint_rows: Array
     condition_id: str = eqx.field(static=True)
 
-    def __init__(self, name: str, law: str, constraint_rows: ArrayLike, /):
+    def __init__(self, name: str, law: str, constraint_rows: ArrayLike, /) -> None:
         rows = np.asarray(constraint_rows)
         if (
             not str(name)

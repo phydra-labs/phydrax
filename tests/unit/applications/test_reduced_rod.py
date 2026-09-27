@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -24,7 +26,7 @@ from phydrax.applications.solid_mechanics._rod_reduction import (
 )
 
 
-def _spatial_rod(*, scale: float = 1.0):
+def _spatial_rod(*, scale: float = 1.0) -> Any:
     dtype = jnp.float32
     return prepare_rod(
         RodPlan(
@@ -45,7 +47,7 @@ def _spatial_rod(*, scale: float = 1.0):
     )
 
 
-def _planar_rod():
+def _planar_rod() -> Any:
     dtype = jnp.float32
     return prepare_rod(
         RodPlan(
@@ -60,7 +62,7 @@ def _planar_rod():
     )
 
 
-def _spatial_basis(*, label: str | None = None):
+def _spatial_basis(*, label: str | None = None) -> Any:
     return RodStrainBasisPlan.shifted_legendre(
         0,
         dimension=3,
@@ -69,13 +71,13 @@ def _spatial_basis(*, label: str | None = None):
     )
 
 
-def _spatial_reduction(*, rod=None, plan=None):
+def _spatial_reduction(*, rod: Any = None, plan: Any = None) -> Any:
     source = _spatial_rod() if rod is None else rod
     reduction_plan = ReducedRodPlan(_spatial_basis()) if plan is None else plan
     return prepare_reduced_rod(source, reduction_plan)
 
 
-def test_basis_constructors_use_canonical_physical_component_scaling():
+def test_basis_constructors_use_canonical_physical_component_scaling() -> None:
     scales = jnp.asarray((2.0, 3.0, 4.0, 5.0, 6.0, 7.0), dtype=jnp.float32)
     pcs = RodStrainBasisPlan.piecewise_constant(
         jnp.asarray((0.0, 0.5, 1.0), dtype=jnp.float32),
@@ -120,7 +122,7 @@ def test_basis_constructors_use_canonical_physical_component_scaling():
     assert value[5, 1] == pytest.approx(1.75)
 
 
-def test_prepared_basis_has_physical_worksets_rank_condition_and_dtype_evidence():
+def test_prepared_basis_has_physical_worksets_rank_condition_and_dtype_evidence() -> None:
     rod = _spatial_rod()
     basis = RodStrainBasisPlan.piecewise_constant(
         jnp.asarray((0.0, 0.5, 1.0), dtype=jnp.float32),
@@ -145,7 +147,7 @@ def test_prepared_basis_has_physical_worksets_rank_condition_and_dtype_evidence(
     assert prepared.evidence.valid
 
 
-def test_weighted_rank_and_condition_failures_reject_preparation():
+def test_weighted_rank_and_condition_failures_reject_preparation() -> None:
     rod = _spatial_rod()
     duplicate = jnp.zeros((1, 6, 2, 1), dtype=jnp.float32)
     duplicate = duplicate.at[0, 0, :, 0].set(1.0)
@@ -174,7 +176,7 @@ def test_weighted_rank_and_condition_failures_reject_preparation():
         prepare_rod_strain_basis(ill_conditioned_plan, rod)
 
 
-def test_plan_and_prepared_ids_bind_content_not_display_labels():
+def test_plan_and_prepared_ids_bind_content_not_display_labels() -> None:
     first_basis = _spatial_basis(label="first")
     renamed_basis = _spatial_basis(label="renamed")
     changed_basis = RodStrainBasisPlan.shifted_legendre(
@@ -219,9 +221,10 @@ def test_plan_and_prepared_ids_bind_content_not_display_labels():
     assert prepare_reduced_rod(changed_rod, first_plan).prepared_id != first.prepared_id
 
 
-def test_only_explicit_fixed_or_native_reference_base_semantics_are_accepted():
+def test_only_explicit_fixed_or_native_reference_base_semantics_are_accepted() -> None:
     basis = _spatial_basis()
-    with pytest.raises(ValueError, match="floating rods are unsupported"):
+    with pytest.raises(ValueError, match="base_policy"):
+        # ty: ignore[invalid-argument-type]
         ReducedRodPlan(basis, base_policy="floating")
     with pytest.raises(ValueError, match="requires both"):
         ReducedRodPlan(
@@ -254,8 +257,8 @@ def test_only_explicit_fixed_or_native_reference_base_semantics_are_accepted():
 
 @pytest.mark.parametrize("coordinate", range(6))
 def test_pure_spatial_extension_shear_bend_and_twist_reconstruct_at_native_sites(
-    coordinate,
-):
+    coordinate: Any,
+) -> None:
     reduction = _spatial_reduction()
     coefficients = jnp.zeros((6,), dtype=jnp.float32).at[coordinate].set(0.2)
     state = ReducedRodState(coefficients, jnp.zeros_like(coefficients))
@@ -284,7 +287,7 @@ def test_pure_spatial_extension_shear_bend_and_twist_reconstruct_at_native_sites
     assert evaluation.strain_evidence.valid
 
 
-def test_mixed_spatial_strain_reconstructs_and_preserves_quaternion_charts():
+def test_mixed_spatial_strain_reconstructs_and_preserves_quaternion_charts() -> None:
     reduction = _spatial_reduction()
     coefficients = jnp.asarray((0.12, -0.08, 0.05, 0.11, -0.09, 0.07), dtype=jnp.float32)
     state = ReducedRodState(
@@ -300,7 +303,7 @@ def test_mixed_spatial_strain_reconstructs_and_preserves_quaternion_charts():
     assert evaluation.valid
 
 
-def test_velocity_jvp_and_effort_vjp_use_native_spaces_and_preserve_power():
+def test_velocity_jvp_and_effort_vjp_use_native_spaces_and_preserve_power() -> None:
     reduction = _spatial_reduction()
     coefficients = jnp.asarray((0.08, -0.05, 0.04, 0.06, -0.03, 0.02), dtype=jnp.float32)
     rates = jnp.asarray((-0.13, 0.17, -0.11, 0.19, -0.07, 0.05), dtype=jnp.float32)
@@ -323,7 +326,7 @@ def test_velocity_jvp_and_effort_vjp_use_native_spaces_and_preserve_power():
     assert reduced_power == pytest.approx(native_power, rel=2.0e-6, abs=2.0e-6)
 
 
-def test_planar_reduction_uses_the_same_basis_and_fixed_base_api():
+def test_planar_reduction_uses_the_same_basis_and_fixed_base_api() -> None:
     rod = _planar_rod()
     basis = RodStrainBasisPlan.shifted_legendre(
         0,

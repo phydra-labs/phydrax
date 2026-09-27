@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 """Compare frozen held-out transfer predictions; no damage claim is made."""
 
+
+from typing import Any
 import hashlib
 import json
 
@@ -45,7 +47,7 @@ def _reference(label: str) -> ReferenceArtifactManifest:
     )
 
 
-def _fit(model, campaign, source):
+def _fit(model: Any, campaign: Any, source: Any) -> Any:
     parameters = np.asarray([0.25, -0.5])
     parameter_id = canonical_fingerprint(
         {

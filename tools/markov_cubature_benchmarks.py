@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -17,7 +18,7 @@ import phydrax as phx
 import phydrax.ein as ein
 
 
-def _weighted_moments(solution):
+def _weighted_moments(solution: Any) -> Any:
     mask = solution.mask[-1]
     weights = jnp.where(mask, jnp.exp(solution.log_weights[-1]), 0.0)
     points = solution.points[-1]
@@ -27,7 +28,7 @@ def _weighted_moments(solution):
     return mean, covariance
 
 
-def _case(state_dimension, intervals, repeats):
+def _case(state_dimension: Any, intervals: Any, repeats: Any) -> Any:
     rate = 0.15
     diffusion_scale = 0.3
     initial = jnp.linspace(0.5, 1.5, state_dimension)
@@ -99,7 +100,7 @@ def _case(state_dimension, intervals, repeats):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--state-dimension", type=int, default=4)
     parser.add_argument("--intervals", type=int, default=16)

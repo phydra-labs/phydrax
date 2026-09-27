@@ -4,14 +4,15 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from .._evolution import AbstractDifferentiableEvolution
 from .._grid import EvolutionGrid, IterationGrid, TimeGrid
@@ -19,6 +20,10 @@ from .._system import ContinuousSystem, DiscreteSystem
 
 
 LyapunovSpectrumMethod: TypeAlias = Literal["periodic_qr"]
+# (state, frame, stretch, total time, pending time, valid, status).
+_SpectrumCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+# (frame, stretch, total time, pending time, valid, status).
+_QRState: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 LYAPUNOV_SUCCESS = 0
 LYAPUNOV_NONFINITE_TANGENT = 1
@@ -78,7 +83,7 @@ class LyapunovSpectrumCheckpoint(StrictModule):
         approximation_id: str,
         valid: ArrayLike = True,
         status: ArrayLike = LYAPUNOV_SUCCESS,
-    ):
+    ) -> None:
         state_array = jnp.asarray(state)
         shape = tuple(state_shape)
         dimension = state_array.size
@@ -187,7 +192,7 @@ class LyapunovSpectrumResult(StrictModule):
         valid: ArrayLike,
         status: ArrayLike,
         checkpoint: LyapunovSpectrumCheckpoint,
-    ):
+    ) -> None:
         if not isinstance(checkpoint, LyapunovSpectrumCheckpoint):
             raise TypeError("checkpoint must be a LyapunovSpectrumCheckpoint.")
         spectrum = jnp.asarray(exponents)
@@ -265,7 +270,7 @@ def _initial_basis(state: Array, rank: int, supplied: ArrayLike | None, /) -> Ar
         if rank == dimension:
             return jnp.eye(dimension, dtype=dtype)
         basis, _ = _thin_qr(
-            jax.random.normal(jax.random.PRNGKey(0), (dimension, rank), dtype=dtype)
+            jax.random.normal(jax.random.key(0), (dimension, rank), dtype=dtype)
         )
         return basis
     basis = jnp.asarray(supplied)
@@ -290,7 +295,9 @@ def _schedule(qr_interval: int, burn_in: int, accumulation_interval: int) -> Non
         raise ValueError("accumulation_interval must be a multiple of qr_interval.")
 
 
-def _provenance(evolution: AbstractDifferentiableEvolution, grid: EvolutionGrid, /):
+def _provenance(
+    evolution: AbstractDifferentiableEvolution, grid: EvolutionGrid, /
+) -> tuple[str, str, str, str, str, str, str]:
     if isinstance(evolution.system, ContinuousSystem):
         system_kind = "continuous"
     elif isinstance(evolution.system, DiscreteSystem):
@@ -314,7 +321,7 @@ def finite_time_lyapunov_spectrum(
     grid: EvolutionGrid,
     /,
     *,
-    args=None,
+    args: Any = None,
     leading_k: int | None = None,
     qr_interval: int = 1,
     burn_in: int = 0,
@@ -442,12 +449,14 @@ def finite_time_lyapunov_spectrum(
         )
     )
 
-    def scan_step(carry, scan_input):
+    def scan_step(
+        carry: _SpectrumCarry, scan_input: tuple[Array, Array, Array]
+    ) -> tuple[_SpectrumCarry, tuple[Array, Array]]:
         current, frame, stretch, total_time, pending_time, run_valid, run_status = carry
         local_index, source, target = scan_input
         global_step = start_step + local_index + 1
 
-        def propagate(vector):
+        def propagate(vector: Array) -> tuple[Array, Array, Array, Array]:
             tangent_step = evolution.tangent_action(
                 current,
                 vector.reshape(state_shape),
@@ -490,7 +499,7 @@ def finite_time_lyapunov_spectrum(
         is_final = local_index + 1 == num_steps
         should_qr = at_burn | before_burn_qr | after_burn_qr | is_final
 
-        def orthonormalize(values):
+        def orthonormalize(values: _QRState) -> _QRState:
             (
                 candidate_frame,
                 candidate_stretch,

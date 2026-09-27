@@ -16,6 +16,7 @@ from .._strict import StrictModule
 from ..axes import AxisKey
 from ..linalg import AbstractVectorSpace, ArraySpace, DualSpace
 from ..metrix import AbstractStateGeometry, EuclideanStateGeometry
+from ..typing import parse
 
 
 InputRole: TypeAlias = Literal["control", "forcing", "parameter"]
@@ -68,7 +69,7 @@ def _components(
     return names
 
 
-def _identifier(value: str | None, payload, prefix: str, /) -> str:
+def _identifier(value: str | None, payload: object, prefix: str, /) -> str:
     if value is not None:
         if not isinstance(value, str) or not value:
             raise ValueError("layout_id must be a non-empty string or None.")
@@ -103,7 +104,7 @@ class StateLayout(StrictModule):
         local_component_names: Sequence[str] | None = None,
         tangent_component_names: Sequence[str] | None = None,
         layout_id: str | None = None,
-    ):
+    ) -> None:
         resolved_shape = _shape(shape, "StateLayout shape")
         resolved_axes = _axes(axes, len(resolved_shape), "state")
         count = prod(resolved_shape) if resolved_shape else 1
@@ -270,24 +271,13 @@ class InputLayout(StrictModule):
         component_names: Sequence[str] | None = None,
         roles: Sequence[InputRole] | InputRole = "control",
         layout_id: str | None = None,
-    ):
+    ) -> None:
         resolved_shape = _shape(shape, "InputLayout shape")
         resolved_axes = _axes(axes, len(resolved_shape), "input")
         count = prod(resolved_shape) if resolved_shape else 1
         resolved_components = _components(component_names, count, "u")
         raw_roles = (roles,) * count if isinstance(roles, str) else tuple(roles)
-        resolved_role_values: list[InputRole] = []
-        for role in raw_roles:
-            if role == "control":
-                resolved_role_values.append("control")
-            elif role == "forcing":
-                resolved_role_values.append("forcing")
-            elif role == "parameter":
-                resolved_role_values.append("parameter")
-            else:
-                raise ValueError(
-                    "roles must assign 'control', 'forcing', or 'parameter' to every component."
-                )
+        resolved_role_values = [parse(role, InputRole, "roles") for role in raw_roles]
         if len(resolved_role_values) != count:
             raise ValueError(
                 "roles must assign 'control', 'forcing', or 'parameter' to every component."

@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from enum import IntEnum, StrEnum
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -69,7 +71,7 @@ class ChemicalAffinePivot(StrictModule):
         direction: ChemicalReactionDirection | str,
         species: str,
         /,
-    ):
+    ) -> None:
         reaction = int(reaction_index)
         direction_ = ChemicalReactionDirection(direction)
         species_ = str(species)
@@ -90,13 +92,13 @@ class ChemicalConditionalAffinePlan(StrictModule):
 
     def __init__(
         self,
-        affine_species,
-        driver_species=(),
+        affine_species: Iterable[str],
+        driver_species: Iterable[str] = (),
         /,
         *,
-        pivots=(),
+        pivots: Iterable[ChemicalAffinePivot] = (),
         plan_id: str | None = None,
-    ):
+    ) -> None:
         affine = tuple(str(value) for value in affine_species)
         drivers = tuple(str(value) for value in driver_species)
         pivots_ = tuple(pivots)
@@ -181,7 +183,7 @@ class ChemicalConditionalAffineDrivers(StrictModule):
         /,
         *,
         runtime: ChemicalRateRuntime | None = None,
-    ):
+    ) -> None:
         species = jnp.asarray(species_concentrations)
         if species.ndim < 1:
             raise ValueError("species_concentrations must have a trailing driver axis.")
@@ -268,7 +270,7 @@ class PreparedChemicalConditionalAffine(StrictModule):
         plan: ChemicalConditionalAffinePlan,
         certificate: ChemicalConditionalAffineCertificate,
         /,
-    ):
+    ) -> None:
         if not isinstance(mechanism, PreparedChemicalMechanism):
             raise TypeError("mechanism must be PreparedChemicalMechanism.")
         if not isinstance(plan, ChemicalConditionalAffinePlan):

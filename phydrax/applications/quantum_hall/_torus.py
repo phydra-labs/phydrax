@@ -44,7 +44,7 @@ class MagneticTorusGeometry(StrictModule, NonTrainableState):
         flux_quanta: int,
         modular_parameter: complex = 1.0j,
         twists: tuple[float, float] = (0.0, 0.0),
-    ):
+    ) -> None:
         flux = int(flux_quanta)
         modular = complex(modular_parameter)
         twist = tuple(float(value) for value in twists)
@@ -85,7 +85,7 @@ class TorusOrbitalTerm:
         annihilators: Sequence[int],
         coefficient: complex,
         winding: tuple[int, int],
-    ):
+    ) -> None:
         creators_ = tuple(int(value) for value in creators)
         annihilators_ = tuple(int(value) for value in annihilators)
         coefficient_ = complex(coefficient)
@@ -136,7 +136,7 @@ class TorusProjectedPlan(StrictModule, NonTrainableState):
         component: HallComponentKey = SPIN_POLARIZED_ELECTRON,
         maximum_basis_dimension: int = 100_000,
         maximum_terms: int = 2_000_000,
-    ):
+    ) -> None:
         particles = int(particle_count)
         momentum = int(momentum_sector)
         terms_ = tuple(terms)

@@ -13,12 +13,14 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
+from jax.typing import DTypeLike
 
+from ..._dtype_names import real_precision_dtype_name
 from ..._fingerprint import canonical_fingerprint
-from ..._precision import real_precision_dtype_name
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from ._amplitude import LogAmplitude
 from ._local import (
     AbstractLocalQuantumOperator,
@@ -31,7 +33,7 @@ class MonopoleKineticPolicy(StrictModule, NonTrainableState):
     compute_dtype: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, *, compute_dtype: object = "float64"):
+    def __init__(self, *, compute_dtype: DTypeLike = "float64") -> None:
         dtype = real_precision_dtype_name(compute_dtype)
         self.compute_dtype = dtype
         self.method_id = f"monopole-sphere-selected-hessian-diagonal:dtype={dtype}"
@@ -48,7 +50,7 @@ class MonopoleKineticPolicy(StrictModule, NonTrainableState):
         flat = jnp.asarray(configuration, dtype=self.compute_dtype).reshape((-1,))
         dimension = flat.shape[0]
 
-        def log_components(coordinates):
+        def log_components(coordinates: Array) -> Array:
             amplitude = model(coordinates.reshape(shape))
             if not isinstance(amplitude, LogAmplitude):
                 raise TypeError("The sphere amplitude model must return LogAmplitude.")
@@ -61,7 +63,7 @@ class MonopoleKineticPolicy(StrictModule, NonTrainableState):
         jacobian = jax.jacrev(log_components)
         gradient_components = jacobian(flat)
 
-        def diagonal_component(direction):
+        def diagonal_component(direction: Array) -> Array:
             _, directional = jax.jvp(jacobian, (flat,), (direction,))
             return jnp.sum(directional * direction[None, :], axis=1)
 
@@ -119,7 +121,7 @@ class MonopoleSphereCoulombHamiltonian(AbstractLocalQuantumOperator):
         kinetic_strength: float = 1.0,
         interaction_strength: float = 1.0,
         kinetic: MonopoleKineticPolicy | None = None,
-    ):
+    ) -> None:
         count = int(electron_count)
         flux = int(twice_monopole_flux)
         radius_ = sqrt(flux / 2.0) if radius is None else float(radius)
@@ -236,12 +238,12 @@ class MonopoleSphereCoulombHamiltonian(AbstractLocalQuantumOperator):
 
 
 def uniform_sphere_electron_walkers(
-    key: Key[Array, ""],
+    key: PRNGKey,
     chain_count: int,
     electron_count: int,
     /,
     *,
-    dtype=jnp.float64,
+    dtype: DTypeLike = jnp.float64,
 ) -> Array:
     chains = int(chain_count)
     electrons = int(electron_count)

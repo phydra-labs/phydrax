@@ -4,16 +4,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_where
+from ...typing import PRNGKey
 from ._dem import DEMRuntimeState, PreparedSoftSphereDEMDynamics
 from ._particle_epoch import (
     grow_particle_execution_epoch,
@@ -65,9 +70,9 @@ class ReactiveParticleTemplatePlan(StrictModule, NonTrainableState):
         /,
         *,
         outer_scale: float | None = None,
-        reaction_front: ArrayLike = (),
+        reaction_front: ArrayLike | Sequence[float] = (),
         template_id: str | None = None,
-    ):
+    ) -> None:
         radius_ = float(radius)
         mass_ = float(mass)
         material = int(material_id)
@@ -151,7 +156,12 @@ class ReactiveParticleTemplateDistributionPlan(StrictModule, NonTrainableState):
     probabilities: Array
     distribution_id: str = eqx.field(static=True)
 
-    def __init__(self, templates, probabilities: ArrayLike, /):
+    def __init__(
+        self,
+        templates: Iterable[ReactiveParticleTemplatePlan],
+        probabilities: ArrayLike,
+        /,
+    ) -> None:
         values = tuple(templates)
         probability = np.asarray(probabilities, dtype=np.float64)
         if not values or any(
@@ -184,7 +194,7 @@ class ReactiveParticleTemplateDistributionPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def sample(self, key: Key[Array, ""], count: int, /) -> Array:
+    def sample(self, key: PRNGKey, count: int, /) -> Array:
         return jr.choice(
             key,
             len(self.templates),
@@ -210,7 +220,7 @@ class ParticleInsertionPlan(StrictModule, NonTrainableState):
         *,
         maximum_attempts: int = 32,
         all_inside: bool = True,
-    ):
+    ) -> None:
         lower_ = np.asarray(lower, dtype=np.float64)
         upper_ = np.asarray(upper, dtype=np.float64)
         count = int(requested_count)
@@ -265,11 +275,11 @@ def insert_reactive_particles(
     internal_batch: PreparedParticleInternalBatch,
     internal_state: ParticleInternalBatchState,
     molar_masses: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     time: Array,
     /,
     *,
-    args=None,
+    args: Any = None,
     available_mask: ArrayLike | None = None,
 ) -> ParticleInsertionResult:
     if not isinstance(plan, ParticleInsertionPlan):
@@ -509,7 +519,7 @@ def _grow_internal_batch(
     batch: PreparedParticleInternalBatch,
     state: ParticleInternalBatchState,
     /,
-):
+) -> tuple[PreparedParticleInternalBatch, ParticleInternalBatchState]:
     old_capacity = transition.source_epoch.dynamics.bodies.capacity
     if batch.particle_count != old_capacity or not np.array_equal(
         np.asarray(batch.owner_indices), np.arange(old_capacity)
@@ -588,12 +598,12 @@ def insert_reactive_particles_with_growth(
     internal_batch: PreparedParticleInternalBatch,
     internal_state: ParticleInternalBatchState,
     molar_masses: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     time: Array,
     growth_policy: ParticleCapacityGrowthPolicy,
     /,
     *,
-    args=None,
+    args: Any = None,
 ) -> ParticleEpochInsertionResult:
     available = ~epoch.ever_occupied & ~epoch.retired
     free = int(np.count_nonzero(np.asarray(available)))
@@ -701,7 +711,7 @@ def fragment_particle_with_growth(
     growth_policy: ParticleCapacityGrowthPolicy,
     /,
     *,
-    args=None,
+    args: Any = None,
 ) -> ParticleEpochFragmentationResult:
     valid = jnp.asarray(child_valid, dtype=jnp.bool_)
     required = int(np.count_nonzero(np.asarray(valid)))
@@ -869,7 +879,7 @@ class ParticleRegionPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self, lower: ArrayLike, upper: ArrayLike, /, *, region_id: str | None = None
-    ):
+    ) -> None:
         lower_ = np.asarray(lower, dtype=np.float64)
         upper_ = np.asarray(upper, dtype=np.float64)
         if lower_.shape != upper_.shape or lower_.ndim != 1 or np.any(upper_ <= lower_):
@@ -921,7 +931,7 @@ class MassFlowSurfacePlan(StrictModule, NonTrainableState):
     normal: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, point: ArrayLike, normal: ArrayLike, /):
+    def __init__(self, point: ArrayLike, normal: ArrayLike, /) -> None:
         point_ = np.asarray(point, dtype=np.float64)
         normal_ = np.asarray(normal, dtype=np.float64)
         norm = np.linalg.norm(normal_)
@@ -985,7 +995,7 @@ def remove_particles_in_region(
     /,
     *,
     remove_inside: bool = True,
-    args=None,
+    args: Any = None,
 ) -> ParticleRemovalResult:
     if not isinstance(region, ParticleRegionPlan):
         raise TypeError("region must be a ParticleRegionPlan.")

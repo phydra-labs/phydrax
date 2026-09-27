@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -10,7 +13,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _gaussian_mcmc_result():
+def _gaussian_mcmc_result() -> Any:
     chains = 2
     draws = 48
     parameter_space = phx.uq.ParameterSpace(
@@ -61,7 +64,7 @@ def _gaussian_mcmc_result():
     return result
 
 
-def test_pivoted_cholesky_selection_builds_a_sparse_gp_factor():
+def test_pivoted_cholesky_selection_builds_a_sparse_gp_factor() -> None:
     coordinates = jnp.linspace(-1.0, 1.0, 64)
     points = jnp.stack((coordinates, coordinates**2), axis=1)
     selection = phx.uq.select_inducing_points(points, 12, key=jr.key(3))
@@ -83,12 +86,12 @@ def test_pivoted_cholesky_selection_builds_a_sparse_gp_factor():
     assert jnp.isfinite(factor.log_probability(jnp.sin(points[:, 0])))
 
 
-def test_inducing_selection_reports_numerical_rank_exhaustion():
+def test_inducing_selection_reports_numerical_rank_exhaustion() -> None:
     with pytest.raises(ValueError, match="kernel rank"):
         phx.uq.select_inducing_points(jnp.zeros((8, 2)), 2, key=jr.key(4))
 
 
-def test_inducing_selection_preserves_structured_path_inputs():
+def test_inducing_selection_preserves_structured_path_inputs() -> None:
     paths = jnp.cumsum(jr.normal(jr.key(44), (7, 5, 2)) * 0.2, axis=1)
     kernel = phx.kernels.SignaturePDEKernel(
         phx.kernels.LinearKernel(),
@@ -107,7 +110,7 @@ def test_inducing_selection_preserves_structured_path_inputs():
     assert jnp.unique(selection.indices).shape == (3,)
 
 
-def test_stein_thinning_preserves_chains_source_indices_and_diagnostics():
+def test_stein_thinning_preserves_chains_source_indices_and_diagnostics() -> None:
     result = _gaussian_mcmc_result()
     method = phx.uq.SteinThinning(10)
 
@@ -140,12 +143,12 @@ def test_stein_thinning_preserves_chains_source_indices_and_diagnostics():
     assert prediction.samples.shape == (2, 10, 3)
 
 
-def test_stein_thinning_rejects_more_points_than_each_chain_contains():
+def test_stein_thinning_rejects_more_points_than_each_chain_contains() -> None:
     result = _gaussian_mcmc_result()
 
     with pytest.raises(ValueError, match="more posterior draws"):
         phx.uq.thin_posterior(result, phx.uq.SteinThinning(49))
 
 
-def jax_unique_counts(indices):
+def jax_unique_counts(indices: Any) -> Any:
     return jnp.asarray([jnp.unique(row).size for row in indices])

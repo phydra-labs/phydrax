@@ -76,9 +76,9 @@ def _name(value: Any, role: str, /) -> str:
 
 def _payload_digest(array: np.ndarray, /) -> str:
     # Digest the contiguous payload bytes in place (empty arrays included).
-    return hashlib.sha256(
-        np.ascontiguousarray(array).reshape(-1).view(np.uint8)
-    ).hexdigest()
+    payload = np.ascontiguousarray(array).reshape(-1).view(np.uint8)
+    # ty: ignore[invalid-argument-type]
+    return hashlib.sha256(memoryview(payload)).hexdigest()
 
 
 def write_exchange(
@@ -145,7 +145,7 @@ def write_exchange(
 
 
 def _decode_manifest(data: bytes, /) -> dict:
-    def pairs(items):
+    def pairs(items: Any) -> Any:
         record = {}
         for key, value in items:
             if key in record:

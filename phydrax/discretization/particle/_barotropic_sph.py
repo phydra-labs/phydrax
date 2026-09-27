@@ -5,13 +5,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.linalg as la
 
@@ -34,13 +36,17 @@ from ._neighborhood import (
     AbstractPreparedParticleNeighborhood,
     ParticleNeighborhoodState,
 )
-from ._pairwise import particle_pair_geometry, ParticlePairGeometry
+from ._pairwise import particle_pair_geometry, ParticlePairGeometry, ParticlePairRelation
 from ._precision import ParticleExecutionPolicy, ParticlePrecisionPolicy
 from ._smoothing import AbstractSPHSmoothingKernel
 from ._sph_operators import (
     sph_summation_density,
     sph_symmetric_pressure_gradient,
 )
+
+
+if TYPE_CHECKING:
+    from ...graph import GraphIR
 
 
 ExternalParticlePotential = Callable[[Array, Array, Any], ArrayLike]
@@ -67,7 +73,7 @@ class BarotropicSPHMethodPlan(StrictModule, NonTrainableState):
         force_cfl: float = 0.25,
         name: str = "barotropic-sph",
         method_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(kernel, AbstractSPHSmoothingKernel):
             raise TypeError("kernel must be an AbstractSPHSmoothingKernel.")
         smoothing = float(smoothing_length)
@@ -174,7 +180,7 @@ class PreparedBarotropicSPHDynamics(StrictModule, NonTrainableState):
         precision: ParticlePrecisionPolicy | None = None,
         external_potential: ExternalParticlePotential | None = None,
         external_potential_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(particles, ParticleDiscretization):
             raise TypeError("particles must be a ParticleDiscretization.")
         if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
@@ -294,7 +300,7 @@ class PreparedBarotropicSPHDynamics(StrictModule, NonTrainableState):
 
     def _density_from_pairs(
         self,
-        pairs,
+        pairs: ParticlePairRelation,
         geometry: ParticlePairGeometry,
         valid: Array,
         /,
@@ -346,7 +352,7 @@ class PreparedBarotropicSPHDynamics(StrictModule, NonTrainableState):
     def pair_geometry(self, position: ArrayLike, /) -> ParticlePairGeometry:
         return self._evaluate(position).geometry
 
-    def graph_view(self, position: ArrayLike, /, *, directed: bool = True):
+    def graph_view(self, position: ArrayLike, /, *, directed: bool = True) -> GraphIR:
         evaluation = self._evaluate(position)
         return particle_graph_view(
             self.particles,
@@ -438,7 +444,7 @@ class PreparedBarotropicSPHDynamics(StrictModule, NonTrainableState):
         if self.external_potential is None:
             return jnp.zeros_like(position)
 
-        def external(configuration):
+        def external(configuration: Array) -> Array:
             return self.external_potential_energy(time, configuration, args)
 
         return jax.grad(external)(position)
@@ -670,7 +676,11 @@ class PreparedBarotropicSPHDynamics(StrictModule, NonTrainableState):
         position: Array,
         args: Any = None,
         /,
-    ):
+    ) -> tuple[
+        PyTree[Array],
+        Callable[[PyTree[Any]], PyTree[Array]],
+        Callable[[PyTree[Any]], tuple[PyTree[Array]]],
+    ]:
         linearization = la.prepare_linearization(
             lambda configuration: self.potential_gradient(time, configuration, args),
             position,

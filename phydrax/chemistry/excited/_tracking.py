@@ -9,7 +9,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 from scipy.optimize import linear_sum_assignment
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -19,6 +20,7 @@ from ._manifold import ElectronicManifoldResult
 from ._representation import (
     BiorthogonalStateRepresentation,
     CIStateRepresentation,
+    ExcitedStateRepresentation,
     RPAStateRepresentation,
     TDAStateRepresentation,
 )
@@ -39,16 +41,16 @@ class StateTrackingResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        overlap_matrix,
-        permutation,
-        alignment,
-        assigned_overlaps,
-        subspace_singular_values,
-        successful,
-        previous_manifold_id,
-        current_manifold_id,
+        overlap_matrix: ArrayLike,
+        permutation: ArrayLike,
+        alignment: ArrayLike,
+        assigned_overlaps: ArrayLike,
+        subspace_singular_values: ArrayLike,
+        successful: ArrayLike,
+        previous_manifold_id: str,
+        current_manifold_id: str,
         /,
-    ):
+    ) -> None:
         overlap = jnp.asarray(overlap_matrix)
         permutation_ = jnp.asarray(permutation, dtype=jnp.int32)
         alignment_ = jnp.asarray(alignment, dtype=overlap.dtype)
@@ -99,7 +101,7 @@ class StateTrackingResult(StrictModule, NonTrainableState):
         )
 
 
-def _left_right(representation):
+def _left_right(representation: ExcitedStateRepresentation) -> tuple[Array, Array]:
     if isinstance(representation, TDAStateRepresentation):
         return representation.amplitudes, representation.amplitudes
     if isinstance(representation, CIStateRepresentation):

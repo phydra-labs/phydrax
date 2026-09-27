@@ -13,7 +13,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -26,6 +27,7 @@ from ..kernels._field_metric import (
     kernel_functional_representer,
     KernelFunctional,
     KernelFunctionalTerm,
+    KernelSection,
     ProductFieldKernelMetric,
 )
 from ..linalg._constraint_operators import (
@@ -41,16 +43,18 @@ from ..linalg._runtime import (
     solve as solve_linear_system,
 )
 from ..linalg._spaces import ArraySpace
+from ..typing import parse, PRNGKey
 from ._affine import (
     AbstractLinearCorrectionProvider,
     AffineBlockAssembly,
+    AffineExactnessScope,
     AffineProjectionPolicy,
     LinearCorrectionEvidence,
     PreparedLinearCorrection,
 )
 
 
-KernelCorrectionRepresentation = Literal[
+KernelCorrectionRepresentation: TypeAlias = Literal[
     "canonical", "finite-feature", "selected-section", "matrix-free"
 ]
 KernelRepresenterExactness = Literal[
@@ -198,7 +202,7 @@ class PointKernelRepresenter(StrictModule):
         /,
         *,
         functional_id: str = "point",
-    ):
+    ) -> None:
         self.field_name = _identifier(field_name, "field_name")
         self.functional_id = _identifier(functional_id, "functional_id")
         self.points = jnp.asarray(points)
@@ -212,7 +216,9 @@ class PointKernelRepresenter(StrictModule):
             functional_id=self.functional_id,
         )
 
-    def section(self, metric: ProductFieldKernelMetric, field_name: str, /):
+    def section(
+        self, metric: ProductFieldKernelMetric, field_name: str, /
+    ) -> KernelSection:
         return metric.representer(self.functional(metric), field_name)
 
 
@@ -234,7 +240,7 @@ class JetKernelRepresenter(StrictModule):
         /,
         *,
         functional_id: str = "jet",
-    ):
+    ) -> None:
         self.field_name = _identifier(field_name, "field_name")
         self.functional_id = _identifier(functional_id, "functional_id")
         self.points = jnp.asarray(points)
@@ -250,7 +256,9 @@ class JetKernelRepresenter(StrictModule):
             functional_id=self.functional_id,
         )
 
-    def section(self, metric: ProductFieldKernelMetric, field_name: str, /):
+    def section(
+        self, metric: ProductFieldKernelMetric, field_name: str, /
+    ) -> KernelSection:
         return metric.representer(self.functional(metric), field_name)
 
 
@@ -277,7 +285,7 @@ class IntegralKernelRepresenter(StrictModule):
         /,
         *,
         functional_id: str = "integral",
-    ):
+    ) -> None:
         if not isinstance(reduction, PreparedLinearReduction):
             raise TypeError("reduction must be a PreparedLinearReduction.")
         if len(reduction.coefficient_fields) != 1 or reduction.schema.retained_axes:
@@ -310,18 +318,23 @@ class IntegralKernelRepresenter(StrictModule):
             realization_id=self.reduction.realization_id,
         )
 
-    def section(self, metric: ProductFieldKernelMetric, field_name: str, /):
+    def section(
+        self, metric: ProductFieldKernelMetric, field_name: str, /
+    ) -> KernelSection:
         return metric.representer(self.functional(metric), field_name)
 
 
 KernelRepresenter: TypeAlias = (
     PointKernelRepresenter | JetKernelRepresenter | IntegralKernelRepresenter
 )
+_KernelFunctionalSource: TypeAlias = (
+    KernelFunctional | KernelRepresenter | Sequence[KernelRepresenter]
+)
 
 
 def _resolve_functional(
     metric: ProductFieldKernelMetric,
-    value: KernelFunctional | KernelRepresenter | Sequence[KernelRepresenter],
+    value: _KernelFunctionalSource,
     /,
     *,
     functional_id: str,
@@ -385,14 +398,10 @@ class KernelCorrectionEvidence(StrictModule):
         functional_id: str,
         metric_id: str,
         realization_id: str | None,
-    ):
-        if representation not in (
-            "canonical",
-            "finite-feature",
-            "selected-section",
-            "matrix-free",
-        ):
-            raise ValueError("Unknown kernel correction representation.")
+    ) -> None:
+        representation = parse(
+            representation, KernelCorrectionRepresentation, "representation"
+        )
         version = int(numeric_version)
         rank_ = int(rank)
         rows = int(row_count)
@@ -439,7 +448,7 @@ class _KernelFieldEvaluator(StrictModule):
             )
         return point.reshape(self.input_shape)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         del key, kwargs
         point = self._point(args)
         if self.representation == "finite-feature":
@@ -536,11 +545,11 @@ class _BaseKernelCorrectionPlan(StrictModule):
     def __init__(
         self,
         metric: ProductFieldKernelMetric,
-        functional: KernelFunctional | KernelRepresenter | Sequence[KernelRepresenter],
+        functional: _KernelFunctionalSource,
         /,
         *,
         representation: KernelCorrectionRepresentation,
-    ):
+    ) -> None:
         if not isinstance(metric, ProductFieldKernelMetric):
             raise TypeError("metric must be a ProductFieldKernelMetric.")
         resolved = _resolve_functional(
@@ -634,7 +643,7 @@ class _BaseKernelCorrectionPlan(StrictModule):
         minimum_diagonal: Any,
         exact: bool,
         check_compatibility: bool,
-        exactness_scope: str,
+        exactness_scope: AffineExactnessScope,
         identity_defect: Any | None = None,
         range_defect: Any | None = None,
     ) -> PreparedLinearCorrection:
@@ -729,18 +738,23 @@ class _BaseKernelCorrectionPlan(StrictModule):
 class CanonicalKernelCorrectionPlan(_BaseKernelCorrectionPlan):
     """Exact canonical minimum-RKHS-norm correction with a dense Gram factor."""
 
-    def __init__(self, metric, functional, /):
+    def __init__(
+        self,
+        metric: ProductFieldKernelMetric,
+        functional: _KernelFunctionalSource,
+        /,
+    ) -> None:
         super().__init__(metric, functional, representation="canonical")
 
     def prepare(
         self,
-        assembly,
-        correction_fields,
+        assembly: AffineBlockAssembly,
+        correction_fields: Sequence[str],
         /,
         *,
         policy: AffineProjectionPolicy,
         numeric_version: int,
-    ):
+    ) -> PreparedLinearCorrection:
         gram = self.metric.functional_gram(self.functional)
         operator = DenseLinearOperator(
             gram.matrix,
@@ -769,20 +783,25 @@ class CanonicalKernelCorrectionPlan(_BaseKernelCorrectionPlan):
 class FiniteFeatureKernelCorrectionPlan(_BaseKernelCorrectionPlan):
     """Exact weight-space correction for a certified finite-feature metric."""
 
-    def __init__(self, metric, functional, /):
+    def __init__(
+        self,
+        metric: ProductFieldKernelMetric,
+        functional: _KernelFunctionalSource,
+        /,
+    ) -> None:
         super().__init__(metric, functional, representation="finite-feature")
         if metric.feature_rank() is None:
             raise TypeError("Finite-feature correction requires an exact feature map.")
 
     def prepare(
         self,
-        assembly,
-        correction_fields,
+        assembly: AffineBlockAssembly,
+        correction_fields: Sequence[str],
         /,
         *,
         policy: AffineProjectionPolicy,
         numeric_version: int,
-    ):
+    ) -> PreparedLinearCorrection:
         features = self.metric.functional_features(self.functional)
         operator = DenseLinearOperator(
             features,
@@ -816,7 +835,15 @@ class SectionKernelCorrectionPlan(_BaseKernelCorrectionPlan):
     sections: KernelFunctional
     require_exact: bool = eqx.field(static=True)
 
-    def __init__(self, metric, functional, sections, /, *, require_exact: bool = False):
+    def __init__(
+        self,
+        metric: ProductFieldKernelMetric,
+        functional: _KernelFunctionalSource,
+        sections: _KernelFunctionalSource,
+        /,
+        *,
+        require_exact: bool = False,
+    ) -> None:
         super().__init__(metric, functional, representation="selected-section")
         self.sections = _resolve_functional(
             metric,
@@ -838,13 +865,13 @@ class SectionKernelCorrectionPlan(_BaseKernelCorrectionPlan):
 
     def prepare(
         self,
-        assembly,
-        correction_fields,
+        assembly: AffineBlockAssembly,
+        correction_fields: Sequence[str],
         /,
         *,
         policy: AffineProjectionPolicy,
         numeric_version: int,
-    ):
+    ) -> PreparedLinearCorrection:
         cross = self.metric.functional_gram(self.functional, self.sections).matrix
         operator = DenseLinearOperator(
             cross,
@@ -884,8 +911,13 @@ class MatrixFreeKernelCorrectionPlan(_BaseKernelCorrectionPlan):
     solve_policy: LinearSolvePolicy
 
     def __init__(
-        self, metric, functional, /, *, solve_policy: LinearSolvePolicy | None = None
-    ):
+        self,
+        metric: ProductFieldKernelMetric,
+        functional: _KernelFunctionalSource,
+        /,
+        *,
+        solve_policy: LinearSolvePolicy | None = None,
+    ) -> None:
         super().__init__(metric, functional, representation="matrix-free")
         policy = LinearSolvePolicy(GMRES()) if solve_policy is None else solve_policy
         if not isinstance(policy, LinearSolvePolicy):
@@ -894,17 +926,17 @@ class MatrixFreeKernelCorrectionPlan(_BaseKernelCorrectionPlan):
 
     def prepare(
         self,
-        assembly,
-        correction_fields,
+        assembly: AffineBlockAssembly,
+        correction_fields: Sequence[str],
         /,
         *,
         policy: AffineProjectionPolicy,
         numeric_version: int,
-    ):
+    ) -> PreparedLinearCorrection:
         dtype = jnp.result_type(*(term.coefficients for term in self.functional.terms))
         space = ArraySpace((self.functional.row_count,), dtype=dtype)
 
-        def action(vector):
+        def action(vector: Array) -> Array:
             return self.metric.functional_gram(self.functional).matrix @ vector
 
         operator = FunctionLinearOperator(
@@ -1033,21 +1065,39 @@ class _KernelCorrectionProvider(AbstractLinearCorrectionProvider):
 class CanonicalKernelCorrectionProvider(_KernelCorrectionProvider):
     plan: CanonicalKernelCorrectionPlan
 
-    def __init__(self, metric, functional, /):
+    def __init__(
+        self,
+        metric: ProductFieldKernelMetric,
+        functional: _KernelFunctionalSource,
+        /,
+    ) -> None:
         self.plan = CanonicalKernelCorrectionPlan(metric, functional)
 
 
 class FiniteFeatureKernelCorrectionProvider(_KernelCorrectionProvider):
     plan: FiniteFeatureKernelCorrectionPlan
 
-    def __init__(self, metric, functional, /):
+    def __init__(
+        self,
+        metric: ProductFieldKernelMetric,
+        functional: _KernelFunctionalSource,
+        /,
+    ) -> None:
         self.plan = FiniteFeatureKernelCorrectionPlan(metric, functional)
 
 
 class SectionKernelCorrectionProvider(_KernelCorrectionProvider):
     plan: SectionKernelCorrectionPlan
 
-    def __init__(self, metric, functional, sections, /, *, require_exact: bool = False):
+    def __init__(
+        self,
+        metric: ProductFieldKernelMetric,
+        functional: _KernelFunctionalSource,
+        sections: _KernelFunctionalSource,
+        /,
+        *,
+        require_exact: bool = False,
+    ) -> None:
         self.plan = SectionKernelCorrectionPlan(
             metric,
             functional,
@@ -1059,7 +1109,14 @@ class SectionKernelCorrectionProvider(_KernelCorrectionProvider):
 class MatrixFreeKernelCorrectionProvider(_KernelCorrectionProvider):
     plan: MatrixFreeKernelCorrectionPlan
 
-    def __init__(self, metric, functional, /, *, solve_policy=None):
+    def __init__(
+        self,
+        metric: ProductFieldKernelMetric,
+        functional: _KernelFunctionalSource,
+        /,
+        *,
+        solve_policy: LinearSolvePolicy | None = None,
+    ) -> None:
         self.plan = MatrixFreeKernelCorrectionPlan(
             metric,
             functional,

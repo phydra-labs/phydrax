@@ -10,8 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array
 
 from .._strict import StrictModule
 from ._particle import _parameter_lane, ParticleFilterResult
@@ -127,7 +127,7 @@ def particle_genealogical_score(
             "PARAMETER leaves."
         )
 
-    def prior_vector(particle):
+    def prior_vector(particle: Array) -> Array:
         return _gradient(
             prior_constants,
             lambda prior: jnp.sum(prior.log_prob(particle)),
@@ -176,7 +176,7 @@ def particle_genealogical_score(
                 next_state = predicted[case_index, step_index, particle_index]
                 previous_state = previous_particles[particle_index]
 
-                def active_score(_):
+                def active_score(_: None) -> Array:
                     transition_vector = _gradient(
                         transition_constants,
                         lambda transition: transition.log_prob(

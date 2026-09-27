@@ -4,14 +4,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from math import isfinite, prod
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._score_field import StateTimeScoreField
@@ -23,9 +25,14 @@ from ...stochastic._gaussian_diffusion import (
     TerminalReferenceRelationship,
 )
 from ...stochastic._wiener import WienerRealization
+from ...typing import PRNGKey
 
 
-def _sample_shape(value, /) -> tuple[int, ...]:
+if TYPE_CHECKING:
+    from ...stochastic._trajectory import StochasticTrajectory
+
+
+def _sample_shape(value: Sequence[int], /) -> tuple[int, ...]:
     shape = tuple(value)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError("Reverse diffusion requires a non-empty positive sample_shape.")
@@ -69,7 +76,7 @@ class ReverseDiffusionRealization(StrictModule):
     def __init__(
         self,
         terminal_states: ArrayLike,
-        score_key: Key[Array, ""],
+        score_key: PRNGKey,
         wiener: WienerRealization,
         /,
         *,
@@ -77,7 +84,7 @@ class ReverseDiffusionRealization(StrictModule):
         score_id: str,
         terminal_reference_id: str,
         realization_id: str,
-    ):
+    ) -> None:
         if not isinstance(wiener, WienerRealization):
             raise TypeError("wiener must be a WienerRealization.")
         samples = tuple(wiener.sample_shape)
@@ -148,9 +155,9 @@ class ReverseDiffusionResult(StrictModule):
         self,
         /,
         *,
-        realization_axes=None,
-        state_axes=("state",),
-    ):
+        realization_axes: Sequence[str] | None = None,
+        state_axes: Sequence[str] = ("state",),
+    ) -> StochasticTrajectory:
         return self.solution.to_stochastic_trajectory(
             initial_state=self.terminal_states,
             initial_time=0.0,
@@ -205,7 +212,7 @@ class ReverseDiffusion(StrictModule):
         max_steps: int = 4096,
         precision: Any = None,
         transport_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(process, AbstractGaussianDiffusion):
             raise TypeError("process must implement AbstractGaussianDiffusion.")
         if not isinstance(terminal_reference, DiffusionTerminalReference):
@@ -278,8 +285,8 @@ class ReverseDiffusion(StrictModule):
 
     def realize(
         self,
-        key: Key[Array, ""],
-        sample_shape,
+        key: PRNGKey,
+        sample_shape: Sequence[int],
         /,
     ) -> ReverseDiffusionRealization:
         samples = _sample_shape(sample_shape)
@@ -422,8 +429,8 @@ class ReverseDiffusion(StrictModule):
 
     def sample_with_diagnostics(
         self,
-        key: Key[Array, ""],
-        sample_shape,
+        key: PRNGKey,
+        sample_shape: Sequence[int],
         /,
         *,
         save_times: ArrayLike | None = None,
@@ -433,8 +440,8 @@ class ReverseDiffusion(StrictModule):
 
     def sample(
         self,
-        key: Key[Array, ""],
-        sample_shape,
+        key: PRNGKey,
+        sample_shape: Sequence[int],
         /,
     ) -> Array:
         result = self.sample_with_diagnostics(key, sample_shape)

@@ -11,10 +11,12 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import parse
 from ._register import HilbertRegisterLayout
 from ._subspaces import BasisStateSubspace, DenseQuantumSubspace, QuantumSubspace
 
@@ -60,7 +62,7 @@ class GaussConstraintNetwork(StrictModule):
         link_wire_ids: Sequence[str] | None = None,
         matter_wire_ids: Sequence[str] | None = None,
         hermiticity_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         incidence_host = np.asarray(vertex_link_incidence)
         if (
             incidence_host.ndim != 2
@@ -260,7 +262,7 @@ class GaussSectorResourcePolicy(StrictModule):
         maximum_dense_elements: int = 1 << 27,
         maximum_basis_states: int = 1 << 20,
         tolerance: float = 1e-10,
-    ):
+    ) -> None:
         dimension = int(maximum_hilbert_dimension)
         dense = int(maximum_dense_elements)
         basis = int(maximum_basis_states)
@@ -355,8 +357,7 @@ def plan_gauss_physical_sector(
         raise TypeError("network must be GaussConstraintNetwork.")
     if not bool(network.valid):
         raise ValueError("Gauss physical sectors require a valid constraint network.")
-    if method not in ("exact-nullspace", "sparse-basis"):
-        raise ValueError("Unknown Gauss physical-sector method.")
+    method = parse(method, GaussSectorMethod, "method")
     selected = GaussSectorResourcePolicy() if resources is None else resources
     if not isinstance(selected, GaussSectorResourcePolicy):
         raise TypeError("resources must be GaussSectorResourcePolicy or None.")

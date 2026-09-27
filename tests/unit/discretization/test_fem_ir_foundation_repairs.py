@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import opt_einsum as oe
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _tri_mesh():
+def _tri_mesh() -> Any:
     vertices = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [0.5, 0.5]])
     cells = jnp.asarray(
         [[0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4]],
@@ -19,7 +22,7 @@ def _tri_mesh():
     return phx.discretization.CellMesh.from_triangles(vertices, cells)
 
 
-def test_sum_factorized_gradient_contracts_every_nodal_axis():
+def test_sum_factorized_gradient_contracts_every_nodal_axis() -> None:
     family = phx.discretization.fem.ReferenceNodalFamily("quadrilateral", 2)
     tabulation = phx.discretization.fem.TensorProductTabulation(
         family,
@@ -44,7 +47,7 @@ def test_sum_factorized_gradient_contracts_every_nodal_axis():
     assert jnp.allclose(gradient.reshape((-1, 2)), expected)
 
 
-def test_smoothed_elasticity_defaults_to_budgeted_matrix_free_operator():
+def test_smoothed_elasticity_defaults_to_budgeted_matrix_free_operator() -> None:
     mesh = _tri_mesh()
     smoothing = phx.discretization.fem.smoothing
     plan = smoothing.SmoothedElasticityPlan(
@@ -60,10 +63,10 @@ def test_smoothed_elasticity_defaults_to_budgeted_matrix_free_operator():
     assert operator.materialize(max_entries=100).shape == (10, 10)
 
 
-def test_rejected_schedule_stage_restores_committed_state():
+def test_rejected_schedule_stage_restores_committed_state() -> None:
     law = phx.solver.TimeLaw.constant(1.0)
 
-    def solve(state, start, end, time_law, args):
+    def solve(state: Any, start: Any, end: Any, time_law: Any, args: Any) -> Any:
         return phx.solver.ScheduleStepResult(
             state=state + 10.0,
             accepted=jnp.asarray(False),
@@ -73,11 +76,13 @@ def test_rejected_schedule_stage_restores_committed_state():
     stage = phx.solver.SolveStage("reject", 0.0, 1.0, law, solve)
     final, results = phx.solver.SolveSchedule((stage,)).run(jnp.asarray(2.0))
 
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(final, 2.0)
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(results[0].state, 2.0)
 
 
-def test_material_evaluate_uses_implicit_root_derivative():
+def test_material_evaluate_uses_implicit_root_derivative() -> None:
     material = phx.equations.fem.LocalImplicitMaterial(
         lambda state, target: state**2 - target,
         lambda state, target: phx.equations.ConstitutiveResponse(state, state),
@@ -95,13 +100,13 @@ def test_material_evaluate_uses_implicit_root_derivative():
     assert jnp.allclose(tangent, 0.25, atol=1.0e-8)
 
 
-def test_local_implicit_material_preserves_response_metadata_and_failed_status():
+def test_local_implicit_material_preserves_response_metadata_and_failed_status() -> None:
     diagnostic = phx.equations.ConstitutiveResponse(
         jnp.asarray((0.0,)),
         jnp.asarray((0.0,)),
     ).diagnostic
 
-    def response(state, target):
+    def response(state: Any, target: Any) -> Any:
         del target
         return phx.equations.ConstitutiveResponse(
             2.0 * state,
@@ -130,12 +135,13 @@ def test_local_implicit_material_preserves_response_metadata_and_failed_status()
     assert int(result.diagnostics["callback"]) == 7
     assert jnp.allclose(result.response, 5.0)
     assert jnp.allclose(result.trial_state, 3.5)
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(result.consistent_tangent, 3.0)
     assert jnp.allclose(result.energy, 1.25)
     assert jnp.allclose(result.dissipation, 0.75)
 
 
-def test_local_implicit_material_preserves_callback_invalidity():
+def test_local_implicit_material_preserves_callback_invalidity() -> None:
     material = phx.equations.fem.LocalImplicitMaterial(
         lambda state, target: state - target,
         lambda state, target: phx.equations.ConstitutiveResponse(
@@ -154,7 +160,7 @@ def test_local_implicit_material_preserves_callback_invalidity():
     assert not bool(result.valid)
 
 
-def test_smoothing_certificate_checks_full_affine_identity():
+def test_smoothing_certificate_checks_full_affine_identity() -> None:
     mesh = _tri_mesh()
     smoothing = phx.discretization.fem.smoothing
     plan = smoothing.SmoothedElasticityPlan(
@@ -179,7 +185,7 @@ def test_smoothing_certificate_checks_full_affine_identity():
     assert jnp.max(evidence.closure_defect) < 1.0e-12
 
 
-def test_ir_workset_program_preserves_lowered_ir_identity():
+def test_ir_workset_program_preserves_lowered_ir_identity() -> None:
     mesh = _tri_mesh()
     field = phx.discretization.FiniteElementFieldSpec(
         "u", phx.discretization.lagrange_element("triangle", 1)

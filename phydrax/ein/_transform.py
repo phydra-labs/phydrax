@@ -11,8 +11,8 @@ from numbers import Integral
 from typing import Literal
 
 import jax.numpy as jnp
-from jax import lax
-from jaxtyping import Array, ArrayLike
+from jax import Array, lax
+from jax.typing import ArrayLike
 
 from ._syntax import (
     _Axis,

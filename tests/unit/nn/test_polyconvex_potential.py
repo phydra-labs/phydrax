@@ -1,4 +1,5 @@
 import io
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -15,7 +16,9 @@ from phydrax.nn.models import (
 
 
 @pytest.mark.parametrize("dimension", (2, 3))
-def test_deformation_gradient_minors_match_determinant_derivatives(dimension):
+def test_deformation_gradient_minors_match_determinant_derivatives(
+    dimension: Any,
+) -> None:
     minors = DeformationGradientMinors(dimension)
     gradient = jnp.eye(dimension) + 0.2 * jr.normal(
         jr.key(dimension), (dimension, dimension), dtype=jnp.float64
@@ -29,8 +32,8 @@ def test_deformation_gradient_minors_match_determinant_derivatives(dimension):
 
 @pytest.mark.parametrize("dimension", (2, 3))
 def test_polynomial_minors_and_constitutive_derivatives_remain_finite_at_singularity(
-    dimension,
-):
+    dimension: Any,
+) -> None:
     gradient = jnp.eye(dimension).at[-1, -1].set(0.0)
     model = PolyconvexPotential(
         dimension,
@@ -50,7 +53,7 @@ def test_polynomial_minors_and_constitutive_derivatives_remain_finite_at_singula
     assert jnp.all(jnp.isfinite(tangent))
 
 
-def test_polyconvex_outer_potential_has_positive_semidefinite_lifted_hessian():
+def test_polyconvex_outer_potential_has_positive_semidefinite_lifted_hessian() -> None:
     model = PolyconvexPotential(
         3,
         width_size=12,
@@ -65,15 +68,16 @@ def test_polyconvex_outer_potential_has_positive_semidefinite_lifted_hessian():
     assert eigenvalues.min() >= -1e-9
 
 
-def test_polyconvex_potential_requires_a_proven_convex_outer_network():
+def test_polyconvex_potential_requires_a_proven_convex_outer_network() -> None:
     wrong_size = InputConvexNetwork(in_size=8, width_size=4, depth=1, key=jr.key(22))
     with pytest.raises(ValueError, match="input size must be 9"):
         PolyconvexPotential(2, potential=wrong_size)
     with pytest.raises(TypeError, match="InputConvexNetwork"):
+        # ty: ignore[invalid-argument-type]
         PolyconvexPotential(2, potential=lambda value: jnp.sum(value))
 
 
-def test_material_tangent_matches_directional_stress_derivative():
+def test_material_tangent_matches_directional_stress_derivative() -> None:
     model = PolyconvexPotential(
         3,
         width_size=10,
@@ -88,7 +92,7 @@ def test_material_tangent_matches_directional_stress_derivative():
     assert jnp.allclose(derivative, expected, atol=2e-8, rtol=2e-8)
 
 
-def test_polyconvex_model_is_batched_jittable_differentiable_and_serializable():
+def test_polyconvex_model_is_batched_jittable_differentiable_and_serializable() -> None:
     model = PolyconvexPotential(
         2,
         width_size=8,

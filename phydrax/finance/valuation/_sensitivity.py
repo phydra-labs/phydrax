@@ -7,12 +7,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Any, Literal
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...linalg import (
@@ -42,7 +43,7 @@ class GreekRequest(StrictModule):
         *,
         second_order_names: Sequence[str] = (),
         bump_sizes: ArrayLike | None = None,
-    ):
+    ) -> None:
         names = tuple(parameter_names)
         if not names or any(not isinstance(value, str) or not value for value in names):
             raise ValueError("parameter_names must contain non-empty strings.")
@@ -90,7 +91,7 @@ class GreekResult(StrictModule):
         request: GreekRequest,
         evidence: GreekEvidence,
         /,
-    ):
+    ) -> None:
         if not isinstance(request, GreekRequest) or not isinstance(
             evidence, GreekEvidence
         ):
@@ -115,7 +116,7 @@ class GreekResult(StrictModule):
         return self.second_order_diagonal[self.request.parameter_names.index(name)]
 
 
-def _scalar_value(value) -> Array:
+def _scalar_value(value: Any) -> Array:
     resolved = value.value if isinstance(value, ValuationResult) else jnp.asarray(value)
     if resolved.shape != ():
         raise ValueError("Greek evaluation requires a scalar valuation output.")

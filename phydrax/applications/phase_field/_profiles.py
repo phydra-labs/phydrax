@@ -12,7 +12,7 @@ from ...qualification import (
 )
 
 
-def _tuple(name: str, **attributes) -> SupportTuple:
+def _tuple(name: str, **attributes: str | int) -> SupportTuple:
     return SupportTuple(name, attributes)
 
 

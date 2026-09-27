@@ -11,10 +11,12 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 
 
 CheckpointMode: TypeAlias = Literal["full", "recompute"]
@@ -42,12 +44,13 @@ class PyTreeCheckpointedAdjointPlan(StrictModule):
         /,
         *,
         mode: CheckpointMode = "recompute",
-    ):
+    ) -> None:
         if not callable(step):
             raise TypeError("step must be callable.")
         count = int(steps)
-        if count <= 0 or mode not in ("full", "recompute"):
+        if count <= 0:
             raise ValueError("Adjoint steps/mode are invalid.")
+        mode = parse(mode, CheckpointMode, "mode")
         self.step = step
         self.steps = count
         self.mode = mode
@@ -74,7 +77,7 @@ class PyTreeCheckpointedAdjointPlan(StrictModule):
         if t0.shape != () or dt.shape != ():
             raise ValueError("Adjoint time and step_size must be scalar.")
 
-        def body(state, index):
+        def body(state: object, index: Array) -> tuple[object, None]:
             next_state = self.step(t0 + index * dt, state, dt, parameters, args)
             return next_state, None
 
@@ -95,7 +98,7 @@ class PyTreeCheckpointedAdjointPlan(StrictModule):
         if not callable(loss):
             raise TypeError("loss must be callable.")
 
-        def objective(initial, parameter_values):
+        def objective(initial: object, parameter_values: object) -> tuple[Array, object]:
             final = self.evolve(
                 initial,
                 parameter_values,
@@ -189,7 +192,7 @@ class MaxwellDFTAdjointPlan(StrictModule):
         adjoint_run: Callable[[Any], Any],
         contraction: Callable[[Any, Any, Any], Any],
         /,
-    ):
+    ) -> None:
         if not all(
             callable(value)
             for value in (forward_run, adjoint_source, adjoint_run, contraction)

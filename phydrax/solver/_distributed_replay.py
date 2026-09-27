@@ -14,7 +14,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -53,7 +54,7 @@ class DistributedReplayEvent(StrictModule, NonTrainableState):
         event_index: int,
         sender_ranks: ArrayLike | None = None,
         receiver_ranks: ArrayLike | None = None,
-    ):
+    ) -> None:
         ids = _routes(canonical_ids, "canonical_ids")
         send = _routes(send_indices, "send_indices")
         receive = _routes(receive_indices, "receive_indices")
@@ -147,7 +148,7 @@ class DistributedReplaySchedule(StrictModule, NonTrainableState):
     events: tuple[DistributedReplayEvent, ...]
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self, events: tuple[DistributedReplayEvent, ...], /):
+    def __init__(self, events: tuple[DistributedReplayEvent, ...], /) -> None:
         if not events or any(
             not isinstance(event, DistributedReplayEvent) for event in events
         ):

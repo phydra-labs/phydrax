@@ -297,7 +297,7 @@ def _float_pair(value: Any, owner: str, /) -> tuple[float, float]:
     endpoints = tuple(float(item) for item in value)
     if not all(np.isfinite(item) for item in endpoints):
         raise ArrayArchiveCorruptionError(f"{owner} interval is nonfinite.")
-    return endpoints
+    return (endpoints[0], endpoints[1])
 
 
 def _schema_from_record(value: Any, /) -> FlowStateSchema:

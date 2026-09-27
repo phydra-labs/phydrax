@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
@@ -47,7 +48,7 @@ def _validate_scalar_field(
     return values
 
 
-def _cell_size(value: ArrayLike, dtype, /) -> Array:
+def _cell_size(value: ArrayLike, dtype: DTypeLike, /) -> Array:
     cell_size = jnp.asarray(value, dtype=dtype)
     if cell_size.shape != ():
         raise ValueError("cell_size must be scalar.")
@@ -225,7 +226,7 @@ class ConstitutiveDynamicWettingPlan(StrictModule, NonTrainableState):
         microscopic_length: float,
         macroscopic_length: float,
         maximum_absolute_capillary_number: float,
-    ):
+    ) -> None:
         equilibrium = float(equilibrium_contact_angle)
         receding = float(receding_contact_angle)
         advancing = float(advancing_contact_angle)

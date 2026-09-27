@@ -8,7 +8,8 @@ from collections.abc import Callable
 from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -51,7 +52,7 @@ class BarotropicFluidProblemIR(StrictModule, NonTrainableState):
         external_potential: ExternalParticlePotential | None = None,
         external_potential_id: str | None = None,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name)
         if not name_:
             raise ValueError("Barotropic fluid problem name must be non-empty.")
@@ -108,7 +109,7 @@ class CompiledBarotropicSPHProblem(StrictModule, NonTrainableState):
         dynamics: PreparedBarotropicSPHDynamics,
         discretization_bundle: DiscretizationBundle,
         /,
-    ):
+    ) -> None:
         if not isinstance(problem, BarotropicFluidProblemIR):
             raise TypeError("problem must be a BarotropicFluidProblemIR.")
         if not isinstance(dynamics, PreparedBarotropicSPHDynamics):

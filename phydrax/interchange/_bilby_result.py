@@ -11,7 +11,8 @@ from typing import Any, TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._frozendict import frozendict
@@ -20,7 +21,7 @@ from .._strict import StrictModule
 
 if TYPE_CHECKING:
     from ..integration import WeightedSampleTarget
-    from ..uq._population import EventPosterior
+    from ..uq._population import EventPosterior, EvidenceKind
 from .._document_resource import decode_json_resource
 from .._external_resource import read_bounded_resource, ResourceLimits
 
@@ -90,7 +91,7 @@ class ImportedBilbyResult(StrictModule):
     sampler: str = eqx.field(static=True)
     bilby_version: str = eqx.field(static=True)
     label: str = eqx.field(static=True)
-    evidence_kind: str = eqx.field(static=True)
+    evidence_kind: EvidenceKind = eqx.field(static=True)
     has_evidence: bool = eqx.field(static=True)
     import_id: str = eqx.field(static=True)
 

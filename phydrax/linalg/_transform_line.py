@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -102,7 +103,7 @@ class TransformLineNullspacePolicy(StrictModule, NonTrainableState):
         zero_mode_index: int = 0,
         pin_row: int = 0,
         policy_id: str | None = None,
-    ):
+    ) -> None:
         weights = jnp.asarray(line_weights)
         if (
             weights.ndim != 1
@@ -181,7 +182,7 @@ class TransformLineRepresentation(StrictModule, NonTrainableState):
         periodic_corners: tuple[ArrayLike, ArrayLike] | None = None,
         representation_id: str | None = None,
         certification_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         transforms_ = tuple(transforms)
         if not all(isinstance(value, AbstractLinearTransform) for value in transforms_):
             raise TypeError("transforms must contain AbstractLinearTransform values.")
@@ -456,7 +457,7 @@ class TransformLineSolvePlan(StrictModule, NonTrainableState):
         differentiation: DifferentiationPolicy | None = None,
         maximum_resource_bytes: int = 512 * 1024**2,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(representation, TransformLineRepresentation):
             raise TypeError("representation must be TransformLineRepresentation.")
         scale = jnp.asarray(operator_scale, dtype=representation.line_diagonal.dtype)
@@ -565,7 +566,7 @@ class PreparedTransformLineSolve(StrictModule, NonTrainableState):
     resources: TransformLineResourceEstimate
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: TransformLineSolvePlan, /):
+    def __init__(self, plan: TransformLineSolvePlan, /) -> None:
         if not isinstance(plan, TransformLineSolvePlan):
             raise TypeError("plan must be TransformLineSolvePlan.")
         representation = plan.representation

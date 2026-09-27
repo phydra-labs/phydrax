@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -36,7 +38,7 @@ def test_plummer_cartesian_derivatives_match_jax() -> None:
         scale,
     )
 
-    def potential(value):
+    def potential(value: Any) -> Any:
         return -gravity / jnp.sqrt(jnp.sum(value * value) + (softening / scale) ** 2)
 
     scaled = displacement / scale

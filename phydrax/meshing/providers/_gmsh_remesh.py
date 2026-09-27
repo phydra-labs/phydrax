@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -89,12 +90,13 @@ def _euler_characteristic(mesh: CellMesh, /) -> int:
     connectivity = mesh.connectivity
     return (
         mesh.coordinates.shape[0]
+        # ty: ignore[unresolved-attribute]
         - np.asarray(connectivity.edges).shape[0]
         + _surface_triangles(mesh).shape[0]
     )
 
 
-def _configure_remeshing(gmsh, plan, /) -> float | None:
+def _configure_remeshing(gmsh: Any, plan: Any, /) -> float | None:
     surface = plan.specification.surface
     options = plan.options
     minimum, target, maximum, curvature_points = _size_values(surface)
@@ -119,7 +121,7 @@ def _configure_remeshing(gmsh, plan, /) -> float | None:
     return target
 
 
-def _reconstruct(gmsh, plan, /) -> int:
+def _reconstruct(gmsh: Any, plan: Any, /) -> int:
     """Classify sharp features, then build reparametrizable discrete geometry."""
     source = plan.source
     reconstruction = plan.reconstruction
@@ -156,11 +158,11 @@ def _reconstruct(gmsh, plan, /) -> int:
 
 
 def _apply_remeshing_sizes(
-    gmsh,
+    gmsh: Any,
     target: float | None,
     background: BackgroundMetricControl | None,
     /,
-):
+) -> Any:
     fields = []
     if target is not None:
         point_entities = gmsh.model.getEntities(0)
@@ -197,7 +199,7 @@ def _nearest_source_cells(
 
 
 def _oriented_surface(
-    plan,
+    plan: Any,
     mesh_points: np.ndarray,
     triangles: np.ndarray,
     closed: bool,
@@ -260,7 +262,9 @@ class _RemeshedSurface:
     source_to_corner: np.ndarray
 
 
-def _canonical_surface(plan, node_tags, points, top, closed: bool, /) -> _RemeshedSurface:
+def _canonical_surface(
+    plan: Any, node_tags: Any, points: Any, top: Any, closed: bool, /
+) -> _RemeshedSurface:
     top_vertices = {
         rows.block_name: _local_connectivity(node_tags, rows.vertices) for rows in top
     }
@@ -299,7 +303,7 @@ def _canonical_surface(plan, node_tags, points, top, closed: bool, /) -> _Remesh
 
 
 def _fidelity_section(
-    plan, points: np.ndarray, remeshed: _RemeshedSurface, /
+    plan: Any, points: np.ndarray, remeshed: _RemeshedSurface, /
 ) -> tuple[_EvidenceSection, np.ndarray, np.ndarray]:
     """Two-sided vertex deviation and topological invariants against the source."""
     source = plan.source
@@ -353,7 +357,7 @@ def _fidelity_section(
 
 
 def _organization(
-    plan, remeshed: _RemeshedSurface, nearest: np.ndarray, residuals: np.ndarray, /
+    plan: Any, remeshed: _RemeshedSurface, nearest: np.ndarray, residuals: np.ndarray, /
 ) -> _Organization:
     source = plan.source
     mesh = remeshed.mesh
@@ -411,14 +415,14 @@ def _organization(
 
 
 def _remesh_stages(
-    plan,
+    plan: Any,
     patch_count: int,
     cell_count: int,
     organization: _Organization,
     background: BackgroundMetricControl | None,
     geometry_layout_id: str,
-    audit,
-    compliance,
+    audit: Any,
+    compliance: Any,
     /,
 ) -> tuple[MeshingStageReport, ...]:
     specification = plan.specification
@@ -526,8 +530,8 @@ def _remesh_stages(
 
 
 def _execute_remesh(
-    gmsh,
-    plan,
+    gmsh: Any,
+    plan: Any,
     version: str,
     info: MeshingProviderInfo,
     /,

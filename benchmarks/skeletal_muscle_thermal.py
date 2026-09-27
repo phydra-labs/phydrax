@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -20,7 +22,7 @@ from tools.skeletal_muscle_thermal_qualification import (
 )
 
 
-def _case(resolution):
+def _case(resolution: Any) -> Any:
     start = time.perf_counter()
     prepared = manufactured_case(resolution, heterogeneous=True)
     prepare_ms = 1000 * (time.perf_counter() - start)
@@ -68,7 +70,7 @@ def _case(resolution):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--output", type=Path)

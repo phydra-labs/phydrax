@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..linalg import HermitianSpectrum
@@ -33,7 +34,7 @@ class LindbladProblem(StrictModule):
         /,
         *,
         problem_id: str = "lindblad",
-    ):
+    ) -> None:
         hamiltonian_ = jnp.asarray(hamiltonian)
         jumps = jnp.asarray(jump_operators)
         density = jnp.asarray(initial_density)
@@ -102,7 +103,7 @@ class LindbladSolution(StrictModule):
         /,
         *,
         problem_id: str,
-    ):
+    ) -> None:
         values = jnp.asarray(states)
         self.states = values
         self.times = jnp.asarray(times)
@@ -137,7 +138,7 @@ def solve_lindblad(
         raise ValueError("steps and step_size must be positive.")
     channel = jsp.linalg.expm(step * problem.generator_matrix())
 
-    def advance(state, _):
+    def advance(state: Array, _: None) -> tuple[Array, Array]:
         next_state = (channel @ state.reshape(-1)).reshape(state.shape)
         next_state = 0.5 * (next_state + _adjoint(next_state))
         return next_state, next_state

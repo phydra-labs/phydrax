@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -46,7 +47,7 @@ class EnergyDepositionSourcePlan(StrictModule, NonTrainableState):
         start_time: float,
         end_time: float,
         source_id: str,
-    ):
+    ) -> None:
         volumes = np.asarray(cell_volumes, dtype=np.float64)
         weights = np.asarray(spatial_weights, dtype=np.float64)
         energy, start, end = map(float, (total_energy, start_time, end_time))
@@ -142,7 +143,9 @@ class FixedConnectivityReactingALERemapPlan(StrictModule, NonTrainableState):
     new_cell_volumes: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, old_cell_volumes: ArrayLike, new_cell_volumes: ArrayLike, /):
+    def __init__(
+        self, old_cell_volumes: ArrayLike, new_cell_volumes: ArrayLike, /
+    ) -> None:
         old = np.asarray(old_cell_volumes, dtype=np.float64)
         new = np.asarray(new_cell_volumes, dtype=np.float64)
         if (
@@ -245,7 +248,9 @@ class ChemistryWorkSchedulePlan(StrictModule, NonTrainableState):
     smoothing: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, block_count: int, worker_count: int, /, *, smoothing: float = 0.5):
+    def __init__(
+        self, block_count: int, worker_count: int, /, *, smoothing: float = 0.5
+    ) -> None:
         blocks, workers = int(block_count), int(worker_count)
         smoothing_ = float(smoothing)
         if blocks <= 0 or workers <= 0 or not 0.0 < smoothing_ <= 1.0:
@@ -262,7 +267,7 @@ class ChemistryWorkSchedulePlan(StrictModule, NonTrainableState):
             }
         )
 
-    def initialize(self, dtype=jnp.float64) -> ChemistryWorkScheduleState:
+    def initialize(self, dtype: DTypeLike = jnp.float64) -> ChemistryWorkScheduleState:
         costs = jnp.ones((self.block_count,), dtype=dtype)
         assignment, _ = self._assign(costs)
         return ChemistryWorkScheduleState(
@@ -274,7 +279,7 @@ class ChemistryWorkSchedulePlan(StrictModule, NonTrainableState):
         assignment = -jnp.ones((self.block_count,), dtype=jnp.int32)
         loads = jnp.zeros((self.worker_count,), dtype=cost.dtype)
 
-        def body(index, carry):
+        def body(index: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             assigned, worker_load = carry
             block = order[index]
             worker = jnp.argmin(worker_load).astype(jnp.int32)

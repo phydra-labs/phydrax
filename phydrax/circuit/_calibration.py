@@ -9,7 +9,9 @@ from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 
@@ -52,7 +54,7 @@ class ScatteringDataset(StrictModule):
         output_ports: Sequence[str] | None = None,
         whitening: ArrayLike | None = None,
         dataset_id: str = "scattering-dataset",
-    ):
+    ) -> None:
         omega = jnp.asarray(angular_frequency)
         values = jnp.asarray(observed).astype(jnp.result_type(observed, jnp.complex128))
         ports = tuple(str(value) for value in port_ids)
@@ -121,7 +123,9 @@ def complex_scattering_residual(
     return factor @ residual
 
 
-def _component_channels(component: AbstractScatteringComponent, /):
+def _component_channels(
+    component: AbstractScatteringComponent, /
+) -> tuple[tuple[str, ...], tuple[WaveReference, ...]]:
     identifiers: list[str] = []
     references: list[WaveReference] = []
     for port in component.ports:
@@ -202,7 +206,7 @@ class CalibrationResidualPlan(StrictModule):
         /,
         *,
         problem_id: str = "scattering-calibration",
-    ):
+    ) -> None:
         values = tuple(datasets)
         if not callable(parameterize):
             raise TypeError("parameterize must be callable.")
@@ -265,7 +269,7 @@ def scattering_posterior_problem(
         raise TypeError("parameter_space must be ParameterSpace.")
     plan = CalibrationResidualPlan(parameterize, datasets)
 
-    def log_likelihood(parameters):
+    def log_likelihood(parameters: PyTree[Any]) -> Array:
         residual = plan.residual(parameters)
         return -0.5 * jnp.vdot(residual, residual).real
 

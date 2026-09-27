@@ -11,7 +11,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 from scipy.special import eval_legendre, roots_jacobi
 
 from phydrax import ein
@@ -19,6 +20,7 @@ from phydrax import ein
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
 OrthogonalFamily: TypeAlias = Literal[
@@ -54,7 +56,7 @@ class OrthogonalRuleData(StrictModule, NonTrainableState):
         /,
         *,
         exact_degree: int,
-        family: OrthogonalFamily,
+        family: str,
         node_rule: str,
         reference_domain: str,
         basis_measure: str,
@@ -62,7 +64,7 @@ class OrthogonalRuleData(StrictModule, NonTrainableState):
         measure_mass: float,
         endpoint_policy: str,
         backend: str,
-    ):
+    ) -> None:
         nodes_host = np.asarray(nodes)
         weights_host = np.asarray(weights)
         if (
@@ -123,32 +125,35 @@ def _vandermonde_recurrence(
     values = [jnp.ones_like(nodes)]
     if degree == 0:
         return jnp.stack(values, axis=-1)
-    if family == "chebyshev":
-        values.append(nodes)
-        for index in range(1, degree):
-            values.append(2.0 * nodes * values[-1] - values[-2])
-    elif family == "legendre":
-        values.append(nodes)
-        for index in range(1, degree):
-            values.append(
-                ((2 * index + 1) * nodes * values[-1] - index * values[-2]) / (index + 1)
-            )
-    elif family == "hermite":
-        values.append(2.0 * nodes)
-        for index in range(1, degree):
-            values.append(2.0 * nodes * values[-1] - 2.0 * index * values[-2])
-    elif family == "hermite_e":
-        values.append(nodes)
-        for index in range(1, degree):
-            values.append(nodes * values[-1] - index * values[-2])
-    elif family == "laguerre":
-        values.append(1.0 - nodes)
-        for index in range(1, degree):
-            values.append(
-                ((2 * index + 1 - nodes) * values[-1] - index * values[-2]) / (index + 1)
-            )
-    else:
-        raise ValueError(f"Unsupported orthogonal polynomial family: {family!r}.")
+    match family:
+        case "chebyshev":
+            values.append(nodes)
+            for index in range(1, degree):
+                values.append(2.0 * nodes * values[-1] - values[-2])
+        case "legendre":
+            values.append(nodes)
+            for index in range(1, degree):
+                values.append(
+                    ((2 * index + 1) * nodes * values[-1] - index * values[-2])
+                    / (index + 1)
+                )
+        case "hermite":
+            values.append(2.0 * nodes)
+            for index in range(1, degree):
+                values.append(2.0 * nodes * values[-1] - 2.0 * index * values[-2])
+        case "hermite_e":
+            values.append(nodes)
+            for index in range(1, degree):
+                values.append(nodes * values[-1] - index * values[-2])
+        case "laguerre":
+            values.append(1.0 - nodes)
+            for index in range(1, degree):
+                values.append(
+                    ((2 * index + 1 - nodes) * values[-1] - index * values[-2])
+                    / (index + 1)
+                )
+        case _:
+            raise ValueError(f"Unsupported orthogonal polynomial family: {family!r}.")
     return jnp.stack(values, axis=-1)
 
 
@@ -295,7 +300,9 @@ def _node_count(value: int, /) -> int:
     return count
 
 
-def _canonical_arrays(nodes, weights, dtype, /) -> tuple[np.ndarray, np.ndarray]:
+def _canonical_arrays(
+    nodes: ArrayLike, weights: ArrayLike, dtype: DTypeLike, /
+) -> tuple[np.ndarray, np.ndarray]:
     nodes_host = np.asarray(nodes, dtype=np.float64).reshape((-1,))
     weights_host = np.asarray(weights, dtype=np.float64).reshape((-1,))
     order = np.argsort(nodes_host)
@@ -311,12 +318,11 @@ def legendre_rule_data(
     kind: LegendreRuleKind = "gauss",
     /,
     *,
-    dtype=jnp.float64,
+    dtype: DTypeLike = jnp.float64,
 ) -> OrthogonalRuleData:
     """Return a canonical raw-Lebesgue Legendre Gauss, Radau, or Lobatto rule."""
     count = _node_count(num_nodes)
-    if kind not in ("gauss", "radau", "lobatto"):
-        raise ValueError("Legendre rule kind must be 'gauss', 'radau', or 'lobatto'.")
+    kind = parse(kind, LegendreRuleKind, "kind")
     if kind == "lobatto" and count < 2:
         raise ValueError("Legendre Lobatto rules require at least two nodes.")
 
@@ -388,7 +394,7 @@ def standard_normal_hermite_rule_data(
     num_nodes: int,
     /,
     *,
-    dtype=jnp.float64,
+    dtype: DTypeLike = jnp.float64,
 ) -> OrthogonalRuleData:
     """Return a probabilists' Hermite rule normalized as a standard-normal expectation."""
     count = _node_count(num_nodes)

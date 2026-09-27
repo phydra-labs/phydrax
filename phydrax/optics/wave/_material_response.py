@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -78,7 +79,11 @@ def _time_integral(values: Array, temporal_axis: int, time_step: float, /) -> Ar
 
 
 def _oscillator_transition(
-    angular_frequency: Array, damping_rate: Array, time_step: float, dtype, /
+    angular_frequency: Array,
+    damping_rate: Array,
+    time_step: float,
+    dtype: DTypeLike,
+    /,
 ) -> tuple[Array, Array, Array, Array]:
     omega = angular_frequency.astype(dtype)
     damping = damping_rate.astype(dtype)
@@ -133,7 +138,7 @@ class DelayedRamanResponsePlan(AbstractCarrierResolvedResponse):
         *,
         provenance_id: str,
         maximum_workspace_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         strength = _real_finite_array("delayed_third_order", delayed_third_order, ())
         frequency = _positive_finite_scalar(
             "oscillator_angular_frequency", oscillator_angular_frequency
@@ -223,7 +228,7 @@ class PreparedDelayedRamanResponse(PreparedCarrierResolvedResponse):
         workspace_real_elements: int,
         workspace_bytes: int,
         prepared_id: str,
-    ):
+    ) -> None:
         self.plan = plan
         self._time_space = time_space
         self._positive_frequency_mask = positive_frequency_mask
@@ -290,7 +295,9 @@ class PreparedDelayedRamanResponse(PreparedCarrierResolvedResponse):
             jnp.zeros(moved.shape[1:], dtype=dtype),
         )
 
-        def advance(state, forcing):
+        def advance(
+            state: tuple[Array, Array], forcing: Array
+        ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
             displacement, velocity = state
             next_displacement = (
                 transition[0] * displacement
@@ -397,7 +404,7 @@ class MultiphotonIonizationRatePlan(StrictModule, NonTrainableState):
         /,
         *,
         provenance_id: str,
-    ):
+    ) -> None:
         coefficient = _nonnegative_finite_scalar("rate_coefficient", rate_coefficient)
         if isinstance(photon_order, bool) or not isinstance(photon_order, Integral):
             raise TypeError("photon_order must be an integer.")
@@ -456,7 +463,7 @@ class DrudePlasmaResponsePlan(StrictModule, NonTrainableState):
         electron_charge_magnitude: ArrayLike = _ELEMENTARY_CHARGE,
         electron_mass: ArrayLike = _ELECTRON_MASS,
         maximum_workspace_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         collision = _nonnegative_finite_scalar(
             "collision_angular_frequency", collision_angular_frequency
         )
@@ -539,7 +546,7 @@ class PreparedDrudePlasmaResponse(StrictModule, NonTrainableState):
         workspace_real_elements: int,
         workspace_bytes: int,
         prepared_id: str,
-    ):
+    ) -> None:
         self.plan = plan
         self.time_space = time_space
         self.field_shape = field_shape
@@ -578,7 +585,7 @@ class PreparedDrudePlasmaResponse(StrictModule, NonTrainableState):
         ) ** 2 / self.plan.electron_mass.astype(dtype)
         initial = jnp.zeros(moved_field.shape[1:], dtype=dtype)
 
-        def advance(current, inputs):
+        def advance(current: Array, inputs: tuple[Array, Array]) -> tuple[Array, Array]:
             interval_field, interval_density = inputs
             forcing = acceleration_scale * interval_density * interval_field
             next_current = decay * current + collision_scale * forcing
@@ -644,7 +651,7 @@ class IonizingDrudeResponsePlan(AbstractCarrierResolvedResponse):
         /,
         *,
         maximum_workspace_bytes: int = 1 << 30,
-    ):
+    ) -> None:
         if not isinstance(ionization, MultiphotonIonizationRatePlan):
             raise TypeError("ionization must be MultiphotonIonizationRatePlan.")
         if not isinstance(drude, DrudePlasmaResponsePlan):
@@ -749,7 +756,7 @@ class PreparedIonizingDrudeResponse(PreparedCarrierResolvedResponse):
         workspace_real_elements: int,
         workspace_bytes: int,
         prepared_id: str,
-    ):
+    ) -> None:
         self.plan = plan
         self.drude = drude
         self._time_space = time_space
@@ -810,7 +817,7 @@ class PreparedIonizingDrudeResponse(PreparedCarrierResolvedResponse):
         step = jnp.asarray(self.time_space.sample_spacing, dtype=dtype)
         initial_neutral = jnp.full(moved_rate.shape[1:], neutral_total, dtype=dtype)
 
-        def deplete(neutral, interval_rate):
+        def deplete(neutral: Array, interval_rate: Array) -> tuple[Array, Array]:
             next_neutral = neutral * jnp.exp(-interval_rate * step)
             return next_neutral, next_neutral
 

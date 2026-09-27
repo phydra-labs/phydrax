@@ -6,18 +6,21 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import isfinite, prod
+from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..stochastic._bsde import BSDEPathBatch
 from ..stochastic._path_dependent_bsde import ReflectedPathDependentBSDEProblem
+from ..typing import parse, PRNGKey
 from ._regression_bsde import (
     _basis_matrix,
     _normal_equation_error,
@@ -108,7 +111,7 @@ def _path_features(
     histories: Array,
     /,
 ) -> Array:
-    def evaluate(history):
+    def evaluate(history: Array) -> Array:
         features = jnp.asarray(problem.path_features(prefix_times, history, problem.args))
         if features.shape != problem.regression_state_shape:
             raise ValueError(
@@ -120,7 +123,7 @@ def _path_features(
 
 
 def _path_values(
-    function: Callable,
+    function: Callable[[Array, Array, Array, Any], Array],
     problem: ReflectedPathDependentBSDEProblem,
     time: Array,
     prefix_times: Array,
@@ -129,7 +132,7 @@ def _path_values(
     *,
     owner: str,
 ) -> Array:
-    def evaluate(history):
+    def evaluate(history: Array) -> Array:
         value = jnp.asarray(function(time, prefix_times, history, problem.args))
         if value.shape != problem.output_shape:
             raise ValueError(f"{owner} returned an incompatible output shape.")
@@ -144,7 +147,7 @@ def _terminal_values(
     histories: Array,
     /,
 ) -> Array:
-    def evaluate(history):
+    def evaluate(history: Array) -> Array:
         value = jnp.asarray(problem.terminal(times, history, problem.args))
         if value.shape != problem.output_shape:
             raise ValueError("terminal returned an incompatible output shape.")
@@ -162,7 +165,7 @@ def _generator_values(
     controls: Array,
     /,
 ) -> Array:
-    def evaluate(history, value, control):
+    def evaluate(history: Array, value: Array, control: Array) -> Array:
         output = jnp.asarray(
             problem.generator(
                 time,
@@ -252,7 +255,7 @@ def solve_reflected_path_dependent_bsde(
     /,
     *,
     paths: BSDEPathBatch | None = None,
-    key: Key[Array, ""] | None = None,
+    key: PRNGKey | None = None,
     scheme: BSDERegressionScheme = "explicit",
     ridge: float = 1e-8,
     standardize: bool = True,
@@ -276,8 +279,7 @@ def solve_reflected_path_dependent_bsde(
         raise TypeError("basis must implement AbstractBSDERegressionBasis.")
     if basis.state_shape != problem.regression_state_shape:
         raise ValueError("basis state_shape must match regression_state_shape.")
-    if scheme not in ("explicit", "implicit"):
-        raise ValueError("scheme must be 'explicit' or 'implicit'.")
+    scheme = parse(scheme, BSDERegressionScheme, "scheme")
     ridge_value = float(ridge)
     rcond_value = float(rcond)
     tolerance = float(picard_tolerance)

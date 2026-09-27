@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,11 +13,11 @@ from phydrax.domain import HyperRectangle
 from phydrax.nn import population as pc
 
 
-def _neuron():
+def _neuron() -> Any:
     return ep.LeakyIntegrateAndFire(0.2, 0.01, -65.0, -50.0, -62.0, refractory_ms=2.0)
 
 
-def test_physical_rate_period_matches_reset_to_threshold_and_refractory():
+def test_physical_rate_period_matches_reset_to_threshold_and_refractory() -> None:
     neuron = _neuron()
     current = jnp.asarray([0.16, 0.3, 0.8])
     rate = pc.lif_rate_response(neuron, current)
@@ -37,7 +39,7 @@ def test_physical_rate_period_matches_reset_to_threshold_and_refractory():
     np.testing.assert_allclose(still_refractory.voltage_mV, neuron.reset_mV)
 
 
-def test_zero_leak_population_uses_the_exact_perfect_integrator_limit():
+def test_zero_leak_population_uses_the_exact_perfect_integrator_limit() -> None:
     neuron = ep.LeakyIntegrateAndFire(0.2, 0.0, -65.0, -50.0, -62.0, refractory_ms=2.0)
     currents = jnp.asarray([0.1, 0.4])
     expected = 1000.0 / (2.0 + 0.2 * 12.0 / currents)
@@ -45,12 +47,15 @@ def test_zero_leak_population_uses_the_exact_perfect_integrator_limit():
         pc.lif_rate_response(neuron, currents), expected, rtol=1e-12
     )
     population = pc.prepare_lif_population(
+        # ty: ignore[invalid-argument-type]
         HyperRectangle([-1.0], [1.0]),
         neuron,
         2,
         key=jr.key(7),
+        # ty: ignore[invalid-argument-type]
         encoders=[[1.0], [-1.0]],
         intercepts=0.0,
+        # ty: ignore[invalid-argument-type]
         maximum_rates_hz=[60.0, 90.0],
     )
     np.testing.assert_allclose(
@@ -59,7 +64,10 @@ def test_zero_leak_population_uses_the_exact_perfect_integrator_limit():
     np.testing.assert_array_equal(population.rates(jnp.asarray([0.0])), [0.0, 0.0])
 
 
-def test_encoder_support_and_rate_inversion_hold_at_multidimensional_box_corners():
+def test_encoder_support_and_rate_inversion_hold_at_multidimensional_box_corners() -> (
+    None
+):
+    # ty: ignore[invalid-argument-type]
     domain = HyperRectangle([-2.0, 1.0], [4.0, 5.0])
     maximum = jnp.asarray([60.0, 90.0, 130.0])
     intercepts = jnp.asarray([-0.5, 0.0, 0.7])
@@ -68,6 +76,7 @@ def test_encoder_support_and_rate_inversion_hold_at_multidimensional_box_corners
         _neuron(),
         3,
         key=jr.key(17),
+        # ty: ignore[invalid-argument-type]
         encoders=[[2.0, 1.0], [-1.0, 3.0], [-1.0, -2.0]],
         intercepts=intercepts,
         maximum_rates_hz=maximum,
@@ -92,12 +101,16 @@ def test_encoder_support_and_rate_inversion_hold_at_multidimensional_box_corners
         )
 
 
-def test_rank_diagnoses_duplicate_and_silent_neurons_without_hiding_masked_rank():
+def test_rank_diagnoses_duplicate_and_silent_neurons_without_hiding_masked_rank() -> None:
     population = pc.LIFPopulation(
+        # ty: ignore[invalid-argument-type]
         HyperRectangle([-1.0], [1.0]),
         _neuron(),
+        # ty: ignore[invalid-argument-type]
         [[1.0], [1.0], [-1.0], [1.0]],
+        # ty: ignore[invalid-argument-type]
         [0.2, 0.2, 0.2, 0.0],
+        # ty: ignore[invalid-argument-type]
         [0.15, 0.15, 0.15, 0.0],
     )
     points = jnp.linspace(-1.0, 1.0, 40)[:, None]
@@ -110,7 +123,12 @@ def test_rank_diagnoses_duplicate_and_silent_neurons_without_hiding_masked_rank(
     assert jnp.isinf(deficient.least_squares.condition_number)
     np.testing.assert_array_equal(deficient.silent_neurons, [False, False, False, True])
     selected = pc.fit_population_decoder(
-        population, points, target, ridge=0.0, neuron_mask=[True, False, True, False]
+        population,
+        points,
+        target,
+        ridge=0.0,
+        # ty: ignore[invalid-argument-type]
+        neuron_mask=[True, False, True, False],
     )
     assert bool(selected.least_squares.valid)
     assert int(selected.least_squares.rank) == 2
@@ -122,9 +140,15 @@ def test_rank_diagnoses_duplicate_and_silent_neurons_without_hiding_masked_rank(
     assert int(regularized.least_squares.rank) == 2
 
 
-def test_weighted_samples_are_scale_replication_and_padding_invariant_with_ridge():
+def test_weighted_samples_are_scale_replication_and_padding_invariant_with_ridge() -> (
+    None
+):
     population = pc.prepare_lif_population(
-        HyperRectangle([-1.0], [1.0]), _neuron(), 8, key=jr.key(3)
+        # ty: ignore[invalid-argument-type]
+        HyperRectangle([-1.0], [1.0]),
+        _neuron(),
+        8,
+        key=jr.key(3),
     )
     points = jnp.linspace(-1.0, 1.0, 21)[:, None]
     target = points[:, 0] ** 2
@@ -175,15 +199,19 @@ def test_weighted_samples_are_scale_replication_and_padding_invariant_with_ridge
     assert jnp.isnan(empty_assessment.rmse)
 
 
-def test_held_out_nonlinear_approximation_is_frozen_and_callable_under_jit():
+def test_held_out_nonlinear_approximation_is_frozen_and_callable_under_jit() -> None:
     keys = jr.split(jr.key(12), 3)
     population = pc.prepare_lif_population(
-        HyperRectangle([-1.0], [1.0]), _neuron(), 64, key=keys[0]
+        # ty: ignore[invalid-argument-type]
+        HyperRectangle([-1.0], [1.0]),
+        _neuron(),
+        64,
+        key=keys[0],
     )
     training = pc.sample_population_points(population, 512, key=keys[1])
     held_out = pc.sample_population_points(population, 128, key=keys[2])
 
-    def target(point):
+    def target(point: Any) -> Any:
         return jnp.asarray([point[0] ** 2, jnp.sin(2.0 * point[0])])
 
     code = pc.fit_population_decoder(population, training, target)
@@ -205,9 +233,17 @@ def test_held_out_nonlinear_approximation_is_frozen_and_callable_under_jit():
     assert trainable.coefficient is not None
 
 
-def test_filtered_spikes_preserve_streaming_and_separate_temporal_errors():
+def test_filtered_spikes_preserve_streaming_and_separate_temporal_errors() -> None:
     population = pc.LIFPopulation(
-        HyperRectangle([-1.0], [1.0]), _neuron(), [[1.0]], [0.2], [0.15]
+        # ty: ignore[invalid-argument-type]
+        HyperRectangle([-1.0], [1.0]),
+        _neuron(),
+        # ty: ignore[invalid-argument-type]
+        [[1.0]],
+        # ty: ignore[invalid-argument-type]
+        [0.2],
+        # ty: ignore[invalid-argument-type]
+        [0.15],
     )
     training = jnp.linspace(0.1, 1.0, 20)[:, None]
     code = pc.fit_population_decoder(
@@ -254,4 +290,5 @@ def test_filtered_spikes_preserve_streaming_and_separate_temporal_errors():
     )
     np.testing.assert_allclose(stationary.rates_hz, 100.0, atol=1e-12)
     with pytest.raises(TypeError):
+        # ty: ignore[invalid-argument-type]
         pc.decode_filtered_spikes(code, expected_counts)

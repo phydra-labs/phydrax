@@ -281,7 +281,7 @@ def _runtime(
     *,
     source: Callable[..., Any] | None = None,
     source_id: str | None = None,
-):
+) -> Any:
     finite_volume = BlockAMRFiniteVolumePlan(
         prepared,
         _system(source=source is not None),
@@ -660,7 +660,7 @@ def _poisson_gate(execution_id: str) -> dict[str, Any]:
 
 
 def _ad_topology_gate(execution_id: str) -> dict[str, Any]:
-    def source(time, state, coordinates, rate):
+    def source(time: Any, state: Any, coordinates: Any, rate: Any) -> Any:
         del time, coordinates
         return rate * state
 
@@ -674,7 +674,7 @@ def _ad_topology_gate(execution_id: str) -> dict[str, Any]:
     state = runtime.initial_state(_state(initial, lambda x: jnp.ones_like(x)))
     step_size = 0.05
 
-    def objective(rate):
+    def objective(rate: Any) -> Any:
         result = runtime.advance(state, step_size, rate)
         return jnp.sum(result.runtime_state.hierarchy_state.levels[0].values)
 

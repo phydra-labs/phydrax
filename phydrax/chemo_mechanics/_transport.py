@@ -5,7 +5,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 def stress_coupled_diffusive_flux(
@@ -14,7 +15,7 @@ def stress_coupled_diffusive_flux(
     mobility: float,
     partial_molar_volume: float,
     /,
-):
+) -> Array:
     if not isfinite(mobility) or mobility < 0 or not isfinite(partial_molar_volume):
         raise ValueError(
             "Diffusive mobility must be nonnegative and coefficients finite."
@@ -33,7 +34,7 @@ def stress_coupled_diffusive_flux(
 
 def phase_field_fracture_driving_energy(
     elastic_energy: ArrayLike, toughness: ArrayLike, length_scale: float, /
-):
+) -> Array:
     if not isfinite(length_scale) or length_scale <= 0:
         raise ValueError("Fracture length scale must be finite and positive.")
     toughness_ = jnp.asarray(toughness)

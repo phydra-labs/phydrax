@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _transport(order=5, points=64):
+def _transport(order: Any = 5, points: Any = 64) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(points, periodic=True),),
         axis_names=("x",),
@@ -32,7 +35,9 @@ def _transport(order=5, points=64):
     return phx.equations.compile_conservation_problem(problem, discretization, method)
 
 
-def test_weno_rusanov_flux_difference_preserves_constants_and_global_conservation():
+def test_weno_rusanov_flux_difference_preserves_constants_and_global_conservation() -> (
+    None
+):
     dynamics = _transport()
     constant = jnp.full((64, 1), 2.5)
     varying = jnp.sin(2.0 * jnp.pi * jnp.arange(64) / 64.0)[:, None]
@@ -44,8 +49,8 @@ def test_weno_rusanov_flux_difference_preserves_constants_and_global_conservatio
     assert jnp.allclose(jnp.sum(varying_rate), 0.0, atol=1e-5)
 
 
-def test_weno5_smooth_face_reconstruction_converges_faster_than_third_order():
-    def error(points):
+def test_weno5_smooth_face_reconstruction_converges_faster_than_third_order() -> None:
+    def error(points: Any) -> Any:
         spacing = 1.0 / points
         left_edges = jnp.arange(points) * spacing
         right_edges = left_edges + spacing
@@ -62,7 +67,7 @@ def test_weno5_smooth_face_reconstruction_converges_faster_than_third_order():
     assert coarse / fine > 16.0
 
 
-def test_ssprk3_step_preserves_constant_transport_state():
+def test_ssprk3_step_preserves_constant_transport_state() -> None:
     dynamics = _transport().dynamics
     state = jnp.ones((64, 1))
 

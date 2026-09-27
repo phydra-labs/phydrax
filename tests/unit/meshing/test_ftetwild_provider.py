@@ -1,4 +1,5 @@
 from importlib.util import find_spec
+from typing import Any
 
 import numpy as np
 import pytest
@@ -10,7 +11,7 @@ from phydrax.meshing.providers._ftetwild import FTetWildOptions, FTetWildProvide
 pytestmark = pytest.mark.meshing_ftetwild
 
 
-def _source(scale=1.0, *, triangle_soup=False):
+def _source(scale: Any = 1.0, *, triangle_soup: Any = False) -> Any:
     points = scale * np.array(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     )
@@ -30,7 +31,7 @@ def _source(scale=1.0, *, triangle_soup=False):
     )
 
 
-def _specification(provider, source, size, *, hard=False):
+def _specification(provider: Any, source: Any, size: Any, *, hard: Any = False) -> Any:
     scope = provider.whole_scope(source)
     return phx.meshing.VolumeMeshingSpec(
         phx.meshing.CellMeshingTarget(
@@ -55,8 +56,8 @@ def _specification(provider, source, size, *, hard=False):
 
 @pytest.mark.parametrize("scale,triangle_soup", ((1.0, False), (0.001, True)))
 def test_native_ftetwild_filters_exterior_and_handles_duplicate_surface_seams(
-    scale, triangle_soup
-):
+    scale: Any, triangle_soup: Any
+) -> None:
     if find_spec("wildmeshing") is None:
         pytest.skip("optional wildmeshing binding is not installed")
     source = _source(scale, triangle_soup=triangle_soup)
@@ -80,6 +81,7 @@ def test_native_ftetwild_filters_exterior_and_handles_duplicate_surface_seams(
     achieved = dict(result.compliance.achieved)
     assert achieved["maximum_sampled_boundary_deviation"] <= 0.005 * scale
     assert result.boundary is not None
+    # ty: ignore[unresolved-attribute]
     assert not np.any(np.asarray(result.boundary.mesh.connectivity.boundary_edges))
     assert not result.associations[0].exact
     assert not result.associations[0].complete
@@ -94,7 +96,7 @@ def test_native_ftetwild_filters_exterior_and_handles_duplicate_surface_seams(
     assert result.derivative_mode is phx.meshing.MeshingDerivativeMode.NONDIFFERENTIABLE
 
 
-def test_ftetwild_rejects_hard_sizing_without_silently_weakening_it():
+def test_ftetwild_rejects_hard_sizing_without_silently_weakening_it() -> None:
     source = _source()
     provider = FTetWildProvider()
     with pytest.raises(phx.meshing.MeshingFailure) as caught:
@@ -105,7 +107,7 @@ def test_ftetwild_rejects_hard_sizing_without_silently_weakening_it():
     )
 
 
-def test_ftetwild_rejects_a_scope_bound_to_another_surface():
+def test_ftetwild_rejects_a_scope_bound_to_another_surface() -> None:
     source, other = _source(), _source(2.0)
     provider = FTetWildProvider()
     with pytest.raises(phx.meshing.MeshingFailure) as caught:

@@ -4,8 +4,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -16,7 +19,14 @@ from ...operators.mechanics import (
     neo_hookean_reference_energy,
     NeoHookeanParameters,
 )
-from ...variational import FieldJetSpec, Functional, LocalIntegralTerm
+from ...variational import (
+    FieldJetSpec,
+    Functional,
+    FunctionalContext,
+    LocalFieldJet,
+    LocalGeometry,
+    LocalIntegralTerm,
+)
 
 
 def neo_hookean_functional(
@@ -34,7 +44,11 @@ def neo_hookean_functional(
     if not field:
         raise ValueError("field_name must be non-empty.")
 
-    def density(fields, geometry, context):
+    def density(
+        fields: Mapping[str, LocalFieldJet],
+        geometry: LocalGeometry,
+        context: FunctionalContext,
+    ) -> Array:
         del geometry, context
         gradient = fields[field].gradient
         if gradient is None:
@@ -105,7 +119,7 @@ class J2PlasticityParameters(StrictModule, NonTrainableState):
         yield_stress: ArrayLike,
         hardening_modulus: ArrayLike,
         /,
-    ):
+    ) -> None:
         values = tuple(
             jnp.asarray(value)
             for value in (
@@ -136,7 +150,7 @@ class J2PlasticityState(StrictModule):
         plastic_strain: ArrayLike,
         equivalent_plastic_strain: ArrayLike,
         /,
-    ):
+    ) -> None:
         plastic = jnp.asarray(plastic_strain)
         equivalent = jnp.asarray(equivalent_plastic_strain)
         if plastic.shape[-2:] != (3, 3) or equivalent.shape != plastic.shape[:-2]:

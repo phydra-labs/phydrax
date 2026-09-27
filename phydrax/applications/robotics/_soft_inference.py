@@ -15,8 +15,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, ArrayLike, PyTree
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._bounds import Bounds
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -41,6 +43,7 @@ from ...optim import (
     StateDesignConstraint,
     StateDesignProblem,
 )
+from ...typing import parse
 
 
 CalibrationSplit: TypeAlias = Literal["train", "validation", "held_out"]
@@ -81,7 +84,7 @@ class PositiveParameterMap(StrictModule, NonTrainableState):
         *,
         minimum: float = 0.0,
         maximum: float | None = None,
-    ):
+    ) -> None:
         lower = float(minimum)
         upper = None if maximum is None else float(maximum)
         if not isfinite(lower) or lower < 0.0:
@@ -139,7 +142,7 @@ class BoundedParameterMap(StrictModule, NonTrainableState):
     name: str = eqx.field(static=True)
     map_id: str = eqx.field(static=True)
 
-    def __init__(self, name: str, lower: float, upper: float, /):
+    def __init__(self, name: str, lower: float, upper: float, /) -> None:
         lower_ = float(lower)
         upper_ = float(upper)
         if not isfinite(lower_) or not isfinite(upper_) or upper_ <= lower_:
@@ -191,7 +194,7 @@ class SPDParameterMap(StrictModule, NonTrainableState):
         /,
         *,
         diagonal_floor: float = 1e-10,
-    ):
+    ) -> None:
         if not isinstance(dimension, int) or isinstance(dimension, bool) or dimension < 1:
             raise ValueError("SPDParameterMap dimension must be a positive integer.")
         floor = float(diagonal_floor)
@@ -282,7 +285,7 @@ class ReducedRodParameterization(StrictModule, NonTrainableState):
         /,
         *,
         parameterization_id: str | None = None,
-    ):
+    ) -> None:
         maps_ = tuple(maps)
         if not maps_ or any(
             not isinstance(
@@ -353,13 +356,12 @@ class CalibrationExperiment(StrictModule, NonTrainableState):
         route_id: str,
         weight: Any = None,
         route_valid: Callable[[Mapping[str, Array], Any], ArrayLike] | None = None,
-    ):
+    ) -> None:
         if not callable(residual):
             raise TypeError("CalibrationExperiment residual must be callable.")
         if route_valid is not None and not callable(route_valid):
             raise TypeError("CalibrationExperiment route_valid must be callable or None.")
-        if split not in ("train", "validation", "held_out"):
-            raise ValueError("CalibrationExperiment split is invalid.")
+        split = parse(split, CalibrationSplit, "split")
         self.weight = weight
         self.residual = residual
         self.route_valid = route_valid
@@ -387,7 +389,7 @@ class CalibrationAcceptance(StrictModule, NonTrainableState):
         maximum_held_out_absolute: float = np.inf,
         maximum_condition_number: float = np.inf,
         require_validation: bool = False,
-    ):
+    ) -> None:
         values = (
             maximum_training_rmse,
             maximum_validation_rmse,
@@ -488,7 +490,7 @@ class ReducedRodCalibrationProblem(StrictModule, NonTrainableState):
         relative_rank_tolerance: float = 1e-8,
         absolute_rank_tolerance: float = 0.0,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(parameterization, ReducedRodParameterization):
             raise TypeError("parameterization must be ReducedRodParameterization.")
         if not isinstance(acceptance, CalibrationAcceptance):
@@ -570,7 +572,9 @@ class ReducedRodCalibrationProblem(StrictModule, NonTrainableState):
         self.plant_id = _identifier(plant_id, "plant_id")
         self.problem_id = _identifier(problem_id, "problem_id")
 
-    def training_residual(self, latent: PyTree[Any], args: Any = None, /):
+    def training_residual(
+        self, latent: PyTree[Any], args: Any = None, /
+    ) -> tuple[PyTree[Array], ...]:
         return self.graph.residual(latent, args)
 
     def split_evidence(
@@ -580,8 +584,7 @@ class ReducedRodCalibrationProblem(StrictModule, NonTrainableState):
         args: Any = None,
         /,
     ) -> CalibrationSplitEvidence:
-        if split not in ("train", "validation", "held_out"):
-            raise ValueError("Unknown calibration split.")
+        split = parse(split, CalibrationSplit, "split")
         physical = self.parameterization.to_physical(latent)
         selected = tuple(
             (experiment, block)
@@ -660,7 +663,7 @@ class ReducedRodCalibrationProblem(StrictModule, NonTrainableState):
         if flat_latent.size < 1:
             raise ValueError("Calibration requires at least one latent coordinate.")
 
-        def residual_vector(coordinates):
+        def residual_vector(coordinates: Array) -> Array:
             return ravel_pytree(self.training_residual(unravel(coordinates), args))[0]
 
         residuals = residual_vector(flat_latent)
@@ -702,7 +705,7 @@ class ReducedRodCalibrationProblem(StrictModule, NonTrainableState):
             jnp.full_like(latent_covariance_candidate, jnp.nan),
         )
 
-        def physical_vector(coordinates):
+        def physical_vector(coordinates: Array) -> Array:
             return ravel_pytree(self.parameterization.to_physical(unravel(coordinates)))[
                 0
             ]
@@ -985,7 +988,7 @@ class FixedModeDerivativeEvidence(StrictModule, NonTrainableState):
         primal_result_id: str,
         maximum_condition_number: float = np.inf,
         maximum_derivative_residual: float = np.inf,
-    ):
+    ) -> None:
         margins = tuple(
             jnp.asarray(value).reshape(())
             for value in (
@@ -1082,7 +1085,7 @@ class SoftCoDesignConstraint(StrictModule, NonTrainableState):
         upper: Any = jnp.inf,
         depends_on_state: bool = True,
         constraint_id: str,
-    ):
+    ) -> None:
         if not callable(function):
             raise TypeError("SoftCoDesignConstraint function must be callable.")
         self.function = function
@@ -1106,7 +1109,7 @@ class CoDesignHeldOutScenario(StrictModule, NonTrainableState):
         /,
         *,
         scenario_id: str,
-    ):
+    ) -> None:
         if not callable(qualifies):
             raise TypeError("CoDesignHeldOutScenario qualifies must be callable.")
         self.qualifies = qualifies
@@ -1172,7 +1175,7 @@ class SoftRobotCoDesignProblem(StrictModule, NonTrainableState):
         design_bounds: Bounds | None = None,
         has_aux: bool = False,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(parameterization, ReducedRodParameterization):
             raise TypeError("parameterization must be ReducedRodParameterization.")
         for value, name in (
@@ -1207,7 +1210,7 @@ class SoftRobotCoDesignProblem(StrictModule, NonTrainableState):
         }
         source_physical = parameterization.to_physical(source_latent)
 
-        def physical(values):
+        def physical(values: Mapping[str, Any]) -> dict[str, Array]:
             return parameterization.to_physical(values)
 
         state_design_constraints = tuple(
@@ -1316,7 +1319,9 @@ class SoftRobotCoDesignProblem(StrictModule, NonTrainableState):
                 initial_design
             )
 
-        def objective(values, args):
+        def objective(
+            values: tuple[PyTree[Any], PyTree[Any]], args: Any
+        ) -> tuple[Array, Any] | Array:
             value, auxiliary = self.state_design.value(values[0], values[1], args)
             return (value, auxiliary) if self.state_design.has_aux else value
 

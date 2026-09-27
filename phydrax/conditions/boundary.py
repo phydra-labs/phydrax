@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
 import equinox as eqx
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from phydrax.domain import (
     DomainComponent,
@@ -44,7 +44,9 @@ def _value_deps(component: ConditionSupport, /) -> tuple[str, ...]:
     return component.domain.labels
 
 
-def _condition_value(value: ConditionValue | None, on: ConditionSupport, default: float):
+def _condition_value(
+    value: ConditionValue | None, on: ConditionSupport, default: float
+) -> DomainFunction | ArrayLike:
     if value is None:
         return default
     if isinstance(value, DomainFunction):
@@ -72,7 +74,7 @@ class Dirichlet(AbstractResidualCondition):
         *,
         target: ConditionValue | None = None,
         label: str | None = None,
-    ):
+    ) -> None:
         self.fields = _fields(field)
         self.on = _validate_support(on)
         self.target = _condition_value(target, self.on, 0.0)
@@ -108,7 +110,7 @@ class Neumann(AbstractResidualCondition):
         target: ConditionValue | None = None,
         mode: Literal["reverse", "forward"] = "reverse",
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(on, DomainComponent):
             raise TypeError("Neumann conditions require one DomainComponent.")
         if mode not in ("reverse", "forward"):
@@ -161,7 +163,7 @@ class Robin(AbstractResidualCondition):
         var: str = "x",
         mode: Literal["reverse", "forward"] = "reverse",
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(on, DomainComponent):
             raise TypeError("Robin conditions require one DomainComponent.")
         if mode not in ("reverse", "forward"):
@@ -220,7 +222,7 @@ class Absorbing(AbstractResidualCondition):
         target: ConditionValue | None = None,
         mode: Literal["reverse", "forward"] = "reverse",
         label: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(on, DomainComponent):
             raise TypeError("Absorbing conditions require one DomainComponent.")
         if time_var not in on.domain.labels:

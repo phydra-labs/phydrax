@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._exponential_family import (
     AbstractExponentialFamily,
@@ -51,7 +52,7 @@ class ExponentialFamilyEstimateResult(StrictModule):
         status: ArrayLike,
         estimator_id: str,
         method_id: str,
-    ):
+    ) -> None:
         if not estimator_id or not method_id:
             raise ValueError("Estimator provenance IDs must be non-empty.")
         shape = mean_coordinates.batch_shape
@@ -94,7 +95,7 @@ class ExponentialFamilyProjectionAccumulator(StrictModule):
         invalid_weight_count: ArrayLike,
         minimum_log_weight: ArrayLike,
         weighted_log_weight_sum: ArrayLike,
-    ):
+    ) -> None:
         if not isinstance(family, AbstractExponentialFamily):
             raise TypeError("family must implement AbstractExponentialFamily.")
         batch_shape = moments.log_scale.shape

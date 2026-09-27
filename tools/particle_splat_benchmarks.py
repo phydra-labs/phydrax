@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from importlib.metadata import version
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -72,7 +73,7 @@ class ParticleSplatBenchmarkReport:
         )
 
 
-def _assignment(name: str):
+def _assignment(name: str) -> Any:
     if name == "multilinear":
         return phx.discretization.MultilinearSplatAssignment(), 1
     if name.startswith("bspline"):
@@ -88,7 +89,7 @@ def _configuration(
     payload_width: int,
     *,
     cell_primary: bool,
-):
+) -> Any:
     axis_type = (
         phx.discretization.UniformCellAxisSpec
         if cell_primary
@@ -127,7 +128,7 @@ def _run_case(
     reference: jax.Array | None,
     *,
     cell_primary: bool,
-):
+) -> Any:
     grid, particles, position, content = _configuration(
         dimension,
         particle_count,
@@ -136,6 +137,7 @@ def _run_case(
         cell_primary=cell_primary,
     )
     assignment, degree = _assignment(assignment_name)
+    # ty: ignore[invalid-argument-type]
     execution = phx.discretization.SplatExecutionPolicy(accumulation=accumulation)
     prepared = phx.discretization.ParticleGridSplatPlan(
         grid,
@@ -144,12 +146,12 @@ def _run_case(
     ).prepare(particles)
 
     @jax.jit
-    def apply(current_position, current_content):
+    def apply(current_position: Any, current_content: Any) -> Any:
         state = prepared.build(current_position)
         return prepared.deposit_content(state, current_content), state
 
     @jax.jit
-    def scatter_routes(current_position, current_content):
+    def scatter_routes(current_position: Any, current_content: Any) -> Any:
         state = prepared.build(current_position)
         payload = state.stencil.weights[..., None] * current_content[:, None, :]
         return prepared.scatter_route_payload(state, payload)
@@ -215,7 +217,7 @@ def _run_case(
     return case, result.content
 
 
-def run_particle_splat_benchmark(*, smoke: bool = False):
+def run_particle_splat_benchmark(*, smoke: bool = False) -> Any:
     """Benchmark structured particle deposition and its numerical evidence."""
     configurations = (
         (
@@ -280,7 +282,7 @@ def run_particle_splat_benchmark(*, smoke: bool = False):
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Benchmark native structured particle-grid splatting."
     )

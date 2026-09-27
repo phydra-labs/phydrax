@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jaxtyping import PyTree
 
 import phydrax.linalg as la
 
@@ -56,7 +57,7 @@ class TriangleFiniteVolumeBoundarySet(StrictModule, NonTrainableState):
         patch_names: tuple[str, ...],
         boundaries: Mapping[str, AbstractConservationBoundary],
         /,
-    ):
+    ) -> None:
         names = tuple(patch_names)
         if set(boundaries) != set(names):
             raise ValueError(
@@ -114,7 +115,7 @@ class TriangleFiniteVolumeMethodPlan(StrictModule):
         *,
         viscous: TriangleViscousFluxPlan | None = None,
         closure: AbstractFaceClosurePlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(
             reconstruction,
             (
@@ -178,7 +179,7 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
         source: SourceFunction | None = None,
         source_id: str | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, TriangleFiniteVolumeDiscretization):
             raise TypeError("discretization must be triangular finite-volume geometry.")
         if not isinstance(method, TriangleFiniteVolumeMethodPlan):
@@ -269,6 +270,8 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
     def make_fallback_dynamics(
         self, fallback_flux: AbstractNumericalFluxPlan, /
     ) -> "PreparedTriangleFiniteVolumeDynamics":
+        if not isinstance(fallback_flux, AbstractArbitraryNormalNumericalFluxPlan):
+            raise TypeError("Triangle FV requires an arbitrary-normal numerical flux.")
         method = TriangleFiniteVolumeMethodPlan(
             PiecewiseConstantReconstruction(), fallback_flux
         )
@@ -464,7 +467,13 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
         ).selected_step
         return self.precision.decision(jnp.minimum(hyperbolic, viscous))
 
-    def linearize(self, time: Array, state: Array, args: Any = None, /):
+    def linearize(
+        self, time: Array, state: Array, args: Any = None, /
+    ) -> tuple[
+        PyTree[Array],
+        Callable[[PyTree[Any]], PyTree[Array]],
+        Callable[[PyTree[Any]], tuple[PyTree[Array]]],
+    ]:
         linearization = la.prepare_linearization(
             lambda value: self(time, value, args), state
         )

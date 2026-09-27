@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.scipy as jsp
 import pytest
@@ -5,14 +7,14 @@ import pytest
 import phydrax as phx
 
 
-def _prepare(algebra, **policy_kwargs):
+def _prepare(algebra: Any, **policy_kwargs: Any) -> Any:
     policy = phx.linalg.AlgebraDerivationPolicy(**policy_kwargs)
     return phx.linalg.prepare_algebra_derivations(
         phx.linalg.plan_algebra_derivations(algebra, policy=policy)
     )
 
 
-def test_canonical_composition_algebras_have_expected_derivation_dimensions():
+def test_canonical_composition_algebras_have_expected_derivation_dimensions() -> None:
     complex_derivations = _prepare(phx.metrix.algebra.ComplexAlgebraSpec())
     quaternion_derivations = _prepare(phx.metrix.algebra.QuaternionAlgebraSpec())
     octonion_derivations = _prepare(phx.metrix.algebra.OctonionAlgebraSpec())
@@ -28,7 +30,7 @@ def test_canonical_composition_algebras_have_expected_derivation_dimensions():
     assert octonion_derivations.maximum_commutator_closure_residual < 1e-10
 
 
-def test_octonion_derivations_infinitesimally_preserve_the_g2_structure():
+def test_octonion_derivations_infinitesimally_preserve_the_g2_structure() -> None:
     algebra = phx.metrix.algebra.OctonionAlgebraSpec()
     derivations = _prepare(algebra)
     bridge = phx.metrix.OctonionG2Bridge(
@@ -44,7 +46,7 @@ def test_octonion_derivations_infinitesimally_preserve_the_g2_structure():
     assert report.maximum_scalar_mixing_residual < 1e-9
 
 
-def test_exponentiated_small_derivation_preserves_octonion_multiplication():
+def test_exponentiated_small_derivation_preserves_octonion_multiplication() -> None:
     algebra = phx.metrix.algebra.OctonionAlgebraSpec()
     product = algebra.prepare_product(backend="sparse")
     derivations = _prepare(algebra)
@@ -59,7 +61,7 @@ def test_exponentiated_small_derivation_preserves_octonion_multiplication():
     assert jnp.allclose(transformed_product, product_of_transforms, atol=1e-10)
 
 
-def test_derivation_projector_returns_a_leibniz_matrix():
+def test_derivation_projector_returns_a_leibniz_matrix() -> None:
     algebra = phx.metrix.algebra.QuaternionAlgebraSpec()
     derivations = _prepare(algebra)
     candidate = jnp.arange(16, dtype=jnp.float64).reshape((4, 4)) / 7.0
@@ -76,7 +78,7 @@ def test_derivation_projector_returns_a_leibniz_matrix():
     assert jnp.allclose(derivations.project(projected), projected, atol=1e-10)
 
 
-def test_derivation_rank_ambiguity_and_resource_failures_are_explicit():
+def test_derivation_rank_ambiguity_and_resource_failures_are_explicit() -> None:
     algebra = phx.metrix.algebra.QuaternionAlgebraSpec()
     ambiguous = _prepare(algebra, minimum_singular_gap=1e30)
 
@@ -89,7 +91,7 @@ def test_derivation_rank_ambiguity_and_resource_failures_are_explicit():
         )
 
 
-def test_derivation_plan_id_records_exact_constraints_and_numeric_policy():
+def test_derivation_plan_id_records_exact_constraints_and_numeric_policy() -> None:
     algebra = phx.metrix.algebra.QuaternionAlgebraSpec()
     first = phx.linalg.plan_algebra_derivations(algebra)
     second = phx.linalg.plan_algebra_derivations(algebra)

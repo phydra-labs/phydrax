@@ -10,6 +10,7 @@ from fractions import Fraction
 
 import jax.numpy as jnp
 from jax import Array
+from jax.typing import DTypeLike
 
 
 # B_0, B_2, ..., B_40.  Keeping the source coefficients rational avoids
@@ -39,7 +40,7 @@ EVEN_BERNOULLI_NUMBERS = (
 )
 
 
-def even_bernoulli_coefficient(index: int, dtype, /) -> Array:
+def even_bernoulli_coefficient(index: int, dtype: DTypeLike, /) -> Array:
     """Return exact-host ``B_(2*index)/(2*index)!`` in ``dtype``."""
     value = EVEN_BERNOULLI_NUMBERS[index]
     factorial = 1

@@ -13,13 +13,15 @@ import stat
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._array_archive import (
     DEFAULT_ARRAY_ARCHIVE_LIMITS,
@@ -55,6 +57,7 @@ from ..lifecycle._migration import MigrationReport
 from ..lifecycle._repository import ObjectNotFoundError
 from ..lifecycle._resolved_run import ResolvedRunSpec
 from ..logging import emit
+from ..typing import parse
 from ._fixed_step import (
     _canonical_structured_state,
     _state_dtype,
@@ -81,7 +84,7 @@ from ._runtime_lifecycle import (
 
 
 RunStatus = Literal["ready", "running", "completed", "failed", "canceled"]
-ProductionTriggerAction = Literal["checkpoint", "publish", "stop"]
+ProductionTriggerAction: TypeAlias = Literal["checkpoint", "publish", "stop"]
 
 
 def _finite_array_tree(state: Any, /) -> Array:
@@ -262,7 +265,7 @@ class ProductionCaseManifest(StrictModule, NonTrainableState):
         topology_id: str,
         geometry_layout_id: str,
         dtype: str,
-    ):
+    ) -> None:
         values = tuple(
             str(value)
             for value in (
@@ -304,7 +307,7 @@ class CheckpointGenerationPolicy(StrictModule, NonTrainableState):
     retention: int = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, retention: int = 3, /):
+    def __init__(self, retention: int = 3, /) -> None:
         retention_ = int(retention)
         if retention_ <= 0:
             raise ValueError("Checkpoint retention must be positive.")
@@ -410,7 +413,7 @@ class DurableCheckpointStore:
         /,
         *,
         encoding_plan: RuntimeCheckpointEncodingPlan | None = None,
-    ):
+    ) -> None:
         self._root_descriptor = -1
         if not isinstance(manifest, ProductionCaseManifest) or not isinstance(
             policy, CheckpointGenerationPolicy
@@ -744,7 +747,7 @@ class ArtifactCheckpointStore:
         resource_request: ResourceRequest,
         artifact_id: str | None = None,
         encoding_plan: RuntimeCheckpointEncodingPlan | None = None,
-    ):
+    ) -> None:
         if not isinstance(manifest, ProductionCaseManifest) or not isinstance(
             policy, CheckpointGenerationPolicy
         ):
@@ -1662,7 +1665,7 @@ class ProductionFailureRecord(StrictModule, NonTrainableState):
         error_code: str,
         last_checkpoint_id: str,
         /,
-    ):
+    ) -> None:
         category_ = str(category)
         code = str(error_code)
         if code not in _FAILURE_CODES.get(category_, ()):
@@ -1714,7 +1717,7 @@ class ProductionTerminalManifest(StrictModule, NonTrainableState):
         failure: ProductionFailureRecord | None,
         iteration_session_state: IterationSessionState | None = None,
         /,
-    ):
+    ) -> None:
         if status not in ("completed", "failed", "canceled"):
             raise ValueError("Terminal manifest status is not terminal.")
         if status == "failed":
@@ -1793,7 +1796,7 @@ class ProductionTriggerBinding(StrictModule, NonTrainableState):
         /,
         *,
         moment_components: Sequence[int] = (),
-    ):
+    ) -> None:
         name_ = str(name)
         indices = tuple(moment_indices)
         components = tuple(moment_components)
@@ -1805,10 +1808,10 @@ class ProductionTriggerBinding(StrictModule, NonTrainableState):
             or any(value < 0 for value in indices)
             or (components and len(components) != len(indices))
             or any(value < 0 for value in components)
-            or action not in ("checkpoint", "publish", "stop")
             or not action_id_
         ):
             raise ValueError("Production trigger binding is invalid.")
+        action = parse(action, ProductionTriggerAction, "action")
         self.name = name_
         self.graph = graph
         self.moment_indices = indices
@@ -1841,15 +1844,15 @@ class ProductionIterationMetrics(StrictModule):
 
     def __init__(
         self,
-        time,
-        accepted_step_size,
-        retry_count,
-        method_successful,
-        accepted,
-        output_due,
-        checkpoint_due,
+        time: ArrayLike,
+        accepted_step_size: ArrayLike,
+        retry_count: ArrayLike,
+        method_successful: ArrayLike,
+        accepted: ArrayLike,
+        output_due: ArrayLike,
+        checkpoint_due: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.time = jnp.asarray(time)
         self.accepted_step_size = jnp.asarray(accepted_step_size)
         self.retry_count = jnp.asarray(retry_count, dtype=jnp.int32)
@@ -1860,15 +1863,15 @@ class ProductionIterationMetrics(StrictModule):
 
 
 def _production_iteration_record(
-    phase,
-    step_index,
+    phase: IterationPhase | ArrayLike,
+    step_index: ArrayLike,
     metrics: ProductionIterationMetrics,
     /,
     *,
-    active=True,
-    committed=False,
-    terminal=False,
-    status=0,
+    active: ArrayLike = True,
+    committed: ArrayLike = False,
+    terminal: ArrayLike = False,
+    status: ArrayLike = 0,
 ) -> IterationRecord:
     return IterationRecord(
         IterationCoordinates(
@@ -1980,7 +1983,7 @@ class ProductionRunPlan(StrictModule):
         validator: Callable | None = None,
         validator_id: str | None = None,
         device_resident: bool = False,
-    ):
+    ) -> None:
         step = float(step_size)
         end = float(end_time)
         steps = int(maximum_steps)
@@ -2130,7 +2133,7 @@ class PreparedProductionRun:
         resolved_run_spec: ResolvedRunSpec | None = None,
         restart_relation: RuntimeRestartRelation | None = None,
         migration_report: MigrationReport | None = None,
-    ):
+    ) -> None:
         if (
             not isinstance(manifest, ProductionCaseManifest)
             or not isinstance(plan, ProductionRunPlan)
@@ -2259,7 +2262,9 @@ class PreparedProductionRun:
         self._compiled_segment = self._compile_segment(plan.segment_steps)
         self._compiled_one_step = self._compile_segment(1)
 
-    def _compile_segment(self, length: int, /):
+    def _compile_segment(
+        self, length: int, /
+    ) -> Callable[[_SegmentState], tuple[_SegmentState, _SegmentRecord]]:
         plan = self.plan
         args = self.args
         retry_decision_id = canonical_fingerprint(
@@ -2271,7 +2276,9 @@ class PreparedProductionRun:
         )
         attempt_count = plan.retry_policy.maximum_retries + 1
 
-        def scan_step(carry: _SegmentState, unused: None):
+        def scan_step(
+            carry: _SegmentState, unused: None
+        ) -> tuple[_SegmentState, _SegmentRecord]:
             del unused
             tolerance = jnp.asarray(
                 32.0 * jnp.finfo(carry.time.dtype).eps, dtype=carry.time.dtype
@@ -2415,7 +2422,7 @@ class PreparedProductionRun:
             return next_carry, record
 
         @jax.jit
-        def execute(initial: _SegmentState):
+        def execute(initial: _SegmentState) -> tuple[_SegmentState, _SegmentRecord]:
             return jax.lax.scan(scan_step, initial, xs=None, length=length)
 
         return execute
@@ -2508,7 +2515,7 @@ class PreparedProductionRun:
             "",
         )
 
-    def _iteration_session_checkpoint(self, /):
+    def _iteration_session_checkpoint(self, /) -> tuple[()] | tuple[Array, Array]:
         if self.iteration_session is None:
             return ()
         state = self.iteration_session.snapshot()

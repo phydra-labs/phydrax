@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -62,7 +63,7 @@ class ConstantIsotropicMobilityPlan(AbstractHydrodynamicMobilityPlan):
     maximum_particles: int = eqx.field(static=True)
     mobility_id: str = eqx.field(static=True)
 
-    def __init__(self, mobility: float, /, *, maximum_particles: int):
+    def __init__(self, mobility: float, /, *, maximum_particles: int) -> None:
         value = float(mobility)
         maximum = int(maximum_particles)
         if not math.isfinite(value) or value <= 0.0 or maximum <= 0:
@@ -97,7 +98,7 @@ class PreparedConstantIsotropicMobility(AbstractPreparedHydrodynamicMobility):
         system: PreparedAtomisticSystem,
         active_slots: ArrayLike,
         /,
-    ):
+    ) -> None:
         slots = _active_slots(plan.maximum_particles, system, active_slots)
         space = ArraySpace(
             (slots.size, 3),
@@ -132,7 +133,7 @@ class PreparedConstantIsotropicMobility(AbstractPreparedHydrodynamicMobility):
         value = self.coordinate_space.validate(jnp.asarray(positions))
         del value
 
-        def action(vector):
+        def action(vector: Array) -> Array:
             return self.plan.mobility * self.coordinate_space.validate(vector)
 
         return FunctionLinearOperator(
@@ -158,7 +159,7 @@ class FreeSpaceRPYMobilityPlan(AbstractHydrodynamicMobilityPlan):
         /,
         *,
         maximum_particles: int,
-    ):
+    ) -> None:
         radius = float(hydrodynamic_radius)
         viscosity = float(dynamic_viscosity)
         maximum = int(maximum_particles)
@@ -205,7 +206,7 @@ class PreparedFreeSpaceRPYMobility(AbstractPreparedHydrodynamicMobility):
         system: PreparedAtomisticSystem,
         active_slots: ArrayLike,
         /,
-    ):
+    ) -> None:
         slots = _active_slots(plan.maximum_particles, system, active_slots)
         space = ArraySpace(
             (slots.size, 3),
@@ -287,7 +288,7 @@ class PreparedFreeSpaceRPYMobility(AbstractPreparedHydrodynamicMobility):
         safe_blocks = identity_pair[..., None, None] * self_mobility * identity
         blocks = jnp.where(configuration_valid, blocks, safe_blocks)
 
-        def action(vector):
+        def action(vector: Array) -> Array:
             value = self.coordinate_space.validate(vector)
             return contract("ijab,jb->ia", blocks, value)
 

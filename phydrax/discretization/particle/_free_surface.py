@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -33,7 +34,7 @@ class FreeSurfaceDetectionPlan(StrictModule, NonTrainableState):
         normal_threshold: float = 0.15,
         cone_angle: float = np.pi / 3.0,
         smooth_sharpness: float = 30.0,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -82,7 +83,9 @@ class FreeSurfacePressurePlan(StrictModule, NonTrainableState):
     mode: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, atmospheric_pressure: float = 0.0, /, *, mode: str = "hard"):
+    def __init__(
+        self, atmospheric_pressure: float = 0.0, /, *, mode: str = "hard"
+    ) -> None:
         if mode not in ("hard", "smooth"):
             raise ValueError("Free-surface pressure mode must be 'hard' or 'smooth'.")
         pressure = float(atmospheric_pressure)
@@ -110,7 +113,7 @@ class FreeSurfaceOperatorCorrectionPlan(StrictModule, NonTrainableState):
     minimum_completeness: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, minimum_completeness: float = 0.2, /):
+    def __init__(self, minimum_completeness: float = 0.2, /) -> None:
         minimum = float(minimum_completeness)
         if not np.isfinite(minimum) or minimum <= 0.0:
             raise ValueError("minimum_completeness must be finite and positive.")

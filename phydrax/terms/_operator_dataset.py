@@ -5,12 +5,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 from phydrax.domain import ConcatenatedModelEvaluator, Domain, DomainFunction
 
@@ -25,9 +25,10 @@ from ..nn.operator.metrics import (
     operator_spectral_loss,
 )
 from ..nn.operator.protocols import OperatorModel
+from ..typing import parse, PRNGKey
 
 
-OperatorLoss = Literal["l2", "h1", "spectral"]
+OperatorLoss: TypeAlias = Literal["l2", "h1", "spectral"]
 
 
 def _operator_callable(function: DomainFunction, /) -> Callable:
@@ -112,7 +113,7 @@ class OperatorDatasetTerm(AbstractScalarTerm):
         relative: bool = True,
         weight: Any = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         self.batches = _batches_tuple(batches)
         if len(self.batches) == 1:
             target_values = (jnp.asarray(targets),)
@@ -124,19 +125,17 @@ class OperatorDatasetTerm(AbstractScalarTerm):
             raise ValueError("targets and batches must have the same length.")
         self.targets = target_values
         self.fields = (str(function),)
-        self.loss_kind = loss
         self.relative = bool(relative)
         self.weight = jnp.asarray(weight, dtype=jnp.float64)
         self.label = None if label is None else str(label)
-        if loss not in ("l2", "h1", "spectral"):
-            raise ValueError("loss must be 'l2', 'h1', or 'spectral'.")
+        self.loss_kind = parse(loss, OperatorLoss, "loss")
 
     def loss(
         self,
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -165,7 +164,7 @@ class OperatorDatasetTerm(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> dict[str, Array]:
@@ -211,24 +210,22 @@ class PhysicsInformedOperatorTerm(AbstractScalarTerm):
         loss: OperatorLoss = "l2",
         weight: Any = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         self.batches = _batches_tuple(batches)
         if not callable(residual_fn):
             raise TypeError("residual_fn must be callable.")
         self.residual_fn = residual_fn
         self.fields = (str(function),)
-        self.loss_kind = loss
         self.weight = jnp.asarray(weight, dtype=jnp.float64)
         self.label = None if label is None else str(label)
-        if loss not in ("l2", "h1", "spectral"):
-            raise ValueError("loss must be 'l2', 'h1', or 'spectral'.")
+        self.loss_kind = parse(loss, OperatorLoss, "loss")
 
     def loss(
         self,
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -276,7 +273,7 @@ class DifferentialPhysicsInformedOperatorTerm(AbstractScalarTerm):
         loss: OperatorLoss = "l2",
         weight: Any = 1.0,
         label: str | None = None,
-    ):
+    ) -> None:
         self.batches = _batches_tuple(batches)
         self.domain = domain
         self.coordinate_label = str(coordinate_label)
@@ -286,11 +283,9 @@ class DifferentialPhysicsInformedOperatorTerm(AbstractScalarTerm):
             raise TypeError("residual_operator must be callable.")
         self.residual_operator = residual_operator
         self.fields = (str(function),)
-        self.loss_kind = loss
         self.weight = jnp.asarray(weight, dtype=jnp.float64)
         self.label = None if label is None else str(label)
-        if loss not in ("l2", "h1", "spectral"):
-            raise ValueError("loss must be 'l2', 'h1', or 'spectral'.")
+        self.loss_kind = parse(loss, OperatorLoss, "loss")
         for batch in self.batches:
             if batch.require_single_query().geometry_case_shape:
                 raise ValueError(
@@ -302,7 +297,7 @@ class DifferentialPhysicsInformedOperatorTerm(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:

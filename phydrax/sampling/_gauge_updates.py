@@ -5,24 +5,26 @@
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
+from .._dtype_names import inexact_result_type
 from .._fingerprint import canonical_fingerprint
-from .._precision import inexact_result_type
 from .._sampling._addressing import derive_key, SampleAddress
 from .._strict import StrictModule
 from ..graph._gauge_transport import GaugeStaplePlan
 from ..linalg import determinant_small_linear, SmallLinearSolvePlan
 from ..metrix import SpecialUnitaryGroup, UnitaryGroup
+from ..typing import parse, PRNGKey
 
 
 _UPDATE_ADDRESS = SampleAddress(
@@ -32,8 +34,8 @@ _EXCHANGE_ADDRESS = SampleAddress(
     "lattice-gauge", "replica-exchange", target="neighbor-pair", role="transition"
 )
 
-GaugeGroupKind = Literal["u1", "su2", "su3"]
-GaugeUpdateKind = Literal["heatbath", "overrelaxation", "mixed"]
+GaugeGroupKind: TypeAlias = Literal["u1", "su2", "su3"]
+GaugeUpdateKind: TypeAlias = Literal["heatbath", "overrelaxation", "mixed"]
 
 
 class GaugeUpdateStatus(IntEnum):
@@ -67,16 +69,14 @@ class GaugeUpdatePlan(StrictModule):
         rejection_attempts: int = 64,
         overrelaxation_passes: int = 1,
         su3_subgroup_passes: int = 1,
-    ):
+    ) -> None:
         beta = float(coupling)
         sweeps = int(num_sweeps)
         attempts = int(rejection_attempts)
         reflections = int(overrelaxation_passes)
         subgroup_passes = int(su3_subgroup_passes)
-        if group not in ("u1", "su2", "su3"):
-            raise ValueError("group must be 'u1', 'su2', or 'su3'.")
-        if update not in ("heatbath", "overrelaxation", "mixed"):
-            raise ValueError("Unsupported gauge update kind.")
+        group = parse(group, GaugeGroupKind, "group")
+        update = parse(update, GaugeUpdateKind, "update")
         if not np.isfinite(beta) or beta < 0.0:
             raise ValueError("coupling must be finite and nonnegative.")
         if (
@@ -168,7 +168,7 @@ class GaugeReplicaExchangePlan(StrictModule):
     inverse_temperatures: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, inverse_temperatures: ArrayLike, /):
+    def __init__(self, inverse_temperatures: ArrayLike, /) -> None:
         beta = jnp.asarray(inverse_temperatures, dtype=jnp.float64).reshape((-1,))
         if (
             beta.size < 2
@@ -364,7 +364,7 @@ def initialize_gauge_update_state(
 
 
 def _sample_von_mises(
-    key: Key[Array, ""], mean: Array, concentration: Array, attempts: int, /
+    key: PRNGKey, mean: Array, concentration: Array, attempts: int, /
 ) -> tuple[Array, Array, Array]:
     """Best--Fisher exact rejection with explicit finite-capacity exhaustion."""
     dtype = inexact_result_type(mean, concentration)
@@ -420,7 +420,7 @@ def _project_su2(plan: SmallLinearSolvePlan, matrix: Array, /) -> tuple[Array, A
 
 
 def _sample_su2(
-    key: Key[Array, ""], concentration: Array, attempts: int, /
+    key: PRNGKey, concentration: Array, attempts: int, /
 ) -> tuple[Array, Array, Array]:
     """Exact SU(2) Haar heatbath rejection for density exp(k a0)."""
     dtype = inexact_result_type(concentration)
@@ -447,7 +447,13 @@ def _sample_su2(
     return _quaternion_su2(quaternion), success, used.astype(jnp.int32)
 
 
-def _u1_update(prepared, link, staple, key, overrelax):
+def _u1_update(
+    prepared: PreparedGaugeUpdate,
+    link: Array,
+    staple: Array,
+    key: PRNGKey,
+    overrelax: bool,
+) -> tuple[Array, Array, Array]:
     product = staple[0, 0]
     magnitude = jnp.abs(product)
     mean = -jnp.angle(product)
@@ -463,7 +469,13 @@ def _u1_update(prepared, link, staple, key, overrelax):
     return jnp.where(success, proposal, link), success, used
 
 
-def _su2_update(prepared, link, staple, key, overrelax):
+def _su2_update(
+    prepared: PreparedGaugeUpdate,
+    link: Array,
+    staple: Array,
+    key: PRNGKey,
+    overrelax: bool,
+) -> tuple[Array, Array, Array]:
     normalized, scale = _project_su2(prepared.small_su2_linalg, staple)
     if overrelax:
         relative = _matmul(link, normalized)
@@ -476,13 +488,20 @@ def _su2_update(prepared, link, staple, key, overrelax):
     return jnp.where(success, proposal, link), success, used
 
 
-def _embedded_su2(value: Array, pair: tuple[int, int], dtype, /) -> Array:
+def _embedded_su2(value: Array, pair: tuple[int, int], dtype: DTypeLike, /) -> Array:
     result = jnp.eye(3, dtype=dtype)
     indices = jnp.asarray(pair)
     return result.at[jnp.ix_(indices, indices)].set(value)
 
 
-def _su3_subgroup_update(prepared, link, staple, key, overrelax, pair):
+def _su3_subgroup_update(
+    prepared: PreparedGaugeUpdate,
+    link: Array,
+    staple: Array,
+    key: PRNGKey,
+    overrelax: bool,
+    pair: tuple[int, int],
+) -> tuple[Array, Array, Array]:
     local = _matmul(link, staple)
     indices = jnp.asarray(pair)
     block = local[jnp.ix_(indices, indices)]
@@ -501,7 +520,9 @@ def _su3_subgroup_update(prepared, link, staple, key, overrelax, pair):
     return jnp.where(success, proposal, link), success, used
 
 
-def _local_log_weight(group, coupling, link, staple):
+def _local_log_weight(
+    group: GaugeGroupKind, coupling: float, link: Array, staple: Array
+) -> Array:
     return (
         coupling
         * jnp.real(jnp.trace(_matmul(link, staple)))
@@ -514,7 +535,7 @@ def gauge_update_sweeps(
     state: GaugeUpdateState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> GaugeUpdateResult:
     """Execute fixed conflict-colored exact-conditionals and reflections."""
     if not isinstance(prepared, PreparedGaugeUpdate):
@@ -685,7 +706,7 @@ def gauge_replica_exchange(
     state: GaugeReplicaState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> GaugeReplicaExchangeResult:
     """Exchange disjoint neighbors using the exact reduced-potential ratio."""
     if not isinstance(plan, GaugeReplicaExchangePlan):

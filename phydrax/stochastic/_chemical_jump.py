@@ -5,11 +5,13 @@
 from __future__ import annotations
 
 from math import factorial
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -17,6 +19,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..equations._chemical_mechanism import PreparedChemicalMechanism
 from ..equations._chemical_rates import ChemicalRateKind, ChemicalRateRuntime
+from ..typing import PRNGKey
 from ._jump import AbstractJumpProcess
 
 
@@ -32,7 +35,7 @@ class ChemicalJumpRuntime(StrictModule):
         /,
         *,
         rate_runtime: ChemicalRateRuntime | None = None,
-    ):
+    ) -> None:
         temperature_value = jnp.asarray(temperature)
         pressure_value = jnp.asarray(pressure, dtype=temperature_value.dtype)
         if temperature_value.shape != () or pressure_value.shape != ():
@@ -68,7 +71,7 @@ class ChemicalJumpProcess(AbstractJumpProcess):
         mechanism: PreparedChemicalMechanism,
         system_measure: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(mechanism, PreparedChemicalMechanism):
             raise TypeError("mechanism must be PreparedChemicalMechanism.")
         measure = jnp.asarray(system_measure)
@@ -136,7 +139,9 @@ class ChemicalJumpProcess(AbstractJumpProcess):
         self.num_channels = len(reaction_indices)
         self.mark_shape = ()
 
-    def intensities(self, time, state, args=None, /):
+    def intensities(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None, /
+    ) -> Array:
         del time
         counts = jnp.asarray(state)
         if counts.shape[-1] != self.mechanism.schema.species_count:
@@ -172,18 +177,35 @@ class ChemicalJumpProcess(AbstractJumpProcess):
         )
         return jnp.where(valid, intensity, jnp.nan)
 
-    def jump(self, state, channel, mark, args=None, /):
+    def jump(
+        self,
+        state: ArrayLike,
+        channel: ArrayLike,
+        mark: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> Array:
         del mark, args
         return (
             jnp.asarray(state)
             + self.channel_stoichiometry[jnp.asarray(channel, dtype=jnp.int32)]
         )
 
-    def sample_mark(self, key, time, state, channel, args=None, /):
+    def sample_mark(
+        self,
+        key: PRNGKey,
+        time: ArrayLike,
+        state: ArrayLike,
+        channel: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> Array:
         del key, time, channel, args
         return jnp.asarray(0, dtype=jnp.asarray(state).dtype)
 
-    def conservation_residual(self, state, reference_invariant, /):
+    def conservation_residual(
+        self, state: ArrayLike, reference_invariant: ArrayLike, /
+    ) -> Array:
         values = jnp.asarray(state)
         elements = contract(
             "...s,es->...e",
@@ -195,7 +217,9 @@ class ChemicalJumpProcess(AbstractJumpProcess):
         return invariant - jnp.asarray(reference_invariant)
 
 
-def _falling_factorial_mass_action(counts, orders, normalization, maximum_order):
+def _falling_factorial_mass_action(
+    counts: Array, orders: Array, normalization: Array, maximum_order: int
+) -> Array:
     terms = []
     for species in range(orders.shape[-1]):
         order = orders[:, species]

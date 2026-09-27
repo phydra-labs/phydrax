@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import opt_einsum as oe
@@ -16,7 +19,7 @@ from phydrax.discretization.lattice_boltzmann._collision import (
 from phydrax.discretization.lattice_boltzmann._forcing import guo_raw_source
 
 
-def _cell_grid(shape, *, periodic=None, lengths=None):
+def _cell_grid(shape: Any, *, periodic: Any = None, lengths: Any = None) -> Any:
     dimension = len(shape)
     periodic = (True,) * dimension if periodic is None else tuple(periodic)
     lengths = (1.0,) * dimension if lengths is None else tuple(lengths)
@@ -40,7 +43,7 @@ def _cell_grid(shape, *, periodic=None, lengths=None):
 @pytest.mark.parametrize(
     "velocity_set", [phx.discretization.D2Q9(), phx.discretization.D3Q19()]
 )
-def test_lattice_velocity_sets_satisfy_hydrodynamic_moments(velocity_set):
+def test_lattice_velocity_sets_satisfy_hydrodynamic_moments(velocity_set: Any) -> None:
     c = np.asarray(velocity_set.velocities, dtype="float64")
     w = np.asarray(velocity_set.weights)
     opposite = np.asarray(velocity_set.opposite)
@@ -67,14 +70,16 @@ def test_lattice_velocity_sets_satisfy_hydrodynamic_moments(velocity_set):
     )
 
 
-def test_lattice_discretization_requires_isotropic_cell_centers():
+def test_lattice_discretization_requires_isotropic_cell_centers() -> None:
     grid = _cell_grid((8, 8))
     discretization = phx.discretization.LatticeBoltzmannPlan(
         grid, phx.discretization.D2Q9()
     ).prepare()
 
     assert discretization.population_shape == (8, 8, 9)
+    # ty: ignore[unresolved-attribute]
     assert discretization.population_space.layout.value_shape == (8, 8, 9)
+    # ty: ignore[unresolved-attribute]
     assert discretization.velocity_space.layout.value_shape == (8, 8, 2)
     assert discretization.preparation.resource_counts
     assert discretization.precision_evidence_id is not None
@@ -103,7 +108,7 @@ def test_lattice_discretization_requires_isotropic_cell_centers():
     assert float32.population_dtype == "float32"
 
 
-def test_lattice_scaling_round_trips_and_derives_relaxation():
+def test_lattice_scaling_round_trips_and_derives_relaxation() -> None:
     scaling = phx.discretization.LatticeBoltzmannScaling(0.02, 0.001, 2.0)
     velocity = jnp.asarray((0.4, -0.2))
     viscosity = jnp.asarray(0.015)
@@ -127,7 +132,7 @@ def test_lattice_scaling_round_trips_and_derives_relaxation():
     )
 
 
-def test_equilibrium_collision_and_guo_moments_are_consistent():
+def test_equilibrium_collision_and_guo_moments_are_consistent() -> None:
     velocity_set = phx.discretization.D2Q9()
     precision = phx.discretization.LatticeBoltzmannPrecisionPolicy()
     density = jnp.asarray([[1.0, 1.2], [0.9, 1.1]])

@@ -14,13 +14,15 @@ from typing import Any, Literal, NamedTuple, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
+from ..._dtype_names import inexact_result_type
 from ..._interpolation import linear_interpolate
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import TimeGrid
+from ...typing import parse
 from ..stochastic._hjb import (
     _finite_real_array,
     _nonnegative_tolerance,
@@ -86,7 +88,7 @@ class DiscreteCoupledHJBProblem(StrictModule, NonTrainableState):
         args: Any = None,
         corner_tolerance: float = 0.0,
         problem_id: str,
-    ):
+    ) -> None:
         if not isinstance(spatial_grid, BoundedUniformGrid1D):
             raise TypeError("spatial_grid must be a BoundedUniformGrid1D.")
         if not isinstance(time_grid, TimeGrid):
@@ -176,7 +178,7 @@ class CoupledHJBPolicyIterationPlan(StrictModule, NonTrainableState):
         damping: float = 1.0,
         update: CoupledHJBUpdate = "jacobi",
         plan_id: str,
-    ):
+    ) -> None:
         if isinstance(maximum_iterations, (bool, np.bool_)):
             raise TypeError("maximum_iterations must be an integer.")
         capacity = operator.index(maximum_iterations)
@@ -186,9 +188,7 @@ class CoupledHJBPolicyIterationPlan(StrictModule, NonTrainableState):
         damping_value = float(damping)
         if not np.isfinite(damping_value) or not 0.0 < damping_value <= 1.0:
             raise ValueError("damping must be finite and in (0, 1].")
-        update_name = str(update)
-        if update_name not in ("jacobi", "gauss_seidel"):
-            raise ValueError("update must be 'jacobi' or 'gauss_seidel'.")
+        update_name = parse(str(update), CoupledHJBUpdate, "update")
         identifier = str(plan_id)
         if not identifier:
             raise ValueError("plan_id must be non-empty.")
@@ -585,7 +585,7 @@ def _best_response(
     minimum = np.min(own_hamiltonians, axis=-1, keepdims=True)
     ties = own_hamiltonians == minimum
     selectors = np.argmax(ties, axis=-1).astype(np.int32)
-    tie_counts = np.sum(ties, axis=-1, dtype=np.int32)
+    tie_counts = ties.sum(axis=-1, dtype=np.int32)
     return selectors, tie_counts
 
 

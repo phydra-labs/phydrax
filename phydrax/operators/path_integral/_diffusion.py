@@ -10,13 +10,15 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 from phydrax.domain import DomainFunction
 
 from ..._doc import DOC_KEY0
 from ...discretization import TemporalMesh
+from ...typing import PRNGKey
 from ._potential import _as_point_time_callable, PotentialLike
 
 
@@ -41,7 +43,7 @@ def _evaluate_drift(
     *,
     position_var: str,
     time_var: str,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> Array:
     if drift is None:
         return jnp.zeros_like(state)
@@ -78,7 +80,7 @@ def _apply_diffusion(
     *,
     position_var: str,
     time_var: str,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> Array:
     state_dim = state.shape[-1]
     flat_state = jnp.reshape(state, (-1, state_dim))
@@ -141,7 +143,7 @@ def diffusion_paths_from_noise(
     slicing: TemporalMesh,
     position_var: str = "x",
     time_var: str = "t",
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> Array:
     r"""Simulate Itô diffusion paths from explicit Euler--Maruyama noise.
 
@@ -173,7 +175,7 @@ def diffusion_paths_from_noise(
     step_noise = jnp.moveaxis(z, -2, 0)
     step_keys = jr.split(key, slicing.num_steps)
 
-    def step(current, xs):
+    def step(current: Array, xs: tuple[Array, Array, Array]) -> tuple[Array, Array]:
         time, normal, step_key = xs
         drift_key, diffusion_key = jr.split(step_key)
         drift_value = _evaluate_drift(
@@ -217,7 +219,7 @@ def sample_diffusion_paths(
     num_paths: int,
     position_var: str = "x",
     time_var: str = "t",
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> Array:
     """Draw Euler--Maruyama paths for a finite-dimensional Itô diffusion."""
     count = int(num_paths)

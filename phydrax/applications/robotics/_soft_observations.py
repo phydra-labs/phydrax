@@ -11,12 +11,15 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import PlantRuntimeState, PlantStepResult
+from ...typing import parse
 from ..solid_mechanics._rod_plant import (
     PreparedReducedRodPlant,
     ReducedRodPlantEvidence,
@@ -109,7 +112,7 @@ def _runtime_key_data(key: ArrayLike, /) -> Array:
     return jax.random.key_data(value)
 
 
-def _tree_exact_equal(left, right, /) -> Array:
+def _tree_exact_equal(left: PyTree[ArrayLike], right: PyTree[ArrayLike], /) -> Array:
     left_leaves, left_tree = jax.tree_util.tree_flatten(left)
     right_leaves, right_tree = jax.tree_util.tree_flatten(right)
     if left_tree != right_tree or len(left_leaves) != len(right_leaves):
@@ -152,7 +155,7 @@ class SoftObservationLayout(StrictModule, NonTrainableState):
         component_query_ids: tuple[str, ...],
         groups: tuple[tuple[str, int, int], ...],
         /,
-    ):
+    ) -> None:
         names = _string_tuple(component_names, "component_names")
         units = _string_tuple(component_units, "component_units")
         frames = _string_tuple(component_frames, "component_frames")
@@ -279,7 +282,7 @@ class SoftRobotObservation(StrictModule):
         sensor_plan_id: str,
         observation_plan_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(layout, SoftObservationLayout):
             raise TypeError("layout must be SoftObservationLayout.")
         arrays = tuple(
@@ -374,7 +377,7 @@ class SoftReducedStateQueryPlan(StrictModule, NonTrainableState):
         include_velocity: bool = True,
         coordinate_unit: str = "1",
         velocity_unit: str = "s^-1",
-    ):
+    ) -> None:
         if not isinstance(include_configuration, bool) or not isinstance(
             include_velocity, bool
         ):
@@ -421,17 +424,14 @@ class SoftFrameQueryPlan(StrictModule, NonTrainableState):
         position_unit: str = "m",
         linear_velocity_unit: str = "m/s",
         angular_velocity_unit: str = "rad/s",
-    ):
+    ) -> None:
         if not isinstance(reconstruction, RodReconstructionPlan):
             raise TypeError("reconstruction must be RodReconstructionPlan.")
         if not isinstance(include_pose, bool):
             raise TypeError("include_pose must be bool.")
-        if not isinstance(twists, tuple) or any(
-            value not in ("body", "world_origin", "frame_world") for value in twists
-        ):
-            raise ValueError(
-                "twists must contain only 'body', 'world_origin', or 'frame_world'."
-            )
+        if not isinstance(twists, tuple):
+            raise ValueError("twists must be a tuple of frame twist kinds.")
+        twists = tuple(parse(value, SoftTwistKind, "twists") for value in twists)
         if len(set(twists)) != len(twists):
             raise ValueError("Frame twist kinds must be unique.")
         if not include_pose and not twists:
@@ -477,7 +477,7 @@ class SoftStrainQueryPlan(StrictModule, NonTrainableState):
         include_reduced: bool = False,
         stretch_shear_unit: str = "1",
         bend_twist_unit: str = "rad/m",
-    ):
+    ) -> None:
         if not isinstance(reconstruction, RodReconstructionPlan):
             raise TypeError("reconstruction must be RodReconstructionPlan.")
         if not isinstance(include_total, bool) or not isinstance(include_reduced, bool):
@@ -532,7 +532,7 @@ class SoftTendonQueryPlan(StrictModule, NonTrainableState):
         length_rate_unit: str = "m/s",
         tension_unit: str = "N",
         energy_unit: str = "J",
-    ):
+    ) -> None:
         if not isinstance(tendons, tuple) or not tendons:
             raise ValueError("tendons must be a nonempty tuple of prepared tendons.")
         if not all(
@@ -606,7 +606,7 @@ class SoftEnergyLoadQueryPlan(StrictModule, NonTrainableState):
         energy_unit: str = "J",
         power_unit: str = "W",
         reduced_effort_unit: str = "J",
-    ):
+    ) -> None:
         if not isinstance(include_mechanics, bool) or not isinstance(
             include_step_ledger, bool
         ):
@@ -650,7 +650,7 @@ class SoftSensorPlan(StrictModule, NonTrainableState):
         *,
         noise_standard_deviation: ArrayLike = 0.0,
         sample_period: float = 0.0,
-    ):
+    ) -> None:
         identifier = _identifier(sensor_id, "sensor_id")
         noise = np.asarray(noise_standard_deviation)
         if noise.ndim > 1 or not np.issubdtype(noise.dtype, np.floating):
@@ -696,7 +696,7 @@ class SoftTendonObservationState(StrictModule):
         execution_signature_id: str,
         tendon_query_id: str,
         /,
-    ):
+    ) -> None:
         if not isinstance(actuator_states, tuple) or not all(
             isinstance(value, TendonActuatorState) for value in actuator_states
         ):
@@ -767,7 +767,7 @@ class SoftObservationPlan(StrictModule, NonTrainableState):
         tendon: SoftTendonQueryPlan | None = None,
         energy_load: SoftEnergyLoadQueryPlan | None = None,
         sensor: SoftSensorPlan | None = None,
-    ):
+    ) -> None:
         values = (
             (reduced_state, SoftReducedStateQueryPlan, "reduced_state"),
             (frame, SoftFrameQueryPlan, "frame"),
@@ -1496,7 +1496,9 @@ class PreparedSoftObservationPlan(StrictModule, NonTrainableState):
     query_plan_id: str = eqx.field(static=True)
     observation_plan_id: str = eqx.field(static=True)
 
-    def __init__(self, plant: PreparedReducedRodPlant, plan: SoftObservationPlan, /):
+    def __init__(
+        self, plant: PreparedReducedRodPlant, plan: SoftObservationPlan, /
+    ) -> None:
         if not isinstance(plant, PreparedReducedRodPlant):
             raise TypeError("plant must be PreparedReducedRodPlant.")
         if not isinstance(plan, SoftObservationPlan):

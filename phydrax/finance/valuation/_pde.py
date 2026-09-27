@@ -7,18 +7,23 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._interpolation import linear_interpolate
 
 from ..._numerics._quadrature_rules import gauss_legendre_data
 from ..._strict import StrictModule
-from ...linalg._tridiagonal_lines import solve_tridiagonal_lines
+from ...linalg._tridiagonal_lines import (
+    solve_tridiagonal_lines,
+    TridiagonalLineSolveResult,
+)
+from ...typing import parse
 from ..contracts._options import OptionType, VanillaPayoff
 from ..core._currency import Currency
 from ..core._evidence import FinanceEvidenceBinding
@@ -28,7 +33,8 @@ from ..models._jump import KouJumpDiffusionModel, MertonJumpDiffusionModel
 from ._types import ValuationEvidence, ValuationResult
 
 
-ExerciseRoute = Literal["european", "american"]
+ExerciseRoute: TypeAlias = Literal["european", "american"]
+_ThetaCarry: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class FiniteDifferencePlan(StrictModule):
@@ -48,7 +54,7 @@ class FiniteDifferencePlan(StrictModule):
         spot_minimum: float = 0.0,
         spot_maximum: float,
         pivot_tolerance: float = 1.0e-13,
-    ):
+    ) -> None:
         if any(
             isinstance(value, bool) or not isinstance(value, int) or value < 4
             for value in (space_steps, time_steps)
@@ -101,15 +107,14 @@ class PDEProblem(StrictModule):
         currency: Currency | None = None,
         evidence_binding: FinanceEvidenceBinding | None = None,
         pricing_law: PricingLaw | None = None,
-    ):
+    ) -> None:
         if not isinstance(model, (BlackScholesModel, LocalVolatilityModel)):
             raise TypeError(
                 "PDE model must be BlackScholesModel or LocalVolatilityModel."
             )
         if not isinstance(payoff, VanillaPayoff):
             raise TypeError("payoff must be VanillaPayoff.")
-        if exercise_route not in ("european", "american"):
-            raise ValueError("PDE exercise_route must be european or american.")
+        exercise_route = parse(exercise_route, ExerciseRoute, "exercise_route")
         if currency is not None and not isinstance(currency, Currency):
             raise TypeError("currency must be Currency or None.")
         if evidence_binding is not None and not isinstance(
@@ -164,7 +169,7 @@ class PIDEPlan(StrictModule):
         *,
         jump_quadrature_nodes: int = 48,
         jump_truncation: float = 10.0,
-    ):
+    ) -> None:
         if not isinstance(finite_difference, FiniteDifferencePlan):
             raise TypeError("finite_difference must be a FiniteDifferencePlan.")
         if (
@@ -190,7 +195,7 @@ class PIDEProblem(StrictModule):
         diffusion_problem: PDEProblem,
         jump_model: MertonJumpDiffusionModel | KouJumpDiffusionModel,
         /,
-    ):
+    ) -> None:
         if not isinstance(diffusion_problem, PDEProblem):
             raise TypeError("diffusion_problem must be a PDEProblem.")
         if not isinstance(diffusion_problem.model, BlackScholesModel):
@@ -275,7 +280,15 @@ def _local_variance(problem: PDEProblem, tau: Array, interior_spots: Array) -> A
     )
 
 
-def _theta_step(problem, plan, grid, current, tau, drift, explicit_source):
+def _theta_step(
+    problem: PDEProblem,
+    plan: FiniteDifferencePlan,
+    grid: Array,
+    current: Array,
+    tau: Array,
+    drift: Array,
+    explicit_source: Array,
+) -> tuple[Array, TridiagonalLineSolveResult]:
     dt = problem.maturity / plan.time_steps
     ds = grid[1] - grid[0]
     spots = grid[1:-1]
@@ -328,7 +341,7 @@ def evaluate_pde(
         jnp.asarray(True),
     )
 
-    def body(iteration, carry):
+    def body(iteration: Array, carry: _ThetaCarry) -> _ThetaCarry:
         current, maximum_residual, minimum_pivot, successful = carry
         tau = (iteration + 1) * problem.maturity / plan_.time_steps
         updated, solve = _theta_step(
@@ -464,7 +477,7 @@ def evaluate_pide(
         jnp.asarray(True),
     )
 
-    def body(iteration, carry):
+    def body(iteration: Array, carry: _ThetaCarry) -> _ThetaCarry:
         current, maximum_residual, minimum_pivot, successful = carry
         tau = (iteration + 1) * problem.maturity / fd.time_steps
         shifted_spots = grid[1:-1, None] * jnp.exp(prepared.jump_nodes[None, :])

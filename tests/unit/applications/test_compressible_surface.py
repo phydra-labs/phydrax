@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -9,7 +11,7 @@ from phydrax.applications.compressible_flow import (
 )
 
 
-def _bounded_dynamics(system, *, viscous=False):
+def _bounded_dynamics(system: Any, *, viscous: Any = False) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(8),
@@ -43,7 +45,7 @@ def _bounded_dynamics(system, *, viscous=False):
     )
 
 
-def _surface_plan(dynamics):
+def _surface_plan(dynamics: Any) -> Any:
     reference = CompressibleAerodynamicReference(
         1.0,
         1.0,
@@ -62,7 +64,7 @@ def _surface_plan(dynamics):
     return CompressibleSurfaceObservationPlan(dynamics, patches, reference)
 
 
-def test_uniform_closed_surface_has_zero_net_force_and_moment():
+def test_uniform_closed_surface_has_zero_net_force_and_moment() -> None:
     system = phx.equations.EulerSystem(2)
     dynamics = _bounded_dynamics(system)
     primitive = jnp.broadcast_to(
@@ -79,7 +81,7 @@ def test_uniform_closed_surface_has_zero_net_force_and_moment():
         np.testing.assert_allclose(patch.pressure_coefficient, 0.0, atol=1.0e-12)
 
 
-def test_surface_viscous_traction_matches_linear_couette_shear():
+def test_surface_viscous_traction_matches_linear_couette_shear() -> None:
     viscosity = 0.2
     system = phx.equations.CompressibleNavierStokesSystem(
         phx.equations.ConstantTransport(viscosity, 0.0), 2

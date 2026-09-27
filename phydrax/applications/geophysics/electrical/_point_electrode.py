@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 from phydrax import ein
@@ -55,7 +56,7 @@ class PointElectrodeSurvey(StrictModule, NonTrainableState):
         *,
         length_unit: UnitDefinition = METER,
         current_unit: UnitDefinition = AMPERE,
-    ):
+    ) -> None:
         positions_ = np.asarray(
             convert_value(positions, source=length_unit, target=METER), dtype=np.float64
         )
@@ -158,7 +159,7 @@ class PointElectrodeDCPlan(StrictModule, NonTrainableState):
         /,
         *,
         conductivity_unit: UnitDefinition = DC_CONDUCTIVITY_UNIT,
-    ):
+    ) -> None:
         _validate_connected_tetrahedra(mesh)
         if not isinstance(survey, PointElectrodeSurvey):
             raise TypeError("Point-electrode DC requires PointElectrodeSurvey.")
@@ -199,7 +200,7 @@ class PreparedPointElectrodeDC(StrictModule, NonTrainableState):
     policy: la.LinearSolvePolicy
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: PointElectrodeDCPlan, /):
+    def __init__(self, plan: PointElectrodeDCPlan, /) -> None:
         if not isinstance(plan, PointElectrodeDCPlan):
             raise TypeError("Prepared point-electrode model requires its plan.")
         cells = np.concatenate(
@@ -335,7 +336,7 @@ class PreparedPointElectrodeDC(StrictModule, NonTrainableState):
         bulk = _primal_operator(compiled)
         node_count = self.gauge.size
 
-        def kkt_action(value):
+        def kkt_action(value: Array) -> Array:
             potential, multiplier = value[:node_count], value[-1]
             return jnp.concatenate(
                 (
@@ -362,7 +363,9 @@ class PreparedPointElectrodeDC(StrictModule, NonTrainableState):
         coordinates = self.plan.mesh.coordinates
         electrode_positions = self.plan.survey.positions_m
 
-        def solve_current(current):
+        def solve_current(
+            current: Array,
+        ) -> tuple[Array, Array, Array, Array, Array, Array]:
             primary_nodes = self._primary(coordinates, current)
             load = self._point_load(current)
             correction_load = load - bulk.mv(primary_nodes)

@@ -4,10 +4,11 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax.domain import AbstractGeometry, Domain, DomainFunction
@@ -25,6 +26,10 @@ from ...metrix import (
     SemiRiemannianMetric,
 )
 from ._domain_ops import _factor_and_dim, _resolve_var, grad, hessian
+
+
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
 
 
 def _geometry_contract(
@@ -80,13 +85,13 @@ class _SignedGradientCallable(StrictModule):
         differential_positions: tuple[int, ...],
         coordinate_position: int,
         /,
-    ):
+    ) -> None:
         self.differential = differential
         self.metric = metric
         self.differential_positions = differential_positions
         self.coordinate_position = int(coordinate_position)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         differential = jnp.asarray(
             self.differential.func(
                 *[args[position] for position in self.differential_positions],
@@ -118,7 +123,7 @@ class _DalembertianCallable(StrictModule):
         second_positions: tuple[int, ...],
         coordinate_position: int,
         /,
-    ):
+    ) -> None:
         self.differential = differential
         self.second_derivative = second_derivative
         self.metric = metric
@@ -126,7 +131,7 @@ class _DalembertianCallable(StrictModule):
         self.second_positions = second_positions
         self.coordinate_position = int(coordinate_position)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         differential = jnp.asarray(
             self.differential.func(
                 *[args[position] for position in self.differential_positions],
@@ -203,10 +208,12 @@ def _domain_geometry_variable(
 class _LorentzianMetricFieldCallable(StrictModule):
     metric: LorentzianMetric
 
-    def __init__(self, metric: LorentzianMetric, /):
+    def __init__(self, metric: LorentzianMetric, /) -> None:
         self.metric = metric
 
-    def __call__(self, coordinates: Any, /, *, key=None, **kwargs: Any):
+    def __call__(
+        self, coordinates: Any, /, *, key: EvalKey = None, **kwargs: Any
+    ) -> Array:
         del key, kwargs
         return self.metric(coordinates)
 
@@ -214,10 +221,10 @@ class _LorentzianMetricFieldCallable(StrictModule):
 class _FieldLorentzianMetricMap(StrictModule):
     field: DomainFunction
 
-    def __init__(self, field: DomainFunction, /):
+    def __init__(self, field: DomainFunction, /) -> None:
         self.field = field
 
-    def __call__(self, coordinates: Any, /):
+    def __call__(self, coordinates: Array, /) -> Array:
         return self.field.func(coordinates, key=None)
 
 
@@ -230,11 +237,13 @@ class _LorentzianCurvatureCallable(StrictModule):
         metric: LorentzianMetric,
         operation: Literal["riemann", "ricci", "scalar", "einstein"],
         /,
-    ):
+    ) -> None:
         self.metric = metric
         self.operation = operation
 
-    def __call__(self, coordinates: Any, /, *, key=None, **kwargs: Any):
+    def __call__(
+        self, coordinates: Any, /, *, key: EvalKey = None, **kwargs: Any
+    ) -> Array:
         del key, kwargs
         if self.operation == "riemann":
             return riemann_tensor(self.metric, coordinates)

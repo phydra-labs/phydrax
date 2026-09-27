@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import meshio
 import numpy as np
@@ -16,7 +19,7 @@ from phydrax.domain import (
 )
 
 
-def _permute_mesh(points: np.ndarray, faces: np.ndarray, perm: np.ndarray):
+def _permute_mesh(points: np.ndarray, faces: np.ndarray, perm: np.ndarray) -> Any:
     pts2 = points[perm]
     inv = np.empty_like(perm)
     inv[perm] = np.arange(perm.shape[0])
@@ -24,7 +27,7 @@ def _permute_mesh(points: np.ndarray, faces: np.ndarray, perm: np.ndarray):
     return pts2, faces2
 
 
-def test_time_interval_equivalence():
+def test_time_interval_equivalence() -> None:
     a = TimeInterval(0.0, 1.0)
     b = TimeInterval(0.0, 1.0)
     c = TimeInterval(0.0, 2.0)
@@ -32,7 +35,7 @@ def test_time_interval_equivalence():
     assert not a.same_support(c)
 
 
-def test_interval1d_equivalence():
+def test_interval1d_equivalence() -> None:
     a = Interval1d(0.0, 1.0)
     b = Interval1d(0.0, 1.0)
     c = Interval1d(0.0, 2.0)
@@ -40,7 +43,7 @@ def test_interval1d_equivalence():
     assert not a.same_support(c)
 
 
-def test_dataset_domain_equivalence():
+def test_dataset_domain_equivalence() -> None:
     data1 = {
         "a": jnp.zeros((4, 2), dtype="float64"),
         "b": jnp.ones((4,), dtype="float64"),
@@ -64,7 +67,7 @@ def test_dataset_domain_equivalence():
     assert not dom1.same_support(dom5)
 
 
-def test_geometry2d_equivalence_strong():
+def test_geometry2d_equivalence_strong() -> None:
     points = np.array(
         [
             [0.0, 0.0, 0.0],
@@ -97,7 +100,7 @@ def test_geometry2d_equivalence_strong():
     assert not geom1.same_support(geom3)
 
 
-def test_geometry3d_equivalence_strong():
+def test_geometry3d_equivalence_strong() -> None:
     points = np.array(
         [
             [0.0, 0.0, 0.0],
@@ -139,14 +142,14 @@ def test_geometry3d_equivalence_strong():
     assert not geom1.same_support(geom3)
 
 
-def test_product_domain_label_collision_equivalent():
+def test_product_domain_label_collision_equivalent() -> None:
     a = Interval1d(0.0, 1.0)
     b = Interval1d(0.0, 1.0)
     dom = ProductDomain(a, b)
     assert dom.labels == ("x",)
 
 
-def test_product_domain_label_collision_not_equivalent():
+def test_product_domain_label_collision_not_equivalent() -> None:
     a = Interval1d(0.0, 1.0)
     b = Interval1d(0.0, 2.0)
     with pytest.raises(ValueError):

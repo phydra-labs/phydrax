@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -15,7 +18,9 @@ from phydrax.discretization.particle import (
 )
 
 
-def _prepared(shell_count=3, species_count=2, *, reference_faces=None):
+def _prepared(
+    shell_count: Any = 3, species_count: Any = 2, *, reference_faces: Any = None
+) -> Any:
     mesh = RadialShellMeshPlan(
         ParticleInternalGeometry.SPHERE,
         shell_count,
@@ -26,7 +31,7 @@ def _prepared(shell_count=3, species_count=2, *, reference_faces=None):
     )
 
 
-def test_nonuniform_spherical_shell_fluxes_are_conservative_and_origin_regular():
+def test_nonuniform_spherical_shell_fluxes_are_conservative_and_origin_regular() -> None:
     prepared = _prepared(reference_faces=jnp.asarray([0.0, 0.1, 0.45, 1.0]))
     outer_scale = jnp.asarray([2.0])
     metrics = prepared.mesh.metrics(outer_scale)
@@ -87,7 +92,7 @@ def test_nonuniform_spherical_shell_fluxes_are_conservative_and_origin_regular()
     assert jnp.all(result.successful)
 
 
-def test_runtime_diffusivity_and_inactive_entries_are_masked_without_failure():
+def test_runtime_diffusivity_and_inactive_entries_are_masked_without_failure() -> None:
     prepared = _prepared()
     outer_scale = jnp.asarray([1.0, 0.0])
     active = jnp.asarray([True, False])
@@ -140,7 +145,7 @@ def test_runtime_diffusivity_and_inactive_entries_are_masked_without_failure():
     assert jnp.all(immobile.successful)
 
 
-def test_ambiguous_runtime_broadcasting_is_rejected():
+def test_ambiguous_runtime_broadcasting_is_rejected() -> None:
     prepared = _prepared()
     amounts = jnp.ones((2, 3, 2))
     with pytest.raises(ValueError, match="cell_diffusivity"):
@@ -154,7 +159,7 @@ def test_ambiguous_runtime_broadcasting_is_rejected():
         )
 
 
-def test_radial_species_transport_is_jittable_and_vmappable():
+def test_radial_species_transport_is_jittable_and_vmappable() -> None:
     prepared = _prepared()
     scale = jnp.asarray([0.8, 1.2])
     metrics = prepared.mesh.metrics(scale)

@@ -5,7 +5,7 @@
 from tools.trefftz_benchmarks import run_trefftz_benchmarks
 
 
-def test_trefftz_benchmark_schema_and_replay():
+def test_trefftz_benchmark_schema_and_replay() -> None:
     first = run_trefftz_benchmarks(
         (2, 4),
         boundary_points=32,

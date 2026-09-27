@@ -10,7 +10,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -20,6 +21,7 @@ from ..._trainable import NonTrainableState
 from ...optim._bounds import Bounds
 from ...optim._programming._mixed_integer import MixedIntegerProgram
 from ...optim._programming._problem import LinearProgram
+from ...typing import parse
 
 
 PredictorConstraintSense: TypeAlias = Literal["lower", "upper", "equal"]
@@ -57,7 +59,7 @@ class PredictorInputBinding(StrictModule, NonTrainableState):
         discrete_decisions: ArrayLike | None = None,
         feature_layout_id: str,
         base_structure_id: str,
-    ):
+    ) -> None:
         matrix_ = jnp.asarray(matrix)
         offset_ = jnp.asarray(offset)
         lower = jnp.asarray(decision_lower)
@@ -147,7 +149,7 @@ class PredictorOutputConstraint(StrictModule, NonTrainableState):
         sense: PredictorConstraintSense = "upper",
         semantic: PredictorOutputSemantic = "prediction",
         constraint_id: str = "learned-output-constraint",
-    ):
+    ) -> None:
         threshold_ = float(threshold)
         output = int(output_index)
         identifier = str(constraint_id)
@@ -155,10 +157,8 @@ class PredictorOutputConstraint(StrictModule, NonTrainableState):
             raise ValueError("Predictor output threshold must be finite.")
         if output < 0:
             raise ValueError("output_index must be nonnegative.")
-        if sense not in ("lower", "upper", "equal"):
-            raise ValueError("Unknown predictor output constraint sense.")
-        if semantic not in ("raw", "prediction"):
-            raise ValueError("Unknown predictor output semantic.")
+        sense = parse(sense, PredictorConstraintSense, "sense")
+        semantic = parse(semantic, PredictorOutputSemantic, "semantic")
         if not identifier:
             raise ValueError("constraint_id must be nonempty.")
         self.threshold = threshold_
@@ -205,7 +205,7 @@ class PredictorConstraintCompilation(StrictModule, NonTrainableState):
         binding_id: str,
         constraint_id: str,
         guarantee: PredictorCompilationGuarantee,
-    ):
+    ) -> None:
         base = int(base_variable_count)
         lower = jnp.asarray(auxiliary_lower)
         upper = jnp.asarray(auxiliary_upper)
@@ -260,8 +260,7 @@ class PredictorConstraintCompilation(StrictModule, NonTrainableState):
         identifiers = tuple(str(value) for value in (model_id, binding_id, constraint_id))
         if any(not value for value in identifiers):
             raise ValueError("Compilation identifiers must be nonempty.")
-        if guarantee not in ("exact", "tolerance-qualified"):
-            raise ValueError("Unknown predictor compilation guarantee.")
+        guarantee = parse(guarantee, PredictorCompilationGuarantee, "guarantee")
         (
             self.auxiliary_lower,
             self.auxiliary_upper,

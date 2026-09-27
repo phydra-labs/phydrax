@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -12,7 +13,7 @@ import phydrax as phx
 class _TableModel(eqx.Module):
     parameters: jax.Array = phx.parameter_field()
 
-    def __call__(self, configuration):
+    def __call__(self, configuration: Any) -> Any:
         bits = (configuration > 0).astype(jnp.int32)
         index = 2 * bits[0] + bits[1]
         value = self.parameters[index]
@@ -27,7 +28,7 @@ class _StaticTableModel(eqx.Module):
     parameters: jax.Array = phx.parameter_field()
     offset: float = eqx.field(static=True)
 
-    def __call__(self, configuration):
+    def __call__(self, configuration: Any) -> Any:
         bits = (configuration > 0).astype(jnp.int32)
         index = 2 * bits[0] + bits[1]
         return phx.operators.LogAmplitude(
@@ -40,7 +41,7 @@ class _ActivatedTableModel(eqx.Module):
     parameters: jax.Array = phx.parameter_field()
     activation: Callable[[jax.Array], jax.Array] = eqx.field(static=True)
 
-    def __call__(self, configuration):
+    def __call__(self, configuration: Any) -> Any:
         bits = (configuration > 0).astype(jnp.int32)
         index = 2 * bits[0] + bits[1]
         return phx.operators.LogAmplitude(
@@ -49,26 +50,26 @@ class _ActivatedTableModel(eqx.Module):
         )
 
 
-def _identity_activation(value):
+def _identity_activation(value: Any) -> Any:
     return value
 
 
-def _halved_activation(value):
+def _halved_activation(value: Any) -> Any:
     return 0.5 * value
 
 
-def _scaled_activation(scale):
-    def activation(value):
+def _scaled_activation(scale: Any) -> Any:
+    def activation(value: Any) -> Any:
         return scale * value
 
     return activation
 
 
-def _operator():
-    def diagonal(configurations):
+def _operator() -> Any:
+    def diagonal(configurations: Any) -> Any:
         return -configurations[..., 0] * configurations[..., 1]
 
-    def connections(configurations):
+    def connections(configurations: Any) -> Any:
         first = configurations.at[..., 0].multiply(-1)
         second = configurations.at[..., 1].multiply(-1)
         connected = jnp.stack((first, second), axis=-2)
@@ -88,12 +89,12 @@ def _operator():
     )
 
 
-def _kernel():
-    def sample(key, current):
+def _kernel() -> Any:
+    def sample(key: Any, current: Any) -> Any:
         index = jr.randint(key, (), 0, current.shape[0])
         return current.at[index].multiply(-1)
 
-    def log_prob(_proposed, current):
+    def log_prob(_proposed: Any, current: Any) -> Any:
         return -jnp.log(float(current.shape[0]))
 
     proposal = phx.sampling.CallableProposal(
@@ -104,31 +105,31 @@ def _kernel():
     return phx.sampling.MetropolisHastings(proposal)
 
 
-def _initial_configurations():
+def _initial_configurations() -> Any:
     return jnp.asarray([[1, 1], [1, -1], [-1, 1], [-1, -1]], dtype=jnp.int32)
 
 
-def _table_log_target(model, configuration):
+def _table_log_target(model: Any, configuration: Any) -> Any:
     return 2.0 * model(configuration).log_abs
 
 
-def _full_target_factory(model):
+def _full_target_factory(model: Any) -> Any:
     return phx.sampling.FullMarkovTarget(
         lambda configuration: _table_log_target(model, configuration),
         target_id="table-density",
     )
 
 
-def _incremental_target_factory(model):
-    def initialize(configuration):
+def _incremental_target_factory(model: Any) -> Any:
+    def initialize(configuration: Any) -> Any:
         value = _table_log_target(model, configuration)
         return value, value
 
-    def propose(_current, cached, proposed, _payload):
+    def propose(_current: Any, cached: Any, proposed: Any, _payload: Any) -> Any:
         value = _table_log_target(model, proposed)
         return value - cached, value, jnp.asarray(True)
 
-    def select(current, proposed, accepted):
+    def select(current: Any, proposed: Any, accepted: Any) -> Any:
         return jnp.where(accepted, proposed, current)
 
     return phx.sampling.IncrementalMarkovTarget(
@@ -142,19 +143,19 @@ def _incremental_target_factory(model):
     )
 
 
-def _drifting_incremental_target_factory(model):
-    def initialize(configuration):
+def _drifting_incremental_target_factory(model: Any) -> Any:
+    def initialize(configuration: Any) -> Any:
         value = _table_log_target(model, configuration)
         return value, value
 
-    def propose(_current, cached, proposed, _payload):
+    def propose(_current: Any, cached: Any, proposed: Any, _payload: Any) -> Any:
         value = _table_log_target(model, proposed)
         return value - cached, value, jnp.asarray(True)
 
-    def select(current, proposed, accepted):
+    def select(current: Any, proposed: Any, accepted: Any) -> Any:
         return jnp.where(accepted, proposed, current)
 
-    def refresh(configuration):
+    def refresh(configuration: Any) -> Any:
         value = _table_log_target(model, configuration)
         return value, value + 1.0
 
@@ -169,7 +170,7 @@ def _drifting_incremental_target_factory(model):
     )
 
 
-def _exact_energy(model):
+def _exact_energy(model: Any) -> Any:
     state = jnp.exp(model.parameters)
     hamiltonian = jnp.asarray(
         [
@@ -182,7 +183,7 @@ def _exact_energy(model):
     return jnp.real(jnp.vdot(state, hamiltonian @ state) / jnp.vdot(state, state))
 
 
-def test_variational_monte_carlo_runs_persistent_sr_and_improves_energy():
+def test_variational_monte_carlo_runs_persistent_sr_and_improves_energy() -> None:
     problem = phx.solver.VariationalMonteCarloProblem(
         _TableModel(jnp.asarray([0.2, -0.1, 0.1, -0.2])),
         _operator(),
@@ -222,7 +223,7 @@ def test_variational_monte_carlo_runs_persistent_sr_and_improves_energy():
     assert diagnostics.mean_acceptance_rate == result.final_estimate.acceptance_rate
 
 
-def test_vmc_zero_iterations_performs_only_frozen_evaluation():
+def test_vmc_zero_iterations_performs_only_frozen_evaluation() -> None:
     problem = phx.solver.VariationalMonteCarloProblem(
         _TableModel(jnp.asarray([0.0, 0.1, -0.1, 0.0])),
         _operator(),
@@ -256,9 +257,9 @@ def test_vmc_zero_iterations_performs_only_frozen_evaluation():
     ),
 )
 def test_vmc_rebinds_full_and_incremental_targets_for_each_frozen_model(
-    target_factory,
-    target_factory_id,
-):
+    target_factory: Any,
+    target_factory_id: Any,
+) -> None:
     model = _TableModel(jnp.asarray([0.2, -0.1, 0.1, -0.2]))
     problem = phx.solver.VariationalMonteCarloProblem(
         model,
@@ -289,7 +290,7 @@ def test_vmc_rebinds_full_and_incremental_targets_for_each_frozen_model(
         assert jnp.allclose(samples.final_state.cache, expected)
 
 
-def test_vmc_rejects_estimates_from_a_tainted_incremental_chain():
+def test_vmc_rejects_estimates_from_a_tainted_incremental_chain() -> None:
     model = _TableModel(jnp.asarray([0.2, -0.1, 0.1, -0.2]))
     problem = phx.solver.VariationalMonteCarloProblem(
         model,
@@ -314,7 +315,7 @@ def test_vmc_rejects_estimates_from_a_tainted_incremental_chain():
     assert not estimate.successful
 
 
-def test_vmc_target_factory_identity_is_explicit_and_stable():
+def test_vmc_target_factory_identity_is_explicit_and_stable() -> None:
     model = _TableModel(jnp.asarray([0.2, -0.1, 0.1, -0.2]))
     arguments = (model, _operator(), _kernel(), _initial_configurations())
 
@@ -343,7 +344,7 @@ def test_vmc_target_factory_identity_is_explicit_and_stable():
 
     target_ids = iter(("first-target", "second-target"))
 
-    def unstable_factory(frozen_model):
+    def unstable_factory(frozen_model: Any) -> Any:
         return phx.sampling.FullMarkovTarget(
             lambda configuration: _table_log_target(frozen_model, configuration),
             target_id=next(target_ids),
@@ -358,7 +359,7 @@ def test_vmc_target_factory_identity_is_explicit_and_stable():
         unstable.target_for_model(model)
 
 
-def test_vmc_complex_parameter_modes_are_explicit():
+def test_vmc_complex_parameter_modes_are_explicit() -> None:
     real_model = _TableModel(jnp.zeros((4,)))
     complex_model = _TableModel(jnp.zeros((4,), dtype="complex128"))
 
@@ -402,7 +403,7 @@ def test_vmc_complex_parameter_modes_are_explicit():
         assert jnp.all(jnp.isfinite(result.final_state.parameter_coordinates))
 
 
-def test_vmc_checkpoint_resume_matches_uninterrupted_training(tmp_path):
+def test_vmc_checkpoint_resume_matches_uninterrupted_training(tmp_path: Any) -> None:
     problem = phx.solver.VariationalMonteCarloProblem(
         _TableModel(jnp.asarray([0.2, -0.1, 0.1, -0.2])),
         _operator(),
@@ -481,8 +482,8 @@ def test_vmc_checkpoint_resume_matches_uninterrupted_training(tmp_path):
 
 
 def test_vmc_checkpoint_carries_attempt_cursor_and_rejects_cursorless_archive(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     from phydrax.solver._variational_monte_carlo import (
         _checkpoint_compatibility,
         _VMC_CHECKPOINT_KIND,
@@ -554,7 +555,7 @@ def test_vmc_checkpoint_carries_attempt_cursor_and_rejects_cursorless_archive(
         phx.solver.read_variational_monte_carlo_checkpoint(cursorless, problem, policy)
 
 
-def test_vmc_checkpoint_rejects_changed_static_model_configuration(tmp_path):
+def test_vmc_checkpoint_rejects_changed_static_model_configuration(tmp_path: Any) -> None:
     parameters = jnp.asarray([0.2, -0.1, 0.1, -0.2])
     common = (_operator(), _kernel(), _initial_configurations())
     original = phx.solver.VariationalMonteCarloProblem(
@@ -588,7 +589,7 @@ def test_vmc_checkpoint_rejects_changed_static_model_configuration(tmp_path):
         )
 
 
-def test_vmc_checkpoint_identifies_model_callables_by_content(tmp_path):
+def test_vmc_checkpoint_identifies_model_callables_by_content(tmp_path: Any) -> None:
     parameters = jnp.asarray([0.2, -0.1, 0.1, -0.2])
     common = (_operator(), _kernel(), _initial_configurations())
     policy = phx.solver.VariationalMonteCarloPolicy(
@@ -598,7 +599,7 @@ def test_vmc_checkpoint_identifies_model_callables_by_content(tmp_path):
         final_chain_diagnostics=False,
     )
 
-    def problem(activation):
+    def problem(activation: Any) -> Any:
         return phx.solver.VariationalMonteCarloProblem(
             _ActivatedTableModel(parameters, activation),
             *common,
@@ -634,7 +635,9 @@ def test_vmc_checkpoint_identifies_model_callables_by_content(tmp_path):
             )
 
 
-def test_incremental_vmc_checkpoint_rebuilds_cache_and_resumes_exactly(tmp_path):
+def test_incremental_vmc_checkpoint_rebuilds_cache_and_resumes_exactly(
+    tmp_path: Any,
+) -> None:
     model = _TableModel(jnp.asarray([0.2, -0.1, 0.1, -0.2]))
     problem = phx.solver.VariationalMonteCarloProblem(
         model,
@@ -726,7 +729,7 @@ def test_incremental_vmc_checkpoint_rebuilds_cache_and_resumes_exactly(tmp_path)
         )
 
 
-def test_incremental_vmc_checkpoint_preserves_chain_taint(tmp_path):
+def test_incremental_vmc_checkpoint_preserves_chain_taint(tmp_path: Any) -> None:
     problem = phx.solver.VariationalMonteCarloProblem(
         _TableModel(jnp.asarray([0.2, -0.1, 0.1, -0.2])),
         _operator(),

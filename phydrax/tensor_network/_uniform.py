@@ -10,7 +10,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -52,7 +53,7 @@ class UniformMatrixProductState(StrictModule):
         /,
         *,
         precision: TensorNetworkPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = TensorNetworkPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, TensorNetworkPrecisionPolicy):
             raise TypeError("precision must be TensorNetworkPrecisionPolicy or None.")
@@ -101,7 +102,7 @@ class UniformMatrixProductOperator(StrictModule):
         /,
         *,
         precision: TensorNetworkPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = TensorNetworkPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, TensorNetworkPrecisionPolicy):
             raise TypeError("precision must be TensorNetworkPrecisionPolicy or None.")
@@ -140,7 +141,7 @@ class UniformTransferLinearOperator(AbstractLinearOperator):
     tensors: tuple[Array, ...]
     bond_dimension: int = eqx.field(static=True)
 
-    def __init__(self, state: UniformMatrixProductState, /):
+    def __init__(self, state: UniformMatrixProductState, /) -> None:
         if not isinstance(state, UniformMatrixProductState):
             raise TypeError("state must be UniformMatrixProductState.")
         dimension = state.bond_dimension**2
@@ -231,7 +232,7 @@ class UniformTransferPolicy(StrictModule):
         injectivity_tolerance: float = 1e-8,
         positivity_tolerance: float = 1e-8,
         maximum_transfer_elements: int = 10_000_000,
-    ):
+    ) -> None:
         modes = int(maximum_modes)
         elements = int(maximum_transfer_elements)
         tolerances = (float(injectivity_tolerance), float(positivity_tolerance))

@@ -4,22 +4,24 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
-DCPolicy = Literal["exclude", "include"]
-NyquistPolicy = Literal["include", "exclude"]
-FinalEdgePolicy = Literal["include", "exclude"]
+DCPolicy: TypeAlias = Literal["exclude", "include"]
+NyquistPolicy: TypeAlias = Literal["include", "exclude"]
+FinalEdgePolicy: TypeAlias = Literal["include", "exclude"]
 
 
 class ModeTransferCorrection(StrictModule, NonTrainableState):
@@ -35,7 +37,7 @@ class ModeTransferCorrection(StrictModule, NonTrainableState):
         /,
         *,
         minimum_transfer_magnitude: float,
-    ):
+    ) -> None:
         values = jax.lax.stop_gradient(jnp.asarray(multiplier))
         source = str(source_operator_id).strip()
         minimum = float(minimum_transfer_magnitude)
@@ -116,7 +118,7 @@ class _FourierShellBinGeometry(StrictModule, NonTrainableState):
         mode_weights: ArrayLike | None = None,
         final_edge_policy: FinalEdgePolicy = "include",
         source_id: str,
-    ):
+    ) -> None:
         magnitude = np.asarray(wavenumber_magnitude, dtype=np.float64)
         edges = np.asarray(bin_edges, dtype=np.float64).reshape((-1,))
         mask = (
@@ -141,10 +143,10 @@ class _FourierShellBinGeometry(StrictModule, NonTrainableState):
             or edges.size < 2
             or np.any(~np.isfinite(edges))
             or np.any(np.diff(edges) <= 0.0)
-            or final_edge_policy not in ("include", "exclude")
             or not source
         ):
             raise ValueError("Fourier shell-bin geometry is invalid.")
+        final_edge_policy = parse(final_edge_policy, FinalEdgePolicy, "final_edge_policy")
         indices = np.searchsorted(edges, magnitude, side="right") - 1
         if final_edge_policy == "include":
             indices[np.isclose(magnitude, edges[-1], rtol=1.0e-12, atol=1.0e-14)] = (
@@ -254,7 +256,7 @@ class PeriodicFourierShellPlan(StrictModule, NonTrainableState):
         nyquist_policy: NyquistPolicy = "include",
         final_edge_policy: FinalEdgePolicy = "include",
         source_id: str = "periodic-cell-field",
-    ):
+    ) -> None:
         shape = tuple(source_shape)
         lengths = tuple(float(value) for value in box_lengths)
         edges = np.asarray(bin_edges, dtype=np.float64).reshape((-1,))
@@ -268,11 +270,11 @@ class PeriodicFourierShellPlan(StrictModule, NonTrainableState):
             or np.any(~np.isfinite(edges))
             or np.any(np.diff(edges) <= 0.0)
             or not source
-            or dc_policy not in ("exclude", "include")
-            or nyquist_policy not in ("include", "exclude")
-            or final_edge_policy not in ("include", "exclude")
         ):
             raise ValueError("Periodic Fourier-shell geometry or policy is invalid.")
+        dc_policy = parse(dc_policy, DCPolicy, "dc_policy")
+        nyquist_policy = parse(nyquist_policy, NyquistPolicy, "nyquist_policy")
+        final_edge_policy = parse(final_edge_policy, FinalEdgePolicy, "final_edge_policy")
         frequencies = tuple(
             2.0
             * np.pi

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +11,7 @@ import phydrax as phx
 cosmology = phx.applications.cosmology
 
 
-def _gravity(count, particles):
+def _gravity(count: Any, particles: Any) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(count, periodic=True),),
         axis_names=("x",),
@@ -33,6 +35,7 @@ def _gravity(count, particles):
         ),
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.3, maximum_retries=0),
@@ -44,7 +47,7 @@ def _gravity(count, particles):
     return phx.solver.ParticleMeshGravityPlan(gravity, transfer)
 
 
-def _case(count=8):
+def _case(count: Any = 8) -> Any:
     scale = cosmology.CosmologyScaleContract(
         cosmology.CODE_COSMOLOGY_SCALE.length_unit,
         cosmology.CODE_COSMOLOGY_SCALE.mass_unit,
@@ -66,7 +69,7 @@ def _case(count=8):
     return background, particles, gravity, kdk, rollout, state
 
 
-def test_uniform_lattice_has_zero_force_and_completed_rollout():
+def test_uniform_lattice_has_zero_force_and_completed_rollout() -> None:
     background, _, gravity, _, rollout, state = _case()
     force = gravity.acceleration(state.positions)
     assert isinstance(force, phx.solver.ParticleMeshGravityForceResult)
@@ -81,11 +84,11 @@ def test_uniform_lattice_has_zero_force_and_completed_rollout():
     assert result.diagnostics.maximum_net_force_norm < 1e-12
 
 
-def test_rollout_is_piecewise_differentiable_away_from_cell_boundaries():
+def test_rollout_is_piecewise_differentiable_away_from_cell_boundaries() -> None:
     background, _, _, kdk, rollout, state = _case()
     pattern = jnp.sin(2.0 * jnp.pi * state.positions)
 
-    def objective(amplitude):
+    def objective(amplitude: Any) -> Any:
         displaced = jnp.mod(state.positions + amplitude * pattern, 1.0)
         initial = kdk.initialize(displaced, jnp.zeros_like(displaced), 0.5)
         final = rollout.rollout(background, initial).state.positions
@@ -101,7 +104,7 @@ def test_rollout_is_piecewise_differentiable_away_from_cell_boundaries():
     np.testing.assert_allclose(tangent, finite_difference, rtol=5e-3, atol=1e-6)
 
 
-def test_kdk_wraps_periodically_and_uses_particle_mass_authority():
+def test_kdk_wraps_periodically_and_uses_particle_mass_authority() -> None:
     background, particles, _, kdk, _, _ = _case(count=2)
     positions = jnp.asarray([[0.99], [0.25]])
     momentum = particles.safe_masses[:, None] * jnp.asarray([[1.0], [0.0]])
@@ -117,7 +120,7 @@ def test_kdk_wraps_periodically_and_uses_particle_mass_authority():
     assert jnp.all((advanced.positions >= 0.0) & (advanced.positions < 1.0))
 
 
-def test_cosmological_pm_rejects_dual_particle_or_geometry_authority():
+def test_cosmological_pm_rejects_dual_particle_or_geometry_authority() -> None:
     _, particles, gravity, _, _, _ = _case()
     other = phx.discretization.ParticleSetPlan(
         jnp.arange(particles.capacity),
@@ -127,16 +130,18 @@ def test_cosmological_pm_rejects_dual_particle_or_geometry_authority():
     ).prepare()
     other_kdk = cosmology.CosmologicalKDKPlan(other, (1.0,))
     with pytest.raises(ValueError, match="share one particle support"):
+        # ty: ignore[invalid-argument-type]
         cosmology.CosmologicalParticleMeshPlan(other_kdk, gravity, [0.5, 0.6])
     with pytest.raises(ValueError, match="increasing"):
         cosmology.CosmologicalParticleMeshPlan(
             cosmology.CosmologicalKDKPlan(particles, (1.0,)),
             gravity,
+            # ty: ignore[invalid-argument-type]
             [0.5, 0.5],
         )
 
 
-def test_periodic_pm_rejects_spatial_curvature():
+def test_periodic_pm_rejects_spatial_curvature() -> None:
     background, _, _, _, rollout, state = _case()
     curved = cosmology.FLRWBackground(
         background.hubble_constant,

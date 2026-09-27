@@ -11,7 +11,8 @@ from math import prod
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -56,7 +57,7 @@ class TwistedSYMPlan(StrictModule):
         coupling: float,
         lattice_spacing: float = 1.0,
         maximum_field_elements: int = 10_000_000,
-    ):
+    ) -> None:
         shape = tuple(lattice_shape)
         rank = int(matrix_rank)
         coupling_ = float(coupling)
@@ -103,7 +104,7 @@ class TwistedSYMConfiguration(StrictModule):
         links: ComplexifiedPFormField,
         reverse_links: ComplexifiedPFormField,
         /,
-    ):
+    ) -> None:
         if not isinstance(links, ComplexifiedPFormField) or not isinstance(
             reverse_links, ComplexifiedPFormField
         ):
@@ -138,7 +139,7 @@ class PreparedTwistedSYMAction(StrictModule):
         curvature_pairs: tuple[tuple[int, int], ...],
         prefactor: Array,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.link_plan = link_plan
         self.curvature_pairs = curvature_pairs
@@ -297,7 +298,7 @@ class BFSSPlan(StrictModule):
         time_spacing: float,
         mass: float = 0.0,
         maximum_field_elements: int = 10_000_000,
-    ):
+    ) -> None:
         slices = int(time_slices)
         count = int(matrix_count)
         rank = int(matrix_rank)
@@ -354,7 +355,7 @@ class BFSSConfiguration(StrictModule):
         temporal_links: ArrayLike,
         reverse_temporal_links: ArrayLike,
         /,
-    ):
+    ) -> None:
         matrices_ = jnp.asarray(matrices)
         dual_ = jnp.asarray(dual_matrices, dtype=matrices_.dtype)
         forward = jnp.asarray(temporal_links, dtype=matrices_.dtype)
@@ -383,7 +384,7 @@ class PreparedBFSSAction(StrictModule):
     prepared_id: str = eqx.field(static=True)
     claim: str = eqx.field(static=True)
 
-    def __init__(self, plan: BFSSPlan, prefactor: Array, /):
+    def __init__(self, plan: BFSSPlan, prefactor: Array, /) -> None:
         self.plan = plan
         self.prefactor = prefactor
         self.prepared_id = canonical_fingerprint(

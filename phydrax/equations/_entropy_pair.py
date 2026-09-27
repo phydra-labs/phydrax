@@ -11,7 +11,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -107,7 +108,7 @@ class ConvexEntropyPair(StrictModule, NonTrainableState):
         /,
         *,
         entropy_id: str,
-    ):
+    ) -> None:
         if not isinstance(system, AbstractConservationSystem):
             raise TypeError("system must be an AbstractConservationSystem.")
         for function, name in (
@@ -473,7 +474,7 @@ class ConvexEntropyValidationReport(StrictModule):
         metric_validation: MetricValidationReport,
         axes: Sequence[int],
         precision_evidence: PrecisionEvidenceEnvelope,
-    ):
+    ) -> None:
         if not isinstance(metric_validation, MetricValidationReport):
             raise TypeError("metric_validation must be a MetricValidationReport.")
         if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
@@ -783,7 +784,7 @@ def _euler_entropy_flux(
 class _IdealGasEntropyPotential(StrictModule):
     system: EulerSystem | CompressibleNavierStokesSystem
 
-    def __init__(self, system: EulerSystem | CompressibleNavierStokesSystem, /):
+    def __init__(self, system: EulerSystem | CompressibleNavierStokesSystem, /) -> None:
         self.system = system
 
     def __call__(self, state: Array, /) -> Array:
@@ -793,7 +794,7 @@ class _IdealGasEntropyPotential(StrictModule):
 class _IdealGasEntropyFlux(StrictModule):
     system: EulerSystem | CompressibleNavierStokesSystem
 
-    def __init__(self, system: EulerSystem | CompressibleNavierStokesSystem, /):
+    def __init__(self, system: EulerSystem | CompressibleNavierStokesSystem, /) -> None:
         self.system = system
 
     def __call__(self, state: Array, axis: int, _args: Any = None, /) -> Array:

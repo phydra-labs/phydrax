@@ -3,6 +3,7 @@ import socket
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -13,14 +14,21 @@ import phydrax as phx
 from phydrax.units import KILOJOULE_PER_MOLE
 
 
-def _runtime(*, units=None, topology=None, charges=None, cell=None):
+def _runtime(
+    *, units: Any = None, topology: Any = None, charges: Any = None, cell: Any = None
+) -> Any:
     units = phx.atomistic.AtomisticUnitSystem.reduced() if units is None else units
     system_plan = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [10, 20, 30],
+        # ty: ignore[invalid-argument-type]
         [1, 1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0, 1.0],
         units,
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0, 0],
+        # ty: ignore[invalid-argument-type]
         charges=[0.0, 0.0, 0.0] if charges is None else charges,
         topology=topology,
         cell=cell,
@@ -30,6 +38,7 @@ def _runtime(*, units=None, topology=None, charges=None, cell=None):
         system.particles
     )
     potential = phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.LennardJonesPotential([0.2], [1.0], 2.5)]
     ).prepare(system)
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
@@ -59,7 +68,7 @@ def _runtime(*, units=None, topology=None, charges=None, cell=None):
     )
 
 
-def test_force_field_mapping_roundtrip_preserves_energy():
+def test_force_field_mapping_roundtrip_preserves_energy() -> None:
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     topology = phx.atomistic.MolecularTopologyPlan(
         bonds=[[10, 20]],
@@ -69,21 +78,29 @@ def test_force_field_mapping_roundtrip_preserves_energy():
         electrostatic_scales=[0.25],
     )
     system_plan = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [10, 20, 30],
+        # ty: ignore[invalid-argument-type]
         [1, 1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0, 1.0],
         units,
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0, 0],
+        # ty: ignore[invalid-argument-type]
         charges=[0.4, -0.2, -0.2],
         topology=topology,
         name="mapping-roundtrip",
     )
     potential_plan = phx.atomistic.AtomisticPotentialProgram(
         [
+            # ty: ignore[invalid-argument-type]
             phx.atomistic.HarmonicBondPotential([2.0], [1.0]),
+            # ty: ignore[invalid-argument-type]
             phx.atomistic.LennardJonesPotential([0.2], [1.0], 2.5),
             phx.atomistic.DirectCoulombPotential(),
         ],
+        # ty: ignore[invalid-argument-type]
         coefficients=[1.2, 0.8, 1.0],
     )
     force_field = phx.atomistic.AtomisticForceFieldPlan(
@@ -121,18 +138,23 @@ def test_force_field_mapping_roundtrip_preserves_energy():
     )
 
 
-def test_force_field_term_families_and_settle():
+def test_force_field_term_families_and_settle() -> None:
     cell = phx.discretization.PeriodicCell(jnp.eye(3) * 6.0)
     topology = phx.atomistic.MolecularTopologyPlan(
         torsions=[[0, 1, 2, 3]],
         impropers=[[0, 1, 2, 3]],
     )
     system = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [0, 1, 2, 3],
+        # ty: ignore[invalid-argument-type]
         [8, 1, 1, 1],
+        # ty: ignore[invalid-argument-type]
         [16.0, 1.0, 1.0, 1.0],
         phx.atomistic.AtomisticUnitSystem.reduced(),
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0, 0, 0],
+        # ty: ignore[invalid-argument-type]
         charges=[-0.3, 0.1, 0.1, 0.1],
         topology=topology,
         cell=cell,
@@ -147,14 +169,27 @@ def test_force_field_term_families_and_settle():
     )
     route = [[0, 1, 2, 3]]
     terms = (
+        # ty: ignore[invalid-argument-type]
         phx.atomistic.HarmonicImproperPotential([1.0], [0.2]),
+        # ty: ignore[invalid-argument-type]
         phx.atomistic.UreyBradleyPotential([1.0], [1.4], [[0, 1, 2]]),
         phx.atomistic.PeriodicTorsionSeriesPotential(
-            [[0.2, 0.1]], [[1, 2]], [[0.0, 0.3]], [[1.0, 1.0]], route
+            # ty: ignore[invalid-argument-type]
+            [[0.2, 0.1]],
+            # ty: ignore[invalid-argument-type]
+            [[1, 2]],
+            # ty: ignore[invalid-argument-type]
+            [[0.0, 0.3]],
+            # ty: ignore[invalid-argument-type]
+            [[1.0, 1.0]],
+            # ty: ignore[invalid-argument-type]
+            route,
         ),
+        # ty: ignore[invalid-argument-type]
         phx.atomistic.RyckaertBellemansPotential([[0.1, 0.2, 0.1, 0.0, 0.0, 0.0]], route),
         phx.atomistic.CMAPPotential(
             jnp.arange(64, dtype="float64").reshape((8, 8)) * 1.0e-3,
+            # ty: ignore[invalid-argument-type]
             [[0, 1, 2, 3, 0, 1, 2, 3]],
         ),
         phx.atomistic.PairOverrideLennardJonesPotential(
@@ -163,6 +198,7 @@ def test_force_field_term_families_and_settle():
             jnp.ones((4, 4)),
             2.5,
         ),
+        # ty: ignore[invalid-argument-type]
         phx.atomistic.TabulatedPairPotential([0.5, 1.5, 2.5], [[[0.2, 0.1, 0.0]]], 2.5),
         phx.atomistic.ReactionFieldPotential(78.5, 2.5),
         phx.atomistic.LennardJonesDispersionCorrection(0.1),
@@ -177,14 +213,20 @@ def test_force_field_term_families_and_settle():
     assert bool(jnp.all(jnp.isfinite(evaluation.forces)))
 
     settle_system = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [0, 1, 2],
+        # ty: ignore[invalid-argument-type]
         [8, 1, 1],
+        # ty: ignore[invalid-argument-type]
         [16.0, 1.0, 1.0],
         phx.atomistic.AtomisticUnitSystem.reduced(),
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     settle = phx.atomistic.SETTLEPlan([[0, 1, 2]], 1.0, 1.6).prepare(settle_system)
     projection = settle.project(
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0], [1.1, 0.1, 0.0], [-0.2, 0.9, 0.1]],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0], [0.1, 0.2, 0.0], [-0.1, 0.0, 0.2]],
     )
     assert bool(projection.successful)
@@ -192,23 +234,29 @@ def test_force_field_term_families_and_settle():
     assert float(projection.velocity_residual) <= 1.0e-10
 
 
-def test_interaction_site_pair_terms_honor_topology_scales():
+def test_interaction_site_pair_terms_honor_topology_scales() -> None:
     topology = phx.atomistic.MolecularTopologyPlan(
         pair_exceptions=[[0, 1]],
         lennard_jones_scales=[0.0],
         electrostatic_scales=[0.0],
     )
     system = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [0, 1],
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         phx.atomistic.AtomisticUnitSystem.reduced(),
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0],
+        # ty: ignore[invalid-argument-type]
         charges=[1.0, -1.0],
         topology=topology,
     ).prepare()
     potential = phx.atomistic.AtomisticPotentialProgram(
         [
+            # ty: ignore[invalid-argument-type]
             phx.atomistic.MorsePotential([[0.2]], [[2.0]], [[1.0]], 2.5),
             phx.atomistic.ReactionFieldPotential(78.5, 2.5),
         ]
@@ -223,7 +271,7 @@ def test_interaction_site_pair_terms_honor_topology_scales():
     np.testing.assert_allclose(result.forces, 0.0, atol=1.0e-12)
 
 
-def test_torsion_series_mapping_preserves_particle_and_parameter_identity():
+def test_torsion_series_mapping_preserves_particle_and_parameter_identity() -> None:
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     mapping = {
         "unit_system": units.to_dict(),
@@ -271,7 +319,7 @@ def test_torsion_series_mapping_preserves_particle_and_parameter_identity():
     np.testing.assert_allclose(evaluations[0].forces, evaluations[1].forces, atol=1e-12)
 
 
-def test_openmm_fourier_components_preserve_energy_and_force_through_roundtrip():
+def test_openmm_fourier_components_preserve_energy_and_force_through_roundtrip() -> None:
     openmm = pytest.importorskip("openmm")
     source = openmm.System()
     for _ in range(4):
@@ -341,7 +389,7 @@ def test_openmm_fourier_components_preserve_energy_and_force_through_roundtrip()
         del context, integrator
 
 
-def _openmm_pair_source(openmm, method):
+def _openmm_pair_source(openmm: Any, method: Any) -> Any:
     source = openmm.System()
     source.addParticle(12.0 * openmm.unit.dalton)
     source.addParticle(16.0 * openmm.unit.dalton)
@@ -378,7 +426,7 @@ def _openmm_pair_source(openmm, method):
     return source
 
 
-def test_openmm_import_export_energy_force_parity():
+def test_openmm_import_export_energy_force_parity() -> None:
     openmm = pytest.importorskip("openmm")
     source = _openmm_pair_source(openmm, openmm.NonbondedForce.NoCutoff)
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
@@ -399,7 +447,7 @@ def test_openmm_import_export_energy_force_parity():
     )
     native = prepared.potential.evaluate(positions, neighborhood.build(positions))
 
-    def openmm_evaluation(system):
+    def openmm_evaluation(system: Any) -> Any:
         integrator = openmm.VerletIntegrator(0.001)
         context = openmm.Context(
             system, integrator, openmm.Platform.getPlatformByName("Reference")
@@ -474,7 +522,7 @@ def test_openmm_import_export_energy_force_parity():
     )
 
 
-def test_h5md_extended_xyz_and_rerun_reporting(tmp_path: Path):
+def test_h5md_extended_xyz_and_rerun_reporting(tmp_path: Path) -> None:
     _, _, neighborhood, potential, dynamics, _, state = _runtime()
     frame = phx.atomistic.AtomisticFrame(
         state.time,
@@ -484,6 +532,7 @@ def test_h5md_extended_xyz_and_rerun_reporting(tmp_path: Path):
         velocities=dynamics.velocity(state),
         momenta=state.kinematics.momenta,
         forces=state.force.forces,
+        # ty: ignore[invalid-argument-type]
         energy=[state.energy.total_energy],
         auxiliary={"temperature": jnp.asarray(1.0)},
         system_id=dynamics.system.plan.system_id,
@@ -505,6 +554,7 @@ def test_h5md_extended_xyz_and_rerun_reporting(tmp_path: Path):
                 momenta=frame.momenta,
                 forces=frame.forces,
                 energy=frame.energy,
+                # ty: ignore[invalid-argument-type]
                 auxiliary=frame.auxiliary,
                 system_id=frame.system_id,
                 topology_id=frame.topology_id,
@@ -515,6 +565,7 @@ def test_h5md_extended_xyz_and_rerun_reporting(tmp_path: Path):
     with h5md.open() as reader:
         recovered = tuple(reader)
     assert len(recovered) == 2
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(recovered[1].velocities, frame.velocities)
     np.testing.assert_allclose(recovered[1].auxiliary["temperature"], 1.0)
     assert recovered[0].source_id == frame.source_id
@@ -529,7 +580,9 @@ def test_h5md_extended_xyz_and_rerun_reporting(tmp_path: Path):
         xyz_frames = tuple(reader)
     assert len(xyz_frames) == 2
     xyz_frame = xyz_frames[0]
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(xyz_frame.forces, frame.forces)
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(xyz_frame.momenta, frame.momenta)
     assert xyz_frame.source_id == frame.source_id
     assert xyz_frame.units.unit_system_id == frame.units.unit_system_id
@@ -568,7 +621,7 @@ def test_h5md_extended_xyz_and_rerun_reporting(tmp_path: Path):
         h5md.open()
 
 
-def test_bias_checkpoint_replay_and_abf_update(tmp_path: Path):
+def test_bias_checkpoint_replay_and_abf_update(tmp_path: Path) -> None:
     _, system, _, _, dynamics, thermodynamic, state = _runtime()
     cv = phx.atomistic.sampling.CollectiveVariablePlan(
         phx.atomistic.sampling.CollectiveVariableKind.DISTANCE, [0, 1]
@@ -578,7 +631,9 @@ def test_bias_checkpoint_replay_and_abf_update(tmp_path: Path):
         phx.atomistic.sampling.AtomisticBiasPlan(
             phx.atomistic.sampling.BiasKind.HARMONIC,
             variables,
+            # ty: ignore[invalid-argument-type]
             center=[1.0],
+            # ty: ignore[invalid-argument-type]
             stiffness=[2.0],
         ),
         dynamics,
@@ -602,7 +657,9 @@ def test_bias_checkpoint_replay_and_abf_update(tmp_path: Path):
         phx.atomistic.sampling.AtomisticBiasPlan(
             phx.atomistic.sampling.BiasKind.ABF,
             variables,
+            # ty: ignore[invalid-argument-type]
             grid_minimum=[0.5],
+            # ty: ignore[invalid-argument-type]
             grid_maximum=[2.0],
             grid_bins=16,
         ),
@@ -621,11 +678,14 @@ def test_bias_checkpoint_replay_and_abf_update(tmp_path: Path):
         )
 
 
-def test_collective_variable_families():
+def test_collective_variable_families() -> None:
     cell = phx.discretization.PeriodicCell(jnp.eye(3) * 8.0)
     system = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [0, 1, 2, 3],
+        # ty: ignore[invalid-argument-type]
         [1, 1, 1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 2.0, 1.0, 2.0],
         phx.atomistic.AtomisticUnitSystem.reduced(),
         cell=cell,
@@ -714,7 +774,10 @@ def test_collective_variable_families():
     )
     for kind, indices, arguments, evaluation_arguments in kinds:
         prepared = phx.atomistic.sampling.CollectiveVariablePlan(
-            kind, indices, **arguments
+            kind,
+            indices,
+            # ty: ignore[invalid-argument-type]
+            **arguments,
         ).prepare(system)
         evaluation = prepared.evaluate(
             positions,
@@ -725,7 +788,7 @@ def test_collective_variable_families():
         assert bool(jnp.isfinite(evaluation.value)), kind
 
 
-def test_mdanalysis_frame_values_are_converted_before_unit_attachment():
+def test_mdanalysis_frame_values_are_converted_before_unit_attachment() -> None:
     atoms = SimpleNamespace(
         positions=np.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]),
         velocities=np.asarray([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]]),
@@ -754,6 +817,7 @@ def test_mdanalysis_frame_values_are_converted_before_unit_attachment():
     )
 
     assert float(frame.time) == 2000.0
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         frame.velocities,
         [[0.001, 0.0, 0.0], [0.0, 0.002, 0.0]],
@@ -763,6 +827,7 @@ def test_mdanalysis_frame_values_are_converted_before_unit_attachment():
         phx.units.ELECTRONVOLT,
         constant_set_id=units.constant_set_id,
     )
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(frame.forces, atoms.forces * force_factor)
     with pytest.raises(ValueError, match="shared reference system"):
         phx.atomistic.interchange.atomistic_frame_from_mdanalysis(
@@ -774,7 +839,7 @@ def test_mdanalysis_frame_values_are_converted_before_unit_attachment():
         )
 
 
-def test_mdanalysis_frame_metadata_and_selection_adapters():
+def test_mdanalysis_frame_metadata_and_selection_adapters() -> None:
     mda = pytest.importorskip("MDAnalysis")
     universe = mda.Universe.empty(
         2,
@@ -812,6 +877,7 @@ def test_mdanalysis_frame_metadata_and_selection_adapters():
     np.testing.assert_array_equal(selection.mask, [True, False])
     np.testing.assert_allclose(recovered.atoms.positions, frame.positions)
     assert float(frame.time) == 2000.0
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         frame.velocities,
         [[0.001, 0.0, 0.0], [0.0, 0.002, 0.0]],
@@ -821,6 +887,7 @@ def test_mdanalysis_frame_metadata_and_selection_adapters():
         phx.units.ELECTRONVOLT,
         constant_set_id=frame.units.constant_set_id,
     )
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         frame.forces,
         np.asarray([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]]) * force_factor,
@@ -835,7 +902,7 @@ def test_mdanalysis_frame_metadata_and_selection_adapters():
         )
 
 
-def test_committee_diversity_and_advanced_methods():
+def test_committee_diversity_and_advanced_methods() -> None:
     _, system, neighborhood, _, _, _, state = _runtime()
     frame = phx.atomistic.AtomisticFrame(
         0.0,
@@ -874,7 +941,9 @@ def test_committee_diversity_and_advanced_methods():
         for score in (3.0, 2.0, 1.0)
     )
     records = phx.atomistic.AcquisitionPlan(
-        2, phx.atomistic.CommitteeAcquisitionScorePolicy(1.0, 1.0, 1.0)
+        2,
+        phx.atomistic.CommitteeAcquisitionScorePolicy(1.0, 1.0, 1.0),
+        # ty: ignore[invalid-argument-type]
     ).select(frames, evidence, descriptors=[[0.0], [0.1], [10.0]])
     assert tuple(record.source_index for record in records) == (0, 2)
     fallback = phx.atomistic.SegmentFallbackPolicy("reference-provider").decide(
@@ -910,7 +979,11 @@ def test_committee_diversity_and_advanced_methods():
     assert bool(second.successful)
 
     gle = phx.atomistic.GeneralizedLangevinPlan(
-        [[1.0, 0.1], [0.1, 1.5]], [[0.2, 0.0], [0.0, 0.2]], 1.0
+        # ty: ignore[invalid-argument-type]
+        [[1.0, 0.1], [0.1, 1.5]],
+        # ty: ignore[invalid-argument-type]
+        [[0.2, 0.0], [0.0, 0.2]],
+        1.0,
     )
     gle_result = gle.apply(
         momenta,
@@ -934,6 +1007,7 @@ def test_committee_diversity_and_advanced_methods():
     )
     contracted = phx.atomistic.ring_polymer_contract(beads, 2)
     np.testing.assert_allclose(jnp.mean(contracted, axis=0), jnp.mean(beads, axis=0))
+    # ty: ignore[invalid-argument-type]
     trpmd = phx.atomistic.ThermostattedRPMDPlan(normal_modes, [0.0, 1.0, 1.0, 1.0])
     trpmd_result = trpmd.apply(
         jnp.zeros_like(beads),
@@ -990,11 +1064,18 @@ def test_committee_diversity_and_advanced_methods():
     assert bool(jnp.all(jnp.isfinite(barostat_state.cell_vectors)))
 
     manifold = phx.atomistic.ManifoldConstraintPlan(
-        phx.atomistic.WallKind.CYLINDER, [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 2.0]
+        phx.atomistic.WallKind.CYLINDER,
+        # ty: ignore[invalid-argument-type]
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 2.0],
     )
     pressure = phx.atomistic.AnisotropicPressurePlan(
-        [1.0, 1.0, 1.0], [0.01, 0.01, 0.01], semi_isotropic=True
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.0, 1.0],
+        # ty: ignore[invalid-argument-type]
+        [0.01, 0.01, 0.01],
+        semi_isotropic=True,
     )
+    # ty: ignore[invalid-argument-type]
     updated_cell = pressure.update_cell(jnp.eye(3) * 6.0, [1.1, 0.9, 1.2], 0.01)
     assert bool(jnp.all(jnp.isfinite(updated_cell)))
     brownian = phx.atomistic.BrownianDynamicsPlan(0.1, 1.0).step(
@@ -1006,7 +1087,9 @@ def test_committee_diversity_and_advanced_methods():
     )
     assert bool(jnp.all(jnp.isfinite(brownian)))
     projection = manifold.project(
+        # ty: ignore[invalid-argument-type]
         [[1.0, 0.0, 0.0], [0.0, 1.0, 1.0]],
+        # ty: ignore[invalid-argument-type]
         [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]],
     )
     assert bool(projection.successful)
@@ -1033,7 +1116,10 @@ def test_committee_diversity_and_advanced_methods():
     wall = phx.atomistic.AtomisticPotentialProgram(
         [
             phx.atomistic.ScalarWallPotential(
-                phx.atomistic.WallKind.PLANE, [1.0, 0.0, 0.0, 0.5], 2.0
+                phx.atomistic.WallKind.PLANE,
+                # ty: ignore[invalid-argument-type]
+                [1.0, 0.0, 0.0, 0.5],
+                2.0,
             )
         ]
     ).prepare(system)
@@ -1047,6 +1133,7 @@ def test_committee_diversity_and_advanced_methods():
     )
 
     eam = phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.EAMPotential([2.0, 1.0, 1.0, 0.5, 2.0], 2.5)]
     ).prepare(system, graph_execution=graph_execution)
     eam_result = eam.evaluate(
@@ -1069,6 +1156,7 @@ def test_committee_diversity_and_advanced_methods():
     )
     for factory, parameters, cutoff in many_body_cases:
         many_body = phx.atomistic.AtomisticPotentialProgram(
+            # ty: ignore[invalid-argument-type]
             [factory(parameters, cutoff)]
         ).prepare(system, graph_execution=graph_execution)
         evaluation = many_body.evaluate(
@@ -1079,15 +1167,22 @@ def test_committee_diversity_and_advanced_methods():
         assert bool(jnp.all(jnp.isfinite(evaluation.forces)))
 
 
-def test_rigid_coordinate_map_and_rotational_step():
+def test_rigid_coordinate_map_and_rotational_step() -> None:
     particles = phx.discretization.ParticleSetPlan(
-        [0, 1], [1.0, 1.0], ambient_dimension=3
+        # ty: ignore[invalid-argument-type]
+        [0, 1],
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.0],
+        ambient_dimension=3,
     ).prepare()
     bodies = phx.discretization.RigidBodySetPlan(
-        [0, 0], jnp.stack((jnp.eye(3), jnp.eye(3)))
+        # ty: ignore[invalid-argument-type]
+        [0, 0],
+        jnp.stack((jnp.eye(3), jnp.eye(3))),
     ).prepare(particles)
     orientation = jnp.asarray([[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]])
     kinematics = bodies.kinematics(
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
         jnp.zeros((2, 3)),
         orientation,
@@ -1095,8 +1190,11 @@ def test_rigid_coordinate_map_and_rotational_step():
     )
     coordinate_map = phx.atomistic.RigidAtomisticCoordinateMap(
         bodies,
+        # ty: ignore[invalid-argument-type]
         [0, 1],
+        # ty: ignore[invalid-argument-type]
         [[0.5, 0.0, 0.0], [-0.5, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [10, 20],
     )
     sites = coordinate_map.realize(kinematics)
@@ -1121,16 +1219,19 @@ def test_rigid_coordinate_map_and_rotational_step():
     )
 
 
-def test_implicit_polarization_and_multipole_pme():
+def test_implicit_polarization_and_multipole_pme() -> None:
     cell = phx.discretization.PeriodicCell(jnp.eye(3) * 6.0)
     _, system, neighborhood, _, _, _, state = _runtime(
         cell=cell, charges=[0.4, -0.2, -0.2]
     )
     multipoles = phx.atomistic.PermanentMultipoleSiteData(
+        # ty: ignore[invalid-argument-type]
         [0.4, -0.2, -0.2],
         jnp.zeros((3, 3)),
         jnp.zeros((3, 3, 3)),
+        # ty: ignore[invalid-argument-type]
         [0.1, 0.1, 0.1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0, 1.0],
     )
     plan = phx.atomistic.PolarizationPlan(maximum_iterations=200, tolerance=1.0e-6)
@@ -1149,6 +1250,7 @@ def test_implicit_polarization_and_multipole_pme():
     energy = pme.energy(site_state, multipoles, cell.vectors, 1.0)
     assert bool(jnp.isfinite(energy))
     dispersion = phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.LennardJonesPMEPotential([[0.1]], 0.4, 2.5, (8, 8, 8))]
     ).prepare(system)
     dispersion_result = dispersion.evaluate(
@@ -1160,19 +1262,43 @@ def test_implicit_polarization_and_multipole_pme():
         jnp.sum(dispersion_result.forces, axis=0), 0.0, atol=1.0e-8
     )
     gb = phx.atomistic.ImplicitSolventPlan("gb").energy(
-        state.kinematics.positions, [0.4, -0.2, -0.2], [1.2, 1.2, 1.2], 1.0
+        state.kinematics.positions,
+        # ty: ignore[invalid-argument-type]
+        [0.4, -0.2, -0.2],
+        # ty: ignore[invalid-argument-type]
+        [1.2, 1.2, 1.2],
+        1.0,
     )
     gk = phx.atomistic.ImplicitSolventPlan("gk").energy(
-        state.kinematics.positions, [0.4, -0.2, -0.2], [1.2, 1.2, 1.2], 1.0
+        state.kinematics.positions,
+        # ty: ignore[invalid-argument-type]
+        [0.4, -0.2, -0.2],
+        # ty: ignore[invalid-argument-type]
+        [1.2, 1.2, 1.2],
+        1.0,
     )
     assert bool(jnp.isfinite(gb) & jnp.isfinite(gk))
     assert not bool(jnp.isclose(gb, gk))
 
 
-def _ipi_roundtrip(plan, system, positions):
+def test_lennard_jones_pme_term_without_cutoff_is_rejected_at_preparation() -> None:
+    cell = phx.discretization.PeriodicCell(jnp.eye(3) * 6.0)
+    _, system, _, _, _, _, _ = _runtime(cell=cell)
+    # ty: ignore[invalid-argument-type]
+    reference = phx.atomistic.LennardJonesPMEPotential([[0.1]], 0.4, 2.5, (8, 8, 8))
+    term = phx.atomistic.GeneralForceFieldTerm(
+        phx.atomistic.ForceFieldTermKind.LENNARD_JONES_PME,
+        reference.arrays,
+        cutoff=None,
+    )
+    with pytest.raises(ValueError, match="requires a cutoff"):
+        phx.atomistic.AtomisticPotentialProgram([term]).prepare(system)
+
+
+def _ipi_roundtrip(plan: Any, system: Any, positions: Any) -> None:
     listener = plan.listen()
 
-    def evaluator(prepared, coordinate, cell_vectors):
+    def evaluator(prepared: Any, coordinate: Any, cell_vectors: Any) -> Any:
         del prepared, cell_vectors
         return phx.atomistic.ExternalAtomisticEvaluation(
             jnp.sum(coordinate**2),
@@ -1184,7 +1310,7 @@ def _ipi_roundtrip(plan, system, positions):
 
     provider = phx.atomistic.CallableBornOppenheimerProvider(evaluator, "local-provider")
 
-    def serve():
+    def serve() -> Any:
         with listener.accept() as session:
             return phx.atomistic.interchange.serve_ipi_once(session, provider, system)
 
@@ -1203,7 +1329,7 @@ def _ipi_roundtrip(plan, system, positions):
 
 
 @pytest.mark.parametrize("mode", ["unix", "tcp"])
-def test_ipi_unix_and_tcp_roundtrip(tmp_path: Path, mode: str):
+def test_ipi_unix_and_tcp_roundtrip(tmp_path: Path, mode: str) -> None:
     _, system, _, _, _, _, state = _runtime()
     if mode == "unix":
         plan = phx.atomistic.interchange.IPITransportPlan.unix(
@@ -1219,7 +1345,7 @@ def test_ipi_unix_and_tcp_roundtrip(tmp_path: Path, mode: str):
     _ipi_roundtrip(plan, system, state.kinematics.positions)
 
 
-def test_packmol_subprocess_boundary_and_provenance(tmp_path: Path):
+def test_packmol_subprocess_boundary_and_provenance(tmp_path: Path) -> None:
     executable = tmp_path / "fake_packmol.py"
     executable.write_text(
         """#!/usr/bin/env python3
@@ -1243,7 +1369,9 @@ Path('output.xyz').write_text(f'{len(output)}\\nfake packmol\\n' + '\\n'.join(ou
     template = phx.atomistic.AtomisticFrame(
         0.0,
         0,
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [10, 20],
         system_id="packmol-system",
         topology_id="packmol-topology",

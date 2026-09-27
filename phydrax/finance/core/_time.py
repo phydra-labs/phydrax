@@ -15,11 +15,13 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
 
+from ...typing import parse
 from ._identifiers import _canonical_text, _token
 
 
@@ -48,7 +50,6 @@ class DayCount(str, Enum):
 StubRule: TypeAlias = Literal[
     "none", "short_front", "long_front", "short_back", "long_back"
 ]
-_STUB_RULES = frozenset(("none", "short_front", "long_front", "short_back", "long_back"))
 
 
 def _integral(value: object, name: str, /, *, lower: int, upper: int) -> int:
@@ -87,7 +88,7 @@ class FinanceDate(StrictModule):
 
     ordinal: int = eqx.field(static=True)
 
-    def __init__(self, ordinal: int, /):
+    def __init__(self, ordinal: int, /) -> None:
         self.ordinal = _integral(
             ordinal, "finance date ordinal", lower=_DATE_MIN, upper=_DATE_MAX
         )
@@ -164,7 +165,7 @@ class TemporalAdmissibilityPolicy(StrictModule):
         require_received_before_available: bool,
         allow_future_effective_event: bool,
         /,
-    ):
+    ) -> None:
         values = (
             require_published_before_received,
             require_received_before_available,
@@ -223,7 +224,7 @@ class FinancialTimestamp(StrictModule):
         vintage_id: str,
         policy: TemporalAdmissibilityPolicy,
         /,
-    ):
+    ) -> None:
         if not isinstance(policy, TemporalAdmissibilityPolicy):
             raise TypeError("policy must be a TemporalAdmissibilityPolicy.")
         clocks = tuple(
@@ -265,7 +266,7 @@ class CalendarSnapshot(StrictModule):
         weekend_weekdays: Sequence[int],
         provenance: str,
         /,
-    ):
+    ) -> None:
         if isinstance(holiday_ordinals, (str, bytes)) or not isinstance(
             holiday_ordinals, Sequence
         ):
@@ -346,14 +347,13 @@ class ScheduleRule(StrictModule):
         payment_lag_days: int,
         day_count: DayCount | str,
         /,
-    ):
+    ) -> None:
         if not isinstance(start, FinanceDate) or not isinstance(end, FinanceDate):
             raise TypeError("schedule start and end must be FinanceDate values.")
         if start.ordinal >= end.ordinal:
             raise ValueError("schedule start must precede schedule end.")
         frequency = _integral(frequency_months, "frequency_months", lower=1, upper=1200)
-        if stub_rule not in _STUB_RULES:
-            raise ValueError("stub_rule is not supported.")
+        stub_rule = parse(stub_rule, StubRule, "stub_rule")
         if type(end_of_month) is not bool:
             raise TypeError("end_of_month must be bool.")
         lag = _integral(payment_lag_days, "payment_lag_days", lower=0, upper=10000)
@@ -415,7 +415,7 @@ class ResolvedSchedule(StrictModule):
         schedule_rule_id: str,
         day_count: DayCount | str,
         /,
-    ):
+    ) -> None:
         raw_dates = tuple(
             np.asarray(value)
             for value in (

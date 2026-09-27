@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from jaxtyping import Array
+from jax import Array
 
 
 class UnitCubeTransport(Protocol):

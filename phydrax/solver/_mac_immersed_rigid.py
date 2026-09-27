@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 from enum import IntFlag
-from typing import Any
+from typing import Any, TypeVar
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -124,7 +125,7 @@ class MACRigidImmersedProjectionPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> None:
 
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
             raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
@@ -284,7 +285,7 @@ class MACRigidImmersedProjectionPlan(StrictModule, NonTrainableState):
                 mobile
             ]
 
-            def angular_inverse(rotation):
+            def angular_inverse(rotation: Array) -> Array:
                 return inverse_inertia_mobile[:, None] * rotation
 
         else:
@@ -293,20 +294,22 @@ class MACRigidImmersedProjectionPlan(StrictModule, NonTrainableState):
             )
             inverse_inertia_mobile = inverse_inertia[mobile]
 
-            def angular_inverse(rotation):
+            def angular_inverse(rotation: Array) -> Array:
                 return contract(
                     "...ij,...j->...i",
                     inverse_inertia_mobile,
                     rotation,
                 )
 
-        def body_inverse(load: RigidGeneralizedVelocity):
+        def body_inverse(load: RigidGeneralizedVelocity) -> RigidGeneralizedVelocity:
             return RigidGeneralizedVelocity(
                 body_coefficient * inverse_mass[:, None] * load.translation,
                 body_coefficient * angular_inverse(load.rotation),
             )
 
-        def response(dual):
+        def response(
+            dual: tuple[Array, Array],
+        ) -> tuple[FaceVelocity, RigidGeneralizedVelocity, Array, FaceVelocity]:
             scaled_pressure, multiplier = dual
             if boundaries.closure_kind == "neumann":
                 projected_pressure = operators.gauge_project(scaled_pressure)
@@ -332,7 +335,7 @@ class MACRigidImmersedProjectionPlan(StrictModule, NonTrainableState):
             body_mass_image = body_inverse(body_load)
             return fluid_mass_image, body_mass_image, mean, fluid_rhs
 
-        def action(dual):
+        def action(dual: tuple[Array, Array]) -> tuple[Array, Array]:
             fluid_image, body_image, mean, _ = response(dual)
             pressure_image = -ell * operators.divergence(fluid_image)
             if boundaries.closure_kind == "neumann":
@@ -557,7 +560,7 @@ class MACRigidImmersedEulerMethod(StrictModule, NonTrainableState):
         projection: MACRigidImmersedProjectionPlan,
         step_size: float,
         /,
-    ):
+    ) -> None:
         step = float(step_size)
         if step <= 0.0:
             raise ValueError("step_size must be positive.")
@@ -777,7 +780,7 @@ class MACRigidImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
         *,
         maximum_iterations: int = 8,
         tolerance: float = 1.0e-9,
-    ):
+    ) -> None:
         iterations = int(maximum_iterations)
         tolerance_ = float(tolerance)
         if iterations <= 0 or tolerance_ <= 0.0:
@@ -874,7 +877,7 @@ class MACRigidImmersedMidpointMethod(StrictModule, NonTrainableState):
     backward_euler: MACRigidImmersedBackwardEulerMethod
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, backward_euler: MACRigidImmersedBackwardEulerMethod, /):
+    def __init__(self, backward_euler: MACRigidImmersedBackwardEulerMethod, /) -> None:
         self.backward_euler = backward_euler
         self.method_id = canonical_fingerprint(
             {
@@ -883,9 +886,28 @@ class MACRigidImmersedMidpointMethod(StrictModule, NonTrainableState):
             }
         )
 
-    def step(self, *args, **kwargs) -> MACRigidImmersedStepResult:
-        first = self.backward_euler.step(*args, **kwargs)
-        initial = args[2]
+    def step(
+        self,
+        time: ArrayLike,
+        fluid_state: ArrayLike,
+        body_kinematics: RigidBodyKinematics,
+        /,
+        *,
+        body_load: RigidBodyLoad | None = None,
+        pressure: ArrayLike | None = None,
+        marker_force_density: ArrayLike | None = None,
+        args: Any = None,
+    ) -> MACRigidImmersedStepResult:
+        first = self.backward_euler.step(
+            time,
+            fluid_state,
+            body_kinematics,
+            body_load=body_load,
+            pressure=pressure,
+            marker_force_density=marker_force_density,
+            args=args,
+        )
+        initial = body_kinematics
         midpoint_velocity = 0.5 * (initial.velocity + first.body_kinematics.velocity)
         midpoint_angular = 0.5 * (
             initial.angular_velocity + first.body_kinematics.angular_velocity
@@ -896,10 +918,14 @@ class MACRigidImmersedMidpointMethod(StrictModule, NonTrainableState):
             initial.orientation,
             midpoint_angular,
         )
-        second_args = (args[0], args[1], midpoint_state)
         second = self.backward_euler.step(
-            *second_args,
-            **kwargs,
+            time,
+            fluid_state,
+            midpoint_state,
+            body_load=body_load,
+            pressure=pressure,
+            marker_force_density=marker_force_density,
+            args=args,
         )
         return MACRigidImmersedStepResult(
             fluid_state=second.fluid_state,
@@ -917,7 +943,10 @@ class MACRigidImmersedMidpointMethod(StrictModule, NonTrainableState):
         )
 
 
-def jax_tree_where(condition: Array, candidate, fallback):
+_Tree = TypeVar("_Tree")
+
+
+def jax_tree_where(condition: Array, candidate: _Tree, fallback: _Tree) -> _Tree:
     import jax
 
     return jax.tree.map(

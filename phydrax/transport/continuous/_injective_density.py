@@ -10,11 +10,13 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._probability import _leading_shape, AbstractProbabilityLaw
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 
 
 class InjectiveDensityResult(StrictModule):
@@ -54,7 +56,7 @@ class InjectiveContinuousFlowLaw(AbstractProbabilityLaw):
         rank_tolerance: float = 1.0e-8,
         maximum_dimension: int = 64,
         law_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(latent_law, AbstractProbabilityLaw):
             raise TypeError("latent_law must be an AbstractProbabilityLaw.")
         if not callable(map) or not callable(left_inverse):
@@ -112,7 +114,7 @@ class InjectiveContinuousFlowLaw(AbstractProbabilityLaw):
     def density_measure_kind(self) -> str:
         return "hausdorff"
 
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         latent = jnp.asarray(self.latent_law.sample(key, sample_shape))
         leading = _leading_shape(
             latent.shape,
@@ -134,12 +136,14 @@ class InjectiveContinuousFlowLaw(AbstractProbabilityLaw):
         latent_size = prod(self.latent_law.event_shape)
         target_size = prod(self.event_shape)
 
-        def one(target):
+        def one(
+            target: Array,
+        ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
             latent = jnp.asarray(self.left_inverse(target))
             reconstructed = jnp.asarray(self.map(latent))
             residual = jnp.sqrt(jnp.sum((reconstructed - target) ** 2))
 
-            def flattened_map(flat_latent):
+            def flattened_map(flat_latent: Array) -> Array:
                 return jnp.asarray(
                     self.map(flat_latent.reshape(self.latent_law.event_shape))
                 ).reshape((target_size,))

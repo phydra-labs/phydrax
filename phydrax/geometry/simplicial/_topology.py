@@ -8,7 +8,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import scipy.sparse as sp
-from jaxtyping import Array
+from jax import Array
 from scipy.sparse.csgraph import connected_components
 
 from ..._strict import StrictModule
@@ -101,7 +101,7 @@ class SegmentTopology(StrictModule):
     vertex_edges: Array
     num_vertices: int = eqx.field(static=True)
 
-    def __init__(self, edges: Array, *, num_vertices: int | None = None):
+    def __init__(self, edges: Array, *, num_vertices: int | None = None) -> None:
         edges_host = np.asarray(edges, dtype=np.int32)
         if edges_host.ndim != 2 or edges_host.shape[1] != 2 or edges_host.shape[0] == 0:
             raise ValueError("edges must have shape (num_edges > 0, 2).")
@@ -191,7 +191,7 @@ class TriangleTopology(StrictModule):
     num_vertices: int = eqx.field(static=True)
     watertight: bool = eqx.field(static=True)
 
-    def __init__(self, faces: Array, *, num_vertices: int | None = None):
+    def __init__(self, faces: Array, *, num_vertices: int | None = None) -> None:
         faces_host = np.asarray(faces, dtype=np.int32)
         if faces_host.ndim != 2 or faces_host.shape[1] != 3 or faces_host.shape[0] == 0:
             raise ValueError("faces must have shape (num_faces > 0, 3).")

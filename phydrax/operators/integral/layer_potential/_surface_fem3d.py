@@ -7,7 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -46,7 +46,7 @@ class _SurfaceFEMBinding3D(StrictModule, NonTrainableState):
         *,
         quadrature_order: int,
         numeric_version: str,
-    ):
+    ) -> None:
         if not isinstance(region, MeshRegion):
             raise TypeError("[geometry] 3D Galerkin preparation requires a MeshRegion.")
         version = str(numeric_version)

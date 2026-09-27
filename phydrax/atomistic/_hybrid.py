@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -62,7 +63,7 @@ def evaluate_force_group(
     if not selected:
         raise ValueError(f"Potential program has no force group {group}.")
 
-    def energy_closure(value):
+    def energy_closure(value: Array) -> tuple[Array, tuple[Array, Array]]:
         context = potential.context(value, neighborhood, **context_kwargs)
         evaluations = tuple(potential.terms[index].energy(context) for index in selected)
         terms = jnp.stack(tuple(item.energy for item in evaluations))
@@ -97,7 +98,7 @@ class RegionMaskedPotential(AbstractAtomisticEnergyTerm):
         /,
         *,
         name: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(term, AbstractAtomisticEnergyTerm):
             raise TypeError("term must be AbstractAtomisticEnergyTerm.")
         if not term.capabilities.local_energy:
@@ -148,7 +149,7 @@ class PreparedRegionMaskedPotential(AbstractPreparedAtomisticEnergyTerm):
         term: AbstractPreparedAtomisticEnergyTerm,
         mask: Array,
         /,
-    ):
+    ) -> None:
         self.plan = plan
         self.term = term
         self.mask = jnp.asarray(mask, dtype=jnp.bool_)
@@ -188,7 +189,7 @@ class RESPAPlan(StrictModule, NonTrainableState):
         *,
         fast_group: int = 0,
         slow_group: int = 1,
-    ):
+    ) -> None:
         step = float(outer_step_size)
         inner = int(inner_steps)
         fast = int(fast_group)
@@ -257,7 +258,7 @@ def respa_step(
     neighborhood = state.neighborhood
     unwrapped = dynamics._unwrapped(state.kinematics, state.cell_vectors)
 
-    def kwargs(current_unwrapped):
+    def kwargs(current_unwrapped: Array) -> dict[str, Any]:
         values: dict[str, Any] = {
             "unwrapped_positions": current_unwrapped,
             "species": state.species,

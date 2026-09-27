@@ -10,7 +10,8 @@ from typing import Literal
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ....qualification import (
@@ -100,7 +101,7 @@ class CotranslationObservationLaw:
         forster_radius: float | None = None,
         forster_radius_standard_error: float | None = None,
         length_unit: UnitDefinition | None = None,
-    ):
+    ) -> None:
         if observable_kind not in (
             "length-resolved-fret",
             "calibrated-arrest-release",
@@ -188,18 +189,28 @@ class CotranslationObservationLaw:
                 "Latent and measured dwell values and uncertainties must align."
             )
         if self.observable_kind == "length-resolved-fret":
-            factor = float(conversion_factor(latent_unit, self.length_unit))
+            length_unit = self.length_unit
+            radius = self.forster_radius
+            radius_error = self.forster_radius_standard_error
+            # __init__ requires every FRET calibration field for this observable.
+            if not (
+                length_unit is not None
+                and radius is not None
+                and (radius_error is not None)
+            ):
+                raise RuntimeError(
+                    "Internal invariant failed: length_unit is not None and radius is not None and (radius_error is not None)."
+                )
+            factor = float(conversion_factor(latent_unit, length_unit))
             distance = values * factor
             distance_error = latent_errors * factor
-            ratio = distance / self.forster_radius
+            ratio = distance / radius
             denominator = 1.0 + ratio**6
             prediction = 1.0 / denominator
-            distance_derivative = (
-                6.0 * jnp.abs(ratio) ** 5 / (self.forster_radius * denominator**2)
-            )
-            radius_derivative = 6.0 * ratio**6 / (self.forster_radius * denominator**2)
+            distance_derivative = 6.0 * jnp.abs(ratio) ** 5 / (radius * denominator**2)
+            radius_derivative = 6.0 * ratio**6 / (radius * denominator**2)
             variance = (distance_derivative * distance_error) ** 2 + (
-                radius_derivative * self.forster_radius_standard_error
+                radius_derivative * radius_error
             ) ** 2
             return prediction, jnp.sqrt(jnp.maximum(variance, 0.0))
         factor = float(conversion_factor(latent_unit, _PER_SECOND))
@@ -248,7 +259,7 @@ class LengthResolvedCotranslationObservations:
         timing_semantics: Literal["measured-dwell-time"],
         source: ReferenceArtifactManifest,
         timing_reference: ReferenceArtifactManifest | None,
-    ):
+    ) -> None:
         cases = tuple(case_ids)
         independent = tuple(independent_unit_ids)
         preparations = tuple(preparation_ids)
@@ -383,7 +394,7 @@ class CotranslationModelFit:
         prediction_code: ReferenceArtifactManifest,
         fit_execution_evidence: QualificationEvidence,
         /,
-    ):
+    ) -> None:
         if not isinstance(campaign, ScientificCampaign):
             raise TypeError("campaign must be a ScientificCampaign.")
         model = _identifier(model_id, "model_id")
@@ -514,7 +525,7 @@ class CotranslationModelPrediction:
         /,
         *,
         latent_unit: UnitDefinition,
-    ):
+    ) -> None:
         if not isinstance(observations, LengthResolvedCotranslationObservations):
             raise TypeError(
                 "observations must be LengthResolvedCotranslationObservations."

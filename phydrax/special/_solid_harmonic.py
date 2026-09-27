@@ -7,12 +7,13 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import jax.numpy as jnp
 from jax import Array, lax
 from jax.typing import ArrayLike
 
+from ..typing import parse
 from ._dtype import _positive_log, promote_real
 from ._spherical_harmonic import (
     _azimuth_power,
@@ -23,7 +24,7 @@ from ._spherical_harmonic import (
 )
 
 
-SolidHarmonicKind = Literal["regular", "irregular"]
+SolidHarmonicKind: TypeAlias = Literal["regular", "irregular"]
 
 
 def _cartesian_vectors(name: str, vector: ArrayLike, /) -> Array:
@@ -131,8 +132,8 @@ def _synthesis_dtype(coefficients: Array, displacements: Array, /) -> jnp.dtype:
 
 
 def _solid_harmonic_synthesis(
-    coefficients: Array,
-    displacements: Array,
+    coefficients: ArrayLike,
+    displacements: ArrayLike,
     /,
     *,
     bandlimit: int,
@@ -143,8 +144,7 @@ def _solid_harmonic_synthesis(
     limit = int(bandlimit)
     if limit <= 0:
         raise ValueError("bandlimit must be positive.")
-    if kind not in ("regular", "irregular"):
-        raise ValueError("kind must be 'regular' or 'irregular'.")
+    kind = parse(kind, SolidHarmonicKind, "kind")
 
     modal = jnp.asarray(coefficients)
     coefficient_shape = (limit, 2 * limit - 1)

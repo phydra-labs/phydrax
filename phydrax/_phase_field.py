@@ -10,7 +10,8 @@ from collections.abc import Callable, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ._strict import StrictModule
@@ -72,7 +73,7 @@ class BulkPotentialDomain(StrictModule, NonTrainableState):
         *,
         open_lower: bool = False,
         open_upper: bool = False,
-    ):
+    ) -> None:
         lower_ = None if lower is None else float(lower)
         upper_ = None if upper is None else float(upper)
         if lower_ is not None and not np.isfinite(lower_):
@@ -153,7 +154,7 @@ class PolynomialBulkFreeEnergy(AbstractBulkFreeEnergy):
     domain: BulkPotentialDomain
     free_energy_id: str = eqx.field(static=True)
 
-    def __init__(self, coefficients: Sequence[float] | ArrayLike, /):
+    def __init__(self, coefficients: Sequence[float] | ArrayLike, /) -> None:
         values = np.asarray(coefficients, dtype=np.float64)
         if (
             values.ndim != 1
@@ -235,7 +236,7 @@ class DoubleWellFreeEnergy(AbstractBulkFreeEnergy):
     domain: BulkPotentialDomain
     free_energy_id: str = eqx.field(static=True)
 
-    def __init__(self, scale: ArrayLike = 1.0, /):
+    def __init__(self, scale: ArrayLike = 1.0, /) -> None:
         scale_host = np.asarray(scale)
         if scale_host.shape != () or not np.isfinite(scale_host) or scale_host <= 0.0:
             raise ValueError("Double-well scale must be one positive finite scalar.")
@@ -297,7 +298,7 @@ class CallableBulkFreeEnergy(AbstractBulkFreeEnergy):
         *,
         potential_id: str,
         domain: BulkPotentialDomain | None = None,
-    ):
+    ) -> None:
         functions = (density, derivative, discrete_derivative, incremental_density)
         if any(not callable(function) for function in functions):
             raise TypeError("Callable bulk energy requires four callable laws.")

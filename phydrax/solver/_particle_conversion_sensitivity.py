@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._differentiation import (
     branch_policy_contract,
@@ -48,7 +49,7 @@ class ParticleConversionSensitivityPolicy(StrictModule, NonTrainableState):
         temperature_margin: float = 1.0e-6,
         phase_margin: float = 1.0e-10,
         reaction_margin: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(mode, BranchDifferentiationPolicy):
             raise TypeError("mode must be a BranchDifferentiationPolicy.")
         match mode:
@@ -264,7 +265,7 @@ def particle_conversion_surrogate_bias(
     )
 
 
-def _mask_sensitivity(value, usable):
+def _mask_sensitivity(value: PyTree, usable: Array) -> PyTree:
     return jax.tree.map(
         lambda leaf: (
             jnp.where(usable, leaf, jnp.nan) if eqx.is_inexact_array(leaf) else leaf

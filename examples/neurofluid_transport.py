@@ -49,7 +49,12 @@ runtime = phx.equations.MixedDimensionalTransportPlan(
     np.asarray((0.2,)),
 ).prepare()
 state = phx.equations.MixedDimensionalTransportState(
-    np.asarray((3.0,)), np.asarray((1.0, 1.5)), np.asarray((0.5,))
+    # ty: ignore[invalid-argument-type]
+    np.asarray((3.0,)),
+    # ty: ignore[invalid-argument-type]
+    np.asarray((1.0, 1.5)),
+    # ty: ignore[invalid-argument-type]
+    np.asarray((0.5,)),
 )
 initial_mass = float(runtime.ledger(state).total_mass)
 for _ in range(5):

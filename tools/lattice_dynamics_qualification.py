@@ -36,12 +36,15 @@ from phydrax.sparse import EdgeRelation
 def qualify() -> dict[str, object]:
     units = AtomisticUnitSystem.reduced()
     cell = PeriodicCell(np.eye(3))
+    # ty: ignore[invalid-argument-type]
     relation = EdgeRelation([0, 0, 0], [0, 0, 0], source_size=1, target_size=1)
     blocks = np.asarray([-np.eye(3), 2.0 * np.eye(3), -np.eye(3)])
     ifc = normalize_second_order_force_constants(
         relation,
+        # ty: ignore[invalid-argument-type]
         [[-1, 0, 0], [0, 0, 0], [1, 0, 0]],
         blocks,
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0]],
         cell,
         second_order_force_constant_unit(
@@ -53,11 +56,13 @@ def qualify() -> dict[str, object]:
         constraint_policy=IFCConstraintPolicy(maximum_relative_correction=1.0e-12),
     )
     q = np.asarray([[0.125, 0.0, 0.0], [0.25, 0.0, 0.0], [0.375, 0.0, 0.0]])
+    # ty: ignore[invalid-argument-type]
     dispersion = HarmonicPhononPlan(ifc, [1.0], units).prepare().evaluate(q)
     expected = 2.0 * np.abs(np.sin(np.pi * q[:, 0]))
     dispersion_residual = float(
         np.max(np.abs(np.asarray(dispersion.angular_frequencies[:, 0]) - expected))
     )
+    # ty: ignore[invalid-argument-type]
     thermal = HarmonicThermodynamicsPlan([1 / 3, 1 / 3, 1 / 3], [1.0, 2.0, 3.0], units)
     thermodynamics = thermal.evaluate(dispersion.angular_frequencies)
     volumes = np.arange(8.0, 13.0)
@@ -96,11 +101,16 @@ def qualify() -> dict[str, object]:
     )
     vertices = IFC3ModeVertexPlan(
         ifc3,
+        # ty: ignore[invalid-argument-type]
         [[0]],
         (1,),
+        # ty: ignore[invalid-argument-type]
         [[0.0]],
+        # ty: ignore[invalid-argument-type]
         [[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]],
+        # ty: ignore[invalid-argument-type]
         [np.eye(6)],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         units,
         phonon_result_id="qualification-phonons",
@@ -109,14 +119,17 @@ def qualify() -> dict[str, object]:
     velocity[0, 0, 0] = 1.0
     rta = ThreePhononRTAPlan(
         ifc3,
+        # ty: ignore[invalid-argument-type]
         [[0]],
         (1,),
+        # ty: ignore[invalid-argument-type]
         [1.0],
         0.02,
         1.0,
         1.0,
         units,
         detailed_balance_tolerance=1.0e-10,
+        # ty: ignore[invalid-argument-type]
     ).evaluate(vertices, velocity, [[1.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
     criteria = {
         "ifc_pair": float(ifc.constraints.corrected_pair_residual) <= 1.0e-12,

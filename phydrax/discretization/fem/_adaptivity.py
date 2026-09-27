@@ -14,7 +14,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 
@@ -26,7 +27,7 @@ class FiniteElementErrorEstimate(StrictModule):
     global_estimate: Array
     estimator_id: str = eqx.field(static=True)
 
-    def __init__(self, cell_indicators: ArrayLike, estimator_id: str, /):
+    def __init__(self, cell_indicators: ArrayLike, estimator_id: str, /) -> None:
         indicators = jnp.asarray(cell_indicators)
         if indicators.ndim != 1:
             raise ValueError("cell_indicators must be rank-1.")
@@ -151,7 +152,7 @@ class FiniteElementDWRIndicators(StrictModule):
     absolute: Array
     global_estimate: Array
 
-    def __init__(self, signed: ArrayLike, /):
+    def __init__(self, signed: ArrayLike, /) -> None:
         signed_ = jnp.asarray(signed)
         if signed_.ndim != 1:
             raise ValueError("DWR signed indicators must be rank-1.")

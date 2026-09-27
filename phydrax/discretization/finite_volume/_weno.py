@@ -9,11 +9,13 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 WENOOrder: TypeAlias = Literal[3, 5]
@@ -136,9 +138,8 @@ class WENOReconstructionPlan(StrictModule, NonTrainableState):
         *,
         epsilon: float = 1e-6,
         power: int = 2,
-    ):
-        if order not in (3, 5):
-            raise ValueError("WENO order must be 3 or 5.")
+    ) -> None:
+        order = parse(order, WENOOrder, "order")
         epsilon_ = float(epsilon)
         power_ = int(power)
         if not np.isfinite(epsilon_) or epsilon_ <= 0.0 or power_ <= 0:

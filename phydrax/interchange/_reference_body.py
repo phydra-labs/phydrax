@@ -9,7 +9,8 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -41,7 +42,7 @@ class ReferenceBodyContract(StrictModule, NonTrainableState):
         *,
         gravity_model_id: str | None = None,
         magnetic_model_id: str | None = None,
-    ):
+    ) -> None:
         name_ = str(name).strip()
         gm, major, minor, rotation, epoch = (
             float(gravitational_parameter_m3_s2),
@@ -112,7 +113,7 @@ class PlanetaryCoordinateContract(StrictModule, NonTrainableState):
         latitude_kind: Literal["planetocentric", "planetographic"],
         longitude_positive: Literal["east", "west"] = "east",
         frame: Literal["body-fixed", "inertial"] = "body-fixed",
-    ):
+    ) -> None:
         if not isinstance(body, ReferenceBodyContract) or not isinstance(
             geospatial, GeospatialContract
         ):

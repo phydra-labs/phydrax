@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -28,7 +29,7 @@ class LiftingFrame3D(StrictModule):
         *,
         linear_velocity: ArrayLike | None = None,
         angular_velocity: ArrayLike | None = None,
-    ):
+    ) -> None:
         rotation_ = jnp.asarray(rotation, dtype=jnp.float64)
         translation_ = jnp.asarray(translation, dtype=jnp.float64)
         linear = (
@@ -85,7 +86,7 @@ class LiftingComponentPlan(StrictModule, NonTrainableState):
         *,
         body_id: int = 0,
         flap_fraction: ArrayLike | None = None,
-    ):
+    ) -> None:
         if (
             not str(name)
             or not isinstance(surface, LiftingSurfacePlan)
@@ -141,7 +142,7 @@ class MultiLiftingSurfacePlan(StrictModule, NonTrainableState):
     components: tuple[LiftingComponentPlan, ...]
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, components: tuple[LiftingComponentPlan, ...], /):
+    def __init__(self, components: tuple[LiftingComponentPlan, ...], /) -> None:
         if not components or any(
             not isinstance(component, LiftingComponentPlan) for component in components
         ):
@@ -160,10 +161,10 @@ class MultiLiftingSurfacePlan(StrictModule, NonTrainableState):
     def prepare(self, /) -> PreparedMultiLiftingSurface:
         prepared = tuple(component.surface.prepare() for component in self.components)
 
-        def points(component, value):
+        def points(component: LiftingComponentPlan, value: ArrayLike) -> Array:
             return component.frame.points(value)
 
-        def vectors(component, value):
+        def vectors(component: LiftingComponentPlan, value: ArrayLike) -> Array:
             return component.frame.vectors(value)
 
         bound_start = jnp.concatenate(

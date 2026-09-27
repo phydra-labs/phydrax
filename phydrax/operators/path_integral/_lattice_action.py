@@ -10,12 +10,14 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ..._sampling import FullMarkovTarget, IncrementalMarkovTarget
 from ..._strict import StrictModule
 from ...metrix import AbstractStateGeometry
 from ...sampling._compact_group_hamiltonian import CompactGeometricTarget
+from ...typing import parse
 
 
 LatticeReferenceMeasure: TypeAlias = Literal[
@@ -44,9 +46,10 @@ class LatticeActionEvidence(StrictModule):
         normalizable: bool,
         additive_constant: float,
         evidence_id: str,
-    ):
-        if reference_measure not in ("lebesgue", "flat-torus", "product-haar"):
-            raise ValueError("Unknown lattice reference measure.")
+    ) -> None:
+        reference_measure = parse(
+            reference_measure, LatticeReferenceMeasure, "reference_measure"
+        )
         constant = float(additive_constant)
         if not jnp.isfinite(constant):
             raise ValueError("additive_constant must be finite.")
@@ -137,7 +140,7 @@ def _initialize_incremental_action(
     action: AbstractIncrementalLatticeAction,
     configuration: PyTree[Any],
     /,
-):
+) -> tuple[Array, PyTree[Array]]:
     value, cache = action.initialize_incremental(configuration)
     return -jnp.asarray(value), cache
 
@@ -149,7 +152,7 @@ def _propose_incremental_action(
     proposed: PyTree[Any],
     payload: PyTree[Any],
     /,
-):
+) -> tuple[Array, PyTree[Array], Array]:
     delta, proposed_cache, valid = action.propose_incremental(
         current, cache, proposed, payload
     )
@@ -162,7 +165,7 @@ def _select_incremental_action(
     proposed: PyTree[Any],
     accepted: Array,
     /,
-):
+) -> PyTree[Array]:
     return action.select_incremental(current, proposed, accepted)
 
 
@@ -170,7 +173,7 @@ def _refresh_incremental_action(
     action: AbstractIncrementalLatticeAction,
     configuration: PyTree[Any],
     /,
-):
+) -> tuple[Array, PyTree[Array]]:
     value, cache = action.refresh_incremental(configuration)
     return -jnp.asarray(value), cache
 

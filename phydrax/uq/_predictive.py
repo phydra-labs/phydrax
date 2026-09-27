@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.axes as cx
 
@@ -17,7 +17,6 @@ from .._frozendict import frozendict
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._uncertainty import (
-    UNCERTAINTY_SOURCES,
     UncertaintySource,
     validate_uncertainty_source,
 )
@@ -30,7 +29,7 @@ class SampleAxis(StrictModule):
     dim: str
     source: UncertaintySource
 
-    def __init__(self, dim: str, source: UncertaintySource):
+    def __init__(self, dim: str, source: UncertaintySource) -> None:
         if not isinstance(dim, str) or not dim:
             raise ValueError("SampleAxis.dim must be a non-empty string.")
         self.dim = dim
@@ -57,7 +56,7 @@ class PredictionInterval(StrictModule):
         nominal_coverage: float,
         simultaneous: bool = False,
         calibrated: bool = False,
-    ):
+    ) -> None:
         if not isinstance(lower, cx.AxisArray) or not isinstance(upper, cx.AxisArray):
             raise TypeError(
                 "PredictionInterval bounds must be phydrax.axes.AxisArray objects."
@@ -98,7 +97,7 @@ class PredictiveField(StrictModule):
         conditional_variance: cx.AxisArray | None = None,
         valid: cx.AxisArray | None = None,
         precision: PredictivePrecisionPolicy | None = None,
-    ):
+    ) -> None:
         if not isinstance(samples, cx.AxisArray):
             raise TypeError("PredictiveField.samples must be a phydrax.axes.AxisArray.")
         axes = tuple(sample_axes)
@@ -168,11 +167,9 @@ class PredictiveField(StrictModule):
             selected = (sources,)
         else:
             selected = tuple(sources)
-        invalid = tuple(
-            source for source in selected if source not in UNCERTAINTY_SOURCES
+        selected = tuple(
+            validate_uncertainty_source(source, owner="sources") for source in selected
         )
-        if invalid:
-            raise ValueError(f"Unknown uncertainty sources: {invalid!r}.")
         dims = tuple(
             axis.dim for axis in self.sample_axes if axis.source in frozenset(selected)
         )

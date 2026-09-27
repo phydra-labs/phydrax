@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -23,7 +24,7 @@ class ConstrainedMechanicalState(StrictModule):
     configuration: Array
     momentum: Array
 
-    def __init__(self, configuration: ArrayLike, momentum: ArrayLike, /):
+    def __init__(self, configuration: ArrayLike, momentum: ArrayLike, /) -> None:
         configuration_ = jnp.asarray(configuration)
         momentum_ = jnp.asarray(momentum)
         if configuration_.ndim != 1 or momentum_.shape != configuration_.shape:
@@ -62,7 +63,7 @@ class SHAKERATTLEPlan:
         maximum_projection_steps: int = 8,
         constraint_tolerance: float = 1.0e-10,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         inverse_mass_ = jnp.asarray(inverse_mass)
         if inverse_mass_.ndim != 1 or inverse_mass_.size == 0:
             raise ValueError("inverse_mass must be a non-empty vector.")
@@ -98,10 +99,14 @@ class SHAKERATTLEPlan:
         object.__setattr__(self, "constraint_tolerance", tolerance)
         object.__setattr__(self, "plan_id", identifier)
 
-    def _position_projection(self, trial: Array, args: object, /):
+    def _position_projection(
+        self, trial: Array, args: object, /
+    ) -> tuple[Array, Array, Array]:
         inverse_mass = self.inverse_mass
 
-        def project(_, carry):
+        def project(
+            _: Array, carry: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array, Array]:
             configuration, active, used = carry
             residual = jnp.atleast_1d(jnp.asarray(self.constraint(configuration, args)))
             jacobian = jax.jacfwd(

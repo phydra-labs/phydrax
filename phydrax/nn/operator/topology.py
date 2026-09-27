@@ -11,7 +11,8 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ...graph._ir import GraphIR
 from ...graph._operator_topology import (

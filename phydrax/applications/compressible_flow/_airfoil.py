@@ -11,7 +11,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -65,7 +66,7 @@ class AirfoilSectionPlan(StrictModule, NonTrainableState):
         /,
         *,
         source_manifest: ReferenceArtifactManifest | None = None,
-    ):
+    ) -> None:
         points = np.asarray(coordinates, dtype=np.float64)
         if points.ndim != 2 or points.shape[1] != 2 or points.shape[0] < 8:
             raise ValueError("Airfoil section requires at least eight planar points.")
@@ -159,7 +160,7 @@ class AirfoilOGridPlan(StrictModule, NonTrainableState):
         /,
         *,
         center: ArrayLike | None = None,
-    ):
+    ) -> None:
         circumferential = int(circumferential_cells)
         radial = int(radial_cells)
         radius = float(farfield_radius)
@@ -224,13 +225,14 @@ class AirfoilOGridPlan(StrictModule, NonTrainableState):
         ).prepare(jnp.asarray(((0.0, 0.0), (1.0, 1.0))))
         reference = FiniteVolumePlan(grid, component_names=names).prepare()
         seam = MappedPeriodicSeamPlan(0, jnp.eye(2), jnp.zeros((2,)))
+        center_host = np.asarray(self.center)
         coordinate_map = partial(
             _static_airfoil_o_grid_map,
             coordinates=tuple(
-                tuple(float(component) for component in point)
+                (float(point[0]), float(point[1]))
                 for point in np.asarray(self.section.coordinates)
             ),
-            center=tuple(float(component) for component in np.asarray(self.center)),
+            center=(float(center_host[0]), float(center_host[1])),
             radius=self.farfield_radius,
         )
         discretization = MappedFiniteVolumePlan(
@@ -292,7 +294,7 @@ class RAE2822CasePlan(StrictModule, NonTrainableState):
         reynolds_number: float,
         target_lift_coefficient: float,
         reference_temperature: float,
-    ):
+    ) -> None:
         values = tuple(
             float(value)
             for value in (
@@ -373,7 +375,7 @@ class TransonicFixedLiftPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-8,
         maximum_steps: int = 64,
-    ):
+    ) -> None:
         target = float(target_lift_coefficient)
         lower, upper = (float(value) for value in angle_bracket)
         tolerance_ = float(tolerance)

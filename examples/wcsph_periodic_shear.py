@@ -30,6 +30,7 @@ particles = phx.discretization.ParticleSetPlan(
     ambient_dimension=2,
     name="periodic-shear-particles",
 ).prepare()
+# ty: ignore[invalid-argument-type]
 box = phx.discretization.ParticleBox([0.0, 0.0], [1.0, 1.0])
 method = phx.discretization.WeaklyCompressibleSPHMethodPlan(
     phx.discretization.WendlandC2SPHKernel(2),
@@ -84,6 +85,7 @@ if not bool(solution.backend_successful & neighborhood.successful):
 
 print("solver", solution.resolved_method)
 print("particle count", particle_count)
+# ty: ignore[unresolved-attribute]
 print("cell shape", compiled.dynamics.neighborhood.cell_shape)
 print("pair count", int(neighborhood.pair_count))
 print("maximum cell occupancy", int(neighborhood.maximum_cell_occupancy))

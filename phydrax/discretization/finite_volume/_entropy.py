@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -42,7 +43,7 @@ class FiniteVolumeEntropyDiagnostics(StrictModule):
         convective_entropy_rate: ArrayLike,
         admissible: ArrayLike,
         precision_evidence: PrecisionEvidenceEnvelope,
-    ):
+    ) -> None:
         identifier = str(pair_id)
         if not identifier:
             raise ValueError("pair_id must be non-empty.")

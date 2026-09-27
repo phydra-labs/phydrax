@@ -8,7 +8,8 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
@@ -16,7 +17,9 @@ from .._strict import StrictModule
 from ..linalg import HermitianPrecisionPolicy, HermitianSpectrum
 
 
-def canonical_commutation_matrix(mode_count: int, /, *, dtype=jnp.float64) -> Array:
+def canonical_commutation_matrix(
+    mode_count: int, /, *, dtype: DTypeLike = jnp.float64
+) -> Array:
     modes = int(mode_count)
     if modes < 1:
         raise ValueError("mode_count must be positive.")
@@ -49,7 +52,7 @@ class BosonicGaussianState(StrictModule):
         tolerance: float = 1e-9,
         geometry_precision: GeometryPrecisionPolicy | None = None,
         hermitian_precision: HermitianPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         hbar_ = float(hbar)
         if not isfinite(hbar_) or hbar_ <= 0.0:
             raise ValueError("hbar must be finite and strictly positive.")
@@ -149,7 +152,7 @@ class BosonicGaussianChannel(StrictModule):
         tolerance: float = 1e-9,
         geometry_precision: GeometryPrecisionPolicy | None = None,
         hermitian_precision: HermitianPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         hbar_ = float(hbar)
         if not isfinite(hbar_) or hbar_ <= 0.0:
             raise ValueError("hbar must be finite and strictly positive.")

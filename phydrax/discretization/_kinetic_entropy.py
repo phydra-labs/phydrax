@@ -4,20 +4,24 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
-KineticEntropyRootStrategy = Literal["exact", "asymptotic", "hybrid"]
+KineticEntropyRootStrategy: TypeAlias = Literal["exact", "asymptotic", "hybrid"]
+# (alpha, lower, upper, active, newton steps, bisection steps, iterations)
+_RootCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 KINETIC_ENTROPY_SUCCESS = 0
 KINETIC_ENTROPY_NONFINITE = 1
@@ -49,9 +53,8 @@ class KineticEntropyRootPlan(StrictModule, NonTrainableState):
         positivity_margin: float = 1.0e-7,
         minimum_root: float = 1.0,
         maximum_root: float = 4.0,
-    ):
-        if strategy not in ("exact", "asymptotic", "hybrid"):
-            raise ValueError(f"Unknown kinetic entropy root strategy {strategy!r}.")
+    ) -> None:
+        strategy = parse(strategy, KineticEntropyRootStrategy, "strategy")
         steps = int(maximum_steps)
         residual = float(residual_tolerance)
         approximation = float(approximation_tolerance)
@@ -217,7 +220,7 @@ def solve_kinetic_entropy_root(
     bisection_count = jnp.zeros(values.shape[:-1], dtype=jnp.int32)
     iteration_count = jnp.zeros(values.shape[:-1], dtype=jnp.int32)
 
-    def body(_, state):
+    def body(_: Array, state: _RootCarry) -> _RootCarry:
         (
             current,
             lo,

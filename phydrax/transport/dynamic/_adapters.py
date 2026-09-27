@@ -8,10 +8,12 @@ from math import prod
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...stochastic._state_space import CategoricalStatePrior
+from ...typing import PRNGKey
 from ._kernel import (
     _path_indices,
     bridge_path_log_prob,
@@ -32,7 +34,7 @@ class BridgeInferenceAdapter(StrictModule):
     result: SchrodingerBridgeResult
     transition: ControlledTransitionKernel
 
-    def __init__(self, result: SchrodingerBridgeResult, /):
+    def __init__(self, result: SchrodingerBridgeResult, /) -> None:
         if not isinstance(result, SchrodingerBridgeResult):
             raise TypeError("result must be a SchrodingerBridgeResult.")
         result = require_converged_bridge(result)
@@ -59,7 +61,7 @@ class BridgeInferenceAdapter(StrictModule):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
         *,
         sample_shape: tuple[int, ...] = (),
@@ -75,7 +77,7 @@ class TerminalDistributionControlAdapter(StrictModule):
     terminal_probabilities: Array
     terminal_weights: Array
 
-    def __init__(self, result: SchrodingerBridgeResult, /):
+    def __init__(self, result: SchrodingerBridgeResult, /) -> None:
         if not isinstance(result, SchrodingerBridgeResult):
             raise TypeError("result must be a SchrodingerBridgeResult.")
         result = require_converged_bridge(result)

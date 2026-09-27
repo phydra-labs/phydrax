@@ -10,7 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
 from .._plans import LinearSolvePlan
@@ -195,7 +195,7 @@ def solve_sparse(
         reorder = method.reorder if isinstance(method, SparseQR) else 1
         flattened_values = state.storage.values.reshape((batch_count, state.storage.nnz))
 
-        def solve_one(inputs):
+        def solve_one(inputs: tuple[Array, Array]) -> Array:
             values, right_hand_side = inputs
             columns = tuple(
                 spsolve(

@@ -10,13 +10,15 @@ import equinox as eqx
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 from phydrax.nn.operator.representations import O3Features, O3Representation
+
+from ....typing import PRNGKey
 
 
 class RadialBasis(StrictModule, NonTrainableState):
@@ -27,7 +29,7 @@ class RadialBasis(StrictModule, NonTrainableState):
     width: float = eqx.field(static=True)
     count: int = eqx.field(static=True)
 
-    def __init__(self, count: int, radius: float, /):
+    def __init__(self, count: int, radius: float, /) -> None:
         self.count = int(count)
         self.radius = float(radius)
         if self.count <= 0 or self.radius <= 0.0:
@@ -61,8 +63,8 @@ class RadialMap(StrictModule):
         out_multiplicity: int,
         /,
         *,
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         self.in_multiplicity = int(in_multiplicity)
         self.out_multiplicity = int(out_multiplicity)
         scale = 1.0 / sqrt(float(int(basis_count) * self.in_multiplicity))
@@ -79,7 +81,7 @@ def _radial_map(
     basis_count: int,
     in_multiplicity: int,
     out_multiplicity: int,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> RadialMap | None:
     if int(in_multiplicity) == 0 or int(out_multiplicity) == 0:
@@ -164,8 +166,8 @@ class EquivariantIntegralLayer(StrictModule):
         *,
         radius: float,
         radial_basis_size: int = 16,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.in_representation = in_representation
         self.out_representation = out_representation
         self.radial_basis = RadialBasis(radial_basis_size, radius)
@@ -484,8 +486,8 @@ class O3PointwiseLinear(StrictModule):
         /,
         *,
         use_scalar_bias: bool = True,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.in_representation = in_representation
         self.out_representation = out_representation
         keys = iter(jr.split(key, 7))

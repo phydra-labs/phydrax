@@ -9,7 +9,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -71,7 +72,7 @@ class VariablePatchALEPlan(StrictModule, NonTrainableState):
         *,
         endpoint_tolerance: float = 1.0e-10,
         minimum_reduction_factor: float = 0.1,
-    ):
+    ) -> None:
         tolerance = float(endpoint_tolerance)
         reduction = float(minimum_reduction_factor)
         if (
@@ -96,7 +97,7 @@ class VariablePatchALEPlan(StrictModule, NonTrainableState):
         self,
         source: VariablePatchGeometryState,
         step_size: ArrayLike,
-        args=None,
+        args: object = None,
         /,
     ) -> VariablePatchALEStepGeometry:
         if (

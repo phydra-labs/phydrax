@@ -15,16 +15,17 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, Key
+from jax import Array
 
 from .._strict import StrictModule
+from ..typing import parse, PRNGKey
 
 
 LevyAreaKind: TypeAlias = Literal["brownian", "space_time", "space_time_time"]
 WienerAlgorithm: TypeAlias = Literal["virtual_tree"]
 
 
-def _validated_key(key: Key[Array, ""], /) -> Array:
+def _validated_key(key: PRNGKey, /) -> Array:
     try:
         key_data = jr.key_data(key)
     except (TypeError, ValueError) as exc:
@@ -118,7 +119,7 @@ class WienerRealization(StrictModule):
 
     def __init__(
         self,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         noise_shape: Sequence[int],
         /,
         *,
@@ -133,7 +134,7 @@ class WienerRealization(StrictModule):
         _path_indices: Array | None = None,
         _realization_id: str | None = None,
         _path_signs: Array | None = None,
-    ):
+    ) -> None:
         key = _validated_key(root_key)
         if len(support) != 2:
             raise ValueError("WienerRealization support must contain exactly two bounds.")
@@ -155,10 +156,7 @@ class WienerRealization(StrictModule):
         tolerance_value = float(tolerance)
         if not isfinite(tolerance_value) or tolerance_value <= 0.0:
             raise ValueError("WienerRealization tolerance must be finite and positive.")
-        if levy_area not in ("brownian", "space_time", "space_time_time"):
-            raise ValueError(
-                "levy_area must be 'brownian', 'space_time', or 'space_time_time'."
-            )
+        levy_area = parse(levy_area, LevyAreaKind, "levy_area")
         if algorithm != "virtual_tree":
             raise ValueError("The only supported Wiener algorithm is 'virtual_tree'.")
         if noise_id is not None and (not isinstance(noise_id, str) or not noise_id):
@@ -239,7 +237,7 @@ class WienerRealization(StrictModule):
     @classmethod
     def independent(
         cls,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         noise_shape: Sequence[int],
         /,
         *,
@@ -267,7 +265,7 @@ class WienerRealization(StrictModule):
     @classmethod
     def antithetic(
         cls,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         noise_shape: Sequence[int],
         /,
         *,

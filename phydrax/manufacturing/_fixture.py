@@ -10,7 +10,7 @@ class FixtureState:
     engaged: bool
     contact_region_id: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.fixture_id or not self.contact_region_id:
             raise ValueError("Fixture identity and contact region are required.")
 

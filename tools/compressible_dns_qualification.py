@@ -475,6 +475,7 @@ def _bind_application_evidence(
         "evidence_id": route_evidence.evidence_id,
     }
     core = {name: value for name, value in artifact.items() if name != "artifact_id"}
+    # ty: ignore[no-matching-overload]
     extra = dict(core["extra"])
     extra["application_route_evidence"] = route_record
     extra["dns_support_inherited"] = False

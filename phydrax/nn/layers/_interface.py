@@ -4,20 +4,21 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._differentiation import DerivativeRegularity
 from ..._model import AbstractArrayModel
 from ..._model._array import value_derivative_contract
 from ..._model._component import ModelExecutionContract
+from ..._validation import positive_finite_float
 from ...geometry import regularized_heaviside_values
+from ...typing import parse
 from .._base import _AbstractBaseModel
 from .._contracts import (
     AFFINE,
@@ -31,7 +32,7 @@ from .._contracts import (
 from .._keys import EvalKey
 
 
-InterfaceDistanceSemantics = Literal["level_set", "signed_distance"]
+InterfaceDistanceSemantics: TypeAlias = Literal["level_set", "signed_distance"]
 # Clip and absolute value; the floored gradient norm; the cosine Heaviside,
 # which matches its constant branches to second order at +-width.
 _C0_PIECEWISE_LINEAR = DerivativeRegularity.piecewise_polynomial(
@@ -76,19 +77,18 @@ class InterfaceFeatureLift(_AbstractBaseModel):
         include_signed_distance: bool = True,
         include_cusp: bool = True,
         include_side: bool = True,
-    ):
+    ) -> None:
         if not callable(level_set):
             raise TypeError("level_set must be callable.")
         dimension = int(in_size)
         if dimension <= 0:
             raise ValueError("in_size must be positive.")
-        if distance_semantics not in ("level_set", "signed_distance"):
-            raise ValueError(
-                "distance_semantics must be 'level_set' or 'signed_distance'."
-            )
-        clip = _positive_finite(distance_clip, "distance_clip")
-        width = _positive_finite(side_width, "side_width")
-        floor = _positive_finite(gradient_floor, "gradient_floor")
+        distance_semantics = parse(
+            distance_semantics, InterfaceDistanceSemantics, "distance_semantics"
+        )
+        clip = positive_finite_float(distance_clip, "distance_clip")
+        width = positive_finite_float(side_width, "side_width")
+        floor = positive_finite_float(gradient_floor, "gradient_floor")
         flags = (
             bool(include_coordinates),
             bool(include_signed_distance),
@@ -190,13 +190,6 @@ class InterfaceFeatureLift(_AbstractBaseModel):
             value_derivative_contract(regularity),
             randomness=network_randomness(self),
         )
-
-
-def _positive_finite(value: float, name: str, /) -> float:
-    resolved = float(value)
-    if not math.isfinite(resolved) or resolved <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return resolved
 
 
 __all__ = ["InterfaceDistanceSemantics", "InterfaceFeatureLift"]

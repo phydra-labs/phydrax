@@ -7,16 +7,17 @@ from __future__ import annotations
 import importlib
 import importlib.util
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import numpy as np
 
 from ...interchange import AdapterError, AdapterLoss, AdapterReport, AdapterStatus
+from ...typing import parse
 from ..imaging import DenseDisplacementField2D
 from ._piv_field import field_columns, field_from_columns
 
 
-PivpyYAxis = Literal["down", "up"]
+PivpyYAxis: TypeAlias = Literal["down", "up"]
 
 
 def is_xarray_available() -> bool:
@@ -29,7 +30,7 @@ def is_pivpy_available() -> bool:
     return importlib.util.find_spec("pivpy") is not None
 
 
-def require_xarray():
+def require_xarray() -> Any:
     """Import xarray only at the interoperability call boundary."""
     if not is_xarray_available():
         raise AdapterError(
@@ -39,7 +40,7 @@ def require_xarray():
     return importlib.import_module("xarray")
 
 
-def require_pivpy():
+def require_pivpy() -> Any:
     """Import pivpy only at the interoperability call boundary."""
     if not is_pivpy_available():
         raise AdapterError(
@@ -223,8 +224,7 @@ def to_pivpy(
     )
     if times_.shape != (len(fields_),) or not np.all(np.isfinite(times_)):
         raise ValueError("times must contain one finite value per field.")
-    if y_axis not in ("down", "up"):
-        raise ValueError("y_axis must be 'down' or 'up'.")
+    y_axis = parse(y_axis, PivpyYAxis, "y_axis")
     row_axis = reference_row[:, 0]
     x = reference_column[0, :]
     y = row_axis if y_axis == "down" else np.min(row_axis) + np.max(row_axis) - row_axis
@@ -306,8 +306,7 @@ def from_pivpy(
             AdapterStatus.INCONSISTENT_SOURCE,
             "pivpy variables must have exact dimension order ('y', 'x', 't').",
         )
-    if y_axis not in ("down", "up"):
-        raise ValueError("y_axis must be 'down' or 'up'.")
+    y_axis = parse(y_axis, PivpyYAxis, "y_axis")
     y = _array_data(dataset.coords["y"].data, materialize_lazy=materialize_lazy).reshape(
         (-1,)
     )

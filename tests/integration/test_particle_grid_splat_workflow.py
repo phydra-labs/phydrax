@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def test_particle_grid_splat_mass_momentum_observation_workflow():
+def test_particle_grid_splat_mass_momentum_observation_workflow() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformAxisSpec(5),
@@ -52,7 +54,7 @@ def test_particle_grid_splat_mass_momentum_observation_workflow():
     assert jnp.all(observed.support)
     assert jnp.allclose(observed.values, position[:, 0] + 2.0 * position[:, 1])
 
-    def observation_loss(current_position):
+    def observation_loss(current_position: Any) -> Any:
         current = prepared.build(current_position)
         density = prepared.deposit_content(current, masses).density
         return jnp.mean(density**2)
@@ -63,7 +65,7 @@ def test_particle_grid_splat_mass_momentum_observation_workflow():
     assert jnp.sum(gradient * gradient) > 0.0
 
 
-def test_batched_quadratic_bspline_cell_transfer_workflow():
+def test_batched_quadratic_bspline_cell_transfer_workflow() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(16, periodic=True),
@@ -90,7 +92,7 @@ def test_batched_quadratic_bspline_cell_transfer_workflow():
         [[1.0, 0.0], [0.5, -1.0], [-0.25, 0.75], [1.5, 0.5]]
     )
 
-    def transfer(position):
+    def transfer(position: Any) -> Any:
         state = prepared.build(position)
         mass = prepared.deposit_content(state, masses)
         vector = prepared.deposit_content(state, momentum)

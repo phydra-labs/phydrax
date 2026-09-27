@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -21,7 +24,7 @@ from phydrax.dynamics import TimeGrid
 from phydrax.optim import Bounds
 
 
-def _motor_control_problem():
+def _motor_control_problem() -> Any:
     model_plan = PotvinFuglevand2017Plan(
         central_adaptation=False,
         peripheral_fatigue=False,
@@ -35,7 +38,7 @@ def _motor_control_problem():
     initial = runtime.pack_state(runtime.initialize())
     target_force = runtime.evaluate(runtime.initialize(), 20.0).total_force
 
-    def running_cost(time, state, control, parameters):
+    def running_cost(time: Any, state: Any, control: Any, parameters: Any) -> Any:
         del time, parameters
         typed = runtime.unpack_state(state)
         force = runtime.evaluate(typed, control[0]).total_force
@@ -54,10 +57,10 @@ def _motor_control_problem():
     return runtime, problem, parameterization, target_force
 
 
-def test_surrogate_decision_requires_causal_exact_control_replay():
+def test_surrogate_decision_requires_causal_exact_control_replay() -> None:
     runtime, problem, parameterization, target_force = _motor_control_problem()
 
-    def exact_force(trajectory):
+    def exact_force(trajectory: Any) -> Any:
         return jax.vmap(
             lambda state, control: (
                 runtime.evaluate(runtime.unpack_state(state), control[0]).total_force
@@ -89,7 +92,7 @@ def test_surrogate_decision_requires_causal_exact_control_replay():
     assert accepted.active_sample_count == 2
 
 
-def test_pure_relative_replay_handles_zero_exact_values_without_nan():
+def test_pure_relative_replay_handles_zero_exact_values_without_nan() -> None:
     _, problem, parameterization, _ = _motor_control_problem()
     replay = SkeletalSurrogateReplayPlan(
         problem,
@@ -126,7 +129,7 @@ def test_pure_relative_replay_handles_zero_exact_values_without_nan():
     assert jnp.all(jnp.isfinite(relative_gradient(nonzero_values)))
 
 
-def test_replay_promotes_integer_exact_values_before_comparison():
+def test_replay_promotes_integer_exact_values_before_comparison() -> None:
     _, problem, parameterization, _ = _motor_control_problem()
     replay = SkeletalSurrogateReplayPlan(
         problem,
@@ -154,10 +157,10 @@ def test_replay_promotes_integer_exact_values_before_comparison():
     assert not bool(evidence.accepted)
 
 
-def test_surrogate_replay_rejects_exact_but_physically_infeasible_control():
+def test_surrogate_replay_rejects_exact_but_physically_infeasible_control() -> None:
     runtime, problem, parameterization, target_force = _motor_control_problem()
 
-    def exact_force(trajectory):
+    def exact_force(trajectory: Any) -> Any:
         return jax.vmap(
             lambda state, control: (
                 runtime.evaluate(runtime.unpack_state(state), control[0]).total_force
@@ -195,7 +198,9 @@ def test_surrogate_replay_rejects_exact_but_physically_infeasible_control():
     assert not bool(result.accepted)
 
 
-def test_exact_observation_operator_identity_prevents_replay_provenance_collision():
+def test_exact_observation_operator_identity_prevents_replay_provenance_collision() -> (
+    None
+):
     _, problem, parameterization, _ = _motor_control_problem()
     first_state_coordinate = SkeletalReplayObservationOperator(
         lambda trajectory: trajectory.states[:-1, 0, 0],
@@ -238,7 +243,7 @@ def test_exact_observation_operator_identity_prevents_replay_provenance_collisio
     assert state_evidence.replay_id != second_state_evidence.replay_id
 
 
-def test_sampling_mpc_uses_exact_hard_motor_unit_rollouts():
+def test_sampling_mpc_uses_exact_hard_motor_unit_rollouts() -> None:
     runtime, problem, parameterization, _ = _motor_control_problem()
     mpc = plan_sampling_mpc(
         problem,

@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -44,7 +45,7 @@ class MPMParticleLifecyclePlan(StrictModule, NonTrainableState):
     capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, capacity: int, /):
+    def __init__(self, capacity: int, /) -> None:
         capacity_ = int(capacity)
         if capacity_ <= 0:
             raise ValueError("Particle lifecycle capacity must be positive.")
@@ -53,7 +54,9 @@ class MPMParticleLifecyclePlan(StrictModule, NonTrainableState):
             {"kind": "mpm-particle-lifecycle", "capacity": capacity_}
         )
 
-    def initialize(self, particle_ids, masses, active, /):
+    def initialize(
+        self, particle_ids: ArrayLike, masses: ArrayLike, active: ArrayLike, /
+    ) -> tuple[MPMLifecycleState, Array]:
         identifiers = jnp.asarray(particle_ids, dtype=jnp.int64)
         mass = jnp.asarray(masses)
         active_ = jnp.asarray(active, dtype=jnp.bool_)
@@ -77,7 +80,12 @@ class MPMParticleLifecyclePlan(StrictModule, NonTrainableState):
         return state, valid
 
     @staticmethod
-    def _evidence(before, after, particles_before, particles_after):
+    def _evidence(
+        before: MPMLifecycleState,
+        after: MPMLifecycleState,
+        particles_before: MPMParticleState,
+        particles_after: MPMParticleState,
+    ) -> MPMLifecycleEvidence:
         before_mass = jnp.sum(jnp.where(before.active, before.masses, 0.0))
         after_mass = jnp.sum(jnp.where(after.active, after.masses, 0.0))
         before_momentum = jnp.sum(
@@ -133,7 +141,7 @@ class MPMParticleLifecyclePlan(StrictModule, NonTrainableState):
         particle_ids: ArrayLike,
         masses: ArrayLike,
         /,
-    ):
+    ) -> MPMLifecycleResult:
         slots_ = jnp.asarray(slots, dtype=jnp.int32)
         identifiers = jnp.asarray(particle_ids, dtype=jnp.int64)
         masses_ = jnp.asarray(masses, dtype=lifecycle.masses.dtype)
@@ -183,7 +191,7 @@ class MPMParticleLifecyclePlan(StrictModule, NonTrainableState):
         lifecycle: MPMLifecycleState,
         slots: ArrayLike,
         /,
-    ):
+    ) -> MPMLifecycleResult:
         slots_ = jnp.asarray(slots, dtype=jnp.int32)
         next_state = MPMLifecycleState(
             lifecycle.particle_ids,
@@ -208,7 +216,7 @@ class MPMParticleLifecyclePlan(StrictModule, NonTrainableState):
         mass_fractions: ArrayLike,
         position_offsets: ArrayLike,
         /,
-    ):
+    ) -> MPMLifecycleResult:
         parent = int(parent_slot)
         children = jnp.asarray(child_slots, dtype=jnp.int32)
         identifiers = jnp.asarray(child_ids, dtype=jnp.int64)
@@ -228,7 +236,7 @@ class MPMParticleLifecyclePlan(StrictModule, NonTrainableState):
             & jnp.isclose(jnp.sum(fractions), 1.0)
         )
 
-        def copy_parent(array):
+        def copy_parent(array: Array) -> Array:
             return array.at[children].set(
                 jnp.broadcast_to(array[parent], array[children].shape)
             )
@@ -271,14 +279,14 @@ class MPMParticleLifecyclePlan(StrictModule, NonTrainableState):
         target_slot: int,
         target_id: int,
         /,
-    ):
+    ) -> MPMLifecycleResult:
         sources = jnp.asarray(source_slots, dtype=jnp.int32)
         target = int(target_slot)
         masses = lifecycle.masses[sources]
         total = jnp.sum(masses)
         weights = masses / jnp.where(total > 0.0, total, 1.0)
 
-        def merge_field(array):
+        def merge_field(array: Array) -> Array:
             merged = jnp.tensordot(weights, array[sources], axes=(0, 0))
             return array.at[target].set(merged)
 
@@ -311,7 +319,7 @@ class MPMCapacityBucketPlan(StrictModule, NonTrainableState):
     buckets: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, buckets: Sequence[int], /):
+    def __init__(self, buckets: Sequence[int], /) -> None:
         values = tuple(sorted(set(int(value) for value in buckets)))
         if not values or any(value <= 0 for value in values):
             raise ValueError("Capacity buckets must be positive.")
@@ -320,7 +328,7 @@ class MPMCapacityBucketPlan(StrictModule, NonTrainableState):
             {"kind": "mpm-capacity-buckets", "buckets": values}
         )
 
-    def select(self, required: int, /):
+    def select(self, required: int, /) -> int:
         required_ = int(required)
         for value in self.buckets:
             if required_ <= value:
@@ -341,7 +349,7 @@ class MPMPageTablePlan(StrictModule, NonTrainableState):
     maximum_probes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, capacity: int, /, *, maximum_probes: int = 16):
+    def __init__(self, capacity: int, /, *, maximum_probes: int = 16) -> None:
         capacity_ = int(capacity)
         probes = int(maximum_probes)
         if capacity_ <= 0 or probes <= 0:
@@ -356,7 +364,7 @@ class MPMPageTablePlan(StrictModule, NonTrainableState):
             }
         )
 
-    def empty(self):
+    def empty(self) -> MPMPageTableState:
         return MPMPageTableState(
             -jnp.ones((self.capacity,), dtype=jnp.int64),
             -jnp.ones((self.capacity,), dtype=jnp.int32),
@@ -365,18 +373,24 @@ class MPMPageTablePlan(StrictModule, NonTrainableState):
             jnp.asarray(False),
         )
 
-    def insert(self, state: MPMPageTableState, keys: ArrayLike, values: ArrayLike, /):
+    def insert(
+        self, state: MPMPageTableState, keys: ArrayLike, values: ArrayLike, /
+    ) -> tuple[MPMPageTableState, Array]:
         keys_ = jnp.asarray(keys, dtype=jnp.int64)
         values_ = jnp.asarray(values, dtype=jnp.int32)
         if keys_.shape != values_.shape:
             raise ValueError("Page-table keys and values must share shape.")
 
-        def insert_one(carry, item):
+        def insert_one(
+            carry: tuple[MPMPageTableState, Array], item: tuple[Array, Array]
+        ) -> tuple[tuple[MPMPageTableState, Array], Array]:
             current, overflow = carry
             key, value = item
             start = jnp.mod(key, self.capacity).astype(jnp.int32)
 
-            def probe_body(index, probe_carry):
+            def probe_body(
+                index: int | Array, probe_carry: tuple[MPMPageTableState, Array]
+            ) -> tuple[MPMPageTableState, Array]:
                 table, inserted = probe_carry
                 slot = jnp.mod(start + index, self.capacity)
                 available = ~table.occupied[slot] | (table.keys[slot] == key)
@@ -418,7 +432,7 @@ class MPMAMRPlan(StrictModule, NonTrainableState):
         /,
         *,
         refinement_ratio: int = 2,
-    ):
+    ) -> None:
         shapes = tuple(tuple(shape) for shape in level_shapes)
         blocks = tuple(maximum_blocks)
         ratio = int(refinement_ratio)
@@ -451,7 +465,7 @@ class MPMAMRPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def restrict(self, fine: ArrayLike, /):
+    def restrict(self, fine: ArrayLike, /) -> Array:
         value = jnp.asarray(fine)
         dimension = len(self.level_shapes[0])
         result = value
@@ -462,14 +476,14 @@ class MPMAMRPlan(StrictModule, NonTrainableState):
             ).mean(axis=axis + 1)
         return result
 
-    def prolong(self, coarse: ArrayLike, /):
+    def prolong(self, coarse: ArrayLike, /) -> Array:
         value = jnp.asarray(coarse)
         result = value
         for axis in range(len(self.level_shapes[0])):
             result = jnp.repeat(result, 2, axis=axis)
         return result
 
-    def select_particle_level(self, half_extent_cells: ArrayLike, /):
+    def select_particle_level(self, half_extent_cells: ArrayLike, /) -> Array:
         extent = jnp.asarray(half_extent_cells)
         maximum = jnp.max(extent, axis=-1)
         level = jnp.floor(-jnp.log2(jnp.maximum(maximum, 1.0e-30))).astype(jnp.int32)

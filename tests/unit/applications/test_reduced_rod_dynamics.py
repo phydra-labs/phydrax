@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -31,7 +33,7 @@ from phydrax.applications.solid_mechanics._rod_reduction import (
 from phydrax.linalg import DenseLinearOperator, FunctionLinearOperator
 
 
-def _spatial_reduction():
+def _spatial_reduction() -> Any:
     dtype = jnp.float32
     rod = prepare_rod(
         RodPlan(
@@ -70,7 +72,7 @@ def _spatial_reduction():
     return prepare_reduced_rod(rod, ReducedRodPlan(basis))
 
 
-def _kelvin_voigt_dynamics(*, gravity=None, plan=None):
+def _kelvin_voigt_dynamics(*, gravity: Any = None, plan: Any = None) -> Any:
     reduction = _spatial_reduction()
     dtype = reduction.rod.plan.rest_positions.dtype
     stretch_viscosity = jnp.broadcast_to(
@@ -99,7 +101,7 @@ def _kelvin_voigt_dynamics(*, gravity=None, plan=None):
     return reduction, dynamics
 
 
-def test_typed_intrinsic_strain_control_flows_through_material_force_ledger():
+def test_typed_intrinsic_strain_control_flows_through_material_force_ledger() -> None:
     reduction = _spatial_reduction()
     dynamics = prepare_reduced_rod_dynamics(reduction)
     passive = dynamics.initialize_material_control()
@@ -147,8 +149,8 @@ def test_typed_intrinsic_strain_control_flows_through_material_force_ledger():
 
 @pytest.mark.parametrize("coordinate", range(6))
 def test_pure_extension_shear_bend_and_twist_use_native_material_quadrature(
-    coordinate,
-):
+    coordinate: Any,
+) -> None:
     reduction = _spatial_reduction()
     dynamics = prepare_reduced_rod_dynamics(reduction)
     coefficients = jnp.zeros((6,), dtype=jnp.float32).at[coordinate].set(0.08)
@@ -189,7 +191,7 @@ def test_pure_extension_shear_bend_and_twist_use_native_material_quadrature(
     assert evaluation.bend_twist_material_result.evidence.valid
 
 
-def test_dense_mass_maps_tangents_to_true_duals_and_inverse_roundtrips():
+def test_dense_mass_maps_tangents_to_true_duals_and_inverse_roundtrips() -> None:
     reduction = _spatial_reduction()
     dynamics = prepare_reduced_rod_dynamics(reduction)
     coefficients = jnp.asarray(
@@ -225,7 +227,7 @@ def test_dense_mass_maps_tangents_to_true_duals_and_inverse_roundtrips():
     assert inverse.solve_evidence.valid
 
 
-def test_fused_actions_match_dense_ad_authority_and_forward_inverse_roundtrip():
+def test_fused_actions_match_dense_ad_authority_and_forward_inverse_roundtrip() -> None:
     reduction, dynamics = _kelvin_voigt_dynamics()
     state = ReducedRodState(
         jnp.asarray((0.04, -0.03, 0.02, 0.025, -0.015, 0.01), dtype=jnp.float32),
@@ -284,7 +286,7 @@ def test_fused_actions_match_dense_ad_authority_and_forward_inverse_roundtrip():
     assert inverse.valid
 
 
-def test_gravity_native_and_direct_load_ledgers_preserve_effort_and_power():
+def test_gravity_native_and_direct_load_ledgers_preserve_effort_and_power() -> None:
     gravity_vector = jnp.asarray((0.0, -9.81, 0.4), dtype=jnp.float32)
     reduction, dynamics = _kelvin_voigt_dynamics(gravity=gravity_vector)
     state = ReducedRodState(
@@ -356,7 +358,9 @@ def test_gravity_native_and_direct_load_ledgers_preserve_effort_and_power():
     assert ledger.valid
 
 
-def test_matrix_free_policy_uses_only_fused_actions_and_records_fixed_work(monkeypatch):
+def test_matrix_free_policy_uses_only_fused_actions_and_records_fixed_work(
+    monkeypatch: Any,
+) -> None:
     plan = ReducedRodMatrixFreeCGPlan(
         relative_tolerance=1.0e-5,
         absolute_tolerance=1.0e-7,
@@ -370,7 +374,7 @@ def test_matrix_free_policy_uses_only_fused_actions_and_records_fixed_work(monke
         jnp.asarray((-0.08, 0.06, -0.04, 0.03, -0.02, 0.05), dtype=jnp.float32),
     )
 
-    def forbidden(*args, **kwargs):
+    def forbidden(*args: Any, **kwargs: Any) -> None:
         raise AssertionError(
             "production reduced dynamics materialized a global derivative"
         )
@@ -394,7 +398,7 @@ def test_matrix_free_policy_uses_only_fused_actions_and_records_fixed_work(monke
     assert inverse.solve_evidence.roundtrip_valid
 
 
-def test_mass_evidence_fails_closed_for_condition_pivot_and_nonfinite_inputs():
+def test_mass_evidence_fails_closed_for_condition_pivot_and_nonfinite_inputs() -> None:
     reduction = _spatial_reduction()
     condition_plan = ReducedRodDenseCholeskyPlan(
         condition_limit=1.000001,

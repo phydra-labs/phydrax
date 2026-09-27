@@ -122,7 +122,7 @@ class HelicsValueSession:
         timeout: float = 30,
         expected_version: str | None = None,
         source_url: str = "",
-    ):
+    ) -> None:
         _host_only(time_delta, publications, subscriptions)
         _require_optional(
             "helics", "install helics>=3 with a host-compatible native HELICS library"
@@ -245,13 +245,17 @@ class HelicsValueSession:
 
     def complete_time(self) -> HelicsTimeGrant:
         self._require_mode("advancing")
+        requested_time = self._requested_time
+        # The advancing mode is entered only after a time request is recorded.
+        if not (requested_time is not None):
+            raise RuntimeError("Internal invariant failed: requested_time is not None.")
         result = self._worker.call("time_complete")
         self.time = result["time"]
         self.mode = "terminated" if result["terminated"] else "executing"
         return HelicsTimeGrant(
-            self._requested_time,
+            requested_time,
             self.time,
-            not result["terminated"] and self.time < self._requested_time,
+            not result["terminated"] and self.time < requested_time,
             result["terminated"],
             self.artifact,
         )

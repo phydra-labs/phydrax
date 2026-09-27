@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _block(bounds, shape=(33, 17)):
+def _block(bounds: Any, shape: Any = (33, 17)) -> Any:
     return phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformAxisSpec(shape[0]),
@@ -19,7 +22,7 @@ def _block(bounds, shape=(33, 17)):
     ).prepare(jnp.asarray(bounds))
 
 
-def _interface(*, orientation=None):
+def _interface(*, orientation: Any = None) -> Any:
     return phx.discretization.BlockInterface(
         "middle",
         "left",
@@ -34,7 +37,7 @@ def _interface(*, orientation=None):
     )
 
 
-def test_conforming_multiblock_topology_certifies_physical_trace_coincidence():
+def test_conforming_multiblock_topology_certifies_physical_trace_coincidence() -> None:
     left = _block(((0.0, 0.0), (0.5, 1.0)))
     right = _block(((0.5, 0.0), (1.0, 1.0)))
     prepared = phx.discretization.MultiblockGridPlan(
@@ -50,7 +53,7 @@ def test_conforming_multiblock_topology_certifies_physical_trace_coincidence():
     assert prepared.block("left").prepared_id == left.prepared_id
 
 
-def test_reflected_tangential_orientation_aligns_reversed_mapped_block():
+def test_reflected_tangential_orientation_aligns_reversed_mapped_block() -> None:
     left_reference = _block(((0.0, 0.0), (1.0, 1.0)), shape=(17, 17))
     right_reference = _block(((0.0, 0.0), (1.0, 1.0)), shape=(17, 17))
     left = phx.discretization.MappedTensorGridPlan(
@@ -82,7 +85,7 @@ def test_reflected_tangential_orientation_aligns_reversed_mapped_block():
     assert prepared.interface_reports[0].geometry_residual < 2e-12
 
 
-def test_nonconforming_nested_interface_and_norm_compatible_mortar():
+def test_nonconforming_nested_interface_and_norm_compatible_mortar() -> None:
     left = _block(((0.0, 0.0), (0.5, 1.0)), shape=(33, 9))
     right = _block(((0.5, 0.0), (1.0, 1.0)), shape=(33, 17))
     prepared = phx.discretization.MultiblockGridPlan(
@@ -117,7 +120,7 @@ def test_nonconforming_nested_interface_and_norm_compatible_mortar():
     )
 
 
-def test_multiblock_sat_central_flux_conserves_energy_and_upwind_dissipates():
+def test_multiblock_sat_central_flux_conserves_energy_and_upwind_dissipates() -> None:
     left_grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(33),),
         axis_names=("x",),
@@ -181,7 +184,7 @@ def test_multiblock_sat_central_flux_conserves_energy_and_upwind_dissipates():
     assert rates[1] < rates[0]
 
 
-def test_nonconforming_multiblock_sat_uses_norm_adjoint_mortar_transfer():
+def test_nonconforming_multiblock_sat_uses_norm_adjoint_mortar_transfer() -> None:
     left_grid = _block(((0.0, 0.0), (0.5, 1.0)), shape=(33, 9))
     right_grid = _block(((0.5, 0.0), (1.0, 1.0)), shape=(33, 17))
     multiblock = phx.discretization.MultiblockGridPlan(
@@ -226,7 +229,7 @@ def test_nonconforming_multiblock_sat_uses_norm_adjoint_mortar_transfer():
     np.testing.assert_allclose(energy_rate, 0.0, rtol=0.0, atol=2e-9)
 
 
-def test_duplicate_physical_face_connections_are_rejected():
+def test_duplicate_physical_face_connections_are_rejected() -> None:
     left = _block(((0.0, 0.0), (0.5, 1.0)))
     right = _block(((0.5, 0.0), (1.0, 1.0)))
 

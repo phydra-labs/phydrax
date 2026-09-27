@@ -10,10 +10,12 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
+from ..._probability import AbstractProbabilityLaw
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from ._diffusion_problem import (
     _proposal_arrays,
     DiffusionBridgePlan,
@@ -66,7 +68,7 @@ def prepare_diffusion_bridge(
     plan: DiffusionBridgePlan,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> PreparedDiffusionBridge:
     """Lower finite proposals and normalized transition factors to one chain."""
     del key
@@ -103,7 +105,7 @@ def prepare_diffusion_bridge(
         source = supports[step]
         target = supports[step + 1]
 
-        def one_source(state):
+        def one_source(state: Array) -> Array:
             return jax.vmap(
                 lambda next_state: problem.reference.log_prob(
                     next_state,
@@ -134,7 +136,7 @@ def prepare_diffusion_bridge(
         0.0,
     )
 
-    def endpoint_probabilities(law, index):
+    def endpoint_probabilities(law: AbstractProbabilityLaw, index: int) -> Array:
         values = jax.vmap(law.log_prob)(supports[index]) + log_weights[index]
         values = jnp.where(masks[index], values, -jnp.inf)
         return jax.nn.softmax(values)
@@ -254,7 +256,7 @@ def solve_diffusion_bridge(prepared: PreparedDiffusionBridge, /) -> DiffusionBri
 
 def sample_diffusion_bridge(
     result: DiffusionBridgeResult,
-    key: Key[Array, ""],
+    key: PRNGKey,
     sample_shape: tuple[int, ...] = (),
     /,
 ) -> Array:
@@ -270,7 +272,7 @@ def sample_diffusion_bridge(
     keys = jr.split(key, count)
     initial_probabilities = result.physical_marginals[0]
 
-    def one(path_key):
+    def one(path_key: PRNGKey) -> Array:
         first_key, path_key = jr.split(path_key)
         index = jr.categorical(first_key, jnp.log(initial_probabilities))
         indices = [index]

@@ -10,8 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -46,7 +47,7 @@ class VortexShardingPolicy(StrictModule, NonTrainableState):
         strategy: str = "target-sharded",
         accumulation: str = "deterministic",
         memory_budget_bytes: int = 2**30,
-    ):
+    ) -> None:
         if (
             not isinstance(mesh, Mesh)
             or strategy

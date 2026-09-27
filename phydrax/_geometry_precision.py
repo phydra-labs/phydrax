@@ -9,17 +9,19 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 
+from ._dtype_names import (
+    complex_precision_dtype,
+    precision_dtype_name,
+    real_precision_dtype_name,
+    ScalarPrecisionDType,
+)
 from ._fingerprint import canonical_fingerprint
 from ._geometry_predicates import PredicateMode
 from ._precision import (
-    complex_precision_dtype,
-    precision_dtype_name,
     precision_itemsize,
     PrecisionEvidenceEnvelope,
     PrecisionRequest,
     PrecisionResolution,
-    real_precision_dtype_name,
-    ScalarPrecisionDType,
 )
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
@@ -89,7 +91,7 @@ class GeometryPrecisionPolicy(StrictModule, NonTrainableState):
         decision_dtype: Any | None = None,
         output_dtype: Any | None = None,
         predicate_mode: PredicateMode | None = None,
-    ):
+    ) -> None:
         coordinate = (
             None if coordinate_dtype is None else precision_dtype_name(coordinate_dtype)
         )
@@ -175,7 +177,7 @@ class GeometryPrecisionPolicy(StrictModule, NonTrainableState):
             )
         return observed
 
-    def compute(self, value: Any, /):
+    def compute(self, value: Any, /) -> Any:
         array = jnp.asarray(value)
         if self.compute_dtype is None or not jnp.issubdtype(array.dtype, jnp.inexact):
             return array
@@ -183,7 +185,7 @@ class GeometryPrecisionPolicy(StrictModule, NonTrainableState):
             _effective_dtype(self.compute_dtype, precision_dtype_name(array.dtype))
         )
 
-    def accumulation(self, value: Any, /):
+    def accumulation(self, value: Any, /) -> Any:
         array = jnp.asarray(value)
         if self.accumulation_dtype is None or not jnp.issubdtype(
             array.dtype, jnp.inexact
@@ -196,11 +198,11 @@ class GeometryPrecisionPolicy(StrictModule, NonTrainableState):
             )
         )
 
-    def decision(self, value: Any, /):
+    def decision(self, value: Any, /) -> Any:
         array = jnp.asarray(value)
         return array if self.decision_dtype is None else array.astype(self.decision_dtype)
 
-    def output(self, value: Any, /):
+    def output(self, value: Any, /) -> Any:
         array = jnp.asarray(value)
         if self.output_dtype is None or not jnp.issubdtype(array.dtype, jnp.inexact):
             return array
@@ -208,14 +210,14 @@ class GeometryPrecisionPolicy(StrictModule, NonTrainableState):
             _effective_dtype(self.output_dtype, precision_dtype_name(array.dtype))
         )
 
-    def sum(self, value: Any, /, *, axis: Any = None, keepdims: bool = False):
+    def sum(self, value: Any, /, *, axis: Any = None, keepdims: bool = False) -> Any:
         return jnp.sum(
             self.accumulation(value),
             axis=axis,
             keepdims=keepdims,
         )
 
-    def norm(self, value: Any, /, *, axis: Any = None, keepdims: bool = False):
+    def norm(self, value: Any, /, *, axis: Any = None, keepdims: bool = False) -> Any:
         accumulated = self.accumulation(value)
         squared = self.sum(jnp.abs(accumulated) ** 2, axis=axis, keepdims=keepdims)
         return self.decision(jnp.sqrt(squared))

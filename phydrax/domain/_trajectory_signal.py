@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 
@@ -18,6 +19,7 @@ from .._doc import DOC_KEY0
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..series import SampledSeries, SampledSeriesReconstruction, SeriesSupport
+from ..typing import parse, PRNGKey
 from ._derivative import (
     DerivativeBackend,
     DerivativeBasis,
@@ -32,7 +34,7 @@ from ._structure import GridBatch, PointBatch
 from ._trajectory_dataset import TRAJECTORY_CASE_INDEX_KEY, TrajectoryDatasetDomain
 
 
-TrajectorySignalInterpolation = Literal["nearest", "linear", "cubic_hermite"]
+TrajectorySignalInterpolation: TypeAlias = Literal["nearest", "linear", "cubic_hermite"]
 
 
 def _validate_values(
@@ -101,6 +103,11 @@ class _TrajectorySignalDerivativeRule(DerivativeRule):
     ) -> DomainFunction | None:
         del mode, basis, periodic
         signal = self.function.func
+        # `derivative_rule_for` binds this rule only to functions evaluated by the signal.
+        if not (isinstance(signal, _SeriesTrajectorySignal)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(signal, _SeriesTrajectorySignal)."
+            )
         domain = signal.domain
         reconstruction = signal.reconstruction
         if reconstruction.interpolation == "nearest":
@@ -146,12 +153,12 @@ class _SeriesTrajectorySignal(
         domain: TrajectoryDatasetDomain | IrregularTrajectoryDatasetDomain,
         reconstruction: SampledSeriesReconstruction,
         derivative_order: int = 0,
-    ):
+    ) -> None:
         self.domain = domain
         self.reconstruction = reconstruction
         self.derivative_order = int(derivative_order)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         del args, key, kwargs
         raise TypeError("TrajectorySignal requires PointBatch evaluation.")
 
@@ -160,7 +167,7 @@ class _SeriesTrajectorySignal(
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         del key, kwargs
@@ -242,9 +249,7 @@ def TrajectorySignal(
         raise ValueError(
             f"time_var must match the trajectory time label {domain.time_label!r}."
         )
-    interpolation_ = str(interpolation)
-    if interpolation_ not in ("nearest", "linear", "cubic_hermite"):
-        raise ValueError("interpolation must be 'nearest', 'linear', or 'cubic_hermite'.")
+    interpolation_ = parse(interpolation, TrajectorySignalInterpolation, "interpolation")
     if (
         isinstance(domain, IrregularTrajectoryDatasetDomain)
         and interpolation_ == "cubic_hermite"

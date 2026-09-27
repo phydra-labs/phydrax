@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import coordax as cx
 import equinox as eqx
@@ -28,7 +29,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _problem(order: int, atoms: int):
+def _problem(order: int, atoms: int) -> Any:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     source = phx.integration.normalized_density(
         phx.integration.over(domain.component()),
@@ -41,6 +42,7 @@ def _problem(order: int, atoms: int):
     support = (jnp.arange(atoms, dtype="float64") + 0.5) / atoms
     target = phx.integration.discrete(
         support,
+        # ty: ignore[invalid-argument-type]
         cx.Field(jnp.full((atoms,), 1.0 / atoms), dims=("atom",)),
         axes="atom",
         normalized=True,
@@ -54,7 +56,7 @@ def _problem(order: int, atoms: int):
     )
 
 
-def _bytes(tree) -> int:
+def _bytes(tree: Any) -> int:
     return sum(
         leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree.leaves(tree)
@@ -62,7 +64,7 @@ def _bytes(tree) -> int:
     )
 
 
-def _record(order: int, atoms: int, iterations: int, repeats: int):
+def _record(order: int, atoms: int, iterations: int, repeats: int) -> Any:
     problem = _problem(order, atoms)
     solver = phx.transport.SemidiscreteSinkhorn(
         0.05,
@@ -83,7 +85,7 @@ def _record(order: int, atoms: int, iterations: int, repeats: int):
         jax.block_until_ready(replay.regularized_cost)
     steady_ms = 1e3 * (time.perf_counter() - started) / repeats
 
-    def objective(support):
+    def objective(support: Any) -> Any:
         return solver(problem.with_target_support(support)).regularized_cost
 
     differentiated = eqx.filter_jit(jax.grad(objective))

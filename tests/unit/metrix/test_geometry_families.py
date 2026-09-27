@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from math import comb
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -11,14 +13,14 @@ import pytest
 import phydrax as phx
 
 
-def test_lorentzian_metric_causality_wave_operator_and_curvature():
+def test_lorentzian_metric_causality_wave_operator_and_curvature() -> None:
     chart = phx.metrix.CoordinateChart("spacetime", ("t", "x", "y", "z"))
     metric = phx.metrix.minkowski_metric(chart)
     point = jnp.array([0.2, -0.3, 0.1, 0.4])
 
     report = phx.metrix.validate_lorentzian_metric(metric, point)
 
-    def field(q):
+    def field(q: Any) -> Any:
         return -(q[0] ** 2) + jnp.sum(q[1:] ** 2)
 
     assert bool(report.valid)
@@ -32,7 +34,7 @@ def test_lorentzian_metric_causality_wave_operator_and_curvature():
         8.0,
     )
 
-    def future_reference(q):
+    def future_reference(q: Any) -> Any:
         return jnp.array([1.0, 0.0, 0.0, 0.0], dtype=q.dtype)
 
     orientation = phx.metrix.TimeOrientation(metric, future_reference)
@@ -55,7 +57,7 @@ def test_lorentzian_metric_causality_wave_operator_and_curvature():
     )
 
 
-def test_signed_tensor_and_levi_civita_operations_are_signature_independent():
+def test_signed_tensor_and_levi_civita_operations_are_signature_independent() -> None:
     chart = phx.metrix.CoordinateChart("minkowski", ("t", "x", "y", "z"))
     metric = phx.metrix.minkowski_metric(chart)
     point = jnp.array([0.2, -0.3, 0.1, 0.4])
@@ -107,7 +109,7 @@ def test_signed_tensor_and_levi_civita_operations_are_signature_independent():
     )
 
 
-def test_signed_codifferential_and_hodge_square_obey_index_signs():
+def test_signed_codifferential_and_hodge_square_obey_index_signs() -> None:
     chart = phx.metrix.CoordinateChart("minkowski_forms", ("t", "x", "y", "z"))
     metric = phx.metrix.minkowski_metric(chart)
     point = jnp.array([0.2, -0.3, 0.1, 0.4])
@@ -164,23 +166,23 @@ def test_signed_codifferential_and_hodge_square_obey_index_signs():
     )
 
 
-def test_signed_metric_constructors_validate_declared_signatures():
+def test_signed_metric_constructors_validate_declared_signatures() -> None:
     chart = phx.metrix.CoordinateChart(
         "spherical_spacetime",
         ("t", "r", "theta", "phi"),
     )
     point = jnp.array([0.3, 4.0, 1.1, -0.2])
 
-    def scale_factor(time):
+    def scale_factor(time: Any) -> Any:
         return jnp.exp(0.1 * time)
 
-    def lapse(q):
+    def lapse(q: Any) -> Any:
         return 1.5 + 0.0 * q[0]
 
-    def shift(q):
+    def shift(q: Any) -> Any:
         return jnp.array([0.1, -0.2, 0.05], dtype=q.dtype)
 
-    def spatial_metric(q):
+    def spatial_metric(q: Any) -> Any:
         return jnp.diag(jnp.array([1.0, 2.0, 3.0], dtype=q.dtype))
 
     metrics = (
@@ -224,7 +226,7 @@ def test_signed_metric_constructors_validate_declared_signatures():
     )
 
 
-def test_differential_forms_obey_nilpotency_hodge_and_pullback_laws():
+def test_differential_forms_obey_nilpotency_hodge_and_pullback_laws() -> None:
     chart = phx.metrix.CoordinateChart("plane", ("x", "y"))
     metric = phx.metrix.RiemannianMetric(lambda q: jnp.eye(2), chart=chart)
     one_form = phx.metrix.DifferentialForm(
@@ -291,7 +293,7 @@ def test_differential_forms_obey_nilpotency_hodge_and_pullback_laws():
     )
 
 
-def test_lie_group_and_poisson_structures_satisfy_defining_laws():
+def test_lie_group_and_poisson_structures_satisfy_defining_laws() -> None:
     group = phx.metrix.SpecialOrthogonalGroup(3)
     algebra = jnp.array([0.2, -0.1, 0.3])
     element = group.exp(group.hat(algebra))
@@ -309,10 +311,10 @@ def test_lie_group_and_poisson_structures_satisfy_defining_laws():
     poisson = phx.metrix.symplectic_to_poisson(symplectic)
     point = jnp.array([0.4, -0.2])
 
-    def left(z):
+    def left(z: Any) -> Any:
         return z[0]
 
-    def right(z):
+    def right(z: Any) -> Any:
         return z[1]
 
     assert bool(phx.metrix.validate_symplectic_form(symplectic, point).valid)
@@ -330,7 +332,7 @@ def test_lie_group_and_poisson_structures_satisfy_defining_laws():
     assert jnp.max(jnp.abs(phx.metrix.casimir_residual(left, poisson, point))) > 0.0
 
 
-def test_lie_group_logs_cover_identity_and_reject_the_pi_cut_locus():
+def test_lie_group_logs_cover_identity_and_reject_the_pi_cut_locus() -> None:
     rotations = phx.metrix.SpecialOrthogonalGroup(3)
     tiny = jnp.array([1e-9, 0.0, 0.0])
     assert jnp.allclose(
@@ -354,7 +356,7 @@ def test_lie_group_logs_cover_identity_and_reject_the_pi_cut_locus():
     )
 
 
-def test_lie_group_batches_preserve_exp_log_and_inverse_laws():
+def test_lie_group_batches_preserve_exp_log_and_inverse_laws() -> None:
     rotations = phx.metrix.SpecialOrthogonalGroup(3)
     rotation_coordinates = jnp.array([[0.2, -0.1, 0.3], [-0.15, 0.25, 0.05]])
     rotation_elements = rotations.exp(rotations.hat(rotation_coordinates))
@@ -405,26 +407,26 @@ def test_lie_group_batches_preserve_exp_log_and_inverse_laws():
     )
 
 
-def test_nonconstant_poisson_structure_obeys_jacobi_and_detects_failure():
+def test_nonconstant_poisson_structure_obeys_jacobi_and_detects_failure() -> None:
     chart = phx.metrix.CoordinateChart("lie_poisson", ("x", "y", "z"))
 
-    def radial_bivector(q):
+    def radial_bivector(q: Any) -> Any:
         x, y, z = q
         return jnp.array([[0.0, z, -y], [-z, 0.0, x], [y, -x, 0.0]])
 
     poisson = phx.metrix.PoissonStructure(radial_bivector, chart=chart)
     point = jnp.array([0.2, 0.3, 0.4])
 
-    def first(q):
+    def first(q: Any) -> Any:
         return q[0]
 
-    def second(q):
+    def second(q: Any) -> Any:
         return q[1]
 
-    def third(q):
+    def third(q: Any) -> Any:
         return q[2]
 
-    def bracket(left, right):
+    def bracket(left: Any, right: Any) -> Any:
         return lambda q: phx.metrix.poisson_bracket(left, right, poisson, q)
 
     jacobi = (
@@ -433,7 +435,7 @@ def test_nonconstant_poisson_structure_obeys_jacobi_and_detects_failure():
         + phx.metrix.poisson_bracket(third, bracket(first, second), poisson, point)
     )
 
-    def casimir(q):
+    def casimir(q: Any) -> Any:
         return jnp.dot(q, q)
 
     assert bool(phx.metrix.validate_poisson_structure(poisson, point).valid)
@@ -444,7 +446,7 @@ def test_nonconstant_poisson_structure_obeys_jacobi_and_detects_failure():
         -phx.metrix.poisson_bracket(second, first, poisson, point),
     )
 
-    def invalid_bivector(q):
+    def invalid_bivector(q: Any) -> Any:
         x, y, z = q
         return jnp.array([[0.0, x, -z], [-x, 0.0, y], [z, -y, 0.0]])
 
@@ -452,7 +454,7 @@ def test_nonconstant_poisson_structure_obeys_jacobi_and_detects_failure():
     assert not bool(phx.metrix.validate_poisson_structure(invalid, point).valid)
 
 
-def test_heisenberg_horizontal_cometric_is_step_two_bracket_generating():
+def test_heisenberg_horizontal_cometric_is_step_two_bracket_generating() -> None:
     chart = phx.metrix.CoordinateChart("heisenberg", ("x", "y", "z"))
     cometric = phx.metrix.HorizontalCometric(
         lambda q: jnp.array([[1.0, 0.0], [0.0, 1.0], [-0.5 * q[1], 0.5 * q[0]]]),
@@ -461,7 +463,7 @@ def test_heisenberg_horizontal_cometric_is_step_two_bracket_generating():
     )
     point = jnp.array([0.2, 0.3, -0.1])
 
-    def field(q):
+    def field(q: Any) -> Any:
         return q[0] ** 2 + q[1] ** 2
 
     report = phx.metrix.validate_horizontal_cometric(

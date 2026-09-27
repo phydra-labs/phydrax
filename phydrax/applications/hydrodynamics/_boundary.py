@@ -9,7 +9,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -43,7 +43,7 @@ class FreeSurfaceBoundaryPlan(StrictModule, NonTrainableState):
         *,
         gas_pressure: float = 101_325.0,
         reference_pressure: float = 101_325.0,
-    ):
+    ) -> None:
         gas = float(gas_pressure)
         reference = float(reference_pressure)
         if not np.isfinite(gas) or not np.isfinite(reference):
@@ -85,13 +85,13 @@ class FreeSurfaceBoundaryPlan(StrictModule, NonTrainableState):
         for axis, grid_axis in enumerate(axes):
             if grid_axis.periodic:
                 continue
-            lower = [slice(None)] * masks[axis].ndim
-            upper = [slice(None)] * masks[axis].ndim
+            lower: list[slice | int] = [slice(None)] * masks[axis].ndim
+            upper: list[slice | int] = [slice(None)] * masks[axis].ndim
             lower[axis] = 0
             upper[axis] = masks[axis].shape[axis] - 1
             masks[axis] = masks[axis].at[tuple(lower)].set(0.0)
             masks[axis] = masks[axis].at[tuple(upper)].set(0.0)
-        top = [slice(None)] * masks[2].ndim
+        top: list[slice | int] = [slice(None)] * masks[2].ndim
         top[2] = masks[2].shape[2] - 1
         masks[2] = masks[2].at[tuple(top)].set(1.0)
         velocities = (

@@ -15,6 +15,7 @@ verified bitwise and by exact face conformity before the meshes merge.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 from scipy.sparse import coo_matrix
@@ -91,7 +92,7 @@ _LAYER_STAGE = MeshingStageKind.LAYER_GENERATION.value
 _FILL_STAGE = MeshingStageKind.VOLUME_FILL.value
 
 
-def _layered_volume(plan, /) -> bool:
+def _layered_volume(plan: Any, /) -> bool:
     """Whether a plan realizes ADVANCING or PROVIDER layers around a core fill."""
     specification = plan.specification
     return isinstance(specification, VolumeMeshingSpec) and any(
@@ -131,7 +132,7 @@ def _domain_inward(
 
 
 def _surface_boundary(
-    gmsh, plan, generation, control: BoundaryLayerControl, /
+    gmsh: Any, plan: Any, generation: Any, control: BoundaryLayerControl, /
 ) -> _Boundary:
     source = _brep_model(plan.source)
     node_tags, node_coordinates, _ = gmsh.model.mesh.getNodes()
@@ -193,7 +194,9 @@ def _components(triangles: np.ndarray, count: int, /) -> np.ndarray:
     return relabeled.reshape(-1)
 
 
-def _exterior_first(points: np.ndarray, triangles: np.ndarray, labels: np.ndarray, /):
+def _exterior_first(
+    points: np.ndarray, triangles: np.ndarray, labels: np.ndarray, /
+) -> Any:
     count = int(labels.max()) + 1
     diagonals = np.empty((count,))
     for label in range(count):
@@ -207,7 +210,7 @@ def _face_keys(faces: np.ndarray, /) -> np.ndarray:
     return np.sort(faces, axis=1)
 
 
-def _configure_core(gmsh, options, maximum_size: float | None, /) -> None:
+def _configure_core(gmsh: Any, options: Any, maximum_size: float | None, /) -> None:
     gmsh.clear()
     gmsh.option.setNumber("General.Terminal", 1 if options.terminal_output else 0)
     gmsh.option.setNumber("General.NumThreads", options.num_threads)
@@ -227,7 +230,7 @@ def _configure_core(gmsh, options, maximum_size: float | None, /) -> None:
     gmsh.model.add("phydrax-layered-core")
 
 
-def _discrete_shells(gmsh, points: np.ndarray, shells, /) -> tuple[int, ...]:
+def _discrete_shells(gmsh: Any, points: np.ndarray, shells: Any, /) -> tuple[int, ...]:
     """One discrete surface per closed shell; node tags are vertex index + 1."""
     triangle_type = gmsh.model.mesh.getElementType("Triangle", 1)
     assigned = np.zeros((points.shape[0],), dtype=np.bool_)
@@ -245,7 +248,7 @@ def _discrete_shells(gmsh, points: np.ndarray, shells, /) -> tuple[int, ...]:
     return tuple(surfaces)
 
 
-def _extract_volume(gmsh, volume: int, name: str, corners: int, /) -> np.ndarray:
+def _extract_volume(gmsh: Any, volume: int, name: str, corners: int, /) -> np.ndarray:
     element_types, _, node_blocks = gmsh.model.mesh.getElements(3, volume)
     expected = gmsh.model.mesh.getElementType(name, 1)
     if tuple(int(value) for value in element_types) != (expected,):
@@ -257,7 +260,7 @@ def _extract_volume(gmsh, volume: int, name: str, corners: int, /) -> np.ndarray
     return np.asarray(node_blocks[0], dtype=np.int64).reshape(-1, corners)
 
 
-def _fixed_nodes(gmsh, points: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+def _fixed_nodes(gmsh: Any, points: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     """Verify fixed nodes bitwise and return appended interior node coordinates."""
     tags, coordinates, _ = gmsh.model.mesh.getNodes()
     tags = np.asarray(tags, dtype=np.int64)
@@ -297,10 +300,10 @@ def _require_conforming(tetrahedra: np.ndarray, fixed: np.ndarray, /) -> None:
 
 
 def _fill_core(
-    gmsh,
+    gmsh: Any,
     points: np.ndarray,
     fixed: np.ndarray,
-    options,
+    options: Any,
     maximum_size: float | None,
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -377,7 +380,7 @@ def _padded(triangles: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _advancing_layers(
-    gmsh, boundary: _Boundary, control, options, maximum_size, /
+    gmsh: Any, boundary: _Boundary, control: Any, options: Any, maximum_size: Any, /
 ) -> _Layered:
     faces, arity = _padded(boundary.triangles)
     empty_points = np.empty((0, 3))
@@ -396,8 +399,13 @@ def _advancing_layers(
 
 
 def _merge_advancing(
-    gmsh, layers: BoundaryLayerMesh, boundary: _Boundary, options, maximum_size, /
-):
+    gmsh: Any,
+    layers: BoundaryLayerMesh,
+    boundary: _Boundary,
+    options: Any,
+    maximum_size: Any,
+    /,
+) -> Any:
     layer_points = np.asarray(layers.mesh.coordinates, dtype=np.float64)
     wall_map = np.asarray(layers.wall_vertices, dtype=np.int64)
     outer = boundary.triangles[~boundary.wall]
@@ -441,6 +449,7 @@ def _cap_triangles(layers: BoundaryLayerMesh, /) -> np.ndarray:
             "Core fill requires a closed layer cap; open wall rims need EXACT_SWEEP.",
             stage=_FILL_STAGE,
         )
+    # ty: ignore[unresolved-attribute]
     if any(block.cell_kind != "triangle" for block in layers.cap.blocks):
         raise MeshingFailure(
             MeshingFailureCategory.UNSUPPORTED_COMBINATION,
@@ -448,12 +457,13 @@ def _cap_triangles(layers: BoundaryLayerMesh, /) -> np.ndarray:
             stage=_FILL_STAGE,
         )
     cap_vertices = np.asarray(layers.cap_vertices, dtype=np.int64)
+    # ty: ignore[unresolved-attribute]
     blocks = [np.asarray(block.vertices, dtype=np.int64) for block in layers.cap.blocks]
     return cap_vertices[np.concatenate(blocks)]
 
 
 def _provider_layers(
-    gmsh, boundary: _Boundary, control, options, maximum_size, /
+    gmsh: Any, boundary: _Boundary, control: Any, options: Any, maximum_size: Any, /
 ) -> _Layered:
     """Gmsh boundary-layer extrusion of the wall mesh, certified natively."""
     faces, arity = _padded(boundary.triangles)
@@ -571,7 +581,9 @@ def _top_faces(prisms: np.ndarray, level: np.ndarray, layers: int, /) -> np.ndar
     return top[np.all(level[top] == layers, axis=1)]
 
 
-def _level_thicknesses(points, wall_triangles, level, layers, /) -> np.ndarray:
+def _level_thicknesses(
+    points: Any, wall_triangles: Any, level: Any, layers: Any, /
+) -> np.ndarray:
     selected = np.flatnonzero(level > 0)
     distance = _nearest_distances(points[wall_triangles], points[selected])
     means = np.asarray(
@@ -583,7 +595,7 @@ def _level_thicknesses(points, wall_triangles, level, layers, /) -> np.ndarray:
 # ---------------------------------------------------------------- merged mesh
 
 
-def _merged_mesh(layered: _Layered, numeric_version: str, /):
+def _merged_mesh(layered: _Layered, numeric_version: str, /) -> Any:
     """Merged cells in canonical (block-name) order with zone mask and layer indices."""
     # ``layer_index`` follows the layer mesh's kind order (_VOLUME_ORDER).
     offsets = {}
@@ -630,11 +642,11 @@ def _merged_mesh(layered: _Layered, numeric_version: str, /):
 
 def _organization(
     mesh: CellMesh, core: np.ndarray, layer_values: np.ndarray, layered: _Layered, /
-):
+) -> Any:
     cells = mesh.entity_set(3)
     cell_ids = np.asarray(cells.entity_ids, dtype=np.int64)
 
-    def cell_scope(selected):
+    def cell_scope(selected: Any) -> Any:
         return MeshingScope(
             mesh.mesh_id,
             mesh.numeric_version,
@@ -653,6 +665,7 @@ def _organization(
         layer_values.astype(np.int32),
     )
     connectivity = mesh.connectivity
+    # ty: ignore[invalid-argument-type]
     rows = _connectivity_face_rows(connectivity)
     faces = mesh.entity_set(2)
     face_ids = np.asarray(faces.entity_ids, dtype=np.int64)
@@ -664,6 +677,7 @@ def _organization(
                 np.stack([rows[index] for index in selected]), axis=1
             )
     incidents = np.asarray(
+        # ty: ignore[invalid-argument-type]
         [len(adjacent) for adjacent in _connectivity_face_incidents(connectivity)]
     )
     patches = []
@@ -704,6 +718,7 @@ def _organization(
                     faces.entity_set_id,
                     face_ids[selected],
                 ),
+                # ty: ignore[invalid-argument-type]
                 connected=_patch_is_connected(connectivity, selected),
                 adjacent_zone_ids=tuple(zone.zone_id for zone in zones),
             )
@@ -711,7 +726,7 @@ def _organization(
     return (layer_zone, core_zone), tuple(patches), attribute
 
 
-def _layer_compliance(control: BoundaryLayerControl, layered: _Layered, /):
+def _layer_compliance(control: BoundaryLayerControl, layered: _Layered, /) -> Any:
     requested_values = np.asarray(control.schedule.thicknesses, dtype=np.float64)
     key = f"layer:{control.control_id}"
     measured = layered.thicknesses
@@ -748,7 +763,7 @@ def _layer_compliance(control: BoundaryLayerControl, layered: _Layered, /):
     return tuple(requested), tuple(achieved), tuple(issues)
 
 
-def _boundary_size_compliance(specification, layered: _Layered, /):
+def _boundary_size_compliance(specification: Any, layered: _Layered, /) -> Any:
     """Whole-source uniform sizes govern the wall and remaining boundary surface."""
     triangles = np.concatenate((layered.wall, layered.outer))
     edges = np.unique(
@@ -794,7 +809,7 @@ def _boundary_size_compliance(specification, layered: _Layered, /):
 
 
 def _layered_result(
-    plan,
+    plan: Any,
     layered: _Layered,
     control: BoundaryLayerControl,
     version: str,
@@ -918,7 +933,16 @@ def _layered_result(
     )
 
 
-def _layered_stages(plan, control, mesh, audit, compliance, geometry, association, /):
+def _layered_stages(
+    plan: Any,
+    control: Any,
+    mesh: Any,
+    audit: Any,
+    compliance: Any,
+    geometry: Any,
+    association: Any,
+    /,
+) -> Any:
     specification = plan.specification
     stages = (
         (
@@ -967,12 +991,12 @@ def _layered_stages(plan, control, mesh, audit, compliance, geometry, associatio
 
 
 def _execute_layered_volume(
-    gmsh,
-    plan,
+    gmsh: Any,
+    plan: Any,
     version: str,
     info: MeshingProviderInfo,
-    cache,
-    background,
+    cache: Any,
+    background: Any,
     /,
 ) -> CellMeshingResult:
     """Surface-mesh the BRep, grow the layers, and fill the core with fixed caps."""
@@ -1001,10 +1025,10 @@ def _execute_layered_volume(
 
 
 def _fill_boundary_layer_core(
-    gmsh,
+    gmsh: Any,
     layers: BoundaryLayerMesh,
     boundary: SurfaceModel,
-    options,
+    options: Any,
     maximum_size: float | None,
     version: str,
     info: MeshingProviderInfo,
@@ -1145,7 +1169,9 @@ def _wall_triangles(layers: BoundaryLayerMesh, /) -> np.ndarray:
     on_wall = np.zeros((layers.mesh.coordinates.shape[0],), dtype=np.bool_)
     on_wall[wall_vertices[wall_vertices >= 0]] = True
     connectivity = layers.mesh.connectivity
+    # ty: ignore[invalid-argument-type]
     rows = _connectivity_face_rows(connectivity)
+    # ty: ignore[invalid-argument-type]
     incidents = _connectivity_face_incidents(connectivity)
     faces = [
         row

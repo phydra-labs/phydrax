@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -27,7 +30,7 @@ _LOWER = 1.0 / np.sqrt(2.0)
 _UPPER = np.sqrt(2.0)
 
 
-def _grid(count, /, *, perturbation=0.0):
+def _grid(count: Any, /, *, perturbation: Any = 0.0) -> Any:
     x, y = np.meshgrid(np.linspace(0.0, 1.0, count + 1), np.linspace(0.0, 1.0, count + 1))
     points = np.stack((x.ravel(), y.ravel()), axis=1)
     interior = np.all((points > 0.0) & (points < 1.0), axis=1)
@@ -43,7 +46,7 @@ def _grid(count, /, *, perturbation=0.0):
     return points, triangles
 
 
-def _scope(mesh, dimension, entity_ids, /):
+def _scope(mesh: Any, dimension: Any, entity_ids: Any, /) -> Any:
     entities = mesh.entity_set(dimension)
     return MeshingScope(
         mesh.mesh_id,
@@ -55,7 +58,7 @@ def _scope(mesh, dimension, entity_ids, /):
     )
 
 
-def _source(count=4, /, *, perturbation=0.0, organized=False):
+def _source(count: Any = 4, /, *, perturbation: Any = 0.0, organized: Any = False) -> Any:
     points, triangles = _grid(count, perturbation=perturbation)
     mesh = phx.discretization.CellMesh.from_triangles(points, triangles)
     mesh = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si()).mesh
@@ -66,6 +69,7 @@ def _source(count=4, /, *, perturbation=0.0, organized=False):
     centroids = np.concatenate(
         [coordinates[np.asarray(block.vertices)].mean(axis=1) for block in mesh.blocks]
     )
+    # ty: ignore[unresolved-attribute]
     edges = np.asarray(mesh.connectivity.edges)
     bottom = np.all(coordinates[edges][:, :, 1] == 0.0, axis=1)
     zones = (
@@ -83,7 +87,7 @@ def _source(count=4, /, *, perturbation=0.0, organized=False):
     )
 
 
-def _metric(source, tensor, /):
+def _metric(source: Any, tensor: Any, /) -> Any:
     mesh = source.mesh
     vertices = mesh.entity_set(0)
     scope = MeshingScope(
@@ -98,14 +102,14 @@ def _metric(source, tensor, /):
     return MeshMetricField(scope, values, minimum_size=1.0e-3, maximum_size=10.0)
 
 
-def _adapt(source, request, /, **options):
+def _adapt(source: Any, request: Any, /, **options: Any) -> Any:
     policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_METRIC_2D, **options)
     return execute_mesh_adaptation(
         prepare_mesh_adaptation(source, request, policy=policy)
     )
 
 
-def _signed_areas(mesh, /):
+def _signed_areas(mesh: Any, /) -> Any:
     points = np.asarray(mesh.coordinates)
     areas = []
     for block in mesh.blocks:
@@ -120,7 +124,7 @@ def _signed_areas(mesh, /):
     return np.concatenate(areas)
 
 
-def _edge_metric_lengths(mesh, tensor, /):
+def _edge_metric_lengths(mesh: Any, tensor: Any, /) -> Any:
     points = np.asarray(mesh.coordinates)
     edges = np.asarray(mesh.connectivity.edges)
     delta = points[edges[:, 1]] - points[edges[:, 0]]
@@ -132,7 +136,7 @@ def _edge_metric_lengths(mesh, tensor, /):
     [np.eye(2) / 0.2**2, np.diag((1.0 / 0.5**2, 1.0 / 0.1**2))],
     ids=["isotropic", "anisotropic"],
 )
-def test_metric_adaptation_reaches_the_unit_mesh(tensor):
+def test_metric_adaptation_reaches_the_unit_mesh(tensor: Any) -> None:
     source = _source()
     result = _adapt(source, MetricMeshAdaptation(_metric(source, tensor)))
 
@@ -146,7 +150,7 @@ def test_metric_adaptation_reaches_the_unit_mesh(tensor):
     assert np.isclose(np.sum(areas), 1.0, rtol=0.0, atol=1.0e-14)
 
 
-def test_metric_adaptation_coarsens_a_fine_mesh():
+def test_metric_adaptation_coarsens_a_fine_mesh() -> None:
     source = _source(8)
     tensor = np.eye(2) / 0.45**2
     result = _adapt(source, MetricMeshAdaptation(_metric(source, tensor)))
@@ -157,7 +161,7 @@ def test_metric_adaptation_coarsens_a_fine_mesh():
     assert np.all(_signed_areas(result.target.mesh) > 0.0)
 
 
-def test_metric_adaptation_preserves_zones_patches_and_interfaces():
+def test_metric_adaptation_preserves_zones_patches_and_interfaces() -> None:
     source = _source(organized=True)
     tensor = np.eye(2) / 0.12**2
     result = _adapt(source, MetricMeshAdaptation(_metric(source, tensor)))
@@ -194,7 +198,7 @@ def test_metric_adaptation_preserves_zones_patches_and_interfaces():
     assert interface_length == pytest.approx(1.0, abs=1.0e-14)
 
 
-def test_metric_adaptation_is_deterministic():
+def test_metric_adaptation_is_deterministic() -> None:
     source = _source(perturbation=0.3)
     metric = _metric(source, np.diag((1.0 / 0.3**2, 1.0 / 0.12**2)))
 
@@ -205,14 +209,14 @@ def test_metric_adaptation_is_deterministic():
     assert first.target.mesh.mesh_id == second.target.mesh.mesh_id
 
 
-def test_metric_adaptation_transfers_linear_fields_exactly():
+def test_metric_adaptation_transfers_linear_fields_exactly() -> None:
     source = _source(perturbation=0.3)
     result = _adapt(
         source,
         MetricMeshAdaptation(_metric(source, np.diag((1.0 / 0.3**2, 1.0 / 0.1**2)))),
     )
 
-    def field(points):
+    def field(points: Any) -> Any:
         return 2.0 + 3.0 * points[:, 0] - 1.5 * points[:, 1]
 
     source_mesh = source.mesh
@@ -232,7 +236,7 @@ def test_metric_adaptation_transfers_linear_fields_exactly():
     np.testing.assert_allclose(np.asarray(values), expected, rtol=0.0, atol=1.0e-13)
 
 
-def test_relocation_only_adaptation_keeps_topology():
+def test_relocation_only_adaptation_keeps_topology() -> None:
     source = _source(6, perturbation=0.35)
     result = _adapt(
         source, RelocationMeshAdaptation(_metric(source, np.eye(2) / 0.17**2))

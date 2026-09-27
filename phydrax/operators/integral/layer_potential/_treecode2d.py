@@ -9,7 +9,8 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -54,7 +55,7 @@ class LaplaceTreecodeBackend2D(StrictModule, NonTrainableState):
         expansion_order: int = 8,
         leaf_size: int = 32,
         opening_angle: float = 0.5,
-    ):
+    ) -> None:
         if (
             not isinstance(potential, LaplaceLayerPotential2D)
             or potential.kind != "single"
@@ -67,7 +68,7 @@ class LaplaceTreecodeBackend2D(StrictModule, NonTrainableState):
             raise ValueError("Laplace treecode opening_angle must lie in (0, 1).")
         points = np.asarray(potential.panelization.points, dtype=np.float64)
         centers: list[np.ndarray] = []
-        radii: list[float] = []
+        radii: list[float | np.floating] = []
         children: list[list[int]] = []
         index_sets: list[np.ndarray] = []
 

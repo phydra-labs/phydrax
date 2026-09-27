@@ -5,20 +5,42 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, cast, NamedTuple
+from typing import Any, cast, NamedTuple, Protocol, TypeAlias, TypeVar
 
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 from blackjax.mcmc import hmc, integrators, metrics, proposal, termination, trajectory
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 
 _Proposal = cast(Any, proposal.Proposal)
 _Trajectory = cast(Any, trajectory.Trajectory)
 _IterativeUTurnState = cast(Any, termination.IterativeUTurnState)
 _reorder_trajectories = cast(Any, trajectory.reorder_trajectories)
+
+_T = TypeVar("_T")
+
+
+class HamiltonianMetric(Protocol):
+    """Momentum sampler, kinetic energy, and U-turn test of a Euclidean metric."""
+
+    @property
+    def sample_momentum(self) -> Callable[..., Any]: ...
+
+    @property
+    def kinetic_energy(self) -> Callable[..., Any]: ...
+
+    @property
+    def check_turning(self) -> Callable[..., Any]: ...
+
+
+_Integrator: TypeAlias = Callable[
+    [integrators.IntegratorState, ArrayLike], integrators.IntegratorState
+]
 
 
 class InterleavedNUTSStats(NamedTuple):
@@ -67,23 +89,38 @@ class _SchedulerCarry(NamedTuple):
     num_scheduler_steps: Array
 
 
+# (continuation, whether a draw was emitted, emitted draw or placeholder).
+_QuantumResult: TypeAlias = tuple[_NUTSContinuation, Array, _NUTSEmission]
+InterleavedNUTSAdvancer: TypeAlias = Callable[
+    [hmc.HMCState, Array, Array, Array],
+    tuple[hmc.HMCState, PyTree[Array], dict[str, Array], InterleavedNUTSStats],
+]
+
+
 def build_interleaved_nuts_advancer(
     logdensity_fn: Callable[[PyTree[Any]], Array],
     /,
     *,
     max_num_doublings: int,
     divergence_threshold: float = 1000.0,
-) -> Callable:
+) -> InterleavedNUTSAdvancer:
     """Build one reusable, chunk-shaped interleaved NUTS executable."""
     doublings = int(max_num_doublings)
     if doublings <= 0:
         raise ValueError("max_num_doublings must be positive.")
     threshold = float(divergence_threshold)
 
-    def run(current_states, step_sizes, inverse_mass_matrices, draw_keys):
+    def run(
+        current_states: hmc.HMCState,
+        step_sizes: Array,
+        inverse_mass_matrices: Array,
+        draw_keys: Array,
+    ) -> tuple[hmc.HMCState, PyTree[Array], dict[str, Array], InterleavedNUTSStats]:
         chains, count = draw_keys.shape
 
-        def prepare_chain(state, keys, inverse_mass_matrix):
+        def prepare_chain(
+            state: hmc.HMCState, keys: Array, inverse_mass_matrix: Array
+        ) -> tuple[PyTree[Array], Array, Array]:
             metric = metrics.default_metric(inverse_mass_matrix)
             split_keys = jax.vmap(lambda key: jr.split(key, 2))(keys)
             momentum_keys = split_keys[:, 0]
@@ -92,7 +129,7 @@ def build_interleaved_nuts_advancer(
                 momentum_keys,
                 state.position,
             )
-            kinetic_energies = jax.vmap(metric.kinetic_energy)(momenta)
+            kinetic_energies = jnp.asarray(jax.vmap(metric.kinetic_energy)(momenta))
             return momenta, kinetic_energies, integrator_keys
 
         momenta, kinetic_energies, integrator_keys = jax.vmap(prepare_chain)(
@@ -118,6 +155,7 @@ def build_interleaved_nuts_advancer(
             integrator_keys[:, 0],
         )
         scalar_shape = (chains, count)
+        scalar_dtype = jnp.asarray(current_states.logdensity).dtype
         buffers = _NUTSBuffers(
             position=jax.tree_util.tree_map(
                 lambda value: jnp.zeros(
@@ -126,13 +164,10 @@ def build_interleaved_nuts_advancer(
                 ),
                 current_states.position,
             ),
-            logdensity=jnp.zeros(scalar_shape, dtype=current_states.logdensity.dtype),
-            acceptance_rate=jnp.zeros(
-                scalar_shape,
-                dtype=current_states.logdensity.dtype,
-            ),
+            logdensity=jnp.zeros(scalar_shape, dtype=scalar_dtype),
+            acceptance_rate=jnp.zeros(scalar_shape, dtype=scalar_dtype),
             is_divergent=jnp.zeros(scalar_shape, dtype=jnp.bool_),
-            energy=jnp.zeros(scalar_shape, dtype=current_states.logdensity.dtype),
+            energy=jnp.zeros(scalar_shape, dtype=scalar_dtype),
             num_integration_steps=jnp.zeros(
                 scalar_shape,
                 dtype=jnp.asarray(0).dtype,
@@ -149,10 +184,10 @@ def build_interleaved_nuts_advancer(
             num_scheduler_steps=jnp.asarray(0, dtype=jnp.int32),
         )
 
-        def has_unfinished_chains(carry):
+        def has_unfinished_chains(carry: _SchedulerCarry) -> Array:
             return jnp.any(carry.completed < count)
 
-        def advance_chains(carry):
+        def advance_chains(carry: _SchedulerCarry) -> _SchedulerCarry:
             raw_continuations, raw_emitted, emissions = jax.vmap(
                 lambda continuation, step_size, inverse_mass_matrix: _advance_one_quantum(
                     continuation,
@@ -234,13 +269,13 @@ def build_interleaved_nuts_advancer(
 
 
 def _initialize_transition(
-    state,
-    momentum,
-    kinetic_energy,
-    integrator_key,
+    state: hmc.HMCState,
+    momentum: PyTree[Array],
+    kinetic_energy: Array,
+    integrator_key: Array,
     *,
-    max_num_doublings,
-):
+    max_num_doublings: int,
+) -> _NUTSContinuation:
     integrator_state = integrators.IntegratorState(
         state.position,
         momentum,
@@ -278,14 +313,16 @@ def _initialize_transition(
     return _initialize_subtrajectory(continuation)
 
 
-def _new_termination_state(position, *, max_num_doublings):
+def _new_termination_state(
+    position: PyTree[Array], *, max_num_doublings: int
+) -> termination.IterativeUTurnState:
     flat_position, _ = ravel_pytree(position)
     checkpoints = jnp.zeros((max_num_doublings, flat_position.shape[0]))
     zero = jnp.asarray(0, dtype=jnp.int32)
     return _IterativeUTurnState(checkpoints, checkpoints, zero, zero)
 
 
-def _initialize_subtrajectory(continuation):
+def _initialize_subtrajectory(continuation: _NUTSContinuation) -> _NUTSContinuation:
     expansion_key = jr.fold_in(
         continuation.integrator_key,
         continuation.expansion_index,
@@ -317,16 +354,16 @@ def _initialize_subtrajectory(continuation):
 
 
 def _advance_one_quantum(
-    continuation,
-    step_size,
-    inverse_mass_matrix,
+    continuation: _NUTSContinuation,
+    step_size: ArrayLike,
+    inverse_mass_matrix: Array,
     *,
-    logdensity_fn,
-    max_num_doublings,
-    divergence_threshold,
-    metric_override=None,
-    integrator_override=None,
-):
+    logdensity_fn: Callable[[PyTree[Any]], Array],
+    max_num_doublings: int,
+    divergence_threshold: float,
+    metric_override: HamiltonianMetric | None = None,
+    integrator_override: _Integrator | None = None,
+) -> _QuantumResult:
     metric = (
         metrics.default_metric(inverse_mass_matrix)
         if metric_override is None
@@ -357,7 +394,7 @@ def _advance_one_quantum(
     new_proposal = generate_proposal(continuation.initial_energy, new_state)
     is_divergent = -new_proposal.weight > divergence_threshold
 
-    def initialize_local(_):
+    def initialize_local(_: None) -> tuple[trajectory.Trajectory, proposal.Proposal]:
         return (
             _Trajectory(
                 new_state,
@@ -368,7 +405,7 @@ def _advance_one_quantum(
             new_proposal,
         )
 
-    def extend_local(_):
+    def extend_local(_: None) -> tuple[trajectory.Trajectory, proposal.Proposal]:
         return (
             trajectory.append_to_trajectory(
                 continuation.local_trajectory,
@@ -405,7 +442,7 @@ def _advance_one_quantum(
     )
     local_done = (next_local_step >= target_steps) | is_divergent | is_turning_subtree
 
-    def keep_integrating(_):
+    def keep_integrating(_: None) -> _QuantumResult:
         updated = continuation._replace(
             local_step=next_local_step,
             local_proposal=local_proposal,
@@ -414,7 +451,7 @@ def _advance_one_quantum(
         )
         return updated, jnp.asarray(False), _placeholder_emission(updated)
 
-    def finish_subtrajectory(_):
+    def finish_subtrajectory(_: object) -> _QuantumResult:
         ordered_local_trajectory = jax.lax.cond(
             direction > 0,
             lambda: local_trajectory,
@@ -426,7 +463,7 @@ def _advance_one_quantum(
             ),
         )
 
-        def accumulate_acceptance(_):
+        def accumulate_acceptance(_: None) -> proposal.Proposal:
             return _Proposal(
                 continuation.global_proposal.state,
                 continuation.global_proposal.energy,
@@ -437,7 +474,7 @@ def _advance_one_quantum(
                 ),
             )
 
-        def sample_global_proposal(_):
+        def sample_global_proposal(_: None) -> proposal.Proposal:
             return proposal.progressive_biased_sampling(
                 global_proposal_key,
                 continuation.global_proposal,
@@ -481,7 +518,7 @@ def _advance_one_quantum(
             termination_state=termination_state,
         )
 
-        def finish_transition(_):
+        def finish_transition(_: None) -> _QuantumResult:
             sampled_state = global_proposal.state
             state = hmc.HMCState(
                 sampled_state.position,
@@ -503,7 +540,7 @@ def _advance_one_quantum(
             )
             return final_continuation, jnp.asarray(True), emission
 
-        def continue_transition(_):
+        def continue_transition(_: None) -> _QuantumResult:
             next_continuation = _initialize_subtrajectory(updated)
             return (
                 next_continuation,
@@ -526,7 +563,7 @@ def _advance_one_quantum(
     )
 
 
-def _placeholder_emission(continuation):
+def _placeholder_emission(continuation: _NUTSContinuation) -> _NUTSEmission:
     zero = jnp.zeros_like(continuation.initial_energy)
     return _NUTSEmission(
         state=continuation.current_state,
@@ -539,7 +576,7 @@ def _placeholder_emission(continuation):
     )
 
 
-def _choose_one(condition, when_true, when_false):
+def _choose_one(condition: Array, when_true: _T, when_false: _T) -> _T:
     return jax.lax.cond(
         condition,
         lambda _: when_true,
@@ -548,14 +585,16 @@ def _choose_one(condition, when_true, when_false):
     )
 
 
-def _dynamic_index_tree(values, index):
+def _dynamic_index_tree(values: PyTree[Array], index: Array) -> PyTree[Array]:
     return jax.tree_util.tree_map(lambda value: value[index], values)
 
 
-def _write_one(buffers, emission, index, should_write):
+def _write_one(
+    buffers: _NUTSBuffers, emission: _NUTSEmission, index: Array, should_write: Array
+) -> _NUTSBuffers:
     safe_index = jnp.minimum(index, buffers.logdensity.shape[0] - 1)
 
-    def write(_):
+    def write(_: None) -> _NUTSBuffers:
         return _NUTSBuffers(
             position=jax.tree_util.tree_map(
                 lambda buffer, value: buffer.at[safe_index].set(value),

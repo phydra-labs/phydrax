@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite
@@ -23,6 +24,7 @@ from ..linalg import (
     PyTreeSpace,
     solve as solve_linear,
 )
+from ..typing import parse
 from ._precision import NonlinearPrecisionPolicy
 from ._types import (
     AbstractNonlinearMethod,
@@ -74,7 +76,27 @@ class _QuasiRun(StrictModule):
     status: Array
 
 
-def _apply_inverse(scale, left, right, count, vector, precision, /):
+class _Search(StrictModule):
+    state: Array
+    residual: Array
+    norm: Array
+    rate: Array
+    evaluations: Array
+    accepted: Array
+    finite_seen: Array
+    domain_failures: Array
+    nonfinite: Array
+
+
+def _apply_inverse(
+    scale: float,
+    left: Array,
+    right: Array,
+    count: Array,
+    vector: Array,
+    precision: NonlinearPrecisionPolicy,
+    /,
+) -> Array:
     active = jnp.arange(left.shape[0]) < count
     left_ = precision.accumulation(left)
     right_ = precision.accumulation(right)
@@ -87,7 +109,15 @@ def _apply_inverse(scale, left, right, count, vector, precision, /):
     return precision.direction(result)
 
 
-def _apply_inverse_transpose(scale, left, right, count, vector, precision, /):
+def _apply_inverse_transpose(
+    scale: float,
+    left: Array,
+    right: Array,
+    count: Array,
+    vector: Array,
+    precision: NonlinearPrecisionPolicy,
+    /,
+) -> Array:
     active = jnp.arange(left.shape[0]) < count
     left_ = precision.accumulation(left)
     right_ = precision.accumulation(right)
@@ -101,29 +131,18 @@ def _apply_inverse_transpose(scale, left, right, count, vector, precision, /):
 
 
 def _line_search(
-    problem,
-    source,
-    target,
-    state,
-    residual,
-    direction,
-    args,
-    maximum_steps,
-    evaluation_limit,
-    precision,
+    problem: NonlinearSystemProblem,
+    source: PyTreeSpace,
+    target: PyTreeSpace,
+    state: Array,
+    residual: Array,
+    direction: Array,
+    args: Any,
+    maximum_steps: int,
+    evaluation_limit: Array | int | None,
+    precision: NonlinearPrecisionPolicy,
     /,
-):
-    class _Search(StrictModule):
-        state: Array
-        residual: Array
-        norm: Array
-        rate: Array
-        evaluations: Array
-        accepted: Array
-        finite_seen: Array
-        domain_failures: Array
-        nonfinite: Array
-
+) -> _Search:
     search = _Search(
         state=state,
         residual=residual,
@@ -136,7 +155,7 @@ def _line_search(
         nonfinite=jnp.asarray(0, dtype=jnp.int32),
     )
 
-    def condition(item):
+    def condition(item: _Search) -> Array:
         within = (
             jnp.asarray(True)
             if evaluation_limit is None
@@ -149,7 +168,7 @@ def _line_search(
             & within
         )
 
-    def body(item):
+    def body(item: _Search) -> _Search:
         candidate_coordinates = jnp.asarray(
             state + item.rate * direction,
             dtype=state.dtype,
@@ -200,9 +219,8 @@ class Broyden(AbstractNonlinearMethod):
         maximum_line_search_steps: int = 20,
         denominator_tolerance: float = 1e-12,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
-        if kind not in ("good", "bad"):
-            raise ValueError("kind must be 'good' or 'bad'.")
+    ) -> None:
+        kind = parse(kind, BroydenKind, "kind")
         memory_ = int(memory)
         steps = int(maximum_line_search_steps)
         scale = float(initial_scale)
@@ -238,13 +256,16 @@ class Broyden(AbstractNonlinearMethod):
 
     def solve(
         self,
-        problem,
-        initial_state,
+        problem: NonlinearSystemProblem,
+        initial_state: PyTree[Any],
         /,
         *,
-        termination,
-        args=None,
-        _initial_evaluation=None,
+        termination: NonlinearTermination,
+        args: Any = None,
+        _initial_evaluation: tuple[
+            NonlinearSystemProblem, PyTree[Array], PyTree[Array], Any
+        ]
+        | None = None,
     ) -> NonlinearResult:
         if not isinstance(problem, NonlinearSystemProblem):
             raise TypeError("problem must be NonlinearSystemProblem.")
@@ -312,7 +333,7 @@ class Broyden(AbstractNonlinearMethod):
             ).astype(jnp.int32),
         )
 
-        def condition(current):
+        def condition(current: _QuasiRun) -> Array:
             within = (
                 jnp.asarray(True)
                 if termination.maximum_evaluations is None
@@ -324,7 +345,7 @@ class Broyden(AbstractNonlinearMethod):
                 & within
             )
 
-        def body(current):
+        def body(current: _QuasiRun) -> _QuasiRun:
             direction = -_apply_inverse(
                 self.initial_scale,
                 current.left_factors,
@@ -557,7 +578,7 @@ class Chord(AbstractNonlinearMethod):
         maximum_dimension: int = 512,
         maximum_line_search_steps: int = 20,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         linear_ = LinearSolvePolicy(DenseLU()) if linear is None else linear
         precision_ = NonlinearPrecisionPolicy() if precision is None else precision
         if not isinstance(linear_, LinearSolvePolicy):
@@ -586,7 +607,15 @@ class Chord(AbstractNonlinearMethod):
             implicit_differentiation=True,
         )
 
-    def solve(self, problem, initial_state, /, *, termination, args=None):
+    def solve(
+        self,
+        problem: NonlinearSystemProblem,
+        initial_state: PyTree[Any],
+        /,
+        *,
+        termination: NonlinearTermination,
+        args: Any = None,
+    ) -> NonlinearResult:
         if not isinstance(problem, NonlinearSystemProblem):
             raise TypeError("problem must be NonlinearSystemProblem.")
         if not isinstance(termination, NonlinearTermination):
@@ -609,7 +638,7 @@ class Chord(AbstractNonlinearMethod):
             raise ValueError("Chord requires a square system within maximum_dimension.")
         initial_coordinates = source.flatten(state_tree)
 
-        def coordinate_residual(coordinates):
+        def coordinate_residual(coordinates: Array) -> Array:
             return target.flatten(problem_.residual(source.unflatten(coordinates), args))
 
         matrix = jax.jacfwd(coordinate_residual)(initial_coordinates)

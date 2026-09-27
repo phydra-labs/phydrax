@@ -4,21 +4,23 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from ..._numerics import solve_weighted_least_squares
 from ..._strict import StrictModule
 from ...metrix import EuclideanStateGeometry
+from ...typing import parse
 from .._layout import InputLayout, StateLayout
-from .._system import DiscreteSystem
-from .._trajectory import TrajectoryData
+from .._system import DiscreteStepContext, DiscreteSystem
+from .._trajectory import TrajectoryData, TrajectoryTransitions
 from ._features import AbstractFeatureLibrary
 from ._status import (
     IDENTIFICATION_INSUFFICIENT_SAMPLES,
@@ -91,7 +93,9 @@ def _rank_mask(
     return retained, jnp.asarray(resolved_rcond, dtype=dtype), policy
 
 
-def _weighted_snapshots(data: TrajectoryData, /):
+def _weighted_snapshots(
+    data: TrajectoryData, /
+) -> tuple[TrajectoryTransitions, Array, Array, Array, Array, Array]:
     transitions = data.transitions()
     source, _ = _flatten_event(transitions.source_states, data.state_layout.shape)
     target, _ = _flatten_event(transitions.target_states, data.state_layout.shape)
@@ -125,10 +129,10 @@ class _LinearIdentifiedTransition(StrictModule):
 
     def __call__(
         self,
-        coordinate: Array,
+        coordinate: DiscreteStepContext,
         state: Array,
-        inputs_or_args,
-        args=None,
+        inputs_or_args: Any,
+        args: object = None,
     ) -> Array:
         del coordinate, args
         flat_state = jnp.asarray(state).reshape((-1,))
@@ -222,8 +226,7 @@ def fit_dmd(
         raise TypeError("data must be TrajectoryData.")
     if rank is not None and energy_threshold is not None:
         raise ValueError("rank and energy_threshold are mutually exclusive.")
-    if mode not in ("exact", "projected"):
-        raise ValueError("mode must be 'exact' or 'projected'.")
+    mode = parse(mode, DMDMode, "mode")
     transitions, source, target, mask, weights, roots = _weighted_snapshots(data)
     input_values = None
     if transitions.inputs is not None:
@@ -394,10 +397,10 @@ class _EDMDIdentifiedTransition(StrictModule):
 
     def __call__(
         self,
-        coordinate: Array,
+        coordinate: DiscreteStepContext,
         state: Array,
-        inputs_or_args,
-        args=None,
+        inputs_or_args: Any,
+        args: object = None,
     ) -> Array:
         del coordinate, args
         features = self.library.evaluate(state).values

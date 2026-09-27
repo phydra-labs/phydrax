@@ -1,12 +1,15 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _state():
+def _state() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8),),
         axis_names=("x",),
@@ -34,7 +37,7 @@ def _state():
     return topology, phx.discretization.VariablePatchHierarchyState(topology, (field,))
 
 
-def test_variable_patch_checkpoint_roundtrip_is_canonical(tmp_path):
+def test_variable_patch_checkpoint_roundtrip_is_canonical(tmp_path: Any) -> None:
     topology, state = _state()
     partition = phx.discretization.VariablePatchPartitionPlan(2, ((1,),)).prepare(
         topology

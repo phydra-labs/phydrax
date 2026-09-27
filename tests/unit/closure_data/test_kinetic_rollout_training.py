@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -58,7 +60,7 @@ from phydrax.equations._transport_closures import ConstantTransport
 from phydrax.nn.layers import Linear
 
 
-def _model(*, offset=0.0):
+def _model(*, offset: Any = 0.0) -> Any:
     model = Linear(
         in_size=4,
         out_size=2,
@@ -75,7 +77,7 @@ def _model(*, offset=0.0):
     )
 
 
-def _runtime():
+def _runtime() -> Any:
     quadrature = d2v17_quadrature()
     material = IdealGasMaterial(1.4, 1.0)
     method = SmoothCompressibleD2VKineticMethod(
@@ -88,7 +90,7 @@ def _runtime():
     )
 
 
-def _flow_schema():
+def _flow_schema() -> Any:
     return FlowStateSchema(
         ("density", "momentum_x", "momentum_y", "total_energy"),
         ("kg/m^3", "kg/(m^2*s)", "kg/(m^2*s)", "J/m^3"),
@@ -98,7 +100,7 @@ def _flow_schema():
     )
 
 
-def _binding(runtime, *, stage_one_artifact_id="stage-one-artifact"):
+def _binding(runtime: Any, *, stage_one_artifact_id: Any = "stage-one-artifact") -> Any:
     flow_schema = _flow_schema()
     provenance = NormalizerProvenance(
         partition_id="stage-one-partition",
@@ -141,7 +143,7 @@ def _binding(runtime, *, stage_one_artifact_id="stage-one-artifact"):
     )
 
 
-def _rollout_schema(runtime, binding):
+def _rollout_schema(runtime: Any, binding: Any) -> Any:
     return SmoothCompressibleRolloutSchema(
         runtime.transport.spatial_shape,
         jnp.float64,
@@ -157,7 +159,7 @@ def _rollout_schema(runtime, binding):
     )
 
 
-def _uniform_state(runtime):
+def _uniform_state(runtime: Any) -> Any:
     conserved = jnp.asarray((1.0, 0.0, 0.0, 1.25), dtype=jnp.float64)
     target_flux = jnp.zeros((2,), dtype=jnp.float64)
     oracle = runtime.energy_plan.solve(conserved[-1], target_flux)
@@ -172,7 +174,9 @@ def _uniform_state(runtime):
     )
 
 
-def _trajectory(runtime, binding, trajectory_id, *, perturbation=0.0):
+def _trajectory(
+    runtime: Any, binding: Any, trajectory_id: Any, *, perturbation: Any = 0.0
+) -> Any:
     schema = _rollout_schema(runtime, binding)
     state = _uniform_state(runtime)
     f = jnp.broadcast_to(state.particle_populations, (26, *schema.f_shape))
@@ -195,7 +199,7 @@ def _trajectory(runtime, binding, trajectory_id, *, perturbation=0.0):
     )
 
 
-def _parent_sample(schema, trajectory_id):
+def _parent_sample(schema: Any, trajectory_id: Any) -> Any:
     return ClosureSample(
         jnp.zeros((1,), dtype=jnp.float64),
         ClosureSampleKey(
@@ -209,7 +213,7 @@ def _parent_sample(schema, trajectory_id):
     )
 
 
-def _trajectory_id_for_split(schema, partition, split):
+def _trajectory_id_for_split(schema: Any, partition: Any, split: Any) -> Any:
     for index in range(10_000):
         trajectory_id = f"{split}-{index}"
         assignment = partition.assign((_parent_sample(schema, trajectory_id),))
@@ -218,7 +222,7 @@ def _trajectory_id_for_split(schema, partition, split):
     raise AssertionError(f"No deterministic {split} identity found.")
 
 
-def _dataset(runtime, binding, *, validation_perturbation=0.0):
+def _dataset(runtime: Any, binding: Any, *, validation_perturbation: Any = 0.0) -> Any:
     schema = _rollout_schema(runtime, binding)
     partition = LeakageSafePartitionPlan(
         "trajectory",
@@ -245,7 +249,7 @@ def _dataset(runtime, binding, *, validation_perturbation=0.0):
     )
 
 
-def _schedules():
+def _schedules() -> Any:
     policy = AdaptiveReplayPreparationPolicy(1_000_000, 1_000_000)
     return tuple(
         prepare_replay_schedule(horizon, 1024, policy) for horizon in (1, 2, 4, 8, 16, 25)
@@ -253,13 +257,13 @@ def _schedules():
 
 
 def _plan(
-    runtime,
-    binding,
-    dataset,
+    runtime: Any,
+    binding: Any,
+    dataset: Any,
     *,
-    replay_mode="step",
-    learning_rate=1.0e-12,
-):
+    replay_mode: Any = "step",
+    learning_rate: Any = 1.0e-12,
+) -> Any:
     options = {}
     if replay_mode == "block":
         options["replay_block_size"] = 2
@@ -284,17 +288,18 @@ def _plan(
         guard_batch_size=1,
         learning_rate=learning_rate,
         replay_mode=replay_mode,
+        # ty: ignore[invalid-argument-type]
         **options,
     )
 
 
-def _array_leaves(tree):
+def _array_leaves(tree: Any) -> Any:
     return tuple(
         np.asarray(value) for value in jax.tree.leaves(tree) if eqx.is_array(value)
     )
 
 
-def test_training_objective_has_no_holdout_split_dependence():
+def test_training_objective_has_no_holdout_split_dependence() -> None:
     runtime = _runtime()
     binding = _binding(runtime)
     clean = _dataset(runtime, binding)
@@ -325,7 +330,7 @@ def test_training_objective_has_no_holdout_split_dependence():
     np.testing.assert_array_equal(clean_value, changed_value)
 
 
-def test_short_window_objective_and_gradient_are_exact_across_replay_modes():
+def test_short_window_objective_and_gradient_are_exact_across_replay_modes() -> None:
     runtime = _runtime()
     binding = _binding(runtime)
     dataset = _dataset(runtime, binding)
@@ -334,7 +339,7 @@ def test_short_window_objective_and_gradient_are_exact_across_replay_modes():
     for mode in ("full", "step", "block", "scheduled"):
         plan = _plan(runtime, binding, dataset, replay_mode=mode)
 
-        def loss(candidate):
+        def loss(candidate: Any) -> Any:
             return kinetic_rollout_objective(
                 candidate, plan, dataset.statistics, dataset.train_windows, 2
             )[0]
@@ -350,7 +355,7 @@ def test_short_window_objective_and_gradient_are_exact_across_replay_modes():
             np.testing.assert_array_equal(observed, expected)
 
 
-def test_vmap_isolates_one_failed_trajectory_without_shortening_other_scans():
+def test_vmap_isolates_one_failed_trajectory_without_shortening_other_scans() -> None:
     runtime = _runtime()
     binding = _binding(runtime)
     dataset = _dataset(runtime, binding)
@@ -371,7 +376,7 @@ def test_vmap_isolates_one_failed_trajectory_without_shortening_other_scans():
     assert evidence.maximum_conservation_residual.shape == (2,)
 
 
-def test_rejected_proposal_rolls_back_model_and_optimizer_together():
+def test_rejected_proposal_rolls_back_model_and_optimizer_together() -> None:
     runtime = _runtime()
     binding = _binding(runtime)
     dataset = _dataset(runtime, binding)
@@ -392,7 +397,7 @@ def test_rejected_proposal_rolls_back_model_and_optimizer_together():
     assert array_tree_fingerprint(update.state.optimizer_state) == before_optimizer
 
 
-def test_checkpoint_resume_matches_uninterrupted_next_update(tmp_path):
+def test_checkpoint_resume_matches_uninterrupted_next_update(tmp_path: Any) -> None:
     runtime = _runtime()
     binding = _binding(runtime)
     dataset = _dataset(runtime, binding)
@@ -416,7 +421,7 @@ def test_checkpoint_resume_matches_uninterrupted_next_update(tmp_path):
     )
 
 
-def test_best_model_snapshot_is_immutable_across_rejection():
+def test_best_model_snapshot_is_immutable_across_rejection() -> None:
     runtime = _runtime()
     binding = _binding(runtime)
     dataset = _dataset(runtime, binding)
@@ -434,7 +439,7 @@ def test_best_model_snapshot_is_immutable_across_rejection():
     np.testing.assert_array_equal(rejected.state.best_loss, state.best_loss)
 
 
-def test_curriculum_advances_only_after_each_accepted_guard():
+def test_curriculum_advances_only_after_each_accepted_guard() -> None:
     runtime = _runtime()
     binding = _binding(runtime)
     dataset = _dataset(runtime, binding)
@@ -450,7 +455,9 @@ def test_curriculum_advances_only_after_each_accepted_guard():
     assert result.state.rejection_count == 0
 
 
-def test_checkpoint_refuses_plan_dataset_and_model_identity_mismatch(tmp_path):
+def test_checkpoint_refuses_plan_dataset_and_model_identity_mismatch(
+    tmp_path: Any,
+) -> None:
     runtime = _runtime()
     binding = _binding(runtime)
     dataset = _dataset(runtime, binding)

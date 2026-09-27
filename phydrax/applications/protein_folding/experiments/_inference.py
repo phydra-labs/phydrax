@@ -10,7 +10,8 @@ from math import isfinite
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ....optim import (
     AbstractLeastSquaresMethod,
@@ -42,17 +43,20 @@ class ExperimentIdentifiability:
     condition_number: float
 
     @property
-    def locally_identifiable(self):
+    def locally_identifiable(self) -> bool:
         return self.rank == len(self.free_names)
 
     @property
-    def null_vectors(self):
+    def null_vectors(self) -> Array:
         return self.right_singular_vectors[self.rank :]
 
 
 def protein_experiment_identifiability(
-    problem, coordinates=None, *, relative_tolerance=None
-):
+    problem: PreparedProteinExperiments,
+    coordinates: ArrayLike | None = None,
+    *,
+    relative_tolerance: float | None = None,
+) -> ExperimentIdentifiability:
     """Host rank decomposition of the real prepared residual Jacobian."""
     z = problem.initial_coordinates if coordinates is None else jnp.asarray(coordinates)
     if z.shape != problem.initial_coordinates.shape or np.any(
@@ -109,14 +113,14 @@ class ProteinExperimentFit:
     covariance: Array | None
 
     @property
-    def coordinates(self):
+    def coordinates(self) -> Array:
         return self.optimization.parameters
 
     @property
-    def named_parameters(self):
+    def named_parameters(self) -> dict[str, Array]:
         return self.problem.parameters.named_values(self.coordinates)
 
-    def predict(self):
+    def predict(self) -> tuple[Array, ...]:
         return self.problem.predict(self.coordinates)
 
 
@@ -124,11 +128,11 @@ def fit_protein_experiments(
     problem: PreparedProteinExperiments,
     /,
     *,
-    initial_coordinates=None,
+    initial_coordinates: ArrayLike | None = None,
     method: AbstractLeastSquaresMethod | None = None,
     termination: OptimizationTermination | None = None,
-    identifiability_tolerance=None,
-):
+    identifiability_tolerance: float | None = None,
+) -> ProteinExperimentFit:
     """Execute native nonlinear least squares, then compute host rank evidence.
 
     All named models use this same real fit path; no forward-only specialized
@@ -177,8 +181,8 @@ def protein_experiment_posterior_problem(
     *,
     prior_mean: ArrayLike,
     prior_standard_deviation: ArrayLike,
-    initial_coordinates=None,
-):
+    initial_coordinates: ArrayLike | None = None,
+) -> PosteriorProblem:
     """Build a native posterior with explicitly specified Gaussian priors on z.
 
     z is the named map's standardized free coordinate (not a log parameter
@@ -208,7 +212,7 @@ def protein_experiment_posterior_problem(
         )
     mean, sigma = jnp.asarray(mean), jnp.asarray(sigma)
 
-    def log_prior(z):
+    def log_prior(z: Array) -> Array:
         return -0.5 * jnp.sum(
             ((z - mean) / sigma) ** 2 + 2 * jnp.log(sigma) + jnp.log(2 * jnp.pi)
         )
@@ -228,7 +232,7 @@ class ProteinExperimentPosterior:
     problem: PreparedProteinExperiments
     mcmc: MCMCResult
 
-    def named_samples(self):
+    def named_samples(self) -> dict[str, Array]:
         raw = self.mcmc.samples
         flat = raw.reshape((-1, raw.shape[-1]))
         values = jax.vmap(self.problem.parameters.decode)(flat)
@@ -238,7 +242,7 @@ class ProteinExperimentPosterior:
             for index, name in enumerate(self.problem.parameters.names)
         }
 
-    def predictive_samples(self):
+    def predictive_samples(self) -> tuple[Array, ...]:
         """Conditional mean draws, not additional measurement-noise draws."""
         raw = self.mcmc.samples
         predictions = jax.vmap(self.problem.predict)(raw.reshape((-1, raw.shape[-1])))
@@ -248,19 +252,19 @@ class ProteinExperimentPosterior:
 
 
 def sample_protein_experiments(
-    problem,
+    problem: PreparedProteinExperiments,
     /,
     *,
-    key,
-    prior_mean,
-    prior_standard_deviation,
-    initial_coordinates=None,
-    num_chains=4,
-    num_warmup=1000,
-    num_samples=1000,
-    target_acceptance_rate=0.8,
-    max_num_doublings=10,
-):
+    key: Array,
+    prior_mean: ArrayLike,
+    prior_standard_deviation: ArrayLike,
+    initial_coordinates: ArrayLike | None = None,
+    num_chains: int = 4,
+    num_warmup: int = 1000,
+    num_samples: int = 1000,
+    target_acceptance_rate: float = 0.8,
+    max_num_doublings: int = 10,
+) -> ProteinExperimentPosterior:
     """Run the existing NUTS owner on the joint normalized likelihood."""
     posterior = protein_experiment_posterior_problem(
         problem,
@@ -304,7 +308,7 @@ def phi_posterior(
     source_id: str,
     minimum_stability_change: float,
     credible_mass: float = 0.95,
-):
+) -> PhiPosterior:
     """Derive Phi from paired WT/mutant posterior samples, never fit covariance.
 
     Phi = RT*(log kf_WT-log kf_mut)/(dG_unfold_WT-dG_unfold_mut).

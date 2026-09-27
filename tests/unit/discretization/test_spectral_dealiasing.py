@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -7,7 +9,7 @@ from phydrax.closure_data._state import FlowStateSchema
 from phydrax.discretization import spectral
 
 
-def _fourier(shape=(6, 8)):
+def _fourier(shape: Any = (6, 8)) -> Any:
     return phx.discretization.TensorSpectralPlan(
         tuple(phx.discretization.FourierBasisPlan(size) for size in shape),
         axis_names=tuple(f"x{axis}" for axis in range(len(shape))),
@@ -18,17 +20,19 @@ def _fourier(shape=(6, 8)):
 
 
 @pytest.mark.parametrize("factor", (1.0, 0.5, jnp.inf, jnp.nan))
-def test_oversampling_dealiasing_requires_finite_factor_above_one(factor):
+def test_oversampling_dealiasing_requires_finite_factor_above_one(factor: Any) -> None:
     with pytest.raises(ValueError, match="finite and greater than one"):
         phx.discretization.OversamplingDealiasingPlan(factor)
 
 
-def test_oversampling_dealiasing_validates_resource_and_spectral_family():
+def test_oversampling_dealiasing_validates_resource_and_spectral_family() -> None:
     with pytest.raises(TypeError, match="real number"):
+        # ty: ignore[invalid-argument-type]
         phx.discretization.OversamplingDealiasingPlan("1.5")
     with pytest.raises(TypeError, match="must be an integer"):
         phx.discretization.OversamplingDealiasingPlan(
             1.5,
+            # ty: ignore[invalid-argument-type]
             maximum_evaluation_modes=12.5,
         )
     with pytest.raises(ValueError, match="must be positive"):
@@ -57,10 +61,19 @@ def test_oversampling_dealiasing_validates_resource_and_spectral_family():
         phx.discretization.OversamplingDealiasingPlan(
             1.5,
             maximum_evaluation_modes=64,
+            # ty: ignore[invalid-argument-type]
         ).prepare(object(), required_polynomial_degree=None)
 
 
-def test_prepared_oversampling_transfers_shapes_constants_and_retained_modes():
+def test_polynomial_closure_dealiasing_rejects_spherical_discretization() -> None:
+    spherical = phx.discretization.SphericalSpectralPlan(4).prepare()
+    with pytest.raises(TypeError, match="tensor spectral discretization"):
+        phx.discretization.PolynomialClosureDealiasingPlan(2).prepare(
+            spherical, required_polynomial_degree=2
+        )
+
+
+def test_prepared_oversampling_transfers_shapes_constants_and_retained_modes() -> None:
     retained = _fourier()
     prepared = phx.discretization.OversamplingDealiasingPlan(
         1.5,
@@ -86,6 +99,7 @@ def test_prepared_oversampling_transfers_shapes_constants_and_retained_modes():
     assert prepared.report.retained_shape == (6, 8)
     assert prepared.report.evaluation_shape == (9, 12)
     assert not prepared.report.exact
+    # ty: ignore[unsupported-operator]
     assert "nonpolynomial" in prepared.report.reason
     assert (
         phx.discretization.OversamplingDealiasingPlan
@@ -93,7 +107,7 @@ def test_prepared_oversampling_transfers_shapes_constants_and_retained_modes():
     )
 
 
-def test_learned_spectral_drift_rejects_identity_oversampling_filter():
+def test_learned_spectral_drift_rejects_identity_oversampling_filter() -> None:
     space = _fourier((6, 6))
     projector = phx.discretization.PeriodicLerayProjector(space)
     coordinates = phx.discretization.HermitianSpectralCoordinates(

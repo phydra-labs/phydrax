@@ -10,15 +10,17 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax import core as jax_core
+from jax import Array, core as jax_core
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, ArrayLike, PyTree
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..linalg import (
     DenseCholesky,
     DenseLinearOperator,
     LinearSolvePolicy,
+    LinearSolveResult,
     LinearSystem,
     OperatorProperties,
     prepare,
@@ -30,7 +32,7 @@ def _factor_and_solve_covariance_system(
     matrix: Array,
     right_hand_side: Array,
     /,
-):
+) -> tuple[LinearSolveResult, Array]:
     operator = DenseLinearOperator(
         matrix,
         properties=OperatorProperties(
@@ -50,7 +52,9 @@ def _factor_and_solve_covariance_system(
     return solve(prepared, right_hand_side), prepared.state.factor
 
 
-def _solve_covariance_system(matrix: Array, right_hand_side: Array, /):
+def _solve_covariance_system(
+    matrix: Array, right_hand_side: Array, /
+) -> LinearSolveResult:
     result, _ = _factor_and_solve_covariance_system(matrix, right_hand_side)
     return result
 
@@ -75,7 +79,7 @@ class DiagonalCovariance(AbstractCovariance):
 
     variance: PyTree[Array]
 
-    def __init__(self, variance: PyTree[ArrayLike], /):
+    def __init__(self, variance: PyTree[ArrayLike], /) -> None:
         arrays = jax.tree_util.tree_map(jnp.asarray, variance)
         leaves = jax.tree_util.tree_leaves(arrays)
         if not leaves or any(not eqx.is_inexact_array(leaf) for leaf in leaves):
@@ -102,7 +106,7 @@ class DenseCovariance(AbstractCovariance):
 
     matrix: Array
 
-    def __init__(self, matrix: ArrayLike, /):
+    def __init__(self, matrix: ArrayLike, /) -> None:
         value = jnp.asarray(matrix)
         if not eqx.is_inexact_array(value):
             raise TypeError("Dense covariance must be an inexact array.")
@@ -136,7 +140,7 @@ class FactorCovariance(AbstractCovariance):
     factors: PyTree[Array]
     rank: int = eqx.field(static=True)
 
-    def __init__(self, factors: PyTree[ArrayLike], /):
+    def __init__(self, factors: PyTree[ArrayLike], /) -> None:
         arrays = jax.tree_util.tree_map(jnp.asarray, factors)
         leaves = jax.tree_util.tree_leaves(arrays)
         if not leaves or any(not eqx.is_inexact_array(leaf) for leaf in leaves):
@@ -168,7 +172,7 @@ class CovarianceOperator(AbstractCovariance):
 
     matvec_fn: Callable[[PyTree[Array]], PyTree[Array]] = eqx.field(static=True)
 
-    def __init__(self, matvec: Callable[[PyTree[Array]], PyTree[Array]], /):
+    def __init__(self, matvec: Callable[[PyTree[Array]], PyTree[Array]], /) -> None:
         if not callable(matvec):
             raise TypeError("CovarianceOperator matvec must be callable.")
         self.matvec_fn = matvec

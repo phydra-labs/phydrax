@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._trainable import fixed_field
@@ -95,7 +96,7 @@ class NonlinearRichardson(AbstractNonlinearMethod):
         minimum_rate: float = 1e-8,
         maximum_search_steps: int = 20,
         precision: NonlinearPrecisionPolicy | None = None,
-    ):
+    ) -> None:
         precision_ = NonlinearPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, NonlinearPrecisionPolicy):
             raise TypeError("precision must be a NonlinearPrecisionPolicy or None.")
@@ -209,7 +210,7 @@ class NonlinearRichardson(AbstractNonlinearMethod):
             ).astype(jnp.int32),
         )
 
-        def condition(current):
+        def condition(current: _RichardsonRun) -> Array:
             within_evaluations = (
                 jnp.asarray(True)
                 if termination.maximum_evaluations is None
@@ -221,7 +222,7 @@ class NonlinearRichardson(AbstractNonlinearMethod):
                 & within_evaluations
             )
 
-        def body(current):
+        def body(current: _RichardsonRun) -> _RichardsonRun:
             state_tree = source.unflatten(current.state)
             combined_prepared = eqx.combine(
                 current.prepared_update,
@@ -284,7 +285,7 @@ class NonlinearRichardson(AbstractNonlinearMethod):
                 nonfinite_trials=update_result.diagnostics.nonfinite_trials,
             )
 
-            def search_condition(item):
+            def search_condition(item: _RichardsonSearch) -> Array:
                 within_evaluations = (
                     jnp.asarray(True)
                     if termination.maximum_evaluations is None
@@ -303,7 +304,7 @@ class NonlinearRichardson(AbstractNonlinearMethod):
                     & within_evaluations
                 )
 
-            def search_body(item):
+            def search_body(item: _RichardsonSearch) -> _RichardsonSearch:
                 rate = self.contraction * item.rate
                 trial_coordinates = current.state + rate * direction
                 trial_state = source.unflatten(trial_coordinates)

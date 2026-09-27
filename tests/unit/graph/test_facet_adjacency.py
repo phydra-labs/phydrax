@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -15,13 +18,13 @@ VERTICES = np.asarray(
 )
 
 
-def _finite_volume(triangles):
+def _finite_volume(triangles: Any) -> Any:
     return phx.discretization.UnstructuredFiniteVolumePlan(
         VERTICES, triangles=np.asarray(triangles, dtype=np.int32)
     ).prepare()
 
 
-def _finite_element(mesh):
+def _finite_element(mesh: Any) -> Any:
     element = phx.discretization.lagrange_element("triangle", 1)
     return phx.discretization.FiniteElementPlan(
         mesh, (phx.discretization.FiniteElementFieldSpec("u", element),)
@@ -31,7 +34,9 @@ def _finite_element(mesh):
 TRIANGLES = ((0, 1, 4), (0, 4, 3), (1, 2, 5), (1, 5, 4))
 
 
-def test_facet_adjacency_identity_is_shared_by_finite_volume_finite_element_and_graph():
+def test_facet_adjacency_identity_is_shared_by_finite_volume_finite_element_and_graph() -> (
+    None
+):
     finite_volume = _finite_volume(TRIANGLES)
     fv = phx.graph.facet_adjacency(finite_volume)
     fe = phx.graph.facet_adjacency(_finite_element(finite_volume.mesh))
@@ -53,7 +58,7 @@ def test_facet_adjacency_identity_is_shared_by_finite_volume_finite_element_and_
     assert phx.graph.facet_adjacency(flipped).topology_id != fv.topology_id
 
 
-def test_physical_residual_and_mesh_graph_net_share_inert_boundary_routes():
+def test_physical_residual_and_mesh_graph_net_share_inert_boundary_routes() -> None:
     finite_volume = _finite_volume(TRIANGLES)
     adjacency = phx.graph.facet_adjacency(finite_volume)
     owners = np.asarray(finite_volume.owner_cells)
@@ -82,7 +87,7 @@ def test_physical_residual_and_mesh_graph_net_share_inert_boundary_routes():
         key=jr.key(0),
     )
 
-    def residual(values):
+    def residual(values: Any) -> Any:
         graph = phx.graph.GraphIR.from_edge_relation(
             adjacency.relation,
             nodes={"centers": finite_volume.cell_centers},
@@ -90,7 +95,7 @@ def test_physical_residual_and_mesh_graph_net_share_inert_boundary_routes():
         )
         return divergence(graph).nodes["residual"]
 
-    def prediction(edges):
+    def prediction(edges: Any) -> Any:
         graph = phx.graph.GraphIR.from_edge_relation(
             adjacency.relation, nodes=finite_volume.cell_centers, edges=edges
         )
@@ -118,8 +123,8 @@ def test_physical_residual_and_mesh_graph_net_share_inert_boundary_routes():
     ],
 )
 def test_facet_adjacency_rejects_inconsistent_routes(
-    facets, owners, neighbors, error, match
-):
+    facets: Any, owners: Any, neighbors: Any, error: Any, match: Any
+) -> None:
     with pytest.raises(error, match=match):
         phx.graph.FacetAdjacency(
             np.asarray(facets),
@@ -131,6 +136,7 @@ def test_facet_adjacency_rejects_inconsistent_routes(
         )
 
 
-def test_facet_adjacency_requires_a_mesh_discretization():
+def test_facet_adjacency_requires_a_mesh_discretization() -> None:
     with pytest.raises(TypeError, match="facet_adjacency"):
+        # ty: ignore[invalid-argument-type]
         phx.graph.facet_adjacency(object())

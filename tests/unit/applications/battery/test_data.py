@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -51,16 +54,16 @@ def _raw(
     record_id: str,
     cell_id: str,
     *,
-    time=(0.0, 1.0, 2.0),
-    current=(1.0, 2.0, 3.0),
-    voltage=(3.0, 3.1, 3.2),
-    temperature=(25.0, 26.0, 27.0),
-    row_ids=None,
-    source_units=None,
-    current_mask=None,
-    voltage_mask=None,
-    temperature_mask=None,
-    manifest=None,
+    time: Any = (0.0, 1.0, 2.0),
+    current: Any = (1.0, 2.0, 3.0),
+    voltage: Any = (3.0, 3.1, 3.2),
+    temperature: Any = (25.0, 26.0, 27.0),
+    row_ids: Any = None,
+    source_units: Any = None,
+    current_mask: Any = None,
+    voltage_mask: Any = None,
+    temperature_mask: Any = None,
+    manifest: Any = None,
 ) -> BatteryRawTimeSeries:
     rows = (
         tuple(f"{record_id}-row-{index}" for index in range(len(time)))
@@ -94,7 +97,7 @@ def _raw(
     )
 
 
-def _series(record_id: str, cell_id: str, *, offset: float = 0.0):
+def _series(record_id: str, cell_id: str, *, offset: float = 0.0) -> Any:
     return preprocess_battery_time_series(
         _raw(
             record_id,
@@ -116,7 +119,9 @@ def _pipelines(preprocessing_id: str) -> BatteryPipelineIDs:
     )
 
 
-def test_preprocessing_stably_orders_collapses_and_normalizes_to_si_passive_sign():
+def test_preprocessing_stably_orders_collapses_and_normalizes_to_si_passive_sign() -> (
+    None
+):
     raw = _raw(
         "trace",
         "cell-a",
@@ -147,7 +152,7 @@ def test_preprocessing_stably_orders_collapses_and_normalizes_to_si_passive_sign
     np.testing.assert_array_equal(record.segment_indices, (0, 0, 0, 1))
 
 
-def test_duplicate_collapse_requires_every_retained_channel_to_agree():
+def test_duplicate_collapse_requires_every_retained_channel_to_agree() -> None:
     equal = _raw(
         "equal",
         "cell-a",
@@ -180,7 +185,9 @@ def test_duplicate_collapse_requires_every_retained_channel_to_agree():
     np.testing.assert_allclose(collapsed.voltage_v, (3.0, 3.1))
 
 
-def test_masks_use_canonical_fills_and_interpolation_never_crosses_gaps_or_bounds():
+def test_masks_use_canonical_fills_and_interpolation_never_crosses_gaps_or_bounds() -> (
+    None
+):
     raw = _raw(
         "masked",
         "cell-a",
@@ -210,7 +217,7 @@ def test_masks_use_canonical_fills_and_interpolation_never_crosses_gaps_or_bound
     np.testing.assert_allclose(sampled.current_a, (0.0, 0.0, 0.0, 3.0, 0.0))
 
 
-def test_rpt_and_eis_are_separate_diagnostic_records_with_local_rights_lineage():
+def test_rpt_and_eis_are_separate_diagnostic_records_with_local_rights_lineage() -> None:
     manifest = _manifest("b")
     common = dict(
         experiment_id="diagnostic-experiment",
@@ -232,9 +239,13 @@ def test_rpt_and_eis_are_separate_diagnostic_records_with_local_rights_lineage()
         channel_units=("C", "ohm"),
         source_coordinate_unit="s",
         source_channel_units=("C", "ohm"),
+        # ty: ignore[invalid-argument-type]
         coordinate=(0.0, 1.0),
+        # ty: ignore[invalid-argument-type]
         values=((3600.0, 0.02), (3590.0, 0.021)),
+        # ty: ignore[invalid-argument-type]
         valid_mask=((True, True), (True, True)),
+        # ty: ignore[invalid-argument-type]
         **common,
     )
     eis = BatteryDiagnosticRecord(
@@ -248,9 +259,13 @@ def test_rpt_and_eis_are_separate_diagnostic_records_with_local_rights_lineage()
         channel_units=("ohm", "ohm"),
         source_coordinate_unit="Hz",
         source_channel_units=("ohm", "ohm"),
+        # ty: ignore[invalid-argument-type]
         coordinate=(1.0, 10.0),
+        # ty: ignore[invalid-argument-type]
         values=((0.02, -0.003), (0.018, -0.001)),
+        # ty: ignore[invalid-argument-type]
         valid_mask=((True, True), (True, True)),
+        # ty: ignore[invalid-argument-type]
         **common,
     )
 
@@ -265,7 +280,9 @@ def test_rpt_and_eis_are_separate_diagnostic_records_with_local_rights_lineage()
     assert rpt.artifact_manifest.source_uri.startswith("file:")
 
 
-def test_normalized_content_fingerprint_is_deterministic_under_source_row_permutation():
+def test_normalized_content_fingerprint_is_deterministic_under_source_row_permutation() -> (
+    None
+):
     first = _raw(
         "stable",
         "cell-a",
@@ -293,7 +310,9 @@ def test_normalized_content_fingerprint_is_deterministic_under_source_row_permut
     assert policy.preprocessing_id == _policy().preprocessing_id
 
 
-def test_whole_cell_split_is_disjoint_complete_and_binds_every_pipeline_identity():
+def test_whole_cell_split_is_disjoint_complete_and_binds_every_pipeline_identity() -> (
+    None
+):
     records = (
         _series("train-1", "cell-train"),
         _series("calibration-1", "cell-calibration"),
@@ -365,7 +384,7 @@ def test_whole_cell_split_is_disjoint_complete_and_binds_every_pipeline_identity
         )
 
 
-def test_transformation_binds_corpus_then_fits_only_train_content():
+def test_transformation_binds_corpus_then_fits_only_train_content() -> None:
     original = (
         _series("train-1", "cell-train", offset=0.0),
         _series("calibration-1", "cell-calibration", offset=1.0),
@@ -417,7 +436,7 @@ def test_transformation_binds_corpus_then_fits_only_train_content():
     np.testing.assert_array_equal(transformed.valid_mask, np.ones((3, 3), dtype="bool"))
 
 
-def test_canonical_arrays_and_sampling_are_jit_ready_and_records_are_immutable():
+def test_canonical_arrays_and_sampling_are_jit_ready_and_records_are_immutable() -> None:
     record = _series("jit", "cell-train")
     sampled = jax.jit(lambda query: interpolate_battery_time_series(record, query))(
         jnp.asarray((0.25, 1.5))
@@ -446,7 +465,7 @@ def test_canonical_arrays_and_sampling_are_jit_ready_and_records_are_immutable()
         _raw("immutable", "cell-a").time[0] = 10.0
 
 
-def test_remote_manifests_are_refused_without_fetching_or_parsing_payloads():
+def test_remote_manifests_are_refused_without_fetching_or_parsing_payloads() -> None:
     remote = ArtifactManifest(
         artifact_id="remote-battery",
         producer="unit-test",

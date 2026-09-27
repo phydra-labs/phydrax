@@ -5,11 +5,13 @@
 from __future__ import annotations
 
 import abc
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -33,14 +35,14 @@ class AbstractDEMContactGraphCorrectionPlan(StrictModule, NonTrainableState):
     @abc.abstractmethod
     def evaluate(
         self,
-        left_indices,
-        right_indices,
-        contact_points,
-        contact_normals,
-        compressive_force,
-        material_ids,
-        materials,
-        valid,
+        left_indices: ArrayLike,
+        right_indices: ArrayLike,
+        contact_points: ArrayLike,
+        contact_normals: ArrayLike,
+        compressive_force: ArrayLike,
+        material_ids: ArrayLike,
+        materials: Any,
+        valid: ArrayLike,
         /,
     ) -> DEMMulticontactCorrection:
         raise NotImplementedError
@@ -61,7 +63,7 @@ class ElasticHalfSpaceMulticontactPlan(AbstractDEMContactGraphCorrectionPlan):
         iterations: int = 2,
         convergence_tolerance: float = 1.0e-6,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         prefactor = float(geometric_prefactor)
         regularization = float(distance_regularization)
         count = int(iterations)
@@ -95,16 +97,16 @@ class ElasticHalfSpaceMulticontactPlan(AbstractDEMContactGraphCorrectionPlan):
 
     def evaluate(
         self,
-        left_indices,
-        right_indices,
-        contact_points,
-        contact_normals,
-        compressive_force,
-        material_ids,
-        materials,
-        valid,
+        left_indices: ArrayLike,
+        right_indices: ArrayLike,
+        contact_points: ArrayLike,
+        contact_normals: ArrayLike,
+        compressive_force: ArrayLike,
+        material_ids: ArrayLike,
+        materials: Any,
+        valid: ArrayLike,
         /,
-    ):
+    ) -> DEMMulticontactCorrection:
         left = jnp.asarray(left_indices, dtype=jnp.int32)
         right = jnp.asarray(right_indices, dtype=jnp.int32)
         points = jnp.asarray(contact_points)

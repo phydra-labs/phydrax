@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from dataclasses import asdict
@@ -25,7 +27,7 @@ from _runtime import (
 from phydrax.applications import compact_objects
 
 
-def _compiler_record(compiled) -> dict[str, object]:
+def _compiler_record(compiled: Any) -> dict[str, object]:
     evidence = compiler_evidence(
         compiled.cost_analysis(),
         compiled.memory_analysis(),
@@ -37,7 +39,7 @@ def _compiler_record(compiled) -> dict[str, object]:
     return record
 
 
-def _measure(function, arguments, warmup, repeats):
+def _measure(function: Any, arguments: Any, warmup: Any, repeats: Any) -> Any:
     compiled, compilation = measure_lower_and_compile(
         lambda: jax.jit(function).lower(*arguments),
         lambda lowered: lowered.compile(),
@@ -52,7 +54,7 @@ def _measure(function, arguments, warmup, repeats):
     }
 
 
-def _setup(node_count: int):
+def _setup(node_count: int) -> Any:
     mode = compact_objects.SeparatedMode(
         0,
         0,
@@ -79,7 +81,7 @@ def run(node_count: int, warmup: int, repeats: int) -> dict[str, object]:
     setup, setup_seconds = measure_synchronized(lambda: _setup(node_count))
     mode, plan, frequency, frequency_direction = setup
 
-    def radial_kernel(value):
+    def radial_kernel(value: Any) -> Any:
         result = compact_objects.evaluate_schwarzschild_radial(plan, value)
         return (
             result.solution,
@@ -98,7 +100,7 @@ def run(node_count: int, warmup: int, repeats: int) -> dict[str, object]:
             result.status,
         )
 
-    def derivative_kernel(value, direction):
+    def derivative_kernel(value: Any, direction: Any) -> Any:
         residual, tangent = jax.jvp(
             lambda candidate: compact_objects.schwarzschild_outgoing_residual(
                 plan, candidate

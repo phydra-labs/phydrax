@@ -8,7 +8,8 @@ from collections.abc import Mapping, Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -34,7 +35,7 @@ class StencilAssignment(StrictModule, NonTrainableState):
         /,
         *,
         scale: complex = 1.0,
-    ):
+    ) -> None:
         target_ = str(target)
         source_ = str(source)
         operator_ = str(operator)
@@ -75,7 +76,7 @@ class FDPipelineReport(StrictModule, NonTrainableState):
         canonical_metadata_bytes: int,
         lowered_metadata_bytes: int,
         plan_id: str,
-    ):
+    ) -> None:
         assignments = int(assignment_count)
         unique = int(unique_application_count)
         canonical = int(canonical_metadata_bytes)
@@ -116,7 +117,7 @@ class StencilProgramPlan(StrictModule, NonTrainableState):
         /,
         *,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(discretization, PreparedFiniteDifferenceDiscretization):
             raise TypeError(
                 "discretization must be PreparedFiniteDifferenceDiscretization."
@@ -177,7 +178,7 @@ class PreparedStencilProgram(StrictModule, NonTrainableState):
     report: FDPipelineReport
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: StencilProgramPlan, /):
+    def __init__(self, plan: StencilProgramPlan, /) -> None:
         if not isinstance(plan, StencilProgramPlan):
             raise TypeError("plan must be a StencilProgramPlan.")
         operator_names = tuple(

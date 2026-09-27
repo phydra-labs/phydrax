@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -29,7 +32,7 @@ from phydrax.operators.quantum.lattice import (
 )
 
 
-def _compiler_resources(**updates):
+def _compiler_resources(**updates: Any) -> Any:
     values = {
         "maximum_terms": 32,
         "maximum_factors_per_term": 4,
@@ -41,11 +44,11 @@ def _compiler_resources(**updates):
     return QuantumLatticeResourcePolicy(**values)
 
 
-def _sector_resources():
+def _sector_resources() -> Any:
     return SectorBasisResourcePolicy(maximum_dimension=64, maximum_table_bytes=20_000)
 
 
-def test_periodic_bridge_requires_explicit_order_and_interaction_contract():
+def test_periodic_bridge_requires_explicit_order_and_interaction_contract() -> None:
     realization = PeriodicFiniteRealization(
         (0, 0, 1, 1),
         (0, 1, 0, 1),
@@ -93,7 +96,7 @@ def test_periodic_bridge_requires_explicit_order_and_interaction_contract():
         periodic_finite_to_fermion_lattice(realization, order, ("b", "a"), interactions)
 
 
-def test_compiler_refuses_branch_work_before_preparation():
+def test_compiler_refuses_branch_work_before_preparation() -> None:
     space = LocalSpacePlan.spin("s", 2)
     raising = LocalOperatorPlan(
         space,
@@ -110,7 +113,7 @@ def test_compiler_refuses_branch_work_before_preparation():
         )
 
 
-def test_numeric_refresh_preserves_structure_and_updates_sector_action():
+def test_numeric_refresh_preserves_structure_and_updates_sector_action() -> None:
     space = LocalSpacePlan.spin("s", 1)
     sz = LocalOperatorPlan(space, "sz", ((-1.0, 0.0), (0.0, 1.0)), (0,))
     initial_specification = QuantumLatticeSpecification(
@@ -132,7 +135,7 @@ def test_numeric_refresh_preserves_structure_and_updates_sector_action():
     assert int(refreshed.numeric_version) == int(initial.numeric_version) + 1
 
 
-def test_sign_free_candidate_retains_raw_chain_and_refuses_sign_cancellation():
+def test_sign_free_candidate_retains_raw_chain_and_refuses_sign_cancellation() -> None:
     plan = SignFreeStochasticCandidatePlan(
         chain_count=2,
         draw_count=4,

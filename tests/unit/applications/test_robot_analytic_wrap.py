@@ -18,7 +18,7 @@ _SPHERE_START = jnp.asarray((-2.0, 0.35, 0.0))
 _SPHERE_END = jnp.asarray((2.1, 0.65, 0.0))
 
 
-def test_sphere_wrap_satisfies_surface_tangency_and_arc_length():
+def test_sphere_wrap_satisfies_surface_tangency_and_arc_length() -> None:
     prepared = SphereRouteWrapPlan(48).prepare(jnp.zeros(3), 1.0)
     result = prepared.evaluate(_SPHERE_START, _SPHERE_END)
 
@@ -44,7 +44,7 @@ def test_sphere_wrap_satisfies_surface_tangency_and_arc_length():
     assert result.total_length_m > jnp.linalg.norm(_SPHERE_END - _SPHERE_START)
 
 
-def test_sphere_no_wrap_is_a_successful_direct_route_and_inside_fails():
+def test_sphere_no_wrap_is_a_successful_direct_route_and_inside_fails() -> None:
     prepared = SphereRouteWrapPlan().prepare(jnp.zeros(3), 1.0)
     start = jnp.asarray((-2.0, 2.0, 0.0))
     end = jnp.asarray((2.0, 2.2, 0.0))
@@ -61,7 +61,7 @@ def test_sphere_no_wrap_is_a_successful_direct_route_and_inside_fails():
     assert int(inside.evidence.status) & int(AnalyticWrapStatus.ENDPOINT_INSIDE)
 
 
-def test_sphere_long_route_is_distinct_and_fixed_branch_differentiable():
+def test_sphere_long_route_is_distinct_and_fixed_branch_differentiable() -> None:
     short = SphereRouteWrapPlan(sense="short").prepare(jnp.zeros(3), 1.0)
     long = SphereRouteWrapPlan(sense="long").prepare(jnp.zeros(3), 1.0)
     short_result = short.evaluate(_SPHERE_START, _SPHERE_END)
@@ -78,7 +78,7 @@ def test_sphere_long_route_is_distinct_and_fixed_branch_differentiable():
     assert bool(jnp.all(jnp.isfinite(derivative)))
 
 
-def test_planar_cylinder_wrap_and_bounded_failures_are_explicit():
+def test_planar_cylinder_wrap_and_bounded_failures_are_explicit() -> None:
     prepared = PlanarCylinderRouteWrapPlan(48).prepare(
         jnp.zeros(3), jnp.asarray((0.0, 0.0, 1.0)), 1.0, 4.0
     )

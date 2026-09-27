@@ -16,6 +16,7 @@ import jax.numpy as jnp
 output = io.StringIO()
 with contextlib.redirect_stdout(output):
     namespace = runpy.run_path(
+        # ty: ignore[invalid-argument-type]
         Path(__file__).resolve().parents[1] / "examples/adaptive_catalyst_pellet.py"
     )
 result = namespace["result"]

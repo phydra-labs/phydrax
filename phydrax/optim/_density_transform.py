@@ -10,10 +10,11 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from scipy.spatial import cKDTree
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..sparse import EdgeRelation, SparseLinearMap
@@ -66,7 +67,7 @@ class ConicDensityFilterPlan(StrictModule, NonTrainableState):
         /,
         *,
         maximum_connections: int = _DEFAULT_MAXIMUM_CONNECTIONS,
-    ):
+    ) -> None:
         points_value = np.asarray(coordinates)
         if not (
             np.issubdtype(points_value.dtype, np.number)
@@ -143,7 +144,7 @@ class PreparedConicDensityFilter(StrictModule, NonTrainableState):
     plan: ConicDensityFilterPlan
     operator: SparseLinearMap
 
-    def __init__(self, plan: ConicDensityFilterPlan, /):
+    def __init__(self, plan: ConicDensityFilterPlan, /) -> None:
         if not isinstance(plan, ConicDensityFilterPlan):
             raise TypeError("plan must be a ConicDensityFilterPlan.")
         points = np.asarray(plan.coordinates, dtype=np.float64)
@@ -182,7 +183,9 @@ class PreparedConicDensityFilter(StrictModule, NonTrainableState):
             route_count = 0
             neighborhoods = tree.query_ball_point(points, plan.radius)
             for target, neighbors in enumerate(neighborhoods):
-                for source in sorted(int(index) for index in neighbors):
+                # scipy-stubs resolve a scalar radius to the 1-D overload; batched
+                # points return an object array of neighbor index lists.
+                for source in sorted(int(index) for index in neighbors):  # ty: ignore[not-iterable]
                     distance = float(np.linalg.norm(points[target] - points[source]))
                     weight = (plan.radius - distance) * measures[source]
                     if weight > 0.0:
@@ -242,7 +245,7 @@ class TanhDensityProjectionPlan(StrictModule, NonTrainableState):
 
     eta: Array
 
-    def __init__(self, eta: ArrayLike, /):
+    def __init__(self, eta: ArrayLike, /) -> None:
         eta_value = np.asarray(eta)
         if eta_value.shape != ():
             raise ValueError("eta must be a scalar array.")
@@ -291,7 +294,7 @@ class DensityTransformPlan(StrictModule, NonTrainableState):
         filter: ConicDensityFilterPlan,
         projection: TanhDensityProjectionPlan,
         /,
-    ):
+    ) -> None:
         if not isinstance(filter, ConicDensityFilterPlan):
             raise TypeError("filter must be a ConicDensityFilterPlan.")
         if not isinstance(projection, TanhDensityProjectionPlan):
@@ -315,7 +318,7 @@ class PreparedDensityTransform(StrictModule, NonTrainableState):
         plan: DensityTransformPlan,
         filter: PreparedConicDensityFilter,
         /,
-    ):
+    ) -> None:
         if not isinstance(plan, DensityTransformPlan):
             raise TypeError("plan must be a DensityTransformPlan.")
         if not isinstance(filter, PreparedConicDensityFilter):

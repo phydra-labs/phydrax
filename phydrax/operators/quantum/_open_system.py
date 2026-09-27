@@ -5,16 +5,21 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.domain import DomainFunction
 
 from ..._strict import StrictModule
 from ._dynamics import von_neumann_residual
 from ._validation import join_function_arguments, validate_matrix_value
+
+
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
 
 
 _ADEngine = Literal["auto", "reverse", "forward", "jvp"]
@@ -51,13 +56,13 @@ class _LindbladDissipatorCallable(StrictModule):
         collapse_operators: tuple[DomainFunction, ...],
         density_positions: tuple[int, ...],
         collapse_positions: tuple[tuple[int, ...], ...],
-    ):
+    ) -> None:
         self.density = density
         self.collapse_operators = collapse_operators
         self.density_positions = density_positions
         self.collapse_positions = collapse_positions
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         density_args = tuple(args[index] for index in self.density_positions)
         density = validate_matrix_value(
             self.density.func(*density_args, key=key, **kwargs),

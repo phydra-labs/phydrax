@@ -1,10 +1,12 @@
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _decay_problem(*, system_id="adaptive-decay"):
+def _decay_problem(*, system_id: Any = "adaptive-decay") -> Any:
     system = phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, parameter: state_rate + parameter * state,
         state_shape=(1,),
@@ -19,7 +21,7 @@ def _decay_problem(*, system_id="adaptive-decay"):
     )
 
 
-def _adaptive_policy(**overrides):
+def _adaptive_policy(**overrides: Any) -> Any:
     values = {
         "relative_tolerance": 1e-5,
         "absolute_tolerance": 1e-8,
@@ -30,12 +32,13 @@ def _adaptive_policy(**overrides):
     values.update(overrides)
     return phx.solver.DAESolvePolicy(
         method=phx.solver.BDFMethod(2),
+        # ty: ignore[invalid-argument-type]
         adaptive=phx.solver.DAEAdaptivePolicy(**values),
         failure="status",
     )
 
 
-def test_adaptive_bdf_accepts_certified_steps_and_lands_on_every_save_time():
+def test_adaptive_bdf_accepts_certified_steps_and_lands_on_every_save_time() -> None:
     problem = _decay_problem()
     grid = phx.dynamics.TimeGrid(
         jnp.linspace(0.0, 0.5, 6),
@@ -80,8 +83,8 @@ def test_adaptive_bdf_accepts_certified_steps_and_lands_on_every_save_time():
     ((1e-3, 0.0), (0.0, 1e-2), (1e-12, 0.0)),
 )
 def test_adaptive_newton_stopping_respects_constraint_and_requested_tolerances(
-    absolute, relative
-):
+    absolute: Any, relative: Any
+) -> None:
     system = phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, rate, args: jnp.asarray(
             (rate[0] + state[0], state[1] - state[0] ** 2)
@@ -124,7 +127,9 @@ def test_adaptive_newton_stopping_respects_constraint_and_requested_tolerances(
         assert jnp.all(solution.residual_norm <= min(absolute, 1e-7))
 
 
-def test_adaptive_error_control_excludes_algebraic_variables_but_certifies_constraints():
+def test_adaptive_error_control_excludes_algebraic_variables_but_certifies_constraints() -> (
+    None
+):
     frequency = 25.0
     system = phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, parameter: jnp.asarray(
@@ -177,7 +182,7 @@ def test_adaptive_error_control_excludes_algebraic_variables_but_certifies_const
     assert solution.discretization_bundle.records[-1].key.role == "temporal"
 
 
-def test_adaptive_capacity_failure_preserves_unsaved_nodes_as_not_run():
+def test_adaptive_capacity_failure_preserves_unsaved_nodes_as_not_run() -> None:
     problem = _decay_problem(system_id="adaptive-capacity")
     grid = phx.dynamics.TimeGrid(
         jnp.asarray((0.0, 0.1, 0.2)),
@@ -199,7 +204,7 @@ def test_adaptive_capacity_failure_preserves_unsaved_nodes_as_not_run():
     assert jnp.all(jnp.isnan(solution.states[1:]))
 
 
-def test_adaptive_step_within_roundoff_of_save_boundary_is_snapped():
+def test_adaptive_step_within_roundoff_of_save_boundary_is_snapped() -> None:
     problem = _decay_problem(system_id="adaptive-save-roundoff")
     interval = jnp.asarray(0.0025)
     grid = phx.dynamics.TimeGrid(
@@ -224,7 +229,7 @@ def test_adaptive_step_within_roundoff_of_save_boundary_is_snapped():
     assert jnp.min(solution.step_history.step_sizes[:count]) > 1e-6
 
 
-def test_adaptive_save_boundary_repartitions_avoidable_tiny_tail():
+def test_adaptive_save_boundary_repartitions_avoidable_tiny_tail() -> None:
     problem = _decay_problem(system_id="adaptive-save-partition")
     grid = phx.dynamics.TimeGrid(
         jnp.asarray((0.0, 0.016, 0.026)),

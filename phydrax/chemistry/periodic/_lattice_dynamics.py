@@ -7,11 +7,13 @@
 from __future__ import annotations
 
 from math import isfinite
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -57,7 +59,7 @@ class NonanalyticPhononCorrection(StrictModule, NonTrainableState):
         cell_id: str,
         charge_neutrality_tolerance: float = 1.0e-8,
         dielectric_symmetry_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         born = np.asarray(born_effective_charges, dtype=np.float64)
         dielectric = np.asarray(dielectric_tensor, dtype=np.float64)
         if born.ndim != 3 or born.shape[1:] != (3, 3) or dielectric.shape != (3, 3):
@@ -122,22 +124,22 @@ class PhononDispersionResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        qpoints,
-        cartesian,
-        frequencies,
-        eigenvectors,
-        matrices,
-        imaginary,
-        acoustic,
-        eigen_residuals,
-        orthogonality,
-        hermiticity,
-        acoustic_residual,
-        successful,
-        ifc_id,
-        unit_system_id,
+        qpoints: ArrayLike,
+        cartesian: ArrayLike,
+        frequencies: ArrayLike,
+        eigenvectors: ArrayLike,
+        matrices: ArrayLike,
+        imaginary: ArrayLike,
+        acoustic: ArrayLike,
+        eigen_residuals: ArrayLike,
+        orthogonality: ArrayLike,
+        hermiticity: ArrayLike,
+        acoustic_residual: ArrayLike,
+        successful: ArrayLike,
+        ifc_id: str,
+        unit_system_id: str,
         /,
-    ):
+    ) -> None:
         self.fractional_qpoints = jnp.asarray(qpoints)
         self.cartesian_qpoints = jnp.asarray(
             cartesian, dtype=self.fractional_qpoints.dtype
@@ -188,7 +190,15 @@ class PhononGroupVelocityResult(StrictModule, NonTrainableState):
     successful: Array
     result_id: str = eqx.field(static=True)
 
-    def __init__(self, velocities, projected, cluster_ids, successful, dispersion_id, /):
+    def __init__(
+        self,
+        velocities: ArrayLike,
+        projected: ArrayLike,
+        cluster_ids: ArrayLike,
+        successful: ArrayLike,
+        dispersion_id: str,
+        /,
+    ) -> None:
         self.velocities = jnp.asarray(velocities)
         self.projected_velocity_matrices = jnp.asarray(projected)
         self.cluster_ids = jnp.asarray(cluster_ids, dtype=jnp.int32)
@@ -227,7 +237,7 @@ class HarmonicPhononPlan(StrictModule, NonTrainableState):
         maximum_qpoints: int = 32768,
         maximum_dense_eigen_work: int = 10_000_000_000,
         acoustic_tolerance: float = 1.0e-7,
-    ):
+    ) -> None:
         if not isinstance(ifc2, SecondOrderForceConstants):
             raise TypeError("ifc2 must be SecondOrderForceConstants.")
         if not isinstance(units, AtomisticUnitSystem):
@@ -289,7 +299,9 @@ class PreparedHarmonicPhonons(StrictModule, NonTrainableState):
     family: PreparedPeriodicTranslationFamily
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, family, /):
+    def __init__(
+        self, plan: HarmonicPhononPlan, family: PreparedPeriodicTranslationFamily, /
+    ) -> None:
         self.plan = plan
         self.family = family
         self.prepared_id = canonical_fingerprint(
@@ -520,7 +532,7 @@ def prepare_harmonic_phonons(plan: HarmonicPhononPlan, /) -> PreparedHarmonicPho
 
 
 def evaluate_phonon_dispersion(
-    prepared: PreparedHarmonicPhonons, qpoints: ArrayLike, /, **kwargs
+    prepared: PreparedHarmonicPhonons, qpoints: ArrayLike, /, **kwargs: Any
 ) -> PhononDispersionResult:
     if not isinstance(prepared, PreparedHarmonicPhonons):
         raise TypeError("prepared must be PreparedHarmonicPhonons.")
@@ -528,7 +540,10 @@ def evaluate_phonon_dispersion(
 
 
 def evaluate_phonon_group_velocity(
-    prepared: PreparedHarmonicPhonons, dispersion: PhononDispersionResult, /, **kwargs
+    prepared: PreparedHarmonicPhonons,
+    dispersion: PhononDispersionResult,
+    /,
+    **kwargs: float,
 ) -> PhononGroupVelocityResult:
     if not isinstance(prepared, PreparedHarmonicPhonons):
         raise TypeError("prepared must be PreparedHarmonicPhonons.")

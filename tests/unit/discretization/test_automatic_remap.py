@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -23,7 +26,7 @@ requires_meshcore = pytest.mark.skipif(
 )
 
 
-def _quad(vertices, cells, *, ids=None):
+def _quad(vertices: Any, cells: Any, *, ids: Any = None) -> Any:
     return UnstructuredFiniteVolumePlan(
         np.asarray(vertices, dtype=np.float64),
         quadrilaterals=np.asarray(cells, dtype=np.int32),
@@ -31,11 +34,11 @@ def _quad(vertices, cells, *, ids=None):
     ).prepare()
 
 
-def _unit_quad():
+def _unit_quad() -> Any:
     return _quad(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)), ((0, 1, 2, 3),))
 
 
-def _grid_points(n):
+def _grid_points(n: Any) -> Any:
     x = np.linspace(0.0, 1.0, n + 1)
     points = np.stack(np.meshgrid(x, x, indexing="ij"), axis=-1).reshape(-1, 2)
     i, j = np.meshgrid(np.arange(n), np.arange(n), indexing="ij")
@@ -43,12 +46,12 @@ def _grid_points(n):
     return points, corner
 
 
-def _quad_grid(n):
+def _quad_grid(n: Any) -> Any:
     points, a = _grid_points(n)
     return _quad(points, np.stack((a, a + n + 1, a + n + 2, a + 1), axis=-1))
 
 
-def _perturbed_triangles(n, *, seed=0):
+def _perturbed_triangles(n: Any, *, seed: Any = 0) -> Any:
     points, a = _grid_points(n)
     interior = np.all((points > 0.0) & (points < 1.0), axis=1)
     rng = np.random.default_rng(seed)
@@ -60,7 +63,7 @@ def _perturbed_triangles(n, *, seed=0):
     ).prepare()
 
 
-def _cell_averages(geometry, function):
+def _cell_averages(geometry: Any, function: Any) -> Any:
     integrals = jnp.sum(
         geometry.cell_quadrature_weights * function(geometry.cell_quadrature_points),
         axis=1,
@@ -68,7 +71,9 @@ def _cell_averages(geometry, function):
     return integrals / geometry.cell_volumes
 
 
-def _second_order(remap, source, limiter=UnstructuredRemapLimiter.BARTH_JESPERSEN):
+def _second_order(
+    remap: Any, source: Any, limiter: Any = UnstructuredRemapLimiter.BARTH_JESPERSEN
+) -> Any:
     return UnstructuredSecondOrderRemapPlan(
         remap.plan, remap.refinement, source, limiter=limiter
     )
@@ -76,22 +81,32 @@ def _second_order(remap, source, limiter=UnstructuredRemapLimiter.BARTH_JESPERSE
 
 @pytest.mark.meshcore
 @requires_meshcore
-def test_identical_meshes_remap_as_exact_jittable_identity():
+def test_identical_meshes_remap_as_exact_jittable_identity() -> None:
     source = _quad_grid(4)
     remap = prepare_unstructured_conservative_remap(source, source, provenance="identity")
     assert remap.status is CommonRefinementStatus.SUCCESS
     assert remap.succeeded
     np.testing.assert_array_equal(
-        remap.plan.target_offsets, np.arange(source.cell_count + 1)
+        # ty: ignore[unresolved-attribute]
+        remap.plan.target_offsets,
+        np.arange(source.cell_count + 1),
     )
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(remap.plan.source_indices, np.arange(source.cell_count))
     np.testing.assert_allclose(
-        remap.plan.intersection_measures, source.cell_volumes, rtol=1e-14
+        # ty: ignore[unresolved-attribute]
+        remap.plan.intersection_measures,
+        source.cell_volumes,
+        rtol=1e-14,
     )
     values = _cell_averages(source, lambda x: jnp.sin(3.0 * x[..., 0]) + x[..., 1] ** 2)
     np.testing.assert_allclose(
-        eqx.filter_jit(remap.plan.apply)(values), values, rtol=1e-13
+        # ty: ignore[unresolved-attribute]
+        eqx.filter_jit(remap.plan.apply)(values),
+        values,
+        rtol=1e-13,
     )
+    # ty: ignore[unresolved-attribute]
     gradient = jax.grad(lambda value: jnp.sum(remap.plan.apply(value) ** 2))(values)
     np.testing.assert_allclose(gradient, 2.0 * values, rtol=1e-13)
     second = eqx.filter_jit(_second_order(remap, source).apply)(values)
@@ -101,7 +116,7 @@ def test_identical_meshes_remap_as_exact_jittable_identity():
 
 @pytest.mark.meshcore
 @requires_meshcore
-def test_containment_and_mixed_cells_cover_both_ledgers():
+def test_containment_and_mixed_cells_cover_both_ledgers() -> None:
     source = _quad(
         ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (2.0, 0.0), (2.0, 1.0)),
         ((0, 1, 2, 3), (1, 4, 5, 2)),
@@ -114,14 +129,19 @@ def test_containment_and_mixed_cells_cover_both_ledgers():
         source, target, provenance="containment"
     )
     assert remap.succeeded
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(remap.plan.intersection_measures, (1.0, 1.0))
     np.testing.assert_allclose(remap.evidence.source_coverage_defects, 0.0, atol=1e-14)
     np.testing.assert_allclose(remap.evidence.target_coverage_defects, 0.0, atol=1e-14)
     values = jnp.asarray([[1.0], [3.0]])
+    # ty: ignore[unresolved-attribute]
     mapped = remap.plan.apply(values)
     np.testing.assert_allclose(mapped, [[2.0]])
     np.testing.assert_allclose(
-        remap.plan.conservation_defect(values, mapped), 0.0, atol=1e-14
+        # ty: ignore[unresolved-attribute]
+        remap.plan.conservation_defect(values, mapped),
+        0.0,
+        atol=1e-14,
     )
 
     mixed_source = UnstructuredFiniteVolumePlan(
@@ -134,12 +154,13 @@ def test_containment_and_mixed_cells_cover_both_ledgers():
         mixed_source, target, provenance="mixed"
     )
     assert mixed.succeeded
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(np.sum(mixed.plan.intersection_measures), 2.0)
 
 
 @pytest.mark.meshcore
 @requires_meshcore
-def test_tetrahedron_identity_and_conservation():
+def test_tetrahedron_identity_and_conservation() -> None:
     geometry = UnstructuredFiniteVolumePlan(
         np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))),
         tetrahedra=np.asarray(((0, 1, 2, 3),), dtype=np.int32),
@@ -149,17 +170,21 @@ def test_tetrahedron_identity_and_conservation():
         geometry, geometry, provenance="tetra"
     )
     assert remap.succeeded
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(remap.plan.intersection_measures, geometry.cell_volumes)
     values = jnp.asarray([[4.0]])
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(remap.plan.apply(values), values)
     np.testing.assert_allclose(
-        remap.plan.conservation_defect(values, remap.plan.apply(values)), 0.0
+        # ty: ignore[unresolved-attribute]
+        remap.plan.conservation_defect(values, remap.plan.apply(values)),
+        0.0,
     )
 
 
 @pytest.mark.meshcore
 @requires_meshcore
-def test_coincident_faces_give_exact_complete_coverage():
+def test_coincident_faces_give_exact_complete_coverage() -> None:
     points = ((0.0, 0.0), (0.5, 0.0), (1.0, 0.0), (0.0, 1.0), (0.5, 1.0), (1.0, 1.0))
     source = _quad(points, ((0, 1, 4, 3), (1, 2, 5, 4)))
     target = UnstructuredFiniteVolumePlan(
@@ -173,25 +198,34 @@ def test_coincident_faces_give_exact_complete_coverage():
     evidence = remap.evidence
     assert evidence.source_gap_count == evidence.target_gap_count == 0
     assert evidence.source_double_count == evidence.target_double_count == 0
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(remap.plan.target_offsets, (0, 1, 2, 3, 4))
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(remap.plan.source_indices, (0, 0, 1, 1))
     np.testing.assert_allclose(
-        remap.plan.intersection_measures, target.cell_volumes, rtol=1e-15
+        # ty: ignore[unresolved-attribute]
+        remap.plan.intersection_measures,
+        target.cell_volumes,
+        rtol=1e-15,
     )
     np.testing.assert_allclose(
-        remap.plan.apply(jnp.asarray((-2.0, 5.0))), (-2.0, -2.0, 5.0, 5.0), rtol=1e-15
+        # ty: ignore[unresolved-attribute]
+        remap.plan.apply(jnp.asarray((-2.0, 5.0))),
+        (-2.0, -2.0, 5.0, 5.0),
+        rtol=1e-15,
     )
 
 
 @pytest.mark.meshcore
 @requires_meshcore
-def test_constants_are_conserved_by_first_and_second_order_remap():
+def test_constants_are_conserved_by_first_and_second_order_remap() -> None:
     source = _quad_grid(6)
     target = _perturbed_triangles(5)
     remap = prepare_unstructured_conservative_remap(source, target, provenance="constant")
     assert remap.succeeded
     constant = jnp.full((source.cell_count, 2), jnp.asarray((3.7, -1.25)))
     np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
         remap.plan.apply(constant),
         jnp.broadcast_to(constant[:1], (target.cell_count, 2)),
         rtol=1e-12,
@@ -206,24 +240,25 @@ def test_constants_are_conserved_by_first_and_second_order_remap():
 
 @pytest.mark.meshcore
 @requires_meshcore
-def test_second_order_remap_reproduces_linear_fields_on_nonmatching_meshes():
+def test_second_order_remap_reproduces_linear_fields_on_nonmatching_meshes() -> None:
     source = _quad_grid(6)
     target = _perturbed_triangles(5, seed=3)
     remap = prepare_unstructured_conservative_remap(source, target, provenance="linear")
 
-    def linear(x):
+    def linear(x: Any) -> Any:
         return 0.5 + 2.0 * x[..., 0] - 3.0 * x[..., 1]
 
     values = _cell_averages(source, linear)
     exact = _cell_averages(target, linear)
     second = _second_order(remap, source, UnstructuredRemapLimiter.NONE).apply(values)
     np.testing.assert_allclose(second.values, exact, rtol=1e-12, atol=1e-12)
+    # ty: ignore[unresolved-attribute]
     assert np.max(np.abs(remap.plan.apply(values) - exact)) > 1e-3
 
 
 @pytest.mark.meshcore
 @requires_meshcore
-def test_limiter_keeps_discontinuous_fields_in_bounds_and_conserves():
+def test_limiter_keeps_discontinuous_fields_in_bounds_and_conserves() -> None:
     source = _quad_grid(8)
     target = _perturbed_triangles(7, seed=5)
     remap = prepare_unstructured_conservative_remap(source, target, provenance="step")
@@ -241,13 +276,16 @@ def test_limiter_keeps_discontinuous_fields_in_bounds_and_conserves():
     total = float(jnp.sum(source.cell_volumes * jnp.abs(step)))
     assert abs(float(limited.conservation_residual_after)) <= 1e-14 * total
     np.testing.assert_allclose(
-        remap.plan.conservation_defect(step, limited.values), 0.0, atol=1e-14 * total
+        # ty: ignore[unresolved-attribute]
+        remap.plan.conservation_defect(step, limited.values),
+        0.0,
+        atol=1e-14 * total,
     )
 
 
 @pytest.mark.meshcore
 @requires_meshcore
-def test_uncovered_and_overcovered_targets_fail_closed_without_plan():
+def test_uncovered_and_overcovered_targets_fail_closed_without_plan() -> None:
     source = _unit_quad()
     larger_target = _quad(
         ((-0.5, -0.5), (1.5, -0.5), (1.5, 1.5), (-0.5, 1.5)), ((0, 1, 2, 3),)
@@ -282,7 +320,7 @@ def test_uncovered_and_overcovered_targets_fail_closed_without_plan():
 
 @pytest.mark.meshcore
 @requires_meshcore
-def test_first_order_remap_is_dual_to_the_reverse_remap():
+def test_first_order_remap_is_dual_to_the_reverse_remap() -> None:
     quads = _quad_grid(5)
     triangles = _perturbed_triangles(4, seed=7)
     forward = prepare_unstructured_conservative_remap(
@@ -294,14 +332,16 @@ def test_first_order_remap_is_dual_to_the_reverse_remap():
     rng = np.random.default_rng(11)
     u = jnp.asarray(rng.normal(size=quads.cell_count))
     w = jnp.asarray(rng.normal(size=triangles.cell_count))
+    # ty: ignore[unresolved-attribute]
     target_pairing = jnp.sum(triangles.cell_volumes * forward.plan.apply(u) * w)
+    # ty: ignore[unresolved-attribute]
     source_pairing = jnp.sum(quads.cell_volumes * u * reverse.plan.apply(w))
     np.testing.assert_allclose(target_pairing, source_pairing, rtol=1e-13)
 
 
 @pytest.mark.meshcore
 @requires_meshcore
-def test_candidate_pair_limit_is_a_resource_refusal():
+def test_candidate_pair_limit_is_a_resource_refusal() -> None:
     geometry = _quad_grid(2)
     limited = prepare_unstructured_conservative_remap(
         geometry,
@@ -316,7 +356,7 @@ def test_candidate_pair_limit_is_a_resource_refusal():
 
 @pytest.mark.meshcore
 @requires_meshcore
-def test_second_order_remap_differentiates_through_values():
+def test_second_order_remap_differentiates_through_values() -> None:
     source = _quad_grid(6)
     target = _perturbed_triangles(5, seed=2)
     remap = prepare_unstructured_conservative_remap(source, target, provenance="grad")
@@ -342,15 +382,18 @@ def test_second_order_remap_differentiates_through_values():
 
 @pytest.mark.meshcore
 @requires_meshcore
-def test_second_order_remap_requires_full_rank_gradient_stencils():
+def test_second_order_remap_requires_full_rank_gradient_stencils() -> None:
     source = _unit_quad()
     remap = prepare_unstructured_conservative_remap(source, source, provenance="one")
     with pytest.raises(ValueError, match="rank deficient"):
         _second_order(remap, source)
 
 
-def test_remap_requires_finite_volume_geometry_and_meshcore(monkeypatch, tmp_path):
+def test_remap_requires_finite_volume_geometry_and_meshcore(
+    monkeypatch: Any, tmp_path: Any
+) -> None:
     with pytest.raises(TypeError, match="unstructured FV"):
+        # ty: ignore[invalid-argument-type]
         prepare_unstructured_conservative_remap(object(), object(), provenance="kind")
     geometry = _unit_quad()
     monkeypatch.setenv("PHYDRAX_MESHCORE_LIBRARY", str(tmp_path / "missing-meshcore"))

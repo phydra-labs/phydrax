@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -31,7 +34,7 @@ class PolyconvexMaterialConstraints(StrictModule):
         cofactor_exponents: tuple[float, ...] = (2.0,),
         minimum_determinant: float = 0.0,
         orientation_barrier: bool = True,
-    ):
+    ) -> None:
         gradient = tuple(float(value) for value in gradient_exponents)
         cofactor = tuple(float(value) for value in cofactor_exponents)
         if (
@@ -60,7 +63,7 @@ class ReferenceConfiguration(StrictModule, NonTrainableState):
     _dtype: str = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
 
-    def __init__(self, deformation_gradient: ArrayLike, /):
+    def __init__(self, deformation_gradient: ArrayLike, /) -> None:
         gradient = jnp.asarray(deformation_gradient)
         if gradient.ndim != 2 or gradient.shape[0] != gradient.shape[1]:
             raise ValueError("Reference deformation gradient must be square.")
@@ -125,11 +128,11 @@ class CoercivePolyconvexEnvelope(StrictModule, ParameterOwner):
         constraints: PolyconvexMaterialConstraints,
         /,
         *,
-        gradient_coefficients: ArrayLike = (1.0, 0.1),
-        cofactor_coefficients: ArrayLike = (0.25,),
+        gradient_coefficients: ArrayLike | Sequence[float] = (1.0, 0.1),
+        cofactor_coefficients: ArrayLike | Sequence[float] = (0.25,),
         determinant_coefficient: float = 1.0,
         barrier_coefficient: float = 0.01,
-    ):
+    ) -> None:
         if not isinstance(constraints, PolyconvexMaterialConstraints):
             raise TypeError("constraints must be PolyconvexMaterialConstraints.")
         gradient = jnp.asarray(gradient_coefficients, dtype=jnp.float64)
@@ -234,7 +237,7 @@ class ConstrainedPolyconvexPotential(StrictModule, ParameterOwner):
         reference: ReferenceConfiguration,
         envelope: CoercivePolyconvexEnvelope,
         /,
-    ):
+    ) -> None:
         if not isinstance(reference, ReferenceConfiguration):
             raise TypeError("reference must be a ReferenceConfiguration.")
         if not isinstance(envelope, CoercivePolyconvexEnvelope):

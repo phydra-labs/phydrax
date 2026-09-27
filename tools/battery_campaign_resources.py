@@ -95,11 +95,16 @@ class BatteryResourcePlan:
         }:
             raise ValueError("Resource plan must contain exactly the registered fields.")
         result = cls(
+            # ty: ignore[invalid-argument-type]
             record["case_id"],
+            # ty: ignore[invalid-argument-type]
             record["workload_id"],
+            # ty: ignore[invalid-argument-type]
             record["sample_count"],
             tuple(
-                QualificationCriterion.from_record(item) for item in record["criteria"]
+                QualificationCriterion.from_record(item)
+                # ty: ignore[not-iterable]
+                for item in record["criteria"]
             ),
         )
         if record != result.to_record():

@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -154,7 +155,7 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         require_complete: bool = True,
         route_id: str | None = None,
         layout_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(
             source, UnstructuredFiniteVolumeDiscretization
         ) or not isinstance(target, UnstructuredFiniteVolumeDiscretization):
@@ -410,7 +411,7 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             jnp.zeros((), dtype=target.dtype),
         )
 
-    def apply_extensive(self, source_content: ArrayLike, /, **kwargs) -> Array:
+    def apply_extensive(self, source_content: ArrayLike, /, **kwargs: Any) -> Array:
         """Explicit extensive-transfer entry point used by AMR callers."""
         return self.apply_content(source_content, **kwargs)
 
@@ -727,7 +728,7 @@ class UnstructuredSecondOrderRemapPlan(StrictModule, NonTrainableState):
         *,
         limiter: UnstructuredRemapLimiter = UnstructuredRemapLimiter.BARTH_JESPERSEN,
         maximum_condition: float = 1.0e12,
-    ):
+    ) -> None:
         from ...geometry._supermesh import PreparedCommonRefinement
 
         if not isinstance(remap, UnstructuredConservativeRemapPlan):

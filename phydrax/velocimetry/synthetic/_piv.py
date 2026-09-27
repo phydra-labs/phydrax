@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from typing import Literal, overload
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -25,6 +26,18 @@ from ...rendering import (
 )
 from ..imaging import DenseDisplacementField2D, ImagePair2D
 from ._common import PIVScenarioKind, SyntheticEvidence
+
+
+@overload
+def _finite_tuple(
+    value: Sequence[float], length: Literal[2], /, *, name: str
+) -> tuple[float, float]: ...
+
+
+@overload
+def _finite_tuple(
+    value: Sequence[float], length: Literal[4], /, *, name: str
+) -> tuple[float, float, float, float]: ...
 
 
 def _finite_tuple(
@@ -89,7 +102,7 @@ class PIVScenarioPlan(StrictModule, NonTrainableState):
         boundary_fraction: float = 0.0,
         delta_t: float = 1.0,
         seed: int = 0,
-    ):
+    ) -> None:
         kind_ = PIVScenarioKind(kind)
         family = kind_.value if family_id is None else str(family_id)
         shape = tuple(image_shape)
@@ -269,7 +282,7 @@ class PIVSyntheticCase(StrictModule, NonTrainableState):
         family_id: str,
         plan_id: str,
         scenario_id: str,
-    ):
+    ) -> None:
         capacity = first_positions_rc.shape[0]
         if first_positions_rc.shape != (capacity, 2) or second_positions_rc.shape != (
             capacity,

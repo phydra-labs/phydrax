@@ -8,7 +8,8 @@ from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -31,7 +32,7 @@ class HarmonicConstraint(StrictModule, NonTrainableState):
         /,
         *,
         policy: Literal["prescribed", "free", "gauge", "deflated"] = "prescribed",
-    ):
+    ) -> None:
         if policy not in ("prescribed", "free", "gauge", "deflated"):
             raise ValueError("Unknown harmonic constraint policy.")
         periods = jnp.asarray(target_periods)

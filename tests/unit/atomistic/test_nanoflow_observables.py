@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,14 +12,18 @@ import numpy as np
 import phydrax as phx
 
 
-def _dynamics():
+def _dynamics() -> Any:
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     cell = phx.discretization.PeriodicCell(4.0 * jnp.eye(3))
     system = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [0, 1, 2],
+        # ty: ignore[invalid-argument-type]
         [1, 1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0, 1.0],
         units,
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0, 0],
         cell=cell,
     ).prepare()
@@ -25,6 +32,7 @@ def _dynamics():
         base, 1.4, 0.2
     ).prepare(system.particles)
     potential = phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.LennardJonesPotential([0.2], [0.8], 1.4, switch_distance=1.2)]
     ).prepare(system)
     dynamics = phx.atomistic.AtomisticDynamicsPlan(
@@ -50,7 +58,7 @@ def _dynamics():
     return dynamics, thermodynamic, initial
 
 
-def test_rollout_observers_update_only_accepted_steps_with_final_retention():
+def test_rollout_observers_update_only_accepted_steps_with_final_retention() -> None:
     dynamics, thermodynamic, initial = _dynamics()
     frame = phx.geometry.PlanarWallFramePlan(
         jnp.zeros((3,)),
@@ -99,7 +107,7 @@ def test_rollout_observers_update_only_accepted_steps_with_final_retention():
     assert int(unchanged.samples) == 0
 
 
-def test_exact_linear_msd_recovers_diffusion_tensor_and_immutable_artifact():
+def test_exact_linear_msd_recovers_diffusion_tensor_and_immutable_artifact() -> None:
     time = jnp.arange(1.0, 7.0)
     diffusion = jnp.diag(jnp.asarray((0.2, 0.1, 0.05)))
     msd = 2.0 * time[:, None, None] * diffusion
@@ -156,7 +164,7 @@ def test_exact_linear_msd_recovers_diffusion_tensor_and_immutable_artifact():
     assert artifact.artifact_id
 
 
-def test_driven_profile_fit_recovers_two_wall_slip_lengths():
+def test_driven_profile_fit_recovers_two_wall_slip_lengths() -> None:
     centers = jnp.asarray((0.5, 1.5, 2.5, 3.5))
     velocity = jnp.stack(
         (
@@ -199,7 +207,7 @@ def test_driven_profile_fit_recovers_two_wall_slip_lengths():
     np.testing.assert_allclose(fit.slip_lengths, (0.5, 0.5))
 
 
-def test_exact_wall_force_contract_produces_friction_with_uncertainty():
+def test_exact_wall_force_contract_produces_friction_with_uncertainty() -> None:
     force = jnp.sin(jnp.linspace(0.0, 2.0 * jnp.pi, 100))[:, None]
     result = phx.atomistic.WallForceCorrelationPlan(
         area=2.0,

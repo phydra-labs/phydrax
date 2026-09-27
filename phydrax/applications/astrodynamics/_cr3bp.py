@@ -8,7 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -54,7 +55,7 @@ class CR3BPSystem(StrictModule, NonTrainableState):
         /,
         *,
         collision_radius: ArrayLike = 0.0,
-    ):
+    ) -> None:
         ratio_host = float(np.asarray(mass_ratio))
         collision_host = float(np.asarray(collision_radius))
         if not np.isfinite(ratio_host) or not 0.0 < ratio_host <= 0.5:
@@ -77,7 +78,7 @@ class CR3BPSystem(StrictModule, NonTrainableState):
         second = jnp.sqrt((x - (1.0 - self.mass_ratio)) ** 2 + y * y + z * z)
         return first, second
 
-    def vector_field(self, time: Array, state: Array, args=None, /) -> Array:
+    def vector_field(self, time: Array, state: Array, args: object = None, /) -> Array:
         del time, args
         first, second = self._distances(state)
         safe_first = jnp.where(first > 0.0, first, 1.0)
@@ -148,7 +149,7 @@ class CR3BPSystem(StrictModule, NonTrainableState):
         ratio = self.mass_ratio
         first_mass = 1.0 - ratio
 
-        def equation(x):
+        def equation(x: Array) -> Array:
             left = x + ratio
             right = x - first_mass
             return (
@@ -165,8 +166,8 @@ class CR3BPSystem(StrictModule, NonTrainableState):
             )
         )
 
-        def solve(seed):
-            def step(_, value):
+        def solve(seed: Array) -> tuple[Array, Array]:
+            def step(_: Array, value: Array) -> Array:
                 residual = equation(value)
                 derivative = jax.grad(equation)(value)
                 candidate = value - residual / jnp.where(

@@ -12,7 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity
@@ -30,6 +30,8 @@ from phydrax.nn._utils import _get_size
 from phydrax.nn.layers._linear import Linear
 from phydrax.nn.operator.data import FunctionSamples, OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
+
+from .....typing import PRNGKey
 
 
 def _image_shape(shape: int | Sequence[int], /) -> tuple[int, int]:
@@ -193,8 +195,8 @@ class _ConditionedLayerNorm(StrictModule):
         *,
         conditioned: bool,
         eps: float,
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         self.conditioned = bool(conditioned)
         self.norm = eqx.nn.LayerNorm(
             int(width),
@@ -247,8 +249,8 @@ class _WindowAttention2D(StrictModule):
         num_heads: int,
         window_size: int,
         shifted: bool,
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         self.width = int(width)
         self.num_heads = int(num_heads)
         self.window_size = int(window_size)
@@ -446,8 +448,8 @@ class _PoseidonBlock(StrictModule):
         mlp_ratio: float,
         conditioned: bool,
         norm_eps: float,
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         hidden = int(round(float(mlp_ratio) * int(width)))
         if hidden <= 0:
             raise ValueError("mlp_ratio must produce a positive hidden width.")
@@ -519,8 +521,8 @@ class _PoseidonStage(StrictModule):
         mlp_ratio: float,
         conditioned: bool,
         norm_eps: float,
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         self.blocks = tuple(
             _PoseidonBlock(
                 width=width,
@@ -556,8 +558,8 @@ class _PatchMerge(StrictModule):
         *,
         conditioned: bool,
         norm_eps: float,
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         reduction_key, norm_key = jr.split(key)
         self.in_width = int(in_width)
         self.reduction = Linear(
@@ -605,8 +607,8 @@ class _PatchUnmerge(StrictModule):
         *,
         conditioned: bool,
         norm_eps: float,
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         expansion_key, mix_key, norm_key = jr.split(key, 3)
         self.in_width = int(in_width)
         out_width = self.in_width // 2
@@ -665,8 +667,8 @@ class _ConvNeXtSkipBlock(StrictModule):
         *,
         conditioned: bool,
         norm_eps: float,
-        key: Key[Array, ""],
-    ):
+        key: PRNGKey,
+    ) -> None:
         keys = jr.split(key, 4)
         self.width = int(width)
         self.depthwise_weight = jr.normal(keys[0], (7, 7, 1, self.width)) / 7.0
@@ -759,8 +761,8 @@ class Poseidon(AbstractOperatorModel):
         source_key: str | None = None,
         learn_residual: bool = False,
         norm_eps: float = 1e-5,
-        key: Key[Array, ""] = DOC_KEY0,
-    ):
+        key: PRNGKey = DOC_KEY0,
+    ) -> None:
         self.in_size = in_channels
         self.out_size = out_channels
         self.image_shape = _image_shape(image_shape)

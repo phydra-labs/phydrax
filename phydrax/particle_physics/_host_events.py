@@ -11,6 +11,7 @@ from numbers import Integral
 
 import equinox as eqx
 import numpy as np
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -307,7 +308,7 @@ class EventPackingReport(StrictModule, NonTrainableState):
         attribute_loss_count: int,
         semantic_loss_fields: tuple[str, ...],
         plan_id: str,
-    ):
+    ) -> None:
         statuses_ = tuple(statuses)
         if any(not isinstance(value, EventPackingStatus) for value in statuses_):
             raise TypeError("statuses must contain EventPackingStatus values.")
@@ -567,6 +568,12 @@ def pack_host_events(
     return HostEventPackingResult(events, report)
 
 
+def _four_vector(values: ArrayLike, /) -> tuple[float, float, float, float]:
+    # ParticleEventBatch validates the trailing four-vector axis at construction.
+    first, second, third, fourth = (float(value) for value in np.asarray(values))
+    return first, second, third, fourth
+
+
 def unpack_particle_events(events: ParticleEventBatch, /) -> tuple[HostEventRecord, ...]:
     """Recover the exact semantic subset carried by one bounded event batch."""
     if not isinstance(events, ParticleEventBatch):
@@ -601,12 +608,7 @@ def unpack_particle_events(events: ParticleEventBatch, /) -> tuple[HostEventReco
             vertices.append(
                 HostVertexRecord(
                     int(events.vertex_ids[event_slot, vertex_slot]),
-                    tuple(
-                        float(value)
-                        for value in np.asarray(
-                            events.production_vertices[event_slot, vertex_slot]
-                        )
-                    ),
+                    _four_vector(events.production_vertices[event_slot, vertex_slot]),
                     incoming,
                     outgoing,
                 )
@@ -617,10 +619,7 @@ def unpack_particle_events(events: ParticleEventBatch, /) -> tuple[HostEventReco
                 int(events.pdg_ids[event_slot, particle_slot]),
                 ParticleRole(int(events.roles[event_slot, particle_slot])),
                 int(events.provider_status[event_slot, particle_slot]),
-                tuple(
-                    float(value)
-                    for value in np.asarray(events.momenta[event_slot, particle_slot])
-                ),
+                _four_vector(events.momenta[event_slot, particle_slot]),
                 float(events.rest_energies[event_slot, particle_slot]),
                 (
                     None

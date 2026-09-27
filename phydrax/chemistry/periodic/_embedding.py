@@ -12,11 +12,13 @@ from numbers import Integral
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float
 from ...discretization.dlr import matsubara_frequencies
 from ...nonlinear import NonlinearSystemProblem
 from ...operators.quantum._impurity import ImpurityEnvironment, MatsubaraHybridization
@@ -34,13 +36,6 @@ from ...solver._impurity import (
     ImpuritySolveRequest,
     ImpuritySolveResult,
 )
-
-
-def _positive(value: float, name: str, /) -> float:
-    result = float(value)
-    if not isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
 
 
 def _positive_int(value: int, name: str, /) -> int:
@@ -91,7 +86,7 @@ class SingleSiteDMFTPlan(StrictModule, NonTrainableState):
         fixed_point_tolerance: float = 1e-5,
         density_tolerance: float = 1e-5,
         bath_tolerance: float = 2e-2,
-    ):
+    ) -> None:
         energies = jnp.asarray(lattice_energies)
         weights = jnp.asarray(lattice_weights)
         labels = jnp.asarray(indices)
@@ -135,14 +130,16 @@ class SingleSiteDMFTPlan(StrictModule, NonTrainableState):
         if not isfinite(density) or not 0.0 <= density <= 2.0:
             raise ValueError("target_density must lie between zero and two.")
         mixing = float(self_energy_mixing)
-        mu_step = _positive(chemical_potential_step, "chemical_potential_step")
+        mu_step = positive_finite_float(
+            chemical_potential_step, "chemical_potential_step"
+        )
         if not isfinite(mixing) or not 0.0 < mixing <= 1.0:
             raise ValueError("self_energy_mixing must lie in (0, 1].")
-        beta_ = _positive(beta, "beta")
+        beta_ = positive_finite_float(beta, "beta")
         iterations = _positive_int(maximum_iterations, "maximum_iterations")
-        fixed = _positive(fixed_point_tolerance, "fixed_point_tolerance")
-        density_tolerance_ = _positive(density_tolerance, "density_tolerance")
-        bath_tolerance_ = _positive(bath_tolerance, "bath_tolerance")
+        fixed = positive_finite_float(fixed_point_tolerance, "fixed_point_tolerance")
+        density_tolerance_ = positive_finite_float(density_tolerance, "density_tolerance")
+        bath_tolerance_ = positive_finite_float(bath_tolerance, "bath_tolerance")
         self.lattice_energies = energies
         self.lattice_weights = weights
         self.indices = labels.astype(jnp.int32)
@@ -180,7 +177,7 @@ class DMFTState(StrictModule):
     self_energy: Array
     chemical_potential: Array
 
-    def __init__(self, self_energy: ArrayLike, chemical_potential: ArrayLike, /):
+    def __init__(self, self_energy: ArrayLike, chemical_potential: ArrayLike, /) -> None:
         sigma = jnp.asarray(self_energy)
         chemical = jnp.asarray(chemical_potential)
         if sigma.ndim != 1 or chemical.shape != ():
@@ -200,7 +197,9 @@ class DMFTResidualArguments(StrictModule):
     plan: SingleSiteDMFTPlan
     provider: AbstractImpurityProvider
 
-    def __init__(self, plan: SingleSiteDMFTPlan, provider: AbstractImpurityProvider, /):
+    def __init__(
+        self, plan: SingleSiteDMFTPlan, provider: AbstractImpurityProvider, /
+    ) -> None:
         if not isinstance(plan, SingleSiteDMFTPlan):
             raise TypeError("plan must be SingleSiteDMFTPlan.")
         if not isinstance(provider, AbstractImpurityProvider):
@@ -435,8 +434,10 @@ def admit_dmft_implicit_derivative(
     condition = jnp.asarray(jacobian_condition)
     if gap.shape != () or condition.shape != ():
         raise ValueError("branch_gap and jacobian_condition must be scalar.")
-    minimum = _positive(minimum_branch_gap, "minimum_branch_gap")
-    maximum = _positive(maximum_jacobian_condition, "maximum_jacobian_condition")
+    minimum = positive_finite_float(minimum_branch_gap, "minimum_branch_gap")
+    maximum = positive_finite_float(
+        maximum_jacobian_condition, "maximum_jacobian_condition"
+    )
     smooth = jnp.isfinite(gap) & (gap >= minimum)
     resolved = jnp.isfinite(condition) & (condition <= maximum)
     admitted = (

@@ -15,7 +15,8 @@ from math import isfinite
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -39,7 +40,7 @@ class LeakyIntegrateAndFire(StrictModule, NonTrainableState):
         threshold_mV: float,
         reset_mV: float,
         refractory_ms: float = 0.0,
-    ):
+    ) -> None:
         capacitance, leak, resting, threshold, reset, refractory = _base_parameters(
             capacitance_nF,
             leak_conductance_uS,
@@ -91,7 +92,7 @@ class AdaptiveExponentialIntegrateAndFire(StrictModule, NonTrainableState):
         refractory_ms: float = 0.0,
         *,
         exponential_threshold_mV: float = -50.0,
-    ):
+    ) -> None:
         capacitance, leak, resting, threshold, reset, refractory = _base_parameters(
             capacitance_nF,
             leak_conductance_uS,
@@ -135,7 +136,7 @@ class PointNeuronState(StrictModule):
     refractory_until_ms: Array
 
 
-def _finite(value, name):
+def _finite(value: float, name: str) -> float:
     if isinstance(value, bool):
         raise TypeError(f"{name} must be a real scalar, not bool.")
     resolved = float(value)
@@ -144,7 +145,7 @@ def _finite(value, name):
     return resolved
 
 
-def _positive(value, name, *, allow_zero=False):
+def _positive(value: float, name: str, *, allow_zero: bool = False) -> float:
     resolved = _finite(value, name)
     if resolved < 0 if allow_zero else resolved <= 0:
         qualifier = "nonnegative" if allow_zero else "positive"
@@ -152,7 +153,14 @@ def _positive(value, name, *, allow_zero=False):
     return resolved
 
 
-def _base_parameters(capacitance, leak, resting, threshold, reset, refractory):
+def _base_parameters(
+    capacitance: float,
+    leak: float,
+    resting: float,
+    threshold: float,
+    reset: float,
+    refractory: float,
+) -> tuple[float, float, float, float, float, float]:
     capacitance = _positive(capacitance, "capacitance_nF")
     leak = _positive(leak, "leak_conductance_uS", allow_zero=True)
     resting = _finite(resting, "resting_mV")
@@ -165,7 +173,9 @@ def _base_parameters(capacitance, leak, resting, threshold, reset, refractory):
 
 
 def initialize_point_neuron(
-    model: PointNeuronModel, voltage_mV=None, time_ms=0.0
+    model: PointNeuronModel,
+    voltage_mV: ArrayLike | None = None,
+    time_ms: ArrayLike = 0.0,
 ) -> PointNeuronState:
     """Initialize at rest (or supplied voltage), with no pending refractory hold."""
     if not isinstance(
@@ -192,21 +202,39 @@ def _charge_increment(rate_times_step: Array) -> Array:
     return jnp.where(small, series, regular)
 
 
-def _passive_advance(voltage, elapsed, capacitance, conductance, inward_drive):
+def _passive_advance(
+    voltage: Array,
+    elapsed: Array,
+    capacitance: Array,
+    conductance: Array,
+    inward_drive: Array,
+) -> Array:
     rate_times_step = conductance * elapsed / capacitance
     return voltage + (elapsed / capacitance) * _charge_increment(rate_times_step) * (
         inward_drive - conductance * voltage
     )
 
 
-def _adaptation_advance(model, adaptation, voltage, elapsed):
+def _adaptation_advance(
+    model: AdaptiveExponentialIntegrateAndFire,
+    adaptation: Array,
+    voltage: Array,
+    elapsed: Array,
+) -> Array:
     equilibrium = model.adaptation_conductance_uS * (voltage - model.resting_mV)
     return adaptation + (-jnp.expm1(-elapsed / model.adaptation_time_constant_ms)) * (
         equilibrium - adaptation
     )
 
 
-def _adex_advance(model, voltage, adaptation, elapsed, conductance, inward_drive):
+def _adex_advance(
+    model: AdaptiveExponentialIntegrateAndFire,
+    voltage: Array,
+    adaptation: Array,
+    elapsed: Array,
+    conductance: Array,
+    inward_drive: Array,
+) -> tuple[Array, Array]:
     """Second-order exponential midpoint, with 32 fixed differentiable substeps.
 
     Leak and frozen-voltage adaptation are treated exponentially, not with a
@@ -218,13 +246,13 @@ def _adex_advance(model, voltage, adaptation, elapsed, conductance, inward_drive
     """
     step = elapsed / 32
 
-    def exponential_current(value):
+    def exponential_current(value: Array) -> Array:
         exponent = (
             jnp.minimum(value, model.threshold_mV) - model.exponential_threshold_mV
         ) / model.slope_mV
         return model.leak_conductance_uS * model.slope_mV * jnp.exp(exponent)
 
-    def substep(_, values):
+    def substep(_: Array, values: tuple[Array, Array]) -> tuple[Array, Array]:
         current_voltage, current_adaptation = values
         midpoint_voltage = _passive_advance(
             current_voltage,
@@ -254,11 +282,11 @@ def _adex_advance(model, voltage, adaptation, elapsed, conductance, inward_drive
 def advance_point_neuron(
     model: PointNeuronModel,
     state: PointNeuronState,
-    elapsed_ms,
-    injected_current_nA=0.0,
-    synaptic_conductance_uS=0.0,
-    synaptic_current_offset_nA=0.0,
-    time_ms=0.0,
+    elapsed_ms: ArrayLike,
+    injected_current_nA: ArrayLike = 0.0,
+    synaptic_conductance_uS: ArrayLike = 0.0,
+    synaptic_current_offset_nA: ArrayLike = 0.0,
+    time_ms: ArrayLike = 0.0,
 ) -> PointNeuronState:
     """Advance one constant-input segment without spike detection or reset.
 
@@ -321,7 +349,7 @@ def advance_point_neuron(
 
 
 def reset_point_neuron(
-    model: PointNeuronModel, state: PointNeuronState, time_ms
+    model: PointNeuronModel, state: PointNeuronState, time_ms: ArrayLike
 ) -> PointNeuronState:
     """Apply a spike reset, AdEx increment, and absolute refractory deadline."""
     voltage, adaptation, time = jnp.broadcast_arrays(
@@ -344,7 +372,7 @@ class ThresholdDetector(StrictModule, NonTrainableState):
     threshold_mV: Array
     rearm_mV: Array
 
-    def __init__(self, threshold_mV: float, rearm_mV: float | None = None):
+    def __init__(self, threshold_mV: float, rearm_mV: float | None = None) -> None:
         threshold = _finite(threshold_mV, "threshold_mV")
         rearm = threshold if rearm_mV is None else _finite(rearm_mV, "rearm_mV")
         if rearm > threshold:
@@ -353,14 +381,16 @@ class ThresholdDetector(StrictModule, NonTrainableState):
         self.rearm_mV = jnp.asarray(rearm)
 
 
-def initialize_threshold_detector(detector: ThresholdDetector, voltage_mV) -> Array:
+def initialize_threshold_detector(
+    detector: ThresholdDetector, voltage_mV: ArrayLike
+) -> Array:
     """Arm only below threshold and at/below the configured rearming level."""
     voltage = jnp.asarray(voltage_mV)
     return (voltage < detector.threshold_mV) & (voltage <= detector.rearm_mV)
 
 
 def advance_threshold_detector(
-    detector: ThresholdDetector, armed: Array, voltage_mV
+    detector: ThresholdDetector, armed: Array, voltage_mV: ArrayLike
 ) -> tuple[Array, Array]:
     """Return ``(armed, fired)``; a threshold plateau never fires repeatedly."""
     voltage = jnp.asarray(voltage_mV)

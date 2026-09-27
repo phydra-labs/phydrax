@@ -9,7 +9,7 @@ from phydrax.applications.cosmology._wave_amr import (
 )
 
 
-def test_wave_amr_fixed_step_adaptive_epoch_and_resource_workflow():
+def test_wave_amr_fixed_step_adaptive_epoch_and_resource_workflow() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(12, periodic=True),),
         axis_names=("x",),
@@ -73,4 +73,5 @@ def test_wave_amr_fixed_step_adaptive_epoch_and_resource_workflow():
     )
     assert resources.admitted
     assert not resources.executable
+    # ty: ignore[unresolved-attribute]
     assert resources.hierarchy.resource_evidence_id

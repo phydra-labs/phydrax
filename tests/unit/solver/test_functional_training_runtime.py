@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -19,7 +20,7 @@ from phydrax.solver._functional_surrogate import (
 )
 
 
-def _fixed_interval_solver(*, blocks=None, evaluation=False):
+def _fixed_interval_solver(*, blocks: Any = None, evaluation: Any = False) -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     field = domain.Parameter(jnp.asarray([1.0, -2.0]))
     component = domain.component()
@@ -47,7 +48,7 @@ def _fixed_interval_solver(*, blocks=None, evaluation=False):
     )
 
 
-def _rejected_update_solver():
+def _rejected_update_solver() -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     field = domain.Parameter(jnp.asarray([0.0]))
     component = domain.component()
@@ -70,7 +71,7 @@ def _rejected_update_solver():
     return phx.solver.FunctionalSolver(functions={"u": field}, terms=(term,))
 
 
-def _nonfinite_gradient_solver():
+def _nonfinite_gradient_solver() -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     field = domain.Parameter(jnp.asarray([0.0]))
     component = domain.component()
@@ -92,7 +93,7 @@ def _nonfinite_gradient_solver():
     return phx.solver.FunctionalSolver(functions={"u": field}, terms=(term,))
 
 
-def test_optax_line_search_rejects_nonfinite_gradient_without_committing():
+def test_optax_line_search_rejects_nonfinite_gradient_without_committing() -> None:
     solver = _nonfinite_gradient_solver()
     accepted_steps = []
 
@@ -134,9 +135,9 @@ def test_optax_line_search_rejects_nonfinite_gradient_without_committing():
     ids=("least-squares", "iterative", "optax-linesearch"),
 )
 def test_rejected_optimizer_step_preserves_target_and_accepted_progress(
-    optimizer,
-    tmp_path,
-):
+    optimizer: Any,
+    tmp_path: Any,
+) -> None:
     solver = _rejected_update_solver()
     policy = DelayedTargetPolicy(2)
     initial_target = TargetParameterState.initialize(
@@ -198,7 +199,7 @@ def test_rejected_optimizer_step_preserves_target_and_accepted_progress(
     )
 
 
-def test_residual_block_layout_preserves_authored_loss_and_root_partition():
+def test_residual_block_layout_preserves_authored_loss_and_root_partition() -> None:
     layout = phx.terms.ResidualBlockLayout(("first", "second"))
     solver = _fixed_interval_solver(blocks=layout)
     params, fixed = partition_functional_parameters(solver.functions)
@@ -218,7 +219,7 @@ def test_residual_block_layout_preserves_authored_loss_and_root_partition():
     assert first.size == second.size == 4
 
 
-def test_prepared_update_separates_equal_physical_and_untransformed_surrogate():
+def test_prepared_update_separates_equal_physical_and_untransformed_surrogate() -> None:
     solver = _fixed_interval_solver()
     params, fixed = partition_functional_parameters(solver.functions)
     prepared = solver.objective.prepare_training(
@@ -236,9 +237,9 @@ def test_prepared_update_separates_equal_physical_and_untransformed_surrogate():
 
 
 def test_functional_checkpoint_resume_matches_uninterrupted_steps(
-    tmp_path,
-    monkeypatch,
-):
+    tmp_path: Any,
+    monkeypatch: Any,
+) -> None:
     plan = phx.solver.FunctionalTrainingPlan(
         checkpoint=phx.solver.FunctionalCheckpointPolicy(
             tmp_path / "functional",
@@ -266,7 +267,7 @@ def test_functional_checkpoint_resume_matches_uninterrupted_steps(
     state_path = next(checkpoint_directory.glob("state-*.eqx"))
     deserialize = training_checkpoint.eqx.tree_deserialise_leaves
 
-    def replace_path_after_open(state_stream, *args, **kwargs):
+    def replace_path_after_open(state_stream: Any, *args: Any, **kwargs: Any) -> Any:
         replacement = checkpoint_directory / "replacement.eqx"
         replacement.write_bytes(b"replacement")
         replacement.replace(state_path)
@@ -415,24 +416,24 @@ def test_functional_checkpoint_resume_matches_uninterrupted_steps(
     )
 
 
-def test_functional_checkpoint_binding_tracks_parameters_and_fails_closed(tmp_path):
+def test_functional_checkpoint_binding_tracks_parameters_and_fails_closed(
+    tmp_path: Any,
+) -> None:
     solver = _fixed_interval_solver()
 
-    def solve(name, num_iter, *, resume=False):
+    def solve(name: Any, num_iter: Any, *, resume: Any = False) -> Any:
         return solver.solve(
             num_iter=num_iter,
             optim=optax.sgd(0.05),
             keep_best=False,
             log_every=0,
             training=phx.solver.FunctionalTrainingPlan(
-                checkpoint=phx.solver.FunctionalCheckpointPolicy(
-                    tmp_path / name, every=1
-                )
+                checkpoint=phx.solver.FunctionalCheckpointPolicy(tmp_path / name, every=1)
             ),
             resume=resume,
         )
 
-    def manifest(name):
+    def manifest(name: Any) -> Any:
         path = tmp_path / name / "manifest.json"
         return path, json.loads(path.read_text(encoding="utf-8"))
 
@@ -472,8 +473,7 @@ def test_functional_checkpoint_binding_tracks_parameters_and_fails_closed(tmp_pa
         solve("first", 1, resume=True)
 
 
-
-def test_functional_session_cursor_resumes_in_memory(tmp_path):
+def test_functional_session_cursor_resumes_in_memory(tmp_path: Any) -> None:
     events = []
     session = phx.execution.IterationSession(
         "functional-resume-session",
@@ -541,7 +541,7 @@ def test_functional_session_cursor_resumes_in_memory(tmp_path):
     assert [event.sequence for event in events] == list(range(session.cursor))
 
 
-def test_standard_optax_gradient_accumulation_preserves_update_semantics():
+def test_standard_optax_gradient_accumulation_preserves_update_semantics() -> None:
     solver = _fixed_interval_solver()
     standard = solver.solve(
         num_iter=2,
@@ -574,7 +574,7 @@ def test_standard_optax_gradient_accumulation_preserves_update_semantics():
     )
 
 
-def test_accumulated_functional_checkpoint_resume_is_exact(tmp_path):
+def test_accumulated_functional_checkpoint_resume_is_exact(tmp_path: Any) -> None:
     solver = _fixed_interval_solver()
     target_policy = DelayedTargetPolicy(1)
     checkpoint_plan = phx.solver.FunctionalTrainingPlan(
@@ -660,7 +660,9 @@ def test_accumulated_functional_checkpoint_resume_is_exact(tmp_path):
     ),
     ids=("least-squares", "iterative", "optax-linesearch"),
 )
-def test_gradient_accumulation_rejects_nonstandard_functional_backends(optimizer):
+def test_gradient_accumulation_rejects_nonstandard_functional_backends(
+    optimizer: Any,
+) -> None:
     with pytest.raises(ValueError, match="only by standard Optax"):
         _fixed_interval_solver().solve(
             num_iter=1,
@@ -671,7 +673,7 @@ def test_gradient_accumulation_rejects_nonstandard_functional_backends(optimizer
         )
 
 
-def test_gradient_accumulation_rejects_stateful_functional_preparation():
+def test_gradient_accumulation_rejects_stateful_functional_preparation() -> None:
     plan = phx.solver.FunctionalTrainingPlan(
         diagnostics=phx.solver.FunctionalDiagnosticsPolicy(every=1),
     )
@@ -686,7 +688,7 @@ def test_gradient_accumulation_rejects_stateful_functional_preparation():
         )
 
 
-def test_checkpoint_resume_replays_resampled_collocation(tmp_path):
+def test_checkpoint_resume_replays_resampled_collocation(tmp_path: Any) -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = phx.nn.models.MLP(
         in_size=1,
@@ -750,7 +752,7 @@ def test_checkpoint_resume_replays_resampled_collocation(tmp_path):
     )
 
 
-def test_kfac_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
+def test_kfac_checkpoint_resume_matches_uninterrupted_steps(tmp_path: Any) -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = phx.nn.models.MLP(
         in_size=1,
@@ -854,8 +856,8 @@ def test_kfac_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
 
 
 def test_target_policy_keep_best_requires_fixed_selection_and_resumes_exactly(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     solver = _fixed_interval_solver(evaluation=True)
     target_policy = DelayedTargetPolicy(1)
     with pytest.raises(ValueError, match="fixed FunctionalSelectionPolicy"):
@@ -932,7 +934,7 @@ def test_target_policy_keep_best_requires_fixed_selection_and_resumes_exactly(
         )
 
 
-def test_fixed_evaluation_selection_is_recorded():
+def test_fixed_evaluation_selection_is_recorded() -> None:
     solver = _fixed_interval_solver(evaluation=True)
     plan = phx.solver.FunctionalTrainingPlan(
         selection=phx.solver.FunctionalSelectionPolicy(every=1)
@@ -948,7 +950,7 @@ def test_fixed_evaluation_selection_is_recorded():
     assert trained.training_state.progress.best_step in (1, 2)
 
 
-def test_exact_nonlinear_correction_freezes_base_and_restores_physical_scale():
+def test_exact_nonlinear_correction_freezes_base_and_restores_physical_scale() -> None:
     solver = _fixed_interval_solver()
     correction = solver.functions["u"].domain.Parameter(jnp.asarray([0.5, 1.0]))
     problem = phx.solver.prepare_functional_correction(
@@ -970,7 +972,7 @@ def test_exact_nonlinear_correction_freezes_base_and_restores_physical_scale():
     )
 
 
-def test_training_policy_publishes_finite_ntk_diagnostics():
+def test_training_policy_publishes_finite_ntk_diagnostics() -> None:
     trained = _fixed_interval_solver().solve(
         num_iter=1,
         optim=optax.sgd(0.01),
@@ -992,7 +994,7 @@ def test_training_policy_publishes_finite_ntk_diagnostics():
     assert trained.training_diagnostics["ntk/trace"] > 0.0
 
 
-def test_frozen_correction_field_preserves_explicit_derivative_rules():
+def test_frozen_correction_field_preserves_explicit_derivative_rules() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     field = domain.Parameter(2.0).with_derivative_rule(
         phx.domain.CallbackDerivativeRule(lambda **kwargs: domain.Parameter(7.0))

@@ -10,13 +10,14 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._high_resolution import HighResolutionReconstructionPlan
 
 
@@ -56,9 +57,8 @@ class MHDPrimitiveReconstructionPlan(StrictModule, NonTrainableState):
         order: int = 5,
         characteristic_eigensystem: Callable | None = None,
         characteristic_id: str | None = None,
-    ):
-        if method not in ("piecewise_constant", "plm", "weno_z", "teno", "mp5"):
-            raise ValueError("Unknown MHD reconstruction method.")
+    ) -> None:
+        method = parse(method, MHDReconstructionMethod, "method")
         theta = float(plm_theta)
         if not np.isfinite(theta) or not 1.0 <= theta <= 2.0:
             raise ValueError("PLM theta must be finite and between one and two.")

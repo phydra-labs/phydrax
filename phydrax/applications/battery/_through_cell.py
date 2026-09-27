@@ -4,19 +4,21 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
-RegionName = Literal["negative", "separator", "positive"]
+RegionName: TypeAlias = Literal["negative", "separator", "positive"]
 _FARADAY_C_MOL = 96485.33212
 
 
@@ -35,13 +37,12 @@ class ThroughCellRegionPlan(StrictModule, NonTrainableState):
         *,
         region: RegionName,
         reference_faces: ArrayLike | None = None,
-    ):
+    ) -> None:
         if isinstance(cell_count, bool) or not isinstance(cell_count, int):
             raise TypeError("cell_count must be an integer.")
         if cell_count < 1:
             raise ValueError("cell_count must be positive.")
-        if region not in ("negative", "separator", "positive"):
-            raise ValueError("region must be 'negative', 'separator', or 'positive'.")
+        region = parse(region, RegionName, "region")
         if reference_faces is None:
             faces_host = np.linspace(0.0, 1.0, cell_count + 1)
         else:
@@ -131,7 +132,7 @@ class PreparedThroughCellMesh(StrictModule, NonTrainableState):
         separator: ThroughCellRegionPlan,
         positive: ThroughCellRegionPlan,
         /,
-    ):
+    ) -> None:
         for supplied, expected in (
             (negative, "negative"),
             (separator, "separator"),

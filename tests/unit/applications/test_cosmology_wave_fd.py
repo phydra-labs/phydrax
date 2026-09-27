@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -12,14 +14,14 @@ from phydrax.applications.cosmology._wave_finite_difference import (
 )
 
 
-def _grid(count):
+def _grid(count: Any) -> Any:
     return phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(count, periodic=True),),
         axis_names=("x",),
     ).prepare(jnp.asarray([[0.0], [1.0]]))
 
 
-def _spectral(count):
+def _spectral(count: Any) -> Any:
     return phx.discretization.TensorSpectralPlan(
         (phx.discretization.FourierBasisPlan(count),),
         axis_names=("x",),
@@ -27,12 +29,12 @@ def _spectral(count):
     ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
 
 
-def _plane_wave(grid, mode=2):
+def _plane_wave(grid: Any, mode: Any = 2) -> Any:
     coordinate = grid.points[:, 0].reshape(grid.shape)
     return jnp.exp(2j * jnp.pi * mode * coordinate)
 
 
-def test_periodic_fd_plane_wave_converges_to_spectral_kinetic_authority():
+def test_periodic_fd_plane_wave_converges_to_spectral_kinetic_authority() -> None:
     errors = []
     action = 2.0e-4
     for count in (24, 48):
@@ -53,7 +55,7 @@ def test_periodic_fd_plane_wave_converges_to_spectral_kinetic_authority():
     assert errors[1] < 0.3 * errors[0]
 
 
-def test_cayley_action_closes_weighted_norm_and_self_adjoint_residual():
+def test_cayley_action_closes_weighted_norm_and_self_adjoint_residual() -> None:
     grid = _grid(32)
     prepared = PeriodicWaveFiniteDifferencePlan(1.0).prepare(grid)
     coordinate = grid.points[:, 0].reshape(grid.shape)
@@ -76,7 +78,7 @@ def test_cayley_action_closes_weighted_norm_and_self_adjoint_residual():
     assert float(result.diagnostics.norm_relative_error) < 1.0e-9
 
 
-def test_cayley_solve_honors_configured_iteration_cap_and_rolls_back():
+def test_cayley_solve_honors_configured_iteration_cap_and_rolls_back() -> None:
     grid = _grid(24)
     prepared = PeriodicWaveFiniteDifferencePlan(
         1.0,
@@ -109,7 +111,7 @@ def test_cayley_solve_honors_configured_iteration_cap_and_rolls_back():
     np.testing.assert_array_equal(result.state.psi, state.psi)
 
 
-def test_nonzero_fd_action_requires_advancing_time_and_obeys_phase_gate():
+def test_nonzero_fd_action_requires_advancing_time_and_obeys_phase_gate() -> None:
     grid = _grid(24)
     coordinate = grid.points[:, 0].reshape(grid.shape)
     state_psi = jnp.exp(6j * jnp.pi * coordinate)
@@ -138,7 +140,7 @@ def test_nonzero_fd_action_requires_advancing_time_and_obeys_phase_gate():
     np.testing.assert_array_equal(result.state.psi, state.psi)
 
 
-def test_contact_action_is_symmetric_around_cayley_drift():
+def test_contact_action_is_symmetric_around_cayley_drift() -> None:
     grid = _grid(24)
     prepared = PeriodicWaveFiniteDifferencePlan(
         1.0,
@@ -188,7 +190,7 @@ def test_contact_action_is_symmetric_around_cayley_drift():
     )
 
 
-def test_contact_alias_gate_uses_pretruncated_wave_before_density_product():
+def test_contact_alias_gate_uses_pretruncated_wave_before_density_product() -> None:
     grid = _grid(24)
     prepared = PeriodicWaveFiniteDifferencePlan(
         1.0,
@@ -208,7 +210,7 @@ def test_contact_alias_gate_uses_pretruncated_wave_before_density_product():
     assert not bool(action.successful)
 
 
-def test_contact_interaction_has_distinct_identity_and_transactional_gates():
+def test_contact_interaction_has_distinct_identity_and_transactional_gates() -> None:
     grid = _grid(24)
     accepted = PeriodicWaveFiniteDifferencePlan(
         1.0,
@@ -227,6 +229,7 @@ def test_contact_interaction_has_distinct_identity_and_transactional_gates():
         contact_action_factor=1.0e-3,
     )
     assert bool(result.successful)
+    # ty: ignore[unresolved-attribute]
     assert accepted.plan.contact.plan_id != accepted.plan.plan_id
     np.testing.assert_allclose(
         result.diagnostics.contact_dealiasing_defect, 0.0, atol=1.0e-14
@@ -271,11 +274,12 @@ def test_contact_interaction_has_distinct_identity_and_transactional_gates():
     np.testing.assert_array_equal(failed.state.psi, initial.psi)
 
 
-def test_spectral_external_actions_obey_endpoint_time_level_contract():
+def test_spectral_external_actions_obey_endpoint_time_level_contract() -> None:
     space = _spectral(12)
     background = phx.applications.cosmology.FLRWBackground(1.0, 1.0)
     prepared = WaveDarkMatterPlan(
         2.0,
+        # ty: ignore[invalid-argument-type]
         (1.0, 1.001),
         reduced_planck_constant=0.5,
     ).prepare(space, background)

@@ -12,7 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from phydrax.ein import contract
 
@@ -99,7 +101,7 @@ class NRSurrogateResourcePolicy(StrictModule, NonTrainableState):
         maximum_modal_entries: int = 32_000_000,
         maximum_output_samples: int = 1_000_000,
         maximum_normalization_losses: int = 64,
-    ):
+    ) -> None:
         names = (
             "maximum_normalized_bytes",
             "maximum_time_samples",
@@ -247,7 +249,7 @@ class PolynomialEmpiricalField(StrictModule, NonTrainableState):
         *,
         field_id: str,
         resource_policy: NRSurrogateResourcePolicy | None = None,
-    ):
+    ) -> None:
         policy = (
             NRSurrogateResourcePolicy() if resource_policy is None else resource_policy
         )
@@ -603,7 +605,7 @@ class AlignedNRSurrogateArtifact(StrictModule, NonTrainableState):
         mode_normalization: str,
         artifact_id: str,
         resource_policy: NRSurrogateResourcePolicy | None = None,
-    ):
+    ) -> None:
         policy = (
             NRSurrogateResourcePolicy() if resource_policy is None else resource_policy
         )
@@ -910,7 +912,7 @@ class AlignedNRSurrogatePlan(StrictModule, NonTrainableState):
         /,
         *,
         symmetry_tolerance: float = 1.0e-10,
-    ):
+    ) -> None:
         if not isinstance(artifact, AlignedNRSurrogateArtifact):
             raise TypeError("artifact must be AlignedNRSurrogateArtifact.")
         if not isinstance(angular, SphericalSpectralDiscretization):

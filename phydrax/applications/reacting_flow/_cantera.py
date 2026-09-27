@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import numpy as np
 import yaml
-from jaxtyping import ArrayLike
+from jax import core as jax_core
+from jax.typing import ArrayLike
 
 from ..._document_resource import decode_text_resource
 from ..._external_resource import read_bounded_resource, ResourceLimits
@@ -73,7 +74,7 @@ class CanteraAdapterError(RuntimeError):
 
 
 class CanteraUnsupportedFeatureError(CanteraAdapterError):
-    def __init__(self, features: Sequence[str], /):
+    def __init__(self, features: Sequence[str], /) -> None:
         self.features = tuple(str(value) for value in features)
         super().__init__(
             "Unsupported Cantera features: " + ", ".join(self.features) + "."
@@ -130,7 +131,7 @@ class CanteraYAMLAdapter(StrictModule, NonTrainableState):
     phase_name: str = eqx.field(static=True)
     adapter_id: str = eqx.field(static=True)
 
-    def __init__(self, phase_name: str = "gas", /):
+    def __init__(self, phase_name: str = "gas", /) -> None:
         name = str(phase_name)
         if not name:
             raise ValueError("phase_name must be nonempty.")
@@ -358,7 +359,7 @@ class CanteraReferenceAdapter(StrictModule, NonTrainableState):
     solution: Any = eqx.field(static=True)
     adapter_id: str = eqx.field(static=True)
 
-    def __init__(self, solution: Any, /, *, solution_id: str):
+    def __init__(self, solution: Any, /, *, solution_id: str) -> None:
         identifier = str(solution_id)
         if not identifier:
             raise ValueError("solution_id must be nonempty.")
@@ -441,7 +442,7 @@ class CanteraReferenceAdapter(StrictModule, NonTrainableState):
 
 
 def _refuse_device_value(value: Any, name: str, /) -> None:
-    if isinstance(value, (jax.Array, jax.core.Tracer)):
+    if isinstance(value, (jax.Array, jax_core.Tracer)):
         raise CanteraNonDifferentiableBoundaryError(
             f"{name} crossed the host-only, non-differentiable Cantera boundary."
         )

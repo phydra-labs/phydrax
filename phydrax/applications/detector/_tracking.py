@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 
@@ -41,7 +42,7 @@ class TrackMeasurementBank(StrictModule, NonTrainableState):
         active: ArrayLike,
         association_id: str,
         conditions_id: str,
-    ):
+    ) -> None:
         event_ids_ = jnp.asarray(event_ids)
         positions_ = jnp.asarray(positions)
         times_ = jnp.asarray(times, dtype=positions_.dtype)
@@ -96,7 +97,7 @@ class TrackFitPlan(StrictModule, NonTrainableState):
         conditions_id: str,
         minimum_measurements: int = 2,
         regularization: float = 1.0e-12,
-    ):
+    ) -> None:
         association = str(association_id).strip()
         conditions = str(conditions_id).strip()
         minimum = int(minimum_measurements)
@@ -150,7 +151,9 @@ def fit_associated_tracks(
     _, _, measurement_count, _ = measurements.positions.shape
     identity = jnp.eye(3, dtype=measurements.positions.dtype)
 
-    def one(positions, times, variances, active, valid):
+    def one(
+        positions: Array, times: Array, variances: Array, active: Array, valid: Array
+    ) -> tuple[Array, Array, Array, Array, Array]:
         admitted = active & valid
         h = jnp.concatenate(
             (

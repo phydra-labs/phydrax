@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
@@ -32,7 +33,7 @@ class NodePlaneContact(StrictModule, NonTrainableState):
         *,
         friction_coefficient: ArrayLike | None = None,
         contact_id: str = "node-plane-contact",
-    ):
+    ) -> None:
         indices = jnp.asarray(node_indices, dtype=jnp.int32)
         origins_ = jnp.asarray(origins)
         normals_ = jnp.asarray(normals, dtype=origins_.dtype)
@@ -82,7 +83,7 @@ class CableSaddleContact(StrictModule, NonTrainableState):
         *,
         friction_coefficient: float = 0.0,
         contact_id: str = "cable-saddle-contact",
-    ):
+    ) -> None:
         if float(friction_coefficient) < 0.0:
             raise ValueError("Saddle friction must be nonnegative.")
         self.incoming_member = int(incoming_member)

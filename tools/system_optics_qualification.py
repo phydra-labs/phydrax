@@ -58,6 +58,7 @@ def _beamlet_case() -> dict[str, float | int | bool]:
     )
     beamlet = gaussian_beamlets_at_waist(
         ray,
+        # ty: ignore[invalid-argument-type]
         GaussianWaistSpecification((0.7, 0.7)),
         BeamletFrame(RigidFrame.identity(3)),
         2.0 * jnp.pi,

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, replace
 from math import ceil
@@ -18,7 +18,8 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import optax
-from jaxtyping import Array
+from jax import Array
+from jaxtyping import PyTree
 
 from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._fingerprint import (
@@ -56,16 +57,20 @@ from ..._training_kernel import (
     KernelObjective,
     OptaxUpdateRule,
     prepare_training_kernel,
+    PreparedTrainingKernel,
     run_training_attempt,
     training_accepted_site_key,
     TrainingAttemptOutcome,
     TrainingKernelSpec,
+    TrainingKernelState,
+    TrainingKeys,
     TrainingRejectionBudgetError,
 )
 from ..._training_objective import (
     _ObjectiveAccumulator,
     _ObjectiveContribution,
 )
+from ...linalg import LinearSolveControl
 from ...metrix import EuclideanStateGeometry
 from .._layout import InputLayout, StateLayout
 from .._system import DiscreteStepContext, DiscreteSystem
@@ -466,8 +471,10 @@ def _rollout_scan_step(
     sources = batch.coordinates[:, depth]
     if controls is None:
 
-        def one(state, source, key, enabled):
-            def advance(_):
+        def one(
+            state: Array, source: Array, key: Array, enabled: Array
+        ) -> tuple[Array, Array]:
+            def advance(_: None) -> tuple[Array, Array]:
                 result = transition.evaluate(
                     model,
                     DiscreteStepContext(
@@ -498,8 +505,10 @@ def _rollout_scan_step(
         )
     else:
 
-        def one(state, inputs, source, key, enabled):
-            def advance(_):
+        def one(
+            state: Array, inputs: Array, source: Array, key: Array, enabled: Array
+        ) -> tuple[Array, Array]:
+            def advance(_: None) -> tuple[Array, Array]:
                 result = transition.evaluate(
                     model,
                     DiscreteStepContext(
@@ -569,7 +578,9 @@ def _rollout_states(
 ) -> tuple[Array, Array, Array, Array]:
     eligible, evidence = _active_window_evidence(batch, active_horizon)
 
-    def step(carry, depth):
+    def step(
+        carry: _RolloutCarry, depth: Array
+    ) -> tuple[_RolloutCarry, tuple[Array, Array]]:
         return _rollout_scan_step(
             carry,
             depth,
@@ -656,7 +667,7 @@ def _residual_window_values(
     )
     eligible, _ = _active_window_evidence(batch, active_horizon)
 
-    def at_depth(depth):
+    def at_depth(depth: Array) -> tuple[Array, Array]:
         previous = origin_states[:, depth]
         following = endpoint_states[:, depth + 1]
         coordinate = batch.coordinates[:, depth]
@@ -664,7 +675,9 @@ def _residual_window_values(
         enabled = eligible & (depth < active_horizon)
         if controls is None:
 
-            def one(next_state, prior_state, source, active):
+            def one(
+                next_state: Array, prior_state: Array, source: Array, active: Array
+            ) -> Array:
                 return jax.lax.cond(
                     active,
                     lambda _: objective.residual(
@@ -685,7 +698,13 @@ def _residual_window_values(
             )
         else:
 
-            def one(next_state, prior_state, source, inputs, active):
+            def one(
+                next_state: Array,
+                prior_state: Array,
+                source: Array,
+                inputs: Array,
+                active: Array,
+            ) -> Array:
                 return jax.lax.cond(
                     active,
                     lambda _: objective.residual(
@@ -755,7 +774,9 @@ def _reference_window_values(
     coefficient_total = jnp.zeros((batch.size,), dtype=endpoint_states.dtype)
     runtime_valid = jnp.asarray(True)
     reference = objective.reference
-    assert reference.step_size is not None
+    reference_step_size = reference.step_size
+    if not (reference_step_size is not None):
+        raise RuntimeError("Internal invariant failed: reference_step_size is not None.")
     eligible, _ = _active_window_evidence(batch, active_horizon)
 
     for origin in range(horizon):
@@ -775,13 +796,13 @@ def _reference_window_values(
                 enabled = eligible & origin_active
                 if controls is None:
 
-                    def one(source, state, active):
+                    def one(source: Array, state: Array, active: Array) -> Array:
                         return jax.lax.cond(
                             active,
                             lambda _: reference.evaluate(
                                 DiscreteStepContext(
                                     source,
-                                    source + reference.step_size,
+                                    source + reference_step_size,
                                     jnp.asarray(origin + branch, dtype=jnp.int32),
                                 ),
                                 state,
@@ -798,13 +819,15 @@ def _reference_window_values(
                     )
                 else:
 
-                    def one(source, state, inputs, active):
+                    def one(
+                        source: Array, state: Array, inputs: Array, active: Array
+                    ) -> Array:
                         return jax.lax.cond(
                             active,
                             lambda _: reference.evaluate(
                                 DiscreteStepContext(
                                     source,
-                                    source + reference.step_size,
+                                    source + reference_step_size,
                                     jnp.asarray(origin + branch, dtype=jnp.int32),
                                 ),
                                 state,
@@ -969,7 +992,7 @@ class _DiscreteRolloutObjective(StrictModule):
         )
 
 
-def _tree_real_result_dtype(tree: Any, /):
+def _tree_real_result_dtype(tree: Any, /) -> np.dtype:
     dtypes = tuple(
         leaf.dtype for leaf in jax.tree_util.tree_leaves(tree) if eqx.is_array(leaf)
     )
@@ -978,7 +1001,9 @@ def _tree_real_result_dtype(tree: Any, /):
     return jnp.result_type(*dtypes)
 
 
-def _accumulate(kernel, state, payload):
+def _accumulate(
+    kernel: PreparedTrainingKernel, state: TrainingKernelState, payload: Any
+) -> tuple[TrainingKernelState, tuple[Any, ...]]:
     return kernel.accumulate_with_diagnostics(state, payload)
 
 
@@ -1101,10 +1126,16 @@ def _resolve_discrete_fit_request(
     tensorboard_every: int,
     evaluation_parameters: EvaluationParametersFn | None,
     evaluation_parameters_id: str | None,
-    optimizer: Any,
+    optimizer: optax.GradientTransformation | None,
     optimizer_id: str | None,
     learning_rate: float,
-):
+) -> tuple[
+    str,
+    AbstractDiscreteModelRolloutTransition,
+    str | None,
+    optax.GradientTransformation,
+    str,
+]:
     if not isinstance(model, AbstractArrayModel):
         raise TypeError("fit_discrete_model requires an AbstractArrayModel.")
     require_parameter_roles(model, context="fit_discrete_model")
@@ -1331,7 +1362,15 @@ def _prepare_discrete_fit_sources(
     gradient_accumulation: int,
     validation_policy: DiscreteModelValidationPolicy | None,
     linear_refinement: ProgressiveLinearRefinementPolicy | None,
-):
+) -> tuple[
+    _NeuralWindowSource,
+    _NeuralWindowSource | None,
+    int,
+    int | None,
+    int,
+    int,
+    DiscreteModelValidationPolicy | None,
+]:
     train_source = _NeuralWindowSource(
         train,
         max_horizon=rollout_policy.max_horizon,
@@ -1557,7 +1596,16 @@ def fit_discrete_model(
     }
     fit_fingerprint = canonical_fingerprint(fit_contract)
 
-    def training_objective(transition, parameters, model_state, fixed, payload, keys):
+    def training_objective(
+        transition: AbstractDiscreteModelRolloutTransition,
+        parameters: PyTree[Any],
+        model_state: PyTree[Any],
+        fixed: PyTree[Any],
+        payload: tuple[_NeuralWindowBatch, PyTree[Any] | None, LinearSolveControl | None],
+        keys: TrainingKeys,
+    ) -> tuple[
+        _ObjectiveContribution, PyTree[Any], tuple[tuple[Array, Array, Array], ...]
+    ]:
         batch, target_parameters, execution_control = payload
         step = keys.accepted_cursor
         total, components, valid = _objective_contributions(
@@ -1622,7 +1670,7 @@ def fit_discrete_model(
     )
     state = kernel.init(model, master_key)
 
-    def evaluation_view():
+    def evaluation_view() -> AbstractArrayModel:
         evaluated = kernel.rule.evaluation_parameters(state.rule_state, state.parameters)
         return eqx.nn.inference_mode(
             combine_parameters(evaluated, state.model_state, kernel.fixed)
@@ -1648,7 +1696,7 @@ def fit_discrete_model(
     )
     refinement_records: list[ProgressiveLinearRefinementRecord] = []
 
-    def training_execution_control():
+    def training_execution_control() -> LinearSolveControl | None:
         if linear_refinement is None:
             return None
         assert refinement_state is not None
@@ -1658,12 +1706,20 @@ def fit_discrete_model(
         None if linear_refinement is None else linear_refinement.evaluation_control()
     )
 
-    def batches(source, epoch, size, *, shuffle_data):
+    def batches(
+        source: _NeuralWindowSource, epoch: int, size: int, *, shuffle_data: bool
+    ) -> Iterator[tuple[int, _NeuralWindowBatch]]:
         indices = source.ordered_indices(epoch, shuffle=shuffle_data, seed=seed)
         for batch_index, start in enumerate(range(0, source.size, size)):
             yield batch_index, source.prepare(indices[start : start + size])
 
-    def evaluate(current_model, source, size, step, execution_control):
+    def evaluate(
+        current_model: AbstractArrayModel,
+        source: _NeuralWindowSource,
+        size: int,
+        step: int,
+        execution_control: LinearSolveControl | None,
+    ) -> dict[str, float]:
         metric_accumulators = [_ObjectiveAccumulator() for _ in metric_names]
         evaluation_key, target_key = (
             training_accepted_site_key(
@@ -1805,7 +1861,7 @@ def fit_discrete_model(
 
     window_microbatches = 0
 
-    def save_progress(training_seconds, *, emit_event=True):
+    def save_progress(training_seconds: float, *, emit_event: bool = True) -> None:
         if checkpoint is None or window_microbatches:
             return
         if emit_event:
@@ -1840,7 +1896,9 @@ def fit_discrete_model(
             },
         )
 
-    def consider_validation(metrics, current_model):
+    def consider_validation(
+        metrics: dict[str, float], current_model: AbstractArrayModel
+    ) -> None:
         if validation_config is None:
             raise RuntimeError("Validation configuration is unavailable.")
         nonlocal best_model

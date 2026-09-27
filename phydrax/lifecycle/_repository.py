@@ -18,7 +18,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, Protocol
+from typing import cast, Iterator, Protocol
 
 import equinox as eqx
 
@@ -77,7 +77,7 @@ class HPCFilesystemProfile(StrictModule, NonTrainableState):
         directory_fsync: bool,
         advisory_locking: bool,
         attempt_private_staging: bool,
-    ):
+    ) -> None:
         provider = _identifier(provider_id, "provider_id")
         filesystem_ = _identifier(filesystem, "filesystem")
         self.provider_id = provider
@@ -133,7 +133,7 @@ class POSIXRepositoryPolicy(StrictModule, NonTrainableState):
         *,
         maximum_chunk_bytes: int = _DEFAULT_CHUNK_LIMIT,
         maximum_metadata_bytes: int = _METADATA_LIMIT,
-    ):
+    ) -> None:
         if not isinstance(filesystem_profile, HPCFilesystemProfile):
             raise TypeError("filesystem_profile must be HPCFilesystemProfile.")
         filesystem_profile.require_transactional_support()
@@ -175,7 +175,7 @@ class ObjectStoreProfile(StrictModule, NonTrainableState):
         strongly_consistent_listing: bool,
         multipart_free_objects: bool,
         maximum_object_bytes: int,
-    ):
+    ) -> None:
         provider = _identifier(provider_id, "provider_id")
         maximum = _positive(maximum_object_bytes, "maximum_object_bytes")
         self.provider_id = provider
@@ -264,7 +264,7 @@ class ArtifactGuardRecoveryAuthorization(StrictModule, NonTrainableState):
         /,
         *,
         worker_fenced: bool,
-    ):
+    ) -> None:
         if worker_fenced is not True:
             raise ValueError(
                 "Artifact guard recovery requires external worker-fencing evidence."
@@ -308,8 +308,9 @@ class ArtifactGuardRecoveryAuthorization(StrictModule, NonTrainableState):
             str(record.get("guard_etag", "")),
             str(record.get("authority_id", "")),
             str(record.get("fencing_evidence_id", "")),
-            record.get("issued_at"),
-            worker_fenced=record.get("worker_fenced"),
+            # __init__ validates and normalizes issued_at through _nonnegative.
+            cast(int, record.get("issued_at")),
+            worker_fenced=record.get("worker_fenced") is True,
         )
         if record.get("authorization_id") != value.authorization_id:
             raise ValueError("Artifact guard authorization identity mismatch.")
@@ -335,7 +336,7 @@ class ConditionalObjectClient(Protocol):
 class InMemoryConditionalObjectClient:
     """Standards-faithful conditional object client for qualification scenarios."""
 
-    def __init__(self, /, *, maximum_object_bytes: int):
+    def __init__(self, /, *, maximum_object_bytes: int) -> None:
         self.maximum_object_bytes = _positive(
             maximum_object_bytes, "maximum_object_bytes"
         )
@@ -425,7 +426,7 @@ class POSIXArtifactRepository:
         /,
         *,
         failure_injector: FailureInjector | None = None,
-    ):
+    ) -> None:
         if not isinstance(policy, POSIXRepositoryPolicy):
             raise TypeError("policy must be POSIXRepositoryPolicy.")
         policy.filesystem_profile.require_transactional_support()
@@ -1258,14 +1259,15 @@ class POSIXArtifactRepository:
         if not self._repository_path_exists(path):
             return default
         record = self._read_json_file(path, self.maximum_metadata_bytes)
+        policy = record.get("policy")
         if (
             record.get("kind") != "artifact-retention"
             or record.get("provider_id") != self.provider_id
             or record.get("artifact_id") != artifact
-            or not isinstance(record.get("policy"), Mapping)
+            or not isinstance(policy, Mapping)
         ):
             raise RepositoryCorruptionError("Retention record is invalid.")
-        return RetentionPolicy.from_record(record["policy"])
+        return RetentionPolicy.from_record(policy)
 
     def _tombstone_optional(self, artifact: str, /) -> TombstoneRecord | None:
         path = self.root / "tombstones" / f"{artifact}.json"
@@ -1603,7 +1605,7 @@ class S3ArtifactRepository:
         *,
         maximum_chunk_bytes: int = _DEFAULT_CHUNK_LIMIT,
         failure_injector: FailureInjector | None = None,
-    ):
+    ) -> None:
         if not isinstance(profile, ObjectStoreProfile):
             raise TypeError("profile must be ObjectStoreProfile.")
         profile.require_transactional_support()
@@ -2293,14 +2295,11 @@ class S3ArtifactRepository:
             manifest_value = self._read_object_optional(
                 self._manifest_key(attempt_), self.maximum_metadata_bytes
             )
-            if marker is not None and manifest_value is None:
-                raise RepositoryCorruptionError("Commit marker has no manifest.")
-            manifest = (
-                None
-                if marker is None
-                else ArtifactManifest.from_record(_json_record(manifest_value.data))
-            )
-            if manifest is not None:
+            manifest: ArtifactManifest | None = None
+            if marker is not None:
+                if manifest_value is None:
+                    raise RepositoryCorruptionError("Commit marker has no manifest.")
+                manifest = ArtifactManifest.from_record(_json_record(manifest_value.data))
                 if (
                     manifest.provider_id != transaction.provider_id
                     or manifest.artifact_id != transaction.artifact_id
@@ -2377,14 +2376,15 @@ class S3ArtifactRepository:
         if value is None:
             return default
         record = _json_record(value.data)
+        policy = record.get("policy")
         if (
             record.get("kind") != "artifact-retention"
             or record.get("provider_id") != self.provider_id
             or record.get("artifact_id") != artifact
-            or not isinstance(record.get("policy"), Mapping)
+            or not isinstance(policy, Mapping)
         ):
             raise RepositoryCorruptionError("Retention record is invalid.")
-        return RetentionPolicy.from_record(record["policy"])
+        return RetentionPolicy.from_record(policy)
 
     def _tombstone_optional(self, artifact: str, /) -> TombstoneRecord | None:
         value = self._read_object_optional(

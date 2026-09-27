@@ -6,6 +6,7 @@ import time
 import tracemalloc
 from dataclasses import asdict, dataclass
 from statistics import median
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -47,7 +48,7 @@ class OperatorDataPlaneBenchmark:
         return asdict(self)
 
 
-def _dataset(cases: int, resolution: int):
+def _dataset(cases: int, resolution: int) -> Any:
     axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, resolution),
@@ -62,14 +63,16 @@ def _dataset(cases: int, resolution: int):
     )
 
 
-def _callback_source(dataset, *, read_latency: float, fingerprint: str | None = None):
+def _callback_source(
+    dataset: Any, *, read_latency: float, fingerprint: str | None = None
+) -> Any:
     backing = phx.nn.operator.InMemoryOperatorCaseSource(dataset)
     reads: list[int] = []
 
-    def metadata_reader(index):
+    def metadata_reader(index: Any) -> Any:
         return backing.case_metadata(index)
 
-    def case_reader(index, request):
+    def case_reader(index: Any, request: Any) -> Any:
         reads.append(index)
         if read_latency:
             time.sleep(read_latency)
@@ -88,7 +91,7 @@ def _callback_source(dataset, *, read_latency: float, fingerprint: str | None = 
     return source, reads
 
 
-def _device_bytes(batch) -> int:
+def _device_bytes(batch: Any) -> int:
     return sum(
         leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree_util.tree_leaves((batch.batch, batch.targets))
@@ -96,7 +99,7 @@ def _device_bytes(batch) -> int:
     )
 
 
-def _profile_epoch(loader, *, consumer_latency: float):
+def _profile_epoch(loader: Any, *, consumer_latency: float) -> Any:
     tracemalloc.start()
     started = time.perf_counter()
     first_elapsed = None

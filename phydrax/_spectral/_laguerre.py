@@ -9,7 +9,8 @@ from math import prod
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from scipy.linalg import eigh_tridiagonal
 from scipy.special import eval_genlaguerre
 
@@ -61,7 +62,7 @@ class RadialLaguerrePlan(StrictModule, NonTrainableState):
         *,
         tau: float = 1.0,
         max_precompute_bytes: int = _DEFAULT_PRECOMPUTE_BYTES,
-    ):
+    ) -> None:
         selected_bandlimit = int(radial_bandlimit)
         selected_tau = float(tau)
         selected_limit = int(max_precompute_bytes)
@@ -84,7 +85,8 @@ class RadialLaguerrePlan(StrictModule, NonTrainableState):
         diagonal = 2.0 * degree + 3.0
         recurrence_degree = np.arange(1, selected_bandlimit, dtype=np.float64)
         off_diagonal = -np.sqrt(recurrence_degree * (recurrence_degree + 2.0))
-        dimensionless_nodes, eigenvectors = eigh_tridiagonal(
+        # ty selects scipy-stubs' deprecated bool/float16 overload for float64 input.
+        dimensionless_nodes, eigenvectors = eigh_tridiagonal(  # ty: ignore[deprecated]
             diagonal,
             off_diagonal,
             check_finite=True,

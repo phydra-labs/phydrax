@@ -38,7 +38,7 @@ class TargetMolecule:
     contour_length: int
     circular: bool
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _text(self.molecule_id, "molecule_id")
         if (
             not isinstance(self.strand_ids, tuple)
@@ -67,7 +67,7 @@ class TargetSite:
     radius: float
     material: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if type(self.target_id) is not int or not 0 <= self.target_id < 2**63:
             raise ValueError("Derived target IDs must be nonnegative int64 identities.")
         if type(self.contour_position) is not int or self.contour_position < 0:
@@ -88,7 +88,7 @@ class SourceTargetRoute:
     target_id: int
     fraction: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _text(self.source_site_id, "source site")
         if type(self.target_id) is not int or not 0 <= self.target_id < 2**63:
             raise ValueError("Source routes require a nonnegative int64 target identity.")
@@ -111,7 +111,7 @@ class RadiationTargetGeometry:
     approximation: str
     losses: tuple[AdapterLoss, ...] = ()
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for values in (self.molecules, self.sites, self.routes, self.losses):
             if not isinstance(values, tuple):
                 raise TypeError("Target support, routes and losses must be tuples.")

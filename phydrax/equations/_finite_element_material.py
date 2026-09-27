@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._admissibility import (
     AdmissibilityHeader,
@@ -55,7 +56,7 @@ class MaterialSiteId(StrictModule, NonTrainableState):
     key: str = eqx.field(static=True)
     site_id: str = eqx.field(static=True)
 
-    def __init__(self, key: str, /):
+    def __init__(self, key: str, /) -> None:
         key_ = str(key).strip()
         if not key_:
             raise ValueError("Material site key must be non-empty.")
@@ -93,7 +94,7 @@ class ConstitutiveResponse(StrictModule):
         header: AdmissibilityHeader | None = None,
         diagnostic: Diagnostic | None = None,
         diagnostics: Mapping[str, ArrayLike] | None = None,
-    ):
+    ) -> None:
         response_ = _inexact_array(response)
         trial = _inexact_array(trial_state)
         tangent = (
@@ -268,7 +269,7 @@ class ConstitutiveModel(AbstractConstitutiveModel, NonTrainableState):
         state_shape: tuple[int, ...],
         response_shape: tuple[int, ...],
         model_id: str,
-    ):
+    ) -> None:
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
         state = tuple(state_shape)
@@ -336,7 +337,11 @@ def _bind_learned_law(
         route=DerivativeRoute.IMPLICIT,
         policy=RegularityPolicy(),
     )
-    reasons = sorted({*contract.derivative_admission.reasons, *implicit.reasons})
+    admission = contract.derivative_admission
+    # A contract bound with a differentiation request always carries its admission.
+    if not (admission is not None):
+        raise RuntimeError("Internal invariant failed: admission is not None.")
+    reasons = sorted({*admission.reasons, *implicit.reasons})
     if reasons:
         raise ValueError(
             f"{site} needs a learned law with first input and parameter derivatives "
@@ -439,7 +444,7 @@ class LearnedConstitutiveModel(AbstractConstitutiveModel):
         model_id: str,
         state_port: ValuePort | None = None,
         port_mapping: PortMapping | None = None,
-    ):
+    ) -> None:
         site = "LearnedConstitutiveModel"
         inputs = (
             (kinematics_port,) if state_port is None else (kinematics_port, state_port)
@@ -565,7 +570,7 @@ class LearnedConstitutiveModel(AbstractConstitutiveModel):
         response_size = prod(self.response_shape)
         stateful = self.state_shape != (0,)
 
-        def response_of(value: Array):
+        def response_of(value: Array) -> tuple[Array, tuple[Array, Array, Array]]:
             features = jnp.concatenate((value, state)) if stateful else value
             raw = model(features[0] if model.in_size == "scalar" else features)
             outputs = jnp.reshape(jnp.asarray(raw), (-1,))
@@ -604,7 +609,7 @@ class MaterialState(StrictModule, NonTrainableState):
         *,
         trial: ArrayLike | None = None,
         state_version: int = 0,
-    ):
+    ) -> None:
         if not isinstance(site_id, MaterialSiteId):
             raise TypeError("site_id must be a MaterialSiteId.")
         model = str(model_id).strip()
@@ -670,7 +675,7 @@ class MaterialTransaction(StrictModule, NonTrainableState):
     layout_id: str = eqx.field(static=True)
     transaction_id: str = eqx.field(static=True)
 
-    def __init__(self, states: Sequence[MaterialState], /):
+    def __init__(self, states: Sequence[MaterialState], /) -> None:
         states_ = tuple(states)
         if not states_ or not all(isinstance(state, MaterialState) for state in states_):
             raise TypeError("states must contain one or more MaterialState values.")
@@ -745,7 +750,7 @@ class MaterialCheckpointPayload(StrictModule, NonTrainableState):
         /,
         *,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(state, MaterialTransaction):
             raise TypeError("state must be a MaterialTransaction.")
         plan = None if plan_id is None else str(plan_id).strip()
@@ -782,7 +787,7 @@ class MaterialIntegrationPlan(StrictModule):
         /,
         *,
         plan_id: str | None = None,
-    ):
+    ) -> None:
         entries = tuple(sites)
         if not entries:
             raise ValueError("Material integration plan requires one or more sites.")
@@ -949,7 +954,7 @@ class MaterialIntegrationPlan(StrictModule):
                 raise ValueError("Material responses must match integration sites.")
         if not all(isinstance(response, ConstitutiveResponse) for response in responses_):
             raise TypeError("responses must contain ConstitutiveResponse values.")
-        trials: dict[str, Array] = {}
+        trials: dict[MaterialSiteId | str, Array] = {}
         for site, model, response in zip(
             self.site_ids, self.models, responses_, strict=True
         ):

@@ -14,7 +14,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, Key
+from jax import Array
+from jax.typing import DTypeLike
 
 from .._strict import StrictModule
 from ..stochastic._events import (
@@ -24,6 +25,7 @@ from ..stochastic._events import (
     PathEventResult,
 )
 from ..stochastic._trajectory import StochasticTrajectory
+from ..typing import PRNGKey
 
 
 class AdaptiveSplittingStatus(IntEnum):
@@ -50,7 +52,7 @@ class AdaptiveMultilevelSplittingPlan(StrictModule):
         kill_count: int | None = None,
         max_rounds: int = 256,
         target_level: float = 0.0,
-    ):
+    ) -> None:
         population = int(population_size)
         if population < 2:
             raise ValueError("population_size must be at least two.")
@@ -89,7 +91,7 @@ class AdaptiveSplittingBranchRequest(StrictModule):
         *,
         level: float,
         round_index: int,
-    ):
+    ) -> None:
         killed = jnp.asarray(killed_indices, dtype=jnp.int32).reshape((-1,))
         parents = jnp.asarray(parent_indices, dtype=jnp.int32).reshape((-1,))
         branches = jnp.asarray(branch_indices, dtype=jnp.int32).reshape((-1,))
@@ -106,7 +108,7 @@ class AdaptiveSplittingBranchRequest(StrictModule):
         self.round_index = int(round_index)
 
 
-InitialPathSampler: TypeAlias = Callable[[Key[Array, ""], int], StochasticTrajectory]
+InitialPathSampler: TypeAlias = Callable[[PRNGKey, int], StochasticTrajectory]
 PathBranchSampler: TypeAlias = Callable[
     [StochasticTrajectory, AdaptiveSplittingBranchRequest],
     StochasticTrajectory,
@@ -139,7 +141,7 @@ class AdaptiveSplittingDiagnostics(StrictModule):
         *,
         initial_trajectory_ids: tuple[str, ...],
         population_trajectory_ids: tuple[tuple[str, ...], ...],
-    ):
+    ) -> None:
         level_values = jnp.asarray(levels, dtype=jnp.float64).reshape((-1,))
         survival = jnp.asarray(survival_probabilities, dtype=jnp.float64).reshape((-1,))
         counts = jnp.asarray(killed_counts, dtype=jnp.int32).reshape((-1,))
@@ -203,7 +205,7 @@ class AdaptiveMultilevelSplittingResult(StrictModule):
         event_result: PathEventResult,
         diagnostics: AdaptiveSplittingDiagnostics,
         /,
-    ):
+    ) -> None:
         self.probability = jnp.asarray(probability, dtype=jnp.float64).reshape(())
         self.log_probability = jnp.asarray(log_probability, dtype=jnp.float64).reshape(())
         self.status = jnp.asarray(status, dtype=jnp.int32).reshape(())
@@ -241,7 +243,7 @@ class AdaptiveSplittingEnsembleResult(StrictModule):
         self,
         results: tuple[AdaptiveMultilevelSplittingResult, ...],
         /,
-    ):
+    ) -> None:
         if not results:
             raise ValueError(
                 "An adaptive splitting ensemble requires at least one result."
@@ -325,7 +327,7 @@ def _score_population(
     return jnp.max(score_paths, axis=-1), score_paths
 
 
-def _empty_round_matrix(population_size: int, /, *, dtype) -> Array:
+def _empty_round_matrix(population_size: int, /, *, dtype: DTypeLike) -> Array:
     return jnp.empty((0, population_size), dtype=dtype)
 
 
@@ -336,7 +338,7 @@ def adaptive_multilevel_splitting(
     *,
     initial_sampler: InitialPathSampler,
     branch_sampler: PathBranchSampler,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> AdaptiveMultilevelSplittingResult:
     """Estimate a path-event probability with adaptive multilevel splitting.
 
@@ -507,7 +509,7 @@ def replicate_adaptive_multilevel_splitting(
     *,
     initial_sampler: InitialPathSampler,
     branch_sampler: PathBranchSampler,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> AdaptiveSplittingEnsembleResult:
     """Run independent AMS populations and estimate uncertainty across replicates."""
 

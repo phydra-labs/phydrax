@@ -1,10 +1,12 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _source():
+def _source() -> Any:
     return phx.meshing.certify_cell_mesh(
         phx.discretization.CellMesh.from_triangles(
             np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.5, 0.5))),
@@ -16,7 +18,7 @@ def _source():
     )
 
 
-def test_triangle_transition_lineage_stencil_and_atomic_commit():
+def test_triangle_transition_lineage_stencil_and_atomic_commit() -> None:
     source = _source()
     mesh = source.mesh
     adaptation = phx.meshing.execute_mesh_adaptation(
@@ -29,18 +31,23 @@ def test_triangle_transition_lineage_stencil_and_atomic_commit():
         )
     )
     transition = adaptation.transition
+    # ty: ignore[unresolved-attribute]
     stencil = transition.vertex_stencil
     assert stencil is not None
     constant = stencil.apply(mesh.vertex_global_ids, jnp.ones((5,)))
     linear = stencil.apply(mesh.vertex_global_ids, mesh.coordinates[:, 0])
+    # ty: ignore[unresolved-attribute]
     cells = transition.lineage.entity_lineage(2)
     refined = np.asarray(cells.relation_kinds) == int(
         phx.meshing.EntityLineageKind.REFINED_FROM
     )
 
     assert jnp.allclose(constant, 1.0)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(linear, transition.target.mesh.coordinates[:, 0])
+    # ty: ignore[unresolved-attribute]
     assert transition.lineage.source_topology_id == mesh.topology_id
+    # ty: ignore[unresolved-attribute]
     assert transition.lineage.target_topology_id == transition.target.mesh.topology_id
     np.testing.assert_array_equal(np.asarray(cells.source_global_ids)[refined], (10, 10))
     np.testing.assert_array_equal(np.asarray(cells.deleted_source_ids), ())
@@ -63,5 +70,7 @@ def test_triangle_transition_lineage_stencil_and_atomic_commit():
 
     assert bool(result.committed)
     assert result.adaptation is adaptation
+    # ty: ignore[unresolved-attribute]
     assert result.mesh.topology_id == transition.target.mesh.topology_id
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(result.state.fields[0], transition.target.mesh.coordinates[:, 0])

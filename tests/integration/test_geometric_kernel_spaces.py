@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _assert_finite_condition(kernel, points, observations):
+def _assert_finite_condition(kernel: Any, points: Any, observations: Any) -> Any:
     model = phx.uq.ExactGaussianProcessDiscrepancy(points, observations)
     state = phx.uq.GaussianProcessLikelihoodState(kernel=kernel, noise_scale=0.05)
     residual = model.residual(jnp.zeros_like(observations))
@@ -21,7 +24,7 @@ def _assert_finite_condition(kernel, points, observations):
     return factor
 
 
-def test_compact_and_combinatorial_kernel_gp_workflows():
+def test_compact_and_combinatorial_kernel_gp_workflows() -> None:
     sphere_points = jnp.asarray(
         [
             [1.0, 0.0, 0.0],
@@ -70,7 +73,7 @@ def test_compact_and_combinatorial_kernel_gp_workflows():
     assert isinstance(categorical_factor, phx.uq.ExactGaussianProcessFactor)
 
 
-def test_noncompact_kernel_gp_workflows_select_exact_feature_space():
+def test_noncompact_kernel_gp_workflows_select_exact_feature_space() -> None:
     radii = jnp.linspace(0.0, 0.8, 24)
     hyperbolic_points = jnp.stack(
         (jnp.cosh(radii), jnp.sinh(radii), jnp.zeros_like(radii)),

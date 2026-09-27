@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from ....discretization._transfer import FieldTransfer
@@ -39,7 +40,7 @@ class ArchieSaturationConductivity(StrictModule):
         tortuosity_factor: ArrayLike = 1.0,
         temperature_coefficient_K_inverse: ArrayLike = 0.0,
         reference_temperature_K: ArrayLike = 293.15,
-    ):
+    ) -> None:
         self.water_conductivity_S_m = jnp.asarray(water_conductivity_S_m)
         self.cementation_exponent = jnp.asarray(cementation_exponent)
         self.saturation_exponent = jnp.asarray(saturation_exponent)
@@ -139,7 +140,7 @@ class HydrogeophysicalPlan(StrictModule):
         source_coordinates: GeospatialContract,
         target_coordinates: GeospatialContract,
         tolerance: float = 1e-9,
-    ):
+    ) -> None:
         if not isinstance(electrical, PreparedDC) or not isinstance(
             transfer, FieldTransfer
         ):
@@ -201,7 +202,7 @@ class HydrogeophysicalPlan(StrictModule):
         self.source_geometry_id = str(source_geometry_id)
         self.target_geometry_id = str(target_geometry_id)
 
-    def require_geometry(self, source_geometry_id: str, target_geometry_id: str):
+    def require_geometry(self, source_geometry_id: str, target_geometry_id: str) -> None:
         if (
             source_geometry_id != self.source_geometry_id
             or target_geometry_id != self.target_geometry_id
@@ -210,7 +211,7 @@ class HydrogeophysicalPlan(StrictModule):
                 "Hydrogeophysical transfer cannot be reused after an unqualified geometry change."
             )
 
-    def _transfer(self, value):
+    def _transfer(self, value: ArrayLike) -> Array:
         value = jnp.asarray(value).reshape(-1)
         source = self.transfer.primal_operator.source
         target = self.transfer.primal_operator.target

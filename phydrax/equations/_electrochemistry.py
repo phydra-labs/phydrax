@@ -9,8 +9,9 @@ import abc
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.scipy.special import xlogy
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -38,7 +39,7 @@ class ElectrolyteTransportParameters(StrictModule, NonTrainableState):
         temperature: ArrayLike,
         permittivity: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(schema, ChemicalSpeciesSchema):
             raise TypeError("schema must be ChemicalSpeciesSchema.")
         diffusivity = jnp.asarray(diffusivities)
@@ -111,7 +112,7 @@ class IdealDiluteElectrochemicalClosure(AbstractElectrochemicalClosure):
         /,
         *,
         standard_concentrations: ArrayLike | None = None,
-    ):
+    ) -> None:
         if not isinstance(schema, ChemicalSpeciesSchema):
             raise TypeError("schema must be ChemicalSpeciesSchema.")
         if standard_concentrations is None:

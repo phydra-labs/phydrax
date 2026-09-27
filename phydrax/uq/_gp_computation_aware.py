@@ -9,7 +9,8 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..linalg import AbstractLinearOperator, LinearSolveStatus
@@ -64,7 +65,7 @@ class GaussianProcessComputationPolicy(StrictModule):
         max_condition_covariance_bytes: int = 64 * 1024 * 1024,
         checkpoint_kernel_blocks: bool = True,
         projected_condition_limit: float | None = None,
-    ):
+    ) -> None:
         limits = (
             int(max_workspace_bytes),
             int(max_factor_storage_bytes),
@@ -122,7 +123,7 @@ class ComputationAwareGaussianProcessDiagnostics(StrictModule):
         actions: _ResolvedGaussianProcessActions,
         factor_storage_elements: int,
         condition_limit: float | None,
-    ):
+    ) -> None:
         noise_condition = projected.noise_factor.diagnostics.condition_estimate
         covariance_condition = projected.covariance_factor.diagnostics.condition_estimate
         finite = (
@@ -203,7 +204,7 @@ class ComputationAwareGaussianProcessFactor(StrictModule):
         actions: AbstractGaussianProcessActionPolicy,
         computation: GaussianProcessComputationPolicy | None = None,
         residual: ArrayLike | None = None,
-    ):
+    ) -> None:
         points = _validated_factor_points(observation_points)
         _require_state(state)
         if not isinstance(actions, AbstractGaussianProcessActionPolicy):
@@ -392,7 +393,7 @@ class ComputationAwareGaussianProcessConditioner(StrictModule):
         variance: ArrayLike,
         observation_count: int,
         output_dims: tuple[str | None, ...],
-    ):
+    ) -> None:
         query = _as_design(query_points)
         solved = jnp.asarray(solved_query_action)
         covariance_array = jnp.asarray(covariance)
@@ -449,7 +450,7 @@ class ComputationAwareGaussianProcessDiscrepancy(StrictModule):
         observation_points: ArrayLike,
         observations: ArrayLike,
         /,
-    ):
+    ) -> None:
         points, values = _validated_observations(
             observation_points,
             observations,

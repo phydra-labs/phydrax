@@ -10,7 +10,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -36,7 +37,7 @@ class VarianceConstrainedSemiGrandPlan(StrictModule, NonTrainableState):
         /,
         *,
         realization_id: int = 0,
-    ):
+    ) -> None:
         thermal = float(temperature)
         chemical = np.asarray(chemical_potentials, dtype=np.float64)
         target = np.asarray(target_fractions, dtype=np.float64)

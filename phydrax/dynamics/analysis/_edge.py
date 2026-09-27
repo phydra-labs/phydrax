@@ -12,15 +12,19 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._geometry_precision import GeometryPrecisionPolicy
 from ..._strict import StrictModule
+from ...typing import parse
 from .._evolution import AbstractEvolution
 from .._trajectory import TrajectoryData
 
 
 RecurrenceSeedMetric: TypeAlias = Literal["euclidean", "supremum"]
+# (lower, upper, lower parameter, upper parameter, valid, values, widths).
+_BisectionCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 EDGE_SUCCESS = 0
 EDGE_INVALID_BRACKET = 1
@@ -69,8 +73,7 @@ def recurrence_seed_candidates(
     maximum_bytes = index(maximum_pair_bytes)
     if maximum_bytes < 1:
         raise ValueError("maximum_pair_bytes must be positive.")
-    if metric not in ("euclidean", "supremum"):
-        raise ValueError("metric must be 'euclidean' or 'supremum'.")
+    metric = parse(metric, RecurrenceSeedMetric, "metric")
     states = trajectory.states.reshape((trajectory.capacity, -1))
     available_pairs = max(trajectory.capacity - separation, 0)
     available_pairs = available_pairs * (available_pairs + 1) // 2
@@ -148,7 +151,7 @@ class EdgeTrackingProblem(StrictModule):
         /,
         *,
         problem_id: str | None = None,
-    ):
+    ) -> None:
         if not isinstance(evolution, AbstractEvolution):
             raise TypeError("evolution must be an AbstractEvolution.")
         if not callable(classifier):
@@ -222,7 +225,7 @@ def track_basin_edge(
         raise TypeError("Edge bracket states must share one inexact dtype.")
     initial_state_finite = jnp.all(jnp.isfinite(lower)) & jnp.all(jnp.isfinite(upper))
 
-    def classify(state):
+    def classify(state: Array) -> tuple[Array, Array]:
         evolved = problem.evolution.advance(
             state,
             problem.source_coordinate,
@@ -256,7 +259,7 @@ def track_basin_edge(
     classifier_history = jnp.full((steps,), jnp.nan, dtype=lower_value.dtype)
     width_history = jnp.full((steps,), jnp.nan, dtype=lower_value.dtype)
 
-    def bisect(carry, index):
+    def bisect(carry: _BisectionCarry, index: Array) -> tuple[_BisectionCarry, None]:
         (
             lower_current,
             upper_current,

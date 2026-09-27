@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -10,13 +13,13 @@ from phydrax._frozendict import frozendict
 from phydrax.operators.differential import directional_derivative, div, grad, laplacian
 
 
-def test_grad_complex_scalar_point():
+def test_grad_complex_scalar_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 2 + 1j * x[1] ** 2
 
     g = grad(u)
@@ -25,13 +28,13 @@ def test_grad_complex_scalar_point():
     assert jnp.allclose(out, jnp.array([4.0, 6.0j]))
 
 
-def test_directional_derivative_complex_scalar_point():
+def test_directional_derivative_complex_scalar_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 2 + 1j * x[1] ** 2
 
     v = geom.Function()(jnp.array([1.0, 1.0]))
@@ -42,13 +45,13 @@ def test_directional_derivative_complex_scalar_point():
     assert jnp.allclose(out, 4.0 + 6.0j)
 
 
-def test_div_complex_vector_field_point():
+def test_div_complex_vector_field_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([x[0], 1j * x[1]])
 
     div_u = div(u)
@@ -57,13 +60,13 @@ def test_div_complex_vector_field_point():
     assert jnp.allclose(out, 1.0 + 1.0j)
 
 
-def test_laplacian_complex_scalar_point():
+def test_laplacian_complex_scalar_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 2 + 1j * x[1] ** 2
 
     lap_u = laplacian(u)

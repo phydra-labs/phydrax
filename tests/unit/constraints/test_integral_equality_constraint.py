@@ -11,7 +11,7 @@ from phydrax.domain import Interval1d
 from phydrax.terms import RandomizedMomentPenalty
 
 
-def test_integral_equal_penalty_matches_exact_constant_integral():
+def test_integral_equal_penalty_matches_exact_constant_integral() -> None:
     geom = Interval1d(0.0, 2.0)
     component = geom.component()
     source = phx.integration.per_step(

@@ -6,16 +6,19 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import prod
+from typing import cast
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..linalg import RecyclingState, refresh_recycling, solve_recycled
 from ._mna import (
+    MNAResult,
     MNASolvePolicy,
     NodalCircuit,
     prepare_mna,
@@ -57,7 +60,7 @@ class MNACaseBatchResult(StrictModule):
     outgoing: Array
     status: Array
     relative_residual: Array
-    results: tuple
+    results: tuple[MNAResult, ...]
     case_shape: tuple[int, ...] = eqx.field(static=True)
 
 
@@ -106,7 +109,7 @@ def prepare_scattering_action_case_batch(
 
 def solve_scattering_action_case_batch(
     prepared: PreparedScatteringActionCaseBatch,
-    excitations: WaveExcitation | ArrayLike | Sequence[WaveExcitation | ArrayLike],
+    excitations: WaveExcitation | Array | Sequence[WaveExcitation | ArrayLike],
     /,
 ) -> ScatteringActionCaseBatchResult:
     if not isinstance(prepared, PreparedScatteringActionCaseBatch):
@@ -171,7 +174,7 @@ def prepare_mna_case_batch(
 
 def solve_mna_case_batch(
     prepared: PreparedMNACaseBatch,
-    incident: ArrayLike | Sequence[ArrayLike],
+    incident: Array | Sequence[ArrayLike],
     /,
 ) -> MNACaseBatchResult:
     if not isinstance(prepared, PreparedMNACaseBatch):
@@ -248,8 +251,10 @@ def solve_scattering_action_recycled_sweep(
             "plans": [case.plan.plan_id for case in cases],
         }
     )
+    # cases is non-empty, so the loop assigned the final recycling state.
+    final_recycling = cast(RecyclingState, recycling)
     return RecycledScatteringSweepResult(
-        tuple(outputs), tuple(statuses), recycling, sweep_id
+        tuple(outputs), tuple(statuses), final_recycling, sweep_id
     )
 
 

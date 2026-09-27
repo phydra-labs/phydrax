@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from .._trainable import fixed_field
@@ -43,7 +44,7 @@ class InteriorLaplaceDirichletResult(StrictModule):
         linear_result: LinearSolveResult,
         discretization: LayerDiscretizationReport,
         boundary_residual_norm: Array,
-    ):
+    ) -> None:
         if not isinstance(potential, LaplaceLayerPotential2D):
             raise TypeError("potential must be LaplaceLayerPotential2D.")
         if not isinstance(linear_result, LinearSolveResult):

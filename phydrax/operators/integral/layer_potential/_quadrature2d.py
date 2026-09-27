@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._interpolation import barycentric_basis
@@ -19,7 +22,12 @@ from ....integration import (
     IntegrationProvenance,
     IntegrationStatus,
 )
-from ._core import BoundaryPanelization2D
+from ._core import AbstractLayerKernel, BoundaryPanelization2D
+
+
+if TYPE_CHECKING:
+    from ._helmholtz2d import HelmholtzLayerKernel2D, HelmholtzLayerPotential2D
+    from ._laplace2d import LaplaceLayerPotential2D
 
 
 class PanelInteractionReport2D(StrictModule):
@@ -40,7 +48,7 @@ class PanelInteractionReport2D(StrictModule):
         /,
         *,
         near_ratio: float = 4.0,
-    ):
+    ) -> None:
         if not isinstance(panelization, BoundaryPanelization2D):
             raise TypeError("panelization must be BoundaryPanelization2D.")
         ratio = float(near_ratio)
@@ -135,7 +143,7 @@ def _panel_density(
 
 
 def _panel_source_data(
-    potential,
+    potential: LaplaceLayerPotential2D | HelmholtzLayerPotential2D,
     panel_id: int,
     reference: Array,
     /,
@@ -155,7 +163,11 @@ def _panel_source_data(
 
 
 def _panel_integrand(
-    potential, target: Array, panel_id: int, reference: Array, /
+    potential: LaplaceLayerPotential2D | HelmholtzLayerPotential2D,
+    target: Array,
+    panel_id: int,
+    reference: Array,
+    /,
 ) -> Array:
     sources, normals, jacobian, density = _panel_source_data(
         potential,
@@ -187,7 +199,7 @@ def _negative_log_moment(lower: Array, upper: Array, target: Array, /) -> Array:
 
 
 def evaluate_laplace_single_layer_self_panel_2d(
-    potential,
+    potential: LaplaceLayerPotential2D,
     panel_id: int,
     target_reference: ArrayLike,
     plan: AdaptiveQuadraturePlan,
@@ -286,7 +298,7 @@ def evaluate_laplace_single_layer_self_panel_2d(
 
 def evaluate_helmholtz_single_layer_self_panel_weights_2d(
     panelization: BoundaryPanelization2D,
-    kernel,
+    kernel: HelmholtzLayerKernel2D,
     panel_id: int,
     target_reference: ArrayLike,
     plan: AdaptiveQuadraturePlan,
@@ -402,7 +414,7 @@ def evaluate_helmholtz_single_layer_self_panel_weights_2d(
 
 def evaluate_helmholtz_single_layer_self_panel_block_2d(
     panelization: BoundaryPanelization2D,
-    kernel,
+    kernel: HelmholtzLayerKernel2D,
     panel_id: int,
     target_references: ArrayLike,
     plan: AdaptiveQuadraturePlan,
@@ -525,7 +537,7 @@ def evaluate_helmholtz_single_layer_self_panel_block_2d(
 
 def evaluate_double_layer_self_panel_weights_2d(
     panelization: BoundaryPanelization2D,
-    kernel,
+    kernel: AbstractLayerKernel,
     panel_id: int,
     target_reference: ArrayLike,
     plan: AdaptiveQuadraturePlan,
@@ -644,7 +656,12 @@ def evaluate_double_layer_self_panel_weights_2d(
     )
 
 
-def _panel_direct(potential, target: Array, panel_id: int, /) -> Array:
+def _panel_direct(
+    potential: LaplaceLayerPotential2D | HelmholtzLayerPotential2D,
+    target: Array,
+    panel_id: int,
+    /,
+) -> Array:
     order = potential.panelization.quadrature_order
     start = panel_id * order
     stop = start + order
@@ -685,7 +702,7 @@ def _panel_plan(plan: AdaptiveQuadraturePlan, panel_count: int) -> AdaptiveQuadr
 
 
 def evaluate_laplace_adaptive_2d(
-    potential,
+    potential: LaplaceLayerPotential2D,
     targets: ArrayLike,
     plan: AdaptiveQuadraturePlan,
     interactions: PanelInteractionReport2D,

@@ -4,12 +4,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
+from typing import Any, TypeVar
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax._src import ad_util, core
 from jax._src.ad_checkpoint import transpose_jaxpr
 from jax._src.interpreters import ad, batching, mlir, partial_eval as pe, pxla
+from jax.typing import ArrayLike
+
+
+_BranchResult = TypeVar("_BranchResult")
 
 
 # A separate call primitive is necessary: lax.cond batches to select, while
@@ -19,27 +27,34 @@ _domain_call = core.Primitive("phydrax_domain_call")
 _domain_call.multiple_results = True
 
 
-def _bind(call, arguments):
+def _bind(call: core.ClosedJaxpr, arguments: Sequence[Any]) -> list[Any]:
     closed = core.ClosedJaxpr(pe.convert_constvars_jaxpr(call.jaxpr), ())
     return _domain_call.bind(*call.consts, *arguments, call=closed)
 
 
-def _implementation(*arguments, call):
+def _implementation(*arguments: Any, call: core.ClosedJaxpr) -> list[Any]:
     return core.jaxpr_as_fun(call)(*arguments)
 
 
-def _abstract(*avals, call):
+def _abstract(
+    *avals: core.AbstractValue, call: core.ClosedJaxpr
+) -> tuple[list[core.AbstractValue], core.Effects]:
     del avals
     return call.out_avals, call.effects
 
 
-def _batch(arguments, dimensions, *, call):
+def _batch(
+    arguments: Sequence[Any],
+    dimensions: Sequence[int | None],
+    *,
+    call: core.ClosedJaxpr,
+) -> tuple[list[Any], tuple[int, ...]]:
     mapped = tuple(
         None if axis is None else jnp.moveaxis(value, axis, 0)
         for value, axis in zip(arguments, dimensions, strict=True)
     )
 
-    def lane(values):
+    def lane(values: tuple[Array | None, ...]) -> list[Any]:
         inputs = tuple(
             original if axis is None else value
             for original, value, axis in zip(arguments, values, dimensions, strict=True)
@@ -52,7 +67,12 @@ def _batch(arguments, dimensions, *, call):
     return outputs, (0,) * len(outputs)
 
 
-def _jvp(primals, tangents, *, call):
+def _jvp(
+    primals: Sequence[Any],
+    tangents: Sequence[Any],
+    *,
+    call: core.ClosedJaxpr,
+) -> tuple[list[Any], list[Any]]:
     values = _domain_call.bind(*primals, call=call)
     nonzero = tuple(not isinstance(value, ad_util.Zero) for value in tangents)
     if not any(nonzero):
@@ -89,7 +109,9 @@ def _jvp(primals, tangents, *, call):
     ]
 
 
-def _transpose(cotangents, *arguments, call):
+def _transpose(
+    cotangents: Sequence[Any], *arguments: Any, call: core.ClosedJaxpr
+) -> list[Any]:
     linear = tuple(ad.is_undefined_primal(value) for value in arguments)
     zero = tuple(isinstance(value, ad_util.Zero) for value in cotangents)
     transposed, input_zero = transpose_jaxpr(call, linear, zero)
@@ -120,7 +142,12 @@ mlir.register_lowering(
 )
 
 
-def domain_cond(predicate, true_function, false_function, operand=None):
+def domain_cond(
+    predicate: ArrayLike,
+    true_function: Callable[[Any], _BranchResult],
+    false_function: Callable[[Any], _BranchResult],
+    operand: object = None,
+) -> _BranchResult:
     """Scalar conditional whose mapped lanes never execute the other branch.
 
     Closure values are explicit primitive operands, including model parameters;

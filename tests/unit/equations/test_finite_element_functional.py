@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,14 +12,14 @@ import numpy as np
 import phydrax as phx
 
 
-def _mesh():
+def _mesh() -> Any:
     return phx.discretization.CellMesh.from_triangles(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
         jnp.asarray(((0, 1, 2),), dtype=jnp.int32),
     )
 
 
-def _discretization(*names):
+def _discretization(*names: Any) -> Any:
     element = phx.discretization.lagrange_element("triangle", 1)
     return phx.discretization.FiniteElementPlan(
         _mesh(),
@@ -24,10 +27,10 @@ def _discretization(*names):
     ).prepare()
 
 
-def test_cell_functional_residual_is_discrete_first_variation():
+def test_cell_functional_residual_is_discrete_first_variation() -> None:
     discretization = _discretization("u")
 
-    def density(fields, geometry, context):
+    def density(fields: Any, geometry: Any, context: Any) -> Any:
         del geometry, context
         return 0.5 * jnp.sum(fields["u"].gradient ** 2, axis=-1)
 
@@ -69,10 +72,10 @@ def test_cell_functional_residual_is_discrete_first_variation():
     assert compiled.potential_evaluation(state).term_values[0].shape == ()
 
 
-def test_mixed_functional_varies_all_fields_without_double_counting_value():
+def test_mixed_functional_varies_all_fields_without_double_counting_value() -> None:
     discretization = _discretization("u", "v")
 
-    def density(fields, geometry, context):
+    def density(fields: Any, geometry: Any, context: Any) -> Any:
         del geometry, context
         difference = fields["u"].value - fields["v"].value
         return 0.5 * difference**2
@@ -110,10 +113,10 @@ def test_mixed_functional_varies_all_fields_without_double_counting_value():
     np.testing.assert_allclose(evaluation.value, evaluation.term_values[0])
 
 
-def test_exterior_functional_value_and_residual_use_same_boundary_measure():
+def test_exterior_functional_value_and_residual_use_same_boundary_measure() -> None:
     discretization = _discretization("u")
 
-    def density(fields, geometry, context):
+    def density(fields: Any, geometry: Any, context: Any) -> Any:
         del context
         if geometry.normal is None:
             raise ValueError("Boundary normal was not provided.")
@@ -147,6 +150,58 @@ def test_exterior_functional_value_and_residual_use_same_boundary_measure():
     np.testing.assert_allclose(
         compiled.residual(state),
         jax.grad(compiled.potential)(state),
+        rtol=2.0e-12,
+        atol=2.0e-12,
+    )
+
+
+def test_constrained_value_and_residual_matches_reduced_residual() -> None:
+    mesh = phx.discretization.CellMesh.from_triangles(
+        jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.5, 0.5))),
+        jnp.asarray(((0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4)), dtype=jnp.int32),
+    )
+    discretization = phx.discretization.FiniteElementPlan(
+        mesh,
+        (
+            phx.discretization.FiniteElementFieldSpec(
+                "u", phx.discretization.lagrange_element("triangle", 1)
+            ),
+        ),
+    ).prepare()
+
+    def density(fields: Any, geometry: Any, context: Any) -> Any:
+        del geometry, context
+        return 0.5 * jnp.sum(fields["u"].gradient ** 2, axis=-1)
+
+    functional = phx.variational.Functional(
+        "dirichlet-energy",
+        (
+            phx.variational.LocalIntegralTerm(
+                "body",
+                region="body",
+                fields=(phx.variational.FieldJetSpec("u", gradient=True),),
+                density=density,
+                density_id="gradient-energy",
+            ),
+        ),
+        variable_fields=("u",),
+    )
+    compiled = phx.equations.compile_finite_element_functional(
+        functional,
+        discretization,
+        fields={"u": "u"},
+        regions={"body": None},
+        constraint=phx.discretization.dirichlet_constraint(discretization, "u"),
+        dirichlet_values=lambda points: points[..., 0],
+    )
+    state = jnp.full_like(compiled.state_space.zeros(), 0.3)
+
+    value, residual = compiled.value_and_residual(state)
+
+    np.testing.assert_allclose(value, compiled.potential(state), atol=2.0e-12)
+    np.testing.assert_allclose(
+        residual,
+        compiled.residual(state),
         rtol=2.0e-12,
         atol=2.0e-12,
     )

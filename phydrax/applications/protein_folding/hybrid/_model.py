@@ -18,7 +18,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -116,7 +117,7 @@ class HybridCrossInteractionPlan(StrictModule, NonTrainableState):
         linker_length: ArrayLike = 0.0,
         electrostatic_prefactor: ArrayLike = 0.0,
         screening: ArrayLike = 0.0,
-    ):
+    ) -> None:
         pairs = np.asarray(site_pairs)
         if pairs.ndim != 2 or pairs.shape[1] != 2 or pairs.dtype.kind not in "iu":
             raise TypeError(
@@ -265,7 +266,7 @@ class PreparedHybridModel(StrictModule, NonTrainableState):
         redistribution: bool = False,
         training_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         if not isinstance(protein_network, PreparedElasticNetwork):
             raise TypeError("protein_network must be PreparedElasticNetwork.")
         if not isinstance(nucleotide_model, PreparedNucleotideModel):
@@ -463,7 +464,7 @@ class PreparedHybridModel(StrictModule, NonTrainableState):
             - rigid_sites[self.nucleotide_site_indices]
         )
 
-        def pair_energy(delta):
+        def pair_energy(delta: Array) -> tuple[Array, Array]:
             components = self.cross.components(delta)
             return jnp.sum(components), components
 
@@ -483,7 +484,7 @@ class PreparedHybridModel(StrictModule, NonTrainableState):
             state.nucleotide, rigid_site_forces
         )
 
-        def add_load(left, right):
+        def add_load(left: RigidBodyLoad, right: RigidBodyLoad) -> RigidBodyLoad:
             return RigidBodyLoad(left.force + right.force, left.torque + right.torque)
 
         load = add_load(nucleotide.loads.load, cross_loads.load)

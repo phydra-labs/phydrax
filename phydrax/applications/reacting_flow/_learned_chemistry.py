@@ -13,7 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
@@ -42,6 +43,7 @@ from ..._trainable import (
     parameter_field,
 )
 from ...equations._chemical_mechanism import PreparedChemicalMechanism
+from ...equations._chemical_rates import ChemicalRateRuntime
 from ...qualification import ReferenceArtifactManifest
 
 
@@ -87,7 +89,7 @@ class LearnedChemicalFeatureSchema(StrictModule, NonTrainableState):
         lower: ArrayLike,
         upper: ArrayLike,
         /,
-    ):
+    ) -> None:
         names = tuple(str(value).strip() for value in feature_names)
         units = tuple(str(value).strip() for value in feature_units)
         lower_ = np.asarray(lower, dtype=np.float64)
@@ -189,7 +191,9 @@ class _AbstractLearnedChemicalTransition(StrictModule):
     component_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def _features(self, concentrations, temperature, pressure, step):
+    def _features(
+        self, concentrations: Array, temperature: Array, pressure: Array, step: Array
+    ) -> Array:
         tiny = jnp.finfo(concentrations.dtype).tiny
         return jnp.concatenate(
             (
@@ -201,7 +205,14 @@ class _AbstractLearnedChemicalTransition(StrictModule):
             axis=-1,
         )
 
-    def _exact(self, concentrations, temperature, pressure, step, runtime):
+    def _exact(
+        self,
+        concentrations: Array,
+        temperature: Array,
+        pressure: Array,
+        step: Array,
+        runtime: ChemicalRateRuntime | None,
+    ) -> tuple[Array, Array]:
         substep = step / self.exact_subcycles
         state = concentrations
         successful = jnp.all(jnp.isfinite(state) & (state >= 0.0), axis=-1)
@@ -278,7 +289,7 @@ class _AbstractLearnedChemicalTransition(StrictModule):
         certain = uncertainty <= self.maximum_uncertainty
         use_learned = supported & certain & finite_model & positive & invariant
 
-        def exact_transition(_):
+        def exact_transition(_: None) -> tuple[Array, Array]:
             return self._exact(concentration, temperature_, pressure_, step, runtime)
 
         exact, exact_success = jax.lax.cond(
@@ -406,7 +417,7 @@ class LearnedChemicalTransitionPlan(_AbstractLearnedChemicalTransition, Explicit
         invariant_tolerance: float = 1.0e-9,
         commercial_use: bool = False,
         export: bool = False,
-    ):
+    ) -> None:
         if not isinstance(mechanism, PreparedChemicalMechanism):
             raise TypeError("mechanism must be PreparedChemicalMechanism.")
         if not isinstance(feature_schema, LearnedChemicalFeatureSchema):
@@ -515,7 +526,7 @@ class TrainableLearnedChemicalTransitionPlan(_AbstractLearnedChemicalTransition)
     model: Callable = parameter_field()
     uncertainty_model: Callable = fixed_field()
 
-    def __init__(self, model: Callable, source: LearnedChemicalTransitionPlan, /):
+    def __init__(self, model: Callable, source: LearnedChemicalTransitionPlan, /) -> None:
         if not isinstance(source, LearnedChemicalTransitionPlan):
             raise TypeError("source must be a LearnedChemicalTransitionPlan.")
         self.model = trainable_provider(model)

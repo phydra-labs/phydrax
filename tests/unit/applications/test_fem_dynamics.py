@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -20,7 +23,7 @@ from phydrax.discretization.fem import (
 )
 
 
-def _tetrahedral_elasticity():
+def _tetrahedral_elasticity() -> Any:
     points = jnp.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -48,7 +51,7 @@ def _tetrahedral_elasticity():
     return discretization, compiled
 
 
-def _rigid_translation_state(*, materials=None):
+def _rigid_translation_state(*, materials: Any = None) -> Any:
     displacement = jnp.zeros((4, 3))
     velocity = jnp.broadcast_to(jnp.asarray((0.4, -0.2, 0.1)), displacement.shape)
     return FiniteElementDynamicsState(
@@ -59,20 +62,22 @@ def _rigid_translation_state(*, materials=None):
     )
 
 
-def _elastic_potential(compiled):
-    def energy(time, displacement, args):
+def _elastic_potential(compiled: Any) -> Any:
+    def energy(time: Any, displacement: Any, args: Any) -> Any:
         del time, args
         return 0.5 * jnp.sum(displacement * compiled.residual(displacement))
 
     return energy
 
 
-def _zero_work(previous, candidate, args):
+def _zero_work(previous: Any, candidate: Any, args: Any) -> Any:
     del previous, candidate, args
     return jnp.asarray(0.0)
 
 
-def test_manufactured_rigid_translation_newmark_step_has_zero_strain_and_energy_defect():
+def test_manufactured_rigid_translation_newmark_step_has_zero_strain_and_energy_defect() -> (
+    None
+):
     _, compiled = _tetrahedral_elasticity()
     state = _rigid_translation_state()
     rigid_displacement = jnp.broadcast_to(
@@ -107,7 +112,7 @@ def test_manufactured_rigid_translation_newmark_step_has_zero_strain_and_energy_
     assert bool(result.candidate.energy.balanced)
 
 
-def test_implicit_newmark_root_exposes_velocity_derivative():
+def test_implicit_newmark_root_exposes_velocity_derivative() -> None:
     _, compiled = _tetrahedral_elasticity()
     template_state = FiniteElementDynamicsState(
         jnp.zeros((4, 3)),
@@ -117,7 +122,7 @@ def test_implicit_newmark_root_exposes_velocity_derivative():
     plan = prepare_finite_element_dynamics(compiled, template_state, 0.05)
     translation = jnp.broadcast_to(jnp.asarray((1.0, 0.0, 0.0)), (4, 3))
 
-    def endpoint(scale):
+    def endpoint(scale: Any) -> Any:
         state = FiniteElementDynamicsState(
             template_state.displacement,
             scale * translation,
@@ -131,11 +136,11 @@ def test_implicit_newmark_root_exposes_velocity_derivative():
     assert jnp.isclose(jax.grad(endpoint)(jnp.asarray(0.7)), 0.05, rtol=2.0e-6)
 
 
-def test_failed_inversion_hook_rolls_back_every_kinematic_field():
+def test_failed_inversion_hook_rolls_back_every_kinematic_field() -> None:
     _, compiled = _tetrahedral_elasticity()
     state = _rigid_translation_state()
 
-    def inverted(time, displacement, args):
+    def inverted(time: Any, displacement: Any, args: Any) -> Any:
         del time, displacement, args
         return jnp.asarray((-1.0,))
 
@@ -161,7 +166,7 @@ def test_failed_inversion_hook_rolls_back_every_kinematic_field():
     assert not bool(result.candidate.admissibility.jacobian_valid)
 
 
-def test_accepted_step_commits_material_history_atomically():
+def test_accepted_step_commits_material_history_atomically() -> None:
     _, compiled = _tetrahedral_elasticity()
     material = phx.equations.MaterialTransaction(
         (
@@ -174,7 +179,15 @@ def test_accepted_step_commits_material_history_atomically():
     )
     state = _rigid_translation_state(materials=material)
 
-    def update(displacement, velocity, acceleration, time, dt, previous, args):
+    def update(
+        displacement: Any,
+        velocity: Any,
+        acceleration: Any,
+        time: Any,
+        dt: Any,
+        previous: Any,
+        args: Any,
+    ) -> Any:
         del displacement, velocity, acceleration, time, args
         return previous.with_trials({"history": previous.states[0].committed + dt})
 
@@ -206,7 +219,7 @@ def test_accepted_step_commits_material_history_atomically():
     assert promoted.state_version == state.state_version + 1
 
 
-def test_prepared_interpolation_and_transpose_scatter_are_exact_duals():
+def test_prepared_interpolation_and_transpose_scatter_are_exact_duals() -> None:
     discretization, _ = _tetrahedral_elasticity()
     interpolation = prepare_finite_element_point_interpolation(
         discretization,
@@ -227,7 +240,7 @@ def test_prepared_interpolation_and_transpose_scatter_are_exact_duals():
     )
 
 
-def _one_rigid_body(position):
+def _one_rigid_body(position: Any) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray((7,), dtype=jnp.int64),
         jnp.ones((1,)),
@@ -246,7 +259,7 @@ def _one_rigid_body(position):
     return bodies, kinematics
 
 
-def test_attachment_kkt_loads_are_action_reaction_and_moment_balanced():
+def test_attachment_kkt_loads_are_action_reaction_and_moment_balanced() -> None:
     discretization, _ = _tetrahedral_elasticity()
     interpolation = prepare_finite_element_point_interpolation(
         discretization,
@@ -285,7 +298,7 @@ def test_attachment_kkt_loads_are_action_reaction_and_moment_balanced():
     assert jnp.abs(kkt_duality) < 1.0e-12
 
 
-def test_duplicate_attachment_rows_fail_rank_preparation():
+def test_duplicate_attachment_rows_fail_rank_preparation() -> None:
     discretization, _ = _tetrahedral_elasticity()
     single = prepare_finite_element_point_interpolation(
         discretization,

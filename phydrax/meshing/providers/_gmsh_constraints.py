@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -25,7 +26,7 @@ from ._gmsh_import import (
 )
 
 
-def _set_periodic(gmsh, plan, shape, /):
+def _set_periodic(gmsh: Any, plan: Any, shape: Any, /) -> Any:
     records = []
     slaves_used = set()
     for constraint in plan.specification.periodic_constraints:
@@ -55,7 +56,9 @@ def _set_periodic(gmsh, plan, shape, /):
     return tuple(records)
 
 
-def _audit_periodic(gmsh, records, node_tags, points, /) -> _EvidenceSection:
+def _audit_periodic(
+    gmsh: Any, records: Any, node_tags: Any, points: Any, /
+) -> _EvidenceSection:
     requested = []
     achieved = []
     for constraint, masters, slaves in records:
@@ -125,7 +128,7 @@ class _ProtectedEntities:
     embedded_count: int
 
 
-def _entity_samples(gmsh, dimension: int, tag: int, /) -> np.ndarray:
+def _entity_samples(gmsh: Any, dimension: int, tag: int, /) -> np.ndarray:
     if dimension == 0:
         return np.asarray(gmsh.model.getValue(0, tag, []), dtype=np.float64).reshape(
             (1, 3)
@@ -137,7 +140,9 @@ def _entity_samples(gmsh, dimension: int, tag: int, /) -> np.ndarray:
     ).reshape((-1, 3))
 
 
-def _contains(gmsh, dimension: int, tag: int, points: np.ndarray, tolerance: float, /):
+def _contains(
+    gmsh: Any, dimension: int, tag: int, points: np.ndarray, tolerance: float, /
+) -> Any:
     if dimension == 3:
         return gmsh.model.isInside(3, tag, points.reshape(-1)) == points.shape[0]
     closest, _ = gmsh.model.getClosestPoint(dimension, tag, points.reshape(-1))
@@ -150,7 +155,7 @@ def _contains(gmsh, dimension: int, tag: int, points: np.ndarray, tolerance: flo
 
 
 def _embedding_host(
-    gmsh, dimension: int, tag: int, top_dimension: int, tolerance: float, /
+    gmsh: Any, dimension: int, tag: int, top_dimension: int, tolerance: float, /
 ) -> tuple[int, int]:
     """Embed a free entity into the lowest-dimensional meshed entity containing it."""
     points = _entity_samples(gmsh, dimension, tag)
@@ -175,7 +180,7 @@ def _embedding_host(
     )
 
 
-def _free_entities(gmsh, top_dimension: int, /) -> set[tuple[int, int]]:
+def _free_entities(gmsh: Any, top_dimension: int, /) -> set[tuple[int, int]]:
     return {
         (dimension, tag)
         for dimension in range(top_dimension)
@@ -185,10 +190,10 @@ def _free_entities(gmsh, top_dimension: int, /) -> set[tuple[int, int]]:
 
 
 def _apply_protected_features(
-    gmsh,
+    gmsh: Any,
     source: BRepModel,
-    shape,
-    specification,
+    shape: Any,
+    specification: Any,
     embedding_allowed: bool,
     /,
 ) -> tuple[_ProtectedEntities, ...]:
@@ -233,7 +238,7 @@ def _apply_protected_features(
     return tuple(records)
 
 
-def _entity_elements(gmsh, dimension: int, tag: int, /):
+def _entity_elements(gmsh: Any, dimension: int, tag: int, /) -> Any:
     element_types, _, node_blocks = gmsh.model.mesh.getElements(dimension, tag)
     for element_type, node_values in zip(element_types, node_blocks, strict=True):
         _, _, _, count, _, corners = gmsh.model.mesh.getElementProperties(
@@ -248,14 +253,16 @@ def _entity_elements(gmsh, dimension: int, tag: int, /):
 
 def _mesh_entity_rows(mesh: CellMesh, dimension: int, /) -> set[tuple[int, ...]]:
     if dimension == 1:
+        # ty: ignore[unresolved-attribute]
         rows = np.asarray(mesh.connectivity.edges, dtype=np.int64)
     else:
+        # ty: ignore[invalid-argument-type]
         rows = _connectivity_face_rows(mesh.connectivity)
     return {tuple(sorted(int(value) for value in row)) for row in rows}
 
 
 def _protected_deviation(
-    gmsh,
+    gmsh: Any,
     dimension: int,
     tag: int,
     node_tags: np.ndarray,
@@ -314,7 +321,7 @@ def _protected_deviation(
 
 
 def _audit_protected_features(
-    gmsh,
+    gmsh: Any,
     records: tuple[_ProtectedEntities, ...],
     mesh: CellMesh,
     node_tags: np.ndarray,

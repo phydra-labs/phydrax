@@ -24,6 +24,7 @@ from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import RealCoordinateEvidence
+from ..typing import parse
 
 
 TemporalEquationForm: TypeAlias = Literal[
@@ -136,7 +137,7 @@ class TemporalMethodCapabilities(StrictModule, NonTrainableState):
         levy_area: str | None = None,
         verified: bool = True,
         method_id: str,
-    ):
+    ) -> None:
         forms = tuple(equation_forms)
         if not forms or len(set(forms)) != len(forms):
             raise ValueError("Temporal equation forms must be non-empty and unique.")
@@ -157,13 +158,12 @@ class TemporalMethodCapabilities(StrictModule, NonTrainableState):
         extent = float(causal_stage_extent)
         if not isfinite(extent) or extent <= 0.0:
             raise ValueError("causal_stage_extent must be finite and positive.")
-        strong = tuple((kind, float(value)) for kind, value in strong_orders)
-        if any(
-            kind not in ("none", "additive", "commutative", "general")
-            or not isfinite(value)
-            or value <= 0.0
-            for kind, value in strong
-        ):
+        converted = tuple((kind, float(value)) for kind, value in strong_orders)
+        strong = tuple(
+            (parse(kind, NoiseRequirement, "strong_orders"), value)
+            for kind, value in converted
+        )
+        if any(not isfinite(value) or value <= 0.0 for _, value in strong):
             raise ValueError("Strong-order records must be finite and positive.")
         ssp = None if ssp_coefficient is None else float(ssp_coefficient)
         if ssp is not None and (not isfinite(ssp) or ssp <= 0.0):
@@ -350,54 +350,29 @@ class TemporalDifferentiationEvidence(StrictModule, NonTrainableState):
         stochastic_semantics: TemporalStochasticSemantics,
         implementation_id: str,
         verified: bool = True,
-    ):
-        if form not in (
-            "discretize-then-optimize",
-            "optimize-then-discretize",
-            "implicit-solution-map",
-            "unknown",
-        ):
-            raise ValueError("Unknown temporal differentiation form.")
-        directions = tuple(orientations)
-        if len(set(directions)) != len(directions) or any(
-            value not in ("forward", "reverse") for value in directions
-        ):
+    ) -> None:
+        form = parse(form, TemporalDifferentiationForm, "form")
+        directions = tuple(
+            parse(value, TemporalDifferentiationOrientation, "orientations")
+            for value in orientations
+        )
+        if len(set(directions)) != len(directions):
             raise ValueError(
                 "Temporal differentiation orientations must be unique forward/reverse values."
             )
-        if checkpointing not in (
-            "none",
-            "online-binomial",
-            "bounded-rematerialization",
-            "full-replay",
-            "chunked-replay",
-            "backend-defined",
-        ):
-            raise ValueError("Unknown temporal checkpointing semantics.")
+        checkpointing = parse(checkpointing, TemporalCheckpointing, "checkpointing")
         count = None if checkpoint_count is None else int(checkpoint_count)
         if count is not None and count < 1:
             raise ValueError("Temporal checkpoint_count must be positive or None.")
-        if decision_semantics not in (
-            "fixed-grid",
-            "frozen-adaptive-schedule",
-            "backend-defined",
-        ):
-            raise ValueError("Unknown temporal decision derivative semantics.")
-        if event_semantics not in (
-            "none",
-            "backend-branchwise-unqualified",
-            "implicit-event-replay",
-            "unsupported",
-            "unknown",
-        ):
-            raise ValueError("Unknown temporal event derivative semantics.")
-        if stochastic_semantics not in (
-            "deterministic",
-            "fixed-realization-pathwise",
-            "distributional",
-            "unknown",
-        ):
-            raise ValueError("Unknown temporal stochastic derivative semantics.")
+        decision_semantics = parse(
+            decision_semantics, TemporalDecisionSemantics, "decision_semantics"
+        )
+        event_semantics = parse(
+            event_semantics, TemporalEventSemantics, "event_semantics"
+        )
+        stochastic_semantics = parse(
+            stochastic_semantics, TemporalStochasticSemantics, "stochastic_semantics"
+        )
         identifier = str(implementation_id)
         if not identifier:
             raise ValueError(
@@ -474,7 +449,7 @@ class TemporalSolveEvidence(StrictModule, NonTrainableState):
         maximum_steps: int | None,
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
         state_coordinates: RealCoordinateEvidence | None = None,
-    ):
+    ) -> None:
         if not isinstance(capabilities, TemporalMethodCapabilities):
             raise TypeError("capabilities must be TemporalMethodCapabilities.")
         if not isinstance(differentiation, TemporalDifferentiationEvidence):

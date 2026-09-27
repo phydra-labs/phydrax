@@ -10,7 +10,8 @@ from itertools import combinations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from scipy.spatial import Delaunay
 
 from .._strict import StrictModule
@@ -116,7 +117,7 @@ class PointCloudComplexPolicy(StrictModule, NonTrainableState):
         maximum_dimension: int = 3,
         maximum_simplices: int = 100_000,
         predicate_tolerance: float = 1e-10,
-    ):
+    ) -> None:
         if (
             int(maximum_dimension) < 0
             or int(maximum_simplices) < 1
@@ -148,7 +149,7 @@ class PointCloudComplexResult(StrictModule, NonTrainableState):
         ambiguous: ArrayLike,
         certified: ArrayLike,
         family: str,
-    ):
+    ) -> None:
         self.topology = topology
         self.simplices = tuple(jnp.asarray(value, dtype=jnp.int32) for value in simplices)
         self.predicate_margins = jnp.asarray(predicate_margins)
@@ -432,7 +433,9 @@ class MultiFiltration(StrictModule, NonTrainableState):
     grades: tuple[Array, ...]
     parameter_dimension: int = eqx.field(static=True)
 
-    def __init__(self, topology: CellComplexTopology, grades: Sequence[ArrayLike], /):
+    def __init__(
+        self, topology: CellComplexTopology, grades: Sequence[ArrayLike], /
+    ) -> None:
         if not isinstance(topology, CellComplexTopology):
             raise TypeError("topology must be a CellComplexTopology.")
         grades_ = tuple(np.asarray(value) for value in grades)
@@ -515,7 +518,7 @@ class FinitePersistenceModule(StrictModule, NonTrainableState):
         /,
         *,
         field: PrimeField,
-    ):
+    ) -> None:
         dimensions_ = np.asarray(dimensions, dtype=np.int32)
         edges_ = np.asarray(edges, dtype=np.int32)
         maps_ = tuple(np.asarray(value, dtype=np.int64) % field.modulus for value in maps)
@@ -565,7 +568,7 @@ class MultiparameterPersistenceResult(StrictModule, NonTrainableState):
         rank_queries: ArrayLike,
         presentation_relations: ArrayLike,
         fibered_diagrams: Sequence[ArrayLike],
-    ):
+    ) -> None:
         self.hilbert_dimensions = jnp.asarray(hilbert_dimensions, dtype=jnp.int32)
         self.rank_queries = jnp.asarray(rank_queries, dtype=jnp.int32)
         self.presentation_relations = jnp.asarray(presentation_relations, dtype=jnp.int32)
@@ -604,7 +607,7 @@ class ZigzagIntervalResult(StrictModule, NonTrainableState):
 
     def __init__(
         self, intervals: ArrayLike, dimensions: ArrayLike, edge_ranks: ArrayLike, /
-    ):
+    ) -> None:
         intervals_ = np.asarray(intervals, dtype=np.int32).reshape((-1, 2))
         dimensions_ = np.asarray(dimensions, dtype=np.int32)
         reconstructed = np.asarray(
@@ -782,7 +785,7 @@ class CellDiagonalApproximation(StrictModule, NonTrainableState):
         right_cells: ArrayLike,
         coefficients: ArrayLike,
         /,
-    ):
+    ) -> None:
         if not isinstance(topology, CellComplexTopology):
             raise TypeError("topology must be a CellComplexTopology.")
         source_degree_ = int(source_degree)
@@ -970,7 +973,7 @@ class CellularSheaf(StrictModule, NonTrainableState):
         /,
         *,
         field: PrimeField,
-    ):
+    ) -> None:
         if not isinstance(topology, CellComplexTopology):
             raise TypeError("topology must be a CellComplexTopology.")
         if not isinstance(field, PrimeField):
@@ -1069,7 +1072,7 @@ class FilteredChainComplex(StrictModule, NonTrainableState):
         /,
         *,
         field: PrimeField,
-    ):
+    ) -> None:
         boundaries_ = tuple(
             np.asarray(value, dtype=np.int64) % field.modulus for value in boundaries
         )
@@ -1112,7 +1115,7 @@ class FilteredBicomplex(StrictModule, NonTrainableState):
         /,
         *,
         field: PrimeField,
-    ):
+    ) -> None:
         horizontal_ = tuple(
             np.asarray(value, dtype=np.int64) % field.modulus for value in horizontal
         )
@@ -1153,7 +1156,7 @@ class SpectralSequenceResult(StrictModule, NonTrainableState):
         stabilized_page: ArrayLike,
         convergence_certified: ArrayLike,
         /,
-    ):
+    ) -> None:
         self.page_dimensions = jnp.asarray(page_dimensions, dtype=jnp.int32)
         self.differential_ranks = jnp.asarray(differential_ranks, dtype=jnp.int32)
         self.stabilized_page = jnp.asarray(stabilized_page, dtype=jnp.int32)

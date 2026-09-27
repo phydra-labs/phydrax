@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_sparse_block_topology_is_transactional_in_explicit_mpm():
+def test_sparse_block_topology_is_transactional_in_explicit_mpm() -> None:
     grid_plan = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformAxisSpec(16, periodic=True, endpoint=False)
